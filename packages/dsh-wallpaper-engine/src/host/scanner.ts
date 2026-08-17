@@ -23,7 +23,10 @@ export async function scanWallpapers(dir: string): Promise<WallpaperInfo[]> {
     if (!existsSync(pjPath)) continue;
     let pj: Record<string, unknown>;
     try {
-      pj = JSON.parse(readFileSync(pjPath, 'utf8'));
+      // 顶层非对象 JSON（null/数组/标量）视为损坏，跳过该目录（I5）
+      const parsed: unknown = JSON.parse(readFileSync(pjPath, 'utf8'));
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) continue;
+      pj = parsed as Record<string, unknown>;
     } catch {
       continue;
     }

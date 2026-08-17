@@ -46,4 +46,17 @@ describe('scanWallpapers', () => {
     const list = await scanWallpapers(dir);
     expect(list).toHaveLength(0);
   });
+  it('I5: 跳过 project.json 非对象（null/数组/字符串）的目录', async () => {
+    for (const [id, content] of [
+      ['null-pj', 'null'],
+      ['arr-pj', '[1,2]'],
+      ['str-pj', '"hi"'],
+    ] as const) {
+      const d = join(dir, id);
+      mkdirSync(d, { recursive: true });
+      writeFileSync(join(d, 'project.json'), content);
+    }
+    const list = await scanWallpapers(dir);
+    expect(list).toHaveLength(0);
+  });
 });
