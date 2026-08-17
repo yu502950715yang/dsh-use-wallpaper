@@ -28,8 +28,12 @@ export function createWallpaperController(
       case 'scene': {
         if (opts.sceneRenderer) {
           const canvas = document.createElement('canvas');
-          const ok = await opts.sceneRenderer.render(plan.wallpaperId, canvas);
-          if (ok) { layer.showSceneCanvas(canvas); break; }
+          try {
+            const ok = await opts.sceneRenderer.render(plan.wallpaperId, canvas);
+            if (ok) { layer.showSceneCanvas(canvas); break; }
+          } catch {
+            // 渲染异常（reject）→ 与失败同等对待，落入回退
+          }
         }
         // 渲染不可用/失败 → 回退 preview
         if (info.previewUrl) layer.showImage(info.previewUrl, !info.hasPreviewGif);
