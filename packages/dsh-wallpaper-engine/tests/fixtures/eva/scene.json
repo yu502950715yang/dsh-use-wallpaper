@@ -1,0 +1,107 @@
+{
+	"camera" : 
+	{
+		"center" : "35.931 -6.317 0.000",
+		"eye" : "35.931 -6.317 1.000",
+		"up" : "0.000 1.000 0.000"
+	},
+	"general" : 
+	{
+		"ambientcolor" : "0.3 0.3 0.3",
+		"bloom" : false,
+		"bloomstrength" : 2,
+		"bloomthreshold" : 0.64999997615814209,
+		"camerafade" : true,
+		"cameraparallax" : false,
+		"cameraparallaxamount" : 0.5,
+		"cameraparallaxdelay" : 0.10000000149011612,
+		"cameraparallaxmouseinfluence" : 0,
+		"camerapreview" : true,
+		"camerashake" : false,
+		"camerashakeamplitude" : 0.5,
+		"camerashakeroughness" : 1,
+		"camerashakespeed" : 3,
+		"clearcolor" : "0.7 0.7 0.7",
+		"clearenabled" : null,
+		"orthogonalprojection" : 
+		{
+			"height" : 1555,
+			"width" : 2400
+		},
+		"skylightcolor" : "0.3 0.3 0.3"
+	},
+	"objects" : 
+	[
+		{
+			"angles" : "0.000 0.000 0.000",
+			"colorBlendMode" : 0,
+			"copybackground" : true,
+			"id" : 12,
+			"image" : "models/neon-genesis-evangelion-wallpaper-3.json",
+			"name" : "neon-genesis-evangelion-wallpaper-3",
+			"origin" : "1200.000 777.500 0.000",
+			"parallaxDepth" : "1.000 1.000",
+			"scale" : "1.000 1.000 1.000",
+			"size" : "2400.000 1555.000",
+			"visible" : true
+		},
+		{
+			"angles" : "0.000 0.000 -0.854",
+			"id" : 18,
+			"image" : null,
+			"model" : null,
+			"name" : "Light rays",
+			"origin" : "1551.805 772.020 0.000",
+			"parallaxDepth" : "1.000 1.000",
+			"particle" : "particles/presets/lightshafts.json",
+			"particlesrc" : null,
+			"scale" : "2.200 2.200 1.000"
+		},
+		{
+			"angles" : "0.000 0.000 0.000",
+			"id" : 27,
+			"image" : null,
+			"model" : null,
+			"name" : "Fog 1",
+			"origin" : "1728.503 107.095 0.000",
+			"parallaxDepth" : "1.000 1.000",
+			"particle" : "particles/presets/fog2.json",
+			"particlesrc" : null,
+			"scale" : "1.900 1.900 1.000"
+		},
+		{
+			"angles" : "0.000 0.000 0.000",
+			"id" : 33,
+			"image" : null,
+			"model" : null,
+			"name" : "Lightning cloud",
+			"origin" : "286.091 1152.722 0.000",
+			"parallaxDepth" : "1.000 1.000",
+			"particle" : "particles/presets/lightning1.json",
+			"particlesrc" : null,
+			"scale" : "0.410 0.408 1.000"
+		},
+		{
+			"angles" : "0.000 0.000 0.000",
+			"id" : 45,
+			"image" : null,
+			"model" : null,
+			"name" : "Fog 1",
+			"origin" : "1908.728 30.230 0.000",
+			"parallaxDepth" : "1.000 1.000",
+			"particle" : "particles/presets/fog1.json",
+			"particlesrc" : null,
+			"scale" : "1.000 1.000 1.000"
+		},
+		{
+			"angles" : "0.000 0.000 0.000",
+			"id" : 61,
+			"name" : "Ashes",
+			"origin" : "757.609 866.372 0.000",
+			"parallaxDepth" : "1.000 1.000",
+			"particle" : "particles/Ashes.json",
+			"particlesrc" : null,
+			"scale" : "2.409 2.409 1.000"
+		}
+	]
+}
