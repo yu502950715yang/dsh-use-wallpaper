@@ -17,6 +17,20 @@ describe('parseSceneJson', () => {
     const particleObjs = desc.objects.filter((o) => o.kind === 'particle');
     expect(particleObjs.length).toBeGreaterThanOrEqual(4);
   });
+  it('parses image object size field (WE pixels)', () => {
+    const desc = parseSceneJson(raw);
+    const imageObj = desc.objects.find((o) => o.kind === 'image') as any;
+    expect(imageObj.size).toEqual([2400, 1555]);
+    // 粒子对象无 size 字段
+    const particleObj = desc.objects.find((o) => o.kind === 'particle') as any;
+    expect(particleObj.size).toBeUndefined();
+  });
+  it('leaves size undefined when absent or invalid', () => {
+    const desc = parseSceneJson('{"objects":[{"id":1,"image":"a.json","origin":"0 0 0","scale":"1 1 1"}]}');
+    expect((desc.objects[0] as any).size).toBeUndefined();
+    const bad = parseSceneJson('{"objects":[{"id":1,"image":"a.json","size":"abc","origin":"0 0 0","scale":"1 1 1"}]}');
+    expect((bad.objects[0] as any).size).toBeUndefined();
+  });
   it('falls back to a default camera when absent', () => {
     const desc = parseSceneJson('{"objects":[]}');
     expect(desc.camera.center).toEqual([0, 0, 0]);

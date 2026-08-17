@@ -1,6 +1,7 @@
 import { injectWallpaperStyles } from './styles.js';
 import { createBackgroundLayer } from './background-layer.js';
 import { createWallpaperController } from './wallpaper-controller.js';
+import { renderScene } from './scene-renderer.js';
 import { mountPicker as mountPickerUI } from './picker.js';
 import { readClientSettings, writeClientSettings } from './settings.js';
 import type { BackgroundPlan, ClientSettings } from './types.js';
@@ -32,6 +33,7 @@ export function bootstrap(): void {
     layer = createBackgroundLayer(root);
     controller = createWallpaperController(layer, {
       fetchList: async () => (await fetch('/wallpapers/list')).json(),
+      sceneRenderer: { render: renderScene }, // scene 壁纸 → Three.js 实时渲染（失败回退 preview）
     });
     // 读回已保存设置并应用到 layer（opacity/blur/kenBurns）
     void readClientSettings().then((s) => {
@@ -54,7 +56,15 @@ export function bootstrap(): void {
       switch (plan.kind) {
         case 'image': layer.showImage(plan.url, plan.kenBurns); break;
         case 'video': layer.showVideo(plan.url); break;
-        case 'scene': break; // 阶段 2 接入 SceneRenderer
+        case 'scene': {
+          // 阶段 2：Three.js 实时渲染；canvas 由 controller/show 创建，失败回退 none
+          const canvas = document.createElement('canvas');
+          void renderScene(plan.wallpaperId, canvas).then((ok) => {
+            if (ok) layer?.showSceneCanvas(canvas);
+            else layer?.showNone();
+          });
+          break;
+        }
         case 'none': layer.showNone(); break;
       }
       if (opts?.opacity !== undefined) layer.setOverlayOpacity(opts.opacity);

@@ -17,7 +17,8 @@ export interface PkgEntry { name: string; offset: number; size: number; }
 export interface SceneImageObject {
   kind: 'image'; id: number; name: string;
   origin: [number, number, number]; scale: [number, number, number];
-  image: string;               // 资源名，如 "models/xxx.json"
+  size?: [number, number];       // scene.json 的 size 字段（WE 像素尺寸），缺省时由纹理宽高推算
+  image: string;                 // 资源名，如 "models/xxx.json"
 }
 export interface SceneParticleObject {
   kind: 'particle'; id: number; name: string;

@@ -6,6 +6,14 @@ function vec3(s: unknown): [number, number, number] {
   return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0];
 }
 
+// WE 对象 size 字段（"宽 高"），缺失/非法时返回 undefined（由渲染器回退纹理宽高）
+function size2(s: unknown): [number, number] | undefined {
+  if (typeof s !== 'string') return undefined;
+  const parts = s.trim().split(/\s+/).map(Number);
+  if (parts.length < 2 || !isFinite(parts[0]) || !isFinite(parts[1])) return undefined;
+  return [parts[0], parts[1]];
+}
+
 export function parseSceneJson(raw: string): SceneDescription {
   const root: any = JSON.parse(raw);
   if (typeof root !== 'object' || root === null || Array.isArray(root)) {
@@ -20,6 +28,7 @@ export function parseSceneJson(raw: string): SceneDescription {
       name: String(o.name ?? ''),
       origin: vec3(o.origin),
       scale: vec3(o.scale),
+      size: size2(o.size),
     };
     if (typeof o.particle === 'string' && o.particle) {
       return { ...base, kind: 'particle' as const, particle: o.particle };

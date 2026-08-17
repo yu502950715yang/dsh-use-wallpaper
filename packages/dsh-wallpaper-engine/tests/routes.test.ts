@@ -109,6 +109,19 @@ describe('registerWallpaperRoutes', () => {
     await routes.get('prefix /wallpapers/scene')!({ url: '/wallpapers/scene/3/asset?name=scene.json' }, res);
     expect(res.statusCode).toBe(200);
     expect(res.headers['Content-Type']).toContain('application/json');
+    expect(res.headers['Cache-Control']).toBe('no-store');
     expect(res.body.toString('utf8')).toBe('{"objects":[]}');
+  });
+  it('rejects unknown scene action segment', async () => {
+    const { makePkg } = await import('./fixtures/make-pkg.js');
+    const pkg = makePkg([{ name: 'scene.json', data: Buffer.from('{}', 'utf8') }]);
+    const d = join(dir, '4');
+    mkdirSync(d, { recursive: true });
+    writeFileSync(join(d, 'scene.pkg'), pkg);
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
+    const res = makeRes();
+    await routes.get('prefix /wallpapers/scene')!({ url: '/wallpapers/scene/4/other?name=scene.json' }, res);
+    expect(res.statusCode).toBe(404);
+    expect(JSON.parse(res.body.toString('utf8'))).toEqual({ error: 'no such action' });
   });
 });

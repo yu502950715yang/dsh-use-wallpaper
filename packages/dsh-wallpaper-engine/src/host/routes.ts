@@ -98,6 +98,8 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
         const { segs, search } = parseUrl(_req);
         if (segs.length < 4) return json(res, 400, { error: 'bad path' });
         const id = segs[2];
+        const action = segs[3];
+        if (action !== 'asset') return json(res, 404, { error: 'no such action' });
         const name = search.get('name') ?? '';
         if (!isSafeToken(id)) return json(res, 400, { error: 'bad id' });
         if (!name || !/^[A-Za-z0-9._\/-]+$/.test(name) || name.includes('..')) {
@@ -110,10 +112,16 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
           const entry = reader.readEntry(name);
           if (!entry) return json(res, 404, { error: 'no such asset' });
           const ext = '.' + name.split('.').pop()?.toLowerCase();
-          res.writeHead(200, { 'Content-Type': MIME[ext] ?? 'application/octet-stream', 'Content-Length': entry.length });
+          // 场景资源是动态内容（pkg 内读取），禁止浏览器缓存，避免切壁纸后拿到陈旧数据
+          res.writeHead(200, {
+            'Content-Type': MIME[ext] ?? 'application/octet-stream',
+            'Content-Length': entry.length,
+            'Cache-Control': 'no-store',
+          });
           res.end(entry);
-        } catch (e: any) {
-          json(res, 500, { error: String(e?.message ?? e) });
+        } catch {
+          // 固定文案，不泄漏内部错误信息
+          json(res, 500, { error: 'internal error' });
         }
       },
     });
