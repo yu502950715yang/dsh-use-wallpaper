@@ -4,6 +4,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { registerWallpaperRoutes } from '../src/host/routes.js';
 
+// Fix round 1：测试与实现适配真实 WebRoute 形态
+// （{ kind: 'exact'|'prefix', path, handler(req, res) }，无 params/query 注入，
+//  handler 内自解析 req.url；mock 捕获 {kind, path, handler}，req 用最小伪对象 { url }）
+
 let dir: string;
 let routes: Map<string, (req: any, res: any) => void>;
 let captured: Array<{ kind: string; path: string }>;
@@ -44,15 +48,23 @@ beforeEach(() => {
 afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
 
 describe('registerWallpaperRoutes', () => {
-  it('registers list route returning scanned wallpapers', async () => {
+  it('registers routes with real WebRoute shape (exact/prefix)', () => {
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
+    expect(captured).toEqual([
+      { kind: 'exact', path: '/wallpapers/list' },
+      { kind: 'prefix', path: '/wallpapers/media' },
+      { kind: 'prefix', path: '/wallpapers/scene' },
+    ]);
+  });
+  it('serves list route returning scanned wallpapers', async () => {
     mkdirSync(join(dir, '1'), { recursive: true });
     writeFileSync(join(dir, '1', 'project.json'), JSON.stringify({ title: 'T', type: 'video', file: 'a.mp4' }));
     writeFileSync(join(dir, '1', 'a.mp4'), 'fake');
     const ctx = makeCtx();
     registerWallpaperRoutes(ctx, { wallpaperDir: dir });
-    const h = routes.get('GET /wallpapers/list')!;
+    const h = routes.get('exact /wallpapers/list')!;
     const res = makeRes();
-    await h({}, res);
+    await h({ url: '/wallpapers/list' }, res);
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body.toString('utf8'));
     expect(body).toHaveLength(1);
@@ -64,18 +76,24 @@ describe('registerWallpaperRoutes', () => {
     writeFileSync(join(dir, '2', 'preview.gif'), 'GIF89a');
     registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
     const res = makeRes();
-    await routes.get('GET /wallpapers/media/:id/preview')!({ params: { id: '2' } }, res);
+    await routes.get('prefix /wallpapers/media')!({ url: '/wallpapers/media/2/preview' }, res);
     expect(res.statusCode).toBe(200);
     expect(res.headers['Content-Type']).toContain('image/gif');
     expect(res.body.toString('utf8')).toBe('GIF89a');
   });
   it('rejects path traversal in id and asset name', async () => {
     registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
+    // id='..'：WHATWG URL dot-segment 规范化将 '..' 段折叠，pathname 段数不足 → 400
     const res1 = makeRes();
-    await routes.get('GET /wallpapers/media/:id/preview')!({ params: { id: '..' } }, res1);
+    await routes.get('prefix /wallpapers/media')!({ url: '/wallpapers/media/../preview' }, res1);
     expect(res1.statusCode).toBe(400);
+    // id 含编码斜杠 %2F（不产生新段、保留在 id 中）→ isSafeToken 拒绝 → 400
+    const res1b = makeRes();
+    await routes.get('prefix /wallpapers/media')!({ url: '/wallpapers/media/1%2F2/preview' }, res1b);
+    expect(res1b.statusCode).toBe(400);
+    // name 穿越：query 参数不经过 path 规范化，'..' 原样保留 → 白名单拒绝 → 400
     const res2 = makeRes();
-    await routes.get('GET /wallpapers/scene/:id/asset')!({ params: { id: '1' }, query: { name: '../../etc/passwd' } }, res2);
+    await routes.get('prefix /wallpapers/scene')!({ url: '/wallpapers/scene/1/asset?name=../../etc/passwd' }, res2);
     expect(res2.statusCode).toBe(400);
   });
   it('serves scene asset from pkg by entry name', async () => {
@@ -88,7 +106,7 @@ describe('registerWallpaperRoutes', () => {
     writeFileSync(join(d, 'scene.pkg'), pkg);
     registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
     const res = makeRes();
-    await routes.get('GET /wallpapers/scene/:id/asset')!({ params: { id: '3' }, query: { name: 'scene.json' } }, res);
+    await routes.get('prefix /wallpapers/scene')!({ url: '/wallpapers/scene/3/asset?name=scene.json' }, res);
     expect(res.statusCode).toBe(200);
     expect(res.headers['Content-Type']).toContain('application/json');
     expect(res.body.toString('utf8')).toBe('{"objects":[]}');

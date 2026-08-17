@@ -27,70 +27,83 @@ function json(res: any, code: number, value: unknown) {
   res.end(body);
 }
 
+// 真实 WebRoute 无 params/query 注入：从 req.url 解析 pathname 段与 query
+// （WHATWG URL 的 dot-segment 规范化天然折叠 '..' 段，是第一层穿越防护）
+function parseUrl(req: any): { segs: string[]; search: URLSearchParams } {
+  const u = new URL(req.url ?? '/', 'http://localhost');
+  return { segs: u.pathname.split('/').filter(Boolean), search: u.searchParams };
+}
+
 export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions): void {
   ctx.inject(['webServer'], (httpCtx: any) => {
     const server = httpCtx.webServer;
+    const { wallpaperDir } = opts;
 
     server.register({
-      kind: 'GET', path: '/wallpapers/list',
+      kind: 'exact', path: '/wallpapers/list',
       handler: async (_req: any, res: any) => {
-        const list = await scanWallpapers(opts.wallpaperDir);
+        // WebRoute 不区分 HTTP 方法（浏览器仅用 GET），此处不校验方法
+        const list = await scanWallpapers(wallpaperDir);
         json(res, 200, list);
       },
     });
 
     server.register({
-      kind: 'GET', path: '/wallpapers/media/:id/preview',
+      kind: 'prefix', path: '/wallpapers/media',
+      // 匹配 /wallpapers/media/<id>/preview 与 /wallpapers/media/<id>/file
       handler: (_req: any, res: any) => {
-        const id = _req.params?.id;
+        const { segs } = parseUrl(_req);
+        if (segs.length < 4) return json(res, 400, { error: 'bad path' });
+        const id = segs[2];
+        const action = segs[3];
         if (!isSafeToken(id)) return json(res, 400, { error: 'bad id' });
-        const base = join(opts.wallpaperDir, id);
-        for (const ext of ['.gif', '.jpg', '.jpeg', '.png']) {
-          const p = join(base, 'preview' + ext);
-          if (existsSync(p)) {
+        if (action === 'preview') {
+          const base = join(wallpaperDir, id);
+          for (const ext of ['.gif', '.jpg', '.jpeg', '.png']) {
+            const p = join(base, 'preview' + ext);
+            if (existsSync(p)) {
+              const body = readFileSync(p);
+              res.writeHead(200, { 'Content-Type': MIME[ext], 'Content-Length': body.length });
+              return res.end(body);
+            }
+          }
+          json(res, 404, { error: 'no preview' });
+        } else if (action === 'file') {
+          // file 名来自 project.json（扫描结果），这里按 id 读取 project.json 获得
+          try {
+            const pj = JSON.parse(readFileSync(join(wallpaperDir, id, 'project.json'), 'utf8'));
+            const file = String(pj.file ?? '');
+            if (!file || file.includes('..') || file.includes('/') || file.includes('\\')) {
+              return json(res, 400, { error: 'bad file' });
+            }
+            const p = join(wallpaperDir, id, file);
+            if (!existsSync(p)) return json(res, 404, { error: 'no file' });
             const body = readFileSync(p);
-            res.writeHead(200, { 'Content-Type': MIME[ext], 'Content-Length': body.length });
-            return res.end(body);
+            const ext = '.' + file.split('.').pop()?.toLowerCase();
+            res.writeHead(200, { 'Content-Type': MIME[ext] ?? 'application/octet-stream', 'Content-Length': body.length });
+            res.end(body);
+          } catch {
+            json(res, 404, { error: 'not found' });
           }
-        }
-        json(res, 404, { error: 'no preview' });
-      },
-    });
-
-    server.register({
-      kind: 'GET', path: '/wallpapers/media/:id/file',
-      handler: (_req: any, res: any) => {
-        const id = _req.params?.id;
-        if (!isSafeToken(id)) return json(res, 400, { error: 'bad id' });
-        // file 名来自 project.json（扫描结果），这里按 id 读取 project.json 获得
-        try {
-          const pj = JSON.parse(readFileSync(join(opts.wallpaperDir, id, 'project.json'), 'utf8'));
-          const file = String(pj.file ?? '');
-          if (!file || file.includes('..') || file.includes('/') || file.includes('\\')) {
-            return json(res, 400, { error: 'bad file' });
-          }
-          const p = join(opts.wallpaperDir, id, file);
-          if (!existsSync(p)) return json(res, 404, { error: 'no file' });
-          const body = readFileSync(p);
-          const ext = '.' + file.split('.').pop()?.toLowerCase();
-          res.writeHead(200, { 'Content-Type': MIME[ext] ?? 'application/octet-stream', 'Content-Length': body.length });
-          res.end(body);
-        } catch {
-          json(res, 404, { error: 'not found' });
+        } else {
+          json(res, 404, { error: 'no such action' });
         }
       },
     });
 
     server.register({
-      kind: 'GET', path: '/wallpapers/scene/:id/asset',
+      kind: 'prefix', path: '/wallpapers/scene',
+      // 匹配 /wallpapers/scene/<id>/asset
       handler: (_req: any, res: any) => {
-        const id = _req.params?.id;
-        const name: string = _req.query?.name ?? '';
+        const { segs, search } = parseUrl(_req);
+        if (segs.length < 4) return json(res, 400, { error: 'bad path' });
+        const id = segs[2];
+        const name = search.get('name') ?? '';
         if (!isSafeToken(id)) return json(res, 400, { error: 'bad id' });
         if (!name || !/^[A-Za-z0-9._\/-]+$/.test(name) || name.includes('..')) {
           return json(res, 400, { error: 'bad name' });
         }
-        const pkgPath = join(opts.wallpaperDir, id, 'scene.pkg');
+        const pkgPath = join(wallpaperDir, id, 'scene.pkg');
         if (!existsSync(pkgPath)) return json(res, 404, { error: 'no scene pkg' });
         try {
           const reader = new PkgReader(pkgPath);
