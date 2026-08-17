@@ -4,7 +4,7 @@ import { resolveBackground } from './background-layer.js';
 
 export interface WallpaperControllerOptions {
   fetchList: () => Promise<WallpaperInfo[]>;
-  sceneRenderer?: { render(wallpaperId: string, canvas: HTMLCanvasElement): Promise<boolean> };
+  sceneRenderer?: { render(wallpaperId: string, fg: HTMLCanvasElement, bg?: HTMLCanvasElement): Promise<boolean> };
 }
 
 export function createWallpaperController(
@@ -40,11 +40,12 @@ export function createWallpaperController(
       case 'image': layer.showImage(plan.url, plan.kenBurns); break;
       case 'scene': {
         if (opts.sceneRenderer) {
-          const canvas = document.createElement('canvas');
+          const fg = document.createElement('canvas');
+          const bg = document.createElement('canvas');
           try {
-            const ok = await opts.sceneRenderer.render(plan.wallpaperId, canvas);
+            const ok = await opts.sceneRenderer.render(plan.wallpaperId, fg, bg);
             if (gen !== selectGeneration) return; // 期间已切换 → 丢弃旧渲染结果
-            if (ok) { layer.showSceneCanvas(canvas); break; }
+            if (ok) { layer.showSceneCanvas(fg, bg); break; }
           } catch {
             if (gen !== selectGeneration) return;
             // 渲染异常（reject）→ 与失败同等对待，落入回退

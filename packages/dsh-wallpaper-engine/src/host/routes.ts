@@ -125,7 +125,9 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
         if (action !== 'asset') return json(res, 404, { error: 'no such action' });
         const name = search.get('name') ?? '';
         if (!isSafeToken(id)) return json(res, 400, { error: 'bad id' });
-        if (!name || !/^[A-Za-z0-9._\/-]+$/.test(name) || name.includes('..')) {
+        // 资源名是 pkg 容器内条目名，可含 Unicode 文件名（俄文/中文等）与空格；
+        // 白名单放行字母/数字/空格/._-/斜杠，仍拒绝 '..' 穿越（readEntry 内 isSafeName 二次校验）。
+        if (!name || !/^[\p{L}\p{N} ._\/-]+$/u.test(name) || name.includes('..')) {
           return json(res, 400, { error: 'bad name' });
         }
         const pkgPath = join(wallpaperDir, id, 'scene.pkg');

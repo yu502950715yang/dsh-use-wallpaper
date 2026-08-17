@@ -46,8 +46,8 @@ async function boot(): Promise<any> {
   vi.resetModules();
   await import('../../src/client/index.js');
   const factory = capturedFactory!;
-  const api = factory() as { bootstrap: () => void };
-  api.bootstrap();
+  const api = factory() as { apply: () => void };
+  api.apply();
   if (document.readyState === 'loading') document.dispatchEvent(new Event('DOMContentLoaded'));
   return (window as any).__wallpaperEngine;
 }

@@ -63,7 +63,7 @@ src/host/    Node 侧（Cordis 插件）：
   routes.ts      HTTP 路由：/wallpapers/list、/wallpapers/media/<id>/{preview,file}、
                  /wallpapers/scene/<id>/asset?name=<资源名>（穿越防护 + 动态内容 no-store）
 src/client/  浏览器侧（bundled to dist/client.js）：
-  index.ts          入口：bootstrap + window.__wallpaperEngine（show/mountPicker）
+  index.ts          入口：cordis apply → bootstrap + window.__wallpaperEngine（show/mountPicker）
   wallpaper-controller.ts  选择渲染 + scene 回退链（renderScene 失败 → preview）
   scene-assets.ts   scene 资源拉取：fetchSceneDescription / particlesFromSpec / fetchParticleSpec
   scene-json.ts     scene.json 解析（camera/orthogonal/objects/image/particle/size）

@@ -29,7 +29,9 @@ export function bootstrap(): void {
   const mount = () => {
     if (layer) return;
     const root = document.createElement('div');
-    document.body.appendChild(root);
+    // prepend 到 body 最前（在 #root 之前），配合 z-index:0 的壁纸层与 #root z-index:1 的层级方案
+    // （参考 dsh-liang-skin 的做法），避免 z-index:-1 被 body/frame 不透明背景遮挡。
+    document.body.prepend(root);
     layer = createBackgroundLayer(root);
     controller = createWallpaperController(layer, {
       fetchList: async () => (await fetch('/wallpapers/list')).json(),
@@ -110,12 +112,18 @@ export function bootstrap(): void {
   };
 }
 
+// Cordis 客户端插件入口：client loader 期待模块导出「函数」或「含 apply 的对象」
+// （与官方 dsh-client-* 插件一致）。apply 在 fiber 应用阶段被调用，触发 bootstrap。
+function apply(): void {
+  bootstrap();
+}
+
 if (typeof window !== 'undefined') {
   const loader = window.__ModuleLoader__;
   if (loader?.load) {
     loader.load({
       id: '@dsh-use/wallpaper-engine',
-      factory: () => { bootstrap(); return { bootstrap }; },
+      factory: () => ({ apply }),
     });
   } else {
     bootstrap();

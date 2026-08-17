@@ -22,7 +22,7 @@ export interface BackgroundLayer {
   root: HTMLElement;
   showImage(url: string, kenBurns: boolean): void;
   showVideo(url: string): void;
-  showSceneCanvas(canvas: HTMLCanvasElement): void;
+  showSceneCanvas(canvas: HTMLCanvasElement, blurCanvas?: HTMLCanvasElement): void;
   showNone(): void;
   setOverlayOpacity(v: number): void;
   setBlur(enabled: boolean, radius: number): void;
@@ -58,8 +58,14 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
       video.playsInline = true;
       fill.appendChild(video);
     },
-    showSceneCanvas(canvas) {
+    showSceneCanvas(canvas, blurCanvas) {
       clear();
+      // 「完整显示 + 边缘模糊填充」：先铺 cover 渲染的背景 canvas（CSS 模糊放大），
+      // 再叠 contain 渲染的前景 canvas（透明边缘露出模糊背景）。
+      if (blurCanvas) {
+        blurCanvas.classList.add('wp-scene-blur');
+        fill.appendChild(blurCanvas);
+      }
       canvas.classList.add('wp-scene-canvas');
       fill.appendChild(canvas);
     },

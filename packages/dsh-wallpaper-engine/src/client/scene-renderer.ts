@@ -23,11 +23,45 @@ export interface SceneRenderer {
 // EVA 实测：image origin=(1200,777.5) = size/2，几何 2400×1555 → 中心 (0,0) 正好铺满正交视口。
 const CAMERA_DISTANCE = 300; // 相机沿 +z 放置，使 shader 中 300/-mv.z = 1（点尺寸=像素尺寸）
 
-export function createSceneRenderer(canvas: HTMLCanvasElement): SceneRenderer {
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+// 按「contain」语义计算正交相机范围：场景完整可见、不变形，多出的方向留白（透明）。
+function containRange(width: number, height: number, viewAspect: number) {
+  const sceneAspect = width / height;
+  if (sceneAspect > viewAspect) {
+    // 场景更宽 → 宽度铺满相机，垂直留白
+    return { w: width, h: width / viewAspect };
+  }
+  // 场景更窄 → 高度铺满相机，水平留白
+  return { w: height * viewAspect, h: height };
+}
+
+// 按「cover」语义计算正交相机范围：场景铺满视口、不变形，超出方向被裁剪。
+function coverRange(width: number, height: number, viewAspect: number) {
+  const sceneAspect = width / height;
+  if (viewAspect > sceneAspect) {
+    // 视口更宽 → 场景宽度铺满，垂直裁剪
+    return { w: width, h: width / viewAspect };
+  }
+  // 视口更窄 → 场景高度铺满，水平裁剪
+  return { w: height * viewAspect, h: height };
+}
+
+export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTMLCanvasElement): SceneRenderer {
+  // 前景：contain 完整显示，透明清屏（透明边缘露出模糊背景）
+  const renderer = new THREE.WebGLRenderer({ canvas: fgCanvas, antialias: true, alpha: true });
+  renderer.setClearColor(0x000000, 0);
   const scene = new THREE.Scene();
   const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -1000, 1000);
   camera.position.z = CAMERA_DISTANCE;
+
+  // 背景（可选）：cover 铺满，作为模糊填充层（clearColor 由 setScene 设置）
+  let bgRenderer: THREE.WebGLRenderer | null = null;
+  let bgCamera: THREE.OrthographicCamera | null = null;
+  if (bgCanvas) {
+    bgRenderer = new THREE.WebGLRenderer({ canvas: bgCanvas, antialias: true, alpha: false });
+    bgCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, -1000, 1000);
+    bgCamera.position.z = CAMERA_DISTANCE;
+  }
+
   let raf = 0;
   let running = false;
   let ortho: { width: number; height: number } = { width: 1920, height: 1080 };
@@ -43,8 +77,9 @@ export function createSceneRenderer(canvas: HTMLCanvasElement): SceneRenderer {
       ps.points.geometry.attributes.position.needsUpdate = true;
       ps.points.geometry.setDrawRange(0, ps.system.count());
     }
+    if (bgRenderer && bgCamera) bgRenderer.render(scene, bgCamera);
     renderer.render(scene, camera);
-    if (running && canvas.isConnected) raf = requestAnimationFrame(frame);
+    if (running && fgCanvas.isConnected) raf = requestAnimationFrame(frame);
     else stop(); // canvas 被 controller 移除（切换壁纸）时自动终止 raf，防止泄漏
   }
 
@@ -54,13 +89,27 @@ export function createSceneRenderer(canvas: HTMLCanvasElement): SceneRenderer {
       scene.background = null; // 清掉上一场景残留背景（Task 8 minor）
       ortho = desc.orthogonal;
       const { width, height } = desc.orthogonal;
-      camera.left = -width / 2; camera.right = width / 2;
-      camera.top = height / 2; camera.bottom = -height / 2;
+      const vw = Math.max(1, Math.round(window.innerWidth || width));
+      const vh = Math.max(1, Math.round(window.innerHeight || height));
+      const viewAspect = vw / vh;
+
+      // 前景相机：contain（完整显示，边缘透明）
+      const fg = containRange(width, height, viewAspect);
+      camera.left = -fg.w / 2; camera.right = fg.w / 2;
+      camera.top = fg.h / 2; camera.bottom = -fg.h / 2;
       camera.updateProjectionMatrix();
-      if (desc.clearColor) {
-        scene.background = new THREE.Color(desc.clearColor[0], desc.clearColor[1], desc.clearColor[2]);
+      renderer.setSize(vw, vh, false);
+
+      // 背景相机：cover（铺满，作为模糊层）
+      if (bgRenderer && bgCamera) {
+        const bg = coverRange(width, height, viewAspect);
+        bgCamera.left = -bg.w / 2; bgCamera.right = bg.w / 2;
+        bgCamera.top = bg.h / 2; bgCamera.bottom = -bg.h / 2;
+        bgCamera.updateProjectionMatrix();
+        const cc = desc.clearColor;
+        bgRenderer.setClearColor(cc ? new THREE.Color(cc[0], cc[1], cc[2]) : 0x111114, 1);
+        bgRenderer.setSize(vw, vh, false);
       }
-      renderer.setSize(width, height, false);
     },
     setImageObject(tex, obj) {
       // 平面几何尺寸：scene.json 对象 size（WE 像素）优先，缺省回退纹理宽高
@@ -123,6 +172,7 @@ export function createSceneRenderer(canvas: HTMLCanvasElement): SceneRenderer {
       running = false;
       cancelAnimationFrame(raf);
       renderer.dispose();
+      bgRenderer?.dispose();
     },
   };
 }
@@ -150,11 +200,11 @@ async function resolveImageTexture(id: string, obj: SceneImageObject): Promise<T
   }
 }
 
-export async function renderScene(id: string, canvas: HTMLCanvasElement): Promise<boolean> {
+export async function renderScene(id: string, fgCanvas: HTMLCanvasElement, bgCanvas?: HTMLCanvasElement): Promise<boolean> {
   let renderer: SceneRenderer | null = null;
   try {
     const desc = await fetchSceneDescription(id);
-    renderer = createSceneRenderer(canvas);
+    renderer = createSceneRenderer(fgCanvas, bgCanvas);
     renderer.setScene(desc);
     let rendered = 0;
     for (const obj of desc.objects) {
