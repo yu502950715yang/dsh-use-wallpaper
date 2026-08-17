@@ -3,3 +3,11 @@ export type BackgroundPlan =
   | { kind: 'video'; url: string }
   | { kind: 'scene'; wallpaperId: string }
   | { kind: 'none' };
+
+export interface ClientSettings {
+  selectedWallpaperId: string;
+  overlayOpacity: number;
+  blurEnabled: boolean;
+  blurRadius: number;
+  kenBurns: boolean;
+}
