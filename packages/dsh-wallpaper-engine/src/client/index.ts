@@ -35,10 +35,38 @@ export function bootstrap(): void {
       fetchList: async () => (await fetch('/wallpapers/list')).json(),
       sceneRenderer: { render: renderScene }, // scene 壁纸 → Three.js 实时渲染（失败回退 preview）
     });
+    // I2：浮动入口按钮 + picker 面板（不依赖 DSH 设置面板 slot API，避免未知集成风险）
+    const fab = document.createElement('button');
+    fab.type = 'button';
+    fab.className = 'wp-fab';
+    fab.title = '切换壁纸';
+    fab.textContent = 'WP';
+    const panel = document.createElement('div');
+    panel.className = 'wp-picker-panel';
+    panel.hidden = true;
+    document.body.append(fab, panel);
+    fab.addEventListener('click', () => {
+      panel.hidden = !panel.hidden;
+      if (panel.hidden) return;
+      void mountPickerUI(panel, controller!, {
+        currentId: settings.selectedWallpaperId,
+        onSelect: (id) => {
+          settings = { ...settings, selectedWallpaperId: id };
+          void controller!.select(id).then(() => applySettingsToLayer(settings));
+          void writeClientSettings({ selectedWallpaperId: id });
+        },
+      });
+    });
     // 读回已保存设置并应用到 layer（opacity/blur/kenBurns）
     void readClientSettings().then((s) => {
       settings = s;
       applySettingsToLayer(s);
+      // I1：恢复已保存的选中壁纸 —— 先 load 保证列表存在，再 select
+      if (s.selectedWallpaperId && controller) {
+        void controller.load().then(() => {
+          if (controller && settings.selectedWallpaperId) void controller.select(settings.selectedWallpaperId);
+        });
+      }
     });
   };
   // 延迟到 DOM 就绪
@@ -57,12 +85,9 @@ export function bootstrap(): void {
         case 'image': layer.showImage(plan.url, plan.kenBurns); break;
         case 'video': layer.showVideo(plan.url); break;
         case 'scene': {
-          // 阶段 2：Three.js 实时渲染；canvas 由 controller/show 创建，失败回退 none
-          const canvas = document.createElement('canvas');
-          void renderScene(plan.wallpaperId, canvas).then((ok) => {
-            if (ok) layer?.showSceneCanvas(canvas);
-            else layer?.showNone();
-          });
+          // I6：委托 controller.select —— 统一 scene 渲染与 preview 回退语义
+          // （渲染失败回退 preview 图，与 controller 一致），并受竞态防护约束
+          void controller!.select(plan.wallpaperId).catch(() => {});
           break;
         }
         case 'none': layer.showNone(); break;

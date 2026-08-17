@@ -13,6 +13,9 @@ const CSS = `
 .wp-thumb-title{font-size:12px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .wp-thumb.wp-selected{border-color:#4f8cff;box-shadow:0 0 0 1px #4f8cff}
 .wp-badge{position:absolute;top:2px;right:2px;font-size:9px;line-height:1;padding:2px 4px;border-radius:4px;background:rgba(0,0,0,.65);color:#fff}
+.wp-fab{position:fixed;right:16px;bottom:16px;z-index:120;width:44px;height:44px;border-radius:50%;border:1px solid rgba(255,255,255,.14);background:rgba(20,22,28,.9);color:#eee;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.35);backdrop-filter:blur(8px)}
+.wp-fab:hover{background:rgba(40,44,54,.95)}
+.wp-picker-panel{position:fixed;right:16px;bottom:72px;top:auto;left:auto;z-index:110}
 `;
 export function injectWallpaperStyles(): void {
   const id = 'dsh-wallpaper-engine/styles';
