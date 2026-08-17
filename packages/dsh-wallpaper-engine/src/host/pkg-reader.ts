@@ -11,10 +11,12 @@ export function parsePkg(buf: Uint8Array): { entries: PkgEntry[]; dataStart: num
   }
   const entries: PkgEntry[] = [];
   let pos = HEADER_SIZE;
-  while (pos + 8 <= buf.length) {
+  while (pos + 4 <= buf.length) {
     const nameLen = buf[pos] | (buf[pos + 1] << 8) | (buf[pos + 2] << 16) | (buf[pos + 3] << 24);
     if (nameLen <= 0 || nameLen > 1024) break; // 文件表结束
     const nameStart = pos + 4;
+    const entryEnd = nameStart + nameLen + 8;
+    if (entryEnd > buf.length) throw new Error('PKG truncated'); // 条目表被截断（name/off/size 不完整）
     const name = Buffer.from(buf.slice(nameStart, nameStart + nameLen)).toString('utf8');
     const off =
       buf[nameStart + nameLen] |
@@ -26,12 +28,17 @@ export function parsePkg(buf: Uint8Array): { entries: PkgEntry[]; dataStart: num
       (buf[nameStart + nameLen + 5] << 8) |
       (buf[nameStart + nameLen + 6] << 16) |
       (buf[nameStart + nameLen + 7] << 24);
-    if (off < 0 || size < 0 || off + size > buf.length - 0) throw new Error('Entry out of bounds');
+    if (off < 0 || size < 0) throw new Error('Entry out of bounds');
     entries.push({ name, offset: off, size });
-    pos = nameStart + nameLen + 8;
+    pos = entryEnd;
     if (entries.length > 10000) throw new Error('Too many entries');
   }
-  return { entries, dataStart: pos };
+  const dataStart = pos;
+  // off 相对 dataStart，二次校验：dataStart + off + size 不得越过缓冲区末尾
+  for (const e of entries) {
+    if (dataStart + e.offset + e.size > buf.length) throw new Error('Entry out of bounds');
+  }
+  return { entries, dataStart };
 }
 
 function isSafeName(name: string): boolean {

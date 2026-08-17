@@ -19,10 +19,29 @@ describe('parsePkg', () => {
     expect(dataStart).toBe(16 + (4 + 10 + 8) + (4 + 15 + 8)); // header + 两条目
   });
   it('rejects truncated buffer', () => {
-    // 偏差修正（brief 原文为 subarray(0, 20)）：20B 包头部完整（16B）+ 条目表截断，
-    // parsePkg 循环条件 pos+8<=len 不满足即静默返回，不会抛错；
-    // 改为 subarray(0, 10) 截断头部，触发 'PKG too small'
+    // Fix round 1（reviewer Important 1）：条目不完整必须抛错
+    // - <16B：头部截断 → 'PKG too small'
+    // - 20B：头部完整但条目表截断（条目需 4+10+8=22B，name 不全）
+    // - 24B / 26B：name / off / size 不完整 → 'PKG truncated'
     expect(() => parsePkg(pkg.subarray(0, 10))).toThrow();
+    expect(() => parsePkg(pkg.subarray(0, 20))).toThrow();
+    expect(() => parsePkg(pkg.subarray(0, 24))).toThrow();
+    expect(() => parsePkg(pkg.subarray(0, 26))).toThrow();
+  });
+  it('rejects entry whose declared size exceeds buffer', () => {
+    // Fix round 1（reviewer Minor 1）：off 相对 dataStart，dataStart+off+size 越界须抛错
+    const hdr = Buffer.alloc(16);
+    hdr.writeUInt32LE(8, 0);
+    hdr.write('PKGV0001', 4, 'ascii');
+    hdr.writeUInt32LE(1, 12);
+    const name = Buffer.from('x.bin', 'utf8');
+    const row = Buffer.alloc(4 + name.length + 8);
+    row.writeUInt32LE(name.length, 0);
+    name.copy(row, 4);
+    row.writeUInt32LE(0, 4 + name.length); // off = 0
+    row.writeUInt32LE(999, 4 + name.length + 4); // size = 999，远超实际数据 3B
+    const bad = Buffer.concat([hdr, row, Buffer.from([1, 2, 3])]);
+    expect(() => parsePkg(bad)).toThrow();
   });
 });
 
