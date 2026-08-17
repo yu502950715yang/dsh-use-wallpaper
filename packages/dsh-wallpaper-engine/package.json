@@ -5,7 +5,8 @@
   "type": "module",
   "main": "lib/host/index.js",
   "exports": {
-    ".": { "default": "./lib/host/index.js"
+    ".": {
+      "default": "./lib/host/index.js"
     },
     "./client": {
       "default": "./dist/client.js"
@@ -49,6 +50,10 @@
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
-  }
+  },
+  "files": [
+    "lib",
+    "dist",
+    "cordis.patch.yml"
+  ]
 }
-

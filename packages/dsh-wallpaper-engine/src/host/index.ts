@@ -5,6 +5,9 @@ import { registerWallpaperRoutes } from './routes.js';
 // 缺省 Wallpaper Engine workshop 目录（cordis.patch.yml 的 config 同名覆盖）
 export const DEFAULT_WALLPAPER_DIR = 'D:/Steam/steamapps/workshop/content/431960';
 
+// 插件名（官方文档要求插件模块导出 name + apply）
+export const name = 'dsh-wallpaper-engine';
+
 export interface WallpaperEngineConfig {
   wallpaperDir?: string;
 }
