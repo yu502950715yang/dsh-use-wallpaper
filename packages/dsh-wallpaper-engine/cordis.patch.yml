@@ -1,0 +1,5 @@
+- insert:
+    - id: dsh-wallpaper-engine
+      name: '@dsh-use/wallpaper-engine'
+      config:
+        wallpaperDir: 'D:/Steam/steamapps/workshop/content/431960'

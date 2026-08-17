@@ -1,0 +1,9 @@
+{
+  "name": "dsh-use-wallpaper",
+  "private": true,
+  "scripts": {
+    "test": "npm --workspace @dsh-use/wallpaper-engine test",
+    "build:client": "npm --workspace @dsh-use/wallpaper-engine run build:client"
+  },
+  "workspaces": ["packages/*"]
+}
