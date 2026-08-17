@@ -39,6 +39,7 @@ export function createSceneRenderer(canvas: HTMLCanvasElement): SceneRenderer {
     const dt = Math.min(clock.getDelta(), 0.05);
     for (const ps of particleSystems) {
       ps.system.update(dt);
+      ps.system.positions(); // 关键：update 只改内部粒子数组，必须再次同步到 positions 缓冲（否则每帧重传同一份全零数据）
       ps.points.geometry.attributes.position.needsUpdate = true;
       ps.points.geometry.setDrawRange(0, ps.system.count());
     }
@@ -72,8 +73,9 @@ export function createSceneRenderer(canvas: HTMLCanvasElement): SceneRenderer {
       const mesh = new THREE.Mesh(geometry, material);
       const s = obj.scale;
       mesh.scale.set(s[0], s[1], s[2] ?? 1);
-      // WE 左上原点 → three 中心原点 + y 翻转：位置 = (origin.x - w/2, -(origin.y - h/2), z)
-      mesh.position.set(obj.origin[0] - (w * s[0]) / 2, -((obj.origin[1] - (h * s[1]) / 2)), obj.origin[2]);
+      // 对象 origin 是 WE 场景中的中心点：中心映射 = (ox - vw/2, vh/2 - oy)（vw/vh = 正交视口尺寸，见文件头注释）。
+      // 用对象尺寸做偏移只在 size==视口时偶然正确（EVA 全屏图），非全屏对象会错位——必须用视口尺寸。
+      mesh.position.set(obj.origin[0] - ortho.width / 2, ortho.height / 2 - obj.origin[1], obj.origin[2]);
       scene.add(mesh);
     },
     addParticleSystem(spec, opts = {}) {
