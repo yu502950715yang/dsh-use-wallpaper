@@ -46,6 +46,9 @@
       "platform": "web",
       "inject": [],
       "immediately": true
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
     }
   }
 }
