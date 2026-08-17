@@ -1,8 +1,8 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { registerWallpaperRoutes } from '../src/host/routes.js';
+import { registerWallpaperRoutes, getPkgReader } from '../src/host/routes.js';
 
 // Fix round 1：测试与实现适配真实 WebRoute 形态
 // （{ kind: 'exact'|'prefix', path, handler(req, res) }，无 params/query 注入，
@@ -123,5 +123,37 @@ describe('registerWallpaperRoutes', () => {
     await routes.get('prefix /wallpapers/scene')!({ url: '/wallpapers/scene/4/other?name=scene.json' }, res);
     expect(res.statusCode).toBe(404);
     expect(JSON.parse(res.body.toString('utf8'))).toEqual({ error: 'no such action' });
+  });
+  it('I4: PkgReader 按 (path, mtime) 缓存，避免每个 asset 请求整包重读', async () => {
+    const { makePkg } = await import('./fixtures/make-pkg.js');
+    const d = join(dir, 'c1');
+    mkdirSync(d, { recursive: true });
+    const pkgPath = join(d, 'scene.pkg');
+    writeFileSync(pkgPath, makePkg([{ name: 'scene.json', data: Buffer.from('{"v":1}', 'utf8') }]));
+    const r1 = getPkgReader(pkgPath);
+    const r2 = getPkgReader(pkgPath);
+    expect(r2).toBe(r1); // 同一路径 + 未变 mtime → 复用同一实例（不再整包读取）
+    expect(r1.readEntry('scene.json')!.toString('utf8')).toBe('{"v":1}');
+    // mtime 变化 → 重建实例并读到新内容
+    writeFileSync(pkgPath, makePkg([{ name: 'scene.json', data: Buffer.from('{"v":2}', 'utf8') }]));
+    utimesSync(pkgPath, new Date(Date.now() + 60000), new Date(Date.now() + 60000));
+    const r3 = getPkgReader(pkgPath);
+    expect(r3).not.toBe(r1);
+    expect(r3.readEntry('scene.json')!.toString('utf8')).toBe('{"v":2}');
+  });
+  it('I4: scene asset handler 连续请求复用缓存且返回一致内容', async () => {
+    const { makePkg } = await import('./fixtures/make-pkg.js');
+    const d = join(dir, 'c2');
+    mkdirSync(d, { recursive: true });
+    writeFileSync(join(d, 'project.json'), JSON.stringify({ type: 'scene' }));
+    writeFileSync(join(d, 'scene.pkg'), makePkg([{ name: 'scene.json', data: Buffer.from('{"objects":[]}', 'utf8') }]));
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
+    const handler = routes.get('prefix /wallpapers/scene')!;
+    for (let i = 0; i < 3; i++) {
+      const res = makeRes();
+      await handler({ url: '/wallpapers/scene/c2/asset?name=scene.json' }, res);
+      expect(res.statusCode).toBe(200);
+      expect(res.body.toString('utf8')).toBe('{"objects":[]}');
+    }
   });
 });

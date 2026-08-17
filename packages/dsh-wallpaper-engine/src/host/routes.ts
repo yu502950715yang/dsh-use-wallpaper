@@ -1,10 +1,33 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { scanWallpapers } from './scanner.js';
 import { PkgReader } from './pkg-reader.js';
 import type { WallpaperInfo } from '../shared/types.js';
 
 export interface WallpaperRoutesOptions { wallpaperDir: string }
+
+// I4：PkgReader 实例缓存 —— scene asset 每请求整包 readFileSync 成本高，
+// 按 (path, mtime) 缓存，mtime 变化才重建；Map 超出上限时淘汰最旧一项。
+const READER_CACHE = new Map<string, { mtimeMs: number; reader: PkgReader }>();
+const READER_CACHE_MAX = 32;
+
+export function getPkgReader(pkgPath: string): PkgReader {
+  let mtimeMs = 0;
+  try {
+    mtimeMs = statSync(pkgPath).mtimeMs;
+  } catch {
+    // 文件不可读：mtime 归零，保证不会误命中旧缓存（下方构造会抛出并走 500 分支）
+  }
+  const hit = READER_CACHE.get(pkgPath);
+  if (hit && hit.mtimeMs === mtimeMs) return hit.reader;
+  const reader = new PkgReader(pkgPath);
+  READER_CACHE.set(pkgPath, { mtimeMs, reader });
+  if (READER_CACHE.size > READER_CACHE_MAX) {
+    const oldest = READER_CACHE.keys().next().value;
+    if (oldest !== undefined) READER_CACHE.delete(oldest);
+  }
+  return reader;
+}
 
 const MIME: Record<string, string> = {
   '.jpg': 'image/jpeg',
@@ -108,7 +131,7 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
         const pkgPath = join(wallpaperDir, id, 'scene.pkg');
         if (!existsSync(pkgPath)) return json(res, 404, { error: 'no scene pkg' });
         try {
-          const reader = new PkgReader(pkgPath);
+          const reader = getPkgReader(pkgPath);
           const entry = reader.readEntry(name);
           if (!entry) return json(res, 404, { error: 'no such asset' });
           const ext = '.' + name.split('.').pop()?.toLowerCase();
