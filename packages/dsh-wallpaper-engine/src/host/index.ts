@@ -19,3 +19,7 @@ export function apply(ctx: any, config?: WallpaperEngineConfig): void {
   // 挂载壁纸 REST 路由（/wallpapers/list、/wallpapers/media、/wallpapers/scene）
   registerWallpaperRoutes(ctx, { wallpaperDir });
 }
+
+// Cordis loader 以默认导出作为插件入口（函数或含 apply 方法的对象）；
+// 命名导出保留给单元测试使用。
+export default apply;
