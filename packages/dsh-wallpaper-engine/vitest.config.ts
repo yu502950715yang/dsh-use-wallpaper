@@ -3,5 +3,6 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['tests/**/*.test.ts'],
+    environmentMatchGlobs: [['tests/dom/**', 'jsdom']],
   },
 });
