@@ -43,6 +43,7 @@ npm run build:client   # esbuild 打包 client 入口 → dist/client.js
 npx vitest run         # 全量单测（node + jsdom 双环境）
 ```
 
+> **注意**：本地迭代时 `pnpm install` 可能因 file: 依赖缓存不更新插件代码，请用 `pnpm add "@dsh-use/wallpaper-engine@file:<本包绝对路径>"` 强制重新链接（插件包每次 build 后需重新同步）。
 要求：Node ≥ 18（`fetch`）、TypeScript strict、ESM-only。
 
 ## 验证（阶段 2 里程碑）
@@ -102,3 +103,4 @@ wallpaper 资源逆向结论（见 `research/` 原型脚本与各 Task 报告）
 - `velocityrandom` 缺失的粒子系统（如 fog2）粒子静止；寿命极短的闪电类粒子（lightning1）视觉接近不可见；
 - 图片对象仅加载第一张 tex（RGBA8888/DXT1/3/5），其他格式返回 null 跳过该对象；
 - 全部对象渲染失败时 `renderScene` 返回 false，由 controller 回退 preview 图（回退链接线）。
+
