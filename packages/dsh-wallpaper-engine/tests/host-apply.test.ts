@@ -59,7 +59,7 @@ describe('apply (host entry)', () => {
   it('路由扫描使用 config.wallpaperDir', async () => {
     mkdirSync(join(dir, '9'), { recursive: true });
     writeFileSync(join(dir, '9', 'project.json'), JSON.stringify({ title: 'W', type: 'image' }));
-    apply(makeCtx({ wallpaperDir: dir }));
+    apply(makeCtx(), { wallpaperDir: dir });
     const res = makeRes();
     await handlers.get('exact /wallpapers/list')!({ url: '/wallpapers/list' }, res);
     expect(res.statusCode).toBe(200);
@@ -67,7 +67,7 @@ describe('apply (host entry)', () => {
     expect(body.map((w: any) => w.id)).toEqual(['9']);
   });
   it('无 config 时使用缺省目录且 list 路由可用（缺省目录不存在 → 空列表）', async () => {
-    apply(makeCtx({}));
+    apply(makeCtx());
     const res = makeRes();
     await handlers.get('exact /wallpapers/list')!({ url: '/wallpapers/list' }, res);
     expect(res.statusCode).toBe(200);
