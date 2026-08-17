@@ -25,19 +25,28 @@ describe('createParticleSystem', () => {
     expect(ps.count()).toBe(0);
   });
   it('moves particles along velocity', () => {
-    const ps = createParticleSystem(emitter, init, { maxParticles: 10 });
-    ps.update(1.0); // 10 个粒子，velocity ∈ [0,1]x
-    const before = ps.positions();
-    ps.update(0.5);
-    const after = ps.positions();
+    const ps = createParticleSystem(
+      { ...emitter, distanceMin: 0, distanceMax: 0 }, // 初始位置为 0，便于观察位移
+      init,
+      { maxParticles: 10 },
+    );
+    ps.update(0.1); // 发射 1 个（life 0.9）
+    ps.update(0.1); // 再发射 1 个（两个粒子均存活，life 0.8/0.9）
+    const before = [...ps.positions()]; // 拷贝快照，避免引用同一 Float32Array
+    ps.update(0.05); // 无新发射（accumulator=0.5<1），仅按 velocity 移动
+    const after = [...ps.positions()];
     for (let i = 0; i < ps.count(); i++) {
+      // velocity ∈ [0,1]x → x 单调不减；比较的是旧值 vs 新值（真实断言）
       expect(after[i * 3]).toBeGreaterThanOrEqual(before[i * 3]);
     }
   });
   it('is deterministic given a fixed seed', () => {
     const a = createParticleSystem(emitter, init, { maxParticles: 10, seed: 42 });
     const b = createParticleSystem(emitter, init, { maxParticles: 10, seed: 42 });
-    a.update(1); b.update(1);
-    expect([...a.positions()]).toEqual([...b.positions()]);
+    const c = createParticleSystem(emitter, init, { maxParticles: 10, seed: 43 });
+    a.update(0.5); b.update(0.5); c.update(0.5); // 存活 5 个，positions 含 rand 派生值
+    expect([...a.positions()]).toEqual([...b.positions()]); // 同 seed 完全一致
+    // 反证：不同 seed 产物不同，证明断言确实比较了 rand 派生值
+    expect([...a.positions()]).not.toEqual([...c.positions()]);
   });
 });
