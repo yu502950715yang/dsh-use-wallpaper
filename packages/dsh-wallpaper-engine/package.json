@@ -41,6 +41,11 @@
       "bundles": [
         "@dsh-use/wallpaper-engine"
       ]
+    },
+    "client": {
+      "platform": "web",
+      "inject": [],
+      "immediately": true
     }
   }
 }
