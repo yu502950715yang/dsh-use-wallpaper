@@ -36,18 +36,14 @@ export class EffectRunner {
   private disposeMaterials(): void {
     for (const m of this.materials.values()) m.dispose();
     // 场景内全屏 quad 的 geometry 一并释放
-    for (const scene of this.scenes.values()) {
-      for (const child of scene.children) {
-        if (child instanceof THREE.Mesh) child.geometry.dispose();
-      }
-    }
+    for (const key of Array.from(this.scenes.keys())) this.disposeSceneQuads(key);
     this.materials.clear();
-    this.scenes.clear();
   }
 
   private getMaterial(pass: CompiledEffectPass, key: string): THREE.ShaderMaterial | null {
     const cached = this.materials.get(key);
     if (cached) return cached;
+    let material: THREE.ShaderMaterial | null = null;
     try {
       const uniforms: Record<string, THREE.IUniform> = {};
       for (const [name, value] of pass.uniforms) {
@@ -63,7 +59,7 @@ export class EffectRunner {
       if (uniforms['g_ModelViewProjectionMatrix']) {
         uniforms['g_ModelViewProjectionMatrix'].value = new THREE.Matrix4();
       }
-      const material = new THREE.ShaderMaterial({
+      material = new THREE.ShaderMaterial({
         vertexShader: pass.vertSrc,
         fragmentShader: pass.fragSrc,
         uniforms,
@@ -72,36 +68,48 @@ export class EffectRunner {
         depthWrite: false,
         blending: blendModeToThree(pass.blendMode),
       });
-      // 预编译检测：three 惰性编译，构造期不报错；用 onShaderError 捕获编译失败（spec §4.4 失败跳过）
+      // 预编译检测（Critical-2 修复，方案 2）：three 惰性编译且 onShaderError 只在首次
+      // 实际渲染触发，因此渲染一次 1×1 探针强制触发；编译失败时 three 跳过绘制不抛异常，
+      // 由 onShaderError 探针置位。GLSL1 源码经 three 自动升级（WebGL2），手动编译会误报。
       let compileFailed = false;
       const prevHandler = this.renderer.debug.onShaderError;
-      this.renderer.debug.onShaderError = () => {
+      this.renderer.debug.onShaderError = (gl, program, vs, fs) => {
         compileFailed = true;
       };
+      const probeRT = new THREE.WebGLRenderTarget(1, 1);
       try {
-        this.renderer.compile(this.getScene(key, material), SCREEN_CAMERA);
+        this.renderer.setRenderTarget(probeRT);
+        this.renderer.render(this.getScene(key, material), SCREEN_CAMERA);
+        this.renderer.setRenderTarget(null);
       } finally {
         this.renderer.debug.onShaderError = prevHandler;
+        probeRT.dispose();
       }
       if (compileFailed) {
         console.warn('[wallpaper-engine] 效果 pass 编译失败，跳过:', key);
         material.dispose();
-        const scene = this.scenes.get(key);
-        if (scene) {
-          for (const child of scene.children) {
-            if (child instanceof THREE.Mesh) child.geometry.dispose();
-          }
-        }
-        this.scenes.delete(key); // 编译失败：清掉刚缓存的 scene（含 quad），避免残留
+        this.disposeSceneQuads(key); // 清掉刚缓存的 scene（含 quad），避免残留
         return null;
       }
       this.materials.set(key, material);
       return material;
     } catch (e) {
       console.warn('[wallpaper-engine] 效果 pass 编译失败，跳过:', key, e);
-      this.scenes.delete(key); // 异常路径同样清理 scene 缓存
+      material?.dispose(); // 已构造则释放
+      this.disposeSceneQuads(key); // 异常路径同样清理 scene 缓存
       return null;
     }
+  }
+
+  // 释放某 key 对应场景中全屏 quad 的 geometry 并移除场景缓存（编译失败/异常路径共用）
+  private disposeSceneQuads(key: string): void {
+    const scene = this.scenes.get(key);
+    if (scene) {
+      for (const child of scene.children) {
+        if (child instanceof THREE.Mesh) child.geometry.dispose();
+      }
+    }
+    this.scenes.delete(key);
   }
 
   private getScene(key: string, material: THREE.ShaderMaterial): THREE.Scene {
