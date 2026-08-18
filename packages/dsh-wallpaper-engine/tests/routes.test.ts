@@ -54,6 +54,7 @@ describe('registerWallpaperRoutes', () => {
       { kind: 'exact', path: '/wallpapers/list' },
       { kind: 'prefix', path: '/wallpapers/media' },
       { kind: 'prefix', path: '/wallpapers/scene' },
+      { kind: 'prefix', path: '/wallpapers/web' },
     ]);
   });
   it('serves list route returning scanned wallpapers', async () => {
@@ -155,5 +156,61 @@ describe('registerWallpaperRoutes', () => {
       expect(res.statusCode).toBe(200);
       expect(res.body.toString('utf8')).toBe('{"objects":[]}');
     }
+  });
+  it('web 路由：index.html 默认页与相对资源（css/js/img）静态服务', async () => {
+    const d = join(dir, 'w1');
+    mkdirSync(join(d, 'css'), { recursive: true });
+    mkdirSync(join(d, 'img'), { recursive: true });
+    writeFileSync(join(d, 'index.html'), '<html><link rel="stylesheet" href="css/a.css"></html>');
+    writeFileSync(join(d, 'css', 'a.css'), 'body{}');
+    writeFileSync(join(d, 'img', 'logo.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
+    const handler = routes.get('prefix /wallpapers/web')!;
+
+    const r1 = makeRes();
+    await handler({ url: '/wallpapers/web/w1/index.html' }, r1);
+    expect(r1.statusCode).toBe(200);
+    expect(r1.headers['Content-Type']).toContain('text/html');
+    expect(r1.body.toString('utf8')).toContain('css/a.css');
+
+    const r2 = makeRes();
+    await handler({ url: '/wallpapers/web/w1/css/a.css' }, r2);
+    expect(r2.statusCode).toBe(200);
+    expect(r2.headers['Content-Type']).toContain('text/css');
+
+    const r3 = makeRes();
+    await handler({ url: '/wallpapers/web/w1/img/logo.png' }, r3);
+    expect(r3.statusCode).toBe(200);
+    expect(r3.headers['Content-Type']).toBe('image/png');
+
+    // 缺省路径 → index.html
+    const r4 = makeRes();
+    await handler({ url: '/wallpapers/web/w1/' }, r4);
+    expect(r4.statusCode).toBe(200);
+    expect(r4.headers['Content-Type']).toContain('text/html');
+  });
+  it('web 路由：路径穿越与越界访问被拒绝', async () => {
+    const d = join(dir, 'w2');
+    mkdirSync(d, { recursive: true });
+    writeFileSync(join(d, 'index.html'), 'ok');
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
+    const handler = routes.get('prefix /wallpapers/web')!;
+
+    const r1 = makeRes();
+    await handler({ url: '/wallpapers/web/w2/../secret' }, r1);
+    // WHATWG URL 规范化已折叠 '..' 段 → 剩余路径不存在 → 404（无法越界即防护生效）
+    expect(r1.statusCode).toBe(404);
+
+    const r2 = makeRes();
+    await handler({ url: '/wallpapers/web/w2/..%2F..%2Fetc%2Fpasswd' }, r2);
+    expect(r2.statusCode).toBe(400);
+
+    const r3 = makeRes();
+    await handler({ url: '/wallpapers/web/w2/nope.html' }, r3);
+    expect(r3.statusCode).toBe(404);
+
+    const r4 = makeRes();
+    await handler({ url: '/wallpapers/web/other/id' }, r4);
+    expect(r4.statusCode).toBe(404);
   });
 });

@@ -21,7 +21,8 @@ export interface MakeTexOptions {
   imageWidth?: number;        // 默认取 mip0 width
   imageHeight?: number;
   unk?: number;
-  container?: 'TEXB0001' | 'TEXB0002';  // 默认 TEXB0002（V2 带 LZ4 字段）
+  container?: 'TEXB0001' | 'TEXB0002' | 'TEXB0003' | 'TEXB0004';  // 默认 TEXB0002（V2 带 LZ4 字段）
+  imageFormat?: number;       // TEXB0003/0004 的 FreeImage 格式（如 FIF_JPEG=2）
   images: TexMipSpec[][];     // 每元素为一个 image 的 mipmap 数组
 }
 
@@ -59,25 +60,34 @@ export function makeTex(opts: MakeTexOptions): Buffer {
   imageCount.writeUInt32LE(opts.images.length, 0);
   chunks.push(imageCount);
 
+  // TEXB0003/0004：imageCount 后紧跟 FreeImage 格式（V4 还有 isVideoMp4 标志）
+  if (container === 'TEXB0003' || container === 'TEXB0004') {
+    const fmt = Buffer.alloc(4);
+    fmt.writeUInt32LE(opts.imageFormat ?? 2, 0); // 默认 FIF_JPEG=2
+    chunks.push(fmt);
+    if (container === 'TEXB0004') chunks.push(Buffer.alloc(4)); // isVideoMp4=0
+  }
+
   for (const mips of opts.images) {
     const mc = Buffer.alloc(4);
     mc.writeUInt32LE(mips.length, 0);
     chunks.push(mc);
     for (const m of mips) {
       const payload = m.lz4 ? lz4Compress(m.data) : m.data;
-      if (container === 'TEXB0002') {
+      if (container === 'TEXB0001') {
+        const meta = Buffer.alloc(12);
+        meta.writeUInt32LE(m.width, 0);
+        meta.writeUInt32LE(m.height, 4);
+        meta.writeUInt32LE(payload.length, 8);   // bytesLen（V1 无 LZ4 字段）
+        chunks.push(meta, Buffer.from(payload));
+      } else {
+        // V2/V3/V4 的 mipmap 记录结构一致：width height isLZ4 decompressedBytes bytesLen
         const meta = Buffer.alloc(20);
         meta.writeUInt32LE(m.width, 0);
         meta.writeUInt32LE(m.height, 4);
         meta.writeUInt32LE(m.lz4 ? 1 : 0, 8);
         meta.writeUInt32LE(m.data.length, 12);   // decompressedBytesCount
         meta.writeUInt32LE(payload.length, 16);  // bytesLen
-        chunks.push(meta, Buffer.from(payload));
-      } else {
-        const meta = Buffer.alloc(12);
-        meta.writeUInt32LE(m.width, 0);
-        meta.writeUInt32LE(m.height, 4);
-        meta.writeUInt32LE(payload.length, 8);   // bytesLen（V1 无 LZ4 字段）
         chunks.push(meta, Buffer.from(payload));
       }
     }

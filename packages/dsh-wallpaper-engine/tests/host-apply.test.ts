@@ -48,12 +48,13 @@ beforeEach(() => {
 afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
 
 describe('apply (host entry)', () => {
-  it('注册 settings 命名空间并挂载 3 条壁纸路由', () => {
+  it('注册 settings 命名空间并挂载 4 条壁纸路由', () => {
     apply(makeCtx());
     expect(registered).toEqual([
       { kind: 'exact', path: '/wallpapers/list' },
       { kind: 'prefix', path: '/wallpapers/media' },
       { kind: 'prefix', path: '/wallpapers/scene' },
+      { kind: 'prefix', path: '/wallpapers/web' },
     ]);
   });
   it('路由扫描使用 config.wallpaperDir', async () => {

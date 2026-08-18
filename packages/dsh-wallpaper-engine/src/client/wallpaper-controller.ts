@@ -38,6 +38,7 @@ export function createWallpaperController(
     switch (plan.kind) {
       case 'video': layer.showVideo(plan.url); break;
       case 'image': layer.showImage(plan.url, plan.kenBurns); break;
+      case 'web': layer.showWeb(plan.url); break;
       case 'scene': {
         if (opts.sceneRenderer) {
           const fg = document.createElement('canvas');

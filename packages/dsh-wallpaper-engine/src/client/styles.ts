@@ -1,7 +1,7 @@
 const CSS = `
 .wp-background-layer{position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none}
 .wp-bg-fill{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
-.wp-bg-fill img,.wp-bg-fill video{width:100%;height:100%;object-fit:cover}
+.wp-bg-fill img,.wp-bg-fill video,.wp-bg-fill iframe{width:100%;height:100%;object-fit:cover;border:0}
 .wp-scene-blur{position:absolute;inset:0;width:100%;height:100%;filter:blur(30px) brightness(.9);transform:scale(1.1)}
 .wp-scene-canvas{position:relative;width:100%;height:100%;object-fit:fill}
 .wp-bg-fill img{user-select:none}

@@ -22,6 +22,7 @@ export function particlesFromSpec(root: any): { emitter: ParticleEmitterSpec; in
   const life = inits.find((i: any) => i.name === 'lifetimerandom');
   const size = inits.find((i: any) => i.name === 'sizerandom');
   const vel = inits.find((i: any) => i.name === 'velocityrandom');
+  const color = inits.find((i: any) => i.name === 'colorrandom');
   return {
     emitter: {
       // rate/distanceMax 缺省值对齐真实 WE 语义（linux-wallpaperengine 逆向源码：
@@ -38,6 +39,8 @@ export function particlesFromSpec(root: any): { emitter: ParticleEmitterSpec; in
       sizeMax: Number(size?.max ?? 16),
       velocityMin: vec3(vel?.min),
       velocityMax: vec3(vel?.max),
+      colorMin: color ? vec3(color.min) : undefined,
+      colorMax: color ? vec3(color.max) : undefined,
     },
   };
 }

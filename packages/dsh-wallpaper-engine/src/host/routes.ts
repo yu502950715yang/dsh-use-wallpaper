@@ -34,9 +34,26 @@ const MIME: Record<string, string> = {
   '.jpeg': 'image/jpeg',
   '.gif': 'image/gif',
   '.png': 'image/png',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
   '.mp4': 'video/mp4',
   '.webm': 'video/webm',
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.ogg': 'audio/ogg',
   '.json': 'application/json',
+  '.html': 'text/html; charset=utf-8',
+  '.htm': 'text/html; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.mjs': 'application/javascript; charset=utf-8',
+  '.txt': 'text/plain; charset=utf-8',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
+  '.otf': 'font/otf',
+  '.eot': 'application/vnd.ms-fontobject',
   '.tex': 'application/octet-stream',
 };
 
@@ -125,9 +142,9 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
         if (action !== 'asset') return json(res, 404, { error: 'no such action' });
         const name = search.get('name') ?? '';
         if (!isSafeToken(id)) return json(res, 400, { error: 'bad id' });
-        // 资源名是 pkg 容器内条目名，可含 Unicode 文件名（俄文/中文等）与空格；
-        // 白名单放行字母/数字/空格/._-/斜杠，仍拒绝 '..' 穿越（readEntry 内 isSafeName 二次校验）。
-        if (!name || !/^[\p{L}\p{N} ._\/-]+$/u.test(name) || name.includes('..')) {
+        // 资源名是 pkg 容器内条目名，可含 Unicode 文件名（俄文/中文等）、标点（《》等）与空格；
+        // 白名单放行字母/数字/标点/空格/._-/斜杠，仍拒绝 '..' 穿越（readEntry 内 isSafeName 二次校验）。
+        if (!name || !/^[\p{L}\p{N}\p{P} ._\/-]+$/u.test(name) || name.includes('..')) {
           return json(res, 400, { error: 'bad name' });
         }
         const pkgPath = join(wallpaperDir, id, 'scene.pkg');
@@ -146,6 +163,42 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
           res.end(entry);
         } catch {
           // 固定文案，不泄漏内部错误信息
+          json(res, 500, { error: 'internal error' });
+        }
+      },
+    });
+
+    server.register({
+      kind: 'prefix', path: '/wallpapers/web',
+      // 匹配 /wallpapers/web/<id>/<path...>：web 壁纸静态文件服务（index.html 及其 css/js/img 等）
+      handler: (_req: any, res: any) => {
+        const { segs } = parseUrl(_req);
+        if (segs.length < 3) return json(res, 400, { error: 'bad path' });
+        const id = segs[2];
+        if (!isSafeToken(id)) return json(res, 400, { error: 'bad id' });
+        // 剩余路径段逐段校验：禁止 '..' 穿越与绝对路径
+        const rest = segs.slice(3);
+        if (rest.some((s) => !s || s === '..' || s.includes('..') || s.includes('\\') || s.includes(':'))) {
+          return json(res, 400, { error: 'bad path' });
+        }
+        const base = join(wallpaperDir, id);
+        const rel = rest.length === 0 ? 'index.html' : rest.join('/');
+        const p = join(base, rel);
+        // 二次校验：解析结果必须位于壁纸目录内（防软链/unicode 变体等绕过）
+        if (p !== base && !p.startsWith(base + '\\') && !p.startsWith(base + '/')) {
+          return json(res, 400, { error: 'bad path' });
+        }
+        if (!existsSync(p) || !statSync(p).isFile()) return json(res, 404, { error: 'no such file' });
+        try {
+          const body = readFileSync(p);
+          const ext = '.' + rel.split('.').pop()?.toLowerCase();
+          res.writeHead(200, {
+            'Content-Type': MIME[ext] ?? 'application/octet-stream',
+            'Content-Length': body.length,
+            'Cache-Control': 'no-store',
+          });
+          res.end(body);
+        } catch {
           json(res, 500, { error: 'internal error' });
         }
       },

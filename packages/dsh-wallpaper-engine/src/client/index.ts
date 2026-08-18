@@ -86,6 +86,7 @@ export function bootstrap(): void {
       switch (plan.kind) {
         case 'image': layer.showImage(plan.url, plan.kenBurns); break;
         case 'video': layer.showVideo(plan.url); break;
+        case 'web': layer.showWeb(plan.url); break;
         case 'scene': {
           // I6：委托 controller.select —— 统一 scene 渲染与 preview 回退语义
           // （渲染失败回退 preview 图，与 controller 一致），并受竞态防护约束

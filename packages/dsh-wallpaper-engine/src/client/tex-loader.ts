@@ -17,6 +17,13 @@ export const TEX_FORMAT = {
   R8: 9,
 } as const;
 
+// FreeImage 格式枚举（TEXB0003+ 容器的 ImageFormat 字段，与 RePKG 一致）
+export const FIF = {
+  JPEG: 2,
+  PNG: 13,
+  WEBP: 21,
+} as const;
+
 // fourCC → three/WebGL 压缩纹理格式常量。
 // DXT1/3/5 对应 EXT_texture_compression_s3tc；BC4/BC5 采用 three 的 CompressedPixelFormat 常量
 // （RED_RGTC1=0x8dbb、SIGNED_RED_RGTC1=0x8dbc、RED_GREEN_RGTC2=0x8dbd、SIGNED_RED_GREEN_RGTC2=0x8dbe，注意是 0x8d 而非 0x8f）。
@@ -49,6 +56,7 @@ export interface TexInfo {
   textureHeight: number;
   format: number;       // TexFormat 枚举值
   flags: number;
+  imageFormat?: number; // TEXB0003+ 容器的 FreeImage 格式（mipmap 数据为 JPEG/PNG 编码）
   mipmaps: TexMipmap[]; // 全部 image 的所有 mipmap（按文件顺序）
 }
 
@@ -77,13 +85,23 @@ export function parseTex(buf: Uint8Array): TexInfo | null {
   const height = readI32(buf, 38);  // ImageHeight
 
   const container = ascii(buf, 46, 9);
-  if (container !== 'TEXB0002\0' && container !== 'TEXB0001\0') return null;
+  if (container !== 'TEXB0002\0' && container !== 'TEXB0001\0'
+    && container !== 'TEXB0003\0' && container !== 'TEXB0004\0') return null;
   const v2 = container === 'TEXB0002\0';
+  const v3plus = container === 'TEXB0003\0' || container === 'TEXB0004\0';
 
   let pos = 46 + 9;
   const imageCount = readI32(buf, pos);
   if (imageCount <= 0 || imageCount > 64) return null;
   pos += 4;
+
+  // TEXB0003/0004：imageCount 后紧跟 FreeImage 格式（V4 还有 isVideoMp4 标志）
+  let imageFormat: number | undefined;
+  if (v3plus) {
+    imageFormat = readI32(buf, pos);
+    pos += 4;
+    if (container === 'TEXB0004\0') pos += 4;
+  }
 
   const mipmaps: TexMipmap[] = [];
   for (let img = 0; img < imageCount; img++) {
@@ -99,14 +117,15 @@ export function parseTex(buf: Uint8Array): TexInfo | null {
       let isLZ4 = 0;
       let decompressedBytes = 0;
       let bytesLen: number;
-      if (v2) {
+      if (v2 || v3plus) {
+        // V2/V3/V4 的 mipmap 记录结构一致：width height isLZ4 decompressedBytes bytesLen
         isLZ4 = readI32(buf, pos + 8);
         decompressedBytes = readI32(buf, pos + 12);
         bytesLen = readI32(buf, pos + 16);
       } else {
         bytesLen = readI32(buf, pos + 8);
       }
-      pos += fieldLen;
+      pos += v2 || v3plus ? 20 : 12;
       if (mw <= 0 || mh <= 0 || bytesLen < 0) return null;
       if (pos + bytesLen > buf.length) return null;
       const payload = buf.subarray(pos, pos + bytesLen);
@@ -121,7 +140,7 @@ export function parseTex(buf: Uint8Array): TexInfo | null {
     }
   }
   if (mipmaps.length === 0) return null;
-  return { width, height, textureWidth, textureHeight, format, flags, mipmaps };
+  return { width, height, textureWidth, textureHeight, format, flags, imageFormat, mipmaps };
 }
 
 // LZ4 block 解压（Wallpaper Engine .tex 内嵌为 LZ4 block，非 frame 格式）
@@ -140,8 +159,9 @@ function pickMipmap(mips: TexMipmap[]): TexMipmap | null {
   return best ?? mips[mips.length - 1] ?? null;
 }
 
-// 由解析结果构造 three 纹理：RGBA8888 → DataTexture；DXT1/3/5 → CompressedTexture
-export function textureFromTex(info: TexInfo): THREE.Texture | null {
+// 由解析结果构造 three 纹理：RGBA8888 → DataTexture；DXT1/3/5 → CompressedTexture；
+// TEXB0003+ 的编码图像（JPEG/PNG/WEBP）→ 解码为 ImageBitmap 后包装为 Texture（异步）。
+export async function textureFromTex(info: TexInfo): Promise<THREE.Texture | null> {
   const mip = pickMipmap(info.mipmaps);
   if (!mip) return null;
   if (info.format === TEX_FORMAT.RGBA8888) {
@@ -150,15 +170,29 @@ export function textureFromTex(info: TexInfo): THREE.Texture | null {
     return tex;
   }
   const glFormat = FORMAT_TO_GL[info.format];
-  if (!glFormat) return null;
-  const tex = new THREE.CompressedTexture(
-    info.mipmaps.map((m) => ({ data: m.data, width: m.width, height: m.height })),
-    mip.width,
-    mip.height,
-    glFormat as THREE.CompressedPixelFormat,
-  );
-  tex.needsUpdate = true;
-  return tex;
+  if (glFormat) {
+    const tex = new THREE.CompressedTexture(
+      info.mipmaps.map((m) => ({ data: m.data, width: m.width, height: m.height })),
+      mip.width,
+      mip.height,
+      glFormat as THREE.CompressedPixelFormat,
+    );
+    tex.needsUpdate = true;
+    return tex;
+  }
+  // TEXB0003+ 编码图像：mipmap 数据是 JPEG/PNG/WEBP 字节流，需解码
+  const mime = info.imageFormat === FIF.JPEG ? 'image/jpeg'
+    : info.imageFormat === FIF.PNG ? 'image/png'
+    : info.imageFormat === FIF.WEBP ? 'image/webp' : '';
+  if (!mime || typeof createImageBitmap !== 'function') return null;
+  try {
+    const bitmap = await createImageBitmap(new Blob([mip.data], { type: mime }));
+    const tex = new THREE.Texture(bitmap as unknown as HTMLImageElement);
+    tex.needsUpdate = true;
+    return tex;
+  } catch {
+    return null;
+  }
 }
 
 // 单次 fetch：拉取 .tex → parseTex → 构造纹理。解析失败/格式不支持返回 null。

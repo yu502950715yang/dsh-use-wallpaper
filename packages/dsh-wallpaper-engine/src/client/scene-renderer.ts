@@ -75,6 +75,8 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
       ps.system.update(dt);
       ps.system.positions(); // 关键：update 只改内部粒子数组，必须再次同步到 positions 缓冲（否则每帧重传同一份全零数据）
       ps.points.geometry.attributes.position.needsUpdate = true;
+      ps.points.geometry.attributes.aColor.needsUpdate = true;
+      ps.points.geometry.attributes.aSize.needsUpdate = true;
       ps.points.geometry.setDrawRange(0, ps.system.count());
     }
     if (bgRenderer && bgCamera) bgRenderer.render(scene, bgCamera);
@@ -131,19 +133,19 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
       const system = createParticleSystem(spec.emitter, spec.init, { maxParticles: 2048 });
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute('position', new THREE.BufferAttribute(system.positions(), 3));
+      geometry.setAttribute('aColor', new THREE.BufferAttribute(system.colors(), 3));
+      geometry.setAttribute('aSize', new THREE.BufferAttribute(system.sizes(), 1));
       geometry.setDrawRange(0, 0);
-      // v1：无每粒子尺寸属性（aSize 留待后续扩展），uniform 取 initializer 平均尺寸（WE 像素）
-      const uSize = (spec.init.sizeMin + spec.init.sizeMax) / 2;
+      // 每粒子颜色（WE colorrandom，0-255 → 0-1）与尺寸（WE 场景像素）
       const material = new THREE.ShaderMaterial({
-        uniforms: { uSize: { value: uSize } },
-        vertexShader: `uniform float uSize; varying float vLife;
-          void main(){ vLife = 1.0; vec4 mv = modelViewMatrix * vec4(position,1.0);
-          gl_PointSize = uSize * (300.0 / -mv.z); gl_Position = projectionMatrix * mv; }`,
-        fragmentShader: `varying float vLife; void main(){
+        vertexShader: `attribute vec3 aColor; attribute float aSize; varying vec3 vColor; varying float vLife;
+          void main(){ vLife = 1.0; vColor = aColor; vec4 mv = modelViewMatrix * vec4(position,1.0);
+          gl_PointSize = aSize * (300.0 / -mv.z); gl_Position = projectionMatrix * mv; }`,
+        fragmentShader: `varying vec3 vColor; varying float vLife; void main(){
           vec2 c = gl_PointCoord - 0.5; float d = length(c);
           if (d > 0.5) discard;
           float a = smoothstep(0.5, 0.0, d) * vLife;
-          gl_FragColor = vec4(1.0, 1.0, 1.0, a); }`,
+          gl_FragColor = vec4(vColor, a); }`,
         transparent: true, depthWrite: false, depthTest: false,
         blending: THREE.AdditiveBlending,
       });
@@ -192,8 +194,10 @@ async function resolveImageTexture(id: string, obj: SceneImageObject): Promise<T
     const mat = await matResp.json();
     const texName: unknown = mat?.passes?.[0]?.textures?.[0];
     if (typeof texName !== 'string' || !texName) return null;
-    const dir = matRef.slice(0, matRef.lastIndexOf('/') + 1);
-    const texPath = dir + texName + '.tex';
+    // texName 可能已含子路径（如 "workshop/xxx/bar"），此时直接使用；否则拼材质同目录
+    const texPath = texName.includes('/')
+      ? texName + '.tex'
+      : matRef.slice(0, matRef.lastIndexOf('/') + 1) + texName + '.tex';
     return loadTexTexture(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(texPath)}`);
   } catch {
     return null;

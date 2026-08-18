@@ -87,6 +87,39 @@ describe('parseTex', () => {
     expect(info.mipmaps[0].data).toEqual(data);
   });
 
+  it('支持 TEXB0003 容器：imageCount 后读 FreeImage 格式，mipmap 记录同 V2', () => {
+    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4]); // 模拟 JPEG 字节流
+    const buf = makeTex({ container: 'TEXB0003', imageFormat: 2 /* FIF_JPEG */, images: [[{ width: 32, height: 16, data: jpeg }]] });
+    const info = parseTex(buf)!;
+    expect(info.imageFormat).toBe(2);
+    expect(info.mipmaps).toHaveLength(1);
+    expect(info.mipmaps[0].data).toEqual(jpeg);
+  });
+
+  it('支持 TEXB0004 容器：额外读 isVideoMp4 标志', () => {
+    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 9, 9, 9, 9]);
+    const buf = makeTex({ container: 'TEXB0004', imageFormat: 2, images: [[{ width: 16, height: 8, data: jpeg }]] });
+    const info = parseTex(buf)!;
+    expect(info.imageFormat).toBe(2);
+    expect(info.mipmaps).toHaveLength(1);
+    expect(info.mipmaps[0].data).toEqual(jpeg);
+  });
+
+  it('TEXB0003 多 mipmap：逐层解析并保留顺序', () => {
+    const buf = makeTex({
+      container: 'TEXB0003', imageFormat: 13 /* FIF_PNG */,
+      images: [[
+        { width: 64, height: 32, data: new Uint8Array([1, 2, 3, 4]) },
+        { width: 32, height: 16, data: new Uint8Array([5, 6, 7, 8]) },
+      ]],
+    });
+    const info = parseTex(buf)!;
+    expect(info.imageFormat).toBe(13);
+    expect(info.mipmaps).toHaveLength(2);
+    expect(info.mipmaps[0].width).toBe(64);
+    expect(info.mipmaps[1].width).toBe(32);
+  });
+
   it('多 image 支持：imageCount 与各 image 的 mipmap 均解析', () => {
     const buf = makeTex({
       images: [

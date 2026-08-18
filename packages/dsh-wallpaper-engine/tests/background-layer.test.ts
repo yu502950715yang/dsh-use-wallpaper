@@ -16,6 +16,14 @@ describe('resolveBackground', () => {
     expect(resolveBackground({ ...base, id: '3', type: 'scene', hasScene: false }).kind).toBe('image');
     expect(resolveBackground({ ...base, id: '4', type: 'unknown' }).kind).toBe('image');
   });
+  it('unknown with hasScene prefers scene plan (project.json 无 type 但含 scene.pkg)', () => {
+    const plan = resolveBackground({ ...base, id: '8', type: 'unknown', hasScene: true });
+    expect(plan).toEqual({ kind: 'scene', wallpaperId: '8' });
+  });
+  it('web type uses web plan with iframe url', () => {
+    const plan = resolveBackground({ ...base, id: '9', type: 'web' });
+    expect(plan).toEqual({ kind: 'web', url: '/wallpapers/web/9/index.html' });
+  });
   it('gif preview sets kenBurns false, jpg sets true', () => {
     const gif = resolveBackground({ ...base, id: '5', type: 'unknown', hasPreviewGif: true, previewUrl: '/wallpapers/media/5/preview' });
     expect(gif).toEqual({ kind: 'image', url: '/wallpapers/media/5/preview', kenBurns: false });

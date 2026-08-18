@@ -9,6 +9,8 @@ export interface ParticleInitializerSpec {
   sizeMin: number; sizeMax: number;
   velocityMin: [number, number, number];
   velocityMax: [number, number, number];
+  colorMin?: [number, number, number]; // WE colorrandom（0-255）
+  colorMax?: [number, number, number];
 }
 export interface ParticleSystemOptions { maxParticles: number; seed?: number }
 
@@ -17,6 +19,7 @@ interface Particle {
   vx: number; vy: number; vz: number;
   life: number; maxLife: number;
   size: number;
+  r: number; g: number; b: number;
 }
 
 function mulberry32(seed: number) {
@@ -38,22 +41,31 @@ export function createParticleSystem(
   const particles: Particle[] = [];
   let accumulator = 0;
   const positions = new Float32Array(opts.maxParticles * 3);
+  const colors = new Float32Array(opts.maxParticles * 3);
+  const sizes = new Float32Array(opts.maxParticles);
+
+  function randIn(min: number, max: number): number {
+    return min + rand() * (max - min);
+  }
 
   function spawn(): void {
     if (particles.length >= opts.maxParticles) return;
-    const life = init.lifetimeMin + rand() * (init.lifetimeMax - init.lifetimeMin);
-    const size = init.sizeMin + rand() * (init.sizeMax - init.sizeMin);
-    const dist = emitter.distanceMin + rand() * (emitter.distanceMax - emitter.distanceMin);
+    const life = randIn(init.lifetimeMin, init.lifetimeMax);
+    const size = randIn(init.sizeMin, init.sizeMax);
+    const dist = randIn(emitter.distanceMin, emitter.distanceMax);
     const dir = emitter.directions;
     const dirLen = Math.hypot(dir[0], dir[1], dir[2]) || 1;
+    const cm = init.colorMin ?? [255, 255, 255];
+    const cx = init.colorMax ?? [255, 255, 255];
     particles.push({
       x: (dir[0] / dirLen) * dist * (rand() * 2 - 1),
       y: (dir[1] / dirLen) * dist * (rand() * 2 - 1),
       z: (dir[2] / dirLen) * dist * (rand() * 2 - 1),
-      vx: init.velocityMin[0] + rand() * (init.velocityMax[0] - init.velocityMin[0]),
-      vy: init.velocityMin[1] + rand() * (init.velocityMax[1] - init.velocityMin[1]),
-      vz: init.velocityMin[2] + rand() * (init.velocityMax[2] - init.velocityMin[2]),
+      vx: randIn(init.velocityMin[0], init.velocityMax[0]),
+      vy: randIn(init.velocityMin[1], init.velocityMax[1]),
+      vz: randIn(init.velocityMin[2], init.velocityMax[2]),
       life, maxLife: life, size,
+      r: randIn(cm[0], cx[0]), g: randIn(cm[1], cx[1]), b: randIn(cm[2], cx[2]),
     });
   }
 
@@ -73,18 +85,21 @@ export function createParticleSystem(
     }
   }
 
-  function syncPositions(): void {
+  function syncBuffers(): void {
     for (let i = 0; i < particles.length; i++) {
       const p = particles[i];
-      positions[i * 3] = p.x;
-      positions[i * 3 + 1] = p.y;
-      positions[i * 3 + 2] = p.z;
+      const o = i * 3;
+      positions[o] = p.x; positions[o + 1] = p.y; positions[o + 2] = p.z;
+      colors[o] = p.r / 255; colors[o + 1] = p.g / 255; colors[o + 2] = p.b / 255;
+      sizes[i] = p.size;
     }
   }
 
   return {
     count: () => particles.length,
     update,
-    positions: () => { syncPositions(); return positions; },
+    positions: () => { syncBuffers(); return positions; },
+    colors: () => colors,
+    sizes: () => sizes,
   };
 }
