@@ -17,6 +17,11 @@ export class EffectRunner {
   private textures = new Map<string, THREE.Texture | null>();    // 纹理槽缓存（key: `${id}:${path}`）
   private width: number;
   private height: number;
+  // update 串行化：帧循环每帧调用 update，但内部有异步纹理槽加载（await），
+  // 并发 update 会交错使用同一 renderer 的 RT/绑定状态 → 画面黑屏/闪烁。
+  // inFlight 标记 update 未完成时跳过本帧（last 保持上次输出，下一帧重试）；
+  // 换壁纸后 textures 已清空 → 首帧加载完成前输出 input（场景 RT），不黑屏。
+  private updateInFlight = false;
 
   constructor(renderer: THREE.WebGLRenderer, width: number, height: number) {
     this.renderer = renderer;
@@ -31,6 +36,14 @@ export class EffectRunner {
     this.id = wallpaperId;
     this.last = null; // 换壁纸避免首帧显示旧纹理
     this.disposeMaterials();
+    this.textures.clear(); // 换壁纸清空纹理缓存（旧壁纸纹理槽 URL 失效）
+    // 纹理槽预加载：异步发起（不 await），update 首次执行时若未就绪则 await——
+    // 预加载让纹理尽快到位，减少 update 内 await 次数（并发窗口缩小）。
+    for (const pass of chains.flat()) {
+      for (const path of pass.textureSlots) {
+        if (path) void this.resolveTextureSlot(path);
+      }
+    }
   }
 
   private disposeMaterials(): void {
@@ -54,6 +67,15 @@ export class EffectRunner {
       for (let i = 0; i < pass.textureSlots.length; i++) {
         const slot = `g_Texture${i + 1}`;
         if (!uniforms[slot]) uniforms[slot] = { value: null };
+      }
+      // 分辨率 uniform（vec4）预建：three 上传 vec4 需要 Vector4/数组，binder 给
+      // 的默认 0（number）会在探针渲染时 uniform4fv 转换失败误判编译失败；
+      // g_TextureNResolution 语义是读端纹理尺寸，update 阶段会按实际纹理覆盖。
+      for (let i = 0; i <= Math.max(pass.textureSlots.length, 0); i++) {
+        const res = `g_Texture${i}Resolution`;
+        uniforms[res] = {
+          value: new THREE.Vector4(this.width, this.height, 1 / Math.max(1, this.width), 1 / Math.max(1, this.height)),
+        };
       }
       // 全屏 quad 在 NDC 下直接输出：模型/视图/投影矩阵取单位阵（WE 行主序 mul(v,M)=M*v）
       if (uniforms['g_ModelViewProjectionMatrix']) {
@@ -134,35 +156,54 @@ export class EffectRunner {
   }
 
   async update(time: number, input: THREE.WebGLRenderTarget): Promise<THREE.WebGLRenderTarget> {
-    const flat: CompiledEffectPass[] = this.chains.flat();
-    if (flat.length === 0) return input;
-    let read = input;
-    for (let i = 0; i < flat.length; i++) {
-      const pass = flat[i];
-      const material = this.getMaterial(pass, `${i}`);
-      if (!material) continue; // pass 级跳过：read 不变，下一 pass 写端仍为 read 反端（无自读自写）
-      // 纹理槽：textures[i] → g_Texture(i+1)；g_Texture0 由执行器设为读端
-      for (let j = 0; j < pass.textureSlots.length; j++) {
-        const tex = await this.resolveTextureSlot(pass.textureSlots[j]);
-        const slot = `g_Texture${j + 1}`;
-        if (material.uniforms[slot]) material.uniforms[slot].value = tex;
-        const res = `g_Texture${j + 1}Resolution`;
-        if (material.uniforms[res]) {
-          const w = (tex?.image as { width?: number } | undefined)?.width ?? this.width;
-          const h = (tex?.image as { height?: number } | undefined)?.height ?? this.height;
-          material.uniforms[res].value = new THREE.Vector4(w, h, 1 / Math.max(1, w), 1 / Math.max(1, h));
+    // 串行化：上一帧 update 未完成（纹理槽异步加载中）→ 直接返回 input，
+    // 避免并发 update 交错使用 renderer 导致 RT/绑定状态错乱（黑屏/闪烁）。
+    // 帧循环用 lastOutput() 贴屏，last 保持最近完成输出，无帧间闪烁。
+    if (this.updateInFlight) return input;
+    this.updateInFlight = true;
+    try {
+      const flat: CompiledEffectPass[] = this.chains.flat();
+      if (flat.length === 0) return input;
+      // 纹理槽统一预解析（await 集中在此：所有 fetch 完成前不触碰 renderer，
+      // 避免与帧循环的场景渲染/贴屏交错 RT 状态）
+      const slotTex = new Map<string, THREE.Texture | null>();
+      for (let i = 0; i < flat.length; i++) {
+        const pass = flat[i];
+        for (let j = 0; j < pass.textureSlots.length; j++) {
+          const path = pass.textureSlots[j];
+          if (path) slotTex.set(`${i}:${j}`, await this.resolveTextureSlot(path));
         }
       }
-      if (material.uniforms['g_Texture0']) material.uniforms['g_Texture0'].value = read.texture;
-      if (material.uniforms['g_Time']) material.uniforms['g_Time'].value = time;
-      const writeTarget = read === this.rtB ? this.rtA : this.rtB; // 动态写端：读端反端
-      this.renderer.setRenderTarget(writeTarget);
-      this.renderer.render(this.getScene(`${i}`, material), SCREEN_CAMERA);
-      read = writeTarget;
+      let read = input;
+      for (let i = 0; i < flat.length; i++) {
+        const pass = flat[i];
+        const material = this.getMaterial(pass, `${i}`);
+        if (!material) continue; // pass 级跳过：read 不变，下一 pass 写端仍为 read 反端（无自读自写）
+        // 纹理槽绑定（值已预解析，无 await）
+        for (let j = 0; j < pass.textureSlots.length; j++) {
+          const tex = slotTex.get(`${i}:${j}`) ?? null;
+          const slot = `g_Texture${j + 1}`;
+          if (material.uniforms[slot]) material.uniforms[slot].value = tex;
+          const res = `g_Texture${j + 1}Resolution`;
+          if (material.uniforms[res]) {
+            const w = (tex?.image as { width?: number } | undefined)?.width ?? this.width;
+            const h = (tex?.image as { height?: number } | undefined)?.height ?? this.height;
+            material.uniforms[res].value = new THREE.Vector4(w, h, 1 / Math.max(1, w), 1 / Math.max(1, h));
+          }
+        }
+        if (material.uniforms['g_Texture0']) material.uniforms['g_Texture0'].value = read.texture;
+        if (material.uniforms['g_Time']) material.uniforms['g_Time'].value = time;
+        const writeTarget = read === this.rtB ? this.rtA : this.rtB; // 动态写端：读端反端
+        this.renderer.setRenderTarget(writeTarget);
+        this.renderer.render(this.getScene(`${i}`, material), SCREEN_CAMERA);
+        read = writeTarget;
+      }
+      this.renderer.setRenderTarget(null);
+      this.last = read.texture; // 同步记录最终输出（帧循环经 lastOutput 贴屏，避免异步竞态）
+      return read;
+    } finally {
+      this.updateInFlight = false;
     }
-    this.renderer.setRenderTarget(null);
-    this.last = read.texture; // 同步记录最终输出（帧循环经 lastOutput 贴屏，避免异步竞态）
-    return read;
   }
 
   // 帧循环同步读取最近输出：update 未完成时返回 null（调用方回退场景 RT，避免首帧黑屏）

@@ -49,7 +49,14 @@ export function resolveUniformBindings(
     }
     if (raw === undefined && u.annotation?.default !== undefined) raw = u.annotation.default;
     const parsed = parseValue(raw);
-    out.set(u.name, parsed ?? 0);
+    // 无值回退：按 GLSL 类型给维度正确的默认（vec2/vec3/vec4 → 全零数组；
+    // float/int → 0）。three 上传 vecN 需要数组/Vector，number 0 会转换失败。
+    const dim = u.type === 'vec2' ? 2 : u.type === 'vec3' ? 3 : u.type === 'vec4' ? 4 : 0;
+    if (parsed === null || parsed === 0) {
+      out.set(u.name, dim ? new Array(dim).fill(0) : (parsed ?? 0));
+    } else {
+      out.set(u.name, parsed);
+    }
   }
   return out;
 }

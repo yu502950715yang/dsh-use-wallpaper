@@ -19,11 +19,13 @@ export interface SceneImageObject {
   origin: [number, number, number]; scale: [number, number, number];
   size?: [number, number];       // scene.json 的 size 字段（WE 像素尺寸），缺省时由纹理宽高推算
   image: string;                 // 资源名，如 "models/xxx.json"
+  effects?: unknown[];           // 对象效果链定义（Ruling 5：全库 122 条效果中 105 条挂在 image 对象上）
 }
 export interface SceneParticleObject {
   kind: 'particle'; id: number; name: string;
   origin: [number, number, number]; scale: [number, number, number];
   particle: string;            // 资源名，如 "particles/presets/lightshafts.json"
+  effects?: unknown[];         // 对象效果链定义（Ruling 5：与 image/util 一致，按 objects 顺序展平）
 }
 // WE 内置合成层/全屏层/项目层对象（image 引用 models/util/*.json，pkg 内无此文件）。
 // 语义是效果链容器/控制节点而非纹理：一期不渲染（跳过），effects 字段为二期

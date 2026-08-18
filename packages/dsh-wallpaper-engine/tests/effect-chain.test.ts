@@ -51,4 +51,36 @@ describe('resolveEffectChain', () => {
     const chain = await resolveEffectChain({ file: 'effects/waterwaves/effect.json', passes: [{ material: 'x.json' }] }, loadFile);
     expect(chain).toBeNull();
   });
+  it('内置 util 材质 pass（materials/util/*）跳过，保留后续真实 pass（refraction 链实测）', async () => {
+    // 对应 2911105183 的 effects/refraction/effect.json：pass0 compose 引内置材质（pkg 无文件），
+    // pass1 才是真实 refract shader——内置合成 pass 跳过，链仍可解析
+    const fxFiles = new Map<string, Uint8Array>(files);
+    fxFiles.set('effects/refraction/effect.json', encoder.encode(JSON.stringify({
+      passes: [
+        { material: 'materials/util/effectcomposebackground.json', compose: true },
+        { material: 'materials/effects/refract.json' },
+      ],
+    })));
+    fxFiles.set('materials/effects/refract.json', encoder.encode(JSON.stringify({
+      passes: [{ shader: 'effects/refract', blending: 'normal' }],
+    })));
+    fxFiles.set('shaders/effects/refract.vert', encoder.encode('void main() { gl_Position = vec4(a_Position, 1.0); }'));
+    fxFiles.set('shaders/effects/refract.frag', encoder.encode('void main() { gl_FragColor = vec4(1.0); }'));
+    const load = async (name: string) => fxFiles.get(name) ?? null;
+    const chain = await resolveEffectChain({
+      file: 'effects/refraction/effect.json',
+      passes: [{ id: 333 }, { constantshadervalues: { strength: 0.12 } }],
+    }, load);
+    expect(chain).not.toBeNull();
+    expect(chain!.length).toBe(1); // 内置 compose pass 被跳过，只剩 refract
+    expect(chain![0].fragSrc).toContain('gl_FragColor');
+  });
+  it('全部 pass 均为内置 util 材质 → 无可执行 pass，返回 null', async () => {
+    const fxFiles = new Map<string, Uint8Array>(files);
+    fxFiles.set('effects/composeonly/effect.json', encoder.encode(JSON.stringify({
+      passes: [{ material: 'materials/util/effectcomposebackground.json', compose: true }],
+    })));
+    const load = async (name: string) => fxFiles.get(name) ?? null;
+    expect(await resolveEffectChain({ file: 'effects/composeonly/effect.json' }, load)).toBeNull();
+  });
 });

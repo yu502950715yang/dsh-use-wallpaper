@@ -95,9 +95,17 @@ describe('全库 scene.pkg 回归验证', () => {
         failScene++;
         continue;
       }
-      // util 对象效果链收集（每个壁纸独立收集；循环结束后逐条解析）
+      // 所有对象效果链收集（Ruling 5：所有对象 kind 不限的 effects 按 objects 顺序展平，
+      // 与 renderScene 收集一致——全库 122 条中 105 条挂在 image 对象上；循环结束后逐条解析）
       const utilEffects: { file: string; passes?: unknown[] }[] = [];
       for (const obj of desc.objects) {
+        // Ruling 5：不再限定 util kind，任意对象带 effects 都按序收集
+        if (Array.isArray(obj.effects)) {
+          for (const fx of obj.effects) {
+            const e = fx as { file?: string; passes?: unknown[] } | null | undefined;
+            if (typeof e?.file === 'string') utilEffects.push({ file: e.file, passes: e.passes });
+          }
+        }
         if (obj.kind === 'image') {
           const r = resolveImageTexPath(obj.image, files);
           if (r.texPath) {
@@ -129,11 +137,6 @@ describe('全库 scene.pkg 回归验证', () => {
             evidence.push(`[${id}] ${magic} particle "${obj.name}" 无有效 emitter: ${obj.particle} keys=${Object.keys(root).join(',')}`);
             failParticle++;
           }
-        } else if (obj.kind === 'util') {
-          // 效果链容器对象：收集 effects（不再跳过；缺 file 的 effect 直接忽略）
-          if (Array.isArray(obj.effects)) {
-            for (const fx of obj.effects) if (typeof fx?.file === 'string') utilEffects.push({ file: fx.file, passes: fx.passes });
-          }
         }
       }
       // 循环后：逐条解析 util 效果链（effect.json → material → shader，合并 scene.json 覆写）
@@ -151,7 +154,7 @@ describe('全库 scene.pkg 回归验证', () => {
     console.log(`scene.json 解析: 成功 ${okScene} / 失败 ${failScene}`);
     console.log(`image 对象: 成功 ${okImg} / 失败 ${failImg}`);
     console.log(`particle 对象: 成功 ${okParticle} / 失败 ${failParticle}`);
-    console.log(`util 效果链: 成功 ${okEffect} / 失败 ${failEffect}`);
+    console.log(`效果链（所有对象）: 成功 ${okEffect} / 失败 ${failEffect}`);
     console.log(`tex 格式分布: ${JSON.stringify(Object.fromEntries([...texFormats.entries()].map(([k, v]) => [k, v])))}`);
     console.log(`tex imageFormat(FIF) 分布: ${JSON.stringify(Object.fromEntries([...texImageFormats.entries()].map(([k, v]) => [k, v])))}`);
     console.log(`tex 容器分布: ${JSON.stringify(Object.fromEntries(texContainers))}`);

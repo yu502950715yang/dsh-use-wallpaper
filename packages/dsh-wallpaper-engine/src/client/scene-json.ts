@@ -29,17 +29,18 @@ export function parseSceneJson(raw: string): SceneDescription {
       origin: vec3(o.origin),
       scale: vec3(o.scale),
       size: size2(o.size),
+      // Ruling 5：所有对象（kind 不限）的 effects 按 objects 顺序保留（全库 122 条中 105 条在 image 对象上）
+      effects: Array.isArray(o.effects) ? o.effects : undefined,
     };
     if (typeof o.particle === 'string' && o.particle) {
       return { ...base, kind: 'particle' as const, particle: o.particle };
     }
     if (typeof o.image === 'string' && o.image) {
       // WE 内置合成层/全屏层/项目层（models/util/*.json）：pkg 内无此文件，
-      // 对象是效果链容器/控制节点而非纹理 → 归类 util（渲染时跳过，二期实现 effects）
+      // 对象是效果链容器/控制节点而非纹理 → 归类 util（渲染时跳过，effects 效果链渲染见二期）
       if (o.image.startsWith('models/util/')) {
         return {
           ...base, kind: 'util' as const, image: o.image,
-          effects: Array.isArray(o.effects) ? o.effects : undefined,
         };
       }
       return { ...base, kind: 'image' as const, image: o.image };

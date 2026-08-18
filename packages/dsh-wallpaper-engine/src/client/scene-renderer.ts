@@ -4,6 +4,8 @@ import { createParticleSystem } from './particles.js';
 import type { ParticleEmitterSpec, ParticleInitializerSpec } from './particles.js';
 import { fetchSceneDescription, fetchParticleSpec } from './scene-assets.js';
 import { loadTexTexture } from './tex-loader.js';
+import { EffectRunner } from './effect-runner.js';
+import { resolveEffectChain } from './shader/effect-chain.js';
 
 export interface SceneRenderer {
   setScene(desc: SceneDescription): void;
@@ -12,6 +14,7 @@ export interface SceneRenderer {
     spec: { emitter: ParticleEmitterSpec; init: ParticleInitializerSpec },
     opts?: { sizeAttenuation?: boolean; origin?: [number, number, number]; scale?: [number, number, number] },
   ): void;
+  setEffectChains(chains: import('./shader/effect-chain.js').CompiledEffectPass[][] | null, id: string): void;
   start(): void;
   stop(): void;
 }
@@ -53,6 +56,20 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
   const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -1000, 1000);
   camera.position.z = CAMERA_DISTANCE;
 
+  // 场景渲染目标：离屏 RT（效果链输入），最终经全屏 quad 贴到 canvas
+  const sceneRT = new THREE.WebGLRenderTarget(1, 1);
+  // 贴屏相机：独立 NDC 正交相机（场景相机是 contain 范围，不能复用）
+  const screenCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, -1000, 1000);
+  screenCamera.position.z = CAMERA_DISTANCE;
+  const screenScene = new THREE.Scene();
+  const screenQuad = new THREE.Mesh(
+    new THREE.PlaneGeometry(2, 2),
+    new THREE.MeshBasicMaterial({ map: sceneRT.texture }),
+  );
+  screenQuad.frustumCulled = false;
+  screenScene.add(screenQuad);
+  let effectRunner: import('./effect-runner.js').EffectRunner | null = null;
+
   // 背景（可选）：cover 铺满，作为模糊填充层（clearColor 由 setScene 设置）
   let bgRenderer: THREE.WebGLRenderer | null = null;
   let bgCamera: THREE.OrthographicCamera | null = null;
@@ -79,8 +96,19 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
       ps.points.geometry.attributes.aSize.needsUpdate = true;
       ps.points.geometry.setDrawRange(0, ps.system.count());
     }
-    if (bgRenderer && bgCamera) bgRenderer.render(scene, bgCamera);
+    // 场景渲染到离屏 RT
+    renderer.setRenderTarget(sceneRT);
     renderer.render(scene, camera);
+    renderer.setRenderTarget(null);
+    // 贴屏源：有效果链时用 runner 最近完成输出（未完成回退场景 RT，避免首帧黑屏），否则 sceneRT
+    const displayTex = effectRunner ? (effectRunner.lastOutput() ?? sceneRT.texture) : sceneRT.texture;
+    (screenQuad.material as THREE.MeshBasicMaterial).map = displayTex;
+    renderer.render(screenScene, screenCamera);
+    // 效果链异步更新（纹理槽加载完成前输出=input，不阻塞帧循环）
+    if (effectRunner) {
+      void effectRunner.update(clock.elapsedTime, sceneRT);
+    }
+    if (bgRenderer && bgCamera) bgRenderer.render(scene, bgCamera);
     if (running && fgCanvas.isConnected) raf = requestAnimationFrame(frame);
     else stop(); // canvas 被 controller 移除（切换壁纸）时自动终止 raf，防止泄漏
   }
@@ -101,6 +129,7 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
       camera.top = fg.h / 2; camera.bottom = -fg.h / 2;
       camera.updateProjectionMatrix();
       renderer.setSize(vw, vh, false);
+      sceneRT.setSize(vw, vh);
 
       // 背景相机：cover（铺满，作为模糊层）
       if (bgRenderer && bgCamera) {
@@ -164,6 +193,21 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
       scene.add(points);
       particleSystems.push({ system, points });
     },
+    setEffectChains(chains: import('./shader/effect-chain.js').CompiledEffectPass[][] | null, id: string) {
+      // 空效果链（无效果壁纸如 EVA）：不创建 runner，帧循环直接贴 sceneRT
+      // （避免空 runner 的 update 空转与潜在状态干扰）
+      if (!chains || chains.length === 0) {
+        effectRunner?.dispose();
+        effectRunner = null;
+        return;
+      }
+      if (!effectRunner) {
+        const vw = Math.max(1, Math.round(window.innerWidth || ortho.width));
+        const vh = Math.max(1, Math.round(window.innerHeight || ortho.height));
+        effectRunner = new EffectRunner(renderer, vw, vh);
+      }
+      effectRunner.setChains(chains, id);
+    },
     start() {
       if (running) return;
       running = true;
@@ -175,6 +219,8 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
       cancelAnimationFrame(raf);
       renderer.dispose();
       bgRenderer?.dispose();
+      effectRunner?.dispose();
+      effectRunner = null;
     },
   };
 }
@@ -216,6 +262,26 @@ export async function renderScene(id: string, fgCanvas: HTMLCanvasElement, bgCan
     const desc = await fetchSceneDescription(id);
     renderer = createSceneRenderer(fgCanvas, bgCanvas);
     renderer.setScene(desc);
+    // Ruling 5：所有对象的 effects 按 scene.json objects 顺序展平，
+    // 全库实测 122 条效果中 105 条挂在 image 对象上，仅 util 会漏掉主视觉
+    const utilEffects = desc.objects
+      .flatMap((o) => (Array.isArray(o.effects) ? o.effects : []))
+      .filter((fx: unknown): fx is { file: string; passes?: unknown[] } => typeof (fx as any)?.file === 'string');
+
+    // 异步加载效果链（失败链 → null 过滤；加载中画面保持原样）
+    void (async () => {
+      const chains: import('./shader/effect-chain.js').CompiledEffectPass[][] = [];
+      for (const fx of utilEffects) {
+        const chain = await resolveEffectChain(fx, async (name) => {
+          const resp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(name)}`);
+          return resp.ok ? new Uint8Array(await resp.arrayBuffer()) : null;
+        });
+        if (chain) chains.push(chain);
+        // spec §4.4：效果链解析失败 → console.warn（解析器静默返回 null，warn 职责在本层）
+        else console.warn('[wallpaper-engine] 效果链解析失败，跳过:', fx.file);
+      }
+      renderer.setEffectChains(chains, id);
+    })();
     let rendered = 0;
     for (const obj of desc.objects) {
       if (obj.kind === 'image') {

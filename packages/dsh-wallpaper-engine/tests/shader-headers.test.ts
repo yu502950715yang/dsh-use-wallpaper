@@ -12,7 +12,8 @@ describe('WE 内置头文件（方言完备性）', () => {
   });
   it('common.h 提供方言核心函数与常量', () => {
     const h = WE_HEADERS['common.h'] ?? '';
-    for (const token of ['texSample2D', 'mul', 'rotateVec2', 'mod2', 'frac', 'saturate', 'M_PI', 'M_PI_2', 'DEG2RAD']) {
+    // 注：mod2 由 Simple_Audio_Bars 自实现（避免重复定义冲突），不在 common.h
+    for (const token of ['texSample2D', 'mul', 'rotateVec2', 'CAST2', 'frac', 'saturate', 'M_PI', 'M_PI_2', 'DEG2RAD']) {
       expect(h, `common.h 缺少 ${token}`).toContain(token);
     }
   });

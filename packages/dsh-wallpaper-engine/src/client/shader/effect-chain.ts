@@ -29,6 +29,10 @@ export async function resolveEffectChain(
       // material 引用：scene.json pass 显式指定时优先（覆写），否则用 effect.json 的引用
       const matRef = scenePasses[i]?.material ?? effect.passes[i].material;
       if (typeof matRef !== 'string') return null;
+      // WE 内置 util 材质（materials/util/*，如 effectcomposebackground.json）：pkg 内无文件，
+      // 是引擎内置合成 pass（compose），跳过该 pass 继续解析后续真实效果 pass
+      // （Task 6 Ruling 5 落地：2911105183 refraction 链实测暴露，全库仅此 1 处）
+      if (matRef.startsWith('materials/util/')) continue;
       const matRaw = await loadFile(matRef);
       if (!matRaw) return null;
       const mat = JSON.parse(new TextDecoder().decode(matRaw)) as { passes?: { shader?: string; blending?: string }[] };
@@ -57,6 +61,8 @@ export async function resolveEffectChain(
         blendMode: mat.passes?.[0]?.blending ?? 'normal',
       });
     }
+    // 全部 pass 为内置 util 材质（被跳过）→ 无可执行 pass，与 passes 为空语义一致
+    if (out.length === 0) return null;
     return out;
   } catch {
     return null;

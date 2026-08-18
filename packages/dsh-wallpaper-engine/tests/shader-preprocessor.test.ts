@@ -60,12 +60,26 @@ describe('preprocessWeShader', () => {
     const out = preprocessWeShader('void main() {}', {});
     expect(out).not.toContain('#define MASK');
   });
-  it('改写 WE attribute 名为 three 属性名（a_Position→position, a_TexCoord→uv）', () => {
+  it('改写 WE attribute 名为 three 属性名（删除声明、改写引用）', () => {
+    // 浏览器集成验证实测：three ShaderMaterial 前缀自带 attribute vec3 position/uv，
+    // WE 的 attribute 声明行若改写保留会重复定义（redefinition）；须删除声明行，
+    // 仅函数体内 a_Position→position、a_TexCoord→uv 引用改写
     const src = 'attribute vec3 a_Position; attribute vec2 a_TexCoord; varying vec4 v_TexCoord; void main() { v_TexCoord = a_TexCoord.xyxy; gl_Position = mul(vec4(a_Position, 1.0), g_ModelViewProjectionMatrix); }';
     const out = preprocessWeShader(src, {});
-    expect(out).toContain('attribute vec3 position;');
-    expect(out).toContain('attribute vec2 uv;');
+    expect(out).not.toContain('attribute vec3 a_Position');
+    expect(out).not.toContain('attribute vec2 a_TexCoord');
+    expect(out).toContain('mul(vec4(position, 1.0), g_ModelViewProjectionMatrix)');
+    expect(out).toContain('v_TexCoord = uv.xyxy');
     expect(out).not.toContain('a_Position');
     expect(out).not.toContain('a_TexCoord');
+  });
+  it('无显式 include 的 shader 隐式注入 common.h（WE 引擎语义）', () => {
+    const out = preprocessWeShader('void main() { gl_FragColor = mul(vec4(1.0), mat4(1.0)); }', {});
+    expect(out).toContain('vec4 mul(vec4 v, mat4 m)'); // common.h 已注入
+    expect(out).toContain('void main()');
+  });
+  it('#if 裸标识符注入默认 0（GLSL ES 3.00 要求已定义）', () => {
+    const out = preprocessWeShader('#if MASK\nfloat x = 1.0;\n#endif\nvoid main() {}', {});
+    expect(out).toContain('#define MASK 0');
   });
 });
