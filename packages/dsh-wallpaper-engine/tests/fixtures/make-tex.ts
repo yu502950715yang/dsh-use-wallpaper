@@ -61,9 +61,10 @@ export function makeTex(opts: MakeTexOptions): Buffer {
   chunks.push(imageCount);
 
   // TEXB0003/0004：imageCount 后紧跟 FreeImage 格式（V4 还有 isVideoMp4 标志）
+  // imageFormat=-1（0xFFFFFFFF）表示 mipmap 为原始像素数据，用 writeInt32LE 写入带符号值
   if (container === 'TEXB0003' || container === 'TEXB0004') {
     const fmt = Buffer.alloc(4);
-    fmt.writeUInt32LE(opts.imageFormat ?? 2, 0); // 默认 FIF_JPEG=2
+    fmt.writeInt32LE(opts.imageFormat ?? 2, 0); // 默认 FIF_JPEG=2
     chunks.push(fmt);
     if (container === 'TEXB0004') chunks.push(Buffer.alloc(4)); // isVideoMp4=0
   }

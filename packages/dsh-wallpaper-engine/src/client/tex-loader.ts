@@ -159,13 +159,46 @@ function pickMipmap(mips: TexMipmap[]): TexMipmap | null {
   return best ?? mips[mips.length - 1] ?? null;
 }
 
-// 由解析结果构造 three 纹理：RGBA8888 → DataTexture；DXT1/3/5 → CompressedTexture；
-// TEXB0003+ 的编码图像（JPEG/PNG/WEBP）→ 解码为 ImageBitmap 后包装为 Texture（异步）。
+// 由解析结果构造 three 纹理：
+//   TEXB0003+ 编码图像（imageFormat=JPEG/PNG/WEBP）→ 解码为 ImageBitmap 后包装为 Texture（异步）
+//   （注意：编码图像的 format 字段仍为 RGBA8888(0)，但 mipmap 数据是 JPEG/PNG 字节流，
+//    必须先按 imageFormat 判断，否则会被误当原始 RGBA 创建 DataTexture → 渲染乱码）
+//   RGBA8888 → DataTexture（数据 top-down → 翻转行序为 bottom-up，与 ImageBitmap 路径方向语义一致）；
+//   DXT1/3/5 → CompressedTexture
 export async function textureFromTex(info: TexInfo): Promise<THREE.Texture | null> {
   const mip = pickMipmap(info.mipmaps);
   if (!mip) return null;
+  // 编码图像优先：imageFormat 是 FreeImage 枚举（JPEG/PNG/WEBP）时数据为编码字节流
+  const mime = info.imageFormat === FIF.JPEG ? 'image/jpeg'
+    : info.imageFormat === FIF.PNG ? 'image/png'
+    : info.imageFormat === FIF.WEBP ? 'image/webp' : '';
+  if (mime) {
+    if (typeof createImageBitmap !== 'function') return null;
+    try {
+      // 方向语义（关键）：three.js 的 texture.flipY 对 ImageBitmap 无效（翻转只能在 bitmap
+      // 创建时通过 imageOrientation 指定）。WE tex 编码图像是 top-down（第一行=顶部），
+      // 而 DataTexture 路径的原始 RGBA 数据是 bottom-up（第一行=底部）——若不解码时翻转，
+      // 编码图像渲染会上下颠倒。imageOrientation:'flipY' 解码 + flipY=false 与 DataTexture 一致。
+      const bitmap = await createImageBitmap(
+        new Blob([mip.data], { type: mime }),
+        { imageOrientation: 'flipY' },
+      );
+      const tex = new THREE.Texture(bitmap as unknown as HTMLImageElement);
+      tex.flipY = false;
+      tex.needsUpdate = true;
+      return tex;
+    } catch {
+      return null;
+    }
+  }
+  // imageFormat=-1 或 TEXB0001/0002（无该字段）→ mipmap 数据为原始像素/块数据
   if (info.format === TEX_FORMAT.RGBA8888) {
-    const tex = new THREE.DataTexture(mip.data, mip.width, mip.height, THREE.RGBAFormat);
+    // 方向语义（关键）：DataTexture 的 flipY 对 TypedArray 上传无效（WebGL 的
+    // UNPACK_FLIP_Y_WEBGL 只对 DOM 元素源生效），数据第一行会落在纹理 v=0（底部）。
+    // WE tex 原始数据是 top-down（第一行=图像顶部），直接上传会上下颠倒，
+    // 因此手动翻转行序为 bottom-up（第一行=图像底部），与 ImageBitmap 路径一致。
+    const flipped = flipRows(mip.data, mip.width, mip.height, 4);
+    const tex = new THREE.DataTexture(flipped, mip.width, mip.height, THREE.RGBAFormat);
     tex.needsUpdate = true;
     return tex;
   }
@@ -180,19 +213,20 @@ export async function textureFromTex(info: TexInfo): Promise<THREE.Texture | nul
     tex.needsUpdate = true;
     return tex;
   }
-  // TEXB0003+ 编码图像：mipmap 数据是 JPEG/PNG/WEBP 字节流，需解码
-  const mime = info.imageFormat === FIF.JPEG ? 'image/jpeg'
-    : info.imageFormat === FIF.PNG ? 'image/png'
-    : info.imageFormat === FIF.WEBP ? 'image/webp' : '';
-  if (!mime || typeof createImageBitmap !== 'function') return null;
-  try {
-    const bitmap = await createImageBitmap(new Blob([mip.data], { type: mime }));
-    const tex = new THREE.Texture(bitmap as unknown as HTMLImageElement);
-    tex.needsUpdate = true;
-    return tex;
-  } catch {
-    return null;
+  return null;
+}
+
+// 垂直翻转像素行序（top-down → bottom-up）。DataTexture 上传 TypedArray 时 flipY 无效，
+// 必须在数据层面翻转，使第一行对应图像底部（v=0 语义与 ImageBitmap 路径对齐）。
+export function flipRows(data: Uint8Array, width: number, height: number, bytesPerPixel: number): Uint8Array<ArrayBuffer> {
+  const rowBytes = width * bytesPerPixel;
+  const out = new Uint8Array(data.length);
+  for (let y = 0; y < height; y++) {
+    const src = y * rowBytes;
+    const dst = (height - 1 - y) * rowBytes;
+    out.set(data.subarray(src, src + rowBytes), dst);
   }
+  return out;
 }
 
 // 单次 fetch：拉取 .tex → parseTex → 构造纹理。解析失败/格式不支持返回 null。

@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { parseTex, glFormatForDds, TEX_FORMAT } from '../src/client/tex-loader.js';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import * as THREE from 'three';
+import { parseTex, glFormatForDds, TEX_FORMAT, textureFromTex, FIF } from '../src/client/tex-loader.js';
 import { makeTex } from './fixtures/make-tex.js';
 
 describe('glFormatForDds', () => {
@@ -152,5 +153,135 @@ describe('parseTex', () => {
       expect(() => parseTex(truncated)).not.toThrow();
       if (cut > 0) expect(parseTex(truncated)).toBeNull();
     }
+  });
+});
+
+// textureFromTex 的分支选择：TEXB0003+ 编码图像（imageFormat=JPEG/PNG/WEBP）即使
+// format 字段仍为 RGBA8888(0)，mipmap 数据也是 JPEG/PNG 字节流，必须走 createImageBitmap
+// 解码分支，而不是当原始 RGBA 创建 DataTexture（否则渲染乱码/失败）。
+// 真实库样本：1429403119 的 waterripplenormal.tex（imgFmt=-1 原始 RGBA）、
+// 2011060960 的 53.tex（imgFmt=13 PNG）、1968789468 的 wallhaven-2ew3pm.tex（imgFmt=2 JPEG）。
+describe('textureFromTex 分支选择', () => {
+  let decodeCalls: { blob: Blob; opts: object }[];
+
+  beforeEach(() => {
+    decodeCalls = [];
+    vi.stubGlobal('createImageBitmap', async (blob: Blob, opts?: object) => {
+      decodeCalls.push({ blob, opts: opts ?? {} });
+      return { width: 32, height: 16, close: () => {} };
+    });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('TEXB0003 + imageFormat=PNG(13) + format=RGBA8888(0)：走解码分支而非 DataTexture', async () => {
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
+    const buf = makeTex({
+      container: 'TEXB0003', imageFormat: FIF.PNG, format: TEX_FORMAT.RGBA8888,
+      images: [[{ width: 32, height: 16, data: png }]],
+    });
+    const tex = await textureFromTex(parseTex(buf)!);
+    expect(tex).not.toBeNull();
+    expect(tex).toBeInstanceOf(THREE.Texture);
+    expect(tex).not.toBeInstanceOf(THREE.DataTexture); // 编码图像不是原始 RGBA
+    expect(decodeCalls).toHaveLength(1);
+    expect(decodeCalls[0].blob.type).toBe('image/png');
+    expect(tex!.image).toEqual({ width: 32, height: 16, close: expect.any(Function) });
+  });
+
+  it('编码图像必须带 imageOrientation:flipY 解码且纹理 flipY=false（修复颠倒渲染）', async () => {
+    // three.js 已知行为：texture.flipY 对 ImageBitmap 无效（翻转只能在 bitmap 创建时指定）。
+    // WE tex 编码图像是 top-down（第一行=顶部），而 DataTexture 原始数据是 bottom-up；
+    // 必须用 imageOrientation:'flipY' 在解码时翻转，使两条路径最终行序一致，否则渲染上下颠倒。
+    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4]);
+    const buf = makeTex({
+      container: 'TEXB0003', imageFormat: FIF.JPEG, format: TEX_FORMAT.RGBA8888,
+      images: [[{ width: 32, height: 16, data: jpeg }]],
+    });
+    const tex = await textureFromTex(parseTex(buf)!);
+    expect(decodeCalls).toHaveLength(1);
+    expect(decodeCalls[0].opts).toMatchObject({ imageOrientation: 'flipY' });
+    expect(tex!.flipY).toBe(false); // 与 DataTexture 路径（flipY=false）方向语义一致
+  });
+
+  it('TEXB0003 + imageFormat=JPEG(2) + format=RGBA8888(0)：走解码分支', async () => {
+    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4]);
+    const buf = makeTex({
+      container: 'TEXB0003', imageFormat: FIF.JPEG, format: TEX_FORMAT.RGBA8888,
+      images: [[{ width: 32, height: 16, data: jpeg }]],
+    });
+    const tex = await textureFromTex(parseTex(buf)!);
+    expect(tex).not.toBeNull();
+    expect(tex).not.toBeInstanceOf(THREE.DataTexture);
+    expect(decodeCalls).toHaveLength(1);
+    expect(decodeCalls[0].blob.type).toBe('image/jpeg');
+  });
+
+  it('TEXB0003 + imageFormat=WEBP(21)：走解码分支', async () => {
+    const webp = new Uint8Array([0x52, 0x49, 0x46, 0x46, 1, 2, 3, 4]);
+    const buf = makeTex({
+      container: 'TEXB0003', imageFormat: FIF.WEBP, format: TEX_FORMAT.RGBA8888,
+      images: [[{ width: 32, height: 16, data: webp }]],
+    });
+    const tex = await textureFromTex(parseTex(buf)!);
+    expect(tex).not.toBeNull();
+    expect(tex).not.toBeInstanceOf(THREE.DataTexture);
+    expect(decodeCalls).toHaveLength(1);
+    expect(decodeCalls[0].blob.type).toBe('image/webp');
+  });
+
+  it('TEXB0003 + imageFormat=-1（原始 RGBA）→ 仍走 DataTexture（回归）', async () => {
+    const rgba = new Uint8Array(32 * 16 * 4).fill(0x80);
+    const buf = makeTex({
+      container: 'TEXB0003', imageFormat: -1, format: TEX_FORMAT.RGBA8888,
+      images: [[{ width: 32, height: 16, data: rgba }]],
+    });
+    const tex = await textureFromTex(parseTex(buf)!);
+    expect(tex).toBeInstanceOf(THREE.DataTexture);
+    expect(decodeCalls).toHaveLength(0); // 原始数据不触发解码
+  });
+
+  it('TEXB0002（无 imageFormat）→ 仍走 DataTexture（回归）', async () => {
+    const rgba = new Uint8Array(32 * 16 * 4).fill(0x40);
+    const buf = makeTex({ format: TEX_FORMAT.RGBA8888, images: [[{ width: 32, height: 16, data: rgba }]] });
+    const tex = await textureFromTex(parseTex(buf)!);
+    expect(tex).toBeInstanceOf(THREE.DataTexture);
+    expect(decodeCalls).toHaveLength(0);
+  });
+
+  it('原始 RGBA 数据必须翻转行序（修复 DataTexture 路径上下颠倒）', async () => {
+    // three.js 的 DataTexture.flipY 对 TypedArray 上传无效（UNPACK_FLIP_Y 只对 DOM 源生效），
+    // 而 WE tex 原始 RGBA 数据是 top-down（第一行=图像顶部）。若直接上传，
+    // 图像顶部会落在 v=0（纹理底部）→ 渲染上下颠倒。必须在构造 DataTexture 前手动翻转行序，
+    // 使数据变为 bottom-up（第一行=图像底部），与 ImageBitmap 修复后的方向语义一致。
+    const w = 8, h = 8;
+    const data = new Uint8Array(w * h * 4);
+    // 第一行全红（代表图像顶部），最后一行全蓝（代表图像底部）
+    for (let x = 0; x < w; x++) { data[x * 4] = 255; data[x * 4 + 3] = 255; }          // row 0: R
+    for (let x = 0; x < w; x++) { data[(h - 1) * w * 4 + x * 4 + 2] = 255; data[(h - 1) * w * 4 + x * 4 + 3] = 255; } // row h-1: B
+    const buf = makeTex({
+      format: TEX_FORMAT.RGBA8888,
+      images: [[{ width: w, height: h, data }]],
+    });
+    const tex = await textureFromTex(parseTex(buf)!) as THREE.DataTexture;
+    expect(tex).toBeInstanceOf(THREE.DataTexture);
+    const out = tex.image.data as Uint8Array;
+    // 翻转后：新第一行应来自原最后一行（蓝）
+    expect(out[2]).toBe(255);          // 新 row0 的 B 通道
+    expect(out[0]).toBe(0);            // 新 row0 无 R
+    // 新最后一行应来自原第一行（红）
+    expect(out[(h - 1) * w * 4]).toBe(255);
+    expect(out[(h - 1) * w * 4 + 2]).toBe(0);
+  });
+
+  it('解码失败（createImageBitmap reject）→ 返回 null 而非抛错', async () => {
+    vi.stubGlobal('createImageBitmap', async () => { throw new Error('decode failed'); });
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4]);
+    const buf = makeTex({
+      container: 'TEXB0003', imageFormat: FIF.PNG, format: TEX_FORMAT.RGBA8888,
+      images: [[{ width: 32, height: 16, data: png }]],
+    });
+    await expect(textureFromTex(parseTex(buf)!)).resolves.toBeNull();
   });
 });
