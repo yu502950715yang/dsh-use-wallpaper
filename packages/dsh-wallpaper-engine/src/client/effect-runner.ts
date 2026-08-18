@@ -1,25 +1,9 @@
 // src/client/effect-runner.ts
-// 效果链执行器：逐链逐 pass 在 ping-pong RT 上执行 WE 后处理 shader。
-// WebGL 部分无法在 node 测试，纯逻辑（RT 交替计划）导出为 rtAlternation 供单测。
+// 效果链执行器：逐 pass 在 ping-pong RT 上执行 WE 后处理 shader。
+// WebGL 部分无法在 node 测试，纯逻辑（blending 映射）导出为 blendModeToThree 供单测。
 import * as THREE from 'three';
 import type { CompiledEffectPass } from './shader/effect-chain.js';
 import { loadTexTexture } from './tex-loader.js';
-
-export interface RtStep { passIndex: number; writeTo: 'A' | 'B' }
-
-// 按链长度展开为 RT 交替计划：当前读端 A（输入），pass 写 B，下一 pass 读 B 写 A……
-// 链之间的承接：上一链最终输出作为下一链输入（读端切换由执行器记录）。
-export function rtAlternation(chainPassCounts: number[]): RtStep[] {
-  const steps: RtStep[] = [];
-  let acc = 0;
-  for (const n of chainPassCounts) {
-    for (let i = 0; i < n; i++) {
-      steps.push({ passIndex: acc + i, writeTo: (acc + i) % 2 === 0 ? 'B' : 'A' });
-    }
-    acc += n;
-  }
-  return steps;
-}
 
 export class EffectRunner {
   private renderer: THREE.WebGLRenderer;
@@ -28,7 +12,7 @@ export class EffectRunner {
   private chains: CompiledEffectPass[][] = [];
   private id = '';
   private last: THREE.Texture | null = null;   // 最近一次 update 的最终输出（帧循环贴屏用）
-  private materials = new Map<string, THREE.ShaderMaterial>();   // key: `${chainIdx}:${passIdx}`
+  private materials = new Map<string, THREE.ShaderMaterial>();   // key: `${passIndex}`
   private scenes = new Map<string, THREE.Scene>();               // 每 pass 独立场景（含全屏 quad）
   private textures = new Map<string, THREE.Texture | null>();    // 纹理槽缓存（key: `${id}:${path}`）
   private width: number;
@@ -45,11 +29,18 @@ export class EffectRunner {
   setChains(chains: CompiledEffectPass[][], wallpaperId: string): void {
     this.chains = chains;
     this.id = wallpaperId;
+    this.last = null; // 换壁纸避免首帧显示旧纹理
     this.disposeMaterials();
   }
 
   private disposeMaterials(): void {
     for (const m of this.materials.values()) m.dispose();
+    // 场景内全屏 quad 的 geometry 一并释放
+    for (const scene of this.scenes.values()) {
+      for (const child of scene.children) {
+        if (child instanceof THREE.Mesh) child.geometry.dispose();
+      }
+    }
     this.materials.clear();
     this.scenes.clear();
   }
@@ -61,6 +52,12 @@ export class EffectRunner {
       const uniforms: Record<string, THREE.IUniform> = {};
       for (const [name, value] of pass.uniforms) {
         uniforms[name] = { value: Array.isArray(value) ? value.slice() : value };
+      }
+      // 预建纹理槽 uniform（binder 跳过 sampler，纹理绑定是执行器职责，spec §4.3）
+      if (!uniforms['g_Texture0']) uniforms['g_Texture0'] = { value: null };
+      for (let i = 0; i < pass.textureSlots.length; i++) {
+        const slot = `g_Texture${i + 1}`;
+        if (!uniforms[slot]) uniforms[slot] = { value: null };
       }
       // 全屏 quad 在 NDC 下直接输出：模型/视图/投影矩阵取单位阵（WE 行主序 mul(v,M)=M*v）
       if (uniforms['g_ModelViewProjectionMatrix']) {
@@ -75,10 +72,34 @@ export class EffectRunner {
         depthWrite: false,
         blending: blendModeToThree(pass.blendMode),
       });
+      // 预编译检测：three 惰性编译，构造期不报错；用 onShaderError 捕获编译失败（spec §4.4 失败跳过）
+      let compileFailed = false;
+      const prevHandler = this.renderer.debug.onShaderError;
+      this.renderer.debug.onShaderError = () => {
+        compileFailed = true;
+      };
+      try {
+        this.renderer.compile(this.getScene(key, material), SCREEN_CAMERA);
+      } finally {
+        this.renderer.debug.onShaderError = prevHandler;
+      }
+      if (compileFailed) {
+        console.warn('[wallpaper-engine] 效果 pass 编译失败，跳过:', key);
+        material.dispose();
+        const scene = this.scenes.get(key);
+        if (scene) {
+          for (const child of scene.children) {
+            if (child instanceof THREE.Mesh) child.geometry.dispose();
+          }
+        }
+        this.scenes.delete(key); // 编译失败：清掉刚缓存的 scene（含 quad），避免残留
+        return null;
+      }
       this.materials.set(key, material);
       return material;
     } catch (e) {
       console.warn('[wallpaper-engine] 效果 pass 编译失败，跳过:', key, e);
+      this.scenes.delete(key); // 异常路径同样清理 scene 缓存
       return null;
     }
   }
@@ -107,20 +128,17 @@ export class EffectRunner {
   async update(time: number, input: THREE.WebGLRenderTarget): Promise<THREE.WebGLRenderTarget> {
     const flat: CompiledEffectPass[] = this.chains.flat();
     if (flat.length === 0) return input;
-    const steps = rtAlternation(this.chains.map((c) => c.length));
-    const targets = { A: this.rtA, B: this.rtB } as const;
     let read = input;
-    for (const step of steps) {
-      const pass = flat[step.passIndex];
-      const key = `${step.passIndex}`;
-      const material = this.getMaterial(pass, key);
-      if (!material) continue; // 编译失败 → 跳过该 pass（画面保持上一状态）
+    for (let i = 0; i < flat.length; i++) {
+      const pass = flat[i];
+      const material = this.getMaterial(pass, `${i}`);
+      if (!material) continue; // pass 级跳过：read 不变，下一 pass 写端仍为 read 反端（无自读自写）
       // 纹理槽：textures[i] → g_Texture(i+1)；g_Texture0 由执行器设为读端
-      for (let i = 0; i < pass.textureSlots.length; i++) {
-        const tex = await this.resolveTextureSlot(pass.textureSlots[i]);
-        const slot = `g_Texture${i + 1}`;
+      for (let j = 0; j < pass.textureSlots.length; j++) {
+        const tex = await this.resolveTextureSlot(pass.textureSlots[j]);
+        const slot = `g_Texture${j + 1}`;
         if (material.uniforms[slot]) material.uniforms[slot].value = tex;
-        const res = `g_Texture${i + 1}Resolution`;
+        const res = `g_Texture${j + 1}Resolution`;
         if (material.uniforms[res]) {
           const w = (tex?.image as { width?: number } | undefined)?.width ?? this.width;
           const h = (tex?.image as { height?: number } | undefined)?.height ?? this.height;
@@ -129,9 +147,9 @@ export class EffectRunner {
       }
       if (material.uniforms['g_Texture0']) material.uniforms['g_Texture0'].value = read.texture;
       if (material.uniforms['g_Time']) material.uniforms['g_Time'].value = time;
-      const writeTarget = targets[step.writeTo];
+      const writeTarget = read === this.rtB ? this.rtA : this.rtB; // 动态写端：读端反端
       this.renderer.setRenderTarget(writeTarget);
-      this.renderer.render(this.getScene(key, material), SCREEN_CAMERA);
+      this.renderer.render(this.getScene(`${i}`, material), SCREEN_CAMERA);
       read = writeTarget;
     }
     this.renderer.setRenderTarget(null);
