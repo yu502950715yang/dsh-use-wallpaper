@@ -29,7 +29,7 @@
 
 | 方言特性 | 证据 |
 |---|---|
-| `#include` 内置头文件 | `common.h`×27、`common_blending.h`×21、`common_blur.h`×4、`common_composite.h`×3、`common_fragment.h`×3（**均不在 pkg 内**，需自实现） |
+| `#include` 内置头文件 | `common.h`×48、`common_blending.h`×21、`common_perspective.h`×6、`common_blur.h`×4、`common_composite.h`×3、`common_fragment.h`×3、`common_vertex.h`×1（**均不在 pkg 内**，需自实现） |
 | combo 宏 | `#if MASK` / `#if PERSPECTIVE == 1` 等 24 个宏；取值如 `BLENDMODE∈{0,9,12,30,31}`、`SHADING∈{0,1,7}`、`REPEAT/NOISE/GREYSCALE∈{0,1}` |
 | 内置函数 | `texSample2D`、`mul(v,M)`（行主序 向量×矩阵）、`rotateVec2`、`squareToQuad`/`inverse`（透视）、`mod2`、`DEG2RAD`/`M_PI*` 常量 |
 | 内置 uniform | `g_Time`、`g_Texture0..3` + `g_TextureNResolution`、`g_ModelViewProjectionMatrix`、`a_Position`/`a_TexCoord` |
@@ -69,7 +69,7 @@ util 对象效果链（遇到 util 对象时，按 scene.json objects 数组顺�
 
 | 模块 | 职责 |
 |---|---|
-| `we-headers.ts` | 5 个内置头文件等价物（字符串常量，函数/常量定义） |
+| `we-headers.ts` | 7 个内置头文件等价物（字符串常量，函数/常量定义） |
 | `shader-preprocessor.ts` | include 展开（内置头 + 相对引用）、combo `#define` 注入、注释剥离（保留 uniform 标注用于绑定） |
 | `uniform-binder.ts` | 解析 uniform 声明与标注 → 绑定策略：内置/参数（material 映射 + default）/音频（静音数组）/纹理槽 |
 | `combo-schema.ts` | 全库 24 个 combo 宏白名单（校验 scene.json 传入值合法） |
