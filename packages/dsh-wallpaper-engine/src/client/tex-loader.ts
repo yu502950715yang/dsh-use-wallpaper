@@ -46,7 +46,7 @@ const FORMAT_TO_GL: Record<number, number> = {
 export interface TexMipmap {
   width: number;
   height: number;
-  data: Uint8Array<ArrayBuffer>;   // 已解压的原始数据（独立 ArrayBuffer，非输入视图）
+  data: Uint8Array;   // 已解压的原始数据（独立 ArrayBuffer，非输入视图）
 }
 
 export interface TexInfo {
@@ -144,7 +144,7 @@ export function parseTex(buf: Uint8Array): TexInfo | null {
 }
 
 // LZ4 block 解压（Wallpaper Engine .tex 内嵌为 LZ4 block，非 frame 格式）
-function lz4Decompress(src: Uint8Array, decompressedSize: number): Uint8Array<ArrayBuffer> {
+function lz4Decompress(src: Uint8Array, decompressedSize: number): Uint8Array {
   const out = new Uint8Array(decompressedSize);
   const n = LZ4.decompressBlock(src, out, 0, src.length, 0);
   return n === decompressedSize ? out : out.subarray(0, Math.min(n, decompressedSize));
@@ -218,7 +218,7 @@ export async function textureFromTex(info: TexInfo): Promise<THREE.Texture | nul
 
 // 垂直翻转像素行序（top-down → bottom-up）。DataTexture 上传 TypedArray 时 flipY 无效，
 // 必须在数据层面翻转，使第一行对应图像底部（v=0 语义与 ImageBitmap 路径对齐）。
-export function flipRows(data: Uint8Array, width: number, height: number, bytesPerPixel: number): Uint8Array<ArrayBuffer> {
+export function flipRows(data: Uint8Array, width: number, height: number, bytesPerPixel: number): Uint8Array {
   const rowBytes = width * bytesPerPixel;
   const out = new Uint8Array(data.length);
   for (let y = 0; y < height; y++) {

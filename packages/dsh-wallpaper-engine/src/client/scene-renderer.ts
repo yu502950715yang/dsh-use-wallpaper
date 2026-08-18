@@ -179,9 +179,19 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
   };
 }
 
+// 材质引用 → tex 资源路径推导。
+// WE 语义（全库实测验证）：material json 的 passes[0].textures[0] 是纹理槽位名，
+//   不含 '/' → 材质同目录下同名 .tex（EVA 等常规布局）；
+//   含 '/'   → 相对 materials/ 的路径（workshop 子目录纹理），拼 "materials/" + texName + ".tex"。
+// 修复：旧实现直接 texName + ".tex"，丢失 materials/ 前缀，导致子目录纹理加载失败。
+export function resolveTexPath(matRef: string, texName: string): string {
+  return texName.includes('/')
+    ? 'materials/' + texName + '.tex'
+    : matRef.slice(0, matRef.lastIndexOf('/') + 1) + texName + '.tex';
+}
+
 // 图片对象纹理：obj.image 指向 models/xxx.json（材料引用），实际 .tex 需经
 // 模型 json → material 字段 → materials/xxx.json → passes[0].textures[0] 推导。
-// v1 推导：tex 资源 = 材质 json 同目录同名 .tex（EVA 实测成立）。
 async function resolveImageTexture(id: string, obj: SceneImageObject): Promise<THREE.Texture | null> {
   try {
     const modelResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(obj.image)}`);
@@ -194,11 +204,7 @@ async function resolveImageTexture(id: string, obj: SceneImageObject): Promise<T
     const mat = await matResp.json();
     const texName: unknown = mat?.passes?.[0]?.textures?.[0];
     if (typeof texName !== 'string' || !texName) return null;
-    // texName 可能已含子路径（如 "workshop/xxx/bar"），此时直接使用；否则拼材质同目录
-    const texPath = texName.includes('/')
-      ? texName + '.tex'
-      : matRef.slice(0, matRef.lastIndexOf('/') + 1) + texName + '.tex';
-    return loadTexTexture(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(texPath)}`);
+    return loadTexTexture(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(resolveTexPath(matRef, texName))}`);
   } catch {
     return null;
   }
@@ -224,6 +230,8 @@ export async function renderScene(id: string, fgCanvas: HTMLCanvasElement, bgCan
           rendered++;
         }
       }
+      // kind === 'util'：WE 内置合成层/效果对象（models/util/*），一期跳过
+      // （不 fetch、不计数；effects 效果链渲染属二期，见 shared/types.ts SceneUtilObject）
     }
     // 全部对象渲染失败 → 返回 false，让 controller 走 preview 回退（回退链接线）
     if (rendered === 0) {

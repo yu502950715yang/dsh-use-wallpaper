@@ -34,6 +34,14 @@ export function parseSceneJson(raw: string): SceneDescription {
       return { ...base, kind: 'particle' as const, particle: o.particle };
     }
     if (typeof o.image === 'string' && o.image) {
+      // WE 内置合成层/全屏层/项目层（models/util/*.json）：pkg 内无此文件，
+      // 对象是效果链容器/控制节点而非纹理 → 归类 util（渲染时跳过，二期实现 effects）
+      if (o.image.startsWith('models/util/')) {
+        return {
+          ...base, kind: 'util' as const, image: o.image,
+          effects: Array.isArray(o.effects) ? o.effects : undefined,
+        };
+      }
       return { ...base, kind: 'image' as const, image: o.image };
     }
     return { ...base, kind: 'particle' as const, particle: '' }; // 无引用对象按空粒子处理（不渲染）

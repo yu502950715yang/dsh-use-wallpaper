@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { createParticleSystem } from '../src/client/particles.js';
+import { resolveTexPath } from '../src/client/scene-renderer.js';
 
 // scene-renderer 的 WebGLRenderer 无法在 node（无 WebGL）环境构造，
 // 这里用真实 THREE.BufferGeometry/BufferAttribute 复刻 addParticleSystem 的缓冲接线
@@ -47,5 +48,16 @@ describe('scene 粒子缓冲刷新（渲染器接线语义）', () => {
     system.positions();
     const moved = Array.from(geometry.attributes.position.array as Float32Array);
     expect(moved.some((v, i) => v !== fresh[i])).toBe(true);
+  });
+});
+
+describe('resolveTexPath（材质 → tex 路径推导）', () => {
+  it('texName 不含 / 时使用材质同目录（EVA 等常规布局）', () => {
+    expect(resolveTexPath('materials/neon-genesis-evangelion-wallpaper-3.json', 'neon-genesis-evangelion-wallpaper-3'))
+      .toBe('materials/neon-genesis-evangelion-wallpaper-3.tex');
+  });
+  it('texName 含 / 时是相对 materials/ 的路径（workshop 子目录纹理，修复丢前缀 bug）', () => {
+    expect(resolveTexPath('materials/workshop/2077932499/Rainboww.json', 'workshop/2077932499/Rainboww'))
+      .toBe('materials/workshop/2077932499/Rainboww.tex');
   });
 });

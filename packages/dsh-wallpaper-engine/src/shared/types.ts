@@ -25,7 +25,17 @@ export interface SceneParticleObject {
   origin: [number, number, number]; scale: [number, number, number];
   particle: string;            // 资源名，如 "particles/presets/lightshafts.json"
 }
-export type SceneObject = SceneImageObject | SceneParticleObject;
+// WE 内置合成层/全屏层/项目层对象（image 引用 models/util/*.json，pkg 内无此文件）。
+// 语义是效果链容器/控制节点而非纹理：一期不渲染（跳过），effects 字段为二期
+// 效果链（shader 后处理）渲染预留。
+export interface SceneUtilObject {
+  kind: 'util'; id: number; name: string;
+  origin: [number, number, number]; scale: [number, number, number];
+  size?: [number, number];       // WE 像素尺寸（与 image 对象一致）
+  image: string;                 // 如 "models/util/composelayer.json"
+  effects?: unknown[];           // 对象效果链定义（effects 数组，二期使用）
+}
+export type SceneObject = SceneImageObject | SceneParticleObject | SceneUtilObject;
 
 export interface SceneDescription {
   camera: { center: [number, number, number]; eye: [number, number, number]; up: [number, number, number] };
