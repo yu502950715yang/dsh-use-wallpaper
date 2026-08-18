@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { parseSceneJson } from '../src/client/scene-json.js';
 import { particlesFromSpec } from '../src/client/scene-assets.js';
 import { parseTex, TEX_FORMAT, FIF } from '../src/client/tex-loader.js';
+import { resolveEffectChain } from '../src/client/shader/effect-chain.js';
 
 const WALLPAPER_DIR = 'D:/Steam/steamapps/workshop/content/431960';
 const hasLibrary = existsSync(WALLPAPER_DIR);
@@ -63,7 +64,7 @@ function resolveImageTexPath(objImage: string, files: Map<string, Uint8Array>): 
 }
 
 describe('全库 scene.pkg 回归验证', () => {
-  it('scene 读取链路零失败（scene.json / image 纹理 / particle 规格）', () => {
+  it('scene 读取链路零失败（scene.json / image 纹理 / particle 规格 / util 效果链）', async () => {
     if (!hasLibrary) {
       console.log('本机无壁纸库，跳过全库验证');
       return;
@@ -72,6 +73,7 @@ describe('全库 scene.pkg 回归验证', () => {
       .filter(d => d.isDirectory()).map(d => d.name);
     const evidence: string[] = [];
     let okScene = 0, failScene = 0, okImg = 0, failImg = 0, okParticle = 0, failParticle = 0;
+    let okEffect = 0, failEffect = 0;
     const texFormats = new Map<number, number>();
     const texContainers = new Map<string, number>();
     const texImageFormats = new Map<number, number>();
@@ -93,6 +95,8 @@ describe('全库 scene.pkg 回归验证', () => {
         failScene++;
         continue;
       }
+      // util 对象效果链收集（每个壁纸独立收集；循环结束后逐条解析）
+      const utilEffects: { file: string; passes?: unknown[] }[] = [];
       for (const obj of desc.objects) {
         if (obj.kind === 'image') {
           const r = resolveImageTexPath(obj.image, files);
@@ -125,6 +129,20 @@ describe('全库 scene.pkg 回归验证', () => {
             evidence.push(`[${id}] ${magic} particle "${obj.name}" 无有效 emitter: ${obj.particle} keys=${Object.keys(root).join(',')}`);
             failParticle++;
           }
+        } else if (obj.kind === 'util') {
+          // 效果链容器对象：收集 effects（不再跳过；缺 file 的 effect 直接忽略）
+          if (Array.isArray(obj.effects)) {
+            for (const fx of obj.effects) if (typeof fx?.file === 'string') utilEffects.push({ file: fx.file, passes: fx.passes });
+          }
+        }
+      }
+      // 循环后：逐条解析 util 效果链（effect.json → material → shader，合并 scene.json 覆写）
+      for (const fx of utilEffects) {
+        const chain = await resolveEffectChain(fx, async (name) => files.get(name) ?? null);
+        if (chain) okEffect++;
+        else {
+          evidence.push(`[${id}] ${magic} 效果链解析失败: ${fx.file}`);
+          failEffect++;
         }
       }
     }
@@ -133,6 +151,7 @@ describe('全库 scene.pkg 回归验证', () => {
     console.log(`scene.json 解析: 成功 ${okScene} / 失败 ${failScene}`);
     console.log(`image 对象: 成功 ${okImg} / 失败 ${failImg}`);
     console.log(`particle 对象: 成功 ${okParticle} / 失败 ${failParticle}`);
+    console.log(`util 效果链: 成功 ${okEffect} / 失败 ${failEffect}`);
     console.log(`tex 格式分布: ${JSON.stringify(Object.fromEntries([...texFormats.entries()].map(([k, v]) => [k, v])))}`);
     console.log(`tex imageFormat(FIF) 分布: ${JSON.stringify(Object.fromEntries([...texImageFormats.entries()].map(([k, v]) => [k, v])))}`);
     console.log(`tex 容器分布: ${JSON.stringify(Object.fromEntries(texContainers))}`);
