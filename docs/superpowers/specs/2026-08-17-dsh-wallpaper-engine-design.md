@@ -122,7 +122,7 @@ web 壁纸   → ① 本地 HTTP 服务 + <iframe>（沙箱化，object-fit 缩�
   - `camera`（center/eye/up）→ `OrthographicCamera`（`general.orthogonalprojection` 给出宽高）；
   - `image` 对象 → `THREE.Mesh` + 平面几何 + 纹理（tex 或 png）。纹理路径推导（全库实测验证）：`obj.image` → `models/*.json` 的 `material` → `materials/*.json` 的 `passes[0].textures[0]`；纹理名不含 `/` 时为材质同目录 `.tex`，含 `/` 时是相对 `materials/` 的路径（拼 `materials/` 前缀，workshop 子目录纹理）；
   - `particle` 对象 → `THREE.Points` + 自定义粒子模拟（见下）；
-  - `models/util/*` 内置对象（composelayer/fullscreenlayer/projectlayer）→ 归类 `util`：合成层/控制节点，pkg 内无对应文件，一期跳过不渲染，`effects` 效果链字段为二期预留；
+  - `models/util/*` 内置对象（composelayer/fullscreenlayer/projectlayer）→ 归类 `util`：合成层/控制节点，pkg 内无对应文件，本体跳过不渲染；**二期已实现 effects 效果链渲染**（2026-08-18 落地，见效果链设计文档）：所有对象的 `effects` 数组按 scene.json 顺序展平、全屏后处理执行（Ruling 5——全库 122 条效果中 105 条在 image 对象上）；
   - `general`（bloom/clearcolor）→ 场景背景色 + 后期（一期仅 clearcolor，bloom 列为二期）。
 - **粒子系统模拟器**：实现 `emitter`（方向/距离/速率）+ `initializer`（生命周期/大小/速度/颜色随机）+ 常见 operator（重力、阻尼、噪声）语义，逐帧更新 `Points` 位置/大小/透明度，渲染用 `ShaderMaterial`（点精灵、加法混合）。
 - **着色器壁纸**：含 vert/frag 的壁纸一期标记为"未适配"，走回退链；二期逐个适配（见 §10.3）。
@@ -227,7 +227,7 @@ E:\code\dsh-use-wallpaper\
 | 粒子数量大导致低端 GPU 掉帧 | 卡顿 | 动态降级：FPS 监测 <30 时减少粒子/降分辨率/回退静态图 |
 | 壁纸库增删（订阅新壁纸） | 列表过期 | 列表缓存 30s + 手动刷新按钮 |
 | tex 格式变体（个别非 BC 压缩） | 纹理加载失败 | 解析器覆盖常见 DDS 变体；失败回退 preview（全库实测：RGBA8888×63 / DXT1×2 / DXT5×1，JPEG/PNG 编码 ×32，均已覆盖） |
-| 内置合成层对象（models/util/*）缺失 | 含效果链对象不显示 | 归类 util 静默跳过（一期）；二期实现 effects 效果链渲染 |
+| 内置合成层对象（models/util/*）缺失 | 含效果链对象不显示 | 归类 util 静默跳过本体；**二期已实现 effects 效果链渲染**（2026-08-18，全库 15 个效果壁纸验证通过） |
 | web 壁纸依赖 Wallpaper Engine API 无法运行 | 画面空白 | iframe 沙箱 + 失败检测回退 preview；记录已知不兼容壁纸 |
 | WorkerW 实时捕获（远期备选） | 复杂度高 | 明确不做，除非用户显式要求（见 §2.2） |
 

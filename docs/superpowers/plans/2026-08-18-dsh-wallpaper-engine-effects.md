@@ -272,8 +272,13 @@ import { readFileSync } from 'node:fs';
 import { preprocessWeShader, extractUniformAnnotations } from '../src/client/shader/shader-preprocessor.js';
 import { WE_HEADERS } from '../src/client/shader/we-headers.js';
 
-const waterwavesFrag = readFileSync(new URL('./fixtures/effects/waterwaves-shaders.txt', import.meta.url), 'utf8')
-  .split('========== shaders/effects/waterwaves.frag')[1].split('========== shaders/effects/waterwaves.vert')[0];
+const waterwavesFrag = (() => {
+  // 从 dump-effects 输出中提取 shader 段（Ruling 2：正则提取，避免残留 dump 头部行）
+  const txt = readFileSync(new URL('./fixtures/effects/waterwaves-shaders.txt', import.meta.url), 'utf8');
+  const m = txt.match(/========== shaders\/effects\/waterwaves\.frag \(\d+B\) ==========\n([\s\S]*?)(?:\n==========|$)/);
+  if (!m) throw new Error('fixture 缺少 waterwaves.frag 段');
+  return m[1];
+})();
 
 describe('extractUniformAnnotations', () => {
   it('解析带标注 uniform（material 映射）', () => {
@@ -689,6 +694,8 @@ Expected: PASS
 
 - [ ] **Step 5: 扩展全库回归（verify-real-library.test.ts）**
 
+（Ruling 1：现有 `it('scene 读取链路零失败…', () => {` 回调是**同步**的，须改为 `async () => {`；效果链解析断言在其内部、`expect(evidence).toEqual([])` 之前 await。）
+
 在现有测试的 `for (const obj of desc.objects)` 循环内、`kind === 'util'` 分支处追加（util 对象现被跳过，需改为收集 effects 并断言可解析）：
 
 ```ts
@@ -699,14 +706,14 @@ if (obj.kind === 'util') {
     for (const fx of obj.effects) if (typeof fx?.file === 'string') utilEffects.push({ file: fx.file, passes: fx.passes });
   }
 }
-// 循环后追加：
+// 循环后追加（注意：utilEffects 需在 for 循环外声明；循环结束后逐条解析）：
 for (const fx of utilEffects) {
   const chain = await resolveEffectChain(fx, async (name) => files.get(name) ?? null);
   if (!chain) evidence.push(`[${id}] ${magic} 效果链解析失败: ${fx.file}`);
 }
 ```
 
-同时 `resolveEffectChain` 为异步，需把现有 `it` 回调改为 `async`（已是 async）。`import { resolveEffectChain } from '../src/client/shader/effect-chain.js';` 加到文件顶部。
+同时：`it` 回调签名改为 `async () => {`（当前为同步）；`import { resolveEffectChain } from '../src/client/shader/effect-chain.js';` 加到文件顶部。`utilEffects` 数组声明在 `for (const id of dirs)` 循环内、`for (const obj ...)` 之前。
 
 - [ ] **Step 6: 运行全库回归确认通过**
 
@@ -1053,9 +1060,9 @@ setEffectChains(chains: import('./shader/effect-chain.js').CompiledEffectPass[][
 - [ ] **Step 2: 改造 renderScene（收集 util 效果链并注入）**
 
 ```ts
-// renderScene 内、desc 解析后：
+// renderScene 内、desc 解析后（Ruling 5：所有对象的 effects 按 scene.json objects 顺序展平，
+// 全库实测 122 条效果中 105 条挂在 image 对象上，仅 util 会漏掉主视觉）
 const utilEffects = desc.objects
-  .filter((o) => o.kind === 'util')
   .flatMap((o) => (Array.isArray(o.effects) ? o.effects : []))
   .filter((fx: any) => typeof fx?.file === 'string');
 
