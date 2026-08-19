@@ -97,14 +97,13 @@ impl Renderer {
     /// 解码后的纹理解码上传：创建 GPU 纹理（mip0，单层）并写入数据。
     /// 支持 RGBA8888 / DXT1/3/5（BC1/2/3）/ R8 / RG88；Unsupported 返回 None。
     ///
-    /// 布局计算（WebGPU texel-block 语义）：
-    /// - 块压缩格式（BC1/2/3）每块 4x4 像素：bytes_per_row = 块列数 × 块字节数，
-    ///   rows_per_image = 块行数 = ceil(h/4)；
-    /// - 非压缩格式块为 1x1 像素：bytes_per_row = 宽 × 每像素字节数，
-    ///   rows_per_image = 高（不能复用块行数——wgpu-core 校验
-    ///   `rows_per_image >= height_in_blocks`，非压缩格式 height_in_blocks = h）。
+    /// 布局（`tex::copy_layout`，native 可测）：
+    /// - bytes_per_row 显式 256 对齐（wgpu `COPY_BYTES_PER_ROW_ALIGNMENT`），
+    ///   已对齐宽度直接借用 mip0（零拷贝），非对齐宽度按行补 padding 重打包；
+    /// - rows_per_image 按格式区分：块压缩 = 块行数 ceil(h/4)，非压缩 = 高。
     pub fn upload_texture(&mut self, img: &crate::tex::TexImage) -> Option<wgpu::Texture> {
         let format = texture::tex_format_to_wgpu(img.format)?;
+        let layout = crate::tex::copy_layout(img)?;
         let usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST;
         let tex = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("we-tex"),
@@ -120,21 +119,21 @@ impl Renderer {
             usage,
             view_formats: &[],
         });
-        // 块压缩格式需按块对齐字节数（block_size: BC1=8、BC2/BC3=16、RGBA=4、RG88=2、R8=1）
-        let block_size = match img.format {
-            crate::tex::TexFormat::Dxt1 => 8u32,
-            crate::tex::TexFormat::Dxt3 | crate::tex::TexFormat::Dxt5 => 16u32,
-            crate::tex::TexFormat::Rgba8888 => 4u32,
-            crate::tex::TexFormat::Rg88 => 2u32,
-            crate::tex::TexFormat::R8 => 1u32,
-            crate::tex::TexFormat::Unsupported(_) => return None,
-        };
-        let (block_w, block_h) = ((img.width.max(1) + 3) / 4, (img.height.max(1) + 3) / 4);
-        let (bytes_per_row, rows_per_image) = match img.format {
-            crate::tex::TexFormat::Dxt1
-            | crate::tex::TexFormat::Dxt3
-            | crate::tex::TexFormat::Dxt5 => (block_w * block_size, block_h.max(1)),
-            _ => (img.width.max(1) * block_size, img.height.max(1)),
+        // 行字节 256 对齐：已对齐（needs_padding=false）直接借用 mip0；
+        // 否则每行拷贝 raw_row 字节并补 (bytes_per_row - raw_row) 零 padding。
+        let mut padded: Vec<u8> = Vec::new();
+        let data: &[u8] = if layout.needs_padding() {
+            padded.reserve(layout.bytes_per_row as usize * layout.rows as usize);
+            let len = img.mip0.len();
+            for row in 0..layout.rows {
+                let start = (row as usize * layout.raw_row as usize).min(len);
+                let end = (start + layout.raw_row as usize).min(len);
+                padded.extend_from_slice(&img.mip0[start..end]);
+                padded.resize(padded.len() + (layout.bytes_per_row - layout.raw_row) as usize, 0);
+            }
+            &padded
+        } else {
+            &img.mip0
         };
         self.queue.write_texture(
             wgpu::TexelCopyTextureInfo {
@@ -143,11 +142,11 @@ impl Renderer {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            &img.mip0,
+            data,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(bytes_per_row),
-                rows_per_image: Some(rows_per_image),
+                bytes_per_row: Some(layout.bytes_per_row),
+                rows_per_image: Some(layout.rows),
             },
             wgpu::Extent3d {
                 width: img.width.max(1),

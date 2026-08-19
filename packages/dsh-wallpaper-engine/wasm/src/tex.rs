@@ -52,6 +52,54 @@ pub fn tex_format_id(format: TexFormat) -> Option<&'static str> {
     }
 }
 
+/// 纹理上传布局（纯计算，native 可测；wgpu 上传侧消费，见
+/// `render::Renderer::upload_texture`）。WebGPU texel-block 语义：
+/// - 块压缩格式（BC1/2/3）每块 4x4 像素，行按"块行"计；
+/// - 非压缩格式块为 1x1 像素，行按像素行计。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CopyLayout {
+    /// write_texture 的 bytes_per_row：显式 256 对齐
+    /// （(raw_row + 255) & !255，wgpu `COPY_BYTES_PER_ROW_ALIGNMENT=256`）。
+    /// writeTexture 规范上无对齐要求（见 wgpu-types 文档与 WebGPU 规范
+    /// writeTexture validusage note），但显式对齐 + 按需重打包可兼容所有
+    /// 后端/实现（对齐宽度零拷贝，非对齐才补 padding）。
+    pub bytes_per_row: u32,
+    /// 紧密行字节数（LZ4 解压后的 mip0 每行原始宽度；重打包的源行宽）。
+    pub raw_row: u32,
+    /// rows_per_image：非压缩 = 高（像素行），块压缩 = 块行数 ceil(h/4)。
+    /// 不能统一用块行数——wgpu-core 校验 `rows_per_image >= height_in_blocks`，
+    /// 非压缩格式 height_in_blocks = h。
+    pub rows: u32,
+}
+
+impl CopyLayout {
+    /// 数据是否需要按行补 padding（bytes_per_row > raw_row）。
+    pub fn needs_padding(&self) -> bool {
+        self.bytes_per_row > self.raw_row
+    }
+}
+
+/// 计算上传布局；Unsupported 格式返回 None（无法上传）。
+pub fn copy_layout(img: &TexImage) -> Option<CopyLayout> {
+    let block_size = match img.format {
+        TexFormat::Dxt1 => 8u32,
+        TexFormat::Dxt3 | TexFormat::Dxt5 => 16u32,
+        TexFormat::Rgba8888 => 4u32,
+        TexFormat::Rg88 => 2u32,
+        TexFormat::R8 => 1u32,
+        TexFormat::Unsupported(_) => return None,
+    };
+    let w = img.width.max(1);
+    let h = img.height.max(1);
+    let (block_w, block_h) = ((w + 3) / 4, (h + 3) / 4);
+    let (raw_row, rows) = match img.format {
+        TexFormat::Dxt1 | TexFormat::Dxt3 | TexFormat::Dxt5 => (block_w * block_size, block_h.max(1)),
+        _ => (w * block_size, h),
+    };
+    let bytes_per_row = (raw_row + 255) & !255;
+    Some(CopyLayout { bytes_per_row, raw_row, rows })
+}
+
 #[derive(Debug, Clone)]
 pub struct TexImage {
     pub width: u32,
