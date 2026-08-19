@@ -24,6 +24,27 @@ export interface WasmSceneModule {
 
 export type LoadWasm = () => Promise<WasmSceneModule | null>;
 
+// wallpaper-controller 的 sceneRenderer 接口形态（scene-renderer.ts 的 renderScene 同构）
+export interface SceneRendererLike {
+  render(id: string, fg: HTMLCanvasElement, bg?: HTMLCanvasElement): Promise<boolean>;
+}
+
+// 回退链组合（spec §7 第 2/3 条）：wasm 渲染器不可用（null）→ 直接用 JS 渲染器；
+// wasm 加载/初始化/渲染失败（resolve false）→ 降级 JS 渲染器；
+// JS 渲染器同样失败（false）→ 最终 false，controller 走 preview 图回退。
+// 组合层不吞异常：任一渲染器 reject 由 controller 的 try/catch 兜底（语义等价 preview）。
+export function createFallbackSceneRenderer(
+  wasm: SceneRendererLike | null,
+  js: SceneRendererLike,
+): SceneRendererLike {
+  if (!wasm) return js;
+  return {
+    async render(id, fg, bg) {
+      return (await wasm.render(id, fg, bg)) || js.render(id, fg, bg);
+    },
+  };
+}
+
 // TS DOM lib 的 Navigator 尚未声明 WebGPU 的 gpu 属性（实验性 API），此处仅做存在性探测
 interface NavigatorWithGPU { gpu?: unknown }
 
@@ -75,9 +96,7 @@ async function resolveImageTexBytes(id: string, imageRef: string): Promise<Uint8
   }
 }
 
-export function createWasmSceneRenderer(opts?: { loadWasm?: LoadWasm }): {
-  render(id: string, fg: HTMLCanvasElement, bg?: HTMLCanvasElement): Promise<boolean>;
-} | null {
+export function createWasmSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneRendererLike | null {
   // 无 WebGPU（navigator.gpu falsy，含 SSR/测试环境）→ null，controller 走现有 JS 渲染回退
   if (typeof navigator === 'undefined' || !(navigator as NavigatorWithGPU).gpu) return null;
   const loadWasm = opts?.loadWasm ?? defaultLoadWasm;

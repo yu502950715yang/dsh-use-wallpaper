@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
 // Task 8：wasm 渲染器胶水的回退逻辑与 API 调用顺序（jsdom）。
 // - 无 WebGPU（navigator.gpu 缺失）→ createWasmSceneRenderer() 返回 null（走现有 JS 渲染回退）
-// - loadWasm 注入失败（null / reject）→ render() resolve false（controller 走 preview 回退）
+// - loadWasm 注入失败（null / reject）→ render() resolve false（组合层降级到 JS 渲染器）
+// - 组合回退链（createFallbackSceneRenderer）：wasm 失败 → JS 渲染器；JS 也失败 → false
+//   → controller 走 preview 图回退（spec §7 第 2/3 条）
 // - 成功路径：scene.json → 对象遍历（image → model.json → material → .tex；particle）→
 //   WeScene.create / load_scene / load_image / add_particle / step / render 按序调用
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { createWasmSceneRenderer } from '../src/client/wasm-renderer.js';
+import { createWasmSceneRenderer, createFallbackSceneRenderer } from '../src/client/wasm-renderer.js';
 
 function jsonResp(body: unknown): any {
   return {
@@ -154,5 +156,60 @@ describe('createWasmSceneRenderer', () => {
       expect(scene.step).toHaveBeenCalled();
       expect(scene.render).toHaveBeenCalled();
     });
+  });
+});
+
+describe('createFallbackSceneRenderer（组合回退链，spec §7 第 2/3 条）', () => {
+  it('wasm 渲染器为 null（无 WebGPU）→ 直接用 JS 渲染器', async () => {
+    const js = { render: vi.fn(async () => true) };
+    const r = createFallbackSceneRenderer(null, js);
+    const fg = document.createElement('canvas');
+    await expect(r.render('1', fg)).resolves.toBe(true);
+    // wasm null → 组合层直接返回 js 原对象（透传原参数个数）
+    expect(js.render).toHaveBeenCalledWith('1', fg);
+  });
+
+  it('wasm 加载失败（render 返回 false）→ 降级调用 JS 渲染器', async () => {
+    vi.stubGlobal('navigator', { gpu: {} });
+    // 注入 loadWasm 返回 null 的 wasm renderer：模拟 wasm 加载失败
+    const wasm = createWasmSceneRenderer({ loadWasm: async () => null });
+    const js = { render: vi.fn(async () => true) };
+    const r = createFallbackSceneRenderer(wasm, js);
+    const fg = document.createElement('canvas');
+    await expect(r.render('1', fg)).resolves.toBe(true);
+    expect(js.render).toHaveBeenCalledWith('1', fg, undefined);
+  });
+
+  it('wasm 与 JS 渲染器都返回 false → 最终 false（controller 走 preview 图回退）', async () => {
+    vi.stubGlobal('navigator', { gpu: {} });
+    const wasm = createWasmSceneRenderer({ loadWasm: async () => null });
+    const js = { render: vi.fn(async () => false) };
+    const r = createFallbackSceneRenderer(wasm, js);
+    const fg = document.createElement('canvas');
+    await expect(r.render('1', fg)).resolves.toBe(false);
+    expect(js.render).toHaveBeenCalledTimes(1);
+  });
+
+  it('wasm 渲染成功 → 不调用 JS 渲染器', async () => {
+    vi.stubGlobal('navigator', { gpu: {} });
+    const wasm = { render: vi.fn(async () => true) };
+    const js = { render: vi.fn(async () => true) };
+    const r = createFallbackSceneRenderer(wasm, js);
+    const fg = document.createElement('canvas');
+    await expect(r.render('1', fg)).resolves.toBe(true);
+    expect(js.render).not.toHaveBeenCalled();
+  });
+
+  it('JS 渲染器 reject → 组合层 reject（controller 已有 catch 兜底走 preview）', async () => {
+    vi.stubGlobal('navigator', { gpu: {} });
+    const wasm = createWasmSceneRenderer({ loadWasm: async () => null });
+    const js = {
+      render: vi.fn(async () => {
+        throw new Error('js render fail');
+      }),
+    };
+    const r = createFallbackSceneRenderer(wasm, js);
+    const fg = document.createElement('canvas');
+    await expect(r.render('1', fg)).rejects.toThrow('js render fail');
   });
 });
