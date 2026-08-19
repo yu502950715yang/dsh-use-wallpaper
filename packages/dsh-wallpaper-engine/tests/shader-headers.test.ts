@@ -50,4 +50,25 @@ describe('WE 内置头文件（方言完备性）', () => {
     expect(h).toContain('BlendSoftLight');
     expect(h).toContain('BlendTint');
   });
+  it('common_blur.h 使用引擎真实权重（13-tap）', () => {
+    const h = WE_HEADERS['common_blur.h'] ?? '';
+    expect(h).toContain('0.1976406528809576');  // 引擎 blur13a 中心权重
+    expect(h).toContain('1.4091998770852122');  // 引擎偏移系数
+    expect(h).toContain('blur7a');
+  });
+  it('common_perspective.h squareToQuad 为引擎列主序实现（含 diffy2/det 分支）', () => {
+    const h = WE_HEADERS['common_perspective.h'] ?? '';
+    expect(h).toContain('diffy2');
+    expect(h).toContain('det == 0.0');
+  });
+  it('common_fragment.h 提供真实 DecompressNormal（RG88/DXT swizzle 分支）与 FORMAT 宏', () => {
+    const h = WE_HEADERS['common_fragment.h'] ?? '';
+    expect(h).toContain('FORMAT_RG88');
+    expect(h).toContain('FORMAT_DXT1');
+    expect(h).toContain('DecompressNormalWithMask');
+    expect(h).toContain('normal.wy * 2.0 - 1.0'); // 默认通道分支
+  });
+  it('common_vertex.h 提供 BuildTangentSpace', () => {
+    expect(WE_HEADERS['common_vertex.h'] ?? '').toContain('BuildTangentSpace');
+  });
 });

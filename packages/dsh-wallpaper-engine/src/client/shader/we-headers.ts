@@ -74,31 +74,122 @@ vec4 CAST4(float x) { return vec4(x); }
 #endif
 `;
 
-// 高斯模糊辅助（common_blur.h）：13/7/3 tap，方向与步长由调用方经 v_TexCoord.zw 传入
+// 高斯模糊辅助（common_blur.h）：引擎逐字转写（blur13/blur7/blur3 rgb 版、
+// blur13a/blur7a/blur3a alpha 版、blurRotateVec2、blurRadial13a/7a/3a）。
 const COMMON_BLUR_H = `
 #ifndef WE_COMMON_BLUR_H
 #define WE_COMMON_BLUR_H
-vec4 blur13a(vec2 uv, vec2 dir) {
-  vec4 c = texSample2D(g_Texture0, uv) * 0.2270270270;
-  c += texSample2D(g_Texture0, uv + dir * 1.3846153846) * 0.3162162162;
-  c += texSample2D(g_Texture0, uv - dir * 1.3846153846) * 0.3162162162;
-  c += texSample2D(g_Texture0, uv + dir * 3.2307692308) * 0.0702702703;
-  c += texSample2D(g_Texture0, uv - dir * 3.2307692308) * 0.0702702703;
-  return c;
+vec3 blur13(vec2 u, vec2 d)
+{
+	vec2 o1 = CAST2(1.4091998770852122) * d;
+	vec2 o2 = CAST2(3.2979348079914822) * d;
+	vec2 o3 = CAST2(5.2062900776825969) * d;
+	return texSample2D(g_Texture0, u).rgb * 0.1976406528809576
+	+ texSample2D(g_Texture0, u + o1).rgb * 0.2959855056006557
+	+ texSample2D(g_Texture0, u - o1).rgb * 0.2959855056006557
+	+ texSample2D(g_Texture0, u + o2).rgb * 0.0935333619980593
+	+ texSample2D(g_Texture0, u - o2).rgb * 0.0935333619980593
+	+ texSample2D(g_Texture0, u + o3).rgb * 0.0116608059608062
+	+ texSample2D(g_Texture0, u - o3).rgb * 0.0116608059608062;
 }
-vec4 blur7a(vec2 uv, vec2 dir) {
-  vec4 c = texSample2D(g_Texture0, uv) * 0.375;
-  c += texSample2D(g_Texture0, uv + dir) * 0.25;
-  c += texSample2D(g_Texture0, uv - dir) * 0.25;
-  c += texSample2D(g_Texture0, uv + dir * 2.0) * 0.0625;
-  c += texSample2D(g_Texture0, uv - dir * 2.0) * 0.0625;
-  return c;
+vec3 blur7(vec2 u, vec2 d)
+{
+	vec2 o1 = CAST2(2.3515644035337887) * d;
+	vec2 o2 = CAST2(0.469433779698372) * d;
+	vec2 o3 = CAST2(1.4091998770852121) * d;
+	vec2 o4 = CAST2(3) * d;
+	return texSample2D(g_Texture0, u + o1).rgb * 0.2028175528299753
+	+ texSample2D(g_Texture0, u + o2).rgb * 0.4044856614512112
+	+ texSample2D(g_Texture0, u - o3).rgb * 0.3213933537319605
+	+ texSample2D(g_Texture0, u - o4).rgb * 0.0713034319868530;
 }
-vec4 blur3a(vec2 uv, vec2 dir) {
-  vec4 c = texSample2D(g_Texture0, uv) * 0.5;
-  c += texSample2D(g_Texture0, uv + dir) * 0.25;
-  c += texSample2D(g_Texture0, uv - dir) * 0.25;
-  return c;
+vec3 blur3(vec2 u, vec2 d)
+{
+	return texSample2D(g_Texture0, u + d).rgb * 0.25
+	+ texSample2D(g_Texture0, u).rgb * 0.5
+	+ texSample2D(g_Texture0, u - d).rgb * 0.25;
+}
+vec4 blur13a(vec2 u, vec2 d)
+{
+	vec2 o1 = CAST2(1.4091998770852122) * d;
+	vec2 o2 = CAST2(3.2979348079914822) * d;
+	vec2 o3 = CAST2(5.2062900776825969) * d;
+	return texSample2D(g_Texture0, u) * 0.1976406528809576
+	+ texSample2D(g_Texture0, u + o1) * 0.2959855056006557
+	+ texSample2D(g_Texture0, u - o1) * 0.2959855056006557
+	+ texSample2D(g_Texture0, u + o2) * 0.0935333619980593
+	+ texSample2D(g_Texture0, u - o2) * 0.0935333619980593
+	+ texSample2D(g_Texture0, u + o3) * 0.0116608059608062
+	+ texSample2D(g_Texture0, u - o3) * 0.0116608059608062;
+}
+vec4 blur7a(vec2 u, vec2 d)
+{
+	vec2 o1 = CAST2(2.3515644035337887) * d;
+	vec2 o2 = CAST2(0.469433779698372) * d;
+	vec2 o3 = CAST2(1.4091998770852121) * d;
+	vec2 o4 = CAST2(3) * d;
+	return texSample2D(g_Texture0, u + o1) * 0.2028175528299753
+	+ texSample2D(g_Texture0, u + o2) * 0.4044856614512112
+	+ texSample2D(g_Texture0, u - o3) * 0.3213933537319605
+	+ texSample2D(g_Texture0, u - o4) * 0.0713034319868530;
+}
+vec4 blur3a(vec2 u, vec2 d)
+{
+	return texSample2D(g_Texture0, u + d) * 0.25
+	+ texSample2D(g_Texture0, u) * 0.5
+	+ texSample2D(g_Texture0, u - d) * 0.25;
+}
+vec2 blurRotateVec2(vec2 v, float r)
+{
+	vec2 cs = vec2(cos(r), sin(r));
+	return vec2(v.x * cs.x - v.y * cs.y, v.x * cs.y + v.y * cs.x);
+}
+vec4 blurRadial13a(vec2 u, vec2 center, float amt)
+{
+	vec2 delta = u - center;
+	amt = amt * 0.025;
+	float o1 = 1.4091998770852122 * amt;
+	float o2 = 3.2979348079914822 * amt;
+	float o3 = 5.2062900776825969 * amt;
+	vec2 r1 = blurRotateVec2(delta, o1) - delta;
+	vec2 r2 = blurRotateVec2(delta, o2) - delta;
+	vec2 r3 = blurRotateVec2(delta, o3) - delta;
+	return texSample2D(g_Texture0, u) * 0.1976406528809576
+	+ texSample2D(g_Texture0, center + r1 + delta) * 0.2959855056006557
+	+ texSample2D(g_Texture0, center - r1 + delta) * 0.2959855056006557
+	+ texSample2D(g_Texture0, center + r2 + delta) * 0.0935333619980593
+	+ texSample2D(g_Texture0, center - r2 + delta) * 0.0935333619980593
+	+ texSample2D(g_Texture0, center + r3 + delta) * 0.0116608059608062
+	+ texSample2D(g_Texture0, center - r3 + delta) * 0.0116608059608062;
+}
+vec4 blurRadial7a(vec2 u, vec2 center, float amt)
+{
+	vec2 delta = u - center;
+	amt = amt * 0.025;
+	float o1 = 2.3515644035337887 * amt;
+	float o2 = 0.469433779698372 * amt;
+	float o3 = 1.4091998770852121 * amt;
+	float o4 = 3 * amt;
+	vec2 r1 = blurRotateVec2(delta, o1) - delta;
+	vec2 r2 = blurRotateVec2(delta, o2) - delta;
+	vec2 r3 = blurRotateVec2(delta, -o3) - delta;
+	vec2 r4 = blurRotateVec2(delta, -o4) - delta;
+
+	return texSample2D(g_Texture0, center + r1 + delta) * 0.2028175528299753
+	+ texSample2D(g_Texture0, center + r2 + delta) * 0.4044856614512112
+	+ texSample2D(g_Texture0, center + r3 + delta) * 0.3213933537319605
+	+ texSample2D(g_Texture0, center + r4 + delta) * 0.0713034319868530;
+}
+vec4 blurRadial3a(vec2 u, vec2 center, float amt)
+{
+	vec2 delta = u - center;
+	amt = amt * 0.025;
+	float o1 = amt;
+	vec2 r1 = blurRotateVec2(delta, o1) - delta;
+
+	return texSample2D(g_Texture0, center + delta) * 0.5
+	+ texSample2D(g_Texture0, center + r1 + delta) * 0.25
+	+ texSample2D(g_Texture0, center - r1 + delta) * 0.25;
 }
 #endif
 `;
@@ -384,29 +475,77 @@ vec3 ApplyBlending(const int blendMode, in vec3 A, in vec3 B, in float opacity)
 #endif
 `;
 
-// 透视辅助（common_perspective.h）：squareToQuad。
-// 注意：inverse 不在此定义——GLSL ES 3.00 内置 inverse(mat2/3/4)，重定义会报
-// "Name of a built-in function cannot be redeclared as function"（浏览器集成验证实测）。
+// 透视辅助（common_perspective.h）：引擎逐字转写（列主序 squareToQuad，含 diffy2/det 分支）。
+// 引擎源文件末尾的 #if HLSL inverse(mat3) 原样保留——GLSL3 下 HLSL 未定义为 0，
+// 该分支不生效；GLSL ES 3.00 内置 inverse，仍不在此重复定义。
 const COMMON_PERSPECTIVE_H = `
 #ifndef WE_COMMON_PERSPECTIVE_H
 #define WE_COMMON_PERSPECTIVE_H
+
 mat3 squareToQuad(vec2 p0, vec2 p1, vec2 p2, vec2 p3) {
-  vec2 d1 = p1 - p2, d2 = p3 - p2, d3 = p0 - p1 + p2 - p3;
-  float a = 0.0, b = 0.0;
-  if (d3.x != 0.0 || d3.y != 0.0) {
-    float cross = d1.x * d2.y - d1.y * d2.x;
-    if (cross != 0.0) {
-      a = (d2.x * d3.y - d2.y * d3.x) / cross;
-      b = (d1.x * d3.y - d1.y * d3.x) / cross;
-    }
-  }
-  mat3 m = mat3(
-    p1.x - p0.x + a * p1.x, p1.y - p0.y + a * p1.y, a,
-    p3.x - p0.x + b * p3.x, p3.y - p0.y + b * p3.y, b,
-    p0.x, p0.y, 1.0
-  );
-  return m;
+	mat3 m = mat3(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0);
+	float dx0 = p0.x;
+	float dy0 = p0.y;
+	float dx1 = p1.x;
+	float dy1 = p1.y;
+	
+	float dx2 = p3.x;
+	float dy2 = p3.y;
+	float dx3 = p2.x;
+	float dy3 = p2.y;
+	
+	float diffx1 = dx1 - dx3;
+	float diffy1 = dy1 - dy3;
+	float diffx2 = dx2 - dx3;
+	float diffy2 = dy2 - dy3;
+
+	float det = diffx1*diffy2 - diffx2*diffy1;
+	float sumx = dx0 - dx1 + dx3 - dx2;
+	float sumy = dy0 - dy1 + dy3 - dy2;
+
+	if (det == 0.0 || (sumx == 0.0 && sumy == 0.0)) {
+		m[0][0] = dx1 - dx0;
+		m[0][1] = dy1 - dy0;
+		m[0][2] = 0.0;
+		m[1][0] = dx3 - dx1;
+		m[1][1] = dy3 - dy1;
+		m[1][2] = 0.0;
+		m[2][0] = dx0;
+		m[2][1] = dy0;
+		m[2][2] = 1.0;
+		return m;
+	} else {
+		float ovdet = 1.0 / det;
+		float g = (sumx * diffy2 - diffx2 * sumy) * ovdet;
+		float h = (diffx1 * sumy - sumx * diffy1) * ovdet;
+
+		m[0][0] = dx1 - dx0 + g * dx1;
+		m[0][1] = dy1 - dy0 + g * dy1;
+		m[0][2] = g;
+		m[1][0] = dx2 - dx0 + h * dx2;
+		m[1][1] = dy2 - dy0 + h * dy2;
+		m[1][2] = h;
+		m[2][0] = dx0;
+		m[2][1] = dy0;
+		m[2][2] = 1.0;
+		return m;
+	}
 }
+
+#if HLSL
+mat3 inverse(mat3 m) {
+	float a00 = m[0][0], a01 = m[0][1], a02 = m[0][2];
+	float a10 = m[1][0], a11 = m[1][1], a12 = m[1][2];
+	float a20 = m[2][0], a21 = m[2][1], a22 = m[2][2];
+	float b01 = a22 * a11 - a12 * a21;
+	float b11 = -a22 * a10 + a12 * a20;
+	float b21 = a21 * a10 - a11 * a20;
+	float det = a00 * b01 + a01 * b11 + a02 * b21;
+	return mat3(b01, (-a22 * a01 + a02 * a21), (a12 * a01 - a02 * a11),
+			  b11, (a22 * a00 - a02 * a20), (-a12 * a00 + a02 * a10),
+			  b21, (-a21 * a00 + a01 * a20), (a11 * a00 - a01 * a10)) / det;
+}
+#endif
 #endif
 `;
 
@@ -461,8 +600,171 @@ vec4 ApplyComposite(vec4 original, vec4 effect)
 	return effect;
 }
 `;
-const COMMON_FRAGMENT_H = `#ifndef WE_COMMON_FRAGMENT_H\n#define WE_COMMON_FRAGMENT_H\n#endif\n`;
-const COMMON_VERTEX_H = `#ifndef WE_COMMON_VERTEX_H\n#define WE_COMMON_VERTEX_H\n#endif\n`;
+const COMMON_FRAGMENT_H = `
+#ifndef WE_COMMON_FRAGMENT_H
+#define WE_COMMON_FRAGMENT_H
+
+#define FORMAT_RGBA8888 0
+#define FORMAT_RGB888 1
+#define FORMAT_RGB565 2
+
+#define FORMAT_ETC1_RGB8 3
+#define FORMAT_DXT5 4
+#define FORMAT_ETC2_RGBA8 5
+#define FORMAT_DXT3 6
+#define FORMAT_DXT1 7
+
+#define FORMAT_RG88 8
+#define FORMAT_R8 9
+#define FORMAT_RG1616F 10
+#define FORMAT_R16F 11
+
+#define FORMAT_BC7 12
+
+vec3 DecompressNormal(vec4 normal)
+{
+#if TEX1FORMAT >= FORMAT_ETC1_RGB8 && TEX1FORMAT <= FORMAT_DXT1 || TEX1FORMAT == FORMAT_BC7
+	normal.yx = normal.yw * 2.0 - vec2(0.965, 1.0);
+#else
+#if TEX1FORMAT == FORMAT_RG88
+	normal.xy = normal.rg * 2.0 - 1.0;
+#else
+	normal.xy = normal.wy * 2.0 - 1.0;
+#endif
+#endif
+	normal.z = sqrt(saturate(1.0 - normal.x * normal.x - normal.y * normal.y));
+	return normal.xyz;
+}
+
+vec4 DecompressNormalWithMask(vec4 normal)
+{
+#if TEX1FORMAT >= FORMAT_ETC1_RGB8 && TEX1FORMAT <= FORMAT_DXT1 || TEX1FORMAT == FORMAT_BC7
+	normal.xw = normal.wx;
+	normal.xy = normal.xy * 2.0 - vec2(0.965, 1.0);
+#else
+#if TEX1FORMAT == FORMAT_RG88
+	normal.xy = normal.gr * 2.0 - 1.0;
+#else
+	normal.xw = normal.wx;
+	normal.xy = normal.xy * 2.0 - 1.0;
+#endif
+#endif
+	normal.z = sqrt(saturate(1.0 - normal.x * normal.x - normal.y * normal.y));
+	return normal;
+}
+
+float ComputeMaterialSpecularPower(const float roughness, const float metallic)
+{
+	return (1.01 - roughness) * mix(400.0, 250.0, metallic);
+}
+
+float ComputeMaterialSpecularStrength(const float roughness, const float metallic)
+{
+	return (0.5 + metallic * 0.5) * (1.0 - roughness * 0.9);
+}
+
+vec3 ComputeLight(const vec3 normal, const vec3 lightDelta, const vec3 color, const float radius)
+{
+	float lightDistance = length(lightDelta);
+	float lightAttn = saturate((radius - lightDistance) / radius);
+	return color * (saturate(dot(lightDelta / lightDistance, normal))) * lightAttn * lightAttn;
+}
+
+vec3 ComputeLightSpecular(const vec3 normal, const vec3 lightDelta, const vec3 color, const float radius, const vec3 viewDir, const float specularPower, const float specularStrength, const float halfLambert, const float metallicTerm, inout vec3 specularResult)
+{
+	float lightDistance = length(lightDelta);
+	float lightAttn = saturate((radius - lightDistance) / radius);
+	vec3 lightDir = lightDelta / lightDistance;
+	float specular = max(0.0, dot(normalize(viewDir + lightDir), normal));
+	specularResult += pow(specular, specularPower) * specularStrength * lightAttn * color;
+	float lightDot = dot(lightDir, normal);
+	float halfLambertLight = lightDot * 0.5 + 0.5;
+	lightDot = mix(lightDot, halfLambertLight, halfLambert);
+	float rim = metallicTerm * 2.0;
+	rim = pow((1.0 - saturate(dot(normal, viewDir))) * pow(halfLambertLight, 0.25), 6.0 - rim) * rim;
+	return color * (saturate(lightDot) + rim) * lightAttn * lightAttn;
+}
+
+float ConvertSampleR8(vec4 _sample)
+{
+#if HLSL_SM30
+		return _sample.a;
+#else
+		return _sample.r;
+#endif
+}
+
+vec4 ConvertTexture0Format(vec4 _sample)
+{
+#if TEX0FORMAT == FORMAT_RG88 || TEX0FORMAT == FORMAT_RG1616F
+#if HLSL_SM30
+	return _sample.rrra;
+#else
+	return _sample.rrrg;
+#endif
+#endif
+
+#if TEX0FORMAT == FORMAT_R8 || TEX0FORMAT == FORMAT_R16F
+#if HLSL_SM30
+	return vec4(1, 1, 1, _sample.a);
+#else
+	return vec4(1, 1, 1, _sample.r);
+#endif
+#endif
+	return _sample;
+}
+
+vec4 ConvertTextureFormat(const int format, vec4 _sample)
+{
+	if (format == FORMAT_RG88 || format == FORMAT_RG1616F)
+	{
+#if HLSL_SM30
+		return _sample.rrra;
+#else
+		return _sample.rrrg;
+#endif
+	}
+
+	if (format == FORMAT_R8 || format == FORMAT_R16F)
+	{
+#if HLSL_SM30
+		return vec4(1, 1, 1, _sample.a);
+#else
+		return vec4(1, 1, 1, _sample.r);
+#endif
+	}
+	return _sample;
+}
+#endif
+`;
+const COMMON_VERTEX_H = `
+#ifndef WE_COMMON_VERTEX_H
+#define WE_COMMON_VERTEX_H
+mat3 BuildTangentSpace(const vec3 normal, const vec4 signedTangent)
+{
+	vec3 tangent = signedTangent.xyz;
+	vec3 bitangent = cross(normal, tangent) * signedTangent.w;
+	return mat3(tangent, bitangent, normal);
+}
+
+mat3 BuildTangentSpace(const mat3 modelTransform, const vec3 normal, const vec4 signedTangent)
+{
+	vec3 tangent = signedTangent.xyz;
+	vec3 bitangent = cross(normal, tangent) * signedTangent.w;
+	return mat3(mul(tangent, modelTransform),
+		mul(bitangent, modelTransform),
+		mul(normal, modelTransform));
+}
+
+void BuildTangentSpace(const mat3 modelTransform, const vec3 normal, const vec4 signedTangent, out vec3 worldTangent, out vec3 worldBitangent)
+{
+	vec3 tangent = signedTangent.xyz;
+	vec3 bitangent = cross(normal, tangent) * signedTangent.w;
+	worldTangent = mul(tangent, modelTransform);
+	worldBitangent = mul(bitangent, modelTransform);
+}
+#endif
+`;
 
 export const WE_HEADERS: Record<string, string> = {
   'common.h': COMMON_H,
