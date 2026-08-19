@@ -83,6 +83,17 @@ pub fn parse_tex(data: &[u8]) -> Option<TexImage> {
             if data.len() < pos + bytes_len {
                 return None;
             }
+            // 上界防护（对齐 tex-loader.ts 的 decompressedBytes <= 1<<30 校验）：
+            // decompress 会按 decompressed 值预分配输出缓冲区，巨大值（如 0xFFFFFFFF）
+            // 会导致内存暴涨/wasm trap 而非优雅返回 None，必须在解压前拦截。
+            // 解压与未解压分支统一校验（未解压分支的 decompressedBytes 也应 > 0）。
+            if decompressed == 0 || decompressed > (1 << 30) {
+                return None;
+            }
+            // 未解压分支同样限制 bytes_len 上界，保持一致
+            if bytes_len > (1 << 30) {
+                return None;
+            }
             let raw = &data[pos..pos + bytes_len];
             let out = if is_lz4 {
                 decompress(raw, decompressed as usize).ok()?
