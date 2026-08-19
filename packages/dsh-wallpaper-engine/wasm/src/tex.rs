@@ -30,6 +30,28 @@ impl From<u32> for TexFormat {
     }
 }
 
+/// TexFormat → 纹理格式字符串标识（无 wgpu 依赖，native `cargo test` 可测）。
+///
+/// wgpu 是 optional 依赖（render feature 门控），native 测试无法引用
+/// `wgpu::TextureFormat`，故格式映射分两层：
+/// - 本函数：TexFormat → 稳定字符串标识（与 wgpu::TextureFormat 的 Debug 名一致）
+/// - `render::texture::tex_format_to_wgpu`：字符串标识 → wgpu::TextureFormat
+///   （render feature 下编译，映射表必须与本函数一一对应）
+///
+/// WebGPU 原生支持 BC 压缩（BC1/BC2/BC3）、R8/RG8 与 RGBA8，故全部映射为
+/// sRGB/UNorm 格式：DXT1→BC1、DXT3→BC2、DXT5→BC3、R8→R8Unorm、RG88→Rg8Unorm。
+pub fn tex_format_id(format: TexFormat) -> Option<&'static str> {
+    match format {
+        TexFormat::Rgba8888 => Some("rgba8unorm-srgb"),
+        TexFormat::Dxt1 => Some("bc1-rgba-unorm-srgb"),
+        TexFormat::Dxt3 => Some("bc2-rgba-unorm-srgb"),
+        TexFormat::Dxt5 => Some("bc3-rgba-unorm-srgb"),
+        TexFormat::R8 => Some("r8-unorm"),
+        TexFormat::Rg88 => Some("rg8-unorm"),
+        TexFormat::Unsupported(_) => None,
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct TexImage {
     pub width: u32,
