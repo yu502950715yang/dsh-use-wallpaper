@@ -166,7 +166,10 @@ impl ParticlePass {
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
                     visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None },
+                    // read_only: false 必须与 shader 的 `var<storage, read_write>` 匹配：
+                    // layout 只给 LOAD 而 shader 声明 LOAD|STORE → wgpu-core WrongAddressSpace，
+                    // create_render_pipeline 运行时 panic（审查 Finding 3 复审修复）
+                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false, min_binding_size: None },
                     count: None,
                 },
             ],
@@ -192,15 +195,17 @@ impl ParticlePass {
             cache: None,
         });
 
-        // 加法混合（粒子发光叠加，透明背景上 alpha 0 无贡献）
+        // 加法混合：SrcAlpha/One（对齐 Three.js AdditiveBlending）——fragment 的
+        // v_life_alpha 参与混合，寿命淡出生效（审查 Finding 3 附带修复：原 One/One
+        // 忽略 alpha，死亡粒子以全亮度残留为固定亮斑）。
         let additive = wgpu::BlendState {
             color: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::One,
+                src_factor: wgpu::BlendFactor::SrcAlpha,
                 dst_factor: wgpu::BlendFactor::One,
                 operation: wgpu::BlendOperation::Add,
             },
             alpha: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::One,
+                src_factor: wgpu::BlendFactor::SrcAlpha,
                 dst_factor: wgpu::BlendFactor::One,
                 operation: wgpu::BlendOperation::Add,
             },
