@@ -26,3 +26,19 @@ fn parses_particle_objects_with_effects() {
     assert!(!parts.is_empty());
     assert!(parts.iter().all(|o| o.particle.is_some()));
 }
+
+#[test]
+fn empty_image_string_classified_as_particle() {
+    // 对齐 TS parseSceneJson（scene-json.ts:38 `o.image && ...` falsy 语义）：
+    // image 空串与无 image 等价 → 无引用对象按空粒子处理（不渲染）
+    let desc = parse_scene(r#"{"objects":[{"image":""}]}"#);
+    assert_eq!(desc.objects[0].kind, ObjectKind::Particle);
+    assert!(desc.objects[0].image.as_deref().is_some());
+}
+
+#[test]
+fn util_image_prefix_classified_as_util() {
+    // WE 内置合成层/全屏层/项目层（models/util/*.json）：效果链容器，归类 util
+    let desc = parse_scene(r#"{"objects":[{"image":"models/util/fullscreen.json"}]}"#);
+    assert_eq!(desc.objects[0].kind, ObjectKind::Util);
+}

@@ -62,8 +62,16 @@ pub fn parse_scene(json: &str) -> SceneDesc {
         let kind = if o.particle.as_deref().map_or(false, |s| !s.is_empty()) {
             ObjectKind::Particle
         } else if let Some(img) = o.image.as_deref() {
-            // WE 内置合成层/全屏层/项目层（models/util/*.json）：效果链容器，归类 util
-            if img.starts_with("models/util/") { ObjectKind::Util } else { ObjectKind::Image }
+            // 对齐 TS parseSceneJson（scene-json.ts:38 `o.image && ...` falsy 语义）：
+            // image 空串与无 image 等价 → 无引用对象按空粒子处理（不渲染）
+            if img.is_empty() {
+                ObjectKind::Particle
+            } else if img.starts_with("models/util/") {
+                // WE 内置合成层/全屏层/项目层（models/util/*.json）：效果链容器，归类 util
+                ObjectKind::Util
+            } else {
+                ObjectKind::Image
+            }
         } else {
             // 无引用对象按空粒子处理（不渲染）
             ObjectKind::Particle
