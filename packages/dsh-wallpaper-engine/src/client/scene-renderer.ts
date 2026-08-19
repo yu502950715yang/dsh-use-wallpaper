@@ -62,9 +62,11 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
   const screenCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, -1000, 1000);
   screenCamera.position.z = CAMERA_DISTANCE;
   const screenScene = new THREE.Scene();
+  // 贴屏 quad 必须 transparent：contain 留白区（场景未覆盖处）alpha 为 0，
+  // 否则 OPAQUE 强制 alpha=1 → 黑边并完全遮挡 bg 模糊层（spec §3.1）
   const screenQuad = new THREE.Mesh(
     new THREE.PlaneGeometry(2, 2),
-    new THREE.MeshBasicMaterial({ map: sceneRT.texture }),
+    new THREE.MeshBasicMaterial({ map: sceneRT.texture, transparent: true }),
   );
   screenQuad.frustumCulled = false;
   screenScene.add(screenQuad);

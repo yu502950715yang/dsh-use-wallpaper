@@ -82,4 +82,49 @@ describe('preprocessWeShader', () => {
     const out = preprocessWeShader('#if MASK\nfloat x = 1.0;\n#endif\nvoid main() {}', {});
     expect(out).toContain('#define MASK 0');
   });
+  it('int 字面量浮点化（GLSL3 禁止 int/float 混算）', () => {
+    const src = 'uniform float g_T; void main() { float a = 1 - g_T; float b = 1; gl_FragColor = vec4(a, b, 0, 1); }';
+    const out = preprocessWeShader(src, {});
+    expect(out).toContain('1.0 - g_T');
+    expect(out).toContain('float b = 1.0;');
+    expect(out).not.toContain('= 1;');
+    expect(out).not.toContain('1 - g_T');
+  });
+  it('const 非常量初始化降级（GLSL3 只允许编译期常量）', () => {
+    const src = 'uniform float u_t; uniform float u_g;\nconst float threshold = pow(u_t, u_g);\nvoid main() { gl_FragColor = vec4(threshold); }';
+    const out = preprocessWeShader(src, {});
+    // const 降级：不再有 const 声明；全局非常量初始化随后移入 main
+    expect(out).not.toContain('const float threshold');
+    expect(out).toContain('float threshold;');
+    expect(out).toContain('threshold = pow(u_t, u_g);');
+  });
+  it('全局非常量初始化移入 main（GLSL3 全局初始化须编译期常量）', () => {
+    // 多行真实格式（单行内联时按行匹配不到以分号结尾的声明）
+    const src = 'uniform float u_t;\nfloat threshold = pow(u_t, 2.0);\nvoid main() { gl_FragColor = vec4(threshold); }';
+    const out = preprocessWeShader(src, {});
+    expect(out).toContain('float threshold;');            // 全局声明保留
+    expect(out).toContain('threshold = pow(u_t, 2.0);');  // 初始化移入 main
+  });
+  it('GLSL3 保留字改写（sample/pointer 作标识符非法）', () => {
+    const src = 'void main() { float sample = 1.0; float pointer = 2.0; gl_FragColor = vec4(sample, pointer, 0.0, 1.0); }';
+    const out = preprocessWeShader(src, {});
+    expect(out).toContain('float sample_ = 1.0;');
+    expect(out).toContain('float pointer_ = 2.0;');
+    expect(out).not.toContain('float sample ');
+    expect(out).not.toContain('float pointer ');
+  });
+  it('sampler 声明前置（common_blur.h 引用 g_Texture0 须先声明）', () => {
+    const src = '#include "common_blur.h"\nuniform sampler2D g_Texture0;\nvoid main() { gl_FragColor = blur13a(vec2(0.5), vec2(1.0, 0.0)); }';
+    const out = preprocessWeShader(src, {});
+    const declIdx = out.indexOf('uniform sampler2D g_Texture0');
+    const blurIdx = out.indexOf('vec4 blur13a(');
+    expect(declIdx).toBeGreaterThan(-1);
+    expect(blurIdx).toBeGreaterThan(-1);
+    expect(declIdx).toBeLessThan(blurIdx); // sampler 声明在 blur13a 定义之前
+  });
+  it('[COMBO] 注释 default 注入（BLENDMODE 等不在 #if 内的宏）', () => {
+    const src = '// [COMBO] {"material":"blend","combo":"BLENDMODE","type":"imageblending","default":9}\nuniform int g_Mode;\nvoid main() { gl_FragColor = vec4(float(g_Mode) + float(BLENDMODE)); }';
+    const out = preprocessWeShader(src, {});
+    expect(out).toContain('#define BLENDMODE 9'); // scene.json 未提供时用注释 default
+  });
 });

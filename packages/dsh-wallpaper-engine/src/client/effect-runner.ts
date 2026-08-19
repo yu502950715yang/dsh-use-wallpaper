@@ -77,7 +77,23 @@ export class EffectRunner {
           value: new THREE.Vector4(this.width, this.height, 1 / Math.max(1, this.width), 1 / Math.max(1, this.height)),
         };
       }
-      // 全屏 quad 在 NDC 下直接输出：模型/视图/投影矩阵取单位阵（WE 行主序 mul(v,M)=M*v）
+      // 全屏 quad 在 NDC 下直接输出：模型/视图/投影矩阵取单位阵（WE 行主序 mul(v,M)=M*v）。
+      // 其他 mat* uniform（g_ModelViewMatrix 等）：binder 对无值 mat 给 0（number），
+      // three 探针渲染时 uniformMatrixNfv 转换失败误判编译失败 → 从 shader 源码提取
+      // matN 声明，按维度预建单位矩阵数组（mat2=4 / mat3=9 / mat4=16 元素）。
+      const matRe = /uniform\s+mat([234])\s+(\w+)/g;
+      const matDefs = new Map<string, number>();
+      for (const src of [pass.vertSrc, pass.fragSrc]) {
+        for (const m of src.matchAll(matRe)) matDefs.set(m[2], Number(m[1]));
+      }
+      for (const [name, dim] of matDefs) {
+        if (uniforms[name] && typeof uniforms[name].value === 'number') {
+          const n = dim * dim;
+          const id = new Array(n).fill(0);
+          for (let i = 0; i < n; i += dim + 1) id[i] = 1; // 单位阵
+          uniforms[name].value = id;
+        }
+      }
       if (uniforms['g_ModelViewProjectionMatrix']) {
         uniforms['g_ModelViewProjectionMatrix'].value = new THREE.Matrix4();
       }

@@ -164,8 +164,8 @@ function relaxGlsl3Strictness(src: string): string {
       const expr = m[3].trim();
       if (/^-?[\d.]+$/.test(expr) || /^(true|false)$/.test(expr)) continue; // 纯常量
       if (/^(?:CAST[234]|vec[234]|mat[234])\s*\(\s*-?[\d.]+\s*\)$/.test(expr)) continue; // 纯常量构造
-      // 拆分：原位置保留 `type name;`，初始化语句插入 main 第一行后
-      lines[i] = l.replace(`= ${expr};`, ';');
+      // 拆分：原位置保留 `type name;`（去掉等号前的尾部空格），初始化语句插入 main 第一行后
+      lines[i] = l.replace(/\s*=\s*[^;]*;\s*$/, ';');
       moved.push(`\t${m[2]} = ${expr};`);
     }
     if (moved.length) lines.splice(mainIdx + 1, 0, ...moved);
