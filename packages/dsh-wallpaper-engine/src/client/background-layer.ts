@@ -45,6 +45,15 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
 
   function clear() { fill.replaceChildren(); }
 
+  // 壁纸激活标记：有壁纸时挂 data-we-wallpaper（styles.ts 主题分支作用域），
+  // 无壁纸时移除——背景透明化/文字对比度提升仅在有壁纸时生效（浅色模式适配）。
+  function markActive(): void {
+    document.body.setAttribute('data-we-wallpaper', 'true');
+  }
+  function markInactive(): void {
+    document.body.removeAttribute('data-we-wallpaper');
+  }
+
   return {
     root,
     showImage(url, kenBurns) {
@@ -53,6 +62,7 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
       img.src = url;
       applyKenBurns(img, kenBurns);
       fill.appendChild(img);
+      markActive();
     },
     showVideo(url) {
       clear();
@@ -63,6 +73,7 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
       video.muted = true;
       video.playsInline = true;
       fill.appendChild(video);
+      markActive();
     },
     showWeb(url) {
       clear();
@@ -74,6 +85,7 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
       frame.setAttribute('sandbox', 'allow-scripts');
       frame.setAttribute('allow', 'autoplay; fullscreen');
       fill.appendChild(frame);
+      markActive();
     },
     showSceneCanvas(canvas, blurCanvas) {
       clear();
@@ -85,8 +97,9 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
       }
       canvas.classList.add('wp-scene-canvas');
       fill.appendChild(canvas);
+      markActive();
     },
-    showNone() { clear(); },
+    showNone() { clear(); markInactive(); },
     setOverlayOpacity(v) { overlay.style.opacity = String(v); },
     setBlur(enabled, radius) {
       fill.style.filter = enabled ? `blur(${radius}px)` : '';

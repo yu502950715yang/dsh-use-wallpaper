@@ -23,4 +23,28 @@ describe('createBackgroundLayer (DOM)', () => {
     const overlay = root.querySelector('.wp-bg-overlay') as HTMLElement;
     expect(overlay.style.opacity).toBe('0.5');
   });
+  it('sets data-we-wallpaper on body when wallpaper active, removes when none', () => {
+    document.body.innerHTML = '';
+    document.body.removeAttribute('data-we-wallpaper');
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    const layer = createBackgroundLayer(root);
+    expect(document.body.hasAttribute('data-we-wallpaper')).toBe(false);
+    layer.showImage('/p.gif', false);
+    expect(document.body.getAttribute('data-we-wallpaper')).toBe('true');
+    layer.showNone();
+    expect(document.body.hasAttribute('data-we-wallpaper')).toBe(false);
+  });
+  it('keeps data-we-wallpaper across media switches, clears on showNone', () => {
+    document.body.innerHTML = '';
+    document.body.removeAttribute('data-we-wallpaper');
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    const layer = createBackgroundLayer(root);
+    layer.showImage('/a.jpg', true);
+    layer.showVideo('/b.mp4');
+    expect(document.body.getAttribute('data-we-wallpaper')).toBe('true');
+    layer.showNone();
+    expect(document.body.hasAttribute('data-we-wallpaper')).toBe(false);
+  });
 });
