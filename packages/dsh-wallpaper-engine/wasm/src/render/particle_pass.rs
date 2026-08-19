@@ -9,14 +9,16 @@ use crate::coords;
 use crate::particle::ParticleSpec;
 
 /// 发射器参数 uniform。repr(C) 布局与 `src/shaders/particle.wgsl` 的
-/// `EmitterParams` 严格对齐（std140：vec3 后补 4 字节 pad，Rust 侧显式 _padN 字段），
+/// `EmitterParams` 严格对齐（std140：vec3 后补 4 字节 pad，Rust 侧显式字段），
 /// 尺寸 160 字节（16 的倍数，满足 uniform 绑定对齐）。
+/// 原 _pad0/_pad1/_pad2 槽复用为 view_w/view_h/elapsed（审查修复：投影与时间演化），
+/// 剩余 _pad3.._pad9 保持占位。
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct EmitterParams {
-    pub origin_x: f32, pub origin_y: f32, pub origin_z: f32, pub _pad0: f32,
-    pub scale_x: f32, pub scale_y: f32, pub scale_z: f32, pub _pad1: f32,
-    pub rate: f32, pub distance_min: f32, pub distance_max: f32, pub _pad2: f32,
+    pub origin_x: f32, pub origin_y: f32, pub origin_z: f32, pub view_w: f32,
+    pub scale_x: f32, pub scale_y: f32, pub scale_z: f32, pub view_h: f32,
+    pub rate: f32, pub distance_min: f32, pub distance_max: f32, pub elapsed: f32,
     pub directions_x: f32, pub directions_y: f32, pub directions_z: f32, pub _pad3: f32,
     pub life_min: f32, pub life_max: f32, pub size_min: f32, pub size_max: f32,
     pub vel_min_x: f32, pub vel_min_y: f32, pub vel_min_z: f32, pub _pad4: f32,
@@ -31,6 +33,7 @@ pub struct EmitterParams {
 
 impl EmitterParams {
     /// CPU 侧坐标映射（WE 左上原点 → 中心原点、y 向上；scale.y 取负）后打包 uniform。
+    /// view_w/view_h 为视口像素尺寸（vs_main 裁剪坐标映射用），elapsed 初始 0（step 累加）。
     pub fn from_spec(spec: &ParticleSpec, origin: [f32; 3], scale: [f32; 3], vw: f32, vh: f32) -> EmitterParams {
         let c = coords::origin_to_center(origin, vw, vh);
         let s = coords::particle_scale(scale);
@@ -38,6 +41,7 @@ impl EmitterParams {
         EmitterParams {
             origin_x: c[0], origin_y: c[1], origin_z: c[2],
             scale_x: s[0], scale_y: s[1], scale_z: s[2],
+            view_w: vw, view_h: vh, elapsed: 0.0,
             rate: spec.emitter.rate,
             distance_min: spec.emitter.distance_min,
             distance_max: spec.emitter.distance_max,
@@ -55,8 +59,7 @@ impl EmitterParams {
             color_max_g: i.color_max.map(|c| c[1]).unwrap_or(1.0),
             color_max_b: i.color_max.map(|c| c[2]).unwrap_or(1.0),
             dt: 0.0, max_particles: 2048,
-            _pad0: 0.0, _pad1: 0.0, _pad2: 0.0, _pad3: 0.0,
-            _pad4: 0.0, _pad5: 0.0, _pad6: 0.0, _pad7: 0.0,
+            _pad3: 0.0, _pad4: 0.0, _pad5: 0.0, _pad6: 0.0, _pad7: 0.0,
             _pad8: 0, _pad9: 0,
         }
     }
@@ -101,13 +104,15 @@ impl ParticlePass {
         let particles_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("particles"),
             size: particle_bytes as u64,
-            usage: wgpu::BufferUsages::STORAGE,
+            // COPY_DST 必需：queue.write_buffer 初始化（WebGPU writeBuffer 目标必须含 COPY_DST，
+            // 否则 wgpu-core 校验失败 / webgpu 后端 panic——审查 Critical）
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         let count_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("particle-count"),
             size: 4,
-            usage: wgpu::BufferUsages::STORAGE,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         let param_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -210,7 +215,9 @@ impl ParticlePass {
                 buffers: &[],
             },
             primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::PointList,
+                // billboard quad（vs 用 vertex_index 推导角点；PointList 的 point_size
+                // builtin 在 naga 24.0.0/wgpu 24 不可用——见 particle.wgsl 头部注释）
+                topology: wgpu::PrimitiveTopology::TriangleList,
                 ..Default::default()
             },
             depth_stencil: None,
@@ -260,10 +267,11 @@ impl ParticlePass {
         }
     }
 
-    /// GPU 模拟一帧：更新 uniform dt → dispatch compute。
+    /// GPU 模拟一帧：更新 uniform dt + 累计 elapsed → dispatch compute。
     pub fn step(&self, queue: &wgpu::Queue, dt: f32) {
         let mut params = self.params.get();
         params.dt = dt;
+        params.elapsed += dt;
         self.params.set(params);
         queue.write_buffer(&self.param_buffer, 0, bytemuck::bytes_of(&params));
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -281,7 +289,7 @@ impl ParticlePass {
         queue.submit([encoder.finish()]);
     }
 
-    /// 点渲染到目标视图（Load 不清除，叠加在既有内容上，加法混合）。
+    /// billboard quad 渲染到目标视图（Load 不清除，叠加在既有内容上，加法混合）。
     pub fn render(&self, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView) {
         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("particle-render-pass"),
@@ -296,6 +304,7 @@ impl ParticlePass {
         });
         rpass.set_pipeline(&self.render_pipeline);
         rpass.set_bind_group(0, &self.render_bind_group, &[]);
-        rpass.draw(0..1, 0..self.max_particles);
+        // 每粒子一个 billboard quad（4 顶点，vertex_index 0..3 推导角点）
+        rpass.draw(0..4, 0..self.max_particles);
     }
 }

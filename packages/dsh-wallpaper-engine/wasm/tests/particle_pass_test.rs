@@ -21,6 +21,10 @@ fn emitter_params_applies_coords_and_flips_scale_y() {
     assert!(p.origin_x.abs() < 1e-3 && p.origin_y.abs() < 1e-3, "原点应映射到中心: ({},{})", p.origin_x, p.origin_y);
     assert_eq!(p.scale_y, -1.0);
     assert_eq!(p.rate, 10.0);
+    // 审查修复：投影/时间演化字段打包正确
+    assert_eq!(p.view_w, 2400.0);
+    assert_eq!(p.view_h, 1555.0);
+    assert_eq!(p.elapsed, 0.0);
 }
 
 #[test]
@@ -28,10 +32,14 @@ fn emitter_params_layout_matches_wgsl_std140() {
     // uniform 结构体布局与 src/shaders/particle.wgsl 的 EmitterParams（std140）
     // 严格对齐（经 naga 24 校验：span=160，下列成员偏移一致）。
     // 160 = 16 的倍数，满足 uniform buffer 绑定对齐；repr(C) 无隐式填充差异。
+    // 审查修复后：_pad0/_pad1/_pad2 槽改名为 view_w/view_h/elapsed（偏移不变）。
     assert_eq!(std::mem::size_of::<EmitterParams>(), 160);
     assert_eq!(std::mem::offset_of!(EmitterParams, origin_x), 0);
+    assert_eq!(std::mem::offset_of!(EmitterParams, view_w), 12);
     assert_eq!(std::mem::offset_of!(EmitterParams, scale_y), 20);
+    assert_eq!(std::mem::offset_of!(EmitterParams, view_h), 28);
     assert_eq!(std::mem::offset_of!(EmitterParams, rate), 32);
+    assert_eq!(std::mem::offset_of!(EmitterParams, elapsed), 44);
     assert_eq!(std::mem::offset_of!(EmitterParams, directions_x), 48);
     assert_eq!(std::mem::offset_of!(EmitterParams, life_min), 64);
     assert_eq!(std::mem::offset_of!(EmitterParams, vel_min_x), 80);
