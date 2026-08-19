@@ -9,6 +9,7 @@ import { registerWallpaperRoutes, getPkgReader } from '../src/host/routes.js';
 //  handler 内自解析 req.url；mock 捕获 {kind, path, handler}，req 用最小伪对象 { url }）
 
 let dir: string;
+let staticDir: string;
 let routes: Map<string, (req: any, res: any) => void>;
 let captured: Array<{ kind: string; path: string }>;
 
@@ -42,6 +43,8 @@ function makeRes() {
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'wp-route-'));
+  staticDir = join(dir, 'static');
+  mkdirSync(staticDir, { recursive: true });
   routes = new Map();
   captured = [];
 });
@@ -54,6 +57,7 @@ describe('registerWallpaperRoutes', () => {
       { kind: 'exact', path: '/wallpapers/list' },
       { kind: 'prefix', path: '/wallpapers/media' },
       { kind: 'prefix', path: '/wallpapers/scene' },
+      { kind: 'prefix', path: '/wallpapers/static' },
       { kind: 'prefix', path: '/wallpapers/web' },
     ]);
   });
@@ -212,5 +216,49 @@ describe('registerWallpaperRoutes', () => {
     const r4 = makeRes();
     await handler({ url: '/wallpapers/web/other/id' }, r4);
     expect(r4.statusCode).toBe(404);
+  });
+  it('静态资源路由：服务插件 wasm 产物（.js/.wasm），带正确 MIME 与 no-store', async () => {
+    writeFileSync(join(staticDir, 'we_scene_wasm.js'), 'export const WeScene = {};');
+    writeFileSync(join(staticDir, 'we_scene_wasm_bg.wasm'), Buffer.from([0x00, 0x61, 0x73, 0x6d]));
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir, staticDir });
+    const handler = routes.get('prefix /wallpapers/static')!;
+
+    const r1 = makeRes();
+    await handler({ url: '/wallpapers/static/we_scene_wasm.js' }, r1);
+    expect(r1.statusCode).toBe(200);
+    expect(r1.headers['Content-Type']).toContain('application/javascript');
+    expect(r1.headers['Cache-Control']).toBe('no-store');
+    expect(r1.body.toString('utf8')).toContain('WeScene');
+
+    const r2 = makeRes();
+    await handler({ url: '/wallpapers/static/we_scene_wasm_bg.wasm' }, r2);
+    expect(r2.statusCode).toBe(200);
+    expect(r2.headers['Content-Type']).toBe('application/wasm');
+    expect(r2.body).toEqual(Buffer.from([0x00, 0x61, 0x73, 0x6d]));
+  });
+  it('静态资源路由：穿越与非法文件名被拒绝', async () => {
+    writeFileSync(join(staticDir, 'ok.js'), 'ok');
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir, staticDir });
+    const handler = routes.get('prefix /wallpapers/static')!;
+
+    // '..' 段被 WHATWG URL 规范化折叠 → 段数不足 → 400（无法越界即防护生效）
+    const r1 = makeRes();
+    await handler({ url: '/wallpapers/static/../secret' }, r1);
+    expect(r1.statusCode).toBe(400);
+
+    // 编码斜杠 %2F（不产生新段、保留在文件名中）→ isSafeToken 拒绝 → 400
+    const r2 = makeRes();
+    await handler({ url: '/wallpapers/static/a%2Fb.js' }, r2);
+    expect(r2.statusCode).toBe(400);
+
+    // 多段路径 → 400
+    const r4 = makeRes();
+    await handler({ url: '/wallpapers/static/a/b.js' }, r4);
+    expect(r4.statusCode).toBe(400);
+
+    // 文件不存在 → 404
+    const r3 = makeRes();
+    await handler({ url: '/wallpapers/static/nope.js' }, r3);
+    expect(r3.statusCode).toBe(404);
   });
 });

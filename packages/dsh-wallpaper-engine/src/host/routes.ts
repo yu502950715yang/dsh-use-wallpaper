@@ -4,7 +4,7 @@ import { scanWallpapers } from './scanner.js';
 import { PkgReader } from './pkg-reader.js';
 import type { WallpaperInfo } from '../shared/types.js';
 
-export interface WallpaperRoutesOptions { wallpaperDir: string }
+export interface WallpaperRoutesOptions { wallpaperDir: string; staticDir?: string }
 
 // I4：PkgReader 实例缓存 —— scene asset 每请求整包 readFileSync 成本高，
 // 按 (path, mtime) 缓存，mtime 变化才重建；Map 超出上限时淘汰最旧一项。
@@ -48,6 +48,7 @@ const MIME: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',
   '.js': 'application/javascript; charset=utf-8',
   '.mjs': 'application/javascript; charset=utf-8',
+  '.wasm': 'application/wasm',
   '.txt': 'text/plain; charset=utf-8',
   '.woff': 'font/woff',
   '.woff2': 'font/woff2',
@@ -163,6 +164,41 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
           res.end(entry);
         } catch {
           // 固定文案，不泄漏内部错误信息
+          json(res, 500, { error: 'internal error' });
+        }
+      },
+    });
+
+    server.register({
+      kind: 'prefix', path: '/wallpapers/static',
+      // 匹配 /wallpapers/static/<file>：服务插件构建产物（wasm 引擎 glue + .wasm 等，
+      // scripts/build-client.mjs 输出到 dist/static/）。
+      handler: (_req: any, res: any) => {
+        const { segs } = parseUrl(_req);
+        // 静态资源必须是单段文件名（无子目录）
+        if (segs.length !== 3) return json(res, 400, { error: 'bad path' });
+        const file = segs[2];
+        if (!isSafeToken(file)) return json(res, 400, { error: 'bad file' });
+        if (!opts.staticDir) return json(res, 500, { error: 'no static dir' });
+        const base = opts.staticDir;
+        const p = join(base, file);
+        // 二次校验：解析结果必须位于静态目录内（isSafeToken 已禁 '..' 与 '/'，
+        // 此处兜底软链/编码变体等绕过）
+        if (p !== base && !p.startsWith(base + '\\') && !p.startsWith(base + '/')) {
+          return json(res, 400, { error: 'bad path' });
+        }
+        if (!existsSync(p) || !statSync(p).isFile()) return json(res, 404, { error: 'no such file' });
+        try {
+          const body = readFileSync(p);
+          const ext = '.' + file.split('.').pop()?.toLowerCase();
+          // 静态产物随构建覆盖同名文件，no-store 与场景资源一致，避免浏览器缓存陈旧版本
+          res.writeHead(200, {
+            'Content-Type': MIME[ext] ?? 'application/octet-stream',
+            'Content-Length': body.length,
+            'Cache-Control': 'no-store',
+          });
+          res.end(body);
+        } catch {
           json(res, 500, { error: 'internal error' });
         }
       },

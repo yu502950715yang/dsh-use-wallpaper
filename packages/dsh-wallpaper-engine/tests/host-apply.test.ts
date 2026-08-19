@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { apply } from '../src/host/index.js';
 
 // C1 集成测试：apply(ctx) 除注册 settings 外，必须经 registerWallpaperRoutes
-// 挂载 3 条壁纸路由，且 wallpaperDir 取自 ctx.config（缺省为 Steam workshop 路径）。
+// 挂载 5 条壁纸路由，且 wallpaperDir 取自 ctx.config（缺省为 Steam workshop 路径）。
 
 let dir: string;
 let registered: Array<{ kind: string; path: string }>;
@@ -48,12 +48,13 @@ beforeEach(() => {
 afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
 
 describe('apply (host entry)', () => {
-  it('注册 settings 命名空间并挂载 4 条壁纸路由', () => {
+  it('注册 settings 命名空间并挂载 5 条壁纸路由', () => {
     apply(makeCtx());
     expect(registered).toEqual([
       { kind: 'exact', path: '/wallpapers/list' },
       { kind: 'prefix', path: '/wallpapers/media' },
       { kind: 'prefix', path: '/wallpapers/scene' },
+      { kind: 'prefix', path: '/wallpapers/static' },
       { kind: 'prefix', path: '/wallpapers/web' },
     ]);
   });

@@ -2,6 +2,7 @@ import { injectWallpaperStyles } from './styles.js';
 import { createBackgroundLayer } from './background-layer.js';
 import { createWallpaperController } from './wallpaper-controller.js';
 import { renderScene } from './scene-renderer.js';
+import { createWasmSceneRenderer } from './wasm-renderer.js';
 import { mountPicker as mountPickerUI } from './picker.js';
 import { readClientSettings, writeClientSettings } from './settings.js';
 import type { BackgroundPlan, ClientSettings } from './types.js';
@@ -35,7 +36,10 @@ export function bootstrap(): void {
     layer = createBackgroundLayer(root);
     controller = createWallpaperController(layer, {
       fetchList: async () => (await fetch('/wallpapers/list')).json(),
-      sceneRenderer: { render: renderScene }, // scene 壁纸 → Three.js 实时渲染（失败回退 preview）
+      sceneRenderer: createWasmSceneRenderer() ?? { render: renderScene },
+      // Task 8 回退链：WebGPU 可用 → wasm 渲染器（Rust/wgpu 引擎）；否则回退现有
+      // Three.js 渲染器。两者都实现同一 sceneRenderer 接口（渲染失败 resolve false
+      // → controller 统一走 preview 图回退）。
     });
     // I2：浮动入口按钮 + picker 面板（不依赖 DSH 设置面板 slot API，避免未知集成风险）
     const fab = document.createElement('button');
