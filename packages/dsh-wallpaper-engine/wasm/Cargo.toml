@@ -6,10 +6,21 @@ edition = "2021"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+default = []
+# 渲染层（wgpu）：仅 wasm 构建启用（native cargo test 只跑解析/数学模块）。
+# wgpu 的 SurfaceTarget::Canvas 变体仅存在于 wasm32 目标，native 无法编译渲染代码，
+# 故必须 feature 隔离（brief Step 4b）。wasm 构建：cargo build --target wasm32-unknown-unknown --features render
+render = ["dep:wgpu", "dep:web-sys", "dep:js-sys", "dep:wasm-bindgen-futures", "dep:console_error_panic_hook"]
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 lz4_flex = "0.11"
 bytemuck = { version = "1", features = ["derive"] }
 wasm-bindgen = "0.2"
-# wgpu 在 Task 5 引入；本任务保持解析模块无 wgpu 依赖
+wgpu = { version = "24", optional = true }
+web-sys = { version = "0.3", features = ["HtmlCanvasElement"], optional = true }
+js-sys = { version = "0.3", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+console_error_panic_hook = { version = "0.1", optional = true }
