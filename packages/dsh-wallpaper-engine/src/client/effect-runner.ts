@@ -7,11 +7,12 @@ import { loadTexTexture } from './tex-loader.js';
 
 // 纹理槽路径推导（spec §3.4 / P0-1）：补 materials/ 前缀 + .tex 后缀；
 // 内置 util/ 与运行时 _rt_ 引用原样透传（走回退分支，不 fetch）。
+// 前缀先判：'materials/x'（带前缀无后缀）只补后缀，避免双重前缀。
 export function resolveTextureSlotPath(path: string | null | undefined): string | null {
   if (!path) return null;
   if (path.startsWith('util/') || path.startsWith('_rt_')) return path; // 内置/运行时：走回退分支
-  if (path.endsWith('.tex')) return path.startsWith('materials/') ? path : 'materials/' + path;
-  return 'materials/' + path + '.tex';
+  const p = path.startsWith('materials/') ? path : 'materials/' + path;
+  return p.endsWith('.tex') ? p : p + '.tex';
 }
 
 // mulberry32（与 particles.ts 同种子算法），确定性噪声
@@ -29,10 +30,12 @@ const BUILTIN_CACHE = new Map<string, THREE.Texture>();
 
 export function resolveBuiltinTexture(path: string | null | undefined): THREE.Texture | null {
   if (!path) return null;
+  // 兼容带 .tex 后缀的内置路径（'util/noise.tex' 这类 scene.json 写法）
+  const p = path.replace(/\.tex$/, '');
   let key: string;
-  if (path === 'util/white') key = 'white';
-  else if (path === 'util/noise' || path === 'util/clouds_256') key = 'noise256';
-  else if (path.startsWith('_rt_')) key = 'white'; // 运行时 RT 一期回退白（A6 合成层精化）
+  if (p === 'util/white') key = 'white';
+  else if (p === 'util/noise' || p === 'util/clouds_256') key = 'noise256';
+  else if (p.startsWith('_rt_')) key = 'white'; // 运行时 RT 一期回退白（A6 合成层精化）
   else return null;
   const cached = BUILTIN_CACHE.get(key);
   if (cached) return cached;

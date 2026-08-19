@@ -22,6 +22,10 @@ describe('resolveTextureSlotPath（纹理槽路径推导）', () => {
   it('已完整路径不变', () => {
     expect(resolveTextureSlotPath('materials/masks/x.tex')).toBe('materials/masks/x.tex');
   });
+  it('带 materials/ 前缀但无 .tex 后缀 → 仅补后缀（不双重前缀）', () => {
+    expect(resolveTextureSlotPath('materials/masks/x')).toBe('materials/masks/x.tex');
+    expect(resolveTextureSlotPath('materials/x')).toBe('materials/x.tex');
+  });
   it('内置 util 与运行时 _rt_ 原样透传', () => {
     expect(resolveTextureSlotPath('util/white')).toBe('util/white');
     expect(resolveTextureSlotPath('_rt_FullFrameBuffer')).toBe('_rt_FullFrameBuffer');
@@ -44,6 +48,11 @@ describe('resolveBuiltinTexture（内置/运行时纹理回退）', () => {
       expect(tex).not.toBeNull();
       expect(tex!.image.width).toBe(256);
     }
+  });
+  it('带 .tex 后缀的内置路径同样识别（util/noise.tex）', () => {
+    const tex = resolveBuiltinTexture('util/noise.tex');
+    expect(tex).not.toBeNull();
+    expect(tex!.image.width).toBe(256);
   });
   it('_rt_* → 白色回退', () => {
     expect(resolveBuiltinTexture('_rt_imageLayerComposite_1_a')).not.toBeNull();

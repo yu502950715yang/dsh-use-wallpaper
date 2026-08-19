@@ -188,10 +188,18 @@ export function preprocessWeShader(source: string, combos: Record<string, number
   });
   let out = src;
   const hadExplicitCommon = out.includes('#include "common.h"');
-  // 展开内置头 include（仅处理 WE_HEADERS 已知的头；未知 include 保留原样）
-  for (const [name, header] of Object.entries(WE_HEADERS)) {
-    out = out.split(`#include "${name}"`).join(header);
-  }
+  // 展开内置头 include（仅处理 WE_HEADERS 已知的头；未知 include 保留原样）。
+  // 嵌套头迭代展开至稳定：common_composite.h 内含 #include "common.h"/
+  // "common_blending.h"，单趟 Object.entries 循环会残留（composite 键序在
+  // common 之后，内层 include 的展开时机已过）——头自带 #ifndef guard 防
+  // 重复定义，迭代安全。
+  let prev: string;
+  do {
+    prev = out;
+    for (const [name, header] of Object.entries(WE_HEADERS)) {
+      out = out.split(`#include "${name}"`).join(header);
+    }
+  } while (out !== prev);
   // WE 引擎对所有效果 shader 隐式提供基础函数头（common.h）：
   // 全库实测 114/182 个 shader 无任何 include 却直接调用 mul/texSample2D/frac 等，
   // 故未显式 include common.h 的 shader 前置注入（guard 宏防止与显式 include 重复）

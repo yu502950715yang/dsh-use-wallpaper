@@ -194,9 +194,9 @@ vec4 blurRadial3a(vec2 u, vec2 center, float amt)
 #endif
 `;
 
-// 图像混合（common_blending.h）：ApplyBlending(mode, src, dst, alpha)
-// BLENDMODE 取值（全库实测）：0=normal、9=add、12=multiply、30/31 为高级模式
-// （浏览器验证期按实际画面补充 30/31 语义；缺省回退 normal）
+// 图像混合（common_blending.h，引擎真实实现逐字转写）：宏驱动 ApplyBlending，
+// BLENDMODE 1-32 编译期分支（12=SoftLight、30=Tint、31=线性加 A+B*opacity，default=BlendNormal）。
+// BLENDMODE 宏由 scene.json combos 注入，未提供时 #if 裸标识符兜底 #define BLENDMODE 0。
 // 返回类型：vec3 —— 全库 5 处调用均赋给 vec3 / .rgb（tint/Simple_Audio_Bars/
 // chromatic_aberration/apply/gaussian），WE 引擎语义是仅 rgb 参与混合。
 const COMMON_BLENDING_H = `

@@ -134,4 +134,11 @@ describe('preprocessWeShader', () => {
     expect(out).not.toContain('1e-10.0');
     expect(out).not.toContain('1.5e-3.0');
   });
+  it('嵌套 include 递归展开（common_composite.h 内层 common.h/common_blending.h 不残留）', () => {
+    const out = preprocessWeShader('#include "common_composite.h"\nvoid main() { gl_FragColor = vec4(1.0); }', {});
+    expect(out).not.toMatch(/#include\s*"/);
+    expect(out).toContain('ApplyCompositeOffset');
+    expect(out).toContain('ApplyBlending');  // 内层 common_blending.h 已展开
+    expect(out).toContain('greyscale');      // 内层 common.h 已展开
+  });
 });
