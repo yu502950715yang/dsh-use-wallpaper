@@ -5,6 +5,55 @@ import * as THREE from 'three';
 import type { CompiledEffectPass } from './shader/effect-chain.js';
 import { loadTexTexture } from './tex-loader.js';
 
+// 纹理槽路径推导（spec §3.4 / P0-1）：补 materials/ 前缀 + .tex 后缀；
+// 内置 util/ 与运行时 _rt_ 引用原样透传（走回退分支，不 fetch）。
+export function resolveTextureSlotPath(path: string | null | undefined): string | null {
+  if (!path) return null;
+  if (path.startsWith('util/') || path.startsWith('_rt_')) return path; // 内置/运行时：走回退分支
+  if (path.endsWith('.tex')) return path.startsWith('materials/') ? path : 'materials/' + path;
+  return 'materials/' + path + '.tex';
+}
+
+// mulberry32（与 particles.ts 同种子算法），确定性噪声
+function mulberry32(seed: number) {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const BUILTIN_CACHE = new Map<string, THREE.Texture>();
+
+export function resolveBuiltinTexture(path: string | null | undefined): THREE.Texture | null {
+  if (!path) return null;
+  let key: string;
+  if (path === 'util/white') key = 'white';
+  else if (path === 'util/noise' || path === 'util/clouds_256') key = 'noise256';
+  else if (path.startsWith('_rt_')) key = 'white'; // 运行时 RT 一期回退白（A6 合成层精化）
+  else return null;
+  const cached = BUILTIN_CACHE.get(key);
+  if (cached) return cached;
+  let tex: THREE.Texture;
+  if (key === 'white') {
+    tex = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1, THREE.RGBAFormat);
+  } else {
+    const size = 256;
+    const data = new Uint8Array(size * size * 4);
+    const rnd = mulberry32(0x51ab3e7d);
+    for (let i = 0; i < size * size; i++) {
+      const v = Math.round(rnd() * 255);
+      data[i * 4] = v; data[i * 4 + 1] = v; data[i * 4 + 2] = v; data[i * 4 + 3] = 255;
+    }
+    tex = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
+  }
+  tex.needsUpdate = true;
+  BUILTIN_CACHE.set(key, tex);
+  return tex;
+}
+
 export class EffectRunner {
   private renderer: THREE.WebGLRenderer;
   private rtA: THREE.WebGLRenderTarget;
@@ -163,10 +212,15 @@ export class EffectRunner {
 
   private async resolveTextureSlot(path: string | null): Promise<THREE.Texture | null> {
     if (!path) return null;
+    // 内置程序纹理 / 运行时 RT 引用：不 fetch，直接回退（P0-2）
+    const builtin = resolveBuiltinTexture(path);
+    if (builtin) return builtin;
     const key = `${this.id}:${path}`;
     if (this.textures.has(key)) return this.textures.get(key) ?? null;
-    const tex = await loadTexTexture(`/wallpapers/scene/${this.id}/asset?name=${encodeURIComponent(path)}`);
-    if (!tex) console.warn('[wallpaper-engine] 纹理槽加载失败，跳过:', path);
+    const resolved = resolveTextureSlotPath(path);
+    if (!resolved) return null;
+    const tex = await loadTexTexture(`/wallpapers/scene/${this.id}/asset?name=${encodeURIComponent(resolved)}`);
+    if (!tex) console.warn('[wallpaper-engine] 纹理槽加载失败，跳过:', path, '→', resolved);
     this.textures.set(key, tex);
     return tex;
   }
