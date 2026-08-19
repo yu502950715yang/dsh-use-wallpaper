@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import LZ4 from 'lz4js';
+import { fetchWithRetry } from './fetch-util.js';
 
 // Wallpaper Engine .tex 容器（TEXV0005）解析器：
 //   "TEXV0005\0" + "TEXI0001\0" + 28B 头（Format/Flags/TextureW/TextureH/ImageW/ImageH/UnkInt0）
@@ -229,11 +230,10 @@ export function flipRows(data: Uint8Array, width: number, height: number, bytesP
   return out;
 }
 
-// 单次 fetch：拉取 .tex → parseTex → 构造纹理。解析失败/格式不支持返回 null。
+// 拉取 .tex（带瞬时失败重试）→ parseTex → 构造纹理。解析失败/格式不支持返回 null。
 export async function loadTexTexture(url: string): Promise<THREE.Texture | null> {
-  const resp = await fetch(url);
-  if (!resp.ok) return null;
-  const buf = new Uint8Array(await resp.arrayBuffer());
+  const buf = await fetchWithRetry(url);
+  if (!buf) return null;
   const info = parseTex(buf);
   if (!info) return null;
   return textureFromTex(info);

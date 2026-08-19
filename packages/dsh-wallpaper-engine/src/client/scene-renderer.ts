@@ -6,6 +6,7 @@ import { fetchSceneDescription, fetchParticleSpec } from './scene-assets.js';
 import { loadTexTexture } from './tex-loader.js';
 import { EffectRunner } from './effect-runner.js';
 import { resolveEffectChain } from './shader/effect-chain.js';
+import { fetchWithRetry } from './fetch-util.js';
 
 export interface SceneRenderer {
   setScene(desc: SceneDescription): void;
@@ -275,8 +276,7 @@ export async function renderScene(id: string, fgCanvas: HTMLCanvasElement, bgCan
       const chains: import('./shader/effect-chain.js').CompiledEffectPass[][] = [];
       for (const fx of utilEffects) {
         const chain = await resolveEffectChain(fx, async (name) => {
-          const resp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(name)}`);
-          return resp.ok ? new Uint8Array(await resp.arrayBuffer()) : null;
+          return fetchWithRetry(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(name)}`);
         });
         if (chain) chains.push(chain);
         // spec §4.4：效果链解析失败 → console.warn（解析器静默返回 null，warn 职责在本层）
