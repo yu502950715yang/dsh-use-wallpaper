@@ -7,31 +7,65 @@ DSH 壁纸引擎背景插件（Cordis 插件体系）：为 DSH Web GUI 提供 W
 
 ## 安装与集成
 
-1. 依赖本包（`file:` 指向本地仓库，或经 `dsh plugin` 安装）：
+### 安装（二选一）
 
-   ```jsonc
-   // C:\Users\<user>\.dsh\profiles\web\package.json
-   {
-     "dependencies": {
-       "@dsh-use/wallpaper-engine": "file:E:/code/dsh-use-wallpaper/packages/dsh-wallpaper-engine"
-     },
-     "dsh": { "profile": { "bundles": ["@dsh-use/wallpaper-engine"] } }
-   }
-   ```
+**方式 A：dsh plugin 命令（推荐）**
 
-2. 将本包 `cordis.patch.yml`（注册插件 + `wallpaperDir` 配置）并入 profile 的 `C:\Users\<user>\.dsh\profiles\web\cordis.patch.yml`：
+```sh
+dsh plugin --profile web add "@dsh-use/wallpaper-engine@file:E:/code/dsh-use-wallpaper/packages/dsh-wallpaper-engine"
+dsh plugin --profile web install
+```
 
-   ```yaml
-   - insert:
-       - id: dsh-wallpaper-engine
-         name: '@dsh-use/wallpaper-engine'
-         config:
-           wallpaperDir: 'D:/Steam/steamapps/workshop/content/431960'
-   ```
+**方式 B：手动改 profile 的 package.json**
 
-3. 重启/刷新 DSH Web GUI（`http://127.0.0.1:3080`）：
-   - 设置面板出现壁纸引擎设置项；打开壁纸选择面板，显示壁纸缩略图网格；
-   - 选择 scene 壁纸 → Three.js 实时渲染；选择视频壁纸 → mp4 循环播放；其余 → preview 回退。
+`C:\Users\<user>\.dsh\profiles\web\package.json`：
+
+```jsonc
+{
+  "dependencies": {
+    "@dsh-use/wallpaper-engine": "file:E:/code/dsh-use-wallpaper/packages/dsh-wallpaper-engine"
+  },
+  "dsh": { "profile": { "bundles": ["@dsh-use/wallpaper-engine"] } }
+}
+```
+
+然后在 profile 目录执行 `dsh plugin --profile web install`（或 `pnpm install`）链接依赖。
+
+### 重要：不要手动改 profile 的 cordis.patch.yml
+
+插件注册由其 **bundle 自带**的 `cordis.patch.yml`（`dsh.bundle.patch`）自动应用，**无需也不可**再手动把插件条目插入 profile 的 `cordis.patch.yml`——重复 insert 同 id 会导致 loader 报错启动失败：
+
+```
+Error: dsh: plugin tree failed to load: ... duplicate loader entry id: dsh-wallpaper-engine
+```
+
+profile 的 `cordis.patch.yml` 保持默认 `[]` 即可。`wallpaperDir` 缺省为 `D:/Steam/steamapps/workshop/content/431960`（Windows 默认 WE workshop 路径）。
+
+### 验证安装
+
+1. 重启 DSH：`dsh web`（或刷新已有 GUI）；
+2. 验证 host 路由：浏览器打开 `http://127.0.0.1:3080/wallpapers/list` 应返回壁纸 JSON 数组（而非 HTML 页面）；
+3. 验证 client：DevTools Console 执行 `!!window.__wallpaperEngine.show` 返回 `true`；
+4. 界面：右下角出现「WP」浮动按钮，点击弹出壁纸选择面板。
+
+### 卸载
+
+```sh
+# 1. 从 profile 移除 bundle 与依赖
+dsh plugin --profile web remove "@dsh-use/wallpaper-engine"   # 或手动从 package.json 删 dependencies 与 bundles 条目
+# 2. 重新链接
+dsh plugin --profile web install
+# 3. 重启 dsh web 生效
+```
+
+### 常见问题排查
+
+| 现象 | 原因与处理 |
+|---|---|
+| `duplicate loader entry id: dsh-wallpaper-engine` | profile 的 `cordis.patch.yml` 被手动插入了插件条目 → 恢复为 `[]`（bundle 自带 patch 已自动注册） |
+| `cannot resolve profile bundle "@dsh-use/wallpaper-engine"` | 依赖未链接 → 在 profile 目录跑 `dsh plugin --profile web install` |
+| `/wallpapers/list` 返回 HTML 而非 JSON | host 插件未加载 → 确认 bundles 列表含 `@dsh-use/wallpaper-engine` 且已 install，重启 `dsh web` |
+| 代码改动后界面无变化 | `file:` 依赖是快照复制，改完插件包需重新 `pnpm add "@dsh-use/wallpaper-engine@file:<本包绝对路径>"` 强制重新链接（README 下方注意） |
 
 ## 构建与测试
 
