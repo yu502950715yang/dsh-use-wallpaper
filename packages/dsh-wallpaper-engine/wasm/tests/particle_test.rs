@@ -22,10 +22,28 @@ fn lightshafts_low_rate() {
 
 #[test]
 fn vector_fields_do_not_nan() {
-    // distancemax 向量 "50 256 0" → 取第一 token 50，不得 NaN
+    // 仅验证真实 fixture 解析结果均为有限值：
+    // Ashes emitter 无 distancemax 字段 → 走缺省分支 256.0（不经过 token 解析）；
+    // velocityrandom.max = "50 0 0" 三个 token 均可解析（vec3 正常路径）。
+    // 防 NaN 的 token 解析路径由 scalar_string_parses_first_token /
+    // unparsable_token_falls_back_to_zero 两个内联测试专门覆盖。
     let spec = parse_particle_spec(ASHES_JSON);
     assert!(spec.emitter.distance_max.is_finite());
     assert!(spec.init.velocity_max.iter().all(|v| v.is_finite()));
+}
+
+#[test]
+fn scalar_string_parses_first_token() {
+    // 标量字段为多 token 字符串 → 取第一 token（防把 "50 256 0" 整串解析成 NaN）
+    let spec = parse_particle_spec(r#"{"emitter":[{"rate":"50 256 0"}]}"#);
+    assert_eq!(spec.emitter.rate, 50.0);
+}
+
+#[test]
+fn unparsable_token_falls_back_to_zero() {
+    // token 无法解析为数字 → 回退 0.0，不得 panic / NaN
+    let spec = parse_particle_spec(r#"{"initializer":[{"name":"velocityrandom","max":"abc def"}]}"#);
+    assert_eq!(spec.init.velocity_max, [0.0, 0.0, 0.0]);
 }
 
 #[test]
