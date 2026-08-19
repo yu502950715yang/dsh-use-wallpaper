@@ -127,4 +127,11 @@ describe('preprocessWeShader', () => {
     const out = preprocessWeShader(src, {});
     expect(out).toContain('#define BLENDMODE 9'); // scene.json 未提供时用注释 default
   });
+  it('科学计数法字面量不被损坏（引擎 common.h rgb2hsv 的 1e-10）', () => {
+    const out = preprocessWeShader('void main() { float x = 1e-10; float y = 1.5e-3; gl_FragColor = vec4(x, y, 0.0, 1.0); }', {});
+    expect(out).toContain('1e-10');
+    expect(out).toContain('1.5e-3');
+    expect(out).not.toContain('1e-10.0');
+    expect(out).not.toContain('1.5e-3.0');
+  });
 });

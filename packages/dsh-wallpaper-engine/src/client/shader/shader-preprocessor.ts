@@ -103,6 +103,10 @@ function normalizeFloatIntLiterals(src: string): string {
   out = out.replace(/\b(?:ivec[234])\s*\([^)]*\)/g, protect);
   out = out.replace(/\bint\s+\w+\s*(?:\[[^\]]*\])?\s*(?:=|;)/g, protect);
   out = out.replace(/(?:==|!=|<=|>=|<|>)\s*-?\d+(?![\w.])/g, protect);
+  // 科学计数法整体保护（1e-10 / 1.5e-3：裸 int 正则会把指数部分 '10'/'3' 误补 .0 → 非法 GLSL。
+  // 引擎 common.h rgb2hsv 的 `1e-10` 即触发；GLSL 浮点字面量允许 `1.e3`/`.5e3`，
+  // 前者被 `\d\.?\d*` 覆盖，后者 `.5e3` 的指数 `3` 前驱为 `e` 本就不会被裸 int 正则命中）
+  out = out.replace(/\d\.?\d*[eE][+-]?\d+/g, protect);
   // 剩余裸 int 字面量补 .0（浮点上下文；1.0 之类已有小数点的不会被匹配，
   // 因为数字前不允许 . 或字母、数字后不允许 . 或字母）
   out = out.replace(/(?<![\w.])-?\d+(?![\w.])/g, (m) => `${m}.0`);
