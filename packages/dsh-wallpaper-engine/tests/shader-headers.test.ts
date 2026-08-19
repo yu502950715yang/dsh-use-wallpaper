@@ -24,4 +24,30 @@ describe('WE 内置头文件（方言完备性）', () => {
     const h = WE_HEADERS['common_blur.h'] ?? '';
     for (const fn of ['blur13a', 'blur7a', 'blur3a']) expect(h).toContain(fn);
   });
+  it('M_PI_2 为 2π（引擎真实值，修复原 π/2 错误）', () => {
+    const h = WE_HEADERS['common.h'] ?? '';
+    expect(h).toContain('M_PI_2 6.28318530718');
+    expect(h).toContain('M_PI_HALF');
+  });
+  it('common.h 提供 greyscale/hsv2rgb/rgb2hsv（引擎真实函数）', () => {
+    const h = WE_HEADERS['common.h'] ?? '';
+    for (const fn of ['greyscale', 'hsv2rgb', 'rgb2hsv']) expect(h).toContain(fn);
+  });
+  it('common_composite.h 提供 ApplyComposite/ApplyCompositeOffset 与 g_Composite* uniform', () => {
+    const h = WE_HEADERS['common_composite.h'] ?? '';
+    for (const token of ['ApplyCompositeOffset', 'ApplyComposite', 'g_CompositeAlpha', 'g_CompositeOffset', 'g_CompositeColor']) {
+      expect(h).toContain(token);
+    }
+    expect(h).toContain('COMPOSITEMONO == 1'); // 单色分支
+  });
+  it('common_blending.h 提供宏驱动 ApplyBlending 与 BlendOpacity/BlendLinearDodge', () => {
+    const h = WE_HEADERS['common_blending.h'] ?? '';
+    expect(h).toContain('ApplyBlending');
+    expect(h).toContain('#if BLENDMODE == 9');   // 宏驱动（非运行时 if）
+    expect(h).toContain('#if BLENDMODE == 12');  // SoftLight
+    expect(h).toContain('BlendOpacity');
+    expect(h).toContain('BlendLinearDodge');
+    expect(h).toContain('BlendSoftLight');
+    expect(h).toContain('BlendTint');
+  });
 });
