@@ -29,7 +29,7 @@ for (const id of dirs) {
     pos = nameStart + nameLen + 8;
   }
   for (const e of entries) {
-    if (!e.name.startsWith('shaders/') || !e.name.endsWith('.frag')) continue;
+    if (!e.name.startsWith('shaders/') || !/\.(frag|vert)$/.test(e.name)) continue;
     const text = Buffer.from(buf.subarray(dataStart + e.off, dataStart + e.off + e.size)).toString('utf8');
     for (const m of text.matchAll(/#include\s+"([^"]+)"/g)) {
       includes.set(m[1], (includes.get(m[1]) ?? 0) + 1);
