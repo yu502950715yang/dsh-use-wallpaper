@@ -664,15 +664,17 @@ fn u32_at(data: &[u8], off: usize) -> u32 {
 }
 
 pub fn parse_tex(data: &[u8]) -> Option<TexImage> {
-    if data.len() < 12 || &data[0..8] != b"TEXV0005\0" { return None; }
-    // TEXI0001\0 在偏移 8；28B 头从偏移 16 开始
-    let hdr = 16usize;
+    // 真实布局（tex-loader.ts 实测）："TEXV0005\0"9B + "TEXI0001\0"9B + 28B 头@18
+    // + 容器头("TEXB0001|0002\0" 等 9B)@46 + imageCount(i32)@55 + 每 image: mipmapCount
+    // + 每 mipmap(V2): width height isLZ4 decompressedBytes bytesLen(20B) + 数据
+    if data.len() < 55 || &data[0..9] != b"TEXV0005\0" || &data[9..18] != b"TEXI0001\0" { return None; }
+    let hdr = 18usize;
     if data.len() < hdr + 28 { return None; }
     let format = u32_at(data, hdr);
     let tex_w = u32_at(data, hdr + 8);
     let tex_h = u32_at(data, hdr + 12);
-    // 跳过 TEXB0001|0002\0 容器头（偏移 hdr+28，16 字节）
-    let mut pos = hdr + 28 + 16;
+    // 容器头 9 字节（TEXB0001|0002|0003|0004\0）
+    let mut pos = hdr + 28 + 9;
     if data.len() < pos + 4 { return None; }
     let image_count = u32_at(data, pos) as usize;
     pos += 4;
@@ -828,7 +830,8 @@ pub struct Renderer {
 impl Renderer {
     pub async fn new(canvas: &web_sys::HtmlCanvasElement, width: u32, height: u32) -> Result<Renderer, String> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::from_bits(1 << 2).unwrap_or(wgpu::Backends::all()), // WebGPU
+            // wasm 目标必须显式 BROWSER_WEBGPU（1<<4）；from_bits(1<<2) 是 METAL，错误
+            backends: wgpu::Backends::BROWSER_WEBGPU,
             ..Default::default()
         });
         let surface = instance.create_surface(wgpu::SurfaceTarget::Canvas(canvas.clone()))
