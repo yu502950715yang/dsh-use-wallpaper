@@ -174,6 +174,7 @@
 1. **初测（含回归）**：bundle = HEAD 1b5357a（Task 1-4），`research/verify-blackout.mjs` 全 24 壁纸 —— 发现 P0-3 转写引入 `1e-10` 科学计数法回归（编译失败 20199 条，4 个原 OK 壁纸转 STATIC）。数据见下方 §9.3。
 2. **终测（修复后）**：bundle = 科学计数法修复 commit（`shader-preprocessor.ts` 保护 `\d\.?\d*[eE][+-]?\d+`），同一脚本全 24 壁纸重跑 —— 编译失败回落至 3717 条，3/4 回归壁纸恢复 OK。
 3. **全新上下文复测**：终测后对全库再做一轮"reload 页面（重置 WebGL 上下文）→ 逐壁纸双帧 diff"交叉验证。**结论：共享上下文长跑对边界壁纸会产生假 STATIC**（2597392171 终测 0.27%→复测 13.65%、2897292240 0.39%→8.92%）；反之 2460786246 终测 31.07%→复测 0%（运行间方差，阶段 2 复核）。下表 diff 采用终测值，* 标注处采用复测值（更可靠），两轮冲突的壁纸显式标注。
+4. **最终审查复测（嵌套 include 修复后）**：bundle = 本 commit（`shader-preprocessor.ts` include 展开改迭代至稳定 + 内置纹理路径加固），headless Edge 全新上下文只重测 2 个渲染回归壁纸（2011060960/3743126786）——2011060960 编译 298→0（嵌套 include 550 条错误全消），两者仍 STATIC（见 §9.4 末尾复测数据，判为阶段 2 渲染语义债务）。
 
 - **console 统计口径**：编译/纹理为 error+warning 事件条数（同一警告按 pass 多次触发会重复计数）；"纹理槽失败"另按唯一文件口径统计。
 
@@ -227,7 +228,7 @@
 
 **剩余编译错误 3 类（CDP hook 采集，5 壁纸 1,265 条全部去重后）**：
 
-1. **`'include' : invalid directive name`**（550 条；2897292240/2597392171/3765967112/2011060960）——**新发现嵌套 include 回归**：Task 3 转写的 `common_composite.h` 内含 `#include "common.h"`/`#include "common_blending.h"`，而 preprocessor 的 include 展开是**单趟** `Object.entries` 循环——composite 头被插入时内层 include 的展开时机已过 → 原样残留 → GLSL 报错。node 复现：`preprocessWeShader('#include "common_composite.h"')` 输出残留 2 条 `#include`。修复方向：展开循环至稳定（header 自带 `#ifndef` guard 防重定义）。**影响面 = 所有 blur_combine 使用者**（即本清单 4 壁纸）。
+1. **`'include' : invalid directive name`**（550 条；2897292240/2597392171/3765967112/2011060960）——**新发现嵌套 include 回归**：Task 3 转写的 `common_composite.h` 内含 `#include "common.h"`/`#include "common_blending.h"`，而 preprocessor 的 include 展开是**单趟** `Object.entries` 循环——composite 头被插入时内层 include 的展开时机已过 → 原样残留 → GLSL 报错。node 复现：`preprocessWeShader('#include "common_composite.h"')` 输出残留 2 条 `#include`。**影响面 = 所有 blur_combine 使用者**（即本清单 4 壁纸）。**已修复**（commit `fix(wallpaper-engine): 嵌套 include 迭代展开至稳定...`）：展开循环改 do/while 迭代至稳定（header 自带 `#ifndef` guard 防重定义，迭代安全），TDD 新用例「嵌套 include 递归展开」先红后绿；最终审查复测 2011060960 编译 298→0（详见本节末尾）。
 2. **`'CAST3'/'CAST4' : no matching overloaded function found`**（337 条；2454403969/3765967112/2011060960/2897292240）——CAST3/CAST4 重载仅接受 float，调用点为 int 参数（protected 上下文如比较/数组下标内未被浮点化）。待阶段 2 定位具体调用点。
 3. **`'=' : cannot convert from 'const float' to 'const highp int'`**（182 条；2597392171/3765967112）——`int x = 1;` 中保护正则仅覆盖 `int x =` 前缀、`1` 被浮点化为 `1.0`。待阶段 2 定位。
 
@@ -236,7 +237,18 @@
 - **2011060960（blur_combine）**：编译 298 条（pass 2/3：`'include'`+`CAST4`），pass 0/1 编译成功但画面 0% 静止。初测损坏版（全部 pass 失败）时 19.77% 动态——说明基础场景在动，**新编译成功的 pass 渲染了覆盖全屏的静态合成**。假设：blur_combine 复合层语义（ApplyComposite/RT 输入）或 pass 顺序；g_Time 假设已排除（其 shader 确实用 g_Time 且 runner 每帧绑定）。
 - **3743126786（bloom + perspective）**：编译 0 条（全过）仍 0% 静止——转写后 shader 语义变化（squareToQuad 列主序/ApplyBlending 宏）导致渲染结果与基线不同。基线同编译状态 diff 6.96%。
 
-两者均与 1e-10 修复无关（初测损坏版同样 STATIC；1e-10 修复只是让更多 pass 编译、暴露了静态合成渲染）。建议阶段 2：先修嵌套 include（9.4-1）恢复 blur_combine 编译，再对 2011060960/3743126786 做 pass 级渲染调试（hook RT 链/每 pass 输出截图）。
+两者均与 1e-10 修复无关：3743126786 初测损坏版同样 STATIC；2011060960 由初测 19.77% 降至 0%（新编译成功的 pass 渲染全屏静态合成）——1e-10 修复只是让更多 pass 编译、暴露了静态合成渲染。建议阶段 2：先修嵌套 include（9.4-1）恢复 blur_combine 编译，再对 2011060960/3743126786 做 pass 级渲染调试（hook RT 链/每 pass 输出截图）。
+
+**最终审查复测（嵌套 include 修复后，headless Edge 全新上下文，2026-08-19）**：
+
+| id | avg | dark | diff | 判定 | 编译/纹理 console |
+|---|---|---|---|---|---|
+| 2011060960 | 214.93 | 0% | 0% | STATIC | 0/0 |
+| 3743126786 | 133.28 | 4.56% | 0% | STATIC | 0/8（mask 404 已知：R8/RG88 单通道不支持） |
+
+- **2011060960 编译 298→0**：嵌套 include 修复消除了 blur_combine 全部编译错误（`'include'` 550 条类错误全消），但画面仍 0% 静止（avg 214.93 亮画面、非黑屏）——证实 §9.4 判断：静态渲染的**主因是转写后效果链渲染语义**（pass 0/1 编译成功即已静止），非编译。documented 为阶段 2 债务（R8/RG88 渲染语义、blur_combine 复合层）。
+- **3743126786 编译 0 仍 STATIC**：与终测一致（avg 133.28、dark 4.56%、diff 0%），纹理 8 条警告均为 `materials/masks/*.tex` 404（tex format 8/9 不支持，已知项）。documented 为阶段 2 债务（squareToQuad/ApplyBlending 语义）。
+- 结论：本 commit 的嵌套 include 修复达成其目标（blur_combine 编译恢复），但**不改变两壁纸的渲染判定**；两者按计划如实记录为阶段 2 债务。
 
 ### 9.5 其他观测
 
