@@ -1,12 +1,8 @@
-// compute shader 粒子：GPU 模拟（发射 + 运动 + 寿命衰减）+ billboard quad 渲染（加法混合）。
-// 布局：uniform 结构体与 Rust EmitterParams（repr(C)）严格对齐
-// （std140：vec3 后补 4 字节 pad；origin/scale 后的 pad 槽复用于 view_w/view_h，
-// rate 后的 pad 槽复用于 elapsed，与 Rust 侧显式字段一一对应）。
-//
-// 渲染方式说明：不用 `@builtin(point_size)`——naga 24.0.0（wgpu 24 锁定）的 WGSL
-// 前端缺失该 builtin 映射（BuiltIn::PointSize 枚举存在但 parse 表无），用了必报
-// UnknownBuiltin。改为 billboard quad（vertex_index 0..3 推导角点，实例化每粒子），
-// 点尺寸=像素尺寸（CAMERA_DISTANCE 语义），fragment 内圆裁剪，无大小限制。
+// compute shader 粒子模拟：emitter 生成 + 运动 + 寿命衰减 + 时间种子。
+// 与 particle_render.wgsl 拆分的标准做法：compute 阶段允许 `var<storage, read_write>`
+// （WGSL 规范禁止 vertex 阶段静态访问 read_write storage，Dawn/Tint validator 强制实施）。
+// uniform 布局与 Rust EmitterParams（repr(C)）严格对齐（std140 160B：
+// vec3 后补 4 字节 pad；view_w/view_h/elapsed 复用原 pad 槽；与 render module 共享）。
 
 struct EmitterParams {
   origin: vec3f, view_w: f32,
@@ -41,7 +37,7 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_
   let i = gid.x;
   if (i >= p.max_particles) { return; }
   // 每粒子独立随机种，含累计时间（elapsed*60 ≈ 帧计数）：
-  // spawn 判定随时间演化，粒子场不会停在静态不动点（审查修复：原种无时间分量逐帧恒定）。
+  // spawn 判定随时间演化，粒子场不会停在静态不动点。
   let seed = i * 2654435761u + lid.x + u32(p.elapsed * 60.0);
   let life_span = p.life_min + rand(seed) * max(p.life_max - p.life_min, 0.0);
   let spawn = rand(seed + 1u) < p.rate * p.dt;
@@ -66,41 +62,4 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_
   }
   particles[i] = cur;
   atomicStore(&count, 0u);
-}
-
-struct VsOut {
-  @builtin(position) clip_pos: vec4f,
-  @location(0) v_uv: vec2f,
-  @location(1) v_color: vec3f,
-  @location(2) v_life_alpha: f32,
-}
-
-@vertex
-fn vs_main(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VsOut {
-  let part = particles[ii];
-  // quad 角点 [-1,1]²：vi 0..3 → (-1,-1),(1,-1),(1,1),(-1,1)（TriangleList，无顶点 buffer）
-  let corner = vec2f(f32(vi & 1u) * 2.0 - 1.0, f32((vi >> 1u) & 1u) * 2.0 - 1.0);
-  // 粒子中心：中心原点、像素量级坐标 → 裁剪坐标（除以半视口映射到 [-1,1]，
-  // 审查修复：原直接输出像素坐标当裁剪坐标，粒子出界不可见）
-  let center_clip = vec2f(part.pos.x / p.view_w * 2.0, part.pos.y / p.view_h * 2.0);
-  // 点尺寸=像素尺寸（CAMERA_DISTANCE 语义）；半尺寸像素偏移 → NDC 偏移
-  let half_px = part.size * 0.5;
-  let ndc_per_px = vec2f(2.0 / p.view_w, 2.0 / p.view_h);
-  var out: VsOut;
-  out.clip_pos = vec4f(center_clip + corner * half_px * ndc_per_px, 0.0, 1.0);
-  out.v_uv = corner * 0.5 + 0.5;
-  out.v_color = part.color;
-  out.v_life_alpha = clamp(part.life / max(part.max_life, 0.0001), 0.0, 1.0);
-  return out;
-}
-
-@fragment
-fn fs_main(
-  @location(0) v_uv: vec2f,
-  @location(1) v_color: vec3f,
-  @location(2) v_life_alpha: f32,
-) -> @location(0) vec4f {
-  // quad 方形光栅 → 圆形裁剪（圆盘）+ 寿命透明度（加法混合，透明像素无贡献）
-  if (length(v_uv - vec2f(0.5)) > 0.5) { discard; }
-  return vec4f(v_color, v_life_alpha);
 }

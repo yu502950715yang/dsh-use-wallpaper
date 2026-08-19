@@ -125,9 +125,16 @@ impl ParticlePass {
         queue.write_buffer(&count_buffer, 0, &[0u8; 4]);
         queue.write_buffer(&param_buffer, 0, bytemuck::bytes_of(params));
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("particle.wgsl"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/particle.wgsl").into()),
+        // compute/render 拆分为两个 shader module（Round 3 审查修复）：
+        // WGSL 规范禁止 vertex 阶段静态访问 `var<storage, read_write>`（Dawn/Tint 强制实施），
+        // 故 compute 用 read_write、render 用 read，各自绑定对应 module 与 bind group layout。
+        let compute_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("particle_compute.wgsl"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/particle_compute.wgsl").into()),
+        });
+        let render_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("particle_render.wgsl"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/particle_render.wgsl").into()),
         });
 
         // compute 需要读写粒子 + 计数；render 只需读粒子（同一 storage buffer 双布局）
@@ -166,10 +173,11 @@ impl ParticlePass {
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
                     visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    // read_only: false 必须与 shader 的 `var<storage, read_write>` 匹配：
-                    // layout 只给 LOAD 而 shader 声明 LOAD|STORE → wgpu-core WrongAddressSpace，
-                    // create_render_pipeline 运行时 panic（审查 Finding 3 复审修复）
-                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false, min_binding_size: None },
+                    // read_only: true 与 particle_render.wgsl 的 `var<storage, read>` 匹配：
+                    // render module 与 compute module 拆分后，vertex 阶段只读 storage 合法
+                    // （Round 3 审查修复；此前 read_only: false 虽过 wgpu-core 校验，
+                    // 但 WGSL 规范禁止 vertex 静态访问 read_write storage，Dawn/Tint 会拒）
+                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None },
                     count: None,
                 },
             ],
@@ -189,7 +197,7 @@ impl ParticlePass {
         let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("particle-compute"),
             layout: Some(&compute_layout),
-            module: &shader,
+            module: &compute_shader,
             entry_point: Some("cs_main"),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
             cache: None,
@@ -214,21 +222,21 @@ impl ParticlePass {
             label: Some("particle-render"),
             layout: Some(&render_layout),
             vertex: wgpu::VertexState {
-                module: &shader,
+                module: &render_shader,
                 entry_point: Some("vs_main"),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 buffers: &[],
             },
             primitive: wgpu::PrimitiveState {
                 // billboard quad（vs 用 vertex_index 推导角点；PointList 的 point_size
-                // builtin 在 naga 24.0.0/wgpu 24 不可用——见 particle.wgsl 头部注释）
+                // builtin 在 naga 24.0.0/wgpu 24 不可用——见 particle_render.wgsl 头部注释）
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 ..Default::default()
             },
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
             fragment: Some(wgpu::FragmentState {
-                module: &shader,
+                module: &render_shader,
                 entry_point: Some("fs_main"),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 targets: &[Some(wgpu::ColorTargetState {
