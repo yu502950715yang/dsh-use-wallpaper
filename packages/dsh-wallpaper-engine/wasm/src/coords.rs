@@ -1,8 +1,11 @@
-//! WE 场景坐标（左上原点、y 向下）→ WebGPU 中心原点、y 向上。
-//! 公式：three.x = we.x - vw/2；three.y = vh/2 - we.y（scene-renderer.ts 文件头注释）
+//! WE 场景坐标（左下原点、y 向上；origin.y 是距底部的距离）→ 中心原点、y 向上。
+//! 公式：three.x = we.x - vw/2；three.y = we.y - vh/2（两系 y 同向，不做翻转）。
+//! 2026-08-20 方向修正：旧实现 `vh/2 - we_y` 把非居中对象上下镜像（NERV logo
+//! origin.y=150 官方在右下角、被镜像到右上角；Orange 部件被镜像到少女头顶），
+//! EVA 主图 oy=sh/2 恰为 0 故验收漏过。scene-renderer.ts 文件头注释同步修正。
 
 pub fn we_to_three(we_x: f32, we_y: f32, vw: f32, vh: f32) -> (f32, f32) {
-    (we_x - vw / 2.0, vh / 2.0 - we_y)
+    (we_x - vw / 2.0, we_y - vh / 2.0)
 }
 
 /// 对象锚点（origin，WE 场景中的中心点）→ 场景中心坐标
@@ -11,16 +14,16 @@ pub fn origin_to_center(origin: [f32; 3], vw: f32, vh: f32) -> [f32; 3] {
     [x, y, origin[2]]
 }
 
-/// 粒子 scale.y 取负完成 y 翻转（方向/速度与 WE 屏幕表现一致）
+/// 粒子 scale：y 不取负（WE y 向上与渲染系同向；snowflat 速度 vy∈[-90,-50]
+/// 为向下运动即证据。旧实现取负是配合错误的 y 翻转）
 pub fn particle_scale(scale: [f32; 3]) -> [f32; 3] {
-    [scale[0], -scale[1], scale[2]]
+    [scale[0], scale[1], scale[2]]
 }
 
-/// 图片 quad 中心 NDC（Task 9 审查修复：center_y 必须走 we_to_three 的 y 翻转——
-/// WE 左上原点、y 向下 → 中心原点、y 向上；原实现 `(oy - sh/2)` 符号相反，
-/// 非垂直居中图片上下颠倒。与粒子 origin_to_center / JS scene-renderer.ts:161
-/// `mesh.position.set(ox - w/2, h/2 - oy, oz)` 语义一致）。
-/// 返回 (center_x_ndc, center_y_ndc)，除以相机半宽/半高（contain/cover 范围）。
+/// 图片 quad 中心 NDC：WE 左下原点、y 向上 → 中心原点、y 向上（we_to_three，
+/// 不翻转），除以相机半宽/半高（contain/cover 范围）。与粒子 origin_to_center /
+/// JS scene-renderer.ts `mesh.position.set(ox - w/2, oy - h/2, oz)` 语义一致。
+/// 返回 (center_x_ndc, center_y_ndc)。
 pub fn image_center_ndc(
     origin: [f32; 3],
     scene_w: f32,

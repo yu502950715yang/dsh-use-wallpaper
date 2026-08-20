@@ -55,7 +55,7 @@
 - **GPU 模拟**（WGSL compute）：emitter 生成（rate/directions/distancemin/max）、initializer（lifetimerandom/sizerandom/velocityrandom）、operator（movement/alphafade，v1 至少这两个）、寿命衰减、尺寸/颜色插值全在 GPU 侧。
 - 渲染：`PointList` primitive + 加法混合（保持现有混合语义）。
 - 数据路径：JS/胶水把粒子规格 JSON 字节流传给 Rust → Rust 解析 → 生成 compute 管线参数。
-- 坐标：沿用现有映射（`three.x = we.x - vw/2`、`three.y = vh/2 - we.y`、`scale.y` 取负，见 scene-renderer.ts 文件头注释与 README 坐标数学节）。
+- 坐标：沿用现有映射（`three.x = we.x - vw/2`、`three.y = we.y - vh/2`、`scale.y` 不取负，见 scene-renderer.ts 文件头注释与 README 坐标数学节）。2026-08-20 方向修正：WE 场景系为**左下原点、y 向上**（origin.y 是距底部距离），旧实现 `vh/2 - we.y` 把非居中对象上下镜像（EVA 主图 oy=sh/2 恰为 0 故早期验收漏过；NERV logo/Orange 部件实测暴露）。
 
 ## 5. 纹理解码（WebGPU 结构性优势，直接兑现）
 

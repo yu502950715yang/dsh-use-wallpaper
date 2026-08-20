@@ -1,7 +1,7 @@
 // 图片平面渲染（Task 9 修复）：NDC 顶点（vertex_index 推导 quad 角点）+ 纹理采样。
 // 坐标约定：ImageUniform.center_x/center_y = quad 中心 NDC（CPU 按 contain/cover 相机范围
-// 归一化，经 coords::image_center_ndc 完成 WE 左上原点 → 中心原点 y 翻转——对齐
-// scene-renderer.ts setImageObject 的 `(ox - w/2, h/2 - oy)` 映射，y 向上）。
+// 归一化，经 coords::image_center_ndc 完成 WE 左下原点、y 向上 → 中心原点、y 向上——
+// 对齐 scene-renderer.ts setImageObject 的 `(ox - w/2, oy - h/2)` 映射，两系 y 同向不做翻转）。
 // UV 翻转：场景 y 向上（quad 顶部 corner.y=1）↔ WebGPU 纹理 v=0（顶部），故 v = 1 - corner.y。
 
 struct ImageUniform {

@@ -75,13 +75,13 @@ fn dispatch_threads_cover_estimate_with_shader_clip() {
 }
 
 #[test]
-fn emitter_params_applies_coords_and_flips_scale_y() {
+fn emitter_params_applies_coords_and_keeps_scale_y() {
     let spec = parse_particle_spec(ASHES_JSON);
     // EVA Ashes 原点 (1200,777.5)、场景 2400x1555、scale (1,1,1)；
     // Task 9 修复后签名：origin 映射用场景尺寸，view_w/view_h 为 contain 投影范围（如 3133x1555）
     let p = EmitterParams::from_spec(&spec, [1200.0, 777.5, 0.0], [1.0, 1.0, 1.0], 2400.0, 1555.0, 3133.0, 1555.0, 2048);
     assert!(p.origin_x.abs() < 1e-3 && p.origin_y.abs() < 1e-3, "原点应映射到场景中心: ({},{})", p.origin_x, p.origin_y);
-    assert_eq!(p.scale_y, -1.0);
+    assert_eq!(p.scale_y, 1.0, "2026-08-20 方向修正：scale.y 不再取负（WE y 向上与渲染系同向）");
     assert_eq!(p.rate, 10.0);
     // 审查修复：投影/时间演化字段打包正确（view = contain 范围，非场景尺寸）
     assert_eq!(p.view_w, 3133.0);

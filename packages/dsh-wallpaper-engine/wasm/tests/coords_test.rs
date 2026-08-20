@@ -9,19 +9,22 @@ fn eva_fullscreen_image_centers_at_zero() {
 }
 
 #[test]
-fn origin_to_center_maps_y_flip() {
-    // WE (0,0)（左上角）→ 中心系 (-vw/2, +vh/2)
+fn origin_to_center_maps_y_no_flip() {
+    // WE (0,0)（左下角、y 向上）→ 中心系 (-vw/2, -vh/2)
+    // 2026-08-20 方向修正：WE y 向上与渲染系同向，origin.y 是距底部距离（不翻转）
     let c = coords::origin_to_center([0.0, 0.0, 5.0], 1920.0, 1080.0);
-    assert_eq!(c, [-960.0, 540.0, 5.0]);
+    assert_eq!(c, [-960.0, -540.0, 5.0]);
 }
 
 #[test]
-fn particle_scale_flips_y() {
-    assert_eq!(coords::particle_scale([1.0, 2.0, 3.0]), [1.0, -2.0, 3.0]);
+fn particle_scale_keeps_y() {
+    // 2026-08-20：scale.y 不再取负（WE y 向上与渲染系同向）
+    assert_eq!(coords::particle_scale([1.0, 2.0, 3.0]), [1.0, 2.0, 3.0]);
 }
 
-// —— Task 9 审查修复：image_center_ndc 的 y 翻转（原实现 (oy - sh/2) 符号相反，
-// 非垂直居中图片上下颠倒；EVA 主图 oy=sh/2 → 0 恰好漏过）——
+// —— 2026-08-20 方向修正：image_center_ndc 的 y 不再翻转（原 `vh/2 - we_y` 把
+// 非居中对象上下镜像：NERV logo origin.y=150 官方在右下角被渲染到右上角；
+// Orange 部件被渲染到少女头顶。EVA 主图 oy=sh/2 恰为 0 故旧实现漏过）——
 
 #[test]
 fn image_center_ndc_centered_y_is_zero() {
@@ -32,21 +35,21 @@ fn image_center_ndc_centered_y_is_zero() {
 
 #[test]
 fn image_center_ndc_top_y_is_positive() {
-    // 场景顶部：oy=0（WE y 向下，顶部=0）→ 翻转后 center_y = +1（NDC 顶部）
-    let (_, cy) = coords::image_center_ndc([0.0, 0.0, 0.0], 100.0, 100.0, 100.0, 100.0);
+    // 场景顶部：oy=sh（WE y 向上，顶部=sh）→ center_y = +1（NDC 顶部）
+    let (_, cy) = coords::image_center_ndc([0.0, 100.0, 0.0], 100.0, 100.0, 100.0, 100.0);
     assert!((cy - 1.0).abs() < 1e-4, "顶部 center_y 应为 +1, got {cy}");
 }
 
 #[test]
 fn image_center_ndc_bottom_y_is_negative() {
-    // 场景底部：oy=sh → 翻转后 center_y = -1（NDC 底部）
-    let (_, cy) = coords::image_center_ndc([0.0, 100.0, 0.0], 100.0, 100.0, 100.0, 100.0);
+    // 场景底部：oy=0（WE y 向上，底部=0）→ center_y = -1（NDC 底部）
+    let (_, cy) = coords::image_center_ndc([0.0, 0.0, 0.0], 100.0, 100.0, 100.0, 100.0);
     assert!((cy + 1.0).abs() < 1e-4, "底部 center_y 应为 -1, got {cy}");
 }
 
 #[test]
 fn image_center_ndc_consistency_with_we_to_three() {
-    // 与 we_to_three 语义严格一致（y 翻转，非对称原点验证）
+    // 与 we_to_three 语义严格一致（y 不翻转，非对称原点验证）
     let origin = [430.0, 220.0, 0.0];
     let (sw, sh, fw, fh) = (1280.0, 720.0, 1600.0, 900.0);
     let (wx, wy) = coords::we_to_three(origin[0], origin[1], sw, sh);

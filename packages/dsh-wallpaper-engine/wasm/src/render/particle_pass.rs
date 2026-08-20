@@ -32,7 +32,8 @@ pub struct EmitterParams {
 }
 
 impl EmitterParams {
-    /// CPU 侧坐标映射（WE 左上原点 → 中心原点、y 向上；scale.y 取负）后打包 uniform。
+    /// CPU 侧坐标映射（WE 左下原点、y 向上 → 中心原点、y 向上；scale.y 不取负——
+    /// 2026-08-20 方向修正，见 coords::particle_scale）后打包 uniform。
     /// Task 9 修复：origin 是 WE 场景坐标（0..scene_w / 0..scene_h），中心映射必须用
     /// **场景尺寸** scene_w/scene_h（原实现与投影共用视口尺寸，create 改传视口后
     /// 粒子位置错位/移出视口）；view_w/view_h 为投影半视口（contain 相机范围，

@@ -20,11 +20,15 @@ export interface SceneRenderer {
   stop(): void;
 }
 
-// 坐标映射（Task 8 审查 Minor 1 修正）：
-// Wallpaper Engine 场景系 = 左上原点、y 向下；three 正交相机 = 中心原点、y 向上。
-// 映射：three.x = we.x - vw/2；three.y = vh/2 - we.y（即 y 翻转）。
-// 对象锚点（origin）是 WE 中的中心点：中心映射为 (ox - vw/2, vh/2 - oy)。
-// EVA 实测：image origin=(1200,777.5) = size/2，几何 2400×1555 → 中心 (0,0) 正好铺满正交视口。
+// 坐标映射（2026-08-20 方向修正，全库目检证实）：
+// Wallpaper Engine 场景系 = 左下原点、y 向上（origin.y 是距底部的距离，非距顶部）；
+// three 正交相机 = 中心原点、y 向上。
+// 映射：three.x = we.x - vw/2；three.y = we.y - vh/2（y 不做翻转，两系 y 同向）。
+// 对象锚点（origin）是 WE 中的中心点：中心映射为 (ox - vw/2, oy - vh/2)。
+// 实测证据：NERV logo origin.y=150（2832263418）官方渲染在右下角（距底 150）；
+//   Orange 部件 Тело origin.y=384 官方叠在少女身上（距底 384 = 距顶 1056）；
+//   旧实现 `vh/2 - we.y`（y 翻转）把两者镜像到顶部 → 部件漂浮在少女头顶（1429403119 问题图）。
+// EVA 主图 origin=(1200,777.5)=size/2 恰居中（oy=sh/2）故新旧公式结果相同，早期验收漏过。
 const CAMERA_DISTANCE = 300; // 相机沿 +z 放置，使 shader 中 300/-mv.z = 1（点尺寸=像素尺寸）
 
 // 按「contain」语义计算正交相机范围：场景完整可见、不变形，多出的方向留白（透明）。
@@ -156,9 +160,10 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
       const mesh = new THREE.Mesh(geometry, material);
       const s = obj.scale;
       mesh.scale.set(s[0], s[1], s[2] ?? 1);
-      // 对象 origin 是 WE 场景中的中心点：中心映射 = (ox - vw/2, vh/2 - oy)（vw/vh = 正交视口尺寸，见文件头注释）。
-      // 用对象尺寸做偏移只在 size==视口时偶然正确（EVA 全屏图），非全屏对象会错位——必须用视口尺寸。
-      mesh.position.set(obj.origin[0] - ortho.width / 2, ortho.height / 2 - obj.origin[1], obj.origin[2]);
+      // 对象 origin 是 WE 场景中的中心点（左下原点、y 向上）：中心映射 = (ox - vw/2, oy - vh/2)。
+      // 旧实现 `vh/2 - oy` 把非居中对象上下镜像（EVA 主图 oy=sh/2 恰好 0 故漏过），
+      // 导致 Orange 少女部件被渲染到头顶（问题图漂浮现象）——2026-08-20 修正为不翻转。
+      mesh.position.set(obj.origin[0] - ortho.width / 2, obj.origin[1] - ortho.height / 2, obj.origin[2]);
       scene.add(mesh);
     },
     addParticleSystem(spec, opts = {}) {
@@ -182,17 +187,18 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
         blending: THREE.AdditiveBlending,
       });
       const points = new THREE.Points(geometry, material);
-      // 粒子模拟在 WE 系（y 向下）生成局部坐标：发射原点按中心映射平移，
-      // scale.y 取负完成 y 翻转（方向/速度与 WE 屏幕表现一致）
+      // 粒子模拟在 WE 系（y 向上）生成局部坐标：发射原点按中心映射平移（同图片对象，
+      // 左下原点 y 向上 → 中心原点 y 向上，不翻转）；scale.y 不取负（旧实现取负是配合
+      // 错误的 y 翻转，2026-08-20 修正——snowflat 速度 vy∈[-90,-50] 为向下运动即证据）。
       if (opts.origin) {
         points.position.set(
           opts.origin[0] - ortho.width / 2,
-          ortho.height / 2 - opts.origin[1],
+          opts.origin[1] - ortho.height / 2,
           opts.origin[2] ?? 0,
         );
       }
       const s = opts.scale ?? [1, 1, 1];
-      points.scale.set(s[0], -(s[1] ?? s[0]), s[2] ?? 1);
+      points.scale.set(s[0], s[1] ?? s[0], s[2] ?? 1);
       scene.add(points);
       particleSystems.push({ system, points });
     },

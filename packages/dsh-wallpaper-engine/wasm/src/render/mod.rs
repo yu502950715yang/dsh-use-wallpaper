@@ -464,10 +464,12 @@ impl Renderer {
     }
 }
 
-/// 图片 quad 的 NDC uniform。Task 9 审查修复：center 复用 coords::image_center_ndc
-/// （内含 we_to_three 的 y 翻转——原实现 `(oy - sh/2)` 符号相反，非垂直居中图片
-/// 上下颠倒；EVA 主图 oy=sh/2 恰为 0 故验收实测漏过）；half 复用 coords::image_half_ndc
-/// （尺寸 = obj.size 优先、缺省回退纹理宽高；scale.y 不取负，对齐 scene-renderer.ts）。
+/// 图片 quad 的 NDC uniform。2026-08-20 方向修正：center 复用 coords::image_center_ndc
+/// （内含 we_to_three——WE 左下原点、y 向上与渲染系同向，不做翻转；旧实现
+/// `(oy - sh/2)` 符号相反、后又被误改为 `(sh/2 - oy)`，两者都把非居中对象上下镜像，
+/// NERV logo 官方在右下角被渲染到右上角、Orange 部件被渲染到少女头顶；EVA 主图
+/// oy=sh/2 恰为 0 故验收漏过）；half 复用 coords::image_half_ndc（尺寸 = obj.size
+/// 优先、缺省回退纹理宽高；scale.y 不取负，对齐 scene-renderer.ts）。
 #[cfg(feature = "render")]
 fn image_ndc(img: &SceneImage, sw: f32, sh: f32, fw: f32, fh: f32) -> ImageUniform {
     let (cx, cy) = coords::image_center_ndc(img.origin, sw, sh, fw, fh);
