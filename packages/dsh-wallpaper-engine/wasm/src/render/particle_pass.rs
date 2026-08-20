@@ -82,6 +82,15 @@ pub fn dispatch_dims(count: u32, workgroup: u32) -> (u32, u32, u32) {
     (((count + g - 1) / g).max(1), 1, 1)
 }
 
+/// 按 emitter 实际需求估算粒子池上限（Task 9 审查修复：原固定 2048，多粒子壁纸
+/// 2859263090 44 系统 × 2048 = 9 万粒子/帧 → headless FPS < 30）。
+/// 稳态粒子数 ≈ rate × 最大寿命（出生率 × 最长存活时间），加 64 余量，夹在 [64, 2048]。
+pub fn estimate_max_particles(spec: &ParticleSpec) -> u32 {
+    let max_life = spec.init.lifetime_max.max(spec.init.lifetime_min).max(0.1);
+    let est = (spec.emitter.rate * max_life).ceil() as u32 + 64;
+    est.clamp(64, 2048)
+}
+
 /// WGSL `Particle` 结构体字节大小：pos 12 + vel 12 + life 4 + max_life 4 + size 4 + color 12 = 48。
 /// 由 Rust 侧按 48 字节/粒子分配 storage buffer（与 shader 布局约定一致）。
 pub const PARTICLE_BYTES: u64 = 48;

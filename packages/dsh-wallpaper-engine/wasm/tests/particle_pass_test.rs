@@ -2,7 +2,7 @@
 //! wgpu 管线部分（ParticlePass）feature 门控，仅 wasm 构建编译，浏览器验证。
 
 use we_scene_wasm::particle::parse_particle_spec;
-use we_scene_wasm::render::particle_pass::{dispatch_dims, EmitterParams};
+use we_scene_wasm::render::particle_pass::{dispatch_dims, estimate_max_particles, EmitterParams};
 
 const ASHES_JSON: &str = include_str!("fixtures/eva/particles_Ashes.json");
 
@@ -11,6 +11,39 @@ fn dispatch_dims_rounds_up() {
     assert_eq!(dispatch_dims(0, 64), (1, 1, 1)); // 空也分派 1 组（安全）
     assert_eq!(dispatch_dims(64, 64), (1, 1, 1));
     assert_eq!(dispatch_dims(65, 64), (2, 1, 1));
+}
+
+#[test]
+fn estimate_max_particles_scales_with_rate_times_lifetime() {
+    // 稳态粒子数 ≈ rate × max_lifetime + 64 余量（Task 9 审查修复：原固定 2048）
+    let spec = parse_particle_spec(ASHES_JSON);
+    let max_life = spec.init.lifetime_max.max(spec.init.lifetime_min);
+    let expected = (spec.emitter.rate * max_life).ceil() as u32 + 64;
+    assert_eq!(estimate_max_particles(&spec), expected.clamp(64, 2048));
+    // 低 rate 不回落过高（lightshafts rate=0.3 等）
+    assert!(estimate_max_particles(&spec) <= 2048);
+}
+
+#[test]
+fn estimate_max_particles_clamps_bounds() {
+    // 构造极端 emitter：rate=0 → 64 下限；rate=1e6 → 2048 上限
+    let low = parse_particle_spec(ASHES_JSON);
+    let mut low_spec = low.clone();
+    // 直接构造最小 spec（不依赖 fixture 字段可变性）
+    use we_scene_wasm::particle::{EmitterSpec, InitSpec, ParticleSpec};
+    let zero = ParticleSpec {
+        emitter: EmitterSpec { rate: 0.0, directions: [0.0; 3], distance_min: 0.0, distance_max: 0.0 },
+        init: InitSpec { lifetime_min: 0.0, lifetime_max: 0.0, size_min: 1.0, size_max: 1.0, velocity_min: [0.0; 3], velocity_max: [0.0; 3], color_min: None, color_max: None },
+        operators: vec![],
+    };
+    assert_eq!(estimate_max_particles(&zero), 64);
+    let huge = ParticleSpec {
+        emitter: EmitterSpec { rate: 1e6, directions: [0.0; 3], distance_min: 0.0, distance_max: 0.0 },
+        init: InitSpec { lifetime_min: 100.0, lifetime_max: 100.0, size_min: 1.0, size_max: 1.0, velocity_min: [0.0; 3], velocity_max: [0.0; 3], color_min: None, color_max: None },
+        operators: vec![],
+    };
+    assert_eq!(estimate_max_particles(&huge), 2048);
+    let _ = low_spec;
 }
 
 #[test]

@@ -9,6 +9,8 @@ pub mod texture;
 
 #[cfg(feature = "render")]
 use crate::particle::ParticleSpec;
+#[cfg(feature = "render")]
+use crate::coords;
 
 /// 相机沿 +z 放置的距离，使 shader 中 300/-mv.z = 1（点尺寸=像素尺寸，对齐 scene-renderer.ts 的 CAMERA_DISTANCE）
 #[cfg(feature = "render")]
@@ -231,14 +233,21 @@ impl Renderer {
     /// 原实现单系统覆盖，EVA 等壁纸 5 个粒子系统只有最后一个渲染，粒子密度远低于
     /// JS 版 → 画面偏暗）。origin 映射用场景尺寸（scene_w/scene_h），投影用 contain
     /// 相机范围（camera_range）——对齐 scene-renderer.ts 语义。
+    /// Task 9 审查修复：粒子池上限按 emitter rate×寿命动态估算（原固定 2048，
+    /// 多粒子壁纸 GPU 负载爆炸 → headless FPS < 30）；cover（背景）模式再减半
+    /// （模糊背景低密度无视觉影响）。
     pub fn set_particle(&mut self, spec: &ParticleSpec, origin: [f32; 3], scale: [f32; 3]) {
         let (fw, fh) = self.camera_range();
         let params = particle_pass::EmitterParams::from_spec(spec, origin, scale, self.scene_w, self.scene_h, fw, fh);
+        let mut max_particles = particle_pass::estimate_max_particles(spec);
+        if self.mode == CameraMode::Cover {
+            max_particles = (max_particles / 2).max(32);
+        }
         self.particle_passes.push(particle_pass::ParticlePass::new(
             &self.device,
             &self.queue,
             &params,
-            2048,
+            max_particles,
             self.config.format,
         ));
     }
@@ -447,17 +456,13 @@ impl Renderer {
     }
 }
 
-/// 图片 quad 的 NDC uniform：中心 = WE 场景中心点映射（ox - sw/2、oy - sh/2）除以相机半宽/半高；
-/// 半宽/半高 = (尺寸×scale/2) 除以相机半宽/半高。尺寸 = obj.size 优先、缺省回退纹理宽高
-/// （对齐 scene-renderer.ts setImageObject）。y 不翻转（WE y 向上，NDC y 向上）。
+/// 图片 quad 的 NDC uniform。Task 9 审查修复：center 复用 coords::image_center_ndc
+/// （内含 we_to_three 的 y 翻转——原实现 `(oy - sh/2)` 符号相反，非垂直居中图片
+/// 上下颠倒；EVA 主图 oy=sh/2 恰为 0 故验收实测漏过）；half 复用 coords::image_half_ndc
+/// （尺寸 = obj.size 优先、缺省回退纹理宽高；scale.y 不取负，对齐 scene-renderer.ts）。
 #[cfg(feature = "render")]
 fn image_ndc(img: &SceneImage, sw: f32, sh: f32, fw: f32, fh: f32) -> ImageUniform {
-    let w = img.size.map(|s| s[0]).unwrap_or(img.tex_width as f32);
-    let h = img.size.map(|s| s[1]).unwrap_or(img.tex_height as f32);
-    ImageUniform {
-        center_x: (img.origin[0] - sw / 2.0) / (fw / 2.0),
-        center_y: (img.origin[1] - sh / 2.0) / (fh / 2.0),
-        half_w: (w * img.scale[0] / 2.0) / (fw / 2.0),
-        half_h: (h * img.scale[1] / 2.0) / (fh / 2.0),
-    }
+    let (cx, cy) = coords::image_center_ndc(img.origin, sw, sh, fw, fh);
+    let (hw, hh) = coords::image_half_ndc(img.size, img.scale, img.tex_width, img.tex_height, fw, fh);
+    ImageUniform { center_x: cx, center_y: cy, half_w: hw, half_h: hh }
 }
