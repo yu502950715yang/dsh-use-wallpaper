@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { scanWallpapers } from './scanner.js';
 import { PkgReader } from './pkg-reader.js';
 import type { WallpaperInfo } from '../shared/types.js';
@@ -180,11 +180,13 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
         const file = segs[2];
         if (!isSafeToken(file)) return json(res, 400, { error: 'bad file' });
         if (!opts.staticDir) return json(res, 500, { error: 'no static dir' });
-        const base = opts.staticDir;
-        const p = join(base, file);
-        // 二次校验：解析结果必须位于静态目录内（isSafeToken 已禁 '..' 与 '/'，
-        // 此处兜底软链/编码变体等绕过）
-        if (p !== base && !p.startsWith(base + '\\') && !p.startsWith(base + '/')) {
+        // 越界二次校验：staticDir 来自 fileURLToPath（Windows 上可能带尾分隔符且与
+        // path.join 的分隔符风格不一致），故先 resolve 规范化（去尾分隔符、统一分隔符）
+        // 再比较前缀，避免误判合法文件越界（Task 9 实测：/wallpapers/static/* 全部 400）。
+        // isSafeToken 已禁 '..'，resolve 无穿越风险。
+        const base = resolve(opts.staticDir);
+        const p = resolve(base, file);
+        if (p !== base && !p.startsWith(base + sep)) {
           return json(res, 400, { error: 'bad path' });
         }
         if (!existsSync(p) || !statSync(p).isFile()) return json(res, 404, { error: 'no such file' });
