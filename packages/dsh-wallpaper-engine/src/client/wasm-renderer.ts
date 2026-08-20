@@ -17,7 +17,10 @@ export interface WasmScene {
 }
 
 // wasm-pack --target web 产物（wasm/pkg/we_scene_wasm.js）模块形态：
-// 命名导出 WeScene；默认导出 __wbg_init（实例化 wasm，可传 wasm URL 覆盖 import.meta.url 定位）
+// 命名导出 WeScene；默认导出 __wbg_init（实例化 wasm，可传 wasm URL 覆盖
+// import.meta.url 定位——直接 import 静态 URL 时 import.meta.url 指向
+// /wallpapers/static/we_scene_wasm.js，相对定位 we_scene_wasm_bg.wasm 同样正确，
+// 但显式传参更稳妥，避免与 blob/路径假设耦合）。
 export interface WasmSceneModule {
   default(moduleOrPath?: string | URL | Request): Promise<unknown>;
   WeScene: { create(canvas: HTMLCanvasElement, width: number, height: number): Promise<WasmScene> };
@@ -70,19 +73,13 @@ const WASM_BIN_FILE = 'we_scene_wasm_bg.wasm';
 
 async function defaultLoadWasm(): Promise<WasmSceneModule | null> {
   try {
-    const resp = await fetch(`${STATIC_BASE}/${WASM_GLUE_FILE}`);
-    if (!resp.ok) return null;
-    const glue = await resp.text();
-    // blob URL 动态 import：绕过 bundle 对 wasm 产物的静态解析（产物独立于 client bundle）。
-    // glue 内 import.meta.url 指向 blob（无法相对解析 .wasm），故初始化时显式传 wasm 静态 URL。
-    const url = URL.createObjectURL(new Blob([glue], { type: 'text/javascript' }));
-    try {
-      const mod = (await import(/* @vite-ignore */ url)) as WasmSceneModule;
-      await mod.default(`${STATIC_BASE}/${WASM_BIN_FILE}`);
-      return mod;
-    } finally {
-      URL.revokeObjectURL(url);
-    }
+    // 直接动态 import 静态 URL（不用 blob：blob 无路径基准，入口内 import.meta.url
+    // 无法相对定位 wasm）。--target web 产物导出 default（__wbg_init），必须显式调用
+    // 初始化——wasm 是惰性单例，不调 default 则 WeScene.create 内 wasm 未定义（实测
+    // 'Cannot read properties of undefined (reading wescene_create)'）。
+    const mod = (await import(/* @vite-ignore */ `${STATIC_BASE}/${WASM_GLUE_FILE}`)) as WasmSceneModule;
+    await mod.default(`${STATIC_BASE}/${WASM_BIN_FILE}`);
+    return mod;
   } catch {
     return null;
   }

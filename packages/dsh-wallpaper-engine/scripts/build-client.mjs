@@ -17,7 +17,9 @@ console.log('client bundle written to dist/client.js');
 
 // Task 8：把 wasm 引擎产物（wasm/pkg/）复制到 dist/static/，由 host 的
 // /wallpapers/static/<file> 路由服务（src/host/routes.ts）。wasm-renderer 运行时
-// fetch glue 并以 blob URL 动态 import，.wasm 字节经显式 URL 传给 __wbg_init。
+// 直接动态 import 入口（we_scene_wasm.js）并调用其默认导出 __wbg_init(wasmUrl)
+// 初始化——产物是 wasm-bindgen --target web 格式（单文件 glue + 独立 .wasm，
+// 入口内 import.meta.url 定位 wasm，默认导出即初始化函数）。
 const here = dirname(fileURLToPath(import.meta.url));
 const pkgDir = join(here, '..', 'wasm', 'pkg');
 const outStatic = join(here, '..', 'dist', 'static');
