@@ -210,9 +210,11 @@ impl Renderer {
         self.mode = CameraMode::Cover;
     }
 
-    /// 场景 clearcolor（0-255 量级 → 归一化存储；cover 背景模式清屏用）。
+    /// 场景 clearcolor（**0-1 量级**——WE 颜色字段（ambientcolor/skylightcolor 同段）为
+    /// 0-1，对齐 JS 版 `new THREE.Color(cc[0], cc[1], cc[2])`；cover 背景模式清屏用。
+    /// 最终审查修复：原实现错误除 255（假设 0-255），EVA "0.7 0.7 0.7" 被压成 ≈0.0027 近黑。
     pub fn set_clear_color(&mut self, c: Option<[f32; 3]>) {
-        self.clear_color = c.map(|[r, g, b]| [r / 255.0, g / 255.0, b / 255.0]);
+        self.clear_color = c;
     }
 
     /// 场景正交尺寸（load_scene 调用；render_frame 的 contain 相机范围计算用）。

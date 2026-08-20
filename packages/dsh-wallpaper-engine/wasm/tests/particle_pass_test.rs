@@ -109,3 +109,38 @@ fn emitter_params_layout_matches_wgsl_std140() {
     assert_eq!(std::mem::offset_of!(EmitterParams, dt), 144);
     assert_eq!(std::mem::offset_of!(EmitterParams, max_particles), 148);
 }
+
+/// WGSL `Particle` 布局镜像（最终审查修复：vec3 对齐 16 → stride 64）。
+/// 用 Rust repr(C) + 显式 pad 字段模拟 WGSL 成员偏移（vec3 自身 16 对齐，
+/// vec3 后的 f32 紧跟，仅 color 前因 vec3 对齐补 8 字节）：
+/// pos@0、vel@16、life@28、max_life@32、size@36、color@48、span=60 → align 16 → 64。
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct WgslParticleLayout {
+    pos: [f32; 3],    // @0
+    _pad0: f32,       // @12（vel vec3 对齐 16）
+    vel: [f32; 3],    // @16
+    life: f32,        // @28（vec3 后 f32 紧跟，无字段间 pad）
+    max_life: f32,    // @32
+    size: f32,        // @36
+    _pad2: f32,       // @40（color vec3 对齐 16 → @48，补 8 字节）
+    _pad2b: f32,      // @44
+    color: [f32; 3],  // @48
+    _pad3: f32,       // @60
+}
+
+#[test]
+fn wgsl_particle_stride_is_64() {
+    // 最终审查修复：PARTICLE_BYTES 从 48 修正为 64——原 48B/粒子分配 storage buffer，
+    // 高索引槽位（i ≥ 0.75*max）越界被 robustness 钳制（读 0 → 粒子不可见）→ 粒子密度
+    // 比估算低约 25%。此处断言 WGSL `Particle` 的真实布局（vec3 对齐 16）与 PARTICLE_BYTES 一致。
+    assert_eq!(std::mem::offset_of!(WgslParticleLayout, pos), 0);
+    assert_eq!(std::mem::offset_of!(WgslParticleLayout, vel), 16);
+    assert_eq!(std::mem::offset_of!(WgslParticleLayout, life), 28);
+    assert_eq!(std::mem::offset_of!(WgslParticleLayout, max_life), 32);
+    assert_eq!(std::mem::offset_of!(WgslParticleLayout, size), 36);
+    assert_eq!(std::mem::offset_of!(WgslParticleLayout, color), 48);
+    assert_eq!(std::mem::size_of::<WgslParticleLayout>(), 64);
+    // PARTICLE_BYTES 必须与 WGSL stride 一致（buffer 分配按此计算）
+    assert_eq!(we_scene_wasm::render::particle_pass::PARTICLE_BYTES, 64);
+}

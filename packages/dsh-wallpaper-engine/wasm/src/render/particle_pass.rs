@@ -103,9 +103,14 @@ pub fn estimate_max_particles(spec: &ParticleSpec) -> u32 {
     est.clamp(64, 2048)
 }
 
-/// WGSL `Particle` 结构体字节大小：pos 12 + vel 12 + life 4 + max_life 4 + size 4 + color 12 = 48。
-/// 由 Rust 侧按 48 字节/粒子分配 storage buffer（与 shader 布局约定一致）。
-pub const PARTICLE_BYTES: u64 = 48;
+/// WGSL `Particle` 结构体 stride（最终审查修复：原按 48B/粒子分配 storage buffer，
+/// 但 WGSL `struct Particle { pos: vec3f, vel: vec3f, life, max_life, size, color: vec3f }`
+/// 布局为 pos@0、vel@16、life@28、max_life@32、size@36、color@48（vec3 对齐 16）、
+/// span=60 → **stride=64**（struct align 16）。按 48B 分配时高索引槽位
+/// （i*64+60 ≥ 48*max，即 i ≥ 0.75*max）越界，被 WebGPU robustness 钳制（读 0 →
+/// 粒子不可见）→ 实际粒子密度比估算低约 25%；compute/渲染读写均按 64 stride 自洽，
+/// 掩盖了 buffer 分配错误。Rust 侧按 stride 64 分配 storage buffer。
+pub const PARTICLE_BYTES: u64 = 64;
 
 /// GPU 粒子模拟 + 点渲染管线（wgpu）。仅 render feature（wasm 构建）编译。
 #[cfg(feature = "render")]

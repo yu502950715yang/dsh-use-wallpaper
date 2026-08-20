@@ -19,7 +19,9 @@ pub struct SceneObject {
 #[derive(Debug, Clone)]
 pub struct SceneDesc {
     pub orthogonal: (f32, f32),
-    /// general.clearcolor（WE 向量字符串 "r g b"，0-255 或 0-1？实测为 0-255 量级，渲染侧归一化）
+    /// general.clearcolor（WE 向量字符串 "r g b"，**0-1 量级**——最终审查修复：
+    /// 原注释疑为 0-255，实测 fixture "0.7 0.7 0.7" 与 JS 版 `new THREE.Color(0.7, 0.7, 0.7)`
+    /// 均为 0-1 语义；渲染侧直接存储不再归一化）
     pub clear_color: Option<[f32; 3]>,
     pub objects: Vec<SceneObject>,
 }
