@@ -136,16 +136,28 @@ fn decode_embedded_image(data: &[u8], declared: Option<u32>) -> Option<(u32, u32
     let kind = match declared {
         Some(f) if f == FIF_PNG => EmbeddedImage::Png,
         Some(f) if f == FIF_JPEG => EmbeddedImage::Jpeg,
-        // 声明 UNKNOWN（-1/0）→ 魔数嗅探
+        // 未声明编码格式 → 魔数嗅探（仅 -1/UNKNOWN 路径到达；0/RAW 在 parse_tex 内透传，不进入本函数）
         _ => sniff_embedded_image(data)?,
     };
     match kind {
         EmbeddedImage::Png => {
-            let dec = png::Decoder::new(data);
+            let mut dec = png::Decoder::new(data);
+            // 统一输出 8-bit RGB/RGBA：STRIP_16 把 16-bit 位深降到 8-bit（避免 16-bit RGB 被按
+            // 8-bit 解析成乱码），EXPAND 把调色板展开为 RGB、灰度<8bit 提升到 8bit、tRNS 展开为 alpha
+            dec.set_transformations(png::Transformations::normalize_to_color8());
             let mut reader = dec.read_info().ok()?;
+            let info = reader.info();
+            // 解码尺寸无界分配防护：w*h*4 超过 1 GiB 直接拒绝（与 raw/LZ4 分支上界一致），
+            // 防止恶意 IHDR（如 100000x100000）在 wasm32 上容量溢出 panic
+            if info.width == 0
+                || info.height == 0
+                || info.width as u64 * info.height as u64 * 4 > (1 << 30)
+            {
+                return None;
+            }
             let mut buf = vec![0u8; reader.output_buffer_size()];
             let info = reader.next_frame(&mut buf).ok()?;
-            // png crate 默认输出与源一致的通道；仅接受 RGBA/RGB → 统一 RGBA8
+            // normalize_to_color8 后输出仅剩 8-bit RGBA/RGB（灰度/灰度+alpha 落入 _ → None）
             let rgba = match info.color_type {
                 png::ColorType::Rgba => buf,
                 png::ColorType::Rgb => {
@@ -163,11 +175,26 @@ fn decode_embedded_image(data: &[u8], declared: Option<u32>) -> Option<(u32, u32
             let mut dec = jpeg_decoder::Decoder::new(data);
             let pixels = dec.decode().ok()?;
             let info = dec.info()?;
-            // jpeg-decoder 输出 RGB（3 通道）→ 补 alpha=255 为 RGBA
-            let mut rgba = Vec::with_capacity(pixels.len() / 3 * 4);
-            for px in pixels.chunks_exact(3) {
-                rgba.extend_from_slice(&[px[0], px[1], px[2], 255]);
-            }
+            let wh = info.width as usize * info.height as usize;
+            // jpeg-decoder 输出通道数随源格式变化：RGB=3、灰度 L8=1、CMYK=4。
+            // 仅接受 3 通道（补 alpha=255）与 1 通道（灰度扩为 [v,v,v,255]），其余（如 CMYK）返回 None，
+            // 避免 mip0 长度 ≠ w*h*4 导致 wgpu write_texture 数据不足校验失败
+            let rgba = if pixels.len() == wh * 3 {
+                let mut out = Vec::with_capacity(wh * 4);
+                for px in pixels.chunks_exact(3) {
+                    out.extend_from_slice(&[px[0], px[1], px[2], 255]);
+                }
+                out
+            } else if pixels.len() == wh {
+                // 灰度 L8 → 各通道复制为 [v, v, v, 255]
+                let mut out = Vec::with_capacity(wh * 4);
+                for &v in &pixels {
+                    out.extend_from_slice(&[v, v, v, 255]);
+                }
+                out
+            } else {
+                return None;
+            };
             Some((info.width as u32, info.height as u32, rgba))
         }
     }
@@ -268,7 +295,8 @@ pub fn parse_tex(data: &[u8]) -> Option<TexImage> {
             };
             // 编码图像（V3+）：mip0 载荷是 JPEG/PNG 字节流 → 解码为 RGBA8。
             // 声明 FIF_PNG/FIF_JPEG → 按声明解码（失败返回 None，图片缺失不中断渲染）；
-            // 声明 u32::MAX（UNKNOWN）→ 魔数嗅探，命中解码、未命中按原始数据透传；
+            // 声明 u32::MAX（UNKNOWN）→ 魔数嗅探：命中解码、未命中透传原始数据、命中但解码失败 → None；
+            // 声明其他格式（如 BMP/WEBP）→ 不支持，返回 None；
             // 声明 0（RAW）→ 不嗅探（避免误伤以 FF D8 FF 开头的合法 RGBA 纹理）。
             if mip0.is_none() {
                 if let Some(declared) = encoded_image_format {
@@ -284,7 +312,6 @@ pub fn parse_tex(data: &[u8]) -> Option<TexImage> {
                         // 声明编码但解码失败 → 该纹理不可用（返回 None，图片缺失不中断渲染）
                         return None;
                     } else if declared == u32::MAX {
-                        // UNKNOWN：嗅探命中才解码，未命中按原始数据透传
                         if let Some((dw, dh, rgba)) = decode_embedded_image(&out, None) {
                             return Some(TexImage {
                                 width: dw,
@@ -293,6 +320,14 @@ pub fn parse_tex(data: &[u8]) -> Option<TexImage> {
                                 mip0: rgba,
                             });
                         }
+                        // 嗅探命中但解码失败 → 纹理不可用（返回 None，对齐参考实现 DecodeFailed）；
+                        // 未命中（非编码图像）→ 透传原始数据
+                        if sniff_embedded_image(&out).is_some() {
+                            return None;
+                        }
+                    } else if declared != 0 {
+                        // 声明了其他编码格式（如 BMP/WEBP）→ 不支持，返回 None（图片缺失不中断渲染）
+                        return None;
                     }
                     // 声明 0（RAW）→ 原样透传
                 }

@@ -1,3 +1,4 @@
+use std::io::Cursor;
 use we_scene_wasm::tex::{parse_tex, TexFormat};
 
 const RGBA_LZ4: &[u8] = include_bytes!("fixtures/tex/rgba_lz4.tex");
@@ -76,10 +77,8 @@ fn rejects_huge_bytes_len() {
     assert!(parse_tex(&tex_with_mip(0, 4, u32::MAX)).is_none());
 }
 
-use std::io::Cursor;
-
 #[test]
-fn probe_fixtures_are_decodable() {
+fn fixtures_are_decodable() {
     // PNG fixture：60x33，最小 mip 的编码载荷
     let png_bytes = include_bytes!("fixtures/tex/png_mip_tail.png");
     let dec = png::Decoder::new(Cursor::new(png_bytes));
@@ -160,5 +159,45 @@ fn sniffs_encoded_tex_when_image_format_unknown() {
     assert_eq!(img.width, 60);
     assert_eq!(img.height, 33);
     // 嗅探命中应解码为 RGBA8（60*33*4=7920），而非原始 PNG 字节透传
+    assert_eq!(img.mip0.len(), 60 * 33 * 4);
+}
+
+// 构造 TEXB0003 容器：1 image × 1 mip，编码载荷先 LZ4 压缩再作为 mip payload（is_lz4=1）
+fn tex_v3_with_lz4_encoded_payload(payload: &[u8], declared_image_format: u32) -> Vec<u8> {
+    let compressed = lz4_flex::block::compress(payload);
+    let mut v = Vec::new();
+    v.extend_from_slice(b"TEXV0005\0");
+    v.extend_from_slice(b"TEXI0001\0");
+    // 28B 头：format=0(RGBA8888 名义), flags=0, texW=1, texH=1, imgW=1, imgH=1, unk=0
+    v.extend_from_slice(&0u32.to_le_bytes());
+    v.extend_from_slice(&0u32.to_le_bytes());
+    v.extend_from_slice(&1u32.to_le_bytes());
+    v.extend_from_slice(&1u32.to_le_bytes());
+    v.extend_from_slice(&1u32.to_le_bytes());
+    v.extend_from_slice(&1u32.to_le_bytes());
+    v.extend_from_slice(&0u32.to_le_bytes());
+    v.extend_from_slice(b"TEXB0003\0");
+    v.extend_from_slice(&1u32.to_le_bytes()); // imageCount
+    v.extend_from_slice(&declared_image_format.to_le_bytes()); // image_format (FreeImage FIF)
+    v.extend_from_slice(&1u32.to_le_bytes()); // mipmapCount
+    v.extend_from_slice(&60u32.to_le_bytes()); // width（以 PNG fixture 实际宽为准）
+    v.extend_from_slice(&33u32.to_le_bytes()); // height
+    v.extend_from_slice(&1u32.to_le_bytes()); // isLZ4 = 1
+    v.extend_from_slice(&(payload.len() as u32).to_le_bytes()); // decompressedBytes = 解压后载荷长度
+    v.extend_from_slice(&(compressed.len() as u32).to_le_bytes()); // bytesLen = 压缩后长度
+    v.extend_from_slice(&compressed);
+    v
+}
+
+#[test]
+fn parses_lz4_compressed_png_encoded_tex_as_rgba() {
+    // 计划要求：编码图像 mip 载荷可能是 LZ4 压缩 → parse_tex 应先解压再按声明 FIF 解码
+    let png = include_bytes!("fixtures/tex/png_mip_tail.png");
+    let tex = tex_v3_with_lz4_encoded_payload(png, 13);
+    let img = parse_tex(&tex).expect("LZ4 压缩的 PNG 编码 tex 应可解析");
+    assert_eq!(img.format, TexFormat::Rgba8888);
+    assert_eq!(img.width, 60);
+    assert_eq!(img.height, 33);
+    // RGBA8 数据量 = 60*33*4 = 7920（解压 + 解码后与未压缩路径一致）
     assert_eq!(img.mip0.len(), 60 * 33 * 4);
 }
