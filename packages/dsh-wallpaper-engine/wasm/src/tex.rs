@@ -39,13 +39,18 @@ impl From<u32> for TexFormat {
 ///   （render feature 下编译，映射表必须与本函数一一对应）
 ///
 /// WebGPU 原生支持 BC 压缩（BC1/BC2/BC3）、R8/RG8 与 RGBA8，故全部映射为
-/// sRGB/UNorm 格式：DXT1→BC1、DXT3→BC2、DXT5→BC3、R8→R8Unorm、RG88→Rg8Unorm。
+/// UNorm（**非 sRGB**）格式：DXT1→BC1、DXT3→BC2、DXT5→BC3、R8→R8Unorm、RG88→Rg8Unorm。
+///
+/// Task 9 实测修复：原映射为 *Srgb 格式，textureSample 会做 sRGB→线性解码；若 surface
+/// 是非 sRGB 格式（headless Edge 实测 formats 首选非 sRGB），fragment 输出的线性值被
+/// 直接显示 → 画面比原图暗约 50%（EVA 主图 avg 200→20）。改为 UNorm 后 fragment 输出
+/// 纹理原始（sRGB 编码）值，与 surface（同样非 sRGB）匹配，图片显示接近原图。
 pub fn tex_format_id(format: TexFormat) -> Option<&'static str> {
     match format {
-        TexFormat::Rgba8888 => Some("rgba8unorm-srgb"),
-        TexFormat::Dxt1 => Some("bc1-rgba-unorm-srgb"),
-        TexFormat::Dxt3 => Some("bc2-rgba-unorm-srgb"),
-        TexFormat::Dxt5 => Some("bc3-rgba-unorm-srgb"),
+        TexFormat::Rgba8888 => Some("rgba8unorm"),
+        TexFormat::Dxt1 => Some("bc1-rgba-unorm"),
+        TexFormat::Dxt3 => Some("bc2-rgba-unorm"),
+        TexFormat::Dxt5 => Some("bc3-rgba-unorm"),
         TexFormat::R8 => Some("r8-unorm"),
         TexFormat::Rg88 => Some("rg8-unorm"),
         TexFormat::Unsupported(_) => None,
@@ -114,8 +119,12 @@ fn u32_at(data: &[u8], off: usize) -> u32 {
 
 pub fn parse_tex(data: &[u8]) -> Option<TexImage> {
     // 真实布局（tex-loader.ts 实测）："TEXV0005\0"9B + "TEXI0001\0"9B + 28B 头@18
-    // + 容器头("TEXB0001|0002\0" 等 9B)@46 + imageCount(i32)@55 + 每 image: mipmapCount
-    // + 每 mipmap(V2): width height isLZ4 decompressedBytes bytesLen(20B) + 数据
+    // + 容器头("TEXB0001|0002|0003|0004\0" 等 9B)@46 + imageCount(i32)@55 + 每 image: mipmapCount
+    // + 每 mipmap(V2/V3+): width height isLZ4 decompressedBytes bytesLen(20B) + 数据
+    //   （V1/TEXB0001: width height bytesLen 12B，无 isLZ4）
+    // Task 9 修复：V3+(TEXB0003/0004) 在 imageCount 后多 4B FreeImage 格式（V4 再加 4B 标志），
+    // 原实现未处理导致 TEXB0003 壁纸（如 2683211654）解析错位失败；另对齐 tex-loader 容错：
+    // 非 LZ4 mip 不校验 decompressedBytes（原实现统一校验导致部分壁纸 parse 失败）。
     if data.len() < 55 || &data[0..9] != b"TEXV0005\0" || &data[9..18] != b"TEXI0001\0" {
         return None;
     }
@@ -124,15 +133,35 @@ pub fn parse_tex(data: &[u8]) -> Option<TexImage> {
         return None;
     }
     let format = u32_at(data, hdr);
-    let _tex_w = u32_at(data, hdr + 8);
-    let _tex_h = u32_at(data, hdr + 12);
-    // 容器头 9 字节（TEXB0001|0002|0003|0004\0）
+    let container = &data[46..55];
+    let v1 = container == b"TEXB0001\0";
+    let v2 = container == b"TEXB0002\0";
+    let v3plus = container == b"TEXB0003\0" || container == b"TEXB0004\0";
+    if !v1 && !v2 && !v3plus {
+        return None;
+    }
     let mut pos = hdr + 28 + 9;
     if data.len() < pos + 4 {
         return None;
     }
     let image_count = u32_at(data, pos) as usize;
     pos += 4;
+    // V3+：imageCount 后紧跟 FreeImage 格式（V4 还有 isVideoMp4 标志）
+    if v3plus {
+        if data.len() < pos + 4 {
+            return None;
+        }
+        let image_format = u32_at(data, pos);
+        pos += 4;
+        if container == b"TEXB0004\0" {
+            pos += 4;
+        }
+        // 编码图像（JPEG/PNG 等，FreeImage 格式 != -1/0）无法在 Rust 侧解码 → 跳过
+        // （返回 None，该图片不上传，保持与 JS 渲染器 preview 回退一致）
+        if image_format != 0 && image_format != u32::MAX {
+            return None;
+        }
+    }
     let mut mip0: Option<(u32, u32, Vec<u8>)> = None;
     for _img in 0..image_count {
         if data.len() < pos + 4 {
@@ -141,23 +170,25 @@ pub fn parse_tex(data: &[u8]) -> Option<TexImage> {
         let mip_count = u32_at(data, pos) as usize;
         pos += 4;
         for _m in 0..mip_count {
-            if data.len() < pos + 20 {
-                return None;
-            }
-            let w = u32_at(data, pos);
-            let h = u32_at(data, pos + 4);
-            let is_lz4 = u32_at(data, pos + 8) == 1;
-            let decompressed = u32_at(data, pos + 12);
-            let bytes_len = u32_at(data, pos + 16) as usize;
-            pos += 20;
+            let (w, h, is_lz4, decompressed, bytes_len) = if v2 || v3plus {
+                if data.len() < pos + 20 {
+                    return None;
+                }
+                (
+                    u32_at(data, pos),
+                    u32_at(data, pos + 4),
+                    u32_at(data, pos + 8) == 1,
+                    u32_at(data, pos + 12),
+                    u32_at(data, pos + 16) as usize,
+                )
+            } else {
+                if data.len() < pos + 12 {
+                    return None;
+                }
+                (u32_at(data, pos), u32_at(data, pos + 4), false, 0, u32_at(data, pos + 8) as usize)
+            };
+            pos += if v2 || v3plus { 20 } else { 12 };
             if data.len() < pos + bytes_len {
-                return None;
-            }
-            // 上界防护（对齐 tex-loader.ts 的 decompressedBytes <= 1<<30 校验）：
-            // decompress 会按 decompressed 值预分配输出缓冲区，巨大值（如 0xFFFFFFFF）
-            // 会导致内存暴涨/wasm trap 而非优雅返回 None，必须在解压前拦截。
-            // 解压与未解压分支统一校验（未解压分支的 decompressedBytes 也应 > 0）。
-            if decompressed == 0 || decompressed > (1 << 30) {
                 return None;
             }
             // 未解压分支同样限制 bytes_len 上界，保持一致
@@ -165,7 +196,11 @@ pub fn parse_tex(data: &[u8]) -> Option<TexImage> {
                 return None;
             }
             let raw = &data[pos..pos + bytes_len];
+            // 对齐 tex-loader.ts：仅 LZ4 分支校验 decompressedBytes；非 LZ4 直接用原始数据
             let out = if is_lz4 {
+                if decompressed == 0 || decompressed > (1 << 30) {
+                    return None;
+                }
                 decompress(raw, decompressed as usize).ok()?
             } else {
                 raw.to_vec()

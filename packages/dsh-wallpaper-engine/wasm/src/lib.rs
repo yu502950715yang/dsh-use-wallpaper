@@ -24,19 +24,11 @@ pub fn init_wasm_runtime() {
 #[cfg(feature = "render")]
 use wasm_bindgen::prelude::*;
 
-/// 已上传纹理的变换元数据（load_image 参数；场景绘制在 Task 8/9 消费）。
-#[cfg(feature = "render")]
-type ImageMeta = (u32, [f32; 3], [f32; 3], Option<[f32; 2]>);
-
 #[cfg(feature = "render")]
 #[wasm_bindgen]
 pub struct WeScene {
     renderer: render::Renderer,
     scene: Option<scene::SceneDesc>,
-    /// 已上传纹理：asset_id → wgpu::Texture（mip0，与 load_image 同序）。
-    images: Vec<(u32, wgpu::Texture)>,
-    /// load_image 传入的 origin/scale/size 变换（与 images 的 asset_id 对应）。
-    image_meta: Vec<ImageMeta>,
     /// 视口像素尺寸（add_particle 的坐标映射用）。
     vw: f32,
     vh: f32,
@@ -61,8 +53,6 @@ impl WeScene {
         Ok(WeScene {
             renderer,
             scene: None,
-            images: Vec::new(),
-            image_meta: Vec::new(),
             vw: width as f32,
             vh: height as f32,
         })
@@ -75,14 +65,24 @@ impl WeScene {
         self.renderer.resize(w, h);
     }
 
-    /// 解析 scene.json（结构对齐 src/client/scene-json.ts）；scene_width/height 返回其正交尺寸。
-    pub fn load_scene(&mut self, json: &str) {
-        self.scene = Some(scene::parse_scene(json));
+    /// 背景模式（cover 铺满）：wasm-renderer 的背景 canvas 用（前景保持 contain）。
+    pub fn set_cover(&mut self) {
+        self.renderer.set_cover();
     }
 
-    /// 解码 .tex 字节并上传纹理（RGBA8888/DXT1/3/5/R8/RG88，TEXV0005 容器）。
-    /// origin/scale/size 为场景变换（当前存储待 Task 8/9 场景绘制消费）；
-    /// 相同 asset_id 重复调用替换旧纹理。
+    /// 解析 scene.json（结构对齐 src/client/scene-json.ts）；scene_width/height 返回其正交尺寸。
+    pub fn load_scene(&mut self, json: &str) {
+        let desc = scene::parse_scene(json);
+        // Task 9 修复：把场景正交尺寸同步给渲染器（render_frame 的 contain 相机范围计算用）
+        self.renderer.set_scene_size(desc.orthogonal.0, desc.orthogonal.1);
+        // 场景 clearcolor → 渲染器（cover 背景模式清屏用，对齐 JS 版 bg 层底色）
+        self.renderer.set_clear_color(desc.clear_color);
+        self.scene = Some(desc);
+    }
+
+    /// 解码 .tex 字节并上传纹理（RGBA8888/DXT1/3/5/R8/RG88，TEXV0005 容器），
+    /// 登记为图片平面（render_frame 在粒子层之前绘制）。相同 asset_id 重复调用替换旧图。
+    /// 失败路径保留 console 诊断（parse/upload 失败是壁纸图片缺失的可观测原因）。
     pub fn load_image(
         &mut self,
         asset_id: u32,
@@ -92,14 +92,14 @@ impl WeScene {
         size: Vec<f32>,
     ) {
         let Some(img) = tex::parse_tex(tex_bytes) else {
+            web_sys::console::log_1(&JsValue::from_str(&format!("[wasm] load_image {asset_id}: parse_tex FAILED ({}B)", tex_bytes.len())));
             return;
         };
         if let Some(tex) = self.renderer.upload_texture(&img) {
-            self.images.retain(|(id, _)| *id != asset_id);
-            self.image_meta.retain(|(id, _, _, _)| *id != asset_id);
             let size = if size.len() >= 2 { Some([size[0], size[1]]) } else { None };
-            self.images.push((asset_id, tex));
-            self.image_meta.push((asset_id, arr3(&origin), arr3(&scale), size));
+            self.renderer.set_image(asset_id, tex, arr3(&origin), arr3(&scale), size, img.width, img.height);
+        } else {
+            web_sys::console::log_1(&JsValue::from_str(&format!("[wasm] load_image {asset_id}: upload_texture FAILED")));
         }
     }
 
@@ -107,7 +107,7 @@ impl WeScene {
     pub fn add_particle(&mut self, json: &str, origin: Vec<f32>, scale: Vec<f32>) {
         let spec = particle::parse_particle_spec(json);
         self.renderer
-            .set_particle(&spec, arr3(&origin), arr3(&scale), self.vw, self.vh);
+            .set_particle(&spec, arr3(&origin), arr3(&scale));
     }
 
     /// GPU 粒子模拟一帧（更新 uniform dt + 累计 elapsed + dispatch compute）。
@@ -136,3 +136,4 @@ impl WeScene {
 fn arr3(v: &[f32]) -> [f32; 3] {
     [v.first().copied().unwrap_or(0.0), v.get(1).copied().unwrap_or(0.0), v.get(2).copied().unwrap_or(0.0)]
 }
+

@@ -14,14 +14,37 @@ use crate::particle::ParticleSpec;
 #[cfg(feature = "render")]
 pub const CAMERA_DISTANCE: f32 = 300.0;
 
-/// 场景图片对象：纹理 + 变换（纹理上传入口见 Task 7）
+/// 场景图片对象：纹理 + 变换 + GPU 资源（Task 9 实测修复：render_frame 原只渲染
+/// 粒子、图片平面未绘制 → 全库画面偏暗；本结构承载图片 quad 渲染所需资源）。
 #[cfg(feature = "render")]
 pub struct SceneImage {
+    pub asset_id: u32,
     pub tex: wgpu::Texture,
+    pub bind_group: wgpu::BindGroup,
+    pub uniform_buffer: wgpu::Buffer,
     pub origin: [f32; 3],
     pub scale: [f32; 3],
     pub size: Option<[f32; 2]>,
+    pub tex_width: u32,
+    pub tex_height: u32,
 }
+
+/// 图片 quad uniform（NDC 中心 + 半宽高；对齐 shaders/image.wgsl 的 ImageUniform，16 字节）
+#[cfg(feature = "render")]
+#[repr(C)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct ImageUniform {
+    pub center_x: f32,
+    pub center_y: f32,
+    pub half_w: f32,
+    pub half_h: f32,
+}
+
+/// 相机模式：前景 contain（完整显示、留白透明）/ 背景 cover（铺满、裁剪）——
+/// 对齐 scene-renderer.ts 的 containRange/coverRange 与 background-layer 双 canvas 语义。
+#[cfg(feature = "render")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CameraMode { Contain, Cover }
 
 #[cfg(feature = "render")]
 pub struct Renderer {
@@ -31,8 +54,20 @@ pub struct Renderer {
     surface: wgpu::Surface<'static>,
     width: u32,
     height: u32,
-    /// GPU 粒子模拟 + 点渲染管线（set_particle 后启用）
-    particle_pass: Option<particle_pass::ParticlePass>,
+    /// GPU 粒子模拟 + 点渲染管线（**多系统**，set_particle 追加——Task 9 修复：
+    /// EVA 等壁纸多粒子系统全部渲染，对齐 JS 版粒子密度）
+    particle_passes: Vec<particle_pass::ParticlePass>,
+    /// 场景正交尺寸（load_scene 设置；render_frame 的 contain 相机范围计算用）
+    scene_w: f32,
+    scene_h: f32,
+    /// 相机模式（contain/cover，wasm-renderer 背景 canvas 用 cover）
+    mode: CameraMode,
+    /// 场景 clearcolor（0-255 量级，load_scene 设置；cover 背景模式清屏用，对齐 JS 版
+    /// bgRenderer.setClearColor(clearColor ?? 0x111114)）
+    clear_color: Option<[f32; 3]>,
+    /// 图片平面（set_image 上传；render_frame 在粒子层之前绘制）
+    images: Vec<SceneImage>,
+    image_pipeline: wgpu::RenderPipeline,
 }
 
 #[cfg(feature = "render")]
@@ -50,16 +85,26 @@ impl Renderer {
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
         }).await.ok_or("no WebGPU adapter")?;
-        // wgpu 24 API 适配：request_device 增补第 2 参数 trace_path（None = 不追踪）
+        // wgpu 24 API 适配：request_device 增补第 2 参数 trace_path（None = 不追踪）。
+        // Task 9 修复：DXT(BC) 纹理需要 texture-compression-bc feature——adapter 支持时
+        // 启用，否则 upload_texture 的 create_texture 会 panic（实测 3743126786/3765967112
+        // 等含 DXT 纹理的壁纸 wasm 渲染 panic → 回退 JS）。
+        let mut required_features = wgpu::Features::empty();
+        if adapter.features().contains(wgpu::Features::TEXTURE_COMPRESSION_BC) {
+            required_features |= wgpu::Features::TEXTURE_COMPRESSION_BC;
+        }
         let (device, queue) = adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("we-scene"),
-            required_features: wgpu::Features::empty(),
+            required_features,
             required_limits: wgpu::Limits::default(),
             memory_hints: wgpu::MemoryHints::Performance,
         }, None).await.map_err(|e| format!("request_device: {e}"))?;
         let caps = surface.get_capabilities(&adapter);
-        let format = caps.formats.iter().copied().find(|f| f.is_srgb())
-            .unwrap_or(caps.formats[0]);
+        // Task 9 修复：直接取 formats[0]（headless Edge 实测首选非 sRGB 格式）。
+        // 原实现优先 sRGB → 纹理(改后非 sRGB) 采样值经 sRGB surface 编码会偏亮，
+        // 且旧组合（sRGB 纹理 + 非 sRGB surface）使画面暗约 50%。统一非 sRGB 管线：
+        // 纹理 fragment 输出原始编码值，surface 直接显示。
+        let format = caps.formats[0];
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
@@ -71,7 +116,107 @@ impl Renderer {
             desired_maximum_frame_latency: 2,
         };
         surface.configure(&device, &config);
-        Ok(Renderer { device, queue, config, surface, width, height, particle_pass: None })
+        // 图片 quad 管线：NDC 顶点（vertex_index 推导角点）+ 纹理采样。
+        // 渲染目标格式与 surface 一致；alpha 混合（透明边缘露出背景模糊层，对齐 JS 版
+        // MeshBasicMaterial transparent:true）。
+        let image_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("image.wgsl"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/image.wgsl").into()),
+        });
+        let image_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("image-bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        let image_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("image-pl"),
+            bind_group_layouts: &[&image_bgl],
+            push_constant_ranges: &[],
+        });
+        let image_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("image-render"),
+            layout: Some(&image_layout),
+            vertex: wgpu::VertexState {
+                module: &image_shader,
+                entry_point: Some("vs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                buffers: &[],
+            },
+            primitive: wgpu::PrimitiveState {
+                // 4 顶点 triangle-strip quad（vs 用 vertex_index 推导角点，同粒子渲染模式）
+                topology: wgpu::PrimitiveTopology::TriangleStrip,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &image_shader,
+                entry_point: Some("fs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: Some(wgpu::BlendState {
+                        color: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::SrcAlpha,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                        alpha: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                    }),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview: None,
+            cache: None,
+        });
+        Ok(Renderer {
+            device, queue, config, surface, width, height,
+            particle_passes: Vec::new(),
+            scene_w: width as f32,
+            scene_h: height as f32,
+            mode: CameraMode::Contain,
+            clear_color: None,
+            images: Vec::new(),
+            image_pipeline,
+        })
+    }
+
+    /// 背景模式（cover）：铺满视口、超出裁剪——wasm-renderer 的背景 canvas 用。
+    pub fn set_cover(&mut self) {
+        self.mode = CameraMode::Cover;
+    }
+
+    /// 场景 clearcolor（0-255 量级 → 归一化存储；cover 背景模式清屏用）。
+    pub fn set_clear_color(&mut self, c: Option<[f32; 3]>) {
+        self.clear_color = c.map(|[r, g, b]| [r / 255.0, g / 255.0, b / 255.0]);
+    }
+
+    /// 场景正交尺寸（load_scene 调用；render_frame 的 contain 相机范围计算用）。
+    pub fn set_scene_size(&mut self, w: f32, h: f32) {
+        self.scene_w = w.max(1.0);
+        self.scene_h = h.max(1.0);
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -82,10 +227,14 @@ impl Renderer {
         self.surface.configure(&self.device, &self.config);
     }
 
-    /// 装载粒子规格并构建 GPU 粒子管线（坐标在 CPU 侧映射后打包进 uniform）。
-    pub fn set_particle(&mut self, spec: &ParticleSpec, origin: [f32; 3], scale: [f32; 3], vw: f32, vh: f32) {
-        let params = particle_pass::EmitterParams::from_spec(spec, origin, scale, vw, vh);
-        self.particle_pass = Some(particle_pass::ParticlePass::new(
+    /// 装载粒子规格并构建 GPU 粒子管线（**追加**而非覆盖——Task 9 修复：
+    /// 原实现单系统覆盖，EVA 等壁纸 5 个粒子系统只有最后一个渲染，粒子密度远低于
+    /// JS 版 → 画面偏暗）。origin 映射用场景尺寸（scene_w/scene_h），投影用 contain
+    /// 相机范围（camera_range）——对齐 scene-renderer.ts 语义。
+    pub fn set_particle(&mut self, spec: &ParticleSpec, origin: [f32; 3], scale: [f32; 3]) {
+        let (fw, fh) = self.camera_range();
+        let params = particle_pass::EmitterParams::from_spec(spec, origin, scale, self.scene_w, self.scene_h, fw, fh);
+        self.particle_passes.push(particle_pass::ParticlePass::new(
             &self.device,
             &self.queue,
             &params,
@@ -103,6 +252,14 @@ impl Renderer {
     /// - rows_per_image 按格式区分：块压缩 = 块行数 ceil(h/4)，非压缩 = 高。
     pub fn upload_texture(&mut self, img: &crate::tex::TexImage) -> Option<wgpu::Texture> {
         let format = texture::tex_format_to_wgpu(img.format)?;
+        // Task 9 修复（防 panic）：BC(DXT) 格式需 texture-compression-bc feature；
+        // adapter 不支持时跳过该纹理（返回 None，图片缺失但不中断 wasm 渲染）
+        if matches!(img.format, crate::tex::TexFormat::Dxt1 | crate::tex::TexFormat::Dxt3 | crate::tex::TexFormat::Dxt5)
+            && !self.device.features().contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
+        {
+            web_sys::console::log_1(&wasm_bindgen::JsValue::from_str("[wasm] upload_texture: BC 纹理跳过（无 texture-compression-bc feature）"));
+            return None;
+        }
         let layout = crate::tex::copy_layout(img)?;
         let usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST;
         let tex = self.device.create_texture(&wgpu::TextureDescriptor {
@@ -157,14 +314,74 @@ impl Renderer {
         Some(tex)
     }
 
+    /// 登记一张图片平面：创建 bind group（纹理+采样器）与 uniform buffer，
+    /// 相同 asset_id 替换旧图（对齐 JS 版 scene-renderer setImageObject 的语义：
+    /// 平面尺寸 = obj.size 优先、缺省回退纹理宽高；scale 直接缩放；origin 为场景中心点）。
+    pub fn set_image(
+        &mut self,
+        asset_id: u32,
+        tex: wgpu::Texture,
+        origin: [f32; 3],
+        scale: [f32; 3],
+        size: Option<[f32; 2]>,
+        tex_width: u32,
+        tex_height: u32,
+    ) {
+        self.images.retain(|im| im.asset_id != asset_id);
+        let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("image-sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        // uniform（binding 0）在 render_frame 每帧更新，这里先建 buffer 再并入 bind group
+        let uniform_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("image-uniform"),
+            size: std::mem::size_of::<ImageUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("image-bg"),
+            layout: &self.image_pipeline.get_bind_group_layout(0),
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+            ],
+        });
+        self.images.push(SceneImage {
+            asset_id,
+            tex,
+            bind_group,
+            uniform_buffer,
+            origin,
+            scale,
+            size,
+            tex_width,
+            tex_height,
+        });
+    }
+
     /// GPU 粒子模拟一帧（更新 uniform dt + dispatch compute）。
     pub fn step(&mut self, dt: f32) {
-        if let Some(pass) = &self.particle_pass {
+        for pass in &self.particle_passes {
             pass.step(&self.queue, dt);
         }
     }
 
-    /// 渲染场景到 canvas。v1：清屏 + 粒子点渲染层（加法混合叠加）。
+    /// 渲染场景到 canvas。Task 9 修复：清屏后先绘制图片平面（contain 正交相机语义，
+    /// 对齐 scene-renderer.ts），再叠加粒子点渲染层（加法混合）。
     pub fn render_frame(&mut self) {
         let frame = match self.surface.get_current_texture() {
             Ok(f) => f,
@@ -172,23 +389,75 @@ impl Renderer {
         };
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        // 图片 uniform 先统一更新（避免 render pass 内同时可变借用 self.queue 与 self.images）
+        if !self.images.is_empty() {
+            let (fw, fh) = self.camera_range();
+            let uniforms: Vec<ImageUniform> = self
+                .images
+                .iter()
+                .map(|img| image_ndc(img, self.scene_w, self.scene_h, fw, fh))
+                .collect();
+            for (img, u) in self.images.iter().zip(&uniforms) {
+                self.queue.write_buffer(&img.uniform_buffer, 0, bytemuck::bytes_of(u));
+            }
+        }
+        // 清屏色：contain（前景）透明（透明区域露出背景 blur 层）；cover（背景）用场景
+        // clearcolor（缺省 0x111114 深灰，对齐 JS 版 bgRenderer.setClearColor），避免背景暗黑
+        let clear = match (self.mode, self.clear_color) {
+            (CameraMode::Contain, _) => wgpu::Color::TRANSPARENT,
+            (CameraMode::Cover, Some([r, g, b])) => wgpu::Color { r: r as f64, g: g as f64, b: b as f64, a: 1.0 },
+            (CameraMode::Cover, None) => wgpu::Color { r: 0.067, g: 0.067, b: 0.078, a: 1.0 },
+        };
         {
-            let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("clear"),
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("scene"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     resolve_target: None,
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store },
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(clear), store: wgpu::StoreOp::Store },
                 })],
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
+            // 图片平面：NDC 直接输出（中心/半宽由 CPU 按 contain 相机范围归一化，见 image_ndc）
+            for img in &self.images {
+                pass.set_pipeline(&self.image_pipeline);
+                pass.set_bind_group(0, &img.bind_group, &[]);
+                pass.draw(0..4, 0..1);
+            }
+            // pass 在块尾 drop，随后粒子渲染开启新的 render pass（不可嵌套）
         }
-        if let Some(pass) = &self.particle_pass {
-            pass.render(&mut encoder, &view);
+        // 粒子层（加法混合叠加在图片上；多粒子系统逐个渲染）
+        for p in &self.particle_passes {
+            p.render(&mut encoder, &view);
         }
         self.queue.submit([encoder.finish()]);
         frame.present();
+    }
+
+    /// contain/cover 相机范围（场景完整可见或铺满）——对齐 camera::contain_range/cover_range。
+    #[cfg(feature = "render")]
+    fn camera_range(&self) -> (f32, f32) {
+        let aspect = self.width as f32 / self.height.max(1) as f32;
+        match self.mode {
+            CameraMode::Contain => camera::contain_range(self.scene_w, self.scene_h, aspect),
+            CameraMode::Cover => camera::cover_range(self.scene_w, self.scene_h, aspect),
+        }
+    }
+}
+
+/// 图片 quad 的 NDC uniform：中心 = WE 场景中心点映射（ox - sw/2、oy - sh/2）除以相机半宽/半高；
+/// 半宽/半高 = (尺寸×scale/2) 除以相机半宽/半高。尺寸 = obj.size 优先、缺省回退纹理宽高
+/// （对齐 scene-renderer.ts setImageObject）。y 不翻转（WE y 向上，NDC y 向上）。
+#[cfg(feature = "render")]
+fn image_ndc(img: &SceneImage, sw: f32, sh: f32, fw: f32, fh: f32) -> ImageUniform {
+    let w = img.size.map(|s| s[0]).unwrap_or(img.tex_width as f32);
+    let h = img.size.map(|s| s[1]).unwrap_or(img.tex_height as f32);
+    ImageUniform {
+        center_x: (img.origin[0] - sw / 2.0) / (fw / 2.0),
+        center_y: (img.origin[1] - sh / 2.0) / (fh / 2.0),
+        half_w: (w * img.scale[0] / 2.0) / (fw / 2.0),
+        half_h: (h * img.scale[1] / 2.0) / (fh / 2.0),
     }
 }

@@ -11,12 +11,13 @@
 use crate::tex::TexFormat;
 
 /// TexFormat → wgpu::TextureFormat（以 `tex::tex_format_id` 字符串为键）。
+/// 全部 UNorm（非 sRGB）：Task 9 修复（与 surface 首选非 sRGB 格式匹配，见 tex.rs 说明）。
 pub fn tex_format_to_wgpu(format: TexFormat) -> Option<wgpu::TextureFormat> {
     match crate::tex::tex_format_id(format)? {
-        "rgba8unorm-srgb" => Some(wgpu::TextureFormat::Rgba8UnormSrgb),
-        "bc1-rgba-unorm-srgb" => Some(wgpu::TextureFormat::Bc1RgbaUnormSrgb),
-        "bc2-rgba-unorm-srgb" => Some(wgpu::TextureFormat::Bc2RgbaUnormSrgb),
-        "bc3-rgba-unorm-srgb" => Some(wgpu::TextureFormat::Bc3RgbaUnormSrgb),
+        "rgba8unorm" => Some(wgpu::TextureFormat::Rgba8Unorm),
+        "bc1-rgba-unorm" => Some(wgpu::TextureFormat::Bc1RgbaUnorm),
+        "bc2-rgba-unorm" => Some(wgpu::TextureFormat::Bc2RgbaUnorm),
+        "bc3-rgba-unorm" => Some(wgpu::TextureFormat::Bc3RgbaUnorm),
         "r8-unorm" => Some(wgpu::TextureFormat::R8Unorm),
         "rg8-unorm" => Some(wgpu::TextureFormat::Rg8Unorm),
         _ => None,

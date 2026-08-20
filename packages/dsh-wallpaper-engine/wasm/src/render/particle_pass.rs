@@ -33,15 +33,26 @@ pub struct EmitterParams {
 
 impl EmitterParams {
     /// CPU 侧坐标映射（WE 左上原点 → 中心原点、y 向上；scale.y 取负）后打包 uniform。
-    /// view_w/view_h 为视口像素尺寸（vs_main 裁剪坐标映射用），elapsed 初始 0（step 累加）。
-    pub fn from_spec(spec: &ParticleSpec, origin: [f32; 3], scale: [f32; 3], vw: f32, vh: f32) -> EmitterParams {
-        let c = coords::origin_to_center(origin, vw, vh);
+    /// Task 9 修复：origin 是 WE 场景坐标（0..scene_w / 0..scene_h），中心映射必须用
+    /// **场景尺寸** scene_w/scene_h（原实现与投影共用视口尺寸，create 改传视口后
+    /// 粒子位置错位/移出视口）；view_w/view_h 为投影半视口（contain 相机范围，
+    /// vs_main 的裁剪坐标映射用），elapsed 初始 0（step 累加）。
+    pub fn from_spec(
+        spec: &ParticleSpec,
+        origin: [f32; 3],
+        scale: [f32; 3],
+        scene_w: f32,
+        scene_h: f32,
+        view_w: f32,
+        view_h: f32,
+    ) -> EmitterParams {
+        let c = coords::origin_to_center(origin, scene_w, scene_h);
         let s = coords::particle_scale(scale);
         let i = &spec.init;
         EmitterParams {
             origin_x: c[0], origin_y: c[1], origin_z: c[2],
             scale_x: s[0], scale_y: s[1], scale_z: s[2],
-            view_w: vw, view_h: vh, elapsed: 0.0,
+            view_w, view_h, elapsed: 0.0,
             rate: spec.emitter.rate,
             distance_min: spec.emitter.distance_min,
             distance_max: spec.emitter.distance_max,

@@ -26,14 +26,14 @@ fn maps_all_supported_formats() {
 
 #[test]
 fn dxt_maps_to_bc_ids() {
-    assert_eq!(tex_format_id(TexFormat::Dxt1), Some("bc1-rgba-unorm-srgb"));
-    assert_eq!(tex_format_id(TexFormat::Dxt3), Some("bc2-rgba-unorm-srgb"));
-    assert_eq!(tex_format_id(TexFormat::Dxt5), Some("bc3-rgba-unorm-srgb"));
+    assert_eq!(tex_format_id(TexFormat::Dxt1), Some("bc1-rgba-unorm"));
+    assert_eq!(tex_format_id(TexFormat::Dxt3), Some("bc2-rgba-unorm"));
+    assert_eq!(tex_format_id(TexFormat::Dxt5), Some("bc3-rgba-unorm"));
 }
 
 #[test]
 fn rgba_r8_rg88_map_ids() {
-    assert_eq!(tex_format_id(TexFormat::Rgba8888), Some("rgba8unorm-srgb"));
+    assert_eq!(tex_format_id(TexFormat::Rgba8888), Some("rgba8unorm"));
     assert_eq!(tex_format_id(TexFormat::R8), Some("r8-unorm"));
     assert_eq!(tex_format_id(TexFormat::Rg88), Some("rg8-unorm"));
 }
