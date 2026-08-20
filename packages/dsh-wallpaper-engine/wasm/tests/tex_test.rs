@@ -98,3 +98,65 @@ fn probe_fixtures_are_decodable() {
     assert_eq!(jinfo.height, 5);
     assert!(!pixels.is_empty());
 }
+
+// 构造 TEXB0003 容器：1 image × 1 mip，编码载荷直接作为 mip payload（is_lz4=0）
+fn tex_v3_with_encoded_payload(payload: &[u8], declared_image_format: u32) -> Vec<u8> {
+    let mut v = Vec::new();
+    v.extend_from_slice(b"TEXV0005\0");
+    v.extend_from_slice(b"TEXI0001\0");
+    // 28B 头：format=0(RGBA8888 名义), flags=0, texW=1, texH=1, imgW=1, imgH=1, unk=0
+    v.extend_from_slice(&0u32.to_le_bytes());
+    v.extend_from_slice(&0u32.to_le_bytes());
+    v.extend_from_slice(&1u32.to_le_bytes());
+    v.extend_from_slice(&1u32.to_le_bytes());
+    v.extend_from_slice(&1u32.to_le_bytes());
+    v.extend_from_slice(&1u32.to_le_bytes());
+    v.extend_from_slice(&0u32.to_le_bytes());
+    v.extend_from_slice(b"TEXB0003\0");
+    v.extend_from_slice(&1u32.to_le_bytes()); // imageCount
+    v.extend_from_slice(&declared_image_format.to_le_bytes()); // image_format (FreeImage FIF)
+    v.extend_from_slice(&1u32.to_le_bytes()); // mipmapCount
+    v.extend_from_slice(&60u32.to_le_bytes()); // width（以 PNG fixture 实际宽为准）
+    v.extend_from_slice(&33u32.to_le_bytes()); // height
+    v.extend_from_slice(&0u32.to_le_bytes()); // isLZ4 = 0
+    v.extend_from_slice(&0u32.to_le_bytes()); // decompressedBytes = 0
+    v.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    v.extend_from_slice(payload);
+    v
+}
+
+#[test]
+fn parses_png_encoded_tex_as_rgba() {
+    let png = include_bytes!("fixtures/tex/png_mip_tail.png");
+    // FIF.PNG = 13（tex-loader.ts FIF 枚举一致）
+    let tex = tex_v3_with_encoded_payload(png, 13);
+    let img = parse_tex(&tex).expect("png 编码 tex 应可解析");
+    assert_eq!(img.format, TexFormat::Rgba8888);
+    assert_eq!(img.width, 60);
+    assert_eq!(img.height, 33);
+    // RGBA8 数据量 = 60*33*4 = 7920
+    assert_eq!(img.mip0.len(), 60 * 33 * 4);
+}
+
+#[test]
+fn parses_jpeg_encoded_tex_as_rgba() {
+    let jpg = include_bytes!("fixtures/tex/jpeg_mip_tail.jpg");
+    // FIF.JPEG = 2
+    let tex = tex_v3_with_encoded_payload(jpg, 2);
+    let img = parse_tex(&tex).expect("jpeg 编码 tex 应可解析");
+    assert_eq!(img.format, TexFormat::Rgba8888);
+    assert_eq!(img.width, 13);
+    assert_eq!(img.height, 5);
+    assert_eq!(img.mip0.len(), 13 * 5 * 4);
+}
+
+#[test]
+fn sniffs_encoded_tex_when_image_format_unknown() {
+    // 声明 -1（UNKNOWN）但 body 是 PNG → 魔数嗅探应解码（对齐 DetectEmbeddedImageType）
+    let png = include_bytes!("fixtures/tex/png_mip_tail.png");
+    let tex = tex_v3_with_encoded_payload(png, u32::MAX);
+    let img = parse_tex(&tex).expect("image_format=-1 时魔数嗅探应解码");
+    assert_eq!(img.format, TexFormat::Rgba8888);
+    assert_eq!(img.width, 60);
+    assert_eq!(img.height, 33);
+}

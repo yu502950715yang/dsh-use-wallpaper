@@ -113,6 +113,66 @@ pub struct TexImage {
     pub mip0: Vec<u8>, // LZ4 解压后的原始数据
 }
 
+// FreeImage 格式（TEXB0003+ 容器的 image_format 槽位，与 tex-loader.ts FIF 枚举一致）
+pub const FIF_JPEG: u32 = 2;
+pub const FIF_PNG: u32 = 13;
+
+// 魔数嗅探（对齐 open-wallpaper-engine TexImageParser::DetectEmbeddedImageType）：
+// 头部 image_format 声明 -1/0（UNKNOWN）但 body 实际是编码图像时回退嗅探。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EmbeddedImage { Png, Jpeg }
+
+fn sniff_embedded_image(data: &[u8]) -> Option<EmbeddedImage> {
+    if data.len() >= 8 && &data[0..8] == b"\x89PNG\r\n\x1a\n" {
+        return Some(EmbeddedImage::Png);
+    }
+    if data.len() >= 3 && data[0] == 0xff && data[1] == 0xd8 && data[2] == 0xff {
+        return Some(EmbeddedImage::Jpeg);
+    }
+    None
+}
+
+fn decode_embedded_image(data: &[u8], declared: Option<u32>) -> Option<(u32, u32, Vec<u8>)> {
+    let kind = match declared {
+        Some(f) if f == FIF_PNG => EmbeddedImage::Png,
+        Some(f) if f == FIF_JPEG => EmbeddedImage::Jpeg,
+        // 声明 UNKNOWN（-1/0）→ 魔数嗅探
+        _ => sniff_embedded_image(data)?,
+    };
+    match kind {
+        EmbeddedImage::Png => {
+            let dec = png::Decoder::new(data);
+            let mut reader = dec.read_info().ok()?;
+            let mut buf = vec![0u8; reader.output_buffer_size()];
+            let info = reader.next_frame(&mut buf).ok()?;
+            // png crate 默认输出与源一致的通道；仅接受 RGBA/RGB → 统一 RGBA8
+            let rgba = match info.color_type {
+                png::ColorType::Rgba => buf,
+                png::ColorType::Rgb => {
+                    let mut out = Vec::with_capacity(info.width as usize * info.height as usize * 4);
+                    for px in buf.chunks_exact(3) {
+                        out.extend_from_slice(&[px[0], px[1], px[2], 255]);
+                    }
+                    out
+                }
+                _ => return None,
+            };
+            Some((info.width, info.height, rgba))
+        }
+        EmbeddedImage::Jpeg => {
+            let mut dec = jpeg_decoder::Decoder::new(data);
+            let pixels = dec.decode().ok()?;
+            let info = dec.info()?;
+            // jpeg-decoder 输出 RGB（3 通道）→ 补 alpha=255 为 RGBA
+            let mut rgba = Vec::with_capacity(pixels.len() / 3 * 4);
+            for px in pixels.chunks_exact(3) {
+                rgba.extend_from_slice(&[px[0], px[1], px[2], 255]);
+            }
+            Some((info.width as u32, info.height as u32, rgba))
+        }
+    }
+}
+
 fn u32_at(data: &[u8], off: usize) -> u32 {
     u32::from_le_bytes(data[off..off + 4].try_into().unwrap_or([0; 4]))
 }
@@ -147,6 +207,7 @@ pub fn parse_tex(data: &[u8]) -> Option<TexImage> {
     let image_count = u32_at(data, pos) as usize;
     pos += 4;
     // V3+：imageCount 后紧跟 FreeImage 格式（V4 还有 isVideoMp4 标志）
+    let mut encoded_image_format: Option<u32> = None;
     if v3plus {
         if data.len() < pos + 4 {
             return None;
@@ -156,10 +217,9 @@ pub fn parse_tex(data: &[u8]) -> Option<TexImage> {
         if container == b"TEXB0004\0" {
             pos += 4;
         }
-        // 编码图像（JPEG/PNG 等，FreeImage 格式 != -1/0）无法在 Rust 侧解码 → 跳过
-        // （返回 None，该图片不上传，保持与 JS 渲染器 preview 回退一致）
+        // 编码图像（JPEG/PNG 等，FreeImage 格式 != -1/0）：不再跳过，记录格式待 mip 解码
         if image_format != 0 && image_format != u32::MAX {
-            return None;
+            encoded_image_format = Some(image_format);
         }
     }
     let mut mip0: Option<(u32, u32, Vec<u8>)> = None;
@@ -205,6 +265,21 @@ pub fn parse_tex(data: &[u8]) -> Option<TexImage> {
             } else {
                 raw.to_vec()
             };
+            // 编码图像（V3+）：mip0 载荷是 JPEG/PNG 字节流 → 解码为 RGBA8
+            if mip0.is_none() {
+                if let Some(declared) = encoded_image_format {
+                    if let Some((dw, dh, rgba)) = decode_embedded_image(&out, Some(declared)) {
+                        return Some(TexImage {
+                            width: dw,
+                            height: dh,
+                            format: TexFormat::Rgba8888,
+                            mip0: rgba,
+                        });
+                    }
+                    // 声明编码但解码失败 → 该纹理不可用（返回 None，图片缺失不中断渲染）
+                    return None;
+                }
+            }
             if mip0.is_none() {
                 mip0 = Some((w, h, out));
             }
