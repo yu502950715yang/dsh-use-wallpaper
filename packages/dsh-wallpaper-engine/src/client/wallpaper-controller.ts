@@ -44,7 +44,20 @@ export function createWallpaperController(
           const fg = document.createElement('canvas');
           const bg = document.createElement('canvas');
           try {
-            const ok = await opts.sceneRenderer.render(plan.wallpaperId, fg, bg);
+            let ok = await opts.sceneRenderer.render(plan.wallpaperId, fg, bg);
+            if (!ok) {
+              // Task 9 修复（回退链 canvas 污染）：wasm 失败时 fg 已被绑定 WebGPU context，
+              // JS 渲染器无法复用 → 重建 canvas 重试一次（组合层对已失败壁纸跳过 wasm，
+              // 用新 canvas 走 JS 渲染器；2597392171 实测 wasm/JS 双失败回退 preview 的根因）
+              const fg2 = document.createElement('canvas');
+              const bg2 = document.createElement('canvas');
+              ok = await opts.sceneRenderer.render(plan.wallpaperId, fg2, bg2);
+              if (ok) {
+                if (gen !== selectGeneration) return;
+                layer.showSceneCanvas(fg2, bg2);
+                break;
+              }
+            }
             if (gen !== selectGeneration) return; // 期间已切换 → 丢弃旧渲染结果
             if (ok) { layer.showSceneCanvas(fg, bg); break; }
           } catch {

@@ -7,6 +7,7 @@ import { resolveTexPath } from './scene-renderer.js';
 export interface WasmScene {
   resize(w: number, h: number): void;
   load_scene(json: string): void;
+  set_cover(): void;
   load_image(assetId: number, tex: Uint8Array, origin: Float32Array, scale: Float32Array, size: Float32Array): void;
   add_particle(json: string, origin: Float32Array, scale: Float32Array): void;
   step(dt: number): void;
@@ -33,14 +34,27 @@ export interface SceneRendererLike {
 // wasm 加载/初始化/渲染失败（resolve false）→ 降级 JS 渲染器；
 // JS 渲染器同样失败（false）→ 最终 false，controller 走 preview 图回退。
 // 组合层不吞异常：任一渲染器 reject 由 controller 的 try/catch 兜底（语义等价 preview）。
+// Task 9 修复（回退链 canvas 污染）：wasm 失败时 fg 已被 WebGPU context 占用，JS 渲染器
+// 无法在同一 canvas 上创建 WebGL context。故 wasm 失败后**返回 false 交由 controller 重建
+// canvas 重试**（重试时 wasmFailed 已记录，组合层直接用新 canvas 走 JS 渲染器），
+// 避免组合层内部换 canvas 与 controller 展示引用不一致（2597392171 双失败根因）。
 export function createFallbackSceneRenderer(
   wasm: SceneRendererLike | null,
   js: SceneRendererLike,
 ): SceneRendererLike {
   if (!wasm) return js;
+  // 本壁纸 wasm 已失败：后续渲染跳过 wasm 直接走 JS（避免反复绑定 canvas）
+  const wasmFailed = new Set<string>();
   return {
     async render(id, fg, bg) {
-      return (await wasm.render(id, fg, bg)) || js.render(id, fg, bg);
+      if (!wasmFailed.has(id)) {
+        const ok = await wasm.render(id, fg, bg);
+        if (ok) return true;
+        wasmFailed.add(id);
+        return false; // wasm 失败且 fg 已被 WebGPU 污染 → controller 重建 canvas 重试
+      }
+      // wasmFailed：controller 已重建 canvas（未绑定 WebGPU），直接走 JS 渲染器
+      return js.render(id, fg, bg);
     },
   };
 }
@@ -103,7 +117,7 @@ export function createWasmSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneRe
   // 模块加载缓存：同一 renderer 内多次 render 只加载/初始化一次 wasm
   let modulePromise: Promise<WasmSceneModule | null> | null = null;
   return {
-    async render(id, fg) {
+    async render(id, fg, bg) {
       try {
         modulePromise ??= loadWasm();
         const mod = await modulePromise;
@@ -114,8 +128,31 @@ export function createWasmSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneRe
         const sceneJson = await sceneJsonResp.text();
         const desc = parseSceneJson(sceneJson);
         const { width, height } = desc.orthogonal;
-        const scene = await mod.WeScene.create(fg, width, height);
+        // Task 9 修复：surface 与 canvas 属性尺寸 = 视口（对齐 scene-renderer.setScene 的
+        // vw/vh 语义；原实现直接传场景正交尺寸，canvas 默认 300×150 → 渲染被拉伸/截图失真）
+        const vw = Math.max(1, Math.round(window.innerWidth || width));
+        const vh = Math.max(1, Math.round(window.innerHeight || height));
+        fg.width = vw;
+        fg.height = vh;
+        const scene = await mod.WeScene.create(fg, vw, vh);
         scene.load_scene(sceneJson);
+        // Task 9 修复（背景层）：bg canvas 用 cover 渲染场景图片（铺满 + CSS 模糊），
+        // 对齐 JS 版 background-layer 的双 canvas 语义——前景 contain 的透明区域露出
+        // 模糊背景，避免透明区域显示黑色导致画面过暗（实测 EVA avg 200→20 的主因之一）。
+        // 背景只加载图片（粒子叠加在前景即可），纹理字节与前景共享同一 fetch。
+        let bgScene: WasmScene | null = null;
+        if (bg) {
+          // 背景层创建失败不应拖垮前景渲染（wasm 双 surface 极端环境可能失败）
+          try {
+            bg.width = vw;
+            bg.height = vh;
+            bgScene = await mod.WeScene.create(bg, vw, vh);
+            bgScene.set_cover();
+            bgScene.load_scene(sceneJson);
+          } catch {
+            bgScene = null;
+          }
+        }
         // 对象遍历：image → 纹理字节直传 wasm；particle → 规格 json 直传；util 跳过
         // （与 scene-renderer.ts 语义一致；assetId 用对象索引保证单场景内唯一）
         let rendered = 0;
@@ -131,11 +168,26 @@ export function createWasmSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneRe
               Float32Array.from(obj.scale),
               Float32Array.from(obj.size ?? []),
             );
+            if (bgScene) {
+              bgScene.load_image(
+                i,
+                tex,
+                Float32Array.from(obj.origin),
+                Float32Array.from(obj.scale),
+                Float32Array.from(obj.size ?? []),
+              );
+            }
             rendered++;
           } else if (obj.kind === 'particle' && obj.particle) {
             const specResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(obj.particle)}`);
             if (!specResp.ok) continue;
-            scene.add_particle(await specResp.text(), Float32Array.from(obj.origin), Float32Array.from(obj.scale));
+            const specText = await specResp.text();
+            scene.add_particle(specText, Float32Array.from(obj.origin), Float32Array.from(obj.scale));
+            // 背景层也叠加粒子：JS 版 bg 渲染整个 scene（含粒子），blur 后背景偏亮；
+            // wasm 版 bgScene 若只有图片（EVA 主图 alpha 大面积 0）→ 背景暗（avg 39 vs 基线 200）
+            if (bgScene) {
+              bgScene.add_particle(specText, Float32Array.from(obj.origin), Float32Array.from(obj.scale));
+            }
             rendered++;
           }
         }
@@ -145,6 +197,10 @@ export function createWasmSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneRe
         const loop = () => {
           scene.step(1 / 60);
           scene.render();
+          if (bgScene) {
+            bgScene.step(1 / 60);
+            bgScene.render();
+          }
           // canvas 被 controller 移除（切换壁纸）时自动终止 raf，防止泄漏
           if (fg.isConnected) raf = requestAnimationFrame(loop);
         };
