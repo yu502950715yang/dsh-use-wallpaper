@@ -75,3 +75,26 @@ fn rejects_huge_bytes_len() {
     // 未解压分支：bytesLen 巨大时同样必须返回 None（越界/上界防护，不崩溃）。
     assert!(parse_tex(&tex_with_mip(0, 4, u32::MAX)).is_none());
 }
+
+use std::io::Cursor;
+
+#[test]
+fn probe_fixtures_are_decodable() {
+    // PNG fixture：60x33，最小 mip 的编码载荷
+    let png_bytes = include_bytes!("fixtures/tex/png_mip_tail.png");
+    let dec = png::Decoder::new(Cursor::new(png_bytes));
+    let mut reader = dec.read_info().expect("png header");
+    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut buf).expect("png frame");
+    assert_eq!(info.width, 60);
+    assert_eq!(info.height, 33);
+
+    // JPEG fixture：13x5，最小 mip 的编码载荷
+    let jpg_bytes = include_bytes!("fixtures/tex/jpeg_mip_tail.jpg");
+    let mut jdec = jpeg_decoder::Decoder::new(Cursor::new(jpg_bytes));
+    let pixels = jdec.decode().expect("jpeg decode");
+    let jinfo = jdec.info().expect("jpeg info");
+    assert_eq!(jinfo.width, 13);
+    assert_eq!(jinfo.height, 5);
+    assert!(!pixels.is_empty());
+}

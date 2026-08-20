@@ -24,3 +24,5 @@ web-sys = { version = "0.3", features = ["HtmlCanvasElement", "console"], option
 js-sys = { version = "0.3", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
 console_error_panic_hook = { version = "0.1", optional = true }
+png = "0.17"
+jpeg-decoder = { version = "0.3", default-features = false }
