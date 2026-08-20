@@ -148,9 +148,13 @@ fn decode_embedded_image(data: &[u8], declared: Option<u32>) -> Option<(u32, u32
             let mut reader = dec.read_info().ok()?;
             let info = reader.info();
             // 解码尺寸无界分配防护：w*h*4 超过 1 GiB 直接拒绝（与 raw/LZ4 分支上界一致），
-            // 防止恶意 IHDR（如 100000x100000）在 wasm32 上容量溢出 panic
+            // 防止恶意 IHDR（如 100000x100000）在 wasm32 上容量溢出 panic。
+            // 按维短路（任一维 > 2^28 即拒）避免 u64 乘法在 w*h ≥ 2^62 时自身溢出
+            // （png crate 接受任意非 0 尺寸，构造 (2^31, 2^31) 头可绕过纯乘法守卫）。
             if info.width == 0
                 || info.height == 0
+                || info.width > (1 << 28)
+                || info.height > (1 << 28)
                 || info.width as u64 * info.height as u64 * 4 > (1 << 30)
             {
                 return None;

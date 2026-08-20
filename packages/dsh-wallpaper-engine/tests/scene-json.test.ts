@@ -35,6 +35,20 @@ describe('parseSceneJson', () => {
     const desc = parseSceneJson('{"objects":[]}');
     expect(desc.camera.center).toEqual([0, 0, 0]);
   });
+  it('defaults missing/invalid scale to [1,1,1] (WE: no scale = original size)', () => {
+    // 缺 scale 字段的 image 对象（实测 3303428996/3743126786/3760200530）：scale 缺省须为
+    // [1,1,1] 而非 [0,0,0]——否则 wasm image_half_ndc quad 尺寸 0 → 主图不渲染。
+    // 与 Rust 侧 scene.rs unwrap_or([1.0,1.0,1.0]) 语义对齐。
+    const missing = parseSceneJson('{"objects":[{"id":1,"image":"a.json","origin":"0 0 0"}]}');
+    expect((missing.objects[0] as any).scale).toEqual([1, 1, 1]);
+    // 非法 scale（非字符串）同样回退 [1,1,1]
+    const bad = parseSceneJson('{"objects":[{"id":1,"image":"a.json","scale":123}]}');
+    expect((bad.objects[0] as any).scale).toEqual([1, 1, 1]);
+    // 合法 scale 保持原值；origin 缺省仍为 [0,0,0]（不回归 camera/origin 语义）
+    const ok = parseSceneJson('{"objects":[{"id":1,"image":"a.json","origin":"0 0 0","scale":"2 2 1"}]}');
+    expect((ok.objects[0] as any).scale).toEqual([2, 2, 1]);
+    expect((ok.objects[0] as any).origin).toEqual([0, 0, 0]);
+  });
   it('classifies built-in util layers (models/util/*) as util kind', () => {
     // WE 内置合成层/全屏层/项目层：pkg 内无 models/util/*.json 文件，
     // 对象语义是效果链容器/控制节点（非纹理），必须与普通 image 区分开

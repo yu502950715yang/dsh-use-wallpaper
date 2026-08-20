@@ -26,3 +26,6 @@ wasm-bindgen-futures = { version = "0.4", optional = true }
 console_error_panic_hook = { version = "0.1", optional = true }
 png = "0.17"
 jpeg-decoder = { version = "0.3", default-features = false }
+
+[dev-dependencies]
+crc32fast = "1.5.0"

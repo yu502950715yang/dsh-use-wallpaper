@@ -14,6 +14,16 @@ function size2(s: unknown): [number, number] | undefined {
   return [parts[0], parts[1]];
 }
 
+// scale 字段缺省/类型非法 → [1,1,1]（WE 语义：无缩放 = 原始尺寸）。
+// 与 Rust 侧 scene.rs 的 unwrap_or([1.0,1.0,1.0]) 对齐——缺 scale 的 image 对象若按 [0,0,0]
+// 解析，wasm 渲染器 image_half_ndc 会算出 quad 尺寸 0 → 主图不渲染（实测 3303428996 等 3 张壁纸）。
+// 字符串部分 token（如 "2 2"）维持 vec3 的缺省 0 语义（与 Rust vec3_str 一致，z 不影响图片渲染）。
+function scale3(s: unknown): [number, number, number] {
+  if (typeof s !== 'string') return [1, 1, 1];
+  const parts = s.trim().split(/\s+/).map(Number);
+  return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0];
+}
+
 export function parseSceneJson(raw: string): SceneDescription {
   const root: any = JSON.parse(raw);
   if (typeof root !== 'object' || root === null || Array.isArray(root)) {
@@ -27,7 +37,7 @@ export function parseSceneJson(raw: string): SceneDescription {
       id: Number(o.id ?? 0),
       name: String(o.name ?? ''),
       origin: vec3(o.origin),
-      scale: vec3(o.scale),
+      scale: scale3(o.scale),
       size: size2(o.size),
       // Ruling 5：所有对象（kind 不限）的 effects 按 objects 顺序保留（全库 122 条中 105 条在 image 对象上）
       effects: Array.isArray(o.effects) ? o.effects : undefined,

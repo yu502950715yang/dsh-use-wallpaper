@@ -201,3 +201,49 @@ fn parses_lz4_compressed_png_encoded_tex_as_rgba() {
     // RGBA8 数据量 = 60*33*4 = 7920（解压 + 解码后与未压缩路径一致）
     assert_eq!(img.mip0.len(), 60 * 33 * 4);
 }
+
+// 构造超大尺寸 PNG：编码真实 1x1 RGBA PNG → 改写 IHDR 的 width/height 为大值 → 重算 IHDR CRC。
+// CRC 必须合法：png crate 校验 CRC 通过后才会接受尺寸（只拒 0），才能让 read_info 真正走到
+// 解码尺寸守卫——png crate 自身不拒绝非 0 超大尺寸（1e6x1e6 实测 read_info 成功、out_buf 4TB，
+// 若不守卫 vec![0u8; 4e12] 在 wasm32 上必然 OOM/panic）。
+fn oversized_png(width: u32, height: u32) -> Vec<u8> {
+    let mut png_bytes = Vec::new();
+    {
+        let mut enc = png::Encoder::new(&mut png_bytes, 1, 1);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        let mut w = enc.write_header().unwrap();
+        w.write_image_data(&[255, 0, 0, 255]).unwrap();
+    }
+    // IHDR 布局：签名 8B + length 4B + "IHDR" 4B → width@16, height@20
+    png_bytes[16..20].copy_from_slice(&width.to_be_bytes());
+    png_bytes[20..24].copy_from_slice(&height.to_be_bytes());
+    // 重算 IHDR CRC（chunk type + data，@12 起的 17 字节）
+    let mut hasher = crc32fast::Hasher::new();
+    hasher.update(&png_bytes[12..29]);
+    let crc = hasher.finalize();
+    png_bytes[29..33].copy_from_slice(&crc.to_be_bytes());
+    png_bytes
+}
+
+#[test]
+fn rejects_oversized_png_dimensions_without_panic() {
+    // 尺寸守卫防御纵深（最终审查 Important 2）：构造 (2^31, 2^31)（w*h ≥ 2^62）。
+    // 当前 png 0.17.16 对 2^31 宽度自身报 "limits are exceeded"（read_info Err → None），
+    // 同时我们的按维短路（任一维 > 2^28 即拒）在乘法守卫（u64 溢出为 0 会放行）之前
+    // 拦截——双保险确保 wasm32 上无 capacity overflow / 乘法溢出 panic。
+    let oversized = oversized_png(1 << 31, 1 << 31);
+    let tex = tex_v3_with_encoded_payload(&oversized, 13);
+    assert!(parse_tex(&tex).is_none(), "超大尺寸 PNG 头应被尺寸守卫拒绝");
+}
+
+#[test]
+fn rejects_billion_pixel_png_without_panic() {
+    // 乘法守卫真实覆盖：png crate 放行 1e6x1e6（实测 read_info OK、out_buf 4TB），
+    // 若不加 w*h*4 > 1 GiB 守卫，vec![0u8; 4e12] 在 wasm32 上必然 OOM/panic。
+    let oversized = oversized_png(1_000_000, 1_000_000);
+    let tex = tex_v3_with_encoded_payload(&oversized, 13);
+    assert!(parse_tex(&tex).is_none(), "超过 1 GiB 的 PNG 应被拒绝");
+}
+
+
