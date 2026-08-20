@@ -206,7 +206,11 @@ pub fn parse_tex(data: &[u8]) -> Option<TexImage> {
     }
     let image_count = u32_at(data, pos) as usize;
     pos += 4;
-    // V3+：imageCount 后紧跟 FreeImage 格式（V4 还有 isVideoMp4 标志）
+    // V3+：imageCount 后紧跟 FreeImage 格式（V4 还有 isVideoMp4 标志）。
+    // 记录原始 image_format 供 mip 循环解码判定：
+    // - FIF_PNG/FIF_JPEG → 按声明解码；
+    // - u32::MAX（UNKNOWN）→ 魔数嗅探（对齐 open-wallpaper-engine DetectEmbeddedImageType）；
+    // - 0（RAW，明确 RGBA 像素）→ 不嗅探（避免误伤以 FF D8 FF 开头的合法 RGBA 纹理）
     let mut encoded_image_format: Option<u32> = None;
     if v3plus {
         if data.len() < pos + 4 {
@@ -217,10 +221,7 @@ pub fn parse_tex(data: &[u8]) -> Option<TexImage> {
         if container == b"TEXB0004\0" {
             pos += 4;
         }
-        // 编码图像（JPEG/PNG 等，FreeImage 格式 != -1/0）：不再跳过，记录格式待 mip 解码
-        if image_format != 0 && image_format != u32::MAX {
-            encoded_image_format = Some(image_format);
-        }
+        encoded_image_format = Some(image_format);
     }
     let mut mip0: Option<(u32, u32, Vec<u8>)> = None;
     for _img in 0..image_count {
@@ -265,19 +266,35 @@ pub fn parse_tex(data: &[u8]) -> Option<TexImage> {
             } else {
                 raw.to_vec()
             };
-            // 编码图像（V3+）：mip0 载荷是 JPEG/PNG 字节流 → 解码为 RGBA8
+            // 编码图像（V3+）：mip0 载荷是 JPEG/PNG 字节流 → 解码为 RGBA8。
+            // 声明 FIF_PNG/FIF_JPEG → 按声明解码（失败返回 None，图片缺失不中断渲染）；
+            // 声明 u32::MAX（UNKNOWN）→ 魔数嗅探，命中解码、未命中按原始数据透传；
+            // 声明 0（RAW）→ 不嗅探（避免误伤以 FF D8 FF 开头的合法 RGBA 纹理）。
             if mip0.is_none() {
                 if let Some(declared) = encoded_image_format {
-                    if let Some((dw, dh, rgba)) = decode_embedded_image(&out, Some(declared)) {
-                        return Some(TexImage {
-                            width: dw,
-                            height: dh,
-                            format: TexFormat::Rgba8888,
-                            mip0: rgba,
-                        });
+                    if declared == FIF_PNG || declared == FIF_JPEG {
+                        if let Some((dw, dh, rgba)) = decode_embedded_image(&out, Some(declared)) {
+                            return Some(TexImage {
+                                width: dw,
+                                height: dh,
+                                format: TexFormat::Rgba8888,
+                                mip0: rgba,
+                            });
+                        }
+                        // 声明编码但解码失败 → 该纹理不可用（返回 None，图片缺失不中断渲染）
+                        return None;
+                    } else if declared == u32::MAX {
+                        // UNKNOWN：嗅探命中才解码，未命中按原始数据透传
+                        if let Some((dw, dh, rgba)) = decode_embedded_image(&out, None) {
+                            return Some(TexImage {
+                                width: dw,
+                                height: dh,
+                                format: TexFormat::Rgba8888,
+                                mip0: rgba,
+                            });
+                        }
                     }
-                    // 声明编码但解码失败 → 该纹理不可用（返回 None，图片缺失不中断渲染）
-                    return None;
+                    // 声明 0（RAW）→ 原样透传
                 }
             }
             if mip0.is_none() {

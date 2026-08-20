@@ -159,4 +159,6 @@ fn sniffs_encoded_tex_when_image_format_unknown() {
     assert_eq!(img.format, TexFormat::Rgba8888);
     assert_eq!(img.width, 60);
     assert_eq!(img.height, 33);
+    // 嗅探命中应解码为 RGBA8（60*33*4=7920），而非原始 PNG 字节透传
+    assert_eq!(img.mip0.len(), 60 * 33 * 4);
 }
