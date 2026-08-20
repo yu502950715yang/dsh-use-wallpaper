@@ -3,3 +3,6 @@ dist/
 *.log
 research/*.bmp
 .superpowers/
+
+# research 调研产物（截图/脚本/文档体积大，不入库）
+research/
