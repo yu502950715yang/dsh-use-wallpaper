@@ -234,15 +234,21 @@ impl Renderer {
     /// JS 版 → 画面偏暗）。origin 映射用场景尺寸（scene_w/scene_h），投影用 contain
     /// 相机范围（camera_range）——对齐 scene-renderer.ts 语义。
     /// Task 9 审查修复：粒子池上限按 emitter rate×寿命动态估算（原固定 2048，
-    /// 多粒子壁纸 GPU 负载爆炸 → headless FPS < 30）；cover（背景）模式再减半
-    /// （模糊背景低密度无视觉影响）。
+    /// 多粒子壁纸 GPU 负载爆炸 → headless FPS < 30）；cover（背景）模式再减半。
+    /// Round 2 审查修复：先算 max_particles（含 cover 减半），再传入 from_spec 写
+    /// uniform —— 与 ParticlePass::new 的 buffer 槽位、dispatch 分派**三处一致**
+    /// （原 uniform 硬编码 2048 → 估算槽位下 shader 边界检查恒不触发 → 越界读写 UB）。
     pub fn set_particle(&mut self, spec: &ParticleSpec, origin: [f32; 3], scale: [f32; 3]) {
         let (fw, fh) = self.camera_range();
-        let params = particle_pass::EmitterParams::from_spec(spec, origin, scale, self.scene_w, self.scene_h, fw, fh);
-        let mut max_particles = particle_pass::estimate_max_particles(spec);
-        if self.mode == CameraMode::Cover {
-            max_particles = (max_particles / 2).max(32);
-        }
+        let est = particle_pass::estimate_max_particles(spec);
+        let max_particles = if self.mode == CameraMode::Cover {
+            particle_pass::cover_max_particles(est)
+        } else {
+            est
+        };
+        let params = particle_pass::EmitterParams::from_spec(
+            spec, origin, scale, self.scene_w, self.scene_h, fw, fh, max_particles,
+        );
         self.particle_passes.push(particle_pass::ParticlePass::new(
             &self.device,
             &self.queue,

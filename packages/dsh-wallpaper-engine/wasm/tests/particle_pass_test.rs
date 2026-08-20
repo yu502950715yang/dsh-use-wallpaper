@@ -2,7 +2,7 @@
 //! wgpu 管线部分（ParticlePass）feature 门控，仅 wasm 构建编译，浏览器验证。
 
 use we_scene_wasm::particle::parse_particle_spec;
-use we_scene_wasm::render::particle_pass::{dispatch_dims, estimate_max_particles, EmitterParams};
+use we_scene_wasm::render::particle_pass::{cover_max_particles, dispatch_dims, estimate_max_particles, EmitterParams};
 
 const ASHES_JSON: &str = include_str!("fixtures/eva/particles_Ashes.json");
 
@@ -27,9 +27,6 @@ fn estimate_max_particles_scales_with_rate_times_lifetime() {
 #[test]
 fn estimate_max_particles_clamps_bounds() {
     // 构造极端 emitter：rate=0 → 64 下限；rate=1e6 → 2048 上限
-    let low = parse_particle_spec(ASHES_JSON);
-    let mut low_spec = low.clone();
-    // 直接构造最小 spec（不依赖 fixture 字段可变性）
     use we_scene_wasm::particle::{EmitterSpec, InitSpec, ParticleSpec};
     let zero = ParticleSpec {
         emitter: EmitterSpec { rate: 0.0, directions: [0.0; 3], distance_min: 0.0, distance_max: 0.0 },
@@ -43,7 +40,38 @@ fn estimate_max_particles_clamps_bounds() {
         operators: vec![],
     };
     assert_eq!(estimate_max_particles(&huge), 2048);
-    let _ = low_spec;
+}
+
+#[test]
+fn cover_max_particles_halves_with_floor() {
+    // cover（背景）模式：减半、下限 32（Round 2 审查：减半逻辑独立纯函数）
+    assert_eq!(cover_max_particles(2048), 1024);
+    assert_eq!(cover_max_particles(65), 32);
+    assert_eq!(cover_max_particles(64), 32);
+    assert_eq!(cover_max_particles(32), 32);
+    assert_eq!(cover_max_particles(31), 32);
+}
+
+#[test]
+fn emitter_params_max_particles_matches_estimate() {
+    // Round 2 审查：uniform max_particles 必须 = buffer 槽位/分派（原硬编码 2048
+    // → 估算槽位下 compute shader 边界检查恒不触发 → storage 越界读写 UB）
+    let spec = parse_particle_spec(ASHES_JSON);
+    for max in [64u32, 65, 128, 1024] {
+        let p = EmitterParams::from_spec(&spec, [0.0; 3], [1.0; 3], 2400.0, 1555.0, 3133.0, 1555.0, max);
+        assert_eq!(p.max_particles, max, "uniform max_particles 应与槽位一致");
+    }
+}
+
+#[test]
+fn dispatch_threads_cover_estimate_with_shader_clip() {
+    // 分派线程数（ceil(est/64)*64）≥ 估算槽位 est，且 < est+64（越界线程由 shader
+    // 的 `i >= p.max_particles`（读 uniform=est）裁剪 return → 不触达 buffer 越界）
+    for est in [1u32, 32, 64, 65, 100, 2048] {
+        let threads = dispatch_dims(est, 64).0 * 64;
+        assert!(threads >= est, "est={est} 线程数 {threads} 应覆盖槽位");
+        assert!(threads < est + 64, "est={est} 线程数 {threads} 应 < est+64");
+    }
 }
 
 #[test]
@@ -51,7 +79,7 @@ fn emitter_params_applies_coords_and_flips_scale_y() {
     let spec = parse_particle_spec(ASHES_JSON);
     // EVA Ashes 原点 (1200,777.5)、场景 2400x1555、scale (1,1,1)；
     // Task 9 修复后签名：origin 映射用场景尺寸，view_w/view_h 为 contain 投影范围（如 3133x1555）
-    let p = EmitterParams::from_spec(&spec, [1200.0, 777.5, 0.0], [1.0, 1.0, 1.0], 2400.0, 1555.0, 3133.0, 1555.0);
+    let p = EmitterParams::from_spec(&spec, [1200.0, 777.5, 0.0], [1.0, 1.0, 1.0], 2400.0, 1555.0, 3133.0, 1555.0, 2048);
     assert!(p.origin_x.abs() < 1e-3 && p.origin_y.abs() < 1e-3, "原点应映射到场景中心: ({},{})", p.origin_x, p.origin_y);
     assert_eq!(p.scale_y, -1.0);
     assert_eq!(p.rate, 10.0);

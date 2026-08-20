@@ -37,6 +37,10 @@ impl EmitterParams {
     /// **场景尺寸** scene_w/scene_h（原实现与投影共用视口尺寸，create 改传视口后
     /// 粒子位置错位/移出视口）；view_w/view_h 为投影半视口（contain 相机范围，
     /// vs_main 的裁剪坐标映射用），elapsed 初始 0（step 累加）。
+    /// Round 2 审查修复：max_particles 由调用方传入（估算值，含 cover 减半），
+    /// 与 ParticlePass::new 的 buffer 槽位、dispatch 分派三处一致——原硬编码 2048
+    /// 与估算 buffer 容量不同步 → compute shader 槽位边界检查（读 uniform 2048）
+    /// 对估算槽位恒不触发 → dispatch 线程超出 buffer 容量时 storage 越界读写（UB）。
     pub fn from_spec(
         spec: &ParticleSpec,
         origin: [f32; 3],
@@ -45,6 +49,7 @@ impl EmitterParams {
         scene_h: f32,
         view_w: f32,
         view_h: f32,
+        max_particles: u32,
     ) -> EmitterParams {
         let c = coords::origin_to_center(origin, scene_w, scene_h);
         let s = coords::particle_scale(scale);
@@ -69,11 +74,18 @@ impl EmitterParams {
             color_max_r: i.color_max.map(|c| c[0]).unwrap_or(1.0),
             color_max_g: i.color_max.map(|c| c[1]).unwrap_or(1.0),
             color_max_b: i.color_max.map(|c| c[2]).unwrap_or(1.0),
-            dt: 0.0, max_particles: 2048,
+            dt: 0.0, max_particles,
             _pad3: 0.0, _pad4: 0.0, _pad5: 0.0, _pad6: 0.0, _pad7: 0.0,
             _pad8: 0, _pad9: 0,
         }
     }
+}
+
+/// cover（背景）模式的粒子池上限：估算值减半、下限 32（模糊背景低密度无视觉影响）。
+/// Round 2 审查修复：减半逻辑独立为纯函数，保证与 set_particle 的 buffer 槽位、
+/// dispatch 分派、uniform max_particles 三处一致（原在 set_particle 内联计算）。
+pub fn cover_max_particles(est: u32) -> u32 {
+    (est / 2).max(32)
 }
 
 /// compute 分派尺寸：`(ceil(count/workgroup), 1, 1)`，空也分派 1 组（安全）。
