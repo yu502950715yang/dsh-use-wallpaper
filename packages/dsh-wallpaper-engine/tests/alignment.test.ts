@@ -49,4 +49,15 @@ describe('applyAlignment（锚点 origin → 中心 = origin + offset×worldSize
   it('保留 z 分量（偏移只作用 x/y 平面）', () => {
     expect(applyAlignment([1, 2, 3], [10, 20], 'topleft')).toEqual([6, 12, 3]);
   });
+  it('T4.4 负 worldSize（scale.y<0 镜像）：锚点对 scale 符号不变（对齐参考实现：偏移烘焙进未缩放几何空间、节点 scale 绕 origin 缩放）', () => {
+    // 参考实现（open-wallpaper-engine SceneImageObjectParser）：alignment_offset 用
+    // 未缩放 geometry_size 计算并烘焙进网格，scale 绕 origin 缩放 → 锚点恒钉在 origin，
+    // 负 scale 的镜像绕锚点翻转内容而非挪动锚点。故 worldSize 须按幅值参与偏移：
+    // 'bottomright' 锚点是右下角 → center = origin - (|w|/2, |h|/2) = (-5, -10)。
+    expect(applyAlignment([0, 0, 0], [10, -20], 'bottomright')).toEqual([-5, -10, 0]);
+    // 'top' 锚点是顶边 → center = origin + (0, |h|/2)（镜像后内容绕锚点翻转）
+    expect(applyAlignment([100, 100, 0], [10, -20], 'top')).toEqual([100, 110, 0]);
+    // 负 scale.x 同理（水平镜像不改变锚点）
+    expect(applyAlignment([50, 50, 0], [-10, 20], 'bottomleft')).toEqual([55, 40, 0]);
+  });
 });

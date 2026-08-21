@@ -90,6 +90,18 @@ fn emitter_params_applies_coords_and_keeps_scale_y() {
 }
 
 #[test]
+fn emitter_params_keeps_negative_scale_y() {
+    // T4.4：负 scale.y 透传进 uniform（不取负、不钳制为正）——2460786246 Lightning
+    // cloud scale.y=-0.18 的粒子布局绕 origin 镜像由 compute shader 的
+    // `pos = origin + dir*dist*scale` 承担；粒子为圆盘，镜像方向不可见。
+    let spec = parse_particle_spec(ASHES_JSON);
+    let p = EmitterParams::from_spec(&spec, [637.28918, 910.51740, 0.0], [0.41565, -0.18259, 1.0], 1920.0, 1080.0, 1920.0, 1080.0, 64);
+    assert_eq!(p.scale_x, 0.41565);
+    assert_eq!(p.scale_y, -0.18259);
+    assert_eq!(p.scale_z, 1.0);
+}
+
+#[test]
 fn emitter_params_layout_matches_wgsl_std140() {
     // uniform 结构体布局与 src/shaders/particle_compute.wgsl / particle_render.wgsl
     // 的 EmitterParams（std140）严格对齐（经 naga 24 校验：span=176，下列成员偏移一致）。

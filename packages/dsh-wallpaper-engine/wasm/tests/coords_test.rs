@@ -22,6 +22,14 @@ fn particle_scale_keeps_y() {
     assert_eq!(coords::particle_scale([1.0, 2.0, 3.0]), [1.0, 2.0, 3.0]);
 }
 
+#[test]
+fn particle_scale_keeps_negative_y() {
+    // T4.4：负 scale.y 透传（不取负、不钳制为正）——粒子为圆盘，镜像不可见；
+    // 布局绕 origin 镜像由 shader 的 `pos = origin + dir*dist*scale` 直乘承担。
+    // 2026-08-20 约定（AGENT.md §2.3）：不得把负 scale 当作映射级 y 翻转重取负。
+    assert_eq!(coords::particle_scale([0.41565, -0.18259, 1.0]), [0.41565, -0.18259, 1.0]);
+}
+
 // —— 2026-08-20 方向修正：image_center_ndc 的 y 不再翻转（原 `vh/2 - we_y` 把
 // 非居中对象上下镜像：NERV logo origin.y=150 官方在右下角被渲染到右上角；
 // Orange 部件被渲染到少女头顶。EVA 主图 oy=sh/2 恰为 0 故旧实现漏过）——
@@ -67,4 +75,19 @@ fn image_half_ndc_size_priority_and_scale() {
     // 缺省回退纹理宽高
     let (hw2, _) = coords::image_half_ndc(None, [1.0, 1.0, 1.0], 4096, 2048, 4096.0, 2048.0);
     assert!((hw2 - 1.0).abs() < 1e-4, "纹理宽高回退 hw2={hw2}");
+}
+
+#[test]
+fn image_half_ndc_negative_scale_y_mirrors() {
+    // T4.4：负 scale.y → 负 half_h（镜像）。image.wgsl 顶点 `center_y + (corner.y-0.5)*2*half_h`
+    // 中负 half_h 翻转 quad 顶点 y、UV 不变 → 纹理内容镜像（与 JS 版 mesh.scale 负 y 同语义，
+    // 属对象自身镜像，与 2026-08-20 映射级 y 翻转修复无关）。
+    let (_, hh) = coords::image_half_ndc(Some([400.0, 300.0]), [1.0, -0.18, 1.0], 4096, 2048, 1920.0, 1080.0);
+    assert!(hh < 0.0, "负 scale.y 应产生负 half_h（镜像）, got {hh}");
+    // 幅值 = 正 scale 的 half_h（镜像只改方向、不改大小）
+    let (_, hh_pos) = coords::image_half_ndc(Some([400.0, 300.0]), [1.0, 0.18, 1.0], 4096, 2048, 1920.0, 1080.0);
+    assert!((hh + hh_pos).abs() < 1e-4, "镜像 half_h 应为 -正 half_h, got {hh} vs {hh_pos}");
+    // x 轴同理（负 scale.x → 负 half_w）
+    let (hw, _) = coords::image_half_ndc(Some([400.0, 300.0]), [-0.5, 1.0, 1.0], 4096, 2048, 1920.0, 1080.0);
+    assert!(hw < 0.0, "负 scale.x 应产生负 half_w, got {hw}");
 }

@@ -78,14 +78,18 @@ export function materialModulation(
   };
 }
 
-// 对象局部正交相机范围 = 对象尺寸 × 缩放（中心原点），逐轴钳制 2048、下限 1。
+// 对象局部正交相机范围 = |对象尺寸 × 缩放|（中心原点），逐轴钳制 2048、下限 1。
 // 相机范围（场景像素）同时作为对象 RT 的分辨率基准：不钳制时对象 quad 精确填满 RT，
 // 效果链 UV 0-1 与 foliagesway_mask 等 mask 纹理对齐对象局部空间。
 // 钳制时该轴对象超出相机视锥被裁剪（超大对象保护性降采样，T1.3 合成时按 UV 语义映射）。
+// T4.4：范围是**幅值**（负 scale 是对象自身镜像，不改变可见大小）——负 scale.y 下
+// RT 分辨率取 |size×scale|，镜像由 quad/几何承载（mesh.scale 或 RT 内容），相机不参与
+// 镜像；若用带符号乘积，负值会被下限钳成 1px → RT 退化、镜像内容不可见（2460786246
+// scale.y=-0.18 实测语义，task-4.4 报告）。
 export function objectCameraRange(objSize: [number, number], scale: [number, number]): { w: number; h: number } {
   return {
-    w: Math.max(1, Math.min(objSize[0] * scale[0], OBJECT_RT_MAX)),
-    h: Math.max(1, Math.min(objSize[1] * scale[1], OBJECT_RT_MAX)),
+    w: Math.max(1, Math.min(Math.abs(objSize[0] * scale[0]), OBJECT_RT_MAX)),
+    h: Math.max(1, Math.min(Math.abs(objSize[1] * scale[1]), OBJECT_RT_MAX)),
   };
 }
 
@@ -102,13 +106,15 @@ function effectiveParticleDistance(spec: { distanceMax?: number }): number {
 }
 
 // 粒子对象局部正交相机范围（T1.4）：粒子动态发射（随时间持续产生）、对象无静态 size
-// 字段，用发射器世界包围盒估计 distanceMax × scale 逐轴钳制 2048、下限 1（与
+// 字段，用发射器世界包围盒估计 |distanceMax × scale| 逐轴钳制 2048、下限 1（与
 // objectCameraRange 同语义）。钳制轴由合成 quad 的 UV 窗口映射（复用 T1.3 机制）。
+// T4.4：范围取幅值——负 scale 的粒子布局绕 origin 镜像由 points.scale / shader 的
+// scale 直乘承担，相机范围只关心可见大小（负值钳成 1px 会使 RT 退化，见 objectCameraRange）。
 export function particleObjectRange(spec: { distanceMax?: number }, scale: [number, number]): { w: number; h: number } {
   const eff = effectiveParticleDistance(spec);
   return {
-    w: Math.max(1, Math.min(eff * scale[0], OBJECT_RT_MAX)),
-    h: Math.max(1, Math.min(eff * scale[1], OBJECT_RT_MAX)),
+    w: Math.max(1, Math.min(Math.abs(eff * scale[0]), OBJECT_RT_MAX)),
+    h: Math.max(1, Math.min(Math.abs(eff * scale[1]), OBJECT_RT_MAX)),
   };
 }
 
@@ -289,11 +295,18 @@ function applyUvWindow(geometry: THREE.PlaneGeometry, ux: { start: number; end: 
   geometry.attributes.uv.needsUpdate = true;
 }
 
-// 合成 quad 几何（T1.3）：世界尺寸 = 未钳制 size×scale；UV 逐轴映射进对象 RT 的可见窗口
-// （rtW/rtH = 钳制后范围 = RT 像素 = 局部相机范围，M13 对齐：RT 像素与场景像素 1:1）。
+// 合成 quad 几何（T1.3）：世界尺寸 = 未钳制 size×scale 的**幅值**；UV 逐轴映射进对象
+// RT 的可见窗口（rtW/rtH = 钳制后范围 = RT 像素 = 局部相机范围，M13 对齐：RT 像素与
+// 场景像素 1:1）。
+// T4.4：quad 帧尺寸必须取幅值——对象 RT 路径的镜像已由局部 mesh 的负 scale 渲染进 RT
+// 内容（局部场景 = 对象忠实渲染），合成 quad 只是显示帧；帧几何若用负 worldH
+// （PlaneGeometry 翻转顶点）会把 RT 内已镜像的内容二次翻转回正（镜像抵消，输出不镜像）。
+// 即「相机范围与 quad 帧用幅值，镜像活在 mesh/RT 内容」的职责分离（task-4.4 报告）。
 export function createCompositeGeometry(worldW: number, worldH: number, rtW: number, rtH: number): THREE.PlaneGeometry {
-  const geometry = new THREE.PlaneGeometry(worldW, worldH);
-  applyUvWindow(geometry, uvWindow(worldW, rtW), uvWindow(worldH, rtH));
+  const w = Math.abs(worldW);
+  const h = Math.abs(worldH);
+  const geometry = new THREE.PlaneGeometry(w, h);
+  applyUvWindow(geometry, uvWindow(w, rtW), uvWindow(h, rtH));
   return geometry;
 }
 

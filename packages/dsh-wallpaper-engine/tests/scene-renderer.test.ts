@@ -85,6 +85,17 @@ describe('objectCameraRange（对象局部正交相机范围 = 尺寸×缩放，
   it('零尺寸/零缩放时下限钳制为 1（不产生退化范围）', () => {
     expect(objectCameraRange([0, 0], [0, 0])).toEqual({ w: 1, h: 1 });
   });
+  it('T4.4 负 scale.y（镜像）：相机范围取幅值 |size×scale|（镜像在 quad 几何/RT 内容，不在相机）', () => {
+    // 2460786246 Lightning cloud 语义 scale.y=-0.18：RT 分辨率必须按幅值 300×0.18=54，
+    // 而非负值被下限钳成 1px（RT 退化 → 镜像内容不可见）
+    expect(objectCameraRange([400, 300], [1, -0.18])).toEqual({ w: 400, h: 54 });
+    // 负 scale 的钳制同样按幅值比较上限（-10000×1 → |−10000| > 2048 → 钳 2048）
+    expect(objectCameraRange([10000, 512], [1, 1])).toEqual({ w: 2048, h: 512 });
+    expect(objectCameraRange([6144, 3072], [-0.47891, -0.47891])).toEqual({
+      w: 2048,
+      h: 3072 * 0.47891,
+    });
+  });
 });
 
 describe('createObjectRenderTarget（对象级渲染目标）', () => {
@@ -223,6 +234,22 @@ describe('createCompositeGeometry（合成 quad：世界尺寸 = 未钳制 size�
     expect(Math.max(...uvs)).toBe(1);
     geo.dispose();
   });
+  it('T4.4 负 worldH（scale.y<0 镜像）：quad 帧尺寸取幅值、帧几何不翻转（镜像由 RT 内容承载）', () => {
+    // 对象 RT 路径：局部 mesh 负 scale 已把镜像渲染进 RT，合成 quad 只是显示帧——
+    // 帧几何若用负 worldH（PlaneGeometry 翻转顶点）会把镜像二次翻转回正（镜像抵消）。
+    // 断言：帧高度 = 幅值 50（±25），且 v=1（RT 顶部）顶点在 +y（帧未翻转）。
+    const geo = createCompositeGeometry(100, -50, 100, 50);
+    const pos = Array.from(geo.attributes.position.array as Float32Array);
+    const ys = pos.filter((_, i) => i % 3 === 1);
+    expect(Math.min(...ys)).toBe(-25);
+    expect(Math.max(...ys)).toBe(25);
+    const uvs = Array.from(geo.attributes.uv.array as Float32Array);
+    const maxYIdx = ys.indexOf(Math.max(...ys)); // v=1 顶点应位于 +y（顶部）
+    expect(uvs[maxYIdx * 2 + 1]).toBe(1);
+    const minYIdx = ys.indexOf(Math.min(...ys));
+    expect(uvs[minYIdx * 2 + 1]).toBe(0);
+    geo.dispose();
+  });
 });
 
 describe('particleObjectRange（粒子对象局部相机范围 = 发射距离×缩放，逐轴钳制 2048、下限 1）', () => {
@@ -241,6 +268,11 @@ describe('particleObjectRange（粒子对象局部相机范围 = 发射距离×�
   });
   it('零缩放 → 下限钳制为 1（不产生退化范围）', () => {
     expect(particleObjectRange({ distanceMax: 320 }, [0, 0])).toEqual({ w: 1, h: 1 });
+  });
+  it('T4.4 负 scale.y（镜像）：相机范围取幅值 |distanceMax×scale|（粒子布局绕 origin 镜像，RT 分辨率按幅值）', () => {
+    expect(particleObjectRange({ distanceMax: 320 }, [1, -0.5])).toEqual({ w: 320, h: 160 });
+    expect(particleObjectRange({ distanceMax: 4096 }, [-1, -1])).toEqual({ w: 2048, h: 2048 });
+    expect(particleObjectRange({}, [-1, 1])).toEqual({ w: 64, h: 64 });
   });
 });
 

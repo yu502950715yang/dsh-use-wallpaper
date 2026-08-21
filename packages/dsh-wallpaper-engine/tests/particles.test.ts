@@ -59,6 +59,26 @@ describe('alphaAt', () => {
   });
 });
 
+describe('T4.4 粒子负 scale 镜像前置（模拟在局部坐标生成）', () => {
+  it('粒子位置相对发射原点（局部坐标，|pos| ≤ distanceMax）——points.scale 的负 scale.y 才能绕对象原点镜像', () => {
+    // 镜像语义：负 scale.y 由渲染侧 points.scale.set(s[0], s[1], ...) 施加，绕**对象原点**
+    // 翻转整个粒子云。前置条件 = 模拟输出局部坐标（否则负 scale 会绕世界原点缩放，
+    // 镜像位置错乱）。断言位置量级 ≤ 发射距离（局部），而非场景量级（960/540 级）。
+    const ps = createParticleSystem(
+      { rate: 50, directions: [1, 1, 0], distanceMin: 0, distanceMax: 5 },
+      { ...init, lifetimeMin: 5, lifetimeMax: 5, velocityMin: [0, 0, 0], velocityMax: [0, 0, 0] },
+      { maxParticles: 100, seed: 7 },
+    );
+    ps.update(1); // 累计 1s，rate=50 → 约 50 个
+    const pos = ps.positions();
+    for (let i = 0; i < ps.count(); i++) {
+      const x = pos[i * 3];
+      const y = pos[i * 3 + 1];
+      expect(Math.hypot(x, y)).toBeLessThanOrEqual(5.01);
+    }
+  });
+});
+
 describe('particlesFromSpec alpha', () => {
   it('解析 alpharandom → alphaMin/alphaMax', () => {
     const spec = particlesFromSpec(JSON.parse(JSON.stringify({
