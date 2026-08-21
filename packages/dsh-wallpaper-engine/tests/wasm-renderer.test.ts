@@ -147,7 +147,7 @@ describe('createWasmSceneRenderer', () => {
     expect(scene.load_image).not.toHaveBeenCalled();
   });
 
-  it('场景含效果链 → render() 在 WeScene.create 之前返回 false（canvas 未绑定 WebGPU，可回退 JS）', async () => {
+  it('场景含效果链 → 不再拦截（2026-08-21 决策：强制 wasm，禁用 JS 回退）→ 继续 wasm 渲染流程', async () => {
     vi.stubGlobal('navigator', { gpu: {} });
     const sceneJson = JSON.stringify({
       camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
@@ -167,14 +167,9 @@ describe('createWasmSceneRenderer', () => {
     const r = createWasmSceneRenderer({ loadWasm: async () => mod as any });
     const fg = document.createElement('canvas');
     const bg = document.createElement('canvas');
-    const fgW = fg.width, fgH = fg.height, bgW = bg.width, bgH = bg.height;
+    // 效果链不再拦截：WeScene.create 被调用（进入 wasm 绑定流程）；纹理 404 → rendered=0 → false（preview）
     await expect(r!.render('1', fg, bg)).resolves.toBe(false);
-    // 效果链检测在 WeScene.create 之前：fg/bg 均未绑定 WebGPU → 组合层/controller 可重建 canvas 走 JS
-    expect(mod.WeScene.create).not.toHaveBeenCalled();
-    expect(fg.width).toBe(fgW); // canvas 未被视口尺寸赋值（未进入绑定流程）
-    expect(fg.height).toBe(fgH);
-    expect(bg.width).toBe(bgW);
-    expect(bg.height).toBe(bgH);
+    expect(mod.WeScene.create).toHaveBeenCalled(); // 不再在 create 前拦截返回
   });
 
   it('成功路径：按序调用 WeScene.create / load_scene / load_image / add_particle 并启动帧循环', async () => {
@@ -345,49 +340,44 @@ describe('createWasmSceneRenderer', () => {
   });
 });
 
-describe('createFallbackSceneRenderer（组合回退链，spec §7 第 2/3 条）', () => {
-  it('wasm 渲染器为 null（无 WebGPU）→ 直接用 JS 渲染器', async () => {
+describe('createFallbackSceneRenderer（2026-08-21 决策：强制 wasm，禁用 JS 回退）', () => {
+  it('wasm 渲染器为 null（无 WebGPU）→ 恒 false（controller 走 preview，不再用 JS 兜底）', async () => {
     const js = { render: vi.fn(async () => true) };
     const r = createFallbackSceneRenderer(null, js);
     const fg = document.createElement('canvas');
-    await expect(r.render('1', fg)).resolves.toBe(true);
-    // wasm null → 组合层直接返回 js 原对象（透传原参数个数）
-    expect(js.render).toHaveBeenCalledWith('1', fg);
+    await expect(r.render('1', fg)).resolves.toBe(false);
+    expect(js.render).not.toHaveBeenCalled();
   });
 
-  it('wasm 加载失败（render 返回 false）→ 组合层返回 false，由 controller 重建 canvas 重试（防 WebGPU 污染）', async () => {
+  it('wasm 加载失败（render 返回 false）→ 组合层返回 false，重试（wasmFailed）仍 false（不再走 JS）', async () => {
     vi.stubGlobal('navigator', { gpu: {} });
     // 注入 loadWasm 返回 null 的 wasm renderer：模拟 wasm 加载失败
     const wasm = createWasmSceneRenderer({ loadWasm: async () => null });
     const js = { render: vi.fn(async () => true) };
     const r = createFallbackSceneRenderer(wasm, js);
     const fg = document.createElement('canvas');
-    // Task 9 修复：wasm 失败后 fg 已被 WebGPU 占用 → 组合层不自行换 canvas（避免与
-    // controller 展示引用不一致），返回 false 让 controller 重建 canvas 再调 render
+    // Task 9 语义保留：wasm 失败后 fg 已被 WebGPU 占用 → 组合层不自行换 canvas，返回 false 让 controller 重建
     await expect(r.render('1', fg)).resolves.toBe(false);
     expect(js.render).not.toHaveBeenCalled();
-    // controller 重试（wasmFailed 已记录）→ 直接用新 canvas 走 JS
+    // controller 重试（wasmFailed 已记录）→ 直接 false（preview 兜底），不再走 JS
     const fg2 = document.createElement('canvas');
     const bg2 = document.createElement('canvas');
-    await expect(r.render('1', fg2, bg2)).resolves.toBe(true);
-    // createWasmSceneRenderer 的 render 为闭包（非 spy），以 js.render 调用次数验证回退
-    expect(js.render).toHaveBeenCalledTimes(1);
-    expect(js.render).toHaveBeenCalledWith('1', fg2, bg2);
+    await expect(r.render('1', fg2, bg2)).resolves.toBe(false);
+    expect(js.render).not.toHaveBeenCalled();
   });
 
-  it('wasm 与 JS 渲染器都返回 false → 最终 false（controller 走 preview 图回退）', async () => {
+  it('wasm 与 JS 都失败 → 最终 false（JS 不再参与，wasm 失败即 preview）', async () => {
     vi.stubGlobal('navigator', { gpu: {} });
     const wasm = createWasmSceneRenderer({ loadWasm: async () => null });
     const js = { render: vi.fn(async () => false) };
     const r = createFallbackSceneRenderer(wasm, js);
     const fg = document.createElement('canvas');
-    // 第一次 wasm 失败 → false；重试（wasmFailed）→ JS false → false
     await expect(r.render('1', fg)).resolves.toBe(false);
     await expect(r.render('1', fg)).resolves.toBe(false);
-    expect(js.render).toHaveBeenCalledTimes(1);
+    expect(js.render).not.toHaveBeenCalled();
   });
 
-  it('wasm 失败后同壁纸再次渲染跳过 wasm 直接走 JS', async () => {
+  it('wasm 失败后同壁纸再次渲染跳过 wasm 直接返回 false（不再走 JS）', async () => {
     vi.stubGlobal('navigator', { gpu: {} });
     const wasm = { render: vi.fn(async () => false) };
     const js = { render: vi.fn(async () => true) };
@@ -395,14 +385,11 @@ describe('createFallbackSceneRenderer（组合回退链，spec §7 第 2/3 条�
     const fg = document.createElement('canvas');
     // 第一次 wasm 失败 → false（controller 将重建 canvas 重试）
     await expect(r.render('1', fg)).resolves.toBe(false);
-    // controller 重试（wasmFailed 已记录）→ 直接走 JS
+    // controller 重试（wasmFailed 已记录）→ 直接 false，不再走 JS
     const fg2 = document.createElement('canvas');
-    const bg2 = document.createElement('canvas');
-    await expect(r.render('1', fg2, bg2)).resolves.toBe(true);
-    // wasm 只尝试一次；第二次渲染直接走 JS
-    expect(wasm.render).toHaveBeenCalledTimes(1);
-    expect(js.render).toHaveBeenCalledTimes(1);
-    expect(js.render).toHaveBeenCalledWith('1', fg2, bg2);
+    await expect(r.render('1', fg2)).resolves.toBe(false);
+    expect(wasm.render).toHaveBeenCalledTimes(1); // wasm 只尝试一次
+    expect(js.render).not.toHaveBeenCalled();
   });
 
   it('wasm 渲染成功 → 不调用 JS 渲染器', async () => {
@@ -413,23 +400,5 @@ describe('createFallbackSceneRenderer（组合回退链，spec §7 第 2/3 条�
     const fg = document.createElement('canvas');
     await expect(r.render('1', fg)).resolves.toBe(true);
     expect(js.render).not.toHaveBeenCalled();
-  });
-
-  it('wasm 失败后 JS 渲染器 reject → 组合层 reject（controller 已有 catch 兜底走 preview）', async () => {
-    vi.stubGlobal('navigator', { gpu: {} });
-    const wasm = createWasmSceneRenderer({ loadWasm: async () => null });
-    const js = {
-      render: vi.fn(async () => {
-        throw new Error('js render fail');
-      }),
-    };
-    const r = createFallbackSceneRenderer(wasm, js);
-    const fg = document.createElement('canvas');
-    // 第一次：wasm 失败 → false（不触发 JS）
-    await expect(r.render('1', fg)).resolves.toBe(false);
-    // 重试（wasmFailed）→ JS reject → 组合层 reject
-    const fg2 = document.createElement('canvas');
-    const bg2 = document.createElement('canvas');
-    await expect(r.render('1', fg2, bg2)).rejects.toThrow('js render fail');
   });
 });

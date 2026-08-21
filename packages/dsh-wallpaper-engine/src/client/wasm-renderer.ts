@@ -50,20 +50,22 @@ export interface SceneRendererLike {
   render(id: string, fg: HTMLCanvasElement, bg?: HTMLCanvasElement): Promise<boolean>;
 }
 
-// 回退链组合（spec §7 第 2/3 条）：wasm 渲染器不可用（null）→ 直接用 JS 渲染器；
-// wasm 加载/初始化/渲染失败（resolve false）→ 降级 JS 渲染器；
-// JS 渲染器同样失败（false）→ 最终 false，controller 走 preview 图回退。
-// 组合层不吞异常：任一渲染器 reject 由 controller 的 try/catch 兜底（语义等价 preview）。
-// Task 9 修复（回退链 canvas 污染）：wasm 失败时 fg 已被 WebGPU context 占用，JS 渲染器
-// 无法在同一 canvas 上创建 WebGL context。故 wasm 失败后**返回 false 交由 controller 重建
-// canvas 重试**（重试时 wasmFailed 已记录，组合层直接用新 canvas 走 JS 渲染器），
-// 避免组合层内部换 canvas 与 controller 展示引用不一致（2597392171 双失败根因）。
+// 2026-08-21 决策（强制 wasm，禁用 JS 回退）：项目主目标为 wasm 播放——
+// wasm 渲染器不可用（null，如无 WebGPU）或渲染失败 → 组合层**不再降级 JS 渲染器**，
+// 直接返回 false，由 controller 走 preview 图回退（场景渲染失败 ≠ 黑屏）。
+// wasm 渲染器自身对带效果链壁纸不再拦截（hasEffectChains 拦截已移除）：所有 scene
+// 壁纸一律走 wasm（静态图片 + GPU 粒子；效果链执行器为后续独立计划）。
+// 说明：wasm 失败时 fg 可能已被 WebGPU context 占用，controller 会重建 canvas 重试，
+// 组合层对已失败壁纸（wasmFailed）直接返回 false（不再尝试任何渲染器）。
 export function createFallbackSceneRenderer(
   wasm: SceneRendererLike | null,
-  js: SceneRendererLike,
+  _js: SceneRendererLike,
 ): SceneRendererLike {
-  if (!wasm) return js;
-  // 本壁纸 wasm 已失败：后续渲染跳过 wasm 直接走 JS（避免反复绑定 canvas）
+  if (!wasm) {
+    // 无 WebGPU 环境：scene 无法 wasm 渲染 → 恒 false（controller 走 preview）
+    return { render: async () => false };
+  }
+  // 本壁纸 wasm 已失败：后续渲染直接返回 false（不再尝试 JS）
   const wasmFailed = new Set<string>();
   return {
     async render(id, fg, bg) {
@@ -73,8 +75,8 @@ export function createFallbackSceneRenderer(
         wasmFailed.add(id);
         return false; // wasm 失败且 fg 已被 WebGPU 污染 → controller 重建 canvas 重试
       }
-      // wasmFailed：controller 已重建 canvas（未绑定 WebGPU），直接走 JS 渲染器
-      return js.render(id, fg, bg);
+      // wasmFailed：controller 已重建 canvas，但 JS 渲染已禁用 → 直接 false（preview 兜底）
+      return false;
     },
   };
 }
@@ -141,11 +143,9 @@ export function createWasmSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneRe
         if (!sceneJsonResp.ok) return false;
         const sceneJson = await sceneJsonResp.text();
         const desc = parseSceneJson(sceneJson);
-        // Task 2.1：效果链检测必须在此处（WeScene.create 之前）——wasm 无效果链执行器，
-        // 带 effects 的壁纸走 wasm 渲染成 STATIC。此处 fg/bg 都尚未绑定 WebGPU context，
-        // 返回 false 后 controller 重建 canvas 走 JS 渲染器（对象级效果链 Phase 1 已实现）；
-        // 若在 WeScene.create 之后才检测，canvas 已被 WebGPU 占用，JS 渲染器无法复用。
-        if (hasEffectChains(desc)) return false;
+        // 2026-08-21 决策（强制 wasm，禁用 JS 回退）：不再检测 hasEffectChains 拦截——
+        // 带效果链壁纸也走 wasm 渲染（静态图片 + GPU 粒子）；wasm 内效果链执行器为
+        // 后续独立计划（wasm-renderer 无需在此处返回 false，避免 wasm 被绕过）。
         const { width, height } = desc.orthogonal;
         // Task 9 修复：surface 与 canvas 属性尺寸 = 视口（对齐 scene-renderer.setScene 的
         // vw/vh 语义；原实现直接传场景正交尺寸，canvas 默认 300×150 → 渲染被拉伸/截图失真）

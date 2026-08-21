@@ -46,9 +46,9 @@ export function createWallpaperController(
           try {
             let ok = await opts.sceneRenderer.render(plan.wallpaperId, fg, bg);
             if (!ok) {
-              // Task 9 修复（回退链 canvas 污染）：wasm 失败时 fg 已被绑定 WebGPU context，
-              // JS 渲染器无法复用 → 重建 canvas 重试一次（组合层对已失败壁纸跳过 wasm，
-              // 用新 canvas 走 JS 渲染器；2597392171 实测 wasm/JS 双失败回退 preview 的根因）
+              // Task 9 语义保留：wasm 失败时 fg 可能已被绑定 WebGPU context → 重建 canvas
+              // 重试一次（组合层对已失败壁纸直接返回 false；2026-08-21 起 JS 渲染已禁用，
+              // 重试仍走 wasm/组合层，最终失败落入下方 preview 回退）
               const fg2 = document.createElement('canvas');
               const bg2 = document.createElement('canvas');
               ok = await opts.sceneRenderer.render(plan.wallpaperId, fg2, bg2);
