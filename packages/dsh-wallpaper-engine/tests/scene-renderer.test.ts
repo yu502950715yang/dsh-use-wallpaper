@@ -4,6 +4,7 @@ import { createParticleSystem } from '../src/client/particles.js';
 import {
   objectCameraRange, createObjectRenderTarget, resolveTexPath,
   groupEffectsByObject, uvWindow, createCompositeGeometry, PendingChainStore,
+  particleObjectRange, particleWorldSize, shouldUseObjectPath,
 } from '../src/client/scene-renderer.js';
 import type { SceneObject } from '../src/shared/types.js';
 
@@ -196,6 +197,47 @@ describe('createCompositeGeometry（合成 quad：世界尺寸 = 未钳制 size�
     expect(Math.min(...uvs)).toBe(0);
     expect(Math.max(...uvs)).toBe(1);
     geo.dispose();
+  });
+});
+
+describe('particleObjectRange（粒子对象局部相机范围 = 发射距离×缩放，逐轴钳制 2048、下限 1）', () => {
+  it('常规：范围 = distanceMax × scale（用发射距离估计粒子世界包围盒）', () => {
+    expect(particleObjectRange({ distanceMax: 320 }, [1, 1])).toEqual({ w: 320, h: 320 });
+    expect(particleObjectRange({ distanceMax: 100 }, [2, 3])).toEqual({ w: 200, h: 300 });
+  });
+  it('超 2048 上限逐轴钳制（单轴超限只钳制该轴）', () => {
+    expect(particleObjectRange({ distanceMax: 4096 }, [1, 1])).toEqual({ w: 2048, h: 2048 });
+    expect(particleObjectRange({ distanceMax: 320 }, [10, 1])).toEqual({ w: 2048, h: 320 });
+  });
+  it('缺/零 distanceMax（粒子对象无发射器字段）→ 默认 64 基准再 ×scale 并钳制', () => {
+    expect(particleObjectRange({}, [1, 1])).toEqual({ w: 64, h: 64 });
+    expect(particleObjectRange({ distanceMax: 0 }, [1, 1])).toEqual({ w: 64, h: 64 });
+    expect(particleObjectRange({}, [100, 1])).toEqual({ w: 2048, h: 64 });
+  });
+  it('零缩放 → 下限钳制为 1（不产生退化范围）', () => {
+    expect(particleObjectRange({ distanceMax: 320 }, [0, 0])).toEqual({ w: 1, h: 1 });
+  });
+});
+
+describe('particleWorldSize（粒子对象合成 quad 世界尺寸 = 未钳制发射距离×缩放）', () => {
+  it('世界尺寸 = distanceMax × scale（未钳制，供合成 quad 与 RT 可见窗口匹配）', () => {
+    expect(particleWorldSize({ distanceMax: 320 }, [10, 1])).toEqual({ w: 3200, h: 320 });
+  });
+  it('缺/零 distanceMax → 默认 64 基准', () => {
+    expect(particleWorldSize({}, [1, 1])).toEqual({ w: 64, h: 64 });
+    expect(particleWorldSize({ distanceMax: 0 }, [1, 1])).toEqual({ w: 64, h: 64 });
+  });
+});
+
+describe('shouldUseObjectPath（对象带效果 → 对象 RT 路径；image/particle 共用调度谓词）', () => {
+  it('effects 非空数组 → true', () => {
+    expect(shouldUseObjectPath({ effects: [{ file: 'a.json' }] })).toBe(true);
+    expect(shouldUseObjectPath({ effects: [{}] })).toBe(true);
+  });
+  it('无 effects / 空数组 / 非数组字段 → false（无效果对象保持共享场景路径）', () => {
+    expect(shouldUseObjectPath({})).toBe(false);
+    expect(shouldUseObjectPath({ effects: [] })).toBe(false);
+    expect(shouldUseObjectPath({ effects: 'x' as unknown })).toBe(false);
   });
 });
 

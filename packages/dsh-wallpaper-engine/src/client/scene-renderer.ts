@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { SceneDescription, SceneImageObject, SceneObject } from '../shared/types.js';
+import type { SceneDescription, SceneImageObject, SceneObject, SceneParticleObject } from '../shared/types.js';
 import { createParticleSystem } from './particles.js';
 import type { ParticleEmitterSpec, ParticleInitializerSpec } from './particles.js';
 import { fetchSceneDescription, fetchParticleSpec } from './scene-assets.js';
@@ -14,10 +14,10 @@ type CompiledEffectChains = import('./shader/effect-chain.js').CompiledEffectPas
 export interface SceneRenderer {
   setScene(desc: SceneDescription): void;
   setImageObject(tex: THREE.Texture | null, obj: SceneImageObject): void;
-  addParticleSystem(
-    spec: { emitter: ParticleEmitterSpec; init: ParticleInitializerSpec },
-    opts?: { sizeAttenuation?: boolean; origin?: [number, number, number]; scale?: [number, number, number] },
-  ): void;
+  // 粒子对象（T1.4）：带效果粒子与 image 对象同走对象 RT 路径（obj.effects 非空 →
+  // 对象局部相机 + 对象 RT + 合成 quad，效果链在 RT 上执行后贴回共享场景）；
+  // 无效果粒子保持共享场景路径。
+  addParticleSystem(spec: { emitter: ParticleEmitterSpec; init: ParticleInitializerSpec }, obj: SceneParticleObject): void;
   // 对象级效果链（T1.3）：给指定对象 id 挂载/替换其效果链（每个带效果对象一个独立
   // EffectRunner，共享同一 renderer；chains 为空 → 移除 runner，quad 回退原始对象 RT）。
   setObjectEffectChains(objId: number, chains: CompiledEffectChains | null, wallpaperId: string): void;
@@ -51,10 +51,47 @@ export function objectCameraRange(objSize: [number, number], scale: [number, num
   };
 }
 
+// 粒子对象默认发射距离（T1.4）：粒子对象无 size 字段（如 fog1），且部分 spec 缺
+// distanceMax——无/零 distanceMax 时按此估计世界包围盒（64px，保证对象 RT 不退化到
+// 1px 而看不见内容）。
+export const PARTICLE_DEFAULT_DISTANCE = 64;
+
+// 粒子发射距离有效值：无/零 distanceMax → 默认 64。是粒子局部相机范围与合成 quad
+// 世界尺寸的共同基准，保证「钳制只发生在 RT 范围、quad 世界尺寸始终未钳制」两处一致。
+function effectiveParticleDistance(spec: { distanceMax?: number }): number {
+  const dist = spec.distanceMax ?? 0;
+  return dist > 0 ? dist : PARTICLE_DEFAULT_DISTANCE;
+}
+
+// 粒子对象局部正交相机范围（T1.4）：粒子动态发射（随时间持续产生）、对象无静态 size
+// 字段，用发射器世界包围盒估计 distanceMax × scale 逐轴钳制 2048、下限 1（与
+// objectCameraRange 同语义）。钳制轴由合成 quad 的 UV 窗口映射（复用 T1.3 机制）。
+export function particleObjectRange(spec: { distanceMax?: number }, scale: [number, number]): { w: number; h: number } {
+  const eff = effectiveParticleDistance(spec);
+  return {
+    w: Math.max(1, Math.min(eff * scale[0], OBJECT_RT_MAX)),
+    h: Math.max(1, Math.min(eff * scale[1], OBJECT_RT_MAX)),
+  };
+}
+
+// 粒子对象合成 quad 世界尺寸（T1.4）：未钳制 distanceMax × scale（同图片对象「未钳制
+// size×scale」语义）；钳制轴粒子超出视锥部分在 RT 中不存在，由 UV 窗口只采样可见段。
+export function particleWorldSize(spec: { distanceMax?: number }, scale: [number, number]): { w: number; h: number } {
+  const eff = effectiveParticleDistance(spec);
+  return { w: eff * scale[0], h: eff * scale[1] };
+}
+
 // 对象级渲染目标：按分辨率创建（浮点取整为整数像素，0/负数钳制 1 —— 保证
 // EffectRunner.ensureTargets 收到的尺寸恒为干净的正整数，不产生退化 RT）。
 export function createObjectRenderTarget(width: number, height: number): THREE.WebGLRenderTarget {
   return new THREE.WebGLRenderTarget(Math.max(1, Math.round(width)), Math.max(1, Math.round(height)));
+}
+
+// 对象级效果路径调度谓词（T1.4）：effects 非空数组 → 走对象 RT 路径。image 与
+// particle 对象共用（Ruling 5：粒子对象同样可挂效果链，与 image/util 一致按 objects
+// 顺序分组）；无效果对象保持共享场景路径。类型谓词让调用方分支内获得 effects 收窄。
+export function shouldUseObjectPath(obj: { effects?: unknown }): obj is { effects: unknown[] } {
+  return Array.isArray(obj.effects) && obj.effects.length > 0;
 }
 
 // 对象级效果链分组（T1.3）：按 scene.json objects 顺序提取带效果对象（effects 非空数组），
@@ -63,7 +100,7 @@ export function createObjectRenderTarget(width: number, height: number): THREE.W
 export function groupEffectsByObject(objects: SceneObject[]): Array<{ obj: SceneObject; effects: unknown[] }> {
   const groups: Array<{ obj: SceneObject; effects: unknown[] }> = [];
   for (const obj of objects) {
-    if (Array.isArray(obj.effects) && obj.effects.length > 0) {
+    if (shouldUseObjectPath(obj)) {
       groups.push({ obj, effects: obj.effects });
     }
   }
@@ -75,7 +112,7 @@ export function groupEffectsByObject(objects: SceneObject[]): Array<{ obj: Scene
 // setImageObject 创建条目）并发交错、无顺序屏障——链可能先于对象条目就绪。
 // 本类做「条目存在即应用 / 缺失即暂存」的纯决策（node 可测，不触碰 renderer/runner）：
 //   applyIfReady 返回 true → 调用方立即挂链；返回 false → 已按 objId 暂存，
-//   setImageObject 创建条目后 take 补挂（否则链被静默丢弃 → 对象级效果不生效）。
+//   setImageObject/addParticleSystem 创建条目后 take 补挂（否则链被静默丢弃 → 对象级效果不生效）。
 // 同一 objId 后到的链覆盖先到的（最新链生效）；条目最终未创建（纹理加载失败）时
 // stop() 调用 clear() 清理暂存，无残留。
 export class PendingChainStore<T> {
@@ -184,9 +221,10 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
 
   const clock = new THREE.Clock();
   const particleSystems: Array<{ system: ReturnType<typeof createParticleSystem>; points: THREE.Points }> = [];
-  // 对象级渲染条目：带效果 image 对象渲染进各自独立 RT（局部正交相机，中心原点），
-  // 效果链（T1.3）在对象 RT 上执行，输出经合成 quad 贴回共享场景（世界坐标 = 对象中心、
-  // 尺寸 = 未钳制 size×scale、UV 只采样 RT 可见窗口）。无效果对象不走此路径（保持共享场景）。
+  // 对象级渲染条目：带效果 image/particle 对象渲染进各自独立 RT（局部正交相机，中心原点），
+  // 效果链（T1.3/T1.4）在对象 RT 上执行，输出经合成 quad 贴回共享场景（世界坐标 = 对象中心、
+  // 尺寸 = 未钳制 size×scale 或 distanceMax×scale、UV 只采样 RT 可见窗口）。无效果对象不走此
+  // 路径（保持共享场景）。
   type ObjectEntry = {
     id: number;
     scene: THREE.Scene;                    // 局部场景（仅该对象 mesh）
@@ -197,7 +235,7 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
   };
   const objectEntries = new Map<number, ObjectEntry>();
   // 效果链异步挂载暂存（I1 竞态修复）：链解析与纹理加载并发，链可能先于条目就绪。
-  // 条目缺失时暂存，setImageObject 创建条目后补挂（防对象级效果静默丢失）。
+  // 条目缺失时暂存，setImageObject/addParticleSystem 创建条目后补挂（防对象级效果静默丢失）。
   const pendingChains = new PendingChainStore<{ chains: CompiledEffectChains | null; wallpaperId: string }>();
   // 对象效果链异步串行化（T1.3）：多个 runner 共享同一 renderer，promise 链保证同一时刻
   // 只有一个 runner 触碰 RT/绑定状态（并发交错破坏状态 → 黑屏/闪烁）。
@@ -316,7 +354,7 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
       // 局部相机范围 = 取整后的 RT 分辨率（M13：RT 像素与场景像素 1:1，合成 UV 窗口精确
       // 对应相机视锥，效果链 UV 0-1 与 mask 纹理对齐对象局部空间）。效果链在对象 RT 上
       // 执行，输出经合成 quad 贴回共享场景（世界尺寸 = 未钳制 size×scale，UV 只采样可见窗口）。
-      if (Array.isArray(obj.effects) && obj.effects.length > 0) {
+      if (shouldUseObjectPath(obj)) {
         const range = objectCameraRange([w, h], [s[0], s[1]]);
         const rt = createObjectRenderTarget(range.w, range.h);
         const localCamera = new THREE.OrthographicCamera(
@@ -348,7 +386,7 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
       mesh.position.set(obj.origin[0] - ortho.width / 2, obj.origin[1] - ortho.height / 2, obj.origin[2]);
       scene.add(mesh);
     },
-    addParticleSystem(spec, opts = {}) {
+    addParticleSystem(spec, obj) {
       const system = createParticleSystem(spec.emitter, spec.init, { maxParticles: 2048 });
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute('position', new THREE.BufferAttribute(system.positions(), 3));
@@ -373,21 +411,52 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
       // 粒子模拟在 WE 系（y 向上）生成局部坐标：发射原点按中心映射平移（同图片对象，
       // 左下原点 y 向上 → 中心原点 y 向上，不翻转）；scale.y 不取负（旧实现取负是配合
       // 错误的 y 翻转，2026-08-20 修正——snowflat 速度 vy∈[-90,-50] 为向下运动即证据）。
-      if (opts.origin) {
-        points.position.set(
-          opts.origin[0] - ortho.width / 2,
-          opts.origin[1] - ortho.height / 2,
-          opts.origin[2] ?? 0,
-        );
-      }
-      const s = opts.scale ?? [1, 1, 1];
+      const s = obj.scale;
       points.scale.set(s[0], s[1] ?? s[0], s[2] ?? 1);
+      // 对象级效果链路径（T1.4）：带效果粒子对象渲染进独立对象 RT（局部正交相机，中心
+      // 原点）——机制与 setImageObject 完全一致（复用 createObjectRenderTarget /
+      // createCompositeGeometry / PendingChainStore / applyObjectChains，无重复实现）。
+      // 粒子对象无 size 字段，局部相机范围 = 发射器世界包围盒估计 distanceMax×scale
+      // （无/零 distanceMax → 默认 64，见 particleObjectRange）；合成 quad 世界尺寸 =
+      // 未钳制 distanceMax×scale，UV 窗口只采样 RT 可见段。
+      if (shouldUseObjectPath(obj)) {
+        const range = particleObjectRange(spec.emitter, [s[0], s[1]]);
+        const world = particleWorldSize(spec.emitter, [s[0], s[1]]);
+        const rt = createObjectRenderTarget(range.w, range.h);
+        const localCamera = new THREE.OrthographicCamera(
+          -rt.width / 2, rt.width / 2, rt.height / 2, -rt.height / 2, -1000, 1000,
+        );
+        localCamera.position.z = CAMERA_DISTANCE;
+        const localScene = new THREE.Scene();
+        localScene.add(points); // points 保持 (0,0,0)：对象中心即局部原点
+        // 合成 quad：世界尺寸 = 未钳制 distanceMax×scale（钳制轴粒子超出视锥部分在 RT
+        // 中不存在，由 UV 窗口只采样 RT 可见段）；初始 map = rt.texture（链就绪前显示原始粒子）。
+        const quad = new THREE.Mesh(
+          createCompositeGeometry(world.w, world.h, rt.width, rt.height),
+          new THREE.MeshBasicMaterial({ map: rt.texture, transparent: true }),
+        );
+        quad.position.set(obj.origin[0] - ortho.width / 2, obj.origin[1] - ortho.height / 2, obj.origin[2]);
+        scene.add(quad);
+        // 按对象 id 替换（M14）：同 id 重设时先清理旧条目（quad/RT/runner），避免残留
+        const existing = objectEntries.get(obj.id);
+        if (existing) disposeObjectEntry(existing);
+        objectEntries.set(obj.id, { id: obj.id, scene: localScene, camera: localCamera, rt, quad, runner: null });
+        // I1 竞态修复：链可能在条目创建前已解析完成（暂存）→ 创建后立即补挂，不丢失
+        const pending = pendingChains.take(obj.id);
+        if (pending) applyObjectChains(obj.id, pending.chains, pending.wallpaperId);
+        // 粒子系统仍需进 particleSystems：帧循环 update + 缓冲同步后，动态发射的粒子
+        // 写入对象 RT（entry.scene 渲染），再经合成 quad 贴回共享场景
+        particleSystems.push({ system, points });
+        return;
+      }
+      // 无效果粒子：共享场景路径（发射原点按中心映射平移，不翻转）
+      points.position.set(obj.origin[0] - ortho.width / 2, obj.origin[1] - ortho.height / 2, obj.origin[2]);
       scene.add(points);
       particleSystems.push({ system, points });
     },
     setObjectEffectChains(objId: number, chains: CompiledEffectChains | null, wallpaperId: string) {
       // I1 竞态修复：链解析与条目创建并发——条目缺失时暂存（不再静默丢弃），
-      // setImageObject 创建条目后 take 补挂
+      // setImageObject/addParticleSystem 创建条目后 take 补挂
       if (!pendingChains.applyIfReady(objId, { chains, wallpaperId }, objectEntries.has(objId))) return;
       applyObjectChains(objId, chains, wallpaperId);
     },
@@ -477,7 +546,7 @@ export async function renderScene(id: string, fgCanvas: HTMLCanvasElement, bgCan
       } else if (obj.kind === 'particle' && obj.particle) {
         const spec = await fetchParticleSpec(id, obj.particle);
         if (spec) {
-          renderer.addParticleSystem(spec, { origin: obj.origin, scale: obj.scale });
+          renderer.addParticleSystem(spec, obj);
           rendered++;
         }
       }
