@@ -45,8 +45,11 @@ fn vs_main(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> 
   let corner = vec2f(f32(vi & 1u) * 2.0 - 1.0, f32((vi >> 1u) & 1u) * 2.0 - 1.0);
   // 粒子中心：中心原点、像素量级坐标 → 裁剪坐标（除以半视口映射到 [-1,1]）
   let center_clip = vec2f(part.pos.x / p.view_w * 2.0, part.pos.y / p.view_h * 2.0);
-  // 点尺寸=像素尺寸（CAMERA_DISTANCE 语义）；半尺寸像素偏移 → NDC 偏移
-  let half_px = part.size * 0.5;
+  // 点尺寸=像素尺寸（CAMERA_DISTANCE 语义）；半尺寸像素偏移 → NDC 偏移。
+  // 2026-08-21 修复（对齐 open-wallpaper-engine world_scale 语义）：粒子尺寸乘对象 scale
+  // ——官方粒子 SceneNode 用对象 scale（MVP 缩放），fog1 scale 2.15 → 雾直径 2150-4730px
+  // 散布更广、叠加少（淡）；原实现不乘 scale（1000-2200px 密集在小区域 → additive 白亮浓雾）。
+  let half_px = part.size * 0.5 * max(abs(p.scale.x), abs(p.scale.y));
   let ndc_per_px = vec2f(2.0 / p.view_w, 2.0 / p.view_h);
   var out: VsOut;
   out.clip_pos = vec4f(center_clip + corner * half_px * ndc_per_px, 0.0, 1.0);
