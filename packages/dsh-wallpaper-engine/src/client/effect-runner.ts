@@ -57,6 +57,53 @@ export function resolveBuiltinTexture(path: string | null | undefined): THREE.Te
   return tex;
 }
 
+// ===== EffectRunner 执行参数化纯函数（T1.1，node 可测；WebGL 渲染路径无法在 node 跑）=====
+
+// 输入纹理归一：场景 RT → .texture；对象 RT 纹理 / 任意纹理原样透传。
+// update 的 input 参数化（Ruling P1-1）：首 pass 的 g_Texture0 即此纹理。
+export function resolveInputTexture(input: THREE.WebGLRenderTarget | THREE.Texture): THREE.Texture {
+  return input instanceof THREE.WebGLRenderTarget ? input.texture : input;
+}
+
+// ping-pong 写端选择：返回上一写端的对端；无上一写端（null，首 pass 读输入纹理，非 runner RT）→ rtA。
+// 与旧实现 read === rtB ? rtA : rtB 等价：read 恒为最近写端（或输入纹理，非 rtA/rtB）。
+export function pickWriteTarget(
+  previous: THREE.WebGLRenderTarget | null,
+  rtA: THREE.WebGLRenderTarget,
+  rtB: THREE.WebGLRenderTarget,
+): THREE.WebGLRenderTarget {
+  if (previous === rtA) return rtB;
+  return rtA; // previous === rtB 或 null → rtA
+}
+
+// setChains opts 尺寸决策：显式给定则覆盖，缺省保持当前（向后兼容，场景级调用不传 opts）。
+export interface EffectTargetSize {
+  width: number;
+  height: number;
+}
+export function resolveTargetSize(
+  current: EffectTargetSize,
+  opts?: { width?: number; height?: number },
+): EffectTargetSize {
+  return {
+    width: opts?.width ?? current.width,
+    height: opts?.height ?? current.height,
+  };
+}
+
+// g_TextureNResolution 推导：image 有尺寸用实际尺寸（three 0.170 的 RT 纹理自带 image
+// {width,height,depth}，即场景/对象 RT 分辨率）；image 缺失（未解码普通纹理）→ 回退默认。
+export function resolveTextureResolution(
+  tex: { image?: { width?: number; height?: number } | null } | null | undefined,
+  fallbackW: number,
+  fallbackH: number,
+): EffectTargetSize {
+  return {
+    width: tex?.image?.width ?? fallbackW,
+    height: tex?.image?.height ?? fallbackH,
+  };
+}
+
 export class EffectRunner {
   private renderer: THREE.WebGLRenderer;
   private rtA: THREE.WebGLRenderTarget;
@@ -83,10 +130,17 @@ export class EffectRunner {
     this.rtB = new THREE.WebGLRenderTarget(width, height);
   }
 
-  setChains(chains: CompiledEffectPass[][], wallpaperId: string): void {
+  setChains(
+    chains: CompiledEffectPass[][],
+    wallpaperId: string,
+    opts?: { width?: number; height?: number },
+  ): void {
     this.chains = chains;
     this.id = wallpaperId;
     this.last = null; // 换壁纸避免首帧显示旧纹理
+    // 对象级 RT 尺寸：opts 覆盖或保持当前（向后兼容，场景级调用不传 opts 即保持构造尺寸）
+    const size = resolveTargetSize({ width: this.width, height: this.height }, opts);
+    this.ensureTargets(size.width, size.height);
     this.disposeMaterials();
     this.textures.clear(); // 换壁纸清空纹理缓存（旧壁纸纹理槽 URL 失效）
     // 纹理槽预加载：异步发起（不 await），update 首次执行时若未就绪则 await——
@@ -96,6 +150,18 @@ export class EffectRunner {
         if (path) void this.resolveTextureSlot(path);
       }
     }
+  }
+
+  // RT 尺寸对齐：仅当目标尺寸与当前不一致才重建 ping-pong RT（避免 recreate churn）；
+  // 重建后同步 this.width/this.height（getMaterial 预建 g_TextureNResolution 默认值跟随对象 RT 尺寸）。
+  private ensureTargets(w: number, h: number): void {
+    if (this.rtA.width === w && this.rtA.height === h) return;
+    this.rtA.dispose();
+    this.rtB.dispose();
+    this.rtA = new THREE.WebGLRenderTarget(w, h);
+    this.rtB = new THREE.WebGLRenderTarget(w, h);
+    this.width = w;
+    this.height = h;
   }
 
   private disposeMaterials(): void {
@@ -228,15 +294,15 @@ export class EffectRunner {
     return tex;
   }
 
-  async update(time: number, input: THREE.WebGLRenderTarget): Promise<THREE.WebGLRenderTarget> {
-    // 串行化：上一帧 update 未完成（纹理槽异步加载中）→ 直接返回 input，
-    // 避免并发 update 交错使用 renderer 导致 RT/绑定状态错乱（黑屏/闪烁）。
-    // 帧循环用 lastOutput() 贴屏，last 保持最近完成输出，无帧间闪烁。
-    if (this.updateInFlight) return input;
+  // 串行化 + 输入参数化（Ruling P1-1）：input 可为场景 RT 或对象 RT 的纹理（任意 Texture）。
+  // 返回最终输出纹理；链为空或上一帧 update 未完成（纹理槽异步加载中）→ null。
+  // 帧循环用 lastOutput() 贴屏，last 保持最近完成输出，无帧间闪烁。
+  async update(time: number, input: THREE.WebGLRenderTarget | THREE.Texture): Promise<THREE.Texture | null> {
+    if (this.updateInFlight) return null;
     this.updateInFlight = true;
     try {
       const flat: CompiledEffectPass[] = this.chains.flat();
-      if (flat.length === 0) return input;
+      if (flat.length === 0) return null;
       // 纹理槽统一预解析（await 集中在此：所有 fetch 完成前不触碰 renderer，
       // 避免与帧循环的场景渲染/贴屏交错 RT 状态）
       const slotTex = new Map<string, THREE.Texture | null>();
@@ -247,11 +313,14 @@ export class EffectRunner {
           if (path) slotTex.set(`${i}:${j}`, await this.resolveTextureSlot(path));
         }
       }
-      let read = input;
+      // 输入归一：场景 RT → .texture，对象 RT 纹理 / 任意纹理原样使用；
+      // 首 pass 的 g_Texture0 = 输入纹理（对象 RT 分辨率可能与 runner 默认不同）。
+      let readTex = resolveInputTexture(input);
+      let lastWrite: THREE.WebGLRenderTarget | null = null; // ping-pong 上一写端（null = 首 pass）
       for (let i = 0; i < flat.length; i++) {
         const pass = flat[i];
         const material = this.getMaterial(pass, `${i}`);
-        if (!material) continue; // pass 级跳过：read 不变，下一 pass 写端仍为 read 反端（无自读自写）
+        if (!material) continue; // pass 级跳过：readTex 不变，下一 pass 写端仍为对端（无自读自写）
         // 纹理槽绑定（值已预解析，无 await）
         for (let j = 0; j < pass.textureSlots.length; j++) {
           const tex = slotTex.get(`${i}:${j}`) ?? null;
@@ -259,21 +328,27 @@ export class EffectRunner {
           if (material.uniforms[slot]) material.uniforms[slot].value = tex;
           const res = `g_Texture${j + 1}Resolution`;
           if (material.uniforms[res]) {
-            const w = (tex?.image as { width?: number } | undefined)?.width ?? this.width;
-            const h = (tex?.image as { height?: number } | undefined)?.height ?? this.height;
+            const { width: w, height: h } = resolveTextureResolution(tex, this.width, this.height);
             material.uniforms[res].value = new THREE.Vector4(w, h, 1 / Math.max(1, w), 1 / Math.max(1, h));
           }
         }
-        if (material.uniforms['g_Texture0']) material.uniforms['g_Texture0'].value = read.texture;
+        if (material.uniforms['g_Texture0']) material.uniforms['g_Texture0'].value = readTex;
+        // g_Texture0Resolution 随输入纹理实际尺寸（three 0.170 RT 纹理自带 image 尺寸；
+        // 未解码普通纹理回退 runner 尺寸）。场景级路径（RT 尺寸 == runner 尺寸）零行为变化。
+        if (material.uniforms['g_Texture0Resolution']) {
+          const { width: w, height: h } = resolveTextureResolution(readTex, this.width, this.height);
+          material.uniforms['g_Texture0Resolution'].value = new THREE.Vector4(w, h, 1 / Math.max(1, w), 1 / Math.max(1, h));
+        }
         if (material.uniforms['g_Time']) material.uniforms['g_Time'].value = time;
-        const writeTarget = read === this.rtB ? this.rtA : this.rtB; // 动态写端：读端反端
+        const writeTarget = pickWriteTarget(lastWrite, this.rtA, this.rtB); // 动态写端：上一写端对端
         this.renderer.setRenderTarget(writeTarget);
         this.renderer.render(this.getScene(`${i}`, material), SCREEN_CAMERA);
-        read = writeTarget;
+        readTex = writeTarget.texture;
+        lastWrite = writeTarget;
       }
       this.renderer.setRenderTarget(null);
-      this.last = read.texture; // 同步记录最终输出（帧循环经 lastOutput 贴屏，避免异步竞态）
-      return read;
+      this.last = readTex; // 同步记录最终输出（帧循环经 lastOutput 贴屏，避免异步竞态）
+      return readTex;
     } finally {
       this.updateInFlight = false;
     }
