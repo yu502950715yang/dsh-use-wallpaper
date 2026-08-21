@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { SceneDescription, SceneImageObject } from '../shared/types.js';
+import type { SceneDescription, SceneImageObject, SceneObject } from '../shared/types.js';
 import { createParticleSystem } from './particles.js';
 import type { ParticleEmitterSpec, ParticleInitializerSpec } from './particles.js';
 import { fetchSceneDescription, fetchParticleSpec } from './scene-assets.js';
@@ -15,7 +15,9 @@ export interface SceneRenderer {
     spec: { emitter: ParticleEmitterSpec; init: ParticleInitializerSpec },
     opts?: { sizeAttenuation?: boolean; origin?: [number, number, number]; scale?: [number, number, number] },
   ): void;
-  setEffectChains(chains: import('./shader/effect-chain.js').CompiledEffectPass[][] | null, id: string): void;
+  // 对象级效果链（T1.3）：给指定对象 id 挂载/替换其效果链（每个带效果对象一个独立
+  // EffectRunner，共享同一 renderer；chains 为空 → 移除 runner，quad 回退原始对象 RT）。
+  setObjectEffectChains(objId: number, chains: import('./shader/effect-chain.js').CompiledEffectPass[][] | null, wallpaperId: string): void;
   start(): void;
   stop(): void;
 }
@@ -52,6 +54,48 @@ export function createObjectRenderTarget(width: number, height: number): THREE.W
   return new THREE.WebGLRenderTarget(Math.max(1, Math.round(width)), Math.max(1, Math.round(height)));
 }
 
+// 对象级效果链分组（T1.3）：按 scene.json objects 顺序提取带效果对象（effects 非空数组），
+// 每组保留该对象自己的 effects 数组（不展平——旧全屏路径 flatMap 展平导致 foliagesway 等
+// 对象级效果整屏生效，T1.3 起每对象独立执行链）。
+export function groupEffectsByObject(objects: SceneObject[]): Array<{ obj: SceneObject; effects: unknown[] }> {
+  const groups: Array<{ obj: SceneObject; effects: unknown[] }> = [];
+  for (const obj of objects) {
+    if (Array.isArray(obj.effects) && obj.effects.length > 0) {
+      groups.push({ obj, effects: obj.effects });
+    }
+  }
+  return groups;
+}
+
+// 合成 quad 的 UV 窗口（T1.3）：对象 RT 只含局部相机视锥内的可见段（钳制轴 = RT 像素），
+// 而合成 quad 世界尺寸 = 未钳制 size×scale。每轴窗口 = 可见段在对象局部空间的占比：
+// uvStart = ((W-C)/2)/W（W=未钳制世界范围，C=钳制后范围=RT 像素），uvEnd = 1 - uvStart
+// （窗口恒居中）；未钳制轴（C ≥ W）或非正 W → 全窗口 [0,1]。
+export function uvWindow(unclamped: number, clamped: number): { start: number; end: number } {
+  if (unclamped <= 0 || clamped >= unclamped) return { start: 0, end: 1 };
+  const start = (unclamped - clamped) / 2 / unclamped;
+  return { start, end: 1 - start };
+}
+
+// 把 PlaneGeometry 的 UV 从 [0,1]² 线性映射进可见窗口（每顶点 UV' = start + uv*(end-start)）：
+// 合成 quad 左/下边采样窗口起点、右/上边采样窗口终点，世界尺寸（未钳制）与 RT 可见段精确对应。
+function applyUvWindow(geometry: THREE.PlaneGeometry, ux: { start: number; end: number }, uy: { start: number; end: number }): void {
+  const uvs = geometry.attributes.uv.array as Float32Array;
+  for (let i = 0; i < uvs.length; i += 2) {
+    uvs[i] = ux.start + uvs[i] * (ux.end - ux.start);
+    uvs[i + 1] = uy.start + uvs[i + 1] * (uy.end - uy.start);
+  }
+  geometry.attributes.uv.needsUpdate = true;
+}
+
+// 合成 quad 几何（T1.3）：世界尺寸 = 未钳制 size×scale；UV 逐轴映射进对象 RT 的可见窗口
+// （rtW/rtH = 钳制后范围 = RT 像素 = 局部相机范围，M13 对齐：RT 像素与场景像素 1:1）。
+export function createCompositeGeometry(worldW: number, worldH: number, rtW: number, rtH: number): THREE.PlaneGeometry {
+  const geometry = new THREE.PlaneGeometry(worldW, worldH);
+  applyUvWindow(geometry, uvWindow(worldW, rtW), uvWindow(worldH, rtH));
+  return geometry;
+}
+
 // 按「contain」语义计算正交相机范围：场景完整可见、不变形，多出的方向留白（透明）。
 function containRange(width: number, height: number, viewAspect: number) {
   const sceneAspect = width / height;
@@ -82,7 +126,7 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
   const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -1000, 1000);
   camera.position.z = CAMERA_DISTANCE;
 
-  // 场景渲染目标：离屏 RT（效果链输入），最终经全屏 quad 贴到 canvas
+  // 场景渲染目标：离屏 RT（共享场景含对象级合成 quad），最终经全屏 quad 贴到 canvas
   const sceneRT = new THREE.WebGLRenderTarget(1, 1);
   // 贴屏相机：独立 NDC 正交相机（场景相机是 contain 范围，不能复用）
   const screenCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, -1000, 1000);
@@ -96,7 +140,6 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
   );
   screenQuad.frustumCulled = false;
   screenScene.add(screenQuad);
-  let effectRunner: import('./effect-runner.js').EffectRunner | null = null;
 
   // 背景（可选）：cover 铺满，作为模糊填充层（clearColor 由 setScene 设置）
   let bgRenderer: THREE.WebGLRenderer | null = null;
@@ -114,8 +157,28 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
   const clock = new THREE.Clock();
   const particleSystems: Array<{ system: ReturnType<typeof createParticleSystem>; points: THREE.Points }> = [];
   // 对象级渲染条目：带效果 image 对象渲染进各自独立 RT（局部正交相机，中心原点），
-  // 效果链（T1.3）在对象 RT 上执行后合成回场景；无效果对象不走此路径（保持共享场景）。
-  const objectEntries: Array<{ scene: THREE.Scene; camera: THREE.OrthographicCamera; rt: THREE.WebGLRenderTarget }> = [];
+  // 效果链（T1.3）在对象 RT 上执行，输出经合成 quad 贴回共享场景（世界坐标 = 对象中心、
+  // 尺寸 = 未钳制 size×scale、UV 只采样 RT 可见窗口）。无效果对象不走此路径（保持共享场景）。
+  type ObjectEntry = {
+    id: number;
+    scene: THREE.Scene;                    // 局部场景（仅该对象 mesh）
+    camera: THREE.OrthographicCamera;      // 局部相机（中心原点，范围 = RT 分辨率）
+    rt: THREE.WebGLRenderTarget;           // 对象 RT（效果链输入 + 原始回退）
+    quad: THREE.Mesh;                      // 共享场景中的合成 quad（map = 效果输出或 rt.texture）
+    runner: EffectRunner | null;           // 该对象自己的效果执行器（T1.3，共享同一 renderer）
+  };
+  const objectEntries = new Map<number, ObjectEntry>();
+  // 对象效果链异步串行化（T1.3）：多个 runner 共享同一 renderer，promise 链保证同一时刻
+  // 只有一个 runner 触碰 RT/绑定状态（并发交错破坏状态 → 黑屏/闪烁）。
+  let objectChain: Promise<unknown> = Promise.resolve();
+
+  function disposeObjectEntry(entry: ObjectEntry): void {
+    scene.remove(entry.quad);
+    entry.rt.dispose();
+    entry.quad.geometry.dispose();
+    (entry.quad.material as THREE.Material).dispose();
+    entry.runner?.dispose();
+  }
 
   function frame() {
     const dt = Math.min(clock.getDelta(), 0.05);
@@ -128,24 +191,35 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
       ps.points.geometry.attributes.aAlpha.needsUpdate = true;
       ps.points.geometry.setDrawRange(0, ps.system.count());
     }
-    // 对象级渲染：带效果对象渲染进各自对象 RT（局部相机）。T1.3 在对象 RT 上挂
-    // 效果链并把输出合成回场景；本任务只建立对象 RT 渲染路径（对象暂不合成回场景）。
-    for (const entry of objectEntries) {
+    // 对象级渲染：带效果对象渲染进各自对象 RT（局部相机，中心原点）。
+    for (const entry of objectEntries.values()) {
       renderer.setRenderTarget(entry.rt);
       renderer.render(entry.scene, entry.camera);
     }
-    // 场景渲染到离屏 RT
+    // 合成贴回：quad 采样效果链最近完成输出；链尚未就绪（编译/纹理加载中）回退对象 RT
+    // 原始纹理（对象正常显示、无效果，不黑屏）。map 更新必须在共享场景渲染之前。
+    for (const entry of objectEntries.values()) {
+      (entry.quad.material as THREE.MeshBasicMaterial).map = entry.runner?.lastOutput() ?? entry.rt.texture;
+    }
+    // 场景渲染到离屏 RT（共享场景现含合成 quad → 效果输出已贴回场景）
     renderer.setRenderTarget(sceneRT);
     renderer.render(scene, camera);
     renderer.setRenderTarget(null);
-    // 贴屏源：有效果链时用 runner 最近完成输出（未完成回退场景 RT，避免首帧黑屏），否则 sceneRT
-    const displayTex = effectRunner ? (effectRunner.lastOutput() ?? sceneRT.texture) : sceneRT.texture;
-    (screenQuad.material as THREE.MeshBasicMaterial).map = displayTex;
+    // 贴屏（T1.3 起无全屏效果链：直接贴场景 RT；对象级效果已在场景内）
+    (screenQuad.material as THREE.MeshBasicMaterial).map = sceneRT.texture;
     renderer.render(screenScene, screenCamera);
-    // 效果链异步更新（纹理槽加载完成前输出=input，不阻塞帧循环）
-    if (effectRunner) {
-      void effectRunner.update(clock.elapsedTime, sceneRT);
+    // 对象级效果链异步串行更新：promise 链保证同一时刻只有一个 runner 触碰 renderer
+    // RT/绑定状态（并发交错 → 黑屏/闪烁）；每 runner 内部保留 updateInFlight 防重入，
+    // 纹理槽缓存后稳态更新近乎同步。失败不阻断后续帧（catch 保持链存活）。
+    for (const entry of objectEntries.values()) {
+      const runner = entry.runner;
+      if (!runner) continue;
+      objectChain = objectChain
+        .then(() => runner.update(clock.elapsedTime, entry.rt.texture))
+        .catch((e) => console.warn('[wallpaper-engine] 对象效果链更新失败:', e));
     }
+    // 背景层：cover 渲染对象级效果后的完整共享场景（含合成 quad）——bg 自身不跑效果链
+    // （不二次叠加，只做模糊填充层）
     if (bgRenderer && bgCamera) bgRenderer.render(scene, bgCamera);
     if (running && fgCanvas.isConnected) raf = requestAnimationFrame(frame);
     else stop(); // canvas 被 controller 移除（切换壁纸）时自动终止 raf，防止泄漏
@@ -191,21 +265,31 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
       const mesh = new THREE.Mesh(geometry, material);
       const s = obj.scale;
       mesh.scale.set(s[0], s[1], s[2] ?? 1);
-      // 对象级效果链路径：带效果 image 对象渲染进独立对象 RT（局部正交相机，范围 =
-      // size×scale、中心原点），效果链 UV 0-1 对齐对象局部空间；不参与共享场景，
-      // T1.3 将对象 RT 的效果输出合成回场景（当前中间态：这些对象暂不显示）。
+      // 对象级效果链路径：带效果 image 对象渲染进独立对象 RT（局部正交相机，中心原点）。
+      // 局部相机范围 = 取整后的 RT 分辨率（M13：RT 像素与场景像素 1:1，合成 UV 窗口精确
+      // 对应相机视锥，效果链 UV 0-1 与 mask 纹理对齐对象局部空间）。效果链在对象 RT 上
+      // 执行，输出经合成 quad 贴回共享场景（世界尺寸 = 未钳制 size×scale，UV 只采样可见窗口）。
       if (Array.isArray(obj.effects) && obj.effects.length > 0) {
         const range = objectCameraRange([w, h], [s[0], s[1]]);
         const rt = createObjectRenderTarget(range.w, range.h);
-        // 局部相机：中心原点、范围 = 对象世界尺寸（钳制后）——不钳制时 quad 精确填满
-        // RT（每 RT 像素 = 1 场景像素），钳制时该轴对象被裁剪（保护性降采样）。
         const localCamera = new THREE.OrthographicCamera(
-          -range.w / 2, range.w / 2, range.h / 2, -range.h / 2, -1000, 1000,
+          -rt.width / 2, rt.width / 2, rt.height / 2, -rt.height / 2, -1000, 1000,
         );
         localCamera.position.z = CAMERA_DISTANCE;
         const localScene = new THREE.Scene();
         localScene.add(mesh); // mesh 保持 (0,0,0)：对象中心即局部原点
-        objectEntries.push({ scene: localScene, camera: localCamera, rt });
+        // 合成 quad：世界尺寸 = 未钳制 size×scale（钳制轴对象超出视锥部分在 RT 中不存在，
+        // 由 UV 窗口只采样 RT 可见段）；初始 map = rt.texture（链就绪前显示原始对象）。
+        const quad = new THREE.Mesh(
+          createCompositeGeometry(w * s[0], h * s[1], rt.width, rt.height),
+          new THREE.MeshBasicMaterial({ map: rt.texture, transparent: true }),
+        );
+        quad.position.set(obj.origin[0] - ortho.width / 2, obj.origin[1] - ortho.height / 2, obj.origin[2]);
+        scene.add(quad);
+        // 按对象 id 替换（M14）：同 id 重设时先清理旧条目（quad/RT/runner），避免残留
+        const existing = objectEntries.get(obj.id);
+        if (existing) disposeObjectEntry(existing);
+        objectEntries.set(obj.id, { id: obj.id, scene: localScene, camera: localCamera, rt, quad, runner: null });
         return;
       }
       // 无效果对象：共享场景路径（对象 origin 是 WE 场景中的中心点：中心映射 = (ox - vw/2, oy - vh/2)。
@@ -251,20 +335,21 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
       scene.add(points);
       particleSystems.push({ system, points });
     },
-    setEffectChains(chains: import('./shader/effect-chain.js').CompiledEffectPass[][] | null, id: string) {
-      // 空效果链（无效果壁纸如 EVA）：不创建 runner，帧循环直接贴 sceneRT
-      // （避免空 runner 的 update 空转与潜在状态干扰）
+    setObjectEffectChains(objId: number, chains: import('./shader/effect-chain.js').CompiledEffectPass[][] | null, wallpaperId: string) {
+      // 对象未设置（纹理加载失败跳过等）→ 无条目可挂链，静默忽略
+      const entry = objectEntries.get(objId);
+      if (!entry) return;
+      // 空效果链（解析失败/全被过滤）→ 移除 runner，合成 quad 回退对象 RT 原始纹理
       if (!chains || chains.length === 0) {
-        effectRunner?.dispose();
-        effectRunner = null;
+        entry.runner?.dispose();
+        entry.runner = null;
         return;
       }
-      if (!effectRunner) {
-        const vw = Math.max(1, Math.round(window.innerWidth || ortho.width));
-        const vh = Math.max(1, Math.round(window.innerHeight || ortho.height));
-        effectRunner = new EffectRunner(renderer, vw, vh);
+      if (!entry.runner) {
+        // 每带效果对象一个独立 runner（共享同一 renderer）；RT 尺寸 = 对象 RT 分辨率
+        entry.runner = new EffectRunner(renderer, entry.rt.width, entry.rt.height);
       }
-      effectRunner.setChains(chains, id);
+      entry.runner.setChains(chains, wallpaperId, { width: entry.rt.width, height: entry.rt.height });
     },
     start() {
       if (running) return;
@@ -275,13 +360,11 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
     stop() {
       running = false;
       cancelAnimationFrame(raf);
-      // 释放对象级 RT（GPU 纹理，换壁纸/停止时必须回收，否则泄漏）
-      for (const entry of objectEntries) entry.rt.dispose();
-      objectEntries.length = 0;
+      // 释放对象级条目：对象 RT、合成 quad 几何/材质、效果 runner（M15；换壁纸/停止必须回收）
+      for (const entry of objectEntries.values()) disposeObjectEntry(entry);
+      objectEntries.clear();
       renderer.dispose();
       bgRenderer?.dispose();
-      effectRunner?.dispose();
-      effectRunner = null;
     },
   };
 }
@@ -323,24 +406,25 @@ export async function renderScene(id: string, fgCanvas: HTMLCanvasElement, bgCan
     const desc = await fetchSceneDescription(id);
     renderer = createSceneRenderer(fgCanvas, bgCanvas);
     renderer.setScene(desc);
-    // Ruling 5：所有对象的 effects 按 scene.json objects 顺序展平，
-    // 全库实测 122 条效果中 105 条挂在 image 对象上，仅 util 会漏掉主视觉
-    const utilEffects = desc.objects
-      .flatMap((o) => (Array.isArray(o.effects) ? o.effects : []))
-      .filter((fx: unknown): fx is { file: string; passes?: unknown[] } => typeof (fx as any)?.file === 'string');
-
+    // 对象级效果链（T1.3）：按对象分组（替换旧全屏展平路径——Ruling 5 的全屏执行导致
+    // foliagesway 等对象级效果整屏生效/摇晃）。每组在 renderer 内拥有独立 EffectRunner，
+    // 链输入 = 对象 RT，输出合成回共享场景；无效果对象路径不变。
+    const effectGroups = groupEffectsByObject(desc.objects);
     // 异步加载效果链（失败链 → null 过滤；加载中画面保持原样）
     void (async () => {
-      const chains: import('./shader/effect-chain.js').CompiledEffectPass[][] = [];
-      for (const fx of utilEffects) {
-        const chain = await resolveEffectChain(fx, async (name) => {
-          return fetchWithRetry(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(name)}`);
-        });
-        if (chain) chains.push(chain);
-        // spec §4.4：效果链解析失败 → console.warn（解析器静默返回 null，warn 职责在本层）
-        else console.warn('[wallpaper-engine] 效果链解析失败，跳过:', fx.file);
+      for (const group of effectGroups) {
+        const chains: import('./shader/effect-chain.js').CompiledEffectPass[][] = [];
+        for (const fx of group.effects) {
+          if (typeof (fx as { file?: unknown } | null)?.file !== 'string') continue;
+          const chain = await resolveEffectChain(fx as { file: string; passes?: unknown[] }, async (name) => {
+            return fetchWithRetry(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(name)}`);
+          });
+          if (chain) chains.push(chain);
+          // spec §4.4：效果链解析失败 → console.warn（解析器静默返回 null，warn 职责在本层）
+          else console.warn('[wallpaper-engine] 效果链解析失败，跳过:', (fx as { file?: unknown }).file);
+        }
+        renderer.setObjectEffectChains(group.obj.id, chains, id);
       }
-      renderer.setEffectChains(chains, id);
     })();
     let rendered = 0;
     for (const obj of desc.objects) {

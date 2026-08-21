@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { createParticleSystem } from '../src/client/particles.js';
-import { objectCameraRange, createObjectRenderTarget, resolveTexPath } from '../src/client/scene-renderer.js';
+import {
+  objectCameraRange, createObjectRenderTarget, resolveTexPath,
+  groupEffectsByObject, uvWindow, createCompositeGeometry,
+} from '../src/client/scene-renderer.js';
+import type { SceneObject } from '../src/shared/types.js';
 
 // scene-renderer 的 WebGLRenderer 无法在 node（无 WebGL）环境构造，
 // 这里用真实 THREE.BufferGeometry/BufferAttribute 复刻 addParticleSystem 的缓冲接线
@@ -99,5 +103,98 @@ describe('createObjectRenderTarget（对象级渲染目标）', () => {
     expect(rt.width).toBe(1);
     expect(rt.height).toBe(1);
     rt.dispose();
+  });
+});
+
+describe('groupEffectsByObject（对象级效果链分组：过滤空 effects、保持对象顺序、不展平）', () => {
+  const fx = (file: string) => ({ file });
+  const image = (id: number, effects?: unknown[]): SceneObject => ({
+    kind: 'image', id, name: `obj${id}`, origin: [0, 0, 0], scale: [1, 1, 1],
+    image: `models/${id}.json`, ...(effects ? { effects } : {}),
+  });
+  const particle = (id: number): SceneObject => ({
+    kind: 'particle', id, name: `p${id}`, origin: [0, 0, 0], scale: [1, 1, 1],
+    particle: `particles/${id}.json`,
+  });
+
+  it('2937346640 结构：主图 4 效果、其余对象无效果 → 仅 1 组（效果不展平、组引用原对象）', () => {
+    const main = image(1, [
+      fx('effects/foliagesway.json'), fx('effects/iris.json'),
+      fx('effects/godrays.json'), fx('effects/waterreflection.json'),
+    ]);
+    const objects = [main, particle(2), image(3)];
+    const groups = groupEffectsByObject(objects);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].obj).toBe(main);
+    expect(groups[0].effects).toHaveLength(4);
+    expect((groups[0].effects as { file: string }[]).map((e) => e.file)).toEqual([
+      'effects/foliagesway.json', 'effects/iris.json', 'effects/godrays.json', 'effects/waterreflection.json',
+    ]);
+  });
+  it('多对象带效果：组按 objects 顺序、effects 数组原样保留（不跨对象展平）', () => {
+    const o2 = image(2, [fx('a.json'), fx('b.json')]);
+    const o3 = image(3, [fx('c.json')]);
+    const o5 = image(5, [fx('d.json'), fx('e.json'), fx('f.json')]);
+    const objects = [image(1), o2, o3, particle(4), o5, particle(6)];
+    const groups = groupEffectsByObject(objects);
+    expect(groups.map((g) => g.obj.id)).toEqual([2, 3, 5]);
+    expect(groups.map((g) => g.effects.length)).toEqual([2, 1, 3]);
+  });
+  it('空数组 / 全无效果对象 → 空分组', () => {
+    expect(groupEffectsByObject([])).toEqual([]);
+    expect(groupEffectsByObject([image(1), particle(2)])).toEqual([]);
+  });
+  it('effects 为 undefined（非数组字段）不误判为组', () => {
+    expect(groupEffectsByObject([image(1)])).toEqual([]);
+  });
+});
+
+describe('uvWindow（合成 quad 的 UV 窗口：钳制轴只采样 RT 可见部分）', () => {
+  it('未钳制轴（clamped ≥ unclamped）→ 全窗口 [0,1]', () => {
+    expect(uvWindow(1471, 1471)).toEqual({ start: 0, end: 1 });
+    expect(uvWindow(2048, 2048)).toEqual({ start: 0, end: 1 });
+  });
+  it('钳制轴：窗口 = ((W-C)/2)/W → 1-((W-C)/2)/W（世界 2942 → RT 2048，x 居中裁剪）', () => {
+    const { start, end } = uvWindow(2942, 2048);
+    expect(start).toBeCloseTo(447 / 2942, 12);
+    expect(end).toBeCloseTo(1 - 447 / 2942, 12);
+  });
+  it('窗口对称性：start + end = 1（RT 可见窗口恒居中）', () => {
+    expect(uvWindow(9.44, 9).start + uvWindow(9.44, 9).end).toBeCloseTo(1, 12);
+  });
+  it('非正未钳制尺寸 → 全窗口（防除零/负窗口）', () => {
+    expect(uvWindow(0, 1)).toEqual({ start: 0, end: 1 });
+  });
+});
+
+describe('createCompositeGeometry（合成 quad：世界尺寸 = 未钳制 size×scale，UV 映射进可见窗口）', () => {
+  it('x 轴钳制（2942×1471 世界 → RT 2048×1471）：quad 世界尺寸未钳制、UV.x 落在窗口内、UV.y 全 [0,1]', () => {
+    const geo = createCompositeGeometry(2942, 1471, 2048, 1471);
+    // 世界尺寸：position 横跨 ±1471（x）、±735.5（y）= 未钳制 size×scale
+    const pos = Array.from(geo.attributes.position.array as Float32Array);
+    const xs = pos.filter((_, i) => i % 3 === 0);
+    const ys = pos.filter((_, i) => i % 3 === 1);
+    expect(Math.min(...xs)).toBe(-1471);
+    expect(Math.max(...xs)).toBe(1471);
+    expect(Math.min(...ys)).toBe(-735.5);
+    expect(Math.max(...ys)).toBe(735.5);
+    // UV 窗口：u 只落在 [uvStart, uvEnd]（仅采样 RT 可见段），v 保持全 [0,1]
+    // （BufferAttribute 存 Float32Array → 精度 ~7 位，用 6 位小数容差）
+    const ux = uvWindow(2942, 2048);
+    const uvs = Array.from(geo.attributes.uv.array as Float32Array);
+    const us = uvs.filter((_, i) => i % 2 === 0);
+    const vs = uvs.filter((_, i) => i % 2 === 1);
+    expect(Math.min(...us)).toBeCloseTo(ux.start, 6);
+    expect(Math.max(...us)).toBeCloseTo(ux.end, 6);
+    expect(Math.min(...vs)).toBe(0);
+    expect(Math.max(...vs)).toBe(1);
+    geo.dispose();
+  });
+  it('未钳制（世界 == RT 尺寸）→ UV 全 [0,1]（与无效果对象渲染语义一致）', () => {
+    const geo = createCompositeGeometry(1471, 1471, 1471, 1471);
+    const uvs = Array.from(geo.attributes.uv.array as Float32Array);
+    expect(Math.min(...uvs)).toBe(0);
+    expect(Math.max(...uvs)).toBe(1);
+    geo.dispose();
   });
 });
