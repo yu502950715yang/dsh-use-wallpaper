@@ -164,7 +164,10 @@ impl Renderer {
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
+                    // T4.3 后 fs_main 用 img.tint（颜色调制）→ fragment 阶段也读 binding 0；
+                    // 原 VERTEX only 在 WebGPU 严格校验下报 "Visibility flags don't include
+                    // the shader stage"（强制 wasm 后所有壁纸走 wasm 立即暴露，实测）
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                     ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None },
                     count: None,
                 },
