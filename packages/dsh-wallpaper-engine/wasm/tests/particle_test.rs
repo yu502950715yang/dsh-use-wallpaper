@@ -51,3 +51,24 @@ fn detects_movement_operator() {
     let spec = parse_particle_spec(ASHES_JSON);
     assert!(spec.operators.iter().any(|op| op.kind == OperatorKind::Movement));
 }
+
+#[test]
+fn colorrandom_normalized_to_0_1() {
+    // WE colorrandom 0-255 量级 → /255 归一化（对齐 JS particles.ts；2026-08-21 修复：
+    // 原实现透传 255 → shader v_color 超范围 → additive 过曝黄色爆炸）
+    let spec = parse_particle_spec(
+        r#"{"emitter":[{"rate":1}],"initializer":[{"name":"colorrandom","min":"255 255 255"}]}"#,
+    );
+    let cm = spec.init.color_min.expect("color_min 应解析");
+    assert!((cm[0] - 1.0).abs() < 1e-5, "255/255 应为 1.0，实际 {}", cm[0]);
+    assert!((cm[1] - 1.0).abs() < 1e-5);
+    assert!((cm[2] - 1.0).abs() < 1e-5);
+
+    let spec2 = parse_particle_spec(
+        r#"{"emitter":[{"rate":1}],"initializer":[{"name":"colorrandom","min":"0 128 255"}]}"#,
+    );
+    let cm2 = spec2.init.color_min.expect("color_min 应解析");
+    assert!((cm2[0] - 0.0).abs() < 1e-5);
+    assert!((cm2[1] - 128.0 / 255.0).abs() < 1e-5);
+    assert!((cm2[2] - 1.0).abs() < 1e-5);
+}

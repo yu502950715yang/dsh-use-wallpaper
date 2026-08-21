@@ -119,8 +119,18 @@ pub fn parse_particle_spec(json: &str) -> ParticleSpec {
             size_max: size.and_then(|i| i.max.as_ref()).map(|v| scalar(v, 16.0)).unwrap_or(16.0),
             velocity_min: vel.and_then(|i| i.min.as_ref()).map(vec3).unwrap_or([0.0; 3]),
             velocity_max: vel.and_then(|i| i.max.as_ref()).map(vec3).unwrap_or([0.0; 3]),
-            color_min: color.and_then(|i| i.min.as_ref()).map(vec3),
-            color_max: color.and_then(|i| i.max.as_ref()).map(vec3),
+            // WE colorrandom 是 0-255 量级（fog1 等 "255 255 255"）→ 归一化 /255 到 0-1
+            // （对齐 JS 版 particles.ts syncBuffers 的 `p.r / 255`；2026-08-21 修复：
+            // 原实现直接透传 255 → shader v_color=(255,255,255) 超范围 → additive 混合
+            // 过曝，白色雾在暖色背景上呈黄色爆炸）。
+            color_min: color.and_then(|i| i.min.as_ref()).map(|v| {
+                let c = vec3(v);
+                [c[0] / 255.0, c[1] / 255.0, c[2] / 255.0]
+            }),
+            color_max: color.and_then(|i| i.max.as_ref()).map(|v| {
+                let c = vec3(v);
+                [c[0] / 255.0, c[1] / 255.0, c[2] / 255.0]
+            }),
             alpha_min: alpha.and_then(|i| i.min.as_ref()).map(|v| scalar(v, 1.0)).unwrap_or(1.0),
             alpha_max: alpha.and_then(|i| i.max.as_ref()).map(|v| scalar(v, 1.0)).unwrap_or(1.0),
         },
