@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { createParticleSystem } from '../src/client/particles.js';
 import {
   objectCameraRange, createObjectRenderTarget, resolveTexPath,
-  groupEffectsByObject, uvWindow, createCompositeGeometry,
+  groupEffectsByObject, uvWindow, createCompositeGeometry, PendingChainStore,
 } from '../src/client/scene-renderer.js';
 import type { SceneObject } from '../src/shared/types.js';
 
@@ -196,5 +196,38 @@ describe('createCompositeGeometry（合成 quad：世界尺寸 = 未钳制 size�
     expect(Math.min(...uvs)).toBe(0);
     expect(Math.max(...uvs)).toBe(1);
     geo.dispose();
+  });
+});
+
+// I1（Important）竞态修复：renderScene 的链解析 IIFE 与纹理加载循环并发（无顺序屏障），
+// 链可能先于 setImageObject 创建条目完成。setObjectEffectChains 对缺失条目必须暂存而非
+// 静默丢弃；setImageObject 创建条目后补挂。PendingChainStore 即该决策的纯逻辑实现
+// （node 可测：不触碰 renderer/runner，只做「条目存在即应用 / 缺失即暂存」决策）。
+describe('PendingChainStore（效果链异步挂载暂存：链先 resolve、条目后创建 → 效果仍挂载）', () => {
+  it('链先 resolve、条目后创建：先暂存，条目创建时取回同一链（不丢失）', () => {
+    const store = new PendingChainStore<string>();
+    const chain = 'chain-A';
+    // 链解析完成，但对象条目尚未创建（纹理仍在加载）→ applyIfReady 返回 false（已暂存）
+    expect(store.applyIfReady(101, chain, false)).toBe(false);
+    // 条目创建完成 → take 取回同一链引用（调用方立即挂到 runner）
+    expect(store.take(101)).toBe(chain);
+    expect(store.take(101)).toBeUndefined(); // 取走即删，不会重复挂载
+  });
+  it('条目先创建、链后解析：直接应用，不暂存', () => {
+    const store = new PendingChainStore<string>();
+    expect(store.applyIfReady(202, 'chain-B', true)).toBe(true);
+    expect(store.take(202)).toBeUndefined(); // 无暂存残留
+  });
+  it('链多次先到：后到的覆盖先到的（最新链生效）', () => {
+    const store = new PendingChainStore<string>();
+    store.applyIfReady(303, 'stale', false);
+    store.applyIfReady(303, 'fresh', false);
+    expect(store.take(303)).toBe('fresh');
+  });
+  it('条目最终未创建（纹理加载失败）：stop 清空暂存，无残留', () => {
+    const store = new PendingChainStore<string>();
+    store.applyIfReady(404, 'chain', false);
+    store.clear();
+    expect(store.take(404)).toBeUndefined();
   });
 });

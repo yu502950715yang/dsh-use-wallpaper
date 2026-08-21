@@ -8,6 +8,9 @@ import { EffectRunner } from './effect-runner.js';
 import { resolveEffectChain } from './shader/effect-chain.js';
 import { fetchWithRetry } from './fetch-util.js';
 
+// 编译后效果链（T1.3）：每组对象的独立链集合（一条链 = CompiledEffectPass[]，逐 pass ping-pong）
+type CompiledEffectChains = import('./shader/effect-chain.js').CompiledEffectPass[][];
+
 export interface SceneRenderer {
   setScene(desc: SceneDescription): void;
   setImageObject(tex: THREE.Texture | null, obj: SceneImageObject): void;
@@ -17,7 +20,7 @@ export interface SceneRenderer {
   ): void;
   // 对象级效果链（T1.3）：给指定对象 id 挂载/替换其效果链（每个带效果对象一个独立
   // EffectRunner，共享同一 renderer；chains 为空 → 移除 runner，quad 回退原始对象 RT）。
-  setObjectEffectChains(objId: number, chains: import('./shader/effect-chain.js').CompiledEffectPass[][] | null, wallpaperId: string): void;
+  setObjectEffectChains(objId: number, chains: CompiledEffectChains | null, wallpaperId: string): void;
   start(): void;
   stop(): void;
 }
@@ -65,6 +68,31 @@ export function groupEffectsByObject(objects: SceneObject[]): Array<{ obj: Scene
     }
   }
   return groups;
+}
+
+// 效果链挂载暂存器（I1 竞态修复）：renderScene 的链解析 IIFE（await resolveEffectChain，
+// 内部多次 await loadFile 网络请求）与纹理加载循环（await resolveImageTexture 后
+// setImageObject 创建条目）并发交错、无顺序屏障——链可能先于对象条目就绪。
+// 本类做「条目存在即应用 / 缺失即暂存」的纯决策（node 可测，不触碰 renderer/runner）：
+//   applyIfReady 返回 true → 调用方立即挂链；返回 false → 已按 objId 暂存，
+//   setImageObject 创建条目后 take 补挂（否则链被静默丢弃 → 对象级效果不生效）。
+// 同一 objId 后到的链覆盖先到的（最新链生效）；条目最终未创建（纹理加载失败）时
+// stop() 调用 clear() 清理暂存，无残留。
+export class PendingChainStore<T> {
+  private stash = new Map<number, T>();
+  applyIfReady(objId: number, chains: T, hasEntry: boolean): boolean {
+    if (hasEntry) return true;
+    this.stash.set(objId, chains);
+    return false;
+  }
+  take(objId: number): T | undefined {
+    const chains = this.stash.get(objId);
+    if (chains !== undefined) this.stash.delete(objId);
+    return chains;
+  }
+  clear(): void {
+    this.stash.clear();
+  }
 }
 
 // 合成 quad 的 UV 窗口（T1.3）：对象 RT 只含局部相机视锥内的可见段（钳制轴 = RT 像素），
@@ -168,6 +196,9 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
     runner: EffectRunner | null;           // 该对象自己的效果执行器（T1.3，共享同一 renderer）
   };
   const objectEntries = new Map<number, ObjectEntry>();
+  // 效果链异步挂载暂存（I1 竞态修复）：链解析与纹理加载并发，链可能先于条目就绪。
+  // 条目缺失时暂存，setImageObject 创建条目后补挂（防对象级效果静默丢失）。
+  const pendingChains = new PendingChainStore<{ chains: CompiledEffectChains | null; wallpaperId: string }>();
   // 对象效果链异步串行化（T1.3）：多个 runner 共享同一 renderer，promise 链保证同一时刻
   // 只有一个 runner 触碰 RT/绑定状态（并发交错破坏状态 → 黑屏/闪烁）。
   let objectChain: Promise<unknown> = Promise.resolve();
@@ -178,6 +209,22 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
     entry.quad.geometry.dispose();
     (entry.quad.material as THREE.Material).dispose();
     entry.runner?.dispose();
+  }
+
+  // 给已创建条目挂载/替换效果链（空链 → 移除 runner，合成 quad 回退对象 RT 原始纹理）
+  function applyObjectChains(objId: number, chains: CompiledEffectChains | null, wallpaperId: string): void {
+    const entry = objectEntries.get(objId);
+    if (!entry) return;
+    if (!chains || chains.length === 0) {
+      entry.runner?.dispose();
+      entry.runner = null;
+      return;
+    }
+    if (!entry.runner) {
+      // 每带效果对象一个独立 runner（共享同一 renderer）；RT 尺寸 = 对象 RT 分辨率
+      entry.runner = new EffectRunner(renderer, entry.rt.width, entry.rt.height);
+    }
+    entry.runner.setChains(chains, wallpaperId, { width: entry.rt.width, height: entry.rt.height });
   }
 
   function frame() {
@@ -290,6 +337,9 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
         const existing = objectEntries.get(obj.id);
         if (existing) disposeObjectEntry(existing);
         objectEntries.set(obj.id, { id: obj.id, scene: localScene, camera: localCamera, rt, quad, runner: null });
+        // I1 竞态修复：链可能在条目创建前已解析完成（暂存）→ 创建后立即补挂，不丢失
+        const pending = pendingChains.take(obj.id);
+        if (pending) applyObjectChains(obj.id, pending.chains, pending.wallpaperId);
         return;
       }
       // 无效果对象：共享场景路径（对象 origin 是 WE 场景中的中心点：中心映射 = (ox - vw/2, oy - vh/2)。
@@ -335,21 +385,11 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
       scene.add(points);
       particleSystems.push({ system, points });
     },
-    setObjectEffectChains(objId: number, chains: import('./shader/effect-chain.js').CompiledEffectPass[][] | null, wallpaperId: string) {
-      // 对象未设置（纹理加载失败跳过等）→ 无条目可挂链，静默忽略
-      const entry = objectEntries.get(objId);
-      if (!entry) return;
-      // 空效果链（解析失败/全被过滤）→ 移除 runner，合成 quad 回退对象 RT 原始纹理
-      if (!chains || chains.length === 0) {
-        entry.runner?.dispose();
-        entry.runner = null;
-        return;
-      }
-      if (!entry.runner) {
-        // 每带效果对象一个独立 runner（共享同一 renderer）；RT 尺寸 = 对象 RT 分辨率
-        entry.runner = new EffectRunner(renderer, entry.rt.width, entry.rt.height);
-      }
-      entry.runner.setChains(chains, wallpaperId, { width: entry.rt.width, height: entry.rt.height });
+    setObjectEffectChains(objId: number, chains: CompiledEffectChains | null, wallpaperId: string) {
+      // I1 竞态修复：链解析与条目创建并发——条目缺失时暂存（不再静默丢弃），
+      // setImageObject 创建条目后 take 补挂
+      if (!pendingChains.applyIfReady(objId, { chains, wallpaperId }, objectEntries.has(objId))) return;
+      applyObjectChains(objId, chains, wallpaperId);
     },
     start() {
       if (running) return;
@@ -363,6 +403,7 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
       // 释放对象级条目：对象 RT、合成 quad 几何/材质、效果 runner（M15；换壁纸/停止必须回收）
       for (const entry of objectEntries.values()) disposeObjectEntry(entry);
       objectEntries.clear();
+      pendingChains.clear(); // 条目最终未创建（纹理加载失败）的暂存链一并清理
       renderer.dispose();
       bgRenderer?.dispose();
     },
@@ -413,7 +454,7 @@ export async function renderScene(id: string, fgCanvas: HTMLCanvasElement, bgCan
     // 异步加载效果链（失败链 → null 过滤；加载中画面保持原样）
     void (async () => {
       for (const group of effectGroups) {
-        const chains: import('./shader/effect-chain.js').CompiledEffectPass[][] = [];
+        const chains: CompiledEffectChains = [];
         for (const fx of group.effects) {
           if (typeof (fx as { file?: unknown } | null)?.file !== 'string') continue;
           const chain = await resolveEffectChain(fx as { file: string; passes?: unknown[] }, async (name) => {
