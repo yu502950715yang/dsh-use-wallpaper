@@ -248,7 +248,7 @@ describe('createWasmSceneRenderer', () => {
         if (url.includes('name=scene.json')) return jsonResp(sceneJson);
         if (url.includes('p.json')) return jsonResp({ emitter: [{ rate: 1.5 }], initializer: [], material: 'materials/presets/fog1.json' });
         if (url.includes('fog1.json')) return jsonResp({ passes: [{ textures: ['particle/fog/fog1'] }] });
-        if (url.includes('particle-texture')) return { ok: true, status: 200, arrayBuffer: async () => new Uint8Array([9, 8, 7, 6]).buffer };
+        if (url.includes('ptex-fog-fog1')) return { ok: true, status: 200, arrayBuffer: async () => new Uint8Array([9, 8, 7, 6]).buffer };
         return { ok: false, status: 404, json: async () => ({}) } as any;
       }),
     );
@@ -261,7 +261,7 @@ describe('createWasmSceneRenderer', () => {
     expect(Array.from(texBytes)).toEqual([9, 8, 7, 6]);
   });
 
-  it('粒子材质纹理缺失（particle-texture 404）→ add_particle 收到空 Uint8Array（纯色兜底）', async () => {
+  it('粒子材质纹理缺失（静态 ptex 资源 404）→ add_particle 收到空 Uint8Array（纯色兜底）', async () => {
     vi.stubGlobal('navigator', { gpu: {} });
     const scene = { load_scene: vi.fn(), load_image: vi.fn(), add_particle: vi.fn(), step: vi.fn(), render: vi.fn() };
     const sceneJson = JSON.stringify({

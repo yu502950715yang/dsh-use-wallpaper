@@ -127,9 +127,11 @@ async function resolveImageTexBytes(id: string, imageRef: string): Promise<Uint8
 }
 
 // 粒子材质纹理字节推导（2026-08-21 方案 A）：粒子 spec 的 material → 材质 json →
-// passes[0].textures[0]（如 "particle/fog/fog1"）→ /wallpapers/particle-texture 路由
-// （WE 安装目录 assets/materials/ 的内置粒子纹理，TEXV0005）。任何一步失败返回 null
-// （空字节 = 无纹理，Rust 侧 1×1 白兜底保持纯色粒子行为）。
+// passes[0].textures[0]（如 "particle/fog/fog1"）→ **静态资源路由**
+// /wallpapers/static/ptex-<斜杠转横线>.tex（build:client 已把 WE 安装目录的粒子纹理
+// 打进 dist/static/，立即生效无需重启 dsh web；host 的 /wallpapers/particle-texture
+// 路由为备选，重启后也可用）。任何一步失败返回 null（空字节 = 无纹理，Rust 侧
+// 1×1 白兜底保持纯色粒子行为）。
 async function resolveParticleTexBytes(id: string, specText: string): Promise<Uint8Array | null> {
   try {
     const spec: unknown = JSON.parse(specText);
@@ -140,9 +142,14 @@ async function resolveParticleTexBytes(id: string, specText: string): Promise<Ui
     const mat: unknown = await matResp.json();
     const texName: unknown = (mat as { passes?: { textures?: unknown[] }[] })?.passes?.[0]?.textures?.[0];
     if (typeof texName !== 'string' || !texName) return null;
-    const texResp = await fetch(`/wallpapers/particle-texture?name=${encodeURIComponent(texName)}`);
+    // 静态资源（立即生效）：build:client 从 WE 安装目录 assets/materials/particle/ 复制，
+    // 相对该目录扁平命名 ptex-<路径斜杠转横线>.tex → "particle/fog/fog1" → ptex-fog-fog1.tex
+    const short = texName.startsWith('particle/') ? texName.slice('particle/'.length) : texName;
+    const texResp = await fetch(`/wallpapers/static/ptex-${encodeURIComponent(short.replace(/\//g, '-'))}.tex`);
     if (!texResp.ok) return null;
-    return new Uint8Array(await texResp.arrayBuffer());
+    const buf = await texResp.arrayBuffer();
+    if (buf.byteLength === 0) return null;
+    return new Uint8Array(buf);
   } catch {
     return null;
   }

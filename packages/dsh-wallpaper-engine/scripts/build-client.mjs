@@ -1,5 +1,5 @@
 import { build } from 'esbuild';
-import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -39,3 +39,28 @@ for (const file of ['we_scene_wasm.js', 'we_scene_wasm_bg.wasm']) {
   copyFileSync(join(pkgDir, file), join(outStatic, file));
 }
 console.log('wasm assets copied to dist/static/ (we_scene_wasm.js, we_scene_wasm_bg.wasm)');
+
+// 2026-08-21（方案 A 静态化）：WE 内置粒子纹理（fog1/halo/light_shafts 等，粒子材质
+// textures 如 "particle/fog/fog1"）从安装目录 assets/materials/particle/ 复制到
+// dist/static/，扁平命名 ptex-<路径斜杠转横线>.tex（静态路由仅单段文件名）。
+// wasm-renderer 按同名规则 fetch /wallpapers/static/ptex-*.tex——**不依赖 host 新增
+// 路由**（/wallpapers/particle-texture 需重启 dsh web 才注册；静态路径立即生效）。
+// WE 安装目录可用环境变量 WE_ASSETS_DIR 覆盖（构建机可能不在本机）。
+const weAssets = process.env.WE_ASSETS_DIR || 'D:/Steam/steamapps/common/wallpaper_engine';
+const weParticleDir = join(weAssets, 'assets', 'materials', 'particle');
+let ptexCopied = 0;
+if (existsSync(weParticleDir)) {
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, entry.name);
+      if (entry.isDirectory()) walk(p);
+      else if (entry.name.endsWith('.tex')) {
+        const rel = p.slice(weParticleDir.length + 1).replace(/[\\/]/g, '-');
+        copyFileSync(p, join(outStatic, `ptex-${rel}`));
+        ptexCopied++;
+      }
+    }
+  };
+  walk(weParticleDir);
+}
+console.log(`particle textures copied to dist/static/ (${ptexCopied} files, source: ${weParticleDir})`);
