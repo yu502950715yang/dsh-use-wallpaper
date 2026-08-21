@@ -248,3 +248,49 @@ describe('text 对象 color 归一化（I3：0-1 与 0-255 双语义）', () => 
     expect((desc.objects[0] as any).color).toEqual([255, 255, 255]);
   });
 });
+
+// T3.4 sound 字段解析：WE 音频对象（无 image/particle/text 的纯音频节点）携带
+// sound 数组。实测（PkgReader 全库 26 个 scene.pkg）：10 个含 sound 的壁纸全部为
+// 对象级 sound 数组（如 2937346640 id=35：["sounds/yutaka hirasaka - acro.flac"]），
+// 无根级 sound 字段 → 按 objects 顺序收集所有对象 sound 数组的字符串条目。
+// 音频对象本身无可见内容，解析后落入空粒子兜底（不渲染，行为与现状一致）。
+describe('parseSceneJson sound 数组解析（T3.4）', () => {
+  it('对象级 sound 数组 → SceneDescription.sounds（2937346640 id=35 实测形态）', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [
+        { id: 1, image: 'models/a.json', origin: '0 0 0', scale: '1 1 1' },
+        {
+          id: 35, name: 'yutaka hirasaka - acro.flac',
+          origin: '-194.97546 0 0', scale: '0.90018 0.90018 0.90018',
+          sound: ['sounds/yutaka hirasaka - acro.flac'], playbackmode: 'loop', volume: 1,
+        },
+      ],
+    }));
+    expect(desc.sounds).toEqual(['sounds/yutaka hirasaka - acro.flac']);
+  });
+
+  it('多对象 sound 按 objects 顺序收集（2597392171 实测：单对象 14 轨）', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [
+        { id: 1, sound: ['sounds/a.mp3', 'sounds/b.mp3'] },
+        { id: 2, sound: ['sounds/c.mp3'] },
+      ],
+    }));
+    expect(desc.sounds).toEqual(['sounds/a.mp3', 'sounds/b.mp3', 'sounds/c.mp3']);
+  });
+
+  it('无 sound 对象 → sounds 为 undefined（不误报空数组）', () => {
+    const desc = parseSceneJson('{"objects":[{"id":1,"image":"a.json"}]}');
+    expect(desc.sounds).toBeUndefined();
+  });
+
+  it('sound 非数组 / 含非字符串条目 → 过滤（畸形数据防御，不抛错）', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [
+        { id: 1, sound: 'sounds/a.mp3' },              // 非数组 → 忽略
+        { id: 2, sound: ['sounds/b.mp3', 42, null, ''] }, // 过滤非字符串/空串
+      ],
+    }));
+    expect(desc.sounds).toEqual(['sounds/b.mp3']);
+  });
+});

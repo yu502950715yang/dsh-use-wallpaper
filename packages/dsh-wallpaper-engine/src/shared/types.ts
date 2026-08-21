@@ -62,4 +62,9 @@ export interface SceneDescription {
   orthogonal: { width: number; height: number };
   clearColor?: [number, number, number];
   objects: SceneObject[];
+  // T3.4：壁纸音频。WE 音频对象（无 image/particle/text 的纯音频节点）携带 sound 数组
+  // （资源名，如 2937346640 id=35 的 ["sounds/yutaka hirasaka - acro.flac"]）；
+  // 全库实测 sound 只挂在对象上（无根级字段），解析器按 objects 顺序收集全部条目。
+  // 无 sound 时缺省 undefined（渲染器 for..of desc.sounds ?? [] 跳过）。
+  sounds?: string[];
 }

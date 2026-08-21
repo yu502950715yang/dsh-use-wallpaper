@@ -117,6 +117,28 @@ describe('registerWallpaperRoutes', () => {
     expect(res.headers['Cache-Control']).toBe('no-store');
     expect(res.body.toString('utf8')).toBe('{"objects":[]}');
   });
+  it('scene asset 服务 .flac 音频：原始字节 + audio/flac（壁纸 sound 播放路由，T3.4）', async () => {
+    // 2937346640 实测：sound 条目如 "sounds/yutaka hirasaka - acro.flac"（30MB flac），
+    // 经 /wallpapers/scene/<id>/asset 路由按 pkg 条目名取原始字节（不解析/不转码）
+    const { makePkg } = await import('./fixtures/make-pkg.js');
+    const pkg = makePkg([
+      { name: 'scene.json', data: Buffer.from('{"objects":[]}', 'utf8') },
+      { name: 'sounds/yutaka hirasaka - acro.flac', data: Buffer.from('fLaC\x00fake-flac-bytes') },
+    ]);
+    const d = join(dir, '5');
+    mkdirSync(d, { recursive: true });
+    writeFileSync(join(d, 'project.json'), JSON.stringify({ type: 'scene' }));
+    writeFileSync(join(d, 'scene.pkg'), pkg);
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
+    const res = makeRes();
+    await routes.get('prefix /wallpapers/scene')!({
+      url: '/wallpapers/scene/5/asset?name=sounds/yutaka%20hirasaka%20-%20acro.flac',
+    }, res);
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['Content-Type']).toBe('audio/flac');
+    expect(res.body.toString('utf8')).toBe('fLaC\x00fake-flac-bytes'); // 原始字节原样返回
+  });
+
   it('rejects unknown scene action segment', async () => {
     const { makePkg } = await import('./fixtures/make-pkg.js');
     const pkg = makePkg([{ name: 'scene.json', data: Buffer.from('{}', 'utf8') }]);

@@ -42,6 +42,7 @@ const MIME: Record<string, string> = {
   '.mp3': 'audio/mpeg',
   '.wav': 'audio/wav',
   '.ogg': 'audio/ogg',
+  '.flac': 'audio/flac', // T3.4：壁纸 sound 条目（如 2937346640 的 30MB flac）走场景资源路由取原始字节
   '.json': 'application/json',
   '.html': 'text/html; charset=utf-8',
   '.htm': 'text/html; charset=utf-8',

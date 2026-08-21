@@ -9,7 +9,7 @@ import type { TextTextureOptions } from './text-object.js';
 import { EffectRunner } from './effect-runner.js';
 import { resolveEffectChain } from './shader/effect-chain.js';
 import { fetchWithRetry } from './fetch-util.js';
-import { createAudioAnalyzer } from './audio-input.js';
+import { createAudioAnalyzer, playWallpaperSound } from './audio-input.js';
 import type { AudioAnalyzer } from './audio-input.js';
 import { detectScriptPattern, formatClockText, VISUALIZER_BAR_COUNT } from './script-patterns.js';
 
@@ -719,6 +719,18 @@ export async function renderScene(id: string, fgCanvas: HTMLCanvasElement, bgCan
   const analyzer = createAudioAnalyzer();
   try {
     const desc = await fetchSceneDescription(id);
+    // T3.4：壁纸音频播放——scene.json 对象级 sound 数组（如 2937346640 id=35 的 flac）
+    // 经场景资源路由取原始字节（/wallpapers/scene/<id>/asset 按 pkg 条目名原样返回，
+    // 见 host/routes.ts，flac/mp3 均已验证），解码后接入频谱分析器
+    // （source → analyser → destination，visualizer 条/频谱效果获得真实数据）。
+    // fire-and-forget：失败静默（返回 false 不抛错），不阻断纹理/效果渲染；
+    // autoplay 被拦时 context 保持 suspended（可视化条全零），用户手势后自动恢复
+    // （见 playWallpaperSound / armGestureResume）。无分析器（无 Web Audio）→ 跳过。
+    if (analyzer) {
+      for (const s of desc.sounds ?? []) {
+        void playWallpaperSound(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(s)}`, analyzer);
+      }
+    }
     renderer = createSceneRenderer(fgCanvas, bgCanvas, analyzer);
     renderer.setScene(desc);
     // 对象级效果链（T1.3）：按对象分组（替换旧全屏展平路径——Ruling 5 的全屏执行导致

@@ -65,6 +65,24 @@ function scriptFields(o: { script?: unknown; scriptproperties?: unknown } | unde
   return { script, scriptProperties };
 }
 
+// T3.4 sound 字段收集：WE 音频对象（无 image/particle/text 的纯音频节点，如
+// 2937346640 id=35）携带 sound 数组（资源名列表，如 ["sounds/yutaka hirasaka - acro.flac"]）。
+// PkgReader 全库 26 个 scene.pkg 实测：10 个含 sound 的壁纸全部为对象级 sound 数组
+// （无根级 sound 字段）→ 按 objects 顺序收集所有对象 sound 数组的字符串条目；
+// 非数组/非字符串条目过滤（畸形数据防御）。音频对象本身无可见内容，解析后仍落入
+// 空粒子兜底（kind:'particle' particle:''，不渲染，与现状一致）。
+function collectSounds(root: any): string[] | undefined {
+  const sounds: string[] = [];
+  const objects = Array.isArray(root.objects) ? root.objects : [];
+  for (const o of objects) {
+    if (!Array.isArray(o?.sound)) continue;
+    for (const s of o.sound) {
+      if (typeof s === 'string' && s) sounds.push(s);
+    }
+  }
+  return sounds.length > 0 ? sounds : undefined;
+}
+
 export function parseSceneJson(raw: string): SceneDescription {
   const root: any = JSON.parse(raw);
   if (typeof root !== 'object' || root === null || Array.isArray(root)) {
@@ -134,5 +152,6 @@ export function parseSceneJson(raw: string): SceneDescription {
     },
     clearColor: cc,
     objects,
+    sounds: collectSounds(root),
   };
 }
