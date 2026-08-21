@@ -5,7 +5,7 @@ import {
   objectCameraRange, createObjectRenderTarget, resolveTexPath,
   groupEffectsByObject, uvWindow, createCompositeGeometry, PendingChainStore,
   particleObjectRange, particleWorldSize, shouldUseObjectPath,
-  barAnchorOffsetY, updateVisualizerBars,
+  barAnchorOffsetY, updateVisualizerBars, materialModulation,
 } from '../src/client/scene-renderer.js';
 import type { SceneObject } from '../src/shared/types.js';
 
@@ -299,6 +299,38 @@ describe('PendingChainStore（效果链异步挂载暂存：链先 resolve、条
   });
 });
 
+// T4.3 材质调制纯函数：WE 对象 color/alpha/brightness → three 材质输入
+// （color 0-255 → /255，×brightness 后 clamp 0-1；opacity = alpha）。MeshBasicMaterial
+// 无 brightness 通道 → 乘入 color（color 缺省按白色处理）。全缺省 → {1,1,1,1} 无调制。
+describe('materialModulation（T4.3 对象 color/alpha/brightness → 材质系数）', () => {
+  it('全缺省 → {1,1,1,1}（无调制，不改变材质默认值）', () => {
+    expect(materialModulation()).toEqual({ r: 1, g: 1, b: 1, a: 1 });
+  });
+  it('color 0-255 → /255 归一化（optColor 输出量级）', () => {
+    expect(materialModulation([255, 0, 0])).toEqual({ r: 1, g: 0, b: 0, a: 1 });
+    expect(materialModulation([128, 64, 32])).toEqual({ r: 128 / 255, g: 64 / 255, b: 32 / 255, a: 1 });
+  });
+  it('alpha → a（material.opacity 输入，0-1 直接透传）', () => {
+    expect(materialModulation(undefined, 0.5)).toEqual({ r: 1, g: 1, b: 1, a: 0.5 });
+    expect(materialModulation(undefined, 0)).toEqual({ r: 1, g: 1, b: 1, a: 0 });
+  });
+  it('brightness 乘入 color：×0.5 减半', () => {
+    expect(materialModulation([255, 255, 255], undefined, 0.5)).toEqual({ r: 0.5, g: 0.5, b: 0.5, a: 1 });
+  });
+  it('brightness 超 1 → color×brightness clamp 0-1（200/255×2>1 → 1）', () => {
+    expect(materialModulation([200, 200, 200], undefined, 2)).toEqual({ r: 1, g: 1, b: 1, a: 1 });
+  });
+  it('brightness 单独作用（无 color）→ 白色 × brightness', () => {
+    expect(materialModulation(undefined, undefined, 0.5)).toEqual({ r: 0.5, g: 0.5, b: 0.5, a: 1 });
+  });
+  it('三者组合：color×brightness + alpha 同时生效', () => {
+    const m = materialModulation([255, 128, 0], 0.25, 0.5);
+    expect(m.r).toBe(0.5);
+    expect(m.g).toBeCloseTo((128 / 255) * 0.5, 12);
+    expect(m.b).toBe(0);
+    expect(m.a).toBe(0.25);
+  });
+});
 // T3.3 visualizer 驱动：barAnchorOffsetY（alignment 锚点 → 中心锚定 quad 的 y 偏移）与
 // updateVisualizerBars（每帧按频谱刷新条高与锚定偏移）为纯函数（只操作 THREE.Mesh 变换，
 // node 可测，不触碰 WebGLRenderer）。语义对齐 Simple Visualizer 脚本：

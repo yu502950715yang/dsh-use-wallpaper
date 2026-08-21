@@ -39,6 +39,14 @@ export interface SceneImageObject {
   effects?: unknown[];           // 对象效果链定义（Ruling 5：全库 122 条效果中 105 条挂在 image 对象上）
   script?: string;               // visible.script（WE 可见性/视觉脚本源码，T3.3 模式识别输入）
   scriptProperties?: Record<string, unknown>; // visible.scriptproperties（{user,value} 已解包，T3.3）
+  // T4.3：对象调制字段（WE 语义）——color 为 "r g b"（0-255 量级，经 optColor 0-1/0-255
+  // 双语义归一化启发，见 scene-json.ts）；alpha 为 0-1（>1 的百分比形态已按
+  // NormalizeLayerAlpha 归一化 /100 并 clamp）；brightness 为纹理色乘法系数（缺省 1）。
+  // 渲染调制 = 纹理 × color×brightness（0-1）、透明度 × alpha。text 对象 color 走既有
+  // T3.1 路径（CanvasTexture 绘制时混色），不经本字段。
+  color?: [number, number, number];
+  alpha?: number;
+  brightness?: number;
 }
 export interface SceneParticleObject {
   kind: 'particle'; id: number; name: string;

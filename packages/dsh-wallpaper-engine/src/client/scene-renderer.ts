@@ -56,6 +56,28 @@ const CAMERA_DISTANCE = 300; // 相机沿 +z 放置，使 shader 中 300/-mv.z =
 // （逐轴钳制，见 objectCameraRange 注释）。
 const OBJECT_RT_MAX = 2048;
 
+// 材质调制系数（T4.3）：WE 对象 color/alpha/brightness → three 材质输入。
+//   color：0-255 量级（optColor 归一化输出）→ /255 到 0-1；
+//   brightness：乘法系数（缺省 1），MeshBasicMaterial 无亮度通道 → 乘入 color，
+//     结果 clamp 0-1（brightness 超 1 时颜色饱和到纯色而非溢出）；
+//   alpha：解析器已归一化 0-1（缺省 1）→ material.opacity（材质 transparent 已置位）。
+// 输出 {r,g,b,a} 0-1；全缺省 → {1,1,1,1}（无调制，不改变材质默认值）。
+export function materialModulation(
+  color?: [number, number, number],
+  alpha?: number,
+  brightness?: number,
+): { r: number; g: number; b: number; a: number } {
+  const b = brightness ?? 1;
+  const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
+  const c = color ?? [255, 255, 255];
+  return {
+    r: clamp01((c[0] / 255) * b),
+    g: clamp01((c[1] / 255) * b),
+    b: clamp01((c[2] / 255) * b),
+    a: clamp01(alpha ?? 1),
+  };
+}
+
 // 对象局部正交相机范围 = 对象尺寸 × 缩放（中心原点），逐轴钳制 2048、下限 1。
 // 相机范围（场景像素）同时作为对象 RT 的分辨率基准：不钳制时对象 quad 精确填满 RT，
 // 效果链 UV 0-1 与 foliagesway_mask 等 mask 纹理对齐对象局部空间。
@@ -517,6 +539,13 @@ export function createSceneRenderer(
       const h = obj.size?.[1] ?? th;
       const geometry = new THREE.PlaneGeometry(w, h);
       const material = new THREE.MeshBasicMaterial({ map: tex ?? undefined, transparent: true });
+      // T4.3：对象调制在**源渲染材质**上施加（color/alpha/brightness → color/opacity）。
+      // 两条路径共用本 mesh：共享场景路径直接渲染；对象 RT 路径本 mesh 是 RT 的源
+      // （对象局部场景内容），RT 已含调制 → 合成 quad 只采样效果输出/RT 纹理、不再
+      // 二次调制（quad 材质保持默认白色 opacity 1，见 createObjectEntry）。
+      const mod = materialModulation(obj.color, obj.alpha, obj.brightness);
+      material.color.setRGB(mod.r, mod.g, mod.b);
+      material.opacity = mod.a;
       const mesh = new THREE.Mesh(geometry, material);
       const s = obj.scale;
       mesh.scale.set(s[0], s[1], s[2] ?? 1);

@@ -322,6 +322,58 @@ describe('parseSceneJson sound 数组解析（T3.4）', () => {
   });
 });
 
+// T4.3 image 对象 color/alpha/brightness 调制字段解析：color 复用 optColor 归一化启发
+// （0-1 → ×255），alpha 按 WE NormalizeLayerAlpha（>1 → /100，再 clamp 0-1），
+// brightness 为乘法系数（缺省 1）。text 对象 color 路径不变（T3.1/I3 不回归）。
+describe('parseSceneJson image 对象调制字段（T4.3）', () => {
+  const parseImage = (fields: Record<string, unknown>) => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [{ id: 1, image: 'models/a.json', origin: '0 0 0', scale: '1 1 1', ...fields }],
+    }));
+    return desc.objects[0] as any;
+  };
+
+  it('color 0-1 语义（"1 1 1"）→ ×255 归一化（复用 optColor 启发）', () => {
+    expect(parseImage({ color: '1 1 1' }).color).toEqual([255, 255, 255]);
+    expect(parseImage({ color: '0.5 0.5 0.5' }).color).toEqual([127.5, 127.5, 127.5]);
+  });
+  it('color 0-255 语义（"255 255 255"）→ 不变', () => {
+    expect(parseImage({ color: '255 255 255 255' }).color).toEqual([255, 255, 255]);
+  });
+  it('color 缺省/非法 → undefined', () => {
+    expect(parseImage({}).color).toBeUndefined();
+    expect(parseImage({ color: 'zzz' }).color).toBeUndefined();
+  });
+  it('alpha 0-100 百分比（"50"）→ 0.5（NormalizeLayerAlpha：>1 → /100）', () => {
+    expect(parseImage({ alpha: '50' }).alpha).toBe(0.5);
+    expect(parseImage({ alpha: 80 }).alpha).toBe(0.8);
+  });
+  it('alpha 0-1 语义（"1"/"0.5"）→ 不变', () => {
+    expect(parseImage({ alpha: '1' }).alpha).toBe(1);
+    expect(parseImage({ alpha: '0.5' }).alpha).toBe(0.5);
+  });
+  it('alpha >100 → /100 后 clamp 1（"200" → 2 → 1）', () => {
+    expect(parseImage({ alpha: '200' }).alpha).toBe(1);
+  });
+  it('alpha 缺省/非法 → undefined', () => {
+    expect(parseImage({}).alpha).toBeUndefined();
+    expect(parseImage({ alpha: 'abc' }).alpha).toBeUndefined();
+  });
+  it('brightness 缺省 → 1（乘法系数默认）', () => {
+    expect(parseImage({}).brightness).toBe(1);
+  });
+  it('brightness 数值/数字字符串 → 原值', () => {
+    expect(parseImage({ brightness: 2 }).brightness).toBe(2);
+    expect(parseImage({ brightness: '0.5' }).brightness).toBe(0.5);
+  });
+  it('text 对象 color 不回归（T3.1/I3：仍解析为 0-255 量级）', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [{ id: 2, text: { value: 'x' }, color: '255 255 255 255', origin: '0 0 0', scale: '1 1 1' }],
+    }));
+    expect((desc.objects[0] as any).color).toEqual([255, 255, 255]);
+  });
+});
+
 // T4.2 visible 归一化：scene.json 的 visible 字段（布尔 / {user,value} / {script,value}）
 // 解析为 SceneObject.visible（VisibleBinding）。所有 kind（image/particle/text/util）
 // 统一在 base 上解析；image 对象的 script/scriptProperties 由归一化 visible 派生

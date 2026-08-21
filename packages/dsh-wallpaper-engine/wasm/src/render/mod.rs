@@ -29,10 +29,18 @@ pub struct SceneImage {
     pub size: Option<[f32; 2]>,
     pub tex_width: u32,
     pub tex_height: u32,
+    // T4.3：对象调制输入（color 0-255 量级 / alpha 0-1 / brightness 乘法系数；
+    // None = 缺省，image_tint 按白色 ×1.0 处理，无调制）
+    pub tint_color: Option<[f32; 3]>,
+    pub tint_alpha: Option<f32>,
+    pub tint_brightness: Option<f32>,
 }
 
-/// 图片 quad uniform（NDC 中心 + 半宽高；对齐 shaders/image.wgsl 的 ImageUniform，16 字节）
-#[cfg(feature = "render")]
+/// 图片 quad uniform（NDC 中心 + 半宽高 + 调制系数 tint；对齐 shaders/image.wgsl 的
+/// ImageUniform，32 字节 = 4×f32 + vec4f）。tint.rgb = color×brightness（0-1）、
+/// tint.a = alpha（0-1），由 image_tint 纯函数计算（native 可测，见 tests/image_tint_test.rs）。
+/// 布局：4 个 f32 后接 vec4f（WGSL vec4 对齐 16，偏移 16 恰好对齐、无隐式填充）。
+/// 本结构不依赖 wgpu，放非门控区以便 native cargo test（无 render feature）校验布局。
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ImageUniform {
@@ -40,6 +48,32 @@ pub struct ImageUniform {
     pub center_y: f32,
     pub half_w: f32,
     pub half_h: f32,
+    pub tint_r: f32,
+    pub tint_g: f32,
+    pub tint_b: f32,
+    pub tint_a: f32,
+}
+
+/// 图片调制系数（T4.3）：WE 对象 color/alpha/brightness → tint（vec4f，0-1）。
+///   color：0-255 量级（对齐 JS optColor 归一化输出）→ /255 到 0-1；
+///   brightness：乘法系数（缺省 1），乘入 color 后 clamp 0-1（超 1 饱和到纯色）；
+///   alpha：0-1（解析器已按 NormalizeLayerAlpha 归一化），缺省 1，clamp 0-1 防御。
+/// 输出 [r,g,b,a] 0-1；全缺省 → [1,1,1,1]（无调制，向后兼容旧行为）。
+pub fn image_tint(
+    color: Option<[f32; 3]>,
+    alpha: Option<f32>,
+    brightness: Option<f32>,
+) -> [f32; 4] {
+    // color 缺省 → 0-255 量级的白色 [255,255,255]（/255 后 = 1.0，无调制；
+    // 不能默认 [1,1,1]——按 0-255 语义 /255 会得到近黑 1/255）
+    let c = color.unwrap_or([255.0, 255.0, 255.0]);
+    let b = brightness.unwrap_or(1.0);
+    [
+        (c[0] / 255.0 * b).clamp(0.0, 1.0),
+        (c[1] / 255.0 * b).clamp(0.0, 1.0),
+        (c[2] / 255.0 * b).clamp(0.0, 1.0),
+        alpha.unwrap_or(1.0).clamp(0.0, 1.0),
+    ]
 }
 
 /// 相机模式：前景 contain（完整显示、留白透明）/ 背景 cover（铺满、裁剪）——
@@ -334,6 +368,8 @@ impl Renderer {
     /// 登记一张图片平面：创建 bind group（纹理+采样器）与 uniform buffer，
     /// 相同 asset_id 替换旧图（对齐 JS 版 scene-renderer setImageObject 的语义：
     /// 平面尺寸 = obj.size 优先、缺省回退纹理宽高；scale 直接缩放；origin 为场景中心点）。
+    /// T4.3：tint_color/alpha/brightness 为对象调制输入（None = 缺省 → 无调制），
+    /// 每帧 image_ndc 打包进 ImageUniform.tint（见 image_tint）。
     pub fn set_image(
         &mut self,
         asset_id: u32,
@@ -343,6 +379,9 @@ impl Renderer {
         size: Option<[f32; 2]>,
         tex_width: u32,
         tex_height: u32,
+        tint_color: Option<[f32; 3]>,
+        tint_alpha: Option<f32>,
+        tint_brightness: Option<f32>,
     ) {
         self.images.retain(|im| im.asset_id != asset_id);
         let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
@@ -387,6 +426,9 @@ impl Renderer {
             size,
             tex_width,
             tex_height,
+            tint_color,
+            tint_alpha,
+            tint_brightness,
         });
     }
 
@@ -470,9 +512,21 @@ impl Renderer {
 /// NERV logo 官方在右下角被渲染到右上角、Orange 部件被渲染到少女头顶；EVA 主图
 /// oy=sh/2 恰为 0 故验收漏过）；half 复用 coords::image_half_ndc（尺寸 = obj.size
 /// 优先、缺省回退纹理宽高；scale.y 不取负，对齐 scene-renderer.ts）。
+/// T4.3：tint = image_tint(img.tint_color, img.tint_alpha, img.tint_brightness)
+/// （color×brightness /255 → 0-1，alpha clamp 0-1；全缺省 → (1,1,1,1) 无调制）。
 #[cfg(feature = "render")]
 fn image_ndc(img: &SceneImage, sw: f32, sh: f32, fw: f32, fh: f32) -> ImageUniform {
     let (cx, cy) = coords::image_center_ndc(img.origin, sw, sh, fw, fh);
     let (hw, hh) = coords::image_half_ndc(img.size, img.scale, img.tex_width, img.tex_height, fw, fh);
-    ImageUniform { center_x: cx, center_y: cy, half_w: hw, half_h: hh }
+    let tint = image_tint(img.tint_color, img.tint_alpha, img.tint_brightness);
+    ImageUniform {
+        center_x: cx,
+        center_y: cy,
+        half_w: hw,
+        half_h: hh,
+        tint_r: tint[0],
+        tint_g: tint[1],
+        tint_b: tint[2],
+        tint_a: tint[3],
+    }
 }

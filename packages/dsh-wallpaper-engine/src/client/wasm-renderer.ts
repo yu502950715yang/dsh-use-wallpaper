@@ -22,7 +22,9 @@ export interface WasmScene {
   resize(w: number, h: number): void;
   load_scene(json: string): void;
   set_cover(): void;
-  load_image(assetId: number, tex: Uint8Array, origin: Float32Array, scale: Float32Array, size: Float32Array): void;
+  // T4.3：color/alpha/brightness 为对象调制输入（Float32Array，空 = 缺省 → 无调制，
+  // 向后兼容；color 0-255 r g b，alpha 0-1，brightness 乘法系数）。
+  load_image(assetId: number, tex: Uint8Array, origin: Float32Array, scale: Float32Array, size: Float32Array, color: Float32Array, alpha: Float32Array, brightness: Float32Array): void;
   add_particle(json: string, origin: Float32Array, scale: Float32Array): void;
   step(dt: number): void;
   render(): void;
@@ -186,12 +188,17 @@ export function createWasmSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneRe
             const origin = size
               ? applyAlignment(obj.origin, [size[0] * obj.scale[0], size[1] * obj.scale[1]], obj.alignment)
               : obj.origin;
+            // T4.3：对象调制输入直传 wasm（空 Float32Array = 缺省 → Rust image_tint
+            // 按无调制处理，与 JS 路径 materialModulation 全缺省 {1,1,1,1} 对齐）
             scene.load_image(
               i,
               tex,
               Float32Array.from(origin),
               Float32Array.from(obj.scale),
               Float32Array.from(size ?? []),
+              Float32Array.from(obj.color ?? []),
+              Float32Array.from(obj.alpha !== undefined ? [obj.alpha] : []),
+              Float32Array.from(obj.brightness !== undefined ? [obj.brightness] : []),
             );
             if (bgScene) {
               bgScene.load_image(
@@ -200,6 +207,9 @@ export function createWasmSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneRe
                 Float32Array.from(origin),
                 Float32Array.from(obj.scale),
                 Float32Array.from(size ?? []),
+                Float32Array.from(obj.color ?? []),
+                Float32Array.from(obj.alpha !== undefined ? [obj.alpha] : []),
+                Float32Array.from(obj.brightness !== undefined ? [obj.brightness] : []),
               );
             }
             rendered++;

@@ -83,6 +83,9 @@ impl WeScene {
     /// 解码 .tex 字节并上传纹理（RGBA8888/DXT1/3/5/R8/RG88，TEXV0005 容器），
     /// 登记为图片平面（render_frame 在粒子层之前绘制）。相同 asset_id 重复调用替换旧图。
     /// 失败路径保留 console 诊断（parse/upload 失败是壁纸图片缺失的可观测原因）。
+    /// T4.3：color/alpha/brightness 为对象调制输入——空 Vec = 缺省（无调制，向后兼容）：
+    ///   color 0-255 量级 r g b（≥3 元素取前 3）；alpha 0-1（单元素）；brightness 乘法系数
+    ///   （单元素）。渲染时 image_tint 打包进 ImageUniform.tint（纹理 × tint）。
     pub fn load_image(
         &mut self,
         asset_id: u32,
@@ -90,6 +93,9 @@ impl WeScene {
         origin: Vec<f32>,
         scale: Vec<f32>,
         size: Vec<f32>,
+        color: Vec<f32>,
+        alpha: Vec<f32>,
+        brightness: Vec<f32>,
     ) {
         let Some(img) = tex::parse_tex(tex_bytes) else {
             web_sys::console::log_1(&JsValue::from_str(&format!("[wasm] load_image {asset_id}: parse_tex FAILED ({}B)", tex_bytes.len())));
@@ -97,7 +103,14 @@ impl WeScene {
         };
         if let Some(tex) = self.renderer.upload_texture(&img) {
             let size = if size.len() >= 2 { Some([size[0], size[1]]) } else { None };
-            self.renderer.set_image(asset_id, tex, arr3(&origin), arr3(&scale), size, img.width, img.height);
+            // 空 Vec = 缺省（None）：向后兼容旧调用（仅 5 参数）与无调制对象
+            let tint_color = (color.len() >= 3).then(|| [color[0], color[1], color[2]]);
+            let tint_alpha = alpha.first().copied();
+            let tint_brightness = brightness.first().copied();
+            self.renderer.set_image(
+                asset_id, tex, arr3(&origin), arr3(&scale), size, img.width, img.height,
+                tint_color, tint_alpha, tint_brightness,
+            );
         } else {
             web_sys::console::log_1(&JsValue::from_str(&format!("[wasm] load_image {asset_id}: upload_texture FAILED")));
         }

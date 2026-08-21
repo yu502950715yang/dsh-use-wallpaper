@@ -34,6 +34,16 @@ function optNum(s: unknown): number | undefined {
   return isFinite(n) ? n : undefined;
 }
 
+// 可选 alpha 字段（T4.3，WE NormalizeLayerAlpha 语义）：数值/数字字符串 → 有限值；
+// 归一化规则：>1 视为 0-100 百分比 /100（"50" → 0.5，"100" → 1），随后 clamp 0-1
+// （"200" → 2 → clamp 1；防御畸形数据）；缺省/非法 → undefined（渲染器按 1.0 处理）。
+function optAlpha(s: unknown): number | undefined {
+  const n = optNum(s);
+  if (n === undefined) return undefined;
+  const a = n > 1 ? n / 100 : n;
+  return Math.max(0, Math.min(1, a));
+}
+
 // 可选颜色字段（WE color 形如 "r g b a"）：取前 3 通道；非法 → undefined。
 // I3 修复（双语义归一化启发）：WE 颜色存在两种序列化——0-255（常规）与 0-1 归一化
 // （文本对象实测：2937346640 VHS Time and Date 的 color "1.00000 1.00000 1.00000" 为白色）。
@@ -125,8 +135,15 @@ export function parseSceneJson(raw: string): SceneDescription {
       // Visualizer）由归一化 visible 派生——kind==='script' 时 script/scriptProperties
       // 照常产出（识别为 visualizer 时渲染器改走 64 条音频条路径，见 scene-renderer.ts）；
       // {user,value} 用户开关（kind==='user'）与布尔（kind==='plain'）不产生脚本字段。
+      // T4.3：image 对象调制字段——color 复用 optColor 归一化启发（"1 1 1" → 255；
+      // 0-255 量级保持），alpha 按 NormalizeLayerAlpha（>1 → /100，clamp 0-1），
+      // brightness 乘法系数缺省 1（渲染器按 纹理 × color×brightness 调制，见
+      // scene-renderer.ts materialModulation / wasm image_tint）。
       return {
         ...base, kind: 'image' as const, image: o.image,
+        color: optColor(o.color),
+        alpha: optAlpha(o.alpha),
+        brightness: optNum(o.brightness) ?? 1,
         ...(base.visible?.kind === 'script'
           ? { script: base.visible.script, scriptProperties: base.visible.scriptProperties }
           : {}),
