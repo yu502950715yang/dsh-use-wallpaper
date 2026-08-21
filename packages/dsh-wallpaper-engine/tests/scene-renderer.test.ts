@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { createParticleSystem } from '../src/client/particles.js';
-import { resolveTexPath } from '../src/client/scene-renderer.js';
+import { objectCameraRange, createObjectRenderTarget, resolveTexPath } from '../src/client/scene-renderer.js';
 
 // scene-renderer 的 WebGLRenderer 无法在 node（无 WebGL）环境构造，
 // 这里用真实 THREE.BufferGeometry/BufferAttribute 复刻 addParticleSystem 的缓冲接线
@@ -59,5 +59,45 @@ describe('resolveTexPath（材质 → tex 路径推导）', () => {
   it('texName 含 / 时是相对 materials/ 的路径（workshop 子目录纹理，修复丢前缀 bug）', () => {
     expect(resolveTexPath('materials/workshop/2077932499/Rainboww.json', 'workshop/2077932499/Rainboww'))
       .toBe('materials/workshop/2077932499/Rainboww.tex');
+  });
+});
+
+describe('objectCameraRange（对象局部正交相机范围 = 尺寸×缩放，逐轴钳制 2048）', () => {
+  it('常规：范围 = objSize × scale（中心原点，quad 精确填满 RT）', () => {
+    expect(objectCameraRange([4, 4], [2.36, 2.36])).toEqual({ w: 9.44, h: 9.44 });
+  });
+  it('超 2048 上限时逐轴钳制（6144×0.47891≈2942.4 → 2048）', () => {
+    // h 方向 3072×0.47891≈1471.2 < 2048 不钳制；用表达式断言避免手算舍入误差
+    expect(objectCameraRange([6144, 3072], [0.47891, 0.47891])).toEqual({
+      w: 2048,
+      h: 3072 * 0.47891,
+    });
+  });
+  it('单轴超限只钳制该轴', () => {
+    expect(objectCameraRange([6144, 512], [1, 1])).toEqual({ w: 2048, h: 512 });
+  });
+  it('零尺寸/零缩放时下限钳制为 1（不产生退化范围）', () => {
+    expect(objectCameraRange([0, 0], [0, 0])).toEqual({ w: 1, h: 1 });
+  });
+});
+
+describe('createObjectRenderTarget（对象级渲染目标）', () => {
+  it('按给定尺寸创建 RT', () => {
+    const rt = createObjectRenderTarget(512, 256);
+    expect(rt.width).toBe(512);
+    expect(rt.height).toBe(256);
+    rt.dispose();
+  });
+  it('浮点尺寸取整为整数分辨率（three RT 需要整数像素）', () => {
+    const rt = createObjectRenderTarget(9.44, 1471.2);
+    expect(rt.width).toBe(9);
+    expect(rt.height).toBe(1471);
+    rt.dispose();
+  });
+  it('0/负数尺寸下限钳制为 1（防退化 RT，对齐 EffectRunner.ensureTargets 的输入要求）', () => {
+    const rt = createObjectRenderTarget(0, -5);
+    expect(rt.width).toBe(1);
+    expect(rt.height).toBe(1);
+    rt.dispose();
   });
 });

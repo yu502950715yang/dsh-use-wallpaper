@@ -31,6 +31,27 @@ export interface SceneRenderer {
 // EVA 主图 origin=(1200,777.5)=size/2 恰居中（oy=sh/2）故新旧公式结果相同，早期验收漏过。
 const CAMERA_DISTANCE = 300; // 相机沿 +z 放置，使 shader 中 300/-mv.z = 1（点尺寸=像素尺寸）
 
+// 对象级渲染目标尺寸上限：防止超大对象（如 6144px 贴图）的对象 RT 撑爆 VRAM
+// （逐轴钳制，见 objectCameraRange 注释）。
+const OBJECT_RT_MAX = 2048;
+
+// 对象局部正交相机范围 = 对象尺寸 × 缩放（中心原点），逐轴钳制 2048、下限 1。
+// 相机范围（场景像素）同时作为对象 RT 的分辨率基准：不钳制时对象 quad 精确填满 RT，
+// 效果链 UV 0-1 与 foliagesway_mask 等 mask 纹理对齐对象局部空间。
+// 钳制时该轴对象超出相机视锥被裁剪（超大对象保护性降采样，T1.3 合成时按 UV 语义映射）。
+export function objectCameraRange(objSize: [number, number], scale: [number, number]): { w: number; h: number } {
+  return {
+    w: Math.max(1, Math.min(objSize[0] * scale[0], OBJECT_RT_MAX)),
+    h: Math.max(1, Math.min(objSize[1] * scale[1], OBJECT_RT_MAX)),
+  };
+}
+
+// 对象级渲染目标：按分辨率创建（浮点取整为整数像素，0/负数钳制 1 —— 保证
+// EffectRunner.ensureTargets 收到的尺寸恒为干净的正整数，不产生退化 RT）。
+export function createObjectRenderTarget(width: number, height: number): THREE.WebGLRenderTarget {
+  return new THREE.WebGLRenderTarget(Math.max(1, Math.round(width)), Math.max(1, Math.round(height)));
+}
+
 // 按「contain」语义计算正交相机范围：场景完整可见、不变形，多出的方向留白（透明）。
 function containRange(width: number, height: number, viewAspect: number) {
   const sceneAspect = width / height;
@@ -92,6 +113,9 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
 
   const clock = new THREE.Clock();
   const particleSystems: Array<{ system: ReturnType<typeof createParticleSystem>; points: THREE.Points }> = [];
+  // 对象级渲染条目：带效果 image 对象渲染进各自独立 RT（局部正交相机，中心原点），
+  // 效果链（T1.3）在对象 RT 上执行后合成回场景；无效果对象不走此路径（保持共享场景）。
+  const objectEntries: Array<{ scene: THREE.Scene; camera: THREE.OrthographicCamera; rt: THREE.WebGLRenderTarget }> = [];
 
   function frame() {
     const dt = Math.min(clock.getDelta(), 0.05);
@@ -103,6 +127,12 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
       ps.points.geometry.attributes.aSize.needsUpdate = true;
       ps.points.geometry.attributes.aAlpha.needsUpdate = true;
       ps.points.geometry.setDrawRange(0, ps.system.count());
+    }
+    // 对象级渲染：带效果对象渲染进各自对象 RT（局部相机）。T1.3 在对象 RT 上挂
+    // 效果链并把输出合成回场景；本任务只建立对象 RT 渲染路径（对象暂不合成回场景）。
+    for (const entry of objectEntries) {
+      renderer.setRenderTarget(entry.rt);
+      renderer.render(entry.scene, entry.camera);
     }
     // 场景渲染到离屏 RT
     renderer.setRenderTarget(sceneRT);
@@ -161,9 +191,26 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
       const mesh = new THREE.Mesh(geometry, material);
       const s = obj.scale;
       mesh.scale.set(s[0], s[1], s[2] ?? 1);
-      // 对象 origin 是 WE 场景中的中心点（左下原点、y 向上）：中心映射 = (ox - vw/2, oy - vh/2)。
+      // 对象级效果链路径：带效果 image 对象渲染进独立对象 RT（局部正交相机，范围 =
+      // size×scale、中心原点），效果链 UV 0-1 对齐对象局部空间；不参与共享场景，
+      // T1.3 将对象 RT 的效果输出合成回场景（当前中间态：这些对象暂不显示）。
+      if (Array.isArray(obj.effects) && obj.effects.length > 0) {
+        const range = objectCameraRange([w, h], [s[0], s[1]]);
+        const rt = createObjectRenderTarget(range.w, range.h);
+        // 局部相机：中心原点、范围 = 对象世界尺寸（钳制后）——不钳制时 quad 精确填满
+        // RT（每 RT 像素 = 1 场景像素），钳制时该轴对象被裁剪（保护性降采样）。
+        const localCamera = new THREE.OrthographicCamera(
+          -range.w / 2, range.w / 2, range.h / 2, -range.h / 2, -1000, 1000,
+        );
+        localCamera.position.z = CAMERA_DISTANCE;
+        const localScene = new THREE.Scene();
+        localScene.add(mesh); // mesh 保持 (0,0,0)：对象中心即局部原点
+        objectEntries.push({ scene: localScene, camera: localCamera, rt });
+        return;
+      }
+      // 无效果对象：共享场景路径（对象 origin 是 WE 场景中的中心点：中心映射 = (ox - vw/2, oy - vh/2)。
       // 旧实现 `vh/2 - oy` 把非居中对象上下镜像（EVA 主图 oy=sh/2 恰好 0 故漏过），
-      // 导致 Orange 少女部件被渲染到头顶（问题图漂浮现象）——2026-08-20 修正为不翻转。
+      // 导致 Orange 少女部件被渲染到头顶（问题图漂浮现象）——2026-08-20 修正为不翻转。）
       mesh.position.set(obj.origin[0] - ortho.width / 2, obj.origin[1] - ortho.height / 2, obj.origin[2]);
       scene.add(mesh);
     },
@@ -228,6 +275,9 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
     stop() {
       running = false;
       cancelAnimationFrame(raf);
+      // 释放对象级 RT（GPU 纹理，换壁纸/停止时必须回收，否则泄漏）
+      for (const entry of objectEntries) entry.rt.dispose();
+      objectEntries.length = 0;
       renderer.dispose();
       bgRenderer?.dispose();
       effectRunner?.dispose();
