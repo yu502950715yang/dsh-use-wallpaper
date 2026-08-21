@@ -2,7 +2,11 @@
 // 与 particle_compute.wgsl 拆分：vertex 阶段只能静态访问 `var<storage, read>` 的 storage
 // （WGSL 规范：vertex 阶段 read_write storage 非法，Dawn/Tint validator 强制实施），
 // 故本文件声明 read 并配 render_bgl（read_only: true）。
-// uniform 布局与 Rust EmitterParams（repr(C)）严格对齐（std140 160B，与 compute module 共享）。
+// uniform 布局与 Rust EmitterParams（repr(C)）严格对齐（std140 176B：11 × vec4，
+// Task 0.3 追加 alpha_min/alpha_max 与 _pad8.._pad11；与 compute module 共享）。
+// 显示 alpha（Task 0.3，控制器裁定 P0-1）：compute 不衰减 alpha（存 spawn 初始值），
+// 本文件按寿命比例计算 v_life_alpha = clamp(life/max_life, 0, 1) * alpha，
+// 对齐 JS 版 alphaAt(initialAlpha, life, maxLife) 语义（open-wallpaper-engine AlphaFadeOperator）。
 
 struct EmitterParams {
   origin: vec3f, view_w: f32,
@@ -14,11 +18,12 @@ struct EmitterParams {
   vel_max: vec3f, _pad5: f32,
   color_min: vec3f, _pad6: f32,
   color_max: vec3f, _pad7: f32,
-  dt: f32, max_particles: u32, _pad8: u32, _pad9: u32,
+  dt: f32, max_particles: u32, alpha_min: f32, alpha_max: f32,
+  _pad8: u32, _pad9: u32, _pad10: u32, _pad11: u32,
 }
 @group(0) @binding(0) var<uniform> p: EmitterParams;
 
-struct Particle { pos: vec3f, vel: vec3f, life: f32, max_life: f32, size: f32, color: vec3f }
+struct Particle { pos: vec3f, vel: vec3f, life: f32, max_life: f32, size: f32, alpha: f32, color: vec3f }
 @group(0) @binding(1) var<storage, read> particles: array<Particle>;
 
 struct VsOut {
@@ -42,7 +47,7 @@ fn vs_main(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> 
   out.clip_pos = vec4f(center_clip + corner * half_px * ndc_per_px, 0.0, 1.0);
   out.v_uv = corner * 0.5 + 0.5;
   out.v_color = part.color;
-  out.v_life_alpha = clamp(part.life / max(part.max_life, 0.0001), 0.0, 1.0);
+  out.v_life_alpha = clamp(part.life / max(part.max_life, 0.0001), 0.0, 1.0) * part.alpha;
   return out;
 }
 

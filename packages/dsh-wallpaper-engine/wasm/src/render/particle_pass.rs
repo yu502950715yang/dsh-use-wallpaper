@@ -8,11 +8,14 @@
 use crate::coords;
 use crate::particle::ParticleSpec;
 
-/// 发射器参数 uniform。repr(C) 布局与 `src/shaders/particle.wgsl` 的
-/// `EmitterParams` 严格对齐（std140：vec3 后补 4 字节 pad，Rust 侧显式字段），
-/// 尺寸 160 字节（16 的倍数，满足 uniform 绑定对齐）。
+/// 发射器参数 uniform。repr(C) 布局与 `src/shaders/particle_compute.wgsl` /
+/// `particle_render.wgsl` 的 `EmitterParams` 严格对齐（std140：vec3 后补 4 字节 pad，
+/// Rust 侧显式字段），尺寸 176 字节（11 × vec4，16 的倍数，满足 uniform 绑定对齐）。
 /// 原 _pad0/_pad1/_pad2 槽复用为 view_w/view_h/elapsed（审查修复：投影与时间演化），
-/// 剩余 _pad3.._pad9 保持占位。
+/// Task 0.3 追加 alpha_min/alpha_max（alpharandom 初始 alpha 范围，缺省 1.0）：
+/// 原尾部 (dt, max_particles, _pad8, _pad9) 改为 (dt, max_particles, alpha_min, alpha_max)，
+/// 再补 _pad8.._pad11 一整行 vec4 使 struct 达 176B（与 WGSL uniform 布局 field-for-field 一致；
+/// WGSL 侧 uniform struct size 会按 align 16 上取整，Rust repr(C) align 4 不会，故显式补 pad）。
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct EmitterParams {
@@ -27,8 +30,12 @@ pub struct EmitterParams {
     pub color_max_r: f32, pub color_max_g: f32, pub color_max_b: f32, pub _pad7: f32,
     pub dt: f32,
     pub max_particles: u32,
+    pub alpha_min: f32,
+    pub alpha_max: f32,
     pub _pad8: u32,
     pub _pad9: u32,
+    pub _pad10: u32,
+    pub _pad11: u32,
 }
 
 impl EmitterParams {
@@ -76,8 +83,9 @@ impl EmitterParams {
             color_max_g: i.color_max.map(|c| c[1]).unwrap_or(1.0),
             color_max_b: i.color_max.map(|c| c[2]).unwrap_or(1.0),
             dt: 0.0, max_particles,
+            alpha_min: i.alpha_min, alpha_max: i.alpha_max,
             _pad3: 0.0, _pad4: 0.0, _pad5: 0.0, _pad6: 0.0, _pad7: 0.0,
-            _pad8: 0, _pad9: 0,
+            _pad8: 0, _pad9: 0, _pad10: 0, _pad11: 0,
         }
     }
 }
@@ -105,9 +113,10 @@ pub fn estimate_max_particles(spec: &ParticleSpec) -> u32 {
 }
 
 /// WGSL `Particle` 结构体 stride（最终审查修复：原按 48B/粒子分配 storage buffer，
-/// 但 WGSL `struct Particle { pos: vec3f, vel: vec3f, life, max_life, size, color: vec3f }`
-/// 布局为 pos@0、vel@16、life@28、max_life@32、size@36、color@48（vec3 对齐 16）、
-/// span=60 → **stride=64**（struct align 16）。按 48B 分配时高索引槽位
+/// 但 WGSL `struct Particle { pos: vec3f, vel: vec3f, life, max_life, size, alpha, color: vec3f }`
+/// 布局为 pos@0、vel@16、life@28、max_life@32、size@36、alpha@40（Task 0.3 追加，
+/// 初始 alpha，compute 不衰减）、color@48（vec3 对齐 16）、span=60 → **stride=64**
+/// （struct align 16）。按 48B 分配时高索引槽位
 /// （i*64+60 ≥ 48*max，即 i ≥ 0.75*max）越界，被 WebGPU robustness 钳制（读 0 →
 /// 粒子不可见）→ 实际粒子密度比估算低约 25%；compute/渲染读写均按 64 stride 自洽，
 /// 掩盖了 buffer 分配错误。Rust 侧按 stride 64 分配 storage buffer。

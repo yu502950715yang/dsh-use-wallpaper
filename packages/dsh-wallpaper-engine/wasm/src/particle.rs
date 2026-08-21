@@ -27,6 +27,11 @@ pub struct InitSpec {
     pub velocity_max: [f32; 3],
     pub color_min: Option<[f32; 3]>,
     pub color_max: Option<[f32; 3]>,
+    /// alpharandom 初始 alpha 范围（缺省 1.0，对齐 JS 版 alphaAt 语义）。
+    /// 控制器裁定 P0-1：alpha 为 spawn 时生成的初始值，compute 不衰减，
+    /// 显示 alpha 由渲染侧按寿命比例计算。
+    pub alpha_min: f32,
+    pub alpha_max: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -89,6 +94,7 @@ pub fn parse_particle_spec(json: &str) -> ParticleSpec {
     let size = inits.iter().find(|i| i.name.as_deref() == Some("sizerandom"));
     let vel = inits.iter().find(|i| i.name.as_deref() == Some("velocityrandom"));
     let color = inits.iter().find(|i| i.name.as_deref() == Some("colorrandom"));
+    let alpha = inits.iter().find(|i| i.name.as_deref() == Some("alpharandom"));
 
     let operators = raw.operator.unwrap_or_default().into_iter().map(|op| {
         let kind = match op.name.as_deref() {
@@ -115,6 +121,8 @@ pub fn parse_particle_spec(json: &str) -> ParticleSpec {
             velocity_max: vel.and_then(|i| i.max.as_ref()).map(vec3).unwrap_or([0.0; 3]),
             color_min: color.and_then(|i| i.min.as_ref()).map(vec3),
             color_max: color.and_then(|i| i.max.as_ref()).map(vec3),
+            alpha_min: alpha.and_then(|i| i.min.as_ref()).map(|v| scalar(v, 1.0)).unwrap_or(1.0),
+            alpha_max: alpha.and_then(|i| i.max.as_ref()).map(|v| scalar(v, 1.0)).unwrap_or(1.0),
         },
         operators,
     }
