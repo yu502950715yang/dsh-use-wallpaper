@@ -212,3 +212,39 @@ describe('parseSceneJson script/scriptproperties 解析（T3.3）', () => {
     expect((desc.objects[0] as any).scriptProperties).toEqual({}); // 解析失败 → 空对象
   });
 });
+
+// I3 修复：WE 文本 color 为 0-1 归一化值（fixture 对象 182 实测 "1.00000 1.00000 1.00000"
+// 白色），optColor 原按 0-255 直用 → rgb(1,1,1) 近黑、深色壁纸上时钟文本不可见。
+// 归一化启发：max 分量 ≤ 1 → 视为 0-1 语义 ×255（"1 1 1" → 255）；否则保持 0-255 语义。
+describe('text 对象 color 归一化（I3：0-1 与 0-255 双语义）', () => {
+  const parseColor = (color: string) => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [{ id: 1, text: { value: 'x' }, color, origin: '0 0 0', scale: '1 1 1' }],
+    }));
+    return (desc.objects[0] as any).color;
+  };
+
+  it('"1 1 1"（0-1 语义白色，VHS fixture 实测形态）→ 255（归一化 ×255，不再近黑）', () => {
+    expect(parseColor('1.00000 1.00000 1.00000')).toEqual([255, 255, 255]);
+  });
+  it('"255 255 255"（0-255 语义）→ 不变', () => {
+    expect(parseColor('255 255 255 255')).toEqual([255, 255, 255]);
+  });
+  it('"0 0 0" → 0 不变（两种语义下黑色一致）', () => {
+    expect(parseColor('0 0 0')).toEqual([0, 0, 0]);
+  });
+  it('中间值 "0.5 0.5 0.5" → ×255 得 127.5（0-1 语义线性放大）', () => {
+    expect(parseColor('0.5 0.5 0.5')).toEqual([127.5, 127.5, 127.5]);
+  });
+  it('既有 0-255 语义不回归：T3.1 的 "255 255 255 255" 仍解析为白色', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [{
+        id: 182, name: 'Time', origin: '1024 20 0', scale: '1 1 1',
+        size: '400 100', color: '255 255 255 255', pointsize: '80',
+        font: 'fonts/Atami-Regular.otf', alignment: 'center',
+        text: { script: 'var d = new Date();', scriptproperties: '{}', value: '12:00' },
+      }],
+    }));
+    expect((desc.objects[0] as any).color).toEqual([255, 255, 255]);
+  });
+});

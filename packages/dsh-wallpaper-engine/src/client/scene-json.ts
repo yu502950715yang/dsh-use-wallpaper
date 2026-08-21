@@ -33,12 +33,21 @@ function optNum(s: unknown): number | undefined {
   return isFinite(n) ? n : undefined;
 }
 
-// 可选颜色字段（WE color 形如 "r g b a"，0-255）：取前 3 通道；非法 → undefined
+// 可选颜色字段（WE color 形如 "r g b a"）：取前 3 通道；非法 → undefined。
+// I3 修复（双语义归一化启发）：WE 颜色存在两种序列化——0-255（常规）与 0-1 归一化
+// （文本对象实测：2937346640 VHS Time and Date 的 color "1.00000 1.00000 1.00000" 为白色）。
+// 判定：max 分量 ≤ 1 → 视为 0-1 语义 ×255（"1 1 1" → 255；"0 0 0" 不变；"0.5" → 127.5）；
+// 否则保持 0-255 语义（"255 255 255" 不变）。下游 createTextTexture/ClockTextDriver
+// 直用本输出拼 rgb(r,g,b)，归一化后白色文本不再退化为近黑 rgb(1,1,1)。
 function optColor(s: unknown): [number, number, number] | undefined {
   if (typeof s !== 'string') return undefined;
   const parts = s.trim().split(/\s+/).map(Number);
   if (parts.length < 3 || !isFinite(parts[0]) || !isFinite(parts[1]) || !isFinite(parts[2])) return undefined;
-  return [parts[0], parts[1], parts[2]];
+  const rgb = [parts[0], parts[1], parts[2]];
+  if (Math.max(parts[0], parts[1], parts[2]) <= 1) {
+    return [rgb[0] * 255, rgb[1] * 255, rgb[2] * 255];
+  }
+  return [rgb[0], rgb[1], rgb[2]];
 }
 
 // 脚本字段提取（T3.3）：WE 对象脚本挂在 image 的 visible / text 的 text 对象上，
