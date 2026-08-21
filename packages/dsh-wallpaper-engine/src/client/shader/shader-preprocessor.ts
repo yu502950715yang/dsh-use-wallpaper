@@ -94,14 +94,19 @@ function normalizeFloatIntLiterals(src: string): string {
   //    `#define SHAPE 0` 补成 0.0 会让 `#if SHAPE == BOTTOM` 报浮点比较非法）
   //  - for 循环头（int 计数）：for (int i = 0; i < N; ++i)
   //  - 数组下标/数组大小：g_AudioSpectrum16Left[i * 2] / uniform float g_A[16]
-  //  - int/ivec 声明与构造：int i = 0; ivec2(1, 2)
+  //  - int/ivec 声明与构造：int i = 0; ivec2(1, 2)；**const int x = 3;**
+  //    （2026-08-21 修复两处：① `(?:const\s+)?`——原正则漏 const 前缀；
+  //    ② 保护**整个声明含右值**——原正则匹配到 `=` 即停，右值 `3;` 的 `3` 在保护段外
+  //    被补 .0 → `const int x = 3.0;` GLSL3 报 "cannot convert from 'const float' to
+  //    'const highp int'"（godrays_cast 等壁纸实测））
   //  - 比较运算中的整数字面量：mode == 9（ApplyBlending 的 int 比较，
   //    补 .0 后 int==float 报错）；全库无"变量与 int 比较"的 float 场景
   out = out.replace(/^\s*#(?:if|elif|ifdef|ifndef|define).*$/gm, protect);
   out = out.replace(/for\s*\([^)]*\)/g, protect);
   out = out.replace(/\[[^\]]*\]/g, protect);
   out = out.replace(/\b(?:ivec[234])\s*\([^)]*\)/g, protect);
-  out = out.replace(/\bint\s+\w+\s*(?:\[[^\]]*\])?\s*(?:=|;)/g, protect);
+  out = out.replace(/\b(?:const\s+)?int\s+\w+\s*(?:\[[^\]]*\])?\s*=[^;]*;/g, protect);
+  out = out.replace(/\b(?:const\s+)?int\s+\w+\s*(?:\[[^\]]*\])?\s*;/g, protect);
   out = out.replace(/(?:==|!=|<=|>=|<|>)\s*-?\d+(?![\w.])/g, protect);
   // 科学计数法整体保护（1e-10 / 1.5e-3：裸 int 正则会把指数部分 '10'/'3' 误补 .0 → 非法 GLSL。
   // 引擎 common.h rgb2hsv 的 `1e-10` 即触发；GLSL 浮点字面量允许 `1.e3`/`.5e3`，
@@ -113,6 +118,53 @@ function normalizeFloatIntLiterals(src: string): string {
   // 还原保护段
   protectedBlocks.forEach((block, i) => {
     out = out.replace(`__WEI_PROTECTED_${i.toString(36)}__`, block);
+  });
+  return out;
+}
+
+// GLSL ES 3.00 严格类型修正（2026-08-21）：int **变量**（const int 常量、int 声明、
+// for 循环计数器）参与浮点运算时 GLSL3 报 "wrong operand types"（GLSL1 允许 int 隐式
+// 转 float）。文本层无法做完整类型推断，采用保守策略：
+//  - 收集 int 变量名（const int / int / uniform int / in|out int / for 头）
+//  - 保护明确 int 上下文（int 声明整行、数组下标、for 头、++/--、int()/ivecN()/float() 构造、比较运算）
+//  - 剩余使用点包 float(name)（与浮点字面量/变量/vec 混合运算、赋给 float、函数参数）
+// 实测覆盖（全库 27 shader）：godrays_cast/shine_cast 的 `const float sampleDrop = sampleCount - 1;`
+// （const int 常量赋 float）与 `albedo += sample * (i / sampleDrop);`（循环计数器除以 float）、
+// `1.0 / sampleCount`、`vec4 * intVar` 等。
+function floatifyIntVarUses(src: string): string {
+  const intVars = new Set<string>();
+  for (const m of src.matchAll(/\b(?:const\s+)?(?:uniform\s+)?(?:in\s+|out\s+)?int\s+(\w+)/g)) {
+    intVars.add(m[1]);
+  }
+  if (intVars.size === 0) return src;
+  const protectedBlocks: string[] = [];
+  const protect = (m: string) => {
+    const token = `__WEI_INTVAR_${protectedBlocks.length.toString(36)}__`;
+    protectedBlocks.push(m);
+    return token;
+  };
+  let out = src;
+  // 保护 int 上下文（不包 float）：
+  //  - int 声明整行（含右值中的其他 int 变量使用：int x = i * 2 的 i 必须保持 int）
+  out = out.replace(/^\s*(?:const\s+)?(?:uniform\s+)?(?:in\s+|out\s+)?int\b[^;]*;/gm, protect);
+  //  - 数组下标（bufferLeft[a] 的 a 是下标，必须 int）
+  out = out.replace(/\[[^\]]*\]/g, protect);
+  //  - for 头（int 计数器声明 + 比较 + ++ 整体）
+  out = out.replace(/for\s*\([^)]*\)/g, protect);
+  //  - 自增/自减与 int/float 显式构造（float(N) 内已是显式转换，不重复包）
+  out = out.replace(/(?:\+\+|--)\s*\w+|\w+\s*(?:\+\+|--)/g, protect);
+  out = out.replace(/\b(?:int|float)\s*\([^)]*\)/g, protect);
+  out = out.replace(/\bivec[234]\s*\([^)]*\)/g, protect);
+  //  - 比较运算两侧的 int 变量（x < sampleCount 保持 int 比较）
+  out = out.replace(/(?:==|!=|<=|>=|<|>)\s*[A-Za-z_]\w*/g, protect);
+  out = out.replace(/[A-Za-z_]\w*\s*(?:==|!=|<=|>=|<|>)/g, protect);
+  // 剩余使用点：float(name)（与浮点字面量/变量/vec 混合运算、赋值、函数参数）
+  for (const name of intVars) {
+    out = out.replace(new RegExp(`\\b${name}\\b`, 'g'), `float(${name})`);
+  }
+  // 还原保护段
+  protectedBlocks.forEach((block, i) => {
+    out = out.replace(`__WEI_INTVAR_${i.toString(36)}__`, block);
   });
   return out;
 }
@@ -208,6 +260,10 @@ export function preprocessWeShader(source: string, combos: Record<string, number
   }
   out = rewriteAttributes(out);
   out = normalizeFloatIntLiterals(out);
+  // int 变量使用点 float() 转换必须在本步（normalize 补 .0 之后、const 降级之前）：
+  // normalize 已把 `1` 补成 `1.0`，此处再处理 int **变量**（字面量不重复处理）；
+  // relaxGlsl3Strictness 的 const 降级依赖转换后的表达式（float(sampleCount) - 1.0）。
+  out = floatifyIntVarUses(out);
   out = relaxGlsl3Strictness(out);
   // 注入 combo 宏（scene.json 提供的值优先，其余按 [COMBO] 注释 default 兜底）
   const defines = new Map<string, string>();

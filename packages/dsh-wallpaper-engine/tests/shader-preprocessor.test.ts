@@ -90,6 +90,40 @@ describe('preprocessWeShader', () => {
     expect(out).not.toContain('= 1;');
     expect(out).not.toContain('1 - g_T');
   });
+  it('const int 字面量声明不被补 .0（2026-08-21 修复）', () => {
+    const src = 'const int N = 3;\nvoid main() { gl_FragColor = vec4(float(N)); }';
+    const out = preprocessWeShader(src, {});
+    expect(out).toContain('const int N = 3;'); // 保持 int，3 不被补 3.0
+    expect(out).not.toContain('const int N = 3.0;');
+  });
+  it('int 变量参与浮点运算 → float() 包裹（GLSL3 禁止 int/float 混算）', () => {
+    // godrays_cast/shine_cast 真实模式：const int 常量赋 float、循环计数器除以 float
+    const src = [
+      'const int sampleCount = 30;',
+      'const float sampleDrop = sampleCount - 1;',
+      'void main() {',
+      '  float acc = 0.0;',
+      '  for (int i = 0; i < sampleCount; ++i) {',
+      '    acc += i / sampleDrop;',
+      '  }',
+      '  gl_FragColor = vec4(acc * sampleCount, 1.0 / sampleCount, 0.0, 1.0);',
+      '}',
+    ].join('\n');
+    const out = preprocessWeShader(src, {});
+    expect(out).toContain('const int sampleCount = 30;');         // 声明保持 int
+    expect(out).toContain('float(sampleCount) - 1');              // const int 赋 float → float()
+    expect(out).toContain('float(i) / sampleDrop');               // 循环计数器除以 float → float()
+    expect(out).toContain('for (int i = 0; i < sampleCount; ++i)'); // 循环头保持 int 比较
+    expect(out).toContain('acc * float(sampleCount)');            // float 运算 → float()
+    expect(out).toContain('1.0 / float(sampleCount)');            // 除法右操作数 → float()
+    expect(out).not.toContain('i / sampleDrop');                  // 原混合运算已转换
+  });
+  it('float() 显式构造内的 int 变量不重复包裹', () => {
+    const src = 'int N = 3;\nvoid main() { gl_FragColor = vec4(float(N)); }';
+    const out = preprocessWeShader(src, {});
+    expect(out).toContain('float(N)');
+    expect(out).not.toContain('float(float(N))');
+  });
   it('const 非常量初始化降级（GLSL3 只允许编译期常量）', () => {
     const src = 'uniform float u_t; uniform float u_g;\nconst float threshold = pow(u_t, u_g);\nvoid main() { gl_FragColor = vec4(threshold); }';
     const out = preprocessWeShader(src, {});

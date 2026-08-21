@@ -251,6 +251,15 @@ export class EffectRunner {
       const prevHandler = this.renderer.debug.onShaderError;
       this.renderer.debug.onShaderError = (gl, program, vs, fs) => {
         compileFailed = true;
+        // 诊断增强（2026-08-21）：three 的 onShaderError 只通知不传错误详情，
+        // 用 gl.getShaderInfoLog 取 GLSL 编译错误（顶点/片元分开），定位具体语法问题。
+        const vsInfo = (gl.getShaderInfoLog(vs) || '').trim();
+        const fsInfo = (gl.getShaderInfoLog(fs) || '').trim();
+        console.warn(
+          `[wallpaper-engine] 效果 pass ${key} shader 编译失败`,
+          vsInfo ? { vertex: vsInfo } : {},
+          fsInfo ? { fragment: fsInfo } : {},
+        );
       };
       const probeRT = new THREE.WebGLRenderTarget(1, 1);
       try {
