@@ -36,6 +36,11 @@ function mulberry32(seed: number) {
   };
 }
 
+// 寿命衰减纯函数（便于 node 测试）：alphaAt(initialAlpha, life, maxLife) = initialAlpha * clamp(life/maxLife, 0, 1)
+export function alphaAt(initialAlpha: number, life: number, maxLife: number): number {
+  return initialAlpha * Math.max(0, Math.min(1, life / Math.max(1e-6, maxLife)));
+}
+
 export function createParticleSystem(
   emitter: ParticleEmitterSpec,
   init: ParticleInitializerSpec,
@@ -47,6 +52,7 @@ export function createParticleSystem(
   const positions = new Float32Array(opts.maxParticles * 3);
   const colors = new Float32Array(opts.maxParticles * 3);
   const sizes = new Float32Array(opts.maxParticles);
+  const alphas = new Float32Array(opts.maxParticles);
 
   function randIn(min: number, max: number): number {
     return min + rand() * (max - min);
@@ -57,6 +63,7 @@ export function createParticleSystem(
     const life = randIn(init.lifetimeMin, init.lifetimeMax);
     const size = randIn(init.sizeMin, init.sizeMax);
     const amn = init.alphaMin ?? 1, amx = init.alphaMax ?? 1;
+    const a = randIn(amn, amx); // 单次随机：initialAlpha 与 alpha 同值，避免首帧衰减跳变（Task 0.1 review minor）
     const dist = randIn(emitter.distanceMin, emitter.distanceMax);
     const dir = emitter.directions;
     const dirLen = Math.hypot(dir[0], dir[1], dir[2]) || 1;
@@ -71,7 +78,7 @@ export function createParticleSystem(
       vz: randIn(init.velocityMin[2], init.velocityMax[2]),
       life, maxLife: life, size,
       r: randIn(cm[0], cx[0]), g: randIn(cm[1], cx[1]), b: randIn(cm[2], cx[2]),
-      initialAlpha: randIn(amn, amx), alpha: randIn(amn, amx),
+      initialAlpha: a, alpha: a,
     });
   }
 
@@ -98,6 +105,7 @@ export function createParticleSystem(
       positions[o] = p.x; positions[o + 1] = p.y; positions[o + 2] = p.z;
       colors[o] = p.r / 255; colors[o + 1] = p.g / 255; colors[o + 2] = p.b / 255;
       sizes[i] = p.size;
+      alphas[i] = alphaAt(p.initialAlpha, p.life, p.maxLife);
     }
   }
 
@@ -107,5 +115,6 @@ export function createParticleSystem(
     positions: () => { syncBuffers(); return positions; },
     colors: () => colors,
     sizes: () => sizes,
+    alphas: () => alphas,
   };
 }

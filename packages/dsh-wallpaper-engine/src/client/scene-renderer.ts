@@ -101,6 +101,7 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
       ps.points.geometry.attributes.position.needsUpdate = true;
       ps.points.geometry.attributes.aColor.needsUpdate = true;
       ps.points.geometry.attributes.aSize.needsUpdate = true;
+      ps.points.geometry.attributes.aAlpha.needsUpdate = true;
       ps.points.geometry.setDrawRange(0, ps.system.count());
     }
     // 场景渲染到离屏 RT
@@ -172,11 +173,12 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
       geometry.setAttribute('position', new THREE.BufferAttribute(system.positions(), 3));
       geometry.setAttribute('aColor', new THREE.BufferAttribute(system.colors(), 3));
       geometry.setAttribute('aSize', new THREE.BufferAttribute(system.sizes(), 1));
+      geometry.setAttribute('aAlpha', new THREE.BufferAttribute(system.alphas(), 1));
       geometry.setDrawRange(0, 0);
       // 每粒子颜色（WE colorrandom，0-255 → 0-1）与尺寸（WE 场景像素）
       const material = new THREE.ShaderMaterial({
-        vertexShader: `attribute vec3 aColor; attribute float aSize; varying vec3 vColor; varying float vLife;
-          void main(){ vLife = 1.0; vColor = aColor; vec4 mv = modelViewMatrix * vec4(position,1.0);
+        vertexShader: `attribute vec3 aColor; attribute float aSize; attribute float aAlpha; varying vec3 vColor; varying float vLife;
+          void main(){ vLife = aAlpha; vColor = aColor; vec4 mv = modelViewMatrix * vec4(position,1.0);
           gl_PointSize = aSize * (300.0 / -mv.z); gl_Position = projectionMatrix * mv; }`,
         fragmentShader: `varying vec3 vColor; varying float vLife; void main(){
           vec2 c = gl_PointCoord - 0.5; float d = length(c);

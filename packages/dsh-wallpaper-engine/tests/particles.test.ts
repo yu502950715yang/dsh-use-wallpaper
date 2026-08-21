@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createParticleSystem } from '../src/client/particles.js';
+import { createParticleSystem, alphaAt } from '../src/client/particles.js';
 import { particlesFromSpec } from '../src/client/scene-assets.js';
 
 const emitter = { rate: 10, directions: [1, 0, 0], distanceMin: 0, distanceMax: 5 };
@@ -49,6 +49,13 @@ describe('createParticleSystem', () => {
     expect([...a.positions()]).toEqual([...b.positions()]); // 同 seed 完全一致
     // 反证：不同 seed 产物不同，证明断言确实比较了 rand 派生值
     expect([...a.positions()]).not.toEqual([...c.positions()]);
+  });
+});
+
+describe('alphaAt', () => {
+  it('alpha 随寿命线性衰减', () => {
+    expect(alphaAt(0.2, 4, 5)).toBeCloseTo(0.16, 5);
+    expect(alphaAt(0.2, 0, 5)).toBe(0);
   });
 });
 
