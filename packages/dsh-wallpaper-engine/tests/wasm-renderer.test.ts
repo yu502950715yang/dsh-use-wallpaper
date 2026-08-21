@@ -6,8 +6,12 @@
 //   → controller 走 preview 图回退（spec §7 第 2/3 条）
 // - 成功路径：scene.json → 对象遍历（image → model.json → material → .tex；particle）→
 //   WeScene.create / load_scene / load_image / add_particle / step / render 按序调用
+// - Task 2.1：hasEffectChains 效果链检测（任一对象 effects?.length > 0 → true）；
+//   wasm 渲染器无效果链执行器，检测到效果链 → render() 在 WeScene.create（绑定 GPU）
+//   之前返回 false，走 controller 的 canvas 重建 → JS 渲染器回退链
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { createWasmSceneRenderer, createFallbackSceneRenderer } from '../src/client/wasm-renderer.js';
+import { parseSceneJson } from '../src/client/scene-json.js';
+import { createWasmSceneRenderer, createFallbackSceneRenderer, hasEffectChains } from '../src/client/wasm-renderer.js';
 
 function jsonResp(body: unknown): any {
   return {
@@ -31,6 +35,46 @@ const SCENE_JSON_TEXT = JSON.stringify({
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+// Task 2.1：效果链检测（纯函数）。scene.json 经 parseSceneJson 解析后 effects 保留在对象上
+// （Array.isArray ? effects : undefined），检测只需判断任一对象 effects?.length > 0。
+function descWithObjects(objects: unknown[]): any {
+  return parseSceneJson(JSON.stringify({ general: { orthogonalprojection: { width: 100, height: 100 } }, objects }));
+}
+
+describe('hasEffectChains', () => {
+  it('任一对象含非空 effects → true', () => {
+    const desc = descWithObjects([{ id: 1, name: 'a', image: 'models/a.json', effects: [{ id: 1 }] }]);
+    expect(hasEffectChains(desc)).toBe(true);
+  });
+
+  it('effects 挂在非首对象（particle 对象）上也返回 true', () => {
+    const desc = descWithObjects([
+      { id: 1, name: 'a', image: 'models/a.json' },
+      { id: 2, name: 'b', particle: 'particles/p.json', effects: [{ id: 7, type: 'godrays' }] },
+    ]);
+    expect(hasEffectChains(desc)).toBe(true);
+  });
+
+  it('无 effects 字段 → false', () => {
+    const desc = descWithObjects([{ id: 1, name: 'a', image: 'models/a.json' }]);
+    expect(hasEffectChains(desc)).toBe(false);
+  });
+
+  it('effects 为空数组 → false', () => {
+    const desc = descWithObjects([{ id: 1, name: 'a', image: 'models/a.json', effects: [] }]);
+    expect(hasEffectChains(desc)).toBe(false);
+  });
+
+  it('effects 非数组（null）→ false（parseSceneJson 归并为 undefined）', () => {
+    const desc = descWithObjects([{ id: 1, name: 'a', image: 'models/a.json', effects: null }]);
+    expect(hasEffectChains(desc)).toBe(false);
+  });
+
+  it('无对象 → false', () => {
+    expect(hasEffectChains(descWithObjects([]))).toBe(false);
+  });
 });
 
 describe('createWasmSceneRenderer', () => {
@@ -99,6 +143,36 @@ describe('createWasmSceneRenderer', () => {
     const fg = document.createElement('canvas');
     await expect(r!.render('1', fg)).resolves.toBe(false);
     expect(scene.load_image).not.toHaveBeenCalled();
+  });
+
+  it('场景含效果链 → render() 在 WeScene.create 之前返回 false（canvas 未绑定 WebGPU，可回退 JS）', async () => {
+    vi.stubGlobal('navigator', { gpu: {} });
+    const sceneJson = JSON.stringify({
+      camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+      general: { orthogonalprojection: { width: 2400, height: 1555 } },
+      objects: [
+        { id: 12, name: 'bg', image: 'models/m.json', effects: [{ id: 1, type: 'godrays' }] },
+      ],
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.includes('scene.json')) return jsonResp(sceneJson);
+        return { ok: false, status: 404, json: async () => ({}) } as any;
+      }),
+    );
+    const mod = { default: vi.fn(async () => undefined), WeScene: { create: vi.fn(async () => ({})) } };
+    const r = createWasmSceneRenderer({ loadWasm: async () => mod as any });
+    const fg = document.createElement('canvas');
+    const bg = document.createElement('canvas');
+    const fgW = fg.width, fgH = fg.height, bgW = bg.width, bgH = bg.height;
+    await expect(r!.render('1', fg, bg)).resolves.toBe(false);
+    // 效果链检测在 WeScene.create 之前：fg/bg 均未绑定 WebGPU → 组合层/controller 可重建 canvas 走 JS
+    expect(mod.WeScene.create).not.toHaveBeenCalled();
+    expect(fg.width).toBe(fgW); // canvas 未被视口尺寸赋值（未进入绑定流程）
+    expect(fg.height).toBe(fgH);
+    expect(bg.width).toBe(bgW);
+    expect(bg.height).toBe(bgH);
   });
 
   it('成功路径：按序调用 WeScene.create / load_scene / load_image / add_particle 并启动帧循环', async () => {

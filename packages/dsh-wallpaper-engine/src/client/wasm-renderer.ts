@@ -2,6 +2,15 @@
 // 无 WebGPU / wasm 加载失败 → 渲染返回 false，controller 走现有 JS 渲染 / preview 回退链。
 import { parseSceneJson } from './scene-json.js';
 import { resolveTexPath } from './scene-renderer.js';
+import type { SceneDescription } from '../shared/types.js';
+
+// Task 2.1：效果链检测（纯函数）。wasm 渲染器（Rust/wgpu）只渲染静态图像 quad +
+// GPU 粒子，无效果链执行器——带 godrays/foliagesway/iris 等对象级 effects 的壁纸
+// 走 wasm 路径会渲染成 STATIC。任一对象含非空 effects 数组 → true，render() 据此
+// 在绑定 WebGPU 之前返回 false，回退 JS 渲染器（Phase 1 已实现对象级效果链，动画恢复）。
+export function hasEffectChains(desc: SceneDescription): boolean {
+  return desc.objects.some((o) => Array.isArray(o.effects) && o.effects.length > 0);
+}
 
 // wasm 侧 WeScene 实例的接口（对齐 wasm/pkg/we_scene_wasm.d.ts）
 export interface WasmScene {
@@ -124,6 +133,11 @@ export function createWasmSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneRe
         if (!sceneJsonResp.ok) return false;
         const sceneJson = await sceneJsonResp.text();
         const desc = parseSceneJson(sceneJson);
+        // Task 2.1：效果链检测必须在此处（WeScene.create 之前）——wasm 无效果链执行器，
+        // 带 effects 的壁纸走 wasm 渲染成 STATIC。此处 fg/bg 都尚未绑定 WebGPU context，
+        // 返回 false 后 controller 重建 canvas 走 JS 渲染器（对象级效果链 Phase 1 已实现）；
+        // 若在 WeScene.create 之后才检测，canvas 已被 WebGPU 占用，JS 渲染器无法复用。
+        if (hasEffectChains(desc)) return false;
         const { width, height } = desc.orthogonal;
         // Task 9 修复：surface 与 canvas 属性尺寸 = 视口（对齐 scene-renderer.setScene 的
         // vw/vh 语义；原实现直接传场景正交尺寸，canvas 默认 300×150 → 渲染被拉伸/截图失真）
