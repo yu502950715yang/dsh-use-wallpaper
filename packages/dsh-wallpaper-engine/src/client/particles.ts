@@ -11,6 +11,8 @@ export interface ParticleInitializerSpec {
   velocityMax: [number, number, number];
   colorMin?: [number, number, number]; // WE colorrandom（0-255）
   colorMax?: [number, number, number];
+  alphaMin?: number; // WE alpharandom
+  alphaMax?: number;
 }
 export interface ParticleSystemOptions { maxParticles: number; seed?: number }
 
@@ -20,6 +22,8 @@ interface Particle {
   life: number; maxLife: number;
   size: number;
   r: number; g: number; b: number;
+  initialAlpha: number; // 寿命衰减基准
+  alpha: number; // 初始 alpha
 }
 
 function mulberry32(seed: number) {
@@ -52,6 +56,7 @@ export function createParticleSystem(
     if (particles.length >= opts.maxParticles) return;
     const life = randIn(init.lifetimeMin, init.lifetimeMax);
     const size = randIn(init.sizeMin, init.sizeMax);
+    const amn = init.alphaMin ?? 1, amx = init.alphaMax ?? 1;
     const dist = randIn(emitter.distanceMin, emitter.distanceMax);
     const dir = emitter.directions;
     const dirLen = Math.hypot(dir[0], dir[1], dir[2]) || 1;
@@ -66,6 +71,7 @@ export function createParticleSystem(
       vz: randIn(init.velocityMin[2], init.velocityMax[2]),
       life, maxLife: life, size,
       r: randIn(cm[0], cx[0]), g: randIn(cm[1], cx[1]), b: randIn(cm[2], cx[2]),
+      initialAlpha: randIn(amn, amx), alpha: randIn(amn, amx),
     });
   }
 

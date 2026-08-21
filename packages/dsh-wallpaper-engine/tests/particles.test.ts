@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createParticleSystem } from '../src/client/particles.js';
+import { particlesFromSpec } from '../src/client/scene-assets.js';
 
 const emitter = { rate: 10, directions: [1, 0, 0], distanceMin: 0, distanceMax: 5 };
 const init = {
@@ -48,5 +49,24 @@ describe('createParticleSystem', () => {
     expect([...a.positions()]).toEqual([...b.positions()]); // 同 seed 完全一致
     // 反证：不同 seed 产物不同，证明断言确实比较了 rand 派生值
     expect([...a.positions()]).not.toEqual([...c.positions()]);
+  });
+});
+
+describe('particlesFromSpec alpha', () => {
+  it('解析 alpharandom → alphaMin/alphaMax', () => {
+    const spec = particlesFromSpec(JSON.parse(JSON.stringify({
+      emitter: [{ rate: 1.5 }],
+      initializer: [
+        { name: 'lifetimerandom', min: 3, max: 5 },
+        { name: 'alpharandom', min: 0.15, max: 0.2 },
+      ],
+    })));
+    expect(spec?.init.alphaMin).toBe(0.15);
+    expect(spec?.init.alphaMax).toBe(0.2);
+  });
+
+  it('无 alpharandom 时 alpha 缺省 1', () => {
+    const spec = particlesFromSpec({ emitter: [{ rate: 1 }], initializer: [] });
+    expect(spec?.init.alphaMin).toBeUndefined();
   });
 });
