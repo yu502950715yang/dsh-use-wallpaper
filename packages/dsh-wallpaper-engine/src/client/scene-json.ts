@@ -1,5 +1,6 @@
 import type { SceneDescription, SceneObject } from '../shared/types.js';
 import { parseScriptProperties } from './script-patterns.js';
+import { parseVisible } from './visibility.js';
 
 function vec3(s: unknown): [number, number, number] {
   if (typeof s !== 'string') return [0, 0, 0];
@@ -52,8 +53,9 @@ function optColor(s: unknown): [number, number, number] | undefined {
 
 // 脚本字段提取（T3.3）：WE 对象脚本挂在 image 的 visible / text 的 text 对象上，
 // 形如 { script, scriptproperties, value }。scriptproperties 直接读 scene.json 对象
-// （{user,value} 包装由 parseScriptProperties 解包），不解析脚本源码。注意区分：
-// visible 也可能是普通 {user,value} 开关包装（效果可见性等）→ script 为 undefined。
+// （{user,value} 包装由 parseScriptProperties 解包），不解析脚本源码。
+// T4.2 起 image 对象改从归一化 visible（kind==='script'）派生 script 字段
+// （见 image 分支），本函数仅服务 text 对象（text.script / text.scriptproperties）。
 function scriptFields(o: { script?: unknown; scriptproperties?: unknown } | undefined): {
   script?: string;
   scriptProperties?: Record<string, unknown>;
@@ -98,6 +100,9 @@ export function parseSceneJson(raw: string): SceneDescription {
       origin: vec3(o.origin),
       scale: scale3(o.scale),
       size: size2(o.size),
+      // T4.2：可见性绑定归一化（布尔 / {user,value} / {script,value} → VisibleBinding；
+      // 缺失/畸形 → undefined = 默认可见）。渲染器按 resolveVisibility 跳过不可见对象。
+      visible: parseVisible(o.visible),
       // T4.1：对象对齐锚点（9 种 WE 对齐值）→ image/particle 对象（text 对象走
       // horizontalalign/verticalalign，另行处理；util 对象不渲染，字段无害保留）。
       // 渲染器按锚点换算中心（applyAlignment），缺省/非法 → undefined = center 无偏移。
@@ -116,12 +121,16 @@ export function parseSceneJson(raw: string): SceneDescription {
           ...base, kind: 'util' as const, image: o.image,
         };
       }
-      // T3.3：image 对象的可见性脚本 visible.{script,scriptproperties}（如 Simple Visualizer）
-      // 一并解析——识别为 visualizer 时渲染器改走 64 条音频条路径（见 scene-renderer.ts）。
-      const vis = typeof o.visible === 'object' && o.visible !== null && !Array.isArray(o.visible)
-        ? o.visible as { script?: unknown; scriptproperties?: unknown }
-        : undefined;
-      return { ...base, kind: 'image' as const, image: o.image, ...scriptFields(vis) };
+      // T3.3/T4.2：image 对象的可见性脚本 visible.{script,scriptproperties}（如 Simple
+      // Visualizer）由归一化 visible 派生——kind==='script' 时 script/scriptProperties
+      // 照常产出（识别为 visualizer 时渲染器改走 64 条音频条路径，见 scene-renderer.ts）；
+      // {user,value} 用户开关（kind==='user'）与布尔（kind==='plain'）不产生脚本字段。
+      return {
+        ...base, kind: 'image' as const, image: o.image,
+        ...(base.visible?.kind === 'script'
+          ? { script: base.visible.script, scriptProperties: base.visible.scriptProperties }
+          : {}),
+      };
     }
     // Ruling P3-1（text 归类优先级）：o.text 为对象（非 null、非数组）→ kind:'text'。
     // 检查位置：image 检查之后、空粒子兜底之前；text.value 为缺省字符串（T3.3 起

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
-import { readClientSettings, writeClientSettings } from '../src/client/settings.js';
+import { readClientSettings, writeClientSettings, getUserPropertyValue } from '../src/client/settings.js';
 
 // C3：DSH 设置是 POST RPC（settings.describe / settings.update），
 // 不是 REST GET/PATCH。以下用例断言 wire 形态、响应解析与失败回退。
@@ -94,5 +94,39 @@ describe('writeClientSettings (settings RPC)', () => {
   it('失败静默忽略（不抛错）', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('net'); }));
     await expect(writeClientSettings({ selectedWallpaperId: '7' })).resolves.toBeUndefined();
+  });
+});
+
+// T4.2 WE 用户属性读取：插件设置（ClientSettings）不含壁纸级用户属性存储，
+// visible:{user,value} 绑定按 key 查询用户切换值——localStorage 持久化
+// （键 we:userprop:<key>，JSON 值）。缺失/损坏/无存储环境 → undefined，
+// resolveVisibility 据此回退绑定 value（不误杀对象）。
+describe('getUserPropertyValue（WE 用户属性 localStorage 存储）', () => {
+  const storage = () => ({ getItem: vi.fn() } as any);
+
+  it('读取已存布尔值（JSON 解析，false 精确返回）', () => {
+    const ls = storage();
+    ls.getItem.mockReturnValue('false');
+    vi.stubGlobal('localStorage', ls);
+    expect(getUserPropertyValue('timeand')).toBe(false);
+    expect(ls.getItem).toHaveBeenCalledWith('we:userprop:timeand');
+  });
+
+  it('缺失键（null）→ undefined（resolveVisibility 回退绑定 value）', () => {
+    const ls = storage();
+    ls.getItem.mockReturnValue(null);
+    vi.stubGlobal('localStorage', ls);
+    expect(getUserPropertyValue('nope')).toBeUndefined();
+  });
+
+  it('无 localStorage（node/SSR 环境）→ undefined（不抛错）', () => {
+    expect(getUserPropertyValue('x')).toBeUndefined();
+  });
+
+  it('损坏 JSON → undefined（不抛错，防御）', () => {
+    const ls = storage();
+    ls.getItem.mockReturnValue('{oops');
+    vi.stubGlobal('localStorage', ls);
+    expect(getUserPropertyValue('x')).toBeUndefined();
   });
 });

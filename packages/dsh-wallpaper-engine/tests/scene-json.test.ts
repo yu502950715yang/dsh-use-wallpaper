@@ -321,3 +321,71 @@ describe('parseSceneJson sound 数组解析（T3.4）', () => {
     expect(desc.sounds).toEqual(['sounds/b.mp3']);
   });
 });
+
+// T4.2 visible 归一化：scene.json 的 visible 字段（布尔 / {user,value} / {script,value}）
+// 解析为 SceneObject.visible（VisibleBinding）。所有 kind（image/particle/text/util）
+// 统一在 base 上解析；image 对象的 script/scriptProperties 由归一化 visible 派生
+// （T3.3 行为不回归：kind==='script' 时字段照常产生）。
+describe('parseSceneJson visible 归一化（T4.2）', () => {
+  it('布尔 visible → visible.kind plain（image/particle/text 均支持）', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [
+        { id: 1, image: 'models/a.json', visible: false, origin: '0 0 0', scale: '1 1 1' },
+        { id: 2, particle: 'particles/p.json', visible: true, origin: '0 0 0', scale: '1 1 1' },
+        { id: 3, text: { value: 'x' }, visible: true, origin: '0 0 0', scale: '1 1 1' },
+      ],
+    }));
+    expect((desc.objects[0] as any).visible).toEqual({ kind: 'plain', value: false });
+    expect((desc.objects[1] as any).visible).toEqual({ kind: 'plain', value: true });
+    expect((desc.objects[2] as any).visible).toEqual({ kind: 'plain', value: true });
+  });
+
+  it('{user,value} → visible.kind user（key/value 保留；不产生 script 字段）', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [{ id: 1, image: 'models/a.json', visible: { user: 'timeand', value: true }, origin: '0 0 0', scale: '1 1 1' }],
+    }));
+    const o = desc.objects[0] as any;
+    expect(o.visible).toEqual({ kind: 'user', key: 'timeand', value: true });
+    expect(o.script).toBeUndefined(); // 用户开关不是脚本对象（T3.3 语义保持）
+  });
+
+  it('{script,value} → visible.kind script，且 script/scriptProperties 照常解析（T3.3 不回归）', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [{
+        id: 61, name: 'Simple Visualizer', image: 'models/workshop/2652493753/bar.json',
+        origin: '113.74350 83.14454 0.00000', scale: '2.36344 2.36344 0.75850',
+        visible: {
+          script: 'let audioData = engine.registerAudioBuffers(64);',
+          scriptproperties: { barWidth: 0.83, originX: { user: '_x', value: 12.67 } },
+          value: true,
+        },
+      }],
+    }));
+    const o = desc.objects[0] as any;
+    expect(o.visible).toEqual({
+      kind: 'script',
+      script: 'let audioData = engine.registerAudioBuffers(64);',
+      scriptProperties: { barWidth: 0.83, originX: 12.67 },
+      value: true,
+    });
+    expect(o.script).toBe('let audioData = engine.registerAudioBuffers(64);'); // T3.3 字段保留
+    expect(o.scriptProperties).toEqual({ barWidth: 0.83, originX: 12.67 });
+  });
+
+  it('无 visible 字段 → visible undefined（不误报绑定）', () => {
+    const desc = parseSceneJson('{"objects":[{"id":1,"image":"models/a.json"}]}');
+    expect((desc.objects[0] as any).visible).toBeUndefined();
+  });
+
+  it('visible 畸形（数组/数字/字符串/null）→ visible undefined（防御，不抛错）', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [
+        { id: 1, image: 'models/a.json', visible: [], origin: '0 0 0', scale: '1 1 1' },
+        { id: 2, image: 'models/b.json', visible: 42, origin: '0 0 0', scale: '1 1 1' },
+        { id: 3, image: 'models/c.json', visible: 'true', origin: '0 0 0', scale: '1 1 1' },
+        { id: 4, image: 'models/d.json', visible: null, origin: '0 0 0', scale: '1 1 1' },
+      ],
+    }));
+    for (const o of desc.objects) expect((o as any).visible).toBeUndefined();
+  });
+});

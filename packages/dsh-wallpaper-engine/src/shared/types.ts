@@ -14,11 +14,27 @@ export interface WallpaperInfo {
 
 export interface PkgEntry { name: string; offset: number; size: number; }
 
+// WE 对象可见性绑定（T4.2）：scene.json 的 visible 字段三种形态归一化——
+//   true / false           → { kind:'plain', value }（静态开关）
+//   { user, value }        → { kind:'user', key, value }（用户属性键；value 为缺省可见性）
+//   { script, value }      → { kind:'script', script, value }（脚本求值超出本期范围，
+//                           可见性保持 value；script/scriptProperties 同时是 T3.3 视觉
+//                           脚本输入——image 对象的 visualizer 识别走同一来源）
+// 缺失/畸形 → undefined（无绑定 = 默认可见）。解析见 src/client/visibility.ts。
+export interface VisibleBinding {
+  kind: 'plain' | 'user' | 'script';
+  value: boolean;                       // 缺省可见性（user 键缺失 / script 未求值时的回退）
+  key?: string;                         // kind='user'：用户属性键名（scene.json 的 user）
+  script?: string;                      // kind='script'：脚本源码（T3.3 模式识别输入）
+  scriptProperties?: Record<string, unknown>; // kind='script'：脚本参数（{user,value} 已解包）
+}
+
 export interface SceneImageObject {
   kind: 'image'; id: number; name: string;
   origin: [number, number, number]; scale: [number, number, number];
   size?: [number, number];       // scene.json 的 size 字段（WE 像素尺寸），缺省时由纹理宽高推算
   image: string;                 // 资源名，如 "models/xxx.json"
+  visible?: VisibleBinding;      // T4.2：可见性绑定（渲染前解析，不可见对象跳过）
   alignment?: string;            // 对象对齐锚点（9 种 WE 对齐值：center/topleft/top/topright/right/bottomright/bottom/bottomleft/left；渲染时 origin 按锚点换算中心，见 alignment.ts）
   effects?: unknown[];           // 对象效果链定义（Ruling 5：全库 122 条效果中 105 条挂在 image 对象上）
   script?: string;               // visible.script（WE 可见性/视觉脚本源码，T3.3 模式识别输入）
@@ -28,6 +44,7 @@ export interface SceneParticleObject {
   kind: 'particle'; id: number; name: string;
   origin: [number, number, number]; scale: [number, number, number];
   particle: string;            // 资源名，如 "particles/presets/lightshafts.json"
+  visible?: VisibleBinding;    // T4.2：可见性绑定（渲染前解析，不可见对象跳过）
   alignment?: string;          // 对象对齐锚点（同 image；渲染时按锚点换算中心，见 alignment.ts）
   effects?: unknown[];         // 对象效果链定义（Ruling 5：与 image/util 一致，按 objects 顺序展平）
 }
@@ -39,6 +56,7 @@ export interface SceneUtilObject {
   origin: [number, number, number]; scale: [number, number, number];
   size?: [number, number];       // WE 像素尺寸（与 image 对象一致）
   image: string;                 // 如 "models/util/composelayer.json"
+  visible?: VisibleBinding;      // T4.2：可见性绑定（util 不渲染，字段无害保留）
   effects?: unknown[];           // 对象效果链定义（effects 数组，二期使用）
 }
 // WE text 对象（T3.1/T3.3）：scene.json 携带 text 字段（{ script, scriptproperties, value }
@@ -50,6 +68,7 @@ export interface SceneTextObject {
   origin: [number, number, number]; scale: [number, number, number];
   size?: [number, number];       // WE 像素尺寸（与 image 对象一致）
   text: string;                  // text.value（缺省字符串，脚本动态文本的静态兜底）
+  visible?: VisibleBinding;      // T4.2：可见性绑定（渲染前解析，不可见对象跳过）
   font?: string;                 // WE 字体名（可能是文件路径，如 fonts/Atami-Regular.otf）
   pointsize?: number;            // 字号（WE pointsize，绘制按 px 近似）
   color?: [number, number, number]; // 文本颜色（WE color "r g b a" 的前 3 通道，0-255）

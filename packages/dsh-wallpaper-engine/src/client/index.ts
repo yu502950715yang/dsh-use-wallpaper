@@ -4,7 +4,7 @@ import { createWallpaperController } from './wallpaper-controller.js';
 import { renderScene } from './scene-renderer.js';
 import { createWasmSceneRenderer, createFallbackSceneRenderer } from './wasm-renderer.js';
 import { mountPicker as mountPickerUI } from './picker.js';
-import { readClientSettings, writeClientSettings } from './settings.js';
+import { readClientSettings, writeClientSettings, getUserPropertyValue } from './settings.js';
 import type { BackgroundPlan, ClientSettings } from './types.js';
 
 declare global {
@@ -36,7 +36,11 @@ export function bootstrap(): void {
     layer = createBackgroundLayer(root);
     controller = createWallpaperController(layer, {
       fetchList: async () => (await fetch('/wallpapers/list')).json(),
-      sceneRenderer: createFallbackSceneRenderer(createWasmSceneRenderer(), { render: renderScene }),
+      sceneRenderer: createFallbackSceneRenderer(createWasmSceneRenderer(), {
+        // T4.2：注入可见性 user 绑定的用户属性 getter（localStorage 实现见 settings.ts；
+        // renderScene 不硬依赖设置存储，键缺失回退绑定 value）
+        render: (id, fg, bg) => renderScene(id, fg, bg, { getUserProperty: getUserPropertyValue }),
+      }),
       // Task 8 回退链（spec §7 第 1/2/3 条，三级语义）：
       //   1. 无 WebGPU → createWasmSceneRenderer() 返回 null → 直接用 JS/Three.js 渲染器；
       //   2. wasm 加载/初始化失败（render resolve false）→ 组合层降级调用 JS 渲染器；

@@ -13,6 +13,7 @@ import { createAudioAnalyzer, playWallpaperSound } from './audio-input.js';
 import type { AudioAnalyzer } from './audio-input.js';
 import { detectScriptPattern, formatClockText, VISUALIZER_BAR_COUNT } from './script-patterns.js';
 import { applyAlignment } from './alignment.js';
+import { resolveVisibility } from './visibility.js';
 
 // 编译后效果链（T1.3）：每组对象的独立链集合（一条链 = CompiledEffectPass[]，逐 pass ping-pong）
 type CompiledEffectChains = import('./shader/effect-chain.js').CompiledEffectPass[][];
@@ -724,11 +725,24 @@ async function resolveImageTexture(id: string, obj: SceneImageObject): Promise<T
   }
 }
 
-export async function renderScene(id: string, fgCanvas: HTMLCanvasElement, bgCanvas?: HTMLCanvasElement): Promise<boolean> {
+// renderScene 可选参数（T4.2）：可见性 user 绑定的用户属性查询 getter 由调用方注入
+// （renderScene 不硬依赖设置存储——node 可测；缺省 → 恒 undefined，user 绑定回退
+// 绑定 value）。localStorage 实现见 settings.ts 的 getUserPropertyValue。
+export interface RenderSceneOptions {
+  getUserProperty?: (key: string) => unknown;
+}
+
+export async function renderScene(
+  id: string,
+  fgCanvas: HTMLCanvasElement,
+  bgCanvas?: HTMLCanvasElement,
+  opts?: RenderSceneOptions,
+): Promise<boolean> {
   let renderer: SceneRenderer | null = null;
   // T3.2：音频频谱分析器生命周期 = 本壁纸场景渲染周期（createSceneRenderer 之前创建、
   // stop() 时 close 释放）。无 Web Audio → null，EffectRunner 保持全零静音（行为不变）。
   const analyzer = createAudioAnalyzer();
+  const getUserProperty = opts?.getUserProperty ?? (() => undefined);
   try {
     const desc = await fetchSceneDescription(id);
     // T3.4：壁纸音频播放——scene.json 对象级 sound 数组（如 2937346640 id=35 的 flac）
@@ -745,10 +759,23 @@ export async function renderScene(id: string, fgCanvas: HTMLCanvasElement, bgCan
     }
     renderer = createSceneRenderer(fgCanvas, bgCanvas, analyzer);
     renderer.setScene(desc);
+    // T4.2 可见性解析（user/script 绑定）：先按 desc.objects 一次扫描收集所有
+    // user 绑定引用的用户属性键（getter 查询 → userProps 表），再以
+    // resolveVisibility 过滤出可见对象。不可见对象**整体跳过**——不渲染
+    // （setImageObject/setTextObject/addParticleSystem 均不调用）、不挂效果链
+    // （groupEffectsByObject 用过滤后列表）、不计入 rendered（全不可见 →
+    // rendered===0 → preview 回退）。script 绑定保持 value（脚本求值超出本期范围）。
+    const userProps: Record<string, unknown> = {};
+    for (const obj of desc.objects) {
+      const v = obj.visible;
+      if (v?.kind === 'user' && v.key) userProps[v.key] = getUserProperty(v.key);
+    }
+    const visibleObjects = desc.objects.filter((o) => resolveVisibility(o, userProps));
     // 对象级效果链（T1.3）：按对象分组（替换旧全屏展平路径——Ruling 5 的全屏执行导致
     // foliagesway 等对象级效果整屏生效/摇晃）。每组在 renderer 内拥有独立 EffectRunner，
     // 链输入 = 对象 RT，输出合成回共享场景；无效果对象路径不变。
-    const effectGroups = groupEffectsByObject(desc.objects);
+    // T4.2：仅对可见对象挂链（不可见对象不进入效果链解析/挂载）。
+    const effectGroups = groupEffectsByObject(visibleObjects);
     // 异步加载效果链（失败链 → null 过滤；加载中画面保持原样）
     void (async () => {
       for (const group of effectGroups) {
@@ -766,7 +793,7 @@ export async function renderScene(id: string, fgCanvas: HTMLCanvasElement, bgCan
       }
     })();
     let rendered = 0;
-    for (const obj of desc.objects) {
+    for (const obj of visibleObjects) {
       if (obj.kind === 'image') {
         // T3.3：visible.script 识别为 visualizer → 64 条音频条路径（纹理解析失败用
         // 1×1 白色 DataTexture 兜底——bar.tex 本体即纯白 4×4，纯色条不依赖纹理内容）；
