@@ -222,6 +222,79 @@ fn u32_at(data: &[u8], off: usize) -> u32 {
     u32::from_le_bytes(data[off..off + 4].try_into().unwrap_or([0; 4]))
 }
 
+/// TEXV0005 flags 的 sprite 位（对齐 open-wallpaper-engine TexFlagEnum::sprite = 2 → bit 2）。
+/// 精灵表纹理：mip0 是整张表，逻辑图（map 尺寸）只是其中一格——**不可裁剪**（当前无
+/// 精灵 UV 偏移支持，保留完整纹理，行为与现状一致）。
+const FLAG_SPRITE: u32 = 1 << 2;
+
+/// 2 的幂填充裁剪（2026-08-21 铺满修复）：TEXV0005 的 mip 记录尺寸（w/h）是**上传尺寸**
+/// （2 的幂，如 4096×2048），而 mapWidth/mapHeight（头部 @34/@38）是**逻辑内容尺寸**
+/// （如 2400×1555，对齐 open-wallpaper-engine ImageHeader.width/height vs mapWidth/mapHeight、
+/// SceneMaterialBuilder 的 sample_extent = map 尺寸）——内容在 mip0 左上角，右侧/底部是
+/// 2 的幂填充（通常黑/透明）。原实现把整个上传纹理当 UV 0-1 → 画面被压缩到 quad 的
+/// map/mip 比例区域、填充区露出（EVA 1280029027 实测右侧/底部显示清屏色灰）。
+/// 本函数把 mip0 裁剪到 map 尺寸：RGBA8/R8/RG88 按行裁剪；DXT 按 4×4 块裁剪
+/// （BC 纹理尺寸须为 4 的倍数，向上取整后右下角 1-3px 冗余无害）；sprite 或
+/// map ≥ mip（无填充）→ 原样保留。
+pub fn crop_to_map(
+    mip0: &[u8],
+    w: u32,
+    h: u32,
+    map_w: u32,
+    map_h: u32,
+    format: TexFormat,
+    flags: u32,
+) -> (u32, u32, Vec<u8>) {
+    let cw = map_w.min(w).max(1);
+    let ch = map_h.min(h).max(1);
+    if flags & FLAG_SPRITE != 0 || (cw >= w && ch >= h) {
+        return (w, h, mip0.to_vec());
+    }
+    match format {
+        TexFormat::Rgba8888 => crop_rows(mip0, w, h, cw, ch, 4),
+        TexFormat::R8 => crop_rows(mip0, w, h, cw, ch, 1),
+        TexFormat::Rg88 => crop_rows(mip0, w, h, cw, ch, 2),
+        TexFormat::Dxt1 => crop_bc(mip0, w, h, cw, ch, 8),
+        TexFormat::Dxt3 | TexFormat::Dxt5 => crop_bc(mip0, w, h, cw, ch, 16),
+        // Unsupported：不裁剪（上传侧也会拒绝）
+        TexFormat::Unsupported(_) => (w, h, mip0.to_vec()),
+    }
+}
+
+/// 非压缩格式按行裁剪：每行取 cw×bpp 字节、取 ch 行（内容在左上角）。
+fn crop_rows(mip0: &[u8], w: u32, h: u32, cw: u32, ch: u32, bpp: u32) -> (u32, u32, Vec<u8>) {
+    let row = cw as usize * bpp as usize;
+    let mut out = Vec::with_capacity(row * ch as usize);
+    for y in 0..ch {
+        let start = (y * w * bpp) as usize;
+        let end = start + row;
+        if end <= mip0.len() {
+            out.extend_from_slice(&mip0[start..end]);
+        }
+    }
+    (cw, ch, out)
+}
+
+/// 块压缩格式按 4×4 块裁剪：目标尺寸向上取整到 4 的倍数（BC 纹理尺寸约束），
+/// 截取左上角块阵列（内容区外的 1-3px 冗余行/列来自原内容边缘块，无害）。
+fn crop_bc(mip0: &[u8], w: u32, h: u32, cw: u32, ch: u32, bpp: u32) -> (u32, u32, Vec<u8>) {
+    let nw = ((cw + 3) / 4) * 4;
+    let nh = ((ch + 3) / 4) * 4;
+    let src_bw = (w + 3) / 4;
+    let dst_bw = nw / 4;
+    let dst_bh = nh / 4;
+    let row = dst_bw as usize * bpp as usize;
+    let mut out = Vec::with_capacity(row * dst_bh as usize);
+    for by in 0..dst_bh {
+        let start = (by * src_bw * bpp) as usize;
+        let end = start + row;
+        if end <= mip0.len() {
+            out.extend_from_slice(&mip0[start..end]);
+        }
+    }
+    (nw, nh, out)
+}
+
 pub fn parse_tex(data: &[u8]) -> Option<TexImage> {
     // 真实布局（tex-loader.ts 实测）："TEXV0005\0"9B + "TEXI0001\0"9B + 28B 头@18
     // + 容器头("TEXB0001|0002|0003|0004\0" 等 9B)@46 + imageCount(i32)@55 + 每 image: mipmapCount
@@ -238,6 +311,12 @@ pub fn parse_tex(data: &[u8]) -> Option<TexImage> {
         return None;
     }
     let format = u32_at(data, hdr);
+    // 2026-08-21 铺满修复：头部 @34/@38 = mapWidth/mapHeight（逻辑内容尺寸，对齐
+    // open-wallpaper-engine ImageHeader.mapWidth/mapHeight）；@22 = flags（sprite 位）。
+    // mip 记录尺寸是 2 的幂上传尺寸，内容在左上角、右侧/底部为填充 → crop_to_map 裁剪。
+    let flags = u32_at(data, hdr + 4);
+    let map_w = u32_at(data, hdr + 16);
+    let map_h = u32_at(data, hdr + 20);
     let container = &data[46..55];
     let v1 = container == b"TEXB0001\0";
     let v2 = container == b"TEXB0002\0";
@@ -356,10 +435,17 @@ pub fn parse_tex(data: &[u8]) -> Option<TexImage> {
             pos += bytes_len;
         }
     }
-    mip0.map(|(w, h, mip0)| TexImage {
-        width: w,
-        height: h,
-        format: format.into(),
-        mip0,
+    mip0.map(|(w, h, mip0)| {
+        let fmt = format.into();
+        // 2 的幂填充裁剪：mip 记录尺寸（上传尺寸）→ map 尺寸（逻辑内容）。
+        // 裁剪后 width/height 是内容尺寸，upload_texture 上传内容区（UV 0-1 = 内容，
+        // 填充区不再显示；image_half_ndc 的 size 缺省回退也用内容尺寸，修正画面压缩）。
+        let (cw, ch, cropped) = crop_to_map(&mip0, w, h, map_w, map_h, fmt, flags);
+        TexImage {
+            width: cw,
+            height: ch,
+            format: fmt,
+            mip0: cropped,
+        }
     })
 }

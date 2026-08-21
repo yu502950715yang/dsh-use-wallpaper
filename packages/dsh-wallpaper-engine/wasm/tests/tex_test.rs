@@ -1,5 +1,5 @@
 use std::io::Cursor;
-use we_scene_wasm::tex::{parse_tex, r8_to_rgba_white_alpha, TexFormat};
+use we_scene_wasm::tex::{crop_to_map, parse_tex, r8_to_rgba_white_alpha, TexFormat};
 
 const RGBA_LZ4: &[u8] = include_bytes!("fixtures/tex/rgba_lz4.tex");
 const DXT1: &[u8] = include_bytes!("fixtures/tex/dxt1.tex");
@@ -45,6 +45,85 @@ fn r8_to_rgba_white_alpha_expands_grayscale() {
 #[test]
 fn r8_to_rgba_white_alpha_empty_input() {
     assert_eq!(r8_to_rgba_white_alpha(&[]), Vec::<u8>::new());
+}
+
+// ===== 2 的幂填充裁剪（2026-08-21 铺满修复）=====
+// TEXV0005 头 28B @18：format@0 flags@4 texW@8 texH@12 mapW@16 mapH@20 unk@24；
+// mip 记录尺寸是上传尺寸（2 的幂），map 尺寸是逻辑内容（内容在 mip0 左上角）。
+// 构造 RGBA8 8×8 上传（map 6×5）：内容区像素 [x,y,0,255]，填充区（x≥6|y≥5）[255,255,255,0]。
+fn tex_rgba8_padded() -> Vec<u8> {
+    let mut v = Vec::new();
+    v.extend_from_slice(b"TEXV0005\0");
+    v.extend_from_slice(b"TEXI0001\0");
+    v.extend_from_slice(&0u32.to_le_bytes()); // format = RGBA8
+    v.extend_from_slice(&0u32.to_le_bytes()); // flags（非 sprite）
+    v.extend_from_slice(&8u32.to_le_bytes()); // texW（上传宽）
+    v.extend_from_slice(&8u32.to_le_bytes()); // texH（上传高）
+    v.extend_from_slice(&6u32.to_le_bytes()); // mapW（逻辑宽）
+    v.extend_from_slice(&5u32.to_le_bytes()); // mapH（逻辑高）
+    v.extend_from_slice(&0u32.to_le_bytes()); // unknown
+    v.extend_from_slice(b"TEXB0002\0");
+    v.extend_from_slice(&1u32.to_le_bytes()); // imageCount
+    v.extend_from_slice(&1u32.to_le_bytes()); // mipmapCount
+    v.extend_from_slice(&8u32.to_le_bytes()); // mip 宽
+    v.extend_from_slice(&8u32.to_le_bytes()); // mip 高
+    v.extend_from_slice(&0u32.to_le_bytes()); // isLZ4
+    v.extend_from_slice(&0u32.to_le_bytes()); // decompressedBytes
+    v.extend_from_slice(&256u32.to_le_bytes()); // bytesLen = 8×8×4
+    for y in 0..8u32 {
+        for x in 0..8u32 {
+            if x < 6 && y < 5 {
+                v.extend_from_slice(&[x as u8, y as u8, 0, 255]); // 内容区
+            } else {
+                v.extend_from_slice(&[255, 255, 255, 0]); // 2 的幂填充（黑透明）
+            }
+        }
+    }
+    v
+}
+
+#[test]
+fn parse_tex_crops_pow2_padding_to_map_size() {
+    // 上传 8×8（2 的幂）、map 6×5：parse_tex 必须裁剪到 6×5，填充区不得进入纹理
+    let img = parse_tex(&tex_rgba8_padded()).expect("应可解析");
+    assert_eq!(img.format, TexFormat::Rgba8888);
+    assert_eq!(img.width, 6);
+    assert_eq!(img.height, 5);
+    assert_eq!(img.mip0.len(), 6 * 5 * 4);
+    // 内容区左上角像素 [0,0,0,255]
+    assert_eq!(&img.mip0[0..4], &[0, 0, 0, 255]);
+    // 内容区右下角（x=5,y=4）像素 [5,4,0,255]
+    let last = (4 * 6 + 5) * 4;
+    assert_eq!(&img.mip0[last..last + 4], &[5, 4, 0, 255]);
+}
+
+#[test]
+fn crop_to_map_keeps_unpadded_and_sprite() {
+    // map ≥ mip（无填充）：原样保留
+    let data: Vec<u8> = (0..16).collect();
+    let (w, h, out) = crop_to_map(&data, 2, 2, 2, 2, TexFormat::Rgba8888, 0);
+    assert_eq!((w, h), (2, 2));
+    assert_eq!(out, data);
+    // sprite 标志（flags bit 2）：即使 mip > map 也不裁剪（精灵表保留完整纹理）
+    let data2: Vec<u8> = (0..64).collect();
+    let (w2, h2, out2) = crop_to_map(&data2, 4, 4, 2, 2, TexFormat::Rgba8888, 1 << 2);
+    assert_eq!((w2, h2), (4, 4));
+    assert_eq!(out2, data2);
+}
+
+#[test]
+fn crop_to_map_dxt1_crops_blocks() {
+    // DXT1（8B/块）：8×8 上传（4×4 块 = 16 块 × 8B = 128B），map 6×6 → 裁剪到 8×8？
+    // 不对——map 6×6 → ceil(6/4)×4 = 8？6/4 向上 = 2 块 = 8px > 6。用 map 4×4（1 块）：
+    // 8×8 上传（16 块）裁剪到 4×4（1 块 = 8B），内容取左上角块。
+    let mut blocks = Vec::new();
+    for i in 0..16u32 {
+        blocks.extend_from_slice(&[i as u8; 8]);
+    }
+    let (w, h, out) = crop_to_map(&blocks, 8, 8, 4, 4, TexFormat::Dxt1, 0);
+    assert_eq!((w, h), (4, 4)); // BC 纹理尺寸向上取整 4 倍数
+    assert_eq!(out.len(), 8); // 1 块
+    assert_eq!(out, vec![0u8; 8]); // 左上角块
 }
 
 // 构造与 make-tex.ts 的 TEXB0002 布局一致的单个 mipmap 容器（1x1），

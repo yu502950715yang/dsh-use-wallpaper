@@ -6,3 +6,6 @@ research/*.bmp
 
 # research 调研产物（截图/脚本/文档体积大，不入库）
 research/
+
+# playwright-cli 截图/日志目录
+.playwright-cli/
