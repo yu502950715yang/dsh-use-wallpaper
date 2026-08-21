@@ -2,6 +2,22 @@
 
 export type WallpaperKind = 'scene' | 'video' | 'web' | 'image' | 'unknown';
 
+// 路径探测结果（/wallpapers/probe）：Steam 库自动扫描的候选目录。
+// kind='workshop'：壁纸目录（steamapps/workshop/content/431960）；
+// kind='assets'：引擎目录（steamapps/common/wallpaper_engine）。
+export type WallpaperPathKind = 'workshop' | 'assets';
+
+export interface SteamPathCandidate {
+  path: string;
+  exists: boolean;   // 目录是否真实存在
+  kind: WallpaperPathKind;
+}
+
+export interface ProbeResult {
+  workshop: SteamPathCandidate[];
+  assets: SteamPathCandidate[];
+}
+
 export interface WallpaperInfo {
   id: string;                  // workshop id（目录名）
   title: string;

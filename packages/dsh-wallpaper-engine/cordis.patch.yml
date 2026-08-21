@@ -1,5 +1,6 @@
 - insert:
     - id: dsh-wallpaper-engine
       name: '@dsh-use/wallpaper-engine'
-      config:
-        wallpaperDir: 'D:/Steam/steamapps/workshop/content/431960'
+      # 2026-08-21：壁纸目录与引擎目录不再写死——由设置面板（设置 → 壁纸）配置，
+      # 支持自动探测（/wallpapers/probe）或手动填写；未配置时回退内置缺省路径。
+      # config 字段保留兼容：如需强制指定可在此覆盖（优先于缺省、低于用户设置）。

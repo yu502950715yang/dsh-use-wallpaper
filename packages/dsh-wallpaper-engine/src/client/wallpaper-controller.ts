@@ -23,6 +23,12 @@ export function createWallpaperController(
 
   async function select(id: string): Promise<void> {
     const gen = ++selectGeneration;
+    // 取消壁纸：空 id 直接清空背景层（恢复默认背景，露出 DSH 原生背景）。
+    // 同步生效并递增 generation，使进行中的旧选择异步回调被竞态防护丢弃。
+    if (id === '') {
+      layer.showNone();
+      return;
+    }
     // 列表未加载时自动拉取（show() 委托 select 的前提）；加载失败则静默放弃本次选择
     if (list.length === 0) {
       try {

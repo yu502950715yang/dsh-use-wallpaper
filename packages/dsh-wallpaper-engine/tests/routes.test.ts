@@ -60,6 +60,7 @@ describe('registerWallpaperRoutes', () => {
       { kind: 'prefix', path: '/wallpapers/static' },
       { kind: 'prefix', path: '/wallpapers/web' },
       { kind: 'exact', path: '/wallpapers/particle-texture' },
+      { kind: 'exact', path: '/wallpapers/probe' },
     ]);
   });
   it('serves list route returning scanned wallpapers', async () => {

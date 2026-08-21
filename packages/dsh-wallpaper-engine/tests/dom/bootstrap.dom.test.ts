@@ -1,18 +1,16 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
-// I1/I2/I6 集成测试：client bootstrap 的挂载行为。
+// I1/I6/S1 集成测试：client bootstrap 的挂载行为。
 // - I1: mount 读回设置后恢复已保存的选中壁纸（load + select）
-// - I2: 注入浮动按钮（.wp-fab）与面板容器（.wp-picker-panel），点击 toggle picker
 // - I6: show(scene) 委托 controller.select → 渲染失败回退 preview 图
+// - S1: 注册 DSH 设置对话框侧边栏 "壁纸" 菜单（settings.section slot），不再注入 FAB
 //
-// index.ts 在 import 时若 window.__ModuleLoader__ 存在则交给 loader 而非自动
-// bootstrap —— 借此捕获 factory 手动控制挂载时机。
+// bundle 的模块注册由构建产物 wrapper（window.__ModuleLoader__.load）完成，
+// 源码 index.ts 只导出 apply/bootstrap —— 测试直接调用 apply(ctx)。
 
 vi.mock('../../src/client/scene-renderer.js', () => ({
   renderScene: vi.fn(async () => false), // scene 渲染失败 → 触发 preview 回退（I6 路径）
 }));
-
-let capturedFactory: (() => unknown) | null = null;
 
 function jsonResp(body: unknown) {
   return { ok: true, status: 200, json: async () => body } as any;
@@ -39,26 +37,34 @@ function stubFetch(list: unknown[], settingsValue: unknown) {
   return fetchMock;
 }
 
-async function boot(): Promise<any> {
+function mockSlotsCtx() {
+  const sections: Array<{ opts: any; Component: unknown }> = [];
+  const ctx = {
+    slots: {
+      inject: (name: string, fn: () => any) => {
+        if (name === 'settings.section') sections.push(fn());
+      },
+      register: (opts: any, Component: unknown) => ({ opts, Component }),
+    },
+  };
+  return { ctx, sections };
+}
+
+async function boot(ctx?: unknown): Promise<any> {
   document.body.innerHTML = '';
-  capturedFactory = null;
-  (window as any).__ModuleLoader__ = { load: (spec: any) => { capturedFactory = spec.factory; } };
   vi.resetModules();
-  await import('../../src/client/index.js');
-  const factory = capturedFactory!;
-  const api = factory() as { apply: () => void };
-  api.apply();
+  const mod = await import('../../src/client/index.js');
+  mod.apply(ctx);
   if (document.readyState === 'loading') document.dispatchEvent(new Event('DOMContentLoaded'));
   return (window as any).__wallpaperEngine;
 }
 
-const EMPTY_SETTINGS = { selectedWallpaperId: '', overlayOpacity: 0.35, blurEnabled: false, blurRadius: 12, kenBurns: true };
+const EMPTY_SETTINGS = { selectedWallpaperId: '', wallpaperDir: '', weAssetsDir: '', overlayOpacity: 0.35, blurEnabled: false, blurRadius: 12, kenBurns: true };
 
 beforeEach(() => { document.body.innerHTML = ''; });
 afterEach(() => {
   vi.unstubAllGlobals();
   delete (window as any).__wallpaperEngine;
-  delete (window as any).__ModuleLoader__;
 });
 
 describe('client bootstrap 集成', () => {
@@ -84,26 +90,19 @@ describe('client bootstrap 集成', () => {
     expect(img).toBeNull();
     expect(fetchMock.mock.calls.filter((c) => c[0] === '/wallpapers/list')).toHaveLength(0);
   });
-  it('I2: bootstrap 注入浮动按钮，点击展开 picker 面板', async () => {
+  it('S1: bootstrap 注册设置菜单 settings.section（壁纸），不再注入 FAB', async () => {
     stubFetch(
       [{ id: '1', title: 'A', type: 'image', hasScene: false, hasPreviewGif: false, previewUrl: '/p1' }],
       EMPTY_SETTINGS,
     );
-    await boot();
-    const fab = document.querySelector('.wp-fab') as HTMLButtonElement | null;
-    expect(fab).not.toBeNull();
-    const panel = document.querySelector('.wp-picker-panel') as HTMLElement | null;
-    expect(panel).not.toBeNull();
-    expect(panel!.hidden).toBe(true); // 默认收起
-    fab!.click();
-    await vi.waitFor(() => {
-      expect((document.querySelector('.wp-picker-panel') as HTMLElement).hidden).toBe(false);
-    });
-    await vi.waitFor(() => {
-      expect(document.querySelectorAll('.wp-picker-panel .wp-thumb').length).toBe(1);
-    });
-    fab!.click(); // 再点收起
-    expect((document.querySelector('.wp-picker-panel') as HTMLElement).hidden).toBe(true);
+    const { ctx, sections } = mockSlotsCtx();
+    await boot(ctx);
+    expect(sections.length).toBe(1);
+    expect(sections[0]!.opts.id).toBe('wallpaper-engine');
+    expect(sections[0]!.opts.label()).toBe('壁纸');
+    expect(sections[0]!.Component).toBeTruthy(); // WallpaperSettingsSection
+    // 不再注入浮动按钮
+    expect(document.querySelector('.wp-fab')).toBeNull();
   });
   it('I6: show(scene) 委托 controller，渲染失败回退 preview 图', async () => {
     stubFetch(

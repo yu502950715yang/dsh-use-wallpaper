@@ -6,9 +6,9 @@ import type { ClientSettings } from './types.js';
 
 const NS = 'wallpaper-engine';
 
-const DEFAULTS: ClientSettings = {
-  selectedWallpaperId: '', overlayOpacity: 0.35,
-  blurEnabled: false, blurRadius: 12, kenBurns: true,
+export const DEFAULTS: ClientSettings = {
+  selectedWallpaperId: '', wallpaperDir: '', weAssetsDir: '',
+  overlayOpacity: 0.35, blurEnabled: false, blurRadius: 12, kenBurns: true,
 };
 
 function newRpcId(): string {

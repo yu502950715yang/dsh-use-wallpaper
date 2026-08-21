@@ -3,22 +3,22 @@ import { createBackgroundLayer } from './background-layer.js';
 import { createWallpaperController } from './wallpaper-controller.js';
 import { renderScene } from './scene-renderer.js';
 import { createWasmSceneRenderer, createFallbackSceneRenderer } from './wasm-renderer.js';
-import { mountPicker as mountPickerUI } from './picker.js';
-import { readClientSettings, writeClientSettings, getUserPropertyValue } from './settings.js';
+import { WallpaperSettingsSection, setWallpaperSelectHandler } from './settings-section.js';
+import { readClientSettings, writeClientSettings, getUserPropertyValue, DEFAULTS } from './settings.js';
 import type { BackgroundPlan, ClientSettings } from './types.js';
 
 declare global {
   interface Window { __ModuleLoader__?: any; __DSH_BOOT__?: any; }
 }
 
-export function bootstrap(): void {
+// 设置对话框侧边栏 "壁纸" 菜单项 id（slots settings.section 注册）
+export const SETTINGS_SECTION_ID = 'wallpaper-engine';
+
+export function bootstrap(ctx?: any): void {
   injectWallpaperStyles();
   let layer: ReturnType<typeof createBackgroundLayer> | null = null;
   let controller: ReturnType<typeof createWallpaperController> | null = null;
-  let settings: ClientSettings = {
-    selectedWallpaperId: '', overlayOpacity: 0.35,
-    blurEnabled: false, blurRadius: 12, kenBurns: true,
-  };
+  let settings: ClientSettings = { ...DEFAULTS };
   const applySettingsToLayer = (s: ClientSettings) => {
     if (!layer) return;
     layer.setOverlayOpacity(s.overlayOpacity);
@@ -26,6 +26,11 @@ export function bootstrap(): void {
     if (!s.kenBurns) {
       layer.root.querySelectorAll('.wp-kenburns').forEach((el) => el.classList.remove('wp-kenburns'));
     }
+  };
+  const selectWallpaper = (id: string) => {
+    settings = { ...settings, selectedWallpaperId: id };
+    void controller!.select(id).then(() => applySettingsToLayer(settings));
+    void writeClientSettings({ selectedWallpaperId: id });
   };
   const mount = () => {
     if (layer) return;
@@ -47,28 +52,8 @@ export function bootstrap(): void {
       //   3. wasm 与 JS 都渲染失败（零对象等，resolve false）→ controller 统一走 preview 图回退。
       // wasm-renderer 保持单一职责：WebGPU 可用时尝试 wasm，失败返回 false 由组合层降级。
     });
-    // I2：浮动入口按钮 + picker 面板（不依赖 DSH 设置面板 slot API，避免未知集成风险）
-    const fab = document.createElement('button');
-    fab.type = 'button';
-    fab.className = 'wp-fab';
-    fab.title = '切换壁纸';
-    fab.textContent = 'WP';
-    const panel = document.createElement('div');
-    panel.className = 'wp-picker-panel';
-    panel.hidden = true;
-    document.body.append(fab, panel);
-    fab.addEventListener('click', () => {
-      panel.hidden = !panel.hidden;
-      if (panel.hidden) return;
-      void mountPickerUI(panel, controller!, {
-        currentId: settings.selectedWallpaperId,
-        onSelect: (id) => {
-          settings = { ...settings, selectedWallpaperId: id };
-          void controller!.select(id).then(() => applySettingsToLayer(settings));
-          void writeClientSettings({ selectedWallpaperId: id });
-        },
-      });
-    });
+    // 设置面板（settings-section）的壁纸切换/取消经共享 handler 委托 controller
+    setWallpaperSelectHandler((id: string) => selectWallpaper(id));
     // 读回已保存设置并应用到 layer（opacity/blur/kenBurns）
     void readClientSettings().then((s) => {
       settings = s;
@@ -87,9 +72,14 @@ export function bootstrap(): void {
   } else {
     mount();
   }
-  // 暴露渲染 API（picker 与设置面板调用）
+  // 暴露渲染 API（设置面板与外部调用）
   (window as any).__wallpaperEngine = {
     mount,
+    select(id: string) {
+      mount();
+      if (!controller) return;
+      void controller.select(id);
+    },
     show(plan: BackgroundPlan, opts?: { opacity?: number; blur?: boolean; blurRadius?: number }) {
       mount();
       if (!layer) return;
@@ -108,35 +98,28 @@ export function bootstrap(): void {
       if (opts?.opacity !== undefined) layer.setOverlayOpacity(opts.opacity);
       if (opts?.blur !== undefined) layer.setBlur(opts.blur, opts.blurRadius ?? 12);
     },
-    mountPicker(root: HTMLElement) {
-      mount();
-      if (!layer || !controller) return;
-      return mountPickerUI(root, controller, {
-        currentId: settings.selectedWallpaperId,
-        onSelect: (id) => {
-          settings = { ...settings, selectedWallpaperId: id };
-          void controller!.select(id).then(() => applySettingsToLayer(settings));
-          void writeClientSettings({ selectedWallpaperId: id });
-        },
-      });
-    },
   };
+  // 注册 DSH 设置对话框侧边栏 "壁纸" 菜单（settings.section slot）：
+  // 菜单项 id/order/label，内容组件 WallpaperSettingsSection（网格/取消/路径配置）。
+  // ctx.slots 由 dsh-client-runtime 的 SlotRegistry 提供（client 插件共享根上下文）。
+  if (ctx?.slots?.inject && ctx?.slots?.register) {
+    ctx.slots.inject('settings.section', () => ctx.slots.register({
+      name: 'settings.section',
+      id: SETTINGS_SECTION_ID,
+      order: 20,
+      label: () => '壁纸',
+    }, WallpaperSettingsSection));
+  }
 }
 
 // Cordis 客户端插件入口：client loader 期待模块导出「函数」或「含 apply 的对象」
 // （与官方 dsh-client-* 插件一致）。apply 在 fiber 应用阶段被调用，触发 bootstrap。
-function apply(): void {
-  bootstrap();
+// 注意：bundle 的注册由构建产物 wrapper（window.__ModuleLoader__.load）完成，
+// 本文件不得再调用 loader.load —— 否则 factory 内二次注册同 id（duplicate registration）。
+export function apply(ctx: any): void {
+  bootstrap(ctx);
 }
 
-if (typeof window !== 'undefined') {
-  const loader = window.__ModuleLoader__;
-  if (loader?.load) {
-    loader.load({
-      id: '@dsh-use/wallpaper-engine',
-      factory: () => ({ apply }),
-    });
-  } else {
-    bootstrap();
-  }
-}
+// Cordis 依赖声明：apply 通过 ctx.slots 注册设置菜单（settings.section slot），
+// 必须 inject 'slots' 服务（官方 client 插件同样导出 inject 数组）。
+export const inject = ['slots'];

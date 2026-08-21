@@ -7,6 +7,9 @@ export type BackgroundPlan =
 
 export interface ClientSettings {
   selectedWallpaperId: string;
+  // 壁纸目录与引擎目录（空 = 未配置，回退 config/缺省）；设置面板可写
+  wallpaperDir: string;
+  weAssetsDir: string;
   overlayOpacity: number;
   blurEnabled: boolean;
   blurRadius: number;

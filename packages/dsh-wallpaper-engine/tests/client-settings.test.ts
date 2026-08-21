@@ -9,8 +9,8 @@ function jsonResponse(body: unknown, ok = true) {
 }
 
 const FULL_DEFAULTS = {
-  selectedWallpaperId: '', overlayOpacity: 0.35,
-  blurEnabled: false, blurRadius: 12, kenBurns: true,
+  selectedWallpaperId: '', wallpaperDir: '', weAssetsDir: '',
+  overlayOpacity: 0.35, blurEnabled: false, blurRadius: 12, kenBurns: true,
 };
 
 afterEach(() => { vi.unstubAllGlobals(); });
@@ -37,7 +37,7 @@ describe('readClientSettings (settings RPC)', () => {
               { ns: 'other', value: { x: 1 } },
               {
                 ns: 'wallpaper-engine',
-                value: { selectedWallpaperId: '42', overlayOpacity: 0.5, blurEnabled: true, blurRadius: 20, kenBurns: false },
+                value: { selectedWallpaperId: '42', wallpaperDir: 'D:/Steam/w', weAssetsDir: 'D:/WE', overlayOpacity: 0.5, blurEnabled: true, blurRadius: 20, kenBurns: false },
               },
             ],
           },
@@ -46,7 +46,7 @@ describe('readClientSettings (settings RPC)', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     const s = await readClientSettings();
-    expect(s).toEqual({ selectedWallpaperId: '42', overlayOpacity: 0.5, blurEnabled: true, blurRadius: 20, kenBurns: false });
+    expect(s).toEqual({ selectedWallpaperId: '42', wallpaperDir: 'D:/Steam/w', weAssetsDir: 'D:/WE', overlayOpacity: 0.5, blurEnabled: true, blurRadius: 20, kenBurns: false });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
   it('命名空间缺失 → 回退默认值', async () => {

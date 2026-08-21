@@ -16,14 +16,18 @@ describe('styles 主题适配', () => {
     // 浅色主题下文字按近白底调校，壁纸透出后失去对比 → 压暗整条灰阶（竞品 1396-1403 同款）
     expect(WALLPAPER_CSS).toMatch(/body\[data-we-wallpaper\]:not\(\[data-ds-dark-theme\]\)\s*{[^}]*--dsw-alias-label-primary/);
   });
-  it('插件 UI 用 CSS 变量而非硬编码深色（picker）', () => {
-    expect(WALLPAPER_CSS).toMatch(/\.wp-picker\s*{[^}]*var\(--wp-panel-bg/);
+  it('设置面板 UI 用 CSS 变量而非硬编码深色（wss-root）', () => {
+    expect(WALLPAPER_CSS).toMatch(/\.wss-root\s*{[^}]*var\(--dsw-alias-label-primary/);
   });
-  it('插件 UI 用 CSS 变量而非硬编码深色（fab）', () => {
-    expect(WALLPAPER_CSS).toMatch(/\.wp-fab\s*{[^}]*var\(--wp-panel-bg/);
+  it('设置面板按钮用 CSS 变量而非硬编码深色（wss-cancel 分组）', () => {
+    expect(WALLPAPER_CSS).toMatch(/\.wss-cancel[^{]*\{[^}]*var\(--dsw-alias-border-l2/);
   });
   it('缩略图文字颜色用 CSS 变量', () => {
     expect(WALLPAPER_CSS).toMatch(/\.wp-thumb\s*{[^}]*var\(--wp-text/);
+  });
+  it('不再包含已移除的 FAB / picker 面板样式', () => {
+    expect(WALLPAPER_CSS).not.toMatch(/\.wp-fab/);
+    expect(WALLPAPER_CSS).not.toMatch(/\.wp-picker-panel/);
   });
   it('背景透明化收敛到有壁纸时（body[data-we-wallpaper] 作用域）', () => {
     // 原实现无条件 body{background:transparent!important}，浅色主题无壁纸时也被破坏 →

@@ -2,9 +2,18 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { scanWallpapers } from './scanner.js';
 import { PkgReader } from './pkg-reader.js';
+import { probeSteamPaths, readSteamInstallPathFromRegistry, DEFAULT_STEAM_ROOTS } from './steam-paths.js';
 import type { WallpaperInfo } from '../shared/types.js';
 
-export interface WallpaperRoutesOptions { wallpaperDir: string; staticDir?: string; weAssetsDir?: string }
+export interface WallpaperRoutesOptions {
+  /** 兼容旧调用：静态 wallpaperDir（无 state 时使用） */
+  wallpaperDir?: string;
+  staticDir?: string;
+  /** 兼容旧调用：静态 weAssetsDir（无 state 时使用） */
+  weAssetsDir?: string;
+  /** 可变运行状态：每次请求读取实时值（host/index.ts 维护，settings 热更新） */
+  state?: { wallpaperDir: string; weAssetsDir: string };
+}
 
 // I4：PkgReader 实例缓存 —— scene asset 每请求整包 readFileSync 成本高，
 // 按 (path, mtime) 缓存，mtime 变化才重建；Map 超出上限时淘汰最旧一项。
@@ -79,13 +88,15 @@ function parseUrl(req: any): { segs: string[]; search: URLSearchParams } {
 export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions): void {
   ctx.inject(['webServer'], (httpCtx: any) => {
     const server = httpCtx.webServer;
-    const { wallpaperDir } = opts;
+    // 每次请求解析实时目录：state（热更新）优先，兼容旧静态 wallpaperDir 参数
+    const dir = () => opts.state?.wallpaperDir ?? opts.wallpaperDir ?? '';
+    const assetsDir = () => opts.state?.weAssetsDir ?? opts.weAssetsDir;
 
     server.register({
       kind: 'exact', path: '/wallpapers/list',
       handler: async (_req: any, res: any) => {
         // WebRoute 不区分 HTTP 方法（浏览器仅用 GET），此处不校验方法
-        const list = await scanWallpapers(wallpaperDir);
+        const list = await scanWallpapers(dir());
         json(res, 200, list);
       },
     });
@@ -100,7 +111,7 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
         const action = segs[3];
         if (!isSafeToken(id)) return json(res, 400, { error: 'bad id' });
         if (action === 'preview') {
-          const base = join(wallpaperDir, id);
+          const base = join(dir(), id);
           for (const ext of ['.gif', '.jpg', '.jpeg', '.png']) {
             const p = join(base, 'preview' + ext);
             if (existsSync(p)) {
@@ -113,12 +124,12 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
         } else if (action === 'file') {
           // file 名来自 project.json（扫描结果），这里按 id 读取 project.json 获得
           try {
-            const pj = JSON.parse(readFileSync(join(wallpaperDir, id, 'project.json'), 'utf8'));
+            const pj = JSON.parse(readFileSync(join(dir(), id, 'project.json'), 'utf8'));
             const file = String(pj.file ?? '');
             if (!file || file.includes('..') || file.includes('/') || file.includes('\\')) {
               return json(res, 400, { error: 'bad file' });
             }
-            const p = join(wallpaperDir, id, file);
+            const p = join(dir(), id, file);
             if (!existsSync(p)) return json(res, 404, { error: 'no file' });
             const body = readFileSync(p);
             const ext = '.' + file.split('.').pop()?.toLowerCase();
@@ -149,7 +160,7 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
         if (!name || !/^[\p{L}\p{N}\p{P} ._\/-]+$/u.test(name) || name.includes('..')) {
           return json(res, 400, { error: 'bad name' });
         }
-        const pkgPath = join(wallpaperDir, id, 'scene.pkg');
+        const pkgPath = join(dir(), id, 'scene.pkg');
         if (!existsSync(pkgPath)) return json(res, 404, { error: 'no scene pkg' });
         try {
           const reader = getPkgReader(pkgPath);
@@ -220,7 +231,7 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
         if (rest.some((s) => !s || s === '..' || s.includes('..') || s.includes('\\') || s.includes(':'))) {
           return json(res, 400, { error: 'bad path' });
         }
-        const base = join(wallpaperDir, id);
+        const base = join(dir(), id);
         const rel = rest.length === 0 ? 'index.html' : rest.join('/');
         const p = join(base, rel);
         // 二次校验：解析结果必须位于壁纸目录内（防软链/unicode 变体等绕过）
@@ -251,13 +262,13 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
       // （weAssetsDir，可配置）提供该纹理原始字节（TEXV0005，client 侧现有解码管线消费）。
       handler: (_req: any, res: any) => {
         const { search } = parseUrl(_req);
-        if (!opts.weAssetsDir) return json(res, 500, { error: 'no we assets dir' });
+        if (!assetsDir()) return json(res, 500, { error: 'no we assets dir' });
         const name = search.get('name') ?? '';
         // name = 材质 textures 路径（含 '/' 子目录），白名单放行字母/数字/标点/空格/._-/斜杠
         if (!name || !/^[\p{L}\p{N}\p{P} ._\/-]+$/u.test(name) || name.includes('..')) {
           return json(res, 400, { error: 'bad name' });
         }
-        const base = resolve(opts.weAssetsDir, 'assets', 'materials');
+        const base = resolve(assetsDir()!, 'assets', 'materials');
         const p = resolve(base, name + '.tex');
         if (p !== base && !p.startsWith(base + sep)) return json(res, 400, { error: 'bad path' });
         if (!existsSync(p) || !statSync(p).isFile()) return json(res, 404, { error: 'no such texture' });
@@ -272,6 +283,27 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
         } catch {
           json(res, 500, { error: 'internal error' });
         }
+      },
+    });
+
+    server.register({
+      kind: 'exact', path: '/wallpapers/probe',
+      // 2026-08-21（路径可配置化）：自动探测 Steam 安装路径（注册表）+ 全部库
+      // （libraryfolders.vdf）+ 常见根，生成壁纸目录与引擎目录候选（带存在性标记）。
+      // 设置面板展示候选，用户点选后写入 settings.wallpaperDir/weAssetsDir（热更新）。
+      handler: (_req: any, res: any) => {
+        const result = probeSteamPaths({
+          steamPath: readSteamInstallPathFromRegistry(),
+          readVdf: (install) => {
+            try {
+              return readFileSync(join(install, 'libraryfolders.vdf'), 'utf8');
+            } catch {
+              return undefined;
+            }
+          },
+          extraRoots: [...DEFAULT_STEAM_ROOTS],
+        });
+        json(res, 200, result);
       },
     });
   });

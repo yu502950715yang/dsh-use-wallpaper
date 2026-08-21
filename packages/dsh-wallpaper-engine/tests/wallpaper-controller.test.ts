@@ -49,4 +49,19 @@ describe('createWallpaperController', () => {
     await c.select('3');
     expect(layer.calls.at(-1)).toBe('image:/p3');
   });
+  it('select empty id -> 取消壁纸（showNone 恢复默认背景）', async () => {
+    const layer = fakeLayer();
+    const c = createWallpaperController(layer, { fetchList: async () => list as any });
+    await c.load();
+    await c.select('');
+    expect(layer.calls.at(-1)).toBe('none');
+  });
+  it('select empty id 在列表未加载时也能取消（不依赖 fetchList）', async () => {
+    const layer = fakeLayer();
+    let fetched = false;
+    const c = createWallpaperController(layer, { fetchList: async () => { fetched = true; return list as any; } });
+    await c.select('');
+    expect(layer.calls.at(-1)).toBe('none');
+    expect(fetched).toBe(false);
+  });
 });

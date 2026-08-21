@@ -7,6 +7,8 @@ describe('wallpaper settings schema', () => {
     const value = WallpaperSettingsSchema({});
     expect(value).toMatchObject({
       selectedWallpaperId: '',
+      wallpaperDir: '',
+      weAssetsDir: '',
       overlayOpacity: 0.35,
       blurEnabled: false,
       blurRadius: 12,

@@ -7,7 +7,13 @@ describe('host entry', () => {
   });
   it('apply registers the settings namespace when settings is injected', () => {
     const registered: string[] = [];
-    const fakeSettings = { register: (ns: string) => registered.push(ns) };
+    // register 返回 scope（get/watch）—— apply 用它做初始应用与热更新
+    const fakeSettings = {
+      register: (ns: string) => {
+        registered.push(ns);
+        return { get: () => ({}), watch: () => () => {} };
+      },
+    };
     // apply 现同时挂载壁纸路由（inject webServer），fake 按服务名提供对应服务
     const ctx = {
       inject: (svc: string[], fn: (c: any) => void) => {

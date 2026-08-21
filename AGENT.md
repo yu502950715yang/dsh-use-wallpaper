@@ -4,7 +4,7 @@
 
 ## 1. 项目概述
 
-**dsh-use-wallpaper** 是一个 DSH（DeepSeek Harness）插件仓库，为 DSH Web GUI 提供 **Wallpaper Engine 壁纸背景**：扫描 Steam workshop 壁纸目录（`D:/Steam/steamapps/workshop/content/431960`），在浏览器中渲染 scene 壁纸 / 播放视频壁纸 / 加载 web 壁纸，其余回退 preview 图 + Ken Burns。
+**dsh-use-wallpaper** 是一个 DSH（DeepSeek Harness）插件仓库，为 DSH Web GUI 提供 **Wallpaper Engine 壁纸背景**：扫描 Steam workshop 壁纸目录（默认 `D:/Steam/steamapps/workshop/content/431960`，2026-08-21 起不再写死——设置 → 壁纸 面板可自动探测（注册表 + libraryfolders.vdf + 常见路径，见 `src/host/steam-paths.ts`）或手动填写，settings 热更新），在浏览器中渲染 scene 壁纸 / 播放视频壁纸 / 加载 web 壁纸，其余回退 preview 图 + Ken Burns。壁纸切换入口在 **DSH 设置对话框侧边栏「壁纸」菜单**（client 经 `settings.section` slot 注册，见 `src/client/settings-section.tsx`）。
 
 - 仓库形态：**monorepo**（npm workspaces），核心包 `packages/dsh-wallpaper-engine`（`@dsh-use/wallpaper-engine`）。
 - 技术栈：Node ≥ 18、TypeScript strict、ESM-only；浏览器侧 Three.js（WebGL）+ Rust/WebGPU（wasm）；宿主侧 Cordis 插件体系。
@@ -30,8 +30,8 @@ preview 图回退（Ken Burns）
 
 ### 2.2 host / client / shared 分层（`src/` 下）
 
-- `src/host/`：Node 侧（Cordis 插件）。`scanner.ts` 扫描壁纸目录 → `WallpaperInfo`；`pkg-reader.ts` 解包 PKGV0001；`routes.ts` 注册 HTTP 路由；`settings.ts` 插件设置。
-- `src/client/`：浏览器侧（esbuild 打包为 `dist/client.js`）。`index.ts` 入口（bootstrap + `window.__wallpaperEngine`）；`wallpaper-controller.ts` 选择/竞态/回退链；`scene-renderer.ts` Three.js 渲染器；`wasm-renderer.ts` wasm 胶水 + 回退组合；`effect-runner.ts` 效果链执行；`particles.ts` 粒子模拟 v1；`tex-loader.ts` TEXV0005 解码；`background-layer.ts` / `picker.ts` / `settings.ts` / `styles.ts`。
+- `src/host/`：Node 侧（Cordis 插件）。`scanner.ts` 扫描壁纸目录 → `WallpaperInfo`；`steam-paths.ts` Steam 目录自动探测（注册表 SteamPath + libraryfolders.vdf + 常见根，`/wallpapers/probe`）；`pkg-reader.ts` 解包 PKGV0001；`routes.ts` 注册 HTTP 路由（读 `WallpaperRuntimeState` 可变目录，settings 热更新）；`settings.ts` 插件设置（含 wallpaperDir/weAssetsDir，空 = 回退 config → 缺省）。
+- `src/client/`：浏览器侧（esbuild 打包为 `dist/client.js`，external react 等 DSH 共享模块）。`index.ts` 入口（bootstrap + `window.__wallpaperEngine` + 注册设置 `settings.section` 菜单）；`settings-section.tsx` 设置面板（壁纸网格/取消/路径配置）；`wallpaper-controller.ts` 选择/竞态/回退链；`scene-renderer.ts` Three.js 渲染器；`wasm-renderer.ts` wasm 胶水 + 回退组合；`effect-runner.ts` 效果链执行；`particles.ts` 粒子模拟 v1；`tex-loader.ts` TEXV0005 解码；`background-layer.ts` / `settings.ts` / `styles.ts`。
 - `src/shared/`：跨 host/client 类型（`WallpaperInfo`、`SceneDescription`、`SceneObject` 等）。
 - `src/client/shader/`：WE shader 方言转译层（`effect-chain.ts` 解析、`shader-preprocessor.ts` 预处理、`uniform-binder.ts`、`we-headers.ts` 内置头）。
 

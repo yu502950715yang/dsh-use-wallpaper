@@ -64,16 +64,36 @@ body[data-ds-dark-theme][data-we-wallpaper]{
 }
 
 /* ── 插件 UI 组件（变量驱动，随主题） ── */
-.wp-picker{position:fixed;right:16px;top:16px;z-index:100;width:224px;max-height:80vh;overflow-y:auto;background:var(--wp-panel-bg);border:1px solid var(--wp-panel-border);border-radius:12px;padding:12px;backdrop-filter:blur(8px)}
 .wp-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
 .wp-thumb{position:relative;display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px;background:transparent;border:1px solid var(--wp-panel-border);border-radius:10px;cursor:pointer;color:var(--wp-text);font:inherit}
 .wp-thumb img{width:96px;height:96px;object-fit:cover;border-radius:8px;display:block}
 .wp-thumb-title{font-size:12px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .wp-thumb.wp-selected{border-color:var(--wp-accent);box-shadow:0 0 0 1px var(--wp-accent)}
 .wp-badge{position:absolute;top:2px;right:2px;font-size:9px;line-height:1;padding:2px 4px;border-radius:4px;background:var(--wp-badge-bg);color:var(--wp-badge-fg)}
-.wp-fab{position:fixed;right:16px;bottom:16px;z-index:120;width:44px;height:44px;border-radius:50%;border:1px solid var(--wp-panel-border);background:var(--wp-panel-bg);color:var(--wp-text);font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.35);backdrop-filter:blur(8px)}
-.wp-fab:hover{filter:brightness(1.1)}
-.wp-picker-panel{position:fixed;right:16px;bottom:72px;top:auto;left:auto;z-index:110}
+
+/* ── 设置对话框 "壁纸" 面板（settings-section，用 DSH 主题变量） ── */
+.wss-root{display:flex;flex-direction:column;gap:14px;color:var(--dsw-alias-label-primary,var(--wp-text));font-size:13px}
+.wss-hint{color:var(--dsw-alias-label-secondary,var(--wp-text));margin:0;font-size:12px;line-height:1.6}
+.wss-current{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px}
+.wss-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px;max-height:280px;overflow-y:auto;padding:2px}
+.wss-thumb{position:relative;display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px;background:var(--dsw-alias-bg-layer-3,transparent);border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));border-radius:10px;cursor:pointer;color:var(--dsw-alias-label-primary,var(--wp-text));font:inherit;min-width:0}
+.wss-thumb img{width:84px;height:84px;object-fit:cover;border-radius:8px;display:block}
+.wss-thumb .wss-no-preview{width:84px;height:84px;display:flex;align-items:center;justify-content:center;border-radius:8px;background:var(--dsw-alias-bg-module-platform,rgba(0,0,0,.08));font-size:11px;color:var(--dsw-alias-label-tertiary,var(--wp-text))}
+.wss-thumb-title{font-size:12px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wss-thumb.wss-selected{border-color:var(--wp-accent);box-shadow:0 0 0 1px var(--wp-accent)}
+.wss-badge{position:absolute;top:2px;right:2px;font-size:9px;line-height:1;padding:2px 4px;border-radius:4px;background:var(--wp-badge-bg);color:var(--wp-badge-fg)}
+.wss-cancel,.wss-save-dirs,.wss-probe,.wss-adopt{border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;padding:6px 12px;font:inherit;font-size:12px;cursor:pointer}
+.wss-cancel:hover,.wss-save-dirs:hover,.wss-probe:hover,.wss-adopt:hover{filter:brightness(1.08)}
+.wss-dirs h4{margin:10px 0 6px;font-size:13px}
+.wss-dir-row{display:flex;flex-direction:column;gap:4px;margin-bottom:8px;font-size:12px;color:var(--dsw-alias-label-secondary,var(--wp-text))}
+.wss-dir-row input{border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;padding:6px 10px;font:inherit;font-size:12px}
+.wss-dir-actions{display:flex;gap:8px}
+.wss-probe-result{border-top:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));padding-top:10px;margin-top:4px}
+.wss-candidate{display:flex;align-items:center;gap:8px;padding:4px 0}
+.wss-candidate-path{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--dsw-alias-label-secondary,var(--wp-text))}
+.wss-exists{color:var(--dsw-alias-state-success-primary,#4caf50);font-size:11px;white-space:nowrap}
+.wss-missing{color:var(--dsw-alias-label-tertiary,var(--wp-text));font-size:11px;white-space:nowrap}
+.wss-message{margin:0;font-size:12px;color:var(--dsw-alias-label-secondary,var(--wp-text))}
 `;
 export const WALLPAPER_CSS = CSS;
 export function injectWallpaperStyles(): void {

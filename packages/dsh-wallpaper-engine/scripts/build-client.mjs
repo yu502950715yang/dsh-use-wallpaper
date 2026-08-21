@@ -1,19 +1,53 @@
 import { build } from 'esbuild';
-import { copyFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-await build({
+// 2026-08-21（设置面板集成）：client 依赖 DSH 共享模块（React、react-dom 等），
+// 构建时标记 external，产物保留 require(...) 调用——运行时由
+// window.__ModuleLoader__ 的 factory(require) 解析（与官方 client 插件一致）。
+const EXTERNAL = [
+  'react',
+  'react-dom',
+  'react/jsx-runtime',
+];
+
+// DSH client 插件 bundle 形态：window.__ModuleLoader__.load({ id, factory })，
+// factory 接收同步 require；module/exports 在 factory 作用域内定义，
+// esbuild CJS 产物的 module.exports 赋值即模块导出。
+const WRAP_HEAD = `window.__ModuleLoader__.load({
+\tid: '@dsh-use/wallpaper-engine',
+\tfactory: (require) => {
+\t\tvar module = { exports: {} };
+\t\tvar exports = module.exports;
+\t\tObject.defineProperty(exports, Symbol.toStringTag, { value: 'Module' });
+`;
+const WRAP_TAIL = `
+\t\treturn module.exports;
+\t}
+});
+`;
+
+const result = await build({
   entryPoints: ['src/client/index.ts'],
   bundle: true,
-  format: 'iife',
+  format: 'cjs',
   platform: 'browser',
   target: 'es2022',
   outfile: 'dist/client.js',
-  external: [],
+  external: EXTERNAL,
+  write: false,
   sourcemap: true,
 });
-console.log('client bundle written to dist/client.js');
+
+const mainOut = result.outputFiles.find((f) => f.path.endsWith('client.js'));
+if (!mainOut) throw new Error('esbuild 未产出 client.js');
+writeFileSync('dist/client.js', WRAP_HEAD + mainOut.text + WRAP_TAIL);
+
+const mapOut = result.outputFiles.find((f) => f.path.endsWith('client.js.map'));
+if (mapOut) writeFileSync('dist/client.js.map', mapOut.text);
+
+console.log('client bundle written to dist/client.js (external: ' + EXTERNAL.join(', ') + ')');
 
 // Task 8：把 wasm 引擎产物（wasm/pkg/）复制到 dist/static/，由 host 的
 // /wallpapers/static/<file> 路由服务（src/host/routes.ts）。wasm-renderer 运行时
