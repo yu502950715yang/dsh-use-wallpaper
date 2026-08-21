@@ -22,6 +22,8 @@ export function hasEffectChains(desc: SceneDescription): boolean {
 export interface WasmScene {
   resize(w: number, h: number): void;
   load_scene(json: string): void;
+  // 2026-08-21 铺满全屏改造：前景也调用 set_cover —— cover 相机 + 场景 clearcolor 清屏
+  // （不透明），对齐桌面版默认 FillMode::ASPECTCROP（铺满、不变形、超出方向裁剪）。
   set_cover(): void;
   // T4.3：color/alpha/brightness 为对象调制输入（Float32Array，空 = 缺省 → 无调制，
   // 向后兼容；color 0-255 r g b，alpha 0-1，brightness 乘法系数）。
@@ -183,24 +185,12 @@ export function createWasmSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneRe
         fg.width = vw;
         fg.height = vh;
         const scene = await mod.WeScene.create(fg, vw, vh);
+        // 2026-08-21 铺满全屏改造（用户需求）：前景 = cover 相机 + 场景 clearcolor 清屏
+        // （不透明）——对齐桌面版默认 FillMode::ASPECTCROP（铺满、不变形、超出方向裁剪）。
+        // 原先景 contain（留白透明）+ 背景模糊层（Task 9）已废弃：前景不透明清屏后背景层
+        // 完全不可见，故移除背景层创建（bg 参数忽略，单层渲染贴近桌面版）。
+        scene.set_cover();
         scene.load_scene(sceneJson);
-        // Task 9 修复（背景层）：bg canvas 用 cover 渲染场景图片（铺满 + CSS 模糊），
-        // 对齐 JS 版 background-layer 的双 canvas 语义——前景 contain 的透明区域露出
-        // 模糊背景，避免透明区域显示黑色导致画面过暗（实测 EVA avg 200→20 的主因之一）。
-        // 背景只加载图片（粒子叠加在前景即可），纹理字节与前景共享同一 fetch。
-        let bgScene: WasmScene | null = null;
-        if (bg) {
-          // 背景层创建失败不应拖垮前景渲染（wasm 双 surface 极端环境可能失败）
-          try {
-            bg.width = vw;
-            bg.height = vh;
-            bgScene = await mod.WeScene.create(bg, vw, vh);
-            bgScene.set_cover();
-            bgScene.load_scene(sceneJson);
-          } catch {
-            bgScene = null;
-          }
-        }
         // 对象遍历：image → 纹理字节直传 wasm；particle → 规格 json 直传；util 跳过
         // （与 scene-renderer.ts 语义一致；assetId 用对象索引保证单场景内唯一）
         // T4.2 可见性过滤（与 scene-renderer.renderScene 的 visibleObjects 过滤一致）：
@@ -235,18 +225,6 @@ export function createWasmSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneRe
               Float32Array.from(obj.alpha !== undefined ? [obj.alpha] : []),
               Float32Array.from(obj.brightness !== undefined ? [obj.brightness] : []),
             );
-            if (bgScene) {
-              bgScene.load_image(
-                i,
-                tex,
-                Float32Array.from(origin),
-                Float32Array.from(obj.scale),
-                Float32Array.from(size ?? []),
-                Float32Array.from(obj.color ?? []),
-                Float32Array.from(obj.alpha !== undefined ? [obj.alpha] : []),
-                Float32Array.from(obj.brightness !== undefined ? [obj.brightness] : []),
-              );
-            }
             rendered++;
           } else if (obj.kind === 'particle' && obj.particle) {
             const specResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(obj.particle)}`);
@@ -263,16 +241,6 @@ export function createWasmSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneRe
               Float32Array.from(obj.scale),
               texBytes ?? new Uint8Array(0),
             );
-            // 背景层也叠加粒子：JS 版 bg 渲染整个 scene（含粒子），blur 后背景偏亮；
-            // wasm 版 bgScene 若只有图片（EVA 主图 alpha 大面积 0）→ 背景暗（avg 39 vs 基线 200）
-            if (bgScene) {
-              bgScene.add_particle(
-                specText,
-                Float32Array.from(obj.origin),
-                Float32Array.from(obj.scale),
-                texBytes ?? new Uint8Array(0),
-              );
-            }
             rendered++;
           }
         }
@@ -282,10 +250,6 @@ export function createWasmSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneRe
         const loop = () => {
           scene.step(1 / 60);
           scene.render();
-          if (bgScene) {
-            bgScene.step(1 / 60);
-            bgScene.render();
-          }
           // canvas 被 controller 移除（切换壁纸）时自动终止 raf，防止泄漏
           if (fg.isConnected) raf = requestAnimationFrame(loop);
         };

@@ -2,7 +2,7 @@
 //! wgpu 管线部分（ParticlePass）feature 门控，仅 wasm 构建编译，浏览器验证。
 
 use we_scene_wasm::particle::parse_particle_spec;
-use we_scene_wasm::render::particle_pass::{cover_max_particles, dispatch_dims, estimate_max_particles, EmitterParams};
+use we_scene_wasm::render::particle_pass::{dispatch_dims, estimate_max_particles, EmitterParams};
 
 const ASHES_JSON: &str = include_str!("fixtures/eva/particles_Ashes.json");
 
@@ -40,16 +40,6 @@ fn estimate_max_particles_clamps_bounds() {
         operators: vec![],
     };
     assert_eq!(estimate_max_particles(&huge), 2048);
-}
-
-#[test]
-fn cover_max_particles_halves_with_floor() {
-    // cover（背景）模式：减半、下限 32（Round 2 审查：减半逻辑独立纯函数）
-    assert_eq!(cover_max_particles(2048), 1024);
-    assert_eq!(cover_max_particles(65), 32);
-    assert_eq!(cover_max_particles(64), 32);
-    assert_eq!(cover_max_particles(32), 32);
-    assert_eq!(cover_max_particles(31), 32);
 }
 
 #[test]

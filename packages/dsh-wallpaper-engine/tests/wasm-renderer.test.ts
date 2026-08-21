@@ -138,7 +138,7 @@ describe('createWasmSceneRenderer', () => {
         return { ok: false, status: 404, json: async () => ({}) } as any;
       }),
     );
-    const scene = { load_scene: vi.fn(), load_image: vi.fn(), add_particle: vi.fn(), step: vi.fn(), render: vi.fn() };
+    const scene = { set_cover: vi.fn(), load_scene: vi.fn(), load_image: vi.fn(), add_particle: vi.fn(), step: vi.fn(), render: vi.fn() };
     const r = createWasmSceneRenderer({
       loadWasm: async () => ({ default: async () => {}, WeScene: { create: async () => scene } } as any),
     });
@@ -163,7 +163,7 @@ describe('createWasmSceneRenderer', () => {
         return { ok: false, status: 404, json: async () => ({}) } as any;
       }),
     );
-    const mod = { default: vi.fn(async () => undefined), WeScene: { create: vi.fn(async () => ({})) } };
+    const mod = { default: vi.fn(async () => undefined), WeScene: { create: vi.fn(async () => ({ set_cover: vi.fn(), load_scene: vi.fn() })) } };
     const r = createWasmSceneRenderer({ loadWasm: async () => mod as any });
     const fg = document.createElement('canvas');
     const bg = document.createElement('canvas');
@@ -175,6 +175,7 @@ describe('createWasmSceneRenderer', () => {
   it('成功路径：按序调用 WeScene.create / load_scene / load_image / add_particle 并启动帧循环', async () => {
     vi.stubGlobal('navigator', { gpu: {} });
     const scene = {
+      set_cover: vi.fn(),
       load_scene: vi.fn(),
       load_image: vi.fn(),
       add_particle: vi.fn(),
@@ -202,13 +203,19 @@ describe('createWasmSceneRenderer', () => {
     );
     const r = createWasmSceneRenderer({ loadWasm: async () => mod });
     const fg = document.createElement('canvas');
-    await expect(r!.render('1', fg)).resolves.toBe(true);
+    const bg = document.createElement('canvas');
+    // 2026-08-21 铺满全屏改造：传 bg 参数验证背景层已移除——renderer 忽略 bg（单层渲染）
+    await expect(r!.render('1', fg, bg)).resolves.toBe(true);
 
     // WeScene.create 用视口尺寸创建（Task 9 修复：surface 与 canvas 属性尺寸 = 视口，
     // 对齐 scene-renderer.setScene 的 vw/vh；jsdom 默认 window.innerWidth=1024/innerHeight=768）
+    expect(mod.WeScene.create).toHaveBeenCalledTimes(1); // 仅前景一次，bg 被忽略
     expect(mod.WeScene.create).toHaveBeenCalledWith(fg, 1024, 768);
     expect(fg.width).toBe(1024);
     expect(fg.height).toBe(768);
+    // 2026-08-21 铺满全屏改造：前景创建后调用 set_cover（cover 相机 + 场景色清屏，
+    // 对齐桌面版默认 FillMode::ASPECTCROP；背景模糊层已移除，无 bgScene 创建）
+    expect(scene.set_cover).toHaveBeenCalledTimes(1);
     // load_scene 收到原始 scene.json 文本
     expect(scene.load_scene).toHaveBeenCalledWith(SCENE_JSON_TEXT);
     // image 对象 → 纹理字节直传 wasm（assetId=对象索引，origin/scale/size 为 Float32Array）
@@ -236,7 +243,7 @@ describe('createWasmSceneRenderer', () => {
 
   it('粒子对象带材质纹理 → add_particle 收到 TEXV0005 字节（方案 A 粒子纹理，2026-08-21）', async () => {
     vi.stubGlobal('navigator', { gpu: {} });
-    const scene = { load_scene: vi.fn(), load_image: vi.fn(), add_particle: vi.fn(), step: vi.fn(), render: vi.fn() };
+    const scene = { set_cover: vi.fn(), load_scene: vi.fn(), load_image: vi.fn(), add_particle: vi.fn(), step: vi.fn(), render: vi.fn() };
     const sceneJson = JSON.stringify({
       camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
       general: { orthogonalprojection: { width: 2400, height: 1555 } },
@@ -263,7 +270,7 @@ describe('createWasmSceneRenderer', () => {
 
   it('粒子材质纹理缺失（静态 ptex 资源 404）→ add_particle 收到空 Uint8Array（纯色兜底）', async () => {
     vi.stubGlobal('navigator', { gpu: {} });
-    const scene = { load_scene: vi.fn(), load_image: vi.fn(), add_particle: vi.fn(), step: vi.fn(), render: vi.fn() };
+    const scene = { set_cover: vi.fn(), load_scene: vi.fn(), load_image: vi.fn(), add_particle: vi.fn(), step: vi.fn(), render: vi.fn() };
     const sceneJson = JSON.stringify({
       camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
       general: { orthogonalprojection: { width: 2400, height: 1555 } },
@@ -303,7 +310,7 @@ describe('createWasmSceneRenderer', () => {
         { id: 18, name: 'rays', particle: 'particles/p.json', origin: '10 20 0', scale: '2 2 1' },
       ],
     });
-    const scene = { load_scene: vi.fn(), load_image: vi.fn(), add_particle: vi.fn(), step: vi.fn(), render: vi.fn() };
+    const scene = { set_cover: vi.fn(), load_scene: vi.fn(), load_image: vi.fn(), add_particle: vi.fn(), step: vi.fn(), render: vi.fn() };
     vi.stubGlobal(
       'fetch',
       vi.fn(async (url: string) => {
@@ -339,7 +346,7 @@ describe('createWasmSceneRenderer', () => {
         { id: 18, name: 'hidden-rays', particle: 'particles/p.json', origin: '10 20 0', scale: '2 2 1', visible: false },
       ],
     });
-    const scene = { load_scene: vi.fn(), load_image: vi.fn(), add_particle: vi.fn(), step: vi.fn(), render: vi.fn() };
+    const scene = { set_cover: vi.fn(), load_scene: vi.fn(), load_image: vi.fn(), add_particle: vi.fn(), step: vi.fn(), render: vi.fn() };
     vi.stubGlobal(
       'fetch',
       vi.fn(async (url: string) => {
@@ -370,7 +377,7 @@ describe('createWasmSceneRenderer', () => {
         { id: 12, name: 'bg', image: 'models/m.json', origin: '100 200 0', scale: '1 1 1', alignment: 'bottomright' },
       ],
     });
-    const scene = { load_scene: vi.fn(), load_image: vi.fn(), add_particle: vi.fn(), step: vi.fn(), render: vi.fn() };
+    const scene = { set_cover: vi.fn(), load_scene: vi.fn(), load_image: vi.fn(), add_particle: vi.fn(), step: vi.fn(), render: vi.fn() };
     vi.stubGlobal(
       'fetch',
       vi.fn(async (url: string) => {

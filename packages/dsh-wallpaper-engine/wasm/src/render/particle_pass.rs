@@ -90,13 +90,6 @@ impl EmitterParams {
     }
 }
 
-/// cover（背景）模式的粒子池上限：估算值减半、下限 32（模糊背景低密度无视觉影响）。
-/// Round 2 审查修复：减半逻辑独立为纯函数，保证与 set_particle 的 buffer 槽位、
-/// dispatch 分派、uniform max_particles 三处一致（原在 set_particle 内联计算）。
-pub fn cover_max_particles(est: u32) -> u32 {
-    (est / 2).max(32)
-}
-
 /// compute 分派尺寸：`(ceil(count/workgroup), 1, 1)`，空也分派 1 组（安全）。
 pub fn dispatch_dims(count: u32, workgroup: u32) -> (u32, u32, u32) {
     let g = workgroup.max(1);

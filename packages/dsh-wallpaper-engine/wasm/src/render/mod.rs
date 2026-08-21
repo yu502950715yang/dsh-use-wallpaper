@@ -278,12 +278,14 @@ impl Renderer {
 
     /// 装载粒子规格并构建 GPU 粒子管线（**追加**而非覆盖——Task 9 修复：
     /// 原实现单系统覆盖，EVA 等壁纸 5 个粒子系统只有最后一个渲染，粒子密度远低于
-    /// JS 版 → 画面偏暗）。origin 映射用场景尺寸（scene_w/scene_h），投影用 contain
-    /// 相机范围（camera_range）——对齐 scene-renderer.ts 语义。
+    /// JS 版 → 画面偏暗）。origin 映射用场景尺寸（scene_w/scene_h），投影用相机
+    /// 范围（camera_range）——对齐 scene-renderer.ts 语义。
     /// Task 9 审查修复：粒子池上限按 emitter rate×寿命动态估算（原固定 2048，
-    /// 多粒子壁纸 GPU 负载爆炸 → headless FPS < 30）；cover（背景）模式再减半。
-    /// Round 2 审查修复：先算 max_particles（含 cover 减半），再传入 from_spec 写
-    /// uniform —— 与 ParticlePass::new 的 buffer 槽位、dispatch 分派**三处一致**
+    /// 多粒子壁纸 GPU 负载爆炸 → headless FPS < 30）。
+    /// 2026-08-21 铺满全屏改造：背景模糊层移除（前景单层 cover 渲染）→ 不再减半
+    /// （减半原为背景层低密度优化；cover_max_particles 已删除）。
+    /// Round 2 审查修复：先算 max_particles，再传入 from_spec 写 uniform —— 与
+    /// ParticlePass::new 的 buffer 槽位、dispatch 分派**三处一致**
     /// （原 uniform 硬编码 2048 → 估算槽位下 shader 边界检查恒不触发 → 越界读写 UB）。
     pub fn set_particle(
         &mut self,
@@ -293,12 +295,7 @@ impl Renderer {
         tex: Option<wgpu::Texture>,
     ) {
         let (fw, fh) = self.camera_range();
-        let est = particle_pass::estimate_max_particles(spec);
-        let max_particles = if self.mode == CameraMode::Cover {
-            particle_pass::cover_max_particles(est)
-        } else {
-            est
-        };
+        let max_particles = particle_pass::estimate_max_particles(spec);
         let params = particle_pass::EmitterParams::from_spec(
             spec, origin, scale, self.scene_w, self.scene_h, fw, fh, max_particles,
         );
