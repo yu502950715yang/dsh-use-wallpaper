@@ -44,7 +44,11 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3u, @builtin(local_invocation_
   // spawn 判定随时间演化，粒子场不会停在静态不动点。
   let seed = i * 2654435761u + lid.x + u32(p.elapsed * 60.0);
   let life_span = p.life_min + rand(seed) * max(p.life_max - p.life_min, 0.0);
-  let spawn = rand(seed + 1u) < p.rate * p.dt;
+  // 2026-08-21 修复（对齐 JS particles.ts 累积出生率）：spawn 概率除以 max_particles——
+  // 原 `rand < rate*dt` 是**每槽位每帧**独立判定 → 总出生率 = max_particles × rate
+  // （fog1: 71 槽位 × 1.5/s ≈ 106/s，应为 1.5/s）→ 粒子无限累积到饱和（71 个巨大雾粒子
+  // additive 叠加 → 画面越来越亮）。除以 max_particles 后总出生率 = rate × dt ✓。
+  let spawn = rand(seed + 1u) < (p.rate * p.dt / f32(p.max_particles));
   var pos = vec3f(0.0); var vel = vec3f(0.0); var life = 0.0; var size = p.size_min; var col = vec3f(1.0);
   // 初始 alpha（Task 0.3）：spawn 时在 [alpha_min, alpha_max] 内随机一次，此后不再衰减
   // （控制器裁定 P0-1——compute 衰减会逐帧累积误差；显示 alpha 由渲染侧计算）。
