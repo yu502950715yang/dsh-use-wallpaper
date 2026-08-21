@@ -46,16 +46,23 @@ fn vs_main(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> 
   // 粒子中心：中心原点、像素量级坐标 → 裁剪坐标（除以半视口映射到 [-1,1]）
   let center_clip = vec2f(part.pos.x / p.view_w * 2.0, part.pos.y / p.view_h * 2.0);
   // 点尺寸=像素尺寸（CAMERA_DISTANCE 语义）；半尺寸像素偏移 → NDC 偏移。
-  // 2026-08-21 修复（对齐 open-wallpaper-engine world_scale 语义）：粒子尺寸乘对象 scale
-  // ——官方粒子 SceneNode 用对象 scale（MVP 缩放），fog1 scale 2.15 → 雾直径 2150-4730px
-  // 散布更广、叠加少（淡）；原实现不乘 scale（1000-2200px 密集在小区域 → additive 白亮浓雾）。
-  let half_px = part.size * 0.5 * max(abs(p.scale.x), abs(p.scale.y));
+  // 2026-08-21 视觉对齐修正：**不乘对象 scale**——官方 fog1 雾在桌面上灰且淡（几乎
+  // 不可见），乘 scale 后雾直径 2150-4730px 覆盖大片、additive 叠加明显（暖背景上显黄）。
+  // 回到 size 直径（1000-2200px）更接近官方视觉（雾淡、不干扰主图暖光）。
+  let half_px = part.size * 0.5;
   let ndc_per_px = vec2f(2.0 / p.view_w, 2.0 / p.view_h);
   var out: VsOut;
   out.clip_pos = vec4f(center_clip + corner * half_px * ndc_per_px, 0.0, 1.0);
   out.v_uv = corner * 0.5 + 0.5;
   out.v_color = part.color;
-  out.v_life_alpha = clamp(part.life / max(part.max_life, 0.0001), 0.0, 1.0) * part.alpha;
+  // 寿命 alpha（2026-08-21 对齐官方 AlphaFadeOperator：fade_in=fade_out=0.5）：
+  // 官方 alpha 随寿命 **三角波**（前 50% 淡入 0→满、后 50% 淡出 满→0），wasm 原为
+  // 线性 1→0（出生即满 alpha → 新粒子立刻满亮、叠加明显）。三角波平均 alpha 减半
+  // 且出现柔和（淡入）→ 雾更接近官方的灰淡质感。
+  // used = 已用寿命比例（0=出生，1=死亡）；life 从 max_life 减到 0。
+  let used = 1.0 - clamp(part.life / max(part.max_life, 0.0001), 0.0, 1.0);
+  let fade = 1.0 - abs(2.0 * used - 1.0); // 三角波：0-0.5 升 0→1、0.5-1 降 1→0
+  out.v_life_alpha = fade * part.alpha;
   return out;
 }
 

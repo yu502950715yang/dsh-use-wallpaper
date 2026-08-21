@@ -141,6 +141,14 @@ impl Renderer {
         // 且旧组合（sRGB 纹理 + 非 sRGB surface）使画面暗约 50%。统一非 sRGB 管线：
         // 纹理 fragment 输出原始编码值，surface 直接显示。
         let format = caps.formats[0];
+        // 调试（2026-08-21 色彩管线排查）：surface 格式决定 sRGB 处理——sRGB surface
+        // 会把写入值当线性再编码显示（非 sRGB 纹理 + sRGB surface → 偏亮偏饱和）。
+        // 用户 Firefox 与 headless Edge 的 formats[0] 可能不同（Task 9 基于 Edge 非 sRGB）。
+        web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(&format!(
+            "[wasm] surface format: {:?} ({} formats)",
+            format,
+            caps.formats.len()
+        )));
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
