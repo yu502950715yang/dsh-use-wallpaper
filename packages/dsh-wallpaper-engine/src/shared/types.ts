@@ -37,7 +37,20 @@ export interface SceneUtilObject {
   image: string;                 // 如 "models/util/composelayer.json"
   effects?: unknown[];           // 对象效果链定义（effects 数组，二期使用）
 }
-export type SceneObject = SceneImageObject | SceneParticleObject | SceneUtilObject;
+// WE text 对象（T3.1）：scene.json 携带 text 字段（{ script, scriptproperties, value }
+// 对象，如 2937346640 的 VHS Time and Date）。一期静态渲染 text.value（离屏 canvas
+// 绘制 → CanvasTexture → 共享场景 quad）；脚本动态文本（时钟等）见 T3.3。
+export interface SceneTextObject {
+  kind: 'text'; id: number; name: string;
+  origin: [number, number, number]; scale: [number, number, number];
+  size?: [number, number];       // WE 像素尺寸（与 image 对象一致）
+  text: string;                  // text.value（缺省字符串，静态渲染内容）
+  font?: string;                 // WE 字体名（可能是文件路径，如 fonts/Atami-Regular.otf）
+  pointsize?: number;            // 字号（WE pointsize，绘制按 px 近似）
+  color?: [number, number, number]; // 文本颜色（WE color "r g b a" 的前 3 通道，0-255）
+  alignment?: string;            // 对齐方式（原始字段保留；静态渲染居中，暂不参与布局）
+}
+export type SceneObject = SceneImageObject | SceneParticleObject | SceneUtilObject | SceneTextObject;
 
 export interface SceneDescription {
   camera: { center: [number, number, number]; eye: [number, number, number]; up: [number, number, number] };

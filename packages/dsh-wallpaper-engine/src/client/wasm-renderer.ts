@@ -9,7 +9,11 @@ import type { SceneDescription } from '../shared/types.js';
 // 走 wasm 路径会渲染成 STATIC。任一对象含非空 effects 数组 → true，render() 据此
 // 在绑定 WebGPU 之前返回 false，回退 JS 渲染器（Phase 1 已实现对象级效果链，动画恢复）。
 export function hasEffectChains(desc: SceneDescription): boolean {
-  return desc.objects.some((o) => Array.isArray(o.effects) && o.effects.length > 0);
+  // SceneTextObject 无 effects 字段（T3.1：text 对象不走效果路径），先窄化访问
+  return desc.objects.some((o) => {
+    const effects = (o as { effects?: unknown }).effects;
+    return Array.isArray(effects) && effects.length > 0;
+  });
 }
 
 // wasm 侧 WeScene 实例的接口（对齐 wasm/pkg/we_scene_wasm.d.ts）

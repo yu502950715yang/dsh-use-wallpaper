@@ -117,6 +117,11 @@ describe('groupEffectsByObject（对象级效果链分组：过滤空 effects、
     kind: 'particle', id, name: `p${id}`, origin: [0, 0, 0], scale: [1, 1, 1],
     particle: `particles/${id}.json`,
   });
+  const text = (id: number, effects?: unknown[]): SceneObject => ({
+    kind: 'text', id, name: `t${id}`, origin: [0, 0, 0], scale: [1, 1, 1],
+    text: '12:00',
+    ...(effects ? { effects } : {}),
+  });
 
   it('2937346640 结构：主图 4 效果、其余对象无效果 → 仅 1 组（效果不展平、组引用原对象）', () => {
     const main = image(1, [
@@ -147,6 +152,14 @@ describe('groupEffectsByObject（对象级效果链分组：过滤空 effects、
   });
   it('effects 为 undefined（非数组字段）不误判为组', () => {
     expect(groupEffectsByObject([image(1)])).toEqual([]);
+  });
+  it('text 对象不参与分组（T3.1：text 始终走共享场景路径，其 effects 超出本期范围）', () => {
+    // 带效果的 text 对象也不进组（不触发对象 RT/效果链执行）；image 带效果照常成组
+    const t = text(10, [fx('a.json')]);
+    const img = image(11, [fx('b.json')]);
+    const groups = groupEffectsByObject([t, img, text(12)]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].obj.id).toBe(11);
   });
 });
 

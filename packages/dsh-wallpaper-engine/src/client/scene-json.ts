@@ -24,6 +24,22 @@ function scale3(s: unknown): [number, number, number] {
   return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0];
 }
 
+// 可选数值字段（text 对象的 pointsize 等）：数字/数字字符串 → 有限数值；否则 undefined
+function optNum(s: unknown): number | undefined {
+  if (typeof s === 'number') return isFinite(s) ? s : undefined;
+  if (typeof s !== 'string') return undefined;
+  const n = Number(s.trim());
+  return isFinite(n) ? n : undefined;
+}
+
+// 可选颜色字段（WE color 形如 "r g b a"，0-255）：取前 3 通道；非法 → undefined
+function optColor(s: unknown): [number, number, number] | undefined {
+  if (typeof s !== 'string') return undefined;
+  const parts = s.trim().split(/\s+/).map(Number);
+  if (parts.length < 3 || !isFinite(parts[0]) || !isFinite(parts[1]) || !isFinite(parts[2])) return undefined;
+  return [parts[0], parts[1], parts[2]];
+}
+
 export function parseSceneJson(raw: string): SceneDescription {
   const root: any = JSON.parse(raw);
   if (typeof root !== 'object' || root === null || Array.isArray(root)) {
@@ -54,6 +70,22 @@ export function parseSceneJson(raw: string): SceneDescription {
         };
       }
       return { ...base, kind: 'image' as const, image: o.image };
+    }
+    // Ruling P3-1（text 归类优先级）：o.text 为对象（非 null、非数组）→ kind:'text'。
+    // 检查位置：image 检查之后、空粒子兜底之前；text.value 为缺省字符串（脚本动态文本
+    // 见 T3.3，本任务仅静态渲染）。此前这类对象落入空粒子兜底 → 不渲染（2937346640 的
+    // VHS Time and Date id=182 即因此缺失）。
+    if (typeof o.text === 'object' && o.text !== null && !Array.isArray(o.text)) {
+      const t = o.text as { value?: unknown };
+      return {
+        ...base,
+        kind: 'text' as const,
+        text: typeof t.value === 'string' ? t.value : '',
+        font: typeof o.font === 'string' && o.font ? o.font : undefined,
+        pointsize: optNum(o.pointsize),
+        color: optColor(o.color),
+        alignment: typeof o.alignment === 'string' && o.alignment ? o.alignment : undefined,
+      };
     }
     return { ...base, kind: 'particle' as const, particle: '' }; // 无引用对象按空粒子处理（不渲染）
   });

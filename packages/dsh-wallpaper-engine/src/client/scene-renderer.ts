@@ -1,9 +1,10 @@
 import * as THREE from 'three';
-import type { SceneDescription, SceneImageObject, SceneObject, SceneParticleObject } from '../shared/types.js';
+import type { SceneDescription, SceneImageObject, SceneObject, SceneParticleObject, SceneTextObject } from '../shared/types.js';
 import { createParticleSystem } from './particles.js';
 import type { ParticleEmitterSpec, ParticleInitializerSpec } from './particles.js';
 import { fetchSceneDescription, fetchParticleSpec } from './scene-assets.js';
 import { loadTexTexture } from './tex-loader.js';
+import { createTextTexture, textCanvasSize } from './text-object.js';
 import { EffectRunner } from './effect-runner.js';
 import { resolveEffectChain } from './shader/effect-chain.js';
 import { fetchWithRetry } from './fetch-util.js';
@@ -14,6 +15,9 @@ type CompiledEffectChains = import('./shader/effect-chain.js').CompiledEffectPas
 export interface SceneRenderer {
   setScene(desc: SceneDescription): void;
   setImageObject(tex: THREE.Texture | null, obj: SceneImageObject): void;
+  // text 对象（T3.1）：静态文本 CanvasTexture → 共享场景 quad。始终走共享场景路径
+  // （不经过对象 RT/效果路径——text 对象带 effects 时仍渲染静态 quad，效果超本期范围）。
+  setTextObject(tex: THREE.CanvasTexture, obj: SceneTextObject): void;
   // 粒子对象（T1.4）：带效果粒子与 image 对象同走对象 RT 路径（obj.effects 非空 →
   // 对象局部相机 + 对象 RT + 合成 quad，效果链在 RT 上执行后贴回共享场景）；
   // 无效果粒子保持共享场景路径。
@@ -97,9 +101,12 @@ export function shouldUseObjectPath(obj: { effects?: unknown }): obj is { effect
 // 对象级效果链分组（T1.3）：按 scene.json objects 顺序提取带效果对象（effects 非空数组），
 // 每组保留该对象自己的 effects 数组（不展平——旧全屏路径 flatMap 展平导致 foliagesway 等
 // 对象级效果整屏生效，T1.3 起每对象独立执行链）。
+// T3.1：text 对象不参与分组——text 永远走共享场景路径（不经过对象 RT/效果执行器），
+// 其 effects 超出本期范围（SceneTextObject 无 effects 字段，见 shared/types.ts）。
 export function groupEffectsByObject(objects: SceneObject[]): Array<{ obj: SceneObject; effects: unknown[] }> {
   const groups: Array<{ obj: SceneObject; effects: unknown[] }> = [];
   for (const obj of objects) {
+    if (obj.kind === 'text') continue;
     if (shouldUseObjectPath(obj)) {
       groups.push({ obj, effects: obj.effects });
     }
@@ -414,6 +421,22 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
       mesh.position.set(obj.origin[0] - ortho.width / 2, obj.origin[1] - ortho.height / 2, obj.origin[2]);
       scene.add(mesh);
     },
+    setTextObject(tex, obj) {
+      // 与 setImageObject 共享场景路径一致：世界尺寸 = size × scale（size 缺省回退纹理
+      // 宽高）；中心映射 (ox - vw/2, oy - vh/2)，y 不做翻转（WE 系左下原点 y 向上，
+      // 见文件头坐标注释）。纹理为透明 canvas（文字区域外 alpha=0），material transparent。
+      const tw = tex?.image?.width ?? 1;
+      const th = tex?.image?.height ?? 1;
+      const w = obj.size?.[0] ?? tw;
+      const h = obj.size?.[1] ?? th;
+      const geometry = new THREE.PlaneGeometry(w, h);
+      const material = new THREE.MeshBasicMaterial({ map: tex, transparent: true });
+      const mesh = new THREE.Mesh(geometry, material);
+      const s = obj.scale;
+      mesh.scale.set(s[0], s[1], s[2] ?? 1);
+      mesh.position.set(obj.origin[0] - ortho.width / 2, obj.origin[1] - ortho.height / 2, obj.origin[2]);
+      scene.add(mesh);
+    },
     addParticleSystem(spec, obj) {
       const system = createParticleSystem(spec.emitter, spec.init, { maxParticles: 2048 });
       const geometry = new THREE.BufferGeometry();
@@ -555,6 +578,20 @@ export async function renderScene(id: string, fgCanvas: HTMLCanvasElement, bgCan
           renderer.addParticleSystem(spec, obj);
           rendered++;
         }
+      } else if (obj.kind === 'text') {
+        // T3.1 静态文本：text.value 直用（脚本动态文本见 T3.3）。画布尺寸 = 对象 size
+        // （WE 像素，缺省由 textCanvasSize 按字号/文本长度估算）；纹理贴到共享场景 quad
+        // （setTextObject 始终共享场景路径，不经过对象 RT/效果路径）。
+        const size = textCanvasSize(obj.text, obj.pointsize, obj.size);
+        const tex = createTextTexture(obj.text, {
+          font: obj.font,
+          pointsize: obj.pointsize,
+          color: obj.color,
+          width: size.w,
+          height: size.h,
+        });
+        renderer.setTextObject(tex, obj);
+        rendered++;
       }
       // kind === 'util'：WE 内置合成层/效果对象（models/util/*），一期跳过
       // （不 fetch、不计数；effects 效果链渲染属二期，见 shared/types.ts SceneUtilObject）

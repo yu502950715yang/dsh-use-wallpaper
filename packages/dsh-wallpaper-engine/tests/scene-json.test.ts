@@ -81,3 +81,72 @@ describe('parseSceneJson', () => {
     expect(() => parseSceneJson('[]')).toThrow();
   });
 });
+
+// T3.1 text 对象归类（Ruling P3-1：particle > image > text(对象) > 空粒子兜底）。
+// 真实样本：2937346640 的 VHS Time and Date（id=182）——text 字段为
+// { script, scriptproperties, value } 对象，此前落入空粒子兜底不渲染。
+describe('parseSceneJson text 对象归类（T3.1）', () => {
+  const textObj = {
+    id: 182, name: 'Time', origin: '1024 20 0', scale: '1 1 1',
+    size: '400 100', color: '255 255 255 255', pointsize: '80',
+    font: 'fonts/Atami-Regular.otf', alignment: 'center',
+    text: { script: 'var d = new Date();', scriptproperties: '{}', value: '12:00' },
+  };
+
+  it('含 text 对象字段（无 image/particle）→ 归为 kind:text，text 取 text.value', () => {
+    const desc = parseSceneJson(JSON.stringify({ objects: [textObj] }));
+    const o = desc.objects[0] as any;
+    expect(o.kind).toBe('text');
+    expect(o.text).toBe('12:00');
+  });
+
+  it('保留 font/pointsize/color/size/alignment 字段', () => {
+    const desc = parseSceneJson(JSON.stringify({ objects: [textObj] }));
+    const o = desc.objects[0] as any;
+    expect(o.font).toBe('fonts/Atami-Regular.otf');
+    expect(o.pointsize).toBe(80);          // 字符串 "80" → 数值
+    expect(o.color).toEqual([255, 255, 255]); // "r g b a" 取前 3 通道
+    expect(o.size).toEqual([400, 100]);
+    expect(o.alignment).toBe('center');
+    expect(o.origin).toEqual([1024, 20, 0]);
+    expect(o.scale).toEqual([1, 1, 1]);
+  });
+
+  it('text.value 缺失/非字符串 → text 为空字符串（静态渲染不崩）', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [{ id: 1, text: { script: 'var d = new Date();' }, origin: '0 0 0', scale: '1 1 1' }],
+    }));
+    expect((desc.objects[0] as any).kind).toBe('text');
+    expect((desc.objects[0] as any).text).toBe('');
+  });
+
+  it('Ruling P3-1 优先级：particle > image > text > 空粒子兜底', () => {
+    // particle 字符串优先于 text
+    const p = parseSceneJson(JSON.stringify({ objects: [{ id: 1, particle: 'particles/p.json', text: { value: 'x' } }] }));
+    expect((p.objects[0] as any).kind).toBe('particle');
+    // image 字符串优先于 text
+    const img = parseSceneJson(JSON.stringify({ objects: [{ id: 2, image: 'models/a.json', text: { value: 'x' } }] }));
+    expect((img.objects[0] as any).kind).toBe('image');
+    // 仅 text → text
+    const t = parseSceneJson(JSON.stringify({ objects: [{ id: 3, text: { value: 'x' } }] }));
+    expect((t.objects[0] as any).kind).toBe('text');
+    // 无引用无 text → 空粒子兜底（原行为不回归）
+    const empty = parseSceneJson(JSON.stringify({ objects: [{ id: 4 }] }));
+    expect((empty.objects[0] as any).kind).toBe('particle');
+  });
+
+  it('text 非对象（字符串/数组）不归为 text', () => {
+    const s = parseSceneJson(JSON.stringify({ objects: [{ id: 1, text: 'fonts/a.otf' }] }));
+    expect((s.objects[0] as any).kind).not.toBe('text');
+    const arr = parseSceneJson(JSON.stringify({ objects: [{ id: 2, text: [] }] }));
+    expect((arr.objects[0] as any).kind).not.toBe('text');
+  });
+
+  it('pointsize 非数字 / color 非法 → 对应字段 undefined', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [{ id: 1, text: { value: 'x' }, pointsize: 'abc', color: 'zzz' }],
+    }));
+    expect((desc.objects[0] as any).pointsize).toBeUndefined();
+    expect((desc.objects[0] as any).color).toBeUndefined();
+  });
+});
