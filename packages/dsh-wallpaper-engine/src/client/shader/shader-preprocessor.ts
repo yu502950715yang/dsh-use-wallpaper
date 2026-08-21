@@ -188,6 +188,11 @@ function floatifyIntVarUses(src: string): string {
   // 保护 int 上下文（不包 float）：
   //  - int 声明整行（含右值中的其他 int 变量使用：int x = i * 2 的 i 必须保持 int）
   out = out.replace(/^\s*(?:const\s+)?(?:uniform\s+)?(?:in\s+|out\s+)?int\b[^;]*;/gm, protect);
+  //  - 函数参数中的 int 声明：(const int blendMode, ... 的 blendMode 是参数名不是使用点
+  //    （2026-08-21 实测：common_blending.h ApplyBlending(const int blendMode, ...) 参数名
+  //    被使用点转换 → `const int float(blendMode)` → GLSL3 'float' : syntax error，
+  //    影响所有含 common_blending.h 的效果 shader）
+  out = out.replace(/(?:\(|,)\s*(?:const\s+)?(?:in\s+|out\s+)?int\s+\w+(?=\s*[,)])/g, protect);
   //  - 数组下标（bufferLeft[a] 的 a 是下标，必须 int）
   out = out.replace(/\[[^\]]*\]/g, protect);
   //  - for 头：用三部分（init; cond; incr）匹配，每部分允许嵌套括号但无分号/花括号

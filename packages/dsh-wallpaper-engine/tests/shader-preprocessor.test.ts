@@ -124,6 +124,20 @@ describe('preprocessWeShader', () => {
     expect(out).toContain('float(N)');
     expect(out).not.toContain('float(float(N))');
   });
+  it('int 函数参数声明不被使用点转换（common_blending.h ApplyBlending 场景）', () => {
+    // 2026-08-21 实测：参数名 blendMode 被转成 `const int float(blendMode)` → GLSL3 'float' : syntax error
+    const src = [
+      'vec3 ApplyBlending(const int blendMode, in vec3 A, in vec3 B, in float opacity) {',
+      '  if (blendMode == 9) return A + B * opacity;',
+      '  return A;',
+      '}',
+      'void main() { gl_FragColor = vec4(ApplyBlending(9, vec3(1.0), vec3(0.5), 1.0), 1.0); }',
+    ].join('\n');
+    const out = preprocessWeShader(src, {});
+    expect(out).toContain('const int blendMode');             // 参数声明原样
+    expect(out).not.toContain('const int float(blendMode)');  // 无语法破坏
+    expect(out).toContain('blendMode == 9');                  // int 比较保持
+  });
   it('const 非常量初始化降级（GLSL3 只允许编译期常量）', () => {
     const src = 'uniform float u_t; uniform float u_g;\nconst float threshold = pow(u_t, u_g);\nvoid main() { gl_FragColor = vec4(threshold); }';
     const out = preprocessWeShader(src, {});
