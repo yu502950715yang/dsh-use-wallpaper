@@ -134,6 +134,16 @@ async function resolveImageTexBytes(id: string, imageRef: string): Promise<Uint8
 // 打进 dist/static/，立即生效无需重启 dsh web；host 的 /wallpapers/particle-texture
 // 路由为备选，重启后也可用）。任何一步失败返回 null（空字节 = 无纹理，Rust 侧
 // 1×1 白兜底保持纯色粒子行为）。
+//
+// 2026-08-22 别名映射：部分壁纸粒子材质引用**不存在的全局纹理**（坏引用，桌面版 WE
+// 同样 fallback 纯色）——1280029027(EVA) 的 light rays 材质 textures "presets/lightshaft"
+// 在 WE 安装目录无对应文件，但真实光柱纹理 particle/light/light_shafts_0.tex 存在
+// （build:client 已复制）。映射到真实纹理让粒子恢复纹理形状（优于桌面版纯色兜底）。
+const PARTICLE_TEX_ALIASES: Record<string, string> = {
+  // "presets/lightshaft"（无下划线，EVA 坏引用）→ light_shafts 序列第 0 帧（光柱精灵）。
+  // 值是 **short 形式**（去 particle/ 前缀，与下方 short 计算后一致）→ ptex-light-light_shafts_0.tex
+  'presets/lightshaft': 'light/light_shafts_0',
+};
 async function resolveParticleTexBytes(id: string, specText: string): Promise<Uint8Array | null> {
   try {
     const spec: unknown = JSON.parse(specText);
@@ -147,7 +157,8 @@ async function resolveParticleTexBytes(id: string, specText: string): Promise<Ui
     // 静态资源（立即生效）：build:client 从 WE 安装目录 assets/materials/particle/ 复制，
     // 相对该目录扁平命名 ptex-<路径斜杠转横线>.tex → "particle/fog/fog1" → ptex-fog-fog1.tex
     const short = texName.startsWith('particle/') ? texName.slice('particle/'.length) : texName;
-    const texResp = await fetch(`/wallpapers/static/ptex-${encodeURIComponent(short.replace(/\//g, '-'))}.tex`);
+    const resolved = PARTICLE_TEX_ALIASES[short] ?? short;
+    const texResp = await fetch(`/wallpapers/static/ptex-${encodeURIComponent(resolved.replace(/\//g, '-'))}.tex`);
     if (!texResp.ok) return null;
     const buf = await texResp.arrayBuffer();
     if (buf.byteLength === 0) return null;

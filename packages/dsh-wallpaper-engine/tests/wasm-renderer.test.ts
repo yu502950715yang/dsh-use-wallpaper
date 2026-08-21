@@ -268,6 +268,34 @@ describe('createWasmSceneRenderer', () => {
     expect(Array.from(texBytes)).toEqual([9, 8, 7, 6]);
   });
 
+  it('粒子材质纹理坏引用（presets/lightshaft）→ 别名映射到真实纹理 ptex-light-light_shafts-0.tex（2026-08-22）', async () => {
+    vi.stubGlobal('navigator', { gpu: {} });
+    const scene = { set_cover: vi.fn(), load_scene: vi.fn(), load_image: vi.fn(), add_particle: vi.fn(), step: vi.fn(), render: vi.fn() };
+    const sceneJson = JSON.stringify({
+      camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+      general: { orthogonalprojection: { width: 2400, height: 1555 } },
+      objects: [{ id: 18, name: 'light rays', particle: 'particles/p.json', origin: '1551 772 0', scale: '2.2 2.2 1' }],
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.includes('name=scene.json')) return jsonResp(sceneJson);
+        if (url.includes('p.json')) return jsonResp({ emitter: [{ rate: 0.3 }], initializer: [], material: 'materials/presets/lightshaft.json' });
+        if (url.includes('lightshaft.json')) return jsonResp({ passes: [{ textures: ['presets/lightshaft'] }] });
+        // 别名映射：坏引用 "presets/lightshaft" → 真实纹理 "particle/light/light_shafts_0"
+        if (url.includes('ptex-light-light_shafts_0')) return { ok: true, status: 200, arrayBuffer: async () => new Uint8Array([1, 2, 3, 4]).buffer };
+        return { ok: false, status: 404, json: async () => ({}) } as any;
+      }),
+    );
+    const mod = { default: vi.fn(async () => undefined), WeScene: { create: vi.fn(async () => scene) } };
+    const r = createWasmSceneRenderer({ loadWasm: async () => mod });
+    const fg = document.createElement('canvas');
+    await expect(r!.render('1', fg)).resolves.toBe(true);
+    expect(scene.add_particle).toHaveBeenCalledTimes(1);
+    const texBytes = scene.add_particle.mock.calls[0][3];
+    expect(Array.from(texBytes)).toEqual([1, 2, 3, 4]);
+  });
+
   it('粒子材质纹理缺失（静态 ptex 资源 404）→ add_particle 收到空 Uint8Array（纯色兜底）', async () => {
     vi.stubGlobal('navigator', { gpu: {} });
     const scene = { set_cover: vi.fn(), load_scene: vi.fn(), load_image: vi.fn(), add_particle: vi.fn(), step: vi.fn(), render: vi.fn() };
