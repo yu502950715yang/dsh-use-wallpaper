@@ -18,14 +18,14 @@ scene 壁纸存在**两条渲染路径**，由 `createFallbackSceneRenderer`（`
 
 ```
 WebGPU 可用 → wasm 渲染器（Rust/wgpu，图片对象 + GPU 粒子）
-  ↓ 加载/初始化/渲染失败（resolve false）
-JS 渲染器（Three.js，`scene-renderer.ts`，图片 + 粒子 + 全屏效果链）
+  ↓ 无 WebGPU / 加载/初始化/渲染失败 / 检测到对象效果链（resolve false）
+JS 渲染器（Three.js，`scene-renderer.ts`，图片 + 粒子 + 对象级效果链）
   ↓ 同样失败
 preview 图回退（Ken Burns）
 ```
 
-- **wasm 渲染器**：图片平面 + GPU 粒子模拟，**不含效果链**（waterwaves/shake 等后处理动画）——这是已知局限，此类壁纸在 wasm 下表现为 STATIC（画面正常但无动画）。
-- **JS 渲染器**：Three.js 渲染场景到离屏 RT，效果链在 RT 上全屏 ping-pong 执行（`effect-runner.ts`）。
+- **wasm 渲染器**：图片平面 + GPU 粒子模拟，**不含效果链执行器**（waterwaves/shake 等后处理动画只在 JS 侧）。渲染前 `hasEffectChains`（`src/client/wasm-renderer.ts`）检测任一对象 `effects` 非空 → 在绑定 WebGPU 之前返回 false，自动回退 JS 渲染器（Phase 2，wasm 不再把效果链壁纸渲染成 STATIC）。因此 wasm 实际服务**无效果链/纯粒子**壁纸；JS 渲染器按需承担其余壁纸。
+- **JS 渲染器**：Three.js 渲染场景到离屏 RT，效果链为**对象级**（Phase 1/2：每带效果对象独立对象 RT + 局部正交相机 + EffectRunner，输出经合成 quad 贴回共享场景；已替代旧的全屏 ping-pong 展平路径）。
 - wasm 失败后 fg canvas 已被 WebGPU context 占用 → 组合层**不自行换 canvas**，返回 false 让 controller 重建 canvas 重试（防污染）。
 
 ### 2.2 host / client / shared 分层（`src/` 下）
@@ -53,11 +53,15 @@ npm test                                   # 仓库根，委托 workspace
 
 # 包内命令（在 packages/dsh-wallpaper-engine 下）
 npm run build                              # tsc -p tsconfig.json → lib/（strict）
+npm run build:wasm                         # wasm-pack 构建（见下）→ wasm/pkg/
 npm run build:client                       # esbuild 打包 client → dist/client.js
                                            # + 复制 wasm 产物到 dist/static/
-npx vitest run                             # 全量单测（180 个）
+                                           # ⚠ 依赖 wasm/pkg/ 最新产物：改过 Rust 必须先
+                                           #   build:wasm 再 build:client（产物缺失直接报错）
+npx vitest run                             # 全量单测（373 个）
 
-# wasm（Rust）构建 —— 注意必须 --target web
+# wasm（Rust）构建 —— 注意必须 --target web；构建顺序：改 Rust → build:wasm → build:client
+npm run build:wasm                         # 等价于下面两条的 wasm-pack 形式（在 wasm/ 下执行）
 cd packages/dsh-wallpaper-engine/wasm
 wasm-pack build --target web --release --features render   # → wasm/pkg/
 # 或等价：cargo build --target wasm32-unknown-unknown --release --features render
@@ -88,7 +92,7 @@ packages/dsh-wallpaper-engine/
   src/{host,client,shared}/   源码（含 client/shader 方言层）
   wasm/                       Rust 引擎（wasm-bindgen + wgpu）
     src/{coords,scene,tex,particle,render}/   Rust 源码
-    pkg/                      构建产物（gitignore，不入库）
+    pkg/                      构建产物（gitignore，不入库——规则在 wasm/.gitignore 的 /pkg/）
     tests/                    Rust native 测试（cargo test）
   lib/                        tsc 产物（gitignore）
   dist/                       esbuild 产物 + dist/static（gitignore）
@@ -105,12 +109,17 @@ research/                     调研产物（gitignore：截图/验证脚本/参
 ## 5. 重要注意事项（踩过的坑）
 
 1. **wasm 产物必须是 `--target web`**。曾用 `--target module`（wasm ESM 静态导入格式、无 `__wbg_init` 默认导出）导致 wasm 静默失败、一直回退 JS 渲染器。`wasm-renderer.ts` 的加载代码期望 `--target web`：动态 import 入口 + 调用默认导出 `mod.default(wasmUrl)` 初始化（不调 init 则 `WeScene.create` 内 wasm 未定义）。
-2. **wasm 渲染器无效果链**：waterwaves/shake/waterflow 等后处理效果只在 JS 渲染器执行。wasm 下这 4 张壁纸（1968789468/2236329190/3743126786/3760200530）为 STATIC 是**预期**，非回归。
-3. **JS 全屏效果链是已知问题**：`renderScene` 把所有对象 effects `flatMap` 展平、全屏串联执行（Ruling 5）。Orange（1429403119，24 个效果）表现为持续摇晃+模糊。**修复方向是对象级效果层**（对齐 open-wallpaper-engine：每对象独立 RT + 局部相机 + 局部 mask UV），尚未实施。
+2. **wasm 渲染器无效果链执行器（已自动回退，不再 STATIC）**：`hasEffectChains` 检测到任一对象 effects 非空 → render() 在绑定 WebGPU 之前返回 false，走 JS 渲染器（对象级效果链，动画完整）。曾长期是已知局限（效果壁纸 wasm 下 STATIC），Phase 2 起已消除。
+3. **对象级效果链（已替代 Ruling 5 全屏展平）**：每带效果对象独立对象 RT + 局部相机 + EffectRunner，输出经合成 quad 贴回共享场景；合成 quad 按 UV 窗口（uvWindow）只采样 RT 可见段（超大对象钳制轴），不再把对象效果整屏生效。旧全屏 flatMap 展平（Orange 持续摇晃+模糊）已废弃。
 4. **坐标方向**：左下原点、y 向上，不做翻转（见 §2.3）。
 5. **场景资源禁止浏览器缓存**：`/wallpapers/scene/<id>/asset` 返回 `Cache-Control: no-store`；改资源后无需清缓存。
 6. **测试沙箱**：vitest/esbuild 依赖 service 子进程（命名管道），在受限沙箱下报 `spawn EPERM`——需完整权限运行。
 7. **`research/` 整体 gitignore**：验证脚本、截图、临时 profile 都不入库。
+8. **粒子 alpha 属性链**：粒子透明度 = 生命周期衰减 × alpha（alpharandom 等随机化经属性链传入），JS ShaderMaterial 与 wasm 粒子层双路径同语义；改粒子 alpha 相关逻辑需双路径验证（`wasm/tests/particle_alpha_tests.rs` + `tests/particles.test.ts`）。
+9. **对象级效果链的已知边界**：visualizer（visible.script 识别）与 text 对象**恒走共享场景路径**（绕过对象 RT/效果链）——它们带 effects 时效果被忽略（`groupEffectsByObject` 跳过 text；visualizer 为脚本控制节点）。注意 `hasEffectChains` 仍会因这类 effects 触发 wasm→JS 回退（仅路径差异，无错误）。
+10. **wasm 成功路径可见性过滤（已修）**：wasm `render()` 对象循环与 JS 路径一致用 `resolveVisibility` 过滤不可见对象；wasm 无用户属性注入（settings 查询仅 JS 路径有），传 `{}` → user 绑定回退绑定 value（无用户属性存储 = 缺省语义）。
+11. **音频管线（T3.2/T3.4）**：`createAudioAnalyzer` 频谱（freqData Uint8Array）→ EffectRunner 音频 uniform + visualizer 条高；壁纸 sound 数组经 `playWallpaperSound` 接入分析器（fire-and-forget；autoplay 被拦时 context suspended、可视化全零，用户手势后恢复）。无 Web Audio → 全零静音。
+12. **构建顺序（改 Rust 必先 build:wasm 再 build:client）**：build:client 把 `wasm/pkg/` 产物复制到 `dist/static/`（页面加载的就是这份）——Rust 改动后直接 build:client 会复制旧 wasm（行为不更新）；产物缺失时 build:client 报错并提示先 `npm run build:wasm`。
 
 ## 6. 测试与验证
 
