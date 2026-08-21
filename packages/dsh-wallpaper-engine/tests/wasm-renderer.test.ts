@@ -23,11 +23,13 @@ function jsonResp(body: unknown): any {
 }
 
 // 典型场景：2400×1555 正交视口 + 1 个 image 对象 + 1 个 particle 对象
+// （T4.1：image 对象 alignment='bottomright'、size 400×300、scale 1 → 传给 wasm 的
+// origin 须预偏移为锚点对应中心 [-100, 50, 0]；Rust 保持「origin=中心」约定不改）
 const SCENE_JSON_TEXT = JSON.stringify({
   camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
   general: { orthogonalprojection: { width: 2400, height: 1555 } },
   objects: [
-    { id: 12, name: 'bg', image: 'models/m.json', origin: '100 200 0', scale: '1 1 1', size: '400 300' },
+    { id: 12, name: 'bg', image: 'models/m.json', origin: '100 200 0', scale: '1 1 1', size: '400 300', alignment: 'bottomright' },
     { id: 18, name: 'rays', particle: 'particles/p.json', origin: '10 20 0', scale: '2 2 1' },
   ],
 });
@@ -220,7 +222,9 @@ describe('createWasmSceneRenderer', () => {
     expect(assetId).toBe(0);
     expect(tex).toBeInstanceOf(Uint8Array);
     expect(Array.from(tex)).toEqual([1, 2, 3, 4]);
-    expect(Array.from(origin)).toEqual([100, 200, 0]);
+    // T4.1：alignment='bottomright'、worldSize=[400,300] → origin 预偏移为锚点中心
+    // （100 - 400/2, 200 - 300/2, 0）= [-100, 50, 0]；Rust 保持「origin=中心」约定
+    expect(Array.from(origin)).toEqual([-100, 50, 0]);
     expect(Array.from(scale)).toEqual([1, 1, 1]);
     expect(Array.from(size)).toEqual([400, 300]);
     // particle 对象 → 规格 json 直传
@@ -232,6 +236,37 @@ describe('createWasmSceneRenderer', () => {
     await vi.waitFor(() => {
       expect(scene.step).toHaveBeenCalled();
       expect(scene.render).toHaveBeenCalled();
+    });
+  });
+
+  it('image 对象无 size 字段 + alignment → origin 不偏移（纹理尺寸在 origin 计算时未知，跳过 alignment）', async () => {
+    vi.stubGlobal('navigator', { gpu: {} });
+    const sceneJson = JSON.stringify({
+      camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+      general: { orthogonalprojection: { width: 2400, height: 1555 } },
+      objects: [
+        { id: 12, name: 'bg', image: 'models/m.json', origin: '100 200 0', scale: '1 1 1', alignment: 'bottomright' },
+      ],
+    });
+    const scene = { load_scene: vi.fn(), load_image: vi.fn(), add_particle: vi.fn(), step: vi.fn(), render: vi.fn() };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.includes('name=scene.json')) return jsonResp(sceneJson);
+        if (url.includes('m.json')) return jsonResp({ material: 'materials/mat.json' });
+        if (url.includes('mat.json')) return jsonResp({ passes: [{ textures: ['tex'] }] });
+        if (url.includes('tex.tex')) return { ok: true, status: 200, arrayBuffer: async () => new Uint8Array([1, 2, 3, 4]).buffer };
+        return { ok: false, status: 404, json: async () => ({}) } as any;
+      }),
+    );
+    const r = createWasmSceneRenderer({ loadWasm: async () => ({ default: vi.fn(), WeScene: { create: async () => scene } } as any) });
+    const fg = document.createElement('canvas');
+    await expect(r!.render('1', fg)).resolves.toBe(true);
+    expect(scene.load_image).toHaveBeenCalledTimes(1);
+    const origin = scene.load_image.mock.calls[0][2];
+    expect(Array.from(origin)).toEqual([100, 200, 0]); // 无 size → 原样直传（不偏移）
+    await vi.waitFor(() => {
+      expect(scene.step).toHaveBeenCalled();
     });
   });
 });

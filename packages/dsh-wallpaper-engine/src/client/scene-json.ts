@@ -98,6 +98,10 @@ export function parseSceneJson(raw: string): SceneDescription {
       origin: vec3(o.origin),
       scale: scale3(o.scale),
       size: size2(o.size),
+      // T4.1：对象对齐锚点（9 种 WE 对齐值）→ image/particle 对象（text 对象走
+      // horizontalalign/verticalalign，另行处理；util 对象不渲染，字段无害保留）。
+      // 渲染器按锚点换算中心（applyAlignment），缺省/非法 → undefined = center 无偏移。
+      alignment: typeof o.alignment === 'string' && o.alignment ? o.alignment : undefined,
       // Ruling 5：所有对象（kind 不限）的 effects 按 objects 顺序保留（全库 122 条中 105 条在 image 对象上）
       effects: Array.isArray(o.effects) ? o.effects : undefined,
     };

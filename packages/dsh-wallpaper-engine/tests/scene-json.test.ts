@@ -159,6 +159,7 @@ describe('parseSceneJson script/scriptproperties 解析（T3.3）', () => {
       objects: [{
         id: 61, name: 'Simple Visualizer', image: 'models/workshop/2652493753/bar.json',
         origin: '113.74350 83.14454 0.00000', scale: '2.36344 2.36344 0.75850',
+        alignment: 'bottomright',
         visible: {
           script: 'let audioData = engine.registerAudioBuffers(64);',
           scriptproperties: { barWidth: 0.83, originX: { user: '_x', value: 12.67 } },
@@ -170,6 +171,32 @@ describe('parseSceneJson script/scriptproperties 解析（T3.3）', () => {
     expect(o.kind).toBe('image');
     expect(o.script).toBe('let audioData = engine.registerAudioBuffers(64);');
     expect(o.scriptProperties).toEqual({ barWidth: 0.83, originX: 12.67 });
+  });
+
+  it('image 对象 alignment 字段 → SceneImageObject.alignment（2937346640 Simple Visualizer id=61 实测：bottomright）', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [{
+        id: 61, name: 'Simple Visualizer', image: 'models/workshop/2652493753/bar.json',
+        origin: '113.74350 83.14454 0.00000', scale: '2.36344 2.36344 0.75850',
+        alignment: 'bottomright',
+      }],
+    }));
+    const o = desc.objects[0] as any;
+    expect(o.kind).toBe('image');
+    expect(o.alignment).toBe('bottomright');
+  });
+
+  it('particle 对象 alignment 字段 → SceneParticleObject.alignment；缺省/非法 → undefined', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [
+        { id: 1, name: 'p1', particle: 'particles/a.json', origin: '0 0 0', scale: '1 1 1', alignment: 'top' },
+        { id: 2, name: 'p2', particle: 'particles/b.json', origin: '0 0 0', scale: '1 1 1' },
+        { id: 3, name: 'p3', particle: 'particles/c.json', origin: '0 0 0', scale: '1 1 1', alignment: 42 },
+      ],
+    }));
+    expect((desc.objects[0] as any).alignment).toBe('top');
+    expect((desc.objects[1] as any).alignment).toBeUndefined(); // 缺省 → undefined
+    expect((desc.objects[2] as any).alignment).toBeUndefined(); // 非字符串 → undefined
   });
 
   it('text 对象 text.script → script；text.scriptproperties → scriptProperties（use24hFormat 解包）', () => {

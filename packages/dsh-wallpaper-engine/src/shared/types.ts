@@ -19,6 +19,7 @@ export interface SceneImageObject {
   origin: [number, number, number]; scale: [number, number, number];
   size?: [number, number];       // scene.json 的 size 字段（WE 像素尺寸），缺省时由纹理宽高推算
   image: string;                 // 资源名，如 "models/xxx.json"
+  alignment?: string;            // 对象对齐锚点（9 种 WE 对齐值：center/topleft/top/topright/right/bottomright/bottom/bottomleft/left；渲染时 origin 按锚点换算中心，见 alignment.ts）
   effects?: unknown[];           // 对象效果链定义（Ruling 5：全库 122 条效果中 105 条挂在 image 对象上）
   script?: string;               // visible.script（WE 可见性/视觉脚本源码，T3.3 模式识别输入）
   scriptProperties?: Record<string, unknown>; // visible.scriptproperties（{user,value} 已解包，T3.3）
@@ -27,6 +28,7 @@ export interface SceneParticleObject {
   kind: 'particle'; id: number; name: string;
   origin: [number, number, number]; scale: [number, number, number];
   particle: string;            // 资源名，如 "particles/presets/lightshafts.json"
+  alignment?: string;          // 对象对齐锚点（同 image；渲染时按锚点换算中心，见 alignment.ts）
   effects?: unknown[];         // 对象效果链定义（Ruling 5：与 image/util 一致，按 objects 顺序展平）
 }
 // WE 内置合成层/全屏层/项目层对象（image 引用 models/util/*.json，pkg 内无此文件）。

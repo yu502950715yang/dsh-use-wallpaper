@@ -2,6 +2,7 @@
 // 无 WebGPU / wasm 加载失败 → 渲染返回 false，controller 走现有 JS 渲染 / preview 回退链。
 import { parseSceneJson } from './scene-json.js';
 import { resolveTexPath } from './scene-renderer.js';
+import { applyAlignment } from './alignment.js';
 import type { SceneDescription } from '../shared/types.js';
 
 // Task 2.1：效果链检测（纯函数）。wasm 渲染器（Rust/wgpu）只渲染静态图像 quad +
@@ -176,20 +177,29 @@ export function createWasmSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneRe
           if (obj.kind === 'image') {
             const tex = await resolveImageTexBytes(id, obj.image);
             if (!tex) continue; // 纹理缺失 → 跳过该对象（与 JS 渲染器一致）
+            // T4.1：alignment 锚点 → 中心（Controller Ruling P4-1：JS 侧预处理 origin，
+            // Rust 保持「origin=中心」约定不改）。世界尺寸 = size×scale（场景像素）；
+            // 纹理尺寸在本路径 origin 计算时未知（字节直传 wasm，不解码）→ size 缺省
+            // 时跳过 alignment（origin 原样直传，等效 center 无偏移，与 JS 路径的
+            // 「缺省回退纹理宽高」在此场景下的差异属预期，见任务 brief）。
+            const size = obj.size;
+            const origin = size
+              ? applyAlignment(obj.origin, [size[0] * obj.scale[0], size[1] * obj.scale[1]], obj.alignment)
+              : obj.origin;
             scene.load_image(
               i,
               tex,
-              Float32Array.from(obj.origin),
+              Float32Array.from(origin),
               Float32Array.from(obj.scale),
-              Float32Array.from(obj.size ?? []),
+              Float32Array.from(size ?? []),
             );
             if (bgScene) {
               bgScene.load_image(
                 i,
                 tex,
-                Float32Array.from(obj.origin),
+                Float32Array.from(origin),
                 Float32Array.from(obj.scale),
-                Float32Array.from(obj.size ?? []),
+                Float32Array.from(size ?? []),
               );
             }
             rendered++;

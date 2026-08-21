@@ -12,6 +12,7 @@ import { fetchWithRetry } from './fetch-util.js';
 import { createAudioAnalyzer, playWallpaperSound } from './audio-input.js';
 import type { AudioAnalyzer } from './audio-input.js';
 import { detectScriptPattern, formatClockText, VISUALIZER_BAR_COUNT } from './script-patterns.js';
+import { applyAlignment } from './alignment.js';
 
 // 编译后效果链（T1.3）：每组对象的独立链集合（一条链 = CompiledEffectPass[]，逐 pass ping-pong）
 type CompiledEffectChains = import('./shader/effect-chain.js').CompiledEffectPass[][];
@@ -518,22 +519,28 @@ export function createSceneRenderer(
       const mesh = new THREE.Mesh(geometry, material);
       const s = obj.scale;
       mesh.scale.set(s[0], s[1], s[2] ?? 1);
+      // T4.1：alignment 锚点 → 中心（世界尺寸 = 未缩放尺寸 × scale，场景像素）。锚点
+      // 偏移同时作用于两条路径——对象 RT 路径（合成 quad 的世界位置）与共享场景路径
+      // （mesh.position）；对象局部渲染内容保持 (0,0,0)（中心锚定，不重复偏移）。
+      const worldW = w * s[0];
+      const worldH = h * s[1];
+      const center = applyAlignment(obj.origin, [worldW, worldH], obj.alignment);
       // 对象级效果链路径：带效果 image 对象渲染进独立对象 RT（局部正交相机，中心原点）。
       // 局部相机范围 = 取整后的 RT 分辨率（M13：RT 像素与场景像素 1:1，合成 UV 展开映射
       // 精确对应相机视锥，效果链 UV 0-1 与 mask 纹理对齐对象局部空间）。效果链在对象 RT
       // 上执行，输出经合成 quad 贴回共享场景（世界尺寸 = 未钳制 size×scale，UV 只采样可见段）。
       if (shouldUseObjectPath(obj)) {
         createObjectEntry(
-          obj.id, obj.origin, w * s[0], h * s[1],
+          obj.id, center, worldW, worldH,
           objectCameraRange([w, h], [s[0], s[1]]),
           mesh,
         );
         return;
       }
-      // 无效果对象：共享场景路径（对象 origin 是 WE 场景中的中心点：中心映射 = (ox - vw/2, oy - vh/2)。
+      // 无效果对象：共享场景路径（对象中心是 WE 场景中的锚点换算中心：中心映射 = (cx - vw/2, cy - vh/2)。
       // 旧实现 `vh/2 - oy` 把非居中对象上下镜像（EVA 主图 oy=sh/2 恰好 0 故漏过），
       // 导致 Orange 少女部件被渲染到头顶（问题图漂浮现象）——2026-08-20 修正为不翻转。）
-      mesh.position.set(obj.origin[0] - ortho.width / 2, obj.origin[1] - ortho.height / 2, obj.origin[2]);
+      mesh.position.set(center[0] - ortho.width / 2, center[1] - ortho.height / 2, center[2]);
       scene.add(mesh);
     },
     setTextObject(tex, obj) {
@@ -634,17 +641,22 @@ export function createSceneRenderer(
       // 粒子对象无 size 字段，局部相机范围 = 发射器世界包围盒估计 distanceMax×scale
       // （无/零 distanceMax → 默认 64，见 particleObjectRange）；合成 quad 世界尺寸 =
       // 未钳制 distanceMax×scale，UV 展开映射只采样 RT 可见段。
+      // T4.1：alignment 锚点 → 中心。粒子无 size 字段，世界尺寸用 particleWorldSize
+      // 的发射距离×scale 估计（同合成 quad 世界尺寸基准）；无发射距离时对齐退化为
+      // center（距离未知即无尺寸，alignment 无效果）。偏移同时作用于对象 RT 路径
+      // （合成 quad 世界位置）与共享场景路径（points.position，即发射原点）。
+      const world = particleWorldSize(spec.emitter, [s[0], s[1]]);
+      const center = applyAlignment(obj.origin, [world.w, world.h], obj.alignment);
       if (shouldUseObjectPath(obj)) {
         const range = particleObjectRange(spec.emitter, [s[0], s[1]]);
-        const world = particleWorldSize(spec.emitter, [s[0], s[1]]);
-        createObjectEntry(obj.id, obj.origin, world.w, world.h, range, points);
+        createObjectEntry(obj.id, center, world.w, world.h, range, points);
         // 粒子系统仍需进 particleSystems：帧循环 update + 缓冲同步后，动态发射的粒子
         // 写入对象 RT（entry.scene 渲染），再经合成 quad 贴回共享场景
         particleSystems.push({ system, points });
         return;
       }
-      // 无效果粒子：共享场景路径（发射原点按中心映射平移，不翻转）
-      points.position.set(obj.origin[0] - ortho.width / 2, obj.origin[1] - ortho.height / 2, obj.origin[2]);
+      // 无效果粒子：共享场景路径（发射原点按锚点换算中心映射平移，不翻转）
+      points.position.set(center[0] - ortho.width / 2, center[1] - ortho.height / 2, center[2]);
       scene.add(points);
       particleSystems.push({ system, points });
     },
