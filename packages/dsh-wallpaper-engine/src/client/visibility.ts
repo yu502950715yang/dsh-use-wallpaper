@@ -63,5 +63,8 @@ export function resolveVisibility(
     }
     case 'script':
       return v.value;
+    default:
+      // 畸形 kind（运行时防御，解析器产出恒为上述三值）→ 默认可见，不误杀对象
+      return true;
   }
 }

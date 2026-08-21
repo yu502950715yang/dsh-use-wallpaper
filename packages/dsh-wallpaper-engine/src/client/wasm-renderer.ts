@@ -3,6 +3,7 @@
 import { parseSceneJson } from './scene-json.js';
 import { resolveTexPath } from './scene-renderer.js';
 import { applyAlignment } from './alignment.js';
+import { resolveVisibility } from './visibility.js';
 import type { SceneDescription } from '../shared/types.js';
 
 // Task 2.1：效果链检测（纯函数）。wasm 渲染器（Rust/wgpu）只渲染静态图像 quad +
@@ -173,9 +174,14 @@ export function createWasmSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneRe
         }
         // 对象遍历：image → 纹理字节直传 wasm；particle → 规格 json 直传；util 跳过
         // （与 scene-renderer.ts 语义一致；assetId 用对象索引保证单场景内唯一）
+        // T4.2 可见性过滤（与 scene-renderer.renderScene 的 visibleObjects 过滤一致）：
+        // wasm 路径无用户属性注入（settings 查询仅 JS 路径有），传 {} → user 绑定回退
+        // 绑定 value（= 无用户属性存储的缺省语义）；不可见对象整体跳过——不加载纹理/
+        // 粒子、不计入 rendered（全不可见 → rendered===0 → 下方 preview 回退，同 JS 路径）。
         let rendered = 0;
         for (let i = 0; i < desc.objects.length; i++) {
           const obj = desc.objects[i];
+          if (!resolveVisibility(obj, {})) continue;
           if (obj.kind === 'image') {
             const tex = await resolveImageTexBytes(id, obj.image);
             if (!tex) continue; // 纹理缺失 → 跳过该对象（与 JS 渲染器一致）

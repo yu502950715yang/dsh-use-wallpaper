@@ -56,6 +56,11 @@ describe('createTextTexture', () => {
     expect(ctx.font).toBe('24px Arial');
   });
 
+  it('M29 多词字体家族名（Times New Roman）→ 加引号（CSS font 简写多词家族需引号，否则被静默丢弃）', () => {
+    createTextTexture('z', { font: 'Times New Roman', pointsize: 20, width: 100, height: 50 });
+    expect(ctx.font).toBe('20px "Times New Roman"');
+  });
+
   it('color [r,g,b] → rgb() fillStyle', () => {
     createTextTexture('x', { color: [255, 0, 128], width: 100, height: 50 });
     expect(ctx.fillStyle).toBe('rgb(255, 0, 128)');

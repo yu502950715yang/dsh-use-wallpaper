@@ -1,5 +1,5 @@
 import { build } from 'esbuild';
-import { copyFileSync, mkdirSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -23,6 +23,17 @@ console.log('client bundle written to dist/client.js');
 const here = dirname(fileURLToPath(import.meta.url));
 const pkgDir = join(here, '..', 'wasm', 'pkg');
 const outStatic = join(here, '..', 'dist', 'static');
+
+// 构建顺序守卫（M54）：dist/static 复制的是 wasm/pkg/ 产物——改过 Rust 必须先
+// `npm run build:wasm` 再 build:client，否则页面加载的是旧 wasm。pkg 产物缺失
+// （全新克隆 / 未构建）时直接报错并提示，不静默失败在半路。
+for (const file of ['we_scene_wasm.js', 'we_scene_wasm_bg.wasm']) {
+  if (!existsSync(join(pkgDir, file))) {
+    console.error(`[build:client] 缺少 wasm/pkg/${file} —— 请先运行 npm run build:wasm（cd wasm && wasm-pack build --target web --release --features render）`);
+    process.exit(1);
+  }
+}
+
 mkdirSync(outStatic, { recursive: true });
 for (const file of ['we_scene_wasm.js', 'we_scene_wasm_bg.wasm']) {
   copyFileSync(join(pkgDir, file), join(outStatic, file));

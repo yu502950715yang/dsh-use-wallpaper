@@ -80,4 +80,10 @@ describe('resolveVisibility（可见性解析：注入用户属性）', () => {
     expect(resolveVisibility({ visible: { kind: 'script', script: 'x()', value: true } }, {})).toBe(true);
     expect(resolveVisibility({ visible: { kind: 'script', script: 'x()', value: false } }, {})).toBe(false);
   });
+
+  it('kind 为未知值（畸形数据）→ 默认可见（switch 缺省分支兜底，不误杀对象）', () => {
+    // 解析器产出的 kind 恒为 plain/user/script；此处模拟运行时收到畸形绑定的防御场景
+    const obj = { visible: { kind: 'unknown-kind' as unknown as 'plain', value: false } };
+    expect(resolveVisibility(obj, {})).toBe(true);
+  });
 });

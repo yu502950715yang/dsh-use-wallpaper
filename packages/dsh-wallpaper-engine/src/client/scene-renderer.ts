@@ -621,6 +621,13 @@ export function createSceneRenderer(
       const anchorY = obj.origin[1] - ortho.height / 2;
       const geometry = new THREE.PlaneGeometry(barWidth, 1);
       const material = new THREE.MeshBasicMaterial({ map: tex, transparent: true });
+      // M53：visualizer 条同样施加对象调制（color/alpha/brightness）——与共享图片路径
+      // 的 setImageObject 一致；visualizer 对象无 color 字段时 materialModulation 返回
+      // 全缺省 {1,1,1,1}（白色不透明），行为与改动前逐点一致（纯函数已由
+      // scene-renderer.test.ts 的 materialModulation 用例覆盖）。
+      const mod = materialModulation(obj.color, obj.alpha, obj.brightness);
+      material.color.setRGB(mod.r, mod.g, mod.b);
+      material.opacity = mod.a;
       const bars: THREE.Mesh[] = [];
       for (let i = 0; i < VISUALIZER_BAR_COUNT; i++) {
         const mesh = new THREE.Mesh(geometry, material);
@@ -718,6 +725,10 @@ export function createSceneRenderer(
     stop() {
       running = false;
       cancelAnimationFrame(raf);
+      // M19：重置对象效果链 promise 链。stop 后 frame 不再追加更新，但已入队的
+      // .then 仍可能在停止后触碰已 dispose 的 runner（旧实现仅靠 .catch 吞掉，
+      // 属清理遗漏）；重置让后续更新从新链起点开始，不再残留对已释放资源的引用。
+      objectChain = Promise.resolve();
       // 释放音频分析器（T3.2）：context.close() 释放 Web Audio 资源（重复 close 会
       // reject，静默吞掉；renderScene 异常兜底路径可能再次 close）
       audioAnalyzer?.context.close().catch(() => {});

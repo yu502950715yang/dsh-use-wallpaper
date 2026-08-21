@@ -239,6 +239,80 @@ describe('createWasmSceneRenderer', () => {
     });
   });
 
+  // T4.2 可见性过滤（wasm 路径补齐）：JS 路径（renderScene）已用 resolveVisibility 过滤
+  // visibleObjects；wasm 路径此前遍历 desc.objects 不过滤 → 不可见对象仍渲染（行为不一致）。
+  // 修复：render() 对象循环内用 resolveVisibility(obj, {}) 跳过不可见对象——wasm 无用户
+  // 属性注入（settings 查询仅 JS 路径有），传 {} 时 user 绑定回退绑定 value（= 无用户属性
+  // 存储的缺省语义，与 JS 路径 getUserProperty 恒 undefined 一致）。
+  it('T4.2 可见性过滤：visible:false 的 image 对象跳过（load_image 不调用，assetId 保持原索引）', async () => {
+    vi.stubGlobal('navigator', { gpu: {} });
+    const sceneJson = JSON.stringify({
+      camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+      general: { orthogonalprojection: { width: 2400, height: 1555 } },
+      objects: [
+        { id: 12, name: 'bg', image: 'models/m.json', origin: '100 200 0', scale: '1 1 1', size: '400 300' },
+        { id: 13, name: 'hidden', image: 'models/m.json', origin: '0 0 0', scale: '1 1 1', size: '100 100', visible: false },
+        { id: 18, name: 'rays', particle: 'particles/p.json', origin: '10 20 0', scale: '2 2 1' },
+      ],
+    });
+    const scene = { load_scene: vi.fn(), load_image: vi.fn(), add_particle: vi.fn(), step: vi.fn(), render: vi.fn() };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.includes('name=scene.json')) return jsonResp(sceneJson);
+        if (url.includes('m.json')) return jsonResp({ material: 'materials/mat.json' });
+        if (url.includes('mat.json')) return jsonResp({ passes: [{ textures: ['tex'] }] });
+        if (url.includes('tex.tex')) return { ok: true, status: 200, arrayBuffer: async () => new Uint8Array([1, 2, 3, 4]).buffer };
+        if (url.includes('p.json')) return jsonResp({ emitter: [{ rate: 5 }], initializer: [] });
+        return { ok: false, status: 404, json: async () => ({}) } as any;
+      }),
+    );
+    const r = createWasmSceneRenderer({ loadWasm: async () => ({ default: vi.fn(), WeScene: { create: async () => scene } } as any) });
+    const fg = document.createElement('canvas');
+    await expect(r!.render('1', fg)).resolves.toBe(true);
+    // 仅可见 image 对象加载（assetId = 原索引 0）；隐藏对象（索引 1）未触发 load_image
+    expect(scene.load_image).toHaveBeenCalledTimes(1);
+    expect(scene.load_image.mock.calls[0][0]).toBe(0);
+    // particle 可见 → 照常 add_particle
+    expect(scene.add_particle).toHaveBeenCalledTimes(1);
+    expect(Array.from(scene.add_particle.mock.calls[0][1])).toEqual([10, 20, 0]);
+    await vi.waitFor(() => {
+      expect(scene.step).toHaveBeenCalled();
+    });
+  });
+
+  it('T4.2 可见性过滤：visible:false 的 particle 对象跳过（add_particle 不调用）', async () => {
+    vi.stubGlobal('navigator', { gpu: {} });
+    const sceneJson = JSON.stringify({
+      camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+      general: { orthogonalprojection: { width: 2400, height: 1555 } },
+      objects: [
+        { id: 12, name: 'bg', image: 'models/m.json', origin: '100 200 0', scale: '1 1 1', size: '400 300' },
+        { id: 18, name: 'hidden-rays', particle: 'particles/p.json', origin: '10 20 0', scale: '2 2 1', visible: false },
+      ],
+    });
+    const scene = { load_scene: vi.fn(), load_image: vi.fn(), add_particle: vi.fn(), step: vi.fn(), render: vi.fn() };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.includes('name=scene.json')) return jsonResp(sceneJson);
+        if (url.includes('m.json')) return jsonResp({ material: 'materials/mat.json' });
+        if (url.includes('mat.json')) return jsonResp({ passes: [{ textures: ['tex'] }] });
+        if (url.includes('tex.tex')) return { ok: true, status: 200, arrayBuffer: async () => new Uint8Array([1, 2, 3, 4]).buffer };
+        if (url.includes('p.json')) return jsonResp({ emitter: [{ rate: 5 }], initializer: [] });
+        return { ok: false, status: 404, json: async () => ({}) } as any;
+      }),
+    );
+    const r = createWasmSceneRenderer({ loadWasm: async () => ({ default: vi.fn(), WeScene: { create: async () => scene } } as any) });
+    const fg = document.createElement('canvas');
+    await expect(r!.render('1', fg)).resolves.toBe(true);
+    expect(scene.load_image).toHaveBeenCalledTimes(1);      // 可见 image 照常
+    expect(scene.add_particle).not.toHaveBeenCalled();      // 隐藏粒子未加载
+    await vi.waitFor(() => {
+      expect(scene.step).toHaveBeenCalled();
+    });
+  });
+
   it('image 对象无 size 字段 + alignment → origin 不偏移（纹理尺寸在 origin 计算时未知，跳过 alignment）', async () => {
     vi.stubGlobal('navigator', { gpu: {} });
     const sceneJson = JSON.stringify({

@@ -48,7 +48,10 @@ export function createTextTexture(text: string, opts: TextTextureOptions): THREE
   const ctx = canvas.getContext('2d');
   if (ctx) {
     const size = Math.max(1, opts.pointsize ?? Math.round(height * 0.8));
-    ctx.font = `${size}px ${resolveFontFamily(opts.font)}`;
+    // M29：多词字体家族名（如 "Times New Roman"）在 CSS font 简写中必须加引号，
+    // 否则整段 font 被浏览器视为非法而静默回退默认字体（单词家族不受影响）。
+    const family = resolveFontFamily(opts.font);
+    ctx.font = family.includes(' ') ? `${size}px "${family}"` : `${size}px ${family}`;
     ctx.fillStyle = opts.color ? `rgb(${opts.color[0]}, ${opts.color[1]}, ${opts.color[2]})` : '#ffffff';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
