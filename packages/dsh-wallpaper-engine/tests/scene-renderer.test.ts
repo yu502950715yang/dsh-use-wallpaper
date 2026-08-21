@@ -168,8 +168,8 @@ describe('uvWindow（合成 quad 的 UV 窗口：钳制轴只采样 RT 可见部
   });
 });
 
-describe('createCompositeGeometry（合成 quad：世界尺寸 = 未钳制 size×scale，UV 映射进可见窗口）', () => {
-  it('x 轴钳制（2942×1471 世界 → RT 2048×1471）：quad 世界尺寸未钳制、UV.x 落在窗口内、UV.y 全 [0,1]', () => {
+describe('createCompositeGeometry（合成 quad：世界尺寸 = 未钳制 size×scale，UV 展开映射进可见窗口外侧）', () => {
+  it('x 轴钳制（2942×1471 世界 → RT 2048×1471）：quad 世界尺寸未钳制、UV.x 展开映射、UV.y 全 [0,1]', () => {
     const geo = createCompositeGeometry(2942, 1471, 2048, 1471);
     // 世界尺寸：position 横跨 ±1471（x）、±735.5（y）= 未钳制 size×scale
     const pos = Array.from(geo.attributes.position.array as Float32Array);
@@ -179,19 +179,30 @@ describe('createCompositeGeometry（合成 quad：世界尺寸 = 未钳制 size�
     expect(Math.max(...xs)).toBe(1471);
     expect(Math.min(...ys)).toBe(-735.5);
     expect(Math.max(...ys)).toBe(735.5);
-    // UV 窗口：u 只落在 [uvStart, uvEnd]（仅采样 RT 可见段），v 保持全 [0,1]
+    // UV 展开映射（I2 修复）：start/end 是世界空间占比（窗口 = 可见段占比），quad UV
+    // 须展开为 u' = (u - start) / (end - start)——中间 [start, end] 世界区间与 RT
+    // [0,1] 一一对应（RT 像素与场景像素 1:1），窗口外侧由采样器 CLAMP 到 0/1。
+    // 对 W=2942,C=2048：窗口 [0.15194, 0.84806] → quad 左缘 u' = (0-start)/宽 ≈
+    // -0.21826（CLAMP 后 0，即 RT 左缘 = 世界局部 -1024）、右缘 u' ≈ 1.21826（CLAMP 1）；
+    // 世界中心 u=0.5 是不动点（1:1）；v 轴未钳制（1471 == RT）保持全 [0,1]。
     // （BufferAttribute 存 Float32Array → 精度 ~7 位，用 6 位小数容差）
     const ux = uvWindow(2942, 2048);
+    const expand = (u: number) => (u - ux.start) / (ux.end - ux.start);
+    expect(expand(0)).toBeCloseTo((2048 - 2942) / (2 * 2048), 6); // 纹理窗口左缘 (C-W)/2C
+    expect(expand(1)).toBeCloseTo((2942 + 2048) / (2 * 2048), 6); // 纹理窗口右缘 (W+C)/2C
+    expect(expand(ux.start)).toBeCloseTo(0, 6);  // 世界可见段起点采样 RT 左缘（1:1）
+    expect(expand(ux.end)).toBeCloseTo(1, 6);    // 世界可见段终点采样 RT 右缘（1:1）
+    expect(expand(0.5)).toBeCloseTo(0.5, 6);     // 世界中心 1:1 不动点
     const uvs = Array.from(geo.attributes.uv.array as Float32Array);
     const us = uvs.filter((_, i) => i % 2 === 0);
     const vs = uvs.filter((_, i) => i % 2 === 1);
-    expect(Math.min(...us)).toBeCloseTo(ux.start, 6);
-    expect(Math.max(...us)).toBeCloseTo(ux.end, 6);
+    expect(Math.min(...us)).toBeCloseTo(expand(0), 6);
+    expect(Math.max(...us)).toBeCloseTo(expand(1), 6);
     expect(Math.min(...vs)).toBe(0);
     expect(Math.max(...vs)).toBe(1);
     geo.dispose();
   });
-  it('未钳制（世界 == RT 尺寸）→ UV 全 [0,1]（与无效果对象渲染语义一致）', () => {
+  it('未钳制（世界 == RT 尺寸）→ UV 全 [0,1]（1:1 回归保护：窗口 [0,1] 两式等价不受影响）', () => {
     const geo = createCompositeGeometry(1471, 1471, 1471, 1471);
     const uvs = Array.from(geo.attributes.uv.array as Float32Array);
     expect(Math.min(...uvs)).toBe(0);

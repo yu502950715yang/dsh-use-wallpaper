@@ -142,13 +142,22 @@ export function uvWindow(unclamped: number, clamped: number): { start: number; e
   return { start, end: 1 - start };
 }
 
-// 把 PlaneGeometry 的 UV 从 [0,1]² 线性映射进可见窗口（每顶点 UV' = start + uv*(end-start)）：
-// 合成 quad 左/下边采样窗口起点、右/上边采样窗口终点，世界尺寸（未钳制）与 RT 可见段精确对应。
+// 把 PlaneGeometry 的 UV 从 [0,1]² 线性**展开**映射到可见窗口外侧（每顶点
+// UV' = (uv - start) / (end - start)）：start/end 是世界空间占比（见 uvWindow），
+// 钳制轴时中间 [start, end] 世界区间与 RT [0,1] 一一对应（RT 像素与场景像素 1:1，
+// M13），窗口外侧超出 [0,1] 的 UV 由采样器 CLAMP 到 0/1（three 纹理默认
+// ClampToEdgeWrapping）——quad 左/下边采样 RT 左缘之前（CLAMP 0）、右/上边采样
+// RT 右缘之后（CLAMP 1），世界中心不动点 1:1。I2 修复：旧实现 UV' = start +
+// uv*(end-start) 把窗口当纹理占比收缩（角色用反），导致钳制轴可见段被拉伸铺满
+// quad、内容放大 (W/C)² 且两侧各裁 ~15.2%。未钳制轴窗口 [0,1] 时 (uv-0)/1 = uv，
+// 与旧式等价、精确 1:1（回归保护）。
 function applyUvWindow(geometry: THREE.PlaneGeometry, ux: { start: number; end: number }, uy: { start: number; end: number }): void {
   const uvs = geometry.attributes.uv.array as Float32Array;
+  const wx = ux.end - ux.start;
+  const wy = uy.end - uy.start;
   for (let i = 0; i < uvs.length; i += 2) {
-    uvs[i] = ux.start + uvs[i] * (ux.end - ux.start);
-    uvs[i + 1] = uy.start + uvs[i + 1] * (uy.end - uy.start);
+    uvs[i] = wx > 0 ? (uvs[i] - ux.start) / wx : uvs[i];
+    uvs[i + 1] = wy > 0 ? (uvs[i + 1] - uy.start) / wy : uvs[i + 1];
   }
   geometry.attributes.uv.needsUpdate = true;
 }
@@ -265,6 +274,43 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
     entry.runner.setChains(chains, wallpaperId, { width: entry.rt.width, height: entry.rt.height });
   }
 
+  // 对象级条目装配（T1.4 抽取，image/particle 双路径共用）：创建对象 RT + 局部相机
+  // （范围 = 钳制后 RT 分辨率）+ 局部场景（容纳对象内容，内容保持 (0,0,0)——对象中心
+  // 即局部原点）+ 合成 quad（世界尺寸 = 未钳制，UV 展开映射只采样 RT 可见段，初始
+  // map = rt.texture，链就绪前显示原始对象）；按对象 id 替换注册（M14）；随后补挂
+  // pendingChains 暂存链（I1 竞态修复）。行为与 T1.3/T1.4 原装配逐点一致。
+  function createObjectEntry(
+    objId: number,
+    origin: [number, number, number],
+    worldW: number,
+    worldH: number,
+    range: { w: number; h: number },
+    content: THREE.Object3D,
+  ): void {
+    const rt = createObjectRenderTarget(range.w, range.h);
+    const localCamera = new THREE.OrthographicCamera(
+      -rt.width / 2, rt.width / 2, rt.height / 2, -rt.height / 2, -1000, 1000,
+    );
+    localCamera.position.z = CAMERA_DISTANCE;
+    const localScene = new THREE.Scene();
+    localScene.add(content); // content 保持 (0,0,0)：对象中心即局部原点
+    // 合成 quad：世界尺寸 = 未钳制（钳制轴对象超出视锥部分在 RT 中不存在，由 UV 展开
+    // 映射只采样 RT 可见段）；初始 map = rt.texture（链就绪前显示原始对象）。
+    const quad = new THREE.Mesh(
+      createCompositeGeometry(worldW, worldH, rt.width, rt.height),
+      new THREE.MeshBasicMaterial({ map: rt.texture, transparent: true }),
+    );
+    quad.position.set(origin[0] - ortho.width / 2, origin[1] - ortho.height / 2, origin[2]);
+    scene.add(quad);
+    // 按对象 id 替换（M14）：同 id 重设时先清理旧条目（quad/RT/runner），避免残留
+    const existing = objectEntries.get(objId);
+    if (existing) disposeObjectEntry(existing);
+    objectEntries.set(objId, { id: objId, scene: localScene, camera: localCamera, rt, quad, runner: null });
+    // I1 竞态修复：链可能在条目创建前已解析完成（暂存）→ 创建后立即补挂，不丢失
+    const pending = pendingChains.take(objId);
+    if (pending) applyObjectChains(objId, pending.chains, pending.wallpaperId);
+  }
+
   function frame() {
     const dt = Math.min(clock.getDelta(), 0.05);
     for (const ps of particleSystems) {
@@ -351,33 +397,15 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
       const s = obj.scale;
       mesh.scale.set(s[0], s[1], s[2] ?? 1);
       // 对象级效果链路径：带效果 image 对象渲染进独立对象 RT（局部正交相机，中心原点）。
-      // 局部相机范围 = 取整后的 RT 分辨率（M13：RT 像素与场景像素 1:1，合成 UV 窗口精确
-      // 对应相机视锥，效果链 UV 0-1 与 mask 纹理对齐对象局部空间）。效果链在对象 RT 上
-      // 执行，输出经合成 quad 贴回共享场景（世界尺寸 = 未钳制 size×scale，UV 只采样可见窗口）。
+      // 局部相机范围 = 取整后的 RT 分辨率（M13：RT 像素与场景像素 1:1，合成 UV 展开映射
+      // 精确对应相机视锥，效果链 UV 0-1 与 mask 纹理对齐对象局部空间）。效果链在对象 RT
+      // 上执行，输出经合成 quad 贴回共享场景（世界尺寸 = 未钳制 size×scale，UV 只采样可见段）。
       if (shouldUseObjectPath(obj)) {
-        const range = objectCameraRange([w, h], [s[0], s[1]]);
-        const rt = createObjectRenderTarget(range.w, range.h);
-        const localCamera = new THREE.OrthographicCamera(
-          -rt.width / 2, rt.width / 2, rt.height / 2, -rt.height / 2, -1000, 1000,
+        createObjectEntry(
+          obj.id, obj.origin, w * s[0], h * s[1],
+          objectCameraRange([w, h], [s[0], s[1]]),
+          mesh,
         );
-        localCamera.position.z = CAMERA_DISTANCE;
-        const localScene = new THREE.Scene();
-        localScene.add(mesh); // mesh 保持 (0,0,0)：对象中心即局部原点
-        // 合成 quad：世界尺寸 = 未钳制 size×scale（钳制轴对象超出视锥部分在 RT 中不存在，
-        // 由 UV 窗口只采样 RT 可见段）；初始 map = rt.texture（链就绪前显示原始对象）。
-        const quad = new THREE.Mesh(
-          createCompositeGeometry(w * s[0], h * s[1], rt.width, rt.height),
-          new THREE.MeshBasicMaterial({ map: rt.texture, transparent: true }),
-        );
-        quad.position.set(obj.origin[0] - ortho.width / 2, obj.origin[1] - ortho.height / 2, obj.origin[2]);
-        scene.add(quad);
-        // 按对象 id 替换（M14）：同 id 重设时先清理旧条目（quad/RT/runner），避免残留
-        const existing = objectEntries.get(obj.id);
-        if (existing) disposeObjectEntry(existing);
-        objectEntries.set(obj.id, { id: obj.id, scene: localScene, camera: localCamera, rt, quad, runner: null });
-        // I1 竞态修复：链可能在条目创建前已解析完成（暂存）→ 创建后立即补挂，不丢失
-        const pending = pendingChains.take(obj.id);
-        if (pending) applyObjectChains(obj.id, pending.chains, pending.wallpaperId);
         return;
       }
       // 无效果对象：共享场景路径（对象 origin 是 WE 场景中的中心点：中心映射 = (ox - vw/2, oy - vh/2)。
@@ -414,36 +442,14 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
       const s = obj.scale;
       points.scale.set(s[0], s[1] ?? s[0], s[2] ?? 1);
       // 对象级效果链路径（T1.4）：带效果粒子对象渲染进独立对象 RT（局部正交相机，中心
-      // 原点）——机制与 setImageObject 完全一致（复用 createObjectRenderTarget /
-      // createCompositeGeometry / PendingChainStore / applyObjectChains，无重复实现）。
+      // 原点）——机制与 setImageObject 完全一致（共用 createObjectEntry，无重复实现）。
       // 粒子对象无 size 字段，局部相机范围 = 发射器世界包围盒估计 distanceMax×scale
       // （无/零 distanceMax → 默认 64，见 particleObjectRange）；合成 quad 世界尺寸 =
-      // 未钳制 distanceMax×scale，UV 窗口只采样 RT 可见段。
+      // 未钳制 distanceMax×scale，UV 展开映射只采样 RT 可见段。
       if (shouldUseObjectPath(obj)) {
         const range = particleObjectRange(spec.emitter, [s[0], s[1]]);
         const world = particleWorldSize(spec.emitter, [s[0], s[1]]);
-        const rt = createObjectRenderTarget(range.w, range.h);
-        const localCamera = new THREE.OrthographicCamera(
-          -rt.width / 2, rt.width / 2, rt.height / 2, -rt.height / 2, -1000, 1000,
-        );
-        localCamera.position.z = CAMERA_DISTANCE;
-        const localScene = new THREE.Scene();
-        localScene.add(points); // points 保持 (0,0,0)：对象中心即局部原点
-        // 合成 quad：世界尺寸 = 未钳制 distanceMax×scale（钳制轴粒子超出视锥部分在 RT
-        // 中不存在，由 UV 窗口只采样 RT 可见段）；初始 map = rt.texture（链就绪前显示原始粒子）。
-        const quad = new THREE.Mesh(
-          createCompositeGeometry(world.w, world.h, rt.width, rt.height),
-          new THREE.MeshBasicMaterial({ map: rt.texture, transparent: true }),
-        );
-        quad.position.set(obj.origin[0] - ortho.width / 2, obj.origin[1] - ortho.height / 2, obj.origin[2]);
-        scene.add(quad);
-        // 按对象 id 替换（M14）：同 id 重设时先清理旧条目（quad/RT/runner），避免残留
-        const existing = objectEntries.get(obj.id);
-        if (existing) disposeObjectEntry(existing);
-        objectEntries.set(obj.id, { id: obj.id, scene: localScene, camera: localCamera, rt, quad, runner: null });
-        // I1 竞态修复：链可能在条目创建前已解析完成（暂存）→ 创建后立即补挂，不丢失
-        const pending = pendingChains.take(obj.id);
-        if (pending) applyObjectChains(obj.id, pending.chains, pending.wallpaperId);
+        createObjectEntry(obj.id, obj.origin, world.w, world.h, range, points);
         // 粒子系统仍需进 particleSystems：帧循环 update + 缓冲同步后，动态发射的粒子
         // 写入对象 RT（entry.scene 渲染），再经合成 quad 贴回共享场景
         particleSystems.push({ system, points });
