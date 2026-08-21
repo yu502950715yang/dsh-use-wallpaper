@@ -20,6 +20,8 @@ export interface SceneImageObject {
   size?: [number, number];       // scene.json 的 size 字段（WE 像素尺寸），缺省时由纹理宽高推算
   image: string;                 // 资源名，如 "models/xxx.json"
   effects?: unknown[];           // 对象效果链定义（Ruling 5：全库 122 条效果中 105 条挂在 image 对象上）
+  script?: string;               // visible.script（WE 可见性/视觉脚本源码，T3.3 模式识别输入）
+  scriptProperties?: Record<string, unknown>; // visible.scriptproperties（{user,value} 已解包，T3.3）
 }
 export interface SceneParticleObject {
   kind: 'particle'; id: number; name: string;
@@ -37,18 +39,21 @@ export interface SceneUtilObject {
   image: string;                 // 如 "models/util/composelayer.json"
   effects?: unknown[];           // 对象效果链定义（effects 数组，二期使用）
 }
-// WE text 对象（T3.1）：scene.json 携带 text 字段（{ script, scriptproperties, value }
-// 对象，如 2937346640 的 VHS Time and Date）。一期静态渲染 text.value（离屏 canvas
-// 绘制 → CanvasTexture → 共享场景 quad）；脚本动态文本（时钟等）见 T3.3。
+// WE text 对象（T3.1/T3.3）：scene.json 携带 text 字段（{ script, scriptproperties, value }
+// 对象，如 2937346640 的 VHS Time and Date）。T3.1 静态渲染 text.value（离屏 canvas
+// 绘制 → CanvasTexture → 共享场景 quad）；T3.3 起 text.script 识别为 clock 时每帧
+// 按 scriptProperties 生成时间文本刷新纹理（静态值仅作缺省）。
 export interface SceneTextObject {
   kind: 'text'; id: number; name: string;
   origin: [number, number, number]; scale: [number, number, number];
   size?: [number, number];       // WE 像素尺寸（与 image 对象一致）
-  text: string;                  // text.value（缺省字符串，静态渲染内容）
+  text: string;                  // text.value（缺省字符串，脚本动态文本的静态兜底）
   font?: string;                 // WE 字体名（可能是文件路径，如 fonts/Atami-Regular.otf）
   pointsize?: number;            // 字号（WE pointsize，绘制按 px 近似）
   color?: [number, number, number]; // 文本颜色（WE color "r g b a" 的前 3 通道，0-255）
   alignment?: string;            // 对齐方式（原始字段保留；静态渲染居中，暂不参与布局）
+  script?: string;               // text.script（WE 文本脚本源码，T3.3 模式识别输入）
+  scriptProperties?: Record<string, unknown>; // text.scriptproperties（{user,value} 已解包，T3.3）
 }
 export type SceneObject = SceneImageObject | SceneParticleObject | SceneUtilObject | SceneTextObject;
 

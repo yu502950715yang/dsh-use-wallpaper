@@ -1,0 +1,7 @@
+{
+  "delimiter": ":",
+  "use24hFormat": {
+    "user": "_24hourformat",
+    "value": false
+  }
+}

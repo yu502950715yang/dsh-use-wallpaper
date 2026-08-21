@@ -150,3 +150,65 @@ describe('parseSceneJson text 对象归类（T3.1）', () => {
     expect((desc.objects[0] as any).color).toBeUndefined();
   });
 });
+
+// T3.3 脚本字段解析：image 对象从 visible.{script,scriptproperties}、text 对象从
+// text.{script,scriptproperties} 提取（scriptproperties 的 {user,value} 包装解包）。
+describe('parseSceneJson script/scriptproperties 解析（T3.3）', () => {
+  it('image 对象 visible.script → script；visible.scriptproperties 解包 → scriptProperties', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [{
+        id: 61, name: 'Simple Visualizer', image: 'models/workshop/2652493753/bar.json',
+        origin: '113.74350 83.14454 0.00000', scale: '2.36344 2.36344 0.75850',
+        visible: {
+          script: 'let audioData = engine.registerAudioBuffers(64);',
+          scriptproperties: { barWidth: 0.83, originX: { user: '_x', value: 12.67 } },
+          value: true,
+        },
+      }],
+    }));
+    const o = desc.objects[0] as any;
+    expect(o.kind).toBe('image');
+    expect(o.script).toBe('let audioData = engine.registerAudioBuffers(64);');
+    expect(o.scriptProperties).toEqual({ barWidth: 0.83, originX: 12.67 });
+  });
+
+  it('text 对象 text.script → script；text.scriptproperties → scriptProperties（use24hFormat 解包）', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [{
+        id: 182, name: 'VHS Time and Date', origin: '1859.88074 811.84882 0.00000', scale: '1 1 1',
+        text: {
+          script: 'let time = new Date(); let hours = time.getHours();',
+          scriptproperties: { delimiter: ':', use24hFormat: { user: '_24hourformat', value: false } },
+          value: '<Time and Date>',
+        },
+      }],
+    }));
+    const o = desc.objects[0] as any;
+    expect(o.kind).toBe('text');
+    expect(o.script).toBe('let time = new Date(); let hours = time.getHours();');
+    expect(o.scriptProperties).toEqual({ delimiter: ':', use24hFormat: false });
+  });
+
+  it('无 script/scriptproperties → 字段 undefined（不误报）', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [{ id: 1, image: 'models/a.json', origin: '0 0 0', scale: '1 1 1' }],
+    }));
+    expect((desc.objects[0] as any).script).toBeUndefined();
+    expect((desc.objects[0] as any).scriptProperties).toBeUndefined();
+  });
+
+  it('visible 为 {user,value} 开关包装（非脚本对象，如效果可见性）→ script 为 undefined', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [{ id: 1, image: 'models/a.json', visible: { user: 'newproperty', value: true }, origin: '0 0 0', scale: '1 1 1' }],
+    }));
+    expect((desc.objects[0] as any).script).toBeUndefined();
+  });
+
+  it('scriptproperties 非对象（畸形数据）→ scriptProperties 为 undefined（不抛错）', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [{ id: 1, image: 'models/a.json', visible: { script: 'x', scriptproperties: 'nope' }, origin: '0 0 0', scale: '1 1 1' }],
+    }));
+    expect((desc.objects[0] as any).script).toBe('x');
+    expect((desc.objects[0] as any).scriptProperties).toEqual({}); // 解析失败 → 空对象
+  });
+});

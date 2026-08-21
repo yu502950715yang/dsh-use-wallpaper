@@ -1,4 +1,5 @@
 import type { SceneDescription, SceneObject } from '../shared/types.js';
+import { parseScriptProperties } from './script-patterns.js';
 
 function vec3(s: unknown): [number, number, number] {
   if (typeof s !== 'string') return [0, 0, 0];
@@ -40,6 +41,21 @@ function optColor(s: unknown): [number, number, number] | undefined {
   return [parts[0], parts[1], parts[2]];
 }
 
+// 脚本字段提取（T3.3）：WE 对象脚本挂在 image 的 visible / text 的 text 对象上，
+// 形如 { script, scriptproperties, value }。scriptproperties 直接读 scene.json 对象
+// （{user,value} 包装由 parseScriptProperties 解包），不解析脚本源码。注意区分：
+// visible 也可能是普通 {user,value} 开关包装（效果可见性等）→ script 为 undefined。
+function scriptFields(o: { script?: unknown; scriptproperties?: unknown } | undefined): {
+  script?: string;
+  scriptProperties?: Record<string, unknown>;
+} {
+  const script = typeof o?.script === 'string' && o.script ? o.script : undefined;
+  const scriptProperties = o?.scriptproperties !== undefined
+    ? parseScriptProperties(o.scriptproperties)
+    : undefined;
+  return { script, scriptProperties };
+}
+
 export function parseSceneJson(raw: string): SceneDescription {
   const root: any = JSON.parse(raw);
   if (typeof root !== 'object' || root === null || Array.isArray(root)) {
@@ -69,14 +85,19 @@ export function parseSceneJson(raw: string): SceneDescription {
           ...base, kind: 'util' as const, image: o.image,
         };
       }
-      return { ...base, kind: 'image' as const, image: o.image };
+      // T3.3：image 对象的可见性脚本 visible.{script,scriptproperties}（如 Simple Visualizer）
+      // 一并解析——识别为 visualizer 时渲染器改走 64 条音频条路径（见 scene-renderer.ts）。
+      const vis = typeof o.visible === 'object' && o.visible !== null && !Array.isArray(o.visible)
+        ? o.visible as { script?: unknown; scriptproperties?: unknown }
+        : undefined;
+      return { ...base, kind: 'image' as const, image: o.image, ...scriptFields(vis) };
     }
     // Ruling P3-1（text 归类优先级）：o.text 为对象（非 null、非数组）→ kind:'text'。
-    // 检查位置：image 检查之后、空粒子兜底之前；text.value 为缺省字符串（脚本动态文本
-    // 见 T3.3，本任务仅静态渲染）。此前这类对象落入空粒子兜底 → 不渲染（2937346640 的
-    // VHS Time and Date id=182 即因此缺失）。
+    // 检查位置：image 检查之后、空粒子兜底之前；text.value 为缺省字符串（T3.3 起
+    // text.script 识别为 clock 时动态生成，静态值仅作兜底）。此前这类对象落入
+    // 空粒子兜底 → 不渲染（2937346640 的 VHS Time and Date id=182 即因此缺失）。
     if (typeof o.text === 'object' && o.text !== null && !Array.isArray(o.text)) {
-      const t = o.text as { value?: unknown };
+      const t = o.text as { value?: unknown; script?: unknown; scriptproperties?: unknown };
       return {
         ...base,
         kind: 'text' as const,
@@ -85,6 +106,8 @@ export function parseSceneJson(raw: string): SceneDescription {
         pointsize: optNum(o.pointsize),
         color: optColor(o.color),
         alignment: typeof o.alignment === 'string' && o.alignment ? o.alignment : undefined,
+        // T3.3：text.script 识别为 clock 时每帧刷新时间文本（scriptproperties 已解包）
+        ...scriptFields(t),
       };
     }
     return { ...base, kind: 'particle' as const, particle: '' }; // 无引用对象按空粒子处理（不渲染）

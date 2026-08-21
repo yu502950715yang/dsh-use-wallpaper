@@ -5,6 +5,7 @@ import {
   objectCameraRange, createObjectRenderTarget, resolveTexPath,
   groupEffectsByObject, uvWindow, createCompositeGeometry, PendingChainStore,
   particleObjectRange, particleWorldSize, shouldUseObjectPath,
+  barAnchorOffsetY, updateVisualizerBars,
 } from '../src/client/scene-renderer.js';
 import type { SceneObject } from '../src/shared/types.js';
 
@@ -295,5 +296,85 @@ describe('PendingChainStore（效果链异步挂载暂存：链先 resolve、条
     store.applyIfReady(404, 'chain', false);
     store.clear();
     expect(store.take(404)).toBeUndefined();
+  });
+});
+
+// T3.3 visualizer 驱动：barAnchorOffsetY（alignment 锚点 → 中心锚定 quad 的 y 偏移）与
+// updateVisualizerBars（每帧按频谱刷新条高与锚定偏移）为纯函数（只操作 THREE.Mesh 变换，
+// node 可测，不触碰 WebGLRenderer）。语义对齐 Simple Visualizer 脚本：
+//   scale.y = amt * scriptProperties.scaleY；origin.y += 0（锚点 y 恒定）；
+//   origin.x += originX 在循环内累积（创建期已按 i+1 累加进 position.x，本函数不动 x）。
+describe('barAnchorOffsetY（alignment → 中心锚定 y 偏移）', () => {
+  it('centre / 缺省 → 0（中心即锚点）', () => {
+    expect(barAnchorOffsetY('centre', 20)).toBe(0);
+    expect(barAnchorOffsetY(undefined, 20)).toBe(0);
+  });
+  it('bottom → +h/2（锚点=底边，quad 中心上移半高，条向上生长）', () => {
+    expect(barAnchorOffsetY('bottom', 20)).toBe(10);
+  });
+  it('top → -h/2（锚点=顶边，quad 中心下移半高，条向下生长）', () => {
+    expect(barAnchorOffsetY('top', 20)).toBe(-10);
+  });
+});
+
+describe('updateVisualizerBars（每帧频谱驱动条高与锚定偏移）', () => {
+  const makeBars = (count: number) => {
+    const bars: THREE.Mesh[] = [];
+    for (let i = 0; i < count; i++) {
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial());
+      mesh.position.set(10 + i * 5, 0, 0); // 创建期已按脚本累积 origin.x
+      bars.push(mesh);
+    }
+    return bars;
+  };
+  const props = { barWidth: 1, scaleY: 20, originX: 5, barAlignmentdir: 'bottom' };
+
+  it('scale.y = freqData[i]/255 × scaleY；bottom 锚定 y = anchorY + h/2', () => {
+    const bars = makeBars(2);
+    updateVisualizerBars(bars, 10, props, new Uint8Array([255, 128]));
+    expect(bars[0].scale.y).toBe(20);                    // 255/255×20
+    expect(bars[0].position.y).toBe(10 + 10);            // anchorY + 20/2
+    expect(bars[1].scale.y).toBeCloseTo(128 / 255 * 20, 6);
+    expect(bars[1].position.y).toBeCloseTo(10 + (128 / 255 * 20) / 2, 6);
+  });
+  it('centre 锚定：y = anchorY（偏移 0）', () => {
+    const bars = makeBars(1);
+    updateVisualizerBars(bars, 5, { ...props, barAlignmentdir: 'centre' }, new Uint8Array([255]));
+    expect(bars[0].position.y).toBe(5);
+    expect(bars[0].scale.y).toBe(20);
+  });
+  it('top 锚定：y = anchorY - h/2', () => {
+    const bars = makeBars(1);
+    updateVisualizerBars(bars, 5, { ...props, barAlignmentdir: 'top' }, new Uint8Array([255]));
+    expect(bars[0].position.y).toBe(5 - 10);
+  });
+  it('缺 barAlignmentdir → 按 bottom 处理（视觉系默认自基线向上生长）', () => {
+    const bars = makeBars(1);
+    updateVisualizerBars(bars, 5, { barWidth: 1, scaleY: 20, originX: 5 }, new Uint8Array([255]));
+    expect(bars[0].position.y).toBe(5 + 10);
+  });
+  it('position.x 由创建期累积（i+1）×originX，本函数不改动 x', () => {
+    const bars = makeBars(3);
+    updateVisualizerBars(bars, 0, props, new Uint8Array([255, 128, 64]));
+    expect(bars.map((b) => b.position.x)).toEqual([10, 15, 20]);
+  });
+  it('freqData 为 null（无音频分析器）→ 全零高度（条不可见但存在，不崩）', () => {
+    const bars = makeBars(2);
+    updateVisualizerBars(bars, 0, props, null);
+    expect(bars[0].scale.y).toBe(0);
+    expect(bars[1].scale.y).toBe(0);
+  });
+  it('freqData 比条数短（防御）→ 按 i % len 循环取 bin', () => {
+    const bars = makeBars(4);
+    updateVisualizerBars(bars, 0, props, new Uint8Array([255, 0]));
+    expect(bars[0].scale.y).toBe(20);
+    expect(bars[1].scale.y).toBe(0);
+    expect(bars[2].scale.y).toBe(20);
+    expect(bars[3].scale.y).toBe(0);
+  });
+  it('scriptProperties 缺字段 → 兜底默认值（scaleY=10、originX=10），不崩', () => {
+    const bars = makeBars(1);
+    updateVisualizerBars(bars, 0, {}, new Uint8Array([255]));
+    expect(bars[0].scale.y).toBe(10);
   });
 });

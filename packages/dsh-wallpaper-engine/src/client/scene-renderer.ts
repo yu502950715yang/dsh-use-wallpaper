@@ -5,11 +5,13 @@ import type { ParticleEmitterSpec, ParticleInitializerSpec } from './particles.j
 import { fetchSceneDescription, fetchParticleSpec } from './scene-assets.js';
 import { loadTexTexture } from './tex-loader.js';
 import { createTextTexture, textCanvasSize } from './text-object.js';
+import type { TextTextureOptions } from './text-object.js';
 import { EffectRunner } from './effect-runner.js';
 import { resolveEffectChain } from './shader/effect-chain.js';
 import { fetchWithRetry } from './fetch-util.js';
 import { createAudioAnalyzer } from './audio-input.js';
 import type { AudioAnalyzer } from './audio-input.js';
+import { detectScriptPattern, formatClockText, VISUALIZER_BAR_COUNT } from './script-patterns.js';
 
 // 编译后效果链（T1.3）：每组对象的独立链集合（一条链 = CompiledEffectPass[]，逐 pass ping-pong）
 type CompiledEffectChains = import('./shader/effect-chain.js').CompiledEffectPass[][];
@@ -20,6 +22,12 @@ export interface SceneRenderer {
   // text 对象（T3.1）：静态文本 CanvasTexture → 共享场景 quad。始终走共享场景路径
   // （不经过对象 RT/效果路径——text 对象带 effects 时仍渲染静态 quad，效果超本期范围）。
   setTextObject(tex: THREE.CanvasTexture, obj: SceneTextObject): void;
+  // 脚本内置模式（T3.3）：visualizer（image 对象 visible.script 识别）→ 64 条音频条
+  // （共享 bar 纹理，每帧按频谱刷新条高）；clock（text 对象 text.script 识别）→
+  // 每帧生成时间文本刷新纹理（复用 createTextTexture，旧纹理 dispose）。
+  // 与 setTextObject 一致始终走共享场景路径（不经过对象 RT/效果路径）。
+  setVisualizerObject(tex: THREE.Texture, obj: SceneImageObject): void;
+  setClockObject(obj: SceneTextObject): void;
   // 粒子对象（T1.4）：带效果粒子与 image 对象同走对象 RT 路径（obj.effects 非空 →
   // 对象局部相机 + 对象 RT + 合成 quad，效果链在 RT 上执行后贴回共享场景）；
   // 无效果粒子保持共享场景路径。
@@ -141,6 +149,92 @@ export class PendingChainStore<T> {
   }
 }
 
+// ── T3.3 脚本内置模式驱动 ──────────────────────────────────────────────
+// visualizer / clock 为纯逻辑 + THREE 变换操作（node 可测，不触碰 WebGLRenderer），
+// 渲染器每帧调用；语义对齐 2937346640 真实脚本（fixture 见 tests/fixtures/2937346640/）。
+
+// scriptProperties 数值字段兜底：数值/数字字符串 → 有限值；缺省/非法 → fallback
+// （WE 属性在 scene.json 中总是携带，此处防御渲染侧数据缺失）。
+function toFiniteNum(v: unknown, fallback: number): number {
+  const n = typeof v === 'number' ? v : Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+// alignment 锚点 → 中心锚定 quad 的 y 偏移（Ruling P4-1 的 applyAlignment 语义，
+// 本任务先做中心锚定近似；T4.1 抽共享函数后复用）：
+//   centre/缺省 → 0（quad 中心 = 锚点）；
+//   bottom（锚点=底边）→ +h/2（quad 中心上移半高，条自锚点向上生长）；
+//   top（锚点=顶边）→ -h/2（quad 中心下移半高，条自锚点向下生长）。
+export function barAnchorOffsetY(alignment: string | undefined, height: number): number {
+  if (alignment === 'bottom') return height / 2;
+  if (alignment === 'top') return -height / 2;
+  return 0;
+}
+
+// visualizer 每帧刷新（对齐 Simple Visualizer 脚本语义）：
+//   scale.y = amt × scriptProperties.scaleY（amt = freqData[i]/255，无分析器 → 0）；
+//   origin.y += 0（锚点 y 恒定，只按 alignment 做中心锚定偏移）；
+//   origin.x += originX 在脚本循环内逐条累积——创建期已按 (i+1)×originX 写入
+//   position.x（脚本先 += 再赋值：第 i 条 x = baseX + (i+1)×originX），本函数不改 x。
+// 64 条共享同一几何/材质，每帧仅改 scale.y 与 position.y（64 次标量运算，开销可忽略）。
+export function updateVisualizerBars(
+  bars: readonly THREE.Mesh[],
+  anchorY: number,                       // 三坐标系锚点 y（对象 origin 的中心映射，不翻转）
+  props: Record<string, unknown>,        // 已解包的 scriptProperties
+  freqData: Uint8Array | null,           // 音频频谱缓冲（T3.2，字节 0-255）；null → 全零
+): void {
+  const scaleY = toFiniteNum(props.scaleY, 10);
+  const alignment = typeof props.barAlignmentdir === 'string' ? props.barAlignmentdir : 'bottom';
+  const len = freqData?.length ?? 0;
+  for (let i = 0; i < bars.length; i++) {
+    const amp = len > 0 ? (freqData![i % len] / 255) : 0;
+    const h = amp * scaleY;
+    const bar = bars[i];
+    bar.scale.y = h;
+    bar.position.y = anchorY + barAnchorOffsetY(alignment, h);
+  }
+}
+
+// clock 文本驱动：每帧生成时间文本，文本变化才重建 CanvasTexture（同分钟不重绘，
+// 每分钟至多 1 次纹理重建）；旧纹理必须 dispose（防逐分钟纹理泄漏）。
+// 构造即生成初始纹理（material.map 恒非空，无需 needsUpdate 重编译）。
+export class ClockTextDriver {
+  private lastText = '';
+  private lastTex: THREE.CanvasTexture | null = null;
+
+  constructor(
+    private mesh: THREE.Mesh,
+    private opts: TextTextureOptions,
+    private props: Record<string, unknown>,
+  ) {
+    this.update(new Date());
+  }
+
+  update(now: Date): void {
+    const text = formatClockText(now, this.props);
+    if (text === this.lastText) return; // 文本未变化（同一分钟）→ 不重建纹理
+    const tex = createTextTexture(text, this.opts);
+    (this.mesh.material as THREE.MeshBasicMaterial).map = tex;
+    this.lastTex?.dispose(); // 释放旧纹理
+    this.lastTex = tex;
+    this.lastText = text;
+  }
+
+  dispose(): void {
+    this.lastTex?.dispose();
+    this.lastTex = null;
+    this.lastText = '';
+  }
+}
+
+// visualizer 纹理解析失败兜底：1×1 白色 DataTexture（bar.tex 本体即 4×4 白纹理，
+// 纯色条不依赖纹理内容，白图即可正确着色）。
+function createWhiteDataTexture(): THREE.DataTexture {
+  const tex = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+  tex.needsUpdate = true;
+  return tex;
+}
+
 // 合成 quad 的 UV 窗口（T1.3）：对象 RT 只含局部相机视锥内的可见段（钳制轴 = RT 像素），
 // 而合成 quad 世界尺寸 = 未钳制 size×scale。每轴窗口 = 可见段在对象局部空间的占比：
 // uvStart = ((W-C)/2)/W（W=未钳制世界范围，C=钳制后范围=RT 像素），uvEnd = 1 - uvStart
@@ -243,6 +337,11 @@ export function createSceneRenderer(
 
   const clock = new THREE.Clock();
   const particleSystems: Array<{ system: ReturnType<typeof createParticleSystem>; points: THREE.Points }> = [];
+  // T3.3 脚本内置模式条目：
+  //   visualizerEntries — 每条 = 64 个共享几何/材质的音频条 + 锚点 y + 已解包属性；
+  //   clockDrivers — 每时钟对象一个驱动（帧循环 update 刷新文本纹理）。
+  const visualizerEntries: Array<{ bars: THREE.Mesh[]; anchorY: number; props: Record<string, unknown> }> = [];
+  const clockDrivers: ClockTextDriver[] = [];
   // 对象级渲染条目：带效果 image/particle 对象渲染进各自独立 RT（局部正交相机，中心原点），
   // 效果链（T1.3/T1.4）在对象 RT 上执行，输出经合成 quad 贴回共享场景（世界坐标 = 对象中心、
   // 尺寸 = 未钳制 size×scale 或 distanceMax×scale、UV 只采样 RT 可见窗口）。无效果对象不走此
@@ -328,6 +427,11 @@ export function createSceneRenderer(
     // 音频频谱刷新（T3.2）：每帧先取一次频谱写入共享缓冲，runner 渲染前读同一引用
     // 注入音频 uniform；无分析器（audioAnalyzer null）→ 跳过，runner 保持全零（静音，不回归）。
     audioAnalyzer?.update();
+    // T3.3 脚本内置模式刷新：visualizer 条高/锚定随频谱逐帧更新（无分析器 → freqData
+    // null → 全零条高）；clock 文本每分钟至多重建一次纹理（见 ClockTextDriver.update）。
+    const freqData = audioAnalyzer?.freqData ?? null;
+    for (const v of visualizerEntries) updateVisualizerBars(v.bars, v.anchorY, v.props, freqData);
+    for (const c of clockDrivers) c.update(new Date());
     const dt = Math.min(clock.getDelta(), 0.05);
     for (const ps of particleSystems) {
       ps.system.update(dt);
@@ -448,6 +552,56 @@ export function createSceneRenderer(
       mesh.position.set(obj.origin[0] - ortho.width / 2, obj.origin[1] - ortho.height / 2, obj.origin[2]);
       scene.add(mesh);
     },
+    setVisualizerObject(tex, obj) {
+      // T3.3 visualizer（visible.script 识别）：渲染 64 条音频条，语义对齐 Simple
+      // Visualizer 脚本——脚本每帧以 `scale.y = amt × scaleY`、`origin.x += originX`
+      // 覆盖 64 条 layer 的变换。本实现：
+      //   几何：1 条 PlaneGeometry(barWidth, 1) + 1 个 MeshBasicMaterial（共享 bar 纹理）
+      //     复用给 64 个 mesh（每帧仅改 scale.y / position.y）；
+      //   世界尺寸：宽 = barWidth（几何宽），高 = scale.y（脚本直赋，不经对象 scale——
+      //     脚本每帧整体覆盖 scale，scene.json 的 scale 字段不参与）；
+      //   位置：锚点 = 对象 origin 的中心映射（不翻转）；第 i 条 x = 锚点x + (i+1)×originX
+      //     （脚本先 origin.x += originX 再赋给 bar：第 0 条即偏移一个 originX）；
+      //   对齐：barAlignmentdir（bottom/centre/top）→ 中心锚定 y 偏移（barAnchorOffsetY）。
+      // 始终走共享场景路径（visualizer 对象为脚本控制节点，不经过对象 RT/效果路径）。
+      const props = obj.scriptProperties ?? {};
+      const barWidth = Math.max(0.0001, toFiniteNum(props.barWidth, 1));
+      const originX = toFiniteNum(props.originX, 10);
+      const anchorX = obj.origin[0] - ortho.width / 2;
+      const anchorY = obj.origin[1] - ortho.height / 2;
+      const geometry = new THREE.PlaneGeometry(barWidth, 1);
+      const material = new THREE.MeshBasicMaterial({ map: tex, transparent: true });
+      const bars: THREE.Mesh[] = [];
+      for (let i = 0; i < VISUALIZER_BAR_COUNT; i++) {
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.position.set(anchorX + (i + 1) * originX, anchorY, obj.origin[2]);
+        scene.add(mesh);
+        bars.push(mesh);
+      }
+      visualizerEntries.push({ bars, anchorY, props });
+    },
+    setClockObject(obj) {
+      // T3.3 clock（text.script 识别）：每帧按 scriptProperties 生成时间文本并刷新
+      // 纹理（文本变化才重建，见 ClockTextDriver）。画布尺寸 = 对象 size（WE 像素，
+      // 缺省按当前时间文本长度估算）；quad 尺寸/位置与静态文本一致（共享场景路径）。
+      const props = obj.scriptProperties ?? {};
+      const size = textCanvasSize(formatClockText(new Date(), props), obj.pointsize, obj.size);
+      const geometry = new THREE.PlaneGeometry(size.w, size.h);
+      const material = new THREE.MeshBasicMaterial({ transparent: true });
+      const mesh = new THREE.Mesh(geometry, material);
+      const s = obj.scale;
+      mesh.scale.set(s[0], s[1], s[2] ?? 1);
+      mesh.position.set(obj.origin[0] - ortho.width / 2, obj.origin[1] - ortho.height / 2, obj.origin[2]);
+      scene.add(mesh);
+      const driver = new ClockTextDriver(mesh, {
+        font: obj.font,
+        pointsize: obj.pointsize,
+        color: obj.color,
+        width: size.w,
+        height: size.h,
+      }, props);
+      clockDrivers.push(driver);
+    },
     addParticleSystem(spec, obj) {
       const system = createParticleSystem(spec.emitter, spec.init, { maxParticles: 2048 });
       const geometry = new THREE.BufferGeometry();
@@ -516,6 +670,11 @@ export function createSceneRenderer(
       for (const entry of objectEntries.values()) disposeObjectEntry(entry);
       objectEntries.clear();
       pendingChains.clear(); // 条目最终未创建（纹理加载失败）的暂存链一并清理
+      // 释放 clock 驱动当前纹理（visualizer 条与共享场景 quad 同既有路径：随 scene
+      // 清理 + JS GC，纹理为 renderScene 传入的外部资源，所有权不在 renderer）
+      for (const c of clockDrivers) c.dispose();
+      clockDrivers.length = 0;
+      visualizerEntries.length = 0;
       renderer.dispose();
       bgRenderer?.dispose();
     },
@@ -585,6 +744,16 @@ export async function renderScene(id: string, fgCanvas: HTMLCanvasElement, bgCan
     let rendered = 0;
     for (const obj of desc.objects) {
       if (obj.kind === 'image') {
+        // T3.3：visible.script 识别为 visualizer → 64 条音频条路径（纹理解析失败用
+        // 1×1 白色 DataTexture 兜底——bar.tex 本体即纯白 4×4，纯色条不依赖纹理内容）；
+        // 其余 image 对象维持原路径（纹理解析失败 → 跳过该对象）。
+        if (obj.script && detectScriptPattern(obj.script) === 'visualizer') {
+          let tex = await resolveImageTexture(id, obj);
+          if (!tex) tex = createWhiteDataTexture();
+          renderer.setVisualizerObject(tex, obj);
+          rendered++;
+          continue;
+        }
         const tex = await resolveImageTexture(id, obj);
         if (!tex) continue; // 纹理缺失 → 跳过该对象（骨架注记：失败即跳过）
         renderer.setImageObject(tex, obj);
@@ -596,6 +765,13 @@ export async function renderScene(id: string, fgCanvas: HTMLCanvasElement, bgCan
           rendered++;
         }
       } else if (obj.kind === 'text') {
+        // T3.3：text.script 识别为 clock → 动态时钟路径（每帧刷新时间文本纹理）；
+        // 其余 text 对象维持 T3.1 静态路径（text.value 直用）。
+        if (obj.script && detectScriptPattern(obj.script) === 'clock') {
+          renderer.setClockObject(obj);
+          rendered++;
+          continue;
+        }
         // T3.1 静态文本：text.value 直用（脚本动态文本见 T3.3）。画布尺寸 = 对象 size
         // （WE 像素，缺省由 textCanvasSize 按字号/文本长度估算）；纹理贴到共享场景 quad
         // （setTextObject 始终共享场景路径，不经过对象 RT/效果路径）。
