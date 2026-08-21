@@ -1,5 +1,5 @@
 use std::io::Cursor;
-use we_scene_wasm::tex::{parse_tex, TexFormat};
+use we_scene_wasm::tex::{parse_tex, r8_to_rgba_white_alpha, TexFormat};
 
 const RGBA_LZ4: &[u8] = include_bytes!("fixtures/tex/rgba_lz4.tex");
 const DXT1: &[u8] = include_bytes!("fixtures/tex/dxt1.tex");
@@ -29,6 +29,22 @@ fn parses_rg88() {
     let img = parse_tex(RG88).expect("rg88 应可解析");
     assert_eq!(img.format, TexFormat::Rg88);
     assert_eq!(img.mip0.len(), 4 * 2); // 2x2 RG88 = 8 字节
+}
+
+#[test]
+fn r8_to_rgba_white_alpha_expands_grayscale() {
+    // R8 灰度粒子纹理（fog1 等）：ConvertTexture0Format FORMAT_R8 语义——
+    // rgb 恒白(255) + alpha=灰度值；每像素 1 字节 → 4 字节 [255,255,255,v]
+    let out = r8_to_rgba_white_alpha(&[0u8, 64, 128, 200, 255]);
+    assert_eq!(out.len(), 5 * 4);
+    assert_eq!(&out[0..4], &[255, 255, 255, 0]);     // 黑 → 白 rgb + alpha 0
+    assert_eq!(&out[4..8], &[255, 255, 255, 64]);
+    assert_eq!(&out[16..20], &[255, 255, 255, 255]); // 白 → 白 rgb + alpha 255
+}
+
+#[test]
+fn r8_to_rgba_white_alpha_empty_input() {
+    assert_eq!(r8_to_rgba_white_alpha(&[]), Vec::<u8>::new());
 }
 
 // 构造与 make-tex.ts 的 TEXB0002 布局一致的单个 mipmap 容器（1x1），

@@ -113,6 +113,20 @@ pub struct TexImage {
     pub mip0: Vec<u8>, // LZ4 解压后的原始数据
 }
 
+/// R8 灰度粒子纹理展开为 RGBA8（2026-08-21 方案 A 修复，对齐 open-wallpaper-engine /
+/// WE 官方 `ConvertTexture0Format` 的 `FORMAT_R8` 语义：`vec4(1, 1, 1, _sample.r)`——
+/// rgb 恒白（纹理不调制颜色）、alpha = 灰度值）。fog1 等粒子雾纹理是 R8；
+/// 直接采样 R8 时 WGSL 返回 (r,0,0,1)——rgb 变红、alpha=1 无纹理调制（雾均匀偏浓）。
+/// 展开后 shader 统一 texel=(1,1,1,灰度)：颜色不调制、alpha 由纹理灰度调制（雾形状柔和）。
+/// 纯函数（native 可测）：每像素 1 字节 → 4 字节 [255,255,255,v]。
+pub fn r8_to_rgba_white_alpha(mip0: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(mip0.len() * 4);
+    for &v in mip0 {
+        out.extend_from_slice(&[255, 255, 255, v]);
+    }
+    out
+}
+
 // FreeImage 格式（TEXB0003+ 容器的 image_format 槽位，与 tex-loader.ts FIF 枚举一致）
 pub const FIF_JPEG: u32 = 2;
 pub const FIF_PNG: u32 = 13;

@@ -312,7 +312,24 @@ impl Renderer {
     ///   已对齐宽度直接借用 mip0（零拷贝），非对齐宽度按行补 padding 重打包；
     /// - rows_per_image 按格式区分：块压缩 = 块行数 ceil(h/4)，非压缩 = 高。
     pub fn upload_texture(&mut self, img: &crate::tex::TexImage) -> Option<wgpu::Texture> {
-        let format = texture::tex_format_to_wgpu(img.format)?;
+        // R8 灰度粒子纹理（fog1 等，2026-08-21 方案 A 修复）：对齐 WE ConvertTexture0Format
+        // FORMAT_R8 语义（rgb 恒白 + alpha=灰度），上传前展开为 RGBA8(255,255,255,r)——
+        // shader 统一 texel=(1,1,1,灰度)：颜色不调制、alpha 由纹理灰度调制（雾形状柔和）。
+        // 直接采样 R8（WGSL 返回 (r,0,0,1)）→ rgb 变红且 alpha 无纹理调制（雾均匀偏浓）。
+        let (format, r8_converted, layout) = if img.format == crate::tex::TexFormat::R8 {
+            let rgba = crate::tex::r8_to_rgba_white_alpha(&img.mip0);
+            let img8 = crate::tex::TexImage {
+                width: img.width,
+                height: img.height,
+                format: crate::tex::TexFormat::Rgba8888,
+                mip0: rgba,
+            };
+            let l = crate::tex::copy_layout(&img8)?;
+            (texture::tex_format_to_wgpu(crate::tex::TexFormat::Rgba8888)?, Some(img8.mip0), l)
+        } else {
+            let f = texture::tex_format_to_wgpu(img.format)?;
+            (f, None, crate::tex::copy_layout(img)?)
+        };
         // Task 9 修复（防 panic）：BC(DXT) 格式需 texture-compression-bc feature；
         // adapter 不支持时跳过该纹理（返回 None，图片缺失但不中断 wasm 渲染）
         if matches!(img.format, crate::tex::TexFormat::Dxt1 | crate::tex::TexFormat::Dxt3 | crate::tex::TexFormat::Dxt5)
@@ -321,7 +338,6 @@ impl Renderer {
             web_sys::console::log_1(&wasm_bindgen::JsValue::from_str("[wasm] upload_texture: BC 纹理跳过（无 texture-compression-bc feature）"));
             return None;
         }
-        let layout = crate::tex::copy_layout(img)?;
         let usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST;
         let tex = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("we-tex"),
@@ -337,21 +353,23 @@ impl Renderer {
             usage,
             view_formats: &[],
         });
-        // 行字节 256 对齐：已对齐（needs_padding=false）直接借用 mip0；
+        // 行字节 256 对齐：已对齐（needs_padding=false）直接借用源数据；
         // 否则每行拷贝 raw_row 字节并补 (bytes_per_row - raw_row) 零 padding。
+        // 源数据：R8 转换后的 RGBA8（r8_converted）或原始 mip0。
+        let src: &[u8] = r8_converted.as_deref().unwrap_or(&img.mip0);
         let mut padded: Vec<u8> = Vec::new();
         let data: &[u8] = if layout.needs_padding() {
             padded.reserve(layout.bytes_per_row as usize * layout.rows as usize);
-            let len = img.mip0.len();
+            let len = src.len();
             for row in 0..layout.rows {
                 let start = (row as usize * layout.raw_row as usize).min(len);
                 let end = (start + layout.raw_row as usize).min(len);
-                padded.extend_from_slice(&img.mip0[start..end]);
+                padded.extend_from_slice(&src[start..end]);
                 padded.resize(padded.len() + (layout.bytes_per_row - layout.raw_row) as usize, 0);
             }
             &padded
         } else {
-            &img.mip0
+            src
         };
         self.queue.write_texture(
             wgpu::TexelCopyTextureInfo {
