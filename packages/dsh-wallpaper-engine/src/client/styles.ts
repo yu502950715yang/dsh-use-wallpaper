@@ -47,20 +47,29 @@ body[data-we-wallpaper]:not([data-ds-dark-theme]){
   --dsw-alias-label-tertiary:rgb(70,73,79);
   --dsw-alias-label-caption:rgb(110,114,120);
   --dsw-alias-label-dimmed:rgb(50,52,56);
-  /* 玻璃面板：半透明白（壁纸色透过） */
-  --dsw-specific-input-major:rgba(255,255,255,.15);
-  --dsw-specific-bubble:rgba(255,255,255,.12);
-  /* 侧栏：浅色半透明 */
-  --dsw-specific-sidebar-fill:rgba(255,255,255,.55);
+  /* 消息气泡/输入框/侧边栏：高不透明（≥.9）——壁纸背景下内容必须清晰可读，
+     仅中央列空白处保留少量壁纸透出（2026-08-21 用户反馈半透明玻璃看不清） */
+  --dsw-specific-input-major:rgba(255,255,255,.9);
+  --dsw-specific-bubble:rgba(255,255,255,.93);
+  --dsw-specific-sidebar-fill:rgba(255,255,255,.93);
 }
 
 /* ── 深色分支：有壁纸 + 深色主题 ── */
 body[data-ds-dark-theme][data-we-wallpaper]{
-  /* 玻璃更透（避免白雾感） */
-  --dsw-specific-input-major:rgba(255,255,255,.06);
-  --dsw-specific-bubble:rgba(255,255,255,.05);
-  /* 侧栏：深色半透明 */
-  --dsw-specific-sidebar-fill:rgba(20,22,28,.55);
+  /* 深色高不透明底（原白色微透明在深色主题下等于无背景，内容叠壁纸看不清） */
+  --dsw-specific-input-major:rgba(30,32,36,.9);
+  --dsw-specific-bubble:rgba(26,28,32,.92);
+  --dsw-specific-sidebar-fill:rgba(20,22,28,.94);
+}
+
+/* ── 消息流容器（中央列 scrollBody）：AI 消息文本无气泡直接叠壁纸，
+   需背景兜底才清晰（2026-08-21 用户反馈"输入框上面的对话列表看不清"）。
+   DSH 列类名含语义后缀 scrollBody（CSS Modules 局部名），相对稳定。 ── */
+body[data-we-wallpaper]:not([data-ds-dark-theme]) #root [class*="centerCol"] [class*="scrollBody"]{
+  background:rgba(255,255,255,.9);
+}
+body[data-ds-dark-theme][data-we-wallpaper] #root [class*="centerCol"] [class*="scrollBody"]{
+  background:rgba(22,24,28,.9);
 }
 
 /* ── 插件 UI 组件（变量驱动，随主题） ── */

@@ -38,4 +38,20 @@ describe('styles 主题适配', () => {
     // 遮罩仍为深色但透明度收敛（不再 .35 压暗浅色主题）
     expect(WALLPAPER_CSS).not.toMatch(/\.wp-bg-overlay\s*{[^}]*opacity:\.35/);
   });
+  it('消息气泡/输入框/侧边栏高不透明（浅色分支 ≥.9，保证壁纸背景下内容清晰）', () => {
+    const light = /body\[data-we-wallpaper\]:not\(\[data-ds-dark-theme\]\)\s*\{([^}]*)\}/.exec(WALLPAPER_CSS)?.[1] ?? '';
+    expect(light).toMatch(/--dsw-specific-bubble:rgba\(255,\s*255,\s*255,\s*\.9\d*\)/);
+    expect(light).toMatch(/--dsw-specific-input-major:rgba\(255,\s*255,\s*255,\s*\.9\d*\)/);
+    expect(light).toMatch(/--dsw-specific-sidebar-fill:rgba\(255,\s*255,\s*255,\s*\.9\d*\)/);
+  });
+  it('消息气泡/输入框/侧边栏高不透明（深色分支 ≥.9，深色底而非白色微透明）', () => {
+    const dark = /body\[data-ds-dark-theme\]\[data-we-wallpaper\]\s*\{([^}]*)\}/.exec(WALLPAPER_CSS)?.[1] ?? '';
+    expect(dark).toMatch(/--dsw-specific-bubble:rgba\(2[0-9],\s*2[0-9],\s*3[0-9],\s*\.9\d*\)/);
+    expect(dark).toMatch(/--dsw-specific-input-major:rgba\(3[0-9],\s*3[0-9],\s*3[0-9],\s*\.9\d*\)/);
+    expect(dark).toMatch(/--dsw-specific-sidebar-fill:rgba\(2[0-9],\s*2[0-9],\s*2[0-9],\s*\.9\d*\)/);
+  });
+  it('消息流容器（中央列 scrollBody）高不透明——AI 消息文本无气泡直接叠壁纸需背景兜底', () => {
+    expect(WALLPAPER_CSS).toMatch(/body\[data-we-wallpaper\]:not\(\[data-ds-dark-theme\]\)\s+#root \[class\*="centerCol"\] \[class\*="scrollBody"\]\s*\{[^}]*rgba\(255,\s*255,\s*255,\s*\.9\d*\)/);
+    expect(WALLPAPER_CSS).toMatch(/body\[data-ds-dark-theme\]\[data-we-wallpaper\]\s+#root \[class\*="centerCol"\] \[class\*="scrollBody"\]\s*\{[^}]*rgba\(2[0-9],\s*2[0-9],\s*[23][0-9],\s*\.9\d*\)/);
+  });
 });
