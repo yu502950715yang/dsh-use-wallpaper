@@ -57,7 +57,12 @@ fn fs_main(
   @location(1) v_color: vec3f,
   @location(2) v_life_alpha: f32,
 ) -> @location(0) vec4f {
-  // quad 方形光栅 → 圆形裁剪（圆盘）+ 寿命透明度（SrcAlpha/One 加法混合）
-  if (length(v_uv - vec2f(0.5)) > 0.5) { discard; }
-  return vec4f(v_color, v_life_alpha);
+  // quad 方形光栅 → 圆形裁剪 + 软边缘渐变（2026-08-21 修复：原硬边 discard 使
+  // 巨大雾粒子（fog1 直径 2150-4730px）在屏幕边缘呈清晰楔形/三角形白色；改
+  // smoothstep 渐变对齐 JS 版粒子 shader（scene-renderer.ts 同款），大圆盘边缘
+  // 柔和 → 薄雾而非白色块。SrcAlpha/One 加法混合不变）。
+  let d = length(v_uv - vec2f(0.5));
+  if (d > 0.5) { discard; }
+  let edge = smoothstep(0.5, 0.0, d) * v_life_alpha;
+  return vec4f(v_color, edge);
 }
