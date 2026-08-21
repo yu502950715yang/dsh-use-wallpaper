@@ -59,6 +59,7 @@ describe('registerWallpaperRoutes', () => {
       { kind: 'prefix', path: '/wallpapers/scene' },
       { kind: 'prefix', path: '/wallpapers/static' },
       { kind: 'prefix', path: '/wallpapers/web' },
+      { kind: 'exact', path: '/wallpapers/particle-texture' },
     ]);
   });
   it('serves list route returning scanned wallpapers', async () => {
@@ -282,5 +283,42 @@ describe('registerWallpaperRoutes', () => {
     const r3 = makeRes();
     await handler({ url: '/wallpapers/static/nope.js' }, r3);
     expect(r3.statusCode).toBe(404);
+  });
+
+  it('粒子纹理路由：服务 WE 内置粒子纹理（TEXV0005 原始字节，no-store，2026-08-21 方案 A）', async () => {
+    const weDir = join(dir, 'we-assets');
+    const fogDir = join(weDir, 'assets', 'materials', 'particle', 'fog');
+    mkdirSync(fogDir, { recursive: true });
+    const texData = Buffer.from('TEXV0005-FAKE-TEX-DATA');
+    writeFileSync(join(fogDir, 'fog1.tex'), texData);
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir, weAssetsDir: weDir });
+    const handler = routes.get('exact /wallpapers/particle-texture')!;
+    const res = makeRes();
+    await handler({ url: '/wallpapers/particle-texture?name=particle/fog/fog1' }, res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual(texData);
+    expect(res.headers['Cache-Control']).toBe('no-store');
+    expect(res.headers['Content-Type']).toBe('application/octet-stream');
+  });
+
+  it('粒子纹理路由：非法 name（穿越）、不存在纹理、缺失 weAssetsDir 被拒绝', async () => {
+    const weDir = join(dir, 'we-assets');
+    mkdirSync(join(weDir, 'assets', 'materials'), { recursive: true });
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir, weAssetsDir: weDir });
+    const handler = routes.get('exact /wallpapers/particle-texture')!;
+
+    // 穿越（..）→ 400
+    const r1 = makeRes();
+    await handler({ url: '/wallpapers/particle-texture?name=../../secret' }, r1);
+    expect(r1.statusCode).toBe(400);
+    // 不存在 → 404
+    const r2 = makeRes();
+    await handler({ url: '/wallpapers/particle-texture?name=particle/fog/nonexist' }, r2);
+    expect(r2.statusCode).toBe(404);
+    // 缺失 weAssetsDir → 500
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
+    const r3 = makeRes();
+    await routes.get('exact /wallpapers/particle-texture')!({ url: '/wallpapers/particle-texture?name=particle/fog/fog1' }, r3);
+    expect(r3.statusCode).toBe(500);
   });
 });

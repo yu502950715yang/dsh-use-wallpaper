@@ -4,7 +4,7 @@ import { scanWallpapers } from './scanner.js';
 import { PkgReader } from './pkg-reader.js';
 import type { WallpaperInfo } from '../shared/types.js';
 
-export interface WallpaperRoutesOptions { wallpaperDir: string; staticDir?: string }
+export interface WallpaperRoutesOptions { wallpaperDir: string; staticDir?: string; weAssetsDir?: string }
 
 // I4：PkgReader 实例缓存 —— scene asset 每请求整包 readFileSync 成本高，
 // 按 (path, mtime) 缓存，mtime 变化才重建；Map 超出上限时淘汰最旧一项。
@@ -233,6 +233,38 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
           const ext = '.' + rel.split('.').pop()?.toLowerCase();
           res.writeHead(200, {
             'Content-Type': MIME[ext] ?? 'application/octet-stream',
+            'Content-Length': body.length,
+            'Cache-Control': 'no-store',
+          });
+          res.end(body);
+        } catch {
+          json(res, 500, { error: 'internal error' });
+        }
+      },
+    });
+
+    server.register({
+      kind: 'exact', path: '/wallpapers/particle-texture',
+      // 2026-08-21（wasm 粒子纹理，方案 A）：WE 内置粒子纹理——粒子材质 textures
+      // 如 "particle/fog/fog1" 是引擎内置资源（不在壁纸 pkg），WE 引擎从
+      // assets/materials/particle/fog/fog1.tex 读取。本路由从 WE 安装目录
+      // （weAssetsDir，可配置）提供该纹理原始字节（TEXV0005，client 侧现有解码管线消费）。
+      handler: (_req: any, res: any) => {
+        const { search } = parseUrl(_req);
+        if (!opts.weAssetsDir) return json(res, 500, { error: 'no we assets dir' });
+        const name = search.get('name') ?? '';
+        // name = 材质 textures 路径（含 '/' 子目录），白名单放行字母/数字/标点/空格/._-/斜杠
+        if (!name || !/^[\p{L}\p{N}\p{P} ._\/-]+$/u.test(name) || name.includes('..')) {
+          return json(res, 400, { error: 'bad name' });
+        }
+        const base = resolve(opts.weAssetsDir, 'assets', 'materials');
+        const p = resolve(base, name + '.tex');
+        if (p !== base && !p.startsWith(base + sep)) return json(res, 400, { error: 'bad path' });
+        if (!existsSync(p) || !statSync(p).isFile()) return json(res, 404, { error: 'no such texture' });
+        try {
+          const body = readFileSync(p);
+          res.writeHead(200, {
+            'Content-Type': 'application/octet-stream',
             'Content-Length': body.length,
             'Cache-Control': 'no-store',
           });

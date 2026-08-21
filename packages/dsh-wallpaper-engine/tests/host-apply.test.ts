@@ -48,7 +48,7 @@ beforeEach(() => {
 afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
 
 describe('apply (host entry)', () => {
-  it('注册 settings 命名空间并挂载 5 条壁纸路由', () => {
+  it('注册 settings 命名空间并挂载 6 条壁纸路由', () => {
     apply(makeCtx());
     expect(registered).toEqual([
       { kind: 'exact', path: '/wallpapers/list' },
@@ -56,6 +56,7 @@ describe('apply (host entry)', () => {
       { kind: 'prefix', path: '/wallpapers/scene' },
       { kind: 'prefix', path: '/wallpapers/static' },
       { kind: 'prefix', path: '/wallpapers/web' },
+      { kind: 'exact', path: '/wallpapers/particle-texture' },
     ]);
   });
   it('路由扫描使用 config.wallpaperDir', async () => {
