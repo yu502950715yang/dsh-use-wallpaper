@@ -38,6 +38,24 @@ body[data-we-wallpaper] #root [style*="grid-template-columns"]{background:transp
 body[data-we-wallpaper]{background:transparent!important}
 body[data-we-wallpaper]{--dsw-alias-bg-base:transparent!important}
 
+/* ── 液态玻璃 token（对照 elysia395/dsh-wallpaper-engine 配方，2026-08-21）：
+   不是不透明化——保持半透明 + backdrop-filter 模糊：壁纸透出且颜色融入玻璃，
+   内容清晰可读。边框改中性灰（深浅主题下都可见）。 ── */
+body[data-we-wallpaper]{
+  --dsw-specific-input-major:rgba(255,255,255,.15);
+  --dsw-specific-bubble:rgba(255,255,255,.12);
+  /* 侧边栏透明：玻璃配方（blur）在其上生效，壁纸透出（参考项目同款） */
+  --dsw-specific-sidebar-fill:transparent;
+  --dsw-alias-border-l1:rgba(180,180,180,.35);
+  --dsw-alias-border-l2:rgba(180,180,180,.35);
+  --dsw-alias-border-l2-darkmode-thin:rgba(180,180,180,.35);
+}
+/* 深色分支：更透的白色玻璃（blur 后白色微透明即可均匀化壁纸，避免深色底糊成一片） */
+body[data-ds-dark-theme][data-we-wallpaper]{
+  --dsw-specific-input-major:rgba(255,255,255,.06);
+  --dsw-specific-bubble:rgba(255,255,255,.05);
+}
+
 /* ── 浅色分支：有壁纸 + 非深色主题 ── */
 body[data-we-wallpaper]:not([data-ds-dark-theme]){
   /* 浅色主题灰阶按近白底调校，壁纸透出后失去对比 → 压暗整条文字 token（竞品同款） */
@@ -47,29 +65,39 @@ body[data-we-wallpaper]:not([data-ds-dark-theme]){
   --dsw-alias-label-tertiary:rgb(70,73,79);
   --dsw-alias-label-caption:rgb(110,114,120);
   --dsw-alias-label-dimmed:rgb(50,52,56);
-  /* 消息气泡/输入框/侧边栏：高不透明（≥.9）——壁纸背景下内容必须清晰可读，
-     仅中央列空白处保留少量壁纸透出（2026-08-21 用户反馈半透明玻璃看不清） */
-  --dsw-specific-input-major:rgba(255,255,255,.9);
-  --dsw-specific-bubble:rgba(255,255,255,.93);
-  --dsw-specific-sidebar-fill:rgba(255,255,255,.93);
 }
 
-/* ── 深色分支：有壁纸 + 深色主题 ── */
-body[data-ds-dark-theme][data-we-wallpaper]{
-  /* 深色高不透明底（原白色微透明在深色主题下等于无背景，内容叠壁纸看不清） */
-  --dsw-specific-input-major:rgba(30,32,36,.9);
-  --dsw-specific-bubble:rgba(26,28,32,.92);
-  --dsw-specific-sidebar-fill:rgba(20,22,28,.94);
+/* ── 液态玻璃配方（参考项目）：消息区 / 输入框 / 侧边栏 ──
+   Apple 式：大半径模糊 + 高饱和 + 亮度/对比提升（壁纸颜色融入成柔光而非灰糊），
+   顶部高光渐变 + 1px 折射高光 + 内描边（"湿玻璃"质感）。
+   选择器：scrollBody（消息流容器）/ data-composer-card（shell 源码稳定属性）/
+   sidebarCol（侧边栏列）——避开 CSS Modules hash 前缀。 */
+body[data-we-wallpaper] [class*="scrollBody"],
+body[data-we-wallpaper] [data-composer-card],
+body[data-we-wallpaper] [class*="sidebarCol"]{
+  background-image:linear-gradient(180deg,rgba(255,255,255,.16),rgba(255,255,255,.05) 38%,rgba(255,255,255,.02));
+  -webkit-backdrop-filter:blur(16px) saturate(1.8) brightness(1.04) contrast(1.01);
+  backdrop-filter:blur(16px) saturate(1.8) brightness(1.04) contrast(1.01);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.32),inset 0 -1px 0 rgba(255,255,255,.08),inset 0 0 0 .5px rgba(255,255,255,.08);
+}
+body[data-ds-dark-theme][data-we-wallpaper] [class*="scrollBody"],
+body[data-ds-dark-theme][data-we-wallpaper] [data-composer-card],
+body[data-ds-dark-theme][data-we-wallpaper] [class*="sidebarCol"]{
+  background-image:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.02) 38%,rgba(255,255,255,.03));
 }
 
-/* ── 消息流容器（中央列 scrollBody）：AI 消息文本无气泡直接叠壁纸，
-   需背景兜底才清晰（2026-08-21 用户反馈"输入框上面的对话列表看不清"）。
-   DSH 列类名含语义后缀 scrollBody（CSS Modules 局部名），相对稳定。 ── */
-body[data-we-wallpaper]:not([data-ds-dark-theme]) #root [class*="centerCol"] [class*="scrollBody"]{
-  background:rgba(255,255,255,.9);
-}
-body[data-ds-dark-theme][data-we-wallpaper] #root [class*="centerCol"] [class*="scrollBody"]{
-  background:rgba(22,24,28,.9);
+/* ── @supports 回退：无 backdrop-filter 支持时近不透明玻璃（文字仍可读） ── */
+@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
+  body[data-we-wallpaper]:not([data-ds-dark-theme]) [class*="scrollBody"],
+  body[data-we-wallpaper]:not([data-ds-dark-theme]) [data-composer-card],
+  body[data-we-wallpaper]:not([data-ds-dark-theme]) [class*="sidebarCol"]{
+    background-color:rgba(255,255,255,.92);
+  }
+  body[data-ds-dark-theme][data-we-wallpaper] [class*="scrollBody"],
+  body[data-ds-dark-theme][data-we-wallpaper] [data-composer-card],
+  body[data-ds-dark-theme][data-we-wallpaper] [class*="sidebarCol"]{
+    background-color:rgba(24,26,30,.92);
+  }
 }
 
 /* ── 插件 UI 组件（变量驱动，随主题） ── */
