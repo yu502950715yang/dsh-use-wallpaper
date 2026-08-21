@@ -131,17 +131,58 @@ function normalizeFloatIntLiterals(src: string): string {
 // 实测覆盖（全库 27 shader）：godrays_cast/shine_cast 的 `const float sampleDrop = sampleCount - 1;`
 // （const int 常量赋 float）与 `albedo += sample * (i / sampleDrop);`（循环计数器除以 float）、
 // `1.0 / sampleCount`、`vec4 * intVar` 等。
+// GLSL ES 3.00 严格类型修正（2026-08-21）：int **变量**（const int 常量、int 声明、
+// for 循环计数器）参与浮点运算时 GLSL3 报 "wrong operand types"（GLSL1 允许 int 隐式
+// 转 float）。文本层无法做完整类型推断，采用保守策略：
+//  - 收集 int 变量名（const int / int / uniform int / in|out int / for 头）
+//  - 保护明确 int 上下文（int 声明整行、数组下标、for 头、++/--、int()/float()/ivecN() 构造、比较运算）
+//  - 剩余使用点包 float(name)（与浮点字面量/变量/vec 混合运算、赋给 float、函数参数）
+// 实测覆盖（全库 27 shader）：godrays_cast/shine_cast 的 `const float sampleDrop = sampleCount - 1;`
+// （const int 常量赋 float）与 `albedo += sample * (i / sampleDrop);`（循环计数器除以 float）、
+// `1.0 / sampleCount`、`vec4 * intVar` 等。
+// 占位符 token 以数字开头（0WEI_INTVAR_...）：变量类正则 [A-Za-z_]\w* 不匹配数字开头，
+// 防止比较保护等把已保护的占位符当变量名吞进新保护块（2026-08-21 Simple_Audio_Bars 实测：
+// float((a - b) < 0.0) 截断后残留 ) 触发比较保护吞占位符 → 嵌套占位符还原错乱）。
 function floatifyIntVarUses(src: string): string {
   const intVars = new Set<string>();
-  for (const m of src.matchAll(/\b(?:const\s+)?(?:uniform\s+)?(?:in\s+|out\s+)?int\s+(\w+)/g)) {
+  // 排除 int 函数定义名（int funcName( 是函数不是变量）：(?!\s*\()
+  for (const m of src.matchAll(/\b(?:const\s+)?(?:uniform\s+)?(?:in\s+|out\s+)?int\s+(\w+)(?!\s*\()/g)) {
     intVars.add(m[1]);
   }
   if (intVars.size === 0) return src;
   const protectedBlocks: string[] = [];
   const protect = (m: string) => {
-    const token = `__WEI_INTVAR_${protectedBlocks.length.toString(36)}__`;
+    const token = `0WEI_INTVAR_${protectedBlocks.length.toString(36)}__`;
     protectedBlocks.push(m);
     return token;
+  };
+  const restore = () => {
+    protectedBlocks.forEach((block, i) => {
+      // 函数式替换避免 block 中 $ 特殊字符；全局替换防同一 token 出现多次残留
+      out = out.replace(new RegExp(`0WEI_INTVAR_${i.toString(36)}__`, 'g'), () => block);
+    });
+  };
+  // int/float/ivec 构造保护：从 '(' 扫描配对 ')'（支持嵌套括号，防止 [^)]* 在
+  // 内层 ) 截断 → 残留部分被后续比较保护误匹配）。返回替换后的完整字符串。
+  const protectConstructs = (text: string): string => {
+    const re = /\b(?:int|float|ivec[234])\s*\(/g;
+    let out2 = '';
+    let last = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text))) {
+      const open = m.index + m[0].length - 1; // '(' 位置
+      let depth = 1;
+      let i = open + 1;
+      for (; i < text.length && depth > 0; i++) {
+        const ch = text[i];
+        if (ch === '(') depth++;
+        else if (ch === ')') depth--;
+      }
+      out2 += text.slice(last, m.index) + protect(text.slice(m.index, i));
+      last = i;
+      re.lastIndex = i; // 跳过已处理段（内部嵌套构造不重复保护）
+    }
+    return out2 + text.slice(last);
   };
   let out = src;
   // 保护 int 上下文（不包 float）：
@@ -149,12 +190,13 @@ function floatifyIntVarUses(src: string): string {
   out = out.replace(/^\s*(?:const\s+)?(?:uniform\s+)?(?:in\s+|out\s+)?int\b[^;]*;/gm, protect);
   //  - 数组下标（bufferLeft[a] 的 a 是下标，必须 int）
   out = out.replace(/\[[^\]]*\]/g, protect);
-  //  - for 头（int 计数器声明 + 比较 + ++ 整体）
-  out = out.replace(/for\s*\([^)]*\)/g, protect);
-  //  - 自增/自减与 int/float 显式构造（float(N) 内已是显式转换，不重复包）
+  //  - for 头：用三部分（init; cond; incr）匹配，每部分允许嵌套括号但无分号/花括号
+  //    （原 `[^)]*` 在 int(...) 的内层 ) 截断 → 循环变量泄漏到保护段外被误转 float(a)）
+  out = out.replace(/for\s*\([^;{}]*;[^;{}]*;[^;{}]*\)/g, protect);
+  //  - 自增/自减
   out = out.replace(/(?:\+\+|--)\s*\w+|\w+\s*(?:\+\+|--)/g, protect);
-  out = out.replace(/\b(?:int|float)\s*\([^)]*\)/g, protect);
-  out = out.replace(/\bivec[234]\s*\([^)]*\)/g, protect);
+  //  - int/float/ivec 构造（配对括号，float(N) 内已是显式转换，不重复包）
+  out = protectConstructs(out);
   //  - 比较运算两侧的 int 变量（x < sampleCount 保持 int 比较）
   out = out.replace(/(?:==|!=|<=|>=|<|>)\s*[A-Za-z_]\w*/g, protect);
   out = out.replace(/[A-Za-z_]\w*\s*(?:==|!=|<=|>=|<|>)/g, protect);
@@ -163,9 +205,7 @@ function floatifyIntVarUses(src: string): string {
     out = out.replace(new RegExp(`\\b${name}\\b`, 'g'), `float(${name})`);
   }
   // 还原保护段
-  protectedBlocks.forEach((block, i) => {
-    out = out.replace(`__WEI_INTVAR_${i.toString(36)}__`, block);
-  });
+  restore();
   return out;
 }
 
