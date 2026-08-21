@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import type { CompiledEffectPass } from './shader/effect-chain.js';
 import { loadTexTexture } from './tex-loader.js';
+import { isAudioUniform } from './shader/uniform-binder.js';
 
 // 纹理槽路径推导（spec §3.4 / P0-1）：补 materials/ 前缀 + .tex 后缀；
 // 内置 util/ 与运行时 _rt_ 引用原样透传（走回退分支，不 fetch）。
@@ -104,6 +105,16 @@ export function resolveTextureResolution(
   };
 }
 
+// T3.2 音频频谱注入：把频谱字节（0-255）归一化为 uniform 浮点（0-1）写入目标数组。
+// uniform 长度按 combo RESOLUTION（16/32/64）可与 64 bin 频谱不等长：
+//   超出频谱长度 → 越界补零（无分析器时数组保持 binder 初始化的全零，静音不回归）；
+//   短于频谱长度 → 只取前 N 个 bin。
+export function fillAudioSpectrumUniform(dest: number[], src: Uint8Array): void {
+  for (let i = 0; i < dest.length; i++) {
+    dest[i] = i < src.length ? src[i] / 255 : 0;
+  }
+}
+
 export class EffectRunner {
   private renderer: THREE.WebGLRenderer;
   private rtA: THREE.WebGLRenderTarget;
@@ -121,6 +132,9 @@ export class EffectRunner {
   // inFlight 标记 update 未完成时跳过本帧（last 保持上次输出，下一帧重试）；
   // 换壁纸后 textures 已清空 → 首帧加载完成前输出 input（场景 RT），不黑屏。
   private updateInFlight = false;
+  // 音频频谱源（T3.2）：freqData 缓冲引用（scene-renderer 每帧刷新后注入）。
+  // null = 无分析器 → 音频 uniform 保持 binder 初始化的全零（静音，行为不变）。
+  private audioSpectrum: Uint8Array | null = null;
 
   constructor(renderer: THREE.WebGLRenderer, width: number, height: number) {
     this.renderer = renderer;
@@ -150,6 +164,12 @@ export class EffectRunner {
         if (path) void this.resolveTextureSlot(path);
       }
     }
+  }
+
+  // 设置音频频谱源（T3.2）：传入频谱缓冲引用（可每帧刷新后重复注入同一引用，
+  // update() 渲染前从缓冲读取当前频谱）；null → 恢复全零静音（不回归）。
+  setAudioSpectrumSource(source: Uint8Array | null): void {
+    this.audioSpectrum = source;
   }
 
   // RT 尺寸对齐：仅当目标尺寸与当前不一致才重建 ping-pong RT（避免 recreate churn）；
@@ -257,6 +277,16 @@ export class EffectRunner {
     }
   }
 
+  // 填充本 pass 材质中所有音频频谱 uniform（g_AudioSpectrum*，binder 初始化的 number[]）：
+  // 字节 0-255 → 浮点 0-1（fillAudioSpectrumUniform，长度不等时补零/截取）。
+  private fillAudioUniforms(material: THREE.ShaderMaterial, src: Uint8Array): void {
+    for (const [name, u] of Object.entries(material.uniforms)) {
+      if (isAudioUniform(name) && Array.isArray(u.value)) {
+        fillAudioSpectrumUniform(u.value as number[], src);
+      }
+    }
+  }
+
   // 释放某 key 对应场景中全屏 quad 的 geometry 并移除场景缓存（编译失败/异常路径共用）
   private disposeSceneQuads(key: string): void {
     const scene = this.scenes.get(key);
@@ -340,6 +370,9 @@ export class EffectRunner {
           material.uniforms['g_Texture0Resolution'].value = new THREE.Vector4(w, h, 1 / Math.max(1, w), 1 / Math.max(1, h));
         }
         if (material.uniforms['g_Time']) material.uniforms['g_Time'].value = time;
+        // 音频频谱注入（T3.2）：渲染前把频谱字节归一化 0-1 写入 g_AudioSpectrum* 数组；
+        // 无频谱源（null）时跳过——数组保持 binder 初始化的全零（静音，行为不变）。
+        if (this.audioSpectrum) this.fillAudioUniforms(material, this.audioSpectrum);
         const writeTarget = pickWriteTarget(lastWrite, this.rtA, this.rtB); // 动态写端：上一写端对端
         this.renderer.setRenderTarget(writeTarget);
         this.renderer.render(this.getScene(`${i}`, material), SCREEN_CAMERA);
@@ -364,6 +397,7 @@ export class EffectRunner {
     this.rtA.dispose();
     this.rtB.dispose();
     this.textures.clear();
+    this.audioSpectrum = null;
   }
 }
 

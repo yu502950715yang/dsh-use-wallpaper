@@ -8,6 +8,7 @@ import {
   pickWriteTarget,
   resolveTargetSize,
   resolveTextureResolution,
+  fillAudioSpectrumUniform,
 } from '../src/client/effect-runner.js';
 
 describe('blendModeToThree（WE blending → three 混合模式）', () => {
@@ -157,5 +158,27 @@ describe('resolveTextureResolution（g_TextureNResolution 推导：image 有尺�
     tex.image = { width: 0, height: 0 };
     expect(resolveTextureResolution(tex, 1920, 1080)).toEqual({ width: 0, height: 0 });
     tex.dispose();
+  });
+});
+
+// ===== T3.2 音频频谱注入：频谱字节（0-255）→ uniform 浮点（0-1）的纯逻辑。
+// EffectRunner 每帧用该函数把 analyser 的 freqData 写入 g_AudioSpectrum* 数组；
+// uniform 长度按 combo RESOLUTION（16/32/64），与 64 bin 频谱的映射规则在此钉死。=====
+
+describe('fillAudioSpectrumUniform（频谱字节 → uniform 浮点：0-255 归一化 0-1，越界补零）', () => {
+  it('字节 0-255 → 0-1 浮点（255 → 1，128 → 128/255）', () => {
+    const dest = new Array(3).fill(0);
+    fillAudioSpectrumUniform(dest, new Uint8Array([0, 128, 255]));
+    expect(dest).toEqual([0, 128 / 255, 1]);
+  });
+  it('uniform 长度大于频谱 bin 数 → 越界补零（无分析器时长度的全零语义延续）', () => {
+    const dest = new Array(5).fill(-1);
+    fillAudioSpectrumUniform(dest, new Uint8Array([255, 255]));
+    expect(dest).toEqual([1, 1, 0, 0, 0]);
+  });
+  it('uniform 长度小于频谱 bin 数（RESOLUTION < 64）→ 只取前 N 个 bin', () => {
+    const dest = new Array(2).fill(0);
+    fillAudioSpectrumUniform(dest, new Uint8Array([10, 20, 30, 40]));
+    expect(dest).toEqual([10 / 255, 20 / 255]);
   });
 });

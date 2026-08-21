@@ -8,6 +8,8 @@ import { createTextTexture, textCanvasSize } from './text-object.js';
 import { EffectRunner } from './effect-runner.js';
 import { resolveEffectChain } from './shader/effect-chain.js';
 import { fetchWithRetry } from './fetch-util.js';
+import { createAudioAnalyzer } from './audio-input.js';
+import type { AudioAnalyzer } from './audio-input.js';
 
 // 编译后效果链（T1.3）：每组对象的独立链集合（一条链 = CompiledEffectPass[]，逐 pass ping-pong）
 type CompiledEffectChains = import('./shader/effect-chain.js').CompiledEffectPass[][];
@@ -199,7 +201,11 @@ function coverRange(width: number, height: number, viewAspect: number) {
   return { w: height * viewAspect, h: height };
 }
 
-export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTMLCanvasElement): SceneRenderer {
+export function createSceneRenderer(
+  fgCanvas: HTMLCanvasElement,
+  bgCanvas?: HTMLCanvasElement,
+  audioAnalyzer?: AudioAnalyzer | null,
+): SceneRenderer {
   // 前景：contain 完整显示，透明清屏（透明边缘露出模糊背景）
   const renderer = new THREE.WebGLRenderer({ canvas: fgCanvas, antialias: true, alpha: true });
   renderer.setClearColor(0x000000, 0);
@@ -319,6 +325,9 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
   }
 
   function frame() {
+    // 音频频谱刷新（T3.2）：每帧先取一次频谱写入共享缓冲，runner 渲染前读同一引用
+    // 注入音频 uniform；无分析器（audioAnalyzer null）→ 跳过，runner 保持全零（静音，不回归）。
+    audioAnalyzer?.update();
     const dt = Math.min(clock.getDelta(), 0.05);
     for (const ps of particleSystems) {
       ps.system.update(dt);
@@ -352,6 +361,8 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
     for (const entry of objectEntries.values()) {
       const runner = entry.runner;
       if (!runner) continue;
+      // 注入共享频谱缓冲引用（每帧同引用，update 时读当前频谱；null → 全零静音）
+      runner.setAudioSpectrumSource(audioAnalyzer?.freqData ?? null);
       objectChain = objectChain
         .then(() => runner.update(clock.elapsedTime, entry.rt.texture))
         .catch((e) => console.warn('[wallpaper-engine] 对象效果链更新失败:', e));
@@ -498,6 +509,9 @@ export function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTML
     stop() {
       running = false;
       cancelAnimationFrame(raf);
+      // 释放音频分析器（T3.2）：context.close() 释放 Web Audio 资源（重复 close 会
+      // reject，静默吞掉；renderScene 异常兜底路径可能再次 close）
+      audioAnalyzer?.context.close().catch(() => {});
       // 释放对象级条目：对象 RT、合成 quad 几何/材质、效果 runner（M15；换壁纸/停止必须回收）
       for (const entry of objectEntries.values()) disposeObjectEntry(entry);
       objectEntries.clear();
@@ -541,9 +555,12 @@ async function resolveImageTexture(id: string, obj: SceneImageObject): Promise<T
 
 export async function renderScene(id: string, fgCanvas: HTMLCanvasElement, bgCanvas?: HTMLCanvasElement): Promise<boolean> {
   let renderer: SceneRenderer | null = null;
+  // T3.2：音频频谱分析器生命周期 = 本壁纸场景渲染周期（createSceneRenderer 之前创建、
+  // stop() 时 close 释放）。无 Web Audio → null，EffectRunner 保持全零静音（行为不变）。
+  const analyzer = createAudioAnalyzer();
   try {
     const desc = await fetchSceneDescription(id);
-    renderer = createSceneRenderer(fgCanvas, bgCanvas);
+    renderer = createSceneRenderer(fgCanvas, bgCanvas, analyzer);
     renderer.setScene(desc);
     // 对象级效果链（T1.3）：按对象分组（替换旧全屏展平路径——Ruling 5 的全屏执行导致
     // foliagesway 等对象级效果整屏生效/摇晃）。每组在 renderer 内拥有独立 EffectRunner，
@@ -605,6 +622,9 @@ export async function renderScene(id: string, fgCanvas: HTMLCanvasElement, bgCan
     return true;
   } catch {
     renderer?.stop();
+    // renderer 未创建（createSceneRenderer 抛异常）时兜底释放分析器（stop() 已 close 则
+    // 此处重复 close 会 reject，静默吞掉）
+    analyzer?.context.close().catch(() => {});
     return false;
   }
 }
