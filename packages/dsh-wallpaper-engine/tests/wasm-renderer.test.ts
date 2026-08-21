@@ -234,6 +234,59 @@ describe('createWasmSceneRenderer', () => {
     });
   });
 
+  it('粒子对象带材质纹理 → add_particle 收到 TEXV0005 字节（方案 A 粒子纹理，2026-08-21）', async () => {
+    vi.stubGlobal('navigator', { gpu: {} });
+    const scene = { load_scene: vi.fn(), load_image: vi.fn(), add_particle: vi.fn(), step: vi.fn(), render: vi.fn() };
+    const sceneJson = JSON.stringify({
+      camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+      general: { orthogonalprojection: { width: 2400, height: 1555 } },
+      objects: [{ id: 18, name: 'fog', particle: 'particles/p.json', origin: '10 20 0', scale: '2 2 1' }],
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.includes('name=scene.json')) return jsonResp(sceneJson);
+        if (url.includes('p.json')) return jsonResp({ emitter: [{ rate: 1.5 }], initializer: [], material: 'materials/presets/fog1.json' });
+        if (url.includes('fog1.json')) return jsonResp({ passes: [{ textures: ['particle/fog/fog1'] }] });
+        if (url.includes('particle-texture')) return { ok: true, status: 200, arrayBuffer: async () => new Uint8Array([9, 8, 7, 6]).buffer };
+        return { ok: false, status: 404, json: async () => ({}) } as any;
+      }),
+    );
+    const mod = { default: vi.fn(async () => undefined), WeScene: { create: vi.fn(async () => scene) } };
+    const r = createWasmSceneRenderer({ loadWasm: async () => mod });
+    const fg = document.createElement('canvas');
+    await expect(r!.render('1', fg)).resolves.toBe(true);
+    expect(scene.add_particle).toHaveBeenCalledTimes(1);
+    const texBytes = scene.add_particle.mock.calls[0][3];
+    expect(Array.from(texBytes)).toEqual([9, 8, 7, 6]);
+  });
+
+  it('粒子材质纹理缺失（particle-texture 404）→ add_particle 收到空 Uint8Array（纯色兜底）', async () => {
+    vi.stubGlobal('navigator', { gpu: {} });
+    const scene = { load_scene: vi.fn(), load_image: vi.fn(), add_particle: vi.fn(), step: vi.fn(), render: vi.fn() };
+    const sceneJson = JSON.stringify({
+      camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+      general: { orthogonalprojection: { width: 2400, height: 1555 } },
+      objects: [{ id: 18, name: 'fog', particle: 'particles/p.json', origin: '10 20 0', scale: '2 2 1' }],
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.includes('name=scene.json')) return jsonResp(sceneJson);
+        if (url.includes('p.json')) return jsonResp({ emitter: [{ rate: 1.5 }], initializer: [], material: 'materials/presets/fog1.json' });
+        if (url.includes('fog1.json')) return jsonResp({ passes: [{ textures: ['particle/fog/fog1'] }] });
+        return { ok: false, status: 404, json: async () => ({}) } as any;
+      }),
+    );
+    const mod = { default: vi.fn(async () => undefined), WeScene: { create: vi.fn(async () => scene) } };
+    const r = createWasmSceneRenderer({ loadWasm: async () => mod });
+    const fg = document.createElement('canvas');
+    await expect(r!.render('1', fg)).resolves.toBe(true);
+    const texBytes = scene.add_particle.mock.calls[0][3];
+    expect(texBytes).toBeInstanceOf(Uint8Array);
+    expect(texBytes.length).toBe(0);
+  });
+
   // T4.2 可见性过滤（wasm 路径补齐）：JS 路径（renderScene）已用 resolveVisibility 过滤
   // visibleObjects；wasm 路径此前遍历 desc.objects 不过滤 → 不可见对象仍渲染（行为不一致）。
   // 修复：render() 对象循环内用 resolveVisibility(obj, {}) 跳过不可见对象——wasm 无用户

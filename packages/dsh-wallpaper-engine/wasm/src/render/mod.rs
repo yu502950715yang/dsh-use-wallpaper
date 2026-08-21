@@ -277,7 +277,13 @@ impl Renderer {
     /// Round 2 审查修复：先算 max_particles（含 cover 减半），再传入 from_spec 写
     /// uniform —— 与 ParticlePass::new 的 buffer 槽位、dispatch 分派**三处一致**
     /// （原 uniform 硬编码 2048 → 估算槽位下 shader 边界检查恒不触发 → 越界读写 UB）。
-    pub fn set_particle(&mut self, spec: &ParticleSpec, origin: [f32; 3], scale: [f32; 3]) {
+    pub fn set_particle(
+        &mut self,
+        spec: &ParticleSpec,
+        origin: [f32; 3],
+        scale: [f32; 3],
+        tex: Option<wgpu::Texture>,
+    ) {
         let (fw, fh) = self.camera_range();
         let est = particle_pass::estimate_max_particles(spec);
         let max_particles = if self.mode == CameraMode::Cover {
@@ -294,6 +300,7 @@ impl Renderer {
             &params,
             max_particles,
             self.config.format,
+            tex,
         ));
     }
 

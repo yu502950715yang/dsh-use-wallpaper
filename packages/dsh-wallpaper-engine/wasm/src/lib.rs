@@ -117,10 +117,17 @@ impl WeScene {
     }
 
     /// 装载粒子规格（emitter[0] + initializer + operator 解析）并构建 GPU 粒子管线。
-    pub fn add_particle(&mut self, json: &str, origin: Vec<f32>, scale: Vec<f32>) {
+    /// tex_bytes 为粒子纹理（TEXV0005，2026-08-21 方案 A：WE 内置 fog/halo 纹理）；
+    /// 空字节 = 无纹理（纯色圆盘兜底，向后兼容旧调用）。
+    pub fn add_particle(&mut self, json: &str, origin: Vec<f32>, scale: Vec<f32>, tex_bytes: Vec<u8>) {
         let spec = particle::parse_particle_spec(json);
+        let tex = if tex_bytes.is_empty() {
+            None
+        } else {
+            tex::parse_tex(&tex_bytes).and_then(|img| self.renderer.upload_texture(&img))
+        };
         self.renderer
-            .set_particle(&spec, arr3(&origin), arr3(&scale));
+            .set_particle(&spec, arr3(&origin), arr3(&scale), tex);
     }
 
     /// GPU 粒子模拟一帧（更新 uniform dt + 累计 elapsed + dispatch compute）。

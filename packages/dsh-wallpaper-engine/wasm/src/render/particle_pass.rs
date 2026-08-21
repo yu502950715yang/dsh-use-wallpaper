@@ -134,18 +134,24 @@ pub struct ParticlePass {
     params: std::cell::Cell<EmitterParams>,
     max_particles: u32,
     dispatch: (u32, u32, u32),
+    /// 粒子纹理持有（2026-08-21 方案 A）：bind group 引用 texture view，view 引用
+    /// texture——texture 必须存活，故由 pass 持有防释放；无纹理时为 1×1 白兜底。
+    _texture: wgpu::Texture,
 }
 
 #[cfg(feature = "render")]
 impl ParticlePass {
     /// 构建 compute（模拟）+ 点渲染管线与全部 GPU 资源，并初始化 buffer 内容。
     /// `format` 为渲染目标格式（surface 格式），必须与最终绘制 target 一致。
+    /// `tex` 为粒子纹理（2026-08-21 方案 A：WE 内置 fog/halo 纹理；None → 1×1 白兜底，
+    /// fs_main 采样 texel=(1,1,1,1) 等价纯色圆盘）。
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         params: &EmitterParams,
         max_particles: u32,
         format: wgpu::TextureFormat,
+        tex: Option<wgpu::Texture>,
     ) -> ParticlePass {
         let particle_bytes = (max_particles as usize) * PARTICLE_BYTES as usize;
         let particles_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -227,6 +233,19 @@ impl ParticlePass {
                     ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None },
                     count: None,
                 },
+                // 粒子纹理（2026-08-21 方案 A）：fragment 采样，fog/halo 引擎内置纹理
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
             ],
         });
 
@@ -305,12 +324,44 @@ impl ParticlePass {
                 wgpu::BindGroupEntry { binding: 2, resource: count_buffer.as_entire_binding() },
             ],
         });
+        // 粒子纹理：有 → 使用粒子纹理；无 → 1×1 白兜底（texel=(1,1,1,1) → 纯色圆盘）
+        let (texture_holder, texture_view) = if let Some(t) = tex {
+            let view = t.create_view(&wgpu::TextureViewDescriptor::default());
+            (t, view)
+        } else {
+            let t = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("particle-white"),
+                size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo { texture: &t, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+                &[255u8, 255, 255, 255],
+                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4), rows_per_image: Some(1) },
+                wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            );
+            let view = t.create_view(&wgpu::TextureViewDescriptor::default());
+            (t, view)
+        };
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("particle-sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
         let render_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("particle-render-bg"),
             layout: &render_bgl,
             entries: &[
                 wgpu::BindGroupEntry { binding: 0, resource: param_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 1, resource: particles_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&texture_view) },
+                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&sampler) },
             ],
         });
 
@@ -324,6 +375,7 @@ impl ParticlePass {
             params: std::cell::Cell::new(*params),
             max_particles,
             dispatch: dispatch_dims(max_particles, 64),
+            _texture: texture_holder,
         }
     }
 

@@ -26,7 +26,7 @@ export interface WasmScene {
   // T4.3：color/alpha/brightness 为对象调制输入（Float32Array，空 = 缺省 → 无调制，
   // 向后兼容；color 0-255 r g b，alpha 0-1，brightness 乘法系数）。
   load_image(assetId: number, tex: Uint8Array, origin: Float32Array, scale: Float32Array, size: Float32Array, color: Float32Array, alpha: Float32Array, brightness: Float32Array): void;
-  add_particle(json: string, origin: Float32Array, scale: Float32Array): void;
+  add_particle(json: string, origin: Float32Array, scale: Float32Array, texBytes: Uint8Array): void;
   step(dt: number): void;
   render(): void;
   scene_width(): number;
@@ -119,6 +119,28 @@ async function resolveImageTexBytes(id: string, imageRef: string): Promise<Uint8
     const texName: unknown = (mat as any)?.passes?.[0]?.textures?.[0];
     if (typeof texName !== 'string' || !texName) return null;
     const texResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(resolveTexPath(matRef, texName))}`);
+    if (!texResp.ok) return null;
+    return new Uint8Array(await texResp.arrayBuffer());
+  } catch {
+    return null;
+  }
+}
+
+// 粒子材质纹理字节推导（2026-08-21 方案 A）：粒子 spec 的 material → 材质 json →
+// passes[0].textures[0]（如 "particle/fog/fog1"）→ /wallpapers/particle-texture 路由
+// （WE 安装目录 assets/materials/ 的内置粒子纹理，TEXV0005）。任何一步失败返回 null
+// （空字节 = 无纹理，Rust 侧 1×1 白兜底保持纯色粒子行为）。
+async function resolveParticleTexBytes(id: string, specText: string): Promise<Uint8Array | null> {
+  try {
+    const spec: unknown = JSON.parse(specText);
+    const matRef: unknown = (spec as { material?: unknown })?.material;
+    if (typeof matRef !== 'string' || !matRef) return null;
+    const matResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(matRef)}`);
+    if (!matResp.ok) return null;
+    const mat: unknown = await matResp.json();
+    const texName: unknown = (mat as { passes?: { textures?: unknown[] }[] })?.passes?.[0]?.textures?.[0];
+    if (typeof texName !== 'string' || !texName) return null;
+    const texResp = await fetch(`/wallpapers/particle-texture?name=${encodeURIComponent(texName)}`);
     if (!texResp.ok) return null;
     return new Uint8Array(await texResp.arrayBuffer());
   } catch {
@@ -223,11 +245,26 @@ export function createWasmSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneRe
             const specResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(obj.particle)}`);
             if (!specResp.ok) continue;
             const specText = await specResp.text();
-            scene.add_particle(specText, Float32Array.from(obj.origin), Float32Array.from(obj.scale));
+            // 2026-08-21（方案 A）：解析粒子材质纹理（spec.material → passes[0].textures[0]，
+            // 如 "particle/fog/fog1" → /wallpapers/particle-texture）→ TEXV0005 字节直传
+            // wasm。纹理缺失（引擎内置资源不可用）→ 空字节 = 无纹理（Rust 用 1×1 白兜底，
+            // 保持纯色粒子行为）。
+            const texBytes = await resolveParticleTexBytes(id, specText);
+            scene.add_particle(
+              specText,
+              Float32Array.from(obj.origin),
+              Float32Array.from(obj.scale),
+              texBytes ?? new Uint8Array(0),
+            );
             // 背景层也叠加粒子：JS 版 bg 渲染整个 scene（含粒子），blur 后背景偏亮；
             // wasm 版 bgScene 若只有图片（EVA 主图 alpha 大面积 0）→ 背景暗（avg 39 vs 基线 200）
             if (bgScene) {
-              bgScene.add_particle(specText, Float32Array.from(obj.origin), Float32Array.from(obj.scale));
+              bgScene.add_particle(
+                specText,
+                Float32Array.from(obj.origin),
+                Float32Array.from(obj.scale),
+                texBytes ?? new Uint8Array(0),
+              );
             }
             rendered++;
           }

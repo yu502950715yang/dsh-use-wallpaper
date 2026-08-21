@@ -26,6 +26,11 @@ struct EmitterParams {
 struct Particle { pos: vec3f, vel: vec3f, life: f32, max_life: f32, size: f32, alpha: f32, color: vec3f }
 @group(0) @binding(1) var<storage, read> particles: array<Particle>;
 
+// 粒子纹理（2026-08-21 方案 A）：WE 粒子材质 textures（如 particle/fog/fog1）是引擎
+// 内置雾/光晕纹理；无纹理时绑定 1×1 白（texel = (1,1,1,1)，保持纯色圆盘行为）。
+@group(0) @binding(2) var tex: texture_2d<f32>;
+@group(0) @binding(3) var samp: sampler;
+
 struct VsOut {
   @builtin(position) clip_pos: vec4f,
   @location(0) v_uv: vec2f,
@@ -57,12 +62,13 @@ fn fs_main(
   @location(1) v_color: vec3f,
   @location(2) v_life_alpha: f32,
 ) -> @location(0) vec4f {
-  // quad 方形光栅 → 圆形裁剪 + 软边缘渐变（2026-08-21 修复：原硬边 discard 使
-  // 巨大雾粒子（fog1 直径 2150-4730px）在屏幕边缘呈清晰楔形/三角形白色；改
-  // smoothstep 渐变对齐 JS 版粒子 shader（scene-renderer.ts 同款），大圆盘边缘
-  // 柔和 → 薄雾而非白色块。SrcAlpha/One 加法混合不变）。
+  // 圆盘光栅 + 软边缘渐变 + 粒子纹理采样（2026-08-21）：
+  // - 软边缘（smoothstep）对齐 JS 粒子 shader，巨大雾粒子不呈白色三角形；
+  // - 纹理采样（fog1/halo 等引擎内置纹理）：颜色 × 纹理 rgb，alpha = 纹理 a × 寿命 × spawn
+  //   alpha；1×1 白兜底（无纹理）时 texel=(1,1,1,1) → 等价纯色圆盘。
   let d = length(v_uv - vec2f(0.5));
   if (d > 0.5) { discard; }
-  let edge = smoothstep(0.5, 0.0, d) * v_life_alpha;
-  return vec4f(v_color, edge);
+  let texel = textureSample(tex, samp, v_uv);
+  let edge = smoothstep(0.5, 0.0, d) * v_life_alpha * texel.a;
+  return vec4f(v_color * texel.rgb, edge);
 }
