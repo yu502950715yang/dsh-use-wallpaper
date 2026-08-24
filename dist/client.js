@@ -36,9 +36,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// node_modules/lz4js/util.js
+// node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/util.js
 var require_util = __commonJS({
-  "node_modules/lz4js/util.js"(exports) {
+  "node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/util.js"(exports) {
     exports.hashU32 = function hashU32(a) {
       a = a | 0;
       a = a + 2127912214 + (a << 12) | 0;
@@ -84,9 +84,9 @@ var require_util = __commonJS({
   }
 });
 
-// node_modules/lz4js/xxh32.js
+// node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/xxh32.js
 var require_xxh32 = __commonJS({
-  "node_modules/lz4js/xxh32.js"(exports) {
+  "node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/xxh32.js"(exports) {
     var util = require_util();
     var prime1 = 2654435761;
     var prime2 = 2246822519;
@@ -162,9 +162,9 @@ var require_xxh32 = __commonJS({
   }
 });
 
-// node_modules/lz4js/lz4.js
+// node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/lz4.js
 var require_lz4 = __commonJS({
-  "node_modules/lz4js/lz4.js"(exports) {
+  "node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/lz4.js"(exports) {
     var xxhash = require_xxh32();
     var util = require_util();
     var minMatch = 4;
@@ -510,14 +510,14 @@ var require_lz4 = __commonJS({
 });
 
 // src/client/index.ts
-var index_exports = {};
-__export(index_exports, {
+var client_exports = {};
+__export(client_exports, {
   SETTINGS_SECTION_ID: () => SETTINGS_SECTION_ID,
   apply: () => apply,
   bootstrap: () => bootstrap,
   inject: () => inject
 });
-module.exports = __toCommonJS(index_exports);
+module.exports = __toCommonJS(client_exports);
 
 // src/client/styles.ts
 var CSS = `
@@ -838,7 +838,7 @@ function createWallpaperController(layer, opts) {
   return { load, select };
 }
 
-// node_modules/three/build/three.module.js
+// node_modules/.pnpm/three@0.170.0/node_modules/three/build/three.module.js
 var REVISION = "170";
 var CullFaceNone = 0;
 var CullFaceBack = 1;
@@ -23121,7 +23121,7 @@ function WallpaperSettingsSection(props) {
           {
             className: "wss-dir-workshop",
             value: wallpaperDir,
-            placeholder: "\u4F8B\u5982 D:/Steam/steamapps/workshop/content/431960\uFF08\u7559\u7A7A = \u9ED8\u8BA4\uFF09",
+            placeholder: "\u4F8B\u5982 D:/Steam/steamapps/workshop/content/431960\uFF08\u7559\u7A7A = \u672A\u914D\u7F6E\uFF09",
             onChange: (e) => setWallpaperDir(e.target.value)
           }
         )
@@ -23133,7 +23133,7 @@ function WallpaperSettingsSection(props) {
           {
             className: "wss-dir-assets",
             value: weAssetsDir,
-            placeholder: "\u4F8B\u5982 D:/Steam/steamapps/common/wallpaper_engine\uFF08\u7559\u7A7A = \u9ED8\u8BA4\uFF09",
+            placeholder: "\u4F8B\u5982 D:/Steam/steamapps/common/wallpaper_engine\uFF08\u7559\u7A7A = \u672A\u914D\u7F6E\uFF09",
             onChange: (e) => setWeAssetsDir(e.target.value)
           }
         )

@@ -129,7 +129,7 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
           <input
             className="wss-dir-workshop"
             value={wallpaperDir}
-            placeholder="例如 D:/Steam/steamapps/workshop/content/431960（留空 = 默认）"
+            placeholder="例如 D:/Steam/steamapps/workshop/content/431960（留空 = 未配置）"
             onChange={(e) => setWallpaperDir(e.target.value)}
           />
         </label>
@@ -138,7 +138,7 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
           <input
             className="wss-dir-assets"
             value={weAssetsDir}
-            placeholder="例如 D:/Steam/steamapps/common/wallpaper_engine（留空 = 默认）"
+            placeholder="例如 D:/Steam/steamapps/common/wallpaper_engine（留空 = 未配置）"
             onChange={(e) => setWeAssetsDir(e.target.value)}
           />
         </label>

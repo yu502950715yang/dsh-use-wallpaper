@@ -3,14 +3,9 @@ import { settingsNamespace } from '@deepseek-ai/dsh-settings';
 import { WALLPAPER_NS, WallpaperSettingsSchema } from './settings.js';
 import { registerWallpaperRoutes } from './routes.js';
 
-// 缺省 Wallpaper Engine workshop 目录（2026-08-21 起不再写死在 cordis.patch.yml；
-// 解析顺序：settings.wallpaperDir（设置面板可配/自动探测）> config.wallpaperDir >
-// 本缺省兜底。用户换 Steam 盘符时在设置面板配置即可，无需改配置文件）
-export const DEFAULT_WALLPAPER_DIR = 'D:/Steam/steamapps/workshop/content/431960';
-
-// 缺省 Wallpaper Engine 安装目录（wasm 粒子纹理来源，语义同 wallpaperDir；
-// 设置面板可配/自动探测，config.weAssetsDir 兼容覆盖）
-export const DEFAULT_WE_ASSETS_DIR = 'D:/Steam/steamapps/common/wallpaper_engine';
+// 壁纸目录与引擎目录不再提供写死缺省（不默认 D:/Steam）：必须由设置面板
+// （自动探测 / 手动填写）或 profile config 显式配置；两者都未配置即视为未配置，
+// 相关路由返回空列表 / 提示配置。
 
 // 缺省 wasm 静态资源目录：build:client 输出 dist/static/（wasm 引擎 glue + .wasm）。
 // 用 import.meta.url 定位模块（源码 src/host/ 与编译后 lib/host/ 相对包根深度一致，
@@ -35,17 +30,17 @@ export interface WallpaperRuntimeState {
 // 不可访问 ctx.config（需 inject 声明）；这里用参数解构兼容 loader 注入。
 export function apply(ctx: any, config?: WallpaperEngineConfig): void {
   const state: WallpaperRuntimeState = {
-    wallpaperDir: config?.wallpaperDir ?? DEFAULT_WALLPAPER_DIR,
-    weAssetsDir: config?.weAssetsDir ?? DEFAULT_WE_ASSETS_DIR,
+    wallpaperDir: config?.wallpaperDir ?? '',
+    weAssetsDir: config?.weAssetsDir ?? '',
   };
   ctx.inject(['settings'], (settingsCtx: any) => {
     const scope = settingsCtx.settings.register(settingsNamespace(WALLPAPER_NS), WallpaperSettingsSchema);
-    // 解析顺序：settings 用户值 > config > 缺省；空字符串（未配置）跳过。
+    // 解析顺序：settings 用户值 > config；均为空即未配置（不再回退写死缺省）。
     const applySettings = (value: any) => {
       if (value?.wallpaperDir) state.wallpaperDir = value.wallpaperDir;
-      else state.wallpaperDir = config?.wallpaperDir ?? DEFAULT_WALLPAPER_DIR;
+      else state.wallpaperDir = config?.wallpaperDir ?? '';
       if (value?.weAssetsDir) state.weAssetsDir = value.weAssetsDir;
-      else state.weAssetsDir = config?.weAssetsDir ?? DEFAULT_WE_ASSETS_DIR;
+      else state.weAssetsDir = config?.weAssetsDir ?? '';
     };
     applySettings(scope.get());
     scope.watch(applySettings);
