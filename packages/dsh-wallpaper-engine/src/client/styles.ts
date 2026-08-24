@@ -76,6 +76,8 @@ body[data-we-wallpaper]:not([data-ds-dark-theme]){
    加 backdrop-filter 会使其成为 containing block → 对话框 fixed 遮罩宽度塌陷。 */
 body[data-we-wallpaper] [class*="scrollBody"],
 body[data-we-wallpaper] [data-composer-card]{
+  /* 白玻璃底色：压淡壁纸色彩（模糊后壁纸融入成柔和的灰白色调，而非鲜艳透出） */
+  background-color:rgba(255,255,255,.15);
   background-image:linear-gradient(180deg,rgba(255,255,255,.16),rgba(255,255,255,.05) 38%,rgba(255,255,255,.02));
   -webkit-backdrop-filter:blur(16px) saturate(1.8) brightness(1.04) contrast(1.01);
   backdrop-filter:blur(16px) saturate(1.8) brightness(1.04) contrast(1.01);
@@ -83,6 +85,8 @@ body[data-we-wallpaper] [data-composer-card]{
 }
 body[data-ds-dark-theme][data-we-wallpaper] [class*="scrollBody"],
 body[data-ds-dark-theme][data-we-wallpaper] [data-composer-card]{
+  /* 深色：更透的白玻璃（dark 分支折减），壁纸透出但被压暗，白字清晰 */
+  background-color:rgba(255,255,255,.06);
   background-image:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.02) 38%,rgba(255,255,255,.03));
 }
 

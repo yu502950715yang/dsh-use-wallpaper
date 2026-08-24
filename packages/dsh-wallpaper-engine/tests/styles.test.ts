@@ -47,9 +47,10 @@ describe('styles 主题适配', () => {
     expect(dark).toMatch(/--dsw-specific-input-major:rgba\(255,\s*255,\s*255,\s*\.0\d*\)/);
     expect(dark).toMatch(/--dsw-specific-bubble:rgba\(255,\s*255,\s*255,\s*\.0\d*\)/);
   });
-  it('液态玻璃配方：消息区 scrollBody backdrop-filter blur + 高光渐变', () => {
+  it('液态玻璃配方：消息区 scrollBody backdrop-filter blur + 白玻璃底色 + 高光渐变', () => {
     expect(WALLPAPER_CSS).toMatch(/\[class\*="scrollBody"\][^{]*\{[^}]*backdrop-filter:blur\(/);
     expect(WALLPAPER_CSS).toMatch(/\[class\*="scrollBody"\][^{]*\{[^}]*linear-gradient\(180deg/);
+    expect(WALLPAPER_CSS).toMatch(/\[class\*="scrollBody"\][^{]*\{[^}]*background-color:rgba\(255,\s*255,\s*255,\s*\.1\d*\)/);
   });
   it('液态玻璃配方：输入框 data-composer-card backdrop-filter', () => {
     expect(WALLPAPER_CSS).toMatch(/\[data-composer-card\][^{]*\{[^}]*backdrop-filter:blur\(/);
