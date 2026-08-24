@@ -69,23 +69,38 @@ body[data-ds-dark-theme][data-we-wallpaper]{
   --dsw-specific-bubble:transparent;
 }
 
-/* ── 文字对比保障（参考项目气泡思路，2026-08-21）：
-   不做整区 blur/白底（挡壁纸背景）——壁纸清晰可见；消息气泡（单条 flowItem）
-   与输入框加半透明背景，文字在气泡内清晰；气泡间隙壁纸透出。
-   深色暗玻璃（白字清晰）、浅色白玻璃（黑字清晰）——每个模式都有对应底色。 ── */
-body[data-we-wallpaper]:not([data-ds-dark-theme]) [class*="flowItem"]{
-  background-color:rgba(255,255,255,.72);
+/* ── 消息气泡/输入框：液态玻璃 + 圆角（frontend-design + 参考项目配方，2026-08-21） ──
+   只对单条消息气泡（flowItem）与输入框（data-composer-card）做液态玻璃
+   （blur + 高光渐变 + 内高光 + 圆角），气泡间壁纸清晰透出：壁纸可见 + 内容清晰 + 美观。
+   ⚠ 不 blur 整区（scrollBody）——整区 blur 会遮挡壁纸（早前已取消）。
+   ⚠ 侧边栏（sidebarCol）不加 blur——DSH 设置对话框 portal 挂在它下面会塌陷。
+   深浅色模式各有对应玻璃底色（浅色白玻璃黑字、深色暗玻璃白字）。 ── */
+body[data-we-wallpaper] [class*="flowItem"]{
+  border-radius:16px;
+  margin-bottom:10px;
+  background-color:rgba(255,255,255,.5);
+  background-image:linear-gradient(180deg,rgba(255,255,255,.18),rgba(255,255,255,.05) 38%,rgba(255,255,255,.02));
+  -webkit-backdrop-filter:blur(14px) saturate(1.7);
+  backdrop-filter:blur(14px) saturate(1.7);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.4),inset 0 -1px 0 rgba(255,255,255,.08),0 4px 16px rgba(0,0,0,.1);
 }
 body[data-ds-dark-theme][data-we-wallpaper] [class*="flowItem"]{
-  background-color:rgba(28,30,34,.72);
+  background-color:rgba(255,255,255,.07);
+  background-image:linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,.02) 38%,rgba(255,255,255,.03));
 }
-body[data-we-wallpaper]:not([data-ds-dark-theme]) [data-composer-card]{
-  background-color:rgba(255,255,255,.8);
+body[data-we-wallpaper] [data-composer-card]{
+  border-radius:20px;
+  background-color:rgba(255,255,255,.5);
+  background-image:linear-gradient(180deg,rgba(255,255,255,.18),rgba(255,255,255,.05) 38%,rgba(255,255,255,.02));
+  -webkit-backdrop-filter:blur(14px) saturate(1.7);
+  backdrop-filter:blur(14px) saturate(1.7);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.4),inset 0 -1px 0 rgba(255,255,255,.08),0 4px 16px rgba(0,0,0,.1);
 }
 body[data-ds-dark-theme][data-we-wallpaper] [data-composer-card]{
-  background-color:rgba(30,32,36,.8);
+  background-color:rgba(255,255,255,.07);
+  background-image:linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,.02) 38%,rgba(255,255,255,.03));
 }
-/* 侧边栏：半透明背景（壁纸透出但文字清晰），无 text-shadow（浅色白影对黑字有害） */
+/* 侧边栏：半透明背景（壁纸透出但文字清晰）；无 blur（对话框 portal 在下面会塌陷） */
 body[data-we-wallpaper]:not([data-ds-dark-theme]) [class*="sidebarCol"]{
   background-color:rgba(255,255,255,.82);
 }
