@@ -182,7 +182,7 @@ src/shared/   跨 host/client 类型（WallpaperInfo、SceneDescription、SceneO
 wasm/         Rust 引擎（wasm-bindgen + wgpu）：coords / scene / tex / particle / render
 scripts/      build-client.mjs（esbuild 打包 + wasm/粒子纹理复制）
 tests/        vitest 单测（node + jsdom 双环境）
-docs/         设计文档与实施计划（specs / plans）
+docs/         开发环境配置（dev-setup.md）；设计文档与实施计划（superpowers/*）
 ```
 
 ---
@@ -197,5 +197,8 @@ docs/         设计文档与实施计划（specs / plans）
 
 ## 🔗 相关链接
 
-[GitHub 仓库](https://github.com/yu502950715yang/dsh-use-wallpaper) · [dsh-plugin 主题页](https://github.com/topics/dsh-plugin) · [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
+- [GitHub 仓库](https://github.com/yu502950715yang/dsh-use-wallpaper)
+- [dsh-plugin 主题页](https://github.com/topics/dsh-plugin)
+- [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
+- [开发环境配置（docs/dev-setup.md）](docs/dev-setup.md) — 在新电脑上继续开发所需的工具链与构建/运行环境
 
