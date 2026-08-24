@@ -69,15 +69,28 @@ body[data-ds-dark-theme][data-we-wallpaper]{
   --dsw-specific-bubble:transparent;
 }
 
-/* ── 消息区/侧边栏文字阴影：壁纸清晰可见下的文字对比兜底（不遮挡背景） ──
-   深色：白字 + 暗影（亮壁纸上白字可读）；浅色：黑字 + 亮影。 */
-body[data-we-wallpaper]:not([data-ds-dark-theme]) [class*="scrollBody"],
-body[data-we-wallpaper]:not([data-ds-dark-theme]) [class*="sidebarCol"]{
-  text-shadow:0 1px 2px rgba(255,255,255,.55);
+/* ── 文字对比保障（参考项目气泡思路，2026-08-21）：
+   不做整区 blur/白底（挡壁纸背景）——壁纸清晰可见；消息气泡（单条 flowItem）
+   与输入框加半透明背景，文字在气泡内清晰；气泡间隙壁纸透出。
+   深色暗玻璃（白字清晰）、浅色白玻璃（黑字清晰）——每个模式都有对应底色。 ── */
+body[data-we-wallpaper]:not([data-ds-dark-theme]) [class*="flowItem"]{
+  background-color:rgba(255,255,255,.72);
 }
-body[data-ds-dark-theme][data-we-wallpaper] [class*="scrollBody"],
+body[data-ds-dark-theme][data-we-wallpaper] [class*="flowItem"]{
+  background-color:rgba(28,30,34,.72);
+}
+body[data-we-wallpaper]:not([data-ds-dark-theme]) [data-composer-card]{
+  background-color:rgba(255,255,255,.8);
+}
+body[data-ds-dark-theme][data-we-wallpaper] [data-composer-card]{
+  background-color:rgba(30,32,36,.8);
+}
+/* 侧边栏：半透明背景（壁纸透出但文字清晰），无 text-shadow（浅色白影对黑字有害） */
+body[data-we-wallpaper]:not([data-ds-dark-theme]) [class*="sidebarCol"]{
+  background-color:rgba(255,255,255,.82);
+}
 body[data-ds-dark-theme][data-we-wallpaper] [class*="sidebarCol"]{
-  text-shadow:0 1px 2px rgba(0,0,0,.6);
+  background-color:rgba(24,26,30,.85);
 }
 
 /* ── 插件 UI 组件（变量驱动，随主题） ── */

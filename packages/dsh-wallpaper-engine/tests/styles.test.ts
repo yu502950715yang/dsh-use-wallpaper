@@ -38,23 +38,24 @@ describe('styles 主题适配', () => {
     // 遮罩仍为深色但透明度收敛（不再 .35 压暗浅色主题）
     expect(WALLPAPER_CSS).not.toMatch(/\.wp-bg-overlay\s*{[^}]*opacity:\.35/);
   });
-  it('取消液态玻璃：消息区/输入框/侧边栏 token 全透明（壁纸清晰可见）', () => {
+  it('消息气泡/输入框/侧边栏半透明背景（每个模式有对应底色，文字清晰）', () => {
+    const light = /body\[data-we-wallpaper\]:not\(\[data-ds-dark-theme\]\)\s*\[class\*="flowItem"\]\s*\{([^}]*)\}/.exec(WALLPAPER_CSS)?.[1] ?? '';
+    expect(light).toMatch(/background-color:rgba\(255,\s*255,\s*255,\s*\.7\d*\)/);
+    const dark = /body\[data-ds-dark-theme\]\[data-we-wallpaper\]\s*\[class\*="flowItem"\]\s*\{([^}]*)\}/.exec(WALLPAPER_CSS)?.[1] ?? '';
+    expect(dark).toMatch(/background-color:rgba\(2[0-9],\s*3[0-9],\s*3[0-9],\s*\.7\d*\)/);
+    expect(WALLPAPER_CSS).toMatch(/\[data-composer-card\][^{]*\{[^}]*background-color:rgba\(255,\s*255,\s*255,\s*\.8\d*\)/);
+    expect(WALLPAPER_CSS).toMatch(/body\[data-ds-dark-theme\]\[data-we-wallpaper\]\s*\[data-composer-card\]\s*\{[^}]*background-color:rgba\(3[0-9],\s*3[0-9],\s*3[0-9],\s*\.8\d*\)/);
+  });
+  it('取消液态玻璃：消息区/输入框/scrim token 透明，无 backdrop-filter 遮挡背景', () => {
     expect(WALLPAPER_CSS).toMatch(/body\[data-we-wallpaper\]\s*\{[^}]*--dsw-specific-sidebar-fill:transparent/);
-    // 浅色与深色分支都设 input-major / bubble 为 transparent
     const light = /body\[data-we-wallpaper\]:not\(\[data-ds-dark-theme\]\)\s*\{([^}]*)\}/.exec(WALLPAPER_CSS)?.[1] ?? '';
     expect(light).toMatch(/--dsw-specific-input-major:transparent/);
     expect(light).toMatch(/--dsw-specific-bubble:transparent/);
     const dark = /body\[data-ds-dark-theme\]\[data-we-wallpaper\]\s*\{([^}]*)\}/.exec(WALLPAPER_CSS)?.[1] ?? '';
     expect(dark).toMatch(/--dsw-specific-input-major:transparent/);
     expect(dark).toMatch(/--dsw-specific-bubble:transparent/);
-  });
-  it('消息区/侧边栏文字 text-shadow：壁纸清晰下的文字对比兜底', () => {
-    expect(WALLPAPER_CSS).toMatch(/\[class\*="scrollBody"\][^{]*\{[^}]*text-shadow:0 1px 2px rgba\(0,\s*0,\s*0,\s*\.6\d*\)/);
-    expect(WALLPAPER_CSS).toMatch(/\[class\*="scrollBody"\][^{]*\{[^}]*text-shadow:0 1px 2px rgba\(255,\s*255,\s*255,\s*\.5\d*\)/);
-  });
-  it('完全取消 backdrop-filter 液态玻璃（无 blur 遮挡背景）', () => {
     expect(WALLPAPER_CSS).not.toMatch(/backdrop-filter/);
-    expect(WALLPAPER_CSS).not.toMatch(/@supports not \(\(backdrop-filter/);
+    expect(WALLPAPER_CSS).not.toMatch(/text-shadow:/);
   });
   it('scrim 遮罩：壁纸清晰可见但被适度压暗（.wp-bg-overlay rgba(0,0,0,.3)）', () => {
     expect(WALLPAPER_CSS).toMatch(/\.wp-bg-overlay\s*\{[^}]*background:rgba\(0,\s*0,\s*0,\s*\.3\d*\)/);
