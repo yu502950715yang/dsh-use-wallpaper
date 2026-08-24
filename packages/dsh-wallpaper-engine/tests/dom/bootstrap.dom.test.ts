@@ -99,7 +99,7 @@ describe('client bootstrap 集成', () => {
     await boot(ctx);
     expect(sections.length).toBe(1);
     expect(sections[0]!.opts.id).toBe('wallpaper-engine');
-    expect(sections[0]!.opts.label()).toBe('壁纸');
+    expect(sections[0]!.opts.label()).toBe('Wallpaper 壁纸');
     expect(sections[0]!.Component).toBeTruthy(); // WallpaperSettingsSection
     // 不再注入浮动按钮
     expect(document.querySelector('.wp-fab')).toBeNull();

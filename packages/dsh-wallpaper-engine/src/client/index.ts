@@ -99,7 +99,7 @@ export function bootstrap(ctx?: any): void {
       if (opts?.blur !== undefined) layer.setBlur(opts.blur, opts.blurRadius ?? 12);
     },
   };
-  // 注册 DSH 设置对话框侧边栏 "壁纸" 菜单（settings.section slot）：
+  // 注册 DSH 设置对话框侧边栏 "Wallpaper 壁纸" 菜单（settings.section slot）：
   // 菜单项 id/order/label，内容组件 WallpaperSettingsSection（网格/取消/路径配置）。
   // ctx.slots 由 dsh-client-runtime 的 SlotRegistry 提供（client 插件共享根上下文）。
   if (ctx?.slots?.inject && ctx?.slots?.register) {
@@ -107,7 +107,7 @@ export function bootstrap(ctx?: any): void {
       name: 'settings.section',
       id: SETTINGS_SECTION_ID,
       order: 20,
-      label: () => '壁纸',
+      label: () => 'Wallpaper 壁纸',
     }, WallpaperSettingsSection));
   }
 }
