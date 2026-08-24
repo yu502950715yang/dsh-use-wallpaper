@@ -85,8 +85,9 @@ body[data-we-wallpaper] [class*="flowItem"]{
   box-shadow:inset 0 1px 0 rgba(255,255,255,.4),inset 0 -1px 0 rgba(255,255,255,.08),0 4px 16px rgba(0,0,0,.1);
 }
 body[data-ds-dark-theme][data-we-wallpaper] [class*="flowItem"]{
-  background-color:rgba(255,255,255,.07);
-  background-image:linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,.02) 38%,rgba(255,255,255,.03));
+  /* 深色：暗玻璃（非白玻璃——白玻璃 + 高光在深色下显白） */
+  background-color:rgba(24,26,30,.65);
+  background-image:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.02) 38%,rgba(255,255,255,.03));
 }
 body[data-we-wallpaper] [data-composer-card]{
   border-radius:20px;
@@ -97,8 +98,8 @@ body[data-we-wallpaper] [data-composer-card]{
   box-shadow:inset 0 1px 0 rgba(255,255,255,.4),inset 0 -1px 0 rgba(255,255,255,.08),0 4px 16px rgba(0,0,0,.1);
 }
 body[data-ds-dark-theme][data-we-wallpaper] [data-composer-card]{
-  background-color:rgba(255,255,255,.07);
-  background-image:linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,.02) 38%,rgba(255,255,255,.03));
+  background-color:rgba(24,26,30,.65);
+  background-image:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.02) 38%,rgba(255,255,255,.03));
 }
 /* 侧边栏：半透明背景（壁纸透出但文字清晰）；无 blur（对话框 portal 在下面会塌陷） */
 body[data-we-wallpaper]:not([data-ds-dark-theme]) [class*="sidebarCol"]{

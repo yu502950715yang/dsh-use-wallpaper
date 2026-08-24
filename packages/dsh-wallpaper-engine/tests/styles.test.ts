@@ -48,7 +48,7 @@ describe('styles 主题适配', () => {
     const light = /body\[data-we-wallpaper\]\s*\[class\*="flowItem"\]\s*\{([^}]*)\}/.exec(WALLPAPER_CSS)?.[1] ?? '';
     expect(light).toMatch(/background-color:rgba\(255,\s*255,\s*255,\s*\.5\d*\)/);
     const dark = /body\[data-ds-dark-theme\]\[data-we-wallpaper\]\s*\[class\*="flowItem"\]\s*\{([^}]*)\}/.exec(WALLPAPER_CSS)?.[1] ?? '';
-    expect(dark).toMatch(/background-color:rgba\(255,\s*255,\s*255,\s*\.0\d*\)/);
+    expect(dark).toMatch(/background-color:rgba\(2[0-9],\s*2[0-9],\s*3[0-9],\s*\.6\d*\)/);
   });
   it('整区 scrollBody 不 blur（壁纸在气泡间清晰可见，不遮挡背景）', () => {
     expect(WALLPAPER_CSS).not.toMatch(/\[class\*="scrollBody"\]\s*\{[^}]*backdrop-filter/);
