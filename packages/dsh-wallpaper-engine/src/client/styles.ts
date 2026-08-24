@@ -9,8 +9,9 @@ const CSS = `
 .wp-kenburns{animation:wp-kenburns 24s ease-in-out infinite alternate}
 @keyframes wp-kenburns{from{transform:scale(1) translate(0,0)}to{transform:scale(1.12) translate(-2%,-1%)}}
 /* 遮罩：黑色半透明（alpha 内聚于 background，不叠加 opacity 属性；
-   浅色主题下同样为深色遮罩，保证文字可读） */
-.wp-bg-overlay{position:absolute;inset:0;background:rgba(0,0,0,.25)}
+   浅色主题下同样为深色遮罩，保证文字可读）。既让壁纸背景清晰可见，
+   又适度压暗保证文字对比（参考项目 scrim 方案，不做模糊玻璃）。 */
+.wp-bg-overlay{position:absolute;inset:0;background:rgba(0,0,0,.3)}
 
 /* ── 插件 UI 主题变量（随 DSH 主题，无壁纸时同样生效） ── */
 body:not([data-ds-dark-theme]){
@@ -38,22 +39,15 @@ body[data-we-wallpaper] #root [style*="grid-template-columns"]{background:transp
 body[data-we-wallpaper]{background:transparent!important}
 body[data-we-wallpaper]{--dsw-alias-bg-base:transparent!important}
 
-/* ── 液态玻璃 token（对照 elysia395/dsh-wallpaper-engine 配方，2026-08-21）：
-   不是不透明化——保持半透明 + backdrop-filter 模糊：壁纸透出且颜色融入玻璃，
-   内容清晰可读。边框改中性灰（深浅主题下都可见）。 ── */
+/* ── 壁纸背景 token（对照 elysia395/dsh-wallpaper-engine 基础方案，2026-08-21）：
+   不做液态玻璃（blur/白底会遮挡背景）——壁纸清晰可见，文字对比靠
+   scrim 遮罩压暗 + 文字 token。仅保留边框中性灰（深浅主题下都可见）与
+   侧边栏透明（壁纸透出）。 ── */
 body[data-we-wallpaper]{
-  --dsw-specific-input-major:rgba(255,255,255,.15);
-  --dsw-specific-bubble:rgba(255,255,255,.12);
-  /* 侧边栏透明：玻璃配方（blur）在其上生效，壁纸透出（参考项目同款） */
   --dsw-specific-sidebar-fill:transparent;
   --dsw-alias-border-l1:rgba(180,180,180,.35);
   --dsw-alias-border-l2:rgba(180,180,180,.35);
   --dsw-alias-border-l2-darkmode-thin:rgba(180,180,180,.35);
-}
-/* 深色分支：更透的白色玻璃（blur 后白色微透明即可均匀化壁纸，避免深色底糊成一片） */
-body[data-ds-dark-theme][data-we-wallpaper]{
-  --dsw-specific-input-major:rgba(255,255,255,.06);
-  --dsw-specific-bubble:rgba(255,255,255,.05);
 }
 
 /* ── 浅色分支：有壁纸 + 非深色主题 ── */
@@ -65,52 +59,25 @@ body[data-we-wallpaper]:not([data-ds-dark-theme]){
   --dsw-alias-label-tertiary:rgb(70,73,79);
   --dsw-alias-label-caption:rgb(110,114,120);
   --dsw-alias-label-dimmed:rgb(50,52,56);
+  /* 消息区/输入框/侧边栏：壁纸清晰透出，文字靠文字阴影提升对比（不做玻璃遮挡） */
+  --dsw-specific-input-major:transparent;
+  --dsw-specific-bubble:transparent;
+}
+/* 深色分支：同样透明（壁纸可见），白字 + scrim 压暗保证对比 */
+body[data-ds-dark-theme][data-we-wallpaper]{
+  --dsw-specific-input-major:transparent;
+  --dsw-specific-bubble:transparent;
 }
 
-/* ── 液态玻璃配方（参考项目）：消息区 / 输入框 ──
-   Apple 式：大半径模糊 + 高饱和 + 亮度/对比提升（壁纸颜色融入成柔光而非灰糊），
-   顶部高光渐变 + 1px 折射高光 + 内描边（"湿玻璃"质感）。
-   选择器：scrollBody（消息流容器）/ data-composer-card（shell 源码稳定属性）——
-   避开 CSS Modules hash 前缀。
-   ⚠ 侧边栏（sidebarCol）不在此组：DSH 设置对话框的 portal 挂在它下面，
-   加 backdrop-filter 会使其成为 containing block → 对话框 fixed 遮罩宽度塌陷。 */
-body[data-we-wallpaper] [class*="scrollBody"],
-body[data-we-wallpaper] [data-composer-card]{
-  /* 白玻璃底色：压淡壁纸色彩（模糊后壁纸融入成柔和的灰白色调，而非鲜艳透出） */
-  background-color:rgba(255,255,255,.15);
-  background-image:linear-gradient(180deg,rgba(255,255,255,.16),rgba(255,255,255,.05) 38%,rgba(255,255,255,.02));
-  -webkit-backdrop-filter:blur(16px) saturate(1.8) brightness(1.04) contrast(1.01);
-  backdrop-filter:blur(16px) saturate(1.8) brightness(1.04) contrast(1.01);
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.32),inset 0 -1px 0 rgba(255,255,255,.08),inset 0 0 0 .5px rgba(255,255,255,.08);
+/* ── 消息区/侧边栏文字阴影：壁纸清晰可见下的文字对比兜底（不遮挡背景） ──
+   深色：白字 + 暗影（亮壁纸上白字可读）；浅色：黑字 + 亮影。 */
+body[data-we-wallpaper]:not([data-ds-dark-theme]) [class*="scrollBody"],
+body[data-we-wallpaper]:not([data-ds-dark-theme]) [class*="sidebarCol"]{
+  text-shadow:0 1px 2px rgba(255,255,255,.55);
 }
 body[data-ds-dark-theme][data-we-wallpaper] [class*="scrollBody"],
-body[data-ds-dark-theme][data-we-wallpaper] [data-composer-card]{
-  /* 深色：更透的白玻璃（dark 分支折减），壁纸透出但被压暗，白字清晰 */
-  background-color:rgba(255,255,255,.06);
-  background-image:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.02) 38%,rgba(255,255,255,.03));
-}
-
-/* ── 侧边栏（对话列表）：无 blur（避免对话框 portal 塌陷），
-   半透明背景 + 高光渐变（玻璃质感但不含 backdrop-filter） ── */
-body[data-we-wallpaper] [class*="sidebarCol"]{
-  background-color:rgba(255,255,255,.72);
-  background-image:linear-gradient(180deg,rgba(255,255,255,.16),rgba(255,255,255,.05) 38%,rgba(255,255,255,.02));
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.32),inset 0 -1px 0 rgba(255,255,255,.08),inset 0 0 0 .5px rgba(255,255,255,.08);
-}
 body[data-ds-dark-theme][data-we-wallpaper] [class*="sidebarCol"]{
-  background-color:rgba(24,26,30,.75);
-}
-
-/* ── @supports 回退：无 backdrop-filter 支持时近不透明玻璃（文字仍可读） ── */
-@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
-  body[data-we-wallpaper]:not([data-ds-dark-theme]) [class*="scrollBody"],
-  body[data-we-wallpaper]:not([data-ds-dark-theme]) [data-composer-card]{
-    background-color:rgba(255,255,255,.92);
-  }
-  body[data-ds-dark-theme][data-we-wallpaper] [class*="scrollBody"],
-  body[data-ds-dark-theme][data-we-wallpaper] [data-composer-card]{
-    background-color:rgba(24,26,30,.92);
-  }
+  text-shadow:0 1px 2px rgba(0,0,0,.6);
 }
 
 /* ── 插件 UI 组件（变量驱动，随主题） ── */

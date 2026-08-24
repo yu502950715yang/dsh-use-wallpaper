@@ -38,33 +38,30 @@ describe('styles 主题适配', () => {
     // 遮罩仍为深色但透明度收敛（不再 .35 压暗浅色主题）
     expect(WALLPAPER_CSS).not.toMatch(/\.wp-bg-overlay\s*{[^}]*opacity:\.35/);
   });
-  it('半透明玻璃 token（参考项目配方）：浅色 input/bubble 白色微透明 .1x', () => {
-    // 液态玻璃 token 在 body[data-we-wallpaper] 基础块（非层级透明块），两个 token 同块
-    expect(WALLPAPER_CSS).toMatch(/body\[data-we-wallpaper\]\s*\{[^}]*--dsw-specific-input-major:rgba\(255,\s*255,\s*255,\s*\.1\d*\)[^}]*--dsw-specific-bubble:rgba\(255,\s*255,\s*255,\s*\.1\d*\)/);
-  });
-  it('半透明玻璃 token（参考项目配方）：深色分支更透的白色玻璃 .0x', () => {
+  it('取消液态玻璃：消息区/输入框/侧边栏 token 全透明（壁纸清晰可见）', () => {
+    expect(WALLPAPER_CSS).toMatch(/body\[data-we-wallpaper\]\s*\{[^}]*--dsw-specific-sidebar-fill:transparent/);
+    // 浅色与深色分支都设 input-major / bubble 为 transparent
+    const light = /body\[data-we-wallpaper\]:not\(\[data-ds-dark-theme\]\)\s*\{([^}]*)\}/.exec(WALLPAPER_CSS)?.[1] ?? '';
+    expect(light).toMatch(/--dsw-specific-input-major:transparent/);
+    expect(light).toMatch(/--dsw-specific-bubble:transparent/);
     const dark = /body\[data-ds-dark-theme\]\[data-we-wallpaper\]\s*\{([^}]*)\}/.exec(WALLPAPER_CSS)?.[1] ?? '';
-    expect(dark).toMatch(/--dsw-specific-input-major:rgba\(255,\s*255,\s*255,\s*\.0\d*\)/);
-    expect(dark).toMatch(/--dsw-specific-bubble:rgba\(255,\s*255,\s*255,\s*\.0\d*\)/);
+    expect(dark).toMatch(/--dsw-specific-input-major:transparent/);
+    expect(dark).toMatch(/--dsw-specific-bubble:transparent/);
   });
-  it('液态玻璃配方：消息区 scrollBody backdrop-filter blur + 白玻璃底色 + 高光渐变', () => {
-    expect(WALLPAPER_CSS).toMatch(/\[class\*="scrollBody"\][^{]*\{[^}]*backdrop-filter:blur\(/);
-    expect(WALLPAPER_CSS).toMatch(/\[class\*="scrollBody"\][^{]*\{[^}]*linear-gradient\(180deg/);
-    expect(WALLPAPER_CSS).toMatch(/\[class\*="scrollBody"\][^{]*\{[^}]*background-color:rgba\(255,\s*255,\s*255,\s*\.1\d*\)/);
+  it('消息区/侧边栏文字 text-shadow：壁纸清晰下的文字对比兜底', () => {
+    expect(WALLPAPER_CSS).toMatch(/\[class\*="scrollBody"\][^{]*\{[^}]*text-shadow:0 1px 2px rgba\(0,\s*0,\s*0,\s*\.6\d*\)/);
+    expect(WALLPAPER_CSS).toMatch(/\[class\*="scrollBody"\][^{]*\{[^}]*text-shadow:0 1px 2px rgba\(255,\s*255,\s*255,\s*\.5\d*\)/);
   });
-  it('液态玻璃配方：输入框 data-composer-card backdrop-filter', () => {
-    expect(WALLPAPER_CSS).toMatch(/\[data-composer-card\][^{]*\{[^}]*backdrop-filter:blur\(/);
+  it('完全取消 backdrop-filter 液态玻璃（无 blur 遮挡背景）', () => {
+    expect(WALLPAPER_CSS).not.toMatch(/backdrop-filter/);
+    expect(WALLPAPER_CSS).not.toMatch(/@supports not \(\(backdrop-filter/);
   });
-  it('液态玻璃配方：侧边栏 sidebarCol 无 blur（避免对话框 portal 塌陷），半透明背景兜底', () => {
-    // 设置对话框 portal 挂在 sidebarCol 下，backdrop-filter 会使其 fixed 遮罩塌陷
-    expect(WALLPAPER_CSS).toMatch(/body\[data-we-wallpaper\]\s*\[class\*="sidebarCol"\]\s*\{[^}]*background-color:rgba\(255,\s*255,\s*255,\s*\.7\d*\)/);
-    expect(WALLPAPER_CSS).not.toMatch(/\[class\*="sidebarCol"\]\s*\{[^}]*backdrop-filter/);
+  it('scrim 遮罩：壁纸清晰可见但被适度压暗（.wp-bg-overlay rgba(0,0,0,.3)）', () => {
+    expect(WALLPAPER_CSS).toMatch(/\.wp-bg-overlay\s*\{[^}]*background:rgba\(0,\s*0,\s*0,\s*\.3\d*\)/);
+    expect(WALLPAPER_CSS).not.toMatch(/\.wp-bg-overlay\s*\{[^}]*opacity:\.35/);
   });
   it('边框强调：--dsw-alias-border-l1/l2 中性灰（深浅主题可见）', () => {
     expect(WALLPAPER_CSS).toMatch(/--dsw-alias-border-l1:rgba\(180,\s*180,\s*180/);
     expect(WALLPAPER_CSS).toMatch(/--dsw-alias-border-l2:rgba\(180,\s*180,\s*180/);
-  });
-  it('@supports 回退：无 backdrop-filter 时近不透明保证可读', () => {
-    expect(WALLPAPER_CSS).toMatch(/@supports not \(\(backdrop-filter:blur\(1px\)\)/);
   });
 });
