@@ -67,35 +67,44 @@ body[data-we-wallpaper]:not([data-ds-dark-theme]){
   --dsw-alias-label-dimmed:rgb(50,52,56);
 }
 
-/* ── 液态玻璃配方（参考项目）：消息区 / 输入框 / 侧边栏 ──
+/* ── 液态玻璃配方（参考项目）：消息区 / 输入框 ──
    Apple 式：大半径模糊 + 高饱和 + 亮度/对比提升（壁纸颜色融入成柔光而非灰糊），
    顶部高光渐变 + 1px 折射高光 + 内描边（"湿玻璃"质感）。
-   选择器：scrollBody（消息流容器）/ data-composer-card（shell 源码稳定属性）/
-   sidebarCol（侧边栏列）——避开 CSS Modules hash 前缀。 */
+   选择器：scrollBody（消息流容器）/ data-composer-card（shell 源码稳定属性）——
+   避开 CSS Modules hash 前缀。
+   ⚠ 侧边栏（sidebarCol）不在此组：DSH 设置对话框的 portal 挂在它下面，
+   加 backdrop-filter 会使其成为 containing block → 对话框 fixed 遮罩宽度塌陷。 */
 body[data-we-wallpaper] [class*="scrollBody"],
-body[data-we-wallpaper] [data-composer-card],
-body[data-we-wallpaper] [class*="sidebarCol"]{
+body[data-we-wallpaper] [data-composer-card]{
   background-image:linear-gradient(180deg,rgba(255,255,255,.16),rgba(255,255,255,.05) 38%,rgba(255,255,255,.02));
   -webkit-backdrop-filter:blur(16px) saturate(1.8) brightness(1.04) contrast(1.01);
   backdrop-filter:blur(16px) saturate(1.8) brightness(1.04) contrast(1.01);
   box-shadow:inset 0 1px 0 rgba(255,255,255,.32),inset 0 -1px 0 rgba(255,255,255,.08),inset 0 0 0 .5px rgba(255,255,255,.08);
 }
 body[data-ds-dark-theme][data-we-wallpaper] [class*="scrollBody"],
-body[data-ds-dark-theme][data-we-wallpaper] [data-composer-card],
-body[data-ds-dark-theme][data-we-wallpaper] [class*="sidebarCol"]{
+body[data-ds-dark-theme][data-we-wallpaper] [data-composer-card]{
   background-image:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.02) 38%,rgba(255,255,255,.03));
+}
+
+/* ── 侧边栏（对话列表）：无 blur（避免对话框 portal 塌陷），
+   半透明背景 + 高光渐变（玻璃质感但不含 backdrop-filter） ── */
+body[data-we-wallpaper] [class*="sidebarCol"]{
+  background-color:rgba(255,255,255,.72);
+  background-image:linear-gradient(180deg,rgba(255,255,255,.16),rgba(255,255,255,.05) 38%,rgba(255,255,255,.02));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.32),inset 0 -1px 0 rgba(255,255,255,.08),inset 0 0 0 .5px rgba(255,255,255,.08);
+}
+body[data-ds-dark-theme][data-we-wallpaper] [class*="sidebarCol"]{
+  background-color:rgba(24,26,30,.75);
 }
 
 /* ── @supports 回退：无 backdrop-filter 支持时近不透明玻璃（文字仍可读） ── */
 @supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
   body[data-we-wallpaper]:not([data-ds-dark-theme]) [class*="scrollBody"],
-  body[data-we-wallpaper]:not([data-ds-dark-theme]) [data-composer-card],
-  body[data-we-wallpaper]:not([data-ds-dark-theme]) [class*="sidebarCol"]{
+  body[data-we-wallpaper]:not([data-ds-dark-theme]) [data-composer-card]{
     background-color:rgba(255,255,255,.92);
   }
   body[data-ds-dark-theme][data-we-wallpaper] [class*="scrollBody"],
-  body[data-ds-dark-theme][data-we-wallpaper] [data-composer-card],
-  body[data-ds-dark-theme][data-we-wallpaper] [class*="sidebarCol"]{
+  body[data-ds-dark-theme][data-we-wallpaper] [data-composer-card]{
     background-color:rgba(24,26,30,.92);
   }
 }

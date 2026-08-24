@@ -54,8 +54,10 @@ describe('styles 主题适配', () => {
   it('液态玻璃配方：输入框 data-composer-card backdrop-filter', () => {
     expect(WALLPAPER_CSS).toMatch(/\[data-composer-card\][^{]*\{[^}]*backdrop-filter:blur\(/);
   });
-  it('液态玻璃配方：侧边栏 sidebarCol backdrop-filter', () => {
-    expect(WALLPAPER_CSS).toMatch(/\[class\*="sidebarCol"\][^{]*\{[^}]*backdrop-filter:blur\(/);
+  it('液态玻璃配方：侧边栏 sidebarCol 无 blur（避免对话框 portal 塌陷），半透明背景兜底', () => {
+    // 设置对话框 portal 挂在 sidebarCol 下，backdrop-filter 会使其 fixed 遮罩塌陷
+    expect(WALLPAPER_CSS).toMatch(/body\[data-we-wallpaper\]\s*\[class\*="sidebarCol"\]\s*\{[^}]*background-color:rgba\(255,\s*255,\s*255,\s*\.7\d*\)/);
+    expect(WALLPAPER_CSS).not.toMatch(/\[class\*="sidebarCol"\]\s*\{[^}]*backdrop-filter/);
   });
   it('边框强调：--dsw-alias-border-l1/l2 中性灰（深浅主题可见）', () => {
     expect(WALLPAPER_CSS).toMatch(/--dsw-alias-border-l1:rgba\(180,\s*180,\s*180/);
