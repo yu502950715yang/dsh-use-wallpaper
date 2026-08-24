@@ -16,15 +16,15 @@
 
 - **wasm 渲染器（Rust/wgpu，WebGPU）**：解析 Wallpaper Engine `scene.json`，逐对象渲染。`image` 对象按 `scene.pkg` 内容解码 TEXV0005 纹理（LZ4 解压，RGBA8888 / DXT / R8 / RG88）后作为图片平面；`particle` 对象走 GPU 粒子管线（emitter + initializer + operator 解析）。
 - **回退链（强制 wasm，无 JS 降级）**：
+  
   ```
   浏览器支持 WebGPU ──► wasm 渲染器（图片平面 + GPU 粒子）
         │ 无 WebGPU / 加载或初始化失败 / 渲染出 0 个可见对象
         ▼
   preview 图回退（Ken Burns 缓慢缩放位移，永不白屏）
   ```
-
+  
   > 注：历史上曾有 wasm → JS(Three.js) 渲染器 → preview 的三级回退，`createFallbackSceneRenderer` 也保留了 JS 渲染器形参，但**当前策略是强制 wasm**——离开 wasm 后不再降级 JS 渲染器，而是直接回退 preview 图。JS/Three.js 渲染器、对象级效果链（EffectRunner）、音频频谱、text/visualizer/clock 脚本等源码仍保留在仓库并有单测覆盖，但**未接入当前运行时回退链**（为后续独立计划）。
-  >
 - **坐标对齐**：WE 场景系为左下原点、y 向上；映射 `three.x = we.x - vw/2`、`three.y = we.y - vh/2`（不做 y 翻转）。
 - **容器/纹理解包**：host 侧读取 `PKGV0001` 容器（`pkg-reader.ts`），client/wasm 侧消费 TEXV0005 纹理字节。
 - **粒子纹理**：WE 内置粒子纹理（fog/halo/light_shafts 等）由 `build:client` 从本机 WE 安装目录复制到 `dist/static/ptex-*.tex`，wasm 渲染器优先经 `/wallpapers/static/ptex-*.tex` 读取；`/wallpapers/particle-texture` 路由（从 `weAssetsDir` 实时读取）为备选。两者都不可用时粒子回退为纯色（**绝不白屏**）。
@@ -48,11 +48,13 @@
 当前主渲染路径为 **wasm（Rust/wgpu）渲染器**，目标是让 scene 壁纸在浏览器里效果**逼近 WE 真机**。以下能力在 JS/Three.js 渲染器中**已有实现并通过单测**，但当前强制 wasm 路径下**尚未接入运行时的 wasm 渲染器**——逐个移植到 Rust/wgpu 是后续的主线：
 
 ### 优先：对象级效果链（含动画效果）
+
 - **现状**：带对象级 `effects`（waterwaves / shake / fade / godrays / foliagesway / iris 等后处理 shader）的壁纸，在 wasm 路径下**只渲染静态图片 + 粒子**，效果链动画缺失。
 - **目标**：把 JS 侧 `effect-runner.ts` + `shader/` 方言层（GLSL→WGSL 转换、uniform 绑定、内置头）移植到 Rust/wgpu，实现**对象级**效果链——每个带效果对象独立离屏 RT + 局部正交相机 + post-pass，输出贴回共享场景。
 - **对齐语义**：参考现有 JS 侧对象级效果链与 `research/open-wallpaper-engine` 的 Layer/CompositeTarget 语义。
 
 ### 后续（按序）
+
 - **text 对象 + clock / visualizer 脚本**：把 `text-object.ts` + `script-patterns.ts` 移植到 wasm，支持静态文本、时钟文本与音频频谱条。
 - **音频可视化**：把 `audio-input.ts` 的分析器移植到 wasm（频谱 → 音频粒子 / visualizer 条高 uniform）。
 - **用户属性 / 视觉脚本求值**：`visible:{user,value}` 等可切换属性正确求值（wasm 侧当前恒定回退默认值）。
@@ -75,7 +77,7 @@ pnpm install
 ```
 
 > 或用 `dsh plugin` 快捷添加（若你的 CLI 支持插件管理）：
->
+> 
 > ```bash
 > dsh plugin --profile web add "@dsh-use/wallpaper-engine@file:E:/code/dsh-use-wallpaper"
 > dsh plugin --profile web install
@@ -110,7 +112,6 @@ Copy-Item "$src\dist\*" "$dst\dist\" -Recurse -Force
 ---
 
 ## 📦 前置条件
-
 
 | 项               | 说明                                                                                                                 |
 | ---------------- | -------------------------------------------------------------------------------------------------------------------- |
@@ -187,10 +188,11 @@ docs/         设计文档与实施计划（specs / plans）
 
 - 代码：MIT。
 - 壁纸、粒子纹理等素材版权归原作者 / Wallpaper Engine 所有，插件只负责在其上渲染，不重新分发第三方素材。
-- 格式语义对齐自 [linux-wallpaperengine](https://github.com/linux-wallpaperengine) / 开源 Wallpaper Engine 逆向实现。
+- 格式语义对齐自 [linux-wallpaperengine](https://github.com/Almamu/linux-wallpaperengine) / 开源 Wallpaper Engine 逆向实现。
 
 ---
 
 ## 🔗 相关链接
 
 [GitHub 仓库](https://github.com/yu502950715yang/dsh-use-wallpaper) · [dsh-plugin 主题页](https://github.com/topics/dsh-plugin) · [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
+
