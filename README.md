@@ -115,16 +115,19 @@ Copy-Item "$src\dist\*" "$dst\dist\" -Recurse -Force
 
 | 项               | 说明                                                                                                                 |
 | ---------------- | -------------------------------------------------------------------------------------------------------------------- |
+| 平台支持         | **当前仅适配 Windows**，macOS 尚未测试                                                                               |
 | DeepSeek Harness | 需`dsh web` / `web` profile（插件面向 DSH Web GUI）                                                                  |
 | Wallpaper Engine | **建议**已装上（Steam，workshop 内容目录 `workshop/content/431960`）。提供 scene / 视频 / 壁纸来源                   |
 | 浏览器           | 现代浏览器（Chrome / Edge 推荐）。scene 壁纸需支持**WebGPU**；不支持时 scene 壁纸回退为 preview 图，其余类型不受影响 |
 | Node             | ≥ 18（仅开发/构建时用，运行时由 DSH 宿主加载）                                                                      |
 
+> **⚠️ 平台说明**：本插件**只在 Windows 上做过测试**，macOS 未验证。涉及本机路径（Steam 目录探测、Wallpaper Engine 安装目录、`D:` 盘默认路径假设）以及浏览器 / WebGPU 行为均以 Windows 为准。**macOS 用户请自行验证后使用**，遇到问题可通过 Issue 反馈。
+
 ---
 
 ## ⚙️ 配置
 
-在 **设置 → 壁纸** 面板（侧边栏「Wallpaper 壁纸壁纸」菜单）：
+在 **设置 → 壁纸** 面板（侧边栏「Wallpaper 壁纸」菜单）：
 
 - **壁纸目录 `wallpaperDir`**：Steam workshop 壁纸目录（自动探测候选，或手动填写）。未配置时视为未配置，列表为空。
 - **引擎目录 `weAssetsDir`**：Wallpaper Engine 安装目录（供粒子纹理等 WE 内置资源读取）。
