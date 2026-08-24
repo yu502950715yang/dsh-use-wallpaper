@@ -1,9 +1,83 @@
 {
-  "name": "dsh-use-wallpaper",
-  "private": true,
-  "scripts": {
-    "test": "npm --workspace @dsh-use/wallpaper-engine test",
-    "build:client": "npm --workspace @dsh-use/wallpaper-engine run build:client"
+  "name": "@dsh-use/wallpaper-engine",
+  "version": "0.1.0",
+  "private": false,
+  "description": "为 DSH（DeepSeek Harness）Web GUI 提供 Wallpaper Engine 壁纸背景：Scene 壁纸由 Three.js / WebGPU（wasm）在浏览器实时渲染，视频壁纸直接播放、Web 壁纸加载，其余回退 preview 图 + Ken Burns。",
+  "type": "module",
+  "main": "lib/host/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/host/index.js"
+    },
+    "./client": {
+      "default": "./dist/client.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
   },
-  "workspaces": ["packages/*"]
+  "scripts": {
+    "test": "vitest run",
+    "build": "tsc -p tsconfig.json",
+    "build:wasm": "cd wasm && wasm-pack build --target web --release --features render",
+    "build:client": "node scripts/build-client.mjs"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1"
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh-settings": "^0.1.0-rc.6",
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "lz4js": "^0.2.0",
+    "three": "^0.170.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@types/three": "^0.170.0",
+    "esbuild": "^0.24.0",
+    "jsdom": "^25.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "dsh": {
+    "profile": {
+      "bundles": [
+        "@dsh-use/wallpaper-engine"
+      ]
+    },
+    "client": {
+      "platform": "web",
+      "inject": [],
+      "immediately": true
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yu502950715yang/dsh-use-wallpaper.git"
+  },
+  "homepage": "https://github.com/yu502950715yang/dsh-use-wallpaper#readme",
+  "bugs": "https://github.com/yu502950715yang/dsh-use-wallpaper/issues",
+  "keywords": [
+    "deepseek",
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "wallpaper-engine",
+    "wallpaper",
+    "scene",
+    "webgpu",
+    "three.js"
+  ],
+  "license": "MIT",
+  "files": [
+    "lib",
+    "dist",
+    "cordis.patch.yml"
+  ]
 }

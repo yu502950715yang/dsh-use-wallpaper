@@ -3,6 +3,9 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// 单包化后 dist 可能未预先存在（全新克隆），先确保目录，否则 writeFileSync('dist/client.js') 报 ENOENT
+mkdirSync('dist', { recursive: true });
+
 // 2026-08-21（设置面板集成）：client 依赖 DSH 共享模块（React、react-dom 等），
 // 构建时标记 external，产物保留 require(...) 调用——运行时由
 // window.__ModuleLoader__ 的 factory(require) 解析（与官方 client 插件一致）。

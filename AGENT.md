@@ -6,7 +6,7 @@
 
 **dsh-use-wallpaper** 是一个 DSH（DeepSeek Harness）插件仓库，为 DSH Web GUI 提供 **Wallpaper Engine 壁纸背景**：扫描 Steam workshop 壁纸目录（默认 `D:/Steam/steamapps/workshop/content/431960`，2026-08-21 起不再写死——设置 → 壁纸 面板可自动探测（注册表 + libraryfolders.vdf + 常见路径，见 `src/host/steam-paths.ts`）或手动填写，settings 热更新），在浏览器中渲染 scene 壁纸 / 播放视频壁纸 / 加载 web 壁纸，其余回退 preview 图 + Ken Burns。壁纸切换入口在 **DSH 设置对话框侧边栏「壁纸」菜单**（client 经 `settings.section` slot 注册，见 `src/client/settings-section.tsx`）。
 
-- 仓库形态：**monorepo**（npm workspaces），核心包 `packages/dsh-wallpaper-engine`（`@dsh-use/wallpaper-engine`）。
+- 仓库形态：**单包仓库**（本仓库根即插件 `@dsh-use/wallpaper-engine`，已在根 `package.json` 声明 `dsh.bundle`，可直接 `dsh plugin add github:...` 安装）。
 - 技术栈：Node ≥ 18、TypeScript strict、ESM-only；浏览器侧 Three.js（WebGL）+ Rust/WebGPU（wasm）；宿主侧 Cordis 插件体系。
 - 不依赖 Wallpaper Engine 运行时：host 侧解包壁纸资源（`PKGV0001` 容器、`TEXV0005` 纹理），client 侧渲染。
 
@@ -51,7 +51,7 @@ three.x = we.x - vw/2；three.y = we.y - vh/2（y 不做翻转）
 # 单测（node + jsdom 双环境，vitest）
 npm test                                   # 仓库根，委托 workspace
 
-# 包内命令（在 packages/dsh-wallpaper-engine 下）
+# 包内命令（在仓库根）
 npm run build                              # tsc -p tsconfig.json → lib/（strict）
 npm run build:wasm                         # wasm-pack 构建（见下）→ wasm/pkg/
 npm run build:client                       # esbuild 打包 client → dist/client.js
@@ -62,7 +62,7 @@ npx vitest run                             # 全量单测（373 个）
 
 # wasm（Rust）构建 —— 注意必须 --target web；构建顺序：改 Rust → build:wasm → build:client
 npm run build:wasm                         # 等价于下面两条的 wasm-pack 形式（在 wasm/ 下执行）
-cd packages/dsh-wallpaper-engine/wasm
+cd wasm
 wasm-pack build --target web --release --features render   # → wasm/pkg/
 # 或等价：cargo build --target wasm32-unknown-unknown --release --features render
 #         + wasm-bindgen <cdylib.wasm> --target web --out-dir wasm/pkg
@@ -76,7 +76,7 @@ profile（`C:\Users\<user>\.dsh\profiles\web`）通过 `file:` 依赖引用本�
 - **可靠方式**：手动把构建产物复制进 profile 的 node_modules：
 
 ```bash
-$src = '<repo>\packages\dsh-wallpaper-engine'
+$src = '<repo>'
 $dst = "$env:USERPROFILE\.dsh\profiles\web\node_modules\@dsh-use\wallpaper-engine"
 Copy-Item "$src\lib\*"  "$dst\lib\"  -Recurse -Force
 Copy-Item "$src\dist\*" "$dst\dist\" -Recurse -Force

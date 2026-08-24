@@ -1,11 +1,18 @@
+# 依赖与构建产物
 node_modules/
-dist/
 *.log
-research/*.bmp
-.superpowers/
 
-# research 调研产物（截图/脚本/文档体积大，不入库）
+# 调研/临时代码（体积大，不入库）
 research/
-
-# playwright-cli 截图/日志目录
+.superpowers/
 .playwright-cli/
+
+# 旧 monorepo 遗留（含被锁定的 node_modules），不再入库
+packages/
+
+# Rust wasm 构建中间产物：最终 wasm 由 build:client 复制进 dist/static 供分发
+wasm/pkg/
+
+# Wallpaper Engine 内置粒子纹理：build:client 时从本地 WE 安装目录复制，运行时改由
+# /wallpapers/particle-texture 从用户 WE 安装提供（缺失则回退纯色），故不提交，避免再分发第三方素材
+dist/static/ptex-*.tex
