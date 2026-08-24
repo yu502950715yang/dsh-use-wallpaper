@@ -78,6 +78,7 @@ body[data-ds-dark-theme][data-we-wallpaper]{
 body[data-we-wallpaper] [class*="flowItem"]{
   border-radius:16px;
   margin-bottom:10px;
+  padding:12px 16px;
   background-color:rgba(255,255,255,.5);
   background-image:linear-gradient(180deg,rgba(255,255,255,.18),rgba(255,255,255,.05) 38%,rgba(255,255,255,.02));
   -webkit-backdrop-filter:blur(14px) saturate(1.7);
