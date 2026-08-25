@@ -26,6 +26,10 @@ wasm-bindgen-futures = { version = "0.4", optional = true }
 console_error_panic_hook = { version = "0.1", optional = true }
 png = "0.17"
 jpeg-decoder = { version = "0.3", default-features = false }
+# GLSL→WGSL 编译/校验（naga 24）：效果链 shader 管线复用。
+# glsl-in（glsl 前端）/ wgsl-out（wgsl 写出）/ wgsl-in（validate_wgsl 解析校验）。
+# 纯 naga + 字符串，native cargo test 可编译，不依赖 wgpu。
+naga = { version = "24", features = ["glsl-in", "wgsl-out", "wgsl-in"] }
 
 [dev-dependencies]
 crc32fast = "1.5.0"

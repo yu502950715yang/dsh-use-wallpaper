@@ -3,6 +3,7 @@
 //! （--features render）编译，渲染验证在浏览器（headless Edge + CDP）。
 
 pub mod camera;
+pub mod effect;
 pub mod particle_pass;
 #[cfg(feature = "render")]
 pub mod texture;
