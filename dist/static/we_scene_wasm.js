@@ -134,6 +134,23 @@ export class WeScene {
     step(dt) {
         wasm.wescene_step(this.__wbg_ptr, dt);
     }
+    /**
+     * 每帧更新一个图片对象的状态（origin/scale/alpha/brightness）。
+     * Option 语义：JS 传 undefined（wasm-bindgen 对 Option 接受 undefined/null）=
+     * 保持现状。asset_id = 对象数组索引（与 load_image/add_particle 一致）。
+     * @param {number} asset_id
+     * @param {Float32Array | null} [origin]
+     * @param {Float32Array | null} [scale]
+     * @param {number | null} [alpha]
+     * @param {number | null} [brightness]
+     */
+    update_image(asset_id, origin, scale, alpha, brightness) {
+        var ptr0 = isLikeNone(origin) ? 0 : passArrayF32ToWasm0(origin, wasm.__wbindgen_malloc);
+        var len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(scale) ? 0 : passArrayF32ToWasm0(scale, wasm.__wbindgen_malloc);
+        var len1 = WASM_VECTOR_LEN;
+        wasm.wescene_update_image(this.__wbg_ptr, asset_id, ptr0, len0, ptr1, len1, isLikeNone(alpha) ? Number.MAX_SAFE_INTEGER : Math.fround(alpha), isLikeNone(brightness) ? Number.MAX_SAFE_INTEGER : Math.fround(brightness));
+    }
 }
 if (Symbol.dispose) WeScene.prototype[Symbol.dispose] = WeScene.prototype.free;
 function __wbg_get_imports() {

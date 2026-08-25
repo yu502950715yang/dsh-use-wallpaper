@@ -18,7 +18,7 @@
   "scripts": {
     "test": "vitest run",
     "build": "tsc -p tsconfig.json",
-    "build:wasm": "cd wasm && wasm-pack build --target web --release --features render",
+    "build:wasm": "cd wasm && wasm-pack build --no-opt --target web --release --features render",
     "build:client": "node scripts/build-client.mjs"
   },
   "peerDependencies": {
