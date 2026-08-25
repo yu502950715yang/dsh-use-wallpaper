@@ -50,6 +50,11 @@ describe('styles 主题适配', () => {
     const dark = /body\[data-ds-dark-theme\]\[data-we-wallpaper\]\s*\[class\*="flowItem"\]\s*\{([^}]*)\}/.exec(WALLPAPER_CSS)?.[1] ?? '';
     expect(dark).toMatch(/background-color:rgba\(2[0-9],\s*2[0-9],\s*3[0-9],\s*\.6\d*\)/);
   });
+  it('用户提问弹窗与主输入框一致：液体玻璃（[data-question-key] section）', () => {
+    expect(WALLPAPER_CSS).toMatch(/\[data-question-key\]\s*section\s*\{[^}]*border-radius:20px[^}]*backdrop-filter:blur\(/);
+    const dark = /body\[data-ds-dark-theme\]\[data-we-wallpaper\]\s*\[data-question-key\]\s*section\s*\{([^}]*)\}/.exec(WALLPAPER_CSS)?.[1] ?? '';
+    expect(dark).toMatch(/background-color:rgba\(2[0-9],\s*2[0-9],\s*3[0-9],\s*\.6\d*\)/);
+  });
   it('整区 scrollBody 不 blur（壁纸在气泡间清晰可见，不遮挡背景）', () => {
     expect(WALLPAPER_CSS).not.toMatch(/\[class\*="scrollBody"\]\s*\{[^}]*backdrop-filter/);
   });

@@ -107,6 +107,21 @@ body[data-ds-dark-theme][data-we-wallpaper] [data-composer-card]{
   background-color:rgba(24,26,30,.65);
   background-image:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.02) 38%,rgba(255,255,255,.03));
 }
+/* 用户提问弹窗（ask_user_question）：其卡片（Mbwy4a_card）原为 transparent，与主输入框
+   （data-composer-card）不一致——套用同一液态玻璃统一视觉（2026-08-25）。
+   [data-question-key] 是 DSH user-question 组件外层 frame 的稳定属性。 */
+body[data-we-wallpaper] [data-question-key] section{
+  border-radius:20px;
+  background-color:rgba(255,255,255,.5);
+  background-image:linear-gradient(180deg,rgba(255,255,255,.18),rgba(255,255,255,.05) 38%,rgba(255,255,255,.02));
+  -webkit-backdrop-filter:blur(14px) saturate(1.7);
+  backdrop-filter:blur(14px) saturate(1.7);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.4),inset 0 -1px 0 rgba(255,255,255,.08),0 4px 16px rgba(0,0,0,.1);
+}
+body[data-ds-dark-theme][data-we-wallpaper] [data-question-key] section{
+  background-color:rgba(24,26,30,.65);
+  background-image:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.02) 38%,rgba(255,255,255,.03));
+}
 /* 侧边栏：背景由 --dsw-specific-sidebar-fill 控制（见上方浅/深分支），此处不再覆盖
    sidebarCol——侧边栏根（hHd-Xa_root）填满该列且用同一 fill，透明后壁纸即透出。
    无 blur（设置对话框 portal 挂在侧边栏下，加 blur 会塌陷）。 */

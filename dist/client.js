@@ -629,6 +629,21 @@ body[data-ds-dark-theme][data-we-wallpaper] [data-composer-card]{
   background-color:rgba(24,26,30,.65);
   background-image:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.02) 38%,rgba(255,255,255,.03));
 }
+/* \u7528\u6237\u63D0\u95EE\u5F39\u7A97\uFF08ask_user_question\uFF09\uFF1A\u5176\u5361\u7247\uFF08Mbwy4a_card\uFF09\u539F\u4E3A transparent\uFF0C\u4E0E\u4E3B\u8F93\u5165\u6846
+   \uFF08data-composer-card\uFF09\u4E0D\u4E00\u81F4\u2014\u2014\u5957\u7528\u540C\u4E00\u6DB2\u6001\u73BB\u7483\u7EDF\u4E00\u89C6\u89C9\uFF082026-08-25\uFF09\u3002
+   [data-question-key] \u662F DSH user-question \u7EC4\u4EF6\u5916\u5C42 frame \u7684\u7A33\u5B9A\u5C5E\u6027\u3002 */
+body[data-we-wallpaper] [data-question-key] section{
+  border-radius:20px;
+  background-color:rgba(255,255,255,.5);
+  background-image:linear-gradient(180deg,rgba(255,255,255,.18),rgba(255,255,255,.05) 38%,rgba(255,255,255,.02));
+  -webkit-backdrop-filter:blur(14px) saturate(1.7);
+  backdrop-filter:blur(14px) saturate(1.7);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.4),inset 0 -1px 0 rgba(255,255,255,.08),0 4px 16px rgba(0,0,0,.1);
+}
+body[data-ds-dark-theme][data-we-wallpaper] [data-question-key] section{
+  background-color:rgba(24,26,30,.65);
+  background-image:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.02) 38%,rgba(255,255,255,.03));
+}
 /* \u4FA7\u8FB9\u680F\uFF1A\u80CC\u666F\u7531 --dsw-specific-sidebar-fill \u63A7\u5236\uFF08\u89C1\u4E0A\u65B9\u6D45/\u6DF1\u5206\u652F\uFF09\uFF0C\u6B64\u5904\u4E0D\u518D\u8986\u76D6
    sidebarCol\u2014\u2014\u4FA7\u8FB9\u680F\u6839\uFF08hHd-Xa_root\uFF09\u586B\u6EE1\u8BE5\u5217\u4E14\u7528\u540C\u4E00 fill\uFF0C\u900F\u660E\u540E\u58C1\u7EB8\u5373\u900F\u51FA\u3002
    \u65E0 blur\uFF08\u8BBE\u7F6E\u5BF9\u8BDD\u6846 portal \u6302\u5728\u4FA7\u8FB9\u680F\u4E0B\uFF0C\u52A0 blur \u4F1A\u584C\u9677\uFF09\u3002 */
