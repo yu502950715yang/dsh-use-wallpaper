@@ -120,6 +120,7 @@ research/                     调研产物（gitignore：截图/验证脚本/参
 10. **wasm 成功路径可见性过滤（已修）**：wasm `render()` 对象循环与 JS 路径一致用 `resolveVisibility` 过滤不可见对象；wasm 无用户属性注入（settings 查询仅 JS 路径有），传 `{}` → user 绑定回退绑定 value（无用户属性存储 = 缺省语义）。
 11. **音频管线（T3.2/T3.4）**：`createAudioAnalyzer` 频谱（freqData Uint8Array）→ EffectRunner 音频 uniform + visualizer 条高；壁纸 sound 数组经 `playWallpaperSound` 接入分析器（fire-and-forget；autoplay 被拦时 context suspended、可视化全零，用户手势后恢复）。无 Web Audio → 全零静音。
 12. **构建顺序（改 Rust 必先 build:wasm 再 build:client）**：build:client 把 `wasm/pkg/` 产物复制到 `dist/static/`（页面加载的就是这份）——Rust 改动后直接 build:client 会复制旧 wasm（行为不更新）；产物缺失时 build:client 报错并提示先 `npm run build:wasm`。
+13. **打 tag / 发布（npm publish）前必须先完整构建产物**（`pnpm run build` + `pnpm run build:client`）：`pnpm run build`（tsc）生成 `lib/`，`build:client`（esbuild）生成 `dist/`，二者对应不同产物。只跑 `build:client`（改 client 后）会更新 `dist/client.js`，但 `lib/client/*`（tsc 产物）仍滞后于 `src/client/*`；发布包 `files` 白名单含 `lib` + `dist`，会用过期的 `lib` 而遗漏源码改动。**2026-08-25 实测**：改 `src/client/styles.ts` 后只跑了 `build:client`，`lib/client/styles.js` 未同步，直到发布前补跑 `pnpm run build` 才一致。故打 tag / 发布前先同步 `lib/` 与 `dist/`，并确认 `git status` 无未提交的构建产物（如本次的 `lib/client/*`）。
 
 ## 6. 测试与验证
 
