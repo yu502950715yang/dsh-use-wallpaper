@@ -41,10 +41,9 @@ body[data-we-wallpaper]{--dsw-alias-bg-base:transparent!important}
 
 /* ── 壁纸背景 token（对照 elysia395/dsh-wallpaper-engine 基础方案，2026-08-21）：
    不做液态玻璃（blur/白底会遮挡背景）——壁纸清晰可见，文字对比靠
-   scrim 遮罩压暗 + 文字 token。仅保留边框中性灰（深浅主题下都可见）与
-   侧边栏透明（壁纸透出）。 ── */
+   scrim 遮罩压暗 + 文字 token。仅保留边框中性灰（深浅主题下都可见）；侧边栏
+   半透明由下方浅/深分支的 --dsw-specific-sidebar-fill 控制（DSH 侧边栏根与列都用它）。 ── */
 body[data-we-wallpaper]{
-  --dsw-specific-sidebar-fill:transparent;
   --dsw-alias-border-l1:rgba(180,180,180,.35);
   --dsw-alias-border-l2:rgba(180,180,180,.35);
   --dsw-alias-border-l2-darkmode-thin:rgba(180,180,180,.35);
@@ -59,14 +58,20 @@ body[data-we-wallpaper]:not([data-ds-dark-theme]){
   --dsw-alias-label-tertiary:rgb(70,73,79);
   --dsw-alias-label-caption:rgb(110,114,120);
   --dsw-alias-label-dimmed:rgb(50,52,56);
-  /* 消息区/输入框/侧边栏：壁纸清晰透出，文字靠文字阴影提升对比（不做玻璃遮挡） */
+  /* 消息区/输入框：壁纸清晰透出，文字靠文字阴影提升对比（不做玻璃遮挡） */
   --dsw-specific-input-major:transparent;
   --dsw-specific-bubble:transparent;
+  /* 侧边栏：--dsw-specific-sidebar-fill 是 DSH 侧边栏根（hHd-Xa_root）与列的填充色。
+     设为半透明白让壁纸透出；!important 覆盖 DSH 主题分支的填充值（原先设 transparent
+     覆盖不到 dark 分支，侧边栏仍被不透明底色挡住——2026-08-25 实测定位）。 */
+  --dsw-specific-sidebar-fill:rgba(255,255,255,.5)!important;
 }
 /* 深色分支：同样透明（壁纸可见），白字 + scrim 压暗保证对比 */
 body[data-ds-dark-theme][data-we-wallpaper]{
   --dsw-specific-input-major:transparent;
   --dsw-specific-bubble:transparent;
+  /* 深色：侧边栏根填充分支（同浅色注释），暗色半透明让壁纸透出 */
+  --dsw-specific-sidebar-fill:rgba(24,26,30,.4)!important;
 }
 
 /* ── 消息气泡/输入框：液态玻璃 + 圆角（frontend-design + 参考项目配方，2026-08-21） ──
@@ -102,13 +107,9 @@ body[data-ds-dark-theme][data-we-wallpaper] [data-composer-card]{
   background-color:rgba(24,26,30,.65);
   background-image:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.02) 38%,rgba(255,255,255,.03));
 }
-/* 侧边栏：半透明背景（壁纸透出但文字清晰）；无 blur（对话框 portal 在下面会塌陷） */
-body[data-we-wallpaper]:not([data-ds-dark-theme]) [class*="sidebarCol"]{
-  background-color:rgba(255,255,255,.82);
-}
-body[data-ds-dark-theme][data-we-wallpaper] [class*="sidebarCol"]{
-  background-color:rgba(24,26,30,.85);
-}
+/* 侧边栏：背景由 --dsw-specific-sidebar-fill 控制（见上方浅/深分支），此处不再覆盖
+   sidebarCol——侧边栏根（hHd-Xa_root）填满该列且用同一 fill，透明后壁纸即透出。
+   无 blur（设置对话框 portal 挂在侧边栏下，加 blur 会塌陷）。 */
 
 /* ── 插件 UI 组件（变量驱动，随主题） ── */
 .wp-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}

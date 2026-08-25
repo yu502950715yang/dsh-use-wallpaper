@@ -53,12 +53,15 @@ describe('styles 主题适配', () => {
   it('整区 scrollBody 不 blur（壁纸在气泡间清晰可见，不遮挡背景）', () => {
     expect(WALLPAPER_CSS).not.toMatch(/\[class\*="scrollBody"\]\s*\{[^}]*backdrop-filter/);
   });
-  it('侧边栏无 blur（对话框 portal 在下面会塌陷），半透明背景兜底', () => {
+  it('侧边栏无 blur（对话框 portal 在下面会塌陷）；填充用 --dsw-specific-sidebar-fill 半透明（壁纸透出）', () => {
     expect(WALLPAPER_CSS).not.toMatch(/\[class\*="sidebarCol"\]\s*\{[^}]*backdrop-filter/);
-    expect(WALLPAPER_CSS).toMatch(/body\[data-we-wallpaper\]:not\(\[data-ds-dark-theme\]\)\s*\[class\*="sidebarCol"\]\s*\{[^}]*background-color:rgba\(255,\s*255,\s*255,\s*\.8\d*\)/);
+    // 侧边栏根（hHd-Xa_root）与列都用 --dsw-specific-sidebar-fill，半透明让壁纸透出
+    expect(WALLPAPER_CSS).toMatch(/body\[data-we-wallpaper\]:not\(\[data-ds-dark-theme\]\)\s*\{[^}]*--dsw-specific-sidebar-fill:rgba\(255,\s*255,\s*255,\s*\.5\d*\)!important/);
+    expect(WALLPAPER_CSS).toMatch(/body\[data-ds-dark-theme\]\[data-we-wallpaper\]\s*\{[^}]*--dsw-specific-sidebar-fill:rgba\(24,\s*26,\s*30,\s*\.4\d*\)!important/);
   });
   it('壁纸层不透明化：消息区/输入框 token 透明（壁纸透出），整区 scrollBody 无 blur，无 text-shadow', () => {
-    expect(WALLPAPER_CSS).toMatch(/body\[data-we-wallpaper\]\s*\{[^}]*--dsw-specific-sidebar-fill:transparent/);
+    // 侧边栏 fill 不再全局设 transparent，而由浅/深分支半透明控制（覆盖 DSH dark 分支的不透明值）
+    expect(WALLPAPER_CSS).not.toMatch(/body\[data-we-wallpaper\]\s*\{[^}]*--dsw-specific-sidebar-fill:transparent/);
     const light = /body\[data-we-wallpaper\]:not\(\[data-ds-dark-theme\]\)\s*\{([^}]*)\}/.exec(WALLPAPER_CSS)?.[1] ?? '';
     expect(light).toMatch(/--dsw-specific-input-major:transparent/);
     expect(light).toMatch(/--dsw-specific-bubble:transparent/);
