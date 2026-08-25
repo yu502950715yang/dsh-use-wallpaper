@@ -38,7 +38,8 @@ export function buildInitialObjectState(
   };
 }
 
-// 规范化读回：clamp alpha 0-1；仅有值字段输出；origin/scale 缺省保留
+// 规范化读回：clamp alpha 0-1；仅有值字段输出。调用方 runUpdate 已做「变化检测」，
+// 只把真正变化的字段放入 raw，故本函数天然省略未变化字段（origin/scale 缺省保留）。
 export function normalizeReadback(raw: {
   origin?: { x: number; y: number; z: number };
   scale?: { x: number; y: number; z: number };
@@ -78,6 +79,8 @@ export class SceneScriptRuntime {
     origin: QuickJSHandle;
     scale: QuickJSHandle;
     image: QuickJSHandle;
+    // Finding 3：上次已提交读回基线，逐帧只输出真正变化的字段。
+    committed: ScriptReadback;
   }> = [];
 
   private constructor(ctx: QuickJSContext, runtime: QuickJSRuntime) {
@@ -91,10 +94,11 @@ export class SceneScriptRuntime {
       const QuickJS = await getQuickJS();
       const runtime = QuickJS.newRuntime();
       const ctx = runtime.newContext();
-      // 预注册宿主基类 IThisPropertyObject（脚本 class extends 它）
+      // 预注册宿主基类 IThisPropertyObject（脚本 class extends 它）。
+      // 顶层 class 声明在 quickjs 全局词法环境注册 `IThisPropertyObject` 绑定，
+      // 后续 evalCode 的脚本可自由引用；无需再用 globalThis.__IThisPropertyObject 别名。
       const base = ctx.evalCode(`
         class IThisPropertyObject { constructor() {} init() {} update(dt) {} }
-        globalThis.__IThisPropertyObject = IThisPropertyObject;
         true;
       `);
       if (base.error) {
@@ -204,19 +208,30 @@ export class SceneScriptRuntime {
     initFn.dispose();
 
     const updateFn = ctx.getProp(instance, 'update');
+    // Finding 3：维护「上次已提交」读回基线，逐帧只输出真正变化的字段。
+    // 初始基线 = 对象初始状态（对齐后的 origin），使首帧无脚本改动时不灌回。
+    const committed: ScriptReadback = {
+      origin: { x: state.origin.x, y: state.origin.y, z: state.origin.z },
+      scale: { x: state.scale.x, y: state.scale.y, z: state.scale.z },
+      imageAlpha: Math.max(0, Math.min(1, state.image.alpha)),
+      imageBrightness: state.image.brightness,
+    };
     // 保留堆对象 handle 供每帧 update 使用，并在 dispose() 时释放，避免 gc_obj_list 断言。
-    this.bounds.push({ instance, updateFn, thisObj, origin: originObj, scale: scaleObj, image: imageObj });
+    this.bounds.push({ instance, updateFn, thisObj, origin: originObj, scale: scaleObj, image: imageObj, committed });
     return {
-      update: (dt: number): ScriptReadback | null => this.runUpdate(updateFn, instance, dt, thisObj),
+      update: (dt: number): ScriptReadback | null => this.runUpdate(updateFn, instance, dt, thisObj, committed),
     };
   }
 
-  /** 每帧对单个绑定做 update + 读回。脚本抛错返回 null（隔离，不抛给宿主）。 */
+  /** 每帧对单个绑定做 update + 读回。脚本抛错返回 null（隔离，不抛给宿主）。
+   *  Finding 3：对比 committed（上次已提交基线），仅输出真正变化的字段——
+   *  未变化字段省略（wasm-renderer 的 update_image 收到 undefined = 保持现状）。 */
   private runUpdate(
     updateFn: QuickJSHandle,
     instance: QuickJSHandle,
     dt: number,
     thisObj: QuickJSHandle,
+    committed: ScriptReadback,
   ): ScriptReadback | null {
     try {
       const dtHandle = this.ctx.newNumber(dt);
@@ -263,21 +278,44 @@ export class SceneScriptRuntime {
       szH.dispose();
       scale.dispose();
 
-      return normalizeReadback({
-        origin: { x: ox, y: oy, z: oz },
-        scale: { x: sx, y: sy, z: sz },
-        imageAlpha,
-        imageBrightness,
-      });
+      // Finding 3：对比 committed，仅输出变化字段（origin/scale 逐分量比较；alpha clamp 0-1）。
+      const raw: {
+        origin?: { x: number; y: number; z: number };
+        scale?: { x: number; y: number; z: number };
+        imageAlpha?: number;
+        imageBrightness?: number;
+      } = {};
+      const oc = committed.origin ?? { x: 0, y: 0, z: 0 };
+      if (ox !== oc.x || oy !== oc.y || oz !== oc.z) {
+        raw.origin = { x: ox, y: oy, z: oz };
+        committed.origin = raw.origin;
+      }
+      const sc = committed.scale ?? { x: 0, y: 0, z: 0 };
+      if (sx !== sc.x || sy !== sc.y || sz !== sc.z) {
+        raw.scale = { x: sx, y: sy, z: sz };
+        committed.scale = raw.scale;
+      }
+      const clAlpha = Math.max(0, Math.min(1, imageAlpha));
+      if (clAlpha !== (committed.imageAlpha ?? 0)) {
+        raw.imageAlpha = clAlpha;
+        committed.imageAlpha = clAlpha;
+      }
+      if (imageBrightness !== (committed.imageBrightness ?? 0)) {
+        raw.imageBrightness = imageBrightness;
+        committed.imageBrightness = imageBrightness;
+      }
+
+      return normalizeReadback(raw);
     } catch {
       return null;
     }
   }
 
-  /** 对每个绑定调用 update（Task 5 的 wasm-renderer 逐对象调 BoundScript.update，此方法可选）。 */
+  /** 对每个绑定调用 update（Task 5 的 wasm-renderer 逐对象调 BoundScript.update，此方法可选）。
+   *  Finding 3：与 per-binding update 共享同一 committed 基线，逐帧只输出变化字段。 */
   tick(dt: number): void {
     for (const b of this.bounds) {
-      this.runUpdate(b.updateFn, b.instance, dt, b.thisObj);
+      this.runUpdate(b.updateFn, b.instance, dt, b.thisObj, b.committed);
     }
   }
 
