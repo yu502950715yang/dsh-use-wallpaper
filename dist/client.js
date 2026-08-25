@@ -2365,6 +2365,15 @@ body[data-ds-dark-theme][data-we-wallpaper] [data-question-key] section{
 .wss-exists{color:var(--dsw-alias-state-success-primary,#4caf50);font-size:11px;white-space:nowrap}
 .wss-missing{color:var(--dsw-alias-label-tertiary,var(--wp-text));font-size:11px;white-space:nowrap}
 .wss-message{margin:0;font-size:12px;color:var(--dsw-alias-label-secondary,var(--wp-text))}
+
+body[data-we-wallpaper] [class*="flowItem"] .md-table-wide{
+  width:100%!important;
+  max-width:100%!important;
+  margin-left:0!important;
+  padding-left:0!important;
+  overflow-x:auto!important;
+  overflow-y:hidden!important;
+}
 `;
 var WALLPAPER_CSS = CSS;
 function injectWallpaperStyles() {
