@@ -2477,6 +2477,7 @@ function createWallpaperController(layer, opts) {
   }
   async function select(id) {
     const gen = ++selectGeneration;
+    opts.sceneRenderer?.dispose?.();
     if (id === "") {
       layer.showNone();
       return;
@@ -24586,7 +24587,6 @@ var SceneScriptRuntime = class _SceneScriptRuntime {
       const ctx = runtime.newContext();
       const base = ctx.evalCode(`
         class IThisPropertyObject { constructor() {} init() {} update(dt) {} }
-        globalThis.__IThisPropertyObject = IThisPropertyObject;
         true;
       `);
       if (base.error) {
@@ -24674,13 +24674,21 @@ var SceneScriptRuntime = class _SceneScriptRuntime {
     }
     initFn.dispose();
     const updateFn = ctx.getProp(instance, "update");
-    this.bounds.push({ instance, updateFn, thisObj, origin: originObj, scale: scaleObj, image: imageObj });
+    const committed = {
+      origin: { x: state.origin.x, y: state.origin.y, z: state.origin.z },
+      scale: { x: state.scale.x, y: state.scale.y, z: state.scale.z },
+      imageAlpha: Math.max(0, Math.min(1, state.image.alpha)),
+      imageBrightness: state.image.brightness
+    };
+    this.bounds.push({ instance, updateFn, thisObj, origin: originObj, scale: scaleObj, image: imageObj, committed });
     return {
-      update: (dt) => this.runUpdate(updateFn, instance, dt, thisObj)
+      update: (dt) => this.runUpdate(updateFn, instance, dt, thisObj, committed)
     };
   }
-  /** 每帧对单个绑定做 update + 读回。脚本抛错返回 null（隔离，不抛给宿主）。 */
-  runUpdate(updateFn, instance, dt, thisObj) {
+  /** 每帧对单个绑定做 update + 读回。脚本抛错返回 null（隔离，不抛给宿主）。
+   *  Finding 3：对比 committed（上次已提交基线），仅输出真正变化的字段——
+   *  未变化字段省略（wasm-renderer 的 update_image 收到 undefined = 保持现状）。 */
+  runUpdate(updateFn, instance, dt, thisObj, committed) {
     try {
       const dtHandle = this.ctx.newNumber(dt);
       const r = this.ctx.callFunction(updateFn, instance, dtHandle);
@@ -24720,20 +24728,36 @@ var SceneScriptRuntime = class _SceneScriptRuntime {
       syH.dispose();
       szH.dispose();
       scale.dispose();
-      return normalizeReadback({
-        origin: { x: ox, y: oy, z: oz },
-        scale: { x: sx, y: sy, z: sz },
-        imageAlpha,
-        imageBrightness
-      });
+      const raw = {};
+      const oc = committed.origin ?? { x: 0, y: 0, z: 0 };
+      if (ox !== oc.x || oy !== oc.y || oz !== oc.z) {
+        raw.origin = { x: ox, y: oy, z: oz };
+        committed.origin = raw.origin;
+      }
+      const sc = committed.scale ?? { x: 0, y: 0, z: 0 };
+      if (sx !== sc.x || sy !== sc.y || sz !== sc.z) {
+        raw.scale = { x: sx, y: sy, z: sz };
+        committed.scale = raw.scale;
+      }
+      const clAlpha = Math.max(0, Math.min(1, imageAlpha));
+      if (clAlpha !== (committed.imageAlpha ?? 0)) {
+        raw.imageAlpha = clAlpha;
+        committed.imageAlpha = clAlpha;
+      }
+      if (imageBrightness !== (committed.imageBrightness ?? 0)) {
+        raw.imageBrightness = imageBrightness;
+        committed.imageBrightness = imageBrightness;
+      }
+      return normalizeReadback(raw);
     } catch {
       return null;
     }
   }
-  /** 对每个绑定调用 update（Task 5 的 wasm-renderer 逐对象调 BoundScript.update，此方法可选）。 */
+  /** 对每个绑定调用 update（Task 5 的 wasm-renderer 逐对象调 BoundScript.update，此方法可选）。
+   *  Finding 3：与 per-binding update 共享同一 committed 基线，逐帧只输出变化字段。 */
   tick(dt) {
     for (const b of this.bounds) {
-      this.runUpdate(b.updateFn, b.instance, dt, b.thisObj);
+      this.runUpdate(b.updateFn, b.instance, dt, b.thisObj, b.committed);
     }
   }
   dispose() {
@@ -24767,7 +24791,8 @@ var SceneScriptRuntime = class _SceneScriptRuntime {
 // src/client/wasm-renderer.ts
 function createFallbackSceneRenderer(wasm, _js) {
   if (!wasm) {
-    return { render: async () => false };
+    return { render: async () => false, dispose: () => {
+    } };
   }
   const wasmFailed = /* @__PURE__ */ new Set();
   return {
@@ -24779,6 +24804,11 @@ function createFallbackSceneRenderer(wasm, _js) {
         return false;
       }
       return false;
+    },
+    // Finding 2：透传 teardown 到底层 wasm 渲染器（JS 渲染器若实现 dispose 一并调用）。
+    dispose() {
+      wasm?.dispose?.();
+      _js?.dispose?.();
     }
   };
 }
@@ -24846,9 +24876,21 @@ function createWasmSceneRenderer(opts) {
   if (typeof navigator === "undefined" || !navigator.gpu) return null;
   const loadWasm = opts?.loadWasm ?? defaultLoadWasm;
   let modulePromise = null;
+  let currentScene = null;
+  let currentScriptRuntime = null;
+  let raf = 0;
+  const teardown = () => {
+    if (raf) cancelAnimationFrame(raf);
+    raf = 0;
+    currentScriptRuntime?.dispose();
+    currentScriptRuntime = null;
+    currentScene?.free?.();
+    currentScene = null;
+  };
   return {
     async render(id, fg, bg) {
       try {
+        teardown();
         modulePromise ??= loadWasm();
         const mod = await modulePromise;
         if (!mod) return false;
@@ -24862,6 +24904,7 @@ function createWasmSceneRenderer(opts) {
         fg.width = vw;
         fg.height = vh;
         const scene = await mod.WeScene.create(fg, vw, vh);
+        currentScene = scene;
         scene.set_cover();
         scene.load_scene(sceneJson);
         let rendered = 0;
@@ -24888,8 +24931,9 @@ function createWasmSceneRenderer(opts) {
             rendered++;
             if (obj.script && obj.script.trim()) {
               scriptRuntime ??= await SceneScriptRuntime.create();
+              if (scriptRuntime) currentScriptRuntime = scriptRuntime;
               const bound = scriptRuntime?.bind(obj.script, {
-                origin: obj.origin,
+                origin,
                 scale: obj.scale,
                 alpha: obj.alpha ?? 1,
                 brightness: obj.brightness ?? 1
@@ -24910,21 +24954,24 @@ function createWasmSceneRenderer(opts) {
             rendered++;
           }
         }
-        if (rendered === 0) return false;
-        let raf = 0;
+        if (rendered === 0) {
+          teardown();
+          return false;
+        }
         const loop = () => {
           scene.step(1 / 60);
           for (const { assetId, bound } of scriptBindings) {
             const rb = bound.update(1 / 60);
-            if (rb) {
-              scene.update_image(
-                assetId,
-                rb.origin ? Float32Array.from([rb.origin.x, rb.origin.y, rb.origin.z]) : void 0,
-                rb.scale ? Float32Array.from([rb.scale.x, rb.scale.y, rb.scale.z]) : void 0,
-                rb.imageAlpha,
-                rb.imageBrightness
-              );
-            }
+            if (!rb) continue;
+            const hasChange = rb.origin || rb.scale || rb.imageAlpha !== void 0 || rb.imageBrightness !== void 0;
+            if (!hasChange) continue;
+            scene.update_image(
+              assetId,
+              rb.origin ? Float32Array.from([rb.origin.x, rb.origin.y, rb.origin.z]) : void 0,
+              rb.scale ? Float32Array.from([rb.scale.x, rb.scale.y, rb.scale.z]) : void 0,
+              rb.imageAlpha,
+              rb.imageBrightness
+            );
           }
           scene.render();
           if (fg.isConnected) raf = requestAnimationFrame(loop);
@@ -24932,8 +24979,14 @@ function createWasmSceneRenderer(opts) {
         raf = requestAnimationFrame(loop);
         return true;
       } catch {
+        teardown();
         return false;
       }
+    },
+    // Finding 2：释放当前场景与脚本运行时（取消运行中的 raf 循环）。调用方（controller）
+    // 在壁纸切换/卸载时调用，避免每次 render 泄漏一个 quickjs 运行时 + wasm scene。
+    dispose() {
+      teardown();
     }
   };
 }
@@ -25175,7 +25228,10 @@ function bootstrap(ctx) {
       sceneRenderer: createFallbackSceneRenderer(createWasmSceneRenderer(), {
         // T4.2：注入可见性 user 绑定的用户属性 getter（localStorage 实现见 settings.ts；
         // renderScene 不硬依赖设置存储，键缺失回退绑定 value）
-        render: (id, fg, bg) => renderScene(id, fg, bg, { getUserProperty: getUserPropertyValue })
+        render: (id, fg, bg) => renderScene(id, fg, bg, { getUserProperty: getUserPropertyValue }),
+        // Finding 2：JS 渲染器当前禁用于运行时回退链（强制 wasm），无资源需释放 → no-op。
+        dispose: () => {
+        }
       })
       // Task 8 回退链（spec §7 第 1/2/3 条，三级语义）：
       //   1. 无 WebGPU → createWasmSceneRenderer() 返回 null → 直接用 JS/Three.js 渲染器；
