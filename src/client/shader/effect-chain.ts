@@ -4,8 +4,11 @@ import { preprocessWeShader, extractUniformAnnotations } from './shader-preproce
 import { resolveUniformBindings, type UniformValue } from './uniform-binder.js';
 
 export interface CompiledEffectPass {
-  vertSrc: string;
-  fragSrc: string;
+  vertSrc: string;                       // 供 three 使用的预处理后 GLSL3
+  fragSrc: string;                       // 供 three 使用的预处理后 GLSL3
+  rawVert: string;                       // 未预处理的原始 WE 方言 vert 源（供 wasm 路径）
+  rawFrag: string;                       // 未预处理的原始 WE 方言 frag 源（供 wasm 路径）
+  combos: Record<string, number>;        // 该 pass 的 combo 宏映射（scene.json 覆写 + 需注入项）
   uniforms: Map<string, UniformValue>;   // 静态值（g_Time 由执行器运行时更新）
   textureSlots: (string | null)[];       // textures[i] → g_Texture(i+1)
   blendMode: string;                     // material json 的 blending（normal/add/...）
@@ -47,8 +50,11 @@ export async function resolveEffectChain(
       const constants = override.constantshadervalues ?? {};
       const textures = Array.isArray(override.textures) ? override.textures : [];
 
-      const vertSrc = preprocessWeShader(new TextDecoder().decode(vertRaw), combos);
-      const fragSrc = preprocessWeShader(new TextDecoder().decode(fragRaw), combos);
+      // 原始源（未预处理，供 wasm 路径用 glsl-to-naga 编译）：在调用 preprocessWeShader 之前保存
+      const rawVert = new TextDecoder().decode(vertRaw);
+      const rawFrag = new TextDecoder().decode(fragRaw);
+      const vertSrc = preprocessWeShader(rawVert, combos);
+      const fragSrc = preprocessWeShader(rawFrag, combos);
       const uniforms = resolveUniformBindings(
         extractUniformAnnotations(fragSrc).concat(extractUniformAnnotations(vertSrc)),
         constants,
@@ -56,6 +62,9 @@ export async function resolveEffectChain(
       out.push({
         vertSrc,
         fragSrc,
+        rawVert,
+        rawFrag,
+        combos,
         uniforms,
         textureSlots: textures,
         blendMode: mat.passes?.[0]?.blending ?? 'normal',
