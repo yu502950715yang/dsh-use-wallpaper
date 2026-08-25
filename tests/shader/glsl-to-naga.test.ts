@@ -160,4 +160,61 @@ describe('glslToNagaPass WE 方言 → naga desktop GLSL', () => {
     expect(desc.fragGlsl).toContain('layout(binding=1) uniform vec2 g_Offset;');
     expect(desc.fragGlsl).toContain('layout(binding=2) uniform sampler2D g_Texture0;');
   });
+
+  it('跨 stage binding 全局唯一：vert+frag 各带 uniform 时合并 uniforms 无重复 binding', () => {
+    const pass = makePass({
+      rawVert: [
+        'attribute vec3 a_Position;',
+        'varying vec2 v_TexCoord;',
+        'uniform mat4 g_ModelViewProjectionMatrix;',
+        'void main() {',
+        '    v_TexCoord = a_Position.xy;',
+        '    gl_Position = mul(vec4(a_Position, 1.0), g_ModelViewProjectionMatrix);',
+        '}',
+      ].join('\n'),
+      rawFrag: [
+        '#include "common.h"',
+        'varying vec2 v_TexCoord;',
+        'uniform sampler2D g_Texture0;',
+        'void main() { gl_FragColor = texSample2D(g_Texture0, v_TexCoord); }',
+      ].join('\n'),
+    });
+    const desc = glslToNagaPass(pass);
+
+    // 合并 uniforms 的 binding 全局唯一（因 frag/vert 各自从 0 编号而碰撞的场景）
+    const bindings = desc.uniforms.map((u) => u.binding);
+    expect(new Set(bindings).size).toBe(desc.uniforms.length);
+    // frag 先编号 [0..n)，vert 接着从 n 继续
+    const tex0 = desc.uniforms.find((u) => u.name === 'g_Texture0');
+    const mvp = desc.uniforms.find((u) => u.name === 'g_ModelViewProjectionMatrix');
+    expect(tex0?.binding).toBe(0);
+    expect(mvp?.binding).toBe(1);
+    // GLSL 里注入的 layout(binding=N) 与 UniformBindingDesc.binding 一一对应
+    expect(desc.fragGlsl).toContain('layout(binding=0) uniform sampler2D g_Texture0;');
+    expect(desc.vertGlsl).toContain('layout(binding=1) uniform mat4 g_ModelViewProjectionMatrix;');
+  });
+
+  it('sampler/uniform 声明前置：include common_blur.h + 后置 g_Texture0 声明，断言声明先于引用', () => {
+    const pass = makePass({
+      rawFrag: [
+        '#include "common_blur.h"',
+        'varying vec2 v_TexCoord;',
+        'uniform sampler2D g_Texture0;',
+        'void main() {',
+        '    gl_FragColor = blur13a(v_TexCoord, vec2(0.1, 0.1));',
+        '}',
+      ].join('\n'),
+    });
+    const desc = glslToNagaPass(pass);
+
+    // common_blur.h 已展开（blur13a 进入输出）
+    expect(desc.fragGlsl).toContain('blur13a');
+    // sampler 声明被前置到 blur13a 函数体（引用 g_Texture0）之前，避免 naga "undeclared identifier"
+    const declIdx = desc.fragGlsl.indexOf('layout(binding=0) uniform sampler2D g_Texture0;');
+    const refIdx = desc.fragGlsl.indexOf('texture(g_Texture0');
+    expect(declIdx).toBeGreaterThanOrEqual(0);
+    expect(refIdx).toBeGreaterThan(declIdx);
+    // 声明生效后，blur13a 引用可正常解析（无残留 #include）
+    expect(desc.fragGlsl).not.toContain('#include');
+  });
 });

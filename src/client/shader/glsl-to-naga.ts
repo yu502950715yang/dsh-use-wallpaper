@@ -33,8 +33,9 @@ export interface NagaPassDesc {
 type Stage = 'vert' | 'frag';
 
 // uniform 声明（支持标量/向量/矩阵/数组与行尾注解，如 uniform float g_A[16]; // {...}）。
-// 组：1=缩进，2=类型，3=变量名，4=数组大小（可选）。
-const UNIFORM_DECL_RE = /^(\s*)uniform\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)(?:\s*\[(\d+)\])?\s*;/gm;
+// 组：1=缩进，2=类型，3=变量名，4=数组大小（可选）。这里匹配整行（含行尾 // {...} 注解）
+// 以便抽取后整行移除再前置——naga glsl frontend 要求声明先于引用（详见 convertStage ⑦ 注释）。
+const UNIFORM_LINE_RE = /^(\s*)uniform\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)(?:\s*\[(\d+)\])?\s*;[^\S\r\n]*(?:\/\/.*)?$/gm;
 
 // WE 方言纹理包装函数（common.h 提供）。规则⑧会把 texSample2D/texSample2DLod/texture2D
 // 全局改写为内建 texture/textureLod——若不先移除包装（其名会被改写为 texture），会与
@@ -91,11 +92,14 @@ function buildDefines(source: string, combos: Record<string, number>): string[] 
 }
 
 // 单 stage 转换：对 rawVert 用 vertex 语义、对 rawFrag 用 fragment 语义。
+// bindingOffset：本 stage 的第一个 layout(binding=N) 编号。跨 stage（vert+frag）由
+// glslToNagaPass 传续，保证合并 uniforms 后的 binding 全局唯一（wasm 侧据此布置单一 bind group）。
 function convertStage(
   src: string,
   stage: Stage,
   combos: Record<string, number>,
   uniforms: Map<string, UniformValue>,
+  bindingOffset: number,
 ): { glsl: string; binds: UniformBindingDesc[] } {
   // ① 展开 WE 内置头 include；未显式 include common.h 则隐式前置（WE 引擎对效果 shader 隐式提供）。
   const hadExplicitCommon = src.includes('#include "common.h"');
@@ -118,20 +122,26 @@ function convertStage(
   // ⑥ gl_FragColor（仅 fragment）→ o_Color，引用替换。
   if (stage === 'frag') s = s.replace(/gl_FragColor/g, 'o_Color');
 
-  // ⑦ 每个 uniform 前缀 layout(binding=N)，N 按声明顺序从 0 递增，并据此生成 UniformBindingDesc。
-  // 注意：uniforms Map 只存值（number | number[]），type 从 GLSL 声明推导；
-  // value 取 pass.uniforms 对应项，缺失时给缺省。
+  // ⑦ uniform：抽取声明、注入 layout(binding=N)，并**前置**到 shader 主体前。
+  //  naga glsl frontend 要求声明先于引用——common_blur.h 的 blur13a/7a/3a 函数体引用
+  //  g_Texture0，而 WE shader 常把 sampler/uniform 声明放在 #include 之后；若不前置
+  //  会报 "g_Texture0 : undeclared identifier"（同 preprocessWeShader 的 samplerDecls）。
+  //  声明按顺序编号，binding 从 bindingOffset 起全局唯一递增，并据此生成 UniformBindingDesc。
+  //  uniforms Map 只存值（number | number[]），type 从 GLSL 声明推导；value 取对应项，缺失给缺省。
   const binds: UniformBindingDesc[] = [];
-  let bind = 0;
-  s = s.replace(UNIFORM_DECL_RE, (m, indent, type, name, arrSize) => {
+  let bind = bindingOffset;
+  const uniformLines: string[] = [];
+  s = s.replace(UNIFORM_LINE_RE, (m, indent, type, name, arrSize) => {
     const typeStr = arrSize ? `${type}[${arrSize}]` : type;
     const binding = bind++;
     const rawValue = uniforms.has(name) ? uniforms.get(name) : undefined;
     // Number 0 / [] 属于合法值，用 ?? 仅在 undefined 时回退缺省（has=true 但值 undefined 的兜底）。
     const value = rawValue === undefined ? defaultValueForType(typeStr) : rawValue;
     binds.push({ name, type: typeStr, value, binding });
-    return `${indent}layout(binding=${binding}) uniform ${type} ${name}${arrSize ? `[${arrSize}]` : ''};`;
+    uniformLines.push(`${indent}layout(binding=${binding}) uniform ${type} ${name}${arrSize ? `[${arrSize}]` : ''};`);
+    return '\n';
   });
+  if (uniformLines.length) s = `${uniformLines.join('\n')}\n${s}`;
 
   // ⑧ WE 方言纹理函数 → 内建（mul/saturate/frac 等方言函数由 WE_HEADERS 提供，不改写）。
   s = s.replace(/\btexSample2D\s*\(/g, 'texture(');
@@ -150,10 +160,11 @@ function convertStage(
 }
 
 // WE 方言 → naga desktop GLSL pass 描述。
-// 规则①-⑨ 对 rawVert/rawFrag 各自执行（binding 计数器 per-stage 从 0 递增）。
+// 规则①-⑨ 对 rawVert/rawFrag 各自执行；layout(binding=N) 编号跨 stage 全局唯一
+// （frag 先编号 [0..n)，vert 接着从 n+1 继续，合并 uniforms 无重复 binding）。
 export function glslToNagaPass(pass: CompiledEffectPass): NagaPassDesc {
-  const vert = convertStage(pass.rawVert, 'vert', pass.combos, pass.uniforms);
-  const frag = convertStage(pass.rawFrag, 'frag', pass.combos, pass.uniforms);
+  const frag = convertStage(pass.rawFrag, 'frag', pass.combos, pass.uniforms, 0);
+  const vert = convertStage(pass.rawVert, 'vert', pass.combos, pass.uniforms, frag.binds.length);
   return {
     vertGlsl: vert.glsl,
     fragGlsl: frag.glsl,
