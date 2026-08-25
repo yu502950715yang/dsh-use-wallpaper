@@ -788,8 +788,17 @@ function createWallpaperController(layer, opts) {
       }
     }
     if (gen !== selectGeneration) return;
-    const info = list.find((w) => w.id === id);
-    if (!info) return;
+    let info = list.find((w) => w.id === id);
+    if (!info) {
+      try {
+        await load();
+      } catch {
+        return;
+      }
+      if (gen !== selectGeneration) return;
+      info = list.find((w) => w.id === id);
+      if (!info) return;
+    }
     const plan = resolveBackground(info);
     switch (plan.kind) {
       case "video":

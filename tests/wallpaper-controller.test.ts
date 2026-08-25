@@ -64,4 +64,28 @@ describe('createWallpaperController', () => {
     expect(layer.calls.at(-1)).toBe('none');
     expect(fetched).toBe(false);
   });
+  it('REPRO(I1): 缓存列表不含新添加壁纸时，select 该 id 应重新拉取列表后再选中', async () => {
+    // 新添加壁纸在设置面板可见（组件独立 fetch），但 controller 内部缓存的 list 是旧列表。
+    // 旧行为：list.find(id) 找不到 → 直接 return → 背景无任何变化（bug）。
+    // 期望：select 找不到时重新 load 一次，列表刷新后能选中新壁纸。
+    const layer = fakeLayer();
+    let fetched = 0;
+    const c = createWallpaperController(layer, {
+      fetchList: async () => {
+        fetched++;
+        // 第一次（controller 初次缓存）：旧列表，不含新壁纸 '4'
+        if (fetched === 1) {
+          return ([{ id: '1', type: 'video', file: 'a.mp4', hasScene: false, hasPreviewGif: false, previewUrl: '/p1', title: 'v' }] as any);
+        }
+        // 之后：含新添加壁纸 '4'（新壁纸选择后按 preview 回退显示）
+        return ([
+          { id: '1', type: 'video', file: 'a.mp4', hasScene: false, hasPreviewGif: false, previewUrl: '/p1', title: 'v' },
+          { id: '4', type: 'unknown', hasScene: false, hasPreviewGif: true, previewUrl: '/p4', title: 'new' },
+        ] as any);
+      },
+    });
+    await c.load();      // 缓存旧列表（不含 '4'）
+    await c.select('4'); // 选择新添加的壁纸
+    expect(layer.calls.at(-1)).toBe('image:/p4'); // 修复后命中 preview 回退
+  });
 });

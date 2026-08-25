@@ -165,10 +165,11 @@ describe('全库 scene.pkg 回归验证', () => {
     }
     // 硬断言：全库 scene 读取链路（解析/纹理推导/粒子规格）必须零失败
     expect(evidence).toEqual([]);
-    // Ruling 5：全库效果链总数必须钉住 122（含 image 对象 105 条；来源
+    // Ruling 5：全库效果链总数必须钉住（初值 122 含 image 对象 105 条；来源
     // research/scan-effects-owners.mjs 全库扫描）——若收集逻辑回归（如丢失
     // image 对象 effects、退化为仅 util），数量下降但全部成功时 evidence 仍空，
-    // 因此数量断言防止"静默漏收集"。
-    expect(okEffect).toBe(122);
+    // 因此数量断言防止"静默漏收集"。本机库新增壁纸 3789452668（Knight in a red
+    // cloak，5 对象共 7 条效果链，全部解析成功）后同步更新为 129。
+    expect(okEffect).toBe(129);
   });
 });
