@@ -644,6 +644,7 @@ body[data-ds-dark-theme][data-we-wallpaper] [class*="sidebarCol"]{
 .wss-root{display:flex;flex-direction:column;gap:14px;color:var(--dsw-alias-label-primary,var(--wp-text));font-size:13px}
 .wss-hint{color:var(--dsw-alias-label-secondary,var(--wp-text));margin:0;font-size:12px;line-height:1.6}
 .wss-current{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px}
+.wss-current-actions{display:flex;gap:8px}
 .wss-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px;max-height:280px;overflow-y:auto;padding:2px}
 .wss-thumb{position:relative;display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px;background:var(--dsw-alias-bg-layer-3,transparent);border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));border-radius:10px;cursor:pointer;color:var(--dsw-alias-label-primary,var(--wp-text));font:inherit;min-width:0}
 .wss-thumb img{width:84px;height:84px;object-fit:cover;border-radius:8px;display:block}
@@ -651,8 +652,8 @@ body[data-ds-dark-theme][data-we-wallpaper] [class*="sidebarCol"]{
 .wss-thumb-title{font-size:12px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .wss-thumb.wss-selected{border-color:var(--wp-accent);box-shadow:0 0 0 1px var(--wp-accent)}
 .wss-badge{position:absolute;top:2px;right:2px;font-size:9px;line-height:1;padding:2px 4px;border-radius:4px;background:var(--wp-badge-bg);color:var(--wp-badge-fg)}
-.wss-cancel,.wss-save-dirs,.wss-probe,.wss-adopt{border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;padding:6px 12px;font:inherit;font-size:12px;cursor:pointer}
-.wss-cancel:hover,.wss-save-dirs:hover,.wss-probe:hover,.wss-adopt:hover{filter:brightness(1.08)}
+.wss-cancel,.wss-save-dirs,.wss-probe,.wss-adopt,.wss-refresh{border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;padding:6px 12px;font:inherit;font-size:12px;cursor:pointer}
+.wss-cancel:hover,.wss-save-dirs:hover,.wss-probe:hover,.wss-adopt:hover,.wss-refresh:hover{filter:brightness(1.08)}
 .wss-dirs h4{margin:10px 0 6px;font-size:13px}
 .wss-dir-row{display:flex;flex-direction:column;gap:4px;margin-bottom:8px;font-size:12px;color:var(--dsw-alias-label-secondary,var(--wp-text))}
 .wss-dir-row input{border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;padding:6px 10px;font:inherit;font-size:12px}
@@ -23073,6 +23074,13 @@ function WallpaperSettingsSection(props) {
     setSettings((prev) => prev ? { ...prev, selectedWallpaperId: id } : prev);
     void writeSettings({ selectedWallpaperId: id }).then(() => setMessage(id ? "\u58C1\u7EB8\u5DF2\u5207\u6362" : "\u5DF2\u53D6\u6D88\u58C1\u7EB8"));
   }, [onSelect, writeSettings]);
+  const refreshWallpapers = (0, import_react.useCallback)(() => {
+    setMessage("");
+    void fetchWallpapers().then((list) => {
+      setWallpapers(list);
+      setMessage("\u58C1\u7EB8\u5217\u8868\u5DF2\u5237\u65B0");
+    }).catch(() => setMessage("\u5237\u65B0\u58C1\u7EB8\u5931\u8D25"));
+  }, [fetchWallpapers]);
   const saveDirs = (0, import_react.useCallback)(() => {
     void writeSettings({ wallpaperDir: wallpaperDir.trim(), weAssetsDir: weAssetsDir.trim() }).then(() => setMessage("\u8DEF\u5F84\u5DF2\u4FDD\u5B58"));
   }, [wallpaperDir, weAssetsDir, writeSettings]);
@@ -23095,7 +23103,10 @@ function WallpaperSettingsSection(props) {
         "\u5F53\u524D\u58C1\u7EB8\uFF1A",
         currentTitle
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-cancel", onClick: () => select(""), children: "\u53D6\u6D88\u58C1\u7EB8" })
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-current-actions", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-refresh", onClick: refreshWallpapers, children: "\u5237\u65B0\u58C1\u7EB8" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-cancel", onClick: () => select(""), children: "\u53D6\u6D88\u58C1\u7EB8" })
+      ] })
     ] }),
     /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "wss-grid", children: wallpapers.map((w) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
       "button",

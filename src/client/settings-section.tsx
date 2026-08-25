@@ -74,6 +74,17 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
     void writeSettings({ selectedWallpaperId: id }).then(() => setMessage(id ? '壁纸已切换' : '已取消壁纸'));
   }, [onSelect, writeSettings]);
 
+  // 刷新壁纸列表：重新从壁纸目录拉取最新列表（壁纸目录变更后手动刷新用）
+  const refreshWallpapers = useCallback(() => {
+    setMessage('');
+    void fetchWallpapers()
+      .then((list) => {
+        setWallpapers(list);
+        setMessage('壁纸列表已刷新');
+      })
+      .catch(() => setMessage('刷新壁纸失败'));
+  }, [fetchWallpapers]);
+
   // 保存手动输入的路径（空值 = 清除用户配置，回退默认）
   const saveDirs = useCallback(() => {
     void writeSettings({ wallpaperDir: wallpaperDir.trim(), weAssetsDir: weAssetsDir.trim() })
@@ -105,7 +116,10 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
       <p className="wss-hint">选择壁纸背景，或取消以恢复默认背景。壁纸目录支持自动探测或手动填写。</p>
       <div className="wss-current">
         <span>当前壁纸：{currentTitle}</span>
-        <button type="button" className="wss-cancel" onClick={() => select('')}>取消壁纸</button>
+        <div className="wss-current-actions">
+          <button type="button" className="wss-refresh" onClick={refreshWallpapers}>刷新壁纸</button>
+          <button type="button" className="wss-cancel" onClick={() => select('')}>取消壁纸</button>
+        </div>
       </div>
       <div className="wss-grid">
         {wallpapers.map((w) => (

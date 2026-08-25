@@ -125,4 +125,31 @@ describe('WallpaperSettingsSection', () => {
     (container.querySelector('.wss-save-dirs') as HTMLElement).click();
     expect(writeSettings).toHaveBeenCalledWith({ wallpaperDir: 'D:/Custom/431960', weAssetsDir: 'D:/Custom/we' });
   });
+
+  it('点击「刷新壁纸」→ 重新拉取列表并更新网格', async () => {
+    const fetchWallpapers = vi.fn(async () => WALLPAPERS as any);
+    mount({ fetchWallpapers });
+    await flush();
+    expect(fetchWallpapers).toHaveBeenCalledTimes(1);
+    expect(container.querySelectorAll('.wss-thumb').length).toBe(2);
+    // 新的列表：替换为另一份数据
+    fetchWallpapers.mockResolvedValueOnce([
+      { id: '3', title: 'Web', type: 'web', hasScene: false, hasPreviewGif: false, previewUrl: '/p3' },
+    ] as any);
+    (container.querySelector('.wss-refresh') as HTMLElement).click();
+    await flush();
+    expect(fetchWallpapers).toHaveBeenCalledTimes(2);
+    const thumbs = container.querySelectorAll('.wss-thumb');
+    expect(thumbs.length).toBe(1);
+    expect((container.querySelector('.wss-thumb-title') as HTMLElement).textContent).toBe('Web');
+  });
+
+  it('点击「刷新壁纸」失败 → 提示刷新壁纸失败', async () => {
+    const fetchWallpapers = vi.fn(async () => { throw new Error('boom'); });
+    mount({ fetchWallpapers });
+    await flush();
+    (container.querySelector('.wss-refresh') as HTMLElement).click();
+    await flush();
+    expect((container.querySelector('.wss-message') as HTMLElement).textContent).toBe('刷新壁纸失败');
+  });
 });
