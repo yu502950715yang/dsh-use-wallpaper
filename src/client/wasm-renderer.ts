@@ -4,6 +4,7 @@ import { parseSceneJson } from './scene-json.js';
 import { resolveTexPath } from './scene-renderer.js';
 import { applyAlignment } from './alignment.js';
 import { resolveVisibility } from './visibility.js';
+import { SceneScriptRuntime } from './scene-script.js';
 import type { SceneDescription } from '../shared/types.js';
 
 // Task 2.1：效果链检测（纯函数）。wasm 渲染器（Rust/wgpu）只渲染静态图像 quad +
@@ -28,6 +29,9 @@ export interface WasmScene {
   // T4.3：color/alpha/brightness 为对象调制输入（Float32Array，空 = 缺省 → 无调制，
   // 向后兼容；color 0-255 r g b，alpha 0-1，brightness 乘法系数）。
   load_image(assetId: number, tex: Uint8Array, origin: Float32Array, scale: Float32Array, size: Float32Array, color: Float32Array, alpha: Float32Array, brightness: Float32Array): void;
+  // T5：脚本状态灌回——每帧更新图片对象状态（origin/scale/alpha/brightness）。Option 语义：
+  // undefined/null = 保持现状；assetId = 对象数组索引（与 load_image 一致）。
+  update_image(assetId: number, origin?: Float32Array, scale?: Float32Array, alpha?: number, brightness?: number): void;
   add_particle(json: string, origin: Float32Array, scale: Float32Array, texBytes: Uint8Array): void;
   step(dt: number): void;
   render(): void;
@@ -209,6 +213,11 @@ export function createWasmSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneRe
         // 绑定 value（= 无用户属性存储的缺省语义）；不可见对象整体跳过——不加载纹理/
         // 粒子、不计入 rendered（全不可见 → rendered===0 → 下方 preview 回退，同 JS 路径）。
         let rendered = 0;
+        // T5：脚本动画（SceneScriptRuntime，Task 4）。懒初始化：首个带脚本的 image 对象
+        // 才 create()（quickjs wasm 懒加载）；失败保持 null → 无动画（静态渲染）。
+        // scriptBindings 收集 { assetId: 对象索引, bound }，每帧更新读回灌回 update_image。
+        let scriptRuntime: SceneScriptRuntime | null = null;
+        const scriptBindings: Array<{ assetId: number; bound: NonNullable<ReturnType<SceneScriptRuntime['bind']>> }> = [];
         for (let i = 0; i < desc.objects.length; i++) {
           const obj = desc.objects[i];
           if (!resolveVisibility(obj, {})) continue;
@@ -237,6 +246,19 @@ export function createWasmSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneRe
               Float32Array.from(obj.brightness !== undefined ? [obj.brightness] : []),
             );
             rendered++;
+            // T5：仅 image 对象且带非空 script 时绑定（text/particle/util 不处理）。
+            // 可见性已在上方 resolveVisibility 过滤（不可见对象 skip，不产生 binding——
+            // 其 i 仍是原索引，update_image 用原索引与 load_image 匹配）。
+            if (obj.script && obj.script.trim()) {
+              scriptRuntime ??= await SceneScriptRuntime.create(); // 懒初始化（失败保持 null = 无动画）
+              const bound = scriptRuntime?.bind(obj.script, {
+                origin: obj.origin,
+                scale: obj.scale,
+                alpha: obj.alpha ?? 1,
+                brightness: obj.brightness ?? 1,
+              });
+              if (bound) scriptBindings.push({ assetId: i, bound });
+            }
           } else if (obj.kind === 'particle' && obj.particle) {
             const specResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(obj.particle)}`);
             if (!specResp.ok) continue;
@@ -260,6 +282,20 @@ export function createWasmSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneRe
         let raf = 0;
         const loop = () => {
           scene.step(1 / 60);
+          // T5：脚本状态灌回——每帧对每个绑定 update(1/60)，读回变化灌回 update_image。
+          // undefined = 保持当前（origin/scale 为 Float32Array，alpha/brightness 为 number）。
+          for (const { assetId, bound } of scriptBindings) {
+            const rb = bound.update(1 / 60);
+            if (rb) {
+              scene.update_image(
+                assetId,
+                rb.origin ? Float32Array.from([rb.origin.x, rb.origin.y, rb.origin.z]) : undefined,
+                rb.scale ? Float32Array.from([rb.scale.x, rb.scale.y, rb.scale.z]) : undefined,
+                rb.imageAlpha,
+                rb.imageBrightness,
+              );
+            }
+          }
           scene.render();
           // canvas 被 controller 移除（切换壁纸）时自动终止 raf，防止泄漏
           if (fg.isConnected) raf = requestAnimationFrame(loop);
