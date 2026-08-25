@@ -7,6 +7,9 @@ research/
 .superpowers/
 .playwright-cli/
 
+# 隔离 worktree 目录（using-git-worktrees）
+.worktrees/
+
 # 旧 monorepo 遗留（含被锁定的 node_modules），不再入库
 packages/
 
