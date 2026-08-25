@@ -46,7 +46,8 @@ function rewriteAttributes(src: string): string {
 // "unexpected token after conditional expression"），因此对 scene.json 未提供的
 // combo 宏必须注入默认 `#define X 0`。跳过：数字、defined(...) 参数、已 #define 的、
 // combos 已注入的、以及 #ifdef/#ifndef 引用的宏（那些语义是"是否定义"，不能注入）。
-function extractIfIdentifiers(src: string): Set<string> {
+// 导出供 glsl-to-naga（wasm 路径）复用（Task B；导出不改变既有行为）。
+export function extractIfIdentifiers(src: string): Set<string> {
   const out = new Set<string>();
   // 逐行匹配 #if 表达式（非 #ifdef/#ifndef）
   for (const m of src.matchAll(/^\s*#if\s+(.+)$/gm)) {
@@ -65,7 +66,8 @@ function extractIfIdentifiers(src: string): Set<string> {
 // `// [COMBO] {"combo":"BLENDMODE","default":0}`）声明了宏及其默认值，
 // scene.json 未覆写时按 default 注入（BLENDMODE 只在 ApplyBlending 调用中出现、
 // 不在 #if 表达式内，extractIfIdentifiers 提取不到，必须从注释兜底）。
-function extractComboDefaults(src: string): Map<string, number> {
+// 导出供 glsl-to-naga（wasm 路径）复用（Task B；导出不改变既有行为）。
+export function extractComboDefaults(src: string): Map<string, number> {
   const out = new Map<string, number>();
   for (const m of src.matchAll(/\[COMBO\]\s*\{[^}]*"combo"\s*:\s*"([A-Za-z_][A-Za-z0-9_]*)"[^}]*"default"\s*:\s*(-?\d+(?:\.\d+)?)/g)) {
     out.set(m[1], Number(m[2]));

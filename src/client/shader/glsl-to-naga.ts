@@ -1,0 +1,164 @@
+// src/client/shader/glsl-to-naga.ts
+// WE 方言 GLSL → naga desktop GLSL（供 wasm 效果链消费）。
+// 仅消费 CompiledEffectPass 的 rawVert/rawFrag/combos/uniforms/textureSlots/blendMode，
+// 不触碰 preprocessWeShader（给 three）与 effect-chain.ts 既有行为。
+//
+// naga 24 glsl frontend 的硬性要求（本文件落地的规则①-⑨）：
+//  - 不接受 #version 300 es，需 desktop 版本（#version 450）。
+//  - 每个 uniform 需 layout(binding=N)；fragment 的 out 需 layout(location=0)。
+//  - precision 限定符（highp/mediump/lowp）去掉更稳。
+//  - varying→in(frag)/out(vert)、attribute→in(vert)；gl_FragColor→自定义 out。
+//  - texSample2D(→texture(、texSample2DLod(→textureLod(、texture2D(→texture(。
+//  - #if 里的未定义宏 → #define X 0。
+import { WE_HEADERS } from './we-headers.js';
+import { extractIfIdentifiers, extractComboDefaults } from './shader-preprocessor.js';
+import type { CompiledEffectPass } from './effect-chain.js';
+import type { UniformValue } from './uniform-binder.js';
+
+export interface UniformBindingDesc {
+  name: string;
+  type: string;
+  value: unknown;
+  binding: number;
+}
+
+export interface NagaPassDesc {
+  vertGlsl: string;
+  fragGlsl: string;
+  uniforms: UniformBindingDesc[];
+  textureSlots: (string | null)[];
+  blendMode: string;
+}
+
+type Stage = 'vert' | 'frag';
+
+// uniform 声明（支持标量/向量/矩阵/数组与行尾注解，如 uniform float g_A[16]; // {...}）。
+// 组：1=缩进，2=类型，3=变量名，4=数组大小（可选）。
+const UNIFORM_DECL_RE = /^(\s*)uniform\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)(?:\s*\[(\d+)\])?\s*;/gm;
+
+// WE 方言纹理包装函数（common.h 提供）。规则⑧会把 texSample2D/texSample2DLod/texture2D
+// 全局改写为内建 texture/textureLod——若不先移除包装（其名会被改写为 texture），会与
+// GLSL 内建 texture 重复定义冲突。包装改写后成死代码，安全移除。
+const TEX_WRAPPER_2DLOD_RE = /vec4\s+texSample2DLod\s*\([^)]*\)\s*\{\s*return\s+textureLod\s*\([^)]*\)\s*;\s*\}/g;
+const TEX_WRAPPER_2D_RE = /vec4\s+texSample2D\s*\([^)]*\)\s*\{\s*return\s+texture2D\s*\([^)]*\)\s*;\s*\}/g;
+
+// 迭代展开 WE 内置头 include（头自带 #ifndef guard，迭代安全）。
+function expandIncludes(src: string): string {
+  let out = src;
+  let prev: string;
+  do {
+    prev = out;
+    for (const [name, header] of Object.entries(WE_HEADERS)) {
+      out = out.split(`#include "${name}"`).join(header);
+    }
+  } while (out !== prev);
+  return out;
+}
+
+// 按 GLSL 类型给缺失 uniform value 的缺省值：
+// number→0、vec/mat→全 0 数组、sampler→null（运行时绑定纹理），数组→全 0 数组。
+function defaultValueForType(type: string): unknown {
+  const vec = type.match(/^vec([234])$/);
+  if (vec) return new Array(Number(vec[1])).fill(0);
+  const mat = type.match(/^mat([234])$/);
+  if (mat) {
+    const n = Number(mat[1]);
+    return new Array(n * n).fill(0);
+  }
+  const arr = type.match(/^float\[(\d+)\]$/);
+  if (arr) return new Array(Number(arr[1])).fill(0);
+  if (type.startsWith('sampler')) return null;
+  return 0;
+}
+
+// 生成 ②/③ 的宏注入：combos 值优先 → [COMBO] 注释 default 兜底 → #if 未定义裸标识符兜底 0。
+// 已 #define 的宏不重复注入（沿用 preprocessWeShader 的逻辑）。
+function buildDefines(source: string, combos: Record<string, number>): string[] {
+  const defines = new Map<string, string>();
+  for (const [k, v] of Object.entries(combos)) defines.set(k, String(v));
+  for (const [k, v] of extractComboDefaults(source)) {
+    if (!defines.has(k)) defines.set(k, String(v));
+  }
+  const alreadyDefined = new Set<string>();
+  for (const m of source.matchAll(/^\s*#define\s+([A-Za-z_][A-Za-z0-9_]*)/gm)) alreadyDefined.add(m[1]);
+  for (const id of extractIfIdentifiers(source)) {
+    if (/^\d/.test(id)) continue;
+    if (alreadyDefined.has(id)) continue;
+    if (defines.has(id)) continue;
+    defines.set(id, '0');
+  }
+  return [...defines.entries()].map(([k, v]) => `#define ${k} ${v}`);
+}
+
+// 单 stage 转换：对 rawVert 用 vertex 语义、对 rawFrag 用 fragment 语义。
+function convertStage(
+  src: string,
+  stage: Stage,
+  combos: Record<string, number>,
+  uniforms: Map<string, UniformValue>,
+): { glsl: string; binds: UniformBindingDesc[] } {
+  // ① 展开 WE 内置头 include；未显式 include common.h 则隐式前置（WE 引擎对效果 shader 隐式提供）。
+  const hadExplicitCommon = src.includes('#include "common.h"');
+  let s = expandIncludes(src);
+  if (!hadExplicitCommon) s = WE_HEADERS['common.h'] + '\n' + s;
+
+  // 移除 WE 纹理包装（见 TEX_WRAPPER_* 注释），再全局改写为内建。
+  s = s.replace(TEX_WRAPPER_2DLOD_RE, '').replace(TEX_WRAPPER_2D_RE, '');
+
+  // 去掉旧 #version（若原始源有）；④ 去 precision 语句与限定符。
+  s = s.replace(/^\s*#version\s+\d+\s*(?:es)?\s*\n/gm, '');
+  s = s.replace(/^\s*precision\s+[A-Za-z_][A-Za-z0-9_]*\s+[A-Za-z_][A-Za-z0-9_]*\s*;\s*\n/gm, '');
+  s = s.replace(/\b(?:highp|mediump|lowp)\s+/g, '');
+
+  // ⑤ 插值/属性改写：fragment 的 varying→in，vertex 的 varying→out；attribute→in。
+  const varyingKw = stage === 'vert' ? 'out' : 'in';
+  s = s.replace(/\bvarying\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)\s*;/g, `${varyingKw} $1 $2;`);
+  s = s.replace(/\battribute\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)\s*;/g, 'in $1 $2;');
+
+  // ⑥ gl_FragColor（仅 fragment）→ o_Color，引用替换。
+  if (stage === 'frag') s = s.replace(/gl_FragColor/g, 'o_Color');
+
+  // ⑦ 每个 uniform 前缀 layout(binding=N)，N 按声明顺序从 0 递增，并据此生成 UniformBindingDesc。
+  // 注意：uniforms Map 只存值（number | number[]），type 从 GLSL 声明推导；
+  // value 取 pass.uniforms 对应项，缺失时给缺省。
+  const binds: UniformBindingDesc[] = [];
+  let bind = 0;
+  s = s.replace(UNIFORM_DECL_RE, (m, indent, type, name, arrSize) => {
+    const typeStr = arrSize ? `${type}[${arrSize}]` : type;
+    const binding = bind++;
+    const rawValue = uniforms.has(name) ? uniforms.get(name) : undefined;
+    // Number 0 / [] 属于合法值，用 ?? 仅在 undefined 时回退缺省（has=true 但值 undefined 的兜底）。
+    const value = rawValue === undefined ? defaultValueForType(typeStr) : rawValue;
+    binds.push({ name, type: typeStr, value, binding });
+    return `${indent}layout(binding=${binding}) uniform ${type} ${name}${arrSize ? `[${arrSize}]` : ''};`;
+  });
+
+  // ⑧ WE 方言纹理函数 → 内建（mul/saturate/frac 等方言函数由 WE_HEADERS 提供，不改写）。
+  s = s.replace(/\btexSample2D\s*\(/g, 'texture(');
+  s = s.replace(/\btexSample2DLod\s*\(/g, 'textureLod(');
+  s = s.replace(/\btexture2D\s*\(/g, 'texture(');
+
+  // ②③ combo/#if 宏注入（须在头与正文之前，使 #if 表达式起效）。
+  const defines = buildDefines(s, combos);
+
+  // ⑨ 头部 #version 450；fragment 额外声明输出 o_Color。
+  const defBlock = defines.length ? `${defines.join('\n')}\n` : '';
+  const oColor = stage === 'frag' ? 'layout(location=0) out vec4 o_Color;\n' : '';
+  const glsl = `#version 450\n${defBlock}${oColor}${s}`;
+
+  return { glsl, binds };
+}
+
+// WE 方言 → naga desktop GLSL pass 描述。
+// 规则①-⑨ 对 rawVert/rawFrag 各自执行（binding 计数器 per-stage 从 0 递增）。
+export function glslToNagaPass(pass: CompiledEffectPass): NagaPassDesc {
+  const vert = convertStage(pass.rawVert, 'vert', pass.combos, pass.uniforms);
+  const frag = convertStage(pass.rawFrag, 'frag', pass.combos, pass.uniforms);
+  return {
+    vertGlsl: vert.glsl,
+    fragGlsl: frag.glsl,
+    uniforms: [...frag.binds, ...vert.binds],
+    textureSlots: pass.textureSlots,
+    blendMode: pass.blendMode,
+  };
+}
