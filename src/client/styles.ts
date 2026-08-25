@@ -158,6 +158,21 @@ body[data-ds-dark-theme][data-we-wallpaper] [data-question-key] section{
 .wss-exists{color:var(--dsw-alias-state-success-primary,#4caf50);font-size:11px;white-space:nowrap}
 .wss-missing{color:var(--dsw-alias-label-tertiary,var(--wp-text));font-size:11px;white-space:nowrap}
 .wss-message{margin:0;font-size:12px;color:var(--dsw-alias-label-secondary,var(--wp-text))}
+
+/* ── 宽表格（≥4 列）约束：DSH 前端会给列数 ≥4 的表加 .md-table-wide，把表格
+   出血到整个聊天滚动面板宽（100cqw，恒大于 748px 内容列）。原版气泡透明，
+   出血不可见；插件给消息气泡（flowItem）加了液态玻璃背景/圆角后，气泡有了
+   明确边界，宽表格左右撑出气泡圆角，显得"表格超出聊天气泡"。
+   这里把宽表格约束回气泡内容区（撤销出血的 width/margin/padding），并恢复
+   气泡内横向滚动（overflow-x:auto），表格不再顶破气泡（2026-08-26）。 ── */
+body[data-we-wallpaper] [class*="flowItem"] .md-table-wide{
+  width:100%!important;
+  max-width:100%!important;
+  margin-left:0!important;
+  padding-left:0!important;
+  overflow-x:auto!important;
+  overflow-y:hidden!important;
+}
 `;
 export const WALLPAPER_CSS = CSS;
 export function injectWallpaperStyles(): void {
