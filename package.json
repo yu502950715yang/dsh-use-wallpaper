@@ -1,6 +1,6 @@
 {
   "name": "@dsh-use/wallpaper-engine",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": false,
   "description": "为 DSH（DeepSeek Harness）Web GUI 提供 Wallpaper Engine 壁纸背景：Scene 壁纸由 Three.js / WebGPU（wasm）在浏览器实时渲染，视频壁纸直接播放、Web 壁纸加载，其余回退 preview 图 + Ken Burns。",
   "type": "module",
