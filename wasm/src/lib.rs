@@ -116,6 +116,22 @@ impl WeScene {
         }
     }
 
+    /// 每帧更新一个图片对象的状态（origin/scale/alpha/brightness）。
+    /// Option 语义：JS 传 undefined（wasm-bindgen 对 Option 接受 undefined/null）=
+    /// 保持现状。asset_id = 对象数组索引（与 load_image/add_particle 一致）。
+    pub fn update_image(
+        &mut self,
+        asset_id: u32,
+        origin: Option<Vec<f32>>,
+        scale: Option<Vec<f32>>,
+        alpha: Option<f32>,
+        brightness: Option<f32>,
+    ) {
+        let o = origin.map(|v| arr3(&v));
+        let s = scale.map(|v| arr3(&v));
+        self.renderer.update_image(asset_id, o, s, alpha, brightness);
+    }
+
     /// 装载粒子规格（emitter[0] + initializer + operator 解析）并构建 GPU 粒子管线。
     /// tex_bytes 为粒子纹理（TEXV0005，2026-08-21 方案 A：WE 内置 fog/halo 纹理）；
     /// 空字节 = 无纹理（纯色圆盘兜底，向后兼容旧调用）。

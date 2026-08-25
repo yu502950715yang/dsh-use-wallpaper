@@ -4,7 +4,12 @@ import { resolveBackground } from './background-layer.js';
 
 export interface WallpaperControllerOptions {
   fetchList: () => Promise<WallpaperInfo[]>;
-  sceneRenderer?: { render(wallpaperId: string, fg: HTMLCanvasElement, bg?: HTMLCanvasElement): Promise<boolean> };
+  // Finding 2：dispose 可选——每次 select（含取消/切壁纸）时调用，释放渲染器持有的
+  // wasm 场景 + 脚本运行时（防泄漏）。仅注入 render 的旧实现不受影响（可选链兜底）。
+  sceneRenderer?: {
+    render(wallpaperId: string, fg: HTMLCanvasElement, bg?: HTMLCanvasElement): Promise<boolean>;
+    dispose?(): void;
+  };
 }
 
 export function createWallpaperController(
@@ -23,6 +28,9 @@ export function createWallpaperController(
 
   async function select(id: string): Promise<void> {
     const gen = ++selectGeneration;
+    // Finding 2：壁纸切换/取消时释放当前 scene 渲染器资源（wasm 场景 + 脚本运行时）。
+    // 旧渲染器的 raf 循环随 canvas 被替换/移除终止，但其持有的 scene/quickjs 需显式释放。
+    opts.sceneRenderer?.dispose?.();
     // 取消壁纸：空 id 直接清空背景层（恢复默认背景，露出 DSH 原生背景）。
     // 同步生效并递增 generation，使进行中的旧选择异步回调被竞态防护丢弃。
     if (id === '') {
