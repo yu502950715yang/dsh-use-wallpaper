@@ -39,6 +39,10 @@ pub struct ParticleSpec {
     pub emitter: EmitterSpec,
     pub init: InitSpec,
     pub operators: Vec<Operator>,
+    /// WE 粒子系统的最大粒子数（spec 的 maxcount 字段，权威上限）。
+    /// 桌面版 WE 按它作为粒子池容量与生成上限；0 = 未指定（旧格式），
+    /// estimate_max_particles 回退 rate×寿命+64 估算。
+    pub maxcount: u32,
 }
 
 fn scalar(v: &serde_json::Value, default: f32) -> f32 {
@@ -81,6 +85,7 @@ struct RawParticle {
     emitter: Option<Vec<serde_json::Value>>,
     initializer: Option<Vec<RawInit>>,
     operator: Option<Vec<RawOperator>>,
+    maxcount: Option<serde_json::Value>,
 }
 
 pub fn parse_particle_spec(json: &str) -> ParticleSpec {
@@ -104,6 +109,10 @@ pub fn parse_particle_spec(json: &str) -> ParticleSpec {
         };
         Operator { kind, params: serde_json::Value::Object(op.params) }
     }).collect();
+
+    // WE maxcount：粒子系统最大数量（数字）。缺省/非正 → 0（未指定，estimate 回退）。
+    // 用 scalar 容错（数字/数字字符串），clamp 到非负。
+    let maxcount = scalar(&(raw.maxcount.unwrap_or(serde_json::Value::Null)), 0.0).max(0.0) as u32;
 
     ParticleSpec {
         emitter: EmitterSpec {
@@ -135,5 +144,6 @@ pub fn parse_particle_spec(json: &str) -> ParticleSpec {
             alpha_max: alpha.and_then(|i| i.max.as_ref()).map(|v| scalar(v, 1.0)).unwrap_or(1.0),
         },
         operators,
+        maxcount,
     }
 }

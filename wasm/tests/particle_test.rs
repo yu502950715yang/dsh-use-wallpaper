@@ -72,3 +72,14 @@ fn colorrandom_normalized_to_0_1() {
     assert!((cm2[1] - 128.0 / 255.0).abs() < 1e-5);
     assert!((cm2[2] - 1.0).abs() < 1e-5);
 }
+
+#[test]
+fn maxcount_parsed_when_present() {
+    // 2026-08-25：parse 读取 spec 的 maxcount（WE 权威粒子上限）。
+    // Fireflies 场景（Crimson Horizon）maxcount=20；无 maxcount → 0（estimate 回退 rate 估算）。
+    let spec = parse_particle_spec(r#"{"maxcount":20,"emitter":[{"rate":20}]}"#);
+    assert_eq!(spec.maxcount, 20);
+
+    let spec2 = parse_particle_spec(r#"{"emitter":[{"rate":20}]}"#);
+    assert_eq!(spec2.maxcount, 0, "缺省 maxcount 应为 0（estimate 回退 rate×寿命+64）");
+}
