@@ -77,6 +77,32 @@ pub fn image_tint(
     ]
 }
 
+/// 图片对象的动态状态（每帧可更新；与 wgpu 解耦，native 可测）。
+/// 用于约束「update_image 一次更新应改哪些 SceneImage 字段」，便于 native 单测。
+#[derive(Debug, Clone, PartialEq)]
+pub struct ObjectState {
+    pub origin: [f32; 3],
+    pub scale: [f32; 3],
+    pub tint_alpha: Option<f32>,
+    pub tint_brightness: Option<f32>,
+}
+
+/// 把一次动态更新应用到对象状态（None = 保持现状）。
+/// Renderer::update_image 对每个匹配的 SceneImage 做同样字段更新。
+/// 拆成纯函数以便 native 测试（SceneImage 含 wgpu 类型，native 不可构造）。
+pub fn apply_image_update(
+    state: &mut ObjectState,
+    origin: Option<[f32; 3]>,
+    scale: Option<[f32; 3]>,
+    alpha: Option<f32>,
+    brightness: Option<f32>,
+) {
+    if let Some(o) = origin { state.origin = o; }
+    if let Some(s) = scale { state.scale = s; }
+    if let Some(a) = alpha { state.tint_alpha = Some(a); }
+    if let Some(b) = brightness { state.tint_brightness = Some(b); }
+}
+
 /// 相机模式：前景 contain（完整显示、留白透明）/ 背景 cover（铺满、裁剪）——
 /// 对齐 scene-renderer.ts 的 containRange/coverRange 与 background-layer 双 canvas 语义。
 #[cfg(feature = "render")]
@@ -464,6 +490,25 @@ impl Renderer {
             tint_alpha,
             tint_brightness,
         });
+    }
+
+    /// 每帧更新一个图片对象的状态（origin/scale/alpha/brightness）。
+    /// None = 保持现状；asset_id 找不到 → no-op（防御对象未注册/已卸载）。
+    /// 字段更新语义与 apply_image_update 完全一致（后者是 native 可测的纯函数版本）。
+    pub fn update_image(
+        &mut self,
+        asset_id: u32,
+        origin: Option<[f32; 3]>,
+        scale: Option<[f32; 3]>,
+        alpha: Option<f32>,
+        brightness: Option<f32>,
+    ) {
+        if let Some(img) = self.images.iter_mut().find(|im| im.asset_id == asset_id) {
+            if let Some(o) = origin { img.origin = o; }
+            if let Some(s) = scale { img.scale = s; }
+            if let Some(a) = alpha { img.tint_alpha = Some(a); }
+            if let Some(b) = brightness { img.tint_brightness = Some(b); }
+        }
     }
 
     /// GPU 粒子模拟一帧（更新 uniform dt + dispatch compute）。

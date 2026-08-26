@@ -14,14 +14,26 @@ fn dispatch_dims_rounds_up() {
 }
 
 #[test]
-fn estimate_max_particles_scales_with_rate_times_lifetime() {
-    // 稳态粒子数 ≈ rate × max_lifetime + 64 余量（Task 9 审查修复：原固定 2048）
+fn estimate_max_particles_uses_maxcount_when_present() {
+    // 2026-08-25：spec 显式给出 maxcount（WE 权威上限）→ estimate 优先使用它（对齐桌面版）。
+    // Ashes fixture maxcount=500 → 返回 500（非 rate×寿命+64）。
     let spec = parse_particle_spec(ASHES_JSON);
-    let max_life = spec.init.lifetime_max.max(spec.init.lifetime_min);
-    let expected = (spec.emitter.rate * max_life).ceil() as u32 + 64;
+    assert_eq!(spec.maxcount, 500);
+    assert_eq!(estimate_max_particles(&spec), 500);
+}
+
+#[test]
+fn estimate_max_particles_scales_with_rate_times_lifetime_when_no_maxcount() {
+    // 无 maxcount（旧格式）→ 回退 rate × max_lifetime + 64 估算（Task 9 审查修复：原固定 2048）
+    use we_scene_wasm::particle::{EmitterSpec, InitSpec, ParticleSpec};
+    let spec = ParticleSpec {
+        emitter: EmitterSpec { rate: 20.0, directions: [0.0; 3], distance_min: 0.0, distance_max: 0.0 },
+        init: InitSpec { lifetime_min: 1.0, lifetime_max: 3.0, size_min: 1.0, size_max: 1.0, velocity_min: [0.0; 3], velocity_max: [0.0; 3], color_min: None, color_max: None, alpha_min: 1.0, alpha_max: 1.0 },
+        operators: vec![],
+        maxcount: 0,
+    };
+    let expected = (20.0f32 * 3.0).ceil() as u32 + 64; // 124
     assert_eq!(estimate_max_particles(&spec), expected.clamp(64, 2048));
-    // 低 rate 不回落过高（lightshafts rate=0.3 等）
-    assert!(estimate_max_particles(&spec) <= 2048);
 }
 
 #[test]
@@ -32,12 +44,14 @@ fn estimate_max_particles_clamps_bounds() {
         emitter: EmitterSpec { rate: 0.0, directions: [0.0; 3], distance_min: 0.0, distance_max: 0.0 },
         init: InitSpec { lifetime_min: 0.0, lifetime_max: 0.0, size_min: 1.0, size_max: 1.0, velocity_min: [0.0; 3], velocity_max: [0.0; 3], color_min: None, color_max: None, alpha_min: 1.0, alpha_max: 1.0 },
         operators: vec![],
+        maxcount: 0,
     };
     assert_eq!(estimate_max_particles(&zero), 64);
     let huge = ParticleSpec {
         emitter: EmitterSpec { rate: 1e6, directions: [0.0; 3], distance_min: 0.0, distance_max: 0.0 },
         init: InitSpec { lifetime_min: 100.0, lifetime_max: 100.0, size_min: 1.0, size_max: 1.0, velocity_min: [0.0; 3], velocity_max: [0.0; 3], color_min: None, color_max: None, alpha_min: 1.0, alpha_max: 1.0 },
         operators: vec![],
+        maxcount: 0,
     };
     assert_eq!(estimate_max_particles(&huge), 2048);
 }

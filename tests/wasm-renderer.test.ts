@@ -426,6 +426,89 @@ describe('createWasmSceneRenderer', () => {
       expect(scene.step).toHaveBeenCalled();
     });
   });
+
+  // T5：脚本动画接入（SceneScriptRuntime，Task 4）。带可见性脚本（visible.script，T4.2
+  // 归一化后挂到 image 对象的 script 字段）的 image 对象 → 懒初始化 SceneScriptRuntime 并
+  // bind；帧循环每帧 update(1/60)，读回 origin 变化灌回 scene.update_image（assetId=原索引）。
+  it('带脚本 image 对象：绑定脚本并每帧调用 update_image（读回 origin 变化）', async () => {
+    vi.stubGlobal('navigator', { gpu: {} });
+    const scene = {
+      set_cover: vi.fn(), load_scene: vi.fn(), load_image: vi.fn(), add_particle: vi.fn(),
+      step: vi.fn(), render: vi.fn(), update_image: vi.fn(),
+    };
+    const sceneJson = JSON.stringify({
+      camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+      general: { orthogonalprojection: { width: 2400, height: 1555 } },
+      objects: [
+        {
+          id: 12, name: 'anim', image: 'models/m.json', origin: '100 200 0', scale: '1 1 1', size: '400 300',
+          visible: { script: `export class A extends IThisPropertyObject { update(dt) { this.origin.x += 5; } }`, value: true },
+        },
+      ],
+    });
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('name=scene.json')) return jsonResp(sceneJson);
+      if (url.includes('m.json')) return jsonResp({ material: 'materials/mat.json' });
+      if (url.includes('mat.json')) return jsonResp({ passes: [{ textures: ['tex'] }] });
+      if (url.includes('tex.tex')) return { ok: true, status: 200, arrayBuffer: async () => new Uint8Array([1, 2, 3, 4]).buffer };
+      return { ok: false, status: 404, json: async () => ({}) } as any;
+    }));
+    const r = createWasmSceneRenderer({ loadWasm: async () => ({ default: vi.fn(), WeScene: { create: async () => scene } } as any) });
+    const fg = document.createElement('canvas');
+    await expect(r!.render('1', fg)).resolves.toBe(true);
+    await vi.waitFor(() => {
+      expect(scene.update_image).toHaveBeenCalled();
+    });
+    const [assetId] = scene.update_image.mock.calls[0];
+    expect(assetId).toBe(0); // 原索引
+  });
+
+  // Finding 1 + 3 + 4 回归：非 center 对齐（bottomright）的脚本 image 对象——
+  // 首帧 readback 基线应等于对齐后的中心（[-100,50,0]），而非原始锚点（[100,200,0]）；
+  // 且仅变化字段被灌回（scale/alpha/brightness 未变 → undefined = Rust 保持现状）。
+  it('Finding1/3/4: bottomright 对齐脚本对象 → update_image 收到对齐中心基线 + 仅变化字段', async () => {
+    vi.stubGlobal('navigator', { gpu: {} });
+    const scene = {
+      set_cover: vi.fn(), load_scene: vi.fn(), load_image: vi.fn(), add_particle: vi.fn(),
+      step: vi.fn(), render: vi.fn(), update_image: vi.fn(),
+    };
+    const sceneJson = JSON.stringify({
+      camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+      general: { orthogonalprojection: { width: 2400, height: 1555 } },
+      objects: [
+        {
+          id: 12, name: 'anim', image: 'models/m.json', origin: '100 200 0', scale: '1 1 1',
+          size: '400 300', alignment: 'bottomright',
+          visible: {
+            script: `export class A extends IThisPropertyObject { update(dt) { this.origin.x += 5; } }`,
+            value: true,
+          },
+        },
+      ],
+    });
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('name=scene.json')) return jsonResp(sceneJson);
+      if (url.includes('m.json')) return jsonResp({ material: 'materials/mat.json' });
+      if (url.includes('mat.json')) return jsonResp({ passes: [{ textures: ['tex'] }] });
+      if (url.includes('tex.tex')) return { ok: true, status: 200, arrayBuffer: async () => new Uint8Array([1, 2, 3, 4]).buffer };
+      return { ok: false, status: 404, json: async () => ({}) } as any;
+    }));
+    const r = createWasmSceneRenderer({ loadWasm: async () => ({ default: vi.fn(), WeScene: { create: async () => scene } } as any) });
+    const fg = document.createElement('canvas');
+    await expect(r!.render('1', fg)).resolves.toBe(true);
+    await vi.waitFor(() => {
+      expect(scene.update_image).toHaveBeenCalled();
+    });
+    const [assetId, origin, scale, alpha, brightness] = scene.update_image.mock.calls[0];
+    expect(assetId).toBe(0); // 原索引
+    // Finding 1：对齐中心基线 [-100,50,0]（锚点 [100,200] + bottomright 偏移：-0.5*400, -0.5*300），
+    // 脚本首帧 origin.x += 5 → -95，而非把原始锚点 100 灌回。
+    expect(Array.from(origin)).toEqual([-95, 50, 0]);
+    // Finding 3：仅变化字段灌回——scale/alpha/brightness 未变 → undefined（Rust 保持现状）。
+    expect(scale).toBeUndefined();
+    expect(alpha).toBeUndefined();
+    expect(brightness).toBeUndefined();
+  });
 });
 
 describe('createFallbackSceneRenderer（2026-08-21 决策：强制 wasm，禁用 JS 回退）', () => {

@@ -4,6 +4,7 @@ import { parseSceneJson } from './scene-json.js';
 import { resolveTexPath } from './scene-renderer.js';
 import { applyAlignment } from './alignment.js';
 import { resolveVisibility } from './visibility.js';
+import { SceneScriptRuntime } from './scene-script.js';
 import type { SceneDescription } from '../shared/types.js';
 
 // Task 2.1：效果链检测（纯函数）。wasm 渲染器（Rust/wgpu）只渲染静态图像 quad +
@@ -28,11 +29,17 @@ export interface WasmScene {
   // T4.3：color/alpha/brightness 为对象调制输入（Float32Array，空 = 缺省 → 无调制，
   // 向后兼容；color 0-255 r g b，alpha 0-1，brightness 乘法系数）。
   load_image(assetId: number, tex: Uint8Array, origin: Float32Array, scale: Float32Array, size: Float32Array, color: Float32Array, alpha: Float32Array, brightness: Float32Array): void;
+  // T5：脚本状态灌回——每帧更新图片对象状态（origin/scale/alpha/brightness）。Option 语义：
+  // undefined/null = 保持现状；assetId = 对象数组索引（与 load_image 一致）。
+  update_image(assetId: number, origin?: Float32Array, scale?: Float32Array, alpha?: number, brightness?: number): void;
   add_particle(json: string, origin: Float32Array, scale: Float32Array, texBytes: Uint8Array): void;
   step(dt: number): void;
   render(): void;
   scene_width(): number;
   scene_height(): number;
+  // Finding 2：wasm-bindgen 生成的 WeScene 自带 free()（释放 wasm 对象/GPU 资源）。
+  // 渲染器 teardown 时调用。测试 mock 通常缺省，调用侧用 free?.() 防御。
+  free(): void;
 }
 
 // wasm-pack --target web 产物（wasm/pkg/we_scene_wasm.js）模块形态：
@@ -50,6 +57,8 @@ export type LoadWasm = () => Promise<WasmSceneModule | null>;
 // wallpaper-controller 的 sceneRenderer 接口形态（scene-renderer.ts 的 renderScene 同构）
 export interface SceneRendererLike {
   render(id: string, fg: HTMLCanvasElement, bg?: HTMLCanvasElement): Promise<boolean>;
+  // Finding 2：释放渲染器持有的场景 wasm 对象与脚本运行时（壁纸切换/卸载时调用，防泄漏）。
+  dispose(): void;
 }
 
 // 2026-08-21 决策（强制 wasm，禁用 JS 回退）：项目主目标为 wasm 播放——
@@ -65,7 +74,7 @@ export function createFallbackSceneRenderer(
 ): SceneRendererLike {
   if (!wasm) {
     // 无 WebGPU 环境：scene 无法 wasm 渲染 → 恒 false（controller 走 preview）
-    return { render: async () => false };
+    return { render: async () => false, dispose: () => {} };
   }
   // 本壁纸 wasm 已失败：后续渲染直接返回 false（不再尝试 JS）
   const wasmFailed = new Set<string>();
@@ -79,6 +88,11 @@ export function createFallbackSceneRenderer(
       }
       // wasmFailed：controller 已重建 canvas，但 JS 渲染已禁用 → 直接 false（preview 兜底）
       return false;
+    },
+    // Finding 2：透传 teardown 到底层 wasm 渲染器（JS 渲染器若实现 dispose 一并调用）。
+    dispose() {
+      wasm?.dispose?.();
+      _js?.dispose?.();
     },
   };
 }
@@ -174,9 +188,24 @@ export function createWasmSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneRe
   const loadWasm = opts?.loadWasm ?? defaultLoadWasm;
   // 模块加载缓存：同一 renderer 内多次 render 只加载/初始化一次 wasm
   let modulePromise: Promise<WasmSceneModule | null> | null = null;
+  // Finding 2：跨 render 调用持有本次渲染创建的 scene / 脚本运行时，供替换/dispose 时释放。
+  // 每次 render 会重建 scene + 启新 raf 循环；旧资源在下次 render 开头或 dispose() 时释放。
+  let currentScene: WasmScene | null = null;
+  let currentScriptRuntime: SceneScriptRuntime | null = null;
+  let raf = 0;
+  const teardown = () => {
+    if (raf) cancelAnimationFrame(raf);
+    raf = 0;
+    currentScriptRuntime?.dispose();
+    currentScriptRuntime = null;
+    currentScene?.free?.();
+    currentScene = null;
+  };
   return {
     async render(id, fg, bg) {
       try {
+        // Finding 2：替换（重试/切壁纸）前先释放上次渲染资源（首次渲染无资源 → no-op）。
+        teardown();
         modulePromise ??= loadWasm();
         const mod = await modulePromise;
         if (!mod) return false;
@@ -196,6 +225,7 @@ export function createWasmSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneRe
         fg.width = vw;
         fg.height = vh;
         const scene = await mod.WeScene.create(fg, vw, vh);
+        currentScene = scene; // Finding 2：持有引用，teardown/dispose 时 free()
         // 2026-08-21 铺满全屏改造（用户需求）：前景 = cover 相机 + 场景 clearcolor 清屏
         // （不透明）——对齐桌面版默认 FillMode::ASPECTCROP（铺满、不变形、超出方向裁剪）。
         // 原先景 contain（留白透明）+ 背景模糊层（Task 9）已废弃：前景不透明清屏后背景层
@@ -209,6 +239,11 @@ export function createWasmSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneRe
         // 绑定 value（= 无用户属性存储的缺省语义）；不可见对象整体跳过——不加载纹理/
         // 粒子、不计入 rendered（全不可见 → rendered===0 → 下方 preview 回退，同 JS 路径）。
         let rendered = 0;
+        // T5：脚本动画（SceneScriptRuntime，Task 4）。懒初始化：首个带脚本的 image 对象
+        // 才 create()（quickjs wasm 懒加载）；失败保持 null → 无动画（静态渲染）。
+        // scriptBindings 收集 { assetId: 对象索引, bound }，每帧更新读回灌回 update_image。
+        let scriptRuntime: SceneScriptRuntime | null = null;
+        const scriptBindings: Array<{ assetId: number; bound: NonNullable<ReturnType<SceneScriptRuntime['bind']>> }> = [];
         for (let i = 0; i < desc.objects.length; i++) {
           const obj = desc.objects[i];
           if (!resolveVisibility(obj, {})) continue;
@@ -237,6 +272,23 @@ export function createWasmSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneRe
               Float32Array.from(obj.brightness !== undefined ? [obj.brightness] : []),
             );
             rendered++;
+            // T5：仅 image 对象且带非空 script 时绑定（text/particle/util 不处理）。
+            // 可见性已在上方 resolveVisibility 过滤（不可见对象 skip，不产生 binding——
+            // 其 i 仍是原索引，update_image 用原索引与 load_image 匹配）。
+            if (obj.script && obj.script.trim()) {
+              scriptRuntime ??= await SceneScriptRuntime.create(); // 懒初始化（失败保持 null = 无动画）
+              // Finding 1：脚本初始 origin 必须与 load_image 渲染用的对齐中心一致，
+              // 否则首帧 readback 会把原始锚点灌回 SceneImage，撤销 alignment 偏移。
+              // ScriptReadback 基线（committed）也由此对齐 origin 初始化 → 无改动时不灌回。
+              if (scriptRuntime) currentScriptRuntime = scriptRuntime; // Finding 2：持引用，teardown 时 dispose
+              const bound = scriptRuntime?.bind(obj.script, {
+                origin,
+                scale: obj.scale,
+                alpha: obj.alpha ?? 1,
+                brightness: obj.brightness ?? 1,
+              });
+              if (bound) scriptBindings.push({ assetId: i, bound });
+            }
           } else if (obj.kind === 'particle' && obj.particle) {
             const specResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(obj.particle)}`);
             if (!specResp.ok) continue;
@@ -256,10 +308,31 @@ export function createWasmSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneRe
           }
         }
         // 全部对象渲染失败 → 返回 false，controller 走 preview 回退（回退链接线）
-        if (rendered === 0) return false;
-        let raf = 0;
+        if (rendered === 0) {
+          // Finding 2：释放本次已创建但未进入循环的 scene/脚本运行时（不泄漏）。
+          teardown();
+          return false;
+        }
         const loop = () => {
           scene.step(1 / 60);
+          // T5：脚本状态灌回——每帧对每个绑定 update(1/60)，读回变化灌回 update_image。
+          // undefined = 保持当前（origin/scale 为 Float32Array，alpha/brightness 为 number）。
+          // Finding 3：BoundScript.update 已做变化检测——未变字段省略（rb 为空对象则不灌回），
+          // 避免对静态对象每帧做 wasm-bindgen 往返 + Float32Array.from 分配。
+          for (const { assetId, bound } of scriptBindings) {
+            const rb = bound.update(1 / 60);
+            if (!rb) continue; // 脚本抛错 → 该对象停动画（隔离），不灌回
+            const hasChange =
+              rb.origin || rb.scale || rb.imageAlpha !== undefined || rb.imageBrightness !== undefined;
+            if (!hasChange) continue; // 无变化 → 不触发 update_image（保持现状）
+            scene.update_image(
+              assetId,
+              rb.origin ? Float32Array.from([rb.origin.x, rb.origin.y, rb.origin.z]) : undefined,
+              rb.scale ? Float32Array.from([rb.scale.x, rb.scale.y, rb.scale.z]) : undefined,
+              rb.imageAlpha,
+              rb.imageBrightness,
+            );
+          }
           scene.render();
           // canvas 被 controller 移除（切换壁纸）时自动终止 raf，防止泄漏
           if (fg.isConnected) raf = requestAnimationFrame(loop);
@@ -267,8 +340,15 @@ export function createWasmSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneRe
         raf = requestAnimationFrame(loop);
         return true;
       } catch {
+        // Finding 2：异常路径释放已创建的 scene/脚本运行时（不泄漏）。
+        teardown();
         return false;
       }
+    },
+    // Finding 2：释放当前场景与脚本运行时（取消运行中的 raf 循环）。调用方（controller）
+    // 在壁纸切换/卸载时调用，避免每次 render 泄漏一个 quickjs 运行时 + wasm scene。
+    dispose() {
+      teardown();
     },
   };
 }
