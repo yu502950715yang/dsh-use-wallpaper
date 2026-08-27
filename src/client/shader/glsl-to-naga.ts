@@ -1,9 +1,13 @@
 // src/client/shader/glsl-to-naga.ts
-// WE 方言 GLSL → naga desktop GLSL（供 wasm 效果链消费）。
+// WE 方言 GLSL → SPIR-V bytes（供 wasm 编译链消费：真实 WE 效果 shader 含 `uniform sampler2D` 采样）。
 // 仅消费 CompiledEffectPass 的 rawVert/rawFrag/combos/uniforms/textureSlots/blendMode，
 // 不触碰 preprocessWeShader（给 three）与 effect-chain.ts 既有行为。
 //
-// naga 24 glsl frontend 的硬性要求（本文件落地的规则①-⑨）：
+// 链路（task-8 编译链集成）：WE 方言 → （规则①-⑨ 预处理为 desktop GLSL）→ @webgpu/glslang
+//   （GLSL→SPIR-V，entry_point `main`）→ wasm 侧 spirv-webgpu-transform + naga spv-in → WGSL。
+// JS 侧只产 SPIR-V（transform/spv-in 在 wasm 编译期做，一次非每帧；见 brief 裁决）。
+//
+// 预处理规则①-⑨（naga glsl frontend 硬性要求）：
 //  - 不接受 #version 300 es，需 desktop 版本（#version 450）。
 //  - 每个 uniform 需 layout(binding=N)；fragment 的 out 需 layout(location=0)。
 //  - precision 限定符（highp/mediump/lowp）去掉更稳。
@@ -14,6 +18,7 @@ import { WE_HEADERS } from './we-headers.js';
 import { extractIfIdentifiers, extractComboDefaults } from './shader-preprocessor.js';
 import type { CompiledEffectPass } from './effect-chain.js';
 import type { UniformValue } from './uniform-binder.js';
+import * as glslangNS from '@webgpu/glslang';
 
 export interface UniformBindingDesc {
   name: string;
@@ -22,6 +27,7 @@ export interface UniformBindingDesc {
   binding: number;
 }
 
+/// 桌面 GLSL 形态（规则的①-⑨ 产物，供 glslang 输入 + 单测断言规则）。
 export interface NagaPassDesc {
   vertGlsl: string;
   fragGlsl: string;
@@ -30,7 +36,44 @@ export interface NagaPassDesc {
   blendMode: string;
 }
 
+/// SPIR-V pass 描述（task-8 编译链集成产出；供 wasm 效果链消费）。
+export interface SpvPassDesc {
+  vertSpv: Uint8Array;
+  fragSpv: Uint8Array;
+  uniforms: UniformBindingDesc[];
+  textureSlots: (string | null)[];
+  blendMode: string;
+}
+
 type Stage = 'vert' | 'frag';
+
+// @webgpu/glslang 运行时为 CJS/Emscripten Module（`module.exports = function()`，callable）：
+// `await glslangNS.default()` 返回带 `compileGLSL` 的 Glslang 实例。其 d.ts 用
+// `export default function(): Promise<Glslang>`，但 NodeNext 下 CJS 默认导入被类型解析为模块
+// 命名空间（`typeof import(...)`），故用显式类型桥接声明该可调用形态，避免依赖其残缺类型。
+interface GlslangApi {
+  compileGLSL(
+    glsl: string,
+    shader_type: 'vertex' | 'fragment' | 'compute',
+    gen_debug: boolean,
+    spirv_version?: string,
+  ): Uint32Array;
+}
+const glslangInit = glslangNS.default as unknown as () => Promise<GlslangApi>;
+let glslangPromise: Promise<GlslangApi> | null = null;
+function loadGlslang(): Promise<GlslangApi> {
+  glslangPromise ??= glslangInit();
+  return glslangPromise;
+}
+
+// SPIR-V 是 little-endian 32-bit word 流；@webgpu/glslang 返回 Uint32Array → 转 Uint8Array bytes
+//（wasm 侧 spirv-webgpu-transform::u8_slice_to_u32_vec 按 LE 读回 word）。
+function u32ToBytes(u32: Uint32Array): Uint8Array {
+  const out = new Uint8Array(u32.length * 4);
+  const dv = new DataView(out.buffer);
+  for (let i = 0; i < u32.length; i++) dv.setUint32(i * 4, u32[i], true);
+  return out;
+}
 
 // uniform 声明（支持标量/向量/矩阵/数组与行尾注解，如 uniform float g_A[16]; // {...}）。
 // 组：1=缩进，2=类型，3=变量名，4=数组大小（可选）。这里匹配整行（含行尾 // {...} 注解）
@@ -159,15 +202,35 @@ function convertStage(
   return { glsl, binds };
 }
 
-// WE 方言 → naga desktop GLSL pass 描述。
+// WE 方言 → desktop GLSL pass 描述（同步；仅做规则①-⑨ 翻译，不编译 SPIR-V）。
+// 供单测断言规则 / 调试；生产 wasm 路径用 glslToNagaPass（含 glslang SPIR-V 编译）。
 // 规则①-⑨ 对 rawVert/rawFrag 各自执行；layout(binding=N) 编号跨 stage 全局唯一
 // （frag 先编号 [0..n)，vert 接着从 n+1 继续，合并 uniforms 无重复 binding）。
-export function glslToNagaPass(pass: CompiledEffectPass): NagaPassDesc {
+export function glslToNagaGlsl(pass: CompiledEffectPass): NagaPassDesc {
   const frag = convertStage(pass.rawFrag, 'frag', pass.combos, pass.uniforms, 0);
   const vert = convertStage(pass.rawVert, 'vert', pass.combos, pass.uniforms, frag.binds.length);
   return {
     vertGlsl: vert.glsl,
     fragGlsl: frag.glsl,
+    uniforms: [...frag.binds, ...vert.binds],
+    textureSlots: pass.textureSlots,
+    blendMode: pass.blendMode,
+  };
+}
+
+// WE 方言 → SPIR-V bytes pass 描述（异步；@webgpu/glslang 一次初始化，compileGLSL 随后同步）。
+// 输出 `{ vert_spv, frag_spv, uniforms, texture_slots, blend_mode }`（替换 vert_glsl/frag_glsl）。
+// glslang 产 SPIR-V 的 entry_point 恒为 `main`（wasm 侧 spv_to_wgsl/naga spv-in 亦解析为 `main`）。
+// 编译失败抛错 → 调用方捕获并回退（绝不白屏）。
+export async function glslToNagaPass(pass: CompiledEffectPass): Promise<SpvPassDesc> {
+  const frag = convertStage(pass.rawFrag, 'frag', pass.combos, pass.uniforms, 0);
+  const vert = convertStage(pass.rawVert, 'vert', pass.combos, pass.uniforms, frag.binds.length);
+  const glslang = await loadGlslang();
+  const vertSpv = u32ToBytes(glslang.compileGLSL(vert.glsl, 'vertex', false));
+  const fragSpv = u32ToBytes(glslang.compileGLSL(frag.glsl, 'fragment', false));
+  return {
+    vertSpv,
+    fragSpv,
     uniforms: [...frag.binds, ...vert.binds],
     textureSlots: pass.textureSlots,
     blendMode: pass.blendMode,

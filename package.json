@@ -27,6 +27,7 @@
   "dependencies": {
     "@deepseek-ai/dsh-settings": "^0.1.0-rc.6",
     "@deepseek-ai/schemastery": "^3.18.1",
+    "@webgpu/glslang": "^0.0.15",
     "lz4js": "^0.2.0",
     "quickjs-emscripten": "^0.32.0",
     "three": "^0.170.0"

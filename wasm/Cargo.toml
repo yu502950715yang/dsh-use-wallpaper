@@ -27,9 +27,14 @@ console_error_panic_hook = { version = "0.1", optional = true }
 png = "0.17"
 jpeg-decoder = { version = "0.3", default-features = false }
 # GLSL→WGSL 编译/校验（naga 24）：效果链 shader 管线复用。
-# glsl-in（glsl 前端）/ wgsl-out（wgsl 写出）/ wgsl-in（validate_wgsl 解析校验）。
+# glsl-in（glsl 前端，演示/simple pass）/ wgsl-out（wgsl 写出）/ wgsl-in（validate_wgsl 解析校验）。
+# spv-in（SPIR-V 前端）：真实 WE 效果 shader 走 GLSL→SPIR-V→spirv-webgpu-transform→spv-in 链路。
 # 纯 naga + 字符串，native cargo test 可编译，不依赖 wgpu。
-naga = { version = "24", features = ["glsl-in", "wgsl-out", "wgsl-in"] }
+naga = { version = "24", features = ["glsl-in", "wgsl-out", "wgsl-in", "spv-in"] }
+# spirv-webgpu-transform（0.1.6）：把 Vulkan 组合采样器（OpTypeSampledImage）拆成独立
+#   texture + sampler，使 naga spv-in 能处理 @webgpu/glslang 产出的组合采样 SPIR-V。
+#   纯 Rust + petgraph（无 C 依赖）。生产 wasm 构建与 native 测试均消费（见 effect::spv_to_wgsl）。
+spirv-webgpu-transform = "0.1.6"
 
 [dev-dependencies]
 crc32fast = "1.5.0"

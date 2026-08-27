@@ -5,6 +5,8 @@ import { resolveTexPath, shouldUseObjectPath, objectCameraRange } from './scene-
 import { applyAlignment } from './alignment.js';
 import { resolveVisibility } from './visibility.js';
 import { SceneScriptRuntime } from './scene-script.js';
+import { resolveEffectChain } from './shader/effect-chain.js';
+import { glslToNagaPass } from './shader/glsl-to-naga.js';
 import type { SceneDescription } from '../shared/types.js';
 
 // Task 2.1：效果链检测（纯函数）。wasm 渲染器（Rust/wgpu）只渲染静态图像 quad +
@@ -17,6 +19,64 @@ export function hasEffectChains(desc: SceneDescription): boolean {
     const effects = (o as { effects?: unknown }).effects;
     return Array.isArray(effects) && effects.length > 0;
   });
+}
+
+// uniform 值 → 打包为 f32 数组（wasm UniformBinding.value: Vec<f32>）。sampler(null)/未知 → null
+// （不进 uniform 缓冲；采样纹理由 wasm collect_bindings 按 WGSL 声明绑定）。
+function flattenUniformValue(value: unknown): number[] | null {
+  if (typeof value === 'number') return [value];
+  if (Array.isArray(value) && value.every((v) => typeof v === 'number')) return value as number[];
+  return null;
+}
+
+/// 对象级效果链的 chain_desc（task-8 编译链集成）：解析对象 effects → resolveEffectChain →
+/// glslToNagaPass（WE GLSL→桌面 GLSL→@webgpu/glslang→SPIR-V bytes）→ 序列化为 UTF-8 JSON 的
+/// `Uint8Array`（wasm-bindgen `Vec<u8>`↔`Uint8Array`）。wasm 侧解析为 `Vec<EffectPassDesc>` 走
+/// spv_to_wgsl 编译。任何一步失败（效果链解析失败 / glslang 编译失败 / 无 pass）→ 返回空
+/// `Uint8Array`（wasm 用内置演示 pass 兜底），绝不白屏。
+async function buildEffectChainDesc(id: string, effects: unknown[]): Promise<Uint8Array> {
+  try {
+    // 与 scene-renderer 同构的 loadFile：从场景 asset 路由拉取（effect.json / shader / material）。
+    const loadFile = async (name: string): Promise<Uint8Array | null> => {
+      const resp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(name)}`);
+      return resp.ok ? new Uint8Array(await resp.arrayBuffer()) : null;
+    };
+    interface WirePass {
+      vert_spv: number[];
+      frag_spv: number[];
+      uniforms: Array<{ name: string; value: number[] }>;
+      texture_slots: (string | null)[];
+      blend_mode: string;
+    }
+    const passes: WirePass[] = [];
+    for (const fx of effects) {
+      if (typeof (fx as { file?: unknown } | null)?.file !== 'string') continue;
+      const chain = await resolveEffectChain(
+        fx as { file: string; passes?: unknown[] },
+        loadFile,
+      );
+      if (!chain) continue;
+      for (const p of chain) {
+        const spv = await glslToNagaPass(p);
+        // sampler uniform（value=null）不进 uniform 缓冲；仅非 sampler uniform 打包进
+        // static_uniforms（g_Time 由执行器每帧写偏移 0，见 EffectChain::render）。
+        const uniforms = spv.uniforms
+          .map((u) => ({ name: u.name, value: flattenUniformValue(u.value) }))
+          .filter((u) => u.value !== null) as Array<{ name: string; value: number[] }>;
+        passes.push({
+          vert_spv: Array.from(spv.vertSpv),
+          frag_spv: Array.from(spv.fragSpv),
+          uniforms,
+          texture_slots: [],
+          blend_mode: spv.blendMode,
+        });
+      }
+    }
+    if (passes.length === 0) return new Uint8Array(0);
+    return new TextEncoder().encode(JSON.stringify(passes));
+  } catch {
+    return new Uint8Array(0);
+  }
 }
 
 // wasm 侧 WeScene 实例的接口（对齐 wasm/pkg/we_scene_wasm.d.ts）
@@ -36,9 +96,10 @@ export interface WasmScene {
   step(dt: number): void;
   // T5（M3/Task5）：对象级效果链。对象内容需先经 load_image 上传；set_object_effect 把它
   // 从共享场景路径移到对象路径（对象 RT + 局部相机 + 效果链 + 合成 quad）。chainDesc 为
-  // 效果链 pass 描述 JSON——当前编译链未集成（task-5-brief 裁决），wasm 用内置演示 pass 兜底，
-  // JS 只传对象定位/尺寸；返回 Promise（wasm 异步建对象效果链管线）。
-  set_object_effect(objId: number, origin: Float32Array, worldSize: Float32Array, rtSize: Float32Array, chainDesc: string): Promise<void>;
+  // 效果链 pass 描述（UTF-8 JSON 的 Uint8Array，task-8 编译链集成：内含真实 WE shader 的
+  // SPIR-V bytes 数组，wasm 解析为 EffectPassDesc 走 spv_to_wgsl；解析失败/空 → 演示 pass 兜底）。
+  // 返回 Promise（wasm 异步建对象效果链管线）。
+  set_object_effect(objId: number, origin: Float32Array, worldSize: Float32Array, rtSize: Float32Array, chainDesc: Uint8Array): Promise<void>;
   // 每帧驱动对象级效果链（对象 RT→效果链→输出 RT）；渲染主路径 scene.render() 已自动调用，
   // 本导出供显式驱动/兼容。
   render_object_effects(): void;
@@ -272,8 +333,9 @@ export function createWasmSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneRe
             // 对象级效果链（M3/Task5）：带 effects 的 image 对象走对象路径（对象 RT + 局部相机
             // + 效果链 + 合成 quad），无效果对象走现有共享场景路径（load_image）。对象内容纹理先
             // 经 load_image 上传（登记对象内容），再 set_object_effect 把它从共享路径移到对象效果
-            // 路径。chainDesc 当前传空（编译链未集成 → wasm 用内置演示 pass 兜底，见 task-5-brief
-            // 裁决）；world_size/rt_size 在 size 缺省时传空，wasm 侧从内容推导（不退化到 1px）。
+            // 路径。chainDesc 由 buildEffectChainDesc 产出（task-8 编译链集成：真实 WE shader 的
+            // SPIR-V）；解析失败/无 pass → 空 Uint8Array（wasm 用内置演示 pass 兜底，绝不白屏）。
+            // world_size/rt_size 在 size 缺省时传空，wasm 侧从内容推导（不退化到 1px）。
             const isObjectPath = shouldUseObjectPath(obj);
             const range = size ? objectCameraRange(size, [obj.scale[0], obj.scale[1]]) : null;
             scene.load_image(
@@ -289,12 +351,13 @@ export function createWasmSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneRe
             if (isObjectPath) {
               const worldSize = size ? [size[0] * obj.scale[0], size[1] * obj.scale[1]] : [];
               const rtSize = range ? [range.w, range.h] : [];
+              const chainDesc = await buildEffectChainDesc(id, obj.effects);
               await scene.set_object_effect(
                 i,
                 Float32Array.from(origin),
                 Float32Array.from(worldSize),
                 Float32Array.from(rtSize),
-                '',
+                chainDesc,
               );
             }
             rendered++;

@@ -8,9 +8,9 @@
 //!   uniform/`blend_key_to_wgpu`）——仅 wasm 构建编译（`--features render`）。
 //!
 //! 关键边界（M2，见 brief 裁决）：
-//! - vert/frag **分别编译**：每个 pass 分别 `glsl_to_wgsl(vert_glsl, Stage::Vertex)` 与
-//!   `glsl_to_wgsl(frag_glsl, Stage::Fragment)` 得两个 WGSL → 各建一个 shader module →
-//!   建 render pipeline（`entry_point: Some("vs_main")` / `Some("fs_main")`）。
+//! - vert/frag **分别编译**：每个 pass 分别编译出 vert/frag 两个 WGSL → 各建一个 shader module →
+//!   建 render pipeline（`entry_point: Some("main")`）。编译源按 pass 来源选择：真实 WE 效果
+//!   shader（SPIR-V）走 `spv_to_wgsl`，演示/simple（GLSL）走 `glsl_to_wgsl`（见 `compile_pass_wgsl`）。
 //! - blendMode 用 native `BlendKey` + `blend_key_to_wgpu(key)`（从 key 映射，DRY，不从 str 重复解析）。
 //! - `EffectChain::new` 一次性编译/建管线/建 ping-pong RT/uniform buffer；`render` 逐 pass
 //!   ping-pong，绑定 g_Texture0+纹理槽+`g_Time`，按 blendMode 混合；audio 频谱本任务置 0（v3）。
@@ -36,6 +36,40 @@ pub fn glsl_to_wgsl(glsl: &str, stage: Stage) -> Result<String, String> {
         .validate(&module).map_err(|e| format!("naga valid: {e:?}"))?;
     let mut w = Writer::new(String::new(), naga::back::wgsl::WriterFlags::EXPLICIT_TYPES);
     w.write(&module, &info).map_err(|e| format!("wgsl write: {e:?}"))?;
+    Ok(w.finish())
+}
+
+/// 真实 WE 效果 shader：SPIR-V bytes → WGSL（编译链集成，非 render 门控，native 可测）。
+///
+/// 链路（task-8 brief / spike 结论）：`spirv-webgpu-transform`(`combimgsampsplitter`) 先拆组合
+/// 采样器（@webgpu/glslang 产出的 `OpTypeSampledImage` 组合采样）为独立 texture + sampler
+/// （注入 `OpSampledImage`），再 `naga::front::spv::parse_u8_slice`(spv-in) → `Validator` →
+/// `wgsl-out`。对照：不 transform 直接 spv-in 会 `InvalidId`（sdk-1.3.268 的已知限制）。
+///
+/// `stage` 由 SPIR-V 的 `OpEntryPoint` 执行模型推导，本函数不依赖它（仅保留签名对称性
+/// 与调用方一致性；spv 路径 entry_point 恒为 `main`）。失败返回错误字符串（绝不 panic）。
+pub fn spv_to_wgsl(spv: &[u8], _stage: Stage) -> Result<String, String> {
+    // ① spirv-webgpu-transform：拆组合采样器（sampler2D 的 OpTypeSampledImage → 独立 texture+sampler）
+    let raw_u32 = spirv_webgpu_transform::u8_slice_to_u32_vec(spv);
+    let mut correction_map = None;
+    let transformed =
+        spirv_webgpu_transform::combimgsampsplitter(&raw_u32, &mut correction_map)
+            .map_err(|e| format!("spirv-webgpu-transform split: {e:?}"))?;
+    let transformed_bytes = spirv_webgpu_transform::u32_slice_to_u8_vec(&transformed);
+    // ② naga spv-in 解析（SPIR-V → naga module）
+    let module = naga::front::spv::parse_u8_slice(
+        &transformed_bytes,
+        &naga::front::spv::Options::default(),
+    )
+    .map_err(|e| format!("spv parse: {e:?}"))?;
+    // ③ Validator（全量校验；spv-in 输出需 WGSL 写出前过校验）
+    let info = Validator::new(ValidationFlags::all(), Capabilities::all())
+        .validate(&module)
+        .map_err(|e| format!("naga valid: {e:?}"))?;
+    // ④ wgsl-out（显式类型写出，与 glsl_to_wgsl 一致）
+    let mut w = Writer::new(String::new(), naga::back::wgsl::WriterFlags::EXPLICIT_TYPES);
+    w.write(&module, &info)
+        .map_err(|e| format!("wgsl write: {e:?}"))?;
     Ok(w.finish())
 }
 
@@ -191,13 +225,13 @@ pub fn composite_ndc_uniform(
 
 /// 纹理槽引用（MVP）。`External(u32)` 索引到外部纹理表（由对象级/glsl-to-naga 层解析）。
 /// M2 多数效果 pass 只使用 g_Texture0，纹理槽多为 None——MVP 先支持 g_Texture0 + 可选槽。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
 pub enum SlotId {
     External(u32),
 }
 
 /// 单个 uniform 绑定：`name` + 打包值（vec4/float/矩阵按长度打包为 `Vec<f32>`）。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct UniformBinding {
     pub name: String,
     pub value: Vec<f32>,
@@ -205,12 +239,26 @@ pub struct UniformBinding {
 
 /// 效果链 pass 描述（编译输入）。binding 编号由 texture_slots + uniforms 的静态顺序决定
 /// （JS 侧 glsl-to-naga 已分配 `layout(binding=N)`；wasm 按同一顺序整理 bind group layout）。
-#[derive(Debug, Clone)]
+///
+/// `shader` 来源二选一（task-8 裁决：真实 WE shader 走 spv，演示/simple 走 glsl）：
+/// - `vert_spv`/`frag_spv`：真实 WE 效果 shader 的 SPIR-V bytes（`spv_to_wgsl` 编译，entry_point `main`）。
+/// - `vert_glsl`/`frag_glsl`：演示/简单路径的 desktop GLSL（`glsl_to_wgsl` 编译，entry_point `main`）。
+///   `vert_spv`/`frag_spv` 非空时优先 spv 路径；否则回退 glsl（兼容 task5 演示 pass）。
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct EffectPassDesc {
+    #[serde(default)]
+    pub vert_spv: Vec<u8>,
+    #[serde(default)]
+    pub frag_spv: Vec<u8>,
+    #[serde(default)]
     pub vert_glsl: String,
+    #[serde(default)]
     pub frag_glsl: String,
+    #[serde(default)]
     pub uniforms: Vec<UniformBinding>,
+    #[serde(default)]
     pub texture_slots: Vec<Option<SlotId>>,
+    #[serde(default)]
     pub blend_mode: BlendMode,
 }
 
@@ -231,6 +279,24 @@ mod imp {
         Uniform,
         Texture,
         Sampler,
+    }
+
+    /// 按 pass 来源编译 vert/frag 为 WGSL：真实 WE 效果 shader（`vert_spv` 非空）走
+    /// `spv_to_wgsl`（SPIR-V→transform→spv-in→WGSL），演示/simple（`vert_spv` 空、`vert_glsl`
+    /// 有值）走 `glsl_to_wgsl`。二者产出 WGSL 的 entry_point 均为 `main`（naga glsl-in /
+    /// spv-in 默认入口；手写 WGSL 的 vs_main/fs_main 的是 effect_passthrough/composite 层）。
+    fn compile_pass_wgsl(desc: &EffectPassDesc) -> Result<(String, String), String> {
+        if !desc.vert_spv.is_empty() {
+            Ok((
+                spv_to_wgsl(&desc.vert_spv, Stage::Vertex)?,
+                spv_to_wgsl(&desc.frag_spv, Stage::Fragment)?,
+            ))
+        } else {
+            Ok((
+                glsl_to_wgsl(&desc.vert_glsl, Stage::Vertex)?,
+                glsl_to_wgsl(&desc.frag_glsl, Stage::Fragment)?,
+            ))
+        }
     }
 
     /// 扫描 vert+frag 两个 WGSL，收集 `@group(0) @binding(N)` 声明与资源类型。
@@ -353,10 +419,8 @@ mod imp {
             // 未闭合的 error scope）。naga 编译失败不应污染 wgpu 状态。
             let mut compiled: Vec<(String, String)> = Vec::with_capacity(passes.len());
             for (i, desc) in passes.iter().enumerate() {
-                let wgsl_vert = glsl_to_wgsl(&desc.vert_glsl, Stage::Vertex)
-                    .map_err(|e| format!("pass {i} vert 编译失败：{e}"))?;
-                let wgsl_frag = glsl_to_wgsl(&desc.frag_glsl, Stage::Fragment)
-                    .map_err(|e| format!("pass {i} frag 编译失败：{e}"))?;
+                let (wgsl_vert, wgsl_frag) =
+                    compile_pass_wgsl(desc).map_err(|e| format!("pass {i} 编译失败：{e}"))?;
                 compiled.push((wgsl_vert, wgsl_frag));
             }
             // Phase 2：wgpu 资源创建（error scope 内，收敛 create_* 的异步校验错误）。
@@ -395,7 +459,7 @@ mod imp {
                     layout: Some(&pipeline_layout),
                     vertex: wgpu::VertexState {
                         module: &vert_module,
-                        entry_point: Some("vs_main"),
+                        entry_point: Some("main"),
                         compilation_options: wgpu::PipelineCompilationOptions::default(),
                         buffers: &[vb_layout],
                     },
@@ -407,7 +471,7 @@ mod imp {
                     multisample: wgpu::MultisampleState::default(),
                     fragment: Some(wgpu::FragmentState {
                         module: &frag_module,
-                        entry_point: Some("fs_main"),
+                        entry_point: Some("main"),
                         compilation_options: wgpu::PipelineCompilationOptions::default(),
                         targets: &[Some(wgpu::ColorTargetState {
                             format,

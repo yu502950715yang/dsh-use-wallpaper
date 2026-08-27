@@ -47,17 +47,31 @@ void main() {
     o_Color = vec4(r, g, b, 1.0);
 }"#;
 
-/// 对象级效果链的 pass 描述（M3/Task5）。编译链未集成（task-5-brief controller 裁决）：
-/// 用**内置演示效果 pass**（g_Time 程序化，naga glsl-in 可编译——不采样 g_Texture0，因 naga
-/// 24 glsl frontend 对 sampler2D NotImplemented，见 progress.md 卡点）串通
-/// 「对象 RT → 效果链 → 合成 quad → surface」链路。真实 WE shader（含 sampler2D 采样）待
-/// 联网集成 spirv-webgpu-transform 后，把其 WGSL 喂入同一管线（本函数只产出 pass 描述，
-/// 与编译链解耦）。`chain_desc` 为将来 pass 描述 JSON；当前阶段忽略（用内置演示 pass）。
+/// 对象级效果链的 pass 描述（M3/Task5，task-8 编译链集成）。
+/// `chain_desc` 现为**真实 WE 效果 pass 的 SPIR-V JSON 数组**（JS 侧 glsl-to-naga 产出）：
+/// 每个元素一个 pass，含 `vert_spv`/`frag_spv`（SPIR-V bytes，入 `EffectChain` 经 spv_to_wgsl
+/// 编译）、`uniforms`/`texture_slots`/`blend_mode`。解析成功且非空 → 用真实 pass；否则
+/// **回退内置演示效果 pass**（g_Time 程序化，naga glsl-in 可编译——不采样 g_Texture0，因演示
+/// shader 用纯程序化输出证明「对象 RT → 效果链 → 合成 quad → surface」链路走通），绝不白屏。
 /// 注意：演示 shader 不采样内容纹理，故对象内容会被程序化动画**替代**（架构验证用；
 /// 真实 shader 采样 g_Texture0 后内容保留）。
 #[cfg(feature = "render")]
-fn demo_object_effect_passes(_chain_desc: &str) -> Vec<effect::EffectPassDesc> {
+fn demo_object_effect_passes(chain_desc: &str) -> Vec<effect::EffectPassDesc> {
+    if !chain_desc.is_empty() {
+        if let Ok(descs) = serde_json::from_str::<Vec<effect::EffectPassDesc>>(chain_desc) {
+            if !descs.is_empty() {
+                // 解析成功且含 pass：return 真实效果 pass（spv 路径；空 spv 的 desc 由
+                // EffectChain 经 compile_pass_wgsl 走 glsl 兜底）
+                return descs;
+            }
+        }
+        web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(&format!(
+            "[wasm] 效果链 chain_desc 解析失败/无 pass，回退内置演示 pass"
+        )));
+    }
     vec![effect::EffectPassDesc {
+        vert_spv: vec![],
+        frag_spv: vec![],
         vert_glsl: DEMO_EFFECT_VERT_GLSL.to_string(),
         frag_glsl: DEMO_EFFECT_FRAG_GLSL.to_string(),
         uniforms: vec![],
@@ -873,9 +887,9 @@ impl Renderer {
     /// - `origin`：对象中心（WE 坐标，已 applyAlignment 换算中心；合成 quad NDC 定位，不翻转 y）。
     /// - `world_size`：`size×scale`（带符号——镜像由内容 RT 承载）。
     /// - `rt_size`：`object_camera_range` 钳制后分辨率（局部正交相机范围 = RT 尺寸，1:1 像素）。
-    /// - `chain_desc`：当前阶段效果链 pass 描述（JSON）。**编译链未集成**（task-5-brief
-    ///   controller 裁决），本方法用内置**演示效果 pass**（g_Time 程序化，naga glsl-in 可编译）
-    ///   串通对象级管线；待联网集成真实 shader 后，把其 WGSL 喂入同一管线即可（架构通用）。
+    /// - `chain_desc`：效果链 pass 描述（JSON，真实 WE shader 的 SPIR-V 数组）。task-8 编译链
+    ///   已集成：JS 侧 glsl-to-naga 产出 SPIR-V bytes 传入，本方法经 `demo_object_effect_passes`
+    ///   解析为 `Vec<EffectPassDesc>`（spv 路径）；解析失败/为空 → 回退内置演示 pass，绝不白屏。
     ///
     /// 绝不白屏：找不到对象内容 / 效果链创建失败 → 不崩溃（对象回退共享路径 / 合成 quad
     /// 采样内容纹理），本方法返回 `Ok`（零副作用），调用方继续渲染。
@@ -1014,9 +1028,9 @@ impl Renderer {
     ///   `particle_world_size`（distanceMax 缺省 64）。
     /// - `rt_size`：对象 RT 分辨率（`particle_object_range` 钳制后）；缺省 →
     ///   `particle_object_range`（无 distanceMax 默认 64，钳 1..2048）。
-    /// - `chain_desc`：当前阶段效果链 pass 描述（JSON）。**编译链未集成**（同 task-5-brief
-    ///   裁决），本方法用内置**演示效果 pass**（g_Time 程序化）串通对象级管线；真实 WE
-    ///   shader 待编译链集成后喂入同一管线（架构通用）。
+    /// - `chain_desc`：效果链 pass 描述（JSON，真实 WE shader 的 SPIR-V 数组）。task-8 编译链
+    ///   已集成：JS 侧产出 SPIR-V 传入（同 `set_object_effect`），本方法经 `demo_object_effect_passes`
+    ///   解析；失败/为空 → 回退内置演示 pass，绝不白屏。
     /// - 粒子模拟（compute）由 `step` 驱动；内容渲染进对象 RT 在 `render_object_effects`。
     ///
     /// 绝不白屏：效果链创建失败 → 合成 quad 采样原始粒子内容（对象正常显示、无效果）。

@@ -3,7 +3,7 @@
 // 断言规则①-⑨：include 展开、combo/#if 宏注入、precision 去除、varying/attribute 改写、
 // gl_FragColor、uniform layout(binding=N)、纹理函数改写、#version 450。
 import { describe, expect, it } from 'vitest';
-import { glslToNagaPass } from '../../src/client/shader/glsl-to-naga.js';
+import { glslToNagaGlsl, glslToNagaPass } from '../../src/client/shader/glsl-to-naga.js';
 import type { CompiledEffectPass } from '../../src/client/shader/effect-chain.js';
 
 function makePass(
@@ -42,7 +42,7 @@ describe('glslToNagaPass WE 方言 → naga desktop GLSL', () => {
       textureSlots: ['tex.png', null],
       blendMode: 'adder',
     });
-    const desc = glslToNagaPass(pass);
+    const desc = glslToNagaGlsl(pass);
 
     // ⑨ 头部
     expect(desc.fragGlsl.startsWith('#version 450')).toBe(true);
@@ -87,7 +87,7 @@ describe('glslToNagaPass WE 方言 → naga desktop GLSL', () => {
         '}',
       ].join('\n'),
     });
-    const desc = glslToNagaPass(pass);
+    const desc = glslToNagaGlsl(pass);
 
     expect(desc.vertGlsl.startsWith('#version 450')).toBe(true);
     // ⑤ vertex：attribute→in、varying→out
@@ -128,7 +128,7 @@ describe('glslToNagaPass WE 方言 → naga desktop GLSL', () => {
       combos: { MASK: 1, BLENDMODE: 9 },
       uniforms: new Map([['g_Alpha', 0.25]]),
     });
-    const desc = glslToNagaPass(pass);
+    const desc = glslToNagaGlsl(pass);
 
     // pass.combos 覆盖 [COMBO] default：BLENDMODE=9（而非 12）
     expect(desc.fragGlsl).toContain('#define BLENDMODE 9');
@@ -151,7 +151,7 @@ describe('glslToNagaPass WE 方言 → naga desktop GLSL', () => {
       ].join('\n'),
       // g_Intensity、g_Offset、g_Texture0 均缺值
     });
-    const desc = glslToNagaPass(pass);
+    const desc = glslToNagaGlsl(pass);
 
     expect(desc.uniforms[0]).toEqual({ name: 'g_Intensity', type: 'float', value: 0, binding: 0 });
     expect(desc.uniforms[1]).toEqual({ name: 'g_Offset', type: 'vec2', value: [0, 0], binding: 1 });
@@ -179,7 +179,7 @@ describe('glslToNagaPass WE 方言 → naga desktop GLSL', () => {
         'void main() { gl_FragColor = texSample2D(g_Texture0, v_TexCoord); }',
       ].join('\n'),
     });
-    const desc = glslToNagaPass(pass);
+    const desc = glslToNagaGlsl(pass);
 
     // 合并 uniforms 的 binding 全局唯一（因 frag/vert 各自从 0 编号而碰撞的场景）
     const bindings = desc.uniforms.map((u) => u.binding);
@@ -205,7 +205,7 @@ describe('glslToNagaPass WE 方言 → naga desktop GLSL', () => {
         '}',
       ].join('\n'),
     });
-    const desc = glslToNagaPass(pass);
+    const desc = glslToNagaGlsl(pass);
 
     // common_blur.h 已展开（blur13a 进入输出）
     expect(desc.fragGlsl).toContain('blur13a');
@@ -217,4 +217,41 @@ describe('glslToNagaPass WE 方言 → naga desktop GLSL', () => {
     // 声明生效后，blur13a 引用可正常解析（无残留 #include）
     expect(desc.fragGlsl).not.toContain('#include');
   });
+
+  it('glslToNagaPass 产出合法 SPIR-V bytes（含 sampler2D 组合采样的 WE 方言 shader）', async () => {
+    const pass = makePass({
+      rawVert: [
+        'attribute vec3 a_Position;',
+        'varying vec2 v_TexCoord;',
+        'void main() {',
+        '    v_TexCoord = a_Position.xy;',
+        '    gl_Position = vec4(a_Position, 1.0);',
+        '}',
+      ].join('\n'),
+      rawFrag: [
+        '#include "common.h"',
+        'varying vec2 v_TexCoord;',
+        'uniform sampler2D g_Texture0;',
+        'uniform float g_Alpha;',
+        'void main() {',
+        '    vec4 c = texSample2D(g_Texture0, v_TexCoord);',
+        '    gl_FragColor = c * g_Alpha;',
+        '}',
+      ].join('\n'),
+      uniforms: new Map([['g_Alpha', 0.5]]),
+      textureSlots: ['tex.png'],
+      blendMode: 'normal',
+    });
+    const spv = await glslToNagaPass(pass);
+    // SPIR-V 魔数 0x07230203（little-endian 前 4 字节），vert/frag 均非空
+    expect(spv.vertSpv.length).toBeGreaterThan(0);
+    expect(spv.fragSpv.length).toBeGreaterThan(0);
+    expect(new DataView(spv.fragSpv.buffer, spv.fragSpv.byteOffset).getUint32(0, true)).toBe(0x07230203);
+    // uniforms（含 sampler 的 binding）/textureSlots/blendMode 透传
+    expect(spv.uniforms).toContainEqual({ name: 'g_Texture0', type: 'sampler2D', value: null, binding: 0 });
+    expect(spv.uniforms).toContainEqual({ name: 'g_Alpha', type: 'float', value: 0.5, binding: 1 });
+    expect(spv.textureSlots).toEqual(['tex.png']);
+    expect(spv.blendMode).toBe('normal');
+  });
 });
+

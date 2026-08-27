@@ -135,8 +135,9 @@ impl WeScene {
     /// 登记一个对象级效果链条目（M3/Task5）。对象内容（图片）需**先**经 `load_image` 上传；
     /// 本方法把该对象从共享场景路径移除，改为走「内容 → 对象RT → 效果链 → 合成quad」。
     /// `origin` = 对象中心（WE 坐标，已 applyAlignment）；`world_size` = size×scale（带符号）；
-    /// `rt_size` = 钳制后对象 RT 分辨率（局部相机范围）；`chain_desc` = 效果链 pass 描述 JSON
-    /// （编译链未集成 → wasm 用内置演示 pass 兜底，见 task-5-brief controller 裁决）。
+    /// `rt_size` = 钳制后对象 RT 分辨率（局部相机范围）；`chain_desc` = 效果链 pass 描述
+    /// （Uint8Array = UTF-8 JSON；task-8 编译链集成：内含真实 WE shader 的 SPIR-V bytes 数组，
+    /// wasm 解析为 `EffectPassDesc` 走 spv_to_wgsl；解析失败/为空 → 内置演示 pass 兜底）。
     /// 找不到内容 / 效果链失败 → 返回 Ok（零副作用，对象回退共享路径 / 采样内容，绝不白屏）。
     pub async fn set_object_effect(
         &mut self,
@@ -144,10 +145,11 @@ impl WeScene {
         origin: Vec<f32>,
         world_size: Vec<f32>,
         rt_size: Vec<f32>,
-        chain_desc: &str,
+        chain_desc: Vec<u8>,
     ) -> Result<(), JsValue> {
+        let chain_desc = String::from_utf8_lossy(&chain_desc).into_owned();
         self.renderer
-            .set_object_effect(obj_id, origin, world_size, rt_size, chain_desc)
+            .set_object_effect(obj_id, origin, world_size, rt_size, &chain_desc)
             .await
             .map_err(|e| JsValue::from_str(&e))
     }
@@ -178,8 +180,8 @@ impl WeScene {
     /// `json` = 粒子规格（同 `add_particle`）；`origin`/`scale` 为对象变换；`tex_bytes` 为
     /// 粒子纹理（TEXV0005，空 = 无纹理白兜底）；`world_size`/`rt_size` 由 JS 用
     /// `particleWorldSize`（未钳制 distance×scale）/`particleObjectRange`（钳制）计算，
-    /// 缺省空 → wasm 用粒子纯函数从 distanceMax/scale 推导；`chain_desc` 当前阶段空
-    /// （编译链未集成 → wasm 内置演示 pass 兜底，见 task-5/task-6-brief 裁决）。
+    /// 缺省空 → wasm 用粒子纯函数从 distanceMax/scale 推导；`chain_desc` = 效果链 pass 描述
+    /// （Uint8Array = UTF-8 JSON，task-8 编译链集成：内含真实 WE shader 的 SPIR-V bytes 数组）。
     pub async fn set_particle_object_effect(
         &mut self,
         obj_id: u32,
@@ -189,7 +191,7 @@ impl WeScene {
         tex_bytes: Vec<u8>,
         world_size: Vec<f32>,
         rt_size: Vec<f32>,
-        chain_desc: &str,
+        chain_desc: Vec<u8>,
     ) -> Result<(), JsValue> {
         let spec = particle::parse_particle_spec(json);
         let tex = if tex_bytes.is_empty() {
@@ -197,10 +199,11 @@ impl WeScene {
         } else {
             tex::parse_tex(&tex_bytes).and_then(|img| self.renderer.upload_texture(&img))
         };
+        let chain_desc = String::from_utf8_lossy(&chain_desc).into_owned();
         self.renderer
             .set_particle_object_effect(
                 obj_id, &spec, arr3(&origin), arr3(&scale), tex,
-                world_size, rt_size, chain_desc,
+                world_size, rt_size, &chain_desc,
             )
             .await
             .map_err(|e| JsValue::from_str(&e))
