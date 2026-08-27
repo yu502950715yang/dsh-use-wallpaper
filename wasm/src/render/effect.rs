@@ -94,6 +94,74 @@ pub fn validate_wgsl(wgsl: &str) -> bool {
 }
 
 // =====================================================================
+// 结构化绑定收集（native 纯逻辑，非 render 门控；naga IR 遍历，替代字符串嗅探）
+// =====================================================================
+
+/// 绑定资源类型（native 纯枚举）。render 层映射到 wgpu `BindingType`
+/// （`Uniform`=uniform buffer、`Texture`=filterable texture_2d、`Sampler`=filtering sampler）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum BindKind {
+    Uniform,
+    Texture,
+    Sampler,
+}
+
+/// 解析一个全局变量的类型 → 绑定类型（texture / sampler）。
+///
+/// 只识别**采样图像**（`texture_2d<f32>` 的 `ImageClass::Sampled`）——storage/depth 图像与
+/// 过滤采样 texture 的 wgpu 绑定类型不匹配，本任务范围仅 WE 效果 shader 的普通 `texture_2d`，
+/// 其它返回 `None`（不加入 layout：宁可少一个绑定让管线校验失败走链级回退，也不制造类型错配）。
+/// `BindingArray`（`sampler2D[]`/`texture2D[]`）递归拆 base 为独立 image/sampler。
+fn bind_kind_of(module: &naga::Module, ty: naga::Handle<naga::Type>) -> Option<BindKind> {
+    use naga::TypeInner;
+    match &module.types[ty].inner {
+        TypeInner::Image { class, .. } => match class {
+            naga::ImageClass::Sampled { .. } => Some(BindKind::Texture),
+            _ => None,
+        },
+        TypeInner::Sampler { .. } => Some(BindKind::Sampler),
+        TypeInner::BindingArray { base, .. } => bind_kind_of(module, *base),
+        _ => None,
+    }
+}
+
+/// 结构化扫描 naga `Module` 的 `global_variables`，收集 `@group(0)` 绑定的资源类型。
+///
+/// **替代旧字符串嗅探**（`find("@group(0) @binding(")` + 向后看字符串判型 + `.parse().unwrap_or(0)`）：
+/// 旧实现对**多纹理/多 uniform block** 脆弱（布局可能与 shader 声明不一致），且 `.unwrap_or(0)`
+/// 把解析失败静默归 0。本函数遍历 naga IR 的 `global_variables`：`AddressSpace::Uniform` →
+/// uniform block（buffer）、`AddressSpace::Handle` → 由类型判 texture/sampler，得到与 shader
+/// 声明**完全一致**的 `(binding, kind)` 升序去重。非 group0 / 无绑定 / 未识别类型的全局变量忽略。
+pub fn module_bindings(module: &naga::Module) -> Vec<(u32, BindKind)> {
+    use naga::AddressSpace;
+    let mut out: Vec<(u32, BindKind)> = Vec::new();
+    for (_h, var) in module.global_variables.iter() {
+        let Some(res) = var.binding.as_ref() else { continue };
+        if res.group != 0 {
+            continue;
+        }
+        let kind = match var.space {
+            AddressSpace::Uniform => Some(BindKind::Uniform),
+            AddressSpace::Handle => bind_kind_of(module, var.ty),
+            _ => None,
+        };
+        if let Some(k) = kind {
+            out.push((res.binding, k));
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// 解析一段 WGSL 字符串 → 结构化绑定列表（`module_bindings`）。native 可测。
+/// 失败返回错误字符串（绝不 panic，与 `spv_to_wgsl`/`glsl_to_wgsl` 契约一致）。
+pub fn wgsl_bindings(wgsl: &str) -> Result<Vec<(u32, BindKind)>, String> {
+    let module = naga::front::wgsl::parse_str(wgsl).map_err(|e| format!("wgsl 解析失败：{e}"))?;
+    Ok(module_bindings(&module))
+}
+
+// =====================================================================
 // native 纯逻辑（非 render 门控；native cargo test 可测）
 // =====================================================================
 
@@ -410,14 +478,6 @@ pub type BlendMode = String;
 mod imp {
     use super::*;
 
-    /// naga 编译出的 WGSL 里，某个绑定资源的类型。
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-    enum BindingKind {
-        Uniform,
-        Texture,
-        Sampler,
-    }
-
     /// 按 pass 来源编译 vert/frag 为 WGSL：真实 WE 效果 shader（`vert_spv` 非空）走
     /// `spv_to_wgsl`（SPIR-V→transform→spv-in→WGSL），演示/simple（`vert_spv` 空、`vert_glsl`
     /// 有值）走 `glsl_to_wgsl`。二者产出 WGSL 的 entry_point 均为 `main`（naga glsl-in /
@@ -444,36 +504,17 @@ mod imp {
         }
     }
 
-    /// 扫描 vert+frag 两个 WGSL，收集 `@group(0) @binding(N)` 声明与资源类型。
-    /// 用于**按 shader 实际声明**构建 bind group layout（保证 layout 与 shader 一致，绝不因
-    /// 未使用的绑定导致管线校验失败）。排序 + 去重以便后续按 binding 编号生成 entries。
-    fn collect_bindings(wgsl_vert: &str, wgsl_frag: &str) -> Vec<(u32, BindingKind)> {
-        let mut out: Vec<(u32, BindingKind)> = Vec::new();
+    /// 结构化扫描 vert+frag 两个 WGSL，收集 `@group(0)` 绑定声明与资源类型（naga IR 遍历，
+    /// 替代旧字符串嗅探；见 super::module_bindings/wgsl_bindings）。合并两段绑定的
+    /// `(binding, 类型)` 排序 + 去重，用于**按 shader 实际声明**构建 bind group layout
+    /// （保证 layout 与 shader 一致，绝不因未使用/错配绑定导致管线校验失败）。
+    /// 任一 WGSL 解析失败 → 忽略该来源（对应 pass 由 error scope 捕获布局/管线校验错误，
+    /// 链级回退，不硬崩）。
+    fn collect_bindings(wgsl_vert: &str, wgsl_frag: &str) -> Vec<(u32, BindKind)> {
+        let mut out: Vec<(u32, BindKind)> = Vec::new();
         for src in [wgsl_vert, wgsl_frag] {
-            let mut from = 0usize;
-            while let Some(rel) = src[from..].find("@group(0) @binding(") {
-                let start = from + rel;
-                let after = start + "@group(0) @binding(".len();
-                let num_end = match src[after..].find(')') {
-                    Some(i) => after + i,
-                    None => break,
-                };
-                let n: u32 = src[after..num_end].trim().parse().unwrap_or(0);
-                // 该绑定声明的 `var` 类型：向后看一小段（naga 在 @binding 后换行补 `var<...>`）。
-                let seg = &src[num_end..(num_end + 300).min(src.len())];
-                let kind = if seg.contains("var<uniform>") {
-                    Some(BindingKind::Uniform)
-                } else if seg.contains("texture_") {
-                    Some(BindingKind::Texture)
-                } else if seg.contains(": sampler") {
-                    Some(BindingKind::Sampler)
-                } else {
-                    None // 无法归类的声明不加入 layout（避免类型错配导致管线校验失败）
-                };
-                if let Some(k) = kind {
-                    out.push((n, k));
-                }
-                from = num_end;
+            if let Ok(mut b) = wgsl_bindings(src) {
+                out.append(&mut b);
             }
         }
         out.sort();
@@ -481,32 +522,32 @@ mod imp {
         out
     }
 
-    /// 由 pass 描述构建 bind group layout（顶点/片元统一可见性，覆盖实际使用阶段，且允许
+    /// 由绑定列表构建 bind group layout（顶点/片元统一可见性，覆盖实际使用阶段，且允许
     /// 过宽可见性避免「Visibility flags don't include the shader stage」错误）。
+    /// `bindings` 来自 `collect_bindings`（结构化 naga IR 扫描），保证 layout 与 shader
+    /// 声明的绑定（含多纹理/多 uniform block）完全一致。
     fn build_bind_group_layout(
         device: &wgpu::Device,
-        wgsl_vert: &str,
-        wgsl_frag: &str,
+        bindings: &[(u32, BindKind)],
         label: &str,
     ) -> wgpu::BindGroupLayout {
-        let bindings = collect_bindings(wgsl_vert, wgsl_frag);
         let entries: Vec<wgpu::BindGroupLayoutEntry> = bindings
             .iter()
             .map(|(binding, kind)| wgpu::BindGroupLayoutEntry {
                 binding: *binding,
                 visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                 ty: match kind {
-                    BindingKind::Uniform => wgpu::BindingType::Buffer {
+                    BindKind::Uniform => wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
-                    BindingKind::Texture => wgpu::BindingType::Texture {
+                    BindKind::Texture => wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
                         view_dimension: wgpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
-                    BindingKind::Sampler => wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    BindKind::Sampler => wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                 },
                 count: None,
             })
@@ -519,10 +560,17 @@ mod imp {
 
     /// 按 binding 分组非不透明 uniform（std140 block 成员），每组建一个 uniform buffer + block 数据。
     /// 返回 `EffectUniformInstance` 列表（按 binding 升序，同 binding 成员保持原顺序）。
+    ///
+    /// **补齐（多传入 `uniform_bindings`）**：`uniform_bindings` 为 shader 实际声明的所有 Uniform
+    /// 绑定编号（来自 `collect_bindings`）。对其中**未被 `uniforms` 覆盖**的 binding（如 demo shader
+    /// 声明 `g_Time` 但 JS 未传该 uniform / 空 uniform block），补一个全 0 空 buffer（16 字节），
+    /// 保证 bind group 恒为 layout 中每个 Uniform 绑定提供资源 → 绝不因缺 entry 触发校验错误
+    /// （不崩，不白屏）。有数据的 binding 仍按 std140 打包（原有逻辑）。
     fn build_uniform_instances(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         uniforms: &[UniformBinding],
+        uniform_bindings: &[u32],
         label: &str,
     ) -> Vec<EffectUniformInstance> {
         let mut entries: Vec<(u32, &UniformBinding)> = uniforms.iter().map(|u| (u.binding, u)).collect();
@@ -553,6 +601,22 @@ mod imp {
             queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&block_data));
             out.push(EffectUniformInstance { binding, buffer, block_data, g_time_offset });
         }
+        // 补齐：shader 声明为 Uniform（`uniform_bindings`）但 `uniforms` 未提供的 binding → 全 0 空 buffer。
+        for &b in uniform_bindings {
+            if out.iter().any(|u| u.binding == b) {
+                continue;
+            }
+            let empty: Vec<f32> = vec![0.0; 4]; // 16 字节空 uniform block（min_uniform_buffer 16B 对齐）
+            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(&format!("{label}-empty-{b}")),
+                size: (empty.len() * 4) as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&empty));
+            out.push(EffectUniformInstance { binding: b, buffer, block_data: empty, g_time_offset: None });
+        }
+        out.sort_by_key(|u| u.binding);
         out
     }
 
@@ -576,8 +640,10 @@ mod imp {
         /// 按 binding 编号分组后的 std140 uniform block（非不透明 uniform 合并进 block；
         /// 一个 pass 通常 1 个 block（frag/vert 各有其 block 时可能 2 个）。
         pub uniform_instances: Vec<EffectUniformInstance>,
-        /// shader 声明的第一个纹理绑定（g_Texture0 语义）→ 绑定当前输入 view。
-        pub input_texture_binding: Option<u32>,
+        /// shader 声明的**全部**纹理绑定编号（升序；多纹理 = 多个）。第一个（通常 = g_Texture0
+        /// 语义）绑当前输入 view；其余多纹理在无额外纹理视图时复用输入 view 保底（不崩，见
+        /// `build_bind_group`）。替代旧的单 `input_texture_binding`。
+        pub texture_bindings: Vec<u32>,
         /// shader 声明的 sampler 绑定 → 绑定共享 sampler。
         pub sampler_binding: Option<u32>,
     }
@@ -630,8 +696,10 @@ mod imp {
                     label: Some(&format!("{label}-frag")),
                     source: wgpu::ShaderSource::Wgsl(wgsl_frag.as_str().into()),
                 });
-                // ② bind group layout（按 shader 实际声明构建，保证一致）
-                let bind_group_layout = build_bind_group_layout(device, &wgsl_vert, &wgsl_frag, &format!("{label}-bgl"));
+                // ② bind group layout（按 shader 实际声明构建，保证一致）。先结构化扫描
+                //   （naga IR 遍历，替代字符串嗅探）得绑定列表，再以此建 layout（避免重复解析）。
+                let bindings = collect_bindings(&wgsl_vert, &wgsl_frag);
+                let bind_group_layout = build_bind_group_layout(device, &bindings, &format!("{label}-bgl"));
                 let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: Some(&format!("{label}-pl")),
                     bind_group_layouts: &[&bind_group_layout],
@@ -679,15 +747,20 @@ mod imp {
                 //  block 成员计算 offset/size/binding，见 UniformBinding）。按 binding 分组，每组：
                 //  block_size = std140_block_size(offset+size)；pack_std140_block 铺值（含 padding 0）；
                 //  buffer 大小 = block_size 字节；g_Time 槽（name=="g_Time"）为每帧动态写。
-                let bindings = collect_bindings(&wgsl_vert, &wgsl_frag);
-                let uniform_instances = build_uniform_instances(device, queue, &desc.uniforms, &format!("{label}-uniform"));
-                let input_texture_binding = bindings.iter().find(|(_, k)| *k == BindingKind::Texture).map(|(b, _)| *b);
-                let sampler_binding = bindings.iter().find(|(_, k)| *k == BindingKind::Sampler).map(|(b, _)| *b);
+                //  对 `bindings` 中声明为 Uniform 但 `desc.uniforms` 未提供的 binding 补空 buffer
+                //  （保证 bind group 恒为 layout 每个 Uniform 绑定提供资源，不崩不白屏）。
+                let uniform_bindings: Vec<u32> =
+                    bindings.iter().filter(|(_, k)| *k == BindKind::Uniform).map(|(b, _)| *b).collect();
+                let uniform_instances =
+                    build_uniform_instances(device, queue, &desc.uniforms, &uniform_bindings, &format!("{label}-uniform"));
+                let texture_bindings: Vec<u32> =
+                    bindings.iter().filter(|(_, k)| *k == BindKind::Texture).map(|(b, _)| *b).collect();
+                let sampler_binding = bindings.iter().find(|(_, k)| *k == BindKind::Sampler).map(|(b, _)| *b);
                 instances.push(EffectPassInstance {
                     pipeline,
                     bind_group_layout,
                     uniform_instances,
-                    input_texture_binding,
+                    texture_bindings,
                     sampler_binding,
                 });
             }
@@ -787,7 +860,18 @@ mod imp {
             }
         }
 
-        /// 按 shader 声明的绑定构建 bind group：std140 uniform block（各 binding）+ 输入纹理(g_Texture0) + sampler。
+        /// 按 shader 声明的绑定构建 bind group：std140 uniform block（各 binding）+ 纹理绑定 + sampler。
+        ///
+        /// **错误防护（缺 entry 不崩）**：wgpu 24 的 `create_bind_group` 校验错误默认不 panic（走
+        /// uncaptured error handler），且此处**保证 entries 与 layout 每个绑定一致**：uniform 绑定
+        /// 恒有 buffer（`build_uniform_instances` 对缺失 binding 已补空 buffer）、全部纹理绑定恒有
+        /// 视图（多纹理无额外资源时复用当前输入 `read_view` 保底）、sampler 恒有共享 sampler——
+        /// 故 bind group 不会因缺 entry 触发校验错误。真正的资源创建错误在 `new` 的 error scope
+        /// 内收敛（`EffectChain::new` 返回 `Err` → 调用方跳链回退，绝不白屏/不崩）。
+        ///
+        /// **多纹理**：`texture_bindings` 为 shader 声明的全部纹理绑定（升序）。第一个（通常
+        /// g_Texture0 语义）绑当前输入 view；其余多纹理槽在**无外部纹理视图表**时复用输入 view
+        /// 保底（当前 `texture_slots` 在 JS wiring 为空，外部纹理表未接通，见 task-13 报告疑虑）。
         fn build_bind_group(&self, pass_index: usize, read_view: &wgpu::TextureView) -> wgpu::BindGroup {
             let pass = &self.passes[pass_index];
             let mut entries: Vec<wgpu::BindGroupEntry> = Vec::new();
@@ -797,7 +881,7 @@ mod imp {
                     resource: uins.buffer.as_entire_binding(),
                 });
             }
-            if let Some(b) = pass.input_texture_binding {
+            for &b in &pass.texture_bindings {
                 entries.push(wgpu::BindGroupEntry {
                     binding: b,
                     resource: wgpu::BindingResource::TextureView(read_view),
