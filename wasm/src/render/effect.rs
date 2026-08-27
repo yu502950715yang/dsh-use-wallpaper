@@ -80,6 +80,29 @@ pub fn pick_write_target(prev: Option<u8>) -> u8 {
     }
 }
 
+/// 对象 RT 单轴尺寸上限（钳制到 2048，避免超大对象效果 RT 爆显存/超出 GPU 限制）。
+pub const OBJECT_RT_MAX: f32 = 2048.0;
+
+/// 对象相机 RT 尺寸：每个轴 = `|size * scale|`，并 clamp 到 `[1, OBJECT_RT_MAX]`。
+/// 纯 native 尺寸数学（不依赖 NDC 渲染坐标），供对象级效果链确定效果 RT 宽高。
+pub fn object_camera_range(size: [f32; 2], scale: [f32; 2]) -> [f32; 2] {
+    [
+        (size[0] * scale[0]).abs().clamp(1.0, OBJECT_RT_MAX),
+        (size[1] * scale[1]).abs().clamp(1.0, OBJECT_RT_MAX),
+    ]
+}
+
+/// uv 窗口映射：由「未钳制尺寸」与「钳制后尺寸」推导采样窗口 `(start, end)`。
+/// 若 `unclamped <= 0` 或该轴未被钳制（`clamped >= unclamped`）→ 全窗 `(0, 1)`；
+/// 否则在未钳制尺寸内居中开窗（start = (unclamped-clamped)/2/unclamped，end = 1-start）。
+pub fn uv_window(unclamped: f32, clamped: f32) -> (f32, f32) {
+    if unclamped <= 0.0 || clamped >= unclamped {
+        return (0.0, 1.0);
+    }
+    let start = (unclamped - clamped) / 2.0 / unclamped;
+    (start, 1.0 - start)
+}
+
 /// 纹理槽引用（MVP）。`External(u32)` 索引到外部纹理表（由对象级/glsl-to-naga 层解析）。
 /// M2 多数效果 pass 只使用 g_Texture0，纹理槽多为 None——MVP 先支持 g_Texture0 + 可选槽。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

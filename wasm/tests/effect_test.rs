@@ -64,3 +64,22 @@ void main() {
     assert!(effect::glsl_to_wgsl(vert, effect::Stage::Vertex).is_ok(), "demo vert 应可编译");
     assert!(effect::glsl_to_wgsl(frag, effect::Stage::Fragment).is_ok(), "demo frag 应可编译");
 }
+
+/// Milestone 3 / Task4：对象 RT 尺寸钳制（native 纯函数，非 render 门控）。
+/// 每个轴 = |size * scale|，并 clamp 到 [1, OBJECT_RT_MAX=2048]。
+#[test]
+fn object_camera_range_clamps_to_2048() {
+    let r = effect::object_camera_range([4000.0, 2000.0], [2.0, 1.0]);
+    assert_eq!(r[0], 2048.0);
+    assert_eq!(r[1], 2000.0);
+}
+
+/// Milestone 3 / Task4：uv 窗口映射（native 纯函数，非 render 门控）。
+/// clamped >= unclamped（未钳制即满幅）→ 全窗 (0,1)；否则按 (unclamped-clamped)/2 居中开窗。
+#[test]
+fn uv_window_unclamped_axis_full() {
+    assert_eq!(effect::uv_window(100.0, 100.0), (0.0, 1.0));
+    let (s, e) = effect::uv_window(100.0, 64.0);
+    assert!((s - 0.18).abs() < 1e-6);
+    assert!((e - 0.82).abs() < 1e-6);
+}
