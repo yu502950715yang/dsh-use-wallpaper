@@ -277,12 +277,15 @@ pub struct UniformBinding {
 // =====================================================================
 
 /// std140 字段类型信息：`(align 字节, size 字节, count 逻辑 float 数)`。未知类型返回 None。
+/// 数组元素 stride = `roundup(elem_size,16) = max(elem_size,16)`——**必须用 elem_size 而非 elem_align**：
+/// 对标量/向量 elem_size ≤ 16，二者等价；但对矩阵（mat2=32B/mat3=48B/mat4=64B）only elem_size 生效，
+/// 否则 `mat4[2]` 会被算成 2*16=32B（正确应为 2*64=128B），后续成员 offset 塌陷（reviewer Important #1）。
 pub fn std140_type_info(ty: &str) -> Option<(u32, u32, u32)> {
     if let Some(idx) = ty.find('[') {
         let base = &ty[..idx];
         let n: u32 = ty[idx + 1..ty.len() - 1].parse().ok()?;
-        let (elem_align, _elem_size, elem_count) = std140_type_info(base)?;
-        let elem_stride = elem_align.max(16); // 数组元素 stride = roundup(align,16)
+        let (_, elem_size, elem_count) = std140_type_info(base)?;
+        let elem_stride = elem_size.max(16); // 数组元素 stride = roundup(elem_size,16)
         return Some((16, n * elem_stride, n * elem_count));
     }
     match ty {
@@ -304,16 +307,22 @@ pub fn std140_block_size(offsets_sizes: &[(u32, u32)]) -> u32 {
 }
 
 /// std140 字段写入计划：把 value（扁平 float）铺到 block 的字节位。返回 `[(valueIdx, floatIdx)]`，
-/// floatIdx 为 block 内 float 下标（block 已预零，padding 不写）。处理 vec/mat/数组（见注释）。
+/// floatIdx 为 block 内 float 下标（block 已预零，padding 不写）。处理 vec/mat/数组。
+/// 数组：按元素 stride（=max(elem_size,16)）逐元素递归（元素内部保留矩阵列 pitch / vec 连续布局），
+/// 元素 e 相对本字段的 float 偏移 = `e * elem_stride/4`（矩阵元素为 64/48/32 而非 4，reviewer Important #1）。
 pub fn std140_write_plan(ty: &str, byte_offset: u32) -> Vec<(u32, u32)> {
     let base = byte_offset / 4; // float 下标基准
     let mut out = Vec::new();
     if let Some(idx) = ty.find('[') {
+        let base_ty = &ty[..idx];
         let n: u32 = ty[idx + 1..ty.len() - 1].parse().unwrap_or(0);
-        let elem_count = std140_type_info(&ty[..idx]).map(|(_, _, c)| c).unwrap_or(4);
+        let (_, elem_size, elem_count) = std140_type_info(base_ty).unwrap_or((16, 16, 4));
+        let elem_stride = elem_size.max(16); // 字节
+        let elem_plan = std140_write_plan(base_ty, 0); // 元素内局部计划（相对元素起始）
         for e in 0..n {
-            for c in 0..elem_count {
-                out.push((e * elem_count + c, base + e * 4 + c));
+            let shift = e * elem_stride / 4; // 元素 e 相对本字段的 float 偏移
+            for (v, fp) in &elem_plan {
+                out.push((e * elem_count + v, base + shift + fp));
             }
         }
         return out;

@@ -155,7 +155,7 @@ function defaultValueForType(type: string): unknown {
     const n = Number(mat[1]);
     return new Array(n * n).fill(0);
   }
-  const arr = type.match(/^float\[(\d+)\]$/);
+  const arr = type.match(/^[A-Za-z_][A-Za-z0-9_]*\[(\d+)\]$/);
   if (arr) return new Array(Number(arr[1])).fill(0);
   if (type.startsWith('sampler')) return null;
   return 0;
@@ -163,14 +163,13 @@ function defaultValueForType(type: string): unknown {
 
 // =====================================================================
 // std140 布局（glslang Vulkan 目标硬性要求：非不透明 uniform 必须包进 uniform block，
-// 且 block 按 std140 对齐）。本段提供：① std140 偏移/size 计算（JS 生成 block 声明用）；
-// ② 逻辑值 → block 内字节位置的写入计划（供 JS 侧按 std140 打包，与 wasm 一致）。
-// 规则（GLSL 4.60 §4.5.7.2，与 glslang 实测一致，见 research/glslang-spike/dump_std140.cjs）：
-//  - float/int/bool: align 4, size 4。
-//  - vec2: align 8, size 8；vec3: align 16, size 12；vec4: align 16, size 16。
-//  - matN（列主序，N 列 × N 行 vecN）: align 16，列 pitch 恒 16 字节 ⇒ size = N*16，count = N*N。
-//  - 数组（float[N]/vecN[N]）: 元素 stride = roundup(align(元素),16) = 16 ⇒ size = N*16，align 16。
-//  - block 总 size = roundup(max(offset+size),16)（std140 block size 恒为 16 倍数）。
+// 且 block 按 std140 对齐）。JS 侧只算 **偏移/size**（生成 block 声明 + 给 wasm 的布局描述）；
+// 实际的逻辑 value→字节铺位打包在 wasm `pack_std140_block`（见 effect.rs）。std140TypeInfo 的
+// align/size 与 glslang 实测一致（research/glslang-spike/dump_std140.cjs）。
+// 规则（GLSL 4.60 §4.5.7.2）：float/int/bool align 4/size 4；vec2 align 8/size 8；
+//   vec3 align 16/size 12；vec4 align 16/size 16；matN align 16/size N*16（列 pitch 恒 16B）count=N²；
+//   数组元素 stride = roundup(elem_size,16) = max(elem_size,16) ⇒ size=N*stride（**用 elem_size，
+//   矩阵元素 size>16；mat4[2]=128B**）；block size = roundup(max(offset+size),16)。
 // =====================================================================
 
 /// 单个 std140 字段的类型信息：align/size（字节）/count（逻辑 float 数，即 value 数组长度）。
@@ -181,12 +180,15 @@ export interface Std140TypeInfo {
 }
 
 export function std140TypeInfo(typeStr: string): Std140TypeInfo | null {
-  const arr = typeStr.match(/^(float|vec2|vec3|vec4|mat[234])\[(\d+)\]$/);
-  if (arr) {
-    const elem = std140TypeInfo(arr[1]);
+  // 数组：查 `[` 前缀再递归（覆盖 float/int/uint/bool/vec/mat 的 `[N]`）。元素 stride =
+  // roundup(elem_size,16) = max(elem_size,16)——必须用 elem_size 而非 elem_align（矩阵元素
+  // size>16，mat4[2] 应为 2*64=128B 而非 2*16=32B，reviewer Important #1）。
+  const arrBase = typeStr.indexOf('[');
+  if (arrBase >= 0) {
+    const elem = std140TypeInfo(typeStr.slice(0, arrBase));
     if (!elem) return null;
-    const elemStride = Math.max(elem.align, 16);
-    const n = Number(arr[2]);
+    const elemStride = Math.max(elem.size, 16);
+    const n = Number(typeStr.slice(arrBase + 1, typeStr.length - 1));
     return { align: 16, size: n * elemStride, count: n * elem.count };
   }
   const vec = typeStr.match(/^vec([234])$/);
@@ -205,91 +207,9 @@ export function std140TypeInfo(typeStr: string): Std140TypeInfo | null {
   return null;
 }
 
-/// std140 block 成员布局：按声明顺序排布字段，返回每字段的字节 offset/size + block 总字节 size。
-/// fields 顺序即 block 内声明顺序（成员全局可见，无实例名）。未知类型走保守 align 16/size 0
-/// 防止偏移污染（正常 WE 类型均在 std140TypeInfo 覆盖内）。
-export function std140Layout(fields: { typeStr: string; count?: number }[]): {
-  offsets: number[];
-  sizes: number[];
-  blockSize: number;
-} {
-  let offset = 0;
-  const offsets: number[] = [];
-  const sizes: number[] = [];
-  for (const f of fields) {
-    const info = std140TypeInfo(f.typeStr);
-    const align = info?.align ?? 16;
-    const size = info?.size ?? 0;
-    offset = (offset + align - 1) & ~(align - 1);
-    offsets.push(offset);
-    sizes.push(size);
-    offset += size;
-  }
-  const blockSize = (offset + 15) & ~15;
-  return { offsets, sizes, blockSize };
-}
-
-/// 给定 block 内字段的字节 offset 与类型，生成「逻辑 value 索引 → block 内 float 索引」写入计划。
-/// 返回 [valueIdx, floatIdx] 对数组（block 已预零，padding 不必写）。用于把 value（扁平 float）
-/// 铺到 std140 block 的正确位置（vec/mat/数组均处理）。
-export function std140WritePlan(typeStr: string, byteOffset: number): [number, number][] {
-  const out: [number, number][] = [];
-  const info = std140TypeInfo(typeStr);
-  if (!info) return out;
-  const floatIdxBase = byteOffset / 4;
-  const arr = typeStr.match(/^(float|vec2|vec3|vec4|mat[234])\[(\d+)\]$/);
-  if (arr) {
-    const n = Number(arr[2]);
-    const elemCount = info.count / n; // 每元素逻辑 float 数
-    for (let e = 0; e < n; e++) {
-      for (let c = 0; c < elemCount; c++) {
-        out.push([e * elemCount + c, floatIdxBase + e * 4 + c]);
-      }
-    }
-    return out;
-  }
-  const mat = typeStr.match(/^mat([234])$/);
-  if (mat) {
-    const n = Number(mat[1]);
-    // 列主序：列 c 的 pitch = 16 字节（4 float），行 r 连续。col<c,r> → value[c*n+r] 在 base + c*4 + r。
-    for (let c = 0; c < n; c++) {
-      for (let r = 0; r < n; r++) {
-        out.push([c * n + r, floatIdxBase + c * 4 + r]);
-      }
-    }
-    return out;
-  }
-  // 标量/vec（float 或 vec2/3/4）：连续铺。
-  for (let i = 0; i < info.count; i++) out.push([i, floatIdxBase + i]);
-  return out;
-}
-
-/// 把某字段的 value（扁平 float 数组）按 std140 铺进 block 缓冲区（f32 数组，已预零）。
-export function packStd140IntoBlock(
-  block: number[],
-  typeStr: string,
-  byteOffset: number,
-  value: unknown,
-): void {
-  const plan = std140WritePlan(typeStr, byteOffset);
-  const v = Array.isArray(value) ? value : Number.isFinite(value as number) ? [value as number] : [];
-  for (const [valueIdx, floatIdx] of plan) {
-    if (floatIdx >= block.length) continue;
-    block[floatIdx] = v[valueIdx] ?? 0;
-  }
-}
-
-/// 打包一个 std140 block：fields = `{ typeStr, byteOffset, value }`，返回完整 block 的 f32 数组。
-export function packStd140Block(
-  blockSize: number,
-  fields: { typeStr: string; byteOffset: number; value: unknown }[],
-): number[] {
-  const block = new Array<number>(Math.ceil(blockSize / 4)).fill(0);
-  for (const f of fields) {
-    packStd140IntoBlock(block, f.typeStr, f.byteOffset, f.value);
-  }
-  return block;
-}
+// JS 侧只保留 `std140TypeInfo` 供 block 偏移计算（convertStage 内联使用）。实际的 value→字节铺位
+// 打包在 wasm `pack_std140_block`（注意：JS 侧删除了重复的 std140WritePlan/packStd140* 孤儿副本，
+// 避免与 Rust 维护两份且再次引入 mat[N] stride bug，reviewer Minor #3）。
 
 // 生成 ②/③ 的宏注入：combos 值优先 → [COMBO] 注释 default 兜底 → #if 未定义裸标识符兜底 0。
 // 已 #define 的宏不重复注入（沿用 preprocessWeShader 的逻辑）。

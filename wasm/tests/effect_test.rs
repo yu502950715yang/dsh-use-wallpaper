@@ -253,3 +253,60 @@ fn std140_pack_fade_semantics_matches_js_offsets() {
     let block = effect::pack_std140_block(32, &fields);
     assert_eq!(block, vec![1.0, 0.0, 0.0, 0.0, 0.315, 0.135, 0.1125, 0.0]);
 }
+
+/// Task10（fix round, reviewer Important #1）：mat[N] 数组的元素 stride 必须用 elem_size（>16）。
+/// mat4[2] = 2*64=128B，count=32；mat3[2] = 2*48=96B，count=18；mat2[2] = 2*32=64B。
+#[test]
+fn std140_type_info_mat_array_stride_uses_elem_size() {
+    assert_eq!(effect::std140_type_info("mat4[2]"), Some((16, 128, 32)));
+    assert_eq!(effect::std140_type_info("mat3[2]"), Some((16, 96, 18)));
+    assert_eq!(effect::std140_type_info("mat2[2]"), Some((16, 64, 8)));
+    // int/uint/bool[4]：元素 stride = max(4,16)=16 ⇒ size 64，count 4（reviewer Minor #4）。
+    assert_eq!(effect::std140_type_info("int[4]"), Some((16, 64, 4)));
+    assert_eq!(effect::std140_type_info("uint[4]"), Some((16, 64, 4)));
+    assert_eq!(effect::std140_type_info("bool[4]"), Some((16, 64, 4)));
+}
+
+/// mat4[2] 打包：元素 stride = 64B（16 float）→ 元素 0 @ float 0..15、元素 1 @ 16..31（连续铺 1..32）。
+#[test]
+fn std140_pack_mat4_array_element_stride_64() {
+    let val: Vec<f32> = (1..=32).map(|v| v as f32).collect();
+    let fields = [effect::Std140Field { ty: "mat4[2]".into(), byte_offset: 0, value: val.clone() }];
+    let block = effect::pack_std140_block(128, &fields);
+    assert_eq!(block.len(), 32);
+    assert_eq!(block, val);
+}
+
+/// mat3[2] 打包：每元素 matrix 列 pitch 16B（每列 3 float + 1 float padding）；元素 1 @ float 12。
+#[test]
+fn std140_pack_mat3_array_column_pitch_and_elem_shift() {
+    let val: Vec<f32> = (1..=18).map(|v| v as f32).collect();
+    let fields = [effect::Std140Field { ty: "mat3[2]".into(), byte_offset: 0, value: val }];
+    let block = effect::pack_std140_block(96, &fields);
+    assert_eq!(block.len(), 24);
+    assert_eq!(
+        block,
+        vec![
+            1.0, 2.0, 3.0, 0.0, 4.0, 5.0, 6.0, 0.0, 7.0, 8.0, 9.0, 0.0,
+            10.0, 11.0, 12.0, 0.0, 13.0, 14.0, 15.0, 0.0, 16.0, 17.0, 18.0, 0.0,
+        ]
+    );
+}
+
+/// int[4] 数组打包：元素 stride 16B（4 float 槽，仅首槽写值）。
+#[test]
+fn std140_pack_int_array_stride_16() {
+    let fields = [effect::Std140Field { ty: "int[4]".into(), byte_offset: 0, value: vec![1.0, 2.0, 3.0, 4.0] }];
+    let block = effect::pack_std140_block(64, &fields);
+    assert_eq!(block, vec![1.0, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 4.0, 0.0, 0.0, 0.0]);
+}
+
+/// write_plan 单独校验 mat4[2]：元素 offset 为 e*elem_size/4（= 16 float），非 e*4。
+#[test]
+fn std140_write_plan_mat4_array_element_offset() {
+    let plan = effect::std140_write_plan("mat4[2]", 0);
+    // 元素 0 的 value index 0..15 映射到 float 0..15；元素 1 的 value 16..31 映射到 float 16..31。
+    assert_eq!(plan.iter().find(|(v, _)| *v == 16).map(|(_, f)| *f), Some(16));
+    assert_eq!(plan.iter().find(|(v, _)| *v == 31).map(|(_, f)| *f), Some(31));
+    assert_eq!(plan.len(), 32);
+}

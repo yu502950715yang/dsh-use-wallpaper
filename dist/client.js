@@ -25580,18 +25580,18 @@ function defaultValueForType(type) {
     const n = Number(mat[1]);
     return new Array(n * n).fill(0);
   }
-  const arr = type.match(/^float\[(\d+)\]$/);
+  const arr = type.match(/^[A-Za-z_][A-Za-z0-9_]*\[(\d+)\]$/);
   if (arr) return new Array(Number(arr[1])).fill(0);
   if (type.startsWith("sampler")) return null;
   return 0;
 }
 function std140TypeInfo(typeStr) {
-  const arr = typeStr.match(/^(float|vec2|vec3|vec4|mat[234])\[(\d+)\]$/);
-  if (arr) {
-    const elem = std140TypeInfo(arr[1]);
+  const arrBase = typeStr.indexOf("[");
+  if (arrBase >= 0) {
+    const elem = std140TypeInfo(typeStr.slice(0, arrBase));
     if (!elem) return null;
-    const elemStride = Math.max(elem.align, 16);
-    const n = Number(arr[2]);
+    const elemStride = Math.max(elem.size, 16);
+    const n = Number(typeStr.slice(arrBase + 1, typeStr.length - 1));
     return { align: 16, size: n * elemStride, count: n * elem.count };
   }
   const vec = typeStr.match(/^vec([234])$/);
