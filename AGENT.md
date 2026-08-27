@@ -23,8 +23,8 @@ scene 壁纸历史上有两条渲染路径，由 `createFallbackSceneRenderer`�
 preview 图回退（Ken Burns，永不白屏）
 ```
 
-- **wasm 渲染器**：图片平面 + GPU 粒子模拟 + **对象级效果链渲染架构**（M3/M4/Task5、Task6 接入——每带效果对象独立对象 RT + 局部正交相机 + `EffectChain` ping-pong 效果链 + 合成 quad UV 窗口，见 `wasm/src/render/mod.rs`）。`hasEffectChains` 拦截已移除（`wasm-renderer.ts` 不再因对象 `effects` 非空而返回 false），带效果壁纸一律走 wasm。
-- **⚠️ 编译链未集成（如实状态）**：wasm 侧效果链当前用**内置演示 shader**（g_Time 程序化，naga glsl-in 可编译）验证管线架构；**真实 WE 效果 shader 的 GLSL→WGSL 编译链（`spirv-webgpu-transform`）待联网集成**（naga glsl frontend 无法编译含 `uniform sampler2D` 的 WE shader，见 §5 Ruling 14）。编译链集成后真实效果壁纸的非 STATIC 目标才达成——**在此之前勿宣称真实效果壁纸已非 STATIC**。
+- **wasm 渲染器（主渲染路径，强制）**：图片平面 + GPU 粒子模拟 + **对象级效果链**（M3/M4/Task5、Task6 接入——每带效果对象独立对象 RT + 局部正交相机 + `EffectChain` ping-pong 效果链 + 合成 quad UV 窗口，`image` 与 `particle` 对象共用对象路径、`SceneScript` 并存驱动，见 `wasm/src/render/mod.rs`）。`hasEffectChains` 注释已改：**保留的纯函数、无拦截作用**（`wasm-renderer.ts` 不再因对象 `effects` 非空而返回 false——强制 wasm，带效果壁纸一律走 wasm）；渲染循环改用 `shouldUseObjectPath(obj)` 做对象级效果路径调度（与 `scene-renderer` 语义一致）。
+- **✅ 编译链已集成（真实 WE 效果已达成）**：wasm 侧效果链走**全编译链**——真实 WE 效果 shader 的 GLSL→`@webgpu/glslang`→SPIR-V bytes→`spirv-webgpu-transform`(拆组合采样)→naga `spv-in`→WGSL（`glsl-to-naga.ts` 产真实 SPIR-V pass 描述 `chain_desc`，`wasm/src/render/effect.rs::spv_to_wgsl` 编译）。`chain_desc` 非空且解析成功即用真实效果 pass，解析失败/为空才回退内置演示 pass 兜底（`mod.rs::demo_object_effect_passes`，绝不白屏）。**真实效果非 STATIC 已达成**：浏览器实测 godrays 效果壁纸 `diff500=98.8%` PASS（效果链动画检出）。相关已知遗留见 §8。（说明：naga 24/25 glsl frontend 无法编译含 `uniform sampler2D` 的 WE shader，为此改用 SPIR-V 链路，见 §5 Ruling 14。）
 - **JS 渲染器（Three.js，`scene-renderer.ts`）**：源码与单测保留在仓库，但**未被当前运行时回退链采用**（wasm 失败不再降级 JS，直接 preview）。其对象级效果链（对象 RT + 局部正交相机 + EffectRunner）为 wasm 侧实现的语义蓝本。
 - wasm 失败后 fg canvas 已被 WebGPU context 占用 → 组合层**不自行换 canvas**，返回 false 让 controller 重建 canvas 重试（防污染）。
 
@@ -109,21 +109,21 @@ research/                     调研产物（gitignore：截图/验证脚本/参
 ## 5. 重要注意事项（踩过的坑）
 
 1. **wasm 产物必须是 `--target web`**。曾用 `--target module`（wasm ESM 静态导入格式、无 `__wbg_init` 默认导出）导致 wasm 静默失败、一直回退 JS 渲染器。`wasm-renderer.ts` 的加载代码期望 `--target web`：动态 import 入口 + 调用默认导出 `mod.default(wasmUrl)` 初始化（不调 init 则 `WeScene.create` 内 wasm 未定义）。
-2. **wasm 对象级效果链：架构已接入、编译链待联网（勿宣称已非 STATIC）**：wasm 侧对象级效果链**渲染架构**已接入（对象 RT + 局部相机 + `EffectChain` ping-pong + 合成 quad，Task5/6），且 `hasEffectChains` 拦截已移除（强制 wasm，带效果壁纸也走 wasm）。**但真实 WE 效果 shader 的 GLSL→WGSL 编译链（`spirv-webgpu-transform`）未集成**——当前用内置演示 shader 验证架构。**切记**：编译链集成前，真实效果壁纸仍可能呈现 STATIC/程序化内容，不要宣称"真实效果壁纸已非 STATIC"（那是编译链集成后的目标；详见 §5 Ruling 14）。
+2. **wasm 对象级效果链：编译链已集成、真实效力已达成（勿再宣称"未集成/已后置"）**：wasm 侧对象级效果链**渲染架构**已接入（对象 RT + 局部相机 + `EffectChain` ping-pong + 合成 quad，Task5/6），**编译链已集成**——真实 WE effect shader 走 GLSL→`@webgpu/glslang`→SPIR-V→`spirv-webgpu-transform`→naga `spv-in`→WGSL（`effect.rs::spv_to_wgsl`），浏览器实测 godrays 效果壁纸 `diff500=98.8%` PASS（非 STATIC）。`hasEffectChains` 拦截已移除（保留纯函数、无拦截作用，强制 wasm），带效果壁纸也走 wasm。**注意**：不再有「内置演示 shader 兜底即整体 STATUS」的旧状态；仅在 `chain_desc` 解析失败/为空时回退演示 pass。遗留见 §8。
 3. **对象级效果链（已替代 Ruling 5 全屏展平）**：每带效果对象独立对象 RT + 局部相机 + EffectRunner，输出经合成 quad 贴回共享场景；合成 quad 按 UV 窗口（uvWindow）只采样 RT 可见段（超大对象钳制轴），不再把对象效果整屏生效。旧全屏 flatMap 展平（Orange 持续摇晃+模糊）已废弃。
 4. **坐标方向**：左下原点、y 向上，不做翻转（见 §2.3）。
 5. **场景资源禁止浏览器缓存**：`/wallpapers/scene/<id>/asset` 返回 `Cache-Control: no-store`；改资源后无需清缓存。
 6. **测试沙箱**：vitest/esbuild 依赖 service 子进程（命名管道），在受限沙箱下报 `spawn EPERM`——需完整权限运行。
 7. **`research/` 整体 gitignore**：验证脚本、截图、临时 profile 都不入库。
 8. **粒子 alpha 属性链**：粒子透明度 = 生命周期衰减 × alpha（alpharandom 等随机化经属性链传入），JS ShaderMaterial 与 wasm 粒子层双路径同语义；改粒子 alpha 相关逻辑需双路径验证（`wasm/tests/particle_alpha_tests.rs` + `tests/particles.test.ts`）。
-9. **对象级效果链的已知边界**：visualizer（visible.script 识别）与 text 对象**恒走共享场景路径**（绕过对象 RT/效果链）——它们带 effects 时效果被忽略（`groupEffectsByObject` 跳过 text；visualizer 为脚本控制节点）。`hasEffectChains` 拦截已移除（强制 wasm），这类 effects 不再触发 wasm→JS 回退，而是直接走 wasm（仅路径差异，无错误）。
+9. **对象级效果链的已知边界**：visualizer（visible.script 识别）与 text 对象**恒走共享场景路径**（绕过对象 RT/效果链）——它们带 effects 时效果被忽略（`groupEffectsByObject` 跳过 text；visualizer 为脚本控制节点）。`hasEffectChains` 注释已改（保留纯函数、无拦截作用、强制 wasm），这类 effects 不再触发 wasm→JS 回退，而是直接走 wasm（仅路径差异，无错误）。
 10. **wasm 成功路径可见性过滤（已修）**：wasm `render()` 对象循环与 JS 路径一致用 `resolveVisibility` 过滤不可见对象；wasm 无用户属性注入（settings 查询仅 JS 路径有），传 `{}` → user 绑定回退绑定 value（无用户属性存储 = 缺省语义）。
 11. **音频管线（T3.2/T3.4）**：`createAudioAnalyzer` 频谱（freqData Uint8Array）→ EffectRunner 音频 uniform + visualizer 条高；壁纸 sound 数组经 `playWallpaperSound` 接入分析器（fire-and-forget；autoplay 被拦时 context suspended、可视化全零，用户手势后恢复）。无 Web Audio → 全零静音。
 12. **构建顺序（改 Rust 必先 build:wasm 再 build:client）**：build:client 把 `wasm/pkg/` 产物复制到 `dist/static/`（页面加载的就是这份）——Rust 改动后直接 build:client 会复制旧 wasm（行为不更新）；产物缺失时 build:client 报错并提示先 `npm run build:wasm`。
 13. **打 tag / 发布（npm publish）前必须先完整构建产物**（`pnpm run build` + `pnpm run build:client`）：`pnpm run build`（tsc）生成 `lib/`，`build:client`（esbuild）生成 `dist/`，二者对应不同产物。只跑 `build:client`（改 client 后）会更新 `dist/client.js`，但 `lib/client/*`（tsc 产物）仍滞后于 `src/client/*`；发布包 `files` 白名单含 `lib` + `dist`，会用过期的 `lib` 而遗漏源码改动。**2026-08-25 实测**：改 `src/client/styles.ts` 后只跑了 `build:client`，`lib/client/styles.js` 未同步，直到发布前补跑 `pnpm run build` 才一致。故打 tag / 发布前先同步 `lib/` 与 `dist/`，并确认 `git status` 无未提交的构建产物（如本次的 `lib/client/*`）。
-14. **naga sampler2D 卡点 + 编译链（`spirv-webgpu-transform`）方向 + 对象级管线要点（M5/Task7）**：
-    - **naga sampler2D 卡点（`progress.md` 实证）**：naga 24/25 的 **glsl frontend 无法编译含 `uniform sampler2D` 声明的 GLSL**——极简 `#version 450; layout(binding=0) uniform sampler2D t;` 也报 `NotImplemented("variable qualifier")`。而**几乎全部 WE 效果链 shader 都用 `g_Texture0`（sampler2D）采样** →「wasm 里 naga glsl frontend 直接编译 WE GLSL」对多数 shader 不成立。naga 30 有依赖 bug（`naga-types 30.0.1` 缺 `apply_default_interpolation`）且 sampler 问题依旧；naga-wasm 用同一 crate 复现。**glslang（GLSL→SPIR-V）+ naga spv frontend（SPIR-V→WGSL）**链：GLSL→SPIR-V 可行（含 sampler2D），但 naga spv 解析 glslang 的 SPIR-V 报 `InvalidId(14)`（需再调试，不保证）。
-    - **编译链方向（待联网）**：真实 WE 效果 shader 的 **GLSL→WGSL 编译链（`spirv-webgpu-transform`）尚未集成**——依赖【需联网环境】（npm 拉取/集成）。集成后把其 WGSL 喂入 `wasm/src/render/effect.rs` 的 `EffectPassDesc` 管线即可（架构通用，仅换编译来源）。**在此之前的 M5 阶段用内置演示 shader（g_Time 程序化，naga glsl-in 可编译）验证对象级管线架构**；不采样 `g_Texture0`，内容被程序化动画替代（架构验证用，真实 shader 采样后内容保留）。
+14. **naga sampler2D 卡点（已绕开）+ 编译链（`spirv-webgpu-transform`，已集成）+ 对象级管线要点（M5/Task7）**：
+    - **naga sampler2D 卡点（历史，已绕开）**：naga 24/25 的 **glsl frontend 无法编译含 `uniform sampler2D` 声明的 GLSL**——极简 `#version 450; layout(binding=0) uniform sampler2D t;` 也报 `NotImplemented("variable qualifier")`。而**几乎全部 WE 效果链 shader 都用 `g_Texture0`（sampler2D）采样** →「wasm 里 naga glsl frontend 直接编译 WE GLSL」对多数 shader 不成立。naga 30 有依赖 bug（`naga-types 30.0.1` 缺 `apply_default_interpolation`）且 sampler 问题依旧；naga-wasm 用同一 crate 复现。naga spv frontend 直接解析 glslang 的 SPIR-V 报 `InvalidId(14)`（旧问题）。
+    - **编译链方向（已集成）**：真实 WE 效果 shader 走 **GLSL→`@webgpu/glslang`→SPIR-V→`spirv-webgpu-transform`→naga `spv-in`→WGSL** 全链。关键在 `spirv-webgpu-transform` 把 glslang 产出的**组合采样**（`OpTypeSampledImage`）拆成独立 texture+sampler，从而绕开 naga spv-in 的 `InvalidId`（见 `wasm/tests/effect_spirv_test.rs`：不 transform 直接 spv-in 应失败，transform 后编译成功）。JS 侧 `glsl-to-naga.ts` 产出真实 SPIR-V pass 描述 `chain_desc`，wasm 侧 `effect.rs::spv_to_wgsl` 编译；`chain_desc` 为空/解析失败才回退内置演示 shader（g_Time 程序化，naga glsl-in 可编译，不采样 `g_Texture0`）兜底，绝不白屏。
     - **对象级管线要点**（`wasm/src/render/mod.rs` `Renderer`）：每带效果对象一条 `ObjectEffectEntry` / `ParticleObjectEffect`，流水线 = 内容 → 对象 RT（`content_view`）→ 效果链 ping-pong（`EffectChain`）→ 输出 RT（`out_view`）→ 合成 quad 贴回 surface。对象 RT 尺寸用 `effect::object_camera_range` / `particle_object_range`（`|size×scale|` 逐轴钳制 `[1, OBJECT_RT_MAX=2048]`）；合成 quad 世界尺寸**未钳制**，UV 窗口（`uv_window`）只采样可见段。**绝不白屏**：效果链创建失败 → `effect_chain=None` → 合成 quad 采样内容纹理（对象正常显示、无效果）。
     - **性能（一次性构建）**：pass 的 naga 编译 + shader module + render pipeline + 对象 RT + uniform buffer 全部在 `EffectChain::new` / `set_object_effect` / `set_particle_object_effect`（壁纸/对象加载时）**一次性**构建；`render_frame` / `render_object_effects` / `step` / `EffectChain::render` **不做** naga 编译 / 管线创建（每帧仅写 uniform + 建 bind group + 提交 render pass）。改效果链逻辑时**勿**把编译/建管线挪进帧内。
 
@@ -145,3 +145,13 @@ node research/verify-wasm-render.mjs --no-webgpu   # JS 回退链
 - 回复与注释/提交信息使用**简体中文**；代码、命令、文件名、技术术语保留原文。
 - 实施前先读 `docs/superpowers/specs/` 对应设计文档；重大变更走技能流程（brainstorming → 设计文档 → writing-plans → TDD）。
 - 改动渲染/坐标/效果链逻辑后，跑全量单测 + `verify-wasm-render.mjs` 双验证再提交。
+
+## 8. 效果链已知遗留（如实状态，勿虚标）
+
+wasm 对象级效果链已接入、编译链已集成、真实 WE 效果已达成（godrays 实测 `diff500=98.8%` PASS），但以下为**已知未达成/待补验**，文档与后续使用请如实标注，勿宣称「全库全部非 STATIC」或「全部 WE 构造受支持」：
+
+1. **wasm 共享粒子路径动画差异（3 张壁纸 STATIC，独立问题待排查）**：部分壁纸走共享粒子路径（无对象级 effects 但有动画粒子/脚本），其动画表现与桌面版存在差异。已实测确认 `2851992662`/`3392903359`/`3760200530` 三张（均无对象级 effects，动画源是粒子 leaves/snow/bubbles）在 wasm 下判为 STATIC——**非纯静态图、非效果链未生效**（内容保留、非黑屏、`ctx=webgpu`；godrays 对照 `2937346640` diff500=98.8% 证明对象级效果链正常），根因是 **wasm 共享粒子路径（`add_particle`/`ParticlePass` compute 模拟）动画未可见**，属独立问题、超出效果链范围，待专项排查。
+2. **particle 对象效果链 JS 挂接已实现但未被库内壁纸触发验证**：`set_particle_object_effect`（M4/Task6）已接入，但当前库内壁纸中没有「带 effects 的 particle 对象」被触发执行，因此该路径**未被真实壁纸验证**，待真实带效果粒子壁纸补验。
+3. **MVM 投影矩阵需执行器提供**：`g_ModelViewProjectionMatrix` 是引擎内建 uniform（材质 json 不给值，被滤出 std140 block → 默认 0）。当前库内依赖 MVM 的效果（如 godrays 的 composelayer 层）为 **frag 效果 + vert passthrough**（`gl_Position` 由 `a_TexCoord` 直接推导，不乘 MVM），故不受影响；仅 vert 阶段真正用到 MVM 的效果链受影响。
+4. **多纹理 / `collect_bindings` 字符串扫描健壮性**：wasm 侧 `collect_bindings` 用文本扫描从 WGSL 提取纹理绑定，对更复杂的真实多纹理 shader 仍待改进（当前库内 shader 已验证可用）。
+5. **headless WebGPU=SwiftShader（非真实 GPU）**：浏览器验证在 headless Edge 的 SwiftShader（软件光栅化）下完成，**非真实 GPU**；需在真实 GPU 上补验（性能/FPS、行为一致性）。

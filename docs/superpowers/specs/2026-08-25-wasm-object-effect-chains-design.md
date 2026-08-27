@@ -1,10 +1,11 @@
 # DSH Wallpaper Engine Scene 渲染 — Wasm 对象级效果链（v2）
 
 - 日期：2026-08-25
-- 状态：**架构已实施；编译链（spirv-webgpu-transform）待联网集成，真实效果验证待补齐**。
-  - 已实施：对象级效果链**渲染架构**（对象 RT / 局部相机 / 效果链 ping-pong / 合成 quad UV 窗口 / particle 对象 / SceneScript 并存）。**M5 阶段用内置演示 shader（g_Time 程序化，naga glsl-in 可编译）验证架构**，未接入真实 WE 效果 shader。
-  - 未实施（需联网）：**真实 WE 效果 shader 的 GLSL→WGSL 编译链（spirv-webgpu-transform）**。naga 24/25 glsl frontend 无法编译含 `uniform sampler2D`（`g_Texture0`）的 WE shader（`NotImplemented("variable qualifier")`，见 `progress.md`）；编译链集成后真实效果壁纸的非 STATIC 目标才达成。
-  - 用户已确认方向：**对象级效果链移植到 wasm**；技术路线原为**方案 A naga 编译**，因 naga sampler 卡点改为**编译链（`spirv-webgpu-transform`）待联网集成**；范围：**通用管线，音频频谱留 v3**。
+- 状态：**已实施：对象级效果链渲染架构 + 编译链 + 真实 WE 效果已达成**。
+  - 已实施：对象级效果链**渲染架构**（对象 RT / 局部相机 / 效果链 ping-pong / 合成 quad UV 窗口 / particle 对象 / SceneScript 并存）；**编译链**（真实 WE 效果 shader 的 GLSL→`@webgpu/glslang`→SPIR-V→`spirv-webgpu-transform`→naga `spv-in`→WGSL，`glsl-to-naga.ts` + `effect.rs::spv_to_wgsl`）；**真实 WE 效果**（浏览器实测 godrays 效果壁纸 `diff500=98.8%` PASS，非 STATIC）。
+  - 实现要点：naga 24/25 glsl frontend 无法编译含 `uniform sampler2D`（`g_Texture0`）的 WE shader（`NotImplemented("variable qualifier")`，见 `progress.md`），故已绕开——改用 glslang 产 SPIR-V + `spirv-webgpu-transform` 拆组合采样 + naga `spv-in` 编译（`wasm/tests/effect_spirv_test.rs` 实证：不 transform 直接 spv-in 应 `InvalidId`，transform 后成功）。
+  - 用户已确认方向：**对象级效果链移植到 wasm**。范围：**通用管线，音频频谱留 v3**。
+  - 已知遗留：① wasm 共享粒子路径动画差异（3 张壁纸 STATIC，独立问题待排查）；② particle 对象效果链 JS 挂接已实现但未被库内壁纸触发验证；③ MVM 投影矩阵需执行器提供（当前 godrays 为 frag 效果不受影响）；④ 多纹理/`collect_bindings` 字符串扫描健壮性；⑤ headless WebGPU=SwiftShader（非真实 GPU，需真实 GPU 补验）。详见 AGENT.md §8。
 - 项目根：`E:\code\dsh-use-wallpaper`
 - 关联：
   - `docs/superpowers/specs/2026-08-19-we-scene-wasm-renderer-design.md`（wasm 渲染器 v1 设计，本 spec 为其 v2 延续）
@@ -19,9 +20,9 @@
 
 现状：**wasm 渲染器（Rust/wgpu）是当前主渲染路径**（强制 wasm 无 JS 回退，`wasm-renderer.ts` 的 `createFallbackSceneRenderer` 已禁用 JS 渲染器）。它已能渲染静态图片平面 + GPU 粒子，覆盖 `image` 图片对象与 `particle` 粒子对象。
 
-核心缺口：**对象级效果链执行器未接入 wasm**。带对象级 `effects`（waterwaves / shake / fade / godrays / foliagesway / iris 等后处理 shader）的壁纸，在 wasm 路径下**只渲染静态图片 + 粒子**（README 中俗称 STATIC），效果链动画缺失，与 WE 真机差距最大。
+核心缺口（设计期背景，**现已补齐**）：**对象级效果链执行器未接入 wasm**。带对象级 `effects`（waterwaves / shake / fade / godrays / foliagesway / iris 等后处理 shader）的壁纸，在 wasm 路径下**只渲染静态图片 + 粒子**（README 中俗称 STATIC），效果链动画缺失，与 WE 真机差距最大。**本 spec 已解决该缺口**：对象级效果链渲染架构 + 编译链 + 真实 WE 效果均已接入（见头部状态与下文）。
 
-目标：把 JS 侧对象级效果链移植到 wasm（Rust/wgpu），让 wasm 主路径下效果链动画完整、逼近 WE 真机。**非新增重做**——JS 侧现有实现与单测作为移植蓝本（README Roadmap「优先：对象级效果链」）。
+目标（**已达成**）：把 JS 侧对象级效果链移植到 wasm（Rust/wgpu），让 wasm 主路径下效果链动画完整、逼近 WE 真机。**非新增重做**——JS 侧现有实现与单测作为移植蓝本（README Roadmap「已达成：对象级效果链」）。
 
 ## 2. 现状分析
 
@@ -57,6 +58,7 @@ wasm 渲染器**没有**：离屏 RT 管线、对象级对象 RT + 局部相机�
 - ⚠️ naga 前端**不接受 `#version 300 es`**，要求 desktop 版本（`#version 450`），且**每个 uniform 需 `layout(binding=N)`**、fragment `out` 需 `layout(location=0)`。
 - ⚠️ naga 对**部分 WE 方言构造**报 `NotImplemented`（如 `composelayer.frag` 的某个 `限定符 + 标识符;` 声明）——需要逐类适配或降级跳过该 pass。
 - 结论：方案 A 可行，但「WE 方言 → naga desktop GLSL」前置转换是重头。
+- **（后续推翻，已改走 SPIR-V 链路）**：此 spike 虽验证了 `fade.frag` 可编译，但随后的进展表明 naga 24/25 glsl frontend **无法编译含 `uniform sampler2D`（`g_Texture0`）的 WE shader**（`NotImplemented("variable qualifier")`，见 `progress.md`），而几乎全部效果链 shader 都采样 `g_Texture0` → 方案 A 对多数 shader 不成立。最终落地为 **`@webgpu/glslang`(GLSL→SPIR-V) → `spirv-webgpu-transform` → naga `spv-in`** 链路（见 §4.2）。
 
 ---
 
@@ -114,15 +116,18 @@ wasm 渲染器**没有**：离屏 RT 管线、对象级对象 RT + 局部相机�
 
 输出 **pass 描述**：`{ vertGlsl, fragGlsl, uniforms: [{name, type, value, binding}], textureSlots, blendMode, audioUniforms }`。`binding=N` 与 naga 反射一致（JS 决定编号），传给 wasm 供 bind group 布置。
 
+> **实现变更（task-8 编译链集成）**：上述预处理规则（①-⑨）产出的 desktop GLSL 不再直接交给 naga glsl frontend 编译，而是喂给 **`@webgpu/glslang`** 做 GLSL→SPIR-V，再经 `spirv-webgpu-transform` + naga `spv-in`→WGSL（§4.2 标注）。真实 WE 效果 shader 已按此链路编译成功（`glsl-to-naga.ts` 的 `glslToNagaPass` 返回 SPIR-V bytes 的 `chain_desc`）。
+
 ### 4.2 wasm 侧：naga GLSL→WGSL 编译 + 管线
 
 新增 `wasm/src/render/effect.rs`：
 
 - **编译**：`naga::front::glsl::Frontend::parse(&Options{stage, defines}, glsl)` → 得到 naga IR；`naga::valid::Validator` 校验；`naga::back::wgsl::Writer` 输出 WGSL 字符串。vertex（`stage=Vertex`）与 fragment（`stage=Fragment`）分别编译。
+  - **（已改为 SPIR-V 链路，非 glsl frontend）**：因 naga 24/25 glsl frontend 无法编译含 `uniform sampler2D` 的 WE shader，实际实现改为：`@webgpu/glslang`（GLSL→SPIR-V bytes，JS 侧 `glsl-to-naga.ts` 产出）→ `spirv-webgpu-transform::combimgsampsplitter`（拆组合采样）→ `naga::front::spv::parse_u8_slice`（spv-in）→ `Validator` → wgsl-out。见 `effect.rs::spv_to_wgsl` 与 `wasm/tests/effect_spirv_test.rs`。
 - **管线**：把两个 WGSL module 用 `device.create_shader_module` 建入 wgpu；`create_render_pipeline`（全屏 quad，`PrimitiveTopology::TriangleStrip`，`vertex_index` 推导角点——复用 `image.wgsl` 的 vs 模式；fragment 输出到 RT/surface）。blendMode 映射到 `BlendState`（normal=SrcAlpha/OneMinusSrcAlpha、add=Additive、multiply=Multiply、subtract=Subtract）。
 - **bind group**：按 pass 描述建 bind group layout（binding=0 输入纹理 `g_Texture0`，binding=1..N 纹理槽 `g_TextureN`，及 uniform buffer binding）。
 - **uniform buffer**：把 pass 的静态 uniform 值（vec/float/int/矩阵）打包到 wgpu buffer；`g_Time` 每帧从 host 更新时间；`g_TextureNResolution` 按当前输入纹理尺寸更新（音频频谱留 v3，`g_AudioSpectrum*` 置 0）。
-- 依赖：`wasm/Cargo.toml` 增 `naga = { version = "24", features = ["glsl-in", "wgsl-out"] }`（与现有 wgpu 24 同代；spike 已验证该组合可编译 WE 方言）。
+- 依赖：`wasm/Cargo.toml` 增 `naga = { version = "24", features = ["glsl-in", "wgsl-out", "wgsl-in", "spv-in"] }` + `spirv-webgpu-transform = "0.1.6"`（与现有 wgpu 24 同代；spike 已验证该组合可编译 WE 方言）。JS 侧 `package.json` 增 `@webgpu/glslang`。
 
 ### 4.3 对象级效果链管线（对象 RT + 局部相机 + ping-pong pass + 合成 quad）
 
@@ -150,8 +155,9 @@ wasm 渲染器**没有**：离屏 RT 管线、对象级对象 RT + 局部相机�
 scene.json ──► 现有 parse(scene) 得 SceneObject(含 effects)
    ├─ 无效果对象 → 现有 image/particle 管线（surface 直接渲染）
    └─ 带效果对象(effects 非空) → effect-chain.ts 解析链
-        → glsl-to-naga 生成 pass 描述 → wasm(load_effect/add_effect_pass)
-        → naga 编译 WGSL + 建管线 + 对象 RT + 合成 quad
+        → glsl-to-naga.ts 生成 pass 描述(桌面 GLSL) → @webgpu/glslang 产 SPIR-V bytes
+        → wasm(load_effect/add_effect_pass) → spv_to_wgsl(spirv-webgpu-transform + naga spv-in)
+        → 建管线 + 对象 RT + 合成 quad
 帧循环：带效果对象进对象RT → 效果链 ping-pong → 合成quad贴回 surface 层
         （无效果对象/粒子仍直接渲染 surface；对象级效果已在帧内同步完成）
 ```
@@ -213,11 +219,13 @@ scene.json ──► 现有 parse(scene) 得 SceneObject(含 effects)
 | M4 | particle 对象效果链 + 全库带效果壁纸回归 | 24 壁纸零失败；带效果壁纸非 STATIC |
 | M5 | 性能调优 + 浏览器双帧验证 + 文档与 build 顺序（build:wasm→build:client） | FPS ≥ 30；文档/AGENT/README 更新 |
 
+> **里程碑状态（已达成）**：M1–M5 均已实施完成。其中 M1 的「GLSL→WGSL 编译管线」以**编译链（glslang→SPIR-V→spirv-webgpu-transform→naga spv-in→WGSL）**落地（非 naga glsl frontend，因 sampler2D 卡点，见 §4.2）；M4「带效果壁纸非 STATIC」经浏览器实测 godrays 效果壁纸 `diff500=98.8%` PASS。遗留见头部「已知遗留」与 AGENT.md §8。
+
 ---
 
 ## 9. 关键实现注意（踩坑预防）
 
-1. **naga 版本与 API**：naga 24 的 `Options` **无 `version` 字段**（从 shader `#version` 读取），字段为 `stage`/`defines`；`Frontend::parse(&opts, glsl)` 参数顺序；`Writer::new(输出, flags)` + 先 `Validator::validate` 得 `ModuleInfo` 再 `write`。spike 已用正确 API（见 `research/naga-spike/src/main.rs`）。
+1. **naga 版本与 API**：naga 24 的 `Options` **无 `version` 字段**（从 shader `#version` 读取），字段为 `stage`/`defines`；`Frontend::parse(&opts, glsl)` 参数顺序；`Writer::new(输出, flags)` + 先 `Validator::validate` 得 `ModuleInfo` 再 `write`。spike 已用正确 API（见 `research/naga-spike/src/main.rs`）。**（已不再用于主链路）**：上述 `Frontend::parse`（glsl frontend）因 sampler2D 卡点已不承担真实 WE shader 编译，改用 `naga::front::spv::parse_u8_slice`（spv-in，见 §4.2）。
 2. **naga 需要 desktop GLSL**：`#[version 450]`、每个 uniform `layout(binding=N)`、fragment `out` `layout(location=0)`——`glsl-to-naga` 必须注入。
 3. **`--target web` 不变**：wasm 构建仍 `--target web`；naga 是 pure Rust，wasm 兼容，不影响加载方式。
 4. **对象级效果链语义与 JS 逐点对齐**：对象路径选择、对象 RT 尺寸钳制、局部相机范围 = RT 分辨率、合成 quad 世界尺寸 = 未钳制幅值、UV 窗口映射、`(ox-vw/2, oy-vh/2)` 映射（**不翻转 y**，AGENT.md §2.3）。

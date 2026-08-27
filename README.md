@@ -6,7 +6,7 @@
 
 把 **Wallpaper Engine 壁纸**带到 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）的 Web GUI：扫描 Steam workshop 壁纸库，在浏览器里渲染 **scene（场景）壁纸**、播放**视频壁纸**、加载 **web 壁纸**，其余回退 **preview 图 + Ken Burns**。不依赖 Wallpaper Engine 运行时，纯浏览器原生能力 + Rust/WebGPU（wasm）渲染器。
 
-> **当前主渲染路径 —— Scene 壁纸 wasm 渲染**：scene 壁纸由 Rust/wgpu 编译为 WebAssembly 的渲染器在浏览器里实时绘制（WebGPU 背板），覆盖 `image` 图片对象与 GPU 粒子。其余壁纸类型分别走视频 / web / preview 回退。
+> **当前主渲染路径 —— Scene 壁纸 wasm 渲染**：scene 壁纸由 Rust/wgpu 编译为 WebAssembly 的渲染器在浏览器里实时绘制（WebGPU 背板），覆盖 `image` 图片对象、GPU 粒子，并**已接入对象级效果链**（真实 WE shader 走 GLSL→`@webgpu/glslang`→SPIR-V→`spirv-webgpu-transform`→naga `spv-in`→WGSL 编译链，godrays 效果壁纸实测 `diff500=98.8%` 非 STATIC）。其余壁纸类型分别走视频 / web / preview 回退。
 
 ---
 
@@ -24,7 +24,7 @@
   preview 图回退（Ken Burns 缓慢缩放位移，永不白屏）
   ```
   
-  > 注：历史上曾有 wasm → JS(Three.js) 渲染器 → preview 的三级回退，`createFallbackSceneRenderer` 也保留了 JS 渲染器形参，但**当前策略是强制 wasm**——离开 wasm 后不再降级 JS 渲染器，而是直接回退 preview 图。JS/Three.js 渲染器、音频频谱、text/visualizer/clock 脚本等源码仍保留在仓库并有单测覆盖，但**未接入当前运行时回退链**（为后续独立计划）。**对象级效果链例外**：wasm 侧对象级效果链**渲染架构已接入**（见下方 Roadmap），接入的是 Rust/wgpu 实现（非 JS 的 EffectRunner）。
+  > 注：历史上曾有 wasm → JS(Three.js) 渲染器 → preview 的三级回退，`createFallbackSceneRenderer` 也保留了 JS 渲染器形参，但**当前策略是强制 wasm**——离开 wasm 后不再降级 JS 渲染器，而是直接回退 preview 图。JS/Three.js 渲染器、音频频谱、text/visualizer/clock 脚本等源码仍保留在仓库并有单测覆盖，但**未接入当前运行时回退链**（为后续独立计划）。**对象级效果链例外**：wasm 侧对象级效果链**已接入**（Rust/wgpu 实现，真实 WE shader 编译成链已集成，见下方 Roadmap），**非 JS 的 EffectRunner**。
 - **坐标对齐**：WE 场景系为左下原点、y 向上；映射 `three.x = we.x - vw/2`、`three.y = we.y - vh/2`（不做 y 翻转）。
 - **容器/纹理解包**：host 侧读取 `PKGV0001` 容器（`pkg-reader.ts`），client/wasm 侧消费 TEXV0005 纹理字节。
 - **粒子纹理**：WE 内置粒子纹理（fog/halo/light_shafts 等）由 `build:client` 从本机 WE 安装目录复制到 `dist/static/ptex-*.tex`，wasm 渲染器优先经 `/wallpapers/static/ptex-*.tex` 读取；`/wallpapers/particle-texture` 路由（从 `weAssetsDir` 实时读取）为备选。两者都不可用时粒子回退为纯色（**绝不白屏**）。
@@ -45,13 +45,13 @@
 
 ## 🗺 接下来（wasm 渲染 Roadmap）
 
-当前主渲染路径为 **wasm（Rust/wgpu）渲染器**，目标是让 scene 壁纸在浏览器里效果**逼近 WE 真机**。以下能力在 JS/Three.js 渲染器中**已有实现并通过单测**；到 wasm 侧**对象级效果链渲染架构已接入**（下述第 1 项，编译链待联网集成），其余能力在强制 wasm 路径下**尚未接入运行时的 wasm 渲染器**——逐个移植到 Rust/wgpu 是后续的主线：
+当前主渲染路径为 **wasm（Rust/wgpu）渲染器**，目标是让 scene 壁纸在浏览器里效果**逼近 WE 真机**。以下能力在 JS/Three.js 渲染器中**已有实现并通过单测**；**对象级效果链（下述第 1 项）已接入 wasm + 编译链已集成，真实 WE 效果已达成**（浏览器实测 godrays `diff500=98.8%` PASS）。其余能力在强制 wasm 路径下**尚未接入运行时的 wasm 渲染器**——逐个移植到 Rust/wgpu 是后续的主线：
 
-### 优先：对象级效果链（含动画效果）—— 架构已接入 wasm，编译链待联网集成
+### 已达成：对象级效果链（含动画效果）—— 已接入 wasm + 编译链已集成 + 真实效果非 STATIC
 
-- **架构现状（已接入）**：对象级效果链**渲染架构**已接入 wasm（Rust/wgpu）——每个带效果对象独立离屏对象 RT + 局部正交相机 + `EffectChain` ping-pong 效果链 post-pass + 合成 quad（UV 窗口）贴回共享场景；`image` 与 `particle` 对象共用对象路径，`SceneScript` 并存驱动。wasm-renderer 已移除 `hasEffectChains` 拦截（强制 wasm，无 JS 降级）。
-- **⚠️ 编译链待联网集成（关键状态）**：真实 WE 效果 shader 的 **GLSL→WGSL 编译链（`spirv-webgpu-transform`）尚未集成**（依赖【需联网环境】，见 `progress.md`）。原因是 naga 24/25 的 glsl frontend **无法编译含 `uniform sampler2D`（即 `g_Texture0`）的 WE shader**（报 `NotImplemented("variable qualifier")`），而几乎全部效果链 shader 都用 `g_Texture0` 采样——方案 A（naga glsl-in 直接编译 WE GLSL）对多数 shader 不成立。当前 **M5 阶段用内置演示 shader（g_Time 程序化，naga glsl-in 可编译）验证对象级管线架构**（对象 RT → 效果链 → 合成 quad 链路走通）。**真实效果壁纸的非 STATIC 目标需编译链集成后达成**；在此之前带效果壁纸仍可能呈现 STATIC 的静态内容（demo pass 会以程序化动画替代内容，见 `mod.rs` 注释）。
-- **接下来（编译链）**：把 JS 侧 `effect-runner.ts` + `shader/` 方言层（GLSL→WGSL 转换、uniform 绑定、内置头）的**编译链**接入（`spirv-webgpu-transform`），把真实 WE shader 编译出的 WGSL 喂入同一 `EffectPassDesc` 管线（架构通用，仅换编译来源）。
+- **架构现状（已接入）**：对象级效果链**渲染架构**已接入 wasm（Rust/wgpu）——每个带效果对象独立离屏对象 RT + 局部正交相机 + `EffectChain` ping-pong 效果链 post-pass + 合成 quad（UV 窗口）贴回共享场景；`image` 与 `particle` 对象共用对象路径，`SceneScript` 并存驱动。wasm-renderer 的 `hasEffectChains` 已转为保留的纯函数（**无拦截作用**，强制 wasm——wasm-renderer 不再因对象 `effects` 非空而返回 false，无 JS 降级），渲染循环用 `shouldUseObjectPath(obj)` 调度对象级路径。
+- **✅ 编译链已集成（真实 WE 效果已达成）**：真实 WE 效果 shader 走 **GLSL→`@webgpu/glslang`→SPIR-V→`spirv-webgpu-transform`→naga `spv-in`→WGSL** 全链（`glsl-to-naga.ts` 产真实 SPIR-V pass 描述，`wasm/src/render/effect.rs::spv_to_wgsl` 编译）。`chain_desc` 非空且解析成功即用真实效果 pass；解析失败/为空才回退内置演示 shader（g_Time 程序化）兜底，绝不白屏。已绕开「naga glsl frontend 无法编译含 `uniform sampler2D` 的 WE shader」的卡点。**浏览器实测 godrays 效果壁纸 `diff500=98.8%` PASS（非 STATIC，动画已检出）**。
+- **已知遗留**（详见 AGENT.md §8）：① wasm 共享粒子路径动画差异（3 张壁纸 STATIC，独立问题待排查）；② particle 对象效果链 JS 挂接已实现但未被库内壁纸触发验证（待真实壁纸补验）；③ MVM 投影矩阵需执行器提供（当前 godrays 为 frag 效果不受影响）；④ 多纹理/`collect_bindings` 字符串扫描健壮性（真实多纹理 shader 待改进）；⑤ headless WebGPU=SwiftShader（非真实 GPU，需真实 GPU 补验）。
 - **对齐语义**：参考现有 JS 侧对象级效果链与 `research/open-wallpaper-engine` 的 Layer/CompositeTarget 语义。
 
 ### 后续（按序）
