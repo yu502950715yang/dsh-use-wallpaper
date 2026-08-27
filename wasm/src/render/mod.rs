@@ -6,6 +6,8 @@ pub mod camera;
 pub mod effect;
 pub mod particle_pass;
 #[cfg(feature = "render")]
+pub mod effect_pass;
+#[cfg(feature = "render")]
 pub mod texture;
 
 #[cfg(feature = "render")]
@@ -131,6 +133,17 @@ pub struct Renderer {
     /// 图片平面（set_image 上传；render_frame 在粒子层之前绘制）
     images: Vec<SceneImage>,
     image_pipeline: wgpu::RenderPipeline,
+    /// 效果链全屏 quad 管线基线（Task2）。当前 0..1 个透传测试 pass（对象级效果链基线的
+    /// 可渲染工程验证）；Task3+ 扩展为对象级效果链（EffectChain/ping-pong/uniform）。
+    effect_passes: Vec<effect_pass::EffectPass>,
+    /// `@group(0)` 的 bind group layout（binding 0 = texture_2d, binding 1 = sampler），
+    /// 效果链各层复用。调用方（render_frame）按当前输入纹理创建 bind group 后传入 render。
+    effect_layout: wgpu::BindGroupLayout,
+    /// 离屏"自采"纹理：场景先渲染到离屏，透传 pass 采样并输出到 surface（读自采渲染，
+    /// 验证 wasm 工程串通、不黑屏）。尺寸/格式与 surface 一致，避免 surface 当帧自依赖。
+    offscreen_tex: wgpu::Texture,
+    offscreen_view: wgpu::TextureView,
+    offscreen_sampler: wgpu::Sampler,
 }
 
 #[cfg(feature = "render")]
@@ -265,6 +278,58 @@ impl Renderer {
             multiview: None,
             cache: None,
         });
+        // == 效果链全屏 quad 管线基线（Task2）==
+        // `@group(0)` bind group layout：binding 0 = texture_2d, binding 1 = sampler
+        // （对齐 effect_passthrough.wgsl 的 @group(0) @binding(0/1)；效果链各层复用）。
+        let effect_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("effect-bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        // 透传测试 pass：创建失败 => EffectPass::new 返回 Err => effect_passes 留空，
+        // render_frame 跳过该 pass 走兜底（直接渲染 surface），绝不黑屏。
+        let mut effect_passes = Vec::new();
+        let effect_wgsl = include_str!("../shader/effect_passthrough.wgsl");
+        match effect_pass::EffectPass::new(&device, effect_wgsl, format, effect_layout.clone()) {
+            Ok(p) => {
+                web_sys::console::log_1(&wasm_bindgen::JsValue::from_str("[wasm] effect pass 创建成功"));
+                effect_passes.push(p);
+            }
+            Err(e) => web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(&format!(
+                "[wasm] effect pass 创建失败，跳过（兜底直接渲染 surface）：{e}"
+            ))),
+        }
+        // 离屏"自采"纹理（尺寸/格式与 surface 一致）：场景先渲染到离屏，再由透传 pass
+        // 采样输出到 surface——读自采渲染验证 wasm 工程串通，避免 surface 当帧自依赖。
+        let offscreen_tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("effect-offscreen"),
+            size: wgpu::Extent3d { width: config.width, height: config.height, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let offscreen_view = offscreen_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let offscreen_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("effect-offscreen-sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
         Ok(Renderer {
             device, queue, config, surface, width, height,
             particle_passes: Vec::new(),
@@ -274,6 +339,11 @@ impl Renderer {
             clear_color: None,
             images: Vec::new(),
             image_pipeline,
+            effect_passes,
+            effect_layout,
+            offscreen_tex,
+            offscreen_view,
+            offscreen_sampler,
         })
     }
 
@@ -301,6 +371,18 @@ impl Renderer {
         self.config.width = self.width;
         self.config.height = self.height;
         self.surface.configure(&self.device, &self.config);
+        // 重建离屏自采纹理（尺寸与 surface 一致；Task2 效果管线输入需要，防旧尺寸失配）
+        self.offscreen_tex = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("effect-offscreen"),
+            size: wgpu::Extent3d { width: self.width, height: self.height, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.config.format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        self.offscreen_view = self.offscreen_tex.create_view(&wgpu::TextureViewDescriptor::default());
     }
 
     /// 装载粒子规格并构建 GPU 粒子管线（**追加**而非覆盖——Task 9 修复：
@@ -520,6 +602,9 @@ impl Renderer {
 
     /// 渲染场景到 canvas。Task 9 修复：清屏后先绘制图片平面（contain 正交相机语义，
     /// 对齐 scene-renderer.ts），再叠加粒子点渲染层（加法混合）。
+    /// Task2 效果链：若 effect_passes 非空，把场景渲染到离屏"自采"纹理，再由透传 pass
+    /// 采样输出到 surface（读自采渲染，验证 wasm 工程串通、不黑屏）；若 effect pass
+    /// 创建失败（effect_passes 空），兜底直接渲染场景到 surface（绝不黑屏）。
     pub fn render_frame(&mut self) {
         let frame = match self.surface.get_current_texture() {
             Ok(f) => f,
@@ -546,11 +631,40 @@ impl Renderer {
             (CameraMode::Cover, Some([r, g, b])) => wgpu::Color { r: r as f64, g: g as f64, b: b as f64, a: 1.0 },
             (CameraMode::Cover, None) => wgpu::Color { r: 0.067, g: 0.067, b: 0.078, a: 1.0 },
         };
+
+        if !self.effect_passes.is_empty() {
+            // 效果链透传（Task2 基线）：场景渲染到离屏自采，再透传输出到 surface。
+            let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("effect-input-bg"),
+                layout: &self.effect_layout,
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&self.offscreen_view) },
+                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.offscreen_sampler) },
+                ],
+            });
+            // 渲染场景到离屏（读自采渲染）
+            self.draw_scene_into(&mut encoder, &self.offscreen_view, clear);
+            // 透传离屏 → surface
+            let pass = &mut self.effect_passes[0];
+            pass.render(&mut encoder, &self.offscreen_view, &view, &bg);
+        } else {
+            // 兜底：无 effect pass（创建失败），直接渲染场景到 surface（不黑屏）
+            self.draw_scene_into(&mut encoder, &view, clear);
+        }
+        self.queue.submit([encoder.finish()]);
+        frame.present();
+    }
+
+    /// 把场景（图片平面 + 粒子层）渲染到 `target` 视图。Task2 抽出供效果链透传的离屏自采
+    /// 与兜底直接 surface 渲染复用。`clear` 为 scene pass 的清屏色（contain 透明 / cover 底色）。
+    /// 只读借用（图片/粒子渲染不改内部状态；图片 uniform 已在 render_frame 提前更新）。
+    #[cfg(feature = "render")]
+    fn draw_scene_into(&self, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView, clear: wgpu::Color) {
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("scene"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
+                    view: target,
                     resolve_target: None,
                     ops: wgpu::Operations { load: wgpu::LoadOp::Clear(clear), store: wgpu::StoreOp::Store },
                 })],
@@ -568,10 +682,8 @@ impl Renderer {
         }
         // 粒子层（加法混合叠加在图片上；多粒子系统逐个渲染）
         for p in &self.particle_passes {
-            p.render(&mut encoder, &view);
+            p.render(encoder, target);
         }
-        self.queue.submit([encoder.finish()]);
-        frame.present();
     }
 
     /// contain/cover 相机范围（场景完整可见或铺满）——对齐 camera::contain_range/cover_range。
