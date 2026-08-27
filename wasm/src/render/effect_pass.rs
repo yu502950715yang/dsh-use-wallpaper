@@ -32,7 +32,7 @@ impl EffectPass {
     ///
     /// 反例：只构建管线一次（不每帧编译 naga）。WGSL 校验（复用 Task1 的 `effect::validate_wgsl`）
     /// 失败或管线创建失败 → 返回 `Err`，调用方跳过该 pass（不黑屏兜底）。
-    pub fn new(
+    pub async fn new(
         device: &wgpu::Device,
         wgsl: &str,
         format: wgpu::TextureFormat,
@@ -42,6 +42,12 @@ impl EffectPass {
         if !crate::render::effect::validate_wgsl(wgsl) {
             return Err(format!("effect WGSL 校验失败：非合法 WGSL"));
         }
+        // Fix（reviewer#1）：wgpu 的 create_shader_module / create_render_pipeline 为同步 API，
+        // 创建期校验错误走 async error scope（不直接返回 Result）。用 push_error_scope(
+        // Validation) 包裹创建调用，pop_error_scope().await 把校验错误带回 Err——否则 `new`
+        // 会拿到校验失败的坏管线却不报错，破坏「绝不白屏」。注意：new 原为同步 fn，改为
+        // async 以便 await pop_error_scope（wgpu 24 的 pop_error_scope 返回 future）。
+        device.push_error_scope(wgpu::ErrorFilter::Validation);
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("effect_passthrough.wgsl"),
             source: wgpu::ShaderSource::Wgsl(wgsl.into()),
@@ -81,19 +87,25 @@ impl EffectPass {
             multiview: None,
             cache: None,
         });
+        // 收取 push_error_scope 期间积累的 wgpu 校验错误（create_shader_module /
+        // create_render_pipeline 的创建期校验错误经 error scope 异步上报）。有错则整体拒绝，
+        // 让调用方（Renderer::render_frame）跳过该 pass 走兜底（绝不黑屏）。
+        if let Some(err) = device.pop_error_scope().await {
+            return Err(format!("effect 管线创建校验失败：{err:?}"));
+        }
         Ok(EffectPass { pipeline, layout })
     }
 
     /// 渲染全屏 quad：把 `bind_group`（绑定输入纹理 view + sampler，由调用方创建并传入，
     /// 见结构体头部注释）透传采样到 `output_view`（render pass 的 color attachment）。
     ///
-    /// `_input_view` 为当前输入纹理的视图——透传基线里输入纹理已由调用方绑定进
-    /// `bind_group`，故此处不直接使用（保留以对齐 brief 签名；后续效果链层若需在 pass
-    /// 内部创建 bind group 可再基于它）。
+    /// 输入纹理由调用方**经 `bind_group` 单一路径**传入；`input_view`（`_` 占位）仅为对齐
+    /// brief 骨架签名保留，无实际用途——避免「bind_group 与 input_view 双路径指定输入」
+    /// 的歧义。若后续效果链层需在 pass 内部创建 bind group，可改为基于它构建。
     pub fn render(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
-        _input_view: &wgpu::TextureView,
+        _: &wgpu::TextureView,
         output_view: &wgpu::TextureView,
         bind_group: &wgpu::BindGroup,
     ) {

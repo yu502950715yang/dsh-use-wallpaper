@@ -141,9 +141,11 @@ pub struct Renderer {
     effect_layout: wgpu::BindGroupLayout,
     /// 离屏"自采"纹理：场景先渲染到离屏，透传 pass 采样并输出到 surface（读自采渲染，
     /// 验证 wasm 工程串通、不黑屏）。尺寸/格式与 surface 一致，避免 surface 当帧自依赖。
-    offscreen_tex: wgpu::Texture,
-    offscreen_view: wgpu::TextureView,
-    offscreen_sampler: wgpu::Sampler,
+    /// **仅当 effect_passes 非空（effect pass 创建成功）时才分配**——Task2 修复：
+    /// 原实现无条件分配，effect 失败时这些资源闲置浪费。Option 表达「可能未分配」。
+    offscreen_tex: Option<wgpu::Texture>,
+    offscreen_view: Option<wgpu::TextureView>,
+    offscreen_sampler: Option<wgpu::Sampler>,
 }
 
 #[cfg(feature = "render")]
@@ -301,8 +303,8 @@ impl Renderer {
         // 透传测试 pass：创建失败 => EffectPass::new 返回 Err => effect_passes 留空，
         // render_frame 跳过该 pass 走兜底（直接渲染 surface），绝不黑屏。
         let mut effect_passes = Vec::new();
-        let effect_wgsl = include_str!("../shader/effect_passthrough.wgsl");
-        match effect_pass::EffectPass::new(&device, effect_wgsl, format, effect_layout.clone()) {
+        let effect_wgsl = include_str!("../shaders/effect_passthrough.wgsl");
+        match effect_pass::EffectPass::new(&device, effect_wgsl, format, effect_layout.clone()).await {
             Ok(p) => {
                 web_sys::console::log_1(&wasm_bindgen::JsValue::from_str("[wasm] effect pass 创建成功"));
                 effect_passes.push(p);
@@ -313,23 +315,29 @@ impl Renderer {
         }
         // 离屏"自采"纹理（尺寸/格式与 surface 一致）：场景先渲染到离屏，再由透传 pass
         // 采样输出到 surface——读自采渲染验证 wasm 工程串通，避免 surface 当帧自依赖。
-        let offscreen_tex = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("effect-offscreen"),
-            size: wgpu::Extent3d { width: config.width, height: config.height, depth_or_array_layers: 1 },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let offscreen_view = offscreen_tex.create_view(&wgpu::TextureViewDescriptor::default());
-        let offscreen_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("effect-offscreen-sampler"),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
+        // Fix：仅当 effect pass 创建成功（effect_passes 非空）才分配，effect 失败时不闲置。
+        let (offscreen_tex, offscreen_view, offscreen_sampler) = if !effect_passes.is_empty() {
+            let tex = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("effect-offscreen"),
+                size: wgpu::Extent3d { width: config.width, height: config.height, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+            let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("effect-offscreen-sampler"),
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                ..Default::default()
+            });
+            (Some(tex), Some(view), Some(sampler))
+        } else {
+            (None, None, None)
+        };
         Ok(Renderer {
             device, queue, config, surface, width, height,
             particle_passes: Vec::new(),
@@ -371,18 +379,24 @@ impl Renderer {
         self.config.width = self.width;
         self.config.height = self.height;
         self.surface.configure(&self.device, &self.config);
-        // 重建离屏自采纹理（尺寸与 surface 一致；Task2 效果管线输入需要，防旧尺寸失配）
-        self.offscreen_tex = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("effect-offscreen"),
-            size: wgpu::Extent3d { width: self.width, height: self.height, depth_or_array_layers: 1 },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: self.config.format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        self.offscreen_view = self.offscreen_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        // 重建离屏自采纹理（尺寸与 surface 一致；Task2 效果管线输入需要，防旧尺寸失配）。
+        // Fix：仅当 effect pass 存在（effect_passes 非空）才重建，否则保持 None（不闲置）。
+        // offscreen_sampler 不依赖尺寸，无需重建。
+        if !self.effect_passes.is_empty() {
+            self.offscreen_tex = Some(self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("effect-offscreen"),
+                size: wgpu::Extent3d { width: self.width, height: self.height, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: self.config.format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            }));
+            self.offscreen_view = self.offscreen_tex
+                .as_ref()
+                .map(|t| t.create_view(&wgpu::TextureViewDescriptor::default()));
+        }
     }
 
     /// 装载粒子规格并构建 GPU 粒子管线（**追加**而非覆盖——Task 9 修复：
@@ -634,19 +648,22 @@ impl Renderer {
 
         if !self.effect_passes.is_empty() {
             // 效果链透传（Task2 基线）：场景渲染到离屏自采，再透传输出到 surface。
+            // effect_passes 非空 => 离屏资源已在 new 时分配，unwrap 安全。
+            let offscreen_view = self.offscreen_view.as_ref().expect("effect pass 存在时离屏纹理已分配");
+            let offscreen_sampler = self.offscreen_sampler.as_ref().expect("effect pass 存在时离屏采样器已分配");
             let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("effect-input-bg"),
                 layout: &self.effect_layout,
                 entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&self.offscreen_view) },
-                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.offscreen_sampler) },
+                    wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(offscreen_view) },
+                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(offscreen_sampler) },
                 ],
             });
             // 渲染场景到离屏（读自采渲染）
-            self.draw_scene_into(&mut encoder, &self.offscreen_view, clear);
+            self.draw_scene_into(&mut encoder, offscreen_view, clear);
             // 透传离屏 → surface
             let pass = &mut self.effect_passes[0];
-            pass.render(&mut encoder, &self.offscreen_view, &view, &bg);
+            pass.render(&mut encoder, offscreen_view, &view, &bg);
         } else {
             // 兜底：无 effect pass（创建失败），直接渲染场景到 surface（不黑屏）
             self.draw_scene_into(&mut encoder, &view, clear);
