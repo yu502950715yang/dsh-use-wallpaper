@@ -32,3 +32,26 @@ fn apply_update_replaces_alpha_brightness() {
     assert_eq!(s.tint_alpha, Some(0.3));
     assert_eq!(s.tint_brightness, Some(1.5));
 }
+
+// =====================================================================
+// M3/Task5：对象内容 quad 渲染到对象 RT 的 NDC uniform（content_ndc，native 纯函数）
+// =====================================================================
+
+use we_scene_wasm::render::content_ndc;
+
+/// 内容在局部空间中心原点 → NDC center=(0,0)；world==rt（未钳制）→ half=1（内容填满 RT）。
+#[test]
+fn content_ndc_centered_at_origin() {
+    let u = content_ndc([100.0, 100.0], 100.0, 100.0, [1.0, 1.0, 1.0, 1.0]);
+    assert_eq!((u.center_x, u.center_y), (0.0, 0.0));
+    assert!((u.half_w - 1.0).abs() < 1e-6);
+    assert!((u.half_h - 1.0).abs() < 1e-6);
+}
+
+/// 负 scale → half 保留符号（镜像由内容 RT 承载，见 task-4.4「镜像活在 mesh/RT 内容」）。
+#[test]
+fn content_ndc_negative_scale_mirrors() {
+    let u = content_ndc([100.0, -100.0], 100.0, 100.0, [1.0, 1.0, 1.0, 1.0]);
+    assert!((u.half_w - 1.0).abs() < 1e-6);
+    assert!((u.half_h + 1.0).abs() < 1e-6);
+}

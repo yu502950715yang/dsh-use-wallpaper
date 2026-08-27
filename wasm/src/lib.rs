@@ -132,6 +132,33 @@ impl WeScene {
         self.renderer.update_image(asset_id, o, s, alpha, brightness);
     }
 
+    /// 登记一个对象级效果链条目（M3/Task5）。对象内容（图片）需**先**经 `load_image` 上传；
+    /// 本方法把该对象从共享场景路径移除，改为走「内容 → 对象RT → 效果链 → 合成quad」。
+    /// `origin` = 对象中心（WE 坐标，已 applyAlignment）；`world_size` = size×scale（带符号）；
+    /// `rt_size` = 钳制后对象 RT 分辨率（局部相机范围）；`chain_desc` = 效果链 pass 描述 JSON
+    /// （编译链未集成 → wasm 用内置演示 pass 兜底，见 task-5-brief controller 裁决）。
+    /// 找不到内容 / 效果链失败 → 返回 Ok（零副作用，对象回退共享路径 / 采样内容，绝不白屏）。
+    pub async fn set_object_effect(
+        &mut self,
+        obj_id: u32,
+        origin: Vec<f32>,
+        world_size: Vec<f32>,
+        rt_size: Vec<f32>,
+        chain_desc: &str,
+    ) -> Result<(), JsValue> {
+        self.renderer
+            .set_object_effect(obj_id, origin, world_size, rt_size, chain_desc)
+            .await
+            .map_err(|e| JsValue::from_str(&e))
+    }
+
+    /// 每帧驱动所有对象级效果链（M3/Task5）：对象内容 → 对象RT → 效果链 ping-pong → 输出RT。
+    /// 由 `render`（render_frame）每帧开头自动调用；本导出供 JS 侧显式驱动（幂等，渲染主路径
+    /// 走 `scene.render()`）。
+    pub fn render_object_effects(&mut self) {
+        self.renderer.render_object_effects();
+    }
+
     /// 装载粒子规格（emitter[0] + initializer + operator 解析）并构建 GPU 粒子管线。
     /// tex_bytes 为粒子纹理（TEXV0005，2026-08-21 方案 A：WE 内置 fog/halo 纹理）；
     /// 空字节 = 无纹理（纯色圆盘兜底，向后兼容旧调用）。

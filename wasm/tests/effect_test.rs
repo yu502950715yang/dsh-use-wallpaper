@@ -83,3 +83,48 @@ fn uv_window_unclamped_axis_full() {
     assert!((s - 0.18).abs() < 1e-6);
     assert!((e - 0.82).abs() < 1e-6);
 }
+
+/// Milestone 3 / Task5：对象合成 quad 的 NDC/UV 窗口 uniform（native 纯函数）。
+/// 未钳制对象（world == rt，场景居中）→ 中心 (0,0)、半宽 = world/view、UV 全窗。
+#[test]
+fn composite_ndc_uniform_centered_unclamped() {
+    let u = effect::composite_ndc_uniform(
+        [50.0, 50.0, 0.0], [100.0, 100.0], [100.0, 100.0],
+        100.0, 100.0, 100.0, 100.0,
+    );
+    assert!((u.center_x).abs() < 1e-6);
+    assert!((u.center_y).abs() < 1e-6);
+    assert!((u.half_w - 1.0).abs() < 1e-6);
+    assert!((u.half_h - 1.0).abs() < 1e-6);
+    assert!((u.uv_w0 - 0.0).abs() < 1e-6);
+    assert!((u.uv_w1 - 1.0).abs() < 1e-6);
+    assert!((u.uv_h0 - 0.0).abs() < 1e-6);
+    assert!((u.uv_h1 - 1.0).abs() < 1e-6);
+}
+
+/// Milestone 3 / Task5：钳制轴（world > rt）开启 UV 窗口（居中开窗），
+/// 但 quad 帧尺寸仍取未钳制幅值（half = world/view）。
+#[test]
+fn composite_ndc_uniform_clamped_opens_uv_window() {
+    let u = effect::composite_ndc_uniform(
+        [50.0, 50.0, 0.0], [100.0, 100.0], [64.0, 64.0],
+        100.0, 100.0, 100.0, 100.0,
+    );
+    assert!((u.uv_w0 - 0.18).abs() < 1e-6);
+    assert!((u.uv_w1 - 0.82).abs() < 1e-6);
+    assert!((u.uv_h0 - 0.18).abs() < 1e-6);
+    assert!((u.uv_h1 - 0.82).abs() < 1e-6);
+    assert!((u.half_w - 1.0).abs() < 1e-6);
+    assert!((u.half_h - 1.0).abs() < 1e-6);
+}
+
+/// Milestone 3 / Task5：坐标不翻转 y——对象中心在场景上部 → client_y 为正
+/// （对齐 `(oy - vh/2)` 映射，y 向上，不做镜像）。
+#[test]
+fn composite_ndc_uniform_no_y_flip() {
+    let u = effect::composite_ndc_uniform(
+        [50.0, 75.0, 0.0], [10.0, 10.0], [10.0, 10.0],
+        100.0, 100.0, 100.0, 100.0,
+    );
+    assert!((u.center_y - 0.5).abs() < 1e-6);
+}

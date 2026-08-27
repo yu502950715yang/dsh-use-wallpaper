@@ -103,6 +103,65 @@ pub fn uv_window(unclamped: f32, clamped: f32) -> (f32, f32) {
     (start, 1.0 - start)
 }
 
+// =====================================================================
+// Task5：对象合成 quad 的 NDC/UV 窗口 uniform（native 纯函数，非 render 门控）
+// =====================================================================
+
+/// 对象合成 quad 的 CPU 侧 uniform（`wasm/src/shaders/composite.wgsl` 的
+/// CompositeUniform，32 字节 = 8×f32）。NDC 中心/半宽决定 quad 在 surface 上的
+/// 位置与大小；UV 窗口（每轴 start/end）把采样从 RT [0,1] 展开到窗口外侧
+/// （对齐 JS `applyUvWindow`：UV' = (uv - start) / (end - start)）。
+/// 布局：4×f32（center/half）+ 4×f32（uv 窗口），WGSL 无额外对齐填充。
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct CompositeUniform {
+    pub center_x: f32,
+    pub center_y: f32,
+    pub half_w: f32,
+    pub half_h: f32,
+    pub uv_w0: f32,
+    pub uv_w1: f32,
+    pub uv_h0: f32,
+    pub uv_h1: f32,
+}
+
+/// 对象合成 quad 的 NDC/UV 窗口 uniform（Task5，CPU 算，native 可测）。
+///
+/// 对齐 JS 蓝本（scene-renderer.ts `createObjectEntry`/`createCompositeGeometry`）：
+/// - quad 帧尺寸 = **未钳制幅值** `|world_size|`（镜像活在对象 RT 内容，quad 只显示
+///   帧——task-4.4 报告的「相机范围与 quad 帧用幅值」职责分离）；半宽 NDC =
+///   `|world|/view`（`(|world|/2)/(view/2)`）；
+/// - 中心用 `coords::image_center_ndc`（对象中心 `(ox-vw/2, oy-vh/2)` 映射，**不翻转 y**）；
+/// - UV 窗口 = `uv_window(未钳制|world|, 钳制 rt)`：未钳制轴 → `[0,1]`；钳制轴居中开窗。
+///
+/// `origin` 为对象中心（WE 坐标，已 applyAlignment 换算中心）；`world_size` 为
+/// `size×scale`（合成 quad 内部取幅值）；`rt_size` 为钳制后对象 RT 分辨率（局部相机范围）。
+pub fn composite_ndc_uniform(
+    origin: [f32; 3],
+    world_size: [f32; 2],
+    rt_size: [f32; 2],
+    scene_w: f32,
+    scene_h: f32,
+    view_w: f32,
+    view_h: f32,
+) -> CompositeUniform {
+    let w_abs = world_size[0].abs();
+    let h_abs = world_size[1].abs();
+    let (cx, cy) = crate::coords::image_center_ndc(origin, scene_w, scene_h, view_w, view_h);
+    let (uw0, uw1) = uv_window(w_abs, rt_size[0]);
+    let (uh0, uh1) = uv_window(h_abs, rt_size[1]);
+    CompositeUniform {
+        center_x: cx,
+        center_y: cy,
+        half_w: w_abs / view_w,
+        half_h: h_abs / view_h,
+        uv_w0: uw0,
+        uv_w1: uw1,
+        uv_h0: uh0,
+        uv_h1: uh1,
+    }
+}
+
 /// 纹理槽引用（MVP）。`External(u32)` 索引到外部纹理表（由对象级/glsl-to-naga 层解析）。
 /// M2 多数效果 pass 只使用 g_Texture0，纹理槽多为 None——MVP 先支持 g_Texture0 + 可选槽。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

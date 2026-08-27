@@ -47,6 +47,25 @@ void main() {
     o_Color = vec4(r, g, b, 1.0);
 }"#;
 
+/// 对象级效果链的 pass 描述（M3/Task5）。编译链未集成（task-5-brief controller 裁决）：
+/// 用**内置演示效果 pass**（g_Time 程序化，naga glsl-in 可编译——不采样 g_Texture0，因 naga
+/// 24 glsl frontend 对 sampler2D NotImplemented，见 progress.md 卡点）串通
+/// 「对象 RT → 效果链 → 合成 quad → surface」链路。真实 WE shader（含 sampler2D 采样）待
+/// 联网集成 spirv-webgpu-transform 后，把其 WGSL 喂入同一管线（本函数只产出 pass 描述，
+/// 与编译链解耦）。`chain_desc` 为将来 pass 描述 JSON；当前阶段忽略（用内置演示 pass）。
+/// 注意：演示 shader 不采样内容纹理，故对象内容会被程序化动画**替代**（架构验证用；
+/// 真实 shader 采样 g_Texture0 后内容保留）。
+#[cfg(feature = "render")]
+fn demo_object_effect_passes(_chain_desc: &str) -> Vec<effect::EffectPassDesc> {
+    vec![effect::EffectPassDesc {
+        vert_glsl: DEMO_EFFECT_VERT_GLSL.to_string(),
+        frag_glsl: DEMO_EFFECT_FRAG_GLSL.to_string(),
+        uniforms: vec![],
+        texture_slots: vec![],
+        blend_mode: "normal".to_string(),
+    }]
+}
+
 /// 场景图片对象：纹理 + 变换 + GPU 资源（Task 9 实测修复：render_frame 原只渲染
 /// 粒子、图片平面未绘制 → 全库画面偏暗；本结构承载图片 quad 渲染所需资源）。
 #[cfg(feature = "render")]
@@ -117,6 +136,29 @@ pub struct ObjectState {
     pub tint_brightness: Option<f32>,
 }
 
+/// 对象内容 quad 渲染到**对象 RT** 的 NDC uniform（M3/Task5，native 可测）。
+///
+/// 对象级路径里，对象内容（图片/内容 mesh）在局部空间**中心原点**（对象中心 = 局部原点），
+/// 局部正交相机范围 = 对象 RT 分辨率（rt 尺寸，1:1 像素）。故：
+/// - NDC center = (0,0)（内容中心即局部原点，非场景 origin——场景 origin 在合成 quad 定位用）；
+/// - NDC half = world/rt（**带符号**：负 scale 的镜像由内容 RT 承载，task-4.4「相机范围与
+///   quad 帧用幅值、镜像活在 mesh/RT 内容」的职责分离——内容 half 保留符号产生镜像，合成
+///   quad 帧用幅值）；
+/// - tint = image_tint（对象 color/alpha/brightness 调制在**源内容**施加，合成 quad 不再二次调制）。
+/// 与 `coords::image_half_ndc` 不同：这里 view 用对象 RT 尺寸（局部相机范围内），而非 surface 相机范围。
+pub fn content_ndc(world_size: [f32; 2], rt_w: f32, rt_h: f32, tint: [f32; 4]) -> ImageUniform {
+    ImageUniform {
+        center_x: 0.0,
+        center_y: 0.0,
+        half_w: world_size[0] / rt_w,
+        half_h: world_size[1] / rt_h,
+        tint_r: tint[0],
+        tint_g: tint[1],
+        tint_b: tint[2],
+        tint_a: tint[3],
+    }
+}
+
 /// 把一次动态更新应用到对象状态（None = 保持现状）。
 /// Renderer::update_image 对每个匹配的 SceneImage 做同样字段更新。
 /// 拆成纯函数以便 native 测试（SceneImage 含 wgpu 类型，native 不可构造）。
@@ -138,6 +180,45 @@ pub fn apply_image_update(
 #[cfg(feature = "render")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CameraMode { Contain, Cover }
+
+/// 对象级效果链的合成 quad GPU 资源（M3/Task5）。pipeline/layout 由 Renderer 共享
+/// （`composite_pipeline`/`composite_layout`），本结构只存每对象各异的
+/// uniform buffer（每帧更新 NDC/UV 窗口）+ 绑定了 out_view 的 bind group。
+#[cfg(feature = "render")]
+pub struct CompositeQuad {
+    pub uniform_buffer: wgpu::Buffer,
+    pub bind_group: wgpu::BindGroup,
+}
+
+/// 对象级效果链条目（M3/Task5）：每带效果对象一个。流水线：
+/// 内容 → 对象 RT（content_view）→ 效果链 ping-pong（effect_chain，写 out_view）→
+/// 合成 quad（composite，采样 out_view）→ surface。
+/// 绝不白屏：效果链创建失败（effect_chain = None）时，`render_object_effects` 把内容
+/// blit 到 out_view，合成 quad 采样原始内容（对象正常显示、无效果）。
+#[cfg(feature = "render")]
+pub struct ObjectEffectEntry {
+    pub obj_id: u32,
+    /// 对象内容（图片：纹理 + bind group + uniform buffer + 变换/tint），内容渲染进 RT 用。
+    pub image: SceneImage,
+    /// 对象内容 RT（image_pipeline 渲染内容的目标；效果链首 pass 的输入）。内容 RT 需
+    /// COPY_SRC 供无链时 blit 到 out。
+    pub content_tex: wgpu::Texture,
+    pub content_view: wgpu::TextureView,
+    /// 效果输出 RT（效果链末 pass 写 / 无链时 blit 内容；合成 quad 采样它）。out 需
+    /// COPY_DST 供 blit + RENDER_ATTACHMENT 供效果链末 pass 写 + TEXTURE_BINDING 供合成 quad 采样。
+    pub out_tex: wgpu::Texture,
+    pub out_view: wgpu::TextureView,
+    /// 局部正交相机范围 = 对象 RT 分辨率（1:1 像素，中心原点）；内容渲染 half 的分母（rt 尺寸）。
+    pub camera_range: (f32, f32),
+    /// 世界尺寸（size×scale，带符号——镜像由内容 RT 承载）。
+    pub world_size: [f32; 2],
+    /// 对象中心（WE 坐标，已 applyAlignment 换算中心；合成 quad NDC 定位用，不翻转 y）。
+    pub origin: [f32; 3],
+    /// 效果链 ping-pong 执行器（对象 RT 尺寸上；None = 创建失败 → 合成 quad 采样内容）。
+    pub effect_chain: Option<effect::EffectChain>,
+    /// 合成 quad（uniform buffer + bind group；pipeline/layout 共享）。
+    pub composite: CompositeQuad,
+}
 
 #[cfg(feature = "render")]
 pub struct Renderer {
@@ -179,6 +260,13 @@ pub struct Renderer {
     /// g_Texture0 采样）待 naga sampler2D 支持后接入（本 MVP 未编采样——见报告疑虑）。
     /// `None` = 创建失败（调用方回退 Task2 透传 / 直接渲染 surface，不黑屏）。
     effect_chain: Option<effect::EffectChain>,
+    /// 对象级效果链条目（M3/Task5）：每带效果对象一个。`set_object_effect` 登记，
+    /// `render_object_effects` 每帧驱动（内容→对象RT→效果链），`render_frame` 合成 quad 贴 surface。
+    object_effects: Vec<ObjectEffectEntry>,
+    /// 对象合成 quad 管线（wasm 内置 WGSL composite.wgsl；pipeline/layout 共享，
+    /// uniform/bind group 每对象各存于 ObjectEffectEntry.composite）。
+    composite_pipeline: wgpu::RenderPipeline,
+    composite_layout: wgpu::BindGroupLayout,
     /// 帧时间（秒，从 0 起；step(dt) 累计），供效果链 g_Time 每帧更新。
     time: f32,
 }
@@ -315,6 +403,82 @@ impl Renderer {
             multiview: None,
             cache: None,
         });
+        // == 对象合成 quad 管线（M3/Task5，wasm 内置 WGSL composite.wgsl）==
+        // bind group layout：binding 0 = CompositeUniform（vertex 读 NDC 中心/半宽 + UV 窗口），
+        // binding 1 = texture_2d（采样对象 RT/效果输出），binding 2 = sampler（fragment）。
+        // vs 用 vertex_index 推导角点（无顶点缓冲，同 image.wgsl 模式）；alpha 混合（透明边缘
+        // 露背景层，对齐 image 管线）。pipeline/layout 共享，uniform/bind group 每对象各存。
+        let composite_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("composite-bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        let composite_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("composite-pl"),
+            bind_group_layouts: &[&composite_bgl],
+            push_constant_ranges: &[],
+        });
+        let composite_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("composite.wgsl"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/composite.wgsl").into()),
+        });
+        let composite_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("composite-render"),
+            layout: Some(&composite_pl),
+            vertex: wgpu::VertexState {
+                module: &composite_shader,
+                entry_point: Some("vs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                buffers: &[],
+            },
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleStrip,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &composite_shader,
+                entry_point: Some("fs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: Some(wgpu::BlendState {
+                        color: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::SrcAlpha,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                        alpha: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                    }),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview: None,
+            cache: None,
+        });
         // == 效果链全屏 quad 管线基线（Task2）==
         // `@group(0)` bind group layout：binding 0 = texture_2d, binding 1 = sampler
         // （对齐 effect_passthrough.wgsl 的 @group(0) @binding(0/1)；效果链各层复用）。
@@ -413,6 +577,9 @@ impl Renderer {
             offscreen_view,
             offscreen_sampler,
             effect_chain,
+            object_effects: Vec::new(),
+            composite_pipeline,
+            composite_layout: composite_bgl,
             time: 0.0,
         })
     }
@@ -667,6 +834,225 @@ impl Renderer {
             if let Some(a) = alpha { img.tint_alpha = Some(a); }
             if let Some(b) = brightness { img.tint_brightness = Some(b); }
         }
+        // 对象级效果链条目（M3/Task5）：带效果对象的内容已从 images 移到 object_effects，
+        // 脚本灌回（T5）需同步更新其 SceneImage——否则对象效果路径的对象不动画。
+        if let Some(entry) = self.object_effects.iter_mut().find(|e| e.obj_id == asset_id) {
+            let img = &mut entry.image;
+            if let Some(o) = origin { img.origin = o; }
+            if let Some(s) = scale { img.scale = s; }
+            if let Some(a) = alpha { img.tint_alpha = Some(a); }
+            if let Some(b) = brightness { img.tint_brightness = Some(b); }
+        }
+    }
+
+    /// 登记一个对象级效果链条目（M3/Task5）。被登记对象走「内容 → 对象 RT → 效果链 → 合成 quad」。
+    ///
+    /// 对象内容（图片）需**先**经 `set_image`（load_image）上传——本方法据 `obj_id` 找到对应
+    /// `SceneImage`，从共享 `images` 列表移除（不再直接渲染 surface），并建立对象内容 RT /
+    /// 效果输出 RT / 效果链（演示 pass）/ 合成 quad。
+    ///
+    /// - `origin`：对象中心（WE 坐标，已 applyAlignment 换算中心；合成 quad NDC 定位，不翻转 y）。
+    /// - `world_size`：`size×scale`（带符号——镜像由内容 RT 承载）。
+    /// - `rt_size`：`object_camera_range` 钳制后分辨率（局部正交相机范围 = RT 尺寸，1:1 像素）。
+    /// - `chain_desc`：当前阶段效果链 pass 描述（JSON）。**编译链未集成**（task-5-brief
+    ///   controller 裁决），本方法用内置**演示效果 pass**（g_Time 程序化，naga glsl-in 可编译）
+    ///   串通对象级管线；待联网集成真实 shader 后，把其 WGSL 喂入同一管线即可（架构通用）。
+    ///
+    /// 绝不白屏：找不到对象内容 / 效果链创建失败 → 不崩溃（对象回退共享路径 / 合成 quad
+    /// 采样内容纹理），本方法返回 `Ok`（零副作用），调用方继续渲染。
+    pub async fn set_object_effect(
+        &mut self,
+        obj_id: u32,
+        origin: Vec<f32>,
+        world_size: Vec<f32>,
+        rt_size: Vec<f32>,
+        chain_desc: &str,
+    ) -> Result<(), String> {
+        // ① 找已上传的对象内容（SceneImage）。找不到 → 回退共享路径（零副作用，绝不白屏）。
+        let Some(idx) = self.images.iter().position(|im| im.asset_id == obj_id) else {
+            web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(&format!(
+                "[wasm] set_object_effect {obj_id}: 无已上传内容（SceneImage 缺失），回退共享路径"
+            )));
+            return Ok(());
+        };
+        let image = self.images.remove(idx);
+        // ② 世界尺寸（带符号）与对象 RT 尺寸：JS 传参优先；不完整则从对象内容推导
+        //   （size 优先、缺省纹理宽高 × scale，对齐 set_image 的 world 尺寸语义——无 size
+        //   对象（如粒子）不退化到 1px，与 objectCameraRange 的下钳制 1 区分：RT 钳 1 是保护，
+        //   world 尺寸仍按内容算）。rt_size 缺省 → object_camera_range（钳制到 OBJECT_RT_MAX）。
+        let (sw, sh) = image.size
+            .map(|s| (s[0], s[1]))
+            .unwrap_or((image.tex_width as f32, image.tex_height as f32));
+        let wsize = if world_size.len() >= 2 {
+            [world_size[0], world_size[1]]
+        } else {
+            [sw * image.scale[0], sh * image.scale[1]]
+        };
+        let rt_size_eff = if rt_size.len() >= 2 {
+            [rt_size[0], rt_size[1]]
+        } else {
+            effect::object_camera_range([sw, sh], [image.scale[0], image.scale[1]])
+        };
+        let rt_w = (rt_size_eff[0].max(0.0).round() as u32).clamp(1, effect::OBJECT_RT_MAX as u32);
+        let rt_h = (rt_size_eff[1].max(0.0).round() as u32).clamp(1, effect::OBJECT_RT_MAX as u32);
+        let origin3 = [
+            origin.first().copied().unwrap_or_else(|| image.origin[0]),
+            origin.get(1).copied().unwrap_or_else(|| image.origin[1]),
+            origin.get(2).copied().unwrap_or_else(|| image.origin[2]),
+        ];
+        // ③ 内容 RT（COPY_SRC 供无链时 blit）+ 输出 RT（COPY_DST 供 blit、RENDER_ATTACHMENT
+        //    供效果链末 pass 写、TEXTURE_BINDING 供合成 quad 采样）。
+        let content_tex = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("object-content"),
+            size: wgpu::Extent3d { width: rt_w, height: rt_h, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.config.format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let content_view = content_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let out_tex = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("object-out"),
+            size: wgpu::Extent3d { width: rt_w, height: rt_h, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.config.format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let out_view = out_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        // ④ 效果链（内置演示 pass 兜底；创建失败 → None → 合成 quad 采样内容，绝不白屏）。
+        let chain_passes = demo_object_effect_passes(chain_desc);
+        let effect_chain = match effect::EffectChain::new(
+            &self.device, &self.queue, chain_passes, self.config.format, rt_w, rt_h,
+        ).await {
+            Ok(c) => {
+                web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(&format!(
+                    "[wasm] set_object_effect {obj_id}: 对象效果链创建成功（rt {rt_w}x{rt_h}）"
+                )));
+                Some(c)
+            }
+            Err(e) => {
+                web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(&format!(
+                    "[wasm] set_object_effect {obj_id}: 对象效果链创建失败（{e}），合成 quad 采样内容兜底"
+                )));
+                None
+            }
+        };
+        // ⑤ 合成 quad：sampler + uniform buffer + bind group（复用 shared composite_layout）。
+        let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("object-composite-sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            // UV 窗口外侧超出 [0,1] 夹到边（对齐 JS 默认 ClampToEdgeWrapping，见 composite.wgsl）
+            ..Default::default()
+        });
+        let uniform_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("object-composite-uniform"),
+            size: std::mem::size_of::<effect::CompositeUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("object-composite-bg"),
+            layout: &self.composite_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: uniform_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&out_view) },
+                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&sampler) },
+            ],
+        });
+        let entry = ObjectEffectEntry {
+            obj_id,
+            image,
+            content_tex,
+            content_view,
+            out_tex,
+            out_view,
+            camera_range: (rt_w as f32, rt_h as f32),
+            world_size: wsize,
+            origin: origin3,
+            effect_chain,
+            composite: CompositeQuad { uniform_buffer, bind_group },
+        };
+        // 同 obj_id 替换（重设），保持对象顺序稳定（合成 quad z 层按登记顺序）
+        self.object_effects.retain(|e| e.obj_id != obj_id);
+        self.object_effects.push(entry);
+        Ok(())
+    }
+
+    /// 每帧驱动所有对象级效果链条目（M3/Task5）。对每个条目：
+    /// ① 更新内容 uniform（center=(0,0)，half=world/rt，tint）→ 写到 image.uniform_buffer；
+    /// ② 渲染对象内容到内容 RT（image_pipeline，局部相机中心原点）；
+    /// ③ 效果链 ping-pong（读内容 RT 写输出 RT）；链失败 → blit 内容到输出 RT。
+    /// 合成 quad 贴 surface 由 `render_frame`（每帧先调本方法，再画场景+合成 quad）。
+    /// 本方法的产物 = 每条目的输出 RT（out_view）已含对象内容/效果输出，供合成 quad 采样。
+    ///
+    /// JS 侧每帧顺序：`scene.step(dt); scene.render();`（render 内部先调本方法）。
+    pub fn render_object_effects(&mut self) {
+        if self.object_effects.is_empty() {
+            return;
+        }
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        let time = self.time;
+        for i in 0..self.object_effects.len() {
+            // ① 更新内容 uniform（只读借用 image 字段 + queue 字段）
+            {
+                let (wsize, cam) = (self.object_effects[i].world_size, self.object_effects[i].camera_range);
+                let img = &self.object_effects[i].image;
+                let tint = image_tint(img.tint_color, img.tint_alpha, img.tint_brightness);
+                let u = content_ndc(wsize, cam.0, cam.1, tint);
+                self.queue.write_buffer(&img.uniform_buffer, 0, bytemuck::bytes_of(&u));
+            }
+            // ② 渲染对象内容到内容 RT（局部相机中心原点，uniform 已提前更新）
+            {
+                let img = &self.object_effects[i].image;
+                let cv = self.object_effects[i].content_view.clone();
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("object-content"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &cv,
+                        resolve_target: None,
+                        ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                pass.set_pipeline(&self.image_pipeline);
+                pass.set_bind_group(0, &img.bind_group, &[]);
+                pass.draw(0..4, 0..1);
+            }
+            // ③ 效果链 ping-pong（读内容 RT 写输出 RT）；链失败 → blit 内容到输出 RT
+            {
+                let cv = self.object_effects[i].content_view.clone();
+                let ov = self.object_effects[i].out_view.clone();
+                if let Some(chain) = &mut self.object_effects[i].effect_chain {
+                    chain.render(&mut encoder, &cv, &ov, time);
+                } else {
+                    let (rw, rh) = self.object_effects[i].camera_range;
+                    encoder.copy_texture_to_texture(
+                        wgpu::TexelCopyTextureInfo {
+                            texture: &self.object_effects[i].content_tex,
+                            mip_level: 0,
+                            origin: wgpu::Origin3d::ZERO,
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        wgpu::TexelCopyTextureInfo {
+                            texture: &self.object_effects[i].out_tex,
+                            mip_level: 0,
+                            origin: wgpu::Origin3d::ZERO,
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        wgpu::Extent3d { width: rw as u32, height: rh as u32, depth_or_array_layers: 1 },
+                    );
+                }
+            }
+        }
+        self.queue.submit([encoder.finish()]);
     }
 
     /// GPU 粒子模拟一帧（更新 uniform dt + dispatch compute）。
@@ -683,7 +1069,11 @@ impl Renderer {
     /// Task2 效果链：若 effect_passes 非空，把场景渲染到离屏"自采"纹理，再由透传 pass
     /// 采样输出到 surface（读自采渲染，验证 wasm 工程串通、不黑屏）；若 effect pass
     /// 创建失败（effect_passes 空），兜底直接渲染场景到 surface（绝不黑屏）。
+    /// M3/Task5：开头先驱动对象级效果链（`render_object_effects`：每个带效果对象
+    /// 内容→对象RT→效果链→输出RT），随后场景绘制时合成 quad 采样各输出RT贴回 surface。
     pub fn render_frame(&mut self) {
+        // 对象级效果链：先算好各对象输出 RT（独立 encoder submit），合成 quad 才能采样最新结果。
+        self.render_object_effects();
         let frame = match self.surface.get_current_texture() {
             Ok(f) => f,
             Err(_) => return,
@@ -700,6 +1090,23 @@ impl Renderer {
                 .collect();
             for (img, u) in self.images.iter().zip(&uniforms) {
                 self.queue.write_buffer(&img.uniform_buffer, 0, bytemuck::bytes_of(u));
+            }
+        }
+        // 对象合成 quad uniform（M3/Task5）：NDC 中心/半宽（surface 相机范围）+ UV 窗口展开。
+        // 每帧更新（相机范围/场景尺寸依赖视口），uniform buffer 内容变，bind group 复用。
+        if !self.object_effects.is_empty() {
+            let (fw, fh) = self.camera_range();
+            let mut i = 0;
+            while i < self.object_effects.len() {
+                let entry = &self.object_effects[i];
+                let u = effect::composite_ndc_uniform(
+                    entry.origin,
+                    entry.world_size,
+                    [entry.camera_range.0, entry.camera_range.1],
+                    self.scene_w, self.scene_h, fw, fh,
+                );
+                self.queue.write_buffer(&entry.composite.uniform_buffer, 0, bytemuck::bytes_of(&u));
+                i += 1;
             }
         }
         // 清屏色：contain（前景）透明（透明区域露出背景 blur 层）；cover（背景）用场景
@@ -767,6 +1174,16 @@ impl Renderer {
                 pass.set_pipeline(&self.image_pipeline);
                 pass.set_bind_group(0, &img.bind_group, &[]);
                 pass.draw(0..4, 0..1);
+            }
+            // 对象级效果链合成 quad（M3/Task5）：采样各对象输出 RT，贴回 target。与共享图片
+            // 同 pass、在共享图片之后叠加——z 层近似（对象按登记顺序后画，粒子层仍在最后）。
+            // 合成 quad 的 NDC 位置/UV 窗口已由 render_frame 每帧写入其 uniform buffer。
+            if !self.object_effects.is_empty() {
+                pass.set_pipeline(&self.composite_pipeline);
+                for entry in &self.object_effects {
+                    pass.set_bind_group(0, &entry.composite.bind_group, &[]);
+                    pass.draw(0..4, 0..1);
+                }
             }
             // pass 在块尾 drop，随后粒子渲染开启新的 render pass（不可嵌套）
         }

@@ -1,7 +1,7 @@
 // Rust/WebGPU 渲染器胶水：实现 wallpaper-controller 的 sceneRenderer 接口。
 // 无 WebGPU / wasm 加载失败 → 渲染返回 false，controller 走现有 JS 渲染 / preview 回退链。
 import { parseSceneJson } from './scene-json.js';
-import { resolveTexPath } from './scene-renderer.js';
+import { resolveTexPath, shouldUseObjectPath, objectCameraRange } from './scene-renderer.js';
 import { applyAlignment } from './alignment.js';
 import { resolveVisibility } from './visibility.js';
 import { SceneScriptRuntime } from './scene-script.js';
@@ -34,6 +34,14 @@ export interface WasmScene {
   update_image(assetId: number, origin?: Float32Array, scale?: Float32Array, alpha?: number, brightness?: number): void;
   add_particle(json: string, origin: Float32Array, scale: Float32Array, texBytes: Uint8Array): void;
   step(dt: number): void;
+  // T5（M3/Task5）：对象级效果链。对象内容需先经 load_image 上传；set_object_effect 把它
+  // 从共享场景路径移到对象路径（对象 RT + 局部相机 + 效果链 + 合成 quad）。chainDesc 为
+  // 效果链 pass 描述 JSON——当前编译链未集成（task-5-brief 裁决），wasm 用内置演示 pass 兜底，
+  // JS 只传对象定位/尺寸；返回 Promise（wasm 异步建对象效果链管线）。
+  set_object_effect(objId: number, origin: Float32Array, worldSize: Float32Array, rtSize: Float32Array, chainDesc: string): Promise<void>;
+  // 每帧驱动对象级效果链（对象 RT→效果链→输出 RT）；渲染主路径 scene.render() 已自动调用，
+  // 本导出供显式驱动/兼容。
+  render_object_effects(): void;
   render(): void;
   scene_width(): number;
   scene_height(): number;
@@ -261,6 +269,13 @@ export function createWasmSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneRe
               : obj.origin;
             // T4.3：对象调制输入直传 wasm（空 Float32Array = 缺省 → Rust image_tint
             // 按无调制处理，与 JS 路径 materialModulation 全缺省 {1,1,1,1} 对齐）
+            // 对象级效果链（M3/Task5）：带 effects 的 image 对象走对象路径（对象 RT + 局部相机
+            // + 效果链 + 合成 quad），无效果对象走现有共享场景路径（load_image）。对象内容纹理先
+            // 经 load_image 上传（登记对象内容），再 set_object_effect 把它从共享路径移到对象效果
+            // 路径。chainDesc 当前传空（编译链未集成 → wasm 用内置演示 pass 兜底，见 task-5-brief
+            // 裁决）；world_size/rt_size 在 size 缺省时传空，wasm 侧从内容推导（不退化到 1px）。
+            const isObjectPath = shouldUseObjectPath(obj);
+            const range = size ? objectCameraRange(size, [obj.scale[0], obj.scale[1]]) : null;
             scene.load_image(
               i,
               tex,
@@ -271,6 +286,17 @@ export function createWasmSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneRe
               Float32Array.from(obj.alpha !== undefined ? [obj.alpha] : []),
               Float32Array.from(obj.brightness !== undefined ? [obj.brightness] : []),
             );
+            if (isObjectPath) {
+              const worldSize = size ? [size[0] * obj.scale[0], size[1] * obj.scale[1]] : [];
+              const rtSize = range ? [range.w, range.h] : [];
+              await scene.set_object_effect(
+                i,
+                Float32Array.from(origin),
+                Float32Array.from(worldSize),
+                Float32Array.from(rtSize),
+                '',
+              );
+            }
             rendered++;
             // T5：仅 image 对象且带非空 script 时绑定（text/particle/util 不处理）。
             // 可见性已在上方 resolveVisibility 过滤（不可见对象 skip，不产生 binding——
