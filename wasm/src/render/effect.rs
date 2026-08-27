@@ -485,6 +485,11 @@ mod imp {
         /// 避免 surface 无法 COPY_DST 的 blit 依赖）；read=write.texture 作为下 pass 输入。
         /// 每 pass 绑定 `g_Texture0`（当前读视图）+ 纹理槽 + uniform（g_Time 每帧 host 更新）。
         /// 不 panic；pass 数 0 → no-op。
+        ///
+        /// **性能约束（一次性构建）**：本方法**不做** naga 编译 / shader module / render pipeline
+        /// 创建——它们的构建与对象 RT / ping-pong RT / uniform buffer 均在 `new`（壁纸/对象加载时）
+        /// 一次性完成。每帧仅：① 写 uniform buffer（g_Time 经 host 更新）；② 按当前输入 view
+        /// 建 bind group；③ 提交 render pass。无每帧 shader 编译，理论上帧内零编译开销。
         pub fn render(
             &mut self,
             encoder: &mut wgpu::CommandEncoder,

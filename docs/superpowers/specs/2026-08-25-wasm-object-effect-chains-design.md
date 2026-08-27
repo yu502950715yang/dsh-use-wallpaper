@@ -1,7 +1,10 @@
 # DSH Wallpaper Engine Scene 渲染 — Wasm 对象级效果链（v2）
 
 - 日期：2026-08-25
-- 状态：设计中（用户已确认方向：**对象级效果链移植到 wasm**；技术路线：**方案 A naga 编译**；范围：**通用管线，音频频谱留 v3**）
+- 状态：**架构已实施；编译链（spirv-webgpu-transform）待联网集成，真实效果验证待补齐**。
+  - 已实施：对象级效果链**渲染架构**（对象 RT / 局部相机 / 效果链 ping-pong / 合成 quad UV 窗口 / particle 对象 / SceneScript 并存）。**M5 阶段用内置演示 shader（g_Time 程序化，naga glsl-in 可编译）验证架构**，未接入真实 WE 效果 shader。
+  - 未实施（需联网）：**真实 WE 效果 shader 的 GLSL→WGSL 编译链（spirv-webgpu-transform）**。naga 24/25 glsl frontend 无法编译含 `uniform sampler2D`（`g_Texture0`）的 WE shader（`NotImplemented("variable qualifier")`，见 `progress.md`）；编译链集成后真实效果壁纸的非 STATIC 目标才达成。
+  - 用户已确认方向：**对象级效果链移植到 wasm**；技术路线原为**方案 A naga 编译**，因 naga sampler 卡点改为**编译链（`spirv-webgpu-transform`）待联网集成**；范围：**通用管线，音频频谱留 v3**。
 - 项目根：`E:\code\dsh-use-wallpaper`
 - 关联：
   - `docs/superpowers/specs/2026-08-19-we-scene-wasm-renderer-design.md`（wasm 渲染器 v1 设计，本 spec 为其 v2 延续）

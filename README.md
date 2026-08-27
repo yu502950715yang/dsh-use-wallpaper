@@ -24,7 +24,7 @@
   preview 图回退（Ken Burns 缓慢缩放位移，永不白屏）
   ```
   
-  > 注：历史上曾有 wasm → JS(Three.js) 渲染器 → preview 的三级回退，`createFallbackSceneRenderer` 也保留了 JS 渲染器形参，但**当前策略是强制 wasm**——离开 wasm 后不再降级 JS 渲染器，而是直接回退 preview 图。JS/Three.js 渲染器、对象级效果链（EffectRunner）、音频频谱、text/visualizer/clock 脚本等源码仍保留在仓库并有单测覆盖，但**未接入当前运行时回退链**（为后续独立计划）。
+  > 注：历史上曾有 wasm → JS(Three.js) 渲染器 → preview 的三级回退，`createFallbackSceneRenderer` 也保留了 JS 渲染器形参，但**当前策略是强制 wasm**——离开 wasm 后不再降级 JS 渲染器，而是直接回退 preview 图。JS/Three.js 渲染器、音频频谱、text/visualizer/clock 脚本等源码仍保留在仓库并有单测覆盖，但**未接入当前运行时回退链**（为后续独立计划）。**对象级效果链例外**：wasm 侧对象级效果链**渲染架构已接入**（见下方 Roadmap），接入的是 Rust/wgpu 实现（非 JS 的 EffectRunner）。
 - **坐标对齐**：WE 场景系为左下原点、y 向上；映射 `three.x = we.x - vw/2`、`three.y = we.y - vh/2`（不做 y 翻转）。
 - **容器/纹理解包**：host 侧读取 `PKGV0001` 容器（`pkg-reader.ts`），client/wasm 侧消费 TEXV0005 纹理字节。
 - **粒子纹理**：WE 内置粒子纹理（fog/halo/light_shafts 等）由 `build:client` 从本机 WE 安装目录复制到 `dist/static/ptex-*.tex`，wasm 渲染器优先经 `/wallpapers/static/ptex-*.tex` 读取；`/wallpapers/particle-texture` 路由（从 `weAssetsDir` 实时读取）为备选。两者都不可用时粒子回退为纯色（**绝不白屏**）。
@@ -45,12 +45,13 @@
 
 ## 🗺 接下来（wasm 渲染 Roadmap）
 
-当前主渲染路径为 **wasm（Rust/wgpu）渲染器**，目标是让 scene 壁纸在浏览器里效果**逼近 WE 真机**。以下能力在 JS/Three.js 渲染器中**已有实现并通过单测**，但当前强制 wasm 路径下**尚未接入运行时的 wasm 渲染器**——逐个移植到 Rust/wgpu 是后续的主线：
+当前主渲染路径为 **wasm（Rust/wgpu）渲染器**，目标是让 scene 壁纸在浏览器里效果**逼近 WE 真机**。以下能力在 JS/Three.js 渲染器中**已有实现并通过单测**；到 wasm 侧**对象级效果链渲染架构已接入**（下述第 1 项，编译链待联网集成），其余能力在强制 wasm 路径下**尚未接入运行时的 wasm 渲染器**——逐个移植到 Rust/wgpu 是后续的主线：
 
-### 优先：对象级效果链（含动画效果）
+### 优先：对象级效果链（含动画效果）—— 架构已接入 wasm，编译链待联网集成
 
-- **现状**：带对象级 `effects`（waterwaves / shake / fade / godrays / foliagesway / iris 等后处理 shader）的壁纸，在 wasm 路径下**只渲染静态图片 + 粒子**，效果链动画缺失。
-- **目标**：把 JS 侧 `effect-runner.ts` + `shader/` 方言层（GLSL→WGSL 转换、uniform 绑定、内置头）移植到 Rust/wgpu，实现**对象级**效果链——每个带效果对象独立离屏 RT + 局部正交相机 + post-pass，输出贴回共享场景。
+- **架构现状（已接入）**：对象级效果链**渲染架构**已接入 wasm（Rust/wgpu）——每个带效果对象独立离屏对象 RT + 局部正交相机 + `EffectChain` ping-pong 效果链 post-pass + 合成 quad（UV 窗口）贴回共享场景；`image` 与 `particle` 对象共用对象路径，`SceneScript` 并存驱动。wasm-renderer 已移除 `hasEffectChains` 拦截（强制 wasm，无 JS 降级）。
+- **⚠️ 编译链待联网集成（关键状态）**：真实 WE 效果 shader 的 **GLSL→WGSL 编译链（`spirv-webgpu-transform`）尚未集成**（依赖【需联网环境】，见 `progress.md`）。原因是 naga 24/25 的 glsl frontend **无法编译含 `uniform sampler2D`（即 `g_Texture0`）的 WE shader**（报 `NotImplemented("variable qualifier")`），而几乎全部效果链 shader 都用 `g_Texture0` 采样——方案 A（naga glsl-in 直接编译 WE GLSL）对多数 shader 不成立。当前 **M5 阶段用内置演示 shader（g_Time 程序化，naga glsl-in 可编译）验证对象级管线架构**（对象 RT → 效果链 → 合成 quad 链路走通）。**真实效果壁纸的非 STATIC 目标需编译链集成后达成**；在此之前带效果壁纸仍可能呈现 STATIC 的静态内容（demo pass 会以程序化动画替代内容，见 `mod.rs` 注释）。
+- **接下来（编译链）**：把 JS 侧 `effect-runner.ts` + `shader/` 方言层（GLSL→WGSL 转换、uniform 绑定、内置头）的**编译链**接入（`spirv-webgpu-transform`），把真实 WE shader 编译出的 WGSL 喂入同一 `EffectPassDesc` 管线（架构通用，仅换编译来源）。
 - **对齐语义**：参考现有 JS 侧对象级效果链与 `research/open-wallpaper-engine` 的 Layer/CompositeTarget 语义。
 
 ### 后续（按序）

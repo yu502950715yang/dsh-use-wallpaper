@@ -14,18 +14,18 @@
 
 ### 2.1 双渲染器 + 回退链
 
-scene 壁纸存在**两条渲染路径**，由 `createFallbackSceneRenderer`（`src/client/wasm-renderer.ts`）组合：
+scene 壁纸历史上有两条渲染路径，由 `createFallbackSceneRenderer`（`src/client/wasm-renderer.ts`）组合；**自 2026-08-21 起改为强制 wasm，禁用 JS 渲染器回退**：
 
 ```
-WebGPU 可用 → wasm 渲染器（Rust/wgpu，图片对象 + GPU 粒子）
-  ↓ 无 WebGPU / 加载/初始化/渲染失败 / 检测到对象效果链（resolve false）
-JS 渲染器（Three.js，`scene-renderer.ts`，图片 + 粒子 + 对象级效果链）
-  ↓ 同样失败
-preview 图回退（Ken Burns）
+浏览器支持 WebGPU ──► wasm 渲染器（Rust/wgpu，图片对象 + GPU 粒子 + 对象级效果链架构）
+      │ 无 WebGPU / 加载或初始化失败 / 渲染出 0 个可见对象
+      ▼
+preview 图回退（Ken Burns，永不白屏）
 ```
 
-- **wasm 渲染器**：图片平面 + GPU 粒子模拟，**不含效果链执行器**（waterwaves/shake 等后处理动画只在 JS 侧）。渲染前 `hasEffectChains`（`src/client/wasm-renderer.ts`）检测任一对象 `effects` 非空 → 在绑定 WebGPU 之前返回 false，自动回退 JS 渲染器（Phase 2，wasm 不再把效果链壁纸渲染成 STATIC）。因此 wasm 实际服务**无效果链/纯粒子**壁纸；JS 渲染器按需承担其余壁纸。
-- **JS 渲染器**：Three.js 渲染场景到离屏 RT，效果链为**对象级**（Phase 1/2：每带效果对象独立对象 RT + 局部正交相机 + EffectRunner，输出经合成 quad 贴回共享场景；已替代旧的全屏 ping-pong 展平路径）。
+- **wasm 渲染器**：图片平面 + GPU 粒子模拟 + **对象级效果链渲染架构**（M3/M4/Task5、Task6 接入——每带效果对象独立对象 RT + 局部正交相机 + `EffectChain` ping-pong 效果链 + 合成 quad UV 窗口，见 `wasm/src/render/mod.rs`）。`hasEffectChains` 拦截已移除（`wasm-renderer.ts` 不再因对象 `effects` 非空而返回 false），带效果壁纸一律走 wasm。
+- **⚠️ 编译链未集成（如实状态）**：wasm 侧效果链当前用**内置演示 shader**（g_Time 程序化，naga glsl-in 可编译）验证管线架构；**真实 WE 效果 shader 的 GLSL→WGSL 编译链（`spirv-webgpu-transform`）待联网集成**（naga glsl frontend 无法编译含 `uniform sampler2D` 的 WE shader，见 §5 Ruling 14）。编译链集成后真实效果壁纸的非 STATIC 目标才达成——**在此之前勿宣称真实效果壁纸已非 STATIC**。
+- **JS 渲染器（Three.js，`scene-renderer.ts`）**：源码与单测保留在仓库，但**未被当前运行时回退链采用**（wasm 失败不再降级 JS，直接 preview）。其对象级效果链（对象 RT + 局部正交相机 + EffectRunner）为 wasm 侧实现的语义蓝本。
 - wasm 失败后 fg canvas 已被 WebGPU context 占用 → 组合层**不自行换 canvas**，返回 false 让 controller 重建 canvas 重试（防污染）。
 
 ### 2.2 host / client / shared 分层（`src/` 下）
@@ -109,18 +109,23 @@ research/                     调研产物（gitignore：截图/验证脚本/参
 ## 5. 重要注意事项（踩过的坑）
 
 1. **wasm 产物必须是 `--target web`**。曾用 `--target module`（wasm ESM 静态导入格式、无 `__wbg_init` 默认导出）导致 wasm 静默失败、一直回退 JS 渲染器。`wasm-renderer.ts` 的加载代码期望 `--target web`：动态 import 入口 + 调用默认导出 `mod.default(wasmUrl)` 初始化（不调 init 则 `WeScene.create` 内 wasm 未定义）。
-2. **wasm 渲染器无效果链执行器（已自动回退，不再 STATIC）**：`hasEffectChains` 检测到任一对象 effects 非空 → render() 在绑定 WebGPU 之前返回 false，走 JS 渲染器（对象级效果链，动画完整）。曾长期是已知局限（效果壁纸 wasm 下 STATIC），Phase 2 起已消除。
+2. **wasm 对象级效果链：架构已接入、编译链待联网（勿宣称已非 STATIC）**：wasm 侧对象级效果链**渲染架构**已接入（对象 RT + 局部相机 + `EffectChain` ping-pong + 合成 quad，Task5/6），且 `hasEffectChains` 拦截已移除（强制 wasm，带效果壁纸也走 wasm）。**但真实 WE 效果 shader 的 GLSL→WGSL 编译链（`spirv-webgpu-transform`）未集成**——当前用内置演示 shader 验证架构。**切记**：编译链集成前，真实效果壁纸仍可能呈现 STATIC/程序化内容，不要宣称"真实效果壁纸已非 STATIC"（那是编译链集成后的目标；详见 §5 Ruling 14）。
 3. **对象级效果链（已替代 Ruling 5 全屏展平）**：每带效果对象独立对象 RT + 局部相机 + EffectRunner，输出经合成 quad 贴回共享场景；合成 quad 按 UV 窗口（uvWindow）只采样 RT 可见段（超大对象钳制轴），不再把对象效果整屏生效。旧全屏 flatMap 展平（Orange 持续摇晃+模糊）已废弃。
 4. **坐标方向**：左下原点、y 向上，不做翻转（见 §2.3）。
 5. **场景资源禁止浏览器缓存**：`/wallpapers/scene/<id>/asset` 返回 `Cache-Control: no-store`；改资源后无需清缓存。
 6. **测试沙箱**：vitest/esbuild 依赖 service 子进程（命名管道），在受限沙箱下报 `spawn EPERM`——需完整权限运行。
 7. **`research/` 整体 gitignore**：验证脚本、截图、临时 profile 都不入库。
 8. **粒子 alpha 属性链**：粒子透明度 = 生命周期衰减 × alpha（alpharandom 等随机化经属性链传入），JS ShaderMaterial 与 wasm 粒子层双路径同语义；改粒子 alpha 相关逻辑需双路径验证（`wasm/tests/particle_alpha_tests.rs` + `tests/particles.test.ts`）。
-9. **对象级效果链的已知边界**：visualizer（visible.script 识别）与 text 对象**恒走共享场景路径**（绕过对象 RT/效果链）——它们带 effects 时效果被忽略（`groupEffectsByObject` 跳过 text；visualizer 为脚本控制节点）。注意 `hasEffectChains` 仍会因这类 effects 触发 wasm→JS 回退（仅路径差异，无错误）。
+9. **对象级效果链的已知边界**：visualizer（visible.script 识别）与 text 对象**恒走共享场景路径**（绕过对象 RT/效果链）——它们带 effects 时效果被忽略（`groupEffectsByObject` 跳过 text；visualizer 为脚本控制节点）。`hasEffectChains` 拦截已移除（强制 wasm），这类 effects 不再触发 wasm→JS 回退，而是直接走 wasm（仅路径差异，无错误）。
 10. **wasm 成功路径可见性过滤（已修）**：wasm `render()` 对象循环与 JS 路径一致用 `resolveVisibility` 过滤不可见对象；wasm 无用户属性注入（settings 查询仅 JS 路径有），传 `{}` → user 绑定回退绑定 value（无用户属性存储 = 缺省语义）。
 11. **音频管线（T3.2/T3.4）**：`createAudioAnalyzer` 频谱（freqData Uint8Array）→ EffectRunner 音频 uniform + visualizer 条高；壁纸 sound 数组经 `playWallpaperSound` 接入分析器（fire-and-forget；autoplay 被拦时 context suspended、可视化全零，用户手势后恢复）。无 Web Audio → 全零静音。
 12. **构建顺序（改 Rust 必先 build:wasm 再 build:client）**：build:client 把 `wasm/pkg/` 产物复制到 `dist/static/`（页面加载的就是这份）——Rust 改动后直接 build:client 会复制旧 wasm（行为不更新）；产物缺失时 build:client 报错并提示先 `npm run build:wasm`。
 13. **打 tag / 发布（npm publish）前必须先完整构建产物**（`pnpm run build` + `pnpm run build:client`）：`pnpm run build`（tsc）生成 `lib/`，`build:client`（esbuild）生成 `dist/`，二者对应不同产物。只跑 `build:client`（改 client 后）会更新 `dist/client.js`，但 `lib/client/*`（tsc 产物）仍滞后于 `src/client/*`；发布包 `files` 白名单含 `lib` + `dist`，会用过期的 `lib` 而遗漏源码改动。**2026-08-25 实测**：改 `src/client/styles.ts` 后只跑了 `build:client`，`lib/client/styles.js` 未同步，直到发布前补跑 `pnpm run build` 才一致。故打 tag / 发布前先同步 `lib/` 与 `dist/`，并确认 `git status` 无未提交的构建产物（如本次的 `lib/client/*`）。
+14. **naga sampler2D 卡点 + 编译链（`spirv-webgpu-transform`）方向 + 对象级管线要点（M5/Task7）**：
+    - **naga sampler2D 卡点（`progress.md` 实证）**：naga 24/25 的 **glsl frontend 无法编译含 `uniform sampler2D` 声明的 GLSL**——极简 `#version 450; layout(binding=0) uniform sampler2D t;` 也报 `NotImplemented("variable qualifier")`。而**几乎全部 WE 效果链 shader 都用 `g_Texture0`（sampler2D）采样** →「wasm 里 naga glsl frontend 直接编译 WE GLSL」对多数 shader 不成立。naga 30 有依赖 bug（`naga-types 30.0.1` 缺 `apply_default_interpolation`）且 sampler 问题依旧；naga-wasm 用同一 crate 复现。**glslang（GLSL→SPIR-V）+ naga spv frontend（SPIR-V→WGSL）**链：GLSL→SPIR-V 可行（含 sampler2D），但 naga spv 解析 glslang 的 SPIR-V 报 `InvalidId(14)`（需再调试，不保证）。
+    - **编译链方向（待联网）**：真实 WE 效果 shader 的 **GLSL→WGSL 编译链（`spirv-webgpu-transform`）尚未集成**——依赖【需联网环境】（npm 拉取/集成）。集成后把其 WGSL 喂入 `wasm/src/render/effect.rs` 的 `EffectPassDesc` 管线即可（架构通用，仅换编译来源）。**在此之前的 M5 阶段用内置演示 shader（g_Time 程序化，naga glsl-in 可编译）验证对象级管线架构**；不采样 `g_Texture0`，内容被程序化动画替代（架构验证用，真实 shader 采样后内容保留）。
+    - **对象级管线要点**（`wasm/src/render/mod.rs` `Renderer`）：每带效果对象一条 `ObjectEffectEntry` / `ParticleObjectEffect`，流水线 = 内容 → 对象 RT（`content_view`）→ 效果链 ping-pong（`EffectChain`）→ 输出 RT（`out_view`）→ 合成 quad 贴回 surface。对象 RT 尺寸用 `effect::object_camera_range` / `particle_object_range`（`|size×scale|` 逐轴钳制 `[1, OBJECT_RT_MAX=2048]`）；合成 quad 世界尺寸**未钳制**，UV 窗口（`uv_window`）只采样可见段。**绝不白屏**：效果链创建失败 → `effect_chain=None` → 合成 quad 采样内容纹理（对象正常显示、无效果）。
+    - **性能（一次性构建）**：pass 的 naga 编译 + shader module + render pipeline + 对象 RT + uniform buffer 全部在 `EffectChain::new` / `set_object_effect` / `set_particle_object_effect`（壁纸/对象加载时）**一次性**构建；`render_frame` / `render_object_effects` / `step` / `EffectChain::render` **不做** naga 编译 / 管线创建（每帧仅写 uniform + 建 bind group + 提交 render pass）。改效果链逻辑时**勿**把编译/建管线挪进帧内。
 
 ## 6. 测试与验证
 
