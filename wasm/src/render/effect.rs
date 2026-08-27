@@ -374,6 +374,13 @@ pub fn pack_std140_block(block_size: u32, fields: &[Std140Field]) -> Vec<f32> {
 /// - `vert_spv`/`frag_spv`：真实 WE 效果 shader 的 SPIR-V bytes（`spv_to_wgsl` 编译，entry_point `main`）。
 /// - `vert_glsl`/`frag_glsl`：演示/简单路径的 desktop GLSL（`glsl_to_wgsl` 编译，entry_point `main`）。
 ///   `vert_spv`/`frag_spv` 非空时优先 spv 路径；否则回退 glsl（兼容 task5 演示 pass）。
+///
+/// ⚠️ **MVM 边界**：WE 效果链 vertex shader（如 composelayer.vert）的 `g_ModelViewProjectionMatrix`
+/// 是引擎内建 uniform，scene.json/material json 不给值 → JS 侧缺省 → `UniformBinding` 未带该成员
+/// → `pack_std140_block` 把 block 里该 mat4 留在 0（缺省全 0）。**执行器需按对象/场景提供正确的
+/// MVM 投影矩阵**（对象级=对象局部正交投影+中心 origin；场景级=场景正交投影）。当前库内依赖 MVM
+/// 的效果（如 godrays 的 composelayer 层）为 frag 效果 + vert passthrough（gl_Position 由
+/// a_TexCoord 推导、不乘 MVM），故不受影响；仅 vert 阶段真正乘 MVM 的效果链受影响（已知边界）。
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct EffectPassDesc {
     #[serde(default)]

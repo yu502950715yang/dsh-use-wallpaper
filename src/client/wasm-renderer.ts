@@ -1,7 +1,7 @@
 // Rust/WebGPU 渲染器胶水：实现 wallpaper-controller 的 sceneRenderer 接口。
 // 无 WebGPU / wasm 加载失败 → 渲染返回 false，controller 走现有 JS 渲染 / preview 回退链。
 import { parseSceneJson } from './scene-json.js';
-import { resolveTexPath, shouldUseObjectPath, objectCameraRange } from './scene-renderer.js';
+import { resolveTexPath, shouldUseObjectPath, objectCameraRange, particleWorldSize, particleObjectRange } from './scene-renderer.js';
 import { applyAlignment } from './alignment.js';
 import { resolveVisibility } from './visibility.js';
 import { SceneScriptRuntime } from './scene-script.js';
@@ -9,10 +9,13 @@ import { resolveEffectChain } from './shader/effect-chain.js';
 import { glslToNagaPass } from './shader/glsl-to-naga.js';
 import type { SceneDescription } from '../shared/types.js';
 
-// Task 2.1：效果链检测（纯函数）。wasm 渲染器（Rust/wgpu）只渲染静态图像 quad +
-// GPU 粒子，无效果链执行器——带 godrays/foliagesway/iris 等对象级 effects 的壁纸
-// 走 wasm 路径会渲染成 STATIC。任一对象含非空 effects 数组 → true，render() 据此
-// 在绑定 WebGPU 之前返回 false，回退 JS 渲染器（Phase 1 已实现对象级效果链，动画恢复）。
+// Task 2.1 遗留：效果链检测（纯函数）。⚠️ 已无拦截作用——2026-08-21 决策「强制 wasm，
+// 禁用 JS 回退」后 wasm 渲染器**不再**用本函数在绑定 WebGPU 前返回 false：所有 scene 壁纸
+// 一律走 wasm（对象级效果链由 wasm/对象路径执行，见 set_object_effect /
+// set_particle_object_effect；真实 WE shader 经 spv_to_wgsl 编译）。本函数仅保留
+// 供测试/外部识别「壁纸是否带对象级 effects」（任一对象 effects 非空 → true），
+// 不再参与渲染路径决策。wasm-renderer 渲染循环用 shouldUseObjectPath(obj) 做对象级
+// 效果路径调度（与 scene-renderer 语义一致）。
 export function hasEffectChains(desc: SceneDescription): boolean {
   // SceneTextObject 无 effects 字段（T3.1：text 对象不走效果路径），先窄化访问
   return desc.objects.some((o) => {
@@ -50,6 +53,18 @@ async function buildEffectChainDesc(id: string, effects: unknown[]): Promise<Uin
       type: string;    // GLSL 类型（float/vec3/mat4/float[16]）
       binding: number; // 所属 std140 block 的 layout(binding=B)
     }
+    // ── MVM（g_ModelViewProjectionMatrix）说明 ──────────────────────────────
+    // WE 效果链 vertex shader（如 composelayer.vert）的
+    //   `layout(std140, binding=B) uniform Params { mat4 g_ModelViewProjectionMatrix; }`
+    // 是**引擎内建 uniform**：scene.json/material json 不给值（不是材质 pass 的 uniform），
+    // 故 `spv.uniforms` 里该条的 value 为缺省 → flattenUniformValue 返回 null → 被滤除出
+    // std140 block → wasm `pack_std140_block` 该 mat4 落默认全 0。
+    // ⚠️ 影响：依赖 MVM 把顶点投影到正确位置的 effect（顶点位移/过屏等）在 wasm 下会算错
+    // 位置（乘 0 → 顶点塌到原点/错误坐标）。**执行器需按对象/场景提供正确的 MVM 投影矩阵**
+    // （对象级路径：对象局部正交投影 + 中心 origin；场景级：场景正交投影），目前 wasm 侧未
+    // 提供，属已知边界。当前库内依赖 MVM 的效果（如 godrays 的 composelayer 层）为 **frag
+    // 效果 + vert passthrough**（gl_Position 由 a_TexCoord 直接推导，不乘 MVM），故不受影响；
+    // 仅 vert 阶段真正用到 MVM 的效果链才受影响。
     interface WirePass {
       vert_spv: number[];
       frag_spv: number[];
@@ -106,6 +121,9 @@ export interface WasmScene {
   // undefined/null = 保持现状；assetId = 对象数组索引（与 load_image 一致）。
   update_image(assetId: number, origin?: Float32Array, scale?: Float32Array, alpha?: number, brightness?: number): void;
   add_particle(json: string, origin: Float32Array, scale: Float32Array, texBytes: Uint8Array): void;
+  // M4/Task6：带 effects 的粒子对象走对象路径（粒子内容→对象RT→效果链→合成quad）。
+  // chainDesc 语义同 set_object_effect（真实 WE shader 的 SPIR-V bytes JSON；空/失败→演示 pass 兜底）。
+  set_particle_object_effect(objId: number, json: string, origin: Float32Array, scale: Float32Array, texBytes: Uint8Array, worldSize: Float32Array, rtSize: Float32Array, chainDesc: Uint8Array): Promise<void>;
   step(dt: number): void;
   // T5（M3/Task5）：对象级效果链。对象内容需先经 load_image 上传；set_object_effect 把它
   // 从共享场景路径移到对象路径（对象 RT + 局部相机 + 效果链 + 合成 quad）。chainDesc 为
@@ -400,12 +418,37 @@ export function createWasmSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneRe
             // wasm。纹理缺失（引擎内置资源不可用）→ 空字节 = 无纹理（Rust 用 1×1 白兜底，
             // 保持纯色粒子行为）。
             const texBytes = await resolveParticleTexBytes(id, specText);
-            scene.add_particle(
-              specText,
-              Float32Array.from(obj.origin),
-              Float32Array.from(obj.scale),
-              texBytes ?? new Uint8Array(0),
-            );
+            // 对象级效果链（M4/Task6）：带 effects 的粒子对象走对象路径（粒子内容→对象RT→
+            // 效果链→合成 quad），复用 image 路径的 buildEffectChainDesc 产出真实 WE shader 的
+            // SPIR-V chainDesc；无效果粒子保持共享场景路径（add_particle）。世界尺寸/对象RT
+            // 范围用粒子发射距离估计（particleWorldSize/particleObjectRange，与 JS renderer
+            // addParticleSystem 同构），origin 按 alignment 换算中心（对齐 JS 对象路径）。
+            const isObjectPath = shouldUseObjectPath(obj);
+            if (isObjectPath) {
+              const spec: unknown = JSON.parse(specText);
+              const emitter = (spec as { emitter?: { distanceMax?: number } })?.emitter ?? {};
+              const world = particleWorldSize(emitter, [obj.scale[0], obj.scale[1]]);
+              const range = particleObjectRange(emitter, [obj.scale[0], obj.scale[1]]);
+              const center = applyAlignment(obj.origin, [world.w, world.h], obj.alignment);
+              const chainDesc = await buildEffectChainDesc(id, obj.effects);
+              await scene.set_particle_object_effect(
+                i,
+                specText,
+                Float32Array.from(center),
+                Float32Array.from(obj.scale),
+                texBytes ?? new Uint8Array(0),
+                Float32Array.from([world.w, world.h]),
+                Float32Array.from([range.w, range.h]),
+                chainDesc,
+              );
+            } else {
+              scene.add_particle(
+                specText,
+                Float32Array.from(obj.origin),
+                Float32Array.from(obj.scale),
+                texBytes ?? new Uint8Array(0),
+              );
+            }
             rendered++;
           }
         }

@@ -25931,12 +25931,32 @@ function createWasmSceneRenderer(opts) {
             if (!specResp.ok) continue;
             const specText = await specResp.text();
             const texBytes = await resolveParticleTexBytes(id, specText);
-            scene.add_particle(
-              specText,
-              Float32Array.from(obj.origin),
-              Float32Array.from(obj.scale),
-              texBytes ?? new Uint8Array(0)
-            );
+            const isObjectPath = shouldUseObjectPath(obj);
+            if (isObjectPath) {
+              const spec = JSON.parse(specText);
+              const emitter = spec?.emitter ?? {};
+              const world = particleWorldSize(emitter, [obj.scale[0], obj.scale[1]]);
+              const range = particleObjectRange(emitter, [obj.scale[0], obj.scale[1]]);
+              const center = applyAlignment(obj.origin, [world.w, world.h], obj.alignment);
+              const chainDesc = await buildEffectChainDesc(id, obj.effects);
+              await scene.set_particle_object_effect(
+                i,
+                specText,
+                Float32Array.from(center),
+                Float32Array.from(obj.scale),
+                texBytes ?? new Uint8Array(0),
+                Float32Array.from([world.w, world.h]),
+                Float32Array.from([range.w, range.h]),
+                chainDesc
+              );
+            } else {
+              scene.add_particle(
+                specText,
+                Float32Array.from(obj.origin),
+                Float32Array.from(obj.scale),
+                texBytes ?? new Uint8Array(0)
+              );
+            }
             rendered++;
           }
         }
