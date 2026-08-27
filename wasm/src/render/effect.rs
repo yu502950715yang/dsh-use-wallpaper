@@ -48,15 +48,30 @@ pub fn glsl_to_wgsl(glsl: &str, stage: Stage) -> Result<String, String> {
 ///
 /// `stage` 由 SPIR-V 的 `OpEntryPoint` 执行模型推导，本函数不依赖它（仅保留签名对称性
 /// 与调用方一致性；spv 路径 entry_point 恒为 `main`）。失败返回错误字符串（绝不 panic）。
+///
+/// **防 panic（reviewer Important #1）**：`spirv-webgpu-transform` 的 `u8_slice_to_u32_vec` 对
+/// 非 4 倍数长度 `assert`，`combimgsampsplitter` 对 SPIR-V 魔数 `assert` 并直接索引头 5 字
+/// （空/畸形输入会 trap，比白屏更糟，违反「绝不白屏/绝不崩溃」）。故入口先做 SPIR-V 头部校验
+/// （长度 ≥ 20 字节且为 4 倍数 + 魔数 `0x07230203` LE），不满足直接返回 `Err`，绝不进入 transform。
 pub fn spv_to_wgsl(spv: &[u8], _stage: Stage) -> Result<String, String> {
-    // ① spirv-webgpu-transform：拆组合采样器（sampler2D 的 OpTypeSampledImage → 独立 texture+sampler）
+    // ① 防 panic 头部校验：合法 SPIR-V 至少含 5 字头（20 字节）且 word 对齐；magic 0x07230203（LE）。
+    if spv.len() < 20 || spv.len() % 4 != 0 {
+        return Err(
+            "invalid SPIR-V header: length must be >= 20 bytes (5 words) and a multiple of 4".into(),
+        );
+    }
+    let magic = u32::from_le_bytes([spv[0], spv[1], spv[2], spv[3]]);
+    if magic != 0x0723_0203 {
+        return Err(format!("invalid SPIR-V header: bad magic 0x{magic:08x}"));
+    }
+    // ② spirv-webgpu-transform：拆组合采样器（sampler2D 的 OpTypeSampledImage → 独立 texture+sampler）
     let raw_u32 = spirv_webgpu_transform::u8_slice_to_u32_vec(spv);
     let mut correction_map = None;
     let transformed =
         spirv_webgpu_transform::combimgsampsplitter(&raw_u32, &mut correction_map)
             .map_err(|e| format!("spirv-webgpu-transform split: {e:?}"))?;
     let transformed_bytes = spirv_webgpu_transform::u32_slice_to_u8_vec(&transformed);
-    // ② naga spv-in 解析（SPIR-V → naga module）
+    // ③ naga spv-in 解析（SPIR-V → naga module）
     let module = naga::front::spv::parse_u8_slice(
         &transformed_bytes,
         &naga::front::spv::Options::default(),
@@ -285,7 +300,15 @@ mod imp {
     /// `spv_to_wgsl`（SPIR-V→transform→spv-in→WGSL），演示/simple（`vert_spv` 空、`vert_glsl`
     /// 有值）走 `glsl_to_wgsl`。二者产出 WGSL 的 entry_point 均为 `main`（naga glsl-in /
     /// spv-in 默认入口；手写 WGSL 的 vs_main/fs_main 的是 effect_passthrough/composite 层）。
+    ///
+    /// **gating 一致性（reviewer Minor #3）**：`vert_spv`/`frag_spv` 必须同空或同非空（畸形 desc
+    /// 一空一非空 → 直接 `Err`，交由调用方链级跳过/兜底，绝不走到错误的编译路径）。
     fn compile_pass_wgsl(desc: &EffectPassDesc) -> Result<(String, String), String> {
+        if desc.vert_spv.is_empty() != desc.frag_spv.is_empty() {
+            return Err(
+                "EffectPassDesc vert_spv/frag_spv 不一致（一空一非空，应为同空/同非空）".into(),
+            );
+        }
         if !desc.vert_spv.is_empty() {
             Ok((
                 spv_to_wgsl(&desc.vert_spv, Stage::Vertex)?,

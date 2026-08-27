@@ -47,3 +47,20 @@ fn raw_spv_without_transform_fails_in_naga() {
         "【对照】未拆组合采样的 glslang SPIR-V 进 naga spv-in 应失败（InvalidId）"
     );
 }
+
+/// 防 panic（reviewer Important #1）：畸形/空 SPIR-V 应返回 `Err` 而非 panic（trap）。
+/// 覆盖：空字节、非 4 倍数长度、长度合法但魔数错误——三者均走 `Err`，绝不进入
+/// spirv-webgpu-transform（其 u8_slice_to_u32_vec/combimgsampsplitter 会 assert/越界）。
+#[test]
+fn spv_to_wgsl_rejects_malformed_spirv_without_panic() {
+    // 空字节（< 4 字节且非 4 倍数头）
+    assert!(effect::spv_to_wgsl(&[], effect::Stage::Fragment).is_err(), "空输入应 Err");
+    // 长度非 4 倍数（3 字节）
+    assert!(effect::spv_to_wgsl(&[1u8, 2, 3], effect::Stage::Fragment).is_err(), "非 4 倍数长度应 Err");
+    // 长度 ≥ 20 但非 4 倍数（21 字节）
+    assert!(effect::spv_to_wgsl(&[0u8; 21], effect::Stage::Fragment).is_err(), "非 4 倍数长度应 Err");
+    // 长度合法（32 字节，4 倍数，≥ 20）但魔数错误（前 4 字节=0，非 0x07230203）
+    assert!(effect::spv_to_wgsl(&[0u8; 32], effect::Stage::Fragment).is_err(), "错误魔数应 Err");
+    // 长度 < 20 但为 4 倍数（16 字节，不含 5 字头）→ 也应 Err（防止 combimgsampsplitter 越界）
+    assert!(effect::spv_to_wgsl(&[0u8; 16], effect::Stage::Fragment).is_err(), "不足 5 字头应 Err");
+}
