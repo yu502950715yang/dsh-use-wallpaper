@@ -82,7 +82,7 @@ export function extractComboDefaults(src: string): Map<string, number> {
 // 用占位符保护，再把剩余裸 int 字面量统一补 `.0`（浮点/构造/函数参数上下文），
 // 最后还原保护段。全库实测覆盖：`v_TexCoord.z = 0;`、`float mask = 1;`、
 // `1 - g_Rough`、`smoothstep(..., 1, ...)`、`mix(blurred.a, 1, ...)`、`vec4(1, -1, ...)`。
-function normalizeFloatIntLiterals(src: string): string {
+export function normalizeFloatIntLiterals(src: string): string {
   // 占位符用不含数字的 token（避免被下方裸 int 正则二次改写）
   const protectedBlocks: string[] = [];
   let out = src;
@@ -145,7 +145,7 @@ function normalizeFloatIntLiterals(src: string): string {
 // 占位符 token 以数字开头（0WEI_INTVAR_...）：变量类正则 [A-Za-z_]\w* 不匹配数字开头，
 // 防止比较保护等把已保护的占位符当变量名吞进新保护块（2026-08-21 Simple_Audio_Bars 实测：
 // float((a - b) < 0.0) 截断后残留 ) 触发比较保护吞占位符 → 嵌套占位符还原错乱）。
-function floatifyIntVarUses(src: string): string {
+export function floatifyIntVarUses(src: string): string {
   const intVars = new Set<string>();
   // 排除 int 函数定义名（int funcName( 是函数不是变量）：(?!\s*\()
   for (const m of src.matchAll(/\b(?:const\s+)?(?:uniform\s+)?(?:in\s+|out\s+)?int\s+(\w+)(?!\s*\()/g)) {
@@ -226,7 +226,7 @@ function floatifyIntVarUses(src: string): string {
 //    局部非常量初始化 GLSL3 合法，不动。
 //  - 保留字 `sample`（GLSL3 保留字，GLSL1 不是）：light_map.frag 等用 `sample`
 //    作变量名 → 改写为 `sample_`（语义不变，仅标识符）。
-function relaxGlsl3Strictness(src: string): string {
+export function relaxGlsl3Strictness(src: string): string {
   let out = src
     // const 非常量初始化 → 去 const（局部与全局都处理；纯字面量保持 const）
     .replace(/\bconst\s+(float|int|vec[234]|mat[234])\s+(\w+)\s*=\s*([^;]*[A-Za-z_][^;]*);/g,

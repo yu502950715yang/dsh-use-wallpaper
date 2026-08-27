@@ -15,7 +15,7 @@
 //  - texSample2D(→texture(、texSample2DLod(→textureLod(、texture2D(→texture(。
 //  - #if 里的未定义宏 → #define X 0。
 import { WE_HEADERS } from './we-headers.js';
-import { extractIfIdentifiers, extractComboDefaults } from './shader-preprocessor.js';
+import { extractIfIdentifiers, extractComboDefaults, normalizeFloatIntLiterals, floatifyIntVarUses, relaxGlsl3Strictness } from './shader-preprocessor.js';
 import type { CompiledEffectPass } from './effect-chain.js';
 import type { UniformValue } from './uniform-binder.js';
 import * as glslangNS from '@webgpu/glslang';
@@ -98,8 +98,9 @@ const UNIFORM_LINE_RE = /^(\s*)uniform\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)(?:\s*\
 // 顶点 in（attribute，来自 a_Position/a_TexCoord）与 out（varying）分属不同接口 space，各自从 0 编号；
 // 片元 in（varying）从 0 编号。顶点 out 与片元 in 都按声明顺序编号，且在有效果 shader 中 varyings
 // 的 vert/frag 声明顺序一致，故同名 varying 得到相同 location（vertex 输出 ↔ fragment 输入匹配）。
-// 已带 layout(location=...) 的声明（如 o_Color）跳过。
-const DECL_IO_RE = /^(\s*)(in|out)\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)\s*;(.*)$/;
+// 已带 layout(location=...) 的声明（如 o_Color）跳过。另支持数组 varying/attribute：
+// `varying vec2 v_TexCoord[4];`（WE 效果 shader 的 blur/downsample 多用，名字后有 `[N]`）。
+const DECL_IO_RE = /^(\s*)(in|out)\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)(\s*\[\s*\d+\s*\])?\s*;(.*)$/;
 
 function assignInterfaceLocations(src: string, stage: Stage): string {
   const out: string[] = [];
@@ -110,14 +111,15 @@ function assignInterfaceLocations(src: string, stage: Stage): string {
     const hasLayout = /layout\s*\(\s*location\s*=/.test(line);
     const m = DECL_IO_RE.exec(line);
     if (m && !hasLayout) {
-      const [, indent, io, type, name, rest] = m;
+      const [, indent, io, type, name, arr, rest] = m;
+      const decl = `${indent}layout(location=`;
       if (stage === 'frag') {
         // fragment 的 in = varying；out 只有 o_Color（已带 layout，不重排）。
-        if (io === 'in') out.push(`${indent}layout(location=${fragInLoc++}) in ${type} ${name};${rest}`);
+        if (io === 'in') out.push(`${decl}${fragInLoc++}) in ${type} ${name}${arr ?? ''};${rest}`);
         else out.push(line);
       } else {
-        if (io === 'in') out.push(`${indent}layout(location=${vertInLoc++}) in ${type} ${name};${rest}`);
-        else out.push(`${indent}layout(location=${vertOutLoc++}) out ${type} ${name};${rest}`);
+        if (io === 'in') out.push(`${decl}${vertInLoc++}) in ${type} ${name}${arr ?? ''};${rest}`);
+        else out.push(`${decl}${vertOutLoc++}) out ${type} ${name}${arr ?? ''};${rest}`);
       }
     } else {
       out.push(line);
@@ -131,6 +133,56 @@ function assignInterfaceLocations(src: string, stage: Stage): string {
 // GLSL 内建 texture 重复定义冲突。包装改写后成死代码，安全移除。
 const TEX_WRAPPER_2DLOD_RE = /vec4\s+texSample2DLod\s*\([^)]*\)\s*\{\s*return\s+textureLod\s*\([^)]*\)\s*;\s*\}/g;
 const TEX_WRAPPER_2D_RE = /vec4\s+texSample2D\s*\([^)]*\)\s*\{\s*return\s+texture2D\s*\([^)]*\)\s*;\s*\}/g;
+
+// GLSL 4.50（Vulkan）要求 max/min/clamp 操作数同维度；WE 效果 shader 沿用 HLSL 标量广播
+// 习惯（`max(0, albedo.rgb)`），desktop GLSL 编译报 "no matching overloaded function"。
+// 此处把 max/min/clamp 中**标量字面量实参**广播为同维度构造（`vecN(标量)`）。仅处理能由
+// .swizzle 明确判定 2/3/4 维的实参（如 albedo.rgb/.rgba/.xy）；无法判定维度的（裸变量/
+// 嵌套表达式/纯标量 max(0.001, weight)）跳过，避免误伤合法标量调用。
+function broadcastScalarOperand(src: string): string {
+  const swizzleDim = (expr: string): number | null => {
+    const m = expr.match(/\.(rgba|xyzw|rgb|xyz|rg|xy)$/);
+    if (!m) return null;
+    return m[1].length === 4 ? 4 : m[1].length === 3 ? 3 : 2;
+  };
+  const vecOf = (dim: number) => `vec${dim}`;
+  return src
+    // max|min|clamp( <数字> , <ident.swizzle> )：把数字广播成向量
+    .replace(/\b(max|min|clamp)\(\s*(-?\d+(?:\.\d+)?)\s*,\s*([A-Za-z_]\w*\s*\.\s*(?:rgba|xyzw|rgb|xyz|rg|xy))\s*\)/g,
+      (m, fn, num, exp) => {
+        const dim = swizzleDim(exp);
+        return dim ? `${fn}(${vecOf(dim)}(${num}), ${exp})` : m;
+      })
+    // max|min|clamp( <ident.swizzle> , <数字> )
+    .replace(/\b(max|min|clamp)\(\s*([A-Za-z_]\w*\s*\.\s*(?:rgba|xyzw|rgb|xyz|rg|xy))\s*,\s*(-?\d+(?:\.\d+)?)\s*\)/g,
+      (m, fn, exp, num) => {
+        const dim = swizzleDim(exp);
+        return dim ? `${fn}(${exp}, ${vecOf(dim)}(${num}))` : m;
+      });
+}
+
+// GLSL 不允许 vec4→vec3/vec2 隐式降维，但 WE 效果 shader 沿用 HLSL 习惯直接
+// `vec3 c = texSample2D(...)`（隐式丢 alpha）。转换后成为 `vec3 c = texture(...)`，glslang
+// 报 "cannot convert from vec4 to vec3"。仅当 RHS 为**完整的纯 texture(...) 调用**（以 ')' 结尾，
+// 未带 .swizzle / 后续运算）时补 swizzle（vec3→.rgb、vec2→.xy）；`texture(...).xyz * 2 - 1`
+// 之类 RHS 已是表达式（结果已定维）不碰，避免把 .rgb 误接到数字/标识符上。
+function fixVectorAssignFromTexture(src: string): string {
+  return src.replace(/\b(vec3|vec2)\s+(\w+)\s*=\s*(texture\([^;]*);/g, (m, type, name, call) => {
+    if (!/\)\s*$/.test(call)) return m;
+    const swizzle = type === 'vec3' ? 'rgb' : 'xy';
+    return `${type} ${name} = ${call}.${swizzle};`;
+  });
+}
+
+// WE 方言：标量字面量后跟 .rgb/.rgba/.rg 表示广播成向量（如 `1.0.rgb` = vec3(1.0)，
+// 常见于 `* 2.0 - 1.0.rgb` 之类）。GLSL 对 float 值 .rgb 报 "vector swizzle out of range"。
+// 用 lookbehind 排除变量名（x.rgb 是合法 swizzle），仅对纯数字字面量展开为 vecN(标量)。
+function broadcastFloatSwizzle(src: string): string {
+  return src.replace(/(?<![A-Za-z0-9_])(-?\d+(?:\.\d+)?)\s*\.\s*(rgba|rgb|rg)\b/g,
+    (m, num, sw) => `vec${sw.length}(${num})`);
+}
+
+
 
 // 迭代展开 WE 内置头 include（头自带 #ifndef guard，迭代安全）。
 function expandIncludes(src: string): string {
@@ -254,10 +306,27 @@ function convertStage(
   s = s.replace(/^\s*precision\s+[A-Za-z_][A-Za-z0-9_]*\s+[A-Za-z_][A-Za-z0-9_]*\s*;\s*\n/gm, '');
   s = s.replace(/\b(?:highp|mediump|lowp)\s+/g, '');
 
+  // ④' WE 方言严格模式修正（复用 three 路径 shader-preprocessor 的成熟三连）。wasm 编译链
+  // 此前漏跑这组修正，导致真实 WE 效果 shader 在 glslang(Vulkan/desktop GLSL 4.50) 报
+  //  - `sample` 保留字 → `unexpected SAMPLE`（godrays_cast/pulse/shine 等）；
+  //  - `max(0, vec3)` 之类 int/float 字面量混用 → `no matching overloaded`（nitro 等）；
+  //  - `const float x = <运行期表达式>` → const 降级（common_blur/blending 等）；
+  //  - int 变量/字面量参与浮点运算 → desktop 也需显式转换（1.0/sampleCount 等）。
+  //  顺序：normalize 补 .0 → floatify 包 float()（依赖 .0 已补）→ relax 去 const/改保留字。
+  s = normalizeFloatIntLiterals(s);
+  s = floatifyIntVarUses(s);
+  s = relaxGlsl3Strictness(s);
+
+  // ④'' WE 自定义 sampler 类型 → Desktop/Vulkan 标准名。`sampler2DComparison` 是
+  // WE 的深度比较采样类型（GLSL 3.30 方言名），Vulkan GLSL 无此名（应 sampler2DShadow），
+  // 效果链仅需取其采样值，降级为 sampler2D 采样原深度图（fluidsimulation_combine 等）。
+  s = s.replace(/\bsampler2DComparison\b/g, 'sampler2D');
+
   // ⑤ 插值/属性改写：fragment 的 varying→in，vertex 的 varying→out；attribute→in。
+  // 支持数组 varying/attribute（`varying vec2 v_TexCoord[4];`，blur/downsample 效果用）。
   const varyingKw = stage === 'vert' ? 'out' : 'in';
-  s = s.replace(/\bvarying\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)\s*;/g, `${varyingKw} $1 $2;`);
-  s = s.replace(/\battribute\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)\s*;/g, 'in $1 $2;');
+  s = s.replace(/\bvarying\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)(\s*\[\s*\d+\s*\])?\s*;/g, (m, type, name, arr) => `${varyingKw} ${type} ${name}${arr ?? ''};`);
+  s = s.replace(/\battribute\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)(\s*\[\s*\d+\s*\])?\s*;/g, (m, type, name, arr) => `in ${type} ${name}${arr ?? ''};`);
 
   // ⑤' 用户可变接口 location（glslang Vulkan 硬性要求，见 assignInterfaceLocations 注释）。
   s = assignInterfaceLocations(s, stage);
@@ -336,6 +405,15 @@ function convertStage(
   s = s.replace(/\btexSample2D\s*\(/g, 'texture(');
   s = s.replace(/\btexSample2DLod\s*\(/g, 'textureLod(');
   s = s.replace(/\btexture2D\s*\(/g, 'texture(');
+
+  // ⑧' 标量-向量广播（desktop GLSL 4.50 硬性要求，见 broadcastScalarOperand 注释）。
+  s = broadcastScalarOperand(s);
+
+  // ⑧'' 标量字面量 .rgb/.rgba/.rg 广播（1.0.rgb = vec3(1.0)，见 broadcastFloatSwizzle）。
+  s = broadcastFloatSwizzle(s);
+
+  // ⑧''' vec4→vec3/2 隐式降维（shimmer 等：vec3 c = texture(...)），见 fixVectorAssignFromTexture。
+  s = fixVectorAssignFromTexture(s);
 
   // ②③ combo/#if 宏注入（须在头与正文之前，使 #if 表达式起效）。
   const defines = buildDefines(s, combos);
