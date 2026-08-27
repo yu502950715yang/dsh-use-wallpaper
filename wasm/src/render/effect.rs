@@ -111,7 +111,10 @@ pub enum BindKind {
 /// 只识别**采样图像**（`texture_2d<f32>` 的 `ImageClass::Sampled`）——storage/depth 图像与
 /// 过滤采样 texture 的 wgpu 绑定类型不匹配，本任务范围仅 WE 效果 shader 的普通 `texture_2d`，
 /// 其它返回 `None`（不加入 layout：宁可少一个绑定让管线校验失败走链级回退，也不制造类型错配）。
-/// `BindingArray`（`sampler2D[]`/`texture2D[]`）递归拆 base 为独立 image/sampler。
+/// `BindingArray`（`sampler2D[]`/`texture2D[]`）**仅作 kind 归类**（取其 base 类型判定为
+/// Texture/Sampler），**不展开为多绑定/多 view**——`build_bind_group_layout` 恒 `count: None`、
+/// `build_bind_group` 恒绑单 view，与任务边界「不做 sampler2D 数组」一致（此类 shader 由
+/// 链级回退兜底，见 task-13 报告）。
 fn bind_kind_of(module: &naga::Module, ty: naga::Handle<naga::Type>) -> Option<BindKind> {
     use naga::TypeInner;
     match &module.types[ty].inner {
@@ -644,8 +647,11 @@ mod imp {
         /// 语义）绑当前输入 view；其余多纹理在无额外纹理视图时复用输入 view 保底（不崩，见
         /// `build_bind_group`）。替代旧的单 `input_texture_binding`。
         pub texture_bindings: Vec<u32>,
-        /// shader 声明的 sampler 绑定 → 绑定共享 sampler。
-        pub sampler_binding: Option<u32>,
+        /// shader 声明的**全部** sampler 绑定编号（升序；多 sampler = 多个）。全部绑共享
+        /// `self.sampler`——若只绑第一个，多 sampler（如 multi_texture_frag 的 binding 1 与 3）
+        /// 会让其余 sampler 缺 entry，每帧 `create_bind_group` 抛「binding N unbound」校验错误
+        /// (reviewer Important #1)。与 `texture_bindings` 对称。
+        pub sampler_bindings: Vec<u32>,
     }
 
     /// 效果链 ping-pong 执行器（M2）：一组 WE 后处理 pass 依次在两张 ping-pong RT 上执行。
@@ -755,13 +761,16 @@ mod imp {
                     build_uniform_instances(device, queue, &desc.uniforms, &uniform_bindings, &format!("{label}-uniform"));
                 let texture_bindings: Vec<u32> =
                     bindings.iter().filter(|(_, k)| *k == BindKind::Texture).map(|(b, _)| *b).collect();
-                let sampler_binding = bindings.iter().find(|(_, k)| *k == BindKind::Sampler).map(|(b, _)| *b);
+                // 全部 sampler 绑定（不取第一个）——与 texture_bindings 对称，多 sampler 不因缺 entry
+                // 导致每帧 create_bind_group 校验错误 (reviewer Important #1)。
+                let sampler_bindings: Vec<u32> =
+                    bindings.iter().filter(|(_, k)| *k == BindKind::Sampler).map(|(b, _)| *b).collect();
                 instances.push(EffectPassInstance {
                     pipeline,
                     bind_group_layout,
                     uniform_instances,
                     texture_bindings,
-                    sampler_binding,
+                    sampler_bindings,
                 });
             }
             // ⑥ ping-pong RT（RENDER_ATTACHMENT | TEXTURE_BINDING）+ 采样器 + 全屏 quad 顶点缓冲
@@ -887,7 +896,7 @@ mod imp {
                     resource: wgpu::BindingResource::TextureView(read_view),
                 });
             }
-            if let Some(b) = pass.sampler_binding {
+            for &b in &pass.sampler_bindings {
                 entries.push(wgpu::BindGroupEntry {
                     binding: b,
                     resource: wgpu::BindingResource::Sampler(&self.sampler),
