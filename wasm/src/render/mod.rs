@@ -285,11 +285,6 @@ pub struct Renderer {
     offscreen_tex: Option<wgpu::Texture>,
     offscreen_view: Option<wgpu::TextureView>,
     offscreen_sampler: Option<wgpu::Sampler>,
-    /// 效果链 ping-pong 执行器（Task3/M2）。当前用一个内置**程序化**单 pass（g_Time 驱动）
-    /// 跑通验证：效果链在 RT 上执行并输出（g_Time 每帧更新）。真实 WE 效果 shader（含
-    /// g_Texture0 采样）待 naga sampler2D 支持后接入（本 MVP 未编采样——见报告疑虑）。
-    /// `None` = 创建失败（调用方回退 Task2 透传 / 直接渲染 surface，不黑屏）。
-    effect_chain: Option<effect::EffectChain>,
     /// 对象级效果链条目（M3/Task5）：每带效果对象一个。`set_object_effect` 登记，
     /// `render_object_effects` 每帧驱动（内容→对象RT→效果链），`render_frame` 合成 quad 贴 surface。
     object_effects: Vec<ObjectEffectEntry>,
@@ -546,35 +541,25 @@ impl Renderer {
                 "[wasm] effect pass 创建失败，跳过（兜底直接渲染 surface）：{e}"
             ))),
         }
-        // == 效果链 ping-pong 执行器（Task3/M2）==
-        // 一次性（非每帧）编译/建管线/建 ping-pong RT/uniform buffer。当前用内置单 pass
-        // 程序化效果（g_Time 驱动）跑通工程验证。创建失败 => None => 回退 Task2 透传 / 直接
-        // 渲染 surface（绝不黑屏）。
-        let mut effect_chain = None;
-        let chain_passes = vec![effect::EffectPassDesc {
-            vert_glsl: DEMO_EFFECT_VERT_GLSL.to_string(),
-            frag_glsl: DEMO_EFFECT_FRAG_GLSL.to_string(),
-            uniforms: vec![],
-            texture_slots: vec![],
-            blend_mode: "normal".to_string(),
-        }];
-        match effect::EffectChain::new(&device, &queue, chain_passes, format, config.width, config.height).await {
-            Ok(chain) => {
-                web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(
-                    "[wasm] effect chain 创建成功（单 pass 程序化，RT 上执行）",
-                ));
-                effect_chain = Some(chain);
-            }
-            Err(e) => web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(&format!(
-                "[wasm] effect chain 创建失败，跳过（回退透传/direct）：{e}"
-            ))),
-        }
+        // == 全局 demo 效果链（Task3/M2 遗留，Critical #1 已移除）==
+        // 原实现在此无条件用内置**程序化**单 pass（g_Time 驱动、不采样 g_Texture0）建一个
+        // 全局全屏 effect_chain，并在 render_frame 第一分支 `if self.effect_chain.is_some()`
+        // 恒优先把它覆盖到所有走 wasm 的场景上——导致**无 effects 的纯图片/粒子壁纸**
+        // 也被程序化动画覆盖（内容丢失回归，比白屏更隐蔽）。
+        // 对象级效果链（set_object_effect / set_particle_object_effect 的对象 RT+效果链+
+        // 合成 quad）已独立落地，由 render_object_effects + draw_scene_into 的合成 quad
+        // 直接驱动，与此全局链无关（其 effect_chain 存于各 ObjectEffectEntry /
+        // ParticleObjectEffect 条目内）。故彻底移除该全局 effect_chain 字段与创建点：
+        // 无 effects 场景不再被覆盖，保留场景/图片/粒子内容；对象级链条目继续正常工作。
+        // 效果链执行器"在 RT 上执行"的架构证明保留在对象级链上（见 ObjectEffectEntry /
+        // ParticleObjectEffect），本全局链不再参与正常场景渲染。
         // 离屏"自采"纹理（尺寸/格式与 surface 一致）：场景先渲染到离屏，再由透传 pass
         // 采样输出到 surface——读自采渲染验证 wasm 工程串通，避免 surface 当帧自依赖。
-        // Fix：仅当 effect pass 创建成功（effect_passes 非空）**或** effect chain 存在
-        // （effect_chain.is_some()）才分配，effect 失败时不闲置。
+        // Fix：仅当效果链透传 pass 创建成功（effect_passes 非空）才分配；无 effects 场景
+        // 走透传/直接渲染 surface（保留内容）。全局 demo effect_chain（Critical #1）已移除，
+        // 不再作为离屏分配的前置条件。
         let (offscreen_tex, offscreen_view, offscreen_sampler) =
-            if !effect_passes.is_empty() || effect_chain.is_some() {
+            if !effect_passes.is_empty() {
             let tex = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("effect-offscreen"),
                 size: wgpu::Extent3d { width: config.width, height: config.height, depth_or_array_layers: 1 },
@@ -610,7 +595,6 @@ impl Renderer {
             offscreen_tex,
             offscreen_view,
             offscreen_sampler,
-            effect_chain,
             object_effects: Vec::new(),
             particle_object_effects: Vec::new(),
             composite_pipeline,
@@ -1355,18 +1339,16 @@ impl Renderer {
             (CameraMode::Cover, None) => wgpu::Color { r: 0.067, g: 0.067, b: 0.078, a: 1.0 },
         };
 
-        if self.effect_chain.is_some() {
-            // 效果链 ping-pong（Task3/M2）：场景渲染到离屏"自采"，再由效果链单 pass 在
-            // ping-pong RT 上执行并输出到 surface（g_Time 每帧更新）。chain 存在 => 离屏已分配。
-            let offscreen_view = self.offscreen_view.as_ref().expect("effect chain 存在时离屏纹理已分配");
-            self.draw_scene_into(&mut encoder, offscreen_view, clear);
-            let time = self.time;
-            if let Some(chain) = &mut self.effect_chain {
-                chain.render(&mut encoder, offscreen_view, &view, time);
-            }
-        } else if !self.effect_passes.is_empty() {
+        if !self.effect_passes.is_empty() {
             // 效果链透传（Task2 基线）：场景渲染到离屏自采，再透传输出到 surface。
             // effect_passes 非空 => 离屏资源已在 new 时分配，unwrap 安全。
+            // 注（Critical #1）：原本此处的第一分支是全局 demo effect_chain（单 pass
+            // 程序化动画、不采样 g_Texture0、normal blend+alpha=1 全覆盖）——恒优先覆盖
+            // 所有走 wasm 的场景（含无 effects 的纯图片/粒子壁纸），造成内容丢失回归。
+            // 已移除全局链：无 effects 场景现在只走本透传分支（透传 preserve 输入内容）
+            // 或下方"直接渲染 surface"兜底，均保留场景内容；对象级链（object_effects /
+            // particle_object_effects）由 render_object_effects + draw_scene_into 合成 quad
+            // 独立驱动，不受影响。
             let offscreen_view = self.offscreen_view.as_ref().expect("effect pass 存在时离屏纹理已分配");
             let offscreen_sampler = self.offscreen_sampler.as_ref().expect("effect pass 存在时离屏采样器已分配");
             let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
