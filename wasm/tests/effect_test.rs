@@ -174,3 +174,82 @@ fn particle_world_size_is_unclamped_signed() {
     let def = effect::particle_world_size(None, [1.0, 1.0]);
     assert_eq!(def, [64.0, 64.0]);
 }
+
+/// Task10：std140 布局与打包（native 纯函数；偏移与 glslang 实测一致，见 dump_std140.cjs）。
+/// float+vec3+vec4 → offset 0/16/32，block 48。
+#[test]
+fn std140_type_info_and_layout_known_cases() {
+    assert_eq!(effect::std140_type_info("float"), Some((4, 4, 1)));
+    assert_eq!(effect::std140_type_info("vec2"), Some((8, 8, 2)));
+    assert_eq!(effect::std140_type_info("vec3"), Some((16, 12, 3)));
+    assert_eq!(effect::std140_type_info("vec4"), Some((16, 16, 4)));
+    assert_eq!(effect::std140_type_info("mat4"), Some((16, 64, 16)));
+    assert_eq!(effect::std140_type_info("mat3"), Some((16, 48, 9)));
+    assert_eq!(effect::std140_type_info("mat2"), Some((16, 32, 4)));
+    // float[4]：元素 stride 16 → size 64
+    assert_eq!(effect::std140_type_info("float[4]"), Some((16, 64, 4)));
+}
+
+/// std140_block_size：roundup(max(offset+size), 16)。
+#[test]
+fn std140_block_size_rounds_to_16() {
+    assert_eq!(effect::std140_block_size(&[(0, 4), (16, 12), (32, 16)]), 48);
+    assert_eq!(effect::std140_block_size(&[(0, 64)]), 64);
+    assert_eq!(effect::std140_block_size(&[(0, 4)]), 16);
+}
+
+/// std140 打包：float(0.5)@0 + vec3(0.25,0.5,0.75)@16 + vec4(1..4)@32 → 铺位正确（vec3 占 12B、对齐 16）。
+#[test]
+fn std140_pack_float_vec3_vec4() {
+    let fields = [
+        effect::Std140Field { ty: "float".into(), byte_offset: 0, value: vec![0.5] },
+        effect::Std140Field { ty: "vec3".into(), byte_offset: 16, value: vec![0.25, 0.5, 0.75] },
+        effect::Std140Field { ty: "vec4".into(), byte_offset: 32, value: vec![1.0, 2.0, 3.0, 4.0] },
+    ];
+    let block = effect::pack_std140_block(48, &fields);
+    assert_eq!(block, vec![0.5, 0.0, 0.0, 0.0, 0.25, 0.5, 0.75, 0.0, 1.0, 2.0, 3.0, 4.0]);
+}
+
+/// std140 打包 mat4：块 64 字节（16 float），列 pitch 恒 16 字节 → 连续铺 0..15。
+#[test]
+fn std140_pack_mat4_contiguous() {
+    let fields = [effect::Std140Field { ty: "mat4".into(), byte_offset: 0, value: (1..=16).map(|v| v as f32).collect() }];
+    let block = effect::pack_std140_block(64, &fields);
+    assert_eq!(block, (1..=16).map(|v| v as f32).collect::<Vec<_>>());
+}
+
+/// std140 打包 mat3：列 pitch 16 字节（每列 3 float + 1 float padding）。
+/// value 列主序 [col0(3) + col1(3) + col2(3)] → 铺到 float idx 0,1,2, 4,5,6, 8,9,10。
+#[test]
+fn std140_pack_mat3_column_pitch_is_16() {
+    // 9 个逻辑 float，列主序：v[c*3+r]。
+    let val: Vec<f32> = (1..=9).map(|v| v as f32).collect();
+    let fields = [effect::Std140Field { ty: "mat3".into(), byte_offset: 0, value: val }];
+    let block = effect::pack_std140_block(48, &fields);
+    // block(12 float)：col0@0-2, pad@3, col1@4-6, pad@7, col2@8-10, pad@11
+    assert_eq!(
+        block,
+        vec![1.0, 2.0, 3.0, 0.0, 4.0, 5.0, 6.0, 0.0, 7.0, 8.0, 9.0, 0.0]
+    );
+}
+
+/// std140 打包 float[4] 数组：元素 stride 16 字节（每元素占 4 float 槽，仅首槽写入）。
+#[test]
+fn std140_pack_float_array_element_stride_16() {
+    let fields = [effect::Std140Field { ty: "float[4]".into(), byte_offset: 0, value: vec![1.0, 2.0, 3.0, 4.0] }];
+    let block = effect::pack_std140_block(64, &fields);
+    assert_eq!(block, vec![1.0, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 4.0, 0.0, 0.0, 0.0]);
+}
+
+/// std140 打包：fade 语义（real shader）——g_Alpha float@0 + color vec3@16。
+/// 模拟 wasm render 从 wire 组装（JS glsl-to-naga 产出 offset）。
+#[test]
+fn std140_pack_fade_semantics_matches_js_offsets() {
+    // JS std140Layout([float, vec3]) → offsets [0,16], blockSize 32。
+    let fields = [
+        effect::Std140Field { ty: "float".into(), byte_offset: 0, value: vec![1.0] },
+        effect::Std140Field { ty: "vec3".into(), byte_offset: 16, value: vec![0.315, 0.135, 0.1125] },
+    ];
+    let block = effect::pack_std140_block(32, &fields);
+    assert_eq!(block, vec![1.0, 0.0, 0.0, 0.0, 0.315, 0.135, 0.1125, 0.0]);
+}

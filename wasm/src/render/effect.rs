@@ -245,11 +245,117 @@ pub enum SlotId {
     External(u32),
 }
 
-/// 单个 uniform 绑定：`name` + 打包值（vec4/float/矩阵按长度打包为 `Vec<f32>`）。
+/// 单个非不透明 uniform 绑定（std140 block 成员）：`name` + 打包值（Vec<f32>）+ 布局描述。
+///
+/// JS 侧 glsl-to-naga 已按 block 成员顺序计算 std140 布局（offset/size 为字节，offset 与 glslang
+/// 实测一致，见 research/glslang-spike/dump_std140.cjs）；`binding` 为所属 std140 block 的
+/// layout(binding=B)（非不透明 uniform 全体共用同一 B；sampler 不在本列表，由 collect_bindings 绑定）。
+/// `ty` 为 GLSL 类型（float/vec2/vec3/vec4/matN/float[N]），wasm 据此把 value 铺进 block 的
+/// 正确字节位（见 pack_std140_block）。serde 字段名对齐 JS wire：type → ty（Rust 保留字规避）。
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct UniformBinding {
     pub name: String,
     pub value: Vec<f32>,
+    #[serde(default)]
+    pub offset: u32,
+    #[serde(default)]
+    pub size: u32,
+    #[serde(rename = "type", default)]
+    pub ty: String,
+    #[serde(default)]
+    pub binding: u32,
+}
+
+// =====================================================================
+// std140 布局与打包（native 纯函数，非 render 门控；cargo test 可测）。
+// 规则与 glslang（Vulkan 目标）std140 一致，见 research/glslang-spike/dump_std140.cjs 实测：
+//   float/int/bool: align 4, size 4, count 1
+//   vec2: align 8, size 8, count 2；vec3: align 16, size 12, count 3；vec4: align 16, size 16, count 4
+//   matN（列主序）: align 16, size N*16（列 pitch 恒 16 字节）, count N*N
+//   float[N]/vecN[N]: 元素 stride = roundup(align(元素),16) ⇒ align 16, size N*16, count N*elemCount
+//   block 总 size = roundup(max(offset+size),16)（std140 block size 恒为 16 倍数）
+// =====================================================================
+
+/// std140 字段类型信息：`(align 字节, size 字节, count 逻辑 float 数)`。未知类型返回 None。
+pub fn std140_type_info(ty: &str) -> Option<(u32, u32, u32)> {
+    if let Some(idx) = ty.find('[') {
+        let base = &ty[..idx];
+        let n: u32 = ty[idx + 1..ty.len() - 1].parse().ok()?;
+        let (elem_align, _elem_size, elem_count) = std140_type_info(base)?;
+        let elem_stride = elem_align.max(16); // 数组元素 stride = roundup(align,16)
+        return Some((16, n * elem_stride, n * elem_count));
+    }
+    match ty {
+        "float" | "int" | "uint" | "bool" => Some((4, 4, 1)),
+        "vec2" => Some((8, 8, 2)),
+        "vec3" => Some((16, 12, 3)),
+        "vec4" => Some((16, 16, 4)),
+        "mat2" => Some((16, 32, 4)),
+        "mat3" => Some((16, 48, 9)),
+        "mat4" => Some((16, 64, 16)),
+        _ => None,
+    }
+}
+
+/// std140 block 总字节 size：`roundup(max(offset+size), 16)`。
+pub fn std140_block_size(offsets_sizes: &[(u32, u32)]) -> u32 {
+    let max_end = offsets_sizes.iter().map(|(o, s)| o + s).max().unwrap_or(0);
+    (max_end + 15) & !15
+}
+
+/// std140 字段写入计划：把 value（扁平 float）铺到 block 的字节位。返回 `[(valueIdx, floatIdx)]`，
+/// floatIdx 为 block 内 float 下标（block 已预零，padding 不写）。处理 vec/mat/数组（见注释）。
+pub fn std140_write_plan(ty: &str, byte_offset: u32) -> Vec<(u32, u32)> {
+    let base = byte_offset / 4; // float 下标基准
+    let mut out = Vec::new();
+    if let Some(idx) = ty.find('[') {
+        let n: u32 = ty[idx + 1..ty.len() - 1].parse().unwrap_or(0);
+        let elem_count = std140_type_info(&ty[..idx]).map(|(_, _, c)| c).unwrap_or(4);
+        for e in 0..n {
+            for c in 0..elem_count {
+                out.push((e * elem_count + c, base + e * 4 + c));
+            }
+        }
+        return out;
+    }
+    if let Some(n) = ty.strip_prefix("mat").and_then(|s| s.parse::<u32>().ok()) {
+        // 列主序：列 c 的 pitch = 4 float（16 字节），行 r 连续。
+        for c in 0..n {
+            for r in 0..n {
+                out.push((c * n + r, base + c * 4 + r));
+            }
+        }
+        return out;
+    }
+    let count = std140_type_info(ty).map(|(_, _, c)| c).unwrap_or(1);
+    for i in 0..count {
+        out.push((i, base + i));
+    }
+    out
+}
+
+/// 待打包的 std140 block 字段（含 type/offset/value）。
+#[derive(Debug, Clone)]
+pub struct Std140Field {
+    pub ty: String,
+    pub byte_offset: u32,
+    pub value: Vec<f32>,
+}
+
+/// 打包一个 std140 block：fields 各含 ty/offset/value，返回完整 block 的 f32 数组
+/// （长度 = ceil(block_size/4)，未写的 padding 为 0）。
+pub fn pack_std140_block(block_size: u32, fields: &[Std140Field]) -> Vec<f32> {
+    let mut block = vec![0.0f32; ((block_size as usize) + 3) / 4];
+    for f in fields {
+        for (value_idx, float_idx) in std140_write_plan(&f.ty, f.byte_offset) {
+            if (float_idx as usize) < block.len() {
+                if let Some(&v) = f.value.get(value_idx as usize) {
+                    block[float_idx as usize] = v;
+                }
+            }
+        }
+    }
+    block
 }
 
 /// 效果链 pass 描述（编译输入）。binding 编号由 texture_slots + uniforms 的静态顺序决定
@@ -395,17 +501,65 @@ mod imp {
         })
     }
 
-    /// 单个 pass 的 GPU 资源（管线 + layout + uniform buffer + 绑定编号）。
+    /// 按 binding 分组非不透明 uniform（std140 block 成员），每组建一个 uniform buffer + block 数据。
+    /// 返回 `EffectUniformInstance` 列表（按 binding 升序，同 binding 成员保持原顺序）。
+    fn build_uniform_instances(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        uniforms: &[UniformBinding],
+        label: &str,
+    ) -> Vec<EffectUniformInstance> {
+        let mut entries: Vec<(u32, &UniformBinding)> = uniforms.iter().map(|u| (u.binding, u)).collect();
+        entries.sort_by_key(|(b, _)| *b);
+        let mut out: Vec<EffectUniformInstance> = Vec::new();
+        let mut i = 0;
+        while i < entries.len() {
+            let binding = entries[i].0;
+            let mut group: Vec<&UniformBinding> = Vec::new();
+            while i < entries.len() && entries[i].0 == binding {
+                group.push(entries[i].1);
+                i += 1;
+            }
+            // block_size = std140 总 size（offset+size 的最大端，向上取 16 倍数）。
+            let block_size = std140_block_size(&group.iter().map(|u| (u.offset, u.size)).collect::<Vec<_>>());
+            let fields: Vec<Std140Field> = group
+                .iter()
+                .map(|u| Std140Field { ty: u.ty.clone(), byte_offset: u.offset, value: u.value.clone() })
+                .collect();
+            let block_data = pack_std140_block(block_size, &fields);
+            let g_time_offset = group.iter().find(|u| u.name == "g_Time").map(|u| u.offset);
+            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(&format!("{label}-{binding}")),
+                size: (block_size as u64).max(16),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&block_data));
+            out.push(EffectUniformInstance { binding, buffer, block_data, g_time_offset });
+        }
+        out
+    }
+
+    /// 单个 std140 uniform block 的 GPU 资源（一个 block 对应一个 `var<uniform>` 绑定）。
+    #[derive(Debug)]
+    pub(super) struct EffectUniformInstance {
+        pub binding: u32,
+        pub buffer: wgpu::Buffer,
+        /// block 完整数据（g_Time 槽已置 0 的静态部分，含 padding 0）。render 时仅把 g_Time
+        /// 写进对应槽再整块 write_buffer（每帧仅重写含 g_Time 的 block，其余保持静态）。
+        pub block_data: Vec<f32>,
+        /// 本 block 中 g_Time 字段的字节 offset（无 g_Time → None，静态不每帧写）。
+        pub g_time_offset: Option<u32>,
+    }
+
+    /// 单个 pass 的 GPU 资源（管线 + layout + uniform block 列表 + 绑定编号）。
     #[derive(Debug)]
     pub(super) struct EffectPassInstance {
         pub pipeline: wgpu::RenderPipeline,
         pub bind_group_layout: wgpu::BindGroupLayout,
-        /// g_Time + 静态值 uniform buffer（每帧写 g_Time）。MVP：绑定到 shader 的第一个 uniform bind。
-        pub uniform_buffer: wgpu::Buffer,
-        /// shader 声明的第一个 uniform 绑定编号（None = 无 uniform，不绑定）。
-        pub uniform_binding: Option<u32>,
-        /// 静态 uniform 值（不含 g_Time，g_Time 由执行器每帧写入偏移 0）。
-        pub static_uniforms: Vec<f32>,
+        /// 按 binding 编号分组后的 std140 uniform block（非不透明 uniform 合并进 block；
+        /// 一个 pass 通常 1 个 block（frag/vert 各有其 block 时可能 2 个）。
+        pub uniform_instances: Vec<EffectUniformInstance>,
         /// shader 声明的第一个纹理绑定（g_Texture0 语义）→ 绑定当前输入 view。
         pub input_texture_binding: Option<u32>,
         /// shader 声明的 sampler 绑定 → 绑定共享 sampler。
@@ -505,37 +659,18 @@ mod imp {
                     multiview: None,
                     cache: None,
                 });
-                // ⑤ uniform buffer：g_Time（偏移 0）+ 静态值打包，长度对齐 4 f32（16 字节）。
+                // ⑤ std140 uniform block：非不透明 uniform 合并进 block（JS 侧 glsl-to-naga 已按
+                //  block 成员计算 offset/size/binding，见 UniformBinding）。按 binding 分组，每组：
+                //  block_size = std140_block_size(offset+size)；pack_std140_block 铺值（含 padding 0）；
+                //  buffer 大小 = block_size 字节；g_Time 槽（name=="g_Time"）为每帧动态写。
                 let bindings = collect_bindings(&wgsl_vert, &wgsl_frag);
-                let uniform_binding = bindings
-                    .iter()
-                    .find(|(_, k)| *k == BindingKind::Uniform)
-                    .map(|(b, _)| *b);
-                let mut static_uniforms: Vec<f32> = Vec::new();
-                for u in &desc.uniforms {
-                    static_uniforms.extend_from_slice(&u.value);
-                }
-                let mut data: Vec<f32> = Vec::with_capacity(1 + static_uniforms.len() + 3);
-                data.push(0.0); // g_Time 槽（offset 0）
-                data.extend_from_slice(&static_uniforms);
-                while data.len() % 4 != 0 {
-                    data.push(0.0);
-                }
-                let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some(&format!("{label}-uniform")),
-                    size: (data.len() * 4) as u64,
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-                queue.write_buffer(&uniform_buffer, 0, bytemuck::cast_slice(&data));
+                let uniform_instances = build_uniform_instances(device, queue, &desc.uniforms, &format!("{label}-uniform"));
                 let input_texture_binding = bindings.iter().find(|(_, k)| *k == BindingKind::Texture).map(|(b, _)| *b);
                 let sampler_binding = bindings.iter().find(|(_, k)| *k == BindingKind::Sampler).map(|(b, _)| *b);
                 instances.push(EffectPassInstance {
                     pipeline,
                     bind_group_layout,
-                    uniform_buffer,
-                    uniform_binding,
-                    static_uniforms,
+                    uniform_instances,
                     input_texture_binding,
                     sampler_binding,
                 });
@@ -600,17 +735,18 @@ mod imp {
                     prev_write = Some(idx);
                     if idx == 0 { &self.rt_a_view } else { &self.rt_b_view }
                 };
-                // 更新 g_Time（offset 0），静态值跟随。字段级借用（disjoint）：对
-                // self.passes[i] 与 self.queue 的不可变借用互不重叠，编译器允许。
-                let static_uniforms = &self.passes[i].static_uniforms;
-                let uniform_buf = &self.passes[i].uniform_buffer;
-                let mut data: Vec<f32> = Vec::with_capacity(1 + static_uniforms.len() + 3);
-                data.push(time);
-                data.extend_from_slice(static_uniforms);
-                while data.len() % 4 != 0 {
-                    data.push(0.0);
+                // 更新 g_Time：仅对含 g_Time 字段的 block 每帧重写（g_Time 位于其 std140 offset，
+                // 而非固定偏移 0）。无 g_Time 的 block 保持静态（new 已写好）。字段级借用（disjoint）：
+                // 对 self.passes[i] 与 self.queue 的不可变借用互不重叠，编译器允许。
+                for uins in &self.passes[i].uniform_instances {
+                    if let Some(off) = uins.g_time_offset {
+                        let mut data = uins.block_data.clone();
+                        if let Some(slot) = data.get_mut((off / 4) as usize) {
+                            *slot = time;
+                        }
+                        self.queue.write_buffer(&uins.buffer, 0, bytemuck::cast_slice(&data));
+                    }
                 }
-                self.queue.write_buffer(uniform_buf, 0, bytemuck::cast_slice(&data));
                 // bind group（按 shader 声明的绑定布置资源）
                 let bind_group = self.build_bind_group(i, read_view);
                 let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -635,14 +771,14 @@ mod imp {
             }
         }
 
-        /// 按 shader 声明的绑定构建 bind group：uniform buffer + 输入纹理(g_Texture0) + sampler。
+        /// 按 shader 声明的绑定构建 bind group：std140 uniform block（各 binding）+ 输入纹理(g_Texture0) + sampler。
         fn build_bind_group(&self, pass_index: usize, read_view: &wgpu::TextureView) -> wgpu::BindGroup {
             let pass = &self.passes[pass_index];
             let mut entries: Vec<wgpu::BindGroupEntry> = Vec::new();
-            if let Some(b) = pass.uniform_binding {
+            for uins in &pass.uniform_instances {
                 entries.push(wgpu::BindGroupEntry {
-                    binding: b,
-                    resource: pass.uniform_buffer.as_entire_binding(),
+                    binding: uins.binding,
+                    resource: uins.buffer.as_entire_binding(),
                 });
             }
             if let Some(b) = pass.input_texture_binding {

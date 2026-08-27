@@ -25535,6 +25535,30 @@ function u32ToBytes(u32) {
   return out;
 }
 var UNIFORM_LINE_RE = /^(\s*)uniform\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)(?:\s*\[(\d+)\])?\s*;[^\S\r\n]*(?:\/\/.*)?$/gm;
+var DECL_IO_RE = /^(\s*)(in|out)\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)\s*;(.*)$/;
+function assignInterfaceLocations(src, stage) {
+  const out = [];
+  let fragInLoc = 0;
+  let vertInLoc = 0;
+  let vertOutLoc = 0;
+  for (const line of src.split("\n")) {
+    const hasLayout = /layout\s*\(\s*location\s*=/.test(line);
+    const m = DECL_IO_RE.exec(line);
+    if (m && !hasLayout) {
+      const [, indent, io, type, name, rest] = m;
+      if (stage === "frag") {
+        if (io === "in") out.push(`${indent}layout(location=${fragInLoc++}) in ${type} ${name};${rest}`);
+        else out.push(line);
+      } else {
+        if (io === "in") out.push(`${indent}layout(location=${vertInLoc++}) in ${type} ${name};${rest}`);
+        else out.push(`${indent}layout(location=${vertOutLoc++}) out ${type} ${name};${rest}`);
+      }
+    } else {
+      out.push(line);
+    }
+  }
+  return out.join("\n");
+}
 var TEX_WRAPPER_2DLOD_RE = /vec4\s+texSample2DLod\s*\([^)]*\)\s*\{\s*return\s+textureLod\s*\([^)]*\)\s*;\s*\}/g;
 var TEX_WRAPPER_2D_RE = /vec4\s+texSample2D\s*\([^)]*\)\s*\{\s*return\s+texture2D\s*\([^)]*\)\s*;\s*\}/g;
 function expandIncludes(src) {
@@ -25561,6 +25585,30 @@ function defaultValueForType(type) {
   if (type.startsWith("sampler")) return null;
   return 0;
 }
+function std140TypeInfo(typeStr) {
+  const arr = typeStr.match(/^(float|vec2|vec3|vec4|mat[234])\[(\d+)\]$/);
+  if (arr) {
+    const elem = std140TypeInfo(arr[1]);
+    if (!elem) return null;
+    const elemStride = Math.max(elem.align, 16);
+    const n = Number(arr[2]);
+    return { align: 16, size: n * elemStride, count: n * elem.count };
+  }
+  const vec = typeStr.match(/^vec([234])$/);
+  if (vec) {
+    const n = Number(vec[1]);
+    return { align: n === 2 ? 8 : 16, size: n === 3 ? 12 : n * 4, count: n };
+  }
+  if (typeStr === "float" || typeStr === "int" || typeStr === "uint" || typeStr === "bool") {
+    return { align: 4, size: 4, count: 1 };
+  }
+  const mat = typeStr.match(/^mat([234])$/);
+  if (mat) {
+    const n = Number(mat[1]);
+    return { align: 16, size: n * 16, count: n * n };
+  }
+  return null;
+}
 function buildDefines(source, combos) {
   const defines = /* @__PURE__ */ new Map();
   for (const [k, v] of Object.entries(combos)) defines.set(k, String(v));
@@ -25579,7 +25627,7 @@ function buildDefines(source, combos) {
 }
 function convertStage(src, stage, combos, uniforms, bindingOffset) {
   const hadExplicitCommon = src.includes('#include "common.h"');
-  let s = expandIncludes(src);
+  let s = expandIncludes(src.replace(/\r\n?/g, "\n"));
   if (!hadExplicitCommon) s = WE_HEADERS["common.h"] + "\n" + s;
   s = s.replace(TEX_WRAPPER_2DLOD_RE, "").replace(TEX_WRAPPER_2D_RE, "");
   s = s.replace(/^\s*#version\s+\d+\s*(?:es)?\s*\n/gm, "");
@@ -25588,21 +25636,64 @@ function convertStage(src, stage, combos, uniforms, bindingOffset) {
   const varyingKw = stage === "vert" ? "out" : "in";
   s = s.replace(/\bvarying\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)\s*;/g, `${varyingKw} $1 $2;`);
   s = s.replace(/\battribute\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)\s*;/g, "in $1 $2;");
+  s = assignInterfaceLocations(s, stage);
   if (stage === "frag") s = s.replace(/gl_FragColor/g, "o_Color");
   const binds = [];
   let bind = bindingOffset;
-  const uniformLines = [];
+  const decls = [];
   s = s.replace(UNIFORM_LINE_RE, (m, indent, type, name, arrSize) => {
-    const typeStr = arrSize ? `${type}[${arrSize}]` : type;
-    const binding = bind++;
-    const rawValue = uniforms.has(name) ? uniforms.get(name) : void 0;
-    const value = rawValue === void 0 ? defaultValueForType(typeStr) : rawValue;
-    binds.push({ name, type: typeStr, value, binding });
-    uniformLines.push(`${indent}layout(binding=${binding}) uniform ${type} ${name}${arrSize ? `[${arrSize}]` : ""};`);
+    decls.push({ type, name, arrSize });
     return "\n";
   });
-  if (uniformLines.length) s = `${uniformLines.join("\n")}
+  if (decls.length) {
+    const opaqueLines = [];
+    const nonOpaque = [];
+    let blockBinding = null;
+    let blockOffset = 0;
+    for (const d of decls) {
+      const typeStr = d.arrSize ? `${d.type}[${d.arrSize}]` : d.type;
+      if (d.type.startsWith("sampler")) {
+        const binding = bind++;
+        const rawValue = uniforms.has(d.name) ? uniforms.get(d.name) : void 0;
+        binds.push({
+          name: d.name,
+          type: typeStr,
+          value: rawValue === void 0 ? defaultValueForType(typeStr) : rawValue,
+          binding
+        });
+        opaqueLines.push(`layout(binding=${binding}) uniform ${d.type} ${d.name}${d.arrSize ? `[${d.arrSize}]` : ""};`);
+      } else {
+        if (blockBinding === null) blockBinding = bind++;
+        const info = std140TypeInfo(typeStr);
+        const align = info?.align ?? 16;
+        const size = info?.size ?? 0;
+        blockOffset = blockOffset + align - 1 & ~(align - 1);
+        const offset = blockOffset;
+        blockOffset += size;
+        const rawValue = uniforms.has(d.name) ? uniforms.get(d.name) : void 0;
+        binds.push({
+          name: d.name,
+          type: typeStr,
+          value: rawValue === void 0 ? defaultValueForType(typeStr) : rawValue,
+          binding: blockBinding,
+          offset,
+          size,
+          blockName: "Params"
+        });
+        nonOpaque.push({ type: d.type, name: d.name, arrSize: d.arrSize, typeStr, offset, size });
+      }
+    }
+    if (nonOpaque.length) {
+      const blockName = "Params";
+      const memberLines = nonOpaque.map((m) => `${m.type} ${m.name}${m.arrSize ? `[${m.arrSize}]` : ""};`);
+      opaqueLines.unshift(`layout(std140, binding=${blockBinding}) uniform ${blockName} {
+${memberLines.join("\n")}
+};
+`);
+    }
+    if (opaqueLines.length) s = `${opaqueLines.join("\n")}
 ${s}`;
+  }
   s = s.replace(/\btexSample2D\s*\(/g, "texture(");
   s = s.replace(/\btexSample2DLod\s*\(/g, "textureLod(");
   s = s.replace(/\btexture2D\s*\(/g, "texture(");
@@ -25612,11 +25703,11 @@ ${s}`;
   const oColor = stage === "frag" ? "layout(location=0) out vec4 o_Color;\n" : "";
   const glsl = `#version 450
 ${defBlock}${oColor}${s}`;
-  return { glsl, binds };
+  return { glsl, binds, nextBinding: bind };
 }
 async function glslToNagaPass(pass) {
   const frag = convertStage(pass.rawFrag, "frag", pass.combos, pass.uniforms, 0);
-  const vert = convertStage(pass.rawVert, "vert", pass.combos, pass.uniforms, frag.binds.length);
+  const vert = convertStage(pass.rawVert, "vert", pass.combos, pass.uniforms, frag.nextBinding);
   const glslang = await loadGlslang();
   const vertSpv = u32ToBytes(glslang.compileGLSL(vert.glsl, "vertex", false));
   const fragSpv = u32ToBytes(glslang.compileGLSL(frag.glsl, "fragment", false));
@@ -25651,7 +25742,10 @@ async function buildEffectChainDesc(id, effects) {
       if (!chain) continue;
       for (const p of chain) {
         const spv = await glslToNagaPass(p);
-        const uniforms = spv.uniforms.map((u) => ({ name: u.name, value: flattenUniformValue(u.value) })).filter((u) => u.value !== null);
+        const uniforms = spv.uniforms.map((u) => {
+          const value = flattenUniformValue(u.value);
+          return value === null ? null : { name: u.name, value, offset: u.offset ?? 0, size: u.size ?? 0, type: u.type, binding: u.binding };
+        }).filter((u) => u !== null);
         passes.push({
           vert_spv: Array.from(spv.vertSpv),
           frag_spv: Array.from(spv.fragSpv),

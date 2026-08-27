@@ -41,10 +41,19 @@ async function buildEffectChainDesc(id: string, effects: unknown[]): Promise<Uin
       const resp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(name)}`);
       return resp.ok ? new Uint8Array(await resp.arrayBuffer()) : null;
     };
+    interface WireUniform {
+      name: string;
+      value: number[];
+      // std140 block 布局描述（非不透明 uniform 有；sampler 被滤除不进本列表）。
+      offset: number;  // 字节 offset（block 内）
+      size: number;    // 字节 size
+      type: string;    // GLSL 类型（float/vec3/mat4/float[16]）
+      binding: number; // 所属 std140 block 的 layout(binding=B)
+    }
     interface WirePass {
       vert_spv: number[];
       frag_spv: number[];
-      uniforms: Array<{ name: string; value: number[] }>;
+      uniforms: WireUniform[];
       texture_slots: (string | null)[];
       blend_mode: string;
     }
@@ -58,11 +67,15 @@ async function buildEffectChainDesc(id: string, effects: unknown[]): Promise<Uin
       if (!chain) continue;
       for (const p of chain) {
         const spv = await glslToNagaPass(p);
-        // sampler uniform（value=null）不进 uniform 缓冲；仅非 sampler uniform 打包进
-        // static_uniforms（g_Time 由执行器每帧写偏移 0，见 EffectChain::render）。
+        // sampler uniform（value=null）不进 std140 block 列表；仅非 sampler uniform 带
+        // offset/size/type/binding 传给 wasm（wasm 按同一 std140 布局 pack，见 EffectChain）。
+        // g_Time 也在 block 内，由 wasm 按 name=="g_Time" 每帧写对应 offset（不再固定偏移 0）。
         const uniforms = spv.uniforms
-          .map((u) => ({ name: u.name, value: flattenUniformValue(u.value) }))
-          .filter((u) => u.value !== null) as Array<{ name: string; value: number[] }>;
+          .map((u): WireUniform | null => {
+            const value = flattenUniformValue(u.value);
+            return value === null ? null : { name: u.name, value, offset: u.offset ?? 0, size: u.size ?? 0, type: u.type, binding: u.binding };
+          })
+          .filter((u): u is WireUniform => u !== null);
         passes.push({
           vert_spv: Array.from(spv.vertSpv),
           frag_spv: Array.from(spv.fragSpv),

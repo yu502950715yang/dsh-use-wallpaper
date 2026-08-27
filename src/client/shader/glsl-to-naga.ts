@@ -25,6 +25,13 @@ export interface UniformBindingDesc {
   type: string;
   value: unknown;
   binding: number;
+  /// std140 block 布局描述（仅非不透明 uniform 有；sampler/独立声明无）。
+  /// offset/size 为字节；blockName 为所属 uniform block 名（block 成员共用）。
+  /// JS 侧据此生成 `layout(binding=N) uniform sampler2D ...`（sampler，无 offset）或
+  /// `layout(std140, binding=B) uniform <blockName> { ... };`（非不透明 block 成员）。
+  offset?: number;
+  size?: number;
+  blockName?: string;
 }
 
 /// 桌面 GLSL 形态（规则的①-⑨ 产物，供 glslang 输入 + 单测断言规则）。
@@ -86,6 +93,39 @@ function u32ToBytes(u32: Uint32Array): Uint8Array {
 // 以便抽取后整行移除再前置——naga glsl frontend 要求声明先于引用（详见 convertStage ⑦ 注释）。
 const UNIFORM_LINE_RE = /^(\s*)uniform\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)(?:\s*\[(\d+)\])?\s*;[^\S\r\n]*(?:\/\/.*)?$/gm;
 
+// 用户可变接口（vertex 的 in/out、fragment 的 in）需要 layout(location=N)（glslang Vulkan 硬性要求：
+// "SPIR-V requires location for user input/output"。内置 gl_Position/gl_FragCoord 不声明，无此列）。
+// 顶点 in（attribute，来自 a_Position/a_TexCoord）与 out（varying）分属不同接口 space，各自从 0 编号；
+// 片元 in（varying）从 0 编号。顶点 out 与片元 in 都按声明顺序编号，且在有效果 shader 中 varyings
+// 的 vert/frag 声明顺序一致，故同名 varying 得到相同 location（vertex 输出 ↔ fragment 输入匹配）。
+// 已带 layout(location=...) 的声明（如 o_Color）跳过。
+const DECL_IO_RE = /^(\s*)(in|out)\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)\s*;(.*)$/;
+
+function assignInterfaceLocations(src: string, stage: Stage): string {
+  const out: string[] = [];
+  let fragInLoc = 0;
+  let vertInLoc = 0;
+  let vertOutLoc = 0;
+  for (const line of src.split('\n')) {
+    const hasLayout = /layout\s*\(\s*location\s*=/.test(line);
+    const m = DECL_IO_RE.exec(line);
+    if (m && !hasLayout) {
+      const [, indent, io, type, name, rest] = m;
+      if (stage === 'frag') {
+        // fragment 的 in = varying；out 只有 o_Color（已带 layout，不重排）。
+        if (io === 'in') out.push(`${indent}layout(location=${fragInLoc++}) in ${type} ${name};${rest}`);
+        else out.push(line);
+      } else {
+        if (io === 'in') out.push(`${indent}layout(location=${vertInLoc++}) in ${type} ${name};${rest}`);
+        else out.push(`${indent}layout(location=${vertOutLoc++}) out ${type} ${name};${rest}`);
+      }
+    } else {
+      out.push(line);
+    }
+  }
+  return out.join('\n');
+}
+
 // WE 方言纹理包装函数（common.h 提供）。规则⑧会把 texSample2D/texSample2DLod/texture2D
 // 全局改写为内建 texture/textureLod——若不先移除包装（其名会被改写为 texture），会与
 // GLSL 内建 texture 重复定义冲突。包装改写后成死代码，安全移除。
@@ -121,6 +161,136 @@ function defaultValueForType(type: string): unknown {
   return 0;
 }
 
+// =====================================================================
+// std140 布局（glslang Vulkan 目标硬性要求：非不透明 uniform 必须包进 uniform block，
+// 且 block 按 std140 对齐）。本段提供：① std140 偏移/size 计算（JS 生成 block 声明用）；
+// ② 逻辑值 → block 内字节位置的写入计划（供 JS 侧按 std140 打包，与 wasm 一致）。
+// 规则（GLSL 4.60 §4.5.7.2，与 glslang 实测一致，见 research/glslang-spike/dump_std140.cjs）：
+//  - float/int/bool: align 4, size 4。
+//  - vec2: align 8, size 8；vec3: align 16, size 12；vec4: align 16, size 16。
+//  - matN（列主序，N 列 × N 行 vecN）: align 16，列 pitch 恒 16 字节 ⇒ size = N*16，count = N*N。
+//  - 数组（float[N]/vecN[N]）: 元素 stride = roundup(align(元素),16) = 16 ⇒ size = N*16，align 16。
+//  - block 总 size = roundup(max(offset+size),16)（std140 block size 恒为 16 倍数）。
+// =====================================================================
+
+/// 单个 std140 字段的类型信息：align/size（字节）/count（逻辑 float 数，即 value 数组长度）。
+export interface Std140TypeInfo {
+  align: number;
+  size: number;
+  count: number;
+}
+
+export function std140TypeInfo(typeStr: string): Std140TypeInfo | null {
+  const arr = typeStr.match(/^(float|vec2|vec3|vec4|mat[234])\[(\d+)\]$/);
+  if (arr) {
+    const elem = std140TypeInfo(arr[1]);
+    if (!elem) return null;
+    const elemStride = Math.max(elem.align, 16);
+    const n = Number(arr[2]);
+    return { align: 16, size: n * elemStride, count: n * elem.count };
+  }
+  const vec = typeStr.match(/^vec([234])$/);
+  if (vec) {
+    const n = Number(vec[1]);
+    return { align: n === 2 ? 8 : 16, size: n === 3 ? 12 : n * 4, count: n };
+  }
+  if (typeStr === 'float' || typeStr === 'int' || typeStr === 'uint' || typeStr === 'bool') {
+    return { align: 4, size: 4, count: 1 };
+  }
+  const mat = typeStr.match(/^mat([234])$/);
+  if (mat) {
+    const n = Number(mat[1]);
+    return { align: 16, size: n * 16, count: n * n };
+  }
+  return null;
+}
+
+/// std140 block 成员布局：按声明顺序排布字段，返回每字段的字节 offset/size + block 总字节 size。
+/// fields 顺序即 block 内声明顺序（成员全局可见，无实例名）。未知类型走保守 align 16/size 0
+/// 防止偏移污染（正常 WE 类型均在 std140TypeInfo 覆盖内）。
+export function std140Layout(fields: { typeStr: string; count?: number }[]): {
+  offsets: number[];
+  sizes: number[];
+  blockSize: number;
+} {
+  let offset = 0;
+  const offsets: number[] = [];
+  const sizes: number[] = [];
+  for (const f of fields) {
+    const info = std140TypeInfo(f.typeStr);
+    const align = info?.align ?? 16;
+    const size = info?.size ?? 0;
+    offset = (offset + align - 1) & ~(align - 1);
+    offsets.push(offset);
+    sizes.push(size);
+    offset += size;
+  }
+  const blockSize = (offset + 15) & ~15;
+  return { offsets, sizes, blockSize };
+}
+
+/// 给定 block 内字段的字节 offset 与类型，生成「逻辑 value 索引 → block 内 float 索引」写入计划。
+/// 返回 [valueIdx, floatIdx] 对数组（block 已预零，padding 不必写）。用于把 value（扁平 float）
+/// 铺到 std140 block 的正确位置（vec/mat/数组均处理）。
+export function std140WritePlan(typeStr: string, byteOffset: number): [number, number][] {
+  const out: [number, number][] = [];
+  const info = std140TypeInfo(typeStr);
+  if (!info) return out;
+  const floatIdxBase = byteOffset / 4;
+  const arr = typeStr.match(/^(float|vec2|vec3|vec4|mat[234])\[(\d+)\]$/);
+  if (arr) {
+    const n = Number(arr[2]);
+    const elemCount = info.count / n; // 每元素逻辑 float 数
+    for (let e = 0; e < n; e++) {
+      for (let c = 0; c < elemCount; c++) {
+        out.push([e * elemCount + c, floatIdxBase + e * 4 + c]);
+      }
+    }
+    return out;
+  }
+  const mat = typeStr.match(/^mat([234])$/);
+  if (mat) {
+    const n = Number(mat[1]);
+    // 列主序：列 c 的 pitch = 16 字节（4 float），行 r 连续。col<c,r> → value[c*n+r] 在 base + c*4 + r。
+    for (let c = 0; c < n; c++) {
+      for (let r = 0; r < n; r++) {
+        out.push([c * n + r, floatIdxBase + c * 4 + r]);
+      }
+    }
+    return out;
+  }
+  // 标量/vec（float 或 vec2/3/4）：连续铺。
+  for (let i = 0; i < info.count; i++) out.push([i, floatIdxBase + i]);
+  return out;
+}
+
+/// 把某字段的 value（扁平 float 数组）按 std140 铺进 block 缓冲区（f32 数组，已预零）。
+export function packStd140IntoBlock(
+  block: number[],
+  typeStr: string,
+  byteOffset: number,
+  value: unknown,
+): void {
+  const plan = std140WritePlan(typeStr, byteOffset);
+  const v = Array.isArray(value) ? value : Number.isFinite(value as number) ? [value as number] : [];
+  for (const [valueIdx, floatIdx] of plan) {
+    if (floatIdx >= block.length) continue;
+    block[floatIdx] = v[valueIdx] ?? 0;
+  }
+}
+
+/// 打包一个 std140 block：fields = `{ typeStr, byteOffset, value }`，返回完整 block 的 f32 数组。
+export function packStd140Block(
+  blockSize: number,
+  fields: { typeStr: string; byteOffset: number; value: unknown }[],
+): number[] {
+  const block = new Array<number>(Math.ceil(blockSize / 4)).fill(0);
+  for (const f of fields) {
+    packStd140IntoBlock(block, f.typeStr, f.byteOffset, f.value);
+  }
+  return block;
+}
+
 // 生成 ②/③ 的宏注入：combos 值优先 → [COMBO] 注释 default 兜底 → #if 未定义裸标识符兜底 0。
 // 已 #define 的宏不重复注入（沿用 preprocessWeShader 的逻辑）。
 function buildDefines(source: string, combos: Record<string, number>): string[] {
@@ -149,10 +319,11 @@ function convertStage(
   combos: Record<string, number>,
   uniforms: Map<string, UniformValue>,
   bindingOffset: number,
-): { glsl: string; binds: UniformBindingDesc[] } {
+): { glsl: string; binds: UniformBindingDesc[]; nextBinding: number } {
   // ① 展开 WE 内置头 include；未显式 include common.h 则隐式前置（WE 引擎对效果 shader 隐式提供）。
+  // 先统一行尾（WE 安装目录 shader 为 CRLF，`\r` 会让 `(.*)$`/`$` 类正则锚点失配——JS `.` 不匹配 `\r`）。
   const hadExplicitCommon = src.includes('#include "common.h"');
-  let s = expandIncludes(src);
+  let s = expandIncludes(src.replace(/\r\n?/g, '\n'));
   if (!hadExplicitCommon) s = WE_HEADERS['common.h'] + '\n' + s;
 
   // 移除 WE 纹理包装（见 TEX_WRAPPER_* 注释），再全局改写为内建。
@@ -168,29 +339,78 @@ function convertStage(
   s = s.replace(/\bvarying\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)\s*;/g, `${varyingKw} $1 $2;`);
   s = s.replace(/\battribute\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)\s*;/g, 'in $1 $2;');
 
+  // ⑤' 用户可变接口 location（glslang Vulkan 硬性要求，见 assignInterfaceLocations 注释）。
+  s = assignInterfaceLocations(s, stage);
+
   // ⑥ gl_FragColor（仅 fragment）→ o_Color，引用替换。
   if (stage === 'frag') s = s.replace(/gl_FragColor/g, 'o_Color');
 
-  // ⑦ uniform：抽取声明、注入 layout(binding=N)，并**前置**到 shader 主体前。
-  //  naga glsl frontend 要求声明先于引用——common_blur.h 的 blur13a/7a/3a 函数体引用
-  //  g_Texture0，而 WE shader 常把 sampler/uniform 声明放在 #include 之后；若不前置
-  //  会报 "g_Texture0 : undeclared identifier"（同 preprocessWeShader 的 samplerDecls）。
-  //  声明按顺序编号，binding 从 bindingOffset 起全局唯一递增，并据此生成 UniformBindingDesc。
-  //  uniforms Map 只存值（number | number[]），type 从 GLSL 声明推导；value 取对应项，缺失给缺省。
+  // ⑦ uniform：分类为非不透明（进 std140 block）与不透明 sampler（独立声明），并**前置**到 shader 主体前。
+  //  glslang（Vulkan 目标）硬性要求非不透明 uniform 必须包进 uniform block（否则报
+  //  "non-opaque uniforms outside a block"）。sampler/image 为不透明，可独立 `layout(binding=N) uniform sampler2D`。
+  //  naga glsl frontend 要求声明先于引用——common_blur.h 的 blur13a/7a/3a 引用 g_Texture0，
+  //  while WE shader 常把声明放 #include 后；不前置会报 "undeclared identifier"。
+  //  规则⑦（std140 block，无实例名→成员全局可见，shader 体引用无需改前缀）：
+  //    layout(std140, binding=B) uniform Params { <type> <name>; ... };   // 非不透明，block 成员
+  //    layout(binding=N) uniform sampler2D <name>;                       // sampler，独立
+  //  binding 按声明顺序编号：sampler 各自递增；非不透明首现时分配 block binding（block 全体共用）。
+  //  uniforms Map 只存值（number | number[]）；type 从 GLSL 声明推导；缺失给缺省。
+  //  非 block 成员额外产出 offset/size/blockName（std140 布局描述），供 wasm 按同一布局打包。
   const binds: UniformBindingDesc[] = [];
   let bind = bindingOffset;
-  const uniformLines: string[] = [];
+  const decls: { type: string; name: string; arrSize?: string }[] = [];
   s = s.replace(UNIFORM_LINE_RE, (m, indent, type, name, arrSize) => {
-    const typeStr = arrSize ? `${type}[${arrSize}]` : type;
-    const binding = bind++;
-    const rawValue = uniforms.has(name) ? uniforms.get(name) : undefined;
-    // Number 0 / [] 属于合法值，用 ?? 仅在 undefined 时回退缺省（has=true 但值 undefined 的兜底）。
-    const value = rawValue === undefined ? defaultValueForType(typeStr) : rawValue;
-    binds.push({ name, type: typeStr, value, binding });
-    uniformLines.push(`${indent}layout(binding=${binding}) uniform ${type} ${name}${arrSize ? `[${arrSize}]` : ''};`);
+    decls.push({ type, name, arrSize });
     return '\n';
   });
-  if (uniformLines.length) s = `${uniformLines.join('\n')}\n${s}`;
+  if (decls.length) {
+    const opaqueLines: string[] = [];
+    const nonOpaque: { type: string; name: string; arrSize?: string; typeStr: string; offset: number; size: number }[] = [];
+    let blockBinding: number | null = null;
+    let blockOffset = 0;
+    for (const d of decls) {
+      const typeStr = d.arrSize ? `${d.type}[${d.arrSize}]` : d.type;
+      if (d.type.startsWith('sampler')) {
+        const binding = bind++;
+        const rawValue = uniforms.has(d.name) ? uniforms.get(d.name) : undefined;
+        binds.push({
+          name: d.name,
+          type: typeStr,
+          value: rawValue === undefined ? defaultValueForType(typeStr) : rawValue,
+          binding,
+        });
+        opaqueLines.push(`layout(binding=${binding}) uniform ${d.type} ${d.name}${d.arrSize ? `[${d.arrSize}]` : ''};`);
+      } else {
+        // 非不透明 → std140 block 成员（无实例名，成员全局可见）。按声明顺序排布，offset 增量计算
+        // （与 glslang std140 一致，见 std140TypeInfo）；block 首个成员分配 block binding（全体共用）。
+        if (blockBinding === null) blockBinding = bind++;
+        const info = std140TypeInfo(typeStr);
+        const align = info?.align ?? 16;
+        const size = info?.size ?? 0;
+        blockOffset = (blockOffset + align - 1) & ~(align - 1);
+        const offset = blockOffset;
+        blockOffset += size;
+        const rawValue = uniforms.has(d.name) ? uniforms.get(d.name) : undefined;
+        binds.push({
+          name: d.name,
+          type: typeStr,
+          value: rawValue === undefined ? defaultValueForType(typeStr) : rawValue,
+          binding: blockBinding,
+          offset,
+          size,
+          blockName: 'Params',
+        });
+        nonOpaque.push({ type: d.type, name: d.name, arrSize: d.arrSize, typeStr, offset, size });
+      }
+    }
+    if (nonOpaque.length) {
+      const blockName = 'Params';
+      const memberLines = nonOpaque.map((m) => `${m.type} ${m.name}${m.arrSize ? `[${m.arrSize}]` : ''};`);
+      opaqueLines.unshift(`layout(std140, binding=${blockBinding}) uniform ${blockName} {\n${memberLines.join('\n')}\n};\n`);
+    }
+    // 前置：std140 block + sampler 声明 → 主体前（声明先于引用）。无实例名，成员全局可见。
+    if (opaqueLines.length) s = `${opaqueLines.join('\n')}\n${s}`;
+  }
 
   // ⑧ WE 方言纹理函数 → 内建（mul/saturate/frac 等方言函数由 WE_HEADERS 提供，不改写）。
   s = s.replace(/\btexSample2D\s*\(/g, 'texture(');
@@ -205,16 +425,16 @@ function convertStage(
   const oColor = stage === 'frag' ? 'layout(location=0) out vec4 o_Color;\n' : '';
   const glsl = `#version 450\n${defBlock}${oColor}${s}`;
 
-  return { glsl, binds };
+  return { glsl, binds, nextBinding: bind };
 }
 
 // WE 方言 → desktop GLSL pass 描述（同步；仅做规则①-⑨ 翻译，不编译 SPIR-V）。
 // 供单测断言规则 / 调试；生产 wasm 路径用 glslToNagaPass（含 glslang SPIR-V 编译）。
 // 规则①-⑨ 对 rawVert/rawFrag 各自执行；layout(binding=N) 编号跨 stage 全局唯一
-// （frag 先编号 [0..n)，vert 接着从 n+1 继续，合并 uniforms 无重复 binding）。
+// （frag 先编号 [0..n)，vert 从 frag.nextBinding（下一个空闲 binding）继续，合并 uniforms 无重复 binding）。
 export function glslToNagaGlsl(pass: CompiledEffectPass): NagaPassDesc {
   const frag = convertStage(pass.rawFrag, 'frag', pass.combos, pass.uniforms, 0);
-  const vert = convertStage(pass.rawVert, 'vert', pass.combos, pass.uniforms, frag.binds.length);
+  const vert = convertStage(pass.rawVert, 'vert', pass.combos, pass.uniforms, frag.nextBinding);
   return {
     vertGlsl: vert.glsl,
     fragGlsl: frag.glsl,
@@ -230,7 +450,7 @@ export function glslToNagaGlsl(pass: CompiledEffectPass): NagaPassDesc {
 // 编译失败抛错 → 调用方捕获并回退（绝不白屏）。
 export async function glslToNagaPass(pass: CompiledEffectPass): Promise<SpvPassDesc> {
   const frag = convertStage(pass.rawFrag, 'frag', pass.combos, pass.uniforms, 0);
-  const vert = convertStage(pass.rawVert, 'vert', pass.combos, pass.uniforms, frag.binds.length);
+  const vert = convertStage(pass.rawVert, 'vert', pass.combos, pass.uniforms, frag.nextBinding);
   const glslang = await loadGlslang();
   const vertSpv = u32ToBytes(glslang.compileGLSL(vert.glsl, 'vertex', false));
   const fragSpv = u32ToBytes(glslang.compileGLSL(frag.glsl, 'fragment', false));

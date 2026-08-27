@@ -36,6 +36,39 @@ fn spv_to_wgsl_fade_sampler_produces_valid_wgsl() {
     assert!(wgsl.contains("uniform"), "应含 uniform block 缓冲（std140 非不透明 uniform）");
 }
 
+/// 逐个编译真实 WE shader 的 SPIR-V（std140 block + varying location），确认 spv_to_wgsl 无错。
+/// 覆盖 composelayer（vert 含 mat4 MVM block）与 fade（frag 含 g_Alpha float + color vec3 block）。
+/// 验证「非不透明 uniform 包进 std140 block」从 GLSL→SPIR-V→transform→naga spv-in→WGSL 全链路，
+/// 且生成的 SPIR-V 必须先能过 @webgpu/glslang（research/glslang-spike/compile_real.cjs 产出）。
+#[test]
+fn spv_to_wgsl_real_we_shader_std140_blocks() {
+    let cases: [(&str, &[u8], effect::Stage); 4] = [
+        ("composelayer_frag", include_bytes!("fixtures/composelayer_frag_new.spv"), effect::Stage::Fragment),
+        ("composelayer_vert", include_bytes!("fixtures/composelayer_vert_new.spv"), effect::Stage::Vertex),
+        ("fade_frag", include_bytes!("fixtures/fade_frag_new.spv"), effect::Stage::Fragment),
+        ("fade_vert", include_bytes!("fixtures/fade_vert_new.spv"), effect::Stage::Vertex),
+    ];
+    for (name, raw, stage) in cases {
+        let wgsl = effect::spv_to_wgsl(raw, stage)
+            .unwrap_or_else(|e| panic!("{name}: 经 spv_to_wgsl 应编译成功，got {e:?}"));
+        println!("[{name}] WGSL({} bytes)：\n{p}", wgsl.len(), p = wgsl);
+        // 按 stage 的 uniform 语义断言 WGSL 形态：
+        //  - composelayer_vert（mat4 MVM block）/ fade_frag（g_Alpha+color block）：应含 var<uniform>。
+        //  - composelayer_frag（仅 sampler）：transform 拆开后应含独立 texture_2d/sampler + textureSample。
+        //  - fade_vert（passthrough）：无 block/纹理，仅需合法 WGSL。
+        match name {
+            "composelayer_vert" | "fade_frag" => {
+                assert!(wgsl.contains("var<uniform>"), "{name}: 应含 uniform block 缓冲（std140）");
+            }
+            "composelayer_frag" => {
+                assert!(wgsl.contains("texture_2d"), "{name}: 应含独立 texture_2d");
+                assert!(wgsl.contains("textureSample"), "{name}: 应含 textureSample");
+            }
+            _ => {}
+        }
+    }
+}
+
 /// 对照：不 transform 直接 naga spv-in —— 应失败（InvalidId），证明 transform 是关键。
 #[test]
 fn raw_spv_without_transform_fails_in_naga() {
