@@ -98,6 +98,14 @@ export class WeScene {
         wasm.wescene_render(this.__wbg_ptr);
     }
     /**
+     * 每帧驱动所有对象级效果链（M3/Task5）：对象内容 → 对象RT → 效果链 ping-pong → 输出RT。
+     * 由 `render`（render_frame）每帧开头自动调用；本导出供 JS 侧显式驱动（幂等，渲染主路径
+     * 走 `scene.render()`）。
+     */
+    render_object_effects() {
+        wasm.wescene_render_object_effects(this.__wbg_ptr);
+    }
+    /**
      * 调整画布尺寸（surface 重建 + 视口尺寸同步）。
      * @param {number} w
      * @param {number} h
@@ -126,6 +134,69 @@ export class WeScene {
      */
     set_cover() {
         wasm.wescene_set_cover(this.__wbg_ptr);
+    }
+    /**
+     * 登记一个对象级效果链条目（M3/Task5）。对象内容（图片）需**先**经 `load_image` 上传；
+     * 本方法把该对象从共享场景路径移除，改为走「内容 → 对象RT → 效果链 → 合成quad」。
+     * `origin` = 对象中心（WE 坐标，已 applyAlignment）；`world_size` = size×scale（带符号）；
+     * `rt_size` = 钳制后对象 RT 分辨率（局部相机范围）；`chain_desc` = 效果链 pass 描述
+     * （Uint8Array = UTF-8 JSON；task-8 编译链集成：内含真实 WE shader 的 SPIR-V bytes 数组，
+     * wasm 解析为 `EffectPassDesc` 走 spv_to_wgsl；解析失败/为空 → 内置演示 pass 兜底）。
+     * 找不到内容 / 效果链失败 → 返回 Ok（零副作用，对象回退共享路径 / 采样内容，绝不白屏）。
+     * @param {number} obj_id
+     * @param {Float32Array} origin
+     * @param {Float32Array} world_size
+     * @param {Float32Array} rt_size
+     * @param {Uint8Array} chain_desc
+     * @returns {Promise<void>}
+     */
+    set_object_effect(obj_id, origin, world_size, rt_size, chain_desc) {
+        const ptr0 = passArrayF32ToWasm0(origin, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArrayF32ToWasm0(world_size, wasm.__wbindgen_malloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArrayF32ToWasm0(rt_size, wasm.__wbindgen_malloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ptr3 = passArray8ToWasm0(chain_desc, wasm.__wbindgen_malloc);
+        const len3 = WASM_VECTOR_LEN;
+        const ret = wasm.wescene_set_object_effect(this.__wbg_ptr, obj_id, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
+        return ret;
+    }
+    /**
+     * 登记一个粒子对象的对象级效果链条目（M4/Task6）。带 `effects` 的粒子对象走
+     * 「粒子内容 → 对象RT → 效果链 ping-pong → 合成 quad」，复用 Task5 对象级管线。
+     * `json` = 粒子规格（同 `add_particle`）；`origin`/`scale` 为对象变换；`tex_bytes` 为
+     * 粒子纹理（TEXV0005，空 = 无纹理白兜底）；`world_size`/`rt_size` 由 JS 用
+     * `particleWorldSize`（未钳制 distance×scale）/`particleObjectRange`（钳制）计算，
+     * 缺省空 → wasm 用粒子纯函数从 distanceMax/scale 推导；`chain_desc` = 效果链 pass 描述
+     * （Uint8Array = UTF-8 JSON，task-8 编译链集成：内含真实 WE shader 的 SPIR-V bytes 数组）。
+     * @param {number} obj_id
+     * @param {string} json
+     * @param {Float32Array} origin
+     * @param {Float32Array} scale
+     * @param {Uint8Array} tex_bytes
+     * @param {Float32Array} world_size
+     * @param {Float32Array} rt_size
+     * @param {Uint8Array} chain_desc
+     * @returns {Promise<void>}
+     */
+    set_particle_object_effect(obj_id, json, origin, scale, tex_bytes, world_size, rt_size, chain_desc) {
+        const ptr0 = passStringToWasm0(json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArrayF32ToWasm0(origin, wasm.__wbindgen_malloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArrayF32ToWasm0(scale, wasm.__wbindgen_malloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ptr3 = passArray8ToWasm0(tex_bytes, wasm.__wbindgen_malloc);
+        const len3 = WASM_VECTOR_LEN;
+        const ptr4 = passArrayF32ToWasm0(world_size, wasm.__wbindgen_malloc);
+        const len4 = WASM_VECTOR_LEN;
+        const ptr5 = passArrayF32ToWasm0(rt_size, wasm.__wbindgen_malloc);
+        const len5 = WASM_VECTOR_LEN;
+        const ptr6 = passArray8ToWasm0(chain_desc, wasm.__wbindgen_malloc);
+        const len6 = WASM_VECTOR_LEN;
+        const ret = wasm.wescene_set_particle_object_effect(this.__wbg_ptr, obj_id, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4, ptr5, len5, ptr6, len6);
+        return ret;
     }
     /**
      * GPU 粒子模拟一帧（更新 uniform dt + 累计 elapsed + dispatch compute）。
@@ -179,6 +250,11 @@ function __wbg_get_imports() {
             const ret = arg0 === null;
             return ret;
         },
+        __wbg___wbindgen_is_object_a2790eb24c211ea0: function(arg0) {
+            const val = arg0;
+            const ret = typeof(val) === 'object' && val !== null;
+            return ret;
+        },
         __wbg___wbindgen_is_undefined_6cff064c44e0d823: function(arg0) {
             const ret = arg0 === undefined;
             return ret;
@@ -215,6 +291,9 @@ function __wbg_get_imports() {
         }, arguments); },
         __wbg_configure_ce7dc0ea629bbc55: function() { return handleError(function (arg0, arg1) {
             arg0.configure(arg1);
+        }, arguments); },
+        __wbg_copyTextureToTexture_d3c9091d3bf4897b: function() { return handleError(function (arg0, arg1, arg2, arg3) {
+            arg0.copyTextureToTexture(arg1, arg2, arg3);
         }, arguments); },
         __wbg_createBindGroupLayout_1d37ac0dabfbed28: function() { return handleError(function (arg0, arg1) {
             const ret = arg0.createBindGroupLayout(arg1);
@@ -355,6 +434,36 @@ function __wbg_get_imports() {
             const ret = result;
             return ret;
         },
+        __wbg_instanceof_GpuOutOfMemoryError_c9077369f40e8df6: function(arg0) {
+            let result;
+            try {
+                result = arg0 instanceof GPUOutOfMemoryError;
+            } catch (_) {
+                result = false;
+            }
+            const ret = result;
+            return ret;
+        },
+        __wbg_instanceof_GpuValidationError_6f92e479d86616a6: function(arg0) {
+            let result;
+            try {
+                result = arg0 instanceof GPUValidationError;
+            } catch (_) {
+                result = false;
+            }
+            const ret = result;
+            return ret;
+        },
+        __wbg_instanceof_Object_80ad464782e2bd73: function(arg0) {
+            let result;
+            try {
+                result = arg0 instanceof Object;
+            } catch (_) {
+                result = false;
+            }
+            const ret = result;
+            return ret;
+        },
         __wbg_instanceof_Window_5625ff9937037a38: function(arg0) {
             let result;
             try {
@@ -374,6 +483,13 @@ function __wbg_get_imports() {
         },
         __wbg_log_e6372b4fbfc9f81e: function(arg0) {
             console.log(arg0);
+        },
+        __wbg_message_e2fb350ad8cfe709: function(arg0, arg1) {
+            const ret = arg1.message;
+            const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len1 = WASM_VECTOR_LEN;
+            getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
+            getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
         },
         __wbg_navigator_6cfdd5fa246d910f: function(arg0) {
             const ret = arg0.navigator;
@@ -416,6 +532,13 @@ function __wbg_get_imports() {
             } finally {
                 state0.a = 0;
             }
+        },
+        __wbg_popErrorScope_79543cb048170397: function(arg0) {
+            const ret = arg0.popErrorScope();
+            return ret;
+        },
+        __wbg_pushErrorScope_674df658c271daea: function(arg0, arg1) {
+            arg0.pushErrorScope(__wbindgen_enum_GpuErrorFilter[arg1]);
         },
         __wbg_push_adb0107829f02d75: function(arg0, arg1) {
             const ret = arg0.push(arg1);
@@ -465,6 +588,12 @@ function __wbg_get_imports() {
         },
         __wbg_setPipeline_323a115b52180cad: function(arg0, arg1) {
             arg0.setPipeline(arg1);
+        },
+        __wbg_setVertexBuffer_e32a2441b1f7bfa3: function(arg0, arg1, arg2, arg3, arg4) {
+            arg0.setVertexBuffer(arg1 >>> 0, arg2, arg3, arg4);
+        },
+        __wbg_setVertexBuffer_f90b4b03dde32ab1: function(arg0, arg1, arg2, arg3) {
+            arg0.setVertexBuffer(arg1 >>> 0, arg2, arg3);
         },
         __wbg_set_8155bb79a948541b: function() { return handleError(function (arg0, arg1, arg2) {
             const ret = Reflect.set(arg0, arg1, arg2);
@@ -1028,7 +1157,7 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         }, arguments); },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 160, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 392, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen__convert__closures_____invoke__ha22148a4a7c1d5ff);
             return ret;
         },
@@ -1089,6 +1218,9 @@ const __wbindgen_enum_GpuCompareFunction = ["never", "less", "equal", "less-equa
 
 
 const __wbindgen_enum_GpuCullMode = ["none", "front", "back"];
+
+
+const __wbindgen_enum_GpuErrorFilter = ["validation", "out-of-memory", "internal"];
 
 
 const __wbindgen_enum_GpuFilterMode = ["nearest", "linear"];

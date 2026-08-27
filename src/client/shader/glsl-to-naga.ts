@@ -62,6 +62,12 @@ interface GlslangApi {
 const glslangInit = glslangNS.default as unknown as () => Promise<GlslangApi>;
 let glslangPromise: Promise<GlslangApi> | null = null;
 function loadGlslang(): Promise<GlslangApi> {
+  // Task 9（浏览器 bundle）：web-devel 工厂的 locateFile() 经 build-client.mjs 的
+  // glslang-web-patch 插件改为读 globalThis.__DSH_GLSLANG_BASE__（DSH 插件静态路由前缀），
+  // 以 fetch /wallpapers/static/glslang.wasm。Node 测试（node-devel）用 fs 读 wasm，不受影响。
+  if (typeof globalThis !== 'undefined') {
+    (globalThis as { __DSH_GLSLANG_BASE__?: string }).__DSH_GLSLANG_BASE__ = '/wallpapers/static/';
+  }
   glslangPromise ??= glslangInit();
   return glslangPromise;
 }

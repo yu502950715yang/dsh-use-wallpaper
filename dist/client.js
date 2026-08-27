@@ -2366,6 +2366,12 @@ body[data-ds-dark-theme][data-we-wallpaper] [data-question-key] section{
 .wss-missing{color:var(--dsw-alias-label-tertiary,var(--wp-text));font-size:11px;white-space:nowrap}
 .wss-message{margin:0;font-size:12px;color:var(--dsw-alias-label-secondary,var(--wp-text))}
 
+/* \u2500\u2500 \u5BBD\u8868\u683C\uFF08\u22654 \u5217\uFF09\u7EA6\u675F\uFF1ADSH \u524D\u7AEF\u4F1A\u7ED9\u5217\u6570 \u22654 \u7684\u8868\u52A0 .md-table-wide\uFF0C\u628A\u8868\u683C
+   \u51FA\u8840\u5230\u6574\u4E2A\u804A\u5929\u6EDA\u52A8\u9762\u677F\u5BBD\uFF08100cqw\uFF0C\u6052\u5927\u4E8E 748px \u5185\u5BB9\u5217\uFF09\u3002\u539F\u7248\u6C14\u6CE1\u900F\u660E\uFF0C
+   \u51FA\u8840\u4E0D\u53EF\u89C1\uFF1B\u63D2\u4EF6\u7ED9\u6D88\u606F\u6C14\u6CE1\uFF08flowItem\uFF09\u52A0\u4E86\u6DB2\u6001\u73BB\u7483\u80CC\u666F/\u5706\u89D2\u540E\uFF0C\u6C14\u6CE1\u6709\u4E86
+   \u660E\u786E\u8FB9\u754C\uFF0C\u5BBD\u8868\u683C\u5DE6\u53F3\u6491\u51FA\u6C14\u6CE1\u5706\u89D2\uFF0C\u663E\u5F97"\u8868\u683C\u8D85\u51FA\u804A\u5929\u6C14\u6CE1"\u3002
+   \u8FD9\u91CC\u628A\u5BBD\u8868\u683C\u7EA6\u675F\u56DE\u6C14\u6CE1\u5185\u5BB9\u533A\uFF08\u64A4\u9500\u51FA\u8840\u7684 width/margin/padding\uFF09\uFF0C\u5E76\u6062\u590D
+   \u6C14\u6CE1\u5185\u6A2A\u5411\u6EDA\u52A8\uFF08overflow-x:auto\uFF09\uFF0C\u8868\u683C\u4E0D\u518D\u9876\u7834\u6C14\u6CE1\uFF082026-08-26\uFF09\u3002 \u2500\u2500 */
 body[data-we-wallpaper] [class*="flowItem"] .md-table-wide{
   width:100%!important;
   max-width:100%!important;
@@ -23866,8 +23872,10 @@ async function resolveEffectChain(sceneEffect, loadFile) {
       const combos = override.combos ?? {};
       const constants = override.constantshadervalues ?? {};
       const textures = Array.isArray(override.textures) ? override.textures : [];
-      const vertSrc = preprocessWeShader(new TextDecoder().decode(vertRaw), combos);
-      const fragSrc = preprocessWeShader(new TextDecoder().decode(fragRaw), combos);
+      const rawVert = new TextDecoder().decode(vertRaw);
+      const rawFrag = new TextDecoder().decode(fragRaw);
+      const vertSrc = preprocessWeShader(rawVert, combos);
+      const fragSrc = preprocessWeShader(rawFrag, combos);
       const uniforms = resolveUniformBindings(
         extractUniformAnnotations(fragSrc).concat(extractUniformAnnotations(vertSrc)),
         constants
@@ -23875,6 +23883,9 @@ async function resolveEffectChain(sceneEffect, loadFile) {
       out.push({
         vertSrc,
         fragSrc,
+        rawVert,
+        rawFrag,
+        combos,
         uniforms,
         textureSlots: textures,
         blendMode: mat.passes?.[0]?.blending ?? "normal"
@@ -24797,7 +24808,865 @@ var SceneScriptRuntime = class _SceneScriptRuntime {
   }
 };
 
+// node_modules/@webgpu/glslang/dist/web-devel/glslang.js
+var Module = function() {
+  var _scriptDir = typeof document !== "undefined" && document.currentScript ? document.currentScript.src : void 0;
+  return function(Module2) {
+    Module2 = Module2 || {};
+    var c;
+    c || (c = typeof Module2 !== "undefined" ? Module2 : {});
+    c.compileGLSLZeroCopy = function(a, b, d, e) {
+      d = !!d;
+      switch (b) {
+        case "vertex":
+          var g = 0;
+          break;
+        case "fragment":
+          g = 4;
+          break;
+        case "compute":
+          g = 5;
+          break;
+        default:
+          throw Error("shader_stage must be 'vertex', 'fragment', or 'compute'.");
+      }
+      switch (e || "1.0") {
+        case "1.0":
+          var f = 65536;
+          break;
+        case "1.1":
+          f = 65792;
+          break;
+        case "1.2":
+          f = 66048;
+          break;
+        case "1.3":
+          f = 66304;
+          break;
+        case "1.4":
+          f = 66560;
+          break;
+        case "1.5":
+          f = 66816;
+          break;
+        default:
+          throw Error("spirv_version must be '1.0' ~ '1.5'.");
+      }
+      e = c._malloc(4);
+      b = c._malloc(4);
+      var h = aa([a, g, d, f, e, b]);
+      d = k(e);
+      a = k(b);
+      c._free(e);
+      c._free(b);
+      if (0 === h) throw Error("GLSL compilation failed");
+      e = {};
+      d /= 4;
+      e.data = c.HEAPU32.subarray(d, d + a);
+      e.free = function() {
+        c._destroy_output_buffer(h);
+      };
+      return e;
+    };
+    c.compileGLSL = function(a, b, d, e) {
+      a = c.compileGLSLZeroCopy(a, b, d, e);
+      b = a.data.slice();
+      a.free();
+      return b;
+    };
+    var p = {}, q;
+    for (q in c) c.hasOwnProperty(q) && (p[q] = c[q]);
+    var r = "./this.program", t = false, u = false;
+    t = "object" === typeof window;
+    u = "function" === typeof importScripts;
+    var v = "", w;
+    if (t || u) u ? v = self.location.href : document.currentScript && (v = document.currentScript.src), _scriptDir && (v = _scriptDir), 0 !== v.indexOf("blob:") ? v = v.substr(0, v.lastIndexOf("/") + 1) : v = "", u && (w = function(a) {
+      var b = new XMLHttpRequest();
+      b.open("GET", a, false);
+      b.responseType = "arraybuffer";
+      b.send(null);
+      return new Uint8Array(b.response);
+    });
+    var x = c.print || console.log.bind(console), y = c.printErr || console.warn.bind(console);
+    for (q in p) p.hasOwnProperty(q) && (c[q] = p[q]);
+    p = null;
+    c.thisProgram && (r = c.thisProgram);
+    var A;
+    c.wasmBinary && (A = c.wasmBinary);
+    "object" !== typeof WebAssembly && y("no native wasm support detected");
+    function k(a) {
+      var b = "i32";
+      "*" === b.charAt(b.length - 1) && (b = "i32");
+      switch (b) {
+        case "i1":
+          return B[a >> 0];
+        case "i8":
+          return B[a >> 0];
+        case "i16":
+          return ba[a >> 1];
+        case "i32":
+          return C[a >> 2];
+        case "i64":
+          return C[a >> 2];
+        case "float":
+          return ca[a >> 2];
+        case "double":
+          return da[a >> 3];
+        default:
+          D("invalid type for getValue: " + b);
+      }
+      return null;
+    }
+    var E, ea = new WebAssembly.Table({ initial: 859, maximum: 859, element: "anyfunc" }), fa = false;
+    function ha() {
+      var a = c._convert_glsl_to_spirv;
+      a || D("Assertion failed: Cannot call unknown function convert_glsl_to_spirv, make sure it is exported");
+      return a;
+    }
+    function aa(a) {
+      var b = "string number boolean number number number".split(" "), d = { string: function(a2) {
+        var b2 = 0;
+        if (null !== a2 && void 0 !== a2 && 0 !== a2) {
+          var d2 = (a2.length << 2) + 1;
+          b2 = G(d2);
+          ia(a2, H, b2, d2);
+        }
+        return b2;
+      }, array: function(a2) {
+        var b2 = G(a2.length);
+        B.set(a2, b2);
+        return b2;
+      } }, e = ha(), g = [], f = 0;
+      if (a) for (var h = 0; h < a.length; h++) {
+        var n = d[b[h]];
+        n ? (0 === f && (f = ja()), g[h] = n(a[h])) : g[h] = a[h];
+      }
+      a = e.apply(null, g);
+      0 !== f && ka(f);
+      return a;
+    }
+    var la = "undefined" !== typeof TextDecoder ? new TextDecoder("utf8") : void 0;
+    function I(a, b, d) {
+      var e = b + d;
+      for (d = b; a[d] && !(d >= e); ) ++d;
+      if (16 < d - b && a.subarray && la) return la.decode(a.subarray(b, d));
+      for (e = ""; b < d; ) {
+        var g = a[b++];
+        if (g & 128) {
+          var f = a[b++] & 63;
+          if (192 == (g & 224)) e += String.fromCharCode((g & 31) << 6 | f);
+          else {
+            var h = a[b++] & 63;
+            g = 224 == (g & 240) ? (g & 15) << 12 | f << 6 | h : (g & 7) << 18 | f << 12 | h << 6 | a[b++] & 63;
+            65536 > g ? e += String.fromCharCode(g) : (g -= 65536, e += String.fromCharCode(55296 | g >> 10, 56320 | g & 1023));
+          }
+        } else e += String.fromCharCode(g);
+      }
+      return e;
+    }
+    function ia(a, b, d, e) {
+      if (0 < e) {
+        e = d + e - 1;
+        for (var g = 0; g < a.length; ++g) {
+          var f = a.charCodeAt(g);
+          if (55296 <= f && 57343 >= f) {
+            var h = a.charCodeAt(++g);
+            f = 65536 + ((f & 1023) << 10) | h & 1023;
+          }
+          if (127 >= f) {
+            if (d >= e) break;
+            b[d++] = f;
+          } else {
+            if (2047 >= f) {
+              if (d + 1 >= e) break;
+              b[d++] = 192 | f >> 6;
+            } else {
+              if (65535 >= f) {
+                if (d + 2 >= e) break;
+                b[d++] = 224 | f >> 12;
+              } else {
+                if (d + 3 >= e) break;
+                b[d++] = 240 | f >> 18;
+                b[d++] = 128 | f >> 12 & 63;
+              }
+              b[d++] = 128 | f >> 6 & 63;
+            }
+            b[d++] = 128 | f & 63;
+          }
+        }
+        b[d] = 0;
+      }
+    }
+    "undefined" !== typeof TextDecoder && new TextDecoder("utf-16le");
+    var J, B, H, ba, C, ca, da;
+    function ma(a) {
+      J = a;
+      c.HEAP8 = B = new Int8Array(a);
+      c.HEAP16 = ba = new Int16Array(a);
+      c.HEAP32 = C = new Int32Array(a);
+      c.HEAPU8 = H = new Uint8Array(a);
+      c.HEAPU16 = new Uint16Array(a);
+      c.HEAPU32 = new Uint32Array(a);
+      c.HEAPF32 = ca = new Float32Array(a);
+      c.HEAPF64 = da = new Float64Array(a);
+    }
+    var na = c.TOTAL_MEMORY || 16777216;
+    c.wasmMemory ? E = c.wasmMemory : E = new WebAssembly.Memory({ initial: na / 65536 });
+    E && (J = E.buffer);
+    na = J.byteLength;
+    ma(J);
+    C[84916] = 5582704;
+    function K(a) {
+      for (; 0 < a.length; ) {
+        var b = a.shift();
+        if ("function" == typeof b) b();
+        else {
+          var d = b.J;
+          "number" === typeof d ? void 0 === b.H ? c.dynCall_v(d) : c.dynCall_vi(d, b.H) : d(void 0 === b.H ? null : b.H);
+        }
+      }
+    }
+    var oa = [], pa = [], qa = [], ra = [];
+    function sa() {
+      var a = c.preRun.shift();
+      oa.unshift(a);
+    }
+    var L = 0, M = null, N = null;
+    c.preloadedImages = {};
+    c.preloadedAudios = {};
+    function D(a) {
+      if (c.onAbort) c.onAbort(a);
+      x(a);
+      y(a);
+      fa = true;
+      throw new WebAssembly.RuntimeError("abort(" + a + "). Build with -s ASSERTIONS=1 for more info.");
+    }
+    function ta() {
+      var a = O;
+      return String.prototype.startsWith ? a.startsWith("data:application/octet-stream;base64,") : 0 === a.indexOf("data:application/octet-stream;base64,");
+    }
+    var O = "glslang.wasm";
+    if (!ta()) {
+      var ua = O;
+      O = c.locateFile ? c.locateFile(ua, v) : v + ua;
+    }
+    function wa() {
+      try {
+        if (A) return new Uint8Array(A);
+        if (w) return w(O);
+        throw "both async and sync fetching of the wasm failed";
+      } catch (a) {
+        D(a);
+      }
+    }
+    function xa() {
+      return A || !t && !u || "function" !== typeof fetch ? new Promise(function(a) {
+        a(wa());
+      }) : fetch(O, { credentials: "same-origin" }).then(function(a) {
+        if (!a.ok) throw "failed to load wasm binary file at '" + O + "'";
+        return a.arrayBuffer();
+      }).catch(function() {
+        return wa();
+      });
+    }
+    pa.push({ J: function() {
+      ya();
+    } });
+    var za = [null, [], []], P = 0;
+    function Aa() {
+      P += 4;
+      return C[P - 4 >> 2];
+    }
+    var Q = {}, Ba = {};
+    function Ca() {
+      if (!R) {
+        var a = { USER: "web_user", LOGNAME: "web_user", PATH: "/", PWD: "/", HOME: "/home/web_user", LANG: ("object" === typeof navigator && navigator.languages && navigator.languages[0] || "C").replace("-", "_") + ".UTF-8", _: r }, b;
+        for (b in Ba) a[b] = Ba[b];
+        var d = [];
+        for (b in a) d.push(b + "=" + a[b]);
+        R = d;
+      }
+      return R;
+    }
+    var R;
+    function S(a) {
+      return 0 === a % 4 && (0 !== a % 100 || 0 === a % 400);
+    }
+    function T(a, b) {
+      for (var d = 0, e = 0; e <= b; d += a[e++]) ;
+      return d;
+    }
+    var U = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31], W = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    function X(a, b) {
+      for (a = new Date(a.getTime()); 0 < b; ) {
+        var d = a.getMonth(), e = (S(a.getFullYear()) ? U : W)[d];
+        if (b > e - a.getDate()) b -= e - a.getDate() + 1, a.setDate(1), 11 > d ? a.setMonth(d + 1) : (a.setMonth(0), a.setFullYear(a.getFullYear() + 1));
+        else {
+          a.setDate(a.getDate() + b);
+          break;
+        }
+      }
+      return a;
+    }
+    function Da(a, b, d, e) {
+      function g(a2, b2, d2) {
+        for (a2 = "number" === typeof a2 ? a2.toString() : a2 || ""; a2.length < b2; ) a2 = d2[0] + a2;
+        return a2;
+      }
+      function f(a2, b2) {
+        return g(a2, b2, "0");
+      }
+      function h(a2, b2) {
+        function V(a3) {
+          return 0 > a3 ? -1 : 0 < a3 ? 1 : 0;
+        }
+        var d2;
+        0 === (d2 = V(a2.getFullYear() - b2.getFullYear())) && 0 === (d2 = V(a2.getMonth() - b2.getMonth())) && (d2 = V(a2.getDate() - b2.getDate()));
+        return d2;
+      }
+      function n(a2) {
+        switch (a2.getDay()) {
+          case 0:
+            return new Date(a2.getFullYear() - 1, 11, 29);
+          case 1:
+            return a2;
+          case 2:
+            return new Date(a2.getFullYear(), 0, 3);
+          case 3:
+            return new Date(
+              a2.getFullYear(),
+              0,
+              2
+            );
+          case 4:
+            return new Date(a2.getFullYear(), 0, 1);
+          case 5:
+            return new Date(a2.getFullYear() - 1, 11, 31);
+          case 6:
+            return new Date(a2.getFullYear() - 1, 11, 30);
+        }
+      }
+      function z(a2) {
+        a2 = X(new Date(a2.A + 1900, 0, 1), a2.G);
+        var b2 = n(new Date(a2.getFullYear() + 1, 0, 4));
+        return 0 >= h(n(new Date(a2.getFullYear(), 0, 4)), a2) ? 0 >= h(b2, a2) ? a2.getFullYear() + 1 : a2.getFullYear() : a2.getFullYear() - 1;
+      }
+      var m = C[e + 40 >> 2];
+      e = { N: C[e >> 2], M: C[e + 4 >> 2], D: C[e + 8 >> 2], C: C[e + 12 >> 2], B: C[e + 16 >> 2], A: C[e + 20 >> 2], F: C[e + 24 >> 2], G: C[e + 28 >> 2], X: C[e + 32 >> 2], L: C[e + 36 >> 2], O: m ? m ? I(H, m, void 0) : "" : "" };
+      d = d ? I(H, d, void 0) : "";
+      m = { "%c": "%a %b %d %H:%M:%S %Y", "%D": "%m/%d/%y", "%F": "%Y-%m-%d", "%h": "%b", "%r": "%I:%M:%S %p", "%R": "%H:%M", "%T": "%H:%M:%S", "%x": "%m/%d/%y", "%X": "%H:%M:%S", "%Ec": "%c", "%EC": "%C", "%Ex": "%m/%d/%y", "%EX": "%H:%M:%S", "%Ey": "%y", "%EY": "%Y", "%Od": "%d", "%Oe": "%e", "%OH": "%H", "%OI": "%I", "%Om": "%m", "%OM": "%M", "%OS": "%S", "%Ou": "%u", "%OU": "%U", "%OV": "%V", "%Ow": "%w", "%OW": "%W", "%Oy": "%y" };
+      for (var l in m) d = d.replace(new RegExp(l, "g"), m[l]);
+      var F = "Sunday Monday Tuesday Wednesday Thursday Friday Saturday".split(" "), va = "January February March April May June July August September October November December".split(" ");
+      m = {
+        "%a": function(a2) {
+          return F[a2.F].substring(0, 3);
+        },
+        "%A": function(a2) {
+          return F[a2.F];
+        },
+        "%b": function(a2) {
+          return va[a2.B].substring(0, 3);
+        },
+        "%B": function(a2) {
+          return va[a2.B];
+        },
+        "%C": function(a2) {
+          return f((a2.A + 1900) / 100 | 0, 2);
+        },
+        "%d": function(a2) {
+          return f(a2.C, 2);
+        },
+        "%e": function(a2) {
+          return g(a2.C, 2, " ");
+        },
+        "%g": function(a2) {
+          return z(a2).toString().substring(2);
+        },
+        "%G": function(a2) {
+          return z(a2);
+        },
+        "%H": function(a2) {
+          return f(a2.D, 2);
+        },
+        "%I": function(a2) {
+          a2 = a2.D;
+          0 == a2 ? a2 = 12 : 12 < a2 && (a2 -= 12);
+          return f(a2, 2);
+        },
+        "%j": function(a2) {
+          return f(a2.C + T(S(a2.A + 1900) ? U : W, a2.B - 1), 3);
+        },
+        "%m": function(a2) {
+          return f(a2.B + 1, 2);
+        },
+        "%M": function(a2) {
+          return f(a2.M, 2);
+        },
+        "%n": function() {
+          return "\n";
+        },
+        "%p": function(a2) {
+          return 0 <= a2.D && 12 > a2.D ? "AM" : "PM";
+        },
+        "%S": function(a2) {
+          return f(a2.N, 2);
+        },
+        "%t": function() {
+          return "	";
+        },
+        "%u": function(a2) {
+          return a2.F || 7;
+        },
+        "%U": function(a2) {
+          var b2 = new Date(a2.A + 1900, 0, 1), d2 = 0 === b2.getDay() ? b2 : X(b2, 7 - b2.getDay());
+          a2 = new Date(a2.A + 1900, a2.B, a2.C);
+          return 0 > h(d2, a2) ? f(Math.ceil((31 - d2.getDate() + (T(S(a2.getFullYear()) ? U : W, a2.getMonth() - 1) - 31) + a2.getDate()) / 7), 2) : 0 === h(d2, b2) ? "01" : "00";
+        },
+        "%V": function(a2) {
+          var b2 = n(new Date(a2.A + 1900, 0, 4)), d2 = n(new Date(a2.A + 1901, 0, 4)), e2 = X(new Date(a2.A + 1900, 0, 1), a2.G);
+          return 0 > h(e2, b2) ? "53" : 0 >= h(d2, e2) ? "01" : f(Math.ceil((b2.getFullYear() < a2.A + 1900 ? a2.G + 32 - b2.getDate() : a2.G + 1 - b2.getDate()) / 7), 2);
+        },
+        "%w": function(a2) {
+          return a2.F;
+        },
+        "%W": function(a2) {
+          var b2 = new Date(a2.A, 0, 1), d2 = 1 === b2.getDay() ? b2 : X(b2, 0 === b2.getDay() ? 1 : 7 - b2.getDay() + 1);
+          a2 = new Date(a2.A + 1900, a2.B, a2.C);
+          return 0 > h(d2, a2) ? f(Math.ceil((31 - d2.getDate() + (T(S(a2.getFullYear()) ? U : W, a2.getMonth() - 1) - 31) + a2.getDate()) / 7), 2) : 0 === h(d2, b2) ? "01" : "00";
+        },
+        "%y": function(a2) {
+          return (a2.A + 1900).toString().substring(2);
+        },
+        "%Y": function(a2) {
+          return a2.A + 1900;
+        },
+        "%z": function(a2) {
+          a2 = a2.L;
+          var b2 = 0 <= a2;
+          a2 = Math.abs(a2) / 60;
+          return (b2 ? "+" : "-") + String("0000" + (a2 / 60 * 100 + a2 % 60)).slice(-4);
+        },
+        "%Z": function(a2) {
+          return a2.O;
+        },
+        "%%": function() {
+          return "%";
+        }
+      };
+      for (l in m) 0 <= d.indexOf(l) && (d = d.replace(new RegExp(l, "g"), m[l](e)));
+      l = Ea(d);
+      if (l.length > b) return 0;
+      B.set(l, a);
+      return l.length - 1;
+    }
+    function Ea(a) {
+      for (var b = 0, d = 0; d < a.length; ++d) {
+        var e = a.charCodeAt(d);
+        55296 <= e && 57343 >= e && (e = 65536 + ((e & 1023) << 10) | a.charCodeAt(++d) & 1023);
+        127 >= e ? ++b : b = 2047 >= e ? b + 2 : 65535 >= e ? b + 3 : b + 4;
+      }
+      b = Array(b + 1);
+      ia(a, b, 0, b.length);
+      return b;
+    }
+    var Ga = {
+      f: function() {
+      },
+      c: function() {
+        c.___errno_location && (C[c.___errno_location() >> 2] = 63);
+        return -1;
+      },
+      n: function(a, b) {
+        P = b;
+        try {
+          var d = Aa();
+          var e = Aa();
+          if (-1 === d || 0 === e) var g = -28;
+          else {
+            var f = Q.K[d];
+            if (f && e === f.U) {
+              var h = (void 0).T(f.S);
+              Q.R(d, h, e, f.flags, f.offset);
+              (void 0).W(h);
+              Q.K[d] = null;
+              f.P && Fa(f.V);
+            }
+            g = 0;
+          }
+          return g;
+        } catch (n) {
+          return D(n), -n.I;
+        }
+      },
+      a: function() {
+      },
+      b: function() {
+        D();
+      },
+      k: function(a, b, d) {
+        H.set(H.subarray(b, b + d), a);
+      },
+      l: function(a) {
+        var b = B.length;
+        if (2147418112 < a) return false;
+        for (var d = 1; 4 >= d; d *= 2) {
+          var e = b * (1 + 0.2 / d);
+          e = Math.min(e, a + 100663296);
+          e = Math.max(16777216, a, e);
+          0 < e % 65536 && (e += 65536 - e % 65536);
+          a: {
+            try {
+              E.grow(Math.min(2147418112, e) - J.byteLength + 65535 >> 16);
+              ma(E.buffer);
+              var g = 1;
+              break a;
+            } catch (f) {
+            }
+            g = void 0;
+          }
+          if (g) return true;
+        }
+        return false;
+      },
+      d: function(a, b) {
+        var d = 0;
+        Ca().forEach(function(e, g) {
+          var f = b + d;
+          g = C[a + 4 * g >> 2] = f;
+          for (f = 0; f < e.length; ++f) B[g++ >> 0] = e.charCodeAt(f);
+          B[g >> 0] = 0;
+          d += e.length + 1;
+        });
+        return 0;
+      },
+      e: function(a, b) {
+        var d = Ca();
+        C[a >> 2] = d.length;
+        var e = 0;
+        d.forEach(function(a2) {
+          e += a2.length + 1;
+        });
+        C[b >> 2] = e;
+        return 0;
+      },
+      h: function() {
+        return 0;
+      },
+      j: function() {
+        return 0;
+      },
+      g: function(a, b, d, e) {
+        try {
+          for (var g = 0, f = 0; f < d; f++) {
+            for (var h = C[b + 8 * f >> 2], n = C[b + (8 * f + 4) >> 2], z = 0; z < n; z++) {
+              var m = H[h + z], l = za[a];
+              0 === m || 10 === m ? ((1 === a ? x : y)(I(l, 0)), l.length = 0) : l.push(m);
+            }
+            g += n;
+          }
+          C[e >> 2] = g;
+          return 0;
+        } catch (F) {
+          return D(F), F.I;
+        }
+      },
+      memory: E,
+      o: function() {
+      },
+      i: function() {
+      },
+      m: function(a, b, d, e) {
+        return Da(a, b, d, e);
+      },
+      table: ea
+    }, Ha = function() {
+      function a(a2) {
+        c.asm = a2.exports;
+        L--;
+        c.monitorRunDependencies && c.monitorRunDependencies(L);
+        0 == L && (null !== M && (clearInterval(M), M = null), N && (a2 = N, N = null, a2()));
+      }
+      function b(b2) {
+        a(b2.instance);
+      }
+      function d(a2) {
+        return xa().then(function(a3) {
+          return WebAssembly.instantiate(a3, e);
+        }).then(a2, function(a3) {
+          y("failed to asynchronously prepare wasm: " + a3);
+          D(a3);
+        });
+      }
+      var e = { env: Ga, wasi_snapshot_preview1: Ga };
+      L++;
+      c.monitorRunDependencies && c.monitorRunDependencies(L);
+      if (c.instantiateWasm) try {
+        return c.instantiateWasm(e, a);
+      } catch (g) {
+        return y("Module.instantiateWasm callback failed with error: " + g), false;
+      }
+      (function() {
+        if (A || "function" !== typeof WebAssembly.instantiateStreaming || ta() || "function" !== typeof fetch) return d(b);
+        fetch(O, { credentials: "same-origin" }).then(function(a2) {
+          return WebAssembly.instantiateStreaming(a2, e).then(b, function(a3) {
+            y("wasm streaming compile failed: " + a3);
+            y("falling back to ArrayBuffer instantiation");
+            d(b);
+          });
+        });
+      })();
+      return {};
+    }();
+    c.asm = Ha;
+    var ya = c.___wasm_call_ctors = function() {
+      return (ya = c.___wasm_call_ctors = c.asm.p).apply(null, arguments);
+    };
+    c._convert_glsl_to_spirv = function() {
+      return (c._convert_glsl_to_spirv = c.asm.q).apply(null, arguments);
+    };
+    c._destroy_output_buffer = function() {
+      return (c._destroy_output_buffer = c.asm.r).apply(null, arguments);
+    };
+    c._malloc = function() {
+      return (c._malloc = c.asm.s).apply(null, arguments);
+    };
+    var Fa = c._free = function() {
+      return (Fa = c._free = c.asm.t).apply(null, arguments);
+    }, ja = c.stackSave = function() {
+      return (ja = c.stackSave = c.asm.u).apply(null, arguments);
+    }, G = c.stackAlloc = function() {
+      return (G = c.stackAlloc = c.asm.v).apply(null, arguments);
+    }, ka = c.stackRestore = function() {
+      return (ka = c.stackRestore = c.asm.w).apply(null, arguments);
+    };
+    c.dynCall_vi = function() {
+      return (c.dynCall_vi = c.asm.x).apply(null, arguments);
+    };
+    c.dynCall_v = function() {
+      return (c.dynCall_v = c.asm.y).apply(null, arguments);
+    };
+    c.asm = Ha;
+    var Y;
+    c.then = function(a) {
+      if (Y) a(c);
+      else {
+        var b = c.onRuntimeInitialized;
+        c.onRuntimeInitialized = function() {
+          b && b();
+          a(c);
+        };
+      }
+      return c;
+    };
+    N = function Ia() {
+      Y || Z();
+      Y || (N = Ia);
+    };
+    function Z() {
+      function a() {
+        if (!Y && (Y = true, !fa)) {
+          K(pa);
+          K(qa);
+          if (c.onRuntimeInitialized) c.onRuntimeInitialized();
+          if (c.postRun) for ("function" == typeof c.postRun && (c.postRun = [c.postRun]); c.postRun.length; ) {
+            var a2 = c.postRun.shift();
+            ra.unshift(a2);
+          }
+          K(ra);
+        }
+      }
+      if (!(0 < L)) {
+        if (c.preRun) for ("function" == typeof c.preRun && (c.preRun = [c.preRun]); c.preRun.length; ) sa();
+        K(oa);
+        0 < L || (c.setStatus ? (c.setStatus("Running..."), setTimeout(function() {
+          setTimeout(function() {
+            c.setStatus("");
+          }, 1);
+          a();
+        }, 1)) : a());
+      }
+    }
+    c.run = Z;
+    if (c.preInit) for ("function" == typeof c.preInit && (c.preInit = [c.preInit]); 0 < c.preInit.length; ) c.preInit.pop()();
+    Z();
+    return Module2;
+  };
+}();
+var glslang_default = /* @__PURE__ */ (() => {
+  const initialize = () => {
+    return new Promise((resolve) => {
+      Module({
+        locateFile(p) {
+          const base = typeof globalThis !== "undefined" && globalThis.__DSH_GLSLANG_BASE__ || "";
+          return base + (p || "glslang.wasm");
+        },
+        onRuntimeInitialized() {
+          resolve({
+            compileGLSLZeroCopy: this.compileGLSLZeroCopy,
+            compileGLSL: this.compileGLSL
+          });
+        }
+      });
+    });
+  };
+  let instance;
+  return () => {
+    if (!instance) {
+      instance = initialize();
+    }
+    return instance;
+  };
+})();
+
+// src/client/shader/glsl-to-naga.ts
+var glslangInit = glslang_default;
+var glslangPromise = null;
+function loadGlslang() {
+  if (typeof globalThis !== "undefined") {
+    globalThis.__DSH_GLSLANG_BASE__ = "/wallpapers/static/";
+  }
+  glslangPromise ??= glslangInit();
+  return glslangPromise;
+}
+function u32ToBytes(u32) {
+  const out = new Uint8Array(u32.length * 4);
+  const dv = new DataView(out.buffer);
+  for (let i = 0; i < u32.length; i++) dv.setUint32(i * 4, u32[i], true);
+  return out;
+}
+var UNIFORM_LINE_RE = /^(\s*)uniform\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)(?:\s*\[(\d+)\])?\s*;[^\S\r\n]*(?:\/\/.*)?$/gm;
+var TEX_WRAPPER_2DLOD_RE = /vec4\s+texSample2DLod\s*\([^)]*\)\s*\{\s*return\s+textureLod\s*\([^)]*\)\s*;\s*\}/g;
+var TEX_WRAPPER_2D_RE = /vec4\s+texSample2D\s*\([^)]*\)\s*\{\s*return\s+texture2D\s*\([^)]*\)\s*;\s*\}/g;
+function expandIncludes(src) {
+  let out = src;
+  let prev;
+  do {
+    prev = out;
+    for (const [name, header] of Object.entries(WE_HEADERS)) {
+      out = out.split(`#include "${name}"`).join(header);
+    }
+  } while (out !== prev);
+  return out;
+}
+function defaultValueForType(type) {
+  const vec = type.match(/^vec([234])$/);
+  if (vec) return new Array(Number(vec[1])).fill(0);
+  const mat = type.match(/^mat([234])$/);
+  if (mat) {
+    const n = Number(mat[1]);
+    return new Array(n * n).fill(0);
+  }
+  const arr = type.match(/^float\[(\d+)\]$/);
+  if (arr) return new Array(Number(arr[1])).fill(0);
+  if (type.startsWith("sampler")) return null;
+  return 0;
+}
+function buildDefines(source, combos) {
+  const defines = /* @__PURE__ */ new Map();
+  for (const [k, v] of Object.entries(combos)) defines.set(k, String(v));
+  for (const [k, v] of extractComboDefaults(source)) {
+    if (!defines.has(k)) defines.set(k, String(v));
+  }
+  const alreadyDefined = /* @__PURE__ */ new Set();
+  for (const m of source.matchAll(/^\s*#define\s+([A-Za-z_][A-Za-z0-9_]*)/gm)) alreadyDefined.add(m[1]);
+  for (const id of extractIfIdentifiers(source)) {
+    if (/^\d/.test(id)) continue;
+    if (alreadyDefined.has(id)) continue;
+    if (defines.has(id)) continue;
+    defines.set(id, "0");
+  }
+  return [...defines.entries()].map(([k, v]) => `#define ${k} ${v}`);
+}
+function convertStage(src, stage, combos, uniforms, bindingOffset) {
+  const hadExplicitCommon = src.includes('#include "common.h"');
+  let s = expandIncludes(src);
+  if (!hadExplicitCommon) s = WE_HEADERS["common.h"] + "\n" + s;
+  s = s.replace(TEX_WRAPPER_2DLOD_RE, "").replace(TEX_WRAPPER_2D_RE, "");
+  s = s.replace(/^\s*#version\s+\d+\s*(?:es)?\s*\n/gm, "");
+  s = s.replace(/^\s*precision\s+[A-Za-z_][A-Za-z0-9_]*\s+[A-Za-z_][A-Za-z0-9_]*\s*;\s*\n/gm, "");
+  s = s.replace(/\b(?:highp|mediump|lowp)\s+/g, "");
+  const varyingKw = stage === "vert" ? "out" : "in";
+  s = s.replace(/\bvarying\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)\s*;/g, `${varyingKw} $1 $2;`);
+  s = s.replace(/\battribute\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)\s*;/g, "in $1 $2;");
+  if (stage === "frag") s = s.replace(/gl_FragColor/g, "o_Color");
+  const binds = [];
+  let bind = bindingOffset;
+  const uniformLines = [];
+  s = s.replace(UNIFORM_LINE_RE, (m, indent, type, name, arrSize) => {
+    const typeStr = arrSize ? `${type}[${arrSize}]` : type;
+    const binding = bind++;
+    const rawValue = uniforms.has(name) ? uniforms.get(name) : void 0;
+    const value = rawValue === void 0 ? defaultValueForType(typeStr) : rawValue;
+    binds.push({ name, type: typeStr, value, binding });
+    uniformLines.push(`${indent}layout(binding=${binding}) uniform ${type} ${name}${arrSize ? `[${arrSize}]` : ""};`);
+    return "\n";
+  });
+  if (uniformLines.length) s = `${uniformLines.join("\n")}
+${s}`;
+  s = s.replace(/\btexSample2D\s*\(/g, "texture(");
+  s = s.replace(/\btexSample2DLod\s*\(/g, "textureLod(");
+  s = s.replace(/\btexture2D\s*\(/g, "texture(");
+  const defines = buildDefines(s, combos);
+  const defBlock = defines.length ? `${defines.join("\n")}
+` : "";
+  const oColor = stage === "frag" ? "layout(location=0) out vec4 o_Color;\n" : "";
+  const glsl = `#version 450
+${defBlock}${oColor}${s}`;
+  return { glsl, binds };
+}
+async function glslToNagaPass(pass) {
+  const frag = convertStage(pass.rawFrag, "frag", pass.combos, pass.uniforms, 0);
+  const vert = convertStage(pass.rawVert, "vert", pass.combos, pass.uniforms, frag.binds.length);
+  const glslang = await loadGlslang();
+  const vertSpv = u32ToBytes(glslang.compileGLSL(vert.glsl, "vertex", false));
+  const fragSpv = u32ToBytes(glslang.compileGLSL(frag.glsl, "fragment", false));
+  return {
+    vertSpv,
+    fragSpv,
+    uniforms: [...frag.binds, ...vert.binds],
+    textureSlots: pass.textureSlots,
+    blendMode: pass.blendMode
+  };
+}
+
 // src/client/wasm-renderer.ts
+function flattenUniformValue(value) {
+  if (typeof value === "number") return [value];
+  if (Array.isArray(value) && value.every((v) => typeof v === "number")) return value;
+  return null;
+}
+async function buildEffectChainDesc(id, effects) {
+  try {
+    const loadFile = async (name) => {
+      const resp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(name)}`);
+      return resp.ok ? new Uint8Array(await resp.arrayBuffer()) : null;
+    };
+    const passes = [];
+    for (const fx of effects) {
+      if (typeof fx?.file !== "string") continue;
+      const chain = await resolveEffectChain(
+        fx,
+        loadFile
+      );
+      if (!chain) continue;
+      for (const p of chain) {
+        const spv = await glslToNagaPass(p);
+        const uniforms = spv.uniforms.map((u) => ({ name: u.name, value: flattenUniformValue(u.value) })).filter((u) => u.value !== null);
+        passes.push({
+          vert_spv: Array.from(spv.vertSpv),
+          frag_spv: Array.from(spv.fragSpv),
+          uniforms,
+          texture_slots: [],
+          blend_mode: spv.blendMode
+        });
+      }
+    }
+    if (passes.length === 0) return new Uint8Array(0);
+    return new TextEncoder().encode(JSON.stringify(passes));
+  } catch {
+    return new Uint8Array(0);
+  }
+}
 function createFallbackSceneRenderer(wasm, _js) {
   if (!wasm) {
     return { render: async () => false, dispose: () => {
@@ -24927,6 +25796,8 @@ function createWasmSceneRenderer(opts) {
             if (!tex) continue;
             const size = obj.size;
             const origin = size ? applyAlignment(obj.origin, [size[0] * obj.scale[0], size[1] * obj.scale[1]], obj.alignment) : obj.origin;
+            const isObjectPath = shouldUseObjectPath(obj);
+            const range = size ? objectCameraRange(size, [obj.scale[0], obj.scale[1]]) : null;
             scene.load_image(
               i,
               tex,
@@ -24937,6 +25808,18 @@ function createWasmSceneRenderer(opts) {
               Float32Array.from(obj.alpha !== void 0 ? [obj.alpha] : []),
               Float32Array.from(obj.brightness !== void 0 ? [obj.brightness] : [])
             );
+            if (isObjectPath) {
+              const worldSize = size ? [size[0] * obj.scale[0], size[1] * obj.scale[1]] : [];
+              const rtSize = range ? [range.w, range.h] : [];
+              const chainDesc = await buildEffectChainDesc(id, obj.effects);
+              await scene.set_object_effect(
+                i,
+                Float32Array.from(origin),
+                Float32Array.from(worldSize),
+                Float32Array.from(rtSize),
+                chainDesc
+              );
+            }
             rendered++;
             if (obj.script && obj.script.trim()) {
               scriptRuntime ??= await SceneScriptRuntime.create();
