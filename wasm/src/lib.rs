@@ -173,6 +173,39 @@ impl WeScene {
             .set_particle(&spec, arr3(&origin), arr3(&scale), tex);
     }
 
+    /// 登记一个粒子对象的对象级效果链条目（M4/Task6）。带 `effects` 的粒子对象走
+    /// 「粒子内容 → 对象RT → 效果链 ping-pong → 合成 quad」，复用 Task5 对象级管线。
+    /// `json` = 粒子规格（同 `add_particle`）；`origin`/`scale` 为对象变换；`tex_bytes` 为
+    /// 粒子纹理（TEXV0005，空 = 无纹理白兜底）；`world_size`/`rt_size` 由 JS 用
+    /// `particleWorldSize`（未钳制 distance×scale）/`particleObjectRange`（钳制）计算，
+    /// 缺省空 → wasm 用粒子纯函数从 distanceMax/scale 推导；`chain_desc` 当前阶段空
+    /// （编译链未集成 → wasm 内置演示 pass 兜底，见 task-5/task-6-brief 裁决）。
+    pub async fn set_particle_object_effect(
+        &mut self,
+        obj_id: u32,
+        json: &str,
+        origin: Vec<f32>,
+        scale: Vec<f32>,
+        tex_bytes: Vec<u8>,
+        world_size: Vec<f32>,
+        rt_size: Vec<f32>,
+        chain_desc: &str,
+    ) -> Result<(), JsValue> {
+        let spec = particle::parse_particle_spec(json);
+        let tex = if tex_bytes.is_empty() {
+            None
+        } else {
+            tex::parse_tex(&tex_bytes).and_then(|img| self.renderer.upload_texture(&img))
+        };
+        self.renderer
+            .set_particle_object_effect(
+                obj_id, &spec, arr3(&origin), arr3(&scale), tex,
+                world_size, rt_size, chain_desc,
+            )
+            .await
+            .map_err(|e| JsValue::from_str(&e))
+    }
+
     /// GPU 粒子模拟一帧（更新 uniform dt + 累计 elapsed + dispatch compute）。
     pub fn step(&mut self, dt: f32) {
         self.renderer.step(dt);

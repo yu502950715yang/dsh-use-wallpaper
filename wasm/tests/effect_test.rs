@@ -128,3 +128,49 @@ fn composite_ndc_uniform_no_y_flip() {
     );
     assert!((u.center_y - 0.5).abs() < 1e-6);
 }
+
+/// Milestone 4 / Task6：particle 对象 RT 尺寸用「有效发射距离 × scale」（复用
+/// object_camera_range 的幅值钳制）。有 distanceMax → 128×2=256（不钳制）。
+/// （brief 指定的核心测试。）
+#[test]
+fn particle_object_range_uses_effective_distance() {
+    // 无 distanceMax → 默认 64；有 → |dist×scale| 钳制
+    let r = effect::particle_object_range(Some(128.0), [2.0, 2.0]);
+    assert_eq!(r[0], 256.0);
+}
+
+/// Milestone 4 / Task6：粒子发射距离有效值——无/非正 distanceMax 回退默认 64，
+/// 正 distanceMax 原样使用。
+#[test]
+fn particle_effective_distance_defaults_to_64() {
+    assert_eq!(effect::particle_effective_distance(None), 64.0);
+    assert_eq!(effect::particle_effective_distance(Some(0.0)), 64.0);
+    assert_eq!(effect::particle_effective_distance(Some(-10.0)), 64.0);
+    assert_eq!(effect::particle_effective_distance(Some(128.0)), 128.0);
+}
+
+/// Milestone 4 / Task6：粒子 RT 尺寸——无 distanceMax → 默认 64×scale；钳制到 OBJECT_RT_MAX。
+#[test]
+fn particle_object_range_defaults_and_clamps() {
+    let d = effect::particle_object_range(None, [1.0, 1.0]);
+    assert_eq!(d, [64.0, 64.0]);
+    // 负 scale → 幅值（对齐 object_camera_range，负值钳成 1px 会让 RT 退化，故取幅值）
+    let neg = effect::particle_object_range(Some(100.0), [-2.0, 2.0]);
+    assert_eq!(neg, [200.0, 200.0]);
+    // 超出 OBJECT_RT_MAX → 钳到 2048
+    let big = effect::particle_object_range(Some(9000.0), [1.0, 1.0]);
+    assert_eq!(big[0], 2048.0);
+}
+
+/// Milestone 4 / Task6：粒子合成 quad 世界尺寸——未钳制 distanceMax × scale（带符号，
+/// 与 particle_object_range 的幅值钳制分工：钳制只发生在 RT 范围，quad 世界尺寸未钳制）。
+#[test]
+fn particle_world_size_is_unclamped_signed() {
+    let w = effect::particle_world_size(Some(128.0), [2.0, -1.5]);
+    assert_eq!(w, [256.0, -192.0]);
+    let d = effect::particle_world_size(None, [2.0, 2.0]);
+    assert_eq!(d, [128.0, 128.0]);
+    // 无 distanceMax → 默认 64
+    let def = effect::particle_world_size(None, [1.0, 1.0]);
+    assert_eq!(def, [64.0, 64.0]);
+}

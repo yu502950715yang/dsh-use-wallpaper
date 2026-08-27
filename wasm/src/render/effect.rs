@@ -104,6 +104,33 @@ pub fn uv_window(unclamped: f32, clamped: f32) -> (f32, f32) {
 }
 
 // =====================================================================
+// Task6/M4：particle 对象效果链的 RT 尺寸与合成 quad 世界尺寸（native 纯函数，非 render 门控）
+// =====================================================================
+
+/// 粒子发射距离有效值：无/非正 `distance_max` → 默认 64。是粒子局部相机范围与合成 quad
+/// 世界尺寸的共同基准，保证「钳制只发生在 RT 范围、quad 世界尺寸始终未钳制」两处一致。
+/// 对齐 JS `effectiveParticleDistance`（scene-renderer.ts）。
+pub fn particle_effective_distance(distance_max: Option<f32>) -> f32 {
+    distance_max.filter(|d| *d > 0.0).unwrap_or(64.0)
+}
+
+/// particle 对象 RT 单轴尺寸（M4/Task6）：粒子动态发射（无静态 size 字段）用发射器世界
+/// 包围盒估计 `|distance_max × scale|` 逐轴钳制 `[1, OBJECT_RT_MAX]`（与 `object_camera_range`
+/// 同语义）。对齐 JS `particleObjectRange` = `effectiveParticleDistance` + 幅值钳制。
+pub fn particle_object_range(distance_max: Option<f32>, scale: [f32; 2]) -> [f32; 2] {
+    object_camera_range([particle_effective_distance(distance_max); 2], scale)
+}
+
+/// particle 对象合成 quad 世界尺寸（M4/Task6）：**未钳制** `distance_max × scale`（带符号，
+/// 负 scale 的粒子布局由 RT 内容/quad 半宽承担——与 image 对象「未钳制 size×scale」语义一致）。
+/// 钳制只发生在 `particle_object_range`（RT 范围），quad 世界尺寸始终未钳制，钳制轴由合成
+/// quad 的 UV 窗口只采样可见段。对齐 JS `particleWorldSize`。
+pub fn particle_world_size(distance_max: Option<f32>, scale: [f32; 2]) -> [f32; 2] {
+    let d = particle_effective_distance(distance_max);
+    [d * scale[0], d * scale[1]]
+}
+
+// =====================================================================
 // Task5：对象合成 quad 的 NDC/UV 窗口 uniform（native 纯函数，非 render 门控）
 // =====================================================================
 
