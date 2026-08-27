@@ -94,6 +94,23 @@ fn emitter_params_applies_coords_and_keeps_scale_y() {
 }
 
 #[test]
+fn emitter_params_local_uses_object_camera() {
+    // final whole-branch review I3：粒子对象级效果链（set_particle_object_effect）内容
+    // 渲染进对象 RT 用**对象局部相机**——局部坐标中心原点（对象中心 = 局部原点，origin=0），
+    // view 范围 = 对象 RT 尺寸（1:1 像素，对齐 image 局部正交相机），而非共享 from_spec 的
+    // 场景相机范围 + scene_w/h（否则投影双重映射近似错位）。
+    let spec = parse_particle_spec(ASHES_JSON);
+    let p = EmitterParams::from_spec_local(&spec, [1.0, 1.0, 1.0], 64.0, 64.0, 2048);
+    assert_eq!(p.origin_x, 0.0, "对象局部原点 = 对象中心（非场景 origin）");
+    assert_eq!(p.origin_y, 0.0);
+    assert_eq!(p.origin_z, 0.0);
+    assert_eq!(p.view_w, 64.0, "局部相机 view 范围 = 对象 RT 尺寸");
+    assert_eq!(p.view_h, 64.0);
+    assert_eq!(p.scale_y, 1.0, "scale.y 不取负（与共享 from_spec 一致）");
+    assert_eq!(p.max_particles, 2048, "max_particles 仍由调用方传入");
+}
+
+#[test]
 fn emitter_params_keeps_negative_scale_y() {
     // T4.4：负 scale.y 透传进 uniform（不取负、不钳制为正）——2460786246 Lightning
     // cloud scale.y=-0.18 的粒子布局绕 origin 镜像由 compute shader 的

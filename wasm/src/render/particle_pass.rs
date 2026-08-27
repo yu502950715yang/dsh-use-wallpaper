@@ -39,31 +39,26 @@ pub struct EmitterParams {
 }
 
 impl EmitterParams {
+    /// 把 emitter 字段打包进 uniform（共享逻辑；origin 已为中心语义、view 已为投影视口）。
     /// CPU 侧坐标映射（WE 左下原点、y 向上 → 中心原点、y 向上；scale.y 不取负——
-    /// 2026-08-20 方向修正，见 coords::particle_scale）后打包 uniform。
-    /// Task 9 修复：origin 是 WE 场景坐标（0..scene_w / 0..scene_h），中心映射必须用
-    /// **场景尺寸** scene_w/scene_h（原实现与投影共用视口尺寸，create 改传视口后
-    /// 粒子位置错位/移出视口）；view_w/view_h 为投影半视口（contain 相机范围，
-    /// vs_main 的裁剪坐标映射用），elapsed 初始 0（step 累加）。
+    /// 2026-08-20 方向修正，见 coords::particle_scale），elapsed 初始 0（step 累加）。
     /// Round 2 审查修复：max_particles 由调用方传入（估算值，含 cover 减半），
     /// 与 ParticlePass::new 的 buffer 槽位、dispatch 分派三处一致——原硬编码 2048
     /// 与估算 buffer 容量不同步 → compute shader 槽位边界检查（读 uniform 2048）
     /// 对估算槽位恒不触发 → dispatch 线程超出 buffer 容量时 storage 越界读写（UB）。
-    pub fn from_spec(
+    #[allow(clippy::too_many_arguments)]
+    fn pack(
         spec: &ParticleSpec,
-        origin: [f32; 3],
+        origin_center: [f32; 3],
         scale: [f32; 3],
-        scene_w: f32,
-        scene_h: f32,
         view_w: f32,
         view_h: f32,
         max_particles: u32,
     ) -> EmitterParams {
-        let c = coords::origin_to_center(origin, scene_w, scene_h);
         let s = coords::particle_scale(scale);
         let i = &spec.init;
         EmitterParams {
-            origin_x: c[0], origin_y: c[1], origin_z: c[2],
+            origin_x: origin_center[0], origin_y: origin_center[1], origin_z: origin_center[2],
             scale_x: s[0], scale_y: s[1], scale_z: s[2],
             view_w, view_h, elapsed: 0.0,
             rate: spec.emitter.rate,
@@ -87,6 +82,42 @@ impl EmitterParams {
             _pad3: 0.0, _pad4: 0.0, _pad5: 0.0, _pad6: 0.0, _pad7: 0.0,
             _pad8: 0, _pad9: 0, _pad10: 0, _pad11: 0,
         }
+    }
+
+    /// **共享粒子路径**（add_particle，粒子直接渲染到 surface）：场景相机语义。
+    /// Task 9 修复：origin 是 WE 场景坐标（0..scene_w / 0..scene_h），中心映射必须用
+    /// **场景尺寸** scene_w/scene_h（原实现与投影共用视口尺寸，create 改传视口后
+    /// 粒子位置错位/移出视口）；view_w/view_h 为投影半视口（contain 相机范围，
+    /// vs_main 的裁剪坐标映射用）。
+    pub fn from_spec(
+        spec: &ParticleSpec,
+        origin: [f32; 3],
+        scale: [f32; 3],
+        scene_w: f32,
+        scene_h: f32,
+        view_w: f32,
+        view_h: f32,
+        max_particles: u32,
+    ) -> EmitterParams {
+        let c = coords::origin_to_center(origin, scene_w, scene_h);
+        Self::pack(spec, c, scale, view_w, view_h, max_particles)
+    }
+
+    /// **粒子对象级效果链**（set_particle_object_effect）：对象局部相机语义。
+    /// 粒子内容渲染进对象 RT（rt_w × rt_h）：局部坐标**中心原点**（对象中心 = 局部原点，
+    /// vs_main 的 `pos / view * 2` 在局部空间内映射），view 范围 = 对象 RT 尺寸（1:1 像素，
+    /// 对齐 image 对象级管线的局部正交相机 `content_ndc` 的 world/rt）。
+    /// 2026-08-25（final whole-branch review I3）：原实现复用共享 `from_spec` 的场景相机范围
+    /// + scene_w/h —— 粒子内容在对象 RT 内「投影双重映射」近似错位；改为对象局部相机后
+    /// 粒子按对象中心呈现、1 世界单位 = 1 像素，与 image 局部管线一致。
+    pub fn from_spec_local(
+        spec: &ParticleSpec,
+        scale: [f32; 3],
+        rt_w: f32,
+        rt_h: f32,
+        max_particles: u32,
+    ) -> EmitterParams {
+        Self::pack(spec, [0.0; 3], scale, rt_w, rt_h, max_particles)
     }
 }
 

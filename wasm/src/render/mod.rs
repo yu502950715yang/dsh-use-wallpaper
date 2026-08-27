@@ -1124,13 +1124,14 @@ impl Renderer {
                 wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&sampler) },
             ],
         });
-        // ⑤ 粒子 GPU 模拟 + 渲染管线（build 渲染到对象 RT）。投影用**场景相机范围**与 WE
-        //    origin（与共享粒子路径一致）——当前演示 pass 阶段内容被程序化动画替代，
-        //    粒子在对象 RT 内的精确局部投影待真实 shader 接入后再细化（架构验证不受影响）。
-        let (fw, fh) = self.camera_range();
+        // ⑤ 粒子 GPU 模拟 + 渲染管线（build 渲染到对象 RT）。投影用**对象局部相机**——
+        //    局部坐标中心原点（对象中心）、view = 对象 RT 尺寸（1:1 像素，对齐 image
+        //    对象级管线的局部正交相机 `content_ndc`），而**非**场景相机范围 + scene_w/h
+        //    （final whole-branch review I3：原实现造成粒子内容在对象 RT 内「投影双重
+        //    映射」近似错位）。原点在局部空间为 (0,0,0)——粒子发射器即对象中心。
         let max_particles = particle_pass::estimate_max_particles(spec);
-        let params = particle_pass::EmitterParams::from_spec(
-            spec, origin, scale, self.scene_w, self.scene_h, fw, fh, max_particles,
+        let params = particle_pass::EmitterParams::from_spec_local(
+            spec, scale, rt_w as f32, rt_h as f32, max_particles,
         );
         let particle = particle_pass::ParticlePass::new(
             &self.device, &self.queue, &params, max_particles, self.config.format, tex,
