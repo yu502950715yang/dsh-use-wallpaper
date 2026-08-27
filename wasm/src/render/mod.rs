@@ -19,6 +19,34 @@ use crate::coords;
 #[cfg(feature = "render")]
 pub const CAMERA_DISTANCE: f32 = 300.0;
 
+// Task3/M2：内置演示效果链的单 pass shader（vertex/fragment 分离，desktop GLSL 450）。
+// 用途：跑通"效果链在 RT 上执行并输出"的工程验证（EffectChain 走 naga glsl_to_wgsl 编译）。
+// 注意：naga 24 glsl frontend 尚不能编译 `sampler2D`（实证见报告疑虑），故本 MVP 演示 pass
+// 用 g_Time + v_uv 生成**程序化**动画（非采样 g_Texture0），证明 ping-pong 执行器链路走通；
+// 真实 WE 效果 shader 的纹理采样待 naga sampler2D 支持后接入后续任务。
+#[cfg(feature = "render")]
+const DEMO_EFFECT_VERT_GLSL: &str = r#"#version 450
+layout(location=0) in vec2 a_Position;
+layout(location=1) in vec2 a_TexCoord;
+layout(location=0) out vec2 v_uv;
+void main() {
+    v_uv = a_TexCoord;
+    gl_Position = vec4(a_Position, 0.0, 1.0);
+}"#;
+
+#[cfg(feature = "render")]
+const DEMO_EFFECT_FRAG_GLSL: &str = r#"#version 450
+layout(location=0) out vec4 o_Color;
+layout(location=0) in vec2 v_uv;
+layout(binding=0) uniform float g_Time;
+void main() {
+    float t = fract(g_Time * 0.25);
+    float r = 0.5 + 0.5 * sin(v_uv.x * 6.28318 + t * 3.14159);
+    float g = 0.5 + 0.5 * sin(v_uv.y * 6.28318 + t * 5.0);
+    float b = 0.5 + 0.5 * cos((v_uv.x + v_uv.y) * 6.28318 + t * 7.0);
+    o_Color = vec4(r, g, b, 1.0);
+}"#;
+
 /// 场景图片对象：纹理 + 变换 + GPU 资源（Task 9 实测修复：render_frame 原只渲染
 /// 粒子、图片平面未绘制 → 全库画面偏暗；本结构承载图片 quad 渲染所需资源）。
 #[cfg(feature = "render")]
@@ -146,6 +174,13 @@ pub struct Renderer {
     offscreen_tex: Option<wgpu::Texture>,
     offscreen_view: Option<wgpu::TextureView>,
     offscreen_sampler: Option<wgpu::Sampler>,
+    /// 效果链 ping-pong 执行器（Task3/M2）。当前用一个内置**程序化**单 pass（g_Time 驱动）
+    /// 跑通验证：效果链在 RT 上执行并输出（g_Time 每帧更新）。真实 WE 效果 shader（含
+    /// g_Texture0 采样）待 naga sampler2D 支持后接入（本 MVP 未编采样——见报告疑虑）。
+    /// `None` = 创建失败（调用方回退 Task2 透传 / 直接渲染 surface，不黑屏）。
+    effect_chain: Option<effect::EffectChain>,
+    /// 帧时间（秒，从 0 起；step(dt) 累计），供效果链 g_Time 每帧更新。
+    time: f32,
 }
 
 #[cfg(feature = "render")]
@@ -313,10 +348,35 @@ impl Renderer {
                 "[wasm] effect pass 创建失败，跳过（兜底直接渲染 surface）：{e}"
             ))),
         }
+        // == 效果链 ping-pong 执行器（Task3/M2）==
+        // 一次性（非每帧）编译/建管线/建 ping-pong RT/uniform buffer。当前用内置单 pass
+        // 程序化效果（g_Time 驱动）跑通工程验证。创建失败 => None => 回退 Task2 透传 / 直接
+        // 渲染 surface（绝不黑屏）。
+        let mut effect_chain = None;
+        let chain_passes = vec![effect::EffectPassDesc {
+            vert_glsl: DEMO_EFFECT_VERT_GLSL.to_string(),
+            frag_glsl: DEMO_EFFECT_FRAG_GLSL.to_string(),
+            uniforms: vec![],
+            texture_slots: vec![],
+            blend_mode: "normal".to_string(),
+        }];
+        match effect::EffectChain::new(&device, &queue, chain_passes, format, config.width, config.height).await {
+            Ok(chain) => {
+                web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(
+                    "[wasm] effect chain 创建成功（单 pass 程序化，RT 上执行）",
+                ));
+                effect_chain = Some(chain);
+            }
+            Err(e) => web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(&format!(
+                "[wasm] effect chain 创建失败，跳过（回退透传/direct）：{e}"
+            ))),
+        }
         // 离屏"自采"纹理（尺寸/格式与 surface 一致）：场景先渲染到离屏，再由透传 pass
         // 采样输出到 surface——读自采渲染验证 wasm 工程串通，避免 surface 当帧自依赖。
-        // Fix：仅当 effect pass 创建成功（effect_passes 非空）才分配，effect 失败时不闲置。
-        let (offscreen_tex, offscreen_view, offscreen_sampler) = if !effect_passes.is_empty() {
+        // Fix：仅当 effect pass 创建成功（effect_passes 非空）**或** effect chain 存在
+        // （effect_chain.is_some()）才分配，effect 失败时不闲置。
+        let (offscreen_tex, offscreen_view, offscreen_sampler) =
+            if !effect_passes.is_empty() || effect_chain.is_some() {
             let tex = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("effect-offscreen"),
                 size: wgpu::Extent3d { width: config.width, height: config.height, depth_or_array_layers: 1 },
@@ -352,6 +412,8 @@ impl Renderer {
             offscreen_tex,
             offscreen_view,
             offscreen_sampler,
+            effect_chain,
+            time: 0.0,
         })
     }
 
@@ -609,6 +671,8 @@ impl Renderer {
 
     /// GPU 粒子模拟一帧（更新 uniform dt + dispatch compute）。
     pub fn step(&mut self, dt: f32) {
+        // 累计帧时间（供效果链 g_Time 每帧更新；JS 每帧固定调用 step(1/60)）
+        self.time += dt;
         for pass in &self.particle_passes {
             pass.step(&self.queue, dt);
         }
@@ -646,7 +710,16 @@ impl Renderer {
             (CameraMode::Cover, None) => wgpu::Color { r: 0.067, g: 0.067, b: 0.078, a: 1.0 },
         };
 
-        if !self.effect_passes.is_empty() {
+        if self.effect_chain.is_some() {
+            // 效果链 ping-pong（Task3/M2）：场景渲染到离屏"自采"，再由效果链单 pass 在
+            // ping-pong RT 上执行并输出到 surface（g_Time 每帧更新）。chain 存在 => 离屏已分配。
+            let offscreen_view = self.offscreen_view.as_ref().expect("effect chain 存在时离屏纹理已分配");
+            self.draw_scene_into(&mut encoder, offscreen_view, clear);
+            let time = self.time;
+            if let Some(chain) = &mut self.effect_chain {
+                chain.render(&mut encoder, offscreen_view, &view, time);
+            }
+        } else if !self.effect_passes.is_empty() {
             // 效果链透传（Task2 基线）：场景渲染到离屏自采，再透传输出到 surface。
             // effect_passes 非空 => 离屏资源已在 new 时分配，unwrap 安全。
             let offscreen_view = self.offscreen_view.as_ref().expect("effect pass 存在时离屏纹理已分配");

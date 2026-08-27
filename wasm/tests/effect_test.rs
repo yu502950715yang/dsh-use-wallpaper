@@ -13,3 +13,54 @@ fn validates_wgsl() {
     let wgsl = "struct O { @location(0) c: vec4<f32>, };\n@fragment fn main() -> O { return O(vec4f(0.0)); }";
     assert!(effect::validate_wgsl(wgsl));
 }
+
+/// Milestone 2 / Task3：ping-pong 写端选择（纯逻辑，native 可测）。
+/// 上一写端为 None（首 pass 读输入纹理）→ 写 rt_a(0)；上一写端为 rt_a(0) → 写 rt_b(1)；
+/// 上一写端为 rt_b(1) → 写 rt_a(0)。与 JS EffectRunner::pickWriteTarget 语义一致。
+#[test]
+fn pick_write_target_pings_pong() {
+    assert_eq!(effect::pick_write_target(None), 0);
+    assert_eq!(effect::pick_write_target(Some(0)), 1);
+    assert_eq!(effect::pick_write_target(Some(1)), 0);
+}
+
+/// Milestone 2 / Task3：blendMode 字符串 → BlendKey（native 可测，DRY——render 层
+/// 用 blend_key_to_wgpu 从 key 映射，不再从 str 重复解析）。
+#[test]
+fn blend_mode_mapping() {
+    assert_eq!(effect::blend_mode_key("normal"), effect::BlendKey::Normal);
+    assert_eq!(effect::blend_mode_key("add"), effect::BlendKey::Add);
+    assert_eq!(effect::blend_mode_key("multiply"), effect::BlendKey::Multiply);
+    assert_eq!(effect::blend_mode_key("subtract"), effect::BlendKey::Subtract);
+    // 未知/缺省回退 Normal（对齐 JS blendModeToThree 的 default）
+    assert_eq!(effect::blend_mode_key(""), effect::BlendKey::Normal);
+    assert_eq!(effect::blend_mode_key("some_unknown"), effect::BlendKey::Normal);
+}
+
+/// Milestone 2 / Task3：内置演示效果链的 vert/frag GLSL 必须能被 naga 编译（现仅运行时创建
+/// EffectChain 才调用 glsl_to_wgsl，无法在 native 编译期验证——此测试在 native 恒定校验
+/// 这两个 shader 可编译，防止集成演示 shader 出错导致链静默创建失败）。
+#[test]
+fn demo_chain_shaders_compile() {
+    let vert = r#"#version 450
+layout(location=0) in vec2 a_Position;
+layout(location=1) in vec2 a_TexCoord;
+layout(location=0) out vec2 v_uv;
+void main() {
+    v_uv = a_TexCoord;
+    gl_Position = vec4(a_Position, 0.0, 1.0);
+}"#;
+    let frag = r#"#version 450
+layout(location=0) out vec4 o_Color;
+layout(location=0) in vec2 v_uv;
+layout(binding=0) uniform float g_Time;
+void main() {
+    float t = fract(g_Time * 0.25);
+    float r = 0.5 + 0.5 * sin(v_uv.x * 6.28318 + t * 3.14159);
+    float g = 0.5 + 0.5 * sin(v_uv.y * 6.28318 + t * 5.0);
+    float b = 0.5 + 0.5 * cos((v_uv.x + v_uv.y) * 6.28318 + t * 7.0);
+    o_Color = vec4(r, g, b, 1.0);
+}"#;
+    assert!(effect::glsl_to_wgsl(vert, effect::Stage::Vertex).is_ok(), "demo vert 应可编译");
+    assert!(effect::glsl_to_wgsl(frag, effect::Stage::Fragment).is_ok(), "demo frag 应可编译");
+}
