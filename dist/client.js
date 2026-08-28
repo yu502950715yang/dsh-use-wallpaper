@@ -22938,6 +22938,24 @@ vec2 rotateVec2(vec2 v, float r) {
   return vec2(v.x * cs.x - v.y * cs.y, v.x * cs.y + v.y * cs.x);
 }
 
+vec2 rotateVec2(vec4 v, float r) { return rotateVec2(v.xy, r); }
+
+// \u2014\u2014 WE \u5F15\u64CE\u901A\u7528\u5F3A\u8F6C/\u6570\u5B66\u65B9\u8A00\uFF08HLSL \u8F6C GLSL \u4EA7\u7269\uFF0C\u975E\u5F15\u64CE common.h \u8F6C\u5199\uFF0C\u9700\u5168\u5C40\u8865\u9F50\uFF09\u2014\u2014
+// CAST2/CAST3/CAST4 \u7B49\u662F HLSL (floatN)x \u5F3A\u8F6C\u7684\u7B49\u4EF7\u7269\uFF1A\u5BF9**\u4EFB\u610F**\u6807\u91CF/\u5411\u91CF x \u5747\u5408\u6CD5
+// \uFF08vec3(float)=\u6807\u91CF\u5E7F\u64AD\u3001vec3(vec2/3)=\u53D6\u5206\u91CF/\u900F\u4F20\u3001vec3(vec4)=\u53D6 xyz\uFF09\uFF0C\u6545\u7528\u5B8F\u800C\u975E\u51FD\u6570\u3002
+// \u771F\u5B9E WE effects \u5B9E\u6D4B\uFF1Ablendgradient \u7528 CAST2(0.0)/CAST3(0.0)\uFF0Cwaterflow \u7528 CAST4(vec4)\uFF0C
+// depthparallax \u7528 CAST3X3(mat4)\uFF0Cmodel_vertex_v1.h \u7528 CASTF(uint\u2192float)/CASTU(float\u2192uint)\u3002
+#define CAST2(x) vec2(x)
+#define CAST3(x) vec3(x)
+#define CAST4(x) vec4(x)
+#define CASTF(x) float(x)
+#define CASTU(x) uint(x)
+#define CAST2X2(x) mat2(x)
+#define CAST3X3(x) mat3(x)
+#define CAST4X4(x) mat4(x)
+// WE \u7684 atan2(y,x) \u662F HLSL \u98CE\u683C\uFF1BGLSL \u5185\u5EFA\u4E3A atan(y,x)\uFF0C\u4EC5\u6620\u5C04\u540D\u5B57\uFF08fisheye \u7B49\u6548\u679C shader\uFF09\u3002
+#define atan2(y, x) atan(y, x)
+
 // \u2014\u2014 \u4EE5\u4E0B\u4E3A\u5F15\u64CE\u771F\u5B9E common.h \u8F6C\u5199\uFF08D:\\Steam\\steamapps\\common\\wallpaper_engine\\assets\\shaders\\common.h\uFF09\u2014\u2014
 vec3 hsv2rgb(vec3 c) {
   vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
@@ -22963,10 +22981,6 @@ float greyscale(vec3 color) {
 // WE \u884C\u4E3B\u5E8F\u7EA6\u5B9A\uFF1Agl_Position = mul(vec4(a_Position,1), g_ModelViewProjectionMatrix)
 vec4 mul(vec4 v, mat4 m) { return m * v; }
 vec3 mul(vec3 v, mat3 m) { return m * v; }
-
-vec2 CAST2(float x) { return vec2(x); }
-vec3 CAST3(float x) { return vec3(x); }
-vec4 CAST4(float x) { return vec4(x); }
 #endif
 `;
 var COMMON_BLUR_H = `
@@ -25535,7 +25549,7 @@ function u32ToBytes(u32) {
   return out;
 }
 var UNIFORM_LINE_RE = /^(\s*)uniform\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)(?:\s*\[(\d+)\])?\s*;[^\S\r\n]*(?:\/\/.*)?$/gm;
-var DECL_IO_RE = /^(\s*)(in|out)\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)\s*;(.*)$/;
+var DECL_IO_RE = /^(\s*)(in|out)\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)(\s*\[\s*\d+\s*\])?\s*;(.*)$/;
 function assignInterfaceLocations(src, stage) {
   const out = [];
   let fragInLoc = 0;
@@ -25545,13 +25559,14 @@ function assignInterfaceLocations(src, stage) {
     const hasLayout = /layout\s*\(\s*location\s*=/.test(line);
     const m = DECL_IO_RE.exec(line);
     if (m && !hasLayout) {
-      const [, indent, io, type, name, rest] = m;
+      const [, indent, io, type, name, arr, rest] = m;
+      const decl = `${indent}layout(location=`;
       if (stage === "frag") {
-        if (io === "in") out.push(`${indent}layout(location=${fragInLoc++}) in ${type} ${name};${rest}`);
+        if (io === "in") out.push(`${decl}${fragInLoc++}) in ${type} ${name}${arr ?? ""};${rest}`);
         else out.push(line);
       } else {
-        if (io === "in") out.push(`${indent}layout(location=${vertInLoc++}) in ${type} ${name};${rest}`);
-        else out.push(`${indent}layout(location=${vertOutLoc++}) out ${type} ${name};${rest}`);
+        if (io === "in") out.push(`${decl}${vertInLoc++}) in ${type} ${name}${arr ?? ""};${rest}`);
+        else out.push(`${decl}${vertOutLoc++}) out ${type} ${name}${arr ?? ""};${rest}`);
       }
     } else {
       out.push(line);
@@ -25561,6 +25576,40 @@ function assignInterfaceLocations(src, stage) {
 }
 var TEX_WRAPPER_2DLOD_RE = /vec4\s+texSample2DLod\s*\([^)]*\)\s*\{\s*return\s+textureLod\s*\([^)]*\)\s*;\s*\}/g;
 var TEX_WRAPPER_2D_RE = /vec4\s+texSample2D\s*\([^)]*\)\s*\{\s*return\s+texture2D\s*\([^)]*\)\s*;\s*\}/g;
+function broadcastScalarOperand(src) {
+  const swizzleDim = (expr) => {
+    const m = expr.match(/\.(rgba|xyzw|rgb|xyz|rg|xy)$/);
+    if (!m) return null;
+    return m[1].length === 4 ? 4 : m[1].length === 3 ? 3 : 2;
+  };
+  const vecOf = (dim) => `vec${dim}`;
+  return src.replace(
+    /\b(max|min|clamp)\(\s*(-?\d+(?:\.\d+)?)\s*,\s*([A-Za-z_]\w*\s*\.\s*(?:rgba|xyzw|rgb|xyz|rg|xy))\s*\)/g,
+    (m, fn, num, exp) => {
+      const dim = swizzleDim(exp);
+      return dim ? `${fn}(${vecOf(dim)}(${num}), ${exp})` : m;
+    }
+  ).replace(
+    /\b(max|min|clamp)\(\s*([A-Za-z_]\w*\s*\.\s*(?:rgba|xyzw|rgb|xyz|rg|xy))\s*,\s*(-?\d+(?:\.\d+)?)\s*\)/g,
+    (m, fn, exp, num) => {
+      const dim = swizzleDim(exp);
+      return dim ? `${fn}(${exp}, ${vecOf(dim)}(${num}))` : m;
+    }
+  );
+}
+function fixVectorAssignFromTexture(src) {
+  return src.replace(/\b(vec3|vec2)\s+(\w+)\s*=\s*(texture\([^;]*);/g, (m, type, name, call) => {
+    if (!/\)\s*$/.test(call)) return m;
+    const swizzle = type === "vec3" ? "rgb" : "xy";
+    return `${type} ${name} = ${call}.${swizzle};`;
+  });
+}
+function broadcastFloatSwizzle(src) {
+  return src.replace(
+    /(?<![A-Za-z0-9_])(-?\d+(?:\.\d+)?)\s*\.\s*(rgba|rgb|rg)\b/g,
+    (m, num, sw) => `vec${sw.length}(${num})`
+  );
+}
 function expandIncludes(src) {
   let out = src;
   let prev;
@@ -25633,13 +25682,18 @@ function convertStage(src, stage, combos, uniforms, bindingOffset) {
   s = s.replace(/^\s*#version\s+\d+\s*(?:es)?\s*\n/gm, "");
   s = s.replace(/^\s*precision\s+[A-Za-z_][A-Za-z0-9_]*\s+[A-Za-z_][A-Za-z0-9_]*\s*;\s*\n/gm, "");
   s = s.replace(/\b(?:highp|mediump|lowp)\s+/g, "");
+  s = normalizeFloatIntLiterals(s);
+  s = floatifyIntVarUses(s);
+  s = relaxGlsl3Strictness(s);
+  s = s.replace(/\bsampler2DComparison\b/g, "sampler2D");
   const varyingKw = stage === "vert" ? "out" : "in";
-  s = s.replace(/\bvarying\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)\s*;/g, `${varyingKw} $1 $2;`);
-  s = s.replace(/\battribute\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)\s*;/g, "in $1 $2;");
+  s = s.replace(/\bvarying\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)(\s*\[\s*\d+\s*\])?\s*;/g, (m, type, name, arr) => `${varyingKw} ${type} ${name}${arr ?? ""};`);
+  s = s.replace(/\battribute\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)(\s*\[\s*\d+\s*\])?\s*;/g, (m, type, name, arr) => `in ${type} ${name}${arr ?? ""};`);
   s = assignInterfaceLocations(s, stage);
   if (stage === "frag") s = s.replace(/gl_FragColor/g, "o_Color");
   const binds = [];
   let bind = bindingOffset;
+  let samplerCount = 0;
   const decls = [];
   s = s.replace(UNIFORM_LINE_RE, (m, indent, type, name, arrSize) => {
     decls.push({ type, name, arrSize });
@@ -25653,6 +25707,7 @@ function convertStage(src, stage, combos, uniforms, bindingOffset) {
     for (const d of decls) {
       const typeStr = d.arrSize ? `${d.type}[${d.arrSize}]` : d.type;
       if (d.type.startsWith("sampler")) {
+        samplerCount++;
         const binding = bind++;
         const rawValue = uniforms.has(d.name) ? uniforms.get(d.name) : void 0;
         binds.push({
@@ -25697,13 +25752,16 @@ ${s}`;
   s = s.replace(/\btexSample2D\s*\(/g, "texture(");
   s = s.replace(/\btexSample2DLod\s*\(/g, "textureLod(");
   s = s.replace(/\btexture2D\s*\(/g, "texture(");
+  s = broadcastScalarOperand(s);
+  s = broadcastFloatSwizzle(s);
+  s = fixVectorAssignFromTexture(s);
   const defines = buildDefines(s, combos);
   const defBlock = defines.length ? `${defines.join("\n")}
 ` : "";
   const oColor = stage === "frag" ? "layout(location=0) out vec4 o_Color;\n" : "";
   const glsl = `#version 450
 ${defBlock}${oColor}${s}`;
-  return { glsl, binds, nextBinding: bind };
+  return { glsl, binds, nextBinding: bind + samplerCount };
 }
 async function glslToNagaPass(pass) {
   const frag = convertStage(pass.rawFrag, "frag", pass.combos, pass.uniforms, 0);
@@ -25755,9 +25813,13 @@ async function buildEffectChainDesc(id, effects) {
         });
       }
     }
-    if (passes.length === 0) return new Uint8Array(0);
+    if (passes.length === 0) {
+      console.warn(`[wasm] buildEffectChainDesc(${id}): \u65E0\u6709\u6548 pass\uFF08\u6548\u679C\u94FE\u89E3\u6790\u5931\u8D25/\u65E0 pass\uFF09\u2192 \u5BF9\u8C61\u663E\u793A\u539F\u59CB\u5185\u5BB9\uFF08\u65E0\u6548\u679C\u94FE\uFF09`);
+      return new Uint8Array(0);
+    }
     return new TextEncoder().encode(JSON.stringify(passes));
-  } catch {
+  } catch (e) {
+    console.warn(`[wasm] buildEffectChainDesc(${id}): \u7F16\u8BD1\u5931\u8D25\u2192 \u5BF9\u8C61\u663E\u793A\u539F\u59CB\u5185\u5BB9\uFF08\u65E0\u6548\u679C\u94FE\uFF09\uFF1A${e instanceof Error ? e.message : String(e)}`);
     return new Uint8Array(0);
   }
 }
@@ -25906,13 +25968,17 @@ function createWasmSceneRenderer(opts) {
               const worldSize = size ? [size[0] * obj.scale[0], size[1] * obj.scale[1]] : [];
               const rtSize = range ? [range.w, range.h] : [];
               const chainDesc = await buildEffectChainDesc(id, obj.effects);
-              await scene.set_object_effect(
-                i,
-                Float32Array.from(origin),
-                Float32Array.from(worldSize),
-                Float32Array.from(rtSize),
-                chainDesc
-              );
+              if (chainDesc.length > 0) {
+                await scene.set_object_effect(
+                  i,
+                  Float32Array.from(origin),
+                  Float32Array.from(worldSize),
+                  Float32Array.from(rtSize),
+                  chainDesc
+                );
+              } else {
+                console.warn(`[wasm] \u5BF9\u8C61 ${i}(image) \u6548\u679C\u94FE\u7F16\u8BD1\u5931\u8D25/\u65E0\u6709\u6548 pass \u2192 \u4FDD\u6301\u5171\u4EAB\u8DEF\u5F84\uFF0C\u663E\u793A\u539F\u59CB\u5185\u5BB9\uFF08\u975E\u6E10\u53D8\uFF09`);
+              }
             }
             rendered++;
             if (obj.script && obj.script.trim()) {
@@ -25939,16 +26005,26 @@ function createWasmSceneRenderer(opts) {
               const range = particleObjectRange(emitter, [obj.scale[0], obj.scale[1]]);
               const center = applyAlignment(obj.origin, [world.w, world.h], obj.alignment);
               const chainDesc = await buildEffectChainDesc(id, obj.effects);
-              await scene.set_particle_object_effect(
-                i,
-                specText,
-                Float32Array.from(center),
-                Float32Array.from(obj.scale),
-                texBytes ?? new Uint8Array(0),
-                Float32Array.from([world.w, world.h]),
-                Float32Array.from([range.w, range.h]),
-                chainDesc
-              );
+              if (chainDesc.length > 0) {
+                await scene.set_particle_object_effect(
+                  i,
+                  specText,
+                  Float32Array.from(center),
+                  Float32Array.from(obj.scale),
+                  texBytes ?? new Uint8Array(0),
+                  Float32Array.from([world.w, world.h]),
+                  Float32Array.from([range.w, range.h]),
+                  chainDesc
+                );
+              } else {
+                console.warn(`[wasm] \u5BF9\u8C61 ${i}(particle) \u6548\u679C\u94FE\u7F16\u8BD1\u5931\u8D25/\u65E0\u6709\u6548 pass \u2192 \u5171\u4EAB\u8DEF\u5F84 add_particle\uFF0C\u663E\u793A\u539F\u59CB\u5185\u5BB9\uFF08\u975E\u6E10\u53D8\uFF09`);
+                scene.add_particle(
+                  specText,
+                  Float32Array.from(obj.origin),
+                  Float32Array.from(obj.scale),
+                  texBytes ?? new Uint8Array(0)
+                );
+              }
             } else {
               scene.add_particle(
                 specText,

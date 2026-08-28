@@ -186,17 +186,20 @@ describe('glslToNagaPass WE 方言 → naga desktop GLSL', () => {
     });
     const desc = glslToNagaGlsl(pass);
 
-    // 合并 uniforms 的 binding 全局唯一（因 frag/vert 各自从 0 编号而碰撞的场景）
+    // 合并 uniforms 的 binding 全局唯一（因 frag/vert 各自从 0 编号而碰撞的场景）；
+    // 且 task-16：vert 从 **frag 拆分后的 binding 上限** 继续（frag 有 1 个 sampler2D → split 后占
+    // 0(texture)+1(sampler) 两槽），故 vert 的 MVM block 在 binding=2（而非旧 bug 的 1——若为 1 会与
+    // frag 拆分后的 sampler binding=1 碰撞，导致 bind group layout `binding index 被前一 entry 指定`）。
     const bindings = desc.uniforms.map((u) => u.binding);
     expect(new Set(bindings).size).toBe(desc.uniforms.length);
-    // frag 先编号 [0..n)，vert 接着从 n 继续
+    // frag 先编号 [0..n)，vert 接着从 n 继续（n = frag 拆分后实际槽数 = 2*#sampler + #block）
     const tex0 = desc.uniforms.find((u) => u.name === 'g_Texture0');
     const mvp = desc.uniforms.find((u) => u.name === 'g_ModelViewProjectionMatrix');
     expect(tex0?.binding).toBe(0);
-    expect(mvp?.binding).toBe(1);
+    expect(mvp?.binding).toBe(2);
     // GLSL 里注入的 layout(binding=N) 与 UniformBindingDesc.binding 一一对应
     expect(desc.fragGlsl).toContain('layout(binding=0) uniform sampler2D g_Texture0;');
-    expect(desc.vertGlsl).toContain('layout(std140, binding=1) uniform Params {');
+    expect(desc.vertGlsl).toContain('layout(std140, binding=2) uniform Params {');
   });
 
   it('sampler/uniform 声明前置：include common_blur.h + 后置 g_Texture0 声明，断言声明先于引用', () => {

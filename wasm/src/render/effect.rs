@@ -164,6 +164,35 @@ pub fn wgsl_bindings(wgsl: &str) -> Result<Vec<(u32, BindKind)>, String> {
     Ok(module_bindings(&module))
 }
 
+/// 解析一段 WGSL 字符串 → 每个 `@group(0) var<uniform>` block 的 `(binding, 成员名列表)`。
+/// native 可测。
+///
+/// task-16（binding 索引重复根因）：`spirv-webgpu-transform` 拆组合采样器会**重排/重编号**
+/// binding——JS 侧 `UniformBindingDesc.binding` 是拆之前的编号（如某 std140 block 在 binding=2），
+/// 而 transform 后同一 block 在 WGSL 里的 binding 变了（如变成 4）。若 wasm 直接用 JS 的 binding
+/// 建 uniform buffer，其 binding 会与 WGSL 的 texture/sampler binding 撞号 → `create_bind_group`
+/// 报 `binding index (M) was specified by a previous entry`。本函数按**成员名**从 WGSL 取每个
+/// uniform block 的真实 binding，供 `build_uniform_instances` 把 JS 提供的 block 值匹配到正确 binding。
+pub fn wgsl_uniform_members(wgsl: &str) -> Result<Vec<(u32, Vec<String>)>, String> {
+    let module = naga::front::wgsl::parse_str(wgsl).map_err(|e| format!("wgsl 解析失败：{e}"))?;
+    let mut out: Vec<(u32, Vec<String>)> = Vec::new();
+    for (_h, var) in module.global_variables.iter() {
+        let Some(res) = var.binding.as_ref() else { continue };
+        if res.group != 0 || var.space != naga::AddressSpace::Uniform {
+            continue;
+        }
+        let names = match &module.types[var.ty].inner {
+            naga::TypeInner::Struct { members, .. } => {
+                members.iter().filter_map(|m| m.name.clone()).collect()
+            }
+            _ => Vec::new(),
+        };
+        out.push((res.binding, names));
+    }
+    out.sort_by_key(|(b, _)| *b);
+    Ok(out)
+}
+
 // =====================================================================
 // native 纯逻辑（非 render 门控；native cargo test 可测）
 // =====================================================================
@@ -525,6 +554,30 @@ mod imp {
         out
     }
 
+    /// 收集 vert+frag 两个 WGSL 里每个 `var<uniform>` block 的 `(binding, 成员名列表)`，按 binding 升序、
+    /// 跨 stage 同 binding 合并成员名。task-16：供 `build_uniform_instances` 按成员名把 JS 提供的
+    /// std140 block 值还原到 transform 后的**真实** binding（避免与 texture/sampler 撞号）。
+    fn collect_uniform_members(wgsl_vert: &str, wgsl_frag: &str) -> Vec<(u32, Vec<String>)> {
+        let mut out: Vec<(u32, Vec<String>)> = Vec::new();
+        for src in [wgsl_vert, wgsl_frag] {
+            if let Ok(b) = wgsl_uniform_members(src) {
+                for (bb, names) in b {
+                    if let Some((_, existing)) = out.iter_mut().find(|(e, _)| *e == bb) {
+                        for n in names {
+                            if !existing.contains(&n) {
+                                existing.push(n);
+                            }
+                        }
+                    } else {
+                        out.push((bb, names));
+                    }
+                }
+            }
+        }
+        out.sort_by_key(|(b, _)| *b);
+        out
+    }
+
     /// 由绑定列表构建 bind group layout（顶点/片元统一可见性，覆盖实际使用阶段，且允许
     /// 过宽可见性避免「Visibility flags don't include the shader stage」错误）。
     /// `bindings` 来自 `collect_bindings`（结构化 naga IR 扫描），保证 layout 与 shader
@@ -564,29 +617,47 @@ mod imp {
     /// 按 binding 分组非不透明 uniform（std140 block 成员），每组建一个 uniform buffer + block 数据。
     /// 返回 `EffectUniformInstance` 列表（按 binding 升序，同 binding 成员保持原顺序）。
     ///
-    /// **补齐（多传入 `uniform_bindings`）**：`uniform_bindings` 为 shader 实际声明的所有 Uniform
-    /// 绑定编号（来自 `collect_bindings`）。对其中**未被 `uniforms` 覆盖**的 binding（如 demo shader
-    /// 声明 `g_Time` 但 JS 未传该 uniform / 空 uniform block），补一个全 0 空 buffer（16 字节），
-    /// 保证 bind group 恒为 layout 中每个 Uniform 绑定提供资源 → 绝不因缺 entry 触发校验错误
-    /// （不崩，不白屏）。有数据的 binding 仍按 std140 打包（原有逻辑）。
+    /// **task-16（binding 索引重复）**：`spirv-webgpu-transform` 拆组合采样器会重排/重编号 binding，
+    /// 故 JS 侧 `UniformBinding.binding`（拆前编号）与 WGSL 真实 binding（拆后）**不一致**——
+    /// 若 uniform buffer 仍用 JS 的 binding，会与 WGSL 的 texture/sampler binding 撞号，导致
+    /// `create_bind_group` 报 `binding index (M) was specified by a previous entry`。这里改为：
+    /// ① 仍按 JS 的 binding 把成员**分组**成 block（成员归属正确，无实例名 block 成员全局可见）；
+    /// ② 用 `uniform_members`（WGSL，含每个 `var<uniform>` 的**成员名**）按成员名映射出该 block
+    ///    变换后的**真实 binding**（命中即用 WGSL binding；找不到时回退 JS binding，不崩）；③ 补齐
+    ///    WGSL 声明为 Uniform 但 `uniforms` 未覆盖的 binding → 全 0 空 buffer（16 字节），保证
+    ///    bind group 恒为 layout 每个 Uniform 绑定提供资源（不因缺 entry 触发校验错误，不崩不白屏）。
     fn build_uniform_instances(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         uniforms: &[UniformBinding],
-        uniform_bindings: &[u32],
+        uniform_members: &[(u32, Vec<String>)],
         label: &str,
     ) -> Vec<EffectUniformInstance> {
+        // ① 按 JS binding 分组 std140 成员（成员名保持不变，用于下方成员名→真实 binding 匹配）。
         let mut entries: Vec<(u32, &UniformBinding)> = uniforms.iter().map(|u| (u.binding, u)).collect();
         entries.sort_by_key(|(b, _)| *b);
+        // ② 成员名 → WGSL 真实 binding（首个命中）。同一 block 成员共享同 binding，故用任一成员名
+        //    即可还原该 block 在 transform 后的 binding。
+        let mut member_to_binding: std::collections::HashMap<&str, u32> = std::collections::HashMap::new();
+        for (b, names) in uniform_members {
+            for n in names {
+                member_to_binding.entry(n.as_str()).or_insert(*b);
+            }
+        }
         let mut out: Vec<EffectUniformInstance> = Vec::new();
         let mut i = 0;
         while i < entries.len() {
-            let binding = entries[i].0;
+            let js_binding = entries[i].0;
             let mut group: Vec<&UniformBinding> = Vec::new();
-            while i < entries.len() && entries[i].0 == binding {
+            while i < entries.len() && entries[i].0 == js_binding {
                 group.push(entries[i].1);
                 i += 1;
             }
+            // 用成员名还原 WGSL 真实 binding（本 block 全体成员共享同一 binding；找不到回退 JS binding）。
+            let binding = group
+                .iter()
+                .find_map(|u| member_to_binding.get(u.name.as_str()).copied())
+                .unwrap_or(js_binding);
             // block_size = std140 总 size（offset+size 的最大端，向上取 16 倍数）。
             let block_size = std140_block_size(&group.iter().map(|u| (u.offset, u.size)).collect::<Vec<_>>());
             let fields: Vec<Std140Field> = group
@@ -604,12 +675,13 @@ mod imp {
             queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&block_data));
             out.push(EffectUniformInstance { binding, buffer, block_data, g_time_offset });
         }
-        // 补齐：shader 声明为 Uniform（`uniform_bindings`）但 `uniforms` 未提供的 binding → 全 0 空 buffer。
-        for &b in uniform_bindings {
-            if out.iter().any(|u| u.binding == b) {
+        // ③ 补齐：WGSL 声明为 Uniform（`uniform_members`）但 `uniforms` 未覆盖/未匹配到的 binding
+        //    → 全 0 空 buffer（16 字节，min_uniform_buffer 16B 对齐）。
+        for (b, _names) in uniform_members {
+            if out.iter().any(|u| u.binding == *b) {
                 continue;
             }
-            let empty: Vec<f32> = vec![0.0; 4]; // 16 字节空 uniform block（min_uniform_buffer 16B 对齐）
+            let empty: Vec<f32> = vec![0.0; 4];
             let buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(&format!("{label}-empty-{b}")),
                 size: (empty.len() * 4) as u64,
@@ -617,7 +689,7 @@ mod imp {
                 mapped_at_creation: false,
             });
             queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&empty));
-            out.push(EffectUniformInstance { binding: b, buffer, block_data: empty, g_time_offset: None });
+            out.push(EffectUniformInstance { binding: *b, buffer, block_data: empty, g_time_offset: None });
         }
         out.sort_by_key(|u| u.binding);
         out
@@ -753,12 +825,12 @@ mod imp {
                 //  block 成员计算 offset/size/binding，见 UniformBinding）。按 binding 分组，每组：
                 //  block_size = std140_block_size(offset+size)；pack_std140_block 铺值（含 padding 0）；
                 //  buffer 大小 = block_size 字节；g_Time 槽（name=="g_Time"）为每帧动态写。
-                //  对 `bindings` 中声明为 Uniform 但 `desc.uniforms` 未提供的 binding 补空 buffer
-                //  （保证 bind group 恒为 layout 每个 Uniform 绑定提供资源，不崩不白屏）。
-                let uniform_bindings: Vec<u32> =
-                    bindings.iter().filter(|(_, k)| *k == BindKind::Uniform).map(|(b, _)| *b).collect();
+                //  task-16：transform 重排 binding 后，block 在 GPU 上的真实 binding 以 WGSL
+                //  `collect_uniform_members`（按成员名）为准，避免与 texture/sampler 撞号导致
+                //  `create_bind_group` 报 「binding index 被前一 entry 指定」。
+                let uniform_members = collect_uniform_members(&wgsl_vert, &wgsl_frag);
                 let uniform_instances =
-                    build_uniform_instances(device, queue, &desc.uniforms, &uniform_bindings, &format!("{label}-uniform"));
+                    build_uniform_instances(device, queue, &desc.uniforms, &uniform_members, &format!("{label}-uniform"));
                 let texture_bindings: Vec<u32> =
                     bindings.iter().filter(|(_, k)| *k == BindKind::Texture).map(|(b, _)| *b).collect();
                 // 全部 sampler 绑定（不取第一个）——与 texture_bindings 对称，多 sampler 不因缺 entry

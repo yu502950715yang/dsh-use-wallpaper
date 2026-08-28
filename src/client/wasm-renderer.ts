@@ -35,8 +35,10 @@ function flattenUniformValue(value: unknown): number[] | null {
 /// 对象级效果链的 chain_desc（task-8 编译链集成）：解析对象 effects → resolveEffectChain →
 /// glslToNagaPass（WE GLSL→桌面 GLSL→@webgpu/glslang→SPIR-V bytes）→ 序列化为 UTF-8 JSON 的
 /// `Uint8Array`（wasm-bindgen `Vec<u8>`↔`Uint8Array`）。wasm 侧解析为 `Vec<EffectPassDesc>` 走
-/// spv_to_wgsl 编译。任何一步失败（效果链解析失败 / glslang 编译失败 / 无 pass）→ 返回空
-/// `Uint8Array`（wasm 用内置演示 pass 兜底），绝不白屏。
+/// spv_to_wgsl 编译。任何一步失败（效果链解析失败 / glslang 编译失败 / 无 pass）→ 返回**空**
+/// `Uint8Array`。⚠️ 调用方行为（task-15）：空 chain_desc = 编译失败/无有效 pass → 对象**不走
+/// 对象级效果链**（不调 set_object_effect / set_particle_object_effect），保持共享路径渲染**原始
+/// 内容**（无效果），绝不回退演示渐变覆盖内容（wasm 侧 demo_object_effect_passes 亦改为返回空 Vec）。
 async function buildEffectChainDesc(id: string, effects: unknown[]): Promise<Uint8Array> {
   try {
     // 与 scene-renderer 同构的 loadFile：从场景 asset 路由拉取（effect.json / shader / material）。
@@ -100,9 +102,13 @@ async function buildEffectChainDesc(id: string, effects: unknown[]): Promise<Uin
         });
       }
     }
-    if (passes.length === 0) return new Uint8Array(0);
+    if (passes.length === 0) {
+      console.warn(`[wasm] buildEffectChainDesc(${id}): 无有效 pass（效果链解析失败/无 pass）→ 对象显示原始内容（无效果链）`);
+      return new Uint8Array(0);
+    }
     return new TextEncoder().encode(JSON.stringify(passes));
-  } catch {
+  } catch (e) {
+    console.warn(`[wasm] buildEffectChainDesc(${id}): 编译失败→ 对象显示原始内容（无效果链）：${e instanceof Error ? e.message : String(e)}`);
     return new Uint8Array(0);
   }
 }
@@ -122,13 +128,15 @@ export interface WasmScene {
   update_image(assetId: number, origin?: Float32Array, scale?: Float32Array, alpha?: number, brightness?: number): void;
   add_particle(json: string, origin: Float32Array, scale: Float32Array, texBytes: Uint8Array): void;
   // M4/Task6：带 effects 的粒子对象走对象路径（粒子内容→对象RT→效果链→合成quad）。
-  // chainDesc 语义同 set_object_effect（真实 WE shader 的 SPIR-V bytes JSON；空/失败→演示 pass 兜底）。
+  // chainDesc 语义同 set_object_effect（真实 WE shader 的 SPIR-V bytes JSON；task-15 起空/失败
+  // = 不调用本方法，对象走共享路径 add_particle 显示原始内容，绝不用演示 pass 兜底）。
   set_particle_object_effect(objId: number, json: string, origin: Float32Array, scale: Float32Array, texBytes: Uint8Array, worldSize: Float32Array, rtSize: Float32Array, chainDesc: Uint8Array): Promise<void>;
   step(dt: number): void;
   // T5（M3/Task5）：对象级效果链。对象内容需先经 load_image 上传；set_object_effect 把它
   // 从共享场景路径移到对象路径（对象 RT + 局部相机 + 效果链 + 合成 quad）。chainDesc 为
   // 效果链 pass 描述（UTF-8 JSON 的 Uint8Array，task-8 编译链集成：内含真实 WE shader 的
-  // SPIR-V bytes 数组，wasm 解析为 EffectPassDesc 走 spv_to_wgsl；解析失败/空 → 演示 pass 兜底）。
+  // SPIR-V bytes 数组，wasm 解析为 EffectPassDesc 走 spv_to_wgsl）。task-15 起：空/失败 →
+  // **不调用**本方法（对象保持共享路径渲染原始内容，无效果链，绝不用演示渐变兜底）。
   // 返回 Promise（wasm 异步建对象效果链管线）。
   set_object_effect(objId: number, origin: Float32Array, worldSize: Float32Array, rtSize: Float32Array, chainDesc: Uint8Array): Promise<void>;
   // 每帧驱动对象级效果链（对象 RT→效果链→输出 RT）；渲染主路径 scene.render() 已自动调用，
@@ -383,13 +391,21 @@ export function createWasmSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneRe
               const worldSize = size ? [size[0] * obj.scale[0], size[1] * obj.scale[1]] : [];
               const rtSize = range ? [range.w, range.h] : [];
               const chainDesc = await buildEffectChainDesc(id, obj.effects);
-              await scene.set_object_effect(
-                i,
-                Float32Array.from(origin),
-                Float32Array.from(worldSize),
-                Float32Array.from(rtSize),
-                chainDesc,
-              );
+              // task-15（编译失败 → 原始内容，非演示渐变）：chainDesc 非空（真实 WE shader 编译出
+              // 有效 SPIR-V）→ 走对象级效果链（对象 RT + 效果链 + 合成 quad）。空（编译失败/无有效
+              // pass）→ **不**调 set_object_effect——对象保持上面的共享路径 load_image（原始内容，
+              // 无效果），绝不用 wasm 内置演示渐变覆盖对象内容。
+              if (chainDesc.length > 0) {
+                await scene.set_object_effect(
+                  i,
+                  Float32Array.from(origin),
+                  Float32Array.from(worldSize),
+                  Float32Array.from(rtSize),
+                  chainDesc,
+                );
+              } else {
+                console.warn(`[wasm] 对象 ${i}(image) 效果链编译失败/无有效 pass → 保持共享路径，显示原始内容（非渐变）`);
+              }
             }
             rendered++;
             // T5：仅 image 对象且带非空 script 时绑定（text/particle/util 不处理）。
@@ -431,16 +447,29 @@ export function createWasmSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneRe
               const range = particleObjectRange(emitter, [obj.scale[0], obj.scale[1]]);
               const center = applyAlignment(obj.origin, [world.w, world.h], obj.alignment);
               const chainDesc = await buildEffectChainDesc(id, obj.effects);
-              await scene.set_particle_object_effect(
-                i,
-                specText,
-                Float32Array.from(center),
-                Float32Array.from(obj.scale),
-                texBytes ?? new Uint8Array(0),
-                Float32Array.from([world.w, world.h]),
-                Float32Array.from([range.w, range.h]),
-                chainDesc,
-              );
+              // task-15（编译失败 → 原始内容，非演示渐变）：chainDesc 非空 → 走对象级效果链；
+              // 空（编译失败/无有效 pass）→ **不**调 set_particle_object_effect，改走共享路径
+              // add_particle（原始粒子内容，无效果链），绝不用 wasm 内置演示渐变覆盖粒子内容。
+              if (chainDesc.length > 0) {
+                await scene.set_particle_object_effect(
+                  i,
+                  specText,
+                  Float32Array.from(center),
+                  Float32Array.from(obj.scale),
+                  texBytes ?? new Uint8Array(0),
+                  Float32Array.from([world.w, world.h]),
+                  Float32Array.from([range.w, range.h]),
+                  chainDesc,
+                );
+              } else {
+                console.warn(`[wasm] 对象 ${i}(particle) 效果链编译失败/无有效 pass → 共享路径 add_particle，显示原始内容（非渐变）`);
+                scene.add_particle(
+                  specText,
+                  Float32Array.from(obj.origin),
+                  Float32Array.from(obj.scale),
+                  texBytes ?? new Uint8Array(0),
+                );
+              }
             } else {
               scene.add_particle(
                 specText,

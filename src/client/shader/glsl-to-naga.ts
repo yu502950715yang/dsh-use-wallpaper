@@ -347,6 +347,12 @@ function convertStage(
   //  非 block 成员额外产出 offset/size/blockName（std140 布局描述），供 wasm 按同一布局打包。
   const binds: UniformBindingDesc[] = [];
   let bind = bindingOffset;
+  // samplerCount：本 stage 的 sampler（组合采样器）个数。spirv-webgpu-transform 拆组合采样器时
+  // 每个 sampler2D 合法消费 **2 个** binding 槽（1 texture + 1 sampler），而非本函数编号用的 1 个。
+  // 故 `nextBinding = bind + samplerCount`（= offset + 2*#sampler + #block）才是该 stage 拆分后的
+  // 实际 binding 上限——下游 stage（vert 从 frag.nextBinding 继续）以此错开，避免跨 stage 因
+  // transform 扩展而 binding 碰撞（task-16 根因）。
+  let samplerCount = 0;
   const decls: { type: string; name: string; arrSize?: string }[] = [];
   s = s.replace(UNIFORM_LINE_RE, (m, indent, type, name, arrSize) => {
     decls.push({ type, name, arrSize });
@@ -360,6 +366,7 @@ function convertStage(
     for (const d of decls) {
       const typeStr = d.arrSize ? `${d.type}[${d.arrSize}]` : d.type;
       if (d.type.startsWith('sampler')) {
+        samplerCount++;
         const binding = bind++;
         const rawValue = uniforms.has(d.name) ? uniforms.get(d.name) : undefined;
         binds.push({
@@ -423,7 +430,7 @@ function convertStage(
   const oColor = stage === 'frag' ? 'layout(location=0) out vec4 o_Color;\n' : '';
   const glsl = `#version 450\n${defBlock}${oColor}${s}`;
 
-  return { glsl, binds, nextBinding: bind };
+  return { glsl, binds, nextBinding: bind + samplerCount };
 }
 
 // WE 方言 → desktop GLSL pass 描述（同步；仅做规则①-⑨ 翻译，不编译 SPIR-V）。

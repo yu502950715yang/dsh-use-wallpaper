@@ -19,42 +19,14 @@ use crate::coords;
 #[cfg(feature = "render")]
 pub const CAMERA_DISTANCE: f32 = 300.0;
 
-// Task3/M2：内置演示效果链的单 pass shader（vertex/fragment 分离，desktop GLSL 450）。
-// 用途：跑通"效果链在 RT 上执行并输出"的工程验证（EffectChain 走 naga glsl_to_wgsl 编译）。
-// 注意：naga 24 glsl frontend 尚不能编译 `sampler2D`（实证见报告疑虑），故本 MVP 演示 pass
-// 用 g_Time + v_uv 生成**程序化**动画（非采样 g_Texture0），证明 ping-pong 执行器链路走通；
-// 真实 WE 效果 shader 的纹理采样待 naga sampler2D 支持后接入后续任务。
-#[cfg(feature = "render")]
-const DEMO_EFFECT_VERT_GLSL: &str = r#"#version 450
-layout(location=0) in vec2 a_Position;
-layout(location=1) in vec2 a_TexCoord;
-layout(location=0) out vec2 v_uv;
-void main() {
-    v_uv = a_TexCoord;
-    gl_Position = vec4(a_Position, 0.0, 1.0);
-}"#;
-
-#[cfg(feature = "render")]
-const DEMO_EFFECT_FRAG_GLSL: &str = r#"#version 450
-layout(location=0) out vec4 o_Color;
-layout(location=0) in vec2 v_uv;
-layout(binding=0) uniform float g_Time;
-void main() {
-    float t = fract(g_Time * 0.25);
-    float r = 0.5 + 0.5 * sin(v_uv.x * 6.28318 + t * 3.14159);
-    float g = 0.5 + 0.5 * sin(v_uv.y * 6.28318 + t * 5.0);
-    float b = 0.5 + 0.5 * cos((v_uv.x + v_uv.y) * 6.28318 + t * 7.0);
-    o_Color = vec4(r, g, b, 1.0);
-}"#;
-
 /// 对象级效果链的 pass 描述（M3/Task5，task-8 编译链集成）。
 /// `chain_desc` 现为**真实 WE 效果 pass 的 SPIR-V JSON 数组**（JS 侧 glsl-to-naga 产出）：
 /// 每个元素一个 pass，含 `vert_spv`/`frag_spv`（SPIR-V bytes，入 `EffectChain` 经 spv_to_wgsl
-/// 编译）、`uniforms`/`texture_slots`/`blend_mode`。解析成功且非空 → 用真实 pass；否则
-/// **回退内置演示效果 pass**（g_Time 程序化，naga glsl-in 可编译——不采样 g_Texture0，因演示
-/// shader 用纯程序化输出证明「对象 RT → 效果链 → 合成 quad → surface」链路走通），绝不白屏。
-/// 注意：演示 shader 不采样内容纹理，故对象内容会被程序化动画**替代**（架构验证用；
-/// 真实 shader 采样 g_Texture0 后内容保留）。
+/// 编译）、`uniforms`/`texture_slots`/`blend_mode`。解析成功且非空 → 用真实 pass。
+/// **task-15（编译失败 → 原始内容，非演示渐变）**：chain_desc 空/解析失败 → 返回**空 `Vec`
+/// （无效果 pass）**——调用方（set_object_effect / set_particle_object_effect）据此把
+/// `effect_chain` 置 `None`，合成 quad 采样原始内容（对象显示内容、无效果），**绝不回退内置
+/// 程序化渐变演示 pass**（旧行为用 g_Time 程序化 shader 替代对象内容，正是「渐变覆盖内容」的根因）。
 #[cfg(feature = "render")]
 fn demo_object_effect_passes(chain_desc: &str) -> Vec<effect::EffectPassDesc> {
     if !chain_desc.is_empty() {
@@ -65,19 +37,15 @@ fn demo_object_effect_passes(chain_desc: &str) -> Vec<effect::EffectPassDesc> {
                 return descs;
             }
         }
-        web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(&format!(
-            "[wasm] 效果链 chain_desc 解析失败/无 pass，回退内置演示 pass"
-        )));
+        web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(
+            "[wasm] 效果链 chain_desc 解析失败/无 pass → 无效果链（对象显示原始内容，非演示渐变）",
+        ));
+    } else {
+        web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(
+            "[wasm] 效果链 chain_desc 为空 → 无效果链（对象显示原始内容，非演示渐变）",
+        ));
     }
-    vec![effect::EffectPassDesc {
-        vert_spv: vec![],
-        frag_spv: vec![],
-        vert_glsl: DEMO_EFFECT_VERT_GLSL.to_string(),
-        frag_glsl: DEMO_EFFECT_FRAG_GLSL.to_string(),
-        uniforms: vec![],
-        texture_slots: vec![],
-        blend_mode: "normal".to_string(),
-    }]
+    Vec::new()
 }
 
 /// 场景图片对象：纹理 + 变换 + GPU 资源（Task 9 实测修复：render_frame 原只渲染
@@ -882,14 +850,15 @@ impl Renderer {
     ///
     /// 对象内容（图片）需**先**经 `set_image`（load_image）上传——本方法据 `obj_id` 找到对应
     /// `SceneImage`，从共享 `images` 列表移除（不再直接渲染 surface），并建立对象内容 RT /
-    /// 效果输出 RT / 效果链（演示 pass）/ 合成 quad。
+    /// 效果输出 RT / 效果链（真实 pass）/ 合成 quad。
     ///
     /// - `origin`：对象中心（WE 坐标，已 applyAlignment 换算中心；合成 quad NDC 定位，不翻转 y）。
     /// - `world_size`：`size×scale`（带符号——镜像由内容 RT 承载）。
     /// - `rt_size`：`object_camera_range` 钳制后分辨率（局部正交相机范围 = RT 尺寸，1:1 像素）。
     /// - `chain_desc`：效果链 pass 描述（JSON，真实 WE shader 的 SPIR-V 数组）。task-8 编译链
     ///   已集成：JS 侧 glsl-to-naga 产出 SPIR-V bytes 传入，本方法经 `demo_object_effect_passes`
-    ///   解析为 `Vec<EffectPassDesc>`（spv 路径）；解析失败/为空 → 回退内置演示 pass，绝不白屏。
+    ///   解析为 `Vec<EffectPassDesc>`（spv 路径）；task-15：解析失败/为空 → 无效果链
+    ///   （effect_chain=None → 合成 quad 采样内容），绝不回退演示渐变。
     ///
     /// 绝不白屏：找不到对象内容 / 效果链创建失败 → 不崩溃（对象回退共享路径 / 合成 quad
     /// 采样内容纹理），本方法返回 `Ok`（零副作用），调用方继续渲染。
@@ -957,22 +926,30 @@ impl Renderer {
             view_formats: &[],
         });
         let out_view = out_tex.create_view(&wgpu::TextureViewDescriptor::default());
-        // ④ 效果链（内置演示 pass 兜底；创建失败 → None → 合成 quad 采样内容，绝不白屏）。
+        // ④ 效果链（task-15：chain_passes 空 → 不建链，effect_chain=None → 合成 quad 采样内容，
+        //    对象显示**原始内容**（非演示渐变）；创建失败 → None → 同样合成 quad 采样内容，绝不白屏）。
         let chain_passes = demo_object_effect_passes(chain_desc);
-        let effect_chain = match effect::EffectChain::new(
-            &self.device, &self.queue, chain_passes, self.config.format, rt_w, rt_h,
-        ).await {
-            Ok(c) => {
-                web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(&format!(
-                    "[wasm] set_object_effect {obj_id}: 对象效果链创建成功（rt {rt_w}x{rt_h}）"
-                )));
-                Some(c)
-            }
-            Err(e) => {
-                web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(&format!(
-                    "[wasm] set_object_effect {obj_id}: 对象效果链创建失败（{e}），合成 quad 采样内容兜底"
-                )));
-                None
+        let effect_chain = if chain_passes.is_empty() {
+            web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(&format!(
+                "[wasm] set_object_effect {obj_id}: 无效果链（chain_desc 空/无有效 pass）→ 合成 quad 采样内容，对象显示原始内容"
+            )));
+            None
+        } else {
+            match effect::EffectChain::new(
+                &self.device, &self.queue, chain_passes, self.config.format, rt_w, rt_h,
+            ).await {
+                Ok(c) => {
+                    web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(&format!(
+                        "[wasm] set_object_effect {obj_id}: 对象效果链创建成功（rt {rt_w}x{rt_h}）"
+                    )));
+                    Some(c)
+                }
+                Err(e) => {
+                    web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(&format!(
+                        "[wasm] set_object_effect {obj_id}: 对象效果链创建失败（{e}），合成 quad 采样内容兜底"
+                    )));
+                    None
+                }
             }
         };
         // ⑤ 合成 quad：sampler + uniform buffer + bind group（复用 shared composite_layout）。
@@ -1030,7 +1007,8 @@ impl Renderer {
     ///   `particle_object_range`（无 distanceMax 默认 64，钳 1..2048）。
     /// - `chain_desc`：效果链 pass 描述（JSON，真实 WE shader 的 SPIR-V 数组）。task-8 编译链
     ///   已集成：JS 侧产出 SPIR-V 传入（同 `set_object_effect`），本方法经 `demo_object_effect_passes`
-    ///   解析；失败/为空 → 回退内置演示 pass，绝不白屏。
+    ///   解析；task-15：失败/为空 → 无效果链（effect_chain=None → 合成 quad 采样粒子内容），
+    ///   绝不回退演示渐变。
     /// - 粒子模拟（compute）由 `step` 驱动；内容渲染进对象 RT 在 `render_object_effects`。
     ///
     /// 绝不白屏：效果链创建失败 → 合成 quad 采样原始粒子内容（对象正常显示、无效果）。
@@ -1084,22 +1062,30 @@ impl Renderer {
             view_formats: &[],
         });
         let out_view = out_tex.create_view(&wgpu::TextureViewDescriptor::default());
-        // ③ 效果链（内置演示 pass 兜底；创建失败 → None → 合成 quad 采样内容，绝不白屏）。
+        // ③ 效果链（task-15：chain_passes 空 → 不建链，effect_chain=None → 合成 quad 采样粒子内容，
+        //    对象显示**原始粒子内容**（非演示渐变）；创建失败 → None → 同样合成 quad 采样内容，绝不白屏）。
         let chain_passes = demo_object_effect_passes(chain_desc);
-        let effect_chain = match effect::EffectChain::new(
-            &self.device, &self.queue, chain_passes, self.config.format, rt_w, rt_h,
-        ).await {
-            Ok(c) => {
-                web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(&format!(
-                    "[wasm] set_particle_object_effect {obj_id}: 粒子对象效果链创建成功（rt {rt_w}x{rt_h}）"
-                )));
-                Some(c)
-            }
-            Err(e) => {
-                web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(&format!(
-                    "[wasm] set_particle_object_effect {obj_id}: 粒子对象效果链创建失败（{e}），合成 quad 采样内容兜底"
-                )));
-                None
+        let effect_chain = if chain_passes.is_empty() {
+            web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(&format!(
+                "[wasm] set_particle_object_effect {obj_id}: 无效果链（chain_desc 空/无有效 pass）→ 合成 quad 采样粒子内容，对象显示原始内容"
+            )));
+            None
+        } else {
+            match effect::EffectChain::new(
+                &self.device, &self.queue, chain_passes, self.config.format, rt_w, rt_h,
+            ).await {
+                Ok(c) => {
+                    web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(&format!(
+                        "[wasm] set_particle_object_effect {obj_id}: 粒子对象效果链创建成功（rt {rt_w}x{rt_h}）"
+                    )));
+                    Some(c)
+                }
+                Err(e) => {
+                    web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(&format!(
+                        "[wasm] set_particle_object_effect {obj_id}: 粒子对象效果链创建失败（{e}），合成 quad 采样内容兜底"
+                    )));
+                    None
+                }
             }
         };
         // ④ 合成 quad：sampler + uniform buffer + bind group（复用 shared composite_layout）。
