@@ -112,14 +112,17 @@ function assignInterfaceLocations(src: string, stage: Stage): string {
     const m = DECL_IO_RE.exec(line);
     if (m && !hasLayout) {
       const [, indent, io, type, name, arr, rest] = m;
+      // 数组 varying/attribute 占 location 连续多槽（vec2 v_TexCoord[4] 占 location 0..3），
+      // 后续接口须在上一个数组占用的槽之后，否则 location 重叠 → glslang 报错（Reviewer Minor #2）。
+      const arrN = arr ? Number(arr.match(/\d+/)?.[0] ?? 1) : 1;
       const decl = `${indent}layout(location=`;
       if (stage === 'frag') {
         // fragment 的 in = varying；out 只有 o_Color（已带 layout，不重排）。
-        if (io === 'in') out.push(`${decl}${fragInLoc++}) in ${type} ${name}${arr ?? ''};${rest}`);
+        if (io === 'in') { out.push(`${decl}${fragInLoc}) in ${type} ${name}${arr ?? ''};${rest}`); fragInLoc += arrN; }
         else out.push(line);
       } else {
-        if (io === 'in') out.push(`${decl}${vertInLoc++}) in ${type} ${name}${arr ?? ''};${rest}`);
-        else out.push(`${decl}${vertOutLoc++}) out ${type} ${name}${arr ?? ''};${rest}`);
+        if (io === 'in') { out.push(`${decl}${vertInLoc}) in ${type} ${name}${arr ?? ''};${rest}`); vertInLoc += arrN; }
+        else { out.push(`${decl}${vertOutLoc}) out ${type} ${name}${arr ?? ''};${rest}`); vertOutLoc += arrN; }
       }
     } else {
       out.push(line);
@@ -163,12 +166,30 @@ function broadcastScalarOperand(src: string): string {
 
 // GLSL 不允许 vec4→vec3/vec2 隐式降维，但 WE 效果 shader 沿用 HLSL 习惯直接
 // `vec3 c = texSample2D(...)`（隐式丢 alpha）。转换后成为 `vec3 c = texture(...)`，glslang
-// 报 "cannot convert from vec4 to vec3"。仅当 RHS 为**完整的纯 texture(...) 调用**（以 ')' 结尾，
-// 未带 .swizzle / 后续运算）时补 swizzle（vec3→.rgb、vec2→.xy）；`texture(...).xyz * 2 - 1`
-// 之类 RHS 已是表达式（结果已定维）不碰，避免把 .rgb 误接到数字/标识符上。
+// 报 "cannot convert from vec4 to vec3"。仅当 RHS 为**单个完整纯 texture()/textureLod() 调用**
+// 时补 swizzle（vec3→.rgb、vec2→.xy）；RHS 若是复合表达式（`texture(...) + X` / `.xyz * 2 - 1`
+// / 以括号结尾的 `texture(...) + (a + 0.5)`）则**不动**，避免把 .rgb 误接到子表达式的括号/数字上
+// （Reviewer Important #1）。
+// 用配对括号解析：`texture(...)` 的闭合 `)` 必须是 RHS 的**最后一个字符**（无尾随运算/swizzle），
+// 且允许实参内嵌套括号（如 `texture(g, frac(shimmerCoord))`）。
+function isSingleTextureCall(call: string): boolean {
+  const open = call.indexOf('(');
+  if (open < 0) return false;
+  let depth = 0;
+  for (let i = open; i < call.length; i++) {
+    if (call[i] === '(') depth++;
+    else if (call[i] === ')') {
+      depth--;
+      if (depth === 0) return i === call.length - 1; // 闭合括号即末尾 → 纯单调用
+    }
+  }
+  return false;
+}
 function fixVectorAssignFromTexture(src: string): string {
-  return src.replace(/\b(vec3|vec2)\s+(\w+)\s*=\s*(texture\([^;]*);/g, (m, type, name, call) => {
-    if (!/\)\s*$/.test(call)) return m;
+  return src.replace(/\b(vec3|vec2)\s+(\w+)\s*=\s*((?:texture|textureLod)\([^;]*)\s*;/g, (m, type, name, call) => {
+    // RHS 必须以 texture/textureLod 调用开头（`texA + ...` 之类不以 texture 开头，不命中）。
+    if (!/^(?:texture|textureLod)\(/.test(call)) return m;
+    if (!isSingleTextureCall(call)) return m;
     const swizzle = type === 'vec3' ? 'rgb' : 'xy';
     return `${type} ${name} = ${call}.${swizzle};`;
   });

@@ -262,5 +262,46 @@ describe('glslToNagaPass WE 方言 → naga desktop GLSL', () => {
     expect(spv.textureSlots).toEqual(['tex.png']);
     expect(spv.blendMode).toBe('normal');
   });
+
+  it('fixVectorAssignFromTexture 收紧：仅单个纯 texture() 调用补 .rgb，复合/已带 swizzle 不补（Reviewer #1）', () => {
+    const pass = makePass({
+      rawFrag: [
+        'uniform sampler2D t;',
+        'void main() {',
+        '  vec3 x = vec3(1.0);',
+        '  vec3 a = texture(t, vec2(0.5));',               // 纯调用 → 补 .rgb
+        '  vec3 b = texture(t, vec2(0.5)) + (x + 0.5);',   // 复合表达式（括号结尾）→ 不补
+        '  vec3 c = texture(t, vec2(0.5)).rgb;',           // 已带 swizzle → 不补
+        '  vec3 d = texture(t, vec2(0.5)).xyz * 2 - 1;',   // 后续运算 → 不补
+        '  vec3 e = (x.rgb);',                             // 非 texture 开头 → 不补
+        '  gl_FragColor = vec4(a + b + c + d + e, 1.0);',
+        '}',
+      ].join('\n'),
+    });
+    const g = glslToNagaGlsl(pass);
+    // a 被补 .rgb；b/c/d/e 保持原样（复合/已 swizzle/后续运算/非 texture）
+    expect(g.fragGlsl).toContain('vec3 a = texture(t, vec2(0.5)).rgb;');
+    expect(g.fragGlsl).toContain('vec3 b = texture(t, vec2(0.5)) + (x + 0.5);');
+    expect(g.fragGlsl).toContain('vec3 c = texture(t, vec2(0.5)).rgb;');
+    expect(g.fragGlsl).toContain('vec3 d = texture(t, vec2(0.5)).xyz * 2.0 - 1.0;');
+    expect(g.fragGlsl).toContain('vec3 e = (x.rgb);');
+    // 不产生错误的 .rgb 追加（如 `).rgb` 后粘连字母/运算符）
+    expect(g.fragGlsl).not.toMatch(/\)\.rgb\b[A-Za-z0-9_]/);
+  });
+
+  it('varying 数组 location 按元素数占位（Reviewer #2）', () => {
+    const pass = makePass({
+      rawFrag: [
+        'varying vec2 v_TexCoord[4];',
+        'varying vec2 v_Other;',
+        'uniform sampler2D t;',
+        'void main() { gl_FragColor = vec4(v_TexCoord[0], v_Other); }',
+      ].join('\n'),
+    });
+    const g = glslToNagaGlsl(pass);
+    // 数组占 location 0..3，后一个从 location 4 开始（避免重叠）
+    expect(g.fragGlsl).toContain('layout(location=0) in vec2 v_TexCoord[4];');
+    expect(g.fragGlsl).toContain('layout(location=4) in vec2 v_Other;');
+  });
 });
 
