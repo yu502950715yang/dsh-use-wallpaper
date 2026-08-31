@@ -539,6 +539,35 @@ pub fn texture_slot_has_bytes(desc: &EffectPassDesc, slot_idx: usize) -> bool {
         .map_or(false, |b| b.as_ref().map_or(false, |v| !v.is_empty()))
 }
 
+/// `g_TextureNResolution` 的权威布局解析（native 纯函数，对齐 WE 官方 WPSceneParser.cpp：
+/// `resolution = { width, height, width, height }` —— `.xy`/`.zw` 均为**像素尺寸**，
+/// 非 texel 倒数 `1/w`）。
+///
+/// - 名称 index N=0（输入对象内容 `g_Texture0`）→ 用对象 RT 尺寸 `base_w`/`base_h`；
+/// - N≥1（独立 mask/normal/flow 槽 `g_TextureN`，对应 `texture_slots[N-1]`）→ 用该槽
+///   纹理的真实尺寸 `slot_w`/`slot_h`（若该槽未加载/尺寸无效 → None，保持 block 原值，
+///   避免用错误尺寸填充造成采样坐标错乱）。
+/// - 非 `g_TextureNResolution` 名称 → None。
+pub fn texture_resolution_for(
+    name: &str,
+    base_w: f32,
+    base_h: f32,
+    slot_w: f32,
+    slot_h: f32,
+) -> Option<[f32; 4]> {
+    // 解析 "g_TextureNResolution" 的 N。
+    let n = name.strip_prefix("g_Texture")?.strip_suffix("Resolution")?.parse::<u32>().ok()?;
+    let (w, h) = if n == 0 {
+        (base_w, base_h)
+    } else {
+        if slot_w <= 0.0 || slot_h <= 0.0 {
+            return None;
+        }
+        (slot_w, slot_h)
+    };
+    Some([w, h, w, h])
+}
+
 /// blendMode 字符串别名（EffectPassDesc 字段类型）。
 pub type BlendMode = String;
 
@@ -679,22 +708,34 @@ mod imp {
         group: &[&UniformBinding],
         tex_w: f32,
         tex_h: f32,
+        slot_sizes: &[Option<(f32, f32)>],
     ) {
-        if tex_w <= 0.0 || tex_h <= 0.0 {
-            return;
-        }
-        for name in [
-            "g_Texture0Resolution",
-            "g_Texture1Resolution",
-            "g_Texture2Resolution",
-        ] {
-            let Some(u) = group.iter().find(|u| u.name == name) else { continue };
+        for u in group {
+            // 仅处理 g_TextureNResolution（N=0..12）；其余成员由 pack_std140_block 已写入。
+            let Some(n) = u.name
+                .strip_prefix("g_Texture")
+                .and_then(|s| s.strip_suffix("Resolution"))
+                .and_then(|s| s.parse::<u32>().ok())
+            else {
+                continue;
+            };
+            // N≥1 的槽纹理尺寸（texture_slots[N-1] 已上传的 mask/normal/flow 纹理），N=0 用对象 RT 尺寸。
+            let (slot_w, slot_h) = if n == 0 {
+                (tex_w, tex_h)
+            } else {
+                match slot_sizes.get((n - 1) as usize).and_then(|s| *s) {
+                    Some((w, h)) => (w, h),
+                    None => continue, // 槽未加载：保持 block 原值，不填充避免错乱。
+                }
+            };
+            let Some(res) = texture_resolution_for(&u.name, tex_w, tex_h, slot_w, slot_h) else { continue };
             let base = (u.offset / 4) as usize;
             if base + 4 <= block_data.len() {
-                block_data[base] = 1.0 / tex_w;
-                block_data[base + 1] = 1.0 / tex_h;
-                block_data[base + 2] = tex_w;
-                block_data[base + 3] = tex_h;
+                // 权威布局 ({w,h} 像素尺寸, {w,h})——WE WPSceneParser: {width,height,width,height}。
+                block_data[base] = res[0];
+                block_data[base + 1] = res[1];
+                block_data[base + 2] = res[2];
+                block_data[base + 3] = res[3];
             }
         }
     }
@@ -709,6 +750,7 @@ mod imp {
         label: &str,
         tex_w: f32,
         tex_h: f32,
+        slot_sizes: &[Option<(f32, f32)>],
     ) -> Vec<EffectUniformInstance> {
         // ① 按 JS binding 分组 std140 成员（成员名保持不变，用于下方成员名→真实 binding 匹配）。
         let mut entries: Vec<(u32, &UniformBinding)> = uniforms.iter().map(|u| (u.binding, u)).collect();
@@ -750,8 +792,9 @@ mod imp {
                 })
                 .collect();
             let mut block_data = pack_std140_block(block_size, &fields);
-            // task-21：注入引擎纹理分辨率 uniform（除 0 → inf 横条乱码根因，见上函数注释）。
-            apply_engine_resolution_uniforms(&mut block_data, &group, tex_w, tex_h);
+            // task-21 + task-wasm-effect-texture-slots：注入引擎纹理分辨率 uniform。
+            // 权威布局 (w,h,w,h)：N=0 用对象 RT 尺寸、N≥1 用对应槽纹理尺寸（slot_sizes[slot_idx]）。
+            apply_engine_resolution_uniforms(&mut block_data, &group, tex_w, tex_h, slot_sizes);
             let g_time_offset = group.iter().find(|u| u.name == "g_Time").map(|u| u.offset);
             let buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(&format!("{label}-{binding}")),
@@ -864,6 +907,36 @@ mod imp {
             // pass 失败（空实例）或关键资源（RT/quad）创建失败才整链 `Err` → 调用方回退，绝不用演示
             // 渐变兜底。注：把编译（无 error scope）与资源创建（独立 error scope）分开，避免一个失败
             // pass 污染下一个 pass 的校验（error scope 只覆盖当前 pass 的资源创建）。
+            // Phase 0：**先**逐 pass 逐槽上传真实 mask/normal/flow 纹理（task-wasm-effect-texture-slots），
+            // 构造 `slot_textures`（绑定用）与 `slot_sizes`（`g_TextureNResolution` per-slot 尺寸用）。
+            // 之所以在 pass 循环前：`build_uniform_instances` 需要槽尺寸来正确填充
+            // `g_TextureNResolution`（N≥1 用槽纹理尺寸而非对象 RT 尺寸——WE 权威布局 (w,h,w,h)）。
+            // 上传失败/无字节 → 槽为 None（build_bind_group 回退白占位，绝不白屏/不崩）。
+            let mut slot_textures: Vec<Vec<Option<wgpu::TextureView>>> = Vec::with_capacity(passes.len());
+            let mut slot_sizes: Vec<Vec<Option<(f32, f32)>>> = Vec::with_capacity(passes.len());
+            device.push_error_scope(wgpu::ErrorFilter::Validation);
+            for desc in &passes {
+                let mut per_tex: Vec<Option<wgpu::TextureView>> = Vec::with_capacity(desc.texture_bytes.len());
+                let mut per_size: Vec<Option<(f32, f32)>> = Vec::with_capacity(desc.texture_bytes.len());
+                for bytes in &desc.texture_bytes {
+                    let info = bytes.as_deref().and_then(|b| {
+                        let img = crate::tex::parse_tex(b)?;
+                        Some((b, img.width as f32, img.height as f32))
+                    });
+                    let view = info.and_then(|(b, _, _)| upload_slot_texture(device, queue, b));
+                    let size = info.map(|(_, w, h)| (w, h));
+                    per_tex.push(view);
+                    per_size.push(size);
+                }
+                slot_textures.push(per_tex);
+                slot_sizes.push(per_size);
+            }
+            if let Some(err) = device.pop_error_scope().await {
+                // 上传纹理校验失败：不影响整链（纹理槽非关键资源），回退项置 None，log 警示。
+                web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(&format!(
+                    "[wasm] 效果链槽纹理上传校验失败（{err:?}），相关槽回退白占位"
+                )));
+            }
             let mut instances: Vec<EffectPassInstance> = Vec::with_capacity(passes.len());
             for (i, desc) in passes.iter().enumerate() {
                 let label = format!("effect-chain-pass-{i}");
@@ -932,7 +1005,7 @@ mod imp {
                 });
                 let uniform_members = collect_uniform_members(&wgsl_vert, &wgsl_frag);
                 let uniform_instances =
-                    build_uniform_instances(device, queue, &desc.uniforms, &uniform_members, &format!("{label}-uniform"), width as f32, height as f32);
+                    build_uniform_instances(device, queue, &desc.uniforms, &uniform_members, &format!("{label}-uniform"), width as f32, height as f32, &slot_sizes[i]);
                 let texture_bindings: Vec<u32> =
                     bindings.iter().filter(|(_, k)| *k == BindKind::Texture).map(|(b, _)| *b).collect();
                 let sampler_bindings: Vec<u32> =

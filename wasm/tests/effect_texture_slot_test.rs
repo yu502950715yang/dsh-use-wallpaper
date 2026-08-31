@@ -52,4 +52,43 @@ fn effect_pass_desc_defaults_texture_bytes_when_absent() {
     assert!(!effect::texture_slot_has_bytes(&desc, 1));
 }
 
+/// `g_TextureNResolution` smooth 布局（权威对齐 WE WPSceneParser.cpp ResolutionVector：
+///   = { width, height, width, height }，.xy/.zw 均为像素尺寸，非 texel 倒数）。
+/// - name 的索引 N=0（输入对象内容）→ 用对象 RT 尺寸 `base_w/base_h`；
+/// - N≥1（独立 mask/normal/flow 槽）→ 用该槽纹理的真实尺寸 `slot_w/slot_h`；
+///   slot 尺寸无效（≤0，即未加载）→ None（保持 block 原值，不填充造成错乱）。
+#[test]
+fn texture_resolution_for_uses_authoritative_layout_and_per_slot_size() {
+    // g_Texture0Resolution：输入（对象 RT），用 base 尺寸，布局 (w,h,w,h)。
+    assert_eq!(
+        effect::texture_resolution_for("g_Texture0Resolution", 265.0, 768.0, 1280.0, 720.0),
+        Some([265.0, 768.0, 265.0, 768.0]),
+        "N=0 用对象 RT 尺寸 base_w/base_h，布局 (w,h,w,h)"
+    );
+    // g_Texture1Resolution：独立 mask 槽，用槽纹理尺寸（如 mask 1280×720），布局 (w,h,w,h)。
+    assert_eq!(
+        effect::texture_resolution_for("g_Texture1Resolution", 265.0, 768.0, 1280.0, 720.0),
+        Some([1280.0, 720.0, 1280.0, 720.0]),
+        "N=1 用槽纹理尺寸（mask 1280×720），布局 (w,h,w,h)"
+    );
+    // g_Texture2Resolution：同 N≥1。
+    assert_eq!(
+        effect::texture_resolution_for("g_Texture2Resolution", 265.0, 768.0, 64.0, 64.0),
+        Some([64.0, 64.0, 64.0, 64.0]),
+        "N=2 用槽纹理尺寸"
+    );
+    // 槽尺寸无效（未加载，≤0）→ None（保持 block 原值，不填充导致采样错乱）。
+    assert_eq!(
+        effect::texture_resolution_for("g_Texture1Resolution", 265.0, 768.0, 0.0, 0.0),
+        None,
+        "槽未加载尺寸无效 → None"
+    );
+    // 非 resolution 名称 → None。
+    assert_eq!(
+        effect::texture_resolution_for("g_Time", 265.0, 768.0, 1280.0, 720.0),
+        None,
+        "非 g_TextureNResolution 名称 → None"
+    );
+}
+
 
