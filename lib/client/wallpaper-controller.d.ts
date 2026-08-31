@@ -4,6 +4,7 @@ export interface WallpaperControllerOptions {
     fetchList: () => Promise<WallpaperInfo[]>;
     sceneRenderer?: {
         render(wallpaperId: string, fg: HTMLCanvasElement, bg?: HTMLCanvasElement): Promise<boolean>;
+        dispose?(): void;
     };
 }
 export declare function createWallpaperController(layer: BackgroundLayer, opts: WallpaperControllerOptions): {

@@ -2,6 +2,9 @@ import { type UniformValue } from './uniform-binder.js';
 export interface CompiledEffectPass {
     vertSrc: string;
     fragSrc: string;
+    rawVert: string;
+    rawFrag: string;
+    combos: Record<string, number>;
     uniforms: Map<string, UniformValue>;
     textureSlots: (string | null)[];
     blendMode: string;
