@@ -120,7 +120,12 @@ async function buildEffectChainDesc(id: string, effects: unknown[]): Promise<Uin
             vert_spv: Array.from(spv.vertSpv),
             frag_spv: Array.from(spv.fragSpv),
             uniforms,
-            texture_slots: [],
+            // texture_slots：scene.json passes[i].textures 的槽位（第 i 项 = g_Texture(i+1)）。
+            // glsl-to-naga 已按此解析（pass.textureSlots = 路径数组，如 [null,"masks/xxx",null]）。
+            // 此前硬编码 [] → wasm build_bind_group 把非首纹理槽全绑 input_view（用背景自身当
+            // 遮罩/噪声 → Orange 贴图错乱、godrays 下降采样被背景污染）。透传给 wasm 使其能按
+            // 槽位区分 previous(空) 与独立纹理(非空)，消除错绑回归。
+            texture_slots: spv.textureSlots.map((ts) => (typeof ts === 'string' && ts.length > 0 ? ts : null)),
             blend_mode: spv.blendMode,
           });
         } catch (e) {

@@ -338,12 +338,13 @@ pub fn composite_ndc_uniform(
     }
 }
 
-/// 纹理槽引用（MVP）。`External(u32)` 索引到外部纹理表（由对象级/glsl-to-naga 层解析）。
-/// M2 多数效果 pass 只使用 g_Texture0，纹理槽多为 None——MVP 先支持 g_Texture0 + 可选槽。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
-pub enum SlotId {
-    External(u32),
-}
+/// 效果链纹理槽语义（task-24 修正）：某 `g_TextureN`（N≥1）槽的**独立纹理路径**（相对壁纸包根）。
+/// `Some(path)` = scene.json 的 pass.textures[i] 提供了独立遮罩/噪声/flow 纹理（如
+/// `masks/waterwaves_mask_xxx`、`util/clouds_256`）；`None` = 该槽无独立纹理，按 WE
+/// `previous`/输入语义回退（combine 的 g_Texture1 = 原始内容 → input_view）。
+/// 此前 JS 侧恒传空数组 → wasm `build_bind_group` 把非首纹理槽全绑 `input_view`（用背景自身
+/// 当遮罩/噪声），造成 Orange 贴图错乱、godrays 下降采样被背景污染的回归。
+/// JS wire 为 `(string|null)[]`（glsl-to-naga 的 `textureSlots`），此处直接 `Vec<Option<String>>`。
 
 /// 单个非不透明 uniform 绑定（std140 block 成员）：`name` + 打包值（Vec<f32>）+ 布局描述。
 ///
@@ -515,7 +516,7 @@ pub struct EffectPassDesc {
     #[serde(default)]
     pub uniforms: Vec<UniformBinding>,
     #[serde(default)]
-    pub texture_slots: Vec<Option<SlotId>>,
+    pub texture_slots: Vec<Option<String>>,
     #[serde(default)]
     pub blend_mode: BlendMode,
 }
@@ -792,6 +793,12 @@ mod imp {
         /// 会让其余 sampler 缺 entry，每帧 `create_bind_group` 抛「binding N unbound」校验错误
         /// (reviewer Important #1)。与 `texture_bindings` 对称。
         pub sampler_bindings: Vec<u32>,
+        /// 效果链纹理槽语义（task-24）：`texture_slots[i]` = `g_Texture(i+1)` 的独立纹理路径
+        /// （Some = 独立遮罩/噪声/flow 纹理；None = 无独立纹理，按 previous/输入语义回退）。
+        /// `build_bind_group` 据此区分「combine 的 previous（None → input_view）」与「waterwaves
+        /// /downsample2 的遮罩/噪声槽（Some → 白色占位，避免用背景自身污染）」。g_Texture0
+        /// 恒为当前输入（read_view），不来自本列表。
+        pub texture_slots: Vec<Option<String>>,
     }
 
     /// 效果链 ping-pong 执行器（M2）：一组 WE 后处理 pass 依次在两张 ping-pong RT 上执行。
@@ -803,6 +810,12 @@ mod imp {
         rt_a_view: wgpu::TextureView,
         rt_b_view: wgpu::TextureView,
         sampler: wgpu::Sampler,
+        /// 白色 1×1 纹理视图（task-24）：绑定到「提供了独立纹理槽」而非首纹理槽（遮罩/噪声/flow）。
+        /// WE 语义下这些槽的**正确值**是加载的独立纹理，但 wasm 执行器暂未接通逐槽纹理字节加载；
+        /// 此前把非首槽全绑 `input_view`（背景自身）导致 Orange 贴图错乱、godrays 下降采样被背景
+        /// 污染的回归。白色是语义合理的兜底（白色遮罩 = 全区域效果、白色噪声 ≈ 常数），至少不再
+        /// 用背景内容污染。combine 的 previous 槽（texture_slots 为 None）仍绑 `input_view`。
+        white_view: wgpu::TextureView,
         quad_vb: wgpu::Buffer,
     }
 
@@ -906,6 +919,8 @@ mod imp {
                     uniform_instances,
                     texture_bindings,
                     sampler_bindings,
+                    // task-24：透传该 pass 的纹理槽语义（g_Texture(i+1) 的独立纹理路径；None = previous）。
+                    texture_slots: desc.texture_slots.clone(),
                 };
                 if let Some(err) = device.pop_error_scope().await {
                     web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(&format!(
@@ -933,8 +948,28 @@ mod imp {
                 ..Default::default()
             });
             let quad_vb = create_quad_vb(device, queue);
+            // 白色 1×1 占位纹理（task-24）：RGBA8 纯白，供「提供了独立纹理槽」的非首纹理槽绑定，
+            // 避免复用 input_view（背景自身）。Color::WHITE 语义在 WE shader 里 = 全 1（遮罩全区域 /
+            // 常数噪声），至少不再用背景内容污染效果链输出。
+            let white_tex = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("effect-white-placeholder"),
+                size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo { texture: &white_tex, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+                &[255u8, 255, 255, 255],
+                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4), rows_per_image: Some(1) },
+                wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            );
+            let white_view = white_tex.create_view(&wgpu::TextureViewDescriptor::default());
             if let Some(err) = device.pop_error_scope().await {
-                return Err(format!("EffectChain 关键资源（RT/sampler/quad）创建校验失败：{err:?}"));
+                return Err(format!("EffectChain 关键资源（RT/sampler/quad/white）创建校验失败：{err:?}"));
             }
             Ok(EffectChain {
                 device: device.clone(),
@@ -943,6 +978,7 @@ mod imp {
                 rt_a_view,
                 rt_b_view,
                 sampler,
+                white_view,
                 quad_vb,
             })
         }
@@ -1025,12 +1061,15 @@ mod imp {
         /// 故 bind group 不会因缺 entry 触发校验错误。真正的资源创建错误在 `new` 的 error scope
         /// 内收敛（`EffectChain::new` 返回 `Err` → 调用方跳链回退，绝不白屏/不崩）。
         ///
-        /// **多纹理（task-22）**：`texture_bindings` 为 shader 声明的全部纹理绑定（升序）。**首纹理**
-        ///（通常 g_Texture0 语义）绑当前效果链输入 `read_view`（ping-pong 的上一写端）；**其余多纹理槽**
-        /// 绑 **原始内容 `input_view`**——WE 效果链的 `previous` 恒指效果链之前的原始内容（godrays
-        /// combine 的 `g_Texture1` = previous = 原始对象内容），如此 combine 才能把光斑/射线叠加到
-        /// 原始基底上（否则 g_Texture1 也被绑到读端 → 射线与射线混合 → 错误）。单纹理 pass 不受影响
-        /// （`texture_bindings` 仅 1 个首槽）；无外部纹理表时该回退也稳定不崩（不再全绑同一读端）。
+        /// **多纹理（task-22 + task-24 修正）**：`texture_bindings` 为 shader 声明的全部纹理绑定
+        /// （升序）。**首纹理**（通常 g_Texture0 语义）绑当前效果链输入 `read_view`；**其余多纹理槽**
+        /// 按 `texture_slots[bi-1]` 区分语义（task-22 曾全部绑 `input_view`，导致 Orange 贴图错乱、
+        /// godrays 下降采样被背景污染的回归）：
+        /// - `texture_slots[bi-1]` 为 `Some(_)`（场景提供了独立遮罩/噪声/flow 纹理）→ 绑白色占位
+        ///   `self.white_view`（wasm 暂未逐槽加载真实纹理；白色至少避免用背景内容污染输出）。
+        /// - `texture_slots[bi-1]` 为 `None`（如 combine 的 g_Texture1 = previous）→ 绑 `input_view`
+        ///   （原始内容），combine 才能把光斑/射线叠加到原始基底上。
+        /// 单纹理 pass 不受影响（`texture_bindings` 仅 1 个首槽）；无外部纹理表时该回退也稳定不崩。
         fn build_bind_group(&self, pass_index: usize, read_view: &wgpu::TextureView, input_view: &wgpu::TextureView) -> wgpu::BindGroup {
             let pass = &self.passes[pass_index];
             let mut entries: Vec<wgpu::BindGroupEntry> = Vec::new();
@@ -1041,8 +1080,18 @@ mod imp {
                 });
             }
             for (bi, &b) in pass.texture_bindings.iter().enumerate() {
-                // 首纹理槽 → 效果链当前读端；其余槽 → 原始内容（WE `previous` 语义）。
-                let view = if bi == 0 { read_view } else { input_view };
+                // 首纹理槽 → 效果链当前读端。
+                let view = if bi == 0 {
+                    read_view
+                } else {
+                    // g_Texture(bi) 对应 texture_slots[bi-1]（g_Texture0 恒为输入，不进来）。
+                    let slot = pass.texture_slots.get(bi - 1).and_then(|s| s.as_deref());
+                    if slot.map_or(false, |s| !s.is_empty()) {
+                        &self.white_view
+                    } else {
+                        input_view
+                    }
+                };
                 entries.push(wgpu::BindGroupEntry {
                     binding: b,
                     resource: wgpu::BindingResource::TextureView(view),
