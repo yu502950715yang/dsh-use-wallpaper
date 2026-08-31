@@ -25981,9 +25981,19 @@ ${s}`;
 ${defBlock}${oColor}${s}`;
   return { glsl, binds, nextBinding: bind + samplerCount };
 }
+function passCombos(pass) {
+  const merged = { ...pass.combos };
+  for (const src of [pass.rawVert, pass.rawFrag]) {
+    for (const [k, v] of extractComboDefaults(src)) {
+      if (!(k in merged)) merged[k] = v;
+    }
+  }
+  return merged;
+}
 function glslToNagaGlsl(pass) {
-  const frag = convertStage(pass.rawFrag, "frag", pass.combos, pass.uniforms, 0);
-  const vert = convertStage(pass.rawVert, "vert", pass.combos, pass.uniforms, frag.nextBinding);
+  const combos = passCombos(pass);
+  const frag = convertStage(pass.rawFrag, "frag", combos, pass.uniforms, 0);
+  const vert = convertStage(pass.rawVert, "vert", combos, pass.uniforms, frag.nextBinding);
   return {
     vertGlsl: vert.glsl,
     fragGlsl: frag.glsl,
@@ -25993,8 +26003,9 @@ function glslToNagaGlsl(pass) {
   };
 }
 async function glslToNagaPass(pass) {
-  const frag = convertStage(pass.rawFrag, "frag", pass.combos, pass.uniforms, 0);
-  const vert = convertStage(pass.rawVert, "vert", pass.combos, pass.uniforms, frag.nextBinding);
+  const combos = passCombos(pass);
+  const frag = convertStage(pass.rawFrag, "frag", combos, pass.uniforms, 0);
+  const vert = convertStage(pass.rawVert, "vert", combos, pass.uniforms, frag.nextBinding);
   const glslang = await loadGlslang();
   const vertSpv = u32ToBytes(glslang.compileGLSL(vert.glsl, "vertex", false));
   const fragSpv = u32ToBytes(glslang.compileGLSL(frag.glsl, "fragment", false));
@@ -26044,10 +26055,6 @@ async function buildEffectChainDesc(id, effects) {
       if (!chain) continue;
       for (const p of chain) {
         try {
-          if (/\bg_ModelViewProjectionMatrix\b/.test(p.rawVert)) {
-            console.warn(`[wasm] \u6548\u679C\u94FE pass \u8DF3\u8FC7\uFF1Avertex \u4F9D\u8D56 MVM\uFF08g_ModelViewProjectionMatrix\uFF09\uFF0Cwasm \u4E0D\u63D0\u4F9B \u2192 \u5BF9\u8C61\u56DE\u9000\u539F\u59CB\u5185\u5BB9\uFF08\u65E0\u6B64\u6548\u679C\uFF09`);
-            continue;
-          }
           const naga = glslToNagaGlsl(p);
           if (!interStageLocationsMatch(naga.vertGlsl, naga.fragGlsl)) {
             console.warn(`[wasm] \u6548\u679C\u94FE pass \u8DF3\u8FC7\uFF1Ainter-stage varying \u4E0D\u5339\u914D\uFF08frag \u8F93\u5165\u7F3A vertex \u8F93\u51FA\uFF09`);

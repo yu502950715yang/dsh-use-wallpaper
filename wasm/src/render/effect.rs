@@ -467,6 +467,27 @@ pub fn pack_std140_block(block_size: u32, fields: &[Std140Field]) -> Vec<f32> {
     block
 }
 
+/// MVM 矩阵 uniform（`matN`）的 **identity** 值（列主序，与 `std140_write_plan` 的 mat 列 pitch 一致）：
+/// 对角元素 1、其余 0。JS 侧引擎内建 MVM 缺省为全 0 → 顶点塌原点；此处为依赖 MVM 投影的效果链
+/// pass 提供正确 identity（wasm 对象级 quad 顶点已是 NDC，见 `build_uniform_instances` 注释）。
+pub fn identity_mat_value(ty: &str) -> Vec<f32> {
+    let n = ty
+        .strip_prefix("mat")
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(4)
+        .max(1);
+    let mut v = vec![0.0f32; n * n];
+    for col in 0..n {
+        v[col * n + col] = 1.0;
+    }
+    v
+}
+
+/// 判断 uniform 名是否为引擎内建 MVM 矩阵（`g_ModelViewProjectionMatrix` / `g_EffectModelViewProjectionMatrix`）。
+pub fn is_mvm_member(name: &str) -> bool {
+    name == "g_ModelViewProjectionMatrix" || name == "g_EffectModelViewProjectionMatrix"
+}
+
 /// 效果链 pass 描述（编译输入）。binding 编号由 texture_slots + uniforms 的静态顺序决定
 /// （JS 侧 glsl-to-naga 已分配 `layout(binding=N)`；wasm 按同一顺序整理 bind group layout）。
 ///
@@ -659,6 +680,8 @@ mod imp {
         }
     }
 
+    /// **MVM 矩阵**：`is_mvm_member`/`identity_mat_value`（native 层）已提供 identity——依赖 MVM
+    /// 投影对象级 quad 顶点的 pass（godrays combine 等）render 时不塌原点。
     fn build_uniform_instances(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -697,7 +720,15 @@ mod imp {
             let block_size = std140_block_size(&group.iter().map(|u| (u.offset, u.size)).collect::<Vec<_>>());
             let fields: Vec<Std140Field> = group
                 .iter()
-                .map(|u| Std140Field { ty: u.ty.clone(), byte_offset: u.offset, value: u.value.clone() })
+                .map(|u| {
+                    // task-22：MVM 矩阵 uniform 用 **identity** 而非 JS 缺省全 0（避免顶点塌原点）。
+                    let value = if is_mvm_member(u.name.as_str()) && u.ty.starts_with("mat") {
+                        identity_mat_value(&u.ty)
+                    } else {
+                        u.value.clone()
+                    };
+                    Std140Field { ty: u.ty.clone(), byte_offset: u.offset, value }
+                })
                 .collect();
             let mut block_data = pack_std140_block(block_size, &fields);
             // task-21：注入引擎纹理分辨率 uniform（除 0 → inf 横条乱码根因，见上函数注释）。
@@ -962,7 +993,7 @@ mod imp {
                     }
                 }
                 // bind group（按 shader 声明的绑定布置资源）
-                let bind_group = self.build_bind_group(i, read_view);
+                let bind_group = self.build_bind_group(i, read_view, input_view);
                 let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("effect-chain-pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -994,10 +1025,13 @@ mod imp {
         /// 故 bind group 不会因缺 entry 触发校验错误。真正的资源创建错误在 `new` 的 error scope
         /// 内收敛（`EffectChain::new` 返回 `Err` → 调用方跳链回退，绝不白屏/不崩）。
         ///
-        /// **多纹理**：`texture_bindings` 为 shader 声明的全部纹理绑定（升序）。第一个（通常
-        /// g_Texture0 语义）绑当前输入 view；其余多纹理槽在**无外部纹理视图表**时复用输入 view
-        /// 保底（当前 `texture_slots` 在 JS wiring 为空，外部纹理表未接通，见 task-13 报告疑虑）。
-        fn build_bind_group(&self, pass_index: usize, read_view: &wgpu::TextureView) -> wgpu::BindGroup {
+        /// **多纹理（task-22）**：`texture_bindings` 为 shader 声明的全部纹理绑定（升序）。**首纹理**
+        ///（通常 g_Texture0 语义）绑当前效果链输入 `read_view`（ping-pong 的上一写端）；**其余多纹理槽**
+        /// 绑 **原始内容 `input_view`**——WE 效果链的 `previous` 恒指效果链之前的原始内容（godrays
+        /// combine 的 `g_Texture1` = previous = 原始对象内容），如此 combine 才能把光斑/射线叠加到
+        /// 原始基底上（否则 g_Texture1 也被绑到读端 → 射线与射线混合 → 错误）。单纹理 pass 不受影响
+        /// （`texture_bindings` 仅 1 个首槽）；无外部纹理表时该回退也稳定不崩（不再全绑同一读端）。
+        fn build_bind_group(&self, pass_index: usize, read_view: &wgpu::TextureView, input_view: &wgpu::TextureView) -> wgpu::BindGroup {
             let pass = &self.passes[pass_index];
             let mut entries: Vec<wgpu::BindGroupEntry> = Vec::new();
             for uins in &pass.uniform_instances {
@@ -1006,10 +1040,12 @@ mod imp {
                     resource: uins.buffer.as_entire_binding(),
                 });
             }
-            for &b in &pass.texture_bindings {
+            for (bi, &b) in pass.texture_bindings.iter().enumerate() {
+                // 首纹理槽 → 效果链当前读端；其余槽 → 原始内容（WE `previous` 语义）。
+                let view = if bi == 0 { read_view } else { input_view };
                 entries.push(wgpu::BindGroupEntry {
                     binding: b,
-                    resource: wgpu::BindingResource::TextureView(read_view),
+                    resource: wgpu::BindingResource::TextureView(view),
                 });
             }
             for &b in &pass.sampler_bindings {

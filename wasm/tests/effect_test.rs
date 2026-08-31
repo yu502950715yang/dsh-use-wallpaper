@@ -310,3 +310,32 @@ fn std140_write_plan_mat4_array_element_offset() {
     assert_eq!(plan.iter().find(|(v, _)| *v == 31).map(|(_, f)| *f), Some(31));
     assert_eq!(plan.len(), 32);
 }
+
+/// task-22：MVM 矩阵 uniform 用 identity（而非 JS 缺省全 0），使依赖 MVM 投影对象级 quad 顶点的
+/// pass（godrays combine / waterwaves 等）顶点不变形塌陷。identity 列主序对角 1、其余 0。
+#[test]
+fn identity_mat_value_is_identity() {
+    assert_eq!(effect::identity_mat_value("mat4"), vec![
+        1.0, 0.0, 0.0, 0.0,
+        0.0, 1.0, 0.0, 0.0,
+        0.0, 0.0, 1.0, 0.0,
+        0.0, 0.0, 0.0, 1.0,
+    ]);
+    assert_eq!(effect::identity_mat_value("mat3"), vec![
+        1.0, 0.0, 0.0,
+        0.0, 1.0, 0.0,
+        0.0, 0.0, 1.0,
+    ]);
+    // 未知类型回退 mat4。
+    assert_eq!(effect::identity_mat_value("matX").len(), 16);
+}
+
+/// task-22：引擎内建 MVM uniform 名识别（含 COPYBG 合成用的 g_EffectModelViewProjectionMatrix）。
+#[test]
+fn is_mvm_member_matches_builtin_names() {
+    assert!(effect::is_mvm_member("g_ModelViewProjectionMatrix"));
+    assert!(effect::is_mvm_member("g_EffectModelViewProjectionMatrix"));
+    assert!(!effect::is_mvm_member("g_Texture0Resolution"));
+    assert!(!effect::is_mvm_member("g_Time"));
+}
+
