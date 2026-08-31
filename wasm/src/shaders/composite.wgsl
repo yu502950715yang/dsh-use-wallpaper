@@ -6,10 +6,13 @@
 //   pos = center + (corner - 0.5) × 2 × half（center/half 为 CPU 算的 NDC 中心/半宽，
 //   CompositeUniform；quad 帧尺寸 = 未钳制 |world_size|，见 effect::composite_ndc_uniform）。
 //   uv = 基础 UV 经窗口展开：(base_uv - uv_start) / (uv_end - uv_start)；未钳制轴窗口
-//   [0,1] 时等价 base_uv（精确 1:1）。基础 UV y 翻转（场景 y 向上 ↔ 纹理 v=0 顶部，
-//   同 image.wgsl），x 不翻转。
-// 片元：采样对象 RT/效果输出纹理（绑定 1）+ sampler（绑定 2）。该纹理与场景已同系（对象
-// 内容渲染进 RT 时已由 image.wgsl 做过 y 翻转），故此处不再二次翻转（对齐 JS `applyUvWindow`）。
+//   [0,1] 时等价 base_uv（精确 1:1）。基础 UV y 方向（2026-08-31 方向修正）：本 shader 采样
+//   **渲染目标**纹理（对象 RT/效果输出 out_tex），WebGPU 渲染目标纹理 v=0 = 顶部（NDC 顶部内容），
+//   与 scene-renderer.ts 平面 uv.y=1 顶部采样 v=1 对齐（JS WebGL 渲染目标 v=1=顶部）；
+//   故 quad 顶部（corner.y=1）应采样 v=0（RT 顶部）：base_uv.y = 1.0 - corner.y（x 不翻转）。
+// 片元：采样对象 RT/效果输出纹理（绑定 1）+ sampler（绑定 2）。该纹理为渲染目标，v=0=顶部，
+// 已与场景同向（对象内容渲染进 RT 时经 image.wgsl 采样、在此再按 `1.0-corner.y` 映回），
+// 与上传纹理（shaders/image.wgsl，v=0=图像底部，用 +corner.y）是两套各自自洽的约定，勿混用。
 //
 // CompositeUniform 布局（32 字节 = 8×f32，CPU 侧 effect::CompositeUniform，repr(C)）：
 

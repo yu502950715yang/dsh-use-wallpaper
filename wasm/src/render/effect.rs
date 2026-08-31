@@ -1003,11 +1003,20 @@ mod imp {
     }
 
     /// 全屏 quad 顶点缓冲（triangle-strip，4 顶点；pos.xy NDC + uv.xy）。a_Position/a_TexCoord。
+    /// UV 方向（2026-08-31 方向修正，与 shaders/image.wgsl 同源约定）：效果链输入/输出均为
+    /// 渲染目标（WebGPU 渲染目标纹理 v=0 = 顶部内存行 = NDC 顶部内容）。要使 pass 保持
+    /// 「输出顶部采样输入顶部」（不翻转内容），输出 NDC 顶部（y=+1）的 a_TexCoord.v 必须为 0
+    /// （输入顶部），故 uv.y 在 NDC 顶部取 0、底部取 1（与旧实现相反）。旧实现 uv.y 顶部取 1
+    /// → 输出顶部采样输入底部 → 内容上下颠倒；但因对象内容经 image.wgsl 的旧 `1.0-corner.y`
+    /// 翻转后恰好被此翻转抵消（`flip∘flip=identity`），旧效果链方向正确。2026-08-31 统一
+    /// image.wgsl 为 `corner.y`（上传纹理 v=0=图像底部，需 v=+corner.y）后，内容不再翻转，
+    /// 此 quad 必须同时反转 uv.y，使效果链仍采样**内容顶部于输出顶部**（shader 采样到的 texel
+    /// 不变，godrays 等真实 WE 效果输出与原样一致），否则效果链会把现在已正立的内容再翻转 → 颠倒。
     const QUAD: [f32; 16] = [
-        -1.0, -1.0, 0.0, 0.0,
-         1.0, -1.0, 1.0, 0.0,
-        -1.0,  1.0, 0.0, 1.0,
-         1.0,  1.0, 1.0, 1.0,
+        -1.0, -1.0, 0.0, 1.0, // bottom-left:  pos(-1,-1), uv(0,1)
+         1.0, -1.0, 1.0, 1.0, // bottom-right: uv(1,1)
+        -1.0,  1.0, 0.0, 0.0, // top-left:     uv(0,0)
+         1.0,  1.0, 1.0, 0.0, // top-right:    uv(1,0)
     ];
 
     fn create_quad_vb(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Buffer {
