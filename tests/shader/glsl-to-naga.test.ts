@@ -3,7 +3,7 @@
 // 断言规则①-⑨：include 展开、combo/#if 宏注入、precision 去除、varying/attribute 改写、
 // gl_FragColor、uniform layout(binding=N)、纹理函数改写、#version 450。
 import { describe, expect, it } from 'vitest';
-import { glslToNagaGlsl, glslToNagaPass } from '../../src/client/shader/glsl-to-naga.js';
+import { glslToNagaGlsl, glslToNagaPass, interStageLocationsMatch } from '../../src/client/shader/glsl-to-naga.js';
 import type { CompiledEffectPass } from '../../src/client/shader/effect-chain.js';
 
 function makePass(
@@ -289,7 +289,7 @@ describe('glslToNagaPass WE 方言 → naga desktop GLSL', () => {
     expect(g.fragGlsl).not.toMatch(/\)\.rgb\b[A-Za-z0-9_]/);
   });
 
-  it('varying 数组 location 按元素数占位（Reviewer #2）', () => {
+  it('varying 数组展开为 location 连续的单变量（task-18：naga 不接受数组顶层 IO）', () => {
     const pass = makePass({
       rawFrag: [
         'varying vec2 v_TexCoord[4];',
@@ -299,9 +299,98 @@ describe('glslToNagaPass WE 方言 → naga desktop GLSL', () => {
       ].join('\n'),
     });
     const g = glslToNagaGlsl(pass);
-    // 数组占 location 0..3，后一个从 location 4 开始（避免重叠）
-    expect(g.fragGlsl).toContain('layout(location=0) in vec2 v_TexCoord[4];');
+    // 数组展开为 v_TexCoord_0..3，各占 location 0..3；后一个 v_Other 从 location 4 开始（避免重叠）
+    expect(g.fragGlsl).toContain('layout(location=0) in vec2 v_TexCoord_0;');
+    expect(g.fragGlsl).toContain('layout(location=3) in vec2 v_TexCoord_3;');
     expect(g.fragGlsl).toContain('layout(location=4) in vec2 v_Other;');
+    // 数组声明已消除（无 v_TexCoord[N] 残留），下标引用改为展开名
+    expect(g.fragGlsl).not.toContain('v_TexCoord[4]');
+    expect(g.fragGlsl).not.toContain('v_TexCoord[0]');
+    expect(g.fragGlsl).toContain('v_TexCoord_0');
+  });
+
+  it('互斥 #if 多分支先裁剪再编号 location（不因跨分支膨胀到 WebGPU 上限 16 之外）', () => {
+    const pass = makePass({
+      rawFrag: [
+        '#if KERNEL == 0',
+        'varying vec2 v_TexCoord[13];',
+        '#elif KERNEL == 1',
+        'varying vec2 v_TexCoord[7];',
+        '#else',
+        'varying vec2 v_TexCoord[3];',
+        '#endif',
+        'uniform sampler2D t;',
+        'void main() { gl_FragColor = texture(t, v_TexCoord[0]); }',
+      ].join('\n'),
+      combos: { KERNEL: 2 },
+    });
+    const g = glslToNagaGlsl(pass);
+    // KERNEL=2 → 仅 #else 分支的 v_TexCoord[3] 生效：展开为 v_TexCoord_0..2，location 0..2（未被推高）
+    expect(g.fragGlsl).toContain('layout(location=0) in vec2 v_TexCoord_0;');
+    expect(g.fragGlsl).toContain('layout(location=2) in vec2 v_TexCoord_2;');
+    expect(g.fragGlsl).not.toContain('_9;');   // 13/7 分支的声明已被裁剪
+    expect(g.fragGlsl).not.toContain('#if');
+    expect(g.fragGlsl).not.toContain('#elif');
+  });
+
+  it('互斥 #if 多分支的 vertex 输出 location 不超 16（blur_gaussian 场景）', () => {
+    const pass = makePass({
+      rawVert: [
+        'attribute vec3 a_Position;',
+        'attribute vec2 a_TexCoord;',
+        '#if KERNEL == 0',
+        'varying vec2 v_TexCoord[13];',
+        '#elif KERNEL == 1',
+        'varying vec2 v_TexCoord[7];',
+        '#else',
+        'varying vec2 v_TexCoord[3];',
+        '#endif',
+        'void main() { gl_Position = vec4(a_Position, 1.0); v_TexCoord[0] = a_TexCoord; v_TexCoord[1] = a_TexCoord; v_TexCoord[2] = a_TexCoord; }',
+      ].join('\n'),
+      combos: { KERNEL: 2 },
+    });
+    const g = glslToNagaGlsl(pass);
+    const maxLoc = Math.max(...[...g.vertGlsl.matchAll(/layout\s*\(\s*location\s*=\s*(\d+)\s*\)\s*out/g)].map((m) => Number(m[1])));
+    expect(maxLoc).toBeLessThan(16);
+  });
+
+  it('interStageLocationsMatch：frag 输入缺对应 vertex 输出（waterripple 场景）→ false；匹配 → true', () => {
+    // waterripple.frag 有 v_Scroll 输入，但其 vert 未输出 v_Scroll
+    const pass = makePass({
+      rawVert: [
+        'attribute vec3 a_Position; attribute vec2 a_TexCoord;',
+        'varying vec4 v_TexCoord;',
+        'varying vec4 v_TexCoordRipple;',
+        'void main(){ gl_Position=vec4(a_Position,1.0); v_TexCoord=a_TexCoord.xyxy; v_TexCoordRipple=a_TexCoord.xyxy; }',
+      ].join('\n'),
+      rawFrag: [
+        'varying vec4 v_TexCoord;',
+        'varying vec2 v_Scroll;',
+        'varying vec4 v_TexCoordRipple;',
+        'uniform sampler2D t;',
+        'void main(){ gl_FragColor = texture(t, v_TexCoord.xy) + vec4(v_Scroll, 0.0, 1.0) + texture(t, v_TexCoordRipple.xy); }',
+      ].join('\n'),
+    });
+    const g = glslToNagaGlsl(pass);
+    // frag 有 3 个 in（含 v_Scroll），vert 只有 2 个 out → 不匹配
+    expect(interStageLocationsMatch(g.vertGlsl, g.fragGlsl)).toBe(false);
+  });
+
+  it('interStageLocationsMatch：vert/frag 对称（blur_downsample）→ true', () => {
+    const pass = makePass({
+      rawVert: [
+        'attribute vec3 a_Position; attribute vec2 a_TexCoord;',
+        'varying vec2 v_TexCoord[4];',
+        'void main(){ gl_Position=vec4(a_Position,1.0); v_TexCoord[0]=a_TexCoord; v_TexCoord[1]=a_TexCoord; v_TexCoord[2]=a_TexCoord; v_TexCoord[3]=a_TexCoord; }',
+      ].join('\n'),
+      rawFrag: [
+        'varying vec2 v_TexCoord[4];',
+        'uniform sampler2D t;',
+        'void main(){ gl_FragColor = texture(t, v_TexCoord[0]); }',
+      ].join('\n'),
+    });
+    const g = glslToNagaGlsl(pass);
+    expect(interStageLocationsMatch(g.vertGlsl, g.fragGlsl)).toBe(true);
   });
 });
 

@@ -25560,13 +25560,21 @@ function assignInterfaceLocations(src, stage) {
     const m = DECL_IO_RE.exec(line);
     if (m && !hasLayout) {
       const [, indent, io, type, name, arr, rest] = m;
+      const arrN = arr ? Number(arr.match(/\d+/)?.[0] ?? 1) : 1;
       const decl = `${indent}layout(location=`;
       if (stage === "frag") {
-        if (io === "in") out.push(`${decl}${fragInLoc++}) in ${type} ${name}${arr ?? ""};${rest}`);
-        else out.push(line);
+        if (io === "in") {
+          out.push(`${decl}${fragInLoc}) in ${type} ${name}${arr ?? ""};${rest}`);
+          fragInLoc += arrN;
+        } else out.push(line);
       } else {
-        if (io === "in") out.push(`${decl}${vertInLoc++}) in ${type} ${name}${arr ?? ""};${rest}`);
-        else out.push(`${decl}${vertOutLoc++}) out ${type} ${name}${arr ?? ""};${rest}`);
+        if (io === "in") {
+          out.push(`${decl}${vertInLoc}) in ${type} ${name}${arr ?? ""};${rest}`);
+          vertInLoc += arrN;
+        } else {
+          out.push(`${decl}${vertOutLoc}) out ${type} ${name}${arr ?? ""};${rest}`);
+          vertOutLoc += arrN;
+        }
       }
     } else {
       out.push(line);
@@ -25597,9 +25605,23 @@ function broadcastScalarOperand(src) {
     }
   );
 }
+function isSingleTextureCall(call) {
+  const open = call.indexOf("(");
+  if (open < 0) return false;
+  let depth = 0;
+  for (let i = open; i < call.length; i++) {
+    if (call[i] === "(") depth++;
+    else if (call[i] === ")") {
+      depth--;
+      if (depth === 0) return i === call.length - 1;
+    }
+  }
+  return false;
+}
 function fixVectorAssignFromTexture(src) {
-  return src.replace(/\b(vec3|vec2)\s+(\w+)\s*=\s*(texture\([^;]*);/g, (m, type, name, call) => {
-    if (!/\)\s*$/.test(call)) return m;
+  return src.replace(/\b(vec3|vec2)\s+(\w+)\s*=\s*((?:texture|textureLod)\([^;]*)\s*;/g, (m, type, name, call) => {
+    if (!/^(?:texture|textureLod)\(/.test(call)) return m;
+    if (!isSingleTextureCall(call)) return m;
     const swizzle = type === "vec3" ? "rgb" : "xy";
     return `${type} ${name} = ${call}.${swizzle};`;
   });
@@ -25658,7 +25680,7 @@ function std140TypeInfo(typeStr) {
   }
   return null;
 }
-function buildDefines(source, combos) {
+function buildDefinesMap(source, combos) {
   const defines = /* @__PURE__ */ new Map();
   for (const [k, v] of Object.entries(combos)) defines.set(k, String(v));
   for (const [k, v] of extractComboDefaults(source)) {
@@ -25672,7 +25694,176 @@ function buildDefines(source, combos) {
     if (defines.has(id)) continue;
     defines.set(id, "0");
   }
-  return [...defines.entries()].map(([k, v]) => `#define ${k} ${v}`);
+  return defines;
+}
+function buildDefines(source, combos) {
+  return [...buildDefinesMap(source, combos).entries()].map(([k, v]) => `#define ${k} ${v}`);
+}
+function evalIfExpr(rawExpr, defines, isDefined) {
+  let e = rawExpr.replace(/\/\/.*$/, "").trim();
+  if (e === "") return 0;
+  e = e.replace(/defined\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)/g, (_m, id) => isDefined(id) ? "1" : "0");
+  const toks = [];
+  const re = /-?\d+(?:\.\d+)?|[A-Za-z_][A-Za-z0-9_]*|==|!=|<=|>=|&&|\|\||[!<>()]/g;
+  let m;
+  while (m = re.exec(e)) toks.push(m[0]);
+  if (toks.length === 0) return 0;
+  let pos = 0;
+  const peek = () => toks[pos];
+  const next = () => toks[pos++];
+  const valOf = (t) => {
+    if (/^-?\d+(?:\.\d+)?$/.test(t)) return Number(t);
+    return defines.has(t) ? Number(defines.get(t)) : 0;
+  };
+  function primary() {
+    const t = next();
+    if (t === "(") {
+      const v = or();
+      if (peek() === ")") next();
+      return v;
+    }
+    return valOf(t);
+  }
+  function cmp() {
+    const a = primary();
+    const op = peek();
+    if (op === "==" || op === "!=" || op === "<" || op === "<=" || op === ">" || op === ">=") {
+      next();
+      const b = primary();
+      switch (op) {
+        case "==":
+          return Number(a === b);
+        case "!=":
+          return Number(a !== b);
+        case "<":
+          return Number(a < b);
+        case "<=":
+          return Number(a <= b);
+        case ">":
+          return Number(a > b);
+        case ">=":
+          return Number(a >= b);
+      }
+    }
+    return a;
+  }
+  function unary() {
+    if (peek() === "!") {
+      next();
+      return Number(unary() === 0);
+    }
+    return cmp();
+  }
+  function and() {
+    let v = unary();
+    while (peek() === "&&") {
+      next();
+      const r = unary();
+      v = Number(v !== 0 && r !== 0);
+    }
+    return v;
+  }
+  function or() {
+    let v = and();
+    while (peek() === "||") {
+      next();
+      const r = and();
+      v = Number(v !== 0 || r !== 0);
+    }
+    return v;
+  }
+  return or();
+}
+function expandIfBranches(src, valueDefines, initDefined) {
+  const lines = src.split("\n");
+  const out = [];
+  const definedSet = new Set(initDefined);
+  const isDefined = (id) => definedSet.has(id);
+  const stack = [];
+  for (const line of lines) {
+    const t = line.trim();
+    const isIf = /^#if\s+/.test(t);
+    const isIfdef = /^#ifdef\s+/.test(t);
+    const isIfndef = /^#ifndef\s+/.test(t);
+    const isElif = /^#elif\s+/.test(t);
+    const isElse = /^#else\s*$/.test(t);
+    const isEndif = /^#endif\s*$/.test(t);
+    const isDefine = /^#define\s+([A-Za-z_][A-Za-z0-9_]*)/.exec(t);
+    const isUndef = /^#undef\s+([A-Za-z_][A-Za-z0-9_]*)/.exec(t);
+    if (isIf || isIfdef || isIfndef) {
+      const parent = stack.length ? stack[stack.length - 1].active : true;
+      let cond;
+      if (isIf) cond = evalIfExpr(t.slice(3), valueDefines, isDefined);
+      else if (isIfdef) cond = Number(isDefined(t.slice(7).trim()));
+      else cond = Number(!isDefined(t.slice(8).trim()));
+      const active2 = parent && cond !== 0;
+      stack.push({ parentActive: parent, active: active2, anyTaken: cond !== 0 });
+      continue;
+    }
+    if (isElif) {
+      const top = stack[stack.length - 1];
+      if (!top) continue;
+      let cond = evalIfExpr(t.slice(5), valueDefines, isDefined);
+      if (top.anyTaken) cond = 0;
+      top.active = top.parentActive && cond !== 0;
+      top.anyTaken = top.anyTaken || cond !== 0;
+      continue;
+    }
+    if (isElse) {
+      const top = stack[stack.length - 1];
+      if (!top) continue;
+      top.active = top.parentActive && !top.anyTaken;
+      top.anyTaken = true;
+      continue;
+    }
+    if (isEndif) {
+      stack.pop();
+      continue;
+    }
+    const active = stack.length ? stack[stack.length - 1].active : true;
+    if (isDefine) {
+      if (active) {
+        definedSet.add(isDefine[1]);
+        out.push(line);
+      }
+      continue;
+    }
+    if (isUndef) {
+      if (active) {
+        definedSet.delete(isUndef[1]);
+        out.push(line);
+      }
+      continue;
+    }
+    if (active) out.push(line);
+  }
+  return out.join("\n");
+}
+function expandArrayIO(src, stage) {
+  const varyingKw = stage === "vert" ? "out" : "in";
+  const ioRe = /^(\s*)\b(varying|attribute|in|out)\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)\s*\[\s*(\d+)\s*\]\s*;(.*)$/gm;
+  const map = /* @__PURE__ */ new Map();
+  let out = src.replace(ioRe, (m, indent, kw, type, name, count, rest) => {
+    const n = Number(count);
+    const finalKw = kw === "attribute" ? "in" : kw === "varying" ? varyingKw : kw;
+    map.set(name, { type, n });
+    let decl = "";
+    for (let i = 0; i < n; i++) decl += `${indent}${finalKw} ${type} ${name}_${i};${rest}
+`;
+    return decl;
+  });
+  for (const name of map.keys()) {
+    const re = new RegExp(`\\b${name}\\s*\\[\\s*([A-Za-z_][A-Za-z0-9_]*|\\d+)\\s*\\]`, "g");
+    out = out.replace(re, (m, idx) => {
+      if (/^\d+$/.test(idx)) return `${name}_${Number(idx)}`;
+      const n = map.get(name).n;
+      let sel = "";
+      for (let i = 0; i < n; i++) sel += `${i === 0 ? "" : ":"}${idx}==${i}?${name}_${i}`;
+      sel += `:${name}_${n - 1}`;
+      return `(${sel})`;
+    });
+  }
+  return out;
 }
 function convertStage(src, stage, combos, uniforms, bindingOffset) {
   const hadExplicitCommon = src.includes('#include "common.h"');
@@ -25686,6 +25877,12 @@ function convertStage(src, stage, combos, uniforms, bindingOffset) {
   s = floatifyIntVarUses(s);
   s = relaxGlsl3Strictness(s);
   s = s.replace(/\bsampler2DComparison\b/g, "sampler2D");
+  s = expandIfBranches(
+    s,
+    buildDefinesMap(s, combos),
+    /* @__PURE__ */ new Set([...Object.keys(combos), ...extractComboDefaults(s).keys()])
+  );
+  s = expandArrayIO(s, stage);
   const varyingKw = stage === "vert" ? "out" : "in";
   s = s.replace(/\bvarying\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)(\s*\[\s*\d+\s*\])?\s*;/g, (m, type, name, arr) => `${varyingKw} ${type} ${name}${arr ?? ""};`);
   s = s.replace(/\battribute\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)(\s*\[\s*\d+\s*\])?\s*;/g, (m, type, name, arr) => `in ${type} ${name}${arr ?? ""};`);
@@ -25763,6 +25960,17 @@ ${s}`;
 ${defBlock}${oColor}${s}`;
   return { glsl, binds, nextBinding: bind + samplerCount };
 }
+function glslToNagaGlsl(pass) {
+  const frag = convertStage(pass.rawFrag, "frag", pass.combos, pass.uniforms, 0);
+  const vert = convertStage(pass.rawVert, "vert", pass.combos, pass.uniforms, frag.nextBinding);
+  return {
+    vertGlsl: vert.glsl,
+    fragGlsl: frag.glsl,
+    uniforms: [...frag.binds, ...vert.binds],
+    textureSlots: pass.textureSlots,
+    blendMode: pass.blendMode
+  };
+}
 async function glslToNagaPass(pass) {
   const frag = convertStage(pass.rawFrag, "frag", pass.combos, pass.uniforms, 0);
   const vert = convertStage(pass.rawVert, "vert", pass.combos, pass.uniforms, frag.nextBinding);
@@ -25776,6 +25984,21 @@ async function glslToNagaPass(pass) {
     textureSlots: pass.textureSlots,
     blendMode: pass.blendMode
   };
+}
+function interStageLocationsMatch(vertGlsl, fragGlsl) {
+  const ioOf = (glsl, io) => {
+    const m = /* @__PURE__ */ new Map();
+    for (const mm of glsl.matchAll(new RegExp(`layout\\s*\\(\\s*location\\s*=\\s*(\\d+)\\s*\\)\\s*${io}\\s+([A-Za-z0-9_]+)\\s+\\w+`, "g"))) {
+      m.set(Number(mm[1]), mm[2]);
+    }
+    return m;
+  };
+  const vout = ioOf(vertGlsl, "out");
+  const fin = ioOf(fragGlsl, "in");
+  for (const [loc, type] of fin) {
+    if (vout.get(loc) !== type) return false;
+  }
+  return true;
 }
 
 // src/client/wasm-renderer.ts
@@ -25799,18 +26022,27 @@ async function buildEffectChainDesc(id, effects) {
       );
       if (!chain) continue;
       for (const p of chain) {
-        const spv = await glslToNagaPass(p);
-        const uniforms = spv.uniforms.map((u) => {
-          const value = flattenUniformValue(u.value);
-          return value === null ? null : { name: u.name, value, offset: u.offset ?? 0, size: u.size ?? 0, type: u.type, binding: u.binding };
-        }).filter((u) => u !== null);
-        passes.push({
-          vert_spv: Array.from(spv.vertSpv),
-          frag_spv: Array.from(spv.fragSpv),
-          uniforms,
-          texture_slots: [],
-          blend_mode: spv.blendMode
-        });
+        try {
+          const naga = glslToNagaGlsl(p);
+          if (!interStageLocationsMatch(naga.vertGlsl, naga.fragGlsl)) {
+            console.warn(`[wasm] \u6548\u679C\u94FE pass \u8DF3\u8FC7\uFF1Ainter-stage varying \u4E0D\u5339\u914D\uFF08frag \u8F93\u5165\u7F3A vertex \u8F93\u51FA\uFF09`);
+            continue;
+          }
+          const spv = await glslToNagaPass(p);
+          const uniforms = spv.uniforms.map((u) => {
+            const value = flattenUniformValue(u.value);
+            return value === null ? null : { name: u.name, value, offset: u.offset ?? 0, size: u.size ?? 0, type: u.type, binding: u.binding };
+          }).filter((u) => u !== null);
+          passes.push({
+            vert_spv: Array.from(spv.vertSpv),
+            frag_spv: Array.from(spv.fragSpv),
+            uniforms,
+            texture_slots: [],
+            blend_mode: spv.blendMode
+          });
+        } catch (e) {
+          console.warn(`[wasm] \u6548\u679C\u94FE pass \u8DF3\u8FC7\uFF08\u7F16\u8BD1\u5931\u8D25\uFF09\uFF1A${e instanceof Error ? e.message : String(e)}`);
+        }
       }
     }
     if (passes.length === 0) {

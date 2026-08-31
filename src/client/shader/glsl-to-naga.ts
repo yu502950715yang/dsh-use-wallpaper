@@ -286,7 +286,8 @@ export function std140TypeInfo(typeStr: string): Std140TypeInfo | null {
 
 // 生成 ②/③ 的宏注入：combos 值优先 → [COMBO] 注释 default 兜底 → #if 未定义裸标识符兜底 0。
 // 已 #define 的宏不重复注入（沿用 preprocessWeShader 的逻辑）。
-function buildDefines(source: string, combos: Record<string, number>): string[] {
+// 返回 Map 形态（供 buildDefines 产出 `#define` 行，也供 expandIfBranches 按同一宏值求值 #if）。
+function buildDefinesMap(source: string, combos: Record<string, number>): Map<string, string> {
   const defines = new Map<string, string>();
   for (const [k, v] of Object.entries(combos)) defines.set(k, String(v));
   for (const [k, v] of extractComboDefaults(source)) {
@@ -300,7 +301,190 @@ function buildDefines(source: string, combos: Record<string, number>): string[] 
     if (defines.has(id)) continue;
     defines.set(id, '0');
   }
-  return [...defines.entries()].map(([k, v]) => `#define ${k} ${v}`);
+  return defines;
+}
+function buildDefines(source: string, combos: Record<string, number>): string[] {
+  return [...buildDefinesMap(source, combos).entries()].map(([k, v]) => `#define ${k} ${v}`);
+}
+
+// 计算一个 `#if` 条件表达式的布尔值（用已注入的宏值；未定义标识符按 C 预处理语义当 0）。
+// 支持 WE 效果 shader 常见表达式：标识符真值、`IDENT == N`/`!=`/`<`/`<=`/`>`/`>=`、
+// `!expr`、`(expr)`、`&&`/`||`、`defined(X)`。递归下降解析，返回 1/0（不处理位运算，
+// 全库 WE 效果 shader 的 #if 未用到）。`isDefined(X)` 由调用方传入（用于 `#if defined(X)`，
+// 反映预处理过程中 `#define` 的累积状态，而非静态注入宏集）。
+function evalIfExpr(rawExpr: string, defines: Map<string, string>, isDefined: (id: string) => boolean): number {
+  let e = rawExpr.replace(/\/\/.*$/, '').trim();
+  if (e === '') return 0;
+  e = e.replace(/defined\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)/g, (_m, id) => (isDefined(id) ? '1' : '0'));
+  // token 化：数字(-?[\d.]+)、标识符、多字符运算符、单字符运算符、括号
+  const toks: string[] = [];
+  const re = /-?\d+(?:\.\d+)?|[A-Za-z_][A-Za-z0-9_]*|==|!=|<=|>=|&&|\|\||[!<>()]/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(e))) toks.push(m[0]);
+  if (toks.length === 0) return 0;
+  let pos = 0;
+  const peek = () => toks[pos];
+  const next = () => toks[pos++];
+  const valOf = (t: string): number => {
+    if (/^-?\d+(?:\.\d+)?$/.test(t)) return Number(t);
+    return defines.has(t) ? Number(defines.get(t)!) : 0;
+  };
+  // 文法：or := and ('||' and)* ; and := unary ('&&' unary)* ; unary := '!' unary | cmp
+  //       cmp := primary (cmpop primary)? ; primary := '(' or ')' | number | ident
+  function primary(): number {
+    const t = next();
+    if (t === '(') {
+      const v = or();
+      if (peek() === ')') next();
+      return v;
+    }
+    return valOf(t);
+  }
+  function cmp(): number {
+    const a = primary();
+    const op = peek();
+    if (op === '==' || op === '!=' || op === '<' || op === '<=' || op === '>' || op === '>=') {
+      next();
+      const b = primary();
+      switch (op) {
+        case '==': return Number(a === b);
+        case '!=': return Number(a !== b);
+        case '<': return Number(a < b);
+        case '<=': return Number(a <= b);
+        case '>': return Number(a > b);
+        case '>=': return Number(a >= b);
+      }
+    }
+    return a;
+  }
+  function unary(): number {
+    if (peek() === '!') { next(); return Number(unary() === 0); }
+    return cmp();
+  }
+  function and(): number {
+    let v = unary();
+    while (peek() === '&&') { next(); const r = unary(); v = Number(v !== 0 && r !== 0); }
+    return v;
+  }
+  function or(): number {
+    let v = and();
+    while (peek() === '||') { next(); const r = and(); v = Number(v !== 0 || r !== 0); }
+    return v;
+  }
+  return or();
+}
+
+// 按宏值展开互斥 `#if/#elif/#else/#endif`（及 `#ifdef/#ifndef`），只保留选中的分支。
+// glslang 的 C 预处理器在编译时也会裁剪；但 JS 侧 `assignInterfaceLocations` 需要在**裁剪后**的
+// 文本上给 varying 编号（否则互斥多分支里每个分支的声明都被编号，把选中分支的 location 推到
+// 超过 WebGPU `maxInterStageShaderVariables`(=16)，如 blur_gaussian 的 `#if KERNEL==0/1/2`）。
+// 必须先于 varying 改写 / location 编号执行。保持嵌套，未激活块内的**非预处理行**剔除。
+// 关键：必须**模拟预处理宏状态**（而非只用初始注入宏集）——header guard（如 `#ifndef WE_COMMON_H`
+// + `#define WE_COMMON_H`）防重复 include；若 `#define` 不累积进 `isDefined`，第二次 `#ifndef
+// WE_COMMON_H` 会误判为真，把 common.h 内容重复内联（如 `frac(...)` 函数重定义，glslang 报
+// "function already has a body"）。故遍历时 `#define` 加入已定义集、`#undef` 移除。
+// `valueDefines`（combos 值）供 `#if IDENT == N` 求值；`initDefined` 为一开始就视为已定义的宏
+// （combos 名 + [COMBO] 默认宏），与"仅出现在 #if 表达式里被兜底成 0 的标识符"区分——后者是
+// 未定义的（C 语义当 0），`#ifdef` 应判 false。
+function expandIfBranches(src: string, valueDefines: Map<string, string>, initDefined: Set<string>): string {
+  const lines = src.split('\n');
+  const out: string[] = [];
+  const definedSet = new Set(initDefined);
+  const isDefined = (id: string) => definedSet.has(id);
+  // 栈元素：{ parentActive, active, anyTaken }——active 为本分支在当前父级下是否输出。
+  const stack: { parentActive: boolean; active: boolean; anyTaken: boolean }[] = [];
+  for (const line of lines) {
+    const t = line.trim();
+    const isIf = /^#if\s+/.test(t);
+    const isIfdef = /^#ifdef\s+/.test(t);
+    const isIfndef = /^#ifndef\s+/.test(t);
+    const isElif = /^#elif\s+/.test(t);
+    const isElse = /^#else\s*$/.test(t);
+    const isEndif = /^#endif\s*$/.test(t);
+    const isDefine = /^#define\s+([A-Za-z_][A-Za-z0-9_]*)/.exec(t);
+    const isUndef = /^#undef\s+([A-Za-z_][A-Za-z0-9_]*)/.exec(t);
+    if (isIf || isIfdef || isIfndef) {
+      const parent = stack.length ? stack[stack.length - 1].active : true;
+      let cond: number;
+      if (isIf) cond = evalIfExpr(t.slice(3), valueDefines, isDefined);
+      else if (isIfdef) cond = Number(isDefined(t.slice(7).trim()));
+      else cond = Number(!isDefined(t.slice(8).trim()));
+      const active = parent && cond !== 0;
+      stack.push({ parentActive: parent, active, anyTaken: cond !== 0 });
+      continue; // 预处理行不输出
+    }
+    if (isElif) {
+      const top = stack[stack.length - 1];
+      if (!top) continue;
+      // 前面分支已取 → 本分支不激活；否则若父级激活且条件真 → 本分支激活。
+      let cond = evalIfExpr(t.slice(5), valueDefines, isDefined);
+      if (top.anyTaken) cond = 0;
+      top.active = top.parentActive && cond !== 0;
+      top.anyTaken = top.anyTaken || cond !== 0;
+      continue;
+    }
+    if (isElse) {
+      const top = stack[stack.length - 1];
+      if (!top) continue;
+      top.active = top.parentActive && !top.anyTaken;
+      top.anyTaken = true;
+      continue;
+    }
+    if (isEndif) {
+      stack.pop();
+      continue;
+    }
+    const active = stack.length ? stack[stack.length - 1].active : true;
+    if (isDefine) {
+      if (active) { definedSet.add(isDefine[1]); out.push(line); } // 未激活分支的 #define 不累积（C 语义跳过整块）
+      continue;
+    }
+    if (isUndef) {
+      if (active) { definedSet.delete(isUndef[1]); out.push(line); }
+      continue;
+    }
+    // 普通行：仅当当前所有层都激活（最内层 active 为真）才输出。
+    if (active) out.push(line);
+  }
+  return out.join('\n');
+}
+
+// 把数组 IO（`varying/attribute/in/out <type> <name>[N];`）展开为 N 个**同名后缀**的单独声明，
+// 并把该数组的**常量下标**引用（`<name>[K]`）改写为 `<name>_<K>`。vertex 输出数组语义等价于
+// N 个连续 location 的单独输出；fragment 输入同理——naga spv-in 对顶层层级 IO 数组不设
+// `TypeFlags::IO_SHAREABLE`（task-18 根因，见 effect.rs spv_to_wgsl 报 `NotIOShareableType`）。
+// WE 效果 shader 的数组下标恒为常量（下采样/高斯偏移），故静态展开安全；若出现变量下标
+// （非常量）则保留原数组（仍编译；此类 shader 仍会在 naga 校验失败，由效果链级回退兜底，绝不白屏）。
+function expandArrayIO(src: string, stage: Stage): string {
+  const varyingKw = stage === 'vert' ? 'out' : 'in';
+  // 仅匹配独立声明行（含行尾注解）；组：1=缩进，2=关键字，3=类型，4=名字，5=数组长度，6=行尾。
+  const ioRe = /^(\s*)\b(varying|attribute|in|out)\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)\s*\[\s*(\d+)\s*\]\s*;(.*)$/gm;
+  const map = new Map<string, { type: string; n: number }>();
+  let out = src.replace(ioRe, (m, indent, kw, type, name, count, rest) => {
+    const n = Number(count);
+    const finalKw = kw === 'attribute' ? 'in' : kw === 'varying' ? varyingKw : kw;
+    map.set(name, { type, n });
+    let decl = '';
+    for (let i = 0; i < n; i++) decl += `${indent}${finalKw} ${type} ${name}_${i};${rest}\n`;
+    return decl;
+  });
+  // 数组下标引用改写（仅对登记过的数组名，避免误伤同名非数组变量）：
+  //  - 常量下标 `name[K]` → 展开后的后缀名 `name_K`。
+  //  - 变量下标 `name[expr]`（blur_downsample4/gaussian 的 `for(int i=0;i<4;i++) v_TexCoord[i]`
+  //    采样偏移循环）→ 三元选择链 `(expr==0?name_0:expr==1?name_1:...:name_{N-1})`，
+  //    与展开后的分散声明语义等价（同一循环内每次迭代选择对应偏移）。
+  for (const name of map.keys()) {
+    const re = new RegExp(`\\b${name}\\s*\\[\\s*([A-Za-z_][A-Za-z0-9_]*|\\d+)\\s*\\]`, 'g');
+    out = out.replace(re, (m, idx) => {
+      if (/^\d+$/.test(idx)) return `${name}_${Number(idx)}`;
+      const n = map.get(name)!.n;
+      let sel = '';
+      for (let i = 0; i < n; i++) sel += `${i === 0 ? '' : ':'}${idx}==${i}?${name}_${i}`;
+      sel += `:${name}_${n - 1}`;
+      return `(${sel})`;
+    });
+  }
+  return out;
 }
 
 // 单 stage 转换：对 rawVert 用 vertex 语义、对 rawFrag 用 fragment 语义。
@@ -343,8 +527,29 @@ function convertStage(
   // 效果链仅需取其采样值，降级为 sampler2D 采样原深度图（fluidsimulation_combine 等）。
   s = s.replace(/\bsampler2DComparison\b/g, 'sampler2D');
 
+  // ④''' 按组合宏裁剪互斥 `#if/#elif/#else/#endif` 分支（task-18 根因之二）：glslang 的 C 预处理器
+  //   在编译时裁剪，但 JS 侧 `assignInterfaceLocations` 需在**裁剪后**文本上编号 varying（否则互斥
+  //   多分支里每个分支的声明都被编号，把选中分支的 location 推到超过 WebGPU
+  //   `maxInterStageShaderVariables`(=16)，如 blur/localcontrast_gaussian 的 `#if KERNEL==0/1/2`
+  //   ——保留分支的数组 varying 展开后被推到 location 20+，wgpu 校验拒绝）。必须先行裁剪。
+  //   求值用与 `buildDefines` 同一宏集（combos 优先 → [COMBO] 默认 → 未定义兜底 0），与 glslang
+  //   语义一致；`#ifdef`/`#ifndef` 按"是否定义"处理（初始已定义集 = combos 名 + [COMBO] 默认宏，
+  //   不含被兜底成 0 的 #if 标识符——后者是未定义，`#ifdef` 应判 false）。
+  s = expandIfBranches(
+    s,
+    buildDefinesMap(s, combos),
+    new Set<string>([...Object.keys(combos), ...extractComboDefaults(s).keys()]),
+  );
+
   // ⑤ 插值/属性改写：fragment 的 varying→in，vertex 的 varying→out；attribute→in。
   // 支持数组 varying/attribute（`varying vec2 v_TexCoord[4];`，blur/downsample 效果用）。
+  // ⑤'' 数组 IO 展开（task-18 根因）：naga 24 的 Validator 校验 `NotIOShareableType`——
+  //   `TypeFlags::IO_SHAREABLE` 对数组顶层 IO 不成立，由 naga spv-in 产生的数组 varying/attribute
+  //   （如 blur/localcontrast 的 `varying vec2 v_TexCoord[4]` 采样偏移数组）spv-in 后过校验必失败，
+  //   导致效果链 pass 编译失败、整链回退。WE 效果 shader 的数组下标恒为常量（0..N-1），
+  //   故展开为 N 个**同名后缀**的单独声明（语义等价位点连续 location），并把常量下标引用改写为
+  //   对应后缀名，使 glslang 产出的 SPIR-V 无数组 IO、naga spv-in 正常通过。
+  s = expandArrayIO(s, stage);
   const varyingKw = stage === 'vert' ? 'out' : 'in';
   s = s.replace(/\bvarying\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)(\s*\[\s*\d+\s*\])?\s*;/g, (m, type, name, arr) => `${varyingKw} ${type} ${name}${arr ?? ''};`);
   s = s.replace(/\battribute\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)(\s*\[\s*\d+\s*\])?\s*;/g, (m, type, name, arr) => `in ${type} ${name}${arr ?? ''};`);
@@ -471,7 +676,6 @@ export function glslToNagaGlsl(pass: CompiledEffectPass): NagaPassDesc {
 }
 
 // WE 方言 → SPIR-V bytes pass 描述（异步；@webgpu/glslang 一次初始化，compileGLSL 随后同步）。
-// 输出 `{ vert_spv, frag_spv, uniforms, texture_slots, blend_mode }`（替换 vert_glsl/frag_glsl）。
 // glslang 产 SPIR-V 的 entry_point 恒为 `main`（wasm 侧 spv_to_wgsl/naga spv-in 亦解析为 `main`）。
 // 编译失败抛错 → 调用方捕获并回退（绝不白屏）。
 export async function glslToNagaPass(pass: CompiledEffectPass): Promise<SpvPassDesc> {
@@ -487,4 +691,26 @@ export async function glslToNagaPass(pass: CompiledEffectPass): Promise<SpvPassD
     textureSlots: pass.textureSlots,
     blendMode: pass.blendMode,
   };
+}
+
+// WebGPU inter-stage 匹配校验（task-18）：fragment 的每个 `layout(location=N)` 输入，必须存在
+// 相同 location 且相同类型的 vertex 输出。GL 对"未连接的 varying"提供默认值，WebGPU 严格校验
+// （"component count ... is different" / 缺 location 则 CreateRenderPipeline 失败）。WE 效果 shader
+// 偶有 fragment 输入无对应 vertex 输出（如 waterripple.frag 的 `varying vec2 v_Scroll;`，而其
+// waterripple.vert 未输出 v_Scroll）——此类 pass 在 WebGPU 下无法建管线，由调用方**跳过该 pass**
+// （效果链级容错，而非整链回退）。返回 true = 匹配。
+export function interStageLocationsMatch(vertGlsl: string, fragGlsl: string): boolean {
+  const ioOf = (glsl: string, io: 'out' | 'in'): Map<number, string> => {
+    const m = new Map<number, string>();
+    for (const mm of glsl.matchAll(new RegExp(`layout\\s*\\(\\s*location\\s*=\\s*(\\d+)\\s*\\)\\s*${io}\\s+([A-Za-z0-9_]+)\\s+\\w+`, 'g'))) {
+      m.set(Number(mm[1]), mm[2]);
+    }
+    return m;
+  };
+  const vout = ioOf(vertGlsl, 'out');
+  const fin = ioOf(fragGlsl, 'in');
+  for (const [loc, type] of fin) {
+    if (vout.get(loc) !== type) return false;
+  }
+  return true;
 }

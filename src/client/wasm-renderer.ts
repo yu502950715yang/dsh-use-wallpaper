@@ -6,7 +6,7 @@ import { applyAlignment } from './alignment.js';
 import { resolveVisibility } from './visibility.js';
 import { SceneScriptRuntime } from './scene-script.js';
 import { resolveEffectChain } from './shader/effect-chain.js';
-import { glslToNagaPass } from './shader/glsl-to-naga.js';
+import { glslToNagaPass, glslToNagaGlsl, interStageLocationsMatch } from './shader/glsl-to-naga.js';
 import type { SceneDescription } from '../shared/types.js';
 
 // Task 2.1 遗留：效果链检测（纯函数）。⚠️ 已无拦截作用——2026-08-21 决策「强制 wasm，
@@ -83,23 +83,38 @@ async function buildEffectChainDesc(id: string, effects: unknown[]): Promise<Uin
       );
       if (!chain) continue;
       for (const p of chain) {
-        const spv = await glslToNagaPass(p);
-        // sampler uniform（value=null）不进 std140 block 列表；仅非 sampler uniform 带
-        // offset/size/type/binding 传给 wasm（wasm 按同一 std140 布局 pack，见 EffectChain）。
-        // g_Time 也在 block 内，由 wasm 按 name=="g_Time" 每帧写对应 offset（不再固定偏移 0）。
-        const uniforms = spv.uniforms
-          .map((u): WireUniform | null => {
-            const value = flattenUniformValue(u.value);
-            return value === null ? null : { name: u.name, value, offset: u.offset ?? 0, size: u.size ?? 0, type: u.type, binding: u.binding };
-          })
-          .filter((u): u is WireUniform => u !== null);
-        passes.push({
-          vert_spv: Array.from(spv.vertSpv),
-          frag_spv: Array.from(spv.fragSpv),
-          uniforms,
-          texture_slots: [],
-          blend_mode: spv.blendMode,
-        });
+        // task-18：WebGPU inter-stage 匹配校验 + per-pass 容错。WE 效果 shader 偶有 fragment 输入
+        // 无对应 vertex 输出（如 waterripple.frag 的 `varying vec2 v_Scroll` 而其 vert 未输出），
+        // 此类 pass 在 wasm `EffectChain::new` 建管线时因 "component count ... is different" 校验
+        // 失败；若整链视为失败会**回退到演示渐变**（旧行为）。这里改为：inter-stage 不匹配或
+        // 单 pass 编译失败 → **跳过该 pass**（效果链级容错），其余 pass 正常组装 → 链创建成功，
+        // 效果链真正工作（非渐变、非白屏）。全部 pass 均失败 → passes 为空 → 对象回退原始内容。
+        try {
+          const naga = glslToNagaGlsl(p);
+          if (!interStageLocationsMatch(naga.vertGlsl, naga.fragGlsl)) {
+            console.warn(`[wasm] 效果链 pass 跳过：inter-stage varying 不匹配（frag 输入缺 vertex 输出）`);
+            continue;
+          }
+          const spv = await glslToNagaPass(p);
+          // sampler uniform（value=null）不进 std140 block 列表；仅非 sampler uniform 带
+          // offset/size/type/binding 传给 wasm（wasm 按同一 std140 布局 pack，见 EffectChain）。
+          // g_Time 也在 block 内，由 wasm 按 name=="g_Time" 每帧写对应 offset（不再固定偏移 0）。
+          const uniforms = spv.uniforms
+            .map((u): WireUniform | null => {
+              const value = flattenUniformValue(u.value);
+              return value === null ? null : { name: u.name, value, offset: u.offset ?? 0, size: u.size ?? 0, type: u.type, binding: u.binding };
+            })
+            .filter((u): u is WireUniform => u !== null);
+          passes.push({
+            vert_spv: Array.from(spv.vertSpv),
+            frag_spv: Array.from(spv.fragSpv),
+            uniforms,
+            texture_slots: [],
+            blend_mode: spv.blendMode,
+          });
+        } catch (e) {
+          console.warn(`[wasm] 效果链 pass 跳过（编译失败）：${e instanceof Error ? e.message : String(e)}`);
+        }
       }
     }
     if (passes.length === 0) {
