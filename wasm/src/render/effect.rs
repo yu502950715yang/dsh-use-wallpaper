@@ -517,8 +517,26 @@ pub struct EffectPassDesc {
     pub uniforms: Vec<UniformBinding>,
     #[serde(default)]
     pub texture_slots: Vec<Option<String>>,
+    /// 效果链纹理槽字节（task-wasm-effect-texture-slots）：与 `texture_slots` **逐槽对齐**。
+    /// 槽 i 有独立 mask/normal/flow 纹理（`texture_slots[i]` 为 `Some`）时携带该纹理的
+    /// `.tex`（TEXV0005 容器）字节；无独立纹理或未加载 → `None`。JS 侧 `buildEffectChainDesc`
+    /// 经 `/wallpapers/scene/<id>/asset` 拉取并作为 `number[]`（与 `vert_spv`/`frag_spv` 同机制）
+    /// 写入 chainDesc JSON。wasm `set_object_effect` 逐槽解码 → `tex::parse_tex` → `upload_texture`
+    /// 上传为 wgpu 纹理，`build_bind_group` 据此绑定真实纹理（替代纯白 1×1 占位）。
+    /// 固定 mask 恒为 1 造成的"全对象位移/拉伸/撕裂"根因。
+    #[serde(default)]
+    pub texture_bytes: Vec<Option<Vec<u8>>>,
     #[serde(default)]
     pub blend_mode: BlendMode,
+}
+
+/// 槽决策纯函数：某纹理槽（索引 `slot_idx`，对应 shader 的 `g_Texture(slot_idx+1)`）是否提供了
+/// 真实纹理字节。`texture_bytes` 有对应项且为 `Some(非空 Vec)` → true（绑真实上传纹理）；
+/// 无字节/缺字段 → false（白占位或 previous 语义）。native 可测（不依赖 wgpu Device）。
+pub fn texture_slot_has_bytes(desc: &EffectPassDesc, slot_idx: usize) -> bool {
+    desc.texture_bytes
+        .get(slot_idx)
+        .map_or(false, |b| b.as_ref().map_or(false, |v| !v.is_empty()))
 }
 
 /// blendMode 字符串别名（EffectPassDesc 字段类型）。
@@ -816,6 +834,12 @@ mod imp {
         /// 污染的回归。白色是语义合理的兜底（白色遮罩 = 全区域效果、白色噪声 ≈ 常数），至少不再
         /// 用背景内容污染。combine 的 previous 槽（texture_slots 为 None）仍绑 `input_view`。
         white_view: wgpu::TextureView,
+        /// 逐 pass 逐槽的**真实上传纹理**视图（task-wasm-effect-texture-slots）：
+        /// `slot_textures[pass_index][slot_idx]` = 该 pass 的 `g_Texture(slot_idx+1)` 槽对应的真实
+        /// mask/normal/flow 纹理（由 `EffectChain::new` 依据 `EffectPassDesc.texture_bytes` 解码上传）。
+        /// 槽无字节/上传失败 → 该项为 `None`（build_bind_group 回退白占位/input_view）。长度与
+        /// `texture_slots` 对齐（`[pass_idx][slot_idx]`，slot_idx 从 0 = `texture_slots[0]` 即 g_Texture1）。
+        slot_textures: Vec<Vec<Option<wgpu::TextureView>>>,
         quad_vb: wgpu::Buffer,
     }
 
@@ -971,6 +995,29 @@ mod imp {
             if let Some(err) = device.pop_error_scope().await {
                 return Err(format!("EffectChain 关键资源（RT/sampler/quad/white）创建校验失败：{err:?}"));
             }
+            // task-wasm-effect-texture-slots：逐 pass 逐槽上传真实 mask/normal/flow 纹理。
+            // 依据 `EffectPassDesc.texture_bytes`（与 texture_slots 对齐），有字节的槽经 parse_tex
+            // 解码 + create_texture + write_texture 上传为 wgpu 纹理（RGBA8888，UNorm，与 surface
+            // 非 sRGB 匹配，见 tex.rs/upload_texture 的 Task 9 说明）。无字节/解析失败 → 该槽为 None
+            // （build_bind_group 回退白占位，绝不白屏/不崩）。修复白色占位导致 mask 恒 1 的对象位移。
+            let mut slot_textures: Vec<Vec<Option<wgpu::TextureView>>> = Vec::with_capacity(passes.len());
+            device.push_error_scope(wgpu::ErrorFilter::Validation);
+            for desc in &passes {
+                let mut per_pass: Vec<Option<wgpu::TextureView>> = Vec::with_capacity(desc.texture_bytes.len());
+                for bytes in &desc.texture_bytes {
+                    let view = bytes
+                        .as_deref()
+                        .and_then(|b| upload_slot_texture(device, queue, b));
+                    per_pass.push(view);
+                }
+                slot_textures.push(per_pass);
+            }
+            if let Some(err) = device.pop_error_scope().await {
+                // 上传纹理校验失败：不影响整链（纹理槽非关键资源），回退项置 None，log 警示。
+                web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(&format!(
+                    "[wasm] 效果链槽纹理上传校验失败（{err:?}），相关槽回退白占位"
+                )));
+            }
             Ok(EffectChain {
                 device: device.clone(),
                 queue: queue.clone(),
@@ -979,6 +1026,7 @@ mod imp {
                 rt_b_view,
                 sampler,
                 white_view,
+                slot_textures,
                 quad_vb,
             })
         }
@@ -1086,7 +1134,18 @@ mod imp {
                 } else {
                     // g_Texture(bi) 对应 texture_slots[bi-1]（g_Texture0 恒为输入，不进来）。
                     let slot = pass.texture_slots.get(bi - 1).and_then(|s| s.as_deref());
-                    if slot.map_or(false, |s| !s.is_empty()) {
+                    // task-wasm-effect-texture-slots：优先绑定**真实上传的** mask/normal/flow 纹理
+                    // （`slot_textures[pass_index][bi-1]`），修复白色占位导致的 mask 恒 1 → 对象位移/拉伸。
+                    // 有真实纹理（texture_slots 为 Some 且字节已成功上传）→ 绑真实纹理；否则回退如下：
+                    let slot_texture = self
+                        .slot_textures
+                        .get(pass_index)
+                        .and_then(|v| v.get(bi - 1))
+                        .and_then(|t| t.as_ref());
+                    if let Some(tex_view) = slot_texture {
+                        tex_view
+                    } else if slot.map_or(false, |s| !s.is_empty()) {
+                        // 场景提供了独立纹理槽但字节缺失/上传失败 → 白色占位（不再用背景内容污染）。
                         &self.white_view
                     } else {
                         input_view
@@ -1109,6 +1168,55 @@ mod imp {
                 entries: &entries,
             })
         }
+    }
+
+    /// 上传一张效果链槽纹理（mask/normal/flow）字节为 wgpu 纹理视图。
+    ///
+    /// task-wasm-effect-texture-slots：`EffectPassDesc.texture_bytes[slot_idx]` 携带的是 `.tex`
+    /// （TEXV0005 容器）字节，经 `crate::tex::parse_tex` 解码 → `copy_layout` 计算上传布局 →
+    /// `create_texture` + `write_texture` 上传。格式为 UNorm（对齐 surface 非 sRGB，见
+    /// `Renderer::upload_texture` 的 Task 9 说明）。mask 纹理实测均为 RGBA8888、TEXB0003 容器，
+    /// 非 BC/压缩，不会走 texture-compression-bc 跳过路径。解析/上传失败 → 返回 None（槽回退白占位）。
+    fn upload_slot_texture(device: &wgpu::Device, queue: &wgpu::Queue, bytes: &[u8]) -> Option<wgpu::TextureView> {
+        let img = crate::tex::parse_tex(bytes)?;
+        let format = crate::render::texture::tex_format_to_wgpu(img.format)?;
+        let layout = crate::tex::copy_layout(&img)?;
+        let tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("effect-slot-tex"),
+            size: wgpu::Extent3d {
+                width: img.width.max(1),
+                height: img.height.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        // 行字节 256 对齐（copy_layout.bytes_per_row 已对齐）；未对齐时逐行拷贝补 padding。
+        let mut padded: Vec<u8> = Vec::new();
+        let data: &[u8] = if layout.needs_padding() {
+            padded.reserve(layout.bytes_per_row as usize * layout.rows as usize);
+            let len = img.mip0.len();
+            for row in 0..layout.rows {
+                let start = (row as usize * layout.raw_row as usize).min(len);
+                let end = (start + layout.raw_row as usize).min(len);
+                padded.extend_from_slice(&img.mip0[start..end]);
+                padded.resize(padded.len() + (layout.bytes_per_row - layout.raw_row) as usize, 0);
+            }
+            &padded
+        } else {
+            &img.mip0
+        };
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo { texture: &tex, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+            data,
+            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(layout.bytes_per_row), rows_per_image: Some(layout.rows) },
+            wgpu::Extent3d { width: img.width.max(1), height: img.height.max(1), depth_or_array_layers: 1 },
+        );
+        Some(tex.create_view(&wgpu::TextureViewDescriptor::default()))
     }
 
     /// 建一张 ping-pong 离屏 RT（RENDER_ATTACHMENT | TEXTURE_BINDING）。

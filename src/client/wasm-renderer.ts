@@ -7,6 +7,7 @@ import { resolveVisibility } from './visibility.js';
 import { SceneScriptRuntime } from './scene-script.js';
 import { resolveEffectChain } from './shader/effect-chain.js';
 import { glslToNagaPass, glslToNagaGlsl, interStageLocationsMatch } from './shader/glsl-to-naga.js';
+import { resolveTextureSlotPath, resolveBuiltinTexture } from './effect-runner.js';
 import type { SceneDescription } from '../shared/types.js';
 
 // Task 2.1 遗留：效果链检测（纯函数）。⚠️ 已无拦截作用——2026-08-21 决策「强制 wasm，
@@ -72,8 +73,38 @@ async function buildEffectChainDesc(id: string, effects: unknown[]): Promise<Uin
       frag_spv: number[];
       uniforms: WireUniform[];
       texture_slots: (string | null)[];
+      // task-wasm-effect-texture-slots：与 texture_slots **逐槽对齐**的 mask/normal/flow 纹理字节。
+      // 槽 i 提供独立文件纹理（非 util/*、非 _rt_）→ 经 resolveTextureSlotPath 解析 + fetch `.tex`
+      // 字节，作为 number[]（与 vert_spv 同机制）传入 wasm 上传绑定；内置/运行时路径 → null
+      // （wasm 用白色占位，语义合理：white=全区域遮罩、noise 由程序噪声近似）。
+      texture_bytes: (number[] | null)[];
       blend_mode: string;
     }
+    // 拉取某个纹理槽的真实 `.tex` 字节（number[]，供 wasm `EffectPassDesc.texture_bytes`）。
+    // 内置/运行时（util/*、_rt_）→ null（wasm 用白色占位）。文件路径 → resolveTextureSlotPath
+    // 解析 + fetch `/wallpapers/scene/<id>/asset`；fetch/解析失败 → null（槽回退白占位，不阻塞）。
+    const loadSlotTextureBytes = async (slot: string | null): Promise<number[] | null> => {
+      if (!slot) return null;
+      if (resolveBuiltinTexture(slot)) return null; // 内置程序纹理/运行时 RT：不 fetch，wasm 白占位
+      const resolved = resolveTextureSlotPath(slot);
+      if (!resolved) {
+        console.warn(`[wasm] 纹理槽路径无法解析，跳过: ${slot}`);
+        return null;
+      }
+      try {
+        const resp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(resolved)}`);
+        if (!resp.ok) {
+          console.warn(`[wasm] 纹理槽 fetch 失败 status=${resp.status}: ${slot} → ${resolved}`);
+          return null;
+        }
+        const bytes = new Uint8Array(await resp.arrayBuffer());
+        console.log(`[wasm] 纹理槽 load 成功: ${slot} → ${resolved} (${bytes.length}B)`);
+        return Array.from(bytes);
+      } catch (e) {
+        console.warn(`[wasm] 纹理槽 fetch 异常: ${slot} → ${resolved}: ${String(e)}`);
+        return null;
+      }
+    };
     const passes: WirePass[] = [];
     for (const fx of effects) {
       if (typeof (fx as { file?: unknown } | null)?.file !== 'string') continue;
@@ -126,6 +157,11 @@ async function buildEffectChainDesc(id: string, effects: unknown[]): Promise<Uin
             // 遮罩/噪声 → Orange 贴图错乱、godrays 下降采样被背景污染）。透传给 wasm 使其能按
             // 槽位区分 previous(空) 与独立纹理(非空)，消除错绑回归。
             texture_slots: spv.textureSlots.map((ts) => (typeof ts === 'string' && ts.length > 0 ? ts : null)),
+            // task-wasm-effect-texture-slots：逐槽拉取真实 mask/normal/flow 纹理字节（与
+            // texture_slots 同序；内置/失败 → null，wasm 回退白占位）。
+            texture_bytes: await Promise.all(
+              spv.textureSlots.map((ts) => loadSlotTextureBytes(typeof ts === 'string' && ts.length > 0 ? ts : null)),
+            ),
             blend_mode: spv.blendMode,
           });
         } catch (e) {
