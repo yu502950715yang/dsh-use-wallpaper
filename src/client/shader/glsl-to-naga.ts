@@ -453,31 +453,51 @@ function expandIfBranches(src: string, valueDefines: Map<string, string>, initDe
 // 并把该数组的**常量下标**引用（`<name>[K]`）改写为 `<name>_<K>`。vertex 输出数组语义等价于
 // N 个连续 location 的单独输出；fragment 输入同理——naga spv-in 对顶层层级 IO 数组不设
 // `TypeFlags::IO_SHAREABLE`（task-18 根因，见 effect.rs spv_to_wgsl 报 `NotIOShareableType`）。
-// WE 效果 shader 的数组下标恒为常量（下采样/高斯偏移），故静态展开安全；若出现变量下标
-// （非常量）则保留原数组（仍编译；此类 shader 仍会在 naga 校验失败，由效果链级回退兜底，绝不白屏）。
+//
+// **左值写保底（task-18 fix）**：展开的前提是能改写所有下标引用。变量下标 `name[idx]` 作为**右值读**
+// 可改写为三元选择链（`(idx==0?name_0:...)` 合法右值）；但作为**赋值左值**（`name[idx] = x`、
+// `name[idx] += x`、`name[idx]++`）三元链是**非左值**，glslang 拒绝。因此若某数组存在**任意一处
+// 变量下标左值写**，则**整个数组保留原样**（声明与所有下标引用都不展开/改写），交给调用方
+// per-pass 容错兜底（该 pass 跳过，不崩不白屏）。常量下标写（blur/gaussian 的 v_TexCoord[0]=...）
+// 与变量下标右值读仍可正常展开。
 function expandArrayIO(src: string, stage: Stage): string {
   const varyingKw = stage === 'vert' ? 'out' : 'in';
-  // 仅匹配独立声明行（含行尾注解）；组：1=缩进，2=关键字，3=类型，4=名字，5=数组长度，6=行尾。
+  // ① 收集数组 IO 声明（仅匹配独立声明行）；组：1=缩进，2=关键字，3=类型，4=名字，5=数组长度，6=行尾。
   const ioRe = /^(\s*)\b(varying|attribute|in|out)\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)\s*\[\s*(\d+)\s*\]\s*;(.*)$/gm;
-  const map = new Map<string, { type: string; n: number }>();
+  const decls = new Map<string, { type: string; n: number; indent: string; rest: string }>();
+  for (const m of src.matchAll(ioRe)) {
+    decls.set(m[4], { type: m[3], n: Number(m[5]), indent: m[1], rest: m[6] });
+  }
+  if (decls.size === 0) return src;
+
+  // ② 判定哪些数组含「变量下标左值写」→ 整个数组保留原样（交给 per-pass 容错，而非改写为非左值三元）。
+  const keep = new Set<string>();
+  for (const name of decls.keys()) {
+    const refRe = new RegExp(`\\b${name}\\s*\\[\\s*([A-Za-z_][A-Za-z0-9_]*|\\d+)\\s*\\]`, 'g');
+    let m: RegExpExecArray | null;
+    while ((m = refRe.exec(src))) {
+      if (/^\d+$/.test(m[1])) continue; // 常量下标：可展开（含常量写）
+      if (isLValueWrite(src, m.index + m[0].length)) { keep.add(name); break; }
+    }
+  }
+
+  // ③ 展开声明：keep 的数组保留原行；否则展开为 N 个同名后缀单变量（location 连续）。
   let out = src.replace(ioRe, (m, indent, kw, type, name, count, rest) => {
+    if (keep.has(name)) return m; // 保留原数组声明（其下标引用也全部保留，见 ④）
     const n = Number(count);
     const finalKw = kw === 'attribute' ? 'in' : kw === 'varying' ? varyingKw : kw;
-    map.set(name, { type, n });
     let decl = '';
     for (let i = 0; i < n; i++) decl += `${indent}${finalKw} ${type} ${name}_${i};${rest}\n`;
     return decl;
   });
-  // 数组下标引用改写（仅对登记过的数组名，避免误伤同名非数组变量）：
-  //  - 常量下标 `name[K]` → 展开后的后缀名 `name_K`。
-  //  - 变量下标 `name[expr]`（blur_downsample4/gaussian 的 `for(int i=0;i<4;i++) v_TexCoord[i]`
-  //    采样偏移循环）→ 三元选择链 `(expr==0?name_0:expr==1?name_1:...:name_{N-1})`，
-  //    与展开后的分散声明语义等价（同一循环内每次迭代选择对应偏移）。
-  for (const name of map.keys()) {
+
+  // ④ 改写下标引用：keep 的数组一律不改写（保留数组引用）；否则常量→name_K、变量（读）→三元链。
+  for (const name of decls.keys()) {
+    if (keep.has(name)) continue;
     const re = new RegExp(`\\b${name}\\s*\\[\\s*([A-Za-z_][A-Za-z0-9_]*|\\d+)\\s*\\]`, 'g');
     out = out.replace(re, (m, idx) => {
       if (/^\d+$/.test(idx)) return `${name}_${Number(idx)}`;
-      const n = map.get(name)!.n;
+      const n = decls.get(name)!.n;
       let sel = '';
       for (let i = 0; i < n; i++) sel += `${i === 0 ? '' : ':'}${idx}==${i}?${name}_${i}`;
       sel += `:${name}_${n - 1}`;
@@ -485,6 +505,13 @@ function expandArrayIO(src: string, stage: Stage): string {
     });
   }
   return out;
+}
+
+// 判断 `whole[pos..]` 是否为数组下标引用的**赋值左值上下文**（`=`/复合赋值/后缀自增自减），
+// 从而不能改写为非左值三元链。排除 `==`/`!=`/`<=`/`>=`/`&&`/`||` 等读取比较。
+function isLValueWrite(whole: string, pos: number): boolean {
+  const after = whole.slice(pos);
+  return /^\s*(?:=(?!=)|\+=|-=|\*=|\/=|<<=|>>=|&=|\|=|\^=|%=|(?:\+\+|--))/.test(after);
 }
 
 // 单 stage 转换：对 rawVert 用 vertex 语义、对 rawFrag 用 fragment 语义。

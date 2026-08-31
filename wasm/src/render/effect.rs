@@ -752,20 +752,28 @@ mod imp {
             width: u32,
             height: u32,
         ) -> Result<EffectChain, String> {
-            // Phase 1：纯 Rust 编译（先于 error scope——GLSL 编译失败即整体 Err，**不会**留下
-            // 未闭合的 error scope）。naga 编译失败不应污染 wgpu 状态。
-            let mut compiled: Vec<(String, String)> = Vec::with_capacity(passes.len());
-            for (i, desc) in passes.iter().enumerate() {
-                let (wgsl_vert, wgsl_frag) =
-                    compile_pass_wgsl(desc).map_err(|e| format!("pass {i} 编译失败：{e}"))?;
-                compiled.push((wgsl_vert, wgsl_frag));
-            }
-            // Phase 2：wgpu 资源创建（error scope 内，收敛 create_* 的异步校验错误）。
-            device.push_error_scope(wgpu::ErrorFilter::Validation);
+            // Phase 1+2：逐 pass 编译 + 资源创建，**per-pass 容错**（task-18 fix）——
+            // wasm 侧镜像 JS `buildEffectChainDesc` 的容错：单个 pass 的 spv_to_wgsl/glsl_to_wgsl
+            // 编译失败、或 wgpu 资源校验失败（location > 16、inter-stage 分量不一致、blend/binding /
+            // 纹理格式不兼容等 JS 层无法预判的校验）→ **跳过该 pass**，不使整链 `Err`。仅当**全部**
+            // pass 失败（空实例）或关键资源（RT/quad）创建失败才整链 `Err` → 调用方回退，绝不用演示
+            // 渐变兜底。注：把编译（无 error scope）与资源创建（独立 error scope）分开，避免一个失败
+            // pass 污染下一个 pass 的校验（error scope 只覆盖当前 pass 的资源创建）。
             let mut instances: Vec<EffectPassInstance> = Vec::with_capacity(passes.len());
-            for (i, (desc, (wgsl_vert, wgsl_frag))) in passes.iter().zip(compiled).enumerate() {
+            for (i, desc) in passes.iter().enumerate() {
                 let label = format!("effect-chain-pass-{i}");
-                // ① 分别编译出的 vert/frag WGSL → 各建一个 shader module（controller 裁决 #1）
+                // ① 编译（纯 Rust，无 error scope）：失败 → 跳过该 pass。
+                let (wgsl_vert, wgsl_frag) = match compile_pass_wgsl(desc) {
+                    Ok(x) => x,
+                    Err(e) => {
+                        web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(&format!(
+                            "[wasm] 效果链 pass {i} 编译失败，跳过该 pass：{e}"
+                        )));
+                        continue;
+                    }
+                };
+                // ② 独立 error scope：单 pass 资源创建/管线校验失败 → 跳过该 pass（不整链失败）。
+                device.push_error_scope(wgpu::ErrorFilter::Validation);
                 let vert_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some(&format!("{label}-vert")),
                     source: wgpu::ShaderSource::Wgsl(wgsl_vert.as_str().into()),
@@ -774,8 +782,6 @@ mod imp {
                     label: Some(&format!("{label}-frag")),
                     source: wgpu::ShaderSource::Wgsl(wgsl_frag.as_str().into()),
                 });
-                // ② bind group layout（按 shader 实际声明构建，保证一致）。先结构化扫描
-                //   （naga IR 遍历，替代字符串嗅探）得绑定列表，再以此建 layout（避免重复解析）。
                 let bindings = collect_bindings(&wgsl_vert, &wgsl_frag);
                 let bind_group_layout = build_bind_group_layout(device, &bindings, &format!("{label}-bgl"));
                 let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -783,7 +789,6 @@ mod imp {
                     bind_group_layouts: &[&bind_group_layout],
                     push_constant_ranges: &[],
                 });
-                // ③ 顶点缓冲布局：全屏 quad（pos.xy + uv.xy），A_Position/a_TexCoord 属性
                 let vb_layout = wgpu::VertexBufferLayout {
                     array_stride: 16,
                     step_mode: wgpu::VertexStepMode::Vertex,
@@ -792,7 +797,6 @@ mod imp {
                         wgpu::VertexAttribute { format: wgpu::VertexFormat::Float32x2, offset: 8, shader_location: 1 },
                     ],
                 };
-                // ④ render pipeline（分离 vert/frag module）
                 let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                     label: Some(&format!("{label}-pipeline")),
                     layout: Some(&pipeline_layout),
@@ -821,31 +825,35 @@ mod imp {
                     multiview: None,
                     cache: None,
                 });
-                // ⑤ std140 uniform block：非不透明 uniform 合并进 block（JS 侧 glsl-to-naga 已按
-                //  block 成员计算 offset/size/binding，见 UniformBinding）。按 binding 分组，每组：
-                //  block_size = std140_block_size(offset+size)；pack_std140_block 铺值（含 padding 0）；
-                //  buffer 大小 = block_size 字节；g_Time 槽（name=="g_Time"）为每帧动态写。
-                //  task-16：transform 重排 binding 后，block 在 GPU 上的真实 binding 以 WGSL
-                //  `collect_uniform_members`（按成员名）为准，避免与 texture/sampler 撞号导致
-                //  `create_bind_group` 报 「binding index 被前一 entry 指定」。
                 let uniform_members = collect_uniform_members(&wgsl_vert, &wgsl_frag);
                 let uniform_instances =
                     build_uniform_instances(device, queue, &desc.uniforms, &uniform_members, &format!("{label}-uniform"));
                 let texture_bindings: Vec<u32> =
                     bindings.iter().filter(|(_, k)| *k == BindKind::Texture).map(|(b, _)| *b).collect();
-                // 全部 sampler 绑定（不取第一个）——与 texture_bindings 对称，多 sampler 不因缺 entry
-                // 导致每帧 create_bind_group 校验错误 (reviewer Important #1)。
                 let sampler_bindings: Vec<u32> =
                     bindings.iter().filter(|(_, k)| *k == BindKind::Sampler).map(|(b, _)| *b).collect();
-                instances.push(EffectPassInstance {
+                let instance = EffectPassInstance {
                     pipeline,
                     bind_group_layout,
                     uniform_instances,
                     texture_bindings,
                     sampler_bindings,
-                });
+                };
+                if let Some(err) = device.pop_error_scope().await {
+                    web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(&format!(
+                        "[wasm] 效果链 pass {i} wgpu 校验失败，跳过该 pass：{err:?}"
+                    )));
+                } else {
+                    instances.push(instance);
+                }
             }
-            // ⑥ ping-pong RT（RENDER_ATTACHMENT | TEXTURE_BINDING）+ 采样器 + 全屏 quad 顶点缓冲
+            // 全部 pass 失败 → 整链失败（调用方回退，绝不用演示渐变兜底）。
+            if instances.is_empty() {
+                return Err("效果链所有 pass 均编译/校验失败，无可用 pass".into());
+            }
+            // ⑥ ping-pong RT（RENDER_ATTACHMENT | TEXTURE_BINDING）+ 采样器 + 全屏 quad 顶点缓冲。
+            //    关键资源创建单独 error scope：失败 → 整链失败（调用方回退）。
+            device.push_error_scope(wgpu::ErrorFilter::Validation);
             let rt_a = create_rt(device, width.max(1), height.max(1), format, "effect-rt-a");
             let rt_b = create_rt(device, width.max(1), height.max(1), format, "effect-rt-b");
             let rt_a_view = rt_a.create_view(&wgpu::TextureViewDescriptor::default());
@@ -857,9 +865,8 @@ mod imp {
                 ..Default::default()
             });
             let quad_vb = create_quad_vb(device, queue);
-            // ⑦ 收取 error scope：任一 wgpu 校验错误 → 整体失败（调用方跳过，不黑屏）。
             if let Some(err) = device.pop_error_scope().await {
-                return Err(format!("EffectChain 资源创建校验失败：{err:?}"));
+                return Err(format!("EffectChain 关键资源（RT/sampler/quad）创建校验失败：{err:?}"));
             }
             Ok(EffectChain {
                 device: device.clone(),

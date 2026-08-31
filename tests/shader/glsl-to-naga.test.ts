@@ -392,5 +392,50 @@ describe('glslToNagaPass WE 方言 → naga desktop GLSL', () => {
     const g = glslToNagaGlsl(pass);
     expect(interStageLocationsMatch(g.vertGlsl, g.fragGlsl)).toBe(true);
   });
+
+  it('变量下标左值写：数组保留原样（不展开为非左值三元），交给 per-pass 容错', () => {
+    const pass = makePass({
+      rawVert: [
+        'varying vec2 v_TexCoord[4];',
+        'uniform float g_Scale;',
+        'void main(){ gl_Position = vec4(0.0); for(int i=0;i<4;i++){ v_TexCoord[i] = vec2(float(i), g_Scale); } }',
+      ].join('\n'),
+    });
+    const g = glslToNagaGlsl(pass);
+    // 变量下标左值写（v_TexCoord[i] = ...）→ 保留原数组：声明不展开、下标引用不改写（避免非左值三元）
+    expect(g.vertGlsl).toContain('out vec2 v_TexCoord[4];');
+    expect(g.vertGlsl).toContain('v_TexCoord[i] = vec2(float(i), g_Scale);');
+    expect(g.vertGlsl).not.toContain('v_TexCoord_0'); // 未展开
+    // 关键：变量下标左值写**不**被改写为非左值三元链（`(i==0?...)=..` 是语法错误）
+    expect(g.vertGlsl).not.toMatch(/\(\s*i\s*==\s*0\s*\?/);
+  });
+
+  it('变量下标右值读：仍展开为三元链（blur/gaussian 采样偏移循环）', () => {
+    const pass = makePass({
+      rawFrag: [
+        'varying vec2 v_TexCoord[4];',
+        'uniform sampler2D t;',
+        'void main(){ vec4 c = vec4(0.0); for(int i=0;i<4;i++){ c += texture(t, v_TexCoord[i]); } gl_FragColor = c; }',
+      ].join('\n'),
+    });
+    const g = glslToNagaGlsl(pass);
+    // 变量下标右值读 → 展开 + 三元链
+    expect(g.fragGlsl).toContain('in vec2 v_TexCoord_0;');
+    expect(g.fragGlsl).toMatch(/\(\s*i\s*==\s*0\s*\?\s*v_TexCoord_0/);
+  });
+
+  it('常量下标写（blur_downsample4 vertex）：仍展开为单变量并保留左值赋', () => {
+    const pass = makePass({
+      rawVert: [
+        'varying vec2 v_TexCoord[4];',
+        'attribute vec2 a_TexCoord;',
+        'void main(){ gl_Position=vec4(0.0); v_TexCoord[0]=a_TexCoord; v_TexCoord[1]=a_TexCoord; v_TexCoord[2]=a_TexCoord; v_TexCoord[3]=a_TexCoord; }',
+      ].join('\n'),
+    });
+    const g = glslToNagaGlsl(pass);
+    expect(g.vertGlsl).toContain('out vec2 v_TexCoord_0;');
+    expect(g.vertGlsl).toContain('v_TexCoord_0=a_TexCoord;');
+    expect(g.vertGlsl).not.toContain('v_TexCoord[0]');
+  });
 });
 

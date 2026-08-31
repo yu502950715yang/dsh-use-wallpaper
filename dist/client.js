@@ -25842,21 +25842,38 @@ function expandIfBranches(src, valueDefines, initDefined) {
 function expandArrayIO(src, stage) {
   const varyingKw = stage === "vert" ? "out" : "in";
   const ioRe = /^(\s*)\b(varying|attribute|in|out)\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)\s*\[\s*(\d+)\s*\]\s*;(.*)$/gm;
-  const map = /* @__PURE__ */ new Map();
+  const decls = /* @__PURE__ */ new Map();
+  for (const m of src.matchAll(ioRe)) {
+    decls.set(m[4], { type: m[3], n: Number(m[5]), indent: m[1], rest: m[6] });
+  }
+  if (decls.size === 0) return src;
+  const keep = /* @__PURE__ */ new Set();
+  for (const name of decls.keys()) {
+    const refRe = new RegExp(`\\b${name}\\s*\\[\\s*([A-Za-z_][A-Za-z0-9_]*|\\d+)\\s*\\]`, "g");
+    let m;
+    while (m = refRe.exec(src)) {
+      if (/^\d+$/.test(m[1])) continue;
+      if (isLValueWrite(src, m.index + m[0].length)) {
+        keep.add(name);
+        break;
+      }
+    }
+  }
   let out = src.replace(ioRe, (m, indent, kw, type, name, count, rest) => {
+    if (keep.has(name)) return m;
     const n = Number(count);
     const finalKw = kw === "attribute" ? "in" : kw === "varying" ? varyingKw : kw;
-    map.set(name, { type, n });
     let decl = "";
     for (let i = 0; i < n; i++) decl += `${indent}${finalKw} ${type} ${name}_${i};${rest}
 `;
     return decl;
   });
-  for (const name of map.keys()) {
+  for (const name of decls.keys()) {
+    if (keep.has(name)) continue;
     const re = new RegExp(`\\b${name}\\s*\\[\\s*([A-Za-z_][A-Za-z0-9_]*|\\d+)\\s*\\]`, "g");
     out = out.replace(re, (m, idx) => {
       if (/^\d+$/.test(idx)) return `${name}_${Number(idx)}`;
-      const n = map.get(name).n;
+      const n = decls.get(name).n;
       let sel = "";
       for (let i = 0; i < n; i++) sel += `${i === 0 ? "" : ":"}${idx}==${i}?${name}_${i}`;
       sel += `:${name}_${n - 1}`;
@@ -25864,6 +25881,10 @@ function expandArrayIO(src, stage) {
     });
   }
   return out;
+}
+function isLValueWrite(whole, pos) {
+  const after = whole.slice(pos);
+  return /^\s*(?:=(?!=)|\+=|-=|\*=|\/=|<<=|>>=|&=|\|=|\^=|%=|(?:\+\+|--))/.test(after);
 }
 function convertStage(src, stage, combos, uniforms, bindingOffset) {
   const hadExplicitCommon = src.includes('#include "common.h"');
