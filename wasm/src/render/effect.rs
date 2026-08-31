@@ -626,12 +626,47 @@ mod imp {
     ///    变换后的**真实 binding**（命中即用 WGSL binding；找不到时回退 JS binding，不崩）；③ 补齐
     ///    WGSL 声明为 Uniform 但 `uniforms` 未覆盖的 binding → 全 0 空 buffer（16 字节），保证
     ///    bind group 恒为 layout 每个 Uniform 绑定提供资源（不因缺 entry 触发校验错误，不崩不白屏）。
+    /// WE 引擎内建纹理分辨率 uniform（`g_TextureNResolution`，vec4）。材质常量（constantshadervalues）
+    /// **不给值**（引擎在运行时注入），JS 侧 glsl-to-naga 缺省 → 值全 0。若 shader 把它当分母
+    /// （如 godrays 的 gaussian 模糊 pass `v_TexCoord.z = g_Scale.x / g_Texture0Resolution.z`），
+    /// 除 0 得 inf → `blur13a` 采样 `u ± inf*tap` 被 sampler ClampToEdge 钳到**纹理边缘** →
+    /// 画面被干净地拉伸/重复采样成横条乱码（task-21 根因：godrays 背景横条）。
+    /// 这里按效果链实际 RT 尺寸注入 WE 标准布局 `vec4(1/w, 1/h, w, h)`（.xy=texel 尺寸、
+    /// .zw=纹理像素大小），使计算得有效 UV 偏移（`g_Scale.x / w` ≈ 1px）。
+    /// 只会覆盖**声明了** g_TextureNResolution 的 block；未声明的 pass 不受影响。
+    fn apply_engine_resolution_uniforms(
+        block_data: &mut [f32],
+        group: &[&UniformBinding],
+        tex_w: f32,
+        tex_h: f32,
+    ) {
+        if tex_w <= 0.0 || tex_h <= 0.0 {
+            return;
+        }
+        for name in [
+            "g_Texture0Resolution",
+            "g_Texture1Resolution",
+            "g_Texture2Resolution",
+        ] {
+            let Some(u) = group.iter().find(|u| u.name == name) else { continue };
+            let base = (u.offset / 4) as usize;
+            if base + 4 <= block_data.len() {
+                block_data[base] = 1.0 / tex_w;
+                block_data[base + 1] = 1.0 / tex_h;
+                block_data[base + 2] = tex_w;
+                block_data[base + 3] = tex_h;
+            }
+        }
+    }
+
     fn build_uniform_instances(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         uniforms: &[UniformBinding],
         uniform_members: &[(u32, Vec<String>)],
         label: &str,
+        tex_w: f32,
+        tex_h: f32,
     ) -> Vec<EffectUniformInstance> {
         // ① 按 JS binding 分组 std140 成员（成员名保持不变，用于下方成员名→真实 binding 匹配）。
         let mut entries: Vec<(u32, &UniformBinding)> = uniforms.iter().map(|u| (u.binding, u)).collect();
@@ -664,7 +699,9 @@ mod imp {
                 .iter()
                 .map(|u| Std140Field { ty: u.ty.clone(), byte_offset: u.offset, value: u.value.clone() })
                 .collect();
-            let block_data = pack_std140_block(block_size, &fields);
+            let mut block_data = pack_std140_block(block_size, &fields);
+            // task-21：注入引擎纹理分辨率 uniform（除 0 → inf 横条乱码根因，见上函数注释）。
+            apply_engine_resolution_uniforms(&mut block_data, &group, tex_w, tex_h);
             let g_time_offset = group.iter().find(|u| u.name == "g_Time").map(|u| u.offset);
             let buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(&format!("{label}-{binding}")),
@@ -827,7 +864,7 @@ mod imp {
                 });
                 let uniform_members = collect_uniform_members(&wgsl_vert, &wgsl_frag);
                 let uniform_instances =
-                    build_uniform_instances(device, queue, &desc.uniforms, &uniform_members, &format!("{label}-uniform"));
+                    build_uniform_instances(device, queue, &desc.uniforms, &uniform_members, &format!("{label}-uniform"), width as f32, height as f32);
                 let texture_bindings: Vec<u32> =
                     bindings.iter().filter(|(_, k)| *k == BindKind::Texture).map(|(b, _)| *b).collect();
                 let sampler_bindings: Vec<u32> =
