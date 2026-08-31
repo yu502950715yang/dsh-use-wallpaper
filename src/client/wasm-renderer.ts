@@ -90,6 +90,19 @@ async function buildEffectChainDesc(id: string, effects: unknown[]): Promise<Uin
         // 单 pass 编译失败 → **跳过该 pass**（效果链级容错），其余 pass 正常组装 → 链创建成功，
         // 效果链真正工作（非渐变、非白屏）。全部 pass 均失败 → passes 为空 → 对象回退原始内容。
         try {
+          // task-19（Orange 等场景壁纸残缺根因）：WE 效果链 vertex shader 若用引擎内建
+          // `g_ModelViewProjectionMatrix`（MVM）投影顶点（如 waterwaves/waterripple/waterflow/
+          // shake 的 `gl_Position = mul(vec4(a_Position,1.0), g_ModelViewProjectionMatrix)`），
+          // wasm 执行器**不提供 MVM**（scene.json/material 不给值 → pack_std140_block 该 mat4 落全 0）
+          // → 顶点塌到原点 (0,0,0,0) → 效果链输出透明 → 带效果对象内容整体消失（背景灰白/人物缺失）。
+          // wasm 的 EffectChain quad 顶点 a_Position 已是 NDC（[-1,1]），正确 MVM 应为 identity，
+          // 但编译链未提供（属既有边界，不改编译链核心）。故此处检测到 vertex 依赖 MVM → 跳过该
+          // pass（与下方 inter-stage 容错一致）；全部 pass 均 MVM 依赖 → passes 为空 → chainDesc 空
+          // → 对象**回退共享路径原始内容**（显示背景/人物，仅无水波位移动画），绝不残破/不缺。
+          if (/\bg_ModelViewProjectionMatrix\b/.test(p.rawVert)) {
+            console.warn(`[wasm] 效果链 pass 跳过：vertex 依赖 MVM（g_ModelViewProjectionMatrix），wasm 不提供 → 对象回退原始内容（无此效果）`);
+            continue;
+          }
           const naga = glslToNagaGlsl(p);
           if (!interStageLocationsMatch(naga.vertGlsl, naga.fragGlsl)) {
             console.warn(`[wasm] 效果链 pass 跳过：inter-stage varying 不匹配（frag 输入缺 vertex 输出）`);
