@@ -79,6 +79,12 @@ async function buildEffectChainDesc(id: string, effects: unknown[]): Promise<Uin
       // （wasm 用白色占位，语义合理：white=全区域遮罩、noise 由程序噪声近似）。
       texture_bytes: (number[] | null)[];
       blend_mode: string;
+      // ── RT 图信息（2026-08-31 阶段1 wasm RT 图执行器）──
+      // 本 pass 写到的具名 RT（null = 最终输出对象 out RT）；fbos 降采样表（name→scale）；
+      // bind 采样来源（name 引用具名 RT / previous / 独立纹理）。
+      target: string | null;
+      bind: { name: string; index: number }[];
+      fbo_scale: Record<string, number>;
     }
     // 拉取某个纹理槽的真实 `.tex` 字节（number[]，供 wasm `EffectPassDesc.texture_bytes`）。
     // 内置/运行时（util/*、_rt_）→ null（wasm 用白色占位）。文件路径 → resolveTextureSlotPath
@@ -163,6 +169,11 @@ async function buildEffectChainDesc(id: string, effects: unknown[]): Promise<Uin
               spv.textureSlots.map((ts) => loadSlotTextureBytes(typeof ts === 'string' && ts.length > 0 ? ts : null)),
             ),
             blend_mode: spv.blendMode,
+            // RT 图信息（2026-08-31 阶段1 === wasm RT 图执行器）：把 effect.json 的
+            // target/bind/fbos 编码进 chain_desc，wasm 据此建多 RT（含降采样）+ 按名绑定。
+            target: p.target ?? null,
+            bind: Array.isArray(p.bind) ? p.bind : [],
+            fbo_scale: p.fboScale ?? {},
           });
         } catch (e) {
           console.warn(`[wasm] 效果链 pass 跳过（编译失败）：${e instanceof Error ? e.message : String(e)}`);

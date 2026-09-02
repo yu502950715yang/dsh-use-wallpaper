@@ -86,3 +86,63 @@ describe('resolveEffectChain 解耦出原始 shader 源与 combos', () => {
     expect(noCombo![0].combos).toEqual({});
   });
 });
+
+describe('resolveEffectChain 保留 RT 图信息（target/bind/fbos，阶段1 RT 图执行器）', () => {
+  // blur 风格：多 pass + 具名中间 RT（_rt_QuarterCompoBuffer1/2）+ fbos 降采样 scale:4。
+  const blurFiles = new Map<string, Uint8Array>([
+    ['effects/blur/effect.json', encoder.encode(JSON.stringify({
+      version: 1,
+      fbos: [
+        { name: '_rt_QuarterCompoBuffer1', scale: 4, format: 'rgba8888' },
+        { name: '_rt_QuarterCompoBuffer2', scale: 4, format: 'rgba8888' },
+      ],
+      passes: [
+        { material: 'materials/effects/blur_downsample4.json', target: '_rt_QuarterCompoBuffer1', bind: [{ name: 'previous', index: 0 }] },
+        { material: 'materials/effects/blur_gaussian_x.json', target: '_rt_QuarterCompoBuffer2', bind: [{ name: '_rt_QuarterCompoBuffer1', index: 0 }] },
+        { material: 'materials/effects/blur_gaussian_y.json', target: '_rt_QuarterCompoBuffer1', bind: [{ name: '_rt_QuarterCompoBuffer2', index: 0 }] },
+        { material: 'materials/effects/blur_combine.json', bind: [{ name: '_rt_QuarterCompoBuffer1', index: 0 }, { name: 'previous', index: 2 }] },
+      ],
+    }))],
+    ['materials/effects/blur_downsample4.json', encoder.encode(JSON.stringify({ passes: [{ shader: 'effects/blur_downsample4', blending: 'normal' }] }))],
+    ['materials/effects/blur_gaussian_x.json', encoder.encode(JSON.stringify({ passes: [{ shader: 'effects/blur_gaussian', blending: 'normal' }] }))],
+    ['materials/effects/blur_gaussian_y.json', encoder.encode(JSON.stringify({ passes: [{ shader: 'effects/blur_gaussian', blending: 'normal' }] }))],
+    ['materials/effects/blur_combine.json', encoder.encode(JSON.stringify({ passes: [{ shader: 'effects/blur_combine', blending: 'normal' }] }))],
+    ['shaders/effects/blur_downsample4.vert', encoder.encode('attribute vec3 a_Position;\nattribute vec2 a_TexCoord;\nvarying vec2 v_TexCoord;\nvoid main(){ gl_Position = vec4(a_Position,1.0); v_TexCoord = a_TexCoord; }')],
+    ['shaders/effects/blur_downsample4.frag', encoder.encode('varying vec2 v_TexCoord;\nvoid main(){ gl_FragColor = vec4(1.0); }')],
+    ['shaders/effects/blur_gaussian.vert', encoder.encode('attribute vec3 a_Position;\nattribute vec2 a_TexCoord;\nvarying vec2 v_TexCoord;\nvoid main(){ gl_Position = vec4(a_Position,1.0); v_TexCoord = a_TexCoord; }')],
+    ['shaders/effects/blur_gaussian.frag', encoder.encode('varying vec2 v_TexCoord;\nvoid main(){ gl_FragColor = vec4(1.0); }')],
+    ['shaders/effects/blur_combine.vert', encoder.encode('attribute vec3 a_Position;\nattribute vec2 a_TexCoord;\nvarying vec4 v_TexCoord;\nvoid main(){ gl_Position = vec4(a_Position,1.0); v_TexCoord = vec4(a_TexCoord,0.0,0.0); }')],
+    ['shaders/effects/blur_combine.frag', encoder.encode('varying vec4 v_TexCoord;\nvoid main(){ gl_FragColor = v_TexCoord; }')],
+  ]);
+  const blurLoad = async (name: string) => blurFiles.get(name) ?? null;
+
+  it('多 pass 链：每个 pass 保留 target 与 bind（具名 RT 引用）', async () => {
+    const chain = await resolveEffectChain({ file: 'effects/blur/effect.json' }, blurLoad);
+    expect(chain).not.toBeNull();
+    // blur_combine 是最后 pass，无 target（= 最终输出）
+    expect(chain![0].target).toBe('_rt_QuarterCompoBuffer1');
+    expect(chain![1].target).toBe('_rt_QuarterCompoBuffer2');
+    expect(chain![3].target).toBeNull();
+    // blur_combine 同时引用模糊结果(_rt_QuarterCompoBuffer1)与 previous(原始内容, index 2)
+    expect(chain![3].bind).toEqual([
+      { name: '_rt_QuarterCompoBuffer1', index: 0 },
+      { name: 'previous', index: 2 },
+    ]);
+  });
+
+  it('fbos 降采样表：name → scale 正确解析（无 fbos 缺省 scale 1）', async () => {
+    const chain = await resolveEffectChain({ file: 'effects/blur/effect.json' }, blurLoad);
+    expect(chain![0].fboScale).toEqual({
+      _rt_QuarterCompoBuffer1: 4,
+      _rt_QuarterCompoBuffer2: 4,
+    });
+  });
+
+  it('scene.json pass 可覆写 target（场景指定目标 RT 优先于 effect.json）', async () => {
+    const chain = await resolveEffectChain({
+      file: 'effects/blur/effect.json',
+      passes: [{ target: '_rt_SceneOverride' }],
+    }, blurLoad);
+    expect(chain![0].target).toBe('_rt_SceneOverride');
+  });
+});

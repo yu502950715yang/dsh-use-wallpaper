@@ -528,6 +528,27 @@ pub struct EffectPassDesc {
     pub texture_bytes: Vec<Option<Vec<u8>>>,
     #[serde(default)]
     pub blend_mode: BlendMode,
+    // ── RT 图信息（2026-08-31 阶段1：wasm EffectChain 升级为 RT 图执行器）──
+    // 本 pass 写到的具名 RT（"_rt_QuarterCompoBuffer1"）；null/"" = 最终输出（对象 out RT）。
+    #[serde(default)]
+    pub target: String,
+    // 具名 RT 的降采样声明（effect.json fbos 的 scale；键 = 具名 RT 名，值 = 降采样倍数，
+    // scale=4 → RT 尺寸 = 基础/4）。无该 RT 条目 → 全尺寸（scale 1）。
+    #[serde(default)]
+    pub fbo_scale: std::collections::HashMap<String, f32>,
+    // 本 pass 的采样来源（effect.json passes[i].bind）：bind[i] 引用具名 RT / "previous" /
+    // 空字符串 = sampler2D 输入。与 shader 的 g_Texture(i+1) 槽一一对应。
+    #[serde(default)]
+    pub bind: Vec<EffectBind>,
+}
+
+/// 效果链 pass 的 bind 条目：name 引用（具名 RT / "previous" / 独立纹理），index = 纹理槽序。
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct EffectBind {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub index: u32,
 }
 
 /// 槽决策纯函数：某纹理槽（索引 `slot_idx`，对应 shader 的 `g_Texture(slot_idx+1)`）是否提供了

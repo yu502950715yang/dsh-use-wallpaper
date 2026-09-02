@@ -38,17 +38,17 @@ describe('styles 主题适配', () => {
     // 遮罩仍为深色但透明度收敛（不再 .35 压暗浅色主题）
     expect(WALLPAPER_CSS).not.toMatch(/\.wp-bg-overlay\s*{[^}]*opacity:\.35/);
   });
-  it('消息气泡/输入框：液态玻璃（blur + 高光渐变 + 圆角），深浅色各有玻璃底色', () => {
-    // 消息气泡：圆角 + backdrop-filter blur + 高光渐变
-    expect(WALLPAPER_CSS).toMatch(/\[class\*="flowItem"\]\s*\{[^}]*border-radius:16px[^}]*backdrop-filter:blur\(/);
-    expect(WALLPAPER_CSS).toMatch(/\[class\*="flowItem"\]\s*\{[^}]*linear-gradient\(180deg/);
-    // 输入框：圆角 + blur
+  it('消息气泡改回 DSH 原生（无液态玻璃覆盖）；输入框保留液态玻璃（blur + 圆角）', () => {
+    // 2026-08-31：消息气泡（flowItem）改回 DSH 原生样式，插件不再给它加液态玻璃覆盖
+    expect(WALLPAPER_CSS).not.toMatch(/\[data-we-wallpaper\]\s*\[class\*="flowItem"\]\s*\{[^}]*backdrop-filter/);
+    expect(WALLPAPER_CSS).not.toMatch(/\[class\*="flowItem"\]\s*\{[^}]*border-radius:16px/);
+    // 输入框：圆角 + blur（保留液态玻璃）
     expect(WALLPAPER_CSS).toMatch(/\[data-composer-card\]\s*\{[^}]*border-radius:20px[^}]*backdrop-filter:blur\(/);
-    // 深浅色玻璃底色
-    const light = /body\[data-we-wallpaper\]\s*\[class\*="flowItem"\]\s*\{([^}]*)\}/.exec(WALLPAPER_CSS)?.[1] ?? '';
-    expect(light).toMatch(/background-color:rgba\(255,\s*255,\s*255,\s*\.5\d*\)/);
-    const dark = /body\[data-ds-dark-theme\]\[data-we-wallpaper\]\s*\[class\*="flowItem"\]\s*\{([^}]*)\}/.exec(WALLPAPER_CSS)?.[1] ?? '';
-    expect(dark).toMatch(/background-color:rgba\(2[0-9],\s*2[0-9],\s*3[0-9],\s*\.6\d*\)/);
+    // 输入框深浅色玻璃底色
+    const lightComposer = /body\[data-we-wallpaper\]\s*\[data-composer-card\]\s*\{([^}]*)\}/.exec(WALLPAPER_CSS)?.[1] ?? '';
+    expect(lightComposer).toMatch(/background-color:rgba\(255,\s*255,\s*255,\s*\.5\d*\)/);
+    const darkComposer = /body\[data-ds-dark-theme\]\[data-we-wallpaper\]\s*\[data-composer-card\]\s*\{([^}]*)\}/.exec(WALLPAPER_CSS)?.[1] ?? '';
+    expect(darkComposer).toMatch(/background-color:rgba\(2[0-9],\s*2[0-9],\s*3[0-9],\s*\.6\d*\)/);
   });
   it('用户提问弹窗与主输入框一致：液体玻璃（[data-question-key] section）', () => {
     expect(WALLPAPER_CSS).toMatch(/\[data-question-key\]\s*section\s*\{[^}]*border-radius:20px[^}]*backdrop-filter:blur\(/);
