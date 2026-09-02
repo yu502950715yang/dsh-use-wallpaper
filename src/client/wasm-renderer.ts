@@ -187,6 +187,14 @@ async function buildEffectChainDesc(id: string, effects: unknown[]): Promise<Uin
       console.warn(`[wasm] buildEffectChainDesc(${id}): 无有效 pass（效果链解析失败/无 pass）→ 对象显示原始内容（无效果链）`);
       return new Uint8Array(0);
     }
+    // ⚠ 阶段1探测：含"具名 RT"（target 非空）的效果链（多 pass + 降采样，如 Eva 01 的 blur）
+    // 当前 wasm RT 图骨架会渲染成白屏（主图丢失）。为保主图可见，先回退"显示原始内容"
+    // （effect_chain=None → 合成 quad 采样 content_view）。Orange/godrays 等无具名 RT 链不受影响
+    // （target 均为 null，走旧线性拼正确）。完整 RT 图执行器作为后续（见 AGENT.md）。
+    if (passes.some((p) => (p.target ?? '') !== '')) {
+      console.warn(`[wasm] buildEffectChainDesc(${id}): 检测到具名 RT 效果链（阶段1骨架暂不渲染）→ 回退显示原始内容`);
+      return new Uint8Array(0);
+    }
     return new TextEncoder().encode(JSON.stringify(passes));
   } catch (e) {
     console.warn(`[wasm] buildEffectChainDesc(${id}): 编译失败→ 对象显示原始内容（无效果链）：${e instanceof Error ? e.message : String(e)}`);
