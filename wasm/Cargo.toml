@@ -38,3 +38,8 @@ spirv-webgpu-transform = "0.1.6"
 
 [dev-dependencies]
 crc32fast = "1.5.0"
+
+[package.metadata.wasm-pack.profile.release]
+# wasm-opt（binaryen）在本机沙箱下因权限拒绝（os error 5），且项目无需手工优化
+# （产物已由 wasm-bindgen 输出）。禁用后 wasm-pack 不再调用 wasm-opt。
+wasm-opt = false

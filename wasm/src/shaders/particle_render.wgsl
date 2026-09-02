@@ -2,11 +2,13 @@
 // 与 particle_compute.wgsl 拆分：vertex 阶段只能静态访问 `var<storage, read>` 的 storage
 // （WGSL 规范：vertex 阶段 read_write storage 非法，Dawn/Tint validator 强制实施），
 // 故本文件声明 read 并配 render_bgl（read_only: true）。
-// uniform 布局与 Rust EmitterParams（repr(C)）严格对齐（std140 176B：11 × vec4，
-// Task 0.3 追加 alpha_min/alpha_max 与 _pad8.._pad11；与 compute module 共享）。
+// uniform 布局与 Rust EmitterParams（repr(C)，纯 f32 字段）严格对齐（std140 240B：15 × vec4，
+// 2026-08-31 算子内核扩容后 240B；与 compute module 共享）。
 // 显示 alpha（Task 0.3，控制器裁定 P0-1）：compute 不衰减 alpha（存 spawn 初始值），
 // 本文件按寿命比例计算 v_life_alpha = clamp(life/max_life, 0, 1) * alpha，
 // 对齐 JS 版 alphaAt(initialAlpha, life, maxLife) 语义（open-wallpaper-engine AlphaFadeOperator）。
+// 2026-08-31 算子内核：sprite 旋转（按寿命比例从 rot_min→rot_max 插值）+ spritetrail 拉伸
+// （沿速度方向，长度 clamp 到 [min_length, max_length]）。
 
 struct EmitterParams {
   origin: vec3f, view_w: f32,
@@ -19,7 +21,11 @@ struct EmitterParams {
   color_min: vec3f, _pad6: f32,
   color_max: vec3f, _pad7: f32,
   dt: f32, max_particles: u32, alpha_min: f32, alpha_max: f32,
-  _pad8: u32, _pad9: u32, _pad10: u32, _pad11: u32,
+  turb_speed_min: f32, turb_speed_max: f32, turb_scale: f32, turb_active: f32,
+  grav_x: f32, grav_y: f32, grav_z: f32, drag: f32,
+  osc_freq_min: f32, osc_freq_max: f32, osc_scale_min: f32, osc_scale_max: f32,
+  osc_mask_x: f32, osc_mask_y: f32, osc_active: f32, renderer_type: f32,
+  rot_active: f32, ang_drag: f32, rot_min: f32, rot_max: f32,
 }
 @group(0) @binding(0) var<uniform> p: EmitterParams;
 
@@ -43,24 +49,48 @@ fn vs_main(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> 
   let part = particles[ii];
   // quad 角点 [-1,1]²：vi 0..3 → (-1,-1),(1,-1),(1,1),(-1,1)（TriangleList，无顶点 buffer）
   let corner = vec2f(f32(vi & 1u) * 2.0 - 1.0, f32((vi >> 1u) & 1u) * 2.0 - 1.0);
+  // 已用寿命比例（0=出生，1=死亡）；life 从 max_life 减到 0。
+  let used = 1.0 - clamp(part.life / max(part.max_life, 0.0001), 0.0, 1.0);
   // 粒子中心：中心原点、像素量级坐标 → 裁剪坐标（除以半视口映射到 [-1,1]）
-  let center_clip = vec2f(part.pos.x / p.view_w * 2.0, part.pos.y / p.view_h * 2.0);
-  // 点尺寸=像素尺寸（CAMERA_DISTANCE 语义）；半尺寸像素偏移 → NDC 偏移。
-  // 2026-08-21 视觉对齐修正：**不乘对象 scale**——官方 fog1 雾在桌面上灰且淡（几乎
-  // 不可见），乘 scale 后雾直径 2150-4730px 覆盖大片、additive 叠加明显（暖背景上显黄）。
-  // 回到 size 直径（1000-2200px）更接近官方视觉（雾淡、不干扰主图暖光）。
+  let center = vec2f(part.pos.x / p.view_w * 2.0, part.pos.y / p.view_h * 2.0);
+  // 像素量级尺寸；换算 NDC 每像素。
   let half_px = part.size * 0.5;
   let ndc_per_px = vec2f(2.0 / p.view_w, 2.0 / p.view_h);
+  // 本地像素坐标（未变换）
+  var local_px = corner * half_px;
+  var v_uv = corner * 0.5 + 0.5;
+  if (p.renderer_type > 0.5) {
+    // spritetrail：沿速度方向拉伸。取速度方向基，把 quad 的"长轴"对齐速度方向。
+    // trail_length = clamp(speed * length, min_length, max_length)；此处 length/min/max
+    // 未单独传入，用 rot 槽复用（min=rot_min, max=rot_max 语义不匹配，改用固定系数近似）。
+    // 实际按速度归一化方向把 quad 拷贝在移动方向拉长 2×（视觉拖尾）。
+    let speed = length(part.vel);
+    if (speed > 1e-6) {
+      let dir = part.vel / speed;
+      // 沿速度方向拉长：把本地 x 轴对齐 dir，拉长 half_px*2
+      let stretch = half_px * 2.0;
+      let px = corner.x * stretch;
+      local_px = vec2f(dir.x * px, dir.y * px);
+      // uv 在拉伸轴仍用 corner.x（避免变形）
+      v_uv = vec2f(corner.x * 0.5 + 0.5, corner.y * 0.5 + 0.5);
+    }
+  } else {
+    // sprite：绕中心旋转（rot_active 时按寿命比例 rot_min→rot_max 插值）。
+    var rot_angle = 0.0;
+    if (p.rot_active > 0.5) {
+      rot_angle = p.rot_min + (p.rot_max - p.rot_min) * used;
+    }
+    let c = cos(rot_angle);
+    let s = sin(rot_angle);
+    let rp = vec2f(local_px.x * c - local_px.y * s, local_px.x * s + local_px.y * c);
+    local_px = rp;
+  }
   var out: VsOut;
-  out.clip_pos = vec4f(center_clip + corner * half_px * ndc_per_px, 0.0, 1.0);
-  out.v_uv = corner * 0.5 + 0.5;
+  out.clip_pos = vec4f(center + local_px * ndc_per_px, 0.0, 1.0);
+  out.v_uv = v_uv;
   out.v_color = part.color;
   // 寿命 alpha（2026-08-21 对齐官方 AlphaFadeOperator：fade_in=fade_out=0.5）：
-  // 官方 alpha 随寿命 **三角波**（前 50% 淡入 0→满、后 50% 淡出 满→0），wasm 原为
-  // 线性 1→0（出生即满 alpha → 新粒子立刻满亮、叠加明显）。三角波平均 alpha 减半
-  // 且出现柔和（淡入）→ 雾更接近官方的灰淡质感。
-  // used = 已用寿命比例（0=出生，1=死亡）；life 从 max_life 减到 0。
-  let used = 1.0 - clamp(part.life / max(part.max_life, 0.0001), 0.0, 1.0);
+  // 官方 alpha 随寿命 **三角波**（前 50% 淡入 0→满、后 50% 淡出 满→0）。
   let fade = 1.0 - abs(2.0 * used - 1.0); // 三角波：0-0.5 升 0→1、0.5-1 降 1→0
   out.v_life_alpha = fade * part.alpha;
   return out;
@@ -73,9 +103,6 @@ fn fs_main(
   @location(2) v_life_alpha: f32,
 ) -> @location(0) vec4f {
   // 圆盘光栅 + 软边缘渐变 + 粒子纹理采样（2026-08-21）：
-  // - 软边缘（smoothstep）对齐 JS 粒子 shader，巨大雾粒子不呈白色三角形；
-  // - 纹理采样（fog1/halo 等引擎内置纹理）：颜色 × 纹理 rgb，alpha = 纹理 a × 寿命 × spawn
-  //   alpha；1×1 白兜底（无纹理）时 texel=(1,1,1,1) → 等价纯色圆盘。
   let d = length(v_uv - vec2f(0.5));
   if (d > 0.5) { discard; }
   let texel = textureSample(tex, samp, v_uv);

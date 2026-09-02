@@ -28,5 +28,6 @@ fn alpha_defaults_to_one() {
 fn emitter_params_layout_176() {
     // EmitterParams 新布局：11 × vec4 = 176B（dt/max_particles 后追加
     // alpha_min/alpha_max，尾补 pad 保持 16 字节对齐，满足 uniform 绑定对齐）。
-    assert_eq!(std::mem::size_of::<EmitterParams>(), 176);
+    // 2026-08-31 算子内核扩容：尾部 pad 复用 + 追加 4 行 vec4 → 现在 15 × vec4 = 240B。
+    assert_eq!(std::mem::size_of::<EmitterParams>(), 240);
 }

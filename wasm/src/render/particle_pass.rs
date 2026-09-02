@@ -6,7 +6,7 @@
 //! `ParticlePass`（wgpu 管线）位于 `#[cfg(feature = "render")]` 门控区，仅 wasm 构建编译。
 
 use crate::coords;
-use crate::particle::ParticleSpec;
+use crate::particle::{OperatorKind, ParticleSpec, Renderer};
 
 /// 发射器参数 uniform。repr(C) 布局与 `src/shaders/particle_compute.wgsl` /
 /// `particle_render.wgsl` 的 `EmitterParams` 严格对齐（std140：vec3 后补 4 字节 pad，
@@ -32,10 +32,22 @@ pub struct EmitterParams {
     pub max_particles: u32,
     pub alpha_min: f32,
     pub alpha_max: f32,
-    pub _pad8: u32,
-    pub _pad9: u32,
-    pub _pad10: u32,
-    pub _pad11: u32,
+    // ==== 2026-08-31 算子内核扩容（补 3 张 STATIC 壁纸 root cause） ====
+    // 原 _pad8.._pad11 一行 vec4 复用为「湍流」槽，再追加 4 行 vec4：
+    //   @160 turb:     speed_min, speed_max, scale, active(0/1)
+    //   @176 movement: gravity_x, gravity_y, gravity_z, drag
+    //   @192 osc:      freq_min, freq_max, scale_min, scale_max
+    //   @208 osc mask: mask_x, mask_y, osc_active(0/1), pad
+    //   @224 rig:      rot_active(0/1), ang_drag, rot_min, rot_max
+    // 共 240B（15 × vec4），满足 uniform 绑定对齐，语义清晰。
+    pub turb_speed_min: f32,
+    pub turb_speed_max: f32,
+    pub turb_scale: f32,
+    pub turb_active: f32,
+    pub grav_x: f32, pub grav_y: f32, pub grav_z: f32, pub drag: f32,
+    pub osc_freq_min: f32, pub osc_freq_max: f32, pub osc_scale_min: f32, pub osc_scale_max: f32,
+    pub osc_mask_x: f32, pub osc_mask_y: f32, pub osc_active: f32, pub renderer_type: f32,
+    pub rot_active: f32, pub ang_drag: f32, pub rot_min: f32, pub rot_max: f32,
 }
 
 impl EmitterParams {
@@ -57,6 +69,13 @@ impl EmitterParams {
     ) -> EmitterParams {
         let s = coords::particle_scale(scale);
         let i = &spec.init;
+        let (turb_speed_min, turb_speed_max, turb_scale, turb_active) = match &i.turbulent {
+            Some(t) => (t.speed_min, t.speed_max, t.scale, 1.0),
+            None => (0.0, 0.0, 0.0, 0.0),
+        };
+        let (grav_x, grav_y, grav_z, drag) = operator_movement(spec);
+        let (osc_freq_min, osc_freq_max, osc_scale_min, osc_scale_max, osc_mask_x, osc_mask_y, osc_active) = operator_oscillate(spec);
+        let (rot_active, ang_drag, rot_min, rot_max) = operator_angular(spec, i);
         EmitterParams {
             origin_x: origin_center[0], origin_y: origin_center[1], origin_z: origin_center[2],
             scale_x: s[0], scale_y: s[1], scale_z: s[2],
@@ -80,7 +99,11 @@ impl EmitterParams {
             dt: 0.0, max_particles,
             alpha_min: i.alpha_min, alpha_max: i.alpha_max,
             _pad3: 0.0, _pad4: 0.0, _pad5: 0.0, _pad6: 0.0, _pad7: 0.0,
-            _pad8: 0, _pad9: 0, _pad10: 0, _pad11: 0,
+            turb_speed_min, turb_speed_max, turb_scale, turb_active,
+            grav_x, grav_y, grav_z, drag,
+            osc_freq_min, osc_freq_max, osc_scale_min, osc_scale_max,
+            osc_mask_x, osc_mask_y, osc_active, renderer_type: renderer_flag(spec.renderer),
+            rot_active, ang_drag, rot_min, rot_max,
         }
     }
 
@@ -118,6 +141,79 @@ impl EmitterParams {
         max_particles: u32,
     ) -> EmitterParams {
         Self::pack(spec, [0.0; 3], scale, rt_w, rt_h, max_particles)
+    }
+}
+
+/// 从 movement operator 提取 gravity (vec3) + drag (标量)（官方 MovementOperator：
+/// `acceleration = DragForce(vel, drag) + gravity`；DragForce(v, s) = -v·s）。
+/// 缺省 gravity=0、drag=0。movement 缺失 → 全 0。
+fn operator_movement(spec: &ParticleSpec) -> (f32, f32, f32, f32) {
+    let Some(op) = spec.operators.iter().find(|o| o.kind == OperatorKind::Movement) else {
+        return (0.0, 0.0, 0.0, 0.0);
+    };
+    let p = &op.params;
+    let f = |k: &str, d: f32| p.get(k).and_then(|v| v.as_f64()).map(|x| x as f32).unwrap_or(d);
+    let str_vec = |k: &str, d: [f32; 3]| {
+        p.get(k).and_then(|v| v.as_str()).map(|s| {
+            let mut it = s.split_whitespace().map(|t| t.parse::<f32>().unwrap_or(0.0));
+            [it.next().unwrap_or(0.0), it.next().unwrap_or(0.0), it.next().unwrap_or(0.0)]
+        }).unwrap_or(d)
+    };
+    let g = str_vec("gravity", [0.0; 3]);
+    let drag = f("drag", 0.0);
+    (g[0], g[1], g[2], drag)
+}
+
+/// 从 oscillateposition operator 提取 freq/scale 范围与 mask（官方 OscillatePositionOperator：
+/// 每轴一个 FrequencyValue，mask[axis] 决定该轴是否摆动）。返回
+/// (freq_min, freq_max, scale_min, scale_max, mask_x, mask_y, active)。
+/// 缺省 freq=0..10、scale=0..1、mask=全 1（官方默认）。oscillate 缺失 → 全 0（关闭）。
+fn operator_oscillate(spec: &ParticleSpec) -> (f32, f32, f32, f32, f32, f32, f32) {
+    let Some(op) = spec.operators.iter().find(|o| o.kind == OperatorKind::OscillatePosition) else {
+        return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+    };
+    let p = &op.params;
+    let f = |k: &str, d: f32| p.get(k).and_then(|v| v.as_f64()).map(|x| x as f32).unwrap_or(d);
+    let freq_min = f("frequencymin", 0.0);
+    let mut freq_max = f("frequencymax", 10.0);
+    if freq_max == 0.0 { freq_max = freq_min; }
+    let scale_min = f("scalemin", 0.0);
+    let scale_max = f("scalemax", 1.0);
+    // mask：字符串 "1 0.5 0" 逐轴。缺省全 1（2D 用 x/y）。
+    let mut mask = [1.0, 1.0, 1.0];
+    if let Some(m) = p.get("mask").and_then(|v| v.as_str()) {
+        let mut it = m.split_whitespace().map(|t| t.parse::<f32>().unwrap_or(1.0));
+        mask = [it.next().unwrap_or(1.0), it.next().unwrap_or(1.0), it.next().unwrap_or(1.0)];
+    }
+    let active = if freq_max > 0.0 { 1.0 } else { 0.0 };
+    (freq_min, freq_max, scale_min, scale_max, mask[0], mask[1], active)
+}
+
+/// 从 angularmovement/angularvelocityrandom 提取旋转激活标记 + 角拖动 + 旋转范围标量。
+/// 本实现为 2D 便利：只取 Z 轴旋转（sprite 平面最常用），min/max 为角度范围，用于按寿命积分。
+/// rot_active = 1 当存在 angularmovement operator；ang_drag 取其 drag；rot_min/max 取
+/// angularvelocityrandom 的 z 分量或 rotationrandom 的 z 分量。
+fn operator_angular(spec: &ParticleSpec, i: &crate::particle::InitSpec) -> (f32, f32, f32, f32) {
+    let has_ang_movement = spec.operators.iter().any(|o| o.kind == OperatorKind::AngularMovement);
+    let ang_drag = spec.operators.iter()
+        .find(|o| o.kind == OperatorKind::AngularMovement)
+        .and_then(|o| o.params.get("drag").and_then(|v| v.as_f64()))
+        .map(|x| x as f32)
+        .unwrap_or(0.0);
+    // 旋转范围（弧度）：优先 angularvelocityrandom 的 z，其次 rotationrandom 的 z。
+    let rot_range = i.angular_vel_max
+        .map(|m| (i.angular_vel_min.map(|n| n[2]).unwrap_or(0.0), m[2]))
+        .or_else(|| i.rotation_max.map(|m| (i.rotation_min.map(|n| n[2]).unwrap_or(0.0), m[2])))
+        .unwrap_or((0.0, 0.0));
+    let active = if has_ang_movement && rot_range.1 != 0.0 { 1.0 } else { 0.0 };
+    (active, ang_drag, rot_range.0, rot_range.1)
+}
+
+/// renderer 类型标志（0=sprite, 1=spritetrail）。render shader 据此做拉伸。
+fn renderer_flag(r: Renderer) -> f32 {
+    match r {
+        Renderer::SpriteTrail { .. } => 1.0,
+        _ => 0.0,
     }
 }
 

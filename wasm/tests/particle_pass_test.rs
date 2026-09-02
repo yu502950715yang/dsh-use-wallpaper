@@ -28,9 +28,10 @@ fn estimate_max_particles_scales_with_rate_times_lifetime_when_no_maxcount() {
     use we_scene_wasm::particle::{EmitterSpec, InitSpec, ParticleSpec};
     let spec = ParticleSpec {
         emitter: EmitterSpec { rate: 20.0, directions: [0.0; 3], distance_min: 0.0, distance_max: 0.0 },
-        init: InitSpec { lifetime_min: 1.0, lifetime_max: 3.0, size_min: 1.0, size_max: 1.0, velocity_min: [0.0; 3], velocity_max: [0.0; 3], color_min: None, color_max: None, alpha_min: 1.0, alpha_max: 1.0 },
+        init: InitSpec { lifetime_min: 1.0, lifetime_max: 3.0, size_min: 1.0, size_max: 1.0, velocity_min: [0.0; 3], velocity_max: [0.0; 3], color_min: None, color_max: None, alpha_min: 1.0, alpha_max: 1.0, rotation_min: None, rotation_max: None, angular_vel_min: None, angular_vel_max: None, turbulent: None },
         operators: vec![],
         maxcount: 0,
+        renderer: we_scene_wasm::particle::Renderer::Sprite,
     };
     let expected = (20.0f32 * 3.0).ceil() as u32 + 64; // 124
     assert_eq!(estimate_max_particles(&spec), expected.clamp(64, 2048));
@@ -42,16 +43,18 @@ fn estimate_max_particles_clamps_bounds() {
     use we_scene_wasm::particle::{EmitterSpec, InitSpec, ParticleSpec};
     let zero = ParticleSpec {
         emitter: EmitterSpec { rate: 0.0, directions: [0.0; 3], distance_min: 0.0, distance_max: 0.0 },
-        init: InitSpec { lifetime_min: 0.0, lifetime_max: 0.0, size_min: 1.0, size_max: 1.0, velocity_min: [0.0; 3], velocity_max: [0.0; 3], color_min: None, color_max: None, alpha_min: 1.0, alpha_max: 1.0 },
+        init: InitSpec { lifetime_min: 0.0, lifetime_max: 0.0, size_min: 1.0, size_max: 1.0, velocity_min: [0.0; 3], velocity_max: [0.0; 3], color_min: None, color_max: None, alpha_min: 1.0, alpha_max: 1.0, rotation_min: None, rotation_max: None, angular_vel_min: None, angular_vel_max: None, turbulent: None },
         operators: vec![],
         maxcount: 0,
+        renderer: we_scene_wasm::particle::Renderer::Sprite,
     };
     assert_eq!(estimate_max_particles(&zero), 64);
     let huge = ParticleSpec {
         emitter: EmitterSpec { rate: 1e6, directions: [0.0; 3], distance_min: 0.0, distance_max: 0.0 },
-        init: InitSpec { lifetime_min: 100.0, lifetime_max: 100.0, size_min: 1.0, size_max: 1.0, velocity_min: [0.0; 3], velocity_max: [0.0; 3], color_min: None, color_max: None, alpha_min: 1.0, alpha_max: 1.0 },
+        init: InitSpec { lifetime_min: 100.0, lifetime_max: 100.0, size_min: 1.0, size_max: 1.0, velocity_min: [0.0; 3], velocity_max: [0.0; 3], color_min: None, color_max: None, alpha_min: 1.0, alpha_max: 1.0, rotation_min: None, rotation_max: None, angular_vel_min: None, angular_vel_max: None, turbulent: None },
         operators: vec![],
         maxcount: 0,
+        renderer: we_scene_wasm::particle::Renderer::Sprite,
     };
     assert_eq!(estimate_max_particles(&huge), 2048);
 }
@@ -125,12 +128,12 @@ fn emitter_params_keeps_negative_scale_y() {
 #[test]
 fn emitter_params_layout_matches_wgsl_std140() {
     // uniform 结构体布局与 src/shaders/particle_compute.wgsl / particle_render.wgsl
-    // 的 EmitterParams（std140）严格对齐（经 naga 24 校验：span=176，下列成员偏移一致）。
-    // 176 = 16 的倍数，满足 uniform buffer 绑定对齐；repr(C) 无隐式填充差异。
-    // 审查修复后：_pad0/_pad1/_pad2 槽改名为 view_w/view_h/elapsed（偏移不变）。
-    // Task 0.3：原尾部 (dt, max_particles, _pad8, _pad9) → (dt, max_particles,
-    // alpha_min, alpha_max)，再补 _pad8.._pad11 一行 vec4 → 176B（11 × vec4）。
-    assert_eq!(std::mem::size_of::<EmitterParams>(), 176);
+    // 的 EmitterParams（纯 f32 字段，repr(C) 无隐式 pad）严格对齐。
+    // 2026-08-31 算子内核扩容：从 176B（11 vec4）→ 240B（15 vec4）。前段偏移不变，
+    // 尾段（alpha_max 之后）追加 5 行 vec4（turb/movement/osc/osc-mask/rig）。
+    // 240 = 16 的倍数，满足 uniform 绑定对齐。
+    assert_eq!(std::mem::size_of::<EmitterParams>(), 240);
+    // 前段固定偏移（不受扩容影响）
     assert_eq!(std::mem::offset_of!(EmitterParams, origin_x), 0);
     assert_eq!(std::mem::offset_of!(EmitterParams, view_w), 12);
     assert_eq!(std::mem::offset_of!(EmitterParams, scale_y), 20);
@@ -145,6 +148,17 @@ fn emitter_params_layout_matches_wgsl_std140() {
     assert_eq!(std::mem::offset_of!(EmitterParams, max_particles), 148);
     assert_eq!(std::mem::offset_of!(EmitterParams, alpha_min), 152);
     assert_eq!(std::mem::offset_of!(EmitterParams, alpha_max), 156);
+    // 追加段（2026-08-31）：turb → movement → osc → osc-mask → rig，连续无 pad
+    assert_eq!(std::mem::offset_of!(EmitterParams, turb_speed_min), 160);
+    assert_eq!(std::mem::offset_of!(EmitterParams, turb_active), 172);
+    assert_eq!(std::mem::offset_of!(EmitterParams, grav_x), 176);
+    assert_eq!(std::mem::offset_of!(EmitterParams, drag), 188);
+    assert_eq!(std::mem::offset_of!(EmitterParams, osc_freq_min), 192);
+    assert_eq!(std::mem::offset_of!(EmitterParams, osc_scale_max), 204);
+    assert_eq!(std::mem::offset_of!(EmitterParams, osc_mask_x), 208);
+    assert_eq!(std::mem::offset_of!(EmitterParams, renderer_type), 220);
+    assert_eq!(std::mem::offset_of!(EmitterParams, rot_active), 224);
+    assert_eq!(std::mem::offset_of!(EmitterParams, rot_max), 236);
 }
 
 /// WGSL `Particle` 布局镜像（最终审查修复：vec3 对齐 16 → stride 64）。
