@@ -119,6 +119,7 @@ async function buildEffectChainDesc(id: string, effects: unknown[]): Promise<Uin
         loadFile,
       );
       if (!chain) continue;
+      if (!chain) continue;
       for (const p of chain) {
         // task-18：WebGPU inter-stage 匹配校验 + per-pass 容错。WE 效果 shader 偶有 fragment 输入
         // 无对应 vertex 输出（如 waterripple.frag 的 `varying vec2 v_Scroll` 而其 vert 未输出），
@@ -171,6 +172,8 @@ async function buildEffectChainDesc(id: string, effects: unknown[]): Promise<Uin
             blend_mode: spv.blendMode,
             // RT 图信息（2026-08-31 阶段1 === wasm RT 图执行器）：把 effect.json 的
             // target/bind/fbos 编码进 chain_desc，wasm 据此建多 RT（含降采样）+ 按名绑定。
+            // wasm EffectPassDesc.target 为 Option<String>（serde 接受 null），无具名 RT 的链
+            // （Orange 等）传 null → wasm 走旧 ping-pong，不误入 RT 图。
             target: p.target ?? null,
             bind: Array.isArray(p.bind) ? p.bind : [],
             fbo_scale: p.fboScale ?? {},

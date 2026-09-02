@@ -23850,11 +23850,16 @@ async function resolveEffectChain(sceneEffect, loadFile) {
     const effectRaw = await loadFile(sceneEffect.file);
     if (!effectRaw) return null;
     const effect = JSON.parse(new TextDecoder().decode(effectRaw));
+    const fboScale = {};
+    for (const fb of effect.fbos ?? []) {
+      if (fb?.name) fboScale[fb.name] = fb.scale > 0 ? fb.scale : 1;
+    }
     const scenePasses = Array.isArray(sceneEffect.passes) ? sceneEffect.passes : [];
     if (!Array.isArray(effect.passes) || effect.passes.length === 0) return null;
     const out = [];
     for (let i = 0; i < effect.passes.length; i++) {
-      const matRef = scenePasses[i]?.material ?? effect.passes[i].material;
+      const scenePass = scenePasses[i] ?? {};
+      const matRef = scenePass.material ?? effect.passes[i].material;
       if (typeof matRef !== "string") return null;
       if (matRef.startsWith("materials/util/")) continue;
       const matRaw = await loadFile(matRef);
@@ -23877,6 +23882,7 @@ async function resolveEffectChain(sceneEffect, loadFile) {
         extractUniformAnnotations(fragSrc).concat(extractUniformAnnotations(vertSrc)),
         constants
       );
+      const effPass = effect.passes[i];
       out.push({
         vertSrc,
         fragSrc,
@@ -23885,7 +23891,12 @@ async function resolveEffectChain(sceneEffect, loadFile) {
         combos,
         uniforms,
         textureSlots: textures,
-        blendMode: mat.passes?.[0]?.blending ?? "normal"
+        blendMode: mat.passes?.[0]?.blending ?? "normal",
+        // RT 图信息（阶段1）：effect.json passes[i].target（写到的具名 RT）/bind（采样来源）；
+        // scene.json pass 可覆写 target（如 scene 指定目标 RT）。缺省 target=null（最终输出）。
+        target: (scenePass.target ?? effPass.target) || null,
+        bind: Array.isArray(effPass.bind) ? effPass.bind : [],
+        fboScale
       });
     }
     if (out.length === 0) return null;
@@ -26058,6 +26069,7 @@ async function buildEffectChainDesc(id, effects) {
         loadFile
       );
       if (!chain) continue;
+      if (!chain) continue;
       for (const p of chain) {
         try {
           const naga = glslToNagaGlsl(p);
@@ -26085,7 +26097,14 @@ async function buildEffectChainDesc(id, effects) {
             texture_bytes: await Promise.all(
               spv.textureSlots.map((ts) => loadSlotTextureBytes(typeof ts === "string" && ts.length > 0 ? ts : null))
             ),
-            blend_mode: spv.blendMode
+            blend_mode: spv.blendMode,
+            // RT 图信息（2026-08-31 阶段1 === wasm RT 图执行器）：把 effect.json 的
+            // target/bind/fbos 编码进 chain_desc，wasm 据此建多 RT（含降采样）+ 按名绑定。
+            // wasm EffectPassDesc.target 为 Option<String>（serde 接受 null），无具名 RT 的链
+            // （Orange 等）传 null → wasm 走旧 ping-pong，不误入 RT 图。
+            target: p.target ?? null,
+            bind: Array.isArray(p.bind) ? p.bind : [],
+            fbo_scale: p.fboScale ?? {}
           });
         } catch (e) {
           console.warn(`[wasm] \u6548\u679C\u94FE pass \u8DF3\u8FC7\uFF08\u7F16\u8BD1\u5931\u8D25\uFF09\uFF1A${e instanceof Error ? e.message : String(e)}`);

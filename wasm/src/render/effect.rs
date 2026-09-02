@@ -531,7 +531,7 @@ pub struct EffectPassDesc {
     // ── RT 图信息（2026-08-31 阶段1：wasm EffectChain 升级为 RT 图执行器）──
     // 本 pass 写到的具名 RT（"_rt_QuarterCompoBuffer1"）；null/"" = 最终输出（对象 out RT）。
     #[serde(default)]
-    pub target: String,
+    pub target: Option<String>,
     // 具名 RT 的降采样声明（effect.json fbos 的 scale；键 = 具名 RT 名，值 = 降采样倍数，
     // scale=4 → RT 尺寸 = 基础/4）。无该 RT 条目 → 全尺寸（scale 1）。
     #[serde(default)]
@@ -881,6 +881,21 @@ mod imp {
         /// /downsample2 的遮罩/噪声槽（Some → 白色占位，避免用背景自身污染）」。g_Texture0
         /// 恒为当前输入（read_view），不来自本列表。
         pub texture_slots: Vec<Option<String>>,
+        // ── RT 图信息（2026-08-31 阶段1：wasm EffectChain 升级为 RT 图执行器）──
+        // 本 pass 写到的具名 RT（空 = 最终输出对象 out RT / 旧 ping-pong 行为）。
+        pub target: Option<String>,
+        // 本 pass 的 3 个读端槽：bind[i].name 引用具名 RT / "previous" / 空(=输入)。
+        // 与 shader 的 g_Texture(i+1) 槽对齐（bind[0] 是 g_Texture1 语义）。
+        pub bind: Vec<EffectBind>,
+    }
+
+    /// 具名 RT 池条目（阶段1 RT 图执行器）：texture + view + 实际尺寸（已按 fbo_scale 降采样）。
+    #[derive(Debug)]
+    pub(super) struct RtEntry {
+        pub texture: wgpu::Texture,
+        pub view: wgpu::TextureView,
+        pub width: u32,
+        pub height: u32,
     }
 
     /// 效果链 ping-pong 执行器（M2）：一组 WE 后处理 pass 依次在两张 ping-pong RT 上执行。
@@ -891,6 +906,11 @@ mod imp {
         passes: Vec<EffectPassInstance>,
         rt_a_view: wgpu::TextureView,
         rt_b_view: wgpu::TextureView,
+        /// 具名 RT 池（2026-08-31 阶段1：RT 图执行器）：key = effect.json fbos 的具名 RT
+        /// （如 "_rt_QuarterCompoBuffer1"），value = 按 fbo_scale 降采样后的 RT（texture + view + 尺寸）。
+        /// pass 的 `target` 写到具名 RT（池内 view），`bind` 按名字读对应 view。无具名 RT 的
+        /// 简单链（Orange/waterripple 等单 pass）不产生池条目，走旧 ping-pong 行为。
+        named_rt: std::collections::HashMap<String, RtEntry>,
         sampler: wgpu::Sampler,
         /// 白色 1×1 纹理视图（task-24）：绑定到「提供了独立纹理槽」而非首纹理槽（遮罩/噪声/flow）。
         /// WE 语义下这些槽的**正确值**是加载的独立纹理，但 wasm 执行器暂未接通逐槽纹理字节加载；
@@ -1039,6 +1059,9 @@ mod imp {
                     sampler_bindings,
                     // task-24：透传该 pass 的纹理槽语义（g_Texture(i+1) 的独立纹理路径；None = previous）。
                     texture_slots: desc.texture_slots.clone(),
+                    // RT 图信息（2026-08-31 阶段1）：target/bind 从 effect.json 传入。
+                    target: desc.target.clone(),
+                    bind: desc.bind.clone(),
                 };
                 if let Some(err) = device.pop_error_scope().await {
                     web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(&format!(
@@ -1059,6 +1082,23 @@ mod imp {
             let rt_b = create_rt(device, width.max(1), height.max(1), format, "effect-rt-b");
             let rt_a_view = rt_a.create_view(&wgpu::TextureViewDescriptor::default());
             let rt_b_view = rt_b.create_view(&wgpu::TextureViewDescriptor::default());
+            // ── 具名 RT 池（2026-08-31 阶段1：RT 图执行器）──
+            // 遍历所有 pass 的 target（非空 = 写具名 RT），按 fbo_scale 建降采样 RT。
+            // 同一具名 RT 只建一次（多 pass 复用）；尺寸 = base ÷ scale（最低 1）。
+            // 无具名 RT 的链（Orange/waterripple 等）named_rt 保持空，走旧 ping-pong。
+            let mut named_rt: std::collections::HashMap<String, RtEntry> = std::collections::HashMap::new();
+            {
+                for desc in &passes {
+                    let Some(target) = desc.target.as_deref().filter(|s| !s.is_empty()) else { continue; };
+                    if named_rt.contains_key(target) { continue; }
+                    let scale = desc.fbo_scale.get(target).copied().filter(|s| *s > 0.0).unwrap_or(1.0);
+                    let w = ((width as f32 / scale).max(1.0)) as u32;
+                    let h = ((height as f32 / scale).max(1.0)) as u32;
+                    let tex = create_rt(device, w, h, format, &format!("effect-named-rt-{target}"));
+                    let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+                    named_rt.insert(target.to_string(), RtEntry { texture: tex, view, width: w, height: h });
+                }
+            }
             let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("effect-sampler"),
                 mag_filter: wgpu::FilterMode::Linear,
@@ -1118,6 +1158,7 @@ mod imp {
                 passes: instances,
                 rt_a_view,
                 rt_b_view,
+                named_rt,
                 sampler,
                 white_view,
                 slot_textures,
@@ -1150,14 +1191,29 @@ mod imp {
             let mut prev_write: Option<u8> = None;
             for i in 0..n {
                 let last = i == n - 1;
-                // 写端：末 pass 写 output_view；否则 ping-pong 写对端 RT。
-                let write_view: &wgpu::TextureView = if last {
+                // 具名 RT 目标标记（2026-08-31 阶段1）：pass.target 为 Some(非空) → 写具名 RT。
+                let has_rt = self.passes[i].target.as_deref().map(|s| !s.is_empty()).unwrap_or(false);
+                // 写端（2026-08-31 阶段1：RT 图支持）：
+                // - pass.target 非空 → 写具名 RT（named_rt[target].view，含降采样）；
+                // - target 空 → 旧 ping-pong：末 pass 写 output_view，否则写对端 rt_a/rt_b。
+                let write_view: &wgpu::TextureView = if has_rt {
+                    &self
+                        .named_rt
+                        .get(self.passes[i].target.as_deref().unwrap_or(""))
+                        .map(|e| &e.view)
+                        .unwrap_or(&output_view)
+                } else if last {
                     output_view
                 } else {
                     let idx = pick_write_target(prev_write);
                     prev_write = Some(idx);
                     if idx == 0 { &self.rt_a_view } else { &self.rt_b_view }
                 };
+                // 读源（2026-08-31 阶段1）：优先按 pass.bind[0] 决定；bind 空/未命中 → 链式 read_view。
+                // - bind[0].name 为具名 RT → named_rt[名].view；
+                // - bind[0].name == "previous" 或空 → input_view（原始内容）；
+                // - 其它/无 bind → 链式 read_view（旧行为，兼容无具名 RT 链的线性依赖）。
+                let pass_read: &wgpu::TextureView = self.resolve_pass_read(i, read_view, input_view);
                 // 更新 g_Time：仅对含 g_Time 字段的 block 每帧重写（g_Time 位于其 std140 offset，
                 // 而非固定偏移 0）。无 g_Time 的 block 保持静态（new 已写好）。字段级借用（disjoint）：
                 // 对 self.passes[i] 与 self.queue 的不可变借用互不重叠，编译器允许。
@@ -1171,7 +1227,7 @@ mod imp {
                     }
                 }
                 // bind group（按 shader 声明的绑定布置资源）
-                let bind_group = self.build_bind_group(i, read_view, input_view);
+                let bind_group = self.build_bind_group(i, pass_read, input_view);
                 let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("effect-chain-pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -1188,10 +1244,39 @@ mod imp {
                 rpass.set_bind_group(0, &bind_group, &[]);
                 rpass.draw(0..4, 0..1);
                 drop(rpass);
-                if !last {
+                // 链式 read_view 更新：仅当 pass 走旧 ping-pong（target 空）且非末 pass 时，
+                // 下一 pass 才能链式读本 pass 写的 rt_a/rt_b。写具名 RT 的 pass 更新链式为
+                // input_view（保守，后续没显式 bind 的 pass 读到原始内容兜底，避免错位）。
+                if !last && !has_rt {
                     read_view = write_view;
+                } else if has_rt {
+                    read_view = input_view;
                 }
             }
+        }
+
+        /// 解析 pass 的读源 view（2026-08-31 阶段1：RT 图支持）。
+        /// bind[0].name 决定 g_Texture0 的读端：
+        /// - 具名 RT（"_rt_*"）→ named_rt[名].view（降采样中间缓冲）；
+        /// - "previous" 或 "" → input_view（原始内容，combine 用）；
+        /// - 其它/无 bind → fallback（链式 read_view，兼容无具名 RT 链）。
+        fn resolve_pass_read<'a>(
+            &'a self,
+            pass_index: usize,
+            fallback: &'a wgpu::TextureView,
+            input_view: &'a wgpu::TextureView,
+        ) -> &'a wgpu::TextureView {
+            let pass = &self.passes[pass_index];
+            if let Some(first) = pass.bind.first() {
+                let name = first.name.trim();
+                if name.is_empty() || name == "previous" {
+                    return input_view;
+                }
+                if let Some(entry) = self.named_rt.get(name) {
+                    return &entry.view;
+                }
+            }
+            fallback
         }
 
         /// 按 shader 声明的绑定构建 bind group：std140 uniform block（各 binding）+ 纹理绑定 + sampler。

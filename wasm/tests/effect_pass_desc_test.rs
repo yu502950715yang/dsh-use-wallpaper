@@ -19,7 +19,7 @@ fn deserializes_target_fbo_scale_bind() {
         "fbo_scale": {"_rt_QuarterCompoBuffer1": 4.0, "_rt_QuarterCompoBuffer2": 4.0}
     }"#;
     let desc: EffectPassDesc = serde_json::from_str(json).expect("应反序列化");
-    assert_eq!(desc.target, "_rt_QuarterCompoBuffer1");
+    assert_eq!(desc.target.as_deref(), Some("_rt_QuarterCompoBuffer1"));
     assert_eq!(desc.bind.len(), 1);
     assert_eq!(desc.bind[0].name, "previous");
     assert_eq!(desc.bind[0].index, 0);
@@ -35,7 +35,8 @@ fn deserializes_target_null_and_empty_bind() {
         "blend_mode": "add"
     }"#;
     let desc: EffectPassDesc = serde_json::from_str(json).expect("应反序列化");
-    assert_eq!(desc.target, "");
+    // 无 target 字段 → serde default → None（= 最终输出对象 out RT）
+    assert!(desc.target.is_none());
     assert!(desc.bind.is_empty());
     assert!(desc.fbo_scale.is_empty());
     assert_eq!(desc.blend_mode, "add");
@@ -52,11 +53,11 @@ fn deserializes_full_chain_pass_order() {
     ]"#;
     let passes: Vec<EffectPassDesc> = serde_json::from_str(json).expect("应反序列化");
     assert_eq!(passes.len(), 4);
-    assert_eq!(passes[0].target, "_rt_QuarterCompoBuffer1");
-    assert_eq!(passes[1].target, "_rt_QuarterCompoBuffer2");
-    assert_eq!(passes[2].target, "_rt_QuarterCompoBuffer1");
-    // 末 pass 无 target → 缺省空串（= 最终输出对象 out RT）
-    assert_eq!(passes[3].target, "");
+    assert_eq!(passes[0].target.as_deref(), Some("_rt_QuarterCompoBuffer1"));
+    assert_eq!(passes[1].target.as_deref(), Some("_rt_QuarterCompoBuffer2"));
+    assert_eq!(passes[2].target.as_deref(), Some("_rt_QuarterCompoBuffer1"));
+    // 末 pass 无 target → serde default → None（= 最终输出对象 out RT）
+    assert!(passes[3].target.is_none());
     // 末 pass combine 同时引用模糊结果与 previous（index 2）
     assert_eq!(passes[3].bind.len(), 2);
     assert_eq!(passes[3].bind[1].name, "previous");

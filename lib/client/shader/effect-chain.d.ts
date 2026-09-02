@@ -8,6 +8,12 @@ export interface CompiledEffectPass {
     uniforms: Map<string, UniformValue>;
     textureSlots: (string | null)[];
     blendMode: string;
+    target: string | null;
+    bind: {
+        name: string;
+        index: number;
+    }[];
+    fboScale: Record<string, number>;
 }
 export declare function resolveEffectChain(sceneEffect: {
     file: string;
