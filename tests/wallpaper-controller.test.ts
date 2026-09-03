@@ -3,14 +3,18 @@ import { createWallpaperController } from '../src/client/wallpaper-controller.js
 
 function fakeLayer() {
   const calls: string[] = [];
+  const fg: string[] = [];
   return {
     calls,
+    fg,
     showImage: (u: string) => calls.push('image:' + u),
     showVideo: (u: string) => calls.push('video:' + u),
     showSceneCanvas: () => calls.push('scene'),
     showNone: () => calls.push('none'),
     setOverlayOpacity: () => {},
     setBlur: () => {},
+    // 文字颜色跟随壁纸亮度：单独记录 setChatFg，不污染主 calls（不影响 switch 展示断言）。
+    setChatFg: (c: string) => fg.push('fg:' + c),
   } as any;
 }
 

@@ -84,4 +84,35 @@ describe('styles 主题适配', () => {
     expect(WALLPAPER_CSS).toMatch(/--dsw-alias-border-l1:rgba\(180,\s*180,\s*180/);
     expect(WALLPAPER_CSS).toMatch(/--dsw-alias-border-l2:rgba\(180,\s*180,\s*180/);
   });
+  it('文字颜色跟随壁纸亮度：消息列文本消费 --wp-chat-fg（fallback 到主题文字色）', () => {
+    // 2026-09-03：只改消息列文字颜色（不遮背景）。flowItem 主要文本 color 读 --wp-chat-fg，
+    // 未测量时 fallback 到 DSH 主题文字色（--dsw-alias-label-primary）。
+    expect(WALLPAPER_CSS).toMatch(/body\[data-we-wallpaper\]\s*\[class\*="flowItem"\]\s*p[\s\S]*color:var\(--wp-chat-fg,var\(--dsw-alias-label-primary,inherit\)\)/);
+  });
+  it('行内代码/代码块不随壁纸亮度反色：显式用主题文字色（避免暗壁纸下 code 白字白底）', () => {
+    // 2026-09-03 修复：code 有独立不透明背景（浅色近白），其 color 会被父级 --wp-chat-fg 继承成白字
+    // → 白底白字。须显式给 code/pre code 用 --dsw-alias-label-primary（随主题：浅=黑/深=白）。
+    expect(WALLPAPER_CSS).toMatch(/body\[data-we-wallpaper\]\s*\[class\*="flowItem"\]\s*code[\s\S]*color:var\(--dsw-alias-label-primary,inherit\)/);
+    expect(WALLPAPER_CSS).toMatch(/body\[data-we-wallpaper\]\s*\[class\*="flowItem"\]\s*pre code[\s\S]*color:var\(--dsw-alias-label-primary,inherit\)/);
+  });
+  it('actions 内操作 SVG 图标跟随壁纸亮度（fill=currentColor 继承容器 color）', () => {
+    // 2026-09-03 修复：actions 的 SVG 图标 fill="currentColor"，背景透明贴壁纸，
+    // 应跟随 --wp-chat-fg（暗壁纸→白图标、亮壁纸→黑图标），避免浅灰图标在壁纸上看不清。
+    expect(WALLPAPER_CSS).toMatch(/\[class\*="flowItem"\]\s*\[class\*="actions"\]\s*svg\s*\{/);
+    expect(WALLPAPER_CSS).toMatch(/\[class\*="flowItem"\]\s*\[class\*="actions"\]\s*svg\s*\{[^}]*color:var\(--wp-chat-fg,var\(--dsw-alias-label-primary,inherit\)\)/);
+  });
+  it('文件链接跟随壁纸亮度（[class*=fileLink]/a，避免深灰链接在暗壁纸上看不清）', () => {
+    // 文件链接选择器是逗号分组（a, fileLink, _file），最后 `_file]{` 直接跟规则体。
+    expect(WALLPAPER_CSS).toMatch(/\[class\*="flowItem"\]\s*\[class\*="fileLink"\]/);
+    expect(WALLPAPER_CSS).toMatch(/\[class\*="flowItem"\]\s*\[class\*="_file"\]\s*\{[^}]*color:var\(--wp-chat-fg,var\(--dsw-alias-label-primary,inherit\)\)/);
+  });
+  it('li 列表点（::marker）跟随壁纸亮度（避免深灰点在暗壁纸上看不清）', () => {
+    expect(WALLPAPER_CSS).toMatch(/\[class\*="flowItem"\]\s*li::marker\s*\{[^}]*color:var\(--wp-chat-fg,var\(--dsw-alias-label-primary,inherit\)\)/);
+  });
+  it('消息气泡（有独立背景）内部文字用主题色（避免暗壁纸下白字贴淡蓝底看不清）', () => {
+    // 2026-09-03 修复：气泡有 --dsw-specific-bubble 背景（浅色淡蓝），内部文字不能用 --wp-chat-fg 反色，
+    // 须显式用 --dsw-alias-label-primary（浅=黑/深=白）保证与气泡背景对比。
+    // 选择器是逗号分组（bubble, bubble p, ... bubble code{），code 是最后一条直接跟 {。
+    expect(WALLPAPER_CSS).toMatch(/\[class\*="flowItem"\]\s*\[class\*="bubble"\]\s*code\s*\{[^}]*color:var\(--dsw-alias-label-primary,inherit\)/);
+  });
 });

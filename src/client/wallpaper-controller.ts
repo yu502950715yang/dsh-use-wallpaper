@@ -1,6 +1,7 @@
 import type { WallpaperInfo } from '../shared/types.js';
 import type { BackgroundLayer } from './background-layer.js';
 import { resolveBackground } from './background-layer.js';
+import { measureLuma, lumaToTextColor } from './luma.js';
 
 export interface WallpaperControllerOptions {
   fetchList: () => Promise<WallpaperInfo[]>;
@@ -10,6 +11,18 @@ export interface WallpaperControllerOptions {
     render(wallpaperId: string, fg: HTMLCanvasElement, bg?: HTMLCanvasElement): Promise<boolean>;
     dispose?(): void;
   };
+}
+
+// 文字颜色跟随壁纸亮度（2026-09-03）：测 preview 图平均亮度，选文字色写 --wp-chat-fg。
+// previewUrl 对 scene/video/image/web 均可用（渲染失败本就回退 preview），是跨类型最稳数据源。
+// 竞态防护：用 gen 校验，防止乱序覆盖。
+function applyChatFg(layer: BackgroundLayer, info: WallpaperInfo | undefined, gen: number, check: () => boolean): void {
+  const url = info?.previewUrl;
+  if (!url) { layer.setChatFg(''); return; }
+  void measureLuma(url).then((luma) => {
+    if (luma === null) { layer.setChatFg(''); return; } // 测量失败 → 回主题默认
+    if (check()) layer.setChatFg(lumaToTextColor(luma));
+  }).catch(() => { layer.setChatFg(''); });
 }
 
 export function createWallpaperController(
@@ -35,6 +48,7 @@ export function createWallpaperController(
     // 同步生效并递增 generation，使进行中的旧选择异步回调被竞态防护丢弃。
     if (id === '') {
       layer.showNone();
+      layer.setChatFg(''); // 清文字颜色，回主题默认
       return;
     }
     // 列表未加载时自动拉取（show() 委托 select 的前提）；加载失败则静默放弃本次选择
@@ -100,6 +114,9 @@ export function createWallpaperController(
       }
       case 'none': layer.showNone(); break;
     }
+    // 文字颜色跟随壁纸亮度：switch 展示壁纸后，异步测 preview 亮度选文字色。
+    // applyChatFg 内部用 gen 校验防竞态；无 preview（测量失败）则清变量回主题默认。
+    applyChatFg(layer, info, gen, () => gen === selectGeneration);
   }
 
   return { load, select };

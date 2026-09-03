@@ -152,6 +152,62 @@ body[data-ds-dark-theme][data-we-wallpaper] [data-question-key] section{
 .wss-missing{color:var(--dsw-alias-label-tertiary,var(--wp-text));font-size:11px;white-space:nowrap}
 .wss-message{margin:0;font-size:12px;color:var(--dsw-alias-label-secondary,var(--wp-text))}
 
+/* ── 文字颜色跟随壁纸亮度（2026-09-03 定稿） ──
+   不遮背景、不改壁纸可见度；只让消息列（[class*="flowItem"] 内主要文本）的
+   文字颜色跟随壁纸亮度自动切换：暗壁纸→白字、亮壁纸→黑字。颜色经 --wp-chat-fg
+   变量（background-layer.js setChatFg 写），fallback 到 DSH 主题文字色（未测量时）。
+   选择器用 flowItem 子元素（稳，不依赖 DSH 的 CSS module 哈希类）。
+   ⚠ code（行内代码）有独立不透明背景（浅色近白 --dsw-alias-markdown-inline-code），
+   其文字必须用与背景对比的 DSH 主题色（--dsw-alias-label-primary：浅=黑/深=白），
+   不能被 --wp-chat-fg 反色——否则暗壁纸下父级变白字，code 继承成白字白底。
+   color 是可继承属性，故须给 code 显式覆盖继承（不随壁纸亮度，只随主题）。 */
+body[data-we-wallpaper] [class*="flowItem"] p,
+body[data-we-wallpaper] [class*="flowItem"] span,
+body[data-we-wallpaper] [class*="flowItem"] li,
+body[data-we-wallpaper] [class*="flowItem"] td,
+body[data-we-wallpaper] [class*="flowItem"] th,
+body[data-we-wallpaper] [class*="flowItem"] h1,
+body[data-we-wallpaper] [class*="flowItem"] h2,
+body[data-we-wallpaper] [class*="flowItem"] h3,
+body[data-we-wallpaper] [class*="flowItem"] blockquote,
+body[data-we-wallpaper] [class*="flowItem"] [class*="actions"]{
+  color:var(--wp-chat-fg,var(--dsw-alias-label-primary,inherit));
+}
+/* actions 内操作 SVG 图标（fill="currentColor" 继承容器 color）跟随壁纸亮度。
+   容器及父背景透明（贴壁纸），故跟随 --wp-chat-fg 反色安全，不会白底白图标。 */
+body[data-we-wallpaper] [class*="flowItem"] [class*="actions"] svg{
+  color:var(--wp-chat-fg,var(--dsw-alias-label-primary,inherit));
+}
+/* 文件链接（[class*="fileLink"] 等，贴在壁纸上、背景透明）跟随壁纸亮度：
+   DSH 给它们固定深灰（--dsw-alias-label-secondary），暗壁纸下看不清 → 反色。
+   同时兜底一般 <a> 链接（同样贴壁纸）。 */
+body[data-we-wallpaper] [class*="flowItem"] a,
+body[data-we-wallpaper] [class*="flowItem"] [class*="fileLink"],
+body[data-we-wallpaper] [class*="flowItem"] [class*="_file"]{
+  color:var(--wp-chat-fg,var(--dsw-alias-label-primary,inherit));
+}
+/* li 列表点（::marker）：DSH 给 marker 单独设深灰（--dsw-alias-label-secondary），
+   覆盖了继承；li 文本已跟随 --wp-chat-fg 但点仍是深灰 → 暗壁纸下看不清。
+   让 marker 同样跟随 --wp-chat-fg 反色。 */
+body[data-we-wallpaper] [class*="flowItem"] li::marker{
+  color:var(--wp-chat-fg,var(--dsw-alias-label-primary,inherit));
+}
+/* 行内代码/代码块：显式主题色（覆盖父级继承的 --wp-chat-fg），保证与其背景对比正确 */
+body[data-we-wallpaper] [class*="flowItem"] code,
+body[data-we-wallpaper] [class*="flowItem"] pre code{
+  color:var(--dsw-alias-label-primary,inherit);
+}
+/* 消息气泡（.Sixlwa_bubble 等有 --dsw-specific-bubble 背景）：气泡有独立不透明背景
+   （浅色=淡蓝 #edf3fe、深色=深灰），内部文字必须用与背景对比的主题色（--dsw-alias-label-primary：
+   浅=黑/深=白）。不能被 --wp-chat-fg 反色（否则暗壁纸下白字贴淡蓝底看不清）。 */
+body[data-we-wallpaper] [class*="flowItem"] [class*="bubble"],
+body[data-we-wallpaper] [class*="flowItem"] [class*="bubble"] p,
+body[data-we-wallpaper] [class*="flowItem"] [class*="bubble"] span,
+body[data-we-wallpaper] [class*="flowItem"] [class*="bubble"] li,
+body[data-we-wallpaper] [class*="flowItem"] [class*="bubble"] code{
+  color:var(--dsw-alias-label-primary,inherit);
+}
+
 /* ── 宽表格（.md-table-wide）约束：2026-08-26 为液态玻璃气泡配套加入。
    现消息气泡（flowItem）已改回 DSH 原生样式（2026-08-31），气泡交给 DSH 原生
    处理，此前的"把宽表格约束回气泡内容区"覆盖不再需要（且会与 DSH 原生竞争），

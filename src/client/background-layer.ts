@@ -32,6 +32,7 @@ export interface BackgroundLayer {
   showNone(): void;
   setOverlayOpacity(v: number): void;
   setBlur(enabled: boolean, radius: number): void;
+  setChatFg(color: string): void;
 }
 
 export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
@@ -103,6 +104,12 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
     setOverlayOpacity(v) { overlay.style.opacity = String(v); },
     setBlur(enabled, radius) {
       fill.style.filter = enabled ? `blur(${radius}px)` : '';
+    },
+    // 文字颜色跟随壁纸亮度（2026-09-03）：把颜色写为 --wp-chat-fg，
+    // styles.ts 消息列文字消费者用它；null/空则移除（回主题默认）。移除时删变量。
+    setChatFg(color) {
+      if (!color) document.documentElement.style.removeProperty('--wp-chat-fg');
+      else document.documentElement.style.setProperty('--wp-chat-fg', color);
     },
   };
 }

@@ -2359,6 +2359,62 @@ body[data-ds-dark-theme][data-we-wallpaper] [data-question-key] section{
 .wss-missing{color:var(--dsw-alias-label-tertiary,var(--wp-text));font-size:11px;white-space:nowrap}
 .wss-message{margin:0;font-size:12px;color:var(--dsw-alias-label-secondary,var(--wp-text))}
 
+/* \u2500\u2500 \u6587\u5B57\u989C\u8272\u8DDF\u968F\u58C1\u7EB8\u4EAE\u5EA6\uFF082026-09-03 \u5B9A\u7A3F\uFF09 \u2500\u2500
+   \u4E0D\u906E\u80CC\u666F\u3001\u4E0D\u6539\u58C1\u7EB8\u53EF\u89C1\u5EA6\uFF1B\u53EA\u8BA9\u6D88\u606F\u5217\uFF08[class*="flowItem"] \u5185\u4E3B\u8981\u6587\u672C\uFF09\u7684
+   \u6587\u5B57\u989C\u8272\u8DDF\u968F\u58C1\u7EB8\u4EAE\u5EA6\u81EA\u52A8\u5207\u6362\uFF1A\u6697\u58C1\u7EB8\u2192\u767D\u5B57\u3001\u4EAE\u58C1\u7EB8\u2192\u9ED1\u5B57\u3002\u989C\u8272\u7ECF --wp-chat-fg
+   \u53D8\u91CF\uFF08background-layer.js setChatFg \u5199\uFF09\uFF0Cfallback \u5230 DSH \u4E3B\u9898\u6587\u5B57\u8272\uFF08\u672A\u6D4B\u91CF\u65F6\uFF09\u3002
+   \u9009\u62E9\u5668\u7528 flowItem \u5B50\u5143\u7D20\uFF08\u7A33\uFF0C\u4E0D\u4F9D\u8D56 DSH \u7684 CSS module \u54C8\u5E0C\u7C7B\uFF09\u3002
+   \u26A0 code\uFF08\u884C\u5185\u4EE3\u7801\uFF09\u6709\u72EC\u7ACB\u4E0D\u900F\u660E\u80CC\u666F\uFF08\u6D45\u8272\u8FD1\u767D --dsw-alias-markdown-inline-code\uFF09\uFF0C
+   \u5176\u6587\u5B57\u5FC5\u987B\u7528\u4E0E\u80CC\u666F\u5BF9\u6BD4\u7684 DSH \u4E3B\u9898\u8272\uFF08--dsw-alias-label-primary\uFF1A\u6D45=\u9ED1/\u6DF1=\u767D\uFF09\uFF0C
+   \u4E0D\u80FD\u88AB --wp-chat-fg \u53CD\u8272\u2014\u2014\u5426\u5219\u6697\u58C1\u7EB8\u4E0B\u7236\u7EA7\u53D8\u767D\u5B57\uFF0Ccode \u7EE7\u627F\u6210\u767D\u5B57\u767D\u5E95\u3002
+   color \u662F\u53EF\u7EE7\u627F\u5C5E\u6027\uFF0C\u6545\u987B\u7ED9 code \u663E\u5F0F\u8986\u76D6\u7EE7\u627F\uFF08\u4E0D\u968F\u58C1\u7EB8\u4EAE\u5EA6\uFF0C\u53EA\u968F\u4E3B\u9898\uFF09\u3002 */
+body[data-we-wallpaper] [class*="flowItem"] p,
+body[data-we-wallpaper] [class*="flowItem"] span,
+body[data-we-wallpaper] [class*="flowItem"] li,
+body[data-we-wallpaper] [class*="flowItem"] td,
+body[data-we-wallpaper] [class*="flowItem"] th,
+body[data-we-wallpaper] [class*="flowItem"] h1,
+body[data-we-wallpaper] [class*="flowItem"] h2,
+body[data-we-wallpaper] [class*="flowItem"] h3,
+body[data-we-wallpaper] [class*="flowItem"] blockquote,
+body[data-we-wallpaper] [class*="flowItem"] [class*="actions"]{
+  color:var(--wp-chat-fg,var(--dsw-alias-label-primary,inherit));
+}
+/* actions \u5185\u64CD\u4F5C SVG \u56FE\u6807\uFF08fill="currentColor" \u7EE7\u627F\u5BB9\u5668 color\uFF09\u8DDF\u968F\u58C1\u7EB8\u4EAE\u5EA6\u3002
+   \u5BB9\u5668\u53CA\u7236\u80CC\u666F\u900F\u660E\uFF08\u8D34\u58C1\u7EB8\uFF09\uFF0C\u6545\u8DDF\u968F --wp-chat-fg \u53CD\u8272\u5B89\u5168\uFF0C\u4E0D\u4F1A\u767D\u5E95\u767D\u56FE\u6807\u3002 */
+body[data-we-wallpaper] [class*="flowItem"] [class*="actions"] svg{
+  color:var(--wp-chat-fg,var(--dsw-alias-label-primary,inherit));
+}
+/* \u6587\u4EF6\u94FE\u63A5\uFF08[class*="fileLink"] \u7B49\uFF0C\u8D34\u5728\u58C1\u7EB8\u4E0A\u3001\u80CC\u666F\u900F\u660E\uFF09\u8DDF\u968F\u58C1\u7EB8\u4EAE\u5EA6\uFF1A
+   DSH \u7ED9\u5B83\u4EEC\u56FA\u5B9A\u6DF1\u7070\uFF08--dsw-alias-label-secondary\uFF09\uFF0C\u6697\u58C1\u7EB8\u4E0B\u770B\u4E0D\u6E05 \u2192 \u53CD\u8272\u3002
+   \u540C\u65F6\u515C\u5E95\u4E00\u822C <a> \u94FE\u63A5\uFF08\u540C\u6837\u8D34\u58C1\u7EB8\uFF09\u3002 */
+body[data-we-wallpaper] [class*="flowItem"] a,
+body[data-we-wallpaper] [class*="flowItem"] [class*="fileLink"],
+body[data-we-wallpaper] [class*="flowItem"] [class*="_file"]{
+  color:var(--wp-chat-fg,var(--dsw-alias-label-primary,inherit));
+}
+/* li \u5217\u8868\u70B9\uFF08::marker\uFF09\uFF1ADSH \u7ED9 marker \u5355\u72EC\u8BBE\u6DF1\u7070\uFF08--dsw-alias-label-secondary\uFF09\uFF0C
+   \u8986\u76D6\u4E86\u7EE7\u627F\uFF1Bli \u6587\u672C\u5DF2\u8DDF\u968F --wp-chat-fg \u4F46\u70B9\u4ECD\u662F\u6DF1\u7070 \u2192 \u6697\u58C1\u7EB8\u4E0B\u770B\u4E0D\u6E05\u3002
+   \u8BA9 marker \u540C\u6837\u8DDF\u968F --wp-chat-fg \u53CD\u8272\u3002 */
+body[data-we-wallpaper] [class*="flowItem"] li::marker{
+  color:var(--wp-chat-fg,var(--dsw-alias-label-primary,inherit));
+}
+/* \u884C\u5185\u4EE3\u7801/\u4EE3\u7801\u5757\uFF1A\u663E\u5F0F\u4E3B\u9898\u8272\uFF08\u8986\u76D6\u7236\u7EA7\u7EE7\u627F\u7684 --wp-chat-fg\uFF09\uFF0C\u4FDD\u8BC1\u4E0E\u5176\u80CC\u666F\u5BF9\u6BD4\u6B63\u786E */
+body[data-we-wallpaper] [class*="flowItem"] code,
+body[data-we-wallpaper] [class*="flowItem"] pre code{
+  color:var(--dsw-alias-label-primary,inherit);
+}
+/* \u6D88\u606F\u6C14\u6CE1\uFF08.Sixlwa_bubble \u7B49\u6709 --dsw-specific-bubble \u80CC\u666F\uFF09\uFF1A\u6C14\u6CE1\u6709\u72EC\u7ACB\u4E0D\u900F\u660E\u80CC\u666F
+   \uFF08\u6D45\u8272=\u6DE1\u84DD #edf3fe\u3001\u6DF1\u8272=\u6DF1\u7070\uFF09\uFF0C\u5185\u90E8\u6587\u5B57\u5FC5\u987B\u7528\u4E0E\u80CC\u666F\u5BF9\u6BD4\u7684\u4E3B\u9898\u8272\uFF08--dsw-alias-label-primary\uFF1A
+   \u6D45=\u9ED1/\u6DF1=\u767D\uFF09\u3002\u4E0D\u80FD\u88AB --wp-chat-fg \u53CD\u8272\uFF08\u5426\u5219\u6697\u58C1\u7EB8\u4E0B\u767D\u5B57\u8D34\u6DE1\u84DD\u5E95\u770B\u4E0D\u6E05\uFF09\u3002 */
+body[data-we-wallpaper] [class*="flowItem"] [class*="bubble"],
+body[data-we-wallpaper] [class*="flowItem"] [class*="bubble"] p,
+body[data-we-wallpaper] [class*="flowItem"] [class*="bubble"] span,
+body[data-we-wallpaper] [class*="flowItem"] [class*="bubble"] li,
+body[data-we-wallpaper] [class*="flowItem"] [class*="bubble"] code{
+  color:var(--dsw-alias-label-primary,inherit);
+}
+
 /* \u2500\u2500 \u5BBD\u8868\u683C\uFF08.md-table-wide\uFF09\u7EA6\u675F\uFF1A2026-08-26 \u4E3A\u6DB2\u6001\u73BB\u7483\u6C14\u6CE1\u914D\u5957\u52A0\u5165\u3002
    \u73B0\u6D88\u606F\u6C14\u6CE1\uFF08flowItem\uFF09\u5DF2\u6539\u56DE DSH \u539F\u751F\u6837\u5F0F\uFF082026-08-31\uFF09\uFF0C\u6C14\u6CE1\u4EA4\u7ED9 DSH \u539F\u751F
    \u5904\u7406\uFF0C\u6B64\u524D\u7684"\u628A\u5BBD\u8868\u683C\u7EA6\u675F\u56DE\u6C14\u6CE1\u5185\u5BB9\u533A"\u8986\u76D6\u4E0D\u518D\u9700\u8981\uFF08\u4E14\u4F1A\u4E0E DSH \u539F\u751F\u7ADE\u4E89\uFF09\uFF0C
@@ -2461,11 +2517,92 @@ function createBackgroundLayer(root) {
     },
     setBlur(enabled, radius) {
       fill.style.filter = enabled ? `blur(${radius}px)` : "";
+    },
+    // 文字颜色跟随壁纸亮度（2026-09-03）：把颜色写为 --wp-chat-fg，
+    // styles.ts 消息列文字消费者用它；null/空则移除（回主题默认）。移除时删变量。
+    setChatFg(color) {
+      if (!color) document.documentElement.style.removeProperty("--wp-chat-fg");
+      else document.documentElement.style.setProperty("--wp-chat-fg", color);
     }
   };
 }
 
+// src/client/luma.ts
+var LUMA_THRESHOLD = 128;
+var TEXT_DARK = "#f9fafb";
+var TEXT_LIGHT = "#0f1115";
+function averageLuma(data) {
+  if (data.length === 0) return 0;
+  let sum = 0;
+  const n = data.length / 4;
+  for (let i = 0; i < n; i++) {
+    const r = data[i * 4];
+    const g = data[i * 4 + 1];
+    const b = data[i * 4 + 2];
+    sum += 0.299 * r + 0.587 * g + 0.114 * b;
+  }
+  return sum / n;
+}
+function lumaToTextColor(luma) {
+  return luma < LUMA_THRESHOLD ? TEXT_DARK : TEXT_LIGHT;
+}
+function measureLuma(url, opts) {
+  const max = opts?.max ?? 32;
+  return new Promise((resolve) => {
+    if (typeof Image === "undefined" || typeof document === "undefined") {
+      resolve(null);
+      return;
+    }
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      try {
+        const w = img.naturalWidth || img.width;
+        const h = img.naturalHeight || img.height;
+        if (!w || !h) {
+          resolve(null);
+          return;
+        }
+        const scale = Math.min(1, max / Math.max(w, h));
+        const sw = Math.max(1, Math.round(w * scale));
+        const sh = Math.max(1, Math.round(h * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = sw;
+        canvas.height = sh;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          resolve(null);
+          return;
+        }
+        ctx.drawImage(img, 0, 0, sw, sh);
+        const data = ctx.getImageData(0, 0, sw, sh).data;
+        resolve(averageLuma(data));
+      } catch {
+        resolve(null);
+      }
+    };
+    img.onerror = () => resolve(null);
+    img.src = url;
+  });
+}
+
 // src/client/wallpaper-controller.ts
+function applyChatFg(layer, info, gen, check) {
+  const url = info?.previewUrl;
+  if (!url) {
+    layer.setChatFg("");
+    return;
+  }
+  void measureLuma(url).then((luma) => {
+    if (luma === null) {
+      layer.setChatFg("");
+      return;
+    }
+    if (check()) layer.setChatFg(lumaToTextColor(luma));
+  }).catch(() => {
+    layer.setChatFg("");
+  });
+}
 function createWallpaperController(layer, opts) {
   let list = [];
   let selectGeneration = 0;
@@ -2478,6 +2615,7 @@ function createWallpaperController(layer, opts) {
     opts.sceneRenderer?.dispose?.();
     if (id === "") {
       layer.showNone();
+      layer.setChatFg("");
       return;
     }
     if (list.length === 0) {
@@ -2544,6 +2682,7 @@ function createWallpaperController(layer, opts) {
         layer.showNone();
         break;
     }
+    applyChatFg(layer, info, gen, () => gen === selectGeneration);
   }
   return { load, select };
 }
