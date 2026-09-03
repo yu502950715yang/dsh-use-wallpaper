@@ -213,6 +213,10 @@ fn decode_embedded_image(data: &[u8], declared: Option<u32>) -> Option<(u32, u32
             } else {
                 return None;
             };
+            // jpeg-decoder 输出为 bottom-up（首行=图像底部）→ 翻转回 top-down（v=0=顶部），
+            // 与 shaders/image.wgsl 的上传纹理约定一致（否则 JPEG 纹理被上下颠倒，
+            // 如 EVA 2683211654 主图为 JPEG，wasm 渲染整图颠倒 / window 桌面原生正确）。
+            let rgba = flip_rows_topdown(&rgba, info.width as u32, info.height as u32, 4);
             Some((info.width as u32, info.height as u32, rgba))
         }
     }
@@ -273,6 +277,23 @@ fn crop_rows(mip0: &[u8], w: u32, h: u32, cw: u32, ch: u32, bpp: u32) -> (u32, u
         }
     }
     (cw, ch, out)
+}
+
+/// 把 RGBA8888 像素数据**垂直翻转行序**（bottom-up → top-down，或反之）。
+/// 对齐 shaders/image.wgsl 的上传纹理约定（v=0=顶部，top-down）：JPEG 解码（jpeg-decoder
+/// crate）输出是 **bottom-up**（首行=图像底部），直接上传会被 image.wgsl 的 `1.0-corner.y`
+/// 上下颠倒（EVA 2683211654 主图为 JPEG，实测 wasm 渲染整图颠倒；window 桌面原生渲染正确）。
+/// 故 JPEG 分支解码为 RGBA 后翻转回 top-down，与 PNG 解码（top-down）方向一致。
+/// bpp = 每像素字节数（RGBA=4）；行 = width*bpp 字节。
+fn flip_rows_topdown(rgba: &[u8], width: u32, height: u32, bpp: usize) -> Vec<u8> {
+    let w = width as usize;
+    let row = w * bpp;
+    let mut out = Vec::with_capacity(row * height as usize);
+    for y in 0..height as usize {
+        let src = (height as usize - 1 - y) * row; // 源：底→顶
+        out.extend_from_slice(&rgba[src..src + row]);
+    }
+    out
 }
 
 /// 块压缩格式按 4×4 块裁剪：目标尺寸向上取整到 4 的倍数（BC 纹理尺寸约束），
@@ -430,7 +451,17 @@ pub fn parse_tex(data: &[u8]) -> Option<TexImage> {
                 }
             }
             if mip0.is_none() {
-                mip0 = Some((w, h, out));
+                // UNKNOWN(-1) 魔数嗅探失败 → 透传原始 mip 数据（编码图像非 PNG/JPEG，WE 以
+                // Rgba8888 原始像素装载）。该原始数据为 **bottom-up**（首行=图像底部），直接
+                // 上传会被 shaders/image.wgsl 的 top-down 约定（v=0=顶部）**上下颠倒**（Orange
+                // 部件 Тело/Волосы/Юбка 实测乱倒挂）。故透传 Rgba8888 时翻转回 top-down，
+                // 与 PNG top-down / JPEG 已翻转对齐。
+                let flip_needed = encoded_image_format == Some(u32::MAX) && format == 0; // 0 = Rgba8888
+                if flip_needed {
+                    mip0 = Some((w, h, flip_rows_topdown(&out, w, h, 4)));
+                } else {
+                    mip0 = Some((w, h, out));
+                }
             }
             pos += bytes_len;
         }
