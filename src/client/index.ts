@@ -4,7 +4,7 @@ import { createWallpaperController } from './wallpaper-controller.js';
 import { renderScene } from './scene-renderer.js';
 import { createWasmSceneRenderer, createFallbackSceneRenderer } from './wasm-renderer.js';
 import { WallpaperSettingsSection, setWallpaperSelectHandler } from './settings-section.js';
-import { readClientSettings, writeClientSettings, getUserPropertyValue, DEFAULTS } from './settings.js';
+import { readClientSettings, writeClientSettings, getUserPropertyValue, DEFAULTS, setSettingsCtx } from './settings.js';
 import type { BackgroundPlan, ClientSettings } from './types.js';
 
 declare global {
@@ -15,6 +15,8 @@ declare global {
 export const SETTINGS_SECTION_ID = 'wallpaper-engine';
 
 export function bootstrap(ctx?: any): void {
+  // DSH 0.1.2-rc.1：设置走 ctx.remote.settings（Typert），须注入 settingsCtx 供读写
+  setSettingsCtx(ctx);
   injectWallpaperStyles();
   let layer: ReturnType<typeof createBackgroundLayer> | null = null;
   let controller: ReturnType<typeof createWallpaperController> | null = null;
@@ -123,5 +125,6 @@ export function apply(ctx: any): void {
 }
 
 // Cordis 依赖声明：apply 通过 ctx.slots 注册设置菜单（settings.section slot），
-// 必须 inject 'slots' 服务（官方 client 插件同样导出 inject 数组）。
-export const inject = ['slots'];
+// 并通过 ctx.remote.settings 读写插件设置（官方 client 插件同款注入）。
+// 必须 inject 'slots'、'remote'、'remote.settings' 服务。
+export const inject = ['slots', 'remote', 'remote.settings'];

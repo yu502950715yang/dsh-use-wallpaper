@@ -26533,41 +26533,38 @@ var DEFAULTS = {
   blurRadius: 12,
   kenBurns: true
 };
-function newRpcId() {
-  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+var settingsCtx = null;
+function setSettingsCtx(ctx) {
+  settingsCtx = ctx;
 }
-async function rpc(method, payload) {
-  try {
-    const resp = await fetch("/api/" + method, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: "client-request", rpcId: newRpcId(), method, payload })
-    });
-    if (!resp.ok) return null;
-    const body = await resp.json();
-    if (typeof body !== "object" || body === null) return null;
-    const result = body.result;
-    if (!result) return null;
-    return { ok: result.ok === true, value: result.value };
-  } catch {
-    return null;
-  }
+function settingsRemote() {
+  return settingsCtx?.remote?.settings ?? null;
 }
 async function readClientSettings() {
-  const res = await rpc("settings.describe", {});
-  const value = res?.ok ? res.value : void 0;
-  if (typeof value === "object" && value !== null) {
-    const namespaces = value.namespaces;
-    const nsRow = namespaces?.find((n) => n.ns === NS);
-    const nsValue = nsRow?.value;
-    if (typeof nsValue === "object" && nsValue !== null) {
-      return { ...DEFAULTS, ...nsValue };
+  const remote = settingsRemote();
+  if (!remote) return { ...DEFAULTS };
+  try {
+    const resp = await remote.describe();
+    const value = resp?.ok ? resp.value : void 0;
+    if (typeof value === "object" && value !== null) {
+      const namespaces = value.namespaces;
+      const nsRow = namespaces?.find((n) => n.ns === NS);
+      const nsValue = nsRow?.value;
+      if (typeof nsValue === "object" && nsValue !== null) {
+        return { ...DEFAULTS, ...nsValue };
+      }
     }
+  } catch {
   }
   return { ...DEFAULTS };
 }
 async function writeClientSettings(patch) {
-  await rpc("settings.update", { ns: NS, patch });
+  const remote = settingsRemote();
+  if (!remote) return;
+  try {
+    await remote.update(NS, patch, void 0);
+  } catch {
+  }
 }
 var USERPROP_PREFIX = "we:userprop:";
 function getUserPropertyValue(key) {
@@ -26729,6 +26726,7 @@ function WallpaperSettingsSection(props) {
 // src/client/index.ts
 var SETTINGS_SECTION_ID = "wallpaper-engine";
 function bootstrap(ctx) {
+  setSettingsCtx(ctx);
   injectWallpaperStyles();
   let layer = null;
   let controller = null;
@@ -26828,7 +26826,7 @@ function bootstrap(ctx) {
 function apply(ctx) {
   bootstrap(ctx);
 }
-var inject = ["slots"];
+var inject = ["slots", "remote", "remote.settings"];
 /*! Bundled license information:
 
 three/build/three.module.js:

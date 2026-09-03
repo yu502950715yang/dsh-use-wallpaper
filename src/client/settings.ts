@@ -1,8 +1,11 @@
 import type { ClientSettings } from './types.js';
 
-// DSH 设置是 POST RPC（apiproxy settings.schema.js）：settings.describe /
-// settings.update 走 /api/<method> 的 client-request envelope，非 REST GET/PATCH。
-// 任何失败（网络、非 JSON、错误码）都静默回退默认值。
+// DSH 0.1.2-rc.1 起设置系统改用 Typert 远程方法（ctx.remote.settings）：
+// describe() 读取、update(ns, patch, revision) 深合并写入——取代旧版
+// fetch('/api/settings.describe') 的 client-request RPC（新版已不识别该接口，
+// 导致设置读写静默回退默认值 → 保存丢失/刷新后壁纸消失）。
+// 插件 client 须在 index.ts 的 inject 声明 'remote','remote.settings'，并在
+// bootstrap 时 setSettingsCtx(ctx)，使本模块能经 ctx.remote.settings 访问。
 
 const NS = 'wallpaper-engine';
 
@@ -11,46 +14,50 @@ export const DEFAULTS: ClientSettings = {
   overlayOpacity: 0.35, blurEnabled: false, blurRadius: 12, kenBurns: true,
 };
 
-function newRpcId(): string {
-  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+/** client cordis ctx（经 setSettingsCtx 注入，供 remote.settings 访问）。 */
+let settingsCtx: any = null;
+
+/** 注入 client ctx：bootstrap(ctx) 时调用；无 ctx（node 测试/SSR）时回退默认值。 */
+export function setSettingsCtx(ctx: any): void {
+  settingsCtx = ctx;
 }
 
-interface RpcResult { ok: boolean; value: unknown }
+/** remote.settings.describe() 的响应：{ ok, value } / { ok:false, error }。 */
+interface RemoteResponse { ok: boolean; value?: any; error?: { message?: string } }
 
-async function rpc(method: string, payload: unknown): Promise<RpcResult | null> {
-  try {
-    const resp = await fetch('/api/' + method, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'client-request', rpcId: newRpcId(), method, payload }),
-    });
-    if (!resp.ok) return null;
-    const body: unknown = await resp.json();
-    if (typeof body !== 'object' || body === null) return null;
-    const result = (body as { result?: { ok?: boolean; value?: unknown } }).result;
-    if (!result) return null;
-    return { ok: result.ok === true, value: result.value };
-  } catch {
-    return null;
-  }
+function settingsRemote(): any {
+  return settingsCtx?.remote?.settings ?? null;
 }
 
 export async function readClientSettings(): Promise<ClientSettings> {
-  const res = await rpc('settings.describe', {});
-  const value = res?.ok ? res.value : undefined;
-  if (typeof value === 'object' && value !== null) {
-    const namespaces = (value as { namespaces?: Array<{ ns?: unknown; value?: unknown }> }).namespaces;
-    const nsRow = namespaces?.find((n) => n.ns === NS);
-    const nsValue = nsRow?.value;
-    if (typeof nsValue === 'object' && nsValue !== null) {
-      return { ...DEFAULTS, ...(nsValue as Partial<ClientSettings>) };
+  const remote = settingsRemote();
+  if (!remote) return { ...DEFAULTS };
+  try {
+    const resp: RemoteResponse = await remote.describe();
+    const value = resp?.ok ? resp.value : undefined;
+    if (typeof value === 'object' && value !== null) {
+      const namespaces = (value as { namespaces?: Array<{ ns?: unknown; value?: unknown }> }).namespaces;
+      const nsRow = namespaces?.find((n) => n.ns === NS);
+      const nsValue = nsRow?.value;
+      if (typeof nsValue === 'object' && nsValue !== null) {
+        return { ...DEFAULTS, ...(nsValue as Partial<ClientSettings>) };
+      }
     }
+  } catch {
+    // 读取失败 → 静默回退默认值
   }
   return { ...DEFAULTS };
 }
 
 export async function writeClientSettings(patch: Partial<ClientSettings>): Promise<void> {
-  await rpc('settings.update', { ns: NS, patch });
+  const remote = settingsRemote();
+  if (!remote) return;
+  try {
+    // update(ns, patch, revision)：revision 不传（undefined）→ 无条件写。
+    await remote.update(NS, patch, undefined);
+  } catch {
+    // 写入失败静默（插件不因此中断）
+  }
 }
 
 // WE 用户属性读取（T4.2）：scene.json 的 visible:{user,value} 绑定按 key 查询用户
