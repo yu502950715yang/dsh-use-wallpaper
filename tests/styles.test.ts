@@ -115,4 +115,11 @@ describe('styles 主题适配', () => {
     // 选择器是逗号分组（bubble, bubble p, ... bubble code{），code 是最后一条直接跟 {。
     expect(WALLPAPER_CSS).toMatch(/\[class\*="flowItem"\]\s*\[class\*="bubble"\]\s*code\s*\{[^}]*color:var\(--dsw-alias-label-primary,inherit\)/);
   });
+  it('聊天顶部 header（文字+图标）跟随壁纸亮度', () => {
+    // 2026-09-03：聊天 header（ChatHeader wSkVaW_header / headerActions / headerUtilities）
+    // 背景透明贴壁纸，文字/图标用固定深灰 → 暗壁纸下看不清，跟随 --wp-chat-fg 反色。
+    expect(WALLPAPER_CSS).toMatch(/body\[data-we-wallpaper\]\s*\[class\*="wSkVaW_header"\]/);
+    // 规则体：header（含 header * 通配）都设 --wp-chat-fg
+    expect(WALLPAPER_CSS).toMatch(/\[class\*="wSkVaW_header"\]\s*\*\s*\{[^}]*color:var\(--wp-chat-fg,/);
+  });
 });

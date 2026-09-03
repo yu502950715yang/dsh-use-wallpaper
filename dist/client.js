@@ -2393,6 +2393,13 @@ body[data-we-wallpaper] [class*="flowItem"] [class*="fileLink"],
 body[data-we-wallpaper] [class*="flowItem"] [class*="_file"]{
   color:var(--wp-chat-fg,var(--dsw-alias-label-primary,inherit));
 }
+/* \u804A\u5929\u9876\u90E8 header\uFF08\u4F1A\u8BDD\u6807\u9898\u680F wSkVaW_header / headerActions / headerUtilities\uFF09\uFF1A
+   \u80CC\u666F\u900F\u660E\u8D34\u58C1\u7EB8\uFF0C\u6587\u5B57/\u56FE\u6807\u7528\u56FA\u5B9A\u6DF1\u7070 \u2192 \u6697\u58C1\u7EB8\u4E0B\u770B\u4E0D\u6E05\u3002\u8DDF\u968F --wp-chat-fg \u53CD\u8272\u3002
+   ChatHeader \u7EC4\u4EF6\u7C7B\uFF08wSkVaW_header \u524D\u7F00\uFF09\uFF0C\u5176\u64CD\u4F5C\u56FE\u6807 fill="currentColor" \u7EE7\u627F\u5BB9\u5668 color\u3002 */
+body[data-we-wallpaper] [class*="wSkVaW_header"],
+body[data-we-wallpaper] [class*="wSkVaW_header"] *{
+  color:var(--wp-chat-fg,var(--dsw-alias-label-primary,inherit));
+}
 /* li \u5217\u8868\u70B9\uFF08::marker\uFF09\uFF1ADSH \u7ED9 marker \u5355\u72EC\u8BBE\u6DF1\u7070\uFF08--dsw-alias-label-secondary\uFF09\uFF0C
    \u8986\u76D6\u4E86\u7EE7\u627F\uFF1Bli \u6587\u672C\u5DF2\u8DDF\u968F --wp-chat-fg \u4F46\u70B9\u4ECD\u662F\u6DF1\u7070 \u2192 \u6697\u58C1\u7EB8\u4E0B\u770B\u4E0D\u6E05\u3002
    \u8BA9 marker \u540C\u6837\u8DDF\u968F --wp-chat-fg \u53CD\u8272\u3002 */

@@ -186,6 +186,13 @@ body[data-we-wallpaper] [class*="flowItem"] [class*="fileLink"],
 body[data-we-wallpaper] [class*="flowItem"] [class*="_file"]{
   color:var(--wp-chat-fg,var(--dsw-alias-label-primary,inherit));
 }
+/* 聊天顶部 header（会话标题栏 wSkVaW_header / headerActions / headerUtilities）：
+   背景透明贴壁纸，文字/图标用固定深灰 → 暗壁纸下看不清。跟随 --wp-chat-fg 反色。
+   ChatHeader 组件类（wSkVaW_header 前缀），其操作图标 fill="currentColor" 继承容器 color。 */
+body[data-we-wallpaper] [class*="wSkVaW_header"],
+body[data-we-wallpaper] [class*="wSkVaW_header"] *{
+  color:var(--wp-chat-fg,var(--dsw-alias-label-primary,inherit));
+}
 /* li 列表点（::marker）：DSH 给 marker 单独设深灰（--dsw-alias-label-secondary），
    覆盖了继承；li 文本已跟随 --wp-chat-fg 但点仍是深灰 → 暗壁纸下看不清。
    让 marker 同样跟随 --wp-chat-fg 反色。 */
