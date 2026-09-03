@@ -1215,14 +1215,30 @@ mod imp {
                 let end = group_starts[g + 1];
                 let group_last_global = end - 1;
                 let is_final_group = g == num_groups - 1;
-                let mut prev_write: Option<u8> = None; // 组内 ping-pong 写端
-                let mut group_out: &wgpu::TextureView = input_view;
+                // 组内 ping-pong 写端。初始 prev_write 需让**组首 pass 的写端避开组输入**
+                // `group_input`（避免同一纹理在同一 pass 里既被采样(RESOURCE)又被当渲染
+                // 目标(COLOR_TARGET) → wgpu 用法冲突，Orange 等纯 ping-pong 链分组后触发）。
+                // `pick_write_target`：None→rt_a(0)，Some(0)→rt_b(1)，Some(1)→rt_a(0)。故：
+                //   - group_input=input_view（首组，无前组输出）→ prev_write=None → 组首写 rt_a；
+                //   - group_input=rt_a（前组 transit 输出）→ prev_write=Some(0) → 组首写 rt_b（对端）；
+                //   - group_input=rt_b（前组 transit 输出）→ prev_write=Some(1) → 组首写 rt_a（对端）。
+                let mut prev_write: Option<u8> = if std::ptr::eq(group_input, &self.rt_a_view) {
+                    Some(0)
+                } else if std::ptr::eq(group_input, &self.rt_b_view) {
+                    Some(1)
+                } else {
+                    None
+                };
+                let mut group_out: &wgpu::TextureView = group_input;
                 for i in start..end {
                     let last = i == group_last_global; // 组内 last
                     let has_rt = self.passes[i].target.as_deref().map(|s| !s.is_empty()).unwrap_or(false);
+                    // 读源：优先 bind[0]（具名 RT / previous → input_view / 链式）。
+                    let pass_read: &wgpu::TextureView = self.resolve_pass_read(i, group_input, input_view);
                     // 写端：
                     // - target 非空 → 写具名 RT（named_rt[target].view，含降采样）；
-                    // - target 空 && 组内 last → 写"组输出"（final group→output_view，否则 transit rt_a_view）；
+                    // - target 空 && 组内 last → 写"组输出"（final group→output_view，否则 transit
+                    //   写**读端对端**，避免同一纹理既采样(RESOURCE)又当渲染目标(COLOR_TARGET)冲突）；
                     // - target 空 && 非组内 last → ping-pong 写对端 rt_a/rt_b。
                     let write_view: &wgpu::TextureView = if has_rt {
                         &self
@@ -1231,14 +1247,20 @@ mod imp {
                             .map(|e| &e.view)
                             .unwrap_or(&output_view)
                     } else if last {
-                        if is_final_group { &output_view } else { &self.rt_a_view }
+                        if is_final_group {
+                            &output_view
+                        } else if std::ptr::eq(pass_read, &self.rt_a_view) {
+                            &self.rt_b_view
+                        } else if std::ptr::eq(pass_read, &self.rt_b_view) {
+                            &self.rt_a_view
+                        } else {
+                            &self.rt_a_view
+                        }
                     } else {
                         let idx = pick_write_target(prev_write);
                         prev_write = Some(idx);
                         if idx == 0 { &self.rt_a_view } else { &self.rt_b_view }
                     };
-                    // 读源：优先 bind[0]（具名 RT / previous → input_view / 链式）。
-                    let pass_read: &wgpu::TextureView = self.resolve_pass_read(i, group_input, input_view);
                     // 更新 g_Time：仅对含 g_Time 字段的 block 每帧重写。
                     for uins in &self.passes[i].uniform_instances {
                         if let Some(off) = uins.g_time_offset {
