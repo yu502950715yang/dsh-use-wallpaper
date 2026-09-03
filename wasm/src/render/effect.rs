@@ -540,6 +540,10 @@ pub struct EffectPassDesc {
     // 空字符串 = sampler2D 输入。与 shader 的 g_Texture(i+1) 槽一一对应。
     #[serde(default)]
     pub bind: Vec<EffectBind>,
+    // 所属 effect 组（group_id，2026-08-31）：同一 effect 的 pass 用相同 id。wasm 按组执行
+    // （组内 target/bind 或线性，组间串行——前组输出喂后组输入），修复多 effect flatten 白屏。
+    #[serde(default)]
+    pub group_id: u32,
 }
 
 /// 效果链 pass 的 bind 条目：name 引用（具名 RT / "previous" / 独立纹理），index = 纹理槽序。
@@ -884,6 +888,8 @@ mod imp {
         // ── RT 图信息（2026-08-31 阶段1：wasm EffectChain 升级为 RT 图执行器）──
         // 本 pass 写到的具名 RT（空 = 最终输出对象 out RT / 旧 ping-pong 行为）。
         pub target: Option<String>,
+        // 所属 effect 组（group_id），render 按组串行执行。
+        pub group_id: u32,
         // 本 pass 的 3 个读端槽：bind[i].name 引用具名 RT / "previous" / 空(=输入)。
         // 与 shader 的 g_Texture(i+1) 槽对齐（bind[0] 是 g_Texture1 语义）。
         pub bind: Vec<EffectBind>,
@@ -1062,6 +1068,7 @@ mod imp {
                     // RT 图信息（2026-08-31 阶段1）：target/bind 从 effect.json 传入。
                     target: desc.target.clone(),
                     bind: desc.bind.clone(),
+                    group_id: desc.group_id,
                 };
                 if let Some(err) = device.pop_error_scope().await {
                     web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(&format!(
@@ -1187,70 +1194,86 @@ mod imp {
             if n == 0 {
                 return;
             }
-            let mut read_view: &wgpu::TextureView = input_view;
-            let mut prev_write: Option<u8> = None;
-            for i in 0..n {
-                let last = i == n - 1;
-                // 具名 RT 目标标记（2026-08-31 阶段1）：pass.target 为 Some(非空) → 写具名 RT。
-                let has_rt = self.passes[i].target.as_deref().map(|s| !s.is_empty()).unwrap_or(false);
-                // 写端（2026-08-31 阶段1：RT 图支持）：
-                // - pass.target 非空 → 写具名 RT（named_rt[target].view，含降采样）；
-                // - target 空 → 旧 ping-pong：末 pass 写 output_view，否则写对端 rt_a/rt_b。
-                let write_view: &wgpu::TextureView = if has_rt {
-                    &self
-                        .named_rt
-                        .get(self.passes[i].target.as_deref().unwrap_or(""))
-                        .map(|e| &e.view)
-                        .unwrap_or(&output_view)
-                } else if last {
-                    output_view
-                } else {
-                    let idx = pick_write_target(prev_write);
-                    prev_write = Some(idx);
-                    if idx == 0 { &self.rt_a_view } else { &self.rt_b_view }
-                };
-                // 读源（2026-08-31 阶段1）：优先按 pass.bind[0] 决定；bind 空/未命中 → 链式 read_view。
-                // - bind[0].name 为具名 RT → named_rt[名].view；
-                // - bind[0].name == "previous" 或空 → input_view（原始内容）；
-                // - 其它/无 bind → 链式 read_view（旧行为，兼容无具名 RT 链的线性依赖）。
-                let pass_read: &wgpu::TextureView = self.resolve_pass_read(i, read_view, input_view);
-                // 更新 g_Time：仅对含 g_Time 字段的 block 每帧重写（g_Time 位于其 std140 offset，
-                // 而非固定偏移 0）。无 g_Time 的 block 保持静态（new 已写好）。字段级借用（disjoint）：
-                // 对 self.passes[i] 与 self.queue 的不可变借用互不重叠，编译器允许。
-                for uins in &self.passes[i].uniform_instances {
-                    if let Some(off) = uins.g_time_offset {
-                        let mut data = uins.block_data.clone();
-                        if let Some(slot) = data.get_mut((off / 4) as usize) {
-                            *slot = time;
+            // ── 按 effect 分组（group_id，2026-08-31）──
+            // JS buildEffectChainDesc 按 fx 顺序入组（同一 effect 的 pass 用相同 group_id，
+            // 连续排列）。这里以 group_id 跳变为界，切分 pass 到各组。组内执行 RT 图/线性
+            // （target/bind/ping-pong；组内 last 判定），组间串行（前组输出 → 下组输入）——
+            // 修复多 effect flatten 成单一 chain 导致组合错误/白屏（Eva01 等）。
+            let mut group_starts: Vec<usize> = vec![0];
+            for i in 1..n {
+                if self.passes[i].group_id != self.passes[i - 1].group_id {
+                    group_starts.push(i);
+                }
+            }
+            group_starts.push(n); // 哨兵：group k 的 pass 范围 = [group_starts[k], group_starts[k+1])
+            let num_groups = group_starts.len() - 1;
+            // 组间串行传递量：本组输出（组尾写端）供下组输入。前组输出若为 transit（rt_a）
+            // 或具名 RT 视图，作为下组首 pass 的"链式输入"。
+            let mut group_input: &wgpu::TextureView = input_view;
+            for g in 0..num_groups {
+                let start = group_starts[g];
+                let end = group_starts[g + 1];
+                let group_last_global = end - 1;
+                let is_final_group = g == num_groups - 1;
+                let mut prev_write: Option<u8> = None; // 组内 ping-pong 写端
+                let mut group_out: &wgpu::TextureView = input_view;
+                for i in start..end {
+                    let last = i == group_last_global; // 组内 last
+                    let has_rt = self.passes[i].target.as_deref().map(|s| !s.is_empty()).unwrap_or(false);
+                    // 写端：
+                    // - target 非空 → 写具名 RT（named_rt[target].view，含降采样）；
+                    // - target 空 && 组内 last → 写"组输出"（final group→output_view，否则 transit rt_a_view）；
+                    // - target 空 && 非组内 last → ping-pong 写对端 rt_a/rt_b。
+                    let write_view: &wgpu::TextureView = if has_rt {
+                        &self
+                            .named_rt
+                            .get(self.passes[i].target.as_deref().unwrap_or(""))
+                            .map(|e| &e.view)
+                            .unwrap_or(&output_view)
+                    } else if last {
+                        if is_final_group { &output_view } else { &self.rt_a_view }
+                    } else {
+                        let idx = pick_write_target(prev_write);
+                        prev_write = Some(idx);
+                        if idx == 0 { &self.rt_a_view } else { &self.rt_b_view }
+                    };
+                    // 读源：优先 bind[0]（具名 RT / previous → input_view / 链式）。
+                    let pass_read: &wgpu::TextureView = self.resolve_pass_read(i, group_input, input_view);
+                    // 更新 g_Time：仅对含 g_Time 字段的 block 每帧重写。
+                    for uins in &self.passes[i].uniform_instances {
+                        if let Some(off) = uins.g_time_offset {
+                            let mut data = uins.block_data.clone();
+                            if let Some(slot) = data.get_mut((off / 4) as usize) {
+                                *slot = time;
+                            }
+                            self.queue.write_buffer(&uins.buffer, 0, bytemuck::cast_slice(&data));
                         }
-                        self.queue.write_buffer(&uins.buffer, 0, bytemuck::cast_slice(&data));
+                    }
+                    let bind_group = self.build_bind_group(i, pass_read, input_view);
+                    let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("effect-chain-pass"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: write_view,
+                            resolve_target: None,
+                            ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
+                    rpass.set_pipeline(&self.passes[i].pipeline);
+                    rpass.set_vertex_buffer(0, self.quad_vb.slice(..));
+                    rpass.set_bind_group(0, &bind_group, &[]);
+                    rpass.draw(0..4, 0..1);
+                    drop(rpass);
+                    // 组输出记录：本 pass 若是组内 last，其写端即组输出（供下组读）。
+                    if last {
+                        group_out = write_view;
                     }
                 }
-                // bind group（按 shader 声明的绑定布置资源）
-                let bind_group = self.build_bind_group(i, pass_read, input_view);
-                let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("effect-chain-pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: write_view,
-                        resolve_target: None,
-                        ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
-                rpass.set_pipeline(&self.passes[i].pipeline);
-                rpass.set_vertex_buffer(0, self.quad_vb.slice(..));
-                rpass.set_bind_group(0, &bind_group, &[]);
-                rpass.draw(0..4, 0..1);
-                drop(rpass);
-                // 链式 read_view 更新：仅当 pass 走旧 ping-pong（target 空）且非末 pass 时，
-                // 下一 pass 才能链式读本 pass 写的 rt_a/rt_b。写具名 RT 的 pass 更新链式为
-                // input_view（保守，后续没显式 bind 的 pass 读到原始内容兜底，避免错位）。
-                if !last && !has_rt {
-                    read_view = write_view;
-                } else if has_rt {
-                    read_view = input_view;
+                // 组间串行：非 final 组的输出作为下组输入。
+                if !is_final_group {
+                    group_input = group_out;
                 }
             }
         }

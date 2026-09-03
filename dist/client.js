@@ -26062,14 +26062,17 @@ async function buildEffectChainDesc(id, effects) {
       }
     };
     const passes = [];
+    let groupId = 0;
     for (const fx of effects) {
       if (typeof fx?.file !== "string") continue;
       const chain = await resolveEffectChain(
         fx,
         loadFile
       );
-      if (!chain) continue;
-      if (!chain) continue;
+      if (!chain) {
+        groupId++;
+        continue;
+      }
       for (const p of chain) {
         try {
           const naga = glslToNagaGlsl(p);
@@ -26104,19 +26107,21 @@ async function buildEffectChainDesc(id, effects) {
             // （Orange 等）传 null → wasm 走旧 ping-pong，不误入 RT 图。
             target: p.target ?? null,
             bind: Array.isArray(p.bind) ? p.bind : [],
-            fbo_scale: p.fboScale ?? {}
+            fbo_scale: p.fboScale ?? {},
+            group_id: groupId
           });
         } catch (e) {
           console.warn(`[wasm] \u6548\u679C\u94FE pass \u8DF3\u8FC7\uFF08\u7F16\u8BD1\u5931\u8D25\uFF09\uFF1A${e instanceof Error ? e.message : String(e)}`);
         }
       }
+      groupId++;
     }
     if (passes.length === 0) {
       console.warn(`[wasm] buildEffectChainDesc(${id}): \u65E0\u6709\u6548 pass\uFF08\u6548\u679C\u94FE\u89E3\u6790\u5931\u8D25/\u65E0 pass\uFF09\u2192 \u5BF9\u8C61\u663E\u793A\u539F\u59CB\u5185\u5BB9\uFF08\u65E0\u6548\u679C\u94FE\uFF09`);
       return new Uint8Array(0);
     }
     if (passes.some((p) => (p.target ?? "") !== "")) {
-      console.warn(`[wasm] buildEffectChainDesc(${id}): \u68C0\u6D4B\u5230\u5177\u540D RT \u6548\u679C\u94FE\uFF08\u9636\u6BB51\u9AA8\u67B6\u6682\u4E0D\u6E32\u67D3\uFF09\u2192 \u56DE\u9000\u663E\u793A\u539F\u59CB\u5185\u5BB9`);
+      console.warn(`[wasm] buildEffectChainDesc(${id}): \u68C0\u6D4B\u5230\u5177\u540D RT \u6548\u679C\u94FE\uFF08\u6548\u679C\u8F93\u51FA\u8FC7\u5EA6\uFF09\u2192 \u56DE\u9000\u663E\u793A\u539F\u59CB\u5185\u5BB9`);
       return new Uint8Array(0);
     }
     return new TextEncoder().encode(JSON.stringify(passes));

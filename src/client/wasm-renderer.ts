@@ -85,6 +85,9 @@ async function buildEffectChainDesc(id: string, effects: unknown[]): Promise<Uin
       target: string | null;
       bind: { name: string; index: number }[];
       fbo_scale: Record<string, number>;
+      // 所属 effect 组（group_id）：同一 effect 的 pass 用相同 group_id，wasm 按组执行
+      // （组内 RT 图/线性，组间串行——前组输出喂后组输入），修复多 effect flatten 白屏。
+      group_id: number;
     }
     // 拉取某个纹理槽的真实 `.tex` 字节（number[]，供 wasm `EffectPassDesc.texture_bytes`）。
     // 内置/运行时（util/*、_rt_）→ null（wasm 用白色占位）。文件路径 → resolveTextureSlotPath
@@ -112,14 +115,14 @@ async function buildEffectChainDesc(id: string, effects: unknown[]): Promise<Uin
       }
     };
     const passes: WirePass[] = [];
+    let groupId = 0;
     for (const fx of effects) {
       if (typeof (fx as { file?: unknown } | null)?.file !== 'string') continue;
       const chain = await resolveEffectChain(
         fx as { file: string; passes?: unknown[] },
         loadFile,
       );
-      if (!chain) continue;
-      if (!chain) continue;
+      if (!chain) { groupId++; continue; }
       for (const p of chain) {
         // task-18：WebGPU inter-stage 匹配校验 + per-pass 容错。WE 效果 shader 偶有 fragment 输入
         // 无对应 vertex 输出（如 waterripple.frag 的 `varying vec2 v_Scroll` 而其 vert 未输出），
@@ -177,22 +180,24 @@ async function buildEffectChainDesc(id: string, effects: unknown[]): Promise<Uin
             target: p.target ?? null,
             bind: Array.isArray(p.bind) ? p.bind : [],
             fbo_scale: p.fboScale ?? {},
+            group_id: groupId,
           });
         } catch (e) {
           console.warn(`[wasm] 效果链 pass 跳过（编译失败）：${e instanceof Error ? e.message : String(e)}`);
         }
       }
+      groupId++;
     }
     if (passes.length === 0) {
       console.warn(`[wasm] buildEffectChainDesc(${id}): 无有效 pass（效果链解析失败/无 pass）→ 对象显示原始内容（无效果链）`);
       return new Uint8Array(0);
     }
-    // ⚠ 阶段1探测：含"具名 RT"（target 非空）的效果链（多 pass + 降采样，如 Eva 01 的 blur）
-    // 当前 wasm RT 图骨架会渲染成白屏（主图丢失）。为保主图可见，先回退"显示原始内容"
-    // （effect_chain=None → 合成 quad 采样 content_view）。Orange/godrays 等无具名 RT 链不受影响
-    // （target 均为 null，走旧线性拼正确）。完整 RT 图执行器作为后续（见 AGENT.md）。
+    // ⚠ 复权：含"具名 RT"（target 非空）的效果链（多 pass + 降采样）
+    // 分组串行虽跑起来但效果输出过度（主图被模糊弱化，如 Eva01 显示模糊光晕铺满），
+    // 视觉不如"显示原始内容"。故暂回退（主图清晰可见）。分组串行正确性（blur combine
+    // 比例/降采样坐标/多纹理槽）留待后续深挖（AGENT.md）。
     if (passes.some((p) => (p.target ?? '') !== '')) {
-      console.warn(`[wasm] buildEffectChainDesc(${id}): 检测到具名 RT 效果链（阶段1骨架暂不渲染）→ 回退显示原始内容`);
+      console.warn(`[wasm] buildEffectChainDesc(${id}): 检测到具名 RT 效果链（效果输出过度）→ 回退显示原始内容`);
       return new Uint8Array(0);
     }
     return new TextEncoder().encode(JSON.stringify(passes));
