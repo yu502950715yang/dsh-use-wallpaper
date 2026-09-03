@@ -54,7 +54,7 @@ const CAMERA_DISTANCE = 300; // 相机沿 +z 放置，使 shader 中 300/-mv.z =
 
 // 对象级渲染目标尺寸上限：防止超大对象（如 6144px 贴图）的对象 RT 撑爆 VRAM
 // （逐轴钳制，见 objectCameraRange 注释）。
-const OBJECT_RT_MAX = 2048;
+const OBJECT_RT_MAX = 4096;
 
 // 材质调制系数（T4.3）：WE 对象 color/alpha/brightness → three 材质输入。
 //   color：0-255 量级（optColor 归一化输出）→ /255 到 0-1；
