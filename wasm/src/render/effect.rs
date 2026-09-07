@@ -1467,20 +1467,21 @@ mod imp {
     }
 
     /// 全屏 quad 顶点缓冲（triangle-strip，4 顶点；pos.xy NDC + uv.xy）。a_Position/a_TexCoord。
-    /// UV 方向（2026-08-31 方向修正，与 shaders/image.wgsl 同源约定）：效果链输入/输出均为
-    /// 渲染目标（WebGPU 渲染目标纹理 v=0 = 顶部内存行 = NDC 顶部内容）。要使 pass 保持
-    /// 「输出顶部采样输入顶部」（不翻转内容），输出 NDC 顶部（y=+1）的 a_TexCoord.v 必须为 0
-    /// （输入顶部），故 uv.y 在 NDC 顶部取 0、底部取 1（与旧实现相反）。旧实现 uv.y 顶部取 1
-    /// → 输出顶部采样输入底部 → 内容上下颠倒；但因对象内容经 image.wgsl 的旧 `1.0-corner.y`
-    /// 翻转后恰好被此翻转抵消（`flip∘flip=identity`），旧效果链方向正确。2026-08-31 统一
-    /// image.wgsl 为 `corner.y`（上传纹理 v=0=图像底部，需 v=+corner.y）后，内容不再翻转，
-    /// 此 quad 必须同时反转 uv.y，使效果链仍采样**内容顶部于输出顶部**（shader 采样到的 texel
-    /// 不变，godrays 等真实 WE 效果输出与原样一致），否则效果链会把现在已正立的内容再翻转 → 颠倒。
+    /// UV 方向（2026-09 修正，headless 实测）：对象级效果链的输入 content RT 在效果链里实际为
+    /// **bottom-up**（v=0=内容底部）。WE 效果 shader 直接 `texture(g_Texture0, v_TexCoord.xy)` 采样
+    /// 会上下颠倒（Crimson 3765967112 主图经 foliagesway 效果链镜像，headless 恒等效果链复现）。
+    /// 故 QUAD 的 a_TexCoord **翻转 y**（top 顶点取 v=1=内容底部）→ 效果 shader 采样后与"空效果链
+    /// copy content→out（正立）"一致。本 QUAD 用于**所有对象级效果链 pass**（全局行为变更；headless
+    /// 恒等/真实链 + 全库实机已确认无回归）；空效果链走 copy、不经本 QUAD。
+    /// 历史澄清：更早注释称「top 顶点取 v=0（恒等，输出顶=输入顶）」——与现实现**不符**，已被本修正
+    /// 取代（现数组 top-left/top-right 的 uv.y=1）。上传纹理为 v=0=顶部（top-down，见 tex.rs）；
+    /// 效果链输出是否正立由输入 content RT 方向决定。QUAD 方向与 image.wgsl 的 UV 约定强耦合，
+    /// 改动 image.wgsl 方向时须同步复核此处。
     const QUAD: [f32; 16] = [
-        -1.0, -1.0, 0.0, 1.0, // bottom-left:  pos(-1,-1), uv(0,1)
-         1.0, -1.0, 1.0, 1.0, // bottom-right: uv(1,1)
-        -1.0,  1.0, 0.0, 0.0, // top-left:     uv(0,0)
-         1.0,  1.0, 1.0, 0.0, // top-right:    uv(1,0)
+        -1.0, -1.0, 0.0, 0.0, // bottom-left:  pos(-1,-1), uv(0,0)
+         1.0, -1.0, 1.0, 0.0, // bottom-right: uv(1,0)
+        -1.0,  1.0, 0.0, 1.0, // top-left:     uv(0,1)
+         1.0,  1.0, 1.0, 1.0, // top-right:    uv(1,1)
     ];
 
     fn create_quad_vb(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Buffer {

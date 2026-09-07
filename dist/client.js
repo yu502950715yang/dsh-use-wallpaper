@@ -24152,7 +24152,7 @@ function applyAlignment(origin, worldSize, alignment) {
 
 // src/client/scene-renderer.ts
 var CAMERA_DISTANCE = 300;
-var OBJECT_RT_MAX = 2048;
+var OBJECT_RT_MAX = 4096;
 function materialModulation(color, alpha, brightness) {
   const b = brightness ?? 1;
   const clamp01 = (v) => Math.max(0, Math.min(1, v));

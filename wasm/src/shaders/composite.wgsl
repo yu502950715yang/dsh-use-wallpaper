@@ -11,8 +11,11 @@
 //   与 scene-renderer.ts 平面 uv.y=1 顶部采样 v=1 对齐（JS WebGL 渲染目标 v=1=顶部）；
 //   故 quad 顶部（corner.y=1）应采样 v=0（RT 顶部）：base_uv.y = 1.0 - corner.y（x 不翻转）。
 // 片元：采样对象 RT/效果输出纹理（绑定 1）+ sampler（绑定 2）。该纹理为渲染目标，v=0=顶部，
-// 已与场景同向（对象内容渲染进 RT 时经 image.wgsl 采样、在此再按 `1.0-corner.y` 映回），
-// 与上传纹理（shaders/image.wgsl，v=0=图像底部，用 +corner.y）是两套各自自洽的约定，勿混用。
+// 已与场景同向（对象内容渲染进 RT 时经 image.wgsl 采样、在此再按 `1.0-corner.y` 映回）。
+// 2026-08-31 方向统一：WebGPU 上传纹理与渲染目标纹理同为 v=0=顶部（上传纹理 top-down，
+// 见 tex.rs；渲染目标 row0=NDC 顶部），两者**不构成两套约定**——image.wgsl（上传纹理）
+// 与 composite.wgsl（渲染目标）统一用 `1.0-corner.y`，使场景内容在「上传→内容 RT→效果链→
+// composite→surface」全程保持正立，无需任何 flip 抵消。
 //
 // CompositeUniform 布局（32 字节 = 8×f32，CPU 侧 effect::CompositeUniform，repr(C)）：
 

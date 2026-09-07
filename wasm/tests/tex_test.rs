@@ -341,4 +341,75 @@ fn rejects_billion_pixel_png_without_panic() {
     assert!(parse_tex(&tex).is_none(), "超过 1 GiB 的 PNG 应被拒绝");
 }
 
+#[test]
+fn parse_tex_unknown_raw_keeps_top_down() {
+    // 方向（2026-09 修正）：UNKNOWN(-1) 魔数嗅探失败透传的 Rgba8888 原始数据是 **top-down**
+    // （首行=图像顶部，与 RAW(0) 明确类型、shaders/image.wgsl 的 v=0=顶部约定一致）。
+    // parse_tex 必须**保持首行**（不翻转）；旧 e6d89b8 误判为 bottom-up 而翻转 → 上下颠倒。
+    let mut v = Vec::new();
+    v.extend_from_slice(b"TEXV0005\0");
+    v.extend_from_slice(b"TEXI0001\0");
+    v.extend_from_slice(&0u32.to_le_bytes()); // format = RGBA8888
+    v.extend_from_slice(&0u32.to_le_bytes()); // flags
+    v.extend_from_slice(&2u32.to_le_bytes()); // texW
+    v.extend_from_slice(&2u32.to_le_bytes()); // texH
+    v.extend_from_slice(&2u32.to_le_bytes()); // mapW
+    v.extend_from_slice(&2u32.to_le_bytes()); // mapH
+    v.extend_from_slice(&0u32.to_le_bytes()); // unk
+    v.extend_from_slice(b"TEXB0003\0");
+    v.extend_from_slice(&1u32.to_le_bytes()); // imageCount
+    v.extend_from_slice(&u32::MAX.to_le_bytes()); // image_format = UNKNOWN(-1)
+    v.extend_from_slice(&1u32.to_le_bytes()); // mipmapCount
+    v.extend_from_slice(&2u32.to_le_bytes()); // width
+    v.extend_from_slice(&2u32.to_le_bytes()); // height
+    v.extend_from_slice(&0u32.to_le_bytes()); // isLZ4 = 0
+    v.extend_from_slice(&0u32.to_le_bytes()); // decompressedBytes = 0
+    v.extend_from_slice(&16u32.to_le_bytes()); // bytesLen = 2x2x4
+    // 行0 = 红(255,0,0,255) 两像素；行1 = 蓝(0,0,255,255) 两像素（无 JPEG/PNG 魔数 → 嗅探失败透传）
+    v.extend_from_slice(&[255, 0, 0, 255, 255, 0, 0, 255, 0, 0, 255, 255, 0, 0, 255, 255]);
+    let img = parse_tex(&v).expect("UNKNOWN raw tex 应可解析");
+    assert_eq!(img.format, TexFormat::Rgba8888);
+    assert_eq!(img.width, 2);
+    assert_eq!(img.height, 2);
+    assert_eq!(img.mip0.len(), 16);
+    // 首行应为红色（top-down 保持、未被 e6d89b8 的 flip 翻转）
+    assert_eq!(&img.mip0[0..4], &[255, 0, 0, 255], "UNKNOWN raw 首行应为图像顶部（top-down），不被翻转");
+    assert_eq!(&img.mip0[8..12], &[0, 0, 255, 255], "第二行应为图像底部（蓝）");
+}
+
+#[test]
+fn parse_tex_jpeg_keeps_decode_top_down() {
+    // 方向（2026-09 修正）：parse_tex 的 JPEG 分支解码后应**保持** jpeg-decoder 的 top-down
+    // 输出（首行=图像顶部），不做翻转。旧 e6d89b8 对 JPEG 做 flip_rows_topdown → mip0 首行
+    // 变成解码末行（上下颠倒）——这是 Mantis/Dva/TLoU/赛博 等 JPEG 主图颠倒的根因。
+    let jpg = include_bytes!("fixtures/tex/jpeg_mip_tail.jpg");
+    // 直接 jpeg-decoder 解码（top-down 参考，decoder.rs "first line starts at index 0"）
+    let mut dec = jpeg_decoder::Decoder::new(Cursor::new(jpg));
+    let pixels = dec.decode().expect("jpeg decode");
+    let info = dec.info().expect("jpeg info");
+    let w = info.width as usize;
+    let h = info.height as usize;
+    let ch = pixels.len() / (w * h); // RGB=3 / RGBA=4 / 灰度=1
+    // 包裹为 TEXB0003 容器、声明 FIF.JPEG=2 → parse_tex
+    let tex = tex_v3_with_encoded_payload(jpg, 2);
+    let img = parse_tex(&tex).expect("jpeg 编码 tex 应可解析");
+    assert_eq!(img.format, TexFormat::Rgba8888);
+    assert_eq!(img.width as usize, w);
+    assert_eq!(img.height as usize, h);
+    // mip0 为 RGBA；其首像素 RGB 应等于 jpeg-decoder 首像素（top-down 保持）。
+    let mip_first_rgb = &img.mip0[0..ch.min(3)];
+    let decode_first_rgb = &pixels[0..ch.min(3)];
+    let decode_last_rgb = &pixels[(h - 1) * w * ch..(h - 1) * w * ch + ch.min(3)];
+    // 首末行不同（有方向性）才具备翻转分辨力；对对称图仅验证解码路径。
+    if decode_first_rgb != decode_last_rgb {
+        assert_eq!(
+            mip_first_rgb,
+            decode_first_rgb,
+            "JPEG parse 首行应 = jpeg-decoder 首行（top-down，不被 e6d89b8 翻转）"
+        );
+    }
+    // 首像素通道不对齐时也保证长度完整
+    assert_eq!(img.mip0.len(), w * h * 4);
+}
+
 

@@ -58,7 +58,13 @@ fn vs_main(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> 
   let ndc_per_px = vec2f(2.0 / p.view_w, 2.0 / p.view_h);
   // 本地像素坐标（未变换）
   var local_px = corner * half_px;
-  var v_uv = corner * 0.5 + 0.5;
+  // v_uv.y 方向（2026-08-31 方向修正）：粒子纹理经 upload_texture 上传，与 image.wgsl
+  // 同属 top-down 上传纹理（v=0=图像顶部、v=1=图像底部）。billboard quad 的屏幕顶部在
+  // clip space 为 corner.y=+1（center + local_px*scale，y 越正越靠上），屏幕顶部应采样
+  // **纹理顶部**（v=0）→ v_uv.y = 0.5 - corner.y*0.5（corner.y=+1→0、corner.y=-1→1）。
+  // 旧实现 `corner.y*0.5+0.5` 使屏幕顶部采样 v=1=纹理底部 → 非对称粒子纹理（落叶/雨滴/
+  // 羽毛等）上下颠倒；对称光晕/雾纹理不显（径向对称），故此前未被发现。
+  var v_uv = vec2f(corner.x * 0.5 + 0.5, 0.5 - corner.y * 0.5);
   if (p.renderer_type > 0.5) {
     // spritetrail：沿速度方向拉伸。取速度方向基，把 quad 的"长轴"对齐速度方向。
     // trail_length = clamp(speed * length, min_length, max_length)；此处 length/min/max
@@ -71,8 +77,9 @@ fn vs_main(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> 
       let stretch = half_px * 2.0;
       let px = corner.x * stretch;
       local_px = vec2f(dir.x * px, dir.y * px);
-      // uv 在拉伸轴仍用 corner.x（避免变形）
-      v_uv = vec2f(corner.x * 0.5 + 0.5, corner.y * 0.5 + 0.5);
+      // uv 在拉伸轴仍用 corner.x（避免变形）；v_uv.y 与 sprite 同（0.5 - corner.y*0.5，
+      // 屏幕顶=纹理顶，见上方方向修正注释）
+      v_uv = vec2f(corner.x * 0.5 + 0.5, 0.5 - corner.y * 0.5);
     }
   } else {
     // sprite：绕中心旋转（rot_active 时按寿命比例 rot_min→rot_max 插值）。

@@ -66,11 +66,11 @@ void main() {
 }
 
 /// Milestone 3 / Task4：对象 RT 尺寸钳制（native 纯函数，非 render 门控）。
-/// 每个轴 = |size * scale|，并 clamp 到 [1, OBJECT_RT_MAX=2048]。
+/// 每个轴 = |size * scale|，并 clamp 到 [1, OBJECT_RT_MAX=4096]（0dc3555 上限 2048→4096）。
 #[test]
-fn object_camera_range_clamps_to_2048() {
+fn object_camera_range_clamps_to_4096() {
     let r = effect::object_camera_range([4000.0, 2000.0], [2.0, 1.0]);
-    assert_eq!(r[0], 2048.0);
+    assert_eq!(r[0], 4096.0);
     assert_eq!(r[1], 2000.0);
 }
 
@@ -157,9 +157,9 @@ fn particle_object_range_defaults_and_clamps() {
     // 负 scale → 幅值（对齐 object_camera_range，负值钳成 1px 会让 RT 退化，故取幅值）
     let neg = effect::particle_object_range(Some(100.0), [-2.0, 2.0]);
     assert_eq!(neg, [200.0, 200.0]);
-    // 超出 OBJECT_RT_MAX → 钳到 2048
+    // 超出 OBJECT_RT_MAX → 钳到 4096（0dc3555 上限 2048→4096）
     let big = effect::particle_object_range(Some(9000.0), [1.0, 1.0]);
-    assert_eq!(big[0], 2048.0);
+    assert_eq!(big[0], 4096.0);
 }
 
 /// Milestone 4 / Task6：粒子合成 quad 世界尺寸——未钳制 distanceMax × scale（带符号，
