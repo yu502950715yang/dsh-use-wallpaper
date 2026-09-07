@@ -1,14 +1,9 @@
 // particle render shader：billboard quad 粒子渲染（加法混合）。
-// 与 particle_compute.wgsl 拆分：vertex 阶段只能静态访问 `var<storage, read>` 的 storage
-// （WGSL 规范：vertex 阶段 read_write storage 非法，Dawn/Tint validator 强制实施），
-// 故本文件声明 read 并配 render_bgl（read_only: true）。
-// uniform 布局与 Rust EmitterParams（repr(C)，纯 f32 字段）严格对齐（std140 240B：15 × vec4，
-// 2026-08-31 算子内核扩容后 240B；与 compute module 共享）。
-// 显示 alpha（Task 0.3，控制器裁定 P0-1）：compute 不衰减 alpha（存 spawn 初始值），
-// 本文件按寿命比例计算 v_life_alpha = clamp(life/max_life, 0, 1) * alpha，
-// 对齐 JS 版 alphaAt(initialAlpha, life, maxLife) 语义（open-wallpaper-engine AlphaFadeOperator）。
-// 2026-08-31 算子内核：sprite 旋转（按寿命比例从 rot_min→rot_max 插值）+ spritetrail 拉伸
-// （沿速度方向，长度 clamp 到 [min_length, max_length]）。
+// 与 particle_compute.wgsl 拆分：vertex 阶段只允许 `var<storage, read>`（WGSL 禁 vertex read_write），
+// 故本文件配 render_bgl（read_only: true）。
+// uniform 与 Rust EmitterParams（repr(C)）对齐（std140 240B = 15×vec4，算子内核扩容后；与 compute 共享）。
+// 显示 alpha：compute 不衰减（存 spawn 初始值），本文件按寿命计算 v_life_alpha = clamp(life/max_life,0,1)×alpha。
+// 算子内核：sprite 旋转（按寿命 rot_min→rot_max 插值）+ spritetrail 沿速度方向拉伸。
 
 struct EmitterParams {
   origin: vec3f, view_w: f32,
@@ -32,8 +27,7 @@ struct EmitterParams {
 struct Particle { pos: vec3f, vel: vec3f, life: f32, max_life: f32, size: f32, alpha: f32, color: vec3f }
 @group(0) @binding(1) var<storage, read> particles: array<Particle>;
 
-// 粒子纹理（2026-08-21 方案 A）：WE 粒子材质 textures（如 particle/fog/fog1）是引擎
-// 内置雾/光晕纹理；无纹理时绑定 1×1 白（texel = (1,1,1,1)，保持纯色圆盘行为）。
+// 粒子纹理：WE 粒子材质 textures（如 particle/fog/fog1）；无纹理时绑 1×1 白（(1,1,1,1)，纯色圆盘）。
 @group(0) @binding(2) var tex: texture_2d<f32>;
 @group(0) @binding(3) var samp: sampler;
 

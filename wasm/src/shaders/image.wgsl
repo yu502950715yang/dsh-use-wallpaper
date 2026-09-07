@@ -1,16 +1,12 @@
-// 图片平面渲染（Task 9 修复）：NDC 顶点（vertex_index 推导 quad 角点）+ 纹理采样。
-// 坐标约定：ImageUniform.center_x/center_y = quad 中心 NDC（CPU 按 contain/cover 相机范围
-// 归一化，经 coords::image_center_ndc 完成 WE 左下原点、y 向上 → 中心原点、y 向上——
-// 对齐 scene-renderer.ts setImageObject 的 `(ox - w/2, oy - h/2)` 映射，两系 y 同向不做翻转）。
-// UV 方向（task-20 修正，实测 headless Edge WebGPU）：上传纹理经 write_texture 写入数据行
-// （mip0 顶部行起），采样时 v=0 对应**数据首行（图像顶部）**、v=1 对应数据末行（图像底部）——
-// 即上传后纹理 v 轴与显示「顶→底」同向（quad 顶部 corner.y=1 采样 v=0 即图像顶部）。
-// 故 v = 1.0 - corner.y。d926c99 误判上传纹理 v=0=底部，改为 `out.uv = corner.y`，把上传纹理
-// 上下颠倒；该颠倒被全局 passthrough（offscreen→surface）的垂直镜像抵消后表面看似正常，
-// 但 bypass 直渲时暴露，并连同位置镜像造成小对象偏上（task-20）。
-// T4.3 调制：tint = vec4f（rgb = color×brightness 0-1、a = alpha 0-1，CPU 侧 image_tint
-// 计算），fs_main 采样结果逐通道相乘（rgb × tint.rgb、a × tint.a）；全缺省 → (1,1,1,1)
-// 等价无调制。布局 32 字节：4×f32（@0/@4/@8/@12）+ vec4f tint（@16，对齐 16 无填充）。
+// 图片平面渲染（quad 由 vertex_index 推导角点）+ 纹理采样。
+// 坐标约定：ImageUniform.center_x/center_y = quad 中心 NDC；CPU 经 coords::image_center_ndc 完成
+// WE 左下原点、y 向上 → 中心原点、y 向上（对齐 scene-renderer.ts setImageObject 的 `ox-w/2, oy-h/2`。
+// 两系 y 同向，不翻转）。
+// UV 方向：上传纹理 top-down（write_texture 数据行，v=0=图像顶部），故 quad 顶部（corner.y=1）采样
+// v=0 → `uv.y = 1.0 - corner.y`。曾误判 v=0=底部（被全局 passthrough 镜像掩盖、bypass 直渲才暴露），
+// 教训见 git log（d926c99）。
+// T4.3 调制：tint = vec4f(rgb=color×brightness 0-1, a=alpha 0-1)；采样逐通道相乘，缺省 (1,1,1,1) 无调制。
+// ImageUniform 布局 32B：4×f32（@0/@4/@8/@12）+ vec4f tint（@16，对齐 16）。
 
 struct ImageUniform {
     center_x: f32,
@@ -44,8 +40,6 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VSOut {
 
 @fragment
 fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
-    // T4.3 调制：纹理 × tint（rgb 乘 color×brightness、a 乘 alpha）。
-    // 保留纹理 alpha：前景 contain 的透明/半透明区域露出背景层（cover + CSS blur），
-    // 对齐 scene-renderer.ts 双 canvas 语义（透明边缘露出模糊背景而非黑色）。
+    // T4.3 调制：采样 × tint（rgb 乘 color×brightness、a 乘 alpha）；保留 alpha 让透明边缘露出背景。
     return textureSample(tex, samp, in.uv) * img.tint;
 }

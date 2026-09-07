@@ -1,23 +1,13 @@
-// 对象合成 quad shader（Milestone 3 / Task5，wasm 内置 WGSL，不经过 naga glsl-in）。
-// 用途：把带效果对象的对象 RT（效果链输出 / 原始内容）经 UV 窗口映射贴回 surface——
-// 完成「对象 RT → 效果链 ping-pong → 合成 quad → surface」对象级管线链路。
-//
-// 顶点：由 @builtin(vertex_index) 推导 triangle-strip 4 顶点（与 shaders/image.wgsl 同模式）。
-//   pos = center + (corner - 0.5) × 2 × half（center/half 为 CPU 算的 NDC 中心/半宽，
-//   CompositeUniform；quad 帧尺寸 = 未钳制 |world_size|，见 effect::composite_ndc_uniform）。
-//   uv = 基础 UV 经窗口展开：(base_uv - uv_start) / (uv_end - uv_start)；未钳制轴窗口
-//   [0,1] 时等价 base_uv（精确 1:1）。基础 UV y 方向（2026-08-31 方向修正）：本 shader 采样
-//   **渲染目标**纹理（对象 RT/效果输出 out_tex），WebGPU 渲染目标纹理 v=0 = 顶部（NDC 顶部内容），
-//   与 scene-renderer.ts 平面 uv.y=1 顶部采样 v=1 对齐（JS WebGL 渲染目标 v=1=顶部）；
-//   故 quad 顶部（corner.y=1）应采样 v=0（RT 顶部）：base_uv.y = 1.0 - corner.y（x 不翻转）。
-// 片元：采样对象 RT/效果输出纹理（绑定 1）+ sampler（绑定 2）。该纹理为渲染目标，v=0=顶部，
-// 已与场景同向（对象内容渲染进 RT 时经 image.wgsl 采样、在此再按 `1.0-corner.y` 映回）。
-// 2026-08-31 方向统一：WebGPU 上传纹理与渲染目标纹理同为 v=0=顶部（上传纹理 top-down，
-// 见 tex.rs；渲染目标 row0=NDC 顶部），两者**不构成两套约定**——image.wgsl（上传纹理）
-// 与 composite.wgsl（渲染目标）统一用 `1.0-corner.y`，使场景内容在「上传→内容 RT→效果链→
-// composite→surface」全程保持正立，无需任何 flip 抵消。
-//
-// CompositeUniform 布局（32 字节 = 8×f32，CPU 侧 effect::CompositeUniform，repr(C)）：
+// 对象合成 quad shader：把带效果对象的对象 RT（效果链输出/原始内容）经 UV 窗口映射贴回 surface，
+// 完成「对象 RT → 效果链 → 合成 quad → surface」对象级管线。
+// 顶点：由 @builtin(vertex_index) 推导 triangle-strip 4 顶点（同 image.wgsl）。
+//   pos = center + (corner-0.5)×2×half（CompositeUniform；quad 帧尺寸=未钳制|world_size|）。
+//   uv 为基础 UV 经窗口展开 (base_uv-start)/(end-start)，未钳制轴 [0,1] 时等价 base_uv。
+//   UV 方向：采样**渲染目标**纹理（对象 RT/效果输出 out_tex），WebGPU 渲染目标 v=0=顶部 → 故
+//   quad 顶部（corner.y=1）采样 v=0：base_uv.y = 1.0-corner.y（x 不翻转）。上传纹理与渲染目标
+//   同为 v=0=顶部（见 tex.rs），与 image.wgsl 统一用 1.0-corner.y，全程保持正立、无需 flip 抵消。
+// 片元：采样对象 RT/效果输出纹理（绑定 1）+ sampler（绑定 2）。
+// CompositeUniform 布局（32B=8×f32，CPU 侧 effect::CompositeUniform，repr(C)）：
 
 struct CompositeUniform {
     center_x: f32,

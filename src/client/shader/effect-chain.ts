@@ -12,7 +12,7 @@ export interface CompiledEffectPass {
   uniforms: Map<string, UniformValue>;   // 静态值（g_Time 由执行器运行时更新）
   textureSlots: (string | null)[];       // textures[i] → g_Texture(i+1)
   blendMode: string;                     // material json 的 blending（normal/add/...）
-  // ── RT 图信息（2026-08-31 阶段1：wasm 效果链升级为 RT 图执行器）──
+  // ── RT 图信息（wasm RT 图执行器）──
   // effect.json passes[i].target：本 pass 写到的具名 RT（如 "_rt_QuarterCompoBuffer1"）。
   // 缺省/空 = 最终输出（对象 out RT）。wasm 据此决定写哪张 RT（具名中间 RT 或最终输出）。
   target: string | null;
@@ -34,8 +34,8 @@ export async function resolveEffectChain(
     const effectRaw = await loadFile(sceneEffect.file);
     if (!effectRaw) return null;
     // effect.json 类型：passes[]（material/target/bind）+ fbos[]（具名 RT 降采样声明）。
-    // 2026-08-31 阶段1（wasm RT 图执行器）：保留 target/bind/fbos（此前被丢弃，导致
-    // blur/clouds 等"多 pass + 具名中间 RT + 降采样"场景主图丢失）。
+    // 保留 target/bind/fbos 供 wasm RT 图执行器（丢弃会导致 blur/clouds 等"多 pass + 具名中间
+    // RT + 降采样"场景主图丢失）。
     const effect = JSON.parse(new TextDecoder().decode(effectRaw)) as {
       passes?: { material?: string; target?: string; bind?: { name: string; index: number }[] }[];
       fbos?: { name: string; scale: number }[];
@@ -55,8 +55,7 @@ export async function resolveEffectChain(
       const matRef = scenePass.material ?? effect.passes[i].material;
       if (typeof matRef !== 'string') return null;
       // WE 内置 util 材质（materials/util/*，如 effectcomposebackground.json）：pkg 内无文件，
-      // 是引擎内置合成 pass（compose），跳过该 pass 继续解析后续真实效果 pass
-      // （Task 6 Ruling 5 落地：2911105183 refraction 链实测暴露，全库仅此 1 处）
+      // 是引擎内置合成 pass（compose），跳过该 pass 继续解析后续真实效果 pass。
       if (matRef.startsWith('materials/util/')) continue;
       const matRaw = await loadFile(matRef);
       if (!matRaw) return null;
@@ -91,7 +90,7 @@ export async function resolveEffectChain(
         uniforms,
         textureSlots: textures,
         blendMode: mat.passes?.[0]?.blending ?? 'normal',
-        // RT 图信息（阶段1）：effect.json passes[i].target（写到的具名 RT）/bind（采样来源）；
+        // RT 图信息：effect.json passes[i].target（写到的具名 RT）/bind（采样来源）；
         // scene.json pass 可覆写 target（如 scene 指定目标 RT）。缺省 target=null（最终输出）。
         target: (scenePass.target ?? effPass.target) || null,
         bind: Array.isArray(effPass.bind) ? effPass.bind : [],

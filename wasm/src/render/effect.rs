@@ -1,20 +1,12 @@
 //! 效果链 shader 编译与校验（naga）+ 效果链 pass 描述 + 效果链 ping-pong 执行器。
 //!
-//! 结构决策（controller 裁决，见 task-3-brief.md）：
-//! - **native 纯逻辑（非门控）**：`BlendKey`/`blend_mode_key`/`pick_write_target`/
-//!   `EffectPassDesc`/`UniformBinding`/`SlotId`——不依赖 render feature / wgpu，native
-//!   `cargo test`（无 render feature）可编译可测（同 Task1 的 `glsl_to_wgsl`/`validate_wgsl`）。
-//! - **render 门控（`#[cfg(feature = "render")]`）**：`EffectChain`（管线/RT/bind group/
-//!   uniform/`blend_key_to_wgpu`）——仅 wasm 构建编译（`--features render`）。
-//!
-//! 关键边界（M2，见 brief 裁决）：
-//! - vert/frag **分别编译**：每个 pass 分别编译出 vert/frag 两个 WGSL → 各建一个 shader module →
-//!   建 render pipeline（`entry_point: Some("main")`）。编译源按 pass 来源选择：真实 WE 效果
-//!   shader（SPIR-V）走 `spv_to_wgsl`，演示/simple（GLSL）走 `glsl_to_wgsl`（见 `compile_pass_wgsl`）。
-//! - blendMode 用 native `BlendKey` + `blend_key_to_wgpu(key)`（从 key 映射，DRY，不从 str 重复解析）。
-//! - `EffectChain::new` 一次性编译/建管线/建 ping-pong RT/uniform buffer；`render` 逐 pass
-//!   ping-pong，绑定 g_Texture0+纹理槽+`g_Time`，按 blendMode 混合；audio 频谱本任务置 0（v3）。
-//! - 绝不白屏：`new` 失败返回 `Err`，调用方跳过该效果链（不硬崩）；`render` 不 panic。
+//! 结构决策：**native 纯逻辑（非门控）**（`glsl_to_wgsl`/`spv_to_wgsl`/`validate_wgsl`/绑定收集/
+//! std140/`BlendKey` 等，无 render feature 也可 `cargo test` 可测）与 **render 门控**
+//! （`#[cfg(feature = "render")]`：`EffectChain` 管线/RT/bind group/uniform，仅 wasm 构建）。
+//! 关键边界：vert/frag **分别编译**（真实 WE shader 走 `spv_to_wgsl`，演示/simple 走 `glsl_to_wgsl`）；
+//! blendMode 用 native `BlendKey` + `blend_key_to_wgpu`（从 key 映射，DRY，不从 str 重复解析）；
+//! `EffectChain::new` 一次性编译/建管线/建 ping-pong RT/uniform buffer；绝不白屏：`new` 失败返回
+//! `Err` 调用方跳过该链，`render` 不 panic。
 use naga::back::wgsl::Writer;
 use naga::front::glsl::{Frontend, Options};
 use naga::valid::{Capabilities, ValidationFlags, Validator};
@@ -41,18 +33,17 @@ pub fn glsl_to_wgsl(glsl: &str, stage: Stage) -> Result<String, String> {
 
 /// 真实 WE 效果 shader：SPIR-V bytes → WGSL（编译链集成，非 render 门控，native 可测）。
 ///
-/// 链路（task-8 brief / spike 结论）：`spirv-webgpu-transform`(`combimgsampsplitter`) 先拆组合
-/// 采样器（@webgpu/glslang 产出的 `OpTypeSampledImage` 组合采样）为独立 texture + sampler
-/// （注入 `OpSampledImage`），再 `naga::front::spv::parse_u8_slice`(spv-in) → `Validator` →
-/// `wgsl-out`。对照：不 transform 直接 spv-in 会 `InvalidId`（sdk-1.3.268 的已知限制）。
+/// 链路：`spirv-webgpu-transform`(`combimgsampsplitter`) 先拆组合采样器（`@webgpu/glslang`
+/// 产出的 `OpTypeSampledImage` 组合采样）为独立 texture + sampler（注入 `OpSampledImage`），再
+/// `naga::front::spv::parse_u8_slice`(spv-in) → `Validator` → `wgsl-out`。不 transform 直接 spv-in
+/// 会 `InvalidId`（sdk-1.3.268 已知限制）。
 ///
-/// `stage` 由 SPIR-V 的 `OpEntryPoint` 执行模型推导，本函数不依赖它（仅保留签名对称性
-/// 与调用方一致性；spv 路径 entry_point 恒为 `main`）。失败返回错误字符串（绝不 panic）。
+/// `stage` 由 SPIR-V 的 `OpEntryPoint` 执行模型推导，本函数不依赖它（仅保留签名对称性）。
 ///
-/// **防 panic（reviewer Important #1）**：`spirv-webgpu-transform` 的 `u8_slice_to_u32_vec` 对
-/// 非 4 倍数长度 `assert`，`combimgsampsplitter` 对 SPIR-V 魔数 `assert` 并直接索引头 5 字
-/// （空/畸形输入会 trap，比白屏更糟，违反「绝不白屏/绝不崩溃」）。故入口先做 SPIR-V 头部校验
-/// （长度 ≥ 20 字节且为 4 倍数 + 魔数 `0x07230203` LE），不满足直接返回 `Err`，绝不进入 transform。
+/// **防 panic**：`spirv-webgpu-transform` 的 `u8_slice_to_u32_vec` 对非 4 倍数长度 `assert`，
+/// `combimgsampsplitter` 对 SPIR-V 魔数 `assert` 并直接索引头 5 字（空/畸形输入会 trap，比白屏
+/// 更糟）。故入口先做 SPIR-V 头部校验（长度 ≥ 20 字节且为 4 倍数 + 魔数 `0x07230203` LE），
+/// 不满足直接返回 `Err`，绝不进入 transform。
 pub fn spv_to_wgsl(spv: &[u8], _stage: Stage) -> Result<String, String> {
     // ① 防 panic 头部校验：合法 SPIR-V 至少含 5 字头（20 字节）且 word 对齐；magic 0x07230203（LE）。
     if spv.len() < 20 || spv.len() % 4 != 0 {
@@ -110,11 +101,10 @@ pub enum BindKind {
 ///
 /// 只识别**采样图像**（`texture_2d<f32>` 的 `ImageClass::Sampled`）——storage/depth 图像与
 /// 过滤采样 texture 的 wgpu 绑定类型不匹配，本任务范围仅 WE 效果 shader 的普通 `texture_2d`，
-/// 其它返回 `None`（不加入 layout：宁可少一个绑定让管线校验失败走链级回退，也不制造类型错配）。
+/// 其它返回 `None`（宁可少一个绑定让管线校验失败走链级回退，也不制造类型错配）。
 /// `BindingArray`（`sampler2D[]`/`texture2D[]`）**仅作 kind 归类**（取其 base 类型判定为
 /// Texture/Sampler），**不展开为多绑定/多 view**——`build_bind_group_layout` 恒 `count: None`、
-/// `build_bind_group` 恒绑单 view，与任务边界「不做 sampler2D 数组」一致（此类 shader 由
-/// 链级回退兜底，见 task-13 报告）。
+/// `build_bind_group` 恒绑单 view（此类 shader 由链级回退兜底）。
 fn bind_kind_of(module: &naga::Module, ty: naga::Handle<naga::Type>) -> Option<BindKind> {
     use naga::TypeInner;
     match &module.types[ty].inner {
@@ -130,11 +120,11 @@ fn bind_kind_of(module: &naga::Module, ty: naga::Handle<naga::Type>) -> Option<B
 
 /// 结构化扫描 naga `Module` 的 `global_variables`，收集 `@group(0)` 绑定的资源类型。
 ///
-/// **替代旧字符串嗅探**（`find("@group(0) @binding(")` + 向后看字符串判型 + `.parse().unwrap_or(0)`）：
-/// 旧实现对**多纹理/多 uniform block** 脆弱（布局可能与 shader 声明不一致），且 `.unwrap_or(0)`
-/// 把解析失败静默归 0。本函数遍历 naga IR 的 `global_variables`：`AddressSpace::Uniform` →
-/// uniform block（buffer）、`AddressSpace::Handle` → 由类型判 texture/sampler，得到与 shader
-/// 声明**完全一致**的 `(binding, kind)` 升序去重。非 group0 / 无绑定 / 未识别类型的全局变量忽略。
+/// 替代旧字符串嗅探（`find("@group(0) @binding(")` + 向后看字符串判型 + `.parse().unwrap_or(0)`，
+/// 对多纹理/多 uniform block 脆弱，且 `.unwrap_or(0)` 把解析失败静默归 0）。本函数遍历 naga IR
+/// 的 `global_variables`：`AddressSpace::Uniform` → uniform block（buffer）、`AddressSpace::Handle`
+/// → 由类型判 texture/sampler，得到与 shader 声明**完全一致**的 `(binding, kind)` 升序去重。
+/// 非 group0 / 无绑定 / 未识别类型的全局变量忽略。
 pub fn module_bindings(module: &naga::Module) -> Vec<(u32, BindKind)> {
     use naga::AddressSpace;
     let mut out: Vec<(u32, BindKind)> = Vec::new();
@@ -167,12 +157,11 @@ pub fn wgsl_bindings(wgsl: &str) -> Result<Vec<(u32, BindKind)>, String> {
 /// 解析一段 WGSL 字符串 → 每个 `@group(0) var<uniform>` block 的 `(binding, 成员名列表)`。
 /// native 可测。
 ///
-/// task-16（binding 索引重复根因）：`spirv-webgpu-transform` 拆组合采样器会**重排/重编号**
-/// binding——JS 侧 `UniformBindingDesc.binding` 是拆之前的编号（如某 std140 block 在 binding=2），
-/// 而 transform 后同一 block 在 WGSL 里的 binding 变了（如变成 4）。若 wasm 直接用 JS 的 binding
-/// 建 uniform buffer，其 binding 会与 WGSL 的 texture/sampler binding 撞号 → `create_bind_group`
-/// 报 `binding index (M) was specified by a previous entry`。本函数按**成员名**从 WGSL 取每个
-/// uniform block 的真实 binding，供 `build_uniform_instances` 把 JS 提供的 block 值匹配到正确 binding。
+/// task-16（binding 索引重复根因）：`spirv-webgpu-transform` 拆组合采样器会**重排/重编号** binding——
+/// JS 侧 `UniformBindingDesc.binding` 是拆之前的编号，而 transform 后同一 block 在 WGSL 里的 binding
+/// 变了。若 wasm 直接用 JS 的 binding 建 uniform buffer，会与 WGSL 的 texture/sampler binding 撞号 →
+/// `create_bind_group` 报 binding 冲突。本函数按**成员名**从 WGSL 取每个 uniform block 的真实 binding，
+/// 供 `build_uniform_instances` 把 JS 提供的 block 值匹配到正确 binding。
 pub fn wgsl_uniform_members(wgsl: &str) -> Result<Vec<(u32, Vec<String>)>, String> {
     let module = naga::front::wgsl::parse_str(wgsl).map_err(|e| format!("wgsl 解析失败：{e}"))?;
     let mut out: Vec<(u32, Vec<String>)> = Vec::new();
@@ -230,9 +219,9 @@ pub fn pick_write_target(prev: Option<u8>) -> u8 {
 }
 
 /// 对象 RT 单轴尺寸上限（钳制到 4096，避免超大对象效果 RT 爆显存/超出 GPU 限制）。
-/// 2026-09-03（横条纹修复）：原 2048 会把满屏主图（如 Orange 2560×1440）钳到 2048，
-/// 导致主图被裁剪 + 合成 quad 用钳制窗口 [0.1,0.9] 显示 → 左右边缘竖直色条（Clamp）。
-/// 提到 4096 使 ≤4096 的主图完整铺满（RT 保持完整宽，uvWin 退化为 [0,1] 全窗，无边缘色条）。
+/// 曾为 2048 会把满屏主图（如 2560×1440）钳小 → 主图被裁剪、合成 quad 用钳制窗口 [0.1,0.9]
+/// 显示左右竖直色条（Clamp）；提到 4096 使 ≤4096 主图完整铺满（RT 保持完整宽，uvWin 退化为
+/// [0,1] 全窗，无边缘色条）。
 pub const OBJECT_RT_MAX: f32 = 4096.0;
 
 /// 对象相机 RT 尺寸：每个轴 = `|size * scale|`，并 clamp 到 `[1, OBJECT_RT_MAX]`。
@@ -306,15 +295,14 @@ pub struct CompositeUniform {
 
 /// 对象合成 quad 的 NDC/UV 窗口 uniform（Task5，CPU 算，native 可测）。
 ///
-/// 对齐 JS 蓝本（scene-renderer.ts `createObjectEntry`/`createCompositeGeometry`）：
-/// - quad 帧尺寸 = **未钳制幅值** `|world_size|`（镜像活在对象 RT 内容，quad 只显示
-///   帧——task-4.4 报告的「相机范围与 quad 帧用幅值」职责分离）；半宽 NDC =
-///   `|world|/view`（`(|world|/2)/(view/2)`）；
-/// - 中心用 `coords::image_center_ndc`（对象中心 `(ox-vw/2, oy-vh/2)` 映射，**不翻转 y**）；
+/// 对齐 JS 蓝本（scene-renderer.ts）：
+/// - quad 帧尺寸 = **未钳制幅值** `|world_size|`（镜像活在对象 RT 内容，quad 只显示帧
+///   ——「相机范围与 quad 帧用幅值」职责分离）；半宽 NDC = `|world|/view`；
+/// - 中心用 `coords::image_center_ndc`（对象中心映射，**不翻转 y**）；
 /// - UV 窗口 = `uv_window(未钳制|world|, 钳制 rt)`：未钳制轴 → `[0,1]`；钳制轴居中开窗。
 ///
-/// `origin` 为对象中心（WE 坐标，已 applyAlignment 换算中心）；`world_size` 为
-/// `size×scale`（合成 quad 内部取幅值）；`rt_size` 为钳制后对象 RT 分辨率（局部相机范围）。
+/// `origin` 为对象中心（WE 坐标，已 applyAlignment 换算中心）；`world_size` 为 `size×scale`
+/// （合成 quad 内部取幅值）；`rt_size` 为钳制后对象 RT 分辨率（局部相机范围）。
 pub fn composite_ndc_uniform(
     origin: [f32; 3],
     world_size: [f32; 2],
@@ -341,13 +329,12 @@ pub fn composite_ndc_uniform(
     }
 }
 
-/// 效果链纹理槽语义（task-24 修正）：某 `g_TextureN`（N≥1）槽的**独立纹理路径**（相对壁纸包根）。
+/// 效果链纹理槽语义：某 `g_TextureN`（N≥1）槽的**独立纹理路径**（相对壁纸包根）。
 /// `Some(path)` = scene.json 的 pass.textures[i] 提供了独立遮罩/噪声/flow 纹理（如
-/// `masks/waterwaves_mask_xxx`、`util/clouds_256`）；`None` = 该槽无独立纹理，按 WE
-/// `previous`/输入语义回退（combine 的 g_Texture1 = 原始内容 → input_view）。
-/// 此前 JS 侧恒传空数组 → wasm `build_bind_group` 把非首纹理槽全绑 `input_view`（用背景自身
-/// 当遮罩/噪声），造成 Orange 贴图错乱、godrays 下降采样被背景污染的回归。
-/// JS wire 为 `(string|null)[]`（glsl-to-naga 的 `textureSlots`），此处直接 `Vec<Option<String>>`。
+/// `masks/waterwaves_mask_xxx`）；`None` = 该槽无独立纹理，按 WE `previous`/输入语义回退
+/// （combine 的 g_Texture1 = 原始内容 → input_view）。曾因 JS 侧恒传空数组 → wasm 把非首纹理槽
+/// 全绑 `input_view`（用背景自身当遮罩/噪声）造成回归。JS wire 为 `(string|null)[]`（textureSlots），
+/// 此处直接 `Vec<Option<String>>`。
 
 /// 单个非不透明 uniform 绑定（std140 block 成员）：`name` + 打包值（Vec<f32>）+ 布局描述。
 ///
@@ -382,8 +369,8 @@ pub struct UniformBinding {
 
 /// std140 字段类型信息：`(align 字节, size 字节, count 逻辑 float 数)`。未知类型返回 None。
 /// 数组元素 stride = `roundup(elem_size,16) = max(elem_size,16)`——**必须用 elem_size 而非 elem_align**：
-/// 对标量/向量 elem_size ≤ 16，二者等价；但对矩阵（mat2=32B/mat3=48B/mat4=64B）only elem_size 生效，
-/// 否则 `mat4[2]` 会被算成 2*16=32B（正确应为 2*64=128B），后续成员 offset 塌陷（reviewer Important #1）。
+/// 对标量/向量 elem_size ≤ 16 二者等价；但对矩阵（mat2=32B/mat3=48B/mat4=64B）only elem_size 生效，
+/// 否则 `mat4[2]` 会被算成 2*16=32B（正确应为 2*64=128B），后续成员 offset 塌陷。
 pub fn std140_type_info(ty: &str) -> Option<(u32, u32, u32)> {
     if let Some(idx) = ty.find('[') {
         let base = &ty[..idx];
@@ -412,8 +399,8 @@ pub fn std140_block_size(offsets_sizes: &[(u32, u32)]) -> u32 {
 
 /// std140 字段写入计划：把 value（扁平 float）铺到 block 的字节位。返回 `[(valueIdx, floatIdx)]`，
 /// floatIdx 为 block 内 float 下标（block 已预零，padding 不写）。处理 vec/mat/数组。
-/// 数组：按元素 stride（=max(elem_size,16)）逐元素递归（元素内部保留矩阵列 pitch / vec 连续布局），
-/// 元素 e 相对本字段的 float 偏移 = `e * elem_stride/4`（矩阵元素为 64/48/32 而非 4，reviewer Important #1）。
+/// 数组按元素 stride（=max(elem_size,16)）逐元素递归（元素内部保留矩阵列 pitch/vec 连续布局），
+/// 元素 e 相对本字段的 float 偏移 = `e * elem_stride/4`（矩阵元素为 64/48/32 而非 4）。
 pub fn std140_write_plan(ty: &str, byte_offset: u32) -> Vec<(u32, u32)> {
     let base = byte_offset / 4; // float 下标基准
     let mut out = Vec::new();
@@ -473,7 +460,7 @@ pub fn pack_std140_block(block_size: u32, fields: &[Std140Field]) -> Vec<f32> {
 
 /// MVM 矩阵 uniform（`matN`）的 **identity** 值（列主序，与 `std140_write_plan` 的 mat 列 pitch 一致）：
 /// 对角元素 1、其余 0。JS 侧引擎内建 MVM 缺省为全 0 → 顶点塌原点；此处为依赖 MVM 投影的效果链
-/// pass 提供正确 identity（wasm 对象级 quad 顶点已是 NDC，见 `build_uniform_instances` 注释）。
+/// pass 提供正确 identity（wasm 对象级 quad 顶点已是 NDC）。
 pub fn identity_mat_value(ty: &str) -> Vec<f32> {
     let n = ty
         .strip_prefix("mat")
@@ -495,17 +482,15 @@ pub fn is_mvm_member(name: &str) -> bool {
 /// 效果链 pass 描述（编译输入）。binding 编号由 texture_slots + uniforms 的静态顺序决定
 /// （JS 侧 glsl-to-naga 已分配 `layout(binding=N)`；wasm 按同一顺序整理 bind group layout）。
 ///
-/// `shader` 来源二选一（task-8 裁决：真实 WE shader 走 spv，演示/simple 走 glsl）：
-/// - `vert_spv`/`frag_spv`：真实 WE 效果 shader 的 SPIR-V bytes（`spv_to_wgsl` 编译，entry_point `main`）。
-/// - `vert_glsl`/`frag_glsl`：演示/简单路径的 desktop GLSL（`glsl_to_wgsl` 编译，entry_point `main`）。
-///   `vert_spv`/`frag_spv` 非空时优先 spv 路径；否则回退 glsl（兼容 task5 演示 pass）。
+/// `shader` 来源二选一：`vert_spv`/`frag_spv`：真实 WE 效果 shader 的 SPIR-V bytes（`spv_to_wgsl`，
+/// entry_point `main`）；`vert_glsl`/`frag_glsl`：演示/简单路径的 desktop GLSL（`glsl_to_wgsl`）。
+/// `vert_spv`/`frag_spv` 非空时优先 spv 路径；否则回退 glsl。
 ///
 /// ⚠️ **MVM 边界**：WE 效果链 vertex shader（如 composelayer.vert）的 `g_ModelViewProjectionMatrix`
-/// 是引擎内建 uniform，scene.json/material json 不给值 → JS 侧缺省 → `UniformBinding` 未带该成员
-/// → `pack_std140_block` 把 block 里该 mat4 留在 0（缺省全 0）。**执行器需按对象/场景提供正确的
-/// MVM 投影矩阵**（对象级=对象局部正交投影+中心 origin；场景级=场景正交投影）。当前库内依赖 MVM
-/// 的效果（如 godrays 的 composelayer 层）为 frag 效果 + vert passthrough（gl_Position 由
-/// a_TexCoord 推导、不乘 MVM），故不受影响；仅 vert 阶段真正乘 MVM 的效果链受影响（已知边界）。
+/// 是引擎内建 uniform，scene/material json 不给值 → `UniformBinding` 未带该成员 →
+/// `pack_std140_block` 把 block 里该 mat4 留在 0。**执行器需按对象/场景提供正确的 MVM 投影矩阵**。
+/// 当前库内依赖 MVM 的效果（如 godrays 的 composelayer 层）为 frag 效果 + vert passthrough（不乘
+/// MVM），故不受影响；仅 vert 阶段真正乘 MVM 的效果链受影响（已知边界）。
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct EffectPassDesc {
     #[serde(default)]
@@ -520,18 +505,17 @@ pub struct EffectPassDesc {
     pub uniforms: Vec<UniformBinding>,
     #[serde(default)]
     pub texture_slots: Vec<Option<String>>,
-    /// 效果链纹理槽字节（task-wasm-effect-texture-slots）：与 `texture_slots` **逐槽对齐**。
-    /// 槽 i 有独立 mask/normal/flow 纹理（`texture_slots[i]` 为 `Some`）时携带该纹理的
-    /// `.tex`（TEXV0005 容器）字节；无独立纹理或未加载 → `None`。JS 侧 `buildEffectChainDesc`
-    /// 经 `/wallpapers/scene/<id>/asset` 拉取并作为 `number[]`（与 `vert_spv`/`frag_spv` 同机制）
-    /// 写入 chainDesc JSON。wasm `set_object_effect` 逐槽解码 → `tex::parse_tex` → `upload_texture`
-    /// 上传为 wgpu 纹理，`build_bind_group` 据此绑定真实纹理（替代纯白 1×1 占位）。
-    /// 固定 mask 恒为 1 造成的"全对象位移/拉伸/撕裂"根因。
+    /// 效果链纹理槽字节：与 `texture_slots` **逐槽对齐**。槽 i 有独立 mask/normal/flow 纹理
+    /// （`texture_slots[i]` 为 `Some`）时携带该纹理的 `.tex`（TEXV0005 容器）字节；无独立纹理或
+    /// 未加载 → `None`。JS 侧 `buildEffectChainDesc` 经 `/wallpapers/scene/<id>/asset` 拉取并作为
+    /// `number[]` 写入 chainDesc JSON。wasm `set_object_effect` 逐槽解码 → `tex::parse_tex` →
+    /// `upload_texture` 上传为 wgpu 纹理，`build_bind_group` 据此绑定真实纹理（替代纯白 1×1 占位，
+    /// 修复白占位 mask 恒 1 造成的"全对象位移/拉伸/撕裂"）。
     #[serde(default)]
     pub texture_bytes: Vec<Option<Vec<u8>>>,
     #[serde(default)]
     pub blend_mode: BlendMode,
-    // ── RT 图信息（2026-08-31 阶段1：wasm EffectChain 升级为 RT 图执行器）──
+    // ── RT 图信息（wasm EffectChain 升级为 RT 图执行器）──
     // 本 pass 写到的具名 RT（"_rt_QuarterCompoBuffer1"）；null/"" = 最终输出（对象 out RT）。
     #[serde(default)]
     pub target: Option<String>,
@@ -543,8 +527,8 @@ pub struct EffectPassDesc {
     // 空字符串 = sampler2D 输入。与 shader 的 g_Texture(i+1) 槽一一对应。
     #[serde(default)]
     pub bind: Vec<EffectBind>,
-    // 所属 effect 组（group_id，2026-08-31）：同一 effect 的 pass 用相同 id。wasm 按组执行
-    // （组内 target/bind 或线性，组间串行——前组输出喂后组输入），修复多 effect flatten 白屏。
+    // 所属 effect 组（group_id）：同一 effect 的 pass 用相同 id。wasm 按组执行（组内 target/bind
+    // 或线性，组间串行——前组输出喂后组输入），修复多 effect flatten 白屏。
     #[serde(default)]
     pub group_id: u32,
 }
@@ -568,13 +552,12 @@ pub fn texture_slot_has_bytes(desc: &EffectPassDesc, slot_idx: usize) -> bool {
 }
 
 /// `g_TextureNResolution` 的权威布局解析（native 纯函数，对齐 WE 官方 WPSceneParser.cpp：
-/// `resolution = { width, height, width, height }` —— `.xy`/`.zw` 均为**像素尺寸**，
+/// `resolution = { width, height, width, height }` —— `.xy`/`.zw` 均为**像素尺寸**），
 /// 非 texel 倒数 `1/w`）。
 ///
 /// - 名称 index N=0（输入对象内容 `g_Texture0`）→ 用对象 RT 尺寸 `base_w`/`base_h`；
-/// - N≥1（独立 mask/normal/flow 槽 `g_TextureN`，对应 `texture_slots[N-1]`）→ 用该槽
-///   纹理的真实尺寸 `slot_w`/`slot_h`（若该槽未加载/尺寸无效 → None，保持 block 原值，
-///   避免用错误尺寸填充造成采样坐标错乱）。
+/// - N≥1（独立 mask/normal/flow 槽 `g_TextureN`，对应 `texture_slots[N-1]`）→ 用该槽纹理的
+///   真实尺寸 `slot_w`/`slot_h`（该槽未加载/尺寸无效 → None，保持 block 原值，避免错误尺寸采样错乱）；
 /// - 非 `g_TextureNResolution` 名称 → None。
 pub fn texture_resolution_for(
     name: &str,
@@ -608,12 +591,12 @@ mod imp {
     use super::*;
 
     /// 按 pass 来源编译 vert/frag 为 WGSL：真实 WE 效果 shader（`vert_spv` 非空）走
-    /// `spv_to_wgsl`（SPIR-V→transform→spv-in→WGSL），演示/simple（`vert_spv` 空、`vert_glsl`
-    /// 有值）走 `glsl_to_wgsl`。二者产出 WGSL 的 entry_point 均为 `main`（naga glsl-in /
-    /// spv-in 默认入口；手写 WGSL 的 vs_main/fs_main 的是 effect_passthrough/composite 层）。
+    /// `spv_to_wgsl`（SPIR-V→transform→spv-in→WGSL），演示/simple（`vert_glsl` 有值）走
+    /// `glsl_to_wgsl`。二者产出 WGSL 的 entry_point 均为 `main`（naga glsl-in/spv-in 默认入口；
+    /// 手写 WGSL 的 vs_main/fs_main 的是 effect_passthrough/composite 层）。
     ///
-    /// **gating 一致性（reviewer Minor #3）**：`vert_spv`/`frag_spv` 必须同空或同非空（畸形 desc
-    /// 一空一非空 → 直接 `Err`，交由调用方链级跳过/兜底，绝不走到错误的编译路径）。
+    /// **gating 一致性**：`vert_spv`/`frag_spv` 必须同空或同非空（一空一非空 → 直接 `Err`，
+    /// 交由调用方链级跳过/兜底，绝不走到错误的编译路径）。
     fn compile_pass_wgsl(desc: &EffectPassDesc) -> Result<(String, String), String> {
         if desc.vert_spv.is_empty() != desc.frag_spv.is_empty() {
             return Err(
@@ -634,11 +617,10 @@ mod imp {
     }
 
     /// 结构化扫描 vert+frag 两个 WGSL，收集 `@group(0)` 绑定声明与资源类型（naga IR 遍历，
-    /// 替代旧字符串嗅探；见 super::module_bindings/wgsl_bindings）。合并两段绑定的
-    /// `(binding, 类型)` 排序 + 去重，用于**按 shader 实际声明**构建 bind group layout
-    /// （保证 layout 与 shader 一致，绝不因未使用/错配绑定导致管线校验失败）。
-    /// 任一 WGSL 解析失败 → 忽略该来源（对应 pass 由 error scope 捕获布局/管线校验错误，
-    /// 链级回退，不硬崩）。
+    /// 替代旧字符串嗅探；见 super::module_bindings/wgsl_bindings）。合并两段绑定的 `(binding, 类型)`
+    /// 排序 + 去重，用于**按 shader 实际声明**构建 bind group layout（保证 layout 与 shader 一致，
+    /// 绝不因未使用/错配绑定导致管线校验失败）。任一 WGSL 解析失败 → 忽略该来源（对应 pass 由
+    /// error scope 捕获校验错误，链级回退，不硬崩）。
     fn collect_bindings(wgsl_vert: &str, wgsl_frag: &str) -> Vec<(u32, BindKind)> {
         let mut out: Vec<(u32, BindKind)> = Vec::new();
         for src in [wgsl_vert, wgsl_frag] {
@@ -675,10 +657,9 @@ mod imp {
         out
     }
 
-    /// 由绑定列表构建 bind group layout（顶点/片元统一可见性，覆盖实际使用阶段，且允许
-    /// 过宽可见性避免「Visibility flags don't include the shader stage」错误）。
-    /// `bindings` 来自 `collect_bindings`（结构化 naga IR 扫描），保证 layout 与 shader
-    /// 声明的绑定（含多纹理/多 uniform block）完全一致。
+    /// 由绑定列表构建 bind group layout（顶点/片元统一可见性，过宽可见性避免
+    /// 「Visibility flags don't include the shader stage」错误）。`bindings` 来自 `collect_bindings`
+    /// （结构化 naga IR 扫描），保证 layout 与 shader 声明的绑定（含多纹理/多 uniform block）完全一致。
     fn build_bind_group_layout(
         device: &wgpu::Device,
         bindings: &[(u32, BindKind)],
@@ -711,26 +692,11 @@ mod imp {
         })
     }
 
-    /// 按 binding 分组非不透明 uniform（std140 block 成员），每组建一个 uniform buffer + block 数据。
-    /// 返回 `EffectUniformInstance` 列表（按 binding 升序，同 binding 成员保持原顺序）。
-    ///
-    /// **task-16（binding 索引重复）**：`spirv-webgpu-transform` 拆组合采样器会重排/重编号 binding，
-    /// 故 JS 侧 `UniformBinding.binding`（拆前编号）与 WGSL 真实 binding（拆后）**不一致**——
-    /// 若 uniform buffer 仍用 JS 的 binding，会与 WGSL 的 texture/sampler binding 撞号，导致
-    /// `create_bind_group` 报 `binding index (M) was specified by a previous entry`。这里改为：
-    /// ① 仍按 JS 的 binding 把成员**分组**成 block（成员归属正确，无实例名 block 成员全局可见）；
-    /// ② 用 `uniform_members`（WGSL，含每个 `var<uniform>` 的**成员名**）按成员名映射出该 block
-    ///    变换后的**真实 binding**（命中即用 WGSL binding；找不到时回退 JS binding，不崩）；③ 补齐
-    ///    WGSL 声明为 Uniform 但 `uniforms` 未覆盖的 binding → 全 0 空 buffer（16 字节），保证
-    ///    bind group 恒为 layout 每个 Uniform 绑定提供资源（不因缺 entry 触发校验错误，不崩不白屏）。
-    /// WE 引擎内建纹理分辨率 uniform（`g_TextureNResolution`，vec4）。材质常量（constantshadervalues）
-    /// **不给值**（引擎在运行时注入），JS 侧 glsl-to-naga 缺省 → 值全 0。若 shader 把它当分母
-    /// （如 godrays 的 gaussian 模糊 pass `v_TexCoord.z = g_Scale.x / g_Texture0Resolution.z`），
-    /// 除 0 得 inf → `blur13a` 采样 `u ± inf*tap` 被 sampler ClampToEdge 钳到**纹理边缘** →
-    /// 画面被干净地拉伸/重复采样成横条乱码（task-21 根因：godrays 背景横条）。
-    /// 这里按效果链实际 RT 尺寸注入 WE 标准布局 `vec4(1/w, 1/h, w, h)`（.xy=texel 尺寸、
-    /// .zw=纹理像素大小），使计算得有效 UV 偏移（`g_Scale.x / w` ≈ 1px）。
-    /// 只会覆盖**声明了** g_TextureNResolution 的 block；未声明的 pass 不受影响。
+    /// 注入引擎内建纹理分辨率 uniform（`g_TextureNResolution`，vec4）。材质常量（constantshadervalues）
+    /// 引擎在运行时注入，JS 侧 glsl-to-naga 缺省 → 值全 0；若 shader 把它当分母（如 godrays 的
+    /// `v_TexCoord.z = g_Scale.x / g_Texture0Resolution.z`）除 0 得 inf → 采样被 sampler ClampToEdge
+    /// 钳到纹理边缘 → 横条乱码。这里按效果链实际 RT 尺寸注入 WE 标准布局 `vec4(1/w, 1/h, w, h)`
+    ///（.xy=texel 尺寸、.zw=纹理像素大小，`g_Scale.x / w` ≈ 1px）。只会覆盖声明了该 uniform 的 block。
     fn apply_engine_resolution_uniforms(
         block_data: &mut [f32],
         group: &[&UniformBinding],
@@ -768,8 +734,17 @@ mod imp {
         }
     }
 
-    /// **MVM 矩阵**：`is_mvm_member`/`identity_mat_value`（native 层）已提供 identity——依赖 MVM
-    /// 投影对象级 quad 顶点的 pass（godrays combine 等）render 时不塌原点。
+    /// 按 binding 分组非不透明 uniform（std140 block 成员），每组建一个 uniform buffer + block 数据。
+    /// 返回 `EffectUniformInstance` 列表（按 binding 升序）。
+    ///
+    /// **task-16（binding 索引重复）**：transform 拆组合采样器会重排/重编号 binding，JS 侧
+    /// `UniformBinding.binding`（拆前）与 WGSL 真实 binding（拆后）**不一致**——若仍用 JS 的 binding
+    /// 会与 texture/sampler 撞号 → `create_bind_group` 报 binding 冲突。这里：① 按 JS binding 分组
+    /// 成员；② 用 `uniform_members`（WGSL 成员名）按成员名映射到变换后**真实 binding**（找不到回退 JS
+    /// binding）；③ 补齐 WGSL 声明为 Uniform 但 `uniforms` 未覆盖的 binding → 全 0 空 buffer（16 字节），
+    /// 保证 bind group 恒为每个 Uniform 绑定提供资源。
+    /// **MVM 矩阵**：`is_mvm_member`/`identity_mat_value`（native 层）已提供 identity——依赖 MVM 投影
+    /// 对象级 quad 顶点的 pass（godrays combine 等）render 时不塌原点。
     fn build_uniform_instances(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -820,8 +795,7 @@ mod imp {
                 })
                 .collect();
             let mut block_data = pack_std140_block(block_size, &fields);
-            // task-21 + task-wasm-effect-texture-slots：注入引擎纹理分辨率 uniform。
-            // 权威布局 (w,h,w,h)：N=0 用对象 RT 尺寸、N≥1 用对应槽纹理尺寸（slot_sizes[slot_idx]）。
+            // 注入引擎纹理分辨率 uniform。权威布局 (w,h,w,h)：N=0 用对象 RT 尺寸、N≥1 用对应槽纹理尺寸。
             apply_engine_resolution_uniforms(&mut block_data, &group, tex_w, tex_h, slot_sizes);
             let g_time_offset = group.iter().find(|u| u.name == "g_Time").map(|u| u.offset);
             let buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -875,20 +849,20 @@ mod imp {
         pub uniform_instances: Vec<EffectUniformInstance>,
         /// shader 声明的**全部**纹理绑定编号（升序；多纹理 = 多个）。第一个（通常 = g_Texture0
         /// 语义）绑当前输入 view；其余多纹理在无额外纹理视图时复用输入 view 保底（不崩，见
-        /// `build_bind_group`）。替代旧的单 `input_texture_binding`。
+        /// `build_bind_group`）。
         pub texture_bindings: Vec<u32>,
         /// shader 声明的**全部** sampler 绑定编号（升序；多 sampler = 多个）。全部绑共享
         /// `self.sampler`——若只绑第一个，多 sampler（如 multi_texture_frag 的 binding 1 与 3）
-        /// 会让其余 sampler 缺 entry，每帧 `create_bind_group` 抛「binding N unbound」校验错误
-        /// (reviewer Important #1)。与 `texture_bindings` 对称。
+        /// 会让其余 sampler 缺 entry，每帧 `create_bind_group` 抛「binding N unbound」校验错误。
+        /// 与 `texture_bindings` 对称。
         pub sampler_bindings: Vec<u32>,
-        /// 效果链纹理槽语义（task-24）：`texture_slots[i]` = `g_Texture(i+1)` 的独立纹理路径
+        /// 效果链纹理槽语义：`texture_slots[i]` = `g_Texture(i+1)` 的独立纹理路径
         /// （Some = 独立遮罩/噪声/flow 纹理；None = 无独立纹理，按 previous/输入语义回退）。
         /// `build_bind_group` 据此区分「combine 的 previous（None → input_view）」与「waterwaves
         /// /downsample2 的遮罩/噪声槽（Some → 白色占位，避免用背景自身污染）」。g_Texture0
         /// 恒为当前输入（read_view），不来自本列表。
         pub texture_slots: Vec<Option<String>>,
-        // ── RT 图信息（2026-08-31 阶段1：wasm EffectChain 升级为 RT 图执行器）──
+        // ── RT 图信息（wasm EffectChain 升级为 RT 图执行器）──
         // 本 pass 写到的具名 RT（空 = 最终输出对象 out RT / 旧 ping-pong 行为）。
         pub target: Option<String>,
         // 所属 effect 组（group_id），render 按组串行执行。
@@ -915,23 +889,23 @@ mod imp {
         passes: Vec<EffectPassInstance>,
         rt_a_view: wgpu::TextureView,
         rt_b_view: wgpu::TextureView,
-        /// 具名 RT 池（2026-08-31 阶段1：RT 图执行器）：key = effect.json fbos 的具名 RT
-        /// （如 "_rt_QuarterCompoBuffer1"），value = 按 fbo_scale 降采样后的 RT（texture + view + 尺寸）。
-        /// pass 的 `target` 写到具名 RT（池内 view），`bind` 按名字读对应 view。无具名 RT 的
-        /// 简单链（Orange/waterripple 等单 pass）不产生池条目，走旧 ping-pong 行为。
+        /// 具名 RT 池（RT 图执行器）：key = effect.json fbos 的具名 RT（如 "_rt_QuarterCompoBuffer1"），
+        /// value = 按 fbo_scale 降采样后的 RT（texture + view + 尺寸）。pass 的 `target` 写到具名 RT
+        /// （池内 view），`bind` 按名字读对应 view。无具名 RT 的简单链（Orange/waterripple 等单 pass）
+        /// 不产生池条目，走旧 ping-pong 行为。
         named_rt: std::collections::HashMap<String, RtEntry>,
         sampler: wgpu::Sampler,
-        /// 白色 1×1 纹理视图（task-24）：绑定到「提供了独立纹理槽」而非首纹理槽（遮罩/噪声/flow）。
+        /// 白色 1×1 纹理视图：绑定到「提供了独立纹理槽」而非首纹理槽（遮罩/噪声/flow）。
         /// WE 语义下这些槽的**正确值**是加载的独立纹理，但 wasm 执行器暂未接通逐槽纹理字节加载；
         /// 此前把非首槽全绑 `input_view`（背景自身）导致 Orange 贴图错乱、godrays 下降采样被背景
         /// 污染的回归。白色是语义合理的兜底（白色遮罩 = 全区域效果、白色噪声 ≈ 常数），至少不再
         /// 用背景内容污染。combine 的 previous 槽（texture_slots 为 None）仍绑 `input_view`。
         white_view: wgpu::TextureView,
-        /// 逐 pass 逐槽的**真实上传纹理**视图（task-wasm-effect-texture-slots）：
-        /// `slot_textures[pass_index][slot_idx]` = 该 pass 的 `g_Texture(slot_idx+1)` 槽对应的真实
-        /// mask/normal/flow 纹理（由 `EffectChain::new` 依据 `EffectPassDesc.texture_bytes` 解码上传）。
-        /// 槽无字节/上传失败 → 该项为 `None`（build_bind_group 回退白占位/input_view）。长度与
-        /// `texture_slots` 对齐（`[pass_idx][slot_idx]`，slot_idx 从 0 = `texture_slots[0]` 即 g_Texture1）。
+        /// 逐 pass 逐槽的**真实上传纹理**视图：`slot_textures[pass_index][slot_idx]` = 该 pass 的
+        /// `g_Texture(slot_idx+1)` 槽对应的真实 mask/normal/flow 纹理（由 `EffectChain::new` 依据
+        /// `EffectPassDesc.texture_bytes` 解码上传）。槽无字节/上传失败 → 该项为 `None`（build_bind_group
+        /// 回退白占位/input_view）。长度与 `texture_slots` 对齐（`[pass_idx][slot_idx]`，slot_idx 从 0
+        /// = `texture_slots[0]` 即 g_Texture1）。
         slot_textures: Vec<Vec<Option<wgpu::TextureView>>>,
         quad_vb: wgpu::Buffer,
     }
@@ -950,18 +924,16 @@ mod imp {
             width: u32,
             height: u32,
         ) -> Result<EffectChain, String> {
-            // Phase 1+2：逐 pass 编译 + 资源创建，**per-pass 容错**（task-18 fix）——
-            // wasm 侧镜像 JS `buildEffectChainDesc` 的容错：单个 pass 的 spv_to_wgsl/glsl_to_wgsl
-            // 编译失败、或 wgpu 资源校验失败（location > 16、inter-stage 分量不一致、blend/binding /
-            // 纹理格式不兼容等 JS 层无法预判的校验）→ **跳过该 pass**，不使整链 `Err`。仅当**全部**
-            // pass 失败（空实例）或关键资源（RT/quad）创建失败才整链 `Err` → 调用方回退，绝不用演示
-            // 渐变兜底。注：把编译（无 error scope）与资源创建（独立 error scope）分开，避免一个失败
-            // pass 污染下一个 pass 的校验（error scope 只覆盖当前 pass 的资源创建）。
-            // Phase 0：**先**逐 pass 逐槽上传真实 mask/normal/flow 纹理（task-wasm-effect-texture-slots），
-            // 构造 `slot_textures`（绑定用）与 `slot_sizes`（`g_TextureNResolution` per-slot 尺寸用）。
-            // 之所以在 pass 循环前：`build_uniform_instances` 需要槽尺寸来正确填充
-            // `g_TextureNResolution`（N≥1 用槽纹理尺寸而非对象 RT 尺寸——WE 权威布局 (w,h,w,h)）。
-            // 上传失败/无字节 → 槽为 None（build_bind_group 回退白占位，绝不白屏/不崩）。
+            // Phase 1+2：逐 pass 编译 + 资源创建，**per-pass 容错**——镜像 JS `buildEffectChainDesc`。
+            // 单个 pass 编译/校验失败（JS 层无法预判，如 location > 16、inter-stage 分量不一致、
+            // blend/binding/纹理格式不兼容）→ **跳过该 pass**，不使整链 `Err`。仅当全部 pass 失败
+            // （空实例）或关键资源（RT/quad）创建失败才整链 `Err` → 调用方回退，绝不用演示渐变兜底。
+            // 注：编译（无 error scope）与资源创建（独立 error scope）分开，避免一个失败 pass 污染
+            // 下一个 pass 的校验。
+            // Phase 0：**先**逐 pass 逐槽上传真实 mask/normal/flow 纹理，构造 `slot_textures`（绑定用）
+            // 与 `slot_sizes`（`g_TextureNResolution` per-slot 尺寸用）。在建 pass 前：build_uniform_instances
+            // 需槽尺寸正确填充 `g_TextureNResolution`（N≥1 用槽纹理尺寸而非对象 RT 尺寸）。
+            // 上传失败/无字节 → 槽为 None（build_bind_group 回退白占位，不崩）。
             let mut slot_textures: Vec<Vec<Option<wgpu::TextureView>>> = Vec::with_capacity(passes.len());
             let mut slot_sizes: Vec<Vec<Option<(f32, f32)>>> = Vec::with_capacity(passes.len());
             device.push_error_scope(wgpu::ErrorFilter::Validation);
@@ -1068,7 +1040,7 @@ mod imp {
                     sampler_bindings,
                     // task-24：透传该 pass 的纹理槽语义（g_Texture(i+1) 的独立纹理路径；None = previous）。
                     texture_slots: desc.texture_slots.clone(),
-                    // RT 图信息（2026-08-31 阶段1）：target/bind 从 effect.json 传入。
+                    // RT 图信息（RT 图执行器）：target/bind 从 effect.json 传入。
                     target: desc.target.clone(),
                     bind: desc.bind.clone(),
                     group_id: desc.group_id,
@@ -1092,7 +1064,7 @@ mod imp {
             let rt_b = create_rt(device, width.max(1), height.max(1), format, "effect-rt-b");
             let rt_a_view = rt_a.create_view(&wgpu::TextureViewDescriptor::default());
             let rt_b_view = rt_b.create_view(&wgpu::TextureViewDescriptor::default());
-            // ── 具名 RT 池（2026-08-31 阶段1：RT 图执行器）──
+            // ── 具名 RT 池（RT 图执行器）──
             // 遍历所有 pass 的 target（非空 = 写具名 RT），按 fbo_scale 建降采样 RT。
             // 同一具名 RT 只建一次（多 pass 复用）；尺寸 = base ÷ scale（最低 1）。
             // 无具名 RT 的链（Orange/waterripple 等）named_rt 保持空，走旧 ping-pong。
@@ -1116,7 +1088,7 @@ mod imp {
                 ..Default::default()
             });
             let quad_vb = create_quad_vb(device, queue);
-            // 白色 1×1 占位纹理（task-24）：RGBA8 纯白，供「提供了独立纹理槽」的非首纹理槽绑定，
+            // 白色 1×1 占位纹理：RGBA8 纯白，供「提供了独立纹理槽」的非首纹理槽绑定，
             // 避免复用 input_view（背景自身）。Color::WHITE 语义在 WE shader 里 = 全 1（遮罩全区域 /
             // 常数噪声），至少不再用背景内容污染效果链输出。
             let white_tex = device.create_texture(&wgpu::TextureDescriptor {
@@ -1139,11 +1111,10 @@ mod imp {
             if let Some(err) = device.pop_error_scope().await {
                 return Err(format!("EffectChain 关键资源（RT/sampler/quad/white）创建校验失败：{err:?}"));
             }
-            // task-wasm-effect-texture-slots：逐 pass 逐槽上传真实 mask/normal/flow 纹理。
-            // 依据 `EffectPassDesc.texture_bytes`（与 texture_slots 对齐），有字节的槽经 parse_tex
-            // 解码 + create_texture + write_texture 上传为 wgpu 纹理（RGBA8888，UNorm，与 surface
-            // 非 sRGB 匹配，见 tex.rs/upload_texture 的 Task 9 说明）。无字节/解析失败 → 该槽为 None
-            // （build_bind_group 回退白占位，绝不白屏/不崩）。修复白色占位导致 mask 恒 1 的对象位移。
+            // 逐 pass 逐槽上传真实 mask/normal/flow 纹理。依据 `EffectPassDesc.texture_bytes`
+            // （与 texture_slots 对齐），有字节的槽经 parse_tex 解码 + create_texture + write_texture
+            // 上传为 wgpu 纹理（RGBA8888，UNorm，与 surface 非 sRGB 匹配）。无字节/解析失败 → 该槽为
+            // None（build_bind_group 回退白占位）。修复白占位导致 mask 恒 1 的对象位移。
             let mut slot_textures: Vec<Vec<Option<wgpu::TextureView>>> = Vec::with_capacity(passes.len());
             device.push_error_scope(wgpu::ErrorFilter::Validation);
             for desc in &passes {
@@ -1182,10 +1153,9 @@ mod imp {
         /// 每 pass 绑定 `g_Texture0`（当前读视图）+ 纹理槽 + uniform（g_Time 每帧 host 更新）。
         /// 不 panic；pass 数 0 → no-op。
         ///
-        /// **性能约束（一次性构建）**：本方法**不做** naga 编译 / shader module / render pipeline
-        /// 创建——它们的构建与对象 RT / ping-pong RT / uniform buffer 均在 `new`（壁纸/对象加载时）
-        /// 一次性完成。每帧仅：① 写 uniform buffer（g_Time 经 host 更新）；② 按当前输入 view
-        /// 建 bind group；③ 提交 render pass。无每帧 shader 编译，理论上帧内零编译开销。
+        /// **性能约束（一次性构建）**：本方法**不做** naga 编译 / shader module / render pipeline 创建——
+        /// 这些都在 `new`（壁纸/对象加载时）一次性完成。每帧仅：① 写 uniform buffer（g_Time）；
+        /// ② 按当前输入 view 建 bind group；③ 提交 render pass，无每帧 shader 编译。
         pub fn render(
             &mut self,
             encoder: &mut wgpu::CommandEncoder,
@@ -1197,11 +1167,10 @@ mod imp {
             if n == 0 {
                 return;
             }
-            // ── 按 effect 分组（group_id，2026-08-31）──
-            // JS buildEffectChainDesc 按 fx 顺序入组（同一 effect 的 pass 用相同 group_id，
-            // 连续排列）。这里以 group_id 跳变为界，切分 pass 到各组。组内执行 RT 图/线性
-            // （target/bind/ping-pong；组内 last 判定），组间串行（前组输出 → 下组输入）——
-            // 修复多 effect flatten 成单一 chain 导致组合错误/白屏（Eva01 等）。
+            // ── 按 effect 分组（group_id）──
+            // JS buildEffectChainDesc 按 fx 顺序入组（同一 effect 的 pass 用相同 group_id，连续排列）。
+            // 这里以 group_id 跳变为界切分 pass 到各组。组内执行 RT 图/线性（target/bind/ping-pong；
+            // 组内 last 判定），组间串行（前组输出 → 下组输入）。
             let mut group_starts: Vec<usize> = vec![0];
             for i in 1..n {
                 if self.passes[i].group_id != self.passes[i - 1].group_id {
@@ -1303,8 +1272,7 @@ mod imp {
             }
         }
 
-        /// 解析 pass 的读源 view（2026-08-31 阶段1：RT 图支持）。
-        /// bind[0].name 决定 g_Texture0 的读端：
+        /// 解析 pass 的读源 view（RT 图支持）。bind[0].name 决定 g_Texture0 的读端：
         /// - 具名 RT（"_rt_*"）→ named_rt[名].view（降采样中间缓冲）；
         /// - "previous" 或 "" → input_view（原始内容，combine 用）；
         /// - 其它/无 bind → fallback（链式 read_view，兼容无具名 RT 链）。
@@ -1329,17 +1297,13 @@ mod imp {
 
         /// 按 shader 声明的绑定构建 bind group：std140 uniform block（各 binding）+ 纹理绑定 + sampler。
         ///
-        /// **错误防护（缺 entry 不崩）**：wgpu 24 的 `create_bind_group` 校验错误默认不 panic（走
-        /// uncaptured error handler），且此处**保证 entries 与 layout 每个绑定一致**：uniform 绑定
-        /// 恒有 buffer（`build_uniform_instances` 对缺失 binding 已补空 buffer）、全部纹理绑定恒有
-        /// 视图（多纹理无额外资源时复用当前输入 `read_view` 保底）、sampler 恒有共享 sampler——
-        /// 故 bind group 不会因缺 entry 触发校验错误。真正的资源创建错误在 `new` 的 error scope
-        /// 内收敛（`EffectChain::new` 返回 `Err` → 调用方跳链回退，绝不白屏/不崩）。
+        /// **错误防护（缺 entry 不崩）**：此处保证 entries 与 layout 每个绑定一致——uniform 绑定恒有
+        /// buffer（`build_uniform_instances` 对缺失 binding 已补空 buffer）、纹理绑定恒有视图（多纹理无
+        /// 额外资源时复用 `read_view` 保底）、sampler 恒有共享 sampler——故 bind group 不会因缺 entry
+        /// 触发校验错误。真正的资源创建错误在 `new` 的 error scope 内收敛。
         ///
-        /// **多纹理（task-22 + task-24 修正）**：`texture_bindings` 为 shader 声明的全部纹理绑定
-        /// （升序）。**首纹理**（通常 g_Texture0 语义）绑当前效果链输入 `read_view`；**其余多纹理槽**
-        /// 按 `texture_slots[bi-1]` 区分语义（task-22 曾全部绑 `input_view`，导致 Orange 贴图错乱、
-        /// godrays 下降采样被背景污染的回归）：
+        /// **多纹理**：`texture_bindings` 为 shader 声明的全部纹理绑定（升序）。**首纹理**（通常
+        /// g_Texture0 语义）绑当前效果链输入 `read_view`；**其余多纹理槽**按 `texture_slots[bi-1]` 区分：
         /// - `texture_slots[bi-1]` 为 `Some(_)`（场景提供了独立遮罩/噪声/flow 纹理）→ 绑白色占位
         ///   `self.white_view`（wasm 暂未逐槽加载真实纹理；白色至少避免用背景内容污染输出）。
         /// - `texture_slots[bi-1]` 为 `None`（如 combine 的 g_Texture1 = previous）→ 绑 `input_view`
@@ -1361,9 +1325,8 @@ mod imp {
                 } else {
                     // g_Texture(bi) 对应 texture_slots[bi-1]（g_Texture0 恒为输入，不进来）。
                     let slot = pass.texture_slots.get(bi - 1).and_then(|s| s.as_deref());
-                    // task-wasm-effect-texture-slots：优先绑定**真实上传的** mask/normal/flow 纹理
-                    // （`slot_textures[pass_index][bi-1]`），修复白色占位导致的 mask 恒 1 → 对象位移/拉伸。
-                    // 有真实纹理（texture_slots 为 Some 且字节已成功上传）→ 绑真实纹理；否则回退如下：
+                    // 优先绑定**真实上传的** mask/normal/flow 纹理（`slot_textures[pass_index][bi-1]`），
+                    // 修复白色占位导致的 mask 恒 1 → 对象位移/拉伸。有真实纹理 → 绑真实纹理；否则回退：
                     let slot_texture = self
                         .slot_textures
                         .get(pass_index)
@@ -1399,10 +1362,9 @@ mod imp {
 
     /// 上传一张效果链槽纹理（mask/normal/flow）字节为 wgpu 纹理视图。
     ///
-    /// task-wasm-effect-texture-slots：`EffectPassDesc.texture_bytes[slot_idx]` 携带的是 `.tex`
-    /// （TEXV0005 容器）字节，经 `crate::tex::parse_tex` 解码 → `copy_layout` 计算上传布局 →
-    /// `create_texture` + `write_texture` 上传。格式为 UNorm（对齐 surface 非 sRGB，见
-    /// `Renderer::upload_texture` 的 Task 9 说明）。mask 纹理实测均为 RGBA8888、TEXB0003 容器，
+    /// `EffectPassDesc.texture_bytes[slot_idx]` 携带的是 `.tex`（TEXV0005 容器）字节，经
+    /// `crate::tex::parse_tex` 解码 → `copy_layout` 计算上传布局 → `create_texture` + `write_texture`
+    /// 上传。格式为 UNorm（对齐 surface 非 sRGB）。mask 纹理实测均为 RGBA8888、TEXB0003 容器，
     /// 非 BC/压缩，不会走 texture-compression-bc 跳过路径。解析/上传失败 → 返回 None（槽回退白占位）。
     fn upload_slot_texture(device: &wgpu::Device, queue: &wgpu::Queue, bytes: &[u8]) -> Option<wgpu::TextureView> {
         let img = crate::tex::parse_tex(bytes)?;
@@ -1467,16 +1429,12 @@ mod imp {
     }
 
     /// 全屏 quad 顶点缓冲（triangle-strip，4 顶点；pos.xy NDC + uv.xy）。a_Position/a_TexCoord。
-    /// UV 方向（2026-09 修正，headless 实测）：对象级效果链的输入 content RT 在效果链里实际为
-    /// **bottom-up**（v=0=内容底部）。WE 效果 shader 直接 `texture(g_Texture0, v_TexCoord.xy)` 采样
-    /// 会上下颠倒（Crimson 3765967112 主图经 foliagesway 效果链镜像，headless 恒等效果链复现）。
-    /// 故 QUAD 的 a_TexCoord **翻转 y**（top 顶点取 v=1=内容底部）→ 效果 shader 采样后与"空效果链
-    /// copy content→out（正立）"一致。本 QUAD 用于**所有对象级效果链 pass**（全局行为变更；headless
-    /// 恒等/真实链 + 全库实机已确认无回归）；空效果链走 copy、不经本 QUAD。
-    /// 历史澄清：更早注释称「top 顶点取 v=0（恒等，输出顶=输入顶）」——与现实现**不符**，已被本修正
-    /// 取代（现数组 top-left/top-right 的 uv.y=1）。上传纹理为 v=0=顶部（top-down，见 tex.rs）；
-    /// 效果链输出是否正立由输入 content RT 方向决定。QUAD 方向与 image.wgsl 的 UV 约定强耦合，
-    /// 改动 image.wgsl 方向时须同步复核此处。
+    /// UV 方向：对象级效果链的输入 content RT 在效果链里实际为 **bottom-up**（v=0=内容底部）。
+    /// WE 效果 shader 直接 `texture(g_Texture0, v_TexCoord.xy)` 采样会上下颠倒，故 QUAD 的
+    /// a_TexCoord **翻转 y**（top 顶点取 v=1=内容底部）→ 效果 shader 采样后与「空效果链 copy
+    /// content→out（正立）」一致。本 QUAD 用于**所有对象级效果链 pass**；空效果链走 copy、不经本 QUAD。
+    /// 上传纹理为 v=0=顶部（top-down，见 tex.rs）；效果链输出是否正立由输入 content RT 方向决定。
+    /// QUAD 方向与 image.wgsl 的 UV 约定强耦合，改动 image.wgsl 方向时须同步复核此处。
     const QUAD: [f32; 16] = [
         -1.0, -1.0, 0.0, 0.0, // bottom-left:  pos(-1,-1), uv(0,0)
          1.0, -1.0, 1.0, 0.0, // bottom-right: uv(1,0)

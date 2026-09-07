@@ -21,12 +21,10 @@ pub const CAMERA_DISTANCE: f32 = 300.0;
 
 /// 对象级效果链的 pass 描述（M3/Task5，task-8 编译链集成）。
 /// `chain_desc` 现为**真实 WE 效果 pass 的 SPIR-V JSON 数组**（JS 侧 glsl-to-naga 产出）：
-/// 每个元素一个 pass，含 `vert_spv`/`frag_spv`（SPIR-V bytes，入 `EffectChain` 经 spv_to_wgsl
-/// 编译）、`uniforms`/`texture_slots`/`blend_mode`。解析成功且非空 → 用真实 pass。
-/// **task-15（编译失败 → 原始内容，非演示渐变）**：chain_desc 空/解析失败 → 返回**空 `Vec`
-/// （无效果 pass）**——调用方（set_object_effect / set_particle_object_effect）据此把
-/// `effect_chain` 置 `None`，合成 quad 采样原始内容（对象显示内容、无效果），**绝不回退内置
-/// 程序化渐变演示 pass**（旧行为用 g_Time 程序化 shader 替代对象内容，正是「渐变覆盖内容」的根因）。
+/// 每个元素一个 pass，含 `vert_spv`/`frag_spv`（SPIR-V bytes，入 `EffectChain` 经 spv_to_wgsl 编译）、
+/// `uniforms`/`texture_slots`/`blend_mode`。
+/// **task-15**：chain_desc 空/解析失败 → 返回**空 `Vec`（无效果 pass）**——调用方据此把
+/// `effect_chain` 置 `None`，合成 quad 采样原始内容，**绝不回退内置程序化渐变演示 pass**。
 #[cfg(feature = "render")]
 fn demo_object_effect_passes(chain_desc: &str) -> Vec<effect::EffectPassDesc> {
     if !chain_desc.is_empty() {
@@ -48,8 +46,7 @@ fn demo_object_effect_passes(chain_desc: &str) -> Vec<effect::EffectPassDesc> {
     Vec::new()
 }
 
-/// 场景图片对象：纹理 + 变换 + GPU 资源（Task 9 实测修复：render_frame 原只渲染
-/// 粒子、图片平面未绘制 → 全库画面偏暗；本结构承载图片 quad 渲染所需资源）。
+/// 场景图片对象：纹理 + 变换 + GPU 资源。承载图片 quad 渲染所需资源。
 #[cfg(feature = "render")]
 pub struct SceneImage {
     pub asset_id: u32,
@@ -87,7 +84,7 @@ pub struct ImageUniform {
 }
 
 /// 图片调制系数（T4.3）：WE 对象 color/alpha/brightness → tint（vec4f，0-1）。
-///   color：0-255 量级（对齐 JS optColor 归一化输出）→ /255 到 0-1；
+///   color：0-255 量级（对齐 JS optColor）→ /255 到 0-1；
 ///   brightness：乘法系数（缺省 1），乘入 color 后 clamp 0-1（超 1 饱和到纯色）；
 ///   alpha：0-1（解析器已按 NormalizeLayerAlpha 归一化），缺省 1，clamp 0-1 防御。
 /// 输出 [r,g,b,a] 0-1；全缺省 → [1,1,1,1]（无调制，向后兼容旧行为）。
@@ -120,13 +117,12 @@ pub struct ObjectState {
 
 /// 对象内容 quad 渲染到**对象 RT** 的 NDC uniform（M3/Task5，native 可测）。
 ///
-/// 对象级路径里，对象内容（图片/内容 mesh）在局部空间**中心原点**（对象中心 = 局部原点），
-/// 局部正交相机范围 = 对象 RT 分辨率（rt 尺寸，1:1 像素）。故：
-/// - NDC center = (0,0)（内容中心即局部原点，非场景 origin——场景 origin 在合成 quad 定位用）；
-/// - NDC half = world/rt（**带符号**：负 scale 的镜像由内容 RT 承载，task-4.4「相机范围与
-///   quad 帧用幅值、镜像活在 mesh/RT 内容」的职责分离——内容 half 保留符号产生镜像，合成
-///   quad 帧用幅值）；
-/// - tint = image_tint（对象 color/alpha/brightness 调制在**源内容**施加，合成 quad 不再二次调制）。
+/// 对象级路径里对象内容（图片/内容 mesh）在局部空间**中心原点**（对象中心 = 局部原点），
+/// 局部正交相机范围 = 对象 RT 分辨率（1:1 像素）。故：
+/// - NDC center = (0,0)（内容中心即局部原点）；
+/// - NDC half = world/rt（**带符号**：负 scale 的镜像由内容 RT 承载——「相机范围与 quad 帧用幅值、
+///   镜像活在 mesh/RT 内容」的职责分离）；
+/// - tint = image_tint（调制在源内容施加，合成 quad 不再二次调制）。
 /// 与 `coords::image_half_ndc` 不同：这里 view 用对象 RT 尺寸（局部相机范围内），而非 surface 相机范围。
 pub fn content_ndc(world_size: [f32; 2], rt_w: f32, rt_h: f32, tint: [f32; 4]) -> ImageUniform {
     ImageUniform {
@@ -205,9 +201,8 @@ pub struct ObjectEffectEntry {
 /// M4/Task6：粒子对象的对象级效果链条目。与 `ObjectEffectEntry`（图片内容）机制一致：
 /// 内容 → 对象 RT → 效果链 ping-pong → 合成 quad 贴回 surface。粒子内容不是静态纹理，
 /// 而是 GPU 模拟管线（`ParticlePass`）每帧渲染到对象 RT；粒子的 compute 模拟（step）由
-/// `Renderer::step` 驱动（与共享粒子系统同）。
-/// 复用 Task5 的对象 RT/效果链/合成 quad 机制（非重复实现）；RT 尺寸用 `particle_object_range`
-/// （无 distanceMax → 默认 64），合成 quad 世界尺寸用 `particle_world_size`（未钳制）。
+/// `Renderer::step` 驱动。复用 Task5 的对象 RT/效果链/合成 quad 机制；RT 尺寸用
+/// `particle_object_range`（无 distanceMax → 默认 64），合成 quad 世界尺寸用 `particle_world_size`。
 /// 绝不白屏：效果链创建失败（effect_chain = None）时内容 blit 到 out_view，合成 quad 采样原始粒子内容。
 #[cfg(feature = "render")]
 pub struct ParticleObjectEffect {
@@ -240,8 +235,8 @@ pub struct Renderer {
     surface: wgpu::Surface<'static>,
     width: u32,
     height: u32,
-    /// GPU 粒子模拟 + 点渲染管线（**多系统**，set_particle 追加——Task 9 修复：
-    /// EVA 等壁纸多粒子系统全部渲染，对齐 JS 版粒子密度）
+    /// GPU 粒子模拟 + 点渲染管线（**多系统**，set_particle 追加——对齐 JS 版粒子密度，
+    /// EVA 等壁纸多粒子系统全部渲染）
     particle_passes: Vec<particle_pass::ParticlePass>,
     /// 场景正交尺寸（load_scene 设置；render_frame 的 contain 相机范围计算用）
     scene_w: f32,
@@ -254,16 +249,14 @@ pub struct Renderer {
     /// 图片平面（set_image 上传；render_frame 在粒子层之前绘制）
     images: Vec<SceneImage>,
     image_pipeline: wgpu::RenderPipeline,
-    /// 效果链全屏 quad 管线基线（Task2）。当前 0..1 个透传测试 pass（对象级效果链基线的
-    /// 可渲染工程验证）；Task3+ 扩展为对象级效果链（EffectChain/ping-pong/uniform）。
+    /// 效果链全屏 quad 管线基线（Task2）。当前 0..1 个透传测试 pass；Task3+ 扩展为对象级效果链。
     effect_passes: Vec<effect_pass::EffectPass>,
     /// `@group(0)` 的 bind group layout（binding 0 = texture_2d, binding 1 = sampler），
     /// 效果链各层复用。调用方（render_frame）按当前输入纹理创建 bind group 后传入 render。
     effect_layout: wgpu::BindGroupLayout,
-    /// 离屏"自采"纹理：场景先渲染到离屏，透传 pass 采样并输出到 surface（读自采渲染，
-    /// 验证 wasm 工程串通、不黑屏）。尺寸/格式与 surface 一致，避免 surface 当帧自依赖。
-    /// **仅当 effect_passes 非空（effect pass 创建成功）时才分配**——Task2 修复：
-    /// 原实现无条件分配，effect 失败时这些资源闲置浪费。Option 表达「可能未分配」。
+    /// 离屏"自采"纹理：场景先渲染到离屏，透传 pass 采样并输出到 surface（读自采渲染，验证 wasm
+    /// 工程串通、不黑屏）。尺寸/格式与 surface 一致，避免 surface 当帧自依赖。
+    /// **仅当 effect_passes 非空（effect pass 创建成功）时才分配**；Option 表达「可能未分配」。
     offscreen_tex: Option<wgpu::Texture>,
     offscreen_view: Option<wgpu::TextureView>,
     offscreen_sampler: Option<wgpu::Sampler>,
@@ -297,10 +290,9 @@ impl Renderer {
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
         }).await.ok_or("no WebGPU adapter")?;
-        // wgpu 24 API 适配：request_device 增补第 2 参数 trace_path（None = 不追踪）。
-        // Task 9 修复：DXT(BC) 纹理需要 texture-compression-bc feature——adapter 支持时
-        // 启用，否则 upload_texture 的 create_texture 会 panic（实测 3743126786/3765967112
-        // 等含 DXT 纹理的壁纸 wasm 渲染 panic → 回退 JS）。
+        // wgpu 24 API：request_device 增补第 2 参数 trace_path（None = 不追踪）。
+        // DXT(BC) 纹理需要 texture-compression-bc feature——adapter 支持时启用，否则
+        // upload_texture 的 create_texture 会 panic。
         let mut required_features = wgpu::Features::empty();
         if adapter.features().contains(wgpu::Features::TEXTURE_COMPRESSION_BC) {
             required_features |= wgpu::Features::TEXTURE_COMPRESSION_BC;
@@ -312,14 +304,11 @@ impl Renderer {
             memory_hints: wgpu::MemoryHints::Performance,
         }, None).await.map_err(|e| format!("request_device: {e}"))?;
         let caps = surface.get_capabilities(&adapter);
-        // Task 9 修复：直接取 formats[0]（headless Edge 实测首选非 sRGB 格式）。
-        // 原实现优先 sRGB → 纹理(改后非 sRGB) 采样值经 sRGB surface 编码会偏亮，
-        // 且旧组合（sRGB 纹理 + 非 sRGB surface）使画面暗约 50%。统一非 sRGB 管线：
-        // 纹理 fragment 输出原始编码值，surface 直接显示。
+        // 直接取 formats[0]（headless Edge 实测首选非 sRGB 格式），统一非 sRGB 管线：
+        // 纹理 fragment 输出原始编码值，surface 直接显示（sRGB 表面会把线性值再编码显示，令画面偏亮）。
         let format = caps.formats[0];
-        // 调试（2026-08-21 色彩管线排查）：surface 格式决定 sRGB 处理——sRGB surface
-        // 会把写入值当线性再编码显示（非 sRGB 纹理 + sRGB surface → 偏亮偏饱和）。
-        // 用户 Firefox 与 headless Edge 的 formats[0] 可能不同（Task 9 基于 Edge 非 sRGB）。
+        // 调试：surface 格式决定 sRGB 处理——sRGB surface 会把写入值当线性再编码显示（非 sRGB 纹理 +
+        // sRGB surface → 偏亮偏饱和）。用户 Firefox 与 headless Edge 的 formats[0] 可能不同。
         web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(&format!(
             "[wasm] surface format: {:?} ({} formats)",
             format,
@@ -523,23 +512,15 @@ impl Renderer {
                 "[wasm] effect pass 创建失败，跳过（兜底直接渲染 surface）：{e}"
             ))),
         }
-        // == 全局 demo 效果链（Task3/M2 遗留，Critical #1 已移除）==
-        // 原实现在此无条件用内置**程序化**单 pass（g_Time 驱动、不采样 g_Texture0）建一个
-        // 全局全屏 effect_chain，并在 render_frame 第一分支 `if self.effect_chain.is_some()`
-        // 恒优先把它覆盖到所有走 wasm 的场景上——导致**无 effects 的纯图片/粒子壁纸**
-        // 也被程序化动画覆盖（内容丢失回归，比白屏更隐蔽）。
-        // 对象级效果链（set_object_effect / set_particle_object_effect 的对象 RT+效果链+
-        // 合成 quad）已独立落地，由 render_object_effects + draw_scene_into 的合成 quad
-        // 直接驱动，与此全局链无关（其 effect_chain 存于各 ObjectEffectEntry /
-        // ParticleObjectEffect 条目内）。故彻底移除该全局 effect_chain 字段与创建点：
-        // 无 effects 场景不再被覆盖，保留场景/图片/粒子内容；对象级链条目继续正常工作。
-        // 效果链执行器"在 RT 上执行"的架构证明保留在对象级链上（见 ObjectEffectEntry /
-        // ParticleObjectEffect），本全局链不再参与正常场景渲染。
-        // 离屏"自采"纹理（尺寸/格式与 surface 一致）：场景先渲染到离屏，再由透传 pass
-        // 采样输出到 surface——读自采渲染验证 wasm 工程串通，避免 surface 当帧自依赖。
-        // Fix：仅当效果链透传 pass 创建成功（effect_passes 非空）才分配；无 effects 场景
-        // 走透传/直接渲染 surface（保留内容）。全局 demo effect_chain（Critical #1）已移除，
-        // 不再作为离屏分配的前置条件。
+        // == 全局 demo 效果链（Task3/M2 遗留，已移除）==
+        // 原实现在此无条件用内置**程序化**单 pass（g_Time 驱动、不采样 g_Texture0）建全局全屏
+        // effect_chain，并在 render_frame 恒优先覆盖所有走 wasm 的场景 → 无 effects 的纯图片/粒子
+        // 壁纸也被程序化动画覆盖（内容丢失回归）。对象级效果链已独立落地（存于各 ObjectEffectEntry /
+        // ParticleObjectEffect 条目内，由 render_object_effects + 合成 quad 直接驱动），故彻底移除该
+        // 全局 effect_chain 字段与创建点。
+        // 离屏"自采"纹理（尺寸/格式与 surface 一致）：场景先渲染到离屏，再由透传 pass 采样输出到
+        // surface——读自采渲染验证 wasm 工程串通，避免 surface 当帧自依赖。仅当 effect_passes 非空
+        // 才分配；无 effects 场景走透传/直接渲染 surface（保留内容）。
         let (offscreen_tex, offscreen_view, offscreen_sampler) =
             if !effect_passes.is_empty() {
             let tex = device.create_texture(&wgpu::TextureDescriptor {
@@ -592,7 +573,7 @@ impl Renderer {
 
     /// 场景 clearcolor（**0-1 量级**——WE 颜色字段（ambientcolor/skylightcolor 同段）为
     /// 0-1，对齐 JS 版 `new THREE.Color(cc[0], cc[1], cc[2])`；cover 背景模式清屏用。
-    /// 最终审查修复：原实现错误除 255（假设 0-255），EVA "0.7 0.7 0.7" 被压成 ≈0.0027 近黑。
+    /// 曾误按 0-255 除以 255，把 "0.7 0.7 0.7" 压成 ≈0.0027 近黑，见 git log。
     pub fn set_clear_color(&mut self, c: Option<[f32; 3]>) {
         self.clear_color = c;
     }
@@ -609,9 +590,8 @@ impl Renderer {
         self.config.width = self.width;
         self.config.height = self.height;
         self.surface.configure(&self.device, &self.config);
-        // 重建离屏自采纹理（尺寸与 surface 一致；Task2 效果管线输入需要，防旧尺寸失配）。
-        // Fix：仅当 effect pass 存在（effect_passes 非空）才重建，否则保持 None（不闲置）。
-        // offscreen_sampler 不依赖尺寸，无需重建。
+        // 重建离屏自采纹理（尺寸与 surface 一致；效果管线输入需要，防旧尺寸失配）。
+        // 仅当 effect pass 存在（effect_passes 非空）才重建，否则保持 None；offscreen_sampler 不依赖尺寸。
         if !self.effect_passes.is_empty() {
             self.offscreen_tex = Some(self.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("effect-offscreen"),
@@ -629,17 +609,11 @@ impl Renderer {
         }
     }
 
-    /// 装载粒子规格并构建 GPU 粒子管线（**追加**而非覆盖——Task 9 修复：
-    /// 原实现单系统覆盖，EVA 等壁纸 5 个粒子系统只有最后一个渲染，粒子密度远低于
-    /// JS 版 → 画面偏暗）。origin 映射用场景尺寸（scene_w/scene_h），投影用相机
-    /// 范围（camera_range）——对齐 scene-renderer.ts 语义。
-    /// Task 9 审查修复：粒子池上限按 emitter rate×寿命动态估算（原固定 2048，
-    /// 多粒子壁纸 GPU 负载爆炸 → headless FPS < 30）。
-    /// 2026-08-21 铺满全屏改造：背景模糊层移除（前景单层 cover 渲染）→ 不再减半
-    /// （减半原为背景层低密度优化；cover_max_particles 已删除）。
-    /// Round 2 审查修复：先算 max_particles，再传入 from_spec 写 uniform —— 与
-    /// ParticlePass::new 的 buffer 槽位、dispatch 分派**三处一致**
-    /// （原 uniform 硬编码 2048 → 估算槽位下 shader 边界检查恒不触发 → 越界读写 UB）。
+    /// 装载粒子规格并构建 GPU 粒子管线（**追加**而非覆盖——对齐 JS 版粒子密度，EVA 等壁纸多粒子
+    /// 系统全部渲染）。origin 映射用场景尺寸（scene_w/scene_h），投影用相机范围（camera_range）。
+    /// 粒子池上限按 emitter rate×寿命动态估算（原固定 2048，多粒子壁纸 GPU 负载爆炸）。
+    /// 先算 max_particles 再传入 from_spec 写 uniform——与 ParticlePass::new 的 buffer 槽位、
+    /// dispatch 分派三处一致（原 uniform 硬编码 → 估算槽位下 shader 边界检查恒不触发 → 越界读写 UB）。
     pub fn set_particle(
         &mut self,
         spec: &ParticleSpec,
@@ -670,10 +644,10 @@ impl Renderer {
     ///   已对齐宽度直接借用 mip0（零拷贝），非对齐宽度按行补 padding 重打包；
     /// - rows_per_image 按格式区分：块压缩 = 块行数 ceil(h/4)，非压缩 = 高。
     pub fn upload_texture(&mut self, img: &crate::tex::TexImage) -> Option<wgpu::Texture> {
-        // R8 灰度粒子纹理（fog1 等，2026-08-21 方案 A 修复）：对齐 WE ConvertTexture0Format
-        // FORMAT_R8 语义（rgb 恒白 + alpha=灰度），上传前展开为 RGBA8(255,255,255,r)——
-        // shader 统一 texel=(1,1,1,灰度)：颜色不调制、alpha 由纹理灰度调制（雾形状柔和）。
-        // 直接采样 R8（WGSL 返回 (r,0,0,1)）→ rgb 变红且 alpha 无纹理调制（雾均匀偏浓）。
+        // R8 灰度粒子纹理（fog1 等）：对齐 WE ConvertTexture0Format FORMAT_R8 语义（rgb 恒白 +
+        // alpha=灰度），上传前展开为 RGBA8(255,255,255,r)——shader 统一 texel=(1,1,1,灰度)：颜色
+        // 不调制、alpha 由纹理灰度调制（雾形状柔和）。直接采样 R8（WGSL 返回 (r,0,0,1)）→ rgb 变红
+        // 且 alpha 无纹理调制（雾均匀偏浓）。
         let (format, r8_converted, layout) = if img.format == crate::tex::TexFormat::R8 {
             let rgba = crate::tex::r8_to_rgba_white_alpha(&img.mip0);
             let img8 = crate::tex::TexImage {
@@ -688,8 +662,8 @@ impl Renderer {
             let f = texture::tex_format_to_wgpu(img.format)?;
             (f, None, crate::tex::copy_layout(img)?)
         };
-        // Task 9 修复（防 panic）：BC(DXT) 格式需 texture-compression-bc feature；
-        // adapter 不支持时跳过该纹理（返回 None，图片缺失但不中断 wasm 渲染）
+        // 防 panic：BC(DXT) 格式需 texture-compression-bc feature，adapter 不支持时跳过该纹理
+        // （返回 None，图片缺失但不中断 wasm 渲染）。
         if matches!(img.format, crate::tex::TexFormat::Dxt1 | crate::tex::TexFormat::Dxt3 | crate::tex::TexFormat::Dxt5)
             && !self.device.features().contains(wgpu::Features::TEXTURE_COMPRESSION_BC)
         {
@@ -754,8 +728,8 @@ impl Renderer {
     /// 登记一张图片平面：创建 bind group（纹理+采样器）与 uniform buffer，
     /// 相同 asset_id 替换旧图（对齐 JS 版 scene-renderer setImageObject 的语义：
     /// 平面尺寸 = obj.size 优先、缺省回退纹理宽高；scale 直接缩放；origin 为场景中心点）。
-    /// T4.3：tint_color/alpha/brightness 为对象调制输入（None = 缺省 → 无调制），
-    /// 每帧 image_ndc 打包进 ImageUniform.tint（见 image_tint）。
+    /// T4.3：tint_color/alpha/brightness 为对象调制输入（None = 缺省 → 无调制），每帧 image_ndc 打包进
+    /// ImageUniform.tint（见 image_tint）。
     pub fn set_image(
         &mut self,
         asset_id: u32,
@@ -855,13 +829,11 @@ impl Renderer {
     /// - `origin`：对象中心（WE 坐标，已 applyAlignment 换算中心；合成 quad NDC 定位，不翻转 y）。
     /// - `world_size`：`size×scale`（带符号——镜像由内容 RT 承载）。
     /// - `rt_size`：`object_camera_range` 钳制后分辨率（局部正交相机范围 = RT 尺寸，1:1 像素）。
-    /// - `chain_desc`：效果链 pass 描述（JSON，真实 WE shader 的 SPIR-V 数组）。task-8 编译链
-    ///   已集成：JS 侧 glsl-to-naga 产出 SPIR-V bytes 传入，本方法经 `demo_object_effect_passes`
-    ///   解析为 `Vec<EffectPassDesc>`（spv 路径）；task-15：解析失败/为空 → 无效果链
-    ///   （effect_chain=None → 合成 quad 采样内容），绝不回退演示渐变。
+    /// - `chain_desc`：效果链 pass 描述（JSON，真实 WE shader 的 SPIR-V 数组），经 `demo_object_effect_passes`
+    ///   解析；task-15：解析失败/为空 → 无效果链（合成 quad 采样内容），绝不回退演示渐变。
     ///
-    /// 绝不白屏：找不到对象内容 / 效果链创建失败 → 不崩溃（对象回退共享路径 / 合成 quad
-    /// 采样内容纹理），本方法返回 `Ok`（零副作用），调用方继续渲染。
+    /// 绝不白屏：找不到对象内容 / 效果链创建失败 → 不崩溃（对象回退共享路径 / 合成 quad 采样内容纹理），
+    /// 本方法返回 `Ok`（零副作用），调用方继续渲染。
     pub async fn set_object_effect(
         &mut self,
         obj_id: u32,
@@ -926,8 +898,8 @@ impl Renderer {
             view_formats: &[],
         });
         let out_view = out_tex.create_view(&wgpu::TextureViewDescriptor::default());
-        // ④ 效果链（task-15：chain_passes 空 → 不建链，effect_chain=None → 合成 quad 采样内容，
-        //    对象显示**原始内容**（非演示渐变）；创建失败 → None → 同样合成 quad 采样内容，绝不白屏）。
+        // ④ 效果链（chain_passes 空 → 不建链，effect_chain=None → 合成 quad 采样内容，对象显示原始内容
+        //    非演示渐变；创建失败 → None → 同样采样内容，绝不白屏）。
         let chain_passes = demo_object_effect_passes(chain_desc);
         let effect_chain = if chain_passes.is_empty() {
             web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(&format!(
@@ -996,19 +968,16 @@ impl Renderer {
 
     /// 登记一个粒子对象的对象级效果链条目（M4/Task6）。带 `effects` 的粒子对象走
     /// 「粒子内容 → 对象 RT → 效果链 ping-pong → 合成 quad」——与 `set_object_effect`
-    /// （图片对象）共用 Task5 的对象级管线机制（对象 RT/效果链/合成 quad），只是内容源
-    /// 是 GPU 粒子模拟（`ParticlePass`）而非静态纹理。粒子不再直接渲染到 surface，
-    /// 改渲染进对象 RT。
+    /// （图片对象）共用 Task5 的对象级管线机制，只是内容源是 GPU 粒子模拟（`ParticlePass`）
+    /// 而非静态纹理。粒子改渲染进对象 RT，不再直接渲染到 surface。
     ///
     /// - `origin`：粒子对象中心（WE 坐标，已 applyAlignment 换算中心；合成 quad NDC 定位）。
     /// - `world_size`：粒子对象合成 quad 世界尺寸（**未钳制** distance_max × scale）；缺省 →
     ///   `particle_world_size`（distanceMax 缺省 64）。
     /// - `rt_size`：对象 RT 分辨率（`particle_object_range` 钳制后）；缺省 →
-    ///   `particle_object_range`（无 distanceMax 默认 64，钳 1..2048）。
-    /// - `chain_desc`：效果链 pass 描述（JSON，真实 WE shader 的 SPIR-V 数组）。task-8 编译链
-    ///   已集成：JS 侧产出 SPIR-V 传入（同 `set_object_effect`），本方法经 `demo_object_effect_passes`
-    ///   解析；task-15：失败/为空 → 无效果链（effect_chain=None → 合成 quad 采样粒子内容），
-    ///   绝不回退演示渐变。
+    ///   `particle_object_range`（无 distanceMax 默认 64，钳 1..4096）。
+    /// - `chain_desc`：效果链 pass 描述（JSON，真实 WE shader 的 SPIR-V 数组），经 `demo_object_effect_passes`
+    ///   解析；task-15：失败/为空 → 无效果链（合成 quad 采样粒子内容），绝不回退演示渐变。
     /// - 粒子模拟（compute）由 `step` 驱动；内容渲染进对象 RT 在 `render_object_effects`。
     ///
     /// 绝不白屏：效果链创建失败 → 合成 quad 采样原始粒子内容（对象正常显示、无效果）。
@@ -1062,8 +1031,8 @@ impl Renderer {
             view_formats: &[],
         });
         let out_view = out_tex.create_view(&wgpu::TextureViewDescriptor::default());
-        // ③ 效果链（task-15：chain_passes 空 → 不建链，effect_chain=None → 合成 quad 采样粒子内容，
-        //    对象显示**原始粒子内容**（非演示渐变）；创建失败 → None → 同样合成 quad 采样内容，绝不白屏）。
+        // ③ 效果链（chain_passes 空 → 不建链，effect_chain=None → 合成 quad 采样粒子内容，对象显示原始
+        //    粒子内容非演示渐变；创建失败 → None → 同样采样内容，绝不白屏）。
         let chain_passes = demo_object_effect_passes(chain_desc);
         let effect_chain = if chain_passes.is_empty() {
             web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(&format!(
@@ -1111,10 +1080,9 @@ impl Renderer {
             ],
         });
         // ⑤ 粒子 GPU 模拟 + 渲染管线（build 渲染到对象 RT）。投影用**对象局部相机**——
-        //    局部坐标中心原点（对象中心）、view = 对象 RT 尺寸（1:1 像素，对齐 image
-        //    对象级管线的局部正交相机 `content_ndc`），而**非**场景相机范围 + scene_w/h
-        //    （final whole-branch review I3：原实现造成粒子内容在对象 RT 内「投影双重
-        //    映射」近似错位）。原点在局部空间为 (0,0,0)——粒子发射器即对象中心。
+        //    局部坐标中心原点（对象中心）、view = 对象 RT 尺寸（1:1 像素，对齐 image 对象级管线的
+        //    局部正交相机 `content_ndc`），而**非**场景相机范围 + scene_w/h（用场景范围会把粒子内容在
+        //    对象 RT 内「投影双重映射」）。原点在局部空间为 (0,0,0)——粒子发射器即对象中心。
         let max_particles = particle_pass::estimate_max_particles(spec);
         let params = particle_pass::EmitterParams::from_spec_local(
             spec, scale, rt_w as f32, rt_h as f32, max_particles,
@@ -1148,7 +1116,6 @@ impl Renderer {
     /// ③ 效果链 ping-pong（读内容 RT 写输出 RT）；链失败 → blit 内容到输出 RT。
     /// 合成 quad 贴 surface 由 `render_frame`（每帧先调本方法，再画场景+合成 quad）。
     /// 本方法的产物 = 每条目的输出 RT（out_view）已含对象内容/效果输出，供合成 quad 采样。
-    ///
     /// JS 侧每帧顺序：`scene.step(dt); scene.render();`（render 内部先调本方法）。
     pub fn render_object_effects(&mut self) {
         if self.object_effects.is_empty() && self.particle_object_effects.is_empty() {
@@ -1210,9 +1177,9 @@ impl Renderer {
                 }
             }
         }
-        // M4/Task6：粒子对象级效果链（内容渲染进对象 RT + 效果链）。粒子内容不是静态纹理，
-        // 而是 GPU 模拟管线每帧渲染——渲染前先把内容 RT 清透明（粒子 render 是加法叠加），
-        // 再调 ParticlePass::render 到 content_view，随后效果链 ping-pong / blit 到输出 RT。
+        // M4/Task6：粒子对象级效果链（内容渲染进对象 RT + 效果链）。粒子内容不是静态纹理，而是 GPU
+        // 模拟管线每帧渲染——渲染前先把内容 RT 清透明（粒子 render 是加法叠加），再调
+        // ParticlePass::render 到 content_view，随后效果链 ping-pong / blit 到输出 RT。
         // 合成 quad 贴回 surface 由 draw_scene_into（render_frame）完成。
         for i in 0..self.particle_object_effects.len() {
             let cv = self.particle_object_effects[i].content_view.clone();
@@ -1274,13 +1241,11 @@ impl Renderer {
         }
     }
 
-    /// 渲染场景到 canvas。Task 9 修复：清屏后先绘制图片平面（contain 正交相机语义，
-    /// 对齐 scene-renderer.ts），再叠加粒子点渲染层（加法混合）。
-    /// Task2 效果链：若 effect_passes 非空，把场景渲染到离屏"自采"纹理，再由透传 pass
-    /// 采样输出到 surface（读自采渲染，验证 wasm 工程串通、不黑屏）；若 effect pass
-    /// 创建失败（effect_passes 空），兜底直接渲染场景到 surface（绝不黑屏）。
-    /// M3/Task5：开头先驱动对象级效果链（`render_object_effects`：每个带效果对象
-    /// 内容→对象RT→效果链→输出RT），随后场景绘制时合成 quad 采样各输出RT贴回 surface。
+    /// 渲染场景到 canvas。清屏后先绘制图片平面（contain 正交相机语义，对齐 scene-renderer.ts），
+    /// 再叠加粒子点渲染层（加法混合）。若 effect_passes 非空，把场景渲染到离屏"自采"纹理，再由透传
+    /// pass 采样输出到 surface（读自采渲染，验证 wasm 工程串通、不黑屏）；否则兜底直接渲染到 surface。
+    /// 开头先驱动对象级效果链（`render_object_effects`：每个带效果对象 内容→对象RT→效果链→输出RT），
+    /// 随后场景绘制时合成 quad 采样各输出 RT 贴回 surface。
     pub fn render_frame(&mut self) {
         // 对象级效果链：先算好各对象输出 RT（独立 encoder submit），合成 quad 才能采样最新结果。
         self.render_object_effects();
@@ -1343,13 +1308,6 @@ impl Renderer {
         if !self.effect_passes.is_empty() {
             // 效果链透传（Task2 基线）：场景渲染到离屏自采，再透传输出到 surface。
             // effect_passes 非空 => 离屏资源已在 new 时分配，unwrap 安全。
-            // 注（Critical #1）：原本此处的第一分支是全局 demo effect_chain（单 pass
-            // 程序化动画、不采样 g_Texture0、normal blend+alpha=1 全覆盖）——恒优先覆盖
-            // 所有走 wasm 的场景（含无 effects 的纯图片/粒子壁纸），造成内容丢失回归。
-            // 已移除全局链：无 effects 场景现在只走本透传分支（透传 preserve 输入内容）
-            // 或下方"直接渲染 surface"兜底，均保留场景内容；对象级链（object_effects /
-            // particle_object_effects）由 render_object_effects + draw_scene_into 合成 quad
-            // 独立驱动，不受影响。
             let offscreen_view = self.offscreen_view.as_ref().expect("effect pass 存在时离屏纹理已分配");
             let offscreen_sampler = self.offscreen_sampler.as_ref().expect("effect pass 存在时离屏采样器已分配");
             let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1430,12 +1388,10 @@ impl Renderer {
     }
 }
 
-/// 图片 quad 的 NDC uniform。2026-08-20 方向修正：center 复用 coords::image_center_ndc
-/// （内含 we_to_three——WE 左下原点、y 向上与渲染系同向，不做翻转；旧实现
-/// `(oy - sh/2)` 符号相反、后又被误改为 `(sh/2 - oy)`，两者都把非居中对象上下镜像，
-/// NERV logo 官方在右下角被渲染到右上角、Orange 部件被渲染到少女头顶；EVA 主图
-/// oy=sh/2 恰为 0 故验收漏过）；half 复用 coords::image_half_ndc（尺寸 = obj.size
-/// 优先、缺省回退纹理宽高；scale.y 不取负，对齐 scene-renderer.ts）。
+/// 图片 quad 的 NDC uniform。center 复用 `coords::image_center_ndc`（内含 we_to_three——WE
+/// 左下原点、y 向上与渲染系同向，**不做翻转**；曾把符号搞反使非居中对象上下镜像，见 git log）；
+/// half 复用 `coords::image_half_ndc`（尺寸 = obj.size 优先、缺省回退纹理宽高；**scale.y 不取负**，
+/// 对齐 scene-renderer.ts）。
 /// T4.3：tint = image_tint(img.tint_color, img.tint_alpha, img.tint_brightness)
 /// （color×brightness /255 → 0-1，alpha clamp 0-1；全缺省 → (1,1,1,1) 无调制）。
 #[cfg(feature = "render")]

@@ -24038,7 +24038,7 @@ async function resolveEffectChain(sceneEffect, loadFile) {
         uniforms,
         textureSlots: textures,
         blendMode: mat.passes?.[0]?.blending ?? "normal",
-        // RT 图信息（阶段1）：effect.json passes[i].target（写到的具名 RT）/bind（采样来源）；
+        // RT 图信息：effect.json passes[i].target（写到的具名 RT）/bind（采样来源）；
         // scene.json pass 可覆写 target（如 scene 指定目标 RT）。缺省 target=null（最终输出）。
         target: (scenePass.target ?? effPass.target) || null,
         bind: Array.isArray(effPass.bind) ? effPass.bind : [],
@@ -26237,9 +26237,8 @@ async function buildEffectChainDesc(id, effects) {
             uniforms,
             // texture_slots：scene.json passes[i].textures 的槽位（第 i 项 = g_Texture(i+1)）。
             // glsl-to-naga 已按此解析（pass.textureSlots = 路径数组，如 [null,"masks/xxx",null]）。
-            // 此前硬编码 [] → wasm build_bind_group 把非首纹理槽全绑 input_view（用背景自身当
-            // 遮罩/噪声 → Orange 贴图错乱、godrays 下降采样被背景污染）。透传给 wasm 使其能按
-            // 槽位区分 previous(空) 与独立纹理(非空)，消除错绑回归。
+            // 透传给 wasm 使其能按槽位区分 previous(空) 与独立纹理(非空)（硬编码 [] 会把非首纹理
+            // 槽全绑 input_view，见 git log）。
             texture_slots: spv.textureSlots.map((ts) => typeof ts === "string" && ts.length > 0 ? ts : null),
             // task-wasm-effect-texture-slots：逐槽拉取真实 mask/normal/flow 纹理字节（与
             // texture_slots 同序；内置/失败 → null，wasm 回退白占位）。
@@ -26247,10 +26246,10 @@ async function buildEffectChainDesc(id, effects) {
               spv.textureSlots.map((ts) => loadSlotTextureBytes(typeof ts === "string" && ts.length > 0 ? ts : null))
             ),
             blend_mode: spv.blendMode,
-            // RT 图信息（2026-08-31 阶段1 === wasm RT 图执行器）：把 effect.json 的
-            // target/bind/fbos 编码进 chain_desc，wasm 据此建多 RT（含降采样）+ 按名绑定。
-            // wasm EffectPassDesc.target 为 Option<String>（serde 接受 null），无具名 RT 的链
-            // （Orange 等）传 null → wasm 走旧 ping-pong，不误入 RT 图。
+            // RT 图信息（wasm RT 图执行器）：把 effect.json 的 target/bind/fbos 编码进
+            // chain_desc，wasm 据此建多 RT（含降采样）+ 按名绑定。wasm EffectPassDesc.target
+            // 为 Option<String>（serde 接受 null），无具名 RT 的链（Orange 等）传 null →
+            // wasm 走旧 ping-pong，不误入 RT 图。
             target: p.target ?? null,
             bind: Array.isArray(p.bind) ? p.bind : [],
             fbo_scale: p.fboScale ?? {},
@@ -26292,7 +26291,7 @@ function createFallbackSceneRenderer(wasm, _js) {
       }
       return false;
     },
-    // Finding 2：透传 teardown 到底层 wasm 渲染器（JS 渲染器若实现 dispose 一并调用）。
+    // 透传 teardown 到底层 wasm 渲染器（JS 渲染器若实现 dispose 一并调用）。
     dispose() {
       wasm?.dispose?.();
       _js?.dispose?.();
@@ -26518,8 +26517,8 @@ function createWasmSceneRenderer(opts) {
         return false;
       }
     },
-    // Finding 2：释放当前场景与脚本运行时（取消运行中的 raf 循环）。调用方（controller）
-    // 在壁纸切换/卸载时调用，避免每次 render 泄漏一个 quickjs 运行时 + wasm scene。
+    // 释放当前场景与脚本运行时（取消运行中的 raf 循环）。调用方（controller）在壁纸
+    // 切换/卸载时调用，避免每次 render 泄漏一个 quickjs 运行时 + wasm scene。
     dispose() {
       teardown();
     }
