@@ -53,3 +53,15 @@ pub fn image_half_ndc(
         (h * scale[1] / 2.0) / (view_h / 2.0),
     )
 }
+
+// —— Task 1 坐标层（粒子，照 linux CParticle）：与上方图片路径（we_to_three，
+// y 不翻转）不同，WE 屏幕 y 向下、粒子按中心原点 y 向上，故在此做 Y 翻转 ——
+
+/// WE 屏幕坐标（y 向下）→ 中心原点（y 向上）：x-=w/2、y=h/2-y（Y 翻，照 linux CParticle）。
+pub fn we_to_center(origin: [f32; 3], view_w: f32, view_h: f32) -> [f32; 3] {
+    [origin[0] - view_w / 2.0, view_h / 2.0 - origin[1], origin[2]]
+}
+/// emitter.origin 局部偏移 Y 翻（照 linux transformedEmitterOrigin）。
+pub fn emitter_origin_y_neg(y: f32) -> f32 {
+    -y
+}
