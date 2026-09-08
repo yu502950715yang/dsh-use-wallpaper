@@ -1,67 +1,115 @@
-struct VsIn { @location(0) pos: vec3f, @location(1) size: f32, @location(2) uv: vec2f,
-              @location(3) color: vec3f, @location(4) alpha: f32 }
-// frame_count = sprite sheet 横向帧数（rosepetals 512×128 → 4；单帧纹理 → 1）。
-// uniform 以 Rust repr(C) 16B 写入（view_w, view_h, frame_count, pad）。
-struct P { view_w: f32, view_h: f32, frame_count: f32, _pad: f32 }
-// 单个粒子 quad 的 NDC 半宽上限（相对半视口）。防御异常大 size 的 spec 渲染成"贴视口大块"。
-// 合理粒子（花瓣 ~0.026、光柱 ≤0.31）远低于此。
-const MAX_HALF_NDC: f32 = 0.45;
+// Task 5：对齐 lwe CParticle::renderSprites() 的 billboard 顶点流与材质。
+//
+// 顶点流（每个**角点顶点** 17 浮点，stride 68B；每粒子 4 角点 + 6 索引，对齐 CParticle.cpp 的
+// `addVertex(u,v)` 四角顺序 (0,1),(1,1),(1,0),(0,0) 与 fillVertices 字段布局）：
+//   @location(0) pos          : vec3  [0..3)  粒子中心（CPU sim 已含对象变换 + 发射点）
+//   @location(1) uv_rot_size  : vec4  [3..7)  (uv.x, uv.y, rot.z, size)
+//   @location(2) color        : vec4  [7..11) (r, g, b, alpha)
+//   @location(3) vel_lifetime : vec4  [11..15)(vel.x, vel.y, vel.z, lifetime)
+//   @location(4) rot_x_y      : vec2  [15..17)(rot.x, rot.y)
+//
+// mvp：`o.clip = mvp × pos`，`mvp = viewProjection × model`；viewProjection 为
+// `ortho(view_w, view_h)`（centered 正交，对角阵 diag(2/view_w, 2/view_h, 1, 1)），model 取单位阵
+// （CPU sim 已把对象变换 + emitter 发射点烘焙进 pos，对齐 lwe 注释）。corner（由 uv 推导 ±1）
+// 在**世界空间**加到粒子中心（含 size 半宽与 rot.z 平面自旋），再经 viewProjection 到 NDC。
+//
+// 多帧（SPRITESHEET）：`lifetime` 编码粒子帧（lwe renderSprites 把 p.frame 写入 lifetime：
+// randomframe → (frame+0.5)/frames，sequence/once → frame/frames），shader 用
+// `floor(frac(lifetime) × frames)` 还原帧号，按 cols/rows 网格切片到该帧子区，corner uv (0..1)
+// 映射为帧内 UV。frames<=1 → 整张纹理采样（退化为 corner uv）。
+//
+// 纹理 alpha 遮罩 + 材质：`mask_mode=1`（真实纹理）→ `alpha = texel.a × particle.alpha`（光柱/雪片
+// 用纹理形状，非纯软圆盘）；`mask_mode=0`（无纹理 1×1 白兜底）→ 软圆点（disk 即形状）。
+// `overbright`（材质 brightness 乘数）乘到彩色；blend 由管线绑定（Additive=SrcAlpha/One、
+// Translucent=SrcAlpha/OneMinusSrcAlpha）。
+
+struct VsIn {
+  @location(0) pos: vec3f,
+  @location(1) uv_rot_size: vec4f,
+  @location(2) color: vec4f,
+  @location(3) vel_lifetime: vec4f,
+  @location(4) rot_x_y: vec2f,
+}
+// uniform（Rust repr(C) 8×f32 = 32B；wgpu uniform binding size 32B 为 16 对齐）。
+struct P {
+  view_w: f32,
+  view_h: f32,
+  spritesheet_frames: f32,
+  spritesheet_cols: f32,
+  spritesheet_rows: f32,
+  overbright: f32,
+  softness: f32,
+  mask_mode: f32,
+}
 @group(0) @binding(0) var<uniform> p: P;
-struct VsOut { @builtin(position) clip: vec4f, @location(0) uv: vec2f,
-               @location(1) color: vec3f, @location(2) alpha: f32,
-               @location(3) local: vec2f }
-@vertex fn vs(@builtin(vertex_index) vi:u32, i:VsIn) -> VsOut {
-  let corner = vec2f(f32(vi & 1u)*2.0-1.0, f32((vi>>1u)&1u)*2.0-1.0);
-  let half = i.size*0.5;
-  // 尺寸映射到 NDC：half/半视口。防御上限 MAX_HALF_NDC——单个粒子 quad 半宽不超过该值，防止异常大
-  // size 的 spec（如 EVA 光柱 sizerandom=350..750，若缺失纹理/alpha 会裸露成大块）渲染成"贴视口大块"。
-  // 正常小粒子（黑神话花瓣 size 30..50 → half_ndc≈0.026）与光柱（≤0.31）远低于上限，不受影响。
-  let half_ndc_x = half/(p.view_w/2.0);
-  let half_ndc_y = half/(p.view_h/2.0);
-  let hx = min(half_ndc_x, MAX_HALF_NDC);
-  let hy = min(half_ndc_y, MAX_HALF_NDC);
-  var o: VsOut;
-  // —— 世界 → NDC 的 viewProjection（centered ortho，由 view_w/view_h 构建）——
-  // 对齐 lwe：m_mvpMatrix = m_viewProjectionMatrix × m_modelMatrix，shader `clip = mvp × pos`。
-  // CPU sim 已把「对象中心 + emitter.origin×obj_scale」（对象变换后的 scene 中心坐标）烘焙进 pos，
-  // 故 model 矩阵取单位阵（Identity）；viewProjection 即 centered ortho
-  // `ortho(-view_w/2, view_w/2, -view_h/2, view_h/2)`——对角阵把 (x,y) 映射到 NDC
-  // (x/(view_w/2), y/(view_h/2))。与旧 `pos/(view/2)` 数值等价，但以真正 mvp 矩阵表达（对齐 lwe 世界→NDC）。
+struct VsOut {
+  @builtin(position) clip: vec4f,
+  @location(0) tex_uv: vec2f,
+  @location(1) color: vec4f,   // rgb 已乘 overbright；a = 粒子 alpha
+  @location(2) local: vec2f,   // quad 局部坐标 [-1,1]^2（fragment 软边缘用）
+}
+@vertex fn vs(i: VsIn) -> VsOut {
+  let corner = i.uv_rot_size.xy * 2.0 - 1.0;
+  let rot_z = i.uv_rot_size.z;
+  let size = i.uv_rot_size.w;
+  // 平面自旋：把 quad 角点绕粒子中心旋转 rot.z。
+  let c = cos(rot_z);
+  let s = sin(rot_z);
+  let rcorner = vec2f(corner.x * c - corner.y * s, corner.x * s + corner.y * c);
+  let half = size * 0.5;
+  let world = vec3f(i.pos.x + rcorner.x * half, i.pos.y + rcorner.y * half, i.pos.z);
+  // mvp = viewProjection × model（model = I）→ centered ortho diag(2/view_w, 2/view_h, 1, 1)。
   let vp = mat4x4f(
     vec4f(2.0 / p.view_w, 0.0, 0.0, 0.0),
     vec4f(0.0, 2.0 / p.view_h, 0.0, 0.0),
     vec4f(0.0, 0.0, 1.0, 0.0),
     vec4f(0.0, 0.0, 0.0, 1.0),
   );
-  let clip_pos = vp * vec4f(i.pos.x, i.pos.y, i.pos.z, 1.0);
-  o.clip.x = clip_pos.x + corner.x*hx;
-  o.clip.y = clip_pos.y + corner.y*hy;
-  o.clip.z = 0.0; o.clip.w = 1.0;
-  // 顶点 uv：>1 帧（sprite sheet，rosepetals 4 帧）按帧中心 uv + 单帧宽步进采样——quad 只采样
-  // 自己那一帧（i.uv 是 sim build_vertices 输出的帧中心 uv.x=(frame+0.5)/frame_count）。单帧纹理
-  // （frame_count<=1：EVA 光柱/余烬/雾，非 rosepetal sheet）整张纹理中心采样 `corner*0.5+0.5`，
-  // 否则 sim 烘焙的 (frame+0.5)/4 uv 会把单帧纹理采样到越界/错位区 → quad 只采到纹理一角 → 显示为
-  // 纯色/红块（Task 5 修复 B 根因之一）。
-  if (p.frame_count > 1.0) {
-    o.uv = vec2f(i.uv.x + corner.x*(0.5/p.frame_count), i.uv.y + corner.y*0.5);
+  var o: VsOut;
+  o.clip = vp * vec4f(world, 1.0);
+  // 多帧切片（SPRITESHEET）。
+  let frames = p.spritesheet_frames;
+  let corner_uv = i.uv_rot_size.xy;
+  if (frames > 1.0) {
+    let lt = i.vel_lifetime.w;
+    let frac_lt = lt - floor(lt);
+    var frame = floor(frac_lt * frames);
+    if (frame >= frames) {
+      frame = frames - 1.0;
+    }
+    let cols = max(p.spritesheet_cols, 1.0);
+    let rows = max(p.spritesheet_rows, 1.0);
+    let col = frame % cols;
+    let row = floor(frame / cols);
+    let fw = 1.0 / cols;
+    let fh = 1.0 / rows;
+    o.tex_uv = vec2f((col + corner_uv.x) * fw, (row + corner_uv.y) * fh);
   } else {
-    o.uv = corner * 0.5 + 0.5;
+    o.tex_uv = corner_uv;
   }
-  o.color = i.color; o.alpha = i.alpha;
-  // 传递 quad 局部坐标（corner ∈ [-1,1]²），fragment 据此做软圆盘裁剪（与 uv 解耦，帧切分下也正确）。
+  o.color = vec4f(i.color.rgb * p.overbright, i.color.a);
   o.local = corner;
   return o;
 }
 @group(0) @binding(1) var tex: texture_2d<f32>;
 @group(0) @binding(2) var samp: sampler;
-@fragment fn fs(o:VsOut) -> @location(0) vec4f {
-  let texel = textureSample(tex, samp, o.uv);
-  // 软圆盘 + 纹理 alpha 形状（对齐 GPU 路径 particle_render.wgsl）：quad 局部半径 >1 裁掉、边缘 0..1
-  // 平滑衰减，再乘纹理 alpha。无纹理（1×1 白兜底 texel=(1,1,1,1)）时整块 quad 不会渲染成"硬色块"，
-  // 而是软圆点（点状）；有纹理时按纹理 alpha 呈现光柱/花瓣形状。blend=Translucent（SrcAlpha/
-  // OneMinusSrcAlpha）→ 半透明叠加，非不透明红块（Task 5 修复 B）。
+@fragment fn fs(o: VsOut) -> @location(0) vec4f {
+  let texel = textureSample(tex, samp, o.tex_uv);
+  // softness：quad 局部圆盘衰减（中心 1、边缘 0）。softness∈(0,1] 控制边缘宽度；
+  // softness=1 → 整盘软（无纹理兜底圆点），小 softness → 薄软边。softness<=0 → 硬裁剪。
   let d = length(o.local);
-  if (d > 1.0) { discard; }
-  let shape = (1.0 - smoothstep(0.0, 1.0, d)) * texel.a;
-  return vec4f(o.color * texel.rgb, o.alpha * shape);
+  var disk = 1.0;
+  if (p.softness > 0.0) {
+    disk = 1.0 - smoothstep(1.0 - p.softness, 1.0, d);
+  } else {
+    if (d > 1.0) {
+      discard;
+    }
+  }
+  // mask_mode=1 → 真实纹理 alpha 遮罩（alpha = texel.a × particle.alpha，软边由纹理 alpha 提供，
+  // 不再用纯软圆盘）；mask_mode=0 → 无纹理软圆点兜底（disk 即形状）。
+  let shape = mix(disk, texel.a, p.mask_mode);
+  let alpha = o.color.a * shape;
+  let rgb = o.color.rgb * texel.rgb;
+  return vec4f(rgb, alpha);
 }

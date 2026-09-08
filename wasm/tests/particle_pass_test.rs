@@ -32,6 +32,7 @@ fn estimate_max_particles_scales_with_rate_times_lifetime_when_no_maxcount() {
         operators: vec![],
         maxcount: 0,
         renderer: we_scene_wasm::particle::Renderer::Sprite,
+        material: None,
     };
     let expected = (20.0f32 * 3.0).ceil() as u32 + 64; // 124
     assert_eq!(estimate_max_particles(&spec), expected.clamp(64, 2048));
@@ -47,6 +48,7 @@ fn estimate_max_particles_clamps_bounds() {
         operators: vec![],
         maxcount: 0,
         renderer: we_scene_wasm::particle::Renderer::Sprite,
+        material: None,
     };
     assert_eq!(estimate_max_particles(&zero), 64);
     let huge = ParticleSpec {
@@ -55,6 +57,7 @@ fn estimate_max_particles_clamps_bounds() {
         operators: vec![],
         maxcount: 0,
         renderer: we_scene_wasm::particle::Renderer::Sprite,
+        material: None,
     };
     assert_eq!(estimate_max_particles(&huge), 2048);
 }

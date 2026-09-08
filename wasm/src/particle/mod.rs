@@ -108,6 +108,10 @@ pub struct ParticleSpec {
     pub maxcount: u32,
     /// renderer：sprite（点 billboard）或 spritetrail（沿速度方向拉伸）。缺省 sprite。
     pub renderer: Renderer,
+    /// WE 粒子材质名（spec 的 `material` 字段，如 `materials/presets/lightshaft.json`）。
+    /// 渲染侧据此推导混合模式（additive/alpha）与 overbright（读取 lwe material 的
+    /// `ui_editor_properties_overbright` 常量）。缺失 → `None`（Translucent 兜底）。
+    pub material: Option<String>,
 }
 
 /// 粒子渲染器类型（官方 renderer[]）。当前只消费 sprite / spritetrail。
@@ -256,6 +260,7 @@ pub fn parse_particle_spec(json: &str) -> ParticleSpec {
         operators,
         maxcount,
         renderer,
+        material: raw.get("material").and_then(|m| m.as_str()).map(|s| s.to_string()),
     }
 }
 

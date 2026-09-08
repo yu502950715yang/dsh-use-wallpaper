@@ -665,7 +665,17 @@ impl Renderer {
         tex: Option<wgpu::Texture>,
     ) {
         let (fw, fh) = self.camera_range();
-        let sim = crate::particle::emitter_spec_to_particle(spec, obj_origin, self.scene_w, self.scene_h);
+        // sprite sheet 帧数（rosepetals 512×128 → 4；单帧 → 1），覆写到 sim 让 build_vertices 编码帧，
+        // 同时作为 billboard uniform 的 spritesheet_frames（shader 切片）。
+        let frame_count = tex
+            .as_ref()
+            .map(|t| particle_render::frame_count_from_dims(t.width(), t.height()))
+            .unwrap_or(1);
+        let mut sim = crate::particle::emitter_spec_to_particle(spec, obj_origin, self.scene_w, self.scene_h);
+        sim.spritesheet_frames = frame_count;
+        // 材质门控：blend（additive/translucent）与 overbright 由 spec 的材质名推导。
+        let blend = particle_render::BlendMode::from_material(spec.material.as_deref());
+        let overbright = particle_render::BlendMode::overbright(spec.material.as_deref());
         let pass = particle_render::ParticleRenderPass::new(
             &self.device,
             &self.queue,
@@ -673,7 +683,8 @@ impl Renderer {
             tex,
             fw,
             fh,
-            particle_render::BlendMode::Translucent,
+            blend,
+            overbright,
         );
         self.cpu_particle_sims.push(sim);
         self.cpu_particle_passes.push(pass);

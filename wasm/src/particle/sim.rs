@@ -82,6 +82,18 @@ pub fn frame_center_uv(frame: f32, frame_count: u32) -> [f32; 2] {
     [(idx + 0.5) / n, 0.5]
 }
 
+/// 把粒子 frame id 编码为 17 浮点流 `lifetime` 字段的值（lwe `renderSprites`：randomframe →
+/// `(frame + 0.5)/frames`，shader 用 `floor(frac(lifetime)×frames)` 还原帧号；单帧 → 0）。
+/// native 可测。
+pub fn frame_lifetime(frame: f32, frames: u32) -> f32 {
+    if frames <= 1 {
+        return 0.0;
+    }
+    let n = frames as f32;
+    let idx = frame.floor().clamp(0.0, n - 1.0);
+    (idx + 0.5) / n
+}
+
 /// 单粒子状态（对应 WE CParticle 的 `ParticleInstance`）。
 ///
 /// Task 3 为对齐 lwe 各 `create*RandomInitializer`，在 spawn 时补充设置两个初始属性：
@@ -671,6 +683,9 @@ pub struct SceneParticleSim {
     pub operators: Vec<ParticleOperator>,
     /// 累计帧时间（秒；= lwe `m_time`，供 turbulence 的 `phase + timeScale*currentTime` 用）。
     pub time: f32,
+    /// sprite sheet 总帧数（rosepetals 512×128 → 4；单帧纹理 → 1）。由渲染层在创建时按纹理尺寸
+    /// 覆写（`set_particle_sim`）；`build_vertices` 用它把粒子 frame 编码进 17 浮点流的位置。
+    pub spritesheet_frames: u32,
 }
 
 impl SceneParticleSim {
@@ -698,6 +713,7 @@ impl SceneParticleSim {
                 drag: 0.0,
             }],
             time: 0.0,
+            spritesheet_frames: DEFAULT_FRAME_COUNT,
         }
     }
 
@@ -942,26 +958,30 @@ impl SceneParticleSim {
         });
     }
 
-    /// 输出顶点缓冲：每粒子 `[pos3, size, uv2, color3, alpha]`（10 元素；alive 粒子的 uv
-    /// 编码为**所属单帧子区中心**——uv.x=(frame+0.5)/frame_count，uv.y=0.5，供 billboard
-    /// shader 按 frame_count 采样单帧而非整张 sprite sheet（玫瑰花瓣 512×128 横向 4 帧，
-    /// 整张 uv∈[0,1] 会把四帧叠成竖条纹，见任务报告）。
-    /// 注：父需求接口写 `Vec<[f32;9]>`，但所给字面量与内联注释均含 10 元素（pos3+size+uv2+color3+alpha），
-    /// 此处以字面量为准返回 `Vec<[f32;10]>`（已作为关注点上报，见任务报告）。
-    pub fn build_vertices(&self) -> Vec<[f32; 10]> {
-        self.particles
-            .iter()
-            .map(|p| {
-                let uv = frame_center_uv(p.frame, DEFAULT_FRAME_COUNT);
-                [
+    /// 输出顶点缓冲：**每角点** 17 浮点（stride 68B），每粒子 4 角点 + 6 索引（对齐 lwe
+    /// `CParticle::renderSprites` 的 `fillVertices` 字段布局，见 `render/particle_render.rs`）。
+    /// 布局 `[pos3, (u,v,rot.z,size), color4, (vel3,lifetime), (rot.x,rot.y)]`：
+    /// - 4 角点的 uv 为该角点 0..1 帧内坐标，(0,1) 左下、(1,1) 右下、(1,0) 右上、(0,0) 左上（lwe）；
+    /// - `lifetime` 编码粒子帧（`(frame+0.5)/frames`，lwe randomframe 语义；单帧 → 0），
+    ///   供 shader `floor(frac(lifetime)×frames)` 还原帧并做 sprite sheet 切片；
+    /// - rot.x/rot.y 本模拟器不追踪（只存单标量 rot≈rot.z），置 0 保留字段占位。
+    /// returns Vec 长度 = particles.len() × 4。
+    pub fn build_vertices(&self) -> Vec<[f32; 17]> {
+        let mut out = Vec::with_capacity(self.particles.len() * 4);
+        for p in &self.particles {
+            // 帧编码 lifetime（lwe renderSprites：randomframe → (frame+0.5)/frames；单帧 → 0）。
+            let lifetime = frame_lifetime(p.frame, self.spritesheet_frames);
+            for (u, v) in [(0.0, 1.0), (1.0, 1.0), (1.0, 0.0), (0.0, 0.0)] {
+                out.push([
                     p.pos[0], p.pos[1], p.pos[2],
-                    p.size,
-                    uv[0], uv[1], // uv（该 frame 的单帧子区中心）
-                    p.color[0], p.color[1], p.color[2],
-                    p.alpha,
-                ]
-            })
-            .collect()
+                    u, v, p.rot, p.size,
+                    p.color[0], p.color[1], p.color[2], p.alpha,
+                    p.vel[0], p.vel[1], p.vel[2], lifetime,
+                    0.0, 0.0, // rot.x, rot.y（未追踪）
+                ]);
+            }
+        }
+        out
     }
 }
 
@@ -1059,13 +1079,24 @@ mod tests {
             },
         });
         let vs = sim.build_vertices();
-        assert_eq!(vs.len(), 1, "单粒子应输出 1 个 10 元素顶点");
-        // 布局 [pos3, size, uv2, color3, alpha]：index 3=size, 4=uv.x, 5=uv.y。
-        assert_eq!(vs[0][3], 40.0, "size 应在 index 3");
-        assert_eq!(vs[0][4], 0.625, "uv.x 应为第 2 帧（rosepetals frame 2）的帧中心");
-        assert_eq!(vs[0][5], 0.5, "uv.y 恒 0.5（每帧占满整高）");
-        assert_eq!(vs[0][6], 1.0, "color[0] 应在 index 6");
-        assert_eq!(vs[0][9], 1.0, "alpha 应在 index 9");
+        assert_eq!(vs.len(), 4, "单粒子应输出 4 角点顶点");
+        // 布局 [pos3, (u,v,rot.z,size), color4, (vel3,lifetime), (rot.x,rot.y)]：每角点 17 浮点。
+        // 角点 0 = (u=0,v=1)（左下）。
+        assert_eq!(vs[0][3], 0.0, "角点 0 的 uv.x=0（左下）");
+        assert_eq!(vs[0][4], 1.0, "角点 0 的 uv.v=1（左下）");
+        assert_eq!(vs[0][6], 40.0, "size 应在 index 6（uv_rot_size.w）");
+        assert_eq!(vs[0][7], 1.0, "color[0] 应在 index 7");
+        assert_eq!(vs[0][10], 1.0, "alpha 应在 index 10");
+        // 角点 1 = (u=1,v=1)（右下）；角点 3 = (u=0,v=0)（左上）。
+        assert_eq!(vs[1][3], 1.0);
+        assert_eq!(vs[3][3], 0.0);
+        assert_eq!(vs[3][4], 0.0);
+        // lifetime 字段（index 14）编码 frame：rosepetals frame=2 → (2+0.5)/4 = 0.625。
+        assert_eq!(vs[0][14], 0.625, "lifetime 应编码第 2 帧（rosepetals frame 2）");
+        // 每角点字段数 = 17；四角点的 pos/size/color/alpha/vel/lifetime 一致（只 uv 不同）。
+        assert_eq!(vs[0].len(), 17);
+        assert_eq!(vs[0][0..3], vs[1][0..3]);
+        assert_eq!(vs[3][6], vs[0][6]);
     }
 
     /// Important I1：spawn 用 `self.init`（每壁纸 spec.init），而非黑神话硬编码。
