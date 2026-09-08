@@ -14,7 +14,7 @@
 //! 对象中心上方，y 在 spawn 时做 Y 翻）；`is_sphere` = emitter name=="sphererandom" 的结果。两者均
 //! 由 `parse_particle_spec` 从 emitter JSON 读取，缺省 origin=[0,0,0]、is_sphere=false。
 
-use super::{ParticleEmitterSpec, ParticleSpec, SceneParticleSim};
+use super::{ParticleEmitterSpec, ParticleInitSpec, ParticleSpec, SceneParticleSim};
 
 /// 把 `spec` 映射为 CPU 粒子模拟器。
 /// `obj_origin` 为对象中心（WE 坐标，精灵按中心原点 Y 翻），`view_w`/`view_h` 为 cover 相机范围。
@@ -24,6 +24,30 @@ pub fn emitter_spec_to_particle(
     view_w: f32,
     view_h: f32,
 ) -> SceneParticleSim {
+    // Important I1：把 `spec.init`（velocityrandom/sizerandom/lifetimerandom/colorrandom/
+    // alpharandom/rotationrandom/angularvelocityrandom）映射为 CPU `ParticleInitSpec`，
+    // 让每个粒子对象用自己的初始参数，而非黑神话硬编码常量。
+    let init = ParticleInitSpec {
+        lifetime_min: spec.init.lifetime_min,
+        lifetime_max: spec.init.lifetime_max,
+        size_min: spec.init.size_min,
+        size_max: spec.init.size_max,
+        // sizerandom 的 exponent：`InitSpec`（mod.rs）未解析 sizerandom 的 exponent 字段，
+        // 映射时统一定为 2.0（对齐黑神话 sizerandom exp2 → size∈[30,50]，行为保持）。
+        size_exponent: 2.0,
+        velocity_min: spec.init.velocity_min,
+        velocity_max: spec.init.velocity_max,
+        // WE colorrandom 已归一 0..1；缺省白 [1,1,1]。
+        color_min: spec.init.color_min.unwrap_or([1.0, 1.0, 1.0]),
+        color_max: spec.init.color_max.unwrap_or([1.0, 1.0, 1.0]),
+        alpha_min: spec.init.alpha_min,
+        alpha_max: spec.init.alpha_max,
+        // rotation/angular_vel 缺省为 0（无该 initializer 时）。
+        rotation_min: spec.init.rotation_min.unwrap_or([0.0; 3]),
+        rotation_max: spec.init.rotation_max.unwrap_or([0.0; 3]),
+        angular_vel_min: spec.init.angular_vel_min.unwrap_or([0.0; 3]),
+        angular_vel_max: spec.init.angular_vel_max.unwrap_or([0.0; 3]),
+    };
     SceneParticleSim::new(
         ParticleEmitterSpec {
             rate: spec.emitter.rate,
@@ -39,6 +63,7 @@ pub fn emitter_spec_to_particle(
         obj_origin,
         view_w,
         view_h,
+        init,
     )
 }
 
@@ -94,5 +119,59 @@ mod tests {
         let sim = emitter_spec_to_particle(&spec, [100.0, 200.0, 0.0], 3840.0, 1906.0);
         assert_eq!(sim.emitter.origin, [0.0; 3], "emitter 无 origin 字段 → 局部偏移缺省 0");
         assert!(!sim.emitter.is_sphere, "emitter 无 name=sphererandom → is_sphere 缺省 false");
+    }
+
+    #[test]
+    fn maps_init_to_particle_init_spec() {
+        // Important I1：spec.init（velocityrandom/sizerandom/lifetimerandom/colorrandom/
+        // alpharandom/rotationrandom）→ CPU `ParticleInitSpec`，用于每壁纸粒子初始化。
+        let json = r#"{
+            "emitter": [{"rate": 20, "origin": "350 750 0"}],
+            "initializer": [
+                {"name": "velocityrandom", "min": "-50 -50 0", "max": "0 -15 0"},
+                {"name": "sizerandom", "min": 30, "max": 50},
+                {"name": "lifetimerandom", "min": 5, "max": 10},
+                {"name": "colorrandom", "min": "255 212 247", "max": "255 212 247"},
+                {"name": "alpharandom", "min": 0.3, "max": 1.0},
+                {"name": "rotationrandom", "min": "-0.5 -0.5 -0.5", "max": "0.5 0.5 0.5"}
+            ],
+            "maxcount": 50
+        }"#;
+        let spec = parse_particle_spec(json);
+        let sim = emitter_spec_to_particle(&spec, [0.0; 3], 3840.0, 1906.0);
+        let i = &sim.init;
+
+        assert_eq!(i.velocity_min, [-50.0, -50.0, 0.0], "velocity_min 应从 spec.init 带入");
+        assert_eq!(i.velocity_max, [0.0, -15.0, 0.0], "velocity_max 应从 spec.init 带入");
+        assert_eq!(i.size_min, 30.0, "size_min 应从 spec.init 带入");
+        assert_eq!(i.size_max, 50.0, "size_max 应从 spec.init 带入");
+        assert_eq!(i.size_exponent, 2.0, "InitSpec 无 exponent → 映射缺省 2.0（对齐黑神话 exp2）");
+        assert_eq!(i.lifetime_min, 5.0, "lifetime_min 应从 spec.init 带入");
+        assert_eq!(i.lifetime_max, 10.0, "lifetime_max 应从 spec.init 带入");
+        // colorrandom "255 212 247" → /255 = [1.0, 0.831, 0.969]（粉花瓣近似）。
+        assert!((i.color_min[0] - 1.0).abs() < 1e-5, "color[0] 应 255/255 → 1.0");
+        assert!((i.color_min[1] - 212.0 / 255.0).abs() < 1e-5, "color[1] 应 212/255");
+        assert!((i.color_min[2] - 247.0 / 255.0).abs() < 1e-5, "color[2] 应 247/255");
+        assert_eq!(i.color_max, i.color_min, "color_min/max 相同 → lerp 恒为该色");
+        assert_eq!(i.alpha_min, 0.3, "alpha_min 应从 spec.init 带入");
+        assert_eq!(i.alpha_max, 1.0, "alpha_max 应从 spec.init 带入");
+        assert_eq!(i.rotation_min, [-0.5, -0.5, -0.5], "rotation_min 应从 spec.init 带入");
+        assert_eq!(i.rotation_max, [0.5, 0.5, 0.5], "rotation_max 应从 spec.init 带入");
+        assert_eq!(i.angular_vel_min, [0.0; 3], "无 angularvelocityrandom → 缺省 0");
+        assert_eq!(i.angular_vel_max, [0.0; 3], "无 angularvelocityrandom → 缺省 0");
+    }
+
+    #[test]
+    fn init_defaults_white_color_zero_rotation_when_absent() {
+        // 无 colorrandom/rotationrandom/alpharandom → color 缺省 [1,1,1]、rotation 缺省 [0,0,0]、alpha 缺省 1.0。
+        let json = r#"{"emitter":[{"rate":10}],"initializer":[{"name":"velocityrandom","min":"0 0 0","max":"0 0 0"}]}"#;
+        let spec = parse_particle_spec(json);
+        let sim = emitter_spec_to_particle(&spec, [0.0; 3], 3840.0, 1906.0);
+        assert_eq!(sim.init.color_min, [1.0, 1.0, 1.0], "无 colorrandom → color_min 缺省白");
+        assert_eq!(sim.init.color_max, [1.0, 1.0, 1.0], "无 colorrandom → color_max 缺省白");
+        assert_eq!(sim.init.rotation_min, [0.0; 3], "无 rotationrandom → rotation_min 缺省 0");
+        assert_eq!(sim.init.rotation_max, [0.0; 3], "无 rotationrandom → rotation_max 缺省 0");
+        assert_eq!(sim.init.alpha_min, 1.0, "无 alpharandom → alpha_min 缺省 1.0");
+        assert_eq!(sim.init.alpha_max, 1.0, "无 alpharandom → alpha_max 缺省 1.0");
     }
 }

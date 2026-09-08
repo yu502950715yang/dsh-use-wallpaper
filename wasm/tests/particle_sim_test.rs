@@ -1,9 +1,11 @@
 //! SceneParticleSim（CPU 粒子模拟器，Task 2）集成测试。
 //! 测试目标：模拟器能按 emission_timer 累计发射生成粒子，并随 update 逐帧向下飘（无重力）。
 
-use we_scene_wasm::particle::{SceneParticleSim, ParticleEmitterSpec};
+use we_scene_wasm::particle::{ParticleEmitterSpec, ParticleInitSpec, SceneParticleSim};
 
 /// 构建黑神话花瓣模拟器（cover 相机半高 1906，非 scene 2160）。
+/// init 为黑神话 spec.init 的映射值：vel.y∈[-50,-15]（向下飘）、size∈[30,50]（exp2）、
+/// life∈[5,10]、粉 color → spawn 用各自 init 而非黑神话硬编码。
 fn flower_sim() -> SceneParticleSim {
     SceneParticleSim::new(
         ParticleEmitterSpec {
@@ -18,6 +20,23 @@ fn flower_sim() -> SceneParticleSim {
         [2306.34, 419.77, 0.0],
         3840.0,
         1906.0,
+        ParticleInitSpec {
+            lifetime_min: 5.0,
+            lifetime_max: 10.0,
+            size_min: 30.0,
+            size_max: 50.0,
+            size_exponent: 2.0,
+            velocity_min: [-50.0, -50.0, 0.0],
+            velocity_max: [0.0, -15.0, 0.0],
+            color_min: [1.0, 0.83, 0.97],
+            color_max: [1.0, 0.83, 0.97],
+            alpha_min: 1.0,
+            alpha_max: 1.0,
+            rotation_min: [0.0; 3],
+            rotation_max: [0.0; 3],
+            angular_vel_min: [0.0; 3],
+            angular_vel_max: [0.0; 3],
+        },
     )
 }
 

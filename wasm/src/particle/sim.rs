@@ -79,6 +79,36 @@ pub struct ParticleEmitterSpec {
     pub is_sphere: bool,
 }
 
+/// 粒子初始值规格（从 `spec.init` 映射；CPU spawn 用它生成新粒子，替换黑神话硬编码——
+/// Important I1：EVA/DK/Crimson 等**无 effects 粒子对象**用各自 spec.init，而非黑神话常量）。
+///
+/// `color`/`rotation`/`angular_vel` 在映射时把 `InitSpec` 的 `Option` 展开为缺省值
+/// （color=[1,1,1]，rotation/angular_vel=[0,0,0]）。字段均为 pub（库公共 API，无 dead_code）。
+pub struct ParticleInitSpec {
+    pub lifetime_min: f32,
+    pub lifetime_max: f32,
+    pub size_min: f32,
+    pub size_max: f32,
+    /// sizerandom 的指数（黑神话 exp2 → size∈[30,50]）。`InitSpec` 未解析 sizerandom 的
+    /// exponent 字段，映射时统一给 2.0（对齐原硬编码，行为不变）。
+    pub size_exponent: f32,
+    pub velocity_min: [f32; 3],
+    pub velocity_max: [f32; 3],
+    pub color_min: [f32; 3],
+    pub color_max: [f32; 3],
+    pub alpha_min: f32,
+    pub alpha_max: f32,
+    /// rotationrandom：初始旋转角（弧度欧拉角，逐分量 [min,max]）。CPU spawn 取 z 轴（`[2]`）
+    /// 做单轴近似。缺省 [0,0,0]。
+    pub rotation_min: [f32; 3],
+    pub rotation_max: [f32; 3],
+    /// angularvelocityrandom：初始角速度（弧/秒，逐分量）。当前 CPU `update` 仍用 0.5*dt
+    /// （黑神话角速度近似，见 update 注释），本字段随 init 带入但尚未被消费
+    /// （angularmovement 算子未完整实现，见文件顶注释）。
+    pub angular_vel_min: [f32; 3],
+    pub angular_vel_max: [f32; 3],
+}
+
 /// 场景粒子模拟器（CPU）。
 pub struct SceneParticleSim {
     pub maxcount: u32,
@@ -92,6 +122,8 @@ pub struct SceneParticleSim {
     pub emission_timer: f32,
     pub particles: Vec<SimParticle>,
     pub emitter: ParticleEmitterSpec,
+    /// 粒子初始值规格（从 `spec.init` 映射；spawn 用它生成新粒子）。
+    pub init: ParticleInitSpec,
 }
 
 impl SceneParticleSim {
@@ -101,6 +133,7 @@ impl SceneParticleSim {
         obj_origin: [f32; 3],
         view_w: f32,
         view_h: f32,
+        init: ParticleInitSpec,
     ) -> Self {
         Self {
             maxcount,
@@ -110,6 +143,7 @@ impl SceneParticleSim {
             emission_timer: 0.0,
             particles: Vec::new(),
             emitter: e,
+            init,
         }
     }
 
@@ -161,15 +195,36 @@ impl SceneParticleSim {
         pos[1] += local[1];
         pos[2] += local[2];
 
-        // 速度：向下（黑神话向下飘）—— vel.y ∈ [-50,-15]；x ∈ [-50,0]
-        let vel = [-50.0 + rand() * 50.0, -50.0 + rand() * 35.0, 0.0];
+        // 初始属性来自 `self.init`（每个壁纸 spec.init 的 velocityrandom/sizerandom/
+        // lifetimerandom/colorrandom/alpharandom/rotationrandom），不再黑神话硬编码
+        // （Important I1：EVA/DK/Crimson 等无 effects 粒子对象也用各自 spec.init，
+        // 背景/图层不受影响，只改 CPU 粒子初始化）。
+        let i = &self.init;
+        // [0,1) 上逐分量线性插值：`a + (b-a)*rand`。
+        let lerp = |a: f32, b: f32| a + (b - a) * rand();
 
-        // 初始属性（照 black spec）
-        let size = 30.0 + (50.0 - 30.0) * rand().powf(2.0); // sizerandom exp2
-        let life = 5.0 + rand() * (10.0 - 5.0);
-        let alpha = 1.0;
-        let color = [1.0, 0.83, 0.97]; // 粉花瓣（color 近似）
-        let rot = rand() * 6.28318;
+        // 速度：各分量在 [min,max] 线性插值。黑神话 velocity_min=[-50,-50,0]、
+        // velocity_max=[0,-15,0] → vel.y ∈ [-50,-15]（向下飘），行为保持。
+        let vel = [
+            lerp(i.velocity_min[0], i.velocity_max[0]),
+            lerp(i.velocity_min[1], i.velocity_max[1]),
+            lerp(i.velocity_min[2], i.velocity_max[2]),
+        ];
+
+        // 尺寸：min + (max-min)*rand^exponent（黑神话 sizerandom exp2 → size∈[30,50]）。
+        let size = i.size_min + (i.size_max - i.size_min) * rand().powf(i.size_exponent);
+        // 寿命：lerp(lifetime_min, lifetime_max, rand)（黑神话 life∈[5,10]）。
+        let life = lerp(i.lifetime_min, i.lifetime_max);
+        // alpha：lerp(alpha_min, alpha_max, rand)（缺省 min=max=1.0 → alpha=1.0）。
+        let alpha = lerp(i.alpha_min, i.alpha_max);
+        // 颜色：各分量线性插值（缺省 color_min/max=[1,1,1]；黑神话为粉花瓣）。
+        let color = [
+            lerp(i.color_min[0], i.color_max[0]),
+            lerp(i.color_min[1], i.color_max[1]),
+            lerp(i.color_min[2], i.color_max[2]),
+        ];
+        // 初始旋转角：rotation_min[2]..rotation_max[2] 单轴近似（缺省 [0,0,0] → rot=0）。
+        let rot = lerp(i.rotation_min[2], i.rotation_max[2]);
         // 帧 id 随机取 0..3（rosepetals sprite sheet 4 帧；否则所有花瓣固定采样同帧）。
         // rand() ∈ [0,1) → *4 ∈ [0,4) → floor ∈ {0,1,2,3}。
         let frame = (rand() * DEFAULT_FRAME_COUNT as f32).floor();
@@ -244,6 +299,23 @@ mod tests {
             [0.0; 3],
             3840.0,
             1906.0,
+            ParticleInitSpec {
+                lifetime_min: 5.0,
+                lifetime_max: 10.0,
+                size_min: 30.0,
+                size_max: 50.0,
+                size_exponent: 2.0,
+                velocity_min: [-50.0, -50.0, 0.0],
+                velocity_max: [0.0, -15.0, 0.0],
+                color_min: [1.0, 0.83, 0.97],
+                color_max: [1.0, 0.83, 0.97],
+                alpha_min: 1.0,
+                alpha_max: 1.0,
+                rotation_min: [0.0; 3],
+                rotation_max: [0.0; 3],
+                angular_vel_min: [0.0; 3],
+                angular_vel_max: [0.0; 3],
+            },
         );
         sim.particles.push(SimParticle {
             pos: [1.0, 2.0, 3.0],
@@ -264,5 +336,68 @@ mod tests {
         assert_eq!(vs[0][5], 0.5, "uv.y 恒 0.5（每帧占满整高）");
         assert_eq!(vs[0][6], 1.0, "color[0] 应在 index 6");
         assert_eq!(vs[0][9], 1.0, "alpha 应在 index 9");
+    }
+
+    /// Important I1：spawn 用 `self.init`（每壁纸 spec.init），而非黑神话硬编码。
+    /// 此处用一组远离黑神话值的 init，断言生成粒子落在 init 范围内（证明不是黑神话常量）。
+    #[test]
+    fn spawn_uses_init_not_black_myth_constants() {
+        let mut sim = SceneParticleSim::new(
+            ParticleEmitterSpec {
+                rate: 0.0,
+                origin: [0.0; 3],
+                directions: [0.0; 3],
+                dist_min: 0.0,
+                dist_max: 0.0,
+                is_sphere: false,
+            },
+            8,
+            [0.0; 3],
+            3840.0,
+            1906.0,
+            ParticleInitSpec {
+                lifetime_min: 2.0,
+                lifetime_max: 3.0,
+                size_min: 10.0,
+                size_max: 20.0,
+                size_exponent: 1.0,
+                velocity_min: [-100.0, -200.0, -300.0],
+                velocity_max: [100.0, 200.0, 300.0],
+                color_min: [0.1, 0.2, 0.3],
+                color_max: [0.4, 0.5, 0.6],
+                alpha_min: 0.5,
+                alpha_max: 0.9,
+                rotation_min: [-1.0, -1.0, -1.0],
+                rotation_max: [1.0, 1.0, 1.0],
+                angular_vel_min: [-2.0, -2.0, -2.0],
+                angular_vel_max: [2.0, 2.0, 2.0],
+            },
+        );
+        // spawn 直接调用（同模块可访问私有方法）生成一个粒子。
+        sim.spawn();
+        assert_eq!(sim.particles.len(), 1, "spawn 应生成 1 个粒子");
+        let p = &sim.particles[0];
+
+        // vel 各分量落在 init 的 [velocity_min, velocity_max]（此组范围远超黑神话 -50..-15）。
+        assert!((-100.0..=100.0).contains(&p.vel[0]), "vel[0] 应在 init 范围内，got {}", p.vel[0]);
+        assert!((-200.0..=200.0).contains(&p.vel[1]), "vel[1] 应来自 init（非黑神话 -50..-15），got {}", p.vel[1]);
+        assert!((-300.0..=300.0).contains(&p.vel[2]), "vel[2] 应在 init 范围内，got {}", p.vel[2]);
+
+        // size 落在 init [size_min, size_max]（非黑神话 30..50）。
+        assert!((10.0..=20.0).contains(&p.size), "size 应来自 init，got {}", p.size);
+        // life 落在 init [lifetime_min, lifetime_max]（非黑神话 5..10）。
+        assert!((2.0..=3.0).contains(&p.life), "life 应来自 init，got {}", p.life);
+        // color 各分量落在 init [color_min, color_max]（非黑神话粉 [1,0.83,0.97]）。
+        assert!((0.1..=0.4).contains(&p.color[0]), "color[0] 非黑神话 1.0，got {}", p.color[0]);
+        assert!((0.2..=0.5).contains(&p.color[1]), "color[1] 非黑神话 0.83，got {}", p.color[1]);
+        assert!((0.3..=0.6).contains(&p.color[2]), "color[2] 非黑神话 0.97，got {}", p.color[2]);
+        // alpha 落在 init [alpha_min, alpha_max]。
+        assert!((0.5..=0.9).contains(&p.alpha), "alpha 应来自 init，got {}", p.alpha);
+        // rot 单轴近似：落在 rotation_min[2]..rotation_max[2]。
+        assert!((-1.0..=1.0).contains(&p.rot), "rot 应来自 init 的 rotation，got {}", p.rot);
+        // frame 保留黑神话帧 0..3。
+        assert!(p.frame >= 0.0 && p.frame < 4.0, "frame 应随机 0..3，got {}", p.frame);
+        // max_life 跟随 life。
+        assert_eq!(p.max_life, p.life, "max_life 应等于 life（spawn 时确定）");
     }
 }

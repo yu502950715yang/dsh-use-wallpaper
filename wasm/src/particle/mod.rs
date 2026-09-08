@@ -22,7 +22,7 @@ pub mod spec_to_emitter;
 
 /// 重导出 CPU 模拟器接口到 `particle` 模块根（供 Task 3/4 以 `particle::SceneParticleSim` 引用，
 /// 与需求接口块/测试 import 一致）。
-pub use sim::{ParticleEmitterSpec, SceneParticleSim, SimParticle};
+pub use sim::{ParticleEmitterSpec, ParticleInitSpec, SceneParticleSim, SimParticle};
 /// 重导出 spec→模拟器映射（Task 4 纯函数，供 render/接线以 `particle::emitter_spec_to_particle` 引用）。
 pub use spec_to_emitter::emitter_spec_to_particle;
 
