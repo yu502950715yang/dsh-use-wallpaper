@@ -38,6 +38,7 @@ fn neutral_init() -> ParticleInitSpec {
         rotation_max: [0.0; 3],
         angular_vel_min: [0.0; 3],
         angular_vel_max: [0.0; 3],
+        turbulent: None,
     }
 }
 

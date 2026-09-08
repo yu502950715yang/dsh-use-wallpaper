@@ -24,6 +24,7 @@
 //! `update()` 注释）。
 
 use crate::coords::we_to_three;
+use super::TurbulentInit;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 /// 进程级 Xorshift32 状态（线程安全；跨实例共享，先简单占位，Task 4 换发射器级种子）。
@@ -80,17 +81,36 @@ pub fn frame_center_uv(frame: f32, frame_count: u32) -> [f32; 2] {
     [(idx + 0.5) / n, 0.5]
 }
 
-/// 单粒子状态（对应 WE CParticle）。
+/// 单粒子状态（对应 WE CParticle 的 `ParticleInstance`）。
+///
+/// Task 3 为对齐 lwe 各 `create*RandomInitializer`，在 spawn 时补充设置两个初始属性：
+/// - `angular_vel`：`angularvelocityrandom` 的初始角速度（弧/秒，逐分量 lerp）。当前 `update()`
+///   仍用黑神话角速度近似 `rot += 0.5*dt`，本字段带 init 语义但**尚未被消费**——由 Task 4
+///   （angularmovement 算子）接入 `rot += angular_vel*dt`。
+/// - `initial`：复位基准（对应 lwe `ParticleInstance::initial`，color/alpha/size/lifetime 存
+///   spawn 时的初值），供 operators（alphafade/sizechange/colorchange，Task 4）按 `initial.*`
+///   推导当前值；`max_life` 仍作 lifetime 基准（`initial.lifetime` 与其一致）。
 pub struct SimParticle {
     pub pos: [f32; 3],
     pub vel: [f32; 3],
     pub rot: f32,
+    pub angular_vel: [f32; 3],
     pub size: f32,
     pub alpha: f32,
     pub life: f32,
     pub max_life: f32,
     pub color: [f32; 3],
     pub frame: f32,
+    pub initial: SimInitial,
+}
+
+/// 单粒子的**初始值复位基准**（对应 lwe `ParticleInstance::initial`）。
+/// 在 spawn 时由各 initializer 设置为该粒子初值；operators/reset（Task 4）据此还原当前值。
+pub struct SimInitial {
+    pub color: [f32; 3],
+    pub alpha: f32,
+    pub size: f32,
+    pub lifetime: f32,
 }
 
 /// 发射器闭包类型（对齐 lwe `CParticle::createBoxEmitter` / `createSphereEmitter` 的 `EmitterFunc`）。
@@ -149,6 +169,10 @@ pub struct ParticleInitSpec {
     /// （angularmovement 算子未完整实现，见文件顶注释）。
     pub angular_vel_min: [f32; 3],
     pub angular_vel_max: [f32; 3],
+    /// turbulentvelocityrandom：spawn 时叠加的湍流初速（对应 lwe `createTurbulentVelocityRandomInitializer`
+    /// 的 normal/forward 基 + speed 幅度）。缺省 `None` = 不叠加（该 initializer 未出现时）。
+    /// 由 `ParticleInitSpec` 随 spec.init 带入（`spec_to_emitter` 从 `InitSpec::turbulent` 映射）。
+    pub turbulent: Option<TurbulentInit>,
 }
 
 /// 场景粒子模拟器（CPU）。
@@ -299,36 +323,79 @@ impl SceneParticleSim {
         pos[2] += local[2];
 
         // 初始属性来自 `self.init`（每个壁纸 spec.init 的 velocityrandom/sizerandom/
-        // lifetimerandom/colorrandom/alpharandom/rotationrandom），不再黑神话硬编码
+        // lifetimerandom/colorrandom/alpharandom/rotationrandom/angularvelocityrandom/
+        // turbulentvelocityrandom），不再黑神话硬编码
         // （Important I1：EVA/DK/Crimson 等无 effects 粒子对象也用各自 spec.init，
         // 背景/图层不受影响，只改 CPU 粒子初始化）。
+        //
+        // 各 initializer 对齐 lwe `create*RandomInitializer`（在**发射时**设置新粒子初始属性）：
+        //   - velocityRandom：`lerp(min,max,rand)` 逐分量；lwe 内部再 `vel.y=-vel.y`（屏幕 Y 向下→中心 Y 向上），
+        //     本模拟器坐标经 `we_to_three`（Y 向上，与背景/图层一致）**已免翻**，且 spec 无 velocity.y 翻开关，
+        //     故 **y 不翻**（黑神话 vel.y∈[-50,-15] 向下飘，行为保持）。
+        //   - sizeRandom：`min + t^exp*(max-min)`（**不做 /2**；exp 取 size_exponent，缺省 2.0）。
+        //   - alphaRandom / lifetimeRandom：`lerp(min,max,rand)`。
+        //   - colorRandom：`lerp(min,max,rand)` 逐分量（已归一 0..1）。
+        //   - rotationRandom：旋转角（欧拉），本模拟器单轴近似取 z 分量。
+        //   - angularVelocityRandom：`lerp(min,max,rand)` 逐分量（弧/秒）。
+        //   - turbulentVelocityRandom：基于法向/前向正交基的随机方向扰动，scale×速度，加到 velocity。
+        //   - frame：randomframe，0..spritesheetFrames-1。
+        //   - initial.color/alpha/size/lifetime：存 spawn 初值（复位基准，供 operators/reset）。
         let i = &self.init;
         // [0,1) 上逐分量线性插值：`a + (b-a)*rand`。
         let lerp = |a: f32, b: f32| a + (b - a) * rand();
 
-        // 速度：各分量在 [min,max] 线性插值。黑神话 velocity_min=[-50,-50,0]、
-        // velocity_max=[0,-15,0] → vel.y ∈ [-50,-15]（向下飘），行为保持。
-        let vel = [
+        // velocityRandom：逐分量 lerp，y 不翻（见文件顶坐标约定 & we_to_three）。
+        // 黑神话 velocity_min=[-50,-50,0]、velocity_max=[0,-15,0] → vel.y ∈ [-50,-15]（向下飘）。
+        let mut vel = [
             lerp(i.velocity_min[0], i.velocity_max[0]),
             lerp(i.velocity_min[1], i.velocity_max[1]),
             lerp(i.velocity_min[2], i.velocity_max[2]),
         ];
 
-        // 尺寸：min + (max-min)*rand^exponent（黑神话 sizerandom exp2 → size∈[30,50]）。
+        // sizeRandom：`min + t^exp*(max-min)`（不做 /2）。黑神话 sizerandom exp2 → size∈[30,50]。
         let size = i.size_min + (i.size_max - i.size_min) * rand().powf(i.size_exponent);
-        // 寿命：lerp(lifetime_min, lifetime_max, rand)（黑神话 life∈[5,10]）。
+        // lifetimeRandom / alphaRandom：`lerp(min,max,rand)`（黑神话 life∈[5,10]、alpha 缺省 1.0）。
         let life = lerp(i.lifetime_min, i.lifetime_max);
-        // alpha：lerp(alpha_min, alpha_max, rand)（缺省 min=max=1.0 → alpha=1.0）。
         let alpha = lerp(i.alpha_min, i.alpha_max);
-        // 颜色：各分量线性插值（缺省 color_min/max=[1,1,1]；黑神话为粉花瓣）。
+        // colorRandom：逐分量 lerp（已归一 0..1；缺省 color_min/max=[1,1,1]；黑神话粉花瓣）。
         let color = [
             lerp(i.color_min[0], i.color_max[0]),
             lerp(i.color_min[1], i.color_max[1]),
             lerp(i.color_min[2], i.color_max[2]),
         ];
-        // 初始旋转角：rotation_min[2]..rotation_max[2] 单轴近似（缺省 [0,0,0] → rot=0）。
+        // rotationRandom：旋转角（欧拉，lwe 逐分量）；本模拟器单轴近似取 z。
         let rot = lerp(i.rotation_min[2], i.rotation_max[2]);
-        // 帧 id 随机取 0..3（rosepetals sprite sheet 4 帧；否则所有花瓣固定采样同帧）。
+        // angularVelocityRandom：逐分量 lerp（弧/秒）。当前 update 仍用 0.5*dt 近似旋转，
+        // 本字段带 init 语义但尚未被消费（angularmovement 算子为 Task 4）。
+        let angular_vel = [
+            lerp(i.angular_vel_min[0], i.angular_vel_max[0]),
+            lerp(i.angular_vel_min[1], i.angular_vel_max[1]),
+            lerp(i.angular_vel_min[2], i.angular_vel_max[2]),
+        ];
+
+        // turbulentVelocityRandom：把扰动**加到 velocity**。方向取法向/前向正交基平面内的随机方向
+        // （`cosθ×forward + sinθ×scale×normal`，归一），速度 `lerp(speedMin, speedMax, rand)`。
+        // 无该 initializer（`turbulent == None`）→ 忽略（不叠加扰动）。
+        if let Some(turb) = &i.turbulent {
+            let speed = lerp(turb.speed_min, turb.speed_max);
+            let angle = rand() * std::f32::consts::TAU;
+            let f = turb.forward;
+            let n = turb.normal;
+            let mut dir = [
+                f[0] * angle.cos() + n[0] * angle.sin() * turb.scale,
+                f[1] * angle.cos() + n[1] * angle.sin() * turb.scale,
+                f[2] * angle.cos() + n[2] * angle.sin() * turb.scale,
+            ];
+            let len = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt();
+            if len > 1e-8 {
+                dir = [dir[0] / len, dir[1] / len, dir[2] / len];
+            }
+            vel[0] += dir[0] * speed;
+            vel[1] += dir[1] * speed;
+            vel[2] += dir[2] * speed;
+        }
+
+        // frame：randomframe，0..spritesheetFrames-1（rosepetals 4 帧；否则所有花瓣固定采样同帧）。
         // rand() ∈ [0,1) → *4 ∈ [0,4) → floor ∈ {0,1,2,3}。
         let frame = (rand() * DEFAULT_FRAME_COUNT as f32).floor();
 
@@ -336,12 +403,21 @@ impl SceneParticleSim {
             pos,
             vel,
             rot,
+            angular_vel,
             size,
             alpha,
             life,
             max_life: life,
             color,
             frame,
+            // initial 复位基准：存 spawn 初值，供 operators（alphafade/sizechange/colorchange，Task 4）
+            // 按 `initial.*` 推导当前值；lifetime 基准与 max_life 一致。
+            initial: SimInitial {
+                color,
+                alpha,
+                size,
+                lifetime: life,
+            },
         });
     }
 
@@ -418,18 +494,26 @@ mod tests {
                 rotation_max: [0.0; 3],
                 angular_vel_min: [0.0; 3],
                 angular_vel_max: [0.0; 3],
+                turbulent: None,
             },
         );
         sim.particles.push(SimParticle {
             pos: [1.0, 2.0, 3.0],
             vel: [0.0; 3],
             rot: 0.0,
+            angular_vel: [0.0; 3],
             size: 40.0,
             alpha: 1.0,
             life: 1.0,
             max_life: 1.0,
             color: [1.0, 0.83, 0.97],
             frame: 2.0,
+            initial: SimInitial {
+                color: [1.0, 0.83, 0.97],
+                alpha: 1.0,
+                size: 40.0,
+                lifetime: 1.0,
+            },
         });
         let vs = sim.build_vertices();
         assert_eq!(vs.len(), 1, "单粒子应输出 1 个 10 元素顶点");
@@ -474,6 +558,7 @@ mod tests {
                 rotation_max: [1.0, 1.0, 1.0],
                 angular_vel_min: [-2.0, -2.0, -2.0],
                 angular_vel_max: [2.0, 2.0, 2.0],
+                turbulent: None,
             },
         );
         // spawn 直接调用（同模块可访问私有方法）生成一个粒子。
@@ -522,6 +607,7 @@ mod tests {
             rotation_max: [0.0; 3],
             angular_vel_min: [0.0; 3],
             angular_vel_max: [0.0; 3],
+            turbulent: None,
         }
     }
 

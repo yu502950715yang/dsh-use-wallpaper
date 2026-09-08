@@ -52,6 +52,8 @@ pub fn emitter_spec_to_particle(
         rotation_max: spec.init.rotation_max.unwrap_or([0.0; 3]),
         angular_vel_min: spec.init.angular_vel_min.unwrap_or([0.0; 3]),
         angular_vel_max: spec.init.angular_vel_max.unwrap_or([0.0; 3]),
+        // turbulentvelocityrandom（normal/forward 基 + speed 幅度）：无该 initializer → None（不叠加）。
+        turbulent: spec.init.turbulent.clone(),
     };
     SceneParticleSim::new(
         ParticleEmitterSpec {
