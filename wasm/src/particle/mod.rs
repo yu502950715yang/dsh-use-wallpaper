@@ -1,3 +1,8 @@
+//! 粒子模块：CPU 模拟器（sim，Task 2）+ 规格解析（parse_particle_spec，Task 1/既有）。
+//! 本文件为「particle」模块根的目录式布局（原 particle.rs 内容移入 + 新增 `pub mod sim;`）；
+//! 由于 Rust 禁止 `particle.rs` 与 `particle/mod.rs` 同时存在（E0761），转为目录式模块，
+//! 原有 `particle::*` 对外路径不变（lib.rs `pub mod particle;` 对两种布局均适用）。
+//!
 //! 粒子规格解析（emitter[0] + initializer + operator + renderer；缺省值对齐现有 scene-assets.ts）
 //! 标量字段：字符串取第一 token（防 NaN）；数字直用。缺省：rate=10、distancemax=256。
 //!
@@ -11,6 +16,12 @@
 //! 实现注意：initializer/operator/renderer 数组元素是任意 JSON 对象，除 name/min/max 外还有
 //! 平铺字段（turbulent 的 scale/speedmin、movement 的 gravity/drag 等）。故这些数组统一以
 //! serde_json::Value 处理（丢弃强类型 RawInit/RawOperator 限制字段的丢字段问题了）。
+
+pub mod sim;
+
+/// 重导出 CPU 模拟器接口到 `particle` 模块根（供 Task 3/4 以 `particle::SceneParticleSim` 引用，
+/// 与需求接口块/测试 import 一致）。
+pub use sim::{ParticleEmitterSpec, SceneParticleSim, SimParticle};
 
 use serde_json::Value;
 
