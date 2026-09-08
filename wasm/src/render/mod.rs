@@ -12,7 +12,7 @@ pub mod effect_pass;
 pub mod texture;
 
 #[cfg(feature = "render")]
-use crate::particle::ParticleSpec;
+use crate::particle::{ParticleSpec, SceneParticleSim};
 #[cfg(feature = "render")]
 use crate::coords;
 
@@ -241,9 +241,15 @@ pub struct Renderer {
     particle_passes: Vec<particle_pass::ParticlePass>,
     /// CPU 模拟粒子（`particle::SceneParticleSim`，Task 2）的 billboard 渲染 pass（Task 3）。
     /// GPU compute（`particle_passes`）与 CPU 模拟（本文）是两条互补路径：本列表只收 CPU
-    /// 顶点驱动渲染的 pass，由 `create_particle_pass` 登记、`draw_cpu_particles` 驱动。
+    /// 顶点驱动渲染的 pass，由 `set_particle_sim` 登记（与 `cpu_particle_sims` 按索引一一对应）、
+    /// `draw_cpu_particles` 驱动。
     /// 字段名 `cpu_particle_passes` 与既有 `particle_passes`（GPU compute）区分，避免同名冲突。
     cpu_particle_passes: Vec<particle_render::ParticleRenderPass>,
+    /// CPU 模拟粒子系统（Task 2 `SceneParticleSim`），与 `cpu_particle_passes` 按索引一一对应。
+    /// `set_particle_sim` 同时 push 一条 sim + 一条 pass；`update_particles` 逐条 `update(dt)`，
+    /// `draw_cpu_particles` 逐条用其 pass 渲染 `build_vertices()` 输出。
+    /// 纯 CPU 模拟（非 GPU compute），与 `particle_passes` 互补；索引对齐，缺一不可。
+    cpu_particle_sims: Vec<SceneParticleSim>,
     /// 场景正交尺寸（load_scene 设置；render_frame 的 contain 相机范围计算用）
     scene_w: f32,
     scene_h: f32,
@@ -554,6 +560,7 @@ impl Renderer {
             device, queue, config, surface, width, height,
             particle_passes: Vec::new(),
             cpu_particle_passes: Vec::new(),
+            cpu_particle_sims: Vec::new(),
             scene_w: width as f32,
             scene_h: height as f32,
             mode: CameraMode::Contain,
@@ -643,41 +650,56 @@ impl Renderer {
         ));
     }
 
-    /// 创建并登记一个 CPU 模拟粒子（Task 2 `SceneParticleSim`）的 billboard 渲染 pass（Task 3），
-    /// 返回其在 `cpu_particle_passes` 中的索引（供 `draw_cpu_particles` 引用）。
-    /// `view_w`/`view_h` 为 cover 相机半视口（如 3840/1906）；`tex` 为粒子纹理（None → 1×1 白兜底）；
-    /// `blend` 决定混合（Additive / Translucent）。
-    pub fn create_particle_pass(
+    /// 登记一个 CPU 模拟粒子（Task 2 `SceneParticleSim`）及其 billboard 渲染 pass（Task 3），
+    /// 追加到 `cpu_particle_sims`/`cpu_particle_passes`（多系统并存，对齐 JS 版粒子密度；
+    /// 与 `set_particle`（GPU compute）互补，不互相替换）。
+    /// `obj_origin` 为对象中心（WE 坐标）；view_w/view_h 用 cover 相机范围（`camera_range()`，
+    /// 全局约束：view_h 用 cover 尺寸，非 scene 2160）；粒子**不乘 scale**（sim 内按对象中心 + emitter 发射）。
+    /// `tex` 为粒子纹理（None → 1×1 白兜底）；`blend` 先用 `Translucent`（后续可扩展）。
+    pub fn set_particle_sim(
         &mut self,
-        view_w: f32,
-        view_h: f32,
-        blend: particle_render::BlendMode,
+        spec: &ParticleSpec,
+        obj_origin: [f32; 3],
         tex: Option<wgpu::Texture>,
-    ) -> usize {
+    ) {
+        let (fw, fh) = self.camera_range();
+        let sim = crate::particle::emitter_spec_to_particle(spec, obj_origin, fw, fh);
         let pass = particle_render::ParticleRenderPass::new(
             &self.device,
             &self.queue,
             self.config.format,
             tex,
-            view_w,
-            view_h,
-            blend,
+            fw,
+            fh,
+            particle_render::BlendMode::Translucent,
         );
+        self.cpu_particle_sims.push(sim);
         self.cpu_particle_passes.push(pass);
-        self.cpu_particle_passes.len() - 1
     }
 
-    /// 用 `pass_index`（`create_particle_pass` 返回值）对应的 pass，把 CPU 粒子顶点
-    /// `vertices`（逐粒子 `[f32;10]`，来自 `SceneParticleSim::build_vertices`）渲染到 `target`。
-    /// `pass_index` 越界 → no-op（防御，绝不 panic）。
-    pub fn draw_cpu_particles(
-        &mut self,
-        pass_index: usize,
-        vertices: &[[f32; 10]],
-        target: &wgpu::TextureView,
-    ) {
-        if let Some(pass) = self.cpu_particle_passes.get_mut(pass_index) {
-            pass.draw(&self.device, &self.queue, vertices, target);
+    /// 每帧推进所有 CPU 模拟粒子（`dt` 秒；JS 侧用 `performance.now` 差分调用）。
+    pub fn update_particles(&mut self, dt: f32) {
+        for sim in &mut self.cpu_particle_sims {
+            sim.update(dt);
+        }
+    }
+
+    /// 用各 sim 对应的 billboard pass，把 CPU 粒子顶点（`SceneParticleSim::build_vertices`）
+    /// 渲染到 `out`。**在背景图层/GPU 粒子绘制之后调用**（pass 的 Load 不清除，叠加其上）。
+    /// sim 与 pass 按索引一一对应（`set_particle_sim` 保证），`zip` 迭代；空粒子条目跳过绘制（防御）。
+    pub fn draw_cpu_particles(&mut self, out: &wgpu::TextureView) {
+        let device = &self.device;
+        let queue = &self.queue;
+        for (sim, pass) in self
+            .cpu_particle_sims
+            .iter()
+            .zip(self.cpu_particle_passes.iter_mut())
+        {
+            if sim.particles.is_empty() {
+                continue;
+            }
+            let vertices = sim.build_vertices();
+            pass.draw(device, queue, &vertices, out);
         }
     }
 
@@ -1299,7 +1321,6 @@ impl Renderer {
             Err(_) => return,
         };
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         // 图片 uniform 先统一更新（避免 render pass 内同时可变借用 self.queue 与 self.images）
         if !self.images.is_empty() {
             let (fw, fh) = self.camera_range();
@@ -1350,29 +1371,43 @@ impl Renderer {
             (CameraMode::Cover, None) => wgpu::Color { r: 0.067, g: 0.067, b: 0.078, a: 1.0 },
         };
 
+        // CPU 粒子叠加：`draw_cpu_particles` 内部自建 command encoder 并 submit（Load 不清除），
+        // 故必须**先提交背景 encoder、后画粒子**，且都在 `frame.present()` 之前（surface texture
+        // present 后即失效，WebGPU 禁止再写）——同一帧内背景在上、粒子叠加其上，无帧滞后。
         if !self.effect_passes.is_empty() {
             // 效果链透传（Task2 基线）：场景渲染到离屏自采，再透传输出到 surface。
             // effect_passes 非空 => 离屏资源已在 new 时分配，unwrap 安全。
-            let offscreen_view = self.offscreen_view.as_ref().expect("effect pass 存在时离屏纹理已分配");
-            let offscreen_sampler = self.offscreen_sampler.as_ref().expect("effect pass 存在时离屏采样器已分配");
+            // clone 离屏 view/sampler 为 owned，避免 `self.draw_cpu_particles`（&mut self）
+            // 与离屏引用（&self.offscreen_view）的借用冲突。
+            let offscreen_view = self.offscreen_view.as_ref().expect("effect pass 存在时离屏纹理已分配").clone();
+            let offscreen_sampler = self.offscreen_sampler.as_ref().expect("effect pass 存在时离屏采样器已分配").clone();
             let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("effect-input-bg"),
                 layout: &self.effect_layout,
                 entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(offscreen_view) },
-                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(offscreen_sampler) },
+                    wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&offscreen_view) },
+                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&offscreen_sampler) },
                 ],
             });
-            // 渲染场景到离屏（读自采渲染）
-            self.draw_scene_into(&mut encoder, offscreen_view, clear);
-            // 透传离屏 → surface
+            // ① 渲染场景到离屏（读自采渲染）
+            let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+            self.draw_scene_into(&mut encoder, &offscreen_view, clear);
+            self.queue.submit([encoder.finish()]);
+            // ② CPU 粒子叠加到离屏（背景之后、粒子之上，Load 不清除）
+            self.draw_cpu_particles(&offscreen_view);
+            // ③ 透传离屏 → surface
+            let mut pe = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
             let pass = &mut self.effect_passes[0];
-            pass.render(&mut encoder, offscreen_view, &view, &bg);
+            pass.render(&mut pe, &offscreen_view, &view, &bg);
+            self.queue.submit([pe.finish()]);
         } else {
             // 兜底：无 effect pass（创建失败），直接渲染场景到 surface（不黑屏）
+            let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
             self.draw_scene_into(&mut encoder, &view, clear);
+            self.queue.submit([encoder.finish()]);
+            // CPU 粒子叠加到 surface（背景之后、粒子之上）
+            self.draw_cpu_particles(&view);
         }
-        self.queue.submit([encoder.finish()]);
         frame.present();
     }
 

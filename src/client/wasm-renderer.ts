@@ -208,6 +208,11 @@ export interface WasmScene {
   update_image(assetId: number, origin?: Float32Array, scale?: Float32Array, alpha?: number, brightness?: number): void;
   add_particle(json: string, origin: Float32Array, scale: Float32Array, texBytes: Uint8Array): void;
   // 带 effects 的粒子对象走对象路径（粒子内容→对象RT→效果链→合成quad）。
+  // B-core（CPU 粒子，Task 4）：构造 CPU 模拟粒子（SceneParticleSim）+ billboard pass。
+  // origin 为对象中心；texBytes 空 = 无纹理（白色 billboard 兜底）；不传 scale（粒子不乘 scale）。
+  set_particle_sim(json: string, origin: Float32Array, texBytes: Uint8Array): void;
+  // 每帧推进所有 CPU 模拟粒子（dt 秒，performance.now 差分）。渲染叠加已由 render() 内部完成。
+  update_particles(dt: number): void;
   // chainDesc 语义同 set_object_effect（真实 WE shader 的 SPIR-V bytes JSON；空/失败 = 不调用
   // 本方法，对象走共享路径 add_particle 显示原始内容，绝不用演示 pass 兜底）。
   set_particle_object_effect(objId: number, json: string, origin: Float32Array, scale: Float32Array, texBytes: Uint8Array, worldSize: Float32Array, rtSize: Float32Array, chainDesc: Uint8Array): Promise<void>;
@@ -533,19 +538,17 @@ export function createWasmSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneRe
                   chainDesc,
                 );
               } else {
-                console.warn(`[wasm] 对象 ${i}(particle) 效果链编译失败/无有效 pass → 共享路径 add_particle，显示原始内容（非渐变）`);
-                scene.add_particle(
+                console.warn(`[wasm] 对象 ${i}(particle) 效果链编译失败/无有效 pass → 共享路径 set_particle_sim，显示原始内容（非渐变）`);
+                scene.set_particle_sim(
                   specText,
                   Float32Array.from(obj.origin),
-                  Float32Array.from(obj.scale),
                   texBytes ?? new Uint8Array(0),
                 );
               }
             } else {
-              scene.add_particle(
+              scene.set_particle_sim(
                 specText,
                 Float32Array.from(obj.origin),
-                Float32Array.from(obj.scale),
                 texBytes ?? new Uint8Array(0),
               );
             }
@@ -558,8 +561,16 @@ export function createWasmSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneRe
           teardown();
           return false;
         }
+        // B-core（CPU 粒子，Task 4）：真实帧间隔 dt（performance.now 差分），
+        // clamp 0.1s 防 tab 切后台/raf 停顿后 dt 过大把粒子瞬移出视口。
+        let lastTime = performance.now();
         const loop = () => {
+          const now = performance.now();
+          const dt = Math.min((now - lastTime) / 1000, 0.1);
+          lastTime = now;
+          // GPU compute 粒子沿用固定 1/60（既有语义不变）；CPU 粒子用真实 dt 推进。
           scene.step(1 / 60);
+          scene.update_particles(dt);
           // T5：脚本状态灌回——每帧对每个绑定 update(1/60)，读回变化灌回 update_image。
           // undefined = 保持当前（origin/scale 为 Float32Array，alpha/brightness 为 number）。
           // BoundScript.update 已做变化检测——未变字段省略（rb 为空对象则不灌回），避免对

@@ -175,6 +175,29 @@ impl WeScene {
             .set_particle(&spec, arr3(&origin), arr3(&scale), tex);
     }
 
+    /// 装载粒子规格并构建 **CPU 模拟**粒子系统（Task 2 `SceneParticleSim`）+ billboard 渲染 pass
+    /// （Task 3 `ParticleRenderPass`），追加到渲染器（多系统并存，对齐 JS 版粒子密度；
+    /// 与 `add_particle`（GPU compute）互补，不互相替换）。
+    ///
+    /// `origin` 为对象中心（WE 坐标）；view 用 cover 相机范围（view_h 非 scene 2160，全局约束）；
+    /// 粒子**不乘 scale**。`tex_bytes` 为粒子纹理（TEXV0005，空字节 = 无纹理 → 1×1 白兜底）。
+    /// 每帧由 `update_particles(dt)` 推进、由 `render()`（render_frame）末尾叠加绘制。
+    pub fn set_particle_sim(&mut self, json: &str, origin: Vec<f32>, tex_bytes: Vec<u8>) {
+        let spec = particle::parse_particle_spec(json);
+        let tex = if tex_bytes.is_empty() {
+            None
+        } else {
+            tex::parse_tex(&tex_bytes).and_then(|img| self.renderer.upload_texture(&img))
+        };
+        self.renderer.set_particle_sim(&spec, arr3(&origin), tex);
+    }
+
+    /// 每帧推进所有 CPU 模拟粒子（`dt` 秒；JS 侧用 `performance.now` 差分）。
+    /// 渲染已由 `render()`（render_frame）在背景之后、粒子之上自动叠加。
+    pub fn update_particles(&mut self, dt: f32) {
+        self.renderer.update_particles(dt);
+    }
+
     /// 登记一个粒子对象的对象级效果链条目（M4/Task6）。带 `effects` 的粒子对象走
     /// 「粒子内容 → 对象RT → 效果链 ping-pong → 合成 quad」，复用 Task5 对象级管线。
     /// `json` = 粒子规格（同 `add_particle`）；`origin`/`scale` 为对象变换；`tex_bytes` 为
