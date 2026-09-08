@@ -34,3 +34,21 @@ fn blend_mode_maps_to_two_variants() {
     let t = particle_render::BlendMode::Translucent;
     assert_ne!(a, t);
 }
+
+#[test]
+fn expand_to_quad_vertices_repeats_each_particle_four_times() {
+    // draw 粒度修正：每粒子展开成 4 个顶点（同属性重复 4 次），供 TriangleStrip 用
+    // `vertex_index` 推角点画隔离 quad（n 粒子 → 4n 顶点）。空输入 → 空输出。
+    let v = [1.0f32, 2.0, 3.0, 40.0, 0.5, 0.5, 0.8, 0.4, 0.2, 0.9];
+    let expanded = particle_render::expand_to_quad_vertices(&[v]);
+    assert_eq!(expanded.len(), 4);
+    assert!(expanded.iter().all(|e| *e == v), "每个粒子应重复 4 次同一属性");
+
+    // 两粒子 → 8 顶点，保持顺序（粒子 0 的 4 个在前、粒子 1 的 4 个在后）。
+    let a = [0.1f32; 10];
+    let b = [0.9f32; 10];
+    let expanded2 = particle_render::expand_to_quad_vertices(&[a, b]);
+    assert_eq!(expanded2, [a, a, a, a, b, b, b, b]);
+
+    assert!(particle_render::expand_to_quad_vertices(&[]).is_empty());
+}

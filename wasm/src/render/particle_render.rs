@@ -44,6 +44,21 @@ pub const PARTICLE_VERTEX_STRIDE: u64 = 40;
 #[cfg(feature = "render")]
 const INITIAL_VERTEX_BYTES: u64 = 4 * PARTICLE_VERTEX_STRIDE;
 
+/// 每粒子 billboard quad 的顶点数（TriangleStrip 的 4 个角点）。
+/// `draw` 内通过 `expand_to_quad_vertices` 把每个粒子 `[f32;10]` 重复 4 次写入顶点缓冲，
+/// shader 再用 `@builtin(vertex_index)` 推角点（每 4 个连续顶点 = 同一粒子一个 quad）。
+pub const VERTICES_PER_PARTICLE: u32 = 4;
+
+/// 把逐粒子 `[f32;10]` 展开成每粒子 **4 个顶点**（同一粒子属性重复 4 次，供 TriangleStrip quad）。
+/// native 可测（纯数据，无 wgpu）。空输入 → 空输出（防御，draw 直接跳过绘制）。
+pub fn expand_to_quad_vertices(vertices: &[[f32; 10]]) -> Vec<[f32; 10]> {
+    let mut out = Vec::with_capacity(vertices.len() * VERTICES_PER_PARTICLE as usize);
+    for v in vertices {
+        out.extend(std::iter::repeat(*v).take(VERTICES_PER_PARTICLE as usize));
+    }
+    out
+}
+
 /// `[f32;10]`（pos3+size+uv2+color3+alpha）的 wgpu 顶点属性表（5 个 location），
 /// 与 `particle_billboard.wgsl` 的 `VsIn` 逐字段对齐。`static` 保证 `'static` 生命周期，
 /// 供管线创建时 `attributes: &VERTEX_ATTRIBUTES` 直接引用（无临时借用）。
@@ -243,9 +258,10 @@ impl ParticleRenderPass {
         }
     }
 
-    /// 把 `vertices`（逐粒子 `[f32;10]`，来自 `SceneParticleSim::build_vertices`）写入顶点缓冲，
-    /// 并以 billboard quad（TriangleStrip）渲染到 `out` 视图。Load 不清除：粒子按混合模式
-    /// 叠加在 `out` 既有内容上（Additive 辉光尘土 / Translucent 透明）。
+    /// 把 `vertices`（逐粒子 `[f32;10]`，来自 `SceneParticleSim::build_vertices`）**展开成每粒子
+    /// 4 顶点**写入顶点缓冲（同一粒子属性重复 4 次），并以 billboard quad（TriangleStrip）渲染
+    /// 到 `out` 视图。shader 用 `@builtin(vertex_index)` 推 quad 角点（每 4 个连续顶点 = 同一粒子
+    /// 一个 quad）。Load 不清除：粒子按混合模式叠加在 `out` 既有内容上。
     pub fn draw(
         &mut self,
         device: &wgpu::Device,
@@ -253,8 +269,9 @@ impl ParticleRenderPass {
         vertices: &[[f32; 10]],
         out: &wgpu::TextureView,
     ) {
-        // 顶点数量超出当前缓冲 → 重新分配（wgpu buffer 创建后大小不可变）。
-        let required = (vertices.len() as u64) * PARTICLE_VERTEX_STRIDE;
+        // 展开后的顶点数 = 每粒子 4 个（quads）+ 所需字节数；超出当前缓冲则重新分配。
+        let quad_vertex_count = (vertices.len() as u32) * VERTICES_PER_PARTICLE;
+        let required = (quad_vertex_count as u64) * PARTICLE_VERTEX_STRIDE;
         if required > self.vertex_buffer.size() {
             self.vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("particle-billboard-vertex"),
@@ -264,7 +281,9 @@ impl ParticleRenderPass {
             });
         }
         if !vertices.is_empty() {
-            queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(vertices));
+            // 展开：每粒子重复 4 次（同一粒子 quad 的 4 个角点由 shader 的 vertex_index 推导）。
+            let expanded = expand_to_quad_vertices(vertices);
+            queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&expanded));
         }
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("particle-billboard-encoder"),
@@ -284,9 +303,8 @@ impl ParticleRenderPass {
             rpass.set_pipeline(&self.pipeline);
             rpass.set_bind_group(0, &self.bind_group, &[]);
             rpass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            let n = vertices.len() as u32;
-            if n > 0 {
-                rpass.draw(0..n, 0..1);
+            if quad_vertex_count > 0 {
+                rpass.draw(0..quad_vertex_count, 0..1);
             }
         }
         queue.submit([encoder.finish()]);
