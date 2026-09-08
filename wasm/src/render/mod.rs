@@ -5,6 +5,7 @@
 pub mod camera;
 pub mod effect;
 pub mod particle_pass;
+pub mod particle_render;
 #[cfg(feature = "render")]
 pub mod effect_pass;
 #[cfg(feature = "render")]
@@ -238,6 +239,11 @@ pub struct Renderer {
     /// GPU 粒子模拟 + 点渲染管线（**多系统**，set_particle 追加——对齐 JS 版粒子密度，
     /// EVA 等壁纸多粒子系统全部渲染）
     particle_passes: Vec<particle_pass::ParticlePass>,
+    /// CPU 模拟粒子（`particle::SceneParticleSim`，Task 2）的 billboard 渲染 pass（Task 3）。
+    /// GPU compute（`particle_passes`）与 CPU 模拟（本文）是两条互补路径：本列表只收 CPU
+    /// 顶点驱动渲染的 pass，由 `create_particle_pass` 登记、`draw_cpu_particles` 驱动。
+    /// 字段名 `cpu_particle_passes` 与既有 `particle_passes`（GPU compute）区分，避免同名冲突。
+    cpu_particle_passes: Vec<particle_render::ParticleRenderPass>,
     /// 场景正交尺寸（load_scene 设置；render_frame 的 contain 相机范围计算用）
     scene_w: f32,
     scene_h: f32,
@@ -547,6 +553,7 @@ impl Renderer {
         Ok(Renderer {
             device, queue, config, surface, width, height,
             particle_passes: Vec::new(),
+            cpu_particle_passes: Vec::new(),
             scene_w: width as f32,
             scene_h: height as f32,
             mode: CameraMode::Contain,
@@ -634,6 +641,44 @@ impl Renderer {
             self.config.format,
             tex,
         ));
+    }
+
+    /// 创建并登记一个 CPU 模拟粒子（Task 2 `SceneParticleSim`）的 billboard 渲染 pass（Task 3），
+    /// 返回其在 `cpu_particle_passes` 中的索引（供 `draw_cpu_particles` 引用）。
+    /// `view_w`/`view_h` 为 cover 相机半视口（如 3840/1906）；`tex` 为粒子纹理（None → 1×1 白兜底）；
+    /// `blend` 决定混合（Additive / Translucent）。
+    pub fn create_particle_pass(
+        &mut self,
+        view_w: f32,
+        view_h: f32,
+        blend: particle_render::BlendMode,
+        tex: Option<wgpu::Texture>,
+    ) -> usize {
+        let pass = particle_render::ParticleRenderPass::new(
+            &self.device,
+            &self.queue,
+            self.config.format,
+            tex,
+            view_w,
+            view_h,
+            blend,
+        );
+        self.cpu_particle_passes.push(pass);
+        self.cpu_particle_passes.len() - 1
+    }
+
+    /// 用 `pass_index`（`create_particle_pass` 返回值）对应的 pass，把 CPU 粒子顶点
+    /// `vertices`（逐粒子 `[f32;10]`，来自 `SceneParticleSim::build_vertices`）渲染到 `target`。
+    /// `pass_index` 越界 → no-op（防御，绝不 panic）。
+    pub fn draw_cpu_particles(
+        &mut self,
+        pass_index: usize,
+        vertices: &[[f32; 10]],
+        target: &wgpu::TextureView,
+    ) {
+        if let Some(pass) = self.cpu_particle_passes.get_mut(pass_index) {
+            pass.draw(&self.device, &self.queue, vertices, target);
+        }
     }
 
     /// 解码后的纹理解码上传：创建 GPU 纹理（mip0，单层）并写入数据。
