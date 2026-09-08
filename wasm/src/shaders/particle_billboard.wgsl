@@ -59,10 +59,14 @@ struct VsOut {
   let half = size * 0.5;
   let world = vec3f(i.pos.x + rcorner.x * half, i.pos.y + rcorner.y * half, i.pos.z);
   // mvp = viewProjection × model（model = I）→ centered ortho diag(2/view_w, 2/view_h, 1, 1)。
+  // 2D 正交投影（与 image.wgsl 一致：clip.z = 0，post-NW 视锥 z∈[0,w] 内，粒子不被裁剪）。
+  // ⚠️ 修正：此前 z 行用 (0,0,1,0)，把粒子 world z（emitter 球壳散射可到 ±750）直接当 clip.z，
+  //   而 clip.w=1 → 视锥 z∈[0,1]，所有 |z|>1 的粒子被裁剪 → 屏幕只剩 clearcolor（粒子不可见）。
+  //   改为 z 行全 0 → clip.z=0（2D billboard 无深度排序，z 不参与可见性，对齐 image.wgsl）。
   let vp = mat4x4f(
     vec4f(2.0 / p.view_w, 0.0, 0.0, 0.0),
     vec4f(0.0, 2.0 / p.view_h, 0.0, 0.0),
-    vec4f(0.0, 0.0, 1.0, 0.0),
+    vec4f(0.0, 0.0, 0.0, 0.0),
     vec4f(0.0, 0.0, 0.0, 1.0),
   );
   var o: VsOut;
