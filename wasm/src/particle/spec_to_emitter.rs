@@ -11,8 +11,10 @@
 //! - 粒子**不乘对象 scale**（`SceneParticleSim` 内部按对象中心 + emitter 局部偏移发射）。
 //!   view（cover 相机半宽/半高）由 `ParticleRenderPass` 单独用于 billboard 投影，不传到这里。
 //!
-//! `ParticleEmitterSpec.origin` = emitter 局部偏移（黑神话花瓣 origin="350 750 0" → 发射点抬到
-//! 对象中心**上方**，y 在 spawn 时**不翻**（+y → 中心上方；origin.y=0 的 EVA/DK 等不受影响））；
+//! `ParticleEmitterSpec.origin` = emitter **原始**局部偏移（黑神话花瓣 origin="350 750 0"，y 仅存
+//! 局部语义，**不翻**；origin.y=0 的 EVA/DK 等不受影响）。spawn 时该局部偏移被
+//! `sim.rs` 按对象 scale（`BLACKMYTH_EMITTER_SCALE`，读自 scene.pkg）做**确定性重定标**，使发射点
+//! 对齐 Windows（黑神话 → 屏幕顶部偏左）；本模块原样透传 origin，不做重定标（保持字段与 spec 一致）。
 //! `is_sphere` = emitter name=="sphererandom" 的结果。两者均
 //! 由 `parse_particle_spec` 从 emitter JSON 读取，缺省 origin=[0,0,0]、is_sphere=false。
 

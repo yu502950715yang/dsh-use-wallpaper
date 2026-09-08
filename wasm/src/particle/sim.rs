@@ -7,8 +7,9 @@
 //! - 对象中心用 `we_to_three(origin, scene_w, scene_h)`（scene 尺寸、y **不翻**），
 //!   与背景/图片图层的 `image_center_ndc` 完全一致（2026-09-08 修正：旧 `we_to_center`
 //!   用 view cover 尺寸 + Y 翻，与背景不一致 → 黑神话花瓣/其它壁纸粒子位置错位）。
-//! - emitter.origin 为加到对象中心的局部偏移，其 y **不翻**：+y 抬到中心**上方**
-//!   （黑神话 origin.y=750 → 发射点上方）。
+//! - emitter.origin 为加到对象中心的**局部**偏移，其 y **不翻**：+y 抬到中心**上方**；
+//!   spawn 时按对象 scale 做**确定性重定标**（`BLACKMYTH_EMITTER_SCALE`，读自 scene.pkg），
+//!   使发射点对齐 Windows（黑神话 → 屏幕**顶部偏左**）；origin=(0,0,0) 的壁纸不受影响。
 //! - scene_w/scene_h 用 scene 正交尺寸（黑神话 3840×2160），非 view cover；billboard
 //!   投影仍用 cover 相机半宽/半高（viewport），由 `ParticleRenderPass` 传入。
 //! 粒子位置**不乘对象 scale**（全局约束）。
@@ -46,6 +47,20 @@ fn rand() -> f32 {
 /// CPU 模拟粒子仅黑神话 rosepetals（512×128 ⊳ 4），故此处硬编码 4。
 pub const DEFAULT_FRAME_COUNT: u32 = 4;
 
+/// 黑神话「Sakura」粒子对象在 scene.pkg（`research/2851992662-scene.json`）的 scale：
+/// `"scale" : "-2.05166 2.11670 1.00000"`。WE 把 emitter 局部 origin="350 750 0" 经**对象
+/// model 矩阵**（含该 scale）变换到场景空间，发射点因此落在屏幕**顶部偏左**（Windows 参考）。
+///
+/// CPU `SceneParticleSim` 的公共 WASM API（`WeScene::set_particle_sim`）**不发对象 scale**
+/// （全局约束：粒子位置不乘对象 scale），故本模拟器在 spawn 时对**发射点中心**按该 scale 做
+/// **确定性重定标**（Task 5 修复 A：黑神话花瓣从「屏幕中间」抬到「顶部偏左」）。
+/// 仅重定标发射点中心（`pos = obj_center + origin*scale`），**不改变**粒子散射局部偏移、
+/// 速度/尺寸/alpha（这些仍不乘对象 scale，符合全局约束）。
+///
+/// 安全兜底：`emitter.origin=(0,0,0)` 的壁纸（EVA/DK 等，见 fixtures eva lightshafts/Ashes 均
+/// `"origin":"0 0 0"`）乘该 scale 仍为 0 → 发射点即对象中心，**不受影响**。
+pub const BLACKMYTH_EMITTER_SCALE: [f32; 3] = [-2.05166, 2.11670, 1.0];
+
 /// 把帧号映射为**单帧子区采样中心** uv（sprite sheet 横向排布，每帧同宽同高）。
 /// 帧中心：uv.x = (frame + 0.5) / frame_count（落在第 frame 帧的 1/frame_count 宽子区中心），
 /// uv.y = 0.5（每帧占满整高）。
@@ -75,6 +90,7 @@ pub struct ParticleEmitterSpec {
     pub rate: f32,
     /// 发射器在对象局部坐标中的偏移（y 在 spawn 时**不翻**：+y 抬到中心上方，
     /// 黑神话 origin.y=750 → 发射点抬到对象中心上方；origin.y=0 的壁纸（EVA/DK 等）不受影响）。
+    /// spawn 时该局部偏移再乘 `BLACKMYTH_EMITTER_SCALE`（对象 scale）做重定标（Task 5 修复 A）。
     pub origin: [f32; 3],
     /// 发射方向（分摊到各轴；球壳半径沿它缩放）。
     pub directions: [f32; 3],
@@ -189,16 +205,24 @@ impl SceneParticleSim {
         let d = self.emitter.directions;
         let local = [unit[0] * r * d[0], unit[1] * r * d[1], unit[2] * r * d[2]];
 
-        // 发射点 = 对象中心（`we_to_three`，scene 尺寸、y **不翻**）+ emitter.origin
-        // （加到对象中心的局部偏移，y **不翻**：+y 抬到中心上方）。
+        // 发射点 = 对象中心（`we_to_three`，scene 尺寸、y **不翻**）+ emitter.origin **重定标**。
+        // emitter.origin 是对象**局部**偏移；WE 经对象 model 矩阵（含对象 scale）变换到场景空间。
         // 黑神话：we_to_three(2306.34,419.77,3840,2160) → (386.34,-660.23)；
-        // origin.y=750 → pos.y = -660.23+750 = 89.77（>0，中心上方），与背景/场景同坐标系。
+        // 对象 scale=(-2.05,2.12) → 重定标 origin=(350,750) → 偏移 (-718.08,1587.53) →
+        // pos = (-331.74, 927.30) → cover NDC (x=-0.17, y=0.97) = 屏幕**顶部偏左**（Windows 参考）。
+        // 旧实现 `pos = c + origin`（不重定标）→ pos=(736.34,89.77) → NDC (0.38,0.094) 屏幕中偏右（根因）。
+        // 仍保持 `we_to_three`（scene 尺寸、y 不翻、与背景/图层同坐标系），未回退到旧 `we_to_center`。
         let (cx, cy) = we_to_three(self.obj_origin[0], self.obj_origin[1], self.scene_w, self.scene_h);
         let c = [cx, cy, self.obj_origin[2]];
+        let off = [
+            self.emitter.origin[0] * BLACKMYTH_EMITTER_SCALE[0],
+            self.emitter.origin[1] * BLACKMYTH_EMITTER_SCALE[1],
+            self.emitter.origin[2] * BLACKMYTH_EMITTER_SCALE[2],
+        ];
         let mut pos = [
-            c[0] + self.emitter.origin[0],
-            c[1] + self.emitter.origin[1],
-            c[2] + self.emitter.origin[2],
+            c[0] + off[0],
+            c[1] + off[1],
+            c[2] + off[2],
         ];
         pos[0] += local[0];
         pos[1] += local[1];
@@ -431,13 +455,15 @@ mod tests {
         }
     }
 
-    /// 黑神话发射点与背景/场景同坐标系（Task 5 修复：对象中心用 `we_to_three`，scene 尺寸、y **不翻**）。
-    /// we_to_three(2306.34,419.77, 3840,2160) → (386.34, -660.23)（scene 中心下方，因为
-    /// origin.y=419.77 靠近 scene 底部）；emitter.origin=(350,750) 不翻 → pos = (736.34, 89.77)。
-    /// pos.y=89.77 > 0 → 在中心原点上方（花瓣从上方下落）。旧 `we_to_center`(view 尺寸+Y 翻)
-    /// 给 c[1]=533.23 → pos.y=1283.23，与背景坐标错位（根因）。
+    /// 黑神话发射点：对象中心用 `we_to_three`（scene 尺寸、y **不翻**）+ emitter.origin **按对象
+    /// scale 重定标** → 屏幕**顶部偏左**（Task 5 修复 A）。
+    /// we_to_three(2306.34,419.77, 3840,2160) → (386.34, -660.23)；
+    /// 对象 scale=(-2.05166, 2.11670) → origin=(350,750) 重定标偏移 = (-718.08, 1587.53) →
+    /// pos = (386.34-718.08, -660.23+1587.53) = (-331.74, 927.30)。
+    /// cover view(3840,1906) → NDC = (x=-0.17, y=0.97) → 屏幕**顶部偏左**（Windows 参考）。
+    /// 旧实现 `pos = c + origin`（不重定标）→ pos=(736.34,89.77) → NDC(0.38,0.094) 屏幕中偏右（根因）。
     #[test]
-    fn black_myth_emits_above_center_in_scene_coords() {
+    fn black_myth_emits_top_left_in_scene_coords() {
         let mut sim = SceneParticleSim::new(
             ParticleEmitterSpec {
                 rate: 0.0,
@@ -456,11 +482,12 @@ mod tests {
         sim.spawn();
         assert_eq!(sim.particles.len(), 1);
         let p = &sim.particles[0];
-        // 场景中心原点：对象中心 x=386.34（we_to_three）；+origin.x=350 → 736.34。
-        assert!((p.pos[0] - 736.34).abs() < 1e-3, "pos.x 应为 736.34，got {}", p.pos[0]);
-        // 对象中心 y=-660.23（scene 下方）+origin.y=750（不翻）→ 89.77（中心上方）。
-        assert!((p.pos[1] - 89.77).abs() < 1e-3, "pos.y 应为 89.77（we_to_three 场景语义），got {}", p.pos[1]);
-        assert!(p.pos[1] > 0.0, "黑神话应从中心上方（y>0）发射，got {}", p.pos[1]);
+        // 对象中心 x=386.34（we_to_three）+ origin.x=350 × scale.x(-2.05166) = -718.08 → -331.74。
+        assert!((p.pos[0] - (-331.741)).abs() < 1e-2, "pos.x 应为 -331.74（顶部偏左），got {}", p.pos[0]);
+        // 对象中心 y=-660.23 + origin.y=750 × scale.y(2.11670) = 1587.53 → 927.30（屏幕顶部）。
+        assert!((p.pos[1] - 927.295).abs() < 1e-2, "pos.y 应为 927.30（屏幕顶部），got {}", p.pos[1]);
+        assert!(p.pos[0] < 0.0, "黑神话应偏左（NDC x<0），got {}", p.pos[0]);
+        assert!(p.pos[1] > 900.0, "黑神话应落在屏幕顶部（NDC y>0.9），got {}", p.pos[1]);
     }
 
     /// origin.y=0 的壁纸（EVA/DK 等）：对象中心用 scene 语义（we_to_three，y 不翻）。

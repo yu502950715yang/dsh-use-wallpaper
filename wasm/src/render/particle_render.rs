@@ -19,6 +19,14 @@
 //! `image_center_ndc` 同坐标系。billboard 顶点仍按 `pos/(view_w/2)`、`pos/(view_h/2)` 映射 NDC
 //! （`view_w`/`view_h` 为 cover 相机尺寸，如 3840/1906），与背景 NDC 完全一致——投影关系保持，
 //! 只把 sim 的对象中心从「view 尺寸 + Y 翻」改为「scene 尺寸 + y 不翻」。
+//!
+//! Task 5 修复 B（billboard 不是红色大块）：`particle_billboard.wgsl` 现做三件事，防止粒子渲染成
+//! "贴视口的大块"——(1) 单帧纹理（EVA 光柱/余烬/雾，frame_count<=1）整张纹理中心采样，避免 sim
+//! 烘焙的 (frame+0.5)/4 uv 把单帧纹理采到越界/错位区（红块根因）；(2) fragment 软圆盘裁剪 + 纹理
+//! alpha 形状（无纹理 1×1 白兜底时渲染成软圆点而非硬色块）；(3) NDC 半宽上限 `MAX_HALF_NDC=0.45`，
+//! 防御异常大 `size`（EVA 光柱 sizerandom=350..750）在无纹理/alpha 裸露时贴满视口。顶点布局
+//! （location 0..4）与 `VsIn` 逐字段对齐不变；`VsOut` 新增 `@location(3) local`（quad 局部坐标，
+//! 由 `@builtin(vertex_index)` 在 vs 内推导，非顶点缓冲属性），供 fragment 做软圆盘。
 
 /// 粒子 quad 的混合模式（按入参选择，不硬编码）。
 /// - `Additive`：SrcAlpha/One（辉光/尘土叠加，对齐 Three.js AdditiveBlending）。
