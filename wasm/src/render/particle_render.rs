@@ -23,17 +23,19 @@ pub enum BlendMode {
     Translucent,
 }
 
-/// 投影 uniform（`view_w`, `view_h`）——NDC 半视口像素尺寸（cover 相机，如 3840/1906）。
-/// 对齐 `particle_billboard.wgsl` 的 `struct P { view_w: f32, view_h: f32 }`。
-/// Rust `repr(C)` 尺寸 8B；wgpu/WGSL uniform binding 的 shader 可见尺寸为 8B，
-/// 但为规避各后端对 uniform struct 按 align16 上取整的差异，这里**补到 16B**
-/// （buffer ≥ shader binding size 恒成立）。尾两槽 pad 不参与 shader 读取。
+/// 投影 uniform（`view_w`, `view_h`, `frame_count`）——NDC 半视口像素尺寸（cover 相机，如 3840/1906）
+/// + sprite sheet 横向帧数（rosepetals 512×128 → 4）。对齐 `particle_billboard.wgsl` 的
+/// `struct P { view_w: f32, view_h: f32, frame_count: f32, _pad: f32 }`。
+/// Rust `repr(C)` 尺寸 16B；wgpu/WGSL uniform binding 的 shader 可见尺寸需为 16B，
+/// 为规避各后端对 uniform struct 按 align16 上取整的差异，这里**补到 16B**
+/// （buffer ≥ shader binding size 恒成立）。尾一槽 pad 不参与 shader 读取。
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ParticleRenderUniform {
     pub view_w: f32,
     pub view_h: f32,
-    pub _pad0: f32,
+    /// sprite sheet 横向帧数（每帧方形：帧数 = 纹理宽/高；非 sheet → 1）。
+    pub frame_count: f32,
     pub _pad1: f32,
 }
 
@@ -136,6 +138,13 @@ impl ParticleRenderPass {
             label: Some("particle_billboard.wgsl"),
             source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/particle_billboard.wgsl").into()),
         });
+        // sprite sheet 帧数：rosepetals 512×128（横向 4 帧，每帧 128×128 方形）→ 帧数=宽/高=4。
+        // 每帧按方形假设；非 sheet（方形纹理或 1×1 白兜底）→ 1，shader 退化为整张采样。
+        // 该值写入 shader uniform，billboard 顶点 uv 按它把整张纹理切成单帧子区（竖条纹根因修复）。
+        let frame_count = tex
+            .as_ref()
+            .map(|t| (t.width().max(1) / t.height().max(1)).max(1))
+            .unwrap_or(1) as f32;
         // bind group layout：binding 0 = uniform（view_w/view_h，vertex 读），
         // binding 1 = texture_2d，binding 2 = sampler（fragment 采样）。
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -238,7 +247,7 @@ impl ParticleRenderPass {
             mapped_at_creation: false,
         });
         queue.write_buffer(&uniform_buffer, 0, bytemuck::bytes_of(&ParticleRenderUniform {
-            view_w, view_h, _pad0: 0.0, _pad1: 0.0,
+            view_w, view_h, frame_count, _pad1: 0.0,
         }));
         // 粒子纹理：有 → 使用；无 → 1×1 白兜底（texel=(1,1,1,1) → 纯色 quad）。
         let (texture_holder, texture_view) = if let Some(t) = tex {

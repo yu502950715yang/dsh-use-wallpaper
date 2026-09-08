@@ -36,6 +36,23 @@ fn rand() -> f32 {
     }
 }
 
+/// sprite sheet 横向帧数（rosepetals 512×128，每帧 128×128 = 4 帧）。
+/// billboard 采样按它把整张纹理切成单帧子区；`build_vertices` 用它把粒子 frame id
+/// 映射为帧中心 uv。与 `particle_render`（按纹理宽/高推导，默认 1）保持一致——当前
+/// CPU 模拟粒子仅黑神话 rosepetals（512×128 ⊳ 4），故此处硬编码 4。
+pub const DEFAULT_FRAME_COUNT: u32 = 4;
+
+/// 把帧号映射为**单帧子区采样中心** uv（sprite sheet 横向排布，每帧同宽同高）。
+/// 帧中心：uv.x = (frame + 0.5) / frame_count（落在第 frame 帧的 1/frame_count 宽子区中心），
+/// uv.y = 0.5（每帧占满整高）。
+/// frame 取整并对 `[0, frame_count-1]` 钳制（防御越界；发射时已保证 0..3）。
+/// native 可测（纯数据，无 wgpu）。
+pub fn frame_center_uv(frame: f32, frame_count: u32) -> [f32; 2] {
+    let n = frame_count.max(1) as f32;
+    let idx = frame.floor().clamp(0.0, n - 1.0);
+    [(idx + 0.5) / n, 0.5]
+}
+
 /// 单粒子状态（对应 WE CParticle）。
 pub struct SimParticle {
     pub pos: [f32; 3],
@@ -153,7 +170,9 @@ impl SceneParticleSim {
         let alpha = 1.0;
         let color = [1.0, 0.83, 0.97]; // 粉花瓣（color 近似）
         let rot = rand() * 6.28318;
-        let frame = 0.0;
+        // 帧 id 随机取 0..3（rosepetals sprite sheet 4 帧；否则所有花瓣固定采样同帧）。
+        // rand() ∈ [0,1) → *4 ∈ [0,4) → floor ∈ {0,1,2,3}。
+        let frame = (rand() * DEFAULT_FRAME_COUNT as f32).floor();
 
         self.particles.push(SimParticle {
             pos,
@@ -168,21 +187,82 @@ impl SceneParticleSim {
         });
     }
 
-    /// 输出顶点缓冲：每粒子 `[pos3, size, uv2, color3, alpha]`（10 元素；alive 粒子 uv=[0.5,0.5]）。
+    /// 输出顶点缓冲：每粒子 `[pos3, size, uv2, color3, alpha]`（10 元素；alive 粒子的 uv
+    /// 编码为**所属单帧子区中心**——uv.x=(frame+0.5)/frame_count，uv.y=0.5，供 billboard
+    /// shader 按 frame_count 采样单帧而非整张 sprite sheet（玫瑰花瓣 512×128 横向 4 帧，
+    /// 整张 uv∈[0,1] 会把四帧叠成竖条纹，见任务报告）。
     /// 注：父需求接口写 `Vec<[f32;9]>`，但所给字面量与内联注释均含 10 元素（pos3+size+uv2+color3+alpha），
     /// 此处以字面量为准返回 `Vec<[f32;10]>`（已作为关注点上报，见任务报告）。
     pub fn build_vertices(&self) -> Vec<[f32; 10]> {
         self.particles
             .iter()
             .map(|p| {
+                let uv = frame_center_uv(p.frame, DEFAULT_FRAME_COUNT);
                 [
                     p.pos[0], p.pos[1], p.pos[2],
                     p.size,
-                    0.5, 0.5, // uv（alive 默认中心）
+                    uv[0], uv[1], // uv（该 frame 的单帧子区中心）
                     p.color[0], p.color[1], p.color[2],
                     p.alpha,
                 ]
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frame_center_uv_maps_to_single_frame_subregion() {
+        // rosepetals：frame_count=4。frame 2 → uv.x = (2+0.5)/4 = 0.625（第 2 帧 1/4 宽子区中心）。
+        assert_eq!(frame_center_uv(2.0, 4), [0.625, 0.5]);
+        assert_eq!(frame_center_uv(0.0, 4), [0.125, 0.5]); // (0+0.5)/4
+        assert_eq!(frame_center_uv(3.0, 4), [0.875, 0.5]); // (3+0.5)/4 = 3.5/4
+        // 非 sheet：单帧 → 全纹理中心。
+        assert_eq!(frame_center_uv(0.0, 1), [0.5, 0.5]);
+        // 越界防御：frame 被钳制到 [0, frame_count-1]。
+        assert_eq!(frame_center_uv(5.0, 4), [0.875, 0.5]);
+        assert_eq!(frame_center_uv(-1.0, 4), [0.125, 0.5]);
+        // 非整数 frame 取整（离散帧 id）。
+        assert_eq!(frame_center_uv(2.7, 4), [0.625, 0.5]);
+    }
+
+    #[test]
+    fn build_vertices_encodes_frame_center_uv() {
+        let mut sim = SceneParticleSim::new(
+            ParticleEmitterSpec {
+                rate: 0.0,
+                origin: [0.0; 3],
+                directions: [0.0; 3],
+                dist_min: 0.0,
+                dist_max: 0.0,
+                is_sphere: false,
+            },
+            8,
+            [0.0; 3],
+            3840.0,
+            1906.0,
+        );
+        sim.particles.push(SimParticle {
+            pos: [1.0, 2.0, 3.0],
+            vel: [0.0; 3],
+            rot: 0.0,
+            size: 40.0,
+            alpha: 1.0,
+            life: 1.0,
+            max_life: 1.0,
+            color: [1.0, 0.83, 0.97],
+            frame: 2.0,
+        });
+        let vs = sim.build_vertices();
+        assert_eq!(vs.len(), 1, "单粒子应输出 1 个 10 元素顶点");
+        // 布局 [pos3, size, uv2, color3, alpha]：index 3=size, 4=uv.x, 5=uv.y。
+        assert_eq!(vs[0][3], 40.0, "size 应在 index 3");
+        assert_eq!(vs[0][4], 0.625, "uv.x 应为第 2 帧（rosepetals frame 2）的帧中心");
+        assert_eq!(vs[0][5], 0.5, "uv.y 恒 0.5（每帧占满整高）");
+        assert_eq!(vs[0][6], 1.0, "color[0] 应在 index 6");
+        assert_eq!(vs[0][9], 1.0, "alpha 应在 index 9");
     }
 }
