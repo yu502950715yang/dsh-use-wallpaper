@@ -3,20 +3,19 @@
 //! 每帧 update 累计发射（emission_timer）、积分运动/寿命、回收死亡粒子，再由 build_vertices 输出
 //! 顶点缓冲供渲染（Task 3/4）。
 //!
-//! 坐标约定（Task 1 对齐 lwe/WE，见 research CParticle.cpp）：
-//! - 对象中心用 **lwe 语义** `obj_transform(origin, scene_w, scene_h) = [x - scene_w/2, scene_h/2 - y, z]`
-//!   （lwe `setup()` 把 screen space origin 转 centered space；y = scene_h/2 - origin.y，y 向上为正）。
-//!   与背景/图层的 `we_to_three`（scene 尺寸、y 不翻）在 y 上**符号相反**——粒子按 lwe 语义，
-//!   背景/图层仍用 `we_to_three`（全局约束：保留 we_to_three）。
+//! 坐标约定（Task 1 对齐 WE；上游裁决 spec §3：对象中心用 `we_to_three`、y **不翻**、与背景/图层一致）：
+//! - 对象中心用 `we_to_three(origin, scene_w, scene_h) = [x - scene_w/2, y - scene_h/2, z]`
+//!   （scene 尺寸、y **不翻**），与背景/图片图层的 `image_center_ndc` 完全一致（同坐标系）。
 //! - emitter.origin 为加到对象中心的**局部**偏移，其 y **不翻**：+y 抬到中心**上方**；
 //!   spawn 时对**发射点中心**按对象 scale 做**确定性重定标**（`BLACKMYTH_OBJ_SCALE`，读自 scene.pkg），
-//!   使发射点对齐 lwe（黑神话 → 屏幕**顶部偏左**）；origin=(0,0,0) 的壁纸不受影响。
+//!   使发射点对齐 WE（黑神话 → 屏幕**顶部偏左**、NDC≈0.97 屏内）；origin=(0,0,0) 的壁纸不受影响。
 //! - 粒子**不因 emitter 散射而额外乘对象 scale**（只对发射点中心乘，散射/速度/尺寸/alpha 不乘）。
 //! - scene_w/scene_h 用 scene 正交尺寸（黑神话 3840×2160），非 view cover；billboard
 //!   投影由 view viewProjection（`ortho(view_w, view_h)`）完成，view_w/view_h 由 `ParticleRenderPass` 传入。
 //!
 //! 伪随机：先用进程级线程安全 Xorshift32（确定性，非加密），Task 4 再接入种子/发射器级状态。
 
+use crate::coords::we_to_three;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 /// 进程级 Xorshift32 状态（线程安全；跨实例共享，先简单占位，Task 4 换发射器级种子）。
@@ -53,25 +52,14 @@ pub const DEFAULT_FRAME_COUNT: u32 = 4;
 ///
 /// CPU `SceneParticleSim` 的公共 WASM API（`WeScene::set_particle_sim`）**不发对象 scale**
 /// （全局约束：粒子位置不乘对象 scale，只对发射点中心乘），故本模拟器在 spawn 时对**发射点**
-/// **中心**按该 scale 做**确定性重定标**（Task 1：黑神话花瓣对齐 lwe/WE，落屏幕**顶部偏左**）。
-/// 仅重定标发射点中心（`发射点 = obj_transform(origin) + emitter.origin×obj_scale`），**不改变**
+/// **中心**按该 scale 做**确定性重定标**（Task 1：黑神话花瓣对齐 WE，落屏幕**顶部偏左**、NDC≈0.97 屏内）。
+/// 仅重定标发射点中心（`发射点 = we_to_three(origin) + emitter.origin×obj_scale`），**不改变**
 /// 粒子散射局部偏移、速度/尺寸/alpha（这些仍不乘对象 scale，符合全局约束）。
 /// Task 6 再泛化到每对象 scale 经 WASM API 传入。
 ///
 /// 安全兜底：`emitter.origin=(0,0,0)` 的壁纸（EVA/DK 等，见 fixtures eva lightshafts/Ashes 均
-/// `"origin":"0 0 0"`）乘该 scale 仍为 0 → 发射点即对象中心，**不受影响**。
+/// `"origin":"0 0 0"`）乘该 scale 仍为 0 → 发射点=对象中心，**不受影响**。
 pub const BLACKMYTH_OBJ_SCALE: [f32; 3] = [-2.05166, 2.11670, 1.0];
-
-/// lwe 语义的对象中心：把 WE **screen space** origin（(0,0) 左上、y 向下）转为 **centered space**
-/// （y 向上）。对齐 lwe `CParticle::setup()`：`origin.x -= scene_w/2; origin.y = scene_h/2 - origin.y;`。
-/// 黑神话：obj_transform([2306.34, 419.77, 0], 3840, 2160) = [2306.34-1920, 1080-419.77, 0]
-///   = [386.34, 660.23, 0]（对象位于 scene 中心**上方** 660.23）。
-/// 与背景/图层的 `we_to_three`（scene 尺寸、y 不翻，返回 [386.34, -660.23]）在 y 上**符号相反**：
-/// 粒子按 lwe 语义（screen space origin → centered，y 向上为正），背景/图层仍用 we_to_three。
-/// native 可测（纯数据，无 wgpu）。
-pub fn obj_transform(origin: [f32; 3], scene_w: f32, scene_h: f32) -> [f32; 3] {
-    [origin[0] - scene_w / 2.0, scene_h / 2.0 - origin[1], origin[2]]
-}
 
 /// 把帧号映射为**单帧子区采样中心** uv（sprite sheet 横向排布，每帧同宽同高）。
 /// 帧中心：uv.x = (frame + 0.5) / frame_count（落在第 frame 帧的 1/frame_count 宽子区中心），
@@ -147,9 +135,9 @@ pub struct SceneParticleSim {
     pub maxcount: u32,
     /// 对象中心（WE 坐标，y 为距底部距离）。
     pub obj_origin: [f32; 3],
-    /// scene 宽（黑神话 3840），spawn 的对象中心映射（obj_transform，lwe 语义）用。
+    /// scene 宽（黑神话 3840），spawn 的对象中心映射（we_to_three，scene 尺寸、y 不翻）用。
     pub scene_w: f32,
-    /// scene 高（黑神话 2160），spawn 的对象中心映射（obj_transform，lwe 语义）用。
+    /// scene 高（黑神话 2160），spawn 的对象中心映射（we_to_three，scene 尺寸、y 不翻）用。
     pub scene_h: f32,
     /// 累积发射计数（≥1.0 即发射一个粒子并减 1）。
     pub emission_timer: f32,
@@ -217,15 +205,16 @@ impl SceneParticleSim {
         let d = self.emitter.directions;
         let local = [unit[0] * r * d[0], unit[1] * r * d[1], unit[2] * r * d[2]];
 
-        // 发射点 = 对象中心（lwe `obj_transform`，scene 尺寸、y 向上为正）+ emitter.origin **重定标**。
-        // emitter.origin 是对象**局部**偏移；lwe 经对象 model 矩阵（含对象 scale）变换到场景空间。
-        // 黑神话：obj_transform(2306.34,419.77,3840,2160) → (386.34, 660.23)（对象在中心**上方**）；
+        // 发射点 = 对象中心（`we_to_three`，scene 尺寸、y **不翻**，与背景/图层同坐标系）+ emitter.origin **重定标**。
+        // emitter.origin 是对象**局部**偏移；WE 经对象 model 矩阵（含对象 scale）变换到场景空间。
+        // 黑神话：we_to_three(2306.34,419.77,3840,2160) → (386.34, -660.23)（对象在 scene 中心下方）；
         // 对象 scale=(-2.05,2.12) → 重定标 origin=(350,750) → 偏移 (-718.08,1587.53) →
-        // pos = (386.34-718.08, 660.23+1587.53) = (-331.74, 2247.76) → view ortho NDC
-        // (x≈-0.17, y≈2.36) = 屏幕**顶部**（lwe 语义：对象中心在中心上方 + emitter.origin 抬升）。
+        // pos = (386.34-718.08, -660.23+1587.53) = (-331.74, 927.30) → view ortho NDC
+        // (x≈-0.17, y≈0.97) = 屏幕**顶部偏左**（屏内，匹配用户实测 Windows 顶部偏左）。
         // 仅对发射点中心乘对象 scale（`发射点 = obj_center + emitter.origin×obj_scale`），局部散射
         // local **直接相加不乘 scale**（全局约束）。Task 6 再泛化到每对象 scale 经 WASM API 传入。
-        let c = obj_transform(self.obj_origin, self.scene_w, self.scene_h);
+        let (cx, cy) = we_to_three(self.obj_origin[0], self.obj_origin[1], self.scene_w, self.scene_h);
+        let c = [cx, cy, self.obj_origin[2]];
         let off = [
             self.emitter.origin[0] * BLACKMYTH_OBJ_SCALE[0],
             self.emitter.origin[1] * BLACKMYTH_OBJ_SCALE[1],
@@ -467,12 +456,12 @@ mod tests {
         }
     }
 
-    /// 黑神话发射点：对象中心用 lwe `obj_transform`（scene 尺寸、y 向上为正）+ emitter.origin **按
-    /// 对象 scale 重定标** → 屏幕**顶部偏左**（Task 1 对齐 lwe/WE）。
-    /// obj_transform(2306.34,419.77, 3840,2160) → (386.34, 660.23)（对象在中心**上方**）；
+    /// 黑神话发射点：对象中心用 `we_to_three`（scene 尺寸、y **不翻**，与背景/图层同坐标系）+ emitter.origin
+    /// **按对象 scale 重定标** → 屏幕**顶部偏左**（Task 1 对齐 WE）。
+    /// we_to_three(2306.34,419.77, 3840,2160) → (386.34, -660.23)（对象在 scene 中心下方）；
     /// 对象 scale=(-2.05166, 2.11670) → origin=(350,750) 重定标偏移 = (-718.08, 1587.53) →
-    /// pos = (386.34-718.08, 660.23+1587.53) = (-331.74, 2247.76)。
-    /// view ortho NDC = (x≈-0.17, y≈2.36) → 屏幕**顶部偏左**（lwe 语义：对象中心在中心上方 + origin 抬升）。
+    /// pos = (386.34-718.08, -660.23+1587.53) = (-331.74, 927.30)。
+    /// view ortho NDC = (x≈-0.17, y≈0.97) → 屏幕**顶部偏左**（屏内）。
     #[test]
     fn black_myth_emits_top_left_in_scene_coords() {
         let mut sim = SceneParticleSim::new(
@@ -493,17 +482,18 @@ mod tests {
         sim.spawn();
         assert_eq!(sim.particles.len(), 1);
         let p = &sim.particles[0];
-        // 对象中心 x=386.34（obj_transform）+ origin.x=350 × scale.x(-2.05166) = -718.08 → -331.74。
+        // 对象中心 x=386.34（we_to_three）+ origin.x=350 × scale.x(-2.05166) = -718.08 → -331.74。
         assert!((p.pos[0] - (-331.741)).abs() < 1e-2, "pos.x 应为 -331.74（顶部偏左），got {}", p.pos[0]);
-        // 对象中心 y=660.23 + origin.y=750 × scale.y(2.11670) = 1587.53 → 2247.76（屏幕顶部）。
-        assert!((p.pos[1] - 2247.755).abs() < 1e-2, "pos.y 应为 2247.76（屏幕顶部），got {}", p.pos[1]);
+        // 对象中心 y=-660.23 + origin.y=750 × scale.y(2.11670) = 1587.53 → 927.30（屏幕顶部偏左）。
+        assert!((p.pos[1] - 927.295).abs() < 1e-2, "pos.y 应为 927.30（屏幕顶部偏左），got {}", p.pos[1]);
         assert!(p.pos[0] < 0.0, "黑神话应偏左（NDC x<0），got {}", p.pos[0]);
-        assert!(p.pos[1] > 900.0, "黑神话应落在屏幕顶部（y>0 且 >view_h/2），got {}", p.pos[1]);
+        // 屏内顶部：pos.y 在 (0, view_h/2)（view ortho 半高），非离屏。
+        assert!((p.pos[1] - 927.30).abs() < 1e-2 && p.pos[1] > 0.0, "黑神话应屏内顶部（0<y<view_h/2），got {}", p.pos[1]);
     }
 
-    /// origin.y=0 的壁纸（EVA/DK 等）：对象中心用 lwe `obj_transform`（scene 尺寸、y 向上为正）。
-    /// obj_transform(2306.34,419.77,3840,2160) → c[1]=660.23；emitter.origin.y=0 → pos.y=660.23。
-    /// 乘对象 scale 仍 0 → 发射点=对象中心，不受影响（与 lwe 语义一致）。
+    /// origin.y=0 的壁纸（EVA/DK 等）：对象中心用 `we_to_three`（scene 尺寸、y **不翻**，与背景一致）。
+    /// we_to_three(2306.34,419.77,3840,2160) → c[1]=-660.23；emitter.origin.y=0 → pos.y=-660.23。
+    /// 乘对象 scale 仍 0 → 发射点=对象中心，不受影响（与背景/图层同坐标系）。
     #[test]
     fn emitter_origin_zero_is_object_center_in_scene_coords() {
         let mut sim = SceneParticleSim::new(
@@ -524,7 +514,7 @@ mod tests {
         sim.spawn();
         assert_eq!(sim.particles.len(), 1);
         let y = sim.particles[0].pos[1];
-        // 对象中心 y = 2160/2 - 419.77 = 660.23（scene 中心上方，lwe 中心化）。
-        assert!((y - 660.23).abs() < 1e-3, "origin.y=0 时 pos.y 应为对象中心 lwe 坐标 660.23，got {}", y);
+        // 对象中心 y = 419.77 - 2160/2 = -660.23（scene 中心下方，we_to_three 与背景一致）。
+        assert!((y - (-660.23)).abs() < 1e-3, "origin.y=0 时 pos.y 应为对象中心 we_to_three 坐标 -660.23，got {}", y);
     }
 }
