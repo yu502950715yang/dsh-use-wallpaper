@@ -14,6 +14,14 @@
 //!   投影由 view viewProjection（`ortho(view_w, view_h)`）完成，view_w/view_h 由 `ParticleRenderPass` 传入。
 //!
 //! 伪随机：先用进程级线程安全 Xorshift32（确定性，非加密），Task 4 再接入种子/发射器级状态。
+//!
+//! 发射器（Task 2，对齐 lwe `createBoxEmitter` / `createSphereEmitter`）：`update()` 按
+//! `emissionTimer += dt*rate` 精确累积并发射（`maxcount` 封顶）；`spawn()` 用 `emitter_local()`
+//! 按 `is_sphere` 分支取局部散射偏移——true → 3D 球壳（`cosθ` 均匀 + `cbrt` 体积均匀）、
+//! false → 均匀盒体（各轴 ±dist×|dir|，照 lwe `flippedDirections.y = -directions.y`），
+//! 再叠加到**对象变换后的发射点**上。lwe 的 `limitOnePerFrame`/`randomPeriodicEmission`/`delay`
+//! 依赖 emitter 的 `flags`/`delay` 等字段，当前 wasm `ParticleEmitterSpec` 未携带，故忽略（见
+//! `update()` 注释）。
 
 use crate::coords::we_to_three;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -85,6 +93,18 @@ pub struct SimParticle {
     pub frame: f32,
 }
 
+/// 发射器闭包类型（对齐 lwe `CParticle::createBoxEmitter` / `createSphereEmitter` 的 `EmitterFunc`）。
+///
+/// 签名 `fn(particles, &mut count, dt)`：把本帧（`dt`）内应按 `rate` 精确累积发射的新粒子写入
+/// `particles` 并递增 `count`。`count` 受 `maxcount` 封顶——lwe 用预分配池 `particles.size()` 作
+/// 上限（`count >= particles.size()` 即停），本 CPU 模拟器等价地把 `SceneParticleSim::maxcount`
+/// 当作池容量。发射器只给「位置起始」（发射点 + 局部散射 `local`）并触发 `count++`，其余初值
+/// （velocity/rotation/color/alpha/size/frame/lifetime）由后续 initializers 填充（对应本模拟器
+/// `spawn()` 内取自 `self.init` 的部分，Task 3 再逐一对齐 lwe）。
+///
+/// 实际驱动在 `SceneParticleSim::update()`（发射累积循环），其语义即本闭包所描述。
+pub type EmitterFn = Box<dyn FnMut(&mut Vec<SimParticle>, &mut u32, f32)>;
+
 /// 发射器规格（对齐 linux createSphereEmitter）。
 pub struct ParticleEmitterSpec {
     pub rate: f32,
@@ -96,7 +116,8 @@ pub struct ParticleEmitterSpec {
     pub directions: [f32; 3],
     pub dist_min: f32,
     pub dist_max: f32,
-    /// 是否球壳散射（当前 spawn 统一按 3D 球壳，见 spawn 注释）。
+    /// 是否球壳散射（spec `name=="sphererandom"` → true）。`emitter_local()` 据此分支：
+    /// true → `createSphereEmitter` 3D 球壳（cosθ 均匀 + cbrt 体积均匀）；false → `createBoxEmitter` 均匀盒体。
     pub is_sphere: bool,
 }
 
@@ -170,11 +191,25 @@ impl SceneParticleSim {
 
     /// 每帧推进：累计发射 → 积分运动/寿命 → 回收死亡粒子。
     pub fn update(&mut self, dt: f32) {
-        // 累积出生率（照 linux：emission_timer += dt*rate；>=1 发射并减 1）
+        // 发射（照 linux createBoxEmitter / createSphereEmitter 的**精确累积**语义）：
+        //   emissionTimer += dt*rate; toEmit = (u32)emissionTimer; emissionTimer -= toEmit;
+        // 然后发射 `min(toEmit, maxcount - alive)`。lwe 即使池满（count>=particles.size()）也
+        // 会清零整数部分（不把计时器无限累加），此处用 `self.maxcount` 作为池容量等价实现。
+        //
+        // 注 1：lwe 的 `rate = emitter.rate * instanceOverride.rate`；当前 wasm `ParticleEmitterSpec`
+        //       不含 instanceOverride，故直接用 `emitter.rate`（无乘数）。
+        // 注 2：lwe 的 `limitOnePerFrame`(flags&2)/`randomPeriodicEmission`(flags&4)/`delay`/
+        //       `duration`/`periodicTimer`/`instantaneous` 均依赖 emitter 的 flags/delay 等字段，
+        //       当前 wasm `ParticleEmitterSpec` 未携带这些字段（spec_to_emitter 只映射
+        //       rate/origin/directions/dist_min/dist_max/is_sphere），故本任务**不实现、予以忽略**
+        //       （任务契约「有则实现，无则忽略并注明」）。
         self.emission_timer += dt * self.emitter.rate;
-        while self.emission_timer >= 1.0 && (self.particles.len() as u32) < self.maxcount {
+        let to_emit = self.emission_timer as u32;
+        self.emission_timer -= to_emit as f32;
+        let alive = self.particles.len() as u32;
+        let n = to_emit.min(self.maxcount.saturating_sub(alive));
+        for _ in 0..n {
             self.spawn();
-            self.emission_timer -= 1.0;
         }
 
         for p in &mut self.particles {
@@ -190,20 +225,54 @@ impl SceneParticleSim {
         self.particles.retain(|p| p.life > 0.0);
     }
 
-    /// 发射一个粒子（照 linux createSphereEmitter 3D 球壳）。
-    fn spawn(&mut self) {
-        // 3D 球壳：均匀球面单位方向
-        let theta = rand() * 6.28318;
-        let cos_t = rand() * 2.0 - 1.0;
-        let sin_t = (1.0 - cos_t * cos_t).sqrt();
-        let unit = [sin_t * theta.cos(), sin_t * theta.sin(), cos_t];
-
-        // 半径：dist_min..dist_max 立方根均匀（球体内均匀分布，`is_sphere` 现统一按球壳/球体处理）
+    /// 计算本次发射的**局部散射偏移** `local`（照 lwe `createBoxEmitter` / `createSphereEmitter`）。
+    ///
+    /// - `is_sphere == true`（spec `name=="sphererandom"`）→ `createSphereEmitter` 的 **3D 球壳**：
+    ///   均匀球面单位方向（`cosθ` uniform[-1,1] → `unit=(sinθcosφ, sinθsinφ, cosθ)`）+ 半径
+    ///   `r = cbrt(dist_min³ + (dist_max³ - dist_min³)·rand)`（**体积均匀**），
+    ///   `local = unit ⊙ r ⊙ directions`（directions 不翻，照 lwe sphere）。
+    /// - `is_sphere == false`（spec `name=="boxrandom"`）→ `createBoxEmitter` 的**均匀盒体**：
+    ///   各轴**独立**在 `[dist_min, dist_max]` 取 `dist`，随机 ± 翻（lwe 的 50/50 翻），再乘
+    ///   `flippedDirections`（`flippedDirections.y = -directions.y` 保留，照 lwe box），得
+    ///   `local[axis] = ±dist × |flipped[axis]|`（= `±dist × |dir[axis]|`；因 `|flipped.y|=|dir.y|`，
+    ///   故 y 翻对分布**无影响**，仅保留 spec 语义）。
+    ///
+    /// 独立成公共方法供集成测试直接断言分布，并被 `spawn()` 复用——散射 `local` **不乘对象 scale**
+    /// （全局约束），由 `spawn()` 直接加到发射点上。
+    pub fn emitter_local(&self) -> [f32; 3] {
+        let dir = self.emitter.directions;
+        // lwe box 用 flippedDirections（y 翻）；sphere 用 directions（不翻）。
+        let flipped = [dir[0], -dir[1], dir[2]];
         let mn = self.emitter.dist_min.max(0.0);
         let mx = self.emitter.dist_max.max(mn);
-        let r = (mn * mn * mn + (mx * mx * mx - mn * mn * mn) * rand()).powf(1.0 / 3.0);
-        let d = self.emitter.directions;
-        let local = [unit[0] * r * d[0], unit[1] * r * d[1], unit[2] * r * d[2]];
+
+        if self.emitter.is_sphere {
+            // sphererandom：3D 球壳（体积均匀）。
+            let theta = rand() * std::f32::consts::TAU;
+            let cos_t = rand() * 2.0 - 1.0;
+            let sin_t = (1.0 - cos_t * cos_t).sqrt();
+            let unit = [sin_t * theta.cos(), sin_t * theta.sin(), cos_t];
+            let r = (mn * mn * mn + (mx * mx * mx - mn * mn * mn) * rand()).cbrt();
+            [unit[0] * r * dir[0], unit[1] * r * dir[1], unit[2] * r * dir[2]]
+        } else {
+            // boxrandom：均匀盒体，各轴 `±dist × |dir|`（50/50 ± 翻照 lwe）。
+            let mut local = [0.0; 3];
+            for axis in 0..3 {
+                let dist = mn + (mx - mn) * rand();
+                let signed = if rand() < 0.5 { -dist } else { dist };
+                local[axis] = signed * flipped[axis];
+            }
+            local
+        }
+    }
+
+    /// 发射一个粒子（照 linux createBoxEmitter / createSphereEmitter）。
+    /// 局部散射偏移由 `emitter_local()`（按 `is_sphere` 分支，见其注释）给出，再叠加到
+    /// **对象变换后的发射点**上；其余初值（velocity/size/life/color/alpha/rot/frame）由
+    /// `self.init` 填充（对应 lwe 后续 initializers 的语义，Task 3 再逐一对齐）。
+    fn spawn(&mut self) {
+        // 局部散射偏移（box 或 sphere，见 `emitter_local`）。
+        let local = self.emitter_local();
 
         // 发射点 = 对象中心（`we_to_three`，scene 尺寸、y **不翻**，与背景/图层同坐标系）+ emitter.origin **重定标**。
         // emitter.origin 是对象**局部**偏移；WE 经对象 model 矩阵（含对象 scale）变换到场景空间。
