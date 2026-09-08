@@ -50,6 +50,12 @@ pub struct EmitterSpec {
     pub directions: [f32; 3],
     pub distance_min: f32,
     pub distance_max: f32,
+    /// 发射器局部偏移（we "x y z"；缺省 [0,0,0]）。CPU 模拟用它把发射点抬离对象中心
+    /// （黑神话花瓣 origin="350 750 0" → 从上方发射），y 在 spawn 时做 Y 翻（emitter_origin_y_neg）。
+    pub origin: [f32; 3],
+    /// 是否球壳散射（emitter name=="sphererandom" → true；缺省 false）。
+    /// CPU 模拟器 sim.rs 的 spawn 现统一按 3D 球壳/球体处理，字段为未来语义扩展保留。
+    pub is_sphere: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -223,6 +229,10 @@ pub fn parse_particle_spec(json: &str) -> ParticleSpec {
             directions: vec3(&em["directions"]),
             distance_min: scalar(&em["distancemin"], 0.0),
             distance_max: scalar(&em["distancemax"], 256.0),
+            // 发射器局部偏移（"x y z"；缺省/缺失 → [0,0,0]）。黑神话花瓣 origin="350 750 0"。
+            origin: vec3(&em["origin"]),
+            // 球壳散射：emitter name=="sphererandom" → true；缺省 false。
+            is_sphere: em["name"].as_str() == Some("sphererandom"),
         },
         init: InitSpec {
             lifetime_min: life.map(|i| scalar(&i["min"], 1.0)).unwrap_or(1.0),
