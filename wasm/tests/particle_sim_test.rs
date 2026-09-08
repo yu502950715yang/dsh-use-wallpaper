@@ -1,12 +1,11 @@
 //! SceneParticleSim（CPU 粒子模拟器，Task 2）集成测试。
-//! 测试目标：模拟器能按 emission_timer 累计发射生成粒子，并随 update 逐帧运动。
+//! 测试目标：模拟器能按 emission_timer 累计发射生成粒子，并随 update 逐帧向下飘（无重力）。
 
 use we_scene_wasm::particle::{SceneParticleSim, ParticleEmitterSpec};
 
-#[test]
-fn sim_spawns_and_moves_down() {
-    // 黑神话花瓣粒子（cover 相机半高 1906，非 scene 2160）：对象中心 Y 翻 + emitter.origin 偏移。
-    let mut sim = SceneParticleSim::new(
+/// 构建黑神话花瓣模拟器（cover 相机半高 1906，非 scene 2160）。
+fn flower_sim() -> SceneParticleSim {
+    SceneParticleSim::new(
         ParticleEmitterSpec {
             rate: 20.0,
             origin: [350.0, 750.0, 0.0],
@@ -19,16 +18,22 @@ fn sim_spawns_and_moves_down() {
         [2306.34, 419.77, 0.0],
         3840.0,
         1906.0,
-    );
+    )
+}
 
-    // 多次 update 后应有粒子
+#[test]
+fn sim_spawns_and_moves_down() {
+    let mut sim = flower_sim();
+
+    // 多次 update 后应有粒子出生。
     for _ in 0..20 {
         sim.update(0.05);
     }
+    assert!(sim.particles.len() > 0, "应有粒子");
     let v = sim.build_vertices();
-    assert!(v.len() > 0, "应有粒子");
+    assert_eq!(v.len(), sim.particles.len(), "alive 粒子应全部输出到顶点缓冲");
 
-    // 至少有一个粒子在中心原点（Y 翻）或向下运动
+    // 分布：粒子围绕中心原点（Y 翻）上下分布（运动/分布真实断言，非空断言）。
     let mut moved_down = false;
     let mut any_up = false;
     for p in &v {
@@ -40,4 +45,44 @@ fn sim_spawns_and_moves_down() {
         }
     }
     assert!(any_up || moved_down, "粒子应分布（上/下）");
+}
+
+#[test]
+fn petals_fall_down_no_gravity() {
+    let mut sim = flower_sim();
+
+    // 先让粒子出生（多次 update 累计发射）。
+    for _ in 0..20 {
+        sim.update(0.05);
+    }
+    assert!(sim.particles.len() > 0, "expected spawned particles");
+
+    // 快照 update 前每个粒子的 (pos[1], vel[1])，用于验证「向下、无重力」。
+    let before: Vec<(f32, f32)> = sim.particles.iter().map(|p| (p.pos[1], p.vel[1])).collect();
+
+    // 黑神话花瓣：spawn 时 vel[1] 初始为负（-50..-15，向下飘）。
+    assert!(
+        before.iter().all(|&(_, vy)| vy < 0.0),
+        "花瓣 vel[1] 初始应为负（向下），got {:?}",
+        before
+    );
+
+    // 再跑一帧：无重力 → vel[1] 保持不变、仍为负（不变向上）；
+    // 位置 pos[1] 因 vel[1]<0 而递减（向下运动）。
+    sim.update(0.05);
+    for (p, &(prev_y, prev_vy)) in sim.particles.iter().zip(before.iter()) {
+        assert!(
+            (p.vel[1] - prev_vy).abs() < 1e-6,
+            "无重力：vy 应保持为初始值（不叠加），got {} vs {}",
+            p.vel[1],
+            prev_vy
+        );
+        assert!(p.vel[1] <= 0.0, "无重力：vy 不应变成向上，got {}", p.vel[1]);
+        assert!(
+            p.pos[1] < prev_y,
+            "无重力向下：pos[1] 应随负 vy 递减，got {} vs {}",
+            p.pos[1],
+            prev_y
+        );
+    }
 }
