@@ -3,6 +3,12 @@
 //! 2026-08-20 方向修正：旧实现 `vh/2 - we_y` 把非居中对象上下镜像（NERV logo
 //! origin.y=150 官方在右下角、被镜像到右上角；Orange 部件被镜像到少女头顶），
 //! EVA 主图 oy=sh/2 恰为 0 故验收漏过。scene-renderer.ts 文件头注释同步修正。
+//! 2026-09-08 粒子坐标修正：CPU 粒子发射点的对象中心此前用 `we_to_center`
+//! （view cover 尺寸 + Y 翻），与背景/图片图层的 `we_to_three`（scene 尺寸 + y 不翻）
+//! 不一致，导致黑神话花瓣"向下一点就消失"、EVA/DK/Crimson 粒子位置错位。
+//! 现统一：粒子对象中心也用 `we_to_three(origin, scene_w, scene_h)`（scene 尺寸、
+//! y 不翻），emitter.origin 作为加到对象中心的局部偏移且 y **不翻**（+y 抬到上方）。
+//! 粒子与背景/场景同坐标系，billboard 均按 pos/(view/2) 映射 NDC。
 
 pub fn we_to_three(we_x: f32, we_y: f32, vw: f32, vh: f32) -> (f32, f32) {
     (we_x - vw / 2.0, we_y - vh / 2.0)
@@ -54,14 +60,7 @@ pub fn image_half_ndc(
     )
 }
 
-// —— Task 1 坐标层（粒子，照 linux CParticle）：与上方图片路径（we_to_three，
-// y 不翻转）不同，WE 屏幕 y 向下、粒子按中心原点 y 向上，故在此做 Y 翻转 ——
-
-/// WE 屏幕坐标（y 向下）→ 中心原点（y 向上）：x-=w/2、y=h/2-y（Y 翻，照 linux CParticle）。
-pub fn we_to_center(origin: [f32; 3], view_w: f32, view_h: f32) -> [f32; 3] {
-    [origin[0] - view_w / 2.0, view_h / 2.0 - origin[1], origin[2]]
-}
-/// emitter.origin 局部偏移 Y 翻（照 linux transformedEmitterOrigin）。
-pub fn emitter_origin_y_neg(y: f32) -> f32 {
-    -y
-}
+// —— 粒子坐标收敛到 we_to_three（scene 尺寸、y 不翻）—— 不再有独立的 Y 翻层。
+// 2026-09-08：删除 `we_to_center`/`emitter_origin_y_neg`（旧 Task 1 Y 翻层）。它们与背景
+// `we_to_three`（scene + y 不翻）不一致，是粒子位置错位的根因。CPU 粒子现复用
+// `we_to_three`/`origin_to_center`（scene 尺寸），emitter.origin 局部偏移 y 不翻。

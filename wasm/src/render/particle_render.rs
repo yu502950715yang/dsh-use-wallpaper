@@ -13,6 +13,12 @@
 //! 结构决策（native 测试可达性）：`BlendMode` / `ParticleRenderUniform` / `PARTICLE_VERTEX_STRIDE`
 //! 为纯数据（不依赖 wgpu），放在非门控区；`ParticleRenderPass`（wgpu 管线）位于
 //! `#[cfg(feature = "render")]` 门控区，仅 wasm 构建编译（native `cargo test` 只测解析/布局）。
+//!
+//! 坐标一致性（2026-09-08）：`SceneParticleSim` 输出的 `pos` 是 **scene 中心坐标**
+//! （`we_to_three(origin, scene_w, scene_h)`，scene 3840×2160、y **不翻**），与背景/图片图层
+//! `image_center_ndc` 同坐标系。billboard 顶点仍按 `pos/(view_w/2)`、`pos/(view_h/2)` 映射 NDC
+//! （`view_w`/`view_h` 为 cover 相机尺寸，如 3840/1906），与背景 NDC 完全一致——投影关系保持，
+//! 只把 sim 的对象中心从「view 尺寸 + Y 翻」改为「scene 尺寸 + y 不翻」。
 
 /// 粒子 quad 的混合模式（按入参选择，不硬编码）。
 /// - `Additive`：SrcAlpha/One（辉光/尘土叠加，对齐 Three.js AdditiveBlending）。

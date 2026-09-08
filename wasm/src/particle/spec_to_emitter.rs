@@ -7,8 +7,9 @@
 //! `SceneParticleSim::new`。
 //!
 //! 坐标/缩放约定（全局约束，见 sim.rs）：
-//! - view_h 用 cover 相机半高（如 1906），**非** scene 正交高度（2160）；
+//! - 对象中心映射用 **scene 尺寸** scene_w/scene_h（黑神话 3840×2160；`we_to_three`，y 不翻）；
 //! - 粒子**不乘对象 scale**（`SceneParticleSim` 内部按对象中心 + emitter 局部偏移发射）。
+//!   view（cover 相机半宽/半高）由 `ParticleRenderPass` 单独用于 billboard 投影，不传到这里。
 //!
 //! `ParticleEmitterSpec.origin` = emitter 局部偏移（黑神话花瓣 origin="350 750 0" → 发射点抬到
 //! 对象中心**上方**，y 在 spawn 时**不翻**（+y → 中心上方；origin.y=0 的 EVA/DK 等不受影响））；
@@ -18,12 +19,13 @@
 use super::{ParticleEmitterSpec, ParticleInitSpec, ParticleSpec, SceneParticleSim};
 
 /// 把 `spec` 映射为 CPU 粒子模拟器。
-/// `obj_origin` 为对象中心（WE 坐标，精灵按中心原点 Y 翻），`view_w`/`view_h` 为 cover 相机范围。
+/// `obj_origin` 为对象中心（WE 坐标），`scene_w`/`scene_h` 为 scene 正交尺寸（黑神话 3840×2160；
+/// spawn 的对象中心用 `we_to_three(origin, scene_w, scene_h)`，y 不翻，与背景/图层一致）。
 pub fn emitter_spec_to_particle(
     spec: &ParticleSpec,
     obj_origin: [f32; 3],
-    view_w: f32,
-    view_h: f32,
+    scene_w: f32,
+    scene_h: f32,
 ) -> SceneParticleSim {
     // Important I1：把 `spec.init`（velocityrandom/sizerandom/lifetimerandom/colorrandom/
     // alpharandom/rotationrandom/angularvelocityrandom）映射为 CPU `ParticleInitSpec`，
@@ -62,8 +64,8 @@ pub fn emitter_spec_to_particle(
         },
         spec.maxcount,
         obj_origin,
-        view_w,
-        view_h,
+        scene_w,
+        scene_h,
         init,
     )
 }
@@ -81,7 +83,7 @@ mod tests {
             "maxcount": 50
         }"#;
         let spec = parse_particle_spec(json);
-        let sim = emitter_spec_to_particle(&spec, [2306.34, 419.77, 0.0], 3840.0, 1906.0);
+        let sim = emitter_spec_to_particle(&spec, [2306.34, 419.77, 0.0], 3840.0, 2160.0);
 
         // maxcount 被带入
         assert_eq!(sim.maxcount, 50, "maxcount 应映射到 sim.maxcount");
@@ -94,9 +96,9 @@ mod tests {
         assert_eq!(sim.emitter.dist_max, 750.0);
         // 对象中心（obj_origin）被带入
         assert_eq!(sim.obj_origin, [2306.34, 419.77, 0.0], "obj_origin 应映射到 sim.obj_origin");
-        // view（cover）被带入
-        assert_eq!(sim.view_w, 3840.0);
-        assert_eq!(sim.view_h, 1906.0, "view_h 应为 cover 尺寸（非 scene 2160）");
+        // scene（黑神话 3840×2160）被带入（we_to_three 对象中心映射用）。
+        assert_eq!(sim.scene_w, 3840.0);
+        assert_eq!(sim.scene_h, 2160.0, "scene_h 应为 scene 正交高（非 cover 1906）");
         // emitter.origin / is_sphere 被带入（黑神话：origin 抬到上方、球壳散射）
         assert_eq!(sim.emitter.origin, [350.0, 750.0, 0.0], "emitter.origin 应被带入（上方发射）");
         assert!(sim.emitter.is_sphere, "name=sphererandom → is_sphere 应为 true");
@@ -107,7 +109,7 @@ mod tests {
         // 无 maxcount（旧格式）→ spec.maxcount = 0；emitter_spec_to_particle 原样带入（不 clamp）。
         let json = r#"{"emitter":[{"rate":10,"directions":"0 1 0","distancemin":0,"distancemax":256}]}"#;
         let spec = parse_particle_spec(json);
-        let sim = emitter_spec_to_particle(&spec, [0.0, 0.0, 0.0], 3840.0, 1906.0);
+        let sim = emitter_spec_to_particle(&spec, [0.0, 0.0, 0.0], 3840.0, 2160.0);
         assert_eq!(spec.maxcount, 0);
         assert_eq!(sim.maxcount, 0, "maxcount 缺省 0 应原样带入");
     }
@@ -117,7 +119,7 @@ mod tests {
         // 无 origin / 无 name=sphererandom → emitter.origin 缺省 [0,0,0]、is_sphere 缺省 false。
         let json = r#"{"emitter":[{"rate":10,"directions":"0 1 0","distancemin":0,"distancemax":256}]}"#;
         let spec = parse_particle_spec(json);
-        let sim = emitter_spec_to_particle(&spec, [100.0, 200.0, 0.0], 3840.0, 1906.0);
+        let sim = emitter_spec_to_particle(&spec, [100.0, 200.0, 0.0], 3840.0, 2160.0);
         assert_eq!(sim.emitter.origin, [0.0; 3], "emitter 无 origin 字段 → 局部偏移缺省 0");
         assert!(!sim.emitter.is_sphere, "emitter 无 name=sphererandom → is_sphere 缺省 false");
     }
@@ -139,7 +141,7 @@ mod tests {
             "maxcount": 50
         }"#;
         let spec = parse_particle_spec(json);
-        let sim = emitter_spec_to_particle(&spec, [0.0; 3], 3840.0, 1906.0);
+        let sim = emitter_spec_to_particle(&spec, [0.0; 3], 3840.0, 2160.0);
         let i = &sim.init;
 
         assert_eq!(i.velocity_min, [-50.0, -50.0, 0.0], "velocity_min 应从 spec.init 带入");
@@ -167,7 +169,7 @@ mod tests {
         // 无 colorrandom/rotationrandom/alpharandom → color 缺省 [1,1,1]、rotation 缺省 [0,0,0]、alpha 缺省 1.0。
         let json = r#"{"emitter":[{"rate":10}],"initializer":[{"name":"velocityrandom","min":"0 0 0","max":"0 0 0"}]}"#;
         let spec = parse_particle_spec(json);
-        let sim = emitter_spec_to_particle(&spec, [0.0; 3], 3840.0, 1906.0);
+        let sim = emitter_spec_to_particle(&spec, [0.0; 3], 3840.0, 2160.0);
         assert_eq!(sim.init.color_min, [1.0, 1.0, 1.0], "无 colorrandom → color_min 缺省白");
         assert_eq!(sim.init.color_max, [1.0, 1.0, 1.0], "无 colorrandom → color_max 缺省白");
         assert_eq!(sim.init.rotation_min, [0.0; 3], "无 rotationrandom → rotation_min 缺省 0");

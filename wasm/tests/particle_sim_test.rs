@@ -3,7 +3,7 @@
 
 use we_scene_wasm::particle::{ParticleEmitterSpec, ParticleInitSpec, SceneParticleSim};
 
-/// 构建黑神话花瓣模拟器（cover 相机半高 1906，非 scene 2160）。
+/// 构建黑神话花瓣模拟器（scene 3840×2160；对象中心映射用 scene 尺寸，与背景/图层一致）。
 /// init 为黑神话 spec.init 的映射值：vel.y∈[-50,-15]（向下飘）、size∈[30,50]（exp2）、
 /// life∈[5,10]、粉 color → spawn 用各自 init 而非黑神话硬编码。
 fn flower_sim() -> SceneParticleSim {
@@ -19,7 +19,7 @@ fn flower_sim() -> SceneParticleSim {
         50,
         [2306.34, 419.77, 0.0],
         3840.0,
-        1906.0,
+        2160.0,
         ParticleInitSpec {
             lifetime_min: 5.0,
             lifetime_max: 10.0,
@@ -52,7 +52,7 @@ fn sim_spawns_and_moves_down() {
     let v = sim.build_vertices();
     assert_eq!(v.len(), sim.particles.len(), "alive 粒子应全部输出到顶点缓冲");
 
-    // 分布：粒子围绕中心原点（Y 翻）上下分布（运动/分布真实断言，非空断言）。
+    // 分布：粒子围绕中心原点（scene 语义，y 向上）上下分布（运动/分布真实断言，非空断言）。
     let mut moved_down = false;
     let mut any_up = false;
     for p in &v {

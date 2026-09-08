@@ -653,8 +653,10 @@ impl Renderer {
     /// 登记一个 CPU 模拟粒子（Task 2 `SceneParticleSim`）及其 billboard 渲染 pass（Task 3），
     /// 追加到 `cpu_particle_sims`/`cpu_particle_passes`（多系统并存，对齐 JS 版粒子密度；
     /// 与 `set_particle`（GPU compute）互补，不互相替换）。
-    /// `obj_origin` 为对象中心（WE 坐标）；view_w/view_h 用 cover 相机范围（`camera_range()`，
-    /// 全局约束：view_h 用 cover 尺寸，非 scene 2160）；粒子**不乘 scale**（sim 内按对象中心 + emitter 发射）。
+    /// `obj_origin` 为对象中心（WE 坐标）；CPU 模拟器的对象中心映射用 **scene 尺寸**
+    /// `self.scene_w`/`self.scene_h`（`we_to_three`，y 不翻，与背景/图层同坐标系，2026-09-08 修正）；
+    /// billboard 投影仍用 cover 相机范围 `camera_range()`（`fw`/`fh`，全局约束）。
+    /// 粒子**不乘 scale**（sim 内按对象中心 + emitter 发射）。
     /// `tex` 为粒子纹理（None → 1×1 白兜底）；`blend` 先用 `Translucent`（后续可扩展）。
     pub fn set_particle_sim(
         &mut self,
@@ -663,7 +665,7 @@ impl Renderer {
         tex: Option<wgpu::Texture>,
     ) {
         let (fw, fh) = self.camera_range();
-        let sim = crate::particle::emitter_spec_to_particle(spec, obj_origin, fw, fh);
+        let sim = crate::particle::emitter_spec_to_particle(spec, obj_origin, self.scene_w, self.scene_h);
         let pass = particle_render::ParticleRenderPass::new(
             &self.device,
             &self.queue,
