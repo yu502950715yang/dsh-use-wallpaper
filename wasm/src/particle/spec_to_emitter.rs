@@ -4,7 +4,7 @@
 //! 直接测试。职责：把 `parse_particle_spec` 解析出的 emitter
 //! （rate/directions/distance_min/max + origin/is_sphere）+ `spec.maxcount` 组装成
 //! `ParticleEmitterSpec`，连同对象中心（obj_origin）与 cover 相机范围（view_w/view_h）调用
-//! `SceneParticleSim::new`。
+//! `SceneParticleSim::new`，并把 `spec.operators`（Task 4.5）映射为 `sim.operators`。
 //!
 //! 坐标/缩放约定（全局约束，见 sim.rs）：
 //! - 对象中心映射用 **scene 尺寸** scene_w/scene_h（黑神话 3840×2160；`we_to_three`，y 不翻）；
@@ -18,7 +18,8 @@
 //! `is_sphere` = emitter name=="sphererandom" 的结果。两者均
 //! 由 `parse_particle_spec` 从 emitter JSON 读取，缺省 origin=[0,0,0]、is_sphere=false。
 
-use super::{ParticleEmitterSpec, ParticleInitSpec, ParticleSpec, SceneParticleSim};
+use super::{sim::ParticleOperator, OperatorKind, ParticleEmitterSpec, ParticleInitSpec, ParticleSpec, SceneParticleSim};
+use serde_json::Value;
 
 /// 把 `spec` 映射为 CPU 粒子模拟器。
 /// `obj_origin` 为对象中心（WE 坐标），`scene_w`/`scene_h` 为 scene 正交尺寸（黑神话 3840×2160；
@@ -55,7 +56,7 @@ pub fn emitter_spec_to_particle(
         // turbulentvelocityrandom（normal/forward 基 + speed 幅度）：无该 initializer → None（不叠加）。
         turbulent: spec.init.turbulent.clone(),
     };
-    SceneParticleSim::new(
+    let mut sim = SceneParticleSim::new(
         ParticleEmitterSpec {
             rate: spec.emitter.rate,
             // emitter 局部偏移（已由 parse_particle_spec 读取 em["origin"]，缺省 [0,0,0]）。
@@ -71,7 +72,87 @@ pub fn emitter_spec_to_particle(
         scene_w,
         scene_h,
         init,
-    )
+    );
+    // Task 4.5：把 `spec.operators` 映射为 CPU 算子列表并接线到 `sim.operators`，使黑神话
+    // （movement/alphafade/angularmovement）与 EVA（movement gravity + alphafade）等算子**真正运行**
+    // （`update()` 逐帧按 `self.operators` 对每个粒子 apply）。缺省（spec 无 operators）由
+    // `spec_operators_to_sim` 兜底为一个无重力/无阻力的 movement，保持既有匀速直线/静止行为。
+    sim.operators = spec_operators_to_sim(spec);
+    sim
+}
+
+/// 把 `spec.operators`（Task 1 解析的 `Vec<Operator>`，`Operator.kind` 由 spec 的 `name` 判）映射为
+/// CPU 模拟器算子列表 `Vec<ParticleOperator>`（对齐 lwe `CParticle::m_operators` 的 `OperatorFunc`
+/// 语义——`update()` 逐帧按序对每个粒子跑）。
+///
+/// 逐一按 `OperatorKind` 映射：
+/// - `Movement` → `Movement { gravity: spec.gravity (vec3，缺省 0), drag: spec.drag (标量，缺省 0) }`。
+///   黑神话 movement **无 gravity/drag** → gravity=0、drag=0；EVA `"gravity":"1 0 0"` → gravity=[1,0,0]。
+/// - `AlphaFade` → `AlphaFade { fade_in, fade_out }`（spec `fadeintime`/`fadeouttime`，缺省 0.5/0.5 照 lwe）。
+///   黑神话 fadeintime 0.1/fadeouttime 0.9；EVA 0.5/0.5。
+/// - `AngularMovement` → `AngularMovement { force, drag }`（`force`/`drag` 缺省 0）。黑神话无 force/drag → 全 0；
+///   其 `angular_vel` 由 `angularvelocityrandom` initializer（spec.init）在 spawn 时提供（Task 3）。
+/// - `Turbulence` → `ParticleOperator::turbulence(scale, timescale, mask, speedmin, speedmax, phasemin, phasemax)`
+///   （缺省照 lwe `Turbulence`：scale=0.01、timescale=20、speedmin=500、speedmax=1000、mask=[1,1,0]）。
+/// - `OscillatePosition` → `OscillatePosition { freq_min, freq_max, scale_min, scale_max, phase_min, phase_max, mask }`
+///   （缺省照 lwe `FrequencyValue`：frequencymax=5、scalemax=1、phasemax=2π、mask=[1,1,0]）。
+/// - `Other`（oscillatealpha/oscillatesize 等——Task 2 spec 解析未给具体 kind）→ 跳过。
+///
+/// 缺省：`spec.operators` 为空或全部不可识别时返回一个**无重力/无阻力**的 `Movement`（保持既有
+/// 「匀速直线/静止」积分，`new()` 的缺省与既有测试行为一致），即本映射结果恒非空。
+pub fn spec_operators_to_sim(spec: &ParticleSpec) -> Vec<ParticleOperator> {
+    let mut ops: Vec<ParticleOperator> = Vec::new();
+    for op in &spec.operators {
+        let p = &op.params; // 该算子的完整 JSON 对象（含平铺字段 gravity/fadeintime/...）
+        let f = |key: &str, default: f32| super::scalar(p.get(key).unwrap_or(&Value::Null), default);
+        let g = |key: &str| super::vec3(p.get(key).unwrap_or(&Value::Null));
+        match op.kind {
+            OperatorKind::Movement => ops.push(ParticleOperator::Movement {
+                gravity: g("gravity"),
+                drag: f("drag", 0.0),
+            }),
+            OperatorKind::AlphaFade => ops.push(ParticleOperator::AlphaFade {
+                fade_in: f("fadeintime", 0.5),
+                fade_out: f("fadeouttime", 0.5),
+            }),
+            OperatorKind::AngularMovement => ops.push(ParticleOperator::AngularMovement {
+                force: g("force"),
+                drag: f("drag", 0.0),
+            }),
+            OperatorKind::Turbulence => {
+                let mask = if p.get("mask").is_some() { g("mask") } else { [1.0, 1.0, 0.0] };
+                ops.push(ParticleOperator::turbulence(
+                    f("scale", 0.01),
+                    f("timescale", 20.0),
+                    mask,
+                    f("speedmin", 500.0),
+                    f("speedmax", 1000.0),
+                    f("phasemin", 0.0),
+                    f("phasemax", 0.0),
+                ));
+            }
+            OperatorKind::OscillatePosition => {
+                let mask = if p.get("mask").is_some() { g("mask") } else { [1.0, 1.0, 0.0] };
+                ops.push(ParticleOperator::OscillatePosition {
+                    freq_min: f("frequencymin", 0.0),
+                    freq_max: f("frequencymax", 5.0),
+                    scale_min: f("scalemin", 0.0),
+                    scale_max: f("scalemax", 1.0),
+                    phase_min: f("phasemin", 0.0),
+                    phase_max: f("phasemax", std::f32::consts::TAU),
+                    mask,
+                });
+            }
+            OperatorKind::Other => {} // 不可识别算子（oscillatealpha/oscillatesize 等）跳过
+        }
+    }
+    if ops.is_empty() {
+        ops.push(ParticleOperator::Movement {
+            gravity: [0.0; 3],
+            drag: 0.0,
+        });
+    }
+    ops
 }
 
 #[cfg(test)]
