@@ -21,8 +21,21 @@ struct VsOut { @builtin(position) clip: vec4f, @location(0) uv: vec2f,
   let hx = min(half_ndc_x, MAX_HALF_NDC);
   let hy = min(half_ndc_y, MAX_HALF_NDC);
   var o: VsOut;
-  o.clip.x = (i.pos.x / (p.view_w/2.0)) + corner.x*hx;
-  o.clip.y = (i.pos.y / (p.view_h/2.0)) + corner.y*hy;
+  // —— 世界 → NDC 的 viewProjection（centered ortho，由 view_w/view_h 构建）——
+  // 对齐 lwe：m_mvpMatrix = m_viewProjectionMatrix × m_modelMatrix，shader `clip = mvp × pos`。
+  // CPU sim 已把「对象中心 + emitter.origin×obj_scale」（对象变换后的 scene 中心坐标）烘焙进 pos，
+  // 故 model 矩阵取单位阵（Identity）；viewProjection 即 centered ortho
+  // `ortho(-view_w/2, view_w/2, -view_h/2, view_h/2)`——对角阵把 (x,y) 映射到 NDC
+  // (x/(view_w/2), y/(view_h/2))。与旧 `pos/(view/2)` 数值等价，但以真正 mvp 矩阵表达（对齐 lwe 世界→NDC）。
+  let vp = mat4x4f(
+    vec4f(2.0 / p.view_w, 0.0, 0.0, 0.0),
+    vec4f(0.0, 2.0 / p.view_h, 0.0, 0.0),
+    vec4f(0.0, 0.0, 1.0, 0.0),
+    vec4f(0.0, 0.0, 0.0, 1.0),
+  );
+  let clip_pos = vp * vec4f(i.pos.x, i.pos.y, i.pos.z, 1.0);
+  o.clip.x = clip_pos.x + corner.x*hx;
+  o.clip.y = clip_pos.y + corner.y*hy;
   o.clip.z = 0.0; o.clip.w = 1.0;
   // 顶点 uv：>1 帧（sprite sheet，rosepetals 4 帧）按帧中心 uv + 单帧宽步进采样——quad 只采样
   // 自己那一帧（i.uv 是 sim build_vertices 输出的帧中心 uv.x=(frame+0.5)/frame_count）。单帧纹理

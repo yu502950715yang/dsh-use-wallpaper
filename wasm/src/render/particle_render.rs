@@ -14,11 +14,12 @@
 //! 为纯数据（不依赖 wgpu），放在非门控区；`ParticleRenderPass`（wgpu 管线）位于
 //! `#[cfg(feature = "render")]` 门控区，仅 wasm 构建编译（native `cargo test` 只测解析/布局）。
 //!
-//! 坐标一致性（2026-09-08）：`SceneParticleSim` 输出的 `pos` 是 **scene 中心坐标**
-//! （`we_to_three(origin, scene_w, scene_h)`，scene 3840×2160、y **不翻**），与背景/图片图层
-//! `image_center_ndc` 同坐标系。billboard 顶点仍按 `pos/(view_w/2)`、`pos/(view_h/2)` 映射 NDC
-//! （`view_w`/`view_h` 为 cover 相机尺寸，如 3840/1906），与背景 NDC 完全一致——投影关系保持，
-//! 只把 sim 的对象中心从「view 尺寸 + Y 翻」改为「scene 尺寸 + y 不翻」。
+//! 坐标一致性（Task 1 对齐 lwe）：`SceneParticleSim` 输出的 `pos` 是 **对象变换后的 scene 中心坐标**
+//! （`obj_transform(origin, scene_w, scene_h)`，lwe 中心化 `y = scene_h/2 - origin.y`，y 向上为正；
+//! 并已含发射点中心乘对象 scale 的偏移）。billboard 顶点在 `particle_billboard.wgsl` 内用
+//! `viewProjection`（centered `ortho(view_w, view_h)`，由本 pass 传入的 `view_w`/`view_h` 构建）
+//! 做**世界→NDC** 的 mvp 变换；由于 `pos` 已含对象变换（对象中心 + emitter.origin×obj_scale），
+//! model 矩阵取单位阵（Identity）。对齐 lwe 的 `m_mvpMatrix = m_viewProjectionMatrix * m_modelMatrix`。
 //!
 //! Task 5 修复 B（billboard 不是红色大块）：`particle_billboard.wgsl` 现做三件事，防止粒子渲染成
 //! "贴视口的大块"——(1) 单帧纹理（EVA 光柱/余烬/雾，frame_count<=1）整张纹理中心采样，避免 sim
