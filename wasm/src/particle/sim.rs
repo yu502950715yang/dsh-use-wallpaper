@@ -5,13 +5,14 @@
 //!
 //! 坐标约定（对齐 linux CParticle，见 coords.rs）：
 //! - 对象中心用 `we_to_center`（we 屏幕 y 向下 → 中心原点 y 向上，Y 翻）。
-//! - emitter.origin 为局部偏移，其 y 用 `emitter_origin_y_neg`（-y）。
+//! - emitter.origin 为局部偏移，其 y **不翻**：we 屏幕 y 向下、中心原点 y 向上，
+//!   origin.y>0 → 发射点抬到中心**上方**（黑神话 origin.y=750 → 从屏幕上方发射）。
 //! - view_h 用 cover 相机半高（如 1906），非 scene 正交高度。
 //! 粒子位置**不乘对象 scale**（全局约束）。
 //!
 //! 伪随机：先用进程级线程安全 Xorshift32（确定性，非加密），Task 4 再接入种子/发射器级状态。
 
-use crate::coords::{emitter_origin_y_neg, we_to_center};
+use crate::coords::we_to_center;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 /// 进程级 Xorshift32 状态（线程安全；跨实例共享，先简单占位，Task 4 换发射器级种子）。
@@ -69,7 +70,8 @@ pub struct SimParticle {
 /// 发射器规格（对齐 linux createSphereEmitter）。
 pub struct ParticleEmitterSpec {
     pub rate: f32,
-    /// 发射器在对象局部坐标中的偏移（y 在 spawn 时做 Y 翻）。
+    /// 发射器在对象局部坐标中的偏移（y 在 spawn 时**不翻**：+y 抬到中心上方，
+    /// 黑神话 origin.y=750 → 从屏幕上方发射；origin.y=0 的壁纸（EVA/DK 等）不受影响）。
     pub origin: [f32; 3],
     /// 发射方向（分摊到各轴；球壳半径沿它缩放）。
     pub directions: [f32; 3],
@@ -184,11 +186,13 @@ impl SceneParticleSim {
         let d = self.emitter.directions;
         let local = [unit[0] * r * d[0], unit[1] * r * d[1], unit[2] * r * d[2]];
 
-        // 发射点 = 对象中心（Y 翻）+ emitter.origin（Y 翻局部偏移）
+        // 发射点 = 对象中心（Y 翻）+ emitter.origin（局部偏移，y **不翻**）：
+        // 黑神话 origin.y=750 → pos.y = c[1]+750 = 1283.23，落在屏幕**上方**（>视口中线 953）；
+        // 而 origin.y=0 的壁纸（EVA/DK 等）与旧实现（-0）等价，不受影响。
         let c = we_to_center(self.obj_origin, self.view_w, self.view_h);
         let mut pos = [
             c[0] + self.emitter.origin[0],
-            c[1] + emitter_origin_y_neg(self.emitter.origin[1]),
+            c[1] + self.emitter.origin[1],
             c[2] + self.emitter.origin[2],
         ];
         pos[0] += local[0];
@@ -399,5 +403,81 @@ mod tests {
         assert!(p.frame >= 0.0 && p.frame < 4.0, "frame 应随机 0..3，got {}", p.frame);
         // max_life 跟随 life。
         assert_eq!(p.max_life, p.life, "max_life 应等于 life（spawn 时确定）");
+    }
+
+    /// 构造一个最小/缺省 init（粒子位置断言不依赖 init 字段值）。
+    fn default_init() -> ParticleInitSpec {
+        ParticleInitSpec {
+            lifetime_min: 5.0,
+            lifetime_max: 10.0,
+            size_min: 30.0,
+            size_max: 50.0,
+            size_exponent: 2.0,
+            velocity_min: [0.0; 3],
+            velocity_max: [0.0; 3],
+            color_min: [1.0, 1.0, 1.0],
+            color_max: [1.0, 1.0, 1.0],
+            alpha_min: 1.0,
+            alpha_max: 1.0,
+            rotation_min: [0.0; 3],
+            rotation_max: [0.0; 3],
+            angular_vel_min: [0.0; 3],
+            angular_vel_max: [0.0; 3],
+        }
+    }
+
+    /// 黑神话从**屏幕上方**发射（Task 5 修复：spawn 的 pos.y 不再对 emitter.origin.y 取负）。
+    /// we_to_center(2306.34,419.77, 3840,1906) → c[1]=953-419.77=533.23；origin.y=750 **不翻**
+    /// → pos.y=533.23+750=1283.23（>视口中线 953，屏幕上方）。修复前 `-750` → -216.77（中心下方）。
+    #[test]
+    fn black_myth_emits_from_above_center() {
+        let mut sim = SceneParticleSim::new(
+            ParticleEmitterSpec {
+                rate: 0.0,
+                origin: [350.0, 750.0, 0.0],
+                directions: [0.0; 3], // 局部球壳偏移为 0 → pos.y 确定
+                dist_min: 0.0,
+                dist_max: 0.0,
+                is_sphere: false,
+            },
+            8,
+            [2306.34, 419.77, 0.0],
+            3840.0,
+            1906.0,
+            default_init(),
+        );
+        sim.spawn();
+        assert_eq!(sim.particles.len(), 1);
+        let y = sim.particles[0].pos[1];
+        // 在中心原点之上，且高于视口中线（视口半高 953）——黑神话从上方发射。
+        assert!(y > 0.0, "黑神话应从中心上方发射，got {}", y);
+        assert!(y > 1906.0 / 2.0, "黑神话发射点应高于屏幕中线，got {}", y);
+        // 精确值：c[1]+origin.y = 533.23+750 = 1283.23。
+        assert!((y - 1283.23).abs() < 1e-3, "pos.y 应为 1283.23（不翻），got {}", y);
+    }
+
+    /// origin.y=0 的壁纸（EVA/DK 等）：不翻与旧实现（-0）等价，发射点即对象中心上方 c[1]，不受影响。
+    #[test]
+    fn emitter_origin_zero_is_unaffected_by_y_flip() {
+        let mut sim = SceneParticleSim::new(
+            ParticleEmitterSpec {
+                rate: 0.0,
+                origin: [0.0; 3],
+                directions: [0.0; 3],
+                dist_min: 0.0,
+                dist_max: 0.0,
+                is_sphere: false,
+            },
+            8,
+            [2306.34, 419.77, 0.0],
+            3840.0,
+            1906.0,
+            default_init(),
+        );
+        sim.spawn();
+        assert_eq!(sim.particles.len(), 1);
+        let y = sim.particles[0].pos[1];
+        // c[1] = 953 - 419.77 = 533.23；origin.y=0 → pos.y = c[1]（不翻与翻等价）。
+        assert!((y - 533.23).abs() < 1e-3, "origin.y=0 时 pos.y 应为对象中心上方 c[1]=533.23，got {}", y);
     }
 }

@@ -11,7 +11,8 @@
 //! - 粒子**不乘对象 scale**（`SceneParticleSim` 内部按对象中心 + emitter 局部偏移发射）。
 //!
 //! `ParticleEmitterSpec.origin` = emitter 局部偏移（黑神话花瓣 origin="350 750 0" → 发射点抬到
-//! 对象中心上方，y 在 spawn 时做 Y 翻）；`is_sphere` = emitter name=="sphererandom" 的结果。两者均
+//! 对象中心**上方**，y 在 spawn 时**不翻**（+y → 中心上方；origin.y=0 的 EVA/DK 等不受影响））；
+//! `is_sphere` = emitter name=="sphererandom" 的结果。两者均
 //! 由 `parse_particle_spec` 从 emitter JSON 读取，缺省 origin=[0,0,0]、is_sphere=false。
 
 use super::{ParticleEmitterSpec, ParticleInitSpec, ParticleSpec, SceneParticleSim};

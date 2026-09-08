@@ -51,7 +51,8 @@ pub struct EmitterSpec {
     pub distance_min: f32,
     pub distance_max: f32,
     /// 发射器局部偏移（we "x y z"；缺省 [0,0,0]）。CPU 模拟用它把发射点抬离对象中心
-    /// （黑神话花瓣 origin="350 750 0" → 从上方发射），y 在 spawn 时做 Y 翻（emitter_origin_y_neg）。
+    /// （黑神话花瓣 origin="350 750 0" → 从**上方**发射），y 在 spawn 时**不翻**（+y 抬到中心上方；
+    /// origin.y=0 的壁纸 EVA/DK 等不受影响）。
     pub origin: [f32; 3],
     /// 是否球壳散射（emitter name=="sphererandom" → true；缺省 false）。
     /// CPU 模拟器 sim.rs 的 spawn 现统一按 3D 球壳/球体处理，字段为未来语义扩展保留。
