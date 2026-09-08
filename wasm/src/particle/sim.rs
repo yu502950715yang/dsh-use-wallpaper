@@ -1,7 +1,7 @@
-//! CPU 粒子模拟器（SceneParticleSim，Task 2）：逐粒子按 linux-wallpaperengine CParticle 语义模拟。
+//! CPU 粒子模拟器（SceneParticleSim，Task 2-4）：逐粒子按 linux-wallpaperengine CParticle 语义模拟。
 //! 与 GPU compute 路径（render/particle_pass.rs）不同，本模拟器在 CPU 端维护 `Vec<SimParticle>`，
-//! 每帧 update 累计发射（emission_timer）、积分运动/寿命、回收死亡粒子，再由 build_vertices 输出
-//! 顶点缓冲供渲染（Task 3/4）。
+//! 每帧 update 累计发射（emission_timer）、逐帧跑各 operators（movement/angularMovement/alphaFade/...
+//! ，Task 4）、按寿命 compaction、再由 build_vertices 输出顶点缓冲供渲染。
 //!
 //! 坐标约定（Task 1 对齐 WE；上游裁决 spec §3：对象中心用 `we_to_three`、y **不翻**、与背景/图层一致）：
 //! - 对象中心用 `we_to_three(origin, scene_w, scene_h) = [x - scene_w/2, y - scene_h/2, z]`
@@ -13,7 +13,8 @@
 //! - scene_w/scene_h 用 scene 正交尺寸（黑神话 3840×2160），非 view cover；billboard
 //!   投影由 view viewProjection（`ortho(view_w, view_h)`）完成，view_w/view_h 由 `ParticleRenderPass` 传入。
 //!
-//! 伪随机：先用进程级线程安全 Xorshift32（确定性，非加密），Task 4 再接入种子/发射器级状态。
+//! 伪随机：进程级线程安全 Xorshift32（确定性，非加密），emitters/initializers（Task 2/3）与
+//! operators（Task 4，oscillate 的 per-particle frequency/scale/phase、turbulence 的 phase/turb_speed）共用。
 //!
 //! 发射器（Task 2，对齐 lwe `createBoxEmitter` / `createSphereEmitter`）：`update()` 按
 //! `emissionTimer += dt*rate` 精确累积并发射（`maxcount` 封顶）；`spawn()` 用 `emitter_local()`
@@ -84,12 +85,15 @@ pub fn frame_center_uv(frame: f32, frame_count: u32) -> [f32; 2] {
 /// 单粒子状态（对应 WE CParticle 的 `ParticleInstance`）。
 ///
 /// Task 3 为对齐 lwe 各 `create*RandomInitializer`，在 spawn 时补充设置两个初始属性：
-/// - `angular_vel`：`angularvelocityrandom` 的初始角速度（弧/秒，逐分量 lerp）。当前 `update()`
-///   仍用黑神话角速度近似 `rot += 0.5*dt`，本字段带 init 语义但**尚未被消费**——由 Task 4
-///   （angularmovement 算子）接入 `rot += angular_vel*dt`。
+/// - `angular_vel`：`angularvelocityrandom` 的初始角速度（弧/秒，逐分量 lerp）。Task 4
+///   （angularmovement 算子）已把它消费进 `rot += angular_vel[z]*dt`（z 单标量近似）。
 /// - `initial`：复位基准（对应 lwe `ParticleInstance::initial`，color/alpha/size/lifetime 存
 ///   spawn 时的初值），供 operators（alphafade/sizechange/colorchange，Task 4）按 `initial.*`
 ///   推导当前值；`max_life` 仍作 lifetime 基准（`initial.lifetime` 与其一致）。
+/// - `fade_in`/`fade_out`：alphaFade 梯形的两个寿命位置（`used=getLifetimePos`），由 alphaFade
+///   算子写入并用（Task 4）。spawn 缺省 0/1（无 alphaFade 时 alpha 恒为 `initial.alpha`）。
+/// - `oscillate_*`：单粒子振荡状态（对应 lwe `ParticleInstance::oscillateAlpha/Size/Position`），
+///   由各 oscillate 算子惰性初始化（`initialized`），供 Task 4 consume。
 pub struct SimParticle {
     pub pos: [f32; 3],
     pub vel: [f32; 3],
@@ -102,6 +106,11 @@ pub struct SimParticle {
     pub color: [f32; 3],
     pub frame: f32,
     pub initial: SimInitial,
+    pub fade_in: f32,
+    pub fade_out: f32,
+    pub oscillate_alpha: OscState,
+    pub oscillate_size: OscState,
+    pub oscillate_position: OscState3,
 }
 
 /// 单粒子的**初始值复位基准**（对应 lwe `ParticleInstance::initial`）。
@@ -111,6 +120,473 @@ pub struct SimInitial {
     pub alpha: f32,
     pub size: f32,
     pub lifetime: f32,
+}
+
+/// 单粒子**单值振荡器状态**（对应 lwe `ParticleInstance::oscillateAlpha/oscillateSize`）。
+/// frequency/scale/phase 在**首次**被 oscillateAlpha/oscillateSize 算子上时按算子 min/max 随机一次
+/// 并置 `initialized`；`base` 由 alphafade/sizechange 每帧更新（`base = p.alpha / p.size`），使组合语义正确。
+pub struct OscState {
+    pub frequency: f32,
+    pub scale: f32,
+    pub phase: f32,
+    pub base: f32,
+    pub initialized: bool,
+}
+
+/// 单粒子**逐轴振荡器状态**（对应 lwe `ParticleInstance::oscillatePosition`）。
+/// 三轴各自 frequency/scale/phase，首次被 oscillatePosition 算子上时按算子 min/max 逐轴随机一次。
+pub struct OscState3 {
+    pub frequency: [f32; 3],
+    pub scale: [f32; 3],
+    pub phase: [f32; 3],
+    pub initialized: bool,
+}
+
+/// lwe `Maths::fadeValue`：在 `[start,end]` 上把数值从 `startValue` 线性插值到 `endValue`，
+/// 端点外钳制（`life<=start → startValue`，`life>=end → endValue`）。用于大小/alpha/颜色随时间渐变。
+fn fade_value(life: f32, start_time: f32, end_time: f32, start_value: f32, end_value: f32) -> f32 {
+    if life <= start_time {
+        start_value
+    } else if life >= end_time {
+        end_value
+    } else {
+        let t = (life - start_time) / (end_time - start_time);
+        start_value + (end_value - start_value) * t
+    }
+}
+
+/// 单粒子 `getLifetimePos`（对应 lwe `ParticleInstance::getLifetimePos` = `age/lifetime`，0..1）。
+/// 本模拟器用 countdown `life`（`life = max_life - age`），故 `= (max_life - life)/max_life`；`max_life<=0 → 1`（避除 0）。
+fn get_lifetime_pos(p: &SimParticle) -> f32 {
+    if p.max_life > 0.0 {
+        (p.max_life - p.life) / p.max_life
+    } else {
+        1.0
+    }
+}
+
+/// 单粒子已存活时间 `age`（秒，递增；对应 lwe `ParticleInstance::age`），由 countdown `life` 推导：`age = max_life - life`。
+fn particle_age(p: &SimParticle) -> f32 {
+    p.max_life - p.life
+}
+
+// ---------------------------------------------------------------------------
+// Perlin / Curl noise（对齐 lwe `NoiseUtils.h` 的 `perlinNoise` / `perlinNoiseVec3` / `curlNoise`），
+// 供 Turbulence 算子对速度做噪声扰动。Rust 版用 256 项置换表 + `& 255` 索引（lwe 用 512 项重复表，
+// 二者对 `PERLIN_PERM[A]`（A∈[0,510]）等价：重复表 `PERLIN_PERM[A] = PERLIN_PERM[A%256]`）。
+// ---------------------------------------------------------------------------
+
+/// Perlin 置换表（lwe `PERLIN_PERM` 前 256 项；`&255` 覆盖 lwe 的 512 重复区）。
+const PERLIN_PERM: [u8; 256] = [
+    151, 160, 137, 91, 90, 15, 131, 13, 201, 95, 96, 53, 194, 233, 7, 225, 140, 36, 103, 30,
+    69, 142, 8, 99, 37, 240, 21, 10, 23, 190, 6, 148, 247, 120, 234, 75, 0, 26, 197, 62,
+    94, 252, 219, 203, 117, 35, 11, 32, 57, 177, 33, 88, 237, 149, 56, 87, 174, 20, 125, 136,
+    171, 168, 68, 175, 74, 165, 71, 134, 139, 48, 27, 166, 77, 146, 158, 231, 83, 111, 229, 122,
+    60, 211, 133, 230, 220, 105, 92, 41, 55, 46, 245, 40, 244, 102, 143, 54, 65, 25, 63, 161,
+    1, 216, 80, 73, 209, 76, 132, 187, 208, 89, 18, 169, 200, 196, 135, 130, 116, 188, 159, 86,
+    164, 100, 109, 198, 173, 186, 3, 64, 52, 217, 226, 250, 124, 123, 5, 202, 38, 147, 118, 126,
+    255, 82, 85, 212, 207, 206, 59, 227, 47, 16, 58, 17, 182, 189, 28, 42, 223, 183, 170, 213,
+    119, 248, 152, 2, 44, 154, 163, 70, 221, 153, 101, 155, 167, 43, 172, 9, 129, 22, 39, 253,
+    19, 98, 108, 110, 79, 113, 224, 232, 178, 185, 112, 104, 218, 246, 97, 228, 251, 34, 242, 193,
+    238, 210, 144, 12, 191, 179, 162, 241, 81, 51, 145, 235, 249, 14, 239, 107, 49, 192, 214, 31,
+    181, 199, 106, 157, 184, 84, 204, 176, 115, 121, 50, 45, 127, 4, 150, 254, 138, 236, 205, 93,
+    222, 114, 67, 29, 24, 72, 243, 141, 128, 195, 78, 66, 215, 61, 156, 180,
+];
+
+/// Perlin 梯度（lwe `perlinGrad`，按 hash 低 4 位取方向）。
+fn perlin_grad(hash: usize, x: f64, y: f64, z: f64) -> f64 {
+    match hash & 0xF {
+        0x0 => x + y,
+        0x1 => -x + y,
+        0x2 => x - y,
+        0x3 => -x - y,
+        0x4 => x + z,
+        0x5 => -x + z,
+        0x6 => x - z,
+        0x7 => -x - z,
+        0x8 => y + z,
+        0x9 => -y + z,
+        0xA => y - z,
+        0xB => -y - z,
+        0xC => y + x,
+        0xD => -y + z,
+        0xE => y - x,
+        0xF => -y - z,
+        _ => 0.0,
+    }
+}
+
+/// Perlin ease 曲线（6t⁵ - 15t⁴ + 10t³）。
+fn perlin_ease(t: f64) -> f64 {
+    t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
+}
+
+/// 线性插值。
+fn lerp_double(t: f64, a: f64, b: f64) -> f64 {
+    a + t * (b - a)
+}
+
+/// 3D Perlin 噪声（lwe `perlinNoise`；`& 255` 等价 lwe 的 512 项重复表索引）。
+fn perlin_noise(x: f64, y: f64, z: f64) -> f64 {
+    let xi = x.floor();
+    let yi = y.floor();
+    let zi = z.floor();
+    let xf = x - xi;
+    let yf = y - yi;
+    let zf = z - zi;
+    let x = xf;
+    let y = yf;
+    let z = zf;
+    let u = perlin_ease(x);
+    let v = perlin_ease(y);
+    let w = perlin_ease(z);
+
+    let xint = (xi as i32 & 255) as usize;
+    let yint = (yi as i32 & 255) as usize;
+    let zint = (zi as i32 & 255) as usize;
+
+    let a = (PERLIN_PERM[xint] as usize + yint) & 255;
+    let aa = (PERLIN_PERM[a] as usize + zint) & 255;
+    let ab = (PERLIN_PERM[(a + 1) & 255] as usize + zint) & 255;
+    let b = (PERLIN_PERM[(xint + 1) & 255] as usize + yint) & 255;
+    let ba = (PERLIN_PERM[b] as usize + zint) & 255;
+    let bb = (PERLIN_PERM[(b + 1) & 255] as usize + zint) & 255;
+
+    lerp_double(
+        w,
+        lerp_double(
+            v,
+            lerp_double(
+                u,
+                perlin_grad(PERLIN_PERM[aa] as usize, x, y, z),
+                perlin_grad(PERLIN_PERM[ba] as usize, x - 1.0, y, z),
+            ),
+            lerp_double(
+                u,
+                perlin_grad(PERLIN_PERM[ab] as usize, x, y - 1.0, z),
+                perlin_grad(PERLIN_PERM[bb] as usize, x - 1.0, y - 1.0, z),
+            ),
+        ),
+        lerp_double(
+            v,
+            lerp_double(
+                u,
+                perlin_grad(PERLIN_PERM[(aa + 1) & 255] as usize, x, y, z - 1.0),
+                perlin_grad(PERLIN_PERM[(ba + 1) & 255] as usize, x - 1.0, y, z - 1.0),
+            ),
+            lerp_double(
+                u,
+                perlin_grad(PERLIN_PERM[(ab + 1) & 255] as usize, x, y - 1.0, z - 1.0),
+                perlin_grad(PERLIN_PERM[(bb + 1) & 255] as usize, x - 1.0, y - 1.0, z - 1.0),
+            ),
+        ),
+    )
+}
+
+/// 3 个独立 Perlin 采样（不同偏移）→ vec3（lwe `perlinNoiseVec3`）。
+fn perlin_noise_vec3(p: [f32; 3]) -> [f32; 3] {
+    [
+        perlin_noise(p[0] as f64, p[1] as f64, p[2] as f64) as f32,
+        perlin_noise((p[0] + 89.2) as f64, (p[1] + 33.1) as f64, (p[2] + 57.3) as f64) as f32,
+        perlin_noise((p[0] + 100.3) as f64, (p[1] + 120.1) as f64, (p[2] + 142.2) as f64) as f32,
+    ]
+}
+
+/// Curl 噪声（lwe `curlNoise`）：对 Perlin 场取旋度，产生平滑涡旋式方向，适合流体粒子运动扰动。
+fn curl_noise(p: [f32; 3]) -> [f32; 3] {
+    let e = 1e-4;
+    let sub = |a: [f32; 3], b: [f32; 3]| [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    let add = |a: [f32; 3], b: [f32; 3]| [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+    let x0 = perlin_noise_vec3(sub(p, [e, 0.0, 0.0]));
+    let x1 = perlin_noise_vec3(add(p, [e, 0.0, 0.0]));
+    let y0 = perlin_noise_vec3(sub(p, [0.0, e, 0.0]));
+    let y1 = perlin_noise_vec3(add(p, [0.0, e, 0.0]));
+    let z0 = perlin_noise_vec3(sub(p, [0.0, 0.0, e]));
+    let z1 = perlin_noise_vec3(add(p, [0.0, 0.0, e]));
+    let x = (y1[2] - y0[2]) - (z1[1] - z0[1]);
+    let y = (z1[0] - z0[0]) - (x1[2] - x0[2]);
+    let z = (x1[1] - x0[1]) - (y1[0] - y0[0]);
+    let denom = 2.0 * e;
+    [x / denom, y / denom, z / denom]
+}
+
+/// 粒子算子（对齐 lwe `CParticle::create*Operator` 的 `OperatorFunc` 语义——**每帧**对每个粒子跑）。
+///
+/// 用枚举 + `apply(&mut SimParticle, dt, time)` 表示 `OperatorFn`（lwe 的闭包捕获算子参数；
+/// 此处参数为算子字段，语义等价）。`time` 为模拟器累计帧时间（= lwe `m_time`，供 turbulence 用）。
+/// 注：lwe 的 `instanceOverride.speed` 未建模（各算子内 `speed` 统一取 1.0）。
+#[derive(Debug, Clone)]
+pub enum ParticleOperator {
+    /// movement：`pos += vel*dt`（先），再 `vel += gravity*dt`，再 `vel *= max(1-drag*dt,0)`。
+    Movement { gravity: [f32; 3], drag: f32 },
+    /// angularMovement：`rot += angularVel[z]*dt`，再 `angularVel[z] += force[z]*dt`，再拖拽衰减，并 wrap 到 ±π。
+    AngularMovement { force: [f32; 3], drag: f32 },
+    /// alphaFade：梯形 fade-in/fade-out（`used=getLifetimePos`），`alpha = initial.alpha * fade`。
+    AlphaFade { fade_in: f32, fade_out: f32 },
+    /// sizeChange：`size = initial.size * fadeValue(used, start, end, startVal, endVal)`。
+    SizeChange { start_time: f32, end_time: f32, start_value: f32, end_value: f32 },
+    /// alphaChange：`alpha = initial.alpha * fadeValue(used, start, end, startVal, endVal)`。
+    AlphaChange { start_time: f32, end_time: f32, start_value: f32, end_value: f32 },
+    /// colorChange：逐分量 `color = initial.color * fadeValue(used, start, end, startVal.r/g/b, endVal.r/g/b)`。
+    ColorChange { start_time: f32, end_time: f32, start_value: [f32; 3], end_value: [f32; 3] },
+    /// turbulence：对速度做 curl 噪声扰动（`vel += curlDir * mask * dt`）。
+    /// `phase`/`turb_speed` 为**算子创建时**按 min/max 各随机一次（对齐 lwe 闭包捕获）。
+    Turbulence {
+        scale: f32,
+        time_scale: f32,
+        mask: [f32; 3],
+        phase: f32,
+        turb_speed: f32,
+    },
+    /// oscillateAlpha：`alpha = base * mix(scaleMin, scaleMax, (cos(freq*age+phase)+1)/2)`。
+    OscillateAlpha {
+        freq_min: f32,
+        freq_max: f32,
+        scale_min: f32,
+        scale_max: f32,
+        phase_min: f32,
+        phase_max: f32,
+    },
+    /// oscillateSize：`size = base * mix(scaleMin, scaleMax, (cos(freq*age+phase)+1)/2)`。
+    OscillateSize {
+        freq_min: f32,
+        freq_max: f32,
+        scale_min: f32,
+        scale_max: f32,
+        phase_min: f32,
+        phase_max: f32,
+    },
+    /// oscillatePosition：逐轴 `pos += -scale*freq*sin(freq*age+phase)*dt*mask`。
+    OscillatePosition {
+        freq_min: f32,
+        freq_max: f32,
+        scale_min: f32,
+        scale_max: f32,
+        phase_min: f32,
+        phase_max: f32,
+        mask: [f32; 3],
+    },
+}
+
+impl ParticleOperator {
+    /// 把算子的 `phase`/`turb_speed` 按 `[min,max]` 各随机一次（对齐 lwe `createTurbulenceOperator` 的
+    /// 算子级单次随机）。`min==max` 时确定（供测试）。
+    pub fn turbulence(
+        scale: f32,
+        time_scale: f32,
+        mask: [f32; 3],
+        speed_min: f32,
+        speed_max: f32,
+        phase_min: f32,
+        phase_max: f32,
+    ) -> Self {
+        let lerp = |a: f32, b: f32| a + (b - a) * rand();
+        ParticleOperator::Turbulence {
+            scale,
+            time_scale,
+            mask,
+            phase: lerp(phase_min, phase_max),
+            turb_speed: lerp(speed_min, speed_max),
+        }
+    }
+
+    /// 对单个粒子应用本算子（lwe `OperatorFunc` 每帧对每个活粒子跑）。`dt` 为帧时间，`time` 为累计帧时间。
+    pub fn apply(&self, p: &mut SimParticle, dt: f32, time: f32) {
+        match self {
+            ParticleOperator::Movement { gravity, drag } => {
+                // lwe createMovementOperator：先 `position += velocity*dt`，再 `velocity += gravity*dt*speed`，
+                // 再 `velocity *= max(1-drag*dt,0)`（speed=1.0，instanceOverride.speed 未建模）。
+                for k in 0..3 {
+                    p.pos[k] += p.vel[k] * dt;
+                    p.vel[k] += gravity[k] * dt;
+                }
+                let drag_factor = (1.0 - drag * dt).max(0.0);
+                for k in 0..3 {
+                    p.vel[k] *= drag_factor;
+                }
+            }
+            ParticleOperator::AngularMovement { force, drag } => {
+                // lwe createAngularMovementOperator：`rotation += angularVelocity*dt*speed`；
+                // 本模拟器 `rot` 为 z 轴单标量近似（Task 3），故取 z 分量。再 `angularVelocity += force*dt*speed`，
+                // 拖拽衰减、wrap 到 ±π（speed=1.0）。
+                p.rot += p.angular_vel[2] * dt;
+                p.angular_vel[2] += force[2] * dt;
+                let drag_factor = (1.0 - drag * dt).max(0.0);
+                p.angular_vel[2] *= drag_factor;
+                let two_pi = std::f32::consts::TAU;
+                let pi = std::f32::consts::PI;
+                while p.rot > pi {
+                    p.rot -= two_pi;
+                }
+                while p.rot < -pi {
+                    p.rot += two_pi;
+                }
+            }
+            ParticleOperator::AlphaFade { fade_in, fade_out } => {
+                // 梯形（存于粒子：SimParticle.fade_in/fade_out，Task 4 契约）。
+                p.fade_in = *fade_in;
+                p.fade_out = *fade_out;
+                let used = get_lifetime_pos(p);
+                let fade = if used <= *fade_in {
+                    // alpha = initial.alpha * used/fade_in
+                    fade_value(used, 0.0, *fade_in, 0.0, 1.0)
+                } else if used > *fade_out {
+                    // alpha = initial.alpha * (1-used)/(1-fade_out)
+                    1.0 - fade_value(used, *fade_out, 1.0, 0.0, 1.0)
+                } else {
+                    1.0
+                };
+                p.alpha = p.initial.alpha * fade;
+                // 更新振荡器 base，使 oscillateAlpha 正确组合（lwe 同）。
+                p.oscillate_alpha.base = p.alpha;
+            }
+            ParticleOperator::SizeChange {
+                start_time,
+                end_time,
+                start_value,
+                end_value,
+            } => {
+                let used = get_lifetime_pos(p);
+                let mult = fade_value(used, *start_time, *end_time, *start_value, *end_value);
+                p.size = p.initial.size * mult;
+                // 更新振荡器 base，使 oscillateSize 正确组合。
+                p.oscillate_size.base = p.size;
+            }
+            ParticleOperator::AlphaChange {
+                start_time,
+                end_time,
+                start_value,
+                end_value,
+            } => {
+                let used = get_lifetime_pos(p);
+                let mult = fade_value(used, *start_time, *end_time, *start_value, *end_value);
+                p.alpha = p.initial.alpha * mult;
+                p.oscillate_alpha.base = p.alpha;
+            }
+            ParticleOperator::ColorChange {
+                start_time,
+                end_time,
+                start_value,
+                end_value,
+            } => {
+                let used = get_lifetime_pos(p);
+                let cr = fade_value(used, *start_time, *end_time, start_value[0], end_value[0]);
+                let cg = fade_value(used, *start_time, *end_time, start_value[1], end_value[1]);
+                let cb = fade_value(used, *start_time, *end_time, start_value[2], end_value[2]);
+                p.color = [
+                    p.initial.color[0] * cr,
+                    p.initial.color[1] * cg,
+                    p.initial.color[2] * cb,
+                ];
+            }
+            ParticleOperator::Turbulence {
+                scale,
+                time_scale,
+                mask,
+                phase,
+                turb_speed,
+            } => {
+                // lwe createTurbulenceOperator：`noisePos = position; noisePos.x += phase + timeScale*currentTime;
+                // noisePos *= noiseScale(scale*2); curlDir = curlNoise(noisePos); 归一×turbSpeed; ×mask;
+                // velocity += curlDir*dt*speed`（speed=1.0）。`turb_speed<=0.0001` 直接 return。
+                if *turb_speed <= 0.0001 {
+                    return;
+                }
+                let noise_scale = scale * 2.0;
+                let npx = (p.pos[0] + phase + time_scale * time) * noise_scale;
+                let npy = p.pos[1] * noise_scale;
+                let npz = p.pos[2] * noise_scale;
+                let mut curl = curl_noise([npx, npy, npz]);
+                let len = (curl[0] * curl[0] + curl[1] * curl[1] + curl[2] * curl[2]).sqrt();
+                if len > 0.0001 {
+                    curl = [
+                        curl[0] / len * turb_speed,
+                        curl[1] / len * turb_speed,
+                        curl[2] / len * turb_speed,
+                    ];
+                }
+                for k in 0..3 {
+                    p.vel[k] += curl[k] * mask[k] * dt;
+                }
+            }
+            ParticleOperator::OscillateAlpha {
+                freq_min,
+                freq_max,
+                scale_min,
+                scale_max,
+                phase_min,
+                phase_max,
+            } => {
+                // lwe createOscillateAlphaOperator：首次按 min/max 随机 frequency/scale/phase（phase 加 2π）
+                // 并置 initialized、base=当前 alpha；其后 `mult = mix(scaleMin, scaleMax, (cos(freq*age+phase)+1)/2)`。
+                if !p.oscillate_alpha.initialized {
+                    p.oscillate_alpha.frequency = *freq_min + (*freq_max - *freq_min) * rand();
+                    p.oscillate_alpha.scale = *scale_min + (*scale_max - *scale_min) * rand();
+                    p.oscillate_alpha.phase =
+                        *phase_min + ((*phase_max + std::f32::consts::TAU) - *phase_min) * rand();
+                    p.oscillate_alpha.base = p.alpha;
+                    p.oscillate_alpha.initialized = true;
+                }
+                let t = particle_age(p);
+                let w = p.oscillate_alpha.frequency;
+                let cos_val = ((w * t + p.oscillate_alpha.phase).cos() + 1.0) * 0.5;
+                let multiplier = scale_min + (scale_max - scale_min) * cos_val;
+                p.alpha = p.oscillate_alpha.base * multiplier;
+            }
+            ParticleOperator::OscillateSize {
+                freq_min,
+                freq_max,
+                scale_min,
+                scale_max,
+                phase_min,
+                phase_max,
+            } => {
+                if !p.oscillate_size.initialized {
+                    p.oscillate_size.frequency = *freq_min + (*freq_max - *freq_min) * rand();
+                    p.oscillate_size.scale = *scale_min + (*scale_max - *scale_min) * rand();
+                    p.oscillate_size.phase =
+                        *phase_min + ((*phase_max + std::f32::consts::TAU) - *phase_min) * rand();
+                    p.oscillate_size.base = p.size;
+                    p.oscillate_size.initialized = true;
+                }
+                let t = particle_age(p);
+                let w = p.oscillate_size.frequency;
+                let cos_val = ((w * t + p.oscillate_size.phase).cos() + 1.0) * 0.5;
+                let multiplier = scale_min + (scale_max - scale_min) * cos_val;
+                p.size = p.oscillate_size.base * multiplier;
+            }
+            ParticleOperator::OscillatePosition {
+                freq_min,
+                freq_max,
+                scale_min,
+                scale_max,
+                phase_min,
+                phase_max,
+                mask,
+            } => {
+                if !p.oscillate_position.initialized {
+                    for axis in 0..3 {
+                        p.oscillate_position.frequency[axis] =
+                            *freq_min + (*freq_max - *freq_min) * rand();
+                        p.oscillate_position.scale[axis] =
+                            *scale_min + (*scale_max - *scale_min) * rand();
+                        p.oscillate_position.phase[axis] = *phase_min
+                            + ((*phase_max + std::f32::consts::TAU) - *phase_min) * rand();
+                    }
+                    p.oscillate_position.initialized = true;
+                }
+                // lwe：`w = 2π*freq/(2π) = freq`；`delta = -scale*freq*sin(freq*age + phase)*dt`。
+                let t = particle_age(p);
+                for axis in 0..3 {
+                    let w = p.oscillate_position.frequency[axis];
+                    let delta = -p.oscillate_position.scale[axis] * w
+                        * (w * t + p.oscillate_position.phase[axis]).sin()
+                        * dt;
+                    p.pos[axis] += delta * mask[axis];
+                }
+            }
+        }
+    }
 }
 
 /// 发射器闭包类型（对齐 lwe `CParticle::createBoxEmitter` / `createSphereEmitter` 的 `EmitterFunc`）。
@@ -164,9 +640,8 @@ pub struct ParticleInitSpec {
     /// 做单轴近似。缺省 [0,0,0]。
     pub rotation_min: [f32; 3],
     pub rotation_max: [f32; 3],
-    /// angularvelocityrandom：初始角速度（弧/秒，逐分量）。当前 CPU `update` 仍用 0.5*dt
-    /// （黑神话角速度近似，见 update 注释），本字段随 init 带入但尚未被消费
-    /// （angularmovement 算子未完整实现，见文件顶注释）。
+    /// angularvelocityrandom：初始角速度（弧/秒，逐分量）。由 angularmovement 算子消费
+    /// （Task 4：`rot += angular_vel[z]*dt`，z 单标量近似）。
     pub angular_vel_min: [f32; 3],
     pub angular_vel_max: [f32; 3],
     /// turbulentvelocityrandom：spawn 时叠加的湍流初速（对应 lwe `createTurbulentVelocityRandomInitializer`
@@ -190,6 +665,12 @@ pub struct SceneParticleSim {
     pub emitter: ParticleEmitterSpec,
     /// 粒子初始值规格（从 `spec.init` 映射；spawn 用它生成新粒子）。
     pub init: ParticleInitSpec,
+    /// 粒子算子列表（对齐 lwe `m_operators`，`OperatorFn` 语义——`update()` 逐帧按序对每个粒子跑）。
+    /// `new()` 缺省放入一个**无重力/无阻力**的 `Movement` 算子（保持既有静止/匀速直线行为；后续
+    /// spec→operator 接线会按 spec 重设为零个或多个算子）。
+    pub operators: Vec<ParticleOperator>,
+    /// 累计帧时间（秒；= lwe `m_time`，供 turbulence 的 `phase + timeScale*currentTime` 用）。
+    pub time: f32,
 }
 
 impl SceneParticleSim {
@@ -210,6 +691,13 @@ impl SceneParticleSim {
             particles: Vec::new(),
             emitter: e,
             init,
+            // 缺省 movement（无重力/阻力）：保持既有「匀速直线/静止」行为；
+            // 既有测试（particle_sim_test::petals_fall_down_no_gravity 等）依赖该积分。
+            operators: vec![ParticleOperator::Movement {
+                gravity: [0.0; 3],
+                drag: 0.0,
+            }],
+            time: 0.0,
         }
     }
 
@@ -236,16 +724,25 @@ impl SceneParticleSim {
             self.spawn();
         }
 
+        // 寿命推进（= lwe `age += dt`；本模拟器 countdown `life -= dt`，二者对 `getLifetimePos=age/lifetime`
+        // 等价：`age = max_life - life`）。放在 operators 之前（lwe `update()` 同序）。
         for p in &mut self.particles {
             p.life -= dt;
-            for k in 0..3 {
-                p.pos[k] += p.vel[k] * dt;
-            }
-            // 无重力（父代理裁决 2026-09-08）：black movement operator(id11) 无 gravity，
-            // 花瓣靠初始 velocity.y=-50..-15 向下飘，vel[1] 保持初始负值、不叠加任何重力
-            // （不用 `-= -9.8*dt`，那会使 vy 渐增/向上，与"向下飘"相悖）。
-            p.rot += 0.5 * dt; // 角速度近似（照 black spec）
         }
+        // 累计帧时间（= lwe `m_time`）。
+        self.time += dt;
+
+        // 各算子逐帧对每个粒子跑（lwe `m_operators` 顺序；OperatorFn 语义，含黑神话 movement 无重力、
+        // angularMovement 消费 angular_vel、alphaFade 梯形、oscillate 正弦等）。
+        for op in &self.operators {
+            for p in &mut self.particles {
+                op.apply(p, dt, self.time);
+            }
+        }
+
+        // 寿命 compaction：死亡（`isAlive = alive && age < lifetime` → 本模拟器 `life > 0`）移除，
+        // `Vec::retain` 保持 spawn 顺序（数组 index 0 恒为最老存活粒子）。
+
         self.particles.retain(|p| p.life > 0.0);
     }
 
@@ -365,8 +862,8 @@ impl SceneParticleSim {
         ];
         // rotationRandom：旋转角（欧拉，lwe 逐分量）；本模拟器单轴近似取 z。
         let rot = lerp(i.rotation_min[2], i.rotation_max[2]);
-        // angularVelocityRandom：逐分量 lerp（弧/秒）。当前 update 仍用 0.5*dt 近似旋转，
-        // 本字段带 init 语义但尚未被消费（angularmovement 算子为 Task 4）。
+        // angularVelocityRandom：逐分量 lerp（弧/秒）。由 angularmovement 算子消费
+        // （Task 4：`rot += angular_vel[z]*dt`）。
         let angular_vel = [
             lerp(i.angular_vel_min[0], i.angular_vel_max[0]),
             lerp(i.angular_vel_min[1], i.angular_vel_max[1]),
@@ -417,6 +914,30 @@ impl SceneParticleSim {
                 alpha,
                 size,
                 lifetime: life,
+            },
+            // alphaFade 梯形预留（缺省 0/1：无 alphaFade 时 used∈[0,1]、alpha 恒为 initial.alpha，不生效）。
+            fade_in: 0.0,
+            fade_out: 1.0,
+            // 振荡器状态（lazy init 由各 oscillate 算子置 initialized）。
+            oscillate_alpha: OscState {
+                frequency: 0.0,
+                scale: 1.0,
+                phase: 0.0,
+                base: 0.0,
+                initialized: false,
+            },
+            oscillate_size: OscState {
+                frequency: 0.0,
+                scale: 1.0,
+                phase: 0.0,
+                base: 0.0,
+                initialized: false,
+            },
+            oscillate_position: OscState3 {
+                frequency: [0.0; 3],
+                scale: [0.0; 3],
+                phase: [0.0; 3],
+                initialized: false,
             },
         });
     }
@@ -513,6 +1034,28 @@ mod tests {
                 alpha: 1.0,
                 size: 40.0,
                 lifetime: 1.0,
+            },
+            fade_in: 0.0,
+            fade_out: 1.0,
+            oscillate_alpha: OscState {
+                frequency: 0.0,
+                scale: 1.0,
+                phase: 0.0,
+                base: 0.0,
+                initialized: false,
+            },
+            oscillate_size: OscState {
+                frequency: 0.0,
+                scale: 1.0,
+                phase: 0.0,
+                base: 0.0,
+                initialized: false,
+            },
+            oscillate_position: OscState3 {
+                frequency: [0.0; 3],
+                scale: [0.0; 3],
+                phase: [0.0; 3],
+                initialized: false,
             },
         });
         let vs = sim.build_vertices();
