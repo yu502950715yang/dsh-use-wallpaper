@@ -11,7 +11,11 @@ struct VsOut { @builtin(position) clip: vec4f, @location(0) uv: vec2f,
   o.clip.x = (i.pos.x / (p.view_w/2.0)) + corner.x*(half/(p.view_w/2.0));
   o.clip.y = (i.pos.y / (p.view_h/2.0)) + corner.y*(half/(p.view_h/2.0));
   o.clip.z = 0.0; o.clip.w = 1.0;
-  o.uv = vec2f(0.5 + i.uv.x*0.5, 0.5 + i.uv.y*0.5) + corner*0.5;
+  // 顶点 uv（i.uv）是粒子纹理的采样中心（sim 的 build_vertices 输出 0.5,0.5 = 纹理中心）。
+  // quad 四角各偏移 ±0.5 → 完整采样 i.uv 周围一个 UV 单位（默认 → [0,1] 整张纹理）。
+  // 原实现是 `vec2f(0.5 + i.uv.x*0.5, ...) + corner*0.5`：对默认中心 0.5 得到 uv∈[0.25,1.25]，
+  // +1 角出界 0..1 被钳制到纹理右/下边缘，只采到纹理右下一角（纹理被局部放大/偏移）——修正。
+  o.uv = i.uv + corner*0.5;
   o.color = i.color; o.alpha = i.alpha;
   return o;
 }

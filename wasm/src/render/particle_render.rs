@@ -44,17 +44,49 @@ pub const PARTICLE_VERTEX_STRIDE: u64 = 40;
 #[cfg(feature = "render")]
 const INITIAL_VERTEX_BYTES: u64 = 4 * PARTICLE_VERTEX_STRIDE;
 
-/// 每粒子 billboard quad 的顶点数（TriangleStrip 的 4 个角点）。
+/// 初始索引缓冲容量（4 粒子，每粒子 6 个 u32 索引）。`draw` 会按需扩容。
+#[cfg(feature = "render")]
+const INITIAL_INDEX_BYTES: u64 = 4 * INDICES_PER_PARTICLE as u64 * std::mem::size_of::<u32>() as u64;
+
+/// 每粒子 billboard quad 的顶点数（4 个角点：一个 quad 需要 4 个不同角点）。
 /// `draw` 内通过 `expand_to_quad_vertices` 把每个粒子 `[f32;10]` 重复 4 次写入顶点缓冲，
-/// shader 再用 `@builtin(vertex_index)` 推角点（每 4 个连续顶点 = 同一粒子一个 quad）。
+/// shader 再用 `@builtin(vertex_index)` 推角点（每 4 个连续顶点 = 同一粒子一个 quad 的 4 个角点）。
 pub const VERTICES_PER_PARTICLE: u32 = 4;
 
-/// 把逐粒子 `[f32;10]` 展开成每粒子 **4 个顶点**（同一粒子属性重复 4 次，供 TriangleStrip quad）。
+/// 每粒子 billboard quad 的**索引数**（TriangleList 的 2 个三角形 × 3 索引 = 6）。
+/// 见 `build_quad_indices` 的注释：为什么必须用索引 + TriangleList 把每个 quad 拆成 2 个
+/// 独立三角形，而不能用一根 `TriangleStrip` 直接 `draw(0..4N)`（那是线框/长条的根因）。
+pub const INDICES_PER_PARTICLE: u32 = 6;
+
+/// 把逐粒子 `[f32;10]` 展开成每粒子 **4 个顶点**（同一粒子属性重复 4 次，供 billboard quad）。
 /// native 可测（纯数据，无 wgpu）。空输入 → 空输出（防御，draw 直接跳过绘制）。
 pub fn expand_to_quad_vertices(vertices: &[[f32; 10]]) -> Vec<[f32; 10]> {
     let mut out = Vec::with_capacity(vertices.len() * VERTICES_PER_PARTICLE as usize);
     for v in vertices {
         out.extend(std::iter::repeat(*v).take(VERTICES_PER_PARTICLE as usize));
+    }
+    out
+}
+
+/// 为 `particle_count` 个粒子生成 billboard quad 的 TriangleList 索引。
+///
+/// **为什么需要它（根因）**：若用 `TriangleStrip` 直接 `draw(0..4N)`，一根 strip 会从粒子 0 的
+/// quad **连续**连到粒子 1 的 quad——三角带按 `(v0,v1,v2),(v1,v2,v3),(v2,v3,v4),…` 排布，
+/// 相邻 quad 之间会生成横跨两粒子的"桥接"三角（例如 `(v2,v3,v4)` 同时用了粒子 0 与粒子 1 的角点），
+/// 这些又长又细的三角横跨整个画面，视觉上就是"粉色线框/三角网格"，而非隔离的填充贴图 quad。
+/// 修复：改用 `TriangleList` + 索引缓冲，每个 quad 明确列出它的 2 个三角形
+/// `[b, b+1, b+2, b+1, b+2, b+3]`（b = 粒子在顶点缓冲中的基址 `i*4`）。`TriangleList` 没有
+/// "跨三角形连续"的语义，每 3 个索引就是独立三角形，相邻 quad 绝不桥接。
+///
+/// 角点一致性：shader 的 `vertex_index`（这里取的是顶点缓冲索引，非索引缓冲下标）经
+/// `vi&1`、`(vi>>1)&1` 推角点，四角依序为 `(-1,-1),(1,-1),(-1,1),(1,1)`。上面两个三角形
+/// 恰好铺满 `[-1,1]²`（左下 + 右上，仅共享对角线，面积不重叠）。基址 b 恒为 4 的倍数，
+/// 位运算对所有粒子一致成立。
+pub fn build_quad_indices(particle_count: usize) -> Vec<u32> {
+    let mut out = Vec::with_capacity(particle_count * INDICES_PER_PARTICLE as usize);
+    for i in 0..particle_count {
+        let b = (i as u32) * VERTICES_PER_PARTICLE;
+        out.extend_from_slice(&[b, b + 1, b + 2, b + 1, b + 2, b + 3]);
     }
     out
 }
@@ -76,6 +108,7 @@ pub struct ParticleRenderPass {
     pipeline: wgpu::RenderPipeline,
     bind_group: wgpu::BindGroup,
     vertex_buffer: wgpu::Buffer,
+    index_buffer: wgpu::Buffer,
     uniform_buffer: wgpu::Buffer,
     /// 粒子纹理持有方（2026-08-21 方案 A，同 ParticlePass）：bind group 引用 texture view，
     /// view 引用 texture——texture 必须存活，故由 pass 持有防释放；无纹理时为 1×1 白兜底。
@@ -174,8 +207,12 @@ impl ParticleRenderPass {
                 }],
             },
             primitive: wgpu::PrimitiveState {
-                // billboard quad：vs 用 vertex_index 推导角点（TriangleStrip，同粒子渲染模式）
-                topology: wgpu::PrimitiveTopology::TriangleStrip,
+                // billboard quad 隔离：TriangleList + 索引缓冲（每粒子 2 个独立三角形）。
+                // 不能用 TriangleStrip 直接 draw(0..4N)——一根 strip 会把相邻粒子 quad 连成
+                // 横跨画面的"桥接"三角（线框/三角网格的根因，见 `build_quad_indices` 注释）。
+                // vs 仍用 vertex_index 推导角点；索引缓冲显式列出两个三角形（顶点缓冲基址=4 的倍数，
+                // 位运算对每个粒子一致）。
+                topology: wgpu::PrimitiveTopology::TriangleList,
                 ..Default::default()
             },
             depth_stencil: None,
@@ -249,19 +286,29 @@ impl ParticleRenderPass {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        // 初始索引缓冲（TriangleList，`draw` 按需扩容）。
+        let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("particle-billboard-index"),
+            size: INITIAL_INDEX_BYTES,
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         ParticleRenderPass {
             pipeline,
             bind_group,
             vertex_buffer,
+            index_buffer,
             uniform_buffer,
             _texture: texture_holder,
         }
     }
 
     /// 把 `vertices`（逐粒子 `[f32;10]`，来自 `SceneParticleSim::build_vertices`）**展开成每粒子
-    /// 4 顶点**写入顶点缓冲（同一粒子属性重复 4 次），并以 billboard quad（TriangleStrip）渲染
-    /// 到 `out` 视图。shader 用 `@builtin(vertex_index)` 推 quad 角点（每 4 个连续顶点 = 同一粒子
-    /// 一个 quad）。Load 不清除：粒子按混合模式叠加在 `out` 既有内容上。
+    /// 4 顶点**写入顶点缓冲（同一粒子属性重复 4 次），并以 billboard quad（TriangleList + 索引缓冲，
+    /// 每粒子 2 个隔离三角形）渲染到 `out` 视图。shader 用 `@builtin(vertex_index)` 推 quad 角点
+    /// （每 4 个连续顶点 = 同一粒子一个 quad；索引缓冲显式指定 quad 的两个三角形，避免
+    /// TriangleStrip 把相邻 quad 连成"桥接"三角——线框/三角网格的根因）。Load 不清除：粒子按
+    /// 混合模式叠加在 `out` 既有内容上。
     pub fn draw(
         &mut self,
         device: &wgpu::Device,
@@ -280,10 +327,24 @@ impl ParticleRenderPass {
                 mapped_at_creation: false,
             });
         }
+        // 索引数 = 每粒子 6 个（2 三角形）；超出当前索引缓冲则重新分配。
+        let index_count = (vertices.len() as u32) * INDICES_PER_PARTICLE;
+        let required_index_bytes = (index_count as u64) * std::mem::size_of::<u32>() as u64;
+        if required_index_bytes > self.index_buffer.size() {
+            self.index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("particle-billboard-index"),
+                size: required_index_bytes.max(INITIAL_INDEX_BYTES),
+                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+        }
         if !vertices.is_empty() {
             // 展开：每粒子重复 4 次（同一粒子 quad 的 4 个角点由 shader 的 vertex_index 推导）。
             let expanded = expand_to_quad_vertices(vertices);
             queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&expanded));
+            // 索引：每 quad 显式列出 2 个三角形（TriangleList），隔离相邻粒子 quad。
+            let indices = build_quad_indices(vertices.len());
+            queue.write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(&indices));
         }
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("particle-billboard-encoder"),
@@ -303,8 +364,9 @@ impl ParticleRenderPass {
             rpass.set_pipeline(&self.pipeline);
             rpass.set_bind_group(0, &self.bind_group, &[]);
             rpass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            if quad_vertex_count > 0 {
-                rpass.draw(0..quad_vertex_count, 0..1);
+            if index_count > 0 {
+                rpass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                rpass.draw_indexed(0..index_count, 0, 0..1);
             }
         }
         queue.submit([encoder.finish()]);
