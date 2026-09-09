@@ -93,10 +93,17 @@ void main() {
 // 粒子 billboard fragment shader：多帧 uv 切片（frameCount，uv.x 帧子区，y 占满整高）→
 // 采样纹理 → color*texel.rgb、alpha=texel.a*particle.alpha；softness 做中心→边缘软衰减。
 // 混色（additive/alpha）由 three.js material.blending 承担（openGL blending），这里只输出 RGBA。
+// 形状对齐 wasm `particle_billboard.wgsl` 的 mask_mode（2026-09-09）：
+//   - mask_mode=1（真实纹理）：shape = texel.a（alpha 遮罩提供形状，**不再额外乘圆盘**）→
+//     光线/花瓣/雪片保持纹理本身的形状，不被软圆盘裁成圆形；
+//   - mask_mode=0（无纹理 1×1 白图兜底）：shape = 软圆盘（disk，softness 控制边缘）→ 纯色软圆点。
+// 此前恒 `texel.a*falloff`（=mask_mode=1 还叠加圆盘）→ 有纹理粒子也被裁成软圆盘（丢形状），
+// 且无纹理粒子呈硬边白块（softness=0 旧病，已由缺省 softness 修正）。
 const PARTICLE_FRAGMENT_SHADER = `
 uniform sampler2D map;
 uniform float frameCount;
 uniform float softness;
+uniform float maskMode;
 varying vec2 vCornerUv;
 varying vec2 vParticleUv;
 varying vec3 vParticleColor;
@@ -107,11 +114,13 @@ void main() {
   frameIndex = min(frameIndex, n - 1.0);
   vec2 texUv = vec2((frameIndex + vCornerUv.x) / n, vCornerUv.y);
   vec4 texel = texture2D(map, texUv);
-  // softness ∈ [0,1]：0=硬边（仅在 quad 边缘收尾），1=全柔（中心→边缘平滑衰减）。
+  // 圆盘软衰减（center→edge）。softness ∈ [0,1]：0=硬边（仅在 quad 边缘收尾），1=全柔（中心→边缘平滑衰减）。
   float dist = length(vCornerUv - 0.5) * 2.0;
   float edgeStart = clamp(1.0 - softness, 0.0001, 0.9999);
-  float falloff = 1.0 - smoothstep(edgeStart, 1.0, dist);
-  float a = texel.a * vParticleAlpha * falloff;
+  float disk = 1.0 - smoothstep(edgeStart, 1.0, dist);
+  // mask_mode：1（真实纹理遮罩，形状=texel.a）↔ 0（无纹理软圆点，形状=disk）。
+  float shape = mix(disk, texel.a, maskMode);
+  float a = vParticleAlpha * shape;
   gl_FragColor = vec4(vParticleColor * texel.rgb, a);
 }
 `;
@@ -169,6 +178,13 @@ export class ThreeScenePlayer {
     // → viewport=场景尺寸 → cover 退化为「全场景无裁剪」+ CSS object-fit:fill 拉伸背景）。真正的
     // canvas 尺寸由调用方在构造后显式 `resize(vw,vh)` 设置（窗口尺寸），见 loadSceneToThree。
     this.renderer = renderer ?? new THREE.WebGLRenderer({ canvas, antialias: true });
+    // 色彩管线对齐 wasm 参考（非 sRGB UNorm 管线，见 wasm/src/render/mod.rs / tex.rs 注释）：
+    //   wasm 纹理用 UNorm（非 sRGB）、fragment 输出**原始编码值**、surface 直接显示——若 surface 是
+    //   sRGB 会把线性值再编码 → 画面偏亮/过曝。three.js 缺省 `outputColorSpace=SRGBColorSpace`
+    //   会对所有未标 `colorSpace` 的纹理做 linear→sRGB 再编码（同样偏亮/过曝，根因「整体偏白/过曝」）。
+    //   这里强制 LinearSRGBColorSpace → `linearToOutputTexel` 恒等（不转换），纹理原始值直出，
+    //   与 wasm 参考的非 sRGB 管线一致（壁纸恢复自然亮度，不再蒙白膜/过曝）。
+    this.renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
     this.applyCover();
   }
 
@@ -338,8 +354,9 @@ export class ThreeScenePlayer {
     opts: { tex?: THREE.Texture; frameCount: number; blend: 'additive' | 'alpha'; softness?: number },
   ): number {
     const frameCount = Math.max(1, Math.floor(opts.frameCount));
-    // softness 默认按有无纹理对齐 wasm `particle_render`（Task 5 回归）：
-    //   有纹理（真实 alpha 遮罩）→ 0.15（薄软边，形状由 texel.a 提供）；
+    // softness 默认按有无纹理对齐 wasm `particle_billboard` 的 mask_mode（Task 5 + 2026-09-09 深挖）：
+    //   有纹理（真实 alpha 遮罩）→ 0.15（若 mask_mode=0 才用到的圆盘默认值；mask_mode=1 时形状由
+    //     texel.a 提供，softness 不参与）——保留该默认值作兜底/精细控制；
     //   无纹理（1×1 白图兜底）→ 1.0（整盘软圆点）。
     // 此前恒 0 → 无纹理粒子是**硬边白方块**（叠在背景上呈白斑/偏白，单个粒子看作方块）。
     // 调用方显式传 softness 时以其为准（测试/精细控制）。
@@ -370,11 +387,13 @@ export class ThreeScenePlayer {
 
     // ShaderMaterial：billboard quad（pos + corner*half_size，mvp 用相机投影/视图）、
     // fragment 多帧 uv 切片（frame_count）、additive/alpha blend、softness、color*texel.rgb、alpha=texel.a*particle.alpha。
+    // maskMode：有纹理→1（形状由 texel.a 提供）；无纹理白图兜底→0（软圆盘）。对齐 wasm particle_billboard 的 mask_mode。
     const material = new THREE.ShaderMaterial({
       uniforms: {
         map: { value: opts.tex ?? createWhiteTexture() },
         frameCount: { value: frameCount },
         softness: { value: softness },
+        maskMode: { value: hasTex ? 1.0 : 0.0 },
       },
       vertexShader: PARTICLE_VERTEX_SHADER,
       fragmentShader: PARTICLE_FRAGMENT_SHADER,

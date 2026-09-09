@@ -22,7 +22,7 @@ function isThreeUse(): boolean {
   try {
     if (new URLSearchParams(window.location.search).get('THREE_USE') === '1') return true;
   } catch { /* location 不可用 → 查全局 */ }
-  return (window as any).__THREE_USE__ === '1';
+  return String((window as any).__THREE_USE__) === '1';
 }
 
 
@@ -55,17 +55,9 @@ export function bootstrap(ctx?: any): void {
     layer = createBackgroundLayer(root);
     controller = createWallpaperController(layer, {
       fetchList: async () => (await fetch('/wallpapers/list')).json(),
-      // Task 5：THREE_USE=1 → 新增 three.js 播放路径（背景 + 粒子）；否则走既有 wasm 路径。
-      // wasm-renderer 仅关闭时启用（保留备用，不删除）；three 路径失败由 controller 落 preview。
-      sceneRenderer: isThreeUse()
-        ? createThreeSceneRenderer()
-        : createFallbackSceneRenderer(createWasmSceneRenderer(), {
-        // T4.2：注入可见性 user 绑定的用户属性 getter（localStorage 实现见 settings.ts；
-        // renderScene 不硬依赖设置存储，键缺失回退绑定 value）
-        render: (id, fg, bg) => renderScene(id, fg, bg, { getUserProperty: getUserPropertyValue }),
-        // Finding 2：JS 渲染器当前禁用于运行时回退链（强制 wasm），无资源需释放 → no-op。
-        dispose: () => {},
-      }),
+      // Task 5：three.js 播放路径（背景 + 粒子）设为**默认**；wasm/WebGPU 路径保留作备用。
+      // three 创建失败时回退到 wasm（three-renderer 内部/controller 兜底），避免白屏。
+      sceneRenderer: createThreeSceneRenderer(),
       // Task 8 回退链（spec §7 第 1/2/3 条，三级语义）：
       //   1. 无 WebGPU → createWasmSceneRenderer() 返回 null → 直接用 JS/Three.js 渲染器；
       //   2. wasm 加载/初始化失败（render resolve false）→ 组合层降级调用 JS 渲染器；

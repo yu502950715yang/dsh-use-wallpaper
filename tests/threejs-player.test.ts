@@ -43,6 +43,13 @@ describe('ThreeScenePlayer', () => {
     expect(player.camera.position.z).toBe(300);
   });
 
+  it('renderer.outputColorSpace = LinearSRGBColorSpace（对齐 wasm 非 sRGB 管线，防纹理过曝/偏白）', () => {
+    const { player } = makePlayer();
+    // wasm 参考用 UNorm（非 sRGB）纹理直出；three 缺省 sRGB output 会对未标色域的纹理做
+    // linear→sRGB 再编码 → 画面偏亮/过曝。强制 LinearSRGB → linearToOutputTexel 恒等（直出）。
+    expect((player.renderer as unknown as { outputColorSpace: string }).outputColorSpace).toBe(THREE.LinearSRGBColorSpace);
+  });
+
   it('缺省 cover：视口 == 场景尺寸 → 相机视锥 == 场景尺寸（1920×1080，无裁剪）', () => {
     const { player } = makePlayer(1920, 1080);
     expect(player.camera.left).toBe(-960);
@@ -362,6 +369,23 @@ describe('ThreeScenePlayer particle layer', () => {
     const p3 = makePlayer(1920, 1080);
     p3.player.addParticle(() => dataA, { frameCount: 4, blend: 'alpha', tex: new THREE.DataTexture(new Uint8Array(4), 2, 2), softness: 0.7 });
     expect((particleMesh(p3.player).material as THREE.ShaderMaterial).uniforms.softness.value).toBe(0.7);
+  });
+
+  it('addParticle：maskMode 按有无纹理（无 tex→0 软圆盘、有 tex→1 纹理 alpha 遮罩保形状），对齐 wasm particle_billboard', () => {
+    const { player } = makePlayer(1920, 1080);
+    // 无 tex（白图兜底）→ maskMode=0：形状=软圆盘（disk，softness 控制边缘）。
+    player.addParticle(() => dataA, { frameCount: 4, blend: 'alpha' });
+    const matNoTex = particleMesh(player).material as THREE.ShaderMaterial;
+    expect(matNoTex.uniforms.maskMode.value).toBe(0);
+    // 有 tex → maskMode=1：形状=texel.a（纹理 alpha 遮罩），粒子保持纹理形状（花瓣/光柱/雪片），
+    // 不被软圆盘裁成圆形。
+    const p2 = makePlayer(1920, 1080);
+    p2.player.addParticle(() => dataA, {
+      frameCount: 4, blend: 'alpha',
+      tex: new THREE.DataTexture(new Uint8Array([255, 255, 255, 128]), 2, 2),
+    });
+    const matTex = particleMesh(p2.player).material as THREE.ShaderMaterial;
+    expect(matTex.uniforms.maskMode.value).toBe(1);
   });
 
   it('addParticle：无 tex 时用 1×1 白 DataTexture 兜底（map uniform 恒非空）', () => {
