@@ -238,6 +238,17 @@ describe('ThreeScenePlayer background layer', () => {
     expect(mat.color.r).toBeCloseTo(0.8, 6);
   });
 
+  it('addBackground：mesh.renderOrder=0、material.depthWrite=false（背景在粒子之下绘制、不写深度遮粒子）', () => {
+    const { player } = makePlayer(3840, 2160);
+    player.addBackground({
+      origin: [1920, 1080, 0], size: [100, 100], scale: [1, 1, 1],
+      sceneW: 3840, sceneH: 2160,
+    });
+    const mesh = player.scene.children[0] as THREE.Mesh;
+    expect(mesh.renderOrder).toBe(0);
+    expect((mesh.material as THREE.MeshBasicMaterial).depthWrite).toBe(false);
+  });
+
   it('update_background：未知 id → no-op（不抛错）', () => {
     const { player } = makePlayer(3840, 2160);
     expect(() => player.update_background(999, [1, 2, 3])).not.toThrow();
@@ -328,6 +339,29 @@ describe('ThreeScenePlayer particle layer', () => {
     expect(mat.uniforms.frameCount.value).toBe(3);
     // 无 tex → map 兜底为 1×1 白 DataTexture（纯色粒子不依赖纹理内容）。
     expect(mat.uniforms.map.value).toBeInstanceOf(THREE.Texture);
+  });
+
+  it('addParticle：softness 缺省按有无纹理（无 tex→1.0 软圆点、有 tex→0.15 薄软边），renderOrder=1（粒子在背景之上）', () => {
+    const { player } = makePlayer(1920, 1080);
+    // 无 tex → 白图兜底 → softness 1.0（整盘软圆点，而非硬边白方块）。
+    player.addParticle(() => dataA, { frameCount: 4, blend: 'alpha' });
+    const meshNoTex = particleMesh(player);
+    const matNoTex = meshNoTex.material as THREE.ShaderMaterial;
+    expect(matNoTex.uniforms.softness.value).toBe(1.0);
+    expect(meshNoTex.renderOrder).toBe(1);
+    // 有 tex → softness 0.15（薄软边，形状由 texel.a 提供）。
+    const p2 = makePlayer(1920, 1080);
+    p2.player.addParticle(() => dataA, {
+      frameCount: 4, blend: 'alpha', tex: new THREE.DataTexture(new Uint8Array(4), 2, 2),
+    });
+    const meshTex = particleMesh(p2.player);
+    const matTex = meshTex.material as THREE.ShaderMaterial;
+    expect(matTex.uniforms.softness.value).toBe(0.15);
+    expect(meshTex.renderOrder).toBe(1);
+    // 显式传 softness 时以显式值为准（覆盖缺省）。
+    const p3 = makePlayer(1920, 1080);
+    p3.player.addParticle(() => dataA, { frameCount: 4, blend: 'alpha', tex: new THREE.DataTexture(new Uint8Array(4), 2, 2), softness: 0.7 });
+    expect((particleMesh(p3.player).material as THREE.ShaderMaterial).uniforms.softness.value).toBe(0.7);
   });
 
   it('addParticle：无 tex 时用 1×1 白 DataTexture 兜底（map uniform 恒非空）', () => {

@@ -82,6 +82,11 @@ void main() {
   vParticleAlpha = particleAlpha;
   vec3 worldPos = particlePosition + vec3(position.xy * particleSize * 0.5, 0.0);
   gl_Position = projectionMatrix * modelViewMatrix * vec4(worldPos, 1.0);
+  // ⚠️ 修正：粒子是 2D billboard（无深度排序，z 不参与可见性）。three 正交相机 far/near 会把
+  // 视锥外的 z 裁剪掉，而 wasm billboard 早已把投影矩阵 z 行全 0（clip.z=0，见 particle_billboard.wgsl）
+  // 防「emitter 球壳散射可到 ±750 的粒子被 z 裁剪 → 粒子不可见」。这里把 NDC z 强制归中（0），
+  // 配合 material.depthTest=false（忽略深度），保证粒子不被相机深度范围裁剪（对齐 wasm 语义）。
+  gl_Position.z = 0.0;
 }
 `;
 
@@ -251,11 +256,16 @@ export class ThreeScenePlayer {
     const material = new THREE.MeshBasicMaterial({
       map: opts.texture ?? null,
       transparent: true,
+      // 背景是透明图层（transparent=true），不写深度——避免其 depthWrite 干扰其他透明对象
+      // （粒子 depthTest=false 不受影响，但背景写出深度会占据深度缓冲区，属多余）。
+      depthWrite: false,
     });
     const mod = materialModulation(undefined, opts.alpha, opts.brightness);
     material.color.setRGB(mod.r, mod.g, mod.b);
     material.opacity = mod.a;
     const mesh = new THREE.Mesh(geometry, material);
+    // renderOrder 0（缺省且显式）：背景在粒子（renderOrder 1）之前绘制（背景在下）。
+    mesh.renderOrder = 0;
     const s = opts.scale;
     mesh.scale.set(s[0], s[1], s[2] ?? 1);
     // we_to_three：origin - scene/2（y 不翻）。
@@ -328,7 +338,13 @@ export class ThreeScenePlayer {
     opts: { tex?: THREE.Texture; frameCount: number; blend: 'additive' | 'alpha'; softness?: number },
   ): number {
     const frameCount = Math.max(1, Math.floor(opts.frameCount));
-    const softness = opts.softness ?? 0;
+    // softness 默认按有无纹理对齐 wasm `particle_render`（Task 5 回归）：
+    //   有纹理（真实 alpha 遮罩）→ 0.15（薄软边，形状由 texel.a 提供）；
+    //   无纹理（1×1 白图兜底）→ 1.0（整盘软圆点）。
+    // 此前恒 0 → 无纹理粒子是**硬边白方块**（叠在背景上呈白斑/偏白，单个粒子看作方块）。
+    // 调用方显式传 softness 时以其为准（测试/精细控制）。
+    const hasTex = !!opts.tex;
+    const softness = opts.softness ?? (hasTex ? 0.15 : 1.0);
 
     // InstancedBufferGeometry：基础 4 角点四边形（position）+ 索引；每粒子一个实例（instanced 属性）。
     const geometry = new THREE.InstancedBufferGeometry();
@@ -372,6 +388,11 @@ export class ThreeScenePlayer {
     const mesh = new THREE.Mesh(geometry, material);
     // 粒子散布在场景（非基础四边形包围球），禁用视锥剔除防止对象中心离屏时整层消失。
     mesh.frustumCulled = false;
+    // renderOrder 固定为 1：保证粒子 billboard 在透明渲染队列中**晚于**背景图层（renderOrder 0）
+    // 绘制，使粒子叠在背景之上（背景 transparent 同排透明队列，靠插入顺序易受排序扰动，见
+    // ThreeScenePlayer 背景/粒子同 z 的 reversePainterSortStable 稳定序）。这是「粒子不可见 /
+    // 与背景竞争」的确定性保险（第 4 条：确认粒子被画出来且不被背景盖住）。
+    mesh.renderOrder = 1;
     this.scene.add(mesh);
 
     const id = this.nextParticleLayerId++;

@@ -121,7 +121,9 @@ export function createThreeSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneR
               specJson: specText,
               tex,
               blend: particleBlend(specText),
-              softness: 0,
+              // softness 缺省由 addParticle 按有无纹理推导（有纹理 0.15 / 无纹理 1.0，对齐 wasm
+              // particle_render SOFTNESS_* 语义）；此处不再硬编码 0（无纹理白图兜底时硬边白方块
+              // 会叠成白斑、单个粒子被看作方块——Task5 回归「粒子可见但不过曝/不遮背景」）。
             });
           }
         }
