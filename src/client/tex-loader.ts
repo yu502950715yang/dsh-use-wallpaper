@@ -211,8 +211,20 @@ export async function textureFromTex(info: TexInfo): Promise<THREE.Texture | nul
   }
   const glFormat = FORMAT_TO_GL[info.format];
   if (glFormat) {
+    // 方向语义（关键，修复 DXT 背景上下颠倒 —— Task 5 深挖）：WE .tex 压缩数据是 **top-down**
+    // （第一行=图像顶部，同 RGBA8888）。`CompressedTexture` 构造器把 `flipY` 置 false，且 WebGL 的
+    // `UNPACK_FLIP_Y_WEBGL` 对压缩纹理上传**无效**（只能按块数据原样写入，v=0=图像顶部），而 three
+    // PlaneGeometry 的 v=0=quad 底部 → 图像顶部被渲染到底部 = **上下颠倒**（RGBA8888 路径靠
+    // `flipRows` 手动翻为 bottom-up 规避，编码图像靠 `imageOrientation:'flipY'` 规避，唯独 DXT 漏掉）。
+    // 此处按**块行**（每 4 像素行一块，DXT 压缩纹理尺寸须为 4 的倍数）反转数据，使 v=0=bottom-up，
+    // 与 DataTexture/ImageBitmap 两条路径的行序**一致**（图像正立）。
+    const blockSize = info.format === TEX_FORMAT.DXT1 ? 8 : 16;
     const tex = new THREE.CompressedTexture(
-      info.mipmaps.map((m) => ({ data: m.data, width: m.width, height: m.height })),
+      info.mipmaps.map((m) => ({
+        data: flipCompressedRows(m.data, m.width, m.height, blockSize),
+        width: m.width,
+        height: m.height,
+      })),
       mip.width,
       mip.height,
       glFormat as THREE.CompressedPixelFormat,
@@ -221,6 +233,30 @@ export async function textureFromTex(info: TexInfo): Promise<THREE.Texture | nul
     return tex;
   }
   return null;
+}
+
+// 垂直翻转压缩纹理的**块行序**（top-down → bottom-up）。DXT（BC1/BC2/BC3）每 4×4 像素一块、
+// 每块固定 `blockSize` 字节（DXT1=8、DXT3/5=16）；压缩纹理无法用 UNPACK_FLIP_Y 翻转，必须在数据层
+// 反转块行（每块行 = 一块高 = 4 像素行，块内像素顺序不变）。尺寸须为 4 的倍数（DXT 约束），
+// 不满足时按 `ceil` 对齐（超出区冗余，无害）。纯函数（native 可测）。
+export function flipCompressedRows(
+  data: Uint8Array,
+  width: number,
+  height: number,
+  blockSize: number,
+): Uint8Array<ArrayBuffer> {
+  const blockW = Math.max(1, Math.ceil(width / 4));
+  const blockH = Math.max(1, Math.ceil(height / 4));
+  const rowBytes = blockW * blockSize;
+  const out = new Uint8Array(data.length);
+  for (let by = 0; by < blockH; by++) {
+    const src = by * rowBytes;
+    const dst = (blockH - 1 - by) * rowBytes;
+    // rowBytes 可能超出 data 尾部（不满足 4 倍时的冗余），用 subarray 截断安全拷贝。
+    const end = Math.min(src + rowBytes, data.length);
+    out.set(data.subarray(src, end), dst);
+  }
+  return out;
 }
 
 // RG88（format 8，2 字节/像素）与 R8（format 9，1 字节/像素）→ RGBA8888。

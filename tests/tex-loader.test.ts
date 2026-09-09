@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
-import { parseTex, glFormatForDds, TEX_FORMAT, textureFromTex, convertUnormToRgba, FIF } from '../src/client/tex-loader.js';
+import { parseTex, glFormatForDds, TEX_FORMAT, textureFromTex, convertUnormToRgba, flipCompressedRows, FIF } from '../src/client/tex-loader.js';
 import { makeTex } from './fixtures/make-tex.js';
 
 describe('glFormatForDds', () => {
@@ -335,5 +335,47 @@ describe('textureFromTex 分支选择', () => {
       images: [[{ width: 32, height: 16, data: png }]],
     });
     await expect(textureFromTex(parseTex(buf)!)).resolves.toBeNull();
+  });
+
+  // Task 5 深挖：DXT 压缩背景纹理上下颠倒（Lycoris Recoil-锦木千束）。
+  // WE .tex 压缩数据是 top-down，而 CompressedTexture.flipY=false + WebGL UNPACK_FLIP_Y 对压缩纹理
+  // 无效 → v=0=图像顶部被渲染到 quad 底部 = 上下颠倒。RGBA8888 路径用 flipRows、编码图像路径用
+  // imageOrientation:'flipY' 均已修正，唯独 DXT 漏掉 → 本组测试锁定并修复「块行反转」。
+  describe('flipCompressedRows（DXT 块行反转）', () => {
+    it('DXT1（blockSize=8）反转块行序（top-down→bottom-up）', () => {
+      // 8×8 = 2 块宽 × 2 块高（每块 4×4）。块索引：row0=block0,1；row1=block2,3。
+      const w = 8, h = 8, blockSize = 8;
+      const blocks = new Uint8Array(4 * blockSize);
+      for (let i = 0; i < 4; i++) for (let j = 0; j < blockSize; j++) blocks[i * blockSize + j] = i * 100 + j;
+      const flipped = flipCompressedRows(blocks, w, h, blockSize);
+      // 反转后：新第一块行 = 旧 row1（block2,3），新最后块行 = 旧 row0（block0,1）。
+      expect(Array.from(flipped.slice(0, blockSize))).toEqual(Array.from(blocks.slice(2 * blockSize, 3 * blockSize)));
+      expect(Array.from(flipped.slice(blockSize, 2 * blockSize))).toEqual(Array.from(blocks.slice(3 * blockSize, 4 * blockSize)));
+      expect(Array.from(flipped.slice(2 * blockSize, 3 * blockSize))).toEqual(Array.from(blocks.slice(0, blockSize)));
+      expect(Array.from(flipped.slice(3 * blockSize, 4 * blockSize))).toEqual(Array.from(blocks.slice(blockSize, 2 * blockSize)));
+    });
+
+    it('DXT3/5（blockSize=16）按块行反转', () => {
+      const w = 4, h = 8, blockSize = 16; // 1 块宽 × 2 块高
+      const blocks = new Uint8Array(2 * blockSize);
+      for (let i = 0; i < 2; i++) for (let j = 0; j < blockSize; j++) blocks[i * blockSize + j] = i * 50 + j;
+      const flipped = flipCompressedRows(blocks, w, h, blockSize);
+      expect(Array.from(flipped.slice(0, blockSize))).toEqual(Array.from(blocks.slice(blockSize, 2 * blockSize)));
+      expect(Array.from(flipped.slice(blockSize, 2 * blockSize))).toEqual(Array.from(blocks.slice(0, blockSize)));
+    });
+
+    it('DXT5（format=4）textureFromTex：加载为 CompressedTexture 且块行已反转（修复 Lycoris 颠倒）', async () => {
+      const w = 8, h = 8, blockSize = 16; // DXT5 每块 16B
+      const blocks = new Uint8Array(4 * blockSize);
+      for (let i = 0; i < 4; i++) for (let j = 0; j < blockSize; j++) blocks[i * blockSize + j] = i * 30 + j;
+      const buf = makeTex({ format: TEX_FORMAT.DXT5, images: [[{ width: w, height: h, data: blocks }]] });
+      const tex = await textureFromTex(parseTex(buf)!) as THREE.CompressedTexture;
+      expect(tex).toBeInstanceOf(THREE.CompressedTexture);
+      expect(tex.flipY).toBe(false); // CompressedTexture 缺省 flipY=false（且 WebGL 对压缩忽略 flip）
+      const m0 = tex.mipmaps[0] as { data: Uint8Array };
+      // 数据已翻为 bottom-up：新第一块行取自旧最后一块行（block2,3）。
+      expect(Array.from(m0.data.slice(0, blockSize))).toEqual(Array.from(blocks.slice(2 * blockSize, 3 * blockSize)));
+      expect(Array.from(m0.data.slice(2 * blockSize, 3 * blockSize))).toEqual(Array.from(blocks.slice(0, blockSize)));
+    });
   });
 });
