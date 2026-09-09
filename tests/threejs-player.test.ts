@@ -243,3 +243,152 @@ describe('ThreeScenePlayer background layer', () => {
     expect(() => player.update_background(999, [1, 2, 3])).not.toThrow();
   });
 });
+
+// Task 3：粒子图层（addParticle / updateParticles）。用 mock getter 提供 sim 顶点（每粒子
+// [pos3,size,uv2,color3,alpha] 10 浮点，对应 wasm SceneParticleSim::build_instance_vertices），
+// 验证 BufferGeometry（InstancedBufferGeometry）被正确填充、updateParticles 刷新 buffer、
+// blend/softness 设到 ShaderMaterial。
+describe('ThreeScenePlayer particle layer', () => {
+  // 每粒子 [pos3, size, uv2, color3, alpha]。helper 把平铺数组转 Float32Array。
+  function makeVerts(...parts: number[][]): Float32Array {
+    return new Float32Array(parts.flat());
+  }
+
+  // 2 粒子数据：
+  //   p0: pos(1,2,3) size40 uv(0.625,0.5) color(0.5,0.6,0.7) alpha0.25
+  //   p1: pos(-4,5,6) size20 uv(0.125,0.5) color(1,0,0) alpha0.5
+  const dataA = makeVerts(
+    [1, 2, 3, 40, 0.625, 0.5, 0.5, 0.6, 0.7, 0.25],
+    [-4, 5, 6, 20, 0.125, 0.5, 1, 0, 0, 0.5],
+  );
+
+  // 取 addParticle 后 scene 里的粒子 mesh（无背景时 scene.children[0]）。
+  function particleMesh(player: ThreeScenePlayer): THREE.Mesh {
+    const mesh = player.scene.children[0] as THREE.Mesh;
+    expect(mesh).toBeInstanceOf(THREE.Mesh);
+    return mesh;
+  }
+
+  it('addParticle：geometry 属性数/长度符合 sim 顶点（每粒子 [pos3,size,uv2,color3,alpha]）', () => {
+    const { player } = makePlayer(1920, 1080);
+    player.addParticle(() => dataA, { frameCount: 4, blend: 'additive', softness: 0.3 });
+    const mesh = particleMesh(player);
+    const geom = mesh.geometry as THREE.InstancedBufferGeometry;
+    expect(geom).toBeInstanceOf(THREE.InstancedBufferGeometry);
+    expect(geom.instanceCount).toBe(2);
+
+    // 5 个 per-particle instanced 属性（position/size/uv/color/alpha），长度 = 粒子数×itemSize。
+    const pos = geom.getAttribute('particlePosition') as THREE.InstancedBufferAttribute;
+    const size = geom.getAttribute('particleSize') as THREE.InstancedBufferAttribute;
+    const uv = geom.getAttribute('particleUv') as THREE.InstancedBufferAttribute;
+    const color = geom.getAttribute('particleColor') as THREE.InstancedBufferAttribute;
+    const alpha = geom.getAttribute('particleAlpha') as THREE.InstancedBufferAttribute;
+    expect(pos.count).toBe(2);
+    expect((pos.array as Float32Array).length).toBe(2 * 3);
+    expect((size.array as Float32Array).length).toBe(2);
+    expect((uv.array as Float32Array).length).toBe(2 * 2);
+    expect((color.array as Float32Array).length).toBe(2 * 3);
+    expect((alpha.array as Float32Array).length).toBe(2);
+
+    // 数据写回：p0 pos=(1,2,3)、size=40、uv=(0.625,0.5)、color=(0.5,0.6,0.7)、alpha=0.25。
+    expect(Array.from(pos.array as Float32Array).slice(0, 3)).toEqual([1, 2, 3]);
+    expect((size.array as Float32Array)[0]).toBe(40);
+    expect(Array.from(uv.array as Float32Array).slice(0, 2)).toEqual([0.625, 0.5]);
+    // Float32 精度：0.5/0.625 可精确，0.6/0.7 需 closeTo。
+    const col0 = Array.from(color.array as Float32Array).slice(0, 3);
+    expect(col0[0]).toBeCloseTo(0.5, 6);
+    expect(col0[1]).toBeCloseTo(0.6, 6);
+    expect(col0[2]).toBeCloseTo(0.7, 6);
+    expect((alpha.array as Float32Array)[0]).toBe(0.25);
+    // p1：pos=(-4,5,6)、size=20。
+    expect(Array.from(pos.array as Float32Array).slice(3, 6)).toEqual([-4, 5, 6]);
+    expect((size.array as Float32Array)[1]).toBe(20);
+  });
+
+  it('addParticle：blend 模式（additive/alpha）设到 material，transparent 恒置位', () => {
+    const { player } = makePlayer(1920, 1080);
+    player.addParticle(() => dataA, { frameCount: 4, blend: 'additive' });
+    const matAdd = particleMesh(player).material as THREE.ShaderMaterial;
+    expect(matAdd.transparent).toBe(true);
+    expect(matAdd.blending).toBe(THREE.AdditiveBlending);
+
+    // alpha blend 用另一个 player（或清空既有图层）。
+    const p2 = makePlayer(1920, 1080);
+    p2.player.addParticle(() => dataA, { frameCount: 4, blend: 'alpha' });
+    const matAlpha = particleMesh(p2.player).material as THREE.ShaderMaterial;
+    expect(matAlpha.transparent).toBe(true);
+    expect(matAlpha.blending).toBe(THREE.NormalBlending);
+  });
+
+  it('addParticle：softness / frameCount 设到 material 的 uniform', () => {
+    const { player } = makePlayer(1920, 1080);
+    player.addParticle(() => dataA, { frameCount: 3, blend: 'alpha', softness: 0.7 });
+    const mat = particleMesh(player).material as THREE.ShaderMaterial;
+    expect(mat.uniforms.softness.value).toBe(0.7);
+    expect(mat.uniforms.frameCount.value).toBe(3);
+    // 无 tex → map 兜底为 1×1 白 DataTexture（纯色粒子不依赖纹理内容）。
+    expect(mat.uniforms.map.value).toBeInstanceOf(THREE.Texture);
+  });
+
+  it('addParticle：无 tex 时用 1×1 白 DataTexture 兜底（map uniform 恒非空）', () => {
+    const { player } = makePlayer(1920, 1080);
+    player.addParticle(() => dataA, { frameCount: 4, blend: 'additive' });
+    const mat = particleMesh(player).material as THREE.ShaderMaterial;
+    const tex = mat.uniforms.map.value as THREE.DataTexture;
+    expect(tex).toBeInstanceOf(THREE.DataTexture);
+    expect(tex.image.width).toBe(1);
+    expect(tex.image.height).toBe(1);
+  });
+
+  it('updateParticles：getter 返回值变化 → BufferAttribute 被刷新（粒子数/数据更新）', () => {
+    const { player } = makePlayer(1920, 1080);
+    // getter 捕获可变 verts；先两次调用返回 dataA，切换后返回 3 粒子 dataB（模拟 sim 推进）。
+    let verts: Float32Array = dataA;
+    const getter = () => verts;
+    player.addParticle(getter, { frameCount: 4, blend: 'additive' });
+    const geom = particleMesh(player).geometry as THREE.InstancedBufferGeometry;
+    expect(geom.instanceCount).toBe(2);
+
+    const dataB = makeVerts(
+      [7, 8, 9, 50, 0.875, 0.5, 0.1, 0.2, 0.3, 0.9],
+      [10, 11, 12, 30, 0.375, 0.5, 0.4, 0.5, 0.6, 0.6],
+      [-1, -2, -3, 15, 0.125, 0.5, 0.7, 0.8, 0.9, 0.1],
+    );
+    verts = dataB;
+    player.updateParticles(0.016);
+    expect(geom.instanceCount).toBe(3);
+    const pos = geom.getAttribute('particlePosition') as THREE.InstancedBufferAttribute;
+    const size = geom.getAttribute('particleSize') as THREE.InstancedBufferAttribute;
+    // 数据写回新值：p0 pos=(7,8,9)、size=50；p2 size=15。
+    expect(Array.from(pos.array as Float32Array).slice(0, 3)).toEqual([7, 8, 9]);
+    expect((size.array as Float32Array)[0]).toBe(50);
+    expect((size.array as Float32Array)[2]).toBe(15);
+    // 属性标记 needsUpdate（buffer 已刷新）。three.js 的 needsUpdate 是 setter-only，
+    // 读需用 version>0 判定（写 needsUpdate=true 使 version++）。
+    expect(pos.version).toBeGreaterThan(0);
+    expect(size.version).toBeGreaterThan(0);
+  });
+
+  it('update(dt) 帧钩子驱动粒子刷新：getter 每帧被调用并写回 buffer', () => {
+    const { player } = makePlayer(1920, 1080);
+    const getter = vi.fn(() => dataA);
+    player.addParticle(getter, { frameCount: 4, blend: 'additive' });
+    expect(getter).toHaveBeenCalledTimes(1); // addParticle 首帧填一次
+    player.update(0.1); // 帧钩子 → updateParticles → 再取 getter
+    expect(getter).toHaveBeenCalledTimes(2);
+  });
+
+  it('addParticle 返回数值 id，dispose 释放粒子几何/材质', () => {
+    const { player } = makePlayer(1920, 1080);
+    const id = player.addParticle(() => dataA, { frameCount: 4, blend: 'additive' });
+    expect(typeof id).toBe('number');
+    const mesh = particleMesh(player);
+    const geom = mesh.geometry;
+    const mat = mesh.material;
+    const spyGeom = vi.spyOn(geom, 'dispose');
+    const spyMat = vi.spyOn(mat, 'dispose');
+    player.dispose();
+    expect(spyGeom).toHaveBeenCalled();
+    expect(spyMat).toHaveBeenCalled();
+  });
+});

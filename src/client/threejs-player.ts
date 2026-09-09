@@ -27,6 +27,97 @@ type BackgroundEntry = {
   sceneH: number;
 };
 
+// 粒子图层条目（Task 3）：记录 three.js billboard quad 的 GPU 资源与配套模拟取顶点 getter。
+// 每粒子一个**实例**（InstancedBufferGeometry 的 instanced attribute），顶点 shader 由
+// 基础四边形角点（position=[-1,1]²）+ 每粒子位置/尺寸展开成屏幕对齐的 billboard。
+type ParticleLayer = {
+  id: number;
+  // 每粒子数据来自 wasm `SceneParticleSim::build_instance_vertices`（摊平 Float32Array，
+  // 每粒子 `[pos3,size,uv2,color3,alpha]` 10 浮点）。getter 每帧刷新时返回当前顶点。
+  getter: () => Float32Array;
+  frameCount: number;
+  geometry: THREE.InstancedBufferGeometry;
+  material: THREE.ShaderMaterial;
+  // 承载 billboard quad 的 mesh（每粒子一个实例）。frustumCulled=false（粒子散布在场景，
+  // 不用基础四边形包围球做视锥剔除，防对象中心离屏时整层被裁掉）。
+  mesh: THREE.Mesh;
+  // 各 instanced attribute（per-particle），updateParticles 直接写其 Float32Array + needsUpdate。
+  positions: THREE.InstancedBufferAttribute;
+  sizes: THREE.InstancedBufferAttribute;
+  uvs: THREE.InstancedBufferAttribute;
+  colors: THREE.InstancedBufferAttribute;
+  alphas: THREE.InstancedBufferAttribute;
+};
+
+// 4 角点单位四边形（[-1,1]²，z=0）：作为 InstancedBufferGeometry 的基础顶点 position（角点），
+// 顶点 shader 用它展开 billboard（pos + corner*half_size）。索引 [0,1,2, 0,2,3] 组成 2 个三角形
+// （从 +z 相机方向看为逆时针 → FrontSide 可见）。
+const PARTICLE_QUAD_CORNERS = new Float32Array([
+  -1, -1, 0,
+   1, -1, 0,
+   1,  1, 0,
+  -1,  1, 0,
+]);
+const PARTICLE_QUAD_INDEX: [number, number, number, number, number, number] = [0, 1, 2, 0, 2, 3];
+
+// 粒子 billboard 顶点 shader：每粒子一个实例，基础四边形 position=[-1,1]² 作角点，
+// worldPos = particlePosition + corner*half_size（half_size = particleSize/2），再用
+// modelViewMatrix×projectionMatrix（mvp）投影。position/normal/uv/矩阵由 three.js 自动注入；
+// 这里只补每粒子 instanced 属性（particlePosition/Size/Uv/Color/Alpha）与传递 varyings。
+const PARTICLE_VERTEX_SHADER = `
+attribute vec3 particlePosition;
+attribute float particleSize;
+attribute vec2 particleUv;
+attribute vec3 particleColor;
+attribute float particleAlpha;
+varying vec2 vCornerUv;
+varying vec2 vParticleUv;
+varying vec3 vParticleColor;
+varying float vParticleAlpha;
+void main() {
+  vCornerUv = position.xy * 0.5 + 0.5;
+  vParticleUv = particleUv;
+  vParticleColor = particleColor;
+  vParticleAlpha = particleAlpha;
+  vec3 worldPos = particlePosition + vec3(position.xy * particleSize * 0.5, 0.0);
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(worldPos, 1.0);
+}
+`;
+
+// 粒子 billboard fragment shader：多帧 uv 切片（frameCount，uv.x 帧子区，y 占满整高）→
+// 采样纹理 → color*texel.rgb、alpha=texel.a*particle.alpha；softness 做中心→边缘软衰减。
+// 混色（additive/alpha）由 three.js material.blending 承担（openGL blending），这里只输出 RGBA。
+const PARTICLE_FRAGMENT_SHADER = `
+uniform sampler2D map;
+uniform float frameCount;
+uniform float softness;
+varying vec2 vCornerUv;
+varying vec2 vParticleUv;
+varying vec3 vParticleColor;
+varying float vParticleAlpha;
+void main() {
+  float n = max(frameCount, 1.0);
+  float frameIndex = floor(clamp(vParticleUv.x, 0.0, 0.999999) * n);
+  frameIndex = min(frameIndex, n - 1.0);
+  vec2 texUv = vec2((frameIndex + vCornerUv.x) / n, vCornerUv.y);
+  vec4 texel = texture2D(map, texUv);
+  // softness ∈ [0,1]：0=硬边（仅在 quad 边缘收尾），1=全柔（中心→边缘平滑衰减）。
+  float dist = length(vCornerUv - 0.5) * 2.0;
+  float edgeStart = clamp(1.0 - softness, 0.0001, 0.9999);
+  float falloff = 1.0 - smoothstep(edgeStart, 1.0, dist);
+  float a = texel.a * vParticleAlpha * falloff;
+  gl_FragColor = vec4(vParticleColor * texel.rgb, a);
+}
+`;
+
+// 无纹理（opts.tex 缺省）时的 1×1 白色兜底（同 scene-renderer.createWhiteDataTexture 语义）：
+// 纯色粒子不依赖纹理内容，白图 → texel=白、alpha=1，颜色/透明度由 vParticleColor/vParticleAlpha 给定。
+function createWhiteTexture(): THREE.DataTexture {
+  const tex = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+  tex.needsUpdate = true;
+  return tex;
+}
+
 export class ThreeScenePlayer {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene: THREE.Scene;
@@ -44,6 +135,10 @@ export class ThreeScenePlayer {
   // 背景图层条目（按 addBackground 返回的 id 索引，供 update_background 引用）。
   private backgroundEntries = new Map<number, BackgroundEntry>();
   private nextBackgroundId = 0;
+
+  // 粒子图层条目（Task 3）：按 addParticle 返回的 id 索引，更新粒子时用其 getter 刷新缓冲区。
+  private particleLayers = new Map<number, ParticleLayer>();
+  private nextParticleLayerId = 0;
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -96,9 +191,12 @@ export class ThreeScenePlayer {
     this.camera.updateProjectionMatrix();
   }
 
-  // 每帧扩展钩子：Task 1 空实现，后续 Task 2/3/4 在这里挂背景 Sprite 更新 / 粒子模拟。
+  // 每帧扩展钩子：驱动粒子图层刷新（Task 3）。Task 1 空实现；背景更新由 update_background
+  // 显式调用（对齐 wasm update_image 语义）。后续 Task 4 可在此挂背景/效果链更新。
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  update(_dt: number): void {}
+  update(_dt: number): void {
+    this.updateParticles(_dt);
+  }
 
   // 启动帧循环（renderer.setAnimationLoop 内部 RAF）。每帧：update(dt)（内部钩子）→
   // 可选外部回调 fn(dt) → render(scene, camera)。dt 用 performance.now 差分，clamp 0.1s
@@ -213,6 +311,142 @@ export class ThreeScenePlayer {
     }
   }
 
+  // Task 3：粒子图层。`simVerticesGetter` 每帧返回模拟器当前顶点（摊平 Float32Array，
+  // 每粒子 `[pos3, size, uv2, color3, alpha]` 10 浮点——来自 wasm `SceneParticleSim::build_instance_vertices`）。
+  // 渲染用 three.js `ShaderMaterial` billboard quad（每粒子一个实例，shader 由基础角点+位置/尺寸展开），
+  // 模拟逻辑仍由 `SceneParticleSim` 承担（思路 1 核心：不重写模拟，只换渲染引擎）。
+  // 返回分配的图层 id，供更新/释放引用。
+  addParticle(
+    simVerticesGetter: () => Float32Array,
+    opts: { tex?: THREE.Texture; frameCount: number; blend: 'additive' | 'alpha'; softness?: number },
+  ): number {
+    const frameCount = Math.max(1, Math.floor(opts.frameCount));
+    const softness = opts.softness ?? 0;
+
+    // InstancedBufferGeometry：基础 4 角点四边形（position）+ 索引；每粒子一个实例（instanced 属性）。
+    const geometry = new THREE.InstancedBufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(PARTICLE_QUAD_CORNERS, 3));
+    geometry.setIndex(new THREE.BufferAttribute(new Uint16Array(PARTICLE_QUAD_INDEX), 1));
+    geometry.instanceCount = 0;
+
+    // 初始 getter 数据 → 决定首帧每个 instanced 属性的容量（updateParticles 逐帧刷新/扩容）。
+    const initial = simVerticesGetter();
+    const count = Math.floor(initial.length / 10);
+
+    // per-particle（每个实例）属性：pos(3)/size(1)/uv(2)/color(3)/alpha(1)；itemSize 与字段对应。
+    const positions = new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3);
+    const sizes = new THREE.InstancedBufferAttribute(new Float32Array(count), 1);
+    const uvs = new THREE.InstancedBufferAttribute(new Float32Array(count * 2), 2);
+    const colors = new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3);
+    const alphas = new THREE.InstancedBufferAttribute(new Float32Array(count), 1);
+    geometry.setAttribute('particlePosition', positions);
+    geometry.setAttribute('particleSize', sizes);
+    geometry.setAttribute('particleUv', uvs);
+    geometry.setAttribute('particleColor', colors);
+    geometry.setAttribute('particleAlpha', alphas);
+
+    // ShaderMaterial：billboard quad（pos + corner*half_size，mvp 用相机投影/视图）、
+    // fragment 多帧 uv 切片（frame_count）、additive/alpha blend、softness、color*texel.rgb、alpha=texel.a*particle.alpha。
+    const material = new THREE.ShaderMaterial({
+      uniforms: {
+        map: { value: opts.tex ?? createWhiteTexture() },
+        frameCount: { value: frameCount },
+        softness: { value: softness },
+      },
+      vertexShader: PARTICLE_VERTEX_SHADER,
+      fragmentShader: PARTICLE_FRAGMENT_SHADER,
+      transparent: true,
+      depthWrite: false,
+      depthTest: false,
+      side: THREE.DoubleSide,
+      blending: opts.blend === 'additive' ? THREE.AdditiveBlending : THREE.NormalBlending,
+    });
+
+    const mesh = new THREE.Mesh(geometry, material);
+    // 粒子散布在场景（非基础四边形包围球），禁用视锥剔除防止对象中心离屏时整层消失。
+    mesh.frustumCulled = false;
+    this.scene.add(mesh);
+
+    const id = this.nextParticleLayerId++;
+    const layer: ParticleLayer = {
+      id,
+      getter: simVerticesGetter,
+      frameCount,
+      geometry,
+      material,
+      mesh,
+      positions,
+      sizes,
+      uvs,
+      colors,
+      alphas,
+    };
+    this.particleLayers.set(id, layer);
+    // 立即写入首帧数据，保持 geometry 与 getter 一致（后续由 updateParticles 逐帧刷新）。
+    this.writeParticleData(layer, initial, count);
+    return id;
+  }
+
+  // 每帧刷新所有粒子图层：调用各自的 `simVerticesGetter()` 取当前顶点并写回 BufferAttribute。
+  // `dt` 预留（模拟推进由 getter 持有方按其帧循环驱动，如 wasm `CpuParticleSim.update`）。
+  updateParticles(dt: number): void {
+    void dt;
+    for (const layer of this.particleLayers.values()) {
+      const data = layer.getter();
+      const count = Math.floor(data.length / 10);
+      this.writeParticleData(layer, data, count);
+    }
+  }
+
+  // 把 per-particle 摊平顶点（每粒子 10 浮点）拆到 5 个 instanced 属性并标记需重传。
+  // 属性容量不足时按需扩容（不足×2），收缩不回收（多余槽位不参与渲染，由 instanceCount 控制）。
+  private writeParticleData(layer: ParticleLayer, data: Float32Array, count: number): void {
+    const ensure = (
+      attr: THREE.InstancedBufferAttribute,
+      itemSize: number,
+      need: number,
+      name: string,
+    ): THREE.InstancedBufferAttribute => {
+      const arr = attr.array as Float32Array;
+      if (arr.length >= need) return attr;
+      const grown = new Float32Array(Math.max(need, Math.max(arr.length * 2, 1)));
+      grown.set(arr);
+      const next = new THREE.InstancedBufferAttribute(grown, itemSize);
+      layer.geometry.setAttribute(name, next);
+      return next;
+    };
+    layer.positions = ensure(layer.positions, 3, count * 3, 'particlePosition');
+    layer.sizes = ensure(layer.sizes, 1, count, 'particleSize');
+    layer.uvs = ensure(layer.uvs, 2, count * 2, 'particleUv');
+    layer.colors = ensure(layer.colors, 3, count * 3, 'particleColor');
+    layer.alphas = ensure(layer.alphas, 1, count, 'particleAlpha');
+
+    const pos = layer.positions.array as Float32Array;
+    const size = layer.sizes.array as Float32Array;
+    const uv = layer.uvs.array as Float32Array;
+    const color = layer.colors.array as Float32Array;
+    const alpha = layer.alphas.array as Float32Array;
+    for (let i = 0; i < count; i++) {
+      const b = i * 10;
+      pos[i * 3] = data[b];
+      pos[i * 3 + 1] = data[b + 1];
+      pos[i * 3 + 2] = data[b + 2];
+      size[i] = data[b + 3];
+      uv[i * 2] = data[b + 4];
+      uv[i * 2 + 1] = data[b + 5];
+      color[i * 3] = data[b + 6];
+      color[i * 3 + 1] = data[b + 7];
+      color[i * 3 + 2] = data[b + 8];
+      alpha[i] = data[b + 9];
+    }
+    layer.positions.needsUpdate = true;
+    layer.sizes.needsUpdate = true;
+    layer.uvs.needsUpdate = true;
+    layer.colors.needsUpdate = true;
+    layer.alphas.needsUpdate = true;
+    layer.geometry.instanceCount = count;
+  }
+
   // 停止循环并释放 renderer 资源。
   dispose(): void {
     this.renderer.setAnimationLoop(null);
@@ -222,6 +456,12 @@ export class ThreeScenePlayer {
       (entry.mesh.material as THREE.Material).dispose();
     }
     this.backgroundEntries.clear();
+    // 释放粒子图层几何/材质（texture 所有权在外，随 scene 清理，不在此 dispose）。
+    for (const layer of this.particleLayers.values()) {
+      layer.geometry.dispose();
+      layer.material.dispose();
+    }
+    this.particleLayers.clear();
     this.renderer.dispose();
   }
 }

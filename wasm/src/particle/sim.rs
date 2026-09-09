@@ -983,6 +983,37 @@ impl SceneParticleSim {
         }
         out
     }
+
+    /// 输出**每粒子单点**顶点（10 浮点：`[pos3, size, uv2, color3, alpha]`），供 three.js 播放器
+    /// billboard（每粒子一个实例，shader 内展开 quad 角点）。`uv2` = 帧子区**中心** uv
+    /// （`frame_center_uv`：uv.x = (frame+0.5)/frame_count，uv.y = 0.5；单帧 → [0.5,0.5]），
+    /// 供 fragment 多帧切片（`floor(uv.x*frame_count)` 还原帧号后取 1/frame_count 子区）。
+    ///
+    /// 与 `build_vertices`（每角点 17 浮点、4 角点，供 wasm-renderer wgpu 路径）**不同**——本方法是
+    /// **新建**的 per-particle 输出（每粒子仅 1 个顶点，不做 4 角点展开），供思路 1 的 three.js
+    /// 播放器用，**不改动**既有 wasm-renderer 粒子渲染路径（`build_vertices`/`ParticleRenderPass`
+    /// 保持原样）。
+    ///
+    /// 字段顺序（每粒子 10 浮点，stride 40B）：
+    ///   `[0..3]` pos3；`[3]` size；`[4..6]` uv2（帧子区中心）；`[6..9]` color3；`[9]` alpha。
+    /// returns Vec 长度 = particles.len() × 10。
+    pub fn build_instance_vertices(&self) -> Vec<f32> {
+        let mut out = Vec::with_capacity(self.particles.len() * 10);
+        for p in &self.particles {
+            let [ux, uy] = frame_center_uv(p.frame, self.spritesheet_frames);
+            out.push(p.pos[0]);
+            out.push(p.pos[1]);
+            out.push(p.pos[2]);
+            out.push(p.size);
+            out.push(ux);
+            out.push(uy);
+            out.push(p.color[0]);
+            out.push(p.color[1]);
+            out.push(p.color[2]);
+            out.push(p.alpha);
+        }
+        out
+    }
 }
 
 #[cfg(test)]
@@ -1097,6 +1128,94 @@ mod tests {
         assert_eq!(vs[0].len(), 17);
         assert_eq!(vs[0][0..3], vs[1][0..3]);
         assert_eq!(vs[3][6], vs[0][6]);
+    }
+
+    /// Task 3：`build_instance_vertices` 输出**每粒子** 10 浮点 `[pos3,size,uv2,color3,alpha]`，
+    /// uv2 = 帧子区中心（frame_center_uv），供 three.js billboard（每粒子一实例，shader 展开角点）。
+    /// 与 `build_vertices`（每角点 17 浮点、4 角点）不同——这是思路 1 的 per-particle 输出。
+    #[test]
+    fn build_instance_vertices_flat_per_particle() {
+        let mut sim = SceneParticleSim::new(
+            ParticleEmitterSpec {
+                rate: 0.0,
+                origin: [0.0; 3],
+                directions: [0.0; 3],
+                dist_min: 0.0,
+                dist_max: 0.0,
+                is_sphere: false,
+            },
+            8,
+            [0.0; 3],
+            3840.0,
+            2160.0,
+            ParticleInitSpec {
+                lifetime_min: 5.0,
+                lifetime_max: 10.0,
+                size_min: 30.0,
+                size_max: 50.0,
+                size_exponent: 2.0,
+                velocity_min: [-50.0, -50.0, 0.0],
+                velocity_max: [0.0, -15.0, 0.0],
+                color_min: [1.0, 0.83, 0.97],
+                color_max: [1.0, 0.83, 0.97],
+                alpha_min: 1.0,
+                alpha_max: 1.0,
+                rotation_min: [0.0; 3],
+                rotation_max: [0.0; 3],
+                angular_vel_min: [0.0; 3],
+                angular_vel_max: [0.0; 3],
+                turbulent: None,
+            },
+        );
+        sim.particles.push(SimParticle {
+            pos: [1.0, 2.0, 3.0],
+            vel: [0.0; 3],
+            rot: 0.0,
+            angular_vel: [0.0; 3],
+            size: 40.0,
+            alpha: 0.25,
+            life: 1.0,
+            max_life: 1.0,
+            color: [0.5, 0.6, 0.7],
+            frame: 2.0,
+            initial: SimInitial {
+                color: [0.5, 0.6, 0.7],
+                alpha: 0.25,
+                size: 40.0,
+                lifetime: 1.0,
+            },
+            fade_in: 0.0,
+            fade_out: 1.0,
+            oscillate_alpha: OscState {
+                frequency: 0.0,
+                scale: 1.0,
+                phase: 0.0,
+                base: 0.0,
+                initialized: false,
+            },
+            oscillate_size: OscState {
+                frequency: 0.0,
+                scale: 1.0,
+                phase: 0.0,
+                base: 0.0,
+                initialized: false,
+            },
+            oscillate_position: OscState3 {
+                frequency: [0.0; 3],
+                scale: [0.0; 3],
+                phase: [0.0; 3],
+                initialized: false,
+            },
+        });
+        let v = sim.build_instance_vertices();
+        assert_eq!(v.len(), 10, "单粒子应输出 10 浮点");
+        assert_eq!(&v[0..3], &[1.0, 2.0, 3.0], "pos3");
+        assert_eq!(v[3], 40.0, "size");
+        // frame=2 → frame_center_uv(2, 4) = [(2+0.5)/4, 0.5] = [0.625, 0.5]。
+        assert_eq!(v[4], 0.625, "uv.x 帧子区中心");
+        assert_eq!(v[5], 0.5, "uv.y");
+        assert_eq!(&v[6..9], &[0.5, 0.6, 0.7], "color3");
+        assert_eq!(v[9], 0.25, "alpha");
     }
 
     /// Important I1：spawn 用 `self.init`（每壁纸 spec.init），而非黑神话硬编码。
