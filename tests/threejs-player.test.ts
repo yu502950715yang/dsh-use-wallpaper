@@ -6,7 +6,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
-import { ThreeScenePlayer } from '../src/client/threejs-player.js';
+import { ThreeScenePlayer, loadSceneToThree, frameCountFromDims, textureFrameCount } from '../src/client/threejs-player.js';
 import { coverRange } from '../src/client/scene-renderer.js';
 
 // 注入的 mock renderer：只测相机/场景/RAF 逻辑，不触碰 WebGL。
@@ -390,5 +390,159 @@ describe('ThreeScenePlayer particle layer', () => {
     player.dispose();
     expect(spyGeom).toHaveBeenCalled();
     expect(spyMat).toHaveBeenCalled();
+  });
+});
+
+// Task 4：loadSceneToThree（WE scene → three 播放器）。用 mock createParticleSim 注入（node 无法
+// 实例化 wasm CpuParticleSim），验证 scene.json 解析装配（背景/粒子数量）、frameCount 对齐、
+// 播放帧 sim.update + player.updateParticles 的推进顺序。复用 Task 1 的 createMockRenderer 注入。
+describe('ThreeScenePlayer loadSceneToThree', () => {
+  // 黑神话（Sakura）scene.json 精简版：1 个 image 对象（主图，id=13）+ 1 个 particle 对象
+  // （Sakura 花瓣，id=71，origin 顶部偏左 + 负 scale）——与 research/2851992662-scene.json 一致。
+  const BLACKMYTH_SCENE = JSON.stringify({
+    camera: {
+      center: '0.00003 26.39995 0.00000',
+      eye: '0.00003 26.39995 1.00000',
+      up: '0.00000 1.00000 0.00000',
+    },
+    general: {
+      clearcolor: '0.70000 0.70000 0.70000',
+      orthogonalprojection: { height: 2160, width: 3840 },
+    },
+    objects: [
+      {
+        id: 13, name: 'blackmyth_wukong_wallpaper_035',
+        image: 'models/blackmyth_wukong_wallpaper_035.json',
+        origin: '1920.00000 1080.00000 0.00000', scale: '1.00000 1.00000 1.00000',
+        size: '3840.00000 2160.00000', alignment: 'center',
+        alpha: 1.0, brightness: 1.0, color: '1.00000 1.00000 1.00000', visible: true,
+      },
+      {
+        id: 71, name: 'Sakura',
+        particle: 'particles/presets/leaves5.json',
+        origin: '2306.34155 419.76611 0.00000', scale: '-2.05166 2.11670 1.00000', visible: true,
+      },
+    ],
+  });
+
+  // 每粒子 [pos3, size, uv2, color3, alpha] 10 浮点（2 粒子），供 mock sim.vertices() 返回。
+  const SIM_VERT = new Float32Array([
+    1, 2, 3, 40, 0.625, 0.5, 0.5, 0.6, 0.7, 0.25,
+    -4, 5, 6, 20, 0.125, 0.5, 1, 0, 0, 0.5,
+  ]);
+
+  // wasm CpuParticleSim 的 mock：记录 update/vertices 调用（可断言推进顺序），
+  // set_frame_count 更新 frame_count() 返回值（对齐真实 sim 语义）。
+  function makeMockSim(initialFrameCount = 4, log: string[] = []) {
+    let frameCount = Math.max(1, initialFrameCount);
+    const update = vi.fn(() => { log.push('update'); });
+    const vertices = vi.fn(() => { log.push('vertices'); return SIM_VERT; });
+    const frame_count = vi.fn(() => frameCount);
+    const set_frame_count = vi.fn((n: number) => { frameCount = Math.max(1, n); });
+    const particle_count = vi.fn(() => 2);
+    return { update, vertices, frame_count, set_frame_count, particle_count };
+  }
+
+  it('解析黑神话 scene.json → 背景对象数(1) + 粒子 sim 数(1)，且装配到同一播放器', () => {
+    const canvas = document.createElement('canvas');
+    const renderer = createMockRenderer();
+    const sim = makeMockSim();
+    const createParticleSim = vi.fn(() => sim);
+    const assets = {
+      renderer: renderer as unknown as THREE.WebGLRenderer,
+      backgroundTextures: new Map([[13, new THREE.DataTexture(new Uint8Array(4), 2, 2)]]),
+      particles: new Map([[71, { specJson: '{}', tex: new THREE.DataTexture(new Uint8Array(4), 512, 128), blend: 'additive' as const, softness: 0.3 }]]),
+      createParticleSim,
+    };
+    const result = loadSceneToThree(BLACKMYTH_SCENE, assets, canvas);
+    expect(result.player).toBeInstanceOf(ThreeScenePlayer);
+    expect(result.backgroundIds).toHaveLength(1);
+    expect(result.sims).toHaveLength(1);
+    expect(result.particleLayers).toHaveLength(1);
+    expect(result.sims[0]).toBe(sim);
+    // 粒子对象：new CpuParticleSim(json, origin, sceneW, sceneH)——origin 为 WE 场景坐标（顶部偏左）。
+    expect(createParticleSim).toHaveBeenCalledTimes(1);
+    const call = createParticleSim.mock.calls[0];
+    expect(call[0]).toBe('{}');
+    expect(call[1][0]).toBeCloseTo(2306.34155, 5);
+    expect(call[1][1]).toBeCloseTo(419.76611, 5);
+    expect(call[2]).toBe(3840);
+    expect(call[3]).toBe(2160);
+    // 背景对象：addBackground 参数 source 为 scene.json 的 image 对象调制/尺寸。
+    const bgMesh = result.player.scene.children[0] as THREE.Mesh;
+    expect(bgMesh.material).toBeInstanceOf(THREE.MeshBasicMaterial);
+    expect(bgMesh.position.x).toBeCloseTo(0, 6); // origin 1920 - 3840/2
+    expect(bgMesh.position.y).toBeCloseTo(0, 6); // origin 1080 - 2160/2
+  });
+
+  it('无粒子 spec（无 particles/createParticleSim）→ 只背景，粒子对象被跳过', () => {
+    const canvas = document.createElement('canvas');
+    const result = loadSceneToThree(BLACKMYTH_SCENE, { renderer: createMockRenderer() as unknown as THREE.WebGLRenderer, backgroundTextures: new Map([[13, new THREE.DataTexture(new Uint8Array(4), 2, 2)]]) }, canvas);
+    expect(result.backgroundIds).toHaveLength(1);
+    expect(result.sims).toHaveLength(0);
+    expect(result.particleLayers).toHaveLength(0);
+    // 场景无粒子图层 → scene.children 只含 1 个背景 mesh。
+    expect(result.player.scene.children.length).toBe(1);
+  });
+
+  it('frameCount 对齐：textureFrameCount(256×256)→1，sim.set_frame_count(1)，opts.frameCount==sim.frame_count()',
+    () => {
+      const canvas = document.createElement('canvas');
+      const sim = makeMockSim(4); // sim 缺省 4 帧（DEFAULT_FRAME_COUNT），纹理单帧 → 需覆写为 1
+      const createParticleSim = vi.fn(() => sim);
+      const assets = {
+        renderer: createMockRenderer() as unknown as THREE.WebGLRenderer,
+        backgroundTextures: new Map([[13, new THREE.DataTexture(new Uint8Array(4), 2, 2)]]),
+        particles: new Map([[71, { specJson: '{}', tex: new THREE.DataTexture(new Uint8Array(4), 256, 256), blend: 'alpha' as const }]]),
+        createParticleSim,
+      };
+      const result = loadSceneToThree(BLACKMYTH_SCENE, assets, canvas);
+      expect(sim.set_frame_count).toHaveBeenCalledWith(1);
+      expect(sim.frame_count()).toBe(1);
+      // 粒子图层 ShaderMaterial 的 frameCount uniform == sim.frame_count()（多帧切片与 sim 帧号对齐）。
+      const mesh = result.player.scene.children.find(
+        (c) => (c as THREE.Mesh).material instanceof THREE.ShaderMaterial,
+      ) as THREE.Mesh;
+      const mat = mesh.material as THREE.ShaderMaterial;
+      expect(mat.uniforms.frameCount.value).toBe(1);
+      expect(mat.uniforms.frameCount.value).toBe(sim.frame_count());
+    });
+
+  it('frameCountFromDims / textureFrameCount 对齐 wasm frame_count_from_dims', () => {
+    expect(frameCountFromDims(512, 128)).toBe(4); // rosepetals 512×128 → 4
+    expect(frameCountFromDims(256, 256)).toBe(1); // 单帧
+    expect(frameCountFromDims(200, 100)).toBe(2);
+    expect(textureFrameCount(new THREE.DataTexture(new Uint8Array(4), 512, 128))).toBe(4);
+    expect(textureFrameCount(new THREE.DataTexture(new Uint8Array(4), 256, 256))).toBe(1);
+    expect(textureFrameCount(undefined)).toBe(1);
+  });
+
+  it('播放帧：先 sim.update(dt) 再 player.updateParticles(dt)（getter 读已推进顶点，粒子不停留）', () => {
+    const canvas = document.createElement('canvas');
+    const renderer = createMockRenderer();
+    const log: string[] = [];
+    const sim = makeMockSim(4, log);
+    const assets = {
+      renderer: renderer as unknown as THREE.WebGLRenderer,
+      backgroundTextures: new Map([[13, new THREE.DataTexture(new Uint8Array(4), 2, 2)]]),
+      particles: new Map([[71, { specJson: '{}', tex: new THREE.DataTexture(new Uint8Array(4), 512, 128), blend: 'additive' as const }]]),
+      createParticleSim: vi.fn(() => sim),
+    };
+    const result = loadSceneToThree(BLACKMYTH_SCENE, assets, canvas);
+    // loadSceneToThree 已通过 player.setAnimationLoop 接线：getter 持有方推进 sim。
+    const loop = renderer._getLoop();
+    expect(loop).toBeTypeOf('function');
+    // addParticle 首帧填一次顶点（log=[vertices]）；跑一帧：fn(dt)→sim.update(dt)，再 updateParticles→getter→vertices。
+    expect(sim.vertices).toHaveBeenCalledTimes(1);
+    loop!();
+    expect(sim.update).toHaveBeenCalledTimes(1);
+    // 帧内 updateParticles 读 getter 一次 → vertices 共 2 次；且顺序为 update 先、vertices 后。
+    expect(sim.vertices).toHaveBeenCalledTimes(2);
+    expect(log.slice(-2)).toEqual(['update', 'vertices']);
+    // dt 为 0..0.1 秒（setAnimationLoop 帧差分 clamp），非 0 保证粒子持续推进。
+    const dtArg = sim.update.mock.calls[0][0] as number;
+    expect(dtArg).toBeGreaterThanOrEqual(0);
+    expect(dtArg).toBeLessThanOrEqual(0.1);
+    expect(result.player.scene.children.length).toBe(2); // 1 背景 + 1 粒子图层
   });
 });

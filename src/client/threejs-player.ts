@@ -12,6 +12,7 @@
 //     文件头坐标注释；背景/粒子用同一相机，保持 cover 与 we_to_three 语义）。
 import * as THREE from 'three';
 import { coverRange, CAMERA_DISTANCE, materialModulation } from './scene-renderer.js';
+import { parseSceneJson } from './scene-json.js';
 
 // 背景图层条目：记录 WE 场景坐标与当前已应用状态，供 update_background 对齐既有
 // update_image 语义（undefined = 保持现状；无变化则跳过）。
@@ -198,17 +199,20 @@ export class ThreeScenePlayer {
     this.updateParticles(_dt);
   }
 
-  // 启动帧循环（renderer.setAnimationLoop 内部 RAF）。每帧：update(dt)（内部钩子）→
-  // 可选外部回调 fn(dt) → render(scene, camera)。dt 用 performance.now 差分，clamp 0.1s
-  // 防 tab 切后台 / RAF 停顿后 dt 过大把粒子瞬移出视口（同 wasm-renderer 语义）。
+  // 启动帧循环（renderer.setAnimationLoop 内部 RAF）。每帧：外部回调 fn(dt) → update(dt)
+  // （内部钩子）→ render(scene, camera)。dt 用 performance.now 差分，clamp 0.1s 防 tab 切
+  // 后台 / RAF 停顿后 dt 过大把粒子瞬移出视口（同 wasm-renderer 语义）。
+  // Task 4 关键：fn(dt) 先于内部 update(dt)——fn 承载「模拟推进」（如 CpuParticleSim.update），
+  // 使 update（→ updateParticles 读 getter）拿到**本帧已推进**的顶点（sim 已在帧内 advance），
+  // 避免「先读旧顶点再推进」的一帧滞后。
   setAnimationLoop(fn?: (dt: number) => void): void {
     this.lastTime = performance.now();
     this.renderer.setAnimationLoop(() => {
       const now = performance.now();
       const dt = Math.min((now - this.lastTime) / 1000, 0.1);
       this.lastTime = now;
-      this.update(dt);
       fn?.(dt);
+      this.update(dt);
       this.renderer.render(this.scene, this.camera);
     });
   }
@@ -464,4 +468,173 @@ export class ThreeScenePlayer {
     this.particleLayers.clear();
     this.renderer.dispose();
   }
+}
+
+// ===== Task 4：把 WE 场景加载进 three.js 播放器（背景图层 + 粒子系统）=====
+//
+// `loadSceneToThree(sceneJson, assets, canvas)` 复用既有解析（scene-json → SceneDescription）、
+// 既有坐标（addBackground 内部 we_to_three，y 不翻）、既有材质调制（materialModulation），
+// 把 WE 场景内容转换成 three.js 可渲染对象：
+//   ① 背景对象（image）→ player.addBackground({origin,size,scale,texture,alpha,brightness,sceneW,sceneH})
+//   ② 粒子对象（particle）→ 每对象 new 一个 CPU 模拟器（SceneParticleSim 的 wasm 导出
+//      CpuParticleSim，经 assets.createParticleSim 工厂注入）→ set_frame_count(纹理帧数) →
+//      player.addParticle(() => sim.vertices(), {tex, frameCount: sim.frame_count(), blend, softness})。
+// 播放循环（Task 4）：player.setAnimationLoop(fn)——fn 每帧先 sim.update(dt)（帧差分 clamp 0.1，
+// 见 setAnimationLoop），再由 player 内部 update(dt)（→ updateParticles(dt)）读 getter 刷新
+// BufferAttribute（sim 已在帧内推进，无一帧滞后）。
+// 背景/粒子共用同一 cover 正交相机（Task 1/2 裁决：构造器传场景尺寸 + setSceneSize + 首帧 resize）。
+//
+// 注意：`loadSceneToThree` 不直接 import wasm `CpuParticleSim`——wasm-bindgen 把它导出为**静态**
+// `CpuParticleSim.new(...)`（非 `new CpuParticleSim(...)`），且 node/jsdom 无法实例化 wasm 模块。
+// 故由 `assets.createParticleSim` 工厂抽象：生产传 wasm 包装（`CpuParticleSim.new(json, Float32Array.from(origin), w, h)`），
+// 测试传 mock。three 播放器与 wasm 解耦（思路 1：不重写模拟，只换渲染引擎）。
+
+// 粒子模拟器接口（对齐 wasm `CpuParticleSim` 的 JS 形态，供 three 播放器读顶点/驱动）。
+export interface ParticleSim {
+  update(dt: number): void;
+  vertices(): Float32Array;
+  frame_count(): number;
+  set_frame_count(n: number): void;
+  particle_count(): number;
+  free?(): void;
+}
+
+// 每粒子对象的渲染/材质条件（由调用方预组装：spec JSON 供 sim 解析、纹理/混合/软化供渲染）。
+export interface LoadedParticleAssets {
+  specJson: string;                            // 粒子规格 JSON（原始），供 CpuParticleSim::new 解析
+  tex?: THREE.Texture;                         // 粒子 sprite sheet 纹理（缺省 = 白图兜底）
+  blend: 'additive' | 'alpha';                 // 混合模式（three ShaderMaterial.blending）
+  softness?: number;                           // 中心→边缘软衰减（0-1）
+}
+
+// 粒子模拟器工厂：从粒子规格 JSON + 对象中心构造模拟器。
+// 生产传 wasm `CpuParticleSim` 的包装；测试传 mock（无需 wasm）。
+export type ParticleSimFactory = (
+  json: string,
+  origin: [number, number, number],
+  sceneW: number,
+  sceneH: number,
+) => ParticleSim;
+
+// 场景装配输入：调用方把已解码的纹理/规格/模拟器工厂交给 `loadSceneToThree`。
+export interface SceneAssets {
+  // 可选注入 renderer（node/jsdom 无 WebGL，测试用 mock 注入；缺省构造标准 antialias WebGLRenderer）。
+  renderer?: THREE.WebGLRenderer;
+  // 背景纹理：image 对象 id → THREE.Texture（缺省 = 无纹理 MeshBasicMaterial，纯色/留白）。
+  backgroundTextures?: Map<number, THREE.Texture>;
+  // 粒子条件：particle 对象 id → 规格/纹理/混合。
+  particles?: Map<number, LoadedParticleAssets>;
+  // 粒子模拟器构造器（wasm CpuParticleSim 的包装；测试注入 mock）。
+  createParticleSim?: ParticleSimFactory;
+}
+
+// `loadSceneToThree` 返回：播放器 + 已装配的模拟器/图层 id（供调用方驱动/释放/校验）。
+export interface ThreeSceneLoadResult {
+  player: ThreeScenePlayer;
+  // 已创建的粒子模拟器（按 scene.json objects 顺序）；长度 = 有粒子 spec + createParticleSim 的粒子对象数。
+  sims: ParticleSim[];
+  // 背景图层 id（addBackground 返回值，按 objects 顺序）；长度 = image 对象数。
+  backgroundIds: number[];
+  // 粒子图层 id（addParticle 返回值）与其对应 sim 的配对。
+  particleLayers: Array<{ id: number; sim: ParticleSim }>;
+}
+
+// 对齐 wasm `particle_render::frame_count_from_dims`：sprite sheet 横向帧数 = 纹理宽/高
+// （每帧方形；rosepetals 512×128 → 4；单帧 → 1）。u32 整除 → floor。
+export function frameCountFromDims(width: number, height: number): number {
+  const w = Math.max(1, width);
+  const h = Math.max(1, height);
+  return Math.max(1, Math.floor(w / h));
+}
+
+// 从 THREE.Texture 读实际纹理尺寸推导 sprite sheet 帧数。
+// DataTexture.image={width,height,data}；CompressedTexture.image 为 mip 数组 [{width,height,data},...]；
+// ImageBitmap/HTMLImageElement.image.width/height。缺省/未知 → 1（单帧）。
+export function textureFrameCount(tex?: THREE.Texture): number {
+  if (!tex) return 1;
+  const img = tex.image as { width?: unknown; height?: unknown } | undefined;
+  if (
+    img &&
+    typeof img.width === 'number' && typeof img.height === 'number' &&
+    img.width > 0 && img.height > 0
+  ) {
+    return frameCountFromDims(img.width, img.height);
+  }
+  if (Array.isArray(tex.image)) {
+    const first = tex.image[0] as { width?: unknown; height?: unknown } | undefined;
+    if (
+      first &&
+      typeof first.width === 'number' && typeof first.height === 'number' &&
+      first.width > 0 && first.height > 0
+    ) {
+      return frameCountFromDims(first.width, first.height);
+    }
+  }
+  return 1;
+}
+
+export function loadSceneToThree(
+  sceneJson: string,
+  assets: SceneAssets,
+  canvas: HTMLCanvasElement,
+): ThreeSceneLoadResult {
+  const desc = parseSceneJson(sceneJson);
+  const sceneW = desc.orthogonal.width;
+  const sceneH = desc.orthogonal.height;
+  // 构造器传场景尺寸（Task 1 裁决：视口缺省与场景同尺寸）；setSceneSize 冗余同步 + 首帧 resize
+  // （Task 1/2 裁决：构造器场景尺寸 + 首帧 resize 视口推 cover，见 setSceneSize/resize 注释）。
+  const player = new ThreeScenePlayer(canvas, sceneW, sceneH, assets.renderer);
+  player.setSceneSize(sceneW, sceneH);
+  if (canvas.width > 0 && canvas.height > 0) {
+    player.resize(canvas.width, canvas.height);
+  }
+
+  const backgroundIds: number[] = [];
+  const particleLayers: Array<{ id: number; sim: ParticleSim }> = [];
+  const sims: ParticleSim[] = [];
+
+  for (const obj of desc.objects) {
+    if (obj.kind === 'image') {
+      // 背景对象：we_to_three（addBackground 内部）+ 对象调制（alpha/brightness）→ 背景图层。
+      // alignment 缺省 centre（addBackground 签名无 alignment，Task 2 裁决）；origin 直传。
+      const id = player.addBackground({
+        origin: obj.origin,
+        size: obj.size,
+        scale: obj.scale,
+        texture: assets.backgroundTextures?.get(obj.id),
+        alpha: obj.alpha,
+        brightness: obj.brightness,
+        sceneW,
+        sceneH,
+      });
+      backgroundIds.push(id);
+    } else if (obj.kind === 'particle' && obj.particle) {
+      // 粒子对象：仅当调用方提供 spec + 模拟器工厂时装配（缺 spec/工厂 → 跳过该对象，绝不白屏，
+      // 与缺失粒子纹理时白图兜底同语义）。
+      const p = assets.particles?.get(obj.id);
+      if (!p || !assets.createParticleSim) continue;
+      // new CpuParticleSim(json, origin, sceneW, sceneH)（经工厂抽象：生产 wasm / 测试 mock）。
+      const sim = assets.createParticleSim(p.specJson, obj.origin, sceneW, sceneH);
+      // FrameCount 对齐（Task 3 Minor）：sim.set_frame_count(纹理帧数)，addParticle 的
+      // opts.frameCount 取 sim.frame_count()——避免多帧 uv 切片与 sim 帧编号错位。
+      const frameCount = textureFrameCount(p.tex);
+      sim.set_frame_count(frameCount);
+      const id = player.addParticle(() => sim.vertices(), {
+        tex: p.tex,
+        frameCount: sim.frame_count(),
+        blend: p.blend,
+        softness: p.softness,
+      });
+      particleLayers.push({ id, sim });
+      sims.push(sim);
+    }
+  }
+
+  // 播放循环：RAF 每帧先 sim.update(dt)（dt 由 setAnimationLoop 帧差分、clamp 0.1）再
+  // player.update(dt)（→ updateParticles(dt) 读 getter = sim.vertices()，sim 已在帧内推进）。
+  player.setAnimationLoop((dt) => {
+    for (const sim of sims) sim.update(dt);
+  });
+
+  return { player, sims, backgroundIds, particleLayers };
 }
