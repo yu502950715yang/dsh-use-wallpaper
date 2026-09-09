@@ -196,12 +196,15 @@ export async function textureFromTex(info: TexInfo): Promise<THREE.Texture | nul
     }
   }
   // imageFormat=-1 或 TEXB0001/0002（无该字段）→ mipmap 数据为原始像素/块数据
-  if (info.format === TEX_FORMAT.RGBA8888) {
+  if (info.format === TEX_FORMAT.RGBA8888 || info.format === TEX_FORMAT.RG88 || info.format === TEX_FORMAT.R8) {
     // 方向语义（关键）：DataTexture 的 flipY 对 TypedArray 上传无效（WebGL 的
     // UNPACK_FLIP_Y_WEBGL 只对 DOM 元素源生效），数据第一行会落在纹理 v=0（底部）。
     // WE tex 原始数据是 top-down（第一行=图像顶部），直接上传会上下颠倒，
     // 因此手动翻转行序为 bottom-up（第一行=图像底部），与 ImageBitmap 路径一致。
-    const flipped = flipRows(mip.data, mip.width, mip.height, 4);
+    // RGBA8888 原样；RG88/R8 先展开为 RGBA（convertUnormToRgba，WE 粒子纹理 alpha-priority 语义）
+    // 再翻转——此前 RG88/R8 无分支直接 return null（DK 雪片/wasam 雾纹理加载失败 → 白图兜底）。
+    const src = info.format === TEX_FORMAT.RGBA8888 ? mip.data : convertUnormToRgba(mip.data, info.format);
+    const flipped = flipRows(src, mip.width, mip.height, 4);
     const tex = new THREE.DataTexture(flipped, mip.width, mip.height, THREE.RGBAFormat);
     tex.needsUpdate = true;
     return tex;
@@ -218,6 +221,34 @@ export async function textureFromTex(info: TexInfo): Promise<THREE.Texture | nul
     return tex;
   }
   return null;
+}
+
+// RG88（format 8，2 字节/像素）与 R8（format 9，1 字节/像素）→ RGBA8888。
+// WebGL 无便捷 2 通道/1 通道 DataTexture 渲染路径（ShaderMaterial 直接按 vec4 采样），故展开为
+// RGBA8，对齐 WE `ConvertTexture0Format` 的粒子语义：
+//   - R8：rgb 恒白、alpha = R 通道（`vec4(1,1,1,_sample.r)`，fog/rain 雾形状——同 wasm
+//     `r8_to_rgba_white_alpha`，纹理不调制颜色、alpha 由灰度调制）。
+//   - RG88：`vec4(r, r, r, g)`——r=亮度灰度（复制到 rgb）、g=alpha 覆盖（snow 雪片形状；
+//     `TextureFlags_AlphaChannelPriority` = "alpha is in G/R channel"，RG88 的 alpha 在 G 通道，
+//     R8 的 alpha 在 R 通道）。
+// 纯函数（native 可测）。
+export function convertUnormToRgba(data: Uint8Array, format: number): Uint8Array<ArrayBuffer> {
+  if (format === TEX_FORMAT.RG88) {
+    const out = new Uint8Array(data.length * 2);
+    for (let i = 0, o = 0; i < data.length; i += 2, o += 4) {
+      const r = data[i];
+      const g = data[i + 1];
+      out[o] = r; out[o + 1] = r; out[o + 2] = r; out[o + 3] = g;
+    }
+    return out;
+  }
+  // R8：rgb 恒白、alpha = R 通道。
+  const out = new Uint8Array(data.length * 4);
+  for (let i = 0, o = 0; i < data.length; i++, o += 4) {
+    const v = data[i];
+    out[o] = 255; out[o + 1] = 255; out[o + 2] = 255; out[o + 3] = v;
+  }
+  return out;
 }
 
 // 垂直翻转像素行序（top-down → bottom-up）。DataTexture 上传 TypedArray 时 flipY 无效，

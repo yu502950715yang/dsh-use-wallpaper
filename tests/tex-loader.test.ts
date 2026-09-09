@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
-import { parseTex, glFormatForDds, TEX_FORMAT, textureFromTex, FIF } from '../src/client/tex-loader.js';
+import { parseTex, glFormatForDds, TEX_FORMAT, textureFromTex, convertUnormToRgba, FIF } from '../src/client/tex-loader.js';
 import { makeTex } from './fixtures/make-tex.js';
 
 describe('glFormatForDds', () => {
@@ -161,6 +161,33 @@ describe('parseTex', () => {
 // 解码分支，而不是当原始 RGBA 创建 DataTexture（否则渲染乱码/失败）。
 // 真实库样本：1429403119 的 waterripplenormal.tex（imgFmt=-1 原始 RGBA）、
 // 2011060960 的 53.tex（imgFmt=13 PNG）、1968789468 的 wallhaven-2ew3pm.tex（imgFmt=2 JPEG）。
+// convertUnormToRgba：RG88/R8 单/双通道粒子纹理 → RGBA8888（WE ConvertTexture0Format alpha 语义）。
+// 这是 DK 雪片（RG88）/ fog（R8）纹理能在 three 路径加载的关键——此前 format 8/9 无分支直接
+// return null → 白图兜底 → 实心方块（无纹理形状）。
+describe('convertUnormToRgba', () => {
+  it('RG88（format 8）：r 复制到 rgb、g 为 alpha（vec4(r,r,r,g)）', () => {
+    // 2 像素：px0=(r=200,g=50) px1=(r=10,g=255)
+    const src = new Uint8Array([200, 50, 10, 255]);
+    const out = convertUnormToRgba(src, TEX_FORMAT.RG88);
+    expect(out).toHaveLength(8); // 2px（4 字节 RG88）× 4B
+    expect(Array.from(out)).toEqual([
+      200, 200, 200, 50,
+      10, 10, 10, 255,
+    ]);
+  });
+
+  it('R8（format 9）：rgb 恒白、alpha = R 通道（vec4(1,1,1,r)）', () => {
+    const src = new Uint8Array([77, 255, 0]);
+    const out = convertUnormToRgba(src, TEX_FORMAT.R8);
+    expect(out).toHaveLength(12); // 3px × 4B
+    expect(Array.from(out)).toEqual([
+      255, 255, 255, 77,
+      255, 255, 255, 255,
+      255, 255, 255, 0,
+    ]);
+  });
+});
+
 describe('textureFromTex 分支选择', () => {
   let decodeCalls: { blob: Blob; opts: object }[];
 
@@ -248,6 +275,31 @@ describe('textureFromTex 分支选择', () => {
     const tex = await textureFromTex(parseTex(buf)!);
     expect(tex).toBeInstanceOf(THREE.DataTexture);
     expect(decodeCalls).toHaveLength(0);
+  });
+
+  it('RG88（format 8）：加载为 DataTexture（修复 DK 雪片黑方块——此前 return null）', async () => {
+    // 2 像素 RG88：px0=(200,50)（较暗+半透明）、px1=(255,255)（亮+不透明）。
+    const w = 2, h = 1;
+    const rg88 = new Uint8Array([200, 50, 255, 255]);
+    const buf = makeTex({ format: TEX_FORMAT.RG88, images: [[{ width: w, height: h, data: rg88 }]] });
+    const info = parseTex(buf)!;
+    expect(info.format).toBe(TEX_FORMAT.RG88);
+    const tex = await textureFromTex(info) as THREE.DataTexture;
+    expect(tex).toBeInstanceOf(THREE.DataTexture); // 不再 return null
+    const out = tex.image.data as Uint8Array;
+    // 经 convertUnormToRgba(r,r,r,g) + flipRows（单行翻转不变）：
+    expect(Array.from(out)).toEqual([200, 200, 200, 50, 255, 255, 255, 255]);
+  });
+
+  it('R8（format 9）：加载为 DataTexture（修复 fog/rain 雾粒子——此前 return null）', async () => {
+    const w = 2, h = 1;
+    const r8 = new Uint8Array([128, 255]);
+    const buf = makeTex({ format: TEX_FORMAT.R8, images: [[{ width: w, height: h, data: r8 }]] });
+    const tex = await textureFromTex(parseTex(buf)!) as THREE.DataTexture;
+    expect(tex).toBeInstanceOf(THREE.DataTexture);
+    const out = tex.image.data as Uint8Array;
+    // rgb 恒白、alpha=R；单行翻转不变：
+    expect(Array.from(out)).toEqual([255, 255, 255, 128, 255, 255, 255, 255]);
   });
 
   it('原始 RGBA 数据必须翻转行序（修复 DataTexture 路径上下颠倒）', async () => {
