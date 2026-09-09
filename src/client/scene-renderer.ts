@@ -46,7 +46,7 @@ export interface SceneRenderer {
 // 映射：three.x = we.x - vw/2；three.y = we.y - vh/2（y 不做翻转，两系 y 同向）。
 // 对象锚点（origin）是 WE 中的中心点：中心映射为 (ox - vw/2, oy - vh/2)。
 // 曾用 y 翻转（vh/2 - we.y）导致非居中对象上下镜像，见 git log。
-const CAMERA_DISTANCE = 300; // 相机沿 +z 放置，使 shader 中 300/-mv.z = 1（点尺寸=像素尺寸）
+export const CAMERA_DISTANCE = 300; // 相机沿 +z 放置，使 shader 中 300/-mv.z = 1（点尺寸=像素尺寸）
 
 // 对象级渲染目标尺寸上限：防止超大对象（如 6144px 贴图）的对象 RT 撑爆 VRAM
 // （逐轴钳制，见 objectCameraRange 注释）。
@@ -311,7 +311,9 @@ function containRange(width: number, height: number, viewAspect: number) {
 }
 
 // 按「cover」语义计算正交相机范围：场景铺满视口、不变形，超出方向被裁剪。
-function coverRange(width: number, height: number, viewAspect: number) {
+// 导出供 threejs-player.ts 复用（同一源语义，不重写）。
+//   场景固有尺寸 width×height × 视口宽高比 viewAspect → { w, h }（正交相机视锥尺寸）。
+export function coverRange(width: number, height: number, viewAspect: number) {
   const sceneAspect = width / height;
   if (viewAspect > sceneAspect) {
     // 视口更宽 → 场景宽度铺满，垂直裁剪
