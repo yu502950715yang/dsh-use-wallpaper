@@ -127,3 +127,119 @@ describe('ThreeScenePlayer', () => {
     expect(mock.dispose).toHaveBeenCalled();
   });
 });
+
+// Task 2：背景图层（addBackground / update_background）。复用 Task 1 的 mock renderer 注入，
+// 验证 we_to_three 中心化（y 不翻）、size×scale 尺寸、alpha/brightness 调制与 update 语义。
+describe('ThreeScenePlayer background layer', () => {
+  // 场景固有尺寸：构造宽高传场景尺寸（Task 1 裁决：构造器传场景尺寸，首帧 resize 推 cover）。
+  it('addBackground：居中 origin=(1920,1080)，场景 3840×2160 → 背景 mesh position = 中心 (0,0)', () => {
+    const { player } = makePlayer(3840, 2160);
+    const id = player.addBackground({
+      origin: [1920, 1080, 0], size: [100, 50], scale: [1, 1, 1],
+      sceneW: 3840, sceneH: 2160,
+    });
+    expect(typeof id).toBe('number');
+    const mesh = player.scene.children[0] as THREE.Mesh;
+    expect(mesh).toBeInstanceOf(THREE.Mesh);
+    expect(mesh.position.x).toBe(0);
+    expect(mesh.position.y).toBe(0);
+    expect(mesh.position.z).toBe(0);
+    // scene 含背景对象（仅 1 个 mesh）
+    expect(player.scene.children.length).toBe(1);
+  });
+
+  it('addBackground：非居中 origin=(2306.34,419.77)，3840×2160 → we_to_three (386.34,-660.23)', () => {
+    const { player } = makePlayer(3840, 2160);
+    player.addBackground({
+      origin: [2306.34, 419.77, 0], size: [10, 10], scale: [1, 1, 1],
+      sceneW: 3840, sceneH: 2160,
+    });
+    const mesh = player.scene.children[0] as THREE.Mesh;
+    expect(mesh.position.x).toBeCloseTo(386.34, 2);
+    expect(mesh.position.y).toBeCloseTo(-660.23, 2);
+  });
+
+  it('addBackground：size×scale 定尺寸（geometry=size，mesh.scale=scale→世界尺寸=size*scale）', () => {
+    const { player } = makePlayer(3840, 2160);
+    player.addBackground({
+      origin: [1920, 1080, 0], size: [200, 100], scale: [2, 3, 1],
+      sceneW: 3840, sceneH: 2160,
+    });
+    const mesh = player.scene.children[0] as THREE.Mesh;
+    const geom = mesh.geometry as THREE.PlaneGeometry;
+    expect(geom.parameters.width).toBe(200);
+    expect(geom.parameters.height).toBe(100);
+    expect(mesh.scale.x).toBe(2);
+    expect(mesh.scale.y).toBe(3);
+    expect(mesh.scale.z).toBe(1);
+  });
+
+  it('addBackground：alpha→material.opacity、brightness→color 调制（rgb=clamp01(brightness)，a=clamp01(alpha)）', () => {
+    const { player } = makePlayer(3840, 2160);
+    player.addBackground({
+      origin: [1920, 1080, 0], size: [100, 100], scale: [1, 1, 1],
+      alpha: 0.5, brightness: 0.8, sceneW: 3840, sceneH: 2160,
+    });
+    const mat = (player.scene.children[0] as THREE.Mesh).material as THREE.MeshBasicMaterial;
+    expect(mat.transparent).toBe(true);
+    expect(mat.opacity).toBeCloseTo(0.5, 6);
+    expect(mat.color.r).toBeCloseTo(0.8, 6);
+    expect(mat.color.g).toBeCloseTo(0.8, 6);
+    expect(mat.color.b).toBeCloseTo(0.8, 6);
+  });
+
+  it('update_background：更新 origin/scale/alpha/brightness（undefined 保持现状）', () => {
+    const { player } = makePlayer(3840, 2160);
+    const id = player.addBackground({
+      origin: [1920, 1080, 0], size: [100, 50], scale: [1, 1, 1],
+      alpha: 1, brightness: 1, sceneW: 3840, sceneH: 2160,
+    });
+    const mesh = player.scene.children[0] as THREE.Mesh;
+    const mat = mesh.material as THREE.MeshBasicMaterial;
+    expect(mat.opacity).toBe(1);
+    expect(mat.color.r).toBe(1);
+
+    // 更新 origin（we_to_three 中心化随场景尺寸重算）
+    player.update_background(id, [2456.34, 419.77, 0]);
+    expect(mesh.position.x).toBeCloseTo(2456.34 - 3840 / 2, 2);
+    expect(mesh.position.y).toBeCloseTo(419.77 - 2160 / 2, 2);
+
+    // 更新 scale（世界尺寸 = size*scale）
+    player.update_background(id, undefined, [2, 3, 1]);
+    expect(mesh.scale.x).toBe(2);
+    expect(mesh.scale.y).toBe(3);
+    expect(mesh.scale.z).toBe(1);
+
+    // 更新 alpha → material.opacity
+    player.update_background(id, undefined, undefined, 0.5);
+    expect(mat.opacity).toBeCloseTo(0.5, 6);
+
+    // 更新 brightness → color 调色（rgb = clamp01(brightness)，a 不变）
+    player.update_background(id, undefined, undefined, undefined, 0.8);
+    expect(mat.color.r).toBeCloseTo(0.8, 6);
+    expect(mat.color.g).toBeCloseTo(0.8, 6);
+    expect(mat.color.b).toBeCloseTo(0.8, 6);
+    expect(mat.opacity).toBeCloseTo(0.5, 6);
+  });
+
+  it('update_background：传入值无变化 → 跳过该字段（位置/opacity/color 保持现值）', () => {
+    const { player } = makePlayer(3840, 2160);
+    const id = player.addBackground({
+      origin: [1920, 1080, 0], size: [100, 50], scale: [1, 1, 1],
+      alpha: 0.5, brightness: 0.8, sceneW: 3840, sceneH: 2160,
+    });
+    const mesh = player.scene.children[0] as THREE.Mesh;
+    const mat = mesh.material as THREE.MeshBasicMaterial;
+    // 全部等于当前已应用状态 → 不触碰
+    player.update_background(id, [1920, 1080, 0], [1, 1, 1], 0.5, 0.8);
+    expect(mesh.position.x).toBe(0);
+    expect(mesh.position.y).toBe(0);
+    expect(mat.opacity).toBeCloseTo(0.5, 6);
+    expect(mat.color.r).toBeCloseTo(0.8, 6);
+  });
+
+  it('update_background：未知 id → no-op（不抛错）', () => {
+    const { player } = makePlayer(3840, 2160);
+    expect(() => player.update_background(999, [1, 2, 3])).not.toThrow();
+  });
+});

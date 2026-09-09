@@ -11,7 +11,21 @@
 //   - 正交相机 y 轴不做翻转（WE 系左下原点 y 向上与 three 正交相机一致，见 scene-renderer
 //     文件头坐标注释；背景/粒子用同一相机，保持 cover 与 we_to_three 语义）。
 import * as THREE from 'three';
-import { coverRange, CAMERA_DISTANCE } from './scene-renderer.js';
+import { coverRange, CAMERA_DISTANCE, materialModulation } from './scene-renderer.js';
+
+// 背景图层条目：记录 WE 场景坐标与当前已应用状态，供 update_background 对齐既有
+// update_image 语义（undefined = 保持现状；无变化则跳过）。
+type BackgroundEntry = {
+  mesh: THREE.Mesh;
+  // WE 场景坐标（创建时的 origin，未中心化）——update_background 用它重算 we_to_three 位置。
+  origin: [number, number, number];
+  scale: [number, number, number];
+  alpha: number;         // 已应用 material.opacity（0-1）
+  brightness: number;    // 亮度乘法系数（原始值，materialModulation 内部 clamp）
+  // 该背景创建时用的场景固有尺寸（we_to_three 中心化基准 = origin - scene/2）。
+  sceneW: number;
+  sceneH: number;
+};
 
 export class ThreeScenePlayer {
   readonly renderer: THREE.WebGLRenderer;
@@ -26,6 +40,10 @@ export class ThreeScenePlayer {
   private viewHeight: number;
 
   private lastTime = 0;
+
+  // 背景图层条目（按 addBackground 返回的 id 索引，供 update_background 引用）。
+  private backgroundEntries = new Map<number, BackgroundEntry>();
+  private nextBackgroundId = 0;
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -102,9 +120,108 @@ export class ThreeScenePlayer {
     this.renderer.render(this.scene, this.camera);
   }
 
+  // Task 2：背景图层（Sprite/Mesh）。用 we_to_three 中心化定位（three = we - scene/2，
+  // 左下原点 y 向上 → 中心原点 y 向上，y 不翻，与背景一致）；size×scale 定尺寸；
+  // alpha → material.opacity、brightness 调色（复用 scene-renderer.materialModulation：
+  // color 缺省全白 → rgb = clamp01(brightness)，a = clamp01(alpha)）。
+  // sceneW/sceneH 为场景固有尺寸（we_to_three 基准，通常 == setSceneSize 注入值）。
+  // 返回分配的背景 id，供 update_background 引用；与后续粒子共用同一相机（Task 1 cover）。
+  addBackground(opts: {
+    origin: [number, number, number];
+    size?: [number, number];
+    scale: [number, number, number];
+    texture?: THREE.Texture;
+    alpha?: number;
+    brightness?: number;
+    sceneW: number;
+    sceneH: number;
+  }): number {
+    const sceneW = opts.sceneW;
+    const sceneH = opts.sceneH;
+    // 背景尺寸 = size × scale。geometry 用未缩放 size、mesh.scale 承载 scale（同
+    // scene-renderer.setImageObject 语义），世界尺寸 = size*scale；size 缺省回退纹理宽高。
+    const w = opts.size?.[0] ?? (opts.texture?.image?.width as number | undefined) ?? 1;
+    const h = opts.size?.[1] ?? (opts.texture?.image?.height as number | undefined) ?? 1;
+    const geometry = new THREE.PlaneGeometry(w, h);
+    const material = new THREE.MeshBasicMaterial({
+      map: opts.texture ?? null,
+      transparent: true,
+    });
+    const mod = materialModulation(undefined, opts.alpha, opts.brightness);
+    material.color.setRGB(mod.r, mod.g, mod.b);
+    material.opacity = mod.a;
+    const mesh = new THREE.Mesh(geometry, material);
+    const s = opts.scale;
+    mesh.scale.set(s[0], s[1], s[2] ?? 1);
+    // we_to_three：origin - scene/2（y 不翻）。
+    mesh.position.set(opts.origin[0] - sceneW / 2, opts.origin[1] - sceneH / 2, opts.origin[2]);
+    this.scene.add(mesh);
+
+    const id = this.nextBackgroundId++;
+    this.backgroundEntries.set(id, {
+      mesh,
+      origin: [opts.origin[0], opts.origin[1], opts.origin[2]],
+      scale: [s[0], s[1], s[2] ?? 1],
+      alpha: mod.a,
+      brightness: opts.brightness ?? 1,
+      sceneW,
+      sceneH,
+    });
+    return id;
+  }
+
+  // Task 2：更新背景图层状态，对齐既有 update_image 语义——undefined = 保持现状；
+  // 传入值若无变化（与当前已应用状态相等）则跳过该字段；未知 id → no-op。
+  // origin 为 WE 场景坐标，先按 we_to_three 中心化（origin - scene/2）再写 mesh.position。
+  update_background(
+    id: number,
+    origin?: [number, number, number],
+    scale?: [number, number, number],
+    alpha?: number,
+    brightness?: number,
+  ): void {
+    const entry = this.backgroundEntries.get(id);
+    if (!entry) return;
+    if (origin) {
+      const [ox, oy, oz] = origin;
+      if (ox !== entry.origin[0] || oy !== entry.origin[1] || oz !== entry.origin[2]) {
+        entry.origin = [ox, oy, oz];
+        entry.mesh.position.set(ox - entry.sceneW / 2, oy - entry.sceneH / 2, oz);
+      }
+    }
+    if (scale) {
+      const [sx, sy, sz] = scale;
+      if (sx !== entry.scale[0] || sy !== entry.scale[1] || sz !== entry.scale[2]) {
+        entry.scale = [sx, sy, sz];
+        entry.mesh.scale.set(sx, sy, sz);
+      }
+    }
+    if (alpha !== undefined) {
+      const a = Math.max(0, Math.min(1, alpha));
+      if (a !== entry.alpha) {
+        entry.alpha = a;
+        (entry.mesh.material as THREE.MeshBasicMaterial).opacity = a;
+      }
+    }
+    if (brightness !== undefined) {
+      if (brightness !== entry.brightness) {
+        entry.brightness = brightness;
+        // brightness 调色：rgb = clamp01(brightness)，a 用当前 opacity（复用调制函数）。
+        const mod = materialModulation(undefined, entry.alpha, brightness);
+        (entry.mesh.material as THREE.MeshBasicMaterial).color.setRGB(mod.r, mod.g, mod.b);
+      }
+    }
+  }
+
   // 停止循环并释放 renderer 资源。
   dispose(): void {
     this.renderer.setAnimationLoop(null);
+    // 释放背景图层几何/材质（texture 所有权通常在外，随 scene 清理，不在此 dispose）。
+    for (const entry of this.backgroundEntries.values()) {
+      entry.mesh.geometry.dispose();
+      (entry.mesh.material as THREE.Material).dispose();
+    }
+    this.backgroundEntries.clear();
     this.renderer.dispose();
   }
 }
