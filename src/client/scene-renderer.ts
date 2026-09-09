@@ -744,7 +744,8 @@ export function resolveTexPath(matRef: string, texName: string): string {
 
 // 图片对象纹理：obj.image 指向 models/xxx.json（材料引用），实际 .tex 需经
 // 模型 json → material 字段 → materials/xxx.json → passes[0].textures[0] 推导。
-async function resolveImageTexture(id: string, obj: SceneImageObject): Promise<THREE.Texture | null> {
+// 导出供 three.js 播放器生产入口（three-renderer.ts）复用同一纹理推导链路。
+export async function resolveImageTexture(id: string, obj: SceneImageObject): Promise<THREE.Texture | null> {
   try {
     const modelResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(obj.image)}`);
     if (!modelResp.ok) return null;

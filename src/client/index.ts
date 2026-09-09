@@ -3,6 +3,7 @@ import { createBackgroundLayer } from './background-layer.js';
 import { createWallpaperController } from './wallpaper-controller.js';
 import { renderScene } from './scene-renderer.js';
 import { createWasmSceneRenderer, createFallbackSceneRenderer } from './wasm-renderer.js';
+import { createThreeSceneRenderer } from './three-renderer.js';
 import { WallpaperSettingsSection, setWallpaperSelectHandler } from './settings-section.js';
 import { readClientSettings, writeClientSettings, getUserPropertyValue, DEFAULTS, setSettingsCtx } from './settings.js';
 import type { BackgroundPlan, ClientSettings } from './types.js';
@@ -11,8 +12,19 @@ declare global {
   interface Window { __ModuleLoader__?: any; __DSH_BOOT__?: any; }
 }
 
-// 设置对话框侧边栏 "壁纸" 菜单项 id（slots settings.section 注册）
-export const SETTINGS_SECTION_ID = 'wallpaper-engine';
+const SETTINGS_SECTION_ID = 'wallpaper-engine';
+
+// Task 5：three.js 播放器路径开关。URL 查询 `THREE_USE=1` 或全局 `window.__THREE_USE__==='1'`
+// 时启用 **新增** 的 three 播放路径（loadSceneToThree：背景 + 粒子，复用 SceneParticleSim）。
+// 缺省（0）→ 走既有 wasm/WebGPU 路径；`wasm-renderer` 保留备用（不删除），可随时对照。
+function isThreeUse(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    if (new URLSearchParams(window.location.search).get('THREE_USE') === '1') return true;
+  } catch { /* location 不可用 → 查全局 */ }
+  return (window as any).__THREE_USE__ === '1';
+}
+
 
 export function bootstrap(ctx?: any): void {
   // DSH 0.1.2-rc.1：设置走 ctx.remote.settings（Typert），须注入 settingsCtx 供读写
@@ -43,7 +55,11 @@ export function bootstrap(ctx?: any): void {
     layer = createBackgroundLayer(root);
     controller = createWallpaperController(layer, {
       fetchList: async () => (await fetch('/wallpapers/list')).json(),
-      sceneRenderer: createFallbackSceneRenderer(createWasmSceneRenderer(), {
+      // Task 5：THREE_USE=1 → 新增 three.js 播放路径（背景 + 粒子）；否则走既有 wasm 路径。
+      // wasm-renderer 仅关闭时启用（保留备用，不删除）；three 路径失败由 controller 落 preview。
+      sceneRenderer: isThreeUse()
+        ? createThreeSceneRenderer()
+        : createFallbackSceneRenderer(createWasmSceneRenderer(), {
         // T4.2：注入可见性 user 绑定的用户属性 getter（localStorage 实现见 settings.ts；
         // renderScene 不硬依赖设置存储，键缺失回退绑定 value）
         render: (id, fg, bg) => renderScene(id, fg, bg, { getUserProperty: getUserPropertyValue }),

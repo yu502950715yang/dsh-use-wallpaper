@@ -296,7 +296,9 @@ const STATIC_BASE = '/wallpapers/static';
 const WASM_GLUE_FILE = 'we_scene_wasm.js';
 const WASM_BIN_FILE = 'we_scene_wasm_bg.wasm';
 
-async function defaultLoadWasm(): Promise<WasmSceneModule | null> {
+// 导出：three.js 播放器生产入口（three-renderer.ts）复用同一 wasm 加载/初始化逻辑
+// （导入静态 URL + 显式 default 初始化；`CpuParticleSim` 是纯 CPU 模拟，无需 WebGPU）。
+export async function defaultLoadWasm(): Promise<WasmSceneModule | null> {
   try {
     // 直接动态 import 静态 URL（不用 blob：blob 无路径基准，入口内 import.meta.url
     // 无法相对定位 wasm）。--target web 产物导出 default（__wbg_init），必须显式调用
@@ -346,7 +348,12 @@ const PARTICLE_TEX_ALIASES: Record<string, string> = {
   // 值是 **short 形式**（去 particle/ 前缀，与下方 short 计算后一致）→ ptex-light-light_shafts_0.tex
   'presets/lightshaft': 'light/light_shafts_0',
 };
-async function resolveParticleTexBytes(id: string, specText: string): Promise<Uint8Array | null> {
+
+// 解析粒子材质 tex 的**静态资源 URL**（供 three.js 播放器生产入口用 loadTexTexture 加载
+// THREE.Texture——与 resolveParticleTexBytes 同一推导：spec.material → 材质 json →
+// passes[0].textures[0] → 静态路由 /wallpapers/static/ptex-<路径>.tex）。
+// 任何一步失败返回 null（无纹理 → 播放器白图兜底，保持纯色粒子行为）。
+export async function resolveParticleTexUrl(id: string, specText: string): Promise<string | null> {
   try {
     const spec: unknown = JSON.parse(specText);
     const matRef: unknown = (spec as { material?: unknown })?.material;
@@ -360,7 +367,17 @@ async function resolveParticleTexBytes(id: string, specText: string): Promise<Ui
     // 相对该目录扁平命名 ptex-<路径斜杠转横线>.tex → "particle/fog/fog1" → ptex-fog-fog1.tex
     const short = texName.startsWith('particle/') ? texName.slice('particle/'.length) : texName;
     const resolved = PARTICLE_TEX_ALIASES[short] ?? short;
-    const texResp = await fetch(`/wallpapers/static/ptex-${encodeURIComponent(resolved.replace(/\//g, '-'))}.tex`);
+    return `/wallpapers/static/ptex-${encodeURIComponent(resolved.replace(/\//g, '-'))}.tex`;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveParticleTexBytes(id: string, specText: string): Promise<Uint8Array | null> {
+  const url = await resolveParticleTexUrl(id, specText);
+  if (!url) return null;
+  try {
+    const texResp = await fetch(url);
     if (!texResp.ok) return null;
     const buf = await texResp.arrayBuffer();
     if (buf.byteLength === 0) return null;
