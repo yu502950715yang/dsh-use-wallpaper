@@ -154,14 +154,10 @@ function lz4Decompress(src: Uint8Array, decompressedSize: number): Uint8Array<Ar
   return n === decompressedSize ? out : out.subarray(0, Math.min(n, decompressedSize));
 }
 
-// 选取纹理 mip：优先取宽度不超过 2048 的最大级（避免 4K 原始数据全量上传），全部超限时退而取最小级
-function pickMipmap(mips: TexMipmap[]): TexMipmap | null {
-  let best: TexMipmap | null = null;
-  for (const m of mips) {
-    if (m.width <= 2048 && (!best || m.width > best.width)) best = m;
-  }
-  return best ?? mips[mips.length - 1] ?? null;
-}
+// 基础层 mip = 全分辨率（mip[0]）。此前 `pickMipmap` 选「宽度 ≤2048 的最大级」做下采样，
+// 当场景/视口需要更高分辨率时该纹理被**放大** → 画面模糊（不是原始分辨率，用户实测「整体糊」）。
+// 这里统一取 mip[0]（解压后的原始尺寸），使背景/粒子纹理**保持原始分辨率**（锐利）。
+// 本仓库 three 页面所有纹理均经 textureFromTex 处理；mipmaps 非空（parseTex 空 → null）故 mip[0] 恒存在。
 
 // 由解析结果构造 three 纹理：
 //   TEXB0003+ 编码图像（imageFormat=JPEG/PNG/WEBP）→ 解码为 ImageBitmap 后包装为 Texture（异步）
@@ -170,8 +166,19 @@ function pickMipmap(mips: TexMipmap[]): TexMipmap | null {
 //   RGBA8888 → DataTexture（数据 top-down → 翻转行序为 bottom-up，与 ImageBitmap 路径方向语义一致）；
 //   DXT1/3/5 → CompressedTexture
 export async function textureFromTex(info: TexInfo): Promise<THREE.Texture | null> {
-  const mip = pickMipmap(info.mipmaps);
+  const mip = info.mipmaps[0];
   if (!mip) return null;
+  // 过滤/采样（关键，修复「模糊/不清」）：three.js `DataTexture` 缺省 **NearestFilter**
+  //（逐像素最近采样，放大成马赛克方块、缩小无 mip 抗锯齿 → 观感「糊/不锐利」）。这里对
+  // 非压缩背景/粒子纹理统一设 `magFilter=LinearFilter`（双线性）+ `minFilter=LinearMipmapLinearFilter`
+  //（mip 链抗锯齿）+ `generateMipmaps=true`（GPU 自动生成 mip），匹配标准高质量采样：1:1 清晰、
+  // 放大柔和、缩小抗锯齿（本仓库 three r170 仅 WebGL2，NPOT 也能生成 mip，无 WebGL1 NPOT 风险）。
+  const applyLinearSampling = (tex: THREE.Texture): void => {
+    tex.magFilter = THREE.LinearFilter;
+    tex.minFilter = THREE.LinearMipmapLinearFilter;
+    tex.generateMipmaps = true;
+    tex.needsUpdate = true;
+  };
   // 编码图像优先：imageFormat 是 FreeImage 枚举（JPEG/PNG/WEBP）时数据为编码字节流
   const mime = info.imageFormat === FIF.JPEG ? 'image/jpeg'
     : info.imageFormat === FIF.PNG ? 'image/png'
@@ -189,7 +196,7 @@ export async function textureFromTex(info: TexInfo): Promise<THREE.Texture | nul
       );
       const tex = new THREE.Texture(bitmap as unknown as HTMLImageElement);
       tex.flipY = false;
-      tex.needsUpdate = true;
+      applyLinearSampling(tex);
       return tex;
     } catch {
       return null;
@@ -206,7 +213,7 @@ export async function textureFromTex(info: TexInfo): Promise<THREE.Texture | nul
     const src = info.format === TEX_FORMAT.RGBA8888 ? mip.data : convertUnormToRgba(mip.data, info.format);
     const flipped = flipRows(src, mip.width, mip.height, 4);
     const tex = new THREE.DataTexture(flipped, mip.width, mip.height, THREE.RGBAFormat);
-    tex.needsUpdate = true;
+    applyLinearSampling(tex);
     return tex;
   }
   const glFormat = FORMAT_TO_GL[info.format];
@@ -229,6 +236,10 @@ export async function textureFromTex(info: TexInfo): Promise<THREE.Texture | nul
       mip.height,
       glFormat as THREE.CompressedPixelFormat,
     );
+    // DXT 已内嵌完整 mip 链（info.mipmaps 全链传入），minFilter 保持 LinearMipmapLinear（有 mip）；
+    // 显式 magFilter=Linear + generateMipmaps=false（压缩纹理不能生成 mip，mip 已内嵌）。
+    tex.magFilter = THREE.LinearFilter;
+    tex.generateMipmaps = false;
     tex.needsUpdate = true;
     return tex;
   }

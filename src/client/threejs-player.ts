@@ -185,6 +185,18 @@ export class ThreeScenePlayer {
     //   这里强制 LinearSRGBColorSpace → `linearToOutputTexel` 恒等（不转换），纹理原始值直出，
     //   与 wasm 参考的非 sRGB 管线一致（壁纸恢复自然亮度，不再蒙白膜/过曝）。
     this.renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+    // 画布/渲染分辨率（关键，修复「画面模糊」——HiDPI 屏幕像素比过低导致的整图放大模糊）：
+    // three.js WebGLRenderer 缺省 `pixelRatio=1`（渲染缓冲 = 视口 CSS 像素），而 `.wp-scene-canvas`
+    // 以 `width:100%`/`height:100%` 铺满窗口。在 HiDPI（devicePixelRatio>1）屏幕上，1× 缓冲被
+    // 放大到 devicePixelRatio× 物理像素 → 整幅画面（背景 + 粒子）**模糊**，粒子（花瓣等）也被
+    // 模糊成不可辨的小色块——这正是 headless SwiftShader（dpr=1）无法复现、真机可见的原因之一。
+    // 按 `window.devicePixelRatio` 设置像素比，使渲染缓冲 = 物理像素（1:1 锐利），与 wasm 参考
+    // 的视口语义一致。node/jsdom 测试用 mock renderer 注入（无 setPixelRatio），防御式跳过。
+    const dpr = typeof window !== 'undefined' && window.devicePixelRatio ? window.devicePixelRatio : 1;
+    const withSetPixelRatio = this.renderer as { setPixelRatio?: (v: number) => void };
+    if (typeof withSetPixelRatio.setPixelRatio === 'function') {
+      withSetPixelRatio.setPixelRatio(dpr);
+    }
     this.applyCover();
   }
 

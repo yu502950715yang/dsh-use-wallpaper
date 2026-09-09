@@ -17,6 +17,7 @@ function createMockRenderer() {
   });
   const renderer = {
     setSize: vi.fn(),
+    setPixelRatio: vi.fn(),
     render: vi.fn(),
     dispose: vi.fn(),
     setAnimationLoop,
@@ -48,6 +49,17 @@ describe('ThreeScenePlayer', () => {
     // wasm 参考用 UNorm（非 sRGB）纹理直出；three 缺省 sRGB output 会对未标色域的纹理做
     // linear→sRGB 再编码 → 画面偏亮/过曝。强制 LinearSRGB → linearToOutputTexel 恒等（直出）。
     expect((player.renderer as unknown as { outputColorSpace: string }).outputColorSpace).toBe(THREE.LinearSRGBColorSpace);
+  });
+
+  it('renderer.setPixelRatio = window.devicePixelRatio（HiDPI 使渲染缓冲=物理像素，防整图放大模糊）', () => {
+    // three WebGLRenderer 缺省 pixelRatio=1（渲染缓冲 = 视口 CSS 像素）；`.wp-scene-canvas` 以
+    // width:100% 铺满窗口，在 HiDPI（devicePixelRatio>1）屏幕上 1× 缓冲被放大到物理像素 →
+    // 整图模糊（背景 + 粒子都被糊成不可辨）。此处按 devicePixelRatio 设置像素比 → 1:1 锐利。
+    const orig = (window as { devicePixelRatio?: number }).devicePixelRatio;
+    Object.defineProperty(window, 'devicePixelRatio', { value: 2, configurable: true });
+    const { mock } = makePlayer();
+    expect(mock.setPixelRatio).toHaveBeenCalledWith(2);
+    Object.defineProperty(window, 'devicePixelRatio', { value: orig, configurable: true });
   });
 
   it('缺省 cover：视口 == 场景尺寸 → 相机视锥 == 场景尺寸（1920×1080，无裁剪）', () => {

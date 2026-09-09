@@ -337,6 +337,38 @@ describe('textureFromTex 分支选择', () => {
     await expect(textureFromTex(parseTex(buf)!)).resolves.toBeNull();
   });
 
+  it('使用全分辨率 mip0（不再下采样 ≤2048）—— 修复「非原始分辨率」模糊', async () => {
+    // 旧 pickMipmap 选「宽度 ≤2048 的最大级」做下采样：mip0(3000) 超限被跳过 → 退回 mip1(1500)。
+    // 当场景/视口需要更高分辨率时 1500 被放大 → 画面模糊。此处验证 textureFromTex 取 mip0（全分辨率）
+    // 作为基础层，尺寸与数据均为 mip0（3000×4），而非下采样后的 mip1（1500×2）。
+    const mip0 = new Uint8Array(3000 * 4 * 4).fill(0x80); // 3000×4 RGBA
+    const mip1 = new Uint8Array(1500 * 2 * 4).fill(0x40); // 1500×2 RGBA
+    const buf = makeTex({
+      format: TEX_FORMAT.RGBA8888,
+      images: [[
+        { width: 3000, height: 4, data: mip0 },
+        { width: 1500, height: 2, data: mip1 },
+      ]],
+    });
+    const info = parseTex(buf)!;
+    const tex = await textureFromTex(info) as THREE.DataTexture;
+    expect(tex).toBeInstanceOf(THREE.DataTexture);
+    expect(tex.image.width).toBe(3000);   // mip0 全分辨率（此前会退到 1500）
+    expect(tex.image.height).toBe(4);
+    expect((tex.image.data as Uint8Array).length).toBe(3000 * 4 * 4);
+  });
+
+  it('textureFromTex 设 LinearFilter 采样 + generateMipmaps（修复 NearestFilter 马赛克/放大模糊）', async () => {
+    // three.js DataTexture 缺省 magFilter/minFilter = NearestFilter（逐像素最近采样：放大成马赛克
+    // 方块、缩小无 mip 抗锯齿 → 观感「糊/不锐利」）。textureFromTex 应统一设为双线性 + mip 抗锯齿。
+    const rgba = new Uint8Array(32 * 16 * 4).fill(0x80);
+    const buf = makeTex({ format: TEX_FORMAT.RGBA8888, images: [[{ width: 32, height: 16, data: rgba }]] });
+    const tex = await textureFromTex(parseTex(buf)!) as THREE.DataTexture;
+    expect(tex.magFilter).toBe(THREE.LinearFilter);
+    expect(tex.minFilter).toBe(THREE.LinearMipmapLinearFilter);
+    expect(tex.generateMipmaps).toBe(true);
+  });
+
   // Task 5 深挖：DXT 压缩背景纹理上下颠倒（Lycoris Recoil-锦木千束）。
   // WE .tex 压缩数据是 top-down，而 CompressedTexture.flipY=false + WebGL UNPACK_FLIP_Y 对压缩纹理
   // 无效 → v=0=图像顶部被渲染到 quad 底部 = 上下颠倒。RGBA8888 路径用 flipRows、编码图像路径用
