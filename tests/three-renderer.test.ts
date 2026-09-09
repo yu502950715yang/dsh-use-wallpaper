@@ -82,7 +82,7 @@ describe('createThreeSceneRenderer', () => {
     const sim = makeMockSim();
     defaultLoadWasm.mockResolvedValue({ CpuParticleSim: { new: vi.fn(() => sim) } } as any);
     loadSceneToThree.mockReturnValue({
-      player: { dispose: vi.fn() },
+      player: { dispose: vi.fn(), resize: vi.fn() },
       sims: [sim],
       backgroundIds: [0],
       particleLayers: [{ id: 1, sim }],
@@ -102,6 +102,9 @@ describe('createThreeSceneRenderer', () => {
     expect(resolveParticleTexUrl.mock.calls[0][1]).toContain('lightshaft');
     expect(loadSceneToThree).toHaveBeenCalledTimes(1);
     const assets = loadSceneToThree.mock.calls[0][1];
+    // Task5：viewport 第 4 参 = 窗口/视口尺寸（窗口比例），而非场景尺寸——cover 相机按窗口宽高比
+    // 裁剪（背景不变形），对照 wasm 路径用 window.innerWidth/Height 推 cover。
+    expect(loadSceneToThree.mock.calls[0][3]).toEqual({ width: 1920, height: 1080 });
     expect(assets.backgroundTextures.get(13)).toEqual({ fake: true });
     expect(assets.particles.get(71).specJson).toContain('lightshaft');
     // material 名含 "lightshaft" → blend = additive
@@ -130,6 +133,7 @@ describe('createThreeSceneRenderer', () => {
     const empty = f('{}', [1, 2, 3], 3840, 2160);
     expect((empty as any).vertices()).toHaveLength(0);
     expect((empty as any).particle_count()).toBe(0);
+    r.dispose(); // 清理 window.resize 监听（否则残留监听会在后续测试的 resize 派发时触发）
   });
 
   it('render：零背景 + 零粒子 → 返回 false（controller 走 preview）', async () => {
@@ -140,5 +144,30 @@ describe('createThreeSceneRenderer', () => {
     const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
     const ok = await r.render('2851992662', document.createElement('canvas'), null);
     expect(ok).toBe(false);
+  });
+
+  it('窗口 resize → player.resize 用新窗口比例重推 cover（监听在 render 后注册、dispose 移除）', async () => {
+    resolveImageTexture.mockResolvedValue({ fake: true } as any);
+    resolveParticleTexUrl.mockResolvedValue(null);
+    // 模拟返回带 resize 的 player（真实 ThreeScenePlayer 的接口）。
+    const player = { dispose: vi.fn(), resize: vi.fn() };
+    defaultLoadWasm.mockResolvedValue({ CpuParticleSim: { new: vi.fn(() => makeMockSim()) } } as any);
+    loadSceneToThree.mockReturnValue({ player, sims: [], backgroundIds: [0], particleLayers: [] });
+
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    await r.render('2851992662', document.createElement('canvas'), null);
+    // render 注册监听后改变窗口尺寸 → 触发 resize → 播放器按新窗口比例重推 cover。
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1600 });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 });
+    window.dispatchEvent(new Event('resize'));
+    expect(player.resize).toHaveBeenCalledWith(1600, 900);
+
+    // dispose 移除监听：再次 resize 不再调用 player.resize。
+    r.dispose();
+    const callsAfterDispose = player.resize.mock.calls.length;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1280 });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 720 });
+    window.dispatchEvent(new Event('resize'));
+    expect(player.resize.mock.calls.length).toBe(callsAfterDispose);
   });
 });

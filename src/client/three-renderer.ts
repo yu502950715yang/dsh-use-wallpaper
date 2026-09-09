@@ -67,11 +67,22 @@ export function createThreeSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneR
   let modulePromise: Promise<WasmSceneModule | null> | null = null;
   // 跨 render 持有本次装配的 three 播放器 + sim（供替换/dispose 释放）。
   let current: ThreeSceneLoadResult | null = null;
+  // window.resize 监听：窗口尺寸变化时按新窗口比例重推 cover（对齐 wasm 窗口视口语义）。
+  let onWindowResize: (() => void) | null = null;
   const teardown = () => {
+    if (onWindowResize) {
+      window.removeEventListener('resize', onWindowResize);
+      onWindowResize = null;
+    }
     current?.player.dispose();
     for (const sim of current?.sims ?? []) sim.free?.();
     current = null;
   };
+  // 当前窗口/视口尺寸（clamp ≥1，对齐 wasm-renderer 的 vw/vh 推导）。
+  const viewportSize = () => ({
+    width: Math.max(1, Math.round(window.innerWidth || 0)),
+    height: Math.max(1, Math.round(window.innerHeight || 0)),
+  });
   return {
     async render(id, fg, _bg) {
       try {
@@ -90,7 +101,6 @@ export function createThreeSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneR
         const vh = Math.max(1, Math.round(window.innerHeight || desc.orthogonal.height));
         fg.width = vw;
         fg.height = vh;
-
         // ── 组装 SceneAssets：背景纹理 + 粒子条件 + 模拟器工厂 ──────────────────────────
         const backgroundTextures = new Map<number, Texture>();
         const particles = new Map<number, LoadedParticleAssets>();
@@ -131,8 +141,21 @@ export function createThreeSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneR
           : undefined;
 
         // 装配并启动播放（背景 + 粒子；setAnimationLoop 内部每帧 sim.update(dt) → 刷新 buffer）。
-        const result = loadSceneToThree(sceneJson, { backgroundTextures, particles, createParticleSim }, fg);
+        // viewport 传真实窗口/视口尺寸（vw/vh）：ThreeScenePlayer 构造器已不再把 canvas 重置回场景
+        // 尺寸，此处显式传给 loadSceneToThree → player.resize(vw,vh) 使 cover 相机按窗口宽高比裁剪
+        // （Task5 修复：窗口比例 ≠ 场景比例时背景 cover 裁切而非 object-fit:fill 拉伸）。
+        const result = loadSceneToThree(sceneJson, { backgroundTextures, particles, createParticleSim }, fg, {
+          width: vw,
+          height: vh,
+        });
         current = result;
+        // 窗口尺寸变化 → 按新窗口比例重推 cover（对齐 wasm 路径的 window.innerWidth/Height 语义）。
+        onWindowResize = () => {
+          if (!current) return;
+          const { width, height } = viewportSize();
+          current.player.resize(width, height);
+        };
+        window.addEventListener('resize', onWindowResize);
         // 观测：确认走的是 three 路径（浏览器回归探测用）。
         console.log(
           `[three] scene loaded id=${id} background=${result.backgroundIds.length} particleLayers=${result.particleLayers.length}`,

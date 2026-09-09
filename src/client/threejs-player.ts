@@ -159,9 +159,12 @@ export class ThreeScenePlayer {
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -1000, 1000);
     this.camera.position.z = CAMERA_DISTANCE;
 
+    // 注意：构造器**不调用 renderer.setSize(width,height,false)**——否则会把 canvas 尺寸重置回场景
+    // 尺寸，覆盖调用方预设的窗口/视口尺寸（Task5 bug 根因：随后的 resize 读到被覆盖的 canvas.width
+    // → viewport=场景尺寸 → cover 退化为「全场景无裁剪」+ CSS object-fit:fill 拉伸背景）。真正的
+    // canvas 尺寸由调用方在构造后显式 `resize(vw,vh)` 设置（窗口尺寸），见 loadSceneToThree。
     this.renderer = renderer ?? new THREE.WebGLRenderer({ canvas, antialias: true });
     this.applyCover();
-    this.renderer.setSize(width, height, false);
   }
 
   // 视口尺寸变更（浏览器 resize / controller 设置 canvas 逻辑尺寸）：只改视口，重新按
@@ -472,7 +475,7 @@ export class ThreeScenePlayer {
 
 // ===== Task 4：把 WE 场景加载进 three.js 播放器（背景图层 + 粒子系统）=====
 //
-// `loadSceneToThree(sceneJson, assets, canvas)` 复用既有解析（scene-json → SceneDescription）、
+// `loadSceneToThree(sceneJson, assets, canvas, viewport?)` 复用既有解析（scene-json → SceneDescription）、
 // 既有坐标（addBackground 内部 we_to_three，y 不翻）、既有材质调制（materialModulation），
 // 把 WE 场景内容转换成 three.js 可渲染对象：
 //   ① 背景对象（image）→ player.addBackground({origin,size,scale,texture,alpha,brightness,sceneW,sceneH})
@@ -482,7 +485,9 @@ export class ThreeScenePlayer {
 // 播放循环（Task 4）：player.setAnimationLoop(fn)——fn 每帧先 sim.update(dt)（帧差分 clamp 0.1，
 // 见 setAnimationLoop），再由 player 内部 update(dt)（→ updateParticles(dt)）读 getter 刷新
 // BufferAttribute（sim 已在帧内推进，无一帧滞后）。
-// 背景/粒子共用同一 cover 正交相机（Task 1/2 裁决：构造器传场景尺寸 + setSceneSize + 首帧 resize）。
+// 背景/粒子共用同一 cover 正交相机（Task 1/2 裁决：构造器传场景尺寸 + setSceneSize + resize）；
+// Task 5 修复：resize 的视口=窗口/视口尺寸（viewport 参数），而非场景尺寸——cover 按窗口比例裁剪，
+// 避免窗口比例 ≠ 场景比例时背景被 object-fit:fill 拉伸（对照 wasm 用 window.innerWidth/Height 的 cover）。
 //
 // 注意：`loadSceneToThree` 不直接 import wasm `CpuParticleSim`——wasm-bindgen 把它导出为**静态**
 // `CpuParticleSim.new(...)`（非 `new CpuParticleSim(...)`），且 node/jsdom 无法实例化 wasm 模块。
@@ -577,17 +582,20 @@ export function loadSceneToThree(
   sceneJson: string,
   assets: SceneAssets,
   canvas: HTMLCanvasElement,
+  viewport?: { width: number; height: number },
 ): ThreeSceneLoadResult {
   const desc = parseSceneJson(sceneJson);
   const sceneW = desc.orthogonal.width;
   const sceneH = desc.orthogonal.height;
-  // 构造器传场景尺寸（Task 1 裁决：视口缺省与场景同尺寸）；setSceneSize 冗余同步 + 首帧 resize
-  // （Task 1/2 裁决：构造器场景尺寸 + 首帧 resize 视口推 cover，见 setSceneSize/resize 注释）。
+  // 构造器传场景尺寸（Task 1 裁决：视口缺省与场景同尺寸）；setSceneSize 冗余同步 + 用**真实视口**
+  // resize（Task 5 修复：视口必须是窗口/视口尺寸，而非场景尺寸）。viewport 由调用方显式传入
+  // （createThreeSceneRenderer.render 的 vw/vh = window.innerWidth/Height）；缺省回退场景尺寸
+  // （构造器缺省 viewport=scene → cover==场景尺寸无裁剪，保持默认语义）。
   const player = new ThreeScenePlayer(canvas, sceneW, sceneH, assets.renderer);
   player.setSceneSize(sceneW, sceneH);
-  if (canvas.width > 0 && canvas.height > 0) {
-    player.resize(canvas.width, canvas.height);
-  }
+  const vw = viewport?.width ?? sceneW;
+  const vh = viewport?.height ?? sceneH;
+  if (vw > 0 && vh > 0) player.resize(vw, vh);
 
   const backgroundIds: number[] = [];
   const particleLayers: Array<{ id: number; sim: ParticleSim }> = [];

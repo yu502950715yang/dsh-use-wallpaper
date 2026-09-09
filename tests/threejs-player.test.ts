@@ -545,4 +545,46 @@ describe('ThreeScenePlayer loadSceneToThree', () => {
     expect(dtArg).toBeLessThanOrEqual(0.1);
     expect(result.player.scene.children.length).toBe(2); // 1 背景 + 1 粒子图层
   });
+
+  // Task 5：cover 相机必须按**窗口/视口宽度比**推（而非场景尺寸）——窗口比例 ≠ 场景比例时背景
+  // cover 裁切（不拉伸），对照 wasm 路径用 window.innerWidth/Height 推 cover。
+  // EVA 场景 2400×1555（≈1.54）放 16:9 窗口（1.778）→ viewAspect > sceneAspect → 宽度铺满、垂直裁剪。
+  const EVA_SCENE = JSON.stringify({
+    general: { orthogonalprojection: { width: 2400, height: 1555 } },
+    objects: [],
+  });
+
+  it('loadSceneToThree 传 viewport=窗口尺寸 → cover 按窗口宽高比裁剪（场景更窄 → 垂直裁到 1350）', () => {
+    const canvas = document.createElement('canvas');
+    const renderer = createMockRenderer();
+    const result = loadSceneToThree(
+      EVA_SCENE,
+      { renderer: renderer as unknown as THREE.WebGLRenderer },
+      canvas,
+      { width: 1920, height: 1080 },
+    );
+    // viewAspect 1.7778 > sceneAspect 1.5434 → cover: w=2400, h=2400/(1920/1080)=1350。
+    expect(result.player.camera.left).toBe(-1200);
+    expect(result.player.camera.right).toBe(1200);
+    expect(result.player.camera.top).toBeCloseTo(1350 / 2, 6);
+    expect(result.player.camera.bottom).toBeCloseTo(-1350 / 2, 6);
+    // resize 用真实窗口尺寸（1920×1080），而非场景尺寸（2400×1555）→ setSize 收到窗口尺寸。
+    expect(renderer.setSize).toHaveBeenCalledWith(1920, 1080, false);
+  });
+
+  it('loadSceneToThree 不传 viewport → 缺省视口=场景尺寸 → cover 无裁剪（向后兼容）', () => {
+    const canvas = document.createElement('canvas');
+    const renderer = createMockRenderer();
+    const result = loadSceneToThree(
+      EVA_SCENE,
+      { renderer: renderer as unknown as THREE.WebGLRenderer },
+      canvas,
+    );
+    // 视口=场景 2400×1555 → viewAspect==sceneAspect → cover == 场景尺寸（无裁剪）。
+    expect(result.player.camera.left).toBe(-1200);
+    expect(result.player.camera.right).toBe(1200);
+    expect(result.player.camera.top).toBeCloseTo(1555 / 2, 6);
+    expect(result.player.camera.bottom).toBeCloseTo(-1555 / 2, 6);
+    expect(renderer.setSize).toHaveBeenCalledWith(2400, 1555, false);
+  });
 });
