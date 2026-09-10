@@ -48,9 +48,44 @@ type ParticleLayer = {
   uvs: THREE.InstancedBufferAttribute;
   colors: THREE.InstancedBufferAttribute;
   alphas: THREE.InstancedBufferAttribute;
+  // 实例缓冲**容量**（= 每个 instanced attribute 的 count，即一次能画的最大粒子数）。
+  // 关键：three 只在**首次渲染**时把该容量锁存进 `geometry._maxInstanceCount`（见 addParticle
+  // 注释），故容量必须一次给足（sim 的 maxcount），运行期只改 `geometry.instanceCount`（0..capacity）。
+  capacity: number;
   // 「粒子已产出」日志只打一次（首帧 instanceCount 由 0 变正时），防每帧刷屏。
   loggedFirstFrame: boolean;
+  // 已记录过的粒子数（倍增时再记一条，见 updateParticles）：用于在真机 console 里**看到计数增长**
+  // （旧日志只在首帧非零时打一次 count=1，极易被误读为「只发射了 1 个粒子」）。
+  loggedCount: number;
 };
+
+// 粒子实例缓冲的**缺省容量**与上限。容量 = 「本层一次最多画多少个粒子」= 每个 instanced attribute
+// 的 count，必须 ≥ 模拟器最终会产出的粒子数（sim 的 `maxcount`，WE spec 的 maxcount 字段）。
+// 生产路径由 `loadSceneToThree` 传入 spec 的 maxcount（黑神话 leaves5 = 50）；spec 缺 maxcount
+// （旧格式，wasm 侧 `maxcount=0` → 模拟器不发射）或测试注入 mock sim 时用缺省值兜底。
+// 上限与 wasm 粒子池 clamp [16, 2048]（render/particle_pass.rs）对齐，防异常 spec 爆内存。
+export const DEFAULT_PARTICLE_CAPACITY = 1024;
+export const MAX_PARTICLE_CAPACITY = 2048;
+
+// 从粒子 spec JSON 读 `maxcount`（= wasm `SceneParticleSim.maxcount`，同一份 JSON 的同一字段；
+// WE 的 JSON 里也可能是字符串 "50"）。缺省/非法/非正 → 0（调用方落到 DEFAULT_PARTICLE_CAPACITY）。
+export function specMaxcount(specJson: string): number {
+  try {
+    const v = (JSON.parse(specJson) as { maxcount?: unknown }).maxcount;
+    const n = typeof v === 'string' ? parseFloat(v) : typeof v === 'number' ? v : 0;
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+// 计算实例缓冲容量：declaredMax（spec 的 maxcount，0 = 未声明）优先，否则缺省；
+// 再 clamp 到 [1, MAX_PARTICLE_CAPACITY]，并保证 ≥ 建层当帧已有的粒子数。
+export function particleCapacity(declaredMax: number, aliveAtCreate: number): number {
+  const declared = Number.isFinite(declaredMax) && declaredMax > 0 ? Math.floor(declaredMax) : 0;
+  const cap = Math.min(declared > 0 ? declared : DEFAULT_PARTICLE_CAPACITY, MAX_PARTICLE_CAPACITY);
+  return Math.max(1, cap, Math.max(0, Math.floor(aliveAtCreate)));
+}
 
 // 4 角点单位四边形（[-1,1]²，z=0）：作为 InstancedBufferGeometry 的基础顶点 position（角点），
 // 顶点 shader 用它展开 billboard（pos + corner*half_size）。索引 [0,1,2, 0,2,3] 组成 2 个三角形
@@ -411,7 +446,15 @@ export class ThreeScenePlayer {
   // 返回分配的图层 id，供更新/释放引用。
   addParticle(
     simVerticesGetter: () => Float32Array,
-    opts: { tex?: THREE.Texture; frameCount: number; blend: 'additive' | 'alpha'; softness?: number },
+    opts: {
+      tex?: THREE.Texture;
+      frameCount: number;
+      blend: 'additive' | 'alpha';
+      softness?: number;
+      // 实例缓冲容量上界（= sim 的 maxcount / spec 的 maxcount；见 ParticleLayer.capacity 注释）。
+      // 缺省 DEFAULT_PARTICLE_CAPACITY。
+      maxInstances?: number;
+    },
   ): number {
     const frameCount = Math.max(1, Math.floor(opts.frameCount));
     // softness 默认按有无纹理对齐 wasm `particle_billboard` 的 mask_mode（Task 5 + 2026-09-09 深挖）：
@@ -429,16 +472,40 @@ export class ThreeScenePlayer {
     geometry.setIndex(new THREE.BufferAttribute(new Uint16Array(PARTICLE_QUAD_INDEX), 1));
     geometry.instanceCount = 0;
 
-    // 初始 getter 数据 → 决定首帧每个 instanced 属性的容量（updateParticles 逐帧刷新/扩容）。
+    // 初始 getter 数据 → 首帧写入（容量固定，见下）。
     const initial = simVerticesGetter();
     const count = Math.floor(initial.length / 10);
 
+    // ⚠️ 实例缓冲容量必须**一次给足、之后不再替换属性**——这是「黑神话花瓣不可见 / 只有 1 个粒子」
+    // 的根因（2026-09-10 定位，headless Edge + 真 GPU 实测）：
+    //
+    // three r170 在 `setupVertexAttributes` 里对 InstancedBufferGeometry **只锁存一次**容量：
+    //   `if (object.isInstancedMesh !== true && geometry._maxInstanceCount === undefined) {
+    //        geometry._maxInstanceCount = geometryAttribute.meshPerAttribute * geometryAttribute.count; }`
+    //   （three.module.js L15653-15657；`undefined` 判断 ⇒ 之后无论属性怎么变都不会再更新，
+    //     只有 `geometry.dispose()` 才会 `delete geometry._maxInstanceCount`）
+    // 绘制时（同上 L29764-29767）：
+    //   `const instanceCount = Math.min(geometry.instanceCount, geometry._maxInstanceCount);`
+    // 而 `renderInstances` 首行就是 `if (primcount === 0) return;`（L15861-15863）——
+    // **primcount===0 时直接不画**。
+    //
+    // 建层时模拟器还没推进（`CpuParticleSim` 首帧才 update），getter 返回 0 粒子；若照粒子数
+    // 分配属性（0 长度），则首次渲染锁存 `_maxInstanceCount = 0` → 该层**永远不画**
+    // （真机实测：`drawElementsInstanced` 计数恒 0，而背景 `drawElements` 每帧照画 60fps）；
+    // 若首帧恰好已有 1 个粒子，容量就锁死 1 → **永远只画 1 个粒子**（用户真机 console 的
+    // `粒子已产出 count=1` 正是同一帧的采样值，与「只发射了 1 个粒子」无关——模拟本身
+    // 每帧累积发射，实测 150 帧即到 maxcount=50）。
+    //
+    // 因此：按 sim 的 maxcount（`opts.maxInstances`，缺省 DEFAULT_PARTICLE_CAPACITY）**预分配**
+    // 全部 instanced 属性，运行期只改 `geometry.instanceCount`（0..capacity），容量不再变化。
+    const capacity = particleCapacity(opts.maxInstances ?? 0, count);
+
     // per-particle（每个实例）属性：pos(3)/size(1)/uv(2)/color(3)/alpha(1)；itemSize 与字段对应。
-    const positions = new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3);
-    const sizes = new THREE.InstancedBufferAttribute(new Float32Array(count), 1);
-    const uvs = new THREE.InstancedBufferAttribute(new Float32Array(count * 2), 2);
-    const colors = new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3);
-    const alphas = new THREE.InstancedBufferAttribute(new Float32Array(count), 1);
+    const positions = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
+    const sizes = new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1);
+    const uvs = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 2), 2);
+    const colors = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
+    const alphas = new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1);
     geometry.setAttribute('particlePosition', positions);
     geometry.setAttribute('particleSize', sizes);
     geometry.setAttribute('particleUv', uvs);
@@ -492,7 +559,9 @@ export class ThreeScenePlayer {
       uvs,
       colors,
       alphas,
+      capacity,
       loggedFirstFrame: false,
+      loggedCount: 0,
     };
     this.particleLayers.set(id, layer);
     // 立即写入首帧数据，保持 geometry 与 getter 一致（后续由 updateParticles 逐帧刷新）。
@@ -501,25 +570,34 @@ export class ThreeScenePlayer {
   }
 
   // 每帧刷新所有粒子图层：调用各自的 `simVerticesGetter()` 取当前顶点并写回 BufferAttribute。
-  // `dt` 预留（模拟推进由 getter 持有方按其帧循环驱动，如 wasm `CpuParticleSim.update`）。
+  // `dt` 用于诊断日志（证明帧循环真的在跑、dt 是真实帧间隔且 >0）。
   updateParticles(dt: number): void {
-    void dt;
     for (const layer of this.particleLayers.values()) {
       const data = layer.getter();
       const count = Math.floor(data.length / 10);
-      // 首次出现非零粒子时打印一次（真机排查用的确定性证据）：用户报「看不到花瓣」时——
-      //   有本行日志 → 模拟已产出顶点，问题在渲染/视口（按 cover 相机范围核对粒子世界坐标）；
-      //   无本行日志 → 模拟从未产出顶点（sim 未推进 / 帧循环已停摆，见 setAnimationLoop 的 try/catch）。
+      // 诊断日志（真机 console 用；确定性判据），每层最多两行：
+      //   ① 首次出现非零粒子时打一条，含 dt 与容量 —— dt≈0 / 缺本行 ⇒ 帧循环没在推进模拟；
+      //   ② 粒子数首次达到容量（maxcount 满池）时再打一条 —— 证明「持续累积发射到 maxcount」。
+      // 旧实现只在首帧非零时打一条 `count=1`（rate=20、60fps 下首个非零帧必然只有 1 个粒子），
+      // 极易被误读成「模拟只发射了 1 个粒子」；②号日志正是为消除该误读而加（真机实测 ~2.5s 到 50）。
       if (count > 0 && !layer.loggedFirstFrame) {
         layer.loggedFirstFrame = true;
-        console.log(`[three] 粒子已产出 layer=${layer.id} count=${count}`);
+        layer.loggedCount = count;
+        console.log(
+          `[three] 粒子已产出 layer=${layer.id} count=${count} dt=${dt.toFixed(4)}s capacity=${layer.capacity}` +
+            `（首帧非零；模拟每帧累积发射，满 capacity 时再打印一条）`,
+        );
+      } else if (layer.loggedCount < layer.capacity && count >= layer.capacity) {
+        layer.loggedCount = count;
+        console.log(`[three] 粒子已达 maxcount layer=${layer.id} count=${count} dt=${dt.toFixed(4)}s`);
       }
       this.writeParticleData(layer, data, count);
     }
   }
 
   // 把 per-particle 摊平顶点（每粒子 10 浮点）拆到 5 个 instanced 属性并标记需重传。
-  // 属性容量不足时按需扩容（不足×2），收缩不回收（多余槽位不参与渲染，由 instanceCount 控制）。
+  // 容量不足时按需扩容（正常不会发生：容量 = sim 的 maxcount）——扩容后**必须**同步
+  // `geometry._maxInstanceCount`（three 的首帧锁存值，见 addParticle 注释），否则 draw 仍按旧容量截断。
   private writeParticleData(layer: ParticleLayer, data: Float32Array, count: number): void {
     const ensure = (
       attr: THREE.InstancedBufferAttribute,
@@ -540,6 +618,20 @@ export class ThreeScenePlayer {
     layer.uvs = ensure(layer.uvs, 2, count * 2, 'particleUv');
     layer.colors = ensure(layer.colors, 3, count * 3, 'particleColor');
     layer.alphas = ensure(layer.alphas, 1, count, 'particleAlpha');
+
+    // 实际容量 = 最小的「每实例元素数」换算回粒子数（5 个属性同步扩容，取最小以保守）。
+    const minCapacity = Math.min(
+      Math.floor((layer.positions.array as Float32Array).length / 3),
+      (layer.sizes.array as Float32Array).length,
+      Math.floor((layer.uvs.array as Float32Array).length / 2),
+      Math.floor((layer.colors.array as Float32Array).length / 3),
+      (layer.alphas.array as Float32Array).length,
+    );
+    if (minCapacity > layer.capacity) {
+      // 超出预分配容量（spec 未声明 maxcount 或声明不准）→ 同步 three 锁存的实例容量。
+      layer.capacity = minCapacity;
+      (layer.geometry as unknown as { _maxInstanceCount?: number })._maxInstanceCount = minCapacity;
+    }
 
     const pos = layer.positions.array as Float32Array;
     const size = layer.sizes.array as Float32Array;
@@ -745,6 +837,10 @@ export function loadSceneToThree(
         frameCount: sim.frame_count(),
         blend: p.blend,
         softness: p.softness,
+        // 实例缓冲容量 = spec 的 maxcount（= wasm `SceneParticleSim.maxcount`，模拟器的发射上限）。
+        // three 只在首帧锁存该容量（见 addParticle），必须按模拟器**最终**会产出的粒子数一次给足；
+        // 缺 maxcount（旧格式/解析失败）→ addParticle 用 DEFAULT_PARTICLE_CAPACITY 兜底。
+        maxInstances: specMaxcount(p.specJson),
       });
       particleLayers.push({ id, sim });
       sims.push(sim);

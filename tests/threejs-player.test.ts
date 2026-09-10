@@ -6,7 +6,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
-import { ThreeScenePlayer, loadSceneToThree, frameCountFromDims, textureFrameCount } from '../src/client/threejs-player.js';
+import { ThreeScenePlayer, loadSceneToThree, frameCountFromDims, textureFrameCount, specMaxcount, particleCapacity, DEFAULT_PARTICLE_CAPACITY, MAX_PARTICLE_CAPACITY } from '../src/client/threejs-player.js';
 import { coverRange } from '../src/client/scene-renderer.js';
 
 // 注入的 mock renderer：只测相机/场景/RAF 逻辑，不触碰 WebGL。
@@ -368,18 +368,21 @@ describe('ThreeScenePlayer particle layer', () => {
     expect(geom).toBeInstanceOf(THREE.InstancedBufferGeometry);
     expect(geom.instanceCount).toBe(2);
 
-    // 5 个 per-particle instanced 属性（position/size/uv/color/alpha），长度 = 粒子数×itemSize。
+    // 5 个 per-particle instanced 属性（position/size/uv/color/alpha）。
+    // 属性按**实例容量**预分配（不是按当前粒子数）——three 首帧锁存容量，必须一次给足（见
+    // addParticle 的根因注释），故此处断言「容量 ≥ 当前粒子数 + 各属性长度 = count×itemSize」，
+    // 而非旧实现的「长度恰为 粒子数×itemSize」。
     const pos = geom.getAttribute('particlePosition') as THREE.InstancedBufferAttribute;
     const size = geom.getAttribute('particleSize') as THREE.InstancedBufferAttribute;
     const uv = geom.getAttribute('particleUv') as THREE.InstancedBufferAttribute;
     const color = geom.getAttribute('particleColor') as THREE.InstancedBufferAttribute;
     const alpha = geom.getAttribute('particleAlpha') as THREE.InstancedBufferAttribute;
-    expect(pos.count).toBe(2);
-    expect((pos.array as Float32Array).length).toBe(2 * 3);
-    expect((size.array as Float32Array).length).toBe(2);
-    expect((uv.array as Float32Array).length).toBe(2 * 2);
-    expect((color.array as Float32Array).length).toBe(2 * 3);
-    expect((alpha.array as Float32Array).length).toBe(2);
+    expect(pos.count).toBeGreaterThanOrEqual(2);
+    expect((pos.array as Float32Array).length).toBe(pos.count * 3);
+    expect((size.array as Float32Array).length).toBe(size.count);
+    expect((uv.array as Float32Array).length).toBe(uv.count * 2);
+    expect((color.array as Float32Array).length).toBe(color.count * 3);
+    expect((alpha.array as Float32Array).length).toBe(alpha.count);
 
     // 数据写回：p0 pos=(1,2,3)、size=40、uv=(0.625,0.5)、color=(0.5,0.6,0.7)、alpha=0.25。
     expect(Array.from(pos.array as Float32Array).slice(0, 3)).toEqual([1, 2, 3]);
@@ -527,6 +530,64 @@ describe('ThreeScenePlayer particle layer', () => {
     expect(getter).toHaveBeenCalledTimes(2);
   });
 
+  // ⚠️ 核心回归测试（2026-09-10 真机根因）：three 对 InstancedBufferGeometry 的实例容量
+  // `geometry._maxInstanceCount` **只在首次渲染时锁存一次**（`setupVertexAttributes`：
+  // `if (object.isInstancedMesh !== true && geometry._maxInstanceCount === undefined)
+  //      geometry._maxInstanceCount = attr.meshPerAttribute * attr.count;`），
+  // 之后 draw 时 `instanceCount = min(geometry.instanceCount, _maxInstanceCount)`，
+  // 且 `renderInstances` 在 `primcount === 0` 时**直接 return**（不画）。
+  // 旧实现按「建层当帧的粒子数」分配属性（模拟器还没 update → 0；或用户机器上首帧恰好 1 个）
+  // ⇒ 容量锁死 0/1 ⇒ 粒子层**永远不画** / **永远只画 1 个**（背景照画，故表现为「背景清晰、
+  // 就是没有花瓣」，而 console 里那条 `count=1` 只是首帧非零的采样值）。
+  // 这两条断言复刻 three 的锁存语义：容量必须一次给足（≥ sim 最终粒子数）。
+  it('addParticle：实例容量一次性给足（three 首帧锁存）——首帧 0 粒子时容量仍 > 0，防整层永不绘制', () => {
+    const { player } = makePlayer(1920, 1080);
+    // 建层时模拟器尚未 update（getter 返回空）——正是生产路径的真实时序。
+    let verts = new Float32Array(0);
+    const getter = () => verts;
+    player.addParticle(getter, { frameCount: 4, blend: 'alpha', maxInstances: 50 });
+    const geom = particleMesh(player).geometry as THREE.InstancedBufferGeometry;
+    // three 首帧锁存的容量（取第一个 instanced 属性）——必须 ≥ maxcount，否则 draw 被截断。
+    const latch = () => {
+      const a = geom.getAttribute('particlePosition') as THREE.InstancedBufferAttribute;
+      return a.meshPerAttribute * a.count;
+    };
+    expect(latch()).toBe(50);
+    expect(Math.min(geom.instanceCount, latch())).toBe(0); // 还没有粒子 → 不画（正确）
+
+    // sim 推进到 50 个粒子（黑神话 leaves5 的 maxcount）→ draw 必须画满 50 个实例。
+    verts = makeVerts(...Array.from({ length: 50 }, (_, i) => [i, i, 0, 40, 0.625, 0.5, 1, 1, 1, 1]));
+    player.updateParticles(1 / 60);
+    expect(geom.instanceCount).toBe(50);
+    expect(Math.min(geom.instanceCount, latch())).toBe(50); // ← 旧实现此处是 0（容量锁死 0）
+  });
+
+  it('addParticle：未声明 maxInstances 时用缺省容量兜底（首帧 0 粒子也不会锁死 0）', () => {
+    const { player } = makePlayer(1920, 1080);
+    let verts = new Float32Array(0);
+    player.addParticle(() => verts, { frameCount: 4, blend: 'alpha' });
+    const geom = particleMesh(player).geometry as THREE.InstancedBufferGeometry;
+    const a = geom.getAttribute('particlePosition') as THREE.InstancedBufferAttribute;
+    expect(a.count).toBe(DEFAULT_PARTICLE_CAPACITY);
+    verts = makeVerts(...Array.from({ length: 30 }, (_, i) => [i, i, 0, 40, 0.625, 0.5, 1, 1, 1, 1]));
+    player.updateParticles(1 / 60);
+    expect(Math.min(geom.instanceCount, a.meshPerAttribute * a.count)).toBe(30);
+  });
+
+  it('addParticle：粒子数超出预分配容量 → 属性扩容**且**同步 three 锁存的 _maxInstanceCount', () => {
+    const { player } = makePlayer(1920, 1080);
+    let verts = new Float32Array(0);
+    player.addParticle(() => verts, { frameCount: 4, blend: 'alpha', maxInstances: 2 });
+    const geom = particleMesh(player).geometry as THREE.InstancedBufferGeometry;
+    expect((geom as unknown as { _maxInstanceCount?: number })._maxInstanceCount).toBeUndefined(); // 未渲染过
+    verts = makeVerts(...Array.from({ length: 5 }, (_, i) => [i, 0, 0, 10, 0.625, 0.5, 1, 1, 1, 1]));
+    player.updateParticles(1 / 60);
+    const a = geom.getAttribute('particlePosition') as THREE.InstancedBufferAttribute;
+    expect(a.count).toBeGreaterThanOrEqual(5);
+    // 扩容后必须同步锁存值，否则 three 仍按旧容量（2）截断 draw。
+    expect((geom as unknown as { _maxInstanceCount?: number })._maxInstanceCount).toBe(a.count);
+  });
+
   it('addParticle 返回数值 id，dispose 释放粒子几何/材质', () => {
     const { player } = makePlayer(1920, 1080);
     const id = player.addParticle(() => dataA, { frameCount: 4, blend: 'additive' });
@@ -656,6 +717,44 @@ describe('ThreeScenePlayer loadSceneToThree', () => {
       expect(mat.uniforms.frameCount.value).toBe(1);
       expect(mat.uniforms.frameCount.value).toBe(sim.frame_count());
     });
+
+  it('loadSceneToThree：实例容量取自 spec 的 maxcount（three 首帧锁存，必须一次给足）', () => {
+    // 黑神话 leaves5 的真实 spec：rate=20、maxcount=50。容量必须 = 50（而非建层当帧的粒子数）。
+    const canvas = document.createElement('canvas');
+    const sim = makeMockSim();
+    const assets = {
+      renderer: createMockRenderer() as unknown as THREE.WebGLRenderer,
+      backgroundTextures: new Map([[13, new THREE.DataTexture(new Uint8Array(4), 2, 2)]]),
+      particles: new Map([[71, {
+        specJson: JSON.stringify({ maxcount: 50, emitter: [{ name: 'sphererandom', rate: 20 }] }),
+        tex: new THREE.DataTexture(new Uint8Array(4), 512, 128),
+        blend: 'alpha' as const,
+      }]]),
+      createParticleSim: vi.fn(() => sim),
+    };
+    const result = loadSceneToThree(BLACKMYTH_SCENE, assets, canvas);
+    const mesh = result.player.scene.children.find(
+      (c) => (c as THREE.Mesh).material instanceof THREE.ShaderMaterial,
+    ) as THREE.Mesh;
+    const geom = mesh.geometry as THREE.InstancedBufferGeometry;
+    const pos = geom.getAttribute('particlePosition') as THREE.InstancedBufferAttribute;
+    expect(pos.count).toBe(50); // ← 旧实现 = mock sim 当前粒子数（2）
+    // mock sim 当前 2 个粒子 → 本帧画 2 个实例（draw = min(instanceCount, 锁存容量)）。
+    expect(geom.instanceCount).toBe(2);
+  });
+
+  it('specMaxcount / particleCapacity：解析 spec.maxcount（含字符串）、缺省与上限兜底', () => {
+    expect(specMaxcount('{"maxcount":50}')).toBe(50);
+    expect(specMaxcount('{"maxcount":"50"}')).toBe(50); // WE JSON 亦有字符串写法
+    expect(specMaxcount('{}')).toBe(0);
+    expect(specMaxcount('not json')).toBe(0);
+    // 声明值优先；未声明 → DEFAULT；不可超 MAX_PARTICLE_CAPACITY。
+    expect(particleCapacity(50, 0)).toBe(50);
+    expect(particleCapacity(0, 0)).toBe(DEFAULT_PARTICLE_CAPACITY);
+    expect(particleCapacity(0, 3000)).toBe(3000);
+    expect(particleCapacity(99999, 0)).toBe(MAX_PARTICLE_CAPACITY);
+    expect(particleCapacity(2, 5)).toBe(5); // 容量不得小于建层当帧已有粒子数
+  });
 
   it('frameCountFromDims / textureFrameCount 对齐 wasm frame_count_from_dims', () => {
     expect(frameCountFromDims(512, 128)).toBe(4); // rosepetals 512×128 → 4
