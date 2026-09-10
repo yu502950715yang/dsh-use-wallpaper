@@ -409,5 +409,45 @@ describe('textureFromTex 分支选择', () => {
       expect(Array.from(m0.data.slice(0, blockSize))).toEqual(Array.from(blocks.slice(2 * blockSize, 3 * blockSize)));
       expect(Array.from(m0.data.slice(2 * blockSize, 3 * blockSize))).toEqual(Array.from(blocks.slice(0, blockSize)));
     });
+
+    // 2026-09-10 Task5 深挖（真机复现）：DXT 背景模糊。根因 = 压缩纹理用了**内嵌 mip 链 + 三线性过滤**：
+    // ① WE 的 DXT mip 链常常不完整（Lycoris materials/111.tex：DXT1 6144×3072 只有 5 级，完整需 13 级），
+    //    three 以 `texStorage2D(levels=mipmaps.length)` 分配不可变存储 → 纹理非 mipmap complete（ES 3.0
+    //    下 mipmap 过滤器结果由实现定义）；② 即便驱动宽松，三线性过滤在常见视口取到 mip1/mip2（实测锐度
+    //    −31%），观感「糊」。修复 = 与 RGBA8888/编码图像路径对齐：只用 mip0 全分辨率基础层 + LinearFilter。
+    it('DXT：只用 mip0 全分辨率基础层 + LinearFilter（修复「内嵌不完整 mip 链 + 三线性」导致的模糊）', async () => {
+      const w = 64, h = 32, blockSize = 8; // DXT1
+      const mip0 = new Uint8Array((w / 4) * (h / 4) * blockSize).fill(0x11);
+      const mip1 = new Uint8Array((w / 8) * (h / 8) * blockSize).fill(0x22);
+      const buf = makeTex({
+        format: TEX_FORMAT.DXT1,
+        images: [[{ width: w, height: h, data: mip0 }, { width: w / 2, height: h / 2, data: mip1 }]],
+      });
+      const info = parseTex(buf)!;
+      expect(info.mipmaps.length).toBe(2); // 解析层仍保留全部内嵌 mip（parseTex 不改语义）
+      const tex = await textureFromTex(info) as THREE.CompressedTexture;
+      // 只有 1 个 mipmap 层级（= mip0），尺寸 = mip0 全分辨率（不是 mip1 的 32×16）。
+      expect(tex.mipmaps.length).toBe(1);
+      expect(tex.mipmaps[0].width).toBe(64);
+      expect(tex.mipmaps[0].height).toBe(32);
+      expect((tex.mipmaps[0].data as Uint8Array).length).toBe(mip0.length);
+      expect(tex.image.width).toBe(64);
+      expect(tex.image.height).toBe(32);
+      // 非 mipmap 过滤器：LinearFilter（基础层双线性）→ 纹理必然 complete，且无 mip 下采样损失。
+      expect(tex.minFilter).toBe(THREE.LinearFilter);
+      expect(tex.magFilter).toBe(THREE.LinearFilter);
+      expect(tex.generateMipmaps).toBe(false);
+    });
+
+    it('DXT1（format=7）：纹理为 CompressedTexture 且 base 尺寸 = mip0（回归 Lycoris 全分辨率）', async () => {
+      const w = 8, h = 8, blockSize = 8;
+      const blocks = new Uint8Array(4 * blockSize).fill(0x7f);
+      const buf = makeTex({ format: TEX_FORMAT.DXT1, images: [[{ width: w, height: h, data: blocks }]] });
+      const tex = await textureFromTex(parseTex(buf)!) as THREE.CompressedTexture;
+      expect(tex).toBeInstanceOf(THREE.CompressedTexture);
+      expect(tex.format).toBe(0x83f1);
+      expect(tex.mipmaps.length).toBe(1);
+      expect(tex.minFilter).toBe(THREE.LinearFilter);
+    });
   });
 });

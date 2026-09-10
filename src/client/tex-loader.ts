@@ -226,19 +226,37 @@ export async function textureFromTex(info: TexInfo): Promise<THREE.Texture | nul
     // 此处按**块行**（每 4 像素行一块，DXT 压缩纹理尺寸须为 4 的倍数）反转数据，使 v=0=bottom-up，
     // 与 DataTexture/ImageBitmap 两条路径的行序**一致**（图像正立）。
     const blockSize = info.format === TEX_FORMAT.DXT1 ? 8 : 16;
+    // ⚠️ 只用 mip[0]（全分辨率基础层），**不传内嵌 mip 链**（关键，修复「DXT 背景模糊」——Lycoris
+    // Recoil，2026-09-10 真机复现）：
+    //   ① WE 的 DXT 纹理内嵌 mip 链往往**不完整**：materials/111.tex 为 DXT1 6144×3072，链只有
+    //      5 级（6144→3072→1536→768→384），而完整链需 0..floor(log2(6144))=12 共 13 级。
+    //      three 的压缩纹理上传用 `texStorage2D(TEXTURE_2D, levels = mipmaps.length …)` 分配
+    //      **不可变存储**（`WebGLTextures` 25125-25232：`levels = getMipLevels()` → `mipmaps.length`），
+    //      之后无法再补层级 ⇒ 该纹理在 ES 3.0 语义下**不是 mipmap complete**（mipmap 过滤器的
+    //      采样结果由实现定义：宽松驱动会夹取到最深一层、严格驱动直接返回 (0,0,0,1)）——不可依赖。
+    //   ② 即使驱动宽松（本机 RTX 3060/ANGLE D3D11 实测：补全链后画面与不补全**像素级一致**），
+    //      `minFilter = LinearMipmapLinearFilter` 的**三线性过滤**会在常见视口下取到 mip1/mip2：
+    //      Lycoris 背景对象 world 宽 = 6144×0.47891 = 2942（画布 2560×1440 的 1.15 倍），1920 宽视口
+    //      下可见纹理跨度 ≈5345 texel → LOD≈1.48（mip1/mip2 混合）；实测锐度（相邻像素梯度均值）
+    //      比基础层采样低 **31%**（4.25 vs 5.58，1920×1080）、17%（3200×1800），即用户所见的「糊」。
+    //      对照：黑神话背景 3840×2160 纹理 ↔ 3840×2160 场景（1:1），1920 视口 LOD 恰为 1.0
+    //      → mip1 = 1920×1080 = 屏幕分辨率 → 像素级锐利，故「同为 three 渲染，唯独 DXT 那张糊」。
+    //   ③ 因此压缩纹理与 RGBA8888/编码图像路径对齐：**基础层 = mip0 全分辨率、不做 mip 下采样**，
+    //      `minFilter = LinearFilter`（非 mipmap 过滤器 ⇒ 纹理必然 complete，无 ① 的未定义行为），
+    //      `magFilter = LinearFilter`（与另两条路径一致的双线性放大）。
     const tex = new THREE.CompressedTexture(
-      info.mipmaps.map((m) => ({
-        data: flipCompressedRows(m.data, m.width, m.height, blockSize),
-        width: m.width,
-        height: m.height,
-      })),
+      [{
+        data: flipCompressedRows(mip.data, mip.width, mip.height, blockSize),
+        width: mip.width,
+        height: mip.height,
+      }],
       mip.width,
       mip.height,
       glFormat as THREE.CompressedPixelFormat,
     );
-    // DXT 已内嵌完整 mip 链（info.mipmaps 全链传入），minFilter 保持 LinearMipmapLinear（有 mip）；
-    // 显式 magFilter=Linear + generateMipmaps=false（压缩纹理不能生成 mip，mip 已内嵌）。
     tex.magFilter = THREE.LinearFilter;
+    tex.minFilter = THREE.LinearFilter;
+    // 压缩纹理不能由 GPU 生成 mip（three 会跳过 generateMipmap），显式关闭避免误判「需要 mip」。
     tex.generateMipmaps = false;
     tex.needsUpdate = true;
     return tex;

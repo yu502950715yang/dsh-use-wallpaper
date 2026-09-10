@@ -152,6 +152,43 @@ describe('ThreeScenePlayer', () => {
     expect(dt).toBeLessThanOrEqual(0.1);
   });
 
+  // 2026-09-10 Task5 深挖（关键，对应「背景清晰但没有粒子」）：three r170 的
+  // `WebGLAnimation.onAnimationFrame` = `animationLoop(...); requestId = context.requestAnimationFrame(...)`
+  // （three.module.js 13612-13618），**重排下一帧在回调之后**且无 try/catch。只要帧体抛一次异常，
+  // RAF 就永久不再排程 → 画面停在首帧（instanceCount=0，粒子永不出现）。本类必须自包裹，保证
+  // 「单帧异常只丢该帧，循环继续」。
+  it('setAnimationLoop：帧体抛异常不逃逸（three 才能重排下一帧，防 RAF 永久停摆 → 无粒子）', () => {
+    const { player, mock } = makePlayer();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let calls = 0;
+    player.setAnimationLoop(() => {
+      calls++;
+      if (calls === 1) throw new Error('sim panic（模拟 wasm 异常）');
+    });
+    const loop = mock._getLoop()!;
+    // 第一帧：外部回调抛错 → 不得逃逸出帧回调（否则 three 不会重排 RAF）。
+    expect(() => loop()).not.toThrow();
+    // 循环继续：第二帧正常执行（渲染没有被停摆）。
+    expect(() => loop()).not.toThrow();
+    expect(calls).toBe(2);
+    // 抛错那帧的 render 被跳过（异常发生在 fn 内，之后的 update/render 不执行）→ 只渲染了第二帧。
+    expect(mock.render).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledTimes(1); // 只警告一次（防刷屏）
+    warn.mockRestore();
+  });
+
+  it('setAnimationLoop：renderer.render 抛异常同样不逃逸（循环自愈）', () => {
+    const { player, mock } = makePlayer();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mock.render.mockImplementationOnce(() => { throw new Error('gl error'); });
+    player.setAnimationLoop();
+    const loop = mock._getLoop()!;
+    expect(() => loop()).not.toThrow();
+    expect(() => loop()).not.toThrow();
+    expect(mock.render).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
+  });
+
   it('setSceneSize 更新场景固有尺寸并重推 cover', () => {
     const { player } = makePlayer(1920, 1080);
     player.setSceneSize(2400, 1555);
@@ -359,8 +396,26 @@ describe('ThreeScenePlayer particle layer', () => {
     expect((size.array as Float32Array)[1]).toBe(20);
   });
 
-  it('addParticle：blend 模式（additive/alpha）设到 material，transparent 恒置位', () => {
+  // 2026-09-10 Task5 深挖：InstancedBufferGeometry 的包围球只看**基础四边形**（[-1,1]²，半径≈1.41），
+  // 不含 per-instance 位置；粒子实际散布在世界坐标 ±1200 处 → 任何按 boundingSphere 剔除的路径都会
+  // 把整层判为离屏（整层不绘制 = 花瓣全丢）。故 mesh.frustumCulled=false **且** geometry.boundingSphere
+  // 显式设为无限半径，双保险。
+  it('addParticle：frustumCulled=false 且 boundingSphere=无限半径（防整层被视锥剔除 → 无花瓣）', () => {
     const { player } = makePlayer(1920, 1080);
+    player.addParticle(() => dataA, { frameCount: 1, blend: 'alpha' });
+    const mesh = particleMesh(player);
+    const geom = mesh.geometry as THREE.InstancedBufferGeometry;
+    expect(mesh.frustumCulled).toBe(false);
+    expect(geom.boundingSphere).toBeInstanceOf(THREE.Sphere);
+    expect(geom.boundingSphere!.radius).toBe(Number.POSITIVE_INFINITY);
+    // 基础四边形自身算出来的包围球半径只有 ≈1.41（远小于粒子世界坐标）——证明显式无限半径是必要的。
+    const probe = new THREE.InstancedBufferGeometry();
+    probe.setAttribute('position', new THREE.BufferAttribute(new Float32Array([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0]), 3));
+    probe.computeBoundingSphere();
+    expect(probe.boundingSphere!.radius).toBeLessThan(2);
+  });
+
+  it('addParticle：blend 模式（additive/alpha）设到 material，transparent 恒置位', () => {    const { player } = makePlayer(1920, 1080);
     player.addParticle(() => dataA, { frameCount: 4, blend: 'additive' });
     const matAdd = particleMesh(player).material as THREE.ShaderMaterial;
     expect(matAdd.transparent).toBe(true);

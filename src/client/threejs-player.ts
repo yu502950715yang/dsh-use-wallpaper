@@ -48,6 +48,8 @@ type ParticleLayer = {
   uvs: THREE.InstancedBufferAttribute;
   colors: THREE.InstancedBufferAttribute;
   alphas: THREE.InstancedBufferAttribute;
+  // 「粒子已产出」日志只打一次（首帧 instanceCount 由 0 变正时），防每帧刷屏。
+  loggedFirstFrame: boolean;
 };
 
 // 4 角点单位四边形（[-1,1]²，z=0）：作为 InstancedBufferGeometry 的基础顶点 position（角点），
@@ -269,15 +271,33 @@ export class ThreeScenePlayer {
   // Task 4 关键：fn(dt) 先于内部 update(dt)——fn 承载「模拟推进」（如 CpuParticleSim.update），
   // 使 update（→ updateParticles 读 getter）拿到**本帧已推进**的顶点（sim 已在帧内 advance），
   // 避免「先读旧顶点再推进」的一帧滞后。
+  //
+  // ⚠️ 帧体必须整体 try/catch（关键，修复「黑神话花瓣不可见」这类「背景清晰但粒子永不出现」）：
+  // three r170 的 `WebGLAnimation.onAnimationFrame` 实现为
+  //   `animationLoop(time, frame); requestId = context.requestAnimationFrame(onAnimationFrame);`
+  // （three.module.js 13612-13618）——**重排下一帧的语句在回调之后**，且 three 不包裹 try/catch。
+  // 因此只要本帧回调抛出一次（wasm 模拟器 panic、顶点 getter 返回异常数据、纹理/材质 GL 错误…），
+  // `requestAnimationFrame` 就再也**不会被重新排程 → RAF 循环永久停摆**：canvas 停在最后成功绘制的
+  // 那一帧（= `loadSceneToThree` 时的首帧，此时 `instanceCount===0`）→ 用户看到「背景清晰但没有粒子」
+  // 且再无任何动画/诊断输出（sim 从未推进，粒子永远不出现）。此处把帧体包进 try/catch（**不重抛**），
+  // 保证 three 每帧都能重新排程 RAF：单帧异常只丢该帧，循环自愈；异常只记一次 warn（防刷屏）。
   setAnimationLoop(fn?: (dt: number) => void): void {
     this.lastTime = performance.now();
+    let warned = false;
     this.renderer.setAnimationLoop(() => {
-      const now = performance.now();
-      const dt = Math.min((now - this.lastTime) / 1000, 0.1);
-      this.lastTime = now;
-      fn?.(dt);
-      this.update(dt);
-      this.renderer.render(this.scene, this.camera);
+      try {
+        const now = performance.now();
+        const dt = Math.min((now - this.lastTime) / 1000, 0.1);
+        this.lastTime = now;
+        fn?.(dt);
+        this.update(dt);
+        this.renderer.render(this.scene, this.camera);
+      } catch (e) {
+        if (!warned) {
+          warned = true;
+          console.warn('[three] 帧循环异常（已丢弃该帧并继续循环）:', e instanceof Error ? e.message : String(e));
+        }
+      }
     });
   }
 
@@ -447,6 +467,11 @@ export class ThreeScenePlayer {
     const mesh = new THREE.Mesh(geometry, material);
     // 粒子散布在场景（非基础四边形包围球），禁用视锥剔除防止对象中心离屏时整层消失。
     mesh.frustumCulled = false;
+    // 双保险：`InstancedBufferGeometry.computeBoundingSphere()` 只看**基础四边形**（[-1,1]²，半径≈1.4）
+    // 而**不看** per-instance 位置，任何仍按 boundingSphere 剔除的代码路径（未来重构、旧 three 版本、
+    // 自定义 renderer/WebXR 路径）都会把整层判为「离屏」（粒子在世界坐标 ±1200 处，包围球在原点）
+    // → 整层不绘制 = 花瓣全丢。显式给一个无限半径的包围球，使该不变量不依赖 `frustumCulled` 一处。
+    geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), Number.POSITIVE_INFINITY);
     // renderOrder 固定为 1：保证粒子 billboard 在透明渲染队列中**晚于**背景图层（renderOrder 0）
     // 绘制，使粒子叠在背景之上（背景 transparent 同排透明队列，靠插入顺序易受排序扰动，见
     // ThreeScenePlayer 背景/粒子同 z 的 reversePainterSortStable 稳定序）。这是「粒子不可见 /
@@ -467,6 +492,7 @@ export class ThreeScenePlayer {
       uvs,
       colors,
       alphas,
+      loggedFirstFrame: false,
     };
     this.particleLayers.set(id, layer);
     // 立即写入首帧数据，保持 geometry 与 getter 一致（后续由 updateParticles 逐帧刷新）。
@@ -481,6 +507,13 @@ export class ThreeScenePlayer {
     for (const layer of this.particleLayers.values()) {
       const data = layer.getter();
       const count = Math.floor(data.length / 10);
+      // 首次出现非零粒子时打印一次（真机排查用的确定性证据）：用户报「看不到花瓣」时——
+      //   有本行日志 → 模拟已产出顶点，问题在渲染/视口（按 cover 相机范围核对粒子世界坐标）；
+      //   无本行日志 → 模拟从未产出顶点（sim 未推进 / 帧循环已停摆，见 setAnimationLoop 的 try/catch）。
+      if (count > 0 && !layer.loggedFirstFrame) {
+        layer.loggedFirstFrame = true;
+        console.log(`[three] 粒子已产出 layer=${layer.id} count=${count}`);
+      }
       this.writeParticleData(layer, data, count);
     }
   }
