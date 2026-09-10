@@ -762,6 +762,60 @@ impl SceneParticleSim {
         self.particles.retain(|p| p.life > 0.0);
     }
 
+    /// 预滚到「已经在飘」的稳态（warm start）——**治「所有花瓣同时下落」**。
+    ///
+    /// 问题（2026-09-10 实测，见 `.superpowers/sdd/2026-09-08-scene-particle-lwe-alignment/task-5-report.md`）：
+    /// 从空池冷启动时，粒子按 `rate` 陆续出生（这部分本就正确），但**全部处于同一寿命相位**
+    /// （首帧 `lifetimePos` 标准差 ≈ 0.002）、且发射器纵向散射很小（黑神话 `directions.y=0.1`
+    /// × `distancemax=750` → 出生 y 仅 ±75，而 scene 高 2160），每片花瓣一个寿命内只下落
+    /// 75~500（≈3%~23% 屏高）。于是整批花瓣在一条窄横带里**同相位平行下落**——观感即
+    /// Windows 用户所说的「所有花瓣同时往下落/一批一起落、一起消失」。
+    ///
+    /// 做法：把发射器「已经运行了约一个平均寿命」后的**稳态**直接铺到首帧——发射
+    /// `steady = min(maxcount, ceil(rate × 平均寿命))` 个粒子，每个粒子带**均匀随机**的出生相位
+    /// `age_frac ∈ [0,1)`（`age = age_frac × lifetime`，位置/旋转按该 age 前滚、`life` 扣减），
+    /// 使各粒子在**不同相位**开始下落（有的刚出生在发射点、有的已飘到半途、有的正在淡出）。
+    /// 之后 `update()` 仍按 `rate` 精确累积发射（池满时由死亡腾位），与既有语义一致。
+    ///
+    /// 与 lwe 的关系：lwe 的发射/初值语义未被改动（`emission_timer` 累积、逐粒子随机 lifetime/
+    /// velocity/frame/rotation 均照旧）；本方法只改**初始条件**（冷启动空池 → 稳态），不改任何
+    /// 逐帧物理。WE 桌面版长时间运行的观感即该稳态，故这是「对齐 Windows 观感」的最小改动。
+    ///
+    /// 幂等性：可重复调用，恒不超过 `maxcount`（池已满时第二次调用不再增粒子；未满则补满，
+    /// 且只对本次新增的粒子做相位前滚）。
+    pub fn prewarm(&mut self) {
+        let mean_life = 0.5 * (self.init.lifetime_min + self.init.lifetime_max);
+        if self.emitter.rate <= 0.0 || mean_life <= 0.0 || self.maxcount == 0 {
+            return;
+        }
+        // 稳态存活数 = rate × 平均寿命（黑神话 20×7.5=150 → 受 maxcount=50 封顶）。
+        let steady = ((self.emitter.rate * mean_life).ceil() as u32).clamp(1, self.maxcount);
+        let first = self.particles.len();
+        for _ in 0..steady {
+            if self.particles.len() as u32 >= self.maxcount {
+                break;
+            }
+            // 出生相位随机（=「每片花瓣在不同时间/相位开始下落」）。
+            let age_frac = rand();
+            self.spawn_with_age_frac(age_frac);
+        }
+        // 按各自 age 前滚各算子一次：位置 `pos += vel*age`（movement）、旋转 `rot += ω*age`
+        // （angularmovement）、alpha/size/color 按 `lifetimePos` 落到该 age 的相位
+        // （alphafade/sizechange/colorchange/oscillate 都是 age 的函数）。`age_frac=0` 的粒子
+        // age=0 → 跳过（与常规发射逐位一致）。
+        let operators = self.operators.clone();
+        for idx in first..self.particles.len() {
+            let age = particle_age(&self.particles[idx]);
+            if age <= 0.0 {
+                continue;
+            }
+            let now = self.time + age;
+            for op in &operators {
+                op.apply(&mut self.particles[idx], age, now);
+            }
+        }
+    }
+
     /// 计算本次发射的**局部散射偏移** `local`（照 lwe `createBoxEmitter` / `createSphereEmitter`）。
     ///
     /// - `is_sphere == true`（spec `name=="sphererandom"`）→ `createSphereEmitter` 的 **3D 球壳**：
@@ -807,7 +861,16 @@ impl SceneParticleSim {
     /// 局部散射偏移由 `emitter_local()`（按 `is_sphere` 分支，见其注释）给出，再叠加到
     /// **对象变换后的发射点**上；其余初值（velocity/size/life/color/alpha/rot/frame）由
     /// `self.init` 填充（对应 lwe 后续 initializers 的语义，Task 3 再逐一对齐）。
+    ///
+    /// `age_frac = 0` → 常规发射（新粒子 age=0，行为与既有一致）；`> 0` → 该粒子出生即带
+    /// `age = age_frac × lifetime` 的**相位偏移**（`life = lifetime - age`），供 `prewarm()`
+    /// 铺「已经在飘」的稳态用（详见 `prewarm` 注释）。
     fn spawn(&mut self) {
+        self.spawn_with_age_frac(0.0);
+    }
+
+    /// `spawn()` 的带相位偏移版本（`age_frac ∈ [0,1)`；`0` = 常规发射）。
+    fn spawn_with_age_frac(&mut self, age_frac: f32) {
         // 局部散射偏移（box 或 sphere，见 `emitter_local`）。
         let local = self.emitter_local();
 
@@ -869,6 +932,10 @@ impl SceneParticleSim {
         let size = i.size_min + (i.size_max - i.size_min) * rand().powf(i.size_exponent);
         // lifetimeRandom / alphaRandom：`lerp(min,max,rand)`（黑神话 life∈[5,10]、alpha 缺省 1.0）。
         let life = lerp(i.lifetime_min, i.lifetime_max);
+        // 出生相位偏移（prewarm 用）：`age = age_frac × lifetime`，剩余寿命 = lifetime - age。
+        // `age_frac = 0`（常规发射）→ spawn_age=0、剩余寿命=lifetime，与既有行为**逐位一致**。
+        let spawn_age = (age_frac.clamp(0.0, 0.999) * life).max(0.0);
+        let life_remaining = (life - spawn_age).max(1e-3);
         let alpha = lerp(i.alpha_min, i.alpha_max);
         // colorRandom：逐分量 lerp（已归一 0..1；缺省 color_min/max=[1,1,1]；黑神话粉花瓣）。
         let color = [
@@ -919,7 +986,7 @@ impl SceneParticleSim {
             angular_vel,
             size,
             alpha,
-            life,
+            life: life_remaining,
             max_life: life,
             color,
             frame,

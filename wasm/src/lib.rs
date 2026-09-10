@@ -288,7 +288,11 @@ impl CpuParticleSim {
     /// `set_frame_count` 覆写。返回 `Err`（spec 解析失败）→ JS 侧 Promise reject。
     pub fn new(json: &str, origin: Vec<f32>, scene_w: f32, scene_h: f32) -> Result<CpuParticleSim, JsValue> {
         let spec = particle::parse_particle_spec(json);
-        let sim = particle::emitter_spec_to_particle(&spec, arr3(&origin), scene_w, scene_h);
+        let mut sim = particle::emitter_spec_to_particle(&spec, arr3(&origin), scene_w, scene_h);
+        // 预滚到「已经在飘」的稳态（修复「所有花瓣同时下落」）：首帧就铺满稳态相位错落的粒子
+        // （每片随机出生 age，位置/旋转/alpha 按该 age 前滚），而不是空池冷启动、一批花瓣
+        // 同相位平行下落。逐帧发射/算子语义不变（详见 `SceneParticleSim::prewarm` 注释）。
+        sim.prewarm();
         Ok(CpuParticleSim { sim })
     }
 
