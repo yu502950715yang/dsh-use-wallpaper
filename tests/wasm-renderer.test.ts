@@ -11,7 +11,7 @@
 //   之前返回 false，走 controller 的 canvas 重建 → JS 渲染器回退链
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { parseSceneJson } from '../src/client/scene-json.js';
-import { createWasmSceneRenderer, createFallbackSceneRenderer, hasEffectChains } from '../src/client/wasm-renderer.js';
+import { createWasmSceneRenderer, createFallbackSceneRenderer, hasEffectChains, resolveParticleMaterial, resolveParticleTexUrl } from '../src/client/wasm-renderer.js';
 
 function jsonResp(body: unknown): any {
   return {
@@ -571,5 +571,44 @@ describe('createFallbackSceneRenderer（2026-08-21 决策：强制 wasm，禁用
     const fg = document.createElement('canvas');
     await expect(r.render('1', fg)).resolves.toBe(true);
     expect(js.render).not.toHaveBeenCalled();
+  });
+});
+
+// 粒子材质解析：一次取回「静态纹理 URL + 混合模式（passes[0].blending）」——three 播放器用前者
+// 加载 THREE.Texture、用后者决定 AdditiveBlending/NormalBlending（DK 黑方块根因见 three-renderer）。
+describe('resolveParticleMaterial / resolveParticleTexUrl（粒子材质 json → 纹理 URL + 混合模式）', () => {
+  it('材质 json 同源返回 texUrl 与 blending（DK：snowperspective 材质 additive + chromaticdot 纹理）', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (String(url).includes('snowperspective.json')) {
+        return jsonResp({ passes: [{ shader: 'genericparticle', blending: 'additive', textures: ['particle/chromaticdot'] }] });
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as any;
+    }));
+    const spec = JSON.stringify({ material: 'materials/workshop/2111504995/presets/snowperspective.json' });
+    expect(await resolveParticleMaterial('2859263090', spec)).toEqual({
+      texUrl: '/wallpapers/static/ptex-chromaticdot.tex',
+      blending: 'additive',
+    });
+    // 兼容入口：仍返回纹理 URL（wasm 路径的字节推导复用）。
+    expect(await resolveParticleTexUrl('2859263090', spec)).toBe('/wallpapers/static/ptex-chromaticdot.tex');
+  });
+
+  it('材质无 textures 字段 → texUrl=null 但 blending 仍返回（混合模式与纹理解耦）', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (String(url).includes('m.json')) return jsonResp({ passes: [{ blending: 'translucent' }] });
+      return { ok: false, status: 404, json: async () => ({}) } as any;
+    }));
+    expect(await resolveParticleMaterial('1', '{"material":"materials/m.json"}')).toEqual({
+      texUrl: null,
+      blending: 'translucent',
+    });
+  });
+
+  it('坏引用（无 material 字段 / 材质 404 / 非法 JSON）→ null（调用方兜底，不抛）', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 404, json: async () => ({}) }) as any));
+    expect(await resolveParticleMaterial('1', '{}')).toBeNull();
+    expect(await resolveParticleMaterial('1', 'not json')).toBeNull();
+    expect(await resolveParticleMaterial('1', '{"material":"materials/missing.json"}')).toBeNull();
+    expect(await resolveParticleTexUrl('1', '{}')).toBeNull();
   });
 });

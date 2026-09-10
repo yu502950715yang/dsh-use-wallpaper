@@ -349,11 +349,27 @@ const PARTICLE_TEX_ALIASES: Record<string, string> = {
   'presets/lightshaft': 'light/light_shafts_0',
 };
 
-// 解析粒子材质 tex 的**静态资源 URL**（供 three.js 播放器生产入口用 loadTexTexture 加载
-// THREE.Texture——与 resolveParticleTexBytes 同一推导：spec.material → 材质 json →
-// passes[0].textures[0] → 静态路由 /wallpapers/static/ptex-<路径>.tex）。
-// 任何一步失败返回 null（无纹理 → 播放器白图兜底，保持纯色粒子行为）。
-export async function resolveParticleTexUrl(id: string, specText: string): Promise<string | null> {
+// 粒子材质解析结果：渲染一个粒子层所需的**材质级**条件。
+export interface ParticleMaterialRef {
+  // 粒子材质 tex 的静态资源 URL（供 loadTexTexture 加载 THREE.Texture）；缺失/坏引用 → null
+  // （播放器白图兜底，保持纯色粒子行为）。
+  texUrl: string | null;
+  // 材质 json `passes[0].blending` **原文**（WE 的权威混合模式，如 "additive"/"translucent"）；
+  // 材质拉取失败或无该字段 → null（调用方回退按材质名启发式判断）。
+  blending: string | null;
+}
+
+// 解析粒子 spec 引用的材质 json（spec.material → `passes[0]`），一次拿到**纹理 URL** 与
+// **混合模式**两个字段——两者同源于同一份材质 json，分开各 fetch 一次会多一次网络往返。
+//
+// ⚠️ 混合模式必须取 `passes[0].blending` 这个**字段值**，不能靠材质**文件名**猜（详见
+// three-renderer.particleBlend 注释：DK 等 44 层粒子的材质名里根本没有 "additive" 字样，
+// 按名猜会把 additive 材质判成 NormalBlending → 纹理 alpha 恒 1 的 additive 纹理被画成
+// 硬边黑方块）。任何一步失败返回 null（调用方各自兜底）。
+export async function resolveParticleMaterial(
+  id: string,
+  specText: string,
+): Promise<ParticleMaterialRef | null> {
   try {
     const spec: unknown = JSON.parse(specText);
     const matRef: unknown = (spec as { material?: unknown })?.material;
@@ -361,16 +377,29 @@ export async function resolveParticleTexUrl(id: string, specText: string): Promi
     const matResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(matRef)}`);
     if (!matResp.ok) return null;
     const mat: unknown = await matResp.json();
-    const texName: unknown = (mat as { passes?: { textures?: unknown[] }[] })?.passes?.[0]?.textures?.[0];
-    if (typeof texName !== 'string' || !texName) return null;
+    const pass0 = (mat as { passes?: { textures?: unknown[]; blending?: unknown }[] })?.passes?.[0];
+    const blending = typeof pass0?.blending === 'string' ? pass0.blending : null;
+    const texName: unknown = pass0?.textures?.[0];
+    if (typeof texName !== 'string' || !texName) return { texUrl: null, blending };
     // 静态资源（立即生效）：build:client 从 WE 安装目录 assets/materials/particle/ 复制，
     // 相对该目录扁平命名 ptex-<路径斜杠转横线>.tex → "particle/fog/fog1" → ptex-fog-fog1.tex
     const short = texName.startsWith('particle/') ? texName.slice('particle/'.length) : texName;
     const resolved = PARTICLE_TEX_ALIASES[short] ?? short;
-    return `/wallpapers/static/ptex-${encodeURIComponent(resolved.replace(/\//g, '-'))}.tex`;
+    return {
+      texUrl: `/wallpapers/static/ptex-${encodeURIComponent(resolved.replace(/\//g, '-'))}.tex`,
+      blending,
+    };
   } catch {
     return null;
   }
+}
+
+// 解析粒子材质 tex 的**静态资源 URL**（供 three.js 播放器生产入口用 loadTexTexture 加载
+// THREE.Texture——与 resolveParticleTexBytes 同一推导：spec.material → 材质 json →
+// passes[0].textures[0] → 静态路由 /wallpapers/static/ptex-<路径>.tex）。
+// 任何一步失败返回 null（无纹理 → 播放器白图兜底，保持纯色粒子行为）。
+export async function resolveParticleTexUrl(id: string, specText: string): Promise<string | null> {
+  return (await resolveParticleMaterial(id, specText))?.texUrl ?? null;
 }
 
 async function resolveParticleTexBytes(id: string, specText: string): Promise<Uint8Array | null> {
