@@ -82,25 +82,33 @@ export function createWallpaperController(
       case 'web': layer.showWeb(plan.url); break;
       case 'scene': {
         if (opts.sceneRenderer) {
+          // ⚠️ 只创建**一个** canvas（前景 = 渲染目标）——它就是页面上显示的那个。
+          // 2026-09-10 Task5 修复：此前这里额外 `document.createElement('canvas')` 出 `bg`
+          // 并交给 `showSceneCanvas(fg, bg)`，background-layer 会把它作为 `.wp-scene-blur`
+          // **先** append 进 `.wp-bg-fill`（DOM 序在前）。而**没有任何**存活路径给它设过尺寸
+          // （wasm-renderer 明确「bg 参数忽略」，three-renderer 的 `_bg` 同样忽略）→ 它永远停在
+          // HTML canvas 默认 **300×150**，再被 CSS `.wp-scene-blur{width:100%;height:100%;
+          // transform:scale(1.1)}` 拉伸到全屏。于是 `document.querySelector('canvas')`
+          // （取文档里第一个 canvas = 这个空的 300×150）读到的**不是** three 真正渲染的 canvas，
+          // 真机排查因此被误导成「渲染缓冲没设成视口尺寸 → 画面被放大模糊」。
+          // 现在不再创建这个死 canvas：DOM 里只剩 three 渲染/显示的那一个（尺寸 = 视口×dpr）。
           const fg = document.createElement('canvas');
-          const bg = document.createElement('canvas');
           try {
-            let ok = await opts.sceneRenderer.render(plan.wallpaperId, fg, bg);
+            let ok = await opts.sceneRenderer.render(plan.wallpaperId, fg);
             if (!ok) {
               // Task 9 语义保留：wasm 失败时 fg 可能已被绑定 WebGPU context → 重建 canvas
               // 重试一次（组合层对已失败壁纸直接返回 false；2026-08-21 起 JS 渲染已禁用，
               // 重试仍走 wasm/组合层，最终失败落入下方 preview 回退）
               const fg2 = document.createElement('canvas');
-              const bg2 = document.createElement('canvas');
-              ok = await opts.sceneRenderer.render(plan.wallpaperId, fg2, bg2);
+              ok = await opts.sceneRenderer.render(plan.wallpaperId, fg2);
               if (ok) {
                 if (gen !== selectGeneration) return;
-                layer.showSceneCanvas(fg2, bg2);
+                layer.showSceneCanvas(fg2);
                 break;
               }
             }
             if (gen !== selectGeneration) return; // 期间已切换 → 丢弃旧渲染结果
-            if (ok) { layer.showSceneCanvas(fg, bg); break; }
+            if (ok) { layer.showSceneCanvas(fg); break; }
           } catch {
             if (gen !== selectGeneration) return;
             // 渲染异常（reject）→ 与失败同等对待，落入回退

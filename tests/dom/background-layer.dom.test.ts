@@ -47,4 +47,24 @@ describe('createBackgroundLayer (DOM)', () => {
     layer.showNone();
     expect(document.body.hasAttribute('data-we-wallpaper')).toBe(false);
   });
+
+  it('showSceneCanvas 把模糊层 canvas 的缓冲对齐前景（不再停在 300×150 被 CSS 拉伸）', () => {
+    // 2026-09-10 Task5：模糊层 canvas 若保持 HTML 默认 300×150，会被
+    // `.wp-scene-blur{width:100%;height:100%;transform:scale(1.1)}` 放大到全屏（模糊/失真），
+    // 且 DOM 序在前 → `document.querySelector('canvas')` 读到它而非真正渲染的 canvas。
+    document.body.innerHTML = '';
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    const layer = createBackgroundLayer(root);
+    const fg = document.createElement('canvas');
+    fg.width = 3840; // 视口 1920 × dpr 2
+    fg.height = 2160;
+    const blur = document.createElement('canvas');
+    expect(blur.width).toBe(300); // HTML 默认值
+    layer.showSceneCanvas(fg, blur);
+    expect(blur.width).toBe(3840);
+    expect(blur.height).toBe(2160);
+    expect(blur.classList.contains('wp-scene-blur')).toBe(true);
+    expect(fg.classList.contains('wp-scene-canvas')).toBe(true);
+  });
 });

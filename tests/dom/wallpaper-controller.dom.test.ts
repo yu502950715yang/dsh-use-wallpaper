@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createWallpaperController } from '../../src/client/wallpaper-controller.js';
+import { createBackgroundLayer } from '../../src/client/background-layer.js';
 
 function fakeLayer() {
   const calls: { name: string; args: unknown[] }[] = [];
@@ -78,5 +79,45 @@ describe('createWallpaperController scene 分支（DOM）', () => {
     // 不调用 load，直接 select：内部应自动拉取列表
     await c.select('2');
     expect(layer.calls.at(-1)?.name).toBe('scene');
+  });
+
+  it('scene 分支只在 DOM 里放**一个** canvas（= 渲染/显示的那个，尺寸 = 视口×dpr）', async () => {
+    // 2026-09-10 Task5（真机 console 实证）：`document.querySelector('canvas')` 得到 300×150
+    // （HTML canvas 默认）—— 根因是 controller 额外创建了一个**没人设尺寸**的 bg canvas，被
+    // background-layer 作为 `.wp-scene-blur` 先 append（DOM 序在前，故 querySelector 命中它）。
+    // 修复后：只创建 fg 一个 canvas 并 append；它的缓冲尺寸由渲染器设为 视口×dpr。
+    document.body.innerHTML = '';
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    const layer = createBackgroundLayer(root);
+    const seen: { id: string; fg: HTMLCanvasElement; bg?: HTMLCanvasElement }[] = [];
+    const c = createWallpaperController(layer, {
+      fetchList: async () => [sceneInfo] as any,
+      sceneRenderer: {
+        render: async (id, fg, bg) => {
+          seen.push({ id, fg, bg });
+          // 模拟 three 渲染器：渲染缓冲 = 视口逻辑尺寸 × dpr
+          const dpr = window.devicePixelRatio || 1;
+          fg.width = Math.floor(window.innerWidth * dpr);
+          fg.height = Math.floor(window.innerHeight * dpr);
+          return true;
+        },
+      },
+    });
+    await c.load();
+    await c.select('2');
+
+    expect(seen.length).toBe(1);
+    expect(seen[0].bg).toBeUndefined(); // 不再创建/传递没人用的 bg canvas
+    const canvases = [...document.querySelectorAll('canvas')];
+    expect(canvases.length).toBe(1); // 页面里只有一个 canvas
+    const q = document.querySelector('canvas') as HTMLCanvasElement;
+    expect(q).toBe(seen[0].fg); // querySelector 命中的就是渲染 + 显示的那个
+    expect(q.width).toBe(Math.floor(window.innerWidth * (window.devicePixelRatio || 1)));
+    expect(q.height).toBe(Math.floor(window.innerHeight * (window.devicePixelRatio || 1)));
+    expect(q.width).not.toBe(300);
+    expect(q.height).not.toBe(150);
+    expect(q.classList.contains('wp-scene-canvas')).toBe(true);
+    expect(document.querySelector('.wp-scene-blur')).toBeNull();
   });
 });

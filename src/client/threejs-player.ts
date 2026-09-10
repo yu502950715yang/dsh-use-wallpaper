@@ -137,6 +137,13 @@ export class ThreeScenePlayer {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene: THREE.Scene;
   readonly camera: THREE.OrthographicCamera;
+  // 承载渲染的 canvas —— **就是调用方 append 到 DOM 显示的那一个**（three 渲染目标 + 页面显示
+  // 同一元素，不存在第二个离屏 canvas）。渲染缓冲尺寸不变量（见 resize）：
+  //   canvas.width/height === 视口逻辑尺寸 × pixelRatio（dpr）
+  // 而 CSS（`.wp-scene-canvas{width:100%;height:100%}`）= 视口逻辑尺寸 → 缓冲与物理像素 1:1，
+  // 既不模糊也不拉伸（2026-09-10 Task5：显式钉住该不变量，防「canvas 停在 HTML 默认 300×150
+  // 被 CSS 拉伸放大」这一整类回退）。
+  readonly canvas: HTMLCanvasElement;
 
   // 场景固有尺寸（WE 正交视口 view_w×view_h；scene.json 未就绪前用构造传入值，越过后
   // 用 setSceneSize 更新）与当前视口尺寸（canvas 逻辑像素）。
@@ -144,6 +151,8 @@ export class ThreeScenePlayer {
   private sceneHeight: number;
   private viewWidth: number;
   private viewHeight: number;
+  // 渲染缓冲像素比（构造时快照 window.devicePixelRatio；resize 时用它推导缓冲尺寸）。
+  private readonly pixelRatio: number;
 
   private lastTime = 0;
 
@@ -168,6 +177,7 @@ export class ThreeScenePlayer {
     // 视口缺省与场景同尺寸 → cover == 场景尺寸（无裁剪）。resize(w,h) 后按视口裁剪。
     this.viewWidth = width;
     this.viewHeight = height;
+    this.canvas = canvas;
 
     this.scene = new THREE.Scene();
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -1000, 1000);
@@ -193,6 +203,7 @@ export class ThreeScenePlayer {
     // 按 `window.devicePixelRatio` 设置像素比，使渲染缓冲 = 物理像素（1:1 锐利），与 wasm 参考
     // 的视口语义一致。node/jsdom 测试用 mock renderer 注入（无 setPixelRatio），防御式跳过。
     const dpr = typeof window !== 'undefined' && window.devicePixelRatio ? window.devicePixelRatio : 1;
+    this.pixelRatio = dpr;
     const withSetPixelRatio = this.renderer as { setPixelRatio?: (v: number) => void };
     if (typeof withSetPixelRatio.setPixelRatio === 'function') {
       withSetPixelRatio.setPixelRatio(dpr);
@@ -201,12 +212,29 @@ export class ThreeScenePlayer {
   }
 
   // 视口尺寸变更（浏览器 resize / controller 设置 canvas 逻辑尺寸）：只改视口，重新按
-  // cover 推导相机范围（cover 语义保持，裁剪方向随视口宽高比变化，不固定传 w/h）。
+  // cover 推导相机范围（cover 语义保持，裁剪方向随视口宽高比变化，不固定传 w/h），并把
+  // **渲染缓冲**钉到 视口 × dpr（不变量，见 canvas 字段注释）。
   resize(width: number, height: number): void {
-    this.viewWidth = width;
-    this.viewHeight = height;
+    const w = Math.max(1, Math.round(width));
+    const h = Math.max(1, Math.round(height));
+    this.viewWidth = w;
+    this.viewHeight = h;
     this.applyCover();
-    this.renderer.setSize(width, height, false);
+    // ① 像素比 + 逻辑尺寸交给 renderer（幂等：写 _pixelRatio/_width/_height + viewport）。
+    const r = this.renderer as {
+      setPixelRatio?: (v: number) => void;
+      setSize?: (w: number, h: number, updateStyle?: boolean) => void;
+    };
+    if (typeof r.setPixelRatio === 'function') r.setPixelRatio(this.pixelRatio);
+    if (typeof r.setSize === 'function') r.setSize(w, h, false);
+    // ② 显式兜底：three `setSize(w,h,false)` 本就会写 `canvas.width = floor(w*pixelRatio)`，此处
+    //    再核对一次（仅在实际不符时才写，避免多余的绘制缓冲重置），使「缓冲 = 视口×dpr」成为
+    //    **本类自己保证**的不变量——任何 renderer 实现（含注入的 mock/异常实现）都不会让 canvas
+    //    停留在 HTML 默认 300×150 而被 CSS `width:100%` 拉伸放大（模糊根因之一）。
+    const bufW = Math.floor(w * this.pixelRatio);
+    const bufH = Math.floor(h * this.pixelRatio);
+    if (this.canvas.width !== bufW) this.canvas.width = bufW;
+    if (this.canvas.height !== bufH) this.canvas.height = bufH;
   }
 
   // 场景固有尺寸（scene.json 的 general.orthogonalprojection）就绪后设置，同时重推 cover。

@@ -62,7 +62,31 @@ describe('ThreeScenePlayer', () => {
     Object.defineProperty(window, 'devicePixelRatio', { value: orig, configurable: true });
   });
 
-  it('缺省 cover：视口 == 场景尺寸 → 相机视锥 == 场景尺寸（1920×1080，无裁剪）', () => {
+  it('resize 把「渲染缓冲 = 视口×dpr」钉死：canvas.width/height 不再是 HTML 默认 300×150', () => {
+    // 2026-09-10 Task5（真机 console 实证起点）：`document.querySelector('canvas')` 读到
+    // 300×150（HTML canvas 默认）→ 说明某个 canvas 从未被设成视口尺寸，被 CSS `width:100%`
+    // 拉伸放大 → 画面模糊。本类自己保证该不变量：resize(w,h) 后 canvas.width/height 必须
+    // = floor(w×dpr), floor(h×dpr)（即使注入的 renderer 是 no-op mock，也不能停在 300×150）。
+    const { player } = makePlayer();
+    const canvas = player.canvas;
+    expect(canvas.width).toBe(300); // jsdom/HTML 默认值（修复前 resize 依赖 renderer.setSize）
+    expect(canvas.height).toBe(150);
+    player.resize(1920, 1080);
+    expect(canvas.width).toBe(1920);
+    expect(canvas.height).toBe(1080);
+  });
+
+  it('resize 在 HiDPI（dpr=2）下缓冲 = 视口×2（1:1 物理像素，不模糊）', () => {
+    const orig = (window as { devicePixelRatio?: number }).devicePixelRatio;
+    Object.defineProperty(window, 'devicePixelRatio', { value: 2, configurable: true });
+    const { player, mock } = makePlayer();
+    player.resize(1600, 900);
+    expect(mock.setSize).toHaveBeenCalledWith(1600, 900, false);
+    expect(mock.setPixelRatio).toHaveBeenLastCalledWith(2);
+    expect(player.canvas.width).toBe(3200);
+    expect(player.canvas.height).toBe(1800);
+    Object.defineProperty(window, 'devicePixelRatio', { value: orig, configurable: true });
+  });  it('缺省 cover：视口 == 场景尺寸 → 相机视锥 == 场景尺寸（1920×1080，无裁剪）', () => {
     const { player } = makePlayer(1920, 1080);
     expect(player.camera.left).toBe(-960);
     expect(player.camera.right).toBe(960);

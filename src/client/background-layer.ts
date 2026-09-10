@@ -93,6 +93,13 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
       // 「完整显示 + 边缘模糊填充」：先铺 cover 渲染的背景 canvas（CSS 模糊放大），
       // 再叠 contain 渲染的前景 canvas（透明边缘露出模糊背景）。
       if (blurCanvas) {
+        // ⚠️ 防御：模糊层 canvas 的**渲染缓冲**必须与前景 canvas 一致（= 视口×dpr）。
+        // 2026-09-10 Task5：曾出现「模糊层 canvas 从未被设尺寸 → 停在 HTML 默认 300×150，
+        // 却被 `.wp-scene-blur{width:100%;height:100%;transform:scale(1.1)}` 拉伸到全屏」，
+        // 且因它 DOM 序在前，`document.querySelector('canvas')` 读到的是它（300×150）而非真正
+        // 渲染的那个 canvas，误导排查。此处按前景缓冲对齐（前景未设尺寸时保持原值不动）。
+        if (canvas.width > 0) blurCanvas.width = canvas.width;
+        if (canvas.height > 0) blurCanvas.height = canvas.height;
         blurCanvas.classList.add('wp-scene-blur');
         fill.appendChild(blurCanvas);
       }
