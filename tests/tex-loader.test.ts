@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
 import { parseTex, glFormatForDds, TEX_FORMAT, textureFromTex, convertUnormToRgba, flipCompressedRows, cropToMap, FIF } from '../src/client/tex-loader.js';
 import { makeTex } from './fixtures/make-tex.js';
+import type { MakeTexSpriteSpec } from './fixtures/make-tex.js';
 
 describe('glFormatForDds', () => {
   it('maps fourCC to GL compressed formats', () => {
@@ -156,6 +157,61 @@ describe('parseTex', () => {
   });
 });
 
+// 精灵表动画（TEXV0005 flags 位 2 = 4）解析：DK WOTLK 的 `particle/fire/fire1` 与
+// `particle/fog/fog1` 都是 1024×1024 的 8×8=64 帧精灵表（TEXS0002/0003，每帧 128×128）。
+// 不解析该段时只能按「纹理宽/高」推帧数（1024/1024 → 1 帧）→ 每个粒子把整张表当一帧采样，
+// 画出一整片 8×8 网格亮点（37 层火把叠加 = 用户所见的全屏闪光/整屏泛光）。
+describe('parseTex 精灵表（TEXS000x）', () => {
+  const spriteTex = (flags: number, sprite: MakeTexSpriteSpec) => makeTex({
+    format: TEX_FORMAT.R8,
+    flags,
+    images: [[{ width: 1024, height: 1024, data: new Uint8Array(1024 * 1024).fill(3) }]],
+    sprite,
+  });
+
+  it('flags 位 2（sprite）：解析 TEXS0002 的帧数与 8×8 网格', () => {
+    const info = parseTex(spriteTex(4, { frames: 64, frameWidth: 128, frameHeight: 128 }))!;
+    expect(info.sprite).toEqual({ frames: 64, cols: 8, rows: 8 });
+  });
+
+  it('TEXS0003（带 atlas 尺寸）同样解析出帧数与网格', () => {
+    const info = parseTex(spriteTex(4, {
+      texs: 3, frames: 64, frameWidth: 128, frameHeight: 128, atlas: [128, 128],
+    }))!;
+    expect(info.sprite).toEqual({ frames: 64, cols: 8, rows: 8 });
+  });
+
+  it('TEXS0001（帧坐标为 i32 像素）同样解析', () => {
+    const info = parseTex(spriteTex(4, {
+      texs: 1, frames: 64, frameWidth: 128, frameHeight: 128,
+    }))!;
+    expect(info.sprite).toEqual({ frames: 64, cols: 8, rows: 8 });
+  });
+
+  it('无 TEXS 段 / 网格装不下帧数 → sprite undefined（回退按宽高推帧数，绝不抛）', () => {
+    const noSection = parseTex(makeTex({
+      format: TEX_FORMAT.R8, flags: 4,
+      images: [[{ width: 1024, height: 1024, data: new Uint8Array(1024).fill(1) }]],
+    }))!;
+    expect(noSection.sprite).toBeUndefined();
+    // 帧尺寸 = 整张纹理 → 网格 1×1 装不下 4 帧 → 不当作规则精灵表。
+    const tooFew = parseTex(spriteTex(4, { frames: 4, frameWidth: 1024, frameHeight: 1024 }))!;
+    expect(tooFew.sprite).toBeUndefined();
+  });
+
+  it('flags 无 sprite 位 → 不解析精灵表段（普通纹理不受影响）', () => {
+    const info = parseTex(spriteTex(2, { frames: 64, frameWidth: 128, frameHeight: 128 }))!;
+    expect(info.sprite).toBeUndefined();
+  });
+
+  it('精灵表段被截断 → sprite undefined 且不抛错', () => {
+    const full = spriteTex(4, { frames: 64, frameWidth: 128, frameHeight: 128 });
+    const head = full.length - 64 * 32 + 8; // 只保留 stamp + frameCount(4) 之后部分帧
+    const truncated = new Uint8Array(full.subarray(0, head));
+    expect(() => parseTex(truncated)).not.toThrow();
+  });
+});
+
 // textureFromTex 的分支选择：TEXB0003+ 编码图像（imageFormat=JPEG/PNG/WEBP）即使
 // format 字段仍为 RGBA8888(0)，mipmap 数据也是 JPEG/PNG 字节流，必须走 createImageBitmap
 // 解码分支，而不是当原始 RGBA 创建 DataTexture（否则渲染乱码/失败）。
@@ -200,6 +256,26 @@ describe('textureFromTex 分支选择', () => {
   });
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it('精灵表信息（TEXS000x）随纹理带走：userData.sprite = {frames, cols, rows}', async () => {
+    const buf = makeTex({
+      format: TEX_FORMAT.R8, flags: 4,
+      images: [[{ width: 1024, height: 1024, data: new Uint8Array(1024 * 1024).fill(4) }]],
+      sprite: { frames: 64, frameWidth: 128, frameHeight: 128 },
+    });
+    const tex = await textureFromTex(parseTex(buf)!);
+    expect(tex).not.toBeNull();
+    expect((tex!.userData as { sprite?: unknown }).sprite).toEqual({ frames: 64, cols: 8, rows: 8 });
+  });
+
+  it('非精灵表纹理不带 sprite 元数据（userData 不被污染）', async () => {
+    const buf = makeTex({
+      format: TEX_FORMAT.RGBA8888,
+      images: [[{ width: 16, height: 16, data: new Uint8Array(16 * 16 * 4) }]],
+    });
+    const tex = await textureFromTex(parseTex(buf)!);
+    expect((tex!.userData as { sprite?: unknown }).sprite).toBeUndefined();
   });
 
   it('TEXB0003 + imageFormat=PNG(13) + format=RGBA8888(0)：走解码分支而非 DataTexture', async () => {

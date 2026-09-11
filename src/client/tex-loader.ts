@@ -62,10 +62,23 @@ export interface TexInfo {
   flags: number;
   imageFormat?: number; // TEXB0003+ 容器的 FreeImage 格式（mipmap 数据为 JPEG/PNG 编码）
   mipmaps: TexMipmap[]; // 全部 image 的所有 mipmap（按文件顺序）
+  // 精灵表（flags 位 2）动画段（TEXS000x）解析结果；非精灵表/解析失败 → undefined。
+  sprite?: TexSpriteInfo;
+}
+
+// 精灵表动画信息（TEXS000x 段）：帧数 + 网格布局（帧宽高由第一帧的 xAxis/yAxis 像素长度得出）。
+export interface TexSpriteInfo {
+  frames: number;
+  cols: number;
+  rows: number;
 }
 
 function readI32(buf: Uint8Array, pos: number): number {
   return buf[pos] | (buf[pos + 1] << 8) | (buf[pos + 2] << 16) | (buf[pos + 3] << 24);
+}
+
+function readF32(buf: Uint8Array, pos: number): number {
+  return new DataView(buf.buffer as ArrayBuffer, buf.byteOffset + pos, 4).getFloat32(0, true);
 }
 
 function ascii(buf: Uint8Array, pos: number, len: number): string {
@@ -144,7 +157,68 @@ export function parseTex(buf: Uint8Array): TexInfo | null {
     }
   }
   if (mipmaps.length === 0) return null;
-  return { width, height, textureWidth, textureHeight, format, flags, imageFormat, mipmaps };
+  // 精灵表（flags 位 2）：mip 循环之后紧跟 TEXS000x 动画段，记录**真实帧数**与每帧 uv。
+  // 不解析该段就只能按「纹理宽/高」猜帧数（1024×1024 的 8×8 精灵表 → 1 帧 = 整张表被当单帧
+  // 采样 → 每个粒子画出一整片网格亮点，见 parseSpriteSection 注释）。
+  const first = mipmaps[0];
+  const sprite = (flags & FLAG_SPRITE) !== 0
+    ? parseSpriteSection(buf, pos, first.width, first.height)
+    : undefined;
+  return { width, height, textureWidth, textureHeight, format, flags, imageFormat, mipmaps, sprite };
+}
+
+// 解析 TEXV0005 的精灵表动画段（TEXS000x，紧跟在全部 image/mip 数据之后；对齐 open-wallpaper-engine
+// `TexImageParser.cpp::ParseHeader` 的 sprite 分支）：
+//   TEXS000x(9B, 尾随 NUL) + frameCount(i32) + [atlasW, atlasH](i32×2, texs>=3)
+//   + 每帧: imageId(i32) + frametime(f32) + (x, y, xAxis0, xAxis1, yAxis0, yAxis1)
+//           （texs==1 → 6×i32 像素；否则 6×f32 像素）
+// 本函数只取「帧数 + 网格列/行数」：帧像素尺寸 = 第一帧 xAxis/yAxis 的欧氏长度，网格 = mip0 尺寸 / 帧尺寸
+// （校验 cols×rows ≥ frames，装不下则视为不是规则精灵表 → undefined）。
+//
+// 为什么必须解析（DK WOTLK 全屏闪光粒子的根因，2026-09-11）：DK 的 `particle/fire/fire1`
+// 与 `particle/fog/fog1` 都是 flags=4（sprite 位）的 1024×1024 **8×8 = 64 帧**精灵表；只按
+// `frameCountFromDims(1024,1024)=1` 判定时，`particle_billboard`/three 粒子 shader 会把**整张表**
+// 当一帧采样 → 单个火把粒子渲染出 64 个火苗排成的网格；DK 有 37 层火把（每层 maxcount=50）
+// → 数万个亮点叠加（additive）＝ 用户所见的「全屏密布发光的闪光粒子、整屏泛光」。
+// 任何越界/非法字段 → undefined（回退旧的宽高推导语义，绝不抛）。
+export function parseSpriteSection(
+  buf: Uint8Array,
+  pos: number,
+  mipWidth: number,
+  mipHeight: number,
+): TexSpriteInfo | undefined {
+  if (!Number.isFinite(pos) || pos < 0 || pos + 13 > buf.length) return undefined;
+  const stamp = ascii(buf, pos, 9);
+  if (!stamp.startsWith('TEXS000')) return undefined;
+  const texs = Number(stamp.slice(4, 8));
+  if (!Number.isFinite(texs) || texs < 1 || texs > 9) return undefined;
+  let p = pos + 9;
+  const frames = readI32(buf, p);
+  p += 4;
+  if (frames <= 0 || frames > 4096) return undefined;
+  if (texs >= 3) p += 8; // atlas 尺寸（未使用：帧几何取自每帧 xAxis/yAxis）
+  const intCoords = texs === 1;
+  const coord = (): number => {
+    const v = intCoords ? readI32(buf, p) : readF32(buf, p);
+    p += 4;
+    return v;
+  };
+  if (p + 8 + 24 > buf.length) return undefined;
+  coord(); // imageId
+  coord(); // frametime
+  coord(); coord(); // x, y（帧左上角像素坐标）
+  const ax0 = coord();
+  const ax1 = coord();
+  const ay0 = coord();
+  const ay1 = coord();
+  const frameW = Math.hypot(ax0, ax1);
+  const frameH = Math.hypot(ay0, ay1);
+  if (!(frameW > 0) || !(frameH > 0)) return undefined;
+  const cols = Math.max(1, Math.round(mipWidth / frameW));
+  const rows = Math.max(1, Math.round(mipHeight / frameH));
+  // 网格装不下全部帧（GIF 等非规则精灵表）→ 不按精灵表处理（对齐 owe 的保守判断）。
+  if (cols * rows < frames) return undefined;
+  return { frames, cols, rows };
 }
 
 // LZ4 block 解压（Wallpaper Engine .tex 内嵌为 LZ4 block，非 frame 格式）
@@ -253,6 +327,12 @@ function cropCompressedToMap(
 export async function textureFromTex(info: TexInfo): Promise<THREE.Texture | null> {
   const mip = info.mipmaps[0];
   if (!mip) return null;
+  // 精灵表信息（TEXS 段）随纹理带走：three.js 粒子路径需要**真实帧数与网格**做多帧 uv 切片
+  // （否则 8×8 精灵表被当单帧 → 每个粒子画出整片网格亮点，见 parseSpriteSection 注释）。
+  const withSprite = (tex: THREE.Texture): THREE.Texture => {
+    if (info.sprite) tex.userData = { ...(tex.userData ?? {}), sprite: info.sprite };
+    return tex;
+  };
   // 过滤/采样（关键，修复「模糊/不清」）：three.js `DataTexture` 缺省 **NearestFilter**
   //（逐像素最近采样，放大成马赛克方块、缩小无 mip 抗锯齿 → 观感「糊/不锐利」）。这里对
   // 非压缩背景/粒子纹理统一设 `magFilter=LinearFilter`（双线性）+ `minFilter=LinearMipmapLinearFilter`
@@ -282,7 +362,7 @@ export async function textureFromTex(info: TexInfo): Promise<THREE.Texture | nul
       const tex = new THREE.Texture(bitmap as unknown as HTMLImageElement);
       tex.flipY = false;
       applyLinearSampling(tex);
-      return tex;
+      return withSprite(tex);
     } catch {
       return null;
     }
@@ -302,7 +382,7 @@ export async function textureFromTex(info: TexInfo): Promise<THREE.Texture | nul
     const flipped = flipRows(src, cropped.width, cropped.height, 4);
     const tex = new THREE.DataTexture(flipped, cropped.width, cropped.height, THREE.RGBAFormat);
     applyLinearSampling(tex);
-    return tex;
+    return withSprite(tex);
   }
   const glFormat = FORMAT_TO_GL[info.format];
   if (glFormat) {
@@ -351,7 +431,7 @@ export async function textureFromTex(info: TexInfo): Promise<THREE.Texture | nul
     // 压缩纹理不能由 GPU 生成 mip（three 会跳过 generateMipmap），显式关闭避免误判「需要 mip」。
     tex.generateMipmaps = false;
     tex.needsUpdate = true;
-    return tex;
+    return withSprite(tex);
   }
   return null;
 }

@@ -79,6 +79,40 @@ export function specMaxcount(specJson: string): number {
   }
 }
 
+// 从粒子 spec JSON 读 **emitter 的局部原点**（`emitter[0].origin`，WE 字符串 "x y z"）。
+// 与 wasm `spec_to_emitter::parse_particle_spec` 同源语义：只用**第一个** emitter、缺省 [0,0,0]、
+// 缺省 y **不翻**（本仓库 three 路径的 y 与背景同系，不翻）。非法/缺失 → [0,0,0]（绝不抛）。
+export function specEmitterOrigin(specJson: string): [number, number, number] {
+  const zero: [number, number, number] = [0, 0, 0];
+  try {
+    const spec = JSON.parse(specJson) as { emitter?: unknown };
+    const list = spec.emitter;
+    const first = Array.isArray(list) ? (list[0] as { origin?: unknown } | undefined) : undefined;
+    const raw = first?.origin;
+    if (typeof raw !== 'string') return zero;
+    const parts = raw.trim().split(/\s+/).map(Number);
+    if (parts.length < 3 || parts.slice(0, 3).some((n) => !Number.isFinite(n))) return zero;
+    return [parts[0], parts[1], parts[2]];
+  } catch {
+    return zero;
+  }
+}
+
+// wasm `SceneParticleSim` 在 spawn 时对 **发射点** 乘的硬编码对象 scale（黑神话 Sakura 的
+// scene.json scale，见 wasm/src/particle/sim.rs `BLACKMYTH_OBJ_SCALE`）。three 路径的顶点 shader
+// 要从模拟器输出里**减掉**这项才能拿到纯局部坐标（散射 + 运动），再按真实对象 scale 重建 ——
+// 因此这里必须与 wasm 常量逐位一致（两边同源，改动需同步）。
+export const BLACKMYTH_OBJ_SCALE: [number, number, number] = [-2.05166, 2.1167, 1.0];
+
+// 计算模拟器已加入 `particlePosition` 的发射点偏移：`BLACKMYTH_OBJ_SCALE ⊙ emitterOrigin`。
+export function simEmitterOffset(emitterOrigin: [number, number, number]): [number, number, number] {
+  return [
+    emitterOrigin[0] * BLACKMYTH_OBJ_SCALE[0],
+    emitterOrigin[1] * BLACKMYTH_OBJ_SCALE[1],
+    emitterOrigin[2] * BLACKMYTH_OBJ_SCALE[2],
+  ];
+}
+
 // 计算实例缓冲容量：declaredMax（spec 的 maxcount，0 = 未声明）优先，否则缺省；
 // 再 clamp 到 [1, MAX_PARTICLE_CAPACITY]，并保证 ≥ 建层当帧已有的粒子数。
 export function particleCapacity(declaredMax: number, aliveAtCreate: number): number {
@@ -108,6 +142,15 @@ attribute float particleSize;
 attribute vec2 particleUv;
 attribute vec3 particleColor;
 attribute float particleAlpha;
+// 对象变换（WE 的粒子 model matrix 语义，见 loadSceneToThree 注释）：
+//   objCenter     对象中心（世界坐标，we_to_three 后）
+//   objScale      scene.json 的对象 scale（逐轴，可为负 = 镜像）
+//   emitterOrigin spec 的 emitter 局部原点（原值，未缩放）
+//   bmOffset      模拟器已加进 particlePosition 的偏移 = BLACKMYTH_OBJ_SCALE ⊙ emitterOrigin
+uniform vec3 objCenter;
+uniform vec3 objScale;
+uniform vec3 emitterOrigin;
+uniform vec3 bmOffset;
 varying vec2 vCornerUv;
 varying vec2 vParticleUv;
 varying vec3 vParticleColor;
@@ -117,7 +160,17 @@ void main() {
   vParticleUv = particleUv;
   vParticleColor = particleColor;
   vParticleAlpha = particleAlpha;
-  vec3 worldPos = particlePosition + vec3(position.xy * particleSize * 0.5, 0.0);
+  // 还原模拟器输出的**局部**坐标（剔除对象中心与模拟器已加的发射点偏移）：
+  //   particlePosition = objCenter + bmOffset + (散射 + 运动)
+  vec3 local = particlePosition - objCenter - bmOffset;
+  // 按对象 scale 重建世界坐标：WE 的粒子局部坐标（发射点 + 散射 + 运动）经对象 model matrix
+  // （含 scale）变换到场景空间（lwe CParticle::updateMatrices：mvp = viewProj × translate(origin)
+  // × rotate × scale）。此前只把 scale 用在发射点上（且是**硬编码的黑神话 scale**），散射/运动/尺寸
+  // 都没乘 —— DK 的「Mouse interactive particle system」对象 scale≈(0.29,0.15) 很小的冰晶粒子
+  // 因此被画成 6.7 倍大的辉光斑（additive）＝ 用户所见的全屏闪光/整屏泛光。
+  vec3 worldPos = objCenter + objScale * (emitterOrigin + local);
+  // 粒子 quad 的尺寸同样乘对象 scale（非均匀；abs 去掉镜像的符号）。
+  worldPos += vec3(position.xy * particleSize * 0.5 * abs(objScale.xy), 0.0);
   gl_Position = projectionMatrix * modelViewMatrix * vec4(worldPos, 1.0);
   // ⚠️ 修正：粒子是 2D billboard（无深度排序，z 不参与可见性）。three 正交相机 far/near 会把
   // 视锥外的 z 裁剪掉，而 wasm billboard 早已把投影矩阵 z 行全 0（clip.z=0，见 particle_billboard.wgsl）
@@ -139,6 +192,8 @@ void main() {
 const PARTICLE_FRAGMENT_SHADER = `
 uniform sampler2D map;
 uniform float frameCount;
+uniform float frameCols;
+uniform float frameRows;
 uniform float softness;
 uniform float maskMode;
 varying vec2 vCornerUv;
@@ -147,9 +202,20 @@ varying vec3 vParticleColor;
 varying float vParticleAlpha;
 void main() {
   float n = max(frameCount, 1.0);
+  // 帧号由 uv.x 编码（帧子区中心，sim frame_center_uv：(frame+0.5)/n）→ 反解出离散帧号。
   float frameIndex = floor(clamp(vParticleUv.x, 0.0, 0.999999) * n);
   frameIndex = min(frameIndex, n - 1.0);
-  vec2 texUv = vec2((frameIndex + vCornerUv.x) / n, vCornerUv.y);
+  // 精灵表按**二维网格**切片（frameCols×frameRows；非精灵表 cols=n、rows=1，与旧的横向等分等价）。
+  // ⚠️ 旧实现只做横向等分（texUv.x=(frameIndex+corner.x)/n），对 WE 的 8×8=64 帧精灵表
+  // （DK 的 fire1/fog1）会把每条 1/64 宽的**竖条**当一帧 → 必须用网格行列定位。
+  float cols = max(frameCols, 1.0);
+  float rows = max(frameRows, 1.0);
+  float col = mod(frameIndex, cols);
+  float row = floor(frameIndex / cols);
+  // 帧 y：TEXS 的帧 y 是**纹理顶部向下**的行号，而 DataTexture 数据已被翻转为 bottom-up
+  // （v=0=图像底部）→ row=0（表顶行）应落在 v 高段，故对帧内 v 做 (rows-1-row) 反转。
+  float frameV = (rows - 1.0 - row + vCornerUv.y) / rows;
+  vec2 texUv = vec2((col + vCornerUv.x) / cols, frameV);
   vec4 texel = texture2D(map, texUv);
   // 圆盘软衰减（center→edge）。softness ∈ [0,1]：0=硬边（仅在 quad 边缘收尾），1=全柔（中心→边缘平滑衰减）。
   float dist = length(vCornerUv - 0.5) * 2.0;
@@ -449,14 +515,33 @@ export class ThreeScenePlayer {
     opts: {
       tex?: THREE.Texture;
       frameCount: number;
+      // 精灵表网格（列×行）。非精灵表缺省 cols=frameCount、rows=1（横向等分，与旧行为一致）；
+      // 精灵表（WE flags 位 2，如 DK 的 fire1/fog1 = 8×8=64 帧）由 `textureFrameGrid` 给出。
+      frameCols?: number;
+      frameRows?: number;
       blend: 'additive' | 'alpha';
       softness?: number;
+      // 对象变换（WE model matrix 语义；缺省 = 不做缩放，保持旧行为／测试语义）：
+      //   objectCenter  对象中心（世界坐标，we_to_three 后）
+      //   objectScale   scene.json 的对象 scale（逐轴，可为负）
+      //   emitterOrigin spec 的 emitter 局部原点（simEmitterOffset 用它算 bmOffset）
+      objectCenter?: [number, number, number];
+      objectScale?: [number, number, number];
+      emitterOrigin?: [number, number, number];
       // 实例缓冲容量上界（= sim 的 maxcount / spec 的 maxcount；见 ParticleLayer.capacity 注释）。
       // 缺省 DEFAULT_PARTICLE_CAPACITY。
       maxInstances?: number;
     },
   ): number {
     const frameCount = Math.max(1, Math.floor(opts.frameCount));
+    // 网格列/行：缺省横向等分（cols=frameCount、rows=1）；精灵表由调用方按纹理元数据给出，
+    // 非法值回退缺省（防御越界 spec/纹理）。
+    const frameCols = Number.isFinite(opts.frameCols) && (opts.frameCols as number) > 0
+      ? Math.max(1, Math.floor(opts.frameCols as number))
+      : frameCount;
+    const frameRows = Number.isFinite(opts.frameRows) && (opts.frameRows as number) > 0
+      ? Math.max(1, Math.floor(opts.frameRows as number))
+      : 1;
     // softness 默认按有无纹理对齐 wasm `particle_billboard` 的 mask_mode（Task 5 + 2026-09-09 深挖）：
     //   有纹理（真实 alpha 遮罩）→ 0.15（若 mask_mode=0 才用到的圆盘默认值；mask_mode=1 时形状由
     //     texel.a 提供，softness 不参与）——保留该默认值作兜底/精细控制；
@@ -519,8 +604,15 @@ export class ThreeScenePlayer {
       uniforms: {
         map: { value: opts.tex ?? createWhiteTexture() },
         frameCount: { value: frameCount },
+        frameCols: { value: frameCols },
+        frameRows: { value: frameRows },
         softness: { value: softness },
         maskMode: { value: hasTex ? 1.0 : 0.0 },
+        // 对象变换（缺省恒等 → 顶点 shader 退化为旧的 worldPos = particlePosition + corner*size/2）。
+        objCenter: { value: new THREE.Vector3(...(opts.objectCenter ?? [0, 0, 0])) },
+        objScale: { value: new THREE.Vector3(...(opts.objectScale ?? [1, 1, 1])) },
+        emitterOrigin: { value: new THREE.Vector3(...(opts.emitterOrigin ?? [0, 0, 0])) },
+        bmOffset: { value: new THREE.Vector3(...simEmitterOffset(opts.emitterOrigin ?? [0, 0, 0])) },
       },
       vertexShader: PARTICLE_VERTEX_SHADER,
       fragmentShader: PARTICLE_FRAGMENT_SHADER,
@@ -760,7 +852,14 @@ export function frameCountFromDims(width: number, height: number): number {
 // 从 THREE.Texture 读实际纹理尺寸推导 sprite sheet 帧数。
 // DataTexture.image={width,height,data}；CompressedTexture.image 为 mip 数组 [{width,height,data},...]；
 // ImageBitmap/HTMLImageElement.image.width/height。缺省/未知 → 1（单帧）。
+//
+// ⚠️ 优先取**纹理自带的 sprite 元数据**（`tex.userData.sprite`，由 tex-loader 解析 TEXV0005 的
+// TEXS000x 段写入）：对 WE 的精灵表动画纹理（flags 位 2），按宽高推帧数是**错的**——DK 的
+// `particle/fire/fire1` 与 `particle/fog/fog1` 都是 1024×1024 的 8×8=64 帧精灵表，`w/h=1`
+// 会推出「1 帧」→ 每个粒子把整张表当一帧画出来（37 层火把 → 全屏密布亮点 + 整屏泛光）。
 export function textureFrameCount(tex?: THREE.Texture): number {
+  const sprite = textureSpriteInfo(tex);
+  if (sprite) return Math.max(1, Math.floor(sprite.frames));
   if (!tex) return 1;
   const img = tex.image as { width?: unknown; height?: unknown } | undefined;
   if (
@@ -781,6 +880,28 @@ export function textureFrameCount(tex?: THREE.Texture): number {
     }
   }
   return 1;
+}
+
+// 读纹理携带的精灵表元数据（tex-loader 解析 TEXS000x 后写入 `userData.sprite`）。
+// 非法/缺失 → undefined（调用方回退「按宽高推帧数 + 横向等分」的旧语义）。
+export function textureSpriteInfo(
+  tex?: THREE.Texture,
+): { frames: number; cols: number; rows: number } | undefined {
+  const raw = (tex?.userData as { sprite?: unknown } | undefined)?.sprite;
+  if (!raw || typeof raw !== 'object') return undefined;
+  const s = raw as { frames?: unknown; cols?: unknown; rows?: unknown };
+  const frames = typeof s.frames === 'number' ? Math.floor(s.frames) : 0;
+  const cols = typeof s.cols === 'number' ? Math.floor(s.cols) : 0;
+  const rows = typeof s.rows === 'number' ? Math.floor(s.rows) : 0;
+  if (frames <= 0 || cols <= 0 || rows <= 0) return undefined;
+  return { frames, cols, rows };
+}
+
+// 帧网格（列×行）：精灵表 → 真实网格；否则 → { cols: frameCount, rows: 1 }（横向等分，旧行为）。
+export function textureFrameGrid(tex?: THREE.Texture): { cols: number; rows: number } {
+  const sprite = textureSpriteInfo(tex);
+  if (sprite) return { cols: sprite.cols, rows: sprite.rows };
+  return { cols: textureFrameCount(tex), rows: 1 };
 }
 
 export function loadSceneToThree(
@@ -830,13 +951,25 @@ export function loadSceneToThree(
       const sim = assets.createParticleSim(p.specJson, obj.origin, sceneW, sceneH);
       // FrameCount 对齐（Task 3 Minor）：sim.set_frame_count(纹理帧数)，addParticle 的
       // opts.frameCount 取 sim.frame_count()——避免多帧 uv 切片与 sim 帧编号错位。
+      // 帧数优先取纹理携带的精灵表元数据（TEXS000x，DK 的 fire1/fog1 = 64 帧），否则按宽高推。
       const frameCount = textureFrameCount(p.tex);
+      const grid = textureFrameGrid(p.tex);
       sim.set_frame_count(frameCount);
+      // 对象变换（WE model matrix）：对象中心 we_to_three + scene.json 的 scale + spec 的 emitter 原点。
+      // 顶点 shader 需要它们把模拟器输出的**发射点已乘黑神话 scale** 的坐标还原成局部坐标，
+      // 再按**本对象**的真实 scale 重建（DK 的 Ice/Torch 等层 scale 与黑神话差异极大，
+      // 不做这一步会把它们画成全屏辉光斑，见 PARTICLE_VERTEX_SHADER 注释）。
+      const emitterOrigin = specEmitterOrigin(p.specJson);
       const id = player.addParticle(() => sim.vertices(), {
         tex: p.tex,
         frameCount: sim.frame_count(),
+        frameCols: grid.cols,
+        frameRows: grid.rows,
         blend: p.blend,
         softness: p.softness,
+        objectCenter: [obj.origin[0] - sceneW / 2, obj.origin[1] - sceneH / 2, obj.origin[2]],
+        objectScale: [obj.scale[0], obj.scale[1], obj.scale[2] ?? 1],
+        emitterOrigin,
         // 实例缓冲容量 = spec 的 maxcount（= wasm `SceneParticleSim.maxcount`，模拟器的发射上限）。
         // three 只在首帧锁存该容量（见 addParticle），必须按模拟器**最终**会产出的粒子数一次给足；
         // 缺 maxcount（旧格式/解析失败）→ addParticle 用 DEFAULT_PARTICLE_CAPACITY 兜底。

@@ -6,7 +6,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
-import { ThreeScenePlayer, loadSceneToThree, frameCountFromDims, textureFrameCount, specMaxcount, particleCapacity, DEFAULT_PARTICLE_CAPACITY, MAX_PARTICLE_CAPACITY } from '../src/client/threejs-player.js';
+import { ThreeScenePlayer, loadSceneToThree, frameCountFromDims, textureFrameCount, textureFrameGrid, specMaxcount, particleCapacity, specEmitterOrigin, simEmitterOffset, BLACKMYTH_OBJ_SCALE, DEFAULT_PARTICLE_CAPACITY, MAX_PARTICLE_CAPACITY } from '../src/client/threejs-player.js';
 import { coverRange } from '../src/client/scene-renderer.js';
 
 // 注入的 mock renderer：只测相机/场景/RAF 逻辑，不触碰 WebGL。
@@ -442,6 +442,44 @@ describe('ThreeScenePlayer particle layer', () => {
     expect(mat.uniforms.map.value).toBeInstanceOf(THREE.Texture);
   });
 
+  it('addParticle：精灵表网格（frameCols/frameRows）设到 uniform；缺省为横向等分（cols=n, rows=1）', () => {
+    const { player } = makePlayer(1920, 1080);
+    player.addParticle(() => dataA, { frameCount: 64, frameCols: 8, frameRows: 8, blend: 'alpha' });
+    const mat = particleMesh(player).material as THREE.ShaderMaterial;
+    expect(mat.uniforms.frameCols.value).toBe(8);
+    expect(mat.uniforms.frameRows.value).toBe(8);
+    // 缺省（非精灵表）：cols=frameCount、rows=1（与旧的横向等分切片等价）。
+    const p2 = makePlayer(1920, 1080);
+    p2.player.addParticle(() => dataA, { frameCount: 4, blend: 'alpha' });
+    const mat2 = particleMesh(p2.player).material as THREE.ShaderMaterial;
+    expect(mat2.uniforms.frameCols.value).toBe(4);
+    expect(mat2.uniforms.frameRows.value).toBe(1);
+  });
+
+  it('addParticle：对象变换（objCenter/objScale/emitterOrigin/bmOffset）设到 uniform；缺省恒等', () => {
+    const { player } = makePlayer(1920, 1080);
+    player.addParticle(() => dataA, {
+      frameCount: 1, blend: 'additive',
+      objectCenter: [100, -50, 0], objectScale: [-0.5, 0.25, 1], emitterOrigin: [150, 550, 0],
+    });
+    const mat = particleMesh(player).material as THREE.ShaderMaterial;
+    expect((mat.uniforms.objCenter.value as THREE.Vector3).toArray()).toEqual([100, -50, 0]);
+    expect((mat.uniforms.objScale.value as THREE.Vector3).toArray()).toEqual([-0.5, 0.25, 1]);
+    expect((mat.uniforms.emitterOrigin.value as THREE.Vector3).toArray()).toEqual([150, 550, 0]);
+    // bmOffset = BLACKMYTH_OBJ_SCALE ⊙ emitterOrigin（模拟器已加进 particlePosition 的偏移，
+    // 顶点 shader 要减掉它才能拿到纯局部坐标）。
+    expect((mat.uniforms.bmOffset.value as THREE.Vector3).toArray()).toEqual([
+      150 * BLACKMYTH_OBJ_SCALE[0], 550 * BLACKMYTH_OBJ_SCALE[1], 0,
+    ]);
+    // 缺省（不传）→ 恒等变换：objCenter=0、objScale=1、emitterOrigin=0、bmOffset=0。
+    const p2 = makePlayer(1920, 1080);
+    p2.player.addParticle(() => dataA, { frameCount: 1, blend: 'alpha' });
+    const mat2 = particleMesh(p2.player).material as THREE.ShaderMaterial;
+    expect((mat2.uniforms.objCenter.value as THREE.Vector3).toArray()).toEqual([0, 0, 0]);
+    expect((mat2.uniforms.objScale.value as THREE.Vector3).toArray()).toEqual([1, 1, 1]);
+    expect((mat2.uniforms.bmOffset.value as THREE.Vector3).toArray().map((v) => v + 0)).toEqual([0, 0, 0]);
+  });
+
   it('addParticle：softness 缺省按有无纹理（无 tex→1.0 软圆点、有 tex→0.15 薄软边），renderOrder=1（粒子在背景之上）', () => {
     const { player } = makePlayer(1920, 1080);
     // 无 tex → 白图兜底 → softness 1.0（整盘软圆点，而非硬边白方块）。
@@ -718,6 +756,35 @@ describe('ThreeScenePlayer loadSceneToThree', () => {
       expect(mat.uniforms.frameCount.value).toBe(sim.frame_count());
     });
 
+  it('loadSceneToThree：对象 scale / emitter 原点接线到粒子 material（WE model matrix 语义）', () => {
+    const canvas = document.createElement('canvas');
+    const sim = makeMockSim();
+    const assets = {
+      renderer: createMockRenderer() as unknown as THREE.WebGLRenderer,
+      backgroundTextures: new Map([[13, new THREE.DataTexture(new Uint8Array(4), 2, 2)]]),
+      particles: new Map([[71, {
+        specJson: '{"emitter":[{"origin":"350 750 0","rate":20}],"maxcount":50}',
+        tex: undefined,
+        blend: 'additive' as const,
+      }]]),
+      createParticleSim: vi.fn(() => sim),
+    };
+    const result = loadSceneToThree(BLACKMYTH_SCENE, assets, canvas);
+    const mesh = result.player.scene.children.find(
+      (c) => (c as THREE.Mesh).material instanceof THREE.ShaderMaterial,
+    ) as THREE.Mesh;
+    const u = (mesh.material as THREE.ShaderMaterial).uniforms;
+    // 对象中心 = we_to_three(scene.json origin, 3840, 2160)（y 不翻）。
+    expect((u.objCenter.value as THREE.Vector3).x).toBeCloseTo(2306.34155 - 1920, 4);
+    expect((u.objCenter.value as THREE.Vector3).y).toBeCloseTo(419.76611 - 1080, 4);
+    // 对象 scale 直传（可为负 = 镜像；DK 的 Ice 层 scale≈(0.29,0.15) 靠它把辉光斑缩回小冰晶）。
+    expect((u.objScale.value as THREE.Vector3).toArray()).toEqual([-2.05166, 2.1167, 1]);
+    // emitter 局部原点（spec 原值）+ 模拟器已加进 particlePosition 的偏移（黑神话 scale ⊙ origin）。
+    expect((u.emitterOrigin.value as THREE.Vector3).toArray()).toEqual([350, 750, 0]);
+    expect((u.bmOffset.value as THREE.Vector3).x).toBeCloseTo(350 * -2.05166, 4);
+    expect((u.bmOffset.value as THREE.Vector3).y).toBeCloseTo(750 * 2.1167, 4);
+  });
+
   it('loadSceneToThree：实例容量取自 spec 的 maxcount（three 首帧锁存，必须一次给足）', () => {
     // 黑神话 leaves5 的真实 spec：rate=20、maxcount=50。容量必须 = 50（而非建层当帧的粒子数）。
     const canvas = document.createElement('canvas');
@@ -763,6 +830,37 @@ describe('ThreeScenePlayer loadSceneToThree', () => {
     expect(textureFrameCount(new THREE.DataTexture(new Uint8Array(4), 512, 128))).toBe(4);
     expect(textureFrameCount(new THREE.DataTexture(new Uint8Array(4), 256, 256))).toBe(1);
     expect(textureFrameCount(undefined)).toBe(1);
+  });
+
+  it('textureFrameCount / textureFrameGrid 优先用精灵表元数据（DK fire1/fog1 = 8×8=64 帧）', () => {
+    // 关键：1024×1024 的 8×8 精灵表按宽高推是「1 帧」→ 每个粒子会画出整张表的 64 格网格。
+    const tex = new THREE.DataTexture(new Uint8Array(4), 1024, 1024);
+    tex.userData = { sprite: { frames: 64, cols: 8, rows: 8 } };
+    expect(textureFrameCount(tex)).toBe(64);
+    expect(textureFrameGrid(tex)).toEqual({ cols: 8, rows: 8 });
+    // 非精灵表 → 回退按宽高推帧数 + 横向等分（cols=n, rows=1）。
+    const plain = new THREE.DataTexture(new Uint8Array(4), 512, 128);
+    expect(textureFrameCount(plain)).toBe(4);
+    expect(textureFrameGrid(plain)).toEqual({ cols: 4, rows: 1 });
+    // 非法元数据（缺 cols/rows 或非正）→ 忽略，回退旧语义。
+    const bad = new THREE.DataTexture(new Uint8Array(4), 256, 256);
+    bad.userData = { sprite: { frames: 0, cols: 0, rows: 0 } };
+    expect(textureFrameCount(bad)).toBe(1);
+    expect(textureFrameGrid(bad)).toEqual({ cols: 1, rows: 1 });
+  });
+
+  it('specEmitterOrigin / simEmitterOffset：解析 emitter[0].origin 并算黑神话偏移', () => {
+    expect(specEmitterOrigin('{"emitter":[{"origin":"150 550 0"}]}')).toEqual([150, 550, 0]);
+    expect(specEmitterOrigin('{"emitter":[{"rate":200}]}')).toEqual([0, 0, 0]);
+    expect(specEmitterOrigin('{"emitter":[]}')).toEqual([0, 0, 0]);
+    expect(specEmitterOrigin('{"emitter":[{"origin":"1 2"}]}')).toEqual([0, 0, 0]); // 分量不足
+    expect(specEmitterOrigin('not json')).toEqual([0, 0, 0]);
+    // 模拟器只对**第一个** emitter 的 origin 乘黑神话 scale，故偏移也只看第一个。
+    expect(specEmitterOrigin('{"emitter":[{"origin":"10 20 0"},{"origin":"99 99 0"}]}')).toEqual([10, 20, 0]);
+    expect(simEmitterOffset([150, 550, 0])).toEqual([
+      150 * BLACKMYTH_OBJ_SCALE[0], 550 * BLACKMYTH_OBJ_SCALE[1], 0,
+    ]);
+    expect(simEmitterOffset([0, 0, 0]).map((v) => v + 0)).toEqual([0, 0, 0]);
   });
 
   it('播放帧：先 sim.update(dt) 再 player.updateParticles(dt)（getter 读已推进顶点，粒子不停留）', () => {

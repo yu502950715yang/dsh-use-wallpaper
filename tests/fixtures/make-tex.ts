@@ -15,7 +15,7 @@ export interface TexMipSpec {
 
 export interface MakeTexOptions {
   format?: number;            // TexFormat 枚举：RGBA8888=0, DXT5=4, DXT3=6, DXT1=7, RG88=8, R8=9
-  flags?: number;
+  flags?: number;             // flags 位 2（值 4）= sprite 精灵表动画
   textureWidth?: number;      // 默认取第一个 image 的 mip0 width
   textureHeight?: number;
   imageWidth?: number;        // 默认取 mip0 width
@@ -24,6 +24,17 @@ export interface MakeTexOptions {
   container?: 'TEXB0001' | 'TEXB0002' | 'TEXB0003' | 'TEXB0004';  // 默认 TEXB0002（V2 带 LZ4 字段）
   imageFormat?: number;       // TEXB0003/0004 的 FreeImage 格式（如 FIF_JPEG=2）
   images: TexMipSpec[][];     // 每元素为一个 image 的 mipmap 数组
+  // 精灵表动画段（TEXS000x，紧跟在 mip 数据之后；对齐 open-wallpaper-engine 的 sprite 分支）。
+  // 帧在纹理中按**行优先网格**排布（每帧 frameWidth×frameHeight），列数由 textureWidth 推出。
+  sprite?: MakeTexSpriteSpec;
+}
+
+export interface MakeTexSpriteSpec {
+  texs?: 1 | 2 | 3;           // TEXS 版本（默认 2；1 = 帧坐标为 i32，3 = 带 atlas 尺寸）
+  frames: number;
+  frameWidth: number;
+  frameHeight: number;
+  atlas?: [number, number];   // texs>=3 时的 atlas 尺寸
 }
 
 function lz4Compress(data: Uint8Array): Uint8Array {
@@ -91,6 +102,37 @@ export function makeTex(opts: MakeTexOptions): Buffer {
         meta.writeUInt32LE(payload.length, 16);  // bytesLen
         chunks.push(meta, Buffer.from(payload));
       }
+    }
+  }
+  // 精灵表动画段（TEXS000x）：帧数 + 每帧 (imageId, frametime, x, y, xAxis[2], yAxis[2])。
+  if (opts.sprite) {
+    const sp = opts.sprite;
+    const texs = sp.texs ?? 2;
+    chunks.push(Buffer.from(`TEXS000${texs}\0`, 'ascii'));
+    const fc = Buffer.alloc(4);
+    fc.writeUInt32LE(sp.frames, 0);
+    chunks.push(fc);
+    if (texs >= 3) {
+      const atlas = Buffer.alloc(8);
+      atlas.writeUInt32LE(sp.atlas?.[0] ?? textureWidth, 0);
+      atlas.writeUInt32LE(sp.atlas?.[1] ?? textureHeight, 4);
+      chunks.push(atlas);
+    }
+    const cols = Math.max(1, Math.round(textureWidth / sp.frameWidth));
+    const intCoords = texs === 1;
+    for (let f = 0; f < sp.frames; f++) {
+      const rec = Buffer.alloc(8 + 24);
+      rec.writeInt32LE(0, 0);                                   // imageId
+      rec.writeFloatLE(0, 4);                                   // frametime
+      const coords = [
+        (f % cols) * sp.frameWidth, Math.floor(f / cols) * sp.frameHeight,
+        sp.frameWidth, 0, 0, sp.frameHeight,
+      ];
+      coords.forEach((v, i) => {
+        if (intCoords) rec.writeInt32LE(v, 8 + i * 4);
+        else rec.writeFloatLE(v, 8 + i * 4);
+      });
+      chunks.push(rec);
     }
   }
   return Buffer.concat(chunks);
