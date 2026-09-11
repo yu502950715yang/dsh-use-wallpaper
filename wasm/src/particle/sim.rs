@@ -829,7 +829,17 @@ impl SceneParticleSim {
     ///   故 y 翻对分布**无影响**，仅保留 spec 语义）。
     ///
     /// 独立成公共方法供集成测试直接断言分布，并被 `spawn()` 复用——散射 `local` **不乘对象 scale**
-    /// （全局约束），由 `spawn()` 直接加到发射点上。
+    /// （本模拟器输出的是**对象局部**坐标；对象 scale 由渲染侧顶点 shader 施加，见
+    /// `threejs-player.ts` 的 `worldPos = objCenter + objScale*(emitterOrigin + local)`——
+    /// 与 lwe `updateMatrices`（`mvp = viewProj × translate × rotate × scale` 作用于**最终**局部顶点）
+    /// 等价：发射点 + 散射 + 运动整体乘 scale）。
+    ///
+    /// ⚠️ 已知偏差（未修，非本次「Crimson 集中」的成因）：lwe `ParticleEmitter.distanceMin/Max`
+    /// 是 **vec3 逐轴**（`createBoxEmitter` 各轴用 `distanceMin[axis]/distanceMax[axis]`），
+    /// 本模拟器 `dist_min/dist_max` 是 **标量**（`scalar()` 取多值字符串的**第一个** token）。
+    /// 对 sphererandom 无影响（lwe 球壳只用 `.x`），对 boxrandom 则把 `"1000 500 0"` 读成 1000
+    /// （Crimson Stars）/ `"50 256 0"` 读成 50（DK Ice）——即 y 轴散射范围与 WE 不符
+    /// （偏大/偏小），但不改变「是否散射」（那是 `directions` 的职责，见 `LWE_DEFAULT_DIRECTIONS`）。
     pub fn emitter_local(&self) -> [f32; 3] {
         let dir = self.emitter.directions;
         // lwe box 用 flippedDirections（y 翻）；sphere 用 directions（不翻）。

@@ -135,6 +135,13 @@ fn default_turbulent() -> TurbulentInit {
     }
 }
 
+/// lwe `ObjectParser::parseParticleEmitter` 的 `directions` 缺省值 **(1,1,0)**
+/// （`ObjectParser.cpp:594`：`parseVec3("directions", glm::vec3(1.0f, 1.0f, 0.0f))`）。
+/// ⚠️ 不是零向量：`emitter_local()` 把散射偏移乘 directions，缺省取 0 会让粒子全部叠在发射点
+/// （Crimson Horizon 的绿色萤火虫就这么被挤成一小片，见 spec_to_emitter 的回归测试）。
+/// 缺省 z=0 表示「正交粒子的散射只在 XY 平面」（WE 正交粒子即 2D disk + z 无关）。
+pub const LWE_DEFAULT_DIRECTIONS: [f32; 3] = [1.0, 1.0, 0.0];
+
 fn scalar(v: &Value, default: f32) -> f32 {
     match v {
         Value::Number(n) => n.as_f64().unwrap_or(default as f64) as f32,
@@ -158,6 +165,19 @@ fn vec3(v: &Value) -> [f32; 3] {
             a.get(2).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32,
         ],
         _ => [0.0; 3],
+    }
+}
+
+/// `vec3` + 「**字段缺失**时用 lwe 缺省值」（字段存在则照原样解析，含显式 "0 0 0"）。
+///
+/// 用于 `directions`：lwe `ObjectParser::parseParticleEmitter`（ObjectParser.cpp:594）
+/// `.directions = parseVec3("directions", glm::vec3(1.0f, 1.0f, 0.0f))` —— **缺省 (1,1,0)**。
+/// 缺省取 0 向量会把 `emitter_local()` 的散射整体乘 0（粒子全部叠在发射点），
+/// 见 `spec_to_emitter.rs` 的 `directions_default_1_1_0_when_absent` 回归测试。
+fn vec3_or(v: &Value, default: [f32; 3]) -> [f32; 3] {
+    match v {
+        Value::String(_) | Value::Array(_) => vec3(v),
+        _ => default,
     }
 }
 
@@ -231,7 +251,7 @@ pub fn parse_particle_spec(json: &str) -> ParticleSpec {
     ParticleSpec {
         emitter: EmitterSpec {
             rate: scalar(&em["rate"], 10.0),
-            directions: vec3(&em["directions"]),
+            directions: vec3_or(&em["directions"], LWE_DEFAULT_DIRECTIONS),
             distance_min: scalar(&em["distancemin"], 0.0),
             distance_max: scalar(&em["distancemax"], 256.0),
             // 发射器局部偏移（"x y z"；缺省/缺失 → [0,0,0]）。黑神话花瓣 origin="350 750 0"。

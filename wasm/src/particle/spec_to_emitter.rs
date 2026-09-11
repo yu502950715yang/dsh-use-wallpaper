@@ -189,6 +189,140 @@ mod tests {
         assert!(sim.emitter.is_sphere, "name=sphererandom → is_sphere 应为 true");
     }
 
+    /// lwe `ObjectParser::parseParticleEmitter`（ObjectParser.cpp:594）：
+    /// `directions = parseVec3("directions", glm::vec3(1,1,0))` —— **缺省 (1,1,0)**，不是 0 向量。
+    ///
+    /// 回归背景（Crimson Horizon 3765967112「绿色光点集中」）：Crimson 的
+    /// `particles/workshop/3355704177/new_particle_system.json`（Fireflies，绿色 0-255-0 + 0-128-0）
+    /// 的 emitter **没有 `directions` 字段**，此前 `vec3()` 缺省 [0,0,0] → `local = unit·r·dir = 0`
+    /// → 20 个粒子全部叠在发射点上（只有 ±20/s 的速度把它们推开几十像素）＝用户所见的
+    /// 「绿色光点挤在画面下方一小片」。WE 里 directions 缺省 (1,1,0) → 球壳半径 32..512 全展开。
+    #[test]
+    fn directions_default_1_1_0_when_absent() {
+        // Fireflies 原始 emitter（无 directions 字段；sphererandom，32..512，rate 20，maxcount 20）。
+        let json = r#"{
+            "emitter": [{"distancemax": 512, "distancemin": 32, "id": 6, "name": "sphererandom", "rate": 20}],
+            "maxcount": 20
+        }"#;
+        let spec = parse_particle_spec(json);
+        let sim = emitter_spec_to_particle(&spec, [784.10718, 431.18640, 0.0], 3840.0, 2160.0);
+        assert_eq!(
+            sim.emitter.directions,
+            [1.0, 1.0, 0.0],
+            "emitter 无 directions → 缺省 (1,1,0)（lwe ObjectParser）"
+        );
+        assert_eq!(sim.emitter.dist_min, 32.0);
+        assert_eq!(sim.emitter.dist_max, 512.0);
+        assert!(sim.emitter.is_sphere, "name=sphererandom → is_sphere");
+    }
+
+    /// directions 显式给出时**不被缺省覆盖**（含全零 "0 0 0" 这一显式语义）。
+    #[test]
+    fn explicit_directions_win_over_default() {
+        let json = r#"{"emitter":[{"name":"sphererandom","rate":10,"directions":"0.5 0.25 0","distancemin":0,"distancemax":100}]}"#;
+        let spec = parse_particle_spec(json);
+        assert_eq!(spec.emitter.directions, [0.5, 0.25, 0.0]);
+        let json0 = r#"{"emitter":[{"name":"sphererandom","rate":10,"directions":"0 0 0","distancemin":0,"distancemax":100}]}"#;
+        let spec0 = parse_particle_spec(json0);
+        assert_eq!(spec0.emitter.directions, [0.0; 3], "显式 \"0 0 0\" 应保持 0（不被缺省覆盖）");
+    }
+
+    /// 端到端：真实 Fireflies 规格 → 发射出的粒子在 XY 上**明显展开**（不是挤在一点）。
+    /// 用 `emitter.origin=[0,0,0]` 的对象中心（scene 中心 → we_to_three = 0）隔离散射本身；
+    /// 中性 init（速度 0、寿命长）使位置只由 emitter 散射决定。
+    #[test]
+    fn fireflies_particles_spread_over_emitter_disc() {
+        let json = include_str!("../../tests/fixtures/crimson/fireflies.json");
+        let spec = parse_particle_spec(json);
+        let init = ParticleInitSpec {
+            lifetime_min: 100.0,
+            lifetime_max: 100.0,
+            size_min: 16.0,
+            size_max: 16.0,
+            size_exponent: 1.0,
+            velocity_min: [0.0; 3],
+            velocity_max: [0.0; 3],
+            color_min: [0.0, 0.5, 0.0],
+            color_max: [0.0, 1.0, 0.0],
+            alpha_min: 1.0,
+            alpha_max: 1.0,
+            rotation_min: [0.0; 3],
+            rotation_max: [0.0; 3],
+            angular_vel_min: [0.0; 3],
+            angular_vel_max: [0.0; 3],
+            turbulent: None,
+        };
+        let mut sim = SceneParticleSim::new(
+            ParticleEmitterSpec {
+                rate: spec.emitter.rate,
+                origin: spec.emitter.origin,
+                directions: spec.emitter.directions,
+                dist_min: spec.emitter.distance_min,
+                dist_max: spec.emitter.distance_max,
+                is_sphere: spec.emitter.is_sphere,
+            },
+            spec.maxcount,
+            [1920.0, 1080.0, 0.0], // we_to_three → [0,0,0]
+            3840.0,
+            2160.0,
+            init,
+        );
+        sim.prewarm();
+        for _ in 0..120 {
+            sim.update(1.0 / 60.0);
+        }
+        assert_eq!(sim.particles.len(), 20, "maxcount=20 应铺满 20 个粒子");
+
+        let (mut min_x, mut max_x, mut min_y, mut max_y) = (f32::MAX, f32::MIN, f32::MAX, f32::MIN);
+        for p in &sim.particles {
+            min_x = min_x.min(p.pos[0]);
+            max_x = max_x.max(p.pos[0]);
+            min_y = min_y.min(p.pos[1]);
+            max_y = max_y.max(p.pos[1]);
+        }
+        // 球壳半径 ∈ [32,512]（×directions=[1,1,0]）→ 20 个粒子的 XY 跨度应达数百像素；
+        // 修复前 local≡0（全部同点）→ 跨度 ≈ 0。
+        let span_x = max_x - min_x;
+        let span_y = max_y - min_y;
+        assert!(
+            span_x > 400.0 && span_y > 400.0,
+            "Fireflies 粒子应在 XY 上展开（get span_x={span_x}, span_y={span_y}）"
+        );
+        // 每个粒子的 XY 半径都在 [32,512] 内（球壳），且**不全为 0**。
+        let nonzero = sim.particles.iter().filter(|p| (p.pos[0].hypot(p.pos[1])) > 1.0).count();
+        assert!(nonzero >= 18, "绝大多数粒子的 XY 半径应非 0（实际 {nonzero}/20）");
+    }
+
+    /// Crimson 的 `Stars.json`（boxrandom，`distancemax:"1000 500 0"`，**无 directions**）
+    /// 同属缺省分支：缺省 (1,1,0) 让星点铺开（此前 directions=[0,0,0] → 500 颗星全叠在对象中心）。
+    ///
+    /// 注：`dist_min/dist_max` 是**标量**（取 "1000 500 0" 的首 token = 1000），而 lwe
+    /// `createBoxEmitter` 用 **vec3 逐轴**（x∈[0,1000]、y∈[0,500]）——已知偏差（见 `sim.rs`
+    /// `emitter_local` 注释），本轮不改（会改变 DK Ice 的观感），故此处只断言「不再全为 0」。
+    #[test]
+    fn stars_box_emitter_scatters_with_default_directions() {
+        let json = include_str!("../../tests/fixtures/crimson/stars.json");
+        let spec = parse_particle_spec(json);
+        assert_eq!(spec.emitter.directions, [1.0, 1.0, 0.0], "无 directions → 缺省 (1,1,0)");
+        assert!(!spec.emitter.is_sphere, "name=boxrandom → 盒体分支");
+        assert_eq!(spec.maxcount, 500);
+
+        let sim = emitter_spec_to_particle(&spec, [1852.83, 2227.32, 0.0], 3840.0, 2160.0);
+        let mut non_zero = 0;
+        let mut max_abs = 0f32;
+        for _ in 0..200 {
+            let l = sim.emitter_local();
+            if l[0].abs() > 1.0 || l[1].abs() > 1.0 {
+                non_zero += 1;
+            }
+            max_abs = max_abs.max(l[0].abs()).max(l[1].abs());
+        }
+        assert_eq!(non_zero, 200, "box 散射不应为 0（directions 缺省为 (1,1,0)）");
+        assert!(max_abs > 500.0, "散射幅度应达数百像素（实际 {max_abs}）");
+        // z：directions.z = 0 → 盒体 z 散射恒 0（WE 正交粒子的 z 不参与成像）。
+        assert_eq!(sim.emitter_local()[2], 0.0, "directions.z=0 → z 散射为 0");
+    }
+
     #[test]
     fn default_maxcount_zero_when_absent() {
         // 无 maxcount（旧格式）→ spec.maxcount = 0；emitter_spec_to_particle 原样带入（不 clamp）。
