@@ -16,6 +16,8 @@ packages/
 # Rust wasm 构建中间产物：最终 wasm 由 build:client 复制进 dist/static 供分发
 wasm/pkg/
 
-# Wallpaper Engine 内置粒子纹理：build:client 时从本地 WE 安装目录复制，运行时改由
-# /wallpapers/particle-texture 从用户 WE 安装提供（缺失则回退纯色），故不提交，避免再分发第三方素材
+# Wallpaper Engine 内置粒子纹理：**2026-09-11 起不再复制进 dist/static/** —— client 改为请求
+# host 路由 /wallpapers/particle-texture（src/host/routes.ts），由 host 从用户本机的 WE 安装
+# 目录 <weAssetsDir>/assets/materials 直读原始字节，故正常构建不会再产生这些文件。
+# 规则保留作兜底：万一有历史产物或手工复制残留，也不会误入库 / 误进 npm 包（避免再分发第三方素材）。
 dist/static/ptex-*.tex

@@ -129,7 +129,7 @@ describe('createThreeSceneRenderer', () => {
     resolveImageTexture.mockResolvedValue({ fake: true } as any);
     // DK WOTLK 的真实形态：spec.material 路径名不含 lightshaft/glow/additive，但材质 json 是 additive。
     resolveParticleMaterial.mockResolvedValue({
-      texUrl: '/wallpapers/static/ptex-chromaticdot.tex',
+      texUrl: '/wallpapers/particle-texture?name=particle%2Fchromaticdot',
       blending: 'additive',
     });
     const tex = { fakeTex: true };
@@ -157,8 +157,8 @@ describe('createThreeSceneRenderer', () => {
     const assets = loadSceneToThree.mock.calls[0][1];
     // 旧实现此处为 'alpha'（按材质名猜）→ 纹理 alpha 全 1 的 addtive 纹理被画成黑方块。
     expect(assets.particles.get(71).blend).toBe('additive');
-    // 纹理经 texUrl → loadTexTexture 装配。
-    expect(loadTexTexture).toHaveBeenCalledWith('/wallpapers/static/ptex-chromaticdot.tex');
+    // 纹理经 texUrl → loadTexTexture 装配（host 路由 /wallpapers/particle-texture）。
+    expect(loadTexTexture).toHaveBeenCalledWith('/wallpapers/particle-texture?name=particle%2Fchromaticdot');
     expect(assets.particles.get(71).tex).toBe(tex);
     r.dispose();
   });

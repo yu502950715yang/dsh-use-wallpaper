@@ -335,17 +335,22 @@ async function resolveImageTexBytes(id: string, imageRef: string): Promise<Uint8
 }
 
 // 粒子材质纹理字节推导：粒子 spec 的 material → 材质 json → passes[0].textures[0]
-// （如 "particle/fog/fog1"）→ **静态资源路由** /wallpapers/static/ptex-<斜杠转横线>.tex
-// （build:client 已把 WE 安装目录的粒子纹理打进 dist/static/，立即生效无需重启）。
+// （如 "particle/fog/fog1"）→ **host 路由** /wallpapers/particle-texture?name=particle/<路径>
+// （2026-09-11 起：该路由从用户本地 WE 安装目录 `<weAssetsDir>/assets/materials` 直接读取，
+//  **不再把 WE 内置纹理复制进 dist/static/ 随包分发** —— WE 粒子纹理是第三方素材，
+//  原先的静态副本让 npm 包多背了 33.5 MB）。
 // 任何一步失败返回 null（空字节 = 无纹理，Rust 侧 1×1 白兜底保持纯色粒子行为）。
+//
+// ⚠️ 该路由由 host 注册，需要 host 侧代码生效（升级插件后需重启 dsh web）；weAssetsDir
+// 未探测到/未配置时路由返回 500/404 → 纹理缺失 → 回退纯色粒子（不白屏）。
 //
 // 别名映射：部分壁纸粒子材质引用**不存在的全局纹理**（坏引用，桌面版 WE 同样 fallback 纯色）——
 // 1280029027(EVA) 的 light rays 材质 textures "presets/lightshaft" 在 WE 安装目录无对应文件，但
-// 真实光柱纹理 particle/light/light_shafts_0.tex 存在（build:client 已复制）。映射到真实纹理让
-// 粒子恢复纹理形状（优于桌面版纯色兜底）。
+// 真实光柱纹理 particle/light/light_shafts_0.tex 存在。映射到真实纹理让粒子恢复纹理形状
+// （优于桌面版纯色兜底）。
 const PARTICLE_TEX_ALIASES: Record<string, string> = {
   // "presets/lightshaft"（无下划线，EVA 坏引用）→ light_shafts 序列第 0 帧（光柱精灵）。
-  // 值是 **short 形式**（去 particle/ 前缀，与下方 short 计算后一致）→ ptex-light-light_shafts_0.tex
+  // 值为**去 particle/ 前缀**的形式（与下方 short 计算一致），拼回时统一加回 particle/。
   'presets/lightshaft': 'light/light_shafts_0',
 };
 
@@ -381,12 +386,16 @@ export async function resolveParticleMaterial(
     const blending = typeof pass0?.blending === 'string' ? pass0.blending : null;
     const texName: unknown = pass0?.textures?.[0];
     if (typeof texName !== 'string' || !texName) return { texUrl: null, blending };
-    // 静态资源（立即生效）：build:client 从 WE 安装目录 assets/materials/particle/ 复制，
-    // 相对该目录扁平命名 ptex-<路径斜杠转横线>.tex → "particle/fog/fog1" → ptex-fog-fog1.tex
+    // 路由以 `<weAssetsDir>/assets/materials` 为基准，name 就是材质纹理的**原始相对路径**
+    // —— 多数是 `particle/<...>`（WE 内置粒子纹理），但也有 `workshop/<id>/particle/<...>`
+    // 这类（如 2897292240 的 Rain_secondary），所以**不能无条件加 `particle/` 前缀**。
+    // 唯例外是别名表：它的值是「去 particle/ 前缀」的短形式（对应文件都在 particle/ 下），
+    // 命中后需把前缀补回来。
     const short = texName.startsWith('particle/') ? texName.slice('particle/'.length) : texName;
-    const resolved = PARTICLE_TEX_ALIASES[short] ?? short;
+    const aliased = PARTICLE_TEX_ALIASES[short];
+    const name = aliased ? `particle/${aliased}` : texName;
     return {
-      texUrl: `/wallpapers/static/ptex-${encodeURIComponent(resolved.replace(/\//g, '-'))}.tex`,
+      texUrl: `/wallpapers/particle-texture?name=${encodeURIComponent(name)}`,
       blending,
     };
   } catch {
@@ -641,8 +650,12 @@ export function createWasmSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneRe
         };
         raf = requestAnimationFrame(loop);
         return true;
-      } catch {
+      } catch (e) {
         // 异常路径释放已创建的 scene/脚本运行时（不泄漏）。
+        // ⚠️ 必须留日志：此前这里是裸 `catch {}`，wasm 路径的任何异常都被静默吞成
+        // 「render 返回 false」，测试与真机都只看到「没渲染」而看不到原因
+        // （2026-09-11 排查 wasm-renderer 的 7 项测试失败时正是卡死在这里）。
+        console.warn('[wasm] render 异常 → 回退:', e instanceof Error ? e.message : String(e));
         teardown();
         return false;
       }

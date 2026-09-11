@@ -134,27 +134,16 @@ if (existsSync(GLSLANG_WASM_SRC)) {
   console.warn(`[build:client] 未找到 ${GLSLANG_WASM_SRC}，跳过 glslang.wasm 复制（真实效果 shader 编译链不可用）`);
 }
 
-// 2026-08-21（方案 A 静态化）：WE 内置粒子纹理（fog1/halo/light_shafts 等，粒子材质
-// textures 如 "particle/fog/fog1"）从安装目录 assets/materials/particle/ 复制到
-// dist/static/，扁平命名 ptex-<路径斜杠转横线>.tex（静态路由仅单段文件名）。
-// wasm-renderer 按同名规则 fetch /wallpapers/static/ptex-*.tex——**不依赖 host 新增
-// 路由**（/wallpapers/particle-texture 需重启 dsh web 才注册；静态路径立即生效）。
-// WE 安装目录可用环境变量 WE_ASSETS_DIR 覆盖（构建机可能不在本机）。
-const weAssets = process.env.WE_ASSETS_DIR || 'D:/Steam/steamapps/common/wallpaper_engine';
-const weParticleDir = join(weAssets, 'assets', 'materials', 'particle');
-let ptexCopied = 0;
-if (existsSync(weParticleDir)) {
-  const walk = (dir) => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const p = join(dir, entry.name);
-      if (entry.isDirectory()) walk(p);
-      else if (entry.name.endsWith('.tex')) {
-        const rel = p.slice(weParticleDir.length + 1).replace(/[\\/]/g, '-');
-        copyFileSync(p, join(outStatic, `ptex-${rel}`));
-        ptexCopied++;
-      }
-    }
-  };
-  walk(weParticleDir);
-}
-console.log(`particle textures copied to dist/static/ (${ptexCopied} files, source: ${weParticleDir})`);
+// 2026-09-11：**不再把 WE 内置粒子纹理复制进 dist/static/**。
+//
+// 这些纹理（fog1 / halo / light_shafts …）是 Wallpaper Engine 的第三方素材，早先按
+// 「静态化」方案复制成 `ptex-<斜杠转横线>.tex` 供 client 直接 fetch。代价是它们会被
+// `files: ["dist"]` 一并打进 npm 包 —— 实测解包体积 43.2 MB 里有 33.5 MB 是这批纹理
+// （245 个文件里 164 个），既无谓放大包体，也不符合 `.gitignore` 里「不再分发第三方素材」
+// 的既定意图。
+//
+// 现在 client（`wasm-renderer.resolveParticleMaterial`）直接请求 host 路由
+// `/wallpapers/particle-texture?name=particle/<路径>`，由 host 从**用户本机**的 WE 安装目录
+// `<weAssetsDir>/assets/materials` 读取原始字节（见 `src/host/routes.ts`）。
+// 因此本步骤无需任何构建期文件操作。
+console.log('particle textures: 不再复制（client 走 /wallpapers/particle-texture 由 host 从 WE 安装目录直读）');

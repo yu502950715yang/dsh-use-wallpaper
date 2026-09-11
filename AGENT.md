@@ -115,6 +115,11 @@ research/                    gitignore：截图 / 验证脚本 / 临时 profile
 11. **效果链的一切编译/建管线必须在加载时一次性完成**（`EffectChain::new` / `set_object_effect` / `set_particle_object_effect`）；`render_frame` / `render_object_effects` / `step` / `EffectChain::render` **不得**做 naga 编译或建管线（每帧只写 uniform + 建 bind group + 提交 pass）。
 12. **音频管线**：`createAudioAnalyzer` 频谱 → EffectRunner 音频 uniform + visualizer 条高；壁纸 `sound` 数组经 `playWallpaperSound` 接入（autoplay 被拦时 context suspended、可视化全零，用户手势后恢复）；无 Web Audio → 全零静音。
 13. **测试沙箱**：vitest / esbuild 依赖 service 子进程（命名管道），受限沙箱下报 `spawn EPERM` —— 需完整权限运行。
+14. **WE 内置粒子纹理走 host 路由，不随包分发（2026-09-11）**：粒子材质引用的纹理（`particle/fog/fog1`、`particle/halo` …）是 **WE 的第三方素材**。早先由 `build:client` 从本机 WE 目录复制成 `dist/static/ptex-*.tex`，结果被 `files: ["dist"]` 一并打进 npm 包（解包 43 MB 里 33 MB 是它）。现在 client 请求 **`/wallpapers/particle-texture?name=<相对 assets/materials 的路径>`**（路由见 `src/host/routes.ts`），由 host 从用户本机 `<weAssetsDir>/assets/materials` 直读。要点：
+    - **`name` 就是材质纹理的原始相对路径，不能无条件加 `particle/` 前缀** —— 全库有 `workshop/<id>/particle/...` 这类路径（`2897292240` 的雨粒子）；
+    - 别名表 `PARTICLE_TEX_ALIASES` 的值是「去 `particle/` 前缀」的短形式，命中后要补回前缀；
+    - 代价：该路由属 host 侧，**升级插件后需重启 `dsh web`** 才注册；weAssetsDir 探测失败时纹理缺失 → 回退纯色粒子（不白屏）；
+    - 验证脚本：`research/verify-particle-tex-fallback.mjs`（全库扫描每个粒子的纹理路径能否解析到真实文件）。
 
 ## 6. 工作约定
 
@@ -146,3 +151,4 @@ research/                    gitignore：截图 / 验证脚本 / 临时 profile
 9. **`verify-wasm-render.mjs` 跑不通**：硬编码 `?token=` 过期（401）。替代：`research/verify-colorblend.mjs` 的「自起 server + headless Edge + esbuild harness」模式（不依赖 token），以及 node 侧直接驱动 wasm `CpuParticleSim`（`research/gtr-verify-fix.mjs`）。
 10. **headless Edge 的 WebGPU 是 SwiftShader（软件光栅化）**，非真实 GPU：性能 / FPS 与部分行为需在真实 GPU 上补验。
 11. **全量 `vitest run` 有 15 项既有失败**（4 个文件：`wasm-renderer` 7 / `scene-renderer` 6 / `verify-real-library` 1 / `dom/bootstrap.dom` 1），均已确认在 v0.3.0 基线即失败；改动后请在 `git stash` 基线对比，**别把既有失败当成本次回归**。
+    其中 `wasm-renderer` 那 7 项已定位到一半（2026-09-11）：`createWasmSceneRenderer.render()` 的**裸 `catch {}`** 把异常静默吞成「返回 false」，测试只看到 `expected false to be true`（现已补上 `console.warn`）。补日志后可见第一层真因是 **mock 与代码脱节**（mock scene 缺 `set_particle_sim` / `update_particles`）；但补全 mock 后 render 虽能成功，又会暴露更深一层的断言问题（`scene.add_particle` 未被调用，疑与 mock 的 fetch 匹配或分流条件有关），需专项排查 —— 那 7 项目前仍维持原状。

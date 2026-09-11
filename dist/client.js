@@ -22189,7 +22189,7 @@ async function defaultLoadWasm() {
 }
 var PARTICLE_TEX_ALIASES = {
   // "presets/lightshaft"（无下划线，EVA 坏引用）→ light_shafts 序列第 0 帧（光柱精灵）。
-  // 值是 **short 形式**（去 particle/ 前缀，与下方 short 计算后一致）→ ptex-light-light_shafts_0.tex
+  // 值为**去 particle/ 前缀**的形式（与下方 short 计算一致），拼回时统一加回 particle/。
   "presets/lightshaft": "light/light_shafts_0"
 };
 async function resolveParticleMaterial(id, specText) {
@@ -22205,9 +22205,10 @@ async function resolveParticleMaterial(id, specText) {
     const texName = pass0?.textures?.[0];
     if (typeof texName !== "string" || !texName) return { texUrl: null, blending };
     const short = texName.startsWith("particle/") ? texName.slice("particle/".length) : texName;
-    const resolved = PARTICLE_TEX_ALIASES[short] ?? short;
+    const aliased = PARTICLE_TEX_ALIASES[short];
+    const name = aliased ? `particle/${aliased}` : texName;
     return {
-      texUrl: `/wallpapers/static/ptex-${encodeURIComponent(resolved.replace(/\//g, "-"))}.tex`,
+      texUrl: `/wallpapers/particle-texture?name=${encodeURIComponent(name)}`,
       blending
     };
   } catch {

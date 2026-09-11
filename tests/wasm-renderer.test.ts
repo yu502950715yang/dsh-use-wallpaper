@@ -255,7 +255,7 @@ describe('createWasmSceneRenderer', () => {
         if (url.includes('name=scene.json')) return jsonResp(sceneJson);
         if (url.includes('p.json')) return jsonResp({ emitter: [{ rate: 1.5 }], initializer: [], material: 'materials/presets/fog1.json' });
         if (url.includes('fog1.json')) return jsonResp({ passes: [{ textures: ['particle/fog/fog1'] }] });
-        if (url.includes('ptex-fog-fog1')) return { ok: true, status: 200, arrayBuffer: async () => new Uint8Array([9, 8, 7, 6]).buffer };
+        if (url.includes('name=particle%2Ffog%2Ffog1')) return { ok: true, status: 200, arrayBuffer: async () => new Uint8Array([9, 8, 7, 6]).buffer };
         return { ok: false, status: 404, json: async () => ({}) } as any;
       }),
     );
@@ -268,7 +268,7 @@ describe('createWasmSceneRenderer', () => {
     expect(Array.from(texBytes)).toEqual([9, 8, 7, 6]);
   });
 
-  it('粒子材质纹理坏引用（presets/lightshaft）→ 别名映射到真实纹理 ptex-light-light_shafts-0.tex（2026-08-22）', async () => {
+  it('粒子材质纹理坏引用（presets/lightshaft）→ 别名映射到真实纹理 particle/light/light_shafts_0（2026-08-22）', async () => {
     vi.stubGlobal('navigator', { gpu: {} });
     const scene = { set_cover: vi.fn(), load_scene: vi.fn(), load_image: vi.fn(), add_particle: vi.fn(), step: vi.fn(), render: vi.fn() };
     const sceneJson = JSON.stringify({
@@ -283,7 +283,7 @@ describe('createWasmSceneRenderer', () => {
         if (url.includes('p.json')) return jsonResp({ emitter: [{ rate: 0.3 }], initializer: [], material: 'materials/presets/lightshaft.json' });
         if (url.includes('lightshaft.json')) return jsonResp({ passes: [{ textures: ['presets/lightshaft'] }] });
         // 别名映射：坏引用 "presets/lightshaft" → 真实纹理 "particle/light/light_shafts_0"
-        if (url.includes('ptex-light-light_shafts_0')) return { ok: true, status: 200, arrayBuffer: async () => new Uint8Array([1, 2, 3, 4]).buffer };
+        if (url.includes('name=particle%2Flight%2Flight_shafts_0')) return { ok: true, status: 200, arrayBuffer: async () => new Uint8Array([1, 2, 3, 4]).buffer };
         return { ok: false, status: 404, json: async () => ({}) } as any;
       }),
     );
@@ -296,7 +296,7 @@ describe('createWasmSceneRenderer', () => {
     expect(Array.from(texBytes)).toEqual([1, 2, 3, 4]);
   });
 
-  it('粒子材质纹理缺失（静态 ptex 资源 404）→ add_particle 收到空 Uint8Array（纯色兜底）', async () => {
+  it('粒子材质纹理缺失（particle-texture 路由 404）→ add_particle 收到空 Uint8Array（纯色兜底）', async () => {
     vi.stubGlobal('navigator', { gpu: {} });
     const scene = { set_cover: vi.fn(), load_scene: vi.fn(), load_image: vi.fn(), add_particle: vi.fn(), step: vi.fn(), render: vi.fn() };
     const sceneJson = JSON.stringify({
@@ -585,12 +585,15 @@ describe('resolveParticleMaterial / resolveParticleTexUrl（粒子材质 json �
       return { ok: false, status: 404, json: async () => ({}) } as any;
     }));
     const spec = JSON.stringify({ material: 'materials/workshop/2111504995/presets/snowperspective.json' });
+    // 纹理 URL = host 路由 /wallpapers/particle-texture（从用户 WE 安装目录直读，不再随包分发）；
+    // name 为相对 <weAssetsDir>/assets/materials 的路径，斜杠经 encodeURIComponent → %2F。
+    const expected = '/wallpapers/particle-texture?name=particle%2Fchromaticdot';
     expect(await resolveParticleMaterial('2859263090', spec)).toEqual({
-      texUrl: '/wallpapers/static/ptex-chromaticdot.tex',
+      texUrl: expected,
       blending: 'additive',
     });
     // 兼容入口：仍返回纹理 URL（wasm 路径的字节推导复用）。
-    expect(await resolveParticleTexUrl('2859263090', spec)).toBe('/wallpapers/static/ptex-chromaticdot.tex');
+    expect(await resolveParticleTexUrl('2859263090', spec)).toBe(expected);
   });
 
   it('材质无 textures 字段 → texUrl=null 但 blending 仍返回（混合模式与纹理解耦）', async () => {
