@@ -251,6 +251,72 @@ function createWhiteTexture(): THREE.DataTexture {
   return tex;
 }
 
+// ── WE 图像颜色混合模式（`colorBlendMode` → shader combo `BLENDMODE`）────────────────────────
+//
+// WE 的 image 对象带 `colorBlendMode != 0` 时会**额外追加一遍混合 pass**
+// （材质 `materials/util/effectpassthrough.json`，shader = `genericimage3`；
+//  见 lwe `CImage.cpp:751-767`）。该 pass 的片元逻辑（WE 明文 shader）：
+//
+//   vec4 screen = texSample2D(g_Texture4, screenUV);            // g_Texture4 = 当前帧缓冲（背景 A）
+//   gl_FragColor.rgb = ApplyBlending(BLENDMODE, screen.rgb, gl_FragColor.rgb, gl_FragColor.a);
+//   gl_FragColor.a   = screen.a;                                 // alpha 保持背景的
+//
+// 而 `ApplyBlending`（`shaders/common_blending.h`）对每个模式给出 `mix(A, F(A,B), op)`，
+// 其中 A=背景、B=对象颜色、op=对象自身的 alpha。three 侧用 `CustomBlending` 复刻：
+// 片元**预乘**输出（rgb × alpha），再配 `blendSrc/blendDst`，使
+//   result = src·srcFactor + dst·dstFactor
+// 与 WE 的 `mix(A, F(A,B), op)` 等价。已实现的三个模式（= 全库仅有的三个非零值）：
+//
+//   7  Screen  F = A + B − A·B  →  mix = A + op·B − op·A·B = (op·B)·(1−A) + A
+//              ⇔ src=(op·B), blendSrc=ONE_MINUS_DST_COLOR, blendDst=ONE
+//              关键性质：B=0（纯黑）时结果 = A —— **黑底完全不改变背景**（GTR 的 Clouds Back）。
+//   31 A + B·op → src=(op·B), blendSrc=ONE, blendDst=ONE
+//   6  Lighten F = max(A,B)（op≈1）→ blendEquation=MAX
+//
+// 其余模式（1..5/8..30/32）暂未实现 → 返回 null，调用方回退普通 alpha 混合（不静默画错）。
+
+/** WE `colorBlendMode` → three `CustomBlending` 设置；未实现的模式返回 null。 */
+export function colorBlendModeToThree(mode: number): {
+  blendEquation: THREE.BlendingEquation;
+  blendSrc: THREE.BlendingSrcFactor | THREE.BlendingDstFactor;
+  blendDst: THREE.BlendingDstFactor;
+} | null {
+  switch (mode) {
+    case 7: // Screen
+      return { blendEquation: THREE.AddEquation, blendSrc: THREE.OneMinusDstColorFactor, blendDst: THREE.OneFactor };
+    case 31: // A + B×opacity（加算）
+      return { blendEquation: THREE.AddEquation, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor };
+    case 6: // Lighten（op≈1 时 = max(A,B)）
+      return { blendEquation: THREE.MaxEquation, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor };
+    default:
+      return null;
+  }
+}
+
+// 带 colorBlendMode 的背景片元 shader：与 MeshBasicMaterial 的贴图路径语义一致
+// （纹理 × tint，alpha = texel.a × opacity），但**预乘输出** —— CustomBlending 的
+// src 因子作用在 src.rgb 上，WE 公式里需要 `op·B`（op = 对象 alpha），
+// 不预乘就拿不到这个乘数（`ONE_MINUS_DST_COLOR` 等因子只看 dst）。
+const COLOR_BLEND_FRAGMENT_SHADER = `
+uniform sampler2D map;
+uniform vec3 tint;
+uniform float opacity;
+varying vec2 vUv;
+void main() {
+  vec4 c = texture2D(map, vUv);
+  float a = c.a * opacity;
+  gl_FragColor = vec4(c.rgb * tint * a, a);
+}
+`;
+
+const COLOR_BLEND_VERTEX_SHADER = `
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`;
+
 export class ThreeScenePlayer {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene: THREE.Scene;
@@ -435,6 +501,9 @@ export class ThreeScenePlayer {
     // 对象欧拉角（**弧度**，scene.json 的 angles；缺省 [0,0,0]）。three 的 Object3D 变换顺序
     // 正是 T·R·S，所以 mesh.rotation 直接承载它（全库 2 个 image 对象带非零 angles）。
     angles?: [number, number, number];
+    // WE 图像颜色混合模式（缺省 0）。非 0 且**已实现**（6/7/31）时改用预乘 ShaderMaterial
+    // + CustomBlending 复刻 WE 的 ApplyBlending；0 或未实现的模式 → 维持普通 alpha 混合。
+    colorBlendMode?: number;
     texture?: THREE.Texture;
     alpha?: number;
     brightness?: number;
@@ -448,16 +517,43 @@ export class ThreeScenePlayer {
     const w = opts.size?.[0] ?? (opts.texture?.image?.width as number | undefined) ?? 1;
     const h = opts.size?.[1] ?? (opts.texture?.image?.height as number | undefined) ?? 1;
     const geometry = new THREE.PlaneGeometry(w, h);
-    const material = new THREE.MeshBasicMaterial({
-      map: opts.texture ?? null,
-      transparent: true,
-      // 背景是透明图层（transparent=true），不写深度——避免其 depthWrite 干扰其他透明对象
-      // （粒子 depthTest=false 不受影响，但背景写出深度会占据深度缓冲区，属多余）。
-      depthWrite: false,
-    });
     const mod = materialModulation(undefined, opts.alpha, opts.brightness);
-    material.color.setRGB(mod.r, mod.g, mod.b);
-    material.opacity = mod.a;
+    // 材质：WE `colorBlendMode` 已实现的模式（6/7/31）→ 预乘 ShaderMaterial + CustomBlending
+    // （复刻 ApplyBlending，见文件上方 COLOR_BLEND_* 注释）；0 / 未实现模式 → 既有
+    // MeshBasicMaterial（普通 alpha 混合，行为与以前一致，不静默画错）。
+    const cb = colorBlendModeToThree(opts.colorBlendMode ?? 0);
+    let material: THREE.Material;
+    if (cb) {
+      material = new THREE.ShaderMaterial({
+        uniforms: {
+          map: { value: opts.texture ?? createWhiteTexture() },
+          tint: { value: new THREE.Vector3(mod.r, mod.g, mod.b) },
+          opacity: { value: mod.a },
+        },
+        vertexShader: COLOR_BLEND_VERTEX_SHADER,
+        fragmentShader: COLOR_BLEND_FRAGMENT_SHADER,
+        transparent: true,
+        // 背景是透明图层，不写深度（避免干扰其他透明对象）。粒子 depthTest=false 不受影响。
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        blending: THREE.CustomBlending,
+        blendEquation: cb.blendEquation,
+        blendSrc: cb.blendSrc,
+        blendDst: cb.blendDst,
+        // WE：`gl_FragColor.a = screen.a` —— 结果 alpha 取**背景**的（自己的 alpha 只当混合权重）。
+        blendSrcAlpha: THREE.ZeroFactor,
+        blendDstAlpha: THREE.OneFactor,
+      });
+    } else {
+      const basic = new THREE.MeshBasicMaterial({
+        map: opts.texture ?? null,
+        transparent: true,
+        depthWrite: false,
+      });
+      basic.color.setRGB(mod.r, mod.g, mod.b);
+      basic.opacity = mod.a;
+      material = basic;
+    }
     const mesh = new THREE.Mesh(geometry, material);
     // renderOrder 0（缺省且显式）：背景在粒子（renderOrder 1）之前绘制（背景在下）。
     mesh.renderOrder = 0;
@@ -514,7 +610,10 @@ export class ThreeScenePlayer {
       const a = Math.max(0, Math.min(1, alpha));
       if (a !== entry.alpha) {
         entry.alpha = a;
-        (entry.mesh.material as THREE.MeshBasicMaterial).opacity = a;
+        // colorBlendMode 背景用预乘 ShaderMaterial（opacity 是 uniform），其余用内置材质的 opacity。
+        const mat = entry.mesh.material as THREE.MeshBasicMaterial | THREE.ShaderMaterial;
+        if (mat instanceof THREE.ShaderMaterial) mat.uniforms.opacity.value = a;
+        else mat.opacity = a;
       }
     }
     if (brightness !== undefined) {
@@ -522,7 +621,9 @@ export class ThreeScenePlayer {
         entry.brightness = brightness;
         // brightness 调色：rgb = clamp01(brightness)，a 用当前 opacity（复用调制函数）。
         const mod = materialModulation(undefined, entry.alpha, brightness);
-        (entry.mesh.material as THREE.MeshBasicMaterial).color.setRGB(mod.r, mod.g, mod.b);
+        const mat = entry.mesh.material as THREE.MeshBasicMaterial | THREE.ShaderMaterial;
+        if (mat instanceof THREE.ShaderMaterial) (mat.uniforms.tint.value as THREE.Vector3).set(mod.r, mod.g, mod.b);
+        else mat.color.setRGB(mod.r, mod.g, mod.b);
       }
     }
   }
@@ -968,6 +1069,8 @@ export function loadSceneToThree(
         scale: obj.scale,
         // WE 对象角度（弧度）→ mesh.rotation（three 的 Object3D 变换顺序即 T·R·S）。
         angles: obj.angles,
+        // WE 图像颜色混合模式（非 0 且已实现时改用预乘 + CustomBlending，见 addBackground）。
+        colorBlendMode: obj.colorBlendMode,
         texture: assets.backgroundTextures?.get(obj.id),
         alpha: obj.alpha,
         brightness: obj.brightness,

@@ -47,6 +47,7 @@ export interface SceneImageObject {
     color?: [number, number, number];
     alpha?: number;
     brightness?: number;
+    colorBlendMode?: number;
 }
 export interface SceneParticleObject {
     kind: 'particle';

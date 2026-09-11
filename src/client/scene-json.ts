@@ -167,6 +167,9 @@ export function parseSceneJson(raw: string): SceneDescription {
         color: optColor(o.color),
         alpha: optAlpha(o.alpha),
         brightness: optNum(o.brightness) ?? 1,
+        // WE 图像颜色混合模式（→ shader combo BLENDMODE；缺省 0 = Normal）。
+        // 非数值/负数/非法 → 0（渲染侧只实现 6/7/31，其余回退普通 alpha 混合）。
+        colorBlendMode: Math.max(0, Math.floor(optNum(o.colorBlendMode) ?? 0)),
         ...(base.visible?.kind === 'script'
           ? { script: base.visible.script, scriptProperties: base.visible.scriptProperties }
           : {}),

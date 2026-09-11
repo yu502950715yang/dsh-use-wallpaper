@@ -805,6 +805,75 @@ describe('ThreeScenePlayer loadSceneToThree', () => {
     expect(uniforms.objAngles.value.z).toBeCloseTo(-1.20063, 5);
   });
 
+  // `colorBlendMode`（WE 图像颜色混合模式）→ 背景对象的 three 混合设置。
+  // WE 语义（`shaders/common_blending.h::ApplyBlending`，由 genericimage3.frag 调用）：
+  //   gl_FragColor.rgb = ApplyBlending(BLENDMODE, screen.rgb, 自己的颜色, 自己的 alpha)
+  //   其中 screen = 当前帧缓冲（已渲染的背景）。
+  // 回归背景（GTR 3743126786）：Clouds Back 的 `colorBlendMode: 7`（Screen）本应让
+  // 黑底（BlendScreen(A,0) = A）完全不改变背景；未实现时黑底被普通 alpha 混合盖住
+  // → 屏幕左上角一块黑色（clouds.tex 实测 78% 是纯黑）。
+  it('图像 colorBlendMode → 背景用 CustomBlending 复刻 WE ApplyBlending', () => {
+    const canvas = document.createElement('canvas');
+    const scene = JSON.stringify({
+      general: { orthogonalprojection: { height: 4147, width: 7430 } },
+      objects: [
+        { id: 17, name: 'bg', image: 'models/bg.json', origin: '3715 2073.5 0', size: '7430 4147' },
+        {
+          id: 246, name: 'Clouds Back', image: 'models/clouds.json',
+          origin: '2465.74438 3493.03442 0.00000', scale: '2.60562 1.70045 1.54228',
+          size: '1920 1080', alpha: 0.5, colorBlendMode: 7,
+        },
+        { id: 300, name: 'additive-ish', image: 'models/x.json', origin: '100 100 0', size: '100 100', colorBlendMode: 31 },
+        { id: 301, name: 'lighten-ish', image: 'models/y.json', origin: '200 200 0', size: '100 100', colorBlendMode: 6 },
+      ],
+    });
+    const tex = () => new THREE.DataTexture(new Uint8Array(4), 2, 2);
+    const assets = {
+      renderer: createMockRenderer() as unknown as THREE.WebGLRenderer,
+      backgroundTextures: new Map([[17, tex()], [246, tex()], [300, tex()], [301, tex()]]),
+    };
+    const result = loadSceneToThree(scene, assets, canvas);
+    const meshes = result.player.scene.children.filter((c) => (c as THREE.Mesh).renderOrder === 0) as THREE.Mesh[];
+    expect(meshes).toHaveLength(4);
+
+    // 缺省（mode=0）：保持既有普通 alpha 混合
+    expect(meshes[0].material.blending).toBe(THREE.NormalBlending);
+
+    // 7 = Screen：src=op×B 预乘，混合 (1−dst, 1) → A + op·B − op·A·B（= WE 的 mix(A, Screen(A,B), op)）
+    const screen = meshes[1].material as THREE.ShaderMaterial;
+    expect(screen.blending).toBe(THREE.CustomBlending);
+    expect(screen.blendEquation).toBe(THREE.AddEquation);
+    expect(screen.blendSrc).toBe(THREE.OneMinusDstColorFactor);
+    expect(screen.blendDst).toBe(THREE.OneFactor);
+    // alpha 按 WE 保留背景的（`gl_FragColor.a = screen.a`）
+    expect(screen.blendSrcAlpha).toBe(THREE.ZeroFactor);
+    expect(screen.blendDstAlpha).toBe(THREE.OneFactor);
+    // 片元是**预乘**输出（rgb × 自身 alpha），否则 CustomBlending 拿不到 op 因子
+    expect(screen.fragmentShader).toContain('gl_FragColor = vec4(c.rgb * tint * a, a)');
+
+    // 31 = A + B·op → (1, 1) 加算
+    expect((meshes[2].material as THREE.ShaderMaterial).blendSrc).toBe(THREE.OneFactor);
+    expect((meshes[2].material as THREE.ShaderMaterial).blendDst).toBe(THREE.OneFactor);
+
+    // 6 = Lighten → max(A, B)（op≈1）
+    expect((meshes[3].material as THREE.ShaderMaterial).blendEquation).toBe(THREE.MaxEquation);
+  });
+
+  it('未实现的 colorBlendMode → 回退普通 alpha 混合（不静默画错）', () => {
+    const canvas = document.createElement('canvas');
+    const scene = JSON.stringify({
+      general: { orthogonalprojection: { height: 1080, width: 1920 } },
+      objects: [{ id: 17, image: 'models/bg.json', origin: '960 540 0', size: '1920 1080', colorBlendMode: 99 }],
+    });
+    const assets = {
+      renderer: createMockRenderer() as unknown as THREE.WebGLRenderer,
+      backgroundTextures: new Map([[17, new THREE.DataTexture(new Uint8Array(4), 2, 2)]]),
+    };
+    const result = loadSceneToThree(scene, assets, canvas);
+    const mesh = result.player.scene.children[0] as THREE.Mesh;
+    expect(mesh.material.blending).toBe(THREE.NormalBlending);
+  });
+
   it('无粒子 spec（无 particles/createParticleSim）→ 只背景，粒子对象被跳过', () => {    const canvas = document.createElement('canvas');
     const result = loadSceneToThree(BLACKMYTH_SCENE, { renderer: createMockRenderer() as unknown as THREE.WebGLRenderer, backgroundTextures: new Map([[13, new THREE.DataTexture(new Uint8Array(4), 2, 2)]]) }, canvas);
     expect(result.backgroundIds).toHaveLength(1);

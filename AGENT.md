@@ -161,6 +161,26 @@ research/                     调研产物（gitignore：截图/验证脚本/参
       转到世界 `(0.932, 0.362)` = **向右偏上**（实测世界速度方向 17.6°、烟从排气管向右延伸
       ≈466px 而不再贯穿全屏）。缺这一环时烟会直着向上——与 §5.15 的湍流方向 bug 是两个独立缺陷，
       两者都要修才与桌面端一致。
+17. **图像 `colorBlendMode`（WE 颜色混合模式）—— 已实现 6/7/31（2026-09-11 修复 GTR 左上角黑块）**：
+    - **语义**：`colorBlendMode != 0` 时 WE 会**额外追加一遍混合 pass**（材质 `materials/util/effectpassthrough.json`，
+      shader = `genericimage3`；见 lwe `CImage.cpp:751-767`）：读**当前帧缓冲** A，做
+      `gl_FragColor.rgb = ApplyBlending(BLENDMODE, A, B, 自己的 alpha)`，且 `gl_FragColor.a = A.a`（alpha 保持背景）。
+      模式表在 **WE 明文 shader** `assets/shaders/common_blending.h::ApplyBlending`：
+      1=Darken 2=Multiply 3=ColorBurn 4/20=Substract 5=min **6=Lighten 7=Screen** 8=ColorDodge 9=Add
+      10=max 11=Overlay … 30=Tint **31=A+B×opacity** 32=A+A×B；0/缺省=Normal（不追加 pass）。
+    - **three 侧实现**（`threejs-player.ts` 的 `colorBlendModeToThree` + `COLOR_BLEND_FRAGMENT_SHADER`）：
+      带已实现模式的背景改用**预乘片元**（输出 `vec4(rgb×tint×a, a)`）+ `CustomBlending`，按模式配
+      `blendSrc/blendDst`：7 → `(OneMinusDstColor, One)`（= Screen：A+op·B−op·A·B）；31 → `(One, One)`；
+      6 → `MaxEquation`（op≈1 时 = max(A,B)）。alpha 一律用 `(Zero, One)` 保持背景的。
+      **未实现的模式 → 回退普通 alpha 混合**（不静默画错）。全库非零的只有 3 个对象：
+      3743126786 Clouds Back=7、2832263418 audio_rainbow=6、2460786246 Clock=31。
+    - **回归**（GTR 左上角一块黑）：Clouds Back 的 `clouds.tex` 是 **DXT1、78% 不透明纯黑 + 白云**，
+      普通 alpha 混合下黑底把背景压暗/盖住；而对象覆盖屏幕左上约 67% 宽 × 37% 高。
+      Screen 的关键性质 `BlendScreen(A, 0) = A` → **纯黑完全不改变背景**。
+      实测（`research/verify-colorblend.mjs`，真实 three 渲染 + 像素采样）：云层黑底处
+      mode=7 与纯背景同值、mode=0 掉到一半；白云处 mode=7 被提亮。
+    - 另注：该对象的 `opacity` 效果（`alpha 0.26` × 渐变 mask）属于**对象效果链**，three 路径仍未实现（§8），
+      所以云的最终亮度会比桌面端略偏亮 —— 但黑块问题已由本项解决。
 
 ## 6. 测试与验证
 
@@ -191,4 +211,6 @@ wasm 对象级效果链已接入、编译链已集成、真实 WE 效果已达�
 4. **多纹理 / `collect_bindings` 字符串扫描健壮性**：wasm 侧 `collect_bindings` 用文本扫描从 WGSL 提取纹理绑定，对更复杂的真实多纹理 shader 仍待改进（当前库内 shader 已验证可用）。
 5. **headless WebGPU=SwiftShader（非真实 GPU）**：浏览器验证在 headless Edge 的 SwiftShader（软件光栅化）下完成，**非真实 GPU**；需在真实 GPU 上补验（性能/FPS、行为一致性）。
 6. **GPU（wasm/WebGPU）备用路径未消费对象级 `instanceoverride`，也未应用对象 `angles`**：2026-09-11 的修复只把「粒子实例覆盖」与「对象角度」接到 three.js **默认**路径（`CpuParticleSim` / `ThreeScenePlayer`，见 §5.15/§5.16）。`wasm-renderer` / `WeScene` 那条**备用**路径的粒子仍按材质/初始化 alpha 渲染、且不套对象旋转 —— 对同一张壁纸（如 GTR 的烟柱）对照渲染时会有亮度与朝向差，属已知未达成。
-7. **`verify-wasm-render.mjs` 当前跑不通（认证 token 失效）**：脚本里硬编码的 `?token=...` 已过期（服务端 401 `dsh web authentication required`），需要从 `dsh web` 启动时打印的 URL 里取新 token 才能做浏览器全库回归。2026-09-11 的粒子修复因此改用 **node 侧直接驱动 wasm `CpuParticleSim`** 验证（`research/gtr-verify-fix.mjs`：真实 scene.pkg 的 spec + override，核对横向速度/alpha 量级），浏览器端由用户刷新页面确认。
+7. **`verify-wasm-render.mjs` 当前跑不通（认证 token 失效）**：脚本里硬编码的 `?token=...` 已过期（服务端 401 `dsh web authentication required`），需要从 `dsh web` 启动时打印的 URL 里取新 token 才能做浏览器全库回归。2026-09-11 的粒子修复因此改用 **node 侧直接驱动 wasm `CpuParticleSim`** 验证（`research/gtr-verify-fix.mjs`：真实 scene.pkg 的 spec + override，核对横向速度/alpha 量级），浏览器端由用户刷新页面确认。**绕过方案**：`research/verify-colorblend.mjs` 自起 http server + headless Edge + esbuild 打包 harness，用**生产代码**（`lib/client/threejs-player.js`）渲染真实纹理并逐像素判定 —— 这条路不依赖 DSH token，适合做渲染改动的端到端验证。
+8. **three.js 路径未实现对象效果链（effects）**：`threejs-player.ts` 里没有任何 effects 处理，全库 **17 张壁纸 / 130 条效果实例**（waterwaves 24 / shake 18 / blurprecise 13 / waterripple 8 / opacity 8 / waterflow 5 / pulse 5 / scroll 5 / perspective 5 …）在默认路径下失效。GTR 的 `opacity`（0.26 + mask）与 `scroll`（云滚动）、`waterripple` 都属于这一类。**GPU（wasm/WebGPU）备用路径有完整效果链**（对象 RT + EffectChain），只是不是默认路径。若需要这些效果，可在设置里切回备用路径，或后续把效果链实现到 three 侧（three 是 WebGL，WE 的 GLSL 效果 shader 可直接用，比 wasm 侧 GLSL→WGSL 编译链更简单）。
+9. **`colorBlendMode` 只实现了 6/7/31**：其余 27 个模式（Darken/Multiply/Overlay/Hue/… 见 §5.17 表）回退普通 alpha 混合 —— 全库当前只有那 3 个对象用到非零值，未实现的模式出现时需要补。

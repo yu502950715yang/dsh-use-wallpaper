@@ -501,4 +501,26 @@ describe('parseSceneJson visible 归一化（T4.2）', () => {
     expect((desc.objects[1] as any).angles).toEqual([0, 0, 0]); // 缺省无旋转
     expect((desc.objects[2] as any).angles[0]).toBeCloseTo(0.5, 6);
   });
+
+  // ---------------------------------------------------------------------------
+  // image 对象的 `colorBlendMode`（WE 图像颜色混合模式 → shader combo BLENDMODE）。
+  // 语义见 WE `shaders/common_blending.h::ApplyBlending`；非零时 WE 会追加一遍
+  // 「读帧缓冲做混合」的 pass（lwe `CImage.cpp:751-767`）。
+  // 回归背景（GTR 3743126786）：Clouds Back 的纹理是 78% 黑底 + 白云，`colorBlendMode: 7`
+  // （Screen）本应让黑色不改变背景 —— 未实现时黑底被普通 alpha 混合直接盖上 = 左上角一块黑。
+  // ---------------------------------------------------------------------------
+  it('解析 image 对象的 colorBlendMode（数值；缺省/非法 → 0）', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [
+        { id: 246, image: 'models/clouds.json', colorBlendMode: 7 },
+        { id: 17, image: 'models/bg.json' },
+        { id: 18, image: 'models/x.json', colorBlendMode: 0 },
+        { id: 19, image: 'models/y.json', colorBlendMode: 'abc' },
+      ],
+    }));
+    expect((desc.objects[0] as any).colorBlendMode).toBe(7);
+    expect((desc.objects[1] as any).colorBlendMode).toBe(0);
+    expect((desc.objects[2] as any).colorBlendMode).toBe(0);
+    expect((desc.objects[3] as any).colorBlendMode).toBe(0);
+  });
 });

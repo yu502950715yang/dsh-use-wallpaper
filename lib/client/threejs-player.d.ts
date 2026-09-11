@@ -6,6 +6,12 @@ export declare function specEmitterOrigin(specJson: string): [number, number, nu
 export declare const BLACKMYTH_OBJ_SCALE: [number, number, number];
 export declare function simEmitterOffset(emitterOrigin: [number, number, number]): [number, number, number];
 export declare function particleCapacity(declaredMax: number, aliveAtCreate: number): number;
+/** WE `colorBlendMode` → three `CustomBlending` 设置；未实现的模式返回 null。 */
+export declare function colorBlendModeToThree(mode: number): {
+    blendEquation: THREE.BlendingEquation;
+    blendSrc: THREE.BlendingSrcFactor | THREE.BlendingDstFactor;
+    blendDst: THREE.BlendingDstFactor;
+} | null;
 export declare class ThreeScenePlayer {
     readonly renderer: THREE.WebGLRenderer;
     readonly scene: THREE.Scene;
@@ -33,6 +39,7 @@ export declare class ThreeScenePlayer {
         size?: [number, number];
         scale: [number, number, number];
         angles?: [number, number, number];
+        colorBlendMode?: number;
         texture?: THREE.Texture;
         alpha?: number;
         brightness?: number;

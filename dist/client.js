@@ -20418,6 +20418,9 @@ function parseSceneJson(raw) {
         color: optColor(o.color),
         alpha: optAlpha(o.alpha),
         brightness: optNum(o.brightness) ?? 1,
+        // WE 图像颜色混合模式（→ shader combo BLENDMODE；缺省 0 = Normal）。
+        // 非数值/负数/非法 → 0（渲染侧只实现 6/7/31，其余回退普通 alpha 混合）。
+        colorBlendMode: Math.max(0, Math.floor(optNum(o.colorBlendMode) ?? 0)),
         ...base.visible?.kind === "script" ? { script: base.visible.script, scriptProperties: base.visible.scriptProperties } : {}
       };
     }
@@ -20957,6 +20960,36 @@ function createWhiteTexture() {
   tex.needsUpdate = true;
   return tex;
 }
+function colorBlendModeToThree(mode) {
+  switch (mode) {
+    case 7:
+      return { blendEquation: AddEquation, blendSrc: OneMinusDstColorFactor, blendDst: OneFactor };
+    case 31:
+      return { blendEquation: AddEquation, blendSrc: OneFactor, blendDst: OneFactor };
+    case 6:
+      return { blendEquation: MaxEquation, blendSrc: OneFactor, blendDst: OneFactor };
+    default:
+      return null;
+  }
+}
+var COLOR_BLEND_FRAGMENT_SHADER = `
+uniform sampler2D map;
+uniform vec3 tint;
+uniform float opacity;
+varying vec2 vUv;
+void main() {
+  vec4 c = texture2D(map, vUv);
+  float a = c.a * opacity;
+  gl_FragColor = vec4(c.rgb * tint * a, a);
+}
+`;
+var COLOR_BLEND_VERTEX_SHADER = `
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`;
 var ThreeScenePlayer = class {
   renderer;
   scene;
@@ -21093,16 +21126,40 @@ var ThreeScenePlayer = class {
     const w = opts.size?.[0] ?? opts.texture?.image?.width ?? 1;
     const h = opts.size?.[1] ?? opts.texture?.image?.height ?? 1;
     const geometry = new PlaneGeometry(w, h);
-    const material = new MeshBasicMaterial({
-      map: opts.texture ?? null,
-      transparent: true,
-      // 背景是透明图层（transparent=true），不写深度——避免其 depthWrite 干扰其他透明对象
-      // （粒子 depthTest=false 不受影响，但背景写出深度会占据深度缓冲区，属多余）。
-      depthWrite: false
-    });
     const mod = materialModulation(void 0, opts.alpha, opts.brightness);
-    material.color.setRGB(mod.r, mod.g, mod.b);
-    material.opacity = mod.a;
+    const cb = colorBlendModeToThree(opts.colorBlendMode ?? 0);
+    let material;
+    if (cb) {
+      material = new ShaderMaterial({
+        uniforms: {
+          map: { value: opts.texture ?? createWhiteTexture() },
+          tint: { value: new Vector3(mod.r, mod.g, mod.b) },
+          opacity: { value: mod.a }
+        },
+        vertexShader: COLOR_BLEND_VERTEX_SHADER,
+        fragmentShader: COLOR_BLEND_FRAGMENT_SHADER,
+        transparent: true,
+        // 背景是透明图层，不写深度（避免干扰其他透明对象）。粒子 depthTest=false 不受影响。
+        depthWrite: false,
+        side: DoubleSide,
+        blending: CustomBlending,
+        blendEquation: cb.blendEquation,
+        blendSrc: cb.blendSrc,
+        blendDst: cb.blendDst,
+        // WE：`gl_FragColor.a = screen.a` —— 结果 alpha 取**背景**的（自己的 alpha 只当混合权重）。
+        blendSrcAlpha: ZeroFactor,
+        blendDstAlpha: OneFactor
+      });
+    } else {
+      const basic = new MeshBasicMaterial({
+        map: opts.texture ?? null,
+        transparent: true,
+        depthWrite: false
+      });
+      basic.color.setRGB(mod.r, mod.g, mod.b);
+      basic.opacity = mod.a;
+      material = basic;
+    }
     const mesh = new Mesh(geometry, material);
     mesh.renderOrder = 0;
     const s = opts.scale;
@@ -21148,14 +21205,18 @@ var ThreeScenePlayer = class {
       const a = Math.max(0, Math.min(1, alpha));
       if (a !== entry.alpha) {
         entry.alpha = a;
-        entry.mesh.material.opacity = a;
+        const mat = entry.mesh.material;
+        if (mat instanceof ShaderMaterial) mat.uniforms.opacity.value = a;
+        else mat.opacity = a;
       }
     }
     if (brightness !== void 0) {
       if (brightness !== entry.brightness) {
         entry.brightness = brightness;
         const mod = materialModulation(void 0, entry.alpha, brightness);
-        entry.mesh.material.color.setRGB(mod.r, mod.g, mod.b);
+        const mat = entry.mesh.material;
+        if (mat instanceof ShaderMaterial) mat.uniforms.tint.value.set(mod.r, mod.g, mod.b);
+        else mat.color.setRGB(mod.r, mod.g, mod.b);
       }
     }
   }
@@ -21381,6 +21442,8 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
         scale: obj.scale,
         // WE 对象角度（弧度）→ mesh.rotation（three 的 Object3D 变换顺序即 T·R·S）。
         angles: obj.angles,
+        // WE 图像颜色混合模式（非 0 且已实现时改用预乘 + CustomBlending，见 addBackground）。
+        colorBlendMode: obj.colorBlendMode,
         texture: assets.backgroundTextures?.get(obj.id),
         alpha: obj.alpha,
         brightness: obj.brightness,

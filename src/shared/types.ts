@@ -69,6 +69,14 @@ export interface SceneImageObject {
   color?: [number, number, number];
   alpha?: number;
   brightness?: number;
+  // WE 图像颜色混合模式（scene.json 的 `colorBlendMode` → shader combo `BLENDMODE`）。
+  // 语义：WE 会**额外追加一遍混合 pass**（材质 `materials/util/effectpassthrough.json`，
+  // shader = `genericimage3`）：读当前帧缓冲 A，与自己颜色 B 做
+  // `gl_FragColor.rgb = ApplyBlending(BLENDMODE, A, B, 自己的 alpha)`（`shaders/common_blending.h`），
+  // alpha 保持背景的。缺省 0 = Normal（不追加 pass，走普通 alpha 混合）。
+  // 全库非零的只有 3 个对象：3743126786 Clouds Back=7(Screen)、2832263418 audio_rainbow=6(Lighten)、
+  // 2460786246 Clock=31(A+B×opacity)。Screen 对纯黑返回 A → 黑底自然「消失」。
+  colorBlendMode?: number;
 }
 export interface SceneParticleObject {
   kind: 'particle'; id: number; name: string;
