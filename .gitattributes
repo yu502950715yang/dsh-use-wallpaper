@@ -1,0 +1,27 @@
+# 行尾统一按 LF 入库、按 LF 检出。
+#
+# 背景（2026-09-11）：本机 `core.autocrlf=true` 且仓库没有 .gitattributes —— git 会在
+# **检出时把 LF 写成 CRLF**，而 tsc / esbuild / wasm-bindgen 生成的构建产物是 LF。
+# 结果是**每次 `npm run build` 之后 `git status` 都会冒出一批「已修改」的产物**
+# （`git diff --numstat` 里它们其实零差异，纯行尾噪音），既干扰 diff 审查，也让
+# 「提交前确认无未提交的构建产物」这条约定无法执行。
+#
+# `eol=lf` 让检出也写 LF，工作区与索引从此一致。
+* text=auto eol=lf
+
+# 显式声明二进制，避免 text=auto 的启发式对个别文件误判（误判会导致 git 试图
+# 转换行尾、损坏内容）。
+*.wasm   binary
+*.tex    binary
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.ico    binary
+*.webp   binary
+*.xz     binary
+*.gz     binary
+*.zip    binary
+*.woff   binary
+*.woff2  binary
+*.ttf    binary
