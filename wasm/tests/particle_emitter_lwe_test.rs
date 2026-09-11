@@ -2,18 +2,20 @@
 //! + 精确发射）测试。
 //!
 //! 对照 `research/.lwe/src/WallpaperEngine/Render/Objects/CParticle.cpp`：
-//! - **boxrandom**（`createBoxEmitter`）：均匀盒体，各轴**独立**在 `[dist_min, dist_max]` 取 `dist`，
-//!   随机 ± 翻（lwe 的 50/50 翻），再乘 `flippedDirections`（`flippedDirections.y = -directions.y`），
-//!   得 `local[axis] = ±dist × |dir[axis]|`（半盒：|local[axis]| ≤ dist_max × |dir[axis]|）。
+//! - **boxrandom**（`createBoxEmitter`）：均匀盒体，各轴**独立**在 `[dist_min[axis], dist_max[axis]]`
+//!   取 `dist`，随机 ± 翻（lwe 的 50/50 翻），再乘 `flippedDirections`
+//!   （`flippedDirections.y = -directions.y`），得 `local[axis] = ±dist × |dir[axis]|`
+//!   （半盒：|local[axis]| ≤ dist_max[axis] × |dir[axis]|）。
 //! - **sphererandom**（`createSphereEmitter`）：3D 球壳——`cosθ` uniform[-1,1]、`unit=(sinθcosφ, sinθsinφ, cosθ)`、
-//!   半径 `r = cbrt(dist_min³ + (dist_max³ - dist_min³)·rand)`（**体积均匀**）、`local = unit·r·directions`。
+//!   半径 `r = cbrt(dist_min.x³ + (dist_max.x³ - dist_min.x³)·rand)`（**体积均匀**，只用 `.x`）、
+//!   `local = unit·r·directions`。
 //! - **精确发射**：`emissionTimer += dt·rate`；`toEmit = (u32)emissionTimer`；`emissionTimer -= toEmit`；
 //!   发射 `min(toEmit, maxcount - alive)`（`maxcount` 封顶；lwe 池满也清零计时器整数部分）。
 //!
 //! 该文件全程 native 可测（纯 Rust 数学，无 wgpu / wasm）。RNG 为进程级 Xorshift32（确定性、共享），
 //! 测试断言均为**分布界/均值**（非逐值），并行执行亦稳健。
 
-use we_scene_wasm::particle::{ParticleEmitterSpec, ParticleInitSpec, SceneParticleSim};
+use we_scene_wasm::particle::{emitter_spec_to_particle, parse_particle_spec, ParticleEmitterSpec, ParticleInitSpec, SceneParticleSim};
 
 /// scene 默认正交尺寸（黑神话 scene.pkg，非 view cover）。
 const SCENE_W: f32 = 3840.0;
@@ -42,13 +44,15 @@ fn neutral_init() -> ParticleInitSpec {
     }
 }
 
+/// `dist_min`/`dist_max` 为**标量**入参（三轴同值，等价 WE 里的数字形式 `"distancemax": 50`）；
+/// 需要逐轴语义的用例直接构造 `ParticleEmitterSpec`（见 `box_emitter_uses_per_axis_distances`）。
 fn mk_emitter(rate: f32, directions: [f32; 3], dist_min: f32, dist_max: f32, is_sphere: bool) -> ParticleEmitterSpec {
     ParticleEmitterSpec {
         rate,
         origin: [0.0; 3],
         directions,
-        dist_min,
-        dist_max,
+        dist_min: [dist_min; 3],
+        dist_max: [dist_max; 3],
         is_sphere,
     }
 }
@@ -125,6 +129,53 @@ fn box_spawned_position_within_box_around_emission_point() {
             );
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// boxrandom **逐轴** 半径（lwe createBoxEmitter：distanceMin/Max[axis]）
+// 回归：Crimson Stars `"1000 500 0"` 此前被解析为标量首 token（1000）→ 三轴同宽，
+// 叠加对象 scale.y=2.148 → 星点铺满整屏（用户所报「全屏大量白色小点」）。
+// ---------------------------------------------------------------------------
+
+#[test]
+fn box_emitter_uses_per_axis_distances() {
+    // Crimson Stars 的原始 emitter：boxrandom，distancemax="1000 500 0"（无 distancemin）。
+    let spec = parse_particle_spec(include_str!("fixtures/crimson/stars.json"));
+    assert_eq!(spec.emitter.distance_min, [0.0; 3], "无 distancemin → (0,0,0)");
+    assert_eq!(spec.emitter.distance_max, [1000.0, 500.0, 0.0], "distancemax 应逐轴解析（不是标量 1000）");
+
+    let sim = emitter_spec_to_particle(&spec, [SCENE_W / 2.0, SCENE_H / 2.0, 0.0], SCENE_W, SCENE_H);
+    let (mut max_x, mut max_y, mut max_z) = (0f32, 0f32, 0f32);
+    for _ in 0..4000 {
+        let l = sim.emitter_local();
+        max_x = max_x.max(l[0].abs());
+        max_y = max_y.max(l[1].abs());
+        max_z = max_z.max(l[2].abs());
+    }
+    // directions 缺省 (1,1,0) → |dir| 均为 1；x 半径 ≤1000、y 半径 ≤500、z 恒 0。
+    assert!(max_x > 900.0 && max_x <= 1000.0 + 1e-3, "x 半径应接近 1000（got {max_x}）");
+    assert!(max_y > 450.0 && max_y <= 500.0 + 1e-3, "y 半径应接近 500（got {max_y}，此前被标量读成 1000）");
+    assert!(max_z <= 1e-6, "directions.z=0 → z 散射恒 0（got {max_z}）");
+
+    // 分布抽样校验：y 半径不应超过 500（旧实现 y 可达 1000）。
+    for _ in 0..2000 {
+        assert!(sim.emitter_local()[1].abs() <= 500.0 + 1e-3, "y 散射半径越界（>500）");
+    }
+}
+
+#[test]
+fn numeric_distance_max_expands_to_all_axes() {
+    // WE/lwe `parseVec3`：**数字**形式 → 三轴同值（黑神话 `"distancemax": 750`、
+    // DK Ice `"distancemax": 50`）。此前我们的 `vec3` 把数字当非法 → [0,0,0]。
+    let json = r#"{"emitter":[{"name":"sphererandom","rate":10,"distancemin":5,"distancemax":750}]}"#;
+    let spec = parse_particle_spec(json);
+    assert_eq!(spec.emitter.distance_min, [5.0; 3], "数字 distancemin → 三轴同值");
+    assert_eq!(spec.emitter.distance_max, [750.0; 3], "数字 distancemax → 三轴同值");
+
+    // 缺省：distancemin=(0,0,0)、distancemax=(256,256,0)（照 lwe ObjectParser）。
+    let spec2 = parse_particle_spec(r#"{"emitter":[{"rate":10}]}"#);
+    assert_eq!(spec2.emitter.distance_min, [0.0; 3]);
+    assert_eq!(spec2.emitter.distance_max, [256.0, 256.0, 0.0], "缺省 distancemax=(256,256,0)");
 }
 
 // ---------------------------------------------------------------------------

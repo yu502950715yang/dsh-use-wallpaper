@@ -622,8 +622,13 @@ pub struct ParticleEmitterSpec {
     pub origin: [f32; 3],
     /// 发射方向（分摊到各轴；球壳半径沿它缩放）。
     pub directions: [f32; 3],
-    pub dist_min: f32,
-    pub dist_max: f32,
+    /// 散射半径下界/上界（**vec3 逐轴**，对齐 lwe `ParticleEmitter.distanceMin/Max`）。
+    /// - `createBoxEmitter`：各轴独立取 `[dist_min[axis], dist_max[axis]]`（Crimson Stars 的
+    ///   `"1000 500 0"` → x∈[0,1000]、y∈[0,500]；此前取标量首 token（1000）会把 y 也放大到 1000
+    ///   ——星点因此铺满整屏而不是只在天空）；
+    /// - `createSphereEmitter`：只用 `.x`（`minRadius = distanceMin.x`）。
+    pub dist_min: [f32; 3],
+    pub dist_max: [f32; 3],
     /// 是否球壳散射（spec `name=="sphererandom"` → true）。`emitter_local()` 据此分支：
     /// true → `createSphereEmitter` 3D 球壳（cosθ 均匀 + cbrt 体积均匀）；false → `createBoxEmitter` 均匀盒体。
     pub is_sphere: bool,
@@ -639,8 +644,7 @@ pub struct ParticleInitSpec {
     pub lifetime_max: f32,
     pub size_min: f32,
     pub size_max: f32,
-    /// sizerandom 的指数（黑神话 exp2 → size∈[30,50]）。`InitSpec` 未解析 sizerandom 的
-    /// exponent 字段，映射时统一给 2.0（对齐原硬编码，行为不变）。
+    /// sizerandom 的指数（黑神话 exp2 → size∈[15,25]；WE/lwe 缺省 1.0）。
     pub size_exponent: f32,
     pub velocity_min: [f32; 3],
     pub velocity_max: [f32; 3],
@@ -823,8 +827,8 @@ impl SceneParticleSim {
     ///   `r = cbrt(dist_min³ + (dist_max³ - dist_min³)·rand)`（**体积均匀**），
     ///   `local = unit ⊙ r ⊙ directions`（directions 不翻，照 lwe sphere）。
     /// - `is_sphere == false`（spec `name=="boxrandom"`）→ `createBoxEmitter` 的**均匀盒体**：
-    ///   各轴**独立**在 `[dist_min, dist_max]` 取 `dist`，随机 ± 翻（lwe 的 50/50 翻），再乘
-    ///   `flippedDirections`（`flippedDirections.y = -directions.y` 保留，照 lwe box），得
+    ///   各轴**独立**在 `[dist_min[axis], dist_max[axis]]` 取 `dist`，随机 ± 翻（lwe 的 50/50 翻），
+    ///   再乘 `flippedDirections`（`flippedDirections.y = -directions.y` 保留，照 lwe box），得
     ///   `local[axis] = ±dist × |flipped[axis]|`（= `±dist × |dir[axis]|`；因 `|flipped.y|=|dir.y|`，
     ///   故 y 翻对分布**无影响**，仅保留 spec 语义）。
     ///
@@ -833,22 +837,15 @@ impl SceneParticleSim {
     /// `threejs-player.ts` 的 `worldPos = objCenter + objScale*(emitterOrigin + local)`——
     /// 与 lwe `updateMatrices`（`mvp = viewProj × translate × rotate × scale` 作用于**最终**局部顶点）
     /// 等价：发射点 + 散射 + 运动整体乘 scale）。
-    ///
-    /// ⚠️ 已知偏差（未修，非本次「Crimson 集中」的成因）：lwe `ParticleEmitter.distanceMin/Max`
-    /// 是 **vec3 逐轴**（`createBoxEmitter` 各轴用 `distanceMin[axis]/distanceMax[axis]`），
-    /// 本模拟器 `dist_min/dist_max` 是 **标量**（`scalar()` 取多值字符串的**第一个** token）。
-    /// 对 sphererandom 无影响（lwe 球壳只用 `.x`），对 boxrandom 则把 `"1000 500 0"` 读成 1000
-    /// （Crimson Stars）/ `"50 256 0"` 读成 50（DK Ice）——即 y 轴散射范围与 WE 不符
-    /// （偏大/偏小），但不改变「是否散射」（那是 `directions` 的职责，见 `LWE_DEFAULT_DIRECTIONS`）。
     pub fn emitter_local(&self) -> [f32; 3] {
         let dir = self.emitter.directions;
         // lwe box 用 flippedDirections（y 翻）；sphere 用 directions（不翻）。
         let flipped = [dir[0], -dir[1], dir[2]];
-        let mn = self.emitter.dist_min.max(0.0);
-        let mx = self.emitter.dist_max.max(mn);
 
         if self.emitter.is_sphere {
-            // sphererandom：3D 球壳（体积均匀）。
+            // sphererandom：3D 球壳（体积均匀）。lwe `createSphereEmitter` 只用 `.x` 半径。
+            let mn = self.emitter.dist_min[0].max(0.0);
+            let mx = self.emitter.dist_max[0].max(mn);
             let theta = rand() * std::f32::consts::TAU;
             let cos_t = rand() * 2.0 - 1.0;
             let sin_t = (1.0 - cos_t * cos_t).sqrt();
@@ -856,9 +853,13 @@ impl SceneParticleSim {
             let r = (mn * mn * mn + (mx * mx * mx - mn * mn * mn) * rand()).cbrt();
             [unit[0] * r * dir[0], unit[1] * r * dir[1], unit[2] * r * dir[2]]
         } else {
-            // boxrandom：均匀盒体，各轴 `±dist × |dir|`（50/50 ± 翻照 lwe）。
+            // boxrandom：均匀盒体，各轴**独立的** `[dist_min, dist_max]` 半径 × `|dir|`
+            // （50/50 ± 翻照 lwe）。此前用标量首 token 作三轴同值 —— Crimson Stars 的
+            // `"1000 500 0"` 会把 y 半径放大到 1000（× 对象 scale.y 2.148 → 星点铺满全屏）。
             let mut local = [0.0; 3];
             for axis in 0..3 {
+                let mn = self.emitter.dist_min[axis].max(0.0);
+                let mx = self.emitter.dist_max[axis].max(mn);
                 let dist = mn + (mx - mn) * rand();
                 let signed = if rand() < 0.5 { -dist } else { dist };
                 local[axis] = signed * flipped[axis];
@@ -918,7 +919,8 @@ impl SceneParticleSim {
         //   - velocityRandom：`lerp(min,max,rand)` 逐分量；lwe 内部再 `vel.y=-vel.y`（屏幕 Y 向下→中心 Y 向上），
         //     本模拟器坐标经 `we_to_three`（Y 向上，与背景/图层一致）**已免翻**，且 spec 无 velocity.y 翻开关，
         //     故 **y 不翻**（黑神话 vel.y∈[-50,-15] 向下飘，行为保持）。
-        //   - sizeRandom：`min + t^exp*(max-min)`（**不做 /2**；exp 取 size_exponent，缺省 2.0）。
+        //   - sizeRandom：`(min + t^exp*(max-min)) / 2`（WE/lwe：`p.size` 为 quad 整宽；exp 取
+        //     size_exponent，WE/lwe 缺省 1.0，黑神话显式 2）。
         //   - alphaRandom / lifetimeRandom：`lerp(min,max,rand)`。
         //   - colorRandom：`lerp(min,max,rand)` 逐分量（已归一 0..1）。
         //   - rotationRandom：旋转角（欧拉），本模拟器单轴近似取 z 分量。
@@ -938,8 +940,14 @@ impl SceneParticleSim {
             lerp(i.velocity_min[2], i.velocity_max[2]),
         ];
 
-        // sizeRandom：`min + t^exp*(max-min)`（不做 /2）。黑神话 sizerandom exp2 → size∈[30,50]。
-        let size = i.size_min + (i.size_max - i.size_min) * rand().powf(i.size_exponent);
+        // sizeRandom：WE/lwe `createSizeRandomInitializer` 为
+        //   `p.size = (min + t^exponent*(max-min)) * override / 2`（**除以 2**）。
+        // 原因：WE 粒子 shader（`common_particles.h::ComputeParticlePosition`）用
+        // `positionAndSize.w * right * (uvs.x-0.5)` 展开 quad —— 即 `p.size` 就是 billboard 的**整宽**
+        // （uvs∈[0,1]），sizerandom 存的是编辑器值的**一半**。本模拟器输出的 `size` 与渲染器
+        // （three `position.xy*particleSize*0.5`、wasm `corner*size/2`，角点 ±1）同为「整宽」语义，
+        // 故此处同样 /2；否则粒子会是 WE 的 **2 倍大**（Crimson 绿点/星点偏大、黑神话花瓣偏大）。
+        let size = (i.size_min + (i.size_max - i.size_min) * rand().powf(i.size_exponent)) * 0.5;
         // lifetimeRandom / alphaRandom：`lerp(min,max,rand)`（黑神话 life∈[5,10]、alpha 缺省 1.0）。
         let life = lerp(i.lifetime_min, i.lifetime_max);
         // 出生相位偏移（prewarm 用）：`age = age_frac × lifetime`，剩余寿命 = lifetime - age。
@@ -1119,8 +1127,8 @@ mod tests {
                 rate: 0.0,
                 origin: [0.0; 3],
                 directions: [0.0; 3],
-                dist_min: 0.0,
-                dist_max: 0.0,
+                dist_min: [0.0; 3],
+                dist_max: [0.0; 3],
                 is_sphere: false,
             },
             8,
@@ -1217,8 +1225,8 @@ mod tests {
                 rate: 0.0,
                 origin: [0.0; 3],
                 directions: [0.0; 3],
-                dist_min: 0.0,
-                dist_max: 0.0,
+                dist_min: [0.0; 3],
+                dist_max: [0.0; 3],
                 is_sphere: false,
             },
             8,
@@ -1304,8 +1312,8 @@ mod tests {
                 rate: 0.0,
                 origin: [0.0; 3],
                 directions: [0.0; 3],
-                dist_min: 0.0,
-                dist_max: 0.0,
+                dist_min: [0.0; 3],
+                dist_max: [0.0; 3],
                 is_sphere: false,
             },
             8,
@@ -1341,8 +1349,8 @@ mod tests {
         assert!((-200.0..=200.0).contains(&p.vel[1]), "vel[1] 应来自 init（非黑神话 -50..-15），got {}", p.vel[1]);
         assert!((-300.0..=300.0).contains(&p.vel[2]), "vel[2] 应在 init 范围内，got {}", p.vel[2]);
 
-        // size 落在 init [size_min, size_max]（非黑神话 30..50）。
-        assert!((10.0..=20.0).contains(&p.size), "size 应来自 init，got {}", p.size);
+        // size 落在 init [size_min/2, size_max/2]（WE/lwe：sizerandom 值 /2；非黑神话 15..25）。
+        assert!((5.0..=10.0).contains(&p.size), "size 应来自 init 且 = 值/2，got {}", p.size);
         // life 落在 init [lifetime_min, lifetime_max]（非黑神话 5..10）。
         assert!((2.0..=3.0).contains(&p.life), "life 应来自 init，got {}", p.life);
         // color 各分量落在 init [color_min, color_max]（非黑神话粉 [1,0.83,0.97]）。
@@ -1394,8 +1402,8 @@ mod tests {
                 rate: 0.0,
                 origin: [350.0, 750.0, 0.0],
                 directions: [0.0; 3], // 局部球壳偏移为 0 → pos 确定
-                dist_min: 0.0,
-                dist_max: 0.0,
+                dist_min: [0.0; 3],
+                dist_max: [0.0; 3],
                 is_sphere: false,
             },
             8,
@@ -1426,8 +1434,8 @@ mod tests {
                 rate: 0.0,
                 origin: [0.0; 3],
                 directions: [0.0; 3],
-                dist_min: 0.0,
-                dist_max: 0.0,
+                dist_min: [0.0; 3],
+                dist_max: [0.0; 3],
                 is_sphere: false,
             },
             8,

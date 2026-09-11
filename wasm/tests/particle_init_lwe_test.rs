@@ -2,7 +2,9 @@
 //! rotation/angularVelocity/turbulentVelocity random）测试。
 //!
 //! 对照 `research/.lwe/src/WallpaperEngine/Render/Objects/CParticle.cpp` 的 `create*RandomInitializer`：
-//! - **sizeRandom**：`size = min + t^exp*(max-min)`（**不做 /2**；exp 用 `size_exponent`，缺省 2.0）。
+//! - **sizeRandom**：`size = (min + t^exp*(max-min)) / 2`（对齐 lwe `createSizeRandomInitializer`：
+//!   编辑器值 /2 后存为 `p.size`，因为 WE 粒子 shader 里该值就是 billboard 的**整宽**；
+//!   exp 用 `size_exponent`，WE/lwe 缺省 1.0，黑神话显式 2）。
 //! - **velocityRandom**：`vel = lerp(min,max,rand)` 逐分量（本模拟器坐标经 `we_to_three`（Y 向上）**已免翻**，
 //!   spec 无 velocity.y 翻开关 → y 不翻）。
 //! - **colorRandom**：`color = lerp(min,max,rand)` 逐分量（已归一 0..1）。
@@ -56,8 +58,8 @@ fn spawn_batch(init: ParticleInitSpec) -> Vec<SimParticle> {
             rate: 50_000.0,
             origin: [0.0; 3],
             directions: [0.0; 3],
-            dist_min: 0.0,
-            dist_max: 0.0,
+            dist_min: [0.0; 3],
+            dist_max: [0.0; 3],
             is_sphere: false,
         },
         600,
@@ -77,11 +79,11 @@ fn mean(v: &[f32]) -> f32 {
 }
 
 // ---------------------------------------------------------------------------
-// sizerandom：`min + t^exp*(max-min)`，**不做 /2**，exp 幂。
+// sizerandom：`(min + t^exp*(max-min)) / 2`（WE/lwe `createSizeRandomInitializer` 的 /2），exp 幂。
 // ---------------------------------------------------------------------------
 
 #[test]
-fn size_random_uses_exponent_and_no_halve() {
+fn size_random_uses_exponent_and_halves() {
     let mut init = neutral_init();
     init.size_min = 10.0;
     init.size_max = 50.0;
@@ -92,15 +94,33 @@ fn size_random_uses_exponent_and_no_halve() {
     let max_size = sizes.iter().cloned().fold(f32::MIN, f32::max);
     let mean_size = mean(&sizes);
 
-    // 全部落在 [size_min, size_max]。
+    // WE/lwe：sizerandom 编辑器值 **/2** 存为该粒子的 quad 整宽 → 全部落在 [5, 25]。
     for &s in &sizes {
-        assert!((10.0..=50.0).contains(&s), "size 应在 [10,50]，got {}", s);
+        assert!((5.0..=25.0).contains(&s), "size 应在 [10/2, 50/2]=[5,25]，got {}", s);
     }
-    // 不做 /2：/2 会把上限压到 (50/2)=25，故必存在 >30 的值（exp2 下 P(size>30)≈0.21，样本 300+ 几乎必现）。
-    assert!(max_size > 30.0, "sizerandom 不应 /2（/2 上限 25），max_size={}", max_size);
-    // exp=2 向 min 偏（mean≈23.3 < 线性中点 30），而非线性（mean=30）或 /2（mean≈11.7）。
-    assert!(mean_size < 28.0, "exp=2 应偏 min，mean_size={}", mean_size);
-    assert!(mean_size > 18.0, "sizerandom 不应 /2（/2 mean≈11.7），mean_size={}", mean_size);
+    // /2：上限 = 50/2 = 25，故不存在 >25 的值。
+    assert!(max_size <= 25.0, "sizerandom 应 /2（上限 25），max_size={}", max_size);
+    // exp=2 向 min 偏（mean≈11.7 < 线性中点 15）——与 lwe `pow(t, exponent)` 一致。
+    assert!(mean_size < 14.0, "exp=2 应偏 min，mean_size={}", mean_size);
+    assert!(mean_size > 8.0, "exp=2 均值应 ≈11.7（/2 后），mean_size={}", mean_size);
+}
+
+/// sizerandom 的 exponent **来自 spec**（WE/lwe 缺省 1.0）：无 exponent → 均匀分布（均值 ≈ 中点）；
+/// 显式 exponent=2 → 向 min 偏。二者都 /2。
+#[test]
+fn size_random_exponent_default_is_one() {
+    let mut uniform = neutral_init();
+    uniform.size_min = 10.0;
+    uniform.size_max = 50.0;
+    uniform.size_exponent = 1.0; // WE/lwe 缺省
+    let ps = spawn_batch(uniform);
+    let sizes: Vec<f32> = ps.iter().map(|p| p.size).collect();
+    let mean_size = mean(&sizes);
+    // 均匀 [5,25] → 均值 ≈ 15（±1.5）。
+    assert!((13.5..=16.5).contains(&mean_size), "exp=1 应近似均匀（/2 后均值≈15），got {}", mean_size);
+    for &s in &sizes {
+        assert!((5.0..=25.0).contains(&s), "size ∈ [5,25]，got {}", s);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -271,9 +291,9 @@ fn initial_reset_baseline_saved() {
         assert!((p.initial.size - p.size).abs() < 1e-6, "initial.size 应等于 size");
         assert!((p.initial.lifetime - p.max_life).abs() < 1e-6, "initial.lifetime 应等于 max_life");
 
-        // 复位基准各自落在对应 init 范围内（证明存的不是黑神话硬编码）。
+        // 复位基准各自落在对应 init 范围内（证明存的不是黑神话硬编码；size 为 /2 后的值）。
         assert!((3.0..=7.0).contains(&p.initial.lifetime), "initial.lifetime 应∈[3,7]");
-        assert!((20.0..=80.0).contains(&p.initial.size), "initial.size 应∈[20,80]");
+        assert!((10.0..=40.0).contains(&p.initial.size), "initial.size 应∈[20/2,80/2]=[10,40]，got {}", p.initial.size);
         assert!((0.3..=0.9).contains(&p.initial.alpha), "initial.alpha 应∈[0.3,0.9]");
     }
 }

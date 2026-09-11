@@ -11,7 +11,7 @@ fn ashes_emitter_defaults() {
     // Ashes emitter 无 rate 字段 → 缺省 10
     let spec = parse_particle_spec(ASHES_JSON);
     assert_eq!(spec.emitter.rate, 10.0);
-    assert_eq!(spec.emitter.distance_max, 256.0);
+    assert_eq!(spec.emitter.distance_max, [256.0, 256.0, 0.0]);
 }
 
 #[test]
@@ -28,7 +28,7 @@ fn vector_fields_do_not_nan() {
     // 防 NaN 的 token 解析路径由 scalar_string_parses_first_token /
     // unparsable_token_falls_back_to_zero 两个内联测试专门覆盖。
     let spec = parse_particle_spec(ASHES_JSON);
-    assert!(spec.emitter.distance_max.is_finite());
+    assert!(spec.emitter.distance_max.iter().all(|v| v.is_finite()));
     assert!(spec.init.velocity_max.iter().all(|v| v.is_finite()));
 }
 

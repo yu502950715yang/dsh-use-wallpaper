@@ -81,13 +81,19 @@ impl EmitterParams {
             scale_x: s[0], scale_y: s[1], scale_z: s[2],
             view_w, view_h, elapsed: 0.0,
             rate: spec.emitter.rate,
-            distance_min: spec.emitter.distance_min,
-            distance_max: spec.emitter.distance_max,
+            // ⚠️ GPU compute 路径（wgpu，非 three 路径）的 uniform 只有**单个标量**散射半径，
+            // 故取 `.x`——与 lwe `createSphereEmitter`（只用 distanceMin.x/Max.x）一致；
+            // boxrandom 的**逐轴**半径由 CPU 模拟器 `SceneParticleSim::emitter_local` 完整实现
+            // （three 路径走 CPU sim）。此路径为简化近似（见 WGSL 的 dir*dist 散射），保持原布局。
+            distance_min: spec.emitter.distance_min[0],
+            distance_max: spec.emitter.distance_max[0],
             directions_x: spec.emitter.directions[0],
             directions_y: spec.emitter.directions[1],
             directions_z: spec.emitter.directions[2],
             life_min: i.lifetime_min, life_max: i.lifetime_max,
-            size_min: i.size_min, size_max: i.size_max,
+            // sizerandom：WE/lwe 存的是编辑器值的**一半**（`p.size` = quad 整宽），
+            // GPU 路径的 WGSL 直接用该值展开 quad → 打包时同样 /2（与 CPU sim 一致）。
+            size_min: i.size_min * 0.5, size_max: i.size_max * 0.5,
             vel_min_x: i.velocity_min[0], vel_min_y: i.velocity_min[1], vel_min_z: i.velocity_min[2],
             vel_max_x: i.velocity_max[0], vel_max_y: i.velocity_max[1], vel_max_z: i.velocity_max[2],
             color_min_r: i.color_min.map(|c| c[0]).unwrap_or(1.0),

@@ -27,8 +27,8 @@ fn estimate_max_particles_scales_with_rate_times_lifetime_when_no_maxcount() {
     // 无 maxcount（旧格式）→ 回退 rate × max_lifetime + 64 估算（Task 9 审查修复：原固定 2048）
     use we_scene_wasm::particle::{EmitterSpec, InitSpec, ParticleSpec};
     let spec = ParticleSpec {
-        emitter: EmitterSpec { rate: 20.0, directions: [0.0; 3], distance_min: 0.0, distance_max: 0.0, origin: [0.0; 3], is_sphere: false },
-        init: InitSpec { lifetime_min: 1.0, lifetime_max: 3.0, size_min: 1.0, size_max: 1.0, velocity_min: [0.0; 3], velocity_max: [0.0; 3], color_min: None, color_max: None, alpha_min: 1.0, alpha_max: 1.0, rotation_min: None, rotation_max: None, angular_vel_min: None, angular_vel_max: None, turbulent: None },
+        emitter: EmitterSpec { rate: 20.0, directions: [0.0; 3], distance_min: [0.0; 3], distance_max: [0.0; 3], origin: [0.0; 3], is_sphere: false },
+        init: InitSpec { lifetime_min: 1.0, lifetime_max: 3.0, size_min: 1.0, size_max: 1.0, size_exponent: 1.0, velocity_min: [0.0; 3], velocity_max: [0.0; 3], color_min: None, color_max: None, alpha_min: 1.0, alpha_max: 1.0, rotation_min: None, rotation_max: None, angular_vel_min: None, angular_vel_max: None, turbulent: None },
         operators: vec![],
         maxcount: 0,
         renderer: we_scene_wasm::particle::Renderer::Sprite,
@@ -43,8 +43,8 @@ fn estimate_max_particles_clamps_bounds() {
     // 构造极端 emitter：rate=0 → 64 下限；rate=1e6 → 2048 上限
     use we_scene_wasm::particle::{EmitterSpec, InitSpec, ParticleSpec};
     let zero = ParticleSpec {
-        emitter: EmitterSpec { rate: 0.0, directions: [0.0; 3], distance_min: 0.0, distance_max: 0.0, origin: [0.0; 3], is_sphere: false },
-        init: InitSpec { lifetime_min: 0.0, lifetime_max: 0.0, size_min: 1.0, size_max: 1.0, velocity_min: [0.0; 3], velocity_max: [0.0; 3], color_min: None, color_max: None, alpha_min: 1.0, alpha_max: 1.0, rotation_min: None, rotation_max: None, angular_vel_min: None, angular_vel_max: None, turbulent: None },
+        emitter: EmitterSpec { rate: 0.0, directions: [0.0; 3], distance_min: [0.0; 3], distance_max: [0.0; 3], origin: [0.0; 3], is_sphere: false },
+        init: InitSpec { lifetime_min: 0.0, lifetime_max: 0.0, size_min: 1.0, size_max: 1.0, size_exponent: 1.0, velocity_min: [0.0; 3], velocity_max: [0.0; 3], color_min: None, color_max: None, alpha_min: 1.0, alpha_max: 1.0, rotation_min: None, rotation_max: None, angular_vel_min: None, angular_vel_max: None, turbulent: None },
         operators: vec![],
         maxcount: 0,
         renderer: we_scene_wasm::particle::Renderer::Sprite,
@@ -52,8 +52,8 @@ fn estimate_max_particles_clamps_bounds() {
     };
     assert_eq!(estimate_max_particles(&zero), 64);
     let huge = ParticleSpec {
-        emitter: EmitterSpec { rate: 1e6, directions: [0.0; 3], distance_min: 0.0, distance_max: 0.0, origin: [0.0; 3], is_sphere: false },
-        init: InitSpec { lifetime_min: 100.0, lifetime_max: 100.0, size_min: 1.0, size_max: 1.0, velocity_min: [0.0; 3], velocity_max: [0.0; 3], color_min: None, color_max: None, alpha_min: 1.0, alpha_max: 1.0, rotation_min: None, rotation_max: None, angular_vel_min: None, angular_vel_max: None, turbulent: None },
+        emitter: EmitterSpec { rate: 1e6, directions: [0.0; 3], distance_min: [0.0; 3], distance_max: [0.0; 3], origin: [0.0; 3], is_sphere: false },
+        init: InitSpec { lifetime_min: 100.0, lifetime_max: 100.0, size_min: 1.0, size_max: 1.0, size_exponent: 1.0, velocity_min: [0.0; 3], velocity_max: [0.0; 3], color_min: None, color_max: None, alpha_min: 1.0, alpha_max: 1.0, rotation_min: None, rotation_max: None, angular_vel_min: None, angular_vel_max: None, turbulent: None },
         operators: vec![],
         maxcount: 0,
         renderer: we_scene_wasm::particle::Renderer::Sprite,

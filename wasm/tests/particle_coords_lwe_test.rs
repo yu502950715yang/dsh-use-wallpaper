@@ -54,8 +54,8 @@ fn neutered_emitter(origin: [f32; 3]) -> ParticleEmitterSpec {
         rate: 1.0,
         origin,
         directions: [0.0; 3], // 局部球壳偏移=0 → 发射点=对象中心+emitter.origin×scale（确定）
-        dist_min: 0.0,
-        dist_max: 0.0,
+        dist_min: [0.0; 3],
+        dist_max: [0.0; 3],
         is_sphere: false,
     }
 }

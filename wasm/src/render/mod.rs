@@ -1075,15 +1075,16 @@ impl Renderer {
         // ① 世界尺寸（未钳制）与对象 RT 尺寸：JS 传参优先；缺省用 particle 纯函数推导
         //   （distanceMax 缺省 64）。world 用 particle_world_size（带符号未钳制），
         //   rt 用 particle_object_range（幅值钳制）——钳制只发生在 RT 范围。
+        let dmax_xy = [spec.emitter.distance_max[0], spec.emitter.distance_max[1]];
         let wsize = if world_size.len() >= 2 {
             [world_size[0], world_size[1]]
         } else {
-            effect::particle_world_size(Some(spec.emitter.distance_max), [scale[0], scale[1]])
+            effect::particle_world_size(Some(dmax_xy), [scale[0], scale[1]])
         };
         let eff_rt = if rt_size.len() >= 2 {
             [rt_size[0], rt_size[1]]
         } else {
-            effect::particle_object_range(Some(spec.emitter.distance_max), [scale[0], scale[1]])
+            effect::particle_object_range(Some(dmax_xy), [scale[0], scale[1]])
         };
         let rt_w = (eff_rt[0].max(0.0).round() as u32).clamp(1, effect::OBJECT_RT_MAX as u32);
         let rt_h = (eff_rt[1].max(0.0).round() as u32).clamp(1, effect::OBJECT_RT_MAX as u32);

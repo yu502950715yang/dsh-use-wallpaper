@@ -38,9 +38,8 @@ pub fn emitter_spec_to_particle(
         lifetime_max: spec.init.lifetime_max,
         size_min: spec.init.size_min,
         size_max: spec.init.size_max,
-        // sizerandom 的 exponent：`InitSpec`（mod.rs）未解析 sizerandom 的 exponent 字段，
-        // 映射时统一定为 2.0（对齐黑神话 sizerandom exp2 → size∈[30,50]，行为保持）。
-        size_exponent: 2.0,
+        // sizerandom 的 exponent：由 `parse_particle_spec` 解析（WE/lwe 缺省 1.0；黑神话显式 2）。
+        size_exponent: spec.init.size_exponent,
         velocity_min: spec.init.velocity_min,
         velocity_max: spec.init.velocity_max,
         // WE colorrandom 已归一 0..1；缺省白 [1,1,1]。
@@ -62,6 +61,7 @@ pub fn emitter_spec_to_particle(
             // emitter 局部偏移（已由 parse_particle_spec 读取 em["origin"]，缺省 [0,0,0]）。
             origin: spec.emitter.origin,
             directions: spec.emitter.directions,
+            // 散射半径 **vec3 逐轴**（lwe createBoxEmitter 各轴独立；sphererandom 只用 .x）。
             dist_min: spec.emitter.distance_min,
             dist_max: spec.emitter.distance_max,
             // 球壳散射标记（已由 parse_particle_spec 读取 em["name"]=="sphererandom"）。
@@ -143,7 +143,53 @@ pub fn spec_operators_to_sim(spec: &ParticleSpec) -> Vec<ParticleOperator> {
                     mask,
                 });
             }
-            OperatorKind::Other => {} // 不可识别算子（oscillatealpha/oscillatesize 等）跳过
+            // oscillatealpha（星点闪烁）：缺省照 lwe `ObjectParser`（freqmin 0 / freqmax 10 /
+            // scalemin 0 / scalemax 1 / phase 0..2π）。Crimson `Stars.json` 用
+            // `{"frequencymax":3,"scalemin":0.2}` → alpha 在 base×[0.2,1] 间正弦振荡（桌面版星点闪烁）。
+            OperatorKind::OscillateAlpha => ops.push(ParticleOperator::OscillateAlpha {
+                freq_min: f("frequencymin", 0.0),
+                freq_max: f("frequencymax", 10.0),
+                scale_min: f("scalemin", 0.0),
+                scale_max: f("scalemax", 1.0),
+                phase_min: f("phasemin", 0.0),
+                phase_max: f("phasemax", std::f32::consts::TAU),
+            }),
+            // oscillatesize：缺省 scale 0.8..1.2（照 lwe）。
+            OperatorKind::OscillateSize => ops.push(ParticleOperator::OscillateSize {
+                freq_min: f("frequencymin", 0.0),
+                freq_max: f("frequencymax", 10.0),
+                scale_min: f("scalemin", 0.8),
+                scale_max: f("scalemax", 1.2),
+                phase_min: f("phasemin", 0.0),
+                phase_max: f("phasemax", std::f32::consts::TAU),
+            }),
+            // sizechange/alphachange：缺省 starttime 0 / endtime 1 / startvalue 1 / endvalue 0（照 lwe）。
+            OperatorKind::SizeChange => ops.push(ParticleOperator::SizeChange {
+                start_time: f("starttime", 0.0),
+                end_time: f("endtime", 1.0),
+                start_value: f("startvalue", 1.0),
+                end_value: f("endvalue", 0.0),
+            }),
+            OperatorKind::AlphaChange => ops.push(ParticleOperator::AlphaChange {
+                start_time: f("starttime", 0.0),
+                end_time: f("endtime", 1.0),
+                start_value: f("startvalue", 1.0),
+                end_value: f("endvalue", 0.0),
+            }),
+            // colorchange：缺省 start/end value 均为 (1,1,1)（照 lwe）。
+            OperatorKind::ColorChange => ops.push(ParticleOperator::ColorChange {
+                start_time: f("starttime", 0.0),
+                end_time: f("endtime", 1.0),
+                start_value: {
+                    let v = g("startvalue");
+                    if p.get("startvalue").is_some() { v } else { [1.0, 1.0, 1.0] }
+                },
+                end_value: {
+                    let v = g("endvalue");
+                    if p.get("endvalue").is_some() { v } else { [1.0, 1.0, 1.0] }
+                },
+            }),
+            OperatorKind::Other => {} // 不可识别算子（vortex/controlpointattract 等）跳过
         }
     }
     if ops.is_empty() {
@@ -176,9 +222,9 @@ mod tests {
         assert_eq!(sim.emitter.rate, 20.0, "emitter.rate 应映射到 emitter.rate");
         // directions 被带入
         assert_eq!(sim.emitter.directions, [1.0, 0.1, 1.0], "directions 应映射");
-        // distance min/max 被带入
-        assert_eq!(sim.emitter.dist_min, 0.0);
-        assert_eq!(sim.emitter.dist_max, 750.0);
+        // distance min/max 被带入（逐轴：数字 750 → 三轴同值）
+        assert_eq!(sim.emitter.dist_min, [0.0; 3]);
+        assert_eq!(sim.emitter.dist_max, [750.0; 3]);
         // 对象中心（obj_origin）被带入
         assert_eq!(sim.obj_origin, [2306.34, 419.77, 0.0], "obj_origin 应映射到 sim.obj_origin");
         // scene（黑神话 3840×2160）被带入（we_to_three 对象中心映射用）。
@@ -211,8 +257,8 @@ mod tests {
             [1.0, 1.0, 0.0],
             "emitter 无 directions → 缺省 (1,1,0)（lwe ObjectParser）"
         );
-        assert_eq!(sim.emitter.dist_min, 32.0);
-        assert_eq!(sim.emitter.dist_max, 512.0);
+        assert_eq!(sim.emitter.dist_min, [32.0; 3]);
+        assert_eq!(sim.emitter.dist_max, [512.0; 3]);
         assert!(sim.emitter.is_sphere, "name=sphererandom → is_sphere");
     }
 
@@ -367,7 +413,7 @@ mod tests {
         assert_eq!(i.velocity_max, [0.0, -15.0, 0.0], "velocity_max 应从 spec.init 带入");
         assert_eq!(i.size_min, 30.0, "size_min 应从 spec.init 带入");
         assert_eq!(i.size_max, 50.0, "size_max 应从 spec.init 带入");
-        assert_eq!(i.size_exponent, 2.0, "InitSpec 无 exponent → 映射缺省 2.0（对齐黑神话 exp2）");
+        assert_eq!(i.size_exponent, 1.0, "sizerandom 无 exponent → WE/lwe 缺省 1.0");
         assert_eq!(i.lifetime_min, 5.0, "lifetime_min 应从 spec.init 带入");
         assert_eq!(i.lifetime_max, 10.0, "lifetime_max 应从 spec.init 带入");
         // colorrandom "255 212 247" → /255 = [1.0, 0.831, 0.969]（粉花瓣近似）。
@@ -381,6 +427,89 @@ mod tests {
         assert_eq!(i.rotation_max, [0.5, 0.5, 0.5], "rotation_max 应从 spec.init 带入");
         assert_eq!(i.angular_vel_min, [0.0; 3], "无 angularvelocityrandom → 缺省 0");
         assert_eq!(i.angular_vel_max, [0.0; 3], "无 angularvelocityrandom → 缺省 0");
+    }
+
+    #[test]
+    fn size_exponent_parsed_from_spec_with_we_default() {
+        // 黑神话显式 exponent=2 → 2；无 exponent（Crimson Stars/Fireflies、DK 等）→ WE/lwe 缺省 1.0。
+        let j2 = r#"{"emitter":[{"rate":1}],"initializer":[{"name":"sizerandom","min":30,"max":50,"exponent":2}]}"#;
+        assert_eq!(parse_particle_spec(j2).init.size_exponent, 2.0, "显式 exponent=2 应保留");
+        let j1 = r#"{"emitter":[{"rate":1}],"initializer":[{"name":"sizerandom","min":5,"max":10}]}"#;
+        assert_eq!(parse_particle_spec(j1).init.size_exponent, 1.0, "无 exponent → 缺省 1.0");
+    }
+
+    /// 回归（用户所报「全屏白色小点」的闪烁缺失）：Crimson `Stars.json` 的
+    /// `oscillatealpha`（`frequencymax=3`、`scalemin=0.2`）此前落到 `OperatorKind::Other` 被**丢弃**
+    /// → 星点不闪烁（桌面版会闪烁）。本测试锁定它被映射为 `ParticleOperator::OscillateAlpha`，
+    /// 且缺省值照 lwe `ObjectParser`（freqmin 0 / scalemax 1 / phase 0..2π）。
+    #[test]
+    fn crimson_stars_oscillate_alpha_mapped_and_twinkles() {
+        use crate::particle::sim::ParticleOperator;
+        let spec = parse_particle_spec(include_str!("../../tests/fixtures/crimson/stars.json"));
+        let ops = spec_operators_to_sim(&spec);
+        let osc = ops.iter().find_map(|o| match o {
+            ParticleOperator::OscillateAlpha { freq_min, freq_max, scale_min, scale_max, .. } => {
+                Some((*freq_min, *freq_max, *scale_min, *scale_max))
+            }
+            _ => None,
+        });
+        let (freq_min, freq_max, scale_min, scale_max) = osc.expect("oscillatealpha 应被映射（此前被当 Other 丢弃）");
+        assert_eq!(freq_min, 0.0, "缺省 frequencymin=0");
+        assert_eq!(freq_max, 3.0, "spec frequencymax=3");
+        assert_eq!(scale_min, 0.2, "spec scalemin=0.2");
+        assert_eq!(scale_max, 1.0, "缺省 scalemax=1");
+        // alphafade 也应存在（spec 第一个 operator）——顺序保持 spec 顺序（base 组合语义）。
+        assert!(
+            ops.iter().any(|o| matches!(o, ParticleOperator::AlphaFade { .. })),
+            "alphafade 应仍在算子列表中"
+        );
+    }
+
+    /// oscillatealpha 真的让 alpha 随时间振荡（星点闪烁）：同一粒子在不同 age 的 alpha 不同，
+    /// 且落在 base × [scalemin, scalemax] 区间内。
+    #[test]
+    fn oscillate_alpha_modulates_alpha_over_time() {
+        use crate::particle::sim::ParticleOperator;
+        let mut p = crate::particle::sim::SimParticle {
+            pos: [0.0; 3],
+            vel: [0.0; 3],
+            rot: 0.0,
+            angular_vel: [0.0; 3],
+            size: 5.0,
+            alpha: 1.0,
+            life: 100.0,
+            max_life: 100.0,
+            color: [1.0; 3],
+            frame: 0.0,
+            initial: crate::particle::sim::SimInitial { color: [1.0; 3], alpha: 1.0, size: 5.0, lifetime: 100.0 },
+            fade_in: 0.0,
+            fade_out: 1.0,
+            oscillate_alpha: crate::particle::sim::OscState { frequency: 0.0, scale: 1.0, phase: 0.0, base: 0.0, initialized: false },
+            oscillate_size: crate::particle::sim::OscState { frequency: 0.0, scale: 1.0, phase: 0.0, base: 0.0, initialized: false },
+            oscillate_position: crate::particle::sim::OscState3 { frequency: [0.0; 3], scale: [0.0; 3], phase: [0.0; 3], initialized: false },
+        };
+        let op = ParticleOperator::OscillateAlpha {
+            freq_min: 2.0,
+            freq_max: 2.0,
+            scale_min: 0.2,
+            scale_max: 1.0,
+            phase_min: 0.0,
+            phase_max: 0.0,
+        };
+        let mut vals = Vec::new();
+        for i in 0..40 {
+            p.life = 100.0 - i as f32 * 0.05; // age = i*0.05
+            op.apply(&mut p, 0.0, 0.0);
+            assert!(
+                (0.2 - 1e-4..=1.0 + 1e-4).contains(&p.alpha),
+                "oscillatealpha 后 alpha 应在 [0.2,1]（got {}）",
+                p.alpha
+            );
+            vals.push(p.alpha);
+        }
+        let min = vals.iter().cloned().fold(f32::MAX, f32::min);
+        let max = vals.iter().cloned().fold(f32::MIN, f32::max);
+        assert!(max - min > 0.5, "alpha 应随时间明显振荡（min={min}, max={max}）");
     }
 
     #[test]

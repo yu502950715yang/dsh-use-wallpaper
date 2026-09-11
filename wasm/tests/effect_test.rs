@@ -135,18 +135,23 @@ fn composite_ndc_uniform_no_y_flip() {
 #[test]
 fn particle_object_range_uses_effective_distance() {
     // 无 distanceMax → 默认 64；有 → |dist×scale| 钳制
-    let r = effect::particle_object_range(Some(128.0), [2.0, 2.0]);
+    let r = effect::particle_object_range(Some([128.0, 128.0]), [2.0, 2.0]);
     assert_eq!(r[0], 256.0);
+    // 逐轴：distancemax="1000 500 0"（Crimson Stars）→ RT 逐轴 1000×scale / 500×scale。
+    let per_axis = effect::particle_object_range(Some([1000.0, 500.0]), [1.0, 1.0]);
+    assert_eq!(per_axis, [1000.0, 500.0]);
 }
 
 /// Milestone 4 / Task6：粒子发射距离有效值——无/非正 distanceMax 回退默认 64，
-/// 正 distanceMax 原样使用。
+/// 正 distanceMax 原样使用（**逐轴**）。
 #[test]
 fn particle_effective_distance_defaults_to_64() {
-    assert_eq!(effect::particle_effective_distance(None), 64.0);
-    assert_eq!(effect::particle_effective_distance(Some(0.0)), 64.0);
-    assert_eq!(effect::particle_effective_distance(Some(-10.0)), 64.0);
-    assert_eq!(effect::particle_effective_distance(Some(128.0)), 128.0);
+    assert_eq!(effect::particle_effective_distance(None), [64.0, 64.0]);
+    assert_eq!(effect::particle_effective_distance(Some([0.0, 0.0])), [64.0, 64.0]);
+    assert_eq!(effect::particle_effective_distance(Some([-10.0, -10.0])), [64.0, 64.0]);
+    assert_eq!(effect::particle_effective_distance(Some([128.0, 128.0])), [128.0, 128.0]);
+    // 逐轴回退：y 轴非正 → 该轴 64，x 轴照原值（WE distancemax 逐轴）。
+    assert_eq!(effect::particle_effective_distance(Some([1000.0, 0.0])), [1000.0, 64.0]);
 }
 
 /// Milestone 4 / Task6：粒子 RT 尺寸——无 distanceMax → 默认 64×scale；钳制到 OBJECT_RT_MAX。
@@ -155,10 +160,10 @@ fn particle_object_range_defaults_and_clamps() {
     let d = effect::particle_object_range(None, [1.0, 1.0]);
     assert_eq!(d, [64.0, 64.0]);
     // 负 scale → 幅值（对齐 object_camera_range，负值钳成 1px 会让 RT 退化，故取幅值）
-    let neg = effect::particle_object_range(Some(100.0), [-2.0, 2.0]);
+    let neg = effect::particle_object_range(Some([100.0, 100.0]), [-2.0, 2.0]);
     assert_eq!(neg, [200.0, 200.0]);
     // 超出 OBJECT_RT_MAX → 钳到 4096（0dc3555 上限 2048→4096）
-    let big = effect::particle_object_range(Some(9000.0), [1.0, 1.0]);
+    let big = effect::particle_object_range(Some([9000.0, 9000.0]), [1.0, 1.0]);
     assert_eq!(big[0], 4096.0);
 }
 
@@ -166,13 +171,16 @@ fn particle_object_range_defaults_and_clamps() {
 /// 与 particle_object_range 的幅值钳制分工：钳制只发生在 RT 范围，quad 世界尺寸未钳制）。
 #[test]
 fn particle_world_size_is_unclamped_signed() {
-    let w = effect::particle_world_size(Some(128.0), [2.0, -1.5]);
+    let w = effect::particle_world_size(Some([128.0, 128.0]), [2.0, -1.5]);
     assert_eq!(w, [256.0, -192.0]);
     let d = effect::particle_world_size(None, [2.0, 2.0]);
     assert_eq!(d, [128.0, 128.0]);
     // 无 distanceMax → 默认 64
     let def = effect::particle_world_size(None, [1.0, 1.0]);
     assert_eq!(def, [64.0, 64.0]);
+    // 逐轴（Crimson Stars 1000/500 × scale 0.716/2.148）
+    let stars = effect::particle_world_size(Some([1000.0, 500.0]), [0.71612, 2.14837]);
+    assert!((stars[0] - 716.12).abs() < 0.01 && (stars[1] - 1074.185).abs() < 0.01, "got {stars:?}");
 }
 
 /// Task10：std140 布局与打包（native 纯函数；偏移与 glslang 实测一致，见 dump_std140.cjs）。

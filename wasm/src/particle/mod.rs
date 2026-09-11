@@ -4,7 +4,10 @@
 //! 原有 `particle::*` 对外路径不变（lib.rs `pub mod particle;` 对两种布局均适用）。
 //!
 //! 粒子规格解析（emitter[0] + initializer + operator + renderer；缺省值对齐现有 scene-assets.ts）
-//! 标量字段：字符串取第一 token（防 NaN）；数字直用。缺省：rate=10、distancemax=256。
+//! 标量字段：字符串取第一 token（防 NaN）；数字直用。缺省：rate=10、distancemax=(256,256,0)。
+//! **vec3 字段**（directions/distancemin/distancemax/origin/mask/…）：字符串按空格逐轴、数组按分量、
+//! **数字展开为三轴同值**（lwe `parseVec3` 语义）——distancemin/max 是**逐轴**半径（Crimson Stars
+//! `"1000 500 0"` → x∈[0,1000]、y∈[0,500]），只有 sphererandom 才退化为仅用 `.x`。
 //!
 //! 2026-08-31 扩容（算子内核补全，治本"3 张 STATIC 壁纸"根因）：
 //! 此前只识别 Movement/AlphaFade 两种 operator，其余归 Other 且丢弃参数 → 依赖
@@ -38,6 +41,16 @@ pub enum OperatorKind {
     OscillatePosition,
     /// 角速度积分（旋转随寿命演化）。参数 drag（AngularMovement 算子）。
     AngularMovement,
+    /// 按寿命正弦调制 alpha（oscillatealpha，星点闪烁）。参数 frequency/scalemin/scalemax/phase。
+    OscillateAlpha,
+    /// 按寿命正弦调制 size（oscillatesize）。参数同 oscillatealpha（缺省 0.8..1.2）。
+    OscillateSize,
+    /// 按寿命线性插值调制 size（sizechange）。参数 starttime/endtime/startvalue/endvalue。
+    SizeChange,
+    /// 按寿命线性插值调制 alpha（alphachange）。参数同 sizechange。
+    AlphaChange,
+    /// 按寿命线性插值调制 color（colorchange）。参数同上 + startvalue/endvalue 为 vec3。
+    ColorChange,
     Other,
 }
 
@@ -48,8 +61,12 @@ pub struct Operator { pub kind: OperatorKind, pub params: Value }
 pub struct EmitterSpec {
     pub rate: f32,
     pub directions: [f32; 3],
-    pub distance_min: f32,
-    pub distance_max: f32,
+    /// 发射散射半径下界（WE/lwe 为 **vec3 逐轴**；lwe `ObjectParser::parseParticleEmitter`
+    /// `parseVec3("distancemin", (0,0,0))` —— 字符串 "x y z" 逐轴、数字则三轴同值）。
+    /// boxrandom 逐轴使用；sphererandom 只用 `.x`（lwe `createSphereEmitter`）。
+    pub distance_min: [f32; 3],
+    /// 发射散射半径上界（逐轴）。缺省 `(256, 256, 0)`（对齐 lwe ObjectParser 缺省）。
+    pub distance_max: [f32; 3],
     /// 发射器局部偏移（we "x y z"；缺省 [0,0,0]）。CPU 模拟用它把发射点抬离对象中心
     /// （黑神话花瓣 origin="350 750 0" → 从**上方**发射），y 在 spawn 时**不翻**（+y 抬到中心上方；
     /// origin.y=0 的壁纸 EVA/DK 等不受影响）。
@@ -65,6 +82,9 @@ pub struct InitSpec {
     pub lifetime_max: f32,
     pub size_min: f32,
     pub size_max: f32,
+    /// sizerandom 的 `exponent`（WE/lwe 缺省 **1.0**：`ObjectParser` `it.user("exponent", 1.0f)`）。
+    /// 黑神话花瓣显式 `"exponent": 2` → 解析后仍为 2（该对象行为不变）。
+    pub size_exponent: f32,
     pub velocity_min: [f32; 3],
     pub velocity_max: [f32; 3],
     pub color_min: Option<[f32; 3]>,
@@ -181,6 +201,24 @@ fn vec3_or(v: &Value, default: [f32; 3]) -> [f32; 3] {
     }
 }
 
+/// `vec3` + 「**字段缺失/非法**时用默认值」的变体，并支持 **JSON 数字**（lwe
+/// `ObjectParser::parseParticleEmitter` 的 `parseVec3`：`is_number()` → 三轴同值）。
+///
+/// 用于 `distancemin`/`distancemax`（发射散射半径）：WE 里既有字符串形式
+/// `"1000 500 0"`（Crimson Stars / Lycoris dust），也有**数字**形式（DK `"distancemax": 50`、
+/// 黑神话 `750`）。数字必须展开为 `(v, v, v)`（**不是** [v,0,0]，也不是取标量后只用 x），
+/// 否则 boxrandom 各轴的散射范围会与 WE 不符（这正是 Crimson Stars「全屏白点」的成因）。
+fn vec3_field(v: &Value, default: [f32; 3]) -> [f32; 3] {
+    match v {
+        Value::Number(n) => {
+            let x = n.as_f64().unwrap_or(default[0] as f64) as f32;
+            [x, x, x]
+        }
+        Value::String(_) | Value::Array(_) => vec3(v),
+        _ => default,
+    }
+}
+
 /// 归一化向量；零向量返回原值（调用方兜底语义）。
 fn normalize3(v: [f32; 3]) -> [f32; 3] {
     let n = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
@@ -221,6 +259,11 @@ pub fn parse_particle_spec(json: &str) -> ParticleSpec {
                 "alphafade" => OperatorKind::AlphaFade,
                 "turbulence" => OperatorKind::Turbulence,
                 "oscillateposition" => OperatorKind::OscillatePosition,
+                "oscillatealpha" => OperatorKind::OscillateAlpha,
+                "oscillatesize" => OperatorKind::OscillateSize,
+                "sizechange" => OperatorKind::SizeChange,
+                "alphachange" => OperatorKind::AlphaChange,
+                "colorchange" => OperatorKind::ColorChange,
                 "angularmovement" => OperatorKind::AngularMovement,
                 _ => OperatorKind::Other,
             };
@@ -252,8 +295,10 @@ pub fn parse_particle_spec(json: &str) -> ParticleSpec {
         emitter: EmitterSpec {
             rate: scalar(&em["rate"], 10.0),
             directions: vec3_or(&em["directions"], LWE_DEFAULT_DIRECTIONS),
-            distance_min: scalar(&em["distancemin"], 0.0),
-            distance_max: scalar(&em["distancemax"], 256.0),
+            // 散射半径 **vec3 逐轴**（lwe `createBoxEmitter` 各轴用 distanceMin/Max[axis]；
+            // `createSphereEmitter` 只用 `.x`）。数字形式展开为三轴同值。
+            distance_min: vec3_field(&em["distancemin"], [0.0, 0.0, 0.0]),
+            distance_max: vec3_field(&em["distancemax"], [256.0, 256.0, 0.0]),
             // 发射器局部偏移（"x y z"；缺省/缺失 → [0,0,0]）。黑神话花瓣 origin="350 750 0"。
             origin: vec3(&em["origin"]),
             // 球壳散射：emitter name=="sphererandom" → true；缺省 false。
@@ -264,6 +309,8 @@ pub fn parse_particle_spec(json: &str) -> ParticleSpec {
             lifetime_max: life.map(|i| scalar(&i["max"], 1.0)).unwrap_or(1.0),
             size_min: size.map(|i| scalar(&i["min"], 16.0)).unwrap_or(16.0),
             size_max: size.map(|i| scalar(&i["max"], 16.0)).unwrap_or(16.0),
+            // sizerandom 的 exponent（WE/lwe 缺省 1.0；黑神话显式 2）。
+            size_exponent: size.map(|i| scalar(&i["exponent"], 1.0)).unwrap_or(1.0),
             velocity_min: vel.map(|i| vec3(&i["min"])).unwrap_or([0.0; 3]),
             velocity_max: vel.map(|i| vec3(&i["max"])).unwrap_or([0.0; 3]),
             // WE colorrandom 是 0-255 量级（fog1 等 "255 255 255"）→ 归一化 /255 到 0-1
