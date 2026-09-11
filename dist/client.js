@@ -11,9 +11,6 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __esm = (fn, res) => function __init() {
-  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
-};
 var __commonJS = (cb, mod) => function __require() {
   return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 };
@@ -512,1692 +509,9 @@ var require_lz4 = __commonJS({
   }
 });
 
-// node_modules/.pnpm/@jitl+quickjs-ffi-types@0.32.0/node_modules/@jitl/quickjs-ffi-types/dist/index.mjs
-var EvalFlags, IntrinsicsFlags, JSPromiseStateEnum, GetOwnPropertyNamesFlags, IsEqualOp;
-var init_dist = __esm({
-  "node_modules/.pnpm/@jitl+quickjs-ffi-types@0.32.0/node_modules/@jitl/quickjs-ffi-types/dist/index.mjs"() {
-    EvalFlags = { JS_EVAL_TYPE_GLOBAL: 0, JS_EVAL_TYPE_MODULE: 1, JS_EVAL_TYPE_DIRECT: 2, JS_EVAL_TYPE_INDIRECT: 3, JS_EVAL_TYPE_MASK: 3, JS_EVAL_FLAG_STRICT: 8, JS_EVAL_FLAG_STRIP: 16, JS_EVAL_FLAG_COMPILE_ONLY: 32, JS_EVAL_FLAG_BACKTRACE_BARRIER: 64 };
-    IntrinsicsFlags = { BaseObjects: 1, Date: 2, Eval: 4, StringNormalize: 8, RegExp: 16, RegExpCompiler: 32, JSON: 64, Proxy: 128, MapSet: 256, TypedArrays: 512, Promise: 1024, BigInt: 2048, BigFloat: 4096, BigDecimal: 8192, OperatorOverloading: 16384, BignumExt: 32768 };
-    JSPromiseStateEnum = { Pending: 0, Fulfilled: 1, Rejected: 2 };
-    GetOwnPropertyNamesFlags = { JS_GPN_STRING_MASK: 1, JS_GPN_SYMBOL_MASK: 2, JS_GPN_PRIVATE_MASK: 4, JS_GPN_ENUM_ONLY: 16, JS_GPN_SET_ENUM: 32, QTS_GPN_NUMBER_MASK: 64, QTS_STANDARD_COMPLIANT_NUMBER: 128 };
-    IsEqualOp = { IsStrictlyEqual: 0, IsSameValue: 1, IsSameValueZero: 2 };
-  }
-});
-
-// node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/chunk-V2S4ZYJR.mjs
-function debugLog(...args) {
-  QTS_DEBUG && console.log("quickjs-emscripten:", ...args);
-}
-function* awaitYield(value) {
-  return yield value;
-}
-function awaitYieldOf(generator) {
-  return awaitYield(awaitEachYieldedPromise(generator));
-}
-function maybeAsyncFn(that, fn) {
-  return (...args) => {
-    let generator = fn.call(that, AwaitYield, ...args);
-    return awaitEachYieldedPromise(generator);
-  };
-}
-function maybeAsync(that, startGenerator) {
-  let generator = startGenerator.call(that, AwaitYield);
-  return awaitEachYieldedPromise(generator);
-}
-function awaitEachYieldedPromise(gen) {
-  function handleNextStep(step) {
-    return step.done ? step.value : step.value instanceof Promise ? step.value.then((value) => handleNextStep(gen.next(value)), (error) => handleNextStep(gen.throw(error))) : handleNextStep(gen.next(step.value));
-  }
-  return handleNextStep(gen.next());
-}
-function scopeFinally(scope, blockError) {
-  let disposeError;
-  try {
-    scope.dispose();
-  } catch (error) {
-    disposeError = error;
-  }
-  if (blockError && disposeError) throw Object.assign(blockError, { message: `${blockError.message}
- Then, failed to dispose scope: ${disposeError.message}`, disposeError }), blockError;
-  if (blockError || disposeError) throw blockError || disposeError;
-}
-function createDisposableArray(items) {
-  let array = items ? Array.from(items) : [];
-  function disposeAlive() {
-    return array.forEach((disposable) => disposable.alive ? disposable.dispose() : void 0);
-  }
-  function someIsAlive() {
-    return array.some((disposable) => disposable.alive);
-  }
-  return Object.defineProperty(array, SymbolDispose, { configurable: true, enumerable: false, value: disposeAlive }), Object.defineProperty(array, "dispose", { configurable: true, enumerable: false, value: disposeAlive }), Object.defineProperty(array, "alive", { configurable: true, enumerable: false, get: someIsAlive }), array;
-}
-function isDisposable(value) {
-  return !!(value && (typeof value == "object" || typeof value == "function") && "alive" in value && typeof value.alive == "boolean" && "dispose" in value && typeof value.dispose == "function");
-}
-function intrinsicsToFlags(intrinsics) {
-  if (!intrinsics) return 0;
-  let result = 0;
-  for (let [maybeIntrinsicName, enabled] of Object.entries(intrinsics)) {
-    if (!(maybeIntrinsicName in IntrinsicsFlags)) throw new QuickJSUnknownIntrinsic(maybeIntrinsicName);
-    enabled && (result |= IntrinsicsFlags[maybeIntrinsicName]);
-  }
-  return result;
-}
-function evalOptionsToFlags(evalOptions) {
-  if (typeof evalOptions == "number") return evalOptions;
-  if (evalOptions === void 0) return 0;
-  let { type, strict, strip, compileOnly, backtraceBarrier } = evalOptions, flags = 0;
-  return type === "global" && (flags |= EvalFlags.JS_EVAL_TYPE_GLOBAL), type === "module" && (flags |= EvalFlags.JS_EVAL_TYPE_MODULE), strict && (flags |= EvalFlags.JS_EVAL_FLAG_STRICT), strip && (flags |= EvalFlags.JS_EVAL_FLAG_STRIP), compileOnly && (flags |= EvalFlags.JS_EVAL_FLAG_COMPILE_ONLY), backtraceBarrier && (flags |= EvalFlags.JS_EVAL_FLAG_BACKTRACE_BARRIER), flags;
-}
-function getOwnPropertyNamesOptionsToFlags(options) {
-  if (typeof options == "number") return options;
-  if (options === void 0) return 0;
-  let { strings: includeStrings, symbols: includeSymbols, quickjsPrivate: includePrivate, onlyEnumerable, numbers: includeNumbers, numbersAsStrings } = options, flags = 0;
-  return includeStrings && (flags |= GetOwnPropertyNamesFlags.JS_GPN_STRING_MASK), includeSymbols && (flags |= GetOwnPropertyNamesFlags.JS_GPN_SYMBOL_MASK), includePrivate && (flags |= GetOwnPropertyNamesFlags.JS_GPN_PRIVATE_MASK), onlyEnumerable && (flags |= GetOwnPropertyNamesFlags.JS_GPN_ENUM_ONLY), includeNumbers && (flags |= GetOwnPropertyNamesFlags.QTS_GPN_NUMBER_MASK), numbersAsStrings && (flags |= GetOwnPropertyNamesFlags.QTS_STANDARD_COMPLIANT_NUMBER), flags;
-}
-function concat(...values) {
-  let result = [];
-  for (let value of values) value !== void 0 && (result = result.concat(value));
-  return result;
-}
-function getGroupId(id) {
-  return id >> 8;
-}
-function applyBaseRuntimeOptions(runtime, options) {
-  options.interruptHandler && runtime.setInterruptHandler(options.interruptHandler), options.maxStackSizeBytes !== void 0 && runtime.setMaxStackSize(options.maxStackSizeBytes), options.memoryLimitBytes !== void 0 && runtime.setMemoryLimit(options.memoryLimitBytes);
-}
-function applyModuleEvalRuntimeOptions(runtime, options) {
-  options.moduleLoader && runtime.setModuleLoader(options.moduleLoader), options.shouldInterrupt && runtime.setInterruptHandler(options.shouldInterrupt), options.memoryLimitBytes !== void 0 && runtime.setMemoryLimit(options.memoryLimitBytes), options.maxStackSizeBytes !== void 0 && runtime.setMaxStackSize(options.maxStackSizeBytes);
-}
-var __defProp2, __export2, QTS_DEBUG, errors_exports, QuickJSUnwrapError, QuickJSWrongOwner, QuickJSUseAfterFree, QuickJSNotImplemented, QuickJSAsyncifyError, QuickJSAsyncifySuspended, QuickJSMemoryLeakDetected, QuickJSEmscriptenModuleError, QuickJSUnknownIntrinsic, QuickJSPromisePending, QuickJSEmptyGetOwnPropertyNames, QuickJSHostRefRangeExceeded, QuickJSHostRefInvalid, AwaitYield, UsingDisposable, SymbolDispose, prototypeAsAny, Lifetime, StaticLifetime, WeakLifetime, Scope, AbstractDisposableResult, DisposableSuccess, DisposableFail, DisposableResult, QuickJSDeferredPromise, ModuleMemory, UnstableSymbol, DefaultIntrinsics, QuickJSIterator, INT32_MIN, INT32_MAX, INVALID_HOST_REF_ID, HostRefMap, HostRef, ContextMemory, QuickJSContext, QuickJSRuntime, QuickJSEmscriptenModuleCallbacks, QuickJSModuleCallbacks, QuickJSWASMModule;
-var init_chunk_V2S4ZYJR = __esm({
-  "node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/chunk-V2S4ZYJR.mjs"() {
-    init_dist();
-    init_dist();
-    __defProp2 = Object.defineProperty;
-    __export2 = (target, all) => {
-      for (var name in all) __defProp2(target, name, { get: all[name], enumerable: true });
-    };
-    QTS_DEBUG = false;
-    errors_exports = {};
-    __export2(errors_exports, { QuickJSAsyncifyError: () => QuickJSAsyncifyError, QuickJSAsyncifySuspended: () => QuickJSAsyncifySuspended, QuickJSEmptyGetOwnPropertyNames: () => QuickJSEmptyGetOwnPropertyNames, QuickJSEmscriptenModuleError: () => QuickJSEmscriptenModuleError, QuickJSHostRefInvalid: () => QuickJSHostRefInvalid, QuickJSHostRefRangeExceeded: () => QuickJSHostRefRangeExceeded, QuickJSMemoryLeakDetected: () => QuickJSMemoryLeakDetected, QuickJSNotImplemented: () => QuickJSNotImplemented, QuickJSPromisePending: () => QuickJSPromisePending, QuickJSUnknownIntrinsic: () => QuickJSUnknownIntrinsic, QuickJSUnwrapError: () => QuickJSUnwrapError, QuickJSUseAfterFree: () => QuickJSUseAfterFree, QuickJSWrongOwner: () => QuickJSWrongOwner });
-    QuickJSUnwrapError = class extends Error {
-      constructor(cause, context) {
-        let message = typeof cause == "object" && cause && "message" in cause ? String(cause.message) : String(cause);
-        super(message);
-        this.cause = cause;
-        this.context = context;
-        this.name = "QuickJSUnwrapError";
-      }
-    };
-    QuickJSWrongOwner = class extends Error {
-      constructor() {
-        super(...arguments);
-        this.name = "QuickJSWrongOwner";
-      }
-    };
-    QuickJSUseAfterFree = class extends Error {
-      constructor() {
-        super(...arguments);
-        this.name = "QuickJSUseAfterFree";
-      }
-    };
-    QuickJSNotImplemented = class extends Error {
-      constructor() {
-        super(...arguments);
-        this.name = "QuickJSNotImplemented";
-      }
-    };
-    QuickJSAsyncifyError = class extends Error {
-      constructor() {
-        super(...arguments);
-        this.name = "QuickJSAsyncifyError";
-      }
-    };
-    QuickJSAsyncifySuspended = class extends Error {
-      constructor() {
-        super(...arguments);
-        this.name = "QuickJSAsyncifySuspended";
-      }
-    };
-    QuickJSMemoryLeakDetected = class extends Error {
-      constructor() {
-        super(...arguments);
-        this.name = "QuickJSMemoryLeakDetected";
-      }
-    };
-    QuickJSEmscriptenModuleError = class extends Error {
-      constructor() {
-        super(...arguments);
-        this.name = "QuickJSEmscriptenModuleError";
-      }
-    };
-    QuickJSUnknownIntrinsic = class extends TypeError {
-      constructor() {
-        super(...arguments);
-        this.name = "QuickJSUnknownIntrinsic";
-      }
-    };
-    QuickJSPromisePending = class extends Error {
-      constructor() {
-        super(...arguments);
-        this.name = "QuickJSPromisePending";
-      }
-    };
-    QuickJSEmptyGetOwnPropertyNames = class extends Error {
-      constructor() {
-        super(...arguments);
-        this.name = "QuickJSEmptyGetOwnPropertyNames";
-      }
-    };
-    QuickJSHostRefRangeExceeded = class extends Error {
-      constructor() {
-        super(...arguments);
-        this.name = "QuickJSHostRefRangeExceeded";
-      }
-    };
-    QuickJSHostRefInvalid = class extends Error {
-      constructor() {
-        super(...arguments);
-        this.name = "QuickJSHostRefInvalid";
-      }
-    };
-    AwaitYield = awaitYield;
-    AwaitYield.of = awaitYieldOf;
-    UsingDisposable = class {
-      [Symbol.dispose]() {
-        return this.dispose();
-      }
-    };
-    SymbolDispose = Symbol.dispose ?? Symbol.for("Symbol.dispose");
-    prototypeAsAny = UsingDisposable.prototype;
-    prototypeAsAny[SymbolDispose] || (prototypeAsAny[SymbolDispose] = function() {
-      return this.dispose();
-    });
-    Lifetime = class _Lifetime extends UsingDisposable {
-      constructor(_value, copier, disposer, _owner) {
-        super();
-        this._value = _value;
-        this.copier = copier;
-        this.disposer = disposer;
-        this._owner = _owner;
-        this._alive = true;
-        this._constructorStack = QTS_DEBUG ? new Error("Lifetime constructed").stack : void 0;
-      }
-      get alive() {
-        return this._alive;
-      }
-      get value() {
-        return this.assertAlive(), this._value;
-      }
-      get owner() {
-        return this._owner;
-      }
-      get dupable() {
-        return !!this.copier;
-      }
-      dup() {
-        if (this.assertAlive(), !this.copier) throw new Error("Non-dupable lifetime");
-        return new _Lifetime(this.copier(this._value), this.copier, this.disposer, this._owner);
-      }
-      consume(map) {
-        this.assertAlive();
-        let result = map(this);
-        return this.dispose(), result;
-      }
-      map(map) {
-        return this.assertAlive(), map(this);
-      }
-      tap(fn) {
-        return fn(this), this;
-      }
-      dispose() {
-        this.assertAlive(), this.disposer && this.disposer(this._value), this._alive = false;
-      }
-      assertAlive() {
-        if (!this.alive) throw this._constructorStack ? new QuickJSUseAfterFree(`Lifetime not alive
-${this._constructorStack}
-Lifetime used`) : new QuickJSUseAfterFree("Lifetime not alive");
-      }
-    };
-    StaticLifetime = class extends Lifetime {
-      constructor(value, owner) {
-        super(value, void 0, void 0, owner);
-      }
-      get dupable() {
-        return true;
-      }
-      dup() {
-        return this;
-      }
-      dispose() {
-      }
-    };
-    WeakLifetime = class extends Lifetime {
-      constructor(value, copier, disposer, owner) {
-        super(value, copier, disposer, owner);
-      }
-      dispose() {
-        this._alive = false;
-      }
-    };
-    Scope = class _Scope extends UsingDisposable {
-      constructor() {
-        super(...arguments);
-        this._disposables = new Lifetime(/* @__PURE__ */ new Set());
-        this.manage = (lifetime) => (this._disposables.value.add(lifetime), lifetime);
-      }
-      static withScope(block) {
-        let scope = new _Scope(), blockError;
-        try {
-          return block(scope);
-        } catch (error) {
-          throw blockError = error, error;
-        } finally {
-          scopeFinally(scope, blockError);
-        }
-      }
-      static withScopeMaybeAsync(_this, block) {
-        return maybeAsync(void 0, function* (awaited) {
-          let scope = new _Scope(), blockError;
-          try {
-            return yield* awaited.of(block.call(_this, awaited, scope));
-          } catch (error) {
-            throw blockError = error, error;
-          } finally {
-            scopeFinally(scope, blockError);
-          }
-        });
-      }
-      static async withScopeAsync(block) {
-        let scope = new _Scope(), blockError;
-        try {
-          return await block(scope);
-        } catch (error) {
-          throw blockError = error, error;
-        } finally {
-          scopeFinally(scope, blockError);
-        }
-      }
-      get alive() {
-        return this._disposables.alive;
-      }
-      dispose() {
-        let lifetimes = Array.from(this._disposables.value.values()).reverse();
-        for (let lifetime of lifetimes) lifetime.alive && lifetime.dispose();
-        this._disposables.dispose();
-      }
-    };
-    AbstractDisposableResult = class _AbstractDisposableResult extends UsingDisposable {
-      static success(value) {
-        return new DisposableSuccess(value);
-      }
-      static fail(error, onUnwrap) {
-        return new DisposableFail(error, onUnwrap);
-      }
-      static is(result) {
-        return result instanceof _AbstractDisposableResult;
-      }
-    };
-    DisposableSuccess = class extends AbstractDisposableResult {
-      constructor(value) {
-        super();
-        this.value = value;
-      }
-      get alive() {
-        return isDisposable(this.value) ? this.value.alive : true;
-      }
-      dispose() {
-        isDisposable(this.value) && this.value.dispose();
-      }
-      unwrap() {
-        return this.value;
-      }
-      unwrapOr(_fallback) {
-        return this.value;
-      }
-    };
-    DisposableFail = class extends AbstractDisposableResult {
-      constructor(error, onUnwrap) {
-        super();
-        this.error = error;
-        this.onUnwrap = onUnwrap;
-      }
-      get alive() {
-        return isDisposable(this.error) ? this.error.alive : true;
-      }
-      dispose() {
-        isDisposable(this.error) && this.error.dispose();
-      }
-      unwrap() {
-        throw this.onUnwrap(this), this.error;
-      }
-      unwrapOr(fallback) {
-        return fallback;
-      }
-    };
-    DisposableResult = AbstractDisposableResult;
-    QuickJSDeferredPromise = class extends UsingDisposable {
-      constructor(args) {
-        super();
-        this.resolve = (value) => {
-          this.resolveHandle.alive && (this.context.unwrapResult(this.context.callFunction(this.resolveHandle, this.context.undefined, value || this.context.undefined)).dispose(), this.disposeResolvers(), this.onSettled());
-        };
-        this.reject = (value) => {
-          this.rejectHandle.alive && (this.context.unwrapResult(this.context.callFunction(this.rejectHandle, this.context.undefined, value || this.context.undefined)).dispose(), this.disposeResolvers(), this.onSettled());
-        };
-        this.dispose = () => {
-          this.handle.alive && this.handle.dispose(), this.disposeResolvers();
-        };
-        this.context = args.context, this.owner = args.context.runtime, this.handle = args.promiseHandle, this.settled = new Promise((resolve) => {
-          this.onSettled = resolve;
-        }), this.resolveHandle = args.resolveHandle, this.rejectHandle = args.rejectHandle;
-      }
-      get alive() {
-        return this.handle.alive || this.resolveHandle.alive || this.rejectHandle.alive;
-      }
-      disposeResolvers() {
-        this.resolveHandle.alive && this.resolveHandle.dispose(), this.rejectHandle.alive && this.rejectHandle.dispose();
-      }
-    };
-    ModuleMemory = class {
-      constructor(module2) {
-        this.module = module2;
-      }
-      toPointerArray(handleArray) {
-        let typedArray = new Int32Array(handleArray.map((handle) => handle.value)), numBytes = typedArray.length * typedArray.BYTES_PER_ELEMENT, ptr = this.module._malloc(numBytes);
-        return new Uint8Array(this.module.HEAPU8.buffer, ptr, numBytes).set(new Uint8Array(typedArray.buffer)), new Lifetime(ptr, void 0, (ptr2) => this.module._free(ptr2));
-      }
-      newTypedArray(kind, length) {
-        let zeros = new kind(new Array(length).fill(0)), numBytes = zeros.length * zeros.BYTES_PER_ELEMENT, ptr = this.module._malloc(numBytes), typedArray = new kind(this.module.HEAPU8.buffer, ptr, length);
-        return typedArray.set(zeros), new Lifetime({ typedArray, ptr }, void 0, (value) => this.module._free(value.ptr));
-      }
-      newMutablePointerArray(length) {
-        return this.newTypedArray(Int32Array, length);
-      }
-      newHeapCharPointer(string) {
-        let strlen = this.module.lengthBytesUTF8(string), dataBytes = strlen + 1, ptr = this.module._malloc(dataBytes);
-        return this.module.stringToUTF8(string, ptr, dataBytes), new Lifetime({ ptr, strlen }, void 0, (value) => this.module._free(value.ptr));
-      }
-      newHeapBufferPointer(buffer) {
-        let numBytes = buffer.byteLength, ptr = this.module._malloc(numBytes);
-        return this.module.HEAPU8.set(buffer, ptr), new Lifetime({ pointer: ptr, numBytes }, void 0, (value) => this.module._free(value.pointer));
-      }
-      consumeHeapCharPointer(ptr) {
-        let str = this.module.UTF8ToString(ptr);
-        return this.module._free(ptr), str;
-      }
-    };
-    UnstableSymbol = Symbol("Unstable");
-    DefaultIntrinsics = Object.freeze({ BaseObjects: true, Date: true, Eval: true, StringNormalize: true, RegExp: true, JSON: true, Proxy: true, MapSet: true, TypedArrays: true, Promise: true });
-    QuickJSIterator = class extends UsingDisposable {
-      constructor(handle, context) {
-        super();
-        this.handle = handle;
-        this.context = context;
-        this._isDone = false;
-        this.owner = context.runtime;
-      }
-      [Symbol.iterator]() {
-        return this;
-      }
-      next(value) {
-        if (!this.alive || this._isDone) return { done: true, value: void 0 };
-        let nextMethod = this._next ?? (this._next = this.context.getProp(this.handle, "next"));
-        return this.callIteratorMethod(nextMethod, value);
-      }
-      return(value) {
-        if (!this.alive) return { done: true, value: void 0 };
-        let returnMethod = this.context.getProp(this.handle, "return");
-        if (returnMethod === this.context.undefined && value === void 0) return this.dispose(), { done: true, value: void 0 };
-        let result = this.callIteratorMethod(returnMethod, value);
-        return returnMethod.dispose(), this.dispose(), result;
-      }
-      throw(e) {
-        if (!this.alive) return { done: true, value: void 0 };
-        let errorHandle = e instanceof Lifetime ? e : this.context.newError(e), throwMethod = this.context.getProp(this.handle, "throw"), result = this.callIteratorMethod(throwMethod, e);
-        return errorHandle.alive && errorHandle.dispose(), throwMethod.dispose(), this.dispose(), result;
-      }
-      get alive() {
-        return this.handle.alive;
-      }
-      dispose() {
-        this._isDone = true, this.handle.dispose(), this._next?.dispose();
-      }
-      callIteratorMethod(method, input) {
-        let callResult = input ? this.context.callFunction(method, this.handle, input) : this.context.callFunction(method, this.handle);
-        if (callResult.error) return this.dispose(), { value: callResult };
-        let done = this.context.getProp(callResult.value, "done").consume((v) => this.context.dump(v)), value = this.context.getProp(callResult.value, "value");
-        return callResult.value.dispose(), done && this.dispose(), { value: DisposableResult.success(value), done };
-      }
-    };
-    INT32_MIN = -2147483648;
-    INT32_MAX = 2147483647;
-    INVALID_HOST_REF_ID = 0;
-    HostRefMap = class {
-      constructor() {
-        this.nextId = INT32_MIN;
-        this.freelist = [];
-        this.groups = /* @__PURE__ */ new Map();
-      }
-      put(value) {
-        let id = this.allocateId(), groupId = getGroupId(id), group = this.groups.get(groupId);
-        return group || (group = /* @__PURE__ */ new Map(), this.groups.set(groupId, group)), group.set(id, value), id;
-      }
-      get(id) {
-        if (id === INVALID_HOST_REF_ID) throw new QuickJSHostRefInvalid("no host reference id defined");
-        let groupId = getGroupId(id), group = this.groups.get(groupId);
-        if (!group) throw new QuickJSHostRefInvalid(`host reference id ${id} is not defined`);
-        let value = group.get(id);
-        if (!value) throw new QuickJSHostRefInvalid(`host reference id ${id} is not defined`);
-        return value;
-      }
-      delete(id) {
-        if (id === INVALID_HOST_REF_ID) throw new QuickJSHostRefInvalid("no host reference id defined");
-        let groupId = getGroupId(id), group = this.groups.get(groupId);
-        if (!group) throw new QuickJSHostRefInvalid(`host reference id ${id} is not defined`);
-        group.delete(id), group.size === 0 && this.groups.delete(groupId), this.freelist.push(id);
-      }
-      allocateId() {
-        if (this.freelist.length > 0) return this.freelist.shift();
-        if (this.nextId === INVALID_HOST_REF_ID && this.nextId++, this.nextId > INT32_MAX) throw new QuickJSHostRefRangeExceeded(`HostRefMap: too many host refs created without disposing. Max simultaneous host refs: ${INT32_MAX - INT32_MIN}`);
-        return this.nextId++;
-      }
-    };
-    HostRef = class extends UsingDisposable {
-      constructor(runtime, handle, id) {
-        if (id === INVALID_HOST_REF_ID) throw new QuickJSHostRefInvalid("cannot create HostRef with undefined id");
-        super();
-        this.runtime = runtime;
-        this.handle = handle;
-        this.id = id;
-      }
-      get alive() {
-        return this.handle.alive;
-      }
-      dispose() {
-        this.handle.dispose();
-      }
-      get value() {
-        return this.runtime.hostRefs.get(this.id);
-      }
-    };
-    ContextMemory = class extends ModuleMemory {
-      constructor(args) {
-        super(args.module);
-        this.scope = new Scope();
-        this.copyJSValue = (ptr) => this.ffi.QTS_DupValuePointer(this.ctx.value, ptr);
-        this.freeJSValue = (ptr) => {
-          this.ffi.QTS_FreeValuePointer(this.ctx.value, ptr);
-        };
-        args.ownedLifetimes?.forEach((lifetime) => this.scope.manage(lifetime)), this.owner = args.owner, this.module = args.module, this.ffi = args.ffi, this.rt = args.rt, this.ctx = this.scope.manage(args.ctx);
-      }
-      get alive() {
-        return this.scope.alive;
-      }
-      dispose() {
-        return this.scope.dispose();
-      }
-      [Symbol.dispose]() {
-        return this.dispose();
-      }
-      manage(lifetime) {
-        return this.scope.manage(lifetime);
-      }
-      consumeJSCharPointer(ptr) {
-        let str = this.module.UTF8ToString(ptr);
-        return this.ffi.QTS_FreeCString(this.ctx.value, ptr), str;
-      }
-      heapValueHandle(ptr, extraDispose) {
-        let dispose = extraDispose ? (val) => {
-          extraDispose(), this.freeJSValue(val);
-        } : this.freeJSValue;
-        return new Lifetime(ptr, this.copyJSValue, dispose, this.owner);
-      }
-      staticHeapValueHandle(ptr) {
-        return this.manage(this.heapValueHandle(ptr)), new StaticLifetime(ptr, this.owner);
-      }
-    };
-    QuickJSContext = class extends UsingDisposable {
-      constructor(args) {
-        super();
-        this._undefined = void 0;
-        this._null = void 0;
-        this._false = void 0;
-        this._true = void 0;
-        this._global = void 0;
-        this._BigInt = void 0;
-        this._Symbol = void 0;
-        this._SymbolIterator = void 0;
-        this._SymbolAsyncIterator = void 0;
-        this.cToHostCallbacks = { callFunction: (ctx, this_ptr, argc, argv, fn_id) => {
-          if (ctx !== this.ctx.value) throw new Error("QuickJSContext instance received C -> JS call with mismatched ctx");
-          let fn = this.getFunction(fn_id);
-          return Scope.withScopeMaybeAsync(this, function* (awaited, scope) {
-            let thisHandle = scope.manage(new WeakLifetime(this_ptr, this.memory.copyJSValue, this.memory.freeJSValue, this.runtime)), argHandles = new Array(argc);
-            for (let i = 0; i < argc; i++) {
-              let ptr = this.ffi.QTS_ArgvGetJSValueConstPointer(argv, i);
-              argHandles[i] = scope.manage(new WeakLifetime(ptr, this.memory.copyJSValue, this.memory.freeJSValue, this.runtime));
-            }
-            try {
-              let result = yield* awaited(fn.apply(thisHandle, argHandles));
-              if (result) {
-                if ("error" in result && result.error) throw this.runtime.debugLog("throw error", result.error), result.error;
-                let handle = scope.manage(result instanceof Lifetime ? result : result.value);
-                return this.ffi.QTS_DupValuePointer(this.ctx.value, handle.value);
-              }
-              return 0;
-            } catch (error) {
-              return this.errorToHandle(error).consume((errorHandle) => this.ffi.QTS_Throw(this.ctx.value, errorHandle.value));
-            }
-          });
-        } };
-        this.runtime = args.runtime, this.module = args.module, this.ffi = args.ffi, this.rt = args.rt, this.ctx = args.ctx, this.memory = new ContextMemory({ ...args, owner: this.runtime }), args.callbacks.setContextCallbacks(this.ctx.value, this.cToHostCallbacks), this.dump = this.dump.bind(this), this.getString = this.getString.bind(this), this.getNumber = this.getNumber.bind(this), this.resolvePromise = this.resolvePromise.bind(this), this.uint32Out = this.memory.manage(this.memory.newTypedArray(Uint32Array, 1));
-      }
-      get alive() {
-        return this.memory.alive;
-      }
-      dispose() {
-        this.memory.dispose();
-      }
-      get undefined() {
-        if (this._undefined) return this._undefined;
-        let ptr = this.ffi.QTS_GetUndefined();
-        return this._undefined = new StaticLifetime(ptr);
-      }
-      get null() {
-        if (this._null) return this._null;
-        let ptr = this.ffi.QTS_GetNull();
-        return this._null = new StaticLifetime(ptr);
-      }
-      get true() {
-        if (this._true) return this._true;
-        let ptr = this.ffi.QTS_GetTrue();
-        return this._true = new StaticLifetime(ptr);
-      }
-      get false() {
-        if (this._false) return this._false;
-        let ptr = this.ffi.QTS_GetFalse();
-        return this._false = new StaticLifetime(ptr);
-      }
-      get global() {
-        if (this._global) return this._global;
-        let ptr = this.ffi.QTS_GetGlobalObject(this.ctx.value);
-        return this._global = this.memory.staticHeapValueHandle(ptr), this._global;
-      }
-      newNumber(num) {
-        return this.memory.heapValueHandle(this.ffi.QTS_NewFloat64(this.ctx.value, num));
-      }
-      newString(str) {
-        let ptr = this.memory.newHeapCharPointer(str).consume((charHandle) => this.ffi.QTS_NewString(this.ctx.value, charHandle.value.ptr));
-        return this.memory.heapValueHandle(ptr);
-      }
-      newUniqueSymbol(description) {
-        let key = (typeof description == "symbol" ? description.description : description) ?? "", ptr = this.memory.newHeapCharPointer(key).consume((charHandle) => this.ffi.QTS_NewSymbol(this.ctx.value, charHandle.value.ptr, 0));
-        return this.memory.heapValueHandle(ptr);
-      }
-      newSymbolFor(key) {
-        let description = (typeof key == "symbol" ? key.description : key) ?? "", ptr = this.memory.newHeapCharPointer(description).consume((charHandle) => this.ffi.QTS_NewSymbol(this.ctx.value, charHandle.value.ptr, 1));
-        return this.memory.heapValueHandle(ptr);
-      }
-      getWellKnownSymbol(name) {
-        return this._Symbol ?? (this._Symbol = this.memory.manage(this.getProp(this.global, "Symbol"))), this.getProp(this._Symbol, name);
-      }
-      newBigInt(num) {
-        if (!this._BigInt) {
-          let bigIntHandle2 = this.getProp(this.global, "BigInt");
-          this.memory.manage(bigIntHandle2), this._BigInt = new StaticLifetime(bigIntHandle2.value, this.runtime);
-        }
-        let bigIntHandle = this._BigInt, asString = String(num);
-        return this.newString(asString).consume((handle) => this.unwrapResult(this.callFunction(bigIntHandle, this.undefined, handle)));
-      }
-      newObject(prototype) {
-        prototype && this.runtime.assertOwned(prototype);
-        let ptr = prototype ? this.ffi.QTS_NewObjectProto(this.ctx.value, prototype.value) : this.ffi.QTS_NewObject(this.ctx.value);
-        return this.memory.heapValueHandle(ptr);
-      }
-      newArray() {
-        let ptr = this.ffi.QTS_NewArray(this.ctx.value);
-        return this.memory.heapValueHandle(ptr);
-      }
-      newArrayBuffer(buffer) {
-        let array = new Uint8Array(buffer), handle = this.memory.newHeapBufferPointer(array), ptr = this.ffi.QTS_NewArrayBuffer(this.ctx.value, handle.value.pointer, array.length);
-        return this.memory.heapValueHandle(ptr);
-      }
-      newPromise(value) {
-        let deferredPromise = Scope.withScope((scope) => {
-          let mutablePointerArray = scope.manage(this.memory.newMutablePointerArray(2)), promisePtr = this.ffi.QTS_NewPromiseCapability(this.ctx.value, mutablePointerArray.value.ptr), promiseHandle = this.memory.heapValueHandle(promisePtr), [resolveHandle, rejectHandle] = Array.from(mutablePointerArray.value.typedArray).map((jsvaluePtr) => this.memory.heapValueHandle(jsvaluePtr));
-          return new QuickJSDeferredPromise({ context: this, promiseHandle, resolveHandle, rejectHandle });
-        });
-        return value && typeof value == "function" && (value = new Promise(value)), value && Promise.resolve(value).then(deferredPromise.resolve, (error) => error instanceof Lifetime ? deferredPromise.reject(error) : this.newError(error).consume(deferredPromise.reject)), deferredPromise;
-      }
-      newFunction(nameOrFn, maybeFn) {
-        let fn = typeof nameOrFn == "function" ? nameOrFn : maybeFn;
-        if (!fn) throw new TypeError("Expected a function");
-        return this.newFunctionWithOptions({ name: typeof nameOrFn == "string" ? nameOrFn : void 0, length: fn.length, isConstructor: false, fn });
-      }
-      newConstructorFunction(nameOrFn, maybeFn) {
-        let fn = typeof nameOrFn == "function" ? nameOrFn : maybeFn;
-        if (!fn) throw new TypeError("Expected a function");
-        return this.newFunctionWithOptions({ name: typeof nameOrFn == "string" ? nameOrFn : void 0, length: fn.length, isConstructor: true, fn });
-      }
-      newFunctionWithOptions(args) {
-        let { name, length, isConstructor, fn } = args, refId = this.runtime.hostRefs.put(fn);
-        try {
-          return this.memory.heapValueHandle(this.ffi.QTS_NewFunction(this.ctx.value, name ?? "", length, isConstructor, refId));
-        } catch (error) {
-          throw this.runtime.hostRefs.delete(refId), error;
-        }
-      }
-      newError(error) {
-        let errorHandle = this.memory.heapValueHandle(this.ffi.QTS_NewError(this.ctx.value));
-        return error && typeof error == "object" ? (error.name !== void 0 && this.newString(error.name).consume((handle) => this.setProp(errorHandle, "name", handle)), error.message !== void 0 && this.newString(error.message).consume((handle) => this.setProp(errorHandle, "message", handle))) : typeof error == "string" ? this.newString(error).consume((handle) => this.setProp(errorHandle, "message", handle)) : error !== void 0 && this.newString(String(error)).consume((handle) => this.setProp(errorHandle, "message", handle)), errorHandle;
-      }
-      newHostRef(value) {
-        let id = this.runtime.hostRefs.put(value);
-        try {
-          let handle = this.memory.heapValueHandle(this.ffi.QTS_NewHostRef(this.ctx.value, id));
-          return new HostRef(this.runtime, handle, id);
-        } catch (error) {
-          throw this.runtime.hostRefs.delete(id), error;
-        }
-      }
-      toHostRef(handle) {
-        let id = this.ffi.QTS_GetHostRefId(handle.value);
-        if (id !== 0) return this.runtime.hostRefs.get(id), new HostRef(this.runtime, handle.dup(), id);
-      }
-      unwrapHostRef(handle) {
-        let id = this.ffi.QTS_GetHostRefId(handle.value);
-        if (id === 0) throw new QuickJSHostRefInvalid("handle is not a HostRef");
-        return this.runtime.hostRefs.get(id);
-      }
-      typeof(handle) {
-        return this.runtime.assertOwned(handle), this.memory.consumeHeapCharPointer(this.ffi.QTS_Typeof(this.ctx.value, handle.value));
-      }
-      getNumber(handle) {
-        return this.runtime.assertOwned(handle), this.ffi.QTS_GetFloat64(this.ctx.value, handle.value);
-      }
-      getString(handle) {
-        return this.runtime.assertOwned(handle), this.memory.consumeJSCharPointer(this.ffi.QTS_GetString(this.ctx.value, handle.value));
-      }
-      getSymbol(handle) {
-        this.runtime.assertOwned(handle);
-        let key = this.memory.consumeJSCharPointer(this.ffi.QTS_GetSymbolDescriptionOrKey(this.ctx.value, handle.value));
-        return this.ffi.QTS_IsGlobalSymbol(this.ctx.value, handle.value) ? Symbol.for(key) : Symbol(key);
-      }
-      getBigInt(handle) {
-        this.runtime.assertOwned(handle);
-        let asString = this.getString(handle);
-        return BigInt(asString);
-      }
-      getArrayBuffer(handle) {
-        this.runtime.assertOwned(handle);
-        let len = this.ffi.QTS_GetArrayBufferLength(this.ctx.value, handle.value), ptr = this.ffi.QTS_GetArrayBuffer(this.ctx.value, handle.value);
-        if (!ptr) throw new Error("Couldn't allocate memory to get ArrayBuffer");
-        return new Lifetime(this.module.HEAPU8.subarray(ptr, ptr + len), void 0, () => this.module._free(ptr));
-      }
-      getPromiseState(handle) {
-        this.runtime.assertOwned(handle);
-        let state = this.ffi.QTS_PromiseState(this.ctx.value, handle.value);
-        if (state < 0) return { type: "fulfilled", value: handle, notAPromise: true };
-        if (state === JSPromiseStateEnum.Pending) return { type: "pending", get error() {
-          return new QuickJSPromisePending("Cannot unwrap a pending promise");
-        } };
-        let ptr = this.ffi.QTS_PromiseResult(this.ctx.value, handle.value), result = this.memory.heapValueHandle(ptr);
-        if (state === JSPromiseStateEnum.Fulfilled) return { type: "fulfilled", value: result };
-        if (state === JSPromiseStateEnum.Rejected) return { type: "rejected", error: result };
-        throw result.dispose(), new Error(`Unknown JSPromiseStateEnum: ${state}`);
-      }
-      resolvePromise(promiseLikeHandle) {
-        this.runtime.assertOwned(promiseLikeHandle);
-        let vmResolveResult = Scope.withScope((scope) => {
-          let vmPromise = scope.manage(this.getProp(this.global, "Promise")), vmPromiseResolve = scope.manage(this.getProp(vmPromise, "resolve"));
-          return this.callFunction(vmPromiseResolve, vmPromise, promiseLikeHandle);
-        });
-        return vmResolveResult.error ? Promise.resolve(vmResolveResult) : new Promise((resolve) => {
-          Scope.withScope((scope) => {
-            let resolveHandle = scope.manage(this.newFunction("resolve", (value) => {
-              resolve(this.success(value && value.dup()));
-            })), rejectHandle = scope.manage(this.newFunction("reject", (error) => {
-              resolve(this.fail(error && error.dup()));
-            })), promiseHandle = scope.manage(vmResolveResult.value), promiseThenHandle = scope.manage(this.getProp(promiseHandle, "then"));
-            this.callFunction(promiseThenHandle, promiseHandle, resolveHandle, rejectHandle).unwrap().dispose();
-          });
-        });
-      }
-      isEqual(a, b, equalityType = IsEqualOp.IsStrictlyEqual) {
-        if (a === b) return true;
-        this.runtime.assertOwned(a), this.runtime.assertOwned(b);
-        let result = this.ffi.QTS_IsEqual(this.ctx.value, a.value, b.value, equalityType);
-        if (result === -1) throw new QuickJSNotImplemented("WASM variant does not expose equality");
-        return !!result;
-      }
-      eq(handle, other) {
-        return this.isEqual(handle, other, IsEqualOp.IsStrictlyEqual);
-      }
-      sameValue(handle, other) {
-        return this.isEqual(handle, other, IsEqualOp.IsSameValue);
-      }
-      sameValueZero(handle, other) {
-        return this.isEqual(handle, other, IsEqualOp.IsSameValueZero);
-      }
-      getProp(handle, key) {
-        this.runtime.assertOwned(handle);
-        let ptr;
-        return typeof key == "number" && key >= 0 ? ptr = this.ffi.QTS_GetPropNumber(this.ctx.value, handle.value, key) : ptr = this.borrowPropertyKey(key).consume((quickJSKey) => this.ffi.QTS_GetProp(this.ctx.value, handle.value, quickJSKey.value)), this.memory.heapValueHandle(ptr);
-      }
-      getLength(handle) {
-        if (this.runtime.assertOwned(handle), !(this.ffi.QTS_GetLength(this.ctx.value, this.uint32Out.value.ptr, handle.value) < 0)) return this.uint32Out.value.typedArray[0];
-      }
-      getOwnPropertyNames(handle, options = { strings: true, numbersAsStrings: true }) {
-        this.runtime.assertOwned(handle), handle.value;
-        let flags = getOwnPropertyNamesOptionsToFlags(options);
-        if (flags === 0) throw new QuickJSEmptyGetOwnPropertyNames("No options set, will return an empty array");
-        return Scope.withScope((scope) => {
-          let outPtr = scope.manage(this.memory.newMutablePointerArray(1)), errorPtr = this.ffi.QTS_GetOwnPropertyNames(this.ctx.value, outPtr.value.ptr, this.uint32Out.value.ptr, handle.value, flags);
-          if (errorPtr) return this.fail(this.memory.heapValueHandle(errorPtr));
-          let len = this.uint32Out.value.typedArray[0], ptr = outPtr.value.typedArray[0], pointerArray = new Uint32Array(this.module.HEAP8.buffer, ptr, len), handles = Array.from(pointerArray).map((ptr2) => this.memory.heapValueHandle(ptr2));
-          return this.ffi.QTS_FreeVoidPointer(this.ctx.value, ptr), this.success(createDisposableArray(handles));
-        });
-      }
-      getIterator(iterableHandle) {
-        let SymbolIterator = this._SymbolIterator ?? (this._SymbolIterator = this.memory.manage(this.getWellKnownSymbol("iterator")));
-        return Scope.withScope((scope) => {
-          let methodHandle = scope.manage(this.getProp(iterableHandle, SymbolIterator)), iteratorCallResult = this.callFunction(methodHandle, iterableHandle);
-          return iteratorCallResult.error ? iteratorCallResult : this.success(new QuickJSIterator(iteratorCallResult.value, this));
-        });
-      }
-      setProp(handle, key, value) {
-        this.runtime.assertOwned(handle), this.borrowPropertyKey(key).consume((quickJSKey) => this.ffi.QTS_SetProp(this.ctx.value, handle.value, quickJSKey.value, value.value));
-      }
-      defineProp(handle, key, descriptor) {
-        this.runtime.assertOwned(handle), Scope.withScope((scope) => {
-          let quickJSKey = scope.manage(this.borrowPropertyKey(key)), value = descriptor.value || this.undefined, configurable = !!descriptor.configurable, enumerable = !!descriptor.enumerable, hasValue = !!descriptor.value, get = descriptor.get ? scope.manage(this.newFunction(descriptor.get.name, descriptor.get)) : this.undefined, set = descriptor.set ? scope.manage(this.newFunction(descriptor.set.name, descriptor.set)) : this.undefined;
-          this.ffi.QTS_DefineProp(this.ctx.value, handle.value, quickJSKey.value, value.value, get.value, set.value, configurable, enumerable, hasValue);
-        });
-      }
-      callFunction(func, thisVal, ...restArgs) {
-        this.runtime.assertOwned(func);
-        let args, firstArg = restArgs[0];
-        firstArg === void 0 || Array.isArray(firstArg) ? args = firstArg ?? [] : args = restArgs;
-        let resultPtr = this.memory.toPointerArray(args).consume((argsArrayPtr) => this.ffi.QTS_Call(this.ctx.value, func.value, thisVal.value, args.length, argsArrayPtr.value)), errorPtr = this.ffi.QTS_ResolveException(this.ctx.value, resultPtr);
-        return errorPtr ? (this.ffi.QTS_FreeValuePointer(this.ctx.value, resultPtr), this.fail(this.memory.heapValueHandle(errorPtr))) : this.success(this.memory.heapValueHandle(resultPtr));
-      }
-      callMethod(thisHandle, key, args = []) {
-        return this.getProp(thisHandle, key).consume((func) => this.callFunction(func, thisHandle, args));
-      }
-      evalCode(code, filename = "eval.js", options) {
-        let detectModule = options === void 0 ? 1 : 0, flags = evalOptionsToFlags(options), resultPtr = this.memory.newHeapCharPointer(code).consume((charHandle) => this.ffi.QTS_Eval(this.ctx.value, charHandle.value.ptr, charHandle.value.strlen, filename, detectModule, flags)), errorPtr = this.ffi.QTS_ResolveException(this.ctx.value, resultPtr);
-        return errorPtr ? (this.ffi.QTS_FreeValuePointer(this.ctx.value, resultPtr), this.fail(this.memory.heapValueHandle(errorPtr))) : this.success(this.memory.heapValueHandle(resultPtr));
-      }
-      throw(error) {
-        return this.errorToHandle(error).consume((handle) => this.ffi.QTS_Throw(this.ctx.value, handle.value));
-      }
-      borrowPropertyKey(key) {
-        return typeof key == "number" ? this.newNumber(key) : typeof key == "string" ? this.newString(key) : new StaticLifetime(key.value, this.runtime);
-      }
-      getMemory(rt) {
-        if (rt === this.rt.value) return this.memory;
-        throw new Error("Private API. Cannot get memory from a different runtime");
-      }
-      dump(handle) {
-        this.runtime.assertOwned(handle);
-        let type = this.typeof(handle);
-        if (type === "string") return this.getString(handle);
-        if (type === "number") return this.getNumber(handle);
-        if (type === "bigint") return this.getBigInt(handle);
-        if (type === "undefined") return;
-        if (type === "symbol") return this.getSymbol(handle);
-        let asPromiseState = this.getPromiseState(handle);
-        if (asPromiseState.type === "fulfilled" && !asPromiseState.notAPromise) return handle.dispose(), { type: asPromiseState.type, value: asPromiseState.value.consume(this.dump) };
-        if (asPromiseState.type === "pending") return handle.dispose(), { type: asPromiseState.type };
-        if (asPromiseState.type === "rejected") return handle.dispose(), { type: asPromiseState.type, error: asPromiseState.error.consume(this.dump) };
-        let str = this.memory.consumeJSCharPointer(this.ffi.QTS_Dump(this.ctx.value, handle.value));
-        try {
-          return JSON.parse(str);
-        } catch {
-          return str;
-        }
-      }
-      unwrapResult(result) {
-        if (result.error) {
-          let context = "context" in result.error ? result.error.context : this, cause = result.error.consume((error) => this.dump(error));
-          if (cause && typeof cause == "object" && typeof cause.message == "string") {
-            let { message, name, stack, ...rest } = cause, exception = new QuickJSUnwrapError(cause, context);
-            typeof name == "string" && (exception.name = cause.name), exception.message = message;
-            let hostStack = exception.stack;
-            throw typeof stack == "string" && (exception.stack = `${name}: ${message}
-${cause.stack}Host: ${hostStack}`), Object.assign(exception, rest), exception;
-          }
-          throw new QuickJSUnwrapError(cause);
-        }
-        return result.value;
-      }
-      [Symbol.for("nodejs.util.inspect.custom")]() {
-        return this.alive ? `${this.constructor.name} { ctx: ${this.ctx.value} rt: ${this.rt.value} }` : `${this.constructor.name} { disposed }`;
-      }
-      getFunction(fn_id) {
-        let fn = this.runtime.hostRefs.get(fn_id);
-        if (typeof fn != "function") throw new Error(`Host reference ${fn_id} is not a function`);
-        return fn;
-      }
-      errorToHandle(error) {
-        return error instanceof Lifetime ? error : this.newError(error);
-      }
-      encodeBinaryJSON(handle) {
-        let ptr = this.ffi.QTS_bjson_encode(this.ctx.value, handle.value);
-        return this.memory.heapValueHandle(ptr);
-      }
-      decodeBinaryJSON(handle) {
-        let ptr = this.ffi.QTS_bjson_decode(this.ctx.value, handle.value);
-        return this.memory.heapValueHandle(ptr);
-      }
-      success(value) {
-        return DisposableResult.success(value);
-      }
-      fail(error) {
-        return DisposableResult.fail(error, (error2) => this.unwrapResult(error2));
-      }
-    };
-    QuickJSRuntime = class extends UsingDisposable {
-      constructor(args) {
-        super();
-        this.scope = new Scope();
-        this.contextMap = /* @__PURE__ */ new Map();
-        this.hostRefs = new HostRefMap();
-        this._debugMode = false;
-        this.cToHostCallbacks = { freeHostRef: (rt, host_ref_id) => {
-          if (rt !== this.rt.value) throw new Error("Runtime pointer mismatch");
-          this.hostRefs.delete(host_ref_id);
-        }, shouldInterrupt: (rt) => {
-          if (rt !== this.rt.value) throw new Error("QuickJSContext instance received C -> JS interrupt with mismatched rt");
-          let fn = this.interruptHandler;
-          if (!fn) throw new Error("QuickJSContext had no interrupt handler");
-          return fn(this) ? 1 : 0;
-        }, loadModuleSource: maybeAsyncFn(this, function* (awaited, rt, ctx, moduleName) {
-          let moduleLoader = this.moduleLoader;
-          if (!moduleLoader) throw new Error("Runtime has no module loader");
-          if (rt !== this.rt.value) throw new Error("Runtime pointer mismatch");
-          let context = this.contextMap.get(ctx) ?? this.newContext({ contextPointer: ctx });
-          try {
-            let result = yield* awaited(moduleLoader(moduleName, context));
-            if (typeof result == "object" && "error" in result && result.error) throw this.debugLog("cToHostLoadModule: loader returned error", result.error), result.error;
-            let moduleSource = typeof result == "string" ? result : "value" in result ? result.value : result;
-            return this.memory.newHeapCharPointer(moduleSource).value.ptr;
-          } catch (error) {
-            return this.debugLog("cToHostLoadModule: caught error", error), context.throw(error), 0;
-          }
-        }), normalizeModule: maybeAsyncFn(this, function* (awaited, rt, ctx, baseModuleName, moduleNameRequest) {
-          let moduleNormalizer = this.moduleNormalizer;
-          if (!moduleNormalizer) throw new Error("Runtime has no module normalizer");
-          if (rt !== this.rt.value) throw new Error("Runtime pointer mismatch");
-          let context = this.contextMap.get(ctx) ?? this.newContext({ contextPointer: ctx });
-          try {
-            let result = yield* awaited(moduleNormalizer(baseModuleName, moduleNameRequest, context));
-            if (typeof result == "object" && "error" in result && result.error) throw this.debugLog("cToHostNormalizeModule: normalizer returned error", result.error), result.error;
-            let name = typeof result == "string" ? result : result.value;
-            return context.getMemory(this.rt.value).newHeapCharPointer(name).value.ptr;
-          } catch (error) {
-            return this.debugLog("normalizeModule: caught error", error), context.throw(error), 0;
-          }
-        }) };
-        args.ownedLifetimes?.forEach((lifetime) => this.scope.manage(lifetime)), this.module = args.module, this.memory = new ModuleMemory(this.module), this.ffi = args.ffi, this.rt = args.rt, this.callbacks = args.callbacks, this.scope.manage(this.rt), this.callbacks.setRuntimeCallbacks(this.rt.value, this.cToHostCallbacks), this.executePendingJobs = this.executePendingJobs.bind(this), QTS_DEBUG && this.setDebugMode(true);
-      }
-      get alive() {
-        return this.scope.alive;
-      }
-      dispose() {
-        return this.scope.dispose();
-      }
-      newContext(options = {}) {
-        let intrinsics = intrinsicsToFlags(options.intrinsics), ctx = new Lifetime(options.contextPointer || this.ffi.QTS_NewContext(this.rt.value, intrinsics), void 0, (ctx_ptr) => {
-          this.contextMap.delete(ctx_ptr), this.callbacks.deleteContext(ctx_ptr), this.ffi.QTS_FreeContext(ctx_ptr);
-        }), context = new QuickJSContext({ module: this.module, ctx, ffi: this.ffi, rt: this.rt, ownedLifetimes: options.ownedLifetimes, runtime: this, callbacks: this.callbacks });
-        return this.contextMap.set(ctx.value, context), context;
-      }
-      setModuleLoader(moduleLoader, moduleNormalizer) {
-        this.moduleLoader = moduleLoader, this.moduleNormalizer = moduleNormalizer, this.ffi.QTS_RuntimeEnableModuleLoader(this.rt.value, this.moduleNormalizer ? 1 : 0);
-      }
-      removeModuleLoader() {
-        this.moduleLoader = void 0, this.ffi.QTS_RuntimeDisableModuleLoader(this.rt.value);
-      }
-      hasPendingJob() {
-        return !!this.ffi.QTS_IsJobPending(this.rt.value);
-      }
-      setInterruptHandler(cb) {
-        let prevInterruptHandler = this.interruptHandler;
-        this.interruptHandler = cb, prevInterruptHandler || this.ffi.QTS_RuntimeEnableInterruptHandler(this.rt.value);
-      }
-      removeInterruptHandler() {
-        this.interruptHandler && (this.ffi.QTS_RuntimeDisableInterruptHandler(this.rt.value), this.interruptHandler = void 0);
-      }
-      executePendingJobs(maxJobsToExecute = -1) {
-        let ctxPtrOut = this.memory.newMutablePointerArray(1), valuePtr = this.ffi.QTS_ExecutePendingJob(this.rt.value, maxJobsToExecute ?? -1, ctxPtrOut.value.ptr), ctxPtr = ctxPtrOut.value.typedArray[0];
-        if (ctxPtrOut.dispose(), ctxPtr === 0) return this.ffi.QTS_FreeValuePointerRuntime(this.rt.value, valuePtr), DisposableResult.success(0);
-        let context = this.contextMap.get(ctxPtr) ?? this.newContext({ contextPointer: ctxPtr }), resultValue = context.getMemory(this.rt.value).heapValueHandle(valuePtr);
-        if (context.typeof(resultValue) === "number") {
-          let executedJobs = context.getNumber(resultValue);
-          return resultValue.dispose(), DisposableResult.success(executedJobs);
-        } else {
-          let error = Object.assign(resultValue, { context });
-          return DisposableResult.fail(error, (error2) => context.unwrapResult(error2));
-        }
-      }
-      setMemoryLimit(limitBytes) {
-        if (limitBytes < 0 && limitBytes !== -1) throw new Error("Cannot set memory limit to negative number. To unset, pass -1");
-        this.ffi.QTS_RuntimeSetMemoryLimit(this.rt.value, limitBytes);
-      }
-      computeMemoryUsage() {
-        let serviceContextMemory = this.getSystemContext().getMemory(this.rt.value);
-        return serviceContextMemory.heapValueHandle(this.ffi.QTS_RuntimeComputeMemoryUsage(this.rt.value, serviceContextMemory.ctx.value));
-      }
-      dumpMemoryUsage() {
-        return this.memory.consumeHeapCharPointer(this.ffi.QTS_RuntimeDumpMemoryUsage(this.rt.value));
-      }
-      setMaxStackSize(stackSize) {
-        if (stackSize < 0) throw new Error("Cannot set memory limit to negative number. To unset, pass 0.");
-        this.ffi.QTS_RuntimeSetMaxStackSize(this.rt.value, stackSize);
-      }
-      assertOwned(handle) {
-        if (handle.owner && handle.owner.rt !== this.rt) throw new QuickJSWrongOwner(`Handle is not owned by this runtime: ${handle.owner.rt.value} != ${this.rt.value}`);
-      }
-      setDebugMode(enabled) {
-        this._debugMode = enabled, this.ffi.DEBUG && this.rt.alive && this.ffi.QTS_SetDebugLogEnabled(this.rt.value, enabled ? 1 : 0);
-      }
-      isDebugMode() {
-        return this._debugMode;
-      }
-      debugLog(...msg) {
-        this._debugMode && console.log("quickjs-emscripten:", ...msg);
-      }
-      [Symbol.for("nodejs.util.inspect.custom")]() {
-        return this.alive ? `${this.constructor.name} { rt: ${this.rt.value} }` : `${this.constructor.name} { disposed }`;
-      }
-      getSystemContext() {
-        return this.context || (this.context = this.scope.manage(this.newContext())), this.context;
-      }
-    };
-    QuickJSEmscriptenModuleCallbacks = class {
-      constructor(args) {
-        this.freeHostRef = args.freeHostRef, this.callFunction = args.callFunction, this.shouldInterrupt = args.shouldInterrupt, this.loadModuleSource = args.loadModuleSource, this.normalizeModule = args.normalizeModule;
-      }
-    };
-    QuickJSModuleCallbacks = class {
-      constructor(module2) {
-        this.contextCallbacks = /* @__PURE__ */ new Map();
-        this.runtimeCallbacks = /* @__PURE__ */ new Map();
-        this.suspendedCount = 0;
-        this.cToHostCallbacks = new QuickJSEmscriptenModuleCallbacks({ freeHostRef: (_asyncify, rt, host_ref_id) => {
-          let runtimeCallbacks = this.runtimeCallbacks.get(rt);
-          if (!runtimeCallbacks) throw new Error(`QuickJSRuntime(rt = ${rt}) not found when trying to free HostRef(id = ${host_ref_id})`);
-          runtimeCallbacks.freeHostRef(rt, host_ref_id);
-        }, callFunction: (asyncify, ctx, this_ptr, argc, argv, fn_id) => this.handleAsyncify(asyncify, () => {
-          try {
-            let vm = this.contextCallbacks.get(ctx);
-            if (!vm) throw new Error(`QuickJSContext(ctx = ${ctx}) not found for C function call "${fn_id}"`);
-            return vm.callFunction(ctx, this_ptr, argc, argv, fn_id);
-          } catch (error) {
-            return console.error("[C to host error: returning null]", error), 0;
-          }
-        }), shouldInterrupt: (asyncify, rt) => this.handleAsyncify(asyncify, () => {
-          try {
-            let vm = this.runtimeCallbacks.get(rt);
-            if (!vm) throw new Error(`QuickJSRuntime(rt = ${rt}) not found for C interrupt`);
-            return vm.shouldInterrupt(rt);
-          } catch (error) {
-            return console.error("[C to host interrupt: returning error]", error), 1;
-          }
-        }), loadModuleSource: (asyncify, rt, ctx, moduleName) => this.handleAsyncify(asyncify, () => {
-          try {
-            let runtimeCallbacks = this.runtimeCallbacks.get(rt);
-            if (!runtimeCallbacks) throw new Error(`QuickJSRuntime(rt = ${rt}) not found for C module loader`);
-            let loadModule = runtimeCallbacks.loadModuleSource;
-            if (!loadModule) throw new Error(`QuickJSRuntime(rt = ${rt}) does not support module loading`);
-            return loadModule(rt, ctx, moduleName);
-          } catch (error) {
-            return console.error("[C to host module loader error: returning null]", error), 0;
-          }
-        }), normalizeModule: (asyncify, rt, ctx, moduleBaseName, moduleName) => this.handleAsyncify(asyncify, () => {
-          try {
-            let runtimeCallbacks = this.runtimeCallbacks.get(rt);
-            if (!runtimeCallbacks) throw new Error(`QuickJSRuntime(rt = ${rt}) not found for C module loader`);
-            let normalizeModule = runtimeCallbacks.normalizeModule;
-            if (!normalizeModule) throw new Error(`QuickJSRuntime(rt = ${rt}) does not support module loading`);
-            return normalizeModule(rt, ctx, moduleBaseName, moduleName);
-          } catch (error) {
-            return console.error("[C to host module loader error: returning null]", error), 0;
-          }
-        }) });
-        this.module = module2, this.module.callbacks = this.cToHostCallbacks;
-      }
-      setRuntimeCallbacks(rt, callbacks) {
-        this.runtimeCallbacks.set(rt, callbacks);
-      }
-      deleteRuntime(rt) {
-        this.runtimeCallbacks.delete(rt);
-      }
-      setContextCallbacks(ctx, callbacks) {
-        this.contextCallbacks.set(ctx, callbacks);
-      }
-      deleteContext(ctx) {
-        this.contextCallbacks.delete(ctx);
-      }
-      handleAsyncify(asyncify, fn) {
-        if (asyncify) return asyncify.handleSleep((done) => {
-          try {
-            let result = fn();
-            if (!(result instanceof Promise)) {
-              debugLog("asyncify.handleSleep: not suspending:", result), done(result);
-              return;
-            }
-            if (this.suspended) throw new QuickJSAsyncifyError(`Already suspended at: ${this.suspended.stack}
-Attempted to suspend at:`);
-            this.suspended = new QuickJSAsyncifySuspended(`(${this.suspendedCount++})`), debugLog("asyncify.handleSleep: suspending:", this.suspended), result.then((resolvedResult) => {
-              this.suspended = void 0, debugLog("asyncify.handleSleep: resolved:", resolvedResult), done(resolvedResult);
-            }, (error) => {
-              debugLog("asyncify.handleSleep: rejected:", error), console.error("QuickJS: cannot handle error in suspended function", error), this.suspended = void 0;
-            });
-          } catch (error) {
-            throw debugLog("asyncify.handleSleep: error:", error), this.suspended = void 0, error;
-          }
-        });
-        let value = fn();
-        if (value instanceof Promise) throw new Error("Promise return value not supported in non-asyncify context.");
-        return value;
-      }
-    };
-    QuickJSWASMModule = class {
-      constructor(module2, ffi) {
-        this.module = module2, this.ffi = ffi, this.callbacks = new QuickJSModuleCallbacks(module2);
-      }
-      newRuntime(options = {}) {
-        let rt = new Lifetime(this.ffi.QTS_NewRuntime(), void 0, (rt_ptr) => {
-          this.ffi.QTS_FreeRuntime(rt_ptr), this.callbacks.deleteRuntime(rt_ptr);
-        }), runtime = new QuickJSRuntime({ module: this.module, callbacks: this.callbacks, ffi: this.ffi, rt });
-        return applyBaseRuntimeOptions(runtime, options), options.moduleLoader && runtime.setModuleLoader(options.moduleLoader), runtime;
-      }
-      newContext(options = {}) {
-        let runtime = this.newRuntime(), context = runtime.newContext({ ...options, ownedLifetimes: concat(runtime, options.ownedLifetimes) });
-        return runtime.context = context, context;
-      }
-      evalCode(code, options = {}) {
-        return Scope.withScope((scope) => {
-          let vm = scope.manage(this.newContext());
-          applyModuleEvalRuntimeOptions(vm.runtime, options);
-          let result = vm.evalCode(code, "eval.js");
-          if (options.memoryLimitBytes !== void 0 && vm.runtime.setMemoryLimit(-1), result.error) throw vm.dump(scope.manage(result.error));
-          return vm.dump(scope.manage(result.value));
-        });
-      }
-      getWasmMemory() {
-        let memory = this.module.quickjsEmscriptenInit?.(() => {
-        })?.getWasmMemory?.();
-        if (!memory) throw new Error("Variant does not support getting WebAssembly.Memory");
-        return memory;
-      }
-      getFFI() {
-        return this.ffi;
-      }
-    };
-  }
-});
-
-// node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/module-ES6BEMUI.mjs
-var module_ES6BEMUI_exports = {};
-__export(module_ES6BEMUI_exports, {
-  QuickJSModuleCallbacks: () => QuickJSModuleCallbacks,
-  QuickJSWASMModule: () => QuickJSWASMModule,
-  applyBaseRuntimeOptions: () => applyBaseRuntimeOptions,
-  applyModuleEvalRuntimeOptions: () => applyModuleEvalRuntimeOptions
-});
-var init_module_ES6BEMUI = __esm({
-  "node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/module-ES6BEMUI.mjs"() {
-    init_chunk_V2S4ZYJR();
-  }
-});
-
-// node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/ffi.mjs
-var ffi_exports = {};
-__export(ffi_exports, {
-  QuickJSFFI: () => QuickJSFFI
-});
-var QuickJSFFI;
-var init_ffi = __esm({
-  "node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/ffi.mjs"() {
-    QuickJSFFI = class {
-      constructor(module2) {
-        this.module = module2;
-        this.DEBUG = false;
-        this.QTS_Throw = this.module.cwrap("QTS_Throw", "number", ["number", "number"]);
-        this.QTS_NewError = this.module.cwrap("QTS_NewError", "number", ["number"]);
-        this.QTS_RuntimeSetMemoryLimit = this.module.cwrap("QTS_RuntimeSetMemoryLimit", null, ["number", "number"]);
-        this.QTS_RuntimeComputeMemoryUsage = this.module.cwrap("QTS_RuntimeComputeMemoryUsage", "number", ["number", "number"]);
-        this.QTS_RuntimeDumpMemoryUsage = this.module.cwrap("QTS_RuntimeDumpMemoryUsage", "number", ["number"]);
-        this.QTS_RecoverableLeakCheck = this.module.cwrap("QTS_RecoverableLeakCheck", "number", []);
-        this.QTS_BuildIsSanitizeLeak = this.module.cwrap("QTS_BuildIsSanitizeLeak", "number", []);
-        this.QTS_RuntimeSetMaxStackSize = this.module.cwrap("QTS_RuntimeSetMaxStackSize", null, ["number", "number"]);
-        this.QTS_GetUndefined = this.module.cwrap("QTS_GetUndefined", "number", []);
-        this.QTS_GetNull = this.module.cwrap("QTS_GetNull", "number", []);
-        this.QTS_GetFalse = this.module.cwrap("QTS_GetFalse", "number", []);
-        this.QTS_GetTrue = this.module.cwrap("QTS_GetTrue", "number", []);
-        this.QTS_NewHostRef = this.module.cwrap("QTS_NewHostRef", "number", ["number", "number"]);
-        this.QTS_GetHostRefId = this.module.cwrap("QTS_GetHostRefId", "number", ["number"]);
-        this.QTS_NewRuntime = this.module.cwrap("QTS_NewRuntime", "number", []);
-        this.QTS_FreeRuntime = this.module.cwrap("QTS_FreeRuntime", null, ["number"]);
-        this.QTS_NewContext = this.module.cwrap("QTS_NewContext", "number", ["number", "number"]);
-        this.QTS_FreeContext = this.module.cwrap("QTS_FreeContext", null, ["number"]);
-        this.QTS_FreeValuePointer = this.module.cwrap("QTS_FreeValuePointer", null, ["number", "number"]);
-        this.QTS_FreeValuePointerRuntime = this.module.cwrap("QTS_FreeValuePointerRuntime", null, ["number", "number"]);
-        this.QTS_FreeVoidPointer = this.module.cwrap("QTS_FreeVoidPointer", null, ["number", "number"]);
-        this.QTS_FreeCString = this.module.cwrap("QTS_FreeCString", null, ["number", "number"]);
-        this.QTS_DupValuePointer = this.module.cwrap("QTS_DupValuePointer", "number", ["number", "number"]);
-        this.QTS_NewObject = this.module.cwrap("QTS_NewObject", "number", ["number"]);
-        this.QTS_NewObjectProto = this.module.cwrap("QTS_NewObjectProto", "number", ["number", "number"]);
-        this.QTS_NewArray = this.module.cwrap("QTS_NewArray", "number", ["number"]);
-        this.QTS_NewArrayBuffer = this.module.cwrap("QTS_NewArrayBuffer", "number", ["number", "number", "number"]);
-        this.QTS_NewFloat64 = this.module.cwrap("QTS_NewFloat64", "number", ["number", "number"]);
-        this.QTS_GetFloat64 = this.module.cwrap("QTS_GetFloat64", "number", ["number", "number"]);
-        this.QTS_NewString = this.module.cwrap("QTS_NewString", "number", ["number", "number"]);
-        this.QTS_GetString = this.module.cwrap("QTS_GetString", "number", ["number", "number"]);
-        this.QTS_GetArrayBuffer = this.module.cwrap("QTS_GetArrayBuffer", "number", ["number", "number"]);
-        this.QTS_GetArrayBufferLength = this.module.cwrap("QTS_GetArrayBufferLength", "number", ["number", "number"]);
-        this.QTS_NewSymbol = this.module.cwrap("QTS_NewSymbol", "number", ["number", "number", "number"]);
-        this.QTS_GetSymbolDescriptionOrKey = this.module.cwrap("QTS_GetSymbolDescriptionOrKey", "number", ["number", "number"]);
-        this.QTS_IsGlobalSymbol = this.module.cwrap("QTS_IsGlobalSymbol", "number", ["number", "number"]);
-        this.QTS_IsJobPending = this.module.cwrap("QTS_IsJobPending", "number", ["number"]);
-        this.QTS_ExecutePendingJob = this.module.cwrap("QTS_ExecutePendingJob", "number", ["number", "number", "number"]);
-        this.QTS_GetProp = this.module.cwrap("QTS_GetProp", "number", ["number", "number", "number"]);
-        this.QTS_GetPropNumber = this.module.cwrap("QTS_GetPropNumber", "number", ["number", "number", "number"]);
-        this.QTS_SetProp = this.module.cwrap("QTS_SetProp", null, ["number", "number", "number", "number"]);
-        this.QTS_DefineProp = this.module.cwrap("QTS_DefineProp", null, ["number", "number", "number", "number", "number", "number", "boolean", "boolean", "boolean"]);
-        this.QTS_GetOwnPropertyNames = this.module.cwrap("QTS_GetOwnPropertyNames", "number", ["number", "number", "number", "number", "number"]);
-        this.QTS_Call = this.module.cwrap("QTS_Call", "number", ["number", "number", "number", "number", "number"]);
-        this.QTS_ResolveException = this.module.cwrap("QTS_ResolveException", "number", ["number", "number"]);
-        this.QTS_Dump = this.module.cwrap("QTS_Dump", "number", ["number", "number"]);
-        this.QTS_Eval = this.module.cwrap("QTS_Eval", "number", ["number", "number", "number", "string", "number", "number"]);
-        this.QTS_GetModuleNamespace = this.module.cwrap("QTS_GetModuleNamespace", "number", ["number", "number"]);
-        this.QTS_Typeof = this.module.cwrap("QTS_Typeof", "number", ["number", "number"]);
-        this.QTS_GetLength = this.module.cwrap("QTS_GetLength", "number", ["number", "number", "number"]);
-        this.QTS_IsEqual = this.module.cwrap("QTS_IsEqual", "number", ["number", "number", "number", "number"]);
-        this.QTS_GetGlobalObject = this.module.cwrap("QTS_GetGlobalObject", "number", ["number"]);
-        this.QTS_NewPromiseCapability = this.module.cwrap("QTS_NewPromiseCapability", "number", ["number", "number"]);
-        this.QTS_PromiseState = this.module.cwrap("QTS_PromiseState", "number", ["number", "number"]);
-        this.QTS_PromiseResult = this.module.cwrap("QTS_PromiseResult", "number", ["number", "number"]);
-        this.QTS_TestStringArg = this.module.cwrap("QTS_TestStringArg", null, ["string"]);
-        this.QTS_GetDebugLogEnabled = this.module.cwrap("QTS_GetDebugLogEnabled", "number", ["number"]);
-        this.QTS_SetDebugLogEnabled = this.module.cwrap("QTS_SetDebugLogEnabled", null, ["number", "number"]);
-        this.QTS_BuildIsDebug = this.module.cwrap("QTS_BuildIsDebug", "number", []);
-        this.QTS_BuildIsAsyncify = this.module.cwrap("QTS_BuildIsAsyncify", "number", []);
-        this.QTS_NewFunction = this.module.cwrap("QTS_NewFunction", "number", ["number", "string", "number", "boolean", "number"]);
-        this.QTS_ArgvGetJSValueConstPointer = this.module.cwrap("QTS_ArgvGetJSValueConstPointer", "number", ["number", "number"]);
-        this.QTS_RuntimeEnableInterruptHandler = this.module.cwrap("QTS_RuntimeEnableInterruptHandler", null, ["number"]);
-        this.QTS_RuntimeDisableInterruptHandler = this.module.cwrap("QTS_RuntimeDisableInterruptHandler", null, ["number"]);
-        this.QTS_RuntimeEnableModuleLoader = this.module.cwrap("QTS_RuntimeEnableModuleLoader", null, ["number", "number"]);
-        this.QTS_RuntimeDisableModuleLoader = this.module.cwrap("QTS_RuntimeDisableModuleLoader", null, ["number"]);
-        this.QTS_bjson_encode = this.module.cwrap("QTS_bjson_encode", "number", ["number", "number"]);
-        this.QTS_bjson_decode = this.module.cwrap("QTS_bjson_decode", "number", ["number", "number"]);
-      }
-    };
-  }
-});
-
-// node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/emscripten-module.browser.mjs
-var emscripten_module_browser_exports = {};
-__export(emscripten_module_browser_exports, {
-  default: () => emscripten_module_browser_default
-});
-async function QuickJSRaw(moduleArg = {}) {
-  var moduleRtn;
-  var c = moduleArg, aa = !!globalThis.window, n = !!globalThis.WorkerGlobalScope;
-  function q(a) {
-    a = { log: a || function() {
-    } };
-    for (const d of q.Pa) d(a);
-    return c.quickJSEmscriptenExtensions = a;
-  }
-  q.Pa = [];
-  c.quickjsEmscriptenInit = q;
-  q.Pa.push((a) => {
-    a.getWasmMemory = function() {
-      return r;
-    };
-  });
-  var t = "./this.program", ba = import_meta.url, u = "", v, w;
-  if (aa || n) {
-    try {
-      u = new URL(".", ba).href;
-    } catch {
-    }
-    n && (w = (a) => {
-      var d = new XMLHttpRequest();
-      d.open("GET", a, false);
-      d.responseType = "arraybuffer";
-      d.send(null);
-      return new Uint8Array(d.response);
-    });
-    v = async (a) => {
-      a = await fetch(a, { credentials: "same-origin" });
-      if (a.ok) return a.arrayBuffer();
-      throw Error(a.status + " : " + a.url);
-    };
-  }
-  var y = console.log.bind(console), z = console.error.bind(console), A, B = false, C, D, E, F, G, H, I, J = false;
-  function K() {
-    var a = r.buffer;
-    c.HEAP8 = F = new Int8Array(a);
-    new Int16Array(a);
-    c.HEAPU8 = G = new Uint8Array(a);
-    new Uint16Array(a);
-    H = new Int32Array(a);
-    I = new Uint32Array(a);
-    new Float32Array(a);
-    new Float64Array(a);
-    new BigInt64Array(a);
-    new BigUint64Array(a);
-  }
-  function L(a) {
-    c.onAbort?.(a);
-    a = "Aborted(" + a + ")";
-    z(a);
-    B = true;
-    a = new WebAssembly.RuntimeError(a + ". Build with -sASSERTIONS for more info.");
-    E?.(a);
-    throw a;
-  }
-  var M;
-  async function ca(a) {
-    if (!A) try {
-      var d = await v(a);
-      return new Uint8Array(d);
-    } catch {
-    }
-    if (a == M && A) a = new Uint8Array(A);
-    else if (w) a = w(a);
-    else throw "both async and sync fetching of the wasm failed";
-    return a;
-  }
-  async function da(a, d) {
-    try {
-      var b = await ca(a);
-      return await WebAssembly.instantiate(b, d);
-    } catch (e) {
-      z(`failed to asynchronously prepare wasm: ${e}`), L(e);
-    }
-  }
-  async function ea(a) {
-    var d = M;
-    if (!A) try {
-      var b = fetch(d, { credentials: "same-origin" });
-      return await WebAssembly.instantiateStreaming(b, a);
-    } catch (e) {
-      z(`wasm streaming compile failed: ${e}`), z("falling back to ArrayBuffer instantiation");
-    }
-    return da(d, a);
-  }
-  class N {
-    name = "ExitStatus";
-    constructor(a) {
-      this.message = `Program terminated with exit(${a})`;
-      this.status = a;
-    }
-  }
-  var O = (a) => {
-    for (; 0 < a.length; ) a.shift()(c);
-  }, P = [], fa = [], ha = () => {
-    var a = c.preRun.shift();
-    fa.push(a);
-  }, Q = true, r, ia = new TextDecoder(), ja = (a, d, b, e) => {
-    b = d + b;
-    if (e) return b;
-    for (; a[d] && !(d >= b); ) ++d;
-    return d;
-  }, R = (a, d, b) => a ? ia.decode(G.subarray(a, ja(G, a, d, b))) : "", S = 0, ka = [0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335], la = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334], T = {}, ma = (a) => {
-    if (!(a instanceof N || "unwind" == a)) throw a;
-  }, na = (a) => {
-    C = a;
-    Q || 0 < S || (c.onExit?.(a), B = true);
-    throw new N(a);
-  }, oa = (a) => {
-    if (!B) try {
-      a();
-    } catch (d) {
-      ma(d);
-    } finally {
-      if (!(Q || 0 < S)) try {
-        C = a = C, na(a);
-      } catch (d) {
-        ma(d);
-      }
-    }
-  }, U = (a, d, b) => {
-    var e = G;
-    if (!(0 < b)) return 0;
-    var f = d;
-    b = d + b - 1;
-    for (var g = 0; g < a.length; ++g) {
-      var h = a.codePointAt(g);
-      if (127 >= h) {
-        if (d >= b) break;
-        e[d++] = h;
-      } else if (2047 >= h) {
-        if (d + 1 >= b) break;
-        e[d++] = 192 | h >> 6;
-        e[d++] = 128 | h & 63;
-      } else if (65535 >= h) {
-        if (d + 2 >= b) break;
-        e[d++] = 224 | h >> 12;
-        e[d++] = 128 | h >> 6 & 63;
-        e[d++] = 128 | h & 63;
-      } else {
-        if (d + 3 >= b) break;
-        e[d++] = 240 | h >> 18;
-        e[d++] = 128 | h >> 12 & 63;
-        e[d++] = 128 | h >> 6 & 63;
-        e[d++] = 128 | h & 63;
-        g++;
-      }
-    }
-    e[d] = 0;
-    return d - f;
-  }, V = {}, pa = () => {
-    if (!W) {
-      var a = {
-        USER: "web_user",
-        LOGNAME: "web_user",
-        PATH: "/",
-        PWD: "/",
-        HOME: "/home/web_user",
-        LANG: (globalThis.navigator?.language ?? "C").replace("-", "_") + ".UTF-8",
-        _: t || "./this.program"
-      }, d;
-      for (d in V) void 0 === V[d] ? delete a[d] : a[d] = V[d];
-      var b = [];
-      for (d in a) b.push(`${d}=${a[d]}`);
-      W = b;
-    }
-    return W;
-  }, W, X = (a) => {
-    for (var d = 0, b = 0; b < a.length; ++b) {
-      var e = a.charCodeAt(b);
-      127 >= e ? d++ : 2047 >= e ? d += 2 : 55296 <= e && 57343 >= e ? (d += 4, ++b) : d += 3;
-    }
-    return d;
-  }, qa = [null, [], []], ta = (a, d, b, e) => {
-    var f = { string: (k) => {
-      var l = 0;
-      if (null !== k && void 0 !== k && 0 !== k) {
-        l = X(k) + 1;
-        var p = Y(l);
-        U(k, p, l);
-        l = p;
-      }
-      return l;
-    }, array: (k) => {
-      var l = Y(k.length);
-      F.set(k, l);
-      return l;
-    } };
-    a = c["_" + a];
-    var g = [], h = 0;
-    if (e) for (var m = 0; m < e.length; m++) {
-      var x = f[b[m]];
-      x ? (0 === h && (h = ra()), g[m] = x(e[m])) : g[m] = e[m];
-    }
-    b = a(...g);
-    return b = function(k) {
-      0 !== h && sa(h);
-      return "string" === d ? R(k) : "boolean" === d ? !!k : k;
-    }(b);
-  };
-  c.wasmMemory ? r = c.wasmMemory : r = new WebAssembly.Memory({ initial: (c.INITIAL_MEMORY || 16777216) / 65536, maximum: 32768 });
-  K();
-  c.noExitRuntime && (Q = c.noExitRuntime);
-  c.print && (y = c.print);
-  c.printErr && (z = c.printErr);
-  c.wasmBinary && (A = c.wasmBinary);
-  c.thisProgram && (t = c.thisProgram);
-  if (c.preInit) for ("function" == typeof c.preInit && (c.preInit = [c.preInit]); 0 < c.preInit.length; ) c.preInit.shift()();
-  c.cwrap = (a, d, b, e) => {
-    var f = !b || b.every((g) => "number" === g || "boolean" === g);
-    return "string" !== d && f && !e ? c["_" + a] : (...g) => ta(a, d, b, g);
-  };
-  c.UTF8ToString = R;
-  c.stringToUTF8 = (a, d, b) => U(a, d, b);
-  c.lengthBytesUTF8 = X;
-  var ua, sa, Y, ra, va = { b: (a, d, b, e) => L(`Assertion failed: ${R(a)}, at: ` + [d ? R(d) : "unknown filename", b, e ? R(e) : "unknown function"]), q: () => L(""), l: () => {
-    Q = false;
-    S = 0;
-  }, m: function(a, d) {
-    a = -9007199254740992 > a || 9007199254740992 < a ? NaN : Number(a);
-    a = new Date(1e3 * a);
-    H[d >> 2] = a.getSeconds();
-    H[d + 4 >> 2] = a.getMinutes();
-    H[d + 8 >> 2] = a.getHours();
-    H[d + 12 >> 2] = a.getDate();
-    H[d + 16 >> 2] = a.getMonth();
-    H[d + 20 >> 2] = a.getFullYear() - 1900;
-    H[d + 24 >> 2] = a.getDay();
-    var b = a.getFullYear();
-    H[d + 28 >> 2] = (0 !== b % 4 || 0 === b % 100 && 0 !== b % 400 ? la : ka)[a.getMonth()] + a.getDate() - 1 | 0;
-    H[d + 36 >> 2] = -(60 * a.getTimezoneOffset());
-    b = new Date(a.getFullYear(), 6, 1).getTimezoneOffset();
-    var e = new Date(a.getFullYear(), 0, 1).getTimezoneOffset();
-    H[d + 32 >> 2] = (b != e && a.getTimezoneOffset() == Math.min(e, b)) | 0;
-  }, j: (a, d) => {
-    T[a] && (clearTimeout(T[a].id), delete T[a]);
-    if (!d) return 0;
-    var b = setTimeout(() => {
-      delete T[a];
-      oa(() => ua(a, performance.now()));
-    }, d);
-    T[a] = { id: b, Qa: d };
-    return 0;
-  }, n: (a, d, b, e) => {
-    var f = (/* @__PURE__ */ new Date()).getFullYear(), g = new Date(f, 0, 1).getTimezoneOffset();
-    f = new Date(f, 6, 1).getTimezoneOffset();
-    I[a >> 2] = 60 * Math.max(g, f);
-    H[d >> 2] = Number(g != f);
-    d = (h) => {
-      var m = Math.abs(h);
-      return `UTC${0 <= h ? "-" : "+"}${String(Math.floor(m / 60)).padStart(2, "0")}${String(m % 60).padStart(2, "0")}`;
-    };
-    a = d(g);
-    d = d(f);
-    f < g ? (U(a, b, 17), U(d, e, 17)) : (U(a, e, 17), U(d, b, 17));
-  }, p: () => Date.now(), k: (a) => {
-    var d = G.length;
-    a >>>= 0;
-    if (2147483648 < a) return false;
-    for (var b = 1; 4 >= b; b *= 2) {
-      var e = d * (1 + 0.2 / b);
-      e = Math.min(e, a + 100663296);
-      a: {
-        e = (Math.min(2147483648, 65536 * Math.ceil(Math.max(a, e) / 65536)) - r.buffer.byteLength + 65535) / 65536 | 0;
-        try {
-          r.grow(e);
-          K();
-          var f = 1;
-          break a;
-        } catch (g) {
-        }
-        f = void 0;
-      }
-      if (f) return true;
-    }
-    return false;
-  }, e: (a, d) => {
-    var b = 0, e = 0, f;
-    for (f of pa()) {
-      var g = d + b;
-      I[a + e >> 2] = g;
-      b += U(f, g, Infinity) + 1;
-      e += 4;
-    }
-    return 0;
-  }, f: (a, d) => {
-    var b = pa();
-    I[a >> 2] = b.length;
-    a = 0;
-    for (var e of b) a += X(e) + 1;
-    I[d >> 2] = a;
-    return 0;
-  }, d: () => 52, o: function() {
-    return 70;
-  }, c: (a, d, b, e) => {
-    for (var f = 0, g = 0; g < b; g++) {
-      var h = I[d >> 2], m = I[d + 4 >> 2];
-      d += 8;
-      for (var x = 0; x < m; x++) {
-        var k = a, l = G[h + x], p = qa[k];
-        0 === l || 10 === l ? (k = 1 === k ? y : z, l = ja(p, 0), l = ia.decode(p.buffer ? p.subarray(0, l) : new Uint8Array(p.slice(0, l))), k(l), p.length = 0) : p.push(l);
-      }
-      f += m;
-    }
-    I[e >> 2] = f;
-    return 0;
-  }, a: r, r: na, s: function(a, d, b, e, f) {
-    return c.callbacks.callFunction(void 0, a, d, b, e, f);
-  }, i: function(a) {
-    return c.callbacks.shouldInterrupt(void 0, a);
-  }, h: function(a, d, b) {
-    b = R(b);
-    return c.callbacks.loadModuleSource(void 0, a, d, b);
-  }, g: function(a, d, b, e) {
-    b = R(b);
-    e = R(e);
-    return c.callbacks.normalizeModule(void 0, a, d, b, e);
-  }, t: function(a, d) {
-    c.callbacks.freeHostRef(void 0, a, d);
-  } }, Z;
-  Z = await async function() {
-    function a(b) {
-      b = Z = b.exports;
-      c._malloc = b.v;
-      c._QTS_Throw = b.w;
-      c._QTS_NewError = b.x;
-      c._QTS_RuntimeSetMemoryLimit = b.y;
-      c._QTS_RuntimeComputeMemoryUsage = b.z;
-      c._QTS_RuntimeDumpMemoryUsage = b.A;
-      c._QTS_RecoverableLeakCheck = b.B;
-      c._QTS_BuildIsSanitizeLeak = b.C;
-      c._QTS_RuntimeSetMaxStackSize = b.D;
-      c._QTS_GetUndefined = b.E;
-      c._QTS_GetNull = b.F;
-      c._QTS_GetFalse = b.G;
-      c._QTS_GetTrue = b.H;
-      c._QTS_NewHostRef = b.I;
-      c._QTS_GetHostRefId = b.J;
-      c._QTS_NewRuntime = b.K;
-      c._QTS_FreeRuntime = b.L;
-      c._free = b.M;
-      c._QTS_NewContext = b.N;
-      c._QTS_FreeContext = b.O;
-      c._QTS_FreeValuePointer = b.P;
-      c._QTS_FreeValuePointerRuntime = b.Q;
-      c._QTS_FreeVoidPointer = b.R;
-      c._QTS_FreeCString = b.S;
-      c._QTS_DupValuePointer = b.T;
-      c._QTS_NewObject = b.U;
-      c._QTS_NewObjectProto = b.V;
-      c._QTS_NewArray = b.W;
-      c._QTS_NewArrayBuffer = b.X;
-      c._QTS_NewFloat64 = b.Y;
-      c._QTS_GetFloat64 = b.Z;
-      c._QTS_NewString = b._;
-      c._QTS_GetString = b.$;
-      c._QTS_GetArrayBuffer = b.aa;
-      c._QTS_GetArrayBufferLength = b.ba;
-      c._QTS_NewSymbol = b.ca;
-      c._QTS_GetSymbolDescriptionOrKey = b.da;
-      c._QTS_IsGlobalSymbol = b.ea;
-      c._QTS_IsJobPending = b.fa;
-      c._QTS_ExecutePendingJob = b.ga;
-      c._QTS_GetProp = b.ha;
-      c._QTS_GetPropNumber = b.ia;
-      c._QTS_SetProp = b.ja;
-      c._QTS_DefineProp = b.ka;
-      c._QTS_GetOwnPropertyNames = b.la;
-      c._QTS_Call = b.ma;
-      c._QTS_ResolveException = b.na;
-      c._QTS_Dump = b.oa;
-      c._QTS_Eval = b.pa;
-      c._QTS_GetModuleNamespace = b.qa;
-      c._QTS_Typeof = b.ra;
-      c._QTS_GetLength = b.sa;
-      c._QTS_IsEqual = b.ta;
-      c._QTS_GetGlobalObject = b.ua;
-      c._QTS_NewPromiseCapability = b.va;
-      c._QTS_PromiseState = b.wa;
-      c._QTS_PromiseResult = b.xa;
-      c._QTS_TestStringArg = b.ya;
-      c._QTS_GetDebugLogEnabled = b.za;
-      c._QTS_SetDebugLogEnabled = b.Aa;
-      c._QTS_BuildIsDebug = b.Ba;
-      c._QTS_BuildIsAsyncify = b.Ca;
-      c._QTS_NewFunction = b.Da;
-      c._QTS_ArgvGetJSValueConstPointer = b.Ea;
-      c._QTS_RuntimeEnableInterruptHandler = b.Fa;
-      c._QTS_RuntimeDisableInterruptHandler = b.Ga;
-      c._QTS_RuntimeEnableModuleLoader = b.Ha;
-      c._QTS_RuntimeDisableModuleLoader = b.Ia;
-      c._QTS_bjson_encode = b.Ja;
-      c._QTS_bjson_decode = b.Ka;
-      ua = b.La;
-      sa = b.Ma;
-      Y = b.Na;
-      ra = b.Oa;
-      return Z;
-    }
-    var d = { a: va };
-    if (c.instantiateWasm) return new Promise((b) => {
-      c.instantiateWasm(d, (e, f) => {
-        b(a(e, f));
-      });
-    });
-    M ??= c.locateFile ? c.locateFile ? c.locateFile("emscripten-module.wasm", u) : u + "emscripten-module.wasm" : new URL("emscripten-module.wasm", import_meta.url).href;
-    return a((await ea(d)).instance);
-  }();
-  (function() {
-    function a() {
-      c.calledRun = true;
-      if (!B) {
-        J = true;
-        Z.u();
-        D?.(c);
-        c.onRuntimeInitialized?.();
-        if (c.postRun) for ("function" == typeof c.postRun && (c.postRun = [c.postRun]); c.postRun.length; ) {
-          var d = c.postRun.shift();
-          P.push(d);
-        }
-        O(P);
-      }
-    }
-    if (c.preRun) for ("function" == typeof c.preRun && (c.preRun = [c.preRun]); c.preRun.length; ) ha();
-    O(fa);
-    c.setStatus ? (c.setStatus("Running..."), setTimeout(() => {
-      setTimeout(() => c.setStatus(""), 1);
-      a();
-    }, 1)) : a();
-  })();
-  J ? moduleRtn = c : moduleRtn = new Promise((a, d) => {
-    D = a;
-    E = d;
-  });
-  ;
-  return moduleRtn;
-}
-var import_meta, emscripten_module_browser_default;
-var init_emscripten_module_browser = __esm({
-  "node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/emscripten-module.browser.mjs"() {
-    import_meta = {};
-    emscripten_module_browser_default = QuickJSRaw;
-  }
-});
-
 // src/client/index.ts
 var client_exports = {};
 __export(client_exports, {
-  SETTINGS_SECTION_ID: () => SETTINGS_SECTION_ID,
   apply: () => apply,
   bootstrap: () => bootstrap,
   inject: () => inject
@@ -2508,6 +822,8 @@ function createBackgroundLayer(root) {
     showSceneCanvas(canvas, blurCanvas) {
       clear();
       if (blurCanvas) {
+        if (canvas.width > 0) blurCanvas.width = canvas.width;
+        if (canvas.height > 0) blurCanvas.height = canvas.height;
         blurCanvas.classList.add("wp-scene-blur");
         fill.appendChild(blurCanvas);
       }
@@ -2658,22 +974,20 @@ function createWallpaperController(layer, opts) {
       case "scene": {
         if (opts.sceneRenderer) {
           const fg = document.createElement("canvas");
-          const bg = document.createElement("canvas");
           try {
-            let ok = await opts.sceneRenderer.render(plan.wallpaperId, fg, bg);
+            let ok = await opts.sceneRenderer.render(plan.wallpaperId, fg);
             if (!ok) {
               const fg2 = document.createElement("canvas");
-              const bg2 = document.createElement("canvas");
-              ok = await opts.sceneRenderer.render(plan.wallpaperId, fg2, bg2);
+              ok = await opts.sceneRenderer.render(plan.wallpaperId, fg2);
               if (ok) {
                 if (gen !== selectGeneration) return;
-                layer.showSceneCanvas(fg2, bg2);
+                layer.showSceneCanvas(fg2);
                 break;
               }
             }
             if (gen !== selectGeneration) return;
             if (ok) {
-              layer.showSceneCanvas(fg, bg);
+              layer.showSceneCanvas(fg);
               break;
             }
           } catch {
@@ -20018,12 +18332,12 @@ var WebGLRenderer = class {
         if (_renderBackground) background.render(scene);
         for (let i = 0, l = cameras.length; i < l; i++) {
           const camera2 = cameras[i];
-          renderScene2(currentRenderList, scene, camera2, camera2.viewport);
+          renderScene(currentRenderList, scene, camera2, camera2.viewport);
         }
       } else {
         if (transmissiveObjects.length > 0) renderTransmissionPass(opaqueObjects, transmissiveObjects, scene, camera);
         if (_renderBackground) background.render(scene);
-        renderScene2(currentRenderList, scene, camera);
+        renderScene(currentRenderList, scene, camera);
       }
       if (_currentRenderTarget !== null) {
         textures.updateMultisampleRenderTarget(_currentRenderTarget);
@@ -20105,7 +18419,7 @@ var WebGLRenderer = class {
         projectObject(children[i], camera, groupOrder, sortObjects);
       }
     }
-    function renderScene2(currentRenderList2, scene, camera, viewport) {
+    function renderScene(currentRenderList2, scene, camera, viewport) {
       const opaqueObjects = currentRenderList2.opaque;
       const transmissiveObjects = currentRenderList2.transmissive;
       const transparentObjects = currentRenderList2.transparent;
@@ -20923,123 +19237,24 @@ var DataTexture = class extends Texture {
     this.unpackAlignment = 1;
   }
 };
-var PointsMaterial = class extends Material {
-  static get type() {
-    return "PointsMaterial";
-  }
-  constructor(parameters) {
-    super();
-    this.isPointsMaterial = true;
-    this.color = new Color(16777215);
-    this.map = null;
-    this.alphaMap = null;
-    this.size = 1;
-    this.sizeAttenuation = true;
-    this.fog = true;
-    this.setValues(parameters);
+var InstancedBufferAttribute = class extends BufferAttribute {
+  constructor(array, itemSize, normalized, meshPerAttribute = 1) {
+    super(array, itemSize, normalized);
+    this.isInstancedBufferAttribute = true;
+    this.meshPerAttribute = meshPerAttribute;
   }
   copy(source) {
     super.copy(source);
-    this.color.copy(source.color);
-    this.map = source.map;
-    this.alphaMap = source.alphaMap;
-    this.size = source.size;
-    this.sizeAttenuation = source.sizeAttenuation;
-    this.fog = source.fog;
+    this.meshPerAttribute = source.meshPerAttribute;
     return this;
   }
-};
-var _inverseMatrix = /* @__PURE__ */ new Matrix4();
-var _ray = /* @__PURE__ */ new Ray();
-var _sphere = /* @__PURE__ */ new Sphere();
-var _position$2 = /* @__PURE__ */ new Vector3();
-var Points = class extends Object3D {
-  constructor(geometry = new BufferGeometry(), material = new PointsMaterial()) {
-    super();
-    this.isPoints = true;
-    this.type = "Points";
-    this.geometry = geometry;
-    this.material = material;
-    this.updateMorphTargets();
-  }
-  copy(source, recursive) {
-    super.copy(source, recursive);
-    this.material = Array.isArray(source.material) ? source.material.slice() : source.material;
-    this.geometry = source.geometry;
-    return this;
-  }
-  raycast(raycaster, intersects) {
-    const geometry = this.geometry;
-    const matrixWorld = this.matrixWorld;
-    const threshold = raycaster.params.Points.threshold;
-    const drawRange = geometry.drawRange;
-    if (geometry.boundingSphere === null) geometry.computeBoundingSphere();
-    _sphere.copy(geometry.boundingSphere);
-    _sphere.applyMatrix4(matrixWorld);
-    _sphere.radius += threshold;
-    if (raycaster.ray.intersectsSphere(_sphere) === false) return;
-    _inverseMatrix.copy(matrixWorld).invert();
-    _ray.copy(raycaster.ray).applyMatrix4(_inverseMatrix);
-    const localThreshold = threshold / ((this.scale.x + this.scale.y + this.scale.z) / 3);
-    const localThresholdSq = localThreshold * localThreshold;
-    const index = geometry.index;
-    const attributes = geometry.attributes;
-    const positionAttribute = attributes.position;
-    if (index !== null) {
-      const start = Math.max(0, drawRange.start);
-      const end = Math.min(index.count, drawRange.start + drawRange.count);
-      for (let i = start, il = end; i < il; i++) {
-        const a = index.getX(i);
-        _position$2.fromBufferAttribute(positionAttribute, a);
-        testPoint(_position$2, a, localThresholdSq, matrixWorld, raycaster, intersects, this);
-      }
-    } else {
-      const start = Math.max(0, drawRange.start);
-      const end = Math.min(positionAttribute.count, drawRange.start + drawRange.count);
-      for (let i = start, l = end; i < l; i++) {
-        _position$2.fromBufferAttribute(positionAttribute, i);
-        testPoint(_position$2, i, localThresholdSq, matrixWorld, raycaster, intersects, this);
-      }
-    }
-  }
-  updateMorphTargets() {
-    const geometry = this.geometry;
-    const morphAttributes = geometry.morphAttributes;
-    const keys = Object.keys(morphAttributes);
-    if (keys.length > 0) {
-      const morphAttribute = morphAttributes[keys[0]];
-      if (morphAttribute !== void 0) {
-        this.morphTargetInfluences = [];
-        this.morphTargetDictionary = {};
-        for (let m = 0, ml = morphAttribute.length; m < ml; m++) {
-          const name = morphAttribute[m].name || String(m);
-          this.morphTargetInfluences.push(0);
-          this.morphTargetDictionary[name] = m;
-        }
-      }
-    }
+  toJSON() {
+    const data = super.toJSON();
+    data.meshPerAttribute = this.meshPerAttribute;
+    data.isInstancedBufferAttribute = true;
+    return data;
   }
 };
-function testPoint(point, index, localThresholdSq, matrixWorld, raycaster, intersects, object) {
-  const rayPointDistanceSq = _ray.distanceSqToPoint(point);
-  if (rayPointDistanceSq < localThresholdSq) {
-    const intersectPoint = new Vector3();
-    _ray.closestPointToPoint(point, intersectPoint);
-    intersectPoint.applyMatrix4(matrixWorld);
-    const distance = raycaster.ray.origin.distanceTo(intersectPoint);
-    if (distance < raycaster.near || distance > raycaster.far) return;
-    intersects.push({
-      distance,
-      distanceToRay: Math.sqrt(rayPointDistanceSq),
-      point: intersectPoint,
-      index,
-      face: null,
-      faceIndex: null,
-      barycoord: null,
-      object
-    });
-  }
-}
 var CompressedTexture = class extends Texture {
   constructor(mipmaps, width, height, format, type, mapping, wrapS, wrapT, magFilter, minFilter, anisotropy, colorSpace) {
     super(null, mapping, wrapS, wrapT, magFilter, minFilter, format, type, anisotropy, colorSpace);
@@ -21048,13 +19263,6 @@ var CompressedTexture = class extends Texture {
     this.mipmaps = mipmaps;
     this.flipY = false;
     this.generateMipmaps = false;
-  }
-};
-var CanvasTexture = class extends Texture {
-  constructor(canvas, mapping, wrapS, wrapT, magFilter, minFilter, format, type, anisotropy) {
-    super(canvas, mapping, wrapS, wrapT, magFilter, minFilter, format, type, anisotropy);
-    this.isCanvasTexture = true;
-    this.needsUpdate = true;
   }
 };
 function convertArray(array, type, forceClone) {
@@ -21644,47 +19852,25 @@ var Loader = class {
   }
 };
 Loader.DEFAULT_MATERIAL_NAME = "__DEFAULT";
-var Clock = class {
-  constructor(autoStart = true) {
-    this.autoStart = autoStart;
-    this.startTime = 0;
-    this.oldTime = 0;
-    this.elapsedTime = 0;
-    this.running = false;
+var InstancedBufferGeometry = class extends BufferGeometry {
+  constructor() {
+    super();
+    this.isInstancedBufferGeometry = true;
+    this.type = "InstancedBufferGeometry";
+    this.instanceCount = Infinity;
   }
-  start() {
-    this.startTime = now();
-    this.oldTime = this.startTime;
-    this.elapsedTime = 0;
-    this.running = true;
+  copy(source) {
+    super.copy(source);
+    this.instanceCount = source.instanceCount;
+    return this;
   }
-  stop() {
-    this.getElapsedTime();
-    this.running = false;
-    this.autoStart = false;
-  }
-  getElapsedTime() {
-    this.getDelta();
-    return this.elapsedTime;
-  }
-  getDelta() {
-    let diff = 0;
-    if (this.autoStart && !this.running) {
-      this.start();
-      return 0;
-    }
-    if (this.running) {
-      const newTime = now();
-      diff = (newTime - this.oldTime) / 1e3;
-      this.oldTime = newTime;
-      this.elapsedTime += diff;
-    }
-    return diff;
+  toJSON() {
+    const data = super.toJSON();
+    data.instanceCount = this.instanceCount;
+    data.isInstancedBufferGeometry = true;
+    return data;
   }
 };
-function now() {
-  return performance.now();
-}
 var _RESERVED_CHARS_RE = "\\[\\]\\.:\\/";
 var _reservedRe = new RegExp("[" + _RESERVED_CHARS_RE + "]", "g");
 var _wordChar = "[^" + _RESERVED_CHARS_RE + "]";
@@ -22076,116 +20262,7 @@ if (typeof window !== "undefined") {
   }
 }
 
-// src/client/particles.ts
-function mulberry32(seed) {
-  let a = seed >>> 0;
-  return () => {
-    a |= 0;
-    a = a + 1831565813 | 0;
-    let t = Math.imul(a ^ a >>> 15, 1 | a);
-    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
-    return ((t ^ t >>> 14) >>> 0) / 4294967296;
-  };
-}
-function alphaAt(initialAlpha, life, maxLife) {
-  return initialAlpha * Math.max(0, Math.min(1, life / Math.max(1e-6, maxLife)));
-}
-function createParticleSystem(emitter, init, opts) {
-  const rand = mulberry32(opts.seed ?? Math.random() * 4294967295 >>> 0);
-  const particles = [];
-  let accumulator = 0;
-  const positions = new Float32Array(opts.maxParticles * 3);
-  const colors = new Float32Array(opts.maxParticles * 3);
-  const sizes = new Float32Array(opts.maxParticles);
-  const alphas = new Float32Array(opts.maxParticles);
-  function randIn(min, max) {
-    return min + rand() * (max - min);
-  }
-  function spawn() {
-    if (particles.length >= opts.maxParticles) return;
-    const life = randIn(init.lifetimeMin, init.lifetimeMax);
-    const size = randIn(init.sizeMin, init.sizeMax);
-    const amn = init.alphaMin ?? 1, amx = init.alphaMax ?? 1;
-    const a = randIn(amn, amx);
-    const dist = randIn(emitter.distanceMin, emitter.distanceMax);
-    const dir = emitter.directions;
-    const dirLen = Math.hypot(dir[0], dir[1], dir[2]) || 1;
-    const cm = init.colorMin ?? [255, 255, 255];
-    const cx = init.colorMax ?? [255, 255, 255];
-    particles.push({
-      x: dir[0] / dirLen * dist * (rand() * 2 - 1),
-      y: dir[1] / dirLen * dist * (rand() * 2 - 1),
-      z: dir[2] / dirLen * dist * (rand() * 2 - 1),
-      vx: randIn(init.velocityMin[0], init.velocityMax[0]),
-      vy: randIn(init.velocityMin[1], init.velocityMax[1]),
-      vz: randIn(init.velocityMin[2], init.velocityMax[2]),
-      life,
-      maxLife: life,
-      size,
-      r: randIn(cm[0], cx[0]),
-      g: randIn(cm[1], cx[1]),
-      b: randIn(cm[2], cx[2]),
-      initialAlpha: a,
-      alpha: a
-    });
-  }
-  function update(dt) {
-    accumulator += dt * emitter.rate;
-    while (accumulator >= 1) {
-      spawn();
-      accumulator -= 1;
-    }
-    for (let i = particles.length - 1; i >= 0; i--) {
-      const p = particles[i];
-      p.life -= dt;
-      if (p.life <= 0) {
-        particles.splice(i, 1);
-        continue;
-      }
-      p.x += p.vx * dt;
-      p.y += p.vy * dt;
-      p.z += p.vz * dt;
-    }
-  }
-  function syncBuffers() {
-    for (let i = 0; i < particles.length; i++) {
-      const p = particles[i];
-      const o = i * 3;
-      positions[o] = p.x;
-      positions[o + 1] = p.y;
-      positions[o + 2] = p.z;
-      colors[o] = p.r / 255;
-      colors[o + 1] = p.g / 255;
-      colors[o + 2] = p.b / 255;
-      sizes[i] = p.size;
-      alphas[i] = alphaAt(p.initialAlpha, p.life, p.maxLife);
-    }
-  }
-  return {
-    count: () => particles.length,
-    update,
-    positions: () => {
-      syncBuffers();
-      return positions;
-    },
-    colors: () => colors,
-    sizes: () => sizes,
-    alphas: () => alphas
-  };
-}
-
 // src/client/script-patterns.ts
-var VISUALIZER_BAR_COUNT = 64;
-function detectScriptPattern(src) {
-  if (typeof src !== "string") return null;
-  if (src.includes("registerAudioBuffers") && (src.includes("createLayer") || src.includes("createLayerAsset"))) {
-    return "visualizer";
-  }
-  if (src.includes("new Date()") && /Jan\.|January/.test(src) && (src.includes("getHours") || src.includes("getMinutes"))) {
-    return "clock";
-  }
-  return null;
-}
 function unwrapScriptProperty(v) {
   if (typeof v === "object" && v !== null && !Array.isArray(v) && "value" in v) {
     return v.value;
@@ -22201,23 +20278,6 @@ function parseScriptProperties(scriptProperties) {
     out[key] = unwrapScriptProperty(value);
   }
   return out;
-}
-var CLOCK_MONTHS = ["Jan.", "Feb.", "Mar.", "Apr.", "May.", "Jun.", "Jul.", "Aug.", "Sep.", "Oct.", "Nov.", "Dec."];
-function formatClockText(date, props) {
-  const use24h = props.use24hFormat !== false;
-  const delimiter = typeof props.delimiter === "string" && props.delimiter ? props.delimiter : ":";
-  const pad = (n) => ("00" + n).slice(-2);
-  let hours = date.getHours();
-  let meridiem = "";
-  if (!use24h) {
-    meridiem = hours < 12 ? "AM" : "PM";
-    hours %= 12;
-    if (hours === 0) hours = 12;
-  }
-  const timeLine = use24h ? `${pad(hours)}${delimiter}${pad(date.getMinutes())}` : `${meridiem} ${pad(hours)}${delimiter}${pad(date.getMinutes())}`;
-  const dateLine = `${CLOCK_MONTHS[date.getMonth()]} ${date.getDate()} ${date.getFullYear()}`;
-  return `${timeLine}
-${dateLine}`;
 }
 
 // src/client/visibility.ts
@@ -22239,22 +20299,6 @@ function parseVisible(raw) {
     };
   }
   return void 0;
-}
-function resolveVisibility(obj, userProps) {
-  const v = obj.visible;
-  if (!v) return true;
-  switch (v.kind) {
-    case "plain":
-      return v.value;
-    case "user": {
-      const p = userProps[v.key ?? ""];
-      return typeof p === "boolean" ? p : v.value;
-    }
-    case "script":
-      return v.value;
-    default:
-      return true;
-  }
 }
 
 // src/client/scene-json.ts
@@ -22391,56 +20435,6 @@ function parseSceneJson(raw) {
   };
 }
 
-// src/client/scene-assets.ts
-function vec32(s) {
-  if (typeof s !== "string") return [0, 0, 0];
-  const p = s.trim().split(/\s+/).map(Number);
-  return [p[0] ?? 0, p[1] ?? 0, p[2] ?? 0];
-}
-async function fetchSceneDescription(id) {
-  const resp = await fetch(`/wallpapers/scene/${id}/asset?name=scene.json`);
-  if (!resp.ok) throw new Error("scene.json fetch failed");
-  return parseSceneJson(await resp.text());
-}
-function particlesFromSpec(root) {
-  if (typeof root !== "object" || root === null) return null;
-  const em = Array.isArray(root.emitter) ? root.emitter[0] : void 0;
-  const inits = Array.isArray(root.initializer) ? root.initializer : [];
-  if (!em) return null;
-  const life = inits.find((i) => i.name === "lifetimerandom");
-  const size = inits.find((i) => i.name === "sizerandom");
-  const vel = inits.find((i) => i.name === "velocityrandom");
-  const color = inits.find((i) => i.name === "colorrandom");
-  const alpha = inits.find((i) => i.name === "alpharandom");
-  return {
-    emitter: {
-      // rate/distanceMax 缺省值对齐真实 WE 语义（linux-wallpaperengine 逆向源码：
-      // rate=10、distancemax=256）；EVA Ashes 等 emitter 无 rate 字段，缺省 0 会导致永不发射
-      rate: Number(em.rate ?? 10),
-      directions: vec32(em.directions),
-      distanceMin: Number(em.distancemin ?? 0),
-      distanceMax: Number(em.distancemax ?? 256)
-    },
-    init: {
-      lifetimeMin: Number(life?.min ?? 1),
-      lifetimeMax: Number(life?.max ?? 1),
-      sizeMin: Number(size?.min ?? 16),
-      sizeMax: Number(size?.max ?? 16),
-      velocityMin: vec32(vel?.min),
-      velocityMax: vec32(vel?.max),
-      colorMin: color ? vec32(color.min) : void 0,
-      colorMax: color ? vec32(color.max) : void 0,
-      alphaMin: alpha ? Number(alpha.min ?? 1) : void 0,
-      alphaMax: alpha ? Number(alpha.max ?? 1) : void 0
-    }
-  };
-}
-async function fetchParticleSpec(id, assetName) {
-  const resp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(assetName)}`);
-  if (!resp.ok) return null;
-  return particlesFromSpec(JSON.parse(await resp.text()));
-}
-
 // src/client/tex-loader.ts
 var import_lz4js = __toESM(require_lz4(), 1);
 
@@ -22478,6 +20472,9 @@ var FORMAT_TO_GL = {
 };
 function readI32(buf, pos) {
   return buf[pos] | buf[pos + 1] << 8 | buf[pos + 2] << 16 | buf[pos + 3] << 24;
+}
+function readF32(buf, pos) {
+  return new DataView(buf.buffer, buf.byteOffset + pos, 4).getFloat32(0, true);
 }
 function ascii(buf, pos, len) {
   let s = "";
@@ -22544,23 +20541,104 @@ function parseTex(buf) {
     }
   }
   if (mipmaps.length === 0) return null;
-  return { width, height, textureWidth, textureHeight, format, flags, imageFormat, mipmaps };
+  const first = mipmaps[0];
+  const sprite = (flags & FLAG_SPRITE) !== 0 ? parseSpriteSection(buf, pos, first.width, first.height) : void 0;
+  return { width, height, textureWidth, textureHeight, format, flags, imageFormat, mipmaps, sprite };
+}
+function parseSpriteSection(buf, pos, mipWidth, mipHeight) {
+  if (!Number.isFinite(pos) || pos < 0 || pos + 13 > buf.length) return void 0;
+  const stamp = ascii(buf, pos, 9);
+  if (!stamp.startsWith("TEXS000")) return void 0;
+  const texs = Number(stamp.slice(4, 8));
+  if (!Number.isFinite(texs) || texs < 1 || texs > 9) return void 0;
+  let p = pos + 9;
+  const frames = readI32(buf, p);
+  p += 4;
+  if (frames <= 0 || frames > 4096) return void 0;
+  if (texs >= 3) p += 8;
+  const intCoords = texs === 1;
+  const coord = () => {
+    const v = intCoords ? readI32(buf, p) : readF32(buf, p);
+    p += 4;
+    return v;
+  };
+  if (p + 8 + 24 > buf.length) return void 0;
+  coord();
+  coord();
+  coord();
+  coord();
+  const ax0 = coord();
+  const ax1 = coord();
+  const ay0 = coord();
+  const ay1 = coord();
+  const frameW = Math.hypot(ax0, ax1);
+  const frameH = Math.hypot(ay0, ay1);
+  if (!(frameW > 0) || !(frameH > 0)) return void 0;
+  const cols = Math.max(1, Math.round(mipWidth / frameW));
+  const rows = Math.max(1, Math.round(mipHeight / frameH));
+  if (cols * rows < frames) return void 0;
+  return { frames, cols, rows };
 }
 function lz4Decompress(src, decompressedSize) {
   const out = new Uint8Array(decompressedSize);
   const n = import_lz4js.default.decompressBlock(src, out, 0, src.length, 0);
   return n === decompressedSize ? out : out.subarray(0, Math.min(n, decompressedSize));
 }
-function pickMipmap(mips) {
-  let best = null;
-  for (const m of mips) {
-    if (m.width <= 2048 && (!best || m.width > best.width)) best = m;
+var FLAG_SPRITE = 1 << 2;
+function cropToMap(data, mipWidth, mipHeight, mapWidth, mapHeight, format, flags) {
+  const valid = Number.isFinite(mapWidth) && Number.isFinite(mapHeight) && mapWidth > 0 && mapHeight > 0;
+  const cw = valid ? Math.min(Math.floor(mapWidth), mipWidth) : mipWidth;
+  const ch = valid ? Math.min(Math.floor(mapHeight), mipHeight) : mipHeight;
+  if ((flags & FLAG_SPRITE) !== 0 || cw >= mipWidth && ch >= mipHeight) {
+    return { width: mipWidth, height: mipHeight, data };
   }
-  return best ?? mips[mips.length - 1] ?? null;
+  if (format === TEX_FORMAT.DXT1 || format === TEX_FORMAT.DXT3 || format === TEX_FORMAT.DXT5) {
+    const blockSize = format === TEX_FORMAT.DXT1 ? 8 : 16;
+    return cropCompressedToMap(data, mipWidth, mipHeight, cw, ch, blockSize);
+  }
+  const bpp = format === TEX_FORMAT.RG88 ? 2 : format === TEX_FORMAT.R8 ? 1 : 4;
+  return cropRowsToMap(data, mipWidth, mipHeight, cw, ch, bpp);
+}
+function cropRowsToMap(data, mipWidth, mipHeight, cw, ch, bpp) {
+  const rowBytes = cw * bpp;
+  const out = new Uint8Array(rowBytes * ch);
+  for (let y = 0; y < ch; y++) {
+    const src = y * mipWidth * bpp;
+    const end = Math.min(src + rowBytes, data.length);
+    if (src >= data.length) break;
+    out.set(data.subarray(src, end), y * rowBytes);
+  }
+  return { width: cw, height: ch, data: out };
+}
+function cropCompressedToMap(data, mipWidth, mipHeight, cw, ch, blockSize) {
+  const nw = Math.ceil(cw / 4) * 4;
+  const nh = Math.ceil(ch / 4) * 4;
+  const srcBlockW = Math.max(1, Math.ceil(mipWidth / 4));
+  const dstBlockW = nw / 4;
+  const dstBlockH = nh / 4;
+  const rowBytes = dstBlockW * blockSize;
+  const out = new Uint8Array(rowBytes * dstBlockH);
+  for (let by = 0; by < dstBlockH; by++) {
+    const src = by * srcBlockW * blockSize;
+    if (src >= data.length) break;
+    const end = Math.min(src + rowBytes, data.length);
+    out.set(data.subarray(src, end), by * rowBytes);
+  }
+  return { width: nw, height: nh, data: out };
 }
 async function textureFromTex(info) {
-  const mip = pickMipmap(info.mipmaps);
+  const mip = info.mipmaps[0];
   if (!mip) return null;
+  const withSprite = (tex) => {
+    if (info.sprite) tex.userData = { ...tex.userData ?? {}, sprite: info.sprite };
+    return tex;
+  };
+  const applyLinearSampling = (tex) => {
+    tex.magFilter = LinearFilter;
+    tex.minFilter = LinearMipmapLinearFilter;
+    tex.generateMipmaps = true;
+    tex.needsUpdate = true;
+  };
   const mime = info.imageFormat === FIF.JPEG ? "image/jpeg" : info.imageFormat === FIF.PNG ? "image/png" : info.imageFormat === FIF.WEBP ? "image/webp" : "";
   if (mime) {
     if (typeof createImageBitmap !== "function") return null;
@@ -22571,30 +20649,77 @@ async function textureFromTex(info) {
       );
       const tex = new Texture(bitmap);
       tex.flipY = false;
-      tex.needsUpdate = true;
-      return tex;
+      applyLinearSampling(tex);
+      return withSprite(tex);
     } catch {
       return null;
     }
   }
-  if (info.format === TEX_FORMAT.RGBA8888) {
-    const flipped = flipRows(mip.data, mip.width, mip.height, 4);
-    const tex = new DataTexture(flipped, mip.width, mip.height, RGBAFormat);
-    tex.needsUpdate = true;
-    return tex;
+  if (info.format === TEX_FORMAT.RGBA8888 || info.format === TEX_FORMAT.RG88 || info.format === TEX_FORMAT.R8) {
+    const cropped = cropToMap(mip.data, mip.width, mip.height, info.width, info.height, info.format, info.flags);
+    const src = info.format === TEX_FORMAT.RGBA8888 ? cropped.data : convertUnormToRgba(cropped.data, info.format);
+    const flipped = flipRows(src, cropped.width, cropped.height, 4);
+    const tex = new DataTexture(flipped, cropped.width, cropped.height, RGBAFormat);
+    applyLinearSampling(tex);
+    return withSprite(tex);
   }
   const glFormat = FORMAT_TO_GL[info.format];
   if (glFormat) {
+    const blockSize = info.format === TEX_FORMAT.DXT1 ? 8 : 16;
+    const cropped = cropToMap(mip.data, mip.width, mip.height, info.width, info.height, info.format, info.flags);
     const tex = new CompressedTexture(
-      info.mipmaps.map((m) => ({ data: m.data, width: m.width, height: m.height })),
-      mip.width,
-      mip.height,
+      [{
+        data: flipCompressedRows(cropped.data, cropped.width, cropped.height, blockSize),
+        width: cropped.width,
+        height: cropped.height
+      }],
+      cropped.width,
+      cropped.height,
       glFormat
     );
+    tex.magFilter = LinearFilter;
+    tex.minFilter = LinearFilter;
+    tex.generateMipmaps = false;
     tex.needsUpdate = true;
-    return tex;
+    return withSprite(tex);
   }
   return null;
+}
+function flipCompressedRows(data, width, height, blockSize) {
+  const blockW = Math.max(1, Math.ceil(width / 4));
+  const blockH = Math.max(1, Math.ceil(height / 4));
+  const rowBytes = blockW * blockSize;
+  const out = new Uint8Array(data.length);
+  for (let by = 0; by < blockH; by++) {
+    const src = by * rowBytes;
+    const dst = (blockH - 1 - by) * rowBytes;
+    const end = Math.min(src + rowBytes, data.length);
+    out.set(data.subarray(src, end), dst);
+  }
+  return out;
+}
+function convertUnormToRgba(data, format) {
+  if (format === TEX_FORMAT.RG88) {
+    const out2 = new Uint8Array(data.length * 2);
+    for (let i = 0, o = 0; i < data.length; i += 2, o += 4) {
+      const r = data[i];
+      const g = data[i + 1];
+      out2[o] = r;
+      out2[o + 1] = r;
+      out2[o + 2] = r;
+      out2[o + 3] = g;
+    }
+    return out2;
+  }
+  const out = new Uint8Array(data.length * 4);
+  for (let i = 0, o = 0; i < data.length; i++, o += 4) {
+    const v = data[i];
+    out[o] = 255;
+    out[o + 1] = 255;
+    out[o + 2] = 255;
+    out[o + 3] = v;
+  }
+  return out;
 }
 function flipRows(data, width, height, bytesPerPixel) {
   const rowBytes = width * bytesPerPixel;
@@ -22614,1545 +20739,12 @@ async function loadTexTexture(url) {
   return textureFromTex(info);
 }
 
-// src/client/text-object.ts
-function resolveFontFamily(font) {
-  if (typeof font !== "string" || !font.trim()) return "sans-serif";
-  const name = font.trim();
-  if (/[/\\]/.test(name) || /\.[a-zA-Z0-9]{2,4}$/.test(name)) return "sans-serif";
-  return name;
-}
-function textCanvasSize(text, pointsize, size) {
-  if (size) return { w: Math.max(1, Math.round(size[0])), h: Math.max(1, Math.round(size[1])) };
-  const ps = Math.max(1, pointsize ?? 32);
-  return {
-    w: Math.max(32, Math.ceil(ps * Math.max(text.length, 2) * 0.62)),
-    h: Math.max(16, Math.ceil(ps * 1.4))
-  };
-}
-function createTextTexture(text, opts) {
-  const width = Math.max(1, Math.round(opts.width));
-  const height = Math.max(1, Math.round(opts.height));
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext("2d");
-  if (ctx) {
-    const size = Math.max(1, opts.pointsize ?? Math.round(height * 0.8));
-    const family = resolveFontFamily(opts.font);
-    ctx.font = family.includes(" ") ? `${size}px "${family}"` : `${size}px ${family}`;
-    ctx.fillStyle = opts.color ? `rgb(${opts.color[0]}, ${opts.color[1]}, ${opts.color[2]})` : "#ffffff";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(text, width / 2, height / 2);
-  }
-  const tex = new CanvasTexture(canvas);
-  tex.needsUpdate = true;
-  return tex;
-}
-
-// src/client/shader/uniform-binder.ts
-function isAudioUniform(name) {
-  return name.startsWith("g_AudioSpectrum");
-}
-function parseValue(raw) {
-  if (typeof raw === "number") return raw;
-  if (typeof raw === "boolean") return raw ? 1 : 0;
-  if (typeof raw === "string") {
-    const parts = raw.trim().split(/\s+/).map(Number);
-    if (parts.some((n) => !isFinite(n))) return null;
-    return parts.length === 1 ? parts[0] : parts;
-  }
-  if (Array.isArray(raw)) {
-    const nums = raw.map(Number);
-    if (nums.some((n) => !isFinite(n))) return null;
-    return nums.length === 1 ? nums[0] : nums;
-  }
-  return null;
-}
-function resolveUniformBindings(annotations, constants) {
-  const out = /* @__PURE__ */ new Map();
-  for (const u of annotations) {
-    if (u.type.startsWith("sampler")) continue;
-    const arrMatch = u.type.match(/^float\[(\d+)\]$/);
-    if (isAudioUniform(u.name) && arrMatch) {
-      out.set(u.name, new Array(Number(arrMatch[1])).fill(0));
-      continue;
-    }
-    let raw;
-    const mat = u.annotation?.material;
-    if (typeof mat === "string") {
-      const v = constants[mat];
-      raw = v && typeof v === "object" && !Array.isArray(v) && "value" in v ? v.value : v;
-    }
-    if (raw === void 0 && u.annotation?.default !== void 0) raw = u.annotation.default;
-    const parsed = parseValue(raw);
-    const dim = u.type === "vec2" ? 2 : u.type === "vec3" ? 3 : u.type === "vec4" ? 4 : 0;
-    if (parsed === null || parsed === 0) {
-      out.set(u.name, dim ? new Array(dim).fill(0) : parsed ?? 0);
-    } else {
-      out.set(u.name, parsed);
-    }
-  }
-  return out;
-}
-
 // src/client/effect-runner.ts
-function resolveTextureSlotPath(path) {
-  if (!path) return null;
-  if (path.startsWith("util/") || path.startsWith("_rt_")) return path;
-  const p = path.startsWith("materials/") ? path : "materials/" + path;
-  return p.endsWith(".tex") ? p : p + ".tex";
-}
-function mulberry322(seed) {
-  let a = seed >>> 0;
-  return () => {
-    a |= 0;
-    a = a + 1831565813 | 0;
-    let t = Math.imul(a ^ a >>> 15, 1 | a);
-    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
-    return ((t ^ t >>> 14) >>> 0) / 4294967296;
-  };
-}
-var BUILTIN_CACHE = /* @__PURE__ */ new Map();
-function resolveBuiltinTexture(path) {
-  if (!path) return null;
-  const p = path.replace(/\.tex$/, "");
-  let key;
-  if (p === "util/white") key = "white";
-  else if (p === "util/noise" || p === "util/clouds_256") key = "noise256";
-  else if (p.startsWith("_rt_")) key = "white";
-  else return null;
-  const cached = BUILTIN_CACHE.get(key);
-  if (cached) return cached;
-  let tex;
-  if (key === "white") {
-    tex = new DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1, RGBAFormat);
-  } else {
-    const size = 256;
-    const data = new Uint8Array(size * size * 4);
-    const rnd = mulberry322(1370177149);
-    for (let i = 0; i < size * size; i++) {
-      const v = Math.round(rnd() * 255);
-      data[i * 4] = v;
-      data[i * 4 + 1] = v;
-      data[i * 4 + 2] = v;
-      data[i * 4 + 3] = 255;
-    }
-    tex = new DataTexture(data, size, size, RGBAFormat);
-  }
-  tex.needsUpdate = true;
-  BUILTIN_CACHE.set(key, tex);
-  return tex;
-}
-function resolveInputTexture(input) {
-  return input instanceof WebGLRenderTarget ? input.texture : input;
-}
-function pickWriteTarget(previous, rtA, rtB) {
-  if (previous === rtA) return rtB;
-  return rtA;
-}
-function resolveTargetSize(current, opts) {
-  return {
-    width: opts?.width ?? current.width,
-    height: opts?.height ?? current.height
-  };
-}
-function resolveTextureResolution(tex, fallbackW, fallbackH) {
-  return {
-    width: tex?.image?.width ?? fallbackW,
-    height: tex?.image?.height ?? fallbackH
-  };
-}
-function fillAudioSpectrumUniform(dest, src) {
-  for (let i = 0; i < dest.length; i++) {
-    dest[i] = i < src.length ? src[i] / 255 : 0;
-  }
-}
-var EffectRunner = class {
-  renderer;
-  rtA;
-  rtB;
-  chains = [];
-  id = "";
-  last = null;
-  // 最近一次 update 的最终输出（帧循环贴屏用）
-  materials = /* @__PURE__ */ new Map();
-  // key: `${passIndex}`
-  scenes = /* @__PURE__ */ new Map();
-  // 每 pass 独立场景（含全屏 quad）
-  textures = /* @__PURE__ */ new Map();
-  // 纹理槽缓存（key: `${id}:${path}`）
-  width;
-  height;
-  // update 串行化：帧循环每帧调用 update，但内部有异步纹理槽加载（await），
-  // 并发 update 会交错使用同一 renderer 的 RT/绑定状态 → 画面黑屏/闪烁。
-  // inFlight 标记 update 未完成时跳过本帧（last 保持上次输出，下一帧重试）；
-  // 换壁纸后 textures 已清空 → 首帧加载完成前输出 input（场景 RT），不黑屏。
-  updateInFlight = false;
-  // 音频频谱源（T3.2）：freqData 缓冲引用（scene-renderer 每帧刷新后注入）。
-  // null = 无分析器 → 音频 uniform 保持 binder 初始化的全零（静音，行为不变）。
-  audioSpectrum = null;
-  constructor(renderer, width, height) {
-    this.renderer = renderer;
-    this.width = width;
-    this.height = height;
-    this.rtA = new WebGLRenderTarget(width, height);
-    this.rtB = new WebGLRenderTarget(width, height);
-  }
-  setChains(chains, wallpaperId, opts) {
-    this.chains = chains;
-    this.id = wallpaperId;
-    this.last = null;
-    const size = resolveTargetSize({ width: this.width, height: this.height }, opts);
-    this.ensureTargets(size.width, size.height);
-    this.disposeMaterials();
-    this.textures.clear();
-    for (const pass of chains.flat()) {
-      for (const path of pass.textureSlots) {
-        if (path) void this.resolveTextureSlot(path);
-      }
-    }
-  }
-  // 设置音频频谱源（T3.2）：传入频谱缓冲引用（可每帧刷新后重复注入同一引用，
-  // update() 渲染前从缓冲读取当前频谱）；null → 恢复全零静音（不回归）。
-  setAudioSpectrumSource(source) {
-    this.audioSpectrum = source;
-  }
-  // RT 尺寸对齐：仅当目标尺寸与当前不一致才重建 ping-pong RT（避免 recreate churn）；
-  // 重建后同步 this.width/this.height（getMaterial 预建 g_TextureNResolution 默认值跟随对象 RT 尺寸）。
-  ensureTargets(w, h) {
-    if (this.rtA.width === w && this.rtA.height === h) return;
-    this.rtA.dispose();
-    this.rtB.dispose();
-    this.rtA = new WebGLRenderTarget(w, h);
-    this.rtB = new WebGLRenderTarget(w, h);
-    this.width = w;
-    this.height = h;
-  }
-  disposeMaterials() {
-    for (const m of this.materials.values()) m.dispose();
-    for (const key of Array.from(this.scenes.keys())) this.disposeSceneQuads(key);
-    this.materials.clear();
-  }
-  getMaterial(pass, key) {
-    const cached = this.materials.get(key);
-    if (cached) return cached;
-    let material = null;
-    try {
-      const uniforms = {};
-      for (const [name, value] of pass.uniforms) {
-        uniforms[name] = { value: Array.isArray(value) ? value.slice() : value };
-      }
-      if (!uniforms["g_Texture0"]) uniforms["g_Texture0"] = { value: null };
-      for (let i = 0; i < pass.textureSlots.length; i++) {
-        const slot = `g_Texture${i + 1}`;
-        if (!uniforms[slot]) uniforms[slot] = { value: null };
-      }
-      for (let i = 0; i <= Math.max(pass.textureSlots.length, 0); i++) {
-        const res = `g_Texture${i}Resolution`;
-        uniforms[res] = {
-          value: new Vector4(this.width, this.height, 1 / Math.max(1, this.width), 1 / Math.max(1, this.height))
-        };
-      }
-      const matRe = /uniform\s+mat([234])\s+(\w+)/g;
-      const matDefs = /* @__PURE__ */ new Map();
-      for (const src of [pass.vertSrc, pass.fragSrc]) {
-        for (const m of src.matchAll(matRe)) matDefs.set(m[2], Number(m[1]));
-      }
-      for (const [name, dim] of matDefs) {
-        if (uniforms[name] && typeof uniforms[name].value === "number") {
-          const n = dim * dim;
-          const id = new Array(n).fill(0);
-          for (let i = 0; i < n; i += dim + 1) id[i] = 1;
-          uniforms[name].value = id;
-        }
-      }
-      if (uniforms["g_ModelViewProjectionMatrix"]) {
-        uniforms["g_ModelViewProjectionMatrix"].value = new Matrix4();
-      }
-      material = new ShaderMaterial({
-        vertexShader: pass.vertSrc,
-        fragmentShader: pass.fragSrc,
-        uniforms,
-        transparent: true,
-        depthTest: false,
-        depthWrite: false,
-        blending: blendModeToThree(pass.blendMode)
-      });
-      let compileFailed = false;
-      const prevHandler = this.renderer.debug.onShaderError;
-      this.renderer.debug.onShaderError = (gl, program, vs, fs) => {
-        compileFailed = true;
-        const vsInfo = (gl.getShaderInfoLog(vs) || "").trim();
-        const fsInfo = (gl.getShaderInfoLog(fs) || "").trim();
-        console.warn(
-          `[wallpaper-engine] \u6548\u679C pass ${key} shader \u7F16\u8BD1\u5931\u8D25`,
-          vsInfo ? { vertex: vsInfo } : {},
-          fsInfo ? { fragment: fsInfo } : {}
-        );
-      };
-      const probeRT = new WebGLRenderTarget(1, 1);
-      try {
-        this.renderer.setRenderTarget(probeRT);
-        this.renderer.render(this.getScene(key, material), SCREEN_CAMERA);
-        this.renderer.setRenderTarget(null);
-      } finally {
-        this.renderer.debug.onShaderError = prevHandler;
-        probeRT.dispose();
-      }
-      if (compileFailed) {
-        console.warn("[wallpaper-engine] \u6548\u679C pass \u7F16\u8BD1\u5931\u8D25\uFF0C\u8DF3\u8FC7:", key);
-        material.dispose();
-        this.disposeSceneQuads(key);
-        return null;
-      }
-      this.materials.set(key, material);
-      return material;
-    } catch (e) {
-      console.warn("[wallpaper-engine] \u6548\u679C pass \u7F16\u8BD1\u5931\u8D25\uFF0C\u8DF3\u8FC7:", key, e);
-      material?.dispose();
-      this.disposeSceneQuads(key);
-      return null;
-    }
-  }
-  // 填充本 pass 材质中所有音频频谱 uniform（g_AudioSpectrum*，binder 初始化的 number[]）：
-  // 字节 0-255 → 浮点 0-1（fillAudioSpectrumUniform，长度不等时补零/截取）。
-  fillAudioUniforms(material, src) {
-    for (const [name, u] of Object.entries(material.uniforms)) {
-      if (isAudioUniform(name) && Array.isArray(u.value)) {
-        fillAudioSpectrumUniform(u.value, src);
-      }
-    }
-  }
-  // 释放某 key 对应场景中全屏 quad 的 geometry 并移除场景缓存（编译失败/异常路径共用）
-  disposeSceneQuads(key) {
-    const scene = this.scenes.get(key);
-    if (scene) {
-      for (const child of scene.children) {
-        if (child instanceof Mesh) child.geometry.dispose();
-      }
-    }
-    this.scenes.delete(key);
-  }
-  getScene(key, material) {
-    const cached = this.scenes.get(key);
-    if (cached) return cached;
-    const scene = new Scene();
-    const quad = new Mesh(new PlaneGeometry(2, 2), material);
-    quad.frustumCulled = false;
-    scene.add(quad);
-    this.scenes.set(key, scene);
-    return scene;
-  }
-  async resolveTextureSlot(path) {
-    if (!path) return null;
-    const builtin = resolveBuiltinTexture(path);
-    if (builtin) return builtin;
-    const key = `${this.id}:${path}`;
-    if (this.textures.has(key)) return this.textures.get(key) ?? null;
-    const resolved = resolveTextureSlotPath(path);
-    if (!resolved) return null;
-    const tex = await loadTexTexture(`/wallpapers/scene/${this.id}/asset?name=${encodeURIComponent(resolved)}`);
-    if (!tex) console.warn("[wallpaper-engine] \u7EB9\u7406\u69FD\u52A0\u8F7D\u5931\u8D25\uFF0C\u8DF3\u8FC7:", path, "\u2192", resolved);
-    this.textures.set(key, tex);
-    return tex;
-  }
-  // 串行化 + 输入参数化（Ruling P1-1）：input 可为场景 RT 或对象 RT 的纹理（任意 Texture）。
-  // 返回最终输出纹理；链为空或上一帧 update 未完成（纹理槽异步加载中）→ null。
-  // 帧循环用 lastOutput() 贴屏，last 保持最近完成输出，无帧间闪烁。
-  async update(time, input) {
-    if (this.updateInFlight) return null;
-    this.updateInFlight = true;
-    try {
-      const flat = this.chains.flat();
-      if (flat.length === 0) return null;
-      const slotTex = /* @__PURE__ */ new Map();
-      for (let i = 0; i < flat.length; i++) {
-        const pass = flat[i];
-        for (let j = 0; j < pass.textureSlots.length; j++) {
-          const path = pass.textureSlots[j];
-          if (path) slotTex.set(`${i}:${j}`, await this.resolveTextureSlot(path));
-        }
-      }
-      let readTex = resolveInputTexture(input);
-      let lastWrite = null;
-      for (let i = 0; i < flat.length; i++) {
-        const pass = flat[i];
-        const material = this.getMaterial(pass, `${i}`);
-        if (!material) continue;
-        for (let j = 0; j < pass.textureSlots.length; j++) {
-          const tex = slotTex.get(`${i}:${j}`) ?? null;
-          const slot = `g_Texture${j + 1}`;
-          if (material.uniforms[slot]) material.uniforms[slot].value = tex;
-          const res = `g_Texture${j + 1}Resolution`;
-          if (material.uniforms[res]) {
-            const { width: w, height: h } = resolveTextureResolution(tex, this.width, this.height);
-            material.uniforms[res].value = new Vector4(w, h, 1 / Math.max(1, w), 1 / Math.max(1, h));
-          }
-        }
-        if (material.uniforms["g_Texture0"]) material.uniforms["g_Texture0"].value = readTex;
-        if (material.uniforms["g_Texture0Resolution"]) {
-          const { width: w, height: h } = resolveTextureResolution(readTex, this.width, this.height);
-          material.uniforms["g_Texture0Resolution"].value = new Vector4(w, h, 1 / Math.max(1, w), 1 / Math.max(1, h));
-        }
-        if (material.uniforms["g_Time"]) material.uniforms["g_Time"].value = time;
-        if (this.audioSpectrum) this.fillAudioUniforms(material, this.audioSpectrum);
-        const writeTarget = pickWriteTarget(lastWrite, this.rtA, this.rtB);
-        this.renderer.setRenderTarget(writeTarget);
-        this.renderer.render(this.getScene(`${i}`, material), SCREEN_CAMERA);
-        readTex = writeTarget.texture;
-        lastWrite = writeTarget;
-      }
-      this.renderer.setRenderTarget(null);
-      this.last = readTex;
-      return readTex;
-    } finally {
-      this.updateInFlight = false;
-    }
-  }
-  // 帧循环同步读取最近输出：update 未完成时返回 null（调用方回退场景 RT，避免首帧黑屏）
-  lastOutput() {
-    return this.last;
-  }
-  dispose() {
-    this.disposeMaterials();
-    this.rtA.dispose();
-    this.rtB.dispose();
-    this.textures.clear();
-    this.audioSpectrum = null;
-  }
-};
 var SCREEN_CAMERA = new OrthographicCamera(-1, 1, 1, -1, -1e3, 1e3);
 SCREEN_CAMERA.position.z = 300;
-function blendModeToThree(mode) {
-  switch (mode) {
-    case "add":
-      return AdditiveBlending;
-    case "multiply":
-      return MultiplyBlending;
-    case "subtract":
-      return SubtractiveBlending;
-    default:
-      return NormalBlending;
-  }
-}
-
-// src/client/shader/we-headers.ts
-var COMMON_H = `
-#ifndef WE_COMMON_H
-#define WE_COMMON_H
-#define M_PI 3.14159265358979323846
-#define M_PI_HALF 1.57079632679489661923
-#define M_PI_2 6.28318530718
-#define SQRT_2 1.41421356237309504880
-#define SQRT_3 1.73205080756887729352
-#define DEG2RAD 0.01745329251994329576923690768489
-#define DEG2PCT 0.0027777777777777777777777777777
-
-float frac(float x) { return fract(x); }
-vec2 frac(vec2 x) { return fract(x); }
-vec3 frac(vec3 x) { return fract(x); }
-vec4 frac(vec4 x) { return fract(x); }
-
-float saturate(float x) { return clamp(x, 0.0, 1.0); }
-vec2 saturate(vec2 x) { return clamp(x, 0.0, 1.0); }
-vec3 saturate(vec3 x) { return clamp(x, 0.0, 1.0); }
-vec4 saturate(vec4 x) { return clamp(x, 0.0, 1.0); }
-
-vec4 texSample2D(sampler2D t, vec2 uv) { return texture2D(t, uv); }
-vec4 texSample2DLod(sampler2D t, vec2 uv, float lod) { return textureLod(t, uv, lod); }
-
-vec2 rotateVec2(vec2 v, float r) {
-  vec2 cs = vec2(cos(r), sin(r));
-  return vec2(v.x * cs.x - v.y * cs.y, v.x * cs.y + v.y * cs.x);
-}
-
-vec2 rotateVec2(vec4 v, float r) { return rotateVec2(v.xy, r); }
-
-// \u2014\u2014 WE \u5F15\u64CE\u901A\u7528\u5F3A\u8F6C/\u6570\u5B66\u65B9\u8A00\uFF08HLSL \u8F6C GLSL \u4EA7\u7269\uFF0C\u975E\u5F15\u64CE common.h \u8F6C\u5199\uFF0C\u9700\u5168\u5C40\u8865\u9F50\uFF09\u2014\u2014
-// CAST2/CAST3/CAST4 \u7B49\u662F HLSL (floatN)x \u5F3A\u8F6C\u7684\u7B49\u4EF7\u7269\uFF1A\u5BF9**\u4EFB\u610F**\u6807\u91CF/\u5411\u91CF x \u5747\u5408\u6CD5
-// \uFF08vec3(float)=\u6807\u91CF\u5E7F\u64AD\u3001vec3(vec2/3)=\u53D6\u5206\u91CF/\u900F\u4F20\u3001vec3(vec4)=\u53D6 xyz\uFF09\uFF0C\u6545\u7528\u5B8F\u800C\u975E\u51FD\u6570\u3002
-// \u771F\u5B9E WE effects \u5B9E\u6D4B\uFF1Ablendgradient \u7528 CAST2(0.0)/CAST3(0.0)\uFF0Cwaterflow \u7528 CAST4(vec4)\uFF0C
-// depthparallax \u7528 CAST3X3(mat4)\uFF0Cmodel_vertex_v1.h \u7528 CASTF(uint\u2192float)/CASTU(float\u2192uint)\u3002
-#define CAST2(x) vec2(x)
-#define CAST3(x) vec3(x)
-#define CAST4(x) vec4(x)
-#define CASTF(x) float(x)
-#define CASTU(x) uint(x)
-#define CAST2X2(x) mat2(x)
-#define CAST3X3(x) mat3(x)
-#define CAST4X4(x) mat4(x)
-// WE \u7684 atan2(y,x) \u662F HLSL \u98CE\u683C\uFF1BGLSL \u5185\u5EFA\u4E3A atan(y,x)\uFF0C\u4EC5\u6620\u5C04\u540D\u5B57\uFF08fisheye \u7B49\u6548\u679C shader\uFF09\u3002
-#define atan2(y, x) atan(y, x)
-
-// \u2014\u2014 \u4EE5\u4E0B\u4E3A\u5F15\u64CE\u771F\u5B9E common.h \u8F6C\u5199\uFF08D:\\Steam\\steamapps\\common\\wallpaper_engine\\assets\\shaders\\common.h\uFF09\u2014\u2014
-vec3 hsv2rgb(vec3 c) {
-  vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
-  vec3 p = abs(frac(c.xxx + K.xyz) * 6.0 - K.www);
-  return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
-}
-
-vec3 rgb2hsv(vec3 RGB) {
-  vec4 P = (RGB.g < RGB.b) ? vec4(RGB.bg, -1.0, 2.0/3.0) : vec4(RGB.gb, 0.0, -1.0/3.0);
-  vec4 Q = (RGB.r < P.x) ? vec4(P.xyw, RGB.r) : vec4(RGB.r, P.yzx);
-  float C = Q.x - min(Q.w, Q.y);
-  float H = abs((Q.w - Q.y) / (6.0 * C + 1e-10) + Q.z);
-  vec3 HCV = vec3(H, C, Q.x);
-  float S = HCV.y / (HCV.z + 1e-10);
-  return vec3(HCV.x, S, HCV.z);
-}
-
-float greyscale(vec3 color) {
-  return dot(color, vec3(0.11, 0.59, 0.3));
-}
-// \u2014\u2014 \u5F15\u64CE\u8F6C\u5199\u7ED3\u675F \u2014\u2014
-
-// WE \u884C\u4E3B\u5E8F\u7EA6\u5B9A\uFF1Agl_Position = mul(vec4(a_Position,1), g_ModelViewProjectionMatrix)
-vec4 mul(vec4 v, mat4 m) { return m * v; }
-vec3 mul(vec3 v, mat3 m) { return m * v; }
-#endif
-`;
-var COMMON_BLUR_H = `
-#ifndef WE_COMMON_BLUR_H
-#define WE_COMMON_BLUR_H
-vec3 blur13(vec2 u, vec2 d)
-{
-	vec2 o1 = CAST2(1.4091998770852122) * d;
-	vec2 o2 = CAST2(3.2979348079914822) * d;
-	vec2 o3 = CAST2(5.2062900776825969) * d;
-	return texSample2D(g_Texture0, u).rgb * 0.1976406528809576
-	+ texSample2D(g_Texture0, u + o1).rgb * 0.2959855056006557
-	+ texSample2D(g_Texture0, u - o1).rgb * 0.2959855056006557
-	+ texSample2D(g_Texture0, u + o2).rgb * 0.0935333619980593
-	+ texSample2D(g_Texture0, u - o2).rgb * 0.0935333619980593
-	+ texSample2D(g_Texture0, u + o3).rgb * 0.0116608059608062
-	+ texSample2D(g_Texture0, u - o3).rgb * 0.0116608059608062;
-}
-vec3 blur7(vec2 u, vec2 d)
-{
-	vec2 o1 = CAST2(2.3515644035337887) * d;
-	vec2 o2 = CAST2(0.469433779698372) * d;
-	vec2 o3 = CAST2(1.4091998770852121) * d;
-	vec2 o4 = CAST2(3) * d;
-	return texSample2D(g_Texture0, u + o1).rgb * 0.2028175528299753
-	+ texSample2D(g_Texture0, u + o2).rgb * 0.4044856614512112
-	+ texSample2D(g_Texture0, u - o3).rgb * 0.3213933537319605
-	+ texSample2D(g_Texture0, u - o4).rgb * 0.0713034319868530;
-}
-vec3 blur3(vec2 u, vec2 d)
-{
-	return texSample2D(g_Texture0, u + d).rgb * 0.25
-	+ texSample2D(g_Texture0, u).rgb * 0.5
-	+ texSample2D(g_Texture0, u - d).rgb * 0.25;
-}
-vec4 blur13a(vec2 u, vec2 d)
-{
-	vec2 o1 = CAST2(1.4091998770852122) * d;
-	vec2 o2 = CAST2(3.2979348079914822) * d;
-	vec2 o3 = CAST2(5.2062900776825969) * d;
-	return texSample2D(g_Texture0, u) * 0.1976406528809576
-	+ texSample2D(g_Texture0, u + o1) * 0.2959855056006557
-	+ texSample2D(g_Texture0, u - o1) * 0.2959855056006557
-	+ texSample2D(g_Texture0, u + o2) * 0.0935333619980593
-	+ texSample2D(g_Texture0, u - o2) * 0.0935333619980593
-	+ texSample2D(g_Texture0, u + o3) * 0.0116608059608062
-	+ texSample2D(g_Texture0, u - o3) * 0.0116608059608062;
-}
-vec4 blur7a(vec2 u, vec2 d)
-{
-	vec2 o1 = CAST2(2.3515644035337887) * d;
-	vec2 o2 = CAST2(0.469433779698372) * d;
-	vec2 o3 = CAST2(1.4091998770852121) * d;
-	vec2 o4 = CAST2(3) * d;
-	return texSample2D(g_Texture0, u + o1) * 0.2028175528299753
-	+ texSample2D(g_Texture0, u + o2) * 0.4044856614512112
-	+ texSample2D(g_Texture0, u - o3) * 0.3213933537319605
-	+ texSample2D(g_Texture0, u - o4) * 0.0713034319868530;
-}
-vec4 blur3a(vec2 u, vec2 d)
-{
-	return texSample2D(g_Texture0, u + d) * 0.25
-	+ texSample2D(g_Texture0, u) * 0.5
-	+ texSample2D(g_Texture0, u - d) * 0.25;
-}
-vec2 blurRotateVec2(vec2 v, float r)
-{
-	vec2 cs = vec2(cos(r), sin(r));
-	return vec2(v.x * cs.x - v.y * cs.y, v.x * cs.y + v.y * cs.x);
-}
-vec4 blurRadial13a(vec2 u, vec2 center, float amt)
-{
-	vec2 delta = u - center;
-	amt = amt * 0.025;
-	float o1 = 1.4091998770852122 * amt;
-	float o2 = 3.2979348079914822 * amt;
-	float o3 = 5.2062900776825969 * amt;
-	vec2 r1 = blurRotateVec2(delta, o1) - delta;
-	vec2 r2 = blurRotateVec2(delta, o2) - delta;
-	vec2 r3 = blurRotateVec2(delta, o3) - delta;
-	return texSample2D(g_Texture0, u) * 0.1976406528809576
-	+ texSample2D(g_Texture0, center + r1 + delta) * 0.2959855056006557
-	+ texSample2D(g_Texture0, center - r1 + delta) * 0.2959855056006557
-	+ texSample2D(g_Texture0, center + r2 + delta) * 0.0935333619980593
-	+ texSample2D(g_Texture0, center - r2 + delta) * 0.0935333619980593
-	+ texSample2D(g_Texture0, center + r3 + delta) * 0.0116608059608062
-	+ texSample2D(g_Texture0, center - r3 + delta) * 0.0116608059608062;
-}
-vec4 blurRadial7a(vec2 u, vec2 center, float amt)
-{
-	vec2 delta = u - center;
-	amt = amt * 0.025;
-	float o1 = 2.3515644035337887 * amt;
-	float o2 = 0.469433779698372 * amt;
-	float o3 = 1.4091998770852121 * amt;
-	float o4 = 3 * amt;
-	vec2 r1 = blurRotateVec2(delta, o1) - delta;
-	vec2 r2 = blurRotateVec2(delta, o2) - delta;
-	vec2 r3 = blurRotateVec2(delta, -o3) - delta;
-	vec2 r4 = blurRotateVec2(delta, -o4) - delta;
-
-	return texSample2D(g_Texture0, center + r1 + delta) * 0.2028175528299753
-	+ texSample2D(g_Texture0, center + r2 + delta) * 0.4044856614512112
-	+ texSample2D(g_Texture0, center + r3 + delta) * 0.3213933537319605
-	+ texSample2D(g_Texture0, center + r4 + delta) * 0.0713034319868530;
-}
-vec4 blurRadial3a(vec2 u, vec2 center, float amt)
-{
-	vec2 delta = u - center;
-	amt = amt * 0.025;
-	float o1 = amt;
-	vec2 r1 = blurRotateVec2(delta, o1) - delta;
-
-	return texSample2D(g_Texture0, center + delta) * 0.5
-	+ texSample2D(g_Texture0, center + r1 + delta) * 0.25
-	+ texSample2D(g_Texture0, center - r1 + delta) * 0.25;
-}
-#endif
-`;
-var COMMON_BLENDING_H = `
-#ifndef WE_COMMON_BLENDING_H
-#define WE_COMMON_BLENDING_H
-vec4 Desaturate(vec3 color, float Desaturation)
-{
-	vec3 grayXfer = vec3(0.3, 0.59, 0.11);
-	vec3 gray = CAST3(dot(grayXfer, color));
-	return vec4(mix(color, gray, Desaturation), 1.0);
-}
-
-vec3 RGBToHSL(vec3 color)
-{
-#ifdef HDR
-	color = saturate(color);
-#endif
-
-	vec3 hsl;
-	float fmin = min(min(color.r, color.g), color.b);
-	float fmax = max(max(color.r, color.g), color.b);
-	float delta = fmax - fmin;
-	hsl.z = (fmax + fmin) / 2.0;
-
-	if (delta == 0.0)
-	{
-		hsl.x = 0.0;
-		hsl.y = 0.0;
-	}
-	else
-	{
-		if (hsl.z < 0.5)
-			hsl.y = delta / (fmax + fmin);
-		else
-			hsl.y = delta / (2.0 - fmax - fmin);
-		float deltaR = (((fmax - color.r) / 6.0) + (delta / 2.0)) / delta;
-		float deltaG = (((fmax - color.g) / 6.0) + (delta / 2.0)) / delta;
-		float deltaB = (((fmax - color.b) / 6.0) + (delta / 2.0)) / delta;
-		if (color.r == fmax )
-			hsl.x = deltaB - deltaG;
-		else if (color.g == fmax)
-			hsl.x = (1.0 / 3.0) + deltaR - deltaB;
-		else if (color.b == fmax)
-			hsl.x = (2.0 / 3.0) + deltaG - deltaR;
-
-		if (hsl.x < 0.0)
-			hsl.x += 1.0;
-		else if (hsl.x > 1.0)
-			hsl.x -= 1.0;
-	}
-
-	return hsl;
-}
-
-float HueToRGB(float f1, float f2, float hue)
-{
-	if (hue < 0.0)
-		hue += 1.0;
-	else if (hue > 1.0)
-		hue -= 1.0;
-	float res;
-	if ((6.0 * hue) < 1.0)
-		res = f1 + (f2 - f1) * 6.0 * hue;
-	else if ((2.0 * hue) < 1.0)
-		res = f2;
-	else if ((3.0 * hue) < 2.0)
-		res = f1 + (f2 - f1) * ((2.0 / 3.0) - hue) * 6.0;
-	else
-		res = f1;
-	return res;
-}
-
-vec3 HSLToRGB(vec3 hsl)
-{
-	vec3 rgb;
-	if (hsl.y == 0.0)
-		rgb = CAST3(hsl.z);
-	else
-	{
-		float f2;
-		if (hsl.z < 0.5)
-			f2 = hsl.z * (1.0 + hsl.y);
-		else
-			f2 = (hsl.z + hsl.y) - (hsl.y * hsl.z);
-		float f1 = 2.0 * hsl.z - f2;
-		rgb.r = HueToRGB(f1, f2, hsl.x + (1.0/3.0));
-		rgb.g = HueToRGB(f1, f2, hsl.x);
-		rgb.b= HueToRGB(f1, f2, hsl.x - (1.0/3.0));
-	}
-	
-	return rgb;
-}
-
-vec3 ContrastSaturationBrightness(vec3 color, float brt, float sat, float con)
-{
-	const float AvgLumR = 0.5;
-	const float AvgLumG = 0.5;
-	const float AvgLumB = 0.5;
-	
-	const vec3 LumCoeff = vec3(0.2125, 0.7154, 0.0721);
-	
-	vec3 AvgLumin = vec3(AvgLumR, AvgLumG, AvgLumB);
-	vec3 brtColor = color * brt;
-	vec3 intensity = CAST3(dot(brtColor, LumCoeff));
-	vec3 satColor = mix(intensity, brtColor, sat);
-	vec3 conColor = mix(AvgLumin, satColor, con);
-	return conColor;
-}
-
-#define BlendLinearDodgef(base, blend) (base + blend)
-#define BlendLinearBurnf(base, blend) max(base + blend - 1.0, 0.0)
-#define BlendLightenf(base, blend) max(blend, base)
-#define BlendDarkenf(base, blend) min(blend, base)
-#define BlendLinearLightf(base, blend) (blend < 0.5 ? BlendLinearBurnf(base, (2.0 * blend)) : BlendLinearDodgef(base, (2.0 * (blend - 0.5))))
-#define BlendScreenf(base, blend) (1.0 - ((1.0 - base) * (1.0 - blend)))
-#define BlendOverlayf(base, blend) (base < 0.5 ? (2.0 * base * blend) : (1.0 - 2.0 * (1.0 - base) * (1.0 - blend)))
-#define BlendSoftLightf(base, blend) ((blend < 0.5) ? (2.0 * base * blend + base * base * (1.0 - 2.0 * blend)) : (sqrt(base) * (2.0 * blend - 1.0) + 2.0 * base * (1.0 - blend)))
-#define BlendColorDodgef(base, blend) ((blend == 1.0) ? blend : min(base / (1.0 - blend), 1.0))
-#define BlendColorBurnf(base, blend) ((blend == 0.0) ? blend : max((1.0 - ((1.0 - base) / blend)), 0.0))
-#define BlendVividLightf(base, blend) ((blend < 0.5) ? BlendColorBurnf(base, (2.0 * blend)) : BlendColorDodgef(base, (2.0 * (blend - 0.5))))
-#define BlendPinLightf(base, blend) ((blend < 0.5) ? BlendDarkenf(base, (2.0 * blend)) : BlendLightenf(base, (2.0 *(blend - 0.5))))
-#define BlendHardMixf(base, blend) ((BlendVividLightf(base, blend) < 0.5) ? 0.0 : 1.0)
-#define BlendReflectf(base, blend) ((blend == 1.0) ? blend : min(base * base / (1.0 - blend), 1.0))
-#define BlendNormal(base, blend) (blend)
-#define BlendLighten BlendLightenf
-#define BlendDarken	 BlendDarkenf
-#define BlendMultiply(base, blend) (base * blend)
-#define BlendAverage(base, blend) ((base + blend) / 2.0)
-#define BlendAdd(base, blend) min(base + blend, CAST3(1.0))
-#define BlendSubstract(base, blend) max(base + blend - CAST3(1.0), CAST3(0.0))
-#define BlendDifference(base, blend) abs(base - blend)
-#define BlendNegation(base, blend) (CAST3(1.0) - abs(CAST3(1.0) - base - blend))
-#define BlendExclusion(base, blend) (base + blend - 2.0 * base * blend)
-#define BlendScreen(base, blend) vec3(BlendScreenf(base.r, blend.r), BlendScreenf(base.g, blend.g), BlendScreenf(base.b, blend.b))
-#define BlendOverlay(base, blend) vec3(BlendOverlayf(base.r, blend.r), BlendOverlayf(base.g, blend.g), BlendOverlayf(base.b, blend.b))
-#define BlendSoftLight(base, blend) vec3(BlendSoftLightf(base.r, blend.r), BlendSoftLightf(base.g, blend.g), BlendSoftLightf(base.b, blend.b))
-#define BlendHardLight(base, blend) BlendOverlay(blend, base)
-#define BlendColorDodge(base, blend) vec3(BlendColorDodgef(base.r, blend.r), BlendColorDodgef(base.g, blend.g), BlendColorDodgef(base.b, blend.b))
-#define BlendColorBurn(base, blend) vec3(BlendColorBurnf(base.r, blend.r), BlendColorBurnf(base.g, blend.g), BlendColorBurnf(base.b, blend.b))
-#define BlendLinearLight(base, blend) vec3(BlendLinearLightf(base.r, blend.r), BlendLinearLightf(base.g, blend.g), BlendLinearLightf(base.b, blend.b))
-#define BlendVividLight(base, blend) vec3(BlendVividLightf(base.r, blend.r), BlendVividLightf(base.g, blend.g), BlendVividLightf(base.b, blend.b))
-#define BlendPinLight(base, blend) vec3(BlendPinLightf(base.r, blend.r), BlendPinLightf(base.g, blend.g), BlendPinLightf(base.b, blend.b))
-#define BlendHardMix(base, blend) vec3(BlendHardMixf(base.r, blend.r), BlendHardMixf(base.g, blend.g), BlendHardMixf(base.b, blend.b))
-#define BlendReflect(base, blend) vec3(BlendReflectf(base.r, blend.r), BlendReflectf(base.g, blend.g), BlendReflectf(base.b, blend.b))
-#define BlendGlow(base, blend) BlendReflect(blend, base)
-#define BlendPhoenix(base, blend) (min(base, blend) - max(base, blend) + CAST3(1.0))
-#define BlendOpacity(base, blend, F, O) mix(base, F(base, blend), O)
-#define BlendLinearDodge(base, blend) min(base + blend, CAST3(1.0))
-#define BlendLinearBurn(base, blend) max(base + blend - CAST3(1.0), CAST3(0.0))
-#define BlendTint(base, blend) (CAST3(max(base.x, max(base.y, base.z))) * blend)
-
-vec3 BlendHue(vec3 base, vec3 blend)
-{
-	vec3 baseHSL = RGBToHSL(base);
-	return HSLToRGB(vec3(RGBToHSL(blend).r, baseHSL.g, baseHSL.b));
-}
-
-vec3 BlendSaturation(vec3 base, vec3 blend)
-{
-	vec3 baseHSL = RGBToHSL(base);
-	return HSLToRGB(vec3(baseHSL.r, RGBToHSL(blend).g, baseHSL.b));
-}
-
-vec3 BlendColor(vec3 base, vec3 blend)
-{
-	vec3 blendHSL = RGBToHSL(blend);
-	return HSLToRGB(vec3(blendHSL.r, blendHSL.g, RGBToHSL(base).b));
-}
-
-vec3 BlendLuminosity(vec3 base, vec3 blend)
-{
-	vec3 baseHSL = RGBToHSL(base);
-	return HSLToRGB(vec3(baseHSL.r, baseHSL.g, RGBToHSL(blend).b));
-}
-
-vec3 ApplyBlending(const int blendMode, in vec3 A, in vec3 B, in float opacity)
-{
-#if BLENDMODE == 1
-	return mix(A,BlendDarken(A,B),opacity);
-#endif
-#if BLENDMODE == 2
-	return mix(A,BlendMultiply(A,B),opacity);
-#endif
-#if BLENDMODE == 3
-	return mix(A,BlendColorBurn(A,B),opacity);
-#endif
-#if BLENDMODE == 4
-	return mix(A,BlendSubstract(A,B),opacity);
-#endif
-#if BLENDMODE == 5
-	return min(A, B);
-#endif
-#if BLENDMODE == 6
-	return mix(A,BlendLighten(A,B),opacity);
-#endif
-#if BLENDMODE == 7
-	return mix(A,BlendScreen(A,B),opacity);
-#endif
-#if BLENDMODE == 8
-	return mix(A,BlendColorDodge(A,B),opacity);
-#endif
-#if BLENDMODE == 9
-	return mix(A,BlendAdd(A,B),opacity);
-#endif
-#if BLENDMODE == 10
-	return max(A, B);
-#endif
-#if BLENDMODE == 11
-	return mix(A,BlendOverlay(A,B),opacity);
-#endif
-#if BLENDMODE == 12
-	return mix(A,BlendSoftLight(A,B),opacity);
-#endif
-#if BLENDMODE == 13
-	return mix(A,BlendHardLight(A,B),opacity);
-#endif
-#if BLENDMODE == 14
-	return mix(A,BlendVividLight(A,B),opacity);
-#endif
-#if BLENDMODE == 15
-	return mix(A,BlendLinearLight(A,B),opacity);
-#endif
-#if BLENDMODE == 16
-	return mix(A,BlendPinLight(A,B),opacity);
-#endif
-#if BLENDMODE == 17
-	return mix(A,BlendHardMix(A,B),opacity);
-#endif
-#if BLENDMODE == 18
-	return mix(A,BlendDifference(A,B),opacity);
-#endif
-#if BLENDMODE == 19
-	return mix(A,BlendExclusion(A,B),opacity);
-#endif
-#if BLENDMODE == 20
-	return mix(A,BlendSubstract(A,B),opacity);
-#endif
-#if BLENDMODE == 21
-	return mix(A,BlendReflect(A,B),opacity);
-#endif
-#if BLENDMODE == 22
-	return mix(A,BlendGlow(A,B),opacity);
-#endif
-#if BLENDMODE == 23
-	return mix(A,BlendPhoenix(A,B),opacity);
-#endif
-#if BLENDMODE == 24
-	return mix(A,BlendAverage(A,B),opacity);
-#endif
-#if BLENDMODE == 25
-	return mix(A,BlendNegation(A,B),opacity);
-#endif
-#if BLENDMODE == 26
-	return mix(A,BlendHue(A,B),opacity);
-#endif
-#if BLENDMODE == 27
-	return mix(A,BlendSaturation(A,B),opacity);
-#endif
-#if BLENDMODE == 28
-	return mix(A,BlendColor(A,B),opacity);
-#endif
-#if BLENDMODE == 29
-	return mix(A,BlendLuminosity(A,B),opacity);
-#endif
-#if BLENDMODE == 30
-	return mix(A,BlendTint(A,B),opacity);
-#endif
-#if BLENDMODE == 31
-	return A+B*opacity;
-#endif
-#if BLENDMODE == 32
-	return mix(A,A+A*B,opacity);
-#endif
-	return mix(A,BlendNormal(A,B),opacity);
-}
-#endif
-`;
-var COMMON_PERSPECTIVE_H = `
-#ifndef WE_COMMON_PERSPECTIVE_H
-#define WE_COMMON_PERSPECTIVE_H
-
-mat3 squareToQuad(vec2 p0, vec2 p1, vec2 p2, vec2 p3) {
-	mat3 m = mat3(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0);
-	float dx0 = p0.x;
-	float dy0 = p0.y;
-	float dx1 = p1.x;
-	float dy1 = p1.y;
-	
-	float dx2 = p3.x;
-	float dy2 = p3.y;
-	float dx3 = p2.x;
-	float dy3 = p2.y;
-	
-	float diffx1 = dx1 - dx3;
-	float diffy1 = dy1 - dy3;
-	float diffx2 = dx2 - dx3;
-	float diffy2 = dy2 - dy3;
-
-	float det = diffx1*diffy2 - diffx2*diffy1;
-	float sumx = dx0 - dx1 + dx3 - dx2;
-	float sumy = dy0 - dy1 + dy3 - dy2;
-
-	if (det == 0.0 || (sumx == 0.0 && sumy == 0.0)) {
-		m[0][0] = dx1 - dx0;
-		m[0][1] = dy1 - dy0;
-		m[0][2] = 0.0;
-		m[1][0] = dx3 - dx1;
-		m[1][1] = dy3 - dy1;
-		m[1][2] = 0.0;
-		m[2][0] = dx0;
-		m[2][1] = dy0;
-		m[2][2] = 1.0;
-		return m;
-	} else {
-		float ovdet = 1.0 / det;
-		float g = (sumx * diffy2 - diffx2 * sumy) * ovdet;
-		float h = (diffx1 * sumy - sumx * diffy1) * ovdet;
-
-		m[0][0] = dx1 - dx0 + g * dx1;
-		m[0][1] = dy1 - dy0 + g * dy1;
-		m[0][2] = g;
-		m[1][0] = dx2 - dx0 + h * dx2;
-		m[1][1] = dy2 - dy0 + h * dy2;
-		m[1][2] = h;
-		m[2][0] = dx0;
-		m[2][1] = dy0;
-		m[2][2] = 1.0;
-		return m;
-	}
-}
-
-#if HLSL
-mat3 inverse(mat3 m) {
-	float a00 = m[0][0], a01 = m[0][1], a02 = m[0][2];
-	float a10 = m[1][0], a11 = m[1][1], a12 = m[1][2];
-	float a20 = m[2][0], a21 = m[2][1], a22 = m[2][2];
-	float b01 = a22 * a11 - a12 * a21;
-	float b11 = -a22 * a10 + a12 * a20;
-	float b21 = a21 * a10 - a11 * a20;
-	float det = a00 * b01 + a01 * b11 + a02 * b21;
-	return mat3(b01, (-a22 * a01 + a02 * a21), (a12 * a01 - a02 * a11),
-			  b11, (a22 * a00 - a02 * a20), (-a12 * a00 + a02 * a10),
-			  b21, (-a21 * a00 + a01 * a20), (a11 * a00 - a01 * a10)) / det;
-}
-#endif
-#endif
-`;
-var COMMON_COMPOSITE_H = `
-#include "common.h"
-#include "common_blending.h"
-
-uniform float g_CompositeAlpha; // {"material":"compositealpha","label":"ui_editor_properties_alpha","default":1,"range":[0.0, 2.0]}
-uniform vec2 g_CompositeOffset; // {"material":"compositeoffset","label":"ui_editor_properties_offset","default":"0 0","linked":true,"range":[-10.0, 10.0]}
-uniform vec3 g_CompositeColor; // {"material":"compositecolor","label":"ui_editor_properties_color","default":"1 1 1","type":"color"}
-
-vec2 ApplyCompositeOffset(vec2 texCoords, vec2 textureResolution)
-{
-#if COMPOSITE != 0
-	return texCoords + g_CompositeOffset / textureResolution;
-#else
-	return texCoords;
-#endif
-}
-
-vec4 ApplyComposite(vec4 original, vec4 effect)
-{
-#if COMPOSITEMONO == 1
-	effect.rgb = CAST3(greyscale(effect.rgb));
-#endif
-
-	effect.rgb *= g_CompositeColor;
-
-#if COMPOSITE == 0
-	return effect;
-#endif
-
-#if COMPOSITE == 1
-	effect.rgb = ApplyBlending(BLENDMODE, original.rgb, effect.rgb, effect.a * g_CompositeAlpha);
-	effect.a = max(effect.a * saturate(g_CompositeAlpha), original.a);
-#endif
-
-#if COMPOSITE == 2
-	effect.a *= saturate(g_CompositeAlpha);
-	effect = mix(effect, original, original.a);
-#endif
-
-#if COMPOSITE == 3
-	effect.a *= saturate(g_CompositeAlpha);
-	effect.a *= 1.0 - original.a;
-#endif
-
-	return effect;
-}
-`;
-var COMMON_FRAGMENT_H = `
-#ifndef WE_COMMON_FRAGMENT_H
-#define WE_COMMON_FRAGMENT_H
-
-#define FORMAT_RGBA8888 0
-#define FORMAT_RGB888 1
-#define FORMAT_RGB565 2
-
-#define FORMAT_ETC1_RGB8 3
-#define FORMAT_DXT5 4
-#define FORMAT_ETC2_RGBA8 5
-#define FORMAT_DXT3 6
-#define FORMAT_DXT1 7
-
-#define FORMAT_RG88 8
-#define FORMAT_R8 9
-#define FORMAT_RG1616F 10
-#define FORMAT_R16F 11
-
-#define FORMAT_BC7 12
-
-vec3 DecompressNormal(vec4 normal)
-{
-#if TEX1FORMAT >= FORMAT_ETC1_RGB8 && TEX1FORMAT <= FORMAT_DXT1 || TEX1FORMAT == FORMAT_BC7
-	normal.yx = normal.yw * 2.0 - vec2(0.965, 1.0);
-#else
-#if TEX1FORMAT == FORMAT_RG88
-	normal.xy = normal.rg * 2.0 - 1.0;
-#else
-	normal.xy = normal.wy * 2.0 - 1.0;
-#endif
-#endif
-	normal.z = sqrt(saturate(1.0 - normal.x * normal.x - normal.y * normal.y));
-	return normal.xyz;
-}
-
-vec4 DecompressNormalWithMask(vec4 normal)
-{
-#if TEX1FORMAT >= FORMAT_ETC1_RGB8 && TEX1FORMAT <= FORMAT_DXT1 || TEX1FORMAT == FORMAT_BC7
-	normal.xw = normal.wx;
-	normal.xy = normal.xy * 2.0 - vec2(0.965, 1.0);
-#else
-#if TEX1FORMAT == FORMAT_RG88
-	normal.xy = normal.gr * 2.0 - 1.0;
-#else
-	normal.xw = normal.wx;
-	normal.xy = normal.xy * 2.0 - 1.0;
-#endif
-#endif
-	normal.z = sqrt(saturate(1.0 - normal.x * normal.x - normal.y * normal.y));
-	return normal;
-}
-
-float ComputeMaterialSpecularPower(const float roughness, const float metallic)
-{
-	return (1.01 - roughness) * mix(400.0, 250.0, metallic);
-}
-
-float ComputeMaterialSpecularStrength(const float roughness, const float metallic)
-{
-	return (0.5 + metallic * 0.5) * (1.0 - roughness * 0.9);
-}
-
-vec3 ComputeLight(const vec3 normal, const vec3 lightDelta, const vec3 color, const float radius)
-{
-	float lightDistance = length(lightDelta);
-	float lightAttn = saturate((radius - lightDistance) / radius);
-	return color * (saturate(dot(lightDelta / lightDistance, normal))) * lightAttn * lightAttn;
-}
-
-vec3 ComputeLightSpecular(const vec3 normal, const vec3 lightDelta, const vec3 color, const float radius, const vec3 viewDir, const float specularPower, const float specularStrength, const float halfLambert, const float metallicTerm, inout vec3 specularResult)
-{
-	float lightDistance = length(lightDelta);
-	float lightAttn = saturate((radius - lightDistance) / radius);
-	vec3 lightDir = lightDelta / lightDistance;
-	float specular = max(0.0, dot(normalize(viewDir + lightDir), normal));
-	specularResult += pow(specular, specularPower) * specularStrength * lightAttn * color;
-	float lightDot = dot(lightDir, normal);
-	float halfLambertLight = lightDot * 0.5 + 0.5;
-	lightDot = mix(lightDot, halfLambertLight, halfLambert);
-	float rim = metallicTerm * 2.0;
-	rim = pow((1.0 - saturate(dot(normal, viewDir))) * pow(halfLambertLight, 0.25), 6.0 - rim) * rim;
-	return color * (saturate(lightDot) + rim) * lightAttn * lightAttn;
-}
-
-float ConvertSampleR8(vec4 _sample)
-{
-#if HLSL_SM30
-		return _sample.a;
-#else
-		return _sample.r;
-#endif
-}
-
-vec4 ConvertTexture0Format(vec4 _sample)
-{
-#if TEX0FORMAT == FORMAT_RG88 || TEX0FORMAT == FORMAT_RG1616F
-#if HLSL_SM30
-	return _sample.rrra;
-#else
-	return _sample.rrrg;
-#endif
-#endif
-
-#if TEX0FORMAT == FORMAT_R8 || TEX0FORMAT == FORMAT_R16F
-#if HLSL_SM30
-	return vec4(1, 1, 1, _sample.a);
-#else
-	return vec4(1, 1, 1, _sample.r);
-#endif
-#endif
-	return _sample;
-}
-
-vec4 ConvertTextureFormat(const int format, vec4 _sample)
-{
-	if (format == FORMAT_RG88 || format == FORMAT_RG1616F)
-	{
-#if HLSL_SM30
-		return _sample.rrra;
-#else
-		return _sample.rrrg;
-#endif
-	}
-
-	if (format == FORMAT_R8 || format == FORMAT_R16F)
-	{
-#if HLSL_SM30
-		return vec4(1, 1, 1, _sample.a);
-#else
-		return vec4(1, 1, 1, _sample.r);
-#endif
-	}
-	return _sample;
-}
-#endif
-`;
-var COMMON_VERTEX_H = `
-#ifndef WE_COMMON_VERTEX_H
-#define WE_COMMON_VERTEX_H
-mat3 BuildTangentSpace(const vec3 normal, const vec4 signedTangent)
-{
-	vec3 tangent = signedTangent.xyz;
-	vec3 bitangent = cross(normal, tangent) * signedTangent.w;
-	return mat3(tangent, bitangent, normal);
-}
-
-mat3 BuildTangentSpace(const mat3 modelTransform, const vec3 normal, const vec4 signedTangent)
-{
-	vec3 tangent = signedTangent.xyz;
-	vec3 bitangent = cross(normal, tangent) * signedTangent.w;
-	return mat3(mul(tangent, modelTransform),
-		mul(bitangent, modelTransform),
-		mul(normal, modelTransform));
-}
-
-void BuildTangentSpace(const mat3 modelTransform, const vec3 normal, const vec4 signedTangent, out vec3 worldTangent, out vec3 worldBitangent)
-{
-	vec3 tangent = signedTangent.xyz;
-	vec3 bitangent = cross(normal, tangent) * signedTangent.w;
-	worldTangent = mul(tangent, modelTransform);
-	worldBitangent = mul(bitangent, modelTransform);
-}
-#endif
-`;
-var WE_HEADERS = {
-  "common.h": COMMON_H,
-  "common_blending.h": COMMON_BLENDING_H,
-  "common_perspective.h": COMMON_PERSPECTIVE_H,
-  "common_blur.h": COMMON_BLUR_H,
-  "common_composite.h": COMMON_COMPOSITE_H,
-  "common_fragment.h": COMMON_FRAGMENT_H,
-  "common_vertex.h": COMMON_VERTEX_H
-};
-
-// src/client/shader/shader-preprocessor.ts
-var UNIFORM_RE = /uniform\s+([\w]+)\s+(\w+)(?:\[(\d+)\])?\s*;\s*(?:\/\/\s*(\{[\s\S]*?\}))?/g;
-function extractUniformAnnotations(source) {
-  const out = [];
-  for (const m of source.matchAll(UNIFORM_RE)) {
-    const type = m[3] ? `${m[1]}[${m[3]}]` : m[1];
-    let annotation;
-    if (m[4]) {
-      try {
-        annotation = JSON.parse(m[4]);
-      } catch {
-        annotation = void 0;
-      }
-    }
-    out.push({ name: m[2], type, annotation });
-  }
-  return out;
-}
-function rewriteAttributes(src) {
-  return src.split("attribute vec3 a_Position;").join("").split("attribute vec2 a_TexCoord;").join("").split("a_Position").join("position").split("a_TexCoord").join("uv");
-}
-function extractIfIdentifiers(src) {
-  const out = /* @__PURE__ */ new Set();
-  for (const m of src.matchAll(/^\s*#if\s+(.+)$/gm)) {
-    const expr = m[1].replace(/defined\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)/g, "").replace(/\/\/.*$/, "");
-    for (const id of expr.matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)) {
-      out.add(id[0]);
-    }
-  }
-  return out;
-}
-function extractComboDefaults(src) {
-  const out = /* @__PURE__ */ new Map();
-  for (const m of src.matchAll(/\[COMBO\]\s*\{[^}]*"combo"\s*:\s*"([A-Za-z_][A-Za-z0-9_]*)"[^}]*"default"\s*:\s*(-?\d+(?:\.\d+)?)/g)) {
-    out.set(m[1], Number(m[2]));
-  }
-  return out;
-}
-function normalizeFloatIntLiterals(src) {
-  const protectedBlocks = [];
-  let out = src;
-  const protect = (m) => {
-    const token = `__WEI_PROTECTED_${protectedBlocks.length.toString(36)}__`;
-    protectedBlocks.push(m);
-    return token;
-  };
-  out = out.replace(/^\s*#(?:if|elif|ifdef|ifndef|define).*$/gm, protect);
-  out = out.replace(/for\s*\([^)]*\)/g, protect);
-  out = out.replace(/\[[^\]]*\]/g, protect);
-  out = out.replace(/\b(?:ivec[234])\s*\([^)]*\)/g, protect);
-  out = out.replace(/\b(?:const\s+)?int\s+\w+\s*(?:\[[^\]]*\])?\s*=[^;]*;/g, protect);
-  out = out.replace(/\b(?:const\s+)?int\s+\w+\s*(?:\[[^\]]*\])?\s*;/g, protect);
-  out = out.replace(/(?:==|!=|<=|>=|<|>)\s*-?\d+(?![\w.])/g, protect);
-  out = out.replace(/\d\.?\d*[eE][+-]?\d+/g, protect);
-  out = out.replace(/(?<![\w.])-?\d+(?![\w.])/g, (m) => `${m}.0`);
-  protectedBlocks.forEach((block, i) => {
-    out = out.replace(`__WEI_PROTECTED_${i.toString(36)}__`, block);
-  });
-  return out;
-}
-function floatifyIntVarUses(src) {
-  const intVars = /* @__PURE__ */ new Set();
-  for (const m of src.matchAll(/\b(?:const\s+)?(?:uniform\s+)?(?:in\s+|out\s+)?int\s+(\w+)(?!\s*\()/g)) {
-    intVars.add(m[1]);
-  }
-  if (intVars.size === 0) return src;
-  const protectedBlocks = [];
-  const protect = (m) => {
-    const token = `0WEI_INTVAR_${protectedBlocks.length.toString(36)}__`;
-    protectedBlocks.push(m);
-    return token;
-  };
-  const restore = () => {
-    protectedBlocks.forEach((block, i) => {
-      out = out.replace(new RegExp(`0WEI_INTVAR_${i.toString(36)}__`, "g"), () => block);
-    });
-  };
-  const protectConstructs = (text) => {
-    const re = /\b(?:int|float|ivec[234])\s*\(/g;
-    let out2 = "";
-    let last = 0;
-    let m;
-    while (m = re.exec(text)) {
-      const open = m.index + m[0].length - 1;
-      let depth = 1;
-      let i = open + 1;
-      for (; i < text.length && depth > 0; i++) {
-        const ch = text[i];
-        if (ch === "(") depth++;
-        else if (ch === ")") depth--;
-      }
-      out2 += text.slice(last, m.index) + protect(text.slice(m.index, i));
-      last = i;
-      re.lastIndex = i;
-    }
-    return out2 + text.slice(last);
-  };
-  let out = src;
-  out = out.replace(/^\s*(?:const\s+)?(?:uniform\s+)?(?:in\s+|out\s+)?int\b[^;]*;/gm, protect);
-  out = out.replace(/(?:\(|,)\s*(?:const\s+)?(?:in\s+|out\s+)?int\s+\w+(?=\s*[,)])/g, protect);
-  out = out.replace(/\[[^\]]*\]/g, protect);
-  out = out.replace(/for\s*\([^;{}]*;[^;{}]*;[^;{}]*\)/g, protect);
-  out = out.replace(/(?:\+\+|--)\s*\w+|\w+\s*(?:\+\+|--)/g, protect);
-  out = protectConstructs(out);
-  out = out.replace(/(?:==|!=|<=|>=|<|>)\s*[A-Za-z_]\w*/g, protect);
-  out = out.replace(/[A-Za-z_]\w*\s*(?:==|!=|<=|>=|<|>)/g, protect);
-  for (const name of intVars) {
-    out = out.replace(new RegExp(`\\b${name}\\b`, "g"), `float(${name})`);
-  }
-  restore();
-  return out;
-}
-function relaxGlsl3Strictness(src) {
-  let out = src.replace(
-    /\bconst\s+(float|int|vec[234]|mat[234])\s+(\w+)\s*=\s*([^;]*[A-Za-z_][^;]*);/g,
-    (m, type, name, expr) => {
-      const trimmed = expr.trim();
-      if (/^-?[\d.]+$/.test(trimmed) || /^(true|false)$/.test(trimmed)) return m;
-      return `${type} ${name} = ${expr};`;
-    }
-  ).replace(/\b(sample|pointer)\b/g, "$1_");
-  const lines = out.split("\n");
-  let mainIdx = -1;
-  for (let i = 0; i < lines.length; i++) {
-    if (/^\s*void\s+main\s*\(/.test(lines[i])) {
-      mainIdx = i;
-      break;
-    }
-  }
-  if (mainIdx > 0) {
-    const moved = [];
-    let depth = 0;
-    let inComment = false;
-    for (let i = 0; i < mainIdx; i++) {
-      const l = lines[i];
-      if (l.trim().startsWith("//")) continue;
-      for (const ch of l) {
-        if (ch === "{") depth++;
-        else if (ch === "}") depth--;
-      }
-      if (depth !== 0) continue;
-      const m = l.match(/^\s*(float|int|vec[234]|mat[234])\s+(\w+)\s*=\s*([^;]*[A-Za-z_][^;]*);\s*$/);
-      if (!m) continue;
-      const expr = m[3].trim();
-      if (/^-?[\d.]+$/.test(expr) || /^(true|false)$/.test(expr)) continue;
-      if (/^(?:CAST[234]|vec[234]|mat[234])\s*\(\s*-?[\d.]+\s*\)$/.test(expr)) continue;
-      lines[i] = l.replace(/\s*=\s*[^;]*;\s*$/, ";");
-      moved.push(`	${m[2]} = ${expr};`);
-    }
-    if (moved.length) lines.splice(mainIdx + 1, 0, ...moved);
-  }
-  return lines.join("\n");
-}
-function preprocessWeShader(source, combos) {
-  const samplerDecls = [];
-  const src = source.replace(/^\s*(uniform\s+sampler\w+\s+\w+\s*;.*)$/gm, (m) => {
-    samplerDecls.push(m.trim());
-    return "";
-  });
-  let out = src;
-  const hadExplicitCommon = out.includes('#include "common.h"');
-  let prev;
-  do {
-    prev = out;
-    for (const [name, header] of Object.entries(WE_HEADERS)) {
-      out = out.split(`#include "${name}"`).join(header);
-    }
-  } while (out !== prev);
-  if (!hadExplicitCommon) {
-    out = WE_HEADERS["common.h"] + "\n" + out;
-  }
-  out = rewriteAttributes(out);
-  out = normalizeFloatIntLiterals(out);
-  out = floatifyIntVarUses(out);
-  out = relaxGlsl3Strictness(out);
-  const defines = /* @__PURE__ */ new Map();
-  for (const [k, v] of Object.entries(combos)) defines.set(k, String(v));
-  for (const [k, v] of extractComboDefaults(out)) {
-    if (!defines.has(k)) defines.set(k, String(v));
-  }
-  const alreadyDefined = /* @__PURE__ */ new Set();
-  for (const m of out.matchAll(/^\s*#define\s+([A-Za-z_][A-Za-z0-9_]*)/gm)) alreadyDefined.add(m[1]);
-  for (const id of extractIfIdentifiers(out)) {
-    if (/^\d/.test(id)) continue;
-    if (alreadyDefined.has(id)) continue;
-    if (defines.has(id)) continue;
-    defines.set(id, "0");
-  }
-  const defineLines = [...defines.entries()].map(([k, v]) => `#define ${k} ${v}`);
-  const prefix = [...defineLines, ...samplerDecls];
-  return prefix.length ? `${prefix.join("\n")}
-${out}` : out;
-}
-
-// src/client/shader/effect-chain.ts
-async function resolveEffectChain(sceneEffect, loadFile) {
-  try {
-    const effectRaw = await loadFile(sceneEffect.file);
-    if (!effectRaw) return null;
-    const effect = JSON.parse(new TextDecoder().decode(effectRaw));
-    const fboScale = {};
-    for (const fb of effect.fbos ?? []) {
-      if (fb?.name) fboScale[fb.name] = fb.scale > 0 ? fb.scale : 1;
-    }
-    const scenePasses = Array.isArray(sceneEffect.passes) ? sceneEffect.passes : [];
-    if (!Array.isArray(effect.passes) || effect.passes.length === 0) return null;
-    const out = [];
-    for (let i = 0; i < effect.passes.length; i++) {
-      const scenePass = scenePasses[i] ?? {};
-      const matRef = scenePass.material ?? effect.passes[i].material;
-      if (typeof matRef !== "string") return null;
-      if (matRef.startsWith("materials/util/")) continue;
-      const matRaw = await loadFile(matRef);
-      if (!matRaw) return null;
-      const mat = JSON.parse(new TextDecoder().decode(matRaw));
-      const shaderName = mat.passes?.[0]?.shader;
-      if (typeof shaderName !== "string") return null;
-      const vertRaw = await loadFile(`shaders/${shaderName}.vert`);
-      const fragRaw = await loadFile(`shaders/${shaderName}.frag`);
-      if (!vertRaw || !fragRaw) return null;
-      const override = scenePasses[i] ?? {};
-      const combos = override.combos ?? {};
-      const constants = override.constantshadervalues ?? {};
-      const textures = Array.isArray(override.textures) ? override.textures : [];
-      const rawVert = new TextDecoder().decode(vertRaw);
-      const rawFrag = new TextDecoder().decode(fragRaw);
-      const vertSrc = preprocessWeShader(rawVert, combos);
-      const fragSrc = preprocessWeShader(rawFrag, combos);
-      const uniforms = resolveUniformBindings(
-        extractUniformAnnotations(fragSrc).concat(extractUniformAnnotations(vertSrc)),
-        constants
-      );
-      const effPass = effect.passes[i];
-      out.push({
-        vertSrc,
-        fragSrc,
-        rawVert,
-        rawFrag,
-        combos,
-        uniforms,
-        textureSlots: textures,
-        blendMode: mat.passes?.[0]?.blending ?? "normal",
-        // RT 图信息：effect.json passes[i].target（写到的具名 RT）/bind（采样来源）；
-        // scene.json pass 可覆写 target（如 scene 指定目标 RT）。缺省 target=null（最终输出）。
-        target: (scenePass.target ?? effPass.target) || null,
-        bind: Array.isArray(effPass.bind) ? effPass.bind : [],
-        fboScale
-      });
-    }
-    if (out.length === 0) return null;
-    return out;
-  } catch {
-    return null;
-  }
-}
-
-// src/client/audio-input.ts
-function resolveAudioContextCtor() {
-  const g = globalThis;
-  return g.AudioContext ?? g.webkitAudioContext ?? null;
-}
-function createAudioAnalyzer() {
-  const Ctor = resolveAudioContextCtor();
-  if (!Ctor) return null;
-  try {
-    const context = new Ctor();
-    const analyser = context.createAnalyser();
-    analyser.fftSize = 128;
-    analyser.connect(context.destination);
-    const freqData = new Uint8Array(analyser.frequencyBinCount);
-    return {
-      context,
-      analyser,
-      freqData,
-      update() {
-        analyser.getByteFrequencyData(freqData);
-      }
-    };
-  } catch {
-    return null;
-  }
-}
-var gestureArmedContexts = /* @__PURE__ */ new WeakSet();
-function armGestureResume(context) {
-  if (typeof window === "undefined" || gestureArmedContexts.has(context)) return;
-  gestureArmedContexts.add(context);
-  const onGesture = () => {
-    detach();
-    if (context.state === "suspended") context.resume().catch(() => {
-    });
-  };
-  const detach = () => {
-    window.removeEventListener("pointerdown", onGesture);
-    window.removeEventListener("keydown", onGesture);
-    window.removeEventListener("touchstart", onGesture);
-  };
-  window.addEventListener("pointerdown", onGesture);
-  window.addEventListener("keydown", onGesture);
-  window.addEventListener("touchstart", onGesture);
-}
-async function playWallpaperSound(url, analyzer) {
-  try {
-    const resp = await fetch(url);
-    if (!resp.ok) return false;
-    const buf = await resp.arrayBuffer();
-    const audioBuffer = await analyzer.context.decodeAudioData(buf);
-    const source = analyzer.context.createBufferSource();
-    source.buffer = audioBuffer;
-    source.loop = true;
-    source.connect(analyzer.analyser);
-    if (analyzer.context.state === "suspended") {
-      analyzer.context.resume().catch(() => {
-      });
-      armGestureResume(analyzer.context);
-    }
-    source.start();
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-// src/client/alignment.ts
-function alignmentOffset(alignment) {
-  switch (alignment) {
-    case "topleft":
-      return [0.5, 0.5];
-    case "top":
-      return [0, 0.5];
-    case "topright":
-      return [-0.5, 0.5];
-    case "right":
-      return [-0.5, 0];
-    case "bottomright":
-      return [-0.5, -0.5];
-    case "bottom":
-      return [0, -0.5];
-    case "bottomleft":
-      return [0.5, -0.5];
-    case "left":
-      return [0.5, 0];
-    default:
-      return [0, 0];
-  }
-}
-function applyAlignment(origin, worldSize, alignment) {
-  const [ox, oy] = alignmentOffset(alignment);
-  return [
-    origin[0] + ox * Math.abs(worldSize[0]),
-    origin[1] + oy * Math.abs(worldSize[1]),
-    origin[2]
-  ];
-}
 
 // src/client/scene-renderer.ts
 var CAMERA_DISTANCE = 300;
-var OBJECT_RT_MAX = 4096;
 function materialModulation(color, alpha, brightness) {
   const b = brightness ?? 1;
   const clamp01 = (v) => Math.max(0, Math.min(1, v));
@@ -24164,435 +20756,12 @@ function materialModulation(color, alpha, brightness) {
     a: clamp01(alpha ?? 1)
   };
 }
-function objectCameraRange(objSize, scale) {
-  return {
-    w: Math.max(1, Math.min(Math.abs(objSize[0] * scale[0]), OBJECT_RT_MAX)),
-    h: Math.max(1, Math.min(Math.abs(objSize[1] * scale[1]), OBJECT_RT_MAX))
-  };
-}
-var PARTICLE_DEFAULT_DISTANCE = 64;
-function effectiveParticleDistance(spec) {
-  const dist = spec.distanceMax ?? 0;
-  return dist > 0 ? dist : PARTICLE_DEFAULT_DISTANCE;
-}
-function particleObjectRange(spec, scale) {
-  const eff = effectiveParticleDistance(spec);
-  return {
-    w: Math.max(1, Math.min(Math.abs(eff * scale[0]), OBJECT_RT_MAX)),
-    h: Math.max(1, Math.min(Math.abs(eff * scale[1]), OBJECT_RT_MAX))
-  };
-}
-function particleWorldSize(spec, scale) {
-  const eff = effectiveParticleDistance(spec);
-  return { w: eff * scale[0], h: eff * scale[1] };
-}
-function createObjectRenderTarget(width, height) {
-  return new WebGLRenderTarget(Math.max(1, Math.round(width)), Math.max(1, Math.round(height)));
-}
-function shouldUseObjectPath(obj) {
-  return Array.isArray(obj.effects) && obj.effects.length > 0;
-}
-function groupEffectsByObject(objects) {
-  const groups = [];
-  for (const obj of objects) {
-    if (obj.kind === "text") continue;
-    if (shouldUseObjectPath(obj)) {
-      groups.push({ obj, effects: obj.effects });
-    }
-  }
-  return groups;
-}
-var PendingChainStore = class {
-  stash = /* @__PURE__ */ new Map();
-  applyIfReady(objId, chains, hasEntry) {
-    if (hasEntry) return true;
-    this.stash.set(objId, chains);
-    return false;
-  }
-  take(objId) {
-    const chains = this.stash.get(objId);
-    if (chains !== void 0) this.stash.delete(objId);
-    return chains;
-  }
-  clear() {
-    this.stash.clear();
-  }
-};
-function toFiniteNum(v, fallback) {
-  const n = typeof v === "number" ? v : Number(v);
-  return Number.isFinite(n) ? n : fallback;
-}
-function barAnchorOffsetY(alignment, height) {
-  if (alignment === "bottom") return height / 2;
-  if (alignment === "top") return -height / 2;
-  return 0;
-}
-function updateVisualizerBars(bars, anchorY, props, freqData) {
-  const scaleY = toFiniteNum(props.scaleY, 10);
-  const alignment = typeof props.barAlignmentdir === "string" ? props.barAlignmentdir : "bottom";
-  const len = freqData?.length ?? 0;
-  for (let i = 0; i < bars.length; i++) {
-    const amp = len > 0 ? freqData[i % len] / 255 : 0;
-    const h = amp * scaleY;
-    const bar = bars[i];
-    bar.scale.y = h;
-    bar.position.y = anchorY + barAnchorOffsetY(alignment, h);
-  }
-}
-var ClockTextDriver = class {
-  constructor(mesh, opts, props) {
-    this.mesh = mesh;
-    this.opts = opts;
-    this.props = props;
-    this.update(/* @__PURE__ */ new Date());
-  }
-  lastText = "";
-  lastTex = null;
-  update(now2) {
-    const text = formatClockText(now2, this.props);
-    if (text === this.lastText) return;
-    const tex = createTextTexture(text, this.opts);
-    this.mesh.material.map = tex;
-    this.lastTex?.dispose();
-    this.lastTex = tex;
-    this.lastText = text;
-  }
-  dispose() {
-    this.lastTex?.dispose();
-    this.lastTex = null;
-    this.lastText = "";
-  }
-};
-function createWhiteDataTexture() {
-  const tex = new DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
-  tex.needsUpdate = true;
-  return tex;
-}
-function uvWindow(unclamped, clamped) {
-  if (unclamped <= 0 || clamped >= unclamped) return { start: 0, end: 1 };
-  const start = (unclamped - clamped) / 2 / unclamped;
-  return { start, end: 1 - start };
-}
-function applyUvWindow(geometry, ux, uy) {
-  const uvs = geometry.attributes.uv.array;
-  const wx = ux.end - ux.start;
-  const wy = uy.end - uy.start;
-  for (let i = 0; i < uvs.length; i += 2) {
-    uvs[i] = wx > 0 ? (uvs[i] - ux.start) / wx : uvs[i];
-    uvs[i + 1] = wy > 0 ? (uvs[i + 1] - uy.start) / wy : uvs[i + 1];
-  }
-  geometry.attributes.uv.needsUpdate = true;
-}
-function createCompositeGeometry(worldW, worldH, rtW, rtH) {
-  const w = Math.abs(worldW);
-  const h = Math.abs(worldH);
-  const geometry = new PlaneGeometry(w, h);
-  applyUvWindow(geometry, uvWindow(w, rtW), uvWindow(h, rtH));
-  return geometry;
-}
-function containRange(width, height, viewAspect) {
-  const sceneAspect = width / height;
-  if (sceneAspect > viewAspect) {
-    return { w: width, h: width / viewAspect };
-  }
-  return { w: height * viewAspect, h: height };
-}
 function coverRange(width, height, viewAspect) {
   const sceneAspect = width / height;
   if (viewAspect > sceneAspect) {
     return { w: width, h: width / viewAspect };
   }
   return { w: height * viewAspect, h: height };
-}
-function createSceneRenderer(fgCanvas, bgCanvas, audioAnalyzer) {
-  const renderer = new WebGLRenderer({ canvas: fgCanvas, antialias: true, alpha: true });
-  renderer.setClearColor(0, 0);
-  const scene = new Scene();
-  const camera = new OrthographicCamera(-1, 1, 1, -1, -1e3, 1e3);
-  camera.position.z = CAMERA_DISTANCE;
-  const sceneRT = new WebGLRenderTarget(1, 1);
-  const screenCamera = new OrthographicCamera(-1, 1, 1, -1, -1e3, 1e3);
-  screenCamera.position.z = CAMERA_DISTANCE;
-  const screenScene = new Scene();
-  const screenQuad = new Mesh(
-    new PlaneGeometry(2, 2),
-    new MeshBasicMaterial({ map: sceneRT.texture, transparent: true })
-  );
-  screenQuad.frustumCulled = false;
-  screenScene.add(screenQuad);
-  let bgRenderer = null;
-  let bgCamera = null;
-  if (bgCanvas) {
-    bgRenderer = new WebGLRenderer({ canvas: bgCanvas, antialias: true, alpha: false });
-    bgCamera = new OrthographicCamera(-1, 1, 1, -1, -1e3, 1e3);
-    bgCamera.position.z = CAMERA_DISTANCE;
-  }
-  let raf = 0;
-  let running = false;
-  let ortho = { width: 1920, height: 1080 };
-  const clock = new Clock();
-  const particleSystems = [];
-  const visualizerEntries = [];
-  const clockDrivers = [];
-  const objectEntries = /* @__PURE__ */ new Map();
-  const pendingChains = new PendingChainStore();
-  let objectChain = Promise.resolve();
-  function disposeObjectEntry(entry) {
-    scene.remove(entry.quad);
-    entry.rt.dispose();
-    entry.quad.geometry.dispose();
-    entry.quad.material.dispose();
-    entry.runner?.dispose();
-  }
-  function applyObjectChains(objId, chains, wallpaperId) {
-    const entry = objectEntries.get(objId);
-    if (!entry) return;
-    if (!chains || chains.length === 0) {
-      entry.runner?.dispose();
-      entry.runner = null;
-      return;
-    }
-    if (!entry.runner) {
-      entry.runner = new EffectRunner(renderer, entry.rt.width, entry.rt.height);
-    }
-    entry.runner.setChains(chains, wallpaperId, { width: entry.rt.width, height: entry.rt.height });
-  }
-  function createObjectEntry(objId, origin, worldW, worldH, range, content) {
-    const rt = createObjectRenderTarget(range.w, range.h);
-    const localCamera = new OrthographicCamera(
-      -rt.width / 2,
-      rt.width / 2,
-      rt.height / 2,
-      -rt.height / 2,
-      -1e3,
-      1e3
-    );
-    localCamera.position.z = CAMERA_DISTANCE;
-    const localScene = new Scene();
-    localScene.add(content);
-    const quad = new Mesh(
-      createCompositeGeometry(worldW, worldH, rt.width, rt.height),
-      new MeshBasicMaterial({ map: rt.texture, transparent: true })
-    );
-    quad.position.set(origin[0] - ortho.width / 2, origin[1] - ortho.height / 2, origin[2]);
-    scene.add(quad);
-    const existing = objectEntries.get(objId);
-    if (existing) disposeObjectEntry(existing);
-    objectEntries.set(objId, { id: objId, scene: localScene, camera: localCamera, rt, quad, runner: null });
-    const pending = pendingChains.take(objId);
-    if (pending) applyObjectChains(objId, pending.chains, pending.wallpaperId);
-  }
-  function frame() {
-    audioAnalyzer?.update();
-    const freqData = audioAnalyzer?.freqData ?? null;
-    for (const v of visualizerEntries) updateVisualizerBars(v.bars, v.anchorY, v.props, freqData);
-    for (const c of clockDrivers) c.update(/* @__PURE__ */ new Date());
-    const dt = Math.min(clock.getDelta(), 0.05);
-    for (const ps of particleSystems) {
-      ps.system.update(dt);
-      ps.system.positions();
-      ps.points.geometry.attributes.position.needsUpdate = true;
-      ps.points.geometry.attributes.aColor.needsUpdate = true;
-      ps.points.geometry.attributes.aSize.needsUpdate = true;
-      ps.points.geometry.attributes.aAlpha.needsUpdate = true;
-      ps.points.geometry.setDrawRange(0, ps.system.count());
-    }
-    for (const entry of objectEntries.values()) {
-      renderer.setRenderTarget(entry.rt);
-      renderer.render(entry.scene, entry.camera);
-    }
-    for (const entry of objectEntries.values()) {
-      entry.quad.material.map = entry.runner?.lastOutput() ?? entry.rt.texture;
-    }
-    renderer.setRenderTarget(sceneRT);
-    renderer.render(scene, camera);
-    renderer.setRenderTarget(null);
-    screenQuad.material.map = sceneRT.texture;
-    renderer.render(screenScene, screenCamera);
-    for (const entry of objectEntries.values()) {
-      const runner = entry.runner;
-      if (!runner) continue;
-      runner.setAudioSpectrumSource(audioAnalyzer?.freqData ?? null);
-      objectChain = objectChain.then(() => runner.update(clock.elapsedTime, entry.rt.texture)).catch((e) => console.warn("[wallpaper-engine] \u5BF9\u8C61\u6548\u679C\u94FE\u66F4\u65B0\u5931\u8D25:", e));
-    }
-    if (bgRenderer && bgCamera) bgRenderer.render(scene, bgCamera);
-    if (running && fgCanvas.isConnected) raf = requestAnimationFrame(frame);
-    else stop();
-  }
-  return {
-    setScene(desc) {
-      scene.clear();
-      scene.background = null;
-      ortho = desc.orthogonal;
-      const { width, height } = desc.orthogonal;
-      const vw = Math.max(1, Math.round(window.innerWidth || width));
-      const vh = Math.max(1, Math.round(window.innerHeight || height));
-      const viewAspect = vw / vh;
-      const fg = containRange(width, height, viewAspect);
-      camera.left = -fg.w / 2;
-      camera.right = fg.w / 2;
-      camera.top = fg.h / 2;
-      camera.bottom = -fg.h / 2;
-      camera.updateProjectionMatrix();
-      renderer.setSize(vw, vh, false);
-      sceneRT.setSize(vw, vh);
-      if (bgRenderer && bgCamera) {
-        const bg = coverRange(width, height, viewAspect);
-        bgCamera.left = -bg.w / 2;
-        bgCamera.right = bg.w / 2;
-        bgCamera.top = bg.h / 2;
-        bgCamera.bottom = -bg.h / 2;
-        bgCamera.updateProjectionMatrix();
-        const cc = desc.clearColor;
-        bgRenderer.setClearColor(cc ? new Color(cc[0], cc[1], cc[2]) : 1118484, 1);
-        bgRenderer.setSize(vw, vh, false);
-      }
-    },
-    setImageObject(tex, obj) {
-      const tw = tex?.image?.width ?? 1;
-      const th = tex?.image?.height ?? 1;
-      const w = obj.size?.[0] ?? tw;
-      const h = obj.size?.[1] ?? th;
-      const geometry = new PlaneGeometry(w, h);
-      const material = new MeshBasicMaterial({ map: tex ?? void 0, transparent: true });
-      const mod = materialModulation(obj.color, obj.alpha, obj.brightness);
-      material.color.setRGB(mod.r, mod.g, mod.b);
-      material.opacity = mod.a;
-      const mesh = new Mesh(geometry, material);
-      const s = obj.scale;
-      mesh.scale.set(s[0], s[1], s[2] ?? 1);
-      const worldW = w * s[0];
-      const worldH = h * s[1];
-      const center = applyAlignment(obj.origin, [worldW, worldH], obj.alignment);
-      if (shouldUseObjectPath(obj)) {
-        createObjectEntry(
-          obj.id,
-          center,
-          worldW,
-          worldH,
-          objectCameraRange([w, h], [s[0], s[1]]),
-          mesh
-        );
-        return;
-      }
-      mesh.position.set(center[0] - ortho.width / 2, center[1] - ortho.height / 2, center[2]);
-      scene.add(mesh);
-    },
-    setTextObject(tex, obj) {
-      const tw = tex?.image?.width ?? 1;
-      const th = tex?.image?.height ?? 1;
-      const w = obj.size?.[0] ?? tw;
-      const h = obj.size?.[1] ?? th;
-      const geometry = new PlaneGeometry(w, h);
-      const material = new MeshBasicMaterial({ map: tex, transparent: true });
-      const mesh = new Mesh(geometry, material);
-      const s = obj.scale;
-      mesh.scale.set(s[0], s[1], s[2] ?? 1);
-      mesh.position.set(obj.origin[0] - ortho.width / 2, obj.origin[1] - ortho.height / 2, obj.origin[2]);
-      scene.add(mesh);
-    },
-    setVisualizerObject(tex, obj) {
-      const props = obj.scriptProperties ?? {};
-      const barWidth = Math.max(1e-4, toFiniteNum(props.barWidth, 1));
-      const originX = toFiniteNum(props.originX, 10);
-      const anchorX = obj.origin[0] - ortho.width / 2;
-      const anchorY = obj.origin[1] - ortho.height / 2;
-      const geometry = new PlaneGeometry(barWidth, 1);
-      const material = new MeshBasicMaterial({ map: tex, transparent: true });
-      const mod = materialModulation(obj.color, obj.alpha, obj.brightness);
-      material.color.setRGB(mod.r, mod.g, mod.b);
-      material.opacity = mod.a;
-      const bars = [];
-      for (let i = 0; i < VISUALIZER_BAR_COUNT; i++) {
-        const mesh = new Mesh(geometry, material);
-        mesh.position.set(anchorX + (i + 1) * originX, anchorY, obj.origin[2]);
-        scene.add(mesh);
-        bars.push(mesh);
-      }
-      visualizerEntries.push({ bars, anchorY, props });
-    },
-    setClockObject(obj) {
-      const props = obj.scriptProperties ?? {};
-      const size = textCanvasSize(formatClockText(/* @__PURE__ */ new Date(), props), obj.pointsize, obj.size);
-      const geometry = new PlaneGeometry(size.w, size.h);
-      const material = new MeshBasicMaterial({ transparent: true });
-      const mesh = new Mesh(geometry, material);
-      const s = obj.scale;
-      mesh.scale.set(s[0], s[1], s[2] ?? 1);
-      mesh.position.set(obj.origin[0] - ortho.width / 2, obj.origin[1] - ortho.height / 2, obj.origin[2]);
-      scene.add(mesh);
-      const driver = new ClockTextDriver(mesh, {
-        font: obj.font,
-        pointsize: obj.pointsize,
-        color: obj.color,
-        width: size.w,
-        height: size.h
-      }, props);
-      clockDrivers.push(driver);
-    },
-    addParticleSystem(spec, obj) {
-      const system = createParticleSystem(spec.emitter, spec.init, { maxParticles: 2048 });
-      const geometry = new BufferGeometry();
-      geometry.setAttribute("position", new BufferAttribute(system.positions(), 3));
-      geometry.setAttribute("aColor", new BufferAttribute(system.colors(), 3));
-      geometry.setAttribute("aSize", new BufferAttribute(system.sizes(), 1));
-      geometry.setAttribute("aAlpha", new BufferAttribute(system.alphas(), 1));
-      geometry.setDrawRange(0, 0);
-      const material = new ShaderMaterial({
-        vertexShader: `attribute vec3 aColor; attribute float aSize; attribute float aAlpha; varying vec3 vColor; varying float vLife;
-          void main(){ vLife = aAlpha; vColor = aColor; vec4 mv = modelViewMatrix * vec4(position,1.0);
-          gl_PointSize = aSize * (300.0 / -mv.z); gl_Position = projectionMatrix * mv; }`,
-        fragmentShader: `varying vec3 vColor; varying float vLife; void main(){
-          vec2 c = gl_PointCoord - 0.5; float d = length(c);
-          if (d > 0.5) discard;
-          float a = smoothstep(0.5, 0.0, d) * vLife;
-          gl_FragColor = vec4(vColor, a); }`,
-        transparent: true,
-        depthWrite: false,
-        depthTest: false,
-        blending: AdditiveBlending
-      });
-      const points = new Points(geometry, material);
-      const s = obj.scale;
-      points.scale.set(s[0], s[1] ?? s[0], s[2] ?? 1);
-      const world = particleWorldSize(spec.emitter, [s[0], s[1]]);
-      const center = applyAlignment(obj.origin, [world.w, world.h], obj.alignment);
-      if (shouldUseObjectPath(obj)) {
-        const range = particleObjectRange(spec.emitter, [s[0], s[1]]);
-        createObjectEntry(obj.id, center, world.w, world.h, range, points);
-        particleSystems.push({ system, points });
-        return;
-      }
-      points.position.set(center[0] - ortho.width / 2, center[1] - ortho.height / 2, center[2]);
-      scene.add(points);
-      particleSystems.push({ system, points });
-    },
-    setObjectEffectChains(objId, chains, wallpaperId) {
-      if (!pendingChains.applyIfReady(objId, { chains, wallpaperId }, objectEntries.has(objId))) return;
-      applyObjectChains(objId, chains, wallpaperId);
-    },
-    start() {
-      if (running) return;
-      running = true;
-      clock.start();
-      raf = requestAnimationFrame(frame);
-    },
-    stop() {
-      running = false;
-      cancelAnimationFrame(raf);
-      objectChain = Promise.resolve();
-      audioAnalyzer?.context.close().catch(() => {
-      });
-      for (const entry of objectEntries.values()) disposeObjectEntry(entry);
-      objectEntries.clear();
-      pendingChains.clear();
-      for (const c of clockDrivers) c.dispose();
-      clockDrivers.length = 0;
-      visualizerEntries.length = 0;
-      renderer.dispose();
-      bgRenderer?.dispose();
-    }
-  };
 }
 function resolveTexPath(matRef, texName) {
   return texName.includes("/") ? "materials/" + texName + ".tex" : matRef.slice(0, matRef.lastIndexOf("/") + 1) + texName + ".tex";
@@ -24614,353 +20783,605 @@ async function resolveImageTexture(id, obj) {
     return null;
   }
 }
-async function renderScene(id, fgCanvas, bgCanvas, opts) {
-  let renderer = null;
-  const analyzer = createAudioAnalyzer();
-  const getUserProperty = opts?.getUserProperty ?? (() => void 0);
+
+// src/client/threejs-player.ts
+var DEFAULT_PARTICLE_CAPACITY = 1024;
+var MAX_PARTICLE_CAPACITY = 2048;
+function specMaxcount(specJson) {
   try {
-    const desc = await fetchSceneDescription(id);
-    if (analyzer) {
-      for (const s of desc.sounds ?? []) {
-        void playWallpaperSound(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(s)}`, analyzer);
-      }
-    }
-    renderer = createSceneRenderer(fgCanvas, bgCanvas, analyzer);
-    renderer.setScene(desc);
-    const userProps = {};
-    for (const obj of desc.objects) {
-      const v = obj.visible;
-      if (v?.kind === "user" && v.key) userProps[v.key] = getUserProperty(v.key);
-    }
-    const visibleObjects = desc.objects.filter((o) => resolveVisibility(o, userProps));
-    const effectGroups = groupEffectsByObject(visibleObjects);
-    void (async () => {
-      for (const group of effectGroups) {
-        const chains = [];
-        for (const fx of group.effects) {
-          if (typeof fx?.file !== "string") continue;
-          const chain = await resolveEffectChain(fx, async (name) => {
-            return fetchWithRetry(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(name)}`);
-          });
-          if (chain) chains.push(chain);
-          else console.warn("[wallpaper-engine] \u6548\u679C\u94FE\u89E3\u6790\u5931\u8D25\uFF0C\u8DF3\u8FC7:", fx.file);
-        }
-        renderer.setObjectEffectChains(group.obj.id, chains, id);
-      }
-    })();
-    let rendered = 0;
-    for (const obj of visibleObjects) {
-      if (obj.kind === "image") {
-        if (obj.script && detectScriptPattern(obj.script) === "visualizer") {
-          let tex2 = await resolveImageTexture(id, obj);
-          if (!tex2) tex2 = createWhiteDataTexture();
-          renderer.setVisualizerObject(tex2, obj);
-          rendered++;
-          continue;
-        }
-        const tex = await resolveImageTexture(id, obj);
-        if (!tex) continue;
-        renderer.setImageObject(tex, obj);
-        rendered++;
-      } else if (obj.kind === "particle" && obj.particle) {
-        const spec = await fetchParticleSpec(id, obj.particle);
-        if (spec) {
-          renderer.addParticleSystem(spec, obj);
-          rendered++;
-        }
-      } else if (obj.kind === "text") {
-        if (obj.script && detectScriptPattern(obj.script) === "clock") {
-          renderer.setClockObject(obj);
-          rendered++;
-          continue;
-        }
-        const size = textCanvasSize(obj.text, obj.pointsize, obj.size);
-        const tex = createTextTexture(obj.text, {
-          font: obj.font,
-          pointsize: obj.pointsize,
-          color: obj.color,
-          width: size.w,
-          height: size.h
-        });
-        renderer.setTextObject(tex, obj);
-        rendered++;
-      }
-    }
-    if (rendered === 0) {
-      renderer.stop();
-      return false;
-    }
-    renderer.start();
-    return true;
+    const v = JSON.parse(specJson).maxcount;
+    const n = typeof v === "string" ? parseFloat(v) : typeof v === "number" ? v : 0;
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
   } catch {
-    renderer?.stop();
-    analyzer?.context.close().catch(() => {
+    return 0;
+  }
+}
+function specEmitterOrigin(specJson) {
+  const zero = [0, 0, 0];
+  try {
+    const spec = JSON.parse(specJson);
+    const list = spec.emitter;
+    const first = Array.isArray(list) ? list[0] : void 0;
+    const raw = first?.origin;
+    if (typeof raw !== "string") return zero;
+    const parts = raw.trim().split(/\s+/).map(Number);
+    if (parts.length < 3 || parts.slice(0, 3).some((n) => !Number.isFinite(n))) return zero;
+    return [parts[0], parts[1], parts[2]];
+  } catch {
+    return zero;
+  }
+}
+var BLACKMYTH_OBJ_SCALE = [-2.05166, 2.1167, 1];
+function simEmitterOffset(emitterOrigin) {
+  return [
+    emitterOrigin[0] * BLACKMYTH_OBJ_SCALE[0],
+    emitterOrigin[1] * BLACKMYTH_OBJ_SCALE[1],
+    emitterOrigin[2] * BLACKMYTH_OBJ_SCALE[2]
+  ];
+}
+function particleCapacity(declaredMax, aliveAtCreate) {
+  const declared = Number.isFinite(declaredMax) && declaredMax > 0 ? Math.floor(declaredMax) : 0;
+  const cap = Math.min(declared > 0 ? declared : DEFAULT_PARTICLE_CAPACITY, MAX_PARTICLE_CAPACITY);
+  return Math.max(1, cap, Math.max(0, Math.floor(aliveAtCreate)));
+}
+var PARTICLE_QUAD_CORNERS = new Float32Array([
+  -1,
+  -1,
+  0,
+  1,
+  -1,
+  0,
+  1,
+  1,
+  0,
+  -1,
+  1,
+  0
+]);
+var PARTICLE_QUAD_INDEX = [0, 1, 2, 0, 2, 3];
+var PARTICLE_VERTEX_SHADER = `
+attribute vec3 particlePosition;
+attribute float particleSize;
+attribute vec2 particleUv;
+attribute vec3 particleColor;
+attribute float particleAlpha;
+// \u5BF9\u8C61\u53D8\u6362\uFF08WE \u7684\u7C92\u5B50 model matrix \u8BED\u4E49\uFF0C\u89C1 loadSceneToThree \u6CE8\u91CA\uFF09\uFF1A
+//   objCenter     \u5BF9\u8C61\u4E2D\u5FC3\uFF08\u4E16\u754C\u5750\u6807\uFF0Cwe_to_three \u540E\uFF09
+//   objScale      scene.json \u7684\u5BF9\u8C61 scale\uFF08\u9010\u8F74\uFF0C\u53EF\u4E3A\u8D1F = \u955C\u50CF\uFF09
+//   emitterOrigin spec \u7684 emitter \u5C40\u90E8\u539F\u70B9\uFF08\u539F\u503C\uFF0C\u672A\u7F29\u653E\uFF09
+//   bmOffset      \u6A21\u62DF\u5668\u5DF2\u52A0\u8FDB particlePosition \u7684\u504F\u79FB = BLACKMYTH_OBJ_SCALE \u2299 emitterOrigin
+uniform vec3 objCenter;
+uniform vec3 objScale;
+uniform vec3 emitterOrigin;
+uniform vec3 bmOffset;
+varying vec2 vCornerUv;
+varying vec2 vParticleUv;
+varying vec3 vParticleColor;
+varying float vParticleAlpha;
+void main() {
+  vCornerUv = position.xy * 0.5 + 0.5;
+  vParticleUv = particleUv;
+  vParticleColor = particleColor;
+  vParticleAlpha = particleAlpha;
+  // \u8FD8\u539F\u6A21\u62DF\u5668\u8F93\u51FA\u7684**\u5C40\u90E8**\u5750\u6807\uFF08\u5254\u9664\u5BF9\u8C61\u4E2D\u5FC3\u4E0E\u6A21\u62DF\u5668\u5DF2\u52A0\u7684\u53D1\u5C04\u70B9\u504F\u79FB\uFF09\uFF1A
+  //   particlePosition = objCenter + bmOffset + (\u6563\u5C04 + \u8FD0\u52A8)
+  vec3 local = particlePosition - objCenter - bmOffset;
+  // \u6309\u5BF9\u8C61 scale \u91CD\u5EFA\u4E16\u754C\u5750\u6807\uFF1AWE \u7684\u7C92\u5B50\u5C40\u90E8\u5750\u6807\uFF08\u53D1\u5C04\u70B9 + \u6563\u5C04 + \u8FD0\u52A8\uFF09\u7ECF\u5BF9\u8C61 model matrix
+  // \uFF08\u542B scale\uFF09\u53D8\u6362\u5230\u573A\u666F\u7A7A\u95F4\uFF08lwe CParticle::updateMatrices\uFF1Amvp = viewProj \xD7 translate(origin)
+  // \xD7 rotate \xD7 scale\uFF09\u3002\u6B64\u524D\u53EA\u628A scale \u7528\u5728\u53D1\u5C04\u70B9\u4E0A\uFF08\u4E14\u662F**\u786C\u7F16\u7801\u7684\u9ED1\u795E\u8BDD scale**\uFF09\uFF0C\u6563\u5C04/\u8FD0\u52A8/\u5C3A\u5BF8
+  // \u90FD\u6CA1\u4E58 \u2014\u2014 DK \u7684\u300CMouse interactive particle system\u300D\u5BF9\u8C61 scale\u2248(0.29,0.15) \u5F88\u5C0F\u7684\u51B0\u6676\u7C92\u5B50
+  // \u56E0\u6B64\u88AB\u753B\u6210 6.7 \u500D\u5927\u7684\u8F89\u5149\u6591\uFF08additive\uFF09\uFF1D \u7528\u6237\u6240\u89C1\u7684\u5168\u5C4F\u95EA\u5149/\u6574\u5C4F\u6CDB\u5149\u3002
+  vec3 worldPos = objCenter + objScale * (emitterOrigin + local);
+  // \u7C92\u5B50 quad \u7684\u5C3A\u5BF8\u540C\u6837\u4E58\u5BF9\u8C61 scale\uFF08\u975E\u5747\u5300\uFF1Babs \u53BB\u6389\u955C\u50CF\u7684\u7B26\u53F7\uFF09\u3002
+  worldPos += vec3(position.xy * particleSize * 0.5 * abs(objScale.xy), 0.0);
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(worldPos, 1.0);
+  // \u26A0\uFE0F \u4FEE\u6B63\uFF1A\u7C92\u5B50\u662F 2D billboard\uFF08\u65E0\u6DF1\u5EA6\u6392\u5E8F\uFF0Cz \u4E0D\u53C2\u4E0E\u53EF\u89C1\u6027\uFF09\u3002three \u6B63\u4EA4\u76F8\u673A far/near \u4F1A\u628A
+  // \u89C6\u9525\u5916\u7684 z \u88C1\u526A\u6389\uFF0C\u800C wasm billboard \u65E9\u5DF2\u628A\u6295\u5F71\u77E9\u9635 z \u884C\u5168 0\uFF08clip.z=0\uFF0C\u89C1 particle_billboard.wgsl\uFF09
+  // \u9632\u300Cemitter \u7403\u58F3\u6563\u5C04\u53EF\u5230 \xB1750 \u7684\u7C92\u5B50\u88AB z \u88C1\u526A \u2192 \u7C92\u5B50\u4E0D\u53EF\u89C1\u300D\u3002\u8FD9\u91CC\u628A NDC z \u5F3A\u5236\u5F52\u4E2D\uFF080\uFF09\uFF0C
+  // \u914D\u5408 material.depthTest=false\uFF08\u5FFD\u7565\u6DF1\u5EA6\uFF09\uFF0C\u4FDD\u8BC1\u7C92\u5B50\u4E0D\u88AB\u76F8\u673A\u6DF1\u5EA6\u8303\u56F4\u88C1\u526A\uFF08\u5BF9\u9F50 wasm \u8BED\u4E49\uFF09\u3002
+  gl_Position.z = 0.0;
+}
+`;
+var PARTICLE_FRAGMENT_SHADER = `
+uniform sampler2D map;
+uniform float frameCount;
+uniform float frameCols;
+uniform float frameRows;
+uniform float softness;
+uniform float maskMode;
+varying vec2 vCornerUv;
+varying vec2 vParticleUv;
+varying vec3 vParticleColor;
+varying float vParticleAlpha;
+void main() {
+  float n = max(frameCount, 1.0);
+  // \u5E27\u53F7\u7531 uv.x \u7F16\u7801\uFF08\u5E27\u5B50\u533A\u4E2D\u5FC3\uFF0Csim frame_center_uv\uFF1A(frame+0.5)/n\uFF09\u2192 \u53CD\u89E3\u51FA\u79BB\u6563\u5E27\u53F7\u3002
+  float frameIndex = floor(clamp(vParticleUv.x, 0.0, 0.999999) * n);
+  frameIndex = min(frameIndex, n - 1.0);
+  // \u7CBE\u7075\u8868\u6309**\u4E8C\u7EF4\u7F51\u683C**\u5207\u7247\uFF08frameCols\xD7frameRows\uFF1B\u975E\u7CBE\u7075\u8868 cols=n\u3001rows=1\uFF0C\u4E0E\u65E7\u7684\u6A2A\u5411\u7B49\u5206\u7B49\u4EF7\uFF09\u3002
+  // \u26A0\uFE0F \u65E7\u5B9E\u73B0\u53EA\u505A\u6A2A\u5411\u7B49\u5206\uFF08texUv.x=(frameIndex+corner.x)/n\uFF09\uFF0C\u5BF9 WE \u7684 8\xD78=64 \u5E27\u7CBE\u7075\u8868
+  // \uFF08DK \u7684 fire1/fog1\uFF09\u4F1A\u628A\u6BCF\u6761 1/64 \u5BBD\u7684**\u7AD6\u6761**\u5F53\u4E00\u5E27 \u2192 \u5FC5\u987B\u7528\u7F51\u683C\u884C\u5217\u5B9A\u4F4D\u3002
+  float cols = max(frameCols, 1.0);
+  float rows = max(frameRows, 1.0);
+  float col = mod(frameIndex, cols);
+  float row = floor(frameIndex / cols);
+  // \u5E27 y\uFF1ATEXS \u7684\u5E27 y \u662F**\u7EB9\u7406\u9876\u90E8\u5411\u4E0B**\u7684\u884C\u53F7\uFF0C\u800C DataTexture \u6570\u636E\u5DF2\u88AB\u7FFB\u8F6C\u4E3A bottom-up
+  // \uFF08v=0=\u56FE\u50CF\u5E95\u90E8\uFF09\u2192 row=0\uFF08\u8868\u9876\u884C\uFF09\u5E94\u843D\u5728 v \u9AD8\u6BB5\uFF0C\u6545\u5BF9\u5E27\u5185 v \u505A (rows-1-row) \u53CD\u8F6C\u3002
+  float frameV = (rows - 1.0 - row + vCornerUv.y) / rows;
+  vec2 texUv = vec2((col + vCornerUv.x) / cols, frameV);
+  vec4 texel = texture2D(map, texUv);
+  // \u5706\u76D8\u8F6F\u8870\u51CF\uFF08center\u2192edge\uFF09\u3002softness \u2208 [0,1]\uFF1A0=\u786C\u8FB9\uFF08\u4EC5\u5728 quad \u8FB9\u7F18\u6536\u5C3E\uFF09\uFF0C1=\u5168\u67D4\uFF08\u4E2D\u5FC3\u2192\u8FB9\u7F18\u5E73\u6ED1\u8870\u51CF\uFF09\u3002
+  float dist = length(vCornerUv - 0.5) * 2.0;
+  float edgeStart = clamp(1.0 - softness, 0.0001, 0.9999);
+  float disk = 1.0 - smoothstep(edgeStart, 1.0, dist);
+  // mask_mode\uFF1A1\uFF08\u771F\u5B9E\u7EB9\u7406\u906E\u7F69\uFF0C\u5F62\u72B6=texel.a\uFF09\u2194 0\uFF08\u65E0\u7EB9\u7406\u8F6F\u5706\u70B9\uFF0C\u5F62\u72B6=disk\uFF09\u3002
+  float shape = mix(disk, texel.a, maskMode);
+  float a = vParticleAlpha * shape;
+  gl_FragColor = vec4(vParticleColor * texel.rgb, a);
+}
+`;
+function createWhiteTexture() {
+  const tex = new DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+  tex.needsUpdate = true;
+  return tex;
+}
+var ThreeScenePlayer = class {
+  renderer;
+  scene;
+  camera;
+  // 承载渲染的 canvas —— **就是调用方 append 到 DOM 显示的那一个**（three 渲染目标 + 页面显示
+  // 同一元素，不存在第二个离屏 canvas）。渲染缓冲尺寸不变量（见 resize）：
+  //   canvas.width/height === 视口逻辑尺寸 × pixelRatio（dpr）
+  // 而 CSS（`.wp-scene-canvas{width:100%;height:100%}`）= 视口逻辑尺寸 → 缓冲与物理像素 1:1，
+  // 既不模糊也不拉伸（2026-09-10 Task5：显式钉住该不变量，防「canvas 停在 HTML 默认 300×150
+  // 被 CSS 拉伸放大」这一整类回退）。
+  canvas;
+  // 场景固有尺寸（WE 正交视口 view_w×view_h；scene.json 未就绪前用构造传入值，越过后
+  // 用 setSceneSize 更新）与当前视口尺寸（canvas 逻辑像素）。
+  sceneWidth;
+  sceneHeight;
+  viewWidth;
+  viewHeight;
+  // 渲染缓冲像素比（构造时快照 window.devicePixelRatio；resize 时用它推导缓冲尺寸）。
+  pixelRatio;
+  lastTime = 0;
+  // 背景图层条目（按 addBackground 返回的 id 索引，供 update_background 引用）。
+  backgroundEntries = /* @__PURE__ */ new Map();
+  nextBackgroundId = 0;
+  // 粒子图层条目（Task 3）：按 addParticle 返回的 id 索引，更新粒子时用其 getter 刷新缓冲区。
+  particleLayers = /* @__PURE__ */ new Map();
+  nextParticleLayerId = 0;
+  constructor(canvas, width, height, renderer) {
+    this.sceneWidth = width;
+    this.sceneHeight = height;
+    this.viewWidth = width;
+    this.viewHeight = height;
+    this.canvas = canvas;
+    this.scene = new Scene();
+    this.camera = new OrthographicCamera(-1, 1, 1, -1, -1e3, 1e3);
+    this.camera.position.z = CAMERA_DISTANCE;
+    this.renderer = renderer ?? new WebGLRenderer({ canvas, antialias: true });
+    this.renderer.outputColorSpace = LinearSRGBColorSpace;
+    const dpr = typeof window !== "undefined" && window.devicePixelRatio ? window.devicePixelRatio : 1;
+    this.pixelRatio = dpr;
+    const withSetPixelRatio = this.renderer;
+    if (typeof withSetPixelRatio.setPixelRatio === "function") {
+      withSetPixelRatio.setPixelRatio(dpr);
+    }
+    this.applyCover();
+  }
+  // 视口尺寸变更（浏览器 resize / controller 设置 canvas 逻辑尺寸）：只改视口，重新按
+  // cover 推导相机范围（cover 语义保持，裁剪方向随视口宽高比变化，不固定传 w/h），并把
+  // **渲染缓冲**钉到 视口 × dpr（不变量，见 canvas 字段注释）。
+  resize(width, height) {
+    const w = Math.max(1, Math.round(width));
+    const h = Math.max(1, Math.round(height));
+    this.viewWidth = w;
+    this.viewHeight = h;
+    this.applyCover();
+    const r = this.renderer;
+    if (typeof r.setPixelRatio === "function") r.setPixelRatio(this.pixelRatio);
+    if (typeof r.setSize === "function") r.setSize(w, h, false);
+    const bufW = Math.floor(w * this.pixelRatio);
+    const bufH = Math.floor(h * this.pixelRatio);
+    if (this.canvas.width !== bufW) this.canvas.width = bufW;
+    if (this.canvas.height !== bufH) this.canvas.height = bufH;
+  }
+  // 场景固有尺寸（scene.json 的 general.orthogonalprojection）就绪后设置，同时重推 cover。
+  // 构造传入的 width/height 只是缺省冗余值（「缺省用传入 width/height」）。
+  setSceneSize(width, height) {
+    this.sceneWidth = width;
+    this.sceneHeight = height;
+    this.applyCover();
+  }
+  // 按 cover 语义把相机视锥设为场景尺寸的 cover 视图（中心原点，z 范围 -1000..1000 不变）。
+  applyCover() {
+    const viewAspect = this.viewWidth / this.viewHeight;
+    const fg = coverRange(this.sceneWidth, this.sceneHeight, viewAspect);
+    this.camera.left = -fg.w / 2;
+    this.camera.right = fg.w / 2;
+    this.camera.top = fg.h / 2;
+    this.camera.bottom = -fg.h / 2;
+    this.camera.updateProjectionMatrix();
+  }
+  // 每帧扩展钩子：驱动粒子图层刷新（Task 3）。Task 1 空实现；背景更新由 update_background
+  // 显式调用（对齐 wasm update_image 语义）。后续 Task 4 可在此挂背景/效果链更新。
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  update(_dt) {
+    this.updateParticles(_dt);
+  }
+  // 启动帧循环（renderer.setAnimationLoop 内部 RAF）。每帧：外部回调 fn(dt) → update(dt)
+  // （内部钩子）→ render(scene, camera)。dt 用 performance.now 差分，clamp 0.1s 防 tab 切
+  // 后台 / RAF 停顿后 dt 过大把粒子瞬移出视口（同 wasm-renderer 语义）。
+  // Task 4 关键：fn(dt) 先于内部 update(dt)——fn 承载「模拟推进」（如 CpuParticleSim.update），
+  // 使 update（→ updateParticles 读 getter）拿到**本帧已推进**的顶点（sim 已在帧内 advance），
+  // 避免「先读旧顶点再推进」的一帧滞后。
+  //
+  // ⚠️ 帧体必须整体 try/catch（关键，修复「黑神话花瓣不可见」这类「背景清晰但粒子永不出现」）：
+  // three r170 的 `WebGLAnimation.onAnimationFrame` 实现为
+  //   `animationLoop(time, frame); requestId = context.requestAnimationFrame(onAnimationFrame);`
+  // （three.module.js 13612-13618）——**重排下一帧的语句在回调之后**，且 three 不包裹 try/catch。
+  // 因此只要本帧回调抛出一次（wasm 模拟器 panic、顶点 getter 返回异常数据、纹理/材质 GL 错误…），
+  // `requestAnimationFrame` 就再也**不会被重新排程 → RAF 循环永久停摆**：canvas 停在最后成功绘制的
+  // 那一帧（= `loadSceneToThree` 时的首帧，此时 `instanceCount===0`）→ 用户看到「背景清晰但没有粒子」
+  // 且再无任何动画/诊断输出（sim 从未推进，粒子永远不出现）。此处把帧体包进 try/catch（**不重抛**），
+  // 保证 three 每帧都能重新排程 RAF：单帧异常只丢该帧，循环自愈；异常只记一次 warn（防刷屏）。
+  setAnimationLoop(fn) {
+    this.lastTime = performance.now();
+    let warned = false;
+    this.renderer.setAnimationLoop(() => {
+      try {
+        const now = performance.now();
+        const dt = Math.min((now - this.lastTime) / 1e3, 0.1);
+        this.lastTime = now;
+        fn?.(dt);
+        this.update(dt);
+        this.renderer.render(this.scene, this.camera);
+      } catch (e) {
+        if (!warned) {
+          warned = true;
+          console.warn("[three] \u5E27\u5FAA\u73AF\u5F02\u5E38\uFF08\u5DF2\u4E22\u5F03\u8BE5\u5E27\u5E76\u7EE7\u7EED\u5FAA\u73AF\uFF09:", e instanceof Error ? e.message : String(e));
+        }
+      }
     });
-    return false;
   }
-}
-
-// node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/index.mjs
-init_dist();
-async function newQuickJSWASMModuleFromVariant(variantOrPromise) {
-  let variant2 = smartUnwrap(await variantOrPromise), [wasmModuleLoader, QuickJSFFI2, { QuickJSWASMModule: QuickJSWASMModule2 }] = await Promise.all([variant2.importModuleLoader().then(smartUnwrap), variant2.importFFI(), Promise.resolve().then(() => (init_module_ES6BEMUI(), module_ES6BEMUI_exports)).then(smartUnwrap)]), wasmModule = await wasmModuleLoader();
-  wasmModule.type = "sync";
-  let ffi = new QuickJSFFI2(wasmModule);
-  return new QuickJSWASMModule2(wasmModule, ffi);
-}
-function smartUnwrap(val) {
-  return val && "default" in val && val.default ? val.default && "default" in val.default && val.default.default ? val.default.default : val.default : val;
-}
-
-// node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/index.mjs
-var variant = { type: "sync", importFFI: () => Promise.resolve().then(() => (init_ffi(), ffi_exports)).then((mod) => mod.QuickJSFFI), importModuleLoader: () => Promise.resolve().then(() => (init_emscripten_module_browser(), emscripten_module_browser_exports)).then((mod) => mod.default) };
-var src_default = variant;
-
-// node_modules/.pnpm/quickjs-emscripten@0.32.0/node_modules/quickjs-emscripten/dist/chunk-OHAYRCBA.mjs
-async function newQuickJSWASMModule(variantOrPromise = src_default) {
-  return newQuickJSWASMModuleFromVariant(variantOrPromise);
-}
-
-// node_modules/.pnpm/quickjs-emscripten@0.32.0/node_modules/quickjs-emscripten/dist/index.mjs
-var singleton;
-var singletonPromise;
-async function getQuickJS() {
-  return singletonPromise ?? (singletonPromise = newQuickJSWASMModule().then((instance) => (singleton = instance, instance))), await singletonPromise;
-}
-
-// src/client/scene-script.ts
-function buildInitialObjectState(origin, scale, alpha, brightness) {
-  return {
-    origin: { x: origin[0], y: origin[1], z: origin[2] },
-    scale: { x: scale[0], y: scale[1], z: scale[2] },
-    alpha,
-    image: { alpha, brightness }
-  };
-}
-function normalizeReadback(raw) {
-  const rb = {};
-  if (raw.origin) rb.origin = { x: raw.origin.x, y: raw.origin.y, z: raw.origin.z };
-  if (raw.scale) rb.scale = { x: raw.scale.x, y: raw.scale.y, z: raw.scale.z };
-  if (raw.imageAlpha !== void 0) rb.imageAlpha = Math.max(0, Math.min(1, raw.imageAlpha));
-  if (raw.imageBrightness !== void 0) rb.imageBrightness = raw.imageBrightness;
-  return rb;
-}
-var SceneScriptRuntime = class _SceneScriptRuntime {
-  ctx;
-  runtime;
-  bounds = [];
-  constructor(ctx, runtime) {
-    this.ctx = ctx;
-    this.runtime = runtime;
+  // 手动渲染一帧（不依赖 RAF，供测试/调用方直接触发）。
+  render() {
+    this.renderer.render(this.scene, this.camera);
   }
-  /** 初始化（异步：quickjs wasm 懒加载）。失败返回 null，调用方退化无动画路径。 */
-  static async create() {
-    try {
-      const QuickJS = await getQuickJS();
-      const runtime = QuickJS.newRuntime();
-      const ctx = runtime.newContext();
-      const base = ctx.evalCode(`
-        class IThisPropertyObject { constructor() {} init() {} update(dt) {} }
-        true;
-      `);
-      if (base.error) {
-        base.error.dispose();
-        ctx.dispose();
-        runtime.dispose();
-        return null;
+  // Task 2：背景图层（Sprite/Mesh）。用 we_to_three 中心化定位（three = we - scene/2，
+  // 左下原点 y 向上 → 中心原点 y 向上，y 不翻，与背景一致）；size×scale 定尺寸；
+  // alpha → material.opacity、brightness 调色（复用 scene-renderer.materialModulation：
+  // color 缺省全白 → rgb = clamp01(brightness)，a = clamp01(alpha)）。
+  // sceneW/sceneH 为场景固有尺寸（we_to_three 基准，通常 == setSceneSize 注入值）。
+  // 返回分配的背景 id，供 update_background 引用；与后续粒子共用同一相机（Task 1 cover）。
+  addBackground(opts) {
+    const sceneW = opts.sceneW;
+    const sceneH = opts.sceneH;
+    const w = opts.size?.[0] ?? opts.texture?.image?.width ?? 1;
+    const h = opts.size?.[1] ?? opts.texture?.image?.height ?? 1;
+    const geometry = new PlaneGeometry(w, h);
+    const material = new MeshBasicMaterial({
+      map: opts.texture ?? null,
+      transparent: true,
+      // 背景是透明图层（transparent=true），不写深度——避免其 depthWrite 干扰其他透明对象
+      // （粒子 depthTest=false 不受影响，但背景写出深度会占据深度缓冲区，属多余）。
+      depthWrite: false
+    });
+    const mod = materialModulation(void 0, opts.alpha, opts.brightness);
+    material.color.setRGB(mod.r, mod.g, mod.b);
+    material.opacity = mod.a;
+    const mesh = new Mesh(geometry, material);
+    mesh.renderOrder = 0;
+    const s = opts.scale;
+    mesh.scale.set(s[0], s[1], s[2] ?? 1);
+    mesh.position.set(opts.origin[0] - sceneW / 2, opts.origin[1] - sceneH / 2, opts.origin[2]);
+    this.scene.add(mesh);
+    const id = this.nextBackgroundId++;
+    this.backgroundEntries.set(id, {
+      mesh,
+      origin: [opts.origin[0], opts.origin[1], opts.origin[2]],
+      scale: [s[0], s[1], s[2] ?? 1],
+      alpha: mod.a,
+      brightness: opts.brightness ?? 1,
+      sceneW,
+      sceneH
+    });
+    return id;
+  }
+  // Task 2：更新背景图层状态，对齐既有 update_image 语义——undefined = 保持现状；
+  // 传入值若无变化（与当前已应用状态相等）则跳过该字段；未知 id → no-op。
+  // origin 为 WE 场景坐标，先按 we_to_three 中心化（origin - scene/2）再写 mesh.position。
+  update_background(id, origin, scale, alpha, brightness) {
+    const entry = this.backgroundEntries.get(id);
+    if (!entry) return;
+    if (origin) {
+      const [ox, oy, oz] = origin;
+      if (ox !== entry.origin[0] || oy !== entry.origin[1] || oz !== entry.origin[2]) {
+        entry.origin = [ox, oy, oz];
+        entry.mesh.position.set(ox - entry.sceneW / 2, oy - entry.sceneH / 2, oz);
       }
-      base.value.dispose();
-      return new _SceneScriptRuntime(ctx, runtime);
-    } catch {
-      return null;
+    }
+    if (scale) {
+      const [sx, sy, sz] = scale;
+      if (sx !== entry.scale[0] || sy !== entry.scale[1] || sz !== entry.scale[2]) {
+        entry.scale = [sx, sy, sz];
+        entry.mesh.scale.set(sx, sy, sz);
+      }
+    }
+    if (alpha !== void 0) {
+      const a = Math.max(0, Math.min(1, alpha));
+      if (a !== entry.alpha) {
+        entry.alpha = a;
+        entry.mesh.material.opacity = a;
+      }
+    }
+    if (brightness !== void 0) {
+      if (brightness !== entry.brightness) {
+        entry.brightness = brightness;
+        const mod = materialModulation(void 0, entry.alpha, brightness);
+        entry.mesh.material.color.setRGB(mod.r, mod.g, mod.b);
+      }
     }
   }
-  /** 为一个对象绑定脚本。initial 来自 scene.json 解析值。返回 null = 脚本不可用（静态渲染）。 */
-  bind(script, initial) {
-    if (!script || typeof script !== "string") return null;
-    const ctx = this.ctx;
-    const state = buildInitialObjectState(initial.origin, initial.scale, initial.alpha, initial.brightness);
-    const thisObj = ctx.newObject();
-    const originObj = ctx.newObject();
-    ctx.setProp(originObj, "x", ctx.newNumber(state.origin.x));
-    ctx.setProp(originObj, "y", ctx.newNumber(state.origin.y));
-    ctx.setProp(originObj, "z", ctx.newNumber(state.origin.z));
-    ctx.setProp(thisObj, "origin", originObj);
-    const scaleObj = ctx.newObject();
-    ctx.setProp(scaleObj, "x", ctx.newNumber(state.scale.x));
-    ctx.setProp(scaleObj, "y", ctx.newNumber(state.scale.y));
-    ctx.setProp(scaleObj, "z", ctx.newNumber(state.scale.z));
-    ctx.setProp(thisObj, "scale", scaleObj);
-    const imageObj = ctx.newObject();
-    ctx.setProp(imageObj, "alpha", ctx.newNumber(state.image.alpha));
-    ctx.setProp(imageObj, "brightness", ctx.newNumber(state.image.brightness));
-    ctx.setProp(thisObj, "image", imageObj);
-    ctx.setProp(thisObj, "alpha", ctx.newNumber(state.alpha));
-    const sanitized = script.replace(/\bexport\s+class\b/g, "class").replace(/\bexport\s+default\b/g, "");
-    const classMatch = /class\s+([A-Za-z0-9_]+)\s+extends\s+IThisPropertyObject/.exec(sanitized);
-    const cname = classMatch ? classMatch[1] : null;
-    let instance;
-    if (cname) {
-      const run = ctx.evalCode(`(function(){ ${sanitized}; return new ${cname}(); })()`);
-      if (run.error) {
-        run.error.dispose();
-        this.disposeObjectGraph(thisObj, originObj, scaleObj, imageObj);
-        return null;
+  // Task 3：粒子图层。`simVerticesGetter` 每帧返回模拟器当前顶点（摊平 Float32Array，
+  // 每粒子 `[pos3, size, uv2, color3, alpha]` 10 浮点——来自 wasm `SceneParticleSim::build_instance_vertices`）。
+  // 渲染用 three.js `ShaderMaterial` billboard quad（每粒子一个实例，shader 由基础角点+位置/尺寸展开），
+  // 模拟逻辑仍由 `SceneParticleSim` 承担（思路 1 核心：不重写模拟，只换渲染引擎）。
+  // 返回分配的图层 id，供更新/释放引用。
+  addParticle(simVerticesGetter, opts) {
+    const frameCount = Math.max(1, Math.floor(opts.frameCount));
+    const frameCols = Number.isFinite(opts.frameCols) && opts.frameCols > 0 ? Math.max(1, Math.floor(opts.frameCols)) : frameCount;
+    const frameRows = Number.isFinite(opts.frameRows) && opts.frameRows > 0 ? Math.max(1, Math.floor(opts.frameRows)) : 1;
+    const hasTex = !!opts.tex;
+    const softness = opts.softness ?? (hasTex ? 0.15 : 1);
+    const geometry = new InstancedBufferGeometry();
+    geometry.setAttribute("position", new BufferAttribute(PARTICLE_QUAD_CORNERS, 3));
+    geometry.setIndex(new BufferAttribute(new Uint16Array(PARTICLE_QUAD_INDEX), 1));
+    geometry.instanceCount = 0;
+    const initial = simVerticesGetter();
+    const count = Math.floor(initial.length / 10);
+    const capacity = particleCapacity(opts.maxInstances ?? 0, count);
+    const positions = new InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
+    const sizes = new InstancedBufferAttribute(new Float32Array(capacity), 1);
+    const uvs = new InstancedBufferAttribute(new Float32Array(capacity * 2), 2);
+    const colors = new InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
+    const alphas = new InstancedBufferAttribute(new Float32Array(capacity), 1);
+    geometry.setAttribute("particlePosition", positions);
+    geometry.setAttribute("particleSize", sizes);
+    geometry.setAttribute("particleUv", uvs);
+    geometry.setAttribute("particleColor", colors);
+    geometry.setAttribute("particleAlpha", alphas);
+    const material = new ShaderMaterial({
+      uniforms: {
+        map: { value: opts.tex ?? createWhiteTexture() },
+        frameCount: { value: frameCount },
+        frameCols: { value: frameCols },
+        frameRows: { value: frameRows },
+        softness: { value: softness },
+        maskMode: { value: hasTex ? 1 : 0 },
+        // 对象变换（缺省恒等 → 顶点 shader 退化为旧的 worldPos = particlePosition + corner*size/2）。
+        objCenter: { value: new Vector3(...opts.objectCenter ?? [0, 0, 0]) },
+        objScale: { value: new Vector3(...opts.objectScale ?? [1, 1, 1]) },
+        emitterOrigin: { value: new Vector3(...opts.emitterOrigin ?? [0, 0, 0]) },
+        bmOffset: { value: new Vector3(...simEmitterOffset(opts.emitterOrigin ?? [0, 0, 0])) }
+      },
+      vertexShader: PARTICLE_VERTEX_SHADER,
+      fragmentShader: PARTICLE_FRAGMENT_SHADER,
+      transparent: true,
+      depthWrite: false,
+      depthTest: false,
+      side: DoubleSide,
+      blending: opts.blend === "additive" ? AdditiveBlending : NormalBlending
+    });
+    const mesh = new Mesh(geometry, material);
+    mesh.frustumCulled = false;
+    geometry.boundingSphere = new Sphere(new Vector3(0, 0, 0), Number.POSITIVE_INFINITY);
+    mesh.renderOrder = 1;
+    this.scene.add(mesh);
+    const id = this.nextParticleLayerId++;
+    const layer = {
+      id,
+      getter: simVerticesGetter,
+      frameCount,
+      geometry,
+      material,
+      mesh,
+      positions,
+      sizes,
+      uvs,
+      colors,
+      alphas,
+      capacity,
+      loggedFirstFrame: false,
+      loggedCount: 0
+    };
+    this.particleLayers.set(id, layer);
+    this.writeParticleData(layer, initial, count);
+    return id;
+  }
+  // 每帧刷新所有粒子图层：调用各自的 `simVerticesGetter()` 取当前顶点并写回 BufferAttribute。
+  // `dt` 用于诊断日志（证明帧循环真的在跑、dt 是真实帧间隔且 >0）。
+  updateParticles(dt) {
+    for (const layer of this.particleLayers.values()) {
+      const data = layer.getter();
+      const count = Math.floor(data.length / 10);
+      if (count > 0 && !layer.loggedFirstFrame) {
+        layer.loggedFirstFrame = true;
+        layer.loggedCount = count;
+        console.log(
+          `[three] \u7C92\u5B50\u5DF2\u4EA7\u51FA layer=${layer.id} count=${count} dt=${dt.toFixed(4)}s capacity=${layer.capacity}\uFF08\u9996\u5E27\u975E\u96F6\uFF1B\u6A21\u62DF\u6BCF\u5E27\u7D2F\u79EF\u53D1\u5C04\uFF0C\u6EE1 capacity \u65F6\u518D\u6253\u5370\u4E00\u6761\uFF09`
+        );
+      } else if (layer.loggedCount < layer.capacity && count >= layer.capacity) {
+        layer.loggedCount = count;
+        console.log(`[three] \u7C92\u5B50\u5DF2\u8FBE maxcount layer=${layer.id} count=${count} dt=${dt.toFixed(4)}s`);
       }
-      instance = run.value;
-    } else {
-      const run = ctx.evalCode(
-        `(function(){ ${sanitized}; return { update: (typeof update === 'function') ? update : (()=>{}) }; })()`
-      );
-      if (run.error) {
-        run.error.dispose();
-        this.disposeObjectGraph(thisObj, originObj, scaleObj, imageObj);
-        return null;
-      }
-      instance = run.value;
+      this.writeParticleData(layer, data, count);
     }
-    const assign = ctx.evalCode(
-      `(function(inst, hostThis){ for (const k of Object.keys(hostThis)) inst[k] = hostThis[k]; return inst; })`
+  }
+  // 把 per-particle 摊平顶点（每粒子 10 浮点）拆到 5 个 instanced 属性并标记需重传。
+  // 容量不足时按需扩容（正常不会发生：容量 = sim 的 maxcount）——扩容后**必须**同步
+  // `geometry._maxInstanceCount`（three 的首帧锁存值，见 addParticle 注释），否则 draw 仍按旧容量截断。
+  writeParticleData(layer, data, count) {
+    const ensure = (attr, itemSize, need, name) => {
+      const arr = attr.array;
+      if (arr.length >= need) return attr;
+      const grown = new Float32Array(Math.max(need, Math.max(arr.length * 2, 1)));
+      grown.set(arr);
+      const next = new InstancedBufferAttribute(grown, itemSize);
+      layer.geometry.setAttribute(name, next);
+      return next;
+    };
+    layer.positions = ensure(layer.positions, 3, count * 3, "particlePosition");
+    layer.sizes = ensure(layer.sizes, 1, count, "particleSize");
+    layer.uvs = ensure(layer.uvs, 2, count * 2, "particleUv");
+    layer.colors = ensure(layer.colors, 3, count * 3, "particleColor");
+    layer.alphas = ensure(layer.alphas, 1, count, "particleAlpha");
+    const minCapacity = Math.min(
+      Math.floor(layer.positions.array.length / 3),
+      layer.sizes.array.length,
+      Math.floor(layer.uvs.array.length / 2),
+      Math.floor(layer.colors.array.length / 3),
+      layer.alphas.array.length
     );
-    if (assign.error) {
-      assign.error.dispose();
-      instance.dispose();
-      this.disposeObjectGraph(thisObj, originObj, scaleObj, imageObj);
-      return null;
+    if (minCapacity > layer.capacity) {
+      layer.capacity = minCapacity;
+      layer.geometry._maxInstanceCount = minCapacity;
     }
-    const assignFn = assign.value;
-    const boundR = ctx.callFunction(assignFn, ctx.undefined, instance, thisObj);
-    if (boundR.error) {
-      boundR.error.dispose();
-      assignFn.dispose();
-      instance.dispose();
-      this.disposeObjectGraph(thisObj, originObj, scaleObj, imageObj);
-      return null;
+    const pos = layer.positions.array;
+    const size = layer.sizes.array;
+    const uv = layer.uvs.array;
+    const color = layer.colors.array;
+    const alpha = layer.alphas.array;
+    for (let i = 0; i < count; i++) {
+      const b = i * 10;
+      pos[i * 3] = data[b];
+      pos[i * 3 + 1] = data[b + 1];
+      pos[i * 3 + 2] = data[b + 2];
+      size[i] = data[b + 3];
+      uv[i * 2] = data[b + 4];
+      uv[i * 2 + 1] = data[b + 5];
+      color[i * 3] = data[b + 6];
+      color[i * 3 + 1] = data[b + 7];
+      color[i * 3 + 2] = data[b + 8];
+      alpha[i] = data[b + 9];
     }
-    boundR.value.dispose();
-    assignFn.dispose();
-    const initFn = ctx.getProp(instance, "init");
-    const initR = ctx.callFunction(initFn, instance);
-    if (initR.error) {
-      initR.error.dispose();
-    } else {
-      initR.value.dispose();
-    }
-    initFn.dispose();
-    const updateFn = ctx.getProp(instance, "update");
-    const committed = {
-      origin: { x: state.origin.x, y: state.origin.y, z: state.origin.z },
-      scale: { x: state.scale.x, y: state.scale.y, z: state.scale.z },
-      imageAlpha: Math.max(0, Math.min(1, state.image.alpha)),
-      imageBrightness: state.image.brightness
-    };
-    this.bounds.push({ instance, updateFn, thisObj, origin: originObj, scale: scaleObj, image: imageObj, committed });
-    return {
-      update: (dt) => this.runUpdate(updateFn, instance, dt, thisObj, committed)
-    };
+    layer.positions.needsUpdate = true;
+    layer.sizes.needsUpdate = true;
+    layer.uvs.needsUpdate = true;
+    layer.colors.needsUpdate = true;
+    layer.alphas.needsUpdate = true;
+    layer.geometry.instanceCount = count;
   }
-  /** 每帧对单个绑定做 update + 读回。脚本抛错返回 null（隔离，不抛给宿主）。
-   *  Finding 3：对比 committed（上次已提交基线），仅输出真正变化的字段——
-   *  未变化字段省略（wasm-renderer 的 update_image 收到 undefined = 保持现状）。 */
-  runUpdate(updateFn, instance, dt, thisObj, committed) {
-    try {
-      const dtHandle = this.ctx.newNumber(dt);
-      const r = this.ctx.callFunction(updateFn, instance, dtHandle);
-      dtHandle.dispose();
-      if (r.error) {
-        r.error.dispose();
-        return null;
-      }
-      r.value.dispose();
-      const image = this.ctx.getProp(thisObj, "image");
-      const imgAlphaH = this.ctx.getProp(image, "alpha");
-      const imageAlpha = this.ctx.getNumber(imgAlphaH);
-      imgAlphaH.dispose();
-      const imgBrightH = this.ctx.getProp(image, "brightness");
-      const imageBrightness = this.ctx.getNumber(imgBrightH);
-      imgBrightH.dispose();
-      image.dispose();
-      const origin = this.ctx.getProp(thisObj, "origin");
-      const oxH = this.ctx.getProp(origin, "x");
-      const oyH = this.ctx.getProp(origin, "y");
-      const ozH = this.ctx.getProp(origin, "z");
-      const ox = this.ctx.getNumber(oxH);
-      const oy = this.ctx.getNumber(oyH);
-      const oz = this.ctx.getNumber(ozH);
-      oxH.dispose();
-      oyH.dispose();
-      ozH.dispose();
-      origin.dispose();
-      const scale = this.ctx.getProp(thisObj, "scale");
-      const sxH = this.ctx.getProp(scale, "x");
-      const syH = this.ctx.getProp(scale, "y");
-      const szH = this.ctx.getProp(scale, "z");
-      const sx = this.ctx.getNumber(sxH);
-      const sy = this.ctx.getNumber(syH);
-      const sz = this.ctx.getNumber(szH);
-      sxH.dispose();
-      syH.dispose();
-      szH.dispose();
-      scale.dispose();
-      const raw = {};
-      const oc = committed.origin ?? { x: 0, y: 0, z: 0 };
-      if (ox !== oc.x || oy !== oc.y || oz !== oc.z) {
-        raw.origin = { x: ox, y: oy, z: oz };
-        committed.origin = raw.origin;
-      }
-      const sc = committed.scale ?? { x: 0, y: 0, z: 0 };
-      if (sx !== sc.x || sy !== sc.y || sz !== sc.z) {
-        raw.scale = { x: sx, y: sy, z: sz };
-        committed.scale = raw.scale;
-      }
-      const clAlpha = Math.max(0, Math.min(1, imageAlpha));
-      if (clAlpha !== (committed.imageAlpha ?? 0)) {
-        raw.imageAlpha = clAlpha;
-        committed.imageAlpha = clAlpha;
-      }
-      if (imageBrightness !== (committed.imageBrightness ?? 0)) {
-        raw.imageBrightness = imageBrightness;
-        committed.imageBrightness = imageBrightness;
-      }
-      return normalizeReadback(raw);
-    } catch {
-      return null;
-    }
-  }
-  /** 对每个绑定调用 update（Task 5 的 wasm-renderer 逐对象调 BoundScript.update，此方法可选）。
-   *  Finding 3：与 per-binding update 共享同一 committed 基线，逐帧只输出变化字段。 */
-  tick(dt) {
-    for (const b of this.bounds) {
-      this.runUpdate(b.updateFn, b.instance, dt, b.thisObj, b.committed);
-    }
-  }
+  // 停止循环并释放 renderer 资源。
   dispose() {
-    for (const b of this.bounds) {
-      b.updateFn.dispose();
-      b.instance.dispose();
-      b.image.dispose();
-      b.scale.dispose();
-      b.origin.dispose();
-      b.thisObj.dispose();
+    this.renderer.setAnimationLoop(null);
+    for (const entry of this.backgroundEntries.values()) {
+      entry.mesh.geometry.dispose();
+      entry.mesh.material.dispose();
     }
-    this.bounds.length = 0;
-    try {
-      this.ctx.dispose();
-    } catch {
+    this.backgroundEntries.clear();
+    for (const layer of this.particleLayers.values()) {
+      layer.geometry.dispose();
+      layer.material.dispose();
     }
-    try {
-      this.runtime.dispose();
-    } catch {
-    }
-  }
-  /** 释放宿主构造的 this 对象图（嵌套 origin/scale/image + thisObj）。 */
-  disposeObjectGraph(thisObj, origin, scale, image) {
-    image.dispose();
-    scale.dispose();
-    origin.dispose();
-    thisObj.dispose();
+    this.particleLayers.clear();
+    this.renderer.dispose();
   }
 };
+function frameCountFromDims(width, height) {
+  const w = Math.max(1, width);
+  const h = Math.max(1, height);
+  return Math.max(1, Math.floor(w / h));
+}
+function textureFrameCount(tex) {
+  const sprite = textureSpriteInfo(tex);
+  if (sprite) return Math.max(1, Math.floor(sprite.frames));
+  if (!tex) return 1;
+  const img = tex.image;
+  if (img && typeof img.width === "number" && typeof img.height === "number" && img.width > 0 && img.height > 0) {
+    return frameCountFromDims(img.width, img.height);
+  }
+  if (Array.isArray(tex.image)) {
+    const first = tex.image[0];
+    if (first && typeof first.width === "number" && typeof first.height === "number" && first.width > 0 && first.height > 0) {
+      return frameCountFromDims(first.width, first.height);
+    }
+  }
+  return 1;
+}
+function textureSpriteInfo(tex) {
+  const raw = tex?.userData?.sprite;
+  if (!raw || typeof raw !== "object") return void 0;
+  const s = raw;
+  const frames = typeof s.frames === "number" ? Math.floor(s.frames) : 0;
+  const cols = typeof s.cols === "number" ? Math.floor(s.cols) : 0;
+  const rows = typeof s.rows === "number" ? Math.floor(s.rows) : 0;
+  if (frames <= 0 || cols <= 0 || rows <= 0) return void 0;
+  return { frames, cols, rows };
+}
+function textureFrameGrid(tex) {
+  const sprite = textureSpriteInfo(tex);
+  if (sprite) return { cols: sprite.cols, rows: sprite.rows };
+  return { cols: textureFrameCount(tex), rows: 1 };
+}
+function loadSceneToThree(sceneJson, assets, canvas, viewport) {
+  const desc = parseSceneJson(sceneJson);
+  const sceneW = desc.orthogonal.width;
+  const sceneH = desc.orthogonal.height;
+  const player = new ThreeScenePlayer(canvas, sceneW, sceneH, assets.renderer);
+  player.setSceneSize(sceneW, sceneH);
+  const vw = viewport?.width ?? sceneW;
+  const vh = viewport?.height ?? sceneH;
+  if (vw > 0 && vh > 0) player.resize(vw, vh);
+  const backgroundIds = [];
+  const particleLayers = [];
+  const sims = [];
+  for (const obj of desc.objects) {
+    if (obj.kind === "image") {
+      const id = player.addBackground({
+        origin: obj.origin,
+        size: obj.size,
+        scale: obj.scale,
+        texture: assets.backgroundTextures?.get(obj.id),
+        alpha: obj.alpha,
+        brightness: obj.brightness,
+        sceneW,
+        sceneH
+      });
+      backgroundIds.push(id);
+    } else if (obj.kind === "particle" && obj.particle) {
+      const p = assets.particles?.get(obj.id);
+      if (!p || !assets.createParticleSim) continue;
+      const sim = assets.createParticleSim(p.specJson, obj.origin, sceneW, sceneH);
+      const frameCount = textureFrameCount(p.tex);
+      const grid = textureFrameGrid(p.tex);
+      sim.set_frame_count(frameCount);
+      const emitterOrigin = specEmitterOrigin(p.specJson);
+      const id = player.addParticle(() => sim.vertices(), {
+        tex: p.tex,
+        frameCount: sim.frame_count(),
+        frameCols: grid.cols,
+        frameRows: grid.rows,
+        blend: p.blend,
+        softness: p.softness,
+        objectCenter: [obj.origin[0] - sceneW / 2, obj.origin[1] - sceneH / 2, obj.origin[2]],
+        objectScale: [obj.scale[0], obj.scale[1], obj.scale[2] ?? 1],
+        emitterOrigin,
+        // 实例缓冲容量 = spec 的 maxcount（= wasm `SceneParticleSim.maxcount`，模拟器的发射上限）。
+        // three 只在首帧锁存该容量（见 addParticle），必须按模拟器**最终**会产出的粒子数一次给足；
+        // 缺 maxcount（旧格式/解析失败）→ addParticle 用 DEFAULT_PARTICLE_CAPACITY 兜底。
+        maxInstances: specMaxcount(p.specJson)
+      });
+      particleLayers.push({ id, sim });
+      sims.push(sim);
+    }
+  }
+  player.setAnimationLoop((dt) => {
+    for (const sim of sims) sim.update(dt);
+  });
+  return { player, sims, backgroundIds, particleLayers };
+}
 
 // node_modules/.pnpm/@webgpu+glslang@0.0.15/node_modules/@webgpu/glslang/dist/web-devel/glslang.js
 var Module = function() {
@@ -25646,658 +22067,8 @@ var Module = function() {
     return Module2;
   };
 }();
-var glslang_default = /* @__PURE__ */ (() => {
-  const initialize = () => {
-    return new Promise((resolve) => {
-      Module({
-        locateFile(p) {
-          const base = typeof globalThis !== "undefined" && globalThis.__DSH_GLSLANG_BASE__ || "";
-          return base + (p || "glslang.wasm");
-        },
-        onRuntimeInitialized() {
-          resolve({
-            compileGLSLZeroCopy: this.compileGLSLZeroCopy,
-            compileGLSL: this.compileGLSL
-          });
-        }
-      });
-    });
-  };
-  let instance;
-  return () => {
-    if (!instance) {
-      instance = initialize();
-    }
-    return instance;
-  };
-})();
-
-// src/client/shader/glsl-to-naga.ts
-var glslangInit = glslang_default;
-var glslangPromise = null;
-function loadGlslang() {
-  if (typeof globalThis !== "undefined") {
-    globalThis.__DSH_GLSLANG_BASE__ = "/wallpapers/static/";
-  }
-  glslangPromise ??= glslangInit();
-  return glslangPromise;
-}
-function u32ToBytes(u32) {
-  const out = new Uint8Array(u32.length * 4);
-  const dv = new DataView(out.buffer);
-  for (let i = 0; i < u32.length; i++) dv.setUint32(i * 4, u32[i], true);
-  return out;
-}
-var UNIFORM_LINE_RE = /^(\s*)uniform\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)(?:\s*\[(\d+)\])?\s*;[^\S\r\n]*(?:\/\/.*)?$/gm;
-var DECL_IO_RE = /^(\s*)(in|out)\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)(\s*\[\s*\d+\s*\])?\s*;(.*)$/;
-function assignInterfaceLocations(src, stage) {
-  const out = [];
-  let fragInLoc = 0;
-  let vertInLoc = 0;
-  let vertOutLoc = 0;
-  for (const line of src.split("\n")) {
-    const hasLayout = /layout\s*\(\s*location\s*=/.test(line);
-    const m = DECL_IO_RE.exec(line);
-    if (m && !hasLayout) {
-      const [, indent, io, type, name, arr, rest] = m;
-      const arrN = arr ? Number(arr.match(/\d+/)?.[0] ?? 1) : 1;
-      const decl = `${indent}layout(location=`;
-      if (stage === "frag") {
-        if (io === "in") {
-          out.push(`${decl}${fragInLoc}) in ${type} ${name}${arr ?? ""};${rest}`);
-          fragInLoc += arrN;
-        } else out.push(line);
-      } else {
-        if (io === "in") {
-          out.push(`${decl}${vertInLoc}) in ${type} ${name}${arr ?? ""};${rest}`);
-          vertInLoc += arrN;
-        } else {
-          out.push(`${decl}${vertOutLoc}) out ${type} ${name}${arr ?? ""};${rest}`);
-          vertOutLoc += arrN;
-        }
-      }
-    } else {
-      out.push(line);
-    }
-  }
-  return out.join("\n");
-}
-var TEX_WRAPPER_2DLOD_RE = /vec4\s+texSample2DLod\s*\([^)]*\)\s*\{\s*return\s+textureLod\s*\([^)]*\)\s*;\s*\}/g;
-var TEX_WRAPPER_2D_RE = /vec4\s+texSample2D\s*\([^)]*\)\s*\{\s*return\s+texture2D\s*\([^)]*\)\s*;\s*\}/g;
-function broadcastScalarOperand(src) {
-  const swizzleDim = (expr) => {
-    const m = expr.match(/\.(rgba|xyzw|rgb|xyz|rg|xy)$/);
-    if (!m) return null;
-    return m[1].length === 4 ? 4 : m[1].length === 3 ? 3 : 2;
-  };
-  const vecOf = (dim) => `vec${dim}`;
-  return src.replace(
-    /\b(max|min|clamp)\(\s*(-?\d+(?:\.\d+)?)\s*,\s*([A-Za-z_]\w*\s*\.\s*(?:rgba|xyzw|rgb|xyz|rg|xy))\s*\)/g,
-    (m, fn, num, exp) => {
-      const dim = swizzleDim(exp);
-      return dim ? `${fn}(${vecOf(dim)}(${num}), ${exp})` : m;
-    }
-  ).replace(
-    /\b(max|min|clamp)\(\s*([A-Za-z_]\w*\s*\.\s*(?:rgba|xyzw|rgb|xyz|rg|xy))\s*,\s*(-?\d+(?:\.\d+)?)\s*\)/g,
-    (m, fn, exp, num) => {
-      const dim = swizzleDim(exp);
-      return dim ? `${fn}(${exp}, ${vecOf(dim)}(${num}))` : m;
-    }
-  );
-}
-function isSingleTextureCall(call) {
-  const open = call.indexOf("(");
-  if (open < 0) return false;
-  let depth = 0;
-  for (let i = open; i < call.length; i++) {
-    if (call[i] === "(") depth++;
-    else if (call[i] === ")") {
-      depth--;
-      if (depth === 0) return i === call.length - 1;
-    }
-  }
-  return false;
-}
-function fixVectorAssignFromTexture(src) {
-  return src.replace(/\b(vec3|vec2)\s+(\w+)\s*=\s*((?:texture|textureLod)\([^;]*)\s*;/g, (m, type, name, call) => {
-    if (!/^(?:texture|textureLod)\(/.test(call)) return m;
-    if (!isSingleTextureCall(call)) return m;
-    const swizzle = type === "vec3" ? "rgb" : "xy";
-    return `${type} ${name} = ${call}.${swizzle};`;
-  });
-}
-function broadcastFloatSwizzle(src) {
-  return src.replace(
-    /(?<![A-Za-z0-9_])(-?\d+(?:\.\d+)?)\s*\.\s*(rgba|rgb|rg)\b/g,
-    (m, num, sw) => `vec${sw.length}(${num})`
-  );
-}
-function expandIncludes(src) {
-  let out = src;
-  let prev;
-  do {
-    prev = out;
-    for (const [name, header] of Object.entries(WE_HEADERS)) {
-      out = out.split(`#include "${name}"`).join(header);
-    }
-  } while (out !== prev);
-  return out;
-}
-function defaultValueForType(type) {
-  const vec = type.match(/^vec([234])$/);
-  if (vec) return new Array(Number(vec[1])).fill(0);
-  const mat = type.match(/^mat([234])$/);
-  if (mat) {
-    const n = Number(mat[1]);
-    return new Array(n * n).fill(0);
-  }
-  const arr = type.match(/^[A-Za-z_][A-Za-z0-9_]*\[(\d+)\]$/);
-  if (arr) return new Array(Number(arr[1])).fill(0);
-  if (type.startsWith("sampler")) return null;
-  return 0;
-}
-function std140TypeInfo(typeStr) {
-  const arrBase = typeStr.indexOf("[");
-  if (arrBase >= 0) {
-    const elem = std140TypeInfo(typeStr.slice(0, arrBase));
-    if (!elem) return null;
-    const elemStride = Math.max(elem.size, 16);
-    const n = Number(typeStr.slice(arrBase + 1, typeStr.length - 1));
-    return { align: 16, size: n * elemStride, count: n * elem.count };
-  }
-  const vec = typeStr.match(/^vec([234])$/);
-  if (vec) {
-    const n = Number(vec[1]);
-    return { align: n === 2 ? 8 : 16, size: n === 3 ? 12 : n * 4, count: n };
-  }
-  if (typeStr === "float" || typeStr === "int" || typeStr === "uint" || typeStr === "bool") {
-    return { align: 4, size: 4, count: 1 };
-  }
-  const mat = typeStr.match(/^mat([234])$/);
-  if (mat) {
-    const n = Number(mat[1]);
-    return { align: 16, size: n * 16, count: n * n };
-  }
-  return null;
-}
-function buildDefinesMap(source, combos) {
-  const defines = /* @__PURE__ */ new Map();
-  for (const [k, v] of Object.entries(combos)) defines.set(k, String(v));
-  for (const [k, v] of extractComboDefaults(source)) {
-    if (!defines.has(k)) defines.set(k, String(v));
-  }
-  const alreadyDefined = /* @__PURE__ */ new Set();
-  for (const m of source.matchAll(/^\s*#define\s+([A-Za-z_][A-Za-z0-9_]*)/gm)) alreadyDefined.add(m[1]);
-  for (const id of extractIfIdentifiers(source)) {
-    if (/^\d/.test(id)) continue;
-    if (alreadyDefined.has(id)) continue;
-    if (defines.has(id)) continue;
-    defines.set(id, "0");
-  }
-  return defines;
-}
-function buildDefines(source, combos) {
-  return [...buildDefinesMap(source, combos).entries()].map(([k, v]) => `#define ${k} ${v}`);
-}
-function evalIfExpr(rawExpr, defines, isDefined) {
-  let e = rawExpr.replace(/\/\/.*$/, "").trim();
-  if (e === "") return 0;
-  e = e.replace(/defined\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)/g, (_m, id) => isDefined(id) ? "1" : "0");
-  const toks = [];
-  const re = /-?\d+(?:\.\d+)?|[A-Za-z_][A-Za-z0-9_]*|==|!=|<=|>=|&&|\|\||[!<>()]/g;
-  let m;
-  while (m = re.exec(e)) toks.push(m[0]);
-  if (toks.length === 0) return 0;
-  let pos = 0;
-  const peek = () => toks[pos];
-  const next = () => toks[pos++];
-  const valOf = (t) => {
-    if (/^-?\d+(?:\.\d+)?$/.test(t)) return Number(t);
-    return defines.has(t) ? Number(defines.get(t)) : 0;
-  };
-  function primary() {
-    const t = next();
-    if (t === "(") {
-      const v = or();
-      if (peek() === ")") next();
-      return v;
-    }
-    return valOf(t);
-  }
-  function cmp() {
-    const a = primary();
-    const op = peek();
-    if (op === "==" || op === "!=" || op === "<" || op === "<=" || op === ">" || op === ">=") {
-      next();
-      const b = primary();
-      switch (op) {
-        case "==":
-          return Number(a === b);
-        case "!=":
-          return Number(a !== b);
-        case "<":
-          return Number(a < b);
-        case "<=":
-          return Number(a <= b);
-        case ">":
-          return Number(a > b);
-        case ">=":
-          return Number(a >= b);
-      }
-    }
-    return a;
-  }
-  function unary() {
-    if (peek() === "!") {
-      next();
-      return Number(unary() === 0);
-    }
-    return cmp();
-  }
-  function and() {
-    let v = unary();
-    while (peek() === "&&") {
-      next();
-      const r = unary();
-      v = Number(v !== 0 && r !== 0);
-    }
-    return v;
-  }
-  function or() {
-    let v = and();
-    while (peek() === "||") {
-      next();
-      const r = and();
-      v = Number(v !== 0 || r !== 0);
-    }
-    return v;
-  }
-  return or();
-}
-function expandIfBranches(src, valueDefines, initDefined) {
-  const lines = src.split("\n");
-  const out = [];
-  const definedSet = new Set(initDefined);
-  const isDefined = (id) => definedSet.has(id);
-  const stack = [];
-  for (const line of lines) {
-    const t = line.trim();
-    const isIf = /^#if\s+/.test(t);
-    const isIfdef = /^#ifdef\s+/.test(t);
-    const isIfndef = /^#ifndef\s+/.test(t);
-    const isElif = /^#elif\s+/.test(t);
-    const isElse = /^#else\s*$/.test(t);
-    const isEndif = /^#endif\s*$/.test(t);
-    const isDefine = /^#define\s+([A-Za-z_][A-Za-z0-9_]*)/.exec(t);
-    const isUndef = /^#undef\s+([A-Za-z_][A-Za-z0-9_]*)/.exec(t);
-    if (isIf || isIfdef || isIfndef) {
-      const parent = stack.length ? stack[stack.length - 1].active : true;
-      let cond;
-      if (isIf) cond = evalIfExpr(t.slice(3), valueDefines, isDefined);
-      else if (isIfdef) cond = Number(isDefined(t.slice(7).trim()));
-      else cond = Number(!isDefined(t.slice(8).trim()));
-      const active2 = parent && cond !== 0;
-      stack.push({ parentActive: parent, active: active2, anyTaken: cond !== 0 });
-      continue;
-    }
-    if (isElif) {
-      const top = stack[stack.length - 1];
-      if (!top) continue;
-      let cond = evalIfExpr(t.slice(5), valueDefines, isDefined);
-      if (top.anyTaken) cond = 0;
-      top.active = top.parentActive && cond !== 0;
-      top.anyTaken = top.anyTaken || cond !== 0;
-      continue;
-    }
-    if (isElse) {
-      const top = stack[stack.length - 1];
-      if (!top) continue;
-      top.active = top.parentActive && !top.anyTaken;
-      top.anyTaken = true;
-      continue;
-    }
-    if (isEndif) {
-      stack.pop();
-      continue;
-    }
-    const active = stack.length ? stack[stack.length - 1].active : true;
-    if (isDefine) {
-      if (active) {
-        definedSet.add(isDefine[1]);
-        out.push(line);
-      }
-      continue;
-    }
-    if (isUndef) {
-      if (active) {
-        definedSet.delete(isUndef[1]);
-        out.push(line);
-      }
-      continue;
-    }
-    if (active) out.push(line);
-  }
-  return out.join("\n");
-}
-function expandArrayIO(src, stage) {
-  const varyingKw = stage === "vert" ? "out" : "in";
-  const ioRe = /^(\s*)\b(varying|attribute|in|out)\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)\s*\[\s*(\d+)\s*\]\s*;(.*)$/gm;
-  const decls = /* @__PURE__ */ new Map();
-  for (const m of src.matchAll(ioRe)) {
-    decls.set(m[4], { type: m[3], n: Number(m[5]), indent: m[1], rest: m[6] });
-  }
-  if (decls.size === 0) return src;
-  const keep = /* @__PURE__ */ new Set();
-  for (const name of decls.keys()) {
-    const refRe = new RegExp(`\\b${name}\\s*\\[\\s*([A-Za-z_][A-Za-z0-9_]*|\\d+)\\s*\\]`, "g");
-    let m;
-    while (m = refRe.exec(src)) {
-      if (/^\d+$/.test(m[1])) continue;
-      if (isLValueWrite(src, m.index + m[0].length)) {
-        keep.add(name);
-        break;
-      }
-    }
-  }
-  let out = src.replace(ioRe, (m, indent, kw, type, name, count, rest) => {
-    if (keep.has(name)) return m;
-    const n = Number(count);
-    const finalKw = kw === "attribute" ? "in" : kw === "varying" ? varyingKw : kw;
-    let decl = "";
-    for (let i = 0; i < n; i++) decl += `${indent}${finalKw} ${type} ${name}_${i};${rest}
-`;
-    return decl;
-  });
-  for (const name of decls.keys()) {
-    if (keep.has(name)) continue;
-    const re = new RegExp(`\\b${name}\\s*\\[\\s*([A-Za-z_][A-Za-z0-9_]*|\\d+)\\s*\\]`, "g");
-    out = out.replace(re, (m, idx) => {
-      if (/^\d+$/.test(idx)) return `${name}_${Number(idx)}`;
-      const n = decls.get(name).n;
-      let sel = "";
-      for (let i = 0; i < n; i++) sel += `${i === 0 ? "" : ":"}${idx}==${i}?${name}_${i}`;
-      sel += `:${name}_${n - 1}`;
-      return `(${sel})`;
-    });
-  }
-  return out;
-}
-function isLValueWrite(whole, pos) {
-  const after = whole.slice(pos);
-  return /^\s*(?:=(?!=)|\+=|-=|\*=|\/=|<<=|>>=|&=|\|=|\^=|%=|(?:\+\+|--))/.test(after);
-}
-function convertStage(src, stage, combos, uniforms, bindingOffset) {
-  const hadExplicitCommon = src.includes('#include "common.h"');
-  let s = expandIncludes(src.replace(/\r\n?/g, "\n"));
-  if (!hadExplicitCommon) s = WE_HEADERS["common.h"] + "\n" + s;
-  s = s.replace(TEX_WRAPPER_2DLOD_RE, "").replace(TEX_WRAPPER_2D_RE, "");
-  s = s.replace(/^\s*#version\s+\d+\s*(?:es)?\s*\n/gm, "");
-  s = s.replace(/^\s*precision\s+[A-Za-z_][A-Za-z0-9_]*\s+[A-Za-z_][A-Za-z0-9_]*\s*;\s*\n/gm, "");
-  s = s.replace(/\b(?:highp|mediump|lowp)\s+/g, "");
-  s = normalizeFloatIntLiterals(s);
-  s = floatifyIntVarUses(s);
-  s = relaxGlsl3Strictness(s);
-  s = s.replace(/\bsampler2DComparison\b/g, "sampler2D");
-  s = expandIfBranches(
-    s,
-    buildDefinesMap(s, combos),
-    /* @__PURE__ */ new Set([...Object.keys(combos), ...extractComboDefaults(s).keys()])
-  );
-  s = expandArrayIO(s, stage);
-  const varyingKw = stage === "vert" ? "out" : "in";
-  s = s.replace(/\bvarying\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)(\s*\[\s*\d+\s*\])?\s*;/g, (m, type, name, arr) => `${varyingKw} ${type} ${name}${arr ?? ""};`);
-  s = s.replace(/\battribute\s+([A-Za-z_][A-Za-z0-9_]*)\s+(\w+)(\s*\[\s*\d+\s*\])?\s*;/g, (m, type, name, arr) => `in ${type} ${name}${arr ?? ""};`);
-  s = assignInterfaceLocations(s, stage);
-  if (stage === "frag") s = s.replace(/gl_FragColor/g, "o_Color");
-  const binds = [];
-  let bind = bindingOffset;
-  let samplerCount = 0;
-  const decls = [];
-  s = s.replace(UNIFORM_LINE_RE, (m, indent, type, name, arrSize) => {
-    decls.push({ type, name, arrSize });
-    return "\n";
-  });
-  if (decls.length) {
-    const opaqueLines = [];
-    const nonOpaque = [];
-    let blockBinding = null;
-    let blockOffset = 0;
-    for (const d of decls) {
-      const typeStr = d.arrSize ? `${d.type}[${d.arrSize}]` : d.type;
-      if (d.type.startsWith("sampler")) {
-        samplerCount++;
-        const binding = bind++;
-        const rawValue = uniforms.has(d.name) ? uniforms.get(d.name) : void 0;
-        binds.push({
-          name: d.name,
-          type: typeStr,
-          value: rawValue === void 0 ? defaultValueForType(typeStr) : rawValue,
-          binding
-        });
-        opaqueLines.push(`layout(binding=${binding}) uniform ${d.type} ${d.name}${d.arrSize ? `[${d.arrSize}]` : ""};`);
-      } else {
-        if (blockBinding === null) blockBinding = bind++;
-        const info = std140TypeInfo(typeStr);
-        const align = info?.align ?? 16;
-        const size = info?.size ?? 0;
-        blockOffset = blockOffset + align - 1 & ~(align - 1);
-        const offset = blockOffset;
-        blockOffset += size;
-        const rawValue = uniforms.has(d.name) ? uniforms.get(d.name) : void 0;
-        binds.push({
-          name: d.name,
-          type: typeStr,
-          value: rawValue === void 0 ? defaultValueForType(typeStr) : rawValue,
-          binding: blockBinding,
-          offset,
-          size,
-          blockName: "Params"
-        });
-        nonOpaque.push({ type: d.type, name: d.name, arrSize: d.arrSize, typeStr, offset, size });
-      }
-    }
-    if (nonOpaque.length) {
-      const blockName = "Params";
-      const memberLines = nonOpaque.map((m) => `${m.type} ${m.name}${m.arrSize ? `[${m.arrSize}]` : ""};`);
-      opaqueLines.unshift(`layout(std140, binding=${blockBinding}) uniform ${blockName} {
-${memberLines.join("\n")}
-};
-`);
-    }
-    if (opaqueLines.length) s = `${opaqueLines.join("\n")}
-${s}`;
-  }
-  s = s.replace(/\btexSample2D\s*\(/g, "texture(");
-  s = s.replace(/\btexSample2DLod\s*\(/g, "textureLod(");
-  s = s.replace(/\btexture2D\s*\(/g, "texture(");
-  s = broadcastScalarOperand(s);
-  s = broadcastFloatSwizzle(s);
-  s = fixVectorAssignFromTexture(s);
-  const defines = buildDefines(s, combos);
-  const defBlock = defines.length ? `${defines.join("\n")}
-` : "";
-  const oColor = stage === "frag" ? "layout(location=0) out vec4 o_Color;\n" : "";
-  const glsl = `#version 450
-${defBlock}${oColor}${s}`;
-  return { glsl, binds, nextBinding: bind + samplerCount };
-}
-function passCombos(pass) {
-  const merged = { ...pass.combos };
-  for (const src of [pass.rawVert, pass.rawFrag]) {
-    for (const [k, v] of extractComboDefaults(src)) {
-      if (!(k in merged)) merged[k] = v;
-    }
-  }
-  return merged;
-}
-function glslToNagaGlsl(pass) {
-  const combos = passCombos(pass);
-  const frag = convertStage(pass.rawFrag, "frag", combos, pass.uniforms, 0);
-  const vert = convertStage(pass.rawVert, "vert", combos, pass.uniforms, frag.nextBinding);
-  return {
-    vertGlsl: vert.glsl,
-    fragGlsl: frag.glsl,
-    uniforms: [...frag.binds, ...vert.binds],
-    textureSlots: pass.textureSlots,
-    blendMode: pass.blendMode
-  };
-}
-async function glslToNagaPass(pass) {
-  const combos = passCombos(pass);
-  const frag = convertStage(pass.rawFrag, "frag", combos, pass.uniforms, 0);
-  const vert = convertStage(pass.rawVert, "vert", combos, pass.uniforms, frag.nextBinding);
-  const glslang = await loadGlslang();
-  const vertSpv = u32ToBytes(glslang.compileGLSL(vert.glsl, "vertex", false));
-  const fragSpv = u32ToBytes(glslang.compileGLSL(frag.glsl, "fragment", false));
-  return {
-    vertSpv,
-    fragSpv,
-    uniforms: [...frag.binds, ...vert.binds],
-    textureSlots: pass.textureSlots,
-    blendMode: pass.blendMode
-  };
-}
-function interStageLocationsMatch(vertGlsl, fragGlsl) {
-  const ioOf = (glsl, io) => {
-    const m = /* @__PURE__ */ new Map();
-    for (const mm of glsl.matchAll(new RegExp(`layout\\s*\\(\\s*location\\s*=\\s*(\\d+)\\s*\\)\\s*${io}\\s+([A-Za-z0-9_]+)\\s+\\w+`, "g"))) {
-      m.set(Number(mm[1]), mm[2]);
-    }
-    return m;
-  };
-  const vout = ioOf(vertGlsl, "out");
-  const fin = ioOf(fragGlsl, "in");
-  for (const [loc, type] of fin) {
-    if (vout.get(loc) !== type) return false;
-  }
-  return true;
-}
 
 // src/client/wasm-renderer.ts
-function flattenUniformValue(value) {
-  if (typeof value === "number") return [value];
-  if (Array.isArray(value) && value.every((v) => typeof v === "number")) return value;
-  return null;
-}
-async function buildEffectChainDesc(id, effects) {
-  try {
-    const loadFile = async (name) => {
-      const resp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(name)}`);
-      return resp.ok ? new Uint8Array(await resp.arrayBuffer()) : null;
-    };
-    const loadSlotTextureBytes = async (slot) => {
-      if (!slot) return null;
-      if (resolveBuiltinTexture(slot)) return null;
-      const resolved = resolveTextureSlotPath(slot);
-      if (!resolved) {
-        console.warn(`[wasm] \u7EB9\u7406\u69FD\u8DEF\u5F84\u65E0\u6CD5\u89E3\u6790\uFF0C\u8DF3\u8FC7: ${slot}`);
-        return null;
-      }
-      try {
-        const resp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(resolved)}`);
-        if (!resp.ok) {
-          console.warn(`[wasm] \u7EB9\u7406\u69FD fetch \u5931\u8D25 status=${resp.status}: ${slot} \u2192 ${resolved}`);
-          return null;
-        }
-        const bytes = new Uint8Array(await resp.arrayBuffer());
-        console.log(`[wasm] \u7EB9\u7406\u69FD load \u6210\u529F: ${slot} \u2192 ${resolved} (${bytes.length}B)`);
-        return Array.from(bytes);
-      } catch (e) {
-        console.warn(`[wasm] \u7EB9\u7406\u69FD fetch \u5F02\u5E38: ${slot} \u2192 ${resolved}: ${String(e)}`);
-        return null;
-      }
-    };
-    const passes = [];
-    let groupId = 0;
-    for (const fx of effects) {
-      if (typeof fx?.file !== "string") continue;
-      const chain = await resolveEffectChain(
-        fx,
-        loadFile
-      );
-      if (!chain) {
-        groupId++;
-        continue;
-      }
-      for (const p of chain) {
-        try {
-          const naga = glslToNagaGlsl(p);
-          if (!interStageLocationsMatch(naga.vertGlsl, naga.fragGlsl)) {
-            console.warn(`[wasm] \u6548\u679C\u94FE pass \u8DF3\u8FC7\uFF1Ainter-stage varying \u4E0D\u5339\u914D\uFF08frag \u8F93\u5165\u7F3A vertex \u8F93\u51FA\uFF09`);
-            continue;
-          }
-          const spv = await glslToNagaPass(p);
-          const uniforms = spv.uniforms.map((u) => {
-            const value = flattenUniformValue(u.value);
-            return value === null ? null : { name: u.name, value, offset: u.offset ?? 0, size: u.size ?? 0, type: u.type, binding: u.binding };
-          }).filter((u) => u !== null);
-          passes.push({
-            vert_spv: Array.from(spv.vertSpv),
-            frag_spv: Array.from(spv.fragSpv),
-            uniforms,
-            // texture_slots：scene.json passes[i].textures 的槽位（第 i 项 = g_Texture(i+1)）。
-            // glsl-to-naga 已按此解析（pass.textureSlots = 路径数组，如 [null,"masks/xxx",null]）。
-            // 透传给 wasm 使其能按槽位区分 previous(空) 与独立纹理(非空)（硬编码 [] 会把非首纹理
-            // 槽全绑 input_view，见 git log）。
-            texture_slots: spv.textureSlots.map((ts) => typeof ts === "string" && ts.length > 0 ? ts : null),
-            // task-wasm-effect-texture-slots：逐槽拉取真实 mask/normal/flow 纹理字节（与
-            // texture_slots 同序；内置/失败 → null，wasm 回退白占位）。
-            texture_bytes: await Promise.all(
-              spv.textureSlots.map((ts) => loadSlotTextureBytes(typeof ts === "string" && ts.length > 0 ? ts : null))
-            ),
-            blend_mode: spv.blendMode,
-            // RT 图信息（wasm RT 图执行器）：把 effect.json 的 target/bind/fbos 编码进
-            // chain_desc，wasm 据此建多 RT（含降采样）+ 按名绑定。wasm EffectPassDesc.target
-            // 为 Option<String>（serde 接受 null），无具名 RT 的链（Orange 等）传 null →
-            // wasm 走旧 ping-pong，不误入 RT 图。
-            target: p.target ?? null,
-            bind: Array.isArray(p.bind) ? p.bind : [],
-            fbo_scale: p.fboScale ?? {},
-            group_id: groupId
-          });
-        } catch (e) {
-          console.warn(`[wasm] \u6548\u679C\u94FE pass \u8DF3\u8FC7\uFF08\u7F16\u8BD1\u5931\u8D25\uFF09\uFF1A${e instanceof Error ? e.message : String(e)}`);
-        }
-      }
-      groupId++;
-    }
-    if (passes.length === 0) {
-      console.warn(`[wasm] buildEffectChainDesc(${id}): \u65E0\u6709\u6548 pass\uFF08\u6548\u679C\u94FE\u89E3\u6790\u5931\u8D25/\u65E0 pass\uFF09\u2192 \u5BF9\u8C61\u663E\u793A\u539F\u59CB\u5185\u5BB9\uFF08\u65E0\u6548\u679C\u94FE\uFF09`);
-      return new Uint8Array(0);
-    }
-    if (passes.some((p) => (p.target ?? "") !== "")) {
-      console.warn(`[wasm] buildEffectChainDesc(${id}): \u68C0\u6D4B\u5230\u5177\u540D RT \u6548\u679C\u94FE\uFF08\u6548\u679C\u8F93\u51FA\u8FC7\u5EA6\uFF09\u2192 \u56DE\u9000\u663E\u793A\u539F\u59CB\u5185\u5BB9`);
-      return new Uint8Array(0);
-    }
-    return new TextEncoder().encode(JSON.stringify(passes));
-  } catch (e) {
-    console.warn(`[wasm] buildEffectChainDesc(${id}): \u7F16\u8BD1\u5931\u8D25\u2192 \u5BF9\u8C61\u663E\u793A\u539F\u59CB\u5185\u5BB9\uFF08\u65E0\u6548\u679C\u94FE\uFF09\uFF1A${e instanceof Error ? e.message : String(e)}`);
-    return new Uint8Array(0);
-  }
-}
-function createFallbackSceneRenderer(wasm, _js) {
-  if (!wasm) {
-    return { render: async () => false, dispose: () => {
-    } };
-  }
-  const wasmFailed = /* @__PURE__ */ new Set();
-  return {
-    async render(id, fg, bg) {
-      if (!wasmFailed.has(id)) {
-        const ok = await wasm.render(id, fg, bg);
-        if (ok) return true;
-        wasmFailed.add(id);
-        return false;
-      }
-      return false;
-    },
-    // 透传 teardown 到底层 wasm 渲染器（JS 渲染器若实现 dispose 一并调用）。
-    dispose() {
-      wasm?.dispose?.();
-      _js?.dispose?.();
-    }
-  };
-}
 var STATIC_BASE = "/wallpapers/static";
 var WASM_GLUE_FILE = "we_scene_wasm.js";
 var WASM_BIN_FILE = "we_scene_wasm_bg.wasm";
@@ -26313,31 +22084,12 @@ async function defaultLoadWasm() {
     return null;
   }
 }
-async function resolveImageTexBytes(id, imageRef) {
-  try {
-    const modelResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(imageRef)}`);
-    if (!modelResp.ok) return null;
-    const model = await modelResp.json();
-    const matRef = model?.material;
-    if (typeof matRef !== "string" || !matRef) return null;
-    const matResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(matRef)}`);
-    if (!matResp.ok) return null;
-    const mat = await matResp.json();
-    const texName = mat?.passes?.[0]?.textures?.[0];
-    if (typeof texName !== "string" || !texName) return null;
-    const texResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(resolveTexPath(matRef, texName))}`);
-    if (!texResp.ok) return null;
-    return new Uint8Array(await texResp.arrayBuffer());
-  } catch {
-    return null;
-  }
-}
 var PARTICLE_TEX_ALIASES = {
   // "presets/lightshaft"（无下划线，EVA 坏引用）→ light_shafts 序列第 0 帧（光柱精灵）。
   // 值是 **short 形式**（去 particle/ 前缀，与下方 short 计算后一致）→ ptex-light-light_shafts_0.tex
   "presets/lightshaft": "light/light_shafts_0"
 };
-async function resolveParticleTexBytes(id, specText) {
+async function resolveParticleMaterial(id, specText) {
   try {
     const spec = JSON.parse(specText);
     const matRef = spec?.material;
@@ -26345,180 +22097,134 @@ async function resolveParticleTexBytes(id, specText) {
     const matResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(matRef)}`);
     if (!matResp.ok) return null;
     const mat = await matResp.json();
-    const texName = mat?.passes?.[0]?.textures?.[0];
-    if (typeof texName !== "string" || !texName) return null;
+    const pass0 = mat?.passes?.[0];
+    const blending = typeof pass0?.blending === "string" ? pass0.blending : null;
+    const texName = pass0?.textures?.[0];
+    if (typeof texName !== "string" || !texName) return { texUrl: null, blending };
     const short = texName.startsWith("particle/") ? texName.slice("particle/".length) : texName;
     const resolved = PARTICLE_TEX_ALIASES[short] ?? short;
-    const texResp = await fetch(`/wallpapers/static/ptex-${encodeURIComponent(resolved.replace(/\//g, "-"))}.tex`);
-    if (!texResp.ok) return null;
-    const buf = await texResp.arrayBuffer();
-    if (buf.byteLength === 0) return null;
-    return new Uint8Array(buf);
+    return {
+      texUrl: `/wallpapers/static/ptex-${encodeURIComponent(resolved.replace(/\//g, "-"))}.tex`,
+      blending
+    };
   } catch {
     return null;
   }
 }
-function createWasmSceneRenderer(opts) {
-  if (typeof navigator === "undefined" || !navigator.gpu) return null;
+
+// src/client/three-renderer.ts
+function particleBlend(blending, specText) {
+  if (typeof blending === "string" && blending) {
+    return /^(add|additive)$/i.test(blending.trim()) ? "additive" : "alpha";
+  }
+  try {
+    const spec = JSON.parse(specText);
+    const mat = spec.material;
+    if (typeof mat === "string" && /lightshaft|glow|additive/i.test(mat)) return "additive";
+  } catch {
+  }
+  return "alpha";
+}
+function createEmptySim() {
+  return {
+    update: () => {
+    },
+    vertices: () => new Float32Array(0),
+    frame_count: () => 1,
+    set_frame_count: () => {
+    },
+    particle_count: () => 0
+  };
+}
+function createThreeSceneRenderer(opts) {
   const loadWasm = opts?.loadWasm ?? defaultLoadWasm;
   let modulePromise = null;
-  let currentScene = null;
-  let currentScriptRuntime = null;
-  let raf = 0;
+  let current = null;
+  let onWindowResize = null;
   const teardown = () => {
-    if (raf) cancelAnimationFrame(raf);
-    raf = 0;
-    currentScriptRuntime?.dispose();
-    currentScriptRuntime = null;
-    currentScene?.free?.();
-    currentScene = null;
+    if (onWindowResize) {
+      window.removeEventListener("resize", onWindowResize);
+      onWindowResize = null;
+    }
+    current?.player.dispose();
+    for (const sim of current?.sims ?? []) sim.free?.();
+    current = null;
   };
+  const viewportSize = () => ({
+    width: Math.max(1, Math.round(window.innerWidth || 0)),
+    height: Math.max(1, Math.round(window.innerHeight || 0))
+  });
   return {
-    async render(id, fg, bg) {
+    async render(id, fg, _bg) {
       try {
         teardown();
         modulePromise ??= loadWasm();
         const mod = await modulePromise;
-        if (!mod) return false;
         const sceneJsonResp = await fetch(`/wallpapers/scene/${id}/asset?name=scene.json`);
         if (!sceneJsonResp.ok) return false;
         const sceneJson = await sceneJsonResp.text();
         const desc = parseSceneJson(sceneJson);
-        const { width, height } = desc.orthogonal;
-        const vw = Math.max(1, Math.round(window.innerWidth || width));
-        const vh = Math.max(1, Math.round(window.innerHeight || height));
+        const vw = Math.max(1, Math.round(window.innerWidth || desc.orthogonal.width));
+        const vh = Math.max(1, Math.round(window.innerHeight || desc.orthogonal.height));
         fg.width = vw;
         fg.height = vh;
-        const scene = await mod.WeScene.create(fg, vw, vh);
-        currentScene = scene;
-        scene.set_cover();
-        scene.load_scene(sceneJson);
-        let rendered = 0;
-        let scriptRuntime = null;
-        const scriptBindings = [];
-        for (let i = 0; i < desc.objects.length; i++) {
-          const obj = desc.objects[i];
-          if (!resolveVisibility(obj, {})) continue;
+        const backgroundTextures = /* @__PURE__ */ new Map();
+        const particles = /* @__PURE__ */ new Map();
+        for (const obj of desc.objects) {
           if (obj.kind === "image") {
-            const tex = await resolveImageTexBytes(id, obj.image);
-            if (!tex) continue;
-            const size = obj.size;
-            const origin = size ? applyAlignment(obj.origin, [size[0] * obj.scale[0], size[1] * obj.scale[1]], obj.alignment) : obj.origin;
-            const isObjectPath = shouldUseObjectPath(obj);
-            const range = size ? objectCameraRange(size, [obj.scale[0], obj.scale[1]]) : null;
-            scene.load_image(
-              i,
-              tex,
-              Float32Array.from(origin),
-              Float32Array.from(obj.scale),
-              Float32Array.from(size ?? []),
-              Float32Array.from(obj.color ?? []),
-              Float32Array.from(obj.alpha !== void 0 ? [obj.alpha] : []),
-              Float32Array.from(obj.brightness !== void 0 ? [obj.brightness] : [])
-            );
-            if (isObjectPath) {
-              const worldSize = size ? [size[0] * obj.scale[0], size[1] * obj.scale[1]] : [];
-              const rtSize = range ? [range.w, range.h] : [];
-              const chainDesc = await buildEffectChainDesc(id, obj.effects);
-              if (chainDesc.length > 0) {
-                await scene.set_object_effect(
-                  i,
-                  Float32Array.from(origin),
-                  Float32Array.from(worldSize),
-                  Float32Array.from(rtSize),
-                  chainDesc
-                );
-              } else {
-                console.warn(`[wasm] \u5BF9\u8C61 ${i}(image) \u6548\u679C\u94FE\u7F16\u8BD1\u5931\u8D25/\u65E0\u6709\u6548 pass \u2192 \u4FDD\u6301\u5171\u4EAB\u8DEF\u5F84\uFF0C\u663E\u793A\u539F\u59CB\u5185\u5BB9\uFF08\u975E\u6E10\u53D8\uFF09`);
-              }
-            }
-            rendered++;
-            if (obj.script && obj.script.trim()) {
-              scriptRuntime ??= await SceneScriptRuntime.create();
-              if (scriptRuntime) currentScriptRuntime = scriptRuntime;
-              const bound = scriptRuntime?.bind(obj.script, {
-                origin,
-                scale: obj.scale,
-                alpha: obj.alpha ?? 1,
-                brightness: obj.brightness ?? 1
-              });
-              if (bound) scriptBindings.push({ assetId: i, bound });
-            }
+            const tex = await resolveImageTexture(id, obj);
+            if (tex) backgroundTextures.set(obj.id, tex);
           } else if (obj.kind === "particle" && obj.particle) {
             const specResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(obj.particle)}`);
             if (!specResp.ok) continue;
             const specText = await specResp.text();
-            const texBytes = await resolveParticleTexBytes(id, specText);
-            const isObjectPath = shouldUseObjectPath(obj);
-            if (isObjectPath) {
-              const spec = JSON.parse(specText);
-              const emitter = spec?.emitter ?? {};
-              const world = particleWorldSize(emitter, [obj.scale[0], obj.scale[1]]);
-              const range = particleObjectRange(emitter, [obj.scale[0], obj.scale[1]]);
-              const center = applyAlignment(obj.origin, [world.w, world.h], obj.alignment);
-              const chainDesc = await buildEffectChainDesc(id, obj.effects);
-              if (chainDesc.length > 0) {
-                await scene.set_particle_object_effect(
-                  i,
-                  specText,
-                  Float32Array.from(center),
-                  Float32Array.from(obj.scale),
-                  texBytes ?? new Uint8Array(0),
-                  Float32Array.from([world.w, world.h]),
-                  Float32Array.from([range.w, range.h]),
-                  chainDesc
-                );
-              } else {
-                console.warn(`[wasm] \u5BF9\u8C61 ${i}(particle) \u6548\u679C\u94FE\u7F16\u8BD1\u5931\u8D25/\u65E0\u6709\u6548 pass \u2192 \u5171\u4EAB\u8DEF\u5F84 add_particle\uFF0C\u663E\u793A\u539F\u59CB\u5185\u5BB9\uFF08\u975E\u6E10\u53D8\uFF09`);
-                scene.add_particle(
-                  specText,
-                  Float32Array.from(obj.origin),
-                  Float32Array.from(obj.scale),
-                  texBytes ?? new Uint8Array(0)
-                );
-              }
-            } else {
-              scene.add_particle(
-                specText,
-                Float32Array.from(obj.origin),
-                Float32Array.from(obj.scale),
-                texBytes ?? new Uint8Array(0)
-              );
-            }
-            rendered++;
+            const mat = await resolveParticleMaterial(id, specText);
+            const tex = mat?.texUrl ? await loadTexTexture(mat.texUrl) ?? void 0 : void 0;
+            particles.set(obj.id, {
+              specJson: specText,
+              tex,
+              blend: particleBlend(mat?.blending, specText)
+              // softness 缺省由 addParticle 按有无纹理推导（有纹理 0.15 / 无纹理 1.0，对齐 wasm
+              // particle_render SOFTNESS_* 语义）；此处不再硬编码 0（无纹理白图兜底时硬边白方块
+              // 会叠成白斑、单个粒子被看作方块——Task5 回归「粒子可见但不过曝/不遮背景」）。
+            });
           }
         }
-        if (rendered === 0) {
+        const cpSim = mod?.CpuParticleSim;
+        const createParticleSim = cpSim ? (json, origin, sceneW, sceneH) => {
+          try {
+            return cpSim.new(json, Float32Array.from(origin), sceneW, sceneH);
+          } catch (e) {
+            console.warn("[three] \u7C92\u5B50\u6A21\u62DF\u5668\u6784\u9020\u5931\u8D25\uFF08\u7528\u96F6\u7C92\u5B50\u515C\u5E95\uFF09:", e instanceof Error ? e.message : String(e));
+            return createEmptySim();
+          }
+        } : void 0;
+        const result = loadSceneToThree(sceneJson, { backgroundTextures, particles, createParticleSim }, fg, {
+          width: vw,
+          height: vh
+        });
+        current = result;
+        onWindowResize = () => {
+          if (!current) return;
+          const { width, height } = viewportSize();
+          current.player.resize(width, height);
+        };
+        window.addEventListener("resize", onWindowResize);
+        console.log(
+          `[three] scene loaded id=${id} background=${result.backgroundIds.length} particleLayers=${result.particleLayers.length}`
+        );
+        if (result.backgroundIds.length === 0 && result.particleLayers.length === 0) {
           teardown();
           return false;
         }
-        const loop = () => {
-          scene.step(1 / 60);
-          for (const { assetId, bound } of scriptBindings) {
-            const rb = bound.update(1 / 60);
-            if (!rb) continue;
-            const hasChange = rb.origin || rb.scale || rb.imageAlpha !== void 0 || rb.imageBrightness !== void 0;
-            if (!hasChange) continue;
-            scene.update_image(
-              assetId,
-              rb.origin ? Float32Array.from([rb.origin.x, rb.origin.y, rb.origin.z]) : void 0,
-              rb.scale ? Float32Array.from([rb.scale.x, rb.scale.y, rb.scale.z]) : void 0,
-              rb.imageAlpha,
-              rb.imageBrightness
-            );
-          }
-          scene.render();
-          if (fg.isConnected) raf = requestAnimationFrame(loop);
-        };
-        raf = requestAnimationFrame(loop);
         return true;
-      } catch {
+      } catch (e) {
+        console.warn("[three] scene render failed:", e instanceof Error ? e.message : String(e));
         teardown();
         return false;
       }
     },
-    // 释放当前场景与脚本运行时（取消运行中的 raf 循环）。调用方（controller）在壁纸
-    // 切换/卸载时调用，避免每次 render 泄漏一个 quickjs 运行时 + wasm scene。
+    // 释放当前 three 播放器 + wasm 模拟器（切壁纸/卸载时防泄漏）。
     dispose() {
       teardown();
     }
@@ -26570,17 +22276,6 @@ async function writeClientSettings(patch) {
   try {
     await remote.update(NS, patch, void 0);
   } catch {
-  }
-}
-var USERPROP_PREFIX = "we:userprop:";
-function getUserPropertyValue(key) {
-  if (typeof localStorage === "undefined") return void 0;
-  const raw = localStorage.getItem(USERPROP_PREFIX + key);
-  if (raw === null) return void 0;
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return void 0;
   }
 }
 
@@ -26757,14 +22452,9 @@ function bootstrap(ctx) {
     layer = createBackgroundLayer(root);
     controller = createWallpaperController(layer, {
       fetchList: async () => (await fetch("/wallpapers/list")).json(),
-      sceneRenderer: createFallbackSceneRenderer(createWasmSceneRenderer(), {
-        // T4.2：注入可见性 user 绑定的用户属性 getter（localStorage 实现见 settings.ts；
-        // renderScene 不硬依赖设置存储，键缺失回退绑定 value）
-        render: (id, fg, bg) => renderScene(id, fg, bg, { getUserProperty: getUserPropertyValue }),
-        // Finding 2：JS 渲染器当前禁用于运行时回退链（强制 wasm），无资源需释放 → no-op。
-        dispose: () => {
-        }
-      })
+      // Task 5：three.js 播放路径（背景 + 粒子）设为**默认**；wasm/WebGPU 路径保留作备用。
+      // three 创建失败时回退到 wasm（three-renderer 内部/controller 兜底），避免白屏。
+      sceneRenderer: createThreeSceneRenderer()
       // Task 8 回退链（spec §7 第 1/2/3 条，三级语义）：
       //   1. 无 WebGPU → createWasmSceneRenderer() 返回 null → 直接用 JS/Three.js 渲染器；
       //   2. wasm 加载/初始化失败（render resolve false）→ 组合层降级调用 JS 渲染器；

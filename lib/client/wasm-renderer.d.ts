@@ -7,6 +7,8 @@ export interface WasmScene {
     load_image(assetId: number, tex: Uint8Array, origin: Float32Array, scale: Float32Array, size: Float32Array, color: Float32Array, alpha: Float32Array, brightness: Float32Array): void;
     update_image(assetId: number, origin?: Float32Array, scale?: Float32Array, alpha?: number, brightness?: number): void;
     add_particle(json: string, origin: Float32Array, scale: Float32Array, texBytes: Uint8Array): void;
+    set_particle_sim(json: string, origin: Float32Array, texBytes: Uint8Array): void;
+    update_particles(dt: number): void;
     set_particle_object_effect(objId: number, json: string, origin: Float32Array, scale: Float32Array, texBytes: Uint8Array, worldSize: Float32Array, rtSize: Float32Array, chainDesc: Uint8Array): Promise<void>;
     step(dt: number): void;
     set_object_effect(objId: number, origin: Float32Array, worldSize: Float32Array, rtSize: Float32Array, chainDesc: Uint8Array): Promise<void>;
@@ -28,6 +30,13 @@ export interface SceneRendererLike {
     dispose(): void;
 }
 export declare function createFallbackSceneRenderer(wasm: SceneRendererLike | null, _js: SceneRendererLike): SceneRendererLike;
+export declare function defaultLoadWasm(): Promise<WasmSceneModule | null>;
+export interface ParticleMaterialRef {
+    texUrl: string | null;
+    blending: string | null;
+}
+export declare function resolveParticleMaterial(id: string, specText: string): Promise<ParticleMaterialRef | null>;
+export declare function resolveParticleTexUrl(id: string, specText: string): Promise<string | null>;
 export declare function createWasmSceneRenderer(opts?: {
     loadWasm?: LoadWasm;
 }): SceneRendererLike | null;

@@ -1,5 +1,91 @@
 /* @ts-self-types="./we_scene_wasm.d.ts" */
 
+/**
+ * 独立 CPU 粒子模拟器 wasm 导出（three.js 播放器路径用）。
+ */
+export class CpuParticleSim {
+    static __wrap(ptr) {
+        const obj = Object.create(CpuParticleSim.prototype);
+        obj.__wbg_ptr = ptr;
+        CpuParticleSimFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        CpuParticleSimFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_cpuparticlesim_free(ptr, 0);
+    }
+    /**
+     * sprite sheet 总帧数（rosepetals 512×128 → 4；单帧 → 1）。
+     * @returns {number}
+     */
+    frame_count() {
+        const ret = wasm.cpuparticlesim_frame_count(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * 从粒子规格 JSON + 对象中心构造 CPU 模拟器（复用 `particle::emitter_spec_to_particle`，
+     * 把 WE spec 的 emitter/initializer/operator 映射为 `SceneParticleSim`）。
+     * `origin` 为对象中心（WE 坐标）；`scene_w`/`scene_h` 为 scene 正交尺寸（we_to_three 用）。
+     * sprite sheet 帧数缺省为 `DEFAULT_FRAME_COUNT`（4），渲染层按纹理尺寸用
+     * `set_frame_count` 覆写。返回 `Err`（spec 解析失败）→ JS 侧 Promise reject。
+     * @param {string} json
+     * @param {Float32Array} origin
+     * @param {number} scene_w
+     * @param {number} scene_h
+     * @returns {CpuParticleSim}
+     */
+    static new(json, origin, scene_w, scene_h) {
+        const ptr0 = passStringToWasm0(json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArrayF32ToWasm0(origin, wasm.__wbindgen_malloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.cpuparticlesim_new(ptr0, len0, ptr1, len1, scene_w, scene_h);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return CpuParticleSim.__wrap(ret[0]);
+    }
+    /**
+     * 当前粒子数（`vertices()` 长度 = count × 10）。
+     * @returns {number}
+     */
+    particle_count() {
+        const ret = wasm.cpuparticlesim_particle_count(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * 覆写总帧数（渲染层按纹理尺寸推导；`n < 1` 钳制到 1）。
+     * @param {number} n
+     */
+    set_frame_count(n) {
+        wasm.cpuparticlesim_set_frame_count(this.__wbg_ptr, n);
+    }
+    /**
+     * 每帧推进模拟（`dt` 秒；JS 侧用 `performance.now` 差分）。
+     * @param {number} dt
+     */
+    update(dt) {
+        wasm.cpuparticlesim_update(this.__wbg_ptr, dt);
+    }
+    /**
+     * 把每粒子顶点摊平为 `Float32Array`：`[pos3, size, uv2, color3, alpha]`（每粒子 10 浮点，
+     * 见 `SceneParticleSim::build_instance_vertices`），供 three.js 播放器 `updateParticles`
+     * 每帧刷新 `BufferAttribute`。
+     * @returns {Float32Array}
+     */
+    vertices() {
+        const ret = wasm.cpuparticlesim_vertices(this.__wbg_ptr);
+        return ret;
+    }
+}
+if (Symbol.dispose) CpuParticleSim.prototype[Symbol.dispose] = CpuParticleSim.prototype.free;
+
 export class WeScene {
     static __wrap(ptr) {
         const obj = Object.create(WeScene.prototype);
@@ -199,6 +285,27 @@ export class WeScene {
         return ret;
     }
     /**
+     * 装载粒子规格并构建 **CPU 模拟**粒子系统（Task 2 `SceneParticleSim`）+ billboard 渲染 pass
+     * （Task 3 `ParticleRenderPass`），追加到渲染器（多系统并存，对齐 JS 版粒子密度；
+     * 与 `add_particle`（GPU compute）互补，不互相替换）。
+     *
+     * `origin` 为对象中心（WE 坐标）；view 用 cover 相机范围（view_h 非 scene 2160，全局约束）；
+     * 粒子**不乘 scale**。`tex_bytes` 为粒子纹理（TEXV0005，空字节 = 无纹理 → 1×1 白兜底）。
+     * 每帧由 `update_particles(dt)` 推进、由 `render()`（render_frame）末尾叠加绘制。
+     * @param {string} json
+     * @param {Float32Array} origin
+     * @param {Uint8Array} tex_bytes
+     */
+    set_particle_sim(json, origin, tex_bytes) {
+        const ptr0 = passStringToWasm0(json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArrayF32ToWasm0(origin, wasm.__wbindgen_malloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passArray8ToWasm0(tex_bytes, wasm.__wbindgen_malloc);
+        const len2 = WASM_VECTOR_LEN;
+        wasm.wescene_set_particle_sim(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2);
+    }
+    /**
      * GPU 粒子模拟一帧（更新 uniform dt + 累计 elapsed + dispatch compute）。
      * @param {number} dt
      */
@@ -221,6 +328,14 @@ export class WeScene {
         var ptr1 = isLikeNone(scale) ? 0 : passArrayF32ToWasm0(scale, wasm.__wbindgen_malloc);
         var len1 = WASM_VECTOR_LEN;
         wasm.wescene_update_image(this.__wbg_ptr, asset_id, ptr0, len0, ptr1, len1, isLikeNone(alpha) ? Number.MAX_SAFE_INTEGER : Math.fround(alpha), isLikeNone(brightness) ? Number.MAX_SAFE_INTEGER : Math.fround(brightness));
+    }
+    /**
+     * 每帧推进所有 CPU 模拟粒子（`dt` 秒；JS 侧用 `performance.now` 差分）。
+     * 渲染已由 `render()`（render_frame）在背景之后、粒子之上自动叠加。
+     * @param {number} dt
+     */
+    update_particles(dt) {
+        wasm.wescene_update_particles(this.__wbg_ptr, dt);
     }
 }
 if (Symbol.dispose) WeScene.prototype[Symbol.dispose] = WeScene.prototype.free;
@@ -345,6 +460,9 @@ function __wbg_get_imports() {
         __wbg_document_ac38448dbfd31a57: function(arg0) {
             const ret = arg0.document;
             return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
+        },
+        __wbg_drawIndexed_fd47a285c65bc454: function(arg0, arg1, arg2, arg3, arg4, arg5) {
+            arg0.drawIndexed(arg1 >>> 0, arg2 >>> 0, arg3 >>> 0, arg4, arg5 >>> 0);
         },
         __wbg_draw_754f5b2022d90fd7: function(arg0, arg1, arg2, arg3, arg4) {
             arg0.draw(arg1 >>> 0, arg2 >>> 0, arg3 >>> 0, arg4 >>> 0);
@@ -515,6 +633,10 @@ function __wbg_get_imports() {
             const ret = new Uint8Array(getArrayU8FromWasm0(arg0, arg1));
             return ret;
         },
+        __wbg_new_from_slice_709ab7061ebcc5da: function(arg0, arg1) {
+            const ret = new Float32Array(getArrayF32FromWasm0(arg0, arg1));
+            return ret;
+        },
         __wbg_new_typed_cceaf62d8d95e9f2: function(arg0, arg1) {
             try {
                 var state0 = {a: arg0, b: arg1};
@@ -582,6 +704,12 @@ function __wbg_get_imports() {
         },
         __wbg_setBindGroup_e7493a4d990b460a: function(arg0, arg1, arg2) {
             arg0.setBindGroup(arg1 >>> 0, arg2);
+        },
+        __wbg_setIndexBuffer_4fb98e6d19bb7f33: function(arg0, arg1, arg2, arg3, arg4) {
+            arg0.setIndexBuffer(arg1, __wbindgen_enum_GpuIndexFormat[arg2], arg3, arg4);
+        },
+        __wbg_setIndexBuffer_7fdf61bb296c38e7: function(arg0, arg1, arg2, arg3) {
+            arg0.setIndexBuffer(arg1, __wbindgen_enum_GpuIndexFormat[arg2], arg3);
         },
         __wbg_setPipeline_0c34cc40ab8d6499: function(arg0, arg1) {
             arg0.setPipeline(arg1);
@@ -1157,7 +1285,7 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         }, arguments); },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 391, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 388, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen__convert__closures_____invoke__ha22148a4a7c1d5ff);
             return ret;
         },
@@ -1275,6 +1403,9 @@ const __wbindgen_enum_GpuVertexFormat = ["uint8", "uint8x2", "uint8x4", "sint8",
 
 
 const __wbindgen_enum_GpuVertexStepMode = ["vertex", "instance"];
+const CpuParticleSimFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_cpuparticlesim_free(ptr, 1));
 const WeSceneFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wescene_free(ptr, 1));
@@ -1352,6 +1483,11 @@ function debugString(val) {
     }
     // TODO we could test for more things here, like `Set`s and `Map`s.
     return className;
+}
+
+function getArrayF32FromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    return getFloat32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
 }
 
 function getArrayU32FromWasm0(ptr, len) {

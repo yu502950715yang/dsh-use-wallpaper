@@ -11,5 +11,6 @@ export interface BackgroundLayer {
     showNone(): void;
     setOverlayOpacity(v: number): void;
     setBlur(enabled: boolean, radius: number): void;
+    setChatFg(color: string): void;
 }
 export declare function createBackgroundLayer(root: HTMLElement): BackgroundLayer;

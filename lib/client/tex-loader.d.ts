@@ -27,8 +27,22 @@ export interface TexInfo {
     flags: number;
     imageFormat?: number;
     mipmaps: TexMipmap[];
+    sprite?: TexSpriteInfo;
+}
+export interface TexSpriteInfo {
+    frames: number;
+    cols: number;
+    rows: number;
 }
 export declare function parseTex(buf: Uint8Array): TexInfo | null;
+export declare function parseSpriteSection(buf: Uint8Array, pos: number, mipWidth: number, mipHeight: number): TexSpriteInfo | undefined;
+export declare function cropToMap(data: Uint8Array<ArrayBuffer>, mipWidth: number, mipHeight: number, mapWidth: number, mapHeight: number, format: number, flags: number): {
+    width: number;
+    height: number;
+    data: Uint8Array<ArrayBuffer>;
+};
 export declare function textureFromTex(info: TexInfo): Promise<THREE.Texture | null>;
+export declare function flipCompressedRows(data: Uint8Array, width: number, height: number, blockSize: number): Uint8Array<ArrayBuffer>;
+export declare function convertUnormToRgba(data: Uint8Array, format: number): Uint8Array<ArrayBuffer>;
 export declare function flipRows(data: Uint8Array, width: number, height: number, bytesPerPixel: number): Uint8Array<ArrayBuffer>;
 export declare function loadTexTexture(url: string): Promise<THREE.Texture | null>;

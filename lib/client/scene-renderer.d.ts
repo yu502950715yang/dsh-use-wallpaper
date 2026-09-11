@@ -18,6 +18,7 @@ export interface SceneRenderer {
     start(): void;
     stop(): void;
 }
+export declare const CAMERA_DISTANCE = 300;
 export declare function materialModulation(color?: [number, number, number], alpha?: number, brightness?: number): {
     r: number;
     g: number;
@@ -76,8 +77,13 @@ export declare function uvWindow(unclamped: number, clamped: number): {
     end: number;
 };
 export declare function createCompositeGeometry(worldW: number, worldH: number, rtW: number, rtH: number): THREE.PlaneGeometry;
+export declare function coverRange(width: number, height: number, viewAspect: number): {
+    w: number;
+    h: number;
+};
 export declare function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTMLCanvasElement, audioAnalyzer?: AudioAnalyzer | null): SceneRenderer;
 export declare function resolveTexPath(matRef: string, texName: string): string;
+export declare function resolveImageTexture(id: string, obj: SceneImageObject): Promise<THREE.Texture | null>;
 export interface RenderSceneOptions {
     getUserProperty?: (key: string) => unknown;
 }
