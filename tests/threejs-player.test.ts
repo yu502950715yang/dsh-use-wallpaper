@@ -716,6 +716,8 @@ describe('ThreeScenePlayer loadSceneToThree', () => {
     expect(call[1][1]).toBeCloseTo(419.76611, 5);
     expect(call[2]).toBe(3840);
     expect(call[3]).toBe(2160);
+    // 第 5 参 = 该对象 instanceoverride 的原始 JSON；此对象没有 override → 空串（= 不覆盖）。
+    expect(call[4]).toBe('');
     // 背景对象：addBackground 参数 source 为 scene.json 的 image 对象调制/尺寸。
     const bgMesh = result.player.scene.children[0] as THREE.Mesh;
     expect(bgMesh.material).toBeInstanceOf(THREE.MeshBasicMaterial);
@@ -723,8 +725,87 @@ describe('ThreeScenePlayer loadSceneToThree', () => {
     expect(bgMesh.position.y).toBeCloseTo(0, 6); // origin 1080 - 2160/2
   });
 
-  it('无粒子 spec（无 particles/createParticleSim）→ 只背景，粒子对象被跳过', () => {
+  // 对象级 instanceoverride：`LoadedParticleAssets.overrideJson`（原始 JSON 文本）必须原样
+  // 作为**第 5 参**交给模拟器工厂 → wasm `CpuParticleSim.new(...)`（Rust 按官方
+  // OverrideSpawnProgram 语义应用 alpha/size/lifetime/speed/color × emitter rate）。
+  // 回归背景（GTR 3743126786）：烟柱的 `{alpha: 0.03, size: 2.09}` 此前无处可传 → 粒子以
+  // 材质 alpha（实测均值 0.797）渲染 = 贯穿全屏的竖直白烟串。
+  it('粒子对象的 overrideJson → 工厂第 5 参（空串 = 无覆盖）', () => {
     const canvas = document.createElement('canvas');
+    const sim = makeMockSim();
+    const createParticleSim = vi.fn(() => sim);
+    const overrideJson = JSON.stringify({ alpha: 0.029999999, id: 23, size: 2.0899999 });
+    const scene = JSON.stringify({
+      general: { orthogonalprojection: { height: 4147, width: 7430 } },
+      objects: [
+        {
+          id: 22, name: 'Струя дыма', particle: 'particles/presets/smoke2.json',
+          origin: '5101.16553 1089.44336 0.00000', scale: '2.89780 2.89780 2.89780',
+        },
+        {
+          id: 67, name: 'Падающая звезда', particle: 'particles/presets/shootingstar.json',
+          origin: '1107.52405 3202.11768 0.00000', scale: '2.71680 2.71680 2.71680',
+        },
+      ],
+    });
+    const assets = {
+      renderer: createMockRenderer() as unknown as THREE.WebGLRenderer,
+      particles: new Map([
+        [22, { specJson: '{}', blend: 'alpha' as const, overrideJson }],
+        [67, { specJson: '{}', blend: 'alpha' as const }],
+      ]),
+      createParticleSim,
+    };
+    loadSceneToThree(scene, assets, canvas);
+    expect(createParticleSim).toHaveBeenCalledTimes(2);
+    const withOverride = createParticleSim.mock.calls.find((c) => c[0] === '{}' && c[4] === overrideJson);
+    expect(withOverride, '带 override 的对象应把 JSON 作为第 5 参').toBeTruthy();
+    // 无 override 的对象 → 空串（不是 undefined，wasm 侧按「空串 = 无覆盖」解析）。
+    const without = createParticleSim.mock.calls.filter((c) => c[4] === '');
+    expect(without).toHaveLength(1);
+  });
+
+  // 对象 `angles`（WE 弧度欧拉角）此前**完全未应用** —— 粒子只在 scale 后的局部空间里运动，
+  // 位置/发射点都没经过对象旋转。回归背景（GTR 3743126786）：烟柱 `angles.z = -1.20063`
+  // 把局部 +Y（湍流的 forward）转到世界 (0.932, 0.362) = 向右偏上，正是桌面端的表现；
+  // 丢掉旋转后烟直着向上 = 用户报的「方向不对」。
+  it('对象 angles → 背景 mesh.rotation + 粒子 objAngles uniform', () => {
+    const canvas = document.createElement('canvas');
+    const sim = makeMockSim();
+    const createParticleSim = vi.fn(() => sim);
+    const scene = JSON.stringify({
+      general: { orthogonalprojection: { height: 2160, width: 3840 } },
+      objects: [
+        {
+          id: 13, image: 'models/a.json',
+          origin: '1920.00000 1080.00000 0.00000', scale: '1.00000 1.00000 1.00000',
+          size: '3840.00000 2160.00000', angles: '0.00000 0.00000 0.50000',
+        },
+        {
+          id: 22, name: 'Струя дыма', particle: 'particles/presets/smoke2.json',
+          origin: '5101.16553 1089.44336 0.00000', scale: '2.89780 2.89780 2.89780',
+          angles: '-0.00000 -0.00000 -1.20063',
+        },
+      ],
+    });
+    const assets = {
+      renderer: createMockRenderer() as unknown as THREE.WebGLRenderer,
+      backgroundTextures: new Map([[13, new THREE.DataTexture(new Uint8Array(4), 2, 2)]]),
+      particles: new Map([[22, { specJson: '{}', blend: 'alpha' as const }]]),
+      createParticleSim,
+    };
+    const result = loadSceneToThree(scene, assets, canvas);
+
+    // 背景：addBackground 的 T·R·S → mesh.rotation 承载对象 angles（three 的欧拉单位=弧度）。
+    const bg = result.player.scene.children.find((c) => (c as THREE.Mesh).renderOrder === 0) as THREE.Mesh;
+    expect(bg.rotation.z).toBeCloseTo(0.5, 6);
+    // 粒子：objAngles uniform 收到同一份对象 angles。
+    const part = result.player.scene.children.find((c) => (c as THREE.Mesh).renderOrder === 1) as THREE.Mesh;
+    const uniforms = (part.material as THREE.ShaderMaterial).uniforms;
+    expect(uniforms.objAngles.value.z).toBeCloseTo(-1.20063, 5);
+  });
+
+  it('无粒子 spec（无 particles/createParticleSim）→ 只背景，粒子对象被跳过', () => {    const canvas = document.createElement('canvas');
     const result = loadSceneToThree(BLACKMYTH_SCENE, { renderer: createMockRenderer() as unknown as THREE.WebGLRenderer, backgroundTextures: new Map([[13, new THREE.DataTexture(new Uint8Array(4), 2, 2)]]) }, canvas);
     expect(result.backgroundIds).toHaveLength(1);
     expect(result.sims).toHaveLength(0);

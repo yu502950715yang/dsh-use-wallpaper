@@ -25,7 +25,7 @@
 //! `update()` 注释）。
 
 use crate::coords::we_to_three;
-use super::TurbulentInit;
+use super::{ParticleOverride, TurbulentInit};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 /// 进程级 Xorshift32 状态（线程安全；跨实例共享，先简单占位，Task 4 换发射器级种子）。
@@ -687,6 +687,15 @@ pub struct SceneParticleSim {
     pub operators: Vec<ParticleOperator>,
     /// 累计帧时间（秒；= lwe `m_time`，供 turbulence 的 `phase + timeScale*currentTime` 用）。
     pub time: f32,
+    /// turbulentvelocityrandom 的 curl 噪声采样位置（**跨 spawn 累积**，对应 OWE
+    /// `TurbulentVelocityRandomProgram::position` 成员）——使相邻发射的粒子方向在噪声场里
+    /// 平滑连贯（而不是各自独立随机）。
+    pub turb_position: [f32; 3],
+    /// 上一次 turbulent 采样时的 `time`（用于推导本次 spawn 应走的 curl 行走步数）。
+    pub turb_last_time: f32,
+    /// scene.json 对象级 `instanceoverride`（粒子实例覆盖，官方 `OverrideSpawnProgram`）。
+    /// 缺省 identity（全 1 / color=None）。由渲染层按对象设置（`CpuParticleSim` 构造时传入）。
+    pub override_spec: ParticleOverride,
     /// sprite sheet 总帧数（rosepetals 512×128 → 4；单帧纹理 → 1）。由渲染层在创建时按纹理尺寸
     /// 覆写（`set_particle_sim`）；`build_vertices` 用它把粒子 frame 编码进 17 浮点流的位置。
     pub spritesheet_frames: u32,
@@ -717,6 +726,9 @@ impl SceneParticleSim {
                 drag: 0.0,
             }],
             time: 0.0,
+            turb_position: [0.0; 3],
+            turb_last_time: 0.0,
+            override_spec: ParticleOverride::default(),
             spritesheet_frames: DEFAULT_FRAME_COUNT,
         }
     }
@@ -735,7 +747,7 @@ impl SceneParticleSim {
         //       当前 wasm `ParticleEmitterSpec` 未携带这些字段（spec_to_emitter 只映射
         //       rate/origin/directions/dist_min/dist_max/is_sphere），故本任务**不实现、予以忽略**
         //       （任务契约「有则实现，无则忽略并注明」）。
-        self.emission_timer += dt * self.emitter.rate;
+        self.emission_timer += dt * self.emitter.rate * self.override_spec.count;
         let to_emit = self.emission_timer as u32;
         self.emission_timer -= to_emit as f32;
         let alive = self.particles.len() as u32;
@@ -947,20 +959,29 @@ impl SceneParticleSim {
         // （uvs∈[0,1]），sizerandom 存的是编辑器值的**一半**。本模拟器输出的 `size` 与渲染器
         // （three `position.xy*particleSize*0.5`、wasm `corner*size/2`，角点 ±1）同为「整宽」语义，
         // 故此处同样 /2；否则粒子会是 WE 的 **2 倍大**（Crimson 绿点/星点偏大、黑神话花瓣偏大）。
-        let size = (i.size_min + (i.size_max - i.size_min) * rand().powf(i.size_exponent)) * 0.5;
+        // instanceoverride.size：官方 override 是**追加在最后**的 initializer，在 sizerandom 的
+        // 「/2」之后乘 `modifiers.Size()`（ParticleParser.cpp:369 `columns.sizes[index] *= ...`）。
+        let size = (i.size_min + (i.size_max - i.size_min) * rand().powf(i.size_exponent))
+            * 0.5
+            * self.override_spec.size;
         // lifetimeRandom / alphaRandom：`lerp(min,max,rand)`（黑神话 life∈[5,10]、alpha 缺省 1.0）。
-        let life = lerp(i.lifetime_min, i.lifetime_max);
+        // 两者再乘 instanceoverride 的 lifetime/alpha（官方 ParticleParser.cpp:365-368）。
+        let life = lerp(i.lifetime_min, i.lifetime_max) * self.override_spec.lifetime;
         // 出生相位偏移（prewarm 用）：`age = age_frac × lifetime`，剩余寿命 = lifetime - age。
         // `age_frac = 0`（常规发射）→ spawn_age=0、剩余寿命=lifetime，与既有行为**逐位一致**。
         let spawn_age = (age_frac.clamp(0.0, 0.999) * life).max(0.0);
         let life_remaining = (life - spawn_age).max(1e-3);
-        let alpha = lerp(i.alpha_min, i.alpha_max);
+        // alpha = alpharandom × instanceoverride.alpha（官方 UiScalarToLinear 为恒等）。
+        let alpha = lerp(i.alpha_min, i.alpha_max) * self.override_spec.alpha;
         // colorRandom：逐分量 lerp（已归一 0..1；缺省 color_min/max=[1,1,1]；黑神话粉花瓣）。
         let color = [
             lerp(i.color_min[0], i.color_max[0]),
             lerp(i.color_min[1], i.color_max[1]),
             lerp(i.color_min[2], i.color_max[2]),
         ];
+        // instanceoverride.color/colorn：**直接覆盖**（官方 ParticleParser.cpp:373-382
+        // `columns.colors[index] = value`，已转线性）。
+        let color = self.override_spec.color.unwrap_or(color);
         // rotationRandom：旋转角（欧拉，lwe 逐分量）；本模拟器单轴近似取 z。
         let rot = lerp(i.rotation_min[2], i.rotation_max[2]);
         // angularVelocityRandom：逐分量 lerp（弧/秒）。由 angularmovement 算子消费
@@ -971,27 +992,86 @@ impl SceneParticleSim {
             lerp(i.angular_vel_min[2], i.angular_vel_max[2]),
         ];
 
-        // turbulentVelocityRandom：把扰动**加到 velocity**。方向取法向/前向正交基平面内的随机方向
-        // （`cosθ×forward + sinθ×scale×normal`，归一），速度 `lerp(speedMin, speedMax, rand)`。
+        // turbulentVelocityRandom：把扰动**加到 velocity**（官方 OWE
+        // `TurbulentVelocityRandomProgram::Initialize`，ParticleParser.cpp:326-357）：
+        //   result = curlNoise(position + normal*phase)   // 3D 噪声场采样（position **跨 spawn 累积**）
+        //   result -= normal*dot(result, normal)          // 投影到**垂直 normal 的平面**
+        //   result 归一（退化到零则取 forward）
+        //   angle  = atan2(normal·(forward×result), forward·result)
+        //   result = AngleAxisf(angle*scale + offset, normal) * forward   // ★ forward **绕 normal 旋转**
+        //   velocity += result * lerp(speedMin, speedMax, rand)
+        //
+        // ⚠️ 回归（GTR 3743126786「贯穿全屏的竖直白烟串」，2026-09-11 定位）：旧实现写成
+        //    `forward*cosθ + normal*sinθ*scale`，把 normal 当成了**偏转方向**——对缺省
+        //    normal=+Z / forward=+Y 得到 (0, cosθ, sinθ)：x 分量恒 0、速度全跑进屏幕上根本
+        //    不可见的 z 轴，177 个粒子于是排成一条竖线（实测 max|vx|=0.000 / max|vy|=247.8 /
+        //    max|vz|=223.1）。正确语义下方向恒落在垂直 normal 的平面内（此处 = XY 平面，z 恒 0）。
+        //
         // 无该 initializer（`turbulent == None`）→ 忽略（不叠加扰动）。
         if let Some(turb) = &i.turbulent {
             let speed = lerp(turb.speed_min, turb.speed_max);
-            let angle = rand() * std::f32::consts::TAU;
+            let phase = lerp(turb.phase_min, turb.phase_max);
             let f = turb.forward;
             let n = turb.normal;
-            let mut dir = [
-                f[0] * angle.cos() + n[0] * angle.sin() * turb.scale,
-                f[1] * angle.cos() + n[1] * angle.sin() * turb.scale,
-                f[2] * angle.cos() + n[2] * angle.sin() * turb.scale,
-            ];
-            let len = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt();
-            if len > 1e-8 {
-                dir = [dir[0] / len, dir[1] / len, dir[2] / len];
+            // curl 行走步数：自上次 spawn 起每 0.01s 一步（官方 do/while `duration -= 0.01` 的等价），
+            // 钳制到 [1, 64] 防低 rate 对象（流星 rate=0.2/s → 间隔 5s）迭代过多。
+            let steps = (((self.time - self.turb_last_time) / 0.01).round() as i32).clamp(1, 64) as usize;
+            self.turb_last_time = self.time;
+            let mut dir = f;
+            for _ in 0..steps {
+                let sample = [
+                    self.turb_position[0] + n[0] * phase,
+                    self.turb_position[1] + n[1] * phase,
+                    self.turb_position[2] + n[2] * phase,
+                ];
+                let mut r = curl_noise(sample);
+                let d = r[0] * n[0] + r[1] * n[1] + r[2] * n[2];
+                r = [r[0] - n[0] * d, r[1] - n[1] * d, r[2] - n[2] * d];
+                let len2 = r[0] * r[0] + r[1] * r[1] + r[2] * r[2];
+                dir = if len2 > 1e-8 {
+                    let inv = 1.0 / len2.sqrt();
+                    [r[0] * inv, r[1] * inv, r[2] * inv]
+                } else {
+                    f // 噪声方向退化到 normal 轴 → 回退 forward（官方同分支）
+                };
+                self.turb_position[0] += dir[0] * 0.005 * turb.timescale;
+                self.turb_position[1] += dir[1] * 0.005 * turb.timescale;
+                self.turb_position[2] += dir[2] * 0.005 * turb.timescale;
             }
-            vel[0] += dir[0] * speed;
-            vel[1] += dir[1] * speed;
-            vel[2] += dir[2] * speed;
+            // theta = angle × max(0, scale×0.5) + offset（官方 `auto scale = max(0, config.scale*0.5)`）。
+            let cross_fd = [
+                f[1] * dir[2] - f[2] * dir[1],
+                f[2] * dir[0] - f[0] * dir[2],
+                f[0] * dir[1] - f[1] * dir[0],
+            ];
+            let cosine = (f[0] * dir[0] + f[1] * dir[1] + f[2] * dir[2]).clamp(-1.0, 1.0);
+            let sine = n[0] * cross_fd[0] + n[1] * cross_fd[1] + n[2] * cross_fd[2];
+            let angle = sine.atan2(cosine);
+            let theta = angle * (turb.scale * 0.5).max(0.0) + turb.offset;
+            // Rodrigues 旋转：forward 绕 normal 转 theta（normal ⊥ forward → 无轴向分量项）。
+            let (sin_t, cos_t) = theta.sin_cos();
+            let axis_cross_f = [
+                n[1] * f[2] - n[2] * f[1],
+                n[2] * f[0] - n[0] * f[2],
+                n[0] * f[1] - n[1] * f[0],
+            ];
+            let out = [
+                f[0] * cos_t + axis_cross_f[0] * sin_t,
+                f[1] * cos_t + axis_cross_f[1] * sin_t,
+                f[2] * cos_t + axis_cross_f[2] * sin_t,
+            ];
+            vel[0] += out[0] * speed;
+            vel[1] += out[1] * speed;
+            vel[2] += out[2] * speed;
         }
+
+        // instanceoverride.speed：官方 override 是**最后一个** initializer，所以它乘在全部速度上
+        // （velocityrandom + turbulentvelocityrandom 都已叠加完，ParticleParser.cpp:371）。
+        vel = [
+            vel[0] * self.override_spec.speed,
+            vel[1] * self.override_spec.speed,
+            vel[2] * self.override_spec.speed,
+        ];
 
         // frame：randomframe，0..spritesheetFrames-1（rosepetals 4 帧；否则所有花瓣固定采样同帧）。
         // rand() ∈ [0,1) → *4 ∈ [0,4) → floor ∈ {0,1,2,3}。

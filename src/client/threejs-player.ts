@@ -21,6 +21,8 @@ type BackgroundEntry = {
   // WE 场景坐标（创建时的 origin，未中心化）——update_background 用它重算 we_to_three 位置。
   origin: [number, number, number];
   scale: [number, number, number];
+  // WE 对象欧拉角（弧度；T·R·S 的 R）。记录创建值（update_background 暂不改角度）。
+  angles: [number, number, number];
   alpha: number;         // 已应用 material.opacity（0-1）
   brightness: number;    // 亮度乘法系数（原始值，materialModulation 内部 clamp）
   // 该背景创建时用的场景固有尺寸（we_to_three 中心化基准 = origin - scene/2）。
@@ -151,10 +153,22 @@ uniform vec3 objCenter;
 uniform vec3 objScale;
 uniform vec3 emitterOrigin;
 uniform vec3 bmOffset;
+// 对象欧拉角（**弧度**）—— WE model matrix = T·R·S 的 R 部分。
+uniform vec3 objAngles;
 varying vec2 vCornerUv;
 varying vec2 vParticleUv;
 varying vec3 vParticleColor;
 varying float vParticleAlpha;
+// 对象旋转 R = Rz·Ry·Rx（官方 order：OWE ParticleRuntime.cpp:25-28 ControlpointRotation）。
+// 每个分量都是右手系绕轴的主动旋转，与 Eigen AngleAxisd(theta, axis) 一致。
+vec3 weObjectRotate(vec3 v, vec3 a) {
+  float cx = cos(a.x), sx = sin(a.x);
+  v = vec3(v.x, v.y * cx - v.z * sx, v.y * sx + v.z * cx);
+  float cy = cos(a.y), sy = sin(a.y);
+  v = vec3(v.x * cy + v.z * sy, v.y, -v.x * sy + v.z * cy);
+  float cz = cos(a.z), sz = sin(a.z);
+  return vec3(v.x * cz - v.y * sz, v.x * sz + v.y * cz, v.z);
+}
 void main() {
   vCornerUv = position.xy * 0.5 + 0.5;
   vParticleUv = particleUv;
@@ -163,14 +177,15 @@ void main() {
   // 还原模拟器输出的**局部**坐标（剔除对象中心与模拟器已加的发射点偏移）：
   //   particlePosition = objCenter + bmOffset + (散射 + 运动)
   vec3 local = particlePosition - objCenter - bmOffset;
-  // 按对象 scale 重建世界坐标：WE 的粒子局部坐标（发射点 + 散射 + 运动）经对象 model matrix
-  // （含 scale）变换到场景空间（lwe CParticle::updateMatrices：mvp = viewProj × translate(origin)
-  // × rotate × scale）。此前只把 scale 用在发射点上（且是**硬编码的黑神话 scale**），散射/运动/尺寸
-  // 都没乘 —— DK 的「Mouse interactive particle system」对象 scale≈(0.29,0.15) 很小的冰晶粒子
-  // 因此被画成 6.7 倍大的辉光斑（additive）＝ 用户所见的全屏闪光/整屏泛光。
-  vec3 worldPos = objCenter + objScale * (emitterOrigin + local);
-  // 粒子 quad 的尺寸同样乘对象 scale（非均匀；abs 去掉镜像的符号）。
-  worldPos += vec3(position.xy * particleSize * 0.5 * abs(objScale.xy), 0.0);
+  // 按对象 model matrix 的 **R·S** 变换到场景空间（WE：mvp = viewProj × translate(origin)
+  // × rotate(angles) × scale）。⚠️ 旋转**必须**在这里做：全库 79 个对象带非零 angles
+  // （粒子 75 个），漏掉它会让粒子的局部朝向直接当世界朝向用 —— GTR 3743126786 的烟柱
+  // angles.z = -1.20063（≈ -68.8°）本应把局部 +Y（湍流的 forward）转到世界 (0.932, 0.362)
+  // =「从排气管向右侧飘」，漏掉旋转后烟就直着往上走。
+  vec3 worldPos = objCenter + weObjectRotate(objScale * (emitterOrigin + local), objAngles);
+  // 粒子 quad 的尺寸同样乘对象 scale（非均匀；abs 去掉镜像的符号），并随对象角度一起转。
+  vec3 corner = weObjectRotate(abs(objScale) * vec3(position.xy * particleSize * 0.5, 0.0), objAngles);
+  worldPos += corner;
   gl_Position = projectionMatrix * modelViewMatrix * vec4(worldPos, 1.0);
   // ⚠️ 修正：粒子是 2D billboard（无深度排序，z 不参与可见性）。three 正交相机 far/near 会把
   // 视锥外的 z 裁剪掉，而 wasm billboard 早已把投影矩阵 z 行全 0（clip.z=0，见 particle_billboard.wgsl）
@@ -417,6 +432,9 @@ export class ThreeScenePlayer {
     origin: [number, number, number];
     size?: [number, number];
     scale: [number, number, number];
+    // 对象欧拉角（**弧度**，scene.json 的 angles；缺省 [0,0,0]）。three 的 Object3D 变换顺序
+    // 正是 T·R·S，所以 mesh.rotation 直接承载它（全库 2 个 image 对象带非零 angles）。
+    angles?: [number, number, number];
     texture?: THREE.Texture;
     alpha?: number;
     brightness?: number;
@@ -445,6 +463,9 @@ export class ThreeScenePlayer {
     mesh.renderOrder = 0;
     const s = opts.scale;
     mesh.scale.set(s[0], s[1], s[2] ?? 1);
+    // 对象角度（弧度）：PlaneGeometry 以几何中心为 pivot，mesh.rotation 即 T·R·S 的 R。
+    const a = opts.angles ?? [0, 0, 0];
+    mesh.rotation.set(a[0], a[1], a[2]);
     // we_to_three：origin - scene/2（y 不翻）。
     mesh.position.set(opts.origin[0] - sceneW / 2, opts.origin[1] - sceneH / 2, opts.origin[2]);
     this.scene.add(mesh);
@@ -454,6 +475,7 @@ export class ThreeScenePlayer {
       mesh,
       origin: [opts.origin[0], opts.origin[1], opts.origin[2]],
       scale: [s[0], s[1], s[2] ?? 1],
+      angles: [a[0], a[1], a[2]],
       alpha: mod.a,
       brightness: opts.brightness ?? 1,
       sceneW,
@@ -527,6 +549,8 @@ export class ThreeScenePlayer {
       //   emitterOrigin spec 的 emitter 局部原点（simEmitterOffset 用它算 bmOffset）
       objectCenter?: [number, number, number];
       objectScale?: [number, number, number];
+      // 对象欧拉角（**弧度**，scene.json 的 angles；缺省 [0,0,0] = 不旋转）。model matrix 的 R。
+      objectAngles?: [number, number, number];
       emitterOrigin?: [number, number, number];
       // 实例缓冲容量上界（= sim 的 maxcount / spec 的 maxcount；见 ParticleLayer.capacity 注释）。
       // 缺省 DEFAULT_PARTICLE_CAPACITY。
@@ -611,6 +635,7 @@ export class ThreeScenePlayer {
         // 对象变换（缺省恒等 → 顶点 shader 退化为旧的 worldPos = particlePosition + corner*size/2）。
         objCenter: { value: new THREE.Vector3(...(opts.objectCenter ?? [0, 0, 0])) },
         objScale: { value: new THREE.Vector3(...(opts.objectScale ?? [1, 1, 1])) },
+        objAngles: { value: new THREE.Vector3(...(opts.objectAngles ?? [0, 0, 0])) },
         emitterOrigin: { value: new THREE.Vector3(...(opts.emitterOrigin ?? [0, 0, 0])) },
         bmOffset: { value: new THREE.Vector3(...simEmitterOffset(opts.emitterOrigin ?? [0, 0, 0])) },
       },
@@ -807,15 +832,21 @@ export interface LoadedParticleAssets {
   tex?: THREE.Texture;                         // 粒子 sprite sheet 纹理（缺省 = 白图兜底）
   blend: 'additive' | 'alpha';                 // 混合模式（three ShaderMaterial.blending）
   softness?: number;                           // 中心→边缘软衰减（0-1）
+  // scene.json 对象级 instanceoverride 的**原始 JSON 文本**（缺省/无覆盖 → undefined）。
+  // 模拟器按官方 OverrideSpawnProgram 语义消费（alpha/size/lifetime/speed 乘数 + color 覆盖 +
+  // emitter rate × count）。GTR 3743126786 的烟柱靠它把 alpha 压到 0.03（桌面端几乎不可见）。
+  overrideJson?: string;
 }
 
 // 粒子模拟器工厂：从粒子规格 JSON + 对象中心构造模拟器。
 // 生产传 wasm `CpuParticleSim` 的包装；测试传 mock（无需 wasm）。
+// `overrideJson` = scene.json 对象 instanceoverride 的原始 JSON（空串 = 无覆盖）。
 export type ParticleSimFactory = (
   json: string,
   origin: [number, number, number],
   sceneW: number,
   sceneH: number,
+  overrideJson: string,
 ) => ParticleSim;
 
 // 场景装配输入：调用方把已解码的纹理/规格/模拟器工厂交给 `loadSceneToThree`。
@@ -935,6 +966,8 @@ export function loadSceneToThree(
         origin: obj.origin,
         size: obj.size,
         scale: obj.scale,
+        // WE 对象角度（弧度）→ mesh.rotation（three 的 Object3D 变换顺序即 T·R·S）。
+        angles: obj.angles,
         texture: assets.backgroundTextures?.get(obj.id),
         alpha: obj.alpha,
         brightness: obj.brightness,
@@ -947,8 +980,9 @@ export function loadSceneToThree(
       // 与缺失粒子纹理时白图兜底同语义）。
       const p = assets.particles?.get(obj.id);
       if (!p || !assets.createParticleSim) continue;
-      // new CpuParticleSim(json, origin, sceneW, sceneH)（经工厂抽象：生产 wasm / 测试 mock）。
-      const sim = assets.createParticleSim(p.specJson, obj.origin, sceneW, sceneH);
+      // new CpuParticleSim(json, origin, sceneW, sceneH, overrideJson)（经工厂抽象：生产 wasm /
+      // 测试 mock）。第 5 参 = 该对象 instanceoverride 的原始 JSON（无覆盖 → 空串）。
+      const sim = assets.createParticleSim(p.specJson, obj.origin, sceneW, sceneH, p.overrideJson ?? '');
       // FrameCount 对齐（Task 3 Minor）：sim.set_frame_count(纹理帧数)，addParticle 的
       // opts.frameCount 取 sim.frame_count()——避免多帧 uv 切片与 sim 帧编号错位。
       // 帧数优先取纹理携带的精灵表元数据（TEXS000x，DK 的 fire1/fog1 = 64 帧），否则按宽高推。
@@ -969,6 +1003,8 @@ export function loadSceneToThree(
         softness: p.softness,
         objectCenter: [obj.origin[0] - sceneW / 2, obj.origin[1] - sceneH / 2, obj.origin[2]],
         objectScale: [obj.scale[0], obj.scale[1], obj.scale[2] ?? 1],
+        // 对象角度（弧度）：顶点 shader 用它把局部运动方向/发射点/quad 角点旋转到场景空间。
+        objectAngles: obj.angles,
         emitterOrigin,
         // 实例缓冲容量 = spec 的 maxcount（= wasm `SceneParticleSim.maxcount`，模拟器的发射上限）。
         // three 只在首帧锁存该容量（见 addParticle），必须按模拟器**最终**会产出的粒子数一次给足；

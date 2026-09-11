@@ -440,4 +440,65 @@ describe('parseSceneJson visible 归一化（T4.2）', () => {
     }));
     for (const o of desc.objects) expect((o as any).visible).toBeUndefined();
   });
+
+  // ---------------------------------------------------------------------------
+  // 对象级 `instanceoverride`（粒子实例覆盖）：JS 侧**只透传原始 JSON 文本**，语义解析在
+  // wasm CPU 模拟器（Rust `parse_particle_override`），避免两份语义漂移。
+  // 回归背景：GTR 3743126786 的烟柱 `{alpha: 0.03, size: 2.09}` 此前完全没被消费，
+  // 粒子按材质 alpha（实测均值 0.797）渲染 → 贯穿全屏的竖直白烟串。
+  // ---------------------------------------------------------------------------
+  it('particle 对象的 instanceoverride → instanceOverrideJson（原始 JSON 文本透传）', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [{
+        id: 22, name: 'Струя дыма', particle: 'particles/presets/smoke2.json',
+        origin: '5101.16553 1089.44336 0.00000', scale: '2.89780 2.89780 2.89780',
+        instanceoverride: { alpha: 0.029999999, id: 23, size: 2.0899999 },
+      }],
+    }));
+    const p = desc.objects[0] as any;
+    expect(p.kind).toBe('particle');
+    expect(JSON.parse(p.instanceOverrideJson)).toEqual({ alpha: 0.029999999, id: 23, size: 2.0899999 });
+  });
+
+  it('instanceoverride 缺失/空对象/非对象 → instanceOverrideJson undefined（= 无覆盖）', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [
+        { id: 1, particle: 'particles/a.json' },
+        { id: 2, particle: 'particles/b.json', instanceoverride: {} },
+        { id: 3, particle: 'particles/c.json', instanceoverride: [] },
+        { id: 4, particle: 'particles/d.json', instanceoverride: null },
+        { id: 5, particle: 'particles/e.json', instanceoverride: 7 },
+      ],
+    }));
+    for (const o of desc.objects) expect((o as any).instanceOverrideJson).toBeUndefined();
+  });
+
+  it('image 对象不产出 instanceOverrideJson（WE 里该字段属于 particle 对象）', () => {
+    const desc = parseSceneJson('{"objects":[{"id":1,"image":"models/a.json","instanceoverride":{"alpha":0.5}}]}');
+    expect((desc.objects[0] as any).instanceOverrideJson).toBeUndefined();
+  });
+
+  // ---------------------------------------------------------------------------
+  // 对象 `angles`（WE 对象欧拉角，**弧度**；缺省 (0,0,0)）。
+  // 全库 79 个对象带非零 angles（粒子 75 / image 2 / text 1 / other 1），此前**完全未解析**
+  // → 粒子运动方向/发射点、背景朝向都没经过对象旋转。
+  // 回归背景（GTR 3743126786）：烟柱 `angles.z = -1.20063`（≈ -68.8°），局部 +Y（向上）
+  // 经该旋转后指向世界 (0.932, 0.362) = **向右偏上** —— 正是桌面端「烟从排气管向右侧飘」，
+  // 而网页端因为丢掉这个旋转，烟直着往上走。
+  // ---------------------------------------------------------------------------
+  it('解析对象 angles（弧度 → [x,y,z]；缺省 [0,0,0]）', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [
+        { id: 22, particle: 'particles/p.json', angles: '-0.00000 -0.00000 -1.20063' },
+        { id: 23, particle: 'particles/q.json' },
+        { id: 13, image: 'models/a.json', angles: '0.5 0 0' },
+      ],
+    }));
+    const a0 = (desc.objects[0] as any).angles;
+    expect(a0[0]).toBeCloseTo(0, 6);
+    expect(a0[1]).toBeCloseTo(0, 6);
+    expect(a0[2]).toBeCloseTo(-1.20063, 6);
+    expect((desc.objects[1] as any).angles).toEqual([0, 0, 0]); // 缺省无旋转
+    expect((desc.objects[2] as any).angles[0]).toBeCloseTo(0.5, 6);
+  });
 });

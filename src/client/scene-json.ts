@@ -95,6 +95,19 @@ function collectSounds(root: any): string[] | undefined {
   return sounds.length > 0 ? sounds : undefined;
 }
 
+// scene.json 对象级 `instanceoverride`（粒子实例覆盖）→ **原始 JSON 文本**（供 wasm CPU 模拟器
+// `parse_particle_override` 消费）。JS 侧不做字段解析，避免与 Rust 两份语义漂移。
+// 非对象 / 数组 / null / 空对象 → undefined（= 无覆盖）。
+function serializeInstanceOverride(v: unknown): string | undefined {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return undefined;
+  try {
+    const text = JSON.stringify(v);
+    return text && text !== '{}' ? text : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function parseSceneJson(raw: string): SceneDescription {
   const root: any = JSON.parse(raw);
   if (typeof root !== 'object' || root === null || Array.isArray(root)) {
@@ -109,6 +122,10 @@ export function parseSceneJson(raw: string): SceneDescription {
       name: String(o.name ?? ''),
       origin: vec3(o.origin),
       scale: scale3(o.scale),
+      // WE 对象欧拉角（**弧度**；缺省 [0,0,0]）= model matrix 的 R（T·R·S，R = Rz·Ry·Rx）。
+      // 全库 79 个对象非零（粒子 75），此前**完全未解析** → 粒子运动方向/发射点、
+      // 背景朝向都没经过对象旋转（GTR 烟柱 angles.z=-1.20063 本应把「向上」转成「向右」）。
+      angles: vec3(o.angles),
       size: size2(o.size),
       // T4.2：可见性绑定归一化（布尔 / {user,value} / {script,value} → VisibleBinding；
       // 缺失/畸形 → undefined = 默认可见）。渲染器按 resolveVisibility 跳过不可见对象。
@@ -121,7 +138,13 @@ export function parseSceneJson(raw: string): SceneDescription {
       effects: Array.isArray(o.effects) ? o.effects : undefined,
     };
     if (typeof o.particle === 'string' && o.particle) {
-      return { ...base, kind: 'particle' as const, particle: o.particle };
+      return {
+        ...base,
+        kind: 'particle' as const,
+        particle: o.particle,
+        // 对象级粒子实例覆盖（alpha/size/lifetime/speed/color × emitter rate）——原始 JSON 透传。
+        instanceOverrideJson: serializeInstanceOverride(o.instanceoverride),
+      };
     }
     if (typeof o.image === 'string' && o.image) {
       // WE 内置合成层/全屏层/项目层（models/util/*.json）：pkg 内无此文件，

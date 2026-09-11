@@ -20356,6 +20356,15 @@ function collectSounds(root) {
   }
   return sounds.length > 0 ? sounds : void 0;
 }
+function serializeInstanceOverride(v) {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return void 0;
+  try {
+    const text = JSON.stringify(v);
+    return text && text !== "{}" ? text : void 0;
+  } catch {
+    return void 0;
+  }
+}
 function parseSceneJson(raw) {
   const root = JSON.parse(raw);
   if (typeof root !== "object" || root === null || Array.isArray(root)) {
@@ -20370,6 +20379,10 @@ function parseSceneJson(raw) {
       name: String(o.name ?? ""),
       origin: vec3(o.origin),
       scale: scale3(o.scale),
+      // WE 对象欧拉角（**弧度**；缺省 [0,0,0]）= model matrix 的 R（T·R·S，R = Rz·Ry·Rx）。
+      // 全库 79 个对象非零（粒子 75），此前**完全未解析** → 粒子运动方向/发射点、
+      // 背景朝向都没经过对象旋转（GTR 烟柱 angles.z=-1.20063 本应把「向上」转成「向右」）。
+      angles: vec3(o.angles),
       size: size2(o.size),
       // T4.2：可见性绑定归一化（布尔 / {user,value} / {script,value} → VisibleBinding；
       // 缺失/畸形 → undefined = 默认可见）。渲染器按 resolveVisibility 跳过不可见对象。
@@ -20382,7 +20395,13 @@ function parseSceneJson(raw) {
       effects: Array.isArray(o.effects) ? o.effects : void 0
     };
     if (typeof o.particle === "string" && o.particle) {
-      return { ...base, kind: "particle", particle: o.particle };
+      return {
+        ...base,
+        kind: "particle",
+        particle: o.particle,
+        // 对象级粒子实例覆盖（alpha/size/lifetime/speed/color × emitter rate）——原始 JSON 透传。
+        instanceOverrideJson: serializeInstanceOverride(o.instanceoverride)
+      };
     }
     if (typeof o.image === "string" && o.image) {
       if (o.image.startsWith("models/util/")) {
@@ -20854,10 +20873,22 @@ uniform vec3 objCenter;
 uniform vec3 objScale;
 uniform vec3 emitterOrigin;
 uniform vec3 bmOffset;
+// \u5BF9\u8C61\u6B27\u62C9\u89D2\uFF08**\u5F27\u5EA6**\uFF09\u2014\u2014 WE model matrix = T\xB7R\xB7S \u7684 R \u90E8\u5206\u3002
+uniform vec3 objAngles;
 varying vec2 vCornerUv;
 varying vec2 vParticleUv;
 varying vec3 vParticleColor;
 varying float vParticleAlpha;
+// \u5BF9\u8C61\u65CB\u8F6C R = Rz\xB7Ry\xB7Rx\uFF08\u5B98\u65B9 order\uFF1AOWE ParticleRuntime.cpp:25-28 ControlpointRotation\uFF09\u3002
+// \u6BCF\u4E2A\u5206\u91CF\u90FD\u662F\u53F3\u624B\u7CFB\u7ED5\u8F74\u7684\u4E3B\u52A8\u65CB\u8F6C\uFF0C\u4E0E Eigen AngleAxisd(theta, axis) \u4E00\u81F4\u3002
+vec3 weObjectRotate(vec3 v, vec3 a) {
+  float cx = cos(a.x), sx = sin(a.x);
+  v = vec3(v.x, v.y * cx - v.z * sx, v.y * sx + v.z * cx);
+  float cy = cos(a.y), sy = sin(a.y);
+  v = vec3(v.x * cy + v.z * sy, v.y, -v.x * sy + v.z * cy);
+  float cz = cos(a.z), sz = sin(a.z);
+  return vec3(v.x * cz - v.y * sz, v.x * sz + v.y * cz, v.z);
+}
 void main() {
   vCornerUv = position.xy * 0.5 + 0.5;
   vParticleUv = particleUv;
@@ -20866,14 +20897,15 @@ void main() {
   // \u8FD8\u539F\u6A21\u62DF\u5668\u8F93\u51FA\u7684**\u5C40\u90E8**\u5750\u6807\uFF08\u5254\u9664\u5BF9\u8C61\u4E2D\u5FC3\u4E0E\u6A21\u62DF\u5668\u5DF2\u52A0\u7684\u53D1\u5C04\u70B9\u504F\u79FB\uFF09\uFF1A
   //   particlePosition = objCenter + bmOffset + (\u6563\u5C04 + \u8FD0\u52A8)
   vec3 local = particlePosition - objCenter - bmOffset;
-  // \u6309\u5BF9\u8C61 scale \u91CD\u5EFA\u4E16\u754C\u5750\u6807\uFF1AWE \u7684\u7C92\u5B50\u5C40\u90E8\u5750\u6807\uFF08\u53D1\u5C04\u70B9 + \u6563\u5C04 + \u8FD0\u52A8\uFF09\u7ECF\u5BF9\u8C61 model matrix
-  // \uFF08\u542B scale\uFF09\u53D8\u6362\u5230\u573A\u666F\u7A7A\u95F4\uFF08lwe CParticle::updateMatrices\uFF1Amvp = viewProj \xD7 translate(origin)
-  // \xD7 rotate \xD7 scale\uFF09\u3002\u6B64\u524D\u53EA\u628A scale \u7528\u5728\u53D1\u5C04\u70B9\u4E0A\uFF08\u4E14\u662F**\u786C\u7F16\u7801\u7684\u9ED1\u795E\u8BDD scale**\uFF09\uFF0C\u6563\u5C04/\u8FD0\u52A8/\u5C3A\u5BF8
-  // \u90FD\u6CA1\u4E58 \u2014\u2014 DK \u7684\u300CMouse interactive particle system\u300D\u5BF9\u8C61 scale\u2248(0.29,0.15) \u5F88\u5C0F\u7684\u51B0\u6676\u7C92\u5B50
-  // \u56E0\u6B64\u88AB\u753B\u6210 6.7 \u500D\u5927\u7684\u8F89\u5149\u6591\uFF08additive\uFF09\uFF1D \u7528\u6237\u6240\u89C1\u7684\u5168\u5C4F\u95EA\u5149/\u6574\u5C4F\u6CDB\u5149\u3002
-  vec3 worldPos = objCenter + objScale * (emitterOrigin + local);
-  // \u7C92\u5B50 quad \u7684\u5C3A\u5BF8\u540C\u6837\u4E58\u5BF9\u8C61 scale\uFF08\u975E\u5747\u5300\uFF1Babs \u53BB\u6389\u955C\u50CF\u7684\u7B26\u53F7\uFF09\u3002
-  worldPos += vec3(position.xy * particleSize * 0.5 * abs(objScale.xy), 0.0);
+  // \u6309\u5BF9\u8C61 model matrix \u7684 **R\xB7S** \u53D8\u6362\u5230\u573A\u666F\u7A7A\u95F4\uFF08WE\uFF1Amvp = viewProj \xD7 translate(origin)
+  // \xD7 rotate(angles) \xD7 scale\uFF09\u3002\u26A0\uFE0F \u65CB\u8F6C**\u5FC5\u987B**\u5728\u8FD9\u91CC\u505A\uFF1A\u5168\u5E93 79 \u4E2A\u5BF9\u8C61\u5E26\u975E\u96F6 angles
+  // \uFF08\u7C92\u5B50 75 \u4E2A\uFF09\uFF0C\u6F0F\u6389\u5B83\u4F1A\u8BA9\u7C92\u5B50\u7684\u5C40\u90E8\u671D\u5411\u76F4\u63A5\u5F53\u4E16\u754C\u671D\u5411\u7528 \u2014\u2014 GTR 3743126786 \u7684\u70DF\u67F1
+  // angles.z = -1.20063\uFF08\u2248 -68.8\xB0\uFF09\u672C\u5E94\u628A\u5C40\u90E8 +Y\uFF08\u6E4D\u6D41\u7684 forward\uFF09\u8F6C\u5230\u4E16\u754C (0.932, 0.362)
+  // =\u300C\u4ECE\u6392\u6C14\u7BA1\u5411\u53F3\u4FA7\u98D8\u300D\uFF0C\u6F0F\u6389\u65CB\u8F6C\u540E\u70DF\u5C31\u76F4\u7740\u5F80\u4E0A\u8D70\u3002
+  vec3 worldPos = objCenter + weObjectRotate(objScale * (emitterOrigin + local), objAngles);
+  // \u7C92\u5B50 quad \u7684\u5C3A\u5BF8\u540C\u6837\u4E58\u5BF9\u8C61 scale\uFF08\u975E\u5747\u5300\uFF1Babs \u53BB\u6389\u955C\u50CF\u7684\u7B26\u53F7\uFF09\uFF0C\u5E76\u968F\u5BF9\u8C61\u89D2\u5EA6\u4E00\u8D77\u8F6C\u3002
+  vec3 corner = weObjectRotate(abs(objScale) * vec3(position.xy * particleSize * 0.5, 0.0), objAngles);
+  worldPos += corner;
   gl_Position = projectionMatrix * modelViewMatrix * vec4(worldPos, 1.0);
   // \u26A0\uFE0F \u4FEE\u6B63\uFF1A\u7C92\u5B50\u662F 2D billboard\uFF08\u65E0\u6DF1\u5EA6\u6392\u5E8F\uFF0Cz \u4E0D\u53C2\u4E0E\u53EF\u89C1\u6027\uFF09\u3002three \u6B63\u4EA4\u76F8\u673A far/near \u4F1A\u628A
   // \u89C6\u9525\u5916\u7684 z \u88C1\u526A\u6389\uFF0C\u800C wasm billboard \u65E9\u5DF2\u628A\u6295\u5F71\u77E9\u9635 z \u884C\u5168 0\uFF08clip.z=0\uFF0C\u89C1 particle_billboard.wgsl\uFF09
@@ -21075,6 +21107,8 @@ var ThreeScenePlayer = class {
     mesh.renderOrder = 0;
     const s = opts.scale;
     mesh.scale.set(s[0], s[1], s[2] ?? 1);
+    const a = opts.angles ?? [0, 0, 0];
+    mesh.rotation.set(a[0], a[1], a[2]);
     mesh.position.set(opts.origin[0] - sceneW / 2, opts.origin[1] - sceneH / 2, opts.origin[2]);
     this.scene.add(mesh);
     const id = this.nextBackgroundId++;
@@ -21082,6 +21116,7 @@ var ThreeScenePlayer = class {
       mesh,
       origin: [opts.origin[0], opts.origin[1], opts.origin[2]],
       scale: [s[0], s[1], s[2] ?? 1],
+      angles: [a[0], a[1], a[2]],
       alpha: mod.a,
       brightness: opts.brightness ?? 1,
       sceneW,
@@ -21163,6 +21198,7 @@ var ThreeScenePlayer = class {
         // 对象变换（缺省恒等 → 顶点 shader 退化为旧的 worldPos = particlePosition + corner*size/2）。
         objCenter: { value: new Vector3(...opts.objectCenter ?? [0, 0, 0]) },
         objScale: { value: new Vector3(...opts.objectScale ?? [1, 1, 1]) },
+        objAngles: { value: new Vector3(...opts.objectAngles ?? [0, 0, 0]) },
         emitterOrigin: { value: new Vector3(...opts.emitterOrigin ?? [0, 0, 0]) },
         bmOffset: { value: new Vector3(...simEmitterOffset(opts.emitterOrigin ?? [0, 0, 0])) }
       },
@@ -21343,6 +21379,8 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
         origin: obj.origin,
         size: obj.size,
         scale: obj.scale,
+        // WE 对象角度（弧度）→ mesh.rotation（three 的 Object3D 变换顺序即 T·R·S）。
+        angles: obj.angles,
         texture: assets.backgroundTextures?.get(obj.id),
         alpha: obj.alpha,
         brightness: obj.brightness,
@@ -21353,7 +21391,7 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
     } else if (obj.kind === "particle" && obj.particle) {
       const p = assets.particles?.get(obj.id);
       if (!p || !assets.createParticleSim) continue;
-      const sim = assets.createParticleSim(p.specJson, obj.origin, sceneW, sceneH);
+      const sim = assets.createParticleSim(p.specJson, obj.origin, sceneW, sceneH, p.overrideJson ?? "");
       const frameCount = textureFrameCount(p.tex);
       const grid = textureFrameGrid(p.tex);
       sim.set_frame_count(frameCount);
@@ -21367,6 +21405,8 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
         softness: p.softness,
         objectCenter: [obj.origin[0] - sceneW / 2, obj.origin[1] - sceneH / 2, obj.origin[2]],
         objectScale: [obj.scale[0], obj.scale[1], obj.scale[2] ?? 1],
+        // 对象角度（弧度）：顶点 shader 用它把局部运动方向/发射点/quad 角点旋转到场景空间。
+        objectAngles: obj.angles,
         emitterOrigin,
         // 实例缓冲容量 = spec 的 maxcount（= wasm `SceneParticleSim.maxcount`，模拟器的发射上限）。
         // three 只在首帧锁存该容量（见 addParticle），必须按模拟器**最终**会产出的粒子数一次给足；
@@ -22183,17 +22223,22 @@ function createThreeSceneRenderer(opts) {
             particles.set(obj.id, {
               specJson: specText,
               tex,
-              blend: particleBlend(mat?.blending, specText)
+              blend: particleBlend(mat?.blending, specText),
+              // 对象级 instanceoverride（原始 JSON；无覆盖 → undefined → 工厂传空串）。
+              // 由 wasm `CpuParticleSim` 按官方 OverrideSpawnProgram 语义应用：
+              // alpha/size/lifetime/speed 乘数 + color 覆盖 + emitter rate × count。
+              // （GTR 3743126786 烟柱 alpha=0.03 靠它才与桌面端一致。）
+              overrideJson: obj.instanceOverrideJson
               // softness 缺省由 addParticle 按有无纹理推导（有纹理 0.15 / 无纹理 1.0，对齐 wasm
-              // particle_render SOFTNESS_* 语义）；此处不再硬编码 0（无纹理白图兜底时硬边白方块
+              // particle_render SOFTNESS_* 语义）；此处不硬编码 0（无纹理白图兜底时硬边白方块
               // 会叠成白斑、单个粒子被看作方块——Task5 回归「粒子可见但不过曝/不遮背景」）。
             });
           }
         }
         const cpSim = mod?.CpuParticleSim;
-        const createParticleSim = cpSim ? (json, origin, sceneW, sceneH) => {
+        const createParticleSim = cpSim ? (json, origin, sceneW, sceneH, overrideJson) => {
           try {
-            return cpSim.new(json, Float32Array.from(origin), sceneW, sceneH);
+            return cpSim.new(json, Float32Array.from(origin), sceneW, sceneH, overrideJson);
           } catch (e) {
             console.warn("[three] \u7C92\u5B50\u6A21\u62DF\u5668\u6784\u9020\u5931\u8D25\uFF08\u7528\u96F6\u7C92\u5B50\u515C\u5E95\uFF09:", e instanceof Error ? e.message : String(e));
             return createEmptySim();

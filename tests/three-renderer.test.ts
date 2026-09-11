@@ -214,6 +214,67 @@ describe('createThreeSceneRenderer', () => {
   });
 });
 
+// 对象级 `instanceoverride` 的接线：scene.json 的 particle 对象带 instanceoverride →
+// `assets.particles[id].overrideJson`（原始 JSON 文本）→ `createParticleSim` 第 5 参 →
+// wasm `CpuParticleSim.new`（Rust 侧按官方 OverrideSpawnProgram 语义应用）。
+// 回归背景（GTR 3743126786）：烟柱 `{alpha: 0.03, size: 2.09}` 此前完全没被消费，
+// 粒子按材质 alpha（实测均值 0.797）渲染成贯穿全屏的竖直白烟串。
+describe('createThreeSceneRenderer instanceoverride 接线', () => {
+  const GTR_SCENE = JSON.stringify({
+    camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+    general: { orthogonalprojection: { height: 4147, width: 7430 } },
+    objects: [
+      {
+        id: 22, name: 'Струя дыма', particle: 'particles/presets/smoke2.json',
+        origin: '5101.16553 1089.44336 0.00000', scale: '2.89780 2.89780 2.89780',
+        instanceoverride: { alpha: 0.029999999, id: 23, size: 2.0899999 },
+      },
+      {
+        id: 67, name: 'Падающая звезда', particle: 'particles/presets/shootingstar.json',
+        origin: '1107.52405 3202.11768 0.00000', scale: '2.71680 2.71680 2.71680',
+      },
+    ],
+  });
+
+  function stubGtrFetch() {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (String(url).includes('name=scene.json')) return { ok: true, text: async () => GTR_SCENE };
+      if (String(url).includes('smoke2.json')) return { ok: true, text: async () => '{"material":"materials/presets/smoke2.json"}' };
+      if (String(url).includes('shootingstar.json')) return { ok: true, text: async () => '{"material":"materials/presets/shootingstar.json"}' };
+      return { ok: false, text: async () => '' };
+    }));
+  }
+
+  it('带 instanceoverride 的粒子对象 → overrideJson 组装进 assets 并透传给工厂', async () => {
+    stubGtrFetch();
+    const sim = makeMockSim();
+    const cpNew = vi.fn(() => sim);
+    defaultLoadWasm.mockResolvedValue({ CpuParticleSim: { new: cpNew } } as any);
+    loadSceneToThree.mockReturnValue({
+      player: { dispose: vi.fn(), resize: vi.fn() },
+      sims: [sim],
+      backgroundIds: [],
+      particleLayers: [{ id: 0, sim }],
+    });
+
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    const ok = await r.render('3743126786', document.createElement('canvas'), null);
+    expect(ok).toBe(true);
+
+    const assets = loadSceneToThree.mock.calls[0][1];
+    const smoke = assets.particles.get(22);
+    expect(JSON.parse(smoke.overrideJson)).toEqual({ alpha: 0.029999999, id: 23, size: 2.0899999 });
+    // 无 instanceoverride 的对象 → undefined（由 loadSceneToThree 归一成空串传下去）
+    expect(assets.particles.get(67).overrideJson).toBeUndefined();
+
+    // 工厂把 overrideJson 原样作为第 5 参交给 wasm。
+    const f = assets.createParticleSim as any;
+    expect(f('{}', [1, 2, 3], 7430, 4147, smoke.overrideJson)).toBe(sim);
+    expect(cpNew).toHaveBeenCalledWith('{}', expect.anything(), 7430, 4147, expect.stringContaining('"alpha"'));
+    r.dispose();
+  });
+});
+
 // 混合模式推导（纯函数）：WE 材质的**权威来源是材质 json 的 `passes[0].blending` 字段值**，
 // 不是 spec.material 的路径名。DK WOTLK 44 层的材质路径名里一个 "additive" 字样都没有，
 // 旧实现按名猜 → 全判 NormalBlending → alpha 恒 1 的 additive 纹理被画成硬边黑方块。

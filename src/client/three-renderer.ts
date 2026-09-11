@@ -29,7 +29,13 @@ import type { LoadWasm, SceneRendererLike, WasmSceneModule } from './wasm-render
 // wasm `CpuParticleSim` 的构造器形态（wasm-bindgen 静态 `new`；`ParticleSim` 接口见
 // threejs-player.ts：update/vertices/frame_count/set_frame_count/particle_count/free）。
 type CpuParticleSimLike = {
-  new: (json: string, origin: Float32Array, sceneW: number, sceneH: number) => ParticleSim;
+  new: (
+    json: string,
+    origin: Float32Array,
+    sceneW: number,
+    sceneH: number,
+    overrideJson: string,
+  ) => ParticleSim;
 };
 
 type ThreeWasmModule = WasmSceneModule & { CpuParticleSim?: CpuParticleSimLike };
@@ -142,8 +148,13 @@ export function createThreeSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneR
               specJson: specText,
               tex,
               blend: particleBlend(mat?.blending, specText),
+              // 对象级 instanceoverride（原始 JSON；无覆盖 → undefined → 工厂传空串）。
+              // 由 wasm `CpuParticleSim` 按官方 OverrideSpawnProgram 语义应用：
+              // alpha/size/lifetime/speed 乘数 + color 覆盖 + emitter rate × count。
+              // （GTR 3743126786 烟柱 alpha=0.03 靠它才与桌面端一致。）
+              overrideJson: obj.instanceOverrideJson,
               // softness 缺省由 addParticle 按有无纹理推导（有纹理 0.15 / 无纹理 1.0，对齐 wasm
-              // particle_render SOFTNESS_* 语义）；此处不再硬编码 0（无纹理白图兜底时硬边白方块
+              // particle_render SOFTNESS_* 语义）；此处不硬编码 0（无纹理白图兜底时硬边白方块
               // 会叠成白斑、单个粒子被看作方块——Task5 回归「粒子可见但不过曝/不遮背景」）。
             });
           }
@@ -153,9 +164,15 @@ export function createThreeSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneR
         // 自动跳过粒子对象（只渲染背景）。
         const cpSim = (mod as ThreeWasmModule | null)?.CpuParticleSim;
         const createParticleSim = cpSim
-          ? (json: string, origin: [number, number, number], sceneW: number, sceneH: number): ParticleSim => {
+          ? (
+              json: string,
+              origin: [number, number, number],
+              sceneW: number,
+              sceneH: number,
+              overrideJson: string,
+            ): ParticleSim => {
               try {
-                return cpSim.new(json, Float32Array.from(origin), sceneW, sceneH);
+                return cpSim.new(json, Float32Array.from(origin), sceneW, sceneH, overrideJson);
               } catch (e) {
                 console.warn('[three] 粒子模拟器构造失败（用零粒子兜底）:', e instanceof Error ? e.message : String(e));
                 return createEmptySim();

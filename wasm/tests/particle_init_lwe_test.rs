@@ -11,8 +11,10 @@
 //! - **lifetimeRandom / alphaRandom**：`lerp(min,max,rand)`。
 //! - **rotationRandom**：旋转角（欧拉），本模拟器单轴近似取 z 分量。
 //! - **angularVelocityRandom**：`lerp(min,max,rand)` 逐分量（弧/秒）。
-//! - **turbulentVelocityRandom**：基于法向/前向正交基的随机方向扰动（`cosθ×forward + sinθ×scale×normal`，归一），
-//!   加上 `speed ∈ [speedMin, speedMax]`，**加到 velocity**；无该 initializer（`turbulent == None`）→ 忽略。
+//! - **turbulentVelocityRandom**：curl 噪声采样 → 投影到 normal 平面 → 与 forward 的夹角 θ →
+//!   **`forward` 绕 `normal` 旋转 `θ×scale×0.5 + offset`**，乘 `speed ∈ [speedMin, speedMax]`，
+//!   **加到 velocity**；无该 initializer（`turbulent == None`）→ 忽略。
+//!   关键性质：方向恒落在**垂直 normal 的平面**内（normal 分量恒 0）。
 //! - **frame**：randomframe，0..spritesheetFrames-1。
 //! - **initial 复位基准**：对应 lwe `ParticleInstance::initial`（color/alpha/size/lifetime 存 spawn 初值，
 //!   供 operators/reset）。
@@ -243,24 +245,98 @@ fn turbulent_uses_basis_vectors() {
         speed_max: 60.0,
         normal: [0.0, 0.0, 1.0],  // 法向 +Z
         forward: [0.0, 1.0, 0.0], // 前向 +Y（正交归一）
+        offset: 0.0,
+        timescale: 1.0,
+        phase_min: 0.0,
+        phase_max: 0.1,
     });
     let ps = spawn_batch(init);
 
-    let mut any_y = false;
-    let mut any_z = false;
+    // 官方语义：`forward` **绕 `normal` 旋转**（`AngleAxisf(angle*scale + offset, normal) * forward`）
+    // → 方向恒落在**垂直 normal 的平面**内。对 normal=+Z：z 分量恒 0、x/y 随机。
+    //
+    // 回归背景（GTR 3743126786 烟柱「贯穿全屏的竖直白烟串」，2026-09-11）：旧实现
+    // `forward*cosθ + normal*sinθ*scale` 把 normal 当成了偏转方向，对缺省 normal=+Z/forward=+Y
+    // 得到 (0, cosθ, sinθ) —— **x 恒 0、速度跑到屏幕上不可见的 z 轴**，于是 177 个粒子全部
+    // 沿竖直方向排成一条线（实测 max|vx|=0.000 / max|vz|=223.1）。
+    let mut any_x = false;
     for p in &ps {
         let (x, y, z) = (p.vel[0], p.vel[1], p.vel[2]);
         let speed = (x * x + y * y + z * z).sqrt();
-        // 扰动方向 = cosθ×forward + sinθ×scale×normal，在前向/法向平面内（两者均为 Y/Z，x=0）→ x≈0。
-        assert!(x.abs() < 1e-3, "湍流扰动应落在前向/法向基平面内（x≈0），vel.x={}", x);
+        assert!(z.abs() < 1e-3, "湍流方向应垂直 normal（z≈0），vel.z={}", z);
+        assert!((x * x + y * y).sqrt() > 1e-3, "方向不应退化到零");
         // 幅度 |speed| 在 [speedMin, speedMax]。
         assert!((speed >= 40.0 - 1e-3 && speed <= 60.0 + 1e-3), "湍流速度应∈[40,60]，got {}", speed);
-        // 用了两个基向量：非仅前向（有 z 分量）非仅法向（有 y 分量）。
-        if y.abs() > 0.01 { any_y = true; }
-        if z.abs() > 0.01 { any_z = true; }
+        if x.abs() > 0.01 { any_x = true; }
     }
-    assert!(any_y, "湍流应使用前向基（有 y 分量）");
-    assert!(any_z, "湍流应使用法向基（有 z 分量）");
+    assert!(any_x, "湍流应绕 normal 旋转 forward（产生 x 分量）；x 恒 0 = 烟柱竖线 bug");
+    let _ = &y_used(&ps);
+}
+
+/// 辅助：确认 y（forward）分量确实参与（避免「只用 normal 平面随机」也算过）。
+fn y_used(ps: &[SimParticle]) -> bool {
+    ps.iter().any(|p| p.vel[1].abs() > 0.01)
+}
+
+/// scale 控制绕 normal 的**旋转角**（官方 `theta = angle * scale * 0.5 + offset`）：
+/// angle ∈ (-π, π] → |θ| ≤ π×scale/2。GTR smoke2 的 scale=0.1 → |θ| ≤ 0.157，
+/// 即方向在 forward(竖直) 附近 ±9° 内摆动（而不是像旧实现那样横向完全不动）。
+#[test]
+fn turbulent_scale_bounds_angular_spread() {
+    let mut init = neutral_init();
+    init.velocity_min = [0.0; 3];
+    init.velocity_max = [0.0; 3];
+    init.turbulent = Some(TurbulentInit {
+        scale: 0.1,
+        speed_min: 250.0,
+        speed_max: 250.0,
+        normal: [0.0, 0.0, 1.0],
+        forward: [0.0, 1.0, 0.0],
+        offset: 0.0,
+        timescale: 0.5,
+        phase_min: 0.0,
+        phase_max: 0.5,
+    });
+    let ps = spawn_batch(init);
+
+    let max_x = 250.0 * (std::f32::consts::PI * 0.1 / 2.0).sin() + 0.5; // ≈ 39.2
+    let mut any_x = false;
+    for p in &ps {
+        assert!(p.vel[2].abs() < 1e-3, "z 分量应恒 0，got {}", p.vel[2]);
+        assert!(p.vel[0].abs() <= max_x, "|vx| 应 ≤ speed×sin(π×scale/2)={max_x}，got {}", p.vel[0]);
+        if p.vel[0].abs() > 0.5 { any_x = true; }
+    }
+    assert!(any_x, "窄 scale 下仍应有非零 x 横向分量（旧实现恒 0）");
+}
+
+/// offset 直接作为旋转角常量项（官方 `theta = angle*scale + offset`）：scale=0 时方向
+/// 就是 `forward` 绕 normal 旋转 `offset`。ember.json 用 offset=-0.5（5 张壁纸）。
+#[test]
+fn turbulent_offset_rotates_forward_by_fixed_angle() {
+    let mut init = neutral_init();
+    init.velocity_min = [0.0; 3];
+    init.velocity_max = [0.0; 3];
+    init.turbulent = Some(TurbulentInit {
+        scale: 0.0,
+        speed_min: 30.0,
+        speed_max: 30.0,
+        normal: [0.0, 0.0, 1.0],
+        forward: [0.0, 1.0, 0.0],
+        offset: -0.5,
+        timescale: 1.0,
+        phase_min: 0.0,
+        phase_max: 0.0,
+    });
+    let ps = spawn_batch(init);
+
+    // forward=+Y 绕 +Z 旋转 -0.5 rad → (sin 0.5, cos 0.5, 0) ≈ (0.4794, 0.8776, 0)
+    let (ex, ey) = (0.5f32.sin(), 0.5f32.cos());
+    for p in &ps {
+        let (ux, uy) = (p.vel[0] / 30.0, p.vel[1] / 30.0);
+        assert!(p.vel[2].abs() < 1e-3, "z 应恒 0，got {}", p.vel[2]);
+        assert!((ux - ex).abs() < 1e-3, "归一化 vx 应 = sin(0.5)={ex}，got {ux}");
+        assert!((uy - ey).abs() < 1e-3, "归一化 vy 应 = cos(0.5)={ey}，got {uy}");
+    }
 }
 
 // ---------------------------------------------------------------------------

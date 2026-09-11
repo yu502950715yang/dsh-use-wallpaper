@@ -126,6 +126,41 @@ research/                     调研产物（gitignore：截图/验证脚本/参
     - **编译链方向（已集成）**：真实 WE 效果 shader 走 **GLSL→`@webgpu/glslang`→SPIR-V→`spirv-webgpu-transform`→naga `spv-in`→WGSL** 全链。关键在 `spirv-webgpu-transform` 把 glslang 产出的**组合采样**（`OpTypeSampledImage`）拆成独立 texture+sampler，从而绕开 naga spv-in 的 `InvalidId`（见 `wasm/tests/effect_spirv_test.rs`：不 transform 直接 spv-in 应失败，transform 后编译成功）。JS 侧 `glsl-to-naga.ts` 产出真实 SPIR-V pass 描述 `chain_desc`，wasm 侧 `effect.rs::spv_to_wgsl` 编译；`chain_desc` 为空/解析失败才回退内置演示 shader（g_Time 程序化，naga glsl-in 可编译，不采样 `g_Texture0`）兜底，绝不白屏。
     - **对象级管线要点**（`wasm/src/render/mod.rs` `Renderer`）：每带效果对象一条 `ObjectEffectEntry` / `ParticleObjectEffect`，流水线 = 内容 → 对象 RT（`content_view`）→ 效果链 ping-pong（`EffectChain`）→ 输出 RT（`out_view`）→ 合成 quad 贴回 surface。对象 RT 尺寸用 `effect::object_camera_range` / `particle_object_range`（`|size×scale|` 逐轴钳制 `[1, OBJECT_RT_MAX=2048]`）；合成 quad 世界尺寸**未钳制**，UV 窗口（`uv_window`）只采样可见段。**绝不白屏**：效果链创建失败 → `effect_chain=None` → 合成 quad 采样内容纹理（对象正常显示、无效果）。
     - **性能（一次性构建）**：pass 的 naga 编译 + shader module + render pipeline + 对象 RT + uniform buffer 全部在 `EffectChain::new` / `set_object_effect` / `set_particle_object_effect`（壁纸/对象加载时）**一次性**构建；`render_frame` / `render_object_effects` / `step` / `EffectChain::render` **不做** naga 编译 / 管线创建（每帧仅写 uniform + 建 bind group + 提交 render pass）。改效果链逻辑时**勿**把编译/建管线挪进帧内。
+15. **粒子湍流方向语义 + 对象级 `instanceoverride`（2026-09-11 修复 GTR 烟柱「贯穿全屏竖直白烟串」）**：
+    - **`turbulentvelocityrandom` 的方向是「`forward` 绕 `normal` 旋转」**：官方 `TurbulentVelocityRandomProgram`
+      （`research/open-wallpaper-engine/.../ParticleParser.cpp:326-357`）= curl 噪声采样 → 投影到**垂直 normal
+      的平面** → 归一 → 与 forward 求夹角 angle → `AngleAxisf(angle*scale + offset, normal) * forward`
+      → `× speed` 加到 velocity。因此方向**恒在垂直 normal 的平面内**（缺省 normal=+Z / forward=+Y 时
+      z 恒 0、x/y 随机）。旧实现写成 `forward*cosθ + normal*sinθ*scale`（把 normal 当成偏转方向）→
+      得到 `(0, cosθ, sinθ)`：**x 分量恒 0、速度全跑进屏幕上根本不可见的 z 轴** → 粒子排成一条竖线
+      （实测 max|vx|=0.000 / max|vz|=223.1）。现在按官方复刻（复用 sim.rs 既有 `curl_noise`，`position`
+      跨 spawn 累积；`offset/timescale/phasemin/phasemax` 全部解析并参与）。**影响面：全库 9 张壁纸**
+      （`2011060960/2236329190/2460786246/2597392171/2851992662/2859263090/2897292240/3743126786/3760200530`）
+      的粒子用了该 initializer，且**都没有显式写 normal/forward**（全走缺省）。GPU（WebGPU）路径的
+      `turb_velocity` 本来就是球面均匀随机，不受此 bug 影响。
+    - **对象级 `instanceoverride` 已接线（three 路径）**：scene.json 的 `instanceoverride` 由
+      `scene-json.ts` **透传原始 JSON 文本**（`SceneParticleObject.instanceOverrideJson`，JS 侧不重复实现语义）
+      → `three-renderer.ts` → `CpuParticleSim.new(json, origin, w, h, override_json)`（第 5 参；**空串 = 无覆盖**）
+      → Rust `particle::parse_particle_override` + `SceneParticleSim::override_spec`，按官方
+      `OverrideSpawnProgram` 语义应用：`alpha/size/lifetime/speed` **乘数**、`color/colorn` 覆盖
+      （`UiColorToLinear` = v²；legacy `color` 先 /255）、emitter rate **× `count`**。缺省 identity。
+      这正是 GTR 烟柱在桌面端几乎不可见的原因（`alpha=0.03`：实测修复前粒子 alpha 均值 0.797）。
+      **GPU（wasm/WebGPU）路径尚未消费该字段**，见 §8。
+16. **对象 `angles`（WE 欧拉角，**弧度**）必须应用（2026-09-11 补修 GTR 烟「方向不对」）**：
+    - 语义：`scene.json` 的 `angles` **原文就是弧度**（OWE `SceneNode.cpp:15`：`m_rotation is in
+      radians. Static scene.json angles are already radians`）；对象 model matrix = **T·R·S**，
+      旋转顺序 **R = Rz·Ry·Rx**（OWE `ParticleRuntime.cpp:25-28` `ControlpointRotation`）。
+    - 现状：`scene-json.ts` 解析进 `SceneObject.angles`；**三个应用点** ——
+      ① 粒子顶点 shader（`threejs-player.ts` PARTICLE_VERTEX_SHADER）：
+      `worldPos = objCenter + R(objAngles)·(objScale ⊙ (emitterOrigin + local))`，quad 角点也经
+      `R·S`（对象转 → 粒子贴图跟着转）；② 背景 `addBackground`：`mesh.rotation.set(angles)`
+      （three 的 Object3D 变换顺序本身就是 T·R·S）；③ text/util：字段解析保留、暂不做几何变换。
+    - **全库 79 个对象带非零 angles**（粒子 75 / image 2 / text 1 / other 1，涉及 15 张壁纸），
+      此前**完全未解析**——粒子的局部运动方向被直接当成世界方向，背景朝向也丢了旋转。
+    - 回归（GTR 3743126786 烟柱）：`angles.z = -1.20063`（≈ -68.8°）把局部 +Y（湍流的 forward）
+      转到世界 `(0.932, 0.362)` = **向右偏上**（实测世界速度方向 17.6°、烟从排气管向右延伸
+      ≈466px 而不再贯穿全屏）。缺这一环时烟会直着向上——与 §5.15 的湍流方向 bug 是两个独立缺陷，
+      两者都要修才与桌面端一致。
 
 ## 6. 测试与验证
 
@@ -155,3 +190,5 @@ wasm 对象级效果链已接入、编译链已集成、真实 WE 效果已达�
 3. **MVM 投影矩阵需执行器提供**：`g_ModelViewProjectionMatrix` 是引擎内建 uniform（材质 json 不给值，被滤出 std140 block → 默认 0）。当前库内依赖 MVM 的效果（如 godrays 的 composelayer 层）为 **frag 效果 + vert passthrough**（`gl_Position` 由 `a_TexCoord` 直接推导，不乘 MVM），故不受影响；仅 vert 阶段真正用到 MVM 的效果链受影响。
 4. **多纹理 / `collect_bindings` 字符串扫描健壮性**：wasm 侧 `collect_bindings` 用文本扫描从 WGSL 提取纹理绑定，对更复杂的真实多纹理 shader 仍待改进（当前库内 shader 已验证可用）。
 5. **headless WebGPU=SwiftShader（非真实 GPU）**：浏览器验证在 headless Edge 的 SwiftShader（软件光栅化）下完成，**非真实 GPU**；需在真实 GPU 上补验（性能/FPS、行为一致性）。
+6. **GPU（wasm/WebGPU）备用路径未消费对象级 `instanceoverride`，也未应用对象 `angles`**：2026-09-11 的修复只把「粒子实例覆盖」与「对象角度」接到 three.js **默认**路径（`CpuParticleSim` / `ThreeScenePlayer`，见 §5.15/§5.16）。`wasm-renderer` / `WeScene` 那条**备用**路径的粒子仍按材质/初始化 alpha 渲染、且不套对象旋转 —— 对同一张壁纸（如 GTR 的烟柱）对照渲染时会有亮度与朝向差，属已知未达成。
+7. **`verify-wasm-render.mjs` 当前跑不通（认证 token 失效）**：脚本里硬编码的 `?token=...` 已过期（服务端 401 `dsh web authentication required`），需要从 `dsh web` 启动时打印的 URL 里取新 token 才能做浏览器全库回归。2026-09-11 的粒子修复因此改用 **node 侧直接驱动 wasm `CpuParticleSim`** 验证（`research/gtr-verify-fix.mjs`：真实 scene.pkg 的 spec + override，核对横向速度/alpha 量级），浏览器端由用户刷新页面确认。

@@ -36,6 +36,7 @@ export interface SceneImageObject {
     name: string;
     origin: [number, number, number];
     scale: [number, number, number];
+    angles?: [number, number, number];
     size?: [number, number];
     image: string;
     visible?: VisibleBinding;
@@ -53,10 +54,12 @@ export interface SceneParticleObject {
     name: string;
     origin: [number, number, number];
     scale: [number, number, number];
+    angles?: [number, number, number];
     particle: string;
     visible?: VisibleBinding;
     alignment?: string;
     effects?: unknown[];
+    instanceOverrideJson?: string;
 }
 export interface SceneUtilObject {
     kind: 'util';
@@ -64,6 +67,7 @@ export interface SceneUtilObject {
     name: string;
     origin: [number, number, number];
     scale: [number, number, number];
+    angles?: [number, number, number];
     size?: [number, number];
     image: string;
     visible?: VisibleBinding;
@@ -75,6 +79,7 @@ export interface SceneTextObject {
     name: string;
     origin: [number, number, number];
     scale: [number, number, number];
+    angles?: [number, number, number];
     size?: [number, number];
     text: string;
     visible?: VisibleBinding;

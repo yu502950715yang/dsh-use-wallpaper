@@ -32,6 +32,7 @@ export declare class ThreeScenePlayer {
         origin: [number, number, number];
         size?: [number, number];
         scale: [number, number, number];
+        angles?: [number, number, number];
         texture?: THREE.Texture;
         alpha?: number;
         brightness?: number;
@@ -48,6 +49,7 @@ export declare class ThreeScenePlayer {
         softness?: number;
         objectCenter?: [number, number, number];
         objectScale?: [number, number, number];
+        objectAngles?: [number, number, number];
         emitterOrigin?: [number, number, number];
         maxInstances?: number;
     }): number;
@@ -68,8 +70,9 @@ export interface LoadedParticleAssets {
     tex?: THREE.Texture;
     blend: 'additive' | 'alpha';
     softness?: number;
+    overrideJson?: string;
 }
-export type ParticleSimFactory = (json: string, origin: [number, number, number], sceneW: number, sceneH: number) => ParticleSim;
+export type ParticleSimFactory = (json: string, origin: [number, number, number], sceneW: number, sceneH: number, overrideJson: string) => ParticleSim;
 export interface SceneAssets {
     renderer?: THREE.WebGLRenderer;
     backgroundTextures?: Map<number, THREE.Texture>;

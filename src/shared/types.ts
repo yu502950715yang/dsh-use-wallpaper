@@ -48,6 +48,12 @@ export interface VisibleBinding {
 export interface SceneImageObject {
   kind: 'image'; id: number; name: string;
   origin: [number, number, number]; scale: [number, number, number];
+  // WE 对象欧拉角（**弧度**，原文即弧度 —— OWE `SceneNode.cpp:15`：`m_rotation is in radians.
+  // Static scene.json angles are already radians`）。对象 model matrix = **T·R·S**，旋转顺序
+  // R = Rz·Ry·Rx（OWE `ParticleRuntime.cpp:25-28` `ControlpointRotation`）。缺省 [0,0,0]。
+  // 全库 79 个对象带非零 angles（粒子 75 / image 2 / text 1 / other 1），此前未解析 ——
+  // GTR 3743126786 烟柱 `angles.z = -1.20063` 本应把「向上」转成「向右」。
+  angles?: [number, number, number];
   size?: [number, number];       // scene.json 的 size 字段（WE 像素尺寸），缺省时由纹理宽高推算
   image: string;                 // 资源名，如 "models/xxx.json"
   visible?: VisibleBinding;      // T4.2：可见性绑定（渲染前解析，不可见对象跳过）
@@ -67,10 +73,19 @@ export interface SceneImageObject {
 export interface SceneParticleObject {
   kind: 'particle'; id: number; name: string;
   origin: [number, number, number]; scale: [number, number, number];
+  // WE 对象欧拉角（**弧度**，缺省 [0,0,0]）—— model matrix T·R·S 的 R（Rz·Ry·Rx）。
+  // 粒子层用它把局部运动方向/发射点旋转到场景空间（全库 75 个粒子对象带非零 angles）。
+  angles?: [number, number, number];
   particle: string;            // 资源名，如 "particles/presets/lightshafts.json"
   visible?: VisibleBinding;    // T4.2：可见性绑定（渲染前解析，不可见对象跳过）
   alignment?: string;          // 对象对齐锚点（同 image；渲染时按锚点换算中心，见 alignment.ts）
   effects?: unknown[];         // 对象效果链定义（Ruling 5：与 image/util 一致，按 objects 顺序展平）
+  // scene.json 的 `instanceoverride`（对象级粒子实例覆盖）**原始 JSON 文本**：WE 用它乘/覆盖
+  // 粒子的 alpha/size/lifetime/speed/color（官方 `OverrideSpawnProgram`），并让 emitter rate
+  // 乘 count（`SceneParticleObjectParser.cpp:264`）。语义解析在 wasm CPU 模拟器
+  // （Rust `parse_particle_override`），JS 侧只透传 —— 避免两份语义漂移。
+  // 回归背景：GTR 3743126786 的烟柱 `{alpha: 0.03, size: 2.09}` 就靠它把粒子压到几乎不可见。
+  instanceOverrideJson?: string;
 }
 // WE 内置合成层/全屏层/项目层对象（image 引用 models/util/*.json，pkg 内无此文件）。
 // 语义是效果链容器/控制节点而非纹理：一期不渲染（跳过），effects 字段为二期
@@ -78,6 +93,9 @@ export interface SceneParticleObject {
 export interface SceneUtilObject {
   kind: 'util'; id: number; name: string;
   origin: [number, number, number]; scale: [number, number, number];
+  // WE 对象欧拉角（弧度，缺省 [0,0,0]）——util/text 当前不参与几何变换，字段保留以与
+  // scene-json 的 base 解析一致（全库各 1 个对象带非零 angles）。
+  angles?: [number, number, number];
   size?: [number, number];       // WE 像素尺寸（与 image 对象一致）
   image: string;                 // 如 "models/util/composelayer.json"
   visible?: VisibleBinding;      // T4.2：可见性绑定（util 不渲染，字段无害保留）
@@ -90,6 +108,9 @@ export interface SceneUtilObject {
 export interface SceneTextObject {
   kind: 'text'; id: number; name: string;
   origin: [number, number, number]; scale: [number, number, number];
+  // WE 对象欧拉角（弧度，缺省 [0,0,0]）——util/text 当前不参与几何变换，字段保留以与
+  // scene-json 的 base 解析一致（全库各 1 个对象带非零 angles）。
+  angles?: [number, number, number];
   size?: [number, number];       // WE 像素尺寸（与 image 对象一致）
   text: string;                  // text.value（缺省字符串，脚本动态文本的静态兜底）
   visible?: VisibleBinding;      // T4.2：可见性绑定（渲染前解析，不可见对象跳过）

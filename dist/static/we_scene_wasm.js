@@ -32,20 +32,26 @@ export class CpuParticleSim {
      * 从粒子规格 JSON + 对象中心构造 CPU 模拟器（复用 `particle::emitter_spec_to_particle`，
      * 把 WE spec 的 emitter/initializer/operator 映射为 `SceneParticleSim`）。
      * `origin` 为对象中心（WE 坐标）；`scene_w`/`scene_h` 为 scene 正交尺寸（we_to_three 用）。
+     * `override_json` 为 scene.json 对象的 `instanceoverride`（JSON 文本；**空串 = 无覆盖**，
+     * 见 `particle::parse_particle_override`）——官方 `OverrideSpawnProgram` 语义：对 spawn 初值
+     * 乘 alpha/size/lifetime/speed、覆盖 color，并让 emitter rate 乘 `count`。
      * sprite sheet 帧数缺省为 `DEFAULT_FRAME_COUNT`（4），渲染层按纹理尺寸用
      * `set_frame_count` 覆写。返回 `Err`（spec 解析失败）→ JS 侧 Promise reject。
      * @param {string} json
      * @param {Float32Array} origin
      * @param {number} scene_w
      * @param {number} scene_h
+     * @param {string} override_json
      * @returns {CpuParticleSim}
      */
-    static new(json, origin, scene_w, scene_h) {
+    static new(json, origin, scene_w, scene_h, override_json) {
         const ptr0 = passStringToWasm0(json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         const ptr1 = passArrayF32ToWasm0(origin, wasm.__wbindgen_malloc);
         const len1 = WASM_VECTOR_LEN;
-        const ret = wasm.cpuparticlesim_new(ptr0, len0, ptr1, len1, scene_w, scene_h);
+        const ptr2 = passStringToWasm0(override_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.cpuparticlesim_new(ptr0, len0, ptr1, len1, scene_w, scene_h, ptr2, len2);
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }
@@ -1285,7 +1291,7 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         }, arguments); },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 388, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 389, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen__convert__closures_____invoke__ha22148a4a7c1d5ff);
             return ret;
         },

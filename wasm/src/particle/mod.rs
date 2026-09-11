@@ -107,7 +107,9 @@ pub struct InitSpec {
 }
 
 /// turbulentvelocityrandom 的 spawn 初速参数（官方 TurbulentRandom）：
-/// speed 在 [speedmin, speedmax] 随机；scale（方向偏转幅度）；normal/forward 正交基。
+/// speed 在 [speedmin, speedmax] 随机；scale（绕 normal 的旋转角缩放）；offset（旋转角常量项，
+/// 弧度）；timescale（curl 噪声行走的时间缩放）；phasemin/phasemax（每粒子随机相位）；
+/// normal/forward 正交基。
 #[derive(Debug, Clone)]
 pub struct TurbulentInit {
     pub scale: f32,
@@ -115,6 +117,86 @@ pub struct TurbulentInit {
     pub speed_max: f32,
     pub normal: [f32; 3],
     pub forward: [f32; 3],
+    /// offset：叠加在旋转角上的常量项（官方 `theta = angle*scale + offset`，弧度）。
+    /// ember.json 用 -0.5（5 张壁纸）。
+    pub offset: f32,
+    /// timescale：curl 噪声行走的时间缩放（官方 `position += result*0.005*timescale`）。
+    pub timescale: f32,
+    /// phasemin/phasemax：每粒子随机相位，参与 curl 噪声采样点（官方 `position + normal*phase`）。
+    pub phase_min: f32,
+    pub phase_max: f32,
+}
+
+/// WE scene.json 对象级 `instanceoverride`（粒子实例覆盖）。
+///
+/// 官方 `wpscene::ParticleInstanceoverride`（OWE `ParticleObject.cppm:156-186`）+ 应用语义
+/// `OverrideSpawnProgram`（`ParticleParser.cpp:359-384`）：它被**追加在所有 initializer 之后**
+/// （`SceneParticleObjectParser.cpp:247-249`），对已经随机出来的初值做乘法/覆盖；
+/// 同时 emitter rate 乘 `Count()`（`SceneParticleObjectParser.cpp:264`
+/// `newEm.rate *= modifiers.Count()`）。颜色走 `UiColorToLinear(v) = v*v`，
+/// 标量走 `UiScalarToLinear(v) = v`（恒等，见 `ParticleParser.cpp:184-186`）。
+///
+/// 缺省全 1 / color=None 即「不做任何改变」；scene 对象没有该字段时用 `Default`。
+///
+/// 回归背景（GTR 3743126786）：该壁纸的烟柱 `instanceoverride.alpha = 0.03`
+/// 是它在桌面端几乎不可见的原因；此前全库未实现 override → 粒子按材质 alpha（实测均值 0.797）
+/// 渲染，叠成一条刺眼的白色烟串。
+#[derive(Debug, Clone)]
+pub struct ParticleOverride {
+    /// 透明度乘数（官方 `UiScalarToLinear(alpha)`，实为恒等）。
+    pub alpha: f32,
+    /// 尺寸乘数。
+    pub size: f32,
+    /// 寿命乘数。
+    pub lifetime: f32,
+    /// 速度乘数（作用于 spawn 初速，**含 turbulentvelocityrandom 叠加的部分**——override 是
+    /// 最后一个 initializer，官方在它之后才乘 Speed()）。
+    pub speed: f32,
+    /// emitter.rate 乘数（官方 `Count()`）。
+    pub count: f32,
+    /// 颜色覆盖（已转线性 0-1）：`color`（legacy 0-255 → /255 再平方）优先，
+    /// 否则 `colorn`（0-1 直接平方）。
+    pub color: Option<[f32; 3]>,
+}
+
+impl Default for ParticleOverride {
+    fn default() -> Self {
+        Self { alpha: 1.0, size: 1.0, lifetime: 1.0, speed: 1.0, count: 1.0, color: None }
+    }
+}
+
+/// 解析 scene.json 对象的 `instanceoverride` 字段。
+///
+/// 空串（JS 侧「无覆盖」的约定）/ 非法 JSON / 非对象 → `None`（调用方落 `Default`，即不改变）。
+/// 字段解析用 `scalar`（字符串取首 token、数字直用），与粒子 spec 的解析同一套启发。
+pub fn parse_particle_override(json: &str) -> Option<ParticleOverride> {
+    if json.trim().is_empty() {
+        return None;
+    }
+    let v: Value = serde_json::from_str(json).ok()?;
+    if !v.is_object() {
+        return None;
+    }
+    let num = |k: &str| v.get(k).map(|x| scalar(x, 1.0)).unwrap_or(1.0);
+    // 官方 `OverrideSpawnProgram`：`color`（legacy，0-255）先 /255 再 `UiColorToLinear`(=v²)；
+    // `colorn`（已归一）直接 v²。二者只取其一（`color` 优先，与 OWE FromJosn 的 if/else if 一致）。
+    let color = if let Some(c) = v.get("color") {
+        let n = vec3(c);
+        Some([(n[0] / 255.0).powi(2), (n[1] / 255.0).powi(2), (n[2] / 255.0).powi(2)])
+    } else {
+        v.get("colorn").map(|c| {
+            let n = vec3(c);
+            [n[0] * n[0], n[1] * n[1], n[2] * n[2]]
+        })
+    };
+    Some(ParticleOverride {
+        alpha: num("alpha"),
+        size: num("size"),
+        lifetime: num("lifetime"),
+        speed: num("speed"),
+        count: num("count"),
+        color,
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -143,8 +225,9 @@ pub enum Renderer {
     RopeTrail,
 }
 
-/// turbulentvelocityrandom 缺省参数（官方 TurbulentRandom 默认值）。
-/// speedmin=100 speedmax=250 scale=1。normal 缺省 +Z，forward 缺省 +Y（2D 常用）。
+/// turbulentvelocityrandom 缺省参数（官方 TurbulentRandom 默认值，OWE `ParticleParser.cpp:211-221`）。
+/// speedmin=100 speedmax=250 scale=1 offset=0 timescale=1 phasemin=0 phasemax=0.1；
+/// normal 缺省 +Z，forward 缺省 +Y（2D 常用）。
 fn default_turbulent() -> TurbulentInit {
     TurbulentInit {
         scale: 1.0,
@@ -152,6 +235,10 @@ fn default_turbulent() -> TurbulentInit {
         speed_max: 250.0,
         normal: [0.0, 0.0, 1.0],
         forward: [0.0, 1.0, 0.0],
+        offset: 0.0,
+        timescale: 1.0,
+        phase_min: 0.0,
+        phase_max: 0.1,
     }
 }
 
@@ -331,7 +418,8 @@ pub fn parse_particle_spec(json: &str) -> ParticleSpec {
     }
 }
 
-/// 解析 turbulentvelocityrandom 的平铺字段（scale/speedmin/speedmax/normal/forward/offset）。
+/// 解析 turbulentvelocityrandom 的平铺字段
+/// （scale/speedmin/speedmax/offset/timescale/phasemin/phasemax/normal/forward）。
 /// 缺省用官方默认；normal/forward 正交归一。
 fn parse_turbulent(i: &Value) -> TurbulentInit {
     let mut tu = default_turbulent();
@@ -339,6 +427,10 @@ fn parse_turbulent(i: &Value) -> TurbulentInit {
     tu.scale = g("scale", 1.0);
     tu.speed_min = g("speedmin", 100.0);
     tu.speed_max = g("speedmax", 250.0);
+    tu.offset = g("offset", 0.0);
+    tu.timescale = g("timescale", 1.0);
+    tu.phase_min = g("phasemin", 0.0);
+    tu.phase_max = g("phasemax", 0.1);
     // normal/forward 是 vec3 字符串（如 "0 0 1"）；缺省 +Z / +Y。
     if i.get("normal").is_some() { tu.normal = vec3(&i["normal"]); }
     if i.get("forward").is_some() { tu.forward = vec3(&i["forward"]); }

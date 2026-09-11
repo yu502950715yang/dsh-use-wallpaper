@@ -284,11 +284,24 @@ impl CpuParticleSim {
     /// 从粒子规格 JSON + 对象中心构造 CPU 模拟器（复用 `particle::emitter_spec_to_particle`，
     /// 把 WE spec 的 emitter/initializer/operator 映射为 `SceneParticleSim`）。
     /// `origin` 为对象中心（WE 坐标）；`scene_w`/`scene_h` 为 scene 正交尺寸（we_to_three 用）。
+    /// `override_json` 为 scene.json 对象的 `instanceoverride`（JSON 文本；**空串 = 无覆盖**，
+    /// 见 `particle::parse_particle_override`）——官方 `OverrideSpawnProgram` 语义：对 spawn 初值
+    /// 乘 alpha/size/lifetime/speed、覆盖 color，并让 emitter rate 乘 `count`。
     /// sprite sheet 帧数缺省为 `DEFAULT_FRAME_COUNT`（4），渲染层按纹理尺寸用
     /// `set_frame_count` 覆写。返回 `Err`（spec 解析失败）→ JS 侧 Promise reject。
-    pub fn new(json: &str, origin: Vec<f32>, scene_w: f32, scene_h: f32) -> Result<CpuParticleSim, JsValue> {
+    pub fn new(
+        json: &str,
+        origin: Vec<f32>,
+        scene_w: f32,
+        scene_h: f32,
+        override_json: &str,
+    ) -> Result<CpuParticleSim, JsValue> {
         let spec = particle::parse_particle_spec(json);
         let mut sim = particle::emitter_spec_to_particle(&spec, arr3(&origin), scene_w, scene_h);
+        // scene.json 的 instanceoverride（缺字段/非法 → None → 保持 identity）。
+        if let Some(ov) = particle::parse_particle_override(override_json) {
+            sim.override_spec = ov;
+        }
         // 预滚到「已经在飘」的稳态（修复「所有花瓣同时下落」）：首帧就铺满稳态相位错落的粒子
         // （每片随机出生 age，位置/旋转/alpha 按该 age 前滚），而不是空池冷启动、一批花瓣
         // 同相位平行下落。逐帧发射/算子语义不变（详见 `SceneParticleSim::prewarm` 注释）。
