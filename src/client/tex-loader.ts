@@ -159,6 +159,91 @@ function lz4Decompress(src: Uint8Array, decompressedSize: number): Uint8Array<Ar
 // 这里统一取 mip[0]（解压后的原始尺寸），使背景/粒子纹理**保持原始分辨率**（锐利）。
 // 本仓库 three 页面所有纹理均经 textureFromTex 处理；mipmaps 非空（parseTex 空 → null）故 mip[0] 恒存在。
 
+// TEXV0005 flags 的 sprite 位（对齐 wasm/src/tex.rs `FLAG_SPRITE = 1 << 2` /
+// open-wallpaper-engine `TexFlagEnum::sprite`）：精灵表纹理的 mip0 是**整张表**，头部 map 尺寸
+// 只是其中一格 → **不可裁剪**（当前无精灵 UV 偏移支持，保持整表行为）。
+const FLAG_SPRITE = 1 << 2;
+
+// 2 的幂填充裁剪（与 wasm/src/tex.rs `crop_to_map` 同源语义，2026-09-10）：
+// TEXV0005 的 **mip 记录尺寸**（w/h）是**上传尺寸**（2 的幂，如 4096×2048），而头部 @34/@38
+// 的 width/height 是**逻辑内容尺寸**（如 2400×1555）。内容在 mip0 **左上角**，右侧/底部是
+// 2 的幂填充（黑/透明）。若不裁剪就把整张上传纹理当 UV 0-1 采样：
+//   - 纹理宽高 = mip 尺寸（4096×2048）→ 图像内容只出现在 quad 的左上 map/mip 比例区域
+//     （EVA：58.6% 宽 × 75.9% 高），**右侧/底部露出填充黑边**——用户截图「EVA 背景只占左边约 2/3、
+//     右侧大片黑」的根因（quad 尺寸 2400×1555 与场景一致、cover 相机也正确，问题在纹理内容域）；
+//   - 「size 缺省回退纹理宽高」的对象也会拿到 4096×2048 这个错误的世界尺寸。
+// 裁剪后纹理尺寸 = 内容尺寸 → UV 0-1 恰好是内容，与 wasm 渲染路径（crop_to_map）产出一致。
+// 无填充（map ≥ mip）/ sprite / map 非法（0）→ 原样返回（不复制数据，零开销）。
+export function cropToMap(
+  data: Uint8Array<ArrayBuffer>,
+  mipWidth: number,
+  mipHeight: number,
+  mapWidth: number,
+  mapHeight: number,
+  format: number,
+  flags: number,
+): { width: number; height: number; data: Uint8Array<ArrayBuffer> } {
+  const valid = Number.isFinite(mapWidth) && Number.isFinite(mapHeight) && mapWidth > 0 && mapHeight > 0;
+  const cw = valid ? Math.min(Math.floor(mapWidth), mipWidth) : mipWidth;
+  const ch = valid ? Math.min(Math.floor(mapHeight), mipHeight) : mipHeight;
+  if ((flags & FLAG_SPRITE) !== 0 || (cw >= mipWidth && ch >= mipHeight)) {
+    return { width: mipWidth, height: mipHeight, data };
+  }
+  if (format === TEX_FORMAT.DXT1 || format === TEX_FORMAT.DXT3 || format === TEX_FORMAT.DXT5) {
+    const blockSize = format === TEX_FORMAT.DXT1 ? 8 : 16;
+    return cropCompressedToMap(data, mipWidth, mipHeight, cw, ch, blockSize);
+  }
+  // 非压缩格式的每像素字节数：RGBA8888=4、RG88=2、R8=1（其余按 4 处理，与既有 Rgba 兜底一致）。
+  const bpp = format === TEX_FORMAT.RG88 ? 2 : format === TEX_FORMAT.R8 ? 1 : 4;
+  return cropRowsToMap(data, mipWidth, mipHeight, cw, ch, bpp);
+}
+
+// 非压缩格式按行裁剪：每行取 cw×bpp 字节、取前 ch 行（内容在左上角）。
+function cropRowsToMap(
+  data: Uint8Array<ArrayBuffer>,
+  mipWidth: number,
+  mipHeight: number,
+  cw: number,
+  ch: number,
+  bpp: number,
+): { width: number; height: number; data: Uint8Array<ArrayBuffer> } {
+  const rowBytes = cw * bpp;
+  const out = new Uint8Array(rowBytes * ch);
+  for (let y = 0; y < ch; y++) {
+    const src = y * mipWidth * bpp;
+    const end = Math.min(src + rowBytes, data.length);
+    if (src >= data.length) break;
+    out.set(data.subarray(src, end), y * rowBytes);
+  }
+  return { width: cw, height: ch, data: out };
+}
+
+// 块压缩格式按 4×4 块阵列裁剪（BC 纹理尺寸须为 4 的倍数 → 目标宽高向上取整到 4）。
+// 截取左上角块阵列；内容区外的 1-3px 冗余行/列取自原内容边缘块（无害，对齐 wasm crop_bc）。
+function cropCompressedToMap(
+  data: Uint8Array<ArrayBuffer>,
+  mipWidth: number,
+  mipHeight: number,
+  cw: number,
+  ch: number,
+  blockSize: number,
+): { width: number; height: number; data: Uint8Array<ArrayBuffer> } {
+  const nw = Math.ceil(cw / 4) * 4;
+  const nh = Math.ceil(ch / 4) * 4;
+  const srcBlockW = Math.max(1, Math.ceil(mipWidth / 4));
+  const dstBlockW = nw / 4;
+  const dstBlockH = nh / 4;
+  const rowBytes = dstBlockW * blockSize;
+  const out = new Uint8Array(rowBytes * dstBlockH);
+  for (let by = 0; by < dstBlockH; by++) {
+    const src = by * srcBlockW * blockSize;
+    if (src >= data.length) break;
+    const end = Math.min(src + rowBytes, data.length);
+    out.set(data.subarray(src, end), by * rowBytes);
+  }
+  return { width: nw, height: nh, data: out };
+}
+
 // 由解析结果构造 three 纹理：
 //   TEXB0003+ 编码图像（imageFormat=JPEG/PNG/WEBP）→ 解码为 ImageBitmap 后包装为 Texture（异步）
 //   （注意：编码图像的 format 字段仍为 RGBA8888(0)，但 mipmap 数据是 JPEG/PNG 字节流，
@@ -208,11 +293,14 @@ export async function textureFromTex(info: TexInfo): Promise<THREE.Texture | nul
     // UNPACK_FLIP_Y_WEBGL 只对 DOM 元素源生效），数据第一行会落在纹理 v=0（底部）。
     // WE tex 原始数据是 top-down（第一行=图像顶部），直接上传会上下颠倒，
     // 因此手动翻转行序为 bottom-up（第一行=图像底部），与 ImageBitmap 路径一致。
+    // 顺序（关键）：**先按 map 尺寸裁掉 2 的幂填充**（cropToMap，此时仍是原始 bpp 数据）
+    // 再 RG88/R8 展开、最后翻转行序——翻转必须用裁剪后的宽高（否则行距错位）。
     // RGBA8888 原样；RG88/R8 先展开为 RGBA（convertUnormToRgba，WE 粒子纹理 alpha-priority 语义）
     // 再翻转——此前 RG88/R8 无分支直接 return null（DK 雪片/wasam 雾纹理加载失败 → 白图兜底）。
-    const src = info.format === TEX_FORMAT.RGBA8888 ? mip.data : convertUnormToRgba(mip.data, info.format);
-    const flipped = flipRows(src, mip.width, mip.height, 4);
-    const tex = new THREE.DataTexture(flipped, mip.width, mip.height, THREE.RGBAFormat);
+    const cropped = cropToMap(mip.data, mip.width, mip.height, info.width, info.height, info.format, info.flags);
+    const src = info.format === TEX_FORMAT.RGBA8888 ? cropped.data : convertUnormToRgba(cropped.data, info.format);
+    const flipped = flipRows(src, cropped.width, cropped.height, 4);
+    const tex = new THREE.DataTexture(flipped, cropped.width, cropped.height, THREE.RGBAFormat);
     applyLinearSampling(tex);
     return tex;
   }
@@ -244,14 +332,18 @@ export async function textureFromTex(info: TexInfo): Promise<THREE.Texture | nul
     //   ③ 因此压缩纹理与 RGBA8888/编码图像路径对齐：**基础层 = mip0 全分辨率、不做 mip 下采样**，
     //      `minFilter = LinearFilter`（非 mipmap 过滤器 ⇒ 纹理必然 complete，无 ① 的未定义行为），
     //      `magFilter = LinearFilter`（与另两条路径一致的双线性放大）。
+    //   ④ 与 RGBA8888 路径同源：**先按 map 尺寸裁掉 2 的幂填充**（DXT 按 4×4 块裁剪，见 cropToMap），
+    //      再反转块行序——裁剪在前，翻转的块行距才与裁剪后的宽度一致。无填充纹理（Lycoris
+    //      materials/111.tex 6144×3072）走原样路径，不复制数据。
+    const cropped = cropToMap(mip.data, mip.width, mip.height, info.width, info.height, info.format, info.flags);
     const tex = new THREE.CompressedTexture(
       [{
-        data: flipCompressedRows(mip.data, mip.width, mip.height, blockSize),
-        width: mip.width,
-        height: mip.height,
+        data: flipCompressedRows(cropped.data, cropped.width, cropped.height, blockSize),
+        width: cropped.width,
+        height: cropped.height,
       }],
-      mip.width,
-      mip.height,
+      cropped.width,
+      cropped.height,
       glFormat as THREE.CompressedPixelFormat,
     );
     tex.magFilter = THREE.LinearFilter;

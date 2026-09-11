@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
-import { parseTex, glFormatForDds, TEX_FORMAT, textureFromTex, convertUnormToRgba, flipCompressedRows, FIF } from '../src/client/tex-loader.js';
+import { parseTex, glFormatForDds, TEX_FORMAT, textureFromTex, convertUnormToRgba, flipCompressedRows, cropToMap, FIF } from '../src/client/tex-loader.js';
 import { makeTex } from './fixtures/make-tex.js';
 
 describe('glFormatForDds', () => {
@@ -449,5 +449,121 @@ describe('textureFromTex 分支选择', () => {
       expect(tex.mipmaps.length).toBe(1);
       expect(tex.minFilter).toBe(THREE.LinearFilter);
     });
+  });
+});
+
+// 2026-09-10 Task5（EVA 背景不铺满）：TEXV0005 的 mip 记录尺寸是 **2 的幂上传尺寸**
+// （如 4096×2048），头部 width/height 是**逻辑内容尺寸**（如 2400×1555）；内容在 mip0 左上角，
+// 右侧/底部是填充。旧实现把整张上传纹理当 UV 0-1 → 图像只占 quad 左上 map/mip 比例区域
+// （EVA 实测 58.6% 宽 × 75.9% 高，右侧/底部露黑填充）。cropToMap 与 wasm `crop_to_map` 同源：
+// 按 map 尺寸裁剪 mip0（RGBA/R8/RG88 按行、DXT 按 4×4 块），sprite/无填充原样返回（零复制）。
+describe('cropToMap（2 的幂填充裁剪，EVA 背景露黑根因）', () => {
+  it('RGBA8888：按行裁剪到 map 尺寸（含行距重排），填充区不进入纹理', () => {
+    const mipW = 8, mipH = 4, mapW = 6, mapH = 3, bpp = 4;
+    const data = new Uint8Array(mipW * mipH * bpp).fill(200); // 填充区标记值 200
+    for (let y = 0; y < mapH; y++) {
+      for (let x = 0; x < mapW; x++) {
+        // 内容像素写 R 通道后其余通道清零（填充区保持全 200，便于断言「填充未被采样」）
+        const o = (y * mipW + x) * bpp;
+        data[o] = 10 + y; data[o + 1] = 0; data[o + 2] = 0; data[o + 3] = 0;
+      }
+    }
+    const out = cropToMap(data, mipW, mipH, mapW, mapH, TEX_FORMAT.RGBA8888, 2);
+    expect(out.width).toBe(6);
+    expect(out.height).toBe(3);
+    expect(out.data).toHaveLength(6 * 3 * 4);
+    // 每行前 6 像素来自内容区、第 7/8 像素（填充）不出现
+    for (let y = 0; y < 3; y++) {
+      for (let x = 0; x < 6; x++) expect(out.data[(y * 6 + x) * 4]).toBe(10 + y);
+    }
+    expect(Array.from(out.data).includes(200)).toBe(false);
+  });
+
+  it('无填充（map ≥ mip）→ 原样返回同一引用（不复制数据）', () => {
+    const data = new Uint8Array(64 * 32 * 4).fill(3);
+    const out = cropToMap(data, 64, 32, 64, 32, TEX_FORMAT.RGBA8888, 2);
+    expect(out.width).toBe(64);
+    expect(out.height).toBe(32);
+    expect(out.data).toBe(data);
+    // map 比 mip 大（畸形数据）同样不放大
+    const bigger = cropToMap(data, 64, 32, 128, 64, TEX_FORMAT.RGBA8888, 2);
+    expect(bigger.data).toBe(data);
+  });
+
+  it('sprite 标记（flags & 4）→ 不裁剪（mip0 是整张精灵表，map 只是其中一格）', () => {
+    const data = new Uint8Array(256 * 768 * 4).fill(9);
+    const out = cropToMap(data, 256, 768, 256, 256, TEX_FORMAT.DXT5, 2 | 4);
+    expect(out.width).toBe(256);
+    expect(out.height).toBe(768);
+    expect(out.data).toBe(data);
+  });
+
+  it('map 尺寸非法（0/NaN）→ 原样返回（防御畸形头部）', () => {
+    const data = new Uint8Array(16 * 16 * 4).fill(1);
+    expect(cropToMap(data, 16, 16, 0, 0, TEX_FORMAT.RGBA8888, 2).data).toBe(data);
+    expect(cropToMap(data, 16, 16, NaN, NaN, TEX_FORMAT.RGBA8888, 2).data).toBe(data);
+  });
+
+  it('R8/RG88：按像素字节数（1/2B）裁剪后再展开', () => {
+    const mipW = 4, mipH = 2, mapW = 3, mapH = 1;
+    const r8 = new Uint8Array(mipW * mipH).fill(77);
+    const out8 = cropToMap(r8, mipW, mipH, mapW, mapH, TEX_FORMAT.R8, 2);
+    expect(out8.width).toBe(3);
+    expect(out8.height).toBe(1);
+    expect(Array.from(out8.data)).toEqual([77, 77, 77]);
+  });
+
+  it('DXT：按 4×4 块裁剪（目标宽高向上取整到 4 的倍数）', () => {
+    const mipW = 8, mipH = 8, blockSize = 8; // 2×2 块
+    const blocks = new Uint8Array(4 * blockSize);
+    for (let i = 0; i < 4; i++) for (let j = 0; j < blockSize; j++) blocks[i * blockSize + j] = i;
+    // map 6×3 → nw=8、nh=4（向上取整到 4）→ 目标 2 块宽 × 1 块高 = 16B
+    const out = cropToMap(blocks, mipW, mipH, 6, 3, TEX_FORMAT.DXT1, 2);
+    expect(out.width).toBe(8);
+    expect(out.height).toBe(4);
+    expect(out.data).toHaveLength(2 * blockSize);
+    expect(Array.from(out.data.slice(0, blockSize))).toEqual(Array.from(blocks.slice(0, blockSize)));
+    expect(Array.from(out.data.slice(blockSize, 2 * blockSize))).toEqual(Array.from(blocks.slice(blockSize, 2 * blockSize)));
+  });
+
+  it('textureFromTex（RGBA8888，EVA 形状 8×4→map 6×3）：纹理尺寸 = 内容尺寸且填充不采样', async () => {
+    const mipW = 8, mipH = 4, bpp = 4;
+    const data = new Uint8Array(mipW * mipH * bpp).fill(200);
+    for (let y = 0; y < 3; y++) {
+      for (let x = 0; x < 6; x++) {
+        const o = (y * mipW + x) * bpp;
+        data[o] = 10 + y; data[o + 1] = 0; data[o + 2] = 0; data[o + 3] = 0;
+      }
+    }
+    const buf = makeTex({
+      format: TEX_FORMAT.RGBA8888, flags: 2,
+      textureWidth: 8, textureHeight: 4, imageWidth: 6, imageHeight: 3,
+      images: [[{ width: mipW, height: mipH, data }]],
+    });
+    const tex = await textureFromTex(parseTex(buf)!) as THREE.DataTexture;
+    expect(tex.image.width).toBe(6);   // 旧实现为 8（上传尺寸）→ 内容只占 quad 的 6/8
+    expect(tex.image.height).toBe(3);
+    const out = tex.image.data as Uint8Array;
+    expect(out).toHaveLength(6 * 3 * 4);
+    expect(Array.from(out).includes(200)).toBe(false); // 填充（200）不进入纹理
+    // 行序仍为 bottom-up（翻转后第一行 = 源内容最后一行 = 值 12）
+    expect(out[0]).toBe(12);
+    expect(out[6 * 2 * 4]).toBe(10);
+  });
+
+  it('textureFromTex（DXT1，6144×3072→2048×2048 换小样：64×32→60×30）：压缩层尺寸 = 裁剪后尺寸', async () => {
+    const mipW = 64, mipH = 32, blockSize = 8;
+    const data = new Uint8Array((mipW / 4) * (mipH / 4) * blockSize).fill(0x11);
+    const buf = makeTex({
+      format: TEX_FORMAT.DXT1, flags: 2,
+      textureWidth: 64, textureHeight: 32, imageWidth: 60, imageHeight: 30,
+      images: [[{ width: mipW, height: mipH, data }]],
+    });
+    const tex = await textureFromTex(parseTex(buf)!) as THREE.CompressedTexture;
+    expect(tex.mipmaps.length).toBe(1);
+    expect(tex.mipmaps[0].width).toBe(60);  // 向上取整到 4 的倍数
+    expect(tex.mipmaps[0].height).toBe(32);
+    expect(tex.image.width).toBe(60);
+    expect(tex.image.height).toBe(32);
   });
 });
