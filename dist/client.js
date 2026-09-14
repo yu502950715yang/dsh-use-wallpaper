@@ -21788,6 +21788,17 @@ function resolveTextureSlotPath(path) {
   const p = path.startsWith("materials/") ? path : "materials/" + path;
   return p.endsWith(".tex") ? p : p + ".tex";
 }
+function isBuiltinTexturePath(path) {
+  if (!path) return false;
+  const p = path.replace(/\.tex$/, "");
+  return p.startsWith("util/") || p.startsWith("_rt_");
+}
+function builtinTextureUrl(path) {
+  if (!path) return null;
+  const p = path.replace(/\.tex$/, "");
+  if (!p.startsWith("util/")) return null;
+  return `/wallpapers/particle-texture?name=${encodeURIComponent(p)}`;
+}
 function mulberry32(seed) {
   let a = seed >>> 0;
   return () => {
@@ -21799,12 +21810,19 @@ function mulberry32(seed) {
   };
 }
 var BUILTIN_CACHE = /* @__PURE__ */ new Map();
+var BUILTIN_NOISE_SEEDS = {
+  noise: 1370177149,
+  // util/noise
+  clouds256: 2115803701
+  // util/clouds_256
+};
 function resolveBuiltinTexture(path) {
   if (!path) return null;
   const p = path.replace(/\.tex$/, "");
   let key;
   if (p === "util/white") key = "white";
-  else if (p === "util/noise" || p === "util/clouds_256") key = "noise256";
+  else if (p === "util/noise") key = "noise";
+  else if (p === "util/clouds_256") key = "clouds256";
   else if (p.startsWith("_rt_")) key = "white";
   else return null;
   const cached = BUILTIN_CACHE.get(key);
@@ -21815,7 +21833,7 @@ function resolveBuiltinTexture(path) {
   } else {
     const size = 256;
     const data = new Uint8Array(size * size * 4);
-    const rnd = mulberry32(1370177149);
+    const rnd = mulberry32(BUILTIN_NOISE_SEEDS[key] ?? 1370177149);
     for (let i = 0; i < size * size; i++) {
       const v = Math.round(rnd() * 255);
       data[i * 4] = v;
@@ -21827,6 +21845,46 @@ function resolveBuiltinTexture(path) {
   }
   tex.needsUpdate = true;
   BUILTIN_CACHE.set(key, tex);
+  return tex;
+}
+async function loadEffectTextureSlot(path, id, cache, load = loadTexTexture, warn = (message) => console.warn(message)) {
+  if (!path) return null;
+  const key = `${id}:${path}`;
+  if (cache.has(key)) return cache.get(key) ?? null;
+  const tryLoad = async (url) => {
+    try {
+      return await load(url, { alphaPriority: false });
+    } catch {
+      return null;
+    }
+  };
+  const realUrl = builtinTextureUrl(path);
+  if (realUrl) {
+    const real = await tryLoad(realUrl);
+    if (real) {
+      cache.set(key, real);
+      return real;
+    }
+  }
+  const builtin = resolveBuiltinTexture(path);
+  if (builtin) {
+    if (realUrl) {
+      warn(
+        `[wallpaper-engine] \u5F15\u64CE\u5185\u7F6E\u7EB9\u7406\u53D6\u4E0D\u5230\u771F\u8EAB\uFF0C\u56DE\u9000\u7A0B\u5E8F\u5316\u8FD1\u4F3C\uFF08\u753B\u9762\u53EF\u80FD\u4E0E\u684C\u9762 WE \u4E0D\u540C\uFF09: ${path} \u2190 ${realUrl}`
+      );
+    }
+    cache.set(key, builtin);
+    return builtin;
+  }
+  if (isBuiltinTexturePath(path)) {
+    cache.set(key, null);
+    return null;
+  }
+  const resolved = resolveTextureSlotPath(path);
+  if (!resolved) return null;
+  const tex = await tryLoad(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(resolved)}`);
+  if (!tex) warn(`[wallpaper-engine] \u7EB9\u7406\u69FD\u52A0\u8F7D\u5931\u8D25\uFF0C\u8DF3\u8FC7: ${path} \u2192 ${resolved}`);
+  cache.set(key, tex);
   return tex;
 }
 function resolveInputTexture(input) {
@@ -22053,17 +22111,7 @@ var EffectRunner = class {
     return scene;
   }
   async resolveTextureSlot(path) {
-    if (!path) return null;
-    const builtin = resolveBuiltinTexture(path);
-    if (builtin) return builtin;
-    const key = `${this.id}:${path}`;
-    if (this.textures.has(key)) return this.textures.get(key) ?? null;
-    const resolved = resolveTextureSlotPath(path);
-    if (!resolved) return null;
-    const tex = await loadTexTexture(`/wallpapers/scene/${this.id}/asset?name=${encodeURIComponent(resolved)}`, { alphaPriority: false });
-    if (!tex) console.warn("[wallpaper-engine] \u7EB9\u7406\u69FD\u52A0\u8F7D\u5931\u8D25\uFF0C\u8DF3\u8FC7:", path, "\u2192", resolved);
-    this.textures.set(key, tex);
-    return tex;
+    return loadEffectTextureSlot(path, this.id, this.textures);
   }
   // 串行化 + 输入参数化（Ruling P1-1）：input 可为场景 RT 或对象 RT 的纹理（任意 Texture）。
   // 返回最终输出纹理；链为空或上一帧 update 未完成（纹理槽异步加载中）→ null。

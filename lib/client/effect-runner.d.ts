@@ -1,7 +1,13 @@
 import * as THREE from 'three';
 import type { CompiledEffectPass } from './shader/effect-chain.js';
 export declare function resolveTextureSlotPath(path: string | null | undefined): string | null;
+export declare function isBuiltinTexturePath(path: string | null | undefined): boolean;
+export declare function builtinTextureUrl(path: string | null | undefined): string | null;
 export declare function resolveBuiltinTexture(path: string | null | undefined): THREE.Texture | null;
+export type EffectTexLoader = (url: string, opts?: {
+    alphaPriority?: boolean;
+}) => Promise<THREE.Texture | null>;
+export declare function loadEffectTextureSlot(path: string | null, id: string, cache: Map<string, THREE.Texture | null>, load?: EffectTexLoader, warn?: (message: string) => void): Promise<THREE.Texture | null>;
 export declare function resolveInputTexture(input: THREE.WebGLRenderTarget | THREE.Texture): THREE.Texture;
 export declare function pickWriteTarget(previous: THREE.WebGLRenderTarget | null, rtA: THREE.WebGLRenderTarget, rtB: THREE.WebGLRenderTarget): THREE.WebGLRenderTarget;
 export interface EffectTargetSize {

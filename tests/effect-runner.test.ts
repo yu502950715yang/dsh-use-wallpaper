@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { blendModeToThree } from '../src/client/effect-runner.js';
 import { resolveTextureSlotPath, resolveBuiltinTexture } from '../src/client/effect-runner.js';
+import { builtinTextureUrl, isBuiltinTexturePath, loadEffectTextureSlot } from '../src/client/effect-runner.js';
 import {
   resolveInputTexture,
   pickWriteTarget,
@@ -52,12 +53,18 @@ describe('resolveBuiltinTexture（内置/运行时纹理回退）', () => {
     expect(tex).not.toBeNull();
     expect(tex!.image.width).toBe(1);
   });
-  it('util/noise 与 util/clouds_256 → 256 噪声纹理', () => {
+  it('util/noise 与 util/clouds_256 各自 → 256 噪声纹理', () => {
     for (const p of ['util/noise', 'util/clouds_256']) {
       const tex = resolveBuiltinTexture(p);
       expect(tex).not.toBeNull();
       expect(tex!.image.width).toBe(256);
     }
+  });
+  it('util/noise 与 util/clouds_256 **不是同一张纹理**（WE 里是两张不同纹理，此前共用 key/实例是错的）', () => {
+    expect(resolveBuiltinTexture('util/noise')).not.toBe(resolveBuiltinTexture('util/clouds_256'));
+  });
+  it('同一路径重复查询 → 同一实例（BUILTIN_CACHE 兜底缓存）', () => {
+    expect(resolveBuiltinTexture('util/clouds_256')).toBe(resolveBuiltinTexture('util/clouds_256.tex'));
   });
   it('带 .tex 后缀的内置路径同样识别（util/noise.tex）', () => {
     const tex = resolveBuiltinTexture('util/noise.tex');
@@ -69,6 +76,110 @@ describe('resolveBuiltinTexture（内置/运行时纹理回退）', () => {
   });
   it('普通路径 → null（交给 fetch）', () => {
     expect(resolveBuiltinTexture('masks/x')).toBeNull();
+  });
+});
+
+// ===== util/* 优先取 WE 真身（2026-09-14 修复 2454403969 的真机扫描线异常）。
+// 纯逻辑抽成 `loadEffectTextureSlot(path, id, cache, load, warn)`：加载器可注入 ⇒ node 可测
+// （WebGL/网络不参与）。真机路径（真实 fetch + .tex 解码 + 上屏）仍由 e2e 覆盖。=====
+
+describe('builtinTextureUrl / isBuiltinTexturePath（util/* 真身 URL 与引擎侧路径判定）', () => {
+  it('util/* → host 既有路由 /wallpapers/particle-texture（name 去掉 .tex 后缀）', () => {
+    expect(builtinTextureUrl('util/noise')).toBe('/wallpapers/particle-texture?name=util%2Fnoise');
+    expect(builtinTextureUrl('util/clouds_256.tex')).toBe('/wallpapers/particle-texture?name=util%2Fclouds_256');
+    expect(builtinTextureUrl('util/white')).toBe('/wallpapers/particle-texture?name=util%2Fwhite');
+  });
+  it('_rt_* → null（运行时具名 RT，WE 目录内无对应文件，不去打必然 404 的请求）', () => {
+    expect(builtinTextureUrl('_rt_FullFrameBuffer')).toBeNull();
+  });
+  it('普通纹理槽 → null（走壁纸 pkg 内的 scene asset）', () => {
+    expect(builtinTextureUrl('masks/waterwaves_mask_x')).toBeNull();
+    expect(builtinTextureUrl(null)).toBeNull();
+  });
+  it('isBuiltinTexturePath：util/* 与 _rt_* 为真，其余为假', () => {
+    expect(isBuiltinTexturePath('util/noise')).toBe(true);
+    expect(isBuiltinTexturePath('util/noise.tex')).toBe(true);
+    expect(isBuiltinTexturePath('_rt_FullFrameBuffer')).toBe(true);
+    expect(isBuiltinTexturePath('masks/x')).toBe(false);
+    expect(isBuiltinTexturePath('materials/util/noise.tex')).toBe(false);
+    expect(isBuiltinTexturePath(null)).toBe(false);
+  });
+});
+
+describe('loadEffectTextureSlot（① util/* 真身 → ② 程序化回退 → ③ 壁纸 pkg 资源）', () => {
+  const realTex = () => new THREE.DataTexture(new Uint8Array([9, 8, 7, 255]), 1, 1, THREE.RGBAFormat);
+
+  it('util/* 真身可达 → 用真身（请求 host 路由、alphaPriority=false），不回退、不告警', async () => {
+    const tex = realTex();
+    const load = vi.fn(async () => tex);
+    const warn = vi.fn();
+    const cache = new Map<string, THREE.Texture | null>();
+    const got = await loadEffectTextureSlot('util/noise', '2454403969', cache, load, warn);
+    expect(got).toBe(tex);
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(load.mock.calls[0][0]).toBe('/wallpapers/particle-texture?name=util%2Fnoise');
+    expect(load.mock.calls[0][1]).toEqual({ alphaPriority: false });
+    expect(warn).not.toHaveBeenCalled();
+    expect(cache.get('2454403969:util/noise')).toBe(tex);
+  });
+
+  it('真身不可达 → 回退程序化近似 + 告警一次，且不重复请求（含失败结果进缓存）', async () => {
+    const load = vi.fn(async () => null);
+    const warn = vi.fn();
+    const cache = new Map<string, THREE.Texture | null>();
+    const first = await loadEffectTextureSlot('util/noise', '2454403969', cache, load, warn);
+    expect(first).toBe(resolveBuiltinTexture('util/noise')); // 回退到程序化噪声（不是 null，不白屏）
+    expect(first!.image.width).toBe(256);
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain('回退程序化近似');
+    expect(String(warn.mock.calls[0][0])).toContain('util/noise');
+    // 第二次（模拟下一帧）：命中缓存 ⇒ 不再发请求、不再告警
+    const second = await loadEffectTextureSlot('util/noise', '2454403969', cache, load, warn);
+    expect(second).toBe(first);
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('加载器抛异常 → 按失败处理并回退（异常不抛进帧循环）', async () => {
+    const load = vi.fn(async () => { throw new Error('boom'); });
+    const warn = vi.fn();
+    const cache = new Map<string, THREE.Texture | null>();
+    const tex = await loadEffectTextureSlot('util/white', 'x', cache, load, warn);
+    expect(tex).toBe(resolveBuiltinTexture('util/white'));
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('_rt_* → 不走真身请求（realUrl 为 null）、不发告警，直接白色回退并缓存', async () => {
+    const load = vi.fn(async () => realTex());
+    const warn = vi.fn();
+    const cache = new Map<string, THREE.Texture | null>();
+    const tex = await loadEffectTextureSlot('_rt_imageLayerComposite_1_a', 'x', cache, load, warn);
+    expect(tex).toBe(resolveBuiltinTexture('_rt_imageLayerComposite_1_a'));
+    expect(load).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+    expect(cache.has('x:_rt_imageLayerComposite_1_a')).toBe(true);
+  });
+
+  it('普通纹理槽 → 走壁纸 pkg 内的 scene asset（materials/ 前缀 + .tex），失败缓存 null 并告警', async () => {
+    const load = vi.fn(async () => null);
+    const warn = vi.fn();
+    const cache = new Map<string, THREE.Texture | null>();
+    const tex = await loadEffectTextureSlot('masks/x', 'wp1', cache, load, warn);
+    expect(tex).toBeNull();
+    expect(load.mock.calls[0][0]).toBe('/wallpapers/scene/wp1/asset?name=' + encodeURIComponent('materials/masks/x.tex'));
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain('纹理槽加载失败');
+    // 失败结果也进缓存 ⇒ 第二次不再请求
+    await loadEffectTextureSlot('masks/x', 'wp1', cache, load, warn);
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('空路径 → null（不请求）', async () => {
+    const load = vi.fn(async () => realTex());
+    expect(await loadEffectTextureSlot(null, 'x', new Map(), load, vi.fn())).toBeNull();
+    expect(load).not.toHaveBeenCalled();
   });
 });
 
