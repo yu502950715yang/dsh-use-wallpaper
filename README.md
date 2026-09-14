@@ -12,7 +12,7 @@
 
 ## 🎬 在 DSH 里的真实效果
 
-下面两段视频都是**在 DSH Web GUI 的真实页面上**录的（不是离线贴图，也不是设计稿）：壁纸由插件在浏览器里实时渲染，DSH 界面叠加在其上。
+下面两段动图都是**在 DSH Web GUI 的真实页面上**录的（不是离线贴图，也不是设计稿）：壁纸由插件在浏览器里实时渲染，DSH 界面叠加在其上。
 
 <table>
 <tr>
@@ -21,7 +21,9 @@
 **Crimson Horizon · 星空雪山**
 <sub>Landscape</sub>
 
-<video src="docs/videos/crimson-horizon-dsh.mp4" autoplay loop muted playsinline width="100%"></video>
+![Crimson Horizon 在 DSH 中的效果](docs/videos/crimson-horizon-dsh.gif)
+
+<sub>[▶ 完整视频（9s / mp4）](docs/videos/crimson-horizon-dsh.mp4)</sub>
 
 </td>
 <td width="50%" align="center">
@@ -29,15 +31,17 @@
 **Knight in a red cloak · 红披风骑士**
 <sub>Anime</sub>
 
-<video src="docs/videos/knight-red-cloak-dsh.mp4" autoplay loop muted playsinline width="100%"></video>
+![Knight in a red cloak 在 DSH 中的效果](docs/videos/knight-red-cloak-dsh.gif)
+
+<sub>[▶ 完整视频（9s / mp4）](docs/videos/knight-red-cloak-dsh.mp4)</sub>
 
 </td>
 </tr>
 </table>
 
-> 视频文件：[crimson-horizon-dsh.mp4](docs/videos/crimson-horizon-dsh.mp4) · [knight-red-cloak-dsh.mp4](docs/videos/knight-red-cloak-dsh.mp4)
+> **为什么这里是动图而不是视频播放器**：GitHub 不会把仓库内 mp4 的相对路径重写成可播放的资源（实测 `raw.githubusercontent.com` 返回 `Content-Type: application/octet-stream` 且带 `X-Content-Type-Options: nosniff`），因此 `<video>` 标签在 GitHub 上无法加载仓库里的 mp4 —— 会显示为一片空白。动图则能正常内嵌播放，故用它做展示；上方的「完整视频」链接指向原 mp4，画质与帧率都更好（点击后可在新页面播放或下载）。
 
-> **录制方式（如实说明）**：两段视频都是在**真实运行的 DSH 页面**上、由本插件的生产构建（`lib/`）实时渲染本机 workshop 壁纸后录制的浏览器画面，未做后期合成；壁纸通过插件自身的切换入口 `window.__wallpaperEngine.select(id)` 切换，因此画面里只有 DSH 界面与壁纸本身。视频已裁掉浏览器地址栏。壁纸素材版权归原作者所有，此处仅作效果展示，不再分发。
+> **录制方式（如实说明）**：两段动图与视频都是在**真实运行的 DSH 页面**上、由本插件的生产构建（`lib/`）实时渲染本机 workshop 壁纸后录制的浏览器画面，未做后期合成；壁纸通过插件自身的切换入口 `window.__wallpaperEngine.select(id)` 切换，因此画面里只有 DSH 界面与壁纸本身。画面已裁掉浏览器地址栏。壁纸素材版权归原作者所有，此处仅作效果展示，不再分发。
 
 ---
 
