@@ -147,6 +147,12 @@ research/                    gitignore：截图 / 验证脚本 / 临时 profile
     - **`NoInterpolation = 1`（bit0）—— 待办**：`applyLinearSampling` **无条件**设 `LinearFilter` + `LinearMipmapLinearFilter`，带此位的纹理（全库 **4 张**）本该 `NearestFilter` ⇒ 被插值偏糊。
     - **`ClampUVsBorder = 8`（bit3）**：按 lwe 的 `CTexture` 路径落 REPEAT（全库 **0 张**带此位，当前无实际影响，语义未验证）。
     - ⚠️ **RT 纹理必须保持 CLAMP**：`object-range.ts` 的对象合成 quad 依赖它。`WebGLRenderTarget` 不经 `textureFromTex`，所以只要不改 RT 创建处就安全 —— **别在别处一律改成 repeat**。
+20. **纹理 v 轴约定：WE 是 `v=0` = 图像顶部；效果链一侧必须按 WE 约定、显示路径保持现状（2026-09-14，提交 `426446c`；报告 `v-convention-report.md`）**：
+    - **WE/lwe 证据**：`research/.lwe/.../CTexture.cpp:84` 直接 `glTexImage2D(..., dataptr)` 上传 `.tex` 原始字节，**只有 `glPixelStorei(GL_UNPACK_ALIGNMENT, 1)`、无任何垂直翻转** ⇒ `.tex` 第一行 → `v=0`，v 沿图像**向下**。
+    - **我们的显示路径**：`textureFromTex` 翻行序（`v=0` = 图像底部）+ mesh UV 不翻 ⇒ **画面正确**（不颠倒），但**效果 shader 里的 v 语义与 WE 相反** ⇒ **用 v 表达的方向量整体反向**（`waterflow` 带符号位移的**纵分量**、`clouds` 旋转 UV、`foliagesway` 摆动、相位图）。真机表现 = 「**方向对但位置/斜度不对**」（Crimson Horizon `3765967112` 的水流）。注意：流动区域的**位置**取决于两侧是否同约定 —— 一直是**对的**（别误判成"条带被镜像"）。
+    - **修法（窄修，勿全量迁移）**：只在**效果链一侧**按 WE 约定加载（`tex-loader` 的 `rowOrder` 参数 + `effect-runner` 的 `{load}` 注入点 + `object-effects` 注入 topDown 加载器），并用「**隔离局部相机 y 镜像** + 合成 quad 的 `flipGeometryUvY` 反镜像**精确抵消**」⇒ RT 内容与 mask 同约定、画面仍正立。**显示路径（背景 / 粒子 / text / 共享场景 / scene-renderer）一行未改**。
+    - **为什么不做全量迁移**：那要改 4~8 个显示采样点（含**未接入、无法端到端验证**的 `scene-renderer` 与 text），**漏一处就是整图上下颠倒**；收益却与窄修相同。
+    - **判据（权威对照）**：第三方 WE 约定 CPU 参照（`research/dsh-wallpaper-engine-v0.7.1` 的 we-renderer `effectWaterflow` 逐字调用）在流动 band 内 —— **修复后 0.04/255**、修复前 1.29/255 ⇒ 修复后与 WE 约定的实现几乎逐像素一致（仅 `PERSPECTIVE=0` 路径可对照）。
 
 ## 6. 工作约定
 
