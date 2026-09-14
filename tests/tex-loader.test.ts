@@ -461,6 +461,65 @@ describe('textureFromTex 分支选择', () => {
     expect(tex.generateMipmaps).toBe(true);
   });
 
+  // 2026-09-14：.tex 资源纹理的采样 wrap 模式（CP2077 `effects/clouds` 整屏发白根因）。
+  // WE 语义：flags **bit 1（值 2）= clampuvs** ⇒ CLAMP_TO_EDGE，否则 **REPEAT**（WE 默认）——
+  // 依据 research/.lwe/src/WallpaperEngine/Render/CTexture.cpp:176-183 与
+  // Data/Assets/Texture.h:88-98（TextureFlags_ClampUVs = 2、TextureFlags_IsGif = 4）。
+  // 此前三条分支都不设 wrapS/wrapT ⇒ 落到 three 默认 ClampToEdgeWrapping ⇒ 与 WE 相反。
+  // 本组对**每条分支**（编码图像 / RGBA8888 DataTexture / DXT CompressedTexture）都断言，防止漏设。
+  // ⚠️ 边界：只对 .tex 资源纹理生效；WebGLRenderTarget 的纹理不经 textureFromTex，保持 CLAMP
+  //（object-range.ts 的对象合成 quad 依赖 clamp）。
+  describe('wrap 模式（flags bit 1 clampuvs ⇒ ClampToEdge，否则 WE 默认 Repeat）', () => {
+    const cases: [string, number, number][] = [
+      ['无 clampuvs（flags=0）', 0, THREE.RepeatWrapping],
+      ['带 clampuvs（flags=2）', 2, THREE.ClampToEdgeWrapping],
+      ['sprite 位单独置位（flags=4）→ 仍 Repeat', 4, THREE.RepeatWrapping],
+      ['clampuvs|sprite（flags=6）→ Clamp', 6, THREE.ClampToEdgeWrapping],
+    ];
+
+    it.each(cases)('编码图像分支：%s', async (_name, flags, expected) => {
+      const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
+      const buf = makeTex({
+        container: 'TEXB0003', imageFormat: FIF.PNG, format: TEX_FORMAT.RGBA8888, flags,
+        images: [[{ width: 32, height: 16, data: png }]],
+      });
+      const tex = await textureFromTex(parseTex(buf)!);
+      expect(tex).not.toBeNull();
+      expect(tex).not.toBeInstanceOf(THREE.DataTexture); // 确认走的确实是解码分支
+      expect(tex!.wrapS).toBe(expected);
+      expect(tex!.wrapT).toBe(expected);
+    });
+
+    it.each(cases)('RGBA8888 DataTexture 分支：%s', async (_name, flags, expected) => {
+      const rgba = new Uint8Array(32 * 16 * 4).fill(0x80);
+      const buf = makeTex({ format: TEX_FORMAT.RGBA8888, flags, images: [[{ width: 32, height: 16, data: rgba }]] });
+      const tex = await textureFromTex(parseTex(buf)!) as THREE.DataTexture;
+      expect(tex).toBeInstanceOf(THREE.DataTexture);
+      expect(tex.wrapS).toBe(expected);
+      expect(tex.wrapT).toBe(expected);
+    });
+
+    it.each(cases)('DXT CompressedTexture 分支：%s', async (_name, flags, expected) => {
+      const w = 8, h = 8;
+      const blocks = new Uint8Array((w / 4) * (h / 4) * 8).fill(0x33);
+      const buf = makeTex({ format: TEX_FORMAT.DXT1, flags, images: [[{ width: w, height: h, data: blocks }]] });
+      const tex = await textureFromTex(parseTex(buf)!) as THREE.CompressedTexture;
+      expect(tex).toBeInstanceOf(THREE.CompressedTexture);
+      expect(tex.wrapS).toBe(expected);
+      expect(tex.wrapT).toBe(expected);
+    });
+
+    it('WE 默认值是 Repeat，不是 three 的默认 ClampToEdge（回归根因）', async () => {
+      // 断言的是「显式赋值」而非「碰巧等于 three 默认」：three 的 Texture 缺省 wrapS/wrapT = 1001。
+      const rgba = new Uint8Array(8 * 8 * 4);
+      const buf = makeTex({ format: TEX_FORMAT.RGBA8888, flags: 0, images: [[{ width: 8, height: 8, data: rgba }]] });
+      const tex = await textureFromTex(parseTex(buf)!) as THREE.DataTexture;
+      const fresh = new THREE.DataTexture(new Uint8Array(4), 1, 1);
+      expect(fresh.wrapS).toBe(THREE.ClampToEdgeWrapping); // three 默认 = clamp（这正是此前的偏差）
+      expect(tex.wrapS).toBe(THREE.RepeatWrapping);         // .tex flags=0 → WE 的 REPEAT
+    });
+  });
+
   // Task 5 深挖：DXT 压缩背景纹理上下颠倒（Lycoris Recoil-锦木千束）。
   // WE .tex 压缩数据是 top-down，而 CompressedTexture.flipY=false + WebGL UNPACK_FLIP_Y 对压缩纹理
   // 无效 → v=0=图像顶部被渲染到 quad 底部 = 上下颠倒。RGBA8888 路径用 flipRows、编码图像路径用

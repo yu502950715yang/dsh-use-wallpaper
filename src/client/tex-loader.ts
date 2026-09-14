@@ -238,6 +238,28 @@ function lz4Decompress(src: Uint8Array, decompressedSize: number): Uint8Array<Ar
 // 只是其中一格 → **不可裁剪**（当前无精灵 UV 偏移支持，保持整表行为）。
 const FLAG_SPRITE = 1 << 2;
 
+// TEXV0005 flags 的 clampuvs 位（值 2，bit 1）—— 决定采样 wrap 模式。
+// 位定义（逐字对齐参考实现 `research/.lwe/src/WallpaperEngine/Data/Assets/Texture.h:88-98`）：
+//   TextureFlags_NoFlags = 0
+//   TextureFlags_NoInterpolation = 1        （bit 0，未实现，见下）
+//   TextureFlags_ClampUVs = 2               （bit 1，★ 本常量）
+//   TextureFlags_IsGif = 4                  （bit 2，本文件 FLAG_SPRITE）
+//   TextureFlags_ClampUVsBorder = 8         （bit 3，未实现，见下）
+//   TextureFlags_Video = 32                 （bit 5，未实现）
+//   TextureFlags_AlphaChannelPriority = 524288（bit 19，现由调用方传参决定，见下）
+// flags 的来源是 **.tex 文件头本身**（`TextureParser.cpp:196` 读入 `header.flags`），与
+// scene.json / material.json 无关。
+const FLAG_CLAMP_UVS = 1 << 1;
+
+// ⚠️ 已知未实现（与 WE 的其它差异，本次 wrap 修复**刻意不碰**，见 wrap-report.md 待办清单）：
+//   · bit 0 `NoInterpolation`：WE 用 NEAREST（`CTexture.cpp:185-191`），而本文件 applyLinearSampling
+//     现在无条件设 Linear/Mipmap ⇒ 带该位的像素风纹理会被线性插值（偏糊）。
+//   · bit 3 `ClampUVsBorder`：WE 对**渲染目标**用 GL_CLAMP_TO_BORDER（`CFBO.cpp:29-31`）；磁盘 .tex
+//     纹理在参考实现里只有 ClampUVs 分支、该位落到 else 的 REPEAT（`CTexture.cpp:177-183`），
+//     three 亦无 CLAMP_TO_BORDER 对应的 `Wrapping` 常量 ⇒ 本实现按 lwe 语义一并视作 REPEAT。
+//   · bit 19 `AlphaChannelPriority`：R8/RG88 的「alpha 写在 G/R 通道」语义，权威来源是该位，
+//     现由 `EffectRunner` 按调用方路径传 `{ alphaPriority: false }` 推断（效果槽语义）。
+
 // 2 的幂填充裁剪（与 wasm/src/tex.rs `crop_to_map` 同源语义，2026-09-10）：
 // TEXV0005 的 **mip 记录尺寸**（w/h）是**上传尺寸**（2 的幂，如 4096×2048），而头部 @34/@38
 // 的 width/height 是**逻辑内容尺寸**（如 2400×1555）。内容在 mip0 **左上角**，右侧/底部是
@@ -354,6 +376,25 @@ export async function textureFromTex(info: TexInfo, opts?: { alphaPriority?: boo
     tex.generateMipmaps = true;
     tex.needsUpdate = true;
   };
+  // wrap 模式（修复 CP2077 `effects/clouds` 整屏发白，2026-09-14）：
+  // WE **默认 REPEAT**，只有 .tex 头 flags 带 `clampuvs`（bit 1）才 clamp —— 参考实现
+  //   `research/.lwe/src/WallpaperEngine/Render/CTexture.cpp:176-183`
+  //     if (flags & TextureFlags_ClampUVs) → GL_CLAMP_TO_EDGE else → GL_REPEAT
+  // 此前本函数三条分支都不设 wrapS/wrapT ⇒ 落到 three 的默认 ClampToEdgeWrapping ⇒ 与 WE 相反。
+  // 后果（clouds.frag 有意把第二组 UV 旋转到负象限：cloudTexCoods.zw = vec2(-w, z)，u∈[-0.5,0]）：
+  // clamp 下 cloud1 整幅塌到纹理**最左一列**（该列 R 均值 0.706，远亮于全图均值 0.494）
+  // ⇒ `cloudColor = cloud0 * cloud1` 被抬高 ⇒ `mix(原图, cloudColor, ~0.28)` 把整屏提亮，
+  // 且 t≈77s 后 UV 全域越界 → 均匀提亮并饱和（真机：62.45 → 75.75，且随时间越来越白）。
+  //
+  // ⚠️ **边界（务必保持）**：本函数只作用于**经 textureFromTex 创建的 `.tex` 资源纹理**。
+  // `WebGLRenderTarget.texture`（对象 RT / ping-pong RT / 具名 RT）**不经过本函数**，必须保持
+  // three 默认的 CLAMP —— `src/client/object-range.ts:147-163` 的对象合成 quad 明确依赖 clamp
+  //（窗口外侧 UV 夹到 RT 边缘），一旦改成 REPEAT 就会把 RT 内容平铺到对象四周。
+  // 因此**绝不要把 wrap 设成全局默认**（例如 Three.js 层的 `Texture.DEFAULT_WRAPPING` 或渲染器钩子）。
+  const applyWrap = (tex: THREE.Texture, info: TexInfo): void => {
+    const clamp = (info.flags & FLAG_CLAMP_UVS) !== 0;
+    tex.wrapS = tex.wrapT = clamp ? THREE.ClampToEdgeWrapping : THREE.RepeatWrapping;
+  };
   // 编码图像优先：imageFormat 是 FreeImage 枚举（JPEG/PNG/WEBP）时数据为编码字节流
   const mime = info.imageFormat === FIF.JPEG ? 'image/jpeg'
     : info.imageFormat === FIF.PNG ? 'image/png'
@@ -371,6 +412,7 @@ export async function textureFromTex(info: TexInfo, opts?: { alphaPriority?: boo
       );
       const tex = new THREE.Texture(bitmap as unknown as HTMLImageElement);
       tex.flipY = false;
+      applyWrap(tex, info);
       applyLinearSampling(tex);
       return withSprite(tex);
     } catch {
@@ -391,6 +433,7 @@ export async function textureFromTex(info: TexInfo, opts?: { alphaPriority?: boo
     const src = info.format === TEX_FORMAT.RGBA8888 ? cropped.data : convertUnormToRgba(cropped.data, info.format, opts?.alphaPriority !== false);
     const flipped = flipRows(src, cropped.width, cropped.height, 4);
     const tex = new THREE.DataTexture(flipped, cropped.width, cropped.height, THREE.RGBAFormat);
+    applyWrap(tex, info);
     applyLinearSampling(tex);
     return withSprite(tex);
   }
@@ -440,6 +483,7 @@ export async function textureFromTex(info: TexInfo, opts?: { alphaPriority?: boo
     tex.minFilter = THREE.LinearFilter;
     // 压缩纹理不能由 GPU 生成 mip（three 会跳过 generateMipmap），显式关闭避免误判「需要 mip」。
     tex.generateMipmaps = false;
+    applyWrap(tex, info);
     tex.needsUpdate = true;
     return withSprite(tex);
   }

@@ -21564,6 +21564,7 @@ function lz4Decompress(src, decompressedSize) {
   return n === decompressedSize ? out : out.subarray(0, Math.min(n, decompressedSize));
 }
 var FLAG_SPRITE = 1 << 2;
+var FLAG_CLAMP_UVS = 1 << 1;
 function cropToMap(data, mipWidth, mipHeight, mapWidth, mapHeight, format, flags) {
   const valid = Number.isFinite(mapWidth) && Number.isFinite(mapHeight) && mapWidth > 0 && mapHeight > 0;
   const cw = valid ? Math.min(Math.floor(mapWidth), mipWidth) : mipWidth;
@@ -21621,6 +21622,10 @@ async function textureFromTex(info, opts) {
     tex.generateMipmaps = true;
     tex.needsUpdate = true;
   };
+  const applyWrap = (tex, info2) => {
+    const clamp2 = (info2.flags & FLAG_CLAMP_UVS) !== 0;
+    tex.wrapS = tex.wrapT = clamp2 ? ClampToEdgeWrapping : RepeatWrapping;
+  };
   const mime = info.imageFormat === FIF.JPEG ? "image/jpeg" : info.imageFormat === FIF.PNG ? "image/png" : info.imageFormat === FIF.WEBP ? "image/webp" : "";
   if (mime) {
     if (typeof createImageBitmap !== "function") return null;
@@ -21631,6 +21636,7 @@ async function textureFromTex(info, opts) {
       );
       const tex = new Texture(bitmap);
       tex.flipY = false;
+      applyWrap(tex, info);
       applyLinearSampling(tex);
       return withSprite(tex);
     } catch {
@@ -21642,6 +21648,7 @@ async function textureFromTex(info, opts) {
     const src = info.format === TEX_FORMAT.RGBA8888 ? cropped.data : convertUnormToRgba(cropped.data, info.format, opts?.alphaPriority !== false);
     const flipped = flipRows(src, cropped.width, cropped.height, 4);
     const tex = new DataTexture(flipped, cropped.width, cropped.height, RGBAFormat);
+    applyWrap(tex, info);
     applyLinearSampling(tex);
     return withSprite(tex);
   }
@@ -21662,6 +21669,7 @@ async function textureFromTex(info, opts) {
     tex.magFilter = LinearFilter;
     tex.minFilter = LinearFilter;
     tex.generateMipmaps = false;
+    applyWrap(tex, info);
     tex.needsUpdate = true;
     return withSprite(tex);
   }

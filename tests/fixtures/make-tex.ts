@@ -15,7 +15,8 @@ export interface TexMipSpec {
 
 export interface MakeTexOptions {
   format?: number;            // TexFormat 枚举：RGBA8888=0, DXT5=4, DXT3=6, DXT1=7, RG88=8, R8=9
-  flags?: number;             // flags 位 2（值 4）= sprite 精灵表动画
+  flags?: number;             // flags：bit 1（值 2）= clampuvs（采样 wrap = CLAMP_TO_EDGE，否则 REPEAT）；
+                              //        bit 2（值 4）= sprite 精灵表动画
   textureWidth?: number;      // 默认取第一个 image 的 mip0 width
   textureHeight?: number;
   imageWidth?: number;        // 默认取 mip0 width
