@@ -46,6 +46,19 @@ type CpuParticleSimLike = {
 
 type ThreeWasmModule = WasmSceneModule & { CpuParticleSim?: CpuParticleSimLike };
 
+// 去重告警（同一 key 只打印一次，防刷屏；与 object-effects.ts 的 warnOnce 同风格，本文件独立
+// 实现一份）。⚠️ 生命周期与「当前壁纸」绑定：render() 开头清空一次，避免跨壁纸累积而漏报。
+const warnedKeys = new Set<string>();
+function warnOnce(key: string, message: string): void {
+  if (warnedKeys.has(key)) return;
+  warnedKeys.add(key);
+  console.warn(`[wallpaper-engine] ${message}`);
+}
+
+// 与「对象级 RT」alpha 语义冲突的 colorBlendMode（= WE 已实现的那三个，见 threejs-player 的
+// colorBlendModeToThree）：这些对象**不走隔离路径**（理由见 render() 内 isolate 计算处的守卫注释）。
+const BLEND_ISOLATION_UNSAFE = new Set([6, 7, 31]);
+
 // 粒子混合模式：**优先读材质 json 的 `passes[0].blending`**（WE 权威字段），缺失时才回退按
 // 材质名启发式（对齐 wasm `BlendMode::from_material`）。
 //
@@ -155,6 +168,9 @@ export function createThreeSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneR
   });
   return {
     async render(id, fg, _bg) {
+      // 诊断去重集合的生命周期 = 当前壁纸：每次 render 清空，避免跨壁纸累积（换了壁纸后新壁纸的
+      // 告警必须还能打印出来）。
+      warnedKeys.clear();
       try {
         // 替换/切壁纸前先释放上次播放器资源（首次渲染 no-op）。
         teardown();
@@ -239,12 +255,31 @@ export function createThreeSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneR
         const dpr = typeof window !== 'undefined' && window.devicePixelRatio ? window.devicePixelRatio : 1;
         const budgetW = Math.floor(vw * dpr);
         const budgetH = Math.floor(vh * dpr);
-        // isolate 的键 = scene.json 的**对象 id**（player 在 loadSceneToThree 内用 obj.id 查表），
-        // 值 = 四字段（RT 像素尺寸 + 合成 quad 世界尺寸，见 SceneAssets.isolate 注释）。
-        const isolate = new Map<number, { rtWidth: number; rtHeight: number; worldW: number; worldH: number }>();
+        // isolate 的键 = scene.json 的**对象 id**，值里的 objectId 同值：player 用 objectId 作
+        // **隔离条目的键**（attachIsolated），ObjectEffectStage 也用同一把键 → 三者同键空间，
+        // 不存在「对象 id → 图层计数器 id」的翻译层，也就不会撞键（见 threejs-player 的注释）。
+        const isolate = new Map<
+          number,
+          { objectId: number; rtWidth: number; rtHeight: number; worldW: number; worldH: number }
+        >();
+        // 因 colorBlendMode 与对象级 RT 的 alpha 语义冲突而**主动跳过隔离**的对象（见下）。这些
+        // 对象仍照常参与渲染（只是没有隔离条目），故不并入下面「挂在未参与渲染的对象上」的汇总
+        // 告警——两者原因不同、各自告警一次，混在一起会指向错误的排查方向。
+        const blendSkipped = new Set<number>();
         for (const obj of desc.objects) {
           if (!effectChains.has(obj.id)) continue;
           if (obj.kind === 'image') {
+            // colorBlendMode ∈ {6,7,31} 的混合语义是「读当前帧缓冲、按自己的 alpha 与之混合」，其内容材质
+            // 把结果 alpha 钉成「背景的 alpha」（blendSrcAlpha=Zero / blendDstAlpha=One）。对象级 RT 里没有
+            // 「背景」，RT 清屏 alpha=0 ⇒ RT alpha 恒 0 ⇒ 合成 quad 的片元被乘成 0，对象会整体不可见。
+            // 改动前这类对象在 three 路径下是「效果不生效但对象可见」；为避免把可见变成不可见，
+            // 对该组合**不走隔离路径**（效果仍不生效，与改动前一致），并告警一次。根本修法留 P2。
+            if (typeof obj.colorBlendMode === 'number' && BLEND_ISOLATION_UNSAFE.has(obj.colorBlendMode)) {
+              warnOnce(`blend-isolation:${obj.id}`,
+                `对象 ${obj.id} 的 colorBlendMode=${obj.colorBlendMode} 与对象级 RT 的 alpha 语义冲突，跳过其效果链（对象保持可见）`);
+              blendSkipped.add(obj.id);
+              continue;
+            }
             const tex = backgroundTextures.get(obj.id);
             const texW = (tex?.image?.width as number | undefined) ?? obj.size?.[0] ?? 1;
             const texH = (tex?.image?.height as number | undefined) ?? obj.size?.[1] ?? 1;
@@ -258,7 +293,10 @@ export function createThreeSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneR
             // dpr 必须在这里乘：RT 要与「贴屏缓冲 = 视口 × dpr」同分辨率，传 1 会让 dpr=2 的
             // 屏幕上对象 RT 只有一半分辨率（效果发糊）且与贴屏不一致。
             const rt = resolveObjectRtSize(range.w, range.h, dpr, budgetW, budgetH);
-            isolate.set(obj.id, { rtWidth: rt.width, rtHeight: rt.height, worldW: world.w, worldH: world.h });
+            isolate.set(obj.id, {
+              objectId: obj.id,
+              rtWidth: rt.width, rtHeight: rt.height, worldW: world.w, worldH: world.h,
+            });
           } else if (obj.kind === 'particle') {
             const p = particles.get(obj.id);
             if (!p) continue;
@@ -270,6 +308,7 @@ export function createThreeSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneR
             const range = particleObjectRange(spec, [obj.scale[0], obj.scale[1]]);
             const rt = resolveObjectRtSize(range.w, range.h, dpr, budgetW, budgetH);
             isolate.set(obj.id, {
+              objectId: obj.id,
               rtWidth: rt.width, rtHeight: rt.height,
               worldW: Math.abs(world.w), worldH: Math.abs(world.h),
             });
@@ -287,35 +326,27 @@ export function createThreeSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneR
         current = result;
 
         // ── 装配 ObjectEffectStage（对象级效果链的编排器）──────────────────────────────
-        // ⚠️ 键空间（踩过的接口陷阱，务必对齐）：stage 的键必须是 **player 隔离条目的 id**，
-        // 不是 scene.json 的对象 id。player 用「背景层 / 粒子层各自的计数器」给隔离条目编号
-        // （threejs-player 的 nextBackgroundId / nextParticleLayerId，从 0 开始），与对象 id
-        // 完全不是一套编号（全库实测对象 id = 12/13/17/20/…）。若用对象 id 挂链，
-        // `ObjectEffectStage.setObjectChains` 的 `isolatedObjects().find(o => o.id === objId)`
-        // 永远找不到条目 → 每个对象都告警「尚无隔离条目，效果链未挂载（调用顺序错误）」，
-        // 且一条效果链都挂不上（对象级效果整条链路静默失效）。
-        // 对齐方式：loadSceneToThree 按 desc.objects 顺序调用 addBackground/addParticle，
-        // 层 id 就是「第几个被建层的该类对象」，而 result.backgroundIds / result.particleLayers
-        // 正是这个顺序的权威产出。
-        const stageKey = new Map<number, number>(); // scene.json 对象 id → player 隔离条目 id
-        {
-          let bgIndex = 0;
-          let particleIndex = 0;
-          for (const obj of desc.objects) {
-            if (obj.kind === 'image') {
-              // 每个 image 对象都会 addBackground（无条件）→ 层 id = 它是第几个 image 对象。
-              const layerId = result.backgroundIds[bgIndex++];
-              if (layerId !== undefined) stageKey.set(obj.id, layerId);
-            } else if (obj.kind === 'particle') {
-              // 粒子层只在「有 spec + 有模拟器工厂」时才建（loadSceneToThree 的同名门控）；
-              // 未建层的对象不占层号，故这里必须用同一条件推进游标。
-              if (!obj.particle || !particles.get(obj.id) || !createParticleSim) continue;
-              const layer = result.particleLayers[particleIndex++];
-              if (layer) stageKey.set(obj.id, layer.id);
-            }
-          }
-        }
+        // 键空间（本轮根治点）：isolate 表的键、player 隔离条目的 id（isolatedObjects()[].id）、
+        // stage 的键**都是 scene.json 的对象 id**——player 的 attachIsolated 直接用 obj.id 建条目。
+        // 此前这里有一层「对象 id → 图层计数器 id」的翻译（用 result.backgroundIds /
+        // result.particleLayers 的游标复制 loadSceneToThree 的建层条件与顺序）：它脆弱（对侧一改
+        // 建层条件/顺序，测试全绿而效果链静默全失效），且两个图层计数器都从 0 起、同壁纸的隔离
+        // image 与隔离 particle 会撞键。该层已整体删除。
+        //
+        // 挂在「不参与渲染的对象类型」（util 合成层/全屏层、缺粒子 spec/资源的对象）上的效果
+        // 不会得到隔离条目，因而无法挂链——为免它们被**静默丢弃**（诊断上完全不可见），按壁纸
+        // 汇总一条告警（每壁纸一条，不按对象刷屏）。
         let stage: ObjectEffectStage | null = null;
+        let droppedEffects = 0;
+        for (const [objId, chains] of effectChains) {
+          // blendSkipped 的已单独告警（colorBlendMode 冲突），不并入本条汇总。
+          if (isolate.has(objId) || blendSkipped.has(objId)) continue;
+          droppedEffects += chains.length;
+        }
+        if (droppedEffects > 0) {
+          warnOnce(`unrendered-effects:${id}`,
+            `${droppedEffects} 条效果挂在未参与渲染的对象类型上（util/音频），已跳过`);
+        }
         // 有对象被真正隔离才需要编排器：util 对象（models/util/*）带 effects 但不在
         // loadSceneToThree 的渲染范围，永远没有隔离条目 → 挂链必然失败，故不建 stage
         // （stage 为 null 时帧序与今天逐字相同）。
@@ -324,18 +355,16 @@ export function createThreeSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneR
             wavelengthId: id, dpr, budgetWidth: budgetW, budgetHeight: budgetH,
           });
           // 顺序契约：先 setWorldSize（尺寸的唯一来源），再 setObjectChains（后者不覆盖世界尺寸）。
-          // 世界尺寸直接用 isolate 里已算好的世界尺寸（同一份计算的两个消费者），不另存一份映射。
+          // 世界尺寸直接用 isolate 里已算好的世界尺寸（同一份计算的两个消费者），不另存一份映射；
+          // 键一律用对象 id（= isolate 的键 = 隔离条目的 id）。
           for (const [objId, iso] of isolate) {
-            const key = stageKey.get(objId);
-            if (key === undefined) continue;
-            stage.setWorldSize(key, iso.worldW, iso.worldH);
+            stage.setWorldSize(objId, iso.worldW, iso.worldH);
           }
           for (const [objId, chains] of effectChains) {
-            const key = stageKey.get(objId);
-            // 没有隔离条目的对象（util 层等）不挂链：挂也找不到 view，只会产生误导性的
-            // 「调用顺序错误」告警，且画不出内容。
-            if (key === undefined) continue;
-            stage.setObjectChains(key, chains);
+            // 没有隔离条目的对象（util 层、缺粒子资源、blend 冲突跳过的）不挂链：挂也找不到 view，
+            // 只会产生误导性的「调用顺序错误」告警，且画不出内容。
+            if (!isolate.has(objId)) continue;
+            stage.setObjectChains(objId, chains);
           }
           result.player.setObjectEffectStage(stage);
           currentStage = stage;

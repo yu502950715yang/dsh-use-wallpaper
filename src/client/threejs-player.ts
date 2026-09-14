@@ -327,6 +327,7 @@ void main() {
 // 纹理空间**，旋转与位移由合成 quad 承载（spec §2.3 论据 b）。
 // rtWidth/rtHeight/rtTexture 是给效果链编排器的扁平视图（免它通过 rt 再取一层）。
 export interface IsolatedObject {
+  /** 键 = scene.json 的**对象 id**（不是本类图层的计数器 id，见 attachIsolated 注释）。 */
   id: number;
   kind: 'background' | 'particle';
   rt: THREE.WebGLRenderTarget;
@@ -548,6 +549,7 @@ export class ThreeScenePlayer {
 
   // 把某个隔离对象的合成 quad 切到给定的采样纹理（效果链输出；编排器在链未就绪时
   // 不调用本方法，quad 保持采样对象 RT 原图 → 对象正常显示、无效果，不黑屏）。
+  // `id` = 隔离条目的键 = scene.json 的对象 id（编排器从 isolatedObjects()[].id 取用）。
   setObjectOutput(id: number, texture: THREE.Texture): void {
     const entry = this.isolated.get(id);
     if (!entry) return;
@@ -557,7 +559,7 @@ export class ThreeScenePlayer {
   }
 
   // 重设隔离对象的 RT 尺寸（视口/dpr 变化时由编排器调用）：同步局部相机视锥与合成几何的
-  // UV 窗口（几何尺寸不变，只重算窗口映射）。
+  // UV 窗口（几何尺寸不变，只重算窗口映射）。`id` = 隔离条目的键 = scene.json 的对象 id。
   resizeObjectRT(id: number, width: number, height: number): void {
     const entry = this.isolated.get(id);
     if (!entry) return;
@@ -614,11 +616,12 @@ export class ThreeScenePlayer {
     brightness?: number;
     sceneW: number;
     sceneH: number;
-    // 对象隔离（对象级效果链）：四字段把两种量分开——
+    // 对象隔离（对象级效果链）：五字段把三种量分开——
+    //   objectId       = scene.json 的**对象 id**，即本隔离条目的键（见 attachIsolated 注释）；
     //   rtWidth/rtHeight = 对象 RT 的像素尺寸（= 局部相机范围，钳制/预算收口后的值）；
     //   worldW/worldH = 合成 quad 的世界尺寸（= |size × scale|，**未钳制**幅值）。
     // 缺省不隔离（内容直接进主 scene，帧序与今天逐字相同）。
-    isolate?: { rtWidth: number; rtHeight: number; worldW: number; worldH: number };
+    isolate?: { objectId: number; rtWidth: number; rtHeight: number; worldW: number; worldH: number };
   }): number {
     const sceneW = opts.sceneW;
     const sceneH = opts.sceneH;
@@ -643,12 +646,13 @@ export class ThreeScenePlayer {
     // we_to_three：origin - scene/2（y 不翻）。
     mesh.position.set(opts.origin[0] - sceneW / 2, opts.origin[1] - sceneH / 2, opts.origin[2]);
 
-    // id 必须在隔离分支**之前**分配：隔离条目按 id 建索引。
+    // 图层 id（本方法返回值 = backgroundEntries 的键）由本类计数器分配；隔离条目的键是
+    // **scene.json 的对象 id**（`opts.isolate.objectId`），两套编号互不相干（见 attachIsolated）。
     const id = this.nextBackgroundId++;
     // 对象世界尺寸（未钳制幅值）：隔离路径下用于合成 quad 的几何尺寸（缩放已并入几何，
     // quad 自身 scale 恒为 1）；非隔离路径下仅用于记录，行为不变。
-    // 优先用调用方传入的 worldW/worldH（isolate 的四字段形状把「RT 像素」与「世界尺寸」
-    // 分开），缺省回退内部计算 = |size × scale|。
+    // 优先用调用方传入的 worldW/worldH（isolate 的形状把「RT 像素」与「世界尺寸」分开），
+    // 缺省回退内部计算 = |size × scale|。
     const worldW = opts.isolate?.worldW ?? Math.abs(w * s[0]);
     const worldH = opts.isolate?.worldH ?? Math.abs(h * s[1]);
 
@@ -658,7 +662,8 @@ export class ThreeScenePlayer {
       mesh.rotation.set(0, 0, 0);
       // 背景的 RT 内容不含旋转 → 旋转由合成 quad 承载（见 attachIsolated 的旋转分工注释）；
       // colorBlendMode 落在「贴回画面」这一步。
-      this.attachIsolated(id, 'background', mesh, worldW, worldH, {
+      // 键 = scene.json 的对象 id（调用方传入），**不是**下面的 nextBackgroundId 图层计数器 id。
+      this.attachIsolated(opts.isolate.objectId, 'background', mesh, worldW, worldH, {
         width: opts.isolate.rtWidth,
         height: opts.isolate.rtHeight,
       }, {
@@ -762,12 +767,19 @@ export class ThreeScenePlayer {
   // createCompositeGeometry（世界尺寸含缩放、UV 按钳制窗口映射），position 承载对象在世界中
   // 的位置。
   //
+  // ⚠️ 第一个参数是 **scene.json 的对象 id**（键），不是本类的图层计数器 id：背景层与粒子层
+  // 各有一个从 0 起的独立计数器（nextBackgroundId / nextParticleLayerId），若拿它们当隔离条目的
+  // 键，同一壁纸同时有隔离 image 与隔离 particle 时两边都从 0 开始 → 后建的粒子条目**覆盖**先建的
+  // 背景条目（背景的 quad 从此采样一张永不被渲染的 RT，且 stageKey 把两个对象映到同一个键）→
+  // 静默画错。用对象 id 作键则与「isolate 表 / ObjectEffectStage / wasm PendingChainStore」
+  // 共用同一把键（全库实测对象 id = 12/13/17/20/…，两套计数器无法表达）。
+  //
   // ⚠️ 旋转的分工**不可「统一」**：quadAngles 由调用方按「RT 内容是否已含旋转」决定——
   //   - 背景：内容 mesh 的 rotation 已归零（RT 内容**不含**旋转）→ quad 承载对象 angles；
   //   - 粒子：内容 shader 里已施加 objAngles（RT 内容**已含**旋转）→ quadAngles 传 [0,0,0]，
   //     否则同一份旋转被施加两次。
   private attachIsolated(
-    id: number,
+    objectId: number,
     kind: 'background' | 'particle',
     content: THREE.Object3D,
     worldW: number,
@@ -795,8 +807,9 @@ export class ThreeScenePlayer {
     // renderOrder 与对象原语义一致（背景 0 / 粒子 1），保证合成顺序不变。
     quad.renderOrder = kind === 'particle' ? 1 : 0;
     this.scene.add(quad);
-    this.isolated.set(id, {
-      id, kind, rt, rtWidth: rtW, rtHeight: rtH, rtTexture: rt.texture,
+    // 键 = scene.json 的对象 id（调用方传入），不是本类自己的图层计数器 id——见本方法头注释。
+    this.isolated.set(objectId, {
+      id: objectId, kind, rt, rtWidth: rtW, rtHeight: rtH, rtTexture: rt.texture,
       localScene, localCamera, quad, worldW, worldH,
     });
   }
@@ -877,12 +890,13 @@ export class ThreeScenePlayer {
       // 实例缓冲容量上界（= sim 的 maxcount / spec 的 maxcount；见 ParticleLayer.capacity 注释）。
       // 缺省 DEFAULT_PARTICLE_CAPACITY。
       maxInstances?: number;
-      // 对象隔离（对象级效果链；粒子对象同样可挂效果链）。四字段语义同 addBackground：
+      // 对象隔离（对象级效果链；粒子对象同样可挂效果链）。五字段语义同 addBackground：
+      //   objectId       = scene.json 的**对象 id**，即隔离条目的键；
       //   rtWidth/rtHeight = 对象 RT 像素尺寸（= particleObjectRange 的钳制收口值）；
       //   worldW/worldH = 合成 quad 世界尺寸（= particleWorldSize 的**未钳制**值）。
       // 粒子 spec 无 size 字段、player 也不知道 distanceMax，故世界尺寸必须由调用方算好传入。
       // 缺省不隔离（内容直接进主 scene，帧序与今天逐字相同）。
-      isolate?: { rtWidth: number; rtHeight: number; worldW: number; worldH: number };
+      isolate?: { objectId: number; rtWidth: number; rtHeight: number; worldW: number; worldH: number };
     },
   ): number {
     const frameCount = Math.max(1, Math.floor(opts.frameCount));
@@ -1003,6 +1017,8 @@ export class ThreeScenePlayer {
       this.scene.add(mesh);
     }
 
+    // 图层 id（本方法返回值 = particleLayers 的键）由本类计数器分配；隔离条目的键是
+    // **scene.json 的对象 id**（`opts.isolate.objectId`），两套编号互不相干（见 attachIsolated）。
     const id = this.nextParticleLayerId++;
     const layer: ParticleLayer = {
       id,
@@ -1030,7 +1046,8 @@ export class ThreeScenePlayer {
       // quadAngles 传 [0,0,0]：RT 内容已含 R(angles)（见上面的负中心平移注释），quad 再转一次
       // 就是双重旋转；背景路径相反（内容不旋转，旋转由 quad 承载）。
       // colorBlendMode 传 0：粒子走普通 alpha 混合。
-      this.attachIsolated(id, 'particle', mesh, opts.isolate.worldW, opts.isolate.worldH,
+      // 键 = scene.json 的对象 id（调用方传入），不是上面的 nextParticleLayerId 图层计数器 id。
+      this.attachIsolated(opts.isolate.objectId, 'particle', mesh, opts.isolate.worldW, opts.isolate.worldH,
         { width: opts.isolate.rtWidth, height: opts.isolate.rtHeight },
         { x: center[0], y: center[1], z: center[2] }, [0, 0, 0], 0);
     }
@@ -1225,13 +1242,16 @@ export interface SceneAssets {
   particles?: Map<number, LoadedParticleAssets>;
   // 粒子模拟器构造器（wasm CpuParticleSim 的包装；测试注入 mock）。
   createParticleSim?: ParticleSimFactory;
-  // 对象隔离请求（对象级效果链）：scene.json 的**对象 id** → 四字段隔离条件。
+  // 对象隔离请求（对象级效果链）：scene.json 的**对象 id** → 隔离条件。
   //   调用方（three-renderer）只为「带效果的对象」下发本表；未列入的对象不隔离
   //   （内容直接进主 scene，帧序与今天逐字相同）。
-  //   四字段把两种量分开（见 addBackground/addParticle 的 isolate 注释）：
+  //   ⚠️ 值的 `objectId` 就是本表的键（同一个 obj.id 写两次）：player 用它作**隔离条目的键**
+  //   （见 attachIsolated），从而与 ObjectEffectStage / wasm PendingChainStore 共用同一把键，
+  //   不再需要「对象 id → 图层计数器 id」的翻译层（那层在 image+particle 同时隔离时会键冲突）。
+  //   其余字段把两种量分开（见 addBackground/addParticle 的 isolate 注释）：
   //   rtWidth/rtHeight = 对象 RT 的像素尺寸（已按 dpr 放大并收口到画布预算）；
   //   worldW/worldH = 合成 quad 的世界尺寸（未钳制幅值）。
-  isolate?: Map<number, { rtWidth: number; rtHeight: number; worldW: number; worldH: number }>;
+  isolate?: Map<number, { objectId: number; rtWidth: number; rtHeight: number; worldW: number; worldH: number }>;
 }
 
 // `loadSceneToThree` 返回：播放器 + 已装配的模拟器/图层 id（供调用方驱动/释放/校验）。
@@ -1349,7 +1369,8 @@ export function loadSceneToThree(
         sceneW,
         sceneH,
         // 对象级效果链：本对象带效果（调用方下发了隔离条件）→ 内容进 localScene 渲染到对象 RT，
-        // 主场景放合成 quad；缺省不隔离，行为与今天逐字相同。
+        // 主场景放合成 quad；缺省不隔离，行为与今天逐字相同。隔离条目的键 = obj.id（值里的
+        // objectId 同值），与 ObjectEffectStage 的键空间一致。
         isolate: assets.isolate?.get(obj.id),
       });
       backgroundIds.push(id);
@@ -1390,6 +1411,7 @@ export function loadSceneToThree(
         maxInstances: specMaxcount(p.specJson),
         // 对象级效果链：带效果的粒子对象同样隔离（对象 RT + 合成 quad）。世界尺寸由调用方按
         // `particleWorldSize(spec, scale)` 算好（player 不知道 spec 的 distanceMax）；缺省不隔离。
+        // 隔离条目的键 = obj.id（值里的 objectId 同值），与 ObjectEffectStage 的键空间一致。
         isolate: assets.isolate?.get(obj.id),
       });
       particleLayers.push({ id, sim });

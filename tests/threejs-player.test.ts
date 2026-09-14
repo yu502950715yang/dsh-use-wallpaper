@@ -1101,13 +1101,18 @@ describe('ThreeScenePlayer 对象隔离', () => {
     const id = player.addBackground({
       origin: [960, 540, 0], size: [400, 200], scale: [2, 2, 1], angles: [0, 0, 0.5],
       texture: makeTexture(), sceneW: 1920, sceneH: 1080,
-      // isolate 四字段：rtWidth/rtHeight = 对象 RT 像素尺寸；worldW/worldH = 合成 quad 的世界尺寸。
-      isolate: { rtWidth: 400, rtHeight: 200, worldW: 800, worldH: 400 },
+      // isolate 五字段：objectId = 隔离条目的键（= scene.json 对象 id，与 addBackground 返回的
+      // 图层计数器 id 不是一套编号）；rtWidth/rtHeight = 对象 RT 像素尺寸；
+      // worldW/worldH = 合成 quad 的世界尺寸。
+      isolate: { objectId: 42, rtWidth: 400, rtHeight: 200, worldW: 800, worldH: 400 },
     });
+    // 返回值语义未变：仍是图层计数器 id（backgroundEntries 的键），首个背景层 = 0。
+    expect(id).toBe(0);
     const iso = player.isolatedObjects();
     expect(iso).toHaveLength(1);
     const entry = iso[0];
-    expect(entry.id).toBe(id);
+    // 隔离条目的 id = isolate.objectId（对象 id 42），**不是**图层 id 0。
+    expect(entry.id).toBe(42);
     expect(entry.kind).toBe('background');
     expect(entry.rt.width).toBe(400);
     expect(entry.rt.height).toBe(200);
@@ -1140,12 +1145,12 @@ describe('ThreeScenePlayer 对象隔离', () => {
 
   it('隔离：内容材质保留调制（烘进 RT），合成 quad 调制中性（不二次施加）', () => {
     const { player } = makePlayer();
-    const id = player.addBackground({
+    player.addBackground({
       origin: [0, 0, 0], size: [10, 10], scale: [1, 1, 1], texture: makeTexture(),
       alpha: 0.5, brightness: 0.8,
-      sceneW: 100, sceneH: 100, isolate: { rtWidth: 10, rtHeight: 10, worldW: 10, worldH: 10 },
+      sceneW: 100, sceneH: 100, isolate: { objectId: 7, rtWidth: 10, rtHeight: 10, worldW: 10, worldH: 10 },
     });
-    const entry = player.isolatedObjects().find((e) => e.id === id)!;
+    const entry = player.isolatedObjects().find((e) => e.id === 7)!;
     const content = entry.localScene.children[0] as THREE.Mesh;
     const contentMat = content.material as THREE.MeshBasicMaterial;
     // 内容材质继续带调制：调制必须烘进 RT（内容渲染时施加一次）。
@@ -1173,9 +1178,12 @@ describe('ThreeScenePlayer 对象隔离', () => {
     const id = player.addParticle(verts, {
       frameCount: 1, blend: 'alpha',
       objectCenter: [100, 50, 0], objectScale: [1, 1, 1], objectAngles: [0, 0, 0.3],
-      isolate: { rtWidth: 64, rtHeight: 64, worldW: 64, worldH: 64 },
+      isolate: { objectId: 71, rtWidth: 64, rtHeight: 64, worldW: 64, worldH: 64 },
     });
-    const entry = player.isolatedObjects().find((e) => e.id === id)!;
+    // 返回值 = 粒子图层计数器 id（particleLayers 的键）= 0；隔离条目的键是对象 id 71
+    // ——两个独立计数器各自从 0 起，正是必须用对象 id 作隔离键的原因。
+    expect(id).toBe(0);
+    const entry = player.isolatedObjects().find((e) => e.id === 71)!;
     expect(entry.kind).toBe('particle');
     const content = entry.localScene.children[0] as THREE.Mesh;
     const mat = content.material as THREE.ShaderMaterial;
@@ -1202,22 +1210,52 @@ describe('ThreeScenePlayer 对象隔离', () => {
     expect([quadMat.color.r, quadMat.color.g, quadMat.color.b]).toEqual([1, 1, 1]);
   });
 
+  // 键冲突回归（审查 Important 2）：背景层与粒子层各有一个**从 0 起的独立计数器**；旧实现把隔离
+  // 条目按这两个计数器编号 → 同一壁纸「既有带效果 image 又有带效果 particle」时，后建的粒子条目
+  // 会**覆盖**先建的背景条目（背景的 quad 从此采样一张永不被渲染的 RT，且两个对象映到同一个键）。
+  // 改用对象 id 作键后两条目共存。
+  it('隔离键 = 对象 id：带效果 image 与 particle 同时隔离时两条目共存（不互相覆盖）', () => {
+    const { player } = makePlayer();
+    const bgId = player.addBackground({
+      origin: [0, 0, 0], size: [10, 10], scale: [1, 1, 1], texture: makeTexture(),
+      sceneW: 100, sceneH: 100, isolate: { objectId: 13, rtWidth: 10, rtHeight: 10, worldW: 10, worldH: 10 },
+    });
+    const verts = () => new Float32Array([0, 0, 0, 10, 0, 0, 1, 1, 1, 1]);
+    const particleId = player.addParticle(verts, {
+      frameCount: 1, blend: 'alpha', objectCenter: [0, 0, 0],
+      isolate: { objectId: 71, rtWidth: 8, rtHeight: 8, worldW: 8, worldH: 8 },
+    });
+    // 两个图层计数器各自从 0 起（互不相干）→ 旧实现下两个隔离条目会撞在同一个键上。
+    expect([bgId, particleId]).toEqual([0, 0]);
+    expect(player.isolatedObjects().map((e) => e.id).sort((a, b) => a - b)).toEqual([13, 71]);
+    // 背景条目仍是自己的 RT（未被粒子条目覆盖）。
+    const bgEntry = player.isolatedObjects().find((e) => e.id === 13)!;
+    expect(bgEntry.kind).toBe('background');
+    expect(bgEntry.rt.width).toBe(10);
+    expect(bgEntry.rt.height).toBe(10);
+    const particleEntry = player.isolatedObjects().find((e) => e.id === 71)!;
+    expect(particleEntry.kind).toBe('particle');
+    expect(particleEntry.rt.width).toBe(8);
+  });
+
   it('setObjectOutput 切换合成 quad 的采样源（MeshBasicMaterial 与 ShaderMaterial 两条路径）', () => {
     const { player } = makePlayer();
     const texA = makeTexture();
     const texB = makeTexture();
     const idBasic = player.addBackground({
       origin: [0, 0, 0], size: [10, 10], scale: [1, 1, 1], texture: texA,
-      sceneW: 100, sceneH: 100, isolate: { rtWidth: 10, rtHeight: 10, worldW: 10, worldH: 10 },
+      sceneW: 100, sceneH: 100, isolate: { objectId: 101, rtWidth: 10, rtHeight: 10, worldW: 10, worldH: 10 },
     });
     const idBlend = player.addBackground({
       origin: [0, 0, 0], size: [10, 10], scale: [1, 1, 1], texture: texA, colorBlendMode: 7,
-      sceneW: 100, sceneH: 100, isolate: { rtWidth: 10, rtHeight: 10, worldW: 10, worldH: 10 },
+      sceneW: 100, sceneH: 100, isolate: { objectId: 102, rtWidth: 10, rtHeight: 10, worldW: 10, worldH: 10 },
     });
-    player.setObjectOutput(idBasic, texB);
-    player.setObjectOutput(idBlend, texB);
-    const entryBasic = player.isolatedObjects().find((e) => e.id === idBasic)!;
-    const entryBlend = player.isolatedObjects().find((e) => e.id === idBlend)!;
+    // 切换采样源用**隔离条目的键**（对象 id），不是 addBackground 的返回值（图层 id 0/1）。
+    expect([idBasic, idBlend]).toEqual([0, 1]);
+    player.setObjectOutput(101, texB);
+    player.setObjectOutput(102, texB);
+    const entryBasic = player.isolatedObjects().find((e) => e.id === 101)!;
+    const entryBlend = player.isolatedObjects().find((e) => e.id === 102)!;
     const basic = entryBasic.quad.material as THREE.MeshBasicMaterial;
     const blend = entryBlend.quad.material as THREE.ShaderMaterial;
     expect(basic.map).toBe(texB);
@@ -1241,7 +1279,7 @@ describe('ThreeScenePlayer 对象隔离', () => {
       .mockImplementation((s: unknown) => { order.push(s === player.scene ? 'main' : 'isolated'); });
     player.addBackground({
       origin: [0, 0, 0], size: [10, 10], scale: [1, 1, 1], texture: makeTexture(),
-      sceneW: 100, sceneH: 100, isolate: { rtWidth: 10, rtHeight: 10, worldW: 10, worldH: 10 },
+      sceneW: 100, sceneH: 100, isolate: { objectId: 55, rtWidth: 10, rtHeight: 10, worldW: 10, worldH: 10 },
     });
     player.setObjectEffectStage({
       bindOutputs: () => order.push('bind'),
@@ -1262,11 +1300,13 @@ describe('ThreeScenePlayer 对象隔离', () => {
     const { player } = makePlayer();
     const id = player.addBackground({
       origin: [0, 0, 0], size: [10, 10], scale: [1, 1, 1], texture: makeTexture(),
-      sceneW: 100, sceneH: 100, isolate: { rtWidth: 10, rtHeight: 10, worldW: 10, worldH: 10 },
+      sceneW: 100, sceneH: 100, isolate: { objectId: 88, rtWidth: 10, rtHeight: 10, worldW: 10, worldH: 10 },
     });
     const entry = player.isolatedObjects()[0];
     const oldGeo = entry.quad.geometry;
-    player.resizeObjectRT(id, 40, 20);
+    // 返回值 = 图层计数器 id（0）；重设 RT 用**隔离条目的键**（对象 id 88）。
+    expect(id).toBe(0);
+    player.resizeObjectRT(88, 40, 20);
     expect(entry.rt.width).toBe(40);
     expect(entry.rt.height).toBe(20);
     expect(entry.localCamera.left).toBe(-20);
@@ -1278,7 +1318,7 @@ describe('ThreeScenePlayer 对象隔离', () => {
     const { player } = makePlayer();
     player.addBackground({
       origin: [0, 0, 0], size: [10, 10], scale: [1, 1, 1], texture: makeTexture(),
-      sceneW: 100, sceneH: 100, isolate: { rtWidth: 10, rtHeight: 10, worldW: 10, worldH: 10 },
+      sceneW: 100, sceneH: 100, isolate: { objectId: 12, rtWidth: 10, rtHeight: 10, worldW: 10, worldH: 10 },
     });
     const entry = player.isolatedObjects()[0];
     const rtDispose = vi.spyOn(entry.rt, 'dispose');
