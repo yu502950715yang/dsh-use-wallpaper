@@ -58,8 +58,12 @@ export function resolveObjectRtSize(
   budgetH: number,
 ): { width: number; height: number } {
   const scale = Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
-  const rawW = Math.max(0, Math.abs(worldW)) * scale;
-  const rawH = Math.max(0, Math.abs(worldH)) * scale;
+  // 非有限输入（NaN / ±Infinity）按 0 处理：`Math.max(0, Math.abs(NaN))` 仍是 NaN，会一路传到
+  // `new THREE.WebGLRenderTarget(NaN, NaN)`（非法 GL 尺寸，建不出 RT）。收口成 0 后由下面的
+  // 下限逻辑归一到 1×1，与「0/负 输入 → 逐轴下限 1」的既有语义一致。
+  const abs = (v: number): number => (Number.isFinite(v) ? Math.abs(v) : 0);
+  const rawW = Math.max(0, abs(worldW)) * scale;
+  const rawH = Math.max(0, abs(worldH)) * scale;
   const capW = Math.max(1, Math.min(OBJECT_RT_MAX, Math.floor(budgetW) || OBJECT_RT_MAX));
   const capH = Math.max(1, Math.min(OBJECT_RT_MAX, Math.floor(budgetH) || OBJECT_RT_MAX));
   // 两轴共用同一比例（等比）；rawW/rawH 为 0 时该轴的比例不参与（避免除零与 0×0）
@@ -129,9 +133,9 @@ export class ObjectEffectStage implements ObjectEffectStage {
 
   constructor(
     private readonly host: ObjectEffectHost,
-    opts: { wavelengthId: string; dpr: number; budgetWidth: number; budgetHeight: number },
+    opts: { wallpaperId: string; dpr: number; budgetWidth: number; budgetHeight: number },
   ) {
-    this.wallpaperId = opts.wavelengthId;
+    this.wallpaperId = opts.wallpaperId;
     this.dpr = opts.dpr > 0 ? opts.dpr : 1;
     this.budgetWidth = opts.budgetWidth;
     this.budgetHeight = opts.budgetHeight;

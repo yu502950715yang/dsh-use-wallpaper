@@ -21838,6 +21838,17 @@ function fillAudioSpectrumUniform(dest, src) {
     dest[i] = i < src.length ? src[i] / 255 : 0;
   }
 }
+function describeEffectPass(pass, key, wallpaperId) {
+  const bits = [`pass ${key}`];
+  if (wallpaperId) bits.push(`\u58C1\u7EB8 ${wallpaperId}`);
+  if (pass.target) bits.push(`target=${pass.target}`);
+  const slots = pass.textureSlots.filter((s) => !!s);
+  if (slots.length > 0) bits.push(`\u7EB9\u7406\u69FD=[${slots.join(", ")}]`);
+  if (pass.blendMode && pass.blendMode !== "normal") bits.push(`blend=${pass.blendMode}`);
+  const head = (pass.rawFrag ?? "").split("\n").map((l) => l.trim()).find((l) => l && !l.startsWith("//") && !l.startsWith("/*") && !l.startsWith("*"));
+  if (head) bits.push(`\u7247\u5143\u9996\u884C=${head.length > 60 ? head.slice(0, 60) + "\u2026" : head}`);
+  return bits.join("\uFF0C");
+}
 var EffectRunner = class {
   renderer;
   rtA;
@@ -21852,6 +21863,11 @@ var EffectRunner = class {
   // 每 pass 独立场景（含全屏 quad）
   textures = /* @__PURE__ */ new Map();
   // 纹理槽缓存（key: `${id}:${path}`）
+  // 编译失败的 pass（key = 链内下标）：探针渲染一旦确认失败就缓存，后续帧直接返回 null 跳过，
+  // 不再「每帧重建材质 + 1×1 探针渲染 + 重复告警」（实测一个坏 pass 每帧 2 条 warning 刷屏）。
+  // 失败本来就是跳过该 pass（update 里 `continue`），故缓存**不改变执行语义**；setChains
+  // （换壁纸 / 重挂链 / resize 重挂）时清空，链变了要重新尝试编译。
+  failed = /* @__PURE__ */ new Set();
   width;
   height;
   // update 串行化：帧循环每帧调用 update，但内部有异步纹理槽加载（await），
@@ -21873,6 +21889,7 @@ var EffectRunner = class {
     this.chains = chains;
     this.id = wallpaperId;
     this.last = null;
+    this.failed.clear();
     const size = resolveTargetSize({ width: this.width, height: this.height }, opts);
     this.ensureTargets(size.width, size.height);
     this.disposeMaterials();
@@ -21905,6 +21922,7 @@ var EffectRunner = class {
     this.materials.clear();
   }
   getMaterial(pass, key) {
+    if (this.failed.has(key)) return null;
     const cached = this.materials.get(key);
     if (cached) return cached;
     let material = null;
@@ -21950,16 +21968,13 @@ var EffectRunner = class {
         blending: blendModeToThree(pass.blendMode)
       });
       let compileFailed = false;
+      let vertLog = "";
+      let fragLog = "";
       const prevHandler = this.renderer.debug.onShaderError;
       this.renderer.debug.onShaderError = (gl, program, vs, fs) => {
         compileFailed = true;
-        const vsInfo = (gl.getShaderInfoLog(vs) || "").trim();
-        const fsInfo = (gl.getShaderInfoLog(fs) || "").trim();
-        console.warn(
-          `[wallpaper-engine] \u6548\u679C pass ${key} shader \u7F16\u8BD1\u5931\u8D25`,
-          vsInfo ? { vertex: vsInfo } : {},
-          fsInfo ? { fragment: fsInfo } : {}
-        );
+        vertLog = (gl.getShaderInfoLog(vs) || "").trim();
+        fragLog = (gl.getShaderInfoLog(fs) || "").trim();
       };
       const probeRT = new WebGLRenderTarget(1, 1);
       try {
@@ -21971,7 +21986,12 @@ var EffectRunner = class {
         probeRT.dispose();
       }
       if (compileFailed) {
-        console.warn("[wallpaper-engine] \u6548\u679C pass \u7F16\u8BD1\u5931\u8D25\uFF0C\u8DF3\u8FC7:", key);
+        this.failed.add(key);
+        console.warn(
+          `[wallpaper-engine] \u6548\u679C pass \u7F16\u8BD1\u5931\u8D25\uFF0C\u8DF3\u8FC7: ${describeEffectPass(pass, key, this.id)}` + (vertLog ? `
+  vertex: ${vertLog}` : "") + (fragLog ? `
+  fragment: ${fragLog}` : "")
+        );
         material.dispose();
         this.disposeSceneQuads(key);
         return null;
@@ -23883,8 +23903,9 @@ function isLinearEffectChain(passes) {
 }
 function resolveObjectRtSize(worldW, worldH, dpr, budgetW, budgetH) {
   const scale = Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
-  const rawW = Math.max(0, Math.abs(worldW)) * scale;
-  const rawH = Math.max(0, Math.abs(worldH)) * scale;
+  const abs = (v) => Number.isFinite(v) ? Math.abs(v) : 0;
+  const rawW = Math.max(0, abs(worldW)) * scale;
+  const rawH = Math.max(0, abs(worldH)) * scale;
   const capW = Math.max(1, Math.min(OBJECT_RT_MAX, Math.floor(budgetW) || OBJECT_RT_MAX));
   const capH = Math.max(1, Math.min(OBJECT_RT_MAX, Math.floor(budgetH) || OBJECT_RT_MAX));
   const ratios = [1];
@@ -23898,7 +23919,7 @@ function resolveObjectRtSize(worldW, worldH, dpr, budgetW, budgetH) {
 var ObjectEffectStage = class {
   constructor(host, opts) {
     this.host = host;
-    this.wallpaperId = opts.wavelengthId;
+    this.wallpaperId = opts.wallpaperId;
     this.dpr = opts.dpr > 0 ? opts.dpr : 1;
     this.budgetWidth = opts.budgetWidth;
     this.budgetHeight = opts.budgetHeight;
@@ -24206,17 +24227,34 @@ function createThreeSceneRenderer(opts) {
         const budgetH = Math.floor(vh * dpr);
         const isolate = /* @__PURE__ */ new Map();
         const blendSkipped = /* @__PURE__ */ new Set();
+        const rtGraphOnly = /* @__PURE__ */ new Set();
         for (const obj of desc.objects) {
-          if (!effectChains.has(obj.id)) continue;
-          if (obj.kind === "image") {
-            if (typeof obj.colorBlendMode === "number" && BLEND_ISOLATION_UNSAFE.has(obj.colorBlendMode)) {
-              warnOnce2(
-                `blend-isolation:${obj.id}`,
-                `\u5BF9\u8C61 ${obj.id} \u7684 colorBlendMode=${obj.colorBlendMode} \u4E0E\u5BF9\u8C61\u7EA7 RT \u7684 alpha \u8BED\u4E49\u51B2\u7A81\uFF0C\u8DF3\u8FC7\u5176\u6548\u679C\u94FE\uFF08\u5BF9\u8C61\u4FDD\u6301\u53EF\u89C1\uFF09`
-              );
-              blendSkipped.add(obj.id);
-              continue;
+          const chains = effectChains.get(obj.id);
+          if (!chains || chains.length === 0) continue;
+          if (obj.kind === "image" && typeof obj.colorBlendMode === "number" && BLEND_ISOLATION_UNSAFE.has(obj.colorBlendMode)) {
+            warnOnce2(
+              `blend-isolation:${obj.id}`,
+              `\u5BF9\u8C61 ${obj.id} \u7684 colorBlendMode=${obj.colorBlendMode} \u4E0E\u5BF9\u8C61\u7EA7 RT \u7684 alpha \u8BED\u4E49\u51B2\u7A81\uFF0C\u8DF3\u8FC7\u5176\u6548\u679C\u94FE\uFF08\u5BF9\u8C61\u4FDD\u6301\u53EF\u89C1\uFF09`
+            );
+            blendSkipped.add(obj.id);
+            continue;
+          }
+          const usable = chains.some((one) => isLinearEffectChain(one));
+          if (!usable) {
+            if (obj.kind === "image" || obj.kind === "particle" && particles.has(obj.id)) {
+              rtGraphOnly.add(obj.id);
+              for (const one of chains) {
+                if (isLinearEffectChain(one)) continue;
+                const label = one.find((p) => p.target)?.target ?? one.find((p) => p.bind.length > 0)?.bind[0]?.name ?? "(\u5177\u540D RT)";
+                warnOnce2(
+                  `rt-graph:${label}`,
+                  `\u6548\u679C\u9700\u8981\u5177\u540D RT\uFF08P2 \u672A\u5B9E\u73B0\uFF09\uFF0C\u8DF3\u8FC7: ${label}\uFF08\u5BF9\u8C61 ${obj.id} \u7684\u94FE\u5168\u4E3A\u5177\u540D RT \u56FE\u94FE\uFF0C\u4E0D\u518D\u9694\u79BB\uFF09`
+                );
+              }
             }
+            continue;
+          }
+          if (obj.kind === "image") {
             const tex = backgroundTextures.get(obj.id);
             const texW = tex?.image?.width ?? obj.size?.[0] ?? 1;
             const texH = tex?.image?.height ?? obj.size?.[1] ?? 1;
@@ -24260,7 +24298,7 @@ function createThreeSceneRenderer(opts) {
         let stage = null;
         let droppedEffects = 0;
         for (const [objId, chains] of effectChains) {
-          if (isolate.has(objId) || blendSkipped.has(objId)) continue;
+          if (isolate.has(objId) || blendSkipped.has(objId) || rtGraphOnly.has(objId)) continue;
           droppedEffects += chains.length;
         }
         if (droppedEffects > 0) {
@@ -24271,7 +24309,7 @@ function createThreeSceneRenderer(opts) {
         }
         if (isolate.size > 0) {
           stage = new ObjectEffectStage(result.player, {
-            wavelengthId: id,
+            wallpaperId: id,
             dpr,
             budgetWidth: budgetW,
             budgetHeight: budgetH

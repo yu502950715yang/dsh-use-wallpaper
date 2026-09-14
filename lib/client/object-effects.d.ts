@@ -38,7 +38,7 @@ export declare class ObjectEffectStage implements ObjectEffectStage {
     /** 去重告警集合（`warnSkip` 之外的通用去重，按 key 只打印一次，防每帧刷屏）。 */
     private warned;
     constructor(host: ObjectEffectHost, opts: {
-        wavelengthId: string;
+        wallpaperId: string;
         dpr: number;
         budgetWidth: number;
         budgetHeight: number;

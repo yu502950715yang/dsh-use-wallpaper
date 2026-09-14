@@ -19,6 +19,7 @@ export declare function resolveTextureResolution(tex: {
     } | null;
 } | null | undefined, fallbackW: number, fallbackH: number): EffectTargetSize;
 export declare function fillAudioSpectrumUniform(dest: number[], src: Uint8Array): void;
+export declare function describeEffectPass(pass: CompiledEffectPass, key: string, wallpaperId: string): string;
 export declare class EffectRunner {
     private renderer;
     private rtA;
@@ -29,6 +30,7 @@ export declare class EffectRunner {
     private materials;
     private scenes;
     private textures;
+    private failed;
     private width;
     private height;
     private updateInFlight;

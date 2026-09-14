@@ -71,6 +71,15 @@ describe('resolveObjectRtSize', () => {
     // 8192×4608 @dpr1 预算 4096×4096：s = min(4096/8192, 4096/4608) = 0.5 → 4096×2304（非 4096×4096）
     expect(resolveObjectRtSize(8192, 4608, 1, 4096, 4096)).toEqual({ width: 4096, height: 2304 });
   });
+  it('非有限输入（NaN / Infinity）不产生 NaN 尺寸（否则会 new WebGLRenderTarget(NaN, NaN)）', () => {
+    // Math.abs(NaN) = NaN → max(0, NaN) = NaN → round 后仍是 NaN → 非法 GL 尺寸（建不出 RT）。
+    // 非有限值按 0 处理，再由逐轴下限归一到 1（与 0/负 输入同语义）。
+    expect(resolveObjectRtSize(NaN, 100, 1, 1920, 1080)).toEqual({ width: 1, height: 100 });
+    expect(resolveObjectRtSize(NaN, NaN, 1, 1920, 1080)).toEqual({ width: 1, height: 1 });
+    const inf = resolveObjectRtSize(Infinity, 100, 1, 1920, 1080);
+    expect(Number.isFinite(inf.width) && Number.isFinite(inf.height)).toBe(true);
+    expect(inf).toEqual({ width: 1, height: 100 });
+  });
 });
 
 // ── 全库回归：链分类的实测数字钉住（spec §2.1） ──
@@ -208,7 +217,7 @@ describe('ObjectEffectStage', () => {
   it('setObjectChains 为线性链创建 runner，并把对象 chains 展平后交给它', () => {
     const host = createHost([{ id: 1, rtWidth: 100, rtHeight: 50 }]);
     const stage = new ObjectEffectStage(host as never, {
-      wavelengthId: 'w', dpr: 1, budgetWidth: 1920, budgetHeight: 1080,
+      wallpaperId: 'w', dpr: 1, budgetWidth: 1920, budgetHeight: 1080,
     });
     const chains = [[pass()], [pass()]];
     stage.setObjectChains(1, chains);
@@ -226,7 +235,7 @@ describe('ObjectEffectStage', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const host = createHost([{ id: 1, rtWidth: 100, rtHeight: 50 }]);
     const stage = new ObjectEffectStage(host as never, {
-      wavelengthId: 'w', dpr: 1, budgetWidth: 1920, budgetHeight: 1080,
+      wallpaperId: 'w', dpr: 1, budgetWidth: 1920, budgetHeight: 1080,
     });
     stage.setObjectChains(1, [[pass({ target: '_rt_a' })]]);
     stage.setObjectChains(1, [[pass({ target: '_rt_a' })]]);
@@ -240,7 +249,7 @@ describe('ObjectEffectStage', () => {
   it('RT 图链的对象不建 runner，bindOutputs 不调用 setObjectOutput（quad 保持对象 RT 原图）', () => {
     const host = createHost([{ id: 1, rtWidth: 10, rtHeight: 10 }]);
     const stage = new ObjectEffectStage(host as never, {
-      wavelengthId: 'w', dpr: 1, budgetWidth: 1920, budgetHeight: 1080,
+      wallpaperId: 'w', dpr: 1, budgetWidth: 1920, budgetHeight: 1080,
     });
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     // 必须是真的具名 RT 形状（`bind: [{ name: 'previous', index: 0 }]` 按本文件既有断言是
@@ -257,7 +266,7 @@ describe('ObjectEffectStage', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const host = createHost([]); // 隔离条目尚未出现＝调用顺序契约被破坏
     const stage = new ObjectEffectStage(host as never, {
-      wavelengthId: 'w', dpr: 1, budgetWidth: 1920, budgetHeight: 1080,
+      wallpaperId: 'w', dpr: 1, budgetWidth: 1920, budgetHeight: 1080,
     });
     stage.setObjectChains(7, [[pass()]]);
     stage.setObjectChains(7, [[pass()]]);
@@ -272,7 +281,7 @@ describe('ObjectEffectStage', () => {
   it('bindOutputs：链未就绪（lastOutput 为 null）→ 不切输出；就绪 → 切到效果输出', () => {
     const host = createHost([{ id: 1, rtWidth: 10, rtHeight: 10 }]);
     const stage = new ObjectEffectStage(host as never, {
-      wavelengthId: 'w', dpr: 1, budgetWidth: 1920, budgetHeight: 1080,
+      wallpaperId: 'w', dpr: 1, budgetWidth: 1920, budgetHeight: 1080,
     });
     // 手工注入一个可控 runner
     const runner = createMockRunner();
@@ -287,7 +296,7 @@ describe('ObjectEffectStage', () => {
   it('advance 串行：同一 runner 的第二次 update 在第一次完成后才发起', async () => {
     const host = createHost([{ id: 1, rtWidth: 10, rtHeight: 10 }]);
     const stage = new ObjectEffectStage(host as never, {
-      wavelengthId: 'w', dpr: 1, budgetWidth: 1920, budgetHeight: 1080,
+      wallpaperId: 'w', dpr: 1, budgetWidth: 1920, budgetHeight: 1080,
     });
     let resolveFirst: (() => void) | null = null;
     const order: string[] = [];
@@ -321,7 +330,7 @@ describe('ObjectEffectStage', () => {
       { id: 2, rtWidth: 10, rtHeight: 10 },
     ]);
     const stage = new ObjectEffectStage(host as never, {
-      wavelengthId: 'w', dpr: 1, budgetWidth: 1920, budgetHeight: 1080,
+      wallpaperId: 'w', dpr: 1, budgetWidth: 1920, budgetHeight: 1080,
     });
     const order: string[] = [];
     let releaseFirst: (() => void) | null = null;
@@ -358,7 +367,7 @@ describe('ObjectEffectStage', () => {
       { id: 2, rtWidth: 100, rtHeight: 50 }, // 无 entry/无 runner：不能被反推世界尺寸
     ]);
     const stage = new ObjectEffectStage(host as never, {
-      wavelengthId: 'w', dpr: 2, budgetWidth: 1920, budgetHeight: 1080,
+      wallpaperId: 'w', dpr: 2, budgetWidth: 1920, budgetHeight: 1080,
     });
     // 世界尺寸的**唯一来源**是 setWorldSize（此处 50×25 = 首轮 RT 像素 / dpr）；
     // onViewportResize 只处理 entries 里已有 runner 的对象，故按契约顺序先挂链。
@@ -383,7 +392,7 @@ describe('ObjectEffectStage', () => {
   it('dispose 释放全部 runner', () => {
     const host = createHost([{ id: 1, rtWidth: 10, rtHeight: 10 }]);
     const stage = new ObjectEffectStage(host as never, {
-      wavelengthId: 'w', dpr: 1, budgetWidth: 1920, budgetHeight: 1080,
+      wallpaperId: 'w', dpr: 1, budgetWidth: 1920, budgetHeight: 1080,
     });
     const runner = createMockRunner();
     stage.debugInjectRunner(1, runner as never);

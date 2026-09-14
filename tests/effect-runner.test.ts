@@ -1,5 +1,5 @@
 // tests/effect-runner.test.ts
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { blendModeToThree } from '../src/client/effect-runner.js';
 import { resolveTextureSlotPath, resolveBuiltinTexture } from '../src/client/effect-runner.js';
@@ -9,7 +9,10 @@ import {
   resolveTargetSize,
   resolveTextureResolution,
   fillAudioSpectrumUniform,
+  describeEffectPass,
+  EffectRunner,
 } from '../src/client/effect-runner.js';
+import type { CompiledEffectPass } from '../src/client/shader/effect-chain.js';
 
 describe('blendModeToThree（WE blending → three 混合模式）', () => {
   it('映射 add/multiply/subtract 与默认回退', () => {
@@ -180,5 +183,90 @@ describe('fillAudioSpectrumUniform（频谱字节 → uniform 浮点：0-255 归
     const dest = new Array(2).fill(0);
     fillAudioSpectrumUniform(dest, new Uint8Array([10, 20, 30, 40]));
     expect(dest).toEqual([10 / 255, 20 / 255]);
+  });
+});
+
+// ===== F3：编译失败的 pass 必须被缓存（同一 key 第二次不再重建材质 / 不再探针渲染）。
+// EffectRunner 在 node 下**可以**实例化：构造器只建 2 张 WebGLRenderTarget（纯 JS），
+// 真正碰 WebGL 的只有探针渲染 `renderer.render(...)`。故注入一个最小 mock renderer：
+//   - `debug.onShaderError` 在探针渲染时被唤起（模拟 three 的编译失败**只通知、不抛异常**）；
+//   - `render` / `setRenderTarget` 记调用次数 —— 编译失败时每个 pass 恰好 1 次探针渲染，
+//     缓存生效后第二次 update 应为 0 次。
+// 「不再重建材质」用 `THREE.Material.prototype.dispose` 计数作为代理：失败分支必定 dispose
+// 刚构造的材质，第二次若不再走构造-失败路径，就不会有第 2 次 dispose。=====
+
+function failingPass(over: Partial<CompiledEffectPass> = {}): CompiledEffectPass {
+  return {
+    vertSrc: 'void main(){ gl_Position = vec4(position, 1.0); }',
+    fragSrc: 'void main(){ gl_FragColor = vec4(1.0); }',
+    rawVert: '', rawFrag: 'uniform sampler2D g_Texture0;',
+    combos: {}, uniforms: new Map(), textureSlots: [], blendMode: 'normal',
+    target: null, bind: [], fboScale: {},
+    ...over,
+  };
+}
+
+/** 最小 mock renderer：探针渲染时触发 onShaderError（= 编译失败），并记录渲染/绑定次数。 */
+function createFailRenderer() {
+  const fakeGl = { getShaderInfoLog: () => "0:254: '==' wrong operand types" };
+  const renderer = {
+    debug: { onShaderError: null as null | ((...a: unknown[]) => void) },
+    setRenderTarget: vi.fn(),
+    render: vi.fn(() => { renderer.debug.onShaderError?.(fakeGl, {}, {}, {}); }),
+  };
+  return renderer;
+}
+
+describe('EffectRunner 编译失败缓存（F3）', () => {
+  it('同一 key 第二次 update 不再重建材质 / 不再探针渲染；setChains 后重新尝试', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const disposeSpy = vi.spyOn(THREE.Material.prototype, 'dispose');
+    const renderer = createFailRenderer();
+    const runner = new EffectRunner(renderer as never, 16, 16);
+    const input = new THREE.Texture();
+    // textureSlots 留空：本用例不触发纹理槽异步加载（那会走 fetch/tex-loader，与本用例无关）。
+    runner.setChains([[failingPass({ target: '_rt_blur' })]], '2911105183', { width: 16, height: 16 });
+
+    await runner.update(0, input);
+    // 第一次：1 次探针渲染（失败后 pass 被跳过，不提交任何帧渲染）+ 1 次材质释放。
+    expect(renderer.render).toHaveBeenCalledTimes(1);
+    expect(disposeSpy).toHaveBeenCalledTimes(1);
+    // 告警一次，且文案可辨识（含壁纸 id 与具名 RT / 纹理槽标识），错误详情是字符串
+    // （原先 handler 内传对象 → 日志里显示 `Object Object`）。
+    const afterFirst = warn.mock.calls.map((c) => c.map((x) => String(x)).join(' ')).join('\n');
+    expect(afterFirst).toContain('效果 pass 编译失败，跳过');
+    expect(afterFirst).toContain('壁纸 2911105183');
+    expect(afterFirst).toContain('_rt_blur');
+    expect(afterFirst).toContain('0:254');
+    expect(afterFirst).not.toContain('[object Object]');
+
+    await runner.update(1, input);
+    await runner.update(2, input);
+    // 失败已缓存：后两帧 0 次渲染（不重建材质、不探针渲染），也不再新增告警。
+    expect(renderer.render).toHaveBeenCalledTimes(1);
+    expect(disposeSpy).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes('效果 pass 编译失败')).length).toBe(1);
+
+    // setChains（换壁纸 / 重挂链）清空失败缓存 → 重新尝试一次（链变了可能就能编译了）。
+    runner.setChains([[failingPass({ target: '_rt_blur' })]], '2911105183', { width: 16, height: 16 });
+    await runner.update(3, input);
+    expect(renderer.render).toHaveBeenCalledTimes(2);
+
+    disposeSpy.mockRestore();
+    warn.mockRestore();
+    runner.dispose();
+  });
+
+  it('describeEffectPass：pass 下标 + 壁纸 id + 具名 RT / 纹理槽 / 混合模式（可辨识，非 `Object Object`）', () => {
+    const label = describeEffectPass(
+      failingPass({ target: '_rt_a', textureSlots: ['effects/refractnormal'], blendMode: 'add' }),
+      '1',
+      '2911105183',
+    );
+    expect(label).toContain('pass 1');
+    expect(label).toContain('壁纸 2911105183');
+    expect(label).toContain('target=_rt_a');
+    expect(label).toContain('effects/refractnormal');
+    expect(label).toContain('blend=add');
   });
 });

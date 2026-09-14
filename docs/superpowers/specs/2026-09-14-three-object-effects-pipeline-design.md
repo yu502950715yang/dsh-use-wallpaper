@@ -299,14 +299,16 @@ finalW/H    = resolveObjectRtSize(range.w, range.h, dpr, budgetW, budgetH)
 - `1429403119`（23 对象 / 24 条链，全库最重）1080p 实测 FPS 与对象 RT 总显存估算；
 - **验收门槛：FPS ≥ 30 @1080p**（与一期 spec §7 的既有门槛一致）。
 
+> **实现偏差 / 未完成（2026-09-14 回写）**：本节的 **FPS 门槛尚未在真实 GPU 上验证**。本机唯一的端到端环境是 **headless Edge，其 WebGL 走 SwiftShader（软件光栅化）**，据此测得的数字**只能作相对信号，不能替代真机 FPS**，门槛状态记为「未验证」。实际补上的是**相对信号测量**（`research/verify-object-effects.mjs` 的 [4] 段）：`1429403119` 的帧间隔与每帧耗时的中位数 / p95、该壁纸的**隔离对象数**，以及**对象 RT 总显存估算**——公式 `Σ_隔离对象 rtW × rtH × 4 字节 ×（1 张对象 RT + 有 runner 时 runner 的 2 张 ping-pong RT）`（runner 的 ping-pong 与对象 RT 同尺寸，见 `object-effects.mount`；不计 depth 附件、驱动对齐开销与纹理槽贴图）。实测数字与输出见 `AGENT.md` §7.1 与 `.superpowers/sdd/2026-09-14-three-object-effects-pipeline/final-fix-report.md`。
+
 ### 7.5 P1 验收清单
 
 1. 全库**线性链 106 条**在 three 主路径**对象级**生效（对象外区域不受影响）；
 2. RT 图链 24 条**显式跳过 + 告警**，无静默错画面；
 3. 无白屏、无 console error；无 effects 壁纸零回归；
 4. `npm test` 无**新增**失败（AGENT.md §7.11 记录的 15 项既有失败以 `git stash` 基线对比，不计入）；
-5. 性能门槛达标（§7.4）；
-6. AGENT.md §7.1 据实改写（P1 达成部分与 P2 遗留）。
+5. 性能门槛达标（§7.4）—— **未完成 / 未验证**：真实 GPU 上未测，只有 SwiftShader 的相对信号（见 §7.4 的实现偏差）；
+6. AGENT.md §7.1 据实改写（P1 达成部分与 P2 遗留）。**已回写**：新增「验收覆盖口径（端到端只验了 2 个样本）」「性能门槛未验证」「`refraction` 失败缓存已修」三条如实标注。
 
 ## 8. 里程碑
 

@@ -3,7 +3,6 @@
 //   ② scene-renderer.ts 的重新导出与 object-range.ts 是**同一个函数对象**
 //      （防止有人日后在 scene-renderer 里再写一份实现，造成两处漂移）。
 import { describe, expect, it } from 'vitest';
-import * as THREE from 'three';
 import {
   CAMERA_DISTANCE, OBJECT_RT_MAX, PARTICLE_DEFAULT_DISTANCE,
   materialModulation, objectCameraRange, particleObjectRange, particleWorldSize,

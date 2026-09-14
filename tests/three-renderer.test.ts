@@ -326,6 +326,15 @@ const FX_FILES: Record<string, string> = {
   'shaders/effects/w.frag': 'void main(){ gl_FragColor = texture2D(g_Texture0, uv); }',
 };
 
+// 具名 RT 图链（pass 写出具名 RT → `isLinearEffectChain` 判为 false，执行器整条跳过）：
+// 与真实库里的 blur / blurprecise / bloom 同形，供「这类对象不值得隔离」的用例（F2）使用。
+const FX_FILES_RT_GRAPH: Record<string, string> = {
+  ...FX_FILES,
+  'effects/rtg/effect.json': JSON.stringify({
+    passes: [{ material: 'materials/effects/w.json', target: '_rt_blur' }],
+  }),
+};
+
 // fetch 桩：scene.json + 资源名 → 文本。资源同时提供 arrayBuffer 形态（与 three-renderer 的
 // loadFile 实现一致：`new Uint8Array(await r.arrayBuffer())`）。
 function stubAssetFetch(scene: string, files: Record<string, string>): void {
@@ -400,7 +409,7 @@ describe('ObjectEffectStage.onViewportResize（无 runner 的隔离对象也要�
     };
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const stage = new ObjectEffectStage(host as never, {
-      wavelengthId: 'w', dpr: 1, budgetWidth: 1920, budgetHeight: 1080,
+      wallpaperId: 'w', dpr: 1, budgetWidth: 1920, budgetHeight: 1080,
     });
     // 契约顺序：先 setWorldSize（世界尺寸唯一来源），再 setObjectChains 传**具名 RT 图链**
     // （整条跳过 → 该对象有隔离条目与世界尺寸，但没有 runner）。
@@ -615,6 +624,66 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     // 告警一次，明确说明「效果跳过、对象保持可见」（诊断可见，不静默）。
     expect(warn.mock.calls.some((c) => String(c[0]).includes('colorBlendMode=7'))).toBe(true);
     // 且**不**计入「挂在未参与渲染的对象类型上」的汇总告警：该对象照常渲染，只是没进隔离路径。
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('未参与渲染'))).toBe(false);
+
+    worldSpy.mockRestore();
+    chainsSpy.mockRestore();
+    warn.mockRestore();
+    r.dispose();
+  });
+
+  // F2（终审 I2）：isolate 准入从「有链」收紧为「至少有一条线性链」。链**全为具名 RT 图链**时
+  // `setObjectChains` 整条跳过（不建 runner），对象 RT 的显存与每帧一次额外渲染 + 一次 RT 切换
+  // 完全没有收益，而 quad 永远采样 RT 原图 ⇒ 观感与不隔离逐像素相同（纯浪费）。
+  it('链全为具名 RT 图链的对象不进 isolate；线性对象与 colorBlendMode 守卫不受影响', async () => {
+    stubAssetFetch(sceneWith([
+      {
+        id: 13, name: 'rtgraph', image: 'models/a.json',
+        origin: '960 540 0', scale: '1 1 1', size: '3840 2160',
+        effects: [{ file: 'effects/rtg/effect.json' }],
+      },
+      {
+        id: 60, name: 'linear', image: 'models/b.json',
+        origin: '960 540 0', scale: '1 1 1', size: '1920 1080',
+        effects: [{ file: 'effects/w/effect.json' }],
+      },
+      {
+        id: 246, name: 'Clouds Back', image: 'models/clouds.json',
+        origin: '960 540 0', scale: '1 1 1', size: '1920 1080', colorBlendMode: 7,
+        effects: [{ file: 'effects/w/effect.json' }],
+      },
+    ]), FX_FILES_RT_GRAPH);
+    resolveImageTexture.mockResolvedValue({ fake: true } as never);
+    defaultLoadWasm.mockResolvedValue(null);
+    const player = {
+      dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage: vi.fn(),
+      renderer: {},
+      // 真实 player 只会为 isolate 里的对象建隔离条目 → 这里也只有线性链的 60。
+      isolatedObjects: () => [{ id: 60, kind: 'background', rtWidth: 1920, rtHeight: 1080, rtTexture: {} }],
+    };
+    loadSceneToThree.mockReturnValue({ player, sims: [], backgroundIds: [0, 1, 2], particleLayers: [] } as never);
+    const worldSpy = vi.spyOn(ObjectEffectStage.prototype, 'setWorldSize').mockImplementation(() => {});
+    const chainsSpy = vi.spyOn(ObjectEffectStage.prototype, 'setObjectChains').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    const ok = await r.render('2132420420', document.createElement('canvas'), null);
+    expect(ok).toBe(true);
+
+    const assets = loadSceneToThree.mock.calls[0][1];
+    // ① 具名 RT 图链对象不隔离（不再为注定被跳过的链白付一张 3840×2160 对象 RT + 每帧额外渲染）；
+    // ② 线性链对象照常隔离挂链（收紧准入不得误伤正常对象）；
+    // ③ colorBlendMode ∈ {6,7,31} 的守卫逐字不变（仍然不隔离、仍然单独告警）。
+    expect(assets.isolate.has(13)).toBe(false);
+    expect(assets.isolate.has(60)).toBe(true);
+    expect(assets.isolate.has(246)).toBe(false);
+    expect(worldSpy.mock.calls.map((c) => c[0])).toEqual([60]);
+    expect(chainsSpy.mock.calls.map((c) => c[0])).toEqual([60]);
+    // 降级告警仍在（收紧准入不等于让「效果被跳过」在诊断上消失），且带上具名 RT 标识；
+    // 也不并入「挂在未参与渲染的对象类型上」的汇总告警——该对象照常渲染，原因不同。
+    const rtGraph = warn.mock.calls.filter((c) => String(c[0]).includes('效果需要具名 RT'));
+    expect(rtGraph).toHaveLength(1);
+    expect(String(rtGraph[0][0])).toContain('_rt_blur');
     expect(warn.mock.calls.some((c) => String(c[0]).includes('未参与渲染'))).toBe(false);
 
     worldSpy.mockRestore();
