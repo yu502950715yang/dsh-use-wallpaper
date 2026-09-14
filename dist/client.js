@@ -20262,6 +20262,85 @@ if (typeof window !== "undefined") {
   }
 }
 
+// src/client/object-range.ts
+var CAMERA_DISTANCE = 300;
+var OBJECT_RT_MAX = 4096;
+function materialModulation(color, alpha, brightness) {
+  const b = brightness ?? 1;
+  const clamp01 = (v) => Math.max(0, Math.min(1, v));
+  const c = color ?? [255, 255, 255];
+  return {
+    r: clamp01(c[0] / 255 * b),
+    g: clamp01(c[1] / 255 * b),
+    b: clamp01(c[2] / 255 * b),
+    a: clamp01(alpha ?? 1)
+  };
+}
+function objectCameraRange(objSize, scale) {
+  return {
+    w: Math.max(1, Math.min(Math.abs(objSize[0] * scale[0]), OBJECT_RT_MAX)),
+    h: Math.max(1, Math.min(Math.abs(objSize[1] * scale[1]), OBJECT_RT_MAX))
+  };
+}
+var PARTICLE_DEFAULT_DISTANCE = 64;
+function effectiveParticleDistance(spec) {
+  const dist = spec.distanceMax ?? 0;
+  return dist > 0 ? dist : PARTICLE_DEFAULT_DISTANCE;
+}
+function particleObjectRange(spec, scale) {
+  const eff = effectiveParticleDistance(spec);
+  return {
+    w: Math.max(1, Math.min(Math.abs(eff * scale[0]), OBJECT_RT_MAX)),
+    h: Math.max(1, Math.min(Math.abs(eff * scale[1]), OBJECT_RT_MAX))
+  };
+}
+function particleWorldSize(spec, scale) {
+  const eff = effectiveParticleDistance(spec);
+  return { w: eff * scale[0], h: eff * scale[1] };
+}
+function shouldUseObjectPath(obj) {
+  return Array.isArray(obj.effects) && obj.effects.length > 0;
+}
+function groupEffectsByObject(objects) {
+  const groups = [];
+  for (const obj of objects) {
+    if (obj.kind === "text") continue;
+    if (shouldUseObjectPath(obj)) {
+      groups.push({ obj, effects: obj.effects });
+    }
+  }
+  return groups;
+}
+function uvWindow(unclamped, clamped) {
+  if (unclamped <= 0 || clamped >= unclamped) return { start: 0, end: 1 };
+  const start = (unclamped - clamped) / 2 / unclamped;
+  return { start, end: 1 - start };
+}
+function applyUvWindow(geometry, ux, uy) {
+  const uvs = geometry.attributes.uv.array;
+  const wx = ux.end - ux.start;
+  const wy = uy.end - uy.start;
+  for (let i = 0; i < uvs.length; i += 2) {
+    uvs[i] = wx > 0 ? (uvs[i] - ux.start) / wx : uvs[i];
+    uvs[i + 1] = wy > 0 ? (uvs[i + 1] - uy.start) / wy : uvs[i + 1];
+  }
+  geometry.attributes.uv.needsUpdate = true;
+}
+function createCompositeGeometry(worldW, worldH, rtW, rtH) {
+  const w = Math.abs(worldW);
+  const h = Math.abs(worldH);
+  const geometry = new PlaneGeometry(w, h);
+  applyUvWindow(geometry, uvWindow(w, rtW), uvWindow(h, rtH));
+  return geometry;
+}
+function coverRange(width, height, viewAspect) {
+  const sceneAspect = width / height;
+  if (viewAspect > sceneAspect) {
+    return { w: width, h: width / viewAspect };
+  }
+  return { w: height * viewAspect, h: height };
+}
+
 // src/client/script-patterns.ts
 function unwrapScriptProperty(v) {
   if (typeof v === "object" && v !== null && !Array.isArray(v) && "value" in v) {
@@ -20455,6 +20534,886 @@ function parseSceneJson(raw) {
     objects,
     sounds: collectSounds(root)
   };
+}
+
+// src/client/threejs-player.ts
+var DEFAULT_PARTICLE_CAPACITY = 1024;
+var MAX_PARTICLE_CAPACITY = 2048;
+function specMaxcount(specJson) {
+  try {
+    const v = JSON.parse(specJson).maxcount;
+    const n = typeof v === "string" ? parseFloat(v) : typeof v === "number" ? v : 0;
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+  } catch {
+    return 0;
+  }
+}
+function specEmitterOrigin(specJson) {
+  const zero = [0, 0, 0];
+  try {
+    const spec = JSON.parse(specJson);
+    const list = spec.emitter;
+    const first = Array.isArray(list) ? list[0] : void 0;
+    const raw = first?.origin;
+    if (typeof raw !== "string") return zero;
+    const parts = raw.trim().split(/\s+/).map(Number);
+    if (parts.length < 3 || parts.slice(0, 3).some((n) => !Number.isFinite(n))) return zero;
+    return [parts[0], parts[1], parts[2]];
+  } catch {
+    return zero;
+  }
+}
+var BLACKMYTH_OBJ_SCALE = [-2.05166, 2.1167, 1];
+function simEmitterOffset(emitterOrigin) {
+  return [
+    emitterOrigin[0] * BLACKMYTH_OBJ_SCALE[0],
+    emitterOrigin[1] * BLACKMYTH_OBJ_SCALE[1],
+    emitterOrigin[2] * BLACKMYTH_OBJ_SCALE[2]
+  ];
+}
+function particleCapacity(declaredMax, aliveAtCreate) {
+  const declared = Number.isFinite(declaredMax) && declaredMax > 0 ? Math.floor(declaredMax) : 0;
+  const cap = Math.min(declared > 0 ? declared : DEFAULT_PARTICLE_CAPACITY, MAX_PARTICLE_CAPACITY);
+  return Math.max(1, cap, Math.max(0, Math.floor(aliveAtCreate)));
+}
+var PARTICLE_QUAD_CORNERS = new Float32Array([
+  -1,
+  -1,
+  0,
+  1,
+  -1,
+  0,
+  1,
+  1,
+  0,
+  -1,
+  1,
+  0
+]);
+var PARTICLE_QUAD_INDEX = [0, 1, 2, 0, 2, 3];
+var PARTICLE_VERTEX_SHADER = `
+attribute vec3 particlePosition;
+attribute float particleSize;
+attribute vec2 particleUv;
+attribute vec3 particleColor;
+attribute float particleAlpha;
+// \u5BF9\u8C61\u53D8\u6362\uFF08WE \u7684\u7C92\u5B50 model matrix \u8BED\u4E49\uFF0C\u89C1 loadSceneToThree \u6CE8\u91CA\uFF09\uFF1A
+//   objCenter     \u5BF9\u8C61\u4E2D\u5FC3\uFF08\u4E16\u754C\u5750\u6807\uFF0Cwe_to_three \u540E\uFF09
+//   objScale      scene.json \u7684\u5BF9\u8C61 scale\uFF08\u9010\u8F74\uFF0C\u53EF\u4E3A\u8D1F = \u955C\u50CF\uFF09
+//   emitterOrigin spec \u7684 emitter \u5C40\u90E8\u539F\u70B9\uFF08\u539F\u503C\uFF0C\u672A\u7F29\u653E\uFF09
+//   bmOffset      \u6A21\u62DF\u5668\u5DF2\u52A0\u8FDB particlePosition \u7684\u504F\u79FB = BLACKMYTH_OBJ_SCALE \u2299 emitterOrigin
+uniform vec3 objCenter;
+uniform vec3 objScale;
+uniform vec3 emitterOrigin;
+uniform vec3 bmOffset;
+// \u5BF9\u8C61\u6B27\u62C9\u89D2\uFF08**\u5F27\u5EA6**\uFF09\u2014\u2014 WE model matrix = T\xB7R\xB7S \u7684 R \u90E8\u5206\u3002
+uniform vec3 objAngles;
+varying vec2 vCornerUv;
+varying vec2 vParticleUv;
+varying vec3 vParticleColor;
+varying float vParticleAlpha;
+// \u5BF9\u8C61\u65CB\u8F6C R = Rz\xB7Ry\xB7Rx\uFF08\u5B98\u65B9 order\uFF1AOWE ParticleRuntime.cpp:25-28 ControlpointRotation\uFF09\u3002
+// \u6BCF\u4E2A\u5206\u91CF\u90FD\u662F\u53F3\u624B\u7CFB\u7ED5\u8F74\u7684\u4E3B\u52A8\u65CB\u8F6C\uFF0C\u4E0E Eigen AngleAxisd(theta, axis) \u4E00\u81F4\u3002
+vec3 weObjectRotate(vec3 v, vec3 a) {
+  float cx = cos(a.x), sx = sin(a.x);
+  v = vec3(v.x, v.y * cx - v.z * sx, v.y * sx + v.z * cx);
+  float cy = cos(a.y), sy = sin(a.y);
+  v = vec3(v.x * cy + v.z * sy, v.y, -v.x * sy + v.z * cy);
+  float cz = cos(a.z), sz = sin(a.z);
+  return vec3(v.x * cz - v.y * sz, v.x * sz + v.y * cz, v.z);
+}
+void main() {
+  vCornerUv = position.xy * 0.5 + 0.5;
+  vParticleUv = particleUv;
+  vParticleColor = particleColor;
+  vParticleAlpha = particleAlpha;
+  // \u8FD8\u539F\u6A21\u62DF\u5668\u8F93\u51FA\u7684**\u5C40\u90E8**\u5750\u6807\uFF08\u5254\u9664\u5BF9\u8C61\u4E2D\u5FC3\u4E0E\u6A21\u62DF\u5668\u5DF2\u52A0\u7684\u53D1\u5C04\u70B9\u504F\u79FB\uFF09\uFF1A
+  //   particlePosition = objCenter + bmOffset + (\u6563\u5C04 + \u8FD0\u52A8)
+  vec3 local = particlePosition - objCenter - bmOffset;
+  // \u6309\u5BF9\u8C61 model matrix \u7684 **R\xB7S** \u53D8\u6362\u5230\u573A\u666F\u7A7A\u95F4\uFF08WE\uFF1Amvp = viewProj \xD7 translate(origin)
+  // \xD7 rotate(angles) \xD7 scale\uFF09\u3002\u26A0\uFE0F \u65CB\u8F6C**\u5FC5\u987B**\u5728\u8FD9\u91CC\u505A\uFF1A\u5168\u5E93 79 \u4E2A\u5BF9\u8C61\u5E26\u975E\u96F6 angles
+  // \uFF08\u7C92\u5B50 75 \u4E2A\uFF09\uFF0C\u6F0F\u6389\u5B83\u4F1A\u8BA9\u7C92\u5B50\u7684\u5C40\u90E8\u671D\u5411\u76F4\u63A5\u5F53\u4E16\u754C\u671D\u5411\u7528 \u2014\u2014 GTR 3743126786 \u7684\u70DF\u67F1
+  // angles.z = -1.20063\uFF08\u2248 -68.8\xB0\uFF09\u672C\u5E94\u628A\u5C40\u90E8 +Y\uFF08\u6E4D\u6D41\u7684 forward\uFF09\u8F6C\u5230\u4E16\u754C (0.932, 0.362)
+  // =\u300C\u4ECE\u6392\u6C14\u7BA1\u5411\u53F3\u4FA7\u98D8\u300D\uFF0C\u6F0F\u6389\u65CB\u8F6C\u540E\u70DF\u5C31\u76F4\u7740\u5F80\u4E0A\u8D70\u3002
+  vec3 worldPos = objCenter + weObjectRotate(objScale * (emitterOrigin + local), objAngles);
+  // \u7C92\u5B50 quad \u7684\u5C3A\u5BF8\u540C\u6837\u4E58\u5BF9\u8C61 scale\uFF08\u975E\u5747\u5300\uFF1Babs \u53BB\u6389\u955C\u50CF\u7684\u7B26\u53F7\uFF09\uFF0C\u5E76\u968F\u5BF9\u8C61\u89D2\u5EA6\u4E00\u8D77\u8F6C\u3002
+  vec3 corner = weObjectRotate(abs(objScale) * vec3(position.xy * particleSize * 0.5, 0.0), objAngles);
+  worldPos += corner;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(worldPos, 1.0);
+  // \u26A0\uFE0F \u4FEE\u6B63\uFF1A\u7C92\u5B50\u662F 2D billboard\uFF08\u65E0\u6DF1\u5EA6\u6392\u5E8F\uFF0Cz \u4E0D\u53C2\u4E0E\u53EF\u89C1\u6027\uFF09\u3002three \u6B63\u4EA4\u76F8\u673A far/near \u4F1A\u628A
+  // \u89C6\u9525\u5916\u7684 z \u88C1\u526A\u6389\uFF0C\u800C wasm billboard \u65E9\u5DF2\u628A\u6295\u5F71\u77E9\u9635 z \u884C\u5168 0\uFF08clip.z=0\uFF0C\u89C1 particle_billboard.wgsl\uFF09
+  // \u9632\u300Cemitter \u7403\u58F3\u6563\u5C04\u53EF\u5230 \xB1750 \u7684\u7C92\u5B50\u88AB z \u88C1\u526A \u2192 \u7C92\u5B50\u4E0D\u53EF\u89C1\u300D\u3002\u8FD9\u91CC\u628A NDC z \u5F3A\u5236\u5F52\u4E2D\uFF080\uFF09\uFF0C
+  // \u914D\u5408 material.depthTest=false\uFF08\u5FFD\u7565\u6DF1\u5EA6\uFF09\uFF0C\u4FDD\u8BC1\u7C92\u5B50\u4E0D\u88AB\u76F8\u673A\u6DF1\u5EA6\u8303\u56F4\u88C1\u526A\uFF08\u5BF9\u9F50 wasm \u8BED\u4E49\uFF09\u3002
+  gl_Position.z = 0.0;
+}
+`;
+var PARTICLE_FRAGMENT_SHADER = `
+uniform sampler2D map;
+uniform float frameCount;
+uniform float frameCols;
+uniform float frameRows;
+uniform float softness;
+uniform float maskMode;
+varying vec2 vCornerUv;
+varying vec2 vParticleUv;
+varying vec3 vParticleColor;
+varying float vParticleAlpha;
+void main() {
+  float n = max(frameCount, 1.0);
+  // \u5E27\u53F7\u7531 uv.x \u7F16\u7801\uFF08\u5E27\u5B50\u533A\u4E2D\u5FC3\uFF0Csim frame_center_uv\uFF1A(frame+0.5)/n\uFF09\u2192 \u53CD\u89E3\u51FA\u79BB\u6563\u5E27\u53F7\u3002
+  float frameIndex = floor(clamp(vParticleUv.x, 0.0, 0.999999) * n);
+  frameIndex = min(frameIndex, n - 1.0);
+  // \u7CBE\u7075\u8868\u6309**\u4E8C\u7EF4\u7F51\u683C**\u5207\u7247\uFF08frameCols\xD7frameRows\uFF1B\u975E\u7CBE\u7075\u8868 cols=n\u3001rows=1\uFF0C\u4E0E\u65E7\u7684\u6A2A\u5411\u7B49\u5206\u7B49\u4EF7\uFF09\u3002
+  // \u26A0\uFE0F \u65E7\u5B9E\u73B0\u53EA\u505A\u6A2A\u5411\u7B49\u5206\uFF08texUv.x=(frameIndex+corner.x)/n\uFF09\uFF0C\u5BF9 WE \u7684 8\xD78=64 \u5E27\u7CBE\u7075\u8868
+  // \uFF08DK \u7684 fire1/fog1\uFF09\u4F1A\u628A\u6BCF\u6761 1/64 \u5BBD\u7684**\u7AD6\u6761**\u5F53\u4E00\u5E27 \u2192 \u5FC5\u987B\u7528\u7F51\u683C\u884C\u5217\u5B9A\u4F4D\u3002
+  float cols = max(frameCols, 1.0);
+  float rows = max(frameRows, 1.0);
+  float col = mod(frameIndex, cols);
+  float row = floor(frameIndex / cols);
+  // \u5E27 y\uFF1ATEXS \u7684\u5E27 y \u662F**\u7EB9\u7406\u9876\u90E8\u5411\u4E0B**\u7684\u884C\u53F7\uFF0C\u800C DataTexture \u6570\u636E\u5DF2\u88AB\u7FFB\u8F6C\u4E3A bottom-up
+  // \uFF08v=0=\u56FE\u50CF\u5E95\u90E8\uFF09\u2192 row=0\uFF08\u8868\u9876\u884C\uFF09\u5E94\u843D\u5728 v \u9AD8\u6BB5\uFF0C\u6545\u5BF9\u5E27\u5185 v \u505A (rows-1-row) \u53CD\u8F6C\u3002
+  float frameV = (rows - 1.0 - row + vCornerUv.y) / rows;
+  vec2 texUv = vec2((col + vCornerUv.x) / cols, frameV);
+  vec4 texel = texture2D(map, texUv);
+  // \u5706\u76D8\u8F6F\u8870\u51CF\uFF08center\u2192edge\uFF09\u3002softness \u2208 [0,1]\uFF1A0=\u786C\u8FB9\uFF08\u4EC5\u5728 quad \u8FB9\u7F18\u6536\u5C3E\uFF09\uFF0C1=\u5168\u67D4\uFF08\u4E2D\u5FC3\u2192\u8FB9\u7F18\u5E73\u6ED1\u8870\u51CF\uFF09\u3002
+  float dist = length(vCornerUv - 0.5) * 2.0;
+  float edgeStart = clamp(1.0 - softness, 0.0001, 0.9999);
+  float disk = 1.0 - smoothstep(edgeStart, 1.0, dist);
+  // mask_mode\uFF1A1\uFF08\u771F\u5B9E\u7EB9\u7406\u906E\u7F69\uFF0C\u5F62\u72B6=texel.a\uFF09\u2194 0\uFF08\u65E0\u7EB9\u7406\u8F6F\u5706\u70B9\uFF0C\u5F62\u72B6=disk\uFF09\u3002
+  float shape = mix(disk, texel.a, maskMode);
+  float a = vParticleAlpha * shape;
+  gl_FragColor = vec4(vParticleColor * texel.rgb, a);
+}
+`;
+function createWhiteTexture() {
+  const tex = new DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+  tex.needsUpdate = true;
+  return tex;
+}
+function colorBlendModeToThree(mode) {
+  switch (mode) {
+    case 7:
+      return { blendEquation: AddEquation, blendSrc: OneMinusDstColorFactor, blendDst: OneFactor };
+    case 31:
+      return { blendEquation: AddEquation, blendSrc: OneFactor, blendDst: OneFactor };
+    case 6:
+      return { blendEquation: MaxEquation, blendSrc: OneFactor, blendDst: OneFactor };
+    default:
+      return null;
+  }
+}
+var COLOR_BLEND_FRAGMENT_SHADER = `
+uniform sampler2D map;
+uniform vec3 tint;
+uniform float opacity;
+varying vec2 vUv;
+void main() {
+  vec4 c = texture2D(map, vUv);
+  float a = c.a * opacity;
+  gl_FragColor = vec4(c.rgb * tint * a, a);
+}
+`;
+var COLOR_BLEND_VERTEX_SHADER = `
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`;
+var ThreeScenePlayer = class {
+  renderer;
+  scene;
+  camera;
+  // 承载渲染的 canvas —— **就是调用方 append 到 DOM 显示的那一个**（three 渲染目标 + 页面显示
+  // 同一元素，不存在第二个离屏 canvas）。渲染缓冲尺寸不变量（见 resize）：
+  //   canvas.width/height === 视口逻辑尺寸 × pixelRatio（dpr）
+  // 而 CSS（`.wp-scene-canvas{width:100%;height:100%}`）= 视口逻辑尺寸 → 缓冲与物理像素 1:1，
+  // 既不模糊也不拉伸（2026-09-10 Task5：显式钉住该不变量，防「canvas 停在 HTML 默认 300×150
+  // 被 CSS 拉伸放大」这一整类回退）。
+  canvas;
+  // 场景固有尺寸（WE 正交视口 view_w×view_h；scene.json 未就绪前用构造传入值，越过后
+  // 用 setSceneSize 更新）与当前视口尺寸（canvas 逻辑像素）。
+  sceneWidth;
+  sceneHeight;
+  viewWidth;
+  viewHeight;
+  // 渲染缓冲像素比（构造时快照 window.devicePixelRatio；resize 时用它推导缓冲尺寸）。
+  pixelRatio;
+  lastTime = 0;
+  // 背景图层条目（按 addBackground 返回的 id 索引，供 update_background 引用）。
+  backgroundEntries = /* @__PURE__ */ new Map();
+  nextBackgroundId = 0;
+  // 粒子图层条目（Task 3）：按 addParticle 返回的 id 索引，更新粒子时用其 getter 刷新缓冲区。
+  particleLayers = /* @__PURE__ */ new Map();
+  nextParticleLayerId = 0;
+  // 对象隔离条目（对象级效果链；空 Map = 本壁纸无带效果对象，帧序退化为原路径）。
+  isolated = /* @__PURE__ */ new Map();
+  objectEffectStage = null;
+  // g_Time 时间原点（构造时刻），advance 传「自 player 创建起的秒数」。
+  startedAt = typeof performance !== "undefined" ? performance.now() : 0;
+  constructor(canvas, width, height, renderer) {
+    this.sceneWidth = width;
+    this.sceneHeight = height;
+    this.viewWidth = width;
+    this.viewHeight = height;
+    this.canvas = canvas;
+    this.scene = new Scene();
+    this.camera = new OrthographicCamera(-1, 1, 1, -1, -1e3, 1e3);
+    this.camera.position.z = CAMERA_DISTANCE;
+    this.renderer = renderer ?? new WebGLRenderer({ canvas, antialias: true });
+    this.renderer.outputColorSpace = LinearSRGBColorSpace;
+    const dpr = typeof window !== "undefined" && window.devicePixelRatio ? window.devicePixelRatio : 1;
+    this.pixelRatio = dpr;
+    const withSetPixelRatio = this.renderer;
+    if (typeof withSetPixelRatio.setPixelRatio === "function") {
+      withSetPixelRatio.setPixelRatio(dpr);
+    }
+    this.applyCover();
+  }
+  // 视口尺寸变更（浏览器 resize / controller 设置 canvas 逻辑尺寸）：只改视口，重新按
+  // cover 推导相机范围（cover 语义保持，裁剪方向随视口宽高比变化，不固定传 w/h），并把
+  // **渲染缓冲**钉到 视口 × dpr（不变量，见 canvas 字段注释）。
+  resize(width, height) {
+    const w = Math.max(1, Math.round(width));
+    const h = Math.max(1, Math.round(height));
+    this.viewWidth = w;
+    this.viewHeight = h;
+    this.applyCover();
+    const r = this.renderer;
+    if (typeof r.setPixelRatio === "function") r.setPixelRatio(this.pixelRatio);
+    if (typeof r.setSize === "function") r.setSize(w, h, false);
+    const bufW = Math.floor(w * this.pixelRatio);
+    const bufH = Math.floor(h * this.pixelRatio);
+    if (this.canvas.width !== bufW) this.canvas.width = bufW;
+    if (this.canvas.height !== bufH) this.canvas.height = bufH;
+  }
+  // 场景固有尺寸（scene.json 的 general.orthogonalprojection）就绪后设置，同时重推 cover。
+  // 构造传入的 width/height 只是缺省冗余值（「缺省用传入 width/height」）。
+  setSceneSize(width, height) {
+    this.sceneWidth = width;
+    this.sceneHeight = height;
+    this.applyCover();
+  }
+  // 按 cover 语义把相机视锥设为场景尺寸的 cover 视图（中心原点，z 范围 -1000..1000 不变）。
+  applyCover() {
+    const viewAspect = this.viewWidth / this.viewHeight;
+    const fg = coverRange(this.sceneWidth, this.sceneHeight, viewAspect);
+    this.camera.left = -fg.w / 2;
+    this.camera.right = fg.w / 2;
+    this.camera.top = fg.h / 2;
+    this.camera.bottom = -fg.h / 2;
+    this.camera.updateProjectionMatrix();
+  }
+  // 每帧扩展钩子：驱动粒子图层刷新（Task 3）。Task 1 空实现；背景更新由 update_background
+  // 显式调用（对齐 wasm update_image 语义）。后续 Task 4 可在此挂背景/效果链更新。
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  update(_dt) {
+    this.updateParticles(_dt);
+  }
+  // 启动帧循环（renderer.setAnimationLoop 内部 RAF）。每帧：外部回调 fn(dt) → update(dt)
+  // （内部钩子）→ render(scene, camera)。dt 用 performance.now 差分，clamp 0.1s 防 tab 切
+  // 后台 / RAF 停顿后 dt 过大把粒子瞬移出视口（同 wasm-renderer 语义）。
+  // Task 4 关键：fn(dt) 先于内部 update(dt)——fn 承载「模拟推进」（如 CpuParticleSim.update），
+  // 使 update（→ updateParticles 读 getter）拿到**本帧已推进**的顶点（sim 已在帧内 advance），
+  // 避免「先读旧顶点再推进」的一帧滞后。
+  //
+  // ⚠️ 帧体必须整体 try/catch（关键，修复「黑神话花瓣不可见」这类「背景清晰但粒子永不出现」）：
+  // three r170 的 `WebGLAnimation.onAnimationFrame` 实现为
+  //   `animationLoop(time, frame); requestId = context.requestAnimationFrame(onAnimationFrame);`
+  // （three.module.js 13612-13618）——**重排下一帧的语句在回调之后**，且 three 不包裹 try/catch。
+  // 因此只要本帧回调抛出一次（wasm 模拟器 panic、顶点 getter 返回异常数据、纹理/材质 GL 错误…），
+  // `requestAnimationFrame` 就再也**不会被重新排程 → RAF 循环永久停摆**：canvas 停在最后成功绘制的
+  // 那一帧（= `loadSceneToThree` 时的首帧，此时 `instanceCount===0`）→ 用户看到「背景清晰但没有粒子」
+  // 且再无任何动画/诊断输出（sim 从未推进，粒子永远不出现）。此处把帧体包进 try/catch（**不重抛**），
+  // 保证 three 每帧都能重新排程 RAF：单帧异常只丢该帧，循环自愈；异常只记一次 warn（防刷屏）。
+  setAnimationLoop(fn) {
+    this.lastTime = performance.now();
+    let warned = false;
+    this.renderer.setAnimationLoop(() => {
+      try {
+        const now = performance.now();
+        const dt = Math.min((now - this.lastTime) / 1e3, 0.1);
+        this.lastTime = now;
+        fn?.(dt);
+        this.update(dt);
+        if (this.isolated.size > 0) this.renderIsolatedContents();
+        this.objectEffectStage?.bindOutputs();
+        this.renderer.render(this.scene, this.camera);
+        this.objectEffectStage?.advance(this.elapsedSeconds());
+      } catch (e) {
+        if (!warned) {
+          warned = true;
+          console.warn("[three] \u5E27\u5FAA\u73AF\u5F02\u5E38\uFF08\u5DF2\u4E22\u5F03\u8BE5\u5E27\u5E76\u7EE7\u7EED\u5FAA\u73AF\uFF09:", e instanceof Error ? e.message : String(e));
+        }
+      }
+    });
+  }
+  // 手动渲染一帧（不依赖 RAF，供测试/调用方直接触发）。
+  // 帧序与 setAnimationLoop 的帧体一致（不带 dt）：隔离内容 → bindOutputs → 主场景 → advance。
+  render() {
+    if (this.isolated.size > 0) this.renderIsolatedContents();
+    this.objectEffectStage?.bindOutputs();
+    this.renderer.render(this.scene, this.camera);
+    this.objectEffectStage?.advance(this.elapsedSeconds());
+  }
+  // 对象级效果链的编排器注入点（null = 本壁纸无效果链，帧序退化为原路径）。
+  setObjectEffectStage(stage) {
+    this.objectEffectStage = stage;
+  }
+  // 隔离对象条目（只读视图，供编排器拿 RT 纹理与尺寸）。
+  isolatedObjects() {
+    return [...this.isolated.values()];
+  }
+  // 把某个隔离对象的合成 quad 切到给定的采样纹理（效果链输出；编排器在链未就绪时
+  // 不调用本方法，quad 保持采样对象 RT 原图 → 对象正常显示、无效果，不黑屏）。
+  // `id` = 隔离条目的键 = scene.json 的对象 id（编排器从 isolatedObjects()[].id 取用）。
+  setObjectOutput(id, texture) {
+    const entry = this.isolated.get(id);
+    if (!entry) return;
+    const mat = entry.quad.material;
+    if (mat instanceof ShaderMaterial) mat.uniforms.map.value = texture;
+    else if (mat instanceof MeshBasicMaterial) mat.map = texture;
+  }
+  // 重设隔离对象的 RT 尺寸（视口/dpr 变化时由编排器调用）：同步局部相机视锥与合成几何的
+  // UV 窗口（几何尺寸不变，只重算窗口映射）。`id` = 隔离条目的键 = scene.json 的对象 id。
+  resizeObjectRT(id, width, height) {
+    const entry = this.isolated.get(id);
+    if (!entry) return;
+    const w = Math.max(1, Math.round(width));
+    const h = Math.max(1, Math.round(height));
+    if (entry.rt.width === w && entry.rt.height === h) return;
+    entry.rt.setSize(w, h);
+    entry.rtWidth = w;
+    entry.rtHeight = h;
+    entry.localCamera.left = -w / 2;
+    entry.localCamera.right = w / 2;
+    entry.localCamera.top = h / 2;
+    entry.localCamera.bottom = -h / 2;
+    entry.localCamera.updateProjectionMatrix();
+    entry.quad.geometry.dispose();
+    entry.quad.geometry = createCompositeGeometry(entry.worldW, entry.worldH, w, h);
+  }
+  // 渲染所有隔离对象的内容到各自 RT（player 拥有 scene/camera，故渲染留在 player）。
+  renderIsolatedContents() {
+    for (const entry of this.isolated.values()) {
+      this.renderer.setRenderTarget(entry.rt);
+      this.renderer.render(entry.localScene, entry.localCamera);
+    }
+    this.renderer.setRenderTarget(null);
+  }
+  // 隔离对象的帧推进时间（秒，自 player 创建起）——g_Time 语义。
+  elapsedSeconds() {
+    const now = typeof performance !== "undefined" ? performance.now() : this.startedAt;
+    return (now - this.startedAt) / 1e3;
+  }
+  // Task 2：背景图层（Sprite/Mesh）。用 we_to_three 中心化定位（three = we - scene/2，
+  // 左下原点 y 向上 → 中心原点 y 向上，y 不翻，与背景一致）；size×scale 定尺寸；
+  // alpha → material.opacity、brightness 调色（复用 scene-renderer.materialModulation：
+  // color 缺省全白 → rgb = clamp01(brightness)，a = clamp01(alpha)）。
+  // sceneW/sceneH 为场景固有尺寸（we_to_three 基准，通常 == setSceneSize 注入值）。
+  // 返回分配的背景 id，供 update_background 引用；与后续粒子共用同一相机（Task 1 cover）。
+  addBackground(opts) {
+    const sceneW = opts.sceneW;
+    const sceneH = opts.sceneH;
+    const w = opts.size?.[0] ?? opts.texture?.image?.width ?? 1;
+    const h = opts.size?.[1] ?? opts.texture?.image?.height ?? 1;
+    const geometry = new PlaneGeometry(w, h);
+    const mod = materialModulation(void 0, opts.alpha, opts.brightness);
+    const material = this.createLayerMaterial(opts.texture ?? null, opts.colorBlendMode ?? 0, mod);
+    const mesh = new Mesh(geometry, material);
+    mesh.renderOrder = 0;
+    const s = opts.scale;
+    mesh.scale.set(s[0], s[1], s[2] ?? 1);
+    const a = opts.angles ?? [0, 0, 0];
+    mesh.rotation.set(a[0], a[1], a[2]);
+    mesh.position.set(opts.origin[0] - sceneW / 2, opts.origin[1] - sceneH / 2, opts.origin[2]);
+    const id = this.nextBackgroundId++;
+    const worldW = opts.isolate?.worldW ?? Math.abs(w * s[0]);
+    const worldH = opts.isolate?.worldH ?? Math.abs(h * s[1]);
+    if (opts.isolate) {
+      mesh.position.set(0, 0, 0);
+      mesh.rotation.set(0, 0, 0);
+      this.attachIsolated(opts.isolate.objectId, "background", mesh, worldW, worldH, {
+        width: opts.isolate.rtWidth,
+        height: opts.isolate.rtHeight
+      }, {
+        x: opts.origin[0] - sceneW / 2,
+        y: opts.origin[1] - sceneH / 2,
+        z: opts.origin[2]
+      }, [a[0], a[1], a[2]], opts.colorBlendMode ?? 0);
+    } else {
+      this.scene.add(mesh);
+    }
+    this.backgroundEntries.set(id, {
+      mesh,
+      origin: [opts.origin[0], opts.origin[1], opts.origin[2]],
+      scale: [s[0], s[1], s[2] ?? 1],
+      angles: [a[0], a[1], a[2]],
+      alpha: mod.a,
+      brightness: opts.brightness ?? 1,
+      sceneW,
+      sceneH
+    });
+    return id;
+  }
+  // 图层材质（**内容**材质）：colorBlendMode 已实现（6/7/31）→ 预乘 ShaderMaterial +
+  // CustomBlending（复刻 WE 的 ApplyBlending）；否则 MeshBasicMaterial（普通 alpha 混合）。
+  // 隔离对象的合成 quad **不**用它，而用 createCompositeQuadMaterial（见该方法注释）。
+  createLayerMaterial(texture, colorBlendMode, mod) {
+    const cb = colorBlendModeToThree(colorBlendMode);
+    if (cb) {
+      return new ShaderMaterial({
+        uniforms: {
+          map: { value: texture ?? createWhiteTexture() },
+          tint: { value: new Vector3(mod.r, mod.g, mod.b) },
+          opacity: { value: mod.a }
+        },
+        vertexShader: COLOR_BLEND_VERTEX_SHADER,
+        fragmentShader: COLOR_BLEND_FRAGMENT_SHADER,
+        transparent: true,
+        // 背景是透明图层，不写深度（避免干扰其他透明对象）。粒子 depthTest=false 不受影响。
+        depthWrite: false,
+        side: DoubleSide,
+        blending: CustomBlending,
+        blendEquation: cb.blendEquation,
+        blendSrc: cb.blendSrc,
+        blendDst: cb.blendDst,
+        // WE：`gl_FragColor.a = screen.a` —— 结果 alpha 取**背景**的（自己的 alpha 只当混合权重）。
+        blendSrcAlpha: ZeroFactor,
+        blendDstAlpha: OneFactor
+      });
+    }
+    const basic = new MeshBasicMaterial({
+      map: texture ?? null,
+      transparent: true,
+      depthWrite: false
+    });
+    basic.color.setRGB(mod.r, mod.g, mod.b);
+    basic.opacity = mod.a;
+    return basic;
+  }
+  // 合成 quad 的材质：只负责「把对象 RT 的像素采样回主场景」。
+  // ⚠️ 两点关键（都是踩过的坑）：
+  //   ① 必须独立构造，**不能 clone 内容材质**——粒子对象的内容材质是 InstancedBufferGeometry
+  //      专用的 billboard shader（依赖逐实例属性），普通 PlaneGeometry 没有这些属性会让
+  //      alpha 恒为 0（粒子隔离后完全不可见）；
+  //   ② **不再二次施加** alpha/brightness/color 调制——内容 mesh 的材质已把调制烘进 RT
+  //      （scene-renderer.ts 的既有结论），clone 后再乘一次会让 alpha=0.5 变成 0.25。
+  // colorBlendMode 分支保留：混合语义本就发生在「贴回画面」这一步。
+  createCompositeQuadMaterial(texture, colorBlendMode) {
+    const cb = colorBlendModeToThree(colorBlendMode);
+    if (cb) {
+      return new ShaderMaterial({
+        uniforms: {
+          map: { value: texture },
+          tint: { value: new Vector3(1, 1, 1) },
+          opacity: { value: 1 }
+        },
+        vertexShader: COLOR_BLEND_VERTEX_SHADER,
+        fragmentShader: COLOR_BLEND_FRAGMENT_SHADER,
+        transparent: true,
+        depthWrite: false,
+        side: DoubleSide,
+        blending: CustomBlending,
+        blendEquation: cb.blendEquation,
+        blendSrc: cb.blendSrc,
+        blendDst: cb.blendDst,
+        blendSrcAlpha: ZeroFactor,
+        blendDstAlpha: OneFactor
+      });
+    }
+    return new MeshBasicMaterial({ map: texture, transparent: true, depthWrite: false });
+  }
+  // 建立对象隔离条目：RT + 局部正交相机 + localScene + 主场景合成 quad。
+  // localCamera 范围 = RT 分辨率（对象中心为原点，与场景像素 1:1）；合成 quad 用
+  // createCompositeGeometry（世界尺寸含缩放、UV 按钳制窗口映射），position 承载对象在世界中
+  // 的位置。
+  //
+  // ⚠️ 第一个参数是 **scene.json 的对象 id**（键），不是本类的图层计数器 id：背景层与粒子层
+  // 各有一个从 0 起的独立计数器（nextBackgroundId / nextParticleLayerId），若拿它们当隔离条目的
+  // 键，同一壁纸同时有隔离 image 与隔离 particle 时两边都从 0 开始 → 后建的粒子条目**覆盖**先建的
+  // 背景条目（背景的 quad 从此采样一张永不被渲染的 RT，且 stageKey 把两个对象映到同一个键）→
+  // 静默画错。用对象 id 作键则与「isolate 表 / ObjectEffectStage / wasm PendingChainStore」
+  // 共用同一把键（全库实测对象 id = 12/13/17/20/…，两套计数器无法表达）。
+  //
+  // ⚠️ 旋转的分工**不可「统一」**：quadAngles 由调用方按「RT 内容是否已含旋转」决定——
+  //   - 背景：内容 mesh 的 rotation 已归零（RT 内容**不含**旋转）→ quad 承载对象 angles；
+  //   - 粒子：内容 shader 里已施加 objAngles（RT 内容**已含**旋转）→ quadAngles 传 [0,0,0]，
+  //     否则同一份旋转被施加两次。
+  attachIsolated(objectId, kind, content, worldW, worldH, size, position, quadAngles, colorBlendMode) {
+    const rtW = Math.max(1, Math.round(size.width));
+    const rtH = Math.max(1, Math.round(size.height));
+    const rt = new WebGLRenderTarget(rtW, rtH);
+    const localCamera = new OrthographicCamera(-rtW / 2, rtW / 2, rtH / 2, -rtH / 2, -1e3, 1e3);
+    localCamera.position.z = CAMERA_DISTANCE;
+    const localScene = new Scene();
+    localScene.add(content);
+    const quad = new Mesh(
+      createCompositeGeometry(worldW, worldH, rtW, rtH),
+      this.createCompositeQuadMaterial(rt.texture, colorBlendMode)
+    );
+    quad.position.set(position.x, position.y, position.z);
+    quad.rotation.set(quadAngles[0], quadAngles[1], quadAngles[2]);
+    quad.renderOrder = kind === "particle" ? 1 : 0;
+    this.scene.add(quad);
+    this.isolated.set(objectId, {
+      id: objectId,
+      kind,
+      rt,
+      rtWidth: rtW,
+      rtHeight: rtH,
+      rtTexture: rt.texture,
+      localScene,
+      localCamera,
+      quad,
+      worldW,
+      worldH
+    });
+  }
+  // Task 2：更新背景图层状态，对齐既有 update_image 语义——undefined = 保持现状；
+  // 传入值若无变化（与当前已应用状态相等）则跳过该字段；未知 id → no-op。
+  // origin 为 WE 场景坐标，先按 we_to_three 中心化（origin - scene/2）再写 mesh.position。
+  update_background(id, origin, scale, alpha, brightness) {
+    const entry = this.backgroundEntries.get(id);
+    if (!entry) return;
+    if (origin) {
+      const [ox, oy, oz] = origin;
+      if (ox !== entry.origin[0] || oy !== entry.origin[1] || oz !== entry.origin[2]) {
+        entry.origin = [ox, oy, oz];
+        entry.mesh.position.set(ox - entry.sceneW / 2, oy - entry.sceneH / 2, oz);
+      }
+    }
+    if (scale) {
+      const [sx, sy, sz] = scale;
+      if (sx !== entry.scale[0] || sy !== entry.scale[1] || sz !== entry.scale[2]) {
+        entry.scale = [sx, sy, sz];
+        entry.mesh.scale.set(sx, sy, sz);
+      }
+    }
+    if (alpha !== void 0) {
+      const a = Math.max(0, Math.min(1, alpha));
+      if (a !== entry.alpha) {
+        entry.alpha = a;
+        const mat = entry.mesh.material;
+        if (mat instanceof ShaderMaterial) mat.uniforms.opacity.value = a;
+        else mat.opacity = a;
+      }
+    }
+    if (brightness !== void 0) {
+      if (brightness !== entry.brightness) {
+        entry.brightness = brightness;
+        const mod = materialModulation(void 0, entry.alpha, brightness);
+        const mat = entry.mesh.material;
+        if (mat instanceof ShaderMaterial) mat.uniforms.tint.value.set(mod.r, mod.g, mod.b);
+        else mat.color.setRGB(mod.r, mod.g, mod.b);
+      }
+    }
+  }
+  // Task 3：粒子图层。`simVerticesGetter` 每帧返回模拟器当前顶点（摊平 Float32Array，
+  // 每粒子 `[pos3, size, uv2, color3, alpha]` 10 浮点——来自 wasm `SceneParticleSim::build_instance_vertices`）。
+  // 渲染用 three.js `ShaderMaterial` billboard quad（每粒子一个实例，shader 由基础角点+位置/尺寸展开），
+  // 模拟逻辑仍由 `SceneParticleSim` 承担（思路 1 核心：不重写模拟，只换渲染引擎）。
+  // 返回分配的图层 id，供更新/释放引用。
+  addParticle(simVerticesGetter, opts) {
+    const frameCount = Math.max(1, Math.floor(opts.frameCount));
+    const frameCols = Number.isFinite(opts.frameCols) && opts.frameCols > 0 ? Math.max(1, Math.floor(opts.frameCols)) : frameCount;
+    const frameRows = Number.isFinite(opts.frameRows) && opts.frameRows > 0 ? Math.max(1, Math.floor(opts.frameRows)) : 1;
+    const hasTex = !!opts.tex;
+    const softness = opts.softness ?? (hasTex ? 0.15 : 1);
+    const geometry = new InstancedBufferGeometry();
+    geometry.setAttribute("position", new BufferAttribute(PARTICLE_QUAD_CORNERS, 3));
+    geometry.setIndex(new BufferAttribute(new Uint16Array(PARTICLE_QUAD_INDEX), 1));
+    geometry.instanceCount = 0;
+    const initial = simVerticesGetter();
+    const count = Math.floor(initial.length / 10);
+    const capacity = particleCapacity(opts.maxInstances ?? 0, count);
+    const positions = new InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
+    const sizes = new InstancedBufferAttribute(new Float32Array(capacity), 1);
+    const uvs = new InstancedBufferAttribute(new Float32Array(capacity * 2), 2);
+    const colors = new InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
+    const alphas = new InstancedBufferAttribute(new Float32Array(capacity), 1);
+    geometry.setAttribute("particlePosition", positions);
+    geometry.setAttribute("particleSize", sizes);
+    geometry.setAttribute("particleUv", uvs);
+    geometry.setAttribute("particleColor", colors);
+    geometry.setAttribute("particleAlpha", alphas);
+    const material = new ShaderMaterial({
+      uniforms: {
+        map: { value: opts.tex ?? createWhiteTexture() },
+        frameCount: { value: frameCount },
+        frameCols: { value: frameCols },
+        frameRows: { value: frameRows },
+        softness: { value: softness },
+        maskMode: { value: hasTex ? 1 : 0 },
+        // 对象变换（缺省恒等 → 顶点 shader 退化为旧的 worldPos = particlePosition + corner*size/2）。
+        objCenter: { value: new Vector3(...opts.objectCenter ?? [0, 0, 0]) },
+        objScale: { value: new Vector3(...opts.objectScale ?? [1, 1, 1]) },
+        objAngles: { value: new Vector3(...opts.objectAngles ?? [0, 0, 0]) },
+        emitterOrigin: { value: new Vector3(...opts.emitterOrigin ?? [0, 0, 0]) },
+        bmOffset: { value: new Vector3(...simEmitterOffset(opts.emitterOrigin ?? [0, 0, 0])) }
+      },
+      vertexShader: PARTICLE_VERTEX_SHADER,
+      fragmentShader: PARTICLE_FRAGMENT_SHADER,
+      transparent: true,
+      depthWrite: false,
+      depthTest: false,
+      side: DoubleSide,
+      blending: opts.blend === "additive" ? AdditiveBlending : NormalBlending
+    });
+    const mesh = new Mesh(geometry, material);
+    mesh.frustumCulled = false;
+    geometry.boundingSphere = new Sphere(new Vector3(0, 0, 0), Number.POSITIVE_INFINITY);
+    mesh.renderOrder = 1;
+    if (opts.isolate) {
+      const c = opts.objectCenter ?? [0, 0, 0];
+      mesh.position.set(-c[0], -c[1], -c[2]);
+    } else {
+      this.scene.add(mesh);
+    }
+    const id = this.nextParticleLayerId++;
+    const layer = {
+      id,
+      getter: simVerticesGetter,
+      frameCount,
+      geometry,
+      material,
+      mesh,
+      positions,
+      sizes,
+      uvs,
+      colors,
+      alphas,
+      capacity,
+      loggedFirstFrame: false,
+      loggedCount: 0
+    };
+    this.particleLayers.set(id, layer);
+    this.writeParticleData(layer, initial, count);
+    if (opts.isolate) {
+      const center = opts.objectCenter ?? [0, 0, 0];
+      this.attachIsolated(
+        opts.isolate.objectId,
+        "particle",
+        mesh,
+        opts.isolate.worldW,
+        opts.isolate.worldH,
+        { width: opts.isolate.rtWidth, height: opts.isolate.rtHeight },
+        { x: center[0], y: center[1], z: center[2] },
+        [0, 0, 0],
+        0
+      );
+    }
+    return id;
+  }
+  // 每帧刷新所有粒子图层：调用各自的 `simVerticesGetter()` 取当前顶点并写回 BufferAttribute。
+  // `dt` 用于诊断日志（证明帧循环真的在跑、dt 是真实帧间隔且 >0）。
+  updateParticles(dt) {
+    for (const layer of this.particleLayers.values()) {
+      const data = layer.getter();
+      const count = Math.floor(data.length / 10);
+      if (count > 0 && !layer.loggedFirstFrame) {
+        layer.loggedFirstFrame = true;
+        layer.loggedCount = count;
+        console.log(
+          `[three] \u7C92\u5B50\u5DF2\u4EA7\u51FA layer=${layer.id} count=${count} dt=${dt.toFixed(4)}s capacity=${layer.capacity}\uFF08\u9996\u5E27\u975E\u96F6\uFF1B\u6A21\u62DF\u6BCF\u5E27\u7D2F\u79EF\u53D1\u5C04\uFF0C\u6EE1 capacity \u65F6\u518D\u6253\u5370\u4E00\u6761\uFF09`
+        );
+      } else if (layer.loggedCount < layer.capacity && count >= layer.capacity) {
+        layer.loggedCount = count;
+        console.log(`[three] \u7C92\u5B50\u5DF2\u8FBE maxcount layer=${layer.id} count=${count} dt=${dt.toFixed(4)}s`);
+      }
+      this.writeParticleData(layer, data, count);
+    }
+  }
+  // 把 per-particle 摊平顶点（每粒子 10 浮点）拆到 5 个 instanced 属性并标记需重传。
+  // 容量不足时按需扩容（正常不会发生：容量 = sim 的 maxcount）——扩容后**必须**同步
+  // `geometry._maxInstanceCount`（three 的首帧锁存值，见 addParticle 注释），否则 draw 仍按旧容量截断。
+  writeParticleData(layer, data, count) {
+    const ensure = (attr, itemSize, need, name) => {
+      const arr = attr.array;
+      if (arr.length >= need) return attr;
+      const grown = new Float32Array(Math.max(need, Math.max(arr.length * 2, 1)));
+      grown.set(arr);
+      const next = new InstancedBufferAttribute(grown, itemSize);
+      layer.geometry.setAttribute(name, next);
+      return next;
+    };
+    layer.positions = ensure(layer.positions, 3, count * 3, "particlePosition");
+    layer.sizes = ensure(layer.sizes, 1, count, "particleSize");
+    layer.uvs = ensure(layer.uvs, 2, count * 2, "particleUv");
+    layer.colors = ensure(layer.colors, 3, count * 3, "particleColor");
+    layer.alphas = ensure(layer.alphas, 1, count, "particleAlpha");
+    const minCapacity = Math.min(
+      Math.floor(layer.positions.array.length / 3),
+      layer.sizes.array.length,
+      Math.floor(layer.uvs.array.length / 2),
+      Math.floor(layer.colors.array.length / 3),
+      layer.alphas.array.length
+    );
+    if (minCapacity > layer.capacity) {
+      layer.capacity = minCapacity;
+      layer.geometry._maxInstanceCount = minCapacity;
+    }
+    const pos = layer.positions.array;
+    const size = layer.sizes.array;
+    const uv = layer.uvs.array;
+    const color = layer.colors.array;
+    const alpha = layer.alphas.array;
+    for (let i = 0; i < count; i++) {
+      const b = i * 10;
+      pos[i * 3] = data[b];
+      pos[i * 3 + 1] = data[b + 1];
+      pos[i * 3 + 2] = data[b + 2];
+      size[i] = data[b + 3];
+      uv[i * 2] = data[b + 4];
+      uv[i * 2 + 1] = data[b + 5];
+      color[i * 3] = data[b + 6];
+      color[i * 3 + 1] = data[b + 7];
+      color[i * 3 + 2] = data[b + 8];
+      alpha[i] = data[b + 9];
+    }
+    layer.positions.needsUpdate = true;
+    layer.sizes.needsUpdate = true;
+    layer.uvs.needsUpdate = true;
+    layer.colors.needsUpdate = true;
+    layer.alphas.needsUpdate = true;
+    layer.geometry.instanceCount = count;
+  }
+  // 停止循环并释放 renderer 资源。
+  dispose() {
+    this.renderer.setAnimationLoop(null);
+    for (const entry of this.backgroundEntries.values()) {
+      entry.mesh.geometry.dispose();
+      entry.mesh.material.dispose();
+    }
+    this.backgroundEntries.clear();
+    for (const layer of this.particleLayers.values()) {
+      layer.geometry.dispose();
+      layer.material.dispose();
+    }
+    this.particleLayers.clear();
+    for (const entry of this.isolated.values()) {
+      entry.rt.dispose();
+      entry.quad.geometry.dispose();
+      entry.quad.material.dispose();
+      entry.localScene.traverse((o) => {
+        const m = o;
+        if (m.geometry) m.geometry.dispose();
+        const mat = m.material;
+        if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
+        else mat?.dispose();
+      });
+    }
+    this.isolated.clear();
+    this.objectEffectStage = null;
+    this.renderer.dispose();
+  }
+};
+function frameCountFromDims(width, height) {
+  const w = Math.max(1, width);
+  const h = Math.max(1, height);
+  return Math.max(1, Math.floor(w / h));
+}
+function textureFrameCount(tex) {
+  const sprite = textureSpriteInfo(tex);
+  if (sprite) return Math.max(1, Math.floor(sprite.frames));
+  if (!tex) return 1;
+  const img = tex.image;
+  if (img && typeof img.width === "number" && typeof img.height === "number" && img.width > 0 && img.height > 0) {
+    return frameCountFromDims(img.width, img.height);
+  }
+  if (Array.isArray(tex.image)) {
+    const first = tex.image[0];
+    if (first && typeof first.width === "number" && typeof first.height === "number" && first.width > 0 && first.height > 0) {
+      return frameCountFromDims(first.width, first.height);
+    }
+  }
+  return 1;
+}
+function textureSpriteInfo(tex) {
+  const raw = tex?.userData?.sprite;
+  if (!raw || typeof raw !== "object") return void 0;
+  const s = raw;
+  const frames = typeof s.frames === "number" ? Math.floor(s.frames) : 0;
+  const cols = typeof s.cols === "number" ? Math.floor(s.cols) : 0;
+  const rows = typeof s.rows === "number" ? Math.floor(s.rows) : 0;
+  if (frames <= 0 || cols <= 0 || rows <= 0) return void 0;
+  return { frames, cols, rows };
+}
+function textureFrameGrid(tex) {
+  const sprite = textureSpriteInfo(tex);
+  if (sprite) return { cols: sprite.cols, rows: sprite.rows };
+  return { cols: textureFrameCount(tex), rows: 1 };
+}
+function loadSceneToThree(sceneJson, assets, canvas, viewport) {
+  const desc = parseSceneJson(sceneJson);
+  const sceneW = desc.orthogonal.width;
+  const sceneH = desc.orthogonal.height;
+  const player = new ThreeScenePlayer(canvas, sceneW, sceneH, assets.renderer);
+  player.setSceneSize(sceneW, sceneH);
+  const vw = viewport?.width ?? sceneW;
+  const vh = viewport?.height ?? sceneH;
+  if (vw > 0 && vh > 0) player.resize(vw, vh);
+  const backgroundIds = [];
+  const particleLayers = [];
+  const sims = [];
+  for (const obj of desc.objects) {
+    if (obj.kind === "image") {
+      const id = player.addBackground({
+        origin: obj.origin,
+        size: obj.size,
+        scale: obj.scale,
+        // WE 对象角度（弧度）→ mesh.rotation（three 的 Object3D 变换顺序即 T·R·S）。
+        angles: obj.angles,
+        // WE 图像颜色混合模式（非 0 且已实现时改用预乘 + CustomBlending，见 addBackground）。
+        colorBlendMode: obj.colorBlendMode,
+        texture: assets.backgroundTextures?.get(obj.id),
+        alpha: obj.alpha,
+        brightness: obj.brightness,
+        sceneW,
+        sceneH,
+        // 对象级效果链：本对象带效果（调用方下发了隔离条件）→ 内容进 localScene 渲染到对象 RT，
+        // 主场景放合成 quad；缺省不隔离，行为与今天逐字相同。隔离条目的键 = obj.id（值里的
+        // objectId 同值），与 ObjectEffectStage 的键空间一致。
+        isolate: assets.isolate?.get(obj.id)
+      });
+      backgroundIds.push(id);
+    } else if (obj.kind === "particle" && obj.particle) {
+      const p = assets.particles?.get(obj.id);
+      if (!p || !assets.createParticleSim) continue;
+      const sim = assets.createParticleSim(p.specJson, obj.origin, sceneW, sceneH, p.overrideJson ?? "");
+      const frameCount = textureFrameCount(p.tex);
+      const grid = textureFrameGrid(p.tex);
+      sim.set_frame_count(frameCount);
+      const emitterOrigin = specEmitterOrigin(p.specJson);
+      const id = player.addParticle(() => sim.vertices(), {
+        tex: p.tex,
+        frameCount: sim.frame_count(),
+        frameCols: grid.cols,
+        frameRows: grid.rows,
+        blend: p.blend,
+        softness: p.softness,
+        objectCenter: [obj.origin[0] - sceneW / 2, obj.origin[1] - sceneH / 2, obj.origin[2]],
+        objectScale: [obj.scale[0], obj.scale[1], obj.scale[2] ?? 1],
+        // 对象角度（弧度）：顶点 shader 用它把局部运动方向/发射点/quad 角点旋转到场景空间。
+        objectAngles: obj.angles,
+        emitterOrigin,
+        // 实例缓冲容量 = spec 的 maxcount（= wasm `SceneParticleSim.maxcount`，模拟器的发射上限）。
+        // three 只在首帧锁存该容量（见 addParticle），必须按模拟器**最终**会产出的粒子数一次给足；
+        // 缺 maxcount（旧格式/解析失败）→ addParticle 用 DEFAULT_PARTICLE_CAPACITY 兜底。
+        maxInstances: specMaxcount(p.specJson),
+        // 对象级效果链：带效果的粒子对象同样隔离（对象 RT + 合成 quad）。世界尺寸由调用方按
+        // `particleWorldSize(spec, scale)` 算好（player 不知道 spec 的 distanceMax）；缺省不隔离。
+        // 隔离条目的键 = obj.id（值里的 objectId 同值），与 ObjectEffectStage 的键空间一致。
+        isolate: assets.isolate?.get(obj.id)
+      });
+      particleLayers.push({ id, sim });
+      sims.push(sim);
+    }
+  }
+  player.setAnimationLoop((dt) => {
+    for (const sim of sims) sim.update(dt);
+  });
+  return { player, sims, backgroundIds, particleLayers };
 }
 
 // src/client/tex-loader.ts
@@ -20761,30 +21720,1409 @@ async function loadTexTexture(url) {
   return textureFromTex(info);
 }
 
-// src/client/effect-runner.ts
-var SCREEN_CAMERA = new OrthographicCamera(-1, 1, 1, -1, -1e3, 1e3);
-SCREEN_CAMERA.position.z = 300;
+// src/client/shader/uniform-binder.ts
+function isAudioUniform(name) {
+  return name.startsWith("g_AudioSpectrum");
+}
+function parseValue(raw) {
+  if (typeof raw === "number") return raw;
+  if (typeof raw === "boolean") return raw ? 1 : 0;
+  if (typeof raw === "string") {
+    const parts = raw.trim().split(/\s+/).map(Number);
+    if (parts.some((n) => !isFinite(n))) return null;
+    return parts.length === 1 ? parts[0] : parts;
+  }
+  if (Array.isArray(raw)) {
+    const nums = raw.map(Number);
+    if (nums.some((n) => !isFinite(n))) return null;
+    return nums.length === 1 ? nums[0] : nums;
+  }
+  return null;
+}
+function resolveUniformBindings(annotations, constants) {
+  const out = /* @__PURE__ */ new Map();
+  for (const u of annotations) {
+    if (u.type.startsWith("sampler")) continue;
+    const arrMatch = u.type.match(/^float\[(\d+)\]$/);
+    if (isAudioUniform(u.name) && arrMatch) {
+      out.set(u.name, new Array(Number(arrMatch[1])).fill(0));
+      continue;
+    }
+    let raw;
+    const mat = u.annotation?.material;
+    if (typeof mat === "string") {
+      const v = constants[mat];
+      raw = v && typeof v === "object" && !Array.isArray(v) && "value" in v ? v.value : v;
+    }
+    if (raw === void 0 && u.annotation?.default !== void 0) raw = u.annotation.default;
+    const parsed = parseValue(raw);
+    const dim = u.type === "vec2" ? 2 : u.type === "vec3" ? 3 : u.type === "vec4" ? 4 : 0;
+    if (parsed === null || parsed === 0) {
+      out.set(u.name, dim ? new Array(dim).fill(0) : parsed ?? 0);
+    } else {
+      out.set(u.name, parsed);
+    }
+  }
+  return out;
+}
 
-// src/client/scene-renderer.ts
-var CAMERA_DISTANCE = 300;
-function materialModulation(color, alpha, brightness) {
-  const b = brightness ?? 1;
-  const clamp01 = (v) => Math.max(0, Math.min(1, v));
-  const c = color ?? [255, 255, 255];
-  return {
-    r: clamp01(c[0] / 255 * b),
-    g: clamp01(c[1] / 255 * b),
-    b: clamp01(c[2] / 255 * b),
-    a: clamp01(alpha ?? 1)
+// src/client/effect-runner.ts
+function resolveTextureSlotPath(path) {
+  if (!path) return null;
+  if (path.startsWith("util/") || path.startsWith("_rt_")) return path;
+  const p = path.startsWith("materials/") ? path : "materials/" + path;
+  return p.endsWith(".tex") ? p : p + ".tex";
+}
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0;
+    a = a + 1831565813 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
   };
 }
-function coverRange(width, height, viewAspect) {
-  const sceneAspect = width / height;
-  if (viewAspect > sceneAspect) {
-    return { w: width, h: width / viewAspect };
+var BUILTIN_CACHE = /* @__PURE__ */ new Map();
+function resolveBuiltinTexture(path) {
+  if (!path) return null;
+  const p = path.replace(/\.tex$/, "");
+  let key;
+  if (p === "util/white") key = "white";
+  else if (p === "util/noise" || p === "util/clouds_256") key = "noise256";
+  else if (p.startsWith("_rt_")) key = "white";
+  else return null;
+  const cached = BUILTIN_CACHE.get(key);
+  if (cached) return cached;
+  let tex;
+  if (key === "white") {
+    tex = new DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1, RGBAFormat);
+  } else {
+    const size = 256;
+    const data = new Uint8Array(size * size * 4);
+    const rnd = mulberry32(1370177149);
+    for (let i = 0; i < size * size; i++) {
+      const v = Math.round(rnd() * 255);
+      data[i * 4] = v;
+      data[i * 4 + 1] = v;
+      data[i * 4 + 2] = v;
+      data[i * 4 + 3] = 255;
+    }
+    tex = new DataTexture(data, size, size, RGBAFormat);
   }
-  return { w: height * viewAspect, h: height };
+  tex.needsUpdate = true;
+  BUILTIN_CACHE.set(key, tex);
+  return tex;
 }
+function resolveInputTexture(input) {
+  return input instanceof WebGLRenderTarget ? input.texture : input;
+}
+function pickWriteTarget(previous, rtA, rtB) {
+  if (previous === rtA) return rtB;
+  return rtA;
+}
+function resolveTargetSize(current, opts) {
+  return {
+    width: opts?.width ?? current.width,
+    height: opts?.height ?? current.height
+  };
+}
+function resolveTextureResolution(tex, fallbackW, fallbackH) {
+  return {
+    width: tex?.image?.width ?? fallbackW,
+    height: tex?.image?.height ?? fallbackH
+  };
+}
+function fillAudioSpectrumUniform(dest, src) {
+  for (let i = 0; i < dest.length; i++) {
+    dest[i] = i < src.length ? src[i] / 255 : 0;
+  }
+}
+var EffectRunner = class {
+  renderer;
+  rtA;
+  rtB;
+  chains = [];
+  id = "";
+  last = null;
+  // 最近一次 update 的最终输出（帧循环贴屏用）
+  materials = /* @__PURE__ */ new Map();
+  // key: `${passIndex}`
+  scenes = /* @__PURE__ */ new Map();
+  // 每 pass 独立场景（含全屏 quad）
+  textures = /* @__PURE__ */ new Map();
+  // 纹理槽缓存（key: `${id}:${path}`）
+  width;
+  height;
+  // update 串行化：帧循环每帧调用 update，但内部有异步纹理槽加载（await），
+  // 并发 update 会交错使用同一 renderer 的 RT/绑定状态 → 画面黑屏/闪烁。
+  // inFlight 标记 update 未完成时跳过本帧（last 保持上次输出，下一帧重试）；
+  // 换壁纸后 textures 已清空 → 首帧加载完成前输出 input（场景 RT），不黑屏。
+  updateInFlight = false;
+  // 音频频谱源（T3.2）：freqData 缓冲引用（scene-renderer 每帧刷新后注入）。
+  // null = 无分析器 → 音频 uniform 保持 binder 初始化的全零（静音，行为不变）。
+  audioSpectrum = null;
+  constructor(renderer, width, height) {
+    this.renderer = renderer;
+    this.width = width;
+    this.height = height;
+    this.rtA = new WebGLRenderTarget(width, height);
+    this.rtB = new WebGLRenderTarget(width, height);
+  }
+  setChains(chains, wallpaperId, opts) {
+    this.chains = chains;
+    this.id = wallpaperId;
+    this.last = null;
+    const size = resolveTargetSize({ width: this.width, height: this.height }, opts);
+    this.ensureTargets(size.width, size.height);
+    this.disposeMaterials();
+    this.textures.clear();
+    for (const pass of chains.flat()) {
+      for (const path of pass.textureSlots) {
+        if (path) void this.resolveTextureSlot(path);
+      }
+    }
+  }
+  // 设置音频频谱源（T3.2）：传入频谱缓冲引用（可每帧刷新后重复注入同一引用，
+  // update() 渲染前从缓冲读取当前频谱）；null → 恢复全零静音（不回归）。
+  setAudioSpectrumSource(source) {
+    this.audioSpectrum = source;
+  }
+  // RT 尺寸对齐：仅当目标尺寸与当前不一致才重建 ping-pong RT（避免 recreate churn）；
+  // 重建后同步 this.width/this.height（getMaterial 预建 g_TextureNResolution 默认值跟随对象 RT 尺寸）。
+  ensureTargets(w, h) {
+    if (this.rtA.width === w && this.rtA.height === h) return;
+    this.rtA.dispose();
+    this.rtB.dispose();
+    this.rtA = new WebGLRenderTarget(w, h);
+    this.rtB = new WebGLRenderTarget(w, h);
+    this.width = w;
+    this.height = h;
+  }
+  disposeMaterials() {
+    for (const m of this.materials.values()) m.dispose();
+    for (const key of Array.from(this.scenes.keys())) this.disposeSceneQuads(key);
+    this.materials.clear();
+  }
+  getMaterial(pass, key) {
+    const cached = this.materials.get(key);
+    if (cached) return cached;
+    let material = null;
+    try {
+      const uniforms = {};
+      for (const [name, value] of pass.uniforms) {
+        uniforms[name] = { value: Array.isArray(value) ? value.slice() : value };
+      }
+      if (!uniforms["g_Texture0"]) uniforms["g_Texture0"] = { value: null };
+      for (let i = 0; i < pass.textureSlots.length; i++) {
+        const slot = `g_Texture${i + 1}`;
+        if (!uniforms[slot]) uniforms[slot] = { value: null };
+      }
+      for (let i = 0; i <= Math.max(pass.textureSlots.length, 0); i++) {
+        const res = `g_Texture${i}Resolution`;
+        uniforms[res] = {
+          value: new Vector4(this.width, this.height, 1 / Math.max(1, this.width), 1 / Math.max(1, this.height))
+        };
+      }
+      const matRe = /uniform\s+mat([234])\s+(\w+)/g;
+      const matDefs = /* @__PURE__ */ new Map();
+      for (const src of [pass.vertSrc, pass.fragSrc]) {
+        for (const m of src.matchAll(matRe)) matDefs.set(m[2], Number(m[1]));
+      }
+      for (const [name, dim] of matDefs) {
+        if (uniforms[name] && typeof uniforms[name].value === "number") {
+          const n = dim * dim;
+          const id = new Array(n).fill(0);
+          for (let i = 0; i < n; i += dim + 1) id[i] = 1;
+          uniforms[name].value = id;
+        }
+      }
+      if (uniforms["g_ModelViewProjectionMatrix"]) {
+        uniforms["g_ModelViewProjectionMatrix"].value = new Matrix4();
+      }
+      material = new ShaderMaterial({
+        vertexShader: pass.vertSrc,
+        fragmentShader: pass.fragSrc,
+        uniforms,
+        transparent: true,
+        depthTest: false,
+        depthWrite: false,
+        blending: blendModeToThree(pass.blendMode)
+      });
+      let compileFailed = false;
+      const prevHandler = this.renderer.debug.onShaderError;
+      this.renderer.debug.onShaderError = (gl, program, vs, fs) => {
+        compileFailed = true;
+        const vsInfo = (gl.getShaderInfoLog(vs) || "").trim();
+        const fsInfo = (gl.getShaderInfoLog(fs) || "").trim();
+        console.warn(
+          `[wallpaper-engine] \u6548\u679C pass ${key} shader \u7F16\u8BD1\u5931\u8D25`,
+          vsInfo ? { vertex: vsInfo } : {},
+          fsInfo ? { fragment: fsInfo } : {}
+        );
+      };
+      const probeRT = new WebGLRenderTarget(1, 1);
+      try {
+        this.renderer.setRenderTarget(probeRT);
+        this.renderer.render(this.getScene(key, material), SCREEN_CAMERA);
+        this.renderer.setRenderTarget(null);
+      } finally {
+        this.renderer.debug.onShaderError = prevHandler;
+        probeRT.dispose();
+      }
+      if (compileFailed) {
+        console.warn("[wallpaper-engine] \u6548\u679C pass \u7F16\u8BD1\u5931\u8D25\uFF0C\u8DF3\u8FC7:", key);
+        material.dispose();
+        this.disposeSceneQuads(key);
+        return null;
+      }
+      this.materials.set(key, material);
+      return material;
+    } catch (e) {
+      console.warn("[wallpaper-engine] \u6548\u679C pass \u7F16\u8BD1\u5931\u8D25\uFF0C\u8DF3\u8FC7:", key, e);
+      material?.dispose();
+      this.disposeSceneQuads(key);
+      return null;
+    }
+  }
+  // 填充本 pass 材质中所有音频频谱 uniform（g_AudioSpectrum*，binder 初始化的 number[]）：
+  // 字节 0-255 → 浮点 0-1（fillAudioSpectrumUniform，长度不等时补零/截取）。
+  fillAudioUniforms(material, src) {
+    for (const [name, u] of Object.entries(material.uniforms)) {
+      if (isAudioUniform(name) && Array.isArray(u.value)) {
+        fillAudioSpectrumUniform(u.value, src);
+      }
+    }
+  }
+  // 释放某 key 对应场景中全屏 quad 的 geometry 并移除场景缓存（编译失败/异常路径共用）
+  disposeSceneQuads(key) {
+    const scene = this.scenes.get(key);
+    if (scene) {
+      for (const child of scene.children) {
+        if (child instanceof Mesh) child.geometry.dispose();
+      }
+    }
+    this.scenes.delete(key);
+  }
+  getScene(key, material) {
+    const cached = this.scenes.get(key);
+    if (cached) return cached;
+    const scene = new Scene();
+    const quad = new Mesh(new PlaneGeometry(2, 2), material);
+    quad.frustumCulled = false;
+    scene.add(quad);
+    this.scenes.set(key, scene);
+    return scene;
+  }
+  async resolveTextureSlot(path) {
+    if (!path) return null;
+    const builtin = resolveBuiltinTexture(path);
+    if (builtin) return builtin;
+    const key = `${this.id}:${path}`;
+    if (this.textures.has(key)) return this.textures.get(key) ?? null;
+    const resolved = resolveTextureSlotPath(path);
+    if (!resolved) return null;
+    const tex = await loadTexTexture(`/wallpapers/scene/${this.id}/asset?name=${encodeURIComponent(resolved)}`);
+    if (!tex) console.warn("[wallpaper-engine] \u7EB9\u7406\u69FD\u52A0\u8F7D\u5931\u8D25\uFF0C\u8DF3\u8FC7:", path, "\u2192", resolved);
+    this.textures.set(key, tex);
+    return tex;
+  }
+  // 串行化 + 输入参数化（Ruling P1-1）：input 可为场景 RT 或对象 RT 的纹理（任意 Texture）。
+  // 返回最终输出纹理；链为空或上一帧 update 未完成（纹理槽异步加载中）→ null。
+  // 帧循环用 lastOutput() 贴屏，last 保持最近完成输出，无帧间闪烁。
+  async update(time, input) {
+    if (this.updateInFlight) return null;
+    this.updateInFlight = true;
+    try {
+      const flat = this.chains.flat();
+      if (flat.length === 0) return null;
+      const slotTex = /* @__PURE__ */ new Map();
+      for (let i = 0; i < flat.length; i++) {
+        const pass = flat[i];
+        for (let j = 0; j < pass.textureSlots.length; j++) {
+          const path = pass.textureSlots[j];
+          if (path) slotTex.set(`${i}:${j}`, await this.resolveTextureSlot(path));
+        }
+      }
+      let readTex = resolveInputTexture(input);
+      let lastWrite = null;
+      for (let i = 0; i < flat.length; i++) {
+        const pass = flat[i];
+        const material = this.getMaterial(pass, `${i}`);
+        if (!material) continue;
+        for (let j = 0; j < pass.textureSlots.length; j++) {
+          const tex = slotTex.get(`${i}:${j}`) ?? null;
+          const slot = `g_Texture${j + 1}`;
+          if (material.uniforms[slot]) material.uniforms[slot].value = tex;
+          const res = `g_Texture${j + 1}Resolution`;
+          if (material.uniforms[res]) {
+            const { width: w, height: h } = resolveTextureResolution(tex, this.width, this.height);
+            material.uniforms[res].value = new Vector4(w, h, 1 / Math.max(1, w), 1 / Math.max(1, h));
+          }
+        }
+        if (material.uniforms["g_Texture0"]) material.uniforms["g_Texture0"].value = readTex;
+        if (material.uniforms["g_Texture0Resolution"]) {
+          const { width: w, height: h } = resolveTextureResolution(readTex, this.width, this.height);
+          material.uniforms["g_Texture0Resolution"].value = new Vector4(w, h, 1 / Math.max(1, w), 1 / Math.max(1, h));
+        }
+        if (material.uniforms["g_Time"]) material.uniforms["g_Time"].value = time;
+        if (this.audioSpectrum) this.fillAudioUniforms(material, this.audioSpectrum);
+        const writeTarget = pickWriteTarget(lastWrite, this.rtA, this.rtB);
+        this.renderer.setRenderTarget(writeTarget);
+        this.renderer.render(this.getScene(`${i}`, material), SCREEN_CAMERA);
+        readTex = writeTarget.texture;
+        lastWrite = writeTarget;
+      }
+      this.renderer.setRenderTarget(null);
+      this.last = readTex;
+      return readTex;
+    } finally {
+      this.updateInFlight = false;
+    }
+  }
+  // 帧循环同步读取最近输出：update 未完成时返回 null（调用方回退场景 RT，避免首帧黑屏）
+  lastOutput() {
+    return this.last;
+  }
+  dispose() {
+    this.disposeMaterials();
+    this.rtA.dispose();
+    this.rtB.dispose();
+    this.textures.clear();
+    this.audioSpectrum = null;
+  }
+};
+var SCREEN_CAMERA = new OrthographicCamera(-1, 1, 1, -1, -1e3, 1e3);
+SCREEN_CAMERA.position.z = 300;
+function blendModeToThree(mode) {
+  switch (mode) {
+    case "add":
+      return AdditiveBlending;
+    case "multiply":
+      return MultiplyBlending;
+    case "subtract":
+      return SubtractiveBlending;
+    default:
+      return NormalBlending;
+  }
+}
+
+// src/client/shader/we-headers.ts
+var COMMON_H = `
+#ifndef WE_COMMON_H
+#define WE_COMMON_H
+#define M_PI 3.14159265358979323846
+#define M_PI_HALF 1.57079632679489661923
+#define M_PI_2 6.28318530718
+#define SQRT_2 1.41421356237309504880
+#define SQRT_3 1.73205080756887729352
+#define DEG2RAD 0.01745329251994329576923690768489
+#define DEG2PCT 0.0027777777777777777777777777777
+
+float frac(float x) { return fract(x); }
+vec2 frac(vec2 x) { return fract(x); }
+vec3 frac(vec3 x) { return fract(x); }
+vec4 frac(vec4 x) { return fract(x); }
+
+float saturate(float x) { return clamp(x, 0.0, 1.0); }
+vec2 saturate(vec2 x) { return clamp(x, 0.0, 1.0); }
+vec3 saturate(vec3 x) { return clamp(x, 0.0, 1.0); }
+vec4 saturate(vec4 x) { return clamp(x, 0.0, 1.0); }
+
+vec4 texSample2D(sampler2D t, vec2 uv) { return texture2D(t, uv); }
+vec4 texSample2DLod(sampler2D t, vec2 uv, float lod) { return textureLod(t, uv, lod); }
+
+vec2 rotateVec2(vec2 v, float r) {
+  vec2 cs = vec2(cos(r), sin(r));
+  return vec2(v.x * cs.x - v.y * cs.y, v.x * cs.y + v.y * cs.x);
+}
+
+vec2 rotateVec2(vec4 v, float r) { return rotateVec2(v.xy, r); }
+
+// \u2014\u2014 WE \u5F15\u64CE\u901A\u7528\u5F3A\u8F6C/\u6570\u5B66\u65B9\u8A00\uFF08HLSL \u8F6C GLSL \u4EA7\u7269\uFF0C\u975E\u5F15\u64CE common.h \u8F6C\u5199\uFF0C\u9700\u5168\u5C40\u8865\u9F50\uFF09\u2014\u2014
+// CAST2/CAST3/CAST4 \u7B49\u662F HLSL (floatN)x \u5F3A\u8F6C\u7684\u7B49\u4EF7\u7269\uFF1A\u5BF9**\u4EFB\u610F**\u6807\u91CF/\u5411\u91CF x \u5747\u5408\u6CD5
+// \uFF08vec3(float)=\u6807\u91CF\u5E7F\u64AD\u3001vec3(vec2/3)=\u53D6\u5206\u91CF/\u900F\u4F20\u3001vec3(vec4)=\u53D6 xyz\uFF09\uFF0C\u6545\u7528\u5B8F\u800C\u975E\u51FD\u6570\u3002
+// \u771F\u5B9E WE effects \u5B9E\u6D4B\uFF1Ablendgradient \u7528 CAST2(0.0)/CAST3(0.0)\uFF0Cwaterflow \u7528 CAST4(vec4)\uFF0C
+// depthparallax \u7528 CAST3X3(mat4)\uFF0Cmodel_vertex_v1.h \u7528 CASTF(uint\u2192float)/CASTU(float\u2192uint)\u3002
+#define CAST2(x) vec2(x)
+#define CAST3(x) vec3(x)
+#define CAST4(x) vec4(x)
+#define CASTF(x) float(x)
+#define CASTU(x) uint(x)
+#define CAST2X2(x) mat2(x)
+#define CAST3X3(x) mat3(x)
+#define CAST4X4(x) mat4(x)
+// WE \u7684 atan2(y,x) \u662F HLSL \u98CE\u683C\uFF1BGLSL \u5185\u5EFA\u4E3A atan(y,x)\uFF0C\u4EC5\u6620\u5C04\u540D\u5B57\uFF08fisheye \u7B49\u6548\u679C shader\uFF09\u3002
+#define atan2(y, x) atan(y, x)
+
+// \u2014\u2014 \u4EE5\u4E0B\u4E3A\u5F15\u64CE\u771F\u5B9E common.h \u8F6C\u5199\uFF08D:\\Steam\\steamapps\\common\\wallpaper_engine\\assets\\shaders\\common.h\uFF09\u2014\u2014
+vec3 hsv2rgb(vec3 c) {
+  vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+  vec3 p = abs(frac(c.xxx + K.xyz) * 6.0 - K.www);
+  return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+}
+
+vec3 rgb2hsv(vec3 RGB) {
+  vec4 P = (RGB.g < RGB.b) ? vec4(RGB.bg, -1.0, 2.0/3.0) : vec4(RGB.gb, 0.0, -1.0/3.0);
+  vec4 Q = (RGB.r < P.x) ? vec4(P.xyw, RGB.r) : vec4(RGB.r, P.yzx);
+  float C = Q.x - min(Q.w, Q.y);
+  float H = abs((Q.w - Q.y) / (6.0 * C + 1e-10) + Q.z);
+  vec3 HCV = vec3(H, C, Q.x);
+  float S = HCV.y / (HCV.z + 1e-10);
+  return vec3(HCV.x, S, HCV.z);
+}
+
+float greyscale(vec3 color) {
+  return dot(color, vec3(0.11, 0.59, 0.3));
+}
+// \u2014\u2014 \u5F15\u64CE\u8F6C\u5199\u7ED3\u675F \u2014\u2014
+
+// WE \u884C\u4E3B\u5E8F\u7EA6\u5B9A\uFF1Agl_Position = mul(vec4(a_Position,1), g_ModelViewProjectionMatrix)
+vec4 mul(vec4 v, mat4 m) { return m * v; }
+vec3 mul(vec3 v, mat3 m) { return m * v; }
+#endif
+`;
+var COMMON_BLUR_H = `
+#ifndef WE_COMMON_BLUR_H
+#define WE_COMMON_BLUR_H
+vec3 blur13(vec2 u, vec2 d)
+{
+	vec2 o1 = CAST2(1.4091998770852122) * d;
+	vec2 o2 = CAST2(3.2979348079914822) * d;
+	vec2 o3 = CAST2(5.2062900776825969) * d;
+	return texSample2D(g_Texture0, u).rgb * 0.1976406528809576
+	+ texSample2D(g_Texture0, u + o1).rgb * 0.2959855056006557
+	+ texSample2D(g_Texture0, u - o1).rgb * 0.2959855056006557
+	+ texSample2D(g_Texture0, u + o2).rgb * 0.0935333619980593
+	+ texSample2D(g_Texture0, u - o2).rgb * 0.0935333619980593
+	+ texSample2D(g_Texture0, u + o3).rgb * 0.0116608059608062
+	+ texSample2D(g_Texture0, u - o3).rgb * 0.0116608059608062;
+}
+vec3 blur7(vec2 u, vec2 d)
+{
+	vec2 o1 = CAST2(2.3515644035337887) * d;
+	vec2 o2 = CAST2(0.469433779698372) * d;
+	vec2 o3 = CAST2(1.4091998770852121) * d;
+	vec2 o4 = CAST2(3) * d;
+	return texSample2D(g_Texture0, u + o1).rgb * 0.2028175528299753
+	+ texSample2D(g_Texture0, u + o2).rgb * 0.4044856614512112
+	+ texSample2D(g_Texture0, u - o3).rgb * 0.3213933537319605
+	+ texSample2D(g_Texture0, u - o4).rgb * 0.0713034319868530;
+}
+vec3 blur3(vec2 u, vec2 d)
+{
+	return texSample2D(g_Texture0, u + d).rgb * 0.25
+	+ texSample2D(g_Texture0, u).rgb * 0.5
+	+ texSample2D(g_Texture0, u - d).rgb * 0.25;
+}
+vec4 blur13a(vec2 u, vec2 d)
+{
+	vec2 o1 = CAST2(1.4091998770852122) * d;
+	vec2 o2 = CAST2(3.2979348079914822) * d;
+	vec2 o3 = CAST2(5.2062900776825969) * d;
+	return texSample2D(g_Texture0, u) * 0.1976406528809576
+	+ texSample2D(g_Texture0, u + o1) * 0.2959855056006557
+	+ texSample2D(g_Texture0, u - o1) * 0.2959855056006557
+	+ texSample2D(g_Texture0, u + o2) * 0.0935333619980593
+	+ texSample2D(g_Texture0, u - o2) * 0.0935333619980593
+	+ texSample2D(g_Texture0, u + o3) * 0.0116608059608062
+	+ texSample2D(g_Texture0, u - o3) * 0.0116608059608062;
+}
+vec4 blur7a(vec2 u, vec2 d)
+{
+	vec2 o1 = CAST2(2.3515644035337887) * d;
+	vec2 o2 = CAST2(0.469433779698372) * d;
+	vec2 o3 = CAST2(1.4091998770852121) * d;
+	vec2 o4 = CAST2(3) * d;
+	return texSample2D(g_Texture0, u + o1) * 0.2028175528299753
+	+ texSample2D(g_Texture0, u + o2) * 0.4044856614512112
+	+ texSample2D(g_Texture0, u - o3) * 0.3213933537319605
+	+ texSample2D(g_Texture0, u - o4) * 0.0713034319868530;
+}
+vec4 blur3a(vec2 u, vec2 d)
+{
+	return texSample2D(g_Texture0, u + d) * 0.25
+	+ texSample2D(g_Texture0, u) * 0.5
+	+ texSample2D(g_Texture0, u - d) * 0.25;
+}
+vec2 blurRotateVec2(vec2 v, float r)
+{
+	vec2 cs = vec2(cos(r), sin(r));
+	return vec2(v.x * cs.x - v.y * cs.y, v.x * cs.y + v.y * cs.x);
+}
+vec4 blurRadial13a(vec2 u, vec2 center, float amt)
+{
+	vec2 delta = u - center;
+	amt = amt * 0.025;
+	float o1 = 1.4091998770852122 * amt;
+	float o2 = 3.2979348079914822 * amt;
+	float o3 = 5.2062900776825969 * amt;
+	vec2 r1 = blurRotateVec2(delta, o1) - delta;
+	vec2 r2 = blurRotateVec2(delta, o2) - delta;
+	vec2 r3 = blurRotateVec2(delta, o3) - delta;
+	return texSample2D(g_Texture0, u) * 0.1976406528809576
+	+ texSample2D(g_Texture0, center + r1 + delta) * 0.2959855056006557
+	+ texSample2D(g_Texture0, center - r1 + delta) * 0.2959855056006557
+	+ texSample2D(g_Texture0, center + r2 + delta) * 0.0935333619980593
+	+ texSample2D(g_Texture0, center - r2 + delta) * 0.0935333619980593
+	+ texSample2D(g_Texture0, center + r3 + delta) * 0.0116608059608062
+	+ texSample2D(g_Texture0, center - r3 + delta) * 0.0116608059608062;
+}
+vec4 blurRadial7a(vec2 u, vec2 center, float amt)
+{
+	vec2 delta = u - center;
+	amt = amt * 0.025;
+	float o1 = 2.3515644035337887 * amt;
+	float o2 = 0.469433779698372 * amt;
+	float o3 = 1.4091998770852121 * amt;
+	float o4 = 3 * amt;
+	vec2 r1 = blurRotateVec2(delta, o1) - delta;
+	vec2 r2 = blurRotateVec2(delta, o2) - delta;
+	vec2 r3 = blurRotateVec2(delta, -o3) - delta;
+	vec2 r4 = blurRotateVec2(delta, -o4) - delta;
+
+	return texSample2D(g_Texture0, center + r1 + delta) * 0.2028175528299753
+	+ texSample2D(g_Texture0, center + r2 + delta) * 0.4044856614512112
+	+ texSample2D(g_Texture0, center + r3 + delta) * 0.3213933537319605
+	+ texSample2D(g_Texture0, center + r4 + delta) * 0.0713034319868530;
+}
+vec4 blurRadial3a(vec2 u, vec2 center, float amt)
+{
+	vec2 delta = u - center;
+	amt = amt * 0.025;
+	float o1 = amt;
+	vec2 r1 = blurRotateVec2(delta, o1) - delta;
+
+	return texSample2D(g_Texture0, center + delta) * 0.5
+	+ texSample2D(g_Texture0, center + r1 + delta) * 0.25
+	+ texSample2D(g_Texture0, center - r1 + delta) * 0.25;
+}
+#endif
+`;
+var COMMON_BLENDING_H = `
+#ifndef WE_COMMON_BLENDING_H
+#define WE_COMMON_BLENDING_H
+vec4 Desaturate(vec3 color, float Desaturation)
+{
+	vec3 grayXfer = vec3(0.3, 0.59, 0.11);
+	vec3 gray = CAST3(dot(grayXfer, color));
+	return vec4(mix(color, gray, Desaturation), 1.0);
+}
+
+vec3 RGBToHSL(vec3 color)
+{
+#ifdef HDR
+	color = saturate(color);
+#endif
+
+	vec3 hsl;
+	float fmin = min(min(color.r, color.g), color.b);
+	float fmax = max(max(color.r, color.g), color.b);
+	float delta = fmax - fmin;
+	hsl.z = (fmax + fmin) / 2.0;
+
+	if (delta == 0.0)
+	{
+		hsl.x = 0.0;
+		hsl.y = 0.0;
+	}
+	else
+	{
+		if (hsl.z < 0.5)
+			hsl.y = delta / (fmax + fmin);
+		else
+			hsl.y = delta / (2.0 - fmax - fmin);
+		float deltaR = (((fmax - color.r) / 6.0) + (delta / 2.0)) / delta;
+		float deltaG = (((fmax - color.g) / 6.0) + (delta / 2.0)) / delta;
+		float deltaB = (((fmax - color.b) / 6.0) + (delta / 2.0)) / delta;
+		if (color.r == fmax )
+			hsl.x = deltaB - deltaG;
+		else if (color.g == fmax)
+			hsl.x = (1.0 / 3.0) + deltaR - deltaB;
+		else if (color.b == fmax)
+			hsl.x = (2.0 / 3.0) + deltaG - deltaR;
+
+		if (hsl.x < 0.0)
+			hsl.x += 1.0;
+		else if (hsl.x > 1.0)
+			hsl.x -= 1.0;
+	}
+
+	return hsl;
+}
+
+float HueToRGB(float f1, float f2, float hue)
+{
+	if (hue < 0.0)
+		hue += 1.0;
+	else if (hue > 1.0)
+		hue -= 1.0;
+	float res;
+	if ((6.0 * hue) < 1.0)
+		res = f1 + (f2 - f1) * 6.0 * hue;
+	else if ((2.0 * hue) < 1.0)
+		res = f2;
+	else if ((3.0 * hue) < 2.0)
+		res = f1 + (f2 - f1) * ((2.0 / 3.0) - hue) * 6.0;
+	else
+		res = f1;
+	return res;
+}
+
+vec3 HSLToRGB(vec3 hsl)
+{
+	vec3 rgb;
+	if (hsl.y == 0.0)
+		rgb = CAST3(hsl.z);
+	else
+	{
+		float f2;
+		if (hsl.z < 0.5)
+			f2 = hsl.z * (1.0 + hsl.y);
+		else
+			f2 = (hsl.z + hsl.y) - (hsl.y * hsl.z);
+		float f1 = 2.0 * hsl.z - f2;
+		rgb.r = HueToRGB(f1, f2, hsl.x + (1.0/3.0));
+		rgb.g = HueToRGB(f1, f2, hsl.x);
+		rgb.b= HueToRGB(f1, f2, hsl.x - (1.0/3.0));
+	}
+	
+	return rgb;
+}
+
+vec3 ContrastSaturationBrightness(vec3 color, float brt, float sat, float con)
+{
+	const float AvgLumR = 0.5;
+	const float AvgLumG = 0.5;
+	const float AvgLumB = 0.5;
+	
+	const vec3 LumCoeff = vec3(0.2125, 0.7154, 0.0721);
+	
+	vec3 AvgLumin = vec3(AvgLumR, AvgLumG, AvgLumB);
+	vec3 brtColor = color * brt;
+	vec3 intensity = CAST3(dot(brtColor, LumCoeff));
+	vec3 satColor = mix(intensity, brtColor, sat);
+	vec3 conColor = mix(AvgLumin, satColor, con);
+	return conColor;
+}
+
+#define BlendLinearDodgef(base, blend) (base + blend)
+#define BlendLinearBurnf(base, blend) max(base + blend - 1.0, 0.0)
+#define BlendLightenf(base, blend) max(blend, base)
+#define BlendDarkenf(base, blend) min(blend, base)
+#define BlendLinearLightf(base, blend) (blend < 0.5 ? BlendLinearBurnf(base, (2.0 * blend)) : BlendLinearDodgef(base, (2.0 * (blend - 0.5))))
+#define BlendScreenf(base, blend) (1.0 - ((1.0 - base) * (1.0 - blend)))
+#define BlendOverlayf(base, blend) (base < 0.5 ? (2.0 * base * blend) : (1.0 - 2.0 * (1.0 - base) * (1.0 - blend)))
+#define BlendSoftLightf(base, blend) ((blend < 0.5) ? (2.0 * base * blend + base * base * (1.0 - 2.0 * blend)) : (sqrt(base) * (2.0 * blend - 1.0) + 2.0 * base * (1.0 - blend)))
+#define BlendColorDodgef(base, blend) ((blend == 1.0) ? blend : min(base / (1.0 - blend), 1.0))
+#define BlendColorBurnf(base, blend) ((blend == 0.0) ? blend : max((1.0 - ((1.0 - base) / blend)), 0.0))
+#define BlendVividLightf(base, blend) ((blend < 0.5) ? BlendColorBurnf(base, (2.0 * blend)) : BlendColorDodgef(base, (2.0 * (blend - 0.5))))
+#define BlendPinLightf(base, blend) ((blend < 0.5) ? BlendDarkenf(base, (2.0 * blend)) : BlendLightenf(base, (2.0 *(blend - 0.5))))
+#define BlendHardMixf(base, blend) ((BlendVividLightf(base, blend) < 0.5) ? 0.0 : 1.0)
+#define BlendReflectf(base, blend) ((blend == 1.0) ? blend : min(base * base / (1.0 - blend), 1.0))
+#define BlendNormal(base, blend) (blend)
+#define BlendLighten BlendLightenf
+#define BlendDarken	 BlendDarkenf
+#define BlendMultiply(base, blend) (base * blend)
+#define BlendAverage(base, blend) ((base + blend) / 2.0)
+#define BlendAdd(base, blend) min(base + blend, CAST3(1.0))
+#define BlendSubstract(base, blend) max(base + blend - CAST3(1.0), CAST3(0.0))
+#define BlendDifference(base, blend) abs(base - blend)
+#define BlendNegation(base, blend) (CAST3(1.0) - abs(CAST3(1.0) - base - blend))
+#define BlendExclusion(base, blend) (base + blend - 2.0 * base * blend)
+#define BlendScreen(base, blend) vec3(BlendScreenf(base.r, blend.r), BlendScreenf(base.g, blend.g), BlendScreenf(base.b, blend.b))
+#define BlendOverlay(base, blend) vec3(BlendOverlayf(base.r, blend.r), BlendOverlayf(base.g, blend.g), BlendOverlayf(base.b, blend.b))
+#define BlendSoftLight(base, blend) vec3(BlendSoftLightf(base.r, blend.r), BlendSoftLightf(base.g, blend.g), BlendSoftLightf(base.b, blend.b))
+#define BlendHardLight(base, blend) BlendOverlay(blend, base)
+#define BlendColorDodge(base, blend) vec3(BlendColorDodgef(base.r, blend.r), BlendColorDodgef(base.g, blend.g), BlendColorDodgef(base.b, blend.b))
+#define BlendColorBurn(base, blend) vec3(BlendColorBurnf(base.r, blend.r), BlendColorBurnf(base.g, blend.g), BlendColorBurnf(base.b, blend.b))
+#define BlendLinearLight(base, blend) vec3(BlendLinearLightf(base.r, blend.r), BlendLinearLightf(base.g, blend.g), BlendLinearLightf(base.b, blend.b))
+#define BlendVividLight(base, blend) vec3(BlendVividLightf(base.r, blend.r), BlendVividLightf(base.g, blend.g), BlendVividLightf(base.b, blend.b))
+#define BlendPinLight(base, blend) vec3(BlendPinLightf(base.r, blend.r), BlendPinLightf(base.g, blend.g), BlendPinLightf(base.b, blend.b))
+#define BlendHardMix(base, blend) vec3(BlendHardMixf(base.r, blend.r), BlendHardMixf(base.g, blend.g), BlendHardMixf(base.b, blend.b))
+#define BlendReflect(base, blend) vec3(BlendReflectf(base.r, blend.r), BlendReflectf(base.g, blend.g), BlendReflectf(base.b, blend.b))
+#define BlendGlow(base, blend) BlendReflect(blend, base)
+#define BlendPhoenix(base, blend) (min(base, blend) - max(base, blend) + CAST3(1.0))
+#define BlendOpacity(base, blend, F, O) mix(base, F(base, blend), O)
+#define BlendLinearDodge(base, blend) min(base + blend, CAST3(1.0))
+#define BlendLinearBurn(base, blend) max(base + blend - CAST3(1.0), CAST3(0.0))
+#define BlendTint(base, blend) (CAST3(max(base.x, max(base.y, base.z))) * blend)
+
+vec3 BlendHue(vec3 base, vec3 blend)
+{
+	vec3 baseHSL = RGBToHSL(base);
+	return HSLToRGB(vec3(RGBToHSL(blend).r, baseHSL.g, baseHSL.b));
+}
+
+vec3 BlendSaturation(vec3 base, vec3 blend)
+{
+	vec3 baseHSL = RGBToHSL(base);
+	return HSLToRGB(vec3(baseHSL.r, RGBToHSL(blend).g, baseHSL.b));
+}
+
+vec3 BlendColor(vec3 base, vec3 blend)
+{
+	vec3 blendHSL = RGBToHSL(blend);
+	return HSLToRGB(vec3(blendHSL.r, blendHSL.g, RGBToHSL(base).b));
+}
+
+vec3 BlendLuminosity(vec3 base, vec3 blend)
+{
+	vec3 baseHSL = RGBToHSL(base);
+	return HSLToRGB(vec3(baseHSL.r, baseHSL.g, RGBToHSL(blend).b));
+}
+
+vec3 ApplyBlending(const int blendMode, in vec3 A, in vec3 B, in float opacity)
+{
+#if BLENDMODE == 1
+	return mix(A,BlendDarken(A,B),opacity);
+#endif
+#if BLENDMODE == 2
+	return mix(A,BlendMultiply(A,B),opacity);
+#endif
+#if BLENDMODE == 3
+	return mix(A,BlendColorBurn(A,B),opacity);
+#endif
+#if BLENDMODE == 4
+	return mix(A,BlendSubstract(A,B),opacity);
+#endif
+#if BLENDMODE == 5
+	return min(A, B);
+#endif
+#if BLENDMODE == 6
+	return mix(A,BlendLighten(A,B),opacity);
+#endif
+#if BLENDMODE == 7
+	return mix(A,BlendScreen(A,B),opacity);
+#endif
+#if BLENDMODE == 8
+	return mix(A,BlendColorDodge(A,B),opacity);
+#endif
+#if BLENDMODE == 9
+	return mix(A,BlendAdd(A,B),opacity);
+#endif
+#if BLENDMODE == 10
+	return max(A, B);
+#endif
+#if BLENDMODE == 11
+	return mix(A,BlendOverlay(A,B),opacity);
+#endif
+#if BLENDMODE == 12
+	return mix(A,BlendSoftLight(A,B),opacity);
+#endif
+#if BLENDMODE == 13
+	return mix(A,BlendHardLight(A,B),opacity);
+#endif
+#if BLENDMODE == 14
+	return mix(A,BlendVividLight(A,B),opacity);
+#endif
+#if BLENDMODE == 15
+	return mix(A,BlendLinearLight(A,B),opacity);
+#endif
+#if BLENDMODE == 16
+	return mix(A,BlendPinLight(A,B),opacity);
+#endif
+#if BLENDMODE == 17
+	return mix(A,BlendHardMix(A,B),opacity);
+#endif
+#if BLENDMODE == 18
+	return mix(A,BlendDifference(A,B),opacity);
+#endif
+#if BLENDMODE == 19
+	return mix(A,BlendExclusion(A,B),opacity);
+#endif
+#if BLENDMODE == 20
+	return mix(A,BlendSubstract(A,B),opacity);
+#endif
+#if BLENDMODE == 21
+	return mix(A,BlendReflect(A,B),opacity);
+#endif
+#if BLENDMODE == 22
+	return mix(A,BlendGlow(A,B),opacity);
+#endif
+#if BLENDMODE == 23
+	return mix(A,BlendPhoenix(A,B),opacity);
+#endif
+#if BLENDMODE == 24
+	return mix(A,BlendAverage(A,B),opacity);
+#endif
+#if BLENDMODE == 25
+	return mix(A,BlendNegation(A,B),opacity);
+#endif
+#if BLENDMODE == 26
+	return mix(A,BlendHue(A,B),opacity);
+#endif
+#if BLENDMODE == 27
+	return mix(A,BlendSaturation(A,B),opacity);
+#endif
+#if BLENDMODE == 28
+	return mix(A,BlendColor(A,B),opacity);
+#endif
+#if BLENDMODE == 29
+	return mix(A,BlendLuminosity(A,B),opacity);
+#endif
+#if BLENDMODE == 30
+	return mix(A,BlendTint(A,B),opacity);
+#endif
+#if BLENDMODE == 31
+	return A+B*opacity;
+#endif
+#if BLENDMODE == 32
+	return mix(A,A+A*B,opacity);
+#endif
+	return mix(A,BlendNormal(A,B),opacity);
+}
+#endif
+`;
+var COMMON_PERSPECTIVE_H = `
+#ifndef WE_COMMON_PERSPECTIVE_H
+#define WE_COMMON_PERSPECTIVE_H
+
+mat3 squareToQuad(vec2 p0, vec2 p1, vec2 p2, vec2 p3) {
+	mat3 m = mat3(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0);
+	float dx0 = p0.x;
+	float dy0 = p0.y;
+	float dx1 = p1.x;
+	float dy1 = p1.y;
+	
+	float dx2 = p3.x;
+	float dy2 = p3.y;
+	float dx3 = p2.x;
+	float dy3 = p2.y;
+	
+	float diffx1 = dx1 - dx3;
+	float diffy1 = dy1 - dy3;
+	float diffx2 = dx2 - dx3;
+	float diffy2 = dy2 - dy3;
+
+	float det = diffx1*diffy2 - diffx2*diffy1;
+	float sumx = dx0 - dx1 + dx3 - dx2;
+	float sumy = dy0 - dy1 + dy3 - dy2;
+
+	if (det == 0.0 || (sumx == 0.0 && sumy == 0.0)) {
+		m[0][0] = dx1 - dx0;
+		m[0][1] = dy1 - dy0;
+		m[0][2] = 0.0;
+		m[1][0] = dx3 - dx1;
+		m[1][1] = dy3 - dy1;
+		m[1][2] = 0.0;
+		m[2][0] = dx0;
+		m[2][1] = dy0;
+		m[2][2] = 1.0;
+		return m;
+	} else {
+		float ovdet = 1.0 / det;
+		float g = (sumx * diffy2 - diffx2 * sumy) * ovdet;
+		float h = (diffx1 * sumy - sumx * diffy1) * ovdet;
+
+		m[0][0] = dx1 - dx0 + g * dx1;
+		m[0][1] = dy1 - dy0 + g * dy1;
+		m[0][2] = g;
+		m[1][0] = dx2 - dx0 + h * dx2;
+		m[1][1] = dy2 - dy0 + h * dy2;
+		m[1][2] = h;
+		m[2][0] = dx0;
+		m[2][1] = dy0;
+		m[2][2] = 1.0;
+		return m;
+	}
+}
+
+#if HLSL
+mat3 inverse(mat3 m) {
+	float a00 = m[0][0], a01 = m[0][1], a02 = m[0][2];
+	float a10 = m[1][0], a11 = m[1][1], a12 = m[1][2];
+	float a20 = m[2][0], a21 = m[2][1], a22 = m[2][2];
+	float b01 = a22 * a11 - a12 * a21;
+	float b11 = -a22 * a10 + a12 * a20;
+	float b21 = a21 * a10 - a11 * a20;
+	float det = a00 * b01 + a01 * b11 + a02 * b21;
+	return mat3(b01, (-a22 * a01 + a02 * a21), (a12 * a01 - a02 * a11),
+			  b11, (a22 * a00 - a02 * a20), (-a12 * a00 + a02 * a10),
+			  b21, (-a21 * a00 + a01 * a20), (a11 * a00 - a01 * a10)) / det;
+}
+#endif
+#endif
+`;
+var COMMON_COMPOSITE_H = `
+#include "common.h"
+#include "common_blending.h"
+
+uniform float g_CompositeAlpha; // {"material":"compositealpha","label":"ui_editor_properties_alpha","default":1,"range":[0.0, 2.0]}
+uniform vec2 g_CompositeOffset; // {"material":"compositeoffset","label":"ui_editor_properties_offset","default":"0 0","linked":true,"range":[-10.0, 10.0]}
+uniform vec3 g_CompositeColor; // {"material":"compositecolor","label":"ui_editor_properties_color","default":"1 1 1","type":"color"}
+
+vec2 ApplyCompositeOffset(vec2 texCoords, vec2 textureResolution)
+{
+#if COMPOSITE != 0
+	return texCoords + g_CompositeOffset / textureResolution;
+#else
+	return texCoords;
+#endif
+}
+
+vec4 ApplyComposite(vec4 original, vec4 effect)
+{
+#if COMPOSITEMONO == 1
+	effect.rgb = CAST3(greyscale(effect.rgb));
+#endif
+
+	effect.rgb *= g_CompositeColor;
+
+#if COMPOSITE == 0
+	return effect;
+#endif
+
+#if COMPOSITE == 1
+	effect.rgb = ApplyBlending(BLENDMODE, original.rgb, effect.rgb, effect.a * g_CompositeAlpha);
+	effect.a = max(effect.a * saturate(g_CompositeAlpha), original.a);
+#endif
+
+#if COMPOSITE == 2
+	effect.a *= saturate(g_CompositeAlpha);
+	effect = mix(effect, original, original.a);
+#endif
+
+#if COMPOSITE == 3
+	effect.a *= saturate(g_CompositeAlpha);
+	effect.a *= 1.0 - original.a;
+#endif
+
+	return effect;
+}
+`;
+var COMMON_FRAGMENT_H = `
+#ifndef WE_COMMON_FRAGMENT_H
+#define WE_COMMON_FRAGMENT_H
+
+#define FORMAT_RGBA8888 0
+#define FORMAT_RGB888 1
+#define FORMAT_RGB565 2
+
+#define FORMAT_ETC1_RGB8 3
+#define FORMAT_DXT5 4
+#define FORMAT_ETC2_RGBA8 5
+#define FORMAT_DXT3 6
+#define FORMAT_DXT1 7
+
+#define FORMAT_RG88 8
+#define FORMAT_R8 9
+#define FORMAT_RG1616F 10
+#define FORMAT_R16F 11
+
+#define FORMAT_BC7 12
+
+vec3 DecompressNormal(vec4 normal)
+{
+#if TEX1FORMAT >= FORMAT_ETC1_RGB8 && TEX1FORMAT <= FORMAT_DXT1 || TEX1FORMAT == FORMAT_BC7
+	normal.yx = normal.yw * 2.0 - vec2(0.965, 1.0);
+#else
+#if TEX1FORMAT == FORMAT_RG88
+	normal.xy = normal.rg * 2.0 - 1.0;
+#else
+	normal.xy = normal.wy * 2.0 - 1.0;
+#endif
+#endif
+	normal.z = sqrt(saturate(1.0 - normal.x * normal.x - normal.y * normal.y));
+	return normal.xyz;
+}
+
+vec4 DecompressNormalWithMask(vec4 normal)
+{
+#if TEX1FORMAT >= FORMAT_ETC1_RGB8 && TEX1FORMAT <= FORMAT_DXT1 || TEX1FORMAT == FORMAT_BC7
+	normal.xw = normal.wx;
+	normal.xy = normal.xy * 2.0 - vec2(0.965, 1.0);
+#else
+#if TEX1FORMAT == FORMAT_RG88
+	normal.xy = normal.gr * 2.0 - 1.0;
+#else
+	normal.xw = normal.wx;
+	normal.xy = normal.xy * 2.0 - 1.0;
+#endif
+#endif
+	normal.z = sqrt(saturate(1.0 - normal.x * normal.x - normal.y * normal.y));
+	return normal;
+}
+
+float ComputeMaterialSpecularPower(const float roughness, const float metallic)
+{
+	return (1.01 - roughness) * mix(400.0, 250.0, metallic);
+}
+
+float ComputeMaterialSpecularStrength(const float roughness, const float metallic)
+{
+	return (0.5 + metallic * 0.5) * (1.0 - roughness * 0.9);
+}
+
+vec3 ComputeLight(const vec3 normal, const vec3 lightDelta, const vec3 color, const float radius)
+{
+	float lightDistance = length(lightDelta);
+	float lightAttn = saturate((radius - lightDistance) / radius);
+	return color * (saturate(dot(lightDelta / lightDistance, normal))) * lightAttn * lightAttn;
+}
+
+vec3 ComputeLightSpecular(const vec3 normal, const vec3 lightDelta, const vec3 color, const float radius, const vec3 viewDir, const float specularPower, const float specularStrength, const float halfLambert, const float metallicTerm, inout vec3 specularResult)
+{
+	float lightDistance = length(lightDelta);
+	float lightAttn = saturate((radius - lightDistance) / radius);
+	vec3 lightDir = lightDelta / lightDistance;
+	float specular = max(0.0, dot(normalize(viewDir + lightDir), normal));
+	specularResult += pow(specular, specularPower) * specularStrength * lightAttn * color;
+	float lightDot = dot(lightDir, normal);
+	float halfLambertLight = lightDot * 0.5 + 0.5;
+	lightDot = mix(lightDot, halfLambertLight, halfLambert);
+	float rim = metallicTerm * 2.0;
+	rim = pow((1.0 - saturate(dot(normal, viewDir))) * pow(halfLambertLight, 0.25), 6.0 - rim) * rim;
+	return color * (saturate(lightDot) + rim) * lightAttn * lightAttn;
+}
+
+float ConvertSampleR8(vec4 _sample)
+{
+#if HLSL_SM30
+		return _sample.a;
+#else
+		return _sample.r;
+#endif
+}
+
+vec4 ConvertTexture0Format(vec4 _sample)
+{
+#if TEX0FORMAT == FORMAT_RG88 || TEX0FORMAT == FORMAT_RG1616F
+#if HLSL_SM30
+	return _sample.rrra;
+#else
+	return _sample.rrrg;
+#endif
+#endif
+
+#if TEX0FORMAT == FORMAT_R8 || TEX0FORMAT == FORMAT_R16F
+#if HLSL_SM30
+	return vec4(1, 1, 1, _sample.a);
+#else
+	return vec4(1, 1, 1, _sample.r);
+#endif
+#endif
+	return _sample;
+}
+
+vec4 ConvertTextureFormat(const int format, vec4 _sample)
+{
+	if (format == FORMAT_RG88 || format == FORMAT_RG1616F)
+	{
+#if HLSL_SM30
+		return _sample.rrra;
+#else
+		return _sample.rrrg;
+#endif
+	}
+
+	if (format == FORMAT_R8 || format == FORMAT_R16F)
+	{
+#if HLSL_SM30
+		return vec4(1, 1, 1, _sample.a);
+#else
+		return vec4(1, 1, 1, _sample.r);
+#endif
+	}
+	return _sample;
+}
+#endif
+`;
+var COMMON_VERTEX_H = `
+#ifndef WE_COMMON_VERTEX_H
+#define WE_COMMON_VERTEX_H
+mat3 BuildTangentSpace(const vec3 normal, const vec4 signedTangent)
+{
+	vec3 tangent = signedTangent.xyz;
+	vec3 bitangent = cross(normal, tangent) * signedTangent.w;
+	return mat3(tangent, bitangent, normal);
+}
+
+mat3 BuildTangentSpace(const mat3 modelTransform, const vec3 normal, const vec4 signedTangent)
+{
+	vec3 tangent = signedTangent.xyz;
+	vec3 bitangent = cross(normal, tangent) * signedTangent.w;
+	return mat3(mul(tangent, modelTransform),
+		mul(bitangent, modelTransform),
+		mul(normal, modelTransform));
+}
+
+void BuildTangentSpace(const mat3 modelTransform, const vec3 normal, const vec4 signedTangent, out vec3 worldTangent, out vec3 worldBitangent)
+{
+	vec3 tangent = signedTangent.xyz;
+	vec3 bitangent = cross(normal, tangent) * signedTangent.w;
+	worldTangent = mul(tangent, modelTransform);
+	worldBitangent = mul(bitangent, modelTransform);
+}
+#endif
+`;
+var WE_HEADERS = {
+  "common.h": COMMON_H,
+  "common_blending.h": COMMON_BLENDING_H,
+  "common_perspective.h": COMMON_PERSPECTIVE_H,
+  "common_blur.h": COMMON_BLUR_H,
+  "common_composite.h": COMMON_COMPOSITE_H,
+  "common_fragment.h": COMMON_FRAGMENT_H,
+  "common_vertex.h": COMMON_VERTEX_H
+};
+
+// src/client/shader/shader-preprocessor.ts
+var UNIFORM_RE = /uniform\s+([\w]+)\s+(\w+)(?:\[(\d+)\])?\s*;\s*(?:\/\/\s*(\{[\s\S]*?\}))?/g;
+function extractUniformAnnotations(source) {
+  const out = [];
+  for (const m of source.matchAll(UNIFORM_RE)) {
+    const type = m[3] ? `${m[1]}[${m[3]}]` : m[1];
+    let annotation;
+    if (m[4]) {
+      try {
+        annotation = JSON.parse(m[4]);
+      } catch {
+        annotation = void 0;
+      }
+    }
+    out.push({ name: m[2], type, annotation });
+  }
+  return out;
+}
+function rewriteAttributes(src) {
+  return src.split("attribute vec3 a_Position;").join("").split("attribute vec2 a_TexCoord;").join("").split("a_Position").join("position").split("a_TexCoord").join("uv");
+}
+function extractIfIdentifiers(src) {
+  const out = /* @__PURE__ */ new Set();
+  for (const m of src.matchAll(/^\s*#if\s+(.+)$/gm)) {
+    const expr = m[1].replace(/defined\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)/g, "").replace(/\/\/.*$/, "");
+    for (const id of expr.matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)) {
+      out.add(id[0]);
+    }
+  }
+  return out;
+}
+function extractComboDefaults(src) {
+  const out = /* @__PURE__ */ new Map();
+  for (const m of src.matchAll(/\[COMBO\]\s*\{[^}]*"combo"\s*:\s*"([A-Za-z_][A-Za-z0-9_]*)"[^}]*"default"\s*:\s*(-?\d+(?:\.\d+)?)/g)) {
+    out.set(m[1], Number(m[2]));
+  }
+  return out;
+}
+function normalizeFloatIntLiterals(src) {
+  const protectedBlocks = [];
+  let out = src;
+  const protect = (m) => {
+    const token = `__WEI_PROTECTED_${protectedBlocks.length.toString(36)}__`;
+    protectedBlocks.push(m);
+    return token;
+  };
+  out = out.replace(/^\s*#(?:if|elif|ifdef|ifndef|define).*$/gm, protect);
+  out = out.replace(/for\s*\([^)]*\)/g, protect);
+  out = out.replace(/\[[^\]]*\]/g, protect);
+  out = out.replace(/\b(?:ivec[234])\s*\([^)]*\)/g, protect);
+  out = out.replace(/\b(?:const\s+)?int\s+\w+\s*(?:\[[^\]]*\])?\s*=[^;]*;/g, protect);
+  out = out.replace(/\b(?:const\s+)?int\s+\w+\s*(?:\[[^\]]*\])?\s*;/g, protect);
+  out = out.replace(/(?:==|!=|<=|>=|<|>)\s*-?\d+(?![\w.])/g, protect);
+  out = out.replace(/\d\.?\d*[eE][+-]?\d+/g, protect);
+  out = out.replace(/(?<![\w.])-?\d+(?![\w.])/g, (m) => `${m}.0`);
+  protectedBlocks.forEach((block, i) => {
+    out = out.replace(`__WEI_PROTECTED_${i.toString(36)}__`, block);
+  });
+  return out;
+}
+function floatifyIntVarUses(src) {
+  const intVars = /* @__PURE__ */ new Set();
+  for (const m of src.matchAll(/\b(?:const\s+)?(?:uniform\s+)?(?:in\s+|out\s+)?int\s+(\w+)(?!\s*\()/g)) {
+    intVars.add(m[1]);
+  }
+  if (intVars.size === 0) return src;
+  const protectedBlocks = [];
+  const protect = (m) => {
+    const token = `0WEI_INTVAR_${protectedBlocks.length.toString(36)}__`;
+    protectedBlocks.push(m);
+    return token;
+  };
+  const restore = () => {
+    protectedBlocks.forEach((block, i) => {
+      out = out.replace(new RegExp(`0WEI_INTVAR_${i.toString(36)}__`, "g"), () => block);
+    });
+  };
+  const protectConstructs = (text) => {
+    const re = /\b(?:int|float|ivec[234])\s*\(/g;
+    let out2 = "";
+    let last = 0;
+    let m;
+    while (m = re.exec(text)) {
+      const open = m.index + m[0].length - 1;
+      let depth = 1;
+      let i = open + 1;
+      for (; i < text.length && depth > 0; i++) {
+        const ch = text[i];
+        if (ch === "(") depth++;
+        else if (ch === ")") depth--;
+      }
+      out2 += text.slice(last, m.index) + protect(text.slice(m.index, i));
+      last = i;
+      re.lastIndex = i;
+    }
+    return out2 + text.slice(last);
+  };
+  let out = src;
+  out = out.replace(/^\s*(?:const\s+)?(?:uniform\s+)?(?:in\s+|out\s+)?int\b[^;]*;/gm, protect);
+  out = out.replace(/(?:\(|,)\s*(?:const\s+)?(?:in\s+|out\s+)?int\s+\w+(?=\s*[,)])/g, protect);
+  out = out.replace(/\[[^\]]*\]/g, protect);
+  out = out.replace(/for\s*\([^;{}]*;[^;{}]*;[^;{}]*\)/g, protect);
+  out = out.replace(/(?:\+\+|--)\s*\w+|\w+\s*(?:\+\+|--)/g, protect);
+  out = protectConstructs(out);
+  out = out.replace(/(?:==|!=|<=|>=|<|>)\s*[A-Za-z_]\w*/g, protect);
+  out = out.replace(/[A-Za-z_]\w*\s*(?:==|!=|<=|>=|<|>)/g, protect);
+  for (const name of intVars) {
+    out = out.replace(new RegExp(`\\b${name}\\b`, "g"), `float(${name})`);
+  }
+  restore();
+  return out;
+}
+function relaxGlsl3Strictness(src) {
+  let out = src.replace(
+    /\bconst\s+(float|int|vec[234]|mat[234])\s+(\w+)\s*=\s*([^;]*[A-Za-z_][^;]*);/g,
+    (m, type, name, expr) => {
+      const trimmed = expr.trim();
+      if (/^-?[\d.]+$/.test(trimmed) || /^(true|false)$/.test(trimmed)) return m;
+      return `${type} ${name} = ${expr};`;
+    }
+  ).replace(/\b(sample|pointer)\b/g, "$1_");
+  const lines = out.split("\n");
+  let mainIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (/^\s*void\s+main\s*\(/.test(lines[i])) {
+      mainIdx = i;
+      break;
+    }
+  }
+  if (mainIdx > 0) {
+    const moved = [];
+    let depth = 0;
+    let inComment = false;
+    for (let i = 0; i < mainIdx; i++) {
+      const l = lines[i];
+      if (l.trim().startsWith("//")) continue;
+      for (const ch of l) {
+        if (ch === "{") depth++;
+        else if (ch === "}") depth--;
+      }
+      if (depth !== 0) continue;
+      const m = l.match(/^\s*(float|int|vec[234]|mat[234])\s+(\w+)\s*=\s*([^;]*[A-Za-z_][^;]*);\s*$/);
+      if (!m) continue;
+      const expr = m[3].trim();
+      if (/^-?[\d.]+$/.test(expr) || /^(true|false)$/.test(expr)) continue;
+      if (/^(?:CAST[234]|vec[234]|mat[234])\s*\(\s*-?[\d.]+\s*\)$/.test(expr)) continue;
+      lines[i] = l.replace(/\s*=\s*[^;]*;\s*$/, ";");
+      moved.push(`	${m[2]} = ${expr};`);
+    }
+    if (moved.length) lines.splice(mainIdx + 1, 0, ...moved);
+  }
+  return lines.join("\n");
+}
+function preprocessWeShader(source, combos) {
+  const samplerDecls = [];
+  const src = source.replace(/^\s*(uniform\s+sampler\w+\s+\w+\s*;.*)$/gm, (m) => {
+    samplerDecls.push(m.trim());
+    return "";
+  });
+  let out = src;
+  const hadExplicitCommon = out.includes('#include "common.h"');
+  let prev;
+  do {
+    prev = out;
+    for (const [name, header] of Object.entries(WE_HEADERS)) {
+      out = out.split(`#include "${name}"`).join(header);
+    }
+  } while (out !== prev);
+  if (!hadExplicitCommon) {
+    out = WE_HEADERS["common.h"] + "\n" + out;
+  }
+  out = rewriteAttributes(out);
+  out = normalizeFloatIntLiterals(out);
+  out = floatifyIntVarUses(out);
+  out = relaxGlsl3Strictness(out);
+  const defines = /* @__PURE__ */ new Map();
+  for (const [k, v] of Object.entries(combos)) defines.set(k, String(v));
+  for (const [k, v] of extractComboDefaults(out)) {
+    if (!defines.has(k)) defines.set(k, String(v));
+  }
+  const alreadyDefined = /* @__PURE__ */ new Set();
+  for (const m of out.matchAll(/^\s*#define\s+([A-Za-z_][A-Za-z0-9_]*)/gm)) alreadyDefined.add(m[1]);
+  for (const id of extractIfIdentifiers(out)) {
+    if (/^\d/.test(id)) continue;
+    if (alreadyDefined.has(id)) continue;
+    if (defines.has(id)) continue;
+    defines.set(id, "0");
+  }
+  const defineLines = [...defines.entries()].map(([k, v]) => `#define ${k} ${v}`);
+  const prefix = [...defineLines, ...samplerDecls];
+  return prefix.length ? `${prefix.join("\n")}
+${out}` : out;
+}
+
+// src/client/shader/effect-chain.ts
+async function resolveEffectChain(sceneEffect, loadFile) {
+  try {
+    const effectRaw = await loadFile(sceneEffect.file);
+    if (!effectRaw) return null;
+    const effect = JSON.parse(new TextDecoder().decode(effectRaw));
+    const fboScale = {};
+    for (const fb of effect.fbos ?? []) {
+      if (fb?.name) fboScale[fb.name] = fb.scale > 0 ? fb.scale : 1;
+    }
+    const scenePasses = Array.isArray(sceneEffect.passes) ? sceneEffect.passes : [];
+    if (!Array.isArray(effect.passes) || effect.passes.length === 0) return null;
+    const out = [];
+    for (let i = 0; i < effect.passes.length; i++) {
+      const scenePass = scenePasses[i] ?? {};
+      const matRef = scenePass.material ?? effect.passes[i].material;
+      if (typeof matRef !== "string") return null;
+      if (matRef.startsWith("materials/util/")) continue;
+      const matRaw = await loadFile(matRef);
+      if (!matRaw) return null;
+      const mat = JSON.parse(new TextDecoder().decode(matRaw));
+      const shaderName = mat.passes?.[0]?.shader;
+      if (typeof shaderName !== "string") return null;
+      const vertRaw = await loadFile(`shaders/${shaderName}.vert`);
+      const fragRaw = await loadFile(`shaders/${shaderName}.frag`);
+      if (!vertRaw || !fragRaw) return null;
+      const override = scenePasses[i] ?? {};
+      const combos = override.combos ?? {};
+      const constants = override.constantshadervalues ?? {};
+      const textures = Array.isArray(override.textures) ? override.textures : [];
+      const rawVert = new TextDecoder().decode(vertRaw);
+      const rawFrag = new TextDecoder().decode(fragRaw);
+      const vertSrc = preprocessWeShader(rawVert, combos);
+      const fragSrc = preprocessWeShader(rawFrag, combos);
+      const uniforms = resolveUniformBindings(
+        extractUniformAnnotations(fragSrc).concat(extractUniformAnnotations(vertSrc)),
+        constants
+      );
+      const effPass = effect.passes[i];
+      out.push({
+        vertSrc,
+        fragSrc,
+        rawVert,
+        rawFrag,
+        combos,
+        uniforms,
+        textureSlots: textures,
+        blendMode: mat.passes?.[0]?.blending ?? "normal",
+        // RT 图信息：effect.json passes[i].target（写到的具名 RT）/bind（采样来源）；
+        // scene.json pass 可覆写 target（如 scene 指定目标 RT）。缺省 target=null（最终输出）。
+        target: (scenePass.target ?? effPass.target) || null,
+        bind: Array.isArray(effPass.bind) ? effPass.bind : [],
+        fboScale
+      });
+    }
+    if (out.length === 0) return null;
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+// src/client/scene-renderer.ts
 function resolveTexPath(matRef, texName) {
   return texName.includes("/") ? "materials/" + texName + ".tex" : matRef.slice(0, matRef.lastIndexOf("/") + 1) + texName + ".tex";
 }
@@ -20804,686 +23142,6 @@ async function resolveImageTexture(id, obj) {
   } catch {
     return null;
   }
-}
-
-// src/client/threejs-player.ts
-var DEFAULT_PARTICLE_CAPACITY = 1024;
-var MAX_PARTICLE_CAPACITY = 2048;
-function specMaxcount(specJson) {
-  try {
-    const v = JSON.parse(specJson).maxcount;
-    const n = typeof v === "string" ? parseFloat(v) : typeof v === "number" ? v : 0;
-    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
-  } catch {
-    return 0;
-  }
-}
-function specEmitterOrigin(specJson) {
-  const zero = [0, 0, 0];
-  try {
-    const spec = JSON.parse(specJson);
-    const list = spec.emitter;
-    const first = Array.isArray(list) ? list[0] : void 0;
-    const raw = first?.origin;
-    if (typeof raw !== "string") return zero;
-    const parts = raw.trim().split(/\s+/).map(Number);
-    if (parts.length < 3 || parts.slice(0, 3).some((n) => !Number.isFinite(n))) return zero;
-    return [parts[0], parts[1], parts[2]];
-  } catch {
-    return zero;
-  }
-}
-var BLACKMYTH_OBJ_SCALE = [-2.05166, 2.1167, 1];
-function simEmitterOffset(emitterOrigin) {
-  return [
-    emitterOrigin[0] * BLACKMYTH_OBJ_SCALE[0],
-    emitterOrigin[1] * BLACKMYTH_OBJ_SCALE[1],
-    emitterOrigin[2] * BLACKMYTH_OBJ_SCALE[2]
-  ];
-}
-function particleCapacity(declaredMax, aliveAtCreate) {
-  const declared = Number.isFinite(declaredMax) && declaredMax > 0 ? Math.floor(declaredMax) : 0;
-  const cap = Math.min(declared > 0 ? declared : DEFAULT_PARTICLE_CAPACITY, MAX_PARTICLE_CAPACITY);
-  return Math.max(1, cap, Math.max(0, Math.floor(aliveAtCreate)));
-}
-var PARTICLE_QUAD_CORNERS = new Float32Array([
-  -1,
-  -1,
-  0,
-  1,
-  -1,
-  0,
-  1,
-  1,
-  0,
-  -1,
-  1,
-  0
-]);
-var PARTICLE_QUAD_INDEX = [0, 1, 2, 0, 2, 3];
-var PARTICLE_VERTEX_SHADER = `
-attribute vec3 particlePosition;
-attribute float particleSize;
-attribute vec2 particleUv;
-attribute vec3 particleColor;
-attribute float particleAlpha;
-// \u5BF9\u8C61\u53D8\u6362\uFF08WE \u7684\u7C92\u5B50 model matrix \u8BED\u4E49\uFF0C\u89C1 loadSceneToThree \u6CE8\u91CA\uFF09\uFF1A
-//   objCenter     \u5BF9\u8C61\u4E2D\u5FC3\uFF08\u4E16\u754C\u5750\u6807\uFF0Cwe_to_three \u540E\uFF09
-//   objScale      scene.json \u7684\u5BF9\u8C61 scale\uFF08\u9010\u8F74\uFF0C\u53EF\u4E3A\u8D1F = \u955C\u50CF\uFF09
-//   emitterOrigin spec \u7684 emitter \u5C40\u90E8\u539F\u70B9\uFF08\u539F\u503C\uFF0C\u672A\u7F29\u653E\uFF09
-//   bmOffset      \u6A21\u62DF\u5668\u5DF2\u52A0\u8FDB particlePosition \u7684\u504F\u79FB = BLACKMYTH_OBJ_SCALE \u2299 emitterOrigin
-uniform vec3 objCenter;
-uniform vec3 objScale;
-uniform vec3 emitterOrigin;
-uniform vec3 bmOffset;
-// \u5BF9\u8C61\u6B27\u62C9\u89D2\uFF08**\u5F27\u5EA6**\uFF09\u2014\u2014 WE model matrix = T\xB7R\xB7S \u7684 R \u90E8\u5206\u3002
-uniform vec3 objAngles;
-varying vec2 vCornerUv;
-varying vec2 vParticleUv;
-varying vec3 vParticleColor;
-varying float vParticleAlpha;
-// \u5BF9\u8C61\u65CB\u8F6C R = Rz\xB7Ry\xB7Rx\uFF08\u5B98\u65B9 order\uFF1AOWE ParticleRuntime.cpp:25-28 ControlpointRotation\uFF09\u3002
-// \u6BCF\u4E2A\u5206\u91CF\u90FD\u662F\u53F3\u624B\u7CFB\u7ED5\u8F74\u7684\u4E3B\u52A8\u65CB\u8F6C\uFF0C\u4E0E Eigen AngleAxisd(theta, axis) \u4E00\u81F4\u3002
-vec3 weObjectRotate(vec3 v, vec3 a) {
-  float cx = cos(a.x), sx = sin(a.x);
-  v = vec3(v.x, v.y * cx - v.z * sx, v.y * sx + v.z * cx);
-  float cy = cos(a.y), sy = sin(a.y);
-  v = vec3(v.x * cy + v.z * sy, v.y, -v.x * sy + v.z * cy);
-  float cz = cos(a.z), sz = sin(a.z);
-  return vec3(v.x * cz - v.y * sz, v.x * sz + v.y * cz, v.z);
-}
-void main() {
-  vCornerUv = position.xy * 0.5 + 0.5;
-  vParticleUv = particleUv;
-  vParticleColor = particleColor;
-  vParticleAlpha = particleAlpha;
-  // \u8FD8\u539F\u6A21\u62DF\u5668\u8F93\u51FA\u7684**\u5C40\u90E8**\u5750\u6807\uFF08\u5254\u9664\u5BF9\u8C61\u4E2D\u5FC3\u4E0E\u6A21\u62DF\u5668\u5DF2\u52A0\u7684\u53D1\u5C04\u70B9\u504F\u79FB\uFF09\uFF1A
-  //   particlePosition = objCenter + bmOffset + (\u6563\u5C04 + \u8FD0\u52A8)
-  vec3 local = particlePosition - objCenter - bmOffset;
-  // \u6309\u5BF9\u8C61 model matrix \u7684 **R\xB7S** \u53D8\u6362\u5230\u573A\u666F\u7A7A\u95F4\uFF08WE\uFF1Amvp = viewProj \xD7 translate(origin)
-  // \xD7 rotate(angles) \xD7 scale\uFF09\u3002\u26A0\uFE0F \u65CB\u8F6C**\u5FC5\u987B**\u5728\u8FD9\u91CC\u505A\uFF1A\u5168\u5E93 79 \u4E2A\u5BF9\u8C61\u5E26\u975E\u96F6 angles
-  // \uFF08\u7C92\u5B50 75 \u4E2A\uFF09\uFF0C\u6F0F\u6389\u5B83\u4F1A\u8BA9\u7C92\u5B50\u7684\u5C40\u90E8\u671D\u5411\u76F4\u63A5\u5F53\u4E16\u754C\u671D\u5411\u7528 \u2014\u2014 GTR 3743126786 \u7684\u70DF\u67F1
-  // angles.z = -1.20063\uFF08\u2248 -68.8\xB0\uFF09\u672C\u5E94\u628A\u5C40\u90E8 +Y\uFF08\u6E4D\u6D41\u7684 forward\uFF09\u8F6C\u5230\u4E16\u754C (0.932, 0.362)
-  // =\u300C\u4ECE\u6392\u6C14\u7BA1\u5411\u53F3\u4FA7\u98D8\u300D\uFF0C\u6F0F\u6389\u65CB\u8F6C\u540E\u70DF\u5C31\u76F4\u7740\u5F80\u4E0A\u8D70\u3002
-  vec3 worldPos = objCenter + weObjectRotate(objScale * (emitterOrigin + local), objAngles);
-  // \u7C92\u5B50 quad \u7684\u5C3A\u5BF8\u540C\u6837\u4E58\u5BF9\u8C61 scale\uFF08\u975E\u5747\u5300\uFF1Babs \u53BB\u6389\u955C\u50CF\u7684\u7B26\u53F7\uFF09\uFF0C\u5E76\u968F\u5BF9\u8C61\u89D2\u5EA6\u4E00\u8D77\u8F6C\u3002
-  vec3 corner = weObjectRotate(abs(objScale) * vec3(position.xy * particleSize * 0.5, 0.0), objAngles);
-  worldPos += corner;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(worldPos, 1.0);
-  // \u26A0\uFE0F \u4FEE\u6B63\uFF1A\u7C92\u5B50\u662F 2D billboard\uFF08\u65E0\u6DF1\u5EA6\u6392\u5E8F\uFF0Cz \u4E0D\u53C2\u4E0E\u53EF\u89C1\u6027\uFF09\u3002three \u6B63\u4EA4\u76F8\u673A far/near \u4F1A\u628A
-  // \u89C6\u9525\u5916\u7684 z \u88C1\u526A\u6389\uFF0C\u800C wasm billboard \u65E9\u5DF2\u628A\u6295\u5F71\u77E9\u9635 z \u884C\u5168 0\uFF08clip.z=0\uFF0C\u89C1 particle_billboard.wgsl\uFF09
-  // \u9632\u300Cemitter \u7403\u58F3\u6563\u5C04\u53EF\u5230 \xB1750 \u7684\u7C92\u5B50\u88AB z \u88C1\u526A \u2192 \u7C92\u5B50\u4E0D\u53EF\u89C1\u300D\u3002\u8FD9\u91CC\u628A NDC z \u5F3A\u5236\u5F52\u4E2D\uFF080\uFF09\uFF0C
-  // \u914D\u5408 material.depthTest=false\uFF08\u5FFD\u7565\u6DF1\u5EA6\uFF09\uFF0C\u4FDD\u8BC1\u7C92\u5B50\u4E0D\u88AB\u76F8\u673A\u6DF1\u5EA6\u8303\u56F4\u88C1\u526A\uFF08\u5BF9\u9F50 wasm \u8BED\u4E49\uFF09\u3002
-  gl_Position.z = 0.0;
-}
-`;
-var PARTICLE_FRAGMENT_SHADER = `
-uniform sampler2D map;
-uniform float frameCount;
-uniform float frameCols;
-uniform float frameRows;
-uniform float softness;
-uniform float maskMode;
-varying vec2 vCornerUv;
-varying vec2 vParticleUv;
-varying vec3 vParticleColor;
-varying float vParticleAlpha;
-void main() {
-  float n = max(frameCount, 1.0);
-  // \u5E27\u53F7\u7531 uv.x \u7F16\u7801\uFF08\u5E27\u5B50\u533A\u4E2D\u5FC3\uFF0Csim frame_center_uv\uFF1A(frame+0.5)/n\uFF09\u2192 \u53CD\u89E3\u51FA\u79BB\u6563\u5E27\u53F7\u3002
-  float frameIndex = floor(clamp(vParticleUv.x, 0.0, 0.999999) * n);
-  frameIndex = min(frameIndex, n - 1.0);
-  // \u7CBE\u7075\u8868\u6309**\u4E8C\u7EF4\u7F51\u683C**\u5207\u7247\uFF08frameCols\xD7frameRows\uFF1B\u975E\u7CBE\u7075\u8868 cols=n\u3001rows=1\uFF0C\u4E0E\u65E7\u7684\u6A2A\u5411\u7B49\u5206\u7B49\u4EF7\uFF09\u3002
-  // \u26A0\uFE0F \u65E7\u5B9E\u73B0\u53EA\u505A\u6A2A\u5411\u7B49\u5206\uFF08texUv.x=(frameIndex+corner.x)/n\uFF09\uFF0C\u5BF9 WE \u7684 8\xD78=64 \u5E27\u7CBE\u7075\u8868
-  // \uFF08DK \u7684 fire1/fog1\uFF09\u4F1A\u628A\u6BCF\u6761 1/64 \u5BBD\u7684**\u7AD6\u6761**\u5F53\u4E00\u5E27 \u2192 \u5FC5\u987B\u7528\u7F51\u683C\u884C\u5217\u5B9A\u4F4D\u3002
-  float cols = max(frameCols, 1.0);
-  float rows = max(frameRows, 1.0);
-  float col = mod(frameIndex, cols);
-  float row = floor(frameIndex / cols);
-  // \u5E27 y\uFF1ATEXS \u7684\u5E27 y \u662F**\u7EB9\u7406\u9876\u90E8\u5411\u4E0B**\u7684\u884C\u53F7\uFF0C\u800C DataTexture \u6570\u636E\u5DF2\u88AB\u7FFB\u8F6C\u4E3A bottom-up
-  // \uFF08v=0=\u56FE\u50CF\u5E95\u90E8\uFF09\u2192 row=0\uFF08\u8868\u9876\u884C\uFF09\u5E94\u843D\u5728 v \u9AD8\u6BB5\uFF0C\u6545\u5BF9\u5E27\u5185 v \u505A (rows-1-row) \u53CD\u8F6C\u3002
-  float frameV = (rows - 1.0 - row + vCornerUv.y) / rows;
-  vec2 texUv = vec2((col + vCornerUv.x) / cols, frameV);
-  vec4 texel = texture2D(map, texUv);
-  // \u5706\u76D8\u8F6F\u8870\u51CF\uFF08center\u2192edge\uFF09\u3002softness \u2208 [0,1]\uFF1A0=\u786C\u8FB9\uFF08\u4EC5\u5728 quad \u8FB9\u7F18\u6536\u5C3E\uFF09\uFF0C1=\u5168\u67D4\uFF08\u4E2D\u5FC3\u2192\u8FB9\u7F18\u5E73\u6ED1\u8870\u51CF\uFF09\u3002
-  float dist = length(vCornerUv - 0.5) * 2.0;
-  float edgeStart = clamp(1.0 - softness, 0.0001, 0.9999);
-  float disk = 1.0 - smoothstep(edgeStart, 1.0, dist);
-  // mask_mode\uFF1A1\uFF08\u771F\u5B9E\u7EB9\u7406\u906E\u7F69\uFF0C\u5F62\u72B6=texel.a\uFF09\u2194 0\uFF08\u65E0\u7EB9\u7406\u8F6F\u5706\u70B9\uFF0C\u5F62\u72B6=disk\uFF09\u3002
-  float shape = mix(disk, texel.a, maskMode);
-  float a = vParticleAlpha * shape;
-  gl_FragColor = vec4(vParticleColor * texel.rgb, a);
-}
-`;
-function createWhiteTexture() {
-  const tex = new DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
-  tex.needsUpdate = true;
-  return tex;
-}
-function colorBlendModeToThree(mode) {
-  switch (mode) {
-    case 7:
-      return { blendEquation: AddEquation, blendSrc: OneMinusDstColorFactor, blendDst: OneFactor };
-    case 31:
-      return { blendEquation: AddEquation, blendSrc: OneFactor, blendDst: OneFactor };
-    case 6:
-      return { blendEquation: MaxEquation, blendSrc: OneFactor, blendDst: OneFactor };
-    default:
-      return null;
-  }
-}
-var COLOR_BLEND_FRAGMENT_SHADER = `
-uniform sampler2D map;
-uniform vec3 tint;
-uniform float opacity;
-varying vec2 vUv;
-void main() {
-  vec4 c = texture2D(map, vUv);
-  float a = c.a * opacity;
-  gl_FragColor = vec4(c.rgb * tint * a, a);
-}
-`;
-var COLOR_BLEND_VERTEX_SHADER = `
-varying vec2 vUv;
-void main() {
-  vUv = uv;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-}
-`;
-var ThreeScenePlayer = class {
-  renderer;
-  scene;
-  camera;
-  // 承载渲染的 canvas —— **就是调用方 append 到 DOM 显示的那一个**（three 渲染目标 + 页面显示
-  // 同一元素，不存在第二个离屏 canvas）。渲染缓冲尺寸不变量（见 resize）：
-  //   canvas.width/height === 视口逻辑尺寸 × pixelRatio（dpr）
-  // 而 CSS（`.wp-scene-canvas{width:100%;height:100%}`）= 视口逻辑尺寸 → 缓冲与物理像素 1:1，
-  // 既不模糊也不拉伸（2026-09-10 Task5：显式钉住该不变量，防「canvas 停在 HTML 默认 300×150
-  // 被 CSS 拉伸放大」这一整类回退）。
-  canvas;
-  // 场景固有尺寸（WE 正交视口 view_w×view_h；scene.json 未就绪前用构造传入值，越过后
-  // 用 setSceneSize 更新）与当前视口尺寸（canvas 逻辑像素）。
-  sceneWidth;
-  sceneHeight;
-  viewWidth;
-  viewHeight;
-  // 渲染缓冲像素比（构造时快照 window.devicePixelRatio；resize 时用它推导缓冲尺寸）。
-  pixelRatio;
-  lastTime = 0;
-  // 背景图层条目（按 addBackground 返回的 id 索引，供 update_background 引用）。
-  backgroundEntries = /* @__PURE__ */ new Map();
-  nextBackgroundId = 0;
-  // 粒子图层条目（Task 3）：按 addParticle 返回的 id 索引，更新粒子时用其 getter 刷新缓冲区。
-  particleLayers = /* @__PURE__ */ new Map();
-  nextParticleLayerId = 0;
-  constructor(canvas, width, height, renderer) {
-    this.sceneWidth = width;
-    this.sceneHeight = height;
-    this.viewWidth = width;
-    this.viewHeight = height;
-    this.canvas = canvas;
-    this.scene = new Scene();
-    this.camera = new OrthographicCamera(-1, 1, 1, -1, -1e3, 1e3);
-    this.camera.position.z = CAMERA_DISTANCE;
-    this.renderer = renderer ?? new WebGLRenderer({ canvas, antialias: true });
-    this.renderer.outputColorSpace = LinearSRGBColorSpace;
-    const dpr = typeof window !== "undefined" && window.devicePixelRatio ? window.devicePixelRatio : 1;
-    this.pixelRatio = dpr;
-    const withSetPixelRatio = this.renderer;
-    if (typeof withSetPixelRatio.setPixelRatio === "function") {
-      withSetPixelRatio.setPixelRatio(dpr);
-    }
-    this.applyCover();
-  }
-  // 视口尺寸变更（浏览器 resize / controller 设置 canvas 逻辑尺寸）：只改视口，重新按
-  // cover 推导相机范围（cover 语义保持，裁剪方向随视口宽高比变化，不固定传 w/h），并把
-  // **渲染缓冲**钉到 视口 × dpr（不变量，见 canvas 字段注释）。
-  resize(width, height) {
-    const w = Math.max(1, Math.round(width));
-    const h = Math.max(1, Math.round(height));
-    this.viewWidth = w;
-    this.viewHeight = h;
-    this.applyCover();
-    const r = this.renderer;
-    if (typeof r.setPixelRatio === "function") r.setPixelRatio(this.pixelRatio);
-    if (typeof r.setSize === "function") r.setSize(w, h, false);
-    const bufW = Math.floor(w * this.pixelRatio);
-    const bufH = Math.floor(h * this.pixelRatio);
-    if (this.canvas.width !== bufW) this.canvas.width = bufW;
-    if (this.canvas.height !== bufH) this.canvas.height = bufH;
-  }
-  // 场景固有尺寸（scene.json 的 general.orthogonalprojection）就绪后设置，同时重推 cover。
-  // 构造传入的 width/height 只是缺省冗余值（「缺省用传入 width/height」）。
-  setSceneSize(width, height) {
-    this.sceneWidth = width;
-    this.sceneHeight = height;
-    this.applyCover();
-  }
-  // 按 cover 语义把相机视锥设为场景尺寸的 cover 视图（中心原点，z 范围 -1000..1000 不变）。
-  applyCover() {
-    const viewAspect = this.viewWidth / this.viewHeight;
-    const fg = coverRange(this.sceneWidth, this.sceneHeight, viewAspect);
-    this.camera.left = -fg.w / 2;
-    this.camera.right = fg.w / 2;
-    this.camera.top = fg.h / 2;
-    this.camera.bottom = -fg.h / 2;
-    this.camera.updateProjectionMatrix();
-  }
-  // 每帧扩展钩子：驱动粒子图层刷新（Task 3）。Task 1 空实现；背景更新由 update_background
-  // 显式调用（对齐 wasm update_image 语义）。后续 Task 4 可在此挂背景/效果链更新。
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  update(_dt) {
-    this.updateParticles(_dt);
-  }
-  // 启动帧循环（renderer.setAnimationLoop 内部 RAF）。每帧：外部回调 fn(dt) → update(dt)
-  // （内部钩子）→ render(scene, camera)。dt 用 performance.now 差分，clamp 0.1s 防 tab 切
-  // 后台 / RAF 停顿后 dt 过大把粒子瞬移出视口（同 wasm-renderer 语义）。
-  // Task 4 关键：fn(dt) 先于内部 update(dt)——fn 承载「模拟推进」（如 CpuParticleSim.update），
-  // 使 update（→ updateParticles 读 getter）拿到**本帧已推进**的顶点（sim 已在帧内 advance），
-  // 避免「先读旧顶点再推进」的一帧滞后。
-  //
-  // ⚠️ 帧体必须整体 try/catch（关键，修复「黑神话花瓣不可见」这类「背景清晰但粒子永不出现」）：
-  // three r170 的 `WebGLAnimation.onAnimationFrame` 实现为
-  //   `animationLoop(time, frame); requestId = context.requestAnimationFrame(onAnimationFrame);`
-  // （three.module.js 13612-13618）——**重排下一帧的语句在回调之后**，且 three 不包裹 try/catch。
-  // 因此只要本帧回调抛出一次（wasm 模拟器 panic、顶点 getter 返回异常数据、纹理/材质 GL 错误…），
-  // `requestAnimationFrame` 就再也**不会被重新排程 → RAF 循环永久停摆**：canvas 停在最后成功绘制的
-  // 那一帧（= `loadSceneToThree` 时的首帧，此时 `instanceCount===0`）→ 用户看到「背景清晰但没有粒子」
-  // 且再无任何动画/诊断输出（sim 从未推进，粒子永远不出现）。此处把帧体包进 try/catch（**不重抛**），
-  // 保证 three 每帧都能重新排程 RAF：单帧异常只丢该帧，循环自愈；异常只记一次 warn（防刷屏）。
-  setAnimationLoop(fn) {
-    this.lastTime = performance.now();
-    let warned = false;
-    this.renderer.setAnimationLoop(() => {
-      try {
-        const now = performance.now();
-        const dt = Math.min((now - this.lastTime) / 1e3, 0.1);
-        this.lastTime = now;
-        fn?.(dt);
-        this.update(dt);
-        this.renderer.render(this.scene, this.camera);
-      } catch (e) {
-        if (!warned) {
-          warned = true;
-          console.warn("[three] \u5E27\u5FAA\u73AF\u5F02\u5E38\uFF08\u5DF2\u4E22\u5F03\u8BE5\u5E27\u5E76\u7EE7\u7EED\u5FAA\u73AF\uFF09:", e instanceof Error ? e.message : String(e));
-        }
-      }
-    });
-  }
-  // 手动渲染一帧（不依赖 RAF，供测试/调用方直接触发）。
-  render() {
-    this.renderer.render(this.scene, this.camera);
-  }
-  // Task 2：背景图层（Sprite/Mesh）。用 we_to_three 中心化定位（three = we - scene/2，
-  // 左下原点 y 向上 → 中心原点 y 向上，y 不翻，与背景一致）；size×scale 定尺寸；
-  // alpha → material.opacity、brightness 调色（复用 scene-renderer.materialModulation：
-  // color 缺省全白 → rgb = clamp01(brightness)，a = clamp01(alpha)）。
-  // sceneW/sceneH 为场景固有尺寸（we_to_three 基准，通常 == setSceneSize 注入值）。
-  // 返回分配的背景 id，供 update_background 引用；与后续粒子共用同一相机（Task 1 cover）。
-  addBackground(opts) {
-    const sceneW = opts.sceneW;
-    const sceneH = opts.sceneH;
-    const w = opts.size?.[0] ?? opts.texture?.image?.width ?? 1;
-    const h = opts.size?.[1] ?? opts.texture?.image?.height ?? 1;
-    const geometry = new PlaneGeometry(w, h);
-    const mod = materialModulation(void 0, opts.alpha, opts.brightness);
-    const cb = colorBlendModeToThree(opts.colorBlendMode ?? 0);
-    let material;
-    if (cb) {
-      material = new ShaderMaterial({
-        uniforms: {
-          map: { value: opts.texture ?? createWhiteTexture() },
-          tint: { value: new Vector3(mod.r, mod.g, mod.b) },
-          opacity: { value: mod.a }
-        },
-        vertexShader: COLOR_BLEND_VERTEX_SHADER,
-        fragmentShader: COLOR_BLEND_FRAGMENT_SHADER,
-        transparent: true,
-        // 背景是透明图层，不写深度（避免干扰其他透明对象）。粒子 depthTest=false 不受影响。
-        depthWrite: false,
-        side: DoubleSide,
-        blending: CustomBlending,
-        blendEquation: cb.blendEquation,
-        blendSrc: cb.blendSrc,
-        blendDst: cb.blendDst,
-        // WE：`gl_FragColor.a = screen.a` —— 结果 alpha 取**背景**的（自己的 alpha 只当混合权重）。
-        blendSrcAlpha: ZeroFactor,
-        blendDstAlpha: OneFactor
-      });
-    } else {
-      const basic = new MeshBasicMaterial({
-        map: opts.texture ?? null,
-        transparent: true,
-        depthWrite: false
-      });
-      basic.color.setRGB(mod.r, mod.g, mod.b);
-      basic.opacity = mod.a;
-      material = basic;
-    }
-    const mesh = new Mesh(geometry, material);
-    mesh.renderOrder = 0;
-    const s = opts.scale;
-    mesh.scale.set(s[0], s[1], s[2] ?? 1);
-    const a = opts.angles ?? [0, 0, 0];
-    mesh.rotation.set(a[0], a[1], a[2]);
-    mesh.position.set(opts.origin[0] - sceneW / 2, opts.origin[1] - sceneH / 2, opts.origin[2]);
-    this.scene.add(mesh);
-    const id = this.nextBackgroundId++;
-    this.backgroundEntries.set(id, {
-      mesh,
-      origin: [opts.origin[0], opts.origin[1], opts.origin[2]],
-      scale: [s[0], s[1], s[2] ?? 1],
-      angles: [a[0], a[1], a[2]],
-      alpha: mod.a,
-      brightness: opts.brightness ?? 1,
-      sceneW,
-      sceneH
-    });
-    return id;
-  }
-  // Task 2：更新背景图层状态，对齐既有 update_image 语义——undefined = 保持现状；
-  // 传入值若无变化（与当前已应用状态相等）则跳过该字段；未知 id → no-op。
-  // origin 为 WE 场景坐标，先按 we_to_three 中心化（origin - scene/2）再写 mesh.position。
-  update_background(id, origin, scale, alpha, brightness) {
-    const entry = this.backgroundEntries.get(id);
-    if (!entry) return;
-    if (origin) {
-      const [ox, oy, oz] = origin;
-      if (ox !== entry.origin[0] || oy !== entry.origin[1] || oz !== entry.origin[2]) {
-        entry.origin = [ox, oy, oz];
-        entry.mesh.position.set(ox - entry.sceneW / 2, oy - entry.sceneH / 2, oz);
-      }
-    }
-    if (scale) {
-      const [sx, sy, sz] = scale;
-      if (sx !== entry.scale[0] || sy !== entry.scale[1] || sz !== entry.scale[2]) {
-        entry.scale = [sx, sy, sz];
-        entry.mesh.scale.set(sx, sy, sz);
-      }
-    }
-    if (alpha !== void 0) {
-      const a = Math.max(0, Math.min(1, alpha));
-      if (a !== entry.alpha) {
-        entry.alpha = a;
-        const mat = entry.mesh.material;
-        if (mat instanceof ShaderMaterial) mat.uniforms.opacity.value = a;
-        else mat.opacity = a;
-      }
-    }
-    if (brightness !== void 0) {
-      if (brightness !== entry.brightness) {
-        entry.brightness = brightness;
-        const mod = materialModulation(void 0, entry.alpha, brightness);
-        const mat = entry.mesh.material;
-        if (mat instanceof ShaderMaterial) mat.uniforms.tint.value.set(mod.r, mod.g, mod.b);
-        else mat.color.setRGB(mod.r, mod.g, mod.b);
-      }
-    }
-  }
-  // Task 3：粒子图层。`simVerticesGetter` 每帧返回模拟器当前顶点（摊平 Float32Array，
-  // 每粒子 `[pos3, size, uv2, color3, alpha]` 10 浮点——来自 wasm `SceneParticleSim::build_instance_vertices`）。
-  // 渲染用 three.js `ShaderMaterial` billboard quad（每粒子一个实例，shader 由基础角点+位置/尺寸展开），
-  // 模拟逻辑仍由 `SceneParticleSim` 承担（思路 1 核心：不重写模拟，只换渲染引擎）。
-  // 返回分配的图层 id，供更新/释放引用。
-  addParticle(simVerticesGetter, opts) {
-    const frameCount = Math.max(1, Math.floor(opts.frameCount));
-    const frameCols = Number.isFinite(opts.frameCols) && opts.frameCols > 0 ? Math.max(1, Math.floor(opts.frameCols)) : frameCount;
-    const frameRows = Number.isFinite(opts.frameRows) && opts.frameRows > 0 ? Math.max(1, Math.floor(opts.frameRows)) : 1;
-    const hasTex = !!opts.tex;
-    const softness = opts.softness ?? (hasTex ? 0.15 : 1);
-    const geometry = new InstancedBufferGeometry();
-    geometry.setAttribute("position", new BufferAttribute(PARTICLE_QUAD_CORNERS, 3));
-    geometry.setIndex(new BufferAttribute(new Uint16Array(PARTICLE_QUAD_INDEX), 1));
-    geometry.instanceCount = 0;
-    const initial = simVerticesGetter();
-    const count = Math.floor(initial.length / 10);
-    const capacity = particleCapacity(opts.maxInstances ?? 0, count);
-    const positions = new InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
-    const sizes = new InstancedBufferAttribute(new Float32Array(capacity), 1);
-    const uvs = new InstancedBufferAttribute(new Float32Array(capacity * 2), 2);
-    const colors = new InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
-    const alphas = new InstancedBufferAttribute(new Float32Array(capacity), 1);
-    geometry.setAttribute("particlePosition", positions);
-    geometry.setAttribute("particleSize", sizes);
-    geometry.setAttribute("particleUv", uvs);
-    geometry.setAttribute("particleColor", colors);
-    geometry.setAttribute("particleAlpha", alphas);
-    const material = new ShaderMaterial({
-      uniforms: {
-        map: { value: opts.tex ?? createWhiteTexture() },
-        frameCount: { value: frameCount },
-        frameCols: { value: frameCols },
-        frameRows: { value: frameRows },
-        softness: { value: softness },
-        maskMode: { value: hasTex ? 1 : 0 },
-        // 对象变换（缺省恒等 → 顶点 shader 退化为旧的 worldPos = particlePosition + corner*size/2）。
-        objCenter: { value: new Vector3(...opts.objectCenter ?? [0, 0, 0]) },
-        objScale: { value: new Vector3(...opts.objectScale ?? [1, 1, 1]) },
-        objAngles: { value: new Vector3(...opts.objectAngles ?? [0, 0, 0]) },
-        emitterOrigin: { value: new Vector3(...opts.emitterOrigin ?? [0, 0, 0]) },
-        bmOffset: { value: new Vector3(...simEmitterOffset(opts.emitterOrigin ?? [0, 0, 0])) }
-      },
-      vertexShader: PARTICLE_VERTEX_SHADER,
-      fragmentShader: PARTICLE_FRAGMENT_SHADER,
-      transparent: true,
-      depthWrite: false,
-      depthTest: false,
-      side: DoubleSide,
-      blending: opts.blend === "additive" ? AdditiveBlending : NormalBlending
-    });
-    const mesh = new Mesh(geometry, material);
-    mesh.frustumCulled = false;
-    geometry.boundingSphere = new Sphere(new Vector3(0, 0, 0), Number.POSITIVE_INFINITY);
-    mesh.renderOrder = 1;
-    this.scene.add(mesh);
-    const id = this.nextParticleLayerId++;
-    const layer = {
-      id,
-      getter: simVerticesGetter,
-      frameCount,
-      geometry,
-      material,
-      mesh,
-      positions,
-      sizes,
-      uvs,
-      colors,
-      alphas,
-      capacity,
-      loggedFirstFrame: false,
-      loggedCount: 0
-    };
-    this.particleLayers.set(id, layer);
-    this.writeParticleData(layer, initial, count);
-    return id;
-  }
-  // 每帧刷新所有粒子图层：调用各自的 `simVerticesGetter()` 取当前顶点并写回 BufferAttribute。
-  // `dt` 用于诊断日志（证明帧循环真的在跑、dt 是真实帧间隔且 >0）。
-  updateParticles(dt) {
-    for (const layer of this.particleLayers.values()) {
-      const data = layer.getter();
-      const count = Math.floor(data.length / 10);
-      if (count > 0 && !layer.loggedFirstFrame) {
-        layer.loggedFirstFrame = true;
-        layer.loggedCount = count;
-        console.log(
-          `[three] \u7C92\u5B50\u5DF2\u4EA7\u51FA layer=${layer.id} count=${count} dt=${dt.toFixed(4)}s capacity=${layer.capacity}\uFF08\u9996\u5E27\u975E\u96F6\uFF1B\u6A21\u62DF\u6BCF\u5E27\u7D2F\u79EF\u53D1\u5C04\uFF0C\u6EE1 capacity \u65F6\u518D\u6253\u5370\u4E00\u6761\uFF09`
-        );
-      } else if (layer.loggedCount < layer.capacity && count >= layer.capacity) {
-        layer.loggedCount = count;
-        console.log(`[three] \u7C92\u5B50\u5DF2\u8FBE maxcount layer=${layer.id} count=${count} dt=${dt.toFixed(4)}s`);
-      }
-      this.writeParticleData(layer, data, count);
-    }
-  }
-  // 把 per-particle 摊平顶点（每粒子 10 浮点）拆到 5 个 instanced 属性并标记需重传。
-  // 容量不足时按需扩容（正常不会发生：容量 = sim 的 maxcount）——扩容后**必须**同步
-  // `geometry._maxInstanceCount`（three 的首帧锁存值，见 addParticle 注释），否则 draw 仍按旧容量截断。
-  writeParticleData(layer, data, count) {
-    const ensure = (attr, itemSize, need, name) => {
-      const arr = attr.array;
-      if (arr.length >= need) return attr;
-      const grown = new Float32Array(Math.max(need, Math.max(arr.length * 2, 1)));
-      grown.set(arr);
-      const next = new InstancedBufferAttribute(grown, itemSize);
-      layer.geometry.setAttribute(name, next);
-      return next;
-    };
-    layer.positions = ensure(layer.positions, 3, count * 3, "particlePosition");
-    layer.sizes = ensure(layer.sizes, 1, count, "particleSize");
-    layer.uvs = ensure(layer.uvs, 2, count * 2, "particleUv");
-    layer.colors = ensure(layer.colors, 3, count * 3, "particleColor");
-    layer.alphas = ensure(layer.alphas, 1, count, "particleAlpha");
-    const minCapacity = Math.min(
-      Math.floor(layer.positions.array.length / 3),
-      layer.sizes.array.length,
-      Math.floor(layer.uvs.array.length / 2),
-      Math.floor(layer.colors.array.length / 3),
-      layer.alphas.array.length
-    );
-    if (minCapacity > layer.capacity) {
-      layer.capacity = minCapacity;
-      layer.geometry._maxInstanceCount = minCapacity;
-    }
-    const pos = layer.positions.array;
-    const size = layer.sizes.array;
-    const uv = layer.uvs.array;
-    const color = layer.colors.array;
-    const alpha = layer.alphas.array;
-    for (let i = 0; i < count; i++) {
-      const b = i * 10;
-      pos[i * 3] = data[b];
-      pos[i * 3 + 1] = data[b + 1];
-      pos[i * 3 + 2] = data[b + 2];
-      size[i] = data[b + 3];
-      uv[i * 2] = data[b + 4];
-      uv[i * 2 + 1] = data[b + 5];
-      color[i * 3] = data[b + 6];
-      color[i * 3 + 1] = data[b + 7];
-      color[i * 3 + 2] = data[b + 8];
-      alpha[i] = data[b + 9];
-    }
-    layer.positions.needsUpdate = true;
-    layer.sizes.needsUpdate = true;
-    layer.uvs.needsUpdate = true;
-    layer.colors.needsUpdate = true;
-    layer.alphas.needsUpdate = true;
-    layer.geometry.instanceCount = count;
-  }
-  // 停止循环并释放 renderer 资源。
-  dispose() {
-    this.renderer.setAnimationLoop(null);
-    for (const entry of this.backgroundEntries.values()) {
-      entry.mesh.geometry.dispose();
-      entry.mesh.material.dispose();
-    }
-    this.backgroundEntries.clear();
-    for (const layer of this.particleLayers.values()) {
-      layer.geometry.dispose();
-      layer.material.dispose();
-    }
-    this.particleLayers.clear();
-    this.renderer.dispose();
-  }
-};
-function frameCountFromDims(width, height) {
-  const w = Math.max(1, width);
-  const h = Math.max(1, height);
-  return Math.max(1, Math.floor(w / h));
-}
-function textureFrameCount(tex) {
-  const sprite = textureSpriteInfo(tex);
-  if (sprite) return Math.max(1, Math.floor(sprite.frames));
-  if (!tex) return 1;
-  const img = tex.image;
-  if (img && typeof img.width === "number" && typeof img.height === "number" && img.width > 0 && img.height > 0) {
-    return frameCountFromDims(img.width, img.height);
-  }
-  if (Array.isArray(tex.image)) {
-    const first = tex.image[0];
-    if (first && typeof first.width === "number" && typeof first.height === "number" && first.width > 0 && first.height > 0) {
-      return frameCountFromDims(first.width, first.height);
-    }
-  }
-  return 1;
-}
-function textureSpriteInfo(tex) {
-  const raw = tex?.userData?.sprite;
-  if (!raw || typeof raw !== "object") return void 0;
-  const s = raw;
-  const frames = typeof s.frames === "number" ? Math.floor(s.frames) : 0;
-  const cols = typeof s.cols === "number" ? Math.floor(s.cols) : 0;
-  const rows = typeof s.rows === "number" ? Math.floor(s.rows) : 0;
-  if (frames <= 0 || cols <= 0 || rows <= 0) return void 0;
-  return { frames, cols, rows };
-}
-function textureFrameGrid(tex) {
-  const sprite = textureSpriteInfo(tex);
-  if (sprite) return { cols: sprite.cols, rows: sprite.rows };
-  return { cols: textureFrameCount(tex), rows: 1 };
-}
-function loadSceneToThree(sceneJson, assets, canvas, viewport) {
-  const desc = parseSceneJson(sceneJson);
-  const sceneW = desc.orthogonal.width;
-  const sceneH = desc.orthogonal.height;
-  const player = new ThreeScenePlayer(canvas, sceneW, sceneH, assets.renderer);
-  player.setSceneSize(sceneW, sceneH);
-  const vw = viewport?.width ?? sceneW;
-  const vh = viewport?.height ?? sceneH;
-  if (vw > 0 && vh > 0) player.resize(vw, vh);
-  const backgroundIds = [];
-  const particleLayers = [];
-  const sims = [];
-  for (const obj of desc.objects) {
-    if (obj.kind === "image") {
-      const id = player.addBackground({
-        origin: obj.origin,
-        size: obj.size,
-        scale: obj.scale,
-        // WE 对象角度（弧度）→ mesh.rotation（three 的 Object3D 变换顺序即 T·R·S）。
-        angles: obj.angles,
-        // WE 图像颜色混合模式（非 0 且已实现时改用预乘 + CustomBlending，见 addBackground）。
-        colorBlendMode: obj.colorBlendMode,
-        texture: assets.backgroundTextures?.get(obj.id),
-        alpha: obj.alpha,
-        brightness: obj.brightness,
-        sceneW,
-        sceneH
-      });
-      backgroundIds.push(id);
-    } else if (obj.kind === "particle" && obj.particle) {
-      const p = assets.particles?.get(obj.id);
-      if (!p || !assets.createParticleSim) continue;
-      const sim = assets.createParticleSim(p.specJson, obj.origin, sceneW, sceneH, p.overrideJson ?? "");
-      const frameCount = textureFrameCount(p.tex);
-      const grid = textureFrameGrid(p.tex);
-      sim.set_frame_count(frameCount);
-      const emitterOrigin = specEmitterOrigin(p.specJson);
-      const id = player.addParticle(() => sim.vertices(), {
-        tex: p.tex,
-        frameCount: sim.frame_count(),
-        frameCols: grid.cols,
-        frameRows: grid.rows,
-        blend: p.blend,
-        softness: p.softness,
-        objectCenter: [obj.origin[0] - sceneW / 2, obj.origin[1] - sceneH / 2, obj.origin[2]],
-        objectScale: [obj.scale[0], obj.scale[1], obj.scale[2] ?? 1],
-        // 对象角度（弧度）：顶点 shader 用它把局部运动方向/发射点/quad 角点旋转到场景空间。
-        objectAngles: obj.angles,
-        emitterOrigin,
-        // 实例缓冲容量 = spec 的 maxcount（= wasm `SceneParticleSim.maxcount`，模拟器的发射上限）。
-        // three 只在首帧锁存该容量（见 addParticle），必须按模拟器**最终**会产出的粒子数一次给足；
-        // 缺 maxcount（旧格式/解析失败）→ addParticle 用 DEFAULT_PARTICLE_CAPACITY 兜底。
-        maxInstances: specMaxcount(p.specJson)
-      });
-      particleLayers.push({ id, sim });
-      sims.push(sim);
-    }
-  }
-  player.setAnimationLoop((dt) => {
-    for (const sim of sims) sim.update(dt);
-  });
-  return { player, sims, backgroundIds, particleLayers };
 }
 
 // node_modules/.pnpm/@webgpu+glslang@0.0.15/node_modules/@webgpu/glslang/dist/web-devel/glslang.js
@@ -22216,7 +23874,215 @@ async function resolveParticleMaterial(id, specText) {
   }
 }
 
+// src/client/object-effects.ts
+function isLinearEffectChain(passes) {
+  if (passes.length === 0) return false;
+  return passes.every(
+    (p) => !p.target && p.bind.every((b) => b.name === "previous" && b.index === 0)
+  );
+}
+function resolveObjectRtSize(worldW, worldH, dpr, budgetW, budgetH) {
+  const scale = Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
+  const rawW = Math.max(0, Math.abs(worldW)) * scale;
+  const rawH = Math.max(0, Math.abs(worldH)) * scale;
+  const capW = Math.max(1, Math.min(OBJECT_RT_MAX, Math.floor(budgetW) || OBJECT_RT_MAX));
+  const capH = Math.max(1, Math.min(OBJECT_RT_MAX, Math.floor(budgetH) || OBJECT_RT_MAX));
+  const ratios = [1];
+  if (rawW > 0) ratios.push(capW / rawW);
+  if (rawH > 0) ratios.push(capH / rawH);
+  const s = Math.min(...ratios);
+  const width = Math.max(1, Math.round(rawW * s));
+  const height = Math.max(1, Math.round(rawH * s));
+  return { width, height };
+}
+var ObjectEffectStage = class {
+  constructor(host, opts) {
+    this.host = host;
+    this.wallpaperId = opts.wavelengthId;
+    this.dpr = opts.dpr > 0 ? opts.dpr : 1;
+    this.budgetWidth = opts.budgetWidth;
+    this.budgetHeight = opts.budgetHeight;
+  }
+  entries = /* @__PURE__ */ new Map();
+  skips = /* @__PURE__ */ new Set();
+  wallpaperId;
+  dpr;
+  budgetWidth;
+  budgetHeight;
+  disposed = false;
+  // 串行链（约束 3）：busy = 有 runner 正在 update，queue = 等待中的 update 任务。
+  // 空闲时**同步**发起第一项（本帧立即开始推进，不推迟一个微任务——与场景级
+  // `void runner.update(...)` 的行为一致；player 的帧序是 render 之后才 advance，
+  // 因此此刻切换 RT 不会打扰本帧主场景渲染）；忙时排队，等前一项 settle 后再发起。
+  busy = false;
+  queue = [];
+  /** 去重告警集合（`warnSkip` 之外的通用去重，按 key 只打印一次，防每帧刷屏）。 */
+  warned = /* @__PURE__ */ new Set();
+  /** 世界尺寸（场景像素）：resize 时按新预算重算 RT 像素尺寸的唯一来源。
+   *  调用顺序契约：three-renderer 先 setWorldSize 再 setObjectChains（后者不覆盖前者）。 */
+  setWorldSize(objId, worldW, worldH) {
+    if (this.disposed) return;
+    const entry = this.entries.get(objId);
+    if (entry) {
+      entry.worldW = worldW;
+      entry.worldH = worldH;
+      return;
+    }
+    this.entries.set(objId, { runner: null, chains: [], worldW, worldH });
+  }
+  /** 挂载某对象的效果链。调用顺序契约：player 先在 loadSceneToThree 内建好隔离条目，
+   *  stage 再挂链（Task 5 的接线顺序：setWorldSize → setObjectChains）；找不到隔离条目
+   *  说明契约被破坏 → 明确告警一次，绝不静默丢弃，也绝不猜尺寸。 */
+  setObjectChains(objId, chains) {
+    if (this.disposed) return;
+    const usable = [];
+    for (const one of chains) {
+      if (isLinearEffectChain(one)) {
+        usable.push(one);
+      } else {
+        const label = one.find((p) => p.target)?.target ?? one.find((p) => p.bind.length > 0)?.bind[0]?.name ?? "(\u5177\u540D RT)";
+        this.warnSkip(label);
+      }
+    }
+    if (usable.length === 0) return;
+    const view = this.host.isolatedObjects().find((o) => o.id === objId);
+    if (!view) {
+      this.warnOnce(`no-isolated:${objId}`, `\u5BF9\u8C61 ${objId} \u5C1A\u65E0\u9694\u79BB\u6761\u76EE\uFF0C\u6548\u679C\u94FE\u672A\u6302\u8F7D\uFF08\u8C03\u7528\u987A\u5E8F\u9519\u8BEF\uFF09`);
+      return;
+    }
+    this.mount(objId, usable, view.rtWidth, view.rtHeight);
+  }
+  /** 视口/预算变化：按新预算重算每个对象的 RT 像素尺寸，并用同一份链重挂（runner 内部 RT 跟随）。
+   *  ⚠️ 遍历 `this.entries` 的**所有**条目（不按有无 runner 过滤）：链全被跳过、因而没有 runner
+   *  的隔离对象（如具名 RT 图链）同样要随视口重设 RT，否则视口放大后它一直用旧的小 RT（偏糊）、
+   *  视口缩小时又一直占着旧的大 RT（超额显存）。 */
+  onViewportResize(budgetWidth, budgetHeight) {
+    if (this.disposed) return;
+    this.budgetWidth = budgetWidth;
+    this.budgetHeight = budgetHeight;
+    for (const [id, entry] of this.entries) {
+      const size = resolveObjectRtSize(entry.worldW, entry.worldH, this.dpr, budgetWidth, budgetHeight);
+      const view = this.host.isolatedObjects().find((o) => o.id === id);
+      if (!view) continue;
+      if (view.rtWidth === size.width && view.rtHeight === size.height) continue;
+      this.host.resizeObjectRT(id, size.width, size.height);
+      if (!entry.runner) continue;
+      entry.runner.setChains(entry.chains, this.wallpaperId, { width: size.width, height: size.height });
+      this.host.setObjectOutput(id, view.rtTexture);
+    }
+  }
+  /** 主场景渲染之前：链有输出才切合成 quad 的采样源；没有输出（首帧未就绪 / 该对象无 runner）
+   *  则**不动输出**——quad 保持采样对象 RT 原图，不黑屏（降级可见，不静默画错）。 */
+  bindOutputs() {
+    for (const view of this.host.isolatedObjects()) {
+      const out = this.entries.get(view.id)?.runner?.lastOutput() ?? null;
+      if (out) this.host.setObjectOutput(view.id, out);
+    }
+  }
+  /** 主场景渲染之后：串行推进各 runner 的 update（异步，不阻塞本帧；见类头约束 3）。 */
+  advance(time) {
+    if (this.disposed) return;
+    for (const view of this.host.isolatedObjects()) {
+      const runner = this.entries.get(view.id)?.runner;
+      if (!runner) continue;
+      runner.setAudioSpectrumSource(null);
+      this.enqueue(() => runner.update(time, view.rtTexture));
+    }
+  }
+  /** 被跳过的具名 RT 图链标识（按标识去重），供诊断与测试查询。 */
+  rtGraphSkips() {
+    return [...this.skips];
+  }
+  dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.queue.length = 0;
+    for (const entry of this.entries.values()) entry.runner?.dispose();
+    this.entries.clear();
+  }
+  // ── 测试/诊断钩子（不参与生产路径） ──
+  debugRunners() {
+    const out = /* @__PURE__ */ new Map();
+    for (const [id, e] of this.entries) if (e.runner) out.set(id, e.runner);
+    return out;
+  }
+  debugInjectRunner(id, runner) {
+    const view = this.host.isolatedObjects().find((o) => o.id === id);
+    this.entries.set(id, {
+      runner,
+      chains: [],
+      worldW: view ? view.rtWidth / this.dpr : 1,
+      worldH: view ? view.rtHeight / this.dpr : 1
+    });
+  }
+  /** 具名 RT 图链降级告警：按标识去重（同一效果被多个对象引用时只告警一次，不刷屏）。 */
+  warnSkip(label) {
+    if (this.skips.has(label)) return;
+    this.skips.add(label);
+    console.warn(
+      `[wallpaper-engine] \u6548\u679C\u9700\u8981\u5177\u540D RT\uFF08P2 \u672A\u5B9E\u73B0\uFF09\uFF0C\u8DF3\u8FC7: ${label}`
+    );
+  }
+  /** 去重告警（同一 key 只打印一次，防每帧刷屏）。 */
+  warnOnce(key, message) {
+    if (this.warned.has(key)) return;
+    this.warned.add(key);
+    console.warn(`[wallpaper-engine] ${message}`);
+  }
+  /** 串行队列入队（约束 3 / 2：只调用既有的 update，不在此建材质）。 */
+  enqueue(task) {
+    if (this.busy) {
+      this.queue.push(task);
+      return;
+    }
+    this.busy = true;
+    this.runTask(task);
+  }
+  runTask(task) {
+    let result;
+    try {
+      result = task();
+    } catch (e) {
+      console.warn("[wallpaper-engine] \u5BF9\u8C61\u6548\u679C\u94FE\u66F4\u65B0\u5931\u8D25:", e);
+      this.finishTask();
+      return;
+    }
+    Promise.resolve(result).catch((e) => {
+      console.warn("[wallpaper-engine] \u5BF9\u8C61\u6548\u679C\u94FE\u66F4\u65B0\u5931\u8D25:", e);
+    }).then(() => {
+      this.finishTask();
+    });
+  }
+  finishTask() {
+    const next = this.queue.shift();
+    if (next) {
+      this.runTask(next);
+      return;
+    }
+    this.busy = false;
+  }
+  mount(objId, chains, rtW, rtH) {
+    let entry = this.entries.get(objId);
+    if (!entry) {
+      entry = { runner: null, chains, worldW: rtW / this.dpr, worldH: rtH / this.dpr };
+      this.entries.set(objId, entry);
+    }
+    entry.chains = chains;
+    if (!entry.runner) {
+      entry.runner = new EffectRunner(this.host.renderer, rtW, rtH);
+    }
+    entry.runner.setChains(chains, this.wallpaperId, { width: rtW, height: rtH });
+  }
+};
+
 // src/client/three-renderer.ts
+var warnedKeys = /* @__PURE__ */ new Set();
+function warnOnce2(key, message) {
+  if (warnedKeys.has(key)) return;
+  warnedKeys.add(key);
+  console.warn(`[wallpaper-engine] ${message}`);
+}
+var BLEND_ISOLATION_UNSAFE = /* @__PURE__ */ new Set([6, 7, 31]);
 function particleBlend(blending, specText) {
   if (typeof blending === "string" && blending) {
     return /^(add|additive)$/i.test(blending.trim()) ? "additive" : "alpha";
@@ -22240,16 +24106,36 @@ function createEmptySim() {
     particle_count: () => 0
   };
 }
+async function collectObjectEffectChains(desc, loadFile) {
+  const out = /* @__PURE__ */ new Map();
+  for (const group of groupEffectsByObject(desc.objects)) {
+    const chains = [];
+    for (const fx of group.effects) {
+      if (typeof fx?.file !== "string") continue;
+      const chain = await resolveEffectChain({ file: fx.file, passes: fx.passes }, loadFile);
+      if (!chain) {
+        console.warn("[wallpaper-engine] \u6548\u679C\u94FE\u89E3\u6790\u5931\u8D25\uFF0C\u8DF3\u8FC7:", fx.file);
+        continue;
+      }
+      chains.push(chain);
+    }
+    if (chains.length > 0) out.set(group.obj.id, chains);
+  }
+  return out;
+}
 function createThreeSceneRenderer(opts) {
   const loadWasm = opts?.loadWasm ?? defaultLoadWasm;
   let modulePromise = null;
   let current = null;
+  let currentStage = null;
   let onWindowResize = null;
   const teardown = () => {
     if (onWindowResize) {
       window.removeEventListener("resize", onWindowResize);
       onWindowResize = null;
     }
+    currentStage?.dispose();
+    currentStage = null;
     current?.player.dispose();
     for (const sim of current?.sims ?? []) sim.free?.();
     current = null;
@@ -22260,6 +24146,7 @@ function createThreeSceneRenderer(opts) {
   });
   return {
     async render(id, fg, _bg) {
+      warnedKeys.clear();
       try {
         teardown();
         modulePromise ??= loadWasm();
@@ -22308,15 +24195,102 @@ function createThreeSceneRenderer(opts) {
             return createEmptySim();
           }
         } : void 0;
-        const result = loadSceneToThree(sceneJson, { backgroundTextures, particles, createParticleSim }, fg, {
+        const loadFile = async (name) => {
+          const r = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(name)}`);
+          if (!r.ok) return null;
+          return new Uint8Array(await r.arrayBuffer());
+        };
+        const effectChains = await collectObjectEffectChains(desc, loadFile);
+        const dpr = typeof window !== "undefined" && window.devicePixelRatio ? window.devicePixelRatio : 1;
+        const budgetW = Math.floor(vw * dpr);
+        const budgetH = Math.floor(vh * dpr);
+        const isolate = /* @__PURE__ */ new Map();
+        const blendSkipped = /* @__PURE__ */ new Set();
+        for (const obj of desc.objects) {
+          if (!effectChains.has(obj.id)) continue;
+          if (obj.kind === "image") {
+            if (typeof obj.colorBlendMode === "number" && BLEND_ISOLATION_UNSAFE.has(obj.colorBlendMode)) {
+              warnOnce2(
+                `blend-isolation:${obj.id}`,
+                `\u5BF9\u8C61 ${obj.id} \u7684 colorBlendMode=${obj.colorBlendMode} \u4E0E\u5BF9\u8C61\u7EA7 RT \u7684 alpha \u8BED\u4E49\u51B2\u7A81\uFF0C\u8DF3\u8FC7\u5176\u6548\u679C\u94FE\uFF08\u5BF9\u8C61\u4FDD\u6301\u53EF\u89C1\uFF09`
+              );
+              blendSkipped.add(obj.id);
+              continue;
+            }
+            const tex = backgroundTextures.get(obj.id);
+            const texW = tex?.image?.width ?? obj.size?.[0] ?? 1;
+            const texH = tex?.image?.height ?? obj.size?.[1] ?? 1;
+            const w = obj.size?.[0] ?? texW;
+            const h = obj.size?.[1] ?? texH;
+            const world = { w: Math.abs(w * obj.scale[0]), h: Math.abs(h * obj.scale[1]) };
+            const range = objectCameraRange([w, h], [obj.scale[0], obj.scale[1]]);
+            const rt = resolveObjectRtSize(range.w, range.h, dpr, budgetW, budgetH);
+            isolate.set(obj.id, {
+              objectId: obj.id,
+              rtWidth: rt.width,
+              rtHeight: rt.height,
+              worldW: world.w,
+              worldH: world.h
+            });
+          } else if (obj.kind === "particle") {
+            const p = particles.get(obj.id);
+            if (!p) continue;
+            let spec = {};
+            try {
+              spec = JSON.parse(p.specJson);
+            } catch {
+            }
+            const world = particleWorldSize(spec, [obj.scale[0], obj.scale[1]]);
+            const range = particleObjectRange(spec, [obj.scale[0], obj.scale[1]]);
+            const rt = resolveObjectRtSize(range.w, range.h, dpr, budgetW, budgetH);
+            isolate.set(obj.id, {
+              objectId: obj.id,
+              rtWidth: rt.width,
+              rtHeight: rt.height,
+              worldW: Math.abs(world.w),
+              worldH: Math.abs(world.h)
+            });
+          }
+        }
+        const result = loadSceneToThree(sceneJson, { backgroundTextures, particles, createParticleSim, isolate }, fg, {
           width: vw,
           height: vh
         });
         current = result;
+        let stage = null;
+        let droppedEffects = 0;
+        for (const [objId, chains] of effectChains) {
+          if (isolate.has(objId) || blendSkipped.has(objId)) continue;
+          droppedEffects += chains.length;
+        }
+        if (droppedEffects > 0) {
+          warnOnce2(
+            `unrendered-effects:${id}`,
+            `${droppedEffects} \u6761\u6548\u679C\u6302\u5728\u672A\u53C2\u4E0E\u6E32\u67D3\u7684\u5BF9\u8C61\u7C7B\u578B\u4E0A\uFF08util/\u97F3\u9891\uFF09\uFF0C\u5DF2\u8DF3\u8FC7`
+          );
+        }
+        if (isolate.size > 0) {
+          stage = new ObjectEffectStage(result.player, {
+            wavelengthId: id,
+            dpr,
+            budgetWidth: budgetW,
+            budgetHeight: budgetH
+          });
+          for (const [objId, iso] of isolate) {
+            stage.setWorldSize(objId, iso.worldW, iso.worldH);
+          }
+          for (const [objId, chains] of effectChains) {
+            if (!isolate.has(objId)) continue;
+            stage.setObjectChains(objId, chains);
+          }
+          result.player.setObjectEffectStage(stage);
+          currentStage = stage;
+        }
         onWindowResize = () => {
           if (!current) return;
           const { width, height } = viewportSize();
           current.player.resize(width, height);
+          currentStage?.onViewportResize(Math.floor(width * dpr), Math.floor(height * dpr));
         };
         window.addEventListener("resize", onWindowResize);
         console.log(

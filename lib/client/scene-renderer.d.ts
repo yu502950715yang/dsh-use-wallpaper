@@ -1,5 +1,7 @@
 import * as THREE from 'three';
-import type { SceneDescription, SceneImageObject, SceneObject, SceneParticleObject, SceneTextObject } from '../shared/types.js';
+import { CAMERA_DISTANCE, OBJECT_RT_MAX, PARTICLE_DEFAULT_DISTANCE, materialModulation, objectCameraRange, particleObjectRange, particleWorldSize, createObjectRenderTarget, shouldUseObjectPath, groupEffectsByObject, PendingChainStore, uvWindow, createCompositeGeometry, coverRange } from './object-range.js';
+export { CAMERA_DISTANCE, OBJECT_RT_MAX, PARTICLE_DEFAULT_DISTANCE, materialModulation, objectCameraRange, particleObjectRange, particleWorldSize, createObjectRenderTarget, shouldUseObjectPath, groupEffectsByObject, PendingChainStore, uvWindow, createCompositeGeometry, coverRange, };
+import type { SceneDescription, SceneImageObject, SceneParticleObject, SceneTextObject } from '../shared/types.js';
 import type { ParticleEmitterSpec, ParticleInitializerSpec } from './particles.js';
 import type { TextTextureOptions } from './text-object.js';
 import type { AudioAnalyzer } from './audio-input.js';
@@ -18,46 +20,6 @@ export interface SceneRenderer {
     start(): void;
     stop(): void;
 }
-export declare const CAMERA_DISTANCE = 300;
-export declare function materialModulation(color?: [number, number, number], alpha?: number, brightness?: number): {
-    r: number;
-    g: number;
-    b: number;
-    a: number;
-};
-export declare function objectCameraRange(objSize: [number, number], scale: [number, number]): {
-    w: number;
-    h: number;
-};
-export declare const PARTICLE_DEFAULT_DISTANCE = 64;
-export declare function particleObjectRange(spec: {
-    distanceMax?: number;
-}, scale: [number, number]): {
-    w: number;
-    h: number;
-};
-export declare function particleWorldSize(spec: {
-    distanceMax?: number;
-}, scale: [number, number]): {
-    w: number;
-    h: number;
-};
-export declare function createObjectRenderTarget(width: number, height: number): THREE.WebGLRenderTarget;
-export declare function shouldUseObjectPath(obj: {
-    effects?: unknown;
-}): obj is {
-    effects: unknown[];
-};
-export declare function groupEffectsByObject(objects: SceneObject[]): Array<{
-    obj: SceneObject;
-    effects: unknown[];
-}>;
-export declare class PendingChainStore<T> {
-    private stash;
-    applyIfReady(objId: number, chains: T, hasEntry: boolean): boolean;
-    take(objId: number): T | undefined;
-    clear(): void;
-}
 export declare function barAnchorOffsetY(alignment: string | undefined, height: number): number;
 export declare function updateVisualizerBars(bars: readonly THREE.Mesh[], anchorY: number, // 三坐标系锚点 y（对象 origin 的中心映射，不翻转）
 props: Record<string, unknown>, // 已解包的 scriptProperties
@@ -72,15 +34,6 @@ export declare class ClockTextDriver {
     update(now: Date): void;
     dispose(): void;
 }
-export declare function uvWindow(unclamped: number, clamped: number): {
-    start: number;
-    end: number;
-};
-export declare function createCompositeGeometry(worldW: number, worldH: number, rtW: number, rtH: number): THREE.PlaneGeometry;
-export declare function coverRange(width: number, height: number, viewAspect: number): {
-    w: number;
-    h: number;
-};
 export declare function createSceneRenderer(fgCanvas: HTMLCanvasElement, bgCanvas?: HTMLCanvasElement, audioAnalyzer?: AudioAnalyzer | null): SceneRenderer;
 export declare function resolveTexPath(matRef: string, texName: string): string;
 export declare function resolveImageTexture(id: string, obj: SceneImageObject): Promise<THREE.Texture | null>;
@@ -88,4 +41,3 @@ export interface RenderSceneOptions {
     getUserProperty?: (key: string) => unknown;
 }
 export declare function renderScene(id: string, fgCanvas: HTMLCanvasElement, bgCanvas?: HTMLCanvasElement, opts?: RenderSceneOptions): Promise<boolean>;
-export {};

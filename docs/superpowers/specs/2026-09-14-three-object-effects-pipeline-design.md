@@ -32,6 +32,8 @@
 | 高频效果 | waterwaves×24、shake×18、opacity×8、waterripple×7、blurprecise×6、waterflow/pulse/perspective×5、clouds/scroll/foliagesway×4 |
 | 单壁纸最重 | `1429403119`：23 个对象 / 24 条效果链 |
 
+> **计数口径**：§2.1「高频效果」按**效果目录**计（不含 `effects/workshop/<id>/...` 变体）；§2.2「RT 图链」按 **effect.json 文件**计，同一效果的多变体会合并计数——`blurprecise` 有三个变体（`effects/blurprecise` 6 次 + `effects/workshop/3732231168/blurprecise` 4 次 + `effects/workshop/3424038533/blurprecise` 3 次 = **13 次**）。
+
 ### 2.2 pass 结构分类（决定 P1 / P2 分界）
 
 按 `effect.json` 的 pass 结构分两类（`research/scan-effect-multipass.mjs` 实测）：
@@ -39,7 +41,7 @@
 | 类别 | 判定 | 种 / 次数 | 现有 `EffectRunner` 是否正确 | 代表 |
 |---|---|---|---|---|
 | **线性链** | 无 `passes[i].target` 且无 `passes[i].bind` | 25 种 / **106 次（82%）** | ✅ 正确（ping-pong 即 WE 的 `previous` 语义） | waterwaves、shake、opacity、waterripple、waterflow、pulse、perspective、clouds、scroll、foliagesway、iris、skew、vhs、filmgrain、spin、tint、lightshafts、Simple_Audio_Bars、refraction（2 pass 纯线性） |
-| **RT 图链** | 有具名 RT `_rt_*` target / `bind` / `fbos` 降采样 | 9 种 / **24 次（18%）** | ❌ 会画错（写错 RT / 读错源） | blurprecise×10、blur×3、localcontrast×2、godrays×2、bloom×2、shine×1、bokeh_blur×1 |
+| **RT 图链** | 有具名 RT `_rt_*` target / `bind` / `fbos` 降采样 | 9 种 / **24 次（18%）** | ❌ 会画错（写错 RT / 读错源） | blurprecise×13、blur×3、localcontrast×2、godrays×2、bloom×2、shine×1、bokeh_blur×1 |
 
 脚本原始输出按 `passes>1 || fbos || target || bind` 粗分类（LINEAR 24 种/105 次、RTGRAPH 10 种/25 次）；本表按**「是否消费具名 RT」**重判，因此 2 pass 但既无 `target` 也无 `bind` 的 `refraction`（1 次）计入线性链，RT 图链为 **9 种 / 24 次**。判定的可执行形式见 §5.1 的 `isLinearEffectChain`。
 
