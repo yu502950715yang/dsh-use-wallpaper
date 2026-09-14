@@ -24,15 +24,16 @@ scene 壁纸 ──► three.js 播放器（**唯一路径**，v0.3.0 起）
 ```
 
 - **接线**：`index.ts` → `createThreeSceneRenderer()`（`three-renderer.ts`，拉 scene.json + 背景纹理 + 粒子条件 + 纹理材质）→ `loadSceneToThree()`（`threejs-player.ts`，正交 cover 相机 + 背景 mesh + 粒子 billboard）→ `setAnimationLoop` 每帧 `sim.update(dt)` 后刷新粒子缓冲。
+- **对象级效果链（effects）的接线位置**（2026-09-14 起，P1）：同一入口下多走两步 —— `createThreeSceneRenderer()`（`three-renderer.ts`：解析每个对象的 `effects` → `resolveEffectChain`，算隔离尺寸 `resolveObjectRtSize`，装配 `ObjectEffectStage`）→ `loadSceneToThree()`（`threejs-player.ts`：隔离对象进 `localScene` + 主场景放合成 quad + 注入帧钩子）→ 每帧 `renderIsolatedContents()`（player 私有方法：内容 `setRenderTarget(objRT)` + `render(localScene, localCamera)`）→ `stage.bindOutputs()` → 渲染主场景（合成 quad 采样效果输出，链未就绪则采样对象 RT）→ `stage.advance(time)`（串行推进 `EffectRunner`，异步不阻塞本帧）。无带效果对象时 stage 为 null，帧序退化为原来的 `fn → update → render`（零回归）。达成与遗留见 §7.1。
 - **粒子模拟不重写**：复用 wasm 里的 `CpuParticleSim`（Rust `particle::SceneParticleSim`，**纯 CPU，不需要 WebGPU**）。renderer 只负责把 `sim.vertices()` 的 10 浮点/粒子画成 billboard。
 - **失败重试**：`wallpaper-controller.ts` 在 `render()` 返回 false 后用**新 canvas** 重试一次（防 WebGL/WebGPU context 污染），仍失败才落 preview。
-- **未接入的路径**：`wasm-renderer.ts`（`createWasmSceneRenderer` / `createFallbackSceneRenderer`）与 `scene-renderer.ts` 的 `renderScene` **源码与单测保留，但运行时不再调用**（`index.ts` 仍 import wasm-renderer 但未使用）。wasm 渲染器有**完整的对象效果链**（对象 RT + 局部正交相机 + `EffectChain` ping-pong + 合成 quad UV 窗口 + GLSL→SPIR-V→WGSL 编译链），three 路径**还没有** —— 这是当前最大的能力差，见 §7。
+- **未接入的路径**：`wasm-renderer.ts`（`createWasmSceneRenderer` / `createFallbackSceneRenderer`）与 `scene-renderer.ts` 的 `renderScene` **源码与单测保留，但运行时不再调用**（`index.ts` 仍 import wasm-renderer 但未使用）。wasm 渲染器有**完整的对象效果链**（对象 RT + 局部正交相机 + `EffectChain` ping-pong + 合成 quad UV 窗口 + GLSL→SPIR-V→WGSL 编译链）；three 路径**已接通对象级效果链（P1，2026-09-14）**，但**具名 RT 图链**（blur / blurprecise / godrays / bloom / shine / localcontrast / bokeh_blur，全库 **24 条**）仍未实现 —— 这是与 wasm 侧相比**剩余**的能力差，见 §7.1。
 - `isThreeUse()` / `THREE_USE=1` 是历史遗留（three 早已是默认）。
 
 ### 2.2 host / client / shared 分层
 
 - `src/host/`：Node 侧（Cordis 插件）。`scanner.ts` 扫描目录 → `WallpaperInfo`；`steam-paths.ts` 目录探测（`/wallpapers/probe`）；`pkg-reader.ts` 解包 PKGV0001；`routes.ts` HTTP 路由（读可变运行时目录，settings 热更新）；`settings.ts` 插件设置。
-- `src/client/`：浏览器侧（esbuild → `dist/client.js`，external react 等 DSH 共享模块）。`index.ts` 入口（bootstrap + `window.__wallpaperEngine` + 注册设置菜单）；`settings-section.tsx` 设置面板；`wallpaper-controller.ts` 选择/竞态/回退链；**`three-renderer.ts` + `threejs-player.ts` 是当前渲染主路径**；`wasm-renderer.ts` / `scene-renderer.ts` / `effect-runner.ts` 为未接入的备用实现；`tex-loader.ts` TEXV0005 解码；`scene-json.ts` scene.json 解析；`background-layer.ts` / `settings.ts` / `styles.ts`。
+- `src/client/`：浏览器侧（esbuild → `dist/client.js`，external react 等 DSH 共享模块）。`index.ts` 入口（bootstrap + `window.__wallpaperEngine` + 注册设置菜单）；`settings-section.tsx` 设置面板；`wallpaper-controller.ts` 选择/竞态/回退链；**`three-renderer.ts` + `threejs-player.ts` 是当前渲染主路径**；`wasm-renderer.ts` / `scene-renderer.ts` 为未接入的备用实现；**`object-effects.ts`（`ObjectEffectStage` 编排器）+ `object-range.ts`（对象范围/合成几何/UV 窗口等纯函数）是主路径的对象级效果链模块**，`effect-runner.ts`（`EffectRunner` 执行器）与 `shader/effect-chain.ts`（`resolveEffectChain` 链解析）自 2026-09-14 起被它们**接入主路径**（此前仅被未接入的 `scene-renderer.ts` 使用）；`tex-loader.ts` TEXV0005 解码；`scene-json.ts` scene.json 解析；`background-layer.ts` / `settings.ts` / `styles.ts`。
 - `src/shared/`：跨 host/client 类型（`WallpaperInfo`、`SceneDescription`、`SceneObject` 等）。
 - `src/client/shader/`：WE shader 方言转译层（`effect-chain.ts` 解析、`shader-preprocessor.ts` 预处理、`glsl-to-naga.ts` 产 SPIR-V pass 描述、`uniform-binder.ts`、`we-headers.ts`）。
 
@@ -116,7 +117,8 @@ research/                    gitignore：截图 / 验证脚本 / 临时 profile
 7. **粒子 alpha 属性链**：透明度 = 生命周期衰减 × alpha（`alpharandom` 等经属性链传入），JS ShaderMaterial 与 wasm 粒子层双路径同语义；改 alpha 相关逻辑要双路径验证（`wasm/tests/particle_alpha_tests.rs` + `tests/particles.test.ts`）。
 8. **场景资源禁止浏览器缓存**：`/wallpapers/scene/<id>/asset` 返回 `Cache-Control: no-store`，改资源无需清缓存。
 9. **wasm 效果链的历史卡点（已绕开，勿重走）**：naga 24/25 的 **glsl frontend 编译不了含 `uniform sampler2D` 的 GLSL**（`NotImplemented("variable qualifier")`），而几乎全部 WE 效果 shader 都采样 `g_Texture0`。现行链路是 **GLSL → `@webgpu/glslang` → SPIR-V → `spirv-webgpu-transform`（把组合采样拆成独立 texture+sampler）→ naga `spv-in` → WGSL**（`glsl-to-naga.ts` 产 `chain_desc`，wasm 侧 `effect.rs::spv_to_wgsl` 编译）；`chain_desc` 为空/解析失败才回退内置演示 pass（绝不白屏）。
-10. **对象级效果链管线要点**（`wasm/src/render/mod.rs`，备用路径）：每带效果对象一条 `ObjectEffectEntry` / `ParticleObjectEffect`，流水线 = 内容 → 对象 RT → 效果链 ping-pong → 输出 RT → 合成 quad 贴回 surface；对象 RT 尺寸逐轴钳制 `[1, 2048]`，合成 quad **不钳制**、靠 UV 窗口只采样可见段。效果链创建失败 → 合成 quad 采样内容纹理（对象正常显示、无效果）。
+10. **对象级效果链管线要点**（`wasm/src/render/mod.rs`，备用路径）：每带效果对象一条 `ObjectEffectEntry` / `ParticleObjectEffect`，流水线 = 内容 → 对象 RT → 效果链 ping-pong → 输出 RT → 合成 quad 贴回 surface；对象 RT 尺寸逐轴钳制 `[1, 4096]`，合成 quad **不钳制**、靠 UV 窗口只采样可见段。效果链创建失败 → 合成 quad 采样内容纹理（对象正常显示、无效果）。
+    - **订正**：本条早先记「钳制 `[1, 2048]`」，与代码不符。实际值是 **4096** —— wasm 侧 `wasm/src/render/effect.rs:225` 的 `OBJECT_RT_MAX = 4096.0`，three 主路径 `src/client/object-range.ts:15` 的 `OBJECT_RT_MAX = 4096`（两条路径同值）。2048 会把满屏主图（如 2560×1440）钳小、主图被裁剪且合成 quad 只剩钳制窗口（Clamp 出竖直色条），故当初已提到 4096，只是文档没跟上（2026-09-14 订正）。
 11. **效果链的一切编译/建管线必须在加载时一次性完成**（`EffectChain::new` / `set_object_effect` / `set_particle_object_effect`）；`render_frame` / `render_object_effects` / `step` / `EffectChain::render` **不得**做 naga 编译或建管线（每帧只写 uniform + 建 bind group + 提交 pass）。
 12. **音频管线**：`createAudioAnalyzer` 频谱 → EffectRunner 音频 uniform + visualizer 条高；壁纸 `sound` 数组经 `playWallpaperSound` 接入（autoplay 被拦时 context suspended、可视化全零，用户手势后恢复）；无 Web Audio → 全零静音。
 13. **测试沙箱**：vitest / esbuild 依赖 service 子进程（命名管道），受限沙箱下报 `spawn EPERM` —— 需完整权限运行。
@@ -138,7 +140,12 @@ research/                    gitignore：截图 / 验证脚本 / 临时 profile
 
 ### three.js 默认路径（当前影响用户）
 
-1. **未实现对象效果链（effects）** —— `threejs-player.ts` 里没有任何 effects 处理，全库 **17 张壁纸 / 130 条效果实例**失效（waterwaves 24 / shake 18 / blurprecise 13 / waterripple 8 / opacity 8 / waterflow 5 / pulse 5 / scroll 5 / perspective 5 / clouds 4 / foliagesway 4 …）。GTR 的 `opacity`（0.26 + mask）、`scroll`（云滚动）、`waterripple` 都属此类 —— 所以 GTR 的云会比桌面端略亮。**wasm 备用路径有完整效果链**。若要补到 three 侧：three 是 WebGL，WE 的效果 GLSL 可直接用，比 wasm 侧的 GLSL→WGSL 编译链**简单得多**。
+1. **对象级效果链（effects）：P1 已达成，P2 遗留 24 条具名 RT 图链** —— three 主路径已接通对象级效果链管线（player 对象隔离能力 + `ObjectEffectStage` 编排 + `three-renderer` 装配，接线见 §2.1），全库 **106/130 条效果引用（82%）** 可由既有 `EffectRunner` 正确执行（waterwaves 24 / shake 18 / opacity 8 / waterripple 7 / waterflow、pulse、perspective 各 5 / clouds、scroll、foliagesway 各 4 …）。**P2 遗留**：**24 条**具名 RT 图链（blurprecise×10、blur×3、localcontrast×2、godrays×2、bloom×2、shine×1、bokeh_blur×1）需要「RT 图执行器」（具名 RT 池 + `fbos` 降采样 + `bind` 语义），当前**整条跳过 + 去重告警** —— **画面不画错，但那些效果不生效**。GTR 的 `opacity`（0.26 + mask）、`scroll`（云滚动）、`waterripple` 都属线性链、已纳入 P1 执行范围（改动前它们全部失效，表现为 GTR 的云比桌面端略亮）。**wasm 备用路径有完整效果链**。（详细设计：`docs/superpowers/specs/2026-09-14-three-object-effects-pipeline-design.md`。）P2 补 RT 图执行器的成本比 wasm 侧低：three 是 WebGL，WE 的效果 GLSL 可直接用，无需 wasm 侧的 GLSL→SPIR-V→WGSL 编译链。
+   - **音频响应效果不随频谱动（如实标注）**：three 主路径**没有音频源** —— `createAudioAnalyzer` 只被未接入的 `scene-renderer.ts` 引用，`ObjectEffectStage.advance` 每帧显式给 `EffectRunner` 传 `null`，音频 uniform 保持 binder 初始化的**全零**。因此 `Simple_Audio_Bars` / `audioline` 等属「**效果在、但不随频谱动**」，不是「不支持该效果」。接音频留 P2。
+   - **`colorBlendMode ∈ {6,7,31}` 且带 effects 的对象被有意排除在隔离之外**：这类模式的内容材质把结果 alpha 钉成「背景的 alpha」（`blendSrcAlpha=Zero / blendDstAlpha=One`），而对象 RT 是新清空的缓冲（alpha 0）⇒ RT alpha 恒 0 ⇒ 合成 quad 片元被乘成 0 ⇒ 对象会**整体不可见**（相对改动前是用户可见回归）。守卫后它们走**非隔离**路径：**效果不生效、但对象保持可见**（与改动前一致），并 `warnOnce` 一次。根本修法（隔离语境下的 alpha 语义）留 P2。全库仅 3 个对象有非零 `colorBlendMode`：`3743126786` Clouds Back=7、`2832263418` audio_rainbow=6、`2460786246` Clock=31。
+   - **粒子对象的效果链只有单测覆盖**：全库实测 **particle 挂载 effects = 0**（effects 挂载对象类型分布 `{util:10, image:109, particle:0, none:11}`），管线里的粒子隔离分支**无真实样本可验**，只有单测覆盖。
+   - **21 条 effects 挂在 util / 音频等不参与渲染的对象类型上**（util:10 + none:11）：会被解析但**不会挂链**（`loadSceneToThree` 不渲染它们，也就没有隔离条目），每张壁纸打一条汇总 `warn`。属 P2 范围。
+   - **具名 RT 图链的告警**：按标识去重，**每张壁纸每个效果标识打印一次**（同一效果被多个对象引用不刷屏）。
 2. **`colorBlendMode` 只实现了 6/7/31**：其余模式（Darken / Multiply / Overlay / Hue … 见 §5.6）回退普通 alpha 混合。全库目前只有那 3 个对象用到非零值，新出现未实现模式时要补。
 3. **粒子 quad 不含 `rot`（自旋）**：`rotationrandom` / `angularvelocityrandom` 计算了但未参与渲染。
 
