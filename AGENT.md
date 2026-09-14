@@ -141,6 +141,12 @@ research/                    gitignore：截图 / 验证脚本 / 临时 profile
     - 缺省 `true` = **粒子纹理**语义（`TextureFlags_AlphaChannelPriority`：形状 / 覆盖写在 R（R8）或 G（RG88）通道）：R8 → `vec4(1,1,1,r)`、RG88 → `vec4(r,r,r,g)`；
     - `false` = **效果纹理槽**语义：R8 → `(r,r,r,1)`、RG88 → `(r,g,0,1)` —— 效果 shader 直接读 `.r` / `.rg` 当**遮罩数值**（`pulse.frag` 的 `float mask = texSample2D(g_Texture2, v_TexCoord.zw).r;`、`shake.frag` 用 `.rg` 取两个方向分量），按粒子语义会让 `.r` 恒为 1 ⇒ mask 失效 ⇒ 本该局部的效果覆盖全图（真机「GTR 整屏脉冲 / 整屏抖动」的主因）。
     - 调用方：`EffectRunner.resolveTextureSlot` 传 `{ alphaPriority: false }`（`effect-runner.ts:390-393`）；粒子纹理路径保持缺省 `true`（`tex-loader.ts:531-537`）。
+    - ⚠️ **待办（2026-09-14 发现）**：这个语义的**权威来源应是 `.tex` 头的 `TextureFlags_AlphaChannelPriority`（bit19 = 524288）**，现在却由**调用方路径**推断（效果槽一律 `false`）。对当前库恰好正确，但语义来源错了。全库 **82 张** `.tex` 带此位。
+19. **`.tex` 的 flags 必须被消费（2026-09-14，提交 `9306ae6`；权威定义见 `research/.lwe/.../Data/Assets/Texture.h:91-97`）**：`textureFromTex` 曾只读格式与尺寸、**把 flags 整个丢掉**（sprite 那一位除外），已暴露三类语义偏差：
+    - **`ClampUVs = 2`（bit1）—— 已修**：WE 默认 **REPEAT**，**仅带此位才 CLAMP**（lwe `CTexture.cpp:176-183`）。曾一律落到 three 默认 `ClampToEdgeWrapping` ⇒ `clouds.frag` 有意把第二组 UV 旋转到负象限（`cloudTexCoods.zw = vec2(-w, z)`，u ∈ [-0.5, 0]），clamp 下 `cloud1` **全部塌到纹理最左一列**（该列 R 均值 0.706 vs 全图 0.494）⇒ `cloudColor = cloud0*cloud1` 从推导的 ≈0.24 抬到 **0.419** ⇒ CP2077（`2454403969`）**整屏偏白**，且**随时间越来越白**（相位 60 s 亮度 105.93；修复后 68.91）。**全库 477 张 `.tex` 中 105 张因此由 clamp 改 repeat**（pkg 内 12/166、素材库 93/311）。
+    - **`NoInterpolation = 1`（bit0）—— 待办**：`applyLinearSampling` **无条件**设 `LinearFilter` + `LinearMipmapLinearFilter`，带此位的纹理（全库 **4 张**）本该 `NearestFilter` ⇒ 被插值偏糊。
+    - **`ClampUVsBorder = 8`（bit3）**：按 lwe 的 `CTexture` 路径落 REPEAT（全库 **0 张**带此位，当前无实际影响，语义未验证）。
+    - ⚠️ **RT 纹理必须保持 CLAMP**：`object-range.ts` 的对象合成 quad 依赖它。`WebGLRenderTarget` 不经 `textureFromTex`，所以只要不改 RT 创建处就安全 —— **别在别处一律改成 repeat**。
 
 ## 6. 工作约定
 
