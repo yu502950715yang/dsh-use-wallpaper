@@ -20874,8 +20874,11 @@ var ThreeScenePlayer = class {
     if (mat instanceof ShaderMaterial) mat.uniforms.map.value = texture;
     else if (mat instanceof MeshBasicMaterial) mat.map = texture;
   }
-  // 重设隔离对象的 RT 尺寸（视口/dpr 变化时由编排器调用）：同步局部相机视锥与合成几何的
-  // UV 窗口（几何尺寸不变，只重算窗口映射）。`id` = 隔离条目的键 = scene.json 的对象 id。
+  // 重设隔离对象的 RT 尺寸（视口/dpr 变化时由编排器调用）：**只改分辨率**。
+  // 局部相机覆盖的世界范围（camW/camH）与合成几何的 UV 窗口都只依赖**世界尺寸**，与 RT 像素
+  // 无关，因此这里不得改动它们 —— 曾在此按 RT 像素重设相机视锥并重建几何，使 dpr>1 的对象
+  // 内容被缩小到 1/dpr 并露出边缘（真机 HiDPI 整张壁纸错乱的同一根因）。
+  // `id` = 隔离条目的键 = scene.json 的对象 id。
   resizeObjectRT(id, width, height) {
     const entry = this.isolated.get(id);
     if (!entry) return;
@@ -20885,13 +20888,6 @@ var ThreeScenePlayer = class {
     entry.rt.setSize(w, h);
     entry.rtWidth = w;
     entry.rtHeight = h;
-    entry.localCamera.left = -w / 2;
-    entry.localCamera.right = w / 2;
-    entry.localCamera.top = h / 2;
-    entry.localCamera.bottom = -h / 2;
-    entry.localCamera.updateProjectionMatrix();
-    entry.quad.geometry.dispose();
-    entry.quad.geometry = createCompositeGeometry(entry.worldW, entry.worldH, w, h);
   }
   // 渲染所有隔离对象的内容到各自 RT（player 拥有 scene/camera，故渲染留在 player）。
   renderIsolatedContents() {
@@ -21044,12 +21040,14 @@ var ThreeScenePlayer = class {
     const rtW = Math.max(1, Math.round(size.width));
     const rtH = Math.max(1, Math.round(size.height));
     const rt = new WebGLRenderTarget(rtW, rtH);
-    const localCamera = new OrthographicCamera(-rtW / 2, rtW / 2, rtH / 2, -rtH / 2, -1e3, 1e3);
+    const camW = Math.max(1, Math.min(Math.abs(worldW), OBJECT_RT_MAX));
+    const camH = Math.max(1, Math.min(Math.abs(worldH), OBJECT_RT_MAX));
+    const localCamera = new OrthographicCamera(-camW / 2, camW / 2, camH / 2, -camH / 2, -1e3, 1e3);
     localCamera.position.z = CAMERA_DISTANCE;
     const localScene = new Scene();
     localScene.add(content);
     const quad = new Mesh(
-      createCompositeGeometry(worldW, worldH, rtW, rtH),
+      createCompositeGeometry(worldW, worldH, camW, camH),
       this.createCompositeQuadMaterial(rt.texture, colorBlendMode)
     );
     quad.position.set(position.x, position.y, position.z);

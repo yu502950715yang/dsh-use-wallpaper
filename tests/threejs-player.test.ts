@@ -1096,6 +1096,50 @@ describe('ThreeScenePlayer 对象隔离', () => {
     return tex;
   }
 
+  // ⚠️ 回归（2026-09-14，真机 HiDPI 反馈「很多 scene 壁纸错乱」）：局部正交相机的
+  // left/right/top/bottom 是**世界坐标范围**（内容以世界单位绘制），必须覆盖对象的
+  // **钳制后世界尺寸**；RT 的像素尺寸只决定分辨率（= 世界 × dpr 收口），**不得**拿来当相机范围。
+  // 曾用 rtW/rtH 当相机范围：dpr>1 时相机多覆盖 dpr 倍 ⇒ 内容只占 RT 的 1/dpr、四周是空白，
+  // 合成 quad 再按「全窗口」把它拉回世界尺寸 ⇒ 对象缩小 + 边缘 clamp 拉伸（HiDPI 屏整张壁纸错乱）。
+  // 既有测试漏检的原因：那些用例的 rtWidth/rtHeight 恰好等于 worldW/worldH，且都不断言相机范围；
+  // headless e2e 的 dpr=1 也让 rt == world，故端到端同样漏检。
+  it('局部相机覆盖的世界范围 = 对象世界尺寸（不是 RT 像素尺寸）', () => {
+    const { player } = makePlayer();
+    // world 2560×1440，RT 像素 5120×2880（dpr=2 的典型结果）——两者不等才能暴露该缺陷。
+    player.addBackground({
+      origin: [960, 540, 0], size: [2560, 1440], scale: [1, 1, 1],
+      texture: makeTexture(), sceneW: 1920, sceneH: 1080,
+      isolate: { objectId: 77, rtWidth: 5120, rtHeight: 2880, worldW: 2560, worldH: 1440 },
+    });
+    const entry = player.isolatedObjects()[0];
+    expect(entry.rt.width).toBe(5120);
+    // 相机必须覆盖世界尺寸 2560×1440（而不是 RT 像素 5120×2880）。
+    expect(entry.localCamera.right - entry.localCamera.left).toBeCloseTo(2560, 5);
+    expect(entry.localCamera.top - entry.localCamera.bottom).toBeCloseTo(1440, 5);
+    // RT 覆盖完整对象 ⇒ 合成几何 UV 为全窗口。
+    const uv = (entry.quad.geometry as THREE.PlaneGeometry).attributes.uv.array as Float32Array;
+    expect(Math.min(...Array.from(uv))).toBeCloseTo(0, 5);
+    expect(Math.max(...Array.from(uv))).toBeCloseTo(1, 5);
+  });
+
+  it('世界尺寸超过 4096 时相机范围按上限钳制（RT 退化为对象的中心窗口）', () => {
+    const { player } = makePlayer();
+    player.addBackground({
+      origin: [0, 0, 0], size: [6000, 1000], scale: [1, 1, 1],
+      texture: makeTexture(), sceneW: 6000, sceneH: 1000,
+      isolate: { objectId: 78, rtWidth: 4096, rtHeight: 683, worldW: 6000, worldH: 1000 },
+    });
+    const entry = player.isolatedObjects()[0];
+    expect(entry.localCamera.right - entry.localCamera.left).toBeCloseTo(4096, 5);
+    expect(entry.localCamera.top - entry.localCamera.bottom).toBeCloseTo(1000, 5);
+    // 钳制轴 → UV 居中窗口（只采样 RT 可见段）：start=(6000-4096)/2/6000≈0.15867、w≈0.68267
+    // ⇒ 展开后的 uv x 极值 ≈ ±1.2324 / -0.2324。
+    const uv = (entry.quad.geometry as THREE.PlaneGeometry).attributes.uv.array as Float32Array;
+    const xs = Array.from(uv).filter((_, i) => i % 2 === 0);
+    expect(Math.min(...xs)).toBeCloseTo(-0.2324, 3);
+    expect(Math.max(...xs)).toBeCloseTo(1.2324, 3);
+  });
+
   it('isolate：内容进 localScene（position/rotation 归零、scale 保留），主 scene 放合成 quad', () => {
     const { player } = makePlayer();
     const id = player.addBackground({
@@ -1296,7 +1340,7 @@ describe('ThreeScenePlayer 对象隔离', () => {
     expect((mock.render as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][0]).toBe(player.scene);
   });
 
-  it('resizeObjectRT 重建 RT 并同步局部相机与合成几何', () => {
+  it('resizeObjectRT 只改 RT 分辨率，不同步相机、不重建合成几何', () => {
     const { player } = makePlayer();
     const id = player.addBackground({
       origin: [0, 0, 0], size: [10, 10], scale: [1, 1, 1], texture: makeTexture(),
@@ -1309,9 +1353,18 @@ describe('ThreeScenePlayer 对象隔离', () => {
     player.resizeObjectRT(88, 40, 20);
     expect(entry.rt.width).toBe(40);
     expect(entry.rt.height).toBe(20);
-    expect(entry.localCamera.left).toBe(-20);
-    expect(entry.localCamera.right).toBe(20);
-    expect(entry.quad.geometry).not.toBe(oldGeo);
+    // 扁平视图必须同步（编排器按它算效果链纹理槽分辨率）。
+    expect(entry.rtWidth).toBe(40);
+    expect(entry.rtHeight).toBe(20);
+    // ⚠️ 相机覆盖的**世界范围**只依赖世界尺寸（10×10），与 RT 像素无关 ⇒ 不得跟着 RT 变。
+    // 曾在此按 RT 像素重设视锥（left=-20/right=20）：dpr>1 时内容被缩小到 1/dpr 并露出边缘
+    // （真机 HiDPI 整张壁纸错乱的同一根因）。
+    expect(entry.localCamera.left).toBe(-5);
+    expect(entry.localCamera.right).toBe(5);
+    expect(entry.localCamera.top).toBe(5);
+    expect(entry.localCamera.bottom).toBe(-5);
+    // 合成几何同样不重建：其世界尺寸与 UV 窗口都只依赖世界尺寸。
+    expect(entry.quad.geometry).toBe(oldGeo);
   });
 
   it('dispose 释放隔离 RT / 合成 quad / 内容', () => {
