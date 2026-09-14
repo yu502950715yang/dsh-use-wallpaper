@@ -14,7 +14,7 @@ import * as THREE from 'three';
 // 几何/尺寸纯函数来自 object-range.ts（唯一实现）：coverRange 是 scene-renderer 重新导出的
 // 同一份实现；CAMERA_DISTANCE / materialModulation 此前经由 scene-renderer 转手，本任务
 // 改为直接从 object-range.js 取（createCompositeGeometry 也在这里），避免多一层转手。
-import { coverRange, CAMERA_DISTANCE, materialModulation, createCompositeGeometry, OBJECT_RT_MAX } from './object-range.js';
+import { coverRange, CAMERA_DISTANCE, materialModulation, createCompositeGeometry } from './object-range.js';
 import { parseSceneJson } from './scene-json.js';
 
 // 背景图层条目：记录 WE 场景坐标与当前已应用状态，供 update_background 对齐既有
@@ -789,14 +789,16 @@ export class ThreeScenePlayer {
     const rtH = Math.max(1, Math.round(size.height));
     const rt = new THREE.WebGLRenderTarget(rtW, rtH);
     // ⚠️ 局部正交相机的 left/right/top/bottom 是**世界坐标范围**（内容以世界单位绘制），
-    // 所以相机必须覆盖**钳制后的世界尺寸**；RT 的像素尺寸只决定分辨率（= 世界 × dpr 收口到预算）。
-    // 曾把相机范围设成 RT 像素尺寸：dpr>1 时相机多覆盖 dpr 倍 ⇒ 内容只占 RT 的 1/dpr、四周是空白，
-    // 合成 quad 再按「全窗口」把它拉回世界尺寸 ⇒ 对象缩小 + 边缘 clamp 拉伸（真机 HiDPI 上整张
-    // 壁纸错乱；headless dpr=1 时 rt == world，故端到端漏检，仅单测能抓）。
-    // 上限钳制与 objectCameraRange 同语义（OBJECT_RT_MAX）：超限时 RT 退化为对象的中心窗口，
-    // 由合成几何的 UV 窗口只采样可见段。
-    const camW = Math.max(1, Math.min(Math.abs(worldW), OBJECT_RT_MAX));
-    const camH = Math.max(1, Math.min(Math.abs(worldH), OBJECT_RT_MAX));
+    // 所以相机必须覆盖**完整对象世界尺寸**；RT 的像素尺寸只决定分辨率（= 世界 × dpr，由编排器
+    // 按预算收口）。这里两个坑都踩过：
+    //   ① 拿 RT 像素当相机范围 → dpr>1 时相机多覆盖 dpr 倍 ⇒ 内容只占 RT 的 1/dpr、四周空白，
+    //      合成 quad 再按全窗口拉回世界尺寸 ⇒ 对象缩小 + 边缘 clamp 拉伸（真机 HiDPI 整张壁纸错乱）；
+    //   ② 把相机范围钳到 OBJECT_RT_MAX → RT 只覆盖对象的中央一块，UV 窗口外侧被 CLAMP 采样成
+    //      **边缘拉伸带**（实测 GTR 3743126786 对象世界宽 7430 > 4096 ⇒ 右侧 22% 画面宽是条纹）。
+    // 超限对象现在的代价只是**分辨率低**（欠采样），不再有几何错位 —— 硬上限属于 RT **像素**尺寸，
+    // 由 resolveObjectRtSize 负责钳制。
+    const camW = Math.max(1, Math.abs(worldW));
+    const camH = Math.max(1, Math.abs(worldH));
     const localCamera = new THREE.OrthographicCamera(-camW / 2, camW / 2, camH / 2, -camH / 2, -1000, 1000);
     localCamera.position.z = CAMERA_DISTANCE;
     const localScene = new THREE.Scene();

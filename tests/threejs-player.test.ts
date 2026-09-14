@@ -1122,7 +1122,7 @@ describe('ThreeScenePlayer 对象隔离', () => {
     expect(Math.max(...Array.from(uv))).toBeCloseTo(1, 5);
   });
 
-  it('世界尺寸超过 4096 时相机范围按上限钳制（RT 退化为对象的中心窗口）', () => {
+  it('世界尺寸超过 RT 像素上限时相机仍覆盖完整对象（不产生边缘拉伸带）', () => {
     const { player } = makePlayer();
     player.addBackground({
       origin: [0, 0, 0], size: [6000, 1000], scale: [1, 1, 1],
@@ -1130,14 +1130,15 @@ describe('ThreeScenePlayer 对象隔离', () => {
       isolate: { objectId: 78, rtWidth: 4096, rtHeight: 683, worldW: 6000, worldH: 1000 },
     });
     const entry = player.isolatedObjects()[0];
-    expect(entry.localCamera.right - entry.localCamera.left).toBeCloseTo(4096, 5);
+    // 相机覆盖**完整**世界尺寸（6000×1000），不被 4096 钳制 —— 4096 只约束 RT 的**像素**尺寸。
+    // （曾把相机也钳到 4096：RT 只覆盖对象中央一块，UV 窗口外侧被 CLAMP 采样成边缘拉伸带，
+    //   实测 GTR 3743126786 对象世界宽 7430 ⇒ 右侧 22% 画面宽是条纹。）
+    expect(entry.localCamera.right - entry.localCamera.left).toBeCloseTo(6000, 5);
     expect(entry.localCamera.top - entry.localCamera.bottom).toBeCloseTo(1000, 5);
-    // 钳制轴 → UV 居中窗口（只采样 RT 可见段）：start=(6000-4096)/2/6000≈0.15867、w≈0.68267
-    // ⇒ 展开后的 uv x 极值 ≈ ±1.2324 / -0.2324。
+    // RT 覆盖完整对象 ⇒ 合成几何 UV 全窗口（超限只降低分辨率，不做几何裁剪）。
     const uv = (entry.quad.geometry as THREE.PlaneGeometry).attributes.uv.array as Float32Array;
-    const xs = Array.from(uv).filter((_, i) => i % 2 === 0);
-    expect(Math.min(...xs)).toBeCloseTo(-0.2324, 3);
-    expect(Math.max(...xs)).toBeCloseTo(1.2324, 3);
+    expect(Math.min(...Array.from(uv))).toBeCloseTo(0, 5);
+    expect(Math.max(...Array.from(uv))).toBeCloseTo(1, 5);
   });
 
   it('isolate：内容进 localScene（position/rotation 归零、scale 保留），主 scene 放合成 quad', () => {
