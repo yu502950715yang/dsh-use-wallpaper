@@ -787,7 +787,12 @@ export class ThreeScenePlayer {
   ): void {
     const rtW = Math.max(1, Math.round(size.width));
     const rtH = Math.max(1, Math.round(size.height));
-    const rt = new THREE.WebGLRenderTarget(rtW, rtH);
+    // ⚠️ **MSAA 必须显式开**：主 canvas 是 `new THREE.WebGLRenderer({ antialias: true })`，
+    // 而 `WebGLRenderTarget` 的 `samples` 缺省为 **0** —— 对象内容经对象 RT 往返会丢掉抗锯齿。
+    // 实测（`--only-effect=effects/shake` 的纯净对照：遮罩生效后 shake 几乎不改变画面）：
+    // 无隔离 Laplacian 均方 713 → 有隔离 **342**，即整幅画面锐度掉一半 —— 这正是
+    // 「大幅背景的壁纸整体不如以前锐」的根因（背景整层走对象 RT）。
+    const rt = new THREE.WebGLRenderTarget(rtW, rtH, { samples: 4 });
     // ⚠️ 局部正交相机的 left/right/top/bottom 是**世界坐标范围**（内容以世界单位绘制），
     // 所以相机必须覆盖**完整对象世界尺寸**；RT 的像素尺寸只决定分辨率（= 世界 × dpr，由编排器
     // 按预算收口）。这里两个坑都踩过：

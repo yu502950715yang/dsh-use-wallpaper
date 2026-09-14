@@ -21039,7 +21039,7 @@ var ThreeScenePlayer = class {
   attachIsolated(objectId, kind, content, worldW, worldH, size, position, quadAngles, colorBlendMode) {
     const rtW = Math.max(1, Math.round(size.width));
     const rtH = Math.max(1, Math.round(size.height));
-    const rt = new WebGLRenderTarget(rtW, rtH);
+    const rt = new WebGLRenderTarget(rtW, rtH, { samples: 4 });
     const camW = Math.max(1, Math.abs(worldW));
     const camH = Math.max(1, Math.abs(worldH));
     const localCamera = new OrthographicCamera(-camW / 2, camW / 2, camH / 2, -camH / 2, -1e3, 1e3);
@@ -24289,7 +24289,7 @@ function createThreeSceneRenderer(opts) {
             const h = obj.size?.[1] ?? texH;
             const world = { w: Math.abs(w * obj.scale[0]), h: Math.abs(h * obj.scale[1]) };
             const range = objectCameraRange([w, h], [obj.scale[0], obj.scale[1]]);
-            const rt = resolveObjectRtSize(range.w, range.h, dpr, budgetW, budgetH);
+            const rt = resolveObjectRtSize(world.w, world.h, dpr, budgetW, budgetH);
             isolate.set(obj.id, {
               objectId: obj.id,
               rtWidth: rt.width,
@@ -24307,7 +24307,7 @@ function createThreeSceneRenderer(opts) {
             }
             const world = particleWorldSize(spec, [obj.scale[0], obj.scale[1]]);
             const range = particleObjectRange(spec, [obj.scale[0], obj.scale[1]]);
-            const rt = resolveObjectRtSize(range.w, range.h, dpr, budgetW, budgetH);
+            const rt = resolveObjectRtSize(world.w, world.h, dpr, budgetW, budgetH);
             isolate.set(obj.id, {
               objectId: obj.id,
               rtWidth: rt.width,
