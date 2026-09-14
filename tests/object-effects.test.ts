@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { isLinearEffectChain, resolveObjectRtSize } from '../src/client/object-effects.js';
+import { isLinearEffectChain } from '../src/client/object-effects.js';
 import { resolveEffectChain } from '../src/client/shader/effect-chain.js';
 import type { CompiledEffectPass } from '../src/client/shader/effect-chain.js';
 
@@ -47,40 +47,8 @@ describe('isLinearEffectChain', () => {
   });
 });
 
-describe('resolveObjectRtSize', () => {
-  it('无预算压力时 = 世界尺寸 × dpr（四舍五入）', () => {
-    expect(resolveObjectRtSize(200, 100, 2, 3840, 2160)).toEqual({ width: 400, height: 200 });
-  });
-  it('超出画布预算 → 等比缩小（两轴同一比例，不破坏 aspect）', () => {
-    // 8000×2000 @dpr1，预算 1920×1080：s = min(1920/8000, 1080/2000) = 0.24 → 1920×480
-    expect(resolveObjectRtSize(8000, 2000, 1, 1920, 1080)).toEqual({ width: 1920, height: 480 });
-  });
-  it('预算本身超过硬上限 4096 时按 4096 收口（4096 单边上限不被预算放宽）', () => {
-    // 世界 10000×10000 @dpr1，预算 8192×8192 → capW=capH=4096 → 4096×4096
-    expect(resolveObjectRtSize(10000, 10000, 1, 8192, 8192)).toEqual({ width: 4096, height: 4096 });
-  });
-  it('退化输入（0/负）→ 逐轴下限 1，不产生 0 尺寸 RT；负值取幅值', () => {
-    // 0 轴 → 下限 1（不产生 0 尺寸 RT）；负值取幅值 → 5（**不是** 1）。
-    // 本条期望与 brief 文本的 {1,1} 不一致，是 brief 自身笔误：brief 的 Step 3 实现用
-    // Math.abs（幅值语义），对 -5 必然得 5。按 T4.4（commit 28c7fcc）的实测教训，
-    // 负值被下限钳成 1px 正是「RT 退化、镜像内容不可见」的真实事故根因，故保留 abs、
-    // 订正测试期望（同 T1 的 R5 处理方式，已在 task-2-report.md 显式请求复核）。
-    expect(resolveObjectRtSize(0, -5, 1, 1920, 1080)).toEqual({ width: 1, height: 5 });
-  });
-  it('极端窄条保持比例（不被逐轴独立 clamp 压成方块）', () => {
-    // 8192×4608 @dpr1 预算 4096×4096：s = min(4096/8192, 4096/4608) = 0.5 → 4096×2304（非 4096×4096）
-    expect(resolveObjectRtSize(8192, 4608, 1, 4096, 4096)).toEqual({ width: 4096, height: 2304 });
-  });
-  it('非有限输入（NaN / Infinity）不产生 NaN 尺寸（否则会 new WebGLRenderTarget(NaN, NaN)）', () => {
-    // Math.abs(NaN) = NaN → max(0, NaN) = NaN → round 后仍是 NaN → 非法 GL 尺寸（建不出 RT）。
-    // 非有限值按 0 处理，再由逐轴下限归一到 1（与 0/负 输入同语义）。
-    expect(resolveObjectRtSize(NaN, 100, 1, 1920, 1080)).toEqual({ width: 1, height: 100 });
-    expect(resolveObjectRtSize(NaN, NaN, 1, 1920, 1080)).toEqual({ width: 1, height: 1 });
-    const inf = resolveObjectRtSize(Infinity, 100, 1, 1920, 1080);
-    expect(Number.isFinite(inf.width) && Number.isFinite(inf.height)).toBe(true);
-    expect(inf).toEqual({ width: 1, height: 100 });
-  });
-});
+// 尺寸口径（objectRtSize）与屏幕密度（screenScalePx）是 object-range.ts 的纯函数，
+// 其单测见 tests/object-range.test.ts；本文件只测编排器对尺寸口径的**消费**。
 
 // ── 全库回归：链分类的实测数字钉住（spec §2.1） ──
 // 与 tests/verify-real-library.test.ts 同样的 pkg 读取方式；本机无壁纸库时整块跳过。
@@ -221,7 +189,7 @@ describe('ObjectEffectStage', () => {
   it('纹理槽加载器按 WE v 约定注入（rowOrder:topDown，与对象 RT 的 v 约定同一套）', async () => {
     const host = createHost([{ id: 1, rtWidth: 100, rtHeight: 50 }]);
     const stage = new ObjectEffectStage(host as never, {
-      wallpaperId: 'w', dpr: 1, budgetWidth: 1920, budgetHeight: 1080,
+      wallpaperId: 'w', screenScale: 1,
     });
     stage.setObjectChains(1, [[pass()]]);
     // 构造注入（mock EffectRunner 记录构造参数）：第 4 个参数带 load 加载器
@@ -237,7 +205,7 @@ describe('ObjectEffectStage', () => {
   it('setObjectChains 为线性链创建 runner，并把对象 chains 展平后交给它', () => {
     const host = createHost([{ id: 1, rtWidth: 100, rtHeight: 50 }]);
     const stage = new ObjectEffectStage(host as never, {
-      wallpaperId: 'w', dpr: 1, budgetWidth: 1920, budgetHeight: 1080,
+      wallpaperId: 'w', screenScale: 1,
     });
     const chains = [[pass()], [pass()]];
     stage.setObjectChains(1, chains);
@@ -255,7 +223,7 @@ describe('ObjectEffectStage', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const host = createHost([{ id: 1, rtWidth: 100, rtHeight: 50 }]);
     const stage = new ObjectEffectStage(host as never, {
-      wallpaperId: 'w', dpr: 1, budgetWidth: 1920, budgetHeight: 1080,
+      wallpaperId: 'w', screenScale: 1,
     });
     stage.setObjectChains(1, [[pass({ target: '_rt_a' })]]);
     stage.setObjectChains(1, [[pass({ target: '_rt_a' })]]);
@@ -269,7 +237,7 @@ describe('ObjectEffectStage', () => {
   it('RT 图链的对象不建 runner，bindOutputs 不调用 setObjectOutput（quad 保持对象 RT 原图）', () => {
     const host = createHost([{ id: 1, rtWidth: 10, rtHeight: 10 }]);
     const stage = new ObjectEffectStage(host as never, {
-      wallpaperId: 'w', dpr: 1, budgetWidth: 1920, budgetHeight: 1080,
+      wallpaperId: 'w', screenScale: 1,
     });
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     // 必须是真的具名 RT 形状（`bind: [{ name: 'previous', index: 0 }]` 按本文件既有断言是
@@ -286,7 +254,7 @@ describe('ObjectEffectStage', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const host = createHost([]); // 隔离条目尚未出现＝调用顺序契约被破坏
     const stage = new ObjectEffectStage(host as never, {
-      wallpaperId: 'w', dpr: 1, budgetWidth: 1920, budgetHeight: 1080,
+      wallpaperId: 'w', screenScale: 1,
     });
     stage.setObjectChains(7, [[pass()]]);
     stage.setObjectChains(7, [[pass()]]);
@@ -301,7 +269,7 @@ describe('ObjectEffectStage', () => {
   it('bindOutputs：链未就绪（lastOutput 为 null）→ 不切输出；就绪 → 切到效果输出', () => {
     const host = createHost([{ id: 1, rtWidth: 10, rtHeight: 10 }]);
     const stage = new ObjectEffectStage(host as never, {
-      wallpaperId: 'w', dpr: 1, budgetWidth: 1920, budgetHeight: 1080,
+      wallpaperId: 'w', screenScale: 1,
     });
     // 手工注入一个可控 runner
     const runner = createMockRunner();
@@ -316,7 +284,7 @@ describe('ObjectEffectStage', () => {
   it('advance 串行：同一 runner 的第二次 update 在第一次完成后才发起', async () => {
     const host = createHost([{ id: 1, rtWidth: 10, rtHeight: 10 }]);
     const stage = new ObjectEffectStage(host as never, {
-      wallpaperId: 'w', dpr: 1, budgetWidth: 1920, budgetHeight: 1080,
+      wallpaperId: 'w', screenScale: 1,
     });
     let resolveFirst: (() => void) | null = null;
     const order: string[] = [];
@@ -350,7 +318,7 @@ describe('ObjectEffectStage', () => {
       { id: 2, rtWidth: 10, rtHeight: 10 },
     ]);
     const stage = new ObjectEffectStage(host as never, {
-      wallpaperId: 'w', dpr: 1, budgetWidth: 1920, budgetHeight: 1080,
+      wallpaperId: 'w', screenScale: 1,
     });
     const order: string[] = [];
     let releaseFirst: (() => void) | null = null;
@@ -381,38 +349,41 @@ describe('ObjectEffectStage', () => {
     expect(second.update).toHaveBeenCalledTimes(1);
   });
 
-  it('onViewportResize 按新预算等比重设 RT 尺寸（缩小→放大可逆；重挂后回退对象 RT 原图）', () => {
+  it('onViewportResize 按新屏幕密度等比重设 RT 尺寸（缩小→放大可逆；重挂后回退对象 RT 原图）', () => {
     const host = createHost([
       { id: 1, rtWidth: 100, rtHeight: 50 },
-      { id: 2, rtWidth: 100, rtHeight: 50 }, // 无 entry/无 runner：不能被反推世界尺寸
+      { id: 2, rtWidth: 100, rtHeight: 50 }, // 无 entry：不能被反推世界尺寸
     ]);
     const stage = new ObjectEffectStage(host as never, {
-      wallpaperId: 'w', dpr: 2, budgetWidth: 1920, budgetHeight: 1080,
+      wallpaperId: 'w', screenScale: 2,
     });
-    // 世界尺寸的**唯一来源**是 setWorldSize（此处 50×25 = 首轮 RT 像素 / dpr）；
-    // onViewportResize 只处理 entries 里已有 runner 的对象，故按契约顺序先挂链。
+    // 世界尺寸的**唯一来源**是 setWorldSize（此处 50×25，密度 2 ⇒ 首轮 RT 100×50）；
+    // onViewportResize 只处理 entries 里已有条目的对象，故按契约顺序先挂链。
     stage.setWorldSize(1, 50, 25);
     stage.setObjectChains(1, [[pass()]]);
-    // 新预算 400×400 @dpr2 → 100×50 不超预算 → 不变
-    stage.onViewportResize(400, 400);
+    // 同一密度（2）→ 屏占位不变 → 不重设 RT（幂等）
+    stage.onViewportResize(2);
     expect(host._resized).toEqual([]);
-    // 新预算 20×20 @dpr2 → cap 20 → 等比 s = min(20/100, 20/50) = 0.2 → 20×10
-    stage.onViewportResize(20, 20);
-    // 只有 id 1 被重设：id 2 无 entry 也没有 runner，直接跳过（不反推 rtWidth / dpr 当世界尺寸
-    // ——那会把「已被预算收口的 RT」当世界尺寸，是不可逆的缩小）。
+    // 密度 0.4（视口缩小）→ 屏占位 50×0.4=20 / 25×0.4=10 → 20×10
+    stage.onViewportResize(0.4);
+    // 只有 id 1 被重设：id 2 无 entry，直接跳过（不反推 rtWidth / 密度 当世界尺寸
+    // ——那会把「已被 4096 上限收口的 RT」当世界尺寸，是不可逆的缩小）。
     expect(host._resized).toEqual([{ id: 1, w: 20, h: 10 }]);
     // 重挂（setChains 清空 last、旧 ping-pong RT 已 dispose）后必须显式回退对象 RT 原图，
     // 否则 quad 会在整个纹理重载窗口内采样已 dispose 的纹理。
     expect(host._outputs.get(1)).toBe(host.isolatedObjects().find((o) => o.id === 1)!.rtTexture);
-    // 放大回去：预算再回到 400×400 → 恢复 100×50（世界尺寸始终来自 setWorldSize，故可逆）
-    stage.onViewportResize(400, 400);
+    // 放大回去：密度再回到 2 → 恢复 100×50（世界尺寸始终来自 setWorldSize，故可逆）
+    stage.onViewportResize(2);
     expect(host._resized).toEqual([{ id: 1, w: 20, h: 10 }, { id: 1, w: 100, h: 50 }]);
+    // 非法密度（0 / NaN）按 1 兜底，不产生 0/NaN 尺寸 RT
+    stage.onViewportResize(0);
+    expect(host._resized[2]).toEqual({ id: 1, w: 50, h: 25 });
   });
 
   it('dispose 释放全部 runner', () => {
     const host = createHost([{ id: 1, rtWidth: 10, rtHeight: 10 }]);
     const stage = new ObjectEffectStage(host as never, {
-      wallpaperId: 'w', dpr: 1, budgetWidth: 1920, budgetHeight: 1080,
+      wallpaperId: 'w', screenScale: 1,
     });
     const runner = createMockRunner();
     stage.debugInjectRunner(1, runner as never);

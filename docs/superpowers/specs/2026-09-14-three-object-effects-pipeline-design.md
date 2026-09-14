@@ -233,7 +233,14 @@ finalW/H    = resolveObjectRtSize(range.w, range.h, dpr, budgetW, budgetH)
 
 **等比缩放而非逐轴独立 clamp**：逐轴独立会把 `8192×4608` 压成 `4096×4096`，破坏依赖 aspect 的效果（竞品 `docs/perf-audit-2026-08-29.md` 记录的真实事故 N-06）。
 
-预算随视口变化（`resize` / `setSceneSize`）时，由 stage 重算并调用 `player.resizeObjectRT(id, w, h)`；`uvWindow` / `createCompositeGeometry` 负责把钳制轴映射回未钳制的世界尺寸（`blurprecise` 类大对象不会因钳制而「缩小摆放」）。
+> **口径修订（2026-09-14，清晰度归因；用户「scene 壁纸不如桌面 WE 清楚」）**：上面「`budget = 视口 × dpr` 作为 min 上限」的口径**已作废** —— 它把**预算当成了基准**，与对象在屏上的**占位像素**差 0.8%（GTR `3743126786`：RT `1280×714` vs 占位 `1290×720`）⇒ 合成 quad 那一步是比 0.992 的双线性缩小 + 亚纹素相位漂移 ⇒ 整层背景锐度实测 **−52%**（Laplacian 均方 `713.2 → 341.5`；逐环节定界：内容→RT `712.9`、效果 pass `711.2`、合成后 `341.5`；与 dpr、MSAA 均无关）。现口径（`object-range.objectRtSize` / `screenScalePx`）：
+> ```
+> screenScale = 画布缓冲宽 / coverRange(scene, 视口).w      # 设备像素 / 世界单位（与主相机 applyCover 同源）
+> finalW/H    = |world| × screenScale 等比收口到 4096
+> ```
+> `screenScale` 必须**同源**送进挂载与 `stage.onViewportResize`（挂载期 `three-renderer` 用纯函数算，resize 期取 `player.screenScalePx()`；stage 不再持有 dpr / 预算，只持这一个标量）—— 旧实现「两处各算一份预算」正是「挂载期对、任何一次 resize 又被打回」这类漏检（`3fd6b00`）的同源结构。实测（GTR、headless、1280×720、相位 5 s）：纯 `shake` 对照 **711.1**（vs 直渲 713.2，−0.3%）、逐像素 MAD **0.0414**；全效果链 **675.1**（修复前 313.3）。**显存代价（全库 15 壁纸 / 40 对象审计）**：`1080p@1` 单壁纸最大 131.8 MB / 中位 27.9 MB（旧 39.0 / 23.7），`@dpr2` 与 `4K@1` 最大 245.7 MB（旧 156.1）/ 中位 95.0；`objectRtSize` 的第 4 参 `cap` 是逐对象字节预算的预留口子。完整数据与边界见 `AGENT.md` §5.21 与归因报告 `clarity-report.md`。
+
+预算随视口变化（`resize` / `setSceneSize`）时，由 stage 按新的 `screenScale` 重算并调用 `player.resizeObjectRT(id, w, h)`；`uvWindow` / `createCompositeGeometry` 负责把钳制轴映射回未钳制的世界尺寸（`blurprecise` 类大对象不会因钳制而「缩小摆放」）。
 
 ### 5.3 执行与生命周期约束
 

@@ -409,15 +409,15 @@ describe('ObjectEffectStage.onViewportResize（无 runner 的隔离对象也要�
     };
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const stage = new ObjectEffectStage(host as never, {
-      wallpaperId: 'w', dpr: 1, budgetWidth: 1920, budgetHeight: 1080,
+      wallpaperId: 'w', screenScale: 1,
     });
     // 契约顺序：先 setWorldSize（世界尺寸唯一来源），再 setObjectChains 传**具名 RT 图链**
     // （整条跳过 → 该对象有隔离条目与世界尺寸，但没有 runner）。
     stage.setWorldSize(1, 50, 25);
     stage.setObjectChains(1, [[fxPass({ target: '_rt_a' })]]);
     expect(stage.debugRunners().has(1)).toBe(false);
-    // dpr=1、世界 50×25、预算 20×20 → s = min(20/50, 20/25) = 0.4 → 20×10
-    stage.onViewportResize(20, 20);
+    // 世界 50×25 @密度 0.4 → 屏占位 20×10
+    stage.onViewportResize(0.4);
     expect(resized).toEqual([{ id: 1, w: 20, h: 10 }]);
     // 没有 runner 就没有「重挂链后 quad 采样已 dispose 纹理」的问题 → 不得动输出。
     expect(outputs).toEqual([]);
@@ -466,6 +466,9 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
       renderer: {},
       // 隔离条目的键 = 对象 id（真实 player 由 attachIsolated(obj.id) 建条目）。
       isolatedObjects: () => [{ id: 13, kind: 'background', rtWidth: 1920, rtHeight: 1080, rtTexture: {} }],
+      // 屏幕密度的**唯一来源**是 player 自己（与 applyCover 同一套 state）：这里用哨兵值 0.5
+      // 证明 resize 回调是把 player 的值**原样**转给 stage，而不是自己另算一份。
+      screenScalePx: vi.fn(() => 0.5),
     };
     loadSceneToThree.mockReturnValue({
       player, sims: [], backgroundIds: [0, 1], particleLayers: [],
@@ -477,12 +480,14 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     const ok = await r.render('2851992662', document.createElement('canvas'), null);
     expect(ok).toBe(true);
 
-    // isolate 以对象 id（13）为键；五字段：objectId 同键，RT 像素 = 世界 × dpr 收口到预算
-    // （1920×1080 视口、3840×2160 对象 → 等比 0.5），世界尺寸保持未收口的 |size × scale|。
+    // isolate 以对象 id（13）为键；五字段：objectId 同键，RT 像素 = 世界尺寸 × **屏幕密度**
+    // （= 对象在画布缓冲上的占位像素），世界尺寸保持未收口的 |size × scale|。
+    // 本用例场景 1920×1080、视口 1920×1080、dpr=1 ⇒ cover 铺满、密度 = 1 ⇒ RT = 世界 3840×2160
+    // （旧口径「收口到视口 × dpr」会给 1920×1080 ⇒ 合成那一步 0.5× 重采样 ⇒ 整层发糊）。
     // 无效果对象不在表内。
     const assets = loadSceneToThree.mock.calls[0][1];
     expect(assets.isolate.get(13)).toEqual({
-      objectId: 13, rtWidth: 1920, rtHeight: 1080, worldW: 3840, worldH: 2160,
+      objectId: 13, rtWidth: 3840, rtHeight: 2160, worldW: 3840, worldH: 2160,
     });
     expect(assets.isolate.has(60)).toBe(false);
     // stage 的键 = 对象 id（13），不是图层计数器 id（带效果的对象是第 2 个 image → 旧实现为 1）。
@@ -493,12 +498,13 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     expect(setObjectEffectStage).toHaveBeenCalledTimes(1);
     expect(setObjectEffectStage.mock.calls[0][0]).toBeInstanceOf(ObjectEffectStage);
 
-    // 窗口 resize → 播放器重推 cover + 编排器按**新预算**重设对象 RT（视口 × dpr）。
+    // 窗口 resize → 播放器重推 cover + 编排器按 player 的**新屏幕密度**重设对象 RT。
     const viewportSpy = vi.spyOn(ObjectEffectStage.prototype, 'onViewportResize').mockImplementation(() => {});
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1600 });
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 });
     window.dispatchEvent(new Event('resize'));
-    expect(viewportSpy.mock.calls).toEqual([[1600, 900]]); // jsdom 的 devicePixelRatio = 1
+    expect(viewportSpy.mock.calls).toEqual([[0.5]]); // = player.screenScalePx()（哨兵值，原样转发）
+    expect(player.resize).toHaveBeenCalledWith(1600, 900);
 
     worldSpy.mockRestore();
     chainsSpy.mockRestore();
@@ -511,7 +517,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     disposeSpy.mockRestore();
   });
 
-  it('particle 对象：RT 像素随 dpr 放大、世界尺寸不随 dpr；链同样按对象 id 挂载', async () => {
+  it('particle 对象：RT 像素 = 屏占位（世界 × 屏幕密度）、世界尺寸不随 dpr；链同样按对象 id 挂载', async () => {
     Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: 2 });
     stubAssetFetch(sceneWithEffects({
       id: 71, name: 'Sakura', particle: 'particles/presets/leaves5.json',
@@ -540,7 +546,8 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     const ok = await r.render('2851992662', document.createElement('canvas'), null);
     expect(ok).toBe(true);
 
-    // distanceMax 100 × scale 2 → 世界 200×200；dpr=2 → RT 像素 400×400（预算 3840×2160 内不收口）。
+    // distanceMax 100 × scale 2 → 世界 200×200；dpr=2 且 cover 铺满（场景 = 视口）⇒ 屏幕密度 2
+    // → RT 像素 = 屏占位 400×400（未触 4096 上限）。
     const assets = loadSceneToThree.mock.calls[0][1];
     expect(assets.isolate.get(71)).toEqual({
       objectId: 71, rtWidth: 400, rtHeight: 400, worldW: 200, worldH: 200,

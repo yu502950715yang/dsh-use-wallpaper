@@ -9,6 +9,7 @@ import {
   materialModulation, objectCameraRange, particleObjectRange, particleWorldSize,
   createObjectRenderTarget, shouldUseObjectPath, groupEffectsByObject, PendingChainStore,
   uvWindow, createCompositeGeometry, coverRange, flipGeometryUvY,
+  screenScalePx, objectRtSize,
 } from '../src/client/object-range.js';
 import * as sceneRenderer from '../src/client/scene-renderer.js';
 
@@ -127,6 +128,65 @@ describe('createObjectRenderTarget / coverRange / materialModulation', () => {
     expect(materialModulation()).toEqual({ r: 1, g: 1, b: 1, a: 1 });
     expect(materialModulation([255, 128, 0], 0.5, 0.5).a).toBeCloseTo(0.5, 5);
     expect(materialModulation([255, 255, 255], undefined, 2).r).toBe(1);
+  });
+});
+
+// ── 对象 RT 的尺寸口径（2026-09-14「清晰度」归因修复） ──────────────────────────
+// 口径：RT 像素 = 对象世界尺寸 × 屏幕密度（= 对象在画布缓冲上的占位像素），等比收口到 4096。
+// 只有「RT 覆盖整个对象」+「RT 像素网格 = 屏上占位像素网格」同时成立，合成那一步的采样比
+// 才恒为 1.0（旧口径与占位差 0.8% ⇒ 双线性重采样 + 亚纹素相位漂移 ⇒ 锐度实测 −52%）。
+describe('screenScalePx（屏幕密度 = 设备像素 / 世界单位）', () => {
+  it('视口与场景同尺寸 → 密度 = dpr（cover 铺满时 1 世界单位 = dpr 设备像素）', () => {
+    expect(screenScalePx(1920, 1080, 1920, 1080, 1)).toBeCloseTo(1, 10);
+    expect(screenScalePx(1920, 1080, 1920, 1080, 2)).toBeCloseTo(2, 10);
+    // 视口宽高比与场景相同但更小 → 密度按比例缩小（缓冲宽 = 960×1）
+    expect(screenScalePx(1920, 1080, 960, 540, 1)).toBeCloseTo(0.5, 10);
+  });
+  it('GTR 3743126786 实测：场景 7430×4147、视口 1280×720 → 密度 = 720/4147（= cover 裁掉左右）', () => {
+    // coverRange(7430,4147, 1280/720) = { w: 4147×(1280/720) = 7372.45, h: 4147 }（场景更宽 → 高度铺满）
+    // 密度 = 1280 / 7372.45 = 720/4147 ≈ 0.1736 ⇒ 对象世界宽 7430 → 屏上 1290 px（比屏宽多 10 px）。
+    expect(screenScalePx(7430, 4147, 1280, 720, 1)).toBeCloseTo(720 / 4147, 10);
+  });
+  it('非有限/非正输入不产生 NaN/0 密度（逐项按 1 兜底）；非法 dpr 视作 1', () => {
+    const a = screenScalePx(NaN, 1080, 1920, 1080, 1);
+    expect(Number.isFinite(a) && a > 0).toBe(true);
+    const b = screenScalePx(1920, 0, 0, 0, NaN);
+    expect(Number.isFinite(b) && b > 0).toBe(true);
+    expect(screenScalePx(1920, 1080, 1920, 1080, NaN)).toBeCloseTo(1, 10);
+    expect(screenScalePx(1920, 1080, 1920, 1080, -2)).toBeCloseTo(1, 10);
+  });
+});
+
+describe('objectRtSize（屏占位口径；等比收口到 4096）', () => {
+  it('RT 像素 = 世界尺寸 × 屏幕密度（四舍五入）', () => {
+    expect(objectRtSize(200, 100, 2)).toEqual({ width: 400, height: 200 });
+    // GTR 3743126786：7430×4147 @密度 720/4147（1280×720 视口）→ 屏占位 1290×720
+    expect(objectRtSize(7430, 4147, 720 / 4147)).toEqual({ width: 1290, height: 720 });
+  });
+  it('超出硬上限 4096 → 等比缩小（两轴同一比例，不破坏 aspect）', () => {
+    // 10000×10000 @密度1 → s = 4096/10000 → 4096×4096
+    expect(objectRtSize(10000, 10000, 1)).toEqual({ width: 4096, height: 4096 });
+    // 8192×4608 @密度1 → s = 4096/8192 = 0.5 → 4096×2304（非 4096×4096）
+    expect(objectRtSize(8192, 4608, 1)).toEqual({ width: 4096, height: 2304 });
+    // cap 可显式收窄（逐对象字节上限的预留口子）
+    expect(objectRtSize(200, 100, 1, 50)).toEqual({ width: 50, height: 25 });
+  });
+  it('屏占位小于视口时 RT 也随之变小（不再按 dpr 放大到超过屏占位）', () => {
+    // 小对象：世界 5003×1836 @密度 0.1736 → 869×319（旧口径会给 1280×470，比屏占位大 ⇒ 缩小走样）
+    expect(objectRtSize(5003, 1836, 720 / 4147)).toEqual({ width: 869, height: 319 });
+  });
+  it('退化输入（0/负/非有限）→ 逐轴下限 1，负值取幅值，不产生 NaN 尺寸', () => {
+    // 0 轴 → 下限 1；负值取幅值 → 5（不是 1）——负 scale 是对象自身镜像，不改变可见大小。
+    expect(objectRtSize(0, -5, 1)).toEqual({ width: 1, height: 5 });
+    expect(objectRtSize(NaN, 100, 1)).toEqual({ width: 1, height: 100 });
+    expect(objectRtSize(NaN, NaN, 1)).toEqual({ width: 1, height: 1 });
+    // 非有限世界尺寸按 0 处理（否则 round(NaN) → new WebGLRenderTarget(NaN, NaN) 建不出 RT）
+    expect(objectRtSize(Infinity, 100, 1)).toEqual({ width: 1, height: 100 });
+  });
+  it('非法屏幕密度（NaN / 0 / 负）按 1 处理（不产生 NaN/0 尺寸 RT）', () => {
+    expect(objectRtSize(200, 100, NaN)).toEqual({ width: 200, height: 100 });
+    expect(objectRtSize(200, 100, 0)).toEqual({ width: 200, height: 100 });
+    expect(objectRtSize(200, 100, -3)).toEqual({ width: 200, height: 100 });
   });
 });
 

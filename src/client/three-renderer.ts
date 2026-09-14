@@ -27,9 +27,9 @@ import { defaultLoadWasm, resolveParticleMaterial } from './wasm-renderer.js';
 import type { LoadWasm, SceneRendererLike, WasmSceneModule } from './wasm-renderer.js';
 import type { SceneDescription } from '../shared/types.js';
 import {
-  groupEffectsByObject, objectCameraRange, particleObjectRange, particleWorldSize,
+  groupEffectsByObject, objectRtSize, particleWorldSize, screenScalePx,
 } from './object-range.js';
-import { isLinearEffectChain, ObjectEffectStage, resolveObjectRtSize } from './object-effects.js';
+import { isLinearEffectChain, ObjectEffectStage } from './object-effects.js';
 import { resolveEffectChain, type CompiledEffectPass } from './shader/effect-chain.js';
 
 // wasm `CpuParticleSim` 的构造器形态（wasm-bindgen 静态 `new`；`ParticleSim` 接口见
@@ -249,8 +249,12 @@ export function createThreeSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneR
         };
         const effectChains = await collectObjectEffectChains(desc, loadFile);
         const dpr = typeof window !== 'undefined' && window.devicePixelRatio ? window.devicePixelRatio : 1;
-        const budgetW = Math.floor(vw * dpr);
-        const budgetH = Math.floor(vh * dpr);
+        // 屏幕密度（设备像素 / 世界单位）：对象 RT 尺寸的**唯一基准**，由主相机同一套 cover 语义
+        // 算出（object-range.screenScalePx 与 player.applyCover 共用 coverRange：同一份 scene 尺寸、
+        // 视口与 dpr ⇒ 同一个数）。窗口 resize 时用 `player.screenScalePx()` 重算同一个量
+        // （见下方 onWindowResize），**不得**另起一套「视口 × dpr 预算」——那正是 3fd6b00
+        // 「挂载期 RT 正确、任何一次 resize 又被打回旧口径」这一漏检类的同源地雷。
+        const screenScale = screenScalePx(desc.orthogonal.width, desc.orthogonal.height, vw, vh, dpr);
         // isolate 的键 = scene.json 的**对象 id**，值里的 objectId 同值：player 用 objectId 作
         // **隔离条目的键**（attachIsolated），ObjectEffectStage 也用同一把键 → 三者同键空间，
         // 不存在「对象 id → 图层计数器 id」的翻译层，也就不会撞键（见 threejs-player 的注释）。
@@ -297,21 +301,19 @@ export function createThreeSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneR
             const texH = (tex?.image?.height as number | undefined) ?? obj.size?.[1] ?? 1;
             const w = obj.size?.[0] ?? texW;
             const h = obj.size?.[1] ?? texH;
-            // 世界尺寸（未钳制幅值）= |size × scale| → 合成 quad 的几何尺寸。
+            // 世界尺寸（未钳制幅值）= |size × scale| → 合成 quad 的几何尺寸，也是对象 RT 尺寸的
+            // **唯一基准**（RT 像素 = 世界尺寸 × 屏幕密度）。
             const world = { w: Math.abs(w * obj.scale[0]), h: Math.abs(h * obj.scale[1]) };
-            // 相机范围（场景像素，已按 4096 钳制）= 对象 RT 的分辨率基准。
-            const range = objectCameraRange([w, h], [obj.scale[0], obj.scale[1]]);
-            // RT 像素尺寸 = 场景像素范围 × dpr，再等比收口到 min(4096, 视口 × dpr)。
-            // dpr 必须在这里乘：RT 要与「贴屏缓冲 = 视口 × dpr」同分辨率，传 1 会让 dpr=2 的
-            // 屏幕上对象 RT 只有一半分辨率（效果发糊）且与贴屏不一致。
-            // ⚠️ RT 分辨率基准必须用**未钳制**的 `world`，**不能**用 `range`：`range` 是
-            // objectCameraRange 的「相机范围」（逐轴钳到 4096），拿它当分辨率基准会同时错两处 ——
-            //   ① 比例失真：7430×4147 被钳成 4096×4096；
-            //   ② 分辨率被视口预算收口得更小：实测退到 **720×720**，贴回屏幕要放大 1.78×
-            //      ⇒ 整层背景明显模糊（这正是「大幅背景壁纸变糊」的根因；e2e harness 自己按 world
-            //      算所以一直复现不出）。
-            // 正确：RT = min(world × dpr, 视口 × dpr, 4096) = 对象在屏幕上的像素数（受 4096 硬上限）。
-            const rt = resolveObjectRtSize(world.w, world.h, dpr, budgetW, budgetH);
+            // RT 像素尺寸 = 对象在画布缓冲上的**占位像素**（世界尺寸 × 屏幕密度），等比收口到 4096。
+            // ⚠️ 两条硬约束（都踩过，见 clarity-report.md）：
+            //   ① 基准必须是**未钳制**的世界尺寸，不是 objectCameraRange 的相机范围（后者逐轴钳到
+            //      4096）：7430×4147 会被钳成 4096×4096（比例失真），且分辨率被视口预算收口后实测
+            //      退到 **720×720**，贴回屏幕要放大 1.78× ⇒ 整层背景明显模糊；
+            //   ② 密度必须与主相机 cover 同源。旧口径「世界 × dpr 收口到视口 × dpr」与屏占位差
+            //      0.8%（GTR 3743126786 实测 1280×714 vs 占位 1290×720）⇒ 合成那一步是比 0.992 的
+            //      双线性缩小 + 亚纹素相位漂移 ⇒ 整层锐度实测 −52%（Laplacian 713 → 342），
+            //      且与 dpr 无关、加 MSAA 也无效（根因就是这一步重采样，不是抗锯齿）。
+            const rt = objectRtSize(world.w, world.h, screenScale);
             isolate.set(obj.id, {
               objectId: obj.id,
               rtWidth: rt.width, rtHeight: rt.height, worldW: world.w, worldH: world.h,
@@ -321,18 +323,11 @@ export function createThreeSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneR
             if (!p) continue;
             let spec: { distanceMax?: number } = {};
             try { spec = JSON.parse(p.specJson) as { distanceMax?: number }; } catch { /* 缺省 distanceMax */ }
-            // 世界尺寸用**未钳制**的 distanceMax × scale（quad 的世界占位），相机范围取幅值
-            // 并钳制 4096（RT 分辨率基准）——两者不可混用（见 particleWorldSize 注释）。
+            // 世界尺寸用**未钳制**的 distanceMax × scale（quad 的世界占位，也是 RT 尺寸的唯一基准）；
+            // 局部相机范围由 player 按同一世界尺寸建立（见 particleWorldSize 注释）。
             const world = particleWorldSize(spec, [obj.scale[0], obj.scale[1]]);
-            const range = particleObjectRange(spec, [obj.scale[0], obj.scale[1]]);
-            // ⚠️ RT 分辨率基准必须用**未钳制**的 `world`，**不能**用 `range`：`range` 是
-            // objectCameraRange 的「相机范围」（逐轴钳到 4096），拿它当分辨率基准会同时错两处 ——
-            //   ① 比例失真：7430×4147 被钳成 4096×4096；
-            //   ② 分辨率被视口预算收口得更小：实测退到 **720×720**，贴回屏幕要放大 1.78×
-            //      ⇒ 整层背景明显模糊（这正是「大幅背景壁纸变糊」的根因；e2e harness 自己按 world
-            //      算所以一直复现不出）。
-            // 正确：RT = min(world × dpr, 视口 × dpr, 4096) = 对象在屏幕上的像素数（受 4096 硬上限）。
-            const rt = resolveObjectRtSize(world.w, world.h, dpr, budgetW, budgetH);
+            // RT 像素尺寸 = 屏占位（世界尺寸 × 屏幕密度），等比收口到 4096（同 image 分支的两条约束）。
+            const rt = objectRtSize(world.w, world.h, screenScale);
             isolate.set(obj.id, {
               objectId: obj.id,
               rtWidth: rt.width, rtHeight: rt.height,
@@ -379,7 +374,7 @@ export function createThreeSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneR
         // （stage 为 null 时帧序与今天逐字相同）。
         if (isolate.size > 0) {
           stage = new ObjectEffectStage(result.player, {
-            wallpaperId: id, dpr, budgetWidth: budgetW, budgetHeight: budgetH,
+            wallpaperId: id, screenScale,
           });
           // 顺序契约：先 setWorldSize（尺寸的唯一来源），再 setObjectChains（后者不覆盖世界尺寸）。
           // 世界尺寸直接用 isolate 里已算好的世界尺寸（同一份计算的两个消费者），不另存一份映射；
@@ -397,12 +392,15 @@ export function createThreeSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneR
           currentStage = stage;
         }
         // 窗口尺寸变化 → 按新窗口比例重推 cover（对齐 wasm 路径的 window.innerWidth/Height 语义），
-        // 并把新的画布缓冲预算同步给效果链编排器（隔离对象 RT 随视口重设）。
+        // 并把新的**屏幕密度**同步给效果链编排器（隔离对象 RT 随视口重设）。
+        // ⚠️ 密度取自 `player.screenScalePx()`（player 内部与 applyCover 同一套 state，
+        // 因此与刚执行的 `player.resize` 天然同源），不在这里另算一份 cover —— 挂载期与 resize
+        // 期两处各算一遍正是「RT 尺寸被 resize 打回旧口径」那类漏检的结构性原因。
         onWindowResize = () => {
           if (!current) return;
           const { width, height } = viewportSize();
           current.player.resize(width, height);
-          currentStage?.onViewportResize(Math.floor(width * dpr), Math.floor(height * dpr));
+          currentStage?.onViewportResize(current.player.screenScalePx());
         };
         window.addEventListener('resize', onWindowResize);
         // 观测：确认走的是 three 路径（浏览器回归探测用）。

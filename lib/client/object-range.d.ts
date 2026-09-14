@@ -55,3 +55,8 @@ export declare function coverRange(width: number, height: number, viewAspect: nu
     w: number;
     h: number;
 };
+export declare function screenScalePx(sceneW: number, sceneH: number, viewW: number, viewH: number, dpr: number): number;
+export declare function objectRtSize(worldW: number, worldH: number, screenScale: number, cap?: number): {
+    width: number;
+    height: number;
+};

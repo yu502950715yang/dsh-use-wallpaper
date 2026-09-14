@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { ThreeScenePlayer, loadSceneToThree, frameCountFromDims, textureFrameCount, textureFrameGrid, specMaxcount, particleCapacity, specEmitterOrigin, simEmitterOffset, BLACKMYTH_OBJ_SCALE, DEFAULT_PARTICLE_CAPACITY, MAX_PARTICLE_CAPACITY } from '../src/client/threejs-player.js';
 import { coverRange } from '../src/client/scene-renderer.js';
-import { createCompositeGeometry } from '../src/client/object-range.js';
+import { createCompositeGeometry, screenScalePx } from '../src/client/object-range.js';
 
 // 注入的 mock renderer：只测相机/场景/RAF 逻辑，不触碰 WebGL。
 function createMockRenderer() {
@@ -1091,6 +1091,36 @@ describe('ThreeScenePlayer loadSceneToThree', () => {
 
 // ===== 对象隔离渲染（对象级效果链的前置能力）=====
 describe('ThreeScenePlayer 对象隔离', () => {
+  // 屏幕密度 = 对象 RT 尺寸的唯一基准（RT 像素 = 世界尺寸 × 密度 = 屏占位像素），必须与主相机
+  // 实际铺满的像素网格同源。挂载期由 three-renderer 用纯函数 screenScalePx(...) 算（player 还没
+  // 创建），resize 期取 player.screenScalePx()。两者必须给出**同一个数**，否则任何一次 resize
+  // 都会把 RT 打回与屏占位不符的尺寸 ⇒ 合成那一步重采样 ⇒ 锐度掉一半（实测 −52%）。
+  describe('screenScalePx（与 three-renderer 的独立计算同源）', () => {
+    it('构造尺寸 = 视口尺寸时 = dpr；resize/setSceneSize 后与纯函数逐点一致', () => {
+      for (const [sceneW, sceneH, vw, vh, dpr] of [
+        [1920, 1080, 1920, 1080, 1],
+        [1920, 1080, 1920, 1080, 2],
+        [1920, 1080, 1600, 900, 1],
+        [7430, 4147, 1280, 720, 1],
+        [3840, 2160, 2560, 1080, 2], // 视口比场景更窄 → 左右裁剪
+      ] as const) {
+        Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: dpr });
+        const { player } = makePlayer(sceneW, sceneH);
+        player.setSceneSize(sceneW, sceneH);
+        player.resize(vw, vh);
+        expect(player.screenScalePx()).toBeCloseTo(screenScalePx(sceneW, sceneH, vw, vh, dpr), 10);
+      }
+      Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: 1 });
+    });
+    it('GTR 3743126786：场景 7430×4147、视口 1280×720 → 密度 = 720/4147（cover 裁左右）', () => {
+      const { player } = makePlayer(7430, 4147);
+      player.setSceneSize(7430, 4147);
+      player.resize(1280, 720);
+      expect(player.screenScalePx()).toBeCloseTo(720 / 4147, 10);
+    });
+  });
+
+
   function makeTexture(): THREE.Texture {
     const tex = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
     tex.needsUpdate = true;

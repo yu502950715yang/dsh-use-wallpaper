@@ -214,3 +214,73 @@ export function coverRange(width: number, height: number, viewAspect: number) {
   // 视口更窄 → 场景高度铺满，水平裁剪
   return { w: height * viewAspect, h: height };
 }
+
+// 「屏幕密度」= 每个世界单位占多少**设备像素**（画布缓冲像素，不是 CSS 像素）。
+//
+// 这是对象 RT 尺寸口径的唯一基准（2026-09-14 清晰度归因，commit 见 git log）：
+// 主相机按 coverRange 把场景宽 `coverW` 个世界单位铺满画布缓冲宽 `floor(viewW × dpr)` 个像素，
+// cover 的两轴比例**天然相同**（coverRange 构造使然），故一个标量就完整描述「世界 → 屏幕」的
+// 线性映射：`设备像素 = 世界单位 × screenScalePx(...)`。
+//
+// 为什么需要它：对象 RT 之前按「世界 × dpr，再等比收口到视口 × dpr」定尺寸，而合成 quad 在屏上
+// 的占位是 `世界 × 屏幕密度`（两者**不同**：前者用视口宽收口、后者用 cover 宽；GTR 3743126786
+// 实测 1280×714 vs 1290×720，差 0.8%）⇒ 合成那一步是「比 0.992 的双线性缩小 + 亚纹素相位漂移」
+// ⇒ 整层背景锐度实测掉 52%（Laplacian 均方 713 → 342），且与 dpr 无关、与 MSAA 无关
+// （见 .superpowers/sdd/2026-09-14-three-object-effects-pipeline/clarity-report.md）。
+export function screenScalePx(
+  sceneW: number,
+  sceneH: number,
+  viewW: number,
+  viewH: number,
+  dpr: number,
+): number {
+  const sw = Number.isFinite(sceneW) && sceneW > 0 ? sceneW : 1;
+  const sh = Number.isFinite(sceneH) && sceneH > 0 ? sceneH : 1;
+  const vw = Number.isFinite(viewW) && viewW > 0 ? viewW : 1;
+  const vh = Number.isFinite(viewH) && viewH > 0 ? viewH : 1;
+  const ratio = Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
+  const cover = coverRange(sw, sh, vw / vh);
+  // 分子取**画布缓冲**宽（= player.resize 的 `canvas.width = floor(viewW × pixelRatio)`），
+  // 与主相机实际铺满的像素网格同一把尺子。
+  const bufferW = Math.max(1, Math.floor(vw * ratio));
+  return bufferW / cover.w;
+}
+
+// 对象 RT 像素尺寸（spec §5.2；2026-09-14 换口径）：
+//   RT 像素 = |对象世界尺寸| × 屏幕密度（= 对象在画布缓冲上的**占位像素**），
+//   再**等比**收口到硬上限（缺省 OBJECT_RT_MAX = 4096）。
+//
+// 为什么是「屏幕占位」：隔离路径是「内容 → 对象 RT → 合成 quad → 屏幕」两跳。只有
+//   ① RT 覆盖**整个对象**（相机范围 = 未钳制世界尺寸，见 threejs-player.attachIsolated），且
+//   ② RT 的像素网格 = 对象在屏上的占位像素网格
+// 同时成立时，第二跳的采样比才恒为 1.0 ⇒ 隔离路径与直渲近似位级等价（实测 Laplacian
+// 711.1 vs 713.2、MAD 0.041）。任一不满足都退化成重采样：比值 <1 是双线性模糊（相位漂移把
+// 最高频成对平均掉），>1 是无 mipmap 的缩小锯齿。反例（都实测过）：
+//   - 旧口径「世界 × dpr 收口到视口 × dpr」：GTR 得 1280×714 vs 占位 1290×720 → 锐度 −52%；
+//   - 预算放宽到 4096：Laplacian 虚高到 2574 但相对直渲 MAD 3.818（走样），显存 ×10.2；
+//   - RT = 源纹理真实尺寸（WE 的 lwe 口径，本壁纸 7430×4147）：显存 352 MB/对象，超硬上限。
+// 与桌面 WE 的关系：WE 的对象 RT = **纹理真实尺寸**（与屏幕解耦，本壁纸相当于 5.76× 超采样），
+// 本口径取 1:1（最小无损），方向一致（RT 恒覆盖整个对象、且不小于屏占位）但不复制其超采样 ——
+// 那需要 352 MB/对象，我们的 4096 硬上限 + 3 张 RT 的显存模型支撑不起。
+//
+// 单一比例（等比）：逐轴独立 clamp 会把 8192×4608 压成 4096×4096、破坏依赖 aspect 的效果
+// （竞品 perf-audit 2026-08-29 记录的真实事故）。
+// 非有限输入（NaN / ±Infinity）按 0 处理：`Math.abs(NaN)` 仍是 NaN，会一路传到
+// `new THREE.WebGLRenderTarget(NaN, NaN)`（非法 GL 尺寸，建不出 RT）；收口成 0 后由下限归一到 1。
+export function objectRtSize(
+  worldW: number,
+  worldH: number,
+  screenScale: number,
+  cap: number = OBJECT_RT_MAX,
+): { width: number; height: number } {
+  const scale = Number.isFinite(screenScale) && screenScale > 0 ? screenScale : 1;
+  const abs = (v: number): number => (Number.isFinite(v) ? Math.abs(v) : 0);
+  const rawW = abs(worldW) * scale;
+  const rawH = abs(worldH) * scale;
+  const limit = Number.isFinite(cap) && cap > 0 ? Math.floor(cap) : OBJECT_RT_MAX;
+  // 两轴共用同一比例；rawW/rawH 均为 0 时比例取 1（避免除零，下限再归一到 1×1）
+  const k = Math.min(1, limit / Math.max(rawW, rawH, 1));
+  const width = Math.max(1, Math.round(rawW * k));
+  const height = Math.max(1, Math.round(rawH * k));
+  return { width, height };
+}

@@ -52,6 +52,7 @@ export declare class ThreeScenePlayer {
     constructor(canvas: HTMLCanvasElement, width: number, height: number, renderer?: THREE.WebGLRenderer);
     resize(width: number, height: number): void;
     setSceneSize(width: number, height: number): void;
+    screenScalePx(): number;
     private applyCover;
     update(_dt: number): void;
     setAnimationLoop(fn?: (dt: number) => void): void;

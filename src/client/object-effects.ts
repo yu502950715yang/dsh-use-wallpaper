@@ -2,14 +2,14 @@
 // three 主路径的对象级效果链编排。
 //
 // 分工（见 spec §3）：
-//   - 本模块：效果链的**编排**（分类、尺寸预算、每对象一个 EffectRunner、串行推进、降级）。
+//   - 本模块：效果链的**编排**（分类、尺寸口径的消费、每对象一个 EffectRunner、串行推进、降级）。
 //   - threejs-player.ts：对象的**隔离渲染**（内容进 localScene / 主场景放合成 quad / 帧序）。
 //   - effect-runner.ts：pass 执行（本特性不改它一行）。
 //
 // 本模块不构造 three 场景、不持有 canvas；player 通过结构化接口（ObjectEffectStage）
 // 被注入，因此本模块不 import threejs-player.ts（避免循环依赖）。
 import type * as THREE from 'three';
-import { OBJECT_RT_MAX } from './object-range.js';
+import { objectRtSize } from './object-range.js';
 import { EffectRunner } from './effect-runner.js';
 import type { EffectTexLoader } from './effect-runner.js';
 import { loadTexTexture } from './tex-loader.js';
@@ -60,36 +60,14 @@ export function isLinearEffectChain(passes: CompiledEffectPass[]): boolean {
   );
 }
 
-// 对象 RT 像素尺寸（spec §5.2）：
-//   世界尺寸（场景像素，已含 objectCameraRange 的 4096 钳制与幅值语义）× dpr，
-//   再**等比**收口到 min(4096, 画布缓冲预算)。
-// 等比而非逐轴独立 clamp：独立 clamp 会把 8192×4608 压成 4096×4096，破坏依赖 aspect 的
-// 效果（竞品 perf-audit 2026-08-29 记录的真实事故）。
-export function resolveObjectRtSize(
-  worldW: number,
-  worldH: number,
-  dpr: number,
-  budgetW: number,
-  budgetH: number,
-): { width: number; height: number } {
-  const scale = Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
-  // 非有限输入（NaN / ±Infinity）按 0 处理：`Math.max(0, Math.abs(NaN))` 仍是 NaN，会一路传到
-  // `new THREE.WebGLRenderTarget(NaN, NaN)`（非法 GL 尺寸，建不出 RT）。收口成 0 后由下面的
-  // 下限逻辑归一到 1×1，与「0/负 输入 → 逐轴下限 1」的既有语义一致。
-  const abs = (v: number): number => (Number.isFinite(v) ? Math.abs(v) : 0);
-  const rawW = Math.max(0, abs(worldW)) * scale;
-  const rawH = Math.max(0, abs(worldH)) * scale;
-  const capW = Math.max(1, Math.min(OBJECT_RT_MAX, Math.floor(budgetW) || OBJECT_RT_MAX));
-  const capH = Math.max(1, Math.min(OBJECT_RT_MAX, Math.floor(budgetH) || OBJECT_RT_MAX));
-  // 两轴共用同一比例（等比）；rawW/rawH 为 0 时该轴的比例不参与（避免除零与 0×0）
-  const ratios: number[] = [1];
-  if (rawW > 0) ratios.push(capW / rawW);
-  if (rawH > 0) ratios.push(capH / rawH);
-  const s = Math.min(...ratios);
-  const width = Math.max(1, Math.round(rawW * s));
-  const height = Math.max(1, Math.round(rawH * s));
-  return { width, height };
-}
+// 对象 RT 像素尺寸的口径（spec §5.2；实现在 object-range.objectRtSize，此处只做说明）：
+//   RT 像素 = |世界尺寸（场景像素，未钳制）| × 屏幕密度（1 世界单位 = 多少设备像素）
+//   → 等比收口到 4096。
+// 即 **对象在画布缓冲上的占位像素** —— 与合成 quad 在屏上的像素网格同一把尺子 ⇒ 采样比
+// 恒为 1.0（旧口径「世界 × dpr 收口到视口 × dpr」与占位差 0.8%，实测锐度掉 52%，见
+// object-range.screenScalePx / objectRtSize 的注释与 clarity-report.md）。
+// 屏幕密度由 three-renderer 从**主相机同一套 cover 语义**算出并同源下发（mount 与
+// onViewportResize 两处同一个数，否则任何一次 resize 都会把 RT 打回旧口径）。
 
 // ══ 编排器（Task 4）═══════════════════════════════════════════════════════════
 // 按对象挂效果链、每对象一个 EffectRunner、串行推进、降级跳过、resize 重算尺寸。
@@ -124,7 +102,7 @@ interface ObjectChainEntry {
   runner: EffectRunner | null;
   /** 原始链定义：resize 时用同一份链 + 新尺寸重新 setChains（EffectRunner 只在尺寸变化时重建 RT）。 */
   chains: CompiledEffectPass[][];
-  /** 世界尺寸（场景像素，未乘 dpr）——resize 时用它按新预算重算 RT 像素尺寸。 */
+  /** 世界尺寸（场景像素，未钳制、未乘屏幕密度）——resize 时用它按新屏幕密度重算 RT 像素尺寸。 */
   worldW: number;
   worldH: number;
 }
@@ -133,9 +111,8 @@ export class ObjectEffectStage implements ObjectEffectStage {
   private entries = new Map<number, ObjectChainEntry>();
   private skips = new Set<string>();
   private readonly wallpaperId: string;
-  private readonly dpr: number;
-  private budgetWidth: number;
-  private budgetHeight: number;
+  /** 屏幕密度（设备像素 / 世界单位）：对象 RT 尺寸的唯一基准，随视口变化（onViewportResize）。 */
+  private screenScale: number;
   private disposed = false;
   // 串行链（约束 3）：busy = 有 runner 正在 update，queue = 等待中的 update 任务。
   // 空闲时**同步**发起第一项（本帧立即开始推进，不推迟一个微任务——与场景级
@@ -148,12 +125,16 @@ export class ObjectEffectStage implements ObjectEffectStage {
 
   constructor(
     private readonly host: ObjectEffectHost,
-    opts: { wallpaperId: string; dpr: number; budgetWidth: number; budgetHeight: number },
+    opts: { wallpaperId: string; screenScale: number },
   ) {
     this.wallpaperId = opts.wallpaperId;
-    this.dpr = opts.dpr > 0 ? opts.dpr : 1;
-    this.budgetWidth = opts.budgetWidth;
-    this.budgetHeight = opts.budgetHeight;
+    this.screenScale = opts.screenScale;
+  }
+
+  /** 当前屏幕密度（设备像素 / 世界单位）；同源下发契约见类头。 */
+  private scale(): number {
+    const s = this.screenScale;
+    return Number.isFinite(s) && s > 0 ? s : 1;
   }
 
   /** 世界尺寸（场景像素）：resize 时按新预算重算 RT 像素尺寸的唯一来源。
@@ -196,19 +177,23 @@ export class ObjectEffectStage implements ObjectEffectStage {
     this.mount(objId, usable, view.rtWidth, view.rtHeight);
   }
 
-  /** 视口/预算变化：按新预算重算每个对象的 RT 像素尺寸，并用同一份链重挂（runner 内部 RT 跟随）。
+  /** 视口变化：按新的**屏幕密度**重算每个对象的 RT 像素尺寸，并用同一份链重挂（runner 内部 RT 跟随）。
+   *  ⚠️ 参数是「设备像素 / 世界单位」这一个标量（object-range.screenScalePx 的返回值），**不是**
+   *  视口宽高预算：旧实现传 `视口 × dpr` 当预算，成了「第二处独立预算」——挂载期与 resize 期
+   *  各算一遍、输入不同源时任何一次 resize 都会把 RT 打回旧口径（3fd6b00「挂载期 RT 正确、
+   *  resize 后被覆盖」这一漏检类的同源地雷）。密度必须由调用方从**主相机同一套 cover 语义**
+   *  取得（three-renderer 用 player.screenScalePx()，见其 resize 回调）。
    *  ⚠️ 遍历 `this.entries` 的**所有**条目（不按有无 runner 过滤）：链全被跳过、因而没有 runner
    *  的隔离对象（如具名 RT 图链）同样要随视口重设 RT，否则视口放大后它一直用旧的小 RT（偏糊）、
    *  视口缩小时又一直占着旧的大 RT（超额显存）。 */
-  onViewportResize(budgetWidth: number, budgetHeight: number): void {
+  onViewportResize(screenScale: number): void {
     if (this.disposed) return;
-    this.budgetWidth = budgetWidth;
-    this.budgetHeight = budgetHeight;
+    this.screenScale = screenScale;
     for (const [id, entry] of this.entries) {
-      // 世界尺寸只由 setWorldSize 确定（唯一来源）。**不要**用 view.rtWidth / dpr 反推：
-      // player 的 resizeObjectRT 会回写 rtWidth/rtHeight，反推等于把「已被预算收口的 RT」
+      // 世界尺寸只由 setWorldSize 确定（唯一来源）。**不要**用 view.rtWidth / 密度 反推：
+      // player 的 resizeObjectRT 会回写 rtWidth/rtHeight，反推等于把「已被上限收口的 RT」
       // 当世界尺寸，是不可逆的缩小（第一轮收口后永远回不到原尺寸）。
-      const size = resolveObjectRtSize(entry.worldW, entry.worldH, this.dpr, budgetWidth, budgetHeight);
+      const size = objectRtSize(entry.worldW, entry.worldH, this.scale());
       const view = this.host.isolatedObjects().find((o) => o.id === id);
       if (!view) continue;
       if (view.rtWidth === size.width && view.rtHeight === size.height) continue;
@@ -267,11 +252,12 @@ export class ObjectEffectStage implements ObjectEffectStage {
   }
   debugInjectRunner(id: number, runner: EffectRunner): void {
     const view = this.host.isolatedObjects().find((o) => o.id === id);
+    // 反向从实测 RT 像素推世界尺寸：仅在测试/诊断（entries 里没有 setWorldSize 的记录）时使用。
     this.entries.set(id, {
       runner,
       chains: [],
-      worldW: view ? view.rtWidth / this.dpr : 1,
-      worldH: view ? view.rtHeight / this.dpr : 1,
+      worldW: view ? view.rtWidth / this.scale() : 1,
+      worldH: view ? view.rtHeight / this.scale() : 1,
     });
   }
 
@@ -329,11 +315,12 @@ export class ObjectEffectStage implements ObjectEffectStage {
   private mount(objId: number, chains: CompiledEffectPass[][], rtW: number, rtH: number): void {
     let entry = this.entries.get(objId);
     if (!entry) {
-      entry = { runner: null, chains, worldW: rtW / this.dpr, worldH: rtH / this.dpr };
+      // 反向从实测 RT 像素推世界尺寸（仅在 setWorldSize 未先行时兜底）。
+      entry = { runner: null, chains, worldW: rtW / this.scale(), worldH: rtH / this.scale() };
       this.entries.set(objId, entry);
     }
     // setWorldSize 可能已先建条目（three-renderer 的顺序是 setWorldSize → setObjectChains），
-    // 此时保留其世界尺寸，不被 RT 尺寸/dpr 反推覆盖。
+    // 此时保留其世界尺寸，不被 RT 尺寸/密度反推覆盖。
     entry.chains = chains;
     if (!entry.runner) {
       // 纹理槽按 WE 约定加载（v=0=图像顶部，与对象 RT 的 v 约定同一套，见 weVRowOrderLoader）。

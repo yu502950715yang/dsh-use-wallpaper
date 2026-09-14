@@ -20276,23 +20276,10 @@ function materialModulation(color, alpha, brightness) {
     a: clamp01(alpha ?? 1)
   };
 }
-function objectCameraRange(objSize, scale) {
-  return {
-    w: Math.max(1, Math.min(Math.abs(objSize[0] * scale[0]), OBJECT_RT_MAX)),
-    h: Math.max(1, Math.min(Math.abs(objSize[1] * scale[1]), OBJECT_RT_MAX))
-  };
-}
 var PARTICLE_DEFAULT_DISTANCE = 64;
 function effectiveParticleDistance(spec) {
   const dist = spec.distanceMax ?? 0;
   return dist > 0 ? dist : PARTICLE_DEFAULT_DISTANCE;
-}
-function particleObjectRange(spec, scale) {
-  const eff = effectiveParticleDistance(spec);
-  return {
-    w: Math.max(1, Math.min(Math.abs(eff * scale[0]), OBJECT_RT_MAX)),
-    h: Math.max(1, Math.min(Math.abs(eff * scale[1]), OBJECT_RT_MAX))
-  };
 }
 function particleWorldSize(spec, scale) {
   const eff = effectiveParticleDistance(spec);
@@ -20344,6 +20331,27 @@ function coverRange(width, height, viewAspect) {
     return { w: width, h: width / viewAspect };
   }
   return { w: height * viewAspect, h: height };
+}
+function screenScalePx(sceneW, sceneH, viewW, viewH, dpr) {
+  const sw = Number.isFinite(sceneW) && sceneW > 0 ? sceneW : 1;
+  const sh = Number.isFinite(sceneH) && sceneH > 0 ? sceneH : 1;
+  const vw = Number.isFinite(viewW) && viewW > 0 ? viewW : 1;
+  const vh = Number.isFinite(viewH) && viewH > 0 ? viewH : 1;
+  const ratio = Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
+  const cover = coverRange(sw, sh, vw / vh);
+  const bufferW = Math.max(1, Math.floor(vw * ratio));
+  return bufferW / cover.w;
+}
+function objectRtSize(worldW, worldH, screenScale, cap = OBJECT_RT_MAX) {
+  const scale = Number.isFinite(screenScale) && screenScale > 0 ? screenScale : 1;
+  const abs = (v) => Number.isFinite(v) ? Math.abs(v) : 0;
+  const rawW = abs(worldW) * scale;
+  const rawH = abs(worldH) * scale;
+  const limit = Number.isFinite(cap) && cap > 0 ? Math.floor(cap) : OBJECT_RT_MAX;
+  const k = Math.min(1, limit / Math.max(rawW, rawH, 1));
+  const width = Math.max(1, Math.round(rawW * k));
+  const height = Math.max(1, Math.round(rawH * k));
+  return { width, height };
 }
 
 // src/client/script-patterns.ts
@@ -20798,6 +20806,21 @@ var ThreeScenePlayer = class {
     this.sceneWidth = width;
     this.sceneHeight = height;
     this.applyCover();
+  }
+  // 屏幕密度（设备像素 / 世界单位）：1 个世界单位在**画布缓冲**上占多少像素。
+  // 与 applyCover 同一套 cover 语义（同一份 sceneWidth/sceneHeight/viewWidth/viewHeight/pixelRatio
+  // ⇒ 同一个 coverRange）⇒ 与主相机实际铺满的像素网格同一把尺子。
+  // 消费者：对象 RT 的尺寸口径（RT 像素 = 对象世界尺寸 × 本密度 = 对象在屏上的占位像素，
+  // 见 object-range.objectRtSize）。挂载期由 three-renderer 用纯函数算出同一个数，resize 期
+  // 直接取本方法（player 的 state 刚被 resize 更新，天然与 cover 同源）。
+  screenScalePx() {
+    return screenScalePx(
+      this.sceneWidth,
+      this.sceneHeight,
+      this.viewWidth,
+      this.viewHeight,
+      this.pixelRatio
+    );
   }
   // 按 cover 语义把相机视锥设为场景尺寸的 cover 视图（中心原点，z 范围 -1000..1000 不变）。
   applyCover() {
@@ -24053,35 +24076,17 @@ function isLinearEffectChain(passes) {
     (p) => !p.target && p.bind.every((b) => b.name === "previous" && b.index === 0)
   );
 }
-function resolveObjectRtSize(worldW, worldH, dpr, budgetW, budgetH) {
-  const scale = Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
-  const abs = (v) => Number.isFinite(v) ? Math.abs(v) : 0;
-  const rawW = Math.max(0, abs(worldW)) * scale;
-  const rawH = Math.max(0, abs(worldH)) * scale;
-  const capW = Math.max(1, Math.min(OBJECT_RT_MAX, Math.floor(budgetW) || OBJECT_RT_MAX));
-  const capH = Math.max(1, Math.min(OBJECT_RT_MAX, Math.floor(budgetH) || OBJECT_RT_MAX));
-  const ratios = [1];
-  if (rawW > 0) ratios.push(capW / rawW);
-  if (rawH > 0) ratios.push(capH / rawH);
-  const s = Math.min(...ratios);
-  const width = Math.max(1, Math.round(rawW * s));
-  const height = Math.max(1, Math.round(rawH * s));
-  return { width, height };
-}
 var ObjectEffectStage = class {
   constructor(host, opts) {
     this.host = host;
     this.wallpaperId = opts.wallpaperId;
-    this.dpr = opts.dpr > 0 ? opts.dpr : 1;
-    this.budgetWidth = opts.budgetWidth;
-    this.budgetHeight = opts.budgetHeight;
+    this.screenScale = opts.screenScale;
   }
   entries = /* @__PURE__ */ new Map();
   skips = /* @__PURE__ */ new Set();
   wallpaperId;
-  dpr;
-  budgetWidth;
-  budgetHeight;
+  /** 屏幕密度（设备像素 / 世界单位）：对象 RT 尺寸的唯一基准，随视口变化（onViewportResize）。 */
+  screenScale;
   disposed = false;
   // 串行链（约束 3）：busy = 有 runner 正在 update，queue = 等待中的 update 任务。
   // 空闲时**同步**发起第一项（本帧立即开始推进，不推迟一个微任务——与场景级
@@ -24091,6 +24096,11 @@ var ObjectEffectStage = class {
   queue = [];
   /** 去重告警集合（`warnSkip` 之外的通用去重，按 key 只打印一次，防每帧刷屏）。 */
   warned = /* @__PURE__ */ new Set();
+  /** 当前屏幕密度（设备像素 / 世界单位）；同源下发契约见类头。 */
+  scale() {
+    const s = this.screenScale;
+    return Number.isFinite(s) && s > 0 ? s : 1;
+  }
   /** 世界尺寸（场景像素）：resize 时按新预算重算 RT 像素尺寸的唯一来源。
    *  调用顺序契约：three-renderer 先 setWorldSize 再 setObjectChains（后者不覆盖前者）。 */
   setWorldSize(objId, worldW, worldH) {
@@ -24125,16 +24135,20 @@ var ObjectEffectStage = class {
     }
     this.mount(objId, usable, view.rtWidth, view.rtHeight);
   }
-  /** 视口/预算变化：按新预算重算每个对象的 RT 像素尺寸，并用同一份链重挂（runner 内部 RT 跟随）。
+  /** 视口变化：按新的**屏幕密度**重算每个对象的 RT 像素尺寸，并用同一份链重挂（runner 内部 RT 跟随）。
+   *  ⚠️ 参数是「设备像素 / 世界单位」这一个标量（object-range.screenScalePx 的返回值），**不是**
+   *  视口宽高预算：旧实现传 `视口 × dpr` 当预算，成了「第二处独立预算」——挂载期与 resize 期
+   *  各算一遍、输入不同源时任何一次 resize 都会把 RT 打回旧口径（3fd6b00「挂载期 RT 正确、
+   *  resize 后被覆盖」这一漏检类的同源地雷）。密度必须由调用方从**主相机同一套 cover 语义**
+   *  取得（three-renderer 用 player.screenScalePx()，见其 resize 回调）。
    *  ⚠️ 遍历 `this.entries` 的**所有**条目（不按有无 runner 过滤）：链全被跳过、因而没有 runner
    *  的隔离对象（如具名 RT 图链）同样要随视口重设 RT，否则视口放大后它一直用旧的小 RT（偏糊）、
    *  视口缩小时又一直占着旧的大 RT（超额显存）。 */
-  onViewportResize(budgetWidth, budgetHeight) {
+  onViewportResize(screenScale) {
     if (this.disposed) return;
-    this.budgetWidth = budgetWidth;
-    this.budgetHeight = budgetHeight;
+    this.screenScale = screenScale;
     for (const [id, entry] of this.entries) {
-      const size = resolveObjectRtSize(entry.worldW, entry.worldH, this.dpr, budgetWidth, budgetHeight);
+      const size = objectRtSize(entry.worldW, entry.worldH, this.scale());
       const view = this.host.isolatedObjects().find((o) => o.id === id);
       if (!view) continue;
       if (view.rtWidth === size.width && view.rtHeight === size.height) continue;
@@ -24184,8 +24198,8 @@ var ObjectEffectStage = class {
     this.entries.set(id, {
       runner,
       chains: [],
-      worldW: view ? view.rtWidth / this.dpr : 1,
-      worldH: view ? view.rtHeight / this.dpr : 1
+      worldW: view ? view.rtWidth / this.scale() : 1,
+      worldH: view ? view.rtHeight / this.scale() : 1
     });
   }
   /** 具名 RT 图链降级告警：按标识去重（同一效果被多个对象引用时只告警一次，不刷屏）。 */
@@ -24237,7 +24251,7 @@ var ObjectEffectStage = class {
   mount(objId, chains, rtW, rtH) {
     let entry = this.entries.get(objId);
     if (!entry) {
-      entry = { runner: null, chains, worldW: rtW / this.dpr, worldH: rtH / this.dpr };
+      entry = { runner: null, chains, worldW: rtW / this.scale(), worldH: rtH / this.scale() };
       this.entries.set(objId, entry);
     }
     entry.chains = chains;
@@ -24374,8 +24388,7 @@ function createThreeSceneRenderer(opts) {
         };
         const effectChains = await collectObjectEffectChains(desc, loadFile);
         const dpr = typeof window !== "undefined" && window.devicePixelRatio ? window.devicePixelRatio : 1;
-        const budgetW = Math.floor(vw * dpr);
-        const budgetH = Math.floor(vh * dpr);
+        const screenScale = screenScalePx(desc.orthogonal.width, desc.orthogonal.height, vw, vh, dpr);
         const isolate = /* @__PURE__ */ new Map();
         const rtGraphOnly = /* @__PURE__ */ new Set();
         for (const obj of desc.objects) {
@@ -24403,8 +24416,7 @@ function createThreeSceneRenderer(opts) {
             const w = obj.size?.[0] ?? texW;
             const h = obj.size?.[1] ?? texH;
             const world = { w: Math.abs(w * obj.scale[0]), h: Math.abs(h * obj.scale[1]) };
-            const range = objectCameraRange([w, h], [obj.scale[0], obj.scale[1]]);
-            const rt = resolveObjectRtSize(world.w, world.h, dpr, budgetW, budgetH);
+            const rt = objectRtSize(world.w, world.h, screenScale);
             isolate.set(obj.id, {
               objectId: obj.id,
               rtWidth: rt.width,
@@ -24421,8 +24433,7 @@ function createThreeSceneRenderer(opts) {
             } catch {
             }
             const world = particleWorldSize(spec, [obj.scale[0], obj.scale[1]]);
-            const range = particleObjectRange(spec, [obj.scale[0], obj.scale[1]]);
-            const rt = resolveObjectRtSize(world.w, world.h, dpr, budgetW, budgetH);
+            const rt = objectRtSize(world.w, world.h, screenScale);
             isolate.set(obj.id, {
               objectId: obj.id,
               rtWidth: rt.width,
@@ -24452,9 +24463,7 @@ function createThreeSceneRenderer(opts) {
         if (isolate.size > 0) {
           stage = new ObjectEffectStage(result.player, {
             wallpaperId: id,
-            dpr,
-            budgetWidth: budgetW,
-            budgetHeight: budgetH
+            screenScale
           });
           for (const [objId, iso] of isolate) {
             stage.setWorldSize(objId, iso.worldW, iso.worldH);
@@ -24470,7 +24479,7 @@ function createThreeSceneRenderer(opts) {
           if (!current) return;
           const { width, height } = viewportSize();
           current.player.resize(width, height);
-          currentStage?.onViewportResize(Math.floor(width * dpr), Math.floor(height * dpr));
+          currentStage?.onViewportResize(current.player.screenScalePx());
         };
         window.addEventListener("resize", onWindowResize);
         console.log(
