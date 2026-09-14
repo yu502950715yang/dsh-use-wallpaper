@@ -25,6 +25,12 @@ import { resolveImageTexture } from './scene-renderer.js';
 import { loadTexTexture } from './tex-loader.js';
 import { defaultLoadWasm, resolveParticleMaterial } from './wasm-renderer.js';
 import type { LoadWasm, SceneRendererLike, WasmSceneModule } from './wasm-renderer.js';
+import type { SceneDescription } from '../shared/types.js';
+import {
+  groupEffectsByObject, objectCameraRange, particleObjectRange, particleWorldSize,
+} from './object-range.js';
+import { ObjectEffectStage, resolveObjectRtSize } from './object-effects.js';
+import { resolveEffectChain, type CompiledEffectPass } from './shader/effect-chain.js';
 
 // wasm `CpuParticleSim` 的构造器形态（wasm-bindgen 静态 `new`；`ParticleSim` 接口见
 // threejs-player.ts：update/vertices/frame_count/set_frame_count/particle_count/free）。
@@ -85,6 +91,38 @@ function createEmptySim(): ParticleSim {
   };
 }
 
+// 收集并解析「带效果对象」的链（spec §2.3：按 scene.json objects 顺序，每对象保留自身
+// effects，不展平）。text 对象不在范围（SceneTextObject 无 effects 字段）；解析失败的链
+// 过滤掉并 warn（该对象回退无效果显示，不黑屏）。
+//
+// ⚠️ 本函数按 `groupEffectsByObject` 的口径收链，其中还包含 `models/util/*` 的 util 对象
+// （合成层/全屏层，全库 8 个对象 10 条效果）——它们在 loadSceneToThree 里**不渲染**，
+// 因此永远没有隔离条目。调用方按「是否真的隔离成功」再过滤一次（见 render() 的挂链循环），
+// 本函数保持「解析与分类」的单一职责。
+//
+// `loadFile` 内部是多次 await fetch（effect.json → material → shader 源），全部发生在**加载期**：
+// 帧内只写 uniform + 提交 pass，不建管线/不 fetch。
+export async function collectObjectEffectChains(
+  desc: SceneDescription,
+  loadFile: (name: string) => Promise<Uint8Array | null>,
+): Promise<Map<number, CompiledEffectPass[][]>> {
+  const out = new Map<number, CompiledEffectPass[][]>();
+  for (const group of groupEffectsByObject(desc.objects)) {
+    const chains: CompiledEffectPass[][] = [];
+    for (const fx of group.effects as Array<{ file?: string; passes?: unknown[] }>) {
+      if (typeof fx?.file !== 'string') continue;
+      const chain = await resolveEffectChain({ file: fx.file, passes: fx.passes }, loadFile);
+      if (!chain) {
+        console.warn('[wallpaper-engine] 效果链解析失败，跳过:', fx.file);
+        continue;
+      }
+      chains.push(chain);
+    }
+    if (chains.length > 0) out.set(group.obj.id, chains);
+  }
+  return out;
+}
+
 // 创建 three.js 播放器场景渲染器（sceneRenderer 接口）。
 // opts.loadWasm 可注入（测试）；缺省用 defaultLoadWasm（导入静态 URL + 显式初始化）。
 export function createThreeSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneRendererLike {
@@ -93,6 +131,8 @@ export function createThreeSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneR
   let modulePromise: Promise<WasmSceneModule | null> | null = null;
   // 跨 render 持有本次装配的 three 播放器 + sim（供替换/dispose 释放）。
   let current: ThreeSceneLoadResult | null = null;
+  // 本次装配的对象级效果链编排器（模块内闭包持有，供 window.resize 同步预算与 teardown 释放）。
+  let currentStage: ObjectEffectStage | null = null;
   // window.resize 监听：窗口尺寸变化时按新窗口比例重推 cover（对齐 wasm 窗口视口语义）。
   let onWindowResize: (() => void) | null = null;
   const teardown = () => {
@@ -100,6 +140,10 @@ export function createThreeSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneR
       window.removeEventListener('resize', onWindowResize);
       onWindowResize = null;
     }
+    // 先释放编排器（其 runner 持有对象 RT/材质），再释放播放器（player.dispose 会释放
+    // renderer 与隔离 RT）——顺序反了会让 runner 的 dispose 触碰已释放的 GL 资源。
+    currentStage?.dispose();
+    currentStage = null;
     current?.player.dispose();
     for (const sim of current?.sims ?? []) sim.free?.();
     current = null;
@@ -180,20 +224,129 @@ export function createThreeSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneR
             }
           : undefined;
 
+        // ── 对象级效果链：解析 + 隔离尺寸预算（spec §5.2）────────────────────────────
+        // ⚠️ 位置：必须在「组装 SceneAssets」的 objects 循环**之后**（本段依赖已被填充的
+        // backgroundTextures/particles：图片尺寸兜底、粒子 spec 的 distanceMax），且在
+        // loadSceneToThree 之前（isolate 要随 assets 一起下发）。
+        // ⚠️ 全部在**加载期**完成：resolveEffectChain 内部的多次 loadFile(fetch)、EffectRunner
+        // 创建与探针编译都在这里；帧内只写 uniform + 提交 pass。
+        const loadFile = async (name: string): Promise<Uint8Array | null> => {
+          const r = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(name)}`);
+          if (!r.ok) return null;
+          return new Uint8Array(await r.arrayBuffer());
+        };
+        const effectChains = await collectObjectEffectChains(desc, loadFile);
+        const dpr = typeof window !== 'undefined' && window.devicePixelRatio ? window.devicePixelRatio : 1;
+        const budgetW = Math.floor(vw * dpr);
+        const budgetH = Math.floor(vh * dpr);
+        // isolate 的键 = scene.json 的**对象 id**（player 在 loadSceneToThree 内用 obj.id 查表），
+        // 值 = 四字段（RT 像素尺寸 + 合成 quad 世界尺寸，见 SceneAssets.isolate 注释）。
+        const isolate = new Map<number, { rtWidth: number; rtHeight: number; worldW: number; worldH: number }>();
+        for (const obj of desc.objects) {
+          if (!effectChains.has(obj.id)) continue;
+          if (obj.kind === 'image') {
+            const tex = backgroundTextures.get(obj.id);
+            const texW = (tex?.image?.width as number | undefined) ?? obj.size?.[0] ?? 1;
+            const texH = (tex?.image?.height as number | undefined) ?? obj.size?.[1] ?? 1;
+            const w = obj.size?.[0] ?? texW;
+            const h = obj.size?.[1] ?? texH;
+            // 世界尺寸（未钳制幅值）= |size × scale| → 合成 quad 的几何尺寸。
+            const world = { w: Math.abs(w * obj.scale[0]), h: Math.abs(h * obj.scale[1]) };
+            // 相机范围（场景像素，已按 4096 钳制）= 对象 RT 的分辨率基准。
+            const range = objectCameraRange([w, h], [obj.scale[0], obj.scale[1]]);
+            // RT 像素尺寸 = 场景像素范围 × dpr，再等比收口到 min(4096, 视口 × dpr)。
+            // dpr 必须在这里乘：RT 要与「贴屏缓冲 = 视口 × dpr」同分辨率，传 1 会让 dpr=2 的
+            // 屏幕上对象 RT 只有一半分辨率（效果发糊）且与贴屏不一致。
+            const rt = resolveObjectRtSize(range.w, range.h, dpr, budgetW, budgetH);
+            isolate.set(obj.id, { rtWidth: rt.width, rtHeight: rt.height, worldW: world.w, worldH: world.h });
+          } else if (obj.kind === 'particle') {
+            const p = particles.get(obj.id);
+            if (!p) continue;
+            let spec: { distanceMax?: number } = {};
+            try { spec = JSON.parse(p.specJson) as { distanceMax?: number }; } catch { /* 缺省 distanceMax */ }
+            // 世界尺寸用**未钳制**的 distanceMax × scale（quad 的世界占位），相机范围取幅值
+            // 并钳制 4096（RT 分辨率基准）——两者不可混用（见 particleWorldSize 注释）。
+            const world = particleWorldSize(spec, [obj.scale[0], obj.scale[1]]);
+            const range = particleObjectRange(spec, [obj.scale[0], obj.scale[1]]);
+            const rt = resolveObjectRtSize(range.w, range.h, dpr, budgetW, budgetH);
+            isolate.set(obj.id, {
+              rtWidth: rt.width, rtHeight: rt.height,
+              worldW: Math.abs(world.w), worldH: Math.abs(world.h),
+            });
+          }
+        }
+
         // 装配并启动播放（背景 + 粒子；setAnimationLoop 内部每帧 sim.update(dt) → 刷新 buffer）。
         // viewport 传真实窗口/视口尺寸（vw/vh）：ThreeScenePlayer 构造器已不再把 canvas 重置回场景
         // 尺寸，此处显式传给 loadSceneToThree → player.resize(vw,vh) 使 cover 相机按窗口宽高比裁剪
         // （Task5 修复：窗口比例 ≠ 场景比例时背景 cover 裁切而非 object-fit:fill 拉伸）。
-        const result = loadSceneToThree(sceneJson, { backgroundTextures, particles, createParticleSim }, fg, {
+        const result = loadSceneToThree(sceneJson, { backgroundTextures, particles, createParticleSim, isolate }, fg, {
           width: vw,
           height: vh,
         });
         current = result;
-        // 窗口尺寸变化 → 按新窗口比例重推 cover（对齐 wasm 路径的 window.innerWidth/Height 语义）。
+
+        // ── 装配 ObjectEffectStage（对象级效果链的编排器）──────────────────────────────
+        // ⚠️ 键空间（踩过的接口陷阱，务必对齐）：stage 的键必须是 **player 隔离条目的 id**，
+        // 不是 scene.json 的对象 id。player 用「背景层 / 粒子层各自的计数器」给隔离条目编号
+        // （threejs-player 的 nextBackgroundId / nextParticleLayerId，从 0 开始），与对象 id
+        // 完全不是一套编号（全库实测对象 id = 12/13/17/20/…）。若用对象 id 挂链，
+        // `ObjectEffectStage.setObjectChains` 的 `isolatedObjects().find(o => o.id === objId)`
+        // 永远找不到条目 → 每个对象都告警「尚无隔离条目，效果链未挂载（调用顺序错误）」，
+        // 且一条效果链都挂不上（对象级效果整条链路静默失效）。
+        // 对齐方式：loadSceneToThree 按 desc.objects 顺序调用 addBackground/addParticle，
+        // 层 id 就是「第几个被建层的该类对象」，而 result.backgroundIds / result.particleLayers
+        // 正是这个顺序的权威产出。
+        const stageKey = new Map<number, number>(); // scene.json 对象 id → player 隔离条目 id
+        {
+          let bgIndex = 0;
+          let particleIndex = 0;
+          for (const obj of desc.objects) {
+            if (obj.kind === 'image') {
+              // 每个 image 对象都会 addBackground（无条件）→ 层 id = 它是第几个 image 对象。
+              const layerId = result.backgroundIds[bgIndex++];
+              if (layerId !== undefined) stageKey.set(obj.id, layerId);
+            } else if (obj.kind === 'particle') {
+              // 粒子层只在「有 spec + 有模拟器工厂」时才建（loadSceneToThree 的同名门控）；
+              // 未建层的对象不占层号，故这里必须用同一条件推进游标。
+              if (!obj.particle || !particles.get(obj.id) || !createParticleSim) continue;
+              const layer = result.particleLayers[particleIndex++];
+              if (layer) stageKey.set(obj.id, layer.id);
+            }
+          }
+        }
+        let stage: ObjectEffectStage | null = null;
+        // 有对象被真正隔离才需要编排器：util 对象（models/util/*）带 effects 但不在
+        // loadSceneToThree 的渲染范围，永远没有隔离条目 → 挂链必然失败，故不建 stage
+        // （stage 为 null 时帧序与今天逐字相同）。
+        if (isolate.size > 0) {
+          stage = new ObjectEffectStage(result.player, {
+            wavelengthId: id, dpr, budgetWidth: budgetW, budgetHeight: budgetH,
+          });
+          // 顺序契约：先 setWorldSize（尺寸的唯一来源），再 setObjectChains（后者不覆盖世界尺寸）。
+          // 世界尺寸直接用 isolate 里已算好的世界尺寸（同一份计算的两个消费者），不另存一份映射。
+          for (const [objId, iso] of isolate) {
+            const key = stageKey.get(objId);
+            if (key === undefined) continue;
+            stage.setWorldSize(key, iso.worldW, iso.worldH);
+          }
+          for (const [objId, chains] of effectChains) {
+            const key = stageKey.get(objId);
+            // 没有隔离条目的对象（util 层等）不挂链：挂也找不到 view，只会产生误导性的
+            // 「调用顺序错误」告警，且画不出内容。
+            if (key === undefined) continue;
+            stage.setObjectChains(key, chains);
+          }
+          result.player.setObjectEffectStage(stage);
+          currentStage = stage;
+        }
+        // 窗口尺寸变化 → 按新窗口比例重推 cover（对齐 wasm 路径的 window.innerWidth/Height 语义），
+        // 并把新的画布缓冲预算同步给效果链编排器（隔离对象 RT 随视口重设）。
         onWindowResize = () => {
           if (!current) return;
           const { width, height } = viewportSize();
           current.player.resize(width, height);
+          currentStage?.onViewportResize(Math.floor(width * dpr), Math.floor(height * dpr));
         };
         window.addEventListener('resize', onWindowResize);
         // 观测：确认走的是 three 路径（浏览器回归探测用）。

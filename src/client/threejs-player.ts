@@ -1225,6 +1225,13 @@ export interface SceneAssets {
   particles?: Map<number, LoadedParticleAssets>;
   // 粒子模拟器构造器（wasm CpuParticleSim 的包装；测试注入 mock）。
   createParticleSim?: ParticleSimFactory;
+  // 对象隔离请求（对象级效果链）：scene.json 的**对象 id** → 四字段隔离条件。
+  //   调用方（three-renderer）只为「带效果的对象」下发本表；未列入的对象不隔离
+  //   （内容直接进主 scene，帧序与今天逐字相同）。
+  //   四字段把两种量分开（见 addBackground/addParticle 的 isolate 注释）：
+  //   rtWidth/rtHeight = 对象 RT 的像素尺寸（已按 dpr 放大并收口到画布预算）；
+  //   worldW/worldH = 合成 quad 的世界尺寸（未钳制幅值）。
+  isolate?: Map<number, { rtWidth: number; rtHeight: number; worldW: number; worldH: number }>;
 }
 
 // `loadSceneToThree` 返回：播放器 + 已装配的模拟器/图层 id（供调用方驱动/释放/校验）。
@@ -1341,6 +1348,9 @@ export function loadSceneToThree(
         brightness: obj.brightness,
         sceneW,
         sceneH,
+        // 对象级效果链：本对象带效果（调用方下发了隔离条件）→ 内容进 localScene 渲染到对象 RT，
+        // 主场景放合成 quad；缺省不隔离，行为与今天逐字相同。
+        isolate: assets.isolate?.get(obj.id),
       });
       backgroundIds.push(id);
     } else if (obj.kind === 'particle' && obj.particle) {
@@ -1378,6 +1388,9 @@ export function loadSceneToThree(
         // three 只在首帧锁存该容量（见 addParticle），必须按模拟器**最终**会产出的粒子数一次给足；
         // 缺 maxcount（旧格式/解析失败）→ addParticle 用 DEFAULT_PARTICLE_CAPACITY 兜底。
         maxInstances: specMaxcount(p.specJson),
+        // 对象级效果链：带效果的粒子对象同样隔离（对象 RT + 合成 quad）。世界尺寸由调用方按
+        // `particleWorldSize(spec, scale)` 算好（player 不知道 spec 的 distanceMax）；缺省不隔离。
+        isolate: assets.isolate?.get(obj.id),
       });
       particleLayers.push({ id, sim });
       sims.push(sim);

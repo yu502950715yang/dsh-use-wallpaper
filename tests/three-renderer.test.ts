@@ -24,11 +24,14 @@ vi.mock('../src/client/wasm-renderer.js', () => ({
   resolveParticleMaterial: vi.fn(),
 }));
 
+import * as THREE from 'three';
 import { loadSceneToThree } from '../src/client/threejs-player.js';
 import { resolveImageTexture } from '../src/client/scene-renderer.js';
 import { loadTexTexture } from '../src/client/tex-loader.js';
 import { defaultLoadWasm, resolveParticleMaterial } from '../src/client/wasm-renderer.js';
-import { createThreeSceneRenderer, particleBlend } from '../src/client/three-renderer.js';
+import { createThreeSceneRenderer, particleBlend, collectObjectEffectChains } from '../src/client/three-renderer.js';
+import { ObjectEffectStage } from '../src/client/object-effects.js';
+import type { CompiledEffectPass } from '../src/client/shader/effect-chain.js';
 
 // 精简黑神话 scene.json（与 2851992662 一致的对象结构：1 image + 1 particle）。
 const SCENE = JSON.stringify({
@@ -298,5 +301,264 @@ describe('particleBlend（材质 json blending → 粒子混合模式）', () =>
     expect(particleBlend('', '{"material":"materials/presets/torch.json"}')).toBe('alpha');
     expect(particleBlend(null, 'not json')).toBe('alpha');
     expect(particleBlend(null, '{}')).toBe('alpha');
+  });
+});
+
+// ===== Task 5：对象级效果链的解析与本路径接线 =====
+// 本文件不 mock effect-runner：新增用例要么不建 runner（具名 RT 图链整条跳过），要么把
+// ObjectEffectStage 的挂载方法替换成 spy（不触碰 WebGL）。
+
+// 造一个最小 CompiledEffectPass（只填本任务关心的字段，其余为占位值）。
+function fxPass(over: Partial<CompiledEffectPass> = {}): CompiledEffectPass {
+  return {
+    vertSrc: '', fragSrc: '', rawVert: '', rawFrag: '',
+    combos: {}, uniforms: new Map(), textureSlots: [], blendMode: 'normal',
+    target: null, bind: [], fboScale: {},
+    ...over,
+  };
+}
+
+// 效果链解析段要用的最小资源集：effect.json → material json → shader 源。
+const FX_FILES: Record<string, string> = {
+  'effects/w/effect.json': JSON.stringify({ passes: [{ material: 'materials/effects/w.json' }] }),
+  'materials/effects/w.json': JSON.stringify({ passes: [{ shader: 'effects/w', blending: 'normal' }] }),
+  'shaders/effects/w.vert': 'void main(){ gl_Position = vec4(position, 1.0); }',
+  'shaders/effects/w.frag': 'void main(){ gl_FragColor = texture2D(g_Texture0, uv); }',
+};
+
+// fetch 桩：scene.json + 资源名 → 文本。资源同时提供 arrayBuffer 形态（与 three-renderer 的
+// loadFile 实现一致：`new Uint8Array(await r.arrayBuffer())`）。
+function stubAssetFetch(scene: string, files: Record<string, string>): void {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    const name = new URL(String(url), 'http://localhost').searchParams.get('name') ?? '';
+    if (name === 'scene.json') return { ok: true, text: async () => scene };
+    const body = files[name];
+    if (body === undefined) return { ok: false, text: async () => '' };
+    const bytes = new TextEncoder().encode(body);
+    return { ok: true, text: async () => body, arrayBuffer: async () => bytes.buffer };
+  }));
+}
+
+describe('collectObjectEffectChains（effects 解析与分类）', () => {
+  it('按对象收集 effects 并解析为链；无效对象（无 effects / text）被跳过', async () => {
+    const desc = {
+      camera: { center: [0, 0, 0], eye: [0, 0, 0], up: [0, 1, 0] },
+      orthogonal: { width: 100, height: 100 },
+      objects: [
+        { kind: 'image', id: 1, name: 'a', origin: [0, 0, 0], scale: [1, 1, 1], image: 'x', effects: [{ file: 'effects/w/effect.json' }] },
+        { kind: 'image', id: 2, name: 'b', origin: [0, 0, 0], scale: [1, 1, 1], image: 'y' },
+      ],
+    } as never;
+    const files = new Map<string, Uint8Array>();
+    files.set('effects/w/effect.json', new TextEncoder().encode(JSON.stringify({
+      passes: [{ material: 'materials/effects/w.json' }],
+    })));
+    files.set('materials/effects/w.json', new TextEncoder().encode(JSON.stringify({
+      passes: [{ shader: 'effects/w', blending: 'normal' }],
+    })));
+    files.set('shaders/effects/w.vert', new TextEncoder().encode('void main(){ gl_Position = vec4(position, 1.0); }'));
+    files.set('shaders/effects/w.frag', new TextEncoder().encode('void main(){ gl_FragColor = texture2D(g_Texture0, uv); }'));
+    const out = await collectObjectEffectChains(desc, async (n) => files.get(n) ?? null);
+    expect(out.size).toBe(1);
+    expect(out.get(1)![0].length).toBe(1);
+    expect(out.has(2)).toBe(false);
+  });
+
+  it('解析失败的链被过滤并 warn（该对象回退无效果显示，不整场失败）', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const desc = {
+      camera: { center: [0, 0, 0], eye: [0, 0, 0], up: [0, 1, 0] },
+      orthogonal: { width: 100, height: 100 },
+      objects: [
+        { kind: 'image', id: 5, name: 'a', origin: [0, 0, 0], scale: [1, 1, 1], image: 'x', effects: [{ file: 'effects/missing/effect.json' }] },
+      ],
+    } as never;
+    const out = await collectObjectEffectChains(desc, async () => null);
+    expect(out.size).toBe(0);
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('效果链解析失败'))).toBe(true);
+    warn.mockRestore();
+  });
+});
+
+// 修正 D：`onViewportResize` 旧实现以 `if (!entry.runner) continue;` 开头，「链全被跳过、
+// 因而没有 runner 的隔离对象」不再随视口重设 RT（视口放大偏糊、缩小超额占显存）。
+describe('ObjectEffectStage.onViewportResize（无 runner 的隔离对象也要重设 RT）', () => {
+  it('链全被跳过（无 runner）→ 按新预算重设 RT，但不回退输出', () => {
+    const view = { id: 1, rtWidth: 100, rtHeight: 50, rtTexture: new THREE.Texture() };
+    const resized: Array<{ id: number; w: number; h: number }> = [];
+    const outputs: Array<{ id: number; tex: THREE.Texture }> = [];
+    const host = {
+      renderer: {} as never,
+      isolatedObjects: () => [view],
+      setObjectOutput: (id: number, tex: THREE.Texture) => { outputs.push({ id, tex }); },
+      resizeObjectRT: (id: number, w: number, h: number) => {
+        resized.push({ id, w, h });
+        // 与真实 player 一致：resizeObjectRT 会回写 rtWidth/rtHeight（threejs-player.ts:570-571）
+        view.rtWidth = w;
+        view.rtHeight = h;
+      },
+    };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const stage = new ObjectEffectStage(host as never, {
+      wavelengthId: 'w', dpr: 1, budgetWidth: 1920, budgetHeight: 1080,
+    });
+    // 契约顺序：先 setWorldSize（世界尺寸唯一来源），再 setObjectChains 传**具名 RT 图链**
+    // （整条跳过 → 该对象有隔离条目与世界尺寸，但没有 runner）。
+    stage.setWorldSize(1, 50, 25);
+    stage.setObjectChains(1, [[fxPass({ target: '_rt_a' })]]);
+    expect(stage.debugRunners().has(1)).toBe(false);
+    // dpr=1、世界 50×25、预算 20×20 → s = min(20/50, 20/25) = 0.4 → 20×10
+    stage.onViewportResize(20, 20);
+    expect(resized).toEqual([{ id: 1, w: 20, h: 10 }]);
+    // 没有 runner 就没有「重挂链后 quad 采样已 dispose 纹理」的问题 → 不得动输出。
+    expect(outputs).toEqual([]);
+    warn.mockRestore();
+  });
+});
+
+// 接线：效果链解析 → isolate 尺寸 → ObjectEffectStage 装配。核心断言是**键空间**：
+//   - `isolate` 以 scene.json 的**对象 id** 为键（loadSceneToThree 内部用 obj.id 查表）；
+//   - stage 以 player **隔离条目 id** 为键（背景层/粒子层各自的计数器，从 0 开始）。
+// 二者不是同一编号空间（全库实测对象 id = 12/13/17/20/…）。若把对象 id 当隔离条目 id 挂链，
+// stage 会为每个对象打印「尚无隔离条目，效果链未挂载（调用顺序错误）」→ 一条效果链都挂不上。
+describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配）', () => {
+  function sceneWith(objects: Array<Record<string, unknown>>): string {
+    return JSON.stringify({
+      camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+      general: { orthogonalprojection: { height: 1080, width: 1920 } },
+      objects,
+    });
+  }
+  function sceneWithEffects(obj: Record<string, unknown>): string {
+    return sceneWith([obj]);
+  }
+
+  it('image 对象：isolate 按对象 id 下发（四字段），效果链按隔离条目 id 挂载', async () => {
+    // 两个 image 对象、带效果的是**第二个**：层 id = 1（背景层计数器），对象 id = 13。
+    // 断言 1（既不是 0 也不是 13）才能真正钉住「按 desc.objects 顺序对齐层 id」的映射逻辑。
+    stubAssetFetch(sceneWith([
+      {
+        id: 60, name: 'back', image: 'models/b.json',
+        origin: '0 0 0', scale: '1 1 1', size: '1920 1080',
+      },
+      {
+        id: 13, name: 'bg', image: 'models/a.json',
+        origin: '960 540 0', scale: '1 1 1', size: '3840 2160',
+        effects: [{ file: 'effects/w/effect.json' }],
+      },
+    ]), FX_FILES);
+    resolveImageTexture.mockResolvedValue({ fake: true } as never);
+    defaultLoadWasm.mockResolvedValue(null); // 无粒子模块（本用例无粒子对象）
+    const setObjectEffectStage = vi.fn();
+    const player = {
+      dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage,
+      renderer: {},
+      isolatedObjects: () => [{ id: 1, kind: 'background', rtWidth: 1920, rtHeight: 1080, rtTexture: {} }],
+    };
+    loadSceneToThree.mockReturnValue({
+      player, sims: [], backgroundIds: [0, 1], particleLayers: [],
+    } as never);
+    const worldSpy = vi.spyOn(ObjectEffectStage.prototype, 'setWorldSize').mockImplementation(() => {});
+    const chainsSpy = vi.spyOn(ObjectEffectStage.prototype, 'setObjectChains').mockImplementation(() => {});
+
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    const ok = await r.render('2851992662', document.createElement('canvas'), null);
+    expect(ok).toBe(true);
+
+    // isolate 以对象 id（13）为键；四字段：RT 像素 = 世界 × dpr 收口到预算（1920×1080 视口、
+    // 3840×2160 对象 → 等比 0.5），世界尺寸保持未收口的 |size × scale|。无效果对象不在表内。
+    const assets = loadSceneToThree.mock.calls[0][1];
+    expect(assets.isolate.get(13)).toEqual({ rtWidth: 1920, rtHeight: 1080, worldW: 3840, worldH: 2160 });
+    expect(assets.isolate.has(60)).toBe(false);
+    // stage 的键 = player 隔离条目 id（带效果对象是第 2 个 image → 1），不是 scene.json 的对象 id（13）。
+    expect(worldSpy.mock.calls).toEqual([[1, 3840, 2160]]);
+    expect(chainsSpy.mock.calls.map((c) => c[0])).toEqual([1]);
+    expect(chainsSpy.mock.calls[0][1]).toHaveLength(1);
+    // 装配完成才注入 player（stage 非 null），供帧序调用 bindOutputs/advance。
+    expect(setObjectEffectStage).toHaveBeenCalledTimes(1);
+    expect(setObjectEffectStage.mock.calls[0][0]).toBeInstanceOf(ObjectEffectStage);
+
+    // 窗口 resize → 播放器重推 cover + 编排器按**新预算**重设对象 RT（视口 × dpr）。
+    const viewportSpy = vi.spyOn(ObjectEffectStage.prototype, 'onViewportResize').mockImplementation(() => {});
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1600 });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 });
+    window.dispatchEvent(new Event('resize'));
+    expect(viewportSpy.mock.calls).toEqual([[1600, 900]]); // jsdom 的 devicePixelRatio = 1
+
+    worldSpy.mockRestore();
+    chainsSpy.mockRestore();
+    viewportSpy.mockRestore();
+    // teardown（切壁纸/dispose）必须释放编排器：runner 持有对象 RT/材质，且要在 player.dispose
+    // （释放 renderer/隔离 RT）之前释放。
+    const disposeSpy = vi.spyOn(ObjectEffectStage.prototype, 'dispose').mockImplementation(() => {});
+    r.dispose();
+    expect(disposeSpy).toHaveBeenCalledTimes(1);
+    disposeSpy.mockRestore();
+  });
+
+  it('particle 对象：RT 像素随 dpr 放大、世界尺寸不随 dpr；链同样按隔离条目 id 挂载', async () => {
+    Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: 2 });
+    stubAssetFetch(sceneWithEffects({
+      id: 71, name: 'Sakura', particle: 'particles/presets/leaves5.json',
+      origin: '2306 419 0', scale: '2 2 1',
+      effects: [{ file: 'effects/w/effect.json' }],
+    }), {
+      ...FX_FILES,
+      'particles/presets/leaves5.json': '{"material":"materials/presets/leaves5.json","distanceMax":100}',
+    });
+    resolveParticleMaterial.mockResolvedValue(null);
+    const sim = makeMockSim();
+    defaultLoadWasm.mockResolvedValue({ CpuParticleSim: { new: vi.fn(() => sim) } } as never);
+    const setObjectEffectStage = vi.fn();
+    const player = {
+      dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage,
+      renderer: {},
+      isolatedObjects: () => [{ id: 0, kind: 'particle', rtWidth: 400, rtHeight: 400, rtTexture: {} }],
+    };
+    loadSceneToThree.mockReturnValue({
+      player, sims: [sim], backgroundIds: [], particleLayers: [{ id: 0, sim }],
+    } as never);
+    const worldSpy = vi.spyOn(ObjectEffectStage.prototype, 'setWorldSize').mockImplementation(() => {});
+    const chainsSpy = vi.spyOn(ObjectEffectStage.prototype, 'setObjectChains').mockImplementation(() => {});
+
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    const ok = await r.render('2851992662', document.createElement('canvas'), null);
+    expect(ok).toBe(true);
+
+    // distanceMax 100 × scale 2 → 世界 200×200；dpr=2 → RT 像素 400×400（预算 3840×2160 内不收口）。
+    const assets = loadSceneToThree.mock.calls[0][1];
+    expect(assets.isolate.get(71)).toEqual({ rtWidth: 400, rtHeight: 400, worldW: 200, worldH: 200 });
+    // 粒子层同样从 0 计数（与背景层计数器独立）→ stage 键为 0，世界尺寸用未钳制值。
+    expect(worldSpy.mock.calls).toEqual([[0, 200, 200]]);
+    expect(chainsSpy.mock.calls.map((c) => c[0])).toEqual([0]);
+
+    worldSpy.mockRestore();
+    chainsSpy.mockRestore();
+    r.dispose();
+    Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: 1 });
+  });
+
+  it('无效果对象：不建 stage、不下发 isolate、帧序与今天一致（零回归）', async () => {
+    stubAssetFetch(SCENE, {});
+    resolveImageTexture.mockResolvedValue({ fake: true } as never);
+    defaultLoadWasm.mockResolvedValue({ CpuParticleSim: { new: vi.fn(() => makeMockSim()) } } as never);
+    const setObjectEffectStage = vi.fn();
+    const player = {
+      dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage,
+      renderer: {},
+      isolatedObjects: () => [],
+    };
+    loadSceneToThree.mockReturnValue({
+      player, sims: [], backgroundIds: [0], particleLayers: [],
+    } as never);
+
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    const ok = await r.render('2851992662', document.createElement('canvas'), null);
+    expect(ok).toBe(true);
+    const assets = loadSceneToThree.mock.calls[0][1];
+    // 无效果对象 → 没有任何隔离请求（isolate 缺省或空 Map，两条路径对 player 等价）。
+    expect(assets.isolate?.size ?? 0).toBe(0);
+    expect(setObjectEffectStage).not.toHaveBeenCalled();
+    r.dispose();
   });
 });

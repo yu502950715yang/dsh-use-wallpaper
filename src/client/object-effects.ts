@@ -177,13 +177,15 @@ export class ObjectEffectStage implements ObjectEffectStage {
     this.mount(objId, usable, view.rtWidth, view.rtHeight);
   }
 
-  /** 视口/预算变化：按新预算重算每个对象的 RT 像素尺寸，并用同一份链重挂（runner 内部 RT 跟随）。 */
+  /** 视口/预算变化：按新预算重算每个对象的 RT 像素尺寸，并用同一份链重挂（runner 内部 RT 跟随）。
+   *  ⚠️ 遍历 `this.entries` 的**所有**条目（不按有无 runner 过滤）：链全被跳过、因而没有 runner
+   *  的隔离对象（如具名 RT 图链）同样要随视口重设 RT，否则视口放大后它一直用旧的小 RT（偏糊）、
+   *  视口缩小时又一直占着旧的大 RT（超额显存）。 */
   onViewportResize(budgetWidth: number, budgetHeight: number): void {
     if (this.disposed) return;
     this.budgetWidth = budgetWidth;
     this.budgetHeight = budgetHeight;
     for (const [id, entry] of this.entries) {
-      if (!entry.runner) continue;
       // 世界尺寸只由 setWorldSize 确定（唯一来源）。**不要**用 view.rtWidth / dpr 反推：
       // player 的 resizeObjectRT 会回写 rtWidth/rtHeight，反推等于把「已被预算收口的 RT」
       // 当世界尺寸，是不可逆的缩小（第一轮收口后永远回不到原尺寸）。
@@ -192,6 +194,8 @@ export class ObjectEffectStage implements ObjectEffectStage {
       if (!view) continue;
       if (view.rtWidth === size.width && view.rtHeight === size.height) continue;
       this.host.resizeObjectRT(id, size.width, size.height);
+      // 无 runner（链全被跳过，如具名 RT 图链）→ 只重设 RT，不重挂链、不回退输出。
+      if (!entry.runner) continue;
       entry.runner.setChains(entry.chains, this.wallpaperId, { width: size.width, height: size.height });
       // 重挂后 runner 的 last 被清空、旧 ping-pong RT 已被 dispose，而 quad 仍绑着那张
       // 已释放的纹理（配合 bindOutputs 的「链未就绪不动输出」契约，会在整个纹理槽重载窗口内
