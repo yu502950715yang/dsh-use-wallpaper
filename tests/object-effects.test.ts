@@ -27,8 +27,17 @@ describe('isLinearEffectChain', () => {
   it('pass 写出具名 RT（target 非空）→ 非线性的 RT 图链', () => {
     expect(isLinearEffectChain([pass({ target: '_rt_FullCompoBuffer1' }), pass()])).toBe(false);
   });
-  it('pass 采样具名 RT（bind 非空）→ 非线性的 RT 图链', () => {
-    expect(isLinearEffectChain([pass({ bind: [{ name: 'previous', index: 0 }] })])).toBe(false);
+  it('pass 采样具名 RT（_rt_*）→ 非线性的 RT 图链', () => {
+    expect(isLinearEffectChain([pass({ bind: [{ name: '_rt_FullCompoBuffer1', index: 0 }] })])).toBe(false);
+  });
+  it('bind 把上一 pass 输出绑在 g_Texture0（与执行器默认一致）→ 线性可执行', () => {
+    expect(isLinearEffectChain([pass({ bind: [{ name: 'previous', index: 0 }] })])).toBe(true);
+  });
+  it('bind 把 previous 绑到 index≠0（执行器固定绑定无法表达）→ RT 图链', () => {
+    expect(isLinearEffectChain([pass({ bind: [{ name: 'previous', index: 1 }] })])).toBe(false);
+  });
+  it('bind 引用空名（sampler2D 槽）→ RT 图链', () => {
+    expect(isLinearEffectChain([pass({ bind: [{ name: '', index: 0 }] })])).toBe(false);
   });
   it('只有 fbos 声明但没有 target/bind → 仍视为线性（fbo 无消费者）', () => {
     expect(isLinearEffectChain([pass({ fboScale: { _rt_a: 4 } })])).toBe(true);

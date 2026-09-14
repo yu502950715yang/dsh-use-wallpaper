@@ -22,15 +22,26 @@ export interface ObjectEffectStage {
   advance(time: number): void;
 }
 
-// 线性可执行判定（spec §5.1）：无具名 RT 写出、也无具名 RT 采样。
-//   - WE 效果链的默认读取源是 `previous`（上一 pass 输出），单 pass 与纯多 pass 都由
-//     EffectRunner 的 ping-pong 正确实现（如 refraction 的 2 pass）；
+// 线性可执行判定（spec §5.1）：链中每个 pass 都不写具名 RT，且 bind 与 EffectRunner 的
+// **固定绑定**完全一致——`g_Texture0` = 上一 pass 输出（readTex），`g_Texture(j+1)` =
+// textureSlots[j]（见 effect-runner.ts 的纹理绑定段）。故判据是「`target` 非空 **或** 存在
+// 引用了非 `previous`/非空名的 bind」（bind.name 语义见 shader/effect-chain.ts）：
+//   - 无 target、bind 为空（如 refraction 的 2 pass）：由 ping-pong 正确实现；
+//   - `bind: [{ name: 'previous', index: 0 }]`：与执行器默认行为同义，线性可执行；
+//   - 其它任何 bind 都需要 RT 图语义，执行器无法表达：具名 RT（`_rt_*`）无法绑定；空名
+//     （sampler2D 槽）无法表达「某个 g_TextureN 来自纹理槽而非上 pass」的任意映射；
+//     `previous` 绑到 index≠0 表示「g_Texture1 = 上一 pass 输出」，而执行器把该槽留给纹理槽；
 //   - `fbos` 只对具名 RT 有意义：链内没有 target 时它没有消费者，不构成降级理由。
 // 具名 RT 图链（blur / blurprecise / godrays / bloom / shine / localcontrast / bokeh_blur）
 // 需要 RT 图执行器（P2），当前整条跳过——产品是错画面，不得硬跑。
 export function isLinearEffectChain(passes: CompiledEffectPass[]): boolean {
   if (passes.length === 0) return false;
-  return passes.every((p) => !p.target && p.bind.length === 0);
+  // 与 EffectRunner 的固定绑定一致者才算线性：`g_Texture0` = 上一 pass 输出。
+  // 任何其它 bind（具名 RT、空名 sampler 槽、把 previous 绑到 index ≠ 0）都需要 RT 图语义，
+  // 由下游整条跳过 + 告警（P2 再做 RT 图执行器）。
+  return passes.every(
+    (p) => !p.target && p.bind.every((b) => b.name === 'previous' && b.index === 0),
+  );
 }
 
 // 对象 RT 像素尺寸（spec §5.2）：
