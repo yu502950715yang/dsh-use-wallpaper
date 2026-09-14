@@ -143,11 +143,11 @@ resizeObjectRT(id: number, width: number, height: number): void;  // 预算变�
 **合成 quad 的材质必须承接对象原有的混合语义**：
 
 - 对象 `colorBlendMode` ∈ {0, 未实现} → `MeshBasicMaterial({ map, transparent: true, depthWrite: false })`；
-- 对象 `colorBlendMode` ∈ {6, 7, 31} → 复用 `colorBlendModeToThree`（`threejs-player.ts:279`）+ 预乘 `ShaderMaterial` + `CustomBlending`，`uniforms.map` = 效果输出纹理。
+- 对象 `colorBlendMode` ∈ {6, 7, 31} → 同样用 `MeshBasicMaterial`（采样的是**非预乘**的对象 RT；`side: DoubleSide`），再由 `colorBlendModeToThree`（`threejs-player.ts:282`）设 `CustomBlending`（`blendEquation/blendSrc/blendDst`，alpha 仍 `Zero/One` 取背景）。**订正（2026-09-14 `6bb3d71`）**：初稿写的是「预乘 `ShaderMaterial` + `CustomBlending`」，实际已改为 `MeshBasicMaterial` —— 隔离内容材质不套 cb、以普通 alpha 写入 RT，再用预乘 shader 会把 rgb 二次乘 alpha（× a²）。
 
-这样 AGENT.md §5.6 的 `ApplyBlending` 语义**落在合成这一步**（对象 RT 内部是干净的替换写，混合本就该发生在贴回画面时），全库 3 个非零对象（`3743126786` Clouds Back=7、`2832263418` audio_rainbow=6、`2460786246` Clock=31）行为不丢 —— 但这 3 个对象在 P1 里**不进隔离路径**（见下面的守卫），走的是原有非隔离渲染。
+这样 AGENT.md §5.6 的 `ApplyBlending` 语义**落在合成这一步**（对象 RT 内部是干净的普通 alpha 写入，混合本就该发生在贴回画面时），全库 3 个非零对象（`3743126786` Clouds Back=7、`2832263418` audio_rainbow=6、`2460786246` Clock=31）行为不丢。**该接法已于 `6bb3d71` 真正接通**：此前这 3 个对象被混合守卫（见 §5.3，**已删除**）排除、走非隔离渲染（效果不生效），现在它们**正常进入隔离路径、效果生效**（订正见 §5.3 / §9 / §10.6）。
 
-> **实现偏差（2026-09-14 回写）**：初稿写合成 quad 用 `opacity` = 对象 alpha、`color` = color×brightness（复用 `materialModulation`）。实际**不能**这样做 —— 内容材质**保留**原有调制（alpha/brightness 已烘进对象 RT），quad 若再乘一次就是**二次调制**（alpha=0.5 → 0.25）。实现的 `createCompositeQuadMaterial(texture, colorBlendMode)` 是**独立构造**的中性材质（`tint=(1,1,1)`、`opacity=1`、只承接混合语义），且**不得 clone 内容材质**：粒子内容材质是 `InstancedBufferGeometry` 专用的 billboard shader（依赖逐实例属性），普通 `PlaneGeometry` 的 quad 没有这些属性 → alpha 恒 0、UV 越界 → 隔离粒子完全不可见。另注：`colorBlendMode ∈ {6,7,31}` **且带 effects** 的对象根本不会进隔离路径（`BLEND_ISOLATION_UNSAFE` 守卫，见 §4.1 与 §9），而不带 effects 的对象本来就不隔离 —— 所以上面这条 `{6,7,31}` 分支在 P1 内**当前不可达**（保留为 P2 解除守卫后的既定接法），实际生效的是「`{0, 未实现模式}` → `MeshBasicMaterial`」与「粒子恒 0」。
+> **实现偏差（2026-09-14 回写）**：初稿写合成 quad 用 `opacity` = 对象 alpha、`color` = color×brightness（复用 `materialModulation`）。实际**不能**这样做 —— 内容材质**保留**原有调制（alpha/brightness 已烘进对象 RT），quad 若再乘一次就是**二次调制**（alpha=0.5 → 0.25）。实现的 `createCompositeQuadMaterial(texture, colorBlendMode)` 是**独立构造**的中性材质（`tint=(1,1,1)`、`opacity=1`、只承接混合语义），且**不得 clone 内容材质**：粒子内容材质是 `InstancedBufferGeometry` 专用的 billboard shader（依赖逐实例属性），普通 `PlaneGeometry` 的 quad 没有这些属性 → alpha 恒 0、UV 越界 → 隔离粒子完全不可见。另注（**2026-09-14 `6bb3d71` 订正**）：上面这条 `{6,7,31}` 分支此前**不可达** —— `BLEND_ISOLATION_UNSAFE` 守卫把「该模式**且**带 effects」的对象整条挡在隔离之外（不带 effects 的对象本来就不隔离）。守卫已删除，该分支即今天的**实际渲染路径**；同时隔离路径的内容材质**不再套 cb**（见 §5.3），否则 RT alpha 恒 0 ⇒ quad 的预乘片元被乘成 0 ⇒ 对象整体不可见。实际生效的路径变成了三条：`{0, 未实现模式}` → `MeshBasicMaterial`、粒子合成 quad 恒 0 混合、以及 `{6,7,31}` → `MeshBasicMaterial` + `CustomBlending`（与第一条共用同一材质形状，只是多设混合因子）。
 
 ### 4.2 帧序
 
@@ -241,7 +241,7 @@ finalW/H    = resolveObjectRtSize(range.w, range.h, dpr, budgetW, budgetH)
 - **串行推进**：`advance` 用**显式串行队列**（`busy` + `queue`：空闲时同步发起本帧第一项，忙时排队、前一项 settle 后再发起；单项失败只 `console.warn`，不拖垮整条链）保证同一时刻只有一个 runner 触碰 renderer 的 RT 与绑定状态——并发交错会导致黑屏/闪烁（`scene-renderer.ts:489-500` 已踩过）。每 runner 内部 `updateInFlight` 只挡得住同一个 runner，**挡不住多个 runner 之间**，故串行化必须由编排器承担；未完成时本帧保留上一输出。
 - **链 / 条目竞态**：初稿写「沿用 `PendingChainStore`」，**实际实现删除了这条暂存路径**（**实现偏差**）：两处调用都以字面 `false` 调用 `applyIfReady`、全类无 `take`，是「宣称处理了竞态、实际静默丢弃」的死状态机；现改为**加载期接线顺序契约**（`three-renderer` 先 `setWorldSize` 再 `setObjectChains`，且 player 在 `loadSceneToThree` 内已建好隔离条目）——找不到隔离条目就 `warnOnce` 明确告警一次，绝不静默。`PendingChainStore` 类本身仍是 `object-range.ts` 的共享导出，未接入的 `scene-renderer.ts` 的既有用法不受影响。
 - **失败隔离**：单 pass 编译失败 → 跳该 pass（`EffectRunner` 探针已实现）；整链不可用 → 该对象回退原始内容；**任一对象失败都不影响其他对象与整张壁纸**（不触发壁纸级回退——画面本身已有效）。
-- **颜色混合守卫**：`colorBlendMode ∈ {6,7,31}` 且带 effects 的对象**不走隔离路径**（RT alpha 语义冲突，见 §4.1 与 §9）：效果不生效但对象保持可见（与改动前一致）+ `warnOnce`，由 `three-renderer` 在算 `isolate` 时排除。
+- **颜色混合语义（`colorBlendMode`；2026-09-14 `6bb3d71` 订正，原「颜色混合守卫」作废）**：混合语义**从内容材质搬到合成 quad** —— 隔离路径的内容材质（`createLayerMaterial(..., forIsolation=true)`）**不套** `colorBlendMode` 的 `CustomBlending`，只用普通 alpha 混合把自己的 rgb + alpha 写进清空的 RT（RT.rgb 因此天然带 ×content-alpha，正是 Screen 的 `op·B` 所需的 B）；`createCompositeQuadMaterial` 统一用 `MeshBasicMaterial`（采样非预乘 RT）+ 按 cb 设 `CustomBlending`（alpha 仍 `Zero/One` 取背景）。`three-renderer` 的 `BLEND_ISOLATION_UNSAFE` 守卫与 `warnOnce('blend-isolation:...')` 已删除 ⇒ 这类对象**正常进入隔离路径、效果生效**（旧的「保可见、牺牲效果」口径作废）。
 - **释放**：`dispose` 顺序 = stage.dispose()（runner/材质/纹理槽缓存）→ player.dispose()（RT/quad/geometry/localScene）。
 
 ### 5.4 音频与指针 uniform
@@ -261,11 +261,11 @@ finalW/H    = resolveObjectRtSize(range.w, range.h, dpr, budgetW, budgetH)
 | 纹理槽加载失败 | 跳该槽（`effect-runner.ts:330-333` 已有），采样回退 three 默认纹理 |
 | 对象 RT 尺寸退化 | `objectCameraRange` 已保证 ≥1；预算计算再取 `Math.max(1, round())` |
 | 视口 resize 期间 | stage 按新预算重算尺寸并 `resizeObjectRT`（含**链全被跳过、没有 runner** 的隔离对象），有 runner 的再重挂链（**实现偏差**：初稿写「继续采样旧纹理」——实际 `setChains` 会 dispose 旧 ping-pong RT，故重挂后**显式回退到对象 RT 原图**，避免整个纹理槽重载窗口内采样已释放纹理） |
-| `colorBlendMode ∈ {6,7,31}` 且带 effects | 该对象**不进隔离路径**（RT alpha 语义冲突，§5.3/§9）：效果不生效、对象保持可见 + 一次 `warnOnce` |
+| `colorBlendMode ∈ {6,7,31}` 且带 effects | 该对象**正常进入隔离路径**（`6bb3d71` 订正：混合语义落在合成 quad，见 §5.3/§9）：**效果生效、对象可见**；不再有「跳过其效果链」的 `warnOnce` |
 | 效果挂在 util / 音频等不参与渲染的对象类型 | 解析但不挂链（无隔离条目），**每张壁纸一条汇总 `warn`**（`N 条效果挂在未参与渲染的对象类型上（util/音频），已跳过`） |
 | 无 effects 的壁纸 | `stage` 为 null，帧序与今天完全一致（零回归路径） |
 
-> **实现偏差 / 遗留（2026-09-14 真机修复回写）**：本表的降级行有两条需要在真机语境下补读：① `colorBlendMode ∈ {6,7,31}` 且带 effects 的对象「不进隔离 ⇒ 效果不生效」这一行，**全库有真实可见的受害者** —— GTR `3743126786` 的 `Clouds Back`（cbm=7，挂 `scroll` / `waterripple` / `opacity`）就是该组合，真机现象是**云不滚动**（桌面 WE 上云向左滚）；当前取舍口径是「**保可见、牺牲效果**」，**根本修法**是重定隔离语境下的 alpha 语义（内容材质正常写自身 alpha、`ApplyBlending` 的读帧缓冲语义交给合成 quad），见 §9 与 §10.6；② 本表的「降级不画错」在验证层面仍有一条漏洞：**e2e harness 与生产装配路径不一致**（它额外调用 `stage.onViewportResize`，按 stage 自己的 `world` 重算 RT，从而覆盖掉挂载期算错的初始 RT 尺寸），正是 `3fd6b00` 那次「e2e 全绿而真机模糊」漏检的原因，见 §10.7 与 `AGENT.md` §7.12。
+> **实现偏差 / 遗留（2026-09-14 真机修复回写；`6bb3d71` 订正）**：本表的降级行有两条需要在真机语境下补读：① `colorBlendMode ∈ {6,7,31}` 且带 effects 的对象**曾**「不进隔离 ⇒ 效果不生效」，**全库有真实可见的受害者** —— GTR `3743126786` 的 `Clouds Back`（cbm=7，挂 `scroll` / `waterripple` / `opacity`）就是该组合，真机现象是**云不滚动**（桌面 WE 上云向左滚）。**该行已于 `6bb3d71` 修复**：混合语义从内容材质搬到**合成 quad**（见 §4.1 / §5.3 / §9），这类对象正常进入隔离、效果生效 —— 实测证据与如实标注见 §10.6 与 `AGENT.md` §7.1；② 本表的「降级不画错」在验证层面仍有一条漏洞：**e2e harness 多调一次 `stage.onViewportResize`**（它走的是生产入口 `createThreeSceneRenderer`、并不复制装配逻辑，但这次额外 resize 按 stage 自己的**未钳制** `world` 重算 RT，从而**覆盖掉挂载期算错的初始 RT 尺寸**），正是 `3fd6b00` 那次「e2e 全绿而真机模糊」漏检的原因，见 §10.7 与 `AGENT.md` §7.12。
 
 ## 7. 测试策略与验收
 
@@ -292,7 +292,7 @@ finalW/H    = resolveObjectRtSize(range.w, range.h, dpr, budgetW, budgetH)
 - 传 `isolate` → 内容进 `localScene`、主 scene 出现合成 quad、`isolatedObjects()` 可见（`id` = 对象 id）、quad 的 T·R·S 与对象一致（**背景**路径；粒子路径的 quad 不承载旋转，见 §4.4）；
 - **不传 `isolate` → 帧调用序列与今天逐字一致**（零回归断言）；
 - 粒子隔离时 `objCenter` / `objAngles` **保留原值**、`mesh.position = -objCenter`（§4.4 的显式单测；**实现偏差**：初稿写的是断言 `uObjectCenter` 为 `[0,0,0]`，方向相反）；
-- `colorBlendMode` ∈ {6,7,31} 的合成 quad 使用 `CustomBlending` 且 premultiplied 着色器（**直接对 player 调 `addBackground({ isolate, colorBlendMode: 7 })` 断言** —— 生产接线里该组合被守卫排除，见 §4.1/§9，故此用例锁的是 P2 解除守卫后的既定接法，不是今天的实际渲染路径）。
+- `colorBlendMode` ∈ {6,7,31} 的合成 quad 使用 `CustomBlending`（材质是**非预乘**的 `MeshBasicMaterial`：`OneMinusDstColor/One`，alpha 仍 `Zero/One`），且隔离内容材质**不套** cb（**直接对 player 调 `addBackground({ isolate, colorBlendMode: 7 })` 断言** —— `6bb3d71` 起这就是**实际生产渲染路径**，守卫已删，见 §4.1/§5.3/§9）。
 
 ### 7.3 端到端（headless Edge，跑生产代码）
 
@@ -336,7 +336,7 @@ finalW/H    = resolveObjectRtSize(range.w, range.h, dpr, budgetW, budgetH)
 - 音频响应与指针交互 uniform 接入（§5.4）；
 - 全屏/相机级后处理链（WE 中以 fullscreen 对象 + 其层 composite RT 实现，需独立链路）；
 - 对象级 `colorBlendMode` 未实现模式（1..5/8..30/32）的补齐；
-- **`colorBlendMode ∈ {6,7,31}` 与对象级 RT 的 alpha 语义冲突**（**P1 用守卫排除，根本修法留 P2**；见 §4.1 / §5.3）：这三类模式的内容材质把结果 alpha 钉成「背景的 alpha」（`blendSrcAlpha=Zero / blendDstAlpha=One`），而对象 RT 是新清空的缓冲（alpha 0）⇒ RT alpha 恒 0 ⇒ 合成 quad 片元被乘成 0 ⇒ 对象会**整体不可见**。P1 让「该混合模式 **且** 带 effects」的对象**不走隔离路径**：**效果不生效、但对象保持可见**（与改动前一致）+ 一次 `warnOnce`；根本修法是重定隔离语境下的 alpha 语义（内容材质应正常写入自身 alpha）。全库仅 3 个对象命中：`3743126786` Clouds Back=7、`2832263418` audio_rainbow=6、`2460786246` Clock=31；
+- **~~`colorBlendMode ∈ {6,7,31}` 与对象级 RT 的 alpha 语义冲突~~**（**已于 `6bb3d71` 解决，不再是 P2 项**；见 §4.1 / §5.3 / §10.6）：原判据（这三类模式的内容材质把结果 alpha 钉成「背景的 alpha」—— `blendSrcAlpha=Zero / blendDstAlpha=One`，而对象 RT 是新清空的缓冲（alpha 0）⇒ RT alpha 恒 0 ⇒ 合成 quad 片元被乘成 0 ⇒ 对象**整体不可见**）仍然成立，但不再需要**排除隔离**：把混合语义搬到**合成 quad**（隔离内容材质只做普通 alpha 写入、`createCompositeQuadMaterial` 用 `MeshBasicMaterial` + 按 cb 的 `CustomBlending`）、删除 `BLEND_ISOLATION_UNSAFE` 守卫即可。全库 3 个对象受益：`3743126786` Clouds Back=7、`2832263418` audio_rainbow=6、`2460786246` Clock=31。**如实标注**：Screen 的 `op·B` 靠「内容以普通 alpha 混合写进清空 RT ⇒ RT.rgb 带 ×content-alpha」实现，**未与桌面 WE 做逐像素对照**；e2e 只跑了 dpr=1 且全关粒子；
 - 粒子 quad 自旋 `rot`（AGENT.md §7.3 既有遗留）。
 
 **P2 方向（预留，不在本 spec 实现细节）**：把 `CompiledEffectPass` 已有的 `target` / `bind` / `fboScale` 消费起来——按 `fbos[].scale` 建具名 RT 池，pass 按 `target` 选写端、按 `bind` 选读端（`previous` = 上一 pass 输出），降采样 RT 尺寸 = 基础尺寸 / scale（下限 1）。three 是 WebGL，无需 wasm 侧的 GLSL→SPIR-V→WGSL 链，直接复用 `EffectRunner` 的材质/探针机制即可。
@@ -348,5 +348,5 @@ finalW/H    = resolveObjectRtSize(range.w, range.h, dpr, budgetW, budgetH)
 3. **headless Edge 的 WebGL 走 SwiftShader**（AGENT.md §7.10），性能数据需在真实 GPU 上复核；
 4. **`refraction` 归类为线性链**（2 pass、无 target/bind）是按 `previous` 默认语义判定，需在 M4 用真实壁纸验证；若实测异常则移入 P2 并记录；
 5. **文档与代码不一致的历史包袱**：AGENT.md §5.10 原记 `OBJECT_RT_MAX=2048`，代码实为 **4096**（`effect.rs:225`、`object-range.ts:15`）——本文档以代码为准。**2026-09-14 已订正** AGENT.md §5.10（并注明 wasm 侧与 three 侧同为 4096）。
-6. **`colorBlendMode ∈ {6,7,31}` 的对象仍被排除在效果隔离之外 ⇒ 其效果不生效（2026-09-14 真机修复回写）**：守卫「保可见、牺牲效果」的可见后果首次被真机确认为 **GTR `3743126786` 的 `Clouds Back`（cbm=7，挂 `scroll` / `waterripple` / `opacity`）—— 云不会滚动**（桌面 WE 上云向左滚；`2832263418` / `2460786246` 的同组合对象没有可肉眼归因的效果）。根本修法是重定**隔离语境下的 alpha 语义**（内容材质正常写自身 alpha、混合交给合成 quad），而不是继续排除隔离；在那之前这条缺口按「效果缺失但对象可见」如实计入遗留（§4.1 / §6 补注 / §9 / `AGENT.md` §7.1）。
-7. **e2e harness 未走与生产逐字相同的装配路径（2026-09-14 真机修复回写）**：`research/verify-hidpi-object-rt.mjs`（入口 `research/harness-object-effects-entry.mjs`）import 的是生产入口 `createThreeSceneRenderer`，但它在页面就绪后**显式多调一次** `window.__fxApplyViewport()` → `stage.onViewportResize(VW × dpr, VH × dpr)`；该路径按 stage 自己持有的**未钳制** `worldW/worldH` 重算 RT（`object-effects.ts:188-211`），于是 **`three-renderer` 挂载期算错的那次初始尺寸被覆盖** ⇒ e2e 全绿而真机模糊（`3fd6b00` 的 `range` vs `world` 缺陷就是这样漏检的）。待改为不额外补 `onViewportResize`（或把断言钉在挂载期 RT 尺寸上）。（脚本在 gitignore 的 `research/` 下，改动不入提交；口径与 `AGENT.md` §7.12 一致。）
+6. **`colorBlendMode ∈ {6,7,31}` 的对象曾被排除在效果隔离之外 ⇒ 其效果不生效（2026-09-14 真机修复回写；`6bb3d71` 已修）**：旧结论的可见受害者是 **GTR `3743126786` 的 `Clouds Back`（cbm=7，挂 `scroll` / `waterripple` / `opacity`）—— 云不滚动**（桌面 WE 上云向左滚；`2832263418` / `2460786246` 的同组合对象没有可肉眼归因的效果）。**已按「把 WE 的混合语义从内容材质搬到合成 quad」修复**（守卫 `BLEND_ISOLATION_UNSAFE` 删除、这类对象正常进入隔离路径），旧的「效果缺失但对象可见」口径作废。**实测证据**（headless Edge、`lib/` 生产代码、dpr=1、`--no-particles`；报告 `.superpowers/sdd/2026-09-14-three-object-effects-pipeline/cloud-scroll-report.md`）：`--only-effect=2944127259/scroll` 相位 5 vs 6 变化 **68604 像素（7.44%）**，**全部落在 Clouds Back 的 quad 矩形内、矩形外 0 变化**；最优位移 **dx = −17px**（向左），与 `scroll.vert` 的 `speedx²·g_Time`（0.14²×1s × 869px = **17.0px**）吻合；对象仍可见（与「无效果」地板对照 MAD=0.925、平均亮度 59.51 vs 59.59）；三条链都生效（仅 `effects/opacity` 时云区平均亮度 59.51→41.10）；console error = 0、单测 112 项全过。**如实标注**：`op·B` 靠「内容以普通 alpha 混合写进清空 RT」实现，**未与桌面 WE 做逐像素对照**；e2e 只跑 **dpr=1** 且全关粒子（`--no-particles` + `wasm=none`），**粒子隔离路径未端到端复验**。**测量口径**：局部化结论由 **bbox 判据**（变化像素是否全部落在对象 quad 矩形内）独立支撑，**不依赖百分比** —— 临时脚本 `research/q-diff-grid.mjs` 早期按 **4 通道**步进解码，而 headless Edge 截图是 **RGB 3 通道**，会把变化算到无关像素上，**其早期百分比数字（如「68% 全图」「68%→4%」）不可用**（bug 已修）；
+7. **e2e harness 多调一次 `onViewportResize`，掩盖了挂载期的 RT 尺寸缺陷（2026-09-14 真机修复回写，`3fd6b00` 漏检原因；机制已于本次订正）**：`research/verify-hidpi-object-rt.mjs`（入口 `research/harness-object-effects-entry.mjs`）**走的就是生产入口** —— 它 import 并调用 `createThreeSceneRenderer()`（`:36` / `:295-296`），**不复制 isolate 尺寸/装配逻辑**（只做只读观测）。真正的偏差是它在页面就绪后**额外多调一次** `window.__fxApplyViewport()`（`:164-170`）→ `player.resize(VW, VH)` + **`stage.onViewportResize(VW × dpr, VH × dpr)`**（`:169-170`）；该路径按 stage 自己持有的**未钳制** `worldW/worldH` 重算 RT（`object-effects.ts:188-211`），于是 **`three-renderer` 挂载期算错的那次初始尺寸被覆盖**（同一类缺陷的实测例：`720×720` → `1280×714`，见 §5.2 的 `实现偏差`）⇒ e2e 全绿而真机（从不 resize）模糊。**待改为**：把断言钉在**挂载期**的 RT 尺寸上（而不是依赖一次 resize 去修正它）。（脚本在 gitignore 的 `research/` 下，改动不入提交；口径与 `AGENT.md` §7.12 一致。）
