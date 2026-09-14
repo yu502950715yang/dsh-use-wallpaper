@@ -1,6 +1,8 @@
 import type * as THREE from 'three';
 import { EffectRunner } from './effect-runner.js';
+import type { EffectTexLoader } from './effect-runner.js';
 import type { CompiledEffectPass } from './shader/effect-chain.js';
+export declare function weVRowOrderLoader(load?: EffectTexLoader): EffectTexLoader;
 export interface ObjectEffectStage {
     /** 主场景渲染之前：把每个隔离对象的合成 quad 绑到效果输出（或回退对象 RT 原图）。 */
     bindOutputs(): void;

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { CompiledEffectPass } from './shader/effect-chain.js';
+import { type TexLoadOptions } from './tex-loader.js';
 export declare function resolveTextureSlotPath(path: string | null | undefined): string | null;
 export declare function isBuiltinTexturePath(path: string | null | undefined): boolean;
 export declare function builtinTextureUrl(path: string | null | undefined): string | null;
@@ -7,9 +8,7 @@ export declare function resolveBuiltinTexture(path: string | null | undefined): 
 export declare function resolveEmptySlotTexture(mode: string | null | undefined): THREE.Texture | null;
 export declare function effectSlotCount(pass: CompiledEffectPass): number;
 export declare function resolveSlotFallback(pass: CompiledEffectPass, index: number): THREE.Texture | null;
-export type EffectTexLoader = (url: string, opts?: {
-    alphaPriority?: boolean;
-}) => Promise<THREE.Texture | null>;
+export type EffectTexLoader = (url: string, opts?: TexLoadOptions) => Promise<THREE.Texture | null>;
 export declare function loadEffectTextureSlot(path: string | null, id: string, cache: Map<string, THREE.Texture | null>, load?: EffectTexLoader, warn?: (message: string) => void): Promise<THREE.Texture | null>;
 export declare function resolveInputTexture(input: THREE.WebGLRenderTarget | THREE.Texture): THREE.Texture;
 export declare function pickWriteTarget(previous: THREE.WebGLRenderTarget | null, rtA: THREE.WebGLRenderTarget, rtB: THREE.WebGLRenderTarget): THREE.WebGLRenderTarget;
@@ -58,7 +57,10 @@ export declare class EffectRunner {
     private height;
     private updateInFlight;
     private audioSpectrum;
-    constructor(renderer: THREE.WebGLRenderer, width: number, height: number);
+    private readonly load;
+    constructor(renderer: THREE.WebGLRenderer, width: number, height: number, opts?: {
+        load?: EffectTexLoader;
+    });
     setChains(chains: CompiledEffectPass[][], wallpaperId: string, opts?: {
         width?: number;
         height?: number;

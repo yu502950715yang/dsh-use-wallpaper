@@ -3,7 +3,7 @@
 // WebGL 部分无法在 node 测试，纯逻辑（blending 映射）导出为 blendModeToThree 供单测。
 import * as THREE from 'three';
 import type { CompiledEffectPass } from './shader/effect-chain.js';
-import { loadTexTexture } from './tex-loader.js';
+import { loadTexTexture, type TexLoadOptions } from './tex-loader.js';
 import { isAudioUniform } from './shader/uniform-binder.js';
 
 // 纹理槽路径推导（spec §3.4 / P0-1）：补 materials/ 前缀 + .tex 后缀；
@@ -169,9 +169,11 @@ export function resolveSlotFallback(pass: CompiledEffectPass, index: number): TH
 // ===== 效果纹理槽解析（本轮修复：`util/*` 优先取 WE 真身）=====
 
 // 纹理加载器签名（缺省 `loadTexTexture`；单测注入假加载器以断言优先级与回退行为）。
+// opts 直接复用 tex-loader 的 `TexLoadOptions`：调用方**通过它携带纹理 v 约定**
+// （`rowOrder`，见 `EffectRunner` 构造参数与 `object-effects.weVRowOrderLoader`）。
 export type EffectTexLoader = (
   url: string,
-  opts?: { alphaPriority?: boolean },
+  opts?: TexLoadOptions,
 ) => Promise<THREE.Texture | null>;
 
 // 效果纹理槽解析：**优先级 ① util/* 真身（host 路由）→ ② 程序化回退 → ③ 壁纸 pkg 内资源**。
@@ -376,11 +378,26 @@ export class EffectRunner {
   // 音频频谱源（T3.2）：freqData 缓冲引用（scene-renderer 每帧刷新后注入）。
   // null = 无分析器 → 音频 uniform 保持 binder 初始化的全零（静音，行为不变）。
   private audioSpectrum: Uint8Array | null = null;
+  // 效果纹理槽加载器（缺省 `loadTexTexture`；可注入以携带 **v 约定** —— 见构造参数注释）。
+  private readonly load: EffectTexLoader;
 
-  constructor(renderer: THREE.WebGLRenderer, width: number, height: number) {
+  // `opts.load`：纹理槽加载器（缺省 `loadTexTexture`）。**调用方用它携带纹理 v 约定**：
+  //   效果 shader 把 `v_TexCoord.y` 当**图像空间**坐标（flowmap 的带符号位移、clouds 的旋转/滚动、
+  //   foliagesway 的摆动方向…），而纹理由对象 RT 提供 —— 二者的 v 约定必须是**同一套**，
+  //   否则条带位置对而方向/斜度反（Crimson waterflow 真机「方向对但位置/斜度不对」）。
+  //   对象 RT 走 `threejs-player.attachIsolated` 的 y 镜像局部相机（v=0=图像顶部 = WE 约定），
+  //   故 `ObjectEffectStage` 注入 `rowOrder:'topDown'` 的 loader 与之对齐；
+  //   未注入的调用方（旧场景级路径）保持 `'bottomUp'`，行为与本参数引入前逐字一致。
+  constructor(
+    renderer: THREE.WebGLRenderer,
+    width: number,
+    height: number,
+    opts: { load?: EffectTexLoader } = {},
+  ) {
     this.renderer = renderer;
     this.width = width;
     this.height = height;
+    this.load = opts.load ?? loadTexTexture;
     this.rtA = new THREE.WebGLRenderTarget(width, height);
     this.rtB = new THREE.WebGLRenderTarget(width, height);
   }
@@ -581,7 +598,8 @@ export class EffectRunner {
   private async resolveTextureSlot(path: string | null): Promise<THREE.Texture | null> {
     // 解析优先级与缓存语义见 loadEffectTextureSlot：`util/*` 先取 WE 真身、失败才回退程序化近似，
     // 结果（含失败 null）走 this.textures 缓存（键含壁纸 id + 路径）⇒ 不重复请求、不每帧重试。
-    return loadEffectTextureSlot(path, this.id, this.textures);
+    // `this.load` 携带调用方的纹理 v 约定（缺省 loadTexTexture = 显示约定；见构造函数注释）。
+    return loadEffectTextureSlot(path, this.id, this.textures, this.load);
   }
 
   // 串行化 + 输入参数化（Ruling P1-1）：input 可为场景 RT 或对象 RT 的纹理（任意 Texture）。

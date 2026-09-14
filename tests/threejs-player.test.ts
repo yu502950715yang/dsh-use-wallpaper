@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { ThreeScenePlayer, loadSceneToThree, frameCountFromDims, textureFrameCount, textureFrameGrid, specMaxcount, particleCapacity, specEmitterOrigin, simEmitterOffset, BLACKMYTH_OBJ_SCALE, DEFAULT_PARTICLE_CAPACITY, MAX_PARTICLE_CAPACITY } from '../src/client/threejs-player.js';
 import { coverRange } from '../src/client/scene-renderer.js';
+import { createCompositeGeometry } from '../src/client/object-range.js';
 
 // 注入的 mock renderer：只测相机/场景/RAF 逻辑，不触碰 WebGL。
 function createMockRenderer() {
@@ -1115,7 +1116,11 @@ describe('ThreeScenePlayer 对象隔离', () => {
     expect(entry.rt.width).toBe(5120);
     // 相机必须覆盖世界尺寸 2560×1440（而不是 RT 像素 5120×2880）。
     expect(entry.localCamera.right - entry.localCamera.left).toBeCloseTo(2560, 5);
-    expect(entry.localCamera.top - entry.localCamera.bottom).toBeCloseTo(1440, 5);
+    // ⚠️ y **镜像**（top=-720 < bottom=+720，2026-09-14 v 约定修复）：局部相机渲染出的对象 RT 是
+    // 效果链的输入，必须取 WE 的 v 约定（v=0=图像顶部，见 attachIsolated 注释）⇒ 幅值仍是 1440，
+    // 但 top/bottom 互换。断言按 `bottom - top`（= 幅值）写，与相机范围语义一致。
+    expect(entry.localCamera.bottom - entry.localCamera.top).toBeCloseTo(1440, 5);
+    expect(entry.localCamera.top).toBeLessThan(entry.localCamera.bottom);
     // RT 覆盖完整对象 ⇒ 合成几何 UV 为全窗口。
     const uv = (entry.quad.geometry as THREE.PlaneGeometry).attributes.uv.array as Float32Array;
     expect(Math.min(...Array.from(uv))).toBeCloseTo(0, 5);
@@ -1134,7 +1139,7 @@ describe('ThreeScenePlayer 对象隔离', () => {
     // （曾把相机也钳到 4096：RT 只覆盖对象中央一块，UV 窗口外侧被 CLAMP 采样成边缘拉伸带，
     //   实测 GTR 3743126786 对象世界宽 7430 ⇒ 右侧 22% 画面宽是条纹。）
     expect(entry.localCamera.right - entry.localCamera.left).toBeCloseTo(6000, 5);
-    expect(entry.localCamera.top - entry.localCamera.bottom).toBeCloseTo(1000, 5);
+    expect(entry.localCamera.bottom - entry.localCamera.top).toBeCloseTo(1000, 5);
     // RT 覆盖完整对象 ⇒ 合成几何 UV 全窗口（超限只降低分辨率，不做几何裁剪）。
     const uv = (entry.quad.geometry as THREE.PlaneGeometry).attributes.uv.array as Float32Array;
     expect(Math.min(...Array.from(uv))).toBeCloseTo(0, 5);
@@ -1169,7 +1174,17 @@ describe('ThreeScenePlayer 对象隔离', () => {
     expect(content.position.toArray()).toEqual([0, 0, 0]);
     expect(content.rotation.toArray().slice(0, 3)).toEqual([0, 0, 0]);
     expect(content.scale.toArray()).toEqual([2, 2, 1]);
-    // 合成 quad：材质**独立于内容材质**（不得 clone 内容材质——内容材质已把调制烘进 RT，
+    // ⚠️ 隔离内容材质必须**双面**（2026-09-14 v 约定修复）：隔离内容的局部相机是 y 镜像
+    // （对象 RT 取 WE 的 v=0=图像顶部约定，见 attachIsolated 注释），投影 y 取负会翻转屏幕
+    // 空间绕序 ⇒ FrontSide 的 quad 会被背面剔除（对象整体消失）。
+    expect((content.material as THREE.Material).side).toBe(THREE.DoubleSide);
+    // 局部相机 y 镜像（top < bottom，幅值仍是相机覆盖的世界范围）
+    expect(entry.localCamera.bottom - entry.localCamera.top).toBeCloseTo(400, 5);
+    expect(entry.localCamera.top).toBeLessThan(entry.localCamera.bottom);
+    // 合成 quad 的 UV 已把 RT 的 WE 约定翻回显示约定（v → 1-v；全窗口下 uv.y ∈ {0,1} 不变）
+    const quadUv = (entry.quad.geometry as THREE.PlaneGeometry).attributes.uv.array as Float32Array;
+    expect(Math.min(...Array.from(quadUv))).toBeCloseTo(0, 5);
+    expect(Math.max(...Array.from(quadUv))).toBeCloseTo(1, 5);    // 合成 quad：材质**独立于内容材质**（不得 clone 内容材质——内容材质已把调制烘进 RT，
     // clone 会让贴回画面时二次施加调制；粒子内容材质是 InstancedBufferGeometry 专用 shader，
     // clone 到普通 PlaneGeometry 上 alpha 恒为 0）。背景无 colorBlendMode → MeshBasicMaterial。
     expect(entry.quad.material).not.toBe(content.material);
@@ -1186,6 +1201,32 @@ describe('ThreeScenePlayer 对象隔离', () => {
     // 主 scene 里只有合成 quad（内容不在主 scene）
     expect(player.scene.children).toContain(entry.quad);
     expect(player.scene.children).not.toContain(content);
+  });
+
+  it('合成 quad 的 UV = 显示约定（RT 的 WE 约定逐顶点取反 ⇒ 世界顶采样 v=0）', () => {
+    const { player } = makePlayer();
+    player.addBackground({
+      origin: [0, 0, 0], size: [100, 100], scale: [1, 1, 1], texture: makeTexture(),
+      sceneW: 100, sceneH: 100, isolate: { objectId: 91, rtWidth: 100, rtHeight: 50, worldW: 100, worldH: 100 },
+    });
+    const entry = player.isolatedObjects().find((e) => e.id === 91)!;
+    const geo = entry.quad.geometry as THREE.PlaneGeometry;
+    const got = geo.attributes.uv.array as Float32Array;
+    // 独立参考：同参数、**未**翻转的合成几何（窗口映射与翻转可交换，故逐顶点 1-v 即期望值；
+    // 本路径 camW/camH = |worldW/worldH| ⇒ 窗口恒全窗口，翻转后 uv.y ∈ {0,1}）
+    const ref = createCompositeGeometry(100, 100, 100, 100).attributes.uv.array as Float32Array;
+    expect(got.length).toBe(ref.length);
+    for (let i = 0; i < got.length; i += 2) {
+      expect(got[i]).toBeCloseTo(ref[i], 6);            // u 不动
+      expect(got[i + 1]).toBeCloseTo(1 - ref[i + 1], 6); // v → 1-v
+    }
+    // 方向语义（关键）：世界**顶**（position.y = +50）的顶点必须采样 RT 的 v=0
+    // ——RT 的 v=0 是**图像顶部**（WE 约定），两处镜像（局部相机 y 镜像 + 本处 UV 取反）
+    // 精确抵消 ⇒ 对象在画面上正立。
+    const pos = geo.attributes.position.array as Float32Array;
+    for (let k = 0; k < got.length / 2; k++) {
+      expect(got[k * 2 + 1]).toBeCloseTo(pos[k * 3 + 1] > 0 ? 0 : 1, 6);
+    }
   });
 
   it('隔离：内容材质保留调制（烘进 RT），合成 quad 调制中性（不二次施加）', () => {
@@ -1410,8 +1451,9 @@ describe('ThreeScenePlayer 对象隔离', () => {
     // （真机 HiDPI 整张壁纸错乱的同一根因）。
     expect(entry.localCamera.left).toBe(-5);
     expect(entry.localCamera.right).toBe(5);
-    expect(entry.localCamera.top).toBe(5);
-    expect(entry.localCamera.bottom).toBe(-5);
+    // y 镜像（v 约定修复）：幅值 5 不变，top/bottom 符号互换（见 attachIsolated 注释）。
+    expect(entry.localCamera.top).toBe(-5);
+    expect(entry.localCamera.bottom).toBe(5);
     // 合成几何同样不重建：其世界尺寸与 UV 窗口都只依赖世界尺寸。
     expect(entry.quad.geometry).toBe(oldGeo);
   });

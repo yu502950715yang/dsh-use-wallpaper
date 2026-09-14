@@ -168,12 +168,27 @@ function applyUvWindow(geometry: THREE.PlaneGeometry, ux: { start: number; end: 
 // 内容（局部场景 = 对象忠实渲染），合成 quad 只是显示帧；帧几何若用负 worldH
 // （PlaneGeometry 翻转顶点）会把 RT 内已镜像的内容二次翻转回正（镜像抵消，输出不镜像）。
 // 即「相机范围与 quad 帧用幅值，镜像活在 mesh/RT 内容」的职责分离。
+//
+// ⚠️ 本函数**不含** v 约定翻转：对象 RT 的 v 约定由调用方决定（three 主路径的隔离 RT 是
+// **WE 约定** v=0=图像顶部，见 `threejs-player.attachIsolated`，其合成 quad 需再调
+// `flipGeometryUvY`；未迁移的调用方保持默认）。默认参数下行为与引入翻转前逐字一致。
 export function createCompositeGeometry(worldW: number, worldH: number, rtW: number, rtH: number): THREE.PlaneGeometry {
   const w = Math.abs(worldW);
   const h = Math.abs(worldH);
   const geometry = new THREE.PlaneGeometry(w, h);
   applyUvWindow(geometry, uvWindow(w, rtW), uvWindow(h, rtH));
   return geometry;
+}
+
+// 逐顶点 uvs[i+1] → 1 - uvs[i+1]（**v 约定翻转**）。用途：对象 RT 采用 WE 约定
+// （v=0=图像顶部，见 `threejs-player.attachIsolated` 的 y 镜像局部相机）后，合成 quad 必须
+// 再把 v 翻回 three 的显示约定（v=0=quad 底边）才能正立贴回主场景。
+// 与 UV 窗口映射（applyUvWindow，窗口恒居中 ⇒ start+end=1）**可交换**：
+//   (1-v-start)/wy == (end-v)/wy == 1-(v-start)/wy，两种顺序结果相同。
+export function flipGeometryUvY(geometry: THREE.BufferGeometry): void {
+  const uvs = geometry.attributes.uv.array as Float32Array;
+  for (let i = 1; i < uvs.length; i += 2) uvs[i] = 1 - uvs[i];
+  geometry.attributes.uv.needsUpdate = true;
 }
 
 // 按「contain」语义计算正交相机范围：场景完整可见、不变形，多出的方向留白（透明）。

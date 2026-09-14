@@ -145,15 +145,19 @@ describe.skipIf(!existsSync(WALLPAPER_DIR))('全库效果链分类（实测数�
 });
 
 // ── 编排器（Task 4）：mock runner 与 host，node 环境不触碰 WebGL ──
-import { ObjectEffectStage } from '../src/client/object-effects.js';
+import { ObjectEffectStage, weVRowOrderLoader } from '../src/client/object-effects.js';
 import * as THREE from 'three';
 import { vi } from 'vitest';
 
 // 编排器内部会 `new EffectRunner(...)`：真实类只在 WebGL 上下文里可用（构造即建 RT、
 // setChains 会跑探针渲染编译 shader），故对本文件整体 mock 它——实例方法全是 vi.fn，
 // 便于断言 setChains 的入参/次数。写法参考 tests/three-renderer.test.ts 对重型依赖的 mock。
+// `runnerCtorArgs` 记录构造参数（用 vi.hoisted 才能在 mock 工厂里引用）——用于断言
+// 「纹理槽加载器按 WE v 约定注入」这条接线。
+const runnerCtorArgs = vi.hoisted(() => [] as unknown[][]);
 vi.mock('../src/client/effect-runner.js', () => {
   class EffectRunner {
+    constructor(...args: unknown[]) { runnerCtorArgs.push(args); }
     setChains = vi.fn();
     setAudioSpectrumSource = vi.fn();
     update = vi.fn(async () => null);
@@ -214,6 +218,22 @@ function createHost(entries: Array<{ id: number; rtWidth: number; rtHeight: numb
 }
 
 describe('ObjectEffectStage', () => {
+  it('纹理槽加载器按 WE v 约定注入（rowOrder:topDown，与对象 RT 的 v 约定同一套）', async () => {
+    const host = createHost([{ id: 1, rtWidth: 100, rtHeight: 50 }]);
+    const stage = new ObjectEffectStage(host as never, {
+      wallpaperId: 'w', dpr: 1, budgetWidth: 1920, budgetHeight: 1080,
+    });
+    stage.setObjectChains(1, [[pass()]]);
+    // 构造注入（mock EffectRunner 记录构造参数）：第 4 个参数带 load 加载器
+    expect(runnerCtorArgs.length).toBeGreaterThan(0);
+    const opts = runnerCtorArgs[0][3] as { load?: (u: string, o?: object) => unknown };
+    expect(typeof opts.load).toBe('function');
+    // 该加载器必须把 rowOrder:'topDown' 叠到调用方 opts 上（不改 alphaPriority 语义）
+    const seen: Array<{ url: string; opts?: object }> = [];
+    await (weVRowOrderLoader(async (url, o) => { seen.push({ url, opts: o }); return null; })('u', { alphaPriority: false }));
+    expect(seen[0]).toEqual({ url: 'u', opts: { alphaPriority: false, rowOrder: 'topDown' } });
+  });
+
   it('setObjectChains 为线性链创建 runner，并把对象 chains 展平后交给它', () => {
     const host = createHost([{ id: 1, rtWidth: 100, rtHeight: 50 }]);
     const stage = new ObjectEffectStage(host as never, {

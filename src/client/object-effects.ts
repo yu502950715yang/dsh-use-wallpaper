@@ -11,7 +11,22 @@
 import type * as THREE from 'three';
 import { OBJECT_RT_MAX } from './object-range.js';
 import { EffectRunner } from './effect-runner.js';
+import type { EffectTexLoader } from './effect-runner.js';
+import { loadTexTexture } from './tex-loader.js';
 import type { CompiledEffectPass } from './shader/effect-chain.js';
+
+// 效果纹理槽加载器（**必须与对象 RT 的 v 约定同一套**，2026-09-14）：
+//   对象 RT 由 `threejs-player.attachIsolated` 的 **y 镜像局部相机**渲染 ⇒ RT 的 v=0 = 图像**顶部**
+//   （= WE 约定：WE/lwe 直接上传 `.tex` 首行，v=0 也是图像顶部）。效果 shader 用 `v_TexCoord.y`
+//   当图像空间坐标（flowmap 的带符号位移 / clouds 的旋转滚动 / foliagesway 的摆动方向），
+//   所以纹理槽也必须按 WE 约定（不翻行序）加载 —— 否则「条带位置对、方向与斜度反」
+//   （Crimson `effects/waterflow`：mask 落在正确的水面区域，但位移的 v 分量整体上下颠倒）。
+//   注意：**只翻一侧不解决问题**（两侧同底部约定时位置对而方向反；只翻 mask 会让位置也反），
+//   必须两侧一起从「显示约定」迁到「WE 约定」。
+// 抽成工厂（纯函数）便于 node 单测断言注入的 rowOrder 真的传到了加载器。
+export function weVRowOrderLoader(load: EffectTexLoader = loadTexTexture): EffectTexLoader {
+  return (url, opts) => load(url, { ...opts, rowOrder: 'topDown' });
+}
 
 // player 消费的钩子接口（结构化匹配，player 不 import 本模块）。
 // 隔离内容的渲染（setRenderTarget + render(localScene, localCamera)）由 player 自己完成，
@@ -321,7 +336,8 @@ export class ObjectEffectStage implements ObjectEffectStage {
     // 此时保留其世界尺寸，不被 RT 尺寸/dpr 反推覆盖。
     entry.chains = chains;
     if (!entry.runner) {
-      entry.runner = new EffectRunner(this.host.renderer, rtW, rtH);
+      // 纹理槽按 WE 约定加载（v=0=图像顶部，与对象 RT 的 v 约定同一套，见 weVRowOrderLoader）。
+      entry.runner = new EffectRunner(this.host.renderer, rtW, rtH, { load: weVRowOrderLoader() });
     }
     entry.runner.setChains(chains, this.wallpaperId, { width: rtW, height: rtH });
   }

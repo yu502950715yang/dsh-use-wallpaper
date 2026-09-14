@@ -419,6 +419,73 @@ describe('textureFromTex 分支选择', () => {
     expect(out[(h - 1) * w * 4 + 2]).toBe(0);
   });
 
+  // ===== v 约定（rowOrder，2026-09-14 水流方向修复）=====
+  // `rowOrder:'topDown'` = WE/对象 RT 约定（.tex 首行落在 v=0 = 图像顶部，不翻行序）；
+  // 缺省 `'bottomUp'` = 显示约定（翻行序，v=0=图像底部）。三条分支都必须按同一开关处理，
+  // 否则效果链的纹理槽与对象 RT 的 v 约定不一致（条带位置对、位移方向反）。
+  describe('rowOrder（纹理 v 约定：缺省显示约定 / topDown = WE 约定）', () => {
+    it('RGBA8888：rowOrder=topDown 时**不**翻行序（首行=图像顶部落在 v=0）', async () => {
+      const w = 8, h = 8;
+      const data = new Uint8Array(w * h * 4);
+      for (let x = 0; x < w; x++) { data[x * 4] = 255; data[x * 4 + 3] = 255; }                                  // row 0 = 图像顶部（红）
+      for (let x = 0; x < w; x++) { data[(h - 1) * w * 4 + x * 4 + 2] = 255; data[(h - 1) * w * 4 + x * 4 + 3] = 255; } // row h-1（蓝）
+      const buf = makeTex({ format: TEX_FORMAT.RGBA8888, images: [[{ width: w, height: h, data }]] });
+      const tex = await textureFromTex(parseTex(buf)!, { rowOrder: 'topDown' }) as THREE.DataTexture;
+      const out = tex.image.data as Uint8Array;
+      expect(out[0]).toBe(255); // 新第一行仍是原第一行（红）
+      expect(out[2]).toBe(0);
+      expect(out[(h - 1) * w * 4 + 2]).toBe(255); // 新最后一行仍是原最后一行（蓝）
+      expect(out[(h - 1) * w * 4]).toBe(0);
+    });
+
+    it('RG88（效果遮罩格式）：rowOrder=topDown 同样不翻行序（通道映射不受影响）', async () => {
+      const w = 4, h = 2;
+      const data = new Uint8Array(w * h * 2);
+      data[0] = 10; data[1] = 20;            // row 0（图像顶部）
+      data[w * 2] = 30; data[w * 2 + 1] = 40; // row 1
+      const buf = makeTex({ format: TEX_FORMAT.RG88, images: [[{ width: w, height: h, data }]] });
+      const tex = await textureFromTex(parseTex(buf)!, { rowOrder: 'topDown', alphaPriority: false }) as THREE.DataTexture;
+      const out = tex.image.data as Uint8Array;
+      expect(Array.from(out.slice(0, 4))).toEqual([10, 20, 0, 255]);            // 首像素仍来自首行
+      expect(Array.from(out.slice(w * 4, w * 4 + 4))).toEqual([30, 40, 0, 255]); // 第二行
+    });
+
+    it('DXT：rowOrder=topDown 时**不**反转块行序', async () => {
+      const w = 8, h = 8, blockSize = 16; // DXT5：2 块宽 × 2 块高
+      const blocks = new Uint8Array(4 * blockSize);
+      for (let i = 0; i < 4; i++) for (let j = 0; j < blockSize; j++) blocks[i * blockSize + j] = i * 30 + j;
+      const buf = makeTex({ format: TEX_FORMAT.DXT5, images: [[{ width: w, height: h, data: blocks }]] });
+      const tex = await textureFromTex(parseTex(buf)!, { rowOrder: 'topDown' }) as THREE.CompressedTexture;
+      const m0 = tex.mipmaps[0] as { data: Uint8Array };
+      expect(Array.from(m0.data.slice(0, blockSize))).toEqual(Array.from(blocks.slice(0, blockSize)));
+      expect(Array.from(m0.data.slice(2 * blockSize, 3 * blockSize))).toEqual(Array.from(blocks.slice(2 * blockSize, 3 * blockSize)));
+    });
+
+    it('编码图像：rowOrder=topDown 时解码用 from-image（不指定 flipY）', async () => {
+      const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4]);
+      const buf = makeTex({
+        container: 'TEXB0003', imageFormat: FIF.JPEG, format: TEX_FORMAT.RGBA8888,
+        images: [[{ width: 32, height: 16, data: jpeg }]],
+      });
+      const tex = await textureFromTex(parseTex(buf)!, { rowOrder: 'topDown' });
+      expect(decodeCalls).toHaveLength(1);
+      expect(decodeCalls[0].opts).toMatchObject({ imageOrientation: 'from-image' });
+      expect(tex!.flipY).toBe(false);
+    });
+
+    it('缺省（不传 rowOrder）= 显示约定：仍翻行序（既有行为逐字不变）', async () => {
+      const w = 4, h = 2;
+      const data = new Uint8Array(w * h * 4);
+      data[0] = 255; data[3] = 255;                      // row 0
+      data[w * 4] = 0; data[w * 4 + 1] = 255; data[w * 4 + 3] = 255; // row 1（绿）
+      const buf = makeTex({ format: TEX_FORMAT.RGBA8888, images: [[{ width: w, height: h, data }]] });
+      const tex = await textureFromTex(parseTex(buf)!) as THREE.DataTexture;
+      const out = tex.image.data as Uint8Array;
+      expect(out[1]).toBe(255); // 首行来自原最后一行（绿）
+      expect(out[0]).toBe(0);
+    });
+  });
+
   it('解码失败（createImageBitmap reject）→ 返回 null 而非抛错', async () => {
     vi.stubGlobal('createImageBitmap', async () => { throw new Error('decode failed'); });
     const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4]);

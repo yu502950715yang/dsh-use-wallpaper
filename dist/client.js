@@ -20333,6 +20333,11 @@ function createCompositeGeometry(worldW, worldH, rtW, rtH) {
   applyUvWindow(geometry, uvWindow(w, rtW), uvWindow(h, rtH));
   return geometry;
 }
+function flipGeometryUvY(geometry) {
+  const uvs = geometry.attributes.uv.array;
+  for (let i = 1; i < uvs.length; i += 2) uvs[i] = 1 - uvs[i];
+  geometry.attributes.uv.needsUpdate = true;
+}
 function coverRange(width, height, viewAspect) {
   const sceneAspect = width / height;
   if (viewAspect > sceneAspect) {
@@ -20982,7 +20987,11 @@ var ThreeScenePlayer = class {
     const basic = new MeshBasicMaterial({
       map: texture ?? null,
       transparent: true,
-      depthWrite: false
+      depthWrite: false,
+      // 隔离内容渲染进**y 镜像的局部相机**（对象 RT 取 WE 的 v 约定，见 attachIsolated）⇒
+      // 屏幕空间绕序被翻转，正面朝外的 quad 会被背面剔除掉（对象整体消失）。故隔离路径改双面；
+      // 非隔离（主场景直渲）继续保持 FrontSide，行为与引入前逐字一致。
+      side: forIsolation ? DoubleSide : FrontSide
     });
     basic.color.setRGB(mod.r, mod.g, mod.b);
     basic.opacity = mod.a;
@@ -21042,12 +21051,14 @@ var ThreeScenePlayer = class {
     const rt = new WebGLRenderTarget(rtW, rtH, { samples: 4 });
     const camW = Math.max(1, Math.abs(worldW));
     const camH = Math.max(1, Math.abs(worldH));
-    const localCamera = new OrthographicCamera(-camW / 2, camW / 2, camH / 2, -camH / 2, -1e3, 1e3);
+    const localCamera = new OrthographicCamera(-camW / 2, camW / 2, -camH / 2, camH / 2, -1e3, 1e3);
     localCamera.position.z = CAMERA_DISTANCE;
     const localScene = new Scene();
     localScene.add(content);
+    const compositeGeometry = createCompositeGeometry(worldW, worldH, camW, camH);
+    flipGeometryUvY(compositeGeometry);
     const quad = new Mesh(
-      createCompositeGeometry(worldW, worldH, camW, camH),
+      compositeGeometry,
       this.createCompositeQuadMaterial(rt.texture, colorBlendMode)
     );
     quad.position.set(position.x, position.y, position.z);
@@ -21609,6 +21620,7 @@ function cropCompressedToMap(data, mipWidth, mipHeight, cw, ch, blockSize) {
 async function textureFromTex(info, opts) {
   const mip = info.mipmaps[0];
   if (!mip) return null;
+  const topDown = opts?.rowOrder === "topDown";
   const withSprite = (tex) => {
     const ud = { ...tex.userData ?? {} };
     if (info.sprite) ud.sprite = info.sprite;
@@ -21632,7 +21644,7 @@ async function textureFromTex(info, opts) {
     try {
       const bitmap = await createImageBitmap(
         new Blob([mip.data], { type: mime }),
-        { imageOrientation: "flipY" }
+        { imageOrientation: topDown ? "from-image" : "flipY" }
       );
       const tex = new Texture(bitmap);
       tex.flipY = false;
@@ -21646,8 +21658,8 @@ async function textureFromTex(info, opts) {
   if (info.format === TEX_FORMAT.RGBA8888 || info.format === TEX_FORMAT.RG88 || info.format === TEX_FORMAT.R8) {
     const cropped = cropToMap(mip.data, mip.width, mip.height, info.width, info.height, info.format, info.flags);
     const src = info.format === TEX_FORMAT.RGBA8888 ? cropped.data : convertUnormToRgba(cropped.data, info.format, opts?.alphaPriority !== false);
-    const flipped = flipRows(src, cropped.width, cropped.height, 4);
-    const tex = new DataTexture(flipped, cropped.width, cropped.height, RGBAFormat);
+    const rows = topDown ? src : flipRows(src, cropped.width, cropped.height, 4);
+    const tex = new DataTexture(rows, cropped.width, cropped.height, RGBAFormat);
     applyWrap(tex, info);
     applyLinearSampling(tex);
     return withSprite(tex);
@@ -21656,9 +21668,10 @@ async function textureFromTex(info, opts) {
   if (glFormat) {
     const blockSize = info.format === TEX_FORMAT.DXT1 ? 8 : 16;
     const cropped = cropToMap(mip.data, mip.width, mip.height, info.width, info.height, info.format, info.flags);
+    const blocks = topDown ? cropped.data : flipCompressedRows(cropped.data, cropped.width, cropped.height, blockSize);
     const tex = new CompressedTexture(
       [{
-        data: flipCompressedRows(cropped.data, cropped.width, cropped.height, blockSize),
+        data: blocks,
         width: cropped.width,
         height: cropped.height
       }],
@@ -21996,10 +22009,20 @@ var EffectRunner = class {
   // 音频频谱源（T3.2）：freqData 缓冲引用（scene-renderer 每帧刷新后注入）。
   // null = 无分析器 → 音频 uniform 保持 binder 初始化的全零（静音，行为不变）。
   audioSpectrum = null;
-  constructor(renderer, width, height) {
+  // 效果纹理槽加载器（缺省 `loadTexTexture`；可注入以携带 **v 约定** —— 见构造参数注释）。
+  load;
+  // `opts.load`：纹理槽加载器（缺省 `loadTexTexture`）。**调用方用它携带纹理 v 约定**：
+  //   效果 shader 把 `v_TexCoord.y` 当**图像空间**坐标（flowmap 的带符号位移、clouds 的旋转/滚动、
+  //   foliagesway 的摆动方向…），而纹理由对象 RT 提供 —— 二者的 v 约定必须是**同一套**，
+  //   否则条带位置对而方向/斜度反（Crimson waterflow 真机「方向对但位置/斜度不对」）。
+  //   对象 RT 走 `threejs-player.attachIsolated` 的 y 镜像局部相机（v=0=图像顶部 = WE 约定），
+  //   故 `ObjectEffectStage` 注入 `rowOrder:'topDown'` 的 loader 与之对齐；
+  //   未注入的调用方（旧场景级路径）保持 `'bottomUp'`，行为与本参数引入前逐字一致。
+  constructor(renderer, width, height, opts = {}) {
     this.renderer = renderer;
     this.width = width;
     this.height = height;
+    this.load = opts.load ?? loadTexTexture;
     this.rtA = new WebGLRenderTarget(width, height);
     this.rtB = new WebGLRenderTarget(width, height);
   }
@@ -22154,7 +22177,7 @@ var EffectRunner = class {
     return scene;
   }
   async resolveTextureSlot(path) {
-    return loadEffectTextureSlot(path, this.id, this.textures);
+    return loadEffectTextureSlot(path, this.id, this.textures, this.load);
   }
   // 串行化 + 输入参数化（Ruling P1-1）：input 可为场景 RT 或对象 RT 的纹理（任意 Texture）。
   // 返回最终输出纹理；链为空或上一帧 update 未完成（纹理槽异步加载中）→ null。
@@ -24021,6 +24044,9 @@ async function resolveParticleMaterial(id, specText) {
 }
 
 // src/client/object-effects.ts
+function weVRowOrderLoader(load = loadTexTexture) {
+  return (url, opts) => load(url, { ...opts, rowOrder: "topDown" });
+}
 function isLinearEffectChain(passes) {
   if (passes.length === 0) return false;
   return passes.every(
@@ -24216,7 +24242,7 @@ var ObjectEffectStage = class {
     }
     entry.chains = chains;
     if (!entry.runner) {
-      entry.runner = new EffectRunner(this.host.renderer, rtW, rtH);
+      entry.runner = new EffectRunner(this.host.renderer, rtW, rtH, { load: weVRowOrderLoader() });
     }
     entry.runner.setChains(chains, this.wallpaperId, { width: rtW, height: rtH });
   }

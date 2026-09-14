@@ -17,6 +17,7 @@ import {
   resolveSlotFallback,
 } from '../src/client/effect-runner.js';
 import type { CompiledEffectPass } from '../src/client/shader/effect-chain.js';
+import { loadTexTexture } from '../src/client/tex-loader.js';
 
 describe('blendModeToThree（WE blending → three 混合模式）', () => {
   it('映射 add/multiply/subtract 与默认回退', () => {
@@ -276,6 +277,43 @@ function createBindRenderer() {
   };
   return { renderer, mats };
 }
+
+describe('EffectRunner 纹理槽加载器注入（纹理 v 约定由调用方携带）', () => {
+  it('构造注入 load → 纹理槽解析走注入加载器（并沿用 alphaPriority:false）', async () => {
+    const { renderer } = createBindRenderer();
+    const seen: Array<{ url: string; opts?: { alphaPriority?: boolean } }> = [];
+    const load = vi.fn(async (url: string, opts?: { alphaPriority?: boolean }) => {
+      seen.push({ url, opts });
+      return new THREE.Texture();
+    });
+    // 注入的加载器 = 调用方携带 v 约定的唯一入口（three 主路径注入 rowOrder:'topDown'，
+    // 见 object-effects.weVRowOrderLoader）；runner 自身不改纹理语义。
+    const runner = new EffectRunner(renderer as never, 16, 16, { load });
+    const pass: CompiledEffectPass = {
+      vertSrc: 'void main(){ gl_Position = vec4(position, 1.0); }',
+      fragSrc: 'uniform sampler2D g_Texture0; void main(){ gl_FragColor = vec4(1.0); }',
+      rawVert: '', rawFrag: '', combos: {}, uniforms: new Map(),
+      textureSlots: [null, 'masks/x'],
+      samplerModes: {},
+      blendMode: 'normal', target: null, bind: [], fboScale: {},
+    };
+    runner.setChains([[pass]], 'wp1', { width: 16, height: 16 });
+    await new Promise((r) => setTimeout(r, 0)); // setChains 的预加载是 void 异步
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(seen[0].url).toContain('materials');
+    expect(seen[0].url).toContain('masks');
+    expect(seen[0].opts).toMatchObject({ alphaPriority: false });
+    runner.dispose();
+  });
+
+  it('不注入 load → 缺省沿用 loadTexTexture（既有调用方行为不变）', async () => {
+    const { renderer } = createBindRenderer();
+    const runner = new EffectRunner(renderer as never, 16, 16);
+    // 私有字段只作观测：缺省 loader 必须是模块内 loadTexTexture（同一函数对象）
+    expect((runner as unknown as { load: unknown }).load).toBe(loadTexTexture);
+    runner.dispose();
+  });
+});
 
 describe('EffectRunner 空槽绑定（update 真绑到 uniform：空槽常量纹理不被覆盖成 null）', () => {
   it('clouds 型 pass（textures 长 2、声明到 g_Texture2）：g_Texture2 = 空槽黑纹理，g_Texture1 仍无兜底', async () => {

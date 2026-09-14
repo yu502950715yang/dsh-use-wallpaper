@@ -3,11 +3,12 @@
 //   ② scene-renderer.ts 的重新导出与 object-range.ts 是**同一个函数对象**
 //      （防止有人日后在 scene-renderer 里再写一份实现，造成两处漂移）。
 import { describe, expect, it } from 'vitest';
+import * as THREE from 'three';
 import {
   CAMERA_DISTANCE, OBJECT_RT_MAX, PARTICLE_DEFAULT_DISTANCE,
   materialModulation, objectCameraRange, particleObjectRange, particleWorldSize,
   createObjectRenderTarget, shouldUseObjectPath, groupEffectsByObject, PendingChainStore,
-  uvWindow, createCompositeGeometry, coverRange,
+  uvWindow, createCompositeGeometry, coverRange, flipGeometryUvY,
 } from '../src/client/object-range.js';
 import * as sceneRenderer from '../src/client/scene-renderer.js';
 
@@ -54,6 +55,27 @@ describe('uvWindow / createCompositeGeometry', () => {
     // PlaneGeometry(200,100) 的 x 极值应为 ±100
     expect(Math.max(...Array.from(pos).filter((_, i) => i % 3 === 0))).toBeCloseTo(100, 5);
     expect(Math.min(...Array.from(pos).filter((_, i) => i % 3 === 0))).toBeCloseTo(-100, 5);
+  });
+  // v 约定翻转（2026-09-14）：对象 RT 取 WE 约定（v=0=图像顶部）后，合成 quad 必须把 v 翻回
+  // 显示约定才能正立贴回主场景。本函数**不**改 createCompositeGeometry 的默认行为
+  // （未迁移的调用方 = scene-renderer 保持逐字不变），故单独测。
+  it('flipGeometryUvY：v → 1-v（u 不动），且与 UV 窗口映射可交换', () => {
+    const geo = createCompositeGeometry(100, 100, 100, 100); // 全窗口 ⇒ uv.y ∈ {0,1}
+    flipGeometryUvY(geo);
+    const uv = geo.attributes.uv.array as Float32Array;
+    expect(Array.from(uv.filter((_, i) => i % 2 === 1)).every((v) => v === 0 || v === 1)).toBe(true);
+    // 逐顶点校验 v 已取反（与位置顺序无关，直接比集合）
+    const before = new THREE.PlaneGeometry(100, 100).attributes.uv.array as Float32Array;
+    for (let i = 1; i < uv.length; i += 2) expect(uv[i]).toBeCloseTo(1 - before[i], 6);
+
+    // 交换律：先窗口后翻转 == 先翻转后窗口（窗口恒居中 start+end=1 ⇒ (end-v)/wy == 1-(v-start)/wy）
+    const a = createCompositeGeometry(100, 50, 100, 50);      // y 轴被钳制（窗口 [0.25,0.75]）
+    const b = createCompositeGeometry(100, 50, 100, 50);
+    flipGeometryUvY(a);
+    const uvsB = b.attributes.uv.array as Float32Array;
+    for (let i = 1; i < uvsB.length; i += 2) uvsB[i] = 1 - uvsB[i];
+    const uvsA = a.attributes.uv.array as Float32Array;
+    for (let i = 1; i < uvsA.length; i += 2) expect(uvsA[i]).toBeCloseTo(uvsB[i], 6);
   });
 });
 

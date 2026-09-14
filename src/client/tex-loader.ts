@@ -340,15 +340,38 @@ function cropCompressedToMap(
   return { width: nw, height: nh, data: out };
 }
 
+// 纹理 v 约定（**两条，必须与消费方匹配**，2026-09-14 水流方向修复引入）：
+//   · `'bottomUp'`（缺省）= **显示约定**：`.tex` 首行是图像顶部 → 上传前翻转行序，
+//     使 v=0 落在图像**底部**，与 three 的 PlaneGeometry（v=0 = quad 底边）/
+//     CanvasTexture（flipY 生效）等显示侧语义一致 ⇒ 画面正立。
+//   · `'topDown'`  = **WE 约定**：`.tex` 首行直接落在 v=0（= 图像顶部），与 WE/lwe
+//     (`CTexture.cpp:84` 直接 `glTexImage2D(..., dataptr)`，无翻转) 及对象 RT 一致。
+//     只给「对象 RT 上的效果链纹理槽」用：那些 shader 拿 `v_TexCoord.y` 当**图像空间**坐标
+//     （`waterflow.frag` 用它采样 flowmap 并按 `(rg-0.498)*2` 做**带符号位移**、
+//     `clouds.frag` 用它旋转/滚动、`foliagesway` 用它决定摆动方向），而下游 RT 的
+//     v=0 也是图像顶部（见 `threejs-player.attachIsolated` 的局部相机 y 镜像）——
+//     两侧同一套 WE 约定，位移方向才与桌面 WE 一致。
+//     ⚠️ 若只让一侧翻（例如只翻 mask 或只翻 RT），条带位置对而**方向仍反**：条带位置由
+//     「两侧一起翻不翻」决定，而位移/滚动方向由「v 轴朝上还是朝下」决定，两者是不同的事。
+export type TexRowOrder = 'bottomUp' | 'topDown';
+
+export interface TexLoadOptions {
+  alphaPriority?: boolean;
+  // 缺省 `'bottomUp'`（显示路径，行为与本参数引入前逐字一致）。
+  rowOrder?: TexRowOrder;
+}
+
 // 由解析结果构造 three 纹理：
 //   TEXB0003+ 编码图像（imageFormat=JPEG/PNG/WEBP）→ 解码为 ImageBitmap 后包装为 Texture（异步）
 //   （注意：编码图像的 format 字段仍为 RGBA8888(0)，但 mipmap 数据是 JPEG/PNG 字节流，
 //    必须先按 imageFormat 判断，否则会被误当原始 RGBA 创建 DataTexture → 渲染乱码）
-//   RGBA8888 → DataTexture（数据 top-down → 翻转行序为 bottom-up，与 ImageBitmap 路径方向语义一致）；
+//   RGBA8888 → DataTexture（`rowOrder` 决定是否翻转行序，见 TexRowOrder 注释）；
 //   DXT1/3/5 → CompressedTexture
-export async function textureFromTex(info: TexInfo, opts?: { alphaPriority?: boolean }): Promise<THREE.Texture | null> {
+export async function textureFromTex(info: TexInfo, opts?: TexLoadOptions): Promise<THREE.Texture | null> {
   const mip = info.mipmaps[0];
   if (!mip) return null;
+  // v 约定：缺省 'bottomUp'（= 本参数引入前的既有行为，纹理上传前翻行序）。
+  const topDown = opts?.rowOrder === 'topDown';
   // 精灵表信息（TEXS 段）随纹理带走：three.js 粒子路径需要**真实帧数与网格**做多帧 uv 切片
   // （否则 8×8 精灵表被当单帧 → 每个粒子画出整片网格亮点，见 parseSpriteSection 注释）。
   const withSprite = (tex: THREE.Texture): THREE.Texture => {
@@ -403,12 +426,13 @@ export async function textureFromTex(info: TexInfo, opts?: { alphaPriority?: boo
     if (typeof createImageBitmap !== 'function') return null;
     try {
       // 方向语义（关键）：three.js 的 texture.flipY 对 ImageBitmap 无效（翻转只能在 bitmap
-      // 创建时通过 imageOrientation 指定）。WE tex 编码图像是 top-down（第一行=顶部），
-      // 而 DataTexture 路径的原始 RGBA 数据是 bottom-up（第一行=底部）——若不解码时翻转，
-      // 编码图像渲染会上下颠倒。imageOrientation:'flipY' 解码 + flipY=false 与 DataTexture 一致。
+      // 创建时通过 imageOrientation 指定）。WE tex 编码图像是 top-down（第一行=顶部）。
+      //   `rowOrder:'bottomUp'`（显示约定）→ 解码时 `imageOrientation:'flipY'` + flipY=false，
+      //     使 v=0=图像底部（与 DataTexture 路径一致，画面正立）；
+      //   `rowOrder:'topDown'`（WE 约定）→ 解码保持 'from-image'（首行=顶部落在 v=0）。
       const bitmap = await createImageBitmap(
         new Blob([mip.data], { type: mime }),
-        { imageOrientation: 'flipY' },
+        { imageOrientation: topDown ? 'from-image' : 'flipY' },
       );
       const tex = new THREE.Texture(bitmap as unknown as HTMLImageElement);
       tex.flipY = false;
@@ -422,17 +446,19 @@ export async function textureFromTex(info: TexInfo, opts?: { alphaPriority?: boo
   // imageFormat=-1 或 TEXB0001/0002（无该字段）→ mipmap 数据为原始像素/块数据
   if (info.format === TEX_FORMAT.RGBA8888 || info.format === TEX_FORMAT.RG88 || info.format === TEX_FORMAT.R8) {
     // 方向语义（关键）：DataTexture 的 flipY 对 TypedArray 上传无效（WebGL 的
-    // UNPACK_FLIP_Y_WEBGL 只对 DOM 元素源生效），数据第一行会落在纹理 v=0（底部）。
-    // WE tex 原始数据是 top-down（第一行=图像顶部），直接上传会上下颠倒，
-    // 因此手动翻转行序为 bottom-up（第一行=图像底部），与 ImageBitmap 路径一致。
+    // UNPACK_FLIP_Y_WEBGL 只对 DOM 元素源生效），数据第一行会落在纹理 v=0。
+    // WE tex 原始数据是 top-down（第一行=图像顶部）：
+    //   `rowOrder:'bottomUp'`（显示约定）→ 手动翻转行序为 bottom-up（第一行=图像底部），
+    //     与 ImageBitmap 路径一致；
+    //   `rowOrder:'topDown'`（WE 约定）→ 不翻（第一行=图像顶部 = v=0）。
     // 顺序（关键）：**先按 map 尺寸裁掉 2 的幂填充**（cropToMap，此时仍是原始 bpp 数据）
-    // 再 RG88/R8 展开、最后翻转行序——翻转必须用裁剪后的宽高（否则行距错位）。
+    // 再 RG88/R8 展开、最后按 rowOrder 决定是否翻转——翻转必须用裁剪后的宽高（否则行距错位）。
     // RGBA8888 原样；RG88/R8 先展开为 RGBA（convertUnormToRgba，WE 粒子纹理 alpha-priority 语义）
     // 再翻转——此前 RG88/R8 无分支直接 return null（DK 雪片/wasam 雾纹理加载失败 → 白图兜底）。
     const cropped = cropToMap(mip.data, mip.width, mip.height, info.width, info.height, info.format, info.flags);
     const src = info.format === TEX_FORMAT.RGBA8888 ? cropped.data : convertUnormToRgba(cropped.data, info.format, opts?.alphaPriority !== false);
-    const flipped = flipRows(src, cropped.width, cropped.height, 4);
-    const tex = new THREE.DataTexture(flipped, cropped.width, cropped.height, THREE.RGBAFormat);
+    const rows = topDown ? src : flipRows(src, cropped.width, cropped.height, 4);
+    const tex = new THREE.DataTexture(rows, cropped.width, cropped.height, THREE.RGBAFormat);
     applyWrap(tex, info);
     applyLinearSampling(tex);
     return withSprite(tex);
@@ -445,7 +471,8 @@ export async function textureFromTex(info: TexInfo, opts?: { alphaPriority?: boo
     // PlaneGeometry 的 v=0=quad 底部 → 图像顶部被渲染到底部 = **上下颠倒**（RGBA8888 路径靠
     // `flipRows` 手动翻为 bottom-up 规避，编码图像靠 `imageOrientation:'flipY'` 规避，唯独 DXT 漏掉）。
     // 此处按**块行**（每 4 像素行一块，DXT 压缩纹理尺寸须为 4 的倍数）反转数据，使 v=0=bottom-up，
-    // 与 DataTexture/ImageBitmap 两条路径的行序**一致**（图像正立）。
+    // 与 DataTexture/ImageBitmap 两条路径的行序**一致**（图像正立）；`rowOrder:'topDown'` 时不翻
+    // （第一块行=图像顶部 = v=0，见 TexRowOrder 注释）。
     const blockSize = info.format === TEX_FORMAT.DXT1 ? 8 : 16;
     // ⚠️ 只用 mip[0]（全分辨率基础层），**不传内嵌 mip 链**（关键，修复「DXT 背景模糊」——Lycoris
     // Recoil，2026-09-10 真机复现）：
@@ -469,9 +496,10 @@ export async function textureFromTex(info: TexInfo, opts?: { alphaPriority?: boo
     //      再反转块行序——裁剪在前，翻转的块行距才与裁剪后的宽度一致。无填充纹理（Lycoris
     //      materials/111.tex 6144×3072）走原样路径，不复制数据。
     const cropped = cropToMap(mip.data, mip.width, mip.height, info.width, info.height, info.format, info.flags);
+    const blocks = topDown ? cropped.data : flipCompressedRows(cropped.data, cropped.width, cropped.height, blockSize);
     const tex = new THREE.CompressedTexture(
       [{
-        data: flipCompressedRows(cropped.data, cropped.width, cropped.height, blockSize),
+        data: blocks,
         width: cropped.width,
         height: cropped.height,
       }],
@@ -573,7 +601,8 @@ export function flipRows(data: Uint8Array, width: number, height: number, bytesP
 
 // 拉取 .tex（带瞬时失败重试）→ parseTex → 构造纹理。解析失败/格式不支持返回 null。
 // `opts.alphaPriority: false` = 效果纹理槽语义（R8/RG88 按原义映射通道，见 convertUnormToRgba）。
-export async function loadTexTexture(url: string, opts?: { alphaPriority?: boolean }): Promise<THREE.Texture | null> {
+// `opts.rowOrder` = v 约定（缺省 'bottomUp' 显示约定，'topDown' = WE/对象 RT 约定，见 TexRowOrder）。
+export async function loadTexTexture(url: string, opts?: TexLoadOptions): Promise<THREE.Texture | null> {
   const buf = await fetchWithRetry(url);
   if (!buf) return null;
   const info = parseTex(buf);
