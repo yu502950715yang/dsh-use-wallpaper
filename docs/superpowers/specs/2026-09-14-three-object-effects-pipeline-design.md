@@ -125,8 +125,10 @@ isolate?: {
 
 > **实现偏差（2026-09-14 回写）**：隔离条目的**键 = `scene.json` 的对象 id**（`isolate.objectId`），**不是** player 的图层计数器 id。player 有两个各自从 0 起的图层计数器（背景 / 粒子），用它们作键会让**同一壁纸的隔离 image 与隔离 particle 互相覆盖**（后建覆盖先建 —— 背景的合成 quad 从此采样一张永不被渲染的 RT），且 stage 侧还要维护一层「对象 id → 图层计数器 id」的翻译（脆弱：复制 `loadSceneToThree` 的建层条件与顺序，对侧一改建层逻辑就静默全失效）。因此 `isolatedObjects()[].id` / `setObjectOutput(id, …)` / `resizeObjectRT(id, …)` **收的都是对象 id**，与 `isolate` 表、`ObjectEffectStage` 共用同一把键空间（仓外调用方若按旧的图层计数器 id 传参会静默 no-op）。
 
+> **实现偏差（2026-09-14 真机修复回写）**：`isolate` 的两组尺寸在随后四轮真机 bug 修复里被进一步钉死语义（三条不变量，完整版见 `AGENT.md` §5.15）：① player 的局部正交相机 `left/right/top/bottom` 是**世界坐标范围**，必须覆盖**完整对象世界尺寸**（`Math.abs(worldW/worldH)`，`threejs-player.ts:796-807`）—— 拿 **RT 像素**当范围会让 dpr>1 的屏幕上相机多覆盖 dpr 倍、内容只占 RT 的 1/dpr ⇒ 对象缩小 + 边缘 clamp 拉伸（`076ad36`）；按 `OBJECT_RT_MAX`(4096) 钳制范围会让超限对象（GTR `3743126786` 对象世界宽 7430）只覆盖中央 ⇒ 右侧 22% 画面宽是边缘拉伸带（`ecfcc10`，超限对象的正确代价是「分辨率低」）；② `rtWidth/rtHeight` 的基准必须是**未钳制**的 `world`，**不是** `range`（`3fd6b00`，见 §5.2 的补注）；③ 键仍是 `isolate.objectId`（`scene.json` 对象 id），本节的第二条 `实现偏差` 不变 —— 两套图层计数器 id 不得混入（`threejs-player.ts:766-771, 824-825`）。
+
 - **不传 `isolate`**：行为与今天**逐字相同**（内容直接进 `this.scene`）——零回归，既有 `threejs-player.test.ts` 全部保持。
-- **传 `isolate`**：内容（`Mesh` / 粒子 `Mesh`）挂进新建的 `localScene` + 局部正交相机（范围 = `[-w/2, w/2] × [-h/2, h/2]`，`position.z = CAMERA_DISTANCE`，与主相机同 z 语义），内容自身保持 `(0,0,0)`（对象中心即局部原点）；主 scene 里放一张合成 quad（几何尺寸 = `createCompositeGeometry(worldW, worldH, rtWidth, rtHeight)`，即世界尺寸已含缩放，quad 自身 `scale` 恒为 1）：`position` = 对象中心（世界坐标；背景 = `origin − scene/2`，y 不翻）、`rotation` = 对象 angles（**粒子路径为 `[0,0,0]`，见 §4.4**）；而局部 `localScene` 里的**内容**只保留 `scale`（含负值镜像）、`position` 归零（**粒子为 `-objCenter`，见 §4.4**）、`rotation` 归零（**粒子的 `R(angles)` 由 shader 施加，见 §4.4**）—— 效果因此作用在对象**自身纹理空间**（spec §2.3 论据 b），旋转由合成 quad 施加。`renderOrder` 仍与对象原语义一致（背景 0 / 粒子 1）。
+- **传 `isolate`**：内容（`Mesh` / 粒子 `Mesh`）挂进新建的 `localScene` + 局部正交相机（范围 = `[-w/2, w/2] × [-h/2, h/2]`，**这里的 `w/h` 是「世界尺寸」`worldW/worldH`，不是 RT 像素 —— 见下方真机修复回写**，`position.z = CAMERA_DISTANCE`，与主相机同 z 语义），内容自身保持 `(0,0,0)`（对象中心即局部原点）；主 scene 里放一张合成 quad（几何尺寸 = `createCompositeGeometry(worldW, worldH, rtWidth, rtHeight)`，即世界尺寸已含缩放，quad 自身 `scale` 恒为 1）：`position` = 对象中心（世界坐标；背景 = `origin − scene/2`，y 不翻）、`rotation` = 对象 angles（**粒子路径为 `[0,0,0]`，见 §4.4**）；而局部 `localScene` 里的**内容**只保留 `scale`（含负值镜像）、`position` 归零（**粒子为 `-objCenter`，见 §4.4**）、`rotation` 归零（**粒子的 `R(angles)` 由 shader 施加，见 §4.4**）—— 效果因此作用在对象**自身纹理空间**（spec §2.3 论据 b），旋转由合成 quad 施加。`renderOrder` 仍与对象原语义一致（背景 0 / 粒子 1）。
 
 新增访问器（供 stage 使用）：
 
@@ -182,6 +184,8 @@ stage?.advance(this.elapsedSeconds())      // ← 新增（异步串行，不阻
 
 这是本设计最容易静默出错的一处（错了表现为「粒子整块偏移」或「整块出画」），必须有显式单测（§7）。
 
+> **实现偏差（2026-09-14 真机修复回写）**：本节的两条坐标修正（`mesh.position = -objCenter`、`quadAngles = [0,0,0]` 的旋转分工）在随后四轮真机修复中**未被改动**，仍是现状；真机上后来暴露的「对象缩小 / 边缘 clamp 拉伸」属**局部正交相机范围**的语义问题（§4.1 补注，`076ad36` / `ecfcc10`），与粒子局部原点归零无关 —— 举证见 `.superpowers/sdd/2026-09-14-three-object-effects-pipeline/hidpi-verify-report.md`（GTR 开粒子与抑制粒子两组结论一致，说明该分工不是这几轮修复的变量）。
+
 ## 5. 执行语义、降级与性能预算
 
 ### 5.1 线性判定与降级
@@ -225,6 +229,8 @@ finalW/H    = resolveObjectRtSize(range.w, range.h, dpr, budgetW, budgetH)
 
 > **实现偏差（2026-09-14 回写）**：实际调用签名是 **`resolveObjectRtSize(range.w, range.h, dpr, budgetW, budgetH)`**，第 3 参**必须是 dpr**。`range` 是**场景像素**，**要乘 dpr** 才能与「贴屏缓冲 = 视口 × dpr」同分辨率；`budgetW/budgetH` 是「视口 × dpr」的缓冲像素，作为上限（`three-renderer.ts` 侧算好用 `dpr` 构造 stage，resize 时由 `onViewportResize(budgetW, budgetH)` 更新）。计划文本曾在调用点写死第 3 参为 `1`（等于不乘 dpr）——那会让 dpr=2 的屏幕上对象 RT 只有一半分辨率（效果发糊）且与贴屏不一致，实施时按本节语义订正为 `dpr`。
 
+> **实现偏差（2026-09-14 真机修复回写）**：上面伪码的 `finalW/H = resolveObjectRtSize(range.w, range.h, …)` **是错的**，实际实现传的是**未钳制**的 `world.w/world.h`（`3fd6b00`）：`RT 像素 = resolveObjectRtSize(world.w, world.h, dpr, budgetW, budgetH) = min(world × dpr, 视口 × dpr, 4096)`。用 `range` 会同时错两处 —— ① 比例失真（`7430×4147` 被逐轴钳成 `4096×4096`）；② 分辨率被视口预算收口得更小（实测 `resolveObjectRtSize(4096, 4096, 1, 1280, 720)` = **720×720**，贴回屏幕要放大 1.78× ⇒ 大幅背景壁纸整层明显模糊；改用 `world` 的 `7430×4147` 得 `1280×714`）。`range` 的语义是「相机范围」（且逐轴钳到 4096），而 `ecfcc10` 之后相机直接用**完整** `world`（不钳制）—— 于是 `range` 在 three 主路径里**已无消费者**（`three-renderer.ts:325` / `:349` 只剩历史残留的赋值；`objectCameraRange` / `particleObjectRange` 仍由未接入的 `scene-renderer.ts` 使用）。另：对象 RT 现显式开 **MSAA `{ samples: 4 }`** 与主 canvas 的 `antialias: true` 对齐（`threejs-player.ts:788-795`）——**如实标注**：该改动**未在真机验证**，且在 headless（SwiftShader）下**实测测不出差别**（同一提交的代码注释里那条锐度对照是「有隔离 / 无隔离」，即隔离会丢 AA 的证据，**不是** `samples: 4` 生效的证据）。
+
 **等比缩放而非逐轴独立 clamp**：逐轴独立会把 `8192×4608` 压成 `4096×4096`，破坏依赖 aspect 的效果（竞品 `docs/perf-audit-2026-08-29.md` 记录的真实事故 N-06）。
 
 预算随视口变化（`resize` / `setSceneSize`）时，由 stage 重算并调用 `player.resizeObjectRT(id, w, h)`；`uvWindow` / `createCompositeGeometry` 负责把钳制轴映射回未钳制的世界尺寸（`blurprecise` 类大对象不会因钳制而「缩小摆放」）。
@@ -258,6 +264,8 @@ finalW/H    = resolveObjectRtSize(range.w, range.h, dpr, budgetW, budgetH)
 | `colorBlendMode ∈ {6,7,31}` 且带 effects | 该对象**不进隔离路径**（RT alpha 语义冲突，§5.3/§9）：效果不生效、对象保持可见 + 一次 `warnOnce` |
 | 效果挂在 util / 音频等不参与渲染的对象类型 | 解析但不挂链（无隔离条目），**每张壁纸一条汇总 `warn`**（`N 条效果挂在未参与渲染的对象类型上（util/音频），已跳过`） |
 | 无 effects 的壁纸 | `stage` 为 null，帧序与今天完全一致（零回归路径） |
+
+> **实现偏差 / 遗留（2026-09-14 真机修复回写）**：本表的降级行有两条需要在真机语境下补读：① `colorBlendMode ∈ {6,7,31}` 且带 effects 的对象「不进隔离 ⇒ 效果不生效」这一行，**全库有真实可见的受害者** —— GTR `3743126786` 的 `Clouds Back`（cbm=7，挂 `scroll` / `waterripple` / `opacity`）就是该组合，真机现象是**云不滚动**（桌面 WE 上云向左滚）；当前取舍口径是「**保可见、牺牲效果**」，**根本修法**是重定隔离语境下的 alpha 语义（内容材质正常写自身 alpha、`ApplyBlending` 的读帧缓冲语义交给合成 quad），见 §9 与 §10.6；② 本表的「降级不画错」在验证层面仍有一条漏洞：**e2e harness 与生产装配路径不一致**（它额外调用 `stage.onViewportResize`，按 stage 自己的 `world` 重算 RT，从而覆盖掉挂载期算错的初始 RT 尺寸），正是 `3fd6b00` 那次「e2e 全绿而真机模糊」漏检的原因，见 §10.7 与 `AGENT.md` §7.12。
 
 ## 7. 测试策略与验收
 
@@ -340,3 +348,5 @@ finalW/H    = resolveObjectRtSize(range.w, range.h, dpr, budgetW, budgetH)
 3. **headless Edge 的 WebGL 走 SwiftShader**（AGENT.md §7.10），性能数据需在真实 GPU 上复核；
 4. **`refraction` 归类为线性链**（2 pass、无 target/bind）是按 `previous` 默认语义判定，需在 M4 用真实壁纸验证；若实测异常则移入 P2 并记录；
 5. **文档与代码不一致的历史包袱**：AGENT.md §5.10 原记 `OBJECT_RT_MAX=2048`，代码实为 **4096**（`effect.rs:225`、`object-range.ts:15`）——本文档以代码为准。**2026-09-14 已订正** AGENT.md §5.10（并注明 wasm 侧与 three 侧同为 4096）。
+6. **`colorBlendMode ∈ {6,7,31}` 的对象仍被排除在效果隔离之外 ⇒ 其效果不生效（2026-09-14 真机修复回写）**：守卫「保可见、牺牲效果」的可见后果首次被真机确认为 **GTR `3743126786` 的 `Clouds Back`（cbm=7，挂 `scroll` / `waterripple` / `opacity`）—— 云不会滚动**（桌面 WE 上云向左滚；`2832263418` / `2460786246` 的同组合对象没有可肉眼归因的效果）。根本修法是重定**隔离语境下的 alpha 语义**（内容材质正常写自身 alpha、混合交给合成 quad），而不是继续排除隔离；在那之前这条缺口按「效果缺失但对象可见」如实计入遗留（§4.1 / §6 补注 / §9 / `AGENT.md` §7.1）。
+7. **e2e harness 未走与生产逐字相同的装配路径（2026-09-14 真机修复回写）**：`research/verify-hidpi-object-rt.mjs`（入口 `research/harness-object-effects-entry.mjs`）import 的是生产入口 `createThreeSceneRenderer`，但它在页面就绪后**显式多调一次** `window.__fxApplyViewport()` → `stage.onViewportResize(VW × dpr, VH × dpr)`；该路径按 stage 自己持有的**未钳制** `worldW/worldH` 重算 RT（`object-effects.ts:188-211`），于是 **`three-renderer` 挂载期算错的那次初始尺寸被覆盖** ⇒ e2e 全绿而真机模糊（`3fd6b00` 的 `range` vs `world` 缺陷就是这样漏检的）。待改为不额外补 `onViewportResize`（或把断言钉在挂载期 RT 尺寸上）。（脚本在 gitignore 的 `research/` 下，改动不入提交；口径与 `AGENT.md` §7.12 一致。）
