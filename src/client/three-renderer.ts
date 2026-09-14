@@ -55,10 +55,6 @@ function warnOnce(key: string, message: string): void {
   console.warn(`[wallpaper-engine] ${message}`);
 }
 
-// 与「对象级 RT」alpha 语义冲突的 colorBlendMode（= WE 已实现的那三个，见 threejs-player 的
-// colorBlendModeToThree）：这些对象**不走隔离路径**（理由见 render() 内 isolate 计算处的守卫注释）。
-const BLEND_ISOLATION_UNSAFE = new Set([6, 7, 31]);
-
 // 粒子混合模式：**优先读材质 json 的 `passes[0].blending`**（WE 权威字段），缺失时才回退按
 // 材质名启发式（对齐 wasm `BlendMode::from_material`）。
 //
@@ -262,10 +258,6 @@ export function createThreeSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneR
           number,
           { objectId: number; rtWidth: number; rtHeight: number; worldW: number; worldH: number }
         >();
-        // 因 colorBlendMode 与对象级 RT 的 alpha 语义冲突而**主动跳过隔离**的对象（见下）。这些
-        // 对象仍照常参与渲染（只是没有隔离条目），故不并入下面「挂在未参与渲染的对象上」的汇总
-        // 告警——两者原因不同、各自告警一次，混在一起会指向错误的排查方向。
-        const blendSkipped = new Set<number>();
         // 链**全为具名 RT 图链**、因而不隔离的对象（见下）。它们照常渲染，只是没有隔离条目、
         // 效果整条跳过（观感与不隔离相同）——既不属于「挂在未参与渲染的对象类型上」，也不该
         // 因为省掉隔离而丢掉「具名 RT 未实现，跳过」这条降级告警（诊断不得静默）。
@@ -274,20 +266,6 @@ export function createThreeSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneR
           const chains = effectChains.get(obj.id);
           // 无链 → 与收紧前逐字一致的早退（effectChains 只在链非空时入表）。
           if (!chains || chains.length === 0) continue;
-          // colorBlendMode ∈ {6,7,31} 的混合语义是「读当前帧缓冲、按自己的 alpha 与之混合」，其内容材质
-          // 把结果 alpha 钉成「背景的 alpha」（blendSrcAlpha=Zero / blendDstAlpha=One）。对象级 RT 里没有
-          // 「背景」，RT 清屏 alpha=0 ⇒ RT alpha 恒 0 ⇒ 合成 quad 的片元被乘成 0，对象会整体不可见。
-          // 改动前这类对象在 three 路径下是「效果不生效但对象可见」；为避免把可见变成不可见，
-          // 对该组合**不走隔离路径**（效果仍不生效，与改动前一致），并告警一次。根本修法留 P2。
-          // ⚠️ 本守卫必须在下面的「有无可执行链」判定**之前**：它的理由与链能不能执行无关，且不许因为
-          // 「链恰好全是具名 RT 图链」而丢掉这条告警（收紧准入不得改守卫语义）。
-          if (obj.kind === 'image'
-            && typeof obj.colorBlendMode === 'number' && BLEND_ISOLATION_UNSAFE.has(obj.colorBlendMode)) {
-            warnOnce(`blend-isolation:${obj.id}`,
-              `对象 ${obj.id} 的 colorBlendMode=${obj.colorBlendMode} 与对象级 RT 的 alpha 语义冲突，跳过其效果链（对象保持可见）`);
-            blendSkipped.add(obj.id);
-            continue;
-          }
           // 只有能被执行的链才值得隔离：链全为具名 RT 图链时会整条跳过（setObjectChains 不建 runner），
           // 此时对象 RT 的显存与每帧一次额外渲染完全没有收益，观感也与不隔离相同。
           const usable = chains.some((one) => isLinearEffectChain(one));
@@ -387,10 +365,9 @@ export function createThreeSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneR
         let stage: ObjectEffectStage | null = null;
         let droppedEffects = 0;
         for (const [objId, chains] of effectChains) {
-          // blendSkipped 的已单独告警（colorBlendMode 冲突），不并入本条汇总。
-          // rtGraphOnly 的也已单独告警（具名 RT 未实现）；它们**照常渲染**（只是不隔离），
+          // rtGraphOnly 的已单独告警（具名 RT 未实现）；它们**照常渲染**（只是不隔离），
           // 原因不是「对象不参与渲染」，并入本条会把排查方向指向错误的类型。
-          if (isolate.has(objId) || blendSkipped.has(objId) || rtGraphOnly.has(objId)) continue;
+          if (isolate.has(objId) || rtGraphOnly.has(objId)) continue;
           droppedEffects += chains.length;
         }
         if (droppedEffects > 0) {

@@ -580,13 +580,14 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     r.dispose();
   });
 
-  // 修 3：colorBlendMode ∈ {6,7,31} 的对象**不走隔离路径**。
-  // 这类模式的混合语义是「读当前帧缓冲、按自己的 alpha 与之混合」，其内容材质把结果 alpha 钉成
-  // 「背景的 alpha」（blendSrcAlpha=Zero / blendDstAlpha=One）；对象级 RT 里没有「背景」、清屏
-  // alpha=0 ⇒ RT alpha 恒 0 ⇒ 合成 quad 的片元被乘成 0，对象整体不可见。改动前这类对象在 three
-  // 路径下是「效果不生效但对象可见」——宁可效果仍不生效（与改动前一致，无回归），也不能把可见
-  // 变成不可见。根本修法（隔离语境下的 alpha 语义）留 P2。
-  it('colorBlendMode=7 的对象不走隔离路径（对象保持可见），普通对象照常隔离', async () => {
+  // 2026-09-14（云不滚动修复）：colorBlendMode ∈ {6,7,31} 的对象**照常进隔离路径**。
+  // 旧守卫的来由：这类模式的混合语义是「读当前帧缓冲、按自己的 alpha 与之混合」，内容材质把结果
+  // alpha 钉成「背景的 alpha」（blendSrcAlpha=Zero / blendDstAlpha=One）；对象级 RT 里没有「背景」、
+  // 清屏 alpha=0 ⇒ RT alpha 恒 0 ⇒ 合成 quad 的片元被乘成 0，对象整体不可见 —— 当年的取舍是
+  // 「保可见、牺牲效果」（GTR 3743126786 的云因此不滚动）。
+  // 现在混合语义整体搬到**合成 quad**（内容材质在隔离路径不套 cb，只把自己的颜色/alpha 写进 RT），
+  // 于是对象可见 **且** 效果生效，守卫已整体删除（回归：GTR 的 Clouds Back obj 246 云滚动）。
+  it('colorBlendMode=7 的对象照常进隔离路径（效果生效且对象可见），普通对象同样隔离', async () => {
     stubAssetFetch(sceneWith([
       {
         id: 13, name: 'bg', image: 'models/a.json',
@@ -616,14 +617,14 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     expect(ok).toBe(true);
 
     const assets = loadSceneToThree.mock.calls[0][1];
-    // 冲突对象不隔离（由 player 走非隔离路径照常画进主场景 → 可见），也不挂链；普通对象照常隔离。
-    expect(assets.isolate.has(246)).toBe(false);
+    // 两个对象都隔离、都挂链（顺序 = scene.json objects 顺序）。
+    expect(assets.isolate.has(246)).toBe(true);
     expect(assets.isolate.get(13)).toBeTruthy();
-    expect(worldSpy.mock.calls.map((c) => c[0])).toEqual([13]);
-    expect(chainsSpy.mock.calls.map((c) => c[0])).toEqual([13]);
-    // 告警一次，明确说明「效果跳过、对象保持可见」（诊断可见，不静默）。
-    expect(warn.mock.calls.some((c) => String(c[0]).includes('colorBlendMode=7'))).toBe(true);
-    // 且**不**计入「挂在未参与渲染的对象类型上」的汇总告警：该对象照常渲染，只是没进隔离路径。
+    expect(worldSpy.mock.calls.map((c) => c[0])).toEqual([13, 246]);
+    expect(chainsSpy.mock.calls.map((c) => c[0])).toEqual([13, 246]);
+    // 旧的「colorBlendMode 与对象级 RT alpha 语义冲突」告警整体消失（守卫已删）。
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('colorBlendMode='))).toBe(false);
+    // 也不计入「挂在未参与渲染的对象类型上」的汇总告警。
     expect(warn.mock.calls.some((c) => String(c[0]).includes('未参与渲染'))).toBe(false);
 
     worldSpy.mockRestore();
@@ -635,7 +636,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
   // F2（终审 I2）：isolate 准入从「有链」收紧为「至少有一条线性链」。链**全为具名 RT 图链**时
   // `setObjectChains` 整条跳过（不建 runner），对象 RT 的显存与每帧一次额外渲染 + 一次 RT 切换
   // 完全没有收益，而 quad 永远采样 RT 原图 ⇒ 隔离没有额外视觉收益（纯浪费）。
-  it('链全为具名 RT 图链的对象不进 isolate；线性对象与 colorBlendMode 守卫不受影响', async () => {
+  it('链全为具名 RT 图链的对象不进 isolate；线性对象（含 colorBlendMode=7）照常隔离', async () => {
     stubAssetFetch(sceneWith([
       {
         id: 13, name: 'rtgraph', image: 'models/a.json',
@@ -673,12 +674,12 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     const assets = loadSceneToThree.mock.calls[0][1];
     // ① 具名 RT 图链对象不隔离（不再为注定被跳过的链白付一张 3840×2160 对象 RT + 每帧额外渲染）；
     // ② 线性链对象照常隔离挂链（收紧准入不得误伤正常对象）；
-    // ③ colorBlendMode ∈ {6,7,31} 的守卫逐字不变（仍然不隔离、仍然单独告警）。
+    // ③ colorBlendMode ∈ {6,7,31} 的对象同样隔离（旧守卫已删，混合语义搬到合成 quad）。
     expect(assets.isolate.has(13)).toBe(false);
     expect(assets.isolate.has(60)).toBe(true);
-    expect(assets.isolate.has(246)).toBe(false);
-    expect(worldSpy.mock.calls.map((c) => c[0])).toEqual([60]);
-    expect(chainsSpy.mock.calls.map((c) => c[0])).toEqual([60]);
+    expect(assets.isolate.has(246)).toBe(true);
+    expect(worldSpy.mock.calls.map((c) => c[0])).toEqual([60, 246]);
+    expect(chainsSpy.mock.calls.map((c) => c[0])).toEqual([60, 246]);
     // 降级告警仍在（收紧准入不等于让「效果被跳过」在诊断上消失），且带上具名 RT 标识；
     // 也不并入「挂在未参与渲染的对象类型上」的汇总告警——该对象照常渲染，原因不同。
     const rtGraph = warn.mock.calls.filter((c) => String(c[0]).includes('效果需要具名 RT'));

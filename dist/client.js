@@ -20915,7 +20915,7 @@ var ThreeScenePlayer = class {
     const h = opts.size?.[1] ?? opts.texture?.image?.height ?? 1;
     const geometry = new PlaneGeometry(w, h);
     const mod = materialModulation(void 0, opts.alpha, opts.brightness);
-    const material = this.createLayerMaterial(opts.texture ?? null, opts.colorBlendMode ?? 0, mod);
+    const material = this.createLayerMaterial(opts.texture ?? null, opts.colorBlendMode ?? 0, mod, !!opts.isolate);
     const mesh = new Mesh(geometry, material);
     mesh.renderOrder = 0;
     const s = opts.scale;
@@ -20955,8 +20955,8 @@ var ThreeScenePlayer = class {
   // 图层材质（**内容**材质）：colorBlendMode 已实现（6/7/31）→ 预乘 ShaderMaterial +
   // CustomBlending（复刻 WE 的 ApplyBlending）；否则 MeshBasicMaterial（普通 alpha 混合）。
   // 隔离对象的合成 quad **不**用它，而用 createCompositeQuadMaterial（见该方法注释）。
-  createLayerMaterial(texture, colorBlendMode, mod) {
-    const cb = colorBlendModeToThree(colorBlendMode);
+  createLayerMaterial(texture, colorBlendMode, mod, forIsolation = false) {
+    const cb = forIsolation ? null : colorBlendModeToThree(colorBlendMode);
     if (cb) {
       return new ShaderMaterial({
         uniforms: {
@@ -20989,36 +20989,36 @@ var ThreeScenePlayer = class {
     return basic;
   }
   // 合成 quad 的材质：只负责「把对象 RT 的像素采样回主场景」。
-  // ⚠️ 两点关键（都是踩过的坑）：
+  // ⚠️ 三点关键（都是踩过的坑）：
   //   ① 必须独立构造，**不能 clone 内容材质**——粒子对象的内容材质是 InstancedBufferGeometry
   //      专用的 billboard shader（依赖逐实例属性），普通 PlaneGeometry 没有这些属性会让
   //      alpha 恒为 0（粒子隔离后完全不可见）；
   //   ② **不再二次施加** alpha/brightness/color 调制——内容 mesh 的材质已把调制烘进 RT
   //      （scene-renderer.ts 的既有结论），clone 后再乘一次会让 alpha=0.5 变成 0.25。
-  // colorBlendMode 分支保留：混合语义本就发生在「贴回画面」这一步。
+  //   ③ **统一用 MeshBasicMaterial**（不再用内容那套预乘 ShaderMaterial）：本 quad 采样的是
+  //      对象 RT，而 RT 是非预乘语义的普通 alpha 写入（内容材质在隔离路径不套 cb），
+  //      若再用预乘 shader 会把 rgb 二次乘 alpha（× a²，见 createLayerMaterial 注释）。
+  // WE 的 `ApplyBlending` 语义用 three 的 CustomBlending 因子**在合成这一步**复刻
+  // （与内容材质同一套因子），alpha 仍取背景的（`gl_FragColor.a = screen.a` ⇒ Zero/One）。
+  // 背景对象带非零 angles 时 quad 承载旋转，超过 90° 的旋转会翻转三角形绕序 —— 与内容材质
+  // （原 cb 分支用 DoubleSide）保持一致用 DoubleSide，避免旋转到背面时整块被背面剔除掉。
   createCompositeQuadMaterial(texture, colorBlendMode) {
+    const mat = new MeshBasicMaterial({
+      map: texture,
+      transparent: true,
+      depthWrite: false,
+      side: DoubleSide
+    });
     const cb = colorBlendModeToThree(colorBlendMode);
     if (cb) {
-      return new ShaderMaterial({
-        uniforms: {
-          map: { value: texture },
-          tint: { value: new Vector3(1, 1, 1) },
-          opacity: { value: 1 }
-        },
-        vertexShader: COLOR_BLEND_VERTEX_SHADER,
-        fragmentShader: COLOR_BLEND_FRAGMENT_SHADER,
-        transparent: true,
-        depthWrite: false,
-        side: DoubleSide,
-        blending: CustomBlending,
-        blendEquation: cb.blendEquation,
-        blendSrc: cb.blendSrc,
-        blendDst: cb.blendDst,
-        blendSrcAlpha: ZeroFactor,
-        blendDstAlpha: OneFactor
-      });
+      mat.blending = CustomBlending;
+      mat.blendEquation = cb.blendEquation;
+      mat.blendSrc = cb.blendSrc;
+      mat.blendDst = cb.blendDst;
+      mat.blendSrcAlpha = ZeroFactor;
+      mat.blendDstAlpha = OneFactor;
     }
-    return new MeshBasicMaterial({ map: texture, transparent: true, depthWrite: false });
+    return mat;
   }
   // 建立对象隔离条目：RT + 局部正交相机 + localScene + 主场景合成 quad。
   // localCamera 范围 = RT 分辨率（对象中心为原点，与场景像素 1:1）；合成 quad 用
@@ -24130,7 +24130,6 @@ function warnOnce2(key, message) {
   warnedKeys.add(key);
   console.warn(`[wallpaper-engine] ${message}`);
 }
-var BLEND_ISOLATION_UNSAFE = /* @__PURE__ */ new Set([6, 7, 31]);
 function particleBlend(blending, specText) {
   if (typeof blending === "string" && blending) {
     return /^(add|additive)$/i.test(blending.trim()) ? "additive" : "alpha";
@@ -24253,19 +24252,10 @@ function createThreeSceneRenderer(opts) {
         const budgetW = Math.floor(vw * dpr);
         const budgetH = Math.floor(vh * dpr);
         const isolate = /* @__PURE__ */ new Map();
-        const blendSkipped = /* @__PURE__ */ new Set();
         const rtGraphOnly = /* @__PURE__ */ new Set();
         for (const obj of desc.objects) {
           const chains = effectChains.get(obj.id);
           if (!chains || chains.length === 0) continue;
-          if (obj.kind === "image" && typeof obj.colorBlendMode === "number" && BLEND_ISOLATION_UNSAFE.has(obj.colorBlendMode)) {
-            warnOnce2(
-              `blend-isolation:${obj.id}`,
-              `\u5BF9\u8C61 ${obj.id} \u7684 colorBlendMode=${obj.colorBlendMode} \u4E0E\u5BF9\u8C61\u7EA7 RT \u7684 alpha \u8BED\u4E49\u51B2\u7A81\uFF0C\u8DF3\u8FC7\u5176\u6548\u679C\u94FE\uFF08\u5BF9\u8C61\u4FDD\u6301\u53EF\u89C1\uFF09`
-            );
-            blendSkipped.add(obj.id);
-            continue;
-          }
           const usable = chains.some((one) => isLinearEffectChain(one));
           if (!usable) {
             if (obj.kind === "image" || obj.kind === "particle" && particles.has(obj.id)) {
@@ -24325,7 +24315,7 @@ function createThreeSceneRenderer(opts) {
         let stage = null;
         let droppedEffects = 0;
         for (const [objId, chains] of effectChains) {
-          if (isolate.has(objId) || blendSkipped.has(objId) || rtGraphOnly.has(objId)) continue;
+          if (isolate.has(objId) || rtGraphOnly.has(objId)) continue;
           droppedEffects += chains.length;
         }
         if (droppedEffects > 0) {

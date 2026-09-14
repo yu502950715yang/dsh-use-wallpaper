@@ -1283,7 +1283,7 @@ describe('ThreeScenePlayer 对象隔离', () => {
     expect(particleEntry.rt.width).toBe(8);
   });
 
-  it('setObjectOutput 切换合成 quad 的采样源（MeshBasicMaterial 与 ShaderMaterial 两条路径）', () => {
+  it('setObjectOutput 切换合成 quad 的采样源（MeshBasicMaterial 路径；cb 混合仍落在 quad 上）', () => {
     const { player } = makePlayer();
     const texA = makeTexture();
     const texB = makeTexture();
@@ -1301,20 +1301,68 @@ describe('ThreeScenePlayer 对象隔离', () => {
     player.setObjectOutput(102, texB);
     const entryBasic = player.isolatedObjects().find((e) => e.id === 101)!;
     const entryBlend = player.isolatedObjects().find((e) => e.id === 102)!;
+    // 两条路径现在**都是 MeshBasicMaterial**（合成 quad 采样的是非预乘的对象 RT，禁用内容那套
+    // 预乘 shader，见 createCompositeQuadMaterial 注释）。
+    expect(entryBasic.quad.material).toBeInstanceOf(THREE.MeshBasicMaterial);
+    expect(entryBlend.quad.material).toBeInstanceOf(THREE.MeshBasicMaterial);
     const basic = entryBasic.quad.material as THREE.MeshBasicMaterial;
-    const blend = entryBlend.quad.material as THREE.ShaderMaterial;
+    const blend = entryBlend.quad.material as THREE.MeshBasicMaterial;
     expect(basic.map).toBe(texB);
-    expect(blend.uniforms.map.value).toBe(texB);
-    // 合成 quad 材质独立于内容材质（colorBlendMode 路径同样是独立构造，不 clone 内容材质）；
-    // 内容材质仍带原有调制（此处无调制 → tint 中性，但对象不同即证明未共用同一实例）。
+    expect(blend.map).toBe(texB);
+    // 合成 quad 材质独立于内容材质（不 clone 内容材质）；内容材质仍带原有调制。
     const contentBlend = entryBlend.localScene.children[0] as THREE.Mesh;
     expect(blend).not.toBe(contentBlend.material);
     expect(entryBasic.quad.material).not.toBe((entryBasic.localScene.children[0] as THREE.Mesh).material);
-    expect(blend.uniforms.tint.value.toArray()).toEqual([1, 1, 1]);
-    expect(blend.uniforms.opacity.value).toBe(1);
+    // 合成 quad 调制中性（不二次施加 alpha/brightness）。
+    expect([blend.color.r, blend.color.g, blend.color.b]).toEqual([1, 1, 1]);
+    expect(blend.opacity).toBe(1);
     // colorBlendMode=7（Screen）必须落在合成这一步：CustomBlending + OneMinusDstColor
     expect(blend.blending).toBe(THREE.CustomBlending);
     expect(blend.blendSrc).toBe(THREE.OneMinusDstColorFactor);
+    expect(blend.blendDst).toBe(THREE.OneFactor);
+    // alpha 按 WE 保留背景的（gl_FragColor.a = screen.a）。
+    expect(blend.blendSrcAlpha).toBe(THREE.ZeroFactor);
+    expect(blend.blendDstAlpha).toBe(THREE.OneFactor);
+    // 无 cb 的合成 quad 仍是普通 alpha 混合。
+    expect(basic.blending).toBe(THREE.NormalBlending);
+  });
+
+  // 2026-09-14：WE 的 colorBlendMode 混合语义从「内容材质」搬到「合成 quad」。
+  // 隔离内容渲染到**新清空的 RT**（alpha=0），若内容材质仍套 cb 的 Zero/One alpha 因子会得到
+  // 「保持背景的 alpha」= 恒 0 ⇒ 合成 quad 的预乘片元被乘成 0 ⇒ 对象整体不可见（旧的
+  // 守卫就是因为这个把 cb 对象排除在隔离之外，代价是 GTR 的云不滚动）。
+  // 现在：内容材质只把自己的颜色 + alpha 写进 RT（普通 alpha 混合，不套 cb）。
+  it('隔离内容材质不套 colorBlendMode（把自己的颜色/alpha 写进 RT，由合成 quad 承担混合）', () => {
+    const { player } = makePlayer();
+    player.addBackground({
+      origin: [0, 0, 0], size: [10, 10], scale: [1, 1, 1], texture: makeTexture(), colorBlendMode: 7,
+      sceneW: 100, sceneH: 100, isolate: { objectId: 103, rtWidth: 10, rtHeight: 10, worldW: 10, worldH: 10 },
+    });
+    const entry = player.isolatedObjects().find((e) => e.id === 103)!;
+    const content = entry.localScene.children[0] as THREE.Mesh;
+    // 内容材质不是预乘 cb shader（隔离路径 forIsolation=true）。
+    expect(content.material).not.toBeInstanceOf(THREE.ShaderMaterial);
+    expect(content.material).toBeInstanceOf(THREE.MeshBasicMaterial);
+    const contentMat = content.material as THREE.MeshBasicMaterial;
+    // 普通 alpha 混合（three 缺省 NormalBlending + 缺省 alpha 因子：SrcAlpha / OneMinusSrcAlpha）。
+    expect(contentMat.blending).toBe(THREE.NormalBlending);
+    expect(contentMat.blendSrcAlpha).toBeNull();
+    expect(contentMat.blendDstAlpha).toBeNull();
+  });
+
+  it('非隔离的 colorBlendMode=7 内容材质**仍**套 cb（主路径语义不变）', () => {
+    const { player } = makePlayer();
+    player.addBackground({
+      origin: [0, 0, 0], size: [10, 10], scale: [1, 1, 1], texture: makeTexture(), colorBlendMode: 7,
+      sceneW: 100, sceneH: 100,
+    });
+    const mesh = player.scene.children[0] as THREE.Mesh;
+    const mat = mesh.material as THREE.ShaderMaterial;
+    expect(mat).toBeInstanceOf(THREE.ShaderMaterial);
+    expect(mat.blending).toBe(THREE.CustomBlending);
+    expect(mat.blendSrc).toBe(THREE.OneMinusDstColorFactor);
+    expect(mat.blendSrcAlpha).toBe(THREE.ZeroFactor);
+    expect(mat.blendDstAlpha).toBe(THREE.OneFactor);
   });
 
   it('帧钩子按序调用：隔离内容渲染 → bindOutputs → 主场景渲染 → advance', () => {
