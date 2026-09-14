@@ -73,23 +73,33 @@ cd wasm && cargo test     # Rust native 单测（无 render feature，跑解析/
 
 ## 3. 本地集成到 DSH profile
 
-profile（如 `%USERPROFILE%\.dsh\profiles\web`）通过 `file:` 依赖引用本包，且是**快照复制**。改代码后可靠地刷新到 profile：
+在**仓库根**执行（`dsh plugin` 会把相对路径锚定到调用目录，所以在别处执行会指向错的路径）：
+
+```bash
+dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
+```
+
+`dsh plugin` 转发给 profile 目录的 pnpm，之后**自动**把本包追加进 `dsh.profile.bundles`（本包声明了 `dsh.bundle`）——**不要**手改 profile 的 `package.json`，也不要往 profile `cordis.patch.yml` 插条目（重复 insert 报 `duplicate loader entry id`）。
+
+`link:` 是**符号链接**（不是 `file:` 快照复制），所以构建产物直接生效：
+
+```powershell
+$i = Get-Item "$env:USERPROFILE\.dsh\profiles\web\node_modules\@dsh-use\wallpaper-engine"
+$i.LinkType   # 期望 SymbolicLink / Junction；为空 = 落成实体副本，改用下方兜底复制
+```
+
+**改代码后如何生效**：
+
+> - host 侧（`lib/`）→ 需**重启 `dsh web`**：host 侧 HMR `@deepseek-ai/cordis-plugin-hmr` 在 `dsh-base` 里默认 `disabled: true`（*opt-in per profile*）。
+> - client 侧（`dist/`）→ **自动热重载**：web profile 始终挂载 `@deepseek-ai/dsh-client-hmr`，每 500ms 轮询每个 client bundle 的 `mtime`/`size`，变化即经 SSE `/plugins/events` 通知浏览器加载新 bundle——无需重启，通常也不用手动强刷。
+
+**兜底（HMR 未生效 / 安装落成实体副本）**：
 
 ```powershell
 $src = "E:\code\dsh-use-wallpaper"
 $dst = "$env:USERPROFILE\.dsh\profiles\web\node_modules\@dsh-use\wallpaper-engine"
 Copy-Item "$src\lib\*"  "$dst\lib\"  -Recurse -Force
 Copy-Item "$src\dist\*" "$dst\dist\" -Recurse -Force
-```
-
-> - host 侧（`lib/`）改代码需要**重启 `dsh web`** 生效。
-> - client 侧（`dist/client.js`）**刷新页面**即可（浏览器可能需强刷；路由带 rev hash）。
-
-或者用 `dsh plugin` 快捷方式安装到 profile：
-
-```bash
-dsh plugin --profile web add "@dsh-use/wallpaper-engine@file:E:/code/dsh-use-wallpaper"
-dsh plugin --profile web install
 ```
 
 ---

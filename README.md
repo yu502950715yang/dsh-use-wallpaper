@@ -78,13 +78,21 @@
 
 插件为**单包仓库**，仓库根 `package.json` 声明 `dsh.bundle`（`cordis.patch.yml` 自动注册）与 `dsh.client`。构建产物 `lib/`、`dist/` 已随仓库提交，安装时无需本地构建。
 
-### 方式一：本地开发调试（`file:`，推荐本地改码）
+### 方式一：本地开发调试（`link:` 符号链接，推荐本地改码）
 
-在 DSH 的 `web` profile 目录（如 `C:\Users\<user>\.dsh\profiles\web`）执行：
+**在本仓库根目录**执行（`link:.` 会被 `dsh plugin` 锚定到当前目录，所以在别处执行会指向错的路径）：
 
 ```bash
-pnpm add "@dsh-use/wallpaper-engine@file:E:/code/dsh-use-wallpaper"
-pnpm install
+dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
+```
+
+`dsh plugin` 把参数转发给 profile 目录下的 pnpm，随后**自动**把声明了 `dsh.bundle` 的依赖追加进 `dsh.profile.bundles`——因此**不需要**手改 profile 的 `package.json`，也**不要**手动往 profile `cordis.patch.yml` 插条目（重复 insert 会报 `duplicate loader entry id`）。
+
+`link:` 会在 profile 的 `node_modules` 里创建**符号链接**而非快照副本，所以 `lib/`、`dist/` 重新构建后 profile 立即读到新产物，无需再手动复制（对比：`file:` 依赖在旧版 pnpm 下是快照复制，那才是「改代码不生效」的来源）：
+
+```powershell
+$i = Get-Item "$env:USERPROFILE\.dsh\profiles\web\node_modules\@dsh-use\wallpaper-engine"
+$i.LinkType   # 期望 SymbolicLink / Junction；若为空说明落成了实体副本，按下方「兜底」复制产物
 ```
 
 ### 方式二：从 GitHub 安装（推荐分发）
@@ -102,7 +110,14 @@ dsh plugin --profile web install
 dsh plugin --profile web add "@dsh-use/wallpaper-engine"
 ```
 
-**改代码后刷新到 profile**：profile 以 `file:` 快照复制，pnpm 通常不刷新；可靠方式是把构建产物复制进 profile：
+**改代码后如何生效**（`link:` 模式下**无需**再复制产物）：
+
+- **client 侧（`dist/`）→ 通常自动热重载，不用重启**：Web profile 始终挂载 `@deepseek-ai/dsh-client-hmr`（`dsh-web-app/cordis.patch.yml` 的 `client-hmr` 行，注释写明 *always mounted*）。它每 500ms stat 轮询每个 client bundle 的 `mtime`/`size`，一旦发现被重写就调用 `clientModules.rebuilt(id)` 重算 rev，再经 SSE `/plugins/events` 推 `rebuilt` 帧，浏览器半接收后加载新 bundle。所以 `pnpm run build:client` 写完文件，页面会自动换到新代码（`/plugins` 响应虽带 `Cache-Control: immutable`，但 URL 里的 `rev` 随内容变化，不会命中陈旧字节）。
+- **host 侧（`lib/`）→ 必须重启 `dsh web`**：host 侧模块热重载 `@deepseek-ai/cordis-plugin-hmr` 在 `dsh-base` 中标了 `disabled: true`（*Module reload is opt-in per profile*），默认不生效。
+
+> 早先「改 client 也必须重启」的结论源自 `file:` **快照复制**：那时重建仓库的 `dist/` 不会改写 profile 里的副本，轮询看不到 `mtime` 变化，重载链自然不触发。换成 `link:` 后这条限制消失。
+
+**兜底（HMR 未生效时）**：SSE 断开、页面没打开、或安装落成了实体副本时，手动复制产物：
 
 ```powershell
 $src = "E:\code\dsh-use-wallpaper"
@@ -111,7 +126,7 @@ Copy-Item "$src\lib\*"  "$dst\lib\"  -Recurse -Force
 Copy-Item "$src\dist\*" "$dst\dist\" -Recurse -Force
 ```
 
-> **⚠️ 客户端 bundle 必须重启 DSH**：DSH 在插件激活时把 `dist/client.js` 一次性读入内存快照，`/plugins` 响应带 `Cache-Control: immutable`——**只刷新浏览器不够**，需**重启 `dsh web` 进程** + 浏览器强刷（Ctrl+Shift+R）才会命中新 bundle。
+然后**重启 `dsh web`** + 浏览器强刷（Ctrl+Shift+R）。
 
 ---
 
