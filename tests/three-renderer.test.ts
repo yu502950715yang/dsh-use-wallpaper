@@ -634,7 +634,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
 
   // F2（终审 I2）：isolate 准入从「有链」收紧为「至少有一条线性链」。链**全为具名 RT 图链**时
   // `setObjectChains` 整条跳过（不建 runner），对象 RT 的显存与每帧一次额外渲染 + 一次 RT 切换
-  // 完全没有收益，而 quad 永远采样 RT 原图 ⇒ 观感与不隔离逐像素相同（纯浪费）。
+  // 完全没有收益，而 quad 永远采样 RT 原图 ⇒ 隔离没有额外视觉收益（纯浪费）。
   it('链全为具名 RT 图链的对象不进 isolate；线性对象与 colorBlendMode 守卫不受影响', async () => {
     stubAssetFetch(sceneWith([
       {
