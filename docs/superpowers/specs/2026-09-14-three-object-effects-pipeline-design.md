@@ -95,12 +95,11 @@ RT 图链的结构实例（`effect.json` 原文）：
 依赖方向：`three-renderer.ts` → `object-effects.ts` → { `object-range.ts`, `effect-runner.ts`, `shader/effect-chain.ts` }；`threejs-player.ts` **不 import** `object-effects.ts`（player 只认识下面这个小接口）。
 
 ```ts
-// threejs-player.ts 内的接口（stage 由外部注入，player 不依赖其实现）
+// 隔离内容的渲染（setRenderTarget + render(localScene, localCamera)）由 player 自己完成，
+// 因为它拥有 scene/camera；stage 只负责「输出绑定」与「链推进」两件事。
 export interface ObjectEffectStage {
-  renderContents(): void;   // 逐隔离对象：setRenderTarget(objRT) + render(localScene, localCamera)
-  bindOutputs(): void;      // quad.map = 效果输出 ?? objRT.texture
-  advance(time: number): void;  // 串行推进 runner.update（异步，不阻塞本帧）
-  dispose(): void;
+  bindOutputs(): void;          // 主场景渲染之前：quad 采样效果输出或对象 RT
+  advance(time: number): void;  // 主场景渲染之后：串行推进 runner.update（异步，不阻塞本帧）
 }
 ```
 
@@ -115,7 +114,7 @@ isolate?: { width: number; height: number };   // 对象 RT 的像素尺寸，�
 ```
 
 - **不传 `isolate`**：行为与今天**逐字相同**（内容直接进 `this.scene`）——零回归，既有 `threejs-player.test.ts` 全部保持。
-- **传 `isolate`**：内容（`Mesh` / 粒子 `Mesh`）挂进新建的 `localScene` + 局部正交相机（范围 = `[-w/2, w/2] × [-h/2, h/2]`，`position.z = CAMERA_DISTANCE`，与主相机同 z 语义），内容自身保持 `(0,0,0)`（对象中心即局部原点）；**主 scene 里放一张合成 `PlaneGeometry` quad**，其 `position` = 对象 origin 的 `we_to_three` 值（`origin - scene/2`，y 不翻）、`rotation` = 对象 angles、`scale` = 对象 scale，`renderOrder` 与对象原语义一致（背景 0 / 粒子 1）。
+- **传 `isolate`**：内容（`Mesh` / 粒子 `Mesh`）挂进新建的 `localScene` + 局部正交相机（范围 = `[-w/2, w/2] × [-h/2, h/2]`，`position.z = CAMERA_DISTANCE`，与主相机同 z 语义），内容自身保持 `(0,0,0)`（对象中心即局部原点）；主 scene 里放一张合成 quad（几何尺寸 = `createCompositeGeometry(|size×scale|, rt.width, rt.height)`，即世界尺寸已含缩放，quad 自身 `scale` 恒为 1）：`position` = `origin − scene/2`（y 不翻）、`rotation` = 对象 angles；而局部 `localScene` 里的**内容**只保留 `scale`（含负值镜像）、`position` 归零、`rotation` 归零 —— 效果因此作用在对象**自身纹理空间**（spec §2.3 论据 b），旋转由合成 quad 施加。`renderOrder` 仍与对象原语义一致（背景 0 / 粒子 1）。
 
 新增访问器（供 stage 使用）：
 
