@@ -1,0 +1,135 @@
+# 技术细节与实现现状
+
+> 面向**开发者与贡献者**。README 只讲使用者需要知道的事，实现细节、内部机制与工程现状放在这里。
+> 相关文档：`AGENT.md`（开发总纲与踩坑史）、`docs/superpowers/specs/`（设计文档）。
+
+---
+
+## 1. 渲染路径
+
+### 1.1 three.js 播放器（当前主路径）
+
+- **背景图层**：每个 `image` 对象 → `Mesh`（`PlaneGeometry` + `MeshBasicMaterial`），按 `we_to_three`（场景中心化、**y 不翻**）定位，`scale` / `alpha` / `brightness` 与 WE 语义一致；`renderOrder=0`、`depthWrite=false`。
+- **粒子系统**：每个 `particle` 对象 → `InstancedBufferGeometry`（每粒子 4 角点 billboard + `ShaderMaterial`）。实例属性 `particlePosition/Size/Uv/Color/Alpha` 按 spec 的 `maxcount` **一次性预分配**（避免 three r170 `_maxInstanceCount` 首帧锁存导致层不绘制），运行期只更新 `instanceCount`。
+- **粒子 shader**：billboard（`pos + corner*halfSize`）、`gl_Position.z=0`（2D，避开正交视锥裁剪）、多帧 sprite UV 网格切片（`frameCount` + cols/rows）、纹理 alpha 遮罩（有纹理 `shape=texel.a`、无纹理软圆盘）、`softness`、additive / alpha 混合。
+- **渲染循环**：`renderer.setAnimationLoop`（`dt` = `performance.now` 差分，clamp 0.1s）→ 逐 `CpuParticleSim.update(dt)` → 刷新实例缓冲 → `render`；帧体 `try/catch` **异常自愈**（three 的 RAF 一次异常会永久停摆）。
+- **相机 / 尺寸**：cover 正交相机（按**窗口宽高比**，非场景比例）；`canvas.width/height = 视口逻辑尺寸 × devicePixelRatio`。
+- **对象级效果链接线**（2026-09-14 起 P1）：`createThreeSceneRenderer()` → `loadSceneToThree()`；隔离对象进 `localScene`、主场景放合成 quad、注入帧钩子；每帧 `renderIsolatedContents()` → `stage.bindOutputs()` → 渲染主场景 → `stage.advance(time)`（串行推进 `EffectRunner`，异步不阻塞本帧）。无带效果对象时 stage 为 null，帧序退化为原路径（零回归）。
+
+### 1.2 粒子模拟（Rust/wasm，`wasm/src/particle/`）
+
+经 wasm-bindgen 暴露 `CpuParticleSim`：
+
+- 照 linux-wallpaperengine `CParticle` 语义实现：`emitter`（`boxrandom` 逐轴 vec3 / `sphererandom` 球壳 cbrt）、`initializer`（`sizerandom`、lifetime / velocity / color / alpha / rotation / angularVelocity / turbulent）、`operator`（movement 重力/阻力、angularMovement、alphaFade 梯形、size/alpha/colorChange、turbulence、oscillateAlpha/Size/Position、寿命 compaction）。
+- **错落稳态（`prewarm`）**：启动时按 `min(maxcount, ceil(rate×平均寿命))` 铺入带**随机出生相位**的粒子，避免「一批同时下落、同时消失」。
+- `build_instance_vertices()` 输出每粒子 `[pos3, size, uv2, color3, alpha]`（10 浮点）喂给 three.js。
+
+### 1.3 纹理 / 材质解码（`src/client/tex-loader.ts`）
+
+- `TEXV0005`：LZ4 解压；支持 **RGBA8888 / DXT1/3/5 / RG88 / R8**（RG88→`vec4(r,r,r,g)`、R8→`vec4(1,1,1,r)`，与 wasm 的 `r8_to_rgba_white_alpha` 对齐）。
+- **2 的幂填充裁剪**（`cropToMap`）：mip 记录的是 2 的幂上传尺寸，按头部逻辑内容尺寸裁剪（EVA 4096×2048→2400×1555），避免背景只占左上角、右侧露黑。
+- **DXT 用 mip0 全分辨率 + `LinearFilter`**（不用 mipmap 过滤），避免大尺寸压缩纹理被三线性 mip 过滤糊化。
+- **sprite 精灵表**：解析 `TEXS000x` 段得到帧数与网格（如火把/雾 1024×1024 = 8×8=64 帧），shader 二维网格切片。
+- 行序统一（`flipRows` / DXT 块行 `flipCompressedRows`）。
+
+---
+
+## 2. 与桌面 Wallpaper Engine 的语义对齐
+
+（本轮与桌面 WE 真机逐像素对拍修正）
+
+- **混合模式按材质 json 的 `passes[0].blending`**（`add`/`additive` → 加法），不再从材质文件名猜（此前导致 additive 层被当普通混合 → 黑方块 / 全屏泛光）。
+- **粒子按对象 scale**：粒子局部坐标与 quad 尺寸乘**本对象真实 scale**（WE `mvp = viewProj×translate×rotate×scale`）。
+- **`sizerandom` ÷2**：spec 存的是编辑器值的一半（`p.size` 为整宽），不除会全壁纸粒子 2 倍大；`sizerandom.exponent` 缺省 1.0（黑神话显式 2）。
+- **`emitter.directions` 缺省 `(1,1,0)`**（lwe 语义；缺省零向量会让粒子全堆在同一点）；`distancemin/max` 逐轴 vec3。
+- **y 约定**：`origin.y - sceneH/2` + emitter 局部 `+y` 朝上（与桌面 WE 实测一致）。
+- **闪烁**：`oscillatealpha` 等算子接线，星点/火光按 spec 振荡。
+- **坐标与变换**（勿再翻转 / 勿漏乘）：WE 场景系 = 左下原点、y 向上；three 正交相机 = 中心原点、y 向上。映射 `three = we − viewport/2`，**y 不翻转**。对象 model matrix = `T·R·S`，`angles` 是**弧度**，旋转顺序 `R = Rz·Ry·Rx`。历史事故：曾用 `vh/2 − oy` 导致非居中对象上下镜像。
+- **`turbulentvelocityrandom` = `forward` 绕 `normal` 旋转**（不是「沿 normal 偏移」）：官方 `TurbulentVelocityRandomProgram` = curl 噪声采样 → 投影到垂直 normal 的平面 → 与 forward 求夹角 → `AngleAxisf(angle*scale + offset, normal) * forward`。方向**恒在垂直 normal 的平面内**。旧实现得到 `(0, cosθ, sinθ)`：x 恒 0、速度全进屏幕上不可见的 z 轴 → 粒子排成一条竖线。影响全库 **9 张壁纸**。
+- **对象级 `instanceoverride`**：`alpha/size/lifetime/speed` 是**乘数**，`color/colorn` 是**覆盖**（`UiColorToLinear` = v²），emitter rate **× `count`**；缺省恒等。JS 侧只透传原始 JSON，语义解析在 Rust（`particle::parse_particle_override`）。
+- **`.tex` flags 必须被消费**（权威定义见 `.lwe/.../Texture.h`）：
+  - `ClampUVs = 2`（bit1）—— **已修**：WE 默认 **REPEAT**，**仅带此位才 CLAMP**。曾一律落到 three 默认 `ClampToEdgeWrapping` ⇒ `clouds.frag` 有意把第二组 UV 旋转到负象限 ⇒ `cloud1` 全部塌到最左一列 ⇒ CP2077 整屏偏白且随时间越来越白。**全库 477 张 `.tex` 中 105 张因此由 clamp 改 repeat**。
+  - `NoInterpolation = 1`（bit0）—— **待办**：`applyLinearSampling` 无条件设 `LinearFilter`，带此位的纹理（全库 4 张）本该 `NearestFilter` ⇒ 被插值偏糊。
+  - ⚠️ **RT 纹理必须保持 CLAMP**（对象合成 quad 依赖它），别在别处一律改成 repeat。
+- **纹理 v 轴**：WE 是 `v=0` = 图像顶部；效果链一侧按 WE 约定加载（`tex-loader` 的 `rowOrder` 参数 + `effect-runner` 注入点），并用「隔离局部相机 y 镜像 + 合成 quad `flipGeometryUvY` 反镜像」精确抵消 ⇒ RT 内容与 mask 同约定、画面仍正立。**显示路径一行未改**（避免漏改一处就整图上下颠倒）。
+- **效果纹理槽编号 + sampler `combo` 派生**：
+  - **`textures[i] → g_Texture(i)`**（**不是** `g_Texture(i+1)`），写错会让所有效果的纹理槽整体错位一个。
+  - sampler 声明带 `"combo":"X"` 时，该槽被绑定即置 `X = 1`（必须在 `preprocessWeShader` **之前**）；缺失会让 `#if MASK` 的局部作用分支永不启用 ⇒ 效果全图生效。
+- **`g_TextureNResolution` 的 vec4 分量是 `(mip0.w, mip0.h, header.w, header.h)`**（lwe 约定），**不是** `(w, h, 1/w, 1/h)`：填错会让遮罩 UV 被压成 ~0 ⇒ 本该局部生效的效果变成全图等量位移。
+- **R8 / RG88 有两套通道语义**（`convertUnormToRgba(data, format, alphaPriority)`）：`true`（缺省）= 粒子纹理语义（形状写在 R / G）；`false` = 效果纹理槽语义（`R8 → (r,r,r,1)`、`RG88 → (r,g,0,1)`，shader 直接读 `.r` / `.rg` 当遮罩数值）。按错语义 ⇒ 遮罩失效 ⇒ 效果覆盖全图。
+  - ⚠️ **待办**：权威来源应是 `.tex` 头的 `TextureFlags_AlphaChannelPriority`（bit19），现由**调用方路径**推断；对当前库恰好正确，但语义来源错了。
+- **`colorBlendMode`（→ combo `BLENDMODE`）不是 alpha 混合**，而是**额外追加一遍「读当前帧缓冲」的混合 pass**（`ApplyBlending(BLENDMODE, A=背景, B=自己, 自己的 alpha)`），alpha 保持背景的。模式表在 WE 明文 `common_blending.h`。three 侧用**预乘片元** + `CustomBlending` 复刻。**未实现的模式回退普通 alpha 混合**（不静默画错）。全库非零只有 3 个对象：`3743126786`=7、`2832263418`=6、`2460786246`=31。关键性质：`BlendScreen(A, 0) = A`。
+
+---
+
+## 3. 对象级效果链（effects）
+
+- **全库覆盖**：**106/130 条效果引用（82%）** 可由既有 `EffectRunner` 正确执行（waterwaves 24 / shake 18 / opacity 8 / waterripple 7 / waterflow、pulse、perspective 各 5 / clouds、scroll、foliagesway 各 4 …）。
+- **验收口径（如实）**：端到端（真实 WebGL 逐像素）验证过的样本只有 `2683211654`（waterwaves 帧间差分）与 `2911105183`（对象级盒内外判据 + 具名 RT 降级告警）；其余效果类别的「可由现有执行器正确执行」是**分类学推断**（依据 `effect.json` 的 pass 结构与 `EffectRunner` 的线性语义），**不是逐个实测**。
+- **P2 遗留**：**24 条具名 RT 图链**（blurprecise×13、blur×3、localcontrast×2、godrays×2、bloom×2、shine×1、bokeh_blur×1）需要「RT 图执行器」（具名 RT 池 + `fbos` 降采样 + `bind` 语义），当前**整条跳过 + 去重告警** ⇒ 画面不画错，但那些效果不生效。
+- **对象 RT 的三条不变量**（改这块先读代码注释）：
+  1. **局部正交相机的 left/right/top/bottom 是「世界坐标范围」**，必须覆盖**完整对象世界尺寸**。两个坑：拿 RT 像素当范围（dpr>1 时对象缩小 + 边缘 clamp 拉伸）；按 `OBJECT_RT_MAX`(4096) 钳制范围（超限对象只覆盖中央 ⇒ 边缘拉伸带）。超限对象的正确代价是「**分辨率低**」，**不是**几何裁剪。
+  2. **RT 像素尺寸 = `|world| × 屏幕密度`**（= 对象在画布缓冲上的占位像素），等比收口到 4096。基准必须是**未钳制**的 `world`，**不能**用相机 `range`。旧口径「`min(world × dpr, 视口 × dpr, 4096)`」把预算当基准，与屏上占位差 0.8% ⇒ 合成那一步是双线性缩小 + 亚纹素相位漂移 ⇒ 整层锐度 **−52%**。
+  3. **`isolate` 的键是 `scene.json` 的对象 id**，不是 player 的图层计数器 id（两者撞键会让隔离 image 与 particle 互相覆盖）。
+- **`colorBlendMode ∈ {6,7,31}` 的对象已进入隔离路径、其效果生效**（2026-09-14 `6bb3d71`）：修法是把 WE 的混合语义从「内容材质」搬到「合成 quad」——隔离内容材质只做普通 alpha 写入，`createCompositeQuadMaterial` 统一用 `MeshBasicMaterial`（采样非预乘对象 RT）并按 `colorBlendMode` 设 `CustomBlending`。
+- **`refraction` 在 GLSL3 下编译失败**（引擎源码自身的 `float(format) == FORMAT_RG88` 缺陷）：效果不生效。**已修的是「失败被缓存」**——此前每帧重试 ⇒ 重建材质 + 探针渲染 + 2 条 warning（实测该页 146×2 条刷屏）；现在按 pass key 缓存失败，同一 key 只试一次。
+- **text 对象的 effects 被静默丢弃**：`groupEffectsByObject` 跳过 `kind === 'text'`，链在解析阶段就不进 `effectChains`（连汇总 warn 都没有）。实测样本 `3765967112` 的 4 条 `blurprecise` 全挂在 text 对象上。
+- **21 条 effects 挂在 util / 音频等不参与渲染的对象类型上**（util:10 + none:11）：会被解析但不会挂链，每张壁纸打一条汇总 warn。
+- **粒子对象的效果链只有单测覆盖**：全库实测 particle 挂载 effects = 0，管线里的粒子隔离分支**无真实样本可验**。
+- **链全为具名 RT 图链的对象不再隔离**（P2 前置优化）：`isolate` 准入收紧为「至少有一条线性链」——隔离无额外视觉收益，省掉对象 RT 显存与每帧一次额外渲染。这类对象的「具名 RT 未实现，跳过」告警**仍然打印**。
+
+---
+
+## 4. 显存与性能
+
+- **对象 RT 显存（审计脚本 `research/q-rt-vram-sweep.mjs`）**：`1920×1080@dpr1` 合计 **530 MB**（旧口径 386 MB）；单壁纸最大 **131.8 MB** / 中位 27.9 MB；`@dpr2` 与 `4K@dpr1` 单壁纸最大 **245.7 MB**（旧 156.1）、中位 95.0。结论：**典型代价 ≈ +18%、最坏 +3.4×**（均为 dpr=1），4096 硬上限把单对象钉在 ~107 MB。
+- **清晰度归因（`clarity-report.md`）**：隔离路径相对**直渲**锐度 −52%（Laplacian 均方 `713.2 → 341.5`，与 dpr、MSAA 均无关）。逐环节定界：内容→对象 RT 712.9（−0.04%）、效果 pass 711.2（−0.24%）、**合成 quad→屏幕 341.5（−52%）** ⇒ 纯 RT 往返无损，损失 100% 在最后一步重采样。修法与实测（GTR `3743126786`，headless Edge，1280×720）：隔离 **711.1** vs 直渲 **713.2（−0.3%）**、逐像素 MAD **0.0414**（修复前 341.5 / MAD 1.804）。
+- **性能门槛未验证**：设计文档 §7.4 自定「`1429403119`（23 对象 / 24 条链，全库最重）1080p **FPS ≥ 30**」为验收门槛，但**尚未在真实 GPU 上验证**。本机唯一端到端环境是 **headless Edge，其 WebGL 走 SwiftShader（软件光栅化）**，故只能给**相对信号**（帧间隔与每帧耗时中位数 / p95、隔离对象数、RT 显存估算）。**软件光栅化数字不能替代真机 FPS**，门槛状态一律记「未验证」。
+- **音频响应效果不随频谱动**：three 主路径**没有音频源** —— `createAudioAnalyzer` 只被未接入的 `scene-renderer.ts` 引用，`ObjectEffectStage.advance` 每帧显式给 `EffectRunner` 传 `null`，音频 uniform 保持全零。属「效果在、但不随频谱动」，不是「不支持该效果」。接音频留 P2。
+
+---
+
+## 5. 备用 / 未接入路径（`AGENT.md` §2.1）
+
+```
+scene 壁纸 ──► three.js 播放器（**唯一路径**，v0.3.0 起）
+                 │  渲染失败 / 渲染出 0 个可见对象
+                 ▼
+             preview 图 + Ken Burns（永不白屏）
+```
+
+- `wasm-renderer.ts`（`createWasmSceneRenderer` / `createFallbackSceneRenderer`）与 `scene-renderer.ts` 的 `renderScene`：**源码与单测保留，但运行时不再调用**（`index.ts` 仍 import 但未使用）。
+- wasm 渲染器有**完整的对象效果链**（对象 RT + 局部正交相机 + `EffectChain` ping-pong + 合成 quad UV 窗口 + GLSL→SPIR-V→WGSL 编译链），three 路径的**具名 RT 图链**仍未实现 —— 这是与 wasm 侧相比**剩余**的能力差。
+- **GPU（wasm）路径未消费 `instanceoverride`，也未应用对象 `angles`**：只接了 three 路径。用备用路径渲染同一张壁纸会有亮度与朝向差。
+- **wasm 效果链对 visualizer / text 对象不生效**：这两类恒走共享场景路径（绕过对象 RT / 效果链）。
+- **3 张壁纸在 wasm 路径判为 STATIC**（`2851992662` / `3392903359` / `3760200530`）：动画源是粒子（leaves/snow/bubbles），根因是 wasm 共享粒子路径动画未可见，属独立问题待专项。
+- **wasm 效果链的历史卡点（已绕开，勿重走）**：naga 24/25 的 **glsl frontend 编译不了含 `uniform sampler2D` 的 GLSL**，而几乎全部 WE 效果 shader 都采样 `g_Texture0`。现行链路是 **GLSL → `@webgpu/glslang` → SPIR-V → `spirv-webgpu-transform`（拆组合采样）→ naga `spv-in` → WGSL**；`chain_desc` 为空/解析失败才回退内置演示 pass（绝不白屏）。
+- **`g_ModelViewProjectionMatrix` 未由执行器提供**（材质 json 不给值 → 默认 0）。库内依赖 MVM 的效果都是「frag 效果 + vert passthrough」，故不受影响。
+- **`collect_bindings` 用文本扫描从 WGSL 提取纹理绑定**，对更复杂的多纹理 shader 待改进。
+
+---
+
+## 6. 关键约定（踩过的坑）
+
+1. **wasm 产物必须 `--target web`**：曾用 `--target module`（无默认导出 `__wbg_init`）导致 wasm 静默失败、一路回退。
+2. **`research/`、`wasm/pkg/`、`dist/static/ptex-*.tex` 是 gitignore**；`lib/`、`dist/` 其余部分**必须提交**。
+3. **场景资源禁止浏览器缓存**：`/wallpapers/scene/<id>/asset` 返回 `Cache-Control: no-store`。
+4. **效果链的一切编译/建管线必须在加载时一次性完成**；`render_frame` / `render_object_effects` / `step` / `EffectChain::render` **不得**做 naga 编译或建管线（每帧只写 uniform + 建 bind group + 提交 pass）。
+5. **对象 `angles`（弧度）必须应用**（粒子顶点 shader、背景 `mesh.rotation`）。全库 79 个对象带非零 angles（粒子 75 / image 2 / text 1 / other 1，涉及 15 张壁纸）。
+6. **粒子 alpha 属性链**：透明度 = 生命周期衰减 × alpha；JS ShaderMaterial 与 wasm 粒子层双路径同语义，改 alpha 逻辑要双路径验证。
+7. **WE 内置粒子/效果纹理走 host 路由，不随包分发**：`/wallpapers/particle-texture?name=<相对 assets/materials 的路径>`（`name` 不能无条件加 `particle/` 前缀 —— 有 `workshop/<id>/particle/...` 这类路径）。曾由 `build:client` 复制成 `dist/static/ptex-*.tex`，结果被 `files: ["dist"]` 打进 npm 包（解包 43 MB 里 33 MB 是它）。
+8. **音频管线**：`createAudioAnalyzer` 频谱 → EffectRunner 音频 uniform + visualizer 条高；autoplay 被拦时 context suspended、可视化全零，用户手势后恢复。
+9. **测试沙箱**：vitest / esbuild 依赖 service 子进程（命名管道），受限沙箱下报 `spawn EPERM` —— 需完整权限运行。
+
+---
+
+## 7. 工程现状 / 测试
+
+- **全量 `vitest run` 有 15 项既有失败**（4 个文件：`wasm-renderer` 7 / `scene-renderer` 6 / `verify-real-library` 1 / `dom/bootstrap.dom` 1），均已确认在 v0.3.0 基线即失败；改动后请在 `git stash` 基线对比，**别把既有失败当成本次回归**。
+  - 其中 `wasm-renderer` 那 7 项已定位到一半：`createWasmSceneRenderer.render()` 的裸 `catch {}` 把异常静默吞成「返回 false」（现已补 `console.warn`）。第一层真因是 mock 与代码脱节（mock scene 缺 `set_particle_sim` / `update_particles`）；补全 mock 后仍暴露更深的断言问题（`scene.add_particle` 未被调用）。
+- **验证手段**：
+  - 单测：`tests/**/*.test.ts`（默认 node），`tests/dom/**` 走 jsdom。
+  - 全库解析回归：`tests/verify-real-library.test.ts`（全库 scene.pkg 的 scene.json / image 纹理 / particle 规格 / 效果链解析零失败）。
+  - **端到端渲染（推荐）**：`research/verify-colorblend.mjs` 的模式 —— 自起 http server + headless Edge + esbuild 打包 harness，**用生产代码**渲染真实纹理并逐像素判定。**不依赖 DSH token**。
+  - 全库浏览器回归：`research/verify-wasm-render.mjs` —— **当前跑不通**（硬编码 `?token=` 过期，401）。
+- **README 效果视频的录制脚本**：`research/dsh-record/record-showcase.ps1`（真实 DSH 页面 + ffmpeg gdigrab 录屏，裁掉地址栏）。
