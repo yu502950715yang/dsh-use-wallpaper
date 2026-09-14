@@ -39,8 +39,6 @@
 </tr>
 </table>
 
-> **为什么这里是动图而不是视频播放器**：GitHub 不会把仓库内 mp4 的相对路径重写成可播放的资源（实测 `raw.githubusercontent.com` 返回 `Content-Type: application/octet-stream` 且带 `X-Content-Type-Options: nosniff`），因此 `<video>` 标签在 GitHub 上无法加载仓库里的 mp4 —— 会显示为一片空白。动图则能正常内嵌播放，故用它做展示；上方的「完整视频」链接指向原 mp4，画质与帧率都更好（点击后可在新页面播放或下载）。
-
 > **录制方式（如实说明）**：两段动图与视频都是在**真实运行的 DSH 页面**上、由本插件的生产构建（`lib/`）实时渲染本机 workshop 壁纸后录制的浏览器画面，未做后期合成；壁纸通过插件自身的切换入口 `window.__wallpaperEngine.select(id)` 切换，因此画面里只有 DSH 界面与壁纸本身。画面已裁掉浏览器地址栏。壁纸素材版权归原作者所有，此处仅作效果展示，不再分发。
 
 ---

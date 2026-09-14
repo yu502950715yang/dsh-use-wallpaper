@@ -132,4 +132,20 @@ scene 壁纸 ──► three.js 播放器（**唯一路径**，v0.3.0 起）
   - 全库解析回归：`tests/verify-real-library.test.ts`（全库 scene.pkg 的 scene.json / image 纹理 / particle 规格 / 效果链解析零失败）。
   - **端到端渲染（推荐）**：`research/verify-colorblend.mjs` 的模式 —— 自起 http server + headless Edge + esbuild 打包 harness，**用生产代码**渲染真实纹理并逐像素判定。**不依赖 DSH token**。
   - 全库浏览器回归：`research/verify-wasm-render.mjs` —— **当前跑不通**（硬编码 `?token=` 过期，401）。
-- **README 效果视频的录制脚本**：`research/dsh-record/record-showcase.ps1`（真实 DSH 页面 + ffmpeg gdigrab 录屏，裁掉地址栏）。
+- **README 效果素材的录制脚本**：`research/dsh-record/record-showcase.ps1`（真实 DSH 页面 + ffmpeg gdigrab 录屏，裁掉地址栏）。
+- ⚠️ **README 里不要用 `<video>` 内嵌仓库内的 mp4 —— GitHub 上不会显示**（2026-09-14 实测，勿重走）：
+  1. **GitHub 不重写 `<video>` 的相对路径**。它会把 `<img>` 的相对地址重写到 raw 域名，但不会对 `<video>` 这么做 ⇒ 浏览器按 README 所在页面路径去取 `github.com/<user>/<repo>/tree/<branch>/docs/videos/x.mp4`（HTML 页面），拿不到视频，显示为一片空白。
+  2. **换成 raw 绝对地址同样播不了**：该仓库的 mp4 在所有 raw 域名下都返回 `Content-Type: application/octet-stream` 且带 `X-Content-Type-Options: nosniff`，nosniff 禁止浏览器把它当视频解码。
+
+  实测矩阵（HEAD 请求）：
+
+  | URL 形式 | HTTP | Content-Type | nosniff |
+  |---|---|---|---|
+  | `raw.githubusercontent.com/<repo>/<branch>/<path>` | 200 | `application/octet-stream` | `nosniff` |
+  | `raw.githubusercontent.com/...?raw=true` | 200 | 同上 | 同上 |
+  | `github.com/<repo>/raw/<branch>/<path>`（含 `?raw=true`） | 200 | 同上 | 同上 |
+  | `github.com/<repo>/blob/<branch>/<path>?raw=true` | 200 | 同上 | 同上 |
+  | `media.githubusercontent.com/media/<repo>/<branch>/<path>` | **404** | — | —（该 CDN 只服务 Git LFS 文件） |
+
+  **可行做法**：README 内嵌用 **GIF**（正常返回 `Content-Type: image/gif`，可内嵌播放），mp4 留作「完整视频」链接（浏览器对顶层导航不套用 nosniff，点击后可在新页面播放/下载）。生成命令见 `research/gif-test`（已清理）所用的两遍调色板法：`fps=10,scale=560:-1` + `palettegen(max_colors=128)` + `paletteuse=dither=bayer`。
+  注意 **GIF 是有损展示**（10fps / 128 色），不代表实际渲染帧率，故 mp4 不能删。
