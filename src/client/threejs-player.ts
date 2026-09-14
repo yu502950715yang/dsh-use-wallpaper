@@ -656,6 +656,8 @@ export class ThreeScenePlayer {
       // 隔离：内容只保留 scale（含镜像），位移/旋转交给合成 quad。
       mesh.position.set(0, 0, 0);
       mesh.rotation.set(0, 0, 0);
+      // 背景的 RT 内容不含旋转 → 旋转由合成 quad 承载（见 attachIsolated 的旋转分工注释）；
+      // colorBlendMode 落在「贴回画面」这一步。
       this.attachIsolated(id, 'background', mesh, worldW, worldH, {
         width: opts.isolate.rtWidth,
         height: opts.isolate.rtHeight,
@@ -663,7 +665,7 @@ export class ThreeScenePlayer {
         x: opts.origin[0] - sceneW / 2,
         y: opts.origin[1] - sceneH / 2,
         z: opts.origin[2],
-      }, [a[0], a[1], a[2]], material, mod);
+      }, [a[0], a[1], a[2]], opts.colorBlendMode ?? 0);
     } else {
       this.scene.add(mesh);
     }
@@ -681,9 +683,9 @@ export class ThreeScenePlayer {
     return id;
   }
 
-  // 图层材质：colorBlendMode 已实现（6/7/31）→ 预乘 ShaderMaterial + CustomBlending（复刻
-  // WE 的 ApplyBlending）；否则 MeshBasicMaterial（普通 alpha 混合）。原路径与隔离对象的
-  // **合成 quad** 共用本方法——隔离时混合发生在「贴回画面」这一步，语义与今天同源。
+  // 图层材质（**内容**材质）：colorBlendMode 已实现（6/7/31）→ 预乘 ShaderMaterial +
+  // CustomBlending（复刻 WE 的 ApplyBlending）；否则 MeshBasicMaterial（普通 alpha 混合）。
+  // 隔离对象的合成 quad **不**用它，而用 createCompositeQuadMaterial（见该方法注释）。
   private createLayerMaterial(
     texture: THREE.Texture | null,
     colorBlendMode: number,
@@ -722,10 +724,48 @@ export class ThreeScenePlayer {
     return basic;
   }
 
+  // 合成 quad 的材质：只负责「把对象 RT 的像素采样回主场景」。
+  // ⚠️ 两点关键（都是踩过的坑）：
+  //   ① 必须独立构造，**不能 clone 内容材质**——粒子对象的内容材质是 InstancedBufferGeometry
+  //      专用的 billboard shader（依赖逐实例属性），普通 PlaneGeometry 没有这些属性会让
+  //      alpha 恒为 0（粒子隔离后完全不可见）；
+  //   ② **不再二次施加** alpha/brightness/color 调制——内容 mesh 的材质已把调制烘进 RT
+  //      （scene-renderer.ts 的既有结论），clone 后再乘一次会让 alpha=0.5 变成 0.25。
+  // colorBlendMode 分支保留：混合语义本就发生在「贴回画面」这一步。
+  private createCompositeQuadMaterial(texture: THREE.Texture, colorBlendMode: number): THREE.Material {
+    const cb = colorBlendModeToThree(colorBlendMode);
+    if (cb) {
+      return new THREE.ShaderMaterial({
+        uniforms: {
+          map: { value: texture },
+          tint: { value: new THREE.Vector3(1, 1, 1) },
+          opacity: { value: 1 },
+        },
+        vertexShader: COLOR_BLEND_VERTEX_SHADER,
+        fragmentShader: COLOR_BLEND_FRAGMENT_SHADER,
+        transparent: true,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        blending: THREE.CustomBlending,
+        blendEquation: cb.blendEquation,
+        blendSrc: cb.blendSrc,
+        blendDst: cb.blendDst,
+        blendSrcAlpha: THREE.ZeroFactor,
+        blendDstAlpha: THREE.OneFactor,
+      });
+    }
+    return new THREE.MeshBasicMaterial({ map: texture, transparent: true, depthWrite: false });
+  }
+
   // 建立对象隔离条目：RT + 局部正交相机 + localScene + 主场景合成 quad。
   // localCamera 范围 = RT 分辨率（对象中心为原点，与场景像素 1:1）；合成 quad 用
-  // createCompositeGeometry（世界尺寸含缩放、UV 按钳制窗口映射），position/rotation 承载
-  // 对象在世界中的位置与朝向。
+  // createCompositeGeometry（世界尺寸含缩放、UV 按钳制窗口映射），position 承载对象在世界中
+  // 的位置。
+  //
+  // ⚠️ 旋转的分工**不可「统一」**：quadAngles 由调用方按「RT 内容是否已含旋转」决定——
+  //   - 背景：内容 mesh 的 rotation 已归零（RT 内容**不含**旋转）→ quad 承载对象 angles；
+  //   - 粒子：内容 shader 里已施加 objAngles（RT 内容**已含**旋转）→ quadAngles 传 [0,0,0]，
+  //     否则同一份旋转被施加两次。
   private attachIsolated(
     id: number,
     kind: 'background' | 'particle',
@@ -734,9 +774,8 @@ export class ThreeScenePlayer {
     worldH: number,
     size: { width: number; height: number },
     position: { x: number; y: number; z: number },
-    angles: [number, number, number],
-    material: THREE.Material,
-    _mod: { r: number; g: number; b: number; a: number },
+    quadAngles: [number, number, number],
+    colorBlendMode: number,
   ): void {
     const rtW = Math.max(1, Math.round(size.width));
     const rtH = Math.max(1, Math.round(size.height));
@@ -744,18 +783,15 @@ export class ThreeScenePlayer {
     const localCamera = new THREE.OrthographicCamera(-rtW / 2, rtW / 2, rtH / 2, -rtH / 2, -1000, 1000);
     localCamera.position.z = CAMERA_DISTANCE;
     const localScene = new THREE.Scene();
+    // 内容 mesh 保留原有（已烘调制的）材质：调制必须继续烘进 RT，只是合成 quad 不再重复施加。
     localScene.add(content);
-    // 合成 quad 的材质：与内容材质同构（同样承接 colorBlendMode / alpha / brightness），
-    // 但 map 指向对象 RT 纹理（效果链就绪后由 setObjectOutput 换成效果输出）。
-    const quadMaterial = material.clone();
-    if (quadMaterial instanceof THREE.ShaderMaterial) {
-      quadMaterial.uniforms.map.value = rt.texture;
-    } else if (quadMaterial instanceof THREE.MeshBasicMaterial) {
-      quadMaterial.map = rt.texture;
-    }
-    const quad = new THREE.Mesh(createCompositeGeometry(worldW, worldH, rtW, rtH), quadMaterial);
+    // 合成 quad 的材质独立构造、采样对象 RT 纹理（效果链就绪后由 setObjectOutput 换成效果输出）。
+    const quad = new THREE.Mesh(
+      createCompositeGeometry(worldW, worldH, rtW, rtH),
+      this.createCompositeQuadMaterial(rt.texture, colorBlendMode),
+    );
     quad.position.set(position.x, position.y, position.z);
-    quad.rotation.set(angles[0], angles[1], angles[2]);
+    quad.rotation.set(quadAngles[0], quadAngles[1], quadAngles[2]);
     // renderOrder 与对象原语义一致（背景 0 / 粒子 1），保证合成顺序不变。
     quad.renderOrder = kind === 'particle' ? 1 : 0;
     this.scene.add(quad);
@@ -954,12 +990,15 @@ export class ThreeScenePlayer {
     // 与背景竞争」的确定性保险（第 4 条：确认粒子被画出来且不被背景盖住）。
     mesh.renderOrder = 1;
     if (opts.isolate) {
-      // 粒子隔离：世界位移由合成 quad 承载，故对象中心/角度在局部场景里归零
-      // （粒子顶点 shader 的 worldPos = objCenter + R·(scale·(emitterOrigin+local))，
-      //  见 PARTICLE_VERTEX_SHADER；objCenter=0 + objAngles=0 ⇒ 局部坐标即局部场景坐标）。
-      const m = mesh.material as THREE.ShaderMaterial;
-      (m.uniforms.objCenter.value as THREE.Vector3).set(0, 0, 0);
-      (m.uniforms.objAngles.value as THREE.Vector3).set(0, 0, 0);
+      // 粒子隔离：世界位移改由「内容 mesh 的负中心平移」承载，**不要**改 objCenter/objAngles
+      // uniform——shader 用 `local = particlePosition - objCenter - bmOffset` 反解局部坐标，
+      // 而 particlePosition 本身就含对象中心（sim 以对象中心为发射基准），置零会让反解错误、
+      // 内容整体出画（局部相机只有对象 RT 那么大）。
+      //   worldPos(shader) = objCenter + R(angles)·(scale·(emitterOrigin+local))
+      //   mesh.position    = -objCenter
+      //   ⇒ 局部场景中的最终位置 = R(angles)·(scale·(emitterOrigin+local))，中心已归零 ✓
+      const c = opts.objectCenter ?? [0, 0, 0];
+      mesh.position.set(-c[0], -c[1], -c[2]);
     } else {
       this.scene.add(mesh);
     }
@@ -986,13 +1025,14 @@ export class ThreeScenePlayer {
     this.writeParticleData(layer, initial, count);
     if (opts.isolate) {
       const center = opts.objectCenter ?? [0, 0, 0];
-      const an = opts.objectAngles ?? [0, 0, 0];
       // 世界尺寸由调用方（three-renderer 侧）按 particleWorldSize 算好传入；RT 像素尺寸
       // 单列。二者不可混用：quad 世界占位若误用 RT 像素会被 dpr/预算收口二次缩放。
+      // quadAngles 传 [0,0,0]：RT 内容已含 R(angles)（见上面的负中心平移注释），quad 再转一次
+      // 就是双重旋转；背景路径相反（内容不旋转，旋转由 quad 承载）。
+      // colorBlendMode 传 0：粒子走普通 alpha 混合。
       this.attachIsolated(id, 'particle', mesh, opts.isolate.worldW, opts.isolate.worldH,
         { width: opts.isolate.rtWidth, height: opts.isolate.rtHeight },
-        { x: center[0], y: center[1], z: center[2] }, [an[0], an[1], an[2]], material,
-        { r: 1, g: 1, b: 1, a: 1 });
+        { x: center[0], y: center[1], z: center[2] }, [0, 0, 0], 0);
     }
     return id;
   }

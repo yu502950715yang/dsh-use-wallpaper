@@ -1119,13 +1119,42 @@ describe('ThreeScenePlayer 对象隔离', () => {
     expect(content.position.toArray()).toEqual([0, 0, 0]);
     expect(content.rotation.toArray().slice(0, 3)).toEqual([0, 0, 0]);
     expect(content.scale.toArray()).toEqual([2, 2, 1]);
-    // 合成 quad：世界位置 = origin - scene/2（y 不翻），旋转 = 对象 angles，尺寸 = |size×scale| 由几何承载
+    // 合成 quad：材质**独立于内容材质**（不得 clone 内容材质——内容材质已把调制烘进 RT，
+    // clone 会让贴回画面时二次施加调制；粒子内容材质是 InstancedBufferGeometry 专用 shader，
+    // clone 到普通 PlaneGeometry 上 alpha 恒为 0）。背景无 colorBlendMode → MeshBasicMaterial。
+    expect(entry.quad.material).not.toBe(content.material);
+    expect(entry.quad.material).toBeInstanceOf(THREE.MeshBasicMaterial);
+    const quadBasic = entry.quad.material as THREE.MeshBasicMaterial;
+    // 合成 quad 的调制中性（无 alpha/brightness 时也必须是 1 / (1,1,1)，不继承内容材质）。
+    expect(quadBasic.opacity).toBe(1);
+    expect([quadBasic.color.r, quadBasic.color.g, quadBasic.color.b]).toEqual([1, 1, 1]);
+    // 合成 quad：世界位置 = origin - scene/2（y 不翻），旋转 = 对象 angles（背景 RT 内容不含
+    // 旋转，旋转必须由 quad 承载），尺寸 = |size×scale| 由几何承载
     expect(entry.quad.position.toArray()).toEqual([0, 0, 0]);
     expect(entry.quad.rotation.z).toBeCloseTo(0.5, 6);
     expect(entry.quad.scale.toArray()).toEqual([1, 1, 1]);
     // 主 scene 里只有合成 quad（内容不在主 scene）
     expect(player.scene.children).toContain(entry.quad);
     expect(player.scene.children).not.toContain(content);
+  });
+
+  it('隔离：内容材质保留调制（烘进 RT），合成 quad 调制中性（不二次施加）', () => {
+    const { player } = makePlayer();
+    const id = player.addBackground({
+      origin: [0, 0, 0], size: [10, 10], scale: [1, 1, 1], texture: makeTexture(),
+      alpha: 0.5, brightness: 0.8,
+      sceneW: 100, sceneH: 100, isolate: { rtWidth: 10, rtHeight: 10, worldW: 10, worldH: 10 },
+    });
+    const entry = player.isolatedObjects().find((e) => e.id === id)!;
+    const content = entry.localScene.children[0] as THREE.Mesh;
+    const contentMat = content.material as THREE.MeshBasicMaterial;
+    // 内容材质继续带调制：调制必须烘进 RT（内容渲染时施加一次）。
+    expect(contentMat.opacity).toBeCloseTo(0.5, 6);
+    expect(contentMat.color.r).toBeCloseTo(0.8, 6);
+    // 合成 quad 中性：opacity=1、color=(1,1,1)——否则贴回主场景会再乘一次（0.5 → 0.25）。
+    const quadMat = entry.quad.material as THREE.MeshBasicMaterial;
+    expect(quadMat.opacity).toBe(1);
+    expect([quadMat.color.r, quadMat.color.g, quadMat.color.b]).toEqual([1, 1, 1]);
   });
 
   it('不传 isolate 时行为不变：内容直接进主 scene，isolatedObjects 为空', () => {
@@ -1138,24 +1167,39 @@ describe('ThreeScenePlayer 对象隔离', () => {
     expect(player.scene.children).toHaveLength(1);
   });
 
-  it('粒子隔离：uObjectCenter 归零（世界位移由合成 quad 承载）', () => {
+  it('粒子隔离：内容 mesh 以负对象中心归位，objCenter uniform 保持原值', () => {
     const { player } = makePlayer();
     const verts = () => new Float32Array([0, 0, 0, 10, 0, 0, 1, 1, 1, 1]);
     const id = player.addParticle(verts, {
       frameCount: 1, blend: 'alpha',
-      objectCenter: [100, 50, 0], objectScale: [1, 1, 1], objectAngles: [0, 0, 0],
+      objectCenter: [100, 50, 0], objectScale: [1, 1, 1], objectAngles: [0, 0, 0.3],
       isolate: { rtWidth: 64, rtHeight: 64, worldW: 64, worldH: 64 },
     });
     const entry = player.isolatedObjects().find((e) => e.id === id)!;
     expect(entry.kind).toBe('particle');
     const content = entry.localScene.children[0] as THREE.Mesh;
     const mat = content.material as THREE.ShaderMaterial;
+    // 归零改由「内容 mesh 的负中心平移」承载：shader 用
+    // `local = particlePosition - objCenter - bmOffset` 反解局部坐标，而 particlePosition 本身
+    // 含对象中心 → uniform 置零会让反解错误、内容整体出画（局部相机只有对象 RT 那么大）。
+    // （`-c[2]` 在 c[2]=0 时得到 -0，故 +0 归一化后再比较数值。）
+    expect(content.position.toArray().map((v) => v + 0)).toEqual([-100, -50, 0]);
     // 注意：粒子 shader 的对象中心 uniform 名是 `objCenter`（不是 objectCenter），
     // 角度是 `objAngles`——见 PARTICLE_VERTEX_SHADER 的 uniform 声明与 addParticle 的创建处。
-    expect((mat.uniforms.objCenter.value as THREE.Vector3).toArray()).toEqual([0, 0, 0]);
-    expect((mat.uniforms.objAngles.value as THREE.Vector3).toArray()).toEqual([0, 0, 0]);
+    expect((mat.uniforms.objCenter.value as THREE.Vector3).toArray()).toEqual([100, 50, 0]);
+    expect((mat.uniforms.objAngles.value as THREE.Vector3).toArray()).toEqual([0, 0, 0.3]);
     // 对象 scale 保留在局部内容上（染色/镜像由局部渲染承担，不由合成 quad 承担）。
     expect((mat.uniforms.objScale.value as THREE.Vector3).toArray()).toEqual([1, 1, 1]);
+    // 旋转分工：粒子 RT 内容**已含** R(objAngles) → 合成 quad 不得再转（否则双重旋转）。
+    expect(entry.quad.rotation.z).toBe(0);
+    expect(entry.quad.position.toArray()).toEqual([100, 50, 0]);
+    // 合成 quad 的材质独立于粒子内容材质（billboard shader 依赖逐实例属性，clone 到普通
+    // PlaneGeometry 上 alpha 恒为 0 → 隔离粒子完全不可见）；且调制中性。
+    expect(entry.quad.material).not.toBe(content.material);
+    expect(entry.quad.material).toBeInstanceOf(THREE.MeshBasicMaterial);
+    const quadMat = entry.quad.material as THREE.MeshBasicMaterial;
+    expect(quadMat.opacity).toBe(1);
+    expect([quadMat.color.r, quadMat.color.g, quadMat.color.b]).toEqual([1, 1, 1]);
   });
 
   it('setObjectOutput 切换合成 quad 的采样源（MeshBasicMaterial 与 ShaderMaterial 两条路径）', () => {
@@ -1172,10 +1216,19 @@ describe('ThreeScenePlayer 对象隔离', () => {
     });
     player.setObjectOutput(idBasic, texB);
     player.setObjectOutput(idBlend, texB);
-    const basic = player.isolatedObjects().find((e) => e.id === idBasic)!.quad.material as THREE.MeshBasicMaterial;
-    const blend = player.isolatedObjects().find((e) => e.id === idBlend)!.quad.material as THREE.ShaderMaterial;
+    const entryBasic = player.isolatedObjects().find((e) => e.id === idBasic)!;
+    const entryBlend = player.isolatedObjects().find((e) => e.id === idBlend)!;
+    const basic = entryBasic.quad.material as THREE.MeshBasicMaterial;
+    const blend = entryBlend.quad.material as THREE.ShaderMaterial;
     expect(basic.map).toBe(texB);
     expect(blend.uniforms.map.value).toBe(texB);
+    // 合成 quad 材质独立于内容材质（colorBlendMode 路径同样是独立构造，不 clone 内容材质）；
+    // 内容材质仍带原有调制（此处无调制 → tint 中性，但对象不同即证明未共用同一实例）。
+    const contentBlend = entryBlend.localScene.children[0] as THREE.Mesh;
+    expect(blend).not.toBe(contentBlend.material);
+    expect(entryBasic.quad.material).not.toBe((entryBasic.localScene.children[0] as THREE.Mesh).material);
+    expect(blend.uniforms.tint.value.toArray()).toEqual([1, 1, 1]);
+    expect(blend.uniforms.opacity.value).toBe(1);
     // colorBlendMode=7（Screen）必须落在合成这一步：CustomBlending + OneMinusDstColor
     expect(blend.blending).toBe(THREE.CustomBlending);
     expect(blend.blendSrc).toBe(THREE.OneMinusDstColorFactor);
