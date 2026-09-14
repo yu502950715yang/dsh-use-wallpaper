@@ -19,6 +19,9 @@ function createMockRenderer() {
     setSize: vi.fn(),
     setPixelRatio: vi.fn(),
     render: vi.fn(),
+    // 对象隔离渲染（Task 3）：renderIsolatedContents 会切换渲染目标到对象 RT，
+    // mock 需提供同名方法（no-op），否则隔离路径全部以 TypeError 失败。
+    setRenderTarget: vi.fn(),
     dispose: vi.fn(),
     setAnimationLoop,
     _getLoop: () => loop,
@@ -1082,5 +1085,152 @@ describe('ThreeScenePlayer loadSceneToThree', () => {
     expect(result.player.camera.top).toBeCloseTo(1555 / 2, 6);
     expect(result.player.camera.bottom).toBeCloseTo(-1555 / 2, 6);
     expect(renderer.setSize).toHaveBeenCalledWith(2400, 1555, false);
+  });
+});
+
+// ===== 对象隔离渲染（对象级效果链的前置能力）=====
+describe('ThreeScenePlayer 对象隔离', () => {
+  function makeTexture(): THREE.Texture {
+    const tex = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+    tex.needsUpdate = true;
+    return tex;
+  }
+
+  it('isolate：内容进 localScene（position/rotation 归零、scale 保留），主 scene 放合成 quad', () => {
+    const { player } = makePlayer();
+    const id = player.addBackground({
+      origin: [960, 540, 0], size: [400, 200], scale: [2, 2, 1], angles: [0, 0, 0.5],
+      texture: makeTexture(), sceneW: 1920, sceneH: 1080,
+      // isolate 四字段：rtWidth/rtHeight = 对象 RT 像素尺寸；worldW/worldH = 合成 quad 的世界尺寸。
+      isolate: { rtWidth: 400, rtHeight: 200, worldW: 800, worldH: 400 },
+    });
+    const iso = player.isolatedObjects();
+    expect(iso).toHaveLength(1);
+    const entry = iso[0];
+    expect(entry.id).toBe(id);
+    expect(entry.kind).toBe('background');
+    expect(entry.rt.width).toBe(400);
+    expect(entry.rt.height).toBe(200);
+    // 世界尺寸用调用方传入值（= |size × scale|），不得被 RT 像素尺寸冒充。
+    expect(entry.worldW).toBe(800);
+    expect(entry.worldH).toBe(400);
+    // 内容：对象中心即局部原点，旋转归零（效果作用在对象自身纹理空间），缩放保留
+    const content = entry.localScene.children[0] as THREE.Mesh;
+    expect(content.position.toArray()).toEqual([0, 0, 0]);
+    expect(content.rotation.toArray().slice(0, 3)).toEqual([0, 0, 0]);
+    expect(content.scale.toArray()).toEqual([2, 2, 1]);
+    // 合成 quad：世界位置 = origin - scene/2（y 不翻），旋转 = 对象 angles，尺寸 = |size×scale| 由几何承载
+    expect(entry.quad.position.toArray()).toEqual([0, 0, 0]);
+    expect(entry.quad.rotation.z).toBeCloseTo(0.5, 6);
+    expect(entry.quad.scale.toArray()).toEqual([1, 1, 1]);
+    // 主 scene 里只有合成 quad（内容不在主 scene）
+    expect(player.scene.children).toContain(entry.quad);
+    expect(player.scene.children).not.toContain(content);
+  });
+
+  it('不传 isolate 时行为不变：内容直接进主 scene，isolatedObjects 为空', () => {
+    const { player } = makePlayer();
+    player.addBackground({
+      origin: [960, 540, 0], size: [400, 200], scale: [1, 1, 1],
+      texture: makeTexture(), sceneW: 1920, sceneH: 1080,
+    });
+    expect(player.isolatedObjects()).toHaveLength(0);
+    expect(player.scene.children).toHaveLength(1);
+  });
+
+  it('粒子隔离：uObjectCenter 归零（世界位移由合成 quad 承载）', () => {
+    const { player } = makePlayer();
+    const verts = () => new Float32Array([0, 0, 0, 10, 0, 0, 1, 1, 1, 1]);
+    const id = player.addParticle(verts, {
+      frameCount: 1, blend: 'alpha',
+      objectCenter: [100, 50, 0], objectScale: [1, 1, 1], objectAngles: [0, 0, 0],
+      isolate: { rtWidth: 64, rtHeight: 64, worldW: 64, worldH: 64 },
+    });
+    const entry = player.isolatedObjects().find((e) => e.id === id)!;
+    expect(entry.kind).toBe('particle');
+    const content = entry.localScene.children[0] as THREE.Mesh;
+    const mat = content.material as THREE.ShaderMaterial;
+    // 注意：粒子 shader 的对象中心 uniform 名是 `objCenter`（不是 objectCenter），
+    // 角度是 `objAngles`——见 PARTICLE_VERTEX_SHADER 的 uniform 声明与 addParticle 的创建处。
+    expect((mat.uniforms.objCenter.value as THREE.Vector3).toArray()).toEqual([0, 0, 0]);
+    expect((mat.uniforms.objAngles.value as THREE.Vector3).toArray()).toEqual([0, 0, 0]);
+    // 对象 scale 保留在局部内容上（染色/镜像由局部渲染承担，不由合成 quad 承担）。
+    expect((mat.uniforms.objScale.value as THREE.Vector3).toArray()).toEqual([1, 1, 1]);
+  });
+
+  it('setObjectOutput 切换合成 quad 的采样源（MeshBasicMaterial 与 ShaderMaterial 两条路径）', () => {
+    const { player } = makePlayer();
+    const texA = makeTexture();
+    const texB = makeTexture();
+    const idBasic = player.addBackground({
+      origin: [0, 0, 0], size: [10, 10], scale: [1, 1, 1], texture: texA,
+      sceneW: 100, sceneH: 100, isolate: { rtWidth: 10, rtHeight: 10, worldW: 10, worldH: 10 },
+    });
+    const idBlend = player.addBackground({
+      origin: [0, 0, 0], size: [10, 10], scale: [1, 1, 1], texture: texA, colorBlendMode: 7,
+      sceneW: 100, sceneH: 100, isolate: { rtWidth: 10, rtHeight: 10, worldW: 10, worldH: 10 },
+    });
+    player.setObjectOutput(idBasic, texB);
+    player.setObjectOutput(idBlend, texB);
+    const basic = player.isolatedObjects().find((e) => e.id === idBasic)!.quad.material as THREE.MeshBasicMaterial;
+    const blend = player.isolatedObjects().find((e) => e.id === idBlend)!.quad.material as THREE.ShaderMaterial;
+    expect(basic.map).toBe(texB);
+    expect(blend.uniforms.map.value).toBe(texB);
+    // colorBlendMode=7（Screen）必须落在合成这一步：CustomBlending + OneMinusDstColor
+    expect(blend.blending).toBe(THREE.CustomBlending);
+    expect(blend.blendSrc).toBe(THREE.OneMinusDstColorFactor);
+  });
+
+  it('帧钩子按序调用：隔离内容渲染 → bindOutputs → 主场景渲染 → advance', () => {
+    const { player, mock } = makePlayer();
+    const order: string[] = [];
+    (mock.render as unknown as { mockImplementation: (f: (s: unknown, c: unknown) => void) => void })
+      .mockImplementation((s: unknown) => { order.push(s === player.scene ? 'main' : 'isolated'); });
+    player.addBackground({
+      origin: [0, 0, 0], size: [10, 10], scale: [1, 1, 1], texture: makeTexture(),
+      sceneW: 100, sceneH: 100, isolate: { rtWidth: 10, rtHeight: 10, worldW: 10, worldH: 10 },
+    });
+    player.setObjectEffectStage({
+      bindOutputs: () => order.push('bind'),
+      advance: () => order.push('advance'),
+    });
+    player.render();
+    expect(order).toEqual(['isolated', 'bind', 'main', 'advance']);
+  });
+
+  it('零回归：不传 isolate 且无 stage 时，render() 只渲染主场景一次', () => {
+    const { player, mock } = makePlayer();
+    player.render();
+    expect(mock.render).toHaveBeenCalledTimes(1);
+    expect((mock.render as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][0]).toBe(player.scene);
+  });
+
+  it('resizeObjectRT 重建 RT 并同步局部相机与合成几何', () => {
+    const { player } = makePlayer();
+    const id = player.addBackground({
+      origin: [0, 0, 0], size: [10, 10], scale: [1, 1, 1], texture: makeTexture(),
+      sceneW: 100, sceneH: 100, isolate: { rtWidth: 10, rtHeight: 10, worldW: 10, worldH: 10 },
+    });
+    const entry = player.isolatedObjects()[0];
+    const oldGeo = entry.quad.geometry;
+    player.resizeObjectRT(id, 40, 20);
+    expect(entry.rt.width).toBe(40);
+    expect(entry.rt.height).toBe(20);
+    expect(entry.localCamera.left).toBe(-20);
+    expect(entry.localCamera.right).toBe(20);
+    expect(entry.quad.geometry).not.toBe(oldGeo);
+  });
+
+  it('dispose 释放隔离 RT / 合成 quad / 内容', () => {
+    const { player } = makePlayer();
+    player.addBackground({
+      origin: [0, 0, 0], size: [10, 10], scale: [1, 1, 1], texture: makeTexture(),
+      sceneW: 100, sceneH: 100, isolate: { rtWidth: 10, rtHeight: 10, worldW: 10, worldH: 10 },
+    });
+    const entry = player.isolatedObjects()[0];
+    const rtDispose = vi.spyOn(entry.rt, 'dispose');
+    player.dispose();
+    expect(rtDispose).toHaveBeenCalled();
+    expect(player.isolatedObjects()).toHaveLength(0);
   });
 });

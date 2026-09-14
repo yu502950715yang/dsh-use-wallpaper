@@ -11,7 +11,10 @@
 //   - 正交相机 y 轴不做翻转（WE 系左下原点 y 向上与 three 正交相机一致，见 scene-renderer
 //     文件头坐标注释；背景/粒子用同一相机，保持 cover 与 we_to_three 语义）。
 import * as THREE from 'three';
-import { coverRange, CAMERA_DISTANCE, materialModulation } from './scene-renderer.js';
+// 几何/尺寸纯函数来自 object-range.ts（唯一实现）：coverRange 是 scene-renderer 重新导出的
+// 同一份实现；CAMERA_DISTANCE / materialModulation 此前经由 scene-renderer 转手，本任务
+// 改为直接从 object-range.js 取（createCompositeGeometry 也在这里），避免多一层转手。
+import { coverRange, CAMERA_DISTANCE, materialModulation, createCompositeGeometry } from './object-range.js';
 import { parseSceneJson } from './scene-json.js';
 
 // 背景图层条目：记录 WE 场景坐标与当前已应用状态，供 update_background 对齐既有
@@ -317,6 +320,35 @@ void main() {
 }
 `;
 
+// 对象隔离条目（对象级效果链）：带 effects 的对象不直接画进主场景，而是
+//   ① 内容进 localScene（对象中心 = 局部原点），渲染到 rt；
+//   ② 主场景放一张合成 quad 顶在对象原位置，采样「效果链输出」或「rt 原图」。
+// 局部内容只保留 scale（含负值镜像），position/rotation 归零——效果因此作用在对象**自身
+// 纹理空间**，旋转与位移由合成 quad 承载（spec §2.3 论据 b）。
+// rtWidth/rtHeight/rtTexture 是给效果链编排器的扁平视图（免它通过 rt 再取一层）。
+export interface IsolatedObject {
+  id: number;
+  kind: 'background' | 'particle';
+  rt: THREE.WebGLRenderTarget;
+  rtWidth: number;
+  rtHeight: number;
+  rtTexture: THREE.Texture;
+  localScene: THREE.Scene;
+  localCamera: THREE.OrthographicCamera;
+  quad: THREE.Mesh;
+  /** 合成 quad 的世界尺寸（= |对象 size/dist × scale|，未钳制幅值），resize 重建几何时用。 */
+  worldW: number;
+  worldH: number;
+}
+
+// 效果链编排器注入点（结构化接口，player 不 import object-effects.ts）。
+// 隔离内容的渲染由 player 自己的私有方法完成（renderIsolatedContents），stage 只承担
+// 「把合成 quad 绑到效果输出」与「推进链」两件事。
+export interface ObjectEffectStage {
+  bindOutputs(): void;
+  advance(time: number): void;
+}
+
 export class ThreeScenePlayer {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene: THREE.Scene;
@@ -347,6 +379,12 @@ export class ThreeScenePlayer {
   // 粒子图层条目（Task 3）：按 addParticle 返回的 id 索引，更新粒子时用其 getter 刷新缓冲区。
   private particleLayers = new Map<number, ParticleLayer>();
   private nextParticleLayerId = 0;
+
+  // 对象隔离条目（对象级效果链；空 Map = 本壁纸无带效果对象，帧序退化为原路径）。
+  private isolated = new Map<number, IsolatedObject>();
+  private objectEffectStage: ObjectEffectStage | null = null;
+  // g_Time 时间原点（构造时刻），advance 传「自 player 创建起的秒数」。
+  private readonly startedAt = typeof performance !== 'undefined' ? performance.now() : 0;
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -473,7 +511,13 @@ export class ThreeScenePlayer {
         this.lastTime = now;
         fn?.(dt);
         this.update(dt);
+        // 对象级效果链：先渲染隔离内容到各自 RT，再让编排器把合成 quad 绑到效果输出。
+        // 空 isolated 时两行都是 no-op，帧序与改动前逐字相同（fn → update → render）。
+        if (this.isolated.size > 0) this.renderIsolatedContents();
+        this.objectEffectStage?.bindOutputs();
         this.renderer.render(this.scene, this.camera);
+        // 链推进是异步串行的（纹理槽可能仍在加载），不阻塞本帧；本帧贴的是上一帧输出。
+        this.objectEffectStage?.advance(this.elapsedSeconds());
       } catch (e) {
         if (!warned) {
           warned = true;
@@ -484,8 +528,69 @@ export class ThreeScenePlayer {
   }
 
   // 手动渲染一帧（不依赖 RAF，供测试/调用方直接触发）。
+  // 帧序与 setAnimationLoop 的帧体一致（不带 dt）：隔离内容 → bindOutputs → 主场景 → advance。
   render(): void {
+    if (this.isolated.size > 0) this.renderIsolatedContents();
+    this.objectEffectStage?.bindOutputs();
     this.renderer.render(this.scene, this.camera);
+    this.objectEffectStage?.advance(this.elapsedSeconds());
+  }
+
+  // 对象级效果链的编排器注入点（null = 本壁纸无效果链，帧序退化为原路径）。
+  setObjectEffectStage(stage: ObjectEffectStage | null): void {
+    this.objectEffectStage = stage;
+  }
+
+  // 隔离对象条目（只读视图，供编排器拿 RT 纹理与尺寸）。
+  isolatedObjects(): IsolatedObject[] {
+    return [...this.isolated.values()];
+  }
+
+  // 把某个隔离对象的合成 quad 切到给定的采样纹理（效果链输出；编排器在链未就绪时
+  // 不调用本方法，quad 保持采样对象 RT 原图 → 对象正常显示、无效果，不黑屏）。
+  setObjectOutput(id: number, texture: THREE.Texture): void {
+    const entry = this.isolated.get(id);
+    if (!entry) return;
+    const mat = entry.quad.material;
+    if (mat instanceof THREE.ShaderMaterial) mat.uniforms.map.value = texture;
+    else if (mat instanceof THREE.MeshBasicMaterial) mat.map = texture;
+  }
+
+  // 重设隔离对象的 RT 尺寸（视口/dpr 变化时由编排器调用）：同步局部相机视锥与合成几何的
+  // UV 窗口（几何尺寸不变，只重算窗口映射）。
+  resizeObjectRT(id: number, width: number, height: number): void {
+    const entry = this.isolated.get(id);
+    if (!entry) return;
+    const w = Math.max(1, Math.round(width));
+    const h = Math.max(1, Math.round(height));
+    if (entry.rt.width === w && entry.rt.height === h) return;
+    entry.rt.setSize(w, h);
+    // 扁平视图（rtWidth/rtHeight）必须与 rt 实际尺寸同步：编排器按注释只读这两个字段，
+    // 留旧值会让它按过期尺寸算效果链 slot。
+    entry.rtWidth = w;
+    entry.rtHeight = h;
+    entry.localCamera.left = -w / 2;
+    entry.localCamera.right = w / 2;
+    entry.localCamera.top = h / 2;
+    entry.localCamera.bottom = -h / 2;
+    entry.localCamera.updateProjectionMatrix();
+    entry.quad.geometry.dispose();
+    entry.quad.geometry = createCompositeGeometry(entry.worldW, entry.worldH, w, h);
+  }
+
+  // 渲染所有隔离对象的内容到各自 RT（player 拥有 scene/camera，故渲染留在 player）。
+  private renderIsolatedContents(): void {
+    for (const entry of this.isolated.values()) {
+      this.renderer.setRenderTarget(entry.rt);
+      this.renderer.render(entry.localScene, entry.localCamera);
+    }
+    this.renderer.setRenderTarget(null);
+  }
+
+  // 隔离对象的帧推进时间（秒，自 player 创建起）——g_Time 语义。
+  elapsedSeconds(): number {
+    const now = typeof performance !== 'undefined' ? performance.now() : this.startedAt;
+    return (now - this.startedAt) / 1000;
   }
 
   // Task 2：背景图层（Sprite/Mesh）。用 we_to_three 中心化定位（three = we - scene/2，
@@ -509,6 +614,11 @@ export class ThreeScenePlayer {
     brightness?: number;
     sceneW: number;
     sceneH: number;
+    // 对象隔离（对象级效果链）：四字段把两种量分开——
+    //   rtWidth/rtHeight = 对象 RT 的像素尺寸（= 局部相机范围，钳制/预算收口后的值）；
+    //   worldW/worldH = 合成 quad 的世界尺寸（= |size × scale|，**未钳制**幅值）。
+    // 缺省不隔离（内容直接进主 scene，帧序与今天逐字相同）。
+    isolate?: { rtWidth: number; rtHeight: number; worldW: number; worldH: number };
   }): number {
     const sceneW = opts.sceneW;
     const sceneH = opts.sceneH;
@@ -520,13 +630,70 @@ export class ThreeScenePlayer {
     const mod = materialModulation(undefined, opts.alpha, opts.brightness);
     // 材质：WE `colorBlendMode` 已实现的模式（6/7/31）→ 预乘 ShaderMaterial + CustomBlending
     // （复刻 ApplyBlending，见文件上方 COLOR_BLEND_* 注释）；0 / 未实现模式 → 既有
-    // MeshBasicMaterial（普通 alpha 混合，行为与以前一致，不静默画错）。
-    const cb = colorBlendModeToThree(opts.colorBlendMode ?? 0);
-    let material: THREE.Material;
+    // MeshBasicMaterial（普通 alpha 混合）。隔离对象的**合成 quad** 也走本方法（见 attachIsolated）。
+    const material = this.createLayerMaterial(opts.texture ?? null, opts.colorBlendMode ?? 0, mod);
+    const mesh = new THREE.Mesh(geometry, material);
+    // renderOrder 0（缺省且显式）：背景在粒子（renderOrder 1）之前绘制（背景在下）。
+    mesh.renderOrder = 0;
+    const s = opts.scale;
+    mesh.scale.set(s[0], s[1], s[2] ?? 1);
+    // 对象角度（弧度）：PlaneGeometry 以几何中心为 pivot，mesh.rotation 即 T·R·S 的 R。
+    const a = opts.angles ?? [0, 0, 0];
+    mesh.rotation.set(a[0], a[1], a[2]);
+    // we_to_three：origin - scene/2（y 不翻）。
+    mesh.position.set(opts.origin[0] - sceneW / 2, opts.origin[1] - sceneH / 2, opts.origin[2]);
+
+    // id 必须在隔离分支**之前**分配：隔离条目按 id 建索引。
+    const id = this.nextBackgroundId++;
+    // 对象世界尺寸（未钳制幅值）：隔离路径下用于合成 quad 的几何尺寸（缩放已并入几何，
+    // quad 自身 scale 恒为 1）；非隔离路径下仅用于记录，行为不变。
+    // 优先用调用方传入的 worldW/worldH（isolate 的四字段形状把「RT 像素」与「世界尺寸」
+    // 分开），缺省回退内部计算 = |size × scale|。
+    const worldW = opts.isolate?.worldW ?? Math.abs(w * s[0]);
+    const worldH = opts.isolate?.worldH ?? Math.abs(h * s[1]);
+
+    if (opts.isolate) {
+      // 隔离：内容只保留 scale（含镜像），位移/旋转交给合成 quad。
+      mesh.position.set(0, 0, 0);
+      mesh.rotation.set(0, 0, 0);
+      this.attachIsolated(id, 'background', mesh, worldW, worldH, {
+        width: opts.isolate.rtWidth,
+        height: opts.isolate.rtHeight,
+      }, {
+        x: opts.origin[0] - sceneW / 2,
+        y: opts.origin[1] - sceneH / 2,
+        z: opts.origin[2],
+      }, [a[0], a[1], a[2]], material, mod);
+    } else {
+      this.scene.add(mesh);
+    }
+
+    this.backgroundEntries.set(id, {
+      mesh,
+      origin: [opts.origin[0], opts.origin[1], opts.origin[2]],
+      scale: [s[0], s[1], s[2] ?? 1],
+      angles: [a[0], a[1], a[2]],
+      alpha: mod.a,
+      brightness: opts.brightness ?? 1,
+      sceneW,
+      sceneH,
+    });
+    return id;
+  }
+
+  // 图层材质：colorBlendMode 已实现（6/7/31）→ 预乘 ShaderMaterial + CustomBlending（复刻
+  // WE 的 ApplyBlending）；否则 MeshBasicMaterial（普通 alpha 混合）。原路径与隔离对象的
+  // **合成 quad** 共用本方法——隔离时混合发生在「贴回画面」这一步，语义与今天同源。
+  private createLayerMaterial(
+    texture: THREE.Texture | null,
+    colorBlendMode: number,
+    mod: { r: number; g: number; b: number; a: number },
+  ): THREE.Material {
+    const cb = colorBlendModeToThree(colorBlendMode);
     if (cb) {
-      material = new THREE.ShaderMaterial({
+      return new THREE.ShaderMaterial({
         uniforms: {
-          map: { value: opts.texture ?? createWhiteTexture() },
+          map: { value: texture ?? createWhiteTexture() },
           tint: { value: new THREE.Vector3(mod.r, mod.g, mod.b) },
           opacity: { value: mod.a },
         },
@@ -544,40 +711,58 @@ export class ThreeScenePlayer {
         blendSrcAlpha: THREE.ZeroFactor,
         blendDstAlpha: THREE.OneFactor,
       });
-    } else {
-      const basic = new THREE.MeshBasicMaterial({
-        map: opts.texture ?? null,
-        transparent: true,
-        depthWrite: false,
-      });
-      basic.color.setRGB(mod.r, mod.g, mod.b);
-      basic.opacity = mod.a;
-      material = basic;
     }
-    const mesh = new THREE.Mesh(geometry, material);
-    // renderOrder 0（缺省且显式）：背景在粒子（renderOrder 1）之前绘制（背景在下）。
-    mesh.renderOrder = 0;
-    const s = opts.scale;
-    mesh.scale.set(s[0], s[1], s[2] ?? 1);
-    // 对象角度（弧度）：PlaneGeometry 以几何中心为 pivot，mesh.rotation 即 T·R·S 的 R。
-    const a = opts.angles ?? [0, 0, 0];
-    mesh.rotation.set(a[0], a[1], a[2]);
-    // we_to_three：origin - scene/2（y 不翻）。
-    mesh.position.set(opts.origin[0] - sceneW / 2, opts.origin[1] - sceneH / 2, opts.origin[2]);
-    this.scene.add(mesh);
-
-    const id = this.nextBackgroundId++;
-    this.backgroundEntries.set(id, {
-      mesh,
-      origin: [opts.origin[0], opts.origin[1], opts.origin[2]],
-      scale: [s[0], s[1], s[2] ?? 1],
-      angles: [a[0], a[1], a[2]],
-      alpha: mod.a,
-      brightness: opts.brightness ?? 1,
-      sceneW,
-      sceneH,
+    const basic = new THREE.MeshBasicMaterial({
+      map: texture ?? null,
+      transparent: true,
+      depthWrite: false,
     });
-    return id;
+    basic.color.setRGB(mod.r, mod.g, mod.b);
+    basic.opacity = mod.a;
+    return basic;
+  }
+
+  // 建立对象隔离条目：RT + 局部正交相机 + localScene + 主场景合成 quad。
+  // localCamera 范围 = RT 分辨率（对象中心为原点，与场景像素 1:1）；合成 quad 用
+  // createCompositeGeometry（世界尺寸含缩放、UV 按钳制窗口映射），position/rotation 承载
+  // 对象在世界中的位置与朝向。
+  private attachIsolated(
+    id: number,
+    kind: 'background' | 'particle',
+    content: THREE.Object3D,
+    worldW: number,
+    worldH: number,
+    size: { width: number; height: number },
+    position: { x: number; y: number; z: number },
+    angles: [number, number, number],
+    material: THREE.Material,
+    _mod: { r: number; g: number; b: number; a: number },
+  ): void {
+    const rtW = Math.max(1, Math.round(size.width));
+    const rtH = Math.max(1, Math.round(size.height));
+    const rt = new THREE.WebGLRenderTarget(rtW, rtH);
+    const localCamera = new THREE.OrthographicCamera(-rtW / 2, rtW / 2, rtH / 2, -rtH / 2, -1000, 1000);
+    localCamera.position.z = CAMERA_DISTANCE;
+    const localScene = new THREE.Scene();
+    localScene.add(content);
+    // 合成 quad 的材质：与内容材质同构（同样承接 colorBlendMode / alpha / brightness），
+    // 但 map 指向对象 RT 纹理（效果链就绪后由 setObjectOutput 换成效果输出）。
+    const quadMaterial = material.clone();
+    if (quadMaterial instanceof THREE.ShaderMaterial) {
+      quadMaterial.uniforms.map.value = rt.texture;
+    } else if (quadMaterial instanceof THREE.MeshBasicMaterial) {
+      quadMaterial.map = rt.texture;
+    }
+    const quad = new THREE.Mesh(createCompositeGeometry(worldW, worldH, rtW, rtH), quadMaterial);
+    quad.position.set(position.x, position.y, position.z);
+    quad.rotation.set(angles[0], angles[1], angles[2]);
+    // renderOrder 与对象原语义一致（背景 0 / 粒子 1），保证合成顺序不变。
+    quad.renderOrder = kind === 'particle' ? 1 : 0;
+    this.scene.add(quad);
+    this.isolated.set(id, {
+      id, kind, rt, rtWidth: rtW, rtHeight: rtH, rtTexture: rt.texture,
+      localScene, localCamera, quad, worldW, worldH,
+    });
   }
 
   // Task 2：更新背景图层状态，对齐既有 update_image 语义——undefined = 保持现状；
@@ -656,6 +841,12 @@ export class ThreeScenePlayer {
       // 实例缓冲容量上界（= sim 的 maxcount / spec 的 maxcount；见 ParticleLayer.capacity 注释）。
       // 缺省 DEFAULT_PARTICLE_CAPACITY。
       maxInstances?: number;
+      // 对象隔离（对象级效果链；粒子对象同样可挂效果链）。四字段语义同 addBackground：
+      //   rtWidth/rtHeight = 对象 RT 像素尺寸（= particleObjectRange 的钳制收口值）；
+      //   worldW/worldH = 合成 quad 世界尺寸（= particleWorldSize 的**未钳制**值）。
+      // 粒子 spec 无 size 字段、player 也不知道 distanceMax，故世界尺寸必须由调用方算好传入。
+      // 缺省不隔离（内容直接进主 scene，帧序与今天逐字相同）。
+      isolate?: { rtWidth: number; rtHeight: number; worldW: number; worldH: number };
     },
   ): number {
     const frameCount = Math.max(1, Math.floor(opts.frameCount));
@@ -762,7 +953,16 @@ export class ThreeScenePlayer {
     // ThreeScenePlayer 背景/粒子同 z 的 reversePainterSortStable 稳定序）。这是「粒子不可见 /
     // 与背景竞争」的确定性保险（第 4 条：确认粒子被画出来且不被背景盖住）。
     mesh.renderOrder = 1;
-    this.scene.add(mesh);
+    if (opts.isolate) {
+      // 粒子隔离：世界位移由合成 quad 承载，故对象中心/角度在局部场景里归零
+      // （粒子顶点 shader 的 worldPos = objCenter + R·(scale·(emitterOrigin+local))，
+      //  见 PARTICLE_VERTEX_SHADER；objCenter=0 + objAngles=0 ⇒ 局部坐标即局部场景坐标）。
+      const m = mesh.material as THREE.ShaderMaterial;
+      (m.uniforms.objCenter.value as THREE.Vector3).set(0, 0, 0);
+      (m.uniforms.objAngles.value as THREE.Vector3).set(0, 0, 0);
+    } else {
+      this.scene.add(mesh);
+    }
 
     const id = this.nextParticleLayerId++;
     const layer: ParticleLayer = {
@@ -784,6 +984,16 @@ export class ThreeScenePlayer {
     this.particleLayers.set(id, layer);
     // 立即写入首帧数据，保持 geometry 与 getter 一致（后续由 updateParticles 逐帧刷新）。
     this.writeParticleData(layer, initial, count);
+    if (opts.isolate) {
+      const center = opts.objectCenter ?? [0, 0, 0];
+      const an = opts.objectAngles ?? [0, 0, 0];
+      // 世界尺寸由调用方（three-renderer 侧）按 particleWorldSize 算好传入；RT 像素尺寸
+      // 单列。二者不可混用：quad 世界占位若误用 RT 像素会被 dpr/预算收口二次缩放。
+      this.attachIsolated(id, 'particle', mesh, opts.isolate.worldW, opts.isolate.worldH,
+        { width: opts.isolate.rtWidth, height: opts.isolate.rtHeight },
+        { x: center[0], y: center[1], z: center[2] }, [an[0], an[1], an[2]], material,
+        { r: 1, g: 1, b: 1, a: 1 });
+    }
     return id;
   }
 
@@ -892,6 +1102,21 @@ export class ThreeScenePlayer {
       layer.material.dispose();
     }
     this.particleLayers.clear();
+    // 隔离对象：RT / 合成 quad / 局部场景内容一并释放（避免切壁纸后 VRAM 泄漏）。
+    for (const entry of this.isolated.values()) {
+      entry.rt.dispose();
+      entry.quad.geometry.dispose();
+      (entry.quad.material as THREE.Material).dispose();
+      entry.localScene.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (m.geometry) m.geometry.dispose();
+        const mat = m.material as THREE.Material | THREE.Material[] | undefined;
+        if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
+        else mat?.dispose();
+      });
+    }
+    this.isolated.clear();
+    this.objectEffectStage = null;
     this.renderer.dispose();
   }
 }
