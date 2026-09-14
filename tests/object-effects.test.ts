@@ -134,3 +134,172 @@ describe.skipIf(!existsSync(WALLPAPER_DIR))('全库效果链分类（实测数�
     expect(rtGraph.size).toBe(9);
   }, 120_000);
 });
+
+// ── 编排器（Task 4）：mock runner 与 host，node 环境不触碰 WebGL ──
+import { ObjectEffectStage } from '../src/client/object-effects.js';
+import * as THREE from 'three';
+import { vi } from 'vitest';
+
+// 编排器内部会 `new EffectRunner(...)`：真实类只在 WebGL 上下文里可用（构造即建 RT、
+// setChains 会跑探针渲染编译 shader），故对本文件整体 mock 它——实例方法全是 vi.fn，
+// 便于断言 setChains 的入参/次数。写法参考 tests/three-renderer.test.ts 对重型依赖的 mock。
+vi.mock('../src/client/effect-runner.js', () => {
+  class EffectRunner {
+    setChains = vi.fn();
+    setAudioSpectrumSource = vi.fn();
+    update = vi.fn(async () => null);
+    lastOutput = vi.fn(() => null);
+    dispose = vi.fn();
+  }
+  return { EffectRunner };
+});
+
+// mock runner：不触碰 WebGL，只记录调用顺序与入参。
+function createMockRunner() {
+  const calls: Array<{ time: number; input: unknown }> = [];
+  let last: THREE.Texture | null = null;
+  const runner = {
+    setChains: vi.fn(),
+    setAudioSpectrumSource: vi.fn(),
+    update: vi.fn(async (time: number, input: unknown) => {
+      calls.push({ time, input });
+      last = (input as THREE.WebGLRenderTarget).texture;
+      return last;
+    }),
+    lastOutput: vi.fn(() => last),
+    dispose: vi.fn(),
+    _calls: calls,
+  };
+  return runner;
+}
+
+function createHost(entries: Array<{ id: number; rtWidth: number; rtHeight: number }>) {
+  const outputs = new Map<number, THREE.Texture>();
+  const resized: Array<{ id: number; w: number; h: number }> = [];
+  const host = {
+    renderer: {} as THREE.WebGLRenderer,
+    isolatedObjects: () => entries.map((e) => ({
+      id: e.id, rtWidth: e.rtWidth, rtHeight: e.rtHeight,
+      rtTexture: new THREE.Texture(),
+    })),
+    setObjectOutput: (id: number, tex: THREE.Texture) => { outputs.set(id, tex); },
+    resizeObjectRT: (id: number, w: number, h: number) => { resized.push({ id, w, h }); },
+    _outputs: outputs,
+    _resized: resized,
+  };
+  return host;
+}
+
+describe('ObjectEffectStage', () => {
+  it('setObjectChains 为线性链创建 runner，并把对象 chains 展平后交给它', () => {
+    const host = createHost([{ id: 1, rtWidth: 100, rtHeight: 50 }]);
+    const stage = new ObjectEffectStage(host as never, {
+      wavelengthId: 'w', dpr: 1, budgetWidth: 1920, budgetHeight: 1080,
+    });
+    const chains = [[pass()], [pass()]];
+    stage.setObjectChains(1, chains);
+    const runners = stage.debugRunners();
+    expect(runners.size).toBe(1);
+    const runner = runners.get(1)!;
+    expect(runner.setChains).toHaveBeenCalledTimes(1);
+    const [passedChains, id, opts] = runner.setChains.mock.calls[0];
+    expect(passedChains).toEqual(chains);
+    expect(id).toBe('w');
+    expect(opts).toEqual({ width: 100, height: 50 });
+  });
+
+  it('RT 图链整条跳过并只告警一次（按 effect 标识去重）', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const host = createHost([{ id: 1, rtWidth: 100, rtHeight: 50 }]);
+    const stage = new ObjectEffectStage(host as never, {
+      wavelengthId: 'w', dpr: 1, budgetWidth: 1920, budgetHeight: 1080,
+    });
+    stage.setObjectChains(1, [[pass({ target: '_rt_a' })]]);
+    stage.setObjectChains(1, [[pass({ target: '_rt_a' })]]);
+    expect(stage.rtGraphSkips()).toEqual(['_rt_a']);
+    const rtGraphWarns = warn.mock.calls.filter((c) => String(c[0]).includes('具名 RT'));
+    expect(rtGraphWarns).toHaveLength(1);
+    expect(stage.debugRunners().has(1)).toBe(false);
+    warn.mockRestore();
+  });
+
+  it('纯 RT 图链的对象不建 runner，bindOutputs 不调用 setObjectOutput（quad 保持对象 RT 原图）', () => {
+    const host = createHost([{ id: 1, rtWidth: 10, rtHeight: 10 }]);
+    const stage = new ObjectEffectStage(host as never, {
+      wavelengthId: 'w', dpr: 1, budgetWidth: 1920, budgetHeight: 1080,
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    stage.setObjectChains(1, [[pass({ bind: [{ name: 'previous', index: 0 }] })]]);
+    stage.bindOutputs();
+    expect(host._outputs.size).toBe(0);
+    warn.mockRestore();
+  });
+
+  it('bindOutputs：链未就绪（lastOutput 为 null）→ 不切输出；就绪 → 切到效果输出', () => {
+    const host = createHost([{ id: 1, rtWidth: 10, rtHeight: 10 }]);
+    const stage = new ObjectEffectStage(host as never, {
+      wavelengthId: 'w', dpr: 1, budgetWidth: 1920, budgetHeight: 1080,
+    });
+    // 手工注入一个可控 runner
+    const runner = createMockRunner();
+    stage.debugInjectRunner(1, runner as never);
+    stage.bindOutputs();
+    expect(host._outputs.size).toBe(0); // lastOutput 为 null
+    runner.lastOutput.mockReturnValue(new THREE.Texture());
+    stage.bindOutputs();
+    expect(host._outputs.size).toBe(1);
+  });
+
+  it('advance 串行：同一 runner 的第二次 update 在第一次完成后才发起', async () => {
+    const host = createHost([{ id: 1, rtWidth: 10, rtHeight: 10 }]);
+    const stage = new ObjectEffectStage(host as never, {
+      wavelengthId: 'w', dpr: 1, budgetWidth: 1920, budgetHeight: 1080,
+    });
+    let resolveFirst: (() => void) | null = null;
+    const order: string[] = [];
+    const runner = {
+      setChains: vi.fn(), setAudioSpectrumSource: vi.fn(), dispose: vi.fn(),
+      lastOutput: () => null,
+      update: vi.fn(() => {
+        order.push('start');
+        if (!resolveFirst) {
+          return new Promise<void>((res) => { resolveFirst = () => { order.push('end'); res(); }; });
+        }
+        return Promise.resolve();
+      }),
+    };
+    stage.debugInjectRunner(1, runner as never);
+    stage.advance(1);
+    stage.advance(2);
+    expect(order).toEqual(['start']); // 第二次未发起（串行）
+    resolveFirst!();
+    await Promise.resolve();
+    await Promise.resolve();
+    stage.advance(3);
+    expect(order).toEqual(['start', 'end', 'start']);
+  });
+
+  it('onViewportResize 按新预算等比重设 RT 尺寸', () => {
+    const host = createHost([{ id: 1, rtWidth: 100, rtHeight: 50 }]);
+    const stage = new ObjectEffectStage(host as never, {
+      wavelengthId: 'w', dpr: 2, budgetWidth: 1920, budgetHeight: 1080,
+    });
+    // 世界尺寸 = RT 像素 / dpr = 50×25；新预算 400×400 @dpr2 → 100×50 不超预算 → 不变
+    stage.onViewportResize(400, 400);
+    expect(host._resized).toEqual([]);
+    // 新预算 20×20 @dpr2 → cap 20 → 等比 s = min(20/100, 20/50) = 0.2 → 20×10
+    stage.onViewportResize(20, 20);
+    expect(host._resized).toEqual([{ id: 1, w: 20, h: 10 }]);
+  });
+
+  it('dispose 释放全部 runner', () => {
+    const host = createHost([{ id: 1, rtWidth: 10, rtHeight: 10 }]);
+    const stage = new ObjectEffectStage(host as never, {
+      wavelengthId: 'w', dpr: 1, budgetWidth: 1920, budgetHeight: 1080,
+    });
+    const runner = createMockRunner();
+    stage.debugInjectRunner(1, runner as never);
+    stage.dispose();
+    expect(runner.dispose).toHaveBeenCalled();
+  });
+});

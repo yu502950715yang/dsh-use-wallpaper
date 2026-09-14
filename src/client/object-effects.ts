@@ -9,7 +9,8 @@
 // 本模块不构造 three 场景、不持有 canvas；player 通过结构化接口（ObjectEffectStage）
 // 被注入，因此本模块不 import threejs-player.ts（避免循环依赖）。
 import type * as THREE from 'three';
-import { OBJECT_RT_MAX } from './object-range.js';
+import { OBJECT_RT_MAX, PendingChainStore } from './object-range.js';
+import { EffectRunner } from './effect-runner.js';
 import type { CompiledEffectPass } from './shader/effect-chain.js';
 
 // player 消费的钩子接口（结构化匹配，player 不 import 本模块）。
@@ -71,5 +72,237 @@ export function resolveObjectRtSize(
   return { width, height };
 }
 
-// 占位：本任务不实现（Task 4 落地）。保留类型引用避免未使用告警。
-export type EffectTexture = THREE.Texture;
+// ══ 编排器（Task 4）═══════════════════════════════════════════════════════════
+// 按对象挂效果链、每对象一个 EffectRunner、串行推进、降级跳过、resize 重算尺寸。
+//
+// 三条硬约束（spec §5.3 / §5.4）：
+//   1. 每对象一个 runner，RT 尺寸 = 该对象 RT 尺寸：对象级效果**不得**全屏展平
+//      （全屏展平会让效果漫到对象包围盒之外，是本特性的核心回归点）；
+//   2. 加载期一次性建：EffectRunner 的创建与 setChains（含材质/探针编译）只发生在挂链与
+//      resize；bindOutputs / advance 里**不得**创建材质或建管线；
+//   3. 串行推进：同一时刻只允许一个 runner 触碰 renderer 的 RT/绑定状态——并发交错会让
+//      ping-pong 写端与输入纹理错配 → 黑屏/闪烁。EffectRunner 自己的 updateInFlight 只挡得住
+//      同一个 runner，挡不住多个 runner 之间，故串行化必须由本编排器承担。
+
+// 编排器看到的隔离对象视图（player 的 isolatedObjects() 结构性满足它）。
+export interface IsolatedHostView {
+  id: number;
+  rtWidth: number;
+  rtHeight: number;
+  rtTexture: THREE.Texture;
+}
+
+// player 的最小宿主接口（player 不 import 本模块，结构化匹配即可）。
+export interface ObjectEffectHost {
+  renderer: THREE.WebGLRenderer;
+  isolatedObjects(): IsolatedHostView[];
+  setObjectOutput(id: number, texture: THREE.Texture): void;
+  resizeObjectRT(id: number, width: number, height: number): void;
+}
+
+// 单个隔离对象的链状态。
+interface ObjectChainEntry {
+  runner: EffectRunner | null;
+  /** 原始链定义：resize 时用同一份链 + 新尺寸重新 setChains（EffectRunner 只在尺寸变化时重建 RT）。 */
+  chains: CompiledEffectPass[][];
+  /** 世界尺寸（场景像素，未乘 dpr）——resize 时用它按新预算重算 RT 像素尺寸。 */
+  worldW: number;
+  worldH: number;
+}
+
+export class ObjectEffectStage implements ObjectEffectStage {
+  private entries = new Map<number, ObjectChainEntry>();
+  private skips = new Set<string>();
+  private readonly wallpaperId: string;
+  private readonly dpr: number;
+  private budgetWidth: number;
+  private budgetHeight: number;
+  private disposed = false;
+  // 串行链（约束 3）：busy = 有 runner 正在 update，queue = 等待中的 update 任务。
+  // 空闲时**同步**发起第一项（本帧立即开始推进，不推迟一个微任务——与场景级
+  // `void runner.update(...)` 的行为一致；player 的帧序是 render 之后才 advance，
+  // 因此此刻切换 RT 不会打扰本帧主场景渲染）；忙时排队，等前一项 settle 后再发起。
+  private busy = false;
+  private queue: Array<() => unknown> = [];
+  private pendingChains = new PendingChainStore<CompiledEffectPass[][]>();
+
+  constructor(
+    private readonly host: ObjectEffectHost,
+    opts: { wavelengthId: string; dpr: number; budgetWidth: number; budgetHeight: number },
+  ) {
+    this.wallpaperId = opts.wavelengthId;
+    this.dpr = opts.dpr > 0 ? opts.dpr : 1;
+    this.budgetWidth = opts.budgetWidth;
+    this.budgetHeight = opts.budgetHeight;
+  }
+
+  /** 世界尺寸（场景像素）：resize 时按新预算重算 RT 像素尺寸的唯一来源。
+   *  调用顺序契约：three-renderer 先 setWorldSize 再 setObjectChains（后者不覆盖前者）。 */
+  setWorldSize(objId: number, worldW: number, worldH: number): void {
+    if (this.disposed) return;
+    const entry = this.entries.get(objId);
+    if (entry) {
+      entry.worldW = worldW;
+      entry.worldH = worldH;
+      return;
+    }
+    this.entries.set(objId, { runner: null, chains: [], worldW, worldH });
+  }
+
+  /** 挂载某对象的效果链（对象条目可能尚未出现 → 暂存，见 PendingChainStore）。 */
+  setObjectChains(objId: number, chains: CompiledEffectPass[][]): void {
+    if (this.disposed) return;
+    // 逐条链分类：保留线性链，跳过具名 RT 图链（整链，不硬跑——产物是错画面）。
+    const usable: CompiledEffectPass[][] = [];
+    for (const one of chains) {
+      if (isLinearEffectChain(one)) {
+        usable.push(one);
+      } else {
+        const label = one.find((p) => p.target)?.target ?? one.find((p) => p.bind.length > 0)?.bind[0]?.name ?? '(具名 RT)';
+        this.warnSkip(label);
+      }
+    }
+    if (usable.length === 0) {
+      this.pendingChains.applyIfReady(objId, [], false);
+      return;
+    }
+    const view = this.host.isolatedObjects().find((o) => o.id === objId);
+    if (!view) {
+      this.pendingChains.applyIfReady(objId, usable, false);
+      return;
+    }
+    this.mount(objId, usable, view.rtWidth, view.rtHeight);
+  }
+
+  /** 视口/预算变化：按新预算重算每个隔离对象的 RT 像素尺寸（等比），有链的对象用同一份链
+   *  重挂（runner 内部 RT 跟随新尺寸；EffectRunner 只在尺寸真变化时重建 RT）。
+   *  遍历 host.isolatedObjects() 而非 entries：本方法要覆盖「条目已隔离、但链尚未挂上」
+   *  的对象——它的世界尺寸此时只能由当前 RT 像素 / dpr 反推（三者的世界尺寸语义见
+   *  resolveObjectRtSize；有 entry 时一律以 entry.worldW/worldH 为准）。 */
+  onViewportResize(budgetWidth: number, budgetHeight: number): void {
+    if (this.disposed) return;
+    this.budgetWidth = budgetWidth;
+    this.budgetHeight = budgetHeight;
+    for (const view of this.host.isolatedObjects()) {
+      const entry = this.entries.get(view.id);
+      const worldW = entry ? entry.worldW : view.rtWidth / this.dpr;
+      const worldH = entry ? entry.worldH : view.rtHeight / this.dpr;
+      const size = resolveObjectRtSize(worldW, worldH, this.dpr, budgetWidth, budgetHeight);
+      if (view.rtWidth === size.width && view.rtHeight === size.height) continue;
+      this.host.resizeObjectRT(view.id, size.width, size.height);
+      if (entry?.runner) {
+        entry.runner.setChains(entry.chains, this.wallpaperId, { width: size.width, height: size.height });
+      }
+    }
+  }
+
+  /** 主场景渲染之前：链有输出才切合成 quad 的采样源；没有输出（首帧未就绪 / 该对象无 runner）
+   *  则**不动输出**——quad 保持采样对象 RT 原图，不黑屏（降级可见，不静默画错）。 */
+  bindOutputs(): void {
+    for (const view of this.host.isolatedObjects()) {
+      const out = this.entries.get(view.id)?.runner?.lastOutput() ?? null;
+      if (out) this.host.setObjectOutput(view.id, out);
+    }
+  }
+
+  /** 主场景渲染之后：串行推进各 runner 的 update（异步，不阻塞本帧；见类头约束 3）。 */
+  advance(time: number): void {
+    if (this.disposed) return;
+    for (const view of this.host.isolatedObjects()) {
+      const runner = this.entries.get(view.id)?.runner;
+      if (!runner) continue;
+      runner.setAudioSpectrumSource(null); // three 主路径无音频源（spec §5.4），保持全零
+      this.enqueue(() => runner.update(time, view.rtTexture));
+    }
+  }
+
+  /** 被跳过的具名 RT 图链标识（按标识去重），供诊断与测试查询。 */
+  rtGraphSkips(): string[] {
+    return [...this.skips];
+  }
+
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    // 丢弃尚未发起的排队任务：runner 即将被释放，再跑 update 只会碰已释放的 RT/材质。
+    this.queue.length = 0;
+    for (const entry of this.entries.values()) entry.runner?.dispose();
+    this.entries.clear();
+    this.pendingChains.clear();
+  }
+
+  // ── 测试/诊断钩子（不参与生产路径） ──
+  debugRunners(): Map<number, EffectRunner> {
+    const out = new Map<number, EffectRunner>();
+    for (const [id, e] of this.entries) if (e.runner) out.set(id, e.runner);
+    return out;
+  }
+  debugInjectRunner(id: number, runner: EffectRunner): void {
+    const view = this.host.isolatedObjects().find((o) => o.id === id);
+    this.entries.set(id, {
+      runner,
+      chains: [],
+      worldW: view ? view.rtWidth / this.dpr : 1,
+      worldH: view ? view.rtHeight / this.dpr : 1,
+    });
+  }
+
+  /** 具名 RT 图链降级告警：按标识去重（同一效果被多个对象引用时只告警一次，不刷屏）。 */
+  private warnSkip(label: string): void {
+    if (this.skips.has(label)) return;
+    this.skips.add(label);
+    console.warn(
+      `[wallpaper-engine] 效果需要具名 RT（P2 未实现），跳过: ${label}`,
+    );
+  }
+
+  /** 串行队列入队（约束 3 / 2：只调用既有的 update，不在此建材质）。 */
+  private enqueue(task: () => unknown): void {
+    if (this.busy) {
+      this.queue.push(task);
+      return;
+    }
+    this.busy = true;
+    this.runTask(task);
+  }
+
+  private runTask(task: () => unknown): void {
+    let result: unknown;
+    try {
+      result = task();
+    } catch (e) {
+      console.warn('[wallpaper-engine] 对象效果链更新失败:', e);
+      this.finishTask();
+      return;
+    }
+    // 同步抛出的错误与 rejected promise 一样只告警不中断：单个对象的效果失败
+    // 不得拖垮整条串行链（其它对象与后续帧仍要继续推进）。
+    Promise.resolve(result)
+      .catch((e) => { console.warn('[wallpaper-engine] 对象效果链更新失败:', e); })
+      .then(() => { this.finishTask(); });
+  }
+
+  private finishTask(): void {
+    const next = this.queue.shift();
+    if (next) {
+      this.runTask(next);
+      return;
+    }
+    this.busy = false;
+  }
+
+  private mount(objId: number, chains: CompiledEffectPass[][], rtW: number, rtH: number): void {
+    let entry = this.entries.get(objId);
+    if (!entry) {
+      entry = { runner: null, chains, worldW: rtW / this.dpr, worldH: rtH / this.dpr };
+      this.entries.set(objId, entry);
+    }
+    // setWorldSize 可能已先建条目（three-renderer 的顺序是 setWorldSize → setObjectChains），
+    // 此时保留其世界尺寸，不被 RT 尺寸/dpr 反推覆盖。
+    entry.chains = chains;
+    if (!entry.runner) {
+      entry.runner = new EffectRunner(this.host.renderer, rtW, rtH);
+    }
+    entry.runner.setChains(chains, this.wallpaperId, { width: rtW, height: rtH });
+  }
+}
