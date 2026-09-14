@@ -9,7 +9,7 @@
 // 本模块不构造 three 场景、不持有 canvas；player 通过结构化接口（ObjectEffectStage）
 // 被注入，因此本模块不 import threejs-player.ts（避免循环依赖）。
 import type * as THREE from 'three';
-import { OBJECT_RT_MAX, PendingChainStore } from './object-range.js';
+import { OBJECT_RT_MAX } from './object-range.js';
 import { EffectRunner } from './effect-runner.js';
 import type { CompiledEffectPass } from './shader/effect-chain.js';
 
@@ -124,7 +124,8 @@ export class ObjectEffectStage implements ObjectEffectStage {
   // 因此此刻切换 RT 不会打扰本帧主场景渲染）；忙时排队，等前一项 settle 后再发起。
   private busy = false;
   private queue: Array<() => unknown> = [];
-  private pendingChains = new PendingChainStore<CompiledEffectPass[][]>();
+  /** 去重告警集合（`warnSkip` 之外的通用去重，按 key 只打印一次，防每帧刷屏）。 */
+  private warned = new Set<string>();
 
   constructor(
     private readonly host: ObjectEffectHost,
@@ -149,7 +150,9 @@ export class ObjectEffectStage implements ObjectEffectStage {
     this.entries.set(objId, { runner: null, chains: [], worldW, worldH });
   }
 
-  /** 挂载某对象的效果链（对象条目可能尚未出现 → 暂存，见 PendingChainStore）。 */
+  /** 挂载某对象的效果链。调用顺序契约：player 先在 loadSceneToThree 内建好隔离条目，
+   *  stage 再挂链（Task 5 的接线顺序：setWorldSize → setObjectChains）；找不到隔离条目
+   *  说明契约被破坏 → 明确告警一次，绝不静默丢弃，也绝不猜尺寸。 */
   setObjectChains(objId: number, chains: CompiledEffectPass[][]): void {
     if (this.disposed) return;
     // 逐条链分类：保留线性链，跳过具名 RT 图链（整链，不硬跑——产物是错画面）。
@@ -162,37 +165,40 @@ export class ObjectEffectStage implements ObjectEffectStage {
         this.warnSkip(label);
       }
     }
-    if (usable.length === 0) {
-      this.pendingChains.applyIfReady(objId, [], false);
-      return;
-    }
+    if (usable.length === 0) return;
     const view = this.host.isolatedObjects().find((o) => o.id === objId);
     if (!view) {
-      this.pendingChains.applyIfReady(objId, usable, false);
+      // 调用顺序契约：player 先在 loadSceneToThree 内建好隔离对象，stage 再挂链
+      // （Task 5 的接线顺序：setWorldSize → setObjectChains）。走到这里说明契约被破坏——
+      // 明确告警一次，绝不静默丢弃，也绝不猜尺寸。
+      this.warnOnce(`no-isolated:${objId}`, `对象 ${objId} 尚无隔离条目，效果链未挂载（调用顺序错误）`);
       return;
     }
     this.mount(objId, usable, view.rtWidth, view.rtHeight);
   }
 
-  /** 视口/预算变化：按新预算重算每个隔离对象的 RT 像素尺寸（等比），有链的对象用同一份链
-   *  重挂（runner 内部 RT 跟随新尺寸；EffectRunner 只在尺寸真变化时重建 RT）。
-   *  遍历 host.isolatedObjects() 而非 entries：本方法要覆盖「条目已隔离、但链尚未挂上」
-   *  的对象——它的世界尺寸此时只能由当前 RT 像素 / dpr 反推（三者的世界尺寸语义见
-   *  resolveObjectRtSize；有 entry 时一律以 entry.worldW/worldH 为准）。 */
+  /** 视口/预算变化：按新预算重算每个对象的 RT 像素尺寸，并用同一份链重挂（runner 内部 RT 跟随）。 */
   onViewportResize(budgetWidth: number, budgetHeight: number): void {
     if (this.disposed) return;
     this.budgetWidth = budgetWidth;
     this.budgetHeight = budgetHeight;
-    for (const view of this.host.isolatedObjects()) {
-      const entry = this.entries.get(view.id);
-      const worldW = entry ? entry.worldW : view.rtWidth / this.dpr;
-      const worldH = entry ? entry.worldH : view.rtHeight / this.dpr;
-      const size = resolveObjectRtSize(worldW, worldH, this.dpr, budgetWidth, budgetHeight);
+    for (const [id, entry] of this.entries) {
+      if (!entry.runner) continue;
+      // 世界尺寸只由 setWorldSize 确定（唯一来源）。**不要**用 view.rtWidth / dpr 反推：
+      // player 的 resizeObjectRT 会回写 rtWidth/rtHeight，反推等于把「已被预算收口的 RT」
+      // 当世界尺寸，是不可逆的缩小（第一轮收口后永远回不到原尺寸）。
+      const size = resolveObjectRtSize(entry.worldW, entry.worldH, this.dpr, budgetWidth, budgetHeight);
+      const view = this.host.isolatedObjects().find((o) => o.id === id);
+      if (!view) continue;
       if (view.rtWidth === size.width && view.rtHeight === size.height) continue;
-      this.host.resizeObjectRT(view.id, size.width, size.height);
-      if (entry?.runner) {
-        entry.runner.setChains(entry.chains, this.wallpaperId, { width: size.width, height: size.height });
-      }
+      this.host.resizeObjectRT(id, size.width, size.height);
+      entry.runner.setChains(entry.chains, this.wallpaperId, { width: size.width, height: size.height });
+      // 重挂后 runner 的 last 被清空、旧 ping-pong RT 已被 dispose，而 quad 仍绑着那张
+      // 已释放的纹理（配合 bindOutputs 的「链未就绪不动输出」契约，会在整个纹理槽重载窗口内
+      // 采样已 dispose 的纹理 → 静默画错）。显式回退到对象 RT 原图。
+      // （view.rtTexture 在 resizeObjectRT 之后仍有效：player 用 rt.setSize 复用同一个
+      //  WebGLRenderTarget，其 .texture 不变。）
+      this.host.setObjectOutput(id, view.rtTexture);
     }
   }
 
@@ -228,7 +234,6 @@ export class ObjectEffectStage implements ObjectEffectStage {
     this.queue.length = 0;
     for (const entry of this.entries.values()) entry.runner?.dispose();
     this.entries.clear();
-    this.pendingChains.clear();
   }
 
   // ── 测试/诊断钩子（不参与生产路径） ──
@@ -254,6 +259,13 @@ export class ObjectEffectStage implements ObjectEffectStage {
     console.warn(
       `[wallpaper-engine] 效果需要具名 RT（P2 未实现），跳过: ${label}`,
     );
+  }
+
+  /** 去重告警（同一 key 只打印一次，防每帧刷屏）。 */
+  private warnOnce(key: string, message: string): void {
+    if (this.warned.has(key)) return;
+    this.warned.add(key);
+    console.warn(`[wallpaper-engine] ${message}`);
   }
 
   /** 串行队列入队（约束 3 / 2：只调用既有的 update，不在此建材质）。 */

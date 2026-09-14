@@ -176,14 +176,28 @@ function createMockRunner() {
 function createHost(entries: Array<{ id: number; rtWidth: number; rtHeight: number }>) {
   const outputs = new Map<number, THREE.Texture>();
   const resized: Array<{ id: number; w: number; h: number }> = [];
+  // 与真实 player 一致的两点（否则测不出「反推世界尺寸」的不可逆 bug）：
+  //   1. resizeObjectRT 会**回写** rtWidth/rtHeight（threejs-player.ts:570-571）；
+  //   2. 同一对象的 rtTexture 在 resize 前后不变（player 用 rt.setSize 复用同一个 RT，
+  //      其 .texture 实例不变）。
+  const textures = new Map<number, THREE.Texture>();
+  const textureOf = (id: number): THREE.Texture => {
+    let t = textures.get(id);
+    if (!t) { t = new THREE.Texture(); textures.set(id, t); }
+    return t;
+  };
   const host = {
     renderer: {} as THREE.WebGLRenderer,
     isolatedObjects: () => entries.map((e) => ({
       id: e.id, rtWidth: e.rtWidth, rtHeight: e.rtHeight,
-      rtTexture: new THREE.Texture(),
+      rtTexture: textureOf(e.id),
     })),
     setObjectOutput: (id: number, tex: THREE.Texture) => { outputs.set(id, tex); },
-    resizeObjectRT: (id: number, w: number, h: number) => { resized.push({ id, w, h }); },
+    resizeObjectRT: (id: number, w: number, h: number) => {
+      const entry = entries.find((e) => e.id === id);
+      if (entry) { entry.rtWidth = w; entry.rtHeight = h; }
+      resized.push({ id, w, h });
+    },
     _outputs: outputs,
     _resized: resized,
   };
@@ -223,15 +237,35 @@ describe('ObjectEffectStage', () => {
     warn.mockRestore();
   });
 
-  it('纯 RT 图链的对象不建 runner，bindOutputs 不调用 setObjectOutput（quad 保持对象 RT 原图）', () => {
+  it('RT 图链的对象不建 runner，bindOutputs 不调用 setObjectOutput（quad 保持对象 RT 原图）', () => {
     const host = createHost([{ id: 1, rtWidth: 10, rtHeight: 10 }]);
     const stage = new ObjectEffectStage(host as never, {
       wavelengthId: 'w', dpr: 1, budgetWidth: 1920, budgetHeight: 1080,
     });
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    stage.setObjectChains(1, [[pass({ bind: [{ name: 'previous', index: 0 }] })]]);
+    // 必须是真的具名 RT 形状（`bind: [{ name: 'previous', index: 0 }]` 按本文件既有断言是
+    // **线性**的，用它做本用例等于空断言：编排器会照常 mount 建 runner）。
+    stage.setObjectChains(1, [[pass({ bind: [{ name: '_rt_a', index: 0 }] })]]);
+    expect(stage.debugRunners().has(1)).toBe(false);
+    expect(stage.rtGraphSkips()).toContain('_rt_a');
     stage.bindOutputs();
     expect(host._outputs.size).toBe(0);
+    warn.mockRestore();
+  });
+
+  it('setObjectChains 在对象尚无隔离条目时明确告警一次，且不建 runner（不暂存、不猜尺寸）', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const host = createHost([]); // 隔离条目尚未出现＝调用顺序契约被破坏
+    const stage = new ObjectEffectStage(host as never, {
+      wavelengthId: 'w', dpr: 1, budgetWidth: 1920, budgetHeight: 1080,
+    });
+    stage.setObjectChains(7, [[pass()]]);
+    stage.setObjectChains(7, [[pass()]]);
+    // 去重告警：同一对象只打印一次（不再有「链先于条目 → 暂存」的死状态机）
+    const warns = warn.mock.calls.filter((c) => String(c[0]).includes('尚无隔离条目'));
+    expect(warns).toHaveLength(1);
+    expect(stage.rtGraphSkips()).toEqual([]); // 线性链不是降级跳过
+    expect(stage.debugRunners().has(7)).toBe(false); // 绝不猜尺寸/静默建 runner
     warn.mockRestore();
   });
 
@@ -279,17 +313,71 @@ describe('ObjectEffectStage', () => {
     expect(order).toEqual(['start', 'end', 'start']);
   });
 
-  it('onViewportResize 按新预算等比重设 RT 尺寸', () => {
-    const host = createHost([{ id: 1, rtWidth: 100, rtHeight: 50 }]);
+  it('advance 串行：第二个 runner 的 update 在第一个 settle 之前不发起（跨 runner 全局串行）', async () => {
+    // 只注入一个 runner 的写法挡不住「每 runner 一个 busy 标志」的错误实现：
+    // 那种实现下两个 runner 会并发交错、抢 renderer 的 RT 绑定。这里注入两个 runner。
+    const host = createHost([
+      { id: 1, rtWidth: 10, rtHeight: 10 },
+      { id: 2, rtWidth: 10, rtHeight: 10 },
+    ]);
+    const stage = new ObjectEffectStage(host as never, {
+      wavelengthId: 'w', dpr: 1, budgetWidth: 1920, budgetHeight: 1080,
+    });
+    const order: string[] = [];
+    let releaseFirst: (() => void) | null = null;
+    const first = {
+      setChains: vi.fn(), setAudioSpectrumSource: vi.fn(), dispose: vi.fn(),
+      lastOutput: () => null,
+      update: vi.fn(() => {
+        order.push('first:start');
+        return new Promise<void>((res) => { releaseFirst = () => { order.push('first:end'); res(); }; });
+      }),
+    };
+    const second = {
+      setChains: vi.fn(), setAudioSpectrumSource: vi.fn(), dispose: vi.fn(),
+      lastOutput: () => null,
+      update: vi.fn(() => { order.push('second:start'); return Promise.resolve(); }),
+    };
+    stage.debugInjectRunner(1, first as never);
+    stage.debugInjectRunner(2, second as never);
+    stage.advance(1);
+    expect(first.update).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(['first:start']);
+    expect(second.update).not.toHaveBeenCalled(); // 第二个 runner 未发起（全局串行）
+    releaseFirst!();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(order).toEqual(['first:start', 'first:end', 'second:start']);
+    expect(second.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('onViewportResize 按新预算等比重设 RT 尺寸（缩小→放大可逆；重挂后回退对象 RT 原图）', () => {
+    const host = createHost([
+      { id: 1, rtWidth: 100, rtHeight: 50 },
+      { id: 2, rtWidth: 100, rtHeight: 50 }, // 无 entry/无 runner：不能被反推世界尺寸
+    ]);
     const stage = new ObjectEffectStage(host as never, {
       wavelengthId: 'w', dpr: 2, budgetWidth: 1920, budgetHeight: 1080,
     });
-    // 世界尺寸 = RT 像素 / dpr = 50×25；新预算 400×400 @dpr2 → 100×50 不超预算 → 不变
+    // 世界尺寸的**唯一来源**是 setWorldSize（此处 50×25 = 首轮 RT 像素 / dpr）；
+    // onViewportResize 只处理 entries 里已有 runner 的对象，故按契约顺序先挂链。
+    stage.setWorldSize(1, 50, 25);
+    stage.setObjectChains(1, [[pass()]]);
+    // 新预算 400×400 @dpr2 → 100×50 不超预算 → 不变
     stage.onViewportResize(400, 400);
     expect(host._resized).toEqual([]);
     // 新预算 20×20 @dpr2 → cap 20 → 等比 s = min(20/100, 20/50) = 0.2 → 20×10
     stage.onViewportResize(20, 20);
+    // 只有 id 1 被重设：id 2 无 entry 也没有 runner，直接跳过（不反推 rtWidth / dpr 当世界尺寸
+    // ——那会把「已被预算收口的 RT」当世界尺寸，是不可逆的缩小）。
     expect(host._resized).toEqual([{ id: 1, w: 20, h: 10 }]);
+    // 重挂（setChains 清空 last、旧 ping-pong RT 已 dispose）后必须显式回退对象 RT 原图，
+    // 否则 quad 会在整个纹理重载窗口内采样已 dispose 的纹理。
+    expect(host._outputs.get(1)).toBe(host.isolatedObjects().find((o) => o.id === 1)!.rtTexture);
+    // 放大回去：预算再回到 400×400 → 恢复 100×50（世界尺寸始终来自 setWorldSize，故可逆）
+    stage.onViewportResize(400, 400);
+    expect(host._resized).toEqual([{ id: 1, w: 20, h: 10 }, { id: 1, w: 100, h: 50 }]);
   });
 
   it('dispose 释放全部 runner', () => {
