@@ -21605,11 +21605,14 @@ function cropCompressedToMap(data, mipWidth, mipHeight, cw, ch, blockSize) {
   }
   return { width: nw, height: nh, data: out };
 }
-async function textureFromTex(info) {
+async function textureFromTex(info, opts) {
   const mip = info.mipmaps[0];
   if (!mip) return null;
   const withSprite = (tex) => {
-    if (info.sprite) tex.userData = { ...tex.userData ?? {}, sprite: info.sprite };
+    const ud = { ...tex.userData ?? {} };
+    if (info.sprite) ud.sprite = info.sprite;
+    ud.fxRes = [mip.width, mip.height, info.textureWidth, info.textureHeight];
+    tex.userData = ud;
     return tex;
   };
   const applyLinearSampling = (tex) => {
@@ -21636,7 +21639,7 @@ async function textureFromTex(info) {
   }
   if (info.format === TEX_FORMAT.RGBA8888 || info.format === TEX_FORMAT.RG88 || info.format === TEX_FORMAT.R8) {
     const cropped = cropToMap(mip.data, mip.width, mip.height, info.width, info.height, info.format, info.flags);
-    const src = info.format === TEX_FORMAT.RGBA8888 ? cropped.data : convertUnormToRgba(cropped.data, info.format);
+    const src = info.format === TEX_FORMAT.RGBA8888 ? cropped.data : convertUnormToRgba(cropped.data, info.format, opts?.alphaPriority !== false);
     const flipped = flipRows(src, cropped.width, cropped.height, 4);
     const tex = new DataTexture(flipped, cropped.width, cropped.height, RGBAFormat);
     applyLinearSampling(tex);
@@ -21677,26 +21680,40 @@ function flipCompressedRows(data, width, height, blockSize) {
   }
   return out;
 }
-function convertUnormToRgba(data, format) {
+function convertUnormToRgba(data, format, alphaPriority = true) {
   if (format === TEX_FORMAT.RG88) {
     const out2 = new Uint8Array(data.length * 2);
     for (let i = 0, o = 0; i < data.length; i += 2, o += 4) {
       const r = data[i];
       const g = data[i + 1];
-      out2[o] = r;
-      out2[o + 1] = r;
-      out2[o + 2] = r;
-      out2[o + 3] = g;
+      if (alphaPriority) {
+        out2[o] = r;
+        out2[o + 1] = r;
+        out2[o + 2] = r;
+        out2[o + 3] = g;
+      } else {
+        out2[o] = r;
+        out2[o + 1] = g;
+        out2[o + 2] = 0;
+        out2[o + 3] = 255;
+      }
     }
     return out2;
   }
   const out = new Uint8Array(data.length * 4);
   for (let i = 0, o = 0; i < data.length; i++, o += 4) {
     const v = data[i];
-    out[o] = 255;
-    out[o + 1] = 255;
-    out[o + 2] = 255;
-    out[o + 3] = v;
+    if (alphaPriority) {
+      out[o] = 255;
+      out[o + 1] = 255;
+      out[o + 2] = 255;
+      out[o + 3] = v;
+    } else {
+      out[o] = v;
+      out[o + 1] = v;
+      out[o + 2] = v;
+      out[o + 3] = 255;
+    }
   }
   return out;
 }
@@ -21710,12 +21727,12 @@ function flipRows(data, width, height, bytesPerPixel) {
   }
   return out;
 }
-async function loadTexTexture(url) {
+async function loadTexTexture(url, opts) {
   const buf = await fetchWithRetry(url);
   if (!buf) return null;
   const info = parseTex(buf);
   if (!info) return null;
-  return textureFromTex(info);
+  return textureFromTex(info, opts);
 }
 
 // src/client/shader/uniform-binder.ts
@@ -21825,11 +21842,14 @@ function resolveTargetSize(current, opts) {
     height: opts?.height ?? current.height
   };
 }
-function resolveTextureResolution(tex, fallbackW, fallbackH) {
-  return {
-    width: tex?.image?.width ?? fallbackW,
-    height: tex?.image?.height ?? fallbackH
-  };
+function resolveTextureResolution4(tex, fallbackW, fallbackH) {
+  const fx = tex?.userData?.fxRes;
+  if (Array.isArray(fx) && fx.length === 4 && Number(fx[0]) > 0 && Number(fx[1]) > 0) {
+    return { x: Number(fx[0]), y: Number(fx[1]), z: Number(fx[2]), w: Number(fx[3]) };
+  }
+  const w = tex?.image?.width ?? fallbackW;
+  const h = tex?.image?.height ?? fallbackH;
+  return { x: w, y: h, z: w, w: h };
 }
 function fillAudioSpectrumUniform(dest, src) {
   for (let i = 0; i < dest.length; i++) {
@@ -21931,13 +21951,13 @@ var EffectRunner = class {
       }
       if (!uniforms["g_Texture0"]) uniforms["g_Texture0"] = { value: null };
       for (let i = 0; i < pass.textureSlots.length; i++) {
-        const slot = `g_Texture${i + 1}`;
+        const slot = `g_Texture${i}`;
         if (!uniforms[slot]) uniforms[slot] = { value: null };
       }
       for (let i = 0; i <= Math.max(pass.textureSlots.length, 0); i++) {
         const res = `g_Texture${i}Resolution`;
         uniforms[res] = {
-          value: new Vector4(this.width, this.height, 1 / Math.max(1, this.width), 1 / Math.max(1, this.height))
+          value: new Vector4(this.width, this.height, this.width, this.height)
         };
       }
       const matRe = /uniform\s+mat([234])\s+(\w+)/g;
@@ -22040,7 +22060,7 @@ var EffectRunner = class {
     if (this.textures.has(key)) return this.textures.get(key) ?? null;
     const resolved = resolveTextureSlotPath(path);
     if (!resolved) return null;
-    const tex = await loadTexTexture(`/wallpapers/scene/${this.id}/asset?name=${encodeURIComponent(resolved)}`);
+    const tex = await loadTexTexture(`/wallpapers/scene/${this.id}/asset?name=${encodeURIComponent(resolved)}`, { alphaPriority: false });
     if (!tex) console.warn("[wallpaper-engine] \u7EB9\u7406\u69FD\u52A0\u8F7D\u5931\u8D25\uFF0C\u8DF3\u8FC7:", path, "\u2192", resolved);
     this.textures.set(key, tex);
     return tex;
@@ -22070,18 +22090,18 @@ var EffectRunner = class {
         if (!material) continue;
         for (let j = 0; j < pass.textureSlots.length; j++) {
           const tex = slotTex.get(`${i}:${j}`) ?? null;
-          const slot = `g_Texture${j + 1}`;
+          const slot = `g_Texture${j}`;
           if (material.uniforms[slot]) material.uniforms[slot].value = tex;
-          const res = `g_Texture${j + 1}Resolution`;
+          const res = `g_Texture${j}Resolution`;
           if (material.uniforms[res]) {
-            const { width: w, height: h } = resolveTextureResolution(tex, this.width, this.height);
-            material.uniforms[res].value = new Vector4(w, h, 1 / Math.max(1, w), 1 / Math.max(1, h));
+            const r4 = resolveTextureResolution4(tex, this.width, this.height);
+            material.uniforms[res].value = new Vector4(r4.x, r4.y, r4.z, r4.w);
           }
         }
         if (material.uniforms["g_Texture0"]) material.uniforms["g_Texture0"].value = readTex;
         if (material.uniforms["g_Texture0Resolution"]) {
-          const { width: w, height: h } = resolveTextureResolution(readTex, this.width, this.height);
-          material.uniforms["g_Texture0Resolution"].value = new Vector4(w, h, 1 / Math.max(1, w), 1 / Math.max(1, h));
+          const r4 = resolveTextureResolution4(readTex, this.width, this.height);
+          material.uniforms["g_Texture0Resolution"].value = new Vector4(r4.x, r4.y, r4.z, r4.w);
         }
         if (material.uniforms["g_Time"]) material.uniforms["g_Time"].value = time;
         if (this.audioSpectrum) this.fillAudioUniforms(material, this.audioSpectrum);
@@ -23105,11 +23125,20 @@ async function resolveEffectChain(sceneEffect, loadFile) {
       const fragRaw = await loadFile(`shaders/${shaderName}.frag`);
       if (!vertRaw || !fragRaw) return null;
       const override = scenePasses[i] ?? {};
-      const combos = override.combos ?? {};
       const constants = override.constantshadervalues ?? {};
       const textures = Array.isArray(override.textures) ? override.textures : [];
       const rawVert = new TextDecoder().decode(vertRaw);
       const rawFrag = new TextDecoder().decode(fragRaw);
+      const derived = {};
+      for (const ann of extractUniformAnnotations(rawFrag).concat(extractUniformAnnotations(rawVert))) {
+        const combo = ann.annotation?.combo;
+        if (typeof combo !== "string" || !combo) continue;
+        const m = /^g_Texture(\d+)$/.exec(ann.name);
+        if (!m) continue;
+        const idx = Number(m[1]);
+        if (idx > 0 && textures[idx]) derived[combo] = 1;
+      }
+      const combos = { ...derived, ...override.combos ?? {} };
       const vertSrc = preprocessWeShader(rawVert, combos);
       const fragSrc = preprocessWeShader(rawFrag, combos);
       const uniforms = resolveUniformBindings(

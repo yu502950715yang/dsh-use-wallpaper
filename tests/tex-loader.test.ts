@@ -221,6 +221,22 @@ describe('parseTex 精灵表（TEXS000x）', () => {
 // 这是 DK 雪片（RG88）/ fog（R8）纹理能在 three 路径加载的关键——此前 format 8/9 无分支直接
 // return null → 白图兜底 → 实心方块（无纹理形状）。
 describe('convertUnormToRgba', () => {
+  // 效果纹理槽语义（alphaPriority=false，2026-09-14 真机对照桌面 WE 时发现）：效果 shader 把
+  // R8/RG88 的通道当**遮罩数值**读（pulse.frag 的 `.r`、shake.frag 的 `.rg`）。若沿用粒子语义
+  //（R8 → rgb 恒白、RG88 → (r,r,r,g)），遮罩恒白/恒 1 ⇒ 本该只作用于遮罩区域的效果覆盖全图
+  //（真机现象：GTR 整屏一闪一闪、整屏晃动，而桌面 WE 上只有手机反光在女孩脸上闪、只有排气管在抖）。
+  it('alphaPriority=false：R8 → r=g=b=R（效果遮罩语义），而非粒子的 rgb 恒白 + alpha=R', () => {
+    const out = convertUnormToRgba(new Uint8Array([0, 128, 255]), TEX_FORMAT.R8, false);
+    expect([...out.slice(0, 4)]).toEqual([0, 0, 0, 255]);
+    expect([...out.slice(4, 8)]).toEqual([128, 128, 128, 255]);
+    expect([...out.slice(8, 12)]).toEqual([255, 255, 255, 255]);
+  });
+
+  it('alphaPriority=false：RG88 → (R, G, 0, 1)（方向图两个分量），而非粒子的 (r,r,r,g)', () => {
+    const out = convertUnormToRgba(new Uint8Array([10, 200]), TEX_FORMAT.RG88, false);
+    expect([...out]).toEqual([10, 200, 0, 255]);
+  });
+
   it('RG88（format 8）：r 复制到 rgb、g 为 alpha（vec4(r,r,r,g)）', () => {
     // 2 像素：px0=(r=200,g=50) px1=(r=10,g=255)
     const src = new Uint8Array([200, 50, 10, 255]);

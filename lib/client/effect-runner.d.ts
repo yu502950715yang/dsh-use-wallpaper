@@ -18,6 +18,20 @@ export declare function resolveTextureResolution(tex: {
         height?: number;
     } | null;
 } | null | undefined, fallbackW: number, fallbackH: number): EffectTargetSize;
+export declare function resolveTextureResolution4(tex: {
+    image?: {
+        width?: number;
+        height?: number;
+    } | null;
+    userData?: {
+        fxRes?: unknown;
+    };
+} | null | undefined, fallbackW: number, fallbackH: number): {
+    x: number;
+    y: number;
+    z: number;
+    w: number;
+};
 export declare function fillAudioSpectrumUniform(dest: number[], src: Uint8Array): void;
 export declare function describeEffectPass(pass: CompiledEffectPass, key: string, wallpaperId: string): string;
 export declare class EffectRunner {

@@ -10,7 +10,7 @@ export interface CompiledEffectPass {
   rawFrag: string;                       // 未预处理的原始 WE 方言 frag 源（供 wasm 路径）
   combos: Record<string, number>;        // 该 pass 的 combo 宏映射（scene.json 覆写 + 需注入项）
   uniforms: Map<string, UniformValue>;   // 静态值（g_Time 由执行器运行时更新）
-  textureSlots: (string | null)[];       // textures[i] → g_Texture(i+1)
+  textureSlots: (string | null)[];       // textures[i] → g_Texture(i)（WE 官方 scenejson.md:22）
   blendMode: string;                     // material json 的 blending（normal/add/...）
   // ── RT 图信息（wasm RT 图执行器）──
   // effect.json passes[i].target：本 pass 写到的具名 RT（如 "_rt_QuarterCompoBuffer1"）。
@@ -67,13 +67,32 @@ export async function resolveEffectChain(
       if (!vertRaw || !fragRaw) return null;
 
       const override = scenePasses[i] ?? {};
-      const combos = override.combos ?? {};
       const constants = override.constantshadervalues ?? {};
       const textures = Array.isArray(override.textures) ? override.textures : [];
 
       // 原始源（未预处理，供 wasm 路径用 glsl-to-naga 编译）：在调用 preprocessWeShader 之前保存
       const rawVert = new TextDecoder().decode(vertRaw);
       const rawFrag = new TextDecoder().decode(fragRaw);
+
+      // ── combo 派生（WE 语义，必须在 preprocessWeShader **之前**，因为 combo 决定 #if 分支）──
+      // shader 里 sampler 声明带 `"combo":"X"` 时，**该槽被绑定（textures 对应项非 null）即置 X=1**。
+      // 典型：`uniform sampler2D g_Texture3; // {"mode":"opacitymask","combo":"MASK"}`
+      // 与 `g_Texture1; // {"mode":"flowmask","default":"util/noflow"}`——mask/方向图被绑定时，
+      // `#if MASK` 的局部作用分支才会启用；不启用时效果会**全图**生效（而不是只作用于 mask 区域），
+      // 这正是「GTR 整屏抖动而不是只抖排气管」的根因之一。
+      // scene.json 的 pass.combos 显式值优先（覆盖派生结果）。
+      const derived: Record<string, number> = {};
+      for (const ann of extractUniformAnnotations(rawFrag).concat(extractUniformAnnotations(rawVert))) {
+        const combo = ann.annotation?.combo;
+        if (typeof combo !== 'string' || !combo) continue;
+        const m = /^g_Texture(\d+)$/.exec(ann.name);
+        if (!m) continue;
+        const idx = Number(m[1]);
+        // textures[i] → g_Texture(i)；g_Texture0 是效果链输入（由执行器绑定 readTex），
+        // 故只对 idx ≥ 1 做派生。
+        if (idx > 0 && textures[idx]) derived[combo] = 1;
+      }
+      const combos: Record<string, number> = { ...derived, ...(override.combos ?? {}) };
       const vertSrc = preprocessWeShader(rawVert, combos);
       const fragSrc = preprocessWeShader(rawFrag, combos);
       const uniforms = resolveUniformBindings(

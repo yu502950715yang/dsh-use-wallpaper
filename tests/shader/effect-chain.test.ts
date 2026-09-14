@@ -31,6 +31,61 @@ const files = new Map<string, Uint8Array>([
 ]);
 const loadFile = async (name: string) => files.get(name) ?? null;
 
+// ── combo 派生（2026-09-14，真机对照桌面 WE 时发现）──────────────────────────────
+// WE 语义：shader 里 sampler 声明带 `"combo":"X"` 时，**该槽被绑定（scene.json 的 textures
+// 对应项非 null）即置 X=1**。典型是 mask / 方向图槽——`#if MASK` 的局部作用分支不启用时，
+// 效果会**全图**生效（真机现象：GTR 整屏抖动而不是只抖排气管、整屏脉冲而不是只有脸部反光）。
+// 另：textures[i] → g_Texture(i)（WE 官方 wpdoc/scenejson.md:22），**不是** g_Texture(i+1)——
+// 曾整体错位一个槽，使 mask 落到别的 sampler 上、shader 采到默认纹理（flowmask 采白 ⇒
+// flowMask≈1.0 ⇒ 全图位移）。
+const comboFiles = new Map<string, Uint8Array>([
+  ['effects/combo/effect.json', encoder.encode(JSON.stringify({
+    version: 1,
+    passes: [{ material: 'materials/effects/combo.json' }],
+  }))],
+  ['materials/effects/combo.json', encoder.encode(JSON.stringify({
+    passes: [{ shader: 'effects/combo', blending: 'normal' }],
+  }))],
+  ['shaders/effects/combo.vert', encoder.encode('void main() { gl_Position = vec4(position, 1.0); }')],
+  ['shaders/effects/combo.frag', encoder.encode(
+    'uniform sampler2D g_Texture0; // {"hidden":true}\n' +
+    'uniform sampler2D g_Texture2; // {"mode":"opacitymask","combo":"MASK"}\n' +
+    'uniform sampler2D g_Texture3; // {"mode":"flowmask","combo":"FLOW","default":"util/noflow"}\n' +
+    '#if MASK\nfloat masked() { return 1.0; }\n#endif\n' +
+    'void main() { gl_FragColor = texSample2D(g_Texture0, vec2(0.0)); }',
+  )],
+]);
+const loadCombo = async (name: string) => comboFiles.get(name) ?? null;
+
+describe('combo 派生：sampler 注释带 combo 且该纹理槽被绑定 → 置 1', () => {
+  it('textures[2] 有纹理 → MASK=1；未提供的槽（textures[3]）不派生；槽数组原样保留', async () => {
+    const chain = await resolveEffectChain({
+      file: 'effects/combo/effect.json',
+      passes: [{ textures: [null, null, 'masks/m.tex'] }],
+    }, loadCombo);
+    expect(chain).not.toBeNull();
+    expect(chain![0].combos.MASK).toBe(1);
+    expect(chain![0].combos.FLOW).toBeUndefined();
+    expect(chain![0].textureSlots).toEqual([null, null, 'masks/m.tex']);
+  });
+
+  it('槽为 null → 不派生该 combo（走 #if 未启用的降级分支）', async () => {
+    const chain = await resolveEffectChain({
+      file: 'effects/combo/effect.json',
+      passes: [{ textures: [null, null, null] }],
+    }, loadCombo);
+    expect(chain![0].combos.MASK).toBeUndefined();
+  });
+
+  it('scene.json 的显式 combos 优先于派生结果', async () => {
+    const chain = await resolveEffectChain({
+      file: 'effects/combo/effect.json',
+      passes: [{ combos: { MASK: 0 }, textures: [null, null, 'masks/m.tex'] }],
+    }, loadCombo);
+    expect(chain![0].combos.MASK).toBe(0);
+  });
+});
+
 describe('resolveEffectChain 解耦出原始 shader 源与 combos', () => {
   it('每个 pass 产出非空 rawVert/rawFrag（原始 WE 方言源），combos 为对象', async () => {
     const chain = await resolveEffectChain({
