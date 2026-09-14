@@ -11,6 +11,12 @@ export interface CompiledEffectPass {
   combos: Record<string, number>;        // 该 pass 的 combo 宏映射（scene.json 覆写 + 需注入项）
   uniforms: Map<string, UniformValue>;   // 静态值（g_Time 由执行器运行时更新）
   textureSlots: (string | null)[];       // textures[i] → g_Texture(i)（WE 官方 scenejson.md:22）
+  // 每个 sampler uniform 名 → 该槽在 shader 注释里声明的 `mode`（如 g_Texture2 → "opacitymask"）。
+  // 只收 mode 非空的声明；vert 与 frag 都扫（同名以 frag 为准——采样发生在片元侧）。
+  // 用途：scene.json 的 textures 数组**没给到**某个槽时，执行器按 mode 决定空槽绑什么常量纹理
+  // （opacitymask → 全 0、flowmask → 中灰；无 mode 的槽不碰，保持既有行为）。
+  // 见 effect-runner.ts 的 resolveEmptySlotTexture / resolveSlotFallback。
+  samplerModes: Record<string, string>;
   blendMode: string;                     // material json 的 blending（normal/add/...）
   // ── RT 图信息（wasm RT 图执行器）──
   // effect.json passes[i].target：本 pass 写到的具名 RT（如 "_rt_QuarterCompoBuffer1"）。
@@ -95,6 +101,15 @@ export async function resolveEffectChain(
       const combos: Record<string, number> = { ...derived, ...(override.combos ?? {}) };
       const vertSrc = preprocessWeShader(rawVert, combos);
       const fragSrc = preprocessWeShader(rawFrag, combos);
+      // sampler 槽的 mode 标注（空槽语义的唯一依据）：**必须扫未预处理的原始源** —— 
+      // preprocessWeShader 会把 `uniform sampler2D x; // {...}` 整行抽出来前置，
+      // 处理后再扫拿不到标注（注释已随行被搬走/丢失）。
+      // 合并顺序：vert → frag，同名（同一槽在两侧都声明）时以 frag 为准。
+      const samplerModes: Record<string, string> = {};
+      for (const ann of extractUniformAnnotations(rawVert).concat(extractUniformAnnotations(rawFrag))) {
+        const mode = ann.annotation?.mode;
+        if (typeof mode === 'string' && mode) samplerModes[ann.name] = mode;
+      }
       const uniforms = resolveUniformBindings(
         extractUniformAnnotations(fragSrc).concat(extractUniformAnnotations(vertSrc)),
         constants,
@@ -108,6 +123,7 @@ export async function resolveEffectChain(
         combos,
         uniforms,
         textureSlots: textures,
+        samplerModes,
         blendMode: mat.passes?.[0]?.blending ?? 'normal',
         // RT 图信息：effect.json passes[i].target（写到的具名 RT）/bind（采样来源）；
         // scene.json pass 可覆写 target（如 scene 指定目标 RT）。缺省 target=null（最终输出）。

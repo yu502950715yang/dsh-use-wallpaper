@@ -91,6 +91,81 @@ export function resolveBuiltinTexture(path: string | null | undefined): THREE.Te
   return tex;
 }
 
+// ===== 空槽纹理（scene.json 未提供的 sampler 槽，按 shader 声明的 mode 兜底）=====
+//
+// 背景（真机反馈 2454403969 赛博朋克2077）：该壁纸 `effects/clouds` 的 pass 只有
+// `textures: [null, "util/clouds_256"]`（长度 2），而 `clouds.frag` 声明了三个 sampler：
+//   g_Texture0（链输入）/ g_Texture1（albedo）/ g_Texture2（`"mode":"opacitymask"` 的 mask）。
+// ⇒ g_Texture2 这个槽**从未被提供**：不绑任何东西时 three 的兜底是 1×1 全 0（`emptyTexture`），
+// 而这个全 0 对 `flowmask` 语义恰好是**满量程位移**（`(0 - 0.498) * 2 = -0.996`），
+// 对 mask 语义则无语义（读到 0 才是「遮罩关」）。`mode` 字段本来就是给这个场景用的：
+// **空槽绑什么由 mode 决定**。裁定与依据：
+//
+//   - `mode: "opacitymask"`（不透明度遮罩）→ 空槽 = 全 0（黑）。乘法遮罩读到 0 ⇒
+//     `mix(原图, 效果, 0)` = 原图（效果不作用）；half 透明遮罩类写法同理取最保守值。
+//     alpha 取 **255**（不是 0）：WE 自己的 `<WE>/assets/materials/util/black.tex` 首像素
+//     实测字节 `00 00 00 ff`（R=G=B=0、A=255），而 shake 的 `g_Texture2` 正是以 `util/black`
+//     作 `default` ⇒ 空槽取 (0,0,0,255) 与官方素材逐字节一致；实测硬需求是 `.r` 为 0
+//     （shader 读 `.r`），alpha 取 255 同时避免「透明黑」在 premultiply/直通路径上的歧义。
+//   - `mode: "flowmask"`（方向图）→ 空槽 = 中灰 ⇒ 零位移。WE 的 `<WE>/assets/materials/util/noflow.tex`
+//     （shake `g_Texture1` 的 `default`）首像素实测字节 `7f 7f 00 ff` ⇒ **R=G=127**。
+//     shake.frag 的零点常量是 0.498，127/255 = 0.498039 是字节值里最接近 0.498 的一个
+//     （128/255 = 0.501961 会把「零位移」变成 +0.0078 的残余位移；0（黑）则是 -0.996 的满量程）。
+//     故取 (127,127,0,255)：R/G 对齐 `util/noflow`，B=0 也与该文件一致（shader 只读 `.rg`）。
+//   - 其它 / 无 mode 的槽：返回 null ⇒ **不改既有行为**（槽保持不预置，交由 update 的既有逻辑）。
+//
+// 这些是 1×1 常量纹理：模块级缓存并复用（不得每次 getMaterial 新建）。
+const EMPTY_SLOT_CACHE = new Map<string, THREE.DataTexture>();
+
+export function resolveEmptySlotTexture(mode: string | null | undefined): THREE.Texture | null {
+  if (!mode) return null;
+  let key: string;
+  let bytes: [number, number, number, number];
+  if (mode === 'opacitymask') {
+    key = 'opacitymask';
+    bytes = [0, 0, 0, 255];       // 全 0（黑）：乘法遮罩读到 0 ⇒ 效果不作用
+  } else if (mode === 'flowmask') {
+    key = 'flowmask';
+    bytes = [127, 127, 0, 255];   // 中灰：对齐 `<WE>/materials/util/noflow.tex` 的 127/127/0/255
+  } else {
+    return null;                  // 无 mode / 未知 mode：不改行为
+  }
+  const cached = EMPTY_SLOT_CACHE.get(key);
+  if (cached) return cached;
+  // DataTexture：默认 NearestFilter + 不生成 mipmap + unpackAlignment 1，
+  // 1×1 下任意 UV 都采到同一 texel（含 REPEAT 槽的越界 UV）。
+  const tex = new THREE.DataTexture(new Uint8Array(bytes), 1, 1, THREE.RGBAFormat);
+  tex.needsUpdate = true;
+  EMPTY_SLOT_CACHE.set(key, tex);
+  return tex;
+}
+
+// pass 的纹理槽总数：`textures` 数组长度 与 shader 声明的 `g_TextureN` 最大下标 + 1 的较大者。
+// 数组长度不够（声明了 sampler 但 scene.json 的 textures 没给到那一位）时必须补齐到声明下标，
+// 否则空槽纹理根本无从绑定 —— 这正是 2454403969 的 clouds（数组长 2、声明到 g_Texture2）的情形。
+export function effectSlotCount(pass: CompiledEffectPass): number {
+  let count = pass.textureSlots.length;
+  // `?? {}`：容忍早于本字段构造的 pass 对象（如既有测试 fixture / 外部调用方），
+  // 语义等同「无 mode 标注」⇒ 槽数退回 textures.length（既有行为）。
+  for (const name of Object.keys(pass.samplerModes ?? {})) {
+    const m = /^g_Texture(\d+)$/.exec(name);
+    if (m) count = Math.max(count, Number(m[1]) + 1);
+  }
+  return count;
+}
+
+// 单个槽的**预置/兜底**纹理（纯函数，node 可测）：
+//   - index 0：`g_Texture0` 是效果链输入，由 update 绑上一 pass 输出（readTex）⇒ 恒 null；
+//   - `textures[index]` 已提供（非空）：真纹理是异步加载的，预置阶段留 null，等 update 绑；
+//   - 未提供：按 shader 声明的 mode 取空槽常量纹理（无 mode ⇒ null）。
+// update 里对**未提供**的槽必须保持这个兜底值（不得被覆盖成 null —— 那会退回 three 的全 0 兜底，
+// 对 flowmask 就是满量程位移）。
+export function resolveSlotFallback(pass: CompiledEffectPass, index: number): THREE.Texture | null {
+  if (index <= 0) return null;
+  if (pass.textureSlots[index]) return null;
+  return resolveEmptySlotTexture(pass.samplerModes?.[`g_Texture${index}`]);
+}
+
 // ===== 效果纹理槽解析（本轮修复：`util/*` 优先取 WE 真身）=====
 
 // 纹理加载器签名（缺省 `loadTexTexture`；单测注入假加载器以断言优先级与回退行为）。
@@ -372,15 +447,21 @@ export class EffectRunner {
       }
       // 预建纹理槽 uniform（binder 跳过 sampler，纹理绑定是执行器职责，spec §4.3）
       // textures[i] → g_Texture(i)（WE 官方 scenejson.md:22）；g_Texture0 已在上方预建。
+      // 槽数取 effectSlotCount（≥ textures.length）：**声明了 sampler 但 textures 数组没给到**
+      // 的槽也要建出来，否则空槽纹理无从绑定（2454403969 的 clouds 就是数组长 2、声明到 g_Texture2）。
+      // 未提供的槽按 shader 声明的 mode 预置空槽纹理（opacitymask → 黑、flowmask → 中灰）；
+      // 无 mode 的槽预置 null，与既有行为一致。
       if (!uniforms['g_Texture0']) uniforms['g_Texture0'] = { value: null };
-      for (let i = 0; i < pass.textureSlots.length; i++) {
+      const slotCount = effectSlotCount(pass);
+      for (let i = 0; i < slotCount; i++) {
         const slot = `g_Texture${i}`;
-        if (!uniforms[slot]) uniforms[slot] = { value: null };
+        if (!uniforms[slot]) uniforms[slot] = { value: resolveSlotFallback(pass, i) };
       }
       // 分辨率 uniform（vec4）预建：three 上传 vec4 需要 Vector4/数组，binder 给
       // 的默认 0（number）会在探针渲染时 uniform4fv 转换失败误判编译失败；
       // g_TextureNResolution 语义是读端纹理尺寸，update 阶段会按实际纹理覆盖。
-      for (let i = 0; i <= Math.max(pass.textureSlots.length, 0); i++) {
+      // 同样铺到 slotCount：空槽（1×1 常量）也要有维度正确的预置值，避免 .z/.x 出现 0/0。
+      for (let i = 0; i <= Math.max(slotCount, 0); i++) {
         const res = `g_Texture${i}Resolution`;
         uniforms[res] = {
           value: new THREE.Vector4(this.width, this.height, this.width, this.height),
@@ -513,13 +594,18 @@ export class EffectRunner {
       const flat: CompiledEffectPass[] = this.chains.flat();
       if (flat.length === 0) return null;
       // 纹理槽统一预解析（await 集中在此：所有 fetch 完成前不触碰 renderer，
-      // 避免与帧循环的场景渲染/贴屏交错 RT 状态）
+      // 避免与帧循环的场景渲染/贴屏交错 RT 状态）。
+      // 槽数 = effectSlotCount（≥ textures.length，含**未提供**的声明槽）：
+      //   已提供（textures[j] 非空）→ 解析出的真实纹理（加载失败为 null，保持既有回退）；
+      //   未提供 → 空槽常量纹理（resolveSlotFallback，按 shader 的 mode 决定；无 mode → null）。
       const slotTex = new Map<string, THREE.Texture | null>();
       for (let i = 0; i < flat.length; i++) {
         const pass = flat[i];
-        for (let j = 0; j < pass.textureSlots.length; j++) {
+        const slots = effectSlotCount(pass);
+        for (let j = 0; j < slots; j++) {
           const path = pass.textureSlots[j];
           if (path) slotTex.set(`${i}:${j}`, await this.resolveTextureSlot(path));
+          else slotTex.set(`${i}:${j}`, resolveSlotFallback(pass, j));
         }
       }
       // 输入归一：场景 RT → .texture，对象 RT 纹理 / 任意纹理原样使用；
@@ -531,7 +617,10 @@ export class EffectRunner {
         const material = this.getMaterial(pass, `${i}`);
         if (!material) continue; // pass 级跳过：readTex 不变，下一 pass 写端仍为对端（无自读自写）
         // 纹理槽绑定（值已预解析，无 await）
-        for (let j = 0; j < pass.textureSlots.length; j++) {
+        // ⚠️ 未提供的槽**不得**被覆盖成 null：slotTex 里放的是空槽常量纹理
+        // （opacitymask → 黑、flowmask → 中灰）。写成 `?? null` 会退回 three 的 1×1 全 0 兜底，
+        // 而全 0 对 flowmask 是满量程位移（(0-0.498)*2 = -0.996）——正是本槽要修掉的语义。
+        for (let j = 0; j < effectSlotCount(pass); j++) {
           const tex = slotTex.get(`${i}:${j}`) ?? null;
           // textures[j] → g_Texture(j)（WE 官方 scenejson.md:22：textures 依次绑到 g_Texture0/1/…）。
           // ⚠️ 曾写成 g_Texture(j+1)：所有效果的纹理槽**整体错位一个**，mask / 方向图落到错误的槽

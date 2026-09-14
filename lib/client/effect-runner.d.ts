@@ -4,6 +4,9 @@ export declare function resolveTextureSlotPath(path: string | null | undefined):
 export declare function isBuiltinTexturePath(path: string | null | undefined): boolean;
 export declare function builtinTextureUrl(path: string | null | undefined): string | null;
 export declare function resolveBuiltinTexture(path: string | null | undefined): THREE.Texture | null;
+export declare function resolveEmptySlotTexture(mode: string | null | undefined): THREE.Texture | null;
+export declare function effectSlotCount(pass: CompiledEffectPass): number;
+export declare function resolveSlotFallback(pass: CompiledEffectPass, index: number): THREE.Texture | null;
 export type EffectTexLoader = (url: string, opts?: {
     alphaPriority?: boolean;
 }) => Promise<THREE.Texture | null>;

@@ -21847,6 +21847,40 @@ function resolveBuiltinTexture(path) {
   BUILTIN_CACHE.set(key, tex);
   return tex;
 }
+var EMPTY_SLOT_CACHE = /* @__PURE__ */ new Map();
+function resolveEmptySlotTexture(mode) {
+  if (!mode) return null;
+  let key;
+  let bytes;
+  if (mode === "opacitymask") {
+    key = "opacitymask";
+    bytes = [0, 0, 0, 255];
+  } else if (mode === "flowmask") {
+    key = "flowmask";
+    bytes = [127, 127, 0, 255];
+  } else {
+    return null;
+  }
+  const cached = EMPTY_SLOT_CACHE.get(key);
+  if (cached) return cached;
+  const tex = new DataTexture(new Uint8Array(bytes), 1, 1, RGBAFormat);
+  tex.needsUpdate = true;
+  EMPTY_SLOT_CACHE.set(key, tex);
+  return tex;
+}
+function effectSlotCount(pass) {
+  let count = pass.textureSlots.length;
+  for (const name of Object.keys(pass.samplerModes ?? {})) {
+    const m = /^g_Texture(\d+)$/.exec(name);
+    if (m) count = Math.max(count, Number(m[1]) + 1);
+  }
+  return count;
+}
+function resolveSlotFallback(pass, index) {
+  if (index <= 0) return null;
+  if (pass.textureSlots[index]) return null;
+  return resolveEmptySlotTexture(pass.samplerModes?.[`g_Texture${index}`]);
+}
 async function loadEffectTextureSlot(path, id, cache, load = loadTexTexture, warn = (message) => console.warn(message)) {
   if (!path) return null;
   const key = `${id}:${path}`;
@@ -22008,11 +22042,12 @@ var EffectRunner = class {
         uniforms[name] = { value: Array.isArray(value) ? value.slice() : value };
       }
       if (!uniforms["g_Texture0"]) uniforms["g_Texture0"] = { value: null };
-      for (let i = 0; i < pass.textureSlots.length; i++) {
+      const slotCount = effectSlotCount(pass);
+      for (let i = 0; i < slotCount; i++) {
         const slot = `g_Texture${i}`;
-        if (!uniforms[slot]) uniforms[slot] = { value: null };
+        if (!uniforms[slot]) uniforms[slot] = { value: resolveSlotFallback(pass, i) };
       }
-      for (let i = 0; i <= Math.max(pass.textureSlots.length, 0); i++) {
+      for (let i = 0; i <= Math.max(slotCount, 0); i++) {
         const res = `g_Texture${i}Resolution`;
         uniforms[res] = {
           value: new Vector4(this.width, this.height, this.width, this.height)
@@ -22125,9 +22160,11 @@ var EffectRunner = class {
       const slotTex = /* @__PURE__ */ new Map();
       for (let i = 0; i < flat.length; i++) {
         const pass = flat[i];
-        for (let j = 0; j < pass.textureSlots.length; j++) {
+        const slots = effectSlotCount(pass);
+        for (let j = 0; j < slots; j++) {
           const path = pass.textureSlots[j];
           if (path) slotTex.set(`${i}:${j}`, await this.resolveTextureSlot(path));
+          else slotTex.set(`${i}:${j}`, resolveSlotFallback(pass, j));
         }
       }
       let readTex = resolveInputTexture(input);
@@ -22136,7 +22173,7 @@ var EffectRunner = class {
         const pass = flat[i];
         const material = this.getMaterial(pass, `${i}`);
         if (!material) continue;
-        for (let j = 0; j < pass.textureSlots.length; j++) {
+        for (let j = 0; j < effectSlotCount(pass); j++) {
           const tex = slotTex.get(`${i}:${j}`) ?? null;
           const slot = `g_Texture${j}`;
           if (material.uniforms[slot]) material.uniforms[slot].value = tex;
@@ -23189,6 +23226,11 @@ async function resolveEffectChain(sceneEffect, loadFile) {
       const combos = { ...derived, ...override.combos ?? {} };
       const vertSrc = preprocessWeShader(rawVert, combos);
       const fragSrc = preprocessWeShader(rawFrag, combos);
+      const samplerModes = {};
+      for (const ann of extractUniformAnnotations(rawVert).concat(extractUniformAnnotations(rawFrag))) {
+        const mode = ann.annotation?.mode;
+        if (typeof mode === "string" && mode) samplerModes[ann.name] = mode;
+      }
       const uniforms = resolveUniformBindings(
         extractUniformAnnotations(fragSrc).concat(extractUniformAnnotations(vertSrc)),
         constants
@@ -23202,6 +23244,7 @@ async function resolveEffectChain(sceneEffect, loadFile) {
         combos,
         uniforms,
         textureSlots: textures,
+        samplerModes,
         blendMode: mat.passes?.[0]?.blending ?? "normal",
         // RT 图信息：effect.json passes[i].target（写到的具名 RT）/bind（采样来源）；
         // scene.json pass 可覆写 target（如 scene 指定目标 RT）。缺省 target=null（最终输出）。

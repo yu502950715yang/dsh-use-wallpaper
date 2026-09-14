@@ -12,6 +12,9 @@ import {
   fillAudioSpectrumUniform,
   describeEffectPass,
   EffectRunner,
+  resolveEmptySlotTexture,
+  effectSlotCount,
+  resolveSlotFallback,
 } from '../src/client/effect-runner.js';
 import type { CompiledEffectPass } from '../src/client/shader/effect-chain.js';
 
@@ -183,6 +186,152 @@ describe('loadEffectTextureSlot（① util/* 真身 → ② 程序化回退 → 
   });
 });
 
+// ===== 空槽纹理（scene.json 未提供的 sampler 槽按 shader 声明的 mode 兜底）=====
+// 依据（2026-09-14 真机反馈 2454403969）：pass 的 textures 数组长度不够时（clouds 只有
+// `[null, "util/clouds_256"]`，而 clouds.frag 声明到 g_Texture2），此前该槽**不绑任何东西**，
+// three 的兜底是 1×1 全 0；对 flowmask 语义全 0 = `(0-0.498)*2 = -0.996` 的满量程位移。
+// mode 标注（effect-chain 的 samplerModes）决定空槽绑什么常量纹理。
+// 取值与 WE 素材逐字节对齐：`<WE>/materials/util/black.tex` 首像素 `00 00 00 ff`、
+// `util/noflow.tex` 首像素 `7f 7f 00 ff`（127/255 = 0.498，最接近 shake.frag 的零点常量）。
+describe('resolveEmptySlotTexture（空槽常量纹理：opacitymask → 黑、flowmask → 中灰）', () => {
+  const bytesOf = (tex: THREE.Texture) => Array.from((tex.image as { data: Uint8Array }).data);
+
+  it('opacitymask → 1×1 全 0 黑（R=G=B=0、A=255，与 util/black.tex 一致）', () => {
+    const tex = resolveEmptySlotTexture('opacitymask');
+    expect(tex).not.toBeNull();
+    expect(tex!.image.width).toBe(1);
+    expect(tex!.image.height).toBe(1);
+    expect(bytesOf(tex!)).toEqual([0, 0, 0, 255]);
+  });
+
+  it('flowmask → 1×1 中灰 127/127（与 util/noflow.tex 一致，127/255 = 0.498 = 零位移）', () => {
+    const tex = resolveEmptySlotTexture('flowmask');
+    expect(bytesOf(tex!)).toEqual([127, 127, 0, 255]);
+    // 关键：不能是 128（(128/255-0.498)*2 = +0.0078 的残余位移）也不能是 0（-0.996 满量程）
+    expect(bytesOf(tex!)[0]).toBe(127);
+  });
+
+  it('同一 mode 重复查询 → 同一实例（模块级缓存，不每次 getMaterial 新建）', () => {
+    expect(resolveEmptySlotTexture('opacitymask')).toBe(resolveEmptySlotTexture('opacitymask'));
+    expect(resolveEmptySlotTexture('flowmask')).toBe(resolveEmptySlotTexture('flowmask'));
+    // 两种 mode 是两个不同实例（黑 ≠ 中灰）
+    expect(resolveEmptySlotTexture('opacitymask')).not.toBe(resolveEmptySlotTexture('flowmask'));
+  });
+
+  it('无 mode / 未知 mode → null（不改既有行为）', () => {
+    expect(resolveEmptySlotTexture(undefined)).toBeNull();
+    expect(resolveEmptySlotTexture(null)).toBeNull();
+    expect(resolveEmptySlotTexture('')).toBeNull();
+    expect(resolveEmptySlotTexture('normal')).toBeNull();
+  });
+});
+
+describe('effectSlotCount / resolveSlotFallback（槽数补齐与逐槽兜底选择）', () => {
+  const pass = (over: Partial<CompiledEffectPass>): CompiledEffectPass => ({
+    vertSrc: '', fragSrc: '', rawVert: '', rawFrag: '', combos: {}, uniforms: new Map(),
+    textureSlots: [], samplerModes: {}, blendMode: 'normal', target: null, bind: [], fboScale: {},
+    ...over,
+  });
+
+  it('槽数 = max(textures.length, 声明下标+1)：clouds 数组长 2、声明到 g_Texture2 → 3', () => {
+    expect(effectSlotCount(pass({ textureSlots: [null, 'util/clouds_256'], samplerModes: { g_Texture2: 'opacitymask' } }))).toBe(3);
+    // 声明比数组短 → 取数组长度（不缩小既有覆盖范围）
+    expect(effectSlotCount(pass({ textureSlots: [null, 'a', 'b'], samplerModes: {} }))).toBe(3);
+    // 非 g_TextureN 的 sampler 名（如 g_TextureClouds）不参与槽数计算
+    expect(effectSlotCount(pass({ textureSlots: [null], samplerModes: { g_Diffuse: 'opacitymask' } }))).toBe(1);
+    // 缺字段（早于本字段构造的 pass）→ 退回 textures.length，不抛异常
+    const legacy = pass({ textureSlots: [null, 'a'] });
+    delete (legacy as Partial<CompiledEffectPass>).samplerModes;
+    expect(effectSlotCount(legacy)).toBe(2);
+  });
+
+  it('g_Texture0 恒 null（链输入由 update 绑 readTex），与 mode 无关', () => {
+    expect(resolveSlotFallback(pass({ textureSlots: [null, null], samplerModes: { g_Texture0: 'opacitymask' } }), 0)).toBeNull();
+  });
+
+  it('已提供的槽 → null（真纹理异步加载，预置阶段不占位）', () => {
+    expect(resolveSlotFallback(pass({ textureSlots: [null, 'masks/m'] }), 1)).toBeNull();
+  });
+
+  it('未提供的槽 → 按 mode 取空槽纹理；无 mode → null', () => {
+    const p = pass({ textureSlots: [null, 'x'], samplerModes: { g_Texture2: 'opacitymask', g_Texture3: 'flowmask', g_Texture4: 'unknown' } });
+    expect(resolveSlotFallback(p, 2)).toBe(resolveEmptySlotTexture('opacitymask'));
+    expect(resolveSlotFallback(p, 3)).toBe(resolveEmptySlotTexture('flowmask'));
+    expect(resolveSlotFallback(p, 4)).toBeNull();
+    expect(resolveSlotFallback(p, 5)).toBeNull(); // 连声明都没有的槽
+  });
+});
+
+/** 最小 mock renderer（不触发 onShaderError = 编译成功）：从 render(scene) 里取回材质，
+ *  用于断言执行器真正绑到 uniform 上的值（getMaterial 是私有的，材质只能这样观测）。 */
+function createBindRenderer() {
+  const mats: THREE.ShaderMaterial[] = [];
+  const renderer = {
+    debug: { onShaderError: null as null | ((...a: unknown[]) => void) },
+    setRenderTarget: vi.fn(),
+    render: vi.fn((scene: THREE.Scene) => {
+      const mesh = scene.children[0] as THREE.Mesh;
+      mats.push(mesh.material as THREE.ShaderMaterial);
+    }),
+  };
+  return { renderer, mats };
+}
+
+describe('EffectRunner 空槽绑定（update 真绑到 uniform：空槽常量纹理不被覆盖成 null）', () => {
+  it('clouds 型 pass（textures 长 2、声明到 g_Texture2）：g_Texture2 = 空槽黑纹理，g_Texture1 仍无兜底', async () => {
+    const { renderer, mats } = createBindRenderer();
+    const runner = new EffectRunner(renderer as never, 16, 16);
+    // textureSlots[1] 留 null：本用例不触发网络/纹理加载（专测空槽路径）
+    const clouds: CompiledEffectPass = {
+      vertSrc: 'void main(){ gl_Position = vec4(position, 1.0); }',
+      fragSrc: 'uniform sampler2D g_Texture0; void main(){ gl_FragColor = vec4(1.0); }',
+      rawVert: '', rawFrag: '', combos: { MASK: 0 }, uniforms: new Map(),
+      textureSlots: [null, null],
+      samplerModes: { g_Texture2: 'opacitymask' },
+      blendMode: 'normal', target: null, bind: [], fboScale: {},
+    };
+    const input = new THREE.Texture();
+    runner.setChains([[clouds]], '2454403969', { width: 16, height: 16 });
+    await runner.update(0, input);
+
+    const mat = mats[mats.length - 1]; // 探针渲染与 pass 渲染是同一材质实例
+    expect(mat).toBeTruthy();
+    // 空槽（textures 数组没给到的 g_Texture2）→ mode 决定的常量纹理，**不是** null
+    expect(mat.uniforms['g_Texture2'].value).toBe(resolveEmptySlotTexture('opacitymask'));
+    // 维度正确的分辨率 uniform 也建出来了（否则 .z/.x 会 0/0 → NaN UV）
+    expect(mat.uniforms['g_Texture2Resolution']).toBeTruthy();
+    // 无 mode 的未提供槽维持既有行为（null），不由空槽逻辑接管
+    expect(mat.uniforms['g_Texture1'].value).toBeNull();
+    // g_Texture0 = 链输入（update 末尾覆写，未被空槽逻辑影响）
+    expect(mat.uniforms['g_Texture0'].value).toBe(input);
+
+    // 第二次 update：仍是同一实例（缓存），且没有被 slotTex 的 `?? null` 覆盖回 null
+    await runner.update(1, input);
+    expect(mats[mats.length - 1].uniforms['g_Texture2'].value).toBe(resolveEmptySlotTexture('opacitymask'));
+    runner.dispose();
+  });
+
+  it('flowmask 型空槽（shake 的 g_Texture1 未提供）→ 中灰而非 three 的 1×1 全 0', async () => {
+    const { renderer, mats } = createBindRenderer();
+    const runner = new EffectRunner(renderer as never, 16, 16);
+    const shake: CompiledEffectPass = {
+      vertSrc: 'void main(){ gl_Position = vec4(position, 1.0); }',
+      fragSrc: 'uniform sampler2D g_Texture0; void main(){ gl_FragColor = vec4(1.0); }',
+      rawVert: '', rawFrag: '', combos: {}, uniforms: new Map(),
+      textureSlots: [null],
+      samplerModes: { g_Texture1: 'flowmask' },
+      blendMode: 'normal', target: null, bind: [], fboScale: {},
+    };
+    runner.setChains([[shake]], '3743126786', { width: 16, height: 16 });
+    await runner.update(0, new THREE.Texture());
+    const mat = mats[mats.length - 1];
+    expect(mat.uniforms['g_Texture1'].value).toBe(resolveEmptySlotTexture('flowmask'));
+    expect(Array.from((mat.uniforms['g_Texture1'].value as THREE.DataTexture).image.data as Uint8Array))
+      .toEqual([127, 127, 0, 255]);
+    runner.dispose();
+  });
+});
+
 // ===== T1.1 输入/输出参数化：update 的 input 可接受任意纹理、setChains 可指定对象 RT 尺寸。
 // WebGL 渲染路径无法在 node 跑，抽出以下纯函数（node 可测）断言决策逻辑。=====
 
@@ -311,7 +460,7 @@ function failingPass(over: Partial<CompiledEffectPass> = {}): CompiledEffectPass
     vertSrc: 'void main(){ gl_Position = vec4(position, 1.0); }',
     fragSrc: 'void main(){ gl_FragColor = vec4(1.0); }',
     rawVert: '', rawFrag: 'uniform sampler2D g_Texture0;',
-    combos: {}, uniforms: new Map(), textureSlots: [], blendMode: 'normal',
+    combos: {}, uniforms: new Map(), textureSlots: [], samplerModes: {}, blendMode: 'normal',
     target: null, bind: [], fboScale: {},
     ...over,
   };
