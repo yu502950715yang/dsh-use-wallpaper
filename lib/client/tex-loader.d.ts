@@ -41,8 +41,13 @@ export declare function cropToMap(data: Uint8Array<ArrayBuffer>, mipWidth: numbe
     height: number;
     data: Uint8Array<ArrayBuffer>;
 };
-export declare function textureFromTex(info: TexInfo): Promise<THREE.Texture | null>;
+export type TexRowOrder = 'bottomUp' | 'topDown';
+export interface TexLoadOptions {
+    alphaPriority?: boolean;
+    rowOrder?: TexRowOrder;
+}
+export declare function textureFromTex(info: TexInfo, opts?: TexLoadOptions): Promise<THREE.Texture | null>;
 export declare function flipCompressedRows(data: Uint8Array, width: number, height: number, blockSize: number): Uint8Array<ArrayBuffer>;
-export declare function convertUnormToRgba(data: Uint8Array, format: number): Uint8Array<ArrayBuffer>;
+export declare function convertUnormToRgba(data: Uint8Array, format: number, alphaPriority?: boolean): Uint8Array<ArrayBuffer>;
 export declare function flipRows(data: Uint8Array, width: number, height: number, bytesPerPixel: number): Uint8Array<ArrayBuffer>;
-export declare function loadTexTexture(url: string): Promise<THREE.Texture | null>;
+export declare function loadTexTexture(url: string, opts?: TexLoadOptions): Promise<THREE.Texture | null>;

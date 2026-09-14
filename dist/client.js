@@ -20262,6 +20262,98 @@ if (typeof window !== "undefined") {
   }
 }
 
+// src/client/object-range.ts
+var CAMERA_DISTANCE = 300;
+var OBJECT_RT_MAX = 4096;
+function materialModulation(color, alpha, brightness) {
+  const b = brightness ?? 1;
+  const clamp01 = (v) => Math.max(0, Math.min(1, v));
+  const c = color ?? [255, 255, 255];
+  return {
+    r: clamp01(c[0] / 255 * b),
+    g: clamp01(c[1] / 255 * b),
+    b: clamp01(c[2] / 255 * b),
+    a: clamp01(alpha ?? 1)
+  };
+}
+var PARTICLE_DEFAULT_DISTANCE = 64;
+function effectiveParticleDistance(spec) {
+  const dist = spec.distanceMax ?? 0;
+  return dist > 0 ? dist : PARTICLE_DEFAULT_DISTANCE;
+}
+function particleWorldSize(spec, scale) {
+  const eff = effectiveParticleDistance(spec);
+  return { w: eff * scale[0], h: eff * scale[1] };
+}
+function shouldUseObjectPath(obj) {
+  return Array.isArray(obj.effects) && obj.effects.length > 0;
+}
+function groupEffectsByObject(objects) {
+  const groups = [];
+  for (const obj of objects) {
+    if (obj.kind === "text") continue;
+    if (shouldUseObjectPath(obj)) {
+      groups.push({ obj, effects: obj.effects });
+    }
+  }
+  return groups;
+}
+function uvWindow(unclamped, clamped) {
+  if (unclamped <= 0 || clamped >= unclamped) return { start: 0, end: 1 };
+  const start = (unclamped - clamped) / 2 / unclamped;
+  return { start, end: 1 - start };
+}
+function applyUvWindow(geometry, ux, uy) {
+  const uvs = geometry.attributes.uv.array;
+  const wx = ux.end - ux.start;
+  const wy = uy.end - uy.start;
+  for (let i = 0; i < uvs.length; i += 2) {
+    uvs[i] = wx > 0 ? (uvs[i] - ux.start) / wx : uvs[i];
+    uvs[i + 1] = wy > 0 ? (uvs[i + 1] - uy.start) / wy : uvs[i + 1];
+  }
+  geometry.attributes.uv.needsUpdate = true;
+}
+function createCompositeGeometry(worldW, worldH, rtW, rtH) {
+  const w = Math.abs(worldW);
+  const h = Math.abs(worldH);
+  const geometry = new PlaneGeometry(w, h);
+  applyUvWindow(geometry, uvWindow(w, rtW), uvWindow(h, rtH));
+  return geometry;
+}
+function flipGeometryUvY(geometry) {
+  const uvs = geometry.attributes.uv.array;
+  for (let i = 1; i < uvs.length; i += 2) uvs[i] = 1 - uvs[i];
+  geometry.attributes.uv.needsUpdate = true;
+}
+function coverRange(width, height, viewAspect) {
+  const sceneAspect = width / height;
+  if (viewAspect > sceneAspect) {
+    return { w: width, h: width / viewAspect };
+  }
+  return { w: height * viewAspect, h: height };
+}
+function screenScalePx(sceneW, sceneH, viewW, viewH, dpr) {
+  const sw = Number.isFinite(sceneW) && sceneW > 0 ? sceneW : 1;
+  const sh = Number.isFinite(sceneH) && sceneH > 0 ? sceneH : 1;
+  const vw = Number.isFinite(viewW) && viewW > 0 ? viewW : 1;
+  const vh = Number.isFinite(viewH) && viewH > 0 ? viewH : 1;
+  const ratio = Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
+  const cover = coverRange(sw, sh, vw / vh);
+  const bufferW = Math.max(1, Math.floor(vw * ratio));
+  return bufferW / cover.w;
+}
+function objectRtSize(worldW, worldH, screenScale, cap = OBJECT_RT_MAX) {
+  const scale = Number.isFinite(screenScale) && screenScale > 0 ? screenScale : 1;
+  const abs = (v) => Number.isFinite(v) ? Math.abs(v) : 0;
+  const rawW = abs(worldW) * scale;
+  const rawH = abs(worldH) * scale;
+  const limit = Number.isFinite(cap) && cap > 0 ? Math.floor(cap) : OBJECT_RT_MAX;
+  const k = Math.min(1, limit / Math.max(rawW, rawH, 1));
+  const width = Math.max(1, Math.round(rawW * k));
+  const height = Math.max(1, Math.round(rawH * k));
+  return { width, height };
+}
+
 // src/client/script-patterns.ts
 function unwrapScriptProperty(v) {
   if (typeof v === "object" && v !== null && !Array.isArray(v) && "value" in v) {
@@ -20455,355 +20547,6 @@ function parseSceneJson(raw) {
     objects,
     sounds: collectSounds(root)
   };
-}
-
-// src/client/tex-loader.ts
-var import_lz4js = __toESM(require_lz4(), 1);
-
-// src/client/fetch-util.ts
-async function fetchWithRetry(url, retries = 2) {
-  for (let i = 0; ; i++) {
-    try {
-      const resp = await fetch(url);
-      return resp.ok ? new Uint8Array(await resp.arrayBuffer()) : null;
-    } catch {
-      if (i >= retries) return null;
-      await new Promise((r) => setTimeout(r, 50 * (i + 1)));
-    }
-  }
-}
-
-// src/client/tex-loader.ts
-var TEX_FORMAT = {
-  RGBA8888: 0,
-  DXT5: 4,
-  DXT3: 6,
-  DXT1: 7,
-  RG88: 8,
-  R8: 9
-};
-var FIF = {
-  JPEG: 2,
-  PNG: 13,
-  WEBP: 21
-};
-var FORMAT_TO_GL = {
-  [TEX_FORMAT.DXT1]: 33777,
-  [TEX_FORMAT.DXT3]: 33778,
-  [TEX_FORMAT.DXT5]: 33779
-};
-function readI32(buf, pos) {
-  return buf[pos] | buf[pos + 1] << 8 | buf[pos + 2] << 16 | buf[pos + 3] << 24;
-}
-function readF32(buf, pos) {
-  return new DataView(buf.buffer, buf.byteOffset + pos, 4).getFloat32(0, true);
-}
-function ascii(buf, pos, len) {
-  let s = "";
-  for (let i = 0; i < len; i++) s += String.fromCharCode(buf[pos + i]);
-  return s;
-}
-var MIN_LEN = 18 + 28 + 9 + 4 + 4;
-function parseTex(buf) {
-  if (buf.length < MIN_LEN) return null;
-  if (ascii(buf, 0, 9) !== "TEXV0005\0") return null;
-  if (ascii(buf, 9, 9) !== "TEXI0001\0") return null;
-  const format = readI32(buf, 18);
-  const flags = readI32(buf, 22);
-  const textureWidth = readI32(buf, 26);
-  const textureHeight = readI32(buf, 30);
-  const width = readI32(buf, 34);
-  const height = readI32(buf, 38);
-  const container = ascii(buf, 46, 9);
-  if (container !== "TEXB0002\0" && container !== "TEXB0001\0" && container !== "TEXB0003\0" && container !== "TEXB0004\0") return null;
-  const v2 = container === "TEXB0002\0";
-  const v3plus = container === "TEXB0003\0" || container === "TEXB0004\0";
-  let pos = 46 + 9;
-  const imageCount = readI32(buf, pos);
-  if (imageCount <= 0 || imageCount > 64) return null;
-  pos += 4;
-  let imageFormat;
-  if (v3plus) {
-    imageFormat = readI32(buf, pos);
-    pos += 4;
-    if (container === "TEXB0004\0") pos += 4;
-  }
-  const mipmaps = [];
-  for (let img = 0; img < imageCount; img++) {
-    if (pos + 4 > buf.length) return null;
-    const mipmapCount = readI32(buf, pos);
-    if (mipmapCount <= 0 || mipmapCount > 256) return null;
-    pos += 4;
-    for (let m = 0; m < mipmapCount; m++) {
-      const fieldLen = v2 ? 20 : 12;
-      if (pos + fieldLen > buf.length) return null;
-      const mw = readI32(buf, pos);
-      const mh = readI32(buf, pos + 4);
-      let isLZ4 = 0;
-      let decompressedBytes = 0;
-      let bytesLen;
-      if (v2 || v3plus) {
-        isLZ4 = readI32(buf, pos + 8);
-        decompressedBytes = readI32(buf, pos + 12);
-        bytesLen = readI32(buf, pos + 16);
-      } else {
-        bytesLen = readI32(buf, pos + 8);
-      }
-      pos += v2 || v3plus ? 20 : 12;
-      if (mw <= 0 || mh <= 0 || bytesLen < 0) return null;
-      if (pos + bytesLen > buf.length) return null;
-      const payload = buf.subarray(pos, pos + bytesLen);
-      pos += bytesLen;
-      if (isLZ4) {
-        if (decompressedBytes <= 0 || decompressedBytes > 1 << 30) return null;
-        mipmaps.push({ width: mw, height: mh, data: lz4Decompress(payload, decompressedBytes) });
-      } else {
-        mipmaps.push({ width: mw, height: mh, data: new Uint8Array(payload) });
-      }
-    }
-  }
-  if (mipmaps.length === 0) return null;
-  const first = mipmaps[0];
-  const sprite = (flags & FLAG_SPRITE) !== 0 ? parseSpriteSection(buf, pos, first.width, first.height) : void 0;
-  return { width, height, textureWidth, textureHeight, format, flags, imageFormat, mipmaps, sprite };
-}
-function parseSpriteSection(buf, pos, mipWidth, mipHeight) {
-  if (!Number.isFinite(pos) || pos < 0 || pos + 13 > buf.length) return void 0;
-  const stamp = ascii(buf, pos, 9);
-  if (!stamp.startsWith("TEXS000")) return void 0;
-  const texs = Number(stamp.slice(4, 8));
-  if (!Number.isFinite(texs) || texs < 1 || texs > 9) return void 0;
-  let p = pos + 9;
-  const frames = readI32(buf, p);
-  p += 4;
-  if (frames <= 0 || frames > 4096) return void 0;
-  if (texs >= 3) p += 8;
-  const intCoords = texs === 1;
-  const coord = () => {
-    const v = intCoords ? readI32(buf, p) : readF32(buf, p);
-    p += 4;
-    return v;
-  };
-  if (p + 8 + 24 > buf.length) return void 0;
-  coord();
-  coord();
-  coord();
-  coord();
-  const ax0 = coord();
-  const ax1 = coord();
-  const ay0 = coord();
-  const ay1 = coord();
-  const frameW = Math.hypot(ax0, ax1);
-  const frameH = Math.hypot(ay0, ay1);
-  if (!(frameW > 0) || !(frameH > 0)) return void 0;
-  const cols = Math.max(1, Math.round(mipWidth / frameW));
-  const rows = Math.max(1, Math.round(mipHeight / frameH));
-  if (cols * rows < frames) return void 0;
-  return { frames, cols, rows };
-}
-function lz4Decompress(src, decompressedSize) {
-  const out = new Uint8Array(decompressedSize);
-  const n = import_lz4js.default.decompressBlock(src, out, 0, src.length, 0);
-  return n === decompressedSize ? out : out.subarray(0, Math.min(n, decompressedSize));
-}
-var FLAG_SPRITE = 1 << 2;
-function cropToMap(data, mipWidth, mipHeight, mapWidth, mapHeight, format, flags) {
-  const valid = Number.isFinite(mapWidth) && Number.isFinite(mapHeight) && mapWidth > 0 && mapHeight > 0;
-  const cw = valid ? Math.min(Math.floor(mapWidth), mipWidth) : mipWidth;
-  const ch = valid ? Math.min(Math.floor(mapHeight), mipHeight) : mipHeight;
-  if ((flags & FLAG_SPRITE) !== 0 || cw >= mipWidth && ch >= mipHeight) {
-    return { width: mipWidth, height: mipHeight, data };
-  }
-  if (format === TEX_FORMAT.DXT1 || format === TEX_FORMAT.DXT3 || format === TEX_FORMAT.DXT5) {
-    const blockSize = format === TEX_FORMAT.DXT1 ? 8 : 16;
-    return cropCompressedToMap(data, mipWidth, mipHeight, cw, ch, blockSize);
-  }
-  const bpp = format === TEX_FORMAT.RG88 ? 2 : format === TEX_FORMAT.R8 ? 1 : 4;
-  return cropRowsToMap(data, mipWidth, mipHeight, cw, ch, bpp);
-}
-function cropRowsToMap(data, mipWidth, mipHeight, cw, ch, bpp) {
-  const rowBytes = cw * bpp;
-  const out = new Uint8Array(rowBytes * ch);
-  for (let y = 0; y < ch; y++) {
-    const src = y * mipWidth * bpp;
-    const end = Math.min(src + rowBytes, data.length);
-    if (src >= data.length) break;
-    out.set(data.subarray(src, end), y * rowBytes);
-  }
-  return { width: cw, height: ch, data: out };
-}
-function cropCompressedToMap(data, mipWidth, mipHeight, cw, ch, blockSize) {
-  const nw = Math.ceil(cw / 4) * 4;
-  const nh = Math.ceil(ch / 4) * 4;
-  const srcBlockW = Math.max(1, Math.ceil(mipWidth / 4));
-  const dstBlockW = nw / 4;
-  const dstBlockH = nh / 4;
-  const rowBytes = dstBlockW * blockSize;
-  const out = new Uint8Array(rowBytes * dstBlockH);
-  for (let by = 0; by < dstBlockH; by++) {
-    const src = by * srcBlockW * blockSize;
-    if (src >= data.length) break;
-    const end = Math.min(src + rowBytes, data.length);
-    out.set(data.subarray(src, end), by * rowBytes);
-  }
-  return { width: nw, height: nh, data: out };
-}
-async function textureFromTex(info) {
-  const mip = info.mipmaps[0];
-  if (!mip) return null;
-  const withSprite = (tex) => {
-    if (info.sprite) tex.userData = { ...tex.userData ?? {}, sprite: info.sprite };
-    return tex;
-  };
-  const applyLinearSampling = (tex) => {
-    tex.magFilter = LinearFilter;
-    tex.minFilter = LinearMipmapLinearFilter;
-    tex.generateMipmaps = true;
-    tex.needsUpdate = true;
-  };
-  const mime = info.imageFormat === FIF.JPEG ? "image/jpeg" : info.imageFormat === FIF.PNG ? "image/png" : info.imageFormat === FIF.WEBP ? "image/webp" : "";
-  if (mime) {
-    if (typeof createImageBitmap !== "function") return null;
-    try {
-      const bitmap = await createImageBitmap(
-        new Blob([mip.data], { type: mime }),
-        { imageOrientation: "flipY" }
-      );
-      const tex = new Texture(bitmap);
-      tex.flipY = false;
-      applyLinearSampling(tex);
-      return withSprite(tex);
-    } catch {
-      return null;
-    }
-  }
-  if (info.format === TEX_FORMAT.RGBA8888 || info.format === TEX_FORMAT.RG88 || info.format === TEX_FORMAT.R8) {
-    const cropped = cropToMap(mip.data, mip.width, mip.height, info.width, info.height, info.format, info.flags);
-    const src = info.format === TEX_FORMAT.RGBA8888 ? cropped.data : convertUnormToRgba(cropped.data, info.format);
-    const flipped = flipRows(src, cropped.width, cropped.height, 4);
-    const tex = new DataTexture(flipped, cropped.width, cropped.height, RGBAFormat);
-    applyLinearSampling(tex);
-    return withSprite(tex);
-  }
-  const glFormat = FORMAT_TO_GL[info.format];
-  if (glFormat) {
-    const blockSize = info.format === TEX_FORMAT.DXT1 ? 8 : 16;
-    const cropped = cropToMap(mip.data, mip.width, mip.height, info.width, info.height, info.format, info.flags);
-    const tex = new CompressedTexture(
-      [{
-        data: flipCompressedRows(cropped.data, cropped.width, cropped.height, blockSize),
-        width: cropped.width,
-        height: cropped.height
-      }],
-      cropped.width,
-      cropped.height,
-      glFormat
-    );
-    tex.magFilter = LinearFilter;
-    tex.minFilter = LinearFilter;
-    tex.generateMipmaps = false;
-    tex.needsUpdate = true;
-    return withSprite(tex);
-  }
-  return null;
-}
-function flipCompressedRows(data, width, height, blockSize) {
-  const blockW = Math.max(1, Math.ceil(width / 4));
-  const blockH = Math.max(1, Math.ceil(height / 4));
-  const rowBytes = blockW * blockSize;
-  const out = new Uint8Array(data.length);
-  for (let by = 0; by < blockH; by++) {
-    const src = by * rowBytes;
-    const dst = (blockH - 1 - by) * rowBytes;
-    const end = Math.min(src + rowBytes, data.length);
-    out.set(data.subarray(src, end), dst);
-  }
-  return out;
-}
-function convertUnormToRgba(data, format) {
-  if (format === TEX_FORMAT.RG88) {
-    const out2 = new Uint8Array(data.length * 2);
-    for (let i = 0, o = 0; i < data.length; i += 2, o += 4) {
-      const r = data[i];
-      const g = data[i + 1];
-      out2[o] = r;
-      out2[o + 1] = r;
-      out2[o + 2] = r;
-      out2[o + 3] = g;
-    }
-    return out2;
-  }
-  const out = new Uint8Array(data.length * 4);
-  for (let i = 0, o = 0; i < data.length; i++, o += 4) {
-    const v = data[i];
-    out[o] = 255;
-    out[o + 1] = 255;
-    out[o + 2] = 255;
-    out[o + 3] = v;
-  }
-  return out;
-}
-function flipRows(data, width, height, bytesPerPixel) {
-  const rowBytes = width * bytesPerPixel;
-  const out = new Uint8Array(data.length);
-  for (let y = 0; y < height; y++) {
-    const src = y * rowBytes;
-    const dst = (height - 1 - y) * rowBytes;
-    out.set(data.subarray(src, src + rowBytes), dst);
-  }
-  return out;
-}
-async function loadTexTexture(url) {
-  const buf = await fetchWithRetry(url);
-  if (!buf) return null;
-  const info = parseTex(buf);
-  if (!info) return null;
-  return textureFromTex(info);
-}
-
-// src/client/effect-runner.ts
-var SCREEN_CAMERA = new OrthographicCamera(-1, 1, 1, -1, -1e3, 1e3);
-SCREEN_CAMERA.position.z = 300;
-
-// src/client/scene-renderer.ts
-var CAMERA_DISTANCE = 300;
-function materialModulation(color, alpha, brightness) {
-  const b = brightness ?? 1;
-  const clamp01 = (v) => Math.max(0, Math.min(1, v));
-  const c = color ?? [255, 255, 255];
-  return {
-    r: clamp01(c[0] / 255 * b),
-    g: clamp01(c[1] / 255 * b),
-    b: clamp01(c[2] / 255 * b),
-    a: clamp01(alpha ?? 1)
-  };
-}
-function coverRange(width, height, viewAspect) {
-  const sceneAspect = width / height;
-  if (viewAspect > sceneAspect) {
-    return { w: width, h: width / viewAspect };
-  }
-  return { w: height * viewAspect, h: height };
-}
-function resolveTexPath(matRef, texName) {
-  return texName.includes("/") ? "materials/" + texName + ".tex" : matRef.slice(0, matRef.lastIndexOf("/") + 1) + texName + ".tex";
-}
-async function resolveImageTexture(id, obj) {
-  try {
-    const modelResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(obj.image)}`);
-    if (!modelResp.ok) return null;
-    const model = await modelResp.json();
-    const matRef = model?.material;
-    if (typeof matRef !== "string" || !matRef) return null;
-    const matResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(matRef)}`);
-    if (!matResp.ok) return null;
-    const mat = await matResp.json();
-    const texName = mat?.passes?.[0]?.textures?.[0];
-    if (typeof texName !== "string" || !texName) return null;
-    return loadTexTexture(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(resolveTexPath(matRef, texName))}`);
-  } catch {
-    return null;
-  }
 }
 
 // src/client/threejs-player.ts
@@ -21016,6 +20759,11 @@ var ThreeScenePlayer = class {
   // 粒子图层条目（Task 3）：按 addParticle 返回的 id 索引，更新粒子时用其 getter 刷新缓冲区。
   particleLayers = /* @__PURE__ */ new Map();
   nextParticleLayerId = 0;
+  // 对象隔离条目（对象级效果链；空 Map = 本壁纸无带效果对象，帧序退化为原路径）。
+  isolated = /* @__PURE__ */ new Map();
+  objectEffectStage = null;
+  // g_Time 时间原点（构造时刻），advance 传「自 player 创建起的秒数」。
+  startedAt = typeof performance !== "undefined" ? performance.now() : 0;
   constructor(canvas, width, height, renderer) {
     this.sceneWidth = width;
     this.sceneHeight = height;
@@ -21059,6 +20807,21 @@ var ThreeScenePlayer = class {
     this.sceneHeight = height;
     this.applyCover();
   }
+  // 屏幕密度（设备像素 / 世界单位）：1 个世界单位在**画布缓冲**上占多少像素。
+  // 与 applyCover 同一套 cover 语义（同一份 sceneWidth/sceneHeight/viewWidth/viewHeight/pixelRatio
+  // ⇒ 同一个 coverRange）⇒ 与主相机实际铺满的像素网格同一把尺子。
+  // 消费者：对象 RT 的尺寸口径（RT 像素 = 对象世界尺寸 × 本密度 = 对象在屏上的占位像素，
+  // 见 object-range.objectRtSize）。挂载期由 three-renderer 用纯函数算出同一个数，resize 期
+  // 直接取本方法（player 的 state 刚被 resize 更新，天然与 cover 同源）。
+  screenScalePx() {
+    return screenScalePx(
+      this.sceneWidth,
+      this.sceneHeight,
+      this.viewWidth,
+      this.viewHeight,
+      this.pixelRatio
+    );
+  }
   // 按 cover 语义把相机视锥设为场景尺寸的 cover 视图（中心原点，z 范围 -1000..1000 不变）。
   applyCover() {
     const viewAspect = this.viewWidth / this.viewHeight;
@@ -21101,7 +20864,10 @@ var ThreeScenePlayer = class {
         this.lastTime = now;
         fn?.(dt);
         this.update(dt);
+        if (this.isolated.size > 0) this.renderIsolatedContents();
+        this.objectEffectStage?.bindOutputs();
         this.renderer.render(this.scene, this.camera);
+        this.objectEffectStage?.advance(this.elapsedSeconds());
       } catch (e) {
         if (!warned) {
           warned = true;
@@ -21111,8 +20877,58 @@ var ThreeScenePlayer = class {
     });
   }
   // 手动渲染一帧（不依赖 RAF，供测试/调用方直接触发）。
+  // 帧序与 setAnimationLoop 的帧体一致（不带 dt）：隔离内容 → bindOutputs → 主场景 → advance。
   render() {
+    if (this.isolated.size > 0) this.renderIsolatedContents();
+    this.objectEffectStage?.bindOutputs();
     this.renderer.render(this.scene, this.camera);
+    this.objectEffectStage?.advance(this.elapsedSeconds());
+  }
+  // 对象级效果链的编排器注入点（null = 本壁纸无效果链，帧序退化为原路径）。
+  setObjectEffectStage(stage) {
+    this.objectEffectStage = stage;
+  }
+  // 隔离对象条目（只读视图，供编排器拿 RT 纹理与尺寸）。
+  isolatedObjects() {
+    return [...this.isolated.values()];
+  }
+  // 把某个隔离对象的合成 quad 切到给定的采样纹理（效果链输出；编排器在链未就绪时
+  // 不调用本方法，quad 保持采样对象 RT 原图 → 对象正常显示、无效果，不黑屏）。
+  // `id` = 隔离条目的键 = scene.json 的对象 id（编排器从 isolatedObjects()[].id 取用）。
+  setObjectOutput(id, texture) {
+    const entry = this.isolated.get(id);
+    if (!entry) return;
+    const mat = entry.quad.material;
+    if (mat instanceof ShaderMaterial) mat.uniforms.map.value = texture;
+    else if (mat instanceof MeshBasicMaterial) mat.map = texture;
+  }
+  // 重设隔离对象的 RT 尺寸（视口/dpr 变化时由编排器调用）：**只改分辨率**。
+  // 局部相机覆盖的世界范围（camW/camH）与合成几何的 UV 窗口都只依赖**世界尺寸**，与 RT 像素
+  // 无关，因此这里不得改动它们 —— 曾在此按 RT 像素重设相机视锥并重建几何，使 dpr>1 的对象
+  // 内容被缩小到 1/dpr 并露出边缘（真机 HiDPI 整张壁纸错乱的同一根因）。
+  // `id` = 隔离条目的键 = scene.json 的对象 id。
+  resizeObjectRT(id, width, height) {
+    const entry = this.isolated.get(id);
+    if (!entry) return;
+    const w = Math.max(1, Math.round(width));
+    const h = Math.max(1, Math.round(height));
+    if (entry.rt.width === w && entry.rt.height === h) return;
+    entry.rt.setSize(w, h);
+    entry.rtWidth = w;
+    entry.rtHeight = h;
+  }
+  // 渲染所有隔离对象的内容到各自 RT（player 拥有 scene/camera，故渲染留在 player）。
+  renderIsolatedContents() {
+    for (const entry of this.isolated.values()) {
+      this.renderer.setRenderTarget(entry.rt);
+      this.renderer.render(entry.localScene, entry.localCamera);
+    }
+    this.renderer.setRenderTarget(null);
+  }
+  // 隔离对象的帧推进时间（秒，自 player 创建起）——g_Time 语义。
+  elapsedSeconds() {
+    const now = typeof performance !== "undefined" ? performance.now() : this.startedAt;
+    return (now - this.startedAt) / 1e3;
   }
   // Task 2：背景图层（Sprite/Mesh）。用 we_to_three 中心化定位（three = we - scene/2，
   // 左下原点 y 向上 → 中心原点 y 向上，y 不翻，与背景一致）；size×scale 定尺寸；
@@ -21127,12 +20943,52 @@ var ThreeScenePlayer = class {
     const h = opts.size?.[1] ?? opts.texture?.image?.height ?? 1;
     const geometry = new PlaneGeometry(w, h);
     const mod = materialModulation(void 0, opts.alpha, opts.brightness);
-    const cb = colorBlendModeToThree(opts.colorBlendMode ?? 0);
-    let material;
+    const material = this.createLayerMaterial(opts.texture ?? null, opts.colorBlendMode ?? 0, mod, !!opts.isolate);
+    const mesh = new Mesh(geometry, material);
+    mesh.renderOrder = 0;
+    const s = opts.scale;
+    mesh.scale.set(s[0], s[1], s[2] ?? 1);
+    const a = opts.angles ?? [0, 0, 0];
+    mesh.rotation.set(a[0], a[1], a[2]);
+    mesh.position.set(opts.origin[0] - sceneW / 2, opts.origin[1] - sceneH / 2, opts.origin[2]);
+    const id = this.nextBackgroundId++;
+    const worldW = opts.isolate?.worldW ?? Math.abs(w * s[0]);
+    const worldH = opts.isolate?.worldH ?? Math.abs(h * s[1]);
+    if (opts.isolate) {
+      mesh.position.set(0, 0, 0);
+      mesh.rotation.set(0, 0, 0);
+      this.attachIsolated(opts.isolate.objectId, "background", mesh, worldW, worldH, {
+        width: opts.isolate.rtWidth,
+        height: opts.isolate.rtHeight
+      }, {
+        x: opts.origin[0] - sceneW / 2,
+        y: opts.origin[1] - sceneH / 2,
+        z: opts.origin[2]
+      }, [a[0], a[1], a[2]], opts.colorBlendMode ?? 0);
+    } else {
+      this.scene.add(mesh);
+    }
+    this.backgroundEntries.set(id, {
+      mesh,
+      origin: [opts.origin[0], opts.origin[1], opts.origin[2]],
+      scale: [s[0], s[1], s[2] ?? 1],
+      angles: [a[0], a[1], a[2]],
+      alpha: mod.a,
+      brightness: opts.brightness ?? 1,
+      sceneW,
+      sceneH
+    });
+    return id;
+  }
+  // 图层材质（**内容**材质）：colorBlendMode 已实现（6/7/31）→ 预乘 ShaderMaterial +
+  // CustomBlending（复刻 WE 的 ApplyBlending）；否则 MeshBasicMaterial（普通 alpha 混合）。
+  // 隔离对象的合成 quad **不**用它，而用 createCompositeQuadMaterial（见该方法注释）。
+  createLayerMaterial(texture, colorBlendMode, mod, forIsolation = false) {
+    const cb = forIsolation ? null : colorBlendModeToThree(colorBlendMode);
     if (cb) {
-      material = new ShaderMaterial({
+      return new ShaderMaterial({
         uniforms: {
-          map: { value: opts.texture ?? createWhiteTexture() },
+          map: { value: texture ?? createWhiteTexture() },
           tint: { value: new Vector3(mod.r, mod.g, mod.b) },
           opacity: { value: mod.a }
         },
@@ -21150,36 +21006,101 @@ var ThreeScenePlayer = class {
         blendSrcAlpha: ZeroFactor,
         blendDstAlpha: OneFactor
       });
-    } else {
-      const basic = new MeshBasicMaterial({
-        map: opts.texture ?? null,
-        transparent: true,
-        depthWrite: false
-      });
-      basic.color.setRGB(mod.r, mod.g, mod.b);
-      basic.opacity = mod.a;
-      material = basic;
     }
-    const mesh = new Mesh(geometry, material);
-    mesh.renderOrder = 0;
-    const s = opts.scale;
-    mesh.scale.set(s[0], s[1], s[2] ?? 1);
-    const a = opts.angles ?? [0, 0, 0];
-    mesh.rotation.set(a[0], a[1], a[2]);
-    mesh.position.set(opts.origin[0] - sceneW / 2, opts.origin[1] - sceneH / 2, opts.origin[2]);
-    this.scene.add(mesh);
-    const id = this.nextBackgroundId++;
-    this.backgroundEntries.set(id, {
-      mesh,
-      origin: [opts.origin[0], opts.origin[1], opts.origin[2]],
-      scale: [s[0], s[1], s[2] ?? 1],
-      angles: [a[0], a[1], a[2]],
-      alpha: mod.a,
-      brightness: opts.brightness ?? 1,
-      sceneW,
-      sceneH
+    const basic = new MeshBasicMaterial({
+      map: texture ?? null,
+      transparent: true,
+      depthWrite: false,
+      // 隔离内容渲染进**y 镜像的局部相机**（对象 RT 取 WE 的 v 约定，见 attachIsolated）⇒
+      // 屏幕空间绕序被翻转，正面朝外的 quad 会被背面剔除掉（对象整体消失）。故隔离路径改双面；
+      // 非隔离（主场景直渲）继续保持 FrontSide，行为与引入前逐字一致。
+      side: forIsolation ? DoubleSide : FrontSide
     });
-    return id;
+    basic.color.setRGB(mod.r, mod.g, mod.b);
+    basic.opacity = mod.a;
+    return basic;
+  }
+  // 合成 quad 的材质：只负责「把对象 RT 的像素采样回主场景」。
+  // ⚠️ 三点关键（都是踩过的坑）：
+  //   ① 必须独立构造，**不能 clone 内容材质**——粒子对象的内容材质是 InstancedBufferGeometry
+  //      专用的 billboard shader（依赖逐实例属性），普通 PlaneGeometry 没有这些属性会让
+  //      alpha 恒为 0（粒子隔离后完全不可见）；
+  //   ② **不再二次施加** alpha/brightness/color 调制——内容 mesh 的材质已把调制烘进 RT
+  //      （scene-renderer.ts 的既有结论），clone 后再乘一次会让 alpha=0.5 变成 0.25。
+  //   ③ **统一用 MeshBasicMaterial**（不再用内容那套预乘 ShaderMaterial）：本 quad 采样的是
+  //      对象 RT，而 RT 是非预乘语义的普通 alpha 写入（内容材质在隔离路径不套 cb），
+  //      若再用预乘 shader 会把 rgb 二次乘 alpha（× a²，见 createLayerMaterial 注释）。
+  // WE 的 `ApplyBlending` 语义用 three 的 CustomBlending 因子**在合成这一步**复刻
+  // （与内容材质同一套因子），alpha 仍取背景的（`gl_FragColor.a = screen.a` ⇒ Zero/One）。
+  // 背景对象带非零 angles 时 quad 承载旋转，超过 90° 的旋转会翻转三角形绕序 —— 与内容材质
+  // （原 cb 分支用 DoubleSide）保持一致用 DoubleSide，避免旋转到背面时整块被背面剔除掉。
+  createCompositeQuadMaterial(texture, colorBlendMode) {
+    const mat = new MeshBasicMaterial({
+      map: texture,
+      transparent: true,
+      depthWrite: false,
+      side: DoubleSide
+    });
+    const cb = colorBlendModeToThree(colorBlendMode);
+    if (cb) {
+      mat.blending = CustomBlending;
+      mat.blendEquation = cb.blendEquation;
+      mat.blendSrc = cb.blendSrc;
+      mat.blendDst = cb.blendDst;
+      mat.blendSrcAlpha = ZeroFactor;
+      mat.blendDstAlpha = OneFactor;
+    }
+    return mat;
+  }
+  // 建立对象隔离条目：RT + 局部正交相机 + localScene + 主场景合成 quad。
+  // localCamera 范围 = RT 分辨率（对象中心为原点，与场景像素 1:1）；合成 quad 用
+  // createCompositeGeometry（世界尺寸含缩放、UV 按钳制窗口映射），position 承载对象在世界中
+  // 的位置。
+  //
+  // ⚠️ 第一个参数是 **scene.json 的对象 id**（键），不是本类的图层计数器 id：背景层与粒子层
+  // 各有一个从 0 起的独立计数器（nextBackgroundId / nextParticleLayerId），若拿它们当隔离条目的
+  // 键，同一壁纸同时有隔离 image 与隔离 particle 时两边都从 0 开始 → 后建的粒子条目**覆盖**先建的
+  // 背景条目（背景的 quad 从此采样一张永不被渲染的 RT，且 stageKey 把两个对象映到同一个键）→
+  // 静默画错。用对象 id 作键则与「isolate 表 / ObjectEffectStage / wasm PendingChainStore」
+  // 共用同一把键（全库实测对象 id = 12/13/17/20/…，两套计数器无法表达）。
+  //
+  // ⚠️ 旋转的分工**不可「统一」**：quadAngles 由调用方按「RT 内容是否已含旋转」决定——
+  //   - 背景：内容 mesh 的 rotation 已归零（RT 内容**不含**旋转）→ quad 承载对象 angles；
+  //   - 粒子：内容 shader 里已施加 objAngles（RT 内容**已含**旋转）→ quadAngles 传 [0,0,0]，
+  //     否则同一份旋转被施加两次。
+  attachIsolated(objectId, kind, content, worldW, worldH, size, position, quadAngles, colorBlendMode) {
+    const rtW = Math.max(1, Math.round(size.width));
+    const rtH = Math.max(1, Math.round(size.height));
+    const rt = new WebGLRenderTarget(rtW, rtH, { samples: 4 });
+    const camW = Math.max(1, Math.abs(worldW));
+    const camH = Math.max(1, Math.abs(worldH));
+    const localCamera = new OrthographicCamera(-camW / 2, camW / 2, -camH / 2, camH / 2, -1e3, 1e3);
+    localCamera.position.z = CAMERA_DISTANCE;
+    const localScene = new Scene();
+    localScene.add(content);
+    const compositeGeometry = createCompositeGeometry(worldW, worldH, camW, camH);
+    flipGeometryUvY(compositeGeometry);
+    const quad = new Mesh(
+      compositeGeometry,
+      this.createCompositeQuadMaterial(rt.texture, colorBlendMode)
+    );
+    quad.position.set(position.x, position.y, position.z);
+    quad.rotation.set(quadAngles[0], quadAngles[1], quadAngles[2]);
+    quad.renderOrder = kind === "particle" ? 1 : 0;
+    this.scene.add(quad);
+    this.isolated.set(objectId, {
+      id: objectId,
+      kind,
+      rt,
+      rtWidth: rtW,
+      rtHeight: rtH,
+      rtTexture: rt.texture,
+      localScene,
+      localCamera,
+      quad,
+      worldW,
+      worldH
+    });
   }
   // Task 2：更新背景图层状态，对齐既有 update_image 语义——undefined = 保持现状；
   // 传入值若无变化（与当前已应用状态相等）则跳过该字段；未知 id → no-op。
@@ -21275,7 +21196,12 @@ var ThreeScenePlayer = class {
     mesh.frustumCulled = false;
     geometry.boundingSphere = new Sphere(new Vector3(0, 0, 0), Number.POSITIVE_INFINITY);
     mesh.renderOrder = 1;
-    this.scene.add(mesh);
+    if (opts.isolate) {
+      const c = opts.objectCenter ?? [0, 0, 0];
+      mesh.position.set(-c[0], -c[1], -c[2]);
+    } else {
+      this.scene.add(mesh);
+    }
     const id = this.nextParticleLayerId++;
     const layer = {
       id,
@@ -21295,6 +21221,20 @@ var ThreeScenePlayer = class {
     };
     this.particleLayers.set(id, layer);
     this.writeParticleData(layer, initial, count);
+    if (opts.isolate) {
+      const center = opts.objectCenter ?? [0, 0, 0];
+      this.attachIsolated(
+        opts.isolate.objectId,
+        "particle",
+        mesh,
+        opts.isolate.worldW,
+        opts.isolate.worldH,
+        { width: opts.isolate.rtWidth, height: opts.isolate.rtHeight },
+        { x: center[0], y: center[1], z: center[2] },
+        [0, 0, 0],
+        0
+      );
+    }
     return id;
   }
   // 每帧刷新所有粒子图层：调用各自的 `simVerticesGetter()` 取当前顶点并写回 BufferAttribute。
@@ -21383,6 +21323,20 @@ var ThreeScenePlayer = class {
       layer.material.dispose();
     }
     this.particleLayers.clear();
+    for (const entry of this.isolated.values()) {
+      entry.rt.dispose();
+      entry.quad.geometry.dispose();
+      entry.quad.material.dispose();
+      entry.localScene.traverse((o) => {
+        const m = o;
+        if (m.geometry) m.geometry.dispose();
+        const mat = m.material;
+        if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
+        else mat?.dispose();
+      });
+    }
+    this.isolated.clear();
+    this.objectEffectStage = null;
     this.renderer.dispose();
   }
 };
@@ -21448,7 +21402,11 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
         alpha: obj.alpha,
         brightness: obj.brightness,
         sceneW,
-        sceneH
+        sceneH,
+        // 对象级效果链：本对象带效果（调用方下发了隔离条件）→ 内容进 localScene 渲染到对象 RT，
+        // 主场景放合成 quad；缺省不隔离，行为与今天逐字相同。隔离条目的键 = obj.id（值里的
+        // objectId 同值），与 ObjectEffectStage 的键空间一致。
+        isolate: assets.isolate?.get(obj.id)
       });
       backgroundIds.push(id);
     } else if (obj.kind === "particle" && obj.particle) {
@@ -21474,7 +21432,11 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
         // 实例缓冲容量 = spec 的 maxcount（= wasm `SceneParticleSim.maxcount`，模拟器的发射上限）。
         // three 只在首帧锁存该容量（见 addParticle），必须按模拟器**最终**会产出的粒子数一次给足；
         // 缺 maxcount（旧格式/解析失败）→ addParticle 用 DEFAULT_PARTICLE_CAPACITY 兜底。
-        maxInstances: specMaxcount(p.specJson)
+        maxInstances: specMaxcount(p.specJson),
+        // 对象级效果链：带效果的粒子对象同样隔离（对象 RT + 合成 quad）。世界尺寸由调用方按
+        // `particleWorldSize(spec, scale)` 算好（player 不知道 spec 的 distanceMax）；缺省不隔离。
+        // 隔离条目的键 = obj.id（值里的 objectId 同值），与 ObjectEffectStage 的键空间一致。
+        isolate: assets.isolate?.get(obj.id)
       });
       particleLayers.push({ id, sim });
       sims.push(sim);
@@ -21484,6 +21446,1894 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
     for (const sim of sims) sim.update(dt);
   });
   return { player, sims, backgroundIds, particleLayers };
+}
+
+// src/client/tex-loader.ts
+var import_lz4js = __toESM(require_lz4(), 1);
+
+// src/client/fetch-util.ts
+async function fetchWithRetry(url, retries = 2) {
+  for (let i = 0; ; i++) {
+    try {
+      const resp = await fetch(url);
+      return resp.ok ? new Uint8Array(await resp.arrayBuffer()) : null;
+    } catch {
+      if (i >= retries) return null;
+      await new Promise((r) => setTimeout(r, 50 * (i + 1)));
+    }
+  }
+}
+
+// src/client/tex-loader.ts
+var TEX_FORMAT = {
+  RGBA8888: 0,
+  DXT5: 4,
+  DXT3: 6,
+  DXT1: 7,
+  RG88: 8,
+  R8: 9
+};
+var FIF = {
+  JPEG: 2,
+  PNG: 13,
+  WEBP: 21
+};
+var FORMAT_TO_GL = {
+  [TEX_FORMAT.DXT1]: 33777,
+  [TEX_FORMAT.DXT3]: 33778,
+  [TEX_FORMAT.DXT5]: 33779
+};
+function readI32(buf, pos) {
+  return buf[pos] | buf[pos + 1] << 8 | buf[pos + 2] << 16 | buf[pos + 3] << 24;
+}
+function readF32(buf, pos) {
+  return new DataView(buf.buffer, buf.byteOffset + pos, 4).getFloat32(0, true);
+}
+function ascii(buf, pos, len) {
+  let s = "";
+  for (let i = 0; i < len; i++) s += String.fromCharCode(buf[pos + i]);
+  return s;
+}
+var MIN_LEN = 18 + 28 + 9 + 4 + 4;
+function parseTex(buf) {
+  if (buf.length < MIN_LEN) return null;
+  if (ascii(buf, 0, 9) !== "TEXV0005\0") return null;
+  if (ascii(buf, 9, 9) !== "TEXI0001\0") return null;
+  const format = readI32(buf, 18);
+  const flags = readI32(buf, 22);
+  const textureWidth = readI32(buf, 26);
+  const textureHeight = readI32(buf, 30);
+  const width = readI32(buf, 34);
+  const height = readI32(buf, 38);
+  const container = ascii(buf, 46, 9);
+  if (container !== "TEXB0002\0" && container !== "TEXB0001\0" && container !== "TEXB0003\0" && container !== "TEXB0004\0") return null;
+  const v2 = container === "TEXB0002\0";
+  const v3plus = container === "TEXB0003\0" || container === "TEXB0004\0";
+  let pos = 46 + 9;
+  const imageCount = readI32(buf, pos);
+  if (imageCount <= 0 || imageCount > 64) return null;
+  pos += 4;
+  let imageFormat;
+  if (v3plus) {
+    imageFormat = readI32(buf, pos);
+    pos += 4;
+    if (container === "TEXB0004\0") pos += 4;
+  }
+  const mipmaps = [];
+  for (let img = 0; img < imageCount; img++) {
+    if (pos + 4 > buf.length) return null;
+    const mipmapCount = readI32(buf, pos);
+    if (mipmapCount <= 0 || mipmapCount > 256) return null;
+    pos += 4;
+    for (let m = 0; m < mipmapCount; m++) {
+      const fieldLen = v2 ? 20 : 12;
+      if (pos + fieldLen > buf.length) return null;
+      const mw = readI32(buf, pos);
+      const mh = readI32(buf, pos + 4);
+      let isLZ4 = 0;
+      let decompressedBytes = 0;
+      let bytesLen;
+      if (v2 || v3plus) {
+        isLZ4 = readI32(buf, pos + 8);
+        decompressedBytes = readI32(buf, pos + 12);
+        bytesLen = readI32(buf, pos + 16);
+      } else {
+        bytesLen = readI32(buf, pos + 8);
+      }
+      pos += v2 || v3plus ? 20 : 12;
+      if (mw <= 0 || mh <= 0 || bytesLen < 0) return null;
+      if (pos + bytesLen > buf.length) return null;
+      const payload = buf.subarray(pos, pos + bytesLen);
+      pos += bytesLen;
+      if (isLZ4) {
+        if (decompressedBytes <= 0 || decompressedBytes > 1 << 30) return null;
+        mipmaps.push({ width: mw, height: mh, data: lz4Decompress(payload, decompressedBytes) });
+      } else {
+        mipmaps.push({ width: mw, height: mh, data: new Uint8Array(payload) });
+      }
+    }
+  }
+  if (mipmaps.length === 0) return null;
+  const first = mipmaps[0];
+  const sprite = (flags & FLAG_SPRITE) !== 0 ? parseSpriteSection(buf, pos, first.width, first.height) : void 0;
+  return { width, height, textureWidth, textureHeight, format, flags, imageFormat, mipmaps, sprite };
+}
+function parseSpriteSection(buf, pos, mipWidth, mipHeight) {
+  if (!Number.isFinite(pos) || pos < 0 || pos + 13 > buf.length) return void 0;
+  const stamp = ascii(buf, pos, 9);
+  if (!stamp.startsWith("TEXS000")) return void 0;
+  const texs = Number(stamp.slice(4, 8));
+  if (!Number.isFinite(texs) || texs < 1 || texs > 9) return void 0;
+  let p = pos + 9;
+  const frames = readI32(buf, p);
+  p += 4;
+  if (frames <= 0 || frames > 4096) return void 0;
+  if (texs >= 3) p += 8;
+  const intCoords = texs === 1;
+  const coord = () => {
+    const v = intCoords ? readI32(buf, p) : readF32(buf, p);
+    p += 4;
+    return v;
+  };
+  if (p + 8 + 24 > buf.length) return void 0;
+  coord();
+  coord();
+  coord();
+  coord();
+  const ax0 = coord();
+  const ax1 = coord();
+  const ay0 = coord();
+  const ay1 = coord();
+  const frameW = Math.hypot(ax0, ax1);
+  const frameH = Math.hypot(ay0, ay1);
+  if (!(frameW > 0) || !(frameH > 0)) return void 0;
+  const cols = Math.max(1, Math.round(mipWidth / frameW));
+  const rows = Math.max(1, Math.round(mipHeight / frameH));
+  if (cols * rows < frames) return void 0;
+  return { frames, cols, rows };
+}
+function lz4Decompress(src, decompressedSize) {
+  const out = new Uint8Array(decompressedSize);
+  const n = import_lz4js.default.decompressBlock(src, out, 0, src.length, 0);
+  return n === decompressedSize ? out : out.subarray(0, Math.min(n, decompressedSize));
+}
+var FLAG_SPRITE = 1 << 2;
+var FLAG_CLAMP_UVS = 1 << 1;
+function cropToMap(data, mipWidth, mipHeight, mapWidth, mapHeight, format, flags) {
+  const valid = Number.isFinite(mapWidth) && Number.isFinite(mapHeight) && mapWidth > 0 && mapHeight > 0;
+  const cw = valid ? Math.min(Math.floor(mapWidth), mipWidth) : mipWidth;
+  const ch = valid ? Math.min(Math.floor(mapHeight), mipHeight) : mipHeight;
+  if ((flags & FLAG_SPRITE) !== 0 || cw >= mipWidth && ch >= mipHeight) {
+    return { width: mipWidth, height: mipHeight, data };
+  }
+  if (format === TEX_FORMAT.DXT1 || format === TEX_FORMAT.DXT3 || format === TEX_FORMAT.DXT5) {
+    const blockSize = format === TEX_FORMAT.DXT1 ? 8 : 16;
+    return cropCompressedToMap(data, mipWidth, mipHeight, cw, ch, blockSize);
+  }
+  const bpp = format === TEX_FORMAT.RG88 ? 2 : format === TEX_FORMAT.R8 ? 1 : 4;
+  return cropRowsToMap(data, mipWidth, mipHeight, cw, ch, bpp);
+}
+function cropRowsToMap(data, mipWidth, mipHeight, cw, ch, bpp) {
+  const rowBytes = cw * bpp;
+  const out = new Uint8Array(rowBytes * ch);
+  for (let y = 0; y < ch; y++) {
+    const src = y * mipWidth * bpp;
+    const end = Math.min(src + rowBytes, data.length);
+    if (src >= data.length) break;
+    out.set(data.subarray(src, end), y * rowBytes);
+  }
+  return { width: cw, height: ch, data: out };
+}
+function cropCompressedToMap(data, mipWidth, mipHeight, cw, ch, blockSize) {
+  const nw = Math.ceil(cw / 4) * 4;
+  const nh = Math.ceil(ch / 4) * 4;
+  const srcBlockW = Math.max(1, Math.ceil(mipWidth / 4));
+  const dstBlockW = nw / 4;
+  const dstBlockH = nh / 4;
+  const rowBytes = dstBlockW * blockSize;
+  const out = new Uint8Array(rowBytes * dstBlockH);
+  for (let by = 0; by < dstBlockH; by++) {
+    const src = by * srcBlockW * blockSize;
+    if (src >= data.length) break;
+    const end = Math.min(src + rowBytes, data.length);
+    out.set(data.subarray(src, end), by * rowBytes);
+  }
+  return { width: nw, height: nh, data: out };
+}
+async function textureFromTex(info, opts) {
+  const mip = info.mipmaps[0];
+  if (!mip) return null;
+  const topDown = opts?.rowOrder === "topDown";
+  const withSprite = (tex) => {
+    const ud = { ...tex.userData ?? {} };
+    if (info.sprite) ud.sprite = info.sprite;
+    ud.fxRes = [mip.width, mip.height, info.textureWidth, info.textureHeight];
+    tex.userData = ud;
+    return tex;
+  };
+  const applyLinearSampling = (tex) => {
+    tex.magFilter = LinearFilter;
+    tex.minFilter = LinearMipmapLinearFilter;
+    tex.generateMipmaps = true;
+    tex.needsUpdate = true;
+  };
+  const applyWrap = (tex, info2) => {
+    const clamp2 = (info2.flags & FLAG_CLAMP_UVS) !== 0;
+    tex.wrapS = tex.wrapT = clamp2 ? ClampToEdgeWrapping : RepeatWrapping;
+  };
+  const mime = info.imageFormat === FIF.JPEG ? "image/jpeg" : info.imageFormat === FIF.PNG ? "image/png" : info.imageFormat === FIF.WEBP ? "image/webp" : "";
+  if (mime) {
+    if (typeof createImageBitmap !== "function") return null;
+    try {
+      const bitmap = await createImageBitmap(
+        new Blob([mip.data], { type: mime }),
+        { imageOrientation: topDown ? "from-image" : "flipY" }
+      );
+      const tex = new Texture(bitmap);
+      tex.flipY = false;
+      applyWrap(tex, info);
+      applyLinearSampling(tex);
+      return withSprite(tex);
+    } catch {
+      return null;
+    }
+  }
+  if (info.format === TEX_FORMAT.RGBA8888 || info.format === TEX_FORMAT.RG88 || info.format === TEX_FORMAT.R8) {
+    const cropped = cropToMap(mip.data, mip.width, mip.height, info.width, info.height, info.format, info.flags);
+    const src = info.format === TEX_FORMAT.RGBA8888 ? cropped.data : convertUnormToRgba(cropped.data, info.format, opts?.alphaPriority !== false);
+    const rows = topDown ? src : flipRows(src, cropped.width, cropped.height, 4);
+    const tex = new DataTexture(rows, cropped.width, cropped.height, RGBAFormat);
+    applyWrap(tex, info);
+    applyLinearSampling(tex);
+    return withSprite(tex);
+  }
+  const glFormat = FORMAT_TO_GL[info.format];
+  if (glFormat) {
+    const blockSize = info.format === TEX_FORMAT.DXT1 ? 8 : 16;
+    const cropped = cropToMap(mip.data, mip.width, mip.height, info.width, info.height, info.format, info.flags);
+    const blocks = topDown ? cropped.data : flipCompressedRows(cropped.data, cropped.width, cropped.height, blockSize);
+    const tex = new CompressedTexture(
+      [{
+        data: blocks,
+        width: cropped.width,
+        height: cropped.height
+      }],
+      cropped.width,
+      cropped.height,
+      glFormat
+    );
+    tex.magFilter = LinearFilter;
+    tex.minFilter = LinearFilter;
+    tex.generateMipmaps = false;
+    applyWrap(tex, info);
+    tex.needsUpdate = true;
+    return withSprite(tex);
+  }
+  return null;
+}
+function flipCompressedRows(data, width, height, blockSize) {
+  const blockW = Math.max(1, Math.ceil(width / 4));
+  const blockH = Math.max(1, Math.ceil(height / 4));
+  const rowBytes = blockW * blockSize;
+  const out = new Uint8Array(data.length);
+  for (let by = 0; by < blockH; by++) {
+    const src = by * rowBytes;
+    const dst = (blockH - 1 - by) * rowBytes;
+    const end = Math.min(src + rowBytes, data.length);
+    out.set(data.subarray(src, end), dst);
+  }
+  return out;
+}
+function convertUnormToRgba(data, format, alphaPriority = true) {
+  if (format === TEX_FORMAT.RG88) {
+    const out2 = new Uint8Array(data.length * 2);
+    for (let i = 0, o = 0; i < data.length; i += 2, o += 4) {
+      const r = data[i];
+      const g = data[i + 1];
+      if (alphaPriority) {
+        out2[o] = r;
+        out2[o + 1] = r;
+        out2[o + 2] = r;
+        out2[o + 3] = g;
+      } else {
+        out2[o] = r;
+        out2[o + 1] = g;
+        out2[o + 2] = 0;
+        out2[o + 3] = 255;
+      }
+    }
+    return out2;
+  }
+  const out = new Uint8Array(data.length * 4);
+  for (let i = 0, o = 0; i < data.length; i++, o += 4) {
+    const v = data[i];
+    if (alphaPriority) {
+      out[o] = 255;
+      out[o + 1] = 255;
+      out[o + 2] = 255;
+      out[o + 3] = v;
+    } else {
+      out[o] = v;
+      out[o + 1] = v;
+      out[o + 2] = v;
+      out[o + 3] = 255;
+    }
+  }
+  return out;
+}
+function flipRows(data, width, height, bytesPerPixel) {
+  const rowBytes = width * bytesPerPixel;
+  const out = new Uint8Array(data.length);
+  for (let y = 0; y < height; y++) {
+    const src = y * rowBytes;
+    const dst = (height - 1 - y) * rowBytes;
+    out.set(data.subarray(src, src + rowBytes), dst);
+  }
+  return out;
+}
+async function loadTexTexture(url, opts) {
+  const buf = await fetchWithRetry(url);
+  if (!buf) return null;
+  const info = parseTex(buf);
+  if (!info) return null;
+  return textureFromTex(info, opts);
+}
+
+// src/client/shader/uniform-binder.ts
+function isAudioUniform(name) {
+  return name.startsWith("g_AudioSpectrum");
+}
+function parseValue(raw) {
+  if (typeof raw === "number") return raw;
+  if (typeof raw === "boolean") return raw ? 1 : 0;
+  if (typeof raw === "string") {
+    const parts = raw.trim().split(/\s+/).map(Number);
+    if (parts.some((n) => !isFinite(n))) return null;
+    return parts.length === 1 ? parts[0] : parts;
+  }
+  if (Array.isArray(raw)) {
+    const nums = raw.map(Number);
+    if (nums.some((n) => !isFinite(n))) return null;
+    return nums.length === 1 ? nums[0] : nums;
+  }
+  return null;
+}
+function resolveUniformBindings(annotations, constants) {
+  const out = /* @__PURE__ */ new Map();
+  for (const u of annotations) {
+    if (u.type.startsWith("sampler")) continue;
+    const arrMatch = u.type.match(/^float\[(\d+)\]$/);
+    if (isAudioUniform(u.name) && arrMatch) {
+      out.set(u.name, new Array(Number(arrMatch[1])).fill(0));
+      continue;
+    }
+    let raw;
+    const mat = u.annotation?.material;
+    if (typeof mat === "string") {
+      const v = constants[mat];
+      raw = v && typeof v === "object" && !Array.isArray(v) && "value" in v ? v.value : v;
+    }
+    if (raw === void 0 && u.annotation?.default !== void 0) raw = u.annotation.default;
+    const parsed = parseValue(raw);
+    const dim = u.type === "vec2" ? 2 : u.type === "vec3" ? 3 : u.type === "vec4" ? 4 : 0;
+    if (parsed === null || parsed === 0) {
+      out.set(u.name, dim ? new Array(dim).fill(0) : parsed ?? 0);
+    } else {
+      out.set(u.name, parsed);
+    }
+  }
+  return out;
+}
+
+// src/client/effect-runner.ts
+function resolveTextureSlotPath(path) {
+  if (!path) return null;
+  if (path.startsWith("util/") || path.startsWith("_rt_")) return path;
+  const p = path.startsWith("materials/") ? path : "materials/" + path;
+  return p.endsWith(".tex") ? p : p + ".tex";
+}
+function isBuiltinTexturePath(path) {
+  if (!path) return false;
+  const p = path.replace(/\.tex$/, "");
+  return p.startsWith("util/") || p.startsWith("_rt_");
+}
+function builtinTextureUrl(path) {
+  if (!path) return null;
+  const p = path.replace(/\.tex$/, "");
+  if (!p.startsWith("util/")) return null;
+  return `/wallpapers/particle-texture?name=${encodeURIComponent(p)}`;
+}
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0;
+    a = a + 1831565813 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+var BUILTIN_CACHE = /* @__PURE__ */ new Map();
+var BUILTIN_NOISE_SEEDS = {
+  noise: 1370177149,
+  // util/noise
+  clouds256: 2115803701
+  // util/clouds_256
+};
+function resolveBuiltinTexture(path) {
+  if (!path) return null;
+  const p = path.replace(/\.tex$/, "");
+  let key;
+  if (p === "util/white") key = "white";
+  else if (p === "util/noise") key = "noise";
+  else if (p === "util/clouds_256") key = "clouds256";
+  else if (p.startsWith("_rt_")) key = "white";
+  else return null;
+  const cached = BUILTIN_CACHE.get(key);
+  if (cached) return cached;
+  let tex;
+  if (key === "white") {
+    tex = new DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1, RGBAFormat);
+  } else {
+    const size = 256;
+    const data = new Uint8Array(size * size * 4);
+    const rnd = mulberry32(BUILTIN_NOISE_SEEDS[key] ?? 1370177149);
+    for (let i = 0; i < size * size; i++) {
+      const v = Math.round(rnd() * 255);
+      data[i * 4] = v;
+      data[i * 4 + 1] = v;
+      data[i * 4 + 2] = v;
+      data[i * 4 + 3] = 255;
+    }
+    tex = new DataTexture(data, size, size, RGBAFormat);
+  }
+  tex.needsUpdate = true;
+  BUILTIN_CACHE.set(key, tex);
+  return tex;
+}
+var EMPTY_SLOT_CACHE = /* @__PURE__ */ new Map();
+function resolveEmptySlotTexture(mode) {
+  if (!mode) return null;
+  let key;
+  let bytes;
+  if (mode === "opacitymask") {
+    key = "opacitymask";
+    bytes = [0, 0, 0, 255];
+  } else if (mode === "flowmask") {
+    key = "flowmask";
+    bytes = [127, 127, 0, 255];
+  } else {
+    return null;
+  }
+  const cached = EMPTY_SLOT_CACHE.get(key);
+  if (cached) return cached;
+  const tex = new DataTexture(new Uint8Array(bytes), 1, 1, RGBAFormat);
+  tex.needsUpdate = true;
+  EMPTY_SLOT_CACHE.set(key, tex);
+  return tex;
+}
+function effectSlotCount(pass) {
+  let count = pass.textureSlots.length;
+  for (const name of Object.keys(pass.samplerModes ?? {})) {
+    const m = /^g_Texture(\d+)$/.exec(name);
+    if (m) count = Math.max(count, Number(m[1]) + 1);
+  }
+  return count;
+}
+function resolveSlotFallback(pass, index) {
+  if (index <= 0) return null;
+  if (pass.textureSlots[index]) return null;
+  return resolveEmptySlotTexture(pass.samplerModes?.[`g_Texture${index}`]);
+}
+async function loadEffectTextureSlot(path, id, cache, load = loadTexTexture, warn = (message) => console.warn(message)) {
+  if (!path) return null;
+  const key = `${id}:${path}`;
+  if (cache.has(key)) return cache.get(key) ?? null;
+  const tryLoad = async (url) => {
+    try {
+      return await load(url, { alphaPriority: false });
+    } catch {
+      return null;
+    }
+  };
+  const realUrl = builtinTextureUrl(path);
+  if (realUrl) {
+    const real = await tryLoad(realUrl);
+    if (real) {
+      cache.set(key, real);
+      return real;
+    }
+  }
+  const builtin = resolveBuiltinTexture(path);
+  if (builtin) {
+    if (realUrl) {
+      warn(
+        `[wallpaper-engine] \u5F15\u64CE\u5185\u7F6E\u7EB9\u7406\u53D6\u4E0D\u5230\u771F\u8EAB\uFF0C\u56DE\u9000\u7A0B\u5E8F\u5316\u8FD1\u4F3C\uFF08\u753B\u9762\u53EF\u80FD\u4E0E\u684C\u9762 WE \u4E0D\u540C\uFF09: ${path} \u2190 ${realUrl}`
+      );
+    }
+    cache.set(key, builtin);
+    return builtin;
+  }
+  if (isBuiltinTexturePath(path)) {
+    cache.set(key, null);
+    return null;
+  }
+  const resolved = resolveTextureSlotPath(path);
+  if (!resolved) return null;
+  const tex = await tryLoad(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(resolved)}`);
+  if (!tex) warn(`[wallpaper-engine] \u7EB9\u7406\u69FD\u52A0\u8F7D\u5931\u8D25\uFF0C\u8DF3\u8FC7: ${path} \u2192 ${resolved}`);
+  cache.set(key, tex);
+  return tex;
+}
+function resolveInputTexture(input) {
+  return input instanceof WebGLRenderTarget ? input.texture : input;
+}
+function pickWriteTarget(previous, rtA, rtB) {
+  if (previous === rtA) return rtB;
+  return rtA;
+}
+function resolveTargetSize(current, opts) {
+  return {
+    width: opts?.width ?? current.width,
+    height: opts?.height ?? current.height
+  };
+}
+function resolveTextureResolution4(tex, fallbackW, fallbackH) {
+  const fx = tex?.userData?.fxRes;
+  if (Array.isArray(fx) && fx.length === 4 && Number(fx[0]) > 0 && Number(fx[1]) > 0) {
+    return { x: Number(fx[0]), y: Number(fx[1]), z: Number(fx[2]), w: Number(fx[3]) };
+  }
+  const w = tex?.image?.width ?? fallbackW;
+  const h = tex?.image?.height ?? fallbackH;
+  return { x: w, y: h, z: w, w: h };
+}
+function fillAudioSpectrumUniform(dest, src) {
+  for (let i = 0; i < dest.length; i++) {
+    dest[i] = i < src.length ? src[i] / 255 : 0;
+  }
+}
+function describeEffectPass(pass, key, wallpaperId) {
+  const bits = [`pass ${key}`];
+  if (wallpaperId) bits.push(`\u58C1\u7EB8 ${wallpaperId}`);
+  if (pass.target) bits.push(`target=${pass.target}`);
+  const slots = pass.textureSlots.filter((s) => !!s);
+  if (slots.length > 0) bits.push(`\u7EB9\u7406\u69FD=[${slots.join(", ")}]`);
+  if (pass.blendMode && pass.blendMode !== "normal") bits.push(`blend=${pass.blendMode}`);
+  const head = (pass.rawFrag ?? "").split("\n").map((l) => l.trim()).find((l) => l && !l.startsWith("//") && !l.startsWith("/*") && !l.startsWith("*"));
+  if (head) bits.push(`\u7247\u5143\u9996\u884C=${head.length > 60 ? head.slice(0, 60) + "\u2026" : head}`);
+  return bits.join("\uFF0C");
+}
+var EffectRunner = class {
+  renderer;
+  rtA;
+  rtB;
+  chains = [];
+  id = "";
+  last = null;
+  // 最近一次 update 的最终输出（帧循环贴屏用）
+  materials = /* @__PURE__ */ new Map();
+  // key: `${passIndex}`
+  scenes = /* @__PURE__ */ new Map();
+  // 每 pass 独立场景（含全屏 quad）
+  textures = /* @__PURE__ */ new Map();
+  // 纹理槽缓存（key: `${id}:${path}`）
+  // 编译失败的 pass（key = 链内下标）：探针渲染一旦确认失败就缓存，后续帧直接返回 null 跳过，
+  // 不再「每帧重建材质 + 1×1 探针渲染 + 重复告警」（实测一个坏 pass 每帧 2 条 warning 刷屏）。
+  // 失败本来就是跳过该 pass（update 里 `continue`），故缓存**不改变执行语义**；setChains
+  // （换壁纸 / 重挂链 / resize 重挂）时清空，链变了要重新尝试编译。
+  failed = /* @__PURE__ */ new Set();
+  width;
+  height;
+  // update 串行化：帧循环每帧调用 update，但内部有异步纹理槽加载（await），
+  // 并发 update 会交错使用同一 renderer 的 RT/绑定状态 → 画面黑屏/闪烁。
+  // inFlight 标记 update 未完成时跳过本帧（last 保持上次输出，下一帧重试）；
+  // 换壁纸后 textures 已清空 → 首帧加载完成前输出 input（场景 RT），不黑屏。
+  updateInFlight = false;
+  // 音频频谱源（T3.2）：freqData 缓冲引用（scene-renderer 每帧刷新后注入）。
+  // null = 无分析器 → 音频 uniform 保持 binder 初始化的全零（静音，行为不变）。
+  audioSpectrum = null;
+  // 效果纹理槽加载器（缺省 `loadTexTexture`；可注入以携带 **v 约定** —— 见构造参数注释）。
+  load;
+  // `opts.load`：纹理槽加载器（缺省 `loadTexTexture`）。**调用方用它携带纹理 v 约定**：
+  //   效果 shader 把 `v_TexCoord.y` 当**图像空间**坐标（flowmap 的带符号位移、clouds 的旋转/滚动、
+  //   foliagesway 的摆动方向…），而纹理由对象 RT 提供 —— 二者的 v 约定必须是**同一套**，
+  //   否则条带位置对而方向/斜度反（Crimson waterflow 真机「方向对但位置/斜度不对」）。
+  //   对象 RT 走 `threejs-player.attachIsolated` 的 y 镜像局部相机（v=0=图像顶部 = WE 约定），
+  //   故 `ObjectEffectStage` 注入 `rowOrder:'topDown'` 的 loader 与之对齐；
+  //   未注入的调用方（旧场景级路径）保持 `'bottomUp'`，行为与本参数引入前逐字一致。
+  constructor(renderer, width, height, opts = {}) {
+    this.renderer = renderer;
+    this.width = width;
+    this.height = height;
+    this.load = opts.load ?? loadTexTexture;
+    this.rtA = new WebGLRenderTarget(width, height);
+    this.rtB = new WebGLRenderTarget(width, height);
+  }
+  setChains(chains, wallpaperId, opts) {
+    this.chains = chains;
+    this.id = wallpaperId;
+    this.last = null;
+    this.failed.clear();
+    const size = resolveTargetSize({ width: this.width, height: this.height }, opts);
+    this.ensureTargets(size.width, size.height);
+    this.disposeMaterials();
+    this.textures.clear();
+    for (const pass of chains.flat()) {
+      for (const path of pass.textureSlots) {
+        if (path) void this.resolveTextureSlot(path);
+      }
+    }
+  }
+  // 设置音频频谱源（T3.2）：传入频谱缓冲引用（可每帧刷新后重复注入同一引用，
+  // update() 渲染前从缓冲读取当前频谱）；null → 恢复全零静音（不回归）。
+  setAudioSpectrumSource(source) {
+    this.audioSpectrum = source;
+  }
+  // RT 尺寸对齐：仅当目标尺寸与当前不一致才重建 ping-pong RT（避免 recreate churn）；
+  // 重建后同步 this.width/this.height（getMaterial 预建 g_TextureNResolution 默认值跟随对象 RT 尺寸）。
+  ensureTargets(w, h) {
+    if (this.rtA.width === w && this.rtA.height === h) return;
+    this.rtA.dispose();
+    this.rtB.dispose();
+    this.rtA = new WebGLRenderTarget(w, h);
+    this.rtB = new WebGLRenderTarget(w, h);
+    this.width = w;
+    this.height = h;
+  }
+  disposeMaterials() {
+    for (const m of this.materials.values()) m.dispose();
+    for (const key of Array.from(this.scenes.keys())) this.disposeSceneQuads(key);
+    this.materials.clear();
+  }
+  getMaterial(pass, key) {
+    if (this.failed.has(key)) return null;
+    const cached = this.materials.get(key);
+    if (cached) return cached;
+    let material = null;
+    try {
+      const uniforms = {};
+      for (const [name, value] of pass.uniforms) {
+        uniforms[name] = { value: Array.isArray(value) ? value.slice() : value };
+      }
+      if (!uniforms["g_Texture0"]) uniforms["g_Texture0"] = { value: null };
+      const slotCount = effectSlotCount(pass);
+      for (let i = 0; i < slotCount; i++) {
+        const slot = `g_Texture${i}`;
+        if (!uniforms[slot]) uniforms[slot] = { value: resolveSlotFallback(pass, i) };
+      }
+      for (let i = 0; i <= Math.max(slotCount, 0); i++) {
+        const res = `g_Texture${i}Resolution`;
+        uniforms[res] = {
+          value: new Vector4(this.width, this.height, this.width, this.height)
+        };
+      }
+      const matRe = /uniform\s+mat([234])\s+(\w+)/g;
+      const matDefs = /* @__PURE__ */ new Map();
+      for (const src of [pass.vertSrc, pass.fragSrc]) {
+        for (const m of src.matchAll(matRe)) matDefs.set(m[2], Number(m[1]));
+      }
+      for (const [name, dim] of matDefs) {
+        if (uniforms[name] && typeof uniforms[name].value === "number") {
+          const n = dim * dim;
+          const id = new Array(n).fill(0);
+          for (let i = 0; i < n; i += dim + 1) id[i] = 1;
+          uniforms[name].value = id;
+        }
+      }
+      if (uniforms["g_ModelViewProjectionMatrix"]) {
+        uniforms["g_ModelViewProjectionMatrix"].value = new Matrix4();
+      }
+      material = new ShaderMaterial({
+        vertexShader: pass.vertSrc,
+        fragmentShader: pass.fragSrc,
+        uniforms,
+        transparent: true,
+        depthTest: false,
+        depthWrite: false,
+        blending: blendModeToThree(pass.blendMode)
+      });
+      let compileFailed = false;
+      let vertLog = "";
+      let fragLog = "";
+      const prevHandler = this.renderer.debug.onShaderError;
+      this.renderer.debug.onShaderError = (gl, program, vs, fs) => {
+        compileFailed = true;
+        vertLog = (gl.getShaderInfoLog(vs) || "").trim();
+        fragLog = (gl.getShaderInfoLog(fs) || "").trim();
+      };
+      const probeRT = new WebGLRenderTarget(1, 1);
+      try {
+        this.renderer.setRenderTarget(probeRT);
+        this.renderer.render(this.getScene(key, material), SCREEN_CAMERA);
+        this.renderer.setRenderTarget(null);
+      } finally {
+        this.renderer.debug.onShaderError = prevHandler;
+        probeRT.dispose();
+      }
+      if (compileFailed) {
+        this.failed.add(key);
+        console.warn(
+          `[wallpaper-engine] \u6548\u679C pass \u7F16\u8BD1\u5931\u8D25\uFF0C\u8DF3\u8FC7: ${describeEffectPass(pass, key, this.id)}` + (vertLog ? `
+  vertex: ${vertLog}` : "") + (fragLog ? `
+  fragment: ${fragLog}` : "")
+        );
+        material.dispose();
+        this.disposeSceneQuads(key);
+        return null;
+      }
+      this.materials.set(key, material);
+      return material;
+    } catch (e) {
+      console.warn("[wallpaper-engine] \u6548\u679C pass \u7F16\u8BD1\u5931\u8D25\uFF0C\u8DF3\u8FC7:", key, e);
+      material?.dispose();
+      this.disposeSceneQuads(key);
+      return null;
+    }
+  }
+  // 填充本 pass 材质中所有音频频谱 uniform（g_AudioSpectrum*，binder 初始化的 number[]）：
+  // 字节 0-255 → 浮点 0-1（fillAudioSpectrumUniform，长度不等时补零/截取）。
+  fillAudioUniforms(material, src) {
+    for (const [name, u] of Object.entries(material.uniforms)) {
+      if (isAudioUniform(name) && Array.isArray(u.value)) {
+        fillAudioSpectrumUniform(u.value, src);
+      }
+    }
+  }
+  // 释放某 key 对应场景中全屏 quad 的 geometry 并移除场景缓存（编译失败/异常路径共用）
+  disposeSceneQuads(key) {
+    const scene = this.scenes.get(key);
+    if (scene) {
+      for (const child of scene.children) {
+        if (child instanceof Mesh) child.geometry.dispose();
+      }
+    }
+    this.scenes.delete(key);
+  }
+  getScene(key, material) {
+    const cached = this.scenes.get(key);
+    if (cached) return cached;
+    const scene = new Scene();
+    const quad = new Mesh(new PlaneGeometry(2, 2), material);
+    quad.frustumCulled = false;
+    scene.add(quad);
+    this.scenes.set(key, scene);
+    return scene;
+  }
+  async resolveTextureSlot(path) {
+    return loadEffectTextureSlot(path, this.id, this.textures, this.load);
+  }
+  // 串行化 + 输入参数化（Ruling P1-1）：input 可为场景 RT 或对象 RT 的纹理（任意 Texture）。
+  // 返回最终输出纹理；链为空或上一帧 update 未完成（纹理槽异步加载中）→ null。
+  // 帧循环用 lastOutput() 贴屏，last 保持最近完成输出，无帧间闪烁。
+  async update(time, input) {
+    if (this.updateInFlight) return null;
+    this.updateInFlight = true;
+    try {
+      const flat = this.chains.flat();
+      if (flat.length === 0) return null;
+      const slotTex = /* @__PURE__ */ new Map();
+      for (let i = 0; i < flat.length; i++) {
+        const pass = flat[i];
+        const slots = effectSlotCount(pass);
+        for (let j = 0; j < slots; j++) {
+          const path = pass.textureSlots[j];
+          if (path) slotTex.set(`${i}:${j}`, await this.resolveTextureSlot(path));
+          else slotTex.set(`${i}:${j}`, resolveSlotFallback(pass, j));
+        }
+      }
+      let readTex = resolveInputTexture(input);
+      let lastWrite = null;
+      for (let i = 0; i < flat.length; i++) {
+        const pass = flat[i];
+        const material = this.getMaterial(pass, `${i}`);
+        if (!material) continue;
+        for (let j = 0; j < effectSlotCount(pass); j++) {
+          const tex = slotTex.get(`${i}:${j}`) ?? null;
+          const slot = `g_Texture${j}`;
+          if (material.uniforms[slot]) material.uniforms[slot].value = tex;
+          const res = `g_Texture${j}Resolution`;
+          if (material.uniforms[res]) {
+            const r4 = resolveTextureResolution4(tex, this.width, this.height);
+            material.uniforms[res].value = new Vector4(r4.x, r4.y, r4.z, r4.w);
+          }
+        }
+        if (material.uniforms["g_Texture0"]) material.uniforms["g_Texture0"].value = readTex;
+        if (material.uniforms["g_Texture0Resolution"]) {
+          const r4 = resolveTextureResolution4(readTex, this.width, this.height);
+          material.uniforms["g_Texture0Resolution"].value = new Vector4(r4.x, r4.y, r4.z, r4.w);
+        }
+        if (material.uniforms["g_Time"]) material.uniforms["g_Time"].value = time;
+        if (this.audioSpectrum) this.fillAudioUniforms(material, this.audioSpectrum);
+        const writeTarget = pickWriteTarget(lastWrite, this.rtA, this.rtB);
+        this.renderer.setRenderTarget(writeTarget);
+        this.renderer.render(this.getScene(`${i}`, material), SCREEN_CAMERA);
+        readTex = writeTarget.texture;
+        lastWrite = writeTarget;
+      }
+      this.renderer.setRenderTarget(null);
+      this.last = readTex;
+      return readTex;
+    } finally {
+      this.updateInFlight = false;
+    }
+  }
+  // 帧循环同步读取最近输出：update 未完成时返回 null（调用方回退场景 RT，避免首帧黑屏）
+  lastOutput() {
+    return this.last;
+  }
+  dispose() {
+    this.disposeMaterials();
+    this.rtA.dispose();
+    this.rtB.dispose();
+    this.textures.clear();
+    this.audioSpectrum = null;
+  }
+};
+var SCREEN_CAMERA = new OrthographicCamera(-1, 1, 1, -1, -1e3, 1e3);
+SCREEN_CAMERA.position.z = 300;
+function blendModeToThree(mode) {
+  switch (mode) {
+    case "add":
+      return AdditiveBlending;
+    case "multiply":
+      return MultiplyBlending;
+    case "subtract":
+      return SubtractiveBlending;
+    default:
+      return NormalBlending;
+  }
+}
+
+// src/client/shader/we-headers.ts
+var COMMON_H = `
+#ifndef WE_COMMON_H
+#define WE_COMMON_H
+#define M_PI 3.14159265358979323846
+#define M_PI_HALF 1.57079632679489661923
+#define M_PI_2 6.28318530718
+#define SQRT_2 1.41421356237309504880
+#define SQRT_3 1.73205080756887729352
+#define DEG2RAD 0.01745329251994329576923690768489
+#define DEG2PCT 0.0027777777777777777777777777777
+
+float frac(float x) { return fract(x); }
+vec2 frac(vec2 x) { return fract(x); }
+vec3 frac(vec3 x) { return fract(x); }
+vec4 frac(vec4 x) { return fract(x); }
+
+float saturate(float x) { return clamp(x, 0.0, 1.0); }
+vec2 saturate(vec2 x) { return clamp(x, 0.0, 1.0); }
+vec3 saturate(vec3 x) { return clamp(x, 0.0, 1.0); }
+vec4 saturate(vec4 x) { return clamp(x, 0.0, 1.0); }
+
+vec4 texSample2D(sampler2D t, vec2 uv) { return texture2D(t, uv); }
+vec4 texSample2DLod(sampler2D t, vec2 uv, float lod) { return textureLod(t, uv, lod); }
+
+vec2 rotateVec2(vec2 v, float r) {
+  vec2 cs = vec2(cos(r), sin(r));
+  return vec2(v.x * cs.x - v.y * cs.y, v.x * cs.y + v.y * cs.x);
+}
+
+vec2 rotateVec2(vec4 v, float r) { return rotateVec2(v.xy, r); }
+
+// \u2014\u2014 WE \u5F15\u64CE\u901A\u7528\u5F3A\u8F6C/\u6570\u5B66\u65B9\u8A00\uFF08HLSL \u8F6C GLSL \u4EA7\u7269\uFF0C\u975E\u5F15\u64CE common.h \u8F6C\u5199\uFF0C\u9700\u5168\u5C40\u8865\u9F50\uFF09\u2014\u2014
+// CAST2/CAST3/CAST4 \u7B49\u662F HLSL (floatN)x \u5F3A\u8F6C\u7684\u7B49\u4EF7\u7269\uFF1A\u5BF9**\u4EFB\u610F**\u6807\u91CF/\u5411\u91CF x \u5747\u5408\u6CD5
+// \uFF08vec3(float)=\u6807\u91CF\u5E7F\u64AD\u3001vec3(vec2/3)=\u53D6\u5206\u91CF/\u900F\u4F20\u3001vec3(vec4)=\u53D6 xyz\uFF09\uFF0C\u6545\u7528\u5B8F\u800C\u975E\u51FD\u6570\u3002
+// \u771F\u5B9E WE effects \u5B9E\u6D4B\uFF1Ablendgradient \u7528 CAST2(0.0)/CAST3(0.0)\uFF0Cwaterflow \u7528 CAST4(vec4)\uFF0C
+// depthparallax \u7528 CAST3X3(mat4)\uFF0Cmodel_vertex_v1.h \u7528 CASTF(uint\u2192float)/CASTU(float\u2192uint)\u3002
+#define CAST2(x) vec2(x)
+#define CAST3(x) vec3(x)
+#define CAST4(x) vec4(x)
+#define CASTF(x) float(x)
+#define CASTU(x) uint(x)
+#define CAST2X2(x) mat2(x)
+#define CAST3X3(x) mat3(x)
+#define CAST4X4(x) mat4(x)
+// WE \u7684 atan2(y,x) \u662F HLSL \u98CE\u683C\uFF1BGLSL \u5185\u5EFA\u4E3A atan(y,x)\uFF0C\u4EC5\u6620\u5C04\u540D\u5B57\uFF08fisheye \u7B49\u6548\u679C shader\uFF09\u3002
+#define atan2(y, x) atan(y, x)
+
+// \u2014\u2014 \u4EE5\u4E0B\u4E3A\u5F15\u64CE\u771F\u5B9E common.h \u8F6C\u5199\uFF08D:\\Steam\\steamapps\\common\\wallpaper_engine\\assets\\shaders\\common.h\uFF09\u2014\u2014
+vec3 hsv2rgb(vec3 c) {
+  vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+  vec3 p = abs(frac(c.xxx + K.xyz) * 6.0 - K.www);
+  return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+}
+
+vec3 rgb2hsv(vec3 RGB) {
+  vec4 P = (RGB.g < RGB.b) ? vec4(RGB.bg, -1.0, 2.0/3.0) : vec4(RGB.gb, 0.0, -1.0/3.0);
+  vec4 Q = (RGB.r < P.x) ? vec4(P.xyw, RGB.r) : vec4(RGB.r, P.yzx);
+  float C = Q.x - min(Q.w, Q.y);
+  float H = abs((Q.w - Q.y) / (6.0 * C + 1e-10) + Q.z);
+  vec3 HCV = vec3(H, C, Q.x);
+  float S = HCV.y / (HCV.z + 1e-10);
+  return vec3(HCV.x, S, HCV.z);
+}
+
+float greyscale(vec3 color) {
+  return dot(color, vec3(0.11, 0.59, 0.3));
+}
+// \u2014\u2014 \u5F15\u64CE\u8F6C\u5199\u7ED3\u675F \u2014\u2014
+
+// WE \u884C\u4E3B\u5E8F\u7EA6\u5B9A\uFF1Agl_Position = mul(vec4(a_Position,1), g_ModelViewProjectionMatrix)
+vec4 mul(vec4 v, mat4 m) { return m * v; }
+vec3 mul(vec3 v, mat3 m) { return m * v; }
+#endif
+`;
+var COMMON_BLUR_H = `
+#ifndef WE_COMMON_BLUR_H
+#define WE_COMMON_BLUR_H
+vec3 blur13(vec2 u, vec2 d)
+{
+	vec2 o1 = CAST2(1.4091998770852122) * d;
+	vec2 o2 = CAST2(3.2979348079914822) * d;
+	vec2 o3 = CAST2(5.2062900776825969) * d;
+	return texSample2D(g_Texture0, u).rgb * 0.1976406528809576
+	+ texSample2D(g_Texture0, u + o1).rgb * 0.2959855056006557
+	+ texSample2D(g_Texture0, u - o1).rgb * 0.2959855056006557
+	+ texSample2D(g_Texture0, u + o2).rgb * 0.0935333619980593
+	+ texSample2D(g_Texture0, u - o2).rgb * 0.0935333619980593
+	+ texSample2D(g_Texture0, u + o3).rgb * 0.0116608059608062
+	+ texSample2D(g_Texture0, u - o3).rgb * 0.0116608059608062;
+}
+vec3 blur7(vec2 u, vec2 d)
+{
+	vec2 o1 = CAST2(2.3515644035337887) * d;
+	vec2 o2 = CAST2(0.469433779698372) * d;
+	vec2 o3 = CAST2(1.4091998770852121) * d;
+	vec2 o4 = CAST2(3) * d;
+	return texSample2D(g_Texture0, u + o1).rgb * 0.2028175528299753
+	+ texSample2D(g_Texture0, u + o2).rgb * 0.4044856614512112
+	+ texSample2D(g_Texture0, u - o3).rgb * 0.3213933537319605
+	+ texSample2D(g_Texture0, u - o4).rgb * 0.0713034319868530;
+}
+vec3 blur3(vec2 u, vec2 d)
+{
+	return texSample2D(g_Texture0, u + d).rgb * 0.25
+	+ texSample2D(g_Texture0, u).rgb * 0.5
+	+ texSample2D(g_Texture0, u - d).rgb * 0.25;
+}
+vec4 blur13a(vec2 u, vec2 d)
+{
+	vec2 o1 = CAST2(1.4091998770852122) * d;
+	vec2 o2 = CAST2(3.2979348079914822) * d;
+	vec2 o3 = CAST2(5.2062900776825969) * d;
+	return texSample2D(g_Texture0, u) * 0.1976406528809576
+	+ texSample2D(g_Texture0, u + o1) * 0.2959855056006557
+	+ texSample2D(g_Texture0, u - o1) * 0.2959855056006557
+	+ texSample2D(g_Texture0, u + o2) * 0.0935333619980593
+	+ texSample2D(g_Texture0, u - o2) * 0.0935333619980593
+	+ texSample2D(g_Texture0, u + o3) * 0.0116608059608062
+	+ texSample2D(g_Texture0, u - o3) * 0.0116608059608062;
+}
+vec4 blur7a(vec2 u, vec2 d)
+{
+	vec2 o1 = CAST2(2.3515644035337887) * d;
+	vec2 o2 = CAST2(0.469433779698372) * d;
+	vec2 o3 = CAST2(1.4091998770852121) * d;
+	vec2 o4 = CAST2(3) * d;
+	return texSample2D(g_Texture0, u + o1) * 0.2028175528299753
+	+ texSample2D(g_Texture0, u + o2) * 0.4044856614512112
+	+ texSample2D(g_Texture0, u - o3) * 0.3213933537319605
+	+ texSample2D(g_Texture0, u - o4) * 0.0713034319868530;
+}
+vec4 blur3a(vec2 u, vec2 d)
+{
+	return texSample2D(g_Texture0, u + d) * 0.25
+	+ texSample2D(g_Texture0, u) * 0.5
+	+ texSample2D(g_Texture0, u - d) * 0.25;
+}
+vec2 blurRotateVec2(vec2 v, float r)
+{
+	vec2 cs = vec2(cos(r), sin(r));
+	return vec2(v.x * cs.x - v.y * cs.y, v.x * cs.y + v.y * cs.x);
+}
+vec4 blurRadial13a(vec2 u, vec2 center, float amt)
+{
+	vec2 delta = u - center;
+	amt = amt * 0.025;
+	float o1 = 1.4091998770852122 * amt;
+	float o2 = 3.2979348079914822 * amt;
+	float o3 = 5.2062900776825969 * amt;
+	vec2 r1 = blurRotateVec2(delta, o1) - delta;
+	vec2 r2 = blurRotateVec2(delta, o2) - delta;
+	vec2 r3 = blurRotateVec2(delta, o3) - delta;
+	return texSample2D(g_Texture0, u) * 0.1976406528809576
+	+ texSample2D(g_Texture0, center + r1 + delta) * 0.2959855056006557
+	+ texSample2D(g_Texture0, center - r1 + delta) * 0.2959855056006557
+	+ texSample2D(g_Texture0, center + r2 + delta) * 0.0935333619980593
+	+ texSample2D(g_Texture0, center - r2 + delta) * 0.0935333619980593
+	+ texSample2D(g_Texture0, center + r3 + delta) * 0.0116608059608062
+	+ texSample2D(g_Texture0, center - r3 + delta) * 0.0116608059608062;
+}
+vec4 blurRadial7a(vec2 u, vec2 center, float amt)
+{
+	vec2 delta = u - center;
+	amt = amt * 0.025;
+	float o1 = 2.3515644035337887 * amt;
+	float o2 = 0.469433779698372 * amt;
+	float o3 = 1.4091998770852121 * amt;
+	float o4 = 3 * amt;
+	vec2 r1 = blurRotateVec2(delta, o1) - delta;
+	vec2 r2 = blurRotateVec2(delta, o2) - delta;
+	vec2 r3 = blurRotateVec2(delta, -o3) - delta;
+	vec2 r4 = blurRotateVec2(delta, -o4) - delta;
+
+	return texSample2D(g_Texture0, center + r1 + delta) * 0.2028175528299753
+	+ texSample2D(g_Texture0, center + r2 + delta) * 0.4044856614512112
+	+ texSample2D(g_Texture0, center + r3 + delta) * 0.3213933537319605
+	+ texSample2D(g_Texture0, center + r4 + delta) * 0.0713034319868530;
+}
+vec4 blurRadial3a(vec2 u, vec2 center, float amt)
+{
+	vec2 delta = u - center;
+	amt = amt * 0.025;
+	float o1 = amt;
+	vec2 r1 = blurRotateVec2(delta, o1) - delta;
+
+	return texSample2D(g_Texture0, center + delta) * 0.5
+	+ texSample2D(g_Texture0, center + r1 + delta) * 0.25
+	+ texSample2D(g_Texture0, center - r1 + delta) * 0.25;
+}
+#endif
+`;
+var COMMON_BLENDING_H = `
+#ifndef WE_COMMON_BLENDING_H
+#define WE_COMMON_BLENDING_H
+vec4 Desaturate(vec3 color, float Desaturation)
+{
+	vec3 grayXfer = vec3(0.3, 0.59, 0.11);
+	vec3 gray = CAST3(dot(grayXfer, color));
+	return vec4(mix(color, gray, Desaturation), 1.0);
+}
+
+vec3 RGBToHSL(vec3 color)
+{
+#ifdef HDR
+	color = saturate(color);
+#endif
+
+	vec3 hsl;
+	float fmin = min(min(color.r, color.g), color.b);
+	float fmax = max(max(color.r, color.g), color.b);
+	float delta = fmax - fmin;
+	hsl.z = (fmax + fmin) / 2.0;
+
+	if (delta == 0.0)
+	{
+		hsl.x = 0.0;
+		hsl.y = 0.0;
+	}
+	else
+	{
+		if (hsl.z < 0.5)
+			hsl.y = delta / (fmax + fmin);
+		else
+			hsl.y = delta / (2.0 - fmax - fmin);
+		float deltaR = (((fmax - color.r) / 6.0) + (delta / 2.0)) / delta;
+		float deltaG = (((fmax - color.g) / 6.0) + (delta / 2.0)) / delta;
+		float deltaB = (((fmax - color.b) / 6.0) + (delta / 2.0)) / delta;
+		if (color.r == fmax )
+			hsl.x = deltaB - deltaG;
+		else if (color.g == fmax)
+			hsl.x = (1.0 / 3.0) + deltaR - deltaB;
+		else if (color.b == fmax)
+			hsl.x = (2.0 / 3.0) + deltaG - deltaR;
+
+		if (hsl.x < 0.0)
+			hsl.x += 1.0;
+		else if (hsl.x > 1.0)
+			hsl.x -= 1.0;
+	}
+
+	return hsl;
+}
+
+float HueToRGB(float f1, float f2, float hue)
+{
+	if (hue < 0.0)
+		hue += 1.0;
+	else if (hue > 1.0)
+		hue -= 1.0;
+	float res;
+	if ((6.0 * hue) < 1.0)
+		res = f1 + (f2 - f1) * 6.0 * hue;
+	else if ((2.0 * hue) < 1.0)
+		res = f2;
+	else if ((3.0 * hue) < 2.0)
+		res = f1 + (f2 - f1) * ((2.0 / 3.0) - hue) * 6.0;
+	else
+		res = f1;
+	return res;
+}
+
+vec3 HSLToRGB(vec3 hsl)
+{
+	vec3 rgb;
+	if (hsl.y == 0.0)
+		rgb = CAST3(hsl.z);
+	else
+	{
+		float f2;
+		if (hsl.z < 0.5)
+			f2 = hsl.z * (1.0 + hsl.y);
+		else
+			f2 = (hsl.z + hsl.y) - (hsl.y * hsl.z);
+		float f1 = 2.0 * hsl.z - f2;
+		rgb.r = HueToRGB(f1, f2, hsl.x + (1.0/3.0));
+		rgb.g = HueToRGB(f1, f2, hsl.x);
+		rgb.b= HueToRGB(f1, f2, hsl.x - (1.0/3.0));
+	}
+	
+	return rgb;
+}
+
+vec3 ContrastSaturationBrightness(vec3 color, float brt, float sat, float con)
+{
+	const float AvgLumR = 0.5;
+	const float AvgLumG = 0.5;
+	const float AvgLumB = 0.5;
+	
+	const vec3 LumCoeff = vec3(0.2125, 0.7154, 0.0721);
+	
+	vec3 AvgLumin = vec3(AvgLumR, AvgLumG, AvgLumB);
+	vec3 brtColor = color * brt;
+	vec3 intensity = CAST3(dot(brtColor, LumCoeff));
+	vec3 satColor = mix(intensity, brtColor, sat);
+	vec3 conColor = mix(AvgLumin, satColor, con);
+	return conColor;
+}
+
+#define BlendLinearDodgef(base, blend) (base + blend)
+#define BlendLinearBurnf(base, blend) max(base + blend - 1.0, 0.0)
+#define BlendLightenf(base, blend) max(blend, base)
+#define BlendDarkenf(base, blend) min(blend, base)
+#define BlendLinearLightf(base, blend) (blend < 0.5 ? BlendLinearBurnf(base, (2.0 * blend)) : BlendLinearDodgef(base, (2.0 * (blend - 0.5))))
+#define BlendScreenf(base, blend) (1.0 - ((1.0 - base) * (1.0 - blend)))
+#define BlendOverlayf(base, blend) (base < 0.5 ? (2.0 * base * blend) : (1.0 - 2.0 * (1.0 - base) * (1.0 - blend)))
+#define BlendSoftLightf(base, blend) ((blend < 0.5) ? (2.0 * base * blend + base * base * (1.0 - 2.0 * blend)) : (sqrt(base) * (2.0 * blend - 1.0) + 2.0 * base * (1.0 - blend)))
+#define BlendColorDodgef(base, blend) ((blend == 1.0) ? blend : min(base / (1.0 - blend), 1.0))
+#define BlendColorBurnf(base, blend) ((blend == 0.0) ? blend : max((1.0 - ((1.0 - base) / blend)), 0.0))
+#define BlendVividLightf(base, blend) ((blend < 0.5) ? BlendColorBurnf(base, (2.0 * blend)) : BlendColorDodgef(base, (2.0 * (blend - 0.5))))
+#define BlendPinLightf(base, blend) ((blend < 0.5) ? BlendDarkenf(base, (2.0 * blend)) : BlendLightenf(base, (2.0 *(blend - 0.5))))
+#define BlendHardMixf(base, blend) ((BlendVividLightf(base, blend) < 0.5) ? 0.0 : 1.0)
+#define BlendReflectf(base, blend) ((blend == 1.0) ? blend : min(base * base / (1.0 - blend), 1.0))
+#define BlendNormal(base, blend) (blend)
+#define BlendLighten BlendLightenf
+#define BlendDarken	 BlendDarkenf
+#define BlendMultiply(base, blend) (base * blend)
+#define BlendAverage(base, blend) ((base + blend) / 2.0)
+#define BlendAdd(base, blend) min(base + blend, CAST3(1.0))
+#define BlendSubstract(base, blend) max(base + blend - CAST3(1.0), CAST3(0.0))
+#define BlendDifference(base, blend) abs(base - blend)
+#define BlendNegation(base, blend) (CAST3(1.0) - abs(CAST3(1.0) - base - blend))
+#define BlendExclusion(base, blend) (base + blend - 2.0 * base * blend)
+#define BlendScreen(base, blend) vec3(BlendScreenf(base.r, blend.r), BlendScreenf(base.g, blend.g), BlendScreenf(base.b, blend.b))
+#define BlendOverlay(base, blend) vec3(BlendOverlayf(base.r, blend.r), BlendOverlayf(base.g, blend.g), BlendOverlayf(base.b, blend.b))
+#define BlendSoftLight(base, blend) vec3(BlendSoftLightf(base.r, blend.r), BlendSoftLightf(base.g, blend.g), BlendSoftLightf(base.b, blend.b))
+#define BlendHardLight(base, blend) BlendOverlay(blend, base)
+#define BlendColorDodge(base, blend) vec3(BlendColorDodgef(base.r, blend.r), BlendColorDodgef(base.g, blend.g), BlendColorDodgef(base.b, blend.b))
+#define BlendColorBurn(base, blend) vec3(BlendColorBurnf(base.r, blend.r), BlendColorBurnf(base.g, blend.g), BlendColorBurnf(base.b, blend.b))
+#define BlendLinearLight(base, blend) vec3(BlendLinearLightf(base.r, blend.r), BlendLinearLightf(base.g, blend.g), BlendLinearLightf(base.b, blend.b))
+#define BlendVividLight(base, blend) vec3(BlendVividLightf(base.r, blend.r), BlendVividLightf(base.g, blend.g), BlendVividLightf(base.b, blend.b))
+#define BlendPinLight(base, blend) vec3(BlendPinLightf(base.r, blend.r), BlendPinLightf(base.g, blend.g), BlendPinLightf(base.b, blend.b))
+#define BlendHardMix(base, blend) vec3(BlendHardMixf(base.r, blend.r), BlendHardMixf(base.g, blend.g), BlendHardMixf(base.b, blend.b))
+#define BlendReflect(base, blend) vec3(BlendReflectf(base.r, blend.r), BlendReflectf(base.g, blend.g), BlendReflectf(base.b, blend.b))
+#define BlendGlow(base, blend) BlendReflect(blend, base)
+#define BlendPhoenix(base, blend) (min(base, blend) - max(base, blend) + CAST3(1.0))
+#define BlendOpacity(base, blend, F, O) mix(base, F(base, blend), O)
+#define BlendLinearDodge(base, blend) min(base + blend, CAST3(1.0))
+#define BlendLinearBurn(base, blend) max(base + blend - CAST3(1.0), CAST3(0.0))
+#define BlendTint(base, blend) (CAST3(max(base.x, max(base.y, base.z))) * blend)
+
+vec3 BlendHue(vec3 base, vec3 blend)
+{
+	vec3 baseHSL = RGBToHSL(base);
+	return HSLToRGB(vec3(RGBToHSL(blend).r, baseHSL.g, baseHSL.b));
+}
+
+vec3 BlendSaturation(vec3 base, vec3 blend)
+{
+	vec3 baseHSL = RGBToHSL(base);
+	return HSLToRGB(vec3(baseHSL.r, RGBToHSL(blend).g, baseHSL.b));
+}
+
+vec3 BlendColor(vec3 base, vec3 blend)
+{
+	vec3 blendHSL = RGBToHSL(blend);
+	return HSLToRGB(vec3(blendHSL.r, blendHSL.g, RGBToHSL(base).b));
+}
+
+vec3 BlendLuminosity(vec3 base, vec3 blend)
+{
+	vec3 baseHSL = RGBToHSL(base);
+	return HSLToRGB(vec3(baseHSL.r, baseHSL.g, RGBToHSL(blend).b));
+}
+
+vec3 ApplyBlending(const int blendMode, in vec3 A, in vec3 B, in float opacity)
+{
+#if BLENDMODE == 1
+	return mix(A,BlendDarken(A,B),opacity);
+#endif
+#if BLENDMODE == 2
+	return mix(A,BlendMultiply(A,B),opacity);
+#endif
+#if BLENDMODE == 3
+	return mix(A,BlendColorBurn(A,B),opacity);
+#endif
+#if BLENDMODE == 4
+	return mix(A,BlendSubstract(A,B),opacity);
+#endif
+#if BLENDMODE == 5
+	return min(A, B);
+#endif
+#if BLENDMODE == 6
+	return mix(A,BlendLighten(A,B),opacity);
+#endif
+#if BLENDMODE == 7
+	return mix(A,BlendScreen(A,B),opacity);
+#endif
+#if BLENDMODE == 8
+	return mix(A,BlendColorDodge(A,B),opacity);
+#endif
+#if BLENDMODE == 9
+	return mix(A,BlendAdd(A,B),opacity);
+#endif
+#if BLENDMODE == 10
+	return max(A, B);
+#endif
+#if BLENDMODE == 11
+	return mix(A,BlendOverlay(A,B),opacity);
+#endif
+#if BLENDMODE == 12
+	return mix(A,BlendSoftLight(A,B),opacity);
+#endif
+#if BLENDMODE == 13
+	return mix(A,BlendHardLight(A,B),opacity);
+#endif
+#if BLENDMODE == 14
+	return mix(A,BlendVividLight(A,B),opacity);
+#endif
+#if BLENDMODE == 15
+	return mix(A,BlendLinearLight(A,B),opacity);
+#endif
+#if BLENDMODE == 16
+	return mix(A,BlendPinLight(A,B),opacity);
+#endif
+#if BLENDMODE == 17
+	return mix(A,BlendHardMix(A,B),opacity);
+#endif
+#if BLENDMODE == 18
+	return mix(A,BlendDifference(A,B),opacity);
+#endif
+#if BLENDMODE == 19
+	return mix(A,BlendExclusion(A,B),opacity);
+#endif
+#if BLENDMODE == 20
+	return mix(A,BlendSubstract(A,B),opacity);
+#endif
+#if BLENDMODE == 21
+	return mix(A,BlendReflect(A,B),opacity);
+#endif
+#if BLENDMODE == 22
+	return mix(A,BlendGlow(A,B),opacity);
+#endif
+#if BLENDMODE == 23
+	return mix(A,BlendPhoenix(A,B),opacity);
+#endif
+#if BLENDMODE == 24
+	return mix(A,BlendAverage(A,B),opacity);
+#endif
+#if BLENDMODE == 25
+	return mix(A,BlendNegation(A,B),opacity);
+#endif
+#if BLENDMODE == 26
+	return mix(A,BlendHue(A,B),opacity);
+#endif
+#if BLENDMODE == 27
+	return mix(A,BlendSaturation(A,B),opacity);
+#endif
+#if BLENDMODE == 28
+	return mix(A,BlendColor(A,B),opacity);
+#endif
+#if BLENDMODE == 29
+	return mix(A,BlendLuminosity(A,B),opacity);
+#endif
+#if BLENDMODE == 30
+	return mix(A,BlendTint(A,B),opacity);
+#endif
+#if BLENDMODE == 31
+	return A+B*opacity;
+#endif
+#if BLENDMODE == 32
+	return mix(A,A+A*B,opacity);
+#endif
+	return mix(A,BlendNormal(A,B),opacity);
+}
+#endif
+`;
+var COMMON_PERSPECTIVE_H = `
+#ifndef WE_COMMON_PERSPECTIVE_H
+#define WE_COMMON_PERSPECTIVE_H
+
+mat3 squareToQuad(vec2 p0, vec2 p1, vec2 p2, vec2 p3) {
+	mat3 m = mat3(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0);
+	float dx0 = p0.x;
+	float dy0 = p0.y;
+	float dx1 = p1.x;
+	float dy1 = p1.y;
+	
+	float dx2 = p3.x;
+	float dy2 = p3.y;
+	float dx3 = p2.x;
+	float dy3 = p2.y;
+	
+	float diffx1 = dx1 - dx3;
+	float diffy1 = dy1 - dy3;
+	float diffx2 = dx2 - dx3;
+	float diffy2 = dy2 - dy3;
+
+	float det = diffx1*diffy2 - diffx2*diffy1;
+	float sumx = dx0 - dx1 + dx3 - dx2;
+	float sumy = dy0 - dy1 + dy3 - dy2;
+
+	if (det == 0.0 || (sumx == 0.0 && sumy == 0.0)) {
+		m[0][0] = dx1 - dx0;
+		m[0][1] = dy1 - dy0;
+		m[0][2] = 0.0;
+		m[1][0] = dx3 - dx1;
+		m[1][1] = dy3 - dy1;
+		m[1][2] = 0.0;
+		m[2][0] = dx0;
+		m[2][1] = dy0;
+		m[2][2] = 1.0;
+		return m;
+	} else {
+		float ovdet = 1.0 / det;
+		float g = (sumx * diffy2 - diffx2 * sumy) * ovdet;
+		float h = (diffx1 * sumy - sumx * diffy1) * ovdet;
+
+		m[0][0] = dx1 - dx0 + g * dx1;
+		m[0][1] = dy1 - dy0 + g * dy1;
+		m[0][2] = g;
+		m[1][0] = dx2 - dx0 + h * dx2;
+		m[1][1] = dy2 - dy0 + h * dy2;
+		m[1][2] = h;
+		m[2][0] = dx0;
+		m[2][1] = dy0;
+		m[2][2] = 1.0;
+		return m;
+	}
+}
+
+#if HLSL
+mat3 inverse(mat3 m) {
+	float a00 = m[0][0], a01 = m[0][1], a02 = m[0][2];
+	float a10 = m[1][0], a11 = m[1][1], a12 = m[1][2];
+	float a20 = m[2][0], a21 = m[2][1], a22 = m[2][2];
+	float b01 = a22 * a11 - a12 * a21;
+	float b11 = -a22 * a10 + a12 * a20;
+	float b21 = a21 * a10 - a11 * a20;
+	float det = a00 * b01 + a01 * b11 + a02 * b21;
+	return mat3(b01, (-a22 * a01 + a02 * a21), (a12 * a01 - a02 * a11),
+			  b11, (a22 * a00 - a02 * a20), (-a12 * a00 + a02 * a10),
+			  b21, (-a21 * a00 + a01 * a20), (a11 * a00 - a01 * a10)) / det;
+}
+#endif
+#endif
+`;
+var COMMON_COMPOSITE_H = `
+#include "common.h"
+#include "common_blending.h"
+
+uniform float g_CompositeAlpha; // {"material":"compositealpha","label":"ui_editor_properties_alpha","default":1,"range":[0.0, 2.0]}
+uniform vec2 g_CompositeOffset; // {"material":"compositeoffset","label":"ui_editor_properties_offset","default":"0 0","linked":true,"range":[-10.0, 10.0]}
+uniform vec3 g_CompositeColor; // {"material":"compositecolor","label":"ui_editor_properties_color","default":"1 1 1","type":"color"}
+
+vec2 ApplyCompositeOffset(vec2 texCoords, vec2 textureResolution)
+{
+#if COMPOSITE != 0
+	return texCoords + g_CompositeOffset / textureResolution;
+#else
+	return texCoords;
+#endif
+}
+
+vec4 ApplyComposite(vec4 original, vec4 effect)
+{
+#if COMPOSITEMONO == 1
+	effect.rgb = CAST3(greyscale(effect.rgb));
+#endif
+
+	effect.rgb *= g_CompositeColor;
+
+#if COMPOSITE == 0
+	return effect;
+#endif
+
+#if COMPOSITE == 1
+	effect.rgb = ApplyBlending(BLENDMODE, original.rgb, effect.rgb, effect.a * g_CompositeAlpha);
+	effect.a = max(effect.a * saturate(g_CompositeAlpha), original.a);
+#endif
+
+#if COMPOSITE == 2
+	effect.a *= saturate(g_CompositeAlpha);
+	effect = mix(effect, original, original.a);
+#endif
+
+#if COMPOSITE == 3
+	effect.a *= saturate(g_CompositeAlpha);
+	effect.a *= 1.0 - original.a;
+#endif
+
+	return effect;
+}
+`;
+var COMMON_FRAGMENT_H = `
+#ifndef WE_COMMON_FRAGMENT_H
+#define WE_COMMON_FRAGMENT_H
+
+#define FORMAT_RGBA8888 0
+#define FORMAT_RGB888 1
+#define FORMAT_RGB565 2
+
+#define FORMAT_ETC1_RGB8 3
+#define FORMAT_DXT5 4
+#define FORMAT_ETC2_RGBA8 5
+#define FORMAT_DXT3 6
+#define FORMAT_DXT1 7
+
+#define FORMAT_RG88 8
+#define FORMAT_R8 9
+#define FORMAT_RG1616F 10
+#define FORMAT_R16F 11
+
+#define FORMAT_BC7 12
+
+vec3 DecompressNormal(vec4 normal)
+{
+#if TEX1FORMAT >= FORMAT_ETC1_RGB8 && TEX1FORMAT <= FORMAT_DXT1 || TEX1FORMAT == FORMAT_BC7
+	normal.yx = normal.yw * 2.0 - vec2(0.965, 1.0);
+#else
+#if TEX1FORMAT == FORMAT_RG88
+	normal.xy = normal.rg * 2.0 - 1.0;
+#else
+	normal.xy = normal.wy * 2.0 - 1.0;
+#endif
+#endif
+	normal.z = sqrt(saturate(1.0 - normal.x * normal.x - normal.y * normal.y));
+	return normal.xyz;
+}
+
+vec4 DecompressNormalWithMask(vec4 normal)
+{
+#if TEX1FORMAT >= FORMAT_ETC1_RGB8 && TEX1FORMAT <= FORMAT_DXT1 || TEX1FORMAT == FORMAT_BC7
+	normal.xw = normal.wx;
+	normal.xy = normal.xy * 2.0 - vec2(0.965, 1.0);
+#else
+#if TEX1FORMAT == FORMAT_RG88
+	normal.xy = normal.gr * 2.0 - 1.0;
+#else
+	normal.xw = normal.wx;
+	normal.xy = normal.xy * 2.0 - 1.0;
+#endif
+#endif
+	normal.z = sqrt(saturate(1.0 - normal.x * normal.x - normal.y * normal.y));
+	return normal;
+}
+
+float ComputeMaterialSpecularPower(const float roughness, const float metallic)
+{
+	return (1.01 - roughness) * mix(400.0, 250.0, metallic);
+}
+
+float ComputeMaterialSpecularStrength(const float roughness, const float metallic)
+{
+	return (0.5 + metallic * 0.5) * (1.0 - roughness * 0.9);
+}
+
+vec3 ComputeLight(const vec3 normal, const vec3 lightDelta, const vec3 color, const float radius)
+{
+	float lightDistance = length(lightDelta);
+	float lightAttn = saturate((radius - lightDistance) / radius);
+	return color * (saturate(dot(lightDelta / lightDistance, normal))) * lightAttn * lightAttn;
+}
+
+vec3 ComputeLightSpecular(const vec3 normal, const vec3 lightDelta, const vec3 color, const float radius, const vec3 viewDir, const float specularPower, const float specularStrength, const float halfLambert, const float metallicTerm, inout vec3 specularResult)
+{
+	float lightDistance = length(lightDelta);
+	float lightAttn = saturate((radius - lightDistance) / radius);
+	vec3 lightDir = lightDelta / lightDistance;
+	float specular = max(0.0, dot(normalize(viewDir + lightDir), normal));
+	specularResult += pow(specular, specularPower) * specularStrength * lightAttn * color;
+	float lightDot = dot(lightDir, normal);
+	float halfLambertLight = lightDot * 0.5 + 0.5;
+	lightDot = mix(lightDot, halfLambertLight, halfLambert);
+	float rim = metallicTerm * 2.0;
+	rim = pow((1.0 - saturate(dot(normal, viewDir))) * pow(halfLambertLight, 0.25), 6.0 - rim) * rim;
+	return color * (saturate(lightDot) + rim) * lightAttn * lightAttn;
+}
+
+float ConvertSampleR8(vec4 _sample)
+{
+#if HLSL_SM30
+		return _sample.a;
+#else
+		return _sample.r;
+#endif
+}
+
+vec4 ConvertTexture0Format(vec4 _sample)
+{
+#if TEX0FORMAT == FORMAT_RG88 || TEX0FORMAT == FORMAT_RG1616F
+#if HLSL_SM30
+	return _sample.rrra;
+#else
+	return _sample.rrrg;
+#endif
+#endif
+
+#if TEX0FORMAT == FORMAT_R8 || TEX0FORMAT == FORMAT_R16F
+#if HLSL_SM30
+	return vec4(1, 1, 1, _sample.a);
+#else
+	return vec4(1, 1, 1, _sample.r);
+#endif
+#endif
+	return _sample;
+}
+
+vec4 ConvertTextureFormat(const int format, vec4 _sample)
+{
+	if (format == FORMAT_RG88 || format == FORMAT_RG1616F)
+	{
+#if HLSL_SM30
+		return _sample.rrra;
+#else
+		return _sample.rrrg;
+#endif
+	}
+
+	if (format == FORMAT_R8 || format == FORMAT_R16F)
+	{
+#if HLSL_SM30
+		return vec4(1, 1, 1, _sample.a);
+#else
+		return vec4(1, 1, 1, _sample.r);
+#endif
+	}
+	return _sample;
+}
+#endif
+`;
+var COMMON_VERTEX_H = `
+#ifndef WE_COMMON_VERTEX_H
+#define WE_COMMON_VERTEX_H
+mat3 BuildTangentSpace(const vec3 normal, const vec4 signedTangent)
+{
+	vec3 tangent = signedTangent.xyz;
+	vec3 bitangent = cross(normal, tangent) * signedTangent.w;
+	return mat3(tangent, bitangent, normal);
+}
+
+mat3 BuildTangentSpace(const mat3 modelTransform, const vec3 normal, const vec4 signedTangent)
+{
+	vec3 tangent = signedTangent.xyz;
+	vec3 bitangent = cross(normal, tangent) * signedTangent.w;
+	return mat3(mul(tangent, modelTransform),
+		mul(bitangent, modelTransform),
+		mul(normal, modelTransform));
+}
+
+void BuildTangentSpace(const mat3 modelTransform, const vec3 normal, const vec4 signedTangent, out vec3 worldTangent, out vec3 worldBitangent)
+{
+	vec3 tangent = signedTangent.xyz;
+	vec3 bitangent = cross(normal, tangent) * signedTangent.w;
+	worldTangent = mul(tangent, modelTransform);
+	worldBitangent = mul(bitangent, modelTransform);
+}
+#endif
+`;
+var WE_HEADERS = {
+  "common.h": COMMON_H,
+  "common_blending.h": COMMON_BLENDING_H,
+  "common_perspective.h": COMMON_PERSPECTIVE_H,
+  "common_blur.h": COMMON_BLUR_H,
+  "common_composite.h": COMMON_COMPOSITE_H,
+  "common_fragment.h": COMMON_FRAGMENT_H,
+  "common_vertex.h": COMMON_VERTEX_H
+};
+
+// src/client/shader/shader-preprocessor.ts
+var UNIFORM_RE = /uniform\s+([\w]+)\s+(\w+)(?:\[(\d+)\])?\s*;\s*(?:\/\/\s*(\{[\s\S]*?\}))?/g;
+function extractUniformAnnotations(source) {
+  const out = [];
+  for (const m of source.matchAll(UNIFORM_RE)) {
+    const type = m[3] ? `${m[1]}[${m[3]}]` : m[1];
+    let annotation;
+    if (m[4]) {
+      try {
+        annotation = JSON.parse(m[4]);
+      } catch {
+        annotation = void 0;
+      }
+    }
+    out.push({ name: m[2], type, annotation });
+  }
+  return out;
+}
+function rewriteAttributes(src) {
+  return src.split("attribute vec3 a_Position;").join("").split("attribute vec2 a_TexCoord;").join("").split("a_Position").join("position").split("a_TexCoord").join("uv");
+}
+function extractIfIdentifiers(src) {
+  const out = /* @__PURE__ */ new Set();
+  for (const m of src.matchAll(/^\s*#if\s+(.+)$/gm)) {
+    const expr = m[1].replace(/defined\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)/g, "").replace(/\/\/.*$/, "");
+    for (const id of expr.matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)) {
+      out.add(id[0]);
+    }
+  }
+  return out;
+}
+function extractComboDefaults(src) {
+  const out = /* @__PURE__ */ new Map();
+  for (const m of src.matchAll(/\[COMBO\]\s*\{[^}]*"combo"\s*:\s*"([A-Za-z_][A-Za-z0-9_]*)"[^}]*"default"\s*:\s*(-?\d+(?:\.\d+)?)/g)) {
+    out.set(m[1], Number(m[2]));
+  }
+  return out;
+}
+function normalizeFloatIntLiterals(src) {
+  const protectedBlocks = [];
+  let out = src;
+  const protect = (m) => {
+    const token = `__WEI_PROTECTED_${protectedBlocks.length.toString(36)}__`;
+    protectedBlocks.push(m);
+    return token;
+  };
+  out = out.replace(/^\s*#(?:if|elif|ifdef|ifndef|define).*$/gm, protect);
+  out = out.replace(/for\s*\([^)]*\)/g, protect);
+  out = out.replace(/\[[^\]]*\]/g, protect);
+  out = out.replace(/\b(?:ivec[234])\s*\([^)]*\)/g, protect);
+  out = out.replace(/\b(?:const\s+)?int\s+\w+\s*(?:\[[^\]]*\])?\s*=[^;]*;/g, protect);
+  out = out.replace(/\b(?:const\s+)?int\s+\w+\s*(?:\[[^\]]*\])?\s*;/g, protect);
+  out = out.replace(/(?:==|!=|<=|>=|<|>)\s*-?\d+(?![\w.])/g, protect);
+  out = out.replace(/\d\.?\d*[eE][+-]?\d+/g, protect);
+  out = out.replace(/(?<![\w.])-?\d+(?![\w.])/g, (m) => `${m}.0`);
+  protectedBlocks.forEach((block, i) => {
+    out = out.replace(`__WEI_PROTECTED_${i.toString(36)}__`, block);
+  });
+  return out;
+}
+function floatifyIntVarUses(src) {
+  const intVars = /* @__PURE__ */ new Set();
+  for (const m of src.matchAll(/\b(?:const\s+)?(?:uniform\s+)?(?:in\s+|out\s+)?int\s+(\w+)(?!\s*\()/g)) {
+    intVars.add(m[1]);
+  }
+  if (intVars.size === 0) return src;
+  const protectedBlocks = [];
+  const protect = (m) => {
+    const token = `0WEI_INTVAR_${protectedBlocks.length.toString(36)}__`;
+    protectedBlocks.push(m);
+    return token;
+  };
+  const restore = () => {
+    protectedBlocks.forEach((block, i) => {
+      out = out.replace(new RegExp(`0WEI_INTVAR_${i.toString(36)}__`, "g"), () => block);
+    });
+  };
+  const protectConstructs = (text) => {
+    const re = /\b(?:int|float|ivec[234])\s*\(/g;
+    let out2 = "";
+    let last = 0;
+    let m;
+    while (m = re.exec(text)) {
+      const open = m.index + m[0].length - 1;
+      let depth = 1;
+      let i = open + 1;
+      for (; i < text.length && depth > 0; i++) {
+        const ch = text[i];
+        if (ch === "(") depth++;
+        else if (ch === ")") depth--;
+      }
+      out2 += text.slice(last, m.index) + protect(text.slice(m.index, i));
+      last = i;
+      re.lastIndex = i;
+    }
+    return out2 + text.slice(last);
+  };
+  let out = src;
+  out = out.replace(/^\s*(?:const\s+)?(?:uniform\s+)?(?:in\s+|out\s+)?int\b[^;]*;/gm, protect);
+  out = out.replace(/(?:\(|,)\s*(?:const\s+)?(?:in\s+|out\s+)?int\s+\w+(?=\s*[,)])/g, protect);
+  out = out.replace(/\[[^\]]*\]/g, protect);
+  out = out.replace(/for\s*\([^;{}]*;[^;{}]*;[^;{}]*\)/g, protect);
+  out = out.replace(/(?:\+\+|--)\s*\w+|\w+\s*(?:\+\+|--)/g, protect);
+  out = protectConstructs(out);
+  out = out.replace(/(?:==|!=|<=|>=|<|>)\s*[A-Za-z_]\w*/g, protect);
+  out = out.replace(/[A-Za-z_]\w*\s*(?:==|!=|<=|>=|<|>)/g, protect);
+  for (const name of intVars) {
+    out = out.replace(new RegExp(`\\b${name}\\b`, "g"), `float(${name})`);
+  }
+  restore();
+  return out;
+}
+function relaxGlsl3Strictness(src) {
+  let out = src.replace(
+    /\bconst\s+(float|int|vec[234]|mat[234])\s+(\w+)\s*=\s*([^;]*[A-Za-z_][^;]*);/g,
+    (m, type, name, expr) => {
+      const trimmed = expr.trim();
+      if (/^-?[\d.]+$/.test(trimmed) || /^(true|false)$/.test(trimmed)) return m;
+      return `${type} ${name} = ${expr};`;
+    }
+  ).replace(/\b(sample|pointer)\b/g, "$1_");
+  const lines = out.split("\n");
+  let mainIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (/^\s*void\s+main\s*\(/.test(lines[i])) {
+      mainIdx = i;
+      break;
+    }
+  }
+  if (mainIdx > 0) {
+    const moved = [];
+    let depth = 0;
+    let inComment = false;
+    for (let i = 0; i < mainIdx; i++) {
+      const l = lines[i];
+      if (l.trim().startsWith("//")) continue;
+      for (const ch of l) {
+        if (ch === "{") depth++;
+        else if (ch === "}") depth--;
+      }
+      if (depth !== 0) continue;
+      const m = l.match(/^\s*(float|int|vec[234]|mat[234])\s+(\w+)\s*=\s*([^;]*[A-Za-z_][^;]*);\s*$/);
+      if (!m) continue;
+      const expr = m[3].trim();
+      if (/^-?[\d.]+$/.test(expr) || /^(true|false)$/.test(expr)) continue;
+      if (/^(?:CAST[234]|vec[234]|mat[234])\s*\(\s*-?[\d.]+\s*\)$/.test(expr)) continue;
+      lines[i] = l.replace(/\s*=\s*[^;]*;\s*$/, ";");
+      moved.push(`	${m[2]} = ${expr};`);
+    }
+    if (moved.length) lines.splice(mainIdx + 1, 0, ...moved);
+  }
+  return lines.join("\n");
+}
+function preprocessWeShader(source, combos) {
+  const samplerDecls = [];
+  const src = source.replace(/^\s*(uniform\s+sampler\w+\s+\w+\s*;.*)$/gm, (m) => {
+    samplerDecls.push(m.trim());
+    return "";
+  });
+  let out = src;
+  const hadExplicitCommon = out.includes('#include "common.h"');
+  let prev;
+  do {
+    prev = out;
+    for (const [name, header] of Object.entries(WE_HEADERS)) {
+      out = out.split(`#include "${name}"`).join(header);
+    }
+  } while (out !== prev);
+  if (!hadExplicitCommon) {
+    out = WE_HEADERS["common.h"] + "\n" + out;
+  }
+  out = rewriteAttributes(out);
+  out = normalizeFloatIntLiterals(out);
+  out = floatifyIntVarUses(out);
+  out = relaxGlsl3Strictness(out);
+  const defines = /* @__PURE__ */ new Map();
+  for (const [k, v] of Object.entries(combos)) defines.set(k, String(v));
+  for (const [k, v] of extractComboDefaults(out)) {
+    if (!defines.has(k)) defines.set(k, String(v));
+  }
+  const alreadyDefined = /* @__PURE__ */ new Set();
+  for (const m of out.matchAll(/^\s*#define\s+([A-Za-z_][A-Za-z0-9_]*)/gm)) alreadyDefined.add(m[1]);
+  for (const id of extractIfIdentifiers(out)) {
+    if (/^\d/.test(id)) continue;
+    if (alreadyDefined.has(id)) continue;
+    if (defines.has(id)) continue;
+    defines.set(id, "0");
+  }
+  const defineLines = [...defines.entries()].map(([k, v]) => `#define ${k} ${v}`);
+  const prefix = [...defineLines, ...samplerDecls];
+  return prefix.length ? `${prefix.join("\n")}
+${out}` : out;
+}
+
+// src/client/shader/effect-chain.ts
+async function resolveEffectChain(sceneEffect, loadFile) {
+  try {
+    const effectRaw = await loadFile(sceneEffect.file);
+    if (!effectRaw) return null;
+    const effect = JSON.parse(new TextDecoder().decode(effectRaw));
+    const fboScale = {};
+    for (const fb of effect.fbos ?? []) {
+      if (fb?.name) fboScale[fb.name] = fb.scale > 0 ? fb.scale : 1;
+    }
+    const scenePasses = Array.isArray(sceneEffect.passes) ? sceneEffect.passes : [];
+    if (!Array.isArray(effect.passes) || effect.passes.length === 0) return null;
+    const out = [];
+    for (let i = 0; i < effect.passes.length; i++) {
+      const scenePass = scenePasses[i] ?? {};
+      const matRef = scenePass.material ?? effect.passes[i].material;
+      if (typeof matRef !== "string") return null;
+      if (matRef.startsWith("materials/util/")) continue;
+      const matRaw = await loadFile(matRef);
+      if (!matRaw) return null;
+      const mat = JSON.parse(new TextDecoder().decode(matRaw));
+      const shaderName = mat.passes?.[0]?.shader;
+      if (typeof shaderName !== "string") return null;
+      const vertRaw = await loadFile(`shaders/${shaderName}.vert`);
+      const fragRaw = await loadFile(`shaders/${shaderName}.frag`);
+      if (!vertRaw || !fragRaw) return null;
+      const override = scenePasses[i] ?? {};
+      const constants = override.constantshadervalues ?? {};
+      const textures = Array.isArray(override.textures) ? override.textures : [];
+      const rawVert = new TextDecoder().decode(vertRaw);
+      const rawFrag = new TextDecoder().decode(fragRaw);
+      const derived = {};
+      for (const ann of extractUniformAnnotations(rawFrag).concat(extractUniformAnnotations(rawVert))) {
+        const combo = ann.annotation?.combo;
+        if (typeof combo !== "string" || !combo) continue;
+        const m = /^g_Texture(\d+)$/.exec(ann.name);
+        if (!m) continue;
+        const idx = Number(m[1]);
+        if (idx > 0 && textures[idx]) derived[combo] = 1;
+      }
+      const combos = { ...derived, ...override.combos ?? {} };
+      const vertSrc = preprocessWeShader(rawVert, combos);
+      const fragSrc = preprocessWeShader(rawFrag, combos);
+      const samplerModes = {};
+      for (const ann of extractUniformAnnotations(rawVert).concat(extractUniformAnnotations(rawFrag))) {
+        const mode = ann.annotation?.mode;
+        if (typeof mode === "string" && mode) samplerModes[ann.name] = mode;
+      }
+      const uniforms = resolveUniformBindings(
+        extractUniformAnnotations(fragSrc).concat(extractUniformAnnotations(vertSrc)),
+        constants
+      );
+      const effPass = effect.passes[i];
+      out.push({
+        vertSrc,
+        fragSrc,
+        rawVert,
+        rawFrag,
+        combos,
+        uniforms,
+        textureSlots: textures,
+        samplerModes,
+        blendMode: mat.passes?.[0]?.blending ?? "normal",
+        // RT 图信息：effect.json passes[i].target（写到的具名 RT）/bind（采样来源）；
+        // scene.json pass 可覆写 target（如 scene 指定目标 RT）。缺省 target=null（最终输出）。
+        target: (scenePass.target ?? effPass.target) || null,
+        bind: Array.isArray(effPass.bind) ? effPass.bind : [],
+        fboScale
+      });
+    }
+    if (out.length === 0) return null;
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+// src/client/scene-renderer.ts
+function resolveTexPath(matRef, texName) {
+  return texName.includes("/") ? "materials/" + texName + ".tex" : matRef.slice(0, matRef.lastIndexOf("/") + 1) + texName + ".tex";
+}
+async function resolveImageTexture(id, obj) {
+  try {
+    const modelResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(obj.image)}`);
+    if (!modelResp.ok) return null;
+    const model = await modelResp.json();
+    const matRef = model?.material;
+    if (typeof matRef !== "string" || !matRef) return null;
+    const matResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(matRef)}`);
+    if (!matResp.ok) return null;
+    const mat = await matResp.json();
+    const texName = mat?.passes?.[0]?.textures?.[0];
+    if (typeof texName !== "string" || !texName) return null;
+    return loadTexTexture(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(resolveTexPath(matRef, texName))}`);
+  } catch {
+    return null;
+  }
 }
 
 // node_modules/.pnpm/@webgpu+glslang@0.0.15/node_modules/@webgpu/glslang/dist/web-devel/glslang.js
@@ -22216,7 +24066,209 @@ async function resolveParticleMaterial(id, specText) {
   }
 }
 
+// src/client/object-effects.ts
+function weVRowOrderLoader(load = loadTexTexture) {
+  return (url, opts) => load(url, { ...opts, rowOrder: "topDown" });
+}
+function isLinearEffectChain(passes) {
+  if (passes.length === 0) return false;
+  return passes.every(
+    (p) => !p.target && p.bind.every((b) => b.name === "previous" && b.index === 0)
+  );
+}
+var ObjectEffectStage = class {
+  constructor(host, opts) {
+    this.host = host;
+    this.wallpaperId = opts.wallpaperId;
+    this.screenScale = opts.screenScale;
+  }
+  entries = /* @__PURE__ */ new Map();
+  skips = /* @__PURE__ */ new Set();
+  wallpaperId;
+  /** 屏幕密度（设备像素 / 世界单位）：对象 RT 尺寸的唯一基准，随视口变化（onViewportResize）。 */
+  screenScale;
+  disposed = false;
+  // 串行链（约束 3）：busy = 有 runner 正在 update，queue = 等待中的 update 任务。
+  // 空闲时**同步**发起第一项（本帧立即开始推进，不推迟一个微任务——与场景级
+  // `void runner.update(...)` 的行为一致；player 的帧序是 render 之后才 advance，
+  // 因此此刻切换 RT 不会打扰本帧主场景渲染）；忙时排队，等前一项 settle 后再发起。
+  busy = false;
+  queue = [];
+  /** 去重告警集合（`warnSkip` 之外的通用去重，按 key 只打印一次，防每帧刷屏）。 */
+  warned = /* @__PURE__ */ new Set();
+  /** 当前屏幕密度（设备像素 / 世界单位）；同源下发契约见类头。 */
+  scale() {
+    const s = this.screenScale;
+    return Number.isFinite(s) && s > 0 ? s : 1;
+  }
+  /** 世界尺寸（场景像素）：resize 时按新预算重算 RT 像素尺寸的唯一来源。
+   *  调用顺序契约：three-renderer 先 setWorldSize 再 setObjectChains（后者不覆盖前者）。 */
+  setWorldSize(objId, worldW, worldH) {
+    if (this.disposed) return;
+    const entry = this.entries.get(objId);
+    if (entry) {
+      entry.worldW = worldW;
+      entry.worldH = worldH;
+      return;
+    }
+    this.entries.set(objId, { runner: null, chains: [], worldW, worldH });
+  }
+  /** 挂载某对象的效果链。调用顺序契约：player 先在 loadSceneToThree 内建好隔离条目，
+   *  stage 再挂链（Task 5 的接线顺序：setWorldSize → setObjectChains）；找不到隔离条目
+   *  说明契约被破坏 → 明确告警一次，绝不静默丢弃，也绝不猜尺寸。 */
+  setObjectChains(objId, chains) {
+    if (this.disposed) return;
+    const usable = [];
+    for (const one of chains) {
+      if (isLinearEffectChain(one)) {
+        usable.push(one);
+      } else {
+        const label = one.find((p) => p.target)?.target ?? one.find((p) => p.bind.length > 0)?.bind[0]?.name ?? "(\u5177\u540D RT)";
+        this.warnSkip(label);
+      }
+    }
+    if (usable.length === 0) return;
+    const view = this.host.isolatedObjects().find((o) => o.id === objId);
+    if (!view) {
+      this.warnOnce(`no-isolated:${objId}`, `\u5BF9\u8C61 ${objId} \u5C1A\u65E0\u9694\u79BB\u6761\u76EE\uFF0C\u6548\u679C\u94FE\u672A\u6302\u8F7D\uFF08\u8C03\u7528\u987A\u5E8F\u9519\u8BEF\uFF09`);
+      return;
+    }
+    this.mount(objId, usable, view.rtWidth, view.rtHeight);
+  }
+  /** 视口变化：按新的**屏幕密度**重算每个对象的 RT 像素尺寸，并用同一份链重挂（runner 内部 RT 跟随）。
+   *  ⚠️ 参数是「设备像素 / 世界单位」这一个标量（object-range.screenScalePx 的返回值），**不是**
+   *  视口宽高预算：旧实现传 `视口 × dpr` 当预算，成了「第二处独立预算」——挂载期与 resize 期
+   *  各算一遍、输入不同源时任何一次 resize 都会把 RT 打回旧口径（3fd6b00「挂载期 RT 正确、
+   *  resize 后被覆盖」这一漏检类的同源地雷）。密度必须由调用方从**主相机同一套 cover 语义**
+   *  取得（three-renderer 用 player.screenScalePx()，见其 resize 回调）。
+   *  ⚠️ 遍历 `this.entries` 的**所有**条目（不按有无 runner 过滤）：链全被跳过、因而没有 runner
+   *  的隔离对象（如具名 RT 图链）同样要随视口重设 RT，否则视口放大后它一直用旧的小 RT（偏糊）、
+   *  视口缩小时又一直占着旧的大 RT（超额显存）。 */
+  onViewportResize(screenScale) {
+    if (this.disposed) return;
+    this.screenScale = screenScale;
+    for (const [id, entry] of this.entries) {
+      const size = objectRtSize(entry.worldW, entry.worldH, this.scale());
+      const view = this.host.isolatedObjects().find((o) => o.id === id);
+      if (!view) continue;
+      if (view.rtWidth === size.width && view.rtHeight === size.height) continue;
+      this.host.resizeObjectRT(id, size.width, size.height);
+      if (!entry.runner) continue;
+      entry.runner.setChains(entry.chains, this.wallpaperId, { width: size.width, height: size.height });
+      this.host.setObjectOutput(id, view.rtTexture);
+    }
+  }
+  /** 主场景渲染之前：链有输出才切合成 quad 的采样源；没有输出（首帧未就绪 / 该对象无 runner）
+   *  则**不动输出**——quad 保持采样对象 RT 原图，不黑屏（降级可见，不静默画错）。 */
+  bindOutputs() {
+    for (const view of this.host.isolatedObjects()) {
+      const out = this.entries.get(view.id)?.runner?.lastOutput() ?? null;
+      if (out) this.host.setObjectOutput(view.id, out);
+    }
+  }
+  /** 主场景渲染之后：串行推进各 runner 的 update（异步，不阻塞本帧；见类头约束 3）。 */
+  advance(time) {
+    if (this.disposed) return;
+    for (const view of this.host.isolatedObjects()) {
+      const runner = this.entries.get(view.id)?.runner;
+      if (!runner) continue;
+      runner.setAudioSpectrumSource(null);
+      this.enqueue(() => runner.update(time, view.rtTexture));
+    }
+  }
+  /** 被跳过的具名 RT 图链标识（按标识去重），供诊断与测试查询。 */
+  rtGraphSkips() {
+    return [...this.skips];
+  }
+  dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.queue.length = 0;
+    for (const entry of this.entries.values()) entry.runner?.dispose();
+    this.entries.clear();
+  }
+  // ── 测试/诊断钩子（不参与生产路径） ──
+  debugRunners() {
+    const out = /* @__PURE__ */ new Map();
+    for (const [id, e] of this.entries) if (e.runner) out.set(id, e.runner);
+    return out;
+  }
+  debugInjectRunner(id, runner) {
+    const view = this.host.isolatedObjects().find((o) => o.id === id);
+    this.entries.set(id, {
+      runner,
+      chains: [],
+      worldW: view ? view.rtWidth / this.scale() : 1,
+      worldH: view ? view.rtHeight / this.scale() : 1
+    });
+  }
+  /** 具名 RT 图链降级告警：按标识去重（同一效果被多个对象引用时只告警一次，不刷屏）。 */
+  warnSkip(label) {
+    if (this.skips.has(label)) return;
+    this.skips.add(label);
+    console.warn(
+      `[wallpaper-engine] \u6548\u679C\u9700\u8981\u5177\u540D RT\uFF08P2 \u672A\u5B9E\u73B0\uFF09\uFF0C\u8DF3\u8FC7: ${label}`
+    );
+  }
+  /** 去重告警（同一 key 只打印一次，防每帧刷屏）。 */
+  warnOnce(key, message) {
+    if (this.warned.has(key)) return;
+    this.warned.add(key);
+    console.warn(`[wallpaper-engine] ${message}`);
+  }
+  /** 串行队列入队（约束 3 / 2：只调用既有的 update，不在此建材质）。 */
+  enqueue(task) {
+    if (this.busy) {
+      this.queue.push(task);
+      return;
+    }
+    this.busy = true;
+    this.runTask(task);
+  }
+  runTask(task) {
+    let result;
+    try {
+      result = task();
+    } catch (e) {
+      console.warn("[wallpaper-engine] \u5BF9\u8C61\u6548\u679C\u94FE\u66F4\u65B0\u5931\u8D25:", e);
+      this.finishTask();
+      return;
+    }
+    Promise.resolve(result).catch((e) => {
+      console.warn("[wallpaper-engine] \u5BF9\u8C61\u6548\u679C\u94FE\u66F4\u65B0\u5931\u8D25:", e);
+    }).then(() => {
+      this.finishTask();
+    });
+  }
+  finishTask() {
+    const next = this.queue.shift();
+    if (next) {
+      this.runTask(next);
+      return;
+    }
+    this.busy = false;
+  }
+  mount(objId, chains, rtW, rtH) {
+    let entry = this.entries.get(objId);
+    if (!entry) {
+      entry = { runner: null, chains, worldW: rtW / this.scale(), worldH: rtH / this.scale() };
+      this.entries.set(objId, entry);
+    }
+    entry.chains = chains;
+    if (!entry.runner) {
+      entry.runner = new EffectRunner(this.host.renderer, rtW, rtH, { load: weVRowOrderLoader() });
+    }
+    entry.runner.setChains(chains, this.wallpaperId, { width: rtW, height: rtH });
+  }
+};
+
 // src/client/three-renderer.ts
+var warnedKeys = /* @__PURE__ */ new Set();
+function warnOnce2(key, message) {
+  if (warnedKeys.has(key)) return;
+  warnedKeys.add(key);
+  console.warn(`[wallpaper-engine] ${message}`);
+}
 function particleBlend(blending, specText) {
   if (typeof blending === "string" && blending) {
     return /^(add|additive)$/i.test(blending.trim()) ? "additive" : "alpha";
@@ -22240,16 +24292,36 @@ function createEmptySim() {
     particle_count: () => 0
   };
 }
+async function collectObjectEffectChains(desc, loadFile) {
+  const out = /* @__PURE__ */ new Map();
+  for (const group of groupEffectsByObject(desc.objects)) {
+    const chains = [];
+    for (const fx of group.effects) {
+      if (typeof fx?.file !== "string") continue;
+      const chain = await resolveEffectChain({ file: fx.file, passes: fx.passes }, loadFile);
+      if (!chain) {
+        console.warn("[wallpaper-engine] \u6548\u679C\u94FE\u89E3\u6790\u5931\u8D25\uFF0C\u8DF3\u8FC7:", fx.file);
+        continue;
+      }
+      chains.push(chain);
+    }
+    if (chains.length > 0) out.set(group.obj.id, chains);
+  }
+  return out;
+}
 function createThreeSceneRenderer(opts) {
   const loadWasm = opts?.loadWasm ?? defaultLoadWasm;
   let modulePromise = null;
   let current = null;
+  let currentStage = null;
   let onWindowResize = null;
   const teardown = () => {
     if (onWindowResize) {
       window.removeEventListener("resize", onWindowResize);
       onWindowResize = null;
     }
+    currentStage?.dispose();
+    currentStage = null;
     current?.player.dispose();
     for (const sim of current?.sims ?? []) sim.free?.();
     current = null;
@@ -22260,6 +24332,7 @@ function createThreeSceneRenderer(opts) {
   });
   return {
     async render(id, fg, _bg) {
+      warnedKeys.clear();
       try {
         teardown();
         modulePromise ??= loadWasm();
@@ -22308,15 +24381,105 @@ function createThreeSceneRenderer(opts) {
             return createEmptySim();
           }
         } : void 0;
-        const result = loadSceneToThree(sceneJson, { backgroundTextures, particles, createParticleSim }, fg, {
+        const loadFile = async (name) => {
+          const r = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(name)}`);
+          if (!r.ok) return null;
+          return new Uint8Array(await r.arrayBuffer());
+        };
+        const effectChains = await collectObjectEffectChains(desc, loadFile);
+        const dpr = typeof window !== "undefined" && window.devicePixelRatio ? window.devicePixelRatio : 1;
+        const screenScale = screenScalePx(desc.orthogonal.width, desc.orthogonal.height, vw, vh, dpr);
+        const isolate = /* @__PURE__ */ new Map();
+        const rtGraphOnly = /* @__PURE__ */ new Set();
+        for (const obj of desc.objects) {
+          const chains = effectChains.get(obj.id);
+          if (!chains || chains.length === 0) continue;
+          const usable = chains.some((one) => isLinearEffectChain(one));
+          if (!usable) {
+            if (obj.kind === "image" || obj.kind === "particle" && particles.has(obj.id)) {
+              rtGraphOnly.add(obj.id);
+              for (const one of chains) {
+                if (isLinearEffectChain(one)) continue;
+                const label = one.find((p) => p.target)?.target ?? one.find((p) => p.bind.length > 0)?.bind[0]?.name ?? "(\u5177\u540D RT)";
+                warnOnce2(
+                  `rt-graph:${label}`,
+                  `\u6548\u679C\u9700\u8981\u5177\u540D RT\uFF08P2 \u672A\u5B9E\u73B0\uFF09\uFF0C\u8DF3\u8FC7: ${label}\uFF08\u5BF9\u8C61 ${obj.id} \u7684\u94FE\u5168\u4E3A\u5177\u540D RT \u56FE\u94FE\uFF0C\u4E0D\u518D\u9694\u79BB\uFF09`
+                );
+              }
+            }
+            continue;
+          }
+          if (obj.kind === "image") {
+            const tex = backgroundTextures.get(obj.id);
+            const texW = tex?.image?.width ?? obj.size?.[0] ?? 1;
+            const texH = tex?.image?.height ?? obj.size?.[1] ?? 1;
+            const w = obj.size?.[0] ?? texW;
+            const h = obj.size?.[1] ?? texH;
+            const world = { w: Math.abs(w * obj.scale[0]), h: Math.abs(h * obj.scale[1]) };
+            const rt = objectRtSize(world.w, world.h, screenScale);
+            isolate.set(obj.id, {
+              objectId: obj.id,
+              rtWidth: rt.width,
+              rtHeight: rt.height,
+              worldW: world.w,
+              worldH: world.h
+            });
+          } else if (obj.kind === "particle") {
+            const p = particles.get(obj.id);
+            if (!p) continue;
+            let spec = {};
+            try {
+              spec = JSON.parse(p.specJson);
+            } catch {
+            }
+            const world = particleWorldSize(spec, [obj.scale[0], obj.scale[1]]);
+            const rt = objectRtSize(world.w, world.h, screenScale);
+            isolate.set(obj.id, {
+              objectId: obj.id,
+              rtWidth: rt.width,
+              rtHeight: rt.height,
+              worldW: Math.abs(world.w),
+              worldH: Math.abs(world.h)
+            });
+          }
+        }
+        const result = loadSceneToThree(sceneJson, { backgroundTextures, particles, createParticleSim, isolate }, fg, {
           width: vw,
           height: vh
         });
         current = result;
+        let stage = null;
+        let droppedEffects = 0;
+        for (const [objId, chains] of effectChains) {
+          if (isolate.has(objId) || rtGraphOnly.has(objId)) continue;
+          droppedEffects += chains.length;
+        }
+        if (droppedEffects > 0) {
+          warnOnce2(
+            `unrendered-effects:${id}`,
+            `${droppedEffects} \u6761\u6548\u679C\u6302\u5728\u672A\u53C2\u4E0E\u6E32\u67D3\u7684\u5BF9\u8C61\u7C7B\u578B\u4E0A\uFF08util/\u97F3\u9891\uFF09\uFF0C\u5DF2\u8DF3\u8FC7`
+          );
+        }
+        if (isolate.size > 0) {
+          stage = new ObjectEffectStage(result.player, {
+            wallpaperId: id,
+            screenScale
+          });
+          for (const [objId, iso] of isolate) {
+            stage.setWorldSize(objId, iso.worldW, iso.worldH);
+          }
+          for (const [objId, chains] of effectChains) {
+            if (!isolate.has(objId)) continue;
+            stage.setObjectChains(objId, chains);
+          }
+          result.player.setObjectEffectStage(stage);
+          currentStage = stage;
+        }
         onWindowResize = () => {
           if (!current) return;
           const { width, height } = viewportSize();
           current.player.resize(width, height);
+          currentStage?.onViewportResize(current.player.screenScalePx());
         };
         window.addEventListener("resize", onWindowResize);
         console.log(

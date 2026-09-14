@@ -12,6 +12,25 @@ export declare function colorBlendModeToThree(mode: number): {
     blendSrc: THREE.BlendingSrcFactor | THREE.BlendingDstFactor;
     blendDst: THREE.BlendingDstFactor;
 } | null;
+export interface IsolatedObject {
+    /** 键 = scene.json 的**对象 id**（不是本类图层的计数器 id，见 attachIsolated 注释）。 */
+    id: number;
+    kind: 'background' | 'particle';
+    rt: THREE.WebGLRenderTarget;
+    rtWidth: number;
+    rtHeight: number;
+    rtTexture: THREE.Texture;
+    localScene: THREE.Scene;
+    localCamera: THREE.OrthographicCamera;
+    quad: THREE.Mesh;
+    /** 合成 quad 的世界尺寸（= |对象 size/dist × scale|，未钳制幅值），resize 重建几何时用。 */
+    worldW: number;
+    worldH: number;
+}
+export interface ObjectEffectStage {
+    bindOutputs(): void;
+    advance(time: number): void;
+}
 export declare class ThreeScenePlayer {
     readonly renderer: THREE.WebGLRenderer;
     readonly scene: THREE.Scene;
@@ -27,13 +46,23 @@ export declare class ThreeScenePlayer {
     private nextBackgroundId;
     private particleLayers;
     private nextParticleLayerId;
+    private isolated;
+    private objectEffectStage;
+    private readonly startedAt;
     constructor(canvas: HTMLCanvasElement, width: number, height: number, renderer?: THREE.WebGLRenderer);
     resize(width: number, height: number): void;
     setSceneSize(width: number, height: number): void;
+    screenScalePx(): number;
     private applyCover;
     update(_dt: number): void;
     setAnimationLoop(fn?: (dt: number) => void): void;
     render(): void;
+    setObjectEffectStage(stage: ObjectEffectStage | null): void;
+    isolatedObjects(): IsolatedObject[];
+    setObjectOutput(id: number, texture: THREE.Texture): void;
+    resizeObjectRT(id: number, width: number, height: number): void;
+    private renderIsolatedContents;
+    elapsedSeconds(): number;
     addBackground(opts: {
         origin: [number, number, number];
         size?: [number, number];
@@ -45,7 +74,17 @@ export declare class ThreeScenePlayer {
         brightness?: number;
         sceneW: number;
         sceneH: number;
+        isolate?: {
+            objectId: number;
+            rtWidth: number;
+            rtHeight: number;
+            worldW: number;
+            worldH: number;
+        };
     }): number;
+    private createLayerMaterial;
+    private createCompositeQuadMaterial;
+    private attachIsolated;
     update_background(id: number, origin?: [number, number, number], scale?: [number, number, number], alpha?: number, brightness?: number): void;
     addParticle(simVerticesGetter: () => Float32Array, opts: {
         tex?: THREE.Texture;
@@ -59,6 +98,13 @@ export declare class ThreeScenePlayer {
         objectAngles?: [number, number, number];
         emitterOrigin?: [number, number, number];
         maxInstances?: number;
+        isolate?: {
+            objectId: number;
+            rtWidth: number;
+            rtHeight: number;
+            worldW: number;
+            worldH: number;
+        };
     }): number;
     updateParticles(dt: number): void;
     private writeParticleData;
@@ -85,6 +131,13 @@ export interface SceneAssets {
     backgroundTextures?: Map<number, THREE.Texture>;
     particles?: Map<number, LoadedParticleAssets>;
     createParticleSim?: ParticleSimFactory;
+    isolate?: Map<number, {
+        objectId: number;
+        rtWidth: number;
+        rtHeight: number;
+        worldW: number;
+        worldH: number;
+    }>;
 }
 export interface ThreeSceneLoadResult {
     player: ThreeScenePlayer;

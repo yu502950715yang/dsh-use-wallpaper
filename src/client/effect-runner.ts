@@ -3,7 +3,7 @@
 // WebGL 部分无法在 node 测试，纯逻辑（blending 映射）导出为 blendModeToThree 供单测。
 import * as THREE from 'three';
 import type { CompiledEffectPass } from './shader/effect-chain.js';
-import { loadTexTexture } from './tex-loader.js';
+import { loadTexTexture, type TexLoadOptions } from './tex-loader.js';
 import { isAudioUniform } from './shader/uniform-binder.js';
 
 // 纹理槽路径推导（spec §3.4 / P0-1）：补 materials/ 前缀 + .tex 后缀；
@@ -14,6 +14,29 @@ export function resolveTextureSlotPath(path: string | null | undefined): string 
   if (path.startsWith('util/') || path.startsWith('_rt_')) return path; // 内置/运行时：走回退分支
   const p = path.startsWith('materials/') ? path : 'materials/' + path;
   return p.endsWith('.tex') ? p : p + '.tex';
+}
+
+// 效果纹理槽的**引擎侧引用**判定（纯函数，node 可测）：
+//   `util/*` —— WE 安装目录里的**真实纹理**（`<weAssetsDir>/assets/materials/util/noise.tex` 263 KB、
+//              `util/clouds_256.tex` 200 KB、`util/white.tex` 5.5 KB —— 均已在真机目录实测存在）；
+//   `_rt_*`  —— 运行时**具名 RT** 引用，WE 目录内**没有**对应文件（递归列 `<...>/materials/_rt_*` 为空）。
+// 两者都不在壁纸 pkg 内，故都不能走 `/wallpapers/scene/<id>/asset`。
+export function isBuiltinTexturePath(path: string | null | undefined): boolean {
+  if (!path) return false;
+  const p = path.replace(/\.tex$/, '');
+  return p.startsWith('util/') || p.startsWith('_rt_');
+}
+
+// `util/*` 的**真身** URL：复用 host 既有路由 `/wallpapers/particle-texture`
+// （`src/host/routes.ts`，基准目录 `<weAssetsDir>/assets/materials`，路由内部自己拼 `name + '.tex'`
+// ⇒ 这里的 name **必须去掉 `.tex` 后缀**，否则会找成 `noise.tex.tex`）。
+// 该路由是**既有**路由、非本轮新增（host 改动需重启 `dsh web` 才生效，复用可避免这个前置条件）。
+// `_rt_*` 返回 null：运行时具名 RT 在 WE 目录里没有文件，不去打必然 404 的请求。
+export function builtinTextureUrl(path: string | null | undefined): string | null {
+  if (!path) return null;
+  const p = path.replace(/\.tex$/, '');
+  if (!p.startsWith('util/')) return null;
+  return `/wallpapers/particle-texture?name=${encodeURIComponent(p)}`;
 }
 
 // mulberry32（与 particles.ts 同种子算法），确定性噪声
@@ -29,13 +52,23 @@ function mulberry32(seed: number) {
 
 const BUILTIN_CACHE = new Map<string, THREE.Texture>();
 
+// 兜底程序化噪声的**逐路径种子**：`util/noise` 与 `util/clouds_256` 在 WE 里是**两张不同的纹理**
+// （noise.tex 263 KB / clouds_256.tex 200 KB）。此前把两者映射到同一个 key `'noise256'`（同一个实例）
+// 是明确的错 —— 共用一张会让语义完全不同的噪声（vhs 的扫描线/失真噪声 vs clouds 的形状噪声）
+// 出现同一图案。这里**分 key、分种子**，至少不再是同一实例。
+const BUILTIN_NOISE_SEEDS: Record<string, number> = {
+  noise: 0x51ab3e7d,     // util/noise
+  clouds256: 0x7e1c9a35, // util/clouds_256
+};
+
 export function resolveBuiltinTexture(path: string | null | undefined): THREE.Texture | null {
   if (!path) return null;
   // 兼容带 .tex 后缀的内置路径（'util/noise.tex' 这类 scene.json 写法）
   const p = path.replace(/\.tex$/, '');
   let key: string;
   if (p === 'util/white') key = 'white';
-  else if (p === 'util/noise' || p === 'util/clouds_256') key = 'noise256';
+  else if (p === 'util/noise') key = 'noise';           // 与 clouds_256 分开（WE 里是两张不同纹理）
+  else if (p === 'util/clouds_256') key = 'clouds256';
   else if (p.startsWith('_rt_')) key = 'white'; // 运行时 RT 一期回退白（A6 合成层精化）
   else return null;
   const cached = BUILTIN_CACHE.get(key);
@@ -46,7 +79,7 @@ export function resolveBuiltinTexture(path: string | null | undefined): THREE.Te
   } else {
     const size = 256;
     const data = new Uint8Array(size * size * 4);
-    const rnd = mulberry32(0x51ab3e7d);
+    const rnd = mulberry32(BUILTIN_NOISE_SEEDS[key] ?? 0x51ab3e7d);
     for (let i = 0; i < size * size; i++) {
       const v = Math.round(rnd() * 255);
       data[i * 4] = v; data[i * 4 + 1] = v; data[i * 4 + 2] = v; data[i * 4 + 3] = 255;
@@ -55,6 +88,169 @@ export function resolveBuiltinTexture(path: string | null | undefined): THREE.Te
   }
   tex.needsUpdate = true;
   BUILTIN_CACHE.set(key, tex);
+  return tex;
+}
+
+// ===== 空槽纹理（scene.json 未提供的 sampler 槽，按 shader 声明的 mode 兜底）=====
+//
+// 背景（真机反馈 2454403969 赛博朋克2077）：该壁纸 `effects/clouds` 的 pass 只有
+// `textures: [null, "util/clouds_256"]`（长度 2），而 `clouds.frag` 声明了三个 sampler：
+//   g_Texture0（链输入）/ g_Texture1（albedo）/ g_Texture2（`"mode":"opacitymask"` 的 mask）。
+// ⇒ g_Texture2 这个槽**从未被提供**：不绑任何东西时 three 的兜底是 1×1 全 0（`emptyTexture`），
+// 而这个全 0 对 `flowmask` 语义恰好是**满量程位移**（`(0 - 0.498) * 2 = -0.996`），
+// 对 mask 语义则无语义（读到 0 才是「遮罩关」）。`mode` 字段本来就是给这个场景用的：
+// **空槽绑什么由 mode 决定**。裁定与依据：
+//
+//   - `mode: "opacitymask"`（不透明度遮罩）→ 空槽 = 全 0（黑）。乘法遮罩读到 0 ⇒
+//     `mix(原图, 效果, 0)` = 原图（效果不作用）；half 透明遮罩类写法同理取最保守值。
+//     alpha 取 **255**（不是 0）：WE 自己的 `<WE>/assets/materials/util/black.tex` 首像素
+//     实测字节 `00 00 00 ff`（R=G=B=0、A=255），而 shake 的 `g_Texture2` 正是以 `util/black`
+//     作 `default` ⇒ 空槽取 (0,0,0,255) 与官方素材逐字节一致；实测硬需求是 `.r` 为 0
+//     （shader 读 `.r`），alpha 取 255 同时避免「透明黑」在 premultiply/直通路径上的歧义。
+//   - `mode: "flowmask"`（方向图）→ 空槽 = 中灰 ⇒ 零位移。WE 的 `<WE>/assets/materials/util/noflow.tex`
+//     （shake `g_Texture1` 的 `default`）首像素实测字节 `7f 7f 00 ff` ⇒ **R=G=127**。
+//     shake.frag 的零点常量是 0.498，127/255 = 0.498039 是字节值里最接近 0.498 的一个
+//     （128/255 = 0.501961 会把「零位移」变成 +0.0078 的残余位移；0（黑）则是 -0.996 的满量程）。
+//     故取 (127,127,0,255)：R/G 对齐 `util/noflow`，B=0 也与该文件一致（shader 只读 `.rg`）。
+//   - 其它 / 无 mode 的槽：返回 null ⇒ **不改既有行为**（槽保持不预置，交由 update 的既有逻辑）。
+//
+// 这些是 1×1 常量纹理：模块级缓存并复用（不得每次 getMaterial 新建）。
+const EMPTY_SLOT_CACHE = new Map<string, THREE.DataTexture>();
+
+export function resolveEmptySlotTexture(mode: string | null | undefined): THREE.Texture | null {
+  if (!mode) return null;
+  let key: string;
+  let bytes: [number, number, number, number];
+  if (mode === 'opacitymask') {
+    key = 'opacitymask';
+    bytes = [0, 0, 0, 255];       // 全 0（黑）：乘法遮罩读到 0 ⇒ 效果不作用
+  } else if (mode === 'flowmask') {
+    key = 'flowmask';
+    bytes = [127, 127, 0, 255];   // 中灰：对齐 `<WE>/materials/util/noflow.tex` 的 127/127/0/255
+  } else {
+    return null;                  // 无 mode / 未知 mode：不改行为
+  }
+  const cached = EMPTY_SLOT_CACHE.get(key);
+  if (cached) return cached;
+  // DataTexture：默认 NearestFilter + 不生成 mipmap + unpackAlignment 1，
+  // 1×1 下任意 UV 都采到同一 texel（含 REPEAT 槽的越界 UV）。
+  const tex = new THREE.DataTexture(new Uint8Array(bytes), 1, 1, THREE.RGBAFormat);
+  tex.needsUpdate = true;
+  EMPTY_SLOT_CACHE.set(key, tex);
+  return tex;
+}
+
+// pass 的纹理槽总数：`textures` 数组长度 与 shader 声明的 `g_TextureN` 最大下标 + 1 的较大者。
+// 数组长度不够（声明了 sampler 但 scene.json 的 textures 没给到那一位）时必须补齐到声明下标，
+// 否则空槽纹理根本无从绑定 —— 这正是 2454403969 的 clouds（数组长 2、声明到 g_Texture2）的情形。
+export function effectSlotCount(pass: CompiledEffectPass): number {
+  let count = pass.textureSlots.length;
+  // `?? {}`：容忍早于本字段构造的 pass 对象（如既有测试 fixture / 外部调用方），
+  // 语义等同「无 mode 标注」⇒ 槽数退回 textures.length（既有行为）。
+  for (const name of Object.keys(pass.samplerModes ?? {})) {
+    const m = /^g_Texture(\d+)$/.exec(name);
+    if (m) count = Math.max(count, Number(m[1]) + 1);
+  }
+  return count;
+}
+
+// 单个槽的**预置/兜底**纹理（纯函数，node 可测）：
+//   - index 0：`g_Texture0` 是效果链输入，由 update 绑上一 pass 输出（readTex）⇒ 恒 null；
+//   - `textures[index]` 已提供（非空）：真纹理是异步加载的，预置阶段留 null，等 update 绑；
+//   - 未提供：按 shader 声明的 mode 取空槽常量纹理（无 mode ⇒ null）。
+// update 里对**未提供**的槽必须保持这个兜底值（不得被覆盖成 null —— 那会退回 three 的全 0 兜底，
+// 对 flowmask 就是满量程位移）。
+export function resolveSlotFallback(pass: CompiledEffectPass, index: number): THREE.Texture | null {
+  if (index <= 0) return null;
+  if (pass.textureSlots[index]) return null;
+  return resolveEmptySlotTexture(pass.samplerModes?.[`g_Texture${index}`]);
+}
+
+// ===== 效果纹理槽解析（本轮修复：`util/*` 优先取 WE 真身）=====
+
+// 纹理加载器签名（缺省 `loadTexTexture`；单测注入假加载器以断言优先级与回退行为）。
+// opts 直接复用 tex-loader 的 `TexLoadOptions`：调用方**通过它携带纹理 v 约定**
+// （`rowOrder`，见 `EffectRunner` 构造参数与 `object-effects.weVRowOrderLoader`）。
+export type EffectTexLoader = (
+  url: string,
+  opts?: TexLoadOptions,
+) => Promise<THREE.Texture | null>;
+
+// 效果纹理槽解析：**优先级 ① util/* 真身（host 路由）→ ② 程序化回退 → ③ 壁纸 pkg 内资源**。
+//
+// 为什么 ① 必须在 ② 之前（根因，2026-09-14 真机反馈 2454403969 赛博朋克2077）：
+//   该壁纸只有 1 个铺满场景的对象（obj 13，3440×1440），挂 3 条链，三条的 `g_Texture1` 都是
+//   **WE 引擎内置素材**（不在壁纸 pkg 内）：`effects/clouds` ← `util/clouds_256`、
+//   `effects/vhs` ← `util/noise`、`effects/waterripple` ← `util/white`。
+//   旧顺序「先程序化回退（同步）→ 命中就直接返回」让 `util/noise` 拿到了 `mulberry32` 逐像素独立
+//   随机生成的**均匀白噪声**，而 WE 的 `util/noise.tex` 是**结构化噪声**；vhs 正用它调制扫描线/
+//   失真（该壁纸 strength=0.31 / artifacts=1.11 / chromatic=0.07 / distortionstrength=0.24）
+//   ⇒ 扫描线被逐像素随机数打散成**满屏杂乱条纹**（画面右侧斜向扫描线 + 底部水平条纹）。
+//   真身本来就能拿到：host 已有**通用**路由 `/wallpapers/particle-texture?name=util/noise`，
+//   客户端只是从来没试过（[`src/host/routes.ts`] 以 `<weAssetsDir>/assets/materials` 为基准读原始
+//   `.tex` 字节，client 侧现有 `loadTexTexture` 解码管线可直接消费）。故此处改为「先真身、失败才回退」。
+//
+// 约定：
+//   - **沿用效果槽参数 `alphaPriority: false`**（效果 shader 把 R8/RG88 的通道当**遮罩数值**读：
+//     `pulse.frag` 的 `.r`、`shake.frag` 的 `.rg`；粒子语义会把 R8 变成 rgb 恒白、RG88 变成
+//     `(r,r,r,g)` ⇒ 遮罩失效 ⇒ 本该局部的效果覆盖全图。见 `tex-loader.convertUnormToRgba`
+//     与提交 3031158）；
+//   - 结果（**含失败 null**）一律进调用方传入的缓存 Map（键含壁纸 id + 路径）⇒ 同一路径绝不重复
+//     请求、也绝不每帧重试；
+//   - 真身取不到时回退程序化近似并 `warn` **一次**（失败结果同样进缓存，故每个路径每张壁纸只告警
+//     一次，便于诊断「画面与桌面 WE 不同」）；`_rt_*` 本就无真身 ⇒ 不告警（避免每张壁纸刷屏）；
+//   - **取不到就回退、绝不白屏**：加载器异常按失败处理，不把异常抛进帧循环。
+export async function loadEffectTextureSlot(
+  path: string | null,
+  id: string,
+  cache: Map<string, THREE.Texture | null>,
+  load: EffectTexLoader = loadTexTexture,
+  warn: (message: string) => void = (message) => console.warn(message),
+): Promise<THREE.Texture | null> {
+  if (!path) return null;
+  const key = `${id}:${path}`;
+  if (cache.has(key)) return cache.get(key) ?? null; // 命中（含失败 null 缓存）→ 不重复请求
+  const tryLoad = async (url: string): Promise<THREE.Texture | null> => {
+    try {
+      return await load(url, { alphaPriority: false });
+    } catch {
+      return null; // 加载器异常 → 按失败处理（回退 / 告警），绝不白屏
+    }
+  };
+  // ① util/*：先取 WE 安装目录里的真身（host 既有路由；`_rt_*` 无真身 → realUrl 为 null）
+  const realUrl = builtinTextureUrl(path);
+  if (realUrl) {
+    const real = await tryLoad(realUrl);
+    if (real) {
+      cache.set(key, real);
+      return real;
+    }
+  }
+  // ② 程序化回退：内置 `util/*` 与运行时 `_rt_*` 的兜底近似（不白屏）
+  const builtin = resolveBuiltinTexture(path);
+  if (builtin) {
+    if (realUrl) {
+      warn(
+        '[wallpaper-engine] 引擎内置纹理取不到真身，回退程序化近似（画面可能与桌面 WE 不同）: '
+        + `${path} ← ${realUrl}`,
+      );
+    }
+    cache.set(key, builtin);
+    return builtin;
+  }
+  // ③ 壁纸 pkg 内的资源：`materials/<path>.tex` → scene asset 路由。
+  //    引擎侧引用（`util/*`、`_rt_*`）走到这里说明既无真身、也不在已知回退表内；实测全库
+  //    scene.pkg 内**没有**任何 `util/` / `_rt_` 条目（26 个 pkg 扫描 = 0）⇒ 直接缓存 null，
+  //    不打必然 404 的请求（槽保持未绑定，不白屏）。
+  if (isBuiltinTexturePath(path)) {
+    cache.set(key, null);
+    return null;
+  }
+  const resolved = resolveTextureSlotPath(path);
+  if (!resolved) return null;
+  const tex = await tryLoad(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(resolved)}`);
+  if (!tex) warn(`[wallpaper-engine] 纹理槽加载失败，跳过: ${path} → ${resolved}`);
+  cache.set(key, tex);
   return tex;
 }
 
@@ -105,6 +301,30 @@ export function resolveTextureResolution(
   };
 }
 
+// g_TextureNResolution 的 **vec4 分量**（WE/lwe 约定）：`(mip0.w, mip0.h, header.w, header.h)`。
+// ⚠️ 不是 `(w, h, 1/w, 1/h)`：WE 的效果 shader 用 `.z/.x` 缩放纹理 UV，例如 shake.vert 的
+//   `v_TexCoord.zw = uv * g_Texture1Resolution.z / g_Texture1Resolution.x`
+// 若 .z 填 1/w，则 .z/.x = 1/w² → mask/方向图的 UV 被压成 ~0 → 所有像素采到同一角 ⇒
+// 本该只作用于 mask 区域的效果变成**全图等量位移**（真机「整屏晃动」的根因）。
+// 纹理经 `textureFromTex` 时把 `[mip0.w, mip0.h, header.w, header.h]` 存进 userData.fxRes；
+// 场景/对象 RT 与未带该字段的纹理按 lwe 约定视为 `(w, h, w, h)`。
+export function resolveTextureResolution4(
+  tex: {
+    image?: { width?: number; height?: number } | null;
+    userData?: { fxRes?: unknown };
+  } | null | undefined,
+  fallbackW: number,
+  fallbackH: number,
+): { x: number; y: number; z: number; w: number } {
+  const fx = tex?.userData?.fxRes;
+  if (Array.isArray(fx) && fx.length === 4 && Number(fx[0]) > 0 && Number(fx[1]) > 0) {
+    return { x: Number(fx[0]), y: Number(fx[1]), z: Number(fx[2]), w: Number(fx[3]) };
+  }
+  const w = tex?.image?.width ?? fallbackW;
+  const h = tex?.image?.height ?? fallbackH;
+  return { x: w, y: h, z: w, w: h };
+}
+
 // T3.2 音频频谱注入：把频谱字节（0-255）归一化为 uniform 浮点（0-1）写入目标数组。
 // uniform 长度按 combo RESOLUTION（16/32/64）可与 64 bin 频谱不等长：
 //   超出频谱长度 → 越界补零（无分析器时数组保持 binder 初始化的全零，静音不回归）；
@@ -113,6 +333,24 @@ export function fillAudioSpectrumUniform(dest: number[], src: Uint8Array): void 
   for (let i = 0; i < dest.length; i++) {
     dest[i] = i < src.length ? src[i] / 255 : 0;
   }
+}
+
+// pass 的可辨识标识（诊断用，纯函数）：`getMaterial` 的 key 只是**链内下标**（`0`/`1`），单看它
+// 无法定位是哪个效果；`CompiledEffectPass` 不带文件路径，故用运行时能拿到的线索拼出可读标识——
+// 壁纸 id、链内下标、具名 RT / 纹理槽 / 非默认混合模式 / 片元源首个非注释行。
+export function describeEffectPass(pass: CompiledEffectPass, key: string, wallpaperId: string): string {
+  const bits: string[] = [`pass ${key}`];
+  if (wallpaperId) bits.push(`壁纸 ${wallpaperId}`);
+  if (pass.target) bits.push(`target=${pass.target}`);
+  const slots = pass.textureSlots.filter((s): s is string => !!s);
+  if (slots.length > 0) bits.push(`纹理槽=[${slots.join(', ')}]`);
+  if (pass.blendMode && pass.blendMode !== 'normal') bits.push(`blend=${pass.blendMode}`);
+  const head = (pass.rawFrag ?? '')
+    .split('\n')
+    .map((l) => l.trim())
+    .find((l) => l && !l.startsWith('//') && !l.startsWith('/*') && !l.startsWith('*'));
+  if (head) bits.push(`片元首行=${head.length > 60 ? head.slice(0, 60) + '…' : head}`);
+  return bits.join('，');
 }
 
 export class EffectRunner {
@@ -125,6 +363,11 @@ export class EffectRunner {
   private materials = new Map<string, THREE.ShaderMaterial>();   // key: `${passIndex}`
   private scenes = new Map<string, THREE.Scene>();               // 每 pass 独立场景（含全屏 quad）
   private textures = new Map<string, THREE.Texture | null>();    // 纹理槽缓存（key: `${id}:${path}`）
+  // 编译失败的 pass（key = 链内下标）：探针渲染一旦确认失败就缓存，后续帧直接返回 null 跳过，
+  // 不再「每帧重建材质 + 1×1 探针渲染 + 重复告警」（实测一个坏 pass 每帧 2 条 warning 刷屏）。
+  // 失败本来就是跳过该 pass（update 里 `continue`），故缓存**不改变执行语义**；setChains
+  // （换壁纸 / 重挂链 / resize 重挂）时清空，链变了要重新尝试编译。
+  private failed = new Set<string>();
   private width: number;
   private height: number;
   // update 串行化：帧循环每帧调用 update，但内部有异步纹理槽加载（await），
@@ -135,11 +378,26 @@ export class EffectRunner {
   // 音频频谱源（T3.2）：freqData 缓冲引用（scene-renderer 每帧刷新后注入）。
   // null = 无分析器 → 音频 uniform 保持 binder 初始化的全零（静音，行为不变）。
   private audioSpectrum: Uint8Array | null = null;
+  // 效果纹理槽加载器（缺省 `loadTexTexture`；可注入以携带 **v 约定** —— 见构造参数注释）。
+  private readonly load: EffectTexLoader;
 
-  constructor(renderer: THREE.WebGLRenderer, width: number, height: number) {
+  // `opts.load`：纹理槽加载器（缺省 `loadTexTexture`）。**调用方用它携带纹理 v 约定**：
+  //   效果 shader 把 `v_TexCoord.y` 当**图像空间**坐标（flowmap 的带符号位移、clouds 的旋转/滚动、
+  //   foliagesway 的摆动方向…），而纹理由对象 RT 提供 —— 二者的 v 约定必须是**同一套**，
+  //   否则条带位置对而方向/斜度反（Crimson waterflow 真机「方向对但位置/斜度不对」）。
+  //   对象 RT 走 `threejs-player.attachIsolated` 的 y 镜像局部相机（v=0=图像顶部 = WE 约定），
+  //   故 `ObjectEffectStage` 注入 `rowOrder:'topDown'` 的 loader 与之对齐；
+  //   未注入的调用方（旧场景级路径）保持 `'bottomUp'`，行为与本参数引入前逐字一致。
+  constructor(
+    renderer: THREE.WebGLRenderer,
+    width: number,
+    height: number,
+    opts: { load?: EffectTexLoader } = {},
+  ) {
     this.renderer = renderer;
     this.width = width;
     this.height = height;
+    this.load = opts.load ?? loadTexTexture;
     this.rtA = new THREE.WebGLRenderTarget(width, height);
     this.rtB = new THREE.WebGLRenderTarget(width, height);
   }
@@ -152,6 +410,7 @@ export class EffectRunner {
     this.chains = chains;
     this.id = wallpaperId;
     this.last = null; // 换壁纸避免首帧显示旧纹理
+    this.failed.clear(); // 链变了：编译失败缓存作废，重新尝试（换壁纸/重挂链/resize 重挂）
     // 对象级 RT 尺寸：opts 覆盖或保持当前（向后兼容，场景级调用不传 opts 即保持构造尺寸）
     const size = resolveTargetSize({ width: this.width, height: this.height }, opts);
     this.ensureTargets(size.width, size.height);
@@ -192,6 +451,9 @@ export class EffectRunner {
   }
 
   private getMaterial(pass: CompiledEffectPass, key: string): THREE.ShaderMaterial | null {
+    // 已确认编译失败的 pass：直接跳过（语义与下方失败分支一致——返回 null → update 里 continue）。
+    // 不做这层缓存时 update 每帧都会重走「建材质 + 探针渲染」，实测一个坏 pass 每帧 2 条 warning。
+    if (this.failed.has(key)) return null;
     const cached = this.materials.get(key);
     if (cached) return cached;
     let material: THREE.ShaderMaterial | null = null;
@@ -201,18 +463,25 @@ export class EffectRunner {
         uniforms[name] = { value: Array.isArray(value) ? value.slice() : value };
       }
       // 预建纹理槽 uniform（binder 跳过 sampler，纹理绑定是执行器职责，spec §4.3）
+      // textures[i] → g_Texture(i)（WE 官方 scenejson.md:22）；g_Texture0 已在上方预建。
+      // 槽数取 effectSlotCount（≥ textures.length）：**声明了 sampler 但 textures 数组没给到**
+      // 的槽也要建出来，否则空槽纹理无从绑定（2454403969 的 clouds 就是数组长 2、声明到 g_Texture2）。
+      // 未提供的槽按 shader 声明的 mode 预置空槽纹理（opacitymask → 黑、flowmask → 中灰）；
+      // 无 mode 的槽预置 null，与既有行为一致。
       if (!uniforms['g_Texture0']) uniforms['g_Texture0'] = { value: null };
-      for (let i = 0; i < pass.textureSlots.length; i++) {
-        const slot = `g_Texture${i + 1}`;
-        if (!uniforms[slot]) uniforms[slot] = { value: null };
+      const slotCount = effectSlotCount(pass);
+      for (let i = 0; i < slotCount; i++) {
+        const slot = `g_Texture${i}`;
+        if (!uniforms[slot]) uniforms[slot] = { value: resolveSlotFallback(pass, i) };
       }
       // 分辨率 uniform（vec4）预建：three 上传 vec4 需要 Vector4/数组，binder 给
       // 的默认 0（number）会在探针渲染时 uniform4fv 转换失败误判编译失败；
       // g_TextureNResolution 语义是读端纹理尺寸，update 阶段会按实际纹理覆盖。
-      for (let i = 0; i <= Math.max(pass.textureSlots.length, 0); i++) {
+      // 同样铺到 slotCount：空槽（1×1 常量）也要有维度正确的预置值，避免 .z/.x 出现 0/0。
+      for (let i = 0; i <= Math.max(slotCount, 0); i++) {
         const res = `g_Texture${i}Resolution`;
         uniforms[res] = {
-          value: new THREE.Vector4(this.width, this.height, 1 / Math.max(1, this.width), 1 / Math.max(1, this.height)),
+          value: new THREE.Vector4(this.width, this.height, this.width, this.height),
         };
       }
       // 全屏 quad 在 NDC 下直接输出：模型/视图/投影矩阵取单位阵（WE 行主序 mul(v,M)=M*v）。
@@ -248,18 +517,18 @@ export class EffectRunner {
       // 实际渲染触发，因此渲染一次 1×1 探针强制触发；编译失败时 three 跳过绘制不抛异常，
       // 由 onShaderError 探针置位。GLSL1 源码经 three 自动升级（WebGL2），手动编译会误报。
       let compileFailed = false;
+      // 编译错误详情（gl.getShaderInfoLog）在 onShaderError 里取，**攒到探针结束后**与可辨识标识
+      // 一起打**一条** warning（原先 handler 内直接 console.warn 且传对象 → 日志显示 `Object Object`，
+      // 且每帧重试 ⇒ 每帧 2 条刷屏）。
+      let vertLog = '';
+      let fragLog = '';
       const prevHandler = this.renderer.debug.onShaderError;
       this.renderer.debug.onShaderError = (gl, program, vs, fs) => {
         compileFailed = true;
         // 诊断增强（2026-08-21）：three 的 onShaderError 只通知不传错误详情，
         // 用 gl.getShaderInfoLog 取 GLSL 编译错误（顶点/片元分开），定位具体语法问题。
-        const vsInfo = (gl.getShaderInfoLog(vs) || '').trim();
-        const fsInfo = (gl.getShaderInfoLog(fs) || '').trim();
-        console.warn(
-          `[wallpaper-engine] 效果 pass ${key} shader 编译失败`,
-          vsInfo ? { vertex: vsInfo } : {},
-          fsInfo ? { fragment: fsInfo } : {},
-        );
+        vertLog = (gl.getShaderInfoLog(vs) || '').trim();
+        fragLog = (gl.getShaderInfoLog(fs) || '').trim();
       };
       const probeRT = new THREE.WebGLRenderTarget(1, 1);
       try {
@@ -271,7 +540,15 @@ export class EffectRunner {
         probeRT.dispose();
       }
       if (compileFailed) {
-        console.warn('[wallpaper-engine] 效果 pass 编译失败，跳过:', key);
+        // 失败缓存：本 key 此后再也不重建材质/不再探针渲染（setChains 时清空重试）。
+        this.failed.add(key);
+        // 告警**按 pass key 去重**（失败已缓存 ⇒ 每个 key 只会走到这里一次），并带上可辨识标识；
+        // 错误详情拼成字符串，不再把对象丢进 console（日志里会显示成 `Object Object`）。
+        console.warn(
+          `[wallpaper-engine] 效果 pass 编译失败，跳过: ${describeEffectPass(pass, key, this.id)}`
+          + (vertLog ? `\n  vertex: ${vertLog}` : '')
+          + (fragLog ? `\n  fragment: ${fragLog}` : ''),
+        );
         material.dispose();
         this.disposeSceneQuads(key); // 清掉刚缓存的 scene（含 quad），避免残留
         return null;
@@ -319,18 +596,10 @@ export class EffectRunner {
   }
 
   private async resolveTextureSlot(path: string | null): Promise<THREE.Texture | null> {
-    if (!path) return null;
-    // 内置程序纹理 / 运行时 RT 引用：不 fetch，直接回退（P0-2）
-    const builtin = resolveBuiltinTexture(path);
-    if (builtin) return builtin;
-    const key = `${this.id}:${path}`;
-    if (this.textures.has(key)) return this.textures.get(key) ?? null;
-    const resolved = resolveTextureSlotPath(path);
-    if (!resolved) return null;
-    const tex = await loadTexTexture(`/wallpapers/scene/${this.id}/asset?name=${encodeURIComponent(resolved)}`);
-    if (!tex) console.warn('[wallpaper-engine] 纹理槽加载失败，跳过:', path, '→', resolved);
-    this.textures.set(key, tex);
-    return tex;
+    // 解析优先级与缓存语义见 loadEffectTextureSlot：`util/*` 先取 WE 真身、失败才回退程序化近似，
+    // 结果（含失败 null）走 this.textures 缓存（键含壁纸 id + 路径）⇒ 不重复请求、不每帧重试。
+    // `this.load` 携带调用方的纹理 v 约定（缺省 loadTexTexture = 显示约定；见构造函数注释）。
+    return loadEffectTextureSlot(path, this.id, this.textures, this.load);
   }
 
   // 串行化 + 输入参数化（Ruling P1-1）：input 可为场景 RT 或对象 RT 的纹理（任意 Texture）。
@@ -343,13 +612,18 @@ export class EffectRunner {
       const flat: CompiledEffectPass[] = this.chains.flat();
       if (flat.length === 0) return null;
       // 纹理槽统一预解析（await 集中在此：所有 fetch 完成前不触碰 renderer，
-      // 避免与帧循环的场景渲染/贴屏交错 RT 状态）
+      // 避免与帧循环的场景渲染/贴屏交错 RT 状态）。
+      // 槽数 = effectSlotCount（≥ textures.length，含**未提供**的声明槽）：
+      //   已提供（textures[j] 非空）→ 解析出的真实纹理（加载失败为 null，保持既有回退）；
+      //   未提供 → 空槽常量纹理（resolveSlotFallback，按 shader 的 mode 决定；无 mode → null）。
       const slotTex = new Map<string, THREE.Texture | null>();
       for (let i = 0; i < flat.length; i++) {
         const pass = flat[i];
-        for (let j = 0; j < pass.textureSlots.length; j++) {
+        const slots = effectSlotCount(pass);
+        for (let j = 0; j < slots; j++) {
           const path = pass.textureSlots[j];
           if (path) slotTex.set(`${i}:${j}`, await this.resolveTextureSlot(path));
+          else slotTex.set(`${i}:${j}`, resolveSlotFallback(pass, j));
         }
       }
       // 输入归一：场景 RT → .texture，对象 RT 纹理 / 任意纹理原样使用；
@@ -361,22 +635,30 @@ export class EffectRunner {
         const material = this.getMaterial(pass, `${i}`);
         if (!material) continue; // pass 级跳过：readTex 不变，下一 pass 写端仍为对端（无自读自写）
         // 纹理槽绑定（值已预解析，无 await）
-        for (let j = 0; j < pass.textureSlots.length; j++) {
+        // ⚠️ 未提供的槽**不得**被覆盖成 null：slotTex 里放的是空槽常量纹理
+        // （opacitymask → 黑、flowmask → 中灰）。写成 `?? null` 会退回 three 的 1×1 全 0 兜底，
+        // 而全 0 对 flowmask 是满量程位移（(0-0.498)*2 = -0.996）——正是本槽要修掉的语义。
+        for (let j = 0; j < effectSlotCount(pass); j++) {
           const tex = slotTex.get(`${i}:${j}`) ?? null;
-          const slot = `g_Texture${j + 1}`;
+          // textures[j] → g_Texture(j)（WE 官方 scenejson.md:22：textures 依次绑到 g_Texture0/1/…）。
+          // ⚠️ 曾写成 g_Texture(j+1)：所有效果的纹理槽**整体错位一个**，mask / 方向图落到错误的槽
+          // ⇒ shader 采到默认纹理（如 shake 的 flowmask 槽采到白 ⇒ flowMask≈1.0）⇒ 本该只作用于
+          // mask 区域的效果变成**全图**生效（GTR 整屏抖动 / 整屏脉冲的根因）。j=0 的 null 会被
+          // 下方的 g_Texture0 = readTex 覆盖（效果链输入的语义，见 WE scenejson 文档）。
+          const slot = `g_Texture${j}`;
           if (material.uniforms[slot]) material.uniforms[slot].value = tex;
-          const res = `g_Texture${j + 1}Resolution`;
+          const res = `g_Texture${j}Resolution`;
           if (material.uniforms[res]) {
-            const { width: w, height: h } = resolveTextureResolution(tex, this.width, this.height);
-            material.uniforms[res].value = new THREE.Vector4(w, h, 1 / Math.max(1, w), 1 / Math.max(1, h));
+            const r4 = resolveTextureResolution4(tex, this.width, this.height);
+            material.uniforms[res].value = new THREE.Vector4(r4.x, r4.y, r4.z, r4.w);
           }
         }
         if (material.uniforms['g_Texture0']) material.uniforms['g_Texture0'].value = readTex;
         // g_Texture0Resolution 随输入纹理实际尺寸（three 0.170 RT 纹理自带 image 尺寸；
         // 未解码普通纹理回退 runner 尺寸）。场景级路径（RT 尺寸 == runner 尺寸）零行为变化。
         if (material.uniforms['g_Texture0Resolution']) {
-          const { width: w, height: h } = resolveTextureResolution(readTex, this.width, this.height);
-          material.uniforms['g_Texture0Resolution'].value = new THREE.Vector4(w, h, 1 / Math.max(1, w), 1 / Math.max(1, h));
+          const r4 = resolveTextureResolution4(readTex, this.width, this.height);
+          material.uniforms['g_Texture0Resolution'].value = new THREE.Vector4(r4.x, r4.y, r4.z, r4.w);
         }
         if (material.uniforms['g_Time']) material.uniforms['g_Time'].value = time;
         // 音频频谱注入（T3.2）：渲染前把频谱字节归一化 0-1 写入 g_AudioSpectrum* 数组；

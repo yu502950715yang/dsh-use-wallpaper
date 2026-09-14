@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { ThreeScenePlayer, loadSceneToThree, frameCountFromDims, textureFrameCount, textureFrameGrid, specMaxcount, particleCapacity, specEmitterOrigin, simEmitterOffset, BLACKMYTH_OBJ_SCALE, DEFAULT_PARTICLE_CAPACITY, MAX_PARTICLE_CAPACITY } from '../src/client/threejs-player.js';
 import { coverRange } from '../src/client/scene-renderer.js';
+import { createCompositeGeometry, screenScalePx } from '../src/client/object-range.js';
 
 // 注入的 mock renderer：只测相机/场景/RAF 逻辑，不触碰 WebGL。
 function createMockRenderer() {
@@ -19,6 +20,9 @@ function createMockRenderer() {
     setSize: vi.fn(),
     setPixelRatio: vi.fn(),
     render: vi.fn(),
+    // 对象隔离渲染（Task 3）：renderIsolatedContents 会切换渲染目标到对象 RT，
+    // mock 需提供同名方法（no-op），否则隔离路径全部以 TypeError 失败。
+    setRenderTarget: vi.fn(),
     dispose: vi.fn(),
     setAnimationLoop,
     _getLoop: () => loop,
@@ -1082,5 +1086,418 @@ describe('ThreeScenePlayer loadSceneToThree', () => {
     expect(result.player.camera.top).toBeCloseTo(1555 / 2, 6);
     expect(result.player.camera.bottom).toBeCloseTo(-1555 / 2, 6);
     expect(renderer.setSize).toHaveBeenCalledWith(2400, 1555, false);
+  });
+});
+
+// ===== 对象隔离渲染（对象级效果链的前置能力）=====
+describe('ThreeScenePlayer 对象隔离', () => {
+  // 屏幕密度 = 对象 RT 尺寸的唯一基准（RT 像素 = 世界尺寸 × 密度 = 屏占位像素），必须与主相机
+  // 实际铺满的像素网格同源。挂载期由 three-renderer 用纯函数 screenScalePx(...) 算（player 还没
+  // 创建），resize 期取 player.screenScalePx()。两者必须给出**同一个数**，否则任何一次 resize
+  // 都会把 RT 打回与屏占位不符的尺寸 ⇒ 合成那一步重采样 ⇒ 锐度掉一半（实测 −52%）。
+  describe('screenScalePx（与 three-renderer 的独立计算同源）', () => {
+    it('构造尺寸 = 视口尺寸时 = dpr；resize/setSceneSize 后与纯函数逐点一致', () => {
+      for (const [sceneW, sceneH, vw, vh, dpr] of [
+        [1920, 1080, 1920, 1080, 1],
+        [1920, 1080, 1920, 1080, 2],
+        [1920, 1080, 1600, 900, 1],
+        [7430, 4147, 1280, 720, 1],
+        [3840, 2160, 2560, 1080, 2], // 视口比场景更窄 → 左右裁剪
+      ] as const) {
+        Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: dpr });
+        const { player } = makePlayer(sceneW, sceneH);
+        player.setSceneSize(sceneW, sceneH);
+        player.resize(vw, vh);
+        expect(player.screenScalePx()).toBeCloseTo(screenScalePx(sceneW, sceneH, vw, vh, dpr), 10);
+      }
+      Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: 1 });
+    });
+    it('GTR 3743126786：场景 7430×4147、视口 1280×720 → 密度 = 720/4147（cover 裁左右）', () => {
+      const { player } = makePlayer(7430, 4147);
+      player.setSceneSize(7430, 4147);
+      player.resize(1280, 720);
+      expect(player.screenScalePx()).toBeCloseTo(720 / 4147, 10);
+    });
+  });
+
+
+  function makeTexture(): THREE.Texture {
+    const tex = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+    tex.needsUpdate = true;
+    return tex;
+  }
+
+  // ⚠️ 回归（2026-09-14，真机 HiDPI 反馈「很多 scene 壁纸错乱」）：局部正交相机的
+  // left/right/top/bottom 是**世界坐标范围**（内容以世界单位绘制），必须覆盖对象的
+  // **钳制后世界尺寸**；RT 的像素尺寸只决定分辨率（= 世界 × dpr 收口），**不得**拿来当相机范围。
+  // 曾用 rtW/rtH 当相机范围：dpr>1 时相机多覆盖 dpr 倍 ⇒ 内容只占 RT 的 1/dpr、四周是空白，
+  // 合成 quad 再按「全窗口」把它拉回世界尺寸 ⇒ 对象缩小 + 边缘 clamp 拉伸（HiDPI 屏整张壁纸错乱）。
+  // 既有测试漏检的原因：那些用例的 rtWidth/rtHeight 恰好等于 worldW/worldH，且都不断言相机范围；
+  // headless e2e 的 dpr=1 也让 rt == world，故端到端同样漏检。
+  it('局部相机覆盖的世界范围 = 对象世界尺寸（不是 RT 像素尺寸）', () => {
+    const { player } = makePlayer();
+    // world 2560×1440，RT 像素 5120×2880（dpr=2 的典型结果）——两者不等才能暴露该缺陷。
+    player.addBackground({
+      origin: [960, 540, 0], size: [2560, 1440], scale: [1, 1, 1],
+      texture: makeTexture(), sceneW: 1920, sceneH: 1080,
+      isolate: { objectId: 77, rtWidth: 5120, rtHeight: 2880, worldW: 2560, worldH: 1440 },
+    });
+    const entry = player.isolatedObjects()[0];
+    expect(entry.rt.width).toBe(5120);
+    // 相机必须覆盖世界尺寸 2560×1440（而不是 RT 像素 5120×2880）。
+    expect(entry.localCamera.right - entry.localCamera.left).toBeCloseTo(2560, 5);
+    // ⚠️ y **镜像**（top=-720 < bottom=+720，2026-09-14 v 约定修复）：局部相机渲染出的对象 RT 是
+    // 效果链的输入，必须取 WE 的 v 约定（v=0=图像顶部，见 attachIsolated 注释）⇒ 幅值仍是 1440，
+    // 但 top/bottom 互换。断言按 `bottom - top`（= 幅值）写，与相机范围语义一致。
+    expect(entry.localCamera.bottom - entry.localCamera.top).toBeCloseTo(1440, 5);
+    expect(entry.localCamera.top).toBeLessThan(entry.localCamera.bottom);
+    // RT 覆盖完整对象 ⇒ 合成几何 UV 为全窗口。
+    const uv = (entry.quad.geometry as THREE.PlaneGeometry).attributes.uv.array as Float32Array;
+    expect(Math.min(...Array.from(uv))).toBeCloseTo(0, 5);
+    expect(Math.max(...Array.from(uv))).toBeCloseTo(1, 5);
+  });
+
+  it('世界尺寸超过 RT 像素上限时相机仍覆盖完整对象（不产生边缘拉伸带）', () => {
+    const { player } = makePlayer();
+    player.addBackground({
+      origin: [0, 0, 0], size: [6000, 1000], scale: [1, 1, 1],
+      texture: makeTexture(), sceneW: 6000, sceneH: 1000,
+      isolate: { objectId: 78, rtWidth: 4096, rtHeight: 683, worldW: 6000, worldH: 1000 },
+    });
+    const entry = player.isolatedObjects()[0];
+    // 相机覆盖**完整**世界尺寸（6000×1000），不被 4096 钳制 —— 4096 只约束 RT 的**像素**尺寸。
+    // （曾把相机也钳到 4096：RT 只覆盖对象中央一块，UV 窗口外侧被 CLAMP 采样成边缘拉伸带，
+    //   实测 GTR 3743126786 对象世界宽 7430 ⇒ 右侧 22% 画面宽是条纹。）
+    expect(entry.localCamera.right - entry.localCamera.left).toBeCloseTo(6000, 5);
+    expect(entry.localCamera.bottom - entry.localCamera.top).toBeCloseTo(1000, 5);
+    // RT 覆盖完整对象 ⇒ 合成几何 UV 全窗口（超限只降低分辨率，不做几何裁剪）。
+    const uv = (entry.quad.geometry as THREE.PlaneGeometry).attributes.uv.array as Float32Array;
+    expect(Math.min(...Array.from(uv))).toBeCloseTo(0, 5);
+    expect(Math.max(...Array.from(uv))).toBeCloseTo(1, 5);
+  });
+
+  it('isolate：内容进 localScene（position/rotation 归零、scale 保留），主 scene 放合成 quad', () => {
+    const { player } = makePlayer();
+    const id = player.addBackground({
+      origin: [960, 540, 0], size: [400, 200], scale: [2, 2, 1], angles: [0, 0, 0.5],
+      texture: makeTexture(), sceneW: 1920, sceneH: 1080,
+      // isolate 五字段：objectId = 隔离条目的键（= scene.json 对象 id，与 addBackground 返回的
+      // 图层计数器 id 不是一套编号）；rtWidth/rtHeight = 对象 RT 像素尺寸；
+      // worldW/worldH = 合成 quad 的世界尺寸。
+      isolate: { objectId: 42, rtWidth: 400, rtHeight: 200, worldW: 800, worldH: 400 },
+    });
+    // 返回值语义未变：仍是图层计数器 id（backgroundEntries 的键），首个背景层 = 0。
+    expect(id).toBe(0);
+    const iso = player.isolatedObjects();
+    expect(iso).toHaveLength(1);
+    const entry = iso[0];
+    // 隔离条目的 id = isolate.objectId（对象 id 42），**不是**图层 id 0。
+    expect(entry.id).toBe(42);
+    expect(entry.kind).toBe('background');
+    expect(entry.rt.width).toBe(400);
+    expect(entry.rt.height).toBe(200);
+    // 世界尺寸用调用方传入值（= |size × scale|），不得被 RT 像素尺寸冒充。
+    expect(entry.worldW).toBe(800);
+    expect(entry.worldH).toBe(400);
+    // 内容：对象中心即局部原点，旋转归零（效果作用在对象自身纹理空间），缩放保留
+    const content = entry.localScene.children[0] as THREE.Mesh;
+    expect(content.position.toArray()).toEqual([0, 0, 0]);
+    expect(content.rotation.toArray().slice(0, 3)).toEqual([0, 0, 0]);
+    expect(content.scale.toArray()).toEqual([2, 2, 1]);
+    // ⚠️ 隔离内容材质必须**双面**（2026-09-14 v 约定修复）：隔离内容的局部相机是 y 镜像
+    // （对象 RT 取 WE 的 v=0=图像顶部约定，见 attachIsolated 注释），投影 y 取负会翻转屏幕
+    // 空间绕序 ⇒ FrontSide 的 quad 会被背面剔除（对象整体消失）。
+    expect((content.material as THREE.Material).side).toBe(THREE.DoubleSide);
+    // 局部相机 y 镜像（top < bottom，幅值仍是相机覆盖的世界范围）
+    expect(entry.localCamera.bottom - entry.localCamera.top).toBeCloseTo(400, 5);
+    expect(entry.localCamera.top).toBeLessThan(entry.localCamera.bottom);
+    // 合成 quad 的 UV 已把 RT 的 WE 约定翻回显示约定（v → 1-v；全窗口下 uv.y ∈ {0,1} 不变）
+    const quadUv = (entry.quad.geometry as THREE.PlaneGeometry).attributes.uv.array as Float32Array;
+    expect(Math.min(...Array.from(quadUv))).toBeCloseTo(0, 5);
+    expect(Math.max(...Array.from(quadUv))).toBeCloseTo(1, 5);    // 合成 quad：材质**独立于内容材质**（不得 clone 内容材质——内容材质已把调制烘进 RT，
+    // clone 会让贴回画面时二次施加调制；粒子内容材质是 InstancedBufferGeometry 专用 shader，
+    // clone 到普通 PlaneGeometry 上 alpha 恒为 0）。背景无 colorBlendMode → MeshBasicMaterial。
+    expect(entry.quad.material).not.toBe(content.material);
+    expect(entry.quad.material).toBeInstanceOf(THREE.MeshBasicMaterial);
+    const quadBasic = entry.quad.material as THREE.MeshBasicMaterial;
+    // 合成 quad 的调制中性（无 alpha/brightness 时也必须是 1 / (1,1,1)，不继承内容材质）。
+    expect(quadBasic.opacity).toBe(1);
+    expect([quadBasic.color.r, quadBasic.color.g, quadBasic.color.b]).toEqual([1, 1, 1]);
+    // 合成 quad：世界位置 = origin - scene/2（y 不翻），旋转 = 对象 angles（背景 RT 内容不含
+    // 旋转，旋转必须由 quad 承载），尺寸 = |size×scale| 由几何承载
+    expect(entry.quad.position.toArray()).toEqual([0, 0, 0]);
+    expect(entry.quad.rotation.z).toBeCloseTo(0.5, 6);
+    expect(entry.quad.scale.toArray()).toEqual([1, 1, 1]);
+    // 主 scene 里只有合成 quad（内容不在主 scene）
+    expect(player.scene.children).toContain(entry.quad);
+    expect(player.scene.children).not.toContain(content);
+  });
+
+  it('合成 quad 的 UV = 显示约定（RT 的 WE 约定逐顶点取反 ⇒ 世界顶采样 v=0）', () => {
+    const { player } = makePlayer();
+    player.addBackground({
+      origin: [0, 0, 0], size: [100, 100], scale: [1, 1, 1], texture: makeTexture(),
+      sceneW: 100, sceneH: 100, isolate: { objectId: 91, rtWidth: 100, rtHeight: 50, worldW: 100, worldH: 100 },
+    });
+    const entry = player.isolatedObjects().find((e) => e.id === 91)!;
+    const geo = entry.quad.geometry as THREE.PlaneGeometry;
+    const got = geo.attributes.uv.array as Float32Array;
+    // 独立参考：同参数、**未**翻转的合成几何（窗口映射与翻转可交换，故逐顶点 1-v 即期望值；
+    // 本路径 camW/camH = |worldW/worldH| ⇒ 窗口恒全窗口，翻转后 uv.y ∈ {0,1}）
+    const ref = createCompositeGeometry(100, 100, 100, 100).attributes.uv.array as Float32Array;
+    expect(got.length).toBe(ref.length);
+    for (let i = 0; i < got.length; i += 2) {
+      expect(got[i]).toBeCloseTo(ref[i], 6);            // u 不动
+      expect(got[i + 1]).toBeCloseTo(1 - ref[i + 1], 6); // v → 1-v
+    }
+    // 方向语义（关键）：世界**顶**（position.y = +50）的顶点必须采样 RT 的 v=0
+    // ——RT 的 v=0 是**图像顶部**（WE 约定），两处镜像（局部相机 y 镜像 + 本处 UV 取反）
+    // 精确抵消 ⇒ 对象在画面上正立。
+    const pos = geo.attributes.position.array as Float32Array;
+    for (let k = 0; k < got.length / 2; k++) {
+      expect(got[k * 2 + 1]).toBeCloseTo(pos[k * 3 + 1] > 0 ? 0 : 1, 6);
+    }
+  });
+
+  it('隔离：内容材质保留调制（烘进 RT），合成 quad 调制中性（不二次施加）', () => {
+    const { player } = makePlayer();
+    player.addBackground({
+      origin: [0, 0, 0], size: [10, 10], scale: [1, 1, 1], texture: makeTexture(),
+      alpha: 0.5, brightness: 0.8,
+      sceneW: 100, sceneH: 100, isolate: { objectId: 7, rtWidth: 10, rtHeight: 10, worldW: 10, worldH: 10 },
+    });
+    const entry = player.isolatedObjects().find((e) => e.id === 7)!;
+    const content = entry.localScene.children[0] as THREE.Mesh;
+    const contentMat = content.material as THREE.MeshBasicMaterial;
+    // 内容材质继续带调制：调制必须烘进 RT（内容渲染时施加一次）。
+    expect(contentMat.opacity).toBeCloseTo(0.5, 6);
+    expect(contentMat.color.r).toBeCloseTo(0.8, 6);
+    // 合成 quad 中性：opacity=1、color=(1,1,1)——否则贴回主场景会再乘一次（0.5 → 0.25）。
+    const quadMat = entry.quad.material as THREE.MeshBasicMaterial;
+    expect(quadMat.opacity).toBe(1);
+    expect([quadMat.color.r, quadMat.color.g, quadMat.color.b]).toEqual([1, 1, 1]);
+  });
+
+  it('不传 isolate 时行为不变：内容直接进主 scene，isolatedObjects 为空', () => {
+    const { player } = makePlayer();
+    player.addBackground({
+      origin: [960, 540, 0], size: [400, 200], scale: [1, 1, 1],
+      texture: makeTexture(), sceneW: 1920, sceneH: 1080,
+    });
+    expect(player.isolatedObjects()).toHaveLength(0);
+    expect(player.scene.children).toHaveLength(1);
+  });
+
+  it('粒子隔离：内容 mesh 以负对象中心归位，objCenter uniform 保持原值', () => {
+    const { player } = makePlayer();
+    const verts = () => new Float32Array([0, 0, 0, 10, 0, 0, 1, 1, 1, 1]);
+    const id = player.addParticle(verts, {
+      frameCount: 1, blend: 'alpha',
+      objectCenter: [100, 50, 0], objectScale: [1, 1, 1], objectAngles: [0, 0, 0.3],
+      isolate: { objectId: 71, rtWidth: 64, rtHeight: 64, worldW: 64, worldH: 64 },
+    });
+    // 返回值 = 粒子图层计数器 id（particleLayers 的键）= 0；隔离条目的键是对象 id 71
+    // ——两个独立计数器各自从 0 起，正是必须用对象 id 作隔离键的原因。
+    expect(id).toBe(0);
+    const entry = player.isolatedObjects().find((e) => e.id === 71)!;
+    expect(entry.kind).toBe('particle');
+    const content = entry.localScene.children[0] as THREE.Mesh;
+    const mat = content.material as THREE.ShaderMaterial;
+    // 归零改由「内容 mesh 的负中心平移」承载：shader 用
+    // `local = particlePosition - objCenter - bmOffset` 反解局部坐标，而 particlePosition 本身
+    // 含对象中心 → uniform 置零会让反解错误、内容整体出画（局部相机只有对象 RT 那么大）。
+    // （`-c[2]` 在 c[2]=0 时得到 -0，故 +0 归一化后再比较数值。）
+    expect(content.position.toArray().map((v) => v + 0)).toEqual([-100, -50, 0]);
+    // 注意：粒子 shader 的对象中心 uniform 名是 `objCenter`（不是 objectCenter），
+    // 角度是 `objAngles`——见 PARTICLE_VERTEX_SHADER 的 uniform 声明与 addParticle 的创建处。
+    expect((mat.uniforms.objCenter.value as THREE.Vector3).toArray()).toEqual([100, 50, 0]);
+    expect((mat.uniforms.objAngles.value as THREE.Vector3).toArray()).toEqual([0, 0, 0.3]);
+    // 对象 scale 保留在局部内容上（染色/镜像由局部渲染承担，不由合成 quad 承担）。
+    expect((mat.uniforms.objScale.value as THREE.Vector3).toArray()).toEqual([1, 1, 1]);
+    // 旋转分工：粒子 RT 内容**已含** R(objAngles) → 合成 quad 不得再转（否则双重旋转）。
+    expect(entry.quad.rotation.z).toBe(0);
+    expect(entry.quad.position.toArray()).toEqual([100, 50, 0]);
+    // 合成 quad 的材质独立于粒子内容材质（billboard shader 依赖逐实例属性，clone 到普通
+    // PlaneGeometry 上 alpha 恒为 0 → 隔离粒子完全不可见）；且调制中性。
+    expect(entry.quad.material).not.toBe(content.material);
+    expect(entry.quad.material).toBeInstanceOf(THREE.MeshBasicMaterial);
+    const quadMat = entry.quad.material as THREE.MeshBasicMaterial;
+    expect(quadMat.opacity).toBe(1);
+    expect([quadMat.color.r, quadMat.color.g, quadMat.color.b]).toEqual([1, 1, 1]);
+  });
+
+  // 键冲突回归（审查 Important 2）：背景层与粒子层各有一个**从 0 起的独立计数器**；旧实现把隔离
+  // 条目按这两个计数器编号 → 同一壁纸「既有带效果 image 又有带效果 particle」时，后建的粒子条目
+  // 会**覆盖**先建的背景条目（背景的 quad 从此采样一张永不被渲染的 RT，且两个对象映到同一个键）。
+  // 改用对象 id 作键后两条目共存。
+  it('隔离键 = 对象 id：带效果 image 与 particle 同时隔离时两条目共存（不互相覆盖）', () => {
+    const { player } = makePlayer();
+    const bgId = player.addBackground({
+      origin: [0, 0, 0], size: [10, 10], scale: [1, 1, 1], texture: makeTexture(),
+      sceneW: 100, sceneH: 100, isolate: { objectId: 13, rtWidth: 10, rtHeight: 10, worldW: 10, worldH: 10 },
+    });
+    const verts = () => new Float32Array([0, 0, 0, 10, 0, 0, 1, 1, 1, 1]);
+    const particleId = player.addParticle(verts, {
+      frameCount: 1, blend: 'alpha', objectCenter: [0, 0, 0],
+      isolate: { objectId: 71, rtWidth: 8, rtHeight: 8, worldW: 8, worldH: 8 },
+    });
+    // 两个图层计数器各自从 0 起（互不相干）→ 旧实现下两个隔离条目会撞在同一个键上。
+    expect([bgId, particleId]).toEqual([0, 0]);
+    expect(player.isolatedObjects().map((e) => e.id).sort((a, b) => a - b)).toEqual([13, 71]);
+    // 背景条目仍是自己的 RT（未被粒子条目覆盖）。
+    const bgEntry = player.isolatedObjects().find((e) => e.id === 13)!;
+    expect(bgEntry.kind).toBe('background');
+    expect(bgEntry.rt.width).toBe(10);
+    expect(bgEntry.rt.height).toBe(10);
+    const particleEntry = player.isolatedObjects().find((e) => e.id === 71)!;
+    expect(particleEntry.kind).toBe('particle');
+    expect(particleEntry.rt.width).toBe(8);
+  });
+
+  it('setObjectOutput 切换合成 quad 的采样源（MeshBasicMaterial 路径；cb 混合仍落在 quad 上）', () => {
+    const { player } = makePlayer();
+    const texA = makeTexture();
+    const texB = makeTexture();
+    const idBasic = player.addBackground({
+      origin: [0, 0, 0], size: [10, 10], scale: [1, 1, 1], texture: texA,
+      sceneW: 100, sceneH: 100, isolate: { objectId: 101, rtWidth: 10, rtHeight: 10, worldW: 10, worldH: 10 },
+    });
+    const idBlend = player.addBackground({
+      origin: [0, 0, 0], size: [10, 10], scale: [1, 1, 1], texture: texA, colorBlendMode: 7,
+      sceneW: 100, sceneH: 100, isolate: { objectId: 102, rtWidth: 10, rtHeight: 10, worldW: 10, worldH: 10 },
+    });
+    // 切换采样源用**隔离条目的键**（对象 id），不是 addBackground 的返回值（图层 id 0/1）。
+    expect([idBasic, idBlend]).toEqual([0, 1]);
+    player.setObjectOutput(101, texB);
+    player.setObjectOutput(102, texB);
+    const entryBasic = player.isolatedObjects().find((e) => e.id === 101)!;
+    const entryBlend = player.isolatedObjects().find((e) => e.id === 102)!;
+    // 两条路径现在**都是 MeshBasicMaterial**（合成 quad 采样的是非预乘的对象 RT，禁用内容那套
+    // 预乘 shader，见 createCompositeQuadMaterial 注释）。
+    expect(entryBasic.quad.material).toBeInstanceOf(THREE.MeshBasicMaterial);
+    expect(entryBlend.quad.material).toBeInstanceOf(THREE.MeshBasicMaterial);
+    const basic = entryBasic.quad.material as THREE.MeshBasicMaterial;
+    const blend = entryBlend.quad.material as THREE.MeshBasicMaterial;
+    expect(basic.map).toBe(texB);
+    expect(blend.map).toBe(texB);
+    // 合成 quad 材质独立于内容材质（不 clone 内容材质）；内容材质仍带原有调制。
+    const contentBlend = entryBlend.localScene.children[0] as THREE.Mesh;
+    expect(blend).not.toBe(contentBlend.material);
+    expect(entryBasic.quad.material).not.toBe((entryBasic.localScene.children[0] as THREE.Mesh).material);
+    // 合成 quad 调制中性（不二次施加 alpha/brightness）。
+    expect([blend.color.r, blend.color.g, blend.color.b]).toEqual([1, 1, 1]);
+    expect(blend.opacity).toBe(1);
+    // colorBlendMode=7（Screen）必须落在合成这一步：CustomBlending + OneMinusDstColor
+    expect(blend.blending).toBe(THREE.CustomBlending);
+    expect(blend.blendSrc).toBe(THREE.OneMinusDstColorFactor);
+    expect(blend.blendDst).toBe(THREE.OneFactor);
+    // alpha 按 WE 保留背景的（gl_FragColor.a = screen.a）。
+    expect(blend.blendSrcAlpha).toBe(THREE.ZeroFactor);
+    expect(blend.blendDstAlpha).toBe(THREE.OneFactor);
+    // 无 cb 的合成 quad 仍是普通 alpha 混合。
+    expect(basic.blending).toBe(THREE.NormalBlending);
+  });
+
+  // 2026-09-14：WE 的 colorBlendMode 混合语义从「内容材质」搬到「合成 quad」。
+  // 隔离内容渲染到**新清空的 RT**（alpha=0），若内容材质仍套 cb 的 Zero/One alpha 因子会得到
+  // 「保持背景的 alpha」= 恒 0 ⇒ 合成 quad 的预乘片元被乘成 0 ⇒ 对象整体不可见（旧的
+  // 守卫就是因为这个把 cb 对象排除在隔离之外，代价是 GTR 的云不滚动）。
+  // 现在：内容材质只把自己的颜色 + alpha 写进 RT（普通 alpha 混合，不套 cb）。
+  it('隔离内容材质不套 colorBlendMode（把自己的颜色/alpha 写进 RT，由合成 quad 承担混合）', () => {
+    const { player } = makePlayer();
+    player.addBackground({
+      origin: [0, 0, 0], size: [10, 10], scale: [1, 1, 1], texture: makeTexture(), colorBlendMode: 7,
+      sceneW: 100, sceneH: 100, isolate: { objectId: 103, rtWidth: 10, rtHeight: 10, worldW: 10, worldH: 10 },
+    });
+    const entry = player.isolatedObjects().find((e) => e.id === 103)!;
+    const content = entry.localScene.children[0] as THREE.Mesh;
+    // 内容材质不是预乘 cb shader（隔离路径 forIsolation=true）。
+    expect(content.material).not.toBeInstanceOf(THREE.ShaderMaterial);
+    expect(content.material).toBeInstanceOf(THREE.MeshBasicMaterial);
+    const contentMat = content.material as THREE.MeshBasicMaterial;
+    // 普通 alpha 混合（three 缺省 NormalBlending + 缺省 alpha 因子：SrcAlpha / OneMinusSrcAlpha）。
+    expect(contentMat.blending).toBe(THREE.NormalBlending);
+    expect(contentMat.blendSrcAlpha).toBeNull();
+    expect(contentMat.blendDstAlpha).toBeNull();
+  });
+
+  it('非隔离的 colorBlendMode=7 内容材质**仍**套 cb（主路径语义不变）', () => {
+    const { player } = makePlayer();
+    player.addBackground({
+      origin: [0, 0, 0], size: [10, 10], scale: [1, 1, 1], texture: makeTexture(), colorBlendMode: 7,
+      sceneW: 100, sceneH: 100,
+    });
+    const mesh = player.scene.children[0] as THREE.Mesh;
+    const mat = mesh.material as THREE.ShaderMaterial;
+    expect(mat).toBeInstanceOf(THREE.ShaderMaterial);
+    expect(mat.blending).toBe(THREE.CustomBlending);
+    expect(mat.blendSrc).toBe(THREE.OneMinusDstColorFactor);
+    expect(mat.blendSrcAlpha).toBe(THREE.ZeroFactor);
+    expect(mat.blendDstAlpha).toBe(THREE.OneFactor);
+  });
+
+  it('帧钩子按序调用：隔离内容渲染 → bindOutputs → 主场景渲染 → advance', () => {
+    const { player, mock } = makePlayer();
+    const order: string[] = [];
+    (mock.render as unknown as { mockImplementation: (f: (s: unknown, c: unknown) => void) => void })
+      .mockImplementation((s: unknown) => { order.push(s === player.scene ? 'main' : 'isolated'); });
+    player.addBackground({
+      origin: [0, 0, 0], size: [10, 10], scale: [1, 1, 1], texture: makeTexture(),
+      sceneW: 100, sceneH: 100, isolate: { objectId: 55, rtWidth: 10, rtHeight: 10, worldW: 10, worldH: 10 },
+    });
+    player.setObjectEffectStage({
+      bindOutputs: () => order.push('bind'),
+      advance: () => order.push('advance'),
+    });
+    player.render();
+    expect(order).toEqual(['isolated', 'bind', 'main', 'advance']);
+  });
+
+  it('零回归：不传 isolate 且无 stage 时，render() 只渲染主场景一次', () => {
+    const { player, mock } = makePlayer();
+    player.render();
+    expect(mock.render).toHaveBeenCalledTimes(1);
+    expect((mock.render as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][0]).toBe(player.scene);
+  });
+
+  it('resizeObjectRT 只改 RT 分辨率，不同步相机、不重建合成几何', () => {
+    const { player } = makePlayer();
+    const id = player.addBackground({
+      origin: [0, 0, 0], size: [10, 10], scale: [1, 1, 1], texture: makeTexture(),
+      sceneW: 100, sceneH: 100, isolate: { objectId: 88, rtWidth: 10, rtHeight: 10, worldW: 10, worldH: 10 },
+    });
+    const entry = player.isolatedObjects()[0];
+    const oldGeo = entry.quad.geometry;
+    // 返回值 = 图层计数器 id（0）；重设 RT 用**隔离条目的键**（对象 id 88）。
+    expect(id).toBe(0);
+    player.resizeObjectRT(88, 40, 20);
+    expect(entry.rt.width).toBe(40);
+    expect(entry.rt.height).toBe(20);
+    // 扁平视图必须同步（编排器按它算效果链纹理槽分辨率）。
+    expect(entry.rtWidth).toBe(40);
+    expect(entry.rtHeight).toBe(20);
+    // ⚠️ 相机覆盖的**世界范围**只依赖世界尺寸（10×10），与 RT 像素无关 ⇒ 不得跟着 RT 变。
+    // 曾在此按 RT 像素重设视锥（left=-20/right=20）：dpr>1 时内容被缩小到 1/dpr 并露出边缘
+    // （真机 HiDPI 整张壁纸错乱的同一根因）。
+    expect(entry.localCamera.left).toBe(-5);
+    expect(entry.localCamera.right).toBe(5);
+    // y 镜像（v 约定修复）：幅值 5 不变，top/bottom 符号互换（见 attachIsolated 注释）。
+    expect(entry.localCamera.top).toBe(-5);
+    expect(entry.localCamera.bottom).toBe(5);
+    // 合成几何同样不重建：其世界尺寸与 UV 窗口都只依赖世界尺寸。
+    expect(entry.quad.geometry).toBe(oldGeo);
+  });
+
+  it('dispose 释放隔离 RT / 合成 quad / 内容', () => {
+    const { player } = makePlayer();
+    player.addBackground({
+      origin: [0, 0, 0], size: [10, 10], scale: [1, 1, 1], texture: makeTexture(),
+      sceneW: 100, sceneH: 100, isolate: { objectId: 12, rtWidth: 10, rtHeight: 10, worldW: 10, worldH: 10 },
+    });
+    const entry = player.isolatedObjects()[0];
+    const rtDispose = vi.spyOn(entry.rt, 'dispose');
+    player.dispose();
+    expect(rtDispose).toHaveBeenCalled();
+    expect(player.isolatedObjects()).toHaveLength(0);
   });
 });

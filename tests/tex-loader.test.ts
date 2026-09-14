@@ -221,6 +221,22 @@ describe('parseTex 精灵表（TEXS000x）', () => {
 // 这是 DK 雪片（RG88）/ fog（R8）纹理能在 three 路径加载的关键——此前 format 8/9 无分支直接
 // return null → 白图兜底 → 实心方块（无纹理形状）。
 describe('convertUnormToRgba', () => {
+  // 效果纹理槽语义（alphaPriority=false，2026-09-14 真机对照桌面 WE 时发现）：效果 shader 把
+  // R8/RG88 的通道当**遮罩数值**读（pulse.frag 的 `.r`、shake.frag 的 `.rg`）。若沿用粒子语义
+  //（R8 → rgb 恒白、RG88 → (r,r,r,g)），遮罩恒白/恒 1 ⇒ 本该只作用于遮罩区域的效果覆盖全图
+  //（真机现象：GTR 整屏一闪一闪、整屏晃动，而桌面 WE 上只有手机反光在女孩脸上闪、只有排气管在抖）。
+  it('alphaPriority=false：R8 → r=g=b=R（效果遮罩语义），而非粒子的 rgb 恒白 + alpha=R', () => {
+    const out = convertUnormToRgba(new Uint8Array([0, 128, 255]), TEX_FORMAT.R8, false);
+    expect([...out.slice(0, 4)]).toEqual([0, 0, 0, 255]);
+    expect([...out.slice(4, 8)]).toEqual([128, 128, 128, 255]);
+    expect([...out.slice(8, 12)]).toEqual([255, 255, 255, 255]);
+  });
+
+  it('alphaPriority=false：RG88 → (R, G, 0, 1)（方向图两个分量），而非粒子的 (r,r,r,g)', () => {
+    const out = convertUnormToRgba(new Uint8Array([10, 200]), TEX_FORMAT.RG88, false);
+    expect([...out]).toEqual([10, 200, 0, 255]);
+  });
+
   it('RG88（format 8）：r 复制到 rgb、g 为 alpha（vec4(r,r,r,g)）', () => {
     // 2 像素：px0=(r=200,g=50) px1=(r=10,g=255)
     const src = new Uint8Array([200, 50, 10, 255]);
@@ -403,6 +419,73 @@ describe('textureFromTex 分支选择', () => {
     expect(out[(h - 1) * w * 4 + 2]).toBe(0);
   });
 
+  // ===== v 约定（rowOrder，2026-09-14 水流方向修复）=====
+  // `rowOrder:'topDown'` = WE/对象 RT 约定（.tex 首行落在 v=0 = 图像顶部，不翻行序）；
+  // 缺省 `'bottomUp'` = 显示约定（翻行序，v=0=图像底部）。三条分支都必须按同一开关处理，
+  // 否则效果链的纹理槽与对象 RT 的 v 约定不一致（条带位置对、位移方向反）。
+  describe('rowOrder（纹理 v 约定：缺省显示约定 / topDown = WE 约定）', () => {
+    it('RGBA8888：rowOrder=topDown 时**不**翻行序（首行=图像顶部落在 v=0）', async () => {
+      const w = 8, h = 8;
+      const data = new Uint8Array(w * h * 4);
+      for (let x = 0; x < w; x++) { data[x * 4] = 255; data[x * 4 + 3] = 255; }                                  // row 0 = 图像顶部（红）
+      for (let x = 0; x < w; x++) { data[(h - 1) * w * 4 + x * 4 + 2] = 255; data[(h - 1) * w * 4 + x * 4 + 3] = 255; } // row h-1（蓝）
+      const buf = makeTex({ format: TEX_FORMAT.RGBA8888, images: [[{ width: w, height: h, data }]] });
+      const tex = await textureFromTex(parseTex(buf)!, { rowOrder: 'topDown' }) as THREE.DataTexture;
+      const out = tex.image.data as Uint8Array;
+      expect(out[0]).toBe(255); // 新第一行仍是原第一行（红）
+      expect(out[2]).toBe(0);
+      expect(out[(h - 1) * w * 4 + 2]).toBe(255); // 新最后一行仍是原最后一行（蓝）
+      expect(out[(h - 1) * w * 4]).toBe(0);
+    });
+
+    it('RG88（效果遮罩格式）：rowOrder=topDown 同样不翻行序（通道映射不受影响）', async () => {
+      const w = 4, h = 2;
+      const data = new Uint8Array(w * h * 2);
+      data[0] = 10; data[1] = 20;            // row 0（图像顶部）
+      data[w * 2] = 30; data[w * 2 + 1] = 40; // row 1
+      const buf = makeTex({ format: TEX_FORMAT.RG88, images: [[{ width: w, height: h, data }]] });
+      const tex = await textureFromTex(parseTex(buf)!, { rowOrder: 'topDown', alphaPriority: false }) as THREE.DataTexture;
+      const out = tex.image.data as Uint8Array;
+      expect(Array.from(out.slice(0, 4))).toEqual([10, 20, 0, 255]);            // 首像素仍来自首行
+      expect(Array.from(out.slice(w * 4, w * 4 + 4))).toEqual([30, 40, 0, 255]); // 第二行
+    });
+
+    it('DXT：rowOrder=topDown 时**不**反转块行序', async () => {
+      const w = 8, h = 8, blockSize = 16; // DXT5：2 块宽 × 2 块高
+      const blocks = new Uint8Array(4 * blockSize);
+      for (let i = 0; i < 4; i++) for (let j = 0; j < blockSize; j++) blocks[i * blockSize + j] = i * 30 + j;
+      const buf = makeTex({ format: TEX_FORMAT.DXT5, images: [[{ width: w, height: h, data: blocks }]] });
+      const tex = await textureFromTex(parseTex(buf)!, { rowOrder: 'topDown' }) as THREE.CompressedTexture;
+      const m0 = tex.mipmaps[0] as { data: Uint8Array };
+      expect(Array.from(m0.data.slice(0, blockSize))).toEqual(Array.from(blocks.slice(0, blockSize)));
+      expect(Array.from(m0.data.slice(2 * blockSize, 3 * blockSize))).toEqual(Array.from(blocks.slice(2 * blockSize, 3 * blockSize)));
+    });
+
+    it('编码图像：rowOrder=topDown 时解码用 from-image（不指定 flipY）', async () => {
+      const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4]);
+      const buf = makeTex({
+        container: 'TEXB0003', imageFormat: FIF.JPEG, format: TEX_FORMAT.RGBA8888,
+        images: [[{ width: 32, height: 16, data: jpeg }]],
+      });
+      const tex = await textureFromTex(parseTex(buf)!, { rowOrder: 'topDown' });
+      expect(decodeCalls).toHaveLength(1);
+      expect(decodeCalls[0].opts).toMatchObject({ imageOrientation: 'from-image' });
+      expect(tex!.flipY).toBe(false);
+    });
+
+    it('缺省（不传 rowOrder）= 显示约定：仍翻行序（既有行为逐字不变）', async () => {
+      const w = 4, h = 2;
+      const data = new Uint8Array(w * h * 4);
+      data[0] = 255; data[3] = 255;                      // row 0
+      data[w * 4] = 0; data[w * 4 + 1] = 255; data[w * 4 + 3] = 255; // row 1（绿）
+      const buf = makeTex({ format: TEX_FORMAT.RGBA8888, images: [[{ width: w, height: h, data }]] });
+      const tex = await textureFromTex(parseTex(buf)!) as THREE.DataTexture;
+      const out = tex.image.data as Uint8Array;
+      expect(out[1]).toBe(255); // 首行来自原最后一行（绿）
+      expect(out[0]).toBe(0);
+    });
+  });
+
   it('解码失败（createImageBitmap reject）→ 返回 null 而非抛错', async () => {
     vi.stubGlobal('createImageBitmap', async () => { throw new Error('decode failed'); });
     const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4]);
@@ -443,6 +526,65 @@ describe('textureFromTex 分支选择', () => {
     expect(tex.magFilter).toBe(THREE.LinearFilter);
     expect(tex.minFilter).toBe(THREE.LinearMipmapLinearFilter);
     expect(tex.generateMipmaps).toBe(true);
+  });
+
+  // 2026-09-14：.tex 资源纹理的采样 wrap 模式（CP2077 `effects/clouds` 整屏发白根因）。
+  // WE 语义：flags **bit 1（值 2）= clampuvs** ⇒ CLAMP_TO_EDGE，否则 **REPEAT**（WE 默认）——
+  // 依据 research/.lwe/src/WallpaperEngine/Render/CTexture.cpp:176-183 与
+  // Data/Assets/Texture.h:88-98（TextureFlags_ClampUVs = 2、TextureFlags_IsGif = 4）。
+  // 此前三条分支都不设 wrapS/wrapT ⇒ 落到 three 默认 ClampToEdgeWrapping ⇒ 与 WE 相反。
+  // 本组对**每条分支**（编码图像 / RGBA8888 DataTexture / DXT CompressedTexture）都断言，防止漏设。
+  // ⚠️ 边界：只对 .tex 资源纹理生效；WebGLRenderTarget 的纹理不经 textureFromTex，保持 CLAMP
+  //（object-range.ts 的对象合成 quad 依赖 clamp）。
+  describe('wrap 模式（flags bit 1 clampuvs ⇒ ClampToEdge，否则 WE 默认 Repeat）', () => {
+    const cases: [string, number, number][] = [
+      ['无 clampuvs（flags=0）', 0, THREE.RepeatWrapping],
+      ['带 clampuvs（flags=2）', 2, THREE.ClampToEdgeWrapping],
+      ['sprite 位单独置位（flags=4）→ 仍 Repeat', 4, THREE.RepeatWrapping],
+      ['clampuvs|sprite（flags=6）→ Clamp', 6, THREE.ClampToEdgeWrapping],
+    ];
+
+    it.each(cases)('编码图像分支：%s', async (_name, flags, expected) => {
+      const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
+      const buf = makeTex({
+        container: 'TEXB0003', imageFormat: FIF.PNG, format: TEX_FORMAT.RGBA8888, flags,
+        images: [[{ width: 32, height: 16, data: png }]],
+      });
+      const tex = await textureFromTex(parseTex(buf)!);
+      expect(tex).not.toBeNull();
+      expect(tex).not.toBeInstanceOf(THREE.DataTexture); // 确认走的确实是解码分支
+      expect(tex!.wrapS).toBe(expected);
+      expect(tex!.wrapT).toBe(expected);
+    });
+
+    it.each(cases)('RGBA8888 DataTexture 分支：%s', async (_name, flags, expected) => {
+      const rgba = new Uint8Array(32 * 16 * 4).fill(0x80);
+      const buf = makeTex({ format: TEX_FORMAT.RGBA8888, flags, images: [[{ width: 32, height: 16, data: rgba }]] });
+      const tex = await textureFromTex(parseTex(buf)!) as THREE.DataTexture;
+      expect(tex).toBeInstanceOf(THREE.DataTexture);
+      expect(tex.wrapS).toBe(expected);
+      expect(tex.wrapT).toBe(expected);
+    });
+
+    it.each(cases)('DXT CompressedTexture 分支：%s', async (_name, flags, expected) => {
+      const w = 8, h = 8;
+      const blocks = new Uint8Array((w / 4) * (h / 4) * 8).fill(0x33);
+      const buf = makeTex({ format: TEX_FORMAT.DXT1, flags, images: [[{ width: w, height: h, data: blocks }]] });
+      const tex = await textureFromTex(parseTex(buf)!) as THREE.CompressedTexture;
+      expect(tex).toBeInstanceOf(THREE.CompressedTexture);
+      expect(tex.wrapS).toBe(expected);
+      expect(tex.wrapT).toBe(expected);
+    });
+
+    it('WE 默认值是 Repeat，不是 three 的默认 ClampToEdge（回归根因）', async () => {
+      // 断言的是「显式赋值」而非「碰巧等于 three 默认」：three 的 Texture 缺省 wrapS/wrapT = 1001。
+      const rgba = new Uint8Array(8 * 8 * 4);
+      const buf = makeTex({ format: TEX_FORMAT.RGBA8888, flags: 0, images: [[{ width: 8, height: 8, data: rgba }]] });
+      const tex = await textureFromTex(parseTex(buf)!) as THREE.DataTexture;
+      const fresh = new THREE.DataTexture(new Uint8Array(4), 1, 1);
+      expect(fresh.wrapS).toBe(THREE.ClampToEdgeWrapping); // three 默认 = clamp（这正是此前的偏差）
+      expect(tex.wrapS).toBe(THREE.RepeatWrapping);         // .tex flags=0 → WE 的 REPEAT
+    });
   });
 
   // Task 5 深挖：DXT 压缩背景纹理上下颠倒（Lycoris Recoil-锦木千束）。
