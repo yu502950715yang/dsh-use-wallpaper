@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { CompiledEffectPass } from './shader/effect-chain.js';
 import { type TexLoadOptions } from './tex-loader.js';
+import { type EffectPlan } from './effect-graph.js';
 export declare function resolveTextureSlotPath(path: string | null | undefined): string | null;
 export declare function isBuiltinTexturePath(path: string | null | undefined): boolean;
 export declare function builtinTextureUrl(path: string | null | undefined): string | null;
@@ -53,6 +54,9 @@ export declare class EffectRunner {
     private scenes;
     private textures;
     private failed;
+    private plan;
+    private namedRt;
+    private warnedKeys;
     private width;
     private height;
     private updateInFlight;
@@ -61,6 +65,16 @@ export declare class EffectRunner {
     constructor(renderer: THREE.WebGLRenderer, width: number, height: number, opts?: {
         load?: EffectTexLoader;
     });
+    /** 挂载带具名 RT 的效果计划。**只允许在加载期 / resize 重挂期调用**（帧内不得建 RT，§5.11）。 */
+    setPlan(plan: EffectPlan, chains: CompiledEffectPass[][], wallpaperId: string, opts?: {
+        width?: number;
+        height?: number;
+    }): void;
+    /** 具名 RT 池：先释放旧的再按计划重建（resize / 换壁纸 / 重挂链共用）。 */
+    private ensureNamedTargets;
+    private clearNamedTargets;
+    /** 按 key 去重的 console.warn（同一条件只报一次，避免每帧 / 每次重挂刷屏）。 */
+    private warnOnce;
     setChains(chains: CompiledEffectPass[][], wallpaperId: string, opts?: {
         width?: number;
         height?: number;
@@ -72,6 +86,13 @@ export declare class EffectRunner {
     private fillAudioUniforms;
     private disposeSceneQuads;
     private getScene;
+    /** 绑一个槽：纹理 + g_TextureNResolution（vec4 口径见 AGENT.md §5.17）。 */
+    private bindSlot;
+    /** 无计划（setChains 旧路径）时的退化计划：全部按线性 ping-pong。 */
+    private plannedPasses;
+    /** `textures` 槽引用的 `_rt_*` 是否为本链**未声明**的全局运行时 RT（如 _rt_FullFrameBuffer）。
+     *  调用方还需排除「该槽已被 bind 覆盖」：那时实际用的是 bind 的源，拦截与告警都是误导。 */
+    private isForeignRuntimeRt;
     private resolveTextureSlot;
     update(time: number, input: THREE.WebGLRenderTarget | THREE.Texture): Promise<THREE.Texture | null>;
     lastOutput(): THREE.Texture | null;

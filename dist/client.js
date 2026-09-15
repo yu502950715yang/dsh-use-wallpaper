@@ -21965,6 +21965,80 @@ function resolveUniformBindings(annotations, constants) {
   return out;
 }
 
+// src/client/effect-graph.ts
+var NAMED_RT_LIMIT = 16;
+function namedRtKey(chainIndex, name) {
+  return `${chainIndex}:${name}`;
+}
+function namedRtScale(fboScale, name) {
+  const s = fboScale?.[name];
+  return typeof s === "number" && Number.isFinite(s) && s > 0 ? s : 1;
+}
+function namedRtSize(baseWidth, baseHeight, scale) {
+  const s = Number.isFinite(scale) && scale > 0 ? scale : 1;
+  const w = Number.isFinite(baseWidth) && baseWidth > 0 ? baseWidth : 1;
+  const h = Number.isFinite(baseHeight) && baseHeight > 0 ? baseHeight : 1;
+  return {
+    width: Math.max(1, Math.round(w / s)),
+    height: Math.max(1, Math.round(h / s))
+  };
+}
+function buildEffectPlan(chains, opts) {
+  const baseW = Number.isFinite(opts.baseWidth) && opts.baseWidth > 0 ? opts.baseWidth : 1;
+  const baseH = Number.isFinite(opts.baseHeight) && opts.baseHeight > 0 ? opts.baseHeight : 1;
+  const namedTargets = [];
+  const passes = [];
+  const droppedChains = [];
+  chains.forEach((chain, chainIndex) => {
+    const names = [];
+    for (const p of chain) {
+      if (p.target && !names.includes(p.target)) names.push(p.target);
+    }
+    if (names.length > NAMED_RT_LIMIT) {
+      droppedChains.push(chainIndex);
+      return;
+    }
+    const keyOf = /* @__PURE__ */ new Map();
+    for (const name of names) {
+      const key = namedRtKey(chainIndex, name);
+      keyOf.set(name, key);
+      const size = namedRtSize(baseW, baseH, namedRtScale(chain[0]?.fboScale, name));
+      namedTargets.push({ key, name, width: size.width, height: size.height });
+    }
+    chain.forEach((p, passIndex) => {
+      const bindings = [];
+      const unresolvedBinds = [];
+      for (const b of p.bind ?? []) {
+        const name = (b.name ?? "").trim();
+        if (name === "previous") {
+          bindings.push({ slot: b.index, source: { type: "previous" } });
+          continue;
+        }
+        const key = name ? keyOf.get(name) : void 0;
+        if (key) {
+          bindings.push({ slot: b.index, source: { type: "named", key } });
+          continue;
+        }
+        unresolvedBinds.push(name);
+      }
+      const writesNamed = p.target !== void 0 && p.target !== null && p.target !== "" && keyOf.has(p.target);
+      const planned = {
+        chainIndex,
+        passIndex,
+        bindings,
+        write: writesNamed ? { type: "named", key: keyOf.get(p.target) } : { type: "pingpong" },
+        blendMode: p.blendMode
+      };
+      if (p.target) planned.target = p.target;
+      if (unresolvedBinds.length > 0) planned.unresolvedBinds = unresolvedBinds;
+      passes.push(planned);
+    });
+  });
+  const last = passes[passes.length - 1];
+  if (last && last.write.type === "pingpong") last.write = { type: "final" };
+  return { namedTargets, passes, droppedChains };
+}
+
 // src/client/effect-runner.ts
 function resolveTextureSlotPath(path) {
   if (!path) return null;
@@ -22162,6 +22236,11 @@ var EffectRunner = class {
   // 失败本来就是跳过该 pass（update 里 `continue`），故缓存**不改变执行语义**；setChains
   // （换壁纸 / 重挂链 / resize 重挂）时清空，链变了要重新尝试编译。
   failed = /* @__PURE__ */ new Set();
+  plan = null;
+  // 具名 RT 池：key = `${chainIndex}:${name}`（作用域 = 单条链，见 effect-graph.ts 头注）
+  namedRt = /* @__PURE__ */ new Map();
+  // 已告警的 key（壁纸 id + 链序号）：resize 重挂会再次进入 setPlan，去重避免刷屏
+  warnedKeys = /* @__PURE__ */ new Set();
   width;
   height;
   // update 串行化：帧循环每帧调用 update，但内部有异步纹理槽加载（await），
@@ -22189,7 +22268,50 @@ var EffectRunner = class {
     this.rtA = new WebGLRenderTarget(width, height);
     this.rtB = new WebGLRenderTarget(width, height);
   }
+  /** 挂载带具名 RT 的效果计划。**只允许在加载期 / resize 重挂期调用**（帧内不得建 RT，§5.11）。 */
+  setPlan(plan, chains, wallpaperId, opts) {
+    this.plan = plan;
+    this.chains = chains;
+    this.id = wallpaperId;
+    this.last = null;
+    this.failed.clear();
+    const size = resolveTargetSize({ width: this.width, height: this.height }, opts);
+    this.ensureTargets(size.width, size.height);
+    this.ensureNamedTargets(plan);
+    this.disposeMaterials();
+    this.textures.clear();
+    for (const pass of chains.flat()) {
+      for (const path of pass.textureSlots) {
+        if (path) void this.resolveTextureSlot(path);
+      }
+    }
+  }
+  /** 具名 RT 池：先释放旧的再按计划重建（resize / 换壁纸 / 重挂链共用）。 */
+  ensureNamedTargets(plan) {
+    this.clearNamedTargets();
+    for (const target of plan.namedTargets) {
+      this.namedRt.set(target.key, new WebGLRenderTarget(target.width, target.height));
+    }
+    for (const chainIndex of plan.droppedChains) {
+      this.warnOnce(
+        `${this.id}:${chainIndex}`,
+        `[wallpaper-engine] \u6548\u679C\u94FE ${chainIndex} \u7684\u5177\u540D RT \u8D85\u8FC7 ${NAMED_RT_LIMIT} \u5F20\uFF0C\u6574\u94FE\u8DF3\u8FC7\uFF08\u58C1\u7EB8 ${this.id}\uFF09`
+      );
+    }
+  }
+  clearNamedTargets() {
+    for (const rt of this.namedRt.values()) rt.dispose();
+    this.namedRt.clear();
+  }
+  /** 按 key 去重的 console.warn（同一条件只报一次，避免每帧 / 每次重挂刷屏）。 */
+  warnOnce(key, message) {
+    if (this.warnedKeys.has(key)) return;
+    this.warnedKeys.add(key);
+    console.warn(message);
+  }
   setChains(chains, wallpaperId, opts) {
+    this.plan = null;
+    this.clearNamedTargets();
     this.chains = chains;
     this.id = wallpaperId;
     this.last = null;
@@ -22337,59 +22459,138 @@ var EffectRunner = class {
     this.scenes.set(key, scene);
     return scene;
   }
+  /** 绑一个槽：纹理 + g_TextureNResolution（vec4 口径见 AGENT.md §5.17）。 */
+  bindSlot(material, slot, tex) {
+    const name = `g_Texture${slot}`;
+    if (!material.uniforms[name]) material.uniforms[name] = { value: null };
+    material.uniforms[name].value = tex;
+    const res = material.uniforms[`g_Texture${slot}Resolution`];
+    if (res) {
+      const r4 = resolveTextureResolution4(tex, this.width, this.height);
+      res.value = new Vector4(r4.x, r4.y, r4.z, r4.w);
+    }
+  }
+  /** 无计划（setChains 旧路径）时的退化计划：全部按线性 ping-pong。 */
+  plannedPasses() {
+    if (this.plan) return this.plan.passes;
+    return this.chains.flatMap((chain, chainIndex) => chain.map((p, passIndex) => ({
+      chainIndex,
+      passIndex,
+      bindings: [],
+      write: { type: "pingpong" },
+      blendMode: p.blendMode
+    })));
+  }
+  /** `textures` 槽引用的 `_rt_*` 是否为本链**未声明**的全局运行时 RT（如 _rt_FullFrameBuffer）。
+   *  调用方还需排除「该槽已被 bind 覆盖」：那时实际用的是 bind 的源，拦截与告警都是误导。 */
+  isForeignRuntimeRt(path, chainIndex) {
+    return path.startsWith("_rt_") && !this.namedRt.has(`${chainIndex}:${path}`);
+  }
   async resolveTextureSlot(path) {
     return loadEffectTextureSlot(path, this.id, this.textures, this.load);
   }
   // 串行化 + 输入参数化（Ruling P1-1）：input 可为场景 RT 或对象 RT 的纹理（任意 Texture）。
   // 返回最终输出纹理；链为空或上一帧 update 未完成（纹理槽异步加载中）→ null。
   // 帧循环用 lastOutput() 贴屏，last 保持最近完成输出，无帧间闪烁。
+  // 有 plan 时按计划执行：写端三态（具名 RT / ping-pong）+ bind 按 g_Texture<index> 覆盖槽；
+  // `previous` = 进入 target 序列前的输入（lwe CImage::configurePassTarget），逐链独立。
   async update(time, input) {
     if (this.updateInFlight) return null;
     this.updateInFlight = true;
     try {
       const flat = this.chains.flat();
       if (flat.length === 0) return null;
+      const planned = this.plannedPasses();
+      if (planned.length === 0) return null;
       const slotTex = /* @__PURE__ */ new Map();
-      for (let i = 0; i < flat.length; i++) {
-        const pass = flat[i];
-        const slots = effectSlotCount(pass);
+      for (const pp of planned) {
+        const p = this.chains[pp.chainIndex][pp.passIndex];
+        const slots = effectSlotCount(p);
         for (let j = 0; j < slots; j++) {
-          const path = pass.textureSlots[j];
-          if (path) slotTex.set(`${i}:${j}`, await this.resolveTextureSlot(path));
-          else slotTex.set(`${i}:${j}`, resolveSlotFallback(pass, j));
+          const path = p.textureSlots[j];
+          const key = `${pp.chainIndex}:${pp.passIndex}:${j}`;
+          const boundByBind = pp.bindings.some((b) => b.slot === j);
+          if (path && !boundByBind && this.isForeignRuntimeRt(path, pp.chainIndex)) {
+            this.warnOnce(
+              `foreign-rt-slot:${this.id}:${key}:${path}`,
+              `[wallpaper-engine] \u7EB9\u7406\u69FD\u5F15\u7528\u4E86\u672C\u94FE\u672A\u58F0\u660E\u7684\u8FD0\u884C\u65F6 RT\uFF0C\u8DF3\u8FC7\u7ED1\u5B9A\uFF08\u69FD\u7559\u7A7A\uFF09: g_Texture${j} \u2190 ${path}\uFF08\u58C1\u7EB8 ${this.id}\uFF0Cpass ${pp.chainIndex}:${pp.passIndex}\uFF09`
+            );
+            slotTex.set(key, resolveSlotFallback(p, j));
+            continue;
+          }
+          slotTex.set(key, path ? await this.resolveTextureSlot(path) : resolveSlotFallback(p, j));
         }
       }
       let readTex = resolveInputTexture(input);
       let lastWrite = null;
-      for (let i = 0; i < flat.length; i++) {
-        const pass = flat[i];
-        const material = this.getMaterial(pass, `${i}`);
-        if (!material) continue;
-        for (let j = 0; j < effectSlotCount(pass); j++) {
-          const tex = slotTex.get(`${i}:${j}`) ?? null;
-          const slot = `g_Texture${j}`;
-          if (material.uniforms[slot]) material.uniforms[slot].value = tex;
-          const res = `g_Texture${j}Resolution`;
-          if (material.uniforms[res]) {
-            const r4 = resolveTextureResolution4(tex, this.width, this.height);
-            material.uniforms[res].value = new Vector4(r4.x, r4.y, r4.z, r4.w);
-          }
+      let last = null;
+      let inSeq = false;
+      let effectInput = null;
+      let currentChain = -1;
+      for (const pp of planned) {
+        const p = this.chains[pp.chainIndex][pp.passIndex];
+        const key = `${pp.chainIndex}:${pp.passIndex}`;
+        if (pp.chainIndex !== currentChain) {
+          inSeq = false;
+          effectInput = null;
+          currentChain = pp.chainIndex;
         }
-        if (material.uniforms["g_Texture0"]) material.uniforms["g_Texture0"].value = readTex;
-        if (material.uniforms["g_Texture0Resolution"]) {
-          const r4 = resolveTextureResolution4(readTex, this.width, this.height);
-          material.uniforms["g_Texture0Resolution"].value = new Vector4(r4.x, r4.y, r4.z, r4.w);
+        for (const name of pp.unresolvedBinds ?? []) {
+          if (!name) continue;
+          this.warnOnce(
+            `unresolved-bind:${this.id}:${pp.chainIndex}:${pp.passIndex}:${name}`,
+            `[wallpaper-engine] bind \u5F15\u7528\u7684\u540D\u5B57\u4E0D\u5728\u672C\u94FE\u5185\uFF0C\u8BE5\u69FD\u4FDD\u6301\u9ED8\u8BA4: ${name}\uFF08\u58C1\u7EB8 ${this.id}\uFF0Cpass ${pp.chainIndex}:${pp.passIndex}\uFF09`
+          );
+        }
+        const writesNamed = pp.write.type === "named";
+        const material = this.getMaterial(p, key);
+        if (!material) {
+          if (writesNamed) {
+            this.renderer.setRenderTarget(null);
+            this.last = null;
+            return null;
+          }
+          continue;
+        }
+        if (writesNamed && !inSeq) {
+          inSeq = true;
+          effectInput = readTex;
+        }
+        for (let j = 0; j < effectSlotCount(p); j++) {
+          this.bindSlot(material, j, slotTex.get(`${pp.chainIndex}:${pp.passIndex}:${j}`) ?? null);
+        }
+        this.bindSlot(material, 0, readTex);
+        for (const b of pp.bindings) {
+          const tex = b.source.type === "previous" ? effectInput : this.namedRt.get(b.source.key)?.texture ?? null;
+          if (tex) this.bindSlot(material, b.slot, tex);
         }
         if (material.uniforms["g_Time"]) material.uniforms["g_Time"].value = time;
         if (this.audioSpectrum) this.fillAudioUniforms(material, this.audioSpectrum);
-        const writeTarget = pickWriteTarget(lastWrite, this.rtA, this.rtB);
-        renderIntoRenderTarget(this.renderer, writeTarget, this.getScene(`${i}`, material), SCREEN_CAMERA);
+        let writeTarget;
+        if (pp.write.type === "named") {
+          const namedTarget = this.namedRt.get(pp.write.key);
+          if (!namedTarget) {
+            this.warnOnce(`no-named-rt:${this.id}:${key}`, `\u5177\u540D RT \u7F3A\u5931\uFF08${key}\uFF09\uFF0C\u653E\u5F03\u8BE5\u6548\u679C\u94FE\uFF08\u58C1\u7EB8 ${this.id}\uFF09`);
+            this.renderer.setRenderTarget(null);
+            this.last = null;
+            return null;
+          }
+          writeTarget = namedTarget;
+        } else {
+          writeTarget = pickWriteTarget(lastWrite, this.rtA, this.rtB);
+          lastWrite = writeTarget;
+        }
+        renderIntoRenderTarget(this.renderer, writeTarget, this.getScene(key, material), SCREEN_CAMERA);
         readTex = writeTarget.texture;
-        lastWrite = writeTarget;
+        last = readTex;
+        if (!writesNamed && inSeq) {
+          inSeq = false;
+          effectInput = null;
+        }
       }
       this.renderer.setRenderTarget(null);
-      this.last = readTex;
-      return readTex;
+      this.last = last;
+      return last;
     } finally {
       this.updateInFlight = false;
     }
@@ -22402,6 +22603,8 @@ var EffectRunner = class {
     this.disposeMaterials();
     this.rtA.dispose();
     this.rtB.dispose();
+    this.clearNamedTargets();
+    this.plan = null;
     this.textures.clear();
     this.audioSpectrum = null;
   }
@@ -23432,6 +23635,9 @@ async function resolveEffectChain(sceneEffect, loadFile) {
         if (idx > 0 && textures[idx]) derived[combo] = 1;
       }
       const combos = { ...derived, ...override.combos ?? {} };
+      for (const raw of [rawVert, rawFrag]) {
+        for (const [k, v] of extractComboDefaults(raw)) if (!(k in combos)) combos[k] = v;
+      }
       const vertSrc = preprocessWeShader(rawVert, combos);
       const fragSrc = preprocessWeShader(rawFrag, combos);
       const samplerModes = {};
@@ -24224,12 +24430,6 @@ async function resolveParticleMaterial(id, specText) {
 function weVRowOrderLoader(load = loadTexTexture) {
   return (url, opts) => load(url, { ...opts, rowOrder: "topDown" });
 }
-function isLinearEffectChain(passes) {
-  if (passes.length === 0) return false;
-  return passes.every(
-    (p) => !p.target && p.bind.every((b) => b.name === "previous" && b.index === 0)
-  );
-}
 var ObjectEffectStage = class {
   constructor(host, opts) {
     this.host = host;
@@ -24237,7 +24437,6 @@ var ObjectEffectStage = class {
     this.screenScale = opts.screenScale;
   }
   entries = /* @__PURE__ */ new Map();
-  skips = /* @__PURE__ */ new Set();
   wallpaperId;
   /** 屏幕密度（设备像素 / 世界单位）：对象 RT 尺寸的唯一基准，随视口变化（onViewportResize）。 */
   screenScale;
@@ -24248,7 +24447,7 @@ var ObjectEffectStage = class {
   // 因此此刻切换 RT 不会打扰本帧主场景渲染）；忙时排队，等前一项 settle 后再发起。
   busy = false;
   queue = [];
-  /** 去重告警集合（`warnSkip` 之外的通用去重，按 key 只打印一次，防每帧刷屏）。 */
+  /** 去重告警集合（按 key 只打印一次，防每帧刷屏）。 */
   warned = /* @__PURE__ */ new Set();
   /** 当前屏幕密度（设备像素 / 世界单位）；同源下发契约见类头。 */
   scale() {
@@ -24265,29 +24464,21 @@ var ObjectEffectStage = class {
       entry.worldH = worldH;
       return;
     }
-    this.entries.set(objId, { runner: null, chains: [], worldW, worldH });
+    this.entries.set(objId, { runner: null, chains: [], plan: null, worldW, worldH });
   }
-  /** 挂载某对象的效果链。调用顺序契约：player 先在 loadSceneToThree 内建好隔离条目，
-   *  stage 再挂链（Task 5 的接线顺序：setWorldSize → setObjectChains）；找不到隔离条目
-   *  说明契约被破坏 → 明确告警一次，绝不静默丢弃，也绝不猜尺寸。 */
+  /** 挂载某对象的效果链（线性链与具名 RT 图链一视同仁，计划交执行器执行）。调用顺序契约：
+   *  player 先在 loadSceneToThree 内建好隔离条目，stage 再挂链（Task 5 的接线顺序：
+   *  setWorldSize → setObjectChains）；找不到隔离条目说明契约被破坏 → 明确告警一次，
+   *  绝不静默丢弃，也绝不猜尺寸。 */
   setObjectChains(objId, chains) {
     if (this.disposed) return;
-    const usable = [];
-    for (const one of chains) {
-      if (isLinearEffectChain(one)) {
-        usable.push(one);
-      } else {
-        const label = one.find((p) => p.target)?.target ?? one.find((p) => p.bind.length > 0)?.bind[0]?.name ?? "(\u5177\u540D RT)";
-        this.warnSkip(label);
-      }
-    }
-    if (usable.length === 0) return;
+    if (chains.length === 0) return;
     const view = this.host.isolatedObjects().find((o) => o.id === objId);
     if (!view) {
       this.warnOnce(`no-isolated:${objId}`, `\u5BF9\u8C61 ${objId} \u5C1A\u65E0\u9694\u79BB\u6761\u76EE\uFF0C\u6548\u679C\u94FE\u672A\u6302\u8F7D\uFF08\u8C03\u7528\u987A\u5E8F\u9519\u8BEF\uFF09`);
       return;
     }
-    this.mount(objId, usable, view.rtWidth, view.rtHeight);
+    this.mount(objId, chains, view.rtWidth, view.rtHeight);
   }
   /** 视口变化：按新的**屏幕密度**重算每个对象的 RT 像素尺寸，并用同一份链重挂（runner 内部 RT 跟随）。
    *  ⚠️ 参数是「设备像素 / 世界单位」这一个标量（object-range.screenScalePx 的返回值），**不是**
@@ -24295,8 +24486,8 @@ var ObjectEffectStage = class {
    *  各算一遍、输入不同源时任何一次 resize 都会把 RT 打回旧口径（3fd6b00「挂载期 RT 正确、
    *  resize 后被覆盖」这一漏检类的同源地雷）。密度必须由调用方从**主相机同一套 cover 语义**
    *  取得（three-renderer 用 player.screenScalePx()，见其 resize 回调）。
-   *  ⚠️ 遍历 `this.entries` 的**所有**条目（不按有无 runner 过滤）：链全被跳过、因而没有 runner
-   *  的隔离对象（如具名 RT 图链）同样要随视口重设 RT，否则视口放大后它一直用旧的小 RT（偏糊）、
+   *  ⚠️ 遍历 `this.entries` 的**所有**条目（不按有无 runner 过滤）：只 setWorldSize 过、链尚未挂载
+   *  的隔离对象同样要随视口重设 RT，否则视口放大后它一直用旧的小 RT（偏糊）、
    *  视口缩小时又一直占着旧的大 RT（超额显存）。 */
   onViewportResize(screenScale) {
     if (this.disposed) return;
@@ -24308,7 +24499,8 @@ var ObjectEffectStage = class {
       if (view.rtWidth === size.width && view.rtHeight === size.height) continue;
       this.host.resizeObjectRT(id, size.width, size.height);
       if (!entry.runner) continue;
-      entry.runner.setChains(entry.chains, this.wallpaperId, { width: size.width, height: size.height });
+      entry.plan = buildEffectPlan(entry.chains, { baseWidth: size.width, baseHeight: size.height });
+      entry.runner.setPlan(entry.plan, entry.chains, this.wallpaperId, { width: size.width, height: size.height });
       this.host.setObjectOutput(id, view.rtTexture);
     }
   }
@@ -24330,10 +24522,6 @@ var ObjectEffectStage = class {
       this.enqueue(() => runner.update(time, view.rtTexture));
     }
   }
-  /** 被跳过的具名 RT 图链标识（按标识去重），供诊断与测试查询。 */
-  rtGraphSkips() {
-    return [...this.skips];
-  }
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
@@ -24352,17 +24540,10 @@ var ObjectEffectStage = class {
     this.entries.set(id, {
       runner,
       chains: [],
+      plan: null,
       worldW: view ? view.rtWidth / this.scale() : 1,
       worldH: view ? view.rtHeight / this.scale() : 1
     });
-  }
-  /** 具名 RT 图链降级告警：按标识去重（同一效果被多个对象引用时只告警一次，不刷屏）。 */
-  warnSkip(label) {
-    if (this.skips.has(label)) return;
-    this.skips.add(label);
-    console.warn(
-      `[wallpaper-engine] \u6548\u679C\u9700\u8981\u5177\u540D RT\uFF08P2 \u672A\u5B9E\u73B0\uFF09\uFF0C\u8DF3\u8FC7: ${label}`
-    );
   }
   /** 去重告警（同一 key 只打印一次，防每帧刷屏）。 */
   warnOnce(key, message) {
@@ -24405,14 +24586,15 @@ var ObjectEffectStage = class {
   mount(objId, chains, rtW, rtH) {
     let entry = this.entries.get(objId);
     if (!entry) {
-      entry = { runner: null, chains, worldW: rtW / this.scale(), worldH: rtH / this.scale() };
+      entry = { runner: null, chains, plan: null, worldW: rtW / this.scale(), worldH: rtH / this.scale() };
       this.entries.set(objId, entry);
     }
     entry.chains = chains;
+    entry.plan = buildEffectPlan(chains, { baseWidth: rtW, baseHeight: rtH });
     if (!entry.runner) {
       entry.runner = new EffectRunner(this.host.renderer, rtW, rtH, { load: weVRowOrderLoader() });
     }
-    entry.runner.setChains(chains, this.wallpaperId, { width: rtW, height: rtH });
+    entry.runner.setPlan(entry.plan, chains, this.wallpaperId, { width: rtW, height: rtH });
   }
 };
 
@@ -24452,6 +24634,7 @@ async function collectObjectEffectChains(desc, loadFile) {
     const chains = [];
     for (const fx of group.effects) {
       if (typeof fx?.file !== "string") continue;
+      if (fx.visible === false) continue;
       const chain = await resolveEffectChain({ file: fx.file, passes: fx.passes }, loadFile);
       if (!chain) {
         console.warn("[wallpaper-engine] \u6548\u679C\u94FE\u89E3\u6790\u5931\u8D25\uFF0C\u8DF3\u8FC7:", fx.file);
@@ -24548,25 +24731,9 @@ function createThreeSceneRenderer(opts) {
         const dpr = typeof window !== "undefined" && window.devicePixelRatio ? window.devicePixelRatio : 1;
         const screenScale = screenScalePx(desc.orthogonal.width, desc.orthogonal.height, vw, vh, dpr);
         const isolate = /* @__PURE__ */ new Map();
-        const rtGraphOnly = /* @__PURE__ */ new Set();
         for (const obj of desc.objects) {
           const chains = effectChains.get(obj.id);
           if (!chains || chains.length === 0) continue;
-          const usable = chains.some((one) => isLinearEffectChain(one));
-          if (!usable) {
-            if (obj.kind === "image" || obj.kind === "particle" && particles.has(obj.id)) {
-              rtGraphOnly.add(obj.id);
-              for (const one of chains) {
-                if (isLinearEffectChain(one)) continue;
-                const label = one.find((p) => p.target)?.target ?? one.find((p) => p.bind.length > 0)?.bind[0]?.name ?? "(\u5177\u540D RT)";
-                warnOnce2(
-                  `rt-graph:${label}`,
-                  `\u6548\u679C\u9700\u8981\u5177\u540D RT\uFF08P2 \u672A\u5B9E\u73B0\uFF09\uFF0C\u8DF3\u8FC7: ${label}\uFF08\u5BF9\u8C61 ${obj.id} \u7684\u94FE\u5168\u4E3A\u5177\u540D RT \u56FE\u94FE\uFF0C\u4E0D\u518D\u9694\u79BB\uFF09`
-                );
-              }
-            }
-            continue;
-          }
           if (obj.kind === "image") {
             const tex = backgroundTextures.get(obj.id);
             const texW = tex?.image?.width ?? obj.size?.[0] ?? 1;
@@ -24609,7 +24776,7 @@ function createThreeSceneRenderer(opts) {
         let stage = null;
         let droppedEffects = 0;
         for (const [objId, chains] of effectChains) {
-          if (isolate.has(objId) || rtGraphOnly.has(objId)) continue;
+          if (isolate.has(objId)) continue;
           droppedEffects += chains.length;
         }
         if (droppedEffects > 0) {
