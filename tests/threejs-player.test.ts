@@ -16,16 +16,25 @@ function createMockRenderer() {
   const setAnimationLoop = vi.fn((fn: (() => void) | null) => {
     loop = fn;
   });
+  // 清屏 alpha 与「渲染那一刻的渲染目标」都要记录：渲染到 RT 时必须清成透明黑（alpha=0），
+  // 主场景 → 画布保持原值（1）。缺这两项，2026-09-15 的「整片黑块」根因无法在单测里回归。
+  let clearAlpha = 1;
+  let currentTarget: unknown = null;
+  const renders: Array<{ scene: unknown; target: unknown; clearAlpha: number }> = [];
   const renderer = {
     setSize: vi.fn(),
     setPixelRatio: vi.fn(),
-    render: vi.fn(),
+    render: vi.fn((scene: unknown) => { renders.push({ scene, target: currentTarget, clearAlpha }); }),
     // 对象隔离渲染（Task 3）：renderIsolatedContents 会切换渲染目标到对象 RT，
     // mock 需提供同名方法（no-op），否则隔离路径全部以 TypeError 失败。
-    setRenderTarget: vi.fn(),
+    setRenderTarget: vi.fn((t: unknown = null) => { currentTarget = t; }),
+    getClearAlpha: vi.fn(() => clearAlpha),
+    setClearAlpha: vi.fn((v: number) => { clearAlpha = v; }),
     dispose: vi.fn(),
     setAnimationLoop,
     _getLoop: () => loop,
+    _renders: renders,
+    _clearAlpha: () => clearAlpha,
   };
   return renderer;
 }
@@ -1434,6 +1443,24 @@ describe('ThreeScenePlayer 对象隔离', () => {
     expect(mat.blendSrc).toBe(THREE.OneMinusDstColorFactor);
     expect(mat.blendSrcAlpha).toBe(THREE.ZeroFactor);
     expect(mat.blendDstAlpha).toBe(THREE.OneFactor);
+  });
+
+  // 2026-09-15 根因回归：three 的清屏 alpha 由 WebGLRenderer 的 `alpha` 参数决定（缺省 false
+  // ⇒ clearAlpha=1），渲染到 **RenderTarget** 时同样生效 ⇒ RT 被清成**不透明黑** ⇒ 对象内容
+  // 透明处 / 效果降 alpha 处变成黑块贴回主场景（2911105183 实测 31.1% 画面纯黑）。
+  // 修法：渲染进 RT 前把清屏 alpha 置 0、渲染后恢复（见 rt-render.ts）。
+  it('隔离内容渲染用透明清屏（clearAlpha=0），主场景渲染保持原值', () => {
+    const { player, mock } = makePlayer();
+    player.addBackground({
+      origin: [0, 0, 0], size: [10, 10], scale: [1, 1, 1], texture: makeTexture(),
+      sceneW: 100, sceneH: 100, isolate: { objectId: 77, rtWidth: 10, rtHeight: 10, worldW: 10, worldH: 10 },
+    });
+    player.render();
+    const isoRender = mock._renders.find((r) => r.target !== null);
+    const mainRender = mock._renders.find((r) => r.target === null);
+    expect(isoRender?.clearAlpha).toBe(0);   // 对象 RT：透明黑清屏
+    expect(mainRender?.clearAlpha).toBe(1);  // 主场景 → 画布：原值不变
+    expect(mock._clearAlpha()).toBe(1);      // 渲染后状态已恢复
   });
 
   it('帧钩子按序调用：隔离内容渲染 → bindOutputs → 主场景渲染 → advance', () => {

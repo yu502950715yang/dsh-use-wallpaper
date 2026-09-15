@@ -138,6 +138,34 @@ describe('preprocessWeShader', () => {
     expect(out).not.toContain('const int float(blendMode)');  // 无语法破坏
     expect(out).toContain('blendMode == 9');                  // int 比较保持
   });
+  it('int 变量与标识符（宏/常量）比较不被包 float()（2026-09-15 修复 refraction 编译失败）', () => {
+    // 实测：common_fragment.h 的 `ConvertTextureFormat(const int format, …)` 里
+    // `if (format == FORMAT_RG88 || format == FORMAT_RG1616F)` 曾被处理成
+    // `float(format) == FORMAT_RG88`（float 与 int 比较）⇒ GLSL ES 3.00
+    // `'==' : wrong operand types` ⇒ 2911105183 的 effects/refraction 整条 pass 编译失败。
+    // 根因：比较保护的两条**单侧**规则顺序错了——右侧规则先把 `==` 吞进保护段，
+    // 左侧规则再也匹配不到左操作数，剩下的 int 变量被 float() 包裹。
+    const src = [
+      '#define FORMAT_RG88 8',
+      '#define FORMAT_R8 9',
+      'vec4 ConvertTextureFormat(const int format, vec4 _sample) {',
+      '  if (format == FORMAT_RG88) return _sample.rrrg;',
+      '  if (format == FORMAT_R8) return _sample.rrrr;',
+      '  return _sample;',
+      '}',
+      'void main() { gl_FragColor = ConvertTextureFormat(8, vec4(1.0)); }',
+    ].join('\n');
+    const out = preprocessWeShader(src, {});
+    expect(out).toContain('format == FORMAT_RG88');   // 比较两侧都保持 int
+    expect(out).toContain('format == FORMAT_R8');
+    expect(out).not.toContain('float(format) ==');    // 不再产生 float/int 比较
+  });
+  it('int 变量与另一个 int 变量比较不被包 float()', () => {
+    const src = 'int f(const int a, const int b) { if (a == b) return 1; return 0; }\nvoid main() { gl_FragColor = vec4(float(f(1, 2))); }';
+    const out = preprocessWeShader(src, {});
+    expect(out).toContain('a == b');
+    expect(out).not.toContain('float(a) == b');
+  });
   it('const 非常量初始化降级（GLSL3 只允许编译期常量）', () => {
     const src = 'uniform float u_t; uniform float u_g;\nconst float threshold = pow(u_t, u_g);\nvoid main() { gl_FragColor = vec4(threshold); }';
     const out = preprocessWeShader(src, {});

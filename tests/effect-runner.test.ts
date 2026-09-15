@@ -515,8 +515,52 @@ function createFailRenderer() {
   return renderer;
 }
 
-describe('EffectRunner 编译失败缓存（F3）', () => {
-  it('同一 key 第二次 update 不再重建材质 / 不再探针渲染；setChains 后重新尝试', async () => {
+// 2026-09-15 根因回归：效果 pass 渲染进 ping-pong RT 必须**透明清屏**（cleared alpha=0）。
+// three 的清屏 alpha 缺省为 1（renderer 以 `alpha: false` 构造），渲染到 RT 时同样生效 ⇒
+// RT 被清成不透明黑；效果把 alpha 降下去处（opacity / mask）rgb 被 SrcAlpha 混合乘成 0、
+// alpha 通道的 blendFunc (ONE, ONE_MINUS_SRC_ALPHA) 又让 alpha 保持 1 ⇒ 输出**不透明黑**
+// ⇒ 合成 quad 把黑块盖回主场景（2911105183 实测 31.1% 画面纯黑）。
+describe('EffectRunner RT 清屏 alpha（黑块根因回归）', () => {
+  function createAlphaRenderer(initialAlpha = 1) {
+    let alpha = initialAlpha;
+    const at = (t: string) => ({ t, alpha });
+    const events: Array<{ t: string; alpha: number }> = [];
+    const renderer = {
+      debug: { onShaderError: null as null | ((...a: unknown[]) => void) },
+      setRenderTarget: vi.fn(),
+      render: vi.fn(() => { events.push(at('render')); }),
+      getClearAlpha: vi.fn(() => alpha),
+      setClearAlpha: vi.fn((v: number) => { alpha = v; }),
+      _alpha: () => alpha,
+      _events: events,
+    };
+    return renderer;
+  }
+
+  it('pass 渲染时清屏 alpha=0，渲染后恢复原值（1）', async () => {
+    const renderer = createAlphaRenderer(1);
+    const runner = new EffectRunner(renderer as never, 16, 16);
+    const pass = failingPassFree('normal');
+    runner.setChains([[pass]], '2911105183', { width: 16, height: 16 });
+    await runner.update(0, new THREE.Texture());
+    // 第 1 次 render = 1×1 编译探针，第 2 次 = 真正写 ping-pong RT 的 pass 渲染
+    expect(renderer._events.length).toBe(2);
+    expect(renderer._events.every((e) => e.alpha === 0)).toBe(true);
+    expect(renderer._alpha()).toBe(1); // 渲染后已恢复，主场景 → 画布语义不变
+    runner.dispose();
+  });
+});
+
+function failingPassFree(blend: string): CompiledEffectPass {
+  return {
+    vertSrc: 'void main(){ gl_Position = vec4(position, 1.0); }',
+    fragSrc: 'uniform sampler2D g_Texture0; void main(){ gl_FragColor = vec4(1.0); }',
+    rawVert: '', rawFrag: '', combos: {}, uniforms: new Map(), textureSlots: [],
+    samplerModes: {}, blendMode: blend, target: null, bind: [], fboScale: {},
+  };
+}
+
+describe('EffectRunner 编译失败缓存（F3）', () => {  it('同一 key 第二次 update 不再重建材质 / 不再探针渲染；setChains 后重新尝试', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const disposeSpy = vi.spyOn(THREE.Material.prototype, 'dispose');
     const renderer = createFailRenderer();

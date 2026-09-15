@@ -51,6 +51,13 @@ const SCENE = JSON.stringify({
   ],
 });
 
+// 背景纹理 fake：真实 `THREE.Texture` 一定有 `dispose` —— three-renderer 在 teardown 里调用它释放
+// 本次装配的纹理（视频纹理的 `<video>`/Blob URL 清理钩子就挂在 `dispose` 事件上，见 tex-loader）。
+// mock 必须带上，否则接线用例会因「在不真实的 fake 上调用 dispose」而误报。
+function fakeTexture() {
+  return { fake: true, dispose: vi.fn() };
+}
+
 function makeMockSim() {
   return {
     update: vi.fn(),
@@ -83,7 +90,7 @@ beforeEach(() => {
 
 describe('createThreeSceneRenderer', () => {
   it('render：解析 scene.json → 为 image 对象组装背景纹理、particle 对象组装 spec/tex/blend', async () => {
-    resolveImageTexture.mockResolvedValue({ fake: true } as any);
+    resolveImageTexture.mockResolvedValue(fakeTexture() as any);
     // 材质 json 不可得（null）→ 回退材质名启发式：spec 材质名含 "lightshaft" → additive。
     resolveParticleMaterial.mockResolvedValue(null);
     const sim = makeMockSim();
@@ -112,7 +119,7 @@ describe('createThreeSceneRenderer', () => {
     // Task5：viewport 第 4 参 = 窗口/视口尺寸（窗口比例），而非场景尺寸——cover 相机按窗口宽高比
     // 裁剪（背景不变形），对照 wasm 路径用 window.innerWidth/Height 推 cover。
     expect(loadSceneToThree.mock.calls[0][3]).toEqual({ width: 1920, height: 1080 });
-    expect(assets.backgroundTextures.get(13)).toEqual({ fake: true });
+    expect(assets.backgroundTextures.get(13)).toEqual({ fake: true, dispose: expect.any(Function) });
     expect(assets.particles.get(71).specJson).toContain('lightshaft');
     // 材质名含 "lightshaft" → blend = additive（材质 json 不可得时的兜底）
     expect(assets.particles.get(71).blend).toBe('additive');
@@ -128,8 +135,33 @@ describe('createThreeSceneRenderer', () => {
     expect((loadSceneToThree.mock.results[0].value as any).player.dispose).toHaveBeenCalled();
   });
 
+  it('dispose / 切壁纸时释放本次装配的背景纹理（视频纹理的 <video>/Blob URL 不能被 renderer.dispose 兜住）', async () => {
+    // 视频纹理（tex-loader 的视频分支）把 `<video>` + Blob URL 挂在纹理的 dispose 事件上：
+    // GPU 侧 `renderer.dispose()` 只释放 WebGL 资源，**不会停解码**，所以壁纸切换必须显式
+    // `texture.dispose()`，否则每切一次就漏一个正在解码的视频与一份 10MB Blob。
+    const texA = { dispose: vi.fn() };
+    const texB = { dispose: vi.fn() };
+    resolveImageTexture.mockResolvedValue(texA as any);
+    loadSceneToThree.mockReturnValue({
+      player: { dispose: vi.fn(), resize: vi.fn() },
+      sims: [], backgroundIds: [0], particleLayers: [],
+    });
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    await r.render('2851992662', document.createElement('canvas'), null);
+    expect(texA.dispose).not.toHaveBeenCalled(); // 首次装配：纹理仍在使用
+
+    // 切到另一张壁纸（render 先 teardown 上一次）→ 上一次的纹理被释放
+    resolveImageTexture.mockResolvedValue(texB as any);
+    await r.render('2851992662', document.createElement('canvas'), null);
+    expect(texA.dispose).toHaveBeenCalledTimes(1);
+    expect(texB.dispose).not.toHaveBeenCalled();
+
+    r.dispose();
+    expect(texB.dispose).toHaveBeenCalledTimes(1);
+  });
+
   it('render：混合模式取材质 json 的 passes[0].blending（DK 44 层根因回归）——材质名不带 "additive" 也是 additive', async () => {
-    resolveImageTexture.mockResolvedValue({ fake: true } as any);
+    resolveImageTexture.mockResolvedValue(fakeTexture() as any);
     // DK WOTLK 的真实形态：spec.material 路径名不含 lightshaft/glow/additive，但材质 json 是 additive。
     resolveParticleMaterial.mockResolvedValue({
       texUrl: '/wallpapers/particle-texture?name=particle%2Fchromaticdot',
@@ -192,7 +224,7 @@ describe('createThreeSceneRenderer', () => {
   });
 
   it('窗口 resize → player.resize 用新窗口比例重推 cover（监听在 render 后注册、dispose 移除）', async () => {
-    resolveImageTexture.mockResolvedValue({ fake: true } as any);
+    resolveImageTexture.mockResolvedValue(fakeTexture() as any);
     resolveParticleMaterial.mockResolvedValue(null);
     // 模拟返回带 resize 的 player（真实 ThreeScenePlayer 的接口）。
     const player = { dispose: vi.fn(), resize: vi.fn() };
@@ -458,7 +490,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
         effects: [{ file: 'effects/w/effect.json' }],
       },
     ]), FX_FILES);
-    resolveImageTexture.mockResolvedValue({ fake: true } as never);
+    resolveImageTexture.mockResolvedValue(fakeTexture() as never);
     defaultLoadWasm.mockResolvedValue(null); // 无粒子模块（本用例无粒子对象）
     const setObjectEffectStage = vi.fn();
     const player = {
@@ -565,7 +597,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
 
   it('无效果对象：不建 stage、不下发 isolate、帧序与今天一致（零回归）', async () => {
     stubAssetFetch(SCENE, {});
-    resolveImageTexture.mockResolvedValue({ fake: true } as never);
+    resolveImageTexture.mockResolvedValue(fakeTexture() as never);
     defaultLoadWasm.mockResolvedValue({ CpuParticleSim: { new: vi.fn(() => makeMockSim()) } } as never);
     const setObjectEffectStage = vi.fn();
     const player = {
@@ -607,7 +639,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
         effects: [{ file: 'effects/w/effect.json' }],
       },
     ]), FX_FILES);
-    resolveImageTexture.mockResolvedValue({ fake: true } as never);
+    resolveImageTexture.mockResolvedValue(fakeTexture() as never);
     defaultLoadWasm.mockResolvedValue(null);
     const player = {
       dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage: vi.fn(),
@@ -661,7 +693,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
         effects: [{ file: 'effects/w/effect.json' }],
       },
     ]), FX_FILES_RT_GRAPH);
-    resolveImageTexture.mockResolvedValue({ fake: true } as never);
+    resolveImageTexture.mockResolvedValue(fakeTexture() as never);
     defaultLoadWasm.mockResolvedValue(null);
     const player = {
       dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage: vi.fn(),
@@ -716,7 +748,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
         effects: [{ file: 'effects/w/effect.json' }, { file: 'effects/w/effect.json' }],
       },
     ]), FX_FILES);
-    resolveImageTexture.mockResolvedValue({ fake: true } as never);
+    resolveImageTexture.mockResolvedValue(fakeTexture() as never);
     defaultLoadWasm.mockResolvedValue(null);
     const player = {
       dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage: vi.fn(),

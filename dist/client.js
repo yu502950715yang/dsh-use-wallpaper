@@ -19255,6 +19255,33 @@ var InstancedBufferAttribute = class extends BufferAttribute {
     return data;
   }
 };
+var VideoTexture = class extends Texture {
+  constructor(video, mapping, wrapS, wrapT, magFilter, minFilter, format, type, anisotropy) {
+    super(video, mapping, wrapS, wrapT, magFilter, minFilter, format, type, anisotropy);
+    this.isVideoTexture = true;
+    this.minFilter = minFilter !== void 0 ? minFilter : LinearFilter;
+    this.magFilter = magFilter !== void 0 ? magFilter : LinearFilter;
+    this.generateMipmaps = false;
+    const scope = this;
+    function updateVideo() {
+      scope.needsUpdate = true;
+      video.requestVideoFrameCallback(updateVideo);
+    }
+    if ("requestVideoFrameCallback" in video) {
+      video.requestVideoFrameCallback(updateVideo);
+    }
+  }
+  clone() {
+    return new this.constructor(this.image).copy(this);
+  }
+  update() {
+    const video = this.image;
+    const hasVideoFrameCallback = "requestVideoFrameCallback" in video;
+    if (hasVideoFrameCallback === false && video.readyState >= video.HAVE_CURRENT_DATA) {
+      this.needsUpdate = true;
+    }
+  }
+};
 var CompressedTexture = class extends Texture {
   constructor(mipmaps, width, height, format, type, mapping, wrapS, wrapT, magFilter, minFilter, anisotropy, colorSpace) {
     super(null, mapping, wrapS, wrapT, magFilter, minFilter, format, type, anisotropy, colorSpace);
@@ -20549,6 +20576,23 @@ function parseSceneJson(raw) {
   };
 }
 
+// src/client/rt-render.ts
+function renderIntoRenderTarget(renderer, target, scene, camera) {
+  const caps = renderer;
+  const canToggle = typeof caps.getClearAlpha === "function" && typeof caps.setClearAlpha === "function";
+  const prevAlpha = canToggle ? caps.getClearAlpha() : null;
+  const needToggle = canToggle && prevAlpha !== 0;
+  if (needToggle) caps.setClearAlpha(0);
+  try {
+    renderer.setRenderTarget(target);
+    renderer.render(scene, camera);
+  } finally {
+    renderer.setRenderTarget(null);
+    if (needToggle) caps.setClearAlpha(prevAlpha);
+  }
+  return prevAlpha;
+}
+
 // src/client/threejs-player.ts
 var DEFAULT_PARTICLE_CAPACITY = 1024;
 var MAX_PARTICLE_CAPACITY = 2048;
@@ -20918,10 +20962,11 @@ var ThreeScenePlayer = class {
     entry.rtHeight = h;
   }
   // 渲染所有隔离对象的内容到各自 RT（player 拥有 scene/camera，故渲染留在 player）。
+  // ⚠️ 必须走 renderIntoRenderTarget（渲染前把清屏 alpha 置 0）：直接 `setRenderTarget + render`
+  // 会把 RT 清成**不透明黑**，对象内容透明处随即变成黑块贴回主场景（根因见 rt-render.ts）。
   renderIsolatedContents() {
     for (const entry of this.isolated.values()) {
-      this.renderer.setRenderTarget(entry.rt);
-      this.renderer.render(entry.localScene, entry.localCamera);
+      renderIntoRenderTarget(this.renderer, entry.rt, entry.localScene, entry.localCamera);
     }
     this.renderer.setRenderTarget(null);
   }
@@ -21640,6 +21685,86 @@ function cropCompressedToMap(data, mipWidth, mipHeight, cw, ch, blockSize) {
   }
   return { width: nw, height: nh, data: out };
 }
+var FLAG_VIDEO = 1 << 5;
+function isVideoTexPayload(info) {
+  if ((info.flags & FLAG_VIDEO) === 0) return false;
+  const d = info.mipmaps[0]?.data;
+  return !!d && d.length >= 12 && d[4] === 102 && d[5] === 116 && d[6] === 121 && d[7] === 112;
+}
+var VIDEO_READY_TIMEOUT_MS = 5e3;
+function waitForVideoReady(video, timeoutMs) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (ok) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      video.removeEventListener("loadeddata", onReady);
+      video.removeEventListener("error", onError);
+      resolve(ok);
+    };
+    const onReady = () => finish(true);
+    const onError = () => finish(false);
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    video.addEventListener("loadeddata", onReady);
+    video.addEventListener("error", onError);
+    if (typeof video.readyState === "number" && video.readyState >= 2) finish(true);
+  });
+}
+function transparentTexture() {
+  const tex = new DataTexture(new Uint8Array([0, 0, 0, 0]), 1, 1, RGBAFormat);
+  tex.needsUpdate = true;
+  return tex;
+}
+async function videoTextureFromMp4(data, info, topDown, decorate) {
+  if (typeof document === "undefined" || typeof URL === "undefined" || typeof URL.createObjectURL !== "function") {
+    return null;
+  }
+  const url = URL.createObjectURL(new Blob([data], { type: "video/mp4" }));
+  const video = document.createElement("video");
+  video.muted = true;
+  video.loop = true;
+  video.playsInline = true;
+  video.preload = "auto";
+  video.src = url;
+  const release = () => {
+    try {
+      video.pause();
+    } catch {
+    }
+    try {
+      video.removeAttribute("src");
+      video.src = "";
+      video.load();
+    } catch {
+    }
+    URL.revokeObjectURL(url);
+    try {
+      video.remove();
+    } catch {
+    }
+  };
+  if (!await waitForVideoReady(video, VIDEO_READY_TIMEOUT_MS)) {
+    release();
+    return null;
+  }
+  const tex = new VideoTexture(video);
+  tex.flipY = !topDown;
+  tex.minFilter = LinearFilter;
+  tex.magFilter = LinearFilter;
+  tex.generateMipmaps = false;
+  tex.addEventListener("dispose", release);
+  void video.play().catch(() => {
+    if (typeof window === "undefined") return;
+    const resume = () => {
+      void video.play().catch(() => {
+      });
+    };
+    window.addEventListener("pointerdown", resume, { once: true });
+    window.addEventListener("keydown", resume, { once: true });
+  });
+  return decorate(tex);
+}
 async function textureFromTex(info, opts) {
   const mip = info.mipmaps[0];
   if (!mip) return null;
@@ -21661,6 +21786,18 @@ async function textureFromTex(info, opts) {
     const clamp2 = (info2.flags & FLAG_CLAMP_UVS) !== 0;
     tex.wrapS = tex.wrapT = clamp2 ? ClampToEdgeWrapping : RepeatWrapping;
   };
+  if (isVideoTexPayload(info)) {
+    const decorate = (t) => {
+      applyWrap(t, info);
+      return withSprite(t);
+    };
+    const videoTex = await videoTextureFromMp4(mip.data, info, topDown, decorate);
+    if (videoTex) return videoTex;
+    console.warn(
+      `[wallpaper-engine] \u89C6\u9891\u7EB9\u7406\u65E0\u6CD5\u64AD\u653E\uFF0C\u56DE\u9000\u4E3A\u900F\u660E: flags=${info.flags} ${mip.width}x${mip.height} ${mip.data.length}B`
+    );
+    return transparentTexture();
+  }
   const mime = info.imageFormat === FIF.JPEG ? "image/jpeg" : info.imageFormat === FIF.PNG ? "image/png" : info.imageFormat === FIF.WEBP ? "image/webp" : "";
   if (mime) {
     if (typeof createImageBitmap !== "function") return null;
@@ -22143,9 +22280,7 @@ var EffectRunner = class {
       };
       const probeRT = new WebGLRenderTarget(1, 1);
       try {
-        this.renderer.setRenderTarget(probeRT);
-        this.renderer.render(this.getScene(key, material), SCREEN_CAMERA);
-        this.renderer.setRenderTarget(null);
+        renderIntoRenderTarget(this.renderer, probeRT, this.getScene(key, material), SCREEN_CAMERA);
       } finally {
         this.renderer.debug.onShaderError = prevHandler;
         probeRT.dispose();
@@ -22245,8 +22380,7 @@ var EffectRunner = class {
         if (material.uniforms["g_Time"]) material.uniforms["g_Time"].value = time;
         if (this.audioSpectrum) this.fillAudioUniforms(material, this.audioSpectrum);
         const writeTarget = pickWriteTarget(lastWrite, this.rtA, this.rtB);
-        this.renderer.setRenderTarget(writeTarget);
-        this.renderer.render(this.getScene(`${i}`, material), SCREEN_CAMERA);
+        renderIntoRenderTarget(this.renderer, writeTarget, this.getScene(`${i}`, material), SCREEN_CAMERA);
         readTex = writeTarget.texture;
         lastWrite = writeTarget;
       }
@@ -23147,8 +23281,9 @@ function floatifyIntVarUses(src) {
   out = out.replace(/for\s*\([^;{}]*;[^;{}]*;[^;{}]*\)/g, protect);
   out = out.replace(/(?:\+\+|--)\s*\w+|\w+\s*(?:\+\+|--)/g, protect);
   out = protectConstructs(out);
-  out = out.replace(/(?:==|!=|<=|>=|<|>)\s*[A-Za-z_]\w*/g, protect);
+  out = out.replace(/[A-Za-z_]\w*\s*(?:==|!=|<=|>=|<|>)\s*[A-Za-z_]\w*/g, protect);
   out = out.replace(/[A-Za-z_]\w*\s*(?:==|!=|<=|>=|<|>)/g, protect);
+  out = out.replace(/(?:==|!=|<=|>=|<|>)\s*[A-Za-z_]\w*/g, protect);
   for (const name of intVars) {
     out = out.replace(new RegExp(`\\b${name}\\b`, "g"), `float(${name})`);
   }
@@ -24315,6 +24450,7 @@ function createThreeSceneRenderer(opts) {
   let current = null;
   let currentStage = null;
   let onWindowResize = null;
+  let currentTextures = null;
   const teardown = () => {
     if (onWindowResize) {
       window.removeEventListener("resize", onWindowResize);
@@ -24325,6 +24461,8 @@ function createThreeSceneRenderer(opts) {
     current?.player.dispose();
     for (const sim of current?.sims ?? []) sim.free?.();
     current = null;
+    for (const tex of currentTextures?.values() ?? []) tex.dispose();
+    currentTextures = null;
   };
   const viewportSize = () => ({
     width: Math.max(1, Math.round(window.innerWidth || 0)),
@@ -24346,6 +24484,7 @@ function createThreeSceneRenderer(opts) {
         fg.width = vw;
         fg.height = vh;
         const backgroundTextures = /* @__PURE__ */ new Map();
+        currentTextures = backgroundTextures;
         const particles = /* @__PURE__ */ new Map();
         for (const obj of desc.objects) {
           if (obj.kind === "image") {

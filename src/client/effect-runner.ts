@@ -5,6 +5,10 @@ import * as THREE from 'three';
 import type { CompiledEffectPass } from './shader/effect-chain.js';
 import { loadTexTexture, type TexLoadOptions } from './tex-loader.js';
 import { isAudioUniform } from './shader/uniform-binder.js';
+// 渲染进 ping-pong RT 必须**透明清屏**（清屏 alpha=0）。效果把 alpha 降下去的地方（opacity /
+// 各类 mask），若 RT 被清成不透明黑，rgb 会被 SrcAlpha 混合乘成 0 而 alpha 恒为 1
+// ⇒ 输出不透明黑 ⇒ 合成 quad 把黑块盖回主场景。根因与实测见 rt-render.ts 文件头。
+import { renderIntoRenderTarget } from './rt-render.js';
 
 // 纹理槽路径推导（spec §3.4 / P0-1）：补 materials/ 前缀 + .tex 后缀；
 // 内置 util/ 与运行时 _rt_ 引用原样透传（走回退分支，不 fetch）。
@@ -532,9 +536,8 @@ export class EffectRunner {
       };
       const probeRT = new THREE.WebGLRenderTarget(1, 1);
       try {
-        this.renderer.setRenderTarget(probeRT);
-        this.renderer.render(this.getScene(key, material), SCREEN_CAMERA);
-        this.renderer.setRenderTarget(null);
+        // 探针只用来触发编译，像素不被读取；走同一个 RT 渲染入口以保持清屏语义一致。
+        renderIntoRenderTarget(this.renderer, probeRT, this.getScene(key, material), SCREEN_CAMERA);
       } finally {
         this.renderer.debug.onShaderError = prevHandler;
         probeRT.dispose();
@@ -665,8 +668,9 @@ export class EffectRunner {
         // 无频谱源（null）时跳过——数组保持 binder 初始化的全零（静音，行为不变）。
         if (this.audioSpectrum) this.fillAudioUniforms(material, this.audioSpectrum);
         const writeTarget = pickWriteTarget(lastWrite, this.rtA, this.rtB); // 动态写端：上一写端对端
-        this.renderer.setRenderTarget(writeTarget);
-        this.renderer.render(this.getScene(`${i}`, material), SCREEN_CAMERA);
+        // ⚠️ 必须透明清屏（见 rt-render.ts）：直接 setRenderTarget + render 会把 RT 清成
+        // 不透明黑，任何「效果把 alpha 降下去」的区域都会变成纯黑块贴回主场景。
+        renderIntoRenderTarget(this.renderer, writeTarget, this.getScene(`${i}`, material), SCREEN_CAMERA);
         readTex = writeTarget.texture;
         lastWrite = writeTarget;
       }

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
-import { parseTex, glFormatForDds, TEX_FORMAT, textureFromTex, convertUnormToRgba, flipCompressedRows, cropToMap, FIF } from '../src/client/tex-loader.js';
+import { parseTex, glFormatForDds, TEX_FORMAT, textureFromTex, convertUnormToRgba, flipCompressedRows, cropToMap, FIF, isVideoTexPayload } from '../src/client/tex-loader.js';
 import { makeTex } from './fixtures/make-tex.js';
 import type { MakeTexSpriteSpec } from './fixtures/make-tex.js';
 
@@ -260,9 +260,36 @@ describe('convertUnormToRgba', () => {
   });
 });
 
+// WE 视频纹理（flags bit5 = Video，值 32）：`.tex` 的 mip0 载荷是**完整 mp4**（不是像素数据）。
+// 实测样本 2911105183 的 CP_ads_01/02.tex：ftyp isom/iso2/avc1/mp41、H.264、1280×720、27.4s。
+// 判定必须是**纯函数**（node 可测，不碰 DOM）：flags 带 Video 位 **且** 载荷是 mp4 容器。
+describe('isVideoTexPayload（视频纹理判定，纯函数）', () => {
+  const MP4 = new Uint8Array([0, 0, 0, 0x20, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d]); // …size+ftyp+isom
+  const texWith = (flags: number, data: Uint8Array) => parseTex(makeTex({
+    flags, container: 'TEXB0003', imageFormat: -1, format: TEX_FORMAT.RGBA8888,
+    images: [[{ width: 1280, height: 720, data }]],
+  }))!;
+
+  it('flags 带 Video 位 + 载荷是 mp4（ftyp）→ true', () => {
+    expect(isVideoTexPayload(texWith(32, MP4))).toBe(true);
+  });
+
+  it('flags 带 Video 位但载荷不是 mp4 → false（回落到既有的原始像素路径）', () => {
+    const rgba = new Uint8Array(8 * 8 * 4).fill(0x80);
+    expect(isVideoTexPayload(texWith(32, rgba))).toBe(false);
+  });
+
+  it('载荷像 mp4 但 flags 没有 Video 位 → false（以 flags 为准）', () => {
+    expect(isVideoTexPayload(texWith(0, MP4))).toBe(false);
+  });
+
+  it('载荷过短（< 12B）不越界读、判 false', () => {
+    expect(isVideoTexPayload(texWith(32, new Uint8Array([0, 0, 0, 0x20, 0x66])))).toBe(false);
+  });
+});
+
 describe('textureFromTex 分支选择', () => {
   let decodeCalls: { blob: Blob; opts: object }[];
-
   beforeEach(() => {
     decodeCalls = [];
     vi.stubGlobal('createImageBitmap', async (blob: Blob, opts?: object) => {
