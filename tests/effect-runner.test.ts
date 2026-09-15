@@ -762,6 +762,32 @@ describe('EffectRunner 按计划执行（具名 RT 写读 / previous 序列 / �
     runner.dispose();
   });
 
+  // Ruling 34：`previous` 不在 target 序列内（该 pass 之前没有任何写具名 RT 的 pass）⇒ 该槽保持
+  // 默认（textures[1]）而不是 readTex；lwe 会回落到「当前内容提供者」，差异必须可诊断。
+  it('previous 落在 target 序列外 → 该槽保持默认并告警一次（第二帧不重复）', async () => {
+    const { renderer, mats } = createPlanRenderer();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const slotTex = new THREE.Texture();
+    const chain = [pass({ bind: [{ index: 1, name: 'previous' }], textureSlots: [null, 'masks/x'] })];
+    const runner = new EffectRunner(renderer as never, 8, 8, { load: async () => slotTex });
+    runner.setPlan(buildEffectPlan([chain], { baseWidth: 8, baseHeight: 8 }), [chain], 'wp', { width: 8, height: 8 });
+    const input = new THREE.Texture();
+    await runner.update(0, input);
+    // ① 槽 1 保持默认（textures[1] 的解析结果），不是序列起点输入 readTex
+    expect(mats[0].uniforms.g_Texture1.value).toBe(slotTex);
+    expect(mats[0].uniforms.g_Texture1.value).not.toBe(input);
+    expect(mats[0].uniforms.g_Texture0.value).toBe(input); // slot 0 仍是当前内容提供者
+    // ② 一条可辨识告警（壁纸 id / pass 键 / 槽位），第二帧不重复
+    const hits = warn.mock.calls.map((c) => String(c[0])).filter((m) => m.includes('previous 不在 target 序列内'));
+    expect(hits.length).toBe(1);
+    expect(hits[0]).toContain('壁纸 wp');
+    expect(hits[0]).toContain('g_Texture1');
+    await runner.update(1, input);
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes('previous 不在 target 序列内')).length).toBe(1);
+    warn.mockRestore();
+    runner.dispose();
+  });
+
   it('bind 覆盖 textures：被 bind 覆写的槽用 bind 的源，未被覆写的槽保持 textures 解析结果', async () => {
     const { renderer, mats } = createPlanRenderer();
     const slotTex = new THREE.Texture();

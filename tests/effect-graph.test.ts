@@ -211,9 +211,9 @@ describe.skipIf(!existsSync(WALLPAPER_DIR))('buildEffectPlan — 全库 RT 图�
           expect(plan.droppedChains).toEqual([]);
           expect(plan.namedTargets.length).toBeGreaterThan(0);
           expect(plan.passes.length).toBe(chain.length);
-          // 末 pass 若不是 named，必须是 final；具名 RT 读数不超过上限
+          // 末 pass 写端全是 final（全库实测 24/24）；named 是显式例外分支，另有用例
           const lastWrite = plan.passes[plan.passes.length - 1].write;
-          expect(lastWrite.type === 'final' || lastWrite.type === 'named').toBe(true);
+          expect(lastWrite.type).toBe('final');
           maxNamed = Math.max(maxNamed, plan.namedTargets.length);
         }
       }

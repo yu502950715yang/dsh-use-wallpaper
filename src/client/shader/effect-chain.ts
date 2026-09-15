@@ -8,7 +8,7 @@ export interface CompiledEffectPass {
   fragSrc: string;                       // 供 three 使用的预处理后 GLSL3
   rawVert: string;                       // 未预处理的原始 WE 方言 vert 源（供 wasm 路径）
   rawFrag: string;                       // 未预处理的原始 WE 方言 frag 源（供 wasm 路径）
-  combos: Record<string, number>;        // 该 pass 的 combo 宏映射（scene.json 覆写 + 需注入项）
+  combos: Record<string, number>;        // 该 pass 的 combo 宏映射（scene.json 覆写 + 派生 + 两 stage 的 [COMBO] 默认合并）
   uniforms: Map<string, UniformValue>;   // 静态值（g_Time 由执行器运行时更新）
   textureSlots: (string | null)[];       // textures[i] → g_Texture(i)（WE 官方 scenejson.md:22）
   // 每个 sampler uniform 名 → 该槽在 shader 注释里声明的 `mode`（如 g_Texture2 → "opacitymask"）。

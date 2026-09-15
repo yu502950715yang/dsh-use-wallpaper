@@ -75,8 +75,8 @@ export function isLinearEffectChain(passes: CompiledEffectPass[]): boolean {
 // 三条硬约束（spec §5.3 / §5.4）：
 //   1. 每对象一个 runner，RT 尺寸 = 该对象 RT 尺寸：对象级效果**不得**全屏展平
 //      （全屏展平会让效果漫到对象包围盒之外，是本特性的核心回归点）；
-//   2. 加载期一次性建：EffectRunner 的创建与 setPlan（含材质/探针编译、具名 RT）只发生在挂链与
-//      resize；bindOutputs / advance 里**不得**创建材质或建管线；
+//   2. 加载期一次建成具名 RT 池：EffectRunner 的创建与 setPlan（建具名 RT + 清材质缓存）只发生在
+//      挂链与 resize；材质与 1×1 探针编译仍由首个 update 帧懒建（帧内首次编译有停顿），bindOutputs / advance 不建管线；
 //   3. 串行推进：同一时刻只允许一个 runner 触碰 renderer 的 RT/绑定状态——并发交错会让
 //      ping-pong 写端与输入纹理错配 → 黑屏/闪烁。EffectRunner 自己的 updateInFlight 只挡得住
 //      同一个 runner，挡不住多个 runner 之间，故串行化必须由本编排器承担。
