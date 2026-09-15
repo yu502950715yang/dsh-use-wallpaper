@@ -64,9 +64,11 @@
 
 ## 3. 对象级效果链（effects）
 
-- **全库覆盖**：**106/130 条效果引用（82%）** 可由既有 `EffectRunner` 正确执行（waterwaves 24 / shake 18 / opacity 8 / waterripple 7 / waterflow、pulse、perspective 各 5 / clouds、scroll、foliagesway 各 4 …）。
-- **验收口径（如实）**：端到端（真实 WebGL 逐像素）验证过的样本只有 `2683211654`（waterwaves 帧间差分）与 `2911105183`（对象级盒内外判据 + 具名 RT 降级告警）；其余效果类别的「可由现有执行器正确执行」是**分类学推断**（依据 `effect.json` 的 pass 结构与 `EffectRunner` 的线性语义），**不是逐个实测**。
-- **P2 遗留**：**24 条具名 RT 图链**（blurprecise×13、blur×3、localcontrast×2、godrays×2、bloom×2、shine×1、bokeh_blur×1）需要「RT 图执行器」（具名 RT 池 + `fbos` 降采样 + `bind` 语义），当前**整条跳过 + 去重告警** ⇒ 画面不画错，但那些效果不生效。
+- **全库覆盖（P1 + P2，2026-09-15）**：线性链与 **24 条具名 RT 图链**（blurprecise×13、blur×3、localcontrast×2、godrays×2、bloom×2、shine×1、bokeh_blur×1）都由同一执行器按计划执行；**原先「整条跳过 + 去重告警」的降级已删除**。典型效应（waterwaves 24 / shake 18 / opacity 8 / waterripple 7 / waterflow、pulse、perspective 各 5 / clouds、scroll、foliagesway 各 4 …）里，`blur` / `blurprecise` / `localcontrast` / `godrays` / `bloom` / `shine` / `bokeh_blur` 属 P2 新增。
+- **计数口径**：`106 线性 + 24 RT`（130 条效果引用）是**声明口径**（按 effect 链数、不过滤 `visible`）；其中 1 条线性链的 effect 级 `visible=false`（`2597392171` obj50 的 `effects/shake`）生产侧整条跳过 ⇒ three 的**执行口径 = 105 线性 + 24 RT**。
+- **10 条链在画面上看不到（不是能力差）**：24 条 RT 图链里 7 条挂在 `text` 对象（收链阶段就被过滤）、3 条挂在 `util` 对象（拿不到隔离条目 ⇒ 不挂链）；这两类对象的渲染是独立缺口。
+- **验收口径（如实）**：端到端（真实 WebGL 逐像素）跑过的样本是 `2683211654` / `2911105183` / `2011060960`（双链同名 RT）/ `2937346640`（godrays）/ `1968789468`（shine）/ `2597392171`（godrays）/ `3743126786`（16 pass bloom）；其余效果类别的「可由现有执行器正确执行」仍是**分类学推断**，**不是逐个实测**。GTR 的 bloom 只测到**局部增亮**（p99 Δ=0），**未与桌面 WE 逐像素对照**。
+- **P2 遗留（如实）**：`3789452668` 的 `effects/color_grading`（线性链）有 `varying` 类型不匹配（`vec4` vs `vec2`）⇒ 该链不生效；`2597392171` 的 godrays 引用了全局运行时 RT `_rt_FullFrameBuffer` ⇒ 该槽不绑（保持默认）+ 告警一次，其完整语义属非目标；**未做显存 cap**。
 - **对象 RT 的三条不变量**（改这块先读代码注释）：
   1. **局部正交相机的 left/right/top/bottom 是「世界坐标范围」**，必须覆盖**完整对象世界尺寸**。两个坑：拿 RT 像素当范围（dpr>1 时对象缩小 + 边缘 clamp 拉伸）；按 `OBJECT_RT_MAX`(4096) 钳制范围（超限对象只覆盖中央 ⇒ 边缘拉伸带）。超限对象的正确代价是「**分辨率低**」，**不是**几何裁剪。
   2. **RT 像素尺寸 = `|world| × 屏幕密度`**（= 对象在画布缓冲上的占位像素），等比收口到 4096。基准必须是**未钳制**的 `world`，**不能**用相机 `range`。旧口径「`min(world × dpr, 视口 × dpr, 4096)`」把预算当基准，与屏上占位差 0.8% ⇒ 合成那一步是双线性缩小 + 亚纹素相位漂移 ⇒ 整层锐度 **−52%**。
@@ -76,16 +78,17 @@
 - **text 对象的 effects 被静默丢弃**：`groupEffectsByObject` 跳过 `kind === 'text'`，链在解析阶段就不进 `effectChains`（连汇总 warn 都没有）。实测样本 `3765967112` 的 4 条 `blurprecise` 全挂在 text 对象上。
 - **21 条 effects 挂在 util / 音频等不参与渲染的对象类型上**（util:10 + none:11）：会被解析但不会挂链，每张壁纸打一条汇总 warn。
 - **粒子对象的效果链只有单测覆盖**：全库实测 particle 挂载 effects = 0，管线里的粒子隔离分支**无真实样本可验**。
-- **链全为具名 RT 图链的对象不再隔离**（P2 前置优化）：`isolate` 准入收紧为「至少有一条线性链」——隔离无额外视觉收益，省掉对象 RT 显存与每帧一次额外渲染。这类对象的「具名 RT 未实现，跳过」告警**仍然打印**。
+- ~~**链全为具名 RT 图链的对象不再隔离**（P2 前置优化）~~：**已作废（2026-09-15，P2）** —— `rtGraphOnly` 分支与其告警已删除，isolate 准入回到「至少有一条**可见**链」；原先不隔离的对象重新进入隔离路径，换来效果生效。
 
 ---
 
 ## 4. 显存与性能
 
 - **对象 RT 显存（审计脚本 `research/q-rt-vram-sweep.mjs`）**：`1920×1080@dpr1` 合计 **530 MB**（旧口径 386 MB）；单壁纸最大 **131.8 MB** / 中位 27.9 MB；`@dpr2` 与 `4K@dpr1` 单壁纸最大 **245.7 MB**（旧 156.1）、中位 95.0。结论：**典型代价 ≈ +18%、最坏 +3.4×**（均为 dpr=1），4096 硬上限把单对象钉在 ~107 MB。
+- **具名 RT 显存（P2，Task 9 实测；静态分配估算，非 GPU 实测）**：1080p@dpr1 全库合计 **39.0 MB / 28 张**（@dpr2 **124.0 MB**）；单壁纸最大 **11.0 MB**（`2597392171`）、单张最大 **7.91 MB**（`3789452668` 的 `_rt_FullCompoBuffer1`）；GTR `3743126786` **5.3 MB / 8 张**（`fbos` scale 2/4/8/16 的降采样金字塔）。占全库显存（3×对象 RT + 具名 RT）约 **6.6%**（两档同比例）⇒ 具名 RT 是「对象 RT + ping-pong」之外的小头，**未做显存 cap**。
 - **清晰度归因（`clarity-report.md`）**：隔离路径相对**直渲**锐度 −52%（Laplacian 均方 `713.2 → 341.5`，与 dpr、MSAA 均无关）。逐环节定界：内容→对象 RT 712.9（−0.04%）、效果 pass 711.2（−0.24%）、**合成 quad→屏幕 341.5（−52%）** ⇒ 纯 RT 往返无损，损失 100% 在最后一步重采样。修法与实测（GTR `3743126786`，headless Edge，1280×720）：隔离 **711.1** vs 直渲 **713.2（−0.3%）**、逐像素 MAD **0.0414**（修复前 341.5 / MAD 1.804）。
 - **性能门槛未验证**：设计文档 §7.4 自定「`1429403119`（23 对象 / 24 条链，全库最重）1080p **FPS ≥ 30**」为验收门槛，但**尚未在真实 GPU 上验证**。本机唯一端到端环境是 **headless Edge，其 WebGL 走 SwiftShader（软件光栅化）**，故只能给**相对信号**（帧间隔与每帧耗时中位数 / p95、隔离对象数、RT 显存估算）。**软件光栅化数字不能替代真机 FPS**，门槛状态一律记「未验证」。
-- **音频响应效果不随频谱动**：three 主路径**没有音频源** —— `createAudioAnalyzer` 只被未接入的 `scene-renderer.ts` 引用，`ObjectEffectStage.advance` 每帧显式给 `EffectRunner` 传 `null`，音频 uniform 保持全零。属「效果在、但不随频谱动」，不是「不支持该效果」。接音频留 P2。
+- **音频响应效果不随频谱动**：three 主路径**没有音频源** —— `createAudioAnalyzer` 只被未接入的 `scene-renderer.ts` 引用，`ObjectEffectStage.advance` 每帧显式给 `EffectRunner` 传 `null`，音频 uniform 保持全零。属「效果在、但不随频谱动」，不是「不支持该效果」。接音频仍未做。
 
 ---
 
@@ -99,7 +102,7 @@ scene 壁纸 ──► three.js 播放器（**唯一路径**，v0.3.0 起）
 ```
 
 - `wasm-renderer.ts`（`createWasmSceneRenderer` / `createFallbackSceneRenderer`）与 `scene-renderer.ts` 的 `renderScene`：**源码与单测保留，但运行时不再调用**（`index.ts` 仍 import 但未使用）。
-- wasm 渲染器有**完整的对象效果链**（对象 RT + 局部正交相机 + `EffectChain` ping-pong + 合成 quad UV 窗口 + GLSL→SPIR-V→WGSL 编译链），three 路径的**具名 RT 图链**仍未实现 —— 这是与 wasm 侧相比**剩余**的能力差。
+- wasm 渲染器有**完整的对象效果链**（对象 RT + 局部正交相机 + `EffectChain` ping-pong + 合成 quad UV 窗口 + GLSL→SPIR-V→WGSL 编译链）；其 RT 图执行的 `bind` 索引语义与 lwe 不符（只取 `bind[0]`、按 `g_Texture(i+1)` 对齐；权威语义是 `bind.index → g_Texture<index>`）。three 路径的具名 RT 图链已于 **2026-09-15（P2）**实现，**能力差已消除**。
 - **GPU（wasm）路径未消费 `instanceoverride`，也未应用对象 `angles`**：只接了 three 路径。用备用路径渲染同一张壁纸会有亮度与朝向差。
 - **wasm 效果链对 visualizer / text 对象不生效**：这两类恒走共享场景路径（绕过对象 RT / 效果链）。
 - **3 张壁纸在 wasm 路径判为 STATIC**（`2851992662` / `3392903359` / `3760200530`）：动画源是粒子（leaves/snow/bubbles），根因是 wasm 共享粒子路径动画未可见，属独立问题待专项。

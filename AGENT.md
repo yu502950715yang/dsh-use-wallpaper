@@ -27,7 +27,7 @@ scene 壁纸 ──► three.js 播放器（**唯一路径**，v0.3.0 起）
 - **对象级效果链（effects）的接线位置**（2026-09-14 起，P1）：同一入口下多走两步 —— `createThreeSceneRenderer()`（`three-renderer.ts`：解析每个对象的 `effects` → `resolveEffectChain`，算隔离尺寸 `resolveObjectRtSize`，装配 `ObjectEffectStage`）→ `loadSceneToThree()`（`threejs-player.ts`：隔离对象进 `localScene` + 主场景放合成 quad + 注入帧钩子）→ 每帧 `renderIsolatedContents()`（player 私有方法：内容 `setRenderTarget(objRT)` + `render(localScene, localCamera)`）→ `stage.bindOutputs()` → 渲染主场景（合成 quad 采样效果输出，链未就绪则采样对象 RT）→ `stage.advance(time)`（串行推进 `EffectRunner`，异步不阻塞本帧）。无带效果对象时 stage 为 null，帧序退化为原来的 `fn → update → render`（零回归）。达成与遗留见 §7.1。
 - **粒子模拟不重写**：复用 wasm 里的 `CpuParticleSim`（Rust `particle::SceneParticleSim`，**纯 CPU，不需要 WebGPU**）。renderer 只负责把 `sim.vertices()` 的 10 浮点/粒子画成 billboard。
 - **失败重试**：`wallpaper-controller.ts` 在 `render()` 返回 false 后用**新 canvas** 重试一次（防 WebGL/WebGPU context 污染），仍失败才落 preview。
-- **未接入的路径**：`wasm-renderer.ts`（`createWasmSceneRenderer` / `createFallbackSceneRenderer`）与 `scene-renderer.ts` 的 `renderScene` **源码与单测保留，但运行时不再调用**（`index.ts` 仍 import wasm-renderer 但未使用）。wasm 渲染器有**完整的对象效果链**（对象 RT + 局部正交相机 + `EffectChain` ping-pong + 合成 quad UV 窗口 + GLSL→SPIR-V→WGSL 编译链）；three 路径**已接通对象级效果链（P1，2026-09-14）**，但**具名 RT 图链**（blur / blurprecise / godrays / bloom / shine / localcontrast / bokeh_blur，全库 **24 条**）仍未实现 —— 这是与 wasm 侧相比**剩余**的能力差，见 §7.1。
+- **未接入的路径**：`wasm-renderer.ts`（`createWasmSceneRenderer` / `createFallbackSceneRenderer`）与 `scene-renderer.ts` 的 `renderScene` **源码与单测保留，但运行时不再调用**（`index.ts` 仍 import wasm-renderer 但未使用）。wasm 渲染器有**完整的对象效果链**（对象 RT + 局部正交相机 + `EffectChain` ping-pong + 合成 quad UV 窗口 + GLSL→SPIR-V→WGSL 编译链）；three 路径**已接通对象级效果链（P1，2026-09-14）**并**支持具名 RT 图链（P2，2026-09-15）** —— blur / blurprecise / godrays / bloom / shine / localcontrast / bokeh_blur（全库 **24 条**）与线性链由**同一执行器**按计划执行（`effect-graph.ts` 的 `buildEffectPlan` + `EffectRunner.setPlan`），**与 wasm 侧的能力差已消除**（语义见 §5.28，达成与遗留见 §7.1）。**计数口径**：`106 线性 + 24 RT`（130 条效果引用）是**声明口径**（按 effect 链数、不过滤 `visible`），其中 1 条线性链的 effect 级 `visible=false` 在生产侧整条跳过 ⇒ three 的**执行口径 = 105 线性 + 24 RT**。wasm 备用路径**有**完整的对象效果链，但其 RT 图执行的 `bind` 索引语义与 lwe 不符（`bind[0] → g_Texture1`；lwe 是 `bind.index → g_Texture<index>`），未接入运行时、本次未改（见 §7「备用 wasm / JS 路径」第 8 条）。
 - `isThreeUse()` / `THREE_USE=1` 是历史遗留（three 早已是默认）。
 
 ### 2.2 host / client / shared 分层
@@ -184,7 +184,7 @@ research/                    gitignore：截图 / 验证脚本 / 临时 profile
 24. **uniform 注解里的**嵌套对象**必须完整解析（2026-09-15，用户报告 `3303428996 死亡搁浅-玛玛` 整屏黑）**：
     - **根因**：`extractUniformAnnotations` 用非贪婪 `\{[\s\S]*?\}` 抓 `// {...}` 注解，遇到**内层 `}`**（WE 注解普遍带 `"require":{"DIRECTDRAW":0}`、`"options":{...}`）就截断 ⇒ `JSON.parse` 失败 ⇒ **注解整体丢失** ⇒ binder 拿不到 `material` 映射与 `default`，uniform 落到「按类型全零」。修法：正则改为抓到行尾，再用 `takeBalancedJson`（配对花括号扫描）截出首个完整对象。
     - **为什么现在才炸**：`3303428996` 的唯一效果是 `effects/lightshafts`，其 **vert** 用 `inverse(squareToQuad(g_Point0..3))` 算透视矩阵 —— 四个点全 0 ⇒ 矩阵退化 ⇒ `v_TexCoordFx.z = 0` ⇒ `fxCoordRef.y` 为 Inf/NaN ⇒ `albedo.rgb = A + B*fx` 里 `B*0 = NaN` ⇒ 输出 NaN ⇒ 渲染成**不透明黑**（实测效果输出 RT 全 `(0,0,0,255)`，整屏 100% 黑）。此前这条 pass 因为 `float(format) == FORMAT_RG88`（§7.1 已修）**编译失败被跳过**，墙上那张图是「效果没跑」的状态；修好编译后效果真的跑起来，才暴露这个注解解析缺陷。
-    - **影响面（全库 194 个 shader 扫描，`research/tmp-2911105183/scan-annotation-impact.mjs`）**：仅 **10** 条注解从「丢失」变「解析成功」——4 条是 `lightshafts` 的 `g_Point0..3`（本条修复对象）、5 条是 `blur_precise_gaussian` 的 `g_Texture2`（`mode:opacitymask` + `combo:MASK`，那些链目前属**具名 RT 图链、整体跳过**，故今日无行为变化，等 RT 图执行器落地才生效）、1 条是 `lightshafts` 的 `g_Texture2`（`RENDERING==1` 才用）。
+    - **影响面（全库 194 个 shader 扫描，`research/tmp-2911105183/scan-annotation-impact.mjs`）**：仅 **10** 条注解从「丢失」变「解析成功」——4 条是 `lightshafts` 的 `g_Point0..3`（本条修复对象）、5 条是 `blur_precise_gaussian` 的 `g_Texture2`（`mode:opacitymask` + `combo:MASK`；那些链属**具名 RT 图链**，2026-09-15 P2 落地后已生效）、1 条是 `lightshafts` 的 `g_Texture2`（`RENDERING==1` 才用）。
     - **验证**：单测 `tests/shader-preprocessor.test.ts` 两条（嵌套 `require` 的 vec 注解完整解析；sampler 注解的 `mode`/`combo` 不丢）；端到端 `3303428996` 黑像素 **100% → 7.2%**（7.2% 是该图自身的暗部，与 `preview.jpg` 对比画面与「光柱」效果一致）；`2911105183` 复测仍 **0.7%**（无回归）。
 
 25. **效果 pass 的 `blending: "normal"` = 覆盖（`ONE/ZERO`），不是 alpha 混合（2026-09-15，用户报告 GTR 左上云消失）**：
@@ -200,7 +200,16 @@ research/                    gitignore：截图 / 验证脚本 / 临时 profile
     - **已知近似（未做到 WE 的严格数学）**：对象 RT 的 rgb 本来就是「内容 alpha 预乘过」的（内容渲染走普通 alpha 混合），合成再乘一次最终 alpha ⇒ 半透明图层的贡献仍带一次多余的内容 alpha（GTR 云实到 `0.5×0.13`，WE 是 `0.13`）。要严格对齐得让内容侧写非预乘 rgb（或按 alpha 反除），改动面更大，本期不做。
     - **验证**：`tests/threejs-player.test.ts` 断言 cb quad `premultipliedAlpha === true`、cbm=0 quad 为 `false`；其它 cbm 用例（`2832263418` cbm=6、`2460786246` cbm=31）端到端黑像素正常（0.0% / 8.8%）。
 
-27. **GTR 云 vs 桌面 WE 的量化对照（2026-09-15，用户提供桌面截图后实测）**：桌面截图（1920×1039，裁掉任务栏）缩到 1280×693 后对齐残差 5.97、scale 0.99、dx=dy=0（`research/tmp-2911105183/compare-desktop.mjs`）。区域亮度（我们 / 桌面）：云区 **46.3 / 48.1**（中位 40/41、云区核心 40.2/41.3）、天空无云 58.5/59.5、**城市灯 58.3/63.4**、全屏 46.0/47.9。⇒ **云层本身已与桌面一致（均值差 1~2/255）**；差异集中在**亮部发光**：云区 p99 **199 / 225**、城市灯 p90 133/147，且桌面的发丝/路灯有明显的 bloom 光晕（`research/tmp-2911105183/lab/cloud-ab.png` 上下拼图可见）。结论：**这不是云层公式问题，而是被跳过的具名 RT 图链**（本壁纸背景对象链里的 `workshop/2822917890/bloom`，属 §7.1 记录的 24 条未实现链之一）——要对齐桌面得做 P2「具名 RT 图执行器」。
+27. **GTR 云 vs 桌面 WE 的量化对照（2026-09-15，用户提供桌面截图后实测）**：桌面截图（1920×1039，裁掉任务栏）缩到 1280×693 后对齐残差 5.97、scale 0.99、dx=dy=0（`research/tmp-2911105183/compare-desktop.mjs`）。区域亮度（我们 / 桌面）：云区 **46.3 / 48.1**（中位 40/41、云区核心 40.2/41.3）、天空无云 58.5/59.5、**城市灯 58.3/63.4**、全屏 46.0/47.9。⇒ **云层本身已与桌面一致（均值差 1~2/255）**；差异集中在**亮部发光**：云区 p99 **199 / 225**、城市灯 p90 133/147，且桌面的发丝/路灯有明显的 bloom 光晕（`research/tmp-2911105183/lab/cloud-ab.png` 上下拼图可见）。结论：**这不是云层公式问题，而是被跳过的具名 RT 图链**（本壁纸背景对象链里的 `workshop/2822917890/bloom`，属 §7.1 记录的 24 条未实现链之一）——要对齐桌面得做 P2「具名 RT 图执行器」。（**2026-09-15 补**：P2 已落地，该 bloom 链现已执行；但 `[5]` 实测它只带来**局部增亮**、不抬全屏 p99，见 §7.1。）
+
+28. **具名 RT 图链的执行语义（P2，2026-09-15；设计文档 `docs/superpowers/specs/2026-09-15-three-rt-graph-executor-design.md`）**：加载期由纯函数 `buildEffectPlan`（`effect-graph.ts`）把链编译成静态计划，`EffectRunner.setPlan` 按计划建**具名 RT 池**；帧内只查表绑槽 + 提交 pass（§5.11）。
+    - **尺寸与作用域**：具名 RT = 对象 RT ÷ `fbos.scale`（未声明 = 1），**池作用域 = 单条链**（key 带链序号 ⇒ 两条链同名 RT 各持一份）；
+    - **`bind.index` = `g_Texture<index>`**（**不是** `g_Texture<index+1>`），且 `bind` 优先于 `textures`；
+    - **`previous` = 进入 target 序列前的输入**（即对象 RT 原图），**不是**上一 pass 输出 —— 按后者实现会让合成基底变成自己的模糊结果；
+    - **写具名 RT 的 pass 编译失败 ⇒ 整条计划放弃**（回退对象 RT 原图）：派生读端会读到空 RT，P1 的「跳该 pass、读端不变」在这里不成立；
+    - 引用链内不存在的 `_rt_*`（全库仅 1 处，全局运行时 RT `_rt_FullFrameBuffer`）⇒ 该槽**保持默认、不绑白纹** + 一条去重告警；
+    - effect 级 `visible === false` 整条不挂链（全库 1 条，**不打降级告警** —— 作者正常内容）；本期**未做显存 cap**；清屏沿用透明清屏（§5.22），与 lwe 的 `LoadOp::Load` 有差异，但写具名 RT 的 pass 全是全屏覆盖写（`normal`）⇒ 清与不清同结果。
+29. **combo 宏必须跨 stage 合并（2026-09-15，提交 `eab01aa`；缺陷早于 P2，P2 放开准入后才暴露）**：`effect-chain.ts` 在两次 `preprocessWeShader` **之前**，把 vert/frag **两侧**的 `[COMBO]` 默认值合并进同一份 `combos`（序同 wasm 路径 `glsl-to-naga.passCombos`）。依据：WE/lwe 的 combo 是 **per-pass**（lwe `ShaderUnit.cpp:694-714` 互并、WE layerd 两个 unit 共用一份 `shader_info->combos`），而预处理器按**单个 stage** 兜底 ⇒ 一侧从 `[COMBO]` 取 `NOISE 1`、另一侧被 `#if` 裸标识符兜底成 `0` ⇒ frag 引用 vert 未声明的 varying ⇒ **program 链接失败**（链接错误不在 shader info log 里，旧告警看不到原因）⇒ 命中「写具名 RT 的 pass 失败即整条计划放弃」。**不要只特判某个宏**：修掉 `NOISE` 后 `KERNEL` 的 varying 数组长度不匹配会立刻顶上。
 
 ## 6. 工作约定
 
@@ -219,23 +228,58 @@ research/                    gitignore：截图 / 验证脚本 / 临时 profile
 
 ### three.js 默认路径（当前影响用户）
 
-1. **对象级效果链（effects）：P1 已达成，P2 遗留 24 条具名 RT 图链** —— three 主路径已接通对象级效果链管线（player 对象隔离能力 + `ObjectEffectStage` 编排 + `three-renderer` 装配，接线见 §2.1），全库 **106/130 条效果引用（82%）** 可由既有 `EffectRunner` 正确执行（waterwaves 24 / shake 18 / opacity 8 / waterripple 7 / waterflow、pulse、perspective 各 5 / clouds、scroll、foliagesway 各 4 …）。**验收覆盖口径（如实标注）**：其中**端到端（真实 WebGL 逐像素）验证的样本**只有 `2683211654`（waterwaves 帧间差分）与 `2911105183`（对象级盒内外判据 + 具名 RT 降级告警）；其余效果类别的「可由现有执行器正确执行」是**分类学推断**（依据 `effect.json` 的 pass 结构与 `EffectRunner` 的线性语义），**不是逐个实测**。**P2 遗留**：**24 条**具名 RT 图链（blurprecise×13、blur×3、localcontrast×2、godrays×2、bloom×2、shine×1、bokeh_blur×1）需要「RT 图执行器」（具名 RT 池 + `fbos` 降采样 + `bind` 语义），当前**整条跳过 + 去重告警** —— **画面不画错，但那些效果不生效**。GTR 的 `opacity`（0.26 + mask）、`scroll`（云滚动）、`waterripple` 都属线性链、已纳入 P1 执行范围（改动前它们全部失效，表现为 GTR 的云比桌面端略亮）—— 但这三条挂在 cbm=7 的 `Clouds Back` 上，一度被混合守卫整条排除（云不滚动），已于 `6bb3d71` 修复生效（见下方 `colorBlendMode ∈ {6,7,31}` 条）。**wasm 备用路径有完整效果链**。（详细设计：`docs/superpowers/specs/2026-09-14-three-object-effects-pipeline-design.md`。）P2 补 RT 图执行器的成本比 wasm 侧低：three 是 WebGL，WE 的效果 GLSL 可直接用，无需 wasm 侧的 GLSL→SPIR-V→WGSL 编译链。
+1. **对象级效果链（effects）：P1（2026-09-14）与 P2「具名 RT 图执行器」（2026-09-15）均已达成** —— three 主路径已接通对象级效果链管线（player 对象隔离能力 + `ObjectEffectStage` 编排 + `three-renderer` 装配，接线见 §2.1）；线性链与**具名 RT 图链**由同一执行器按计划执行（语义见 §5.28），**原先「整条跳过 + 去重告警」的降级已删除**，**24 条 RT 图链**（blurprecise×13、blur×3、localcontrast×2、godrays×2、bloom×2、shine×1、bokeh_blur×1）**全部可执行**。GTR 的 `opacity`（0.26 + mask）、`scroll`（云滚动）、`waterripple` 属线性链、P1 起生效（曾因混合守卫整条排除，`6bb3d71` 修复，见下方 `colorBlendMode ∈ {6,7,31}` 条）。
+   - **计数口径（别混）**：`106 线性 + 24 RT`（130 条效果引用）是**声明口径**（按 effect 链数、不过滤 `visible`）；其中 **1 条线性链的 effect 级 `visible=false`**（`2597392171` obj50 的 `effects/shake`）在生产侧整条跳过（§5.28）⇒ **three 的执行口径 = 105 线性 + 24 RT**。
+   - **24 条里有 10 条在画面上看不见（如实标注，不是能力差）**：**7 条挂在 `text` 对象**（收链阶段就被 `groupEffectsByObject` 过滤）、**3 条挂在 `util` 对象**（进链表但拿不到隔离条目 ⇒ 不挂链，只进「未参与渲染的对象类型」的汇总告警）。执行器语义覆盖这些模板，**画面没有变化**；text 对象的渲染本身是独立缺口。
+   - **验收覆盖口径（如实标注）**：端到端（headless Edge 真实 WebGL 逐像素）跑过的是下表 11 段样本；其余效果类别的「可正确执行」是**分类学推断**（依据 `effect.json` 的 pass 结构与执行器语义），**不是逐个实测**。
+   - **端到端实测**（headless Edge / SwiftShader + `lib/` 生产代码，1280×720，日志 `research/object-effects/rt-graph-run4.log`；脚本在 gitignore 的 `research/`）：**30 PASS / 2 FAIL**，两项 FAIL 都是 `[5]` 的**归因对照**（见下），**不是回归**。
+
+     | 段 | 样本 | 具名 RT 形态 | 实测 |
+     |---|---|---|---|
+     | `[1]` | `2683211654` | —（线性 waterwaves） | 帧间差分 40.02% PASS |
+     | `[2]` | `2911105183` obj210 | —（线性） | 盒内 4019px / **盒外最大差 0** PASS |
+     | `[3a]` | `3765967112` | blurprecise 挂 `text`（链不挂载） | 零 console error / 零跳过告警 PASS |
+     | `[3b]` | `2911105183` | blurprecise（1 张全尺寸） | 同上 PASS |
+     | `[3d]` | `2011060960` obj634 | blur + localcontrast（**双链同名 RT**） | 帧间 718500px（77.96%）/ 静态贡献 834700px PASS |
+     | `[3e]` | `2937346640` obj44 | godrays（scale=2，2 张） | 帧间 **0 → 90px** / 静态贡献 921552px PASS |
+     | `[3f]` | `1968789468` obj13 | shine（scale=2，2 张） | 帧间 **0 → 313564px（34.02%）** PASS |
+     | `[3g]` | `2597392171` obj50 | godrays | 帧间 863208px（93.66%）/ 静态贡献 739026px PASS |
+     | `[3c]` | `3743126786` | bloom 16 pass / **8 张**（scale 2/4/8/16） | isolated=2、零 error / 零跳过告警 PASS |
+     | `[5]` | `3743126786` obj17 | 同上的 bloom 可见性 | 局部增亮 28913px（3.14%）/ **全屏 p99 Δ=0** |
+     | `[4]` | `1429403119` | —（性能相对信号） | 两档帧间隔中位数 16.7 ms（SwiftShader，**非门槛**） |
+
+   - 修 §5.29 的 combo 合并**之前**，`[3e]`/`[3f]` 是「pass 编译失败 2 条 + 帧间差分 0px」（写具名 RT 的 pass 失败 ⇒ 整条计划放弃、对象一个效果都没跑），修复后编译失败 **0**。
+   - **证据口径的收窄（勿引申）**：`[3e]` 的「静态贡献 921552px（99.99%）」≈ 全画布，更像「摘掉该对象的链后**该对象自身**不再渲染」⇒ 结论只能写到「**链在执行**」，**不可**引申为「godrays 可见」（`[3f]`/`[3g]` 的静态对照同此口径）。
+   - **GTR bloom 的可见性只有弱证据（如实标注）**：全屏 p99 **无提升**（Δ=0 —— 「只保留 bloom 链」与「只摘 bloom 链」两种归因对照都是 0；主判据表面的 +17 全部来自同对象其它链 pulse 等）；bloom 的证据只有**局部增亮**（更亮 28913px = 3.14%、maxΔ103、平均亮度 +0.507）。**未与桌面 WE 逐像素对照**（用户未提供截图）。
+   - **具名 RT 显存（Task 9 实测）**：下表是**静态分配估算**（不含 mipmap / 驱动对齐 / 纹理与粒子缓冲），**非 GPU 实测**。
+
+     | 指标 | 1080p@dpr1 | 1080p@dpr2 |
+     |---|---|---|
+     | 具名 RT 全库合计 | **39.0 MB / 28 张** | **124.0 MB / 28 张** |
+     | 单壁纸最大 | **11.0 MB**（`2597392171`） | 31.6 MB（`3789452668`） |
+     | 单张最大 | **7.91 MB**（`3789452668` 的 `_rt_FullCompoBuffer1`，1920×1080） | 31.6 MB（同一张 3840×2160） |
+     | GTR `3743126786` | **5.3 MB / 8 张**（scale 2/4/8/16 的降采样金字塔） | 21.2 MB |
+     | 占全库显存（3×对象 RT + 具名 RT） | 约 **6.6%** | 约 **6.6%** |
+
+   - ⇒ 具名 RT 是「对象 RT + ping-pong」主项之外的**小头**，本期**不做显存 cap** 的裁定站得住（落点留在 `buildEffectPlan` 的尺寸计算处）。**注意**：本计划的 spec 早先按「GTR 那 8 张是全尺寸」估过一版（比实测大一个数量级），**那是错的**（已在 spec 订正，实测 5.3 MB）——别再引用那版估算。
+   - **仍未修的一条（按裁定不在本次范围）**：`3789452668` 的 `effects/color_grading`（**线性链**）有一个与 §5.29 无关的缺陷 —— `varying` 类型不匹配（`vec4` vs `vec2`）⇒ 该链不生效（改动前后一致）。
+   - **`_rt_FullFrameBuffer` 的降级（1 处）**：`2597392171` 的 godrays（pass 5）引用了全局运行时 RT，执行器**不绑白纹**（保持该槽默认）+ 一条去重告警；它的完整语义（当前帧缓冲）属**非目标**。
    - **性能门槛未验证（如实标注，勿据此宣称达标）**：设计文档 §7.4 自定「`1429403119`（23 对象 / 24 条链，全库最重）1080p **FPS ≥ 30**」为验收门槛、§7.5 列为 P1 验收项，但**该门槛尚未在真实 GPU 上验证**。本机唯一的端到端环境是 **headless Edge，其 WebGL 走 SwiftShader（软件光栅化）**，因此 `research/verify-object-effects.mjs` 的 [4] 段给出的只是**相对信号**：帧间隔与每帧耗时的中位数 / p95，外加该壁纸的**隔离对象数**与**对象 RT 总显存估算**（公式：`Σ_隔离对象 rtW × rtH × 4 字节 ×（1 张对象 RT + 有 runner 时 runner 的 2 张 ping-pong RT）`；runner 的 ping-pong 与对象 RT 同尺寸，见 `object-effects.mount`；不计 depth 附件、驱动对齐开销与纹理槽贴图）。**软件光栅化的数字不能替代真机 FPS** —— 门槛状态一律记为「未验证」，真机 FPS 待补验。（[4] 段对 **1280×720 与 1920×1080 两档**都出数：显存随预算变化，只测 720p 会与 §7.4 的 1080p 口径对不上；实测输出见 `research/object-effects/f1-run*.log` 与 `final-fix-report.md`。）
-   - **音频响应效果不随频谱动（如实标注）**：three 主路径**没有音频源** —— `createAudioAnalyzer` 只被未接入的 `scene-renderer.ts` 引用，`ObjectEffectStage.advance` 每帧显式给 `EffectRunner` 传 `null`，音频 uniform 保持 binder 初始化的**全零**。因此 `Simple_Audio_Bars` / `audioline` 等属「**效果在、但不随频谱动**」，不是「不支持该效果」。接音频留 P2。
+   - **音频响应效果不随频谱动（如实标注）**：three 主路径**没有音频源** —— `createAudioAnalyzer` 只被未接入的 `scene-renderer.ts` 引用，`ObjectEffectStage.advance` 每帧显式给 `EffectRunner` 传 `null`，音频 uniform 保持 binder 初始化的**全零**。因此 `Simple_Audio_Bars` / `audioline` 等属「**效果在、但不随频谱动**」，不是「不支持该效果」。**接音频仍未做**（P2「具名 RT 图执行器」不含音频）。
    - **`colorBlendMode ∈ {6,7,31}` 的对象已进入隔离路径、其效果生效（2026-09-14 修复，提交 `6bb3d71`）**：旧结论「这类对象被有意排除在隔离之外 ⇒ 效果不生效（GTR 的云不滚动）」**已作废**。当时排除的原因仍然成立：这类模式把内容材质的结果 alpha 钉成「背景的 alpha」（`blendSrcAlpha=Zero / blendDstAlpha=One`），而对象 RT 是新清空的缓冲（alpha 0）⇒ RT alpha 恒 0 ⇒ 合成 quad 片元被乘成 0 ⇒ 对象会**整体不可见**（相对改动前是用户可见回归），故 P1 用 `BLEND_ISOLATION_UNSAFE` 换「保可见、牺牲效果」。**修法：把 WE 的混合语义从「内容材质」搬到「合成 quad」** —— 隔离路径的内容材质（`createLayerMaterial(..., forIsolation=true)`）**不再套用** `colorBlendMode` 的 `CustomBlending`，只把自己的 rgb + alpha 用普通 alpha 混合写进清空的 RT；**非隔离**路径（主场景直出）语义逐字不变。`createCompositeQuadMaterial` **统一用 `MeshBasicMaterial`**（采样**非预乘**的对象 RT）并按 `colorBlendMode` 设 `CustomBlending`（Screen → `OneMinusDstColor/One`，alpha 仍 `Zero/One` 保持背景）。`three-renderer` 里的 `BLEND_ISOLATION_UNSAFE` 守卫及其 `warnOnce('blend-isolation:...')` 已删除 —— 这类对象现在**正常进入隔离**、效果**生效**。全库 3 个非零对象：`3743126786` Clouds Back=7、`2832263418` audio_rainbow=6、`2460786246` Clock=31。
         - **实测证据（headless Edge、`lib/` 生产代码、dpr=1、`--no-particles`；报告 `.superpowers/sdd/2026-09-14-three-object-effects-pipeline/cloud-scroll-report.md`）**：① `--only-effect=2944127259/scroll` 相位 5 vs 6 变化 **68604 像素（7.44%）**，**全部落在 Clouds Back 的 quad 矩形内、矩形外 0 变化**；最优位移 **dx = −17px**（向左），与 `scroll.vert` 的 `speedx²·g_Time`（0.14²×1s = 0.0196 UV × 869px = **17.0px**）吻合；② **对象仍可见**：云区与「无效果」地板对照 MAD=0.925、平均亮度 59.51 vs 59.59；③ 三条链都生效（仅 `effects/opacity` 时云区平均亮度 59.51→41.10）；所有运行 console error = 0；单测 112 项全过。
         - **如实标注**：`colorBlendMode` 的 Screen 语义（`op·B`）是靠「内容以普通 alpha 混合写进清空 RT ⇒ RT.rgb 天然带 ×content-alpha」实现的，**未与桌面 WE 做逐像素对照**；e2e 只跑了 **dpr=1** 且全关粒子（`--no-particles` + `wasm=none`），**粒子隔离路径未端到端复验**。
         - **测量口径澄清**：本条的局部化结论由 **bbox 判据**独立支撑（变化像素是否全部落在对象 quad 矩形内），**不依赖百分比** —— 临时脚本 `research/q-diff-grid.mjs` 早期按固定 **4 通道**步进解码，而 headless Edge 的截图是 **RGB 3 通道**，会把变化算到无关像素上（表现为「铺满整宽 + 周期性花纹」）；该 bug 已修，**早期基于它的百分比数字（如「68% 全图」「68%→4%」）不可用、不应引用**。
    - **粒子对象的效果链只有单测覆盖**：全库实测 **particle 挂载 effects = 0**（effects 挂载对象类型分布 `{util:10, image:109, particle:0, none:11}`），管线里的粒子隔离分支**无真实样本可验**，只有单测覆盖。
-   - **21 条 effects 挂在 util / 音频等不参与渲染的对象类型上**（util:10 + none:11）：会被解析但**不会挂链**（`loadSceneToThree` 不渲染它们，也就没有隔离条目），每张壁纸打一条汇总 `warn`。属 P2 范围。
-   - **text 对象的 effects 被静默丢弃（比 util/音频更彻底）**：`groupEffectsByObject`（`src/client/object-range.ts`）跳过 `kind === 'text'` 的对象，链在**解析阶段**就不进 `effectChains` —— 因此这类效果**连上面那条汇总 warn 都没有**。实测样本：`3765967112` 的 4 条 `blurprecise` 全部挂在 text 对象上（obj 71/79/89/117），这也是「拿该壁纸验证具名 RT 告警会得到 0 条」的原因。属 P2 范围（text 对象的渲染本身也是缺口）。
+   - **21 条 effects 挂在 util / 音频等不参与渲染的对象类型上**（util:10 + none:11）：会被解析但**不会挂链**（`loadSceneToThree` 不渲染它们，也就没有隔离条目），每张壁纸打一条汇总 `warn`。**P2 后依旧如此** —— 执行器已支持这些链的模板，缺的是这类对象本身的渲染，属遗留。
+   - **text 对象的 effects 被静默丢弃（比 util/音频更彻底）**：`groupEffectsByObject`（`src/client/object-range.ts`）跳过 `kind === 'text'` 的对象，链在**解析阶段**就不进 `effectChains` —— 因此这类效果**连上面那条汇总 warn 都没有**。实测样本：`3765967112` 的 4 条 `blurprecise` 全部挂在 text 对象上（obj 71/79/89/117），这也是「拿该壁纸验证具名 RT 告警会得到 0 条」的原因。**P2 已落地但不覆盖它**（执行器支持这类链的模板，缺的是 text 对象渲染本身）。
    - **`refraction` 在 GLSL3 下的编译失败：已修（2026-09-15）**：报错源码是 `common_fragment.h` 的 `ConvertTextureFormat(const int format, …)` —— 预处理把 `if (format == FORMAT_RG88 || format == FORMAT_RG1616F)` 里的 `format` 包成了 `float(format)`，生成 `float(format) == FORMAT_RG88`（float 与 int 比较）⇒ `0:254: '==' : wrong operand types` ⇒ `2911105183` obj 304 的 `effects/refraction` 整条 pass 被跳过。**根因**是 `floatifyIntVarUses` 里两条**单侧**比较保护规则的**顺序错了**：右侧规则（`(op)\s*ident`）先跑，把运算符一起吞进保护段，左侧规则再也匹配不到左操作数，剩下的 int 变量被 float() 包裹。**修法**：把比较表达式 `LHS op RHS` 整体先保护（整条规则在前），单侧规则退化为兜底；回归用例见 `tests/shader-preprocessor.test.ts`（`format == FORMAT_RG88` 保持 int、不再出现 `float(format) ==`）。复验：同一页面（`research/tmp-2911105183/render-lab.mjs`）console 里**不再有**「效果 pass 编译失败」告警。**上一轮（2026-09-14）已修的是「失败不被缓存」**（此前 `EffectRunner.getMaterial` 不缓存编译失败状态：`update()` 每帧重试 ⇒ 每帧重建材质 + 1×1 探针渲染 + 2 条 warning，实测该页 **146×2 条**刷屏）：现在 `failed` 集合按 pass key 缓存失败，同一 key 只试一次（`setChains` 时清空重试），告警也改为**每个失败 key 一条**、且带上壁纸 id / 具名 RT / 纹理槽等**可辨识标识**。
    - **`CP_ads_01/02` 的 WE 视频纹理已实现（2026-09-15）**：这两张 `.tex` 的载荷是完整 mp4（`flags=35`/bit5 Video、`imageFormat=-1`），现在走 `<video>` + `THREE.VideoTexture` 原生解码，广告牌恢复成动态广告（此前被当原始像素解码 ⇒ 乱码/黑块/透明）。实现、约束与实测见 §5.23；**未实现**：视频音频（这两个 mp4 本身无音轨）、与场景时间同步、H.265/WebM、精灵表式视频、视频纹理当效果槽时的独立释放。
-   - **链全为具名 RT 图链的对象不再隔离（P2 前置优化）**：`three-renderer` 的 isolate 准入从「有 effects」收紧为「**至少有一条线性链**」——链全是具名 RT 图链时 `setObjectChains` 整条跳过（不建 runner），对象 RT 的显存与每帧一次额外渲染 + 一次 RT 切换完全没有收益，而合成 quad 永远采样 RT 原图 ⇒ **隔离没有额外视觉收益**（口径提示：隔离路径与直接渲染**并非位级等价** —— 对象 RT 是 8 位量化、alpha 经预乘往返、预算收口时 quad 为放大采样；此处只主张「无收益」，不主张「逐像素相同」）。实测样本：`2132420420` obj 13（3840×2160，约 31.6 MB 对象 RT + 每帧一次额外渲染）。这类**渲染对象**的「具名 RT 未实现，跳过」告警**仍然打印**（带具名 RT 标识与对象 id，不因省掉隔离而静默），也不再计入「挂在未参与渲染的对象类型上」的汇总；util / text 对象照旧计入那条汇总（它们本来就不渲染，隔离与否与它们无关）。
-   - **具名 RT 图链的告警**：按标识去重，**每张壁纸每个效果标识打印一次**（同一效果被多个对象引用不刷屏）。
+   - ~~**链全为具名 RT 图链的对象不再隔离（P2 前置优化）**~~：**已作废（2026-09-15，P2）** —— `rtGraphOnly` 分支、其「不再隔离」告警与下面那条「具名 RT 图链的告警」全部删除，isolate 准入回到「至少有一条**可见**链」（§5.28）；原先因全为具名 RT 链而不隔离的对象（`2132420420` obj13 等）重新进入隔离路径 —— 付出对象 RT 显存与每帧一次额外渲染，换来效果生效。**以下为该优化存在时的历史描述**：`three-renderer` 的 isolate 准入从「有 effects」收紧为「**至少有一条线性链**」——链全是具名 RT 图链时 `setObjectChains` 整条跳过（不建 runner），对象 RT 的显存与每帧一次额外渲染 + 一次 RT 切换完全没有收益，而合成 quad 永远采样 RT 原图 ⇒ **隔离没有额外视觉收益**（口径提示：隔离路径与直接渲染**并非位级等价** —— 对象 RT 是 8 位量化、alpha 经预乘往返、预算收口时 quad 为放大采样；此处只主张「无收益」，不主张「逐像素相同」）。实测样本：`2132420420` obj 13（3840×2160，约 31.6 MB 对象 RT + 每帧一次额外渲染）。这类**渲染对象**的「具名 RT 未实现，跳过」告警**仍然打印**（带具名 RT 标识与对象 id，不因省掉隔离而静默），也不再计入「挂在未参与渲染的对象类型上」的汇总；util / text 对象照旧计入那条汇总（它们本来就不渲染，隔离与否与它们无关）。
+   - **具名 RT 图链的跳过告警**：**已删除（2026-09-15）** —— 具名 RT 链现已可执行，不再有「效果需要具名 RT（P2 未实现），跳过」这条告警（原先按标识去重、每张壁纸每个效果标识打印一次）。
 2. **`colorBlendMode` 只实现了 6/7/31**：其余模式（Darken / Multiply / Overlay / Hue … 见 §5.6）回退普通 alpha 混合。全库目前只有那 3 个对象用到非零值，新出现未实现模式时要补。
 3. **粒子 quad 不含 `rot`（自旋）**：`rotationrandom` / `angularvelocityrandom` 计算了但未参与渲染。
-4. ~~**`copybackground: true` 的图层走隔离路径时接近全黑**~~ —— **已修（2026-09-15）**：真因不是 `copybackground` 语义缺失，而是「渲染进 RT 时清屏 alpha=1 ⇒ 内容透明处变不透明黑」（见 §5.22）。同一 A/B（把 `renderer.setClearAlpha` 打成 no-op 复现旧行为）：旧行为 `2597392171` 成品均值 **14.03/255**（与 2026-09-14 记录的 15.3 / 14.98 一致）、黑像素 86.6%；修复后 **83.99/255**（对齐「去掉 effects 直渲」的 81.0）、黑像素 **0.0%**。当初的「疑因（RT 清成透明黑 ⇒ 内容近乎空）」方向对了，但**清的不是透明黑而是不透明黑**，这才是整屏发黑的关键。**仍存**：该对象的 effects 带 `"visible": false` 与绑定脚本属性的 **effect 级可见性**我们未解析（只解析对象级 `visible`）⇒ 本不该跑的 pass 也会生效；`copybackground` 的「先拷贝下方背景再跑效果链」语义仍未实现（水面倒影/涟漪读背景副本的场景会缺内容）。
+4. ~~**`copybackground: true` 的图层走隔离路径时接近全黑**~~ —— **已修（2026-09-15）**：真因不是 `copybackground` 语义缺失，而是「渲染进 RT 时清屏 alpha=1 ⇒ 内容透明处变不透明黑」（见 §5.22）。同一 A/B（把 `renderer.setClearAlpha` 打成 no-op 复现旧行为）：旧行为 `2597392171` 成品均值 **14.03/255**（与 2026-09-14 记录的 15.3 / 14.98 一致）、黑像素 86.6%；修复后 **83.99/255**（对齐「去掉 effects 直渲」的 81.0）、黑像素 **0.0%**。当初的「疑因（RT 清成透明黑 ⇒ 内容近乎空）」方向对了，但**清的不是透明黑而是不透明黑**，这才是整屏发黑的关键。**仍存**：`copybackground` 的「先拷贝下方背景再跑效果链」语义仍未实现（水面倒影/涟漪读背景副本的场景会缺内容）。（**2026-09-15 订正**：effect 级 `visible === false` **现已解析** —— 全库 1 条 = 该对象 obj50 的 `effects/shake`，按 lwe `CImage::setupPasses` 语义整条跳过、**不打降级告警**；绑定脚本属性的其它可见性仍未处理。）
 
 ### 备用 wasm / JS 路径
 
@@ -244,7 +288,7 @@ research/                    gitignore：截图 / 验证脚本 / 临时 profile
 5. **3 张壁纸在 wasm 路径判为 STATIC**（`2851992662` / `3392903359` / `3760200530`）：均无对象级 effects，动画源是粒子（leaves/snow/bubbles）。内容保留、非黑屏、`ctx=webgpu`；对照 godrays `2937346640`（`diff500=98.8%` PASS）说明效果链正常 —— 根因是 **wasm 共享粒子路径动画未可见**，属独立问题待专项排查。
 6. **particle 对象效果链未被真实壁纸验证**：`set_particle_object_effect` 已实现，但库内没有「带 effects 的 particle 对象」被触发。
 7. **`g_ModelViewProjectionMatrix` 未由执行器提供**（材质 json 不给值 → 默认 0）。库内依赖 MVM 的效果都是「frag 效果 + vert passthrough」，故不受影响；仅 vert 阶段真正用 MVM 的效果链会出问题。
-8. **`collect_bindings` 用文本扫描从 WGSL 提取纹理绑定**，对更复杂的多纹理 shader 待改进（库内 shader 已验证可用）。
+8. **`collect_bindings` 用文本扫描从 WGSL 提取纹理绑定**，对更复杂的多纹理 shader 待改进（库内 shader 已验证可用）。**另：其 RT 图执行器的 `bind` 索引语义与 lwe 不符** —— `resolve_pass_read`（`effect.rs`）只取 `bind[0]` 决定唯一读端、按 `g_Texture(i+1)` 对齐，权威语义是 `bind.index → g_Texture<index>`；该路径未接入运行时，本次未改（§2.1）。
 
 ### 验证与其它
 
