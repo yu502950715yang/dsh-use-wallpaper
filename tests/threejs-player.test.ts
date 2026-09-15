@@ -16,8 +16,7 @@ function createMockRenderer() {
   const setAnimationLoop = vi.fn((fn: (() => void) | null) => {
     loop = fn;
   });
-  // 清屏 alpha 与「渲染那一刻的渲染目标」都要记录：渲染到 RT 时必须清成透明黑（alpha=0），
-  // 主场景 → 画布保持原值（1）。缺这两项，2026-09-15 的「整片黑块」根因无法在单测里回归。
+  // 清屏 alpha 与渲染目标都要记录：渲染到 RT 时必须清成透明黑（见 AGENT.md §5.22）。
   let clearAlpha = 1;
   let currentTarget: unknown = null;
   const renders: Array<{ scene: unknown; target: unknown; clearAlpha: number }> = [];
@@ -1445,10 +1444,7 @@ describe('ThreeScenePlayer 对象隔离', () => {
     expect(mat.blendDstAlpha).toBe(THREE.OneFactor);
   });
 
-  // 2026-09-15 根因回归：three 的清屏 alpha 由 WebGLRenderer 的 `alpha` 参数决定（缺省 false
-  // ⇒ clearAlpha=1），渲染到 **RenderTarget** 时同样生效 ⇒ RT 被清成**不透明黑** ⇒ 对象内容
-  // 透明处 / 效果降 alpha 处变成黑块贴回主场景（2911105183 实测 31.1% 画面纯黑）。
-  // 修法：渲染进 RT 前把清屏 alpha 置 0、渲染后恢复（见 rt-render.ts）。
+  // 回归（AGENT.md §5.22）：渲染到 RT 必须透明清屏（clearAlpha=0），主场景 → 画布保持原值。
   it('隔离内容渲染用透明清屏（clearAlpha=0），主场景渲染保持原值', () => {
     const { player, mock } = makePlayer();
     player.addBackground({

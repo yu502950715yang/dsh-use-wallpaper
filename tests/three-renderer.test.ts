@@ -51,9 +51,7 @@ const SCENE = JSON.stringify({
   ],
 });
 
-// 背景纹理 fake：真实 `THREE.Texture` 一定有 `dispose` —— three-renderer 在 teardown 里调用它释放
-// 本次装配的纹理（视频纹理的 `<video>`/Blob URL 清理钩子就挂在 `dispose` 事件上，见 tex-loader）。
-// mock 必须带上，否则接线用例会因「在不真实的 fake 上调用 dispose」而误报。
+// 背景纹理 fake：真实 Texture 一定有 dispose（teardown 会调用它释放本次纹理）。
 function fakeTexture() {
   return { fake: true, dispose: vi.fn() };
 }
@@ -136,9 +134,8 @@ describe('createThreeSceneRenderer', () => {
   });
 
   it('dispose / 切壁纸时释放本次装配的背景纹理（视频纹理的 <video>/Blob URL 不能被 renderer.dispose 兜住）', async () => {
-    // 视频纹理（tex-loader 的视频分支）把 `<video>` + Blob URL 挂在纹理的 dispose 事件上：
-    // GPU 侧 `renderer.dispose()` 只释放 WebGL 资源，**不会停解码**，所以壁纸切换必须显式
-    // `texture.dispose()`，否则每切一次就漏一个正在解码的视频与一份 10MB Blob。
+    // 视频纹理把 `<video>` + Blob URL 挂在纹理的 dispose 事件上，GPU 侧释放不会停解码
+    // ⇒ 壁纸切换必须显式 texture.dispose()（见 AGENT.md §5.23）。
     const texA = { dispose: vi.fn() };
     const texB = { dispose: vi.fn() };
     resolveImageTexture.mockResolvedValue(texA as any);

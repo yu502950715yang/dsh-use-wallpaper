@@ -16,9 +16,8 @@ import * as THREE from 'three';
 // 改为直接从 object-range.js 取（createCompositeGeometry 也在这里），避免多一层转手。
 import { coverRange, CAMERA_DISTANCE, materialModulation, createCompositeGeometry, flipGeometryUvY, screenScalePx } from './object-range.js';
 import { parseSceneJson } from './scene-json.js';
-// 渲染进对象 RT 必须**透明清屏**（清屏 alpha=0）：three 的清屏 alpha 缺省为 1（renderer 以
-// `alpha: false` 构造），渲染到 RT 时也照用 ⇒ 内容透明处/效果降 alpha 处会变成**不透明黑**。
-// 根因与实测数字见 rt-render.ts 文件头。
+// 渲染进对象 RT 必须透明清屏（清屏 alpha=0），否则内容透明处/效果降 alpha 处会变成不透明黑。
+// 根因见 rt-render.ts 与 AGENT.md §5.22。
 import { renderIntoRenderTarget } from './rt-render.js';
 
 // 背景图层条目：记录 WE 场景坐标与当前已应用状态，供 update_background 对齐既有
@@ -593,8 +592,7 @@ export class ThreeScenePlayer {
   }
 
   // 渲染所有隔离对象的内容到各自 RT（player 拥有 scene/camera，故渲染留在 player）。
-  // ⚠️ 必须走 renderIntoRenderTarget（渲染前把清屏 alpha 置 0）：直接 `setRenderTarget + render`
-  // 会把 RT 清成**不透明黑**，对象内容透明处随即变成黑块贴回主场景（根因见 rt-render.ts）。
+  // ⚠️ 必须走 renderIntoRenderTarget（透明清屏），直接 setRenderTarget + render 会画出黑块。
   private renderIsolatedContents(): void {
     for (const entry of this.isolated.values()) {
       renderIntoRenderTarget(this.renderer, entry.rt, entry.localScene, entry.localCamera);

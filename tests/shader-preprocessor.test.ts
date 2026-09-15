@@ -139,12 +139,9 @@ describe('preprocessWeShader', () => {
     expect(out).toContain('blendMode == 9');                  // int 比较保持
   });
   it('int 变量与标识符（宏/常量）比较不被包 float()（2026-09-15 修复 refraction 编译失败）', () => {
-    // 实测：common_fragment.h 的 `ConvertTextureFormat(const int format, …)` 里
-    // `if (format == FORMAT_RG88 || format == FORMAT_RG1616F)` 曾被处理成
-    // `float(format) == FORMAT_RG88`（float 与 int 比较）⇒ GLSL ES 3.00
-    // `'==' : wrong operand types` ⇒ 2911105183 的 effects/refraction 整条 pass 编译失败。
-    // 根因：比较保护的两条**单侧**规则顺序错了——右侧规则先把 `==` 吞进保护段，
-    // 左侧规则再也匹配不到左操作数，剩下的 int 变量被 float() 包裹。
+    // 实测：common_fragment.h 的 `if (format == FORMAT_RG88)` 曾被处理成 `float(format) == …`
+    // ⇒ GLSL3 '==' wrong operand types ⇒ 2911105183 的 effects/refraction 整条 pass 编译失败。
+    // 根因是两条单侧比较保护规则顺序错（右侧规则先吞掉运算符）。细节见 AGENT.md §7.1。
     const src = [
       '#define FORMAT_RG88 8',
       '#define FORMAT_R8 9',

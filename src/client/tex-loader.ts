@@ -361,25 +361,20 @@ export interface TexLoadOptions {
   rowOrder?: TexRowOrder;
 }
 
-// TEXV0005 flags 的 video 位（值 32，bit 5；权威定义见 research/.lwe/.../Data/Assets/Texture.h:91-97
-// 的 `TextureFlags_Video`）：带此位时 mip0 载荷是**完整 mp4 文件**（不是像素/块数据）。
+// TEXV0005 flags 的 video 位（值 32，bit 5）：带此位时 mip0 载荷是**完整 mp4 文件**（不是像素）。
 const FLAG_VIDEO = 1 << 5;
 
-/**
- * 视频纹理判定（纯函数，node 可测）：flags 带 Video 位 **且** mip0 载荷是 mp4 容器
- * （第一个 box 的 type = `ftyp`）。两个条件都要：单看 flags 会把「标了 Video 位但其实是像素数据」
- * 的包当视频（库里暂未出现），单看 magic 会误判恰好以 `?? ?? ?? ?? ftyp` 开头的像素数据。
- */
+/** 视频纹理判定（纯函数，node 可测）：flags 带 Video 位 **且** mip0 载荷以 mp4 的 `ftyp` box 开头。 */
 export function isVideoTexPayload(info: TexInfo): boolean {
   if ((info.flags & FLAG_VIDEO) === 0) return false;
   const d = info.mipmaps[0]?.data;
   return !!d && d.length >= 12 && d[4] === 0x66 && d[5] === 0x74 && d[6] === 0x79 && d[7] === 0x70;
 }
 
-// 视频纹理就绪等待（`loadeddata` = 首帧可绘制）上限。超时按「播不了」处理（回落透明）。
+// 等 `loadeddata`（首帧可绘制）的上限；超时按「播不了」处理。
 const VIDEO_READY_TIMEOUT_MS = 5000;
 
-/** 等 `<video>` 就绪：`loadeddata` → true；`error` / 超时 → false（幂等，只结算一次）。 */
+/** 等 `<video>` 就绪：`loadeddata`/已就绪 → true；`error`/超时 → false（幂等）。 */
 function waitForVideoReady(video: HTMLVideoElement, timeoutMs: number): Promise<boolean> {
   return new Promise((resolve) => {
     let done = false;
@@ -396,12 +391,12 @@ function waitForVideoReady(video: HTMLVideoElement, timeoutMs: number): Promise<
     const timer = setTimeout(() => finish(false), timeoutMs);
     video.addEventListener('loadeddata', onReady);
     video.addEventListener('error', onError);
-    // 已在缓存/已就绪（HAVE_CURRENT_DATA=2）时不会再有 loadeddata → 直接放行。
+    // 已就绪（HAVE_CURRENT_DATA=2）时不会再有 loadeddata → 直接放行。
     if (typeof video.readyState === 'number' && video.readyState >= 2) finish(true);
   });
 }
 
-/** 视频不可播时的降级纹理：1×1 透明像素（见调用点注释：不白板、也不把 mp4 当像素解码）。 */
+/** 视频不可播时的降级纹理：1×1 透明像素。 */
 function transparentTexture(): THREE.DataTexture {
   const tex = new THREE.DataTexture(new Uint8Array([0, 0, 0, 0]), 1, 1, THREE.RGBAFormat);
   tex.needsUpdate = true;
@@ -409,20 +404,11 @@ function transparentTexture(): THREE.DataTexture {
 }
 
 /**
- * 由 mp4 载荷建 `THREE.VideoTexture`（WE 视频纹理）。失败返回 null（调用方决定降级）。
+ * 由 mp4 载荷建 `THREE.VideoTexture`（浏览器原生解码）。失败返回 null，由调用方降级。
  *
- * 实测（`research/tmp-2911105183/probe-video-play.mjs`，headless Edge）：载荷是完整 mp4
- * （`ftyp isom/iso2/avc1/mp41`、H.264、1280×720、27.4s、无音轨），`loadeddata` 后
- * `play()` 成功、可作为 `texImage2D` 源（`glError=0`）⇒ 浏览器原生解码即可，不需要额外解封装。
- *
- * 三个不显然的约束：
- *  ① **静音自动播放**：`muted + playsInline` 才允许无手势起播（壁纸没有用户手势）；被策略拒绝时
- *     挂一次性 `pointerdown/keydown` 重试（与音频路径同思路），起播前纹理显示首帧之前的状态。
- *  ② **不进 mip 链**：`VideoTexture` 每帧 `needsUpdate`，`generateMipmaps` 会每帧重建整条 mip 链
- *     ⇒ 强制 `LinearFilter` + `generateMipmaps=false`（three 的 VideoTexture 缺省亦如此，这里写死
- *     以免未来被 `applyLinearSampling` 之类改动带上 mip）。
- *  ③ **生命周期不归 GPU 管**：`renderer.dispose()` 只释放 GPU 纹理，**不会停解码、不会撤销 Blob URL**
- *     ⇒ 在纹理的 `dispose` 事件（three `Texture.dispose()` 会派发）里 pause + 清 src + revoke。
+ * 三个约束：静音 `muted + playsInline` 才允许无手势起播（被拒则等一次手势重试）；
+ * 不进 mip 链（`VideoTexture` 每帧 needsUpdate）；`<video>`/Blob URL 不受 GPU 释放管，
+ * 故清理挂在纹理 `dispose` 事件上。详见 AGENT.md §5.23。
  */
 async function videoTextureFromMp4(
   data: Uint8Array<ArrayBuffer>,
@@ -441,7 +427,7 @@ async function videoTextureFromMp4(
   video.preload = 'auto';
   video.src = url;
   const release = (): void => {
-    try { video.pause(); } catch { /* 未起播时 pause 可能抛，忽略 */ }
+    try { video.pause(); } catch { /* 未起播时可能抛，忽略 */ }
     try { video.removeAttribute('src'); video.src = ''; video.load(); } catch { /* 忽略 */ }
     URL.revokeObjectURL(url);
     try { video.remove(); } catch { /* 未插入 DOM 时无 remove，忽略 */ }
@@ -451,14 +437,12 @@ async function videoTextureFromMp4(
     return null;
   }
   const tex = new THREE.VideoTexture(video);
-  // 行序：显示约定（bottomUp）→ flipY=true（video 是 DOM 元素源，UNPACK_FLIP_Y_WEBGL 生效）；
-  // 效果槽约定（topDown = WE 的 v=0=顶部）→ flipY=false。与 ImageBitmap 分支同一套语义。
+  // 行序与 ImageBitmap 分支同语义：显示约定翻行序，效果槽约定（WE v=0=顶部）不翻。
   tex.flipY = !topDown;
   tex.minFilter = THREE.LinearFilter;
   tex.magFilter = THREE.LinearFilter;
   tex.generateMipmaps = false;
   tex.addEventListener('dispose', release);
-  // 静音自动播放；被策略拒绝 → 等一次用户手势重试。
   void video.play().catch(() => {
     if (typeof window === 'undefined') return;
     const resume = (): void => { void video.play().catch(() => { /* 仍失败则保持首帧 */ }); };
@@ -525,8 +509,7 @@ export async function textureFromTex(info: TexInfo, opts?: TexLoadOptions): Prom
     const clamp = (info.flags & FLAG_CLAMP_UVS) !== 0;
     tex.wrapS = tex.wrapT = clamp ? THREE.ClampToEdgeWrapping : THREE.RepeatWrapping;
   };
-  // 视频纹理优先（必须排在编码图像与原始像素两条分支**之前**）：flags bit5 置位时 mip0 是
-  // **完整 mp4 文件**，按像素解会得到乱码（且载荷常比 w×h×4 小 ⇒ 后续 flipRows 直接越界抛错）。
+  // 视频纹理优先（必须在编码图像/原始像素两条分支之前：mp4 当像素解是乱码）。
   if (isVideoTexPayload(info)) {
     const decorate = (t: THREE.Texture): THREE.Texture => {
       applyWrap(t, info);
@@ -534,10 +517,7 @@ export async function textureFromTex(info: TexInfo, opts?: TexLoadOptions): Prom
     };
     const videoTex = await videoTextureFromMp4(mip.data, info, topDown, decorate);
     if (videoTex) return videoTex;
-    // 播不了（编解码不支持 / 解码错误 / 5s 超时）→ **画透明**：
-    //   ① 返回 null 会让 `createLayerMaterial(map: null)` 退回**白色不透明**面板；
-    //   ② 按原始像素解 mp4 是乱码、且可能越界抛错。
-    // 载体是 1×1 透明纹理 ⇒ 该图层不可见（与「视频纹理未实现」时的观感一致），并留一条可辨识告警。
+    // 播不了 → 画透明（返回 null 会退回**白色不透明**面板），并留一条可辨识告警。
     console.warn(
       `[wallpaper-engine] 视频纹理无法播放，回退为透明: flags=${info.flags} `
       + `${mip.width}x${mip.height} ${mip.data.length}B`,

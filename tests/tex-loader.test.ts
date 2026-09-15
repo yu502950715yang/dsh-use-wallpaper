@@ -260,9 +260,8 @@ describe('convertUnormToRgba', () => {
   });
 });
 
-// WE 视频纹理（flags bit5 = Video，值 32）：`.tex` 的 mip0 载荷是**完整 mp4**（不是像素数据）。
-// 实测样本 2911105183 的 CP_ads_01/02.tex：ftyp isom/iso2/avc1/mp41、H.264、1280×720、27.4s。
-// 判定必须是**纯函数**（node 可测，不碰 DOM）：flags 带 Video 位 **且** 载荷是 mp4 容器。
+// WE 视频纹理（flags bit5 = Video）：.tex 的 mip0 载荷是**完整 mp4**（不是像素数据）。
+// 判定必须是纯函数（node 可测，不碰 DOM）：flags 带 Video 位 **且** 载荷是 mp4 容器。
 describe('isVideoTexPayload（视频纹理判定，纯函数）', () => {
   const MP4 = new Uint8Array([0, 0, 0, 0x20, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d]); // …size+ftyp+isom
   const texWith = (flags: number, data: Uint8Array) => parseTex(makeTex({

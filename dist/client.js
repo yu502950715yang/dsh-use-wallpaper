@@ -20962,8 +20962,7 @@ var ThreeScenePlayer = class {
     entry.rtHeight = h;
   }
   // 渲染所有隔离对象的内容到各自 RT（player 拥有 scene/camera，故渲染留在 player）。
-  // ⚠️ 必须走 renderIntoRenderTarget（渲染前把清屏 alpha 置 0）：直接 `setRenderTarget + render`
-  // 会把 RT 清成**不透明黑**，对象内容透明处随即变成黑块贴回主场景（根因见 rt-render.ts）。
+  // ⚠️ 必须走 renderIntoRenderTarget（透明清屏），直接 setRenderTarget + render 会画出黑块。
   renderIsolatedContents() {
     for (const entry of this.isolated.values()) {
       renderIntoRenderTarget(this.renderer, entry.rt, entry.localScene, entry.localCamera);

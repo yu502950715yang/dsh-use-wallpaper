@@ -205,16 +205,10 @@ export function floatifyIntVarUses(src: string): string {
   //  - int/float/ivec 构造（配对括号，float(N) 内已是显式转换，不重复包）
   out = protectConstructs(out);
   //  - 比较运算两侧的 int 变量（x < sampleCount 保持 int 比较）
-  //    ⚠️ **必须先把整个比较表达式 `LHS op RHS` 一起保护**（2026-09-15 修复）：
-  //    原先只有「右侧」与「左侧」两条**单侧**规则，且右侧规则在前 —— 它会把运算符
-  //    （`==`/`<` …）一起吞进保护段，于是左侧规则再也匹配不到左操作数，剩下的 int 变量
-  //    在下一步被包成 `float(x)`，生成 `float(format) == FORMAT_RG88`（float 与 int 比较，
-  //    GLSL ES 3.00 报 `'==' : wrong operand types`）⇒ 整条 pass 编译失败被跳过。
-  //    实测受害者：`common_fragment.h` 的 `ConvertTextureFormat(const int format, …)`
-  //    （2911105183 的 `effects/refraction` 即因此报 `0:254` 并整条效果失效）。
+  //    先整体保护 `LHS op RHS`：单侧规则会把运算符吞进保护段，左操作数随即被包成 float(x)
+  //    （生成 `float(format) == FORMAT_RG88`，GLSL3 报 '==' wrong operand types，见 AGENT.md §7.1）。
   out = out.replace(/[A-Za-z_]\w*\s*(?:==|!=|<=|>=|<|>)\s*[A-Za-z_]\w*/g, protect);
-  //    单侧兜底：另一侧是字面量/表达式（`x == 0.0`、`== x`）时仍按原样保护运算符与那一侧，
-  //    使 `x` 不被包 float()（int 与 int 字面量比较合法；float 字面量场景由上面整条规则兜住）。
+  //    单侧兜底：另一侧是字面量/表达式（`x == 0.0`、`== x`）时，仍保护运算符与那一侧。
   out = out.replace(/[A-Za-z_]\w*\s*(?:==|!=|<=|>=|<|>)/g, protect);
   out = out.replace(/(?:==|!=|<=|>=|<|>)\s*[A-Za-z_]\w*/g, protect);
   // 剩余使用点：float(name)（与浮点字面量/变量/vec 混合运算、赋值、函数参数）

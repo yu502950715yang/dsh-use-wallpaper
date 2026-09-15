@@ -515,11 +515,8 @@ function createFailRenderer() {
   return renderer;
 }
 
-// 2026-09-15 根因回归：效果 pass 渲染进 ping-pong RT 必须**透明清屏**（cleared alpha=0）。
-// three 的清屏 alpha 缺省为 1（renderer 以 `alpha: false` 构造），渲染到 RT 时同样生效 ⇒
-// RT 被清成不透明黑；效果把 alpha 降下去处（opacity / mask）rgb 被 SrcAlpha 混合乘成 0、
-// alpha 通道的 blendFunc (ONE, ONE_MINUS_SRC_ALPHA) 又让 alpha 保持 1 ⇒ 输出**不透明黑**
-// ⇒ 合成 quad 把黑块盖回主场景（2911105183 实测 31.1% 画面纯黑）。
+// 回归（AGENT.md §5.22）：效果 pass 渲染进 ping-pong RT 必须透明清屏（alpha=0），
+// 否则效果把 alpha 降下去处会变成不透明黑块贴回主场景。
 describe('EffectRunner RT 清屏 alpha（黑块根因回归）', () => {
   function createAlphaRenderer(initialAlpha = 1) {
     let alpha = initialAlpha;

@@ -1,10 +1,6 @@
-// WE 视频纹理（flags bit5 = Video）的 DOM 侧行为：mp4 载荷 → THREE.VideoTexture，
-// 以及**资源生命周期**（`<video>` + Blob URL 不受 GPU 资源释放管，必须在纹理 dispose 时清理）。
-//
-// 真实样本：2911105183 的 `materials/CP_ads_01/02.tex` —— ftyp isom/iso2/avc1/mp41、H.264、
-// 1280×720、27.4s、无音轨。jsdom 不会真解码，所以这里用 FakeVideo 精确控制
-// `loadeddata` / `error` 时机与监听器，断言的是**我们的**行为（判定走哪条分支、纹理属性、
-// dispose 时停播 + 撤销 URL），不是浏览器的解码能力（那由 research/tmp-2911105183/probe-video-play.mjs 实测）。
+// WE 视频纹理（flags bit5 = Video）的 DOM 侧行为：mp4 载荷 → THREE.VideoTexture，以及资源生命周期
+// （`<video>` + Blob URL 不受 GPU 释放管）。jsdom 不真解码，故用 FakeVideo 控制 loadeddata/error 时机；
+// 编码可播性由 research/tmp-2911105183/probe-video-play.mjs 在真实 Edge 里实测。
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
 import { parseTex, textureFromTex, isVideoTexPayload, TEX_FORMAT } from '../../src/client/tex-loader.js';

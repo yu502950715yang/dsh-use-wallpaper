@@ -46,11 +46,7 @@ export interface TexLoadOptions {
     alphaPriority?: boolean;
     rowOrder?: TexRowOrder;
 }
-/**
- * 视频纹理判定（纯函数，node 可测）：flags 带 Video 位 **且** mip0 载荷是 mp4 容器
- * （第一个 box 的 type = `ftyp`）。两个条件都要：单看 flags 会把「标了 Video 位但其实是像素数据」
- * 的包当视频（库里暂未出现），单看 magic 会误判恰好以 `?? ?? ?? ?? ftyp` 开头的像素数据。
- */
+/** 视频纹理判定（纯函数，node 可测）：flags 带 Video 位 **且** mip0 载荷以 mp4 的 `ftyp` box 开头。 */
 export declare function isVideoTexPayload(info: TexInfo): boolean;
 export declare function textureFromTex(info: TexInfo, opts?: TexLoadOptions): Promise<THREE.Texture | null>;
 export declare function flipCompressedRows(data: Uint8Array, width: number, height: number, blockSize: number): Uint8Array<ArrayBuffer>;
