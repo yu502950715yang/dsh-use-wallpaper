@@ -66,7 +66,7 @@
 
 - **全库覆盖（P1 + P2，2026-09-15）**：线性链与 **24 条具名 RT 图链**（blurprecise×13、blur×3、localcontrast×2、godrays×2、bloom×2、shine×1、bokeh_blur×1）都由同一执行器按计划执行（**模板均已覆盖**；其中 10 条不挂链、画面无变化，见下条）；**原先「整条跳过 + 去重告警」的降级已删除**。
 - **新增的效果类别**：`blur` / `blurprecise` / `localcontrast` / `godrays` / `bloom` / `shine` / `bokeh_blur` 属 P2 新增。P1 已有的高频线性效应是 waterwaves 24 / shake 18 / opacity 8 / waterripple 7 / waterflow、pulse、perspective 各 5 / clouds、scroll、foliagesway 各 4 …。
-- **计数口径**：`106 线性 + 24 RT`（130 条效果引用）是**声明口径**（按 effect 链数、不过滤 `visible`）；其中 1 条线性链的 effect 级 `visible=false`（`2597392171` obj50 的 `effects/shake`）生产侧整条跳过 ⇒ three 的**执行口径 = 105 线性 + 24 RT**。
+- **计数口径**：`106 线性 + 24 RT`（130 条效果引用）是**声明口径**（按 effect 链数、不过滤 `visible`）；其中 1 条线性链的 effect 级 `visible=false`（`2597392171` obj50 的 `effects/shake`）生产侧整条跳过（**`visible` 仅 three 主路径解析**；未接入的 `scene-renderer` / `wasm-renderer` 并源循环未过滤）⇒ three 的**执行口径 = 105 线性 + 24 RT**。
 - **10 条链在画面上看不到（不是能力差）**：24 条 RT 图链里 7 条挂在 `text` 对象（收链阶段就被过滤）、3 条挂在 `util` 对象（拿不到隔离条目 ⇒ 不挂链）；这两类对象的渲染是独立缺口。
 - **验收口径（如实）**：端到端（真实 WebGL 逐像素）跑过的样本是 `2683211654` / `2911105183` / `2011060960`（双链同名 RT）/ `2937346640`（godrays）/ `1968789468`（shine）/ `2597392171`（godrays）/ `3743126786`（16 pass bloom）/ `3765967112`（blurprecise 挂 text，链不挂载，只作「不报错」回归）/ `1429403119`（性能相对信号）；该轮共 **30 PASS / 2 FAIL**，2 条 FAIL **全是 `[5]` 的归因对照**（bloom 不抬全屏 p99），**不是回归**（明细见 `AGENT.md` §7.1 的表）。其余效果类别的「可由现有执行器正确执行」仍是**分类学推断**，**不是逐个实测**。GTR 的 bloom 只测到**局部增亮**（p99 Δ=0），**未与桌面 WE 逐像素对照**。
 - **P2 遗留（如实）**：`3789452668` 的 `effects/color_grading`（线性链）有 `varying` 类型不匹配（`vec4` vs `vec2`）⇒ 该链不生效；`2597392171` 的 godrays 引用了全局运行时 RT `_rt_FullFrameBuffer` ⇒ 该槽不绑（保持默认）+ 告警一次，其完整语义属非目标；**未做显存 cap**。

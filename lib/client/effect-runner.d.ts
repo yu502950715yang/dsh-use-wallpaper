@@ -65,7 +65,8 @@ export declare class EffectRunner {
     constructor(renderer: THREE.WebGLRenderer, width: number, height: number, opts?: {
         load?: EffectTexLoader;
     });
-    /** 挂载带具名 RT 的效果计划。**只允许在加载期 / resize 重挂期调用**（帧内不得建 RT，§5.11）。 */
+    /** 挂载带具名 RT 的效果计划：建具名 RT 池 + 清材质缓存。**只允许在加载期 / resize 重挂期调用**（帧内不得建 RT，§5.11）。
+     *  材质与 1×1 探针编译不在本方法内 —— 仍由首个 update 帧的 getMaterial 懒建（帧内首次编译有停顿）。 */
     setPlan(plan: EffectPlan, chains: CompiledEffectPass[][], wallpaperId: string, opts?: {
         width?: number;
         height?: number;

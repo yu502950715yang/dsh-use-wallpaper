@@ -22268,7 +22268,8 @@ var EffectRunner = class {
     this.rtA = new WebGLRenderTarget(width, height);
     this.rtB = new WebGLRenderTarget(width, height);
   }
-  /** 挂载带具名 RT 的效果计划。**只允许在加载期 / resize 重挂期调用**（帧内不得建 RT，§5.11）。 */
+  /** 挂载带具名 RT 的效果计划：建具名 RT 池 + 清材质缓存。**只允许在加载期 / resize 重挂期调用**（帧内不得建 RT，§5.11）。
+   *  材质与 1×1 探针编译不在本方法内 —— 仍由首个 update 帧的 getMaterial 懒建（帧内首次编译有停顿）。 */
   setPlan(plan, chains, wallpaperId, opts) {
     this.plan = plan;
     this.chains = chains;
@@ -22562,7 +22563,14 @@ var EffectRunner = class {
         this.bindSlot(material, 0, readTex);
         for (const b of pp.bindings) {
           const tex = b.source.type === "previous" ? effectInput : this.namedRt.get(b.source.key)?.texture ?? null;
-          if (tex) this.bindSlot(material, b.slot, tex);
+          if (tex) {
+            this.bindSlot(material, b.slot, tex);
+          } else if (b.source.type === "previous") {
+            this.warnOnce(
+              `unresolved-previous:${this.id}:${key}:${b.slot}`,
+              `[wallpaper-engine] bind \u7684 previous \u4E0D\u5728 target \u5E8F\u5217\u5185\uFF0C\u8BE5\u69FD\u56DE\u843D\u5230\u8BE5\u69FD\u9ED8\u8BA4: g_Texture${b.slot}\uFF08\u58C1\u7EB8 ${this.id}\uFF0Cpass ${key}\uFF09`
+            );
+          }
         }
         if (material.uniforms["g_Time"]) material.uniforms["g_Time"].value = time;
         if (this.audioSpectrum) this.fillAudioUniforms(material, this.audioSpectrum);
@@ -22570,7 +22578,7 @@ var EffectRunner = class {
         if (pp.write.type === "named") {
           const namedTarget = this.namedRt.get(pp.write.key);
           if (!namedTarget) {
-            this.warnOnce(`no-named-rt:${this.id}:${key}`, `\u5177\u540D RT \u7F3A\u5931\uFF08${key}\uFF09\uFF0C\u653E\u5F03\u8BE5\u6548\u679C\u94FE\uFF08\u58C1\u7EB8 ${this.id}\uFF09`);
+            this.warnOnce(`no-named-rt:${this.id}:${key}`, `[wallpaper-engine] \u5177\u540D RT \u7F3A\u5931\uFF08${key}\uFF09\uFF0C\u653E\u5F03\u8BE5\u6548\u679C\u94FE\uFF08\u58C1\u7EB8 ${this.id}\uFF09`);
             this.renderer.setRenderTarget(null);
             this.last = null;
             return null;
