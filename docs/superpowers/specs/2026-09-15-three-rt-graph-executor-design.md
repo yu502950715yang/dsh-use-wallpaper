@@ -33,7 +33,7 @@ three 主路径 P1 已接通对象级效果链，但 `effect.json` 里带**具�
 | shine | 1 | 5 | `_rt_HalfCompoBuffer1/2` | 2 |
 | bloom | 1 | 4 | `_rt_buffer1/2` | 4 |
 | bokeh_blur | 1 | 5 | `_rt_downscaled1/2`、`_rt_coc` | 4 |
-| bloom（GTR 变体） | 1 | **16** | `blur_start_2/4/8/16`、`blur_end_2/4/8/16`（**fbos 未声明**，名字**不带 `_rt_` 前缀**） | 1（缺省） |
+| bloom（GTR 变体） | 1 | **16** | `blur_start_2/4/8/16`、`blur_end_2/4/8/16`（**fbos 声明 scale=2/4/8/16 且 `unique:true`**；名字**不带 `_rt_` 前缀**） | 2 / 4 / 8 / 16 |
 
 合计 13 + 3 + 2 + 2 + 1 + 1 + 1 + 1 = **24**（bloom 共 2 条：一条 `_rt_buffer` 型、一条 GTR `blur_*` 型）。
 
@@ -48,7 +48,7 @@ three 主路径 P1 已接通对象级效果链，但 `effect.json` 里带**具�
 其它事实：
 
 - `fbo.format` 全库只有 `rgba8888` 与 `rgba_backbuffer`；`fbos[].unique` 与 `passes[].command` 全库 **0 处**；
-- **`fbos` 声明与实际 `target` 不保证一致**：GTR 的 bloom `effect.json` 声明了 `_rt_buffer1/2`，但它的 16 个 pass 实际写的是 `blur_start_*`/`blur_end_*`（同一份 `fbos` 统计里 `_rt_buffer1/2` 出现在 2 个壁纸，其中一个正是 GTR 这条未被使用的声明）⇒ **具名 RT 清单必须按 `target` 建立，`fbos` 只用来查 `scale`**；
+- **具名 RT 清单按 `target` 建立、`fbos` 只提供 `scale`**（不按 `fbos` 建）：`fbos` 可能是**超集**（声明了却没有任何 pass 使用的条目不该建 RT），而 `target` 才是「谁会被写」的权威。（**实现期订正 2026-09-15**：本节早先写「GTR 的 bloom 声明了 `_rt_buffer1/2` 却把 target 改成 `blur_start_*`、两者不一致」——那是本计划扫描脚本的误读；实测原文是该链 `fbos` 就声明了 `blur_start_2/end_2(scale 2)`、`_4(4)`、`_8(8)`、`_16(16)`（`format: rgba_backbuffer`、`unique: true`），与 16 个 pass 的 target 完全一致，全库 `_rt_buffer1/2` 的「声明」在本机数据里 0 命中。规则本身不变。）
 - `textures[0]` 非空的 pass **0 处**；`bind` 与 `textures` 同 index 冲突 **6 处**（全在 RT 图链上，例：`shine` p4 的 `textures[1]="_rt_imageLayerComposite_13_b"` 被 `bind[1]=previous` 覆写）；`bind.index >= textures.length` **77 处**（靠 shader 声明的槽位补齐，`effectSlotCount` 已实现）；
 - `textures[]` 里的 `_rt_*` 引用：`_rt_imageLayerComposite_<id>_a/_b` **6 处全部被 `bind` 覆写**（无需处理）；`_rt_FullFrameBuffer` **1 处未被覆写**（`2597392171 obj50` godrays p4 slot2）⇒ 进入降级清单（§6）。线性链里 `_rt_*` 槽引用 **0 处** ⇒ P1 线性路径无同类既有缺陷；
 - scene.json 覆写 `bind` / `target` 全库 **0 处** ⇒ `resolveEffectChain` 现解析出的 `target`/`bind` 可直接消费，无需扩解析；
@@ -162,7 +162,7 @@ export function buildEffectPlan(
 
 ### 4.2 计划构造规则
 
-1. **具名 RT 清单**：逐链遍历 `passes[i].target`，去重建表。尺寸 = `max(1, round(baseWidth / scale))`（`baseWidth` = 对象 RT 像素宽），`scale` 取 `pass.fboScale[name]`，缺省 / ≤0 = 1。**`target` 出现过但 `fbos` 未声明的名字照建**（GTR 的 8 张）。对象 RT 已钳在 4096，除以 scale 只会更小，无需二次钳制。`format` / `unique` 不消费（§2.2 #9）。
+1. **具名 RT 清单**：逐链遍历 `passes[i].target`，去重建表。尺寸 = `max(1, round(baseWidth / scale))`（`baseWidth` = 对象 RT 像素宽），`scale` 取 `pass.fboScale[name]`，缺省 / ≤0 = 1（**实现期订正**：全库实测的 `target` 都在 `fbos` 里有声明；「声明了却没被任何 `target` 用到」的条目**不建 RT**，故清单以 `target` 为准）。对象 RT 已钳在 4096，除以 scale 只会更小，无需二次钳制。`format` / `unique` 不消费（§2.2 #9）。
 2. **key 加链序号**：`${chainIndex}:${name}`。
 3. **序列状态机**（逐链独立）：
 
@@ -206,7 +206,7 @@ for each pass in chain:
 | p2 | `g_Texture0` = Q2 | named Q1（覆盖写） | — |
 | p3 | `g_Texture0` = Q1；`g_Texture2` = previous = **对象RT** | pingpong | 收尾 |
 
-**GTR bloom（16 pass，未声明 fbos ⇒ 全尺寸）** — 8 张 1000×600
+**GTR bloom（16 pass，8 张降采样 RT）** — 尺寸 = 1000×600 ÷ scale（2/4/8/16）
 
 | pass | 读 | 写 | 序列 |
 |---|---|---|---|
@@ -240,9 +240,9 @@ godrays / shine（5 pass，scale=2）与 bloom（4 pass，scale=4）分别同上
 | godrays / shine（3 条，scale=2） | 2 张 ½ | 4.2 MB |
 | blur / localcontrast / bloom（7 条，scale=4） | 2 张 ¼ | 1.0 MB |
 | bokeh_blur（1 条，scale=4） | 3 张 ¼ | 1.6 MB |
-| GTR bloom（1 条，未声明 scale） | 8 张全尺寸 | **66.4 MB** |
+| GTR bloom（1 条，scale=2/4/8/16 各 2 张） | 2 张 ½ + 2 张 ¼ + 2 张 ⅛ + 2 张 1/16 | **约 5.5 MB** |
 
-⇒ **单张壁纸最大 +66 MB（GTR），典型 < 10 MB**。参照系：现有对象 RT 口径 1080p@dpr1 全库合计 530 MB、单壁纸最大 131.8 MB。
+⇒ **单张壁纸最大约 +8.3 MB（blurprecise 的全尺寸单张），典型 < 10 MB**（**实现期订正 2026-09-15**：早先按「GTR 的 8 张是全尺寸」估出 +66.4 MB，实测该链 `fbos` 声明了 scale=2/4/8/16 ⇒ 合计约 5.5 MB；1080p 满屏口径）。参照系：现有对象 RT 口径 1080p@dpr1 全库合计 530 MB、单壁纸最大 131.8 MB。
 
 **本期不做显存 cap**（不做"超预算降 scale"）：全库只有一个大头，且收口会改变画面（模糊半径的像素尺度依赖 RT 分辨率），属"为省显存牺牲正确性"的取舍，应由使用者在看到真机数字后决定。落点已留在 `buildEffectPlan` 的尺寸计算处，将来要 cap 只改那一处 + 对应 oracle。本期义务是**测量并如实记录**：把 `research/q-rt-vram-sweep.mjs` 的估算口径扩上具名 RT，结果写进 `AGENT.md` §7。
 
@@ -298,7 +298,7 @@ godrays / shine（5 pass，scale=2）与 bloom（4 pass，scale=4）分别同上
 | `2011060960` | blur + localcontrast（**双链同名 RT**）| 两链互不污染；盒外零变化 |
 | `2937346640` | godrays（scale=2）| 效果在对象盒内 |
 | `1968789468` | shine | 同上 |
-| `3743126786` | GTR bloom（16 pass，全尺寸 RT）| **盒外变化 = 0**；云区/城市灯亮部（p90/p99）相对直渲明显提升；云区均值不得回归（§5.27 基线 46.3）|
+| `3743126786` | GTR bloom（16 pass，8 张降采样 RT）| **盒外变化 = 0**；云区/城市灯亮部（p90/p99）相对直渲明显提升；云区均值不得回归（§5.27 基线 46.3）；**归因须用「只保留 bloom 链」的对照**（实测：只摘 bloom 链时 p99 无变化，主判据的 +17 来自同对象其它链）|
 
 性能走既有 [4] 段（帧间隔中位数 / p95 + 隔离对象数 + **新增具名 RT 显存估算**），结论一律标注"SwiftShader ≠ 真机，FPS 门槛未验证"。
 
@@ -336,7 +336,7 @@ godrays / shine（5 pass，scale=2）与 bloom（4 pass，scale=4）分别同上
 ## 10. 遗留与风险（开工前如实记录）
 
 1. **清屏语义与 lwe 的差异**（§5）：本期沿用透明清屏；若出现"写具名 RT 的 pass 用了 translucent/additive"的壁纸，结果会与桌面不同。实施时复核全库，有例外记入 §7。
-2. **16 pass / 8 张全尺寸 RT 的性能与显存代价只在本机 headless（SwiftShader）测量**，真机 FPS 门槛仍未验证。
+2. **16 pass / 8 张降采样 RT（scale 2/4/8/16，约 5.5 MB）的性能与显存代价只在本机 headless（SwiftShader）测量**，真机 FPS 门槛仍未验证。
 3. **线性链的"逐位等价"是断言层面**（计划形态一致），端到端仍有既有样本（`2911105183` 黑像素、GTR 云区均值）作为回归闸门。
 4. **14 条可见 ≠ 14 处明显观感变化**：部分链本就作用在局部区域（如 `util/white` mask 的 localcontrast），验收以"效果在对象盒内生效 + 无回归"为准，不以"观感显著"为准。
 5. **`fbos[].format` 未消费**：依据是 lwe 自身忽略该字段（§2.2 #9）。若将来出现 `rgba16161616f`（HDR）的链，需重新评估（全库当前 0 处）。
