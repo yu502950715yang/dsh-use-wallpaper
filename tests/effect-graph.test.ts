@@ -1,4 +1,3 @@
-// tests/effect-graph.test.ts
 // RT 图执行计划的纯函数单测（语义依据见 docs/superpowers/specs/2026-09-15-three-rt-graph-executor-design.md）。
 import { describe, expect, it } from 'vitest';
 import {
@@ -38,6 +37,11 @@ describe('namedRtKey / namedRtScale / namedRtSize（具名 RT 口径）', () => 
     expect(namedRtSize(1000, 600, 3)).toEqual({ width: 333, height: 200 });
     expect(namedRtSize(1, 1, 4)).toEqual({ width: 1, height: 1 });
   });
+  it('scale 非法 / 0 / 负 → 按 1（导出 API 自身设防，不透出 Infinity / NaN）', () => {
+    expect(namedRtSize(1000, 600, 0)).toEqual({ width: 1000, height: 600 });
+    expect(namedRtSize(1000, 600, Number.NaN)).toEqual({ width: 1000, height: 600 });
+    expect(namedRtSize(1000, 600, -2)).toEqual({ width: 1000, height: 600 });
+  });
 });
 
 describe('buildEffectPlan — 具名 RT 清单', () => {
@@ -73,7 +77,8 @@ describe('buildEffectPlan — 具名 RT 清单', () => {
     const plan = buildEffectPlan([many, [pass({ target: '_rt_ok' })]], { baseWidth: 100, baseHeight: 100 });
     expect(plan.droppedChains).toEqual([0]);
     expect(plan.namedTargets.map((t) => t.key)).toEqual(['1:_rt_ok']);
-    expect(plan.passes.every((p) => p.chainIndex === 1)).toBe(true);
+    // passes 由后续任务产出（本任务恒为空），届时升级为「链 0 无 pass / 链 1 有 pass」的真断言
+    expect(plan.passes).toEqual([]);
   });
   it('base 非法（0 / NaN）→ 按 1 计算，不产生 0 尺寸 RT', () => {
     const plan = buildEffectPlan([[pass({ target: '_rt_a' })]], { baseWidth: 0, baseHeight: Number.NaN });
