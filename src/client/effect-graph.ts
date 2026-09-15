@@ -40,12 +40,14 @@ export function namedRtScale(fboScale: Record<string, number> | undefined, name:
   return typeof s === 'number' && Number.isFinite(s) && s > 0 ? s : 1;
 }
 
-/** scale 非法 / 0 / 负 → 按 1：导出 API 自身设防，不依赖调用方先归一到 namedRtScale 的口径。 */
+/** scale / base 非法（非有限 / ≤0）→ 按 1：导出 API 自身设防，不依赖调用方先归一。 */
 export function namedRtSize(baseWidth: number, baseHeight: number, scale: number): { width: number; height: number } {
   const s = Number.isFinite(scale) && scale > 0 ? scale : 1;
+  const w = Number.isFinite(baseWidth) && baseWidth > 0 ? baseWidth : 1;
+  const h = Number.isFinite(baseHeight) && baseHeight > 0 ? baseHeight : 1;
   return {
-    width: Math.max(1, Math.round(baseWidth / s)),
-    height: Math.max(1, Math.round(baseHeight / s)),
+    width: Math.max(1, Math.round(w / s)),
+    height: Math.max(1, Math.round(h / s)),
   };
 }
 
@@ -69,10 +71,42 @@ export function buildEffectPlan(
       droppedChains.push(chainIndex);
       return;
     }
+    const keyOf = new Map<string, string>();
     for (const name of names) {
+      const key = namedRtKey(chainIndex, name);
+      keyOf.set(name, key);
       const size = namedRtSize(baseW, baseH, namedRtScale(chain[0]?.fboScale, name));
-      namedTargets.push({ key: namedRtKey(chainIndex, name), name, width: size.width, height: size.height });
+      namedTargets.push({ key, name, width: size.width, height: size.height });
     }
+
+    // ② 逐 pass 的 bind 覆盖项（写端在 Task 3 补）
+    chain.forEach((p, passIndex) => {
+      const bindings: PlannedPass['bindings'] = [];
+      const unresolvedBinds: string[] = [];
+      for (const b of p.bind ?? []) {
+        const name = (b.name ?? '').trim();
+        if (name === 'previous') {
+          bindings.push({ slot: b.index, source: { type: 'previous' } });
+          continue;
+        }
+        const key = name ? keyOf.get(name) : undefined;
+        if (key) {
+          bindings.push({ slot: b.index, source: { type: 'named', key } });
+          continue;
+        }
+        unresolvedBinds.push(name);
+      }
+      const planned: PlannedPass = {
+        chainIndex,
+        passIndex,
+        bindings,
+        write: { type: 'pingpong' },
+        blendMode: p.blendMode,
+      };
+      if (p.target) planned.target = p.target;
+      if (unresolvedBinds.length > 0) planned.unresolvedBinds = unresolvedBinds;
+      passes.push(planned);
+    });
   });
 
   return { namedTargets, passes, droppedChains };
