@@ -8,6 +8,7 @@ import { isAudioUniform } from './shader/uniform-binder.js';
 // 渲染进 RT 必须透明清屏（清屏 alpha=0），否则效果降 alpha 处会变成不透明黑块贴回主场景。
 // 根因见 rt-render.ts 与 AGENT.md §5.22。
 import { renderIntoRenderTarget } from './rt-render.js';
+import { NAMED_RT_LIMIT, type EffectPlan } from './effect-graph.js';
 
 // 纹理槽路径推导（spec §3.4 / P0-1）：补 materials/ 前缀 + .tex 后缀；
 // 内置 util/ 与运行时 _rt_ 引用原样透传（走回退分支，不 fetch）。
@@ -371,6 +372,11 @@ export class EffectRunner {
   // 失败本来就是跳过该 pass（update 里 `continue`），故缓存**不改变执行语义**；setChains
   // （换壁纸 / 重挂链 / resize 重挂）时清空，链变了要重新尝试编译。
   private failed = new Set<string>();
+  private plan: EffectPlan | null = null;
+  // 具名 RT 池：key = `${chainIndex}:${name}`（作用域 = 单条链，见 effect-graph.ts 头注）
+  private namedRt = new Map<string, THREE.WebGLRenderTarget>();
+  // 已告警的 key（壁纸 id + 链序号）：resize 重挂会再次进入 setPlan，去重避免刷屏
+  private warnedKeys = new Set<string>();
   private width: number;
   private height: number;
   // update 串行化：帧循环每帧调用 update，但内部有异步纹理槽加载（await），
@@ -405,11 +411,63 @@ export class EffectRunner {
     this.rtB = new THREE.WebGLRenderTarget(width, height);
   }
 
+  /** 挂载带具名 RT 的效果计划。**只允许在加载期 / resize 重挂期调用**（帧内不得建 RT，§5.11）。 */
+  setPlan(
+    plan: EffectPlan,
+    chains: CompiledEffectPass[][],
+    wallpaperId: string,
+    opts?: { width?: number; height?: number },
+  ): void {
+    this.plan = plan;
+    this.chains = chains;
+    this.id = wallpaperId;
+    this.last = null;
+    this.failed.clear();
+    const size = resolveTargetSize({ width: this.width, height: this.height }, opts);
+    this.ensureTargets(size.width, size.height);
+    this.ensureNamedTargets(plan);
+    this.disposeMaterials();
+    this.textures.clear();
+    for (const pass of chains.flat()) {
+      for (const path of pass.textureSlots) {
+        if (path) void this.resolveTextureSlot(path);
+      }
+    }
+  }
+
+  /** 具名 RT 池：先释放旧的再按计划重建（resize / 换壁纸 / 重挂链共用）。 */
+  private ensureNamedTargets(plan: EffectPlan): void {
+    this.clearNamedTargets();
+    for (const target of plan.namedTargets) {
+      this.namedRt.set(target.key, new THREE.WebGLRenderTarget(target.width, target.height));
+    }
+    for (const chainIndex of plan.droppedChains) {
+      this.warnOnce(
+        `${this.id}:${chainIndex}`,
+        `[wallpaper-engine] 效果链 ${chainIndex} 的具名 RT 超过 ${NAMED_RT_LIMIT} 张，整链跳过（壁纸 ${this.id}）`,
+      );
+    }
+  }
+
+  private clearNamedTargets(): void {
+    for (const rt of this.namedRt.values()) rt.dispose();
+    this.namedRt.clear();
+  }
+
+  /** 按 key 去重的 console.warn（同一条件只报一次，避免每帧 / 每次重挂刷屏）。 */
+  private warnOnce(key: string, message: string): void {
+    if (this.warnedKeys.has(key)) return;
+    this.warnedKeys.add(key);
+    console.warn(message);
+  }
+
   setChains(
     chains: CompiledEffectPass[][],
     wallpaperId: string,
     opts?: { width?: number; height?: number },
   ): void {
+    this.plan = null; // 旧场景级路径无计划
+    this.clearNamedTargets(); // 不残留上一份计划的具名 RT
     this.chains = chains;
     this.id = wallpaperId;
     this.last = null; // 换壁纸避免首帧显示旧纹理
@@ -689,6 +747,7 @@ export class EffectRunner {
     this.disposeMaterials();
     this.rtA.dispose();
     this.rtB.dispose();
+    this.clearNamedTargets();
     this.textures.clear();
     this.audioSpectrum = null;
   }

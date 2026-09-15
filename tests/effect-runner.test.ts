@@ -18,6 +18,14 @@ import {
 } from '../src/client/effect-runner.js';
 import type { CompiledEffectPass } from '../src/client/shader/effect-chain.js';
 import { loadTexTexture } from '../src/client/tex-loader.js';
+import { buildEffectPlan, NAMED_RT_LIMIT } from '../src/client/effect-graph.js';
+
+/** 测试用 pass 工厂（模块级：effectSlotCount 与 setPlan 两处 describe 共用）。 */
+const pass = (over: Partial<CompiledEffectPass> = {}): CompiledEffectPass => ({
+  vertSrc: '', fragSrc: '', rawVert: '', rawFrag: '', combos: {}, uniforms: new Map(),
+  textureSlots: [], samplerModes: {}, blendMode: 'normal', target: null, bind: [], fboScale: {},
+  ...over,
+});
 
 describe('blendModeToThree（WE blending → three 混合模式）', () => {
   it('映射 add/multiply/subtract 与默认回退', () => {
@@ -236,12 +244,6 @@ describe('resolveEmptySlotTexture（空槽常量纹理：opacitymask → 黑、f
 });
 
 describe('effectSlotCount / resolveSlotFallback（槽数补齐与逐槽兜底选择）', () => {
-  const pass = (over: Partial<CompiledEffectPass>): CompiledEffectPass => ({
-    vertSrc: '', fragSrc: '', rawVert: '', rawFrag: '', combos: {}, uniforms: new Map(),
-    textureSlots: [], samplerModes: {}, blendMode: 'normal', target: null, bind: [], fboScale: {},
-    ...over,
-  });
-
   it('槽数 = max(textures.length, 声明下标+1)：clouds 数组长 2、声明到 g_Texture2 → 3', () => {
     expect(effectSlotCount(pass({ textureSlots: [null, 'util/clouds_256'], samplerModes: { g_Texture2: 'opacitymask' } }))).toBe(3);
     // 声明比数组短 → 取数组长度（不缩小既有覆盖范围）
@@ -615,5 +617,78 @@ describe('EffectRunner 编译失败缓存（F3）', () => {  it('同一 key 第�
     expect(label).toContain('target=_rt_a');
     expect(label).toContain('effects/refractnormal');
     expect(label).toContain('blend=add');
+  });
+});
+
+// ===== Task 4：具名 RT 池与生命周期（setPlan）。按计划的执行（update）是 Task 5 的事，
+// 这里只覆盖建池、重挂释放、dispose 收口、旧路径不残留、超上限告警五条。=====
+
+/** 读私有具名 RT 池（只作观测；执行器不导出它）。 */
+function namedOf(runner: EffectRunner): Map<string, THREE.WebGLRenderTarget> {
+  return (runner as unknown as { namedRt: Map<string, THREE.WebGLRenderTarget> }).namedRt;
+}
+
+describe('EffectRunner.setPlan（具名 RT 池与生命周期）', () => {
+  it('按计划的 namedTargets 建池，尺寸 = 对象 RT ÷ scale', () => {
+    const { renderer } = createBindRenderer();
+    const fb = { _rt_Q1: 4, _rt_Q2: 2 };
+    const chain = [pass({ target: '_rt_Q1', fboScale: fb }), pass({ target: '_rt_Q2', fboScale: fb })];
+    const plan = buildEffectPlan([chain], { baseWidth: 64, baseHeight: 32 });
+    const runner = new EffectRunner(renderer as never, 64, 32);
+    runner.setPlan(plan, [chain], 'wp1', { width: 64, height: 32 });
+    const named = namedOf(runner);
+    expect([...named.keys()]).toEqual(['0:_rt_Q1', '0:_rt_Q2']);
+    expect([named.get('0:_rt_Q1')!.width, named.get('0:_rt_Q1')!.height]).toEqual([16, 8]);
+    expect([named.get('0:_rt_Q2')!.width, named.get('0:_rt_Q2')!.height]).toEqual([32, 16]);
+    runner.dispose();
+  });
+
+  it('resize 重挂（setPlan 新尺寸）→ 旧具名 RT 被释放、按新基准重建', () => {
+    const { renderer } = createBindRenderer();
+    const chain = [pass({ target: '_rt_Q1', fboScale: { _rt_Q1: 4 } })];
+    const runner = new EffectRunner(renderer as never, 64, 32);
+    runner.setPlan(buildEffectPlan([chain], { baseWidth: 64, baseHeight: 32 }), [chain], 'wp1', { width: 64, height: 32 });
+    const oldRt = namedOf(runner).get('0:_rt_Q1')!;
+    const spy = vi.spyOn(oldRt, 'dispose');
+    runner.setPlan(buildEffectPlan([chain], { baseWidth: 128, baseHeight: 64 }), [chain], 'wp1', { width: 128, height: 64 });
+    expect(spy).toHaveBeenCalled();
+    expect(namedOf(runner).get('0:_rt_Q1')!.width).toBe(32);
+    runner.dispose();
+  });
+
+  it('dispose → 具名 RT 全部释放、池清空', () => {
+    const { renderer } = createBindRenderer();
+    const chain = [pass({ target: '_rt_Q1' })];
+    const runner = new EffectRunner(renderer as never, 16, 16);
+    runner.setPlan(buildEffectPlan([chain], { baseWidth: 16, baseHeight: 16 }), [chain], 'wp1', { width: 16, height: 16 });
+    const rt = namedOf(runner).get('0:_rt_Q1')!;
+    const spy = vi.spyOn(rt, 'dispose');
+    runner.dispose();
+    expect(spy).toHaveBeenCalled();
+    expect(namedOf(runner).size).toBe(0);
+  });
+
+  it('链被 droppedChains 丢弃 → 不建该链的池，且按壁纸+链序号告警一次', () => {
+    const { renderer } = createBindRenderer();
+    const many = Array.from({ length: NAMED_RT_LIMIT + 1 }, (_, i) => pass({ target: `_rt_${i}` }));
+    const plan = buildEffectPlan([many], { baseWidth: 16, baseHeight: 16 });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const runner = new EffectRunner(renderer as never, 16, 16);
+    runner.setPlan(plan, [many], 'wp9', { width: 16, height: 16 });
+    expect(namedOf(runner).size).toBe(0);
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes('wp9')).length).toBe(1);
+    warn.mockRestore();
+    runner.dispose();
+  });
+
+  it('setChains（旧场景级路径）不残留上一份计划的具名 RT', () => {
+    const { renderer } = createBindRenderer();
+    const chain = [pass({ target: '_rt_Q1' })];
+    const runner = new EffectRunner(renderer as never, 16, 16);
+    runner.setPlan(buildEffectPlan([chain], { baseWidth: 16, baseHeight: 16 }), [chain], 'wp1', { width: 16, height: 16 });
+    expect(namedOf(runner).size).toBe(1);
+    runner.setChains([[pass()]], 'wp1');
+    expect(namedOf(runner).size).toBe(0);
+    runner.dispose();
   });
 });
