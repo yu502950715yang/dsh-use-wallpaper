@@ -692,3 +692,170 @@ describe('EffectRunner.setPlan（具名 RT 池与生命周期）', () => {
     runner.dispose();
   });
 });
+
+// ===== Task 5：按计划执行（具名 RT 写读 / bind 覆盖槽 / previous 序列）======
+// 断言下标按「每次 pass 渲染」计数：`mats[i]` / `targets[i]` = 第 i 个 pass 的渲染。
+// getMaterial 内部的 1×1 编译探针也走同一个 render 入口，故 helper 把它过滤掉（否则下标整体偏移）。
+describe('EffectRunner 按计划执行（具名 RT 写读 / previous 序列 / 槽覆盖）', () => {
+  // 记录每次渲染的写端（renderIntoRenderTarget 会先 setRenderTarget(rt)）
+  function createPlanRenderer() {
+    const mats: THREE.ShaderMaterial[] = [];
+    const targets: Array<THREE.WebGLRenderTarget | null> = [];
+    let current: THREE.WebGLRenderTarget | null = null;
+    const isProbe = (rt: THREE.WebGLRenderTarget | null) => !!rt && rt.width === 1 && rt.height === 1;
+    const renderer = {
+      debug: { onShaderError: null as null | ((...a: unknown[]) => void) },
+      setRenderTarget: vi.fn((rt: THREE.WebGLRenderTarget | null) => {
+        current = rt;
+        if (rt && !isProbe(rt)) targets.push(rt);
+      }),
+      render: vi.fn((scene: THREE.Scene) => {
+        if (isProbe(current)) return;
+        const mesh = scene.children[0] as THREE.Mesh;
+        mats.push(mesh.material as THREE.ShaderMaterial);
+      }),
+    };
+    return { renderer, mats, targets };
+  }
+
+  it('blurprecise 形态：p0 写具名 RT、p1 的 g_Texture0 = 该 RT、g_Texture1 = previous(=输入)', async () => {
+    const { renderer, mats, targets } = createPlanRenderer();
+    const fb = { _rt_FullCompoBuffer1: 1 };
+    const chain = [
+      pass({ target: '_rt_FullCompoBuffer1', fboScale: fb }),
+      pass({ bind: [{ index: 0, name: '_rt_FullCompoBuffer1' }, { index: 1, name: 'previous' }], fboScale: fb }),
+    ];
+    const runner = new EffectRunner(renderer as never, 32, 16);
+    runner.setPlan(buildEffectPlan([chain], { baseWidth: 32, baseHeight: 16 }), [chain], 'wp', { width: 32, height: 16 });
+    const input = new THREE.Texture();
+    await runner.update(0, input);
+
+    const namedRt = namedOf(runner).get('0:_rt_FullCompoBuffer1')!;
+    // p0 写到具名 RT（尺寸 32×16），p1 写到 ping-pong RT（不是具名 RT）
+    expect(targets[0]).toBe(namedRt);
+    expect(targets[1]).not.toBe(namedRt);
+    // p1 的 g_Texture0 = 具名 RT 纹理、g_Texture1 = 对象 RT 输入（previous 落在序列起点输入）
+    const p1 = mats[1];
+    expect(p1.uniforms.g_Texture0.value).toBe(namedRt.texture);
+    expect(p1.uniforms.g_Texture1.value).toBe(input);
+    // 输出 = p1 的输出（ping-pong RT 纹理）
+    expect(runner.lastOutput()).toBe(targets[1]!.texture);
+    runner.dispose();
+  });
+
+  it('blur 形态：bind[0] 指向刚写的具名 RT，bind[2]=previous 拿到原始输入（不是上一 pass 输出）', async () => {
+    const { renderer, mats } = createPlanRenderer();
+    const fb = { _rt_Q1: 4, _rt_Q2: 4 };
+    const chain = [
+      pass({ target: '_rt_Q1', fboScale: fb }),
+      pass({ target: '_rt_Q2', fboScale: fb }),
+      pass({ target: '_rt_Q1', fboScale: fb }),
+      pass({ bind: [{ index: 0, name: '_rt_Q1' }, { index: 2, name: 'previous' }], fboScale: fb }),
+    ];
+    const runner = new EffectRunner(renderer as never, 32, 16);
+    runner.setPlan(buildEffectPlan([chain], { baseWidth: 32, baseHeight: 16 }), [chain], 'wp', { width: 32, height: 16 });
+    const input = new THREE.Texture();
+    await runner.update(0, input);
+    const combine = mats[3];
+    expect(combine.uniforms.g_Texture0.value).toBe(namedOf(runner).get('0:_rt_Q1')!.texture);
+    expect(combine.uniforms.g_Texture2.value).toBe(input); // previous = 序列起点输入
+    runner.dispose();
+  });
+
+  it('bind 覆盖 textures：被 bind 覆写的槽用 bind 的源，未被覆写的槽保持 textures 解析结果', async () => {
+    const { renderer, mats } = createPlanRenderer();
+    const slotTex = new THREE.Texture();
+    const chain = [
+      pass({ target: '_rt_H' }),
+      pass({
+        bind: [{ index: 1, name: 'previous' }],
+        textureSlots: [null, 'util/white'],
+      }),
+    ];
+    const runner = new EffectRunner(renderer as never, 8, 8, {
+      load: async () => slotTex,
+    });
+    runner.setPlan(buildEffectPlan([chain], { baseWidth: 8, baseHeight: 8 }), [chain], 'wp', { width: 8, height: 8 });
+    const input = new THREE.Texture();
+    await runner.update(0, input);
+    const p1 = mats[1];
+    expect(p1.uniforms.g_Texture1.value).toBe(input);   // bind[1]=previous 覆写了 textures[1]
+    expect(p1.uniforms.g_Texture0.value).toBe(namedOf(runner).get('0:_rt_H')!.texture);
+    runner.dispose();
+  });
+
+  it('写具名 RT 的 pass 编译失败 → 整条计划放弃、lastOutput() 为 null（不采样半成品）', async () => {
+    const { renderer } = createPlanRenderer();
+    // 让探针渲染触发 onShaderError ⇒ getMaterial 判定编译失败
+    renderer.render = vi.fn((scene: THREE.Scene) => {
+      const cb = renderer.debug.onShaderError as null | ((...a: unknown[]) => void);
+      if (cb) cb({ getShaderInfoLog: () => 'boom' } as never, {}, {}, {});
+      void scene;
+    });
+    const chain = [pass({ target: '_rt_F' }), pass({ bind: [{ index: 0, name: '_rt_F' }] })];
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const runner = new EffectRunner(renderer as never, 8, 8);
+    runner.setPlan(buildEffectPlan([chain], { baseWidth: 8, baseHeight: 8 }), [chain], 'wp', { width: 8, height: 8 });
+    const out = await runner.update(0, new THREE.Texture());
+    expect(out).toBeNull();
+    expect(runner.lastOutput()).toBeNull();
+    warn.mockRestore();
+    runner.dispose();
+  });
+
+  it('无 plan（setChains 旧路径）→ 走线性 ping-pong，末输出非 null（零回归）', async () => {
+    const { renderer } = createPlanRenderer();
+    const runner = new EffectRunner(renderer as never, 8, 8);
+    runner.setChains([[pass()]], 'wp');
+    const out = await runner.update(0, new THREE.Texture());
+    expect(out).not.toBeNull();
+    runner.dispose();
+  });
+
+  // Ruling 12：`textures` 里的全局运行时 RT（`_rt_*` 且不在本链具名 RT 表内，如 2597392171 的
+  // _rt_FullFrameBuffer）不解析 —— 绑白等于凭空造内容，比留空更容易画错。
+  it('textures 里的全局运行时 RT 不被解析成白纹：槽留空 + 可辨识告警一次', async () => {
+    const { renderer, mats } = createPlanRenderer();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const chain = [pass({ target: '_rt_FullCompoBuffer1', textureSlots: [null, '_rt_FullFrameBuffer'] })];
+    const runner = new EffectRunner(renderer as never, 8, 8);
+    runner.setPlan(buildEffectPlan([chain], { baseWidth: 8, baseHeight: 8 }), [chain], 'wp', { width: 8, height: 8 });
+    await runner.update(0, new THREE.Texture());
+    // 未拦截时这里是 resolveBuiltinTexture('_rt_*') 的 1×1 白纹
+    expect(mats[0].uniforms.g_Texture1.value).toBeNull();
+    const hits = warn.mock.calls.map((c) => String(c[0])).filter((m) => m.includes('_rt_FullFrameBuffer'));
+    expect(hits.length).toBe(1);
+    expect(hits[0]).toContain('壁纸 wp');   // 可辨识：壁纸 id / 槽位 / 名字
+    expect(hits[0]).toContain('g_Texture1');
+    await runner.update(1, new THREE.Texture()); // 第二帧不重复告警
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes('_rt_FullFrameBuffer')).length).toBe(1);
+    warn.mockRestore();
+    runner.dispose();
+  });
+
+  // Ruling 5：`unresolvedBinds` 可能含空名（全库实测无此形态）——非空名按 pass 去重告警、空名静默。
+  it('bind 里未解析的名字告警一次，空名 bind 不打噪声', async () => {
+    const { renderer } = createPlanRenderer();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const chain = [pass({ target: '_rt_H', bind: [{ index: 2, name: '_rt_Missing' }, { index: 1, name: '' }] })];
+    const runner = new EffectRunner(renderer as never, 8, 8);
+    runner.setPlan(buildEffectPlan([chain], { baseWidth: 8, baseHeight: 8 }), [chain], 'wp', { width: 8, height: 8 });
+    await runner.update(0, new THREE.Texture());
+    await runner.update(1, new THREE.Texture());
+    const msgs = warn.mock.calls.map((c) => String(c[0]));
+    expect(msgs.filter((m) => m.includes('_rt_Missing')).length).toBe(1);
+    expect(msgs.filter((m) => m.includes('bind 引用的名字')).length).toBe(1); // 空名不产第二条
+    warn.mockRestore();
+    runner.dispose();
+  });
+
+  // Ruling 16：dispose 后计划作废，plannedPasses() 不得再走「有计划」分支。
+  it('dispose → plan 作废（plannedPasses 退回退化分支）', () => {
+    const { renderer } = createPlanRenderer();
+    const chain = [pass({ target: '_rt_Q1' })];
+    const runner = new EffectRunner(renderer as never, 8, 8);
+    runner.setPlan(buildEffectPlan([chain], { baseWidth: 8, baseHeight: 8 }), [chain], 'wp', { width: 8, height: 8 });
+    runner.dispose();
+    expect((runner as unknown as { plan: unknown }).plan).toBeNull();
+  });
+});
