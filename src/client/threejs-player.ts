@@ -745,6 +745,10 @@ export class ThreeScenePlayer {
       map: texture ?? null,
       transparent: true,
       depthWrite: false,
+      // 隔离路径：WE 在对象有多个 pass 时把**首个 pass 强制成 BlendingMode_Normal（ONE/ZERO 覆盖）**
+      // （lwe CImage.cpp：`(*first)->setBlendingMode(BlendingMode_Normal)`）⇒ 覆盖写，RT.rgb 保持
+      // 非预乘、透明度只走 alpha；否则 rgb 被预乘一次、合成再乘一次 ⇒ 半透明图层只剩一半亮度（§5.27）。
+      blending: forIsolation ? THREE.NoBlending : THREE.NormalBlending,
       // 隔离内容渲染进**y 镜像的局部相机**（对象 RT 取 WE 的 v 约定，见 attachIsolated）⇒
       // 屏幕空间绕序被翻转，正面朝外的 quad 会被背面剔除掉（对象整体消失）。故隔离路径改双面；
       // 非隔离（主场景直渲）继续保持 FrontSide，行为与引入前逐字一致。

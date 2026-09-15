@@ -1414,10 +1414,12 @@ describe('ThreeScenePlayer 对象隔离', () => {
 
   // 2026-09-14：WE 的 colorBlendMode 混合语义从「内容材质」搬到「合成 quad」。
   // 隔离内容渲染到**新清空的 RT**（alpha=0），若内容材质仍套 cb 的 Zero/One alpha 因子会得到
-  // 「保持背景的 alpha」= 恒 0 ⇒ 合成 quad 的预乘片元被乘成 0 ⇒ 对象整体不可见（旧的
-  // 守卫就是因为这个把 cb 对象排除在隔离之外，代价是 GTR 的云不滚动）。
-  // 现在：内容材质只把自己的颜色 + alpha 写进 RT（普通 alpha 混合，不套 cb）。
-  it('隔离内容材质不套 colorBlendMode（把自己的颜色/alpha 写进 RT，由合成 quad 承担混合）', () => {
+  // 「保持背景的 alpha」= 恒 0 ⇒ 合成 quad 的预乘片元被乘成 0 ⇒ 对象整体不可见。
+  // 2026-09-15 补：WE 在「对象有多个 pass」时把**首个 pass 强制成 BlendingMode_Normal（= ONE/ZERO
+  // 覆盖）**（lwe `CImage.cpp` setupPasses 前那段 setBlendingMode），所以隔离内容必须**覆盖写**
+  // ⇒ RT.rgb = 非预乘的 B、RT.a = 内容 alpha；否则 rgb 被预乘一次，合成再乘一次最终 alpha
+  // ⇒ 半透明图层只剩一半亮度（GTR 云「太淡看不清」）。
+  it('隔离内容材质覆盖写（不套 cb、不预乘），由合成 quad 承担混合', () => {
     const { player } = makePlayer();
     player.addBackground({
       origin: [0, 0, 0], size: [10, 10], scale: [1, 1, 1], texture: makeTexture(), colorBlendMode: 7,
@@ -1429,8 +1431,7 @@ describe('ThreeScenePlayer 对象隔离', () => {
     expect(content.material).not.toBeInstanceOf(THREE.ShaderMaterial);
     expect(content.material).toBeInstanceOf(THREE.MeshBasicMaterial);
     const contentMat = content.material as THREE.MeshBasicMaterial;
-    // 普通 alpha 混合（three 缺省 NormalBlending + 缺省 alpha 因子：SrcAlpha / OneMinusSrcAlpha）。
-    expect(contentMat.blending).toBe(THREE.NormalBlending);
+    expect(contentMat.blending).toBe(THREE.NoBlending);   // WE 首个 pass = Normal(ONE/ZERO)
     expect(contentMat.blendSrcAlpha).toBeNull();
     expect(contentMat.blendDstAlpha).toBeNull();
   });
