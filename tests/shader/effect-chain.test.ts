@@ -167,6 +167,120 @@ describe('samplerModes：sampler 注释的 mode 标注（空槽纹理选择依�
   });
 });
 
+// ── combo 跨 stage 合并（2026-09-15，task-8c）───────────────────────────────────
+// WE 语义：combo 宏整 pass 共用（lwe ShaderUnit.cpp:694-714 / WE layerd WPSceneParser.cpp:1643-1644）。
+// `[COMBO] default` 常只写在一侧时，另一侧会兜底 `#define X 0` ⇒ 两侧注入不同 ⇒ 链接失败（wasm 路径的
+// glsl-to-naga.passCombos 早已合并，本组用例锁 three 路径同口径）。
+const stageFixtures = (vert: string, frag: string) => new Map<string, Uint8Array>([
+  ['effects/stage/effect.json', encoder.encode(JSON.stringify({
+    version: 1,
+    passes: [{ material: 'materials/effects/stage.json' }],
+  }))],
+  ['materials/effects/stage.json', encoder.encode(JSON.stringify({
+    passes: [{ shader: 'effects/stage', blending: 'normal' }],
+  }))],
+  ['shaders/effects/stage.vert', encoder.encode(vert)],
+  ['shaders/effects/stage.frag', encoder.encode(frag)],
+]);
+
+/** 取预处理后源码里注入的 `#define X V` 数值（同名以先出现的为准）。 */
+function injectedDefine(src: string, name: string): string | undefined {
+  const m = new RegExp(`^#define\\s+${name}\\s+(\\S+)\\s*$`, 'm').exec(src);
+  return m?.[1];
+}
+
+describe('combo 跨 stage 合并：同一 pass 的 vert 与 frag 得到同一套宏值', () => {
+  // 真实 godrays_downsample2 / shine_downsample2 形态：frag 有 [COMBO] NOISE default 1，
+  // vert 只用 `#if NOISE == 1` 门控 v_NoiseTexCoord（frag 直接采它 ⇒ 两侧不一致即链接失败）。
+  const downsample2Vert = [
+    'attribute vec3 a_Position;',
+    'attribute vec2 a_TexCoord;',
+    'varying vec4 v_TexCoord;',
+    '#if NOISE == 1',
+    'varying vec4 v_NoiseTexCoord;',
+    '#endif',
+    'void main() {',
+    '\tgl_Position = vec4(a_Position, 1.0);',
+    '\tv_TexCoord = a_TexCoord.xyxy;',
+    '#if NOISE == 1',
+    '\tv_NoiseTexCoord.xy = a_TexCoord;',
+    '#endif',
+    '}',
+  ].join('\n');
+  const downsample2Frag = [
+    '// [COMBO] {"material":"noise","combo":"NOISE","type":"options","default":1}',
+    'varying vec4 v_TexCoord;',
+    'uniform sampler2D g_Texture0;',
+    '#if NOISE == 1',
+    'varying vec4 v_NoiseTexCoord;',
+    'uniform sampler2D g_Texture2;',
+    '#endif',
+    'void main() {',
+    '#if NOISE',
+    '\tvec4 n = texSample2D(g_Texture2, v_NoiseTexCoord.xy);',
+    '#else',
+    '\tvec4 n = vec4(1.0);',
+    '#endif',
+    '\tgl_FragColor = texSample2D(g_Texture0, v_TexCoord.xy) * n;',
+    '}',
+  ].join('\n');
+
+  it('downsample2：frag 的 [COMBO] NOISE 默认合并进 vert（两侧 #define NOISE 一致 = 1）', async () => {
+    const files = stageFixtures(downsample2Vert, downsample2Frag);
+    const chain = await resolveEffectChain({ file: 'effects/stage/effect.json' }, async (n) => files.get(n) ?? null);
+    expect(chain).not.toBeNull();
+    const pass = chain![0];
+    expect(injectedDefine(pass.fragSrc, 'NOISE')).toBe('1');
+    // 修复前：vert 走 `#if` 裸标识符兜底 → '0'（两侧不一致 ⇒ 链接失败）
+    expect(injectedDefine(pass.vertSrc, 'NOISE')).toBe('1');
+    expect(injectedDefine(pass.vertSrc, 'NOISE')).toBe(injectedDefine(pass.fragSrc, 'NOISE'));
+  });
+
+  // 真实 shine_gaussian 形态：frag 有 [COMBO] KERNEL default 1，两侧的 varying 数组尺寸由
+  // `#if KERNEL` 决定（vec2[7] vs vec2[13]）——与 NOISE 同因，不能只特判 NOISE。
+  const gaussianVert = [
+    'attribute vec3 a_Position;',
+    'attribute vec2 a_TexCoord;',
+    '#if KERNEL == 0',
+    'varying vec2 v_TexCoord[13];',
+    '#else',
+    'varying vec2 v_TexCoord[7];',
+    '#endif',
+    'void main() { gl_Position = vec4(a_Position, 1.0); v_TexCoord[0] = a_TexCoord; }',
+  ].join('\n');
+  const gaussianFrag = [
+    '// [COMBO] {"material":"kernel","combo":"KERNEL","type":"options","default":1,"options":{"13x13":0,"7x7":1}}',
+    '#if KERNEL == 0',
+    'varying vec2 v_TexCoord[13];',
+    '#else',
+    'varying vec2 v_TexCoord[7];',
+    '#endif',
+    'uniform sampler2D g_Texture0;',
+    'void main() { gl_FragColor = texSample2D(g_Texture0, v_TexCoord[0]); }',
+  ].join('\n');
+
+  it('gaussian：frag 的 [COMBO] KERNEL 默认合并进 vert（两侧 #define KERNEL 一致 = 1）', async () => {
+    const files = stageFixtures(gaussianVert, gaussianFrag);
+    const chain = await resolveEffectChain({ file: 'effects/stage/effect.json' }, async (n) => files.get(n) ?? null);
+    const pass = chain![0];
+    expect(injectedDefine(pass.vertSrc, 'KERNEL')).toBe('1');
+    expect(injectedDefine(pass.vertSrc, 'KERNEL')).toBe(injectedDefine(pass.fragSrc, 'KERNEL'));
+    // 数组尺寸随之一致（修复前 vert 取 13、frag 取 7 ⇒ inter-stage 不匹配）
+    expect(/varying vec2 v_TexCoord\[7\]/.test(pass.vertSrc)).toBe(true);
+    expect(/varying vec2 v_TexCoord\[7\]/.test(pass.fragSrc)).toBe(true);
+  });
+
+  it('scene.json 覆写仍优先于 [COMBO] 注释默认（合并不改优先级）', async () => {
+    const files = stageFixtures(downsample2Vert, downsample2Frag);
+    const chain = await resolveEffectChain(
+      { file: 'effects/stage/effect.json', passes: [{ combos: { NOISE: 0 } }] },
+      async (n) => files.get(n) ?? null,
+    );
+    expect(injectedDefine(chain![0].vertSrc, 'NOISE')).toBe('0');
+    expect(injectedDefine(chain![0].fragSrc, 'NOISE')).toBe('0');
+  });
+});
+
 describe('resolveEffectChain 解耦出原始 shader 源与 combos', () => {
   it('每个 pass 产出非空 rawVert/rawFrag（原始 WE 方言源），combos 为对象', async () => {
     const chain = await resolveEffectChain({
