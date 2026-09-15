@@ -102,9 +102,7 @@ resolveEffectChain（解析，不改）
 ```ts
 export type RtSource =
   | { type: 'previous' }             // 序列起点输入（lwe effectInput）；不在序列中时回落到该槽默认
-  | { type: 'named'; key: string }   // 链内具名 RT（key 含链序号）
-  | { type: 'slot'; index: number }  // textures[index] 提供的独立纹理
-  | { type: 'chain' };               // 默认：上一 pass 输出（链首 = 对象 RT / 输入纹理）
+  | { type: 'named'; key: string };  // 链内具名 RT（key 含链序号）
 
 export type RtWrite =
   | { type: 'named'; key: string }
@@ -113,7 +111,8 @@ export type RtWrite =
 
 export interface PlannedPass {
   chainIndex: number;
-  bindings: Array<{ slot: number; source: RtSource }>;  // slot = g_Texture<slot>
+  passIndex: number;                 // 链内下标；执行器用 chains[chainIndex][passIndex] 取材质信息
+  bindings: Array<{ slot: number; source: RtSource }>;  // **只含 bind 覆盖项**：slot = g_Texture<slot>
   write: RtWrite;
   blendMode: string;
   /** 该 pass 的 target 名（诊断用） */
@@ -126,7 +125,7 @@ export interface EffectPlan {
   /** 具名 RT 清单（key 已带链序号），尺寸 = base ÷ scale */
   namedTargets: Array<{ key: string; name: string; width: number; height: number }>;
   passes: PlannedPass[];
-  /** 因超限/不可解析而整体放弃的链序号（诊断 + 告警） */
+  /** 因超限而整体放弃的链序号（诊断 + 告警） */
   droppedChains: number[];
 }
 
@@ -135,6 +134,8 @@ export function buildEffectPlan(
   opts: { baseWidth: number; baseHeight: number },
 ): EffectPlan;
 ```
+
+> 接口口径：`bindings` **只承载 `bind` 的覆盖项**；未被覆盖的槽由执行器按既有默认语义处理（slot 0 = 当前内容提供者、slot j≥1 = `textures[j]` / 空槽兜底），因此不需要"默认来源"类型。`passIndex` 让执行器按 `chains[chainIndex][passIndex]` 取回 `CompiledEffectPass`（`droppedChains` 会使 `plan.passes` 与 `chains.flat()` 下标错位，故不能用平坦下标对齐）。
 
 **`src/client/effect-runner.ts`（改）**：新增 `setPlan(plan, opts)`；`update` 按 `plan.passes` 执行；持有 `namedRt: Map<key, WebGLRenderTarget>`。旧 `setChains(chains, id, opts)` 保留（未接入的 `scene-renderer.ts` 仍在用），内部委托为"无具名 RT 的退化计划"，线性行为逐位不变。
 
@@ -172,18 +173,19 @@ for each pass in chain:
   if writesNamed && !inSeq: inSeq = true; effectInput = current          // §2.2 #4
   write = writesNamed ? named(key) : (是本条计划最后一个 pass ? final : pingpong)
 
-  默认 g_Texture<idx> = (idx === 0 ? current : 该槽默认)
+  // 读端：未被 bind 覆盖的槽由执行器按既有默认语义处理（slot 0 = current、slot j = textures[j]/空槽兜底）
+  bindings = []
   对每个 bind[{index, name}]:
-     name === 'previous' → effectInput ?? 该槽默认                          // §2.2 #3
-     name 在具名 RT 表中   → 该 RT 纹理
-     否则                 → 保持默认 + 记入 unresolvedBinds（§6 告警）
+     name === 'previous' → bindings.push({ slot: index, source: previous })   // §2.2 #3（运行时回落该槽默认）
+     name 在具名 RT 表中   → bindings.push({ slot: index, source: named })     // §2.2 #1
+     否则                 → 不 push（保持该槽默认）+ 记入 unresolvedBinds（§6 告警）
 
   current = writesNamed ? 该具名 RT 纹理 : 本 pass 输出纹理                 // §2.2 #5
   if (!writesNamed && inSeq): inSeq = false; effectInput = null             // §2.2 #4
 ```
 
 4. **写端三态**：`named`（写具名 RT）/ `pingpong`（写 `rtA`/`rtB` 对端，沿用 `pickWriteTarget`）/ `final`（本计划最后一个 pass；对象隔离路径下同为 pingpong 写端，其纹理经 `lastOutput()` 交给合成 quad）。若最后一个 pass 写具名 RT，则 `lastOutput()` = 该具名 RT 纹理（全库无此形态，但语义需确定）。
-5. **线性链退化**：无 `target`、`bind` 全为 `previous@index=0` 或空时，计划退化为"读端全 `chain`、写端全 `pingpong`（末 pass `final`）"，即 P1 行为 —— 这是零回归的判据（§7.1 有对应断言）。
+5. **线性链退化**：无 `target`、`bind` 全空时（全库 106 条线性链皆如此），计划退化为"`bindings` 全空、写端全 `pingpong`（末 pass `final`）"——执行器因此走 P1 的默认读端与 ping-pong 路径，这是零回归的判据（§7.1 有对应断言）。
 6. **RT 数量软上限**：单链具名 RT > 16 张 ⇒ 该链进 `droppedChains`（整链不挂，对象正常显示无效果）+ 一条告警。全库最多 8 张。
 
 ### 4.3 三类模板走查（base = 1000×600）
@@ -254,7 +256,7 @@ godrays / shine（5 pass，scale=2）与 bloom（4 pass，scale=4）分别同上
 | 情形 | 处置 |
 |---|---|
 | `bind` 引用链内不存在的具名 RT（全库 1 处 `_rt_FullFrameBuffer`） | 该槽**回落到默认来源** + 去重告警一次（带壁纸 id / 对象 id / RT 名 / 槽位）。依据 §2.2 #3 的回落语义与 `resolveFBO` 只报错不崩 |
-| **写具名 RT 的 pass** 编译失败 | **整链放弃**：本链后续 pass 不再执行、输出回退对象 RT 原图。P2 新引入的风险点 —— 派生读端会读到空 RT（透明黑），P1 那套"跳该 pass、读端不变"在 RT 图上不成立 |
+| **写具名 RT 的 pass** 编译失败 | **整条计划放弃**（含后续链：它们的输入已不可信），输出回退对象 RT 原图。P2 新引入的风险点 —— 派生读端会读到空 RT（透明黑），P1 那套"跳该 pass、读端不变"在 RT 图上不成立 |
 | 普通（pingpong）pass 编译失败 | 沿用 P1：跳该 pass、读端不变（仍然安全） |
 | 单链具名 RT > 16 张 | 该链进 `droppedChains`，不挂载（对象正常显示、无效果）+ 一条告警 |
 | effect 级 `visible === false`（全库 1 条） | 该 effect 整条不挂链（§2.2 #10），**不打告警**（作者正常内容，不是降级） |
@@ -271,7 +273,7 @@ godrays / shine（5 pass，scale=2）与 bloom（4 pass，scale=4）分别同上
 - **槽位优先级**：bind > textures > 默认；index 0/1/2；`bind.index >= textures.length`（77 处形态）；
 - **写端三态**：`named` / `pingpong` / `final`；末 pass 带 target 的情形；
 - **不可解析 bind** → 回落默认 + `unresolvedBinds`；
-- **线性链退化（零回归判据）**：对 106 条线性链（其 `bind` 全为空，见 §2.1），计划必须满足"读端全为 `chain`、写端全为 `pingpong`（末 pass 为 `final`）"；
+- **线性链退化（零回归判据）**：对 106 条线性链（其 `bind` 全为空，见 §2.1），计划必须满足"`bindings` 全为空、写端全为 `pingpong`（末 pass 为 `final`）"；
 - fixture 用全库 7 类模板的真实 JSON 抽最小形态。
 
 ### 7.2 执行器（扩 `tests/effect-runner.test.ts`，jsdom + three mock）
