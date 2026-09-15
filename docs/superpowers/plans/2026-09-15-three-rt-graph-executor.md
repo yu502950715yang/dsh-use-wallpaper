@@ -1524,7 +1524,7 @@ for (const dpr of [1, 2]) {
 node research/q-named-rt-vram.mjs 2>&1 | Tee-Object research/q-named-rt-vram.log
 ```
 
-Expected：`3743126786` 的具名 RT 一栏最大（8 张全尺寸，1080p@dpr1 约 66 MB）；其余壁纸 < 10 MB。若 `3743126786` 不是最大或量级差一个数量级，先查 `buildEffectPlan` 的 scale 解析再继续。
+Expected：`3743126786` 的具名 RT 一栏最大（8 张全尺寸，1080p@dpr1 约 66 MB）；其余壁纸 < 10 MB。若 `3743126786` 不是最大或量级差一个数量级，先查 `buildEffectPlan` 的 scale 解析再继续。（**实现期订正 2026-09-15**：该链 `fbos` 实际声明 scale=2/4/8/16（降采样金字塔），实测约 **5.3 MB** —— 本行「8 张全尺寸约 66 MB」是错的预期，实测才是准；见 spec §5.1 与 `AGENT.md` §7.1。）
 
 - [ ] **Step 3: 提交（脚本 gitignore，无代码改动）**
 
