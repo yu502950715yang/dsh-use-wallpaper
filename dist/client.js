@@ -23177,17 +23177,29 @@ var WE_HEADERS = {
 };
 
 // src/client/shader/shader-preprocessor.ts
-var UNIFORM_RE = /uniform\s+([\w]+)\s+(\w+)(?:\[(\d+)\])?\s*;\s*(?:\/\/\s*(\{[\s\S]*?\}))?/g;
+var UNIFORM_RE = /uniform\s+([\w]+)\s+(\w+)(?:\[(\d+)\])?\s*;\s*(?:\/\/\s*(\{[^\n]*\}))?/g;
+function takeBalancedJson(text) {
+  let depth = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === "{") depth++;
+    else if (c === "}" && --depth === 0) return text.slice(0, i + 1);
+  }
+  return null;
+}
 function extractUniformAnnotations(source) {
   const out = [];
   for (const m of source.matchAll(UNIFORM_RE)) {
     const type = m[3] ? `${m[1]}[${m[3]}]` : m[1];
     let annotation;
     if (m[4]) {
-      try {
-        annotation = JSON.parse(m[4]);
-      } catch {
-        annotation = void 0;
+      const json = takeBalancedJson(m[4]);
+      if (json) {
+        try {
+          annotation = JSON.parse(json);
+        } catch {
+          annotation = void 0;
+        }
       }
     }
     out.push({ name: m[2], type, annotation });

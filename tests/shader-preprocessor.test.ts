@@ -30,6 +30,22 @@ describe('extractUniformAnnotations', () => {
     const anns = extractUniformAnnotations('uniform float g_AudioSpectrum16Left[16];');
     expect(anns[0].type).toBe('float[16]');
   });
+  // 回归（2026-09-15，3303428996 死亡搁浅-玛玛整屏黑）：注解里的**嵌套对象**（`"require":{...}`、
+  // `"options":{...}`）会让非贪婪 `\{[\s\S]*?\}` 在内层 `}` 截断 ⇒ JSON.parse 失败 ⇒ 注解整体丢失
+  // ⇒ material 映射与 default 都拿不到（uniform 落 0）。lightshafts 的 g_Point0..3 全 0 ⇒ 透视矩阵
+  // 退化 ⇒ NaN ⇒ 整屏黑。sampler 上的 mode/combo 同样会被丢掉（遮罩语义失效）。
+  it('注解含嵌套对象（require/options）时仍完整解析（不被内层 } 截断）', () => {
+    const src = 'uniform vec2 g_Point0; // {"material":"point0","label":"p0","default":"0.67728 0.01297","require":{"DIRECTDRAW":0}}';
+    const anns = extractUniformAnnotations(src);
+    expect(anns[0].annotation).toEqual({
+      material: 'point0', label: 'p0', default: '0.67728 0.01297', require: { DIRECTDRAW: 0 },
+    });
+  });
+  it('sampler 注解含 require 时 mode/combo 不丢（遮罩语义依赖它）', () => {
+    const src = 'uniform sampler2D g_Texture3; // {"label":"mask","mode":"opacitymask","combo":"MASK","require":{"DIRECTDRAW":0}}';
+    const anns = extractUniformAnnotations(src);
+    expect(anns[0].annotation).toMatchObject({ mode: 'opacitymask', combo: 'MASK' });
+  });
 });
 
 describe('preprocessWeShader', () => {

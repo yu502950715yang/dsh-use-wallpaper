@@ -181,6 +181,12 @@ research/                    gitignore：截图 / 验证脚本 / 临时 profile
     - **附带补的一处资源所有权缺口**：`three-renderer` 此前不释放本次装配的背景纹理（注释口径是「随 `renderer.dispose` 清理」，对 GPU 纹理成立、对视频不成立）⇒ 现在 `teardown()` 显式 `texture.dispose()` 本次 `backgroundTextures`，壁纸切换即停播 + 撤销 Blob（否则每切一次漏一个仍在解码的视频 + 一份 10MB Blob）。**边界**：效果**纹理槽**用的纹理（`EffectRunner` 的 `this.textures` 缓存）仍不 dispose（槽里混有模块级共享的空槽常量纹理，误 dispose 会波及其他 runner；库内也无「视频纹理当效果槽」的用法）。
     - **验证**：单测 `tests/tex-loader.test.ts`（判定正/反例）+ `tests/dom/tex-loader-video.dom.test.ts`（jsdom + FakeVideo：VideoTexture/flipY/wrap/fxRes/dispose 清理/error 降级）+ `tests/three-renderer.test.ts`（teardown 释放纹理，切壁纸与 dispose 两条路径）；端到端 `research/tmp-2911105183/render-lab.mjs` 的 `bg-ads` 变体（只留静态背景 + 三个广告牌）两帧连拍：**只有两块广告牌区域在动**（粗网格 8×6 变化率 10.4%/5.2% 与 4.7%/2.1%，其余全 0.0%），整屏黑像素仍 **0.7%**、广告牌区域暗像素 **0.0%**。`research/verify-object-effects.mjs` 的 [2] 判据同步升级为「盒外 = 去掉全部**动画源**（时间驱动效果对象 **+ 视频纹理对象**）」——视频是独立于效果链的动画源，不建模它会把广告牌误判成「效果漫出盒子」（升级前该判据 FAIL：盒外最大差 155；升级后 PASS：盒外最大差 0）。
 
+24. **uniform 注解里的**嵌套对象**必须完整解析（2026-09-15，用户报告 `3303428996 死亡搁浅-玛玛` 整屏黑）**：
+    - **根因**：`extractUniformAnnotations` 用非贪婪 `\{[\s\S]*?\}` 抓 `// {...}` 注解，遇到**内层 `}`**（WE 注解普遍带 `"require":{"DIRECTDRAW":0}`、`"options":{...}`）就截断 ⇒ `JSON.parse` 失败 ⇒ **注解整体丢失** ⇒ binder 拿不到 `material` 映射与 `default`，uniform 落到「按类型全零」。修法：正则改为抓到行尾，再用 `takeBalancedJson`（配对花括号扫描）截出首个完整对象。
+    - **为什么现在才炸**：`3303428996` 的唯一效果是 `effects/lightshafts`，其 **vert** 用 `inverse(squareToQuad(g_Point0..3))` 算透视矩阵 —— 四个点全 0 ⇒ 矩阵退化 ⇒ `v_TexCoordFx.z = 0` ⇒ `fxCoordRef.y` 为 Inf/NaN ⇒ `albedo.rgb = A + B*fx` 里 `B*0 = NaN` ⇒ 输出 NaN ⇒ 渲染成**不透明黑**（实测效果输出 RT 全 `(0,0,0,255)`，整屏 100% 黑）。此前这条 pass 因为 `float(format) == FORMAT_RG88`（§7.1 已修）**编译失败被跳过**，墙上那张图是「效果没跑」的状态；修好编译后效果真的跑起来，才暴露这个注解解析缺陷。
+    - **影响面（全库 194 个 shader 扫描，`research/tmp-2911105183/scan-annotation-impact.mjs`）**：仅 **10** 条注解从「丢失」变「解析成功」——4 条是 `lightshafts` 的 `g_Point0..3`（本条修复对象）、5 条是 `blur_precise_gaussian` 的 `g_Texture2`（`mode:opacitymask` + `combo:MASK`，那些链目前属**具名 RT 图链、整体跳过**，故今日无行为变化，等 RT 图执行器落地才生效）、1 条是 `lightshafts` 的 `g_Texture2`（`RENDERING==1` 才用）。
+    - **验证**：单测 `tests/shader-preprocessor.test.ts` 两条（嵌套 `require` 的 vec 注解完整解析；sampler 注解的 `mode`/`combo` 不丢）；端到端 `3303428996` 黑像素 **100% → 7.2%**（7.2% 是该图自身的暗部，与 `preview.jpg` 对比画面与「光柱」效果一致）；`2911105183` 复测仍 **0.7%**（无回归）。
+
 ## 6. 工作约定
 
 - 回复、注释、文档、**提交信息一律简体中文**；代码、命令、文件名、技术术语保留原文。

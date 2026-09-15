@@ -10,7 +10,20 @@ export interface UniformAnnotation {
 
 // uniform 声明正则：支持 sampler2D / float / vec2..4 / float[N] 数组
 // （GLSL 数组后缀在变量名后：uniform float g_AudioSpectrum16Left[16];）
-const UNIFORM_RE = /uniform\s+([\w]+)\s+(\w+)(?:\[(\d+)\])?\s*;\s*(?:\/\/\s*(\{[\s\S]*?\}))?/g;
+// 注解 JSON 可能含**嵌套对象**（`"require":{"DIRECTDRAW":0}`、`"options":{...}`），故先抓到行尾、
+// 再由 takeBalancedJson 截出首个配对完整的对象（非贪婪 `\{.*?\}` 会在内层 `}` 截断，注解整体丢失）。
+const UNIFORM_RE = /uniform\s+([\w]+)\s+(\w+)(?:\[(\d+)\])?\s*;\s*(?:\/\/\s*(\{[^\n]*\}))?/g;
+
+/** 取首个配对完整的 `{...}`（容忍行尾多余字符）；无完整配对返回 null。 */
+function takeBalancedJson(text: string): string | null {
+  let depth = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '{') depth++;
+    else if (c === '}' && --depth === 0) return text.slice(0, i + 1);
+  }
+  return null;
+}
 
 export function extractUniformAnnotations(source: string): UniformAnnotation[] {
   const out: UniformAnnotation[] = [];
@@ -19,7 +32,10 @@ export function extractUniformAnnotations(source: string): UniformAnnotation[] {
     const type = m[3] ? `${m[1]}[${m[3]}]` : m[1];
     let annotation: Record<string, unknown> | undefined;
     if (m[4]) {
-      try { annotation = JSON.parse(m[4]); } catch { annotation = undefined; }
+      const json = takeBalancedJson(m[4]);
+      if (json) {
+        try { annotation = JSON.parse(json); } catch { annotation = undefined; }
+      }
     }
     out.push({ name: m[2], type, annotation });
   }
