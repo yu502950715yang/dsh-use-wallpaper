@@ -48,7 +48,7 @@ three 主路径 P1 已接通对象级效果链，但 `effect.json` 里带**具�
 其它事实：
 
 - `fbo.format` 全库只有 `rgba8888` 与 `rgba_backbuffer`；`fbos[].unique` 与 `passes[].command` 全库 **0 处**；
-- **具名 RT 清单按 `target` 建立、`fbos` 只提供 `scale`**（不按 `fbos` 建）：`fbos` 可能是**超集**（声明了却没有任何 pass 使用的条目不该建 RT），而 `target` 才是「谁会被写」的权威。（**实现期订正 2026-09-15**：本节早先写「GTR 的 bloom 声明了 `_rt_buffer1/2` 却把 target 改成 `blur_start_*`、两者不一致」——那是本计划扫描脚本的误读；实测原文是该链 `fbos` 就声明了 `blur_start_2/end_2(scale 2)`、`_4(4)`、`_8(8)`、`_16(16)`（`format: rgba_backbuffer`、`unique: true`），与 16 个 pass 的 target 完全一致，全库 `_rt_buffer1/2` 的「声明」在本机数据里 0 命中。规则本身不变。）
+- **具名 RT 清单按 `target` 建立、`fbos` 只提供 `scale`**（不按 `fbos` 建）：`fbos` 可能是**超集**（声明了却没有任何 pass 使用的条目不该建 RT），而 `target` 才是「谁会被写」的权威。（**实现期订正 2026-09-15**：本节早先写「GTR 的 bloom 声明了 `_rt_buffer1/2` 却把 target 改成 `blur_start_*`、两者不一致」——那是本计划扫描脚本的误读；实测原文是该链 `fbos` 就声明了 `blur_start_2/end_2(scale 2)`、`_4(4)`、`_8(8)`、`_16(16)`（`format: rgba_backbuffer`、`unique: true`），与 16 个 pass 的 target 完全一致。另：`_rt_buffer1/2` 这个命名**确实存在于本库**（`2911105183` obj58 的 bloom 链，挂 util 对象，与 GTR 那条无关）——本行早先写的「全库 0 命中」是对诊断报告的误读。规则本身不变。）
 - `textures[0]` 非空的 pass **0 处**；`bind` 与 `textures` 同 index 冲突 **6 处**（全在 RT 图链上，例：`shine` p4 的 `textures[1]="_rt_imageLayerComposite_13_b"` 被 `bind[1]=previous` 覆写）；`bind.index >= textures.length` **77 处**（靠 shader 声明的槽位补齐，`effectSlotCount` 已实现）；
 - `textures[]` 里的 `_rt_*` 引用：`_rt_imageLayerComposite_<id>_a/_b` **6 处全部被 `bind` 覆写**（无需处理）；`_rt_FullFrameBuffer` **1 处未被覆写**（`2597392171 obj50` godrays p4 slot2）⇒ 进入降级清单（§6）。线性链里 `_rt_*` 槽引用 **0 处** ⇒ P1 线性路径无同类既有缺陷；
 - scene.json 覆写 `bind` / `target` 全库 **0 处** ⇒ `resolveEffectChain` 现解析出的 `target`/`bind` 可直接消费，无需扩解析；
