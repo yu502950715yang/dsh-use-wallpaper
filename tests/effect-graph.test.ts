@@ -1,9 +1,14 @@
 // RT 图执行计划的纯函数单测（语义依据见 docs/superpowers/specs/2026-09-15-three-rt-graph-executor-design.md）。
 import { describe, expect, it } from 'vitest';
+import { existsSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   buildEffectPlan, namedRtKey, namedRtScale, namedRtSize, NAMED_RT_LIMIT,
 } from '../src/client/effect-graph.js';
+import { resolveEffectChain } from '../src/client/shader/effect-chain.js';
 import type { CompiledEffectPass } from '../src/client/shader/effect-chain.js';
+import { isLinearEffectChain } from '../src/client/object-effects.js';
+import { PkgReader } from '../src/host/pkg-reader.js';
 
 // 最小 CompiledEffectPass：只填本文件关心的字段。
 function pass(over: Partial<CompiledEffectPass> = {}): CompiledEffectPass {
@@ -45,6 +50,10 @@ describe('namedRtKey / namedRtScale / namedRtSize（具名 RT 口径）', () => 
   it('base 非法（NaN / Infinity）→ 也按 1（导出 API 不透出 NaN / Infinity 尺寸）', () => {
     expect(namedRtSize(Number.NaN, 600, 4)).toEqual({ width: 1, height: 150 });
     expect(namedRtSize(Number.POSITIVE_INFINITY, 600, 4)).toEqual({ width: 1, height: 150 });
+  });
+  it('base ≤0 → 按 1，再由 Math.max(1, …) 兜底（不产生负尺寸）', () => {
+    expect(namedRtSize(0, 600, 4)).toEqual({ width: 1, height: 150 });
+    expect(namedRtSize(-100, 600, 4)).toEqual({ width: 1, height: 150 });
   });
 });
 
@@ -140,5 +149,77 @@ describe('buildEffectPlan — bind 覆盖项（读端）', () => {
     const plan = buildEffectPlan([chain], { baseWidth: 10, baseHeight: 10 });
     expect(plan.passes[0].blendMode).toBe('additive');
     expect(plan.passes[0].target).toBe('_rt_F');
+  });
+});
+
+describe('buildEffectPlan — 写端三态与线性链退化', () => {
+  it('有 target → named；无 target → pingpong；整条计划的最后一个 pass → final', () => {
+    const chain = [pass({ target: '_rt_F' }), pass({ target: '_rt_G' }), pass()];
+    const plan = buildEffectPlan([chain], { baseWidth: 10, baseHeight: 10 });
+    expect(plan.passes.map((p) => p.write)).toEqual([
+      { type: 'named', key: '0:_rt_F' },
+      { type: 'named', key: '0:_rt_G' },
+      { type: 'final' },
+    ]);
+  });
+  it('最后一个 pass 写具名 RT → write 保持 named（执行器据此把 lastOutput 设为该 RT）', () => {
+    const chain = [pass(), pass({ target: '_rt_F' })];
+    const plan = buildEffectPlan([chain], { baseWidth: 10, baseHeight: 10 });
+    expect(plan.passes.map((p) => p.write.type)).toEqual(['pingpong', 'named']);
+  });
+  it('线性链退化：bindings 全空、写端全 pingpong、末 pass final（零回归判据）', () => {
+    const plan = buildEffectPlan([[pass(), pass(), pass()]], { baseWidth: 10, baseHeight: 10 });
+    expect(plan.namedTargets).toEqual([]);
+    expect(plan.passes.every((p) => p.bindings.length === 0)).toBe(true);
+    expect(plan.passes.map((p) => p.write.type)).toEqual(['pingpong', 'pingpong', 'final']);
+  });
+  it('多链：只有整条计划的最后一个 pass 是 final（链间不重置）', () => {
+    const plan = buildEffectPlan([[pass()], [pass()]], { baseWidth: 10, baseHeight: 10 });
+    expect(plan.passes.map((p) => [p.chainIndex, p.write.type])).toEqual([[0, 'pingpong'], [1, 'final']]);
+  });
+  it('空链 / 全空输入 → 不崩、无 pass', () => {
+    expect(buildEffectPlan([[]], { baseWidth: 10, baseHeight: 10 }).passes).toEqual([]);
+    expect(buildEffectPlan([], { baseWidth: 10, baseHeight: 10 }).passes).toEqual([]);
+  });
+});
+
+// 全库真实链的形态回归（本机无壁纸库时跳过）：24 条 RT 图链必须全部可计划、无 droppedChains。
+const WALLPAPER_DIR = 'D:/Steam/steamapps/workshop/content/431960';
+
+describe.skipIf(!existsSync(WALLPAPER_DIR))('buildEffectPlan — 全库 RT 图链形态（实测数字，勿放宽）', () => {
+  it('24 条 RT 图链：每条都有具名 RT、末 pass 写端非 named、无 droppedChains', async () => {
+    const dirs = readdirSync(WALLPAPER_DIR, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
+    let rtChains = 0;
+    let maxNamed = 0;
+    for (const id of dirs) {
+      const pkgPath = join(WALLPAPER_DIR, id, 'scene.pkg');
+      if (!existsSync(pkgPath)) continue;
+      const reader = new PkgReader(pkgPath);
+      const raw = reader.readEntry('scene.json');
+      if (!raw) continue;
+      const scene = JSON.parse(Buffer.from(raw).toString('utf8')) as {
+        objects?: Array<{ effects?: Array<{ file?: string; passes?: unknown[] }> }>;
+      };
+      const loadFile = async (name: string) => { const e = reader.readEntry(name); return e ? new Uint8Array(e) : null; };
+      for (const obj of scene.objects ?? []) {
+        for (const fx of obj.effects ?? []) {
+          if (typeof fx.file !== 'string') continue;
+          const chain = await resolveEffectChain({ file: fx.file, passes: fx.passes }, loadFile);
+          if (!chain || isLinearEffectChain(chain)) continue;
+          rtChains++;
+          const plan = buildEffectPlan([chain], { baseWidth: 1280, baseHeight: 720 });
+          expect(plan.droppedChains).toEqual([]);
+          expect(plan.namedTargets.length).toBeGreaterThan(0);
+          expect(plan.passes.length).toBe(chain.length);
+          // 末 pass 若不是 named，必须是 final；具名 RT 读数不超过上限
+          const lastWrite = plan.passes[plan.passes.length - 1].write;
+          expect(lastWrite.type === 'final' || lastWrite.type === 'named').toBe(true);
+          maxNamed = Math.max(maxNamed, plan.namedTargets.length);
+        }
+      }
+    }
+    console.log(`[全库计划] RT 图链 ${rtChains} 条；单链具名 RT 最多 ${maxNamed} 张`);
+    expect(rtChains).toBe(24);
+    expect(maxNamed).toBeLessThanOrEqual(8);
   });
 });

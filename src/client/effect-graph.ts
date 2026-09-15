@@ -79,7 +79,7 @@ export function buildEffectPlan(
       namedTargets.push({ key, name, width: size.width, height: size.height });
     }
 
-    // ② 逐 pass 的 bind 覆盖项（写端在 Task 3 补）
+    // ② 逐 pass 的 bind 覆盖项与写端
     chain.forEach((p, passIndex) => {
       const bindings: PlannedPass['bindings'] = [];
       const unresolvedBinds: string[] = [];
@@ -96,11 +96,12 @@ export function buildEffectPlan(
         }
         unresolvedBinds.push(name);
       }
+      const writesNamed = p.target !== undefined && p.target !== null && p.target !== '' && keyOf.has(p.target);
       const planned: PlannedPass = {
         chainIndex,
         passIndex,
         bindings,
-        write: { type: 'pingpong' },
+        write: writesNamed ? { type: 'named', key: keyOf.get(p.target as string) as string } : { type: 'pingpong' },
         blendMode: p.blendMode,
       };
       if (p.target) planned.target = p.target;
@@ -108,6 +109,10 @@ export function buildEffectPlan(
       passes.push(planned);
     });
   });
+
+  // 整条计划的最后一个 pass：pingpong → final（named 保持，执行器据此把 lastOutput 设为该 RT）
+  const last = passes[passes.length - 1];
+  if (last && last.write.type === 'pingpong') last.write = { type: 'final' };
 
   return { namedTargets, passes, droppedChains };
 }
