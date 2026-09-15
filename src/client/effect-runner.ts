@@ -680,7 +680,8 @@ export class EffectRunner {
     })));
   }
 
-  /** `textures` 槽引用的 `_rt_*` 是否为本链**未声明**的全局运行时 RT（如 _rt_FullFrameBuffer）。 */
+  /** `textures` 槽引用的 `_rt_*` 是否为本链**未声明**的全局运行时 RT（如 _rt_FullFrameBuffer）。
+   *  调用方还需排除「该槽已被 bind 覆盖」：那时实际用的是 bind 的源，拦截与告警都是误导。 */
   private isForeignRuntimeRt(path: string, chainIndex: number): boolean {
     return path.startsWith('_rt_') && !this.namedRt.has(`${chainIndex}:${path}`); // 池 key = `${链序号}:${名字}`
   }
@@ -714,7 +715,10 @@ export class EffectRunner {
         for (let j = 0; j < slots; j++) {
           const path = p.textureSlots[j];
           const key = `${pp.chainIndex}:${pp.passIndex}:${j}`;
-          if (path && this.isForeignRuntimeRt(path, pp.chainIndex)) {
+          // 该槽被本 pass 的 bind 覆盖时实际用的是 bind 的源（真实库 _rt_imageLayerComposite_*_a/_b
+          // 共 6 处均如此）⇒ 不拦截、不告警，否则是误导性告警。
+          const boundByBind = pp.bindings.some((b) => b.slot === j);
+          if (path && !boundByBind && this.isForeignRuntimeRt(path, pp.chainIndex)) {
             // `_rt_*` 不在本链具名 RT 表内 = 全局运行时 RT：解析只会拿到 1×1 白纹（凭空造内容），
             // 故保持该槽默认（通常为 null），只告警一次。
             this.warnOnce(

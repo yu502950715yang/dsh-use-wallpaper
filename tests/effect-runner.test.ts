@@ -833,6 +833,28 @@ describe('EffectRunner 按计划执行（具名 RT 写读 / previous 序列 / �
     runner.dispose();
   });
 
+  // Ruling 18：`_rt_imageLayerComposite_*_a/_b` 这类表外 `_rt_*` 槽若同时被本 pass 的 bind 覆盖，
+  // 实际用的是 bind 的源（真实库里 6 处均如此）⇒ 不得打「表外运行时 RT」的误导性告警。
+  it('表外 _rt_* 槽同时被 bind 覆盖 → 不告警，且该槽绑到 bind 的源', async () => {
+    const { renderer, mats } = createPlanRenderer();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const chain = [
+      pass({ target: '_rt_H' }),
+      pass({
+        textureSlots: [null, '_rt_imageLayerComposite_1_b'],
+        bind: [{ index: 1, name: 'previous' }],
+      }),
+    ];
+    const runner = new EffectRunner(renderer as never, 8, 8);
+    runner.setPlan(buildEffectPlan([chain], { baseWidth: 8, baseHeight: 8 }), [chain], 'wp', { width: 8, height: 8 });
+    const input = new THREE.Texture();
+    await runner.update(0, input);
+    expect(mats[1].uniforms.g_Texture1.value).toBe(input); // bind 覆盖槽 = previous（序列起点输入）
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('_rt_imageLayerComposite_1_b'))).toBe(false);
+    warn.mockRestore();
+    runner.dispose();
+  });
+
   // Ruling 5：`unresolvedBinds` 可能含空名（全库实测无此形态）——非空名按 pass 去重告警、空名静默。
   it('bind 里未解析的名字告警一次，空名 bind 不打噪声', async () => {
     const { renderer } = createPlanRenderer();

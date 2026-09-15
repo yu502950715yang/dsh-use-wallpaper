@@ -334,8 +334,8 @@ describe('particleBlend（材质 json blending → 粒子混合模式）', () =>
 });
 
 // ===== Task 5：对象级效果链的解析与本路径接线 =====
-// 本文件不 mock effect-runner：新增用例要么不建 runner（具名 RT 图链整条跳过），要么把
-// ObjectEffectStage 的挂载方法替换成 spy（不触碰 WebGL）。
+// 本文件不 mock effect-runner：用例要么不建 runner（挂载方法替换成 spy），要么走真实
+// ObjectEffectStage（用例内的链不带纹理槽，不触碰 WebGL）。
 
 // 造一个最小 CompiledEffectPass（只填本任务关心的字段，其余为占位值）。
 function fxPass(over: Partial<CompiledEffectPass> = {}): CompiledEffectPass {
@@ -355,8 +355,8 @@ const FX_FILES: Record<string, string> = {
   'shaders/effects/w.frag': 'void main(){ gl_FragColor = texture2D(g_Texture0, uv); }',
 };
 
-// 具名 RT 图链（pass 写出具名 RT → `isLinearEffectChain` 判为 false，执行器整条跳过）：
-// 与真实库里的 blur / blurprecise / bloom 同形，供「这类对象不值得隔离」的用例（F2）使用。
+// 具名 RT 图链（pass 写出具名 RT）：与真实库里的 blur / blurprecise / bloom 同形，
+// 供「这类对象照常隔离（P2 起可执行）」的用例使用。
 const FX_FILES_RT_GRAPH: Record<string, string> = {
   ...FX_FILES,
   'effects/rtg/effect.json': JSON.stringify({
@@ -416,12 +416,33 @@ describe('collectObjectEffectChains（effects 解析与分类）', () => {
     expect(warn.mock.calls.some((c) => String(c[0]).includes('效果链解析失败'))).toBe(true);
     warn.mockRestore();
   });
+
+  // 过滤发生在**解析之前**：不可见 effect 连 effect.json 都不去读（本用例刻意不提供 material/shader，
+  // 若过滤失效就会走解析并打「效果链解析失败」）。
+  it('effect 级 visible:false 的 effect 不进链表（lwe CImage 语义），且不在解析阶段告警', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const desc = {
+      camera: { center: [0, 0, 0], eye: [0, 0, 0], up: [0, 1, 0] },
+      orthogonal: { width: 100, height: 100 },
+      objects: [
+        { kind: 'image', id: 7, name: 'a', origin: [0, 0, 0], scale: [1, 1, 1], image: 'x',
+          effects: [{ file: 'effects/w/effect.json', visible: false }] },
+      ],
+    } as never;
+    const files = new Map<string, Uint8Array>();
+    files.set('effects/w/effect.json', new TextEncoder().encode(JSON.stringify({ passes: [{ material: 'materials/effects/w.json' }] })));
+    const out = await collectObjectEffectChains(desc, async (n) => files.get(n) ?? null);
+    expect(out.size).toBe(0);
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('效果链解析失败'))).toBe(false);
+    warn.mockRestore();
+  });
 });
 
-// 修正 D：`onViewportResize` 旧实现以 `if (!entry.runner) continue;` 开头，「链全被跳过、
-// 因而没有 runner 的隔离对象」不再随视口重设 RT（视口放大偏糊、缩小超额占显存）。
+// 修正 D：`onViewportResize` 旧实现以 `if (!entry.runner) continue;` 开头，「尚无 runner 的隔离对象」
+// 不随视口重设 RT（视口放大偏糊、缩小超额占显存）。Task 6 起具名 RT 图链照常建 runner，
+// 「无 runner」这一态改由「只 setWorldSize、链尚未挂载」构造。
 describe('ObjectEffectStage.onViewportResize（无 runner 的隔离对象也要重设 RT）', () => {
-  it('链全被跳过（无 runner）→ 按新预算重设 RT，但不回退输出', () => {
+  it('只 setWorldSize、链尚未挂载（无 runner）→ 按新预算重设 RT，但不回退输出', () => {
     const view = { id: 1, rtWidth: 100, rtHeight: 50, rtTexture: new THREE.Texture() };
     const resized: Array<{ id: number; w: number; h: number }> = [];
     const outputs: Array<{ id: number; tex: THREE.Texture }> = [];
@@ -436,21 +457,44 @@ describe('ObjectEffectStage.onViewportResize（无 runner 的隔离对象也要�
         view.rtHeight = h;
       },
     };
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const stage = new ObjectEffectStage(host as never, {
       wallpaperId: 'w', screenScale: 1,
     });
-    // 契约顺序：先 setWorldSize（世界尺寸唯一来源），再 setObjectChains 传**具名 RT 图链**
-    // （整条跳过 → 该对象有隔离条目与世界尺寸，但没有 runner）。
+    // 契约顺序：只 setWorldSize（世界尺寸唯一来源），链尚未挂载 ⇒ 有隔离条目与世界尺寸、没有 runner。
     stage.setWorldSize(1, 50, 25);
-    stage.setObjectChains(1, [[fxPass({ target: '_rt_a' })]]);
-    expect(stage.debugRunners().has(1)).toBe(false);
     // 世界 50×25 @密度 0.4 → 屏占位 20×10
     stage.onViewportResize(0.4);
     expect(resized).toEqual([{ id: 1, w: 20, h: 10 }]);
     // 没有 runner 就没有「重挂链后 quad 采样已 dispose 纹理」的问题 → 不得动输出。
     expect(outputs).toEqual([]);
-    warn.mockRestore();
+    stage.dispose();
+  });
+
+  // Task 6 起具名 RT 图链照常建 runner（不再整条跳过）⇒ 有 runner 的对象同样随视口重设 RT。
+  it('具名 RT 图链的隔离对象有 runner → resize 同样重设 RT 并回退对象 RT 原图', () => {
+    const view = { id: 1, rtWidth: 100, rtHeight: 50, rtTexture: new THREE.Texture() };
+    const resized: Array<{ id: number; w: number; h: number }> = [];
+    const outputs: Array<{ id: number; tex: THREE.Texture }> = [];
+    const host = {
+      renderer: {} as never,
+      isolatedObjects: () => [view],
+      setObjectOutput: (id: number, tex: THREE.Texture) => { outputs.push({ id, tex }); },
+      resizeObjectRT: (id: number, w: number, h: number) => {
+        resized.push({ id, w, h });
+        view.rtWidth = w;
+        view.rtHeight = h;
+      },
+    };
+    const stage = new ObjectEffectStage(host as never, {
+      wallpaperId: 'w', screenScale: 1,
+    });
+    stage.setWorldSize(1, 50, 25);
+    stage.setObjectChains(1, [[fxPass({ target: '_rt_a' })]]);
+    expect(stage.debugRunners().has(1)).toBe(true);
+    stage.onViewportResize(0.4);
+    expect(resized).toEqual([{ id: 1, w: 20, h: 10 }]);
+    expect(outputs).toHaveLength(1); // 重挂后回退对象 RT 原图
+    stage.dispose();
   });
 });
 
@@ -669,25 +713,14 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     r.dispose();
   });
 
-  // F2（终审 I2）：isolate 准入从「有链」收紧为「至少有一条线性链」。链**全为具名 RT 图链**时
-  // `setObjectChains` 整条跳过（不建 runner），对象 RT 的显存与每帧一次额外渲染 + 一次 RT 切换
-  // 完全没有收益，而 quad 永远采样 RT 原图 ⇒ 隔离没有额外视觉收益（纯浪费）。
-  it('链全为具名 RT 图链的对象不进 isolate；线性对象（含 colorBlendMode=7）照常隔离', async () => {
+  // P2：具名 RT 图链**已可执行**（Task 6 起 setObjectChains 一视同仁建 runner/计划），
+  // 准入回到「有链即隔离」——rtGraphOnly 优化与「不再隔离」告警整体删除。
+  it('链全为具名 RT 图链的对象**照常**隔离（P2 起可执行，不再有 rtGraphOnly 优化）', async () => {
     stubAssetFetch(sceneWith([
       {
         id: 13, name: 'rtgraph', image: 'models/a.json',
         origin: '960 540 0', scale: '1 1 1', size: '3840 2160',
         effects: [{ file: 'effects/rtg/effect.json' }],
-      },
-      {
-        id: 60, name: 'linear', image: 'models/b.json',
-        origin: '960 540 0', scale: '1 1 1', size: '1920 1080',
-        effects: [{ file: 'effects/w/effect.json' }],
-      },
-      {
-        id: 246, name: 'Clouds Back', image: 'models/clouds.json',
-        origin: '960 540 0', scale: '1 1 1', size: '1920 1080', colorBlendMode: 7,
-        effects: [{ file: 'effects/w/effect.json' }],
       },
     ]), FX_FILES_RT_GRAPH);
     resolveImageTexture.mockResolvedValue(fakeTexture() as never);
@@ -695,34 +728,21 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     const player = {
       dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage: vi.fn(),
       renderer: {},
-      // 真实 player 只会为 isolate 里的对象建隔离条目 → 这里也只有线性链的 60。
-      isolatedObjects: () => [{ id: 60, kind: 'background', rtWidth: 1920, rtHeight: 1080, rtTexture: {} }],
+      // P2 起这类对象进入隔离（真实 player 会为 isolate 里每个对象建条目）
+      isolatedObjects: () => [{ id: 13, kind: 'background', rtWidth: 3840, rtHeight: 2160, rtTexture: {} }],
     };
-    loadSceneToThree.mockReturnValue({ player, sims: [], backgroundIds: [0, 1, 2], particleLayers: [] } as never);
+    loadSceneToThree.mockReturnValue({ player, sims: [], backgroundIds: [0], particleLayers: [] } as never);
     const worldSpy = vi.spyOn(ObjectEffectStage.prototype, 'setWorldSize').mockImplementation(() => {});
     const chainsSpy = vi.spyOn(ObjectEffectStage.prototype, 'setObjectChains').mockImplementation(() => {});
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-
     const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
-    const ok = await r.render('2132420420', document.createElement('canvas'), null);
-    expect(ok).toBe(true);
-
+    expect(await r.render('2132420420', document.createElement('canvas'), null)).toBe(true);
     const assets = loadSceneToThree.mock.calls[0][1];
-    // ① 具名 RT 图链对象不隔离（不再为注定被跳过的链白付一张 3840×2160 对象 RT + 每帧额外渲染）；
-    // ② 线性链对象照常隔离挂链（收紧准入不得误伤正常对象）；
-    // ③ colorBlendMode ∈ {6,7,31} 的对象同样隔离（旧守卫已删，混合语义搬到合成 quad）。
-    expect(assets.isolate.has(13)).toBe(false);
-    expect(assets.isolate.has(60)).toBe(true);
-    expect(assets.isolate.has(246)).toBe(true);
-    expect(worldSpy.mock.calls.map((c) => c[0])).toEqual([60, 246]);
-    expect(chainsSpy.mock.calls.map((c) => c[0])).toEqual([60, 246]);
-    // 降级告警仍在（收紧准入不等于让「效果被跳过」在诊断上消失），且带上具名 RT 标识；
-    // 也不并入「挂在未参与渲染的对象类型上」的汇总告警——该对象照常渲染，原因不同。
-    const rtGraph = warn.mock.calls.filter((c) => String(c[0]).includes('效果需要具名 RT'));
-    expect(rtGraph).toHaveLength(1);
-    expect(String(rtGraph[0][0])).toContain('_rt_blur');
-    expect(warn.mock.calls.some((c) => String(c[0]).includes('未参与渲染'))).toBe(false);
-
+    expect(assets.isolate.has(13)).toBe(true);                    // ← 反转点（原为 false）
+    expect(worldSpy.mock.calls.map((c) => c[0])).toEqual([13]);
+    expect(chainsSpy.mock.calls.map((c) => c[0])).toEqual([13]);
+    // 不再有「效果需要具名 RT（P2 未实现）」告警
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes('效果需要具名 RT'))).toHaveLength(0);
     worldSpy.mockRestore();
     chainsSpy.mockRestore();
     warn.mockRestore();

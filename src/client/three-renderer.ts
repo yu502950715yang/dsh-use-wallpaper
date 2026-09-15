@@ -29,7 +29,7 @@ import type { SceneDescription } from '../shared/types.js';
 import {
   groupEffectsByObject, objectRtSize, particleWorldSize, screenScalePx,
 } from './object-range.js';
-import { isLinearEffectChain, ObjectEffectStage } from './object-effects.js';
+import { ObjectEffectStage } from './object-effects.js';
 import { resolveEffectChain, type CompiledEffectPass } from './shader/effect-chain.js';
 
 // wasm `CpuParticleSim` 的构造器形态（wasm-bindgen 静态 `new`；`ParticleSim` 接口见
@@ -118,8 +118,10 @@ export async function collectObjectEffectChains(
   const out = new Map<number, CompiledEffectPass[][]>();
   for (const group of groupEffectsByObject(desc.objects)) {
     const chains: CompiledEffectPass[][] = [];
-    for (const fx of group.effects as Array<{ file?: string; passes?: unknown[] }>) {
+    for (const fx of group.effects as Array<{ file?: string; passes?: unknown[]; visible?: boolean }>) {
       if (typeof fx?.file !== 'string') continue;
+      // effect 级可见性：lwe CImage::setupPasses 对 visible=false 的 effect 整条跳过（正常内容，不告警）
+      if (fx.visible === false) continue;
       const chain = await resolveEffectChain({ file: fx.file, passes: fx.passes }, loadFile);
       if (!chain) {
         console.warn('[wallpaper-engine] 效果链解析失败，跳过:', fx.file);
@@ -269,39 +271,12 @@ export function createThreeSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneR
           number,
           { objectId: number; rtWidth: number; rtHeight: number; worldW: number; worldH: number }
         >();
-        // 链**全为具名 RT 图链**、因而不隔离的对象（见下）。它们照常渲染，只是没有隔离条目、
-        // 效果整条跳过（观感与不隔离相同）——既不属于「挂在未参与渲染的对象类型上」，也不该
-        // 因为省掉隔离而丢掉「具名 RT 未实现，跳过」这条降级告警（诊断不得静默）。
-        const rtGraphOnly = new Set<number>();
+        // P2 起 isolate 准入 = 「有链」：线性链与具名 RT 图链都由 ObjectEffectStage 建 runner 与计划执行
+        // （Task 6 已反转旧的「链全为具名 RT 图链则不隔离」收紧准入，故这里不再有 rtGraphOnly 分支）。
         for (const obj of desc.objects) {
           const chains = effectChains.get(obj.id);
           // 无链 → 与收紧前逐字一致的早退（effectChains 只在链非空时入表）。
           if (!chains || chains.length === 0) continue;
-          // 只有能被执行的链才值得隔离：链全为具名 RT 图链时会整条跳过（setObjectChains 不建 runner），
-          // 此时对象 RT 的显存与每帧一次额外渲染完全没有收益，观感也与不隔离相同。
-          const usable = chains.some((one) => isLinearEffectChain(one));
-          if (!usable) {
-            // 收紧前准入只看「有链」：这类对象照样进了 isolate → 一张收口到对象尺寸的对象 RT
-            // （如 3840×2160 = 31.6 MB）+ 合成 quad + 每帧一次额外渲染与一次 RT 切换，而链从未
-            // 建 runner ⇒ quad 永远采样 RT 原图，隔离没有额外视觉收益（纯浪费）。注意隔离路径与
-            // 直接渲染并非位级等价（RT 8 位量化 / alpha 预乘往返 / 预算收口时放大采样），故不主张「逐像素相同」。
-            //
-            // 只对「收紧前**本该**被隔离」的渲染对象（image / 有 spec 的 particle）在这里告警：util /
-            // text / 缺粒子资源的对象本来就没有隔离条目，它们的 effects 由下面「挂在未参与渲染的对象
-            // 类型上」汇总告警覆盖（口径与收紧前逐字一致，不在这里抢走那条告警）。
-            if (obj.kind === 'image' || (obj.kind === 'particle' && particles.has(obj.id))) {
-              rtGraphOnly.add(obj.id);
-              for (const one of chains) {
-                if (isLinearEffectChain(one)) continue;
-                const label = one.find((p) => p.target)?.target
-                  ?? one.find((p) => p.bind.length > 0)?.bind[0]?.name
-                  ?? '(具名 RT)';
-                warnOnce(`rt-graph:${label}`,
-                  `效果需要具名 RT（P2 未实现），跳过: ${label}（对象 ${obj.id} 的链全为具名 RT 图链，不再隔离）`);
-              }
-            }
-            continue;
-          }
           if (obj.kind === 'image') {
             const tex = backgroundTextures.get(obj.id);
             const texW = (tex?.image?.width as number | undefined) ?? obj.size?.[0] ?? 1;
@@ -367,9 +342,8 @@ export function createThreeSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneR
         let stage: ObjectEffectStage | null = null;
         let droppedEffects = 0;
         for (const [objId, chains] of effectChains) {
-          // rtGraphOnly 的已单独告警（具名 RT 未实现）；它们**照常渲染**（只是不隔离），
-          // 原因不是「对象不参与渲染」，并入本条会把排查方向指向错误的类型。
-          if (isolate.has(objId) || rtGraphOnly.has(objId)) continue;
+          // 没有隔离条目 = 对象不参与渲染（util 层 / 缺粒子资源），并入本条汇总告警。
+          if (isolate.has(objId)) continue;
           droppedEffects += chains.length;
         }
         if (droppedEffects > 0) {

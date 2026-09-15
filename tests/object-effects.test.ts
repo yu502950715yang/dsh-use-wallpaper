@@ -142,6 +142,7 @@ function createMockRunner() {
   let last: THREE.Texture | null = null;
   const runner = {
     setChains: vi.fn(),
+    setPlan: vi.fn(),
     setAudioSpectrumSource: vi.fn(),
     update: vi.fn(async (time: number, input: unknown) => {
       calls.push({ time, input });
@@ -347,7 +348,7 @@ describe('ObjectEffectStage', () => {
     expect(second.update).toHaveBeenCalledTimes(1);
   });
 
-  it('onViewportResize 按新屏幕密度等比重设 RT 尺寸（缩小→放大可逆；重挂后回退对象 RT 原图）', () => {
+  it('onViewportResize 按新屏幕密度等比重设 RT 尺寸（缩小→放大可逆；计划随新尺寸重建）', () => {
     const host = createHost([
       { id: 1, rtWidth: 100, rtHeight: 50 },
       { id: 2, rtWidth: 100, rtHeight: 50 }, // 无 entry：不能被反推世界尺寸
@@ -355,10 +356,21 @@ describe('ObjectEffectStage', () => {
     const stage = new ObjectEffectStage(host as never, {
       wallpaperId: 'w', screenScale: 2,
     });
+    // 含具名 RT 的两 pass 链：计划里的 namedTargets 尺寸 = 对象 RT ÷ fboScale(1) ⇒ 随 resize 同比变。
+    const chain = [
+      pass({ target: '_rt_H' }),
+      pass({ bind: [{ index: 0, name: '_rt_H' }] }),
+    ];
     // 世界尺寸的**唯一来源**是 setWorldSize（此处 50×25，密度 2 ⇒ 首轮 RT 100×50）；
     // onViewportResize 只处理 entries 里已有条目的对象，故按契约顺序先挂链。
     stage.setWorldSize(1, 50, 25);
-    stage.setObjectChains(1, [[pass()]]);
+    stage.setObjectChains(1, [chain]);
+    const runner = stage.debugRunners().get(1)!;
+    const namedSize = (i: number) => {
+      const plan = runner.setPlan.mock.calls[i][0];
+      return [plan.namedTargets[0].width, plan.namedTargets[0].height];
+    };
+    expect(namedSize(0)).toEqual([100, 50]); // 挂载期：具名 RT 跟随对象 RT 100×50
     // 同一密度（2）→ 屏占位不变 → 不重设 RT（幂等）
     stage.onViewportResize(2);
     expect(host._resized).toEqual([]);
@@ -370,9 +382,12 @@ describe('ObjectEffectStage', () => {
     // 重挂（setChains 清空 last、旧 ping-pong RT 已 dispose）后必须显式回退对象 RT 原图，
     // 否则 quad 会在整个纹理重载窗口内采样已 dispose 的纹理。
     expect(host._outputs.get(1)).toBe(host.isolatedObjects().find((o) => o.id === 1)!.rtTexture);
+    // 计划随新尺寸重建：具名 RT 100×50 → 20×10（同一份链、新基准）。
+    expect(namedSize(1)).toEqual([20, 10]);
     // 放大回去：密度再回到 2 → 恢复 100×50（世界尺寸始终来自 setWorldSize，故可逆）
     stage.onViewportResize(2);
     expect(host._resized).toEqual([{ id: 1, w: 20, h: 10 }, { id: 1, w: 100, h: 50 }]);
+    expect(namedSize(2)).toEqual([100, 50]);
     // 非法密度（0 / NaN）按 1 兜底，不产生 0/NaN 尺寸 RT
     stage.onViewportResize(0);
     expect(host._resized[2]).toEqual({ id: 1, w: 50, h: 25 });
