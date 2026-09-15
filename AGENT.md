@@ -190,8 +190,15 @@ research/                    gitignore：截图 / 验证脚本 / 临时 profile
 25. **效果 pass 的 `blending: "normal"` = 覆盖（`ONE/ZERO`），不是 alpha 混合（2026-09-15，用户报告 GTR 左上云消失）**：
     - **WE 语义（参考实现逐字）**：`research/.lwe .../Render/Objects/Effects/CPass.cpp::setupRenderFramebuffer` —— `Normal → glBlendFuncSeparate(ONE, ZERO, ONE, ZERO)`（**直接覆盖**）、`Translucent → (SRC_ALPHA, ONE_MINUS_SRC_ALPHA, …)`、`Additive → (SRC_ALPHA, ONE)`；`MaterialParser::parseBlendMode` 未知值也回落 Normal。我们的 `blendModeToThree` 曾把 `normal` 映射成 three 的 `NormalBlending`（`SrcAlpha/OneMinusSrcAlpha`）⇒ pass 写 ping-pong RT（每 pass 都清成透明）时 **rgb 被乘一次自身 alpha、每过一个 pass 再乘一次**。
     - **症状与定界（GTR `3743126786` obj 246「Clouds Back」：scroll + waterripple + opacity，内容 alpha 0.5）**：修复前该对象的效果输出 RT **rgb 全 0**（alpha 0.13 = 0.5×0.26），合成是 cbm=7 Screen（颜色因子不看 alpha）⇒ 加 0 ⇒ **云整层不可见**；修复后输出均值 rgb 0→21.7（云的游动/涟漪可见）。为什么以前看不出来：§5.22 那轮修复之前 RT 被清成**不透明黑**，alpha 通道被 alpha blendFunc 钉在 1（不会逐级衰减），rgb 恰好不被继续乘 ⇒ 这个缺陷被「不透明清屏」掩盖了；§5.22 让 alpha 变真实后立刻显形。
-    - **修法**：`blendModeToThree` 改为 `normal`/未知 → `THREE.NoBlending`（= `ONE/ZERO`），`additive/add` → Additive，`translucent/alpha` → Normal，保留 `multiply/subtract`（WE pass 枚举里没有，属我们既有扩展）。**副带收益**：pass 不再预乘 alpha ⇒ 合成 quad 那一步不会再把 rgb 乘第二次（§5.6/§7.1 记录的「× a²」顾虑同时消掉）。
+    - **修法**：`blendModeToThree` 改为 `normal`/未知 → `THREE.NoBlending`（= `ONE/ZERO`），`additive/add` → Additive，`translucent/alpha` → Normal，保留 `multiply/subtract`（WE pass 枚举里没有，属我们既有扩展）。**注意**：pass 不再预乘 alpha 后，cbm 6/7/31 的合成就必须自己把图层 alpha 乘回来（见 §5.26，否则云层全强度盖住人物）。
     - **验证**：`tests/effect-runner.test.ts` 改断言（旧断言把 `normal` 记成 NormalBlending，是错的语义）；端到端 GTR 云层恢复（含 scroll 游动）；`2911105183` 复测 **0.7%**、`3303428996` 复测 **7.2%** 均无回归；验收脚本 [1][2][2-归因×2][2-有效性][3b][4] PASS。
+
+26. **cbm 6/7/31 的合成 quad 必须把图层 alpha 预乘进 rgb（2026-09-15，用户报告 GTR 云挡住人物）**：
+    - **WE 语义**：`colorBlendMode` 是 `mix(A, Blend(A, B), opacity)`（A=背景、B=图层、opacity=图层 alpha）——**opacity 参与**。我们的合成 quad 用 CustomBlending 复刻，而 Screen(7) 的颜色因子 `(OneMinusDstColor, One)`、31 的 `(One, One)`、6 的 `MaxEquation` **都不看 alpha** ⇒ 图层 alpha（`alpha 0.5` × `opacity 0.26` × mask）必须由片元预乘进 rgb。
+    - **症状**：§5.25 让 pass 不再预乘 alpha 之后，云层以**全强度**Screen 叠加 ⇒ 人物区均值 61.6 → **85.8**（被云洗亮、「云挡住人物」），mask 也整个失效。修法：cb 分支的合成 quad 开 `mat.premultipliedAlpha = true`（three 的 `<premultiplied_alpha_fragment>` 会做 `gl_FragColor.rgb *= gl_FragColor.a`）。
+    - **实测（GTR `3743126786`，同分辨率逐区域均值）**：人物区 85.8 → **58.7**（基线 5d4e3da 61.6）、云/天空区 65.8 → **43.0**（基线 46.4）、全屏 53.3 → 48.2（基线 48.9）⇒ 回到本会话之前的观感（云在人物之后、被 mask 排除）。
+    - **已知近似（未做到 WE 的严格数学）**：对象 RT 的 rgb 本来就是「内容 alpha 预乘过」的（内容渲染走普通 alpha 混合），合成再乘一次最终 alpha ⇒ 半透明图层的贡献仍带一次多余的内容 alpha（GTR 云实到 `0.5×0.13`，WE 是 `0.13`）。要严格对齐得让内容侧写非预乘 rgb（或按 alpha 反除），改动面更大，本期不做。
+    - **验证**：`tests/threejs-player.test.ts` 断言 cb quad `premultipliedAlpha === true`、cbm=0 quad 为 `false`；其它 cbm 用例（`2832263418` cbm=6、`2460786246` cbm=31）端到端黑像素正常（0.0% / 8.8%）。
 
 ## 6. 工作约定
 

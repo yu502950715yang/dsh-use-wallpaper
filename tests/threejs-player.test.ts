@@ -1402,6 +1402,12 @@ describe('ThreeScenePlayer 对象隔离', () => {
     // alpha 按 WE 保留背景的（gl_FragColor.a = screen.a）。
     expect(blend.blendSrcAlpha).toBe(THREE.ZeroFactor);
     expect(blend.blendDstAlpha).toBe(THREE.OneFactor);
+    // 回归（2026-09-15，GTR 云挡住人物）：WE 的 cbm 语义是 `mix(A, blend(A,B), opacity)` ——
+    // 颜色因子（OneMinusDstColor/One）**不看 alpha**，所以图层 alpha（opacity 0.26 × mask）必须
+    // 由片元自己预乘进 rgb（`premultipliedAlpha` ⇒ `gl_FragColor.rgb *= gl_FragColor.a`），
+    // 否则云层会以全强度盖在人物上、mask 也失效。cbm=0 走普通 alpha 混合，必须**不**预乘。
+    expect(blend.premultipliedAlpha).toBe(true);
+    expect(basic.premultipliedAlpha).toBe(false);
     // 无 cb 的合成 quad 仍是普通 alpha 混合。
     expect(basic.blending).toBe(THREE.NormalBlending);
   });

@@ -21071,11 +21071,10 @@ var ThreeScenePlayer = class {
   //      alpha 恒为 0（粒子隔离后完全不可见）；
   //   ② **不再二次施加** alpha/brightness/color 调制——内容 mesh 的材质已把调制烘进 RT
   //      （scene-renderer.ts 的既有结论），clone 后再乘一次会让 alpha=0.5 变成 0.25。
-  //   ③ **统一用 MeshBasicMaterial**（不再用内容那套预乘 ShaderMaterial）：本 quad 采样的是
-  //      对象 RT，而 RT 是非预乘语义的普通 alpha 写入（内容材质在隔离路径不套 cb），
-  //      若再用预乘 shader 会把 rgb 二次乘 alpha（× a²，见 createLayerMaterial 注释）。
-  // WE 的 `ApplyBlending` 语义用 three 的 CustomBlending 因子**在合成这一步**复刻
-  // （与内容材质同一套因子），alpha 仍取背景的（`gl_FragColor.a = screen.a` ⇒ Zero/One）。
+  //   ③ **统一用 MeshBasicMaterial**：本 quad 采样的是对象 RT（内容材质在隔离路径不套 cb），
+  //      只有 cb（6/7/31）分支额外开 `premultipliedAlpha`（见下）。
+  // WE 的 `ApplyBlending` 语义用 three 的 CustomBlending 因子**在合成这一步**复刻，
+  // alpha 仍取背景的（`gl_FragColor.a = screen.a` ⇒ Zero/One）。
   // 背景对象带非零 angles 时 quad 承载旋转，超过 90° 的旋转会翻转三角形绕序 —— 与内容材质
   // （原 cb 分支用 DoubleSide）保持一致用 DoubleSide，避免旋转到背面时整块被背面剔除掉。
   createCompositeQuadMaterial(texture, colorBlendMode) {
@@ -21093,6 +21092,7 @@ var ThreeScenePlayer = class {
       mat.blendDst = cb.blendDst;
       mat.blendSrcAlpha = ZeroFactor;
       mat.blendDstAlpha = OneFactor;
+      mat.premultipliedAlpha = true;
     }
     return mat;
   }
