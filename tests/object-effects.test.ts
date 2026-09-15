@@ -127,6 +127,7 @@ vi.mock('../src/client/effect-runner.js', () => {
   class EffectRunner {
     constructor(...args: unknown[]) { runnerCtorArgs.push(args); }
     setChains = vi.fn();
+    setPlan = vi.fn();
     setAudioSpectrumSource = vi.fn();
     update = vi.fn(async () => null);
     lastOutput = vi.fn(() => null);
@@ -212,42 +213,38 @@ describe('ObjectEffectStage', () => {
     const runners = stage.debugRunners();
     expect(runners.size).toBe(1);
     const runner = runners.get(1)!;
-    expect(runner.setChains).toHaveBeenCalledTimes(1);
-    const [passedChains, id, opts] = runner.setChains.mock.calls[0];
+    expect(runner.setPlan).toHaveBeenCalledTimes(1);
+    const [plan, passedChains, id, opts] = runner.setPlan.mock.calls[0];
+    expect(plan.namedTargets).toEqual([]); // 线性链没有具名 RT
     expect(passedChains).toEqual(chains);
     expect(id).toBe('w');
     expect(opts).toEqual({ width: 100, height: 50 });
   });
 
-  it('RT 图链整条跳过并只告警一次（按 effect 标识去重）', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  it('RT 图链照常挂载：setPlan 收到含具名 RT 的计划（不再整链跳过）', () => {
     const host = createHost([{ id: 1, rtWidth: 100, rtHeight: 50 }]);
-    const stage = new ObjectEffectStage(host as never, {
-      wallpaperId: 'w', screenScale: 1,
-    });
-    stage.setObjectChains(1, [[pass({ target: '_rt_a' })]]);
-    stage.setObjectChains(1, [[pass({ target: '_rt_a' })]]);
-    expect(stage.rtGraphSkips()).toEqual(['_rt_a']);
-    const rtGraphWarns = warn.mock.calls.filter((c) => String(c[0]).includes('具名 RT'));
-    expect(rtGraphWarns).toHaveLength(1);
-    expect(stage.debugRunners().has(1)).toBe(false);
-    warn.mockRestore();
+    const stage = new ObjectEffectStage(host as never, { wallpaperId: 'w', screenScale: 1 });
+    const rtChain = [
+      pass({ target: '_rt_FullCompoBuffer1', fboScale: { _rt_FullCompoBuffer1: 1 } }),
+      pass({ bind: [{ index: 0, name: '_rt_FullCompoBuffer1' }, { index: 1, name: 'previous' }] }),
+    ];
+    stage.setObjectChains(1, [rtChain]);
+    const entry = (stage as unknown as {
+      entries: Map<number, { plan: { namedTargets: Array<{ key: string }> } | null }>;
+    }).entries.get(1);
+    expect(entry?.plan?.namedTargets.map((t) => t.key)).toEqual(['0:_rt_FullCompoBuffer1']);
+    // 与线性链一致：所有链都挂载，不再有 rtGraphSkips()
+    expect(typeof (stage as unknown as { rtGraphSkips?: unknown }).rtGraphSkips).toBe('undefined');
   });
 
-  it('RT 图链的对象不建 runner，bindOutputs 不调用 setObjectOutput（quad 保持对象 RT 原图）', () => {
+  it('RT 图链的对象照常建 runner；链未有输出前 bindOutputs 不动输出（quad 保持对象 RT 原图）', () => {
     const host = createHost([{ id: 1, rtWidth: 10, rtHeight: 10 }]);
-    const stage = new ObjectEffectStage(host as never, {
-      wallpaperId: 'w', screenScale: 1,
-    });
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    // 必须是真的具名 RT 形状（`bind: [{ name: 'previous', index: 0 }]` 按本文件既有断言是
-    // **线性**的，用它做本用例等于空断言：编排器会照常 mount 建 runner）。
-    stage.setObjectChains(1, [[pass({ bind: [{ name: '_rt_a', index: 0 }] })]]);
-    expect(stage.debugRunners().has(1)).toBe(false);
-    expect(stage.rtGraphSkips()).toContain('_rt_a');
-    stage.bindOutputs();
-    expect(host._outputs.size).toBe(0);
-    warn.mockRestore();
+    const stage = new ObjectEffectStage(host as never, { wallpaperId: 'w', screenScale: 1 });
+    const rtChain = [pass({ target: '_rt_F' }), pass({ bind: [{ index: 0, name: '_rt_F' }] })];
+    stage.setObjectChains(1, [rtChain]);
+    expect(stage.debugRunners().size).toBe(1);
+    stage.bindOutputs();                       // mock runner 的 lastOutput() 恒 null
+    expect(host._outputs.has(1)).toBe(false);  // 未就绪 → 不切输出
   });
 
   it('setObjectChains 在对象尚无隔离条目时明确告警一次，且不建 runner（不暂存、不猜尺寸）', () => {
@@ -261,8 +258,9 @@ describe('ObjectEffectStage', () => {
     // 去重告警：同一对象只打印一次（不再有「链先于条目 → 暂存」的死状态机）
     const warns = warn.mock.calls.filter((c) => String(c[0]).includes('尚无隔离条目'));
     expect(warns).toHaveLength(1);
-    expect(stage.rtGraphSkips()).toEqual([]); // 线性链不是降级跳过
     expect(stage.debugRunners().has(7)).toBe(false); // 绝不猜尺寸/静默建 runner
+    // 线性链不是降级跳过：不再有 rtGraphSkips() 这套分类机制
+    expect(typeof (stage as unknown as { rtGraphSkips?: unknown }).rtGraphSkips).toBe('undefined');
     warn.mockRestore();
   });
 

@@ -2,7 +2,7 @@
 // three 主路径的对象级效果链编排。
 //
 // 分工（见 spec §3）：
-//   - 本模块：效果链的**编排**（分类、尺寸口径的消费、每对象一个 EffectRunner、串行推进、降级）。
+//   - 本模块：效果链的**编排**（尺寸口径的消费、每对象一个 EffectRunner、串行推进、降级）。
 //   - threejs-player.ts：对象的**隔离渲染**（内容进 localScene / 主场景放合成 quad / 帧序）。
 //   - effect-runner.ts：pass 执行（本特性不改它一行）。
 //
@@ -14,6 +14,7 @@ import { EffectRunner } from './effect-runner.js';
 import type { EffectTexLoader } from './effect-runner.js';
 import { loadTexTexture } from './tex-loader.js';
 import type { CompiledEffectPass } from './shader/effect-chain.js';
+import { buildEffectPlan, type EffectPlan } from './effect-graph.js';
 
 // 效果纹理槽加载器（**必须与对象 RT 的 v 约定同一套**，2026-09-14）：
 //   对象 RT 由 `threejs-player.attachIsolated` 的 **y 镜像局部相机**渲染 ⇒ RT 的 v=0 = 图像**顶部**
@@ -49,12 +50,11 @@ export interface ObjectEffectStage {
 //     `previous` 绑到 index≠0 表示「g_Texture1 = 上一 pass 输出」，而执行器把该槽留给纹理槽；
 //   - `fbos` 只对具名 RT 有意义：链内没有 target 时它没有消费者，不构成降级理由。
 // 具名 RT 图链（blur / blurprecise / godrays / bloom / shine / localcontrast / bokeh_blur）
-// 需要 RT 图执行器（P2），当前整条跳过——产品是错画面，不得硬跑。
+// 由 effect-graph 的 RT 图计划执行；本判定只作分类/回归口径用，生产路径不再按它跳过。
 export function isLinearEffectChain(passes: CompiledEffectPass[]): boolean {
   if (passes.length === 0) return false;
   // 与 EffectRunner 的固定绑定一致者才算线性：`g_Texture0` = 上一 pass 输出。
-  // 任何其它 bind（具名 RT、空名 sampler 槽、把 previous 绑到 index ≠ 0）都需要 RT 图语义，
-  // 由下游整条跳过 + 告警（P2 再做 RT 图执行器）。
+  // 任何其它 bind（具名 RT、空名 sampler 槽、把 previous 绑到 index ≠ 0）都属 RT 图链。
   return passes.every(
     (p) => !p.target && p.bind.every((b) => b.name === 'previous' && b.index === 0),
   );
@@ -70,12 +70,12 @@ export function isLinearEffectChain(passes: CompiledEffectPass[]): boolean {
 // onViewportResize 两处同一个数，否则任何一次 resize 都会把 RT 打回旧口径）。
 
 // ══ 编排器（Task 4）═══════════════════════════════════════════════════════════
-// 按对象挂效果链、每对象一个 EffectRunner、串行推进、降级跳过、resize 重算尺寸。
+// 按对象挂效果链、每对象一个 EffectRunner、串行推进、resize 重算尺寸。
 //
 // 三条硬约束（spec §5.3 / §5.4）：
 //   1. 每对象一个 runner，RT 尺寸 = 该对象 RT 尺寸：对象级效果**不得**全屏展平
 //      （全屏展平会让效果漫到对象包围盒之外，是本特性的核心回归点）；
-//   2. 加载期一次性建：EffectRunner 的创建与 setChains（含材质/探针编译）只发生在挂链与
+//   2. 加载期一次性建：EffectRunner 的创建与 setPlan（含材质/探针编译、具名 RT）只发生在挂链与
 //      resize；bindOutputs / advance 里**不得**创建材质或建管线；
 //   3. 串行推进：同一时刻只允许一个 runner 触碰 renderer 的 RT/绑定状态——并发交错会让
 //      ping-pong 写端与输入纹理错配 → 黑屏/闪烁。EffectRunner 自己的 updateInFlight 只挡得住
@@ -100,8 +100,10 @@ export interface ObjectEffectHost {
 // 单个隔离对象的链状态。
 interface ObjectChainEntry {
   runner: EffectRunner | null;
-  /** 原始链定义：resize 时用同一份链 + 新尺寸重新 setChains（EffectRunner 只在尺寸变化时重建 RT）。 */
+  /** 原始链定义：resize 时用同一份链 + 新尺寸重建计划（执行器只在尺寸变化时重建 RT）。 */
   chains: CompiledEffectPass[][];
+  /** 本次挂载的计划（resize 重挂时按新尺寸重建）。 */
+  plan: EffectPlan | null;
   /** 世界尺寸（场景像素，未钳制、未乘屏幕密度）——resize 时用它按新屏幕密度重算 RT 像素尺寸。 */
   worldW: number;
   worldH: number;
@@ -109,7 +111,6 @@ interface ObjectChainEntry {
 
 export class ObjectEffectStage implements ObjectEffectStage {
   private entries = new Map<number, ObjectChainEntry>();
-  private skips = new Set<string>();
   private readonly wallpaperId: string;
   /** 屏幕密度（设备像素 / 世界单位）：对象 RT 尺寸的唯一基准，随视口变化（onViewportResize）。 */
   private screenScale: number;
@@ -120,7 +121,7 @@ export class ObjectEffectStage implements ObjectEffectStage {
   // 因此此刻切换 RT 不会打扰本帧主场景渲染）；忙时排队，等前一项 settle 后再发起。
   private busy = false;
   private queue: Array<() => unknown> = [];
-  /** 去重告警集合（`warnSkip` 之外的通用去重，按 key 只打印一次，防每帧刷屏）。 */
+  /** 去重告警集合（按 key 只打印一次，防每帧刷屏）。 */
   private warned = new Set<string>();
 
   constructor(
@@ -147,25 +148,16 @@ export class ObjectEffectStage implements ObjectEffectStage {
       entry.worldH = worldH;
       return;
     }
-    this.entries.set(objId, { runner: null, chains: [], worldW, worldH });
+    this.entries.set(objId, { runner: null, chains: [], plan: null, worldW, worldH });
   }
 
-  /** 挂载某对象的效果链。调用顺序契约：player 先在 loadSceneToThree 内建好隔离条目，
-   *  stage 再挂链（Task 5 的接线顺序：setWorldSize → setObjectChains）；找不到隔离条目
-   *  说明契约被破坏 → 明确告警一次，绝不静默丢弃，也绝不猜尺寸。 */
+  /** 挂载某对象的效果链（线性链与具名 RT 图链一视同仁，计划交执行器执行）。调用顺序契约：
+   *  player 先在 loadSceneToThree 内建好隔离条目，stage 再挂链（Task 5 的接线顺序：
+   *  setWorldSize → setObjectChains）；找不到隔离条目说明契约被破坏 → 明确告警一次，
+   *  绝不静默丢弃，也绝不猜尺寸。 */
   setObjectChains(objId: number, chains: CompiledEffectPass[][]): void {
     if (this.disposed) return;
-    // 逐条链分类：保留线性链，跳过具名 RT 图链（整链，不硬跑——产物是错画面）。
-    const usable: CompiledEffectPass[][] = [];
-    for (const one of chains) {
-      if (isLinearEffectChain(one)) {
-        usable.push(one);
-      } else {
-        const label = one.find((p) => p.target)?.target ?? one.find((p) => p.bind.length > 0)?.bind[0]?.name ?? '(具名 RT)';
-        this.warnSkip(label);
-      }
-    }
-    if (usable.length === 0) return;
+    if (chains.length === 0) return;
     const view = this.host.isolatedObjects().find((o) => o.id === objId);
     if (!view) {
       // 调用顺序契约：player 先在 loadSceneToThree 内建好隔离对象，stage 再挂链
@@ -174,7 +166,7 @@ export class ObjectEffectStage implements ObjectEffectStage {
       this.warnOnce(`no-isolated:${objId}`, `对象 ${objId} 尚无隔离条目，效果链未挂载（调用顺序错误）`);
       return;
     }
-    this.mount(objId, usable, view.rtWidth, view.rtHeight);
+    this.mount(objId, chains, view.rtWidth, view.rtHeight);
   }
 
   /** 视口变化：按新的**屏幕密度**重算每个对象的 RT 像素尺寸，并用同一份链重挂（runner 内部 RT 跟随）。
@@ -183,8 +175,8 @@ export class ObjectEffectStage implements ObjectEffectStage {
    *  各算一遍、输入不同源时任何一次 resize 都会把 RT 打回旧口径（3fd6b00「挂载期 RT 正确、
    *  resize 后被覆盖」这一漏检类的同源地雷）。密度必须由调用方从**主相机同一套 cover 语义**
    *  取得（three-renderer 用 player.screenScalePx()，见其 resize 回调）。
-   *  ⚠️ 遍历 `this.entries` 的**所有**条目（不按有无 runner 过滤）：链全被跳过、因而没有 runner
-   *  的隔离对象（如具名 RT 图链）同样要随视口重设 RT，否则视口放大后它一直用旧的小 RT（偏糊）、
+   *  ⚠️ 遍历 `this.entries` 的**所有**条目（不按有无 runner 过滤）：只 setWorldSize 过、链尚未挂载
+   *  的隔离对象同样要随视口重设 RT，否则视口放大后它一直用旧的小 RT（偏糊）、
    *  视口缩小时又一直占着旧的大 RT（超额显存）。 */
   onViewportResize(screenScale: number): void {
     if (this.disposed) return;
@@ -198,9 +190,10 @@ export class ObjectEffectStage implements ObjectEffectStage {
       if (!view) continue;
       if (view.rtWidth === size.width && view.rtHeight === size.height) continue;
       this.host.resizeObjectRT(id, size.width, size.height);
-      // 无 runner（链全被跳过，如具名 RT 图链）→ 只重设 RT，不重挂链、不回退输出。
+      // 尚无 runner（只 setWorldSize、链还没挂）→ 只重设 RT，不重挂链、不回退输出。
       if (!entry.runner) continue;
-      entry.runner.setChains(entry.chains, this.wallpaperId, { width: size.width, height: size.height });
+      entry.plan = buildEffectPlan(entry.chains, { baseWidth: size.width, baseHeight: size.height });
+      entry.runner.setPlan(entry.plan, entry.chains, this.wallpaperId, { width: size.width, height: size.height });
       // 重挂后 runner 的 last 被清空、旧 ping-pong RT 已被 dispose，而 quad 仍绑着那张
       // 已释放的纹理（配合 bindOutputs 的「链未就绪不动输出」契约，会在整个纹理槽重载窗口内
       // 采样已 dispose 的纹理 → 静默画错）。显式回退到对象 RT 原图。
@@ -230,11 +223,6 @@ export class ObjectEffectStage implements ObjectEffectStage {
     }
   }
 
-  /** 被跳过的具名 RT 图链标识（按标识去重），供诊断与测试查询。 */
-  rtGraphSkips(): string[] {
-    return [...this.skips];
-  }
-
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
@@ -256,18 +244,10 @@ export class ObjectEffectStage implements ObjectEffectStage {
     this.entries.set(id, {
       runner,
       chains: [],
+      plan: null,
       worldW: view ? view.rtWidth / this.scale() : 1,
       worldH: view ? view.rtHeight / this.scale() : 1,
     });
-  }
-
-  /** 具名 RT 图链降级告警：按标识去重（同一效果被多个对象引用时只告警一次，不刷屏）。 */
-  private warnSkip(label: string): void {
-    if (this.skips.has(label)) return;
-    this.skips.add(label);
-    console.warn(
-      `[wallpaper-engine] 效果需要具名 RT（P2 未实现），跳过: ${label}`,
-    );
   }
 
   /** 去重告警（同一 key 只打印一次，防每帧刷屏）。 */
@@ -316,16 +296,17 @@ export class ObjectEffectStage implements ObjectEffectStage {
     let entry = this.entries.get(objId);
     if (!entry) {
       // 反向从实测 RT 像素推世界尺寸（仅在 setWorldSize 未先行时兜底）。
-      entry = { runner: null, chains, worldW: rtW / this.scale(), worldH: rtH / this.scale() };
+      entry = { runner: null, chains, plan: null, worldW: rtW / this.scale(), worldH: rtH / this.scale() };
       this.entries.set(objId, entry);
     }
     // setWorldSize 可能已先建条目（three-renderer 的顺序是 setWorldSize → setObjectChains），
     // 此时保留其世界尺寸，不被 RT 尺寸/密度反推覆盖。
     entry.chains = chains;
+    entry.plan = buildEffectPlan(chains, { baseWidth: rtW, baseHeight: rtH });
     if (!entry.runner) {
       // 纹理槽按 WE 约定加载（v=0=图像顶部，与对象 RT 的 v 约定同一套，见 weVRowOrderLoader）。
       entry.runner = new EffectRunner(this.host.renderer, rtW, rtH, { load: weVRowOrderLoader() });
     }
-    entry.runner.setChains(chains, this.wallpaperId, { width: rtW, height: rtH });
+    entry.runner.setPlan(entry.plan, chains, this.wallpaperId, { width: rtW, height: rtH });
   }
 }
