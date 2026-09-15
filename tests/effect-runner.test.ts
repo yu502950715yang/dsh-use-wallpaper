@@ -24,8 +24,16 @@ describe('blendModeToThree（WE blending → three 混合模式）', () => {
     expect(blendModeToThree('add')).toBe(THREE.AdditiveBlending);
     expect(blendModeToThree('multiply')).toBe(THREE.MultiplyBlending);
     expect(blendModeToThree('subtract')).toBe(THREE.SubtractiveBlending);
-    expect(blendModeToThree('normal')).toBe(THREE.NormalBlending);
-    expect(blendModeToThree('unknown-mode')).toBe(THREE.NormalBlending);
+    expect(blendModeToThree('translucent')).toBe(THREE.NormalBlending);
+  });
+  // 回归（2026-09-15，用户报告 GTR 左上云消失）：WE 的 `BlendingMode_Normal` 是
+  // `glBlendFuncSeparate(GL_ONE, GL_ZERO, GL_ONE, GL_ZERO)` = **直接覆盖**（不是 alpha 混合）——
+  // 见 research/.lwe CPass::setupRenderFramebuffer；MaterialParser 未知值也回落 Normal。
+  // 曾错映射成 three 的 NormalBlending（SrcAlpha/OneMinusSrcAlpha）⇒ pass 写 ping-pong RT 时
+  // rgb 被乘一次 alpha、每过一个 pass 再乘一次 ⇒ 半透明图层（GTR 云 alpha 0.5）三轮后 rgb≈0 ⇒ 云消失。
+  it('normal / 未知 blending = 覆盖（WE BlendingMode_Normal 是 ONE/ZERO，不是 alpha 混合）', () => {
+    expect(blendModeToThree('normal')).toBe(THREE.NoBlending);
+    expect(blendModeToThree('unknown-mode')).toBe(THREE.NoBlending);
   });
 });
 

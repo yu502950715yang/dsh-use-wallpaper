@@ -22407,13 +22407,17 @@ SCREEN_CAMERA.position.z = 300;
 function blendModeToThree(mode) {
   switch (mode) {
     case "add":
+    case "additive":
       return AdditiveBlending;
     case "multiply":
       return MultiplyBlending;
     case "subtract":
       return SubtractiveBlending;
-    default:
+    case "translucent":
+    case "alpha":
       return NormalBlending;
+    default:
+      return NoBlending;
   }
 }
 

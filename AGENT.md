@@ -187,6 +187,12 @@ research/                    gitignore：截图 / 验证脚本 / 临时 profile
     - **影响面（全库 194 个 shader 扫描，`research/tmp-2911105183/scan-annotation-impact.mjs`）**：仅 **10** 条注解从「丢失」变「解析成功」——4 条是 `lightshafts` 的 `g_Point0..3`（本条修复对象）、5 条是 `blur_precise_gaussian` 的 `g_Texture2`（`mode:opacitymask` + `combo:MASK`，那些链目前属**具名 RT 图链、整体跳过**，故今日无行为变化，等 RT 图执行器落地才生效）、1 条是 `lightshafts` 的 `g_Texture2`（`RENDERING==1` 才用）。
     - **验证**：单测 `tests/shader-preprocessor.test.ts` 两条（嵌套 `require` 的 vec 注解完整解析；sampler 注解的 `mode`/`combo` 不丢）；端到端 `3303428996` 黑像素 **100% → 7.2%**（7.2% 是该图自身的暗部，与 `preview.jpg` 对比画面与「光柱」效果一致）；`2911105183` 复测仍 **0.7%**（无回归）。
 
+25. **效果 pass 的 `blending: "normal"` = 覆盖（`ONE/ZERO`），不是 alpha 混合（2026-09-15，用户报告 GTR 左上云消失）**：
+    - **WE 语义（参考实现逐字）**：`research/.lwe .../Render/Objects/Effects/CPass.cpp::setupRenderFramebuffer` —— `Normal → glBlendFuncSeparate(ONE, ZERO, ONE, ZERO)`（**直接覆盖**）、`Translucent → (SRC_ALPHA, ONE_MINUS_SRC_ALPHA, …)`、`Additive → (SRC_ALPHA, ONE)`；`MaterialParser::parseBlendMode` 未知值也回落 Normal。我们的 `blendModeToThree` 曾把 `normal` 映射成 three 的 `NormalBlending`（`SrcAlpha/OneMinusSrcAlpha`）⇒ pass 写 ping-pong RT（每 pass 都清成透明）时 **rgb 被乘一次自身 alpha、每过一个 pass 再乘一次**。
+    - **症状与定界（GTR `3743126786` obj 246「Clouds Back」：scroll + waterripple + opacity，内容 alpha 0.5）**：修复前该对象的效果输出 RT **rgb 全 0**（alpha 0.13 = 0.5×0.26），合成是 cbm=7 Screen（颜色因子不看 alpha）⇒ 加 0 ⇒ **云整层不可见**；修复后输出均值 rgb 0→21.7（云的游动/涟漪可见）。为什么以前看不出来：§5.22 那轮修复之前 RT 被清成**不透明黑**，alpha 通道被 alpha blendFunc 钉在 1（不会逐级衰减），rgb 恰好不被继续乘 ⇒ 这个缺陷被「不透明清屏」掩盖了；§5.22 让 alpha 变真实后立刻显形。
+    - **修法**：`blendModeToThree` 改为 `normal`/未知 → `THREE.NoBlending`（= `ONE/ZERO`），`additive/add` → Additive，`translucent/alpha` → Normal，保留 `multiply/subtract`（WE pass 枚举里没有，属我们既有扩展）。**副带收益**：pass 不再预乘 alpha ⇒ 合成 quad 那一步不会再把 rgb 乘第二次（§5.6/§7.1 记录的「× a²」顾虑同时消掉）。
+    - **验证**：`tests/effect-runner.test.ts` 改断言（旧断言把 `normal` 记成 NormalBlending，是错的语义）；端到端 GTR 云层恢复（含 scroll 游动）；`2911105183` 复测 **0.7%**、`3303428996` 复测 **7.2%** 均无回归；验收脚本 [1][2][2-归因×2][2-有效性][3b][4] PASS。
+
 ## 6. 工作约定
 
 - 回复、注释、文档、**提交信息一律简体中文**；代码、命令、文件名、技术术语保留原文。

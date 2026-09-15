@@ -698,12 +698,18 @@ export class EffectRunner {
 const SCREEN_CAMERA = new THREE.OrthographicCamera(-1, 1, 1, -1, -1000, 1000);
 SCREEN_CAMERA.position.z = 300;
 
-// 材质 json blending → three 混合模式（WE 枚举，spec §3.2；未知回退 normal）
+// 材质 json blending → three 混合模式（对齐 WE `CPass::setupRenderFramebuffer`：
+// normal/未知 = `glBlendFunc(ONE, ZERO)` **覆盖**，translucent = SRC_ALPHA/ONE_MINUS_SRC_ALPHA，
+// additive = SRC_ALPHA/ONE）。**normal 不能映射成 NormalBlending**：pass 写 ping-pong RT 时会被
+// 乘一次 alpha、每过一 pass 再乘一次，半透明图层的 rgb 会逐级趋零（GTR 云消失，见 AGENT.md §5.25）。
 export function blendModeToThree(mode: string): THREE.Blending {
   switch (mode) {
-    case 'add': return THREE.AdditiveBlending;
+    case 'add':
+    case 'additive': return THREE.AdditiveBlending;
     case 'multiply': return THREE.MultiplyBlending;
     case 'subtract': return THREE.SubtractiveBlending;
-    default: return THREE.NormalBlending;
+    case 'translucent':
+    case 'alpha': return THREE.NormalBlending;
+    default: return THREE.NoBlending;
   }
 }
