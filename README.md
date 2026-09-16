@@ -156,7 +156,7 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 
 - **仅 Windows 实测**，macOS 未测试。
 - **需要本机装有 Wallpaper Engine**：插件要从中读取内置的粒子与特效素材。没装或路径没配对时，粒子会退化为纯色圆点（画面仍在，不会白屏）。
-- **浏览器需支持 WebGL2**（Chrome / Edge 推荐）；不支持时自动退回预览图。
+- **浏览器需支持 WebGL2**（Chrome / Edge 均可）；**为了更接近 Wallpaper Engine 的效果，推荐使用 Chrome**。不支持 WebGL2 时自动退回预览图。
 
 **发现壁纸有问题？欢迎反馈**
 
