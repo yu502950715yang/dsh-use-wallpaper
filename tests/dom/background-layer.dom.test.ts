@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createBackgroundLayer } from '../../src/client/background-layer.js';
 
 describe('createBackgroundLayer (DOM)', () => {
@@ -67,4 +67,68 @@ describe('createBackgroundLayer (DOM)', () => {
     expect(blur.classList.contains('wp-scene-blur')).toBe(true);
     expect(fg.classList.contains('wp-scene-canvas')).toBe(true);
   });
+
+  // AGENT.md §5.30：无 allow-same-origin 的沙箱是 opaque origin，壁纸自己的 img/video 也算跨源，
+  // WebGL texImage2D 会抛 SecurityError（web 壁纸空白）⇒ 改用另一回环主机名承载壁纸。
+  it('showWeb：另一回环主机名可达时跨源承载，并保留 allow-same-origin', async () => {
+    document.body.innerHTML = '';
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({} as Response);
+    try {
+      const layer = createBackgroundLayer(root);
+      layer.showWeb('/wallpapers/web/9/index.html');
+      await vi.waitFor(() => expect(root.querySelector('.wp-bg-fill iframe')).not.toBeNull());
+      const frame = root.querySelector('.wp-bg-fill iframe') as HTMLIFrameElement;
+      // jsdom 的 location 是 http://localhost:3000 → 应为互换后的 127.0.0.1
+      expect(frame.getAttribute('src')).toBe('http://127.0.0.1:3000/wallpapers/web/9/index.html');
+      expect(frame.getAttribute('sandbox')).toBe('allow-scripts allow-same-origin');
+      expect(frame.getAttribute('allow')).toBe('autoplay; fullscreen');
+      expect(frame.getAttribute('scrolling')).toBe('no'); // 壁纸是背景：不允许子帧滚动条吃掉视口
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'http://127.0.0.1:3000/wallpapers/web/9/index.html',
+        expect.objectContaining({ mode: 'no-cors' }),
+      );
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it('showWeb：另一主机名不可达时退回同源 + 纯 allow-scripts 沙箱', async () => {
+    document.body.innerHTML = '';
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('network error'));
+    try {
+      const layer = createBackgroundLayer(root);
+      layer.showWeb('/wallpapers/web/9/index.html');
+      await vi.waitFor(() => expect(root.querySelector('.wp-bg-fill iframe')).not.toBeNull());
+      const frame = root.querySelector('.wp-bg-fill iframe') as HTMLIFrameElement;
+      expect(frame.getAttribute('src')).toBe('http://localhost:3000/wallpapers/web/9/index.html');
+      expect(frame.getAttribute('sandbox')).toBe('allow-scripts');
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it('showWeb：探活未落地就切换壁纸时，旧 iframe 不再落地', async () => {
+    document.body.innerHTML = '';
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    let release: (v: unknown) => void = () => {};
+    const pending = new Promise((res) => { release = res; });
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockReturnValue(pending as Promise<Response>);
+    try {
+      const layer = createBackgroundLayer(root);
+      layer.showWeb('/wallpapers/web/9/index.html');
+      layer.showVideo('/v.mp4'); // 期间切换 → 递增 frameToken
+      release({});
+      await new Promise((r) => setTimeout(r, 0));
+      expect(root.querySelector('.wp-bg-fill iframe')).toBeNull();
+      expect(root.querySelector('.wp-bg-fill video')).not.toBeNull();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
 });
+

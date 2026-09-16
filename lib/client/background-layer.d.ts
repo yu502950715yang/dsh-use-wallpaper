@@ -2,6 +2,17 @@ import type { WallpaperInfo } from '../shared/types.js';
 import type { BackgroundPlan } from './types.js';
 export declare function resolveBackground(info: WallpaperInfo): BackgroundPlan;
 export declare function applyKenBurns(el: HTMLElement, enabled: boolean): void;
+export interface WebFrameLocation {
+    protocol: string;
+    hostname: string;
+    port: string;
+}
+export interface WebFrameSpec {
+    url: string;
+    sandbox: string;
+}
+export declare function alternateLoopbackOrigin(loc: WebFrameLocation): string | null;
+export declare function webFrameSpec(wallpaperPath: string, loc: WebFrameLocation, altOrigin: string | null): WebFrameSpec;
 export interface BackgroundLayer {
     root: HTMLElement;
     showImage(url: string, kenBurns: boolean): void;

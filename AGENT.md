@@ -211,6 +211,16 @@ research/                    gitignore：截图 / 验证脚本 / 临时 profile
     - effect 级 `visible === false` 整条不挂链（全库 1 条，**不打降级告警** —— 作者正常内容）；**`visible` 仅由 three 主路径解析**（未接入的 `scene-renderer` / `wasm-renderer` 并源循环未过滤）；本期**未做显存 cap**；清屏沿用透明清屏（§5.22），与 lwe 的 `LoadOp::Load` 有差异，但写具名 RT 的 pass 全是全屏覆盖写 ⇒ 清与不清同结果（**全库复核 2026-09-15**：**62** 个写具名 RT 的 pass 的 `blendMode` **全部**为 `normal` —— 即 `blendModeToThree` 映射到 `NoBlending`(ONE/ZERO)，**0 例外**；脚本 `research/q-named-rt-blendmode.mjs`，只读、gitignore）。
 29. **combo 宏必须跨 stage 合并（2026-09-15，提交 `eab01aa`；缺陷早于 P2，P2 放开准入后才暴露）**：`effect-chain.ts` 在两次 `preprocessWeShader` **之前**，把 vert/frag **两侧**的 `[COMBO]` 默认值合并进同一份 `combos`（序同 wasm 路径 `glsl-to-naga.passCombos`）。依据：WE/lwe 的 combo 是 **per-pass**（lwe `ShaderUnit.cpp:694-714` 互并、WE layerd 两个 unit 共用一份 `shader_info->combos`），而预处理器按**单个 stage** 兜底 ⇒ 一侧从 `[COMBO]` 取 `NOISE 1`、另一侧被 `#if` 裸标识符兜底成 `0` ⇒ frag 引用 vert 未声明的 varying ⇒ **program 链接失败**（链接错误不在 shader info log 里，旧告警看不到原因）⇒ 命中「写具名 RT 的 pass 失败即整条计划放弃」。**不要只特判某个宏**：修掉 `NOISE` 后 `KERNEL` 的 varying 数组长度不匹配会立刻顶上。
 
+30. **web 壁纸 iframe 必须「与自身资源同源 + 与宿主跨源」——opaque origin 沙箱会让 WebGL 类壁纸整片空白（2026-09-16，用户报告 `3789244610 Night City Rain (Kiroshi Boulevard)` 报错）**：
+    - **现象**：切到该壁纸后 console 报 `Uncaught (in promise) DOMException: The operation is insecure.`（Chromium 同处文案 `SecurityError: Failed to execute 'texImage2D' … Tainted canvases may not be loaded.`），并伴随 `img/city.jpg` 404 + `OpaqueResponseBlocking`；画面空白。
+    - **根因**：`background-layer.ts` 的 `showWeb` 用 `sandbox="allow-scripts"`（**无** `allow-same-origin`）⇒ 壁纸文档是 **opaque origin**，按规范它**自己的** `img/city.png` / `city-loop.webm` 也算跨源 ⇒ rain 渲染器 `createTexture` 里 `texImage2D` 抛 SecurityError ⇒ init 中断、`window.__rain` 从不建立 ⇒ 空白。设计文档里「无跨域」的假设本身不成立：**沙箱就是跨源**。
+    - **实测（headless Edge + CDP，同一份壁纸文件）**：`sandbox="allow-scripts"` → SecurityError；同一路径换另一回环主机名且不沙箱 → `window.__rain` 建立、画面正常（`research/_web-wallpaper-sandbox-probe*.mjs`）。
+    - **修法**：`showWeb` 把 iframe 指向**另一个回环主机名**（`127.0.0.1` ↔ `localhost`，DSH webserver 两个都接），并保留 `sandbox="allow-scripts allow-same-origin"` —— 壁纸与自身资源同源（贴图可用）、与宿主页**仍跨源**（实测父页读子帧 DOM 抛 SecurityError，隔离不降级，因为允许同源只影响它自己的 origin）。另一主机名探活失败（非回环访问等）则兜底回同源 + 纯 `allow-scripts`（隔离优先，WebGL 类壁纸降级，见 §7）。
+    - **端到端**：`research/_web-wallpaper-origin-e2e.mjs`（自起 harness + 反代 `/wallpapers/*` 到真实 DSH，用生产代码 `lib/client/background-layer.js`）：插件侧 10 项全 PASS（含 `window.__rain`、隔离、`scrolling=no`、画面非黑），另有 2 条 INFO 报告**壁纸自身**的既有问题（见下条，按用户要求不修）。
+    - **壁纸自身的三个问题（已定位，但 2026-09-16 起按用户明令「不得改壁纸目录」——只记录、只报给用户，由用户在创作源里改）**：① `css/style1.css:46` 的 `url(../img/city.jpg)` 指向不存在的文件（目录里只有 `city.png`）⇒ 404（Firefox 另报 `OpaqueResponseBlocking`）；② `index.html` 的 `<nav class="slideshow__nav">` 为空 ⇒ `index.min.js` 的 `h()` 里 `document.querySelector("[href='#slide-1']")` 为 null ⇒ `i.classList.add(...)` 抛 `TypeError`（连带跳过 storm 闪电定时器与 `slide--current`）；③ 文档自身溢出（见下条）。**曾经的临时修法**（`city.png`、`i &&` 守卫、`body{overflow:hidden}`）已按要求全部回退，壁纸目录现为原始字节。
+    - **同一壁纸的第二症状：横/纵两条滚动条（2026-09-16，用户追问「切换后出现横纵滚动条」）**：滚动条在**壁纸 iframe 自己的文档里**（宿主页 `vBar=0`，不是 DSH 页面在滚）。壁纸文档自身溢出时（问题 ③：`.image-preload` 的 `left:-9999px` 图簇实测 `bottom:1444`）**Firefox 计入可滚动溢出、Chromium 不计** ⇒ 只有 Firefox 出现纵向滚动条（实测 `innerWidth−clientWidth = 17`、`scrollHeight 1444 / clientHeight 666`），而壁纸的 `.slideshow{width:100vw}` 与 `#container`（`width = window.innerWidth`）都按「含滚动条」的视口宽算 ⇒ 反撑出横向滚动条（同样 17），`100vh` 再把纵向留住 —— 两条互相维持。**插件侧修法（唯一落地的一层）**：iframe 加 `scrolling="no"` —— Firefox/Edge 实测子帧 `clientWidth == innerWidth`、`vBar = hBar = 0`，即不出现滚动条占位，也对齐 WE 的 CEF 表现（背景层本就 `pointer-events:none`，滚动从不可用）。**代价**：`scrolling` 是 obsolete 属性，将来浏览器若忽略它，问题 ③ 的滚动条会回来 —— 根治仍在壁纸侧（`body{overflow:hidden}` + `.image-preload` 裁剪），需由用户在自己的创作源里改。探针 `research/_ff-scroll-probe.mjs`（页面自上报，Firefox 与 Edge 同页各跑一次，不依赖 CDP）。
+    - **遗留**：壁纸自身仍有 `enableVertexAttribArray: -1` / `vertexAttribPointer: -1` 的 WebGL 警告（它的 water vertex shader 只声明 `a_position`，frag 却声明 `v_texCoord`），非致命、本次未动。
+
 ## 6. 工作约定
 
 - 回复、注释、文档、**提交信息一律简体中文**；代码、命令、文件名、技术术语保留原文。
@@ -220,6 +230,7 @@ research/                    gitignore：截图 / 验证脚本 / 临时 profile
   - 正例：`// RT 必须透明清屏，否则效果降 alpha 处会变成黑块（AGENT.md §5.22）`。
   - 根因、实测数字、历史事故一律写进本文件（§5 / §7）或 `docs/`；代码里只留**一句结论 + `AGENT.md §x.y` 指针**。
   - 例外：涉及「不改就会踩回去」的硬约束（如坐标/行序/混合因子），可保留必要的 2-3 行说明，但仍要指向 §5 对应条目。
+- **壁纸目录只读（用户明令，2026-09-16）**：Steam 工坊目录（`<wallpaperDir>/<id>/`）里是**用户自己的作品**，**不得修改其中任何文件**（含 CSS/JS/HTML）。发现壁纸侧缺陷（资源 404、脚本报错、文档溢出等）时：**只记录 + 报告**（根因写进 §5 对应条目、遗留写进 §7），由用户在自己的创作源里改；不得以「顺手修好」为由直接编辑。修复只能落在**插件侧**（或明确回退已做的壁纸侧改动）。
 - 实施前读 `docs/superpowers/specs/` 对应设计文档；重大变更走技能流程（brainstorming → 设计文档 → writing-plans → TDD）。
 - 渲染 / 坐标 / 粒子 / 材质语义的改动：先写失败测试，改完跑相关 vitest + 必要时用 §3.3 的端到端渲染验证，最后把结论与遗留如实写进本文件。
 - **如实标注**：能力未达成就在 §7 写明，不要宣称「全库支持」。
@@ -299,6 +310,11 @@ research/                    gitignore：截图 / 验证脚本 / 临时 profile
 6. **particle 对象效果链未被真实壁纸验证**：`set_particle_object_effect` 已实现，但库内没有「带 effects 的 particle 对象」被触发。
 7. **`g_ModelViewProjectionMatrix` 未由执行器提供**（材质 json 不给值 → 默认 0）。库内依赖 MVM 的效果都是「frag 效果 + vert passthrough」，故不受影响；仅 vert 阶段真正用 MVM 的效果链会出问题。
 8. **`collect_bindings` 用文本扫描从 WGSL 提取纹理绑定**，对更复杂的多纹理 shader 待改进（库内 shader 已验证可用）。**另：其 RT 图执行器的 `bind` 索引语义与 lwe 不符** —— `resolve_pass_read`（`effect.rs`）只取 `bind[0]` 决定唯一读端、按 `g_Texture(i+1)` 对齐，权威语义是 `bind.index → g_Texture<index>`；该路径未接入运行时，本次未改（§2.1）。
+
+### web 壁纸（`type: web`）
+
+13. **非回环访问时 web 壁纸退回 opaque origin 沙箱**：`showWeb` 的另一主机名方案只在页面本身用回环名（`127.0.0.1` / `localhost`）时成立；若通过局域网 IP / 隧道访问 GUI，探活失败 ⇒ 退回同源 + `allow-scripts`（opaque origin）⇒ 依赖 WebGL 贴图的 web 壁纸仍会空白（纯 DOM/CSS 的 web 壁纸不受影响）。未做「另起端口」方案（与设计文档「不另起端口」冲突）。
+14. **web 壁纸无失败回退**：设计文档承诺的「失败检测回退 preview」未实现（跨源 iframe 拿不到子帧错误，只能靠壁纸自身配合）；web 壁纸渲染失败时背景会停在空白而不是 preview 图。
 
 ### 验证与其它
 

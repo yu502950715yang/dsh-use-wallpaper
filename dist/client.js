@@ -771,6 +771,14 @@ function resolveBackground(info) {
 function applyKenBurns(el, enabled) {
   el.classList.toggle("wp-kenburns", enabled);
 }
+function alternateLoopbackOrigin(loc) {
+  const alt = loc.hostname === "localhost" ? "127.0.0.1" : loc.hostname === "127.0.0.1" || loc.hostname === "::1" || loc.hostname === "[::1]" ? "localhost" : null;
+  return alt === null ? null : `${loc.protocol}//${alt}${loc.port ? ":" + loc.port : ""}`;
+}
+function webFrameSpec(wallpaperPath, loc, altOrigin) {
+  const origin = altOrigin ?? `${loc.protocol}//${loc.hostname}${loc.port ? ":" + loc.port : ""}`;
+  return { url: origin + wallpaperPath, sandbox: altOrigin ? "allow-scripts allow-same-origin" : "allow-scripts" };
+}
 function createBackgroundLayer(root) {
   root.classList.add("wp-background-layer");
   const fill = document.createElement("div");
@@ -779,8 +787,26 @@ function createBackgroundLayer(root) {
   const overlay = document.createElement("div");
   overlay.className = "wp-bg-overlay";
   root.appendChild(overlay);
+  let frameToken = 0;
+  let altOriginProbe = null;
   function clear() {
+    frameToken += 1;
     fill.replaceChildren();
+  }
+  function probeAlternateOrigin(altOrigin, wallpaperPath) {
+    if (typeof fetch !== "function") return Promise.resolve(null);
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), 1e3);
+    return fetch(altOrigin + wallpaperPath, { mode: "no-cors", signal: ac.signal }).then(() => altOrigin, () => null).finally(() => clearTimeout(timer));
+  }
+  function attachWebFrame(spec) {
+    const frame = document.createElement("iframe");
+    frame.src = spec.url;
+    frame.className = "wp-scene-canvas";
+    frame.setAttribute("sandbox", spec.sandbox);
+    frame.setAttribute("allow", "autoplay; fullscreen");
+    frame.setAttribute("scrolling", "no");
+    fill.appendChild(frame);
   }
   function markActive() {
     document.body.setAttribute("data-we-wallpaper", "true");
@@ -810,14 +836,21 @@ function createBackgroundLayer(root) {
       markActive();
     },
     showWeb(url) {
-      clear();
-      const frame = document.createElement("iframe");
-      frame.src = url;
-      frame.className = "wp-scene-canvas";
-      frame.setAttribute("sandbox", "allow-scripts");
-      frame.setAttribute("allow", "autoplay; fullscreen");
-      fill.appendChild(frame);
+      const token = ++frameToken;
       markActive();
+      const loc = window.location;
+      const alt = alternateLoopbackOrigin(loc);
+      if (!alt) {
+        fill.replaceChildren();
+        attachWebFrame(webFrameSpec(url, loc, null));
+        return;
+      }
+      altOriginProbe ??= probeAlternateOrigin(alt, url);
+      void altOriginProbe.then((origin) => {
+        if (token !== frameToken) return;
+        fill.replaceChildren();
+        attachWebFrame(webFrameSpec(url, loc, origin));
+      });
     },
     showSceneCanvas(canvas, blurCanvas) {
       clear();
