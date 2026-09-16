@@ -1,7 +1,7 @@
 // tests/shader-preprocessor.test.ts
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { preprocessWeShader, extractUniformAnnotations } from '../src/client/shader/shader-preprocessor.js';
+import { preprocessWeShader, extractUniformAnnotations, reconcileVaryingDeclarations } from '../src/client/shader/shader-preprocessor.js';
 import { WE_HEADERS } from '../src/client/shader/we-headers.js';
 
 const waterwavesFrag = (() => {
@@ -229,5 +229,89 @@ describe('preprocessWeShader', () => {
     expect(out).toContain('ApplyCompositeOffset');
     expect(out).toContain('ApplyBlending');  // 内层 common_blending.h 已展开
     expect(out).toContain('greyscale');      // 内层 common.h 已展开
+  });
+});
+
+// ── varying 声明跨 stage 兼容（用户实测：壁纸 3789452668 的 color_grading）─────────────
+// 作者把 vert 写成 `varying vec4 v_TexCoord;`、frag 写成 `varying vec2 v_TexCoord;`
+// ⇒ linkProgram 报 "Varying 'v_TexCoord' is not linkable" ⇒ 整 pass 被跳过（调色层缺失）。
+// 规则：只在「宽侧 = vert、窄侧 = frag、同为 vec 族、且 frag 内每处用法都紧跟 `.`」时把
+// frag 的声明提升为 vert 的类型（语义等价）；其余一律不改 + 告警（绝不静默画错）。
+describe('reconcileVaryingDeclarations（varying 声明跨 stage 兼容）', () => {
+  const VERT_VEC4 = 'varying vec4 v_TexCoord;';
+  const FRAG_VEC2 = 'varying vec2 v_TexCoord;';
+  const vert = `attribute vec2 a_TexCoord;\n${VERT_VEC4}\nvoid main() { v_TexCoord = vec4(a_TexCoord, 0.0, 1.0); }`;
+
+  it('真实形态（frag 窄、全 .xy 用法）→ 只提升 frag 声明，无告警', () => {
+    const frag = `${FRAG_VEC2}\nuniform sampler2D g_Texture0;\nvoid main() { gl_FragColor = texSample2D(g_Texture0, v_TexCoord.xy) * v_TexCoord.xy; }`;
+    const r = reconcileVaryingDeclarations(vert, frag);
+    expect(r.vert).toBe(vert);                       // vert 一字不动
+    expect(r.frag).toBe(frag.replace(FRAG_VEC2, VERT_VEC4));
+    expect(r.frag).toContain('varying vec4 v_TexCoord;');
+    expect(r.frag).not.toContain('varying vec2 v_TexCoord;');
+    expect(r.warnings).toEqual([]);
+  });
+
+  it('swizzle 多分量（.x 与 .w，仍紧跟 `.`）→ 同样改写成功', () => {
+    const frag = `${FRAG_VEC2}\nvoid main() { gl_FragColor = vec4(v_TexCoord.x, v_TexCoord.w, 0.0, 1.0); }`;
+    const r = reconcileVaryingDeclarations(vert, frag);
+    expect(r.frag).toBe(frag.replace(FRAG_VEC2, VERT_VEC4));
+    expect(r.warnings).toEqual([]);
+  });
+
+  it('frag 存在整体用法 → 原样返回 + 1 条告警（提升会让类型失配）', () => {
+    const frag = `${FRAG_VEC2}\nuniform sampler2D g_Texture0;\nvoid main() { gl_FragColor = texSample2D(g_Texture0, v_TexCoord); }`;
+    const r = reconcileVaryingDeclarations(vert, frag);
+    expect(r.vert).toBe(vert);
+    expect(r.frag).toBe(frag);
+    expect(r.warnings).toHaveLength(1);
+    expect(r.warnings[0]).toContain('v_TexCoord');
+    expect(r.warnings[0]).toContain('applyFragmentTexCoordCompatibility'); // 指出与 lwe :417 的对应关系
+  });
+
+  it('反方向（窄侧是 vert）→ 原样返回 + 1 条告警（提到 lwe 的 applyLinkedVaryingCompatibility）', () => {
+    const v2 = 'attribute vec2 a_TexCoord;\nvarying vec2 v_TexCoord;\nvoid main() { v_TexCoord = a_TexCoord; }';
+    const f4 = 'varying vec4 v_TexCoord;\nvoid main() { gl_FragColor = v_TexCoord; }';
+    const r = reconcileVaryingDeclarations(v2, f4);
+    expect(r.vert).toBe(v2);
+    expect(r.frag).toBe(f4);
+    expect(r.warnings).toHaveLength(1);
+    expect(r.warnings[0]).toContain('v_TexCoord');
+    expect(r.warnings[0]).toContain('applyLinkedVaryingCompatibility');
+  });
+
+  it('两侧不同族（vec4/float、float/vec2）→ 原样返回 + 告警', () => {
+    const fragFloat = 'varying float v_TexCoord;\nvoid main() { gl_FragColor = vec4(v_TexCoord); }';
+    const a = reconcileVaryingDeclarations(vert, fragFloat);
+    expect(a.frag).toBe(fragFloat);
+    expect(a.vert).toBe(vert);
+    expect(a.warnings).toHaveLength(1);
+    expect(a.warnings[0]).toContain('v_TexCoord');
+
+    const vertFloat = 'varying float v_TexCoord;\nvoid main() { v_TexCoord = 1.0; }';
+    const b = reconcileVaryingDeclarations(vertFloat, FRAG_VEC2 + '\nvoid main() { gl_FragColor = vec4(v_TexCoord.xy, 0.0, 1.0); }');
+    expect(b.vert).toBe(vertFloat);
+    expect(b.warnings).toHaveLength(1);
+  });
+
+  it('无关 pass 零副作用（两侧声明完全相同，含同型的多个 varying）→ 原样返回、无告警', () => {
+    const v = 'varying vec2 v_TexCoord;\nvarying vec4 v_TexCoordMask;\nvoid main() { v_TexCoord = vec2(0.0); v_TexCoordMask = vec4(1.0); }';
+    const f = 'varying vec2 v_TexCoord;\nvarying vec4 v_TexCoordMask;\nvoid main() { gl_FragColor = v_TexCoordMask * v_TexCoord.x; }';
+    const r = reconcileVaryingDeclarations(v, f);
+    expect(r.vert).toBe(v);
+    expect(r.frag).toBe(f);
+    expect(r.warnings).toEqual([]);
+  });
+
+  it('多个不匹配并存：只改可安全改写的那个，只对整体用法那个告警', () => {
+    const v = 'varying vec4 v_Good;\nvarying vec4 v_Bad;\nvoid main() { v_Good = vec4(1.0); v_Bad = vec4(1.0); }';
+    const f = 'varying vec2 v_Good;\nvarying vec2 v_Bad;\nvoid main() { gl_FragColor = vec4(v_Good.xy, v_Bad.x, 1.0); useAll(v_Bad); }';
+    const r = reconcileVaryingDeclarations(v, f);
+    expect(r.frag).toContain('varying vec4 v_Good;');
+    expect(r.frag).not.toContain('varying vec2 v_Good;');
+    expect(r.frag).toContain('varying vec2 v_Bad;');   // 有整体用法 ⇒ 不动
+    expect(r.vert).toBe(v);
+    expect(r.warnings).toHaveLength(1);
+    expect(r.warnings[0]).toContain('v_Bad');
   });
 });

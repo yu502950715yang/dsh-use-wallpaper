@@ -3,7 +3,7 @@
 // 重点断言：编译 pass 的 rawVert/rawFrag 是**未预处理**的原始 WE 方言源
 // （attribute 声明 / #include / gl_FragColor 等原样保留），而 vertSrc/fragSrc
 // 仍是供 three 用的预处理后 GLSL3（combo 注入、头展开、attribute 改写）。
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { resolveEffectChain } from '../../src/client/shader/effect-chain.js';
 
 const encoder = new TextEncoder();
@@ -394,5 +394,48 @@ describe('resolveEffectChain 保留 RT 图信息（target/bind/fbos，阶段1 RT
       passes: [{ target: '_rt_SceneOverride' }],
     }, blurLoad);
     expect(chain![0].target).toBe('_rt_SceneOverride');
+  });
+});
+
+// ── varying 声明兼容接入（用户实测：3789452668 的 color_grading 链接失败）──────────────
+// 真实形态：vert `varying vec4 v_TexCoord;` / frag `varying vec2 v_TexCoord;`，frag 内全是 `.xy`
+// 用法 ⇒ three 路径应把 frag 声明提升为 vec4；未预处理的 rawFrag 必须保持原始 vec2（wasm 路径在用）。
+describe('varying 声明兼容接入', () => {
+  const varyingFiles = new Map<string, Uint8Array>([
+    ['effects/varying/effect.json', encoder.encode(JSON.stringify({
+      version: 1,
+      passes: [{ material: 'materials/effects/varying.json' }],
+    }))],
+    ['materials/effects/varying.json', encoder.encode(JSON.stringify({
+      passes: [{ shader: 'effects/varying', blending: 'normal' }],
+    }))],
+    ['shaders/effects/varying.vert', encoder.encode(
+      'attribute vec2 a_TexCoord;\n'
+      + 'varying vec4 v_TexCoord;\n'
+      + 'void main() { gl_Position = vec4(a_Position, 1.0); v_TexCoord = vec4(a_TexCoord, 0.0, 1.0); }',
+    )],
+    ['shaders/effects/varying.frag', encoder.encode(
+      'varying vec2 v_TexCoord;\n'
+      + 'uniform sampler2D g_Texture0;\n'
+      + 'void main() { gl_FragColor = texSample2D(g_Texture0, v_TexCoord.xy); }',
+    )],
+  ]);
+  const loadVarying = async (name: string) => varyingFiles.get(name) ?? null;
+
+  it('frag 声明被提升为 vec4（语义等价、无告警），rawFrag 保持原始 vec2', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const chain = await resolveEffectChain({ file: 'effects/varying/effect.json' }, loadVarying);
+      expect(chain).not.toBeNull();
+      const pass = chain![0];
+      expect(pass.fragSrc).toContain('varying vec4 v_TexCoord;');
+      expect(pass.fragSrc).not.toContain('varying vec2 v_TexCoord;');
+      expect(pass.vertSrc).toContain('varying vec4 v_TexCoord;');
+      expect(pass.rawFrag).toContain('varying vec2 v_TexCoord;');  // raw 不被污染
+      expect(pass.rawVert).toContain('varying vec4 v_TexCoord;');
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

@@ -1,6 +1,6 @@
 // src/client/shader/effect-chain.ts
 // 效果链解析：effect.json → material → shader，合并 scene.json 覆写，产出可执行 pass。
-import { preprocessWeShader, extractUniformAnnotations, extractComboDefaults } from './shader-preprocessor.js';
+import { preprocessWeShader, extractUniformAnnotations, extractComboDefaults, reconcileVaryingDeclarations } from './shader-preprocessor.js';
 import { resolveUniformBindings, type UniformValue } from './uniform-binder.js';
 
 export interface CompiledEffectPass {
@@ -104,8 +104,12 @@ export async function resolveEffectChain(
       for (const raw of [rawVert, rawFrag]) {
         for (const [k, v] of extractComboDefaults(raw)) if (!(k in combos)) combos[k] = v;
       }
-      const vertSrc = preprocessWeShader(rawVert, combos);
-      const fragSrc = preprocessWeShader(rawFrag, combos);
+      // varying 声明跨 stage 一致化（combo 合并之后、预处理之前）：作者把同一 varying 写成不同类型
+      // 会让 linkProgram 失败、整 pass 被跳过。只在真实不匹配时动手，且只做语义等价改写（见该函数注释）。
+      const varying = reconcileVaryingDeclarations(rawVert, rawFrag);
+      for (const w of varying.warnings) console.warn(`[wallpaper-engine] ${w}`);
+      const vertSrc = preprocessWeShader(varying.vert, combos);
+      const fragSrc = preprocessWeShader(varying.frag, combos);
       // sampler 槽的 mode 标注（空槽语义的唯一依据）：**必须扫未预处理的原始源** —— 
       // preprocessWeShader 会把 `uniform sampler2D x; // {...}` 整行抽出来前置，
       // 处理后再扫拿不到标注（注释已随行被搬走/丢失）。
