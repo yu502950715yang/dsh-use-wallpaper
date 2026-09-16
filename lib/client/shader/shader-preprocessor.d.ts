@@ -6,6 +6,11 @@ export interface UniformAnnotation {
 export declare function extractUniformAnnotations(source: string): UniformAnnotation[];
 export declare function extractIfIdentifiers(src: string): Set<string>;
 export declare function extractComboDefaults(src: string): Map<string, number>;
+export declare function reconcileVaryingDeclarations(rawVert: string, rawFrag: string): {
+    vert: string;
+    frag: string;
+    warnings: string[];
+};
 export declare function normalizeFloatIntLiterals(src: string): string;
 export declare function floatifyIntVarUses(src: string): string;
 export declare function relaxGlsl3Strictness(src: string): string;

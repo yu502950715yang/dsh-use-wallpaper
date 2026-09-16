@@ -23445,6 +23445,54 @@ function extractComboDefaults(src) {
   }
   return out;
 }
+var VARYING_DECL_RE = /^[ \t]*varying[ \t]+(vec[234]|float|mat[234])[ \t]+([A-Za-z_][A-Za-z0-9_]*)[ \t]*;/gm;
+var VARYING_COMPONENTS = { float: 1, vec2: 2, vec3: 3, vec4: 4, mat2: 4, mat3: 9, mat4: 16 };
+var VEC_VARYING_TYPES = /* @__PURE__ */ new Set(["vec2", "vec3", "vec4"]);
+function extractVaryingDecls(src) {
+  const out = /* @__PURE__ */ new Map();
+  for (const m of src.matchAll(VARYING_DECL_RE)) out.set(m[2], m[1]);
+  return out;
+}
+function usesOnlySwizzle(src, name) {
+  const body = src.replace(
+    new RegExp(`^[ \\t]*varying[ \\t]+(?:vec[234]|float|mat[234])[ \\t]+${name}[ \\t]*;`, "gm"),
+    ""
+  );
+  const re = new RegExp(`\\b${name}\\b`, "g");
+  let m;
+  while (m = re.exec(body)) {
+    if (!/^\s*\./.test(body.slice(m.index + m[0].length))) return false;
+  }
+  return true;
+}
+function reconcileVaryingDeclarations(rawVert, rawFrag) {
+  const vertDecls = extractVaryingDecls(rawVert);
+  const fragDecls = extractVaryingDecls(rawFrag);
+  let frag = rawFrag;
+  const warnings = [];
+  for (const [name, fragType] of fragDecls) {
+    const vertType = vertDecls.get(name);
+    if (vertType === void 0 || vertType === fragType) continue;
+    const pair = `${name}\uFF08vert ${vertType} / frag ${fragType}\uFF09`;
+    if (!VEC_VARYING_TYPES.has(vertType) || !VEC_VARYING_TYPES.has(fragType)) {
+      warnings.push(`varying \u58F0\u660E\u8DE8 stage \u4E0D\u5339\u914D\uFF08\u4E24\u4FA7\u4E0D\u540C\u65CF\uFF0C\u975E vec \u65CF\u65E0\u6CD5\u5B89\u5168\u63D0\u5347\uFF09\uFF1A${pair}\uFF0C\u5DF2\u653E\u5F03\u6539\u5199`);
+      continue;
+    }
+    if (VARYING_COMPONENTS[fragType] > VARYING_COMPONENTS[vertType]) {
+      warnings.push(`varying \u58F0\u660E\u8DE8 stage \u4E0D\u5339\u914D\uFF08\u7A84\u4FA7\u662F vert\uFF09\uFF1A${pair}\uFF1B\u53C2\u8003\u5B9E\u73B0 lwe ShaderUnit.cpp:379 applyLinkedVaryingCompatibility \u5904\u7406\u7684\u662F\u8FD9\u4E2A\u65B9\u5411\uFF0C\u9700\u6539\u5199\u9876\u70B9\u4FA7\u8D4B\u503C ${name} = vec4(expr, 0.0, 1.0)\uFF0C\u672C\u5E93\u672A\u9047\u5230\u8BE5\u5F62\u6001\u3001\u5C1A\u672A\u5B9E\u73B0\uFF0C\u5DF2\u653E\u5F03\u6539\u5199`);
+      continue;
+    }
+    if (!usesOnlySwizzle(frag, name)) {
+      warnings.push(`varying \u58F0\u660E\u8DE8 stage \u4E0D\u5339\u914D\uFF08frag \u5B58\u5728\u6574\u4F53\u7528\u6CD5\uFF09\uFF1A${pair}\uFF1B\u63D0\u5347\u58F0\u660E\u4F1A\u8BA9 ${name} \u5728 frag \u91CC\u7C7B\u578B\u5931\u914D\uFF0C\u9700\u50CF lwe ShaderUnit.cpp:417 applyFragmentTexCoordCompatibility \u90A3\u6837\u8865 .xy\uFF0C\u672C\u4EFB\u52A1\u4E0D\u505A\uFF0C\u5DF2\u653E\u5F03\u6539\u5199`);
+      continue;
+    }
+    frag = frag.replace(
+      new RegExp(`^([ \\t]*)varying[ \\t]+${fragType}[ \\t]+${name}([ \\t]*);`, "gm"),
+      `$1varying ${vertType} ${name}$2;`
+    );
+  }
+  return { vert: rawVert, frag, warnings };
+}
 function normalizeFloatIntLiterals(src) {
   const protectedBlocks = [];
   let out = src;
@@ -23646,8 +23694,10 @@ async function resolveEffectChain(sceneEffect, loadFile) {
       for (const raw of [rawVert, rawFrag]) {
         for (const [k, v] of extractComboDefaults(raw)) if (!(k in combos)) combos[k] = v;
       }
-      const vertSrc = preprocessWeShader(rawVert, combos);
-      const fragSrc = preprocessWeShader(rawFrag, combos);
+      const varying = reconcileVaryingDeclarations(rawVert, rawFrag);
+      for (const w of varying.warnings) console.warn(`[wallpaper-engine] ${w}`);
+      const vertSrc = preprocessWeShader(varying.vert, combos);
+      const fragSrc = preprocessWeShader(varying.frag, combos);
       const samplerModes = {};
       for (const ann of extractUniformAnnotations(rawVert).concat(extractUniformAnnotations(rawFrag))) {
         const mode = ann.annotation?.mode;
