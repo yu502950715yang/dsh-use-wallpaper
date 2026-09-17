@@ -78,7 +78,7 @@ dsh plugin --profile web add "@dsh-use/wallpaper-engine"
 dsh plugin --profile web install
 ```
 
-> 已发布到 npm，最新版本 **[0.4.1](https://www.npmjs.com/package/@dsh-use/wallpaper-engine)**。发布包只含 `lib` + `dist` + `cordis.patch.yml`（构建产物已随包提交，**装完无需本地构建**）。
+> 已发布到 npm，最新版本 **[0.4.2](https://www.npmjs.com/package/@dsh-use/wallpaper-engine)**。发布包只含 `lib` + `dist` + `cordis.patch.yml`（构建产物已随包提交，**装完无需本地构建**）。
 >
 > npm 版与 GitHub 版的差别：npm 走版本发布，**更新节奏慢于仓库 `main`**；想第一时间拿到修复请用上面的 GitHub 方式。
 
