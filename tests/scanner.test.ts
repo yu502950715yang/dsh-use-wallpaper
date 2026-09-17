@@ -23,6 +23,12 @@ describe('kindFromProjectJson', () => {
     expect(kindFromProjectJson({ type: 'image' })).toBe('image');
     expect(kindFromProjectJson({})).toBe('unknown');
   });
+  it('type 大小写不敏感（WE 会写 "Web"/"Scene"）', () => {
+    expect(kindFromProjectJson({ type: 'Web' })).toBe('web');
+    expect(kindFromProjectJson({ type: 'Scene' })).toBe('scene');
+    expect(kindFromProjectJson({ type: 'Video' })).toBe('video');
+    expect(kindFromProjectJson({ type: ' web ' })).toBe('web');
+  });
 });
 
 describe('scanWallpapers', () => {

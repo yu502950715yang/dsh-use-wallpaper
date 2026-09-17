@@ -221,6 +221,13 @@ research/                    gitignore：截图 / 验证脚本 / 临时 profile
     - **同一壁纸的第二症状：横/纵两条滚动条（2026-09-16，用户追问「切换后出现横纵滚动条」）**：滚动条在**壁纸 iframe 自己的文档里**（宿主页 `vBar=0`，不是 DSH 页面在滚）。壁纸文档自身溢出时（问题 ③：`.image-preload` 的 `left:-9999px` 图簇实测 `bottom:1444`）**Firefox 计入可滚动溢出、Chromium 不计** ⇒ 只有 Firefox 出现纵向滚动条（实测 `innerWidth−clientWidth = 17`、`scrollHeight 1444 / clientHeight 666`），而壁纸的 `.slideshow{width:100vw}` 与 `#container`（`width = window.innerWidth`）都按「含滚动条」的视口宽算 ⇒ 反撑出横向滚动条（同样 17），`100vh` 再把纵向留住 —— 两条互相维持。**插件侧修法（唯一落地的一层）**：iframe 加 `scrolling="no"` —— Firefox/Edge 实测子帧 `clientWidth == innerWidth`、`vBar = hBar = 0`，即不出现滚动条占位，也对齐 WE 的 CEF 表现（背景层本就 `pointer-events:none`，滚动从不可用）。**代价**：`scrolling` 是 obsolete 属性，将来浏览器若忽略它，问题 ③ 的滚动条会回来 —— 根治仍在壁纸侧（`body{overflow:hidden}` + `.image-preload` 裁剪），需由用户在自己的创作源里改。探针 `research/_ff-scroll-probe.mjs`（页面自上报，Firefox 与 Edge 同页各跑一次，不依赖 CDP）。
     - **遗留**：壁纸自身仍有 `enableVertexAttribArray: -1` / `vertexAttribPointer: -1` 的 WebGL 警告（它的 water vertex shader 只声明 `a_position`，frag 却声明 `v_texCoord`），非致命、本次未动。
 
+31. **`project.json` 的 `type` 大小写敏感 ⇒ web 壁纸被判 `unknown`、只剩 192×192 的 preview 图兜底（2026-09-17，用户报告 `3778198228 World of Warcraft: Classic | Login Screen`「DSH 里只放大了某一块，桌面能看全」）**：
+    - **现象**：DSH 背景是被放大约 10 倍且糊掉的一块画面（只见拱门中段），桌面 WE 播的是完整 4K 视频。
+    - **根因**：该壁纸写的是 `"type": "Web"`（首字母大写），而 `scanner.ts` 的 `kindFromProjectJson` 以 `t === 'web'` **大小写敏感**比较 ⇒ 返回 `unknown` ⇒ `resolveBackground` 既不是 scene（`hasScene=false`）也不是 video/web ⇒ 回落 `previewUrl`。它的 `preview.gif` 是 **192×192 的正方形裁切**，被 `.wp-bg-fill img{width:100%;height:100%;object-fit:cover}` 铺满视口 ⇒ **放大约 10 倍 + 纵向裁掉一半**，正是「某一块被放大」的观感。
+    - **实测（headless Edge + 生产 `lib/`，1920×919 视口，脚本 `research/_wow-webcheck.mjs`，gitignore）**：坏路径 `img naturalWidth/Height = 192/192`、`clientWidth/Height = 1920/919`、`objectFit=cover`（截图 `research/.wow-webcheck/before-preview-image.png` 与用户截图构图一致）；修复后走 iframe，子帧 `videoWidth/Height = 3840×2160`、`readyState=4`、`!paused`、`currentTime=10.98`（`after-web-iframe.png` 为完整壁纸）。
+    - **修法**：`kindFromProjectJson` 先 `trim().toLowerCase()` 再比较。影响面：全库**只有这一张**由 `unknown` 变为 `web`；另有 5 张 `"Scene"`（`2236329190`/`2911105183`/`2937346640`/`3765967112`/`3780477933`）此前同样误判 `unknown`，因 `hasScene=true` 侥幸仍走 scene 分支，画面无碍。
+    - **残留（非插件缺陷）**：壁纸自身给 video 写死 `object-fit:cover`，DSH 窗口比 16:9 更宽时会纵向裁掉约 15% —— 作者设定，跨源 iframe 改不了，且 §6 禁止改壁纸目录。另：`/wallpapers/web` 路由整文件 `readFileSync`、无 Range 支持，该 webm 66 MB 实测能正常播放，大文件下的表现未专门测。
+
 ## 6. 工作约定
 
 - 回复、注释、文档、**提交信息一律简体中文**；代码、命令、文件名、技术术语保留原文。

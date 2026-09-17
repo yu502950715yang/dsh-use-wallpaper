@@ -3,7 +3,9 @@ import { join } from 'node:path';
 import type { WallpaperInfo, WallpaperKind } from '../shared/types.js';
 
 export function kindFromProjectJson(pj: Record<string, unknown>): WallpaperKind {
-  const t = String(pj.type ?? '');
+  // WE 写的 type 大小写不定（实测 "Web"/"Scene"）；不归一化会掉进 unknown，
+  // 非 scene 的（如 web）就无法走各自分支、只剩 preview 图兜底。
+  const t = String(pj.type ?? '').trim().toLowerCase();
   if (t === 'scene' || t === 'video' || t === 'web' || t === 'image') return t;
   return 'unknown';
 }
