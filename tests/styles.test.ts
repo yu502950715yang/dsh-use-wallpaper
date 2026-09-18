@@ -120,6 +120,12 @@ describe('styles 主题适配', () => {
     // 选择器是逗号分组（bubble, bubble p, ... bubble code{），code 是最后一条直接跟 {。
     expect(WALLPAPER_CSS).toMatch(/\[class\*="flowItem"\]\s*\[class\*="bubble"\]\s*code\s*\{[^}]*color:var\(--dsw-alias-label-primary,inherit\)/);
   });
+  it('自带实底的卡片（present 文件卡 / 改动文件卡）内部文字不跟随壁纸反色', () => {
+    // 2026-09-18：这两类卡片有 --deliverable-fill / --changes-fill 实底，卡内文字靠继承取
+    // --dsw-alias-label-primary；被 --wp-chat-fg 反色后，浅色主题下白字贴浅底 → 看不见。
+    expect(WALLPAPER_CSS).toMatch(/\[data-presented-file\][\s\S]*color:var\(--dsw-alias-label-primary/);
+    expect(WALLPAPER_CSS).toMatch(/\[data-changed-files\][\s\S]*color:var\(--dsw-alias-label-primary/);
+  });
   it('聊天顶部 header（文字+图标）跟随壁纸亮度', () => {
     // 2026-09-03：聊天 header（ChatHeader wSkVaW_header / headerActions / headerUtilities）
     // 背景透明贴壁纸，文字/图标用固定深灰 → 暗壁纸下看不清，跟随 --wp-chat-fg 反色。
