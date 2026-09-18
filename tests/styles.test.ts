@@ -64,7 +64,7 @@ describe('styles 主题适配', () => {
     expect(WALLPAPER_CSS).toMatch(/body\[data-we-wallpaper\]:not\(\[data-ds-dark-theme\]\)\s*\{[^}]*--dsw-specific-sidebar-fill:rgba\(255,\s*255,\s*255,\s*\.5\d*\)!important/);
     expect(WALLPAPER_CSS).toMatch(/body\[data-ds-dark-theme\]\[data-we-wallpaper\]\s*\{[^}]*--dsw-specific-sidebar-fill:rgba\(24,\s*26,\s*30,\s*\.4\d*\)!important/);
   });
-  it('壁纸层不透明化：消息区/输入框 token 透明（壁纸透出），整区 scrollBody 无 blur，无 text-shadow', () => {
+  it('壁纸层不透明化：消息区/输入框 token 透明（壁纸透出），整区 scrollBody 无 blur，消息区无 text-shadow', () => {
     // 侧边栏 fill 不再全局设 transparent，而由浅/深分支半透明控制（覆盖 DSH dark 分支的不透明值）
     expect(WALLPAPER_CSS).not.toMatch(/body\[data-we-wallpaper\]\s*\{[^}]*--dsw-specific-sidebar-fill:transparent/);
     const light = /body\[data-we-wallpaper\]:not\(\[data-ds-dark-theme\]\)\s*\{([^}]*)\}/.exec(WALLPAPER_CSS)?.[1] ?? '';
@@ -74,7 +74,12 @@ describe('styles 主题适配', () => {
     expect(dark).toMatch(/--dsw-specific-input-major:transparent/);
     expect(dark).toMatch(/--dsw-specific-bubble:transparent/);
     expect(WALLPAPER_CSS).not.toMatch(/\[class\*="scrollBody"\]\s*\{[^}]*backdrop-filter/);
-    expect(WALLPAPER_CSS).not.toMatch(/text-shadow:/);
+    // 2026-09-18：断言收窄到消息区（原为全局 not.toMatch(/text-shadow:/)）。
+    // 原意未变——消息区的对比靠 scrim + 文字颜色，不用 text-shadow；插件管理页
+    // 页头/分组标题的阴影是另一页面的处理，见文件末尾用例。
+    expect(WALLPAPER_CSS).not.toMatch(/\[class\*="flowItem"\][^{]*\{[^}]*text-shadow/);
+    expect(WALLPAPER_CSS).not.toMatch(/\[data-composer-card\][^{]*\{[^}]*text-shadow/);
+    expect(WALLPAPER_CSS).not.toMatch(/\[data-question-key\][^{]*\{[^}]*text-shadow/);
   });
   it('scrim 遮罩：壁纸清晰可见但被适度压暗（.wp-bg-overlay rgba(0,0,0,.3)）', () => {
     expect(WALLPAPER_CSS).toMatch(/\.wp-bg-overlay\s*\{[^}]*background:rgba\(0,\s*0,\s*0,\s*\.3\d*\)/);
@@ -121,5 +126,25 @@ describe('styles 主题适配', () => {
     expect(WALLPAPER_CSS).toMatch(/body\[data-we-wallpaper\]\s*\[class\*="wSkVaW_header"\]/);
     // 规则体：header（含 header * 通配）都设 --wp-chat-fg
     expect(WALLPAPER_CSS).toMatch(/\[class\*="wSkVaW_header"\]\s*\*\s*\{[^}]*color:var\(--wp-chat-fg,/);
+  });
+  it('插件管理页（DSH 0.1.6 新增）卡片补底：两类稳定锚点都覆盖，且不碰共用中间列', () => {
+    // 2026-09-18：该页容器与卡片原本全透明（--dsw-alias-bg-base 被插件置 transparent），
+    // 文字直接压在壁纸上读不清。卡片有两类锚点：data-plugin-package（已安装的包）
+    // 与 data-plugin-item（内置项），必须都覆盖，否则内置项那几张仍是无底的。
+    expect(WALLPAPER_CSS).toMatch(/li:is\(\[data-plugin-package\],\[data-plugin-item\]\)\s*\{\s*background:var\(--wp-card-bg\)/);
+    // 深浅两套底由 --wp-card-bg 按主题分支给出（深色主题白字配深底、浅色主题黑字配白底）
+    expect(WALLPAPER_CSS).toMatch(/body\[data-we-wallpaper\]\s*\[data-plugin-panel\]\s*\{[^}]*--wp-card-bg:rgba\(255,\s*255,\s*255/);
+    expect(WALLPAPER_CSS).toMatch(/body\[data-ds-dark-theme\]\[data-we-wallpaper\]\s*\[data-plugin-panel\]\s*\{[^}]*--wp-card-bg:rgba\(16,\s*18,\s*24/);
+    // 挂在插件页专属容器上；挂共用中间列会波及对话页（先剥注释，只查真实选择器）
+    expect(WALLPAPER_CSS.replace(/\/\*[\s\S]*?\*\//g, '')).not.toMatch(/centerCol/);
+    // 详情页（同一 [data-plugin-panel] 的下一层）：头部块与「包含的组件」行补同一套底
+    expect(WALLPAPER_CSS).toMatch(/\[data-plugin-detail\]\s*\[class\*="detailMain"\]\s*\{[^}]*background:var\(--wp-card-bg\)/);
+    expect(WALLPAPER_CSS).toMatch(/li\[data-plugin-row\]\s*\{[^}]*background:var\(--wp-card-bg\)/);
+    // 面包屑（← 插件列表）跟随壁纸亮度反色，避免 DSH 固定浅灰贴壁纸发虚
+    expect(WALLPAPER_CSS).toMatch(/\[class\*="crumb"\]\s*\{[^}]*color:var\(--wp-chat-fg,/);
+    // 页头标题/副标题同样走 chip 底（浅色主题下黑字压亮壁纸段仍糊）
+    expect(WALLPAPER_CSS).toMatch(/\[class\*="pageIntro"\]\s*\{[^}]*background:var\(--wp-chip-bg\)/);
+    // 页头不再加 text-shadow：会连 DSH 原生「＋ 添加插件」按钮的文字一起弄脏
+    expect(WALLPAPER_CSS).not.toMatch(/pageHead[^{]*\{[^}]*text-shadow/);
   });
 });
