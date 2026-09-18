@@ -736,6 +736,35 @@ body[data-we-wallpaper] [class*="flowItem"] [class*="bubble"] code{
   color:var(--dsw-alias-label-primary,inherit);
 }
 
+/* \u2500\u2500 \u81EA\u5E26\u5B9E\u5E95\u7684\u5361\u7247\uFF1A\u4E0D\u8DDF\u968F\u58C1\u7EB8\u4EAE\u5EA6\u53CD\u8272\uFF082026-09-18\uFF09 \u2500\u2500
+   present \u6587\u4EF6\u5361\u7247\uFF08[data-presented-file]\uFF09\u4E0E\u300C\u672C\u56DE\u5408\u6539\u52A8\u6587\u4EF6\u300D\u5361\u7247\uFF08[data-changed-files]\uFF09
+   \u90FD\u6709\u81EA\u5DF1\u4E0D\u900F\u660E\u7684\u5E95\uFF08--deliverable-fill / --changes-fill\uFF09\uFF0C\u5361\u5185\u6587\u5B57\u9760\u7EE7\u627F\u53D6
+   --dsw-alias-label-primary\u3002\u4E0A\u9762\u7684 --wp-chat-fg \u53CD\u8272\u4F1A\u8986\u76D6\u8FD9\u4EFD\u7EE7\u627F\uFF1A\u6D45\u8272\u4E3B\u9898\u4E0B\u5361\u7247\u662F\u6D45\u5E95\u3001
+   \u6587\u5B57\u5374\u88AB\u53CD\u6210\u767D\u5B57 \u2192 \u767D\u5E95\u767D\u5B57\u770B\u4E0D\u89C1\uFF08\u6DF1\u8272\u4E3B\u9898\u4E0B\u4E24\u8005\u6070\u597D\u540C\u8272\uFF0C\u6240\u4EE5\u53EA\u6709\u6D45\u8272\u66B4\u9732\uFF09\u3002
+   \u8FD9\u91CC\u6309\u4E3B\u9898\u8272\u6062\u590D\u5361\u5185\u6587\u5B57\uFF0C\u5E76\u4FDD\u7559\u6B21\u8981\u6587\u5B57\u4E0E\u589E\u5220\u8BA1\u6570\u7684\u5C42\u7EA7\u8272\u3002 */
+body[data-we-wallpaper] [class*="flowItem"] [data-presented-file],
+body[data-we-wallpaper] [class*="flowItem"] [data-presented-file] *,
+body[data-we-wallpaper] [class*="flowItem"] [data-changed-files],
+body[data-we-wallpaper] [class*="flowItem"] [data-changed-files] *{
+  color:var(--dsw-alias-label-primary,inherit);
+}
+body[data-we-wallpaper] [class*="flowItem"] [data-presented-file] [class*="description"]{
+  color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-primary));
+}
+body[data-we-wallpaper] [class*="flowItem"] [data-presented-file] [class*="description"][data-error="true"]{
+  color:var(--dsw-alias-state-error-primary);
+}
+body[data-we-wallpaper] [class*="flowItem"] [data-changed-files] [class*="stat"],
+body[data-we-wallpaper] [class*="flowItem"] [data-changed-files] [class*="row"]{
+  color:var(--dsw-alias-label-secondary,var(--dsw-alias-label-primary));
+}
+body[data-we-wallpaper] [class*="flowItem"] [data-changed-files] [class*="added"]{
+  color:var(--dsw-alias-state-success-primary);
+}
+body[data-we-wallpaper] [class*="flowItem"] [data-changed-files] [class*="deleted"]{
+  color:var(--dsw-alias-state-error-primary);
+}
+
 /* \u2500\u2500 \u5BBD\u8868\u683C\uFF08.md-table-wide\uFF09\u7EA6\u675F\uFF1A2026-08-26 \u4E3A\u6DB2\u6001\u73BB\u7483\u6C14\u6CE1\u914D\u5957\u52A0\u5165\u3002
    \u73B0\u6D88\u606F\u6C14\u6CE1\uFF08flowItem\uFF09\u5DF2\u6539\u56DE DSH \u539F\u751F\u6837\u5F0F\uFF082026-08-31\uFF09\uFF0C\u6C14\u6CE1\u4EA4\u7ED9 DSH \u539F\u751F
    \u5904\u7406\uFF0C\u6B64\u524D\u7684"\u628A\u5BBD\u8868\u683C\u7EA6\u675F\u56DE\u6C14\u6CE1\u5185\u5BB9\u533A"\u8986\u76D6\u4E0D\u518D\u9700\u8981\uFF08\u4E14\u4F1A\u4E0E DSH \u539F\u751F\u7ADE\u4E89\uFF09\uFF0C
