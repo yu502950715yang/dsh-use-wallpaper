@@ -220,7 +220,13 @@ body[data-we-wallpaper] [class*="flowItem"] [class*="bubble"] code{
    都有自己不透明的底（--deliverable-fill / --changes-fill），卡内文字靠继承取
    --dsw-alias-label-primary。上面的 --wp-chat-fg 反色会覆盖这份继承：浅色主题下卡片是浅底、
    文字却被反成白字 → 白底白字看不见（深色主题下两者恰好同色，所以只有浅色暴露）。
-   这里按主题色恢复卡内文字，并保留次要文字与增删计数的层级色。 */
+   这里按主题色恢复卡内文字，并保留次要文字与增删计数的层级色。
+   ⚠ 2026-09-18 订正：改动文件卡片 DSH **只给 header 上了 --changes-fill**，
+   卡片本体与文件行列表（.list）背景是透明的——只改文字色会让列表里的深色文字压壁纸。
+   故给卡片本体补上同一个 --changes-fill，与 header 连成一张完整的卡。 */
+body[data-we-wallpaper] [class*="flowItem"] [data-changed-files]{
+  background:var(--changes-fill,rgba(0,0,0,.04));
+}
 body[data-we-wallpaper] [class*="flowItem"] [data-presented-file],
 body[data-we-wallpaper] [class*="flowItem"] [data-presented-file] *,
 body[data-we-wallpaper] [class*="flowItem"] [data-changed-files],
@@ -309,6 +315,27 @@ body[data-we-wallpaper] [data-plugin-panel] li[data-plugin-row] + li[data-plugin
 body[data-we-wallpaper] [data-plugin-panel] [class*="crumb"]{
   color:var(--wp-chat-fg,inherit);
   text-shadow:0 1px 3px rgba(0,0,0,.7);
+}
+
+/* ── 右侧栏（文件 / 终端 / 浏览器面板，2026-09-18） ──
+   DSH 的右侧栏内容容器 [data-sidebar-right-panel] 原本背景全透明，面板内容（文件树、
+   工作区路径、工具图标条）直接压壁纸，浅色主题下黑字压在暗壁纸上大片发虚。
+   底挂在这个内容容器上，而不是外层 [data-rightbar-col]：点「全屏」后 DSH 会把面板改成
+   position:fixed 铺满视口、脱离 rightbarCol 的 576px 宽，挂外层会整片漏底（实测）。
+   自带底的子面板（终端、浏览器 iframe）会盖住这层，不受影响。 */
+body[data-we-wallpaper] [data-sidebar-right-panel]{
+  background:rgba(255,255,255,.74);
+}
+body[data-ds-dark-theme][data-we-wallpaper] [data-sidebar-right-panel]{
+  background:rgba(24,26,30,.62);
+}
+/* 全屏（data-sidebar-right-panel="fullscreen"）：面板铺满视口、本该盖住下层 UI。
+   半透明的底会让左侧栏与聊天内容透上来（实测 .96 仍有文字残影），故用不透明底色。 */
+body[data-we-wallpaper] [data-sidebar-right-panel="fullscreen"]{
+  background:#fff;
+}
+body[data-ds-dark-theme][data-we-wallpaper] [data-sidebar-right-panel="fullscreen"]{
+  background:rgb(24,26,30);
 }
 `;
 export const WALLPAPER_CSS = CSS;

@@ -125,6 +125,8 @@ describe('styles 主题适配', () => {
     // --dsw-alias-label-primary；被 --wp-chat-fg 反色后，浅色主题下白字贴浅底 → 看不见。
     expect(WALLPAPER_CSS).toMatch(/\[data-presented-file\][\s\S]*color:var\(--dsw-alias-label-primary/);
     expect(WALLPAPER_CSS).toMatch(/\[data-changed-files\][\s\S]*color:var\(--dsw-alias-label-primary/);
+    // 改动文件卡片 DSH 只给 header 上色，卡片本体要补 --changes-fill，否则文件行列表透壁纸
+    expect(WALLPAPER_CSS).toMatch(/\[data-changed-files\]\s*\{[^}]*background:var\(--changes-fill/);
   });
   it('聊天顶部 header（文字+图标）跟随壁纸亮度', () => {
     // 2026-09-03：聊天 header（ChatHeader wSkVaW_header / headerActions / headerUtilities）
@@ -152,5 +154,17 @@ describe('styles 主题适配', () => {
     expect(WALLPAPER_CSS).toMatch(/\[class\*="pageIntro"\]\s*\{[^}]*background:var\(--wp-chip-bg\)/);
     // 页头不再加 text-shadow：会连 DSH 原生「＋ 添加插件」按钮的文字一起弄脏
     expect(WALLPAPER_CSS).not.toMatch(/pageHead[^{]*\{[^}]*text-shadow/);
+  });
+  it('右侧栏（文件 / 终端 / 浏览器面板）补半透明底：挂在面板容器上，全屏也覆盖', () => {
+    // 2026-09-18：面板内容容器原本全透明，内容直接压壁纸（浅色下大片发虚）。
+    // 必须挂 [data-sidebar-right-panel]：点全屏后 DSH 把面板改成 position:fixed 铺满视口，
+    // 挂外层 [data-rightbar-col]（仍 576px 宽）会整片漏底。
+    expect(WALLPAPER_CSS).toMatch(/body\[data-we-wallpaper\]\s*\[data-sidebar-right-panel\]\s*\{[^}]*background:rgba\(255,\s*255,\s*255,\s*\.7/);
+    expect(WALLPAPER_CSS).toMatch(/body\[data-ds-dark-theme\]\[data-we-wallpaper\]\s*\[data-sidebar-right-panel\]\s*\{[^}]*background:rgba\(24,\s*26,\s*30,\s*\.6/);
+    // 底不再挂外层列（全屏会漏）
+    expect(WALLPAPER_CSS.replace(/\/\*[\s\S]*?\*\//g, '')).not.toMatch(/\[data-rightbar-col\]\s*\{/);
+    // 全屏模式铺满视口，要用不透明底，否则左侧栏/聊天内容透上来（半透明实测仍有残影）
+    expect(WALLPAPER_CSS).toMatch(/\[data-sidebar-right-panel="fullscreen"\]\s*\{[^}]*background:#fff/);
+    expect(WALLPAPER_CSS).toMatch(/\[data-ds-dark-theme\]\[data-we-wallpaper\]\s*\[data-sidebar-right-panel="fullscreen"\]\s*\{[^}]*background:rgb\(24,\s*26,\s*30\)/);
   });
 });
