@@ -6,6 +6,9 @@ node_modules/
 research/
 .superpowers/
 .playwright-cli/
+# Playwright 验证用产物：截图目录与临时浏览器数据（不入库）
+output/
+.pw-local/
 
 # 隔离 worktree 目录（using-git-worktrees）
 .worktrees/
