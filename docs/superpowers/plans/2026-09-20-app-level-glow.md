@@ -567,7 +567,7 @@ Expected: exit 0
 
 ```bash
 git add src/client/glow-stage.ts tests/glow-stage.test.ts
-git commit -m "feat(glow): GlowStage 的 shader、RT 池与 pass 链" -m "10 pass（bright-pass + 三级 H/V box blur + composite）；颜色空间按 spec §3.4 对齐 sRGB 域。" -m "失败一次即永久降级为直渲，绝不白屏。验证：单测 18 项 + tsc。"
+git commit -m "feat(glow): GlowStage 的 shader、RT 池与 pass 链" -m "10 pass（bright-pass + 三级 H/V box blur + composite）；颜色空间按 spec §3.4 对齐 sRGB 域。" -m "失败一次即永久降级为直渲，绝不白屏。验证：单测 16 项 + tsc。"
 ```
 
 ---
@@ -575,7 +575,7 @@ git commit -m "feat(glow): GlowStage 的 shader、RT 池与 pass 链" -m "10 pas
 ### Task 3: `threejs-player` 的 `setGlowStage` hook
 
 **Files:**
-- Modify: `src/client/threejs-player.ts`（帧体 `setAnimationLoop` 与 `renderFrame` 两处、`resize()`、`dispose()`）
+- Modify: `src/client/threejs-player.ts`（既有 `render()` 与 `setAnimationLoop` 帧体两处、`resize()`、`dispose()`）
 - Test: `tests/threejs-player.test.ts`
 
 **Interfaces:**
@@ -607,7 +607,7 @@ it('未装配 glowStage 时帧序不变（直接 renderer.render(scene, camera)�
   const { player, mock } = makePlayer();
   const before = mock._renders.length;
   player.setGlowStage(null);
-  player.renderFrame();
+  player.render();
   expect(mock._renders.length).toBe(before + 1);
   expect(mock._renders[mock._renders.length - 1].target).toBeNull(); // 渲到 canvas
 });
@@ -617,7 +617,7 @@ it('装配 glowStage 时委托 apply，且不直接渲染主场景', () => {
   const g = glowStageSpy();
   const before = mock._renders.length;
   player.setGlowStage(g.stage as never);
-  player.renderFrame();
+  player.render();
   expect(g.applied.length).toBe(1);
   expect(mock._renders.length).toBe(before); // 主场景渲染被委托给 stage（spy 不真渲）
 });
@@ -673,11 +673,10 @@ import type { GlowStage } from './glow-stage.js';
   }
 ```
 
-(c) 把帧体抽成 `renderFrame()` 并让 `setAnimationLoop` 复用它（**两处帧序必须同源**，避免漂移）：
+(c) **该文件已有一个 `render()`**（第 548–553 行，注释为「手动渲染一帧（不依赖 RAF，供测试/调用方直接触发）；帧序与 setAnimationLoop 的帧体一致（不带 dt）」）—— **不要新增 `renderFrame()`**，直接改它的第三行：
 
 ```ts
-  /** 一帧的渲染帧序：隔离内容 → bindOutputs → 主场景（或 Glow）→ advance。 */
-  renderFrame(): void {
+  render(): void {
     if (this.isolated.size > 0) this.renderIsolatedContents();
     this.objectEffectStage?.bindOutputs();
     if (this.glowStage) this.glowStage.apply(this.renderer, this.scene, this.camera);
@@ -686,9 +685,9 @@ import type { GlowStage } from './glow-stage.js';
   }
 ```
 
-`setAnimationLoop` 的帧体与既有 `renderFrame`（无 dt 的那个方法，若已存在同名则合并为一个）内对上述 4 行的重复实现改为调用 `this.renderFrame()`。
+(d) `setAnimationLoop` 的帧体里有**同样 4 行**的重复（第 532–536 行）⇒ 把那 4 行替换为 `this.render();`（该方法自己的 dt 计算、`update(dt)` 调用与 try/catch 异常自愈**保留不动**）。这样两处帧序**结构上同源**，不会再漂移。
 
-(d) `resize(width, height)` 末尾加（**传画布缓冲尺寸，不是 CSS 尺寸** —— 该方法内部已完成 canvas 尺寸与 dpr 设置）：
+(e) `resize(width, height)` 末尾加（**传画布缓冲尺寸，不是 CSS 尺寸** —— 该方法内部已完成 canvas 尺寸与 dpr 设置）：
 
 ```ts
     // Glow 各级 RT 必须按画布缓冲尺寸建（与主相机 cover 口径一致）
@@ -929,7 +928,7 @@ import { createGlowStage, type GlowStage } from './glow-stage.js';
     currentGlow = null;
 ```
 
-(e) **不要**在 `onWindowResize` 里再调 `currentGlow?.resize(...)` —— 该处第 383 行的 `current.player.resize(width, height)` **内部已经**把画布缓冲尺寸同步给了 stage（Task 3 的 (d)）。两处各算一遍正是 `AGENT.md` §5.21 那类"尺寸口径不一致 / 挂载期与 resize 期不同源"的结构性来源。
+(f) **不要**在 `onWindowResize` 里再调 `currentGlow?.resize(...)` —— 该处第 383 行的 `current.player.resize(width, height)` **内部已经**把画布缓冲尺寸同步给了 stage（Task 3 的 (d)）。两处各算一遍正是 `AGENT.md` §5.21 那类"尺寸口径不一致 / 挂载期与 resize 期不同源"的结构性来源。
 
 - [ ] **Step 4: 跑测试确认通过**
 
