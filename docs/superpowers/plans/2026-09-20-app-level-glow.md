@@ -913,18 +913,20 @@ import { createGlowStage, type GlowStage } from './glow-stage.js';
   let currentGlow: GlowStage | null = null;
 ```
 
-(c) 在 render 成功装配 player 之后（`current.player` 就绪处）接线 —— **尺寸用 `fg.width/height`**（canvas 缓冲尺寸：`loadSceneToThree` 内部的 `player.resize(vw, vh)` 已按 dpr 设过）：
+(c) 接线点：**`src/client/three-renderer.ts` 第 372–374 行之后、且 `if (isolate.size > 0) { … }` 块之外**（该处 `result.player` 已就绪、`fg` 在闭包内）。
+⚠️ **必须在块外**：Glow 不依赖「是否有对象被隔离」——放在块内会让"无效果链对象"的壁纸永远没有 Glow。
+尺寸用 `fg.width/height`（**画布缓冲**尺寸）：`loadSceneToThree` 内部第 **1433** 行已 `player.resize(vw, vh)`（按 dpr 设 canvas 缓冲），故此刻已含 dpr。
 
 ```ts
-    // 应用级 Glow：关闭时**不建任何资源**（零回归）
-    currentGlow?.dispose();
-    currentGlow = settings.glowEnabled
-      ? createGlowStage(fg.width, fg.height, {
-          threshold: settings.glowThreshold,
-          strength: settings.glowStrength,
-        })
-      : null;
-    current.player.setGlowStage(currentGlow);
+        // 应用级 Glow：关闭时**不建任何资源**（零回归）
+        currentGlow?.dispose();
+        currentGlow = settings.glowEnabled
+          ? createGlowStage(fg.width, fg.height, {
+              threshold: settings.glowThreshold,
+              strength: settings.glowStrength,
+            })
+          : null;
+        result.player.setGlowStage(currentGlow);
 ```
 
 (d) `teardown()` 里（`currentStage?.dispose()` 附近）加：
