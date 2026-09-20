@@ -15,6 +15,8 @@
 - **渲染循环**：`renderer.setAnimationLoop`（`dt` = `performance.now` 差分，clamp 0.1s）→ 逐 `CpuParticleSim.update(dt)` → 刷新实例缓冲 → `render`；帧体 `try/catch` **异常自愈**（three 的 RAF 一次异常会永久停摆）。
 - **相机 / 尺寸**：cover 正交相机（按**窗口宽高比**，非场景比例）；`canvas.width/height = 视口逻辑尺寸 × devicePixelRatio`。
 - **对象级效果链接线**（2026-09-14 起 P1）：`createThreeSceneRenderer()` → `loadSceneToThree()`；隔离对象进 `localScene`、主场景放合成 quad、注入帧钩子；每帧 `renderIsolatedContents()` → `stage.bindOutputs()` → 渲染主场景 → `stage.advance(time)`（串行推进 `EffectRunner`，异步不阻塞本帧）。无带效果对象时 stage 为 null，帧序退化为原路径（零回归）。
+- **text 对象**（2026-09-21）：与 image 同路径渲染为背景 quad（`CanvasTexture`）；`clock` 脚本每帧判文本变化后**就地重绘**同一 canvas（同分钟不重绘）并置 `needsUpdate`；**只对 text 应用 `visible` 过滤**；pkg 内字体经 `FontFace` 加载、失败回退 sans-serif。非 clock 脚本显示 `text.value` 静态默认值（**不是真实时间**，见 `AGENT.md` §7.1 第 6 条）。
+- **省电与画质档位**（2026-09-21）：`paused` / `pauseOnHidden`（停 RAF + 帧内防御 + `elapsedSeconds` 扣暂停时长）、`qualityScale`（渲染像素比 = 设备像素比 × 档位；画布缓冲与对象 RT 的屏幕密度走**同一个** `resolvePixelRatio`）；`resize()` 重读 `devicePixelRatio`（跨屏自适应）。见 `AGENT.md` §7.1 第 7 条。
 
 ### 1.2 粒子模拟（Rust/wasm，`wasm/src/particle/`）
 
@@ -93,6 +95,7 @@
   - **同轮发现并修复的一处泄漏**：`EffectRunner` 的纹理槽缓存在同一 WebGL 上下文内 resize 重挂链时**每次泄漏 28 张 GPU 纹理**（`renderer.info.memory.textures` 107→303 等差增长）；切换壁纸因新建上下文而不显形。修法与证据见 `AGENT.md` §7.5。
 - **应用级 Glow 的显存与开销（2026-09-20 实测）**：base RT（画布缓冲尺寸）+ 6 张小 RT（三级各一对 ping-pong，合计约 **0.66×base** 面积）；实现用 `HalfFloatType`（RGBA8 口径翻倍）⇒ **720p 静态估算 ≈ 12 MB**（7 张 RT：1280×720 base + 640×360 / 320×180 / 160×90 各两张；逐张相加 = 12,211,200 B = **12.2 MB / 11.6 MiB**；Task 6 记的 **11.9 MB** 已作废，仅作历史记录），`renderer.info.memory.textures` 可精确核对（GTR **28 → 35，+7**）；spec 的 @3440×1440@dpr1 RGBA8 口径 ≈ 33 MB ⇒ HalfFloat 约 66 MB。**只统计 `glowEnabled` 时占用**，改阈值 / 强度不重建 RT。**开销**：每帧 CPU 侧 `renderer.render` 提交 **+0.1~+0.4 ms**（16.7ms 帧预算的 0.6~2.4%），**不含 GPU 时间**（真 GPU 光栅化异步，严格验收未做）。**`[6]` 显存泄漏探测仍 Δ 0**，但 5 次观测为 Δ0/Δ1/Δ0/Δ2/Δ0（开关两侧都出现过 Δ>0）⇒ 如实记为**零星残留 1~2 张、与 Glow 无关**（远小于修复前的 Δ196）。**如实**：只测了 GTR `3743126786` 一张壁纸；nvidia-smi 差值噪声 ±400 MiB，**不可用于定量**。完整数据见 `AGENT.md` §7.1 的 2026-09-20「已实现」子条。
 - **音频响应效果不随频谱动**：three 主路径**没有音频源** —— `createAudioAnalyzer` 只被未接入的 `scene-renderer.ts` 引用，`ObjectEffectStage.advance` 每帧显式给 `EffectRunner` 传 `null`，音频 uniform 保持全零。属「效果在、但不随频谱动」，不是「不支持该效果」。接音频仍未做。
+- **省电与画质档位**（2026-09-21）：`qualityScale` 让渲染像素比 = 设备像素比 × 档位（0.5–1），画布缓冲与对象 RT 的屏幕密度随之等比缩小 ⇒ 显存与填充率同比例下降；暂停停掉整条 RAF（`elapsedSeconds` 扣除暂停时长，恢复不跳帧）。**只有单测覆盖，无真机目检**；暂停的真实省电收益未测。
 
 ---
 

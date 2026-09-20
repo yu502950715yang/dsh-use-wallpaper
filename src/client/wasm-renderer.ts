@@ -251,6 +251,10 @@ export interface SceneRendererLike {
   render(id: string, fg: HTMLCanvasElement, bg?: HTMLCanvasElement): Promise<boolean>;
   // 释放渲染器持有的场景 wasm 对象与脚本运行时（壁纸切换/卸载时调用，防泄漏）。
   dispose(): void;
+  // 可选：暂停/恢复帧循环（省电）。未实现的渲染器忽略即可。
+  setPaused?(paused: boolean): void;
+  // 可选：画质档位（渲染像素比倍率）。
+  setQualityScale?(scale: number): void;
 }
 
 // 强制 wasm、禁用 JS 回退：项目主目标为 wasm 播放——wasm 渲染器不可用（null，如无 WebGPU）

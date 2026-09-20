@@ -1,7 +1,8 @@
-// src/client/text-object.ts —— WE text 对象静态文本渲染（T3.1）
+// src/client/text-object.ts —— WE text 对象文本渲染（T3.1 静态 + T3.3 时钟驱动）
 // 把文本绘制到离屏 canvas（2D），包装为 THREE.CanvasTexture 供 quad 贴图。
-// 仅处理静态文本（text.value 直用）；脚本驱动的动态文本（时钟等）见 T3.3。
+// 时钟走字**就地重绘同一 canvas**（只置 needsUpdate），不重建纹理。
 import * as THREE from 'three';
+import { formatClockText } from './script-patterns.js';
 
 export interface TextTextureOptions {
   font?: string;                    // WE 字体名（可能是文件路径，如 fonts/Atami-Regular.otf）
@@ -36,28 +37,55 @@ export function textCanvasSize(
   };
 }
 
-// 把文本绘制到指定尺寸的离屏 canvas，返回 CanvasTexture（needsUpdate 已置位）。
-// 文本水平/垂直居中（静态渲染中心对齐足够；alignment 字段暂不参与布局）。
-// canvas 2D 不可用（极端环境/jsdom 无 node-canvas）时返回空白纹理，不抛错。
-export function createTextTexture(text: string, opts: TextTextureOptions): THREE.CanvasTexture {
+// 把文本绘制到指定 canvas（就地重绘：时钟走字复用同一 canvas/纹理，只需 needsUpdate）。
+// 文本水平/垂直居中（alignment 字段暂不参与布局）。2D 上下文不可用时静默留白，不抛错。
+export function drawTextToCanvas(canvas: HTMLCanvasElement, text: string, opts: TextTextureOptions): void {
   const width = Math.max(1, Math.round(opts.width));
   const height = Math.max(1, Math.round(opts.height));
-  const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
   const ctx = canvas.getContext('2d');
-  if (ctx) {
-    const size = Math.max(1, opts.pointsize ?? Math.round(height * 0.8));
-    // M29：多词字体家族名（如 "Times New Roman"）在 CSS font 简写中必须加引号，
-    // 否则整段 font 被浏览器视为非法而静默回退默认字体（单词家族不受影响）。
-    const family = resolveFontFamily(opts.font);
-    ctx.font = family.includes(' ') ? `${size}px "${family}"` : `${size}px ${family}`;
-    ctx.fillStyle = opts.color ? `rgb(${opts.color[0]}, ${opts.color[1]}, ${opts.color[2]})` : '#ffffff';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(text, width / 2, height / 2);
-  }
+  if (!ctx) return;
+  const size = Math.max(1, opts.pointsize ?? Math.round(height * 0.8));
+  // M29：多词字体家族名（如 "Times New Roman"）在 CSS font 简写中必须加引号，
+  // 否则整段 font 被浏览器视为非法而静默回退默认字体（单词家族不受影响）。
+  const family = resolveFontFamily(opts.font);
+  ctx.font = family.includes(' ') ? `${size}px "${family}"` : `${size}px ${family}`;
+  ctx.fillStyle = opts.color ? `rgb(${opts.color[0]}, ${opts.color[1]}, ${opts.color[2]})` : '#ffffff';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, width / 2, height / 2);
+}
+
+// 把文本绘制到新建的离屏 canvas，返回 CanvasTexture（needsUpdate 已置位）。
+export function createTextTexture(text: string, opts: TextTextureOptions): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  drawTextToCanvas(canvas, text, opts);
   const tex = new THREE.CanvasTexture(canvas);
   tex.needsUpdate = true;
   return tex;
+}
+
+export interface ClockDriver {
+  /** 文本变化时重绘 canvas 并返回 true（调用方据此置 texture.needsUpdate）。 */
+  update(now: Date): boolean;
+}
+
+// 时钟驱动：按 formatClockText 生成文本，**文本变化才重绘**（同分钟不重绘）。
+export function createClockDriver(
+  canvas: HTMLCanvasElement,
+  opts: TextTextureOptions,
+  props: Record<string, unknown>,
+  initialText: string,
+): ClockDriver {
+  let last = initialText;
+  return {
+    update(now: Date): boolean {
+      const text = formatClockText(now, props);
+      if (text === last) return false;
+      drawTextToCanvas(canvas, text, opts);
+      last = text;
+      return true;
+    },
+  };
 }

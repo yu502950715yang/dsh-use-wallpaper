@@ -5,7 +5,8 @@
 // 返回记录型 2D 上下文，断言绘制参数（字号/颜色/居中）与返回纹理的宽高。
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
-import { createTextTexture, textCanvasSize } from '../src/client/text-object.js';
+import { createTextTexture, textCanvasSize, drawTextToCanvas, createClockDriver } from '../src/client/text-object.js';
+import { formatClockText } from '../src/client/script-patterns.js';
 
 // 记录型 2D 上下文：捕获 createTextTexture 设置的绘制状态与 fillText 调用
 function makeMock2d() {
@@ -77,6 +78,62 @@ describe('createTextTexture', () => {
     vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue(null);
     const tex = createTextTexture('x', { width: 10, height: 10 });
     expect(tex).toBeInstanceOf(THREE.CanvasTexture);
+  });
+});
+
+describe('drawTextToCanvas（就地重绘：时钟复用同一 canvas 与纹理）', () => {
+  let ctx: ReturnType<typeof makeMock2d>;
+  beforeEach(() => {
+    ctx = makeMock2d();
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(ctx as unknown as CanvasRenderingContext2D);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('按 opts 重设画布尺寸并居中绘制文本', () => {
+    const canvas = document.createElement('canvas');
+    drawTextToCanvas(canvas, '14:05', { pointsize: 40, width: 200, height: 64 });
+    expect(canvas.width).toBe(200);
+    expect(canvas.height).toBe(64);
+    expect(ctx.fillText).toHaveBeenCalledWith('14:05', 100, 32);
+  });
+
+  it('2D 上下文不可用（getContext → null）时不抛错', () => {
+    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue(null);
+    const canvas = document.createElement('canvas');
+    expect(() => drawTextToCanvas(canvas, 'x', { width: 10, height: 10 })).not.toThrow();
+  });
+});
+
+describe('createClockDriver（clock 模式：文本变化才重绘）', () => {
+  let ctx: ReturnType<typeof makeMock2d>;
+  beforeEach(() => {
+    ctx = makeMock2d();
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(ctx as unknown as CanvasRenderingContext2D);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('同一分钟返回 false（不重绘），跨分钟返回 true 并重绘', () => {
+    const canvas = document.createElement('canvas');
+    const driver = createClockDriver(canvas, { pointsize: 40, width: 200, height: 64 }, {}, 'init');
+    expect(driver.update(new Date(2026, 7, 21, 14, 5, 10))).toBe(true);
+    expect(ctx.fillText).toHaveBeenCalledTimes(1);
+    expect(driver.update(new Date(2026, 7, 21, 14, 5, 50))).toBe(false);
+    expect(ctx.fillText).toHaveBeenCalledTimes(1);
+    expect(driver.update(new Date(2026, 7, 21, 14, 6, 0))).toBe(true);
+    expect(ctx.fillText).toHaveBeenCalledTimes(2);
+  });
+
+  it('初始文本就是当前时钟文本 → 首次 update 不重绘（构造即已绘制）', () => {
+    const props: Record<string, unknown> = {};
+    const now = new Date(2026, 7, 21, 14, 5, 0);
+    const canvas = document.createElement('canvas');
+    const driver = createClockDriver(canvas, { width: 10, height: 10 }, props, formatClockText(now, props));
+    expect(driver.update(now)).toBe(false);
+    expect(ctx.fillText).not.toHaveBeenCalled();
   });
 });
 

@@ -355,6 +355,14 @@ export interface ObjectEffectStage {
   advance(time: number): void;
 }
 
+// 渲染像素比 = 设备像素比 × 画质档位。画布缓冲与对象 RT 的屏幕密度都按它算，
+// three-renderer 挂载期算屏幕密度必须调**同一个函数**（口径不一致会让整层模糊，见 AGENT.md §5.15）。
+export function resolvePixelRatio(devicePixelRatio: number, qualityScale: number): number {
+  const dpr = Number.isFinite(devicePixelRatio) && devicePixelRatio > 0 ? devicePixelRatio : 1;
+  const scale = Number.isFinite(qualityScale) && qualityScale > 0 ? qualityScale : 1;
+  return dpr * scale;
+}
+
 export class ThreeScenePlayer {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene: THREE.Scene;
@@ -373,8 +381,16 @@ export class ThreeScenePlayer {
   private sceneHeight: number;
   private viewWidth: number;
   private viewHeight: number;
-  // 渲染缓冲像素比（构造时快照 window.devicePixelRatio；resize 时用它推导缓冲尺寸）。
-  private readonly pixelRatio: number;
+  // 渲染缓冲像素比 = 设备像素比 × 画质档位（resize 时重读设备像素比，跨屏拖动自适应）。
+  private pixelRatio: number;
+  // 画质档位（< 1 = 降分辨率省显存/提流畅；1 = 原生 dpr）。
+  private qualityScale: number;
+  // 暂停（省电）：停 RAF 排程，并把暂停时长从 elapsedSeconds 里扣除（恢复后 g_Time 不跳）。
+  private paused = false;
+  private pausedAt = 0;
+  private pausedTotal = 0;
+  // 已安装的帧回调（resume 时用它重新排程）。
+  private loopFn: ((dt: number) => void) | null = null;
 
   private lastTime = 0;
 
@@ -401,6 +417,8 @@ export class ThreeScenePlayer {
     // 可选注入 renderer：node/jsdom 无 WebGL 无法构造真 WebGLRenderer，测试用 mock 注入
     // （契约「可 mock renderer」）。缺省创建标准 antialias WebGLRenderer。
     renderer?: THREE.WebGLRenderer,
+    // 画质档位（渲染像素比倍率，缺省 1 = 原生 dpr）；运行时用 setQualityScale 调整。
+    qualityScale = 1,
   ) {
     this.sceneWidth = width;
     this.sceneHeight = height;
@@ -432,11 +450,11 @@ export class ThreeScenePlayer {
     // 模糊成不可辨的小色块——这正是 headless SwiftShader（dpr=1）无法复现、真机可见的原因之一。
     // 按 `window.devicePixelRatio` 设置像素比，使渲染缓冲 = 物理像素（1:1 锐利），与 wasm 参考
     // 的视口语义一致。node/jsdom 测试用 mock renderer 注入（无 setPixelRatio），防御式跳过。
-    const dpr = typeof window !== 'undefined' && window.devicePixelRatio ? window.devicePixelRatio : 1;
-    this.pixelRatio = dpr;
+    this.qualityScale = Number.isFinite(qualityScale) && qualityScale > 0 ? qualityScale : 1;
+    this.pixelRatio = resolvePixelRatio(this.devicePixelRatio(), this.qualityScale);
     const withSetPixelRatio = this.renderer as { setPixelRatio?: (v: number) => void };
     if (typeof withSetPixelRatio.setPixelRatio === 'function') {
-      withSetPixelRatio.setPixelRatio(dpr);
+      withSetPixelRatio.setPixelRatio(this.pixelRatio);
     }
     this.applyCover();
   }
@@ -449,6 +467,8 @@ export class ThreeScenePlayer {
     const h = Math.max(1, Math.round(height));
     this.viewWidth = w;
     this.viewHeight = h;
+    // 重读设备像素比：窗口拖到另一块缩放比例不同的显示器后，缓冲必须按新 dpr 重推。
+    this.pixelRatio = resolvePixelRatio(this.devicePixelRatio(), this.qualityScale);
     this.applyCover();
     // ① 像素比 + 逻辑尺寸交给 renderer（幂等：写 _pixelRatio/_width/_height + viewport）。
     const r = this.renderer as {
@@ -469,6 +489,43 @@ export class ThreeScenePlayer {
     // 退回本类自持的 canvas（生产路径 renderer.domElement 就是它）。
     const buf = (this.renderer as { domElement?: HTMLCanvasElement }).domElement ?? this.canvas;
     this.glowStage?.resize(buf.width, buf.height);
+  }
+
+  /** 画质档位：走 resize 路径重推画布缓冲与屏幕密度（对象 RT 的基准随之变化）。 */
+  setQualityScale(scale: number): void {
+    const s = Number.isFinite(scale) && scale > 0 ? scale : 1;
+    if (s === this.qualityScale) return;
+    this.qualityScale = s;
+    this.resize(this.viewWidth, this.viewHeight);
+  }
+
+  /** 暂停帧循环（省电）：停 RAF 排程；暂停时长不计入 elapsedSeconds。 */
+  pause(): void {
+    if (this.paused) return;
+    this.paused = true;
+    this.pausedAt = this.nowMs();
+    this.renderer.setAnimationLoop(null);
+  }
+
+  /** 恢复帧循环（暂停期间的时间被扣除，恢复后 g_Time 不跳变）。 */
+  resume(): void {
+    if (!this.paused) return;
+    this.pausedTotal += this.nowMs() - this.pausedAt;
+    this.paused = false;
+    if (this.loopFn) this.installLoop();
+  }
+
+  isPaused(): boolean {
+    return this.paused;
+  }
+
+  // 设备像素比：每次读取（跨屏拖动后由 resize 用新值重推缓冲）。
+  private devicePixelRatio(): number {
+    return typeof window !== 'undefined' && window.devicePixelRatio ? window.devicePixelRatio : 1;
+  }
+
+  private nowMs(): number {
+    return typeof performance !== 'undefined' ? performance.now() : this.startedAt;
   }
 
   // 场景固有尺寸（scene.json 的 general.orthogonalprojection）就绪后设置，同时重推 cover。
@@ -526,10 +583,24 @@ export class ThreeScenePlayer {
   // 且再无任何动画/诊断输出（sim 从未推进，粒子永远不出现）。此处把帧体包进 try/catch（**不重抛**），
   // 保证 three 每帧都能重新排程 RAF：单帧异常只丢该帧，循环自愈；异常只记一次 warn（防刷屏）。
   setAnimationLoop(fn?: (dt: number) => void): void {
+    this.loopFn = fn ?? null;
+    // 暂停中装配（挂载即暂停）→ 不排程，等 resume 再装。
+    if (this.paused) {
+      this.renderer.setAnimationLoop(null);
+      return;
+    }
+    this.installLoop();
+  }
+
+  // 安装帧体（setAnimationLoop 与 resume 共用）。
+  private installLoop(): void {
+    const fn = this.loopFn;
     this.lastTime = performance.now();
     let warned = false;
     this.renderer.setAnimationLoop(() => {
       try {
+        // 暂停后可能仍有一帧已被排程（cancel 与回调的时序不保证）→ 帧内再挡一次。
+        if (this.paused) return;
         const now = performance.now();
         const dt = Math.min((now - this.lastTime) / 1000, 0.1);
         this.lastTime = now;
@@ -613,8 +684,10 @@ export class ThreeScenePlayer {
 
   // 隔离对象的帧推进时间（秒，自 player 创建起）——g_Time 语义。
   elapsedSeconds(): number {
-    const now = typeof performance !== 'undefined' ? performance.now() : this.startedAt;
-    return (now - this.startedAt) / 1000;
+    const now = this.nowMs();
+    // 暂停期间（含当前这段）不计入：效果链的 g_Time 在恢复后不跳变。
+    const inPause = this.paused ? now - this.pausedAt : 0;
+    return (now - this.startedAt - this.pausedTotal - inPause) / 1000;
   }
 
   // Task 2：背景图层（Sprite/Mesh）。用 we_to_three 中心化定位（three = we - scene/2，
@@ -1337,6 +1410,11 @@ export interface SceneAssets {
   //   rtWidth/rtHeight = 对象 RT 的像素尺寸（= 世界尺寸 × 屏幕密度的屏占位，等比收口到 4096）；
   //   worldW/worldH = 合成 quad 的世界尺寸（未钳制幅值）。
   isolate?: Map<number, { objectId: number; rtWidth: number; rtHeight: number; worldW: number; worldH: number }>;
+  // 渲染像素比档位（<1 降分辨率省显存/提流畅；缺省 1）。调用方算屏幕密度时必须用同一个数。
+  qualityScale?: number;
+  // text 对象图层（对象 id → 纹理 + 可选 clock 驱动）：与 image 同路径渲染为背景 quad。
+  // 调用方负责 visible 过滤、纹理创建与字体加载；此处只消费。
+  textLayers?: Map<number, { texture: THREE.Texture; driver?: { update(now: Date): boolean } }>;
 }
 
 // `loadSceneToThree` 返回：播放器 + 已装配的模拟器/图层 id（供调用方驱动/释放/校验）。
@@ -1426,7 +1504,7 @@ export function loadSceneToThree(
   // resize（Task 5 修复：视口必须是窗口/视口尺寸，而非场景尺寸）。viewport 由调用方显式传入
   // （createThreeSceneRenderer.render 的 vw/vh = window.innerWidth/Height）；缺省回退场景尺寸
   // （构造器缺省 viewport=scene → cover==场景尺寸无裁剪，保持默认语义）。
-  const player = new ThreeScenePlayer(canvas, sceneW, sceneH, assets.renderer);
+  const player = new ThreeScenePlayer(canvas, sceneW, sceneH, assets.renderer, assets.qualityScale);
   player.setSceneSize(sceneW, sceneH);
   const vw = viewport?.width ?? sceneW;
   const vh = viewport?.height ?? sceneH;
@@ -1435,6 +1513,8 @@ export function loadSceneToThree(
   const backgroundIds: number[] = [];
   const particleLayers: Array<{ id: number; sim: ParticleSim }> = [];
   const sims: ParticleSim[] = [];
+  // text 对象的时钟驱动（每帧判文本是否变化，变了才置 needsUpdate）。
+  const textDrivers: Array<{ texture: THREE.Texture; driver: { update(now: Date): boolean } }> = [];
 
   for (const obj of desc.objects) {
     if (obj.kind === 'image') {
@@ -1459,6 +1539,21 @@ export function loadSceneToThree(
         isolate: assets.isolate?.get(obj.id),
       });
       backgroundIds.push(id);
+    } else if (obj.kind === 'text') {
+      // text 与 image 同路径（quad + 纹理）；缺条目 = 调用方按 visible 过滤掉了该对象。
+      const layer = assets.textLayers?.get(obj.id);
+      if (!layer) continue;
+      const id = player.addBackground({
+        origin: obj.origin,
+        size: obj.size,
+        scale: obj.scale,
+        angles: obj.angles,
+        texture: layer.texture,
+        sceneW,
+        sceneH,
+      });
+      backgroundIds.push(id);
+      if (layer.driver) textDrivers.push({ texture: layer.texture, driver: layer.driver });
     } else if (obj.kind === 'particle' && obj.particle) {
       // 粒子对象：仅当调用方提供 spec + 模拟器工厂时装配（缺 spec/工厂 → 跳过该对象，绝不白屏，
       // 与缺失粒子纹理时白图兜底同语义）。
@@ -1508,6 +1603,8 @@ export function loadSceneToThree(
   // player.update(dt)（→ updateParticles(dt) 读 getter = sim.vertices()，sim 已在帧内推进）。
   player.setAnimationLoop((dt) => {
     for (const sim of sims) sim.update(dt);
+    // 时钟文本：文本变化才重绘（同分钟不重绘）→ 置 needsUpdate 触发纹理上传。
+    for (const t of textDrivers) if (t.driver.update(new Date())) t.texture.needsUpdate = true;
   });
 
   return { player, sims, backgroundIds, particleLayers };

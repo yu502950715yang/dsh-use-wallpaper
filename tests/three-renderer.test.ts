@@ -7,10 +7,13 @@
 //   - createParticleSim 工厂调用 wasm `CpuParticleSim.new`（失败 → 空 sim 兜底）；
 //   - 零背景 + 零粒子 → render 返回 false（controller 落 preview）；
 //   - dispose 释放播放器。
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
 // mock 重模块（three-renderer 的依赖）。type 导入在运行时被擦除，vi.mock 只替换运行时值。
-vi.mock('../src/client/threejs-player.js', () => ({
+// 只替换 loadSceneToThree，其余导出（如 resolvePixelRatio 的渲染像素比口径）用真实实现——
+// mock 自己重写一份公式会与生产漂移，而屏幕密度口径正是本文件多处断言的核心。
+vi.mock('../src/client/threejs-player.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/client/threejs-player.js')>()),
   loadSceneToThree: vi.fn(),
 }));
 vi.mock('../src/client/scene-renderer.js', () => ({
@@ -703,6 +706,46 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     disposeSpy.mockRestore();
   });
 
+  // 省电与画质档位（2026-09-21）：状态跨 render 保留；装配即应用；改档位要同步屏幕密度给 stage。
+  it('setPaused / setQualityScale：无 player 时记状态、装配即暂停；有 player 时即时下发并同步屏幕密度给 stage', async () => {
+    stubSettings({ glowEnabled: false });
+    stubAssetFetch(sceneWithEffects({
+      id: 13, name: 'bg', image: 'models/a.json',
+      origin: '960 540 0', scale: '1 1 1', size: '1920 1080',
+      effects: [{ file: 'effects/w/effect.json' }],
+    }), FX_FILES);
+    resolveImageTexture.mockResolvedValue(fakeTexture() as never);
+    defaultLoadWasm.mockResolvedValue(null);
+    const player = {
+      dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage: vi.fn(),
+      setGlowStage: vi.fn(),
+      renderer: {},
+      isolatedObjects: () => [{ id: 13, kind: 'background', rtWidth: 1920, rtHeight: 1080, rtTexture: {} }],
+      screenScalePx: vi.fn(() => 0.5),
+      pause: vi.fn(), resume: vi.fn(), setQualityScale: vi.fn(),
+    };
+    loadSceneToThree.mockReturnValue({ player, sims: [], backgroundIds: [0], particleLayers: [] } as never);
+    const worldSpy = vi.spyOn(ObjectEffectStage.prototype, 'setWorldSize').mockImplementation(() => {});
+    const chainsSpy = vi.spyOn(ObjectEffectStage.prototype, 'setObjectChains').mockImplementation(() => {});
+    const viewportSpy = vi.spyOn(ObjectEffectStage.prototype, 'onViewportResize').mockImplementation(() => {});
+
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    r.setPaused?.(true); // 尚无 player：只记状态
+    expect(player.pause).not.toHaveBeenCalled();
+    await r.render('2851992662', document.createElement('canvas'), null);
+    expect(player.pause).toHaveBeenCalledTimes(1); // 装配即暂停（如切到后台时换壁纸）
+
+    r.setPaused?.(false);
+    expect(player.resume).toHaveBeenCalledTimes(1);
+    r.setQualityScale?.(0.5);
+    expect(player.setQualityScale).toHaveBeenCalledWith(0.5);
+    // 对象 RT 的尺寸基准 = 屏幕密度，必须与 player 同源（哨兵值原样转发，不在这里另算）
+    expect(viewportSpy).toHaveBeenLastCalledWith(0.5);
+
+    worldSpy.mockRestore(); chainsSpy.mockRestore(); viewportSpy.mockRestore();
+    r.dispose();
+  });
+
   it('particle 对象：RT 像素 = 屏占位（世界 × 屏幕密度）、世界尺寸不随 dpr；链同样按对象 id 挂载', async () => {
     Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: 2 });
     stubAssetFetch(sceneWithEffects({
@@ -983,6 +1026,92 @@ describe('对象级效果链接线（真实 loadSceneToThree 对侧校验）', (
 
     mountSpy.mockRestore();
     warn.mockRestore();
+    r.dispose();
+  });
+});
+
+// text 对象（2026-09-21）：主路径渲染 text（时钟每帧走字）；**只对 text** 应用 visible 过滤——
+// 不接会叠出本应隐藏的时钟（2911105183 的 3 个 Clock 里有 2 个默认隐藏）。
+describe('three-renderer text 对象', () => {
+  const sceneWithText = (textObj: Record<string, unknown>) => JSON.stringify({
+    camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+    general: { orthogonalprojection: { width: 1920, height: 1080 } },
+    objects: [{
+      id: 5, name: 'Clock', origin: '960 540 0', scale: '1 1 1', size: '400 100', ...textObj,
+    }],
+  });
+  const CLOCK_SCRIPT = "var d = new Date(); var m = ['Jan.','Feb.']; var h = d.getHours(); var mi = d.getMinutes();";
+  let ctx2d: { font: string; fillStyle: string; textAlign: string; textBaseline: string; fillText: ReturnType<typeof vi.fn> };
+
+  function stubTextRender() {
+    const player = {
+      dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setObjectEffectStage: vi.fn(),
+      isolatedObjects: () => [],
+    };
+    loadSceneToThree.mockReturnValue({ player, sims: [], backgroundIds: [0], particleLayers: [] } as never);
+    return player;
+  }
+
+  beforeEach(() => {
+    ctx2d = { font: '', fillStyle: '', textAlign: '', textBaseline: '', fillText: vi.fn() };
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext')
+      .mockReturnValue(ctx2d as unknown as CanvasRenderingContext2D);
+    stubSettings({ glowEnabled: false });
+    defaultLoadWasm.mockResolvedValue(null);
+  });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('clock 脚本的 text → 下发 textLayers（纹理 + 每帧驱动），初始文本即时钟格式而非占位值', async () => {
+    stubAssetFetch(sceneWithText({ text: { value: '12:34', script: CLOCK_SCRIPT } }), {});
+    stubTextRender();
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    expect(await r.render('2851992662', document.createElement('canvas'), null)).toBe(true);
+
+    const assets = loadSceneToThree.mock.calls[0][1] as { textLayers: Map<number, { texture: unknown; driver?: { update(now: Date): boolean } }> };
+    const layer = assets.textLayers.get(5)!;
+    expect(layer.texture).toBeTruthy();
+    expect(typeof layer.driver?.update).toBe('function');
+    expect(String(ctx2d.fillText.mock.calls[0][0])).toMatch(/\d{2}:\d{2}/);
+    r.dispose();
+  });
+
+  it('visible=false 的 text 被过滤（不下发）——否则会画出本应隐藏的时钟', async () => {
+    stubAssetFetch(sceneWithText({ visible: false, text: { value: '12:34', script: CLOCK_SCRIPT } }), {});
+    stubTextRender();
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    await r.render('2851992662', document.createElement('canvas'), null);
+
+    const assets = loadSceneToThree.mock.calls[0][1] as { textLayers: Map<number, unknown> };
+    expect(assets.textLayers.size).toBe(0);
+    expect(ctx2d.fillText).not.toHaveBeenCalled();
+    r.dispose();
+  });
+
+  it('visible 用户绑定 → 按 localStorage 用户属性决定（键缺失回退绑定默认值）', async () => {
+    stubAssetFetch(sceneWithText({ visible: { user: 'clock', value: false }, text: { value: '12:34' } }), {});
+    stubTextRender();
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+
+    await r.render('2851992662', document.createElement('canvas'), null);
+    expect((loadSceneToThree.mock.calls[0][1] as { textLayers: Map<number, unknown> }).textLayers.size).toBe(0);
+
+    localStorage.setItem('we:userprop:clock', 'true');
+    await r.render('2851992662', document.createElement('canvas'), null);
+    expect((loadSceneToThree.mock.calls[1][1] as { textLayers: Map<number, unknown> }).textLayers.size).toBe(1);
+
+    localStorage.clear();
+    r.dispose();
+  });
+
+  it('非 clock 文本 → 有纹理、无驱动（静态文本不动）', async () => {
+    stubAssetFetch(sceneWithText({ text: { value: 'HELLO' } }), {});
+    stubTextRender();
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    await r.render('2851992662', document.createElement('canvas'), null);
+
+    const assets = loadSceneToThree.mock.calls[0][1] as { textLayers: Map<number, { driver?: unknown }> };
+    expect(assets.textLayers.get(5)!.driver).toBeUndefined();
+    expect(ctx2d.fillText).toHaveBeenCalledWith('HELLO', 200, 50);
     r.dispose();
   });
 });

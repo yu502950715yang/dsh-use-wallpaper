@@ -1,13 +1,14 @@
 // src/host/steam-paths.ts —— Wallpaper Engine 目录自动探测。
 // 目标：不再依赖写死的 D:/Steam 路径。从三处来源收集候选 Steam 根目录：
 //   1. 注册表 HKCU\Software\Valve\Steam 的 SteamPath（Steam 安装目录）
-//   2. libraryfolders.vdf（Steam 安装目录下，列出全部 Steam 库路径）
+//   2. libraryfolders.vdf（列出全部 Steam 库路径；新版 Steam 在 steamapps//config 下，见
+//      libraryFoldersVdfCandidates）
 //   3. 常见安装根目录（C:/Program Files (x86)/Steam、D:/Steam 等）
 // 再由每个根生成壁纸目录候选（steamapps/workshop/content/431960）与
 // 引擎目录候选（steamapps/common/wallpaper_engine），并按存在性标记。
 // I/O（注册表、vdf 读取）经参数注入，纯逻辑可单测。
 
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join, sep } from 'node:path';
 import type { SteamPathCandidate, WallpaperPathKind } from '../shared/types.js';
@@ -52,6 +53,31 @@ export function parseLibraryFoldersVdf(vdf: string): string[] {
     out.push(m[1]!.replace(/\\\\/g, '\\'));
   }
   return out;
+}
+
+// libraryfolders.vdf 的候选位置：新版 Steam 在 steamapps/（真身）与 config/（副本），
+// 旧版才在安装根。只读安装根会漏掉第二个及以后的库（装在其他盘的壁纸探测不到）。
+export function libraryFoldersVdfCandidates(steamInstall: string): string[] {
+  return [
+    join(steamInstall, 'steamapps', 'libraryfolders.vdf'),
+    join(steamInstall, 'config', 'libraryfolders.vdf'),
+    join(steamInstall, 'libraryfolders.vdf'),
+  ];
+}
+
+/** 按候选顺序读取 libraryfolders.vdf：取首个可读文本，全部不可读返回 undefined。 */
+export function readLibraryFoldersVdf(
+  steamInstall: string,
+  readFile: (path: string) => string = (p) => readFileSync(p, 'utf8'),
+): string | undefined {
+  for (const p of libraryFoldersVdfCandidates(steamInstall)) {
+    try {
+      return readFile(p);
+    } catch {
+      // 读不到 → 试下一个候选
+    }
+  }
+  return undefined;
 }
 
 /** 归一化路径分隔符（/ 与 \ 视为同一路径）后小写，Windows 大小写不敏感。 */
@@ -122,7 +148,8 @@ export function readSteamInstallPathFromRegistry(
 
 /**
  * 组装完整探测结果：收集根目录 → 生成两类候选 → 标记存在性。
- * readVdf 未注入时按 steamPath + '/libraryfolders.vdf' 尝试读取（可能不存在）。
+ * readVdf 未注入时不读 vdf（只有注册表路径与额外根）；生产侧用
+ * readLibraryFoldersVdf 提供实现（多候选路径）。
  */
 export function probeSteamPaths(deps: SteamProbeDeps): ProbeResult {
   let vdfText = deps.vdfText;

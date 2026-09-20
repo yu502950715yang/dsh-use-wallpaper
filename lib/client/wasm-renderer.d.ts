@@ -28,6 +28,8 @@ export type LoadWasm = () => Promise<WasmSceneModule | null>;
 export interface SceneRendererLike {
     render(id: string, fg: HTMLCanvasElement, bg?: HTMLCanvasElement): Promise<boolean>;
     dispose(): void;
+    setPaused?(paused: boolean): void;
+    setQualityScale?(scale: number): void;
 }
 export declare function createFallbackSceneRenderer(wasm: SceneRendererLike | null, _js: SceneRendererLike): SceneRendererLike;
 export declare function defaultLoadWasm(): Promise<WasmSceneModule | null>;

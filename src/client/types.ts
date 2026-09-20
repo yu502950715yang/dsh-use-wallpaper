@@ -20,4 +20,10 @@ export interface ClientSettings {
   glowThreshold: number;
   /** 发光强度，缺省 1.0。 */
   glowStrength: number;
+  /** 手动暂停壁纸渲染（省电；scene 与视频壁纸生效）。 */
+  paused: boolean;
+  /** 页面切到后台（不可见）时自动暂停，回来恢复。 */
+  pauseOnHidden: boolean;
+  /** 画质档位：渲染像素比倍率（1 = 原生 dpr；0.5 = 半分辨率省显存/提流畅）。 */
+  qualityScale: number;
 }

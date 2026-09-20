@@ -11,6 +11,9 @@ export interface WallpaperSettingsSectionProps {
     fetchProbe?: () => Promise<ProbeResult>;
     /** 切换/取消壁纸（index.ts 注入 controller.select，空 id = 取消） */
     onSelect?: (id: string) => void;
+    /** 运行期设置（暂停/画质档位）变更：index.ts 注入后立即下发给渲染器，无需重选壁纸 */
+    onRuntimeSettings?: (patch: Partial<ClientSettings>) => void;
 }
 export declare function setWallpaperSelectHandler(fn: (id: string) => void): void;
+export declare function setWallpaperRuntimeHandler(fn: (patch: Partial<ClientSettings>) => void): void;
 export declare function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): JSX.Element;

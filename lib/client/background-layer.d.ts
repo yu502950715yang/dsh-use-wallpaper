@@ -23,5 +23,7 @@ export interface BackgroundLayer {
     setOverlayOpacity(v: number): void;
     setBlur(enabled: boolean, radius: number): void;
     setChatFg(color: string): void;
+    /** 省电：暂停/恢复视频壁纸播放（scene 由渲染器负责；web 壁纸在 iframe 里无法受控）。 */
+    setPaused(paused: boolean): void;
 }
 export declare function createBackgroundLayer(root: HTMLElement): BackgroundLayer;

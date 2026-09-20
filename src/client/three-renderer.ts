@@ -16,10 +16,11 @@
 // 已知边界（Task 5 合约）：
 //   - 粒子 billboard 不做 quad 自旋（`build_instance_vertices` 的 10 浮点不含 rotation）；
 //     粒子**位置/尺寸/颜色/alpha/帧**随 sim 每帧推进，飘动可见（本任务核心）。
-//   - 可视性（visible.user/script 绑定）本任务不做过滤——四壁纸对象均为可见；
+//   - 可视性（visible.user/script 绑定）**只对 text 对象生效**（2026-09-21）；image/particle 的
+//     visible 仍未过滤（全库 22 个非平凡绑定里 16 个在这两类上）；
 //     loadSceneToThree 沿用「缺物件 spec/工厂则跳过该粒子对象」语义，绝不全屏失败。
 import type { Texture } from 'three';
-import { loadSceneToThree, type LoadedParticleAssets, type ParticleSim, type ThreeSceneLoadResult } from './threejs-player.js';
+import { loadSceneToThree, resolvePixelRatio, type LoadedParticleAssets, type ParticleSim, type ThreeSceneLoadResult } from './threejs-player.js';
 import { parseSceneJson } from './scene-json.js';
 import { resolveImageTexture } from './scene-renderer.js';
 import { loadTexTexture } from './tex-loader.js';
@@ -31,8 +32,11 @@ import {
 } from './object-range.js';
 import { ObjectEffectStage } from './object-effects.js';
 import { createGlowStage, type GlowStage } from './glow-stage.js';
-import { readClientSettings } from './settings.js';
+import { readClientSettings, getUserPropertyValue } from './settings.js';
 import { resolveEffectChain, type CompiledEffectPass } from './shader/effect-chain.js';
+import { createTextTexture, textCanvasSize, createClockDriver } from './text-object.js';
+import { detectScriptPattern, formatClockText } from './script-patterns.js';
+import { resolveVisibility } from './visibility.js';
 
 // wasm `CpuParticleSim` 的构造器形态（wasm-bindgen 静态 `new`；`ParticleSim` 接口见
 // threejs-player.ts：update/vertices/frame_count/set_frame_count/particle_count/free）。
@@ -55,6 +59,35 @@ function warnOnce(key: string, message: string): void {
   if (warnedKeys.has(key)) return;
   warnedKeys.add(key);
   console.warn(`[wallpaper-engine] ${message}`);
+}
+
+// WE 字体（pkg 内 otf/ttf）经 FontFace 加载后按家族名绘制；失败或环境不支持（jsdom 无 FontFace）
+// → 回退系统 sans-serif。按「壁纸 id + 字体路径」缓存：同一壁纸的多个 text 对象共用一次加载。
+const FONT_CACHE = new Map<string, Promise<string | null>>();
+let fontSeq = 0;
+async function loadWallpaperFont(wallpaperId: string, font: string | undefined): Promise<string | undefined> {
+  if (typeof font !== 'string' || !font) return undefined;
+  if (!/\.(otf|ttf|ttc|woff2?)$/i.test(font)) return undefined; // 家族名直接用
+  if (typeof FontFace === 'undefined' || typeof document === 'undefined' || !document.fonts) return undefined;
+  const key = `${wallpaperId}:${font}`;
+  let pending = FONT_CACHE.get(key);
+  if (!pending) {
+    pending = (async () => {
+      try {
+        const r = await fetch(`/wallpapers/scene/${wallpaperId}/asset?name=${encodeURIComponent(font)}`);
+        if (!r.ok) return null;
+        const family = `we-font-${++fontSeq}`;
+        const face = new FontFace(family, await r.arrayBuffer());
+        await face.load();
+        document.fonts.add(face);
+        return family;
+      } catch {
+        return null; // 字体取不到/非法 → 上层回退默认字体（不阻断渲染）
+      }
+    })();
+    FONT_CACHE.set(key, pending);
+  }
+  return (await pending) ?? undefined;
 }
 
 // 粒子混合模式：**优先读材质 json 的 `passes[0].blending`**（WE 权威字段），缺失时才回退按
@@ -148,6 +181,9 @@ export function createThreeSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneR
   let currentStage: ObjectEffectStage | null = null;
   // 本次装配的应用级 Glow stage（同上：闭包持有，teardown 释放）。
   let currentGlow: GlowStage | null = null;
+  // 省电与画质档位（跨 render 有效）：render 内读设置同步，装配时就地应用。
+  let paused = false;
+  let qualityScale = 1;
   // window.resize 监听：窗口尺寸变化时按新窗口比例重推 cover（对齐 wasm 窗口视口语义）。
   let onWindowResize: (() => void) | null = null;
   // 本次装配的背景纹理：teardown 时显式 dispose（视频纹理的 `<video>`/Blob URL 清理挂在
@@ -231,6 +267,38 @@ export function createThreeSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneR
             });
           }
         }
+        // ── text 对象（2026-09-21）────────────────────────────────────────────────
+        // **只对 text** 应用 visible（布尔 / 用户属性 / 脚本绑定）：本库 20 个 text 全是脚本时钟，
+        // 其中数个默认隐藏（2911105183 的 3 个 Clock 有 2 个 value=false），不过滤就会叠出多个时钟。
+        // image/particle 的可见性不在本次范围（存量行为不变）。
+        const userProps: Record<string, unknown> = {};
+        for (const obj of desc.objects) {
+          if (obj.visible?.kind === 'user' && obj.visible.key) {
+            userProps[obj.visible.key] = getUserPropertyValue(obj.visible.key);
+          }
+        }
+        const textLayers = new Map<number, { texture: Texture; driver?: { update(now: Date): boolean } }>();
+        for (const obj of desc.objects) {
+          if (obj.kind !== 'text') continue;
+          if (!resolveVisibility(obj, userProps)) continue;
+          const size = textCanvasSize(obj.text, obj.pointsize, obj.size);
+          const opts = {
+            font: await loadWallpaperFont(id, obj.font),
+            pointsize: obj.pointsize,
+            color: obj.color,
+            width: size.w,
+            height: size.h,
+          };
+          const props = obj.scriptProperties ?? {};
+          const isClock = obj.script ? detectScriptPattern(obj.script) === 'clock' : false;
+          const initial = isClock ? formatClockText(new Date(), props) : obj.text;
+          const texture = createTextTexture(initial, opts);
+          textLayers.set(obj.id, {
+            texture,
+            // 时钟：每帧判文本是否变化（同分钟不重绘），变了由 player 置 needsUpdate 上传。
+            driver: isClock ? createClockDriver(texture.image as HTMLCanvasElement, opts, props, initial) : undefined,
+          });
+        }
         // `createParticleSim`：wasm CpuParticleSim 构造器（测试可注入 loadWasm 得到假模块）。
         // 模块无 CpuParticleSim（如未编译 render feature）→ undefined → loadSceneToThree
         // 自动跳过粒子对象（只渲染背景）。
@@ -264,7 +332,14 @@ export function createThreeSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneR
           return new Uint8Array(await r.arrayBuffer());
         };
         const effectChains = await collectObjectEffectChains(desc, loadFile);
-        const dpr = typeof window !== 'undefined' && window.devicePixelRatio ? window.devicePixelRatio : 1;
+        // 插件设置：一次读取。画质档位必须在算屏幕密度**之前**拿到——对象 RT 的尺寸基准与画布
+        // 缓冲必须用同一个渲染像素比（两者口径不一致会让整层模糊，见 AGENT.md §5.15/§5.21）。
+        const settings = await readClientSettings();
+        qualityScale = settings.qualityScale ?? 1;
+        const dpr = resolvePixelRatio(
+          typeof window !== 'undefined' && window.devicePixelRatio ? window.devicePixelRatio : 1,
+          qualityScale,
+        );
         // 屏幕密度（设备像素 / 世界单位）：对象 RT 尺寸的**唯一基准**，由主相机同一套 cover 语义
         // 算出（object-range.screenScalePx 与 player.applyCover 共用 coverRange：同一份 scene 尺寸、
         // 视口与 dpr ⇒ 同一个数）。窗口 resize 时用 `player.screenScalePx()` 重算同一个量
@@ -329,7 +404,7 @@ export function createThreeSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneR
         // viewport 传真实窗口/视口尺寸（vw/vh）：ThreeScenePlayer 构造器已不再把 canvas 重置回场景
         // 尺寸，此处显式传给 loadSceneToThree → player.resize(vw,vh) 使 cover 相机按窗口宽高比裁剪
         // （Task5 修复：窗口比例 ≠ 场景比例时背景 cover 裁切而非 object-fit:fill 拉伸）。
-        const result = loadSceneToThree(sceneJson, { backgroundTextures, particles, createParticleSim, isolate }, fg, {
+        const result = loadSceneToThree(sceneJson, { backgroundTextures, particles, createParticleSim, isolate, textLayers, qualityScale }, fg, {
           width: vw,
           height: vh,
         });
@@ -382,7 +457,6 @@ export function createThreeSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneR
         // 应用级 Glow：按插件设置装配（关闭时零资源、帧序与输出零回归）。⚠️ 必须在 isolate 块
         // **之外**——Glow 与「有无对象被隔离」无关；尺寸用画布缓冲（loadSceneToThree 内部已
         // player.resize(vw,vh) 按 dpr 设过），故 resize 由 player.resize 内部单点同步，此处不重复。
-        const settings = await readClientSettings();
         currentGlow?.dispose();
         currentGlow = settings.glowEnabled
           ? createGlowStage(fg.width, fg.height, {
@@ -391,6 +465,8 @@ export function createThreeSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneR
             })
           : null;
         result.player.setGlowStage(currentGlow);
+        // 省电：装配时若已处于暂停态（如切到后台时换壁纸）→ 直接不排程。
+        if (paused) result.player.pause();
         // 窗口尺寸变化 → 按新窗口比例重推 cover（对齐 wasm 路径的 window.innerWidth/Height 语义），
         // 并把新的**屏幕密度**同步给效果链编排器（隔离对象 RT 随视口重设）。
         // ⚠️ 密度取自 `player.screenScalePx()`（player 内部与 applyCover 同一套 state，
@@ -418,6 +494,20 @@ export function createThreeSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneR
         teardown();
         return false;
       }
+    },
+    // 省电：暂停/恢复当前播放器的帧循环（无播放器时只记状态，下次装配时就地应用）。
+    setPaused(value: boolean) {
+      paused = value;
+      if (!current) return;
+      if (value) current.player.pause();
+      else current.player.resume();
+    },
+    // 画质档位：改渲染像素比后重推画布缓冲，并把新屏幕密度同步给效果链编排器（对象 RT 随其重设）。
+    setQualityScale(scale: number) {
+      qualityScale = scale;
+      if (!current) return;
+      current.player.setQualityScale(scale);
+      currentStage?.onViewportResize(current.player.screenScalePx());
     },
     // 释放当前 three 播放器 + wasm 模拟器（切壁纸/卸载时防泄漏）。
     dispose() {

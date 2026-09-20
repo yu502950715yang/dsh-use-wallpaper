@@ -4,7 +4,7 @@ import { createWallpaperController } from './wallpaper-controller.js';
 import { renderScene } from './scene-renderer.js';
 import { createWasmSceneRenderer, createFallbackSceneRenderer } from './wasm-renderer.js';
 import { createThreeSceneRenderer } from './three-renderer.js';
-import { WallpaperSettingsSection, setWallpaperSelectHandler } from './settings-section.js';
+import { WallpaperSettingsSection, setWallpaperSelectHandler, setWallpaperRuntimeHandler } from './settings-section.js';
 import { readClientSettings, writeClientSettings, getUserPropertyValue, DEFAULTS, setSettingsCtx } from './settings.js';
 import type { BackgroundPlan, ClientSettings } from './types.js';
 
@@ -33,6 +33,9 @@ export function bootstrap(ctx?: any): void {
   let layer: ReturnType<typeof createBackgroundLayer> | null = null;
   let controller: ReturnType<typeof createWallpaperController> | null = null;
   let settings: ClientSettings = { ...DEFAULTS };
+  // three.js 场景渲染器：bootstrap 创建一次、跨壁纸复用（内部每次 render 重建 player）。
+  // 这里持有引用，是为了把「省电 / 画质档位」直接下发——它们不在 controller 的渲染接口上。
+  const sceneRenderer = createThreeSceneRenderer();
   const applySettingsToLayer = (s: ClientSettings) => {
     if (!layer) return;
     layer.setOverlayOpacity(s.overlayOpacity);
@@ -40,6 +43,14 @@ export function bootstrap(ctx?: any): void {
     if (!s.kenBurns) {
       layer.root.querySelectorAll('.wp-kenburns').forEach((el) => el.classList.remove('wp-kenburns'));
     }
+  };
+  // 省电与画质档位：每次按「设置 + 当前可见性」重算（不做增量维护，避免状态漂移）。
+  const applyRuntimeSettings = (s: ClientSettings) => {
+    const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
+    const shouldPause = s.paused || (s.pauseOnHidden && hidden);
+    sceneRenderer.setPaused?.(shouldPause);
+    sceneRenderer.setQualityScale?.(s.qualityScale);
+    layer?.setPaused(shouldPause);
   };
   const selectWallpaper = (id: string) => {
     settings = { ...settings, selectedWallpaperId: id };
@@ -57,7 +68,7 @@ export function bootstrap(ctx?: any): void {
       fetchList: async () => (await fetch('/wallpapers/list')).json(),
       // Task 5：three.js 播放路径（背景 + 粒子）设为**默认**；wasm/WebGPU 路径保留作备用。
       // three 创建失败时回退到 wasm（three-renderer 内部/controller 兜底），避免白屏。
-      sceneRenderer: createThreeSceneRenderer(),
+      sceneRenderer,
       // Task 8 回退链（spec §7 第 1/2/3 条，三级语义）：
       //   1. 无 WebGPU → createWasmSceneRenderer() 返回 null → 直接用 JS/Three.js 渲染器；
       //   2. wasm 加载/初始化失败（render resolve false）→ 组合层降级调用 JS 渲染器；
@@ -66,10 +77,16 @@ export function bootstrap(ctx?: any): void {
     });
     // 设置面板（settings-section）的壁纸切换/取消经共享 handler 委托 controller
     setWallpaperSelectHandler((id: string) => selectWallpaper(id));
-    // 读回已保存设置并应用到 layer（opacity/blur/kenBurns）
+    // 设置面板改省电/画质档位 → 立即下发（不必重选壁纸）
+    setWallpaperRuntimeHandler((patch) => {
+      settings = { ...settings, ...patch };
+      applyRuntimeSettings(settings);
+    });
+    // 读回已保存设置并应用到 layer（opacity/blur/kenBurns）与运行期项（暂停/画质档位）
     void readClientSettings().then((s) => {
       settings = s;
       applySettingsToLayer(s);
+      applyRuntimeSettings(s);
       // I1：恢复已保存的选中壁纸 —— 先 load 保证列表存在，再 select
       if (s.selectedWallpaperId && controller) {
         void controller.load().then(() => {
@@ -78,6 +95,10 @@ export function bootstrap(ctx?: any): void {
       }
     });
   };
+  // 切到后台/最小化 → 按设置自动暂停（省电），回到前台恢复。
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => applyRuntimeSettings(settings));
+  }
   // 延迟到 DOM 就绪
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', mount, { once: true });

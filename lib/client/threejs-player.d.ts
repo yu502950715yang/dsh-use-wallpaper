@@ -32,6 +32,7 @@ export interface ObjectEffectStage {
     bindOutputs(): void;
     advance(time: number): void;
 }
+export declare function resolvePixelRatio(devicePixelRatio: number, qualityScale: number): number;
 export declare class ThreeScenePlayer {
     readonly renderer: THREE.WebGLRenderer;
     readonly scene: THREE.Scene;
@@ -41,7 +42,12 @@ export declare class ThreeScenePlayer {
     private sceneHeight;
     private viewWidth;
     private viewHeight;
-    private readonly pixelRatio;
+    private pixelRatio;
+    private qualityScale;
+    private paused;
+    private pausedAt;
+    private pausedTotal;
+    private loopFn;
     private lastTime;
     private backgroundEntries;
     private nextBackgroundId;
@@ -51,13 +57,23 @@ export declare class ThreeScenePlayer {
     private objectEffectStage;
     private glowStage;
     private readonly startedAt;
-    constructor(canvas: HTMLCanvasElement, width: number, height: number, renderer?: THREE.WebGLRenderer);
+    constructor(canvas: HTMLCanvasElement, width: number, height: number, renderer?: THREE.WebGLRenderer, qualityScale?: number);
     resize(width: number, height: number): void;
+    /** 画质档位：走 resize 路径重推画布缓冲与屏幕密度（对象 RT 的基准随之变化）。 */
+    setQualityScale(scale: number): void;
+    /** 暂停帧循环（省电）：停 RAF 排程；暂停时长不计入 elapsedSeconds。 */
+    pause(): void;
+    /** 恢复帧循环（暂停期间的时间被扣除，恢复后 g_Time 不跳变）。 */
+    resume(): void;
+    isPaused(): boolean;
+    private devicePixelRatio;
+    private nowMs;
     setSceneSize(width: number, height: number): void;
     screenScalePx(): number;
     private applyCover;
     update(_dt: number): void;
     setAnimationLoop(fn?: (dt: number) => void): void;
+    private installLoop;
     render(): void;
     setObjectEffectStage(stage: ObjectEffectStage | null): void;
     /** 装配应用级 Glow（null = 关闭）。关闭时帧序与本方法加入前逐字相同。 */
@@ -141,6 +157,13 @@ export interface SceneAssets {
         rtHeight: number;
         worldW: number;
         worldH: number;
+    }>;
+    qualityScale?: number;
+    textLayers?: Map<number, {
+        texture: THREE.Texture;
+        driver?: {
+            update(now: Date): boolean;
+        };
     }>;
 }
 export interface ThreeSceneLoadResult {

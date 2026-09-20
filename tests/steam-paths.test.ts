@@ -10,6 +10,8 @@ import {
   toCandidates,
   probeSteamPaths,
   readSteamInstallPathFromRegistry,
+  libraryFoldersVdfCandidates,
+  readLibraryFoldersVdf,
   type ProbeResult,
 } from '../src/host/steam-paths.js';
 
@@ -110,6 +112,45 @@ describe('readSteamInstallPathFromRegistry', () => {
     expect(readSteamInstallPathFromRegistry(() => ({ status: 0, stdout: 'nothing here' }))).toBeUndefined();
     expect(readSteamInstallPathFromRegistry(() => ({ status: 1, stdout: '' }))).toBeUndefined();
     expect(readSteamInstallPathFromRegistry(() => null)).toBeUndefined();
+  });
+});
+
+// 新版 Steam 把 libraryfolders.vdf 从安装根移到了 steamapps/（真身）与 config/（副本）；
+// 只读安装根会拿不到第二个及以后的库（装在别的盘的壁纸探测不到）。
+describe('libraryFoldersVdfCandidates / readLibraryFoldersVdf', () => {
+  it('候选顺序：steamapps → config → 安装根（新版优先，旧版兜底）', () => {
+    expect(libraryFoldersVdfCandidates('D:\\Steam')).toEqual([
+      join('D:\\Steam', 'steamapps', 'libraryfolders.vdf'),
+      join('D:\\Steam', 'config', 'libraryfolders.vdf'),
+      join('D:\\Steam', 'libraryfolders.vdf'),
+    ]);
+  });
+
+  it('取首个可读候选：steamapps 可读时不再尝试后续', () => {
+    const tried: string[] = [];
+    const read = (p: string) => {
+      tried.push(p);
+      return '"libraryfolders"{"0"{"path""D:\\\\Steam"}}';
+    };
+    expect(readLibraryFoldersVdf('D:\\Steam', read)).toContain('libraryfolders');
+    expect(tried).toEqual([join('D:\\Steam', 'steamapps', 'libraryfolders.vdf')]);
+  });
+
+  it('steamapps 缺失时回退 config，再回退安装根', () => {
+    const read = (p: string) => {
+      if (p === join('D:\\Steam', 'config', 'libraryfolders.vdf')) return 'config-vdf';
+      throw new Error('ENOENT');
+    };
+    expect(readLibraryFoldersVdf('D:\\Steam', read)).toBe('config-vdf');
+    const readRoot = (p: string) => {
+      if (p === join('D:\\Steam', 'libraryfolders.vdf')) return 'legacy-vdf';
+      throw new Error('ENOENT');
+    };
+    expect(readLibraryFoldersVdf('D:\\Steam', readRoot)).toBe('legacy-vdf');
+  });
+
+  it('全部候选不可读时返回 undefined（不抛）', () => {
+    expect(readLibraryFoldersVdf('D:\\Steam', () => { throw new Error('ENOENT'); })).toBeUndefined();
   });
 });
 

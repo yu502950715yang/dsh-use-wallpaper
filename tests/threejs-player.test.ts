@@ -6,7 +6,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
-import { ThreeScenePlayer, loadSceneToThree, frameCountFromDims, textureFrameCount, textureFrameGrid, specMaxcount, particleCapacity, specEmitterOrigin, simEmitterOffset, BLACKMYTH_OBJ_SCALE, DEFAULT_PARTICLE_CAPACITY, MAX_PARTICLE_CAPACITY } from '../src/client/threejs-player.js';
+import { ThreeScenePlayer, loadSceneToThree, resolvePixelRatio, frameCountFromDims, textureFrameCount, textureFrameGrid, specMaxcount, particleCapacity, specEmitterOrigin, simEmitterOffset, BLACKMYTH_OBJ_SCALE, DEFAULT_PARTICLE_CAPACITY, MAX_PARTICLE_CAPACITY } from '../src/client/threejs-player.js';
 import { coverRange } from '../src/client/scene-renderer.js';
 import { createCompositeGeometry, screenScalePx } from '../src/client/object-range.js';
 
@@ -43,6 +43,157 @@ function makePlayer(w = 1920, h = 1080, mock = createMockRenderer()) {
   const player = new ThreeScenePlayer(canvas, w, h, mock as unknown as THREE.WebGLRenderer);
   return { player, mock };
 }
+
+// text 对象（2026-09-21）：与 image 同路径渲染成背景 quad；clock 由 driver 每帧判断文本变化，
+// 变了才重绘 canvas 并置 texture.needsUpdate（同分钟不重绘，省开销）。
+describe('loadSceneToThree text 对象', () => {
+  const scene = JSON.stringify({
+    camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+    general: { orthogonalprojection: { width: 1920, height: 1080 } },
+    objects: [
+      { id: 7, name: 'Clock', origin: '960 540 0', scale: '1 1 1', size: '400 100', text: { value: '12:34' } },
+    ],
+  });
+  const makeTextAssets = (layer?: { texture: THREE.Texture; driver?: { update(now: Date): boolean } }) => ({
+    renderer: createMockRenderer() as unknown as THREE.WebGLRenderer,
+    textLayers: new Map(layer ? [[7, layer]] : []),
+  });
+
+  it('textLayers 提供纹理 → 渲染为背景 quad 并计入 backgroundIds', () => {
+    const tex = new THREE.DataTexture(new Uint8Array(4), 2, 2);
+    const result = loadSceneToThree(scene, makeTextAssets({ texture: tex }), document.createElement('canvas'));
+    expect(result.backgroundIds).toHaveLength(1);
+  });
+
+  it('textLayers 无该对象条目 → 跳过（visible=false 由调用方过滤，player 不兜底）', () => {
+    const result = loadSceneToThree(scene, makeTextAssets(), document.createElement('canvas'));
+    expect(result.backgroundIds).toHaveLength(0);
+  });
+
+  it('帧循环驱动 clock：driver 返回 true 时置 texture.needsUpdate（version 递增）', () => {
+    const tex = new THREE.DataTexture(new Uint8Array(4), 2, 2);
+    const driver = { update: vi.fn(() => true) };
+    const assets = makeTextAssets({ texture: tex, driver });
+    loadSceneToThree(scene, assets, document.createElement('canvas'));
+    const before = tex.version;
+    (assets.renderer as unknown as { _getLoop: () => (() => void) | null })._getLoop()!();
+    expect(driver.update).toHaveBeenCalledTimes(1);
+    expect(tex.version).toBeGreaterThan(before);
+  });
+
+  it('driver 返回 false（同一分钟）时不动纹理', () => {
+    const tex = new THREE.DataTexture(new Uint8Array(4), 2, 2);
+    const driver = { update: vi.fn(() => false) };
+    const assets = makeTextAssets({ texture: tex, driver });
+    loadSceneToThree(scene, assets, document.createElement('canvas'));
+    const before = tex.version;
+    (assets.renderer as unknown as { _getLoop: () => (() => void) | null })._getLoop()!();
+    expect(tex.version).toBe(before);
+  });
+});
+
+// 省电与画质档位（2026-09-21）：暂停门控 RAF + 渲染像素比 = 设备像素比 × 画质档位。
+// 画质档位必须与 three-renderer 挂载期算屏幕密度用的是**同一个数**，否则对象 RT 尺寸口径
+// 与画布缓冲不一致（AGENT.md §5.15/§5.21：曾因此整层锐度 −52%）。
+describe('ThreeScenePlayer 暂停与画质档位', () => {
+  it('resolvePixelRatio：设备像素比 × 档位，非法输入回退 1', () => {
+    expect(resolvePixelRatio(2, 1)).toBe(2);
+    expect(resolvePixelRatio(2, 0.5)).toBe(1);
+    expect(resolvePixelRatio(1.5, 1.5)).toBeCloseTo(2.25, 10);
+    expect(resolvePixelRatio(0, 1)).toBe(1);
+    expect(resolvePixelRatio(Number.NaN, 1)).toBe(1);
+    expect(resolvePixelRatio(2, 0)).toBe(2);
+    expect(resolvePixelRatio(2, -1)).toBe(2);
+  });
+
+  it('构造接受画质档位：pixelRatio 与画布缓冲都按 dpr×档位', () => {
+    const orig = (window as { devicePixelRatio?: number }).devicePixelRatio;
+    Object.defineProperty(window, 'devicePixelRatio', { value: 2, configurable: true });
+    const canvas = document.createElement('canvas');
+    const mock = createMockRenderer();
+    const player = new ThreeScenePlayer(canvas, 1920, 1080, mock as unknown as THREE.WebGLRenderer, 0.5);
+    player.resize(1600, 900);
+    expect(mock.setPixelRatio).toHaveBeenLastCalledWith(1);
+    expect(canvas.width).toBe(1600);
+    expect(canvas.height).toBe(900);
+    Object.defineProperty(window, 'devicePixelRatio', { value: orig, configurable: true });
+  });
+
+  it('setQualityScale 走 resize 路径重推缓冲与屏幕密度（对象 RT 基准随之变化）', () => {
+    const orig = (window as { devicePixelRatio?: number }).devicePixelRatio;
+    Object.defineProperty(window, 'devicePixelRatio', { value: 2, configurable: true });
+    const { player, mock } = makePlayer();
+    player.resize(1600, 900);
+    const before = player.screenScalePx();
+    expect(player.canvas.width).toBe(3200);
+    player.setQualityScale(0.5);
+    expect(mock.setPixelRatio).toHaveBeenLastCalledWith(1);
+    expect(player.canvas.width).toBe(1600);
+    expect(player.canvas.height).toBe(900);
+    // 屏幕密度 = 设备像素/世界单位，必须同步减半（否则对象 RT 仍按旧密度建 → 口径漂移）
+    expect(player.screenScalePx()).toBeCloseTo(before / 2, 10);
+    player.setQualityScale(1);
+    expect(player.canvas.width).toBe(3200);
+    expect(player.screenScalePx()).toBeCloseTo(before, 10);
+    Object.defineProperty(window, 'devicePixelRatio', { value: orig, configurable: true });
+  });
+
+  it('resize 重读 devicePixelRatio（窗口拖到另一块不同缩放比例的显示器）', () => {
+    const orig = (window as { devicePixelRatio?: number }).devicePixelRatio;
+    Object.defineProperty(window, 'devicePixelRatio', { value: 1, configurable: true });
+    const { player } = makePlayer();
+    player.resize(1600, 900);
+    expect(player.canvas.width).toBe(1600);
+    // 构造后设备像素比变化（跨屏拖动）→ 下一次 resize 必须按新值重推
+    Object.defineProperty(window, 'devicePixelRatio', { value: 2, configurable: true });
+    player.resize(1600, 900);
+    expect(player.canvas.width).toBe(3200);
+    Object.defineProperty(window, 'devicePixelRatio', { value: orig, configurable: true });
+  });
+
+  it('pause 停止 RAF 排程，resume 重新排程（同一帧回调）', () => {
+    const { player, mock } = makePlayer();
+    const fn = vi.fn();
+    player.setAnimationLoop(fn);
+    const loop = mock._getLoop();
+    expect(typeof loop).toBe('function');
+    player.pause();
+    expect(player.isPaused()).toBe(true);
+    expect(mock.setAnimationLoop).toHaveBeenLastCalledWith(null);
+    // 暂停期间即使外部仍调用帧体也不推进（防御：排程已停，但不依赖 three 的实现细节）
+    loop!();
+    expect(fn).not.toHaveBeenCalled();
+    player.resume();
+    expect(player.isPaused()).toBe(false);
+    expect(mock.setAnimationLoop).toHaveBeenLastCalledWith(expect.any(Function));
+    mock._getLoop()!();
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it('暂停期间 setAnimationLoop 不排程（挂载即暂停的场景）', () => {
+    const { player, mock } = makePlayer();
+    player.pause();
+    player.setAnimationLoop(() => {});
+    expect(mock.setAnimationLoop).toHaveBeenLastCalledWith(null);
+    player.resume();
+    expect(mock.setAnimationLoop).toHaveBeenLastCalledWith(expect.any(Function));
+  });
+
+  it('暂停冻结 elapsedSeconds（恢复后不跳帧，g_Time 驱动的滚动不瞬移）', () => {
+    const nowSpy = vi.spyOn(performance, 'now');
+    nowSpy.mockReturnValue(1000);
+    const { player } = makePlayer();
+    nowSpy.mockReturnValue(2000);
+    expect(player.elapsedSeconds()).toBeCloseTo(1, 5);
+    player.pause();
+    nowSpy.mockReturnValue(9000); // 暂停 7 秒
+    expect(player.elapsedSeconds()).toBeCloseTo(1, 5);
+    player.resume();
+    nowSpy.mockReturnValue(9500);
+    expect(player.elapsedSeconds()).toBeCloseTo(1.5, 5);
+    nowSpy.mockRestore();
+  });
+});
 
 describe('ThreeScenePlayer', () => {
   it('构造后 scene / camera / renderer 均存在（scene/camera 为真实 THREE 对象）', () => {

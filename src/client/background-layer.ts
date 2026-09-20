@@ -64,6 +64,8 @@ export interface BackgroundLayer {
   setOverlayOpacity(v: number): void;
   setBlur(enabled: boolean, radius: number): void;
   setChatFg(color: string): void;
+  /** 省电：暂停/恢复视频壁纸播放（scene 由渲染器负责；web 壁纸在 iframe 里无法受控）。 */
+  setPaused(paused: boolean): void;
 }
 
 export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
@@ -78,8 +80,11 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
   // frameToken：每次背景变更递增，作废尚未落地的 web iframe（另一主机名的探活是异步的）
   let frameToken = 0;
   let altOriginProbe: Promise<string | null> | null = null;
+  // 省电状态与当前视频元素（setPaused 对后者 pause/play）。
+  let paused = false;
+  let currentVideo: HTMLVideoElement | null = null;
 
-  function clear() { frameToken += 1; fill.replaceChildren(); }
+  function clear() { frameToken += 1; fill.replaceChildren(); currentVideo = null; }
 
   // 探活：另一主机名上同一路径能取到即视为可达。no-cors 读不到响应体（跨源），
   // 故只有网络层失败才 reject —— 401/404 也算「该主机名可达」。
@@ -132,6 +137,8 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
       video.muted = true;
       video.playsInline = true;
       fill.appendChild(video);
+      currentVideo = video;
+      if (paused) video.pause(); // 暂停态下换壁纸：新视频同样不播
       markActive();
     },
     showWeb(url) {
@@ -181,6 +188,13 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
     setChatFg(color) {
       if (!color) document.documentElement.style.removeProperty('--wp-chat-fg');
       else document.documentElement.style.setProperty('--wp-chat-fg', color);
+    },
+    // 省电：视频壁纸停/续播（web 壁纸在 iframe 内，插件无法控制）。
+    setPaused(value) {
+      paused = value;
+      if (!currentVideo) return;
+      if (value) currentVideo.pause();
+      else void currentVideo.play().catch(() => {});
     },
   };
 }

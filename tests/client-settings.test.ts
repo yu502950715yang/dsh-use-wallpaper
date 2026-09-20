@@ -8,6 +8,7 @@ const FULL_DEFAULTS = {
   selectedWallpaperId: '', wallpaperDir: '', weAssetsDir: '',
   overlayOpacity: 0.35, blurEnabled: false, blurRadius: 12, kenBurns: true,
   glowEnabled: true, glowThreshold: 0.65, glowStrength: 1.0,
+  paused: false, pauseOnHidden: true, qualityScale: 1,
 };
 
 afterEach(() => { vi.unstubAllGlobals(); setSettingsCtx(null); });
@@ -35,7 +36,7 @@ describe('readClientSettings (ctx.remote.settings.describe)', () => {
     stubRemote({ describe });
     const s = await readClientSettings();
     // 命名空间未给的字段由 DEFAULTS 补齐（含 Glow 三字段）
-    expect(s).toEqual({ selectedWallpaperId: '42', wallpaperDir: 'D:/Steam/w', weAssetsDir: 'D:/WE', overlayOpacity: 0.5, blurEnabled: true, blurRadius: 20, kenBurns: false, glowEnabled: true, glowThreshold: 0.65, glowStrength: 1.0 });
+    expect(s).toEqual({ selectedWallpaperId: '42', wallpaperDir: 'D:/Steam/w', weAssetsDir: 'D:/WE', overlayOpacity: 0.5, blurEnabled: true, blurRadius: 20, kenBurns: false, glowEnabled: true, glowThreshold: 0.65, glowStrength: 1.0, paused: false, pauseOnHidden: true, qualityScale: 1 });
     expect(describe).toHaveBeenCalledTimes(1);
   });
   it('命名空间缺失 → 回退默认值', async () => {

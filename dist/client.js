@@ -667,6 +667,9 @@ body[data-ds-dark-theme][data-we-wallpaper] [data-question-key] section{
 .wss-dir-row input{border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;padding:6px 10px;font:inherit;font-size:12px}
 /* \u5149\u6655\u5F00\u5173\u884C\uFF1A\u590D\u9009\u6846\u4E0E\u6587\u5B57\u4E0E\u5176\u4ED6\u63A7\u4EF6\uFF08.wss-dir-row\uFF09\u5DE6\u5BF9\u9F50\u3001\u540C\u4E00\u884C\u5C45\u4E2D */
 .wss-glow-row{display:flex;align-items:center;gap:6px;margin-bottom:8px;font-size:12px;color:var(--dsw-alias-label-secondary,var(--wp-text))}
+/* \u7701\u7535/\u753B\u8D28\u6863\u4F4D\u533A\u5757\uFF1A\u590D\u7528\u5149\u6655\u884C\u7684\u6392\u7248\uFF0C\u884C\u8DDD\u66F4\u7D27 */
+.wss-power{display:flex;flex-direction:column;gap:2px;margin:4px 0 10px}
+.wss-quality{border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;padding:4px 8px;font:inherit;font-size:12px}
 .wss-dir-actions{display:flex;gap:8px}
 .wss-probe-result{border-top:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));padding-top:10px;margin-top:4px}
 .wss-candidate{display:flex;align-items:center;gap:8px;padding:4px 0}
@@ -909,9 +912,12 @@ function createBackgroundLayer(root) {
   root.appendChild(overlay);
   let frameToken = 0;
   let altOriginProbe = null;
+  let paused = false;
+  let currentVideo = null;
   function clear() {
     frameToken += 1;
     fill.replaceChildren();
+    currentVideo = null;
   }
   function probeAlternateOrigin(altOrigin, wallpaperPath) {
     if (typeof fetch !== "function") return Promise.resolve(null);
@@ -953,6 +959,8 @@ function createBackgroundLayer(root) {
       video.muted = true;
       video.playsInline = true;
       fill.appendChild(video);
+      currentVideo = video;
+      if (paused) video.pause();
       markActive();
     },
     showWeb(url) {
@@ -999,6 +1007,14 @@ function createBackgroundLayer(root) {
     setChatFg(color) {
       if (!color) document.documentElement.style.removeProperty("--wp-chat-fg");
       else document.documentElement.style.setProperty("--wp-chat-fg", color);
+    },
+    // 省电：视频壁纸停/续播（web 壁纸在 iframe 内，插件无法控制）。
+    setPaused(value) {
+      paused = value;
+      if (!currentVideo) return;
+      if (value) currentVideo.pause();
+      else void currentVideo.play().catch(() => {
+      });
     }
   };
 }
@@ -19445,6 +19461,13 @@ var CompressedTexture = class extends Texture {
     this.generateMipmaps = false;
   }
 };
+var CanvasTexture = class extends Texture {
+  constructor(canvas, mapping, wrapS, wrapT, magFilter, minFilter, format, type, anisotropy) {
+    super(canvas, mapping, wrapS, wrapT, magFilter, minFilter, format, type, anisotropy);
+    this.isCanvasTexture = true;
+    this.needsUpdate = true;
+  }
+};
 function convertArray(array, type, forceClone) {
   if (!array || // let 'undefined' and 'null' pass
   !forceClone && array.constructor === type) return array;
@@ -20535,6 +20558,16 @@ function objectRtSize(worldW, worldH, screenScale, cap = OBJECT_RT_MAX) {
 }
 
 // src/client/script-patterns.ts
+function detectScriptPattern(src) {
+  if (typeof src !== "string") return null;
+  if (src.includes("registerAudioBuffers") && (src.includes("createLayer") || src.includes("createLayerAsset"))) {
+    return "visualizer";
+  }
+  if (src.includes("new Date()") && /Jan\.|January/.test(src) && (src.includes("getHours") || src.includes("getMinutes"))) {
+    return "clock";
+  }
+  return null;
+}
 function unwrapScriptProperty(v) {
   if (typeof v === "object" && v !== null && !Array.isArray(v) && "value" in v) {
     return v.value;
@@ -20550,6 +20583,23 @@ function parseScriptProperties(scriptProperties) {
     out[key] = unwrapScriptProperty(value);
   }
   return out;
+}
+var CLOCK_MONTHS = ["Jan.", "Feb.", "Mar.", "Apr.", "May.", "Jun.", "Jul.", "Aug.", "Sep.", "Oct.", "Nov.", "Dec."];
+function formatClockText(date, props) {
+  const use24h = props.use24hFormat !== false;
+  const delimiter = typeof props.delimiter === "string" && props.delimiter ? props.delimiter : ":";
+  const pad = (n) => ("00" + n).slice(-2);
+  let hours = date.getHours();
+  let meridiem = "";
+  if (!use24h) {
+    meridiem = hours < 12 ? "AM" : "PM";
+    hours %= 12;
+    if (hours === 0) hours = 12;
+  }
+  const timeLine = use24h ? `${pad(hours)}${delimiter}${pad(date.getMinutes())}` : `${meridiem} ${pad(hours)}${delimiter}${pad(date.getMinutes())}`;
+  const dateLine = `${CLOCK_MONTHS[date.getMonth()]} ${date.getDate()} ${date.getFullYear()}`;
+  return `${timeLine}
+${dateLine}`;
 }
 
 // src/client/visibility.ts
@@ -20571,6 +20621,22 @@ function parseVisible(raw) {
     };
   }
   return void 0;
+}
+function resolveVisibility(obj, userProps) {
+  const v = obj.visible;
+  if (!v) return true;
+  switch (v.kind) {
+    case "plain":
+      return v.value;
+    case "user": {
+      const p = userProps[v.key ?? ""];
+      return typeof p === "boolean" ? p : v.value;
+    }
+    case "script":
+      return v.value;
+    default:
+      return true;
+  }
 }
 
 // src/client/scene-json.ts
@@ -20930,6 +20996,11 @@ void main() {
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }
 `;
+function resolvePixelRatio(devicePixelRatio, qualityScale) {
+  const dpr = Number.isFinite(devicePixelRatio) && devicePixelRatio > 0 ? devicePixelRatio : 1;
+  const scale = Number.isFinite(qualityScale) && qualityScale > 0 ? qualityScale : 1;
+  return dpr * scale;
+}
 var ThreeScenePlayer = class {
   renderer;
   scene;
@@ -20947,8 +21018,16 @@ var ThreeScenePlayer = class {
   sceneHeight;
   viewWidth;
   viewHeight;
-  // 渲染缓冲像素比（构造时快照 window.devicePixelRatio；resize 时用它推导缓冲尺寸）。
+  // 渲染缓冲像素比 = 设备像素比 × 画质档位（resize 时重读设备像素比，跨屏拖动自适应）。
   pixelRatio;
+  // 画质档位（< 1 = 降分辨率省显存/提流畅；1 = 原生 dpr）。
+  qualityScale;
+  // 暂停（省电）：停 RAF 排程，并把暂停时长从 elapsedSeconds 里扣除（恢复后 g_Time 不跳）。
+  paused = false;
+  pausedAt = 0;
+  pausedTotal = 0;
+  // 已安装的帧回调（resume 时用它重新排程）。
+  loopFn = null;
   lastTime = 0;
   // 背景图层条目（按 addBackground 返回的 id 索引，供 update_background 引用）。
   backgroundEntries = /* @__PURE__ */ new Map();
@@ -20963,7 +21042,7 @@ var ThreeScenePlayer = class {
   glowStage = null;
   // g_Time 时间原点（构造时刻），advance 传「自 player 创建起的秒数」。
   startedAt = typeof performance !== "undefined" ? performance.now() : 0;
-  constructor(canvas, width, height, renderer) {
+  constructor(canvas, width, height, renderer, qualityScale = 1) {
     this.sceneWidth = width;
     this.sceneHeight = height;
     this.viewWidth = width;
@@ -20974,11 +21053,11 @@ var ThreeScenePlayer = class {
     this.camera.position.z = CAMERA_DISTANCE;
     this.renderer = renderer ?? new WebGLRenderer({ canvas, antialias: true });
     this.renderer.outputColorSpace = LinearSRGBColorSpace;
-    const dpr = typeof window !== "undefined" && window.devicePixelRatio ? window.devicePixelRatio : 1;
-    this.pixelRatio = dpr;
+    this.qualityScale = Number.isFinite(qualityScale) && qualityScale > 0 ? qualityScale : 1;
+    this.pixelRatio = resolvePixelRatio(this.devicePixelRatio(), this.qualityScale);
     const withSetPixelRatio = this.renderer;
     if (typeof withSetPixelRatio.setPixelRatio === "function") {
-      withSetPixelRatio.setPixelRatio(dpr);
+      withSetPixelRatio.setPixelRatio(this.pixelRatio);
     }
     this.applyCover();
   }
@@ -20990,6 +21069,7 @@ var ThreeScenePlayer = class {
     const h = Math.max(1, Math.round(height));
     this.viewWidth = w;
     this.viewHeight = h;
+    this.pixelRatio = resolvePixelRatio(this.devicePixelRatio(), this.qualityScale);
     this.applyCover();
     const r = this.renderer;
     if (typeof r.setPixelRatio === "function") r.setPixelRatio(this.pixelRatio);
@@ -21000,6 +21080,37 @@ var ThreeScenePlayer = class {
     if (this.canvas.height !== bufH) this.canvas.height = bufH;
     const buf = this.renderer.domElement ?? this.canvas;
     this.glowStage?.resize(buf.width, buf.height);
+  }
+  /** 画质档位：走 resize 路径重推画布缓冲与屏幕密度（对象 RT 的基准随之变化）。 */
+  setQualityScale(scale) {
+    const s = Number.isFinite(scale) && scale > 0 ? scale : 1;
+    if (s === this.qualityScale) return;
+    this.qualityScale = s;
+    this.resize(this.viewWidth, this.viewHeight);
+  }
+  /** 暂停帧循环（省电）：停 RAF 排程；暂停时长不计入 elapsedSeconds。 */
+  pause() {
+    if (this.paused) return;
+    this.paused = true;
+    this.pausedAt = this.nowMs();
+    this.renderer.setAnimationLoop(null);
+  }
+  /** 恢复帧循环（暂停期间的时间被扣除，恢复后 g_Time 不跳变）。 */
+  resume() {
+    if (!this.paused) return;
+    this.pausedTotal += this.nowMs() - this.pausedAt;
+    this.paused = false;
+    if (this.loopFn) this.installLoop();
+  }
+  isPaused() {
+    return this.paused;
+  }
+  // 设备像素比：每次读取（跨屏拖动后由 resize 用新值重推缓冲）。
+  devicePixelRatio() {
+    return typeof window !== "undefined" && window.devicePixelRatio ? window.devicePixelRatio : 1;
+  }
+  nowMs() {
+    return typeof performance !== "undefined" ? performance.now() : this.startedAt;
   }
   // 场景固有尺寸（scene.json 的 general.orthogonalprojection）就绪后设置，同时重推 cover。
   // 构造传入的 width/height 只是缺省冗余值（「缺省用传入 width/height」）。
@@ -21056,10 +21167,21 @@ var ThreeScenePlayer = class {
   // 且再无任何动画/诊断输出（sim 从未推进，粒子永远不出现）。此处把帧体包进 try/catch（**不重抛**），
   // 保证 three 每帧都能重新排程 RAF：单帧异常只丢该帧，循环自愈；异常只记一次 warn（防刷屏）。
   setAnimationLoop(fn) {
+    this.loopFn = fn ?? null;
+    if (this.paused) {
+      this.renderer.setAnimationLoop(null);
+      return;
+    }
+    this.installLoop();
+  }
+  // 安装帧体（setAnimationLoop 与 resume 共用）。
+  installLoop() {
+    const fn = this.loopFn;
     this.lastTime = performance.now();
     let warned = false;
     this.renderer.setAnimationLoop(() => {
       try {
+        if (this.paused) return;
         const now = performance.now();
         const dt = Math.min((now - this.lastTime) / 1e3, 0.1);
         this.lastTime = now;
@@ -21131,8 +21253,9 @@ var ThreeScenePlayer = class {
   }
   // 隔离对象的帧推进时间（秒，自 player 创建起）——g_Time 语义。
   elapsedSeconds() {
-    const now = typeof performance !== "undefined" ? performance.now() : this.startedAt;
-    return (now - this.startedAt) / 1e3;
+    const now = this.nowMs();
+    const inPause = this.paused ? now - this.pausedAt : 0;
+    return (now - this.startedAt - this.pausedTotal - inPause) / 1e3;
   }
   // Task 2：背景图层（Sprite/Mesh）。用 we_to_three 中心化定位（three = we - scene/2，
   // 左下原点 y 向上 → 中心原点 y 向上，y 不翻，与背景一致）；size×scale 定尺寸；
@@ -21590,7 +21713,7 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
   const desc = parseSceneJson(sceneJson);
   const sceneW = desc.orthogonal.width;
   const sceneH = desc.orthogonal.height;
-  const player = new ThreeScenePlayer(canvas, sceneW, sceneH, assets.renderer);
+  const player = new ThreeScenePlayer(canvas, sceneW, sceneH, assets.renderer, assets.qualityScale);
   player.setSceneSize(sceneW, sceneH);
   const vw = viewport?.width ?? sceneW;
   const vh = viewport?.height ?? sceneH;
@@ -21598,6 +21721,7 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
   const backgroundIds = [];
   const particleLayers = [];
   const sims = [];
+  const textDrivers = [];
   for (const obj of desc.objects) {
     if (obj.kind === "image") {
       const id = player.addBackground({
@@ -21619,6 +21743,20 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
         isolate: assets.isolate?.get(obj.id)
       });
       backgroundIds.push(id);
+    } else if (obj.kind === "text") {
+      const layer = assets.textLayers?.get(obj.id);
+      if (!layer) continue;
+      const id = player.addBackground({
+        origin: obj.origin,
+        size: obj.size,
+        scale: obj.scale,
+        angles: obj.angles,
+        texture: layer.texture,
+        sceneW,
+        sceneH
+      });
+      backgroundIds.push(id);
+      if (layer.driver) textDrivers.push({ texture: layer.texture, driver: layer.driver });
     } else if (obj.kind === "particle" && obj.particle) {
       const p = assets.particles?.get(obj.id);
       if (!p || !assets.createParticleSim) continue;
@@ -21654,6 +21792,7 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
   }
   player.setAnimationLoop((dt) => {
     for (const sim of sims) sim.update(dt);
+    for (const t of textDrivers) if (t.driver.update(/* @__PURE__ */ new Date())) t.texture.needsUpdate = true;
   });
   return { player, sims, backgroundIds, particleLayers };
 }
@@ -22079,6 +22218,56 @@ async function loadTexTexture(url, opts) {
   const info = parseTex(buf);
   if (!info) return null;
   return textureFromTex(info, opts);
+}
+
+// src/client/text-object.ts
+function resolveFontFamily(font) {
+  if (typeof font !== "string" || !font.trim()) return "sans-serif";
+  const name = font.trim();
+  if (/[/\\]/.test(name) || /\.[a-zA-Z0-9]{2,4}$/.test(name)) return "sans-serif";
+  return name;
+}
+function textCanvasSize(text, pointsize, size) {
+  if (size) return { w: Math.max(1, Math.round(size[0])), h: Math.max(1, Math.round(size[1])) };
+  const ps = Math.max(1, pointsize ?? 32);
+  return {
+    w: Math.max(32, Math.ceil(ps * Math.max(text.length, 2) * 0.62)),
+    h: Math.max(16, Math.ceil(ps * 1.4))
+  };
+}
+function drawTextToCanvas(canvas, text, opts) {
+  const width = Math.max(1, Math.round(opts.width));
+  const height = Math.max(1, Math.round(opts.height));
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  const size = Math.max(1, opts.pointsize ?? Math.round(height * 0.8));
+  const family = resolveFontFamily(opts.font);
+  ctx.font = family.includes(" ") ? `${size}px "${family}"` : `${size}px ${family}`;
+  ctx.fillStyle = opts.color ? `rgb(${opts.color[0]}, ${opts.color[1]}, ${opts.color[2]})` : "#ffffff";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, width / 2, height / 2);
+}
+function createTextTexture(text, opts) {
+  const canvas = document.createElement("canvas");
+  drawTextToCanvas(canvas, text, opts);
+  const tex = new CanvasTexture(canvas);
+  tex.needsUpdate = true;
+  return tex;
+}
+function createClockDriver(canvas, opts, props, initialText) {
+  let last = initialText;
+  return {
+    update(now) {
+      const text = formatClockText(now, props);
+      if (text === last) return false;
+      drawTextToCanvas(canvas, text, opts);
+      last = text;
+      return true;
+    }
+  };
 }
 
 // src/client/shader/uniform-binder.ts
@@ -25126,7 +25315,10 @@ var DEFAULTS = {
   kenBurns: true,
   glowEnabled: true,
   glowThreshold: 0.65,
-  glowStrength: 1
+  glowStrength: 1,
+  paused: false,
+  pauseOnHidden: true,
+  qualityScale: 1
 };
 var settingsCtx = null;
 var lastGood = null;
@@ -25165,6 +25357,17 @@ async function writeClientSettings(patch) {
   } catch {
   }
 }
+var USERPROP_PREFIX = "we:userprop:";
+function getUserPropertyValue(key) {
+  if (typeof localStorage === "undefined") return void 0;
+  const raw = localStorage.getItem(USERPROP_PREFIX + key);
+  if (raw === null) return void 0;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return void 0;
+  }
+}
 
 // src/client/three-renderer.ts
 var warnedKeys = /* @__PURE__ */ new Set();
@@ -25172,6 +25375,32 @@ function warnOnce2(key, message) {
   if (warnedKeys.has(key)) return;
   warnedKeys.add(key);
   console.warn(`[wallpaper-engine] ${message}`);
+}
+var FONT_CACHE = /* @__PURE__ */ new Map();
+var fontSeq = 0;
+async function loadWallpaperFont(wallpaperId, font) {
+  if (typeof font !== "string" || !font) return void 0;
+  if (!/\.(otf|ttf|ttc|woff2?)$/i.test(font)) return void 0;
+  if (typeof FontFace === "undefined" || typeof document === "undefined" || !document.fonts) return void 0;
+  const key = `${wallpaperId}:${font}`;
+  let pending = FONT_CACHE.get(key);
+  if (!pending) {
+    pending = (async () => {
+      try {
+        const r = await fetch(`/wallpapers/scene/${wallpaperId}/asset?name=${encodeURIComponent(font)}`);
+        if (!r.ok) return null;
+        const family = `we-font-${++fontSeq}`;
+        const face = new FontFace(family, await r.arrayBuffer());
+        await face.load();
+        document.fonts.add(face);
+        return family;
+      } catch {
+        return null;
+      }
+    })();
+    FONT_CACHE.set(key, pending);
+  }
+  return await pending ?? void 0;
 }
 function particleBlend(blending, specText) {
   if (typeof blending === "string" && blending) {
@@ -25220,6 +25449,8 @@ function createThreeSceneRenderer(opts) {
   let current = null;
   let currentStage = null;
   let currentGlow = null;
+  let paused = false;
+  let qualityScale = 1;
   let onWindowResize = null;
   let currentTextures = null;
   const teardown = () => {
@@ -25284,6 +25515,34 @@ function createThreeSceneRenderer(opts) {
             });
           }
         }
+        const userProps = {};
+        for (const obj of desc.objects) {
+          if (obj.visible?.kind === "user" && obj.visible.key) {
+            userProps[obj.visible.key] = getUserPropertyValue(obj.visible.key);
+          }
+        }
+        const textLayers = /* @__PURE__ */ new Map();
+        for (const obj of desc.objects) {
+          if (obj.kind !== "text") continue;
+          if (!resolveVisibility(obj, userProps)) continue;
+          const size = textCanvasSize(obj.text, obj.pointsize, obj.size);
+          const opts2 = {
+            font: await loadWallpaperFont(id, obj.font),
+            pointsize: obj.pointsize,
+            color: obj.color,
+            width: size.w,
+            height: size.h
+          };
+          const props = obj.scriptProperties ?? {};
+          const isClock = obj.script ? detectScriptPattern(obj.script) === "clock" : false;
+          const initial = isClock ? formatClockText(/* @__PURE__ */ new Date(), props) : obj.text;
+          const texture = createTextTexture(initial, opts2);
+          textLayers.set(obj.id, {
+            texture,
+            // 时钟：每帧判文本是否变化（同分钟不重绘），变了由 player 置 needsUpdate 上传。
+            driver: isClock ? createClockDriver(texture.image, opts2, props, initial) : void 0
+          });
+        }
         const cpSim = mod?.CpuParticleSim;
         const createParticleSim = cpSim ? (json, origin, sceneW, sceneH, overrideJson) => {
           try {
@@ -25299,7 +25558,12 @@ function createThreeSceneRenderer(opts) {
           return new Uint8Array(await r.arrayBuffer());
         };
         const effectChains = await collectObjectEffectChains(desc, loadFile);
-        const dpr = typeof window !== "undefined" && window.devicePixelRatio ? window.devicePixelRatio : 1;
+        const settings = await readClientSettings();
+        qualityScale = settings.qualityScale ?? 1;
+        const dpr = resolvePixelRatio(
+          typeof window !== "undefined" && window.devicePixelRatio ? window.devicePixelRatio : 1,
+          qualityScale
+        );
         const screenScale = screenScalePx(desc.orthogonal.width, desc.orthogonal.height, vw, vh, dpr);
         const isolate = /* @__PURE__ */ new Map();
         for (const obj of desc.objects) {
@@ -25339,7 +25603,7 @@ function createThreeSceneRenderer(opts) {
             });
           }
         }
-        const result = loadSceneToThree(sceneJson, { backgroundTextures, particles, createParticleSim, isolate }, fg, {
+        const result = loadSceneToThree(sceneJson, { backgroundTextures, particles, createParticleSim, isolate, textLayers, qualityScale }, fg, {
           width: vw,
           height: vh
         });
@@ -25371,13 +25635,13 @@ function createThreeSceneRenderer(opts) {
           result.player.setObjectEffectStage(stage);
           currentStage = stage;
         }
-        const settings = await readClientSettings();
         currentGlow?.dispose();
         currentGlow = settings.glowEnabled ? createGlowStage(fg.width, fg.height, {
           threshold: settings.glowThreshold,
           strength: settings.glowStrength
         }) : null;
         result.player.setGlowStage(currentGlow);
+        if (paused) result.player.pause();
         onWindowResize = () => {
           if (!current) return;
           const { width, height } = viewportSize();
@@ -25399,6 +25663,20 @@ function createThreeSceneRenderer(opts) {
         return false;
       }
     },
+    // 省电：暂停/恢复当前播放器的帧循环（无播放器时只记状态，下次装配时就地应用）。
+    setPaused(value) {
+      paused = value;
+      if (!current) return;
+      if (value) current.player.pause();
+      else current.player.resume();
+    },
+    // 画质档位：改渲染像素比后重推画布缓冲，并把新屏幕密度同步给效果链编排器（对象 RT 随其重设）。
+    setQualityScale(scale) {
+      qualityScale = scale;
+      if (!current) return;
+      current.player.setQualityScale(scale);
+      currentStage?.onViewportResize(current.player.screenScalePx());
+    },
     // 释放当前 three 播放器 + wasm 模拟器（切壁纸/卸载时防泄漏）。
     dispose() {
       teardown();
@@ -25419,12 +25697,18 @@ var sharedOnSelect = null;
 function setWallpaperSelectHandler(fn) {
   sharedOnSelect = fn;
 }
+var sharedOnRuntimeSettings = null;
+function setWallpaperRuntimeHandler(fn) {
+  sharedOnRuntimeSettings = fn;
+}
 function WallpaperSettingsSection(props) {
   const fetchSettings = props.fetchSettings ?? readClientSettings;
   const writeSettings = props.writeSettings ?? writeClientSettings;
   const fetchWallpapers = props.fetchWallpapers ?? defaultFetchWallpapers;
   const fetchProbe = props.fetchProbe ?? defaultFetchProbe;
   const onSelect = props.onSelect ?? sharedOnSelect ?? (() => {
+  });
+  const onRuntimeSettings = props.onRuntimeSettings ?? sharedOnRuntimeSettings ?? (() => {
   });
   const [settings, setSettings] = (0, import_react.useState)(null);
   const [wallpapers, setWallpapers] = (0, import_react.useState)([]);
@@ -25465,6 +25749,11 @@ function WallpaperSettingsSection(props) {
     setSettings((prev) => prev ? { ...prev, glowEnabled: enabled } : prev);
     void writeSettings({ glowEnabled: enabled }).then(() => setMessage(enabled ? "\u5149\u6655\u5DF2\u5F00\u542F" : "\u5149\u6655\u5DF2\u5173\u95ED"));
   }, [writeSettings]);
+  const applyRuntime = (0, import_react.useCallback)((patch) => {
+    setSettings((prev) => prev ? { ...prev, ...patch } : prev);
+    onRuntimeSettings(patch);
+    void writeSettings(patch);
+  }, [onRuntimeSettings, writeSettings]);
   const saveDirs = (0, import_react.useCallback)(() => {
     void writeSettings({ wallpaperDir: wallpaperDir.trim(), weAssetsDir: weAssetsDir.trim() }).then(() => setMessage("\u8DEF\u5F84\u5DF2\u4FDD\u5B58"));
   }, [wallpaperDir, weAssetsDir, writeSettings]);
@@ -25517,6 +25806,46 @@ function WallpaperSettingsSection(props) {
         }
       ),
       "\u5149\u6655\uFF08\u5207\u6362\u58C1\u7EB8\u540E\u751F\u6548\uFF09"
+    ] }),
+    settings && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-power", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "input",
+          {
+            type: "checkbox",
+            checked: settings.paused,
+            onChange: (e) => applyRuntime({ paused: e.target.checked })
+          }
+        ),
+        "\u6682\u505C\u58C1\u7EB8\uFF08\u7701\u7535\uFF09"
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "input",
+          {
+            type: "checkbox",
+            checked: settings.pauseOnHidden,
+            onChange: (e) => applyRuntime({ pauseOnHidden: e.target.checked })
+          }
+        ),
+        "\u5207\u5230\u540E\u53F0\u65F6\u81EA\u52A8\u6682\u505C"
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u753B\u8D28\u6863\u4F4D" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+          "select",
+          {
+            className: "wss-quality",
+            value: String(settings.qualityScale),
+            onChange: (e) => applyRuntime({ qualityScale: Number(e.target.value) }),
+            children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "1", children: "\u539F\u751F\uFF081\xD7\uFF09" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "0.75", children: "\u7701\u663E\u5B58\uFF080.75\xD7\uFF09" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "0.5", children: "\u6700\u7701\uFF080.5\xD7\uFF09" })
+            ]
+          }
+        )
+      ] })
     ] }),
     /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-dirs", children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { children: "\u58C1\u7EB8\u76EE\u5F55" }),
@@ -25575,6 +25904,7 @@ function bootstrap(ctx) {
   let layer = null;
   let controller = null;
   let settings = { ...DEFAULTS };
+  const sceneRenderer = createThreeSceneRenderer();
   const applySettingsToLayer = (s) => {
     if (!layer) return;
     layer.setOverlayOpacity(s.overlayOpacity);
@@ -25582,6 +25912,13 @@ function bootstrap(ctx) {
     if (!s.kenBurns) {
       layer.root.querySelectorAll(".wp-kenburns").forEach((el) => el.classList.remove("wp-kenburns"));
     }
+  };
+  const applyRuntimeSettings = (s) => {
+    const hidden = typeof document !== "undefined" && document.visibilityState === "hidden";
+    const shouldPause = s.paused || s.pauseOnHidden && hidden;
+    sceneRenderer.setPaused?.(shouldPause);
+    sceneRenderer.setQualityScale?.(s.qualityScale);
+    layer?.setPaused(shouldPause);
   };
   const selectWallpaper = (id) => {
     settings = { ...settings, selectedWallpaperId: id };
@@ -25597,7 +25934,7 @@ function bootstrap(ctx) {
       fetchList: async () => (await fetch("/wallpapers/list")).json(),
       // Task 5：three.js 播放路径（背景 + 粒子）设为**默认**；wasm/WebGPU 路径保留作备用。
       // three 创建失败时回退到 wasm（three-renderer 内部/controller 兜底），避免白屏。
-      sceneRenderer: createThreeSceneRenderer()
+      sceneRenderer
       // Task 8 回退链（spec §7 第 1/2/3 条，三级语义）：
       //   1. 无 WebGPU → createWasmSceneRenderer() 返回 null → 直接用 JS/Three.js 渲染器；
       //   2. wasm 加载/初始化失败（render resolve false）→ 组合层降级调用 JS 渲染器；
@@ -25605,9 +25942,14 @@ function bootstrap(ctx) {
       // wasm-renderer 保持单一职责：WebGPU 可用时尝试 wasm，失败返回 false 由组合层降级。
     });
     setWallpaperSelectHandler((id) => selectWallpaper(id));
+    setWallpaperRuntimeHandler((patch) => {
+      settings = { ...settings, ...patch };
+      applyRuntimeSettings(settings);
+    });
     void readClientSettings().then((s) => {
       settings = s;
       applySettingsToLayer(s);
+      applyRuntimeSettings(s);
       if (s.selectedWallpaperId && controller) {
         void controller.load().then(() => {
           if (controller && settings.selectedWallpaperId) void controller.select(settings.selectedWallpaperId);
@@ -25615,6 +25957,9 @@ function bootstrap(ctx) {
       }
     });
   };
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", () => applyRuntimeSettings(settings));
+  }
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", mount, { once: true });
   } else {

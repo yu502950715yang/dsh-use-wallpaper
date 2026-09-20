@@ -11,6 +11,9 @@ export declare const WallpaperSettingsSchema: z<Schemastery.ObjectS<{
     glowEnabled: z<boolean, boolean>;
     glowThreshold: z<number, number>;
     glowStrength: z<number, number>;
+    paused: z<boolean, boolean>;
+    pauseOnHidden: z<boolean, boolean>;
+    qualityScale: z<number, number>;
 }>, Schemastery.ObjectT<{
     selectedWallpaperId: z<string, string>;
     wallpaperDir: z<string, string>;
@@ -22,4 +25,7 @@ export declare const WallpaperSettingsSchema: z<Schemastery.ObjectS<{
     glowEnabled: z<boolean, boolean>;
     glowThreshold: z<number, number>;
     glowStrength: z<number, number>;
+    paused: z<boolean, boolean>;
+    pauseOnHidden: z<boolean, boolean>;
+    qualityScale: z<number, number>;
 }>>;

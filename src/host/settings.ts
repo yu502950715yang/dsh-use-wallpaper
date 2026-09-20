@@ -17,4 +17,9 @@ export const WallpaperSettingsSchema = z.object({
   glowEnabled: z.boolean().default(true),
   glowThreshold: z.number().min(0).max(0.99).default(0.65),
   glowStrength: z.number().min(0).max(4).default(1.0),
+  // 省电与画质档位（2026-09-21）：paused 手动暂停；pauseOnHidden 切到后台自动暂停；
+  // qualityScale 渲染像素比倍率（1 = 原生 dpr，下限 0.5 防糊到不可用）。
+  paused: z.boolean().default(false),
+  pauseOnHidden: z.boolean().default(true),
+  qualityScale: z.number().min(0.5).max(1).default(1),
 });

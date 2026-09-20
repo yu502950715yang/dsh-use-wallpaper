@@ -14,6 +14,7 @@ const BASE_SETTINGS: ClientSettings = {
   selectedWallpaperId: '1', wallpaperDir: '', weAssetsDir: '',
   overlayOpacity: 0.35, blurEnabled: false, blurRadius: 12, kenBurns: true,
   glowEnabled: true, glowThreshold: 0.65, glowStrength: 1.0,
+  paused: false, pauseOnHidden: true, qualityScale: 1,
 };
 
 const WALLPAPERS = [
@@ -168,5 +169,35 @@ describe('WallpaperSettingsSection', () => {
     (container.querySelector('.wss-refresh') as HTMLElement).click();
     await flush();
     expect((container.querySelector('.wss-message') as HTMLElement).textContent).toBe('刷新壁纸失败');
+  });
+
+  // 省电/画质档位（2026-09-21）：面板改完立即生效（经 onRuntimeSettings 下发渲染器），并持久化。
+  it('省电/画质控件：暂停、后台自动暂停、画质档位 → 即时回调 + 持久化', async () => {
+    const writeSettings = vi.fn(async () => {});
+    const onRuntimeSettings = vi.fn();
+    mount({ writeSettings, onRuntimeSettings });
+    await flush();
+
+    const boxes = container.querySelectorAll('.wss-power input[type="checkbox"]');
+    expect(boxes.length).toBe(2);
+    expect((boxes[0] as HTMLInputElement).checked).toBe(false); // paused 缺省 false
+    expect((boxes[1] as HTMLInputElement).checked).toBe(true); // pauseOnHidden 缺省 true
+    (boxes[0] as HTMLInputElement).click();
+    await flush();
+    expect(onRuntimeSettings).toHaveBeenCalledWith({ paused: true });
+    expect(writeSettings).toHaveBeenCalledWith({ paused: true });
+
+    (container.querySelectorAll('.wss-power input[type="checkbox"]')[1] as HTMLInputElement).click();
+    await flush();
+    expect(onRuntimeSettings).toHaveBeenCalledWith({ pauseOnHidden: false });
+
+    const select = container.querySelector('.wss-quality') as HTMLSelectElement;
+    expect(select.value).toBe('1');
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!;
+    setter.call(select, '0.5');
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    await flush();
+    expect(onRuntimeSettings).toHaveBeenCalledWith({ qualityScale: 0.5 });
+    expect(writeSettings).toHaveBeenCalledWith({ qualityScale: 0.5 });
   });
 });

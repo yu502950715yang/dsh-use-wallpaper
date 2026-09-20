@@ -10,4 +10,10 @@ export declare function textCanvasSize(text: string, pointsize: number | undefin
     w: number;
     h: number;
 };
+export declare function drawTextToCanvas(canvas: HTMLCanvasElement, text: string, opts: TextTextureOptions): void;
 export declare function createTextTexture(text: string, opts: TextTextureOptions): THREE.CanvasTexture;
+export interface ClockDriver {
+    /** 文本变化时重绘 canvas 并返回 true（调用方据此置 texture.needsUpdate）。 */
+    update(now: Date): boolean;
+}
+export declare function createClockDriver(canvas: HTMLCanvasElement, opts: TextTextureOptions, props: Record<string, unknown>, initialText: string): ClockDriver;

@@ -19,6 +19,8 @@ export interface WallpaperSettingsSectionProps {
   fetchProbe?: () => Promise<ProbeResult>;
   /** 切换/取消壁纸（index.ts 注入 controller.select，空 id = 取消） */
   onSelect?: (id: string) => void;
+  /** 运行期设置（暂停/画质档位）变更：index.ts 注入后立即下发给渲染器，无需重选壁纸 */
+  onRuntimeSettings?: (patch: Partial<ClientSettings>) => void;
 }
 
 async function defaultFetchWallpapers(): Promise<WallpaperInfo[]> {
@@ -37,12 +39,20 @@ export function setWallpaperSelectHandler(fn: (id: string) => void): void {
   sharedOnSelect = fn;
 }
 
+// 运行期设置（省电/画质档位）的共享处理器：同样由 index.ts 注册（槽位组件无法直接传 props）。
+let sharedOnRuntimeSettings: ((patch: Partial<ClientSettings>) => void) | null = null;
+
+export function setWallpaperRuntimeHandler(fn: (patch: Partial<ClientSettings>) => void): void {
+  sharedOnRuntimeSettings = fn;
+}
+
 export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): JSX.Element {
   const fetchSettings = props.fetchSettings ?? readClientSettings;
   const writeSettings = props.writeSettings ?? writeClientSettings;
   const fetchWallpapers = props.fetchWallpapers ?? defaultFetchWallpapers;
   const fetchProbe = props.fetchProbe ?? defaultFetchProbe;
   const onSelect = props.onSelect ?? sharedOnSelect ?? (() => {});
+  const onRuntimeSettings = props.onRuntimeSettings ?? sharedOnRuntimeSettings ?? (() => {});
 
   const [settings, setSettings] = useState<ClientSettings | null>(null);
   const [wallpapers, setWallpapers] = useState<WallpaperInfo[]>([]);
@@ -91,6 +101,13 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
     void writeSettings({ glowEnabled: enabled })
       .then(() => setMessage(enabled ? '光晕已开启' : '光晕已关闭'));
   }, [writeSettings]);
+
+  // 省电与画质档位：本地即时生效（经共享 handler 下发渲染器）+ 持久化（不必重选壁纸）
+  const applyRuntime = useCallback((patch: Partial<ClientSettings>) => {
+    setSettings((prev) => (prev ? { ...prev, ...patch } : prev));
+    onRuntimeSettings(patch);
+    void writeSettings(patch);
+  }, [onRuntimeSettings, writeSettings]);
 
   // 保存手动输入的路径（空值 = 清除用户配置，回退默认）
   const saveDirs = useCallback(() => {
@@ -153,6 +170,39 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
           />
           光晕（切换壁纸后生效）
         </label>
+      )}
+      {/* 省电 / 画质档位：立即生效（不必重选壁纸） */}
+      {settings && (
+        <div className="wss-power">
+          <label className="wss-glow-row">
+            <input
+              type="checkbox"
+              checked={settings.paused}
+              onChange={(e) => applyRuntime({ paused: e.target.checked })}
+            />
+            暂停壁纸（省电）
+          </label>
+          <label className="wss-glow-row">
+            <input
+              type="checkbox"
+              checked={settings.pauseOnHidden}
+              onChange={(e) => applyRuntime({ pauseOnHidden: e.target.checked })}
+            />
+            切到后台时自动暂停
+          </label>
+          <label className="wss-glow-row">
+            <span>画质档位</span>
+            <select
+              className="wss-quality"
+              value={String(settings.qualityScale)}
+              onChange={(e) => applyRuntime({ qualityScale: Number(e.target.value) })}
+            >
+              <option value="1">原生（1×）</option>
+              <option value="0.75">省显存（0.75×）</option>
+              <option value="0.5">最省（0.5×）</option>
+            </select>
+          </label>
+        </div>
       )}
       <div className="wss-dirs">
         <h4>壁纸目录</h4>

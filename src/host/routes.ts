@@ -2,7 +2,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { scanWallpapers } from './scanner.js';
 import { PkgReader } from './pkg-reader.js';
-import { probeSteamPaths, readSteamInstallPathFromRegistry, DEFAULT_STEAM_ROOTS } from './steam-paths.js';
+import { probeSteamPaths, readSteamInstallPathFromRegistry, readLibraryFoldersVdf, DEFAULT_STEAM_ROOTS } from './steam-paths.js';
 import type { WallpaperInfo } from '../shared/types.js';
 
 export interface WallpaperRoutesOptions {
@@ -294,13 +294,7 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
       handler: (_req: any, res: any) => {
         const result = probeSteamPaths({
           steamPath: readSteamInstallPathFromRegistry(),
-          readVdf: (install) => {
-            try {
-              return readFileSync(join(install, 'libraryfolders.vdf'), 'utf8');
-            } catch {
-              return undefined;
-            }
-          },
+          readVdf: (install) => readLibraryFoldersVdf(install),
           extraRoots: [...DEFAULT_STEAM_ROOTS],
         });
         json(res, 200, result);

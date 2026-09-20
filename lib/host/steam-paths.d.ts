@@ -22,6 +22,9 @@ export interface ProbeResult {
 export declare const DEFAULT_STEAM_ROOTS: readonly string[];
 /** 解析 libraryfolders.vdf 原文，返回全部库路径（反转义 \\ → \）。 */
 export declare function parseLibraryFoldersVdf(vdf: string): string[];
+export declare function libraryFoldersVdfCandidates(steamInstall: string): string[];
+/** 按候选顺序读取 libraryfolders.vdf：取首个可读文本，全部不可读返回 undefined。 */
+export declare function readLibraryFoldersVdf(steamInstall: string, readFile?: (path: string) => string): string | undefined;
 /**
  * 汇总全部候选 Steam 根目录：注册表安装路径（本身即一个库）、
  * vdf 库列表、常见根目录；按 Windows 大小写不敏感去重。
@@ -44,6 +47,7 @@ export declare function readSteamInstallPathFromRegistry(run?: (cmd: string, arg
 } | null): string | undefined;
 /**
  * 组装完整探测结果：收集根目录 → 生成两类候选 → 标记存在性。
- * readVdf 未注入时按 steamPath + '/libraryfolders.vdf' 尝试读取（可能不存在）。
+ * readVdf 未注入时不读 vdf（只有注册表路径与额外根）；生产侧用
+ * readLibraryFoldersVdf 提供实现（多候选路径）。
  */
 export declare function probeSteamPaths(deps: SteamProbeDeps): ProbeResult;

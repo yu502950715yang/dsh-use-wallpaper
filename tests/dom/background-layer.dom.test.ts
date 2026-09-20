@@ -130,5 +130,31 @@ describe('createBackgroundLayer (DOM)', () => {
       fetchSpy.mockRestore();
     }
   });
+
+  // 省电（2026-09-21）：视频壁纸停/续播；web 壁纸在 iframe 内，插件无法控制。
+  it('setPaused：视频壁纸暂停/恢复，且暂停态下换壁纸的新视频同样不播', () => {
+    document.body.innerHTML = '';
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    const pauseSpy = vi.spyOn(window.HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+    const playSpy = vi.spyOn(window.HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined as never);
+    try {
+      const layer = createBackgroundLayer(root);
+      layer.showVideo('/a.mp4');
+      expect(pauseSpy).not.toHaveBeenCalled();
+      layer.setPaused(true);
+      expect(pauseSpy).toHaveBeenCalledTimes(1);
+      layer.setPaused(false);
+      expect(playSpy).toHaveBeenCalledTimes(1);
+      // 暂停态下切壁纸：新视频也不播（否则「暂停」会被换壁纸悄悄解除）
+      layer.setPaused(true); // 第 2 次：暂停当前视频
+      layer.showVideo('/b.mp4'); // 第 3 次：新视频仍处暂停态
+      expect(pauseSpy).toHaveBeenCalledTimes(3);
+      expect(root.querySelectorAll('.wp-bg-fill video')).toHaveLength(1);
+    } finally {
+      pauseSpy.mockRestore();
+      playSpy.mockRestore();
+    }
+  });
 });
 
