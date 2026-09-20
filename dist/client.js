@@ -20957,6 +20957,8 @@ var ThreeScenePlayer = class {
   // 对象隔离条目（对象级效果链；空 Map = 本壁纸无带效果对象，帧序退化为原路径）。
   isolated = /* @__PURE__ */ new Map();
   objectEffectStage = null;
+  // 应用级 Glow 注入点（null = 本壁纸不开 Glow，帧序退化为原路径）。
+  glowStage = null;
   // g_Time 时间原点（构造时刻），advance 传「自 player 创建起的秒数」。
   startedAt = typeof performance !== "undefined" ? performance.now() : 0;
   constructor(canvas, width, height, renderer) {
@@ -20994,6 +20996,8 @@ var ThreeScenePlayer = class {
     const bufH = Math.floor(h * this.pixelRatio);
     if (this.canvas.width !== bufW) this.canvas.width = bufW;
     if (this.canvas.height !== bufH) this.canvas.height = bufH;
+    const buf = this.renderer.domElement ?? this.canvas;
+    this.glowStage?.resize(buf.width, buf.height);
   }
   // 场景固有尺寸（scene.json 的 general.orthogonalprojection）就绪后设置，同时重推 cover。
   // 构造传入的 width/height 只是缺省冗余值（「缺省用传入 width/height」）。
@@ -21059,10 +21063,7 @@ var ThreeScenePlayer = class {
         this.lastTime = now;
         fn?.(dt);
         this.update(dt);
-        if (this.isolated.size > 0) this.renderIsolatedContents();
-        this.objectEffectStage?.bindOutputs();
-        this.renderer.render(this.scene, this.camera);
-        this.objectEffectStage?.advance(this.elapsedSeconds());
+        this.render();
       } catch (e) {
         if (!warned) {
           warned = true;
@@ -21073,15 +21074,21 @@ var ThreeScenePlayer = class {
   }
   // 手动渲染一帧（不依赖 RAF，供测试/调用方直接触发）。
   // 帧序与 setAnimationLoop 的帧体一致（不带 dt）：隔离内容 → bindOutputs → 主场景 → advance。
+  // 装配了 glowStage 时主场景渲染委托给它（stage 内部渲染主场景到 RT 再做全屏 glow 合成）。
   render() {
     if (this.isolated.size > 0) this.renderIsolatedContents();
     this.objectEffectStage?.bindOutputs();
-    this.renderer.render(this.scene, this.camera);
+    if (this.glowStage) this.glowStage.apply(this.renderer, this.scene, this.camera);
+    else this.renderer.render(this.scene, this.camera);
     this.objectEffectStage?.advance(this.elapsedSeconds());
   }
   // 对象级效果链的编排器注入点（null = 本壁纸无效果链，帧序退化为原路径）。
   setObjectEffectStage(stage) {
     this.objectEffectStage = stage;
+  }
+  /** 装配应用级 Glow（null = 关闭）。关闭时帧序与本方法加入前逐字相同。 */
+  setGlowStage(stage) {
+    this.glowStage = stage;
   }
   // 隔离对象条目（只读视图，供编排器拿 RT 纹理与尺寸）。
   isolatedObjects() {
@@ -21536,6 +21543,8 @@ var ThreeScenePlayer = class {
     }
     this.isolated.clear();
     this.objectEffectStage = null;
+    this.glowStage?.dispose();
+    this.glowStage = null;
     this.renderer.dispose();
   }
 };
@@ -21937,8 +21946,8 @@ async function textureFromTex(info, opts) {
     tex.needsUpdate = true;
   };
   const applyWrap = (tex, info2) => {
-    const clamp2 = (info2.flags & FLAG_CLAMP_UVS) !== 0;
-    tex.wrapS = tex.wrapT = clamp2 ? ClampToEdgeWrapping : RepeatWrapping;
+    const clamp3 = (info2.flags & FLAG_CLAMP_UVS) !== 0;
+    tex.wrapS = tex.wrapT = clamp3 ? ClampToEdgeWrapping : RepeatWrapping;
   };
   if (isVideoTexPayload(info)) {
     const decorate = (t) => {
@@ -24819,6 +24828,307 @@ var ObjectEffectStage = class {
   }
 };
 
+// src/client/glow-stage.ts
+var GLOW_DEFAULTS = { threshold: 0.65, strength: 1 };
+var THRESHOLD_MAX = 0.99;
+var STRENGTH_MAX = 4;
+function clamp2(v, lo, hi) {
+  return Math.min(hi, Math.max(lo, v));
+}
+function normalizeGlowOptions(opts) {
+  const t = Number(opts?.threshold);
+  const s = Number(opts?.strength);
+  return {
+    threshold: Number.isFinite(t) ? clamp2(t, 0, THRESHOLD_MAX) : GLOW_DEFAULTS.threshold,
+    strength: Number.isFinite(s) ? clamp2(s, 0, STRENGTH_MAX) : GLOW_DEFAULTS.strength
+  };
+}
+function glowLevelSizes(width, height) {
+  const out = [];
+  let w = Math.max(1, Math.floor(width));
+  let h = Math.max(1, Math.floor(height));
+  for (let i = 0; i < 3; i++) {
+    w = Math.max(1, Math.floor(w / 2));
+    h = Math.max(1, Math.floor(h / 2));
+    out.push({ w, h });
+  }
+  return out;
+}
+var VERT = `
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = vec4(position.xy, 0.0, 1.0);
+}
+`;
+var BRIGHT_FRAG = `
+uniform sampler2D tSrc;
+uniform float uThreshold;
+varying vec2 vUv;
+void main() {
+  vec3 c = texture2D(tSrc, vUv).rgb;
+  float luma = dot(c, vec3(0.299, 0.587, 0.114));
+  float k = max(0.0, luma - uThreshold) / max(1e-6, 1.0 - uThreshold);
+  gl_FragColor = vec4(c * k, 1.0);
+}
+`;
+var BLUR_FRAG = `
+uniform sampler2D tSrc;
+uniform vec2 uStep;
+varying vec2 vUv;
+void main() {
+  vec3 sum = vec3(0.0);
+  for (int i = 0; i < 9; i++) {
+    float o = float(i - 4);
+    sum += texture2D(tSrc, vUv + uStep * o).rgb;
+  }
+  gl_FragColor = vec4(sum / 9.0, 1.0);
+}
+`;
+var COPY_FRAG = `
+uniform sampler2D tSrc;
+varying vec2 vUv;
+void main() {
+  gl_FragColor = vec4(texture2D(tSrc, vUv).rgb, 1.0);
+}
+`;
+var COMPOSITE_FRAG = `
+uniform sampler2D tBase;
+uniform sampler2D tL1;
+uniform sampler2D tL2;
+uniform sampler2D tL3;
+uniform float uStrength;
+varying vec2 vUv;
+void main() {
+  vec3 base = texture2D(tBase, vUv).rgb;
+  vec3 glow = (texture2D(tL1, vUv).rgb + texture2D(tL2, vUv).rgb + texture2D(tL3, vUv).rgb) / 3.0;
+  gl_FragColor = vec4(clamp(base + glow * uStrength, 0.0, 1.0), 1.0);
+}
+`;
+var BLUR_RADII = [4, 6, 8];
+function rtOptions() {
+  return {
+    type: HalfFloatType,
+    // 浮点 RT：8 位在多次累加后会有 banding
+    format: RGBAFormat,
+    depthBuffer: false,
+    stencilBuffer: false,
+    generateMipmaps: false,
+    minFilter: LinearFilter,
+    magFilter: LinearFilter,
+    wrapS: ClampToEdgeWrapping,
+    // §5.19：RT 必须 CLAMP
+    wrapT: ClampToEdgeWrapping
+  };
+}
+function createGlowStage(width, height, opts) {
+  if (!(width > 0) || !(height > 0)) return null;
+  let options = normalizeGlowOptions(opts);
+  const quadScene = new Scene();
+  const quadCamera = new Camera();
+  const geometry = new PlaneGeometry(2, 2);
+  const placeholderMat = new MeshBasicMaterial();
+  const mesh = new Mesh(geometry, placeholderMat);
+  quadScene.add(mesh);
+  const brightMat = new ShaderMaterial({ vertexShader: VERT, fragmentShader: BRIGHT_FRAG, uniforms: { tSrc: { value: null }, uThreshold: { value: options.threshold } }, depthTest: false, depthWrite: false });
+  const blurMat = new ShaderMaterial({ vertexShader: VERT, fragmentShader: BLUR_FRAG, uniforms: { tSrc: { value: null }, uStep: { value: new Vector2() } }, depthTest: false, depthWrite: false });
+  const copyMat = new ShaderMaterial({ vertexShader: VERT, fragmentShader: COPY_FRAG, uniforms: { tSrc: { value: null } }, depthTest: false, depthWrite: false });
+  const compositeMat = new ShaderMaterial({ vertexShader: VERT, fragmentShader: COMPOSITE_FRAG, uniforms: { tBase: { value: null }, tL1: { value: null }, tL2: { value: null }, tL3: { value: null }, uStrength: { value: options.strength } }, depthTest: false, depthWrite: false });
+  let baseRT = null;
+  let levelRTs = [];
+  let levelSizes = [];
+  let glowFailed = false;
+  let disposed = false;
+  let hooked = false;
+  let hookSpent = false;
+  let hookedRenderer = null;
+  let prevOnShaderError;
+  function installShaderErrorHook(r) {
+    if (hooked || hookSpent) return;
+    hookSpent = true;
+    hooked = true;
+    hookedRenderer = r;
+    const dbg = r.debug;
+    if (!dbg) return;
+    prevOnShaderError = dbg.onShaderError;
+    dbg.onShaderError = (...args) => {
+      glowFailed = true;
+      console.warn("[wallpaper-engine] \u5E94\u7528\u7EA7 Glow \u7684 shader \u7F16\u8BD1/\u94FE\u63A5\u5931\u8D25\uFF0C\u5DF2\u964D\u7EA7\u4E3A\u76F4\u6E32");
+      try {
+        prevOnShaderError?.(...args);
+      } catch {
+      }
+    };
+  }
+  function removeShaderErrorHook() {
+    if (!hooked) return;
+    const dbg = hookedRenderer ? hookedRenderer.debug : void 0;
+    if (dbg) dbg.onShaderError = prevOnShaderError;
+    hooked = false;
+    hookedRenderer = null;
+    prevOnShaderError = void 0;
+  }
+  const rtCount = () => (baseRT ? 1 : 0) + levelRTs.length;
+  function buildTargets(w, h) {
+    disposeTargets();
+    baseRT = new WebGLRenderTarget(Math.max(1, w), Math.max(1, h), rtOptions());
+    levelSizes = glowLevelSizes(w, h);
+    levelRTs = [];
+    for (const s of levelSizes) {
+      levelRTs.push(new WebGLRenderTarget(s.w, s.h, rtOptions()));
+      levelRTs.push(new WebGLRenderTarget(s.w, s.h, rtOptions()));
+    }
+  }
+  function disposeTargets() {
+    baseRT?.dispose();
+    baseRT = null;
+    for (const rt of levelRTs) rt.dispose();
+    levelRTs = [];
+  }
+  function runPass(r, mat, dst) {
+    mesh.material = mat;
+    if (dst) renderIntoRenderTarget(r, dst, quadScene, quadCamera);
+    else {
+      r.setRenderTarget(null);
+      r.render(quadScene, quadCamera);
+    }
+  }
+  function blurLevel(r, idx, a, b) {
+    const radius = BLUR_RADII[idx];
+    const size = levelSizes[idx];
+    blurMat.uniforms.tSrc.value = a.texture;
+    blurMat.uniforms.uStep.value.set(radius / 4 / size.w, 0);
+    runPass(r, blurMat, b);
+    blurMat.uniforms.tSrc.value = b.texture;
+    blurMat.uniforms.uStep.value.set(0, radius / 4 / size.h);
+    runPass(r, blurMat, a);
+  }
+  function renderGlow(r, scene, camera) {
+    const [l1a, l1b, l2a, l2b, l3a, l3b] = levelRTs;
+    renderIntoRenderTarget(r, baseRT, scene, camera);
+    brightMat.uniforms.tSrc.value = baseRT.texture;
+    runPass(r, brightMat, l1a);
+    blurLevel(r, 0, l1a, l1b);
+    copyMat.uniforms.tSrc.value = l1a.texture;
+    runPass(r, copyMat, l2a);
+    blurLevel(r, 1, l2a, l2b);
+    copyMat.uniforms.tSrc.value = l2a.texture;
+    runPass(r, copyMat, l3a);
+    blurLevel(r, 2, l3a, l3b);
+    compositeMat.uniforms.tBase.value = baseRT.texture;
+    compositeMat.uniforms.tL1.value = l1a.texture;
+    compositeMat.uniforms.tL2.value = l2a.texture;
+    compositeMat.uniforms.tL3.value = l3a.texture;
+    compositeMat.uniforms.uStrength.value = options.strength;
+    runPass(r, compositeMat, null);
+  }
+  buildTargets(width, height);
+  return {
+    apply(r, scene, camera) {
+      if (disposed) return;
+      if (glowFailed) {
+        r.setRenderTarget(null);
+        r.render(scene, camera);
+        return;
+      }
+      installShaderErrorHook(r);
+      try {
+        renderGlow(r, scene, camera);
+      } catch (e) {
+        glowFailed = true;
+        console.warn("[wallpaper-engine] \u5E94\u7528\u7EA7 Glow \u5931\u8D25\uFF0C\u5DF2\u964D\u7EA7\u4E3A\u76F4\u6E32\uFF1A" + String(e?.message ?? e));
+        r.setRenderTarget(null);
+        r.render(scene, camera);
+      } finally {
+        removeShaderErrorHook();
+      }
+    },
+    resize(w, h) {
+      if (disposed) return;
+      if (!(w > 0) || !(h > 0)) return;
+      buildTargets(w, h);
+    },
+    setOptions(o) {
+      options = normalizeGlowOptions(o);
+      brightMat.uniforms.uThreshold.value = options.threshold;
+      compositeMat.uniforms.uStrength.value = options.strength;
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      removeShaderErrorHook();
+      disposeTargets();
+      geometry.dispose();
+      placeholderMat.dispose();
+      brightMat.dispose();
+      blurMat.dispose();
+      copyMat.dispose();
+      compositeMat.dispose();
+    },
+    // 仅供测试观测（不参与渲染语义）
+    get rtCount() {
+      return rtCount();
+    },
+    get levelSizes() {
+      return levelSizes;
+    },
+    get options() {
+      return options;
+    },
+    get glowFailed() {
+      return glowFailed;
+    }
+  };
+}
+
+// src/client/settings.ts
+var NS = "wallpaper-engine";
+var DEFAULTS = {
+  selectedWallpaperId: "",
+  wallpaperDir: "",
+  weAssetsDir: "",
+  overlayOpacity: 0.35,
+  blurEnabled: false,
+  blurRadius: 12,
+  kenBurns: true,
+  glowEnabled: true,
+  glowThreshold: 0.65,
+  glowStrength: 1
+};
+var settingsCtx = null;
+function setSettingsCtx(ctx) {
+  settingsCtx = ctx;
+}
+function settingsRemote() {
+  return settingsCtx?.remote?.settings ?? null;
+}
+async function readClientSettings() {
+  const remote = settingsRemote();
+  if (!remote) return { ...DEFAULTS };
+  try {
+    const resp = await remote.describe();
+    const value = resp?.ok ? resp.value : void 0;
+    if (typeof value === "object" && value !== null) {
+      const namespaces = value.namespaces;
+      const nsRow = namespaces?.find((n) => n.ns === NS);
+      const nsValue = nsRow?.value;
+      if (typeof nsValue === "object" && nsValue !== null) {
+        return { ...DEFAULTS, ...nsValue };
+      }
+    }
+  } catch {
+  }
+  return { ...DEFAULTS };
+}
+async function writeClientSettings(patch) {
+  const remote = settingsRemote();
+  if (!remote) return;
+  try {
+    await remote.update(NS, patch, void 0);
+  } catch {
+  }
+}
+
 // src/client/three-renderer.ts
 var warnedKeys = /* @__PURE__ */ new Set();
 function warnOnce2(key, message) {
@@ -24872,6 +25182,7 @@ function createThreeSceneRenderer(opts) {
   let modulePromise = null;
   let current = null;
   let currentStage = null;
+  let currentGlow = null;
   let onWindowResize = null;
   let currentTextures = null;
   const teardown = () => {
@@ -24881,6 +25192,8 @@ function createThreeSceneRenderer(opts) {
     }
     currentStage?.dispose();
     currentStage = null;
+    currentGlow?.dispose();
+    currentGlow = null;
     current?.player.dispose();
     for (const sim of current?.sims ?? []) sim.free?.();
     current = null;
@@ -25021,6 +25334,13 @@ function createThreeSceneRenderer(opts) {
           result.player.setObjectEffectStage(stage);
           currentStage = stage;
         }
+        const settings = await readClientSettings();
+        currentGlow?.dispose();
+        currentGlow = settings.glowEnabled ? createGlowStage(fg.width, fg.height, {
+          threshold: settings.glowThreshold,
+          strength: settings.glowStrength
+        }) : null;
+        result.player.setGlowStage(currentGlow);
         onWindowResize = () => {
           if (!current) return;
           const { width, height } = viewportSize();
@@ -25051,53 +25371,6 @@ function createThreeSceneRenderer(opts) {
 
 // src/client/settings-section.tsx
 var import_react = require("react");
-
-// src/client/settings.ts
-var NS = "wallpaper-engine";
-var DEFAULTS = {
-  selectedWallpaperId: "",
-  wallpaperDir: "",
-  weAssetsDir: "",
-  overlayOpacity: 0.35,
-  blurEnabled: false,
-  blurRadius: 12,
-  kenBurns: true
-};
-var settingsCtx = null;
-function setSettingsCtx(ctx) {
-  settingsCtx = ctx;
-}
-function settingsRemote() {
-  return settingsCtx?.remote?.settings ?? null;
-}
-async function readClientSettings() {
-  const remote = settingsRemote();
-  if (!remote) return { ...DEFAULTS };
-  try {
-    const resp = await remote.describe();
-    const value = resp?.ok ? resp.value : void 0;
-    if (typeof value === "object" && value !== null) {
-      const namespaces = value.namespaces;
-      const nsRow = namespaces?.find((n) => n.ns === NS);
-      const nsValue = nsRow?.value;
-      if (typeof nsValue === "object" && nsValue !== null) {
-        return { ...DEFAULTS, ...nsValue };
-      }
-    }
-  } catch {
-  }
-  return { ...DEFAULTS };
-}
-async function writeClientSettings(patch) {
-  const remote = settingsRemote();
-  if (!remote) return;
-  try {
-    await remote.update(NS, patch, void 0);
-  } catch {
-  }
-}
-
-// src/client/settings-section.tsx
 var import_jsx_runtime = require("react/jsx-runtime");
 async function defaultFetchWallpapers() {
   return (await fetch("/wallpapers/list")).json();
@@ -25151,6 +25424,10 @@ function WallpaperSettingsSection(props) {
       setMessage("\u58C1\u7EB8\u5217\u8868\u5DF2\u5237\u65B0");
     }).catch(() => setMessage("\u5237\u65B0\u58C1\u7EB8\u5931\u8D25"));
   }, [fetchWallpapers]);
+  const toggleGlow = (0, import_react.useCallback)((enabled) => {
+    setSettings((prev) => prev ? { ...prev, glowEnabled: enabled } : prev);
+    void writeSettings({ glowEnabled: enabled }).then(() => setMessage(enabled ? "\u5149\u6655\u5DF2\u5F00\u542F" : "\u5149\u6655\u5DF2\u5173\u95ED"));
+  }, [writeSettings]);
   const saveDirs = (0, import_react.useCallback)(() => {
     void writeSettings({ wallpaperDir: wallpaperDir.trim(), weAssetsDir: weAssetsDir.trim() }).then(() => setMessage("\u8DEF\u5F84\u5DF2\u4FDD\u5B58"));
   }, [wallpaperDir, weAssetsDir, writeSettings]);
@@ -25193,6 +25470,17 @@ function WallpaperSettingsSection(props) {
       },
       w.id
     )) }),
+    settings && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "input",
+        {
+          type: "checkbox",
+          checked: settings.glowEnabled,
+          onChange: (e) => toggleGlow(e.target.checked)
+        }
+      ),
+      "\u5149\u6655"
+    ] }),
     /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-dirs", children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { children: "\u58C1\u7EB8\u76EE\u5F55" }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-dir-row", children: [

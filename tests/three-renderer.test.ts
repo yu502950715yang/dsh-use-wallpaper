@@ -23,6 +23,12 @@ vi.mock('../src/client/wasm-renderer.js', () => ({
   defaultLoadWasm: vi.fn(),
   resolveParticleMaterial: vi.fn(),
 }));
+// 应用级 Glow 的 stage 是 WebGL 资源（RT/材质），单测只关心装配时序 → 整体 mock。
+vi.mock('../src/client/glow-stage.js', () => ({
+  createGlowStage: vi.fn(() => ({
+    apply: vi.fn(), resize: vi.fn(), setOptions: vi.fn(), dispose: vi.fn(),
+  })),
+}));
 
 import * as THREE from 'three';
 import { loadSceneToThree } from '../src/client/threejs-player.js';
@@ -30,8 +36,11 @@ import { resolveImageTexture } from '../src/client/scene-renderer.js';
 import { loadTexTexture } from '../src/client/tex-loader.js';
 import { defaultLoadWasm, resolveParticleMaterial } from '../src/client/wasm-renderer.js';
 import { createThreeSceneRenderer, particleBlend, collectObjectEffectChains } from '../src/client/three-renderer.js';
+import { createGlowStage } from '../src/client/glow-stage.js';
+import { setSettingsCtx } from '../src/client/settings.js';
 import { ObjectEffectStage } from '../src/client/object-effects.js';
 import type { CompiledEffectPass } from '../src/client/shader/effect-chain.js';
+import type { ClientSettings } from '../src/client/types.js';
 
 // 精简黑神话 scene.json（与 2851992662 一致的对象结构：1 image + 1 particle）。
 const SCENE = JSON.stringify({
@@ -66,8 +75,23 @@ function makeMockSim() {
   };
 }
 
+// 注入插件设置（settings.ts 的模块级 ctx）：describe() 的命名空间值即设置覆盖。
+// 不注入（setSettingsCtx(null)）时 readClientSettings 回退 DEFAULTS（glowEnabled=true）。
+function stubSettings(patch: Partial<ClientSettings>): void {
+  setSettingsCtx({
+    remote: {
+      settings: {
+        describe: async () => ({
+          ok: true, value: { namespaces: [{ ns: 'wallpaper-engine', value: patch }] },
+        }),
+      },
+    },
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  setSettingsCtx(null); // 重置设置注入（回退 DEFAULTS）
   // 粒子材质解析缺省：材质 json 不可得（→ 调用方走材质名启发式兜底）——需要材质的用例自行覆盖。
   resolveParticleMaterial.mockResolvedValue(null);
   // scene.json 拉取
@@ -94,7 +118,7 @@ describe('createThreeSceneRenderer', () => {
     const sim = makeMockSim();
     defaultLoadWasm.mockResolvedValue({ CpuParticleSim: { new: vi.fn(() => sim) } } as any);
     loadSceneToThree.mockReturnValue({
-      player: { dispose: vi.fn(), resize: vi.fn() },
+      player: { dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn() },
       sims: [sim],
       backgroundIds: [0],
       particleLayers: [{ id: 1, sim }],
@@ -140,7 +164,7 @@ describe('createThreeSceneRenderer', () => {
     const texB = { dispose: vi.fn() };
     resolveImageTexture.mockResolvedValue(texA as any);
     loadSceneToThree.mockReturnValue({
-      player: { dispose: vi.fn(), resize: vi.fn() },
+      player: { dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn() },
       sims: [], backgroundIds: [0], particleLayers: [],
     });
     const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
@@ -169,7 +193,7 @@ describe('createThreeSceneRenderer', () => {
     const sim = makeMockSim();
     defaultLoadWasm.mockResolvedValue({ CpuParticleSim: { new: vi.fn(() => sim) } } as any);
     loadSceneToThree.mockReturnValue({
-      player: { dispose: vi.fn(), resize: vi.fn() },
+      player: { dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn() },
       sims: [sim],
       backgroundIds: [0],
       particleLayers: [{ id: 1, sim }],
@@ -198,7 +222,7 @@ describe('createThreeSceneRenderer', () => {
   it('render：CpuParticleSim.new 抛错 → 工厂返回空 sim（不整场失败）', async () => {
     resolveParticleMaterial.mockResolvedValue(null);
     defaultLoadWasm.mockResolvedValue({ CpuParticleSim: { new: vi.fn(() => { throw new Error('bad spec'); }) } } as any);
-    loadSceneToThree.mockReturnValue({ player: { dispose: vi.fn() }, sims: [], backgroundIds: [0], particleLayers: [] });
+    loadSceneToThree.mockReturnValue({ player: { dispose: vi.fn(), setGlowStage: vi.fn() }, sims: [], backgroundIds: [0], particleLayers: [] });
 
     const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
     const ok = await r.render('2851992662', document.createElement('canvas'), null);
@@ -213,7 +237,7 @@ describe('createThreeSceneRenderer', () => {
   it('render：零背景 + 零粒子 → 返回 false（controller 走 preview）', async () => {
     resolveImageTexture.mockResolvedValue(null);
     defaultLoadWasm.mockResolvedValue({ CpuParticleSim: { new: vi.fn(() => makeMockSim()) } } as any);
-    loadSceneToThree.mockReturnValue({ player: { dispose: vi.fn() }, sims: [], backgroundIds: [], particleLayers: [] });
+    loadSceneToThree.mockReturnValue({ player: { dispose: vi.fn(), setGlowStage: vi.fn() }, sims: [], backgroundIds: [], particleLayers: [] });
 
     const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
     const ok = await r.render('2851992662', document.createElement('canvas'), null);
@@ -224,7 +248,7 @@ describe('createThreeSceneRenderer', () => {
     resolveImageTexture.mockResolvedValue(fakeTexture() as any);
     resolveParticleMaterial.mockResolvedValue(null);
     // 模拟返回带 resize 的 player（真实 ThreeScenePlayer 的接口）。
-    const player = { dispose: vi.fn(), resize: vi.fn() };
+    const player = { dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn() };
     defaultLoadWasm.mockResolvedValue({ CpuParticleSim: { new: vi.fn(() => makeMockSim()) } } as any);
     loadSceneToThree.mockReturnValue({ player, sims: [], backgroundIds: [0], particleLayers: [] });
 
@@ -243,6 +267,59 @@ describe('createThreeSceneRenderer', () => {
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: 720 });
     window.dispatchEvent(new Event('resize'));
     expect(player.resize.mock.calls.length).toBe(callsAfterDispose);
+  });
+
+  // ── 应用级 Glow 的装配（Task 5）：按设置建 stage → 交给 player → teardown 释放 ──────────
+  // 成功 render 的公共桩（背景 1 层 + 带 setGlowStage 的 player）。
+  function prepareGlowRender() {
+    resolveImageTexture.mockResolvedValue(fakeTexture() as any);
+    resolveParticleMaterial.mockResolvedValue(null);
+    defaultLoadWasm.mockResolvedValue({ CpuParticleSim: { new: vi.fn(() => makeMockSim()) } } as any);
+    const player = { dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn() };
+    loadSceneToThree.mockReturnValue({ player, sims: [], backgroundIds: [0], particleLayers: [] } as any);
+    return player;
+  }
+
+  it('glowEnabled=false ⇒ 不创建 Glow stage（零资源），player 收到 null', async () => {
+    stubSettings({ glowEnabled: false });
+    const player = prepareGlowRender();
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    expect(await r.render('2851992662', document.createElement('canvas'), null)).toBe(true);
+    expect(createGlowStage).not.toHaveBeenCalled();
+    expect(player.setGlowStage).toHaveBeenCalledWith(null);
+    r.dispose();
+  });
+
+  it('glowEnabled=true ⇒ 用画布缓冲尺寸 + 设置参数创建 stage 并交给 player', async () => {
+    stubSettings({ glowEnabled: true, glowThreshold: 0.8, glowStrength: 2 });
+    const player = prepareGlowRender();
+    const canvas = document.createElement('canvas');
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    expect(await r.render('2851992662', canvas, null)).toBe(true);
+
+    expect(createGlowStage).toHaveBeenCalledTimes(1);
+    // 本场景无 effects（isolate 为空）却仍然建了 Glow ⇒ 钉住「装配必须在 isolate 块之外」。
+    expect(loadSceneToThree.mock.calls[0][1].isolate?.size ?? 0).toBe(0);
+    const [w, h, opts] = vi.mocked(createGlowStage).mock.calls[0];
+    // 尺寸 = 画布**缓冲**尺寸（正数；dpr 由 player.resize 设定，此处只钉口径来源）。
+    expect(w).toBeGreaterThan(0);
+    expect(h).toBeGreaterThan(0);
+    expect(w).toBe(canvas.width);
+    expect(h).toBe(canvas.height);
+    // 阈值/强度来自插件设置（而非硬编码的 A 档）。
+    expect(opts).toEqual({ threshold: 0.8, strength: 2 });
+    expect(player.setGlowStage).toHaveBeenCalledWith(vi.mocked(createGlowStage).mock.results[0].value);
+    r.dispose();
+  });
+
+  it('dispose ⇒ stage 被释放', async () => {
+    prepareGlowRender();
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    await r.render('2851992662', document.createElement('canvas'), null);
+    const stage = vi.mocked(createGlowStage).mock.results[0].value!;
+
+    r.dispose();
+    expect(stage.dispose).toHaveBeenCalled();
   });
 });
 
@@ -283,7 +360,7 @@ describe('createThreeSceneRenderer instanceoverride 接线', () => {
     const cpNew = vi.fn(() => sim);
     defaultLoadWasm.mockResolvedValue({ CpuParticleSim: { new: cpNew } } as any);
     loadSceneToThree.mockReturnValue({
-      player: { dispose: vi.fn(), resize: vi.fn() },
+      player: { dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn() },
       sims: [sim],
       backgroundIds: [],
       particleLayers: [{ id: 0, sim }],
@@ -536,6 +613,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     const setObjectEffectStage = vi.fn();
     const player = {
       dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage,
+      setGlowStage: vi.fn(),
       renderer: {},
       // 隔离条目的键 = 对象 id（真实 player 由 attachIsolated(obj.id) 建条目）。
       isolatedObjects: () => [{ id: 13, kind: 'background', rtWidth: 1920, rtHeight: 1080, rtTexture: {} }],
@@ -606,6 +684,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     const setObjectEffectStage = vi.fn();
     const player = {
       dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage,
+      setGlowStage: vi.fn(),
       renderer: {},
       isolatedObjects: () => [{ id: 71, kind: 'particle', rtWidth: 400, rtHeight: 400, rtTexture: {} }],
     };
@@ -643,6 +722,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     const setObjectEffectStage = vi.fn();
     const player = {
       dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage,
+      setGlowStage: vi.fn(),
       renderer: {},
       isolatedObjects: () => [],
     };
@@ -684,6 +764,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     defaultLoadWasm.mockResolvedValue(null);
     const player = {
       dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage: vi.fn(),
+      setGlowStage: vi.fn(),
       renderer: {},
       isolatedObjects: () => [{ id: 13, kind: 'background', rtWidth: 1920, rtHeight: 1080, rtTexture: {} }],
     };
@@ -727,6 +808,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     defaultLoadWasm.mockResolvedValue(null);
     const player = {
       dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage: vi.fn(),
+      setGlowStage: vi.fn(),
       renderer: {},
       // P2 起这类对象进入隔离（真实 player 会为 isolate 里每个对象建条目）
       isolatedObjects: () => [{ id: 13, kind: 'background', rtWidth: 3840, rtHeight: 2160, rtTexture: {} }],
@@ -769,6 +851,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     defaultLoadWasm.mockResolvedValue(null);
     const player = {
       dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage: vi.fn(),
+      setGlowStage: vi.fn(),
       renderer: {},
       isolatedObjects: () => [{ id: 13, kind: 'background', rtWidth: 1920, rtHeight: 1080, rtTexture: {} }],
     };

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { GlowStage } from './glow-stage.js';
 export declare const DEFAULT_PARTICLE_CAPACITY = 1024;
 export declare const MAX_PARTICLE_CAPACITY = 2048;
 export declare function specMaxcount(specJson: string): number;
@@ -48,6 +49,7 @@ export declare class ThreeScenePlayer {
     private nextParticleLayerId;
     private isolated;
     private objectEffectStage;
+    private glowStage;
     private readonly startedAt;
     constructor(canvas: HTMLCanvasElement, width: number, height: number, renderer?: THREE.WebGLRenderer);
     resize(width: number, height: number): void;
@@ -58,6 +60,8 @@ export declare class ThreeScenePlayer {
     setAnimationLoop(fn?: (dt: number) => void): void;
     render(): void;
     setObjectEffectStage(stage: ObjectEffectStage | null): void;
+    /** 装配应用级 Glow（null = 关闭）。关闭时帧序与本方法加入前逐字相同。 */
+    setGlowStage(stage: GlowStage | null): void;
     isolatedObjects(): IsolatedObject[];
     setObjectOutput(id: number, texture: THREE.Texture): void;
     resizeObjectRT(id: number, width: number, height: number): void;

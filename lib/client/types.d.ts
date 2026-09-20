@@ -22,4 +22,10 @@ export interface ClientSettings {
     blurEnabled: boolean;
     blurRadius: number;
     kenBurns: boolean;
+    /** 应用级 Glow（对齐 WE 的 general.user.postprocessing）：整帧亮部发光。 */
+    glowEnabled: boolean;
+    /** bright-pass 阈值（sRGB 域），缺省 0.65。 */
+    glowThreshold: number;
+    /** 发光强度，缺省 1.0。 */
+    glowStrength: number;
 }

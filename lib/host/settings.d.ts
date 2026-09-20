@@ -8,6 +8,9 @@ export declare const WallpaperSettingsSchema: z<Schemastery.ObjectS<{
     blurEnabled: z<boolean, boolean>;
     blurRadius: z<number, number>;
     kenBurns: z<boolean, boolean>;
+    glowEnabled: z<boolean, boolean>;
+    glowThreshold: z<number, number>;
+    glowStrength: z<number, number>;
 }>, Schemastery.ObjectT<{
     selectedWallpaperId: z<string, string>;
     wallpaperDir: z<string, string>;
@@ -16,4 +19,7 @@ export declare const WallpaperSettingsSchema: z<Schemastery.ObjectS<{
     blurEnabled: z<boolean, boolean>;
     blurRadius: z<number, number>;
     kenBurns: z<boolean, boolean>;
+    glowEnabled: z<boolean, boolean>;
+    glowThreshold: z<number, number>;
+    glowStrength: z<number, number>;
 }>>;

@@ -30,6 +30,8 @@ import {
   groupEffectsByObject, objectRtSize, particleWorldSize, screenScalePx,
 } from './object-range.js';
 import { ObjectEffectStage } from './object-effects.js';
+import { createGlowStage, type GlowStage } from './glow-stage.js';
+import { readClientSettings } from './settings.js';
 import { resolveEffectChain, type CompiledEffectPass } from './shader/effect-chain.js';
 
 // wasm `CpuParticleSim` 的构造器形态（wasm-bindgen 静态 `new`；`ParticleSim` 接口见
@@ -144,6 +146,8 @@ export function createThreeSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneR
   let current: ThreeSceneLoadResult | null = null;
   // 本次装配的对象级效果链编排器（模块内闭包持有，供 window.resize 同步预算与 teardown 释放）。
   let currentStage: ObjectEffectStage | null = null;
+  // 本次装配的应用级 Glow stage（同上：闭包持有，teardown 释放）。
+  let currentGlow: GlowStage | null = null;
   // window.resize 监听：窗口尺寸变化时按新窗口比例重推 cover（对齐 wasm 窗口视口语义）。
   let onWindowResize: (() => void) | null = null;
   // 本次装配的背景纹理：teardown 时显式 dispose（视频纹理的 `<video>`/Blob URL 清理挂在
@@ -158,6 +162,9 @@ export function createThreeSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneR
     // renderer 与隔离 RT）——顺序反了会让 runner 的 dispose 触碰已释放的 GL 资源。
     currentStage?.dispose();
     currentStage = null;
+    // Glow stage 持有自己的 RT/材质，同样要在 player.dispose（释放 renderer）之前释放。
+    currentGlow?.dispose();
+    currentGlow = null;
     current?.player.dispose();
     for (const sim of current?.sims ?? []) sim.free?.();
     current = null;
@@ -372,6 +379,18 @@ export function createThreeSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneR
           result.player.setObjectEffectStage(stage);
           currentStage = stage;
         }
+        // 应用级 Glow：按插件设置装配（关闭时零资源、帧序与输出零回归）。⚠️ 必须在 isolate 块
+        // **之外**——Glow 与「有无对象被隔离」无关；尺寸用画布缓冲（loadSceneToThree 内部已
+        // player.resize(vw,vh) 按 dpr 设过），故 resize 由 player.resize 内部单点同步，此处不重复。
+        const settings = await readClientSettings();
+        currentGlow?.dispose();
+        currentGlow = settings.glowEnabled
+          ? createGlowStage(fg.width, fg.height, {
+              threshold: settings.glowThreshold,
+              strength: settings.glowStrength,
+            })
+          : null;
+        result.player.setGlowStage(currentGlow);
         // 窗口尺寸变化 → 按新窗口比例重推 cover（对齐 wasm 路径的 window.innerWidth/Height 语义），
         // 并把新的**屏幕密度**同步给效果链编排器（隔离对象 RT 随视口重设）。
         // ⚠️ 密度取自 `player.screenScalePx()`（player 内部与 applyCover 同一套 state，
