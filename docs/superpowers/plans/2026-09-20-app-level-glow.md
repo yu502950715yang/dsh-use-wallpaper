@@ -256,8 +256,8 @@ describe('createGlowStage（RT 池与 pass 链）', () => {
     const { renderer, calls } = mockRenderer();
     const stage = createGlowStage(1280, 720)!;
     stage.apply(renderer, scene, camera);
-    // 10 个 pass，其中最后一个 composite 的目标是 null（canvas）
-    expect(calls.render).toBe(10);
+    // 11 次 renderer.render = 1 次「主场景 → base RT」+ 10 个 glow pass（末个 composite 目标为 null）
+    expect(calls.render).toBe(11);
     expect(calls.setRenderTarget[calls.setRenderTarget.length - 1]).toBeNull();
     stage.dispose();
   });
@@ -433,7 +433,8 @@ export function createGlowStage(
   const quadScene = new THREE.Scene();
   const quadCamera = new THREE.Camera();
   const geometry = new THREE.PlaneGeometry(2, 2);
-  const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+  // 显式泛型：mesh.material 随后会被换成 ShaderMaterial；用 MeshBasicMaterial 推断会在赋值处 TS2740
+  const mesh = new THREE.Mesh<THREE.PlaneGeometry, THREE.Material>(geometry, new THREE.MeshBasicMaterial());
   quadScene.add(mesh);
 
   const brightMat = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: BRIGHT_FRAG, uniforms: { tSrc: { value: null }, uThreshold: { value: options.threshold } }, depthTest: false, depthWrite: false });
