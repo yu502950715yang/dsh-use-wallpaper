@@ -25525,6 +25525,9 @@ function createThreeSceneRenderer(opts) {
         for (const obj of desc.objects) {
           if (obj.kind !== "text") continue;
           if (!resolveVisibility(obj, userProps)) continue;
+          const props = obj.scriptProperties ?? {};
+          const isClock = obj.script ? detectScriptPattern(obj.script) === "clock" : false;
+          if (obj.script && !isClock) continue;
           const size = textCanvasSize(obj.text, obj.pointsize, obj.size);
           const opts2 = {
             font: await loadWallpaperFont(id, obj.font),
@@ -25533,8 +25536,6 @@ function createThreeSceneRenderer(opts) {
             width: size.w,
             height: size.h
           };
-          const props = obj.scriptProperties ?? {};
-          const isClock = obj.script ? detectScriptPattern(obj.script) === "clock" : false;
           const initial = isClock ? formatClockText(/* @__PURE__ */ new Date(), props) : obj.text;
           const texture = createTextTexture(initial, opts2);
           textLayers.set(obj.id, {

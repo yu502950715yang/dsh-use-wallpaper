@@ -281,6 +281,12 @@ export function createThreeSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneR
         for (const obj of desc.objects) {
           if (obj.kind !== 'text') continue;
           if (!resolveVisibility(obj, userProps)) continue;
+          const props = obj.scriptProperties ?? {};
+          const isClock = obj.script ? detectScriptPattern(obj.script) === 'clock' : false;
+          // 带脚本但未识别的写法：脚本不会执行，`text.value` 只是作者的占位值
+          // （CodeTime 的 `"12"` / `hour:minute:…`、Crimson Horizon 的 `DAY` / `<Date>`）——
+          // 画出来比不画更糟（2026-09-21 用户实测反馈）→ 跳过、交给 preview 回退。
+          if (obj.script && !isClock) continue;
           const size = textCanvasSize(obj.text, obj.pointsize, obj.size);
           const opts = {
             font: await loadWallpaperFont(id, obj.font),
@@ -289,8 +295,6 @@ export function createThreeSceneRenderer(opts?: { loadWasm?: LoadWasm }): SceneR
             width: size.w,
             height: size.h,
           };
-          const props = obj.scriptProperties ?? {};
-          const isClock = obj.script ? detectScriptPattern(obj.script) === 'clock' : false;
           const initial = isClock ? formatClockText(new Date(), props) : obj.text;
           const texture = createTextTexture(initial, opts);
           textLayers.set(obj.id, {

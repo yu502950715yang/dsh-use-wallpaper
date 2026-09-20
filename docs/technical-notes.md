@@ -15,7 +15,7 @@
 - **渲染循环**：`renderer.setAnimationLoop`（`dt` = `performance.now` 差分，clamp 0.1s）→ 逐 `CpuParticleSim.update(dt)` → 刷新实例缓冲 → `render`；帧体 `try/catch` **异常自愈**（three 的 RAF 一次异常会永久停摆）。
 - **相机 / 尺寸**：cover 正交相机（按**窗口宽高比**，非场景比例）；`canvas.width/height = 视口逻辑尺寸 × devicePixelRatio`。
 - **对象级效果链接线**（2026-09-14 起 P1）：`createThreeSceneRenderer()` → `loadSceneToThree()`；隔离对象进 `localScene`、主场景放合成 quad、注入帧钩子；每帧 `renderIsolatedContents()` → `stage.bindOutputs()` → 渲染主场景 → `stage.advance(time)`（串行推进 `EffectRunner`，异步不阻塞本帧）。无带效果对象时 stage 为 null，帧序退化为原路径（零回归）。
-- **text 对象**（2026-09-21）：与 image 同路径渲染为背景 quad（`CanvasTexture`）；`clock` 脚本每帧判文本变化后**就地重绘**同一 canvas（同分钟不重绘）并置 `needsUpdate`；**只对 text 应用 `visible` 过滤**；pkg 内字体经 `FontFace` 加载、失败回退 sans-serif。非 clock 脚本显示 `text.value` 静态默认值（**不是真实时间**，见 `AGENT.md` §7.1 第 6 条）。
+- **text 对象**（2026-09-21）：与 image 同路径渲染为背景 quad（`CanvasTexture`）；`clock` 脚本每帧判文本变化后**就地重绘**同一 canvas（同分钟不重绘）并置 `needsUpdate`；**只对 text 应用 `visible` 过滤**；pkg 内字体经 `FontFace` 加载、失败回退 sans-serif。非 clock 脚本（未识别写法）**跳过不渲染** —— 脚本不执行时 `text.value` 只是作者占位值（见 `AGENT.md` §7.1 第 6 条）。
 - **省电与画质档位**（2026-09-21）：`paused` / `pauseOnHidden`（停 RAF + 帧内防御 + `elapsedSeconds` 扣暂停时长）、`qualityScale`（渲染像素比 = 设备像素比 × 档位；画布缓冲与对象 RT 的屏幕密度走**同一个** `resolvePixelRatio`）；`resize()` 重读 `devicePixelRatio`（跨屏自适应）。见 `AGENT.md` §7.1 第 7 条。
 
 ### 1.2 粒子模拟（Rust/wasm，`wasm/src/particle/`）

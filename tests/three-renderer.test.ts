@@ -1114,4 +1114,23 @@ describe('three-renderer text 对象', () => {
     expect(ctx2d.fillText).toHaveBeenCalledWith('HELLO', 200, 50);
     r.dispose();
   });
+
+  // 2026-09-21 用户实测反馈：CodeTime（2980088441）把作者的占位值画到屏幕上（"12"/hour:minute:…/
+  // "Year"），整张壁纸只剩脏字。脚本不执行时 text.value 不代表真实内容，宁可不画。
+  it('带脚本但未识别（非 clock）→ 跳过，不显示作者占位值', async () => {
+    stubAssetFetch(sceneWithText({
+      text: {
+        value: '"12"',
+        script: "export function update(value) { let clock = new Date(); value.x = clock.getFullYear(); return value; }",
+      },
+    }), {});
+    stubTextRender();
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    await r.render('2851992662', document.createElement('canvas'), null);
+
+    const assets = loadSceneToThree.mock.calls[0][1] as { textLayers: Map<number, unknown> };
+    expect(assets.textLayers.size).toBe(0);
+    expect(ctx2d.fillText).not.toHaveBeenCalled();
+    r.dispose();
+  });
 });
