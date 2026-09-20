@@ -57,6 +57,15 @@ describe('createTextTexture', () => {
     expect(ctx.font).toBe('24px Arial');
   });
 
+  // WE 的系统字体名（CodeTime 用 systemfont_consolas）此前被当未知家族 → 回退 sans-serif，
+  // 观感与桌面（等宽）不符。
+  it('WE 系统字体名映射为 CSS 家族（systemfont_consolas → 等宽）', () => {
+    createTextTexture('x', { font: 'systemfont_consolas', pointsize: 32, width: 100, height: 50 });
+    expect(ctx.font).toBe('32px Consolas, "Courier New", monospace');
+    createTextTexture('y', { font: 'systemfont_arial', pointsize: 32, width: 100, height: 50 });
+    expect(ctx.font).toBe('32px Arial, Helvetica, sans-serif');
+  });
+
   it('M29 多词字体家族名（Times New Roman）→ 加引号（CSS font 简写多词家族需引号，否则被静默丢弃）', () => {
     createTextTexture('z', { font: 'Times New Roman', pointsize: 20, width: 100, height: 50 });
     expect(ctx.font).toBe('20px "Times New Roman"');
@@ -107,6 +116,13 @@ describe('drawTextToCanvas（就地重绘：时钟复用同一 canvas 与纹理�
     expect(ctx.fillText.mock.calls.map((c) => [c[0], c[2]])).toEqual([
       ['A', 26], ['B', 50], ['C', 74],
     ]);
+  });
+
+  // CodeTime id=59 的脚本返回值用 \t 做缩进；canvas 的 fillText 不渲染 \t。
+  it('制表符展开为空格（否则标签列的缩进丢失）', () => {
+    const canvas = document.createElement('canvas');
+    drawTextToCanvas(canvas, 'hour:\n\t\tminute:', { pointsize: 20, width: 200, height: 100 });
+    expect(ctx.fillText.mock.calls.map((c) => c[0])).toEqual(['hour:', '  minute:']);
   });
 
   it('2D 上下文不可用（getContext → null）时不抛错', () => {

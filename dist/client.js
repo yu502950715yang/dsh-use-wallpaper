@@ -22354,8 +22354,9 @@ function optAlpha(s) {
   return Math.max(0, Math.min(1, a));
 }
 function optColor(s) {
-  if (typeof s !== "string") return void 0;
-  const parts = s.trim().split(/\s+/).map(Number);
+  const raw = typeof s === "object" && s !== null && typeof s.value === "string" ? s.value : s;
+  if (typeof raw !== "string") return void 0;
+  const parts = raw.trim().split(/\s+/).map(Number);
   if (parts.length < 3 || !isFinite(parts[0]) || !isFinite(parts[1]) || !isFinite(parts[2])) return void 0;
   const rgb = [parts[0], parts[1], parts[2]];
   if (Math.max(parts[0], parts[1], parts[2]) <= 1) {
@@ -22445,6 +22446,17 @@ function parseSceneJson(raw) {
         // 非数值/负数/非法 → 0（渲染侧只实现 6/7/31，其余回退普通 alpha 混合）。
         colorBlendMode: Math.max(0, Math.floor(optNum(o.colorBlendMode) ?? 0)),
         ...base.visible?.kind === "script" ? { script: base.visible.script, scriptProperties: base.visible.scriptProperties } : {}
+      };
+    }
+    if (typeof o.text === "string" && o.text) {
+      return {
+        ...base,
+        kind: "text",
+        text: o.text,
+        font: typeof o.font === "string" && o.font ? o.font : void 0,
+        pointsize: optNum(o.pointsize),
+        color: optColor(o.color),
+        alignment: typeof o.alignment === "string" && o.alignment ? o.alignment : void 0
       };
     }
     if (typeof o.text === "object" && o.text !== null && !Array.isArray(o.text)) {
@@ -23906,11 +23918,27 @@ async function loadTexTexture(url, opts) {
 }
 
 // src/client/text-object.ts
+var WE_SYSTEM_FONTS = {
+  systemfont_arial: "Arial, Helvetica, sans-serif",
+  systemfont_consolas: 'Consolas, "Courier New", monospace',
+  systemfont_couriernew: '"Courier New", Courier, monospace',
+  systemfont_timesnewroman: '"Times New Roman", Times, serif',
+  systemfont_segoeui: '"Segoe UI", Tahoma, sans-serif',
+  systemfont_tahoma: "Tahoma, Geneva, sans-serif",
+  systemfont_verdana: "Verdana, Geneva, sans-serif",
+  systemfont_georgia: "Georgia, serif",
+  systemfont_impact: "Impact, Charcoal, sans-serif",
+  systemfont_lucidaconsole: '"Lucida Console", Monaco, monospace',
+  systemfont_comicsansms: '"Comic Sans MS", cursive'
+};
 function resolveFontFamily(font) {
   if (typeof font !== "string" || !font.trim()) return "sans-serif";
   const name = font.trim();
+  const sys = WE_SYSTEM_FONTS[name.toLowerCase()];
+  if (sys) return sys;
+  if (name.toLowerCase().startsWith("systemfont_")) return "sans-serif";
   if (/[/\\]/.test(name) || /\.[a-zA-Z0-9]{2,4}$/.test(name)) return "sans-serif";
-  return name;
+  return name.includes(" ") ? `"${name}"` : name;
 }
 function textCanvasSize(text, pointsize, size) {
   if (size) return { w: Math.max(1, Math.round(size[0])), h: Math.max(1, Math.round(size[1])) };
@@ -23929,11 +23957,11 @@ function drawTextToCanvas(canvas, text, opts) {
   if (!ctx) return;
   const size = Math.max(1, opts.pointsize ?? Math.round(height * 0.8));
   const family = resolveFontFamily(opts.font);
-  ctx.font = family.includes(" ") ? `${size}px "${family}"` : `${size}px ${family}`;
+  ctx.font = `${size}px ${family}`;
   ctx.fillStyle = opts.color ? `rgb(${opts.color[0]}, ${opts.color[1]}, ${opts.color[2]})` : "#ffffff";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  const lines = String(text).split("\n");
+  const lines = String(text).split("\n").map((line) => line.replace(/\t/g, " "));
   const lineHeight = size * 1.2;
   const firstY = height / 2 - (lines.length - 1) * lineHeight / 2;
   lines.forEach((line, i) => ctx.fillText(line, width / 2, firstY + i * lineHeight));

@@ -100,6 +100,23 @@ describe('parseSceneJson text 对象归类（T3.1）', () => {
     expect(o.text).toBe('12:00');
   });
 
+  // 2980088441（CodeTime）实测：11 个对象里有 4 个的 text 是**字符串**（"const"/"clock"/"={"/"}"），
+  // 此前只认对象形态 → 它们被归为「无引用对象」不渲染，画面上整行 `const clock = {` 与收尾 `}` 缺失。
+  it('text 为字符串 → 归为 kind:text，text 取该字符串（CodeTime 的 const/clock/={/} 形态）', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [{
+        id: 51, name: 'Text Layer', origin: '110.88 135.24 0', scale: '0.05 0.05 0.05',
+        size: '365 156', text: 'const', font: 'systemfont_consolas', pointsize: '32',
+        color: '0.19608 0.62353 0.62353', horizontalalign: 'center', verticalalign: 'center',
+      }],
+    }));
+    const o = desc.objects[0] as any;
+    expect(o.kind).toBe('text');
+    expect(o.text).toBe('const');
+    expect(o.pointsize).toBe(32);
+    expect(o.color).toEqual([0.19608 * 255, 0.62353 * 255, 0.62353 * 255]);
+  });
+
   it('保留 font/pointsize/color/size/alignment 字段', () => {
     const desc = parseSceneJson(JSON.stringify({ objects: [textObj] }));
     const o = desc.objects[0] as any;
@@ -135,11 +152,17 @@ describe('parseSceneJson text 对象归类（T3.1）', () => {
     expect((empty.objects[0] as any).kind).toBe('particle');
   });
 
-  it('text 非对象（字符串/数组）不归为 text', () => {
-    const s = parseSceneJson(JSON.stringify({ objects: [{ id: 1, text: 'fonts/a.otf' }] }));
-    expect((s.objects[0] as any).kind).not.toBe('text');
+  // 2026-09-21 订正（原断言「text 字符串不归为 text」）：text 为字符串 = 静态文本
+  // （CodeTime 的 "const" / "clock" / "={" / "}"）。全库实测该形态仅 4 个对象、全在 2980088441、
+  // 值均为代码片段，无「把路径写进 text」的误用。
+  it('text 为字符串 → 归为 text（静态文本）；数组 / 空串仍不归', () => {
+    const s = parseSceneJson(JSON.stringify({ objects: [{ id: 1, text: 'const' }] }));
+    expect((s.objects[0] as any).kind).toBe('text');
+    expect((s.objects[0] as any).text).toBe('const');
     const arr = parseSceneJson(JSON.stringify({ objects: [{ id: 2, text: [] }] }));
     expect((arr.objects[0] as any).kind).not.toBe('text');
+    const empty = parseSceneJson(JSON.stringify({ objects: [{ id: 3, text: '' }] }));
+    expect((empty.objects[0] as any).kind).not.toBe('text');
   });
 
   it('pointsize 非数字 / color 非法 → 对应字段 undefined', () => {
@@ -273,6 +296,17 @@ describe('text 对象 color 归一化（I3：0-1 与 0-255 双语义）', () => 
       }],
     }));
     expect((desc.objects[0] as any).color).toEqual([255, 255, 255]);
+  });
+
+  // CodeTime id=54 的 color 是**对象**（音频响应脚本驱动，value = 红色）→ 不执行脚本时取 value。
+  it('color 为对象（脚本驱动）→ 取 value 解析（否则退化为白色）', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [{
+        id: 54, text: 'clock', origin: '0 0 0', scale: '1 1 1',
+        color: { script: 'x', scriptproperties: {}, value: '0.76078 0.15294 0.15294' },
+      }],
+    }));
+    expect((desc.objects[0] as any).color).toEqual([0.76078 * 255, 0.15294 * 255, 0.15294 * 255]);
   });
 });
 
