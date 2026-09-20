@@ -90,17 +90,20 @@ function splitLines(text: string): string[] {
   return String(text).split('\n').map((line) => line.replace(/\t/g, ''));
 }
 
-// canvas 的字体 bounding box（Chrome/Windows 取 Win 度量）≈ FreeType 的 ascender/descender/行高；
-// 缺失（旧浏览器/jsdom mock）→ 按 0.8em / 0.2em 估算。
+// canvas 的字体 bounding box ≈ FreeType 的 ascender/descender/行高。但**pkg 内自定义字体会返回
+// 远超 em 的值**（2937346640 的 8bitOperator 实测 ~2.9em ⇒ 画布被撑大 2.4 倍）→ 总行高超过
+// 1.5em 时等比收口到 1.2em（与该作者 size 反算出的 396px 一致）。缺失（jsdom mock）→ 0.8/0.2em。
 function lineMetrics(ctx: CanvasRenderingContext2D, px: number): { ascent: number; descent: number; lineHeight: number } {
   const m = ctx.measureText('Mg');
-  const ascent = Number.isFinite(m.fontBoundingBoxAscent) && m.fontBoundingBoxAscent > 0
+  const rawAscent = Number.isFinite(m.fontBoundingBoxAscent) && m.fontBoundingBoxAscent > 0
     ? m.fontBoundingBoxAscent
     : px * 0.8;
-  const descent = Number.isFinite(m.fontBoundingBoxDescent) && m.fontBoundingBoxDescent > 0
+  const rawDescent = Number.isFinite(m.fontBoundingBoxDescent) && m.fontBoundingBoxDescent > 0
     ? m.fontBoundingBoxDescent
     : px * 0.2;
-  return { ascent, descent, lineHeight: ascent + descent };
+  const total = rawAscent + rawDescent;
+  const k = total > px * 1.5 ? (px * 1.2) / total : 1;
+  return { ascent: rawAscent * k, descent: rawDescent * k, lineHeight: total * k };
 }
 
 // 度量用的独立 context（不缓存：jsdom 单测按用例 mock getContext，缓存会跨用例串味）。

@@ -135,6 +135,17 @@ describe('drawTextToCanvas（就地重绘：时钟复用同一 canvas 与纹理�
     expect(ctx.fillText.mock.calls.map((c) => c[0])).toEqual(['hour:', 'minute:']);
   });
 
+  it('字体 bounding box 远超 em（pkg 内自定义字体）→ 行高收口 1.2em，画布不被撑大', () => {
+    // 2937346640 的 8bitOperator 实测 ~2.9em；照用会把两行文本的画布撑到 958px（应为 394px）
+    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue({
+      ...ctx,
+      font: '164px X',
+      measureText: () => ({ width: 100, fontBoundingBoxAscent: 400, fontBoundingBoxDescent: 80 }),
+    } as never);
+    const layout = measureTextLayout('a\nb', { pointsize: 41 });   // pointsize×4 = 164px
+    expect(layout.height).toBeCloseTo(2 * 164 * 1.2, 0);          // 393.6，而非 960
+  });
+
   it('font 为文件路径（fonts/xxx.otf）→ 回退 sans-serif；字体家族名直用；WE 系统字体名映射', () => {
     createTextTexture('x', { font: 'fonts/Atami-Regular.otf', pointsize: 20, width: 100, height: 50 });
     expect(ctx.font).toBe('80px sans-serif');

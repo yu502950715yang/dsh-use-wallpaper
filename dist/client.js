@@ -22558,9 +22558,11 @@ function splitLines(text) {
 }
 function lineMetrics(ctx, px) {
   const m = ctx.measureText("Mg");
-  const ascent = Number.isFinite(m.fontBoundingBoxAscent) && m.fontBoundingBoxAscent > 0 ? m.fontBoundingBoxAscent : px * 0.8;
-  const descent = Number.isFinite(m.fontBoundingBoxDescent) && m.fontBoundingBoxDescent > 0 ? m.fontBoundingBoxDescent : px * 0.2;
-  return { ascent, descent, lineHeight: ascent + descent };
+  const rawAscent = Number.isFinite(m.fontBoundingBoxAscent) && m.fontBoundingBoxAscent > 0 ? m.fontBoundingBoxAscent : px * 0.8;
+  const rawDescent = Number.isFinite(m.fontBoundingBoxDescent) && m.fontBoundingBoxDescent > 0 ? m.fontBoundingBoxDescent : px * 0.2;
+  const total = rawAscent + rawDescent;
+  const k = total > px * 1.5 ? px * 1.2 / total : 1;
+  return { ascent: rawAscent * k, descent: rawDescent * k, lineHeight: total * k };
 }
 function measureContext() {
   if (typeof document === "undefined") return null;
