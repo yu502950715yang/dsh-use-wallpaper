@@ -115,7 +115,7 @@ export function normalizeGlowOptions(opts?: GlowOptions): Required<GlowOptions>;
 ```
 
 > **2026-09-20 订正（实现与上面的接口有两处偏离，原文保留）**：
-> 1. **`createGlowStage` 的签名改为 `createGlowStage(width: number, height: number, opts?: GlowOptions)`** —— RT 与材质都是**纯 JS 对象、不需要 GL 上下文**，`renderer` 只在 `apply(renderer, …)` 时使用（`three-renderer` 也拿不到 `player.renderer` 这个私有字段）。创建期**只对非法尺寸**返回 `null`。
+> 1. **`createGlowStage` 的签名改为 `createGlowStage(width: number, height: number, opts?: GlowOptions)`** —— RT 与材质都是**纯 JS 对象、不需要 GL 上下文**，`renderer` 只在 `apply(renderer, …)` 时使用。创建期**只对非法尺寸**返回 `null`。
 > 2. **「shader 编译失败 ⇒ 返回 null」不成立**：shader 编译 / 链接失败改为**运行期首次 `apply` 捕获并永久降级**（此后帧序回退为无 Glow），并额外挂 `renderer.debug.onShaderError` —— 因为 three 在 `LINK_STATUS === false` 时**只 `console.error`、不抛异常**，单靠 `try/catch` 抓不到。实现见 `src/client/glow-stage.ts`。
 
 player 侧只加：
@@ -183,7 +183,8 @@ else this.renderer.render(this.scene, this.camera);   // 零回归路径
 
 **即时生效**：设置变更 → 重建或更新 stage（开关：`setGlowStage(newStage | null)`；阈值/强度：`stage.setOptions(...)`），不重启 `dsh web`。
 
-> **2026-09-20 订正（原文保留）**：实际是「**下次 render（切壁纸）后生效**」，**不是**即时 —— `three-renderer` 的装配在**创建 renderer 时**读一次设置（`createThreeSceneRenderer` 内），设置变更后没有「变更 → 更新 stage」的通路；真正即时要在 `index.ts` 加这条通路，超出本轮文件清单。**如实标注**：面板拨动「光晕」开关后需切换一次壁纸（或重启 `dsh web`）才看到变化，阈值 / 强度同理。同页自证用的 `__fxSetGlow` 也是靠「注入 ctx 后重渲染同一张壁纸」才生效（`research/verify-object-effects.mjs`）。
+> **2026-09-20 订正（原文保留）**：实际是「**下次 render（切壁纸）后生效**」，**不是**即时 —— `three-renderer` 的装配在**每次 `render`（加载 / 切换壁纸）时**读一次设置（`src/client/three-renderer.ts` 的 `render(id, fg)` 路径内 `await readClientSettings()` 后 `createGlowStage(...)` / `setGlowStage(...)`；调用方是 `src/client/wallpaper-controller.ts` 的每次 `select(id)`，而 `readClientSettings()` 每次现拉远端、**无缓存**），设置变更后没有「变更 → 更新 stage」的通路；真正即时要在 `index.ts` 加这条通路，超出本轮文件清单。**如实标注**：面板拨动「光晕」开关后需切换一次壁纸（或重启 `dsh web`）才看到变化，阈值 / 强度同理。同页自证用的 `__fxSetGlow` 也是靠「注入 ctx 后重渲染同一张壁纸」才生效（`research/verify-object-effects.mjs`）。
+> **另注：本节上面的表格为原稿** —— 其中的旧签名 `createGlowStage(player.renderer, {threshold, strength})` 与旧失败语义「shader 编译失败 / renderer 不可用 ⇒ 返回 null」**均已作废**：**接口签名与失败语义以 §3.2 的订正为准**。
 
 ### 3.6 错误处理与零回归
 
@@ -217,6 +218,7 @@ else this.renderer.render(this.scene, this.camera);   // 零回归路径
 > 1. 判据的 p99 是**云区**口径（区域 **`[0,0,576,242]`**，见 `AGENT.md` §5.27），**不是全屏 p99** —— 本机复算 GTR **全屏** p99 关 245 → 开 255（Δ=10，**会误判为未达标**）；全屏 p99 在 Glow 开启后整体钉在 255、**失去鉴别力**（既有 `[5]` 判据因此由 1 PASS + 2 FAIL 变 3 FAIL；**不是 bloom 失效**）。
 > 2. 开 / 关对照**不能**靠页内开关跨 `runPage`：**导航会重置模块态** ⇒ 注入的 ctx 丢失、两次都退回 `DEFAULTS.glowEnabled = true`（两次都变成同一档）。必须在**创建 renderer 之前**经 **URL 参数注入 `setSettingsCtx`**。
 > 3. 实测结果（真机 RTX 3060 / ANGLE D3D11，壁纸只测 GTR 一张）：云区 p99 **关 200 → 开 224（Δ = +24）**，四次独立测量零差异；离线 A 档 221 / 桌面 225。**未与桌面 WE 逐像素对照**（无同机同刻桌面截图）。
+> 4. **「199」与「200」的关系（勿误读为矛盾）**：本节判据里的 `~199`（§1 引用的 §5.27 桌面对照那轮）与本条实测的「关 **200**」是**两次不同时间的「改动前」采集** —— 口径 / 时点不同，**并非矛盾**；`AGENT.md` §5.27 与 §7.1 同此说明。
 - **零回归**：`glowEnabled = false` 时与改动前的同相位帧**逐像素一致**（差分仅剩时间相位与噪点口径）。
 - **性能**：开 / 关的每帧 `renderer.render` 提交耗时与帧间隔对比（RTX 3060 @3440×1440、1080p；`AGENT.md` §7.1 的代理判据口径），确认退化可忽略。
 - `lib/` + `dist/` 重建后跑；既有 15 项失败**逐项不变**。
