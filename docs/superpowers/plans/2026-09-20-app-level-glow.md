@@ -999,19 +999,31 @@ git commit -m "feat(glow): three-renderer 按设置装配/拆除 Glow stage" -m 
   }
 ```
 
-同时在 `research/harness-object-effects-entry.mjs` 暴露开关入口（把设置写进页面可读的位置，并让生产装配走它）：
+同时在 `research/harness-object-effects-entry.mjs` 暴露开关入口。
+⚠️ **实现方式被 Task 5 的实现改变了**（原稿的 localStorage 覆盖方案**行不通**）：Glow 的开关由 `three-renderer` 在**每次 render** 时 `await readClientSettings()` 决定，而它读的是 `settings.ts` 的**模块级 ctx** ⇒ harness 必须在 `createThreeSceneRenderer()` 之前用既有的 **`setSettingsCtx`** 注入，否则开/关两次都拿到 `DEFAULTS`（`glowEnabled = true`），[7] 判据必挂。参考实现：
 
 ```js
-// ★ Glow 开关（2026-09-20）：[7] 段用它在同一页面内做开/关对照。
-//   生产里 glow 由插件设置驱动；harness 通过 localStorage 覆盖后重新装配 player。
-window.__fxSetGlow = (on) => {
-  try { localStorage.setItem('we:harness:glow', on ? '1' : '0'); } catch {}
-  location.reload();
-  return 'reloading';
+// ★ Glow 开关（2026-09-20）：[7] 段用它在**同一页面内**做开/关对照。
+//   生产里 glow 由插件设置驱动，而 three-renderer 每次 render 都 await readClientSettings()
+//   读 settings.ts 的模块级 ctx ⇒ 注入 ctx 后**再触发一次 render**（__fxSwitch 同 id）即生效。
+import { setSettingsCtx } from '../lib/client/settings.js';
+window.__fxSetGlow = async (on) => {
+  setSettingsCtx({
+    remote: {
+      settings: {
+        describe: async () => ({
+          ok: true,
+          value: { namespaces: [{ ns: 'wallpaper-engine', value: { glowEnabled: on } }] },
+        }),
+      },
+    },
+  });
+  await window.__fxSwitch(String(id)); // 同 id 重渲染一次，让新设置进入装配
+  return 'ok';
 };
 ```
 
-> **执行者注意**：harness 入口读 `localStorage['we:harness:glow']` 后覆盖 `glowEnabled` 再调 `createThreeSceneRenderer()`（在既有 `WASM_NONE` 覆盖处附近加同样的 override 即可）。若这条路比预期绕，**替代方案**：直接跑两次 `verify-object-effects.mjs`，第二次用环境变量 `GLOW=0` 让脚本自身的设置注入为关闭 —— 只要开/关两帧来自**同一套生产代码**即可。
+> **执行者注意**：`id` 是 harness 入口已有的壁纸 id（从 URL 取）。若同 id 的 `__fxSwitch` 会短路，改为「先切到另一张、再切回目标 id」。**务必确认设置真的生效**（例如在页面里断言 `window.__player` 的 glowStage 非空/为空），不要只看 `__fxSetGlow` 的返回值。
 
 - [ ] **Step 2: 在真 GPU 上跑**
 
