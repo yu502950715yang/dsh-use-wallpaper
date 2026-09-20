@@ -160,6 +160,11 @@ export interface SceneAssets {
         worldW: number;
         worldH: number;
     }>;
+    worldTransforms?: Map<number, {
+        origin: [number, number, number];
+        scale: [number, number, number];
+        angles: [number, number, number];
+    }>;
     qualityScale?: number;
     textLayers?: Map<number, {
         texture: THREE.Texture;

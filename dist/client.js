@@ -22418,6 +22418,8 @@ function parseSceneJson(raw) {
       // horizontalalign/verticalalign，另行处理；util 对象不渲染，字段无害保留）。
       // 渲染器按锚点换算中心（applyAlignment），缺省/非法 → undefined = center 无偏移。
       alignment: typeof o.alignment === "string" && o.alignment ? o.alignment : void 0,
+      // 场景树：子对象变换相对父节点（容器 `none` 对象也保留，世界变换由 scene-graph.ts 累积）
+      parent: optNum(o.parent),
       // Ruling 5：所有对象（kind 不限）的 effects 按 objects 顺序保留（全库 122 条中 105 条在 image 对象上）
       effects: Array.isArray(o.effects) ? o.effects : void 0
     };
@@ -23592,6 +23594,10 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
   const desc = parseSceneJson(sceneJson);
   const sceneW = desc.orthogonal.width;
   const sceneH = desc.orthogonal.height;
+  const world = (o) => {
+    const w = assets.worldTransforms?.get(o.id);
+    return w ? { origin: w.origin, scale: w.scale, angles: w.angles } : { origin: o.origin, scale: o.scale, angles: o.angles ?? [0, 0, 0] };
+  };
   const player = new ThreeScenePlayer(canvas, sceneW, sceneH, assets.renderer, assets.qualityScale);
   player.setSceneSize(sceneW, sceneH);
   const vw = viewport?.width ?? sceneW;
@@ -23603,12 +23609,13 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
   const textDrivers = [];
   for (const obj of desc.objects) {
     if (obj.kind === "image") {
+      const t = world(obj);
       const id = player.addBackground({
-        origin: obj.origin,
+        origin: t.origin,
         size: obj.size,
-        scale: obj.scale,
+        scale: t.scale,
         // WE 对象角度（弧度）→ mesh.rotation（three 的 Object3D 变换顺序即 T·R·S）。
-        angles: obj.angles,
+        angles: t.angles,
         // WE 图像颜色混合模式（非 0 且已实现时改用预乘 + CustomBlending，见 addBackground）。
         colorBlendMode: obj.colorBlendMode,
         texture: assets.backgroundTextures?.get(obj.id),
@@ -23626,11 +23633,12 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
       const layer = assets.textLayers?.get(obj.id);
       if (!layer) continue;
       const off = layer.anchorOffset ?? [0, 0];
+      const t = world(obj);
       const id = player.addBackground({
-        origin: [obj.origin[0] + off[0], obj.origin[1] + off[1], obj.origin[2]],
+        origin: [t.origin[0] + off[0], t.origin[1] + off[1], t.origin[2]],
         size: layer.size,
-        scale: obj.scale,
-        angles: obj.angles,
+        scale: t.scale,
+        angles: t.angles,
         texture: layer.texture,
         sceneW,
         sceneH
@@ -23641,8 +23649,8 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
           texture: layer.texture,
           driver: layer.driver,
           backgroundId: id,
-          origin: obj.origin,
-          scale: obj.scale,
+          origin: t.origin,
+          scale: t.scale,
           horizontalAlign: obj.horizontalAlign,
           verticalAlign: obj.verticalAlign,
           alignment: obj.alignment
@@ -23651,7 +23659,8 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
     } else if (obj.kind === "particle" && obj.particle) {
       const p = assets.particles?.get(obj.id);
       if (!p || !assets.createParticleSim) continue;
-      const sim = assets.createParticleSim(p.specJson, obj.origin, sceneW, sceneH, p.overrideJson ?? "");
+      const t = world(obj);
+      const sim = assets.createParticleSim(p.specJson, t.origin, sceneW, sceneH, p.overrideJson ?? "");
       const frameCount = textureFrameCount(p.tex);
       const grid = textureFrameGrid(p.tex);
       sim.set_frame_count(frameCount);
@@ -23663,10 +23672,10 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
         frameRows: grid.rows,
         blend: p.blend,
         softness: p.softness,
-        objectCenter: [obj.origin[0] - sceneW / 2, obj.origin[1] - sceneH / 2, obj.origin[2]],
-        objectScale: [obj.scale[0], obj.scale[1], obj.scale[2] ?? 1],
+        objectCenter: [t.origin[0] - sceneW / 2, t.origin[1] - sceneH / 2, t.origin[2]],
+        objectScale: [t.scale[0], t.scale[1], t.scale[2] ?? 1],
         // 对象角度（弧度）：顶点 shader 用它把局部运动方向/发射点/quad 角点旋转到场景空间。
-        objectAngles: obj.angles,
+        objectAngles: t.angles,
         emitterOrigin,
         // 实例缓冲容量 = spec 的 maxcount（= wasm `SceneParticleSim.maxcount`，模拟器的发射上限）。
         // three 只在首帧锁存该容量（见 addParticle），必须按模拟器**最终**会产出的粒子数一次给足；
@@ -23694,6 +23703,63 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
     }
   });
   return { player, sims, backgroundIds, particleLayers };
+}
+
+// src/client/scene-graph.ts
+var MAX_DEPTH = 64;
+var LOCAL_ZERO = [0, 0, 0];
+var LOCAL_ONE = [1, 1, 1];
+var ANGLE_ORDER = "ZYX";
+var outEuler = /* @__PURE__ */ new Euler();
+var worldRotation = /* @__PURE__ */ new Matrix4();
+function rotationMatrix(angles) {
+  return new Matrix4().makeRotationFromEuler(
+    new Euler(angles[0], angles[1], angles[2], ANGLE_ORDER)
+  );
+}
+function resolveWorldTransforms(nodes) {
+  const byId = /* @__PURE__ */ new Map();
+  for (const n of nodes) byId.set(n.id, n);
+  const out = /* @__PURE__ */ new Map();
+  const visiting = /* @__PURE__ */ new Set();
+  const local = (n) => ({
+    origin: [...n.origin ?? LOCAL_ZERO],
+    scale: [...n.scale ?? LOCAL_ONE],
+    angles: [...n.angles ?? LOCAL_ZERO]
+  });
+  const resolve = (n, depth) => {
+    const cached = out.get(n.id);
+    if (cached) return cached;
+    const self2 = local(n);
+    const parent = n.parent !== void 0 ? byId.get(n.parent) : void 0;
+    if (!parent || depth >= MAX_DEPTH || visiting.has(n.id)) {
+      out.set(n.id, self2);
+      return self2;
+    }
+    visiting.add(n.id);
+    const pw = resolve(parent, depth + 1);
+    visiting.delete(n.id);
+    const offset = new Vector3(
+      self2.origin[0] * pw.scale[0],
+      self2.origin[1] * pw.scale[1],
+      self2.origin[2] * pw.scale[2]
+    ).applyMatrix4(rotationMatrix(pw.angles));
+    let angles = [0, 0, 0];
+    if (!pw.angles.every((a) => a === 0) || !self2.angles.every((a) => a === 0)) {
+      worldRotation.multiplyMatrices(rotationMatrix(pw.angles), rotationMatrix(self2.angles));
+      outEuler.setFromRotationMatrix(worldRotation, ANGLE_ORDER);
+      angles = [outEuler.x, outEuler.y, outEuler.z];
+    }
+    const world = {
+      origin: [pw.origin[0] + offset.x, pw.origin[1] + offset.y, pw.origin[2] + offset.z],
+      scale: [pw.scale[0] * self2.scale[0], pw.scale[1] * self2.scale[1], pw.scale[2] * self2.scale[2]],
+      angles
+    };
+    out.set(n.id, world);
+    return world;
+  };
+  for (const n of nodes) resolve(n, 0);
+  return out;
 }
 
 // src/client/tex-loader.ts
@@ -27434,6 +27500,7 @@ function warnOnce2(key, message) {
   warnedKeys.add(key);
   console.warn(`[wallpaper-engine] ${message}`);
 }
+var lastWorldTransforms = null;
 var FONT_CACHE = /* @__PURE__ */ new Map();
 var fontSeq = 0;
 async function loadWallpaperFont(wallpaperId, font) {
@@ -27549,6 +27616,16 @@ function createThreeSceneRenderer(opts) {
         const vh = Math.max(1, Math.round(window.innerHeight || desc.orthogonal.height));
         fg.width = vw;
         fg.height = vh;
+        const worldTransforms = resolveWorldTransforms(desc.objects);
+        lastWorldTransforms = worldTransforms;
+        for (const obj of desc.objects) {
+          const wt = worldTransforms.get(obj.id);
+          if (wt) {
+            obj.origin = wt.origin;
+            obj.scale = wt.scale;
+            obj.angles = wt.angles;
+          }
+        }
         const backgroundTextures = /* @__PURE__ */ new Map();
         currentTextures = backgroundTextures;
         const particles = /* @__PURE__ */ new Map();
@@ -27659,7 +27736,8 @@ function createThreeSceneRenderer(opts) {
             const texH = tex?.image?.height ?? obj.size?.[1] ?? 1;
             const w = obj.size?.[0] ?? texW;
             const h = obj.size?.[1] ?? texH;
-            const world = { w: Math.abs(w * obj.scale[0]), h: Math.abs(h * obj.scale[1]) };
+            const s = obj.scale;
+            const world = { w: Math.abs(w * s[0]), h: Math.abs(h * s[1]) };
             const rt = objectRtSize(world.w, world.h, screenScale);
             isolate.set(obj.id, {
               objectId: obj.id,
@@ -27676,7 +27754,8 @@ function createThreeSceneRenderer(opts) {
               spec = JSON.parse(p.specJson);
             } catch {
             }
-            const world = particleWorldSize(spec, [obj.scale[0], obj.scale[1]]);
+            const s = obj.scale;
+            const world = particleWorldSize(spec, [s[0], s[1]]);
             const rt = objectRtSize(world.w, world.h, screenScale);
             isolate.set(obj.id, {
               objectId: obj.id,
@@ -27687,7 +27766,7 @@ function createThreeSceneRenderer(opts) {
             });
           }
         }
-        const result = loadSceneToThree(sceneJson, { backgroundTextures, particles, createParticleSim, isolate, textLayers, qualityScale }, fg, {
+        const result = loadSceneToThree(sceneJson, { backgroundTextures, particles, createParticleSim, isolate, textLayers, qualityScale, worldTransforms }, fg, {
           width: vw,
           height: vh
         });
