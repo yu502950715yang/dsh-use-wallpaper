@@ -44,6 +44,16 @@ class QuickJSTextRuntime implements TextScriptRuntime {
     this.budget = STEP_BUDGET;
   }
 
+  /** interrupt handler 每执行一批指令调一次：递减预算。 */
+  step(): void {
+    this.budget -= 1000;
+  }
+
+  /** 预算耗尽 → 让 quickjs 中断当前脚本（抛 interrupt 错误）。 */
+  outOfBudget(): boolean {
+    return this.budget <= 0;
+  }
+
   bind(
     script: string,
     scriptProperties: Record<string, unknown>,
@@ -130,6 +140,13 @@ async function createRuntime(): Promise<TextScriptRuntime | null> {
   try {
     const QuickJS = await getQuickJS();
     const runtime = QuickJS.newRuntime();
+    // 中断处理器必须在 newContext 之前注册：闭包经 self 拿到实例后递减预算。
+    let self: QuickJSTextRuntime | null = null;
+    runtime.setInterruptHandler(() => {
+      if (!self) return false;
+      self.step();
+      return self.outOfBudget();
+    });
     const ctx = runtime.newContext();
     const pre = ctx.evalCode(PRELUDE);
     if (pre.error) {
@@ -139,7 +156,8 @@ async function createRuntime(): Promise<TextScriptRuntime | null> {
       return null;
     }
     pre.value.dispose();
-    return new QuickJSTextRuntime(ctx, runtime);
+    self = new QuickJSTextRuntime(ctx, runtime);
+    return self;
   } catch {
     return null;
   }

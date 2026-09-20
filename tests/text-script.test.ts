@@ -56,4 +56,21 @@ describe('getTextScriptRuntime', () => {
     expect(second!.update()).toBe('b');
     second!.dispose();
   });
+
+  it('脚本抛错 → update 返回 null（隔离，不抛给宿主）', async () => {
+    const rt = await getTextScriptRuntime();
+    const b = rt!.bind(`export function update(v){ throw new Error('boom'); }`, {}, '');
+    expect(b!.update()).toBeNull();
+    b!.dispose();
+  });
+
+  it('死循环脚本被步数预算中断 → update 返回 null，且 runtime 仍可用', async () => {
+    const rt = await getTextScriptRuntime();
+    const bad = rt!.bind(`export function update(v){ while(true){} }`, {}, '');
+    expect(bad!.update()).toBeNull();
+    bad!.dispose();
+    const good = rt!.bind(`export function update(v){ return 'still-alive'; }`, {}, '');
+    expect(good!.update()).toBe('still-alive');
+    good!.dispose();
+  });
 });
