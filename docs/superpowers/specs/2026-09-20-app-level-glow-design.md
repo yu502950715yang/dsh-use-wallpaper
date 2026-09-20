@@ -1,0 +1,223 @@
+# 应用级 Glow（全屏后处理）— 设计文档
+
+- 日期：2026-09-20
+- 状态：**设计已确认，待写实施计划**
+- 项目根：`E:\code\dsh-use-wallpaper`
+- 关联：
+  - `AGENT.md` §7.1 的「**应用级后处理（WE 的「后处理 / Glow」）未实现**」条 —— 本文要弥合的就是它（含 2026-09-16 的离线可行性实验与 A 档参数、2026-09-20 的真机 GPU 验收订正）
+  - `AGENT.md` §5.11（帧内禁止编译 / 建 RT）、§5.22（渲染进 RT 必须透明清屏）、§5.27（GTR 与桌面的量化对照）、§7.5（`EffectRunner` 纹理槽所有权）
+  - `docs/technical-notes.md` §4（性能与显存现状）
+  - `2026-09-15-three-rt-graph-executor-design.md`（对象级 RT 图执行器；**本设计刻意不复用它**，理由见 §3.3）
+  - 参考实现：`research/glow-post.mjs`、`research/glow-compare.mjs`（离线实验脚本，gitignored）
+
+## 1. 概述
+
+`AGENT.md` §5.27 在把 GTR `3743126786` 与桌面 WE 逐区域对照后得到：**云层本身已与桌面一致（均值差 1~2/255）**，差异集中在**亮部发光** —— 云区 p99 **199 / 桌面 225**、城市灯均值 **58.3 / 桌面 63.4（差约 +5.1）**，且桌面在发丝、路灯上有明显 bloom 光晕。
+
+成因已用四条证据锁定：那不是任何壁纸的 effect 链，而是 WE 的**应用级后处理**（`config.json` 里 `general.user.postprocessing = "enabled"` 的整帧发光）：它不在 `scene.json` 里，插件既读不到、作者也无法关闭。**影响面：所有壁纸的亮部。**
+
+本文实现它：一个作用在**最终合成帧**上的全屏 Glow（bright-pass → 多级降采样模糊 → 加法回叠），做成**插件设置项**（应用级语义，对齐 WE 的 `general.user.postprocessing`，**不是**壁纸字段）。
+
+**本轮范围（已与用户确认）**：
+- **只覆盖 scene 壁纸**（WebGL 内后处理）；video / image / web 壁纸维持现状（不预造跨类型抽象）。
+- **默认开启**，参数取离线实验的 **A 档**（`threshold = 0.65`、`strength = 1.0`）。
+- 设置面板**只加一个「光晕」开关**；阈值 / 强度走 profile `config`（与 `overlayOpacity` / `blurEnabled` / `blurRadius` / `kenBurns` 四个字段同待遇 —— README 已如实标注那四个字段没有面板控件，此处保持一致，不特殊化 Glow）。
+
+## 2. 事实基础
+
+### 2.1 WE 侧：它是应用级设置
+
+- 本机 `config.json`：`general.user.postprocessing = "enabled"`。（`AGENT.md` §7.1 的记录）
+- 因此它**不随壁纸分发**、也不出现在 `scene.json` 中；壁纸级 `general.bloom`（`bloomstrength`/`bloomthreshold`/`bloomtint` + HDR 分支）是**另一个**东西，全库仅 3 张壁纸开启（`2454403969` / `2937346640` / `3790775478`），**不在本文范围**。
+- 证据链（为何不是对象级 `bloom` 链）：① 主图 `2222222222.tex` 解出的像素里没有那道光锥；② 壁纸级 `general.bloom = false`；③ 对象级 `workshop/2822917890/bloom` 链的 `apply_mask`（R8）只有 3.17% 像素非零、位置在画面中右纵向 25–58%（跑车尾灯 / 右侧建筑），**不覆盖路灯**；④ 该链参数逐项验证正确。详见 `AGENT.md` §5.27 的 2026-09-16 订正。
+
+### 2.2 离线可行性实验（`research/glow-post.mjs`）
+
+算法（CPU、0–255 `sRGB` 字节域）：
+
+1. **bright-pass**：`k = max(0, luma/255 − t) / (1 − t)`（`luma` = Rec.601 加权），按**原色相**缩放后回写到 0–255 域；
+2. **1/2、1/4、1/8 三级**降采样，每级两次 box blur（半径约 4 / 6 / 8）；
+3. 各级**双线性上采样等权累加**（`1/levels.length`）；
+4. `out = clamp(base + glow × strength)`。
+
+在 GTR 本机真实渲染截图（1280×720）上的三档实测（区域口径同 `AGENT.md` §5.27）：
+
+| 档 | t / strength | 云区 p99（桌面 **225**） | 城市灯均值（桌面 **+5.1**） | 亮部 luma>200 占比 |
+|---|---|---|---|---|
+| **A** | **0.65 / 1.0** | 199 → **221**（达成 85%） | 57.5 → **+8.0** | 2.44% → 3.07% |
+| B | 0.65 / 1.5 | → 231（123%） | → +11.7 | → 3.41% |
+| C | 0.50 / 2.0 | → 251（200%） | → +18.1 | → 4.06% |
+
+⇒ **A 档最贴桌面**（云区 p99 命中最好）；**C 档会让白底招牌整块糊成纯白**，不作默认。
+
+⚠️ **未验证**：只测了 GTR 一张壁纸（而 WE 的 postprocessing 是全局开关）；**未与桌面逐像素对照**（桌面记录基于 1280×693 重叠区，实验用 1280×720，底部 27px 未对齐）；"各级等权"是推测，**WE 真实权重未知**（灯区偏高可能源于此）。
+
+### 2.3 我们的帧序与层结构（插入点）
+
+帧体（`threejs-player.ts` 的 `setAnimationLoop`，与其无 dt 的等价帧序）：
+
+```
+隔离内容 renderIsolatedContents() → stage.bindOutputs() → renderer.render(scene, camera) → stage.advance(t)
+                                                                    ↑ 唯一输出到 canvas 的一步
+```
+
+⇒ **Glow 必须插在最后这一步**：把「渲染到 canvas」改成「渲染到 base RT → Glow 链 → composite 回 canvas」。
+
+层结构（CSS 叠层，见 `background-layer.ts`）：`.wp-bg-fill`（含 canvas）→ `.wp-scene-blur`（可选模糊）→ overlay（`overlayOpacity`）→ DSH 的 DOM UI。**Glow 在 WebGL 内完成 ⇒ 天然位于 overlay 之下**，不需要改动任何层序，也不会碰到 DSH 界面。
+
+## 3. 设计
+
+### 3.1 架构与数据流
+
+```
+帧体：隔离内容 → bindOutputs → ┌ 未装配 glowStage：renderer.render(scene, camera)          ← 与今天逐字相同
+                              └ 已装配：glowStage.apply(renderer, scene, camera)
+                                                │
+                          render(scene) → base RT（视口尺寸）
+                                                │
+                          bright-pass + ↓1/2 → L1 ─ boxH/boxV → L1
+                                                │ ↓1/2 → L2 ─ boxH/boxV → L2
+                                                │           ↓1/2 → L3 ─ boxH/boxV → L3
+                                                │
+                          上采样(L3→L2→L1→全屏)等权累加 → glow
+                                                │
+                          composite：clamp(base + glow × strength) → canvas
+```
+
+新增模块 `src/client/glow-stage.ts`；`threejs-player` 只加一个可选 hook；`three-renderer` 按设置装配 —— 与既有 `ObjectEffectStage` 的注入方式**完全同构**。
+
+### 3.2 `src/client/glow-stage.ts` 接口
+
+```ts
+export interface GlowOptions {
+  threshold?: number;   // 缺省 0.65；clamp 到 [0, 1)
+  strength?: number;    // 缺省 1.0；clamp 到 [0, 4]
+}
+
+export interface GlowStage {
+  /** 渲染 scene 到内部 base RT，跑 Glow 链，最后 composite 到当前 canvas。 */
+  apply(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera): void;
+  /** 视口 / resize：按画布缓冲尺寸重建 base 与各级 RT。 */
+  resize(width: number, height: number): void;
+  /** 运行期改参数（clamp 后即时生效，不重建 RT / 不重编译 shader）。 */
+  setOptions(opts: GlowOptions): void;
+  dispose(): void;
+}
+
+/** 建不起来（shader 编译失败 / 无法建 RT）→ 返回 null，调用方回退为无 Glow（不白屏）。 */
+export function createGlowStage(renderer: THREE.WebGLRenderer, opts?: GlowOptions): GlowStage | null;
+
+/** 纯函数（node 可测）：三级降采样 RT 的尺寸计划（L1 = 1/2、L2 = 1/4、L3 = 1/8，逐级不小于 1px）。
+ *  base RT 的尺寸即调用方传入的 (width, height)，不在此返回。 */
+export function glowLevelSizes(width: number, height: number): Array<{ w: number; h: number }>;
+/** 纯函数（node 可测）：参数 clamp。 */
+export function normalizeGlowOptions(opts?: GlowOptions): Required<GlowOptions>;
+```
+
+player 侧只加：
+
+```ts
+setGlowStage(stage: GlowStage | null): void;
+```
+
+帧体分支：
+
+```ts
+if (this.glowStage) this.glowStage.apply(this.renderer, this.scene, this.camera);
+else this.renderer.render(this.scene, this.camera);   // 零回归路径
+```
+
+### 3.3 为什么不复用 `EffectRunner`（否掉方案 C）
+
+`EffectRunner` 是**对象级**语义：它有对象 RT 的概念、`g_Texture0` = 对象内容、`textures[i] → g_Texture(i)`、以及 9 个 WE 内置头文件的方言层。Glow 是**应用级**（整帧），既不来自 `effect.json`，也不需要具名 RT 池 / `bind` 覆盖 / `buildEffectPlan`。硬套要引入一个"全屏假对象"的概念，并且把「应用级后处理」和「壁纸对象效果链」两套生命周期混在一个执行器里 —— 语义扭曲的代价大于多写一个模块。
+
+**也不内联进 `threejs-player`**（方案 A 被否）：该文件已 1500+ 行（场景图 / 相机 / 粒子 / 隔离对象 / 效果链挂接），后处理的 shader 与 RT 池生命周期与帧循环不是一个层次；独立 stage 还能让纯逻辑（尺寸计划、参数 clamp）在 node 下测。
+
+### 3.4 pass 链、颜色空间对齐与参数
+
+**pass 清单**（只有第 1 步与第 10 步是全屏；每级用 ping-pong 两张，避免同 RT 读写）：
+
+| # | pass | 输入 → 输出 | 尺寸 |
+|---|---|---|---|
+| 1 | bright-pass（含降采样） | base → L1a | 1/2 |
+| 2 | boxH（半径 4） | L1a → L1b | 1/2 |
+| 3 | boxV（半径 4） | L1b → L1a | 1/2 |
+| 4 | 降采样 | L1a → L2a | 1/4 |
+| 5 | boxH（半径 6） | L2a → L2b | 1/4 |
+| 6 | boxV（半径 6） | L2b → L2a | 1/4 |
+| 7 | 降采样 | L2a → L3a | 1/8 |
+| 8 | boxH（半径 8） | L3a → L3b | 1/8 |
+| 9 | boxV（半径 8） | L3b → L3a | 1/8 |
+| 10 | **composite**（全屏 quad 一次采 4 张纹理：`base` + `L1a` + `L2a` + `L3a`，三级**等权 1/3** 由硬件双线性上采样后累加，再与 `base` 相加） | → canvas | 全屏 |
+
+⇒ 资源 = 1 张 base RT + **6 张**小 RT（三级各一对 ping-pong），无额外累加缓冲。
+
+尺寸规则：逐级取半、**最小 1px**（沿用 `object-range` 的收口风格），由 `glowLevelSizes` 决定并在 node 侧单测。
+
+**⚠️ 颜色空间对齐（本设计最容易踩的一步，必须做对否则 A 档参数失效）**：
+
+离线实验的 `0.65` 是在 **sRGB 字节域**（PNG 像素）标定的，而我们的主场景渲染进 RT 时材质输出的是**线性**值（`outputColorSpace` 只作用于渲染到 canvas 那一步）。因此 Glow shader 内必须显式对齐：
+
+- 采样 base RT（线性）→ **手工转 sRGB** → 在该域算 `luma` / 做 bright-pass / 各级模糊与累加 → 输出前**转回线性**，与 base 相加得最终线性值；
+- composite 输出到 canvas 时由 `renderer.outputColorSpace = SRGBColorSpace` 自动编码 ⇒ 与今天的显示链路一致。
+
+**RT 类型**：优先 `HalfFloatType`（bright-pass 后累加精度更稳，WebGL2 均可支持），不可用时回退 `UnsignedByteType`。**不走 `renderIntoRenderTarget()` 以外的清屏路径**（§5.22 的透明清屏语义；Glow 链内每个 pass 都是全屏覆盖写，但入口必须一致）。
+
+**参数**：`normalizeGlowOptions` 统一 clamp（`threshold ∈ [0, 1)`、`strength ∈ [0, 4]`），缺省 `0.65 / 1.0`。参数变更只更新 uniform，**不重建 RT、不重编译 shader**（§5.11）。
+
+### 3.5 设置与装配
+
+| 位置 | 改动 |
+|---|---|
+| `src/client/types.ts` | `ClientSettings` 加 `glowEnabled: boolean`、`glowThreshold: number`、`glowStrength: number` |
+| `src/client/settings.ts` | `DEFAULTS` 加 `glowEnabled: true` / `glowThreshold: 0.65` / `glowStrength: 1.0` |
+| `src/host/settings.ts` | schema 同步三个字段（缺省值一致），使 profile `config` 可覆盖 |
+| `src/client/settings-section.tsx` | 只加一个「光晕」开关（写入 `glowEnabled`） |
+| `src/client/three-renderer.ts` | 按 `glowEnabled` 装配：`glowEnabled ? createGlowStage(player.renderer, {threshold, strength}) : null`，随后 `player.setGlowStage(stage)`；`teardown()` 里 `stage?.dispose()`；`resize` 路径同步 `stage.resize(...)` |
+
+**即时生效**：设置变更 → 重建或更新 stage（开关：`setGlowStage(newStage | null)`；阈值/强度：`stage.setOptions(...)`），不重启 `dsh web`。
+
+### 3.6 错误处理与零回归
+
+- `createGlowStage` 返回 `null`（shader 编译失败 / RT 建不起来）⇒ **静默降级为无 Glow** + 一条可辨识 `console.warn`；不白屏、不中断壁纸、不触发壁纸级 preview 回退（沿用既有"效果失败一律跳过"语义）。
+- `glowEnabled = false` ⇒ **不建任何 RT / shader**，帧体走 `renderer.render(...)` 那条分支 ⇒ **逐像素零回归、零额外 GPU 开销**。
+- 帧内**不做**编译 / 建 RT / 建 shader（§5.11）：全部发生在装配期与 resize 期。
+- RT 尺寸随画布缓冲（含 `devicePixelRatio`），与主相机 cover 口径一致；resize 时同步重建。
+- 显存：base RT（视口尺寸 = 画布缓冲）+ 6 张小 RT（三级各一对 ping-pong，合计约 **0.66 × base 面积**）≈ **33 MB @3440×1440@dpr1**（RGBA8；HalfFloat 则 ×2），仅在开启时占用。
+
+## 4. 非目标
+
+- **不做** video / image / web 壁纸的 Glow（类型不同、机制不同，未预造抽象）。
+- **不做**壁纸级 `general.bloom`（`bloomstrength` / `bloomthreshold` / `bloomtint` / HDR 分支；全库 3 张），语义与本文的应用级 Glow 不同。
+- **不做** HDR / 色调映射 / 色彩分级；不做 `glowTint`。
+- **不做**设置面板的阈值 / 强度滑块（走 `config`）。
+- **不改** `wasm` / `scene-renderer` 备用路径。
+- **不做**显存 cap 与自适应降级（若实测显存压力大，另开一题）。
+
+## 5. 测试与验收
+
+**单测（node，`tests/glow-stage.test.ts`）**
+- `glowLevelSizes`：常规视口、极窄/极矮视口（逐级不小于 1px）、非 2 的幂尺寸。
+- `normalizeGlowOptions`：缺省、越界 clamp（`threshold = 1` / 负值、`strength` 上限）、非法值（`NaN`）回退缺省。
+- `createGlowStage` 在 renderer/shader 不可用时返回 `null`（mock 编译失败）。
+- `glowEnabled = false` 时**不创建**任何 RT（以 mock renderer 计数断言）。
+
+**端到端（真 GPU，复用本轮建好的 `--gpu` 档与 `lumaStats`）**
+- GTR `3743126786`：开 / 关两帧的**云区 p99** 与**亮部占比**；判据 = 开启后云区 p99 由 ~199 升至 **≥215**（对齐离线 A 档的 221，桌面 225）。
+- **零回归**：`glowEnabled = false` 时与改动前的同相位帧**逐像素一致**（差分仅剩时间相位与噪点口径）。
+- **性能**：开 / 关的每帧 `renderer.render` 提交耗时与帧间隔对比（RTX 3060 @3440×1440、1080p；`AGENT.md` §7.1 的代理判据口径），确认退化可忽略。
+- `lib/` + `dist/` 重建后跑；既有 15 项失败**逐项不变**。
+
+**验收门槛**
+1. 开启后亮部提升方向与幅度符合离线 A 档（云区 p99 ≥ 215）。
+2. 关闭后逐像素零回归。
+3. 每帧 GPU 开销可忽略（提交耗时仍在预算 33.3ms 的个位数百分比内）。
+4. 画面不出现 C 档那种"白底招牌糊成纯白"。
+
+## 6. 风险与遗留
+
+- **参数未与桌面逐像素对照**：离线实验只对齐了区域统计（云区 p99 / 灯区均值），且"各级等权"是推测、WE 真实权重未知 ⇒ **落地后需用桌面截图再校准一次**（需要用户提供桌面 WE 截图）。
+- **A 档的灯区偏亮**（+8.0 vs 桌面 +5.1）：高光密集画面可能比桌面更亮；若实际观感偏亮，先调 `strength`（config 可改，无需改码）。
+- **颜色空间对齐是正确性关键**（§3.4）：若实现时域搞错，`threshold` 的语义会整体偏移（线性域的 0.65 ≈ sRGB 域的 0.83），表现为"几乎不发光"。端到端 p99 判据就是用来抓这个的。
+- **高 dpr / 大视口的显存**：base RT 随画布缓冲（= CSS 尺寸 × dpr）线性增长 —— 3440×1440@dpr1 约 20 MB、@dpr1.5 约 45 MB、3840×2160@dpr1 约 33 MB（RGBA8；HalfFloat 翻倍），另加约 0.66×base 的小 RT。开启后需实测；必要时按 `object-range` 的收口方式设定上限。
+- **跨类型语义缺口（如实标注）**：WE 的 postprocessing 对 video 壁纸同样生效，我们本轮只做 scene ⇒ **video / image / web 壁纸的亮部仍与桌面有差**。这是本轮**有意接受**的范围裁剪，不是遗漏。
