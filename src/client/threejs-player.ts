@@ -19,6 +19,8 @@ import { parseSceneJson } from './scene-json.js';
 // 渲染进对象 RT 必须透明清屏（清屏 alpha=0），否则内容透明处/效果降 alpha 处会变成不透明黑。
 // 根因见 rt-render.ts 与 AGENT.md §5.22。
 import { renderIntoRenderTarget } from './rt-render.js';
+// 应用级 Glow 的注入点类型（本任务只加 hook，装配在后续 Task）。
+import type { GlowStage } from './glow-stage.js';
 
 // 背景图层条目：记录 WE 场景坐标与当前已应用状态，供 update_background 对齐既有
 // update_image 语义（undefined = 保持现状；无变化则跳过）。
@@ -387,6 +389,8 @@ export class ThreeScenePlayer {
   // 对象隔离条目（对象级效果链；空 Map = 本壁纸无带效果对象，帧序退化为原路径）。
   private isolated = new Map<number, IsolatedObject>();
   private objectEffectStage: ObjectEffectStage | null = null;
+  // 应用级 Glow 注入点（null = 本壁纸不开 Glow，帧序退化为原路径）。
+  private glowStage: GlowStage | null = null;
   // g_Time 时间原点（构造时刻），advance 传「自 player 创建起的秒数」。
   private readonly startedAt = typeof performance !== 'undefined' ? performance.now() : 0;
 
@@ -461,6 +465,10 @@ export class ThreeScenePlayer {
     const bufH = Math.floor(h * this.pixelRatio);
     if (this.canvas.width !== bufW) this.canvas.width = bufW;
     if (this.canvas.height !== bufH) this.canvas.height = bufH;
+    // Glow 各级 RT 必须按画布缓冲尺寸建（与主相机 cover 口径一致）。mock renderer 无 domElement，
+    // 退回本类自持的 canvas（生产路径 renderer.domElement 就是它）。
+    const buf = (this.renderer as { domElement?: HTMLCanvasElement }).domElement ?? this.canvas;
+    this.glowStage?.resize(buf.width, buf.height);
   }
 
   // 场景固有尺寸（scene.json 的 general.orthogonalprojection）就绪后设置，同时重推 cover。
@@ -527,13 +535,8 @@ export class ThreeScenePlayer {
         this.lastTime = now;
         fn?.(dt);
         this.update(dt);
-        // 对象级效果链：先渲染隔离内容到各自 RT，再让编排器把合成 quad 绑到效果输出。
-        // 空 isolated 时两行都是 no-op，帧序与改动前逐字相同（fn → update → render）。
-        if (this.isolated.size > 0) this.renderIsolatedContents();
-        this.objectEffectStage?.bindOutputs();
-        this.renderer.render(this.scene, this.camera);
-        // 链推进是异步串行的（纹理槽可能仍在加载），不阻塞本帧；本帧贴的是上一帧输出。
-        this.objectEffectStage?.advance(this.elapsedSeconds());
+        // 帧序统一在 render() 内（隔离内容 → bindOutputs → Glow/主场景 → advance），两处不再漂移。
+        this.render();
       } catch (e) {
         if (!warned) {
           warned = true;
@@ -545,16 +548,24 @@ export class ThreeScenePlayer {
 
   // 手动渲染一帧（不依赖 RAF，供测试/调用方直接触发）。
   // 帧序与 setAnimationLoop 的帧体一致（不带 dt）：隔离内容 → bindOutputs → 主场景 → advance。
+  // 装配了 glowStage 时主场景渲染委托给它（stage 内部渲染主场景到 RT 再做全屏 glow 合成）。
   render(): void {
     if (this.isolated.size > 0) this.renderIsolatedContents();
     this.objectEffectStage?.bindOutputs();
-    this.renderer.render(this.scene, this.camera);
+    if (this.glowStage) this.glowStage.apply(this.renderer, this.scene, this.camera);
+    else this.renderer.render(this.scene, this.camera);
+    // 链推进是异步串行的（纹理槽可能仍在加载），不阻塞本帧；本帧贴的是上一帧输出。
     this.objectEffectStage?.advance(this.elapsedSeconds());
   }
 
   // 对象级效果链的编排器注入点（null = 本壁纸无效果链，帧序退化为原路径）。
   setObjectEffectStage(stage: ObjectEffectStage | null): void {
     this.objectEffectStage = stage;
+  }
+
+  /** 装配应用级 Glow（null = 关闭）。关闭时帧序与本方法加入前逐字相同。 */
+  setGlowStage(stage: GlowStage | null): void {
+    this.glowStage = stage;
   }
 
   // 隔离对象条目（只读视图，供编排器拿 RT 纹理与尺寸）。
@@ -1245,6 +1256,9 @@ export class ThreeScenePlayer {
     }
     this.isolated.clear();
     this.objectEffectStage = null;
+    // 应用级 Glow 的 RT/shader 归 stage 所有，须在 renderer.dispose() 前释放。
+    this.glowStage?.dispose();
+    this.glowStage = null;
     this.renderer.dispose();
   }
 }

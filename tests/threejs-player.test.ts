@@ -218,6 +218,61 @@ describe('ThreeScenePlayer', () => {
     expect(mock.setAnimationLoop).toHaveBeenCalledWith(null);
     expect(mock.dispose).toHaveBeenCalled();
   });
+
+  /** GlowStage 的最小 spy：断言 apply / resize / dispose 的调用。 */
+  function glowStageSpy() {
+    const applied: unknown[] = [];
+    const sizes: Array<[number, number]> = [];
+    let disposed = false;
+    return {
+      stage: {
+        apply: (_r: unknown, s: unknown, c: unknown) => { applied.push([s, c]); },
+        resize: (w: number, h: number) => { sizes.push([w, h]); },
+        setOptions: () => {},
+        dispose: () => { disposed = true; },
+      },
+      applied, sizes, isDisposed: () => disposed,
+    };
+  }
+
+  it('未装配 glowStage 时帧序不变（直接 renderer.render(scene, camera)）', () => {
+    const { player, mock } = makePlayer();
+    const before = mock._renders.length;
+    player.setGlowStage(null);
+    player.render();
+    expect(mock._renders.length).toBe(before + 1);
+    expect(mock._renders[mock._renders.length - 1].target).toBeNull(); // 渲到 canvas
+  });
+
+  it('装配 glowStage 时委托 apply，且不直接渲染主场景', () => {
+    const { player, mock } = makePlayer();
+    const g = glowStageSpy();
+    const before = mock._renders.length;
+    player.setGlowStage(g.stage as never);
+    player.render();
+    expect(g.applied.length).toBe(1);
+    expect(mock._renders.length).toBe(before); // 主场景渲染被委托给 stage（spy 不真渲）
+  });
+
+  it('resize 时把画布缓冲尺寸同步给 glowStage', () => {
+    const { player } = makePlayer();
+    const g = glowStageSpy();
+    player.setGlowStage(g.stage as never);
+    player.resize(800, 600);
+    expect(g.sizes.length).toBe(1);
+    const [w, h] = g.sizes[0];
+    // 传的是**画布缓冲**尺寸（≥ CSS 尺寸；jsdom 默认 dpr=1 ⇒ 相等）
+    expect(w).toBeGreaterThanOrEqual(800);
+    expect(h).toBeGreaterThanOrEqual(600);
+  });
+
+  it('dispose 时拆除 glowStage', () => {
+    const { player } = makePlayer();
+    const g = glowStageSpy();
+    player.setGlowStage(g.stage as never);
+    player.dispose();
+    expect(g.isDisposed()).toBe(true);
+  });
 });
 
 // Task 2：背景图层（addBackground / update_background）。复用 Task 1 的 mock renderer 注入，
