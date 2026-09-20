@@ -1070,6 +1070,15 @@ Expected: `[7]` 段输出 `关=~199 开=≥215`，`PASS`；`[1]`–`[6]` 与本�
 ## 32. **应用级 Glow 的颜色空间必须手工对齐（2026-09-20）**：离线标定 `threshold` 用的是 **sRGB 字节域**（PNG 像素），而主场景渲染进 RT 得到的是**线性**值（`outputColorSpace` 只作用于渲染到 canvas 那一步）⇒ Glow shader 内必须「线性 → `toSrgb()` → 算 luma / bright-pass / 各级模糊 → composite 后 `toLinear()`」。**漏掉这一步的后果是阈值语义整体偏移**（sRGB 域 0.65 ≈ 线性域 0.83）⇒ 表现为"几乎不发光"，而不是报错。端到端判据（云区 p99 ≥ 215）就是用来抓它的。
 ```
 
+- [ ] **Step 1b: 订正设计文档（spec）的四处表述**
+
+`docs/superpowers/specs/2026-09-20-app-level-glow-design.md` 有四处与最终实现 / 仓库实际不符，**逐条追加订正**（沿用本仓库的追加式订正惯例，**不要删除原文**）：
+
+1. **§3.2 的 `createGlowStage(renderer, …)` 与「shader 编译失败 ⇒ null」**：实现改为 `createGlowStage(width, height, opts?)` —— RT 与材质是纯 JS 对象、不需要 GL 上下文，renderer 只在 `apply(renderer, …)` 时使用；创建期**只对非法尺寸**返回 `null`。shader 编译 / 链接失败改为**运行期首次 `apply` 捕获并永久降级**，并额外挂 `renderer.debug.onShaderError`（因为 three 在 `LINK_STATUS === false` 时**只 console.error、不抛异常**，单靠 `try/catch` 抓不到）。
+2. **§3.4 的颜色空间**：原写「composite 末尾 `toLinear()` 后交回 `renderer.outputColorSpace` 编码」，前提是 `outputColorSpace = SRGBColorSpace`。但本仓库 `threejs-player.ts` **强制 `LinearSRGBColorSpace`**、且全库纹理**未标 `colorSpace`** ⇒ 全链路**字节域恒等**，原方案的 `toSrgb(base)` 是**二次编码**（threshold 等效约 0.38 域、发光范围远超 A 档）。实现改为**链内不做任何颜色转换**。实测印证：云区 p99 关 **200** → 开 **224**，与离线 A 档 **221** / 桌面 **225** 吻合。
+3. **§3.5 的「即时生效」**：实际是「**下次 render（切壁纸）后生效**」——真正即时要在 `index.ts` 加「设置变更 → 更新 stage」的通路，超出本轮文件清单。**如实标注**，不要写成即时。
+4. **§5 的判据口径与注入方式**：判据的 p99 是**云区**口径（区域 `[0,0,576,242]`，见 `AGENT.md` §5.27），**不是全屏 p99**（全屏会被钉在 255、失去鉴别力）；开 / 关对照**不能**靠页内开关跨 `runPage`（**导航会重置模块态** ⇒ 两次都是同一档），必须在创建 renderer 前**经 URL 参数注入 `setSettingsCtx`**。
+
 - [ ] **Step 2: 回写 `docs/technical-notes.md`**
 
 在 §4（显存与性能）追加：
