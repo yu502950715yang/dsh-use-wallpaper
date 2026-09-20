@@ -713,7 +713,7 @@ Expected: exit 0
 
 ```bash
 git add src/client/threejs-player.ts tests/threejs-player.test.ts
-git commit -m "feat(glow): player 加 setGlowStage hook 与帧序分支" -m "未装配时走原 renderer.render 路径（零回归）；帧体抽为 renderFrame 供两处复用。" -m "验证：threejs-player 单测全绿（含 4 项新增）。"
+git commit -m "feat(glow): player 加 setGlowStage hook 与帧序分支" -m "未装配时走原 renderer.render 路径（零回归）；setAnimationLoop 帧体复用 render()，消除 4 行重复。" -m "验证：threejs-player 单测全绿（含 4 项新增）。"
 ```
 
 ---
