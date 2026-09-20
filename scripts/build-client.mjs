@@ -1,5 +1,5 @@
 import { build } from 'esbuild';
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -133,6 +133,16 @@ if (existsSync(GLSLANG_WASM_SRC)) {
 } else {
   console.warn(`[build:client] 未找到 ${GLSLANG_WASM_SRC}，跳过 glslang.wasm 复制（真实效果 shader 编译链不可用）`);
 }
+
+// text 脚本沙箱（quickjs）：wasm 复制到 dist/static/，运行时用 RELEASE_SYNC 变体 +
+// wasmLocation = '/wallpapers/static/quickjs.wasm'。与 glslang 不同：缺失即中止构建
+// （否则线上会静默退化成「脚本不执行」，用户看到的是空文本层）。
+const QUICKJS_WASM_SRC = join(here, '..', 'node_modules', '@jitl', 'quickjs-wasmfile-release-sync', 'dist', 'emscripten-module.wasm');
+if (!existsSync(QUICKJS_WASM_SRC)) {
+  throw new Error(`[build:client] 未找到 ${QUICKJS_WASM_SRC}，text 脚本沙箱不可用 —— 构建中止`);
+}
+copyFileSync(QUICKJS_WASM_SRC, join(outStatic, 'quickjs.wasm'));
+console.log(`quickjs.wasm copied to dist/static/ (${(statSync(QUICKJS_WASM_SRC).size / 1024).toFixed(0)} KB)`);
 
 // 2026-09-11：**不再把 WE 内置粒子纹理复制进 dist/static/**。
 //

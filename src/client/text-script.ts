@@ -1,7 +1,7 @@
 // src/client/text-script.ts —— WE text 脚本（text.script 的 update）的 quickjs 沙箱运行时。
 // 只执行 update(value)；沙箱内拿不到 DOM/window/fetch，且有步数上限防死循环。
-import { getQuickJS } from 'quickjs-emscripten';
-import type { QuickJSContext, QuickJSRuntime, QuickJSHandle } from 'quickjs-emscripten';
+import { newQuickJSWASMModuleFromVariant, newVariant, RELEASE_SYNC } from 'quickjs-emscripten';
+import type { QuickJSContext, QuickJSRuntime, QuickJSHandle, QuickJSWASMModule } from 'quickjs-emscripten';
 
 export interface TextScriptBinding {
   /** 调脚本 update(value) 取新文本；抛错/超时 → null（调用方保持上一帧）。 */
@@ -136,9 +136,16 @@ class QuickJSTextRuntime implements TextScriptRuntime {
 // 模块级单例：整页只实例化一次 QuickJS（跨壁纸复用，见 spec §3.3）。
 let runtimePromise: Promise<TextScriptRuntime | null> | null = null;
 
+// 浏览器：wasm 由 host 的 /wallpapers/static/ 提供（build:client 复制到 dist/static/quickjs.wasm）；
+// Node 测试环境无 window → 交给库默认定位（fs 读取）。
+function createQuickJSModule(): Promise<QuickJSWASMModule> {
+  const wasmLocation = typeof window !== 'undefined' ? '/wallpapers/static/quickjs.wasm' : undefined;
+  return newQuickJSWASMModuleFromVariant(newVariant(RELEASE_SYNC, wasmLocation ? { wasmLocation } : {}));
+}
+
 async function createRuntime(): Promise<TextScriptRuntime | null> {
   try {
-    const QuickJS = await getQuickJS();
+    const QuickJS = await createQuickJSModule();
     const runtime = QuickJS.newRuntime();
     // 中断处理器必须在 newContext 之前注册：闭包经 self 拿到实例后递减预算。
     let self: QuickJSTextRuntime | null = null;
