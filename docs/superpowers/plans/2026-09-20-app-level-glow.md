@@ -766,7 +766,7 @@ it('DEFAULTS 含 Glow 三字段（默认开启 / A 档参数）', () => {
   });
 ```
 
-`tests/dom/settings-section.dom.test.tsx`：该文件已有渲染设置面板的用例与 `writeClientSettings` 的 mock 方式；追加一个用例 —— 渲染面板 → `screen.getByLabelText('光晕')` 拿到复选框 → `fireEvent.click` → 断言写入 `{ glowEnabled: false }`（写入断言沿用该文件既有写法）。
+`tests/dom/settings-section.dom.test.tsx`：该组件的动作**全走 props 注入**（见组件第 11–22 行）⇒ 渲染时注入 `writeSettings: vi.fn()`（若该文件已有渲染辅助就沿用其既有写法），然后：`screen.getByLabelText('光晕')` 取到复选框 → `fireEvent.click` → 断言 `writeSettings` 被调用且参数含 `{ glowEnabled: false }`。
 
 - [ ] **Step 2: 跑测试确认失败**
 
@@ -804,18 +804,23 @@ export const DEFAULTS: ClientSettings = {
   glowStrength: z.number().min(0).max(4).default(1.0),
 ```
 
-`src/client/settings-section.tsx` 加一个复选框（放在既有控件附近，沿用文件里的控件写法）：
+`src/client/settings-section.tsx`：该文件是 React 函数组件，数据与动作经 **props 注入**（`fetchSettings` / `writeSettings` / `onSelect` 等，见第 11–22、41–45 行）以便 jsdom 单测。在既有控件区（例如「壁纸目录」块之前）加一个复选框，**必须用注入的 `writeSettings`**（不是直接调 `writeClientSettings`），并注意 `settings` 可能为 `null`：
 
 ```tsx
-<label>
-  <input
-    type="checkbox"
-    checked={settings.glowEnabled}
-    onChange={(e) => void writeClientSettings({ glowEnabled: e.target.checked })}
-  />
-  光晕
-</label>
+{settings && (
+  <label className="wss-glow-row">
+    <input
+      type="checkbox"
+      checked={settings.glowEnabled}
+      onChange={(e) => void writeSettings({ glowEnabled: e.target.checked })
+        .then(() => setMessage(e.target.checked ? '光晕已开启' : '光晕已关闭'))}
+    />
+    光晕
+  </label>
+)}
 ```
+
+> `<label>` 包裹 `<input>` ⇒ 测试可用 `screen.getByLabelText('光晕')` 取到该复选框。
 
 - [ ] **Step 4: 跑测试确认通过**
 
