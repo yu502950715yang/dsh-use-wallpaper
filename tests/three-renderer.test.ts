@@ -38,7 +38,7 @@ import { loadSceneToThree } from '../src/client/threejs-player.js';
 import { resolveImageTexture } from '../src/client/scene-renderer.js';
 import { loadTexTexture } from '../src/client/tex-loader.js';
 import { defaultLoadWasm, resolveParticleMaterial } from '../src/client/wasm-renderer.js';
-import { createThreeSceneRenderer, particleBlend, collectObjectEffectChains } from '../src/client/three-renderer.js';
+import { createThreeSceneRenderer, particleBlend, collectObjectEffectChains, lastWorldTransformOf } from '../src/client/three-renderer.js';
 import { createGlowStage } from '../src/client/glow-stage.js';
 import { setSettingsCtx } from '../src/client/settings.js';
 import { ObjectEffectStage } from '../src/client/object-effects.js';
@@ -1245,5 +1245,99 @@ describe('three-renderer text 对象', () => {
     r.dispose();
 
     expect(disposeBinding).toHaveBeenCalledTimes(1);
+  });
+});
+
+// 场景树层级（parent）：组装前先把对象变换折叠成**世界值**再下发。
+// 计划里用的 `scriptPlayer()` helper 本轮不在作用域（该 text describe 用的是局部
+// `stubTextRender()`），按本文件既有风格补一个等价 helper。
+describe('three-renderer 场景树层级（parent → 世界变换）', () => {
+  function scriptPlayer() {
+    return {
+      dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setObjectEffectStage: vi.fn(),
+      isolatedObjects: () => [],
+    };
+  }
+
+  it('parent 层级：组装折叠出世界变换（3798688689 的 solidlayer 世界宽 = 2560）', async () => {
+    const scene = JSON.stringify({
+      camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+      general: { orthogonalprojection: { width: 2560, height: 1440 } },
+      objects: [
+        { id: 1, name: 'root', origin: '1280 720 0', scale: '1.64103 1.64103 1' },
+        { id: 1003, parent: 1, name: 'matte', origin: '0 0 0', scale: '1 1 1' },
+        { id: 10030, parent: 1003, name: 'solid', image: 'models/layers/l_10030.json', size: '100 100', scale: '15.6 9.6 1' },
+      ],
+    });
+    stubAssetFetch(scene, {});
+    resolveImageTexture.mockResolvedValue(fakeTexture() as never);
+    loadSceneToThree.mockReturnValue({ player: scriptPlayer(), sims: [], backgroundIds: [0, 1], particleLayers: [] } as never);
+
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm, getTextScriptRuntime: async () => null });
+    await r.render('3798688689', document.createElement('canvas'), null);
+
+    const t = lastWorldTransformOf(10030)!;
+    expect(t.scale[0]).toBeCloseTo(25.6001, 3);        // 1.64103 × 15.6
+    expect(t.origin[0]).toBeCloseTo(1280, 3);
+    expect(100 * t.scale[0]).toBeCloseTo(2560, 0);     // 世界宽 = 场景宽
+    // 链上每个节点都要有世界值
+    expect(lastWorldTransformOf(1)!.scale).toEqual([1.64103, 1.64103, 1]);
+    expect(lastWorldTransformOf(1003)!.origin).toEqual([1280, 720, 0]);
+    // 世界变换表随 assets 一起下发给真实装配路径（loadSceneToThree）
+    const assets = loadSceneToThree.mock.calls[0][1] as {
+      worldTransforms?: Map<number, { origin: [number, number, number]; scale: [number, number, number] }>;
+    };
+    expect(assets.worldTransforms!.get(10030)!.scale[0]).toBeCloseTo(25.6001, 3);
+    r.dispose();
+  });
+
+  it('无 parent 的对象：接线后世界值逐字段等于局部值（零回归）', async () => {
+    const scene = JSON.stringify({
+      camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+      general: { orthogonalprojection: { width: 1920, height: 1080 } },
+      objects: [{ id: 9, name: 'flat', image: 'models/layers/l_9.json', origin: '100 200 0', scale: '2 3 1', size: '10 10' }],
+    });
+    stubAssetFetch(scene, {});
+    resolveImageTexture.mockResolvedValue(fakeTexture() as never);
+    loadSceneToThree.mockReturnValue({ player: scriptPlayer(), sims: [], backgroundIds: [0], particleLayers: [] } as never);
+
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm, getTextScriptRuntime: async () => null });
+    await r.render('3743126786', document.createElement('canvas'), null);
+    expect(lastWorldTransformOf(9)).toEqual({ origin: [100, 200, 0], scale: [2, 3, 1], angles: [0, 0, 0] });
+    const assets = loadSceneToThree.mock.calls[0][1] as {
+      worldTransforms?: Map<number, { origin: [number, number, number] }>;
+    };
+    expect(assets.worldTransforms!.get(9)!.origin).toEqual([100, 200, 0]);
+    r.dispose();
+  });
+
+  it('隔离对象的世界尺寸随父链 scale（RT 尺寸基准 = 世界尺寸 × 屏幕密度）', async () => {
+    const OBJ_ID = 10030;
+    const scene = JSON.stringify({
+      camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+      general: { orthogonalprojection: { width: 2560, height: 1440 } },
+      objects: [
+        { id: 1, name: 'root', origin: '1280 720 0', scale: '1.64103 1.64103 1' },
+        { id: 1003, parent: 1, name: 'matte', origin: '0 0 0', scale: '1 1 1' },
+        {
+          id: OBJ_ID, parent: 1003, name: 'solid', image: 'models/layers/l_10030.json',
+          size: '100 100', scale: '15.6 9.6 1', effects: [{ file: 'effects/w/effect.json' }],
+        },
+      ],
+    });
+    stubAssetFetch(scene, FX_FILES);
+    resolveImageTexture.mockResolvedValue(new THREE.DataTexture(new Uint8Array(4), 1, 1) as never);
+    loadSceneToThree.mockReturnValue({ player: scriptPlayer(), sims: [], backgroundIds: [0], particleLayers: [] } as never);
+
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm, getTextScriptRuntime: async () => null });
+    await r.render('3798688689', document.createElement('canvas'), null);
+
+    const assets = loadSceneToThree.mock.calls[0][1] as {
+      isolate?: Map<number, { worldW: number; worldH: number }>;
+    };
+    // 世界尺寸 = |size × 世界 scale| = 100 × 25.6001 ≈ 2560（场景宽），不再是局部 scale 的 100×15.6
+    expect(assets.isolate!.get(OBJ_ID)!.worldW).toBeCloseTo(2560.01, 1);
+    expect(assets.isolate!.get(OBJ_ID)!.worldH).toBeCloseTo(1575.39, 1);
+    r.dispose();
   });
 });

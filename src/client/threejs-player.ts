@@ -1434,6 +1434,10 @@ export interface SceneAssets {
   //   rtWidth/rtHeight = 对象 RT 的像素尺寸（= 世界尺寸 × 屏幕密度的屏占位，等比收口到 4096）；
   //   worldW/worldH = 合成 quad 的世界尺寸（未钳制幅值）。
   isolate?: Map<number, { objectId: number; rtWidth: number; rtHeight: number; worldW: number; worldH: number }>;
+  // 场景树世界变换（可选）：scene.json 的**对象 id** → 父链累积后的世界 origin/scale/angles。
+  // 由调用方（three-renderer）折叠后下发；缺省逐字段回退对象自身局部值（行为不变）。
+  // ⚠️ 必须由调用方下发：本函数按 sceneJson 文本重新 parseSceneJson，拿不到调用方对 desc 的覆写。
+  worldTransforms?: Map<number, { origin: [number, number, number]; scale: [number, number, number]; angles: [number, number, number] }>;
   // 渲染像素比档位（<1 降分辨率省显存/提流畅；缺省 1）。调用方算屏幕密度时必须用同一个数。
   qualityScale?: number;
   // text 对象图层（对象 id → 纹理 + 可选时钟/脚本驱动）：与 image 同路径渲染为背景 quad。
@@ -1531,6 +1535,15 @@ export function loadSceneToThree(
   const desc = parseSceneJson(sceneJson);
   const sceneW = desc.orthogonal.width;
   const sceneH = desc.orthogonal.height;
+  // 场景树世界变换（由 three-renderer 折叠后下发）：**每个对象都取世界值**——`loadSceneToThree`
+  // 会按 scene.json 文本重新解析，拿不到 renderer 侧对 desc 的覆写。缺省（旧调用方/测试）
+  // 逐字段回退局部值，行为不变。无 parent 的对象世界值 = 局部值（零回归）。
+  const world = (o: { id: number; origin: [number, number, number]; scale: [number, number, number]; angles?: [number, number, number] }) => {
+    const w = assets.worldTransforms?.get(o.id);
+    return w
+      ? { origin: w.origin, scale: w.scale, angles: w.angles }
+      : { origin: o.origin, scale: o.scale, angles: o.angles ?? [0, 0, 0] as [number, number, number] };
+  };
   // 构造器传场景尺寸（Task 1 裁决：视口缺省与场景同尺寸）；setSceneSize 冗余同步 + 用**真实视口**
   // resize（Task 5 修复：视口必须是窗口/视口尺寸，而非场景尺寸）。viewport 由调用方显式传入
   // （createThreeSceneRenderer.render 的 vw/vh = window.innerWidth/Height）；缺省回退场景尺寸
@@ -1559,13 +1572,14 @@ export function loadSceneToThree(
   for (const obj of desc.objects) {
     if (obj.kind === 'image') {
       // 背景对象：we_to_three（addBackground 内部）+ 对象调制（alpha/brightness）→ 背景图层。
-      // alignment 缺省 centre（addBackground 签名无 alignment，Task 2 裁决）；origin 直传。
+      // alignment 缺省 centre（addBackground 签名无 alignment，Task 2 裁决）；origin 直传世界值。
+      const t = world(obj);
       const id = player.addBackground({
-        origin: obj.origin,
+        origin: t.origin,
         size: obj.size,
-        scale: obj.scale,
+        scale: t.scale,
         // WE 对象角度（弧度）→ mesh.rotation（three 的 Object3D 变换顺序即 T·R·S）。
-        angles: obj.angles,
+        angles: t.angles,
         // WE 图像颜色混合模式（非 0 且已实现时改用预乘 + CustomBlending，见 addBackground）。
         colorBlendMode: obj.colorBlendMode,
         texture: assets.backgroundTextures?.get(obj.id),
@@ -1586,11 +1600,12 @@ export function loadSceneToThree(
       const layer = assets.textLayers?.get(obj.id);
       if (!layer) continue;
       const off = layer.anchorOffset ?? [0, 0];
+      const t = world(obj);
       const id = player.addBackground({
-        origin: [obj.origin[0] + off[0], obj.origin[1] + off[1], obj.origin[2]],
+        origin: [t.origin[0] + off[0], t.origin[1] + off[1], t.origin[2]],
         size: layer.size,
-        scale: obj.scale,
-        angles: obj.angles,
+        scale: t.scale,
+        angles: t.angles,
         texture: layer.texture,
         sceneW,
         sceneH,
@@ -1601,8 +1616,8 @@ export function loadSceneToThree(
           texture: layer.texture,
           driver: layer.driver,
           backgroundId: id,
-          origin: obj.origin,
-          scale: obj.scale,
+          origin: t.origin,
+          scale: t.scale,
           horizontalAlign: obj.horizontalAlign,
           verticalAlign: obj.verticalAlign,
           alignment: obj.alignment,
@@ -1613,9 +1628,10 @@ export function loadSceneToThree(
       // 与缺失粒子纹理时白图兜底同语义）。
       const p = assets.particles?.get(obj.id);
       if (!p || !assets.createParticleSim) continue;
+      const t = world(obj);
       // new CpuParticleSim(json, origin, sceneW, sceneH, overrideJson)（经工厂抽象：生产 wasm /
       // 测试 mock）。第 5 参 = 该对象 instanceoverride 的原始 JSON（无覆盖 → 空串）。
-      const sim = assets.createParticleSim(p.specJson, obj.origin, sceneW, sceneH, p.overrideJson ?? '');
+      const sim = assets.createParticleSim(p.specJson, t.origin, sceneW, sceneH, p.overrideJson ?? '');
       // FrameCount 对齐（Task 3 Minor）：sim.set_frame_count(纹理帧数)，addParticle 的
       // opts.frameCount 取 sim.frame_count()——避免多帧 uv 切片与 sim 帧编号错位。
       // 帧数优先取纹理携带的精灵表元数据（TEXS000x，DK 的 fire1/fog1 = 64 帧），否则按宽高推。
@@ -1634,10 +1650,10 @@ export function loadSceneToThree(
         frameRows: grid.rows,
         blend: p.blend,
         softness: p.softness,
-        objectCenter: [obj.origin[0] - sceneW / 2, obj.origin[1] - sceneH / 2, obj.origin[2]],
-        objectScale: [obj.scale[0], obj.scale[1], obj.scale[2] ?? 1],
+        objectCenter: [t.origin[0] - sceneW / 2, t.origin[1] - sceneH / 2, t.origin[2]],
+        objectScale: [t.scale[0], t.scale[1], t.scale[2] ?? 1],
         // 对象角度（弧度）：顶点 shader 用它把局部运动方向/发射点/quad 角点旋转到场景空间。
-        objectAngles: obj.angles,
+        objectAngles: t.angles,
         emitterOrigin,
         // 实例缓冲容量 = spec 的 maxcount（= wasm `SceneParticleSim.maxcount`，模拟器的发射上限）。
         // three 只在首帧锁存该容量（见 addParticle），必须按模拟器**最终**会产出的粒子数一次给足；
