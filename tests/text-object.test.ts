@@ -99,6 +99,16 @@ describe('drawTextToCanvas（就地重绘：时钟复用同一 canvas 与纹理�
     expect(ctx.fillText).toHaveBeenCalledWith('14:05', 100, 32);
   });
 
+  it('多行文本按 \\n 分行绘制并整体垂直居中（fillText 不处理换行）', () => {
+    const canvas = document.createElement('canvas');
+    drawTextToCanvas(canvas, 'A\nB\nC', { pointsize: 20, width: 200, height: 100 });
+    // 行高 = 字号 × 1.2 = 24；三行居中的首行 y = 50 − 24 = 26
+    expect(ctx.fillText).toHaveBeenCalledTimes(3);
+    expect(ctx.fillText.mock.calls.map((c) => [c[0], c[2]])).toEqual([
+      ['A', 26], ['B', 50], ['C', 74],
+    ]);
+  });
+
   it('2D 上下文不可用（getContext → null）时不抛错', () => {
     vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue(null);
     const canvas = document.createElement('canvas');
@@ -119,12 +129,13 @@ describe('createClockDriver（clock 模式：文本变化才重绘）', () => {
   it('同一分钟返回 false（不重绘），跨分钟返回 true 并重绘', () => {
     const canvas = document.createElement('canvas');
     const driver = createClockDriver(canvas, { pointsize: 40, width: 200, height: 64 }, {}, 'init');
+    // clock 文本是两行（`HH:MM\nMon. D YYYY`）→ 每次重绘 2 次 fillText
     expect(driver.update(new Date(2026, 7, 21, 14, 5, 10))).toBe(true);
-    expect(ctx.fillText).toHaveBeenCalledTimes(1);
-    expect(driver.update(new Date(2026, 7, 21, 14, 5, 50))).toBe(false);
-    expect(ctx.fillText).toHaveBeenCalledTimes(1);
-    expect(driver.update(new Date(2026, 7, 21, 14, 6, 0))).toBe(true);
     expect(ctx.fillText).toHaveBeenCalledTimes(2);
+    expect(driver.update(new Date(2026, 7, 21, 14, 5, 50))).toBe(false);
+    expect(ctx.fillText).toHaveBeenCalledTimes(2);
+    expect(driver.update(new Date(2026, 7, 21, 14, 6, 0))).toBe(true);
+    expect(ctx.fillText).toHaveBeenCalledTimes(4);
   });
 
   it('初始文本就是当前时钟文本 → 首次 update 不重绘（构造即已绘制）', () => {

@@ -23933,7 +23933,10 @@ function drawTextToCanvas(canvas, text, opts) {
   ctx.fillStyle = opts.color ? `rgb(${opts.color[0]}, ${opts.color[1]}, ${opts.color[2]})` : "#ffffff";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(text, width / 2, height / 2);
+  const lines = String(text).split("\n");
+  const lineHeight = size * 1.2;
+  const firstY = height / 2 - (lines.length - 1) * lineHeight / 2;
+  lines.forEach((line, i) => ctx.fillText(line, width / 2, firstY + i * lineHeight));
 }
 function createTextTexture(text, opts) {
   const canvas = document.createElement("canvas");
