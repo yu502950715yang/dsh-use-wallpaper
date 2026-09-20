@@ -49,6 +49,16 @@ describe('parseSceneJson', () => {
     expect((ok.objects[0] as any).scale).toEqual([2, 2, 1]);
     expect((ok.objects[0] as any).origin).toEqual([0, 0, 0]);
   });
+  it('parent 字段解析（含容器对象）', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [
+        { id: 1, name: 'root', origin: '0 0 0', scale: '1 1 1' },
+        { id: 2, parent: 1, image: 'models/a.json', origin: '0 0 0', scale: '1 1 1' },
+      ],
+    }));
+    expect((desc.objects[0] as any).parent).toBeUndefined();
+    expect((desc.objects[1] as any).parent).toBe(1);
+  });
   it('classifies built-in util layers (models/util/*) as util kind', () => {
     // WE 内置合成层/全屏层/项目层：pkg 内无 models/util/*.json 文件，
     // 对象语义是效果链容器/控制节点（非纹理），必须与普通 image 区分开

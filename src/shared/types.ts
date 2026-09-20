@@ -48,6 +48,7 @@ export interface VisibleBinding {
 export interface SceneImageObject {
   kind: 'image'; id: number; name: string;
   origin: [number, number, number]; scale: [number, number, number];
+  parent?: number;               // 场景树父对象 id（世界变换由 scene-graph 累积）
   // WE 对象欧拉角（**弧度**，原文即弧度 —— OWE `SceneNode.cpp:15`：`m_rotation is in radians.
   // Static scene.json angles are already radians`）。对象 model matrix = **T·R·S**，旋转顺序
   // R = Rz·Ry·Rx（OWE `ParticleRuntime.cpp:25-28` `ControlpointRotation`）。缺省 [0,0,0]。
@@ -81,6 +82,7 @@ export interface SceneImageObject {
 export interface SceneParticleObject {
   kind: 'particle'; id: number; name: string;
   origin: [number, number, number]; scale: [number, number, number];
+  parent?: number;               // 场景树父对象 id（世界变换由 scene-graph 累积）
   // WE 对象欧拉角（**弧度**，缺省 [0,0,0]）—— model matrix T·R·S 的 R（Rz·Ry·Rx）。
   // 粒子层用它把局部运动方向/发射点旋转到场景空间（全库 75 个粒子对象带非零 angles）。
   angles?: [number, number, number];
@@ -101,6 +103,7 @@ export interface SceneParticleObject {
 export interface SceneUtilObject {
   kind: 'util'; id: number; name: string;
   origin: [number, number, number]; scale: [number, number, number];
+  parent?: number;               // 场景树父对象 id（容器不渲染，但父链要靠它累积）
   // WE 对象欧拉角（弧度，缺省 [0,0,0]）——util/text 当前不参与几何变换，字段保留以与
   // scene-json 的 base 解析一致（全库各 1 个对象带非零 angles）。
   angles?: [number, number, number];
@@ -116,6 +119,7 @@ export interface SceneUtilObject {
 export interface SceneTextObject {
   kind: 'text'; id: number; name: string;
   origin: [number, number, number]; scale: [number, number, number];
+  parent?: number;               // 场景树父对象 id（世界变换由 scene-graph 累积）
   // WE 对象欧拉角（弧度，缺省 [0,0,0]）——util/text 当前不参与几何变换，字段保留以与
   // scene-json 的 base 解析一致（全库各 1 个对象带非零 angles）。
   angles?: [number, number, number];
