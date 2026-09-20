@@ -221,7 +221,7 @@ describe('ThreeScenePlayer', () => {
 
   /** GlowStage 的最小 spy：断言 apply / resize / dispose 的调用。 */
   function glowStageSpy() {
-    const applied: unknown[] = [];
+    const applied: Array<[unknown, unknown]> = [];
     const sizes: Array<[number, number]> = [];
     let disposed = false;
     return {
@@ -251,6 +251,9 @@ describe('ThreeScenePlayer', () => {
     player.setGlowStage(g.stage as never);
     player.render();
     expect(g.applied.length).toBe(1);
+    // 实参必须是 player 自己的 scene/camera（只断言调用次数抓不到参数传错的回归）
+    expect(g.applied[0][0]).toBe(player.scene);
+    expect(g.applied[0][1]).toBe(player.camera);
     expect(mock._renders.length).toBe(before); // 主场景渲染被委托给 stage（spy 不真渲）
   });
 
@@ -264,6 +267,21 @@ describe('ThreeScenePlayer', () => {
     // 传的是**画布缓冲**尺寸（≥ CSS 尺寸；jsdom 默认 dpr=1 ⇒ 相等）
     expect(w).toBeGreaterThanOrEqual(800);
     expect(h).toBeGreaterThanOrEqual(600);
+  });
+
+  it('dpr=2 时 resize 同步给 glowStage 的是**画布缓冲** 1600×1200，不是 CSS 800×600', () => {
+    const orig = (window as { devicePixelRatio?: number }).devicePixelRatio;
+    Object.defineProperty(window, 'devicePixelRatio', { value: 2, configurable: true });
+    try {
+      const { player } = makePlayer();
+      const g = glowStageSpy();
+      player.setGlowStage(g.stage as never);
+      player.resize(800, 600);
+      // 缓冲 = 视口 × dpr（不变量）；传 CSS 尺寸会让 Glow 各级 RT 只有 1/dpr 分辨率
+      expect(g.sizes).toEqual([[1600, 1200]]);
+    } finally {
+      Object.defineProperty(window, 'devicePixelRatio', { value: orig, configurable: true });
+    }
   });
 
   it('dispose 时拆除 glowStage', () => {

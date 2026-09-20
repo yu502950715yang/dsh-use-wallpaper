@@ -42,13 +42,27 @@ describe('readClientSettings (ctx.remote.settings.describe)', () => {
     stubRemote({ describe: vi.fn(async () => ({ ok: true, value: { writable: true, hasDocument: true, namespaces: [] } })) });
     expect(await readClientSettings()).toEqual(FULL_DEFAULTS);
   });
-  it('describe ok:false → 回退默认值', async () => {
+  it('describe ok:false → 回退默认值（尚无成功读取可沿用）', async () => {
     stubRemote({ describe: vi.fn(async () => ({ ok: false, error: { message: 'nope' } })) });
     expect(await readClientSettings()).toEqual(FULL_DEFAULTS);
   });
-  it('describe 抛异常 → 回退默认值', async () => {
+  it('describe 抛异常 → 回退默认值（尚无成功读取可沿用）', async () => {
     stubRemote({ describe: vi.fn(async () => { throw new Error('net'); }) });
     expect(await readClientSettings()).toEqual(FULL_DEFAULTS);
+  });
+  it('成功读取后再失败 → 返回**上次成功值**，不回 DEFAULTS（否则会悄悄重开用户关掉的 Glow）', async () => {
+    const describe = vi.fn(async () => describeValue({ glowEnabled: false, glowStrength: 0.5 }));
+    stubRemote({ describe });
+    const first = await readClientSettings();
+    expect(first.glowEnabled).toBe(false);
+    // 同一次会话内 describe 瞬时失败（网络抖动 / 热重载）
+    describe.mockImplementation(async () => { throw new Error('net'); });
+    const second = await readClientSettings();
+    expect(second).toEqual(first);
+    expect(second.glowEnabled).toBe(false); // 不是 DEFAULTS 的 true
+    // ok:false 同样沿用上次成功值
+    describe.mockImplementation(async () => ({ ok: false, error: { message: 'nope' } }));
+    expect((await readClientSettings()).glowEnabled).toBe(false);
   });
   it('无 ctx.remote.settings → 回退默认值（node/SSR 防御）', async () => {
     setSettingsCtx(null);

@@ -155,13 +155,34 @@ export function createGlowStage(
   let levelSizes: Array<{ w: number; h: number }> = [];
   let glowFailed = false;
   let disposed = false;
+  let baseRendered = false; // 本帧主场景是否已成功渲进 base RT（失败回退时决定「贴图」还是「直渲」）
   // three 在 shader 链接失败时只调 renderer.debug.onShaderError（不抛，见 three.module.js LINK_STATUS 分支），
   // 故首帧 apply 期间临时挂钩子：抓到就置 glowFailed；首帧结束摘掉，避免误判其它材质的 shader 失败。
+  // ⚠️ 钩子窗口只该覆盖**我们自己的 4 个材质** ⇒ 主场景 → base RT 那一次渲染放在装钩子**之前**。
   let hooked = false; // 当前是否挂着
   let hookSpent = false; // 首帧已挂过：glow program 那时就编译完，之后不再挂
   let hookedRenderer: THREE.WebGLRenderer | null = null;
   let prevOnShaderError: ((...a: unknown[]) => void) | undefined;
   type DebugCapable = { debug?: { onShaderError?: (...a: unknown[]) => void } };
+
+  // three 的钩子只「通知」不带错误详情，且钩子在位时会跳过它自带的详细 console.error ⇒
+  // 自己用 gl.getShaderInfoLog 取 GLSL 编译错误打进告警（范式同 effect-runner.ts）。
+  function shaderErrorDetail(gl: unknown, program: unknown, vs: unknown, fs: unknown): string {
+    const g = gl as {
+      getShaderInfoLog?: (s: unknown) => string | null;
+      getProgramInfoLog?: (p: unknown) => string | null;
+    } | null;
+    const take = (name: 'getShaderInfoLog' | 'getProgramInfoLog', x: unknown): string => {
+      const fn = g?.[name];
+      if (!x || typeof fn !== 'function') return '';
+      try { return (fn.call(g, x) ?? '').trim(); } catch { return ''; }
+    };
+    return ([
+      ['vertex', take('getShaderInfoLog', vs)],
+      ['fragment', take('getShaderInfoLog', fs)],
+      ['program', take('getProgramInfoLog', program)],
+    ] as Array<[string, string]>).filter(([, text]) => text).map(([kind, text]) => `${kind}: ${text}`).join(' | ');
+  }
 
   function installShaderErrorHook(r: THREE.WebGLRenderer): void {
     if (hooked || hookSpent) return;
@@ -173,7 +194,8 @@ export function createGlowStage(
     prevOnShaderError = dbg.onShaderError;
     dbg.onShaderError = (...args: unknown[]) => {
       glowFailed = true;
-      console.warn('[wallpaper-engine] 应用级 Glow 的 shader 编译/链接失败，已降级为直渲');
+      const detail = shaderErrorDetail(args[0], args[1], args[2], args[3]);
+      console.warn('[wallpaper-engine] 应用级 Glow 的 shader 编译/链接失败，已降级为直渲' + (detail ? `：${detail}` : ''));
       try { prevOnShaderError?.(...args); } catch { /* 原钩子抛错不影响降级 */ }
     };
   }
@@ -225,25 +247,36 @@ export function createGlowStage(
     runPass(r, blurMat, a);
   }
 
-  // 10 个 pass，顺序与离线实验的**链式**一致：down → blur → 作为下一级输入（spec §2.2 / 表 §3.4）
-  function renderGlow(r: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera): void {
+  // 失败回退用：把已渲好的 base RT 贴到 canvas（= 本帧的无 Glow 输出，且**不重复渲染主场景**）。
+  // 贴图本身失败（copy 材质也坏）返回 false，调用方退回直渲。
+  function copyBaseToCanvas(r: THREE.WebGLRenderer): boolean {
+    try {
+      copyMat.uniforms.tSrc.value = baseRT!.texture;
+      runPass(r, copyMat, null);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // 9 个 pass（主场景 → base RT 那一步在 apply 里、钩子之前做），顺序与离线实验的**链式**一致：
+  // down → blur → 作为下一级输入（spec §2.2 / 表 §3.4）
+  function renderGlowPasses(r: THREE.WebGLRenderer): void {
     const [l1a, l1b, l2a, l2b, l3a, l3b] = levelRTs;
-    // 1) 主场景 → base RT（透明清屏，§5.22）
-    renderIntoRenderTarget(r, baseRT!, scene, camera);
-    // 2) bright-pass（含降采样）：base → L1a
+    // 1) bright-pass（含降采样）：base → L1a
     brightMat.uniforms.tSrc.value = baseRT!.texture;
     runPass(r, brightMat, l1a);
-    // 3–4) L1 模糊
+    // 2–3) L1 模糊
     blurLevel(r, 0, l1a, l1b);
-    // 5) 降采样：**模糊后的** L1a → L2a
+    // 4) 降采样：**模糊后的** L1a → L2a
     copyMat.uniforms.tSrc.value = l1a.texture; runPass(r, copyMat, l2a);
-    // 6–7) L2 模糊
+    // 5–6) L2 模糊
     blurLevel(r, 1, l2a, l2b);
-    // 8) 降采样：L2a → L3a
+    // 7) 降采样：L2a → L3a
     copyMat.uniforms.tSrc.value = l2a.texture; runPass(r, copyMat, l3a);
-    // 9) L3 模糊（H + V 两个 pass 计入上一步之后）
+    // 8) L3 模糊（H + V 两个 pass 计入上一步之后）
     blurLevel(r, 2, l3a, l3b);
-    // 10) composite：base + 三级等权上采样累加 → canvas
+    // 9) composite：base + 三级等权上采样累加 → canvas
     compositeMat.uniforms.tBase.value = baseRT!.texture;
     compositeMat.uniforms.tL1.value = l1a.texture;
     compositeMat.uniforms.tL2.value = l2a.texture;
@@ -258,13 +291,21 @@ export function createGlowStage(
     apply(r, scene, camera) {
       if (disposed) return;
       if (glowFailed) { r.setRenderTarget(null); r.render(scene, camera); return; }
-      installShaderErrorHook(r);
       try {
-        renderGlow(r, scene, camera);
+        // 1) 主场景 → base RT（透明清屏，§5.22）。**在装钩子之前**：钩子只盯我们自己的 4 个材质，
+        //    否则场景材质的 shader 失败会被误判成 Glow 失败并永久降级。
+        baseRendered = false;
+        renderIntoRenderTarget(r, baseRT!, scene, camera);
+        baseRendered = true;
+        installShaderErrorHook(r);
+        renderGlowPasses(r);
       } catch (e) {
         // 绝不白屏：一次失败即永久降级为直渲（运行期异常 / pass 失败）
         glowFailed = true;
         console.warn('[wallpaper-engine] 应用级 Glow 失败，已降级为直渲：' + String((e as Error)?.message ?? e));
+        // 本帧回退：主场景本帧已渲进 base RT（只渲了那一次）⇒ 贴到 canvas 即可；只有连 base 都
+        // 没渲成（内容不可信）才退回直渲。
+        if (baseRendered && copyBaseToCanvas(r)) return;
         r.setRenderTarget(null);
         r.render(scene, camera);
       } finally {

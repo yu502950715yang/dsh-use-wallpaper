@@ -188,11 +188,13 @@ else this.renderer.render(this.scene, this.camera);   // 零回归路径
 
 ### 3.6 错误处理与零回归
 
-- `createGlowStage` 返回 `null`（shader 编译失败 / RT 建不起来）⇒ **静默降级为无 Glow** + 一条可辨识 `console.warn`；不白屏、不中断壁纸、不触发壁纸级 preview 回退（沿用既有"效果失败一律跳过"语义）。
+- `createGlowStage` 返回 `null`（shader 编译失败 / RT 建不起来）⇒ **静默降级为无 Glow** + 一条可辨识 `console.warn`；不白屏、不中断壁纸、不触发壁纸级 preview 回退（沿用既有"效果失败一律跳过"语义）。**以 §3.2 的订正为准**（创建期只对非法尺寸返回 `null`；shader 失败在运行期首次 `apply` 捕获并永久降级）。
 - `glowEnabled = false` ⇒ **不建任何 RT / shader**，帧体走 `renderer.render(...)` 那条分支 ⇒ **逐像素零回归、零额外 GPU 开销**。
 - 帧内**不做**编译 / 建 RT / 建 shader（§5.11）：全部发生在装配期与 resize 期。
 - RT 尺寸随画布缓冲（含 `devicePixelRatio`），与主相机 cover 口径一致；resize 时同步重建。
 - 显存：base RT（视口尺寸 = 画布缓冲）+ 6 张小 RT（三级各一对 ping-pong，合计约 **0.66 × base 面积**）≈ **33 MB @3440×1440@dpr1**（RGBA8；HalfFloat 则 ×2），仅在开启时占用。
+
+> **2026-09-20 订正（「帧内不做编译」是不实标注；上面原文保留，本条为准）**：RT 与材质对象确实在**装配期**创建，但 **three 是惰性编译** ⇒ 我们 4 个 program 实际在**首个 `apply` 帧内**编译（每次切壁纸 / 开 Glow 一次；`ObjectEffectStage` 也有同类已知停顿，见 `src/client/object-effects.ts:79`）——**编译不在装配期**。属一次性首帧停顿；验收只报中位数 / p95（见下面的 2026-09-20 订正第 2 条），**该首帧尖峰未测量**。另：首帧若 composite 链接失败，这一帧可能一次性闪黑（下一帧起永久降级为直渲），同样**未测量**。**不为它加 `prewarm`**（本轮非目标）。
 
 ## 4. 非目标
 

@@ -143,7 +143,7 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
           </button>
         ))}
       </div>
-      {/* 应用级 Glow 开关（label 包裹 input ⇒ 复选框可访问名为「光晕」） */}
+      {/* 应用级 Glow 开关（label 包裹 input ⇒ 复选框可访问名为「光晕…」） */}
       {settings && (
         <label className="wss-glow-row">
           <input
@@ -151,7 +151,7 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
             checked={settings.glowEnabled}
             onChange={(e) => toggleGlow(e.target.checked)}
           />
-          光晕
+          光晕（切换壁纸后生效）
         </label>
       )}
       <div className="wss-dirs">

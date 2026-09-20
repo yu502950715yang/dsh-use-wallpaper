@@ -665,6 +665,8 @@ body[data-ds-dark-theme][data-we-wallpaper] [data-question-key] section{
 .wss-dirs h4{margin:10px 0 6px;font-size:13px}
 .wss-dir-row{display:flex;flex-direction:column;gap:4px;margin-bottom:8px;font-size:12px;color:var(--dsw-alias-label-secondary,var(--wp-text))}
 .wss-dir-row input{border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;padding:6px 10px;font:inherit;font-size:12px}
+/* \u5149\u6655\u5F00\u5173\u884C\uFF1A\u590D\u9009\u6846\u4E0E\u6587\u5B57\u4E0E\u5176\u4ED6\u63A7\u4EF6\uFF08.wss-dir-row\uFF09\u5DE6\u5BF9\u9F50\u3001\u540C\u4E00\u884C\u5C45\u4E2D */
+.wss-glow-row{display:flex;align-items:center;gap:6px;margin-bottom:8px;font-size:12px;color:var(--dsw-alias-label-secondary,var(--wp-text))}
 .wss-dir-actions{display:flex;gap:8px}
 .wss-probe-result{border-top:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));padding-top:10px;margin-top:4px}
 .wss-candidate{display:flex;align-items:center;gap:8px;padding:4px 0}
@@ -24939,10 +24941,28 @@ function createGlowStage(width, height, opts) {
   let levelSizes = [];
   let glowFailed = false;
   let disposed = false;
+  let baseRendered = false;
   let hooked = false;
   let hookSpent = false;
   let hookedRenderer = null;
   let prevOnShaderError;
+  function shaderErrorDetail(gl, program, vs, fs) {
+    const g = gl;
+    const take = (name, x) => {
+      const fn = g?.[name];
+      if (!x || typeof fn !== "function") return "";
+      try {
+        return (fn.call(g, x) ?? "").trim();
+      } catch {
+        return "";
+      }
+    };
+    return [
+      ["vertex", take("getShaderInfoLog", vs)],
+      ["fragment", take("getShaderInfoLog", fs)],
+      ["program", take("getProgramInfoLog", program)]
+    ].filter(([, text]) => text).map(([kind, text]) => `${kind}: ${text}`).join(" | ");
+  }
   function installShaderErrorHook(r) {
     if (hooked || hookSpent) return;
     hookSpent = true;
@@ -24953,7 +24973,8 @@ function createGlowStage(width, height, opts) {
     prevOnShaderError = dbg.onShaderError;
     dbg.onShaderError = (...args) => {
       glowFailed = true;
-      console.warn("[wallpaper-engine] \u5E94\u7528\u7EA7 Glow \u7684 shader \u7F16\u8BD1/\u94FE\u63A5\u5931\u8D25\uFF0C\u5DF2\u964D\u7EA7\u4E3A\u76F4\u6E32");
+      const detail = shaderErrorDetail(args[0], args[1], args[2], args[3]);
+      console.warn("[wallpaper-engine] \u5E94\u7528\u7EA7 Glow \u7684 shader \u7F16\u8BD1/\u94FE\u63A5\u5931\u8D25\uFF0C\u5DF2\u964D\u7EA7\u4E3A\u76F4\u6E32" + (detail ? `\uFF1A${detail}` : ""));
       try {
         prevOnShaderError?.(...args);
       } catch {
@@ -25003,9 +25024,17 @@ function createGlowStage(width, height, opts) {
     blurMat.uniforms.uStep.value.set(0, radius / 4 / size.h);
     runPass(r, blurMat, a);
   }
-  function renderGlow(r, scene, camera) {
+  function copyBaseToCanvas(r) {
+    try {
+      copyMat.uniforms.tSrc.value = baseRT.texture;
+      runPass(r, copyMat, null);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  function renderGlowPasses(r) {
     const [l1a, l1b, l2a, l2b, l3a, l3b] = levelRTs;
-    renderIntoRenderTarget(r, baseRT, scene, camera);
     brightMat.uniforms.tSrc.value = baseRT.texture;
     runPass(r, brightMat, l1a);
     blurLevel(r, 0, l1a, l1b);
@@ -25031,12 +25060,16 @@ function createGlowStage(width, height, opts) {
         r.render(scene, camera);
         return;
       }
-      installShaderErrorHook(r);
       try {
-        renderGlow(r, scene, camera);
+        baseRendered = false;
+        renderIntoRenderTarget(r, baseRT, scene, camera);
+        baseRendered = true;
+        installShaderErrorHook(r);
+        renderGlowPasses(r);
       } catch (e) {
         glowFailed = true;
         console.warn("[wallpaper-engine] \u5E94\u7528\u7EA7 Glow \u5931\u8D25\uFF0C\u5DF2\u964D\u7EA7\u4E3A\u76F4\u6E32\uFF1A" + String(e?.message ?? e));
+        if (baseRendered && copyBaseToCanvas(r)) return;
         r.setRenderTarget(null);
         r.render(scene, camera);
       } finally {
@@ -25096,29 +25129,33 @@ var DEFAULTS = {
   glowStrength: 1
 };
 var settingsCtx = null;
+var lastGood = null;
 function setSettingsCtx(ctx) {
   settingsCtx = ctx;
+  lastGood = null;
 }
 function settingsRemote() {
   return settingsCtx?.remote?.settings ?? null;
 }
 async function readClientSettings() {
   const remote = settingsRemote();
-  if (!remote) return { ...DEFAULTS };
-  try {
-    const resp = await remote.describe();
-    const value = resp?.ok ? resp.value : void 0;
-    if (typeof value === "object" && value !== null) {
-      const namespaces = value.namespaces;
-      const nsRow = namespaces?.find((n) => n.ns === NS);
-      const nsValue = nsRow?.value;
-      if (typeof nsValue === "object" && nsValue !== null) {
-        return { ...DEFAULTS, ...nsValue };
+  if (remote) {
+    try {
+      const resp = await remote.describe();
+      const value = resp?.ok ? resp.value : void 0;
+      if (typeof value === "object" && value !== null) {
+        const namespaces = value.namespaces;
+        const nsRow = namespaces?.find((n) => n.ns === NS);
+        const nsValue = nsRow?.value;
+        if (typeof nsValue === "object" && nsValue !== null) {
+          lastGood = { ...lastGood ?? DEFAULTS, ...nsValue };
+          return { ...lastGood };
+        }
       }
+    } catch {
     }
-  } catch {
   }
-  return { ...DEFAULTS };
+  return { ...lastGood ?? DEFAULTS };
 }
 async function writeClientSettings(patch) {
   const remote = settingsRemote();
@@ -25479,7 +25516,7 @@ function WallpaperSettingsSection(props) {
           onChange: (e) => toggleGlow(e.target.checked)
         }
       ),
-      "\u5149\u6655"
+      "\u5149\u6655\uFF08\u5207\u6362\u58C1\u7EB8\u540E\u751F\u6548\uFF09"
     ] }),
     /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-dirs", children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { children: "\u58C1\u7EB8\u76EE\u5F55" }),

@@ -217,7 +217,7 @@ git commit -m "feat(glow): 参数纯函数与三级降采样尺寸计划" -m "no
   - 内部不变量（供测试观测）：`(stage as any).glowFailed === boolean`、`(stage as any).rtCount === number`
 
 > **与 spec §3.2 的两点偏离（实现期订正，理由如下）**：
-> 1. `createGlowStage` **不接收 renderer** —— RT 与材质都是纯 JS 对象，不需要 GL 上下文；renderer 直到 `apply(renderer, …)` 才可用（`three-renderer` 里 `player.renderer` 是私有字段，取不到）。尺寸用**画布缓冲**尺寸（装配点用 `fg.width/height`，此时已含 dpr）。
+> 1. `createGlowStage` **不接收 renderer** —— RT 与材质都是纯 JS 对象，创建期不需要 GL 上下文；renderer 只在 `apply(renderer, …)` 时使用。尺寸用**画布缓冲**尺寸（装配点用 `fg.width/height`，此时已含 dpr）。
 > 2. "shader 编译失败 ⇒ 返回 null"改为：**创建期只对非法尺寸返回 null**；shader / pass 的失败在**运行期首次 `apply` 时捕获并永久降级为直渲**（仍满足"绝不白屏"）。Task 7 回写 spec 措辞。
 
 - [ ] **Step 1: 写失败测试**
@@ -1142,7 +1142,7 @@ git commit -m "docs(glow): 回写应用级 Glow 的实现、实测与颜色空�
 
 **自审发现并已修正的 4 处问题**（初稿的错误，记录在此以免执行者误用旧版）：
 1. **降采样顺序**（Task 2 实现）：初稿把两级降采样都放在模糊之前 ⇒ 会得到"未模糊的 L1 降采样成 L2"，与离线实验的**链式**（down → blur → 作为下一级输入，见 `glow-post.mjs` 的 `cur` 传递）不一致。已改为 `bright → L1 blur → down → L2 blur → down → L3 blur`。
-2. **`createGlowStage` 的 renderer 参数**：初稿让它接收 `renderer`，但 `three-renderer` 拿不到（`player.renderer` 是私有字段），且 RT/材质是纯 JS 对象本不需要 GL 上下文 ⇒ 已改为 `createGlowStage(width, height, opts?)`，renderer 只在 `apply(renderer, …)` 时使用。
+2. **`createGlowStage` 的 renderer 参数**：初稿让它接收 `renderer`，但 RT/材质是纯 JS 对象、创建期本不需要 GL 上下文 ⇒ 已改为 `createGlowStage(width, height, opts?)`，renderer 只在 `apply(renderer, …)` 时使用。
 3. **测试引用的辅助名**：初稿编造了 `makePlayerWithMockRenderer` / `renderWithSettings` 等。已换成文件里的真实辅助（`createMockRenderer` / `makePlayer` / `mock._renders` / `WallpaperSettingsSchema`），其余改为"复用该文件既有准备步骤 + 明确断言"。
 4. **resize 尺寸口径**：初稿在 `three-renderer` 的 `onWindowResize` 里再算一次尺寸（且易传成 CSS 尺寸）⇒ 改为**只在 `player.resize()` 内部**用 `renderer.domElement.width/height` 同步（缓冲尺寸），避免两处各算一遍。
 

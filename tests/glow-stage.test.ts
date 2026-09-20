@@ -61,13 +61,23 @@ describe('glowLevelSizes（三级降采样尺寸：逐级取半、最小 1px）'
 
 /** 最小 renderer mock：只记录调用，不真编译 shader（node 无 WebGL）。 */
 function mockRenderer() {
-  const calls = { render: 0, setRenderTarget: [] as unknown[] };
+  const calls = {
+    render: 0,
+    setRenderTarget: [] as unknown[],
+    hookAtRender: [] as boolean[],
+    scenes: [] as unknown[], // 每次 render 的第一个实参（主场景 vs 全屏 quad）
+  };
   const renderer = {
     debug: { onShaderError: undefined as ((...a: unknown[]) => void) | undefined },
     getClearAlpha: () => 1,
     setClearAlpha: (a: number) => { void a; },
     setRenderTarget: (t: unknown) => { calls.setRenderTarget.push(t); },
-    render: () => { calls.render += 1; },
+    render: (s?: unknown) => {
+      calls.render += 1;
+      calls.scenes.push(s);
+      // 记录「这次 render 时 shader 失败钩子是否已安装」（钩子在位即为函数）
+      calls.hookAtRender.push(typeof renderer.debug.onShaderError === 'function');
+    },
   };
   return { renderer: renderer as unknown as THREE.WebGLRenderer, calls };
 }
@@ -137,18 +147,23 @@ describe('createGlowStage（RT 池与 pass 链）', () => {
     stage.dispose();
   });
 
-  it('apply 抛错 ⇒ 永久降级为直渲（同一帧内先试再回退，之后不再尝试）', () => {
+  it('apply 抛错 ⇒ 永久降级为直渲；失败帧**不重复渲染主场景**（base 内容直接贴回 canvas）', () => {
     const { renderer, calls } = mockRenderer();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {}); // 降级告警故意触发，静音
     const stage = createGlowStage(1280, 720)!;
-    // 让第一个 pass 的渲染抛错（模拟运行期 pass 异常）
-    let thrown = false;
-    (renderer as unknown as { render: () => void }).render = () => {
+    // 第 2 次 render（bright-pass）抛错 → 模拟运行期 pass 异常；base 那次（第 1 次）已完成
+    let n = 0;
+    (renderer as unknown as { render: (s?: unknown) => void }).render = (s?: unknown) => {
       calls.render += 1;
-      if (!thrown) { thrown = true; throw new Error('boom'); }
+      calls.scenes.push(s);
+      n += 1;
+      if (n === 2) throw new Error('boom');
     };
-    stage.apply(renderer, scene, camera); // 首次：抛错 → 降级并直渲一次
+    stage.apply(renderer, scene, camera); // 首次：pass 抛错 → 降级
     expect((stage as unknown as { glowFailed: boolean }).glowFailed).toBe(true);
+    // 主场景本帧只渲一次（= base 那次）；回退是把 base 贴到 canvas（传的是 quad）
+    expect(calls.scenes.filter((s) => s === scene).length).toBe(1);
+    expect(calls.scenes[calls.scenes.length - 1]).not.toBe(scene);
     const afterFallback = calls.render;
     stage.apply(renderer, scene, camera); // 之后：直接直渲，不再跑 pass 链
     expect(calls.render).toBe(afterFallback + 1);
@@ -157,7 +172,39 @@ describe('createGlowStage（RT 池与 pass 链）', () => {
     stage.dispose();
   });
 
-  it('shader 链接失败（three 只调 onShaderError、不抛）⇒ 同样永久降级为直渲', () => {
+  it('base 那次渲染本身抛错（内容不可信）⇒ 回退为直渲一次，仍永久降级', () => {
+    const { renderer, calls } = mockRenderer();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const stage = createGlowStage(1280, 720)!;
+    let thrown = false;
+    (renderer as unknown as { render: (s?: unknown) => void }).render = (s?: unknown) => {
+      calls.render += 1;
+      calls.scenes.push(s);
+      if (!thrown) { thrown = true; throw new Error('boom'); }
+    };
+    stage.apply(renderer, scene, camera);
+    expect((stage as unknown as { glowFailed: boolean }).glowFailed).toBe(true);
+    expect(calls.scenes.filter((s) => s === scene).length).toBe(2); // base（抛错）+ 直渲回退
+    stage.apply(renderer, scene, camera);
+    expect(calls.scenes.filter((s) => s === scene).length).toBe(3); // 之后每帧只直渲一次
+    warn.mockRestore();
+    stage.dispose();
+  });
+
+  it('钩子窗口只覆盖我们自己的材质：主场景 → base RT 那一次渲染发生在装钩子之前', () => {
+    const { renderer, calls } = mockRenderer();
+    const stage = createGlowStage(1280, 720)!;
+    stage.apply(renderer, scene, camera);
+    expect(calls.render).toBe(11);
+    // 第 1 次 render = 主场景 → base RT（钩子未装）；其后 10 个 pass 都在钩子生效期内
+    expect(calls.hookAtRender[0]).toBe(false);
+    expect(calls.hookAtRender.length).toBe(11);
+    expect(calls.hookAtRender.slice(1).every((v) => v)).toBe(true);
+    expect((stage as unknown as { glowFailed: boolean }).glowFailed).toBe(false);
+    stage.dispose();
+  });
+
+  it('shader 链接失败（three 只调 onShaderError、不抛）⇒ 同样永久降级为直渲 + 告警带 GLSL 详情', () => {
     const { renderer, calls } = mockRenderer();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const stage = createGlowStage(1280, 720)!;
@@ -166,13 +213,20 @@ describe('createGlowStage（RT 池与 pass 链）', () => {
       debug: { onShaderError?: (...a: unknown[]) => void };
     };
     // 模拟 three：LINK_STATUS === false 时只调 renderer.debug.onShaderError，然后正常返回（不抛）
+    const gl = {
+      getShaderInfoLog: (s: unknown) => (s === 'fs' ? 'ERROR: 0:12 syntax error' : ''),
+      getProgramInfoLog: () => 'link failed',
+    };
     r.render = () => {
       calls.render += 1;
-      r.debug.onShaderError?.();
+      r.debug.onShaderError?.(gl, 'program', 'vs', 'fs');
     };
     stage.apply(renderer, scene, camera);
     expect((stage as unknown as { glowFailed: boolean }).glowFailed).toBe(true);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('shader 编译/链接失败'));
+    // 钩子在位时 three 会跳过它自带的详细 console.error ⇒ 我们自取 GLSL info log（含 program log）
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('syntax error'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('link failed'));
     expect(r.debug.onShaderError).toBeUndefined(); // 首帧结束即摘钩子
     const afterFirst = calls.render;
     stage.apply(renderer, scene, camera); // 下一次：直渲短路，只剩 1 次 render

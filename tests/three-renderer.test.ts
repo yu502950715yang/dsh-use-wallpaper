@@ -259,6 +259,8 @@ describe('createThreeSceneRenderer', () => {
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 });
     window.dispatchEvent(new Event('resize'));
     expect(player.resize).toHaveBeenCalledWith(1600, 900);
+    // Glow 的 RT 尺寸只在 player.resize 内部单点同步 ⇒ three-renderer **不**再自己调 stage.resize
+    expect(vi.mocked(createGlowStage).mock.results[0].value!.resize).not.toHaveBeenCalled();
 
     // dispose 移除监听：再次 resize 不再调用 player.resize。
     r.dispose();
@@ -320,6 +322,39 @@ describe('createThreeSceneRenderer', () => {
 
     r.dispose();
     expect(stage.dispose).toHaveBeenCalled();
+  });
+
+  it('dpr=2 ⇒ Glow 收到**画布缓冲**尺寸 1600×1200，不是 CSS 尺寸 800×600', async () => {
+    // 背景（AGENT.md §5.21/§7.12 复发类缺陷）：只断言 `createGlowStage` 的尺寸 == 传入 canvas 的
+    // width 是**恒真**的（实现就是读它）⇒ 误传 CSS 尺寸同样通过。本用例固定 dpr=2 并让 mock 复现
+    // 真实链路的不变量（loadSceneToThree → player.resize → canvas.width = floor(vw×dpr)），
+    // 使「传 CSS 尺寸」的实现必然变红。
+    const origDpr = window.devicePixelRatio;
+    Object.defineProperty(window, 'devicePixelRatio', { value: 2, configurable: true });
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 800 });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 600 });
+    try {
+      stubSettings({ glowEnabled: true });
+      const player = prepareGlowRender();
+      const canvas = document.createElement('canvas');
+      const stub = player as unknown as { resize: (w: number, h: number) => void };
+      stub.resize = (w, h) => { canvas.width = Math.floor(w * 2); canvas.height = Math.floor(h * 2); };
+      loadSceneToThree.mockImplementationOnce(
+        ((_j: unknown, _a: unknown, _c: unknown, vp: { width: number; height: number }) => {
+          stub.resize(vp.width, vp.height);
+          return { player, sims: [], backgroundIds: [0], particleLayers: [] };
+        }) as never,
+      );
+      const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+      expect(await r.render('2851992662', canvas, null)).toBe(true);
+      const [w, h] = vi.mocked(createGlowStage).mock.calls[0];
+      expect([w, h]).toEqual([1600, 1200]);
+      r.dispose();
+    } finally {
+      Object.defineProperty(window, 'devicePixelRatio', { value: origDpr, configurable: true });
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1920 });
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: 1080 });
+    }
   });
 });
 

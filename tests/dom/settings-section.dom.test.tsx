@@ -132,9 +132,9 @@ describe('WallpaperSettingsSection', () => {
     mount({ writeSettings });
     await flush();
     // 本文件无 @testing-library 依赖：沿用既有写法，按 label 取到「光晕」复选框
-    // （label 包裹 input ⇒ 该复选框即以「光晕」为可访问名）
+    // （label 包裹 input ⇒ 该复选框即以「光晕（切换壁纸后生效）」为可访问名）
     const label = container.querySelector('.wss-glow-row') as HTMLLabelElement | null;
-    expect(label?.textContent).toBe('光晕');
+    expect(label?.textContent).toBe('光晕（切换壁纸后生效）');
     const box = label!.querySelector('input[type="checkbox"]') as HTMLInputElement;
     expect(box.checked).toBe(true);
     box.click();
