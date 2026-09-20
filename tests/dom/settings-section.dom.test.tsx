@@ -13,6 +13,7 @@ import type { ProbeResult } from '../../src/shared/types.js';
 const BASE_SETTINGS: ClientSettings = {
   selectedWallpaperId: '1', wallpaperDir: '', weAssetsDir: '',
   overlayOpacity: 0.35, blurEnabled: false, blurRadius: 12, kenBurns: true,
+  glowEnabled: true, glowThreshold: 0.65, glowStrength: 1.0,
 };
 
 const WALLPAPERS = [
@@ -124,6 +125,22 @@ describe('WallpaperSettingsSection', () => {
     setValue(inputA, 'D:/Custom/we');
     (container.querySelector('.wss-save-dirs') as HTMLElement).click();
     expect(writeSettings).toHaveBeenCalledWith({ wallpaperDir: 'D:/Custom/431960', weAssetsDir: 'D:/Custom/we' });
+  });
+
+  it('点击「光晕」复选框 → 持久化 glowEnabled=false', async () => {
+    const writeSettings = vi.fn(async () => {});
+    mount({ writeSettings });
+    await flush();
+    // 本文件无 @testing-library 依赖：沿用既有写法，按 label 取到「光晕」复选框
+    // （label 包裹 input ⇒ 该复选框即以「光晕」为可访问名）
+    const label = container.querySelector('.wss-glow-row') as HTMLLabelElement | null;
+    expect(label?.textContent).toBe('光晕');
+    const box = label!.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    expect(box.checked).toBe(true);
+    box.click();
+    await flush();
+    expect(writeSettings).toHaveBeenCalledWith({ glowEnabled: false });
+    expect(box.checked).toBe(false);
   });
 
   it('点击「刷新壁纸」→ 重新拉取列表并更新网格', async () => {

@@ -13,10 +13,17 @@ describe('wallpaper settings schema', () => {
       blurEnabled: false,
       blurRadius: 12,
       kenBurns: true,
+      glowEnabled: true,
+      glowThreshold: 0.65,
+      glowStrength: 1.0,
     });
   });
   it('rejects opacity outside [0,1]', () => {
     expect(() => WallpaperSettingsSchema({ overlayOpacity: 2 })).toThrow();
+  });
+  it('rejects glowThreshold outside [0, 0.99] and glowStrength outside [0, 4]', () => {
+    expect(() => WallpaperSettingsSchema({ glowThreshold: 1 })).toThrow();
+    expect(() => WallpaperSettingsSchema({ glowStrength: 5 })).toThrow();
   });
   it('exposes the wallpaper-engine namespace', () => {
     expect(WALLPAPER_NS).toBe('wallpaper-engine');

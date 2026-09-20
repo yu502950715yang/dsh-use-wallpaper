@@ -85,6 +85,13 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
       .catch(() => setMessage('刷新壁纸失败'));
   }, [fetchWallpapers]);
 
+  // 应用级 Glow 开关：本地即时生效 + 持久化（同 select）；阈值/强度走 config 不上面板
+  const toggleGlow = useCallback((enabled: boolean) => {
+    setSettings((prev) => (prev ? { ...prev, glowEnabled: enabled } : prev));
+    void writeSettings({ glowEnabled: enabled })
+      .then(() => setMessage(enabled ? '光晕已开启' : '光晕已关闭'));
+  }, [writeSettings]);
+
   // 保存手动输入的路径（空值 = 清除用户配置，回退默认）
   const saveDirs = useCallback(() => {
     void writeSettings({ wallpaperDir: wallpaperDir.trim(), weAssetsDir: weAssetsDir.trim() })
@@ -136,6 +143,17 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
           </button>
         ))}
       </div>
+      {/* 应用级 Glow 开关（label 包裹 input ⇒ 复选框可访问名为「光晕」） */}
+      {settings && (
+        <label className="wss-glow-row">
+          <input
+            type="checkbox"
+            checked={settings.glowEnabled}
+            onChange={(e) => toggleGlow(e.target.checked)}
+          />
+          光晕
+        </label>
+      )}
       <div className="wss-dirs">
         <h4>壁纸目录</h4>
         <label className="wss-dir-row">

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
-import { readClientSettings, writeClientSettings, getUserPropertyValue, setSettingsCtx } from '../src/client/settings.js';
+import { readClientSettings, writeClientSettings, getUserPropertyValue, setSettingsCtx, DEFAULTS } from '../src/client/settings.js';
 
 // DSH 0.1.2-rc.1：设置走 ctx.remote.settings（Typert 远程方法），
 // describe() 读取、update(ns, patch) 深合并写入。插件经 setSettingsCtx(ctx) 注入 ctx。
@@ -7,6 +7,7 @@ import { readClientSettings, writeClientSettings, getUserPropertyValue, setSetti
 const FULL_DEFAULTS = {
   selectedWallpaperId: '', wallpaperDir: '', weAssetsDir: '',
   overlayOpacity: 0.35, blurEnabled: false, blurRadius: 12, kenBurns: true,
+  glowEnabled: true, glowThreshold: 0.65, glowStrength: 1.0,
 };
 
 afterEach(() => { vi.unstubAllGlobals(); setSettingsCtx(null); });
@@ -33,7 +34,8 @@ describe('readClientSettings (ctx.remote.settings.describe)', () => {
     }));
     stubRemote({ describe });
     const s = await readClientSettings();
-    expect(s).toEqual({ selectedWallpaperId: '42', wallpaperDir: 'D:/Steam/w', weAssetsDir: 'D:/WE', overlayOpacity: 0.5, blurEnabled: true, blurRadius: 20, kenBurns: false });
+    // 命名空间未给的字段由 DEFAULTS 补齐（含 Glow 三字段）
+    expect(s).toEqual({ selectedWallpaperId: '42', wallpaperDir: 'D:/Steam/w', weAssetsDir: 'D:/WE', overlayOpacity: 0.5, blurEnabled: true, blurRadius: 20, kenBurns: false, glowEnabled: true, glowThreshold: 0.65, glowStrength: 1.0 });
     expect(describe).toHaveBeenCalledTimes(1);
   });
   it('命名空间缺失 → 回退默认值', async () => {
@@ -65,6 +67,15 @@ describe('writeClientSettings (ctx.remote.settings.update)', () => {
   it('失败静默忽略（不抛错）', async () => {
     stubRemote({ update: vi.fn(async () => { throw new Error('net'); }) });
     await expect(writeClientSettings({ selectedWallpaperId: '7' })).resolves.toBeUndefined();
+  });
+});
+
+// 应用级 Glow 三字段的客户端缺省值（与 host schema 默认一致）。
+describe('DEFAULTS（客户端缺省值）', () => {
+  it('DEFAULTS 含 Glow 三字段（默认开启 / A 档参数）', () => {
+    expect(DEFAULTS.glowEnabled).toBe(true);
+    expect(DEFAULTS.glowThreshold).toBe(0.65);
+    expect(DEFAULTS.glowStrength).toBe(1.0);
   });
 });
 

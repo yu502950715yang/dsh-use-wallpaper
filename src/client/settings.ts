@@ -12,6 +12,7 @@ const NS = 'wallpaper-engine';
 export const DEFAULTS: ClientSettings = {
   selectedWallpaperId: '', wallpaperDir: '', weAssetsDir: '',
   overlayOpacity: 0.35, blurEnabled: false, blurRadius: 12, kenBurns: true,
+  glowEnabled: true, glowThreshold: 0.65, glowStrength: 1.0,
 };
 
 /** client cordis ctx（经 setSettingsCtx 注入，供 remote.settings 访问）。 */
