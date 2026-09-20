@@ -117,6 +117,39 @@ describe('parseSceneJson text 对象归类（T3.1）', () => {
     expect(o.color).toEqual([0.19608 * 255, 0.62353 * 255, 0.62353 * 255]);
   });
 
+  // 图层尺寸/定位靠 horizontalalign/verticalalign/padding（SceneTextObjectParser 第 434-449 行）；
+  // 缺失时图层取 alignment 推导（9 种锚点），因此三种形态的对象形态都要解析。
+  it('对象形态 text：解析 horizontalalign/verticalalign/padding', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [{ ...textObj, horizontalalign: 'left', verticalalign: 'bottom', padding: '32' }],
+    }));
+    const o = desc.objects[0] as any;
+    expect(o.horizontalAlign).toBe('left');
+    expect(o.verticalAlign).toBe('bottom');
+    expect(o.padding).toBe(32);
+  });
+
+  it('字符串形态 text：同样解析 horizontalalign/verticalalign/padding；缺失 → undefined', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [{
+        id: 59, name: 'vars', origin: '107.35 108.11 0', scale: '0.05 0.05 0.05',
+        size: '511 936', text: 'hour:\nminute:', font: 'systemfont_consolas', pointsize: '32',
+        padding: '32', horizontalalign: 'left', verticalalign: 'center',
+      }],
+    }));
+    const o = desc.objects[0] as any;
+    expect(o.kind).toBe('text');
+    expect(o.horizontalAlign).toBe('left');
+    expect(o.verticalAlign).toBe('center');
+    expect(o.padding).toBe(32);
+
+    const plain = parseSceneJson(JSON.stringify({ objects: [{ id: 1, text: 'x' }] }));
+    const p = plain.objects[0] as any;
+    expect(p.horizontalAlign).toBeUndefined();
+    expect(p.verticalAlign).toBeUndefined();
+    expect(p.padding).toBeUndefined();
+  });
+
   it('保留 font/pointsize/color/size/alignment 字段', () => {
     const desc = parseSceneJson(JSON.stringify({ objects: [textObj] }));
     const o = desc.objects[0] as any;

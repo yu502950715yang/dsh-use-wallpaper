@@ -22347,6 +22347,9 @@ function optNum(s) {
   const n = Number(s.trim());
   return isFinite(n) ? n : void 0;
 }
+function optStr(s) {
+  return typeof s === "string" && s.trim() ? s : void 0;
+}
 function optAlpha(s) {
   const n = optNum(s);
   if (n === void 0) return void 0;
@@ -22456,7 +22459,11 @@ function parseSceneJson(raw) {
         font: typeof o.font === "string" && o.font ? o.font : void 0,
         pointsize: optNum(o.pointsize),
         color: optColor(o.color),
-        alignment: typeof o.alignment === "string" && o.alignment ? o.alignment : void 0
+        alignment: typeof o.alignment === "string" && o.alignment ? o.alignment : void 0,
+        // 图层尺寸/定位字段（两种 text 形态都要解析；缺省 → 由 alignment 推导）
+        horizontalAlign: optStr(o.horizontalalign),
+        verticalAlign: optStr(o.verticalalign),
+        padding: optNum(o.padding)
       };
     }
     if (typeof o.text === "object" && o.text !== null && !Array.isArray(o.text)) {
@@ -22469,6 +22476,9 @@ function parseSceneJson(raw) {
         pointsize: optNum(o.pointsize),
         color: optColor(o.color),
         alignment: typeof o.alignment === "string" && o.alignment ? o.alignment : void 0,
+        horizontalAlign: optStr(o.horizontalalign),
+        verticalAlign: optStr(o.verticalalign),
+        padding: optNum(o.padding),
         // T3.3：text.script 识别为 clock 时每帧刷新时间文本（scriptproperties 已解包）
         ...scriptFields(t)
       };
@@ -23443,9 +23453,10 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
     } else if (obj.kind === "text") {
       const layer = assets.textLayers?.get(obj.id);
       if (!layer) continue;
+      const off = layer.anchorOffset ?? [0, 0];
       const id = player.addBackground({
-        origin: obj.origin,
-        size: obj.size,
+        origin: [obj.origin[0] + off[0], obj.origin[1] + off[1], obj.origin[2]],
+        size: layer.size,
         scale: obj.scale,
         angles: obj.angles,
         texture: layer.texture,
@@ -23918,6 +23929,8 @@ async function loadTexTexture(url, opts) {
 }
 
 // src/client/text-object.ts
+var POINTSIZE_TO_PX = 4;
+var DEFAULT_POINTSIZE = 12;
 var WE_SYSTEM_FONTS = {
   systemfont_arial: "Arial, Helvetica, sans-serif",
   systemfont_consolas: 'Consolas, "Courier New", monospace',
@@ -23940,13 +23953,81 @@ function resolveFontFamily(font) {
   if (/[/\\]/.test(name) || /\.[a-zA-Z0-9]{2,4}$/.test(name)) return "sans-serif";
   return name.includes(" ") ? `"${name}"` : name;
 }
-function textCanvasSize(text, pointsize, size) {
-  if (size) return { w: Math.max(1, Math.round(size[0])), h: Math.max(1, Math.round(size[1])) };
-  const ps = Math.max(1, pointsize ?? 32);
+function fontPx(pointsize) {
+  const raw = typeof pointsize === "number" && isFinite(pointsize) && pointsize > 0 ? pointsize : DEFAULT_POINTSIZE;
+  return Math.min(1024, Math.max(1, Math.round(raw * POINTSIZE_TO_PX)));
+}
+function fontCss(font, pointsize) {
+  return `${fontPx(pointsize)}px ${resolveFontFamily(font)}`;
+}
+function splitLines(text) {
+  return String(text).split("\n").map((line) => line.replace(/\t/g, ""));
+}
+function lineMetrics(ctx, px) {
+  const m = ctx.measureText("Mg");
+  const ascent = Number.isFinite(m.fontBoundingBoxAscent) && m.fontBoundingBoxAscent > 0 ? m.fontBoundingBoxAscent : px * 0.8;
+  const descent = Number.isFinite(m.fontBoundingBoxDescent) && m.fontBoundingBoxDescent > 0 ? m.fontBoundingBoxDescent : px * 0.2;
+  return { ascent, descent, lineHeight: ascent + descent };
+}
+function measureContext() {
+  if (typeof document === "undefined") return null;
+  try {
+    return document.createElement("canvas").getContext("2d");
+  } catch {
+    return null;
+  }
+}
+function paddingOf(padding) {
+  return typeof padding === "number" && isFinite(padding) && padding > 0 ? padding : 0;
+}
+function measureTextLayout(text, opts = {}) {
+  const pad = paddingOf(opts.padding);
+  const ctx = measureContext();
+  if (!ctx) {
+    const px = fontPx(opts.pointsize);
+    const lines2 = splitLines(text);
+    const longest = lines2.reduce((n, l) => Math.max(n, l.length), 2);
+    return {
+      textWidth: px * 0.5 * longest,
+      textHeight: px * lines2.length,
+      width: Math.max(1, Math.ceil(px * 0.5 * longest + 2 * pad)),
+      height: Math.max(1, Math.ceil(px * lines2.length + 2 * pad))
+    };
+  }
+  ctx.font = fontCss(opts.font, opts.pointsize);
+  const lines = splitLines(text);
+  const widths = lines.map((line) => ctx.measureText(line).width);
+  const textWidth = widths.reduce((n, w) => Math.max(n, isFinite(w) ? w : 0), 0);
+  const { ascent, descent, lineHeight } = lineMetrics(ctx, fontPx(opts.pointsize));
+  const textHeight = ascent + descent + Math.max(0, lines.length - 1) * lineHeight;
   return {
-    w: Math.max(32, Math.ceil(ps * Math.max(text.length, 2) * 0.62)),
-    h: Math.max(16, Math.ceil(ps * 1.4))
+    textWidth,
+    textHeight,
+    width: Math.max(1, Math.ceil(textWidth + 2 * pad)),
+    height: Math.max(1, Math.ceil(textHeight + 2 * pad))
   };
+}
+function textAlignments(horizontalAlign, verticalAlign, alignment) {
+  const axis = (primary, fallback, neg, pos) => {
+    const src = typeof primary === "string" && primary.trim() ? primary : fallback;
+    if (typeof src === "string") {
+      if (src.includes(neg)) return neg;
+      if (src.includes(pos)) return pos;
+    }
+    return "center";
+  };
+  return {
+    halign: axis(horizontalAlign, alignment, "left", "right"),
+    valign: axis(verticalAlign, alignment, "top", "bottom")
+  };
+}
+function textLayerOffset(layout, horizontalAlign, verticalAlign, alignment, scale) {
+  const { halign, valign } = textAlignments(horizontalAlign, verticalAlign, alignment);
+  const sx = Number.isFinite(scale[0]) ? scale[0] : 1;
+  const sy = Number.isFinite(scale[1]) ? scale[1] : 1;
+  const ox = halign === "left" ? 0.5 : halign === "right" ? -0.5 : 0;
+  const oy = valign === "top" ? -0.5 : valign === "bottom" ? 0.5 : 0;
+  return [ox * layout.textWidth * sx, oy * layout.textHeight * sy];
 }
 function drawTextToCanvas(canvas, text, opts) {
   const width = Math.max(1, Math.round(opts.width));
@@ -23955,16 +24036,19 @@ function drawTextToCanvas(canvas, text, opts) {
   canvas.height = height;
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
-  const size = Math.max(1, opts.pointsize ?? Math.round(height * 0.8));
-  const family = resolveFontFamily(opts.font);
-  ctx.font = `${size}px ${family}`;
+  const px = fontPx(opts.pointsize);
+  ctx.font = `${px}px ${resolveFontFamily(opts.font)}`;
   ctx.fillStyle = opts.color ? `rgb(${opts.color[0]}, ${opts.color[1]}, ${opts.color[2]})` : "#ffffff";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  const lines = String(text).split("\n").map((line) => line.replace(/\t/g, " "));
-  const lineHeight = size * 1.2;
-  const firstY = height / 2 - (lines.length - 1) * lineHeight / 2;
-  lines.forEach((line, i) => ctx.fillText(line, width / 2, firstY + i * lineHeight));
+  ctx.textBaseline = "alphabetic";
+  const pad = paddingOf(opts.padding);
+  const { halign } = textAlignments(opts.horizontalAlign, opts.verticalAlign, opts.alignment);
+  const { ascent, lineHeight } = lineMetrics(ctx, px);
+  const lines = splitLines(text);
+  ctx.textAlign = halign;
+  const anchorX = halign === "left" ? pad : halign === "right" ? width - pad : width / 2;
+  lines.forEach((line, i) => {
+    ctx.fillText(line, anchorX, pad + ascent + i * lineHeight);
+  });
 }
 function createTextTexture(text, opts) {
   const canvas = document.createElement("canvas");
@@ -27474,30 +27558,36 @@ function createThreeSceneRenderer(opts) {
           const isClock = obj.script ? detectScriptPattern(obj.script) === "clock" : false;
           const binding = obj.script && scriptRuntime ? scriptRuntime.bind(obj.script, props, obj.text) : null;
           if (obj.script && !binding && !isClock) continue;
-          const size = textCanvasSize(obj.text, obj.pointsize, obj.size);
-          const opts2 = {
-            font: await loadWallpaperFont(id, obj.font),
+          const initial = binding ? binding.update() ?? "" : isClock ? formatClockText(/* @__PURE__ */ new Date(), props) : obj.text;
+          const font = await loadWallpaperFont(id, obj.font) ?? obj.font;
+          const measureOpts = {
+            font,
             pointsize: obj.pointsize,
-            color: obj.color,
-            width: size.w,
-            height: size.h
+            padding: obj.padding,
+            horizontalAlign: obj.horizontalAlign
           };
+          const layout = measureTextLayout(initial, measureOpts);
+          const size = { w: layout.width, h: layout.height };
+          const opts2 = { ...measureOpts, color: obj.color, width: size.w, height: size.h };
+          const anchorOffset = textLayerOffset(layout, obj.horizontalAlign, obj.verticalAlign, obj.alignment, obj.scale);
           if (binding) {
             currentScriptBindings.push(binding);
-            const scripted = binding.update() ?? "";
-            const scriptTexture = createTextTexture(scripted, opts2);
+            const scriptTexture = createTextTexture(initial, opts2);
             textLayers.set(obj.id, {
               texture: scriptTexture,
-              driver: createScriptDriver(scriptTexture.image, opts2, binding, scripted)
+              driver: createScriptDriver(scriptTexture.image, opts2, binding, initial),
+              size: [size.w, size.h],
+              anchorOffset
             });
             continue;
           }
-          const initial = isClock ? formatClockText(/* @__PURE__ */ new Date(), props) : obj.text;
           const texture = createTextTexture(initial, opts2);
           textLayers.set(obj.id, {
             texture,
             // 时钟：每帧判文本是否变化（同分钟不重绘），变了由 player 置 needsUpdate 上传。
-            driver: isClock ? createClockDriver(texture.image, opts2, props, initial) : void 0
+            driver: isClock ? createClockDriver(texture.image, opts2, props, initial) : void 0,
+            size: [size.w, size.h],
+            anchorOffset
           });
         }
         const cpSim = mod?.CpuParticleSim;

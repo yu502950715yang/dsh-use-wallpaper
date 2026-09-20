@@ -1414,7 +1414,13 @@ export interface SceneAssets {
   qualityScale?: number;
   // text 对象图层（对象 id → 纹理 + 可选 clock 驱动）：与 image 同路径渲染为背景 quad。
   // 调用方负责 visible 过滤、纹理创建与字体加载；此处只消费。
-  textLayers?: Map<number, { texture: THREE.Texture; driver?: { update(now: Date): boolean } }>;
+  // size = 装配期实测 canvas（文本 + 2×padding），anchorOffset = origin 锚点 → 中心偏移。
+  textLayers?: Map<number, {
+    texture: THREE.Texture;
+    driver?: { update(now: Date): boolean };
+    size?: [number, number];
+    anchorOffset?: [number, number];
+  }>;
 }
 
 // `loadSceneToThree` 返回：播放器 + 已装配的模拟器/图层 id（供调用方驱动/释放/校验）。
@@ -1541,11 +1547,14 @@ export function loadSceneToThree(
       backgroundIds.push(id);
     } else if (obj.kind === 'text') {
       // text 与 image 同路径（quad + 纹理）；缺条目 = 调用方按 visible 过滤掉了该对象。
+      // 几何 = 实测 canvas 尺寸（不是 scene.json 的 size）；中心 = origin + 锚点偏移
+      // （halign/valign 决定 origin 落在文本框哪条边，见 textLayerOffset）。
       const layer = assets.textLayers?.get(obj.id);
       if (!layer) continue;
+      const off = layer.anchorOffset ?? [0, 0];
       const id = player.addBackground({
-        origin: obj.origin,
-        size: obj.size,
+        origin: [obj.origin[0] + off[0], obj.origin[1] + off[1], obj.origin[2]],
+        size: layer.size,
         scale: obj.scale,
         angles: obj.angles,
         texture: layer.texture,

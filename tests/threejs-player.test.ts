@@ -54,7 +54,12 @@ describe('loadSceneToThree text 对象', () => {
       { id: 7, name: 'Clock', origin: '960 540 0', scale: '1 1 1', size: '400 100', text: { value: '12:34' } },
     ],
   });
-  const makeTextAssets = (layer?: { texture: THREE.Texture; driver?: { update(now: Date): boolean } }) => ({
+  const makeTextAssets = (layer?: {
+    texture: THREE.Texture;
+    driver?: { update(now: Date): boolean };
+    size?: [number, number];
+    anchorOffset?: [number, number];
+  }) => ({
     renderer: createMockRenderer() as unknown as THREE.WebGLRenderer,
     textLayers: new Map(layer ? [[7, layer]] : []),
   });
@@ -63,6 +68,23 @@ describe('loadSceneToThree text 对象', () => {
     const tex = new THREE.DataTexture(new Uint8Array(4), 2, 2);
     const result = loadSceneToThree(scene, makeTextAssets({ texture: tex }), document.createElement('canvas'));
     expect(result.backgroundIds).toHaveLength(1);
+  });
+
+  // 文本图层尺寸 = 装配期实测的 canvas（= 文本 + 2×padding），世界尺寸 = canvas × scale；
+  // 位置 = origin + 锚点偏移（halign/valign 决定 origin 落在文本框哪条边）。
+  it('textLayers 的 size/anchorOffset → quad 几何尺寸与位置', () => {
+    const tex = new THREE.DataTexture(new Uint8Array(4), 2, 2);
+    const result = loadSceneToThree(
+      scene,
+      makeTextAssets({ texture: tex, size: [600, 200], anchorOffset: [15, -5] }),
+      document.createElement('canvas'),
+    );
+    const mesh = result.player.scene.children[0] as THREE.Mesh;
+    const geo = mesh.geometry as THREE.PlaneGeometry;
+    expect(geo.parameters.width).toBe(600);
+    expect(geo.parameters.height).toBe(200);
+    // origin 960 540 - 场景中心 (960, 540) + 锚点偏移
+    expect(mesh.position.toArray()).toEqual([15, -5, 0]);
   });
 
   it('textLayers 无该对象条目 → 跳过（visible=false 由调用方过滤，player 不兜底）', () => {

@@ -88,6 +88,9 @@ export interface SceneTextObject {
     pointsize?: number;
     color?: [number, number, number];
     alignment?: string;
+    horizontalAlign?: string;
+    verticalAlign?: string;
+    padding?: number;
     script?: string;
     scriptProperties?: Record<string, unknown>;
 }

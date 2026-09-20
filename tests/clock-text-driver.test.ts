@@ -6,11 +6,21 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
 import { ClockTextDriver } from '../src/client/scene-renderer.js';
 
+// 记录型 2D 上下文：绘制基线由 measureText 度量决定（等宽 0.5em、字体 bounding box 1em）
 function makeMock2d() {
-  return {
+  const ctx = {
     font: '', fillStyle: '', textAlign: '', textBaseline: '',
     fillText: vi.fn(),
+    measureText: vi.fn((s: string) => {
+      const px = parseFloat(ctx.font) || 10;
+      return {
+        width: String(s).length * px * 0.5,
+        fontBoundingBoxAscent: px * 0.8,
+        fontBoundingBoxDescent: px * 0.2,
+      };
+    }),
   };
+  return ctx;
 }
 
 describe('ClockTextDriver（时钟文本纹理逐帧刷新）', () => {
@@ -59,7 +69,11 @@ describe('ClockTextDriver（时钟文本纹理逐帧刷新）', () => {
     const fresh = (mesh.material as THREE.MeshBasicMaterial).map as THREE.CanvasTexture;
     expect(fresh).not.toBe(old);
     expect(disposeSpy).toHaveBeenCalledTimes(1); // 旧纹理已释放（防每帧纹理泄漏）
-    expect(ctx.fillText).toHaveBeenLastCalledWith('14:06\nAug. 21 2026', 200, 50);
+    // 两行文本按行绘制：缺省 pointsize 12 → 48px 字号，基线 = ascent + i×行高（缺省 halign=center）。
+    // 构造期已画过一次（当前时刻）→ 取最后一次重绘的两行断言。
+    const tail = ctx.fillText.mock.calls.slice(-2);
+    expect(tail[0]).toEqual(['14:06', 200, 0.8 * 48]);
+    expect(tail[1]).toEqual(['Aug. 21 2026', 200, 0.8 * 48 + 48]);
     driver.dispose();
   });
 
@@ -67,7 +81,9 @@ describe('ClockTextDriver（时钟文本纹理逐帧刷新）', () => {
     const mesh = new THREE.Mesh(new THREE.PlaneGeometry(400, 100), new THREE.MeshBasicMaterial());
     const driver = new ClockTextDriver(mesh, { width: 400, height: 100 }, { use24hFormat: false, delimiter: ':' });
     driver.update(new Date(2026, 7, 21, 14, 6));
-    expect(ctx.fillText).toHaveBeenLastCalledWith('PM 02:06\nAug. 21 2026', 200, 50);
+    const tail = ctx.fillText.mock.calls.slice(-2);
+    expect(tail[0]).toEqual(['PM 02:06', 200, 0.8 * 48]);
+    expect(tail[1]).toEqual(['Aug. 21 2026', 200, 0.8 * 48 + 48]);
     driver.dispose();
   });
 

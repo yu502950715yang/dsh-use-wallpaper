@@ -164,6 +164,8 @@ export interface SceneAssets {
         driver?: {
             update(now: Date): boolean;
         };
+        size?: [number, number];
+        anchorOffset?: [number, number];
     }>;
 }
 export interface ThreeSceneLoadResult {

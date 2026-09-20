@@ -1041,7 +1041,11 @@ describe('three-renderer text 对象', () => {
     }],
   });
   const CLOCK_SCRIPT = "var d = new Date(); var m = ['Jan.','Feb.']; var h = d.getHours(); var mi = d.getMinutes();";
-  let ctx2d: { font: string; fillStyle: string; textAlign: string; textBaseline: string; fillText: ReturnType<typeof vi.fn> };
+  // 记录型 2D 上下文：度量按「等宽 0.5em、字体 bounding box 1em（ascent 0.8em / descent 0.2em）」模拟。
+  let ctx2d: {
+    font: string; fillStyle: string; textAlign: string; textBaseline: string;
+    fillText: ReturnType<typeof vi.fn>; measureText: ReturnType<typeof vi.fn>;
+  };
 
   function stubTextRender() {
     const player = {
@@ -1053,7 +1057,17 @@ describe('three-renderer text 对象', () => {
   }
 
   beforeEach(() => {
-    ctx2d = { font: '', fillStyle: '', textAlign: '', textBaseline: '', fillText: vi.fn() };
+    ctx2d = {
+      font: '', fillStyle: '', textAlign: '', textBaseline: '', fillText: vi.fn(),
+      measureText: vi.fn((s: string) => {
+        const px = parseFloat(ctx2d.font) || 10;
+        return {
+          width: String(s).length * px * 0.5,
+          fontBoundingBoxAscent: px * 0.8,
+          fontBoundingBoxDescent: px * 0.2,
+        };
+      }),
+    };
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext')
       .mockReturnValue(ctx2d as unknown as CanvasRenderingContext2D);
     stubSettings({ glowEnabled: false });
@@ -1112,7 +1126,32 @@ describe('three-renderer text 对象', () => {
 
     const assets = loadSceneToThree.mock.calls[0][1] as { textLayers: Map<number, { driver?: unknown }> };
     expect(assets.textLayers.get(5)!.driver).toBeUndefined();
-    expect(ctx2d.fillText).toHaveBeenCalledWith('HELLO', 200, 50);
+    // 无 pointsize/padding/alignment → WE 默认 pointsize 12（48px）、画布 = 实测文本（120×48）、
+    // 缺省 halign=center → 行起点 = 画布中心 60，基线 = ascent 0.8em。
+    expect(ctx2d.fillText).toHaveBeenCalledWith('HELLO', 60, 0.8 * 48);
+    r.dispose();
+  });
+
+  // SceneTextObjectParser 第 434-481 行：图层尺寸 = measureText 实测文本 + 2×padding（不是
+  // scene.json 的 size），文本按 horizontalalign/verticalalign 定锚点（origin 是锚点）。
+  it('pointsize/padding/horizontalalign/verticalalign → 画布尺寸与锚点偏移下发', async () => {
+    stubAssetFetch(sceneWithText({
+      text: 'const', pointsize: '32', padding: '32', scale: '0.05 0.05 0.05',
+      horizontalalign: 'left', verticalalign: 'bottom', size: '365 156',
+    }), {});
+    stubTextRender();
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    await r.render('2851992662', document.createElement('canvas'), null);
+
+    const assets = loadSceneToThree.mock.calls[0][1] as {
+      textLayers: Map<number, { size?: [number, number]; anchorOffset?: [number, number] }>;
+    };
+    const layer = assets.textLayers.get(5)!;
+    // 128px 字体下 'const' 宽 = 5 × 0.5em × 128 = 320；高 = 128 → 画布 = 320+64 × 128+64
+    expect(layer.size).toEqual([384, 192]);
+    // left/bottom：中心 = origin + (textWidth/2, textHeight/2) × scale（不含 padding）
+    expect(layer.anchorOffset).toEqual([(320 / 2) * 0.05, (128 / 2) * 0.05]);
+    expect(ctx2d.fillText).toHaveBeenCalledWith('const', 32, 32 + 0.8 * 128);
     r.dispose();
   });
 

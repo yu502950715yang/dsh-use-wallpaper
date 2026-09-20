@@ -34,6 +34,11 @@ function optNum(s: unknown): number | undefined {
   return isFinite(n) ? n : undefined;
 }
 
+// 可选字符串字段（text 的 horizontalalign/verticalalign 等）：非空字符串 → 原值；否则 undefined
+function optStr(s: unknown): string | undefined {
+  return typeof s === 'string' && s.trim() ? s : undefined;
+}
+
 // 可选 alpha 字段（T4.3，WE NormalizeLayerAlpha 语义）：数值/数字字符串 → 有限值；
 // 归一化规则：>1 视为 0-100 百分比 /100（"50" → 0.5，"100" → 1），随后 clamp 0-1
 // （"200" → 2 → clamp 1；防御畸形数据）；缺省/非法 → undefined（渲染器按 1.0 处理）。
@@ -195,6 +200,10 @@ export function parseSceneJson(raw: string): SceneDescription {
         pointsize: optNum(o.pointsize),
         color: optColor(o.color),
         alignment: typeof o.alignment === 'string' && o.alignment ? o.alignment : undefined,
+        // 图层尺寸/定位字段（两种 text 形态都要解析；缺省 → 由 alignment 推导）
+        horizontalAlign: optStr(o.horizontalalign),
+        verticalAlign: optStr(o.verticalalign),
+        padding: optNum(o.padding),
       };
     }
     if (typeof o.text === 'object' && o.text !== null && !Array.isArray(o.text)) {
@@ -207,6 +216,9 @@ export function parseSceneJson(raw: string): SceneDescription {
         pointsize: optNum(o.pointsize),
         color: optColor(o.color),
         alignment: typeof o.alignment === 'string' && o.alignment ? o.alignment : undefined,
+        horizontalAlign: optStr(o.horizontalalign),
+        verticalAlign: optStr(o.verticalalign),
+        padding: optNum(o.padding),
         // T3.3：text.script 识别为 clock 时每帧刷新时间文本（scriptproperties 已解包）
         ...scriptFields(t),
       };

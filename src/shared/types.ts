@@ -123,9 +123,12 @@ export interface SceneTextObject {
   text: string;                  // text.value（缺省字符串，脚本动态文本的静态兜底）
   visible?: VisibleBinding;      // T4.2：可见性绑定（渲染前解析，不可见对象跳过）
   font?: string;                 // WE 字体名（可能是文件路径，如 fonts/Atami-Regular.otf）
-  pointsize?: number;            // 字号（WE pointsize，绘制按 px 近似）
+  pointsize?: number;            // WE pointsize；像素字号 = pointsize × 4（OME TextPointSizeToPx）
   color?: [number, number, number]; // 文本颜色（WE color "r g b a" 的前 3 通道，0-255）
-  alignment?: string;            // 对齐方式（原始字段保留；静态渲染居中，暂不参与布局）
+  alignment?: string;            // 对齐锚点（9 种 WE 值）；horizontalalign/verticalalign 缺省时由它推导
+  horizontalAlign?: string;      // WE horizontalalign：文本框锚点/多行行对齐（left/center/right）
+  verticalAlign?: string;        // WE verticalalign：origin 落在文本框哪条边（top/center/bottom）
+  padding?: number;              // WE padding：文本框四周**等量**内边距（字体像素单位）
   script?: string;               // text.script（WE 文本脚本源码，T3.3 模式识别输入）
   scriptProperties?: Record<string, unknown>; // text.scriptproperties（{user,value} 已解包，T3.3）
 }
