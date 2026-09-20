@@ -5,7 +5,7 @@
 // 返回记录型 2D 上下文，断言绘制参数（字号/颜色/居中）与返回纹理的宽高。
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
-import { createTextTexture, textCanvasSize, drawTextToCanvas, createClockDriver } from '../src/client/text-object.js';
+import { createTextTexture, textCanvasSize, drawTextToCanvas, createClockDriver, createScriptDriver } from '../src/client/text-object.js';
 import { formatClockText } from '../src/client/script-patterns.js';
 
 // 记录型 2D 上下文：捕获 createTextTexture 设置的绘制状态与 fillText 调用
@@ -133,6 +133,45 @@ describe('createClockDriver（clock 模式：文本变化才重绘）', () => {
     const canvas = document.createElement('canvas');
     const driver = createClockDriver(canvas, { width: 10, height: 10 }, props, formatClockText(now, props));
     expect(driver.update(now)).toBe(false);
+    expect(ctx.fillText).not.toHaveBeenCalled();
+  });
+});
+
+describe('createScriptDriver（text.script：脚本给出新文本，变化才重绘）', () => {
+  let ctx: ReturnType<typeof makeMock2d>;
+  beforeEach(() => {
+    ctx = makeMock2d();
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(ctx as unknown as CanvasRenderingContext2D);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('脚本文本变化才重绘并返回 true', () => {
+    let text = 'a';
+    const binding = { update: () => text, dispose: () => {} };
+    const canvas = document.createElement('canvas');
+    const driver = createScriptDriver(canvas, { width: 10, height: 10 }, binding);
+    expect(driver.update(new Date())).toBe(true); // 与初始 '' 不同 → 重绘
+    expect(driver.update(new Date())).toBe(false); // 未变
+    expect(ctx.fillText).toHaveBeenCalledTimes(1);
+    text = 'b';
+    expect(driver.update(new Date())).toBe(true);
+    expect(ctx.fillText).toHaveBeenCalledTimes(2);
+  });
+
+  it('脚本返回 null（抛错/超时）时不动纹理', () => {
+    const binding = { update: (): string | null => null, dispose: () => {} };
+    const driver = createScriptDriver(document.createElement('canvas'), { width: 10, height: 10 }, binding);
+    expect(driver.update(new Date())).toBe(false);
+    expect(ctx.fillText).not.toHaveBeenCalled();
+  });
+
+  it('装配期已画过脚本初值 → 传入 initialText 后首帧同值不重绘', () => {
+    const binding = { update: () => 'SCRIPTED', dispose: () => {} };
+    const canvas = document.createElement('canvas');
+    const driver = createScriptDriver(canvas, { width: 10, height: 10 }, binding, 'SCRIPTED');
+    expect(driver.update(new Date())).toBe(false);
     expect(ctx.fillText).not.toHaveBeenCalled();
   });
 });

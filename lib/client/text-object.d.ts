@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { TextScriptBinding } from './text-script.js';
 export interface TextTextureOptions {
     font?: string;
     pointsize?: number;
@@ -16,4 +17,5 @@ export interface ClockDriver {
     /** 文本变化时重绘 canvas 并返回 true（调用方据此置 texture.needsUpdate）。 */
     update(now: Date): boolean;
 }
+export declare function createScriptDriver(canvas: HTMLCanvasElement, opts: TextTextureOptions, binding: TextScriptBinding, initialText?: string): ClockDriver;
 export declare function createClockDriver(canvas: HTMLCanvasElement, opts: TextTextureOptions, props: Record<string, unknown>, initialText: string): ClockDriver;

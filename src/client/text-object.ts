@@ -1,8 +1,9 @@
-// src/client/text-object.ts —— WE text 对象文本渲染（T3.1 静态 + T3.3 时钟驱动）
+// src/client/text-object.ts —— WE text 对象文本渲染（T3.1 静态 + T3.3 时钟驱动 + 脚本驱动）
 // 把文本绘制到离屏 canvas（2D），包装为 THREE.CanvasTexture 供 quad 贴图。
-// 时钟走字**就地重绘同一 canvas**（只置 needsUpdate），不重建纹理。
+// 时钟/脚本走字**就地重绘同一 canvas**（只置 needsUpdate），不重建纹理。
 import * as THREE from 'three';
 import { formatClockText } from './script-patterns.js';
+import type { TextScriptBinding } from './text-script.js';
 
 export interface TextTextureOptions {
   font?: string;                    // WE 字体名（可能是文件路径，如 fonts/Atami-Regular.otf）
@@ -69,6 +70,26 @@ export function createTextTexture(text: string, opts: TextTextureOptions): THREE
 export interface ClockDriver {
   /** 文本变化时重绘 canvas 并返回 true（调用方据此置 texture.needsUpdate）。 */
   update(now: Date): boolean;
+}
+
+// 脚本驱动：每帧问脚本要新文本，变化才重绘（与 clock 驱动同形态，忽略 now）。
+// initialText = 装配期已画进 canvas 的脚本首帧值（避免首帧以相同文本重绘一次）。
+export function createScriptDriver(
+  canvas: HTMLCanvasElement,
+  opts: TextTextureOptions,
+  binding: TextScriptBinding,
+  initialText = '',
+): ClockDriver {
+  let last = initialText;
+  return {
+    update(_now: Date): boolean {
+      const text = binding.update();
+      if (text === null || text === '' || text === last) return false;
+      drawTextToCanvas(canvas, text, opts);
+      last = text;
+      return true;
+    },
+  };
 }
 
 // 时钟驱动：按 formatClockText 生成文本，**文本变化才重绘**（同分钟不重绘）。

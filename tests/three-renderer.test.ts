@@ -1064,7 +1064,8 @@ describe('three-renderer text 对象', () => {
   it('clock 脚本的 text → 下发 textLayers（纹理 + 每帧驱动），初始文本即时钟格式而非占位值', async () => {
     stubAssetFetch(sceneWithText({ text: { value: '12:34', script: CLOCK_SCRIPT } }), {});
     stubTextRender();
-    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    // 注入「运行时不可用」：单测不加载 quickjs wasm，clock 兜底路径才是本用例的断言对象。
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm, getTextScriptRuntime: async () => null });
     expect(await r.render('2851992662', document.createElement('canvas'), null)).toBe(true);
 
     const assets = loadSceneToThree.mock.calls[0][1] as { textLayers: Map<number, { texture: unknown; driver?: { update(now: Date): boolean } }> };
@@ -1116,8 +1117,9 @@ describe('three-renderer text 对象', () => {
   });
 
   // 2026-09-21 用户实测反馈：CodeTime（2980088441）把作者的占位值画到屏幕上（"12"/hour:minute:…/
-  // "Year"），整张壁纸只剩脏字。脚本不执行时 text.value 不代表真实内容，宁可不画。
-  it('带脚本但未识别（非 clock）→ 跳过，不显示作者占位值', async () => {
+  // "Year"），整张壁纸只剩脏字。脚本不可用（bind 失败 / 运行时拿不到）时 text.value 不代表真实
+  // 内容，宁可不画。
+  it('带脚本但非 clock 且脚本 bind 失败 → 跳过，不显示作者占位值', async () => {
     stubAssetFetch(sceneWithText({
       text: {
         value: '"12"',
@@ -1125,12 +1127,77 @@ describe('three-renderer text 对象', () => {
       },
     }), {});
     stubTextRender();
-    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    const r = createThreeSceneRenderer({
+      loadWasm: defaultLoadWasm,
+      getTextScriptRuntime: async () => ({ bind: () => null, dispose: vi.fn() }),
+    });
     await r.render('2851992662', document.createElement('canvas'), null);
 
     const assets = loadSceneToThree.mock.calls[0][1] as { textLayers: Map<number, unknown> };
     expect(assets.textLayers.size).toBe(0);
     expect(ctx2d.fillText).not.toHaveBeenCalled();
     r.dispose();
+  });
+
+  // Task 4：三个优先序 + 泄漏口径（spec §3.2/§3.3）。
+  it('脚本 bind 成功 → 脚本驱动优先（clock 形态也走脚本），初始文本来自脚本首帧', async () => {
+    const update = vi.fn(() => 'SCRIPTED');
+    const bind = vi.fn(() => ({ update, dispose: vi.fn() }));
+    stubAssetFetch(sceneWithText({ text: { value: '12:34', script: CLOCK_SCRIPT } }), {});
+    stubTextRender();
+    const r = createThreeSceneRenderer({
+      loadWasm: defaultLoadWasm,
+      getTextScriptRuntime: async () => ({ bind, dispose: vi.fn() }),
+    });
+    await r.render('2851992662', document.createElement('canvas'), null);
+
+    const assets = loadSceneToThree.mock.calls[0][1] as {
+      textLayers: Map<number, { texture: unknown; driver?: { update(now: Date): boolean } }>;
+    };
+    expect(bind).toHaveBeenCalledTimes(1);
+    expect(ctx2d.fillText.mock.calls[0][0]).toBe('SCRIPTED'); // 初始文本来自脚本，不是 clock 格式
+    expect(assets.textLayers.get(5)!.driver).toBeTruthy();
+    r.dispose();
+  });
+
+  it('脚本 bind 失败 + 识别为 clock → 回退既有 clock 驱动', async () => {
+    stubAssetFetch(sceneWithText({ text: { value: '12:34', script: CLOCK_SCRIPT } }), {});
+    stubTextRender();
+    const r = createThreeSceneRenderer({
+      loadWasm: defaultLoadWasm,
+      getTextScriptRuntime: async () => ({ bind: () => null, dispose: vi.fn() }),
+    });
+    await r.render('2851992662', document.createElement('canvas'), null);
+
+    // clock 分支产出的是时钟格式（HH:MM + 日期），不是 text.value 占位串
+    expect(String(ctx2d.fillText.mock.calls[0][0])).toMatch(/\d{2}:\d{2}/);
+    const assets = loadSceneToThree.mock.calls[0][1] as { textLayers: Map<number, { driver?: unknown }> };
+    expect(assets.textLayers.get(5)!.driver).toBeTruthy();
+    r.dispose();
+  });
+
+  it('没有 text 脚本的壁纸 → 不实例化脚本运行时（不付 wasm 成本）', async () => {
+    stubAssetFetch(sceneWithText({ text: { value: 'HELLO' } }), {});
+    stubTextRender();
+    const getRuntime = vi.fn(async () => null);
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm, getTextScriptRuntime: getRuntime });
+    await r.render('2851992662', document.createElement('canvas'), null);
+
+    expect(getRuntime).not.toHaveBeenCalled();
+    r.dispose();
+  });
+
+  it('dispose 释放脚本绑定（切壁纸不留 handle）', async () => {
+    const disposeBinding = vi.fn();
+    stubAssetFetch(sceneWithText({ text: { value: '12:34', script: CLOCK_SCRIPT } }), {});
+    stubTextRender();
+    const r = createThreeSceneRenderer({
+      loadWasm: defaultLoadWasm,
+      getTextScriptRuntime: async () => ({ bind: () => ({ update: () => 'x', dispose: disposeBinding }), dispose: vi.fn() }),
+    });
+    await r.render('2851992662', document.createElement('canvas'), null);
+    r.dispose();
+
+    expect(disposeBinding).toHaveBeenCalledTimes(1);
   });
 });
