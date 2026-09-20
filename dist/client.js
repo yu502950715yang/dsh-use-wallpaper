@@ -22253,6 +22253,7 @@ function resolveBuiltinTexture(path) {
     tex = new DataTexture(data, size, size, RGBAFormat);
   }
   tex.needsUpdate = true;
+  tex.userData.__shared = true;
   BUILTIN_CACHE.set(key, tex);
   return tex;
 }
@@ -22274,6 +22275,7 @@ function resolveEmptySlotTexture(mode) {
   if (cached) return cached;
   const tex = new DataTexture(new Uint8Array(bytes), 1, 1, RGBAFormat);
   tex.needsUpdate = true;
+  tex.userData.__shared = true;
   EMPTY_SLOT_CACHE.set(key, tex);
   return tex;
 }
@@ -22431,7 +22433,7 @@ var EffectRunner = class {
     this.ensureTargets(size.width, size.height);
     this.ensureNamedTargets(plan);
     this.disposeMaterials();
-    this.textures.clear();
+    this.clearTextures();
     for (const pass of chains.flat()) {
       for (const path of pass.textureSlots) {
         if (path) void this.resolveTextureSlot(path);
@@ -22471,7 +22473,7 @@ var EffectRunner = class {
     const size = resolveTargetSize({ width: this.width, height: this.height }, opts);
     this.ensureTargets(size.width, size.height);
     this.disposeMaterials();
-    this.textures.clear();
+    this.clearTextures();
     for (const pass of chains.flat()) {
       for (const path of pass.textureSlots) {
         if (path) void this.resolveTextureSlot(path);
@@ -22498,6 +22500,16 @@ var EffectRunner = class {
     for (const m of this.materials.values()) m.dispose();
     for (const key of Array.from(this.scenes.keys())) this.disposeSceneQuads(key);
     this.materials.clear();
+  }
+  /** 纹理槽缓存清理：**只释放本实例加载的纹理**，跳过模块级共享纹理（`BUILTIN_CACHE` /
+   *  `EMPTY_SLOT_CACHE` —— 其它 runner 仍在复用，误释放会让它们采样到已删除的纹理）。
+   *  只 `.clear()` 不 dispose 会漏掉 `deleteTexture` ⇒ **同一 WebGL 上下文内**每次 resize 重挂链
+   *  泄漏该壁纸全部效果槽纹理（真机实测 +28 张/次，见 AGENT.md §7.13）。 */
+  clearTextures() {
+    for (const tex of this.textures.values()) {
+      if (tex && !tex.userData?.__shared) tex.dispose();
+    }
+    this.textures.clear();
   }
   getMaterial(pass, key) {
     if (this.failed.has(key)) return null;
@@ -22764,7 +22776,7 @@ var EffectRunner = class {
     this.rtB.dispose();
     this.clearNamedTargets();
     this.plan = null;
-    this.textures.clear();
+    this.clearTextures();
     this.audioSpectrum = null;
   }
 };

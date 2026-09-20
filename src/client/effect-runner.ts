@@ -91,6 +91,7 @@ export function resolveBuiltinTexture(path: string | null | undefined): THREE.Te
     tex = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
   }
   tex.needsUpdate = true;
+  tex.userData.__shared = true; // 模块级共享：EffectRunner 清理纹理槽时必须跳过（误释放会波及其他 runner）
   BUILTIN_CACHE.set(key, tex);
   return tex;
 }
@@ -140,6 +141,7 @@ export function resolveEmptySlotTexture(mode: string | null | undefined): THREE.
   // 1×1 下任意 UV 都采到同一 texel（含 REPEAT 槽的越界 UV）。
   const tex = new THREE.DataTexture(new Uint8Array(bytes), 1, 1, THREE.RGBAFormat);
   tex.needsUpdate = true;
+  tex.userData.__shared = true; // 模块级共享（同上）：不得被单个 runner 释放
   EMPTY_SLOT_CACHE.set(key, tex);
   return tex;
 }
@@ -428,7 +430,7 @@ export class EffectRunner {
     this.ensureTargets(size.width, size.height);
     this.ensureNamedTargets(plan);
     this.disposeMaterials();
-    this.textures.clear();
+    this.clearTextures();
     for (const pass of chains.flat()) {
       for (const path of pass.textureSlots) {
         if (path) void this.resolveTextureSlot(path);
@@ -477,7 +479,7 @@ export class EffectRunner {
     const size = resolveTargetSize({ width: this.width, height: this.height }, opts);
     this.ensureTargets(size.width, size.height);
     this.disposeMaterials();
-    this.textures.clear(); // 换壁纸清空纹理缓存（旧壁纸纹理槽 URL 失效）
+    this.clearTextures(); // 换壁纸：清空纹理槽缓存并**释放本实例加载的纹理**（模块级共享纹理跳过）
     // 纹理槽预加载：异步发起（不 await），update 首次执行时若未就绪则 await——
     // 预加载让纹理尽快到位，减少 update 内 await 次数（并发窗口缩小）。
     for (const pass of chains.flat()) {
@@ -510,6 +512,17 @@ export class EffectRunner {
     // 场景内全屏 quad 的 geometry 一并释放
     for (const key of Array.from(this.scenes.keys())) this.disposeSceneQuads(key);
     this.materials.clear();
+  }
+
+  /** 纹理槽缓存清理：**只释放本实例加载的纹理**，跳过模块级共享纹理（`BUILTIN_CACHE` /
+   *  `EMPTY_SLOT_CACHE` —— 其它 runner 仍在复用，误释放会让它们采样到已删除的纹理）。
+   *  只 `.clear()` 不 dispose 会漏掉 `deleteTexture` ⇒ **同一 WebGL 上下文内**每次 resize 重挂链
+   *  泄漏该壁纸全部效果槽纹理（真机实测 +28 张/次，见 AGENT.md §7.13）。 */
+  private clearTextures(): void {
+    for (const tex of this.textures.values()) {
+      if (tex && !tex.userData?.__shared) tex.dispose();
+    }
+    this.textures.clear();
   }
 
   private getMaterial(pass: CompiledEffectPass, key: string): THREE.ShaderMaterial | null {
@@ -842,7 +855,7 @@ export class EffectRunner {
     this.rtB.dispose();
     this.clearNamedTargets();
     this.plan = null; // 计划与具名 RT 一并作废，避免 plannedPasses() 误判为有计划分支
-    this.textures.clear();
+    this.clearTextures();
     this.audioSpectrum = null;
   }
 }

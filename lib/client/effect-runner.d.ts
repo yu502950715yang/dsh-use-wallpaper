@@ -83,6 +83,11 @@ export declare class EffectRunner {
     setAudioSpectrumSource(source: Uint8Array | null): void;
     private ensureTargets;
     private disposeMaterials;
+    /** 纹理槽缓存清理：**只释放本实例加载的纹理**，跳过模块级共享纹理（`BUILTIN_CACHE` /
+     *  `EMPTY_SLOT_CACHE` —— 其它 runner 仍在复用，误释放会让它们采样到已删除的纹理）。
+     *  只 `.clear()` 不 dispose 会漏掉 `deleteTexture` ⇒ **同一 WebGL 上下文内**每次 resize 重挂链
+     *  泄漏该壁纸全部效果槽纹理（真机实测 +28 张/次，见 AGENT.md §7.13）。 */
+    private clearTextures;
     private getMaterial;
     private fillAudioUniforms;
     private disposeSceneQuads;

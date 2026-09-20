@@ -325,6 +325,80 @@ describe('EffectRunner 纹理槽加载器注入（纹理 v 约定由调用方携
   });
 });
 
+// resize 重挂链（`ObjectEffectStage.onViewportResize` → `setPlan`）会在**同一 WebGL 上下文内**
+// 反复清空纹理槽缓存；只 `.clear()` 不 dispose ⇒ three 的 `info.memory.textures` 只增不减
+// ⇒ 每次 resize 泄漏该壁纸全部效果槽纹理（真机实测 **+28 张/次**，见 AGENT.md §7.13）。
+// 但槽里混有**模块级共享**纹理（`BUILTIN_CACHE` / `EMPTY_SLOT_CACHE`），不能一律 dispose。
+describe('EffectRunner 纹理所有权（重挂链泄漏修复：只释放本实例加载的纹理）', () => {
+  const slotPass = (): CompiledEffectPass => ({
+    vertSrc: 'void main(){ gl_Position = vec4(position, 1.0); }',
+    fragSrc: 'uniform sampler2D g_Texture0; void main(){ gl_FragColor = vec4(1.0); }',
+    rawVert: '', rawFrag: '', combos: {}, uniforms: new Map(),
+    textureSlots: [null, 'masks/x'],
+    samplerModes: {},
+    blendMode: 'normal', target: null, bind: [], fboScale: {},
+  });
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+
+  it('换链（resize 重挂链）时 dispose 上一轮本实例加载的纹理', async () => {
+    const { renderer } = createBindRenderer();
+    const made: THREE.Texture[] = [];
+    const load = vi.fn(async () => {
+      const t = new THREE.Texture();
+      t.dispose = vi.fn();
+      made.push(t);
+      return t;
+    });
+    const runner = new EffectRunner(renderer as never, 16, 16, { load });
+    runner.setChains([[slotPass()]], 'wp1', { width: 16, height: 16 });
+    await tick();
+    expect(made.length).toBe(1);
+    expect(made[0].dispose).not.toHaveBeenCalled();
+
+    // resize 重挂链：同一 runner、同一 WebGL 上下文内再次 setChains
+    runner.setChains([[slotPass()]], 'wp1', { width: 32, height: 32 });
+    expect(made[0].dispose).toHaveBeenCalledTimes(1);
+
+    await tick();
+    expect(made[1].dispose).not.toHaveBeenCalled(); // 本轮仍在用的纹理不得被释放
+    runner.dispose();
+  });
+
+  it('dispose() 释放本实例加载的纹理', async () => {
+    const { renderer } = createBindRenderer();
+    const made: THREE.Texture[] = [];
+    const load = vi.fn(async () => {
+      const t = new THREE.Texture();
+      t.dispose = vi.fn();
+      made.push(t);
+      return t;
+    });
+    const runner = new EffectRunner(renderer as never, 16, 16, { load });
+    runner.setChains([[slotPass()]], 'wp1', { width: 16, height: 16 });
+    await tick();
+    runner.dispose();
+    expect(made[0].dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('不 dispose 模块级共享纹理（BUILTIN_CACHE：其它 runner 仍在复用）', async () => {
+    const { renderer } = createBindRenderer();
+    // 注入 loader 恒失败 ⇒ `util/noise` 走程序化回退，拿到模块级缓存的共享纹理
+    const runner = new EffectRunner(renderer as never, 16, 16, { load: async () => null });
+    const pass = slotPass();
+    pass.textureSlots = [null, 'util/noise'];
+    runner.setChains([[pass]], 'wp1', { width: 16, height: 16 });
+    await tick();
+
+    const shared = resolveBuiltinTexture('util/noise') as THREE.Texture;
+    expect(shared).toBeTruthy();
+    const spy = vi.spyOn(shared, 'dispose');
+    runner.setChains([[pass]], 'wp2', { width: 32, height: 32 });
+    runner.dispose();
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+});
+
 describe('EffectRunner 空槽绑定（update 真绑到 uniform：空槽常量纹理不被覆盖成 null）', () => {
   it('clouds 型 pass（textures 长 2、声明到 g_Texture2）：g_Texture2 = 空槽黑纹理，g_Texture1 仍无兜底', async () => {
     const { renderer, mats } = createBindRenderer();
