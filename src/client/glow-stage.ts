@@ -2,6 +2,8 @@
 // 应用级 Glow（全屏后处理）：bright-pass → 三级降采样 box blur → composite 加法回叠。
 // 语义来源是 WE 的应用级设置（general.user.postprocessing），不属于任何壁纸字段。
 // 设计：docs/superpowers/specs/2026-09-20-app-level-glow-design.md。
+// 颜色空间前提：threejs-player 强制 outputColorSpace = LinearSRGBColorSpace 且纹理未标 colorSpace
+// ⇒ 全链路字节域恒等，base RT 的值与离线标定 threshold 的域一致；该前提若改变，threshold 须重标定。
 import * as THREE from 'three';
 import { renderIntoRenderTarget } from './rt-render.js';
 
@@ -51,8 +53,7 @@ export interface GlowStage {
 }
 
 // ── shader ────────────────────────────────────────────────────────────────────
-// 颜色空间：主场景渲进 RT 是**线性**值，而 threshold 标定在 **sRGB 字节域**（spec §3.4）
-// ⇒ bright-pass 先转 sRGB，composite 末了转回线性，交回 renderer.outputColorSpace 编码。
+// 不做颜色空间转换：链路字节域恒等（见文件头前提），直接按纹理值算 luma。
 const VERT = `
 varying vec2 vUv;
 void main() {
@@ -61,29 +62,15 @@ void main() {
 }
 `;
 
-const SRGB_HELPERS = `
-vec3 toSrgb(vec3 c) {
-  vec3 lo = c * 12.92;
-  vec3 hi = 1.055 * pow(max(c, vec3(1e-5)), vec3(1.0 / 2.4)) - 0.055;
-  return mix(lo, hi, step(vec3(0.0031308), c));
-}
-vec3 toLinear(vec3 c) {
-  vec3 lo = c / 12.92;
-  vec3 hi = pow((c + 0.055) / 1.055, vec3(2.4));
-  return mix(lo, hi, step(vec3(0.04045), c));
-}
-`;
-
 const BRIGHT_FRAG = `
 uniform sampler2D tSrc;
 uniform float uThreshold;
 varying vec2 vUv;
-${SRGB_HELPERS}
 void main() {
-  vec3 srgb = toSrgb(texture2D(tSrc, vUv).rgb);
-  float luma = dot(srgb, vec3(0.299, 0.587, 0.114));
+  vec3 c = texture2D(tSrc, vUv).rgb;
+  float luma = dot(c, vec3(0.299, 0.587, 0.114));
   float k = max(0.0, luma - uThreshold) / max(1e-6, 1.0 - uThreshold);
-  gl_FragColor = vec4(srgb * k, 1.0);
+  gl_FragColor = vec4(c * k, 1.0);
 }
 `;
 
@@ -117,12 +104,10 @@ uniform sampler2D tL2;
 uniform sampler2D tL3;
 uniform float uStrength;
 varying vec2 vUv;
-${SRGB_HELPERS}
 void main() {
-  vec3 baseSrgb = toSrgb(texture2D(tBase, vUv).rgb);
+  vec3 base = texture2D(tBase, vUv).rgb;
   vec3 glow = (texture2D(tL1, vUv).rgb + texture2D(tL2, vUv).rgb + texture2D(tL3, vUv).rgb) / 3.0;
-  vec3 outc = clamp(baseSrgb + glow * uStrength, 0.0, 1.0);
-  gl_FragColor = vec4(toLinear(outc), 1.0);
+  gl_FragColor = vec4(clamp(base + glow * uStrength, 0.0, 1.0), 1.0);
 }
 `;
 
@@ -131,7 +116,7 @@ const BLUR_RADII = [4, 6, 8];
 
 function rtOptions(): THREE.RenderTargetOptions {
   return {
-    type: THREE.HalfFloatType, // bright-pass 后要在 sRGB 域累加，8 位会有 banding
+    type: THREE.HalfFloatType, // 浮点 RT：8 位在多次累加后会有 banding
     format: THREE.RGBAFormat,
     depthBuffer: false,
     stencilBuffer: false,
@@ -156,7 +141,8 @@ export function createGlowStage(
   const quadCamera = new THREE.Camera();
   const geometry = new THREE.PlaneGeometry(2, 2);
   // 泛型写成 Material：同一个 quad 逐 pass 换 material（占位 MeshBasicMaterial 从不参与渲染）
-  const mesh = new THREE.Mesh<THREE.PlaneGeometry, THREE.Material>(geometry, new THREE.MeshBasicMaterial());
+  const placeholderMat = new THREE.MeshBasicMaterial();
+  const mesh = new THREE.Mesh<THREE.PlaneGeometry, THREE.Material>(geometry, placeholderMat);
   quadScene.add(mesh);
 
   const brightMat = new THREE.ShaderMaterial({ vertexShader: VERT, fragmentShader: BRIGHT_FRAG, uniforms: { tSrc: { value: null }, uThreshold: { value: options.threshold } }, depthTest: false, depthWrite: false });
@@ -169,6 +155,37 @@ export function createGlowStage(
   let levelSizes: Array<{ w: number; h: number }> = [];
   let glowFailed = false;
   let disposed = false;
+  // three 在 shader 链接失败时只调 renderer.debug.onShaderError（不抛，见 three.module.js LINK_STATUS 分支），
+  // 故首帧 apply 期间临时挂钩子：抓到就置 glowFailed；首帧结束摘掉，避免误判其它材质的 shader 失败。
+  let hooked = false; // 当前是否挂着
+  let hookSpent = false; // 首帧已挂过：glow program 那时就编译完，之后不再挂
+  let hookedRenderer: THREE.WebGLRenderer | null = null;
+  let prevOnShaderError: ((...a: unknown[]) => void) | undefined;
+  type DebugCapable = { debug?: { onShaderError?: (...a: unknown[]) => void } };
+
+  function installShaderErrorHook(r: THREE.WebGLRenderer): void {
+    if (hooked || hookSpent) return;
+    hookSpent = true;
+    hooked = true;
+    hookedRenderer = r;
+    const dbg = (r as unknown as DebugCapable).debug;
+    if (!dbg) return; // renderer 无 debug（mock / 老版本）⇒ 只剩 try/catch 兜底
+    prevOnShaderError = dbg.onShaderError;
+    dbg.onShaderError = (...args: unknown[]) => {
+      glowFailed = true;
+      console.warn('[wallpaper-engine] 应用级 Glow 的 shader 编译/链接失败，已降级为直渲');
+      try { prevOnShaderError?.(...args); } catch { /* 原钩子抛错不影响降级 */ }
+    };
+  }
+
+  function removeShaderErrorHook(): void {
+    if (!hooked) return;
+    const dbg = hookedRenderer ? (hookedRenderer as unknown as DebugCapable).debug : undefined;
+    if (dbg) dbg.onShaderError = prevOnShaderError;
+    hooked = false;
+    hookedRenderer = null;
+    prevOnShaderError = undefined;
+  }
 
   const rtCount = () => (baseRT ? 1 : 0) + levelRTs.length;
 
@@ -241,18 +258,22 @@ export function createGlowStage(
     apply(r, scene, camera) {
       if (disposed) return;
       if (glowFailed) { r.setRenderTarget(null); r.render(scene, camera); return; }
+      installShaderErrorHook(r);
       try {
         renderGlow(r, scene, camera);
       } catch (e) {
-        // 绝不白屏：一次失败即永久降级为直渲（shader 编译失败 / pass 异常）
+        // 绝不白屏：一次失败即永久降级为直渲（运行期异常 / pass 失败）
         glowFailed = true;
         console.warn('[wallpaper-engine] 应用级 Glow 失败，已降级为直渲：' + String((e as Error)?.message ?? e));
         r.setRenderTarget(null);
         r.render(scene, camera);
+      } finally {
+        removeShaderErrorHook(); // 只盯首帧：之后其它材质（场景效果链）的 shader 失败不算 Glow 的
       }
     },
     resize(w, h) {
       if (disposed) return;
+      if (!(w > 0) || !(h > 0)) return; // 与创建期一致：非法尺寸不动 RT 池
       buildTargets(w, h);
     },
     setOptions(o) {
@@ -263,8 +284,10 @@ export function createGlowStage(
     dispose() {
       if (disposed) return;
       disposed = true;
+      removeShaderErrorHook();
       disposeTargets();
       geometry.dispose();
+      placeholderMat.dispose();
       brightMat.dispose(); blurMat.dispose(); copyMat.dispose(); compositeMat.dispose();
     },
     // 仅供测试观测（不参与渲染语义）
