@@ -1,7 +1,7 @@
 # 应用级 Glow（全屏后处理）— 设计文档
 
 - 日期：2026-09-20
-- 状态：**设计已确认，待写实施计划**
+- 状态：**设计已确认，待写实施计划**（**2026-09-20 订正：已实现并默认开启**，实测见 `AGENT.md` §7.1 的「应用级后处理 ⇒ 已实现」子条；本文 §3.2 / §3.4 / §3.5 / §5 各有追加式订正）
 - 项目根：`E:\code\dsh-use-wallpaper`
 - 关联：
   - `AGENT.md` §7.1 的「**应用级后处理（WE 的「后处理 / Glow」）未实现**」条 —— 本文要弥合的就是它（含 2026-09-16 的离线可行性实验与 A 档参数、2026-09-20 的真机 GPU 验收订正）
@@ -114,6 +114,10 @@ export function glowLevelSizes(width: number, height: number): Array<{ w: number
 export function normalizeGlowOptions(opts?: GlowOptions): Required<GlowOptions>;
 ```
 
+> **2026-09-20 订正（实现与上面的接口有两处偏离，原文保留）**：
+> 1. **`createGlowStage` 的签名改为 `createGlowStage(width: number, height: number, opts?: GlowOptions)`** —— RT 与材质都是**纯 JS 对象、不需要 GL 上下文**，`renderer` 只在 `apply(renderer, …)` 时使用（`three-renderer` 也拿不到 `player.renderer` 这个私有字段）。创建期**只对非法尺寸**返回 `null`。
+> 2. **「shader 编译失败 ⇒ 返回 null」不成立**：shader 编译 / 链接失败改为**运行期首次 `apply` 捕获并永久降级**（此后帧序回退为无 Glow），并额外挂 `renderer.debug.onShaderError` —— 因为 three 在 `LINK_STATUS === false` 时**只 `console.error`、不抛异常**，单靠 `try/catch` 抓不到。实现见 `src/client/glow-stage.ts`。
+
 player 侧只加：
 
 ```ts
@@ -161,6 +165,8 @@ else this.renderer.render(this.scene, this.camera);   // 零回归路径
 - 采样 base RT（线性）→ **手工转 sRGB** → 在该域算 `luma` / 做 bright-pass / 各级模糊与累加 → 输出前**转回线性**，与 base 相加得最终线性值；
 - composite 输出到 canvas 时由 `renderer.outputColorSpace = SRGBColorSpace` 自动编码 ⇒ 与今天的显示链路一致。
 
+> **2026-09-20 订正（颜色空间：上面这段的前提在本仓库不成立，原文保留）**：原文的前提是 `renderer.outputColorSpace = SRGBColorSpace`。但本仓库 `threejs-player.ts` **强制 `LinearSRGBColorSpace`**（three 的 `linearToOutputTexel` 恒等）、且全库纹理**未标 `colorSpace`**（采样不转换）⇒ 全链路**字节域恒等**，此时再插一次 `toSrgb(base)` 是**二次编码**（threshold 等效约 0.38 域、发光范围远超 A 档）。**实现改为链内不做任何颜色转换**（composite 直接渲到 canvas）。实测印证：云区 p99 关 **200** → 开 **224**，与离线 A 档 **221** / 桌面 **225** 吻合；关闭档的 **200** 与离线在 8bit PNG 字节域标定的 **200** 完全一致 ⇒ `0.65` 两边含义相同。教训与自查手段见 `AGENT.md` §5.32。
+
 **RT 类型**：优先 `HalfFloatType`（bright-pass 后累加精度更稳，WebGL2 均可支持），不可用时回退 `UnsignedByteType`。**不走 `renderIntoRenderTarget()` 以外的清屏路径**（§5.22 的透明清屏语义；Glow 链内每个 pass 都是全屏覆盖写，但入口必须一致）。
 
 **参数**：`normalizeGlowOptions` 统一 clamp（`threshold ∈ [0, 1)`、`strength ∈ [0, 4]`），缺省 `0.65 / 1.0`。参数变更只更新 uniform，**不重建 RT、不重编译 shader**（§5.11）。
@@ -176,6 +182,8 @@ else this.renderer.render(this.scene, this.camera);   // 零回归路径
 | `src/client/three-renderer.ts` | 按 `glowEnabled` 装配：`glowEnabled ? createGlowStage(player.renderer, {threshold, strength}) : null`，随后 `player.setGlowStage(stage)`；`teardown()` 里 `stage?.dispose()`；`resize` 路径同步 `stage.resize(...)` |
 
 **即时生效**：设置变更 → 重建或更新 stage（开关：`setGlowStage(newStage | null)`；阈值/强度：`stage.setOptions(...)`），不重启 `dsh web`。
+
+> **2026-09-20 订正（原文保留）**：实际是「**下次 render（切壁纸）后生效**」，**不是**即时 —— `three-renderer` 的装配在**创建 renderer 时**读一次设置（`createThreeSceneRenderer` 内），设置变更后没有「变更 → 更新 stage」的通路；真正即时要在 `index.ts` 加这条通路，超出本轮文件清单。**如实标注**：面板拨动「光晕」开关后需切换一次壁纸（或重启 `dsh web`）才看到变化，阈值 / 强度同理。同页自证用的 `__fxSetGlow` 也是靠「注入 ctx 后重渲染同一张壁纸」才生效（`research/verify-object-effects.mjs`）。
 
 ### 3.6 错误处理与零回归
 
@@ -204,9 +212,19 @@ else this.renderer.render(this.scene, this.camera);   // 零回归路径
 
 **端到端（真 GPU，复用本轮建好的 `--gpu` 档与 `lumaStats`）**
 - GTR `3743126786`：开 / 关两帧的**云区 p99** 与**亮部占比**；判据 = 开启后云区 p99 由 ~199 升至 **≥215**（对齐离线 A 档的 221，桌面 225）。
+
+> **2026-09-20 订正（判据口径与注入方式，原文保留）**：
+> 1. 判据的 p99 是**云区**口径（区域 **`[0,0,576,242]`**，见 `AGENT.md` §5.27），**不是全屏 p99** —— 本机复算 GTR **全屏** p99 关 245 → 开 255（Δ=10，**会误判为未达标**）；全屏 p99 在 Glow 开启后整体钉在 255、**失去鉴别力**（既有 `[5]` 判据因此由 1 PASS + 2 FAIL 变 3 FAIL；**不是 bloom 失效**）。
+> 2. 开 / 关对照**不能**靠页内开关跨 `runPage`：**导航会重置模块态** ⇒ 注入的 ctx 丢失、两次都退回 `DEFAULTS.glowEnabled = true`（两次都变成同一档）。必须在**创建 renderer 之前**经 **URL 参数注入 `setSettingsCtx`**。
+> 3. 实测结果（真机 RTX 3060 / ANGLE D3D11，壁纸只测 GTR 一张）：云区 p99 **关 200 → 开 224（Δ = +24）**，四次独立测量零差异；离线 A 档 221 / 桌面 225。**未与桌面 WE 逐像素对照**（无同机同刻桌面截图）。
 - **零回归**：`glowEnabled = false` 时与改动前的同相位帧**逐像素一致**（差分仅剩时间相位与噪点口径）。
 - **性能**：开 / 关的每帧 `renderer.render` 提交耗时与帧间隔对比（RTX 3060 @3440×1440、1080p；`AGENT.md` §7.1 的代理判据口径），确认退化可忽略。
 - `lib/` + `dist/` 重建后跑；既有 15 项失败**逐项不变**。
+
+> **2026-09-20 订正（上面这几条验收的实际口径，原文保留；§3.6 与下面「验收门槛」第 2 条的「逐像素零回归」同此口径）**：
+> 1. **「逐像素一致」测不到**：GTR 是时间驱动壁纸（云滚动 / 发丝 sway / 粒子），拿不到「同相位帧」；改用可操作口径 —— 与改动前真机截图的差 **1.6~6.1% / maxΔ 11~23**，**远小于同一运行内的帧间噪声地板**（16.2~16.4% / maxΔ 126~140）。**逐项零回归**则成立：GL 纹理 / 程序数 **28/17**、每帧 `render` 调用 **38.0** 与改动前逐项相同。**勿**把它引用为「逐像素一致」。
+> 2. **性能只在 1280×720 测过**（每帧 CPU 侧 `renderer.render` 提交 **+0.1~+0.4 ms** = 16.7ms 帧预算的 **0.6~2.4%**），**未在 3440×1440 / 1080p 复测**，且**不含 GPU 时间**（真 GPU 光栅化异步）。
+> 3. 上面「既有 15 项失败逐项不变」本轮复核：已跑的第二组 14 项（`scene-renderer` **6** / `wasm-renderer` **7** / `dom/bootstrap.dom` **1**）**逐项相同**；`verify-real-library` 的 1 项因太慢未跑。受影响模块的 5 个文件 **213 项全绿**。
 
 **验收门槛**
 1. 开启后亮部提升方向与幅度符合离线 A 档（云区 p99 ≥ 215）。
