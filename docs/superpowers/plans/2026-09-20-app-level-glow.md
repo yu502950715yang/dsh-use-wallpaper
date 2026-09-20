@@ -187,7 +187,7 @@ export function glowLevelSizes(width: number, height: number): Array<{ w: number
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `node node_modules/vitest/vitest.mjs run tests/glow-stage.test.ts --reporter=basic`
-Expected: PASS（12 项）
+Expected: PASS（10 项）
 
 - [ ] **Step 5: 类型检查**
 
@@ -556,7 +556,7 @@ export function createGlowStage(
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `node node_modules/vitest/vitest.mjs run tests/glow-stage.test.ts --reporter=basic`
-Expected: PASS（18 项）
+Expected: PASS（16 项）
 
 - [ ] **Step 5: 类型检查**
 
@@ -796,12 +796,12 @@ export const DEFAULTS: ClientSettings = {
 };
 ```
 
-`src/host/settings.ts` 的 schema 加三个字段（沿用该文件既有的 `Schema.object({...})` 风格，缺省值与 `DEFAULTS` 一致）：
+`src/host/settings.ts`：该文件用 `import z from '@deepseek-ai/schemastery'` 与 `z.object({...})`（见其第 1、5 行），在 `WallpaperSettingsSchema` 里加三个字段（缺省值与 `DEFAULTS` 一致）：
 
 ```ts
-  glowEnabled: Schema.boolean().default(true),
-  glowThreshold: Schema.number().min(0).max(0.99).default(0.65),
-  glowStrength: Schema.number().min(0).max(4).default(1.0),
+  glowEnabled: z.boolean().default(true),
+  glowThreshold: z.number().min(0).max(0.99).default(0.65),
+  glowStrength: z.number().min(0).max(4).default(1.0),
 ```
 
 `src/client/settings-section.tsx` 加一个复选框（放在既有控件附近，沿用文件里的控件写法）：
