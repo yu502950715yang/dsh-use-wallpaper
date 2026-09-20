@@ -16,6 +16,7 @@
 - **相机 / 尺寸**：cover 正交相机（按**窗口宽高比**，非场景比例）；`canvas.width/height = 视口逻辑尺寸 × devicePixelRatio`。
 - **对象级效果链接线**（2026-09-14 起 P1）：`createThreeSceneRenderer()` → `loadSceneToThree()`；隔离对象进 `localScene`、主场景放合成 quad、注入帧钩子；每帧 `renderIsolatedContents()` → `stage.bindOutputs()` → 渲染主场景 → `stage.advance(time)`（串行推进 `EffectRunner`，异步不阻塞本帧）。无带效果对象时 stage 为 null，帧序退化为原路径（零回归）。
 - **text 对象 + 脚本运行时**（2026-09-20）：与 image 同路径渲染为背景 quad（`CanvasTexture`）；**多行文本按 `\n` 分行绘制**（`fillText` 本身不处理换行）；驱动按「quickjs 沙箱执行 `text.script` → clock 硬编码兜底 → 跳过」取，文本变化才**就地重绘**同一 canvas；**只对 text 应用 `visible` 过滤**；pkg 内字体经 `FontFace` 加载、失败回退 sans-serif。沙箱实现、实测与未验证项见 `AGENT.md` §7.1 第 6 条。
+- **场景树层级变换**（2026-09-20）：`scene-json` 解析 `parent`，`src/client/scene-graph.ts` 的 `resolveWorldTransforms()` 在装载时把父链折叠成世界变换（`scale` 逐分量相乘、`origin` 经父旋转、`angles` 矩阵累积），随 `SceneAssets.worldTransforms` 下发，下游统一读世界值。反算基准与影响面见 `AGENT.md` §7.1 第 9 条。
 - **省电与画质档位**（2026-09-21）：`paused` / `pauseOnHidden`（停 RAF + 帧内防御 + `elapsedSeconds` 扣暂停时长）、`qualityScale`（渲染像素比 = 设备像素比 × 档位；画布缓冲与对象 RT 的屏幕密度走**同一个** `resolvePixelRatio`）；`resize()` 重读 `devicePixelRatio`（跨屏自适应）。见 `AGENT.md` §7.1 第 7 条。
 
 ### 1.2 粒子模拟（Rust/wasm，`wasm/src/particle/`）
