@@ -22519,6 +22519,160 @@ function renderIntoRenderTarget(renderer, target, scene, camera) {
   return prevAlpha;
 }
 
+// src/client/text-object.ts
+var POINTSIZE_TO_PX = 4;
+var DEFAULT_POINTSIZE = 12;
+var WE_SYSTEM_FONTS = {
+  systemfont_arial: "Arial, Helvetica, sans-serif",
+  systemfont_consolas: 'Consolas, "Courier New", monospace',
+  systemfont_couriernew: '"Courier New", Courier, monospace',
+  systemfont_timesnewroman: '"Times New Roman", Times, serif',
+  systemfont_segoeui: '"Segoe UI", Tahoma, sans-serif',
+  systemfont_tahoma: "Tahoma, Geneva, sans-serif",
+  systemfont_verdana: "Verdana, Geneva, sans-serif",
+  systemfont_georgia: "Georgia, serif",
+  systemfont_impact: "Impact, Charcoal, sans-serif",
+  systemfont_lucidaconsole: '"Lucida Console", Monaco, monospace',
+  systemfont_comicsansms: '"Comic Sans MS", cursive'
+};
+function resolveFontFamily(font) {
+  if (typeof font !== "string" || !font.trim()) return "sans-serif";
+  const name = font.trim();
+  const sys = WE_SYSTEM_FONTS[name.toLowerCase()];
+  if (sys) return sys;
+  if (name.toLowerCase().startsWith("systemfont_")) return "sans-serif";
+  if (/[/\\]/.test(name) || /\.[a-zA-Z0-9]{2,4}$/.test(name)) return "sans-serif";
+  return name.includes(" ") ? `"${name}"` : name;
+}
+function fontPx(pointsize) {
+  const raw = typeof pointsize === "number" && isFinite(pointsize) && pointsize > 0 ? pointsize : DEFAULT_POINTSIZE;
+  return Math.min(1024, Math.max(1, Math.round(raw * POINTSIZE_TO_PX)));
+}
+function fontCss(font, pointsize) {
+  return `${fontPx(pointsize)}px ${resolveFontFamily(font)}`;
+}
+function splitLines(text) {
+  return String(text).split("\n").map((line) => line.replace(/\t/g, ""));
+}
+function lineMetrics(ctx, px) {
+  const m = ctx.measureText("Mg");
+  const ascent = Number.isFinite(m.fontBoundingBoxAscent) && m.fontBoundingBoxAscent > 0 ? m.fontBoundingBoxAscent : px * 0.8;
+  const descent = Number.isFinite(m.fontBoundingBoxDescent) && m.fontBoundingBoxDescent > 0 ? m.fontBoundingBoxDescent : px * 0.2;
+  return { ascent, descent, lineHeight: ascent + descent };
+}
+function measureContext() {
+  if (typeof document === "undefined") return null;
+  try {
+    return document.createElement("canvas").getContext("2d");
+  } catch {
+    return null;
+  }
+}
+function paddingOf(padding) {
+  return typeof padding === "number" && isFinite(padding) && padding > 0 ? padding : 0;
+}
+function measureTextLayout(text, opts = {}) {
+  const pad = paddingOf(opts.padding);
+  const ctx = measureContext();
+  if (!ctx) {
+    const px = fontPx(opts.pointsize);
+    const lines2 = splitLines(text);
+    const longest = lines2.reduce((n, l) => Math.max(n, l.length), 2);
+    return {
+      textWidth: px * 0.5 * longest,
+      textHeight: px * lines2.length,
+      width: Math.max(1, Math.ceil(px * 0.5 * longest + 2 * pad)),
+      height: Math.max(1, Math.ceil(px * lines2.length + 2 * pad))
+    };
+  }
+  ctx.font = fontCss(opts.font, opts.pointsize);
+  const lines = splitLines(text);
+  const widths = lines.map((line) => ctx.measureText(line).width);
+  const textWidth = widths.reduce((n, w) => Math.max(n, isFinite(w) ? w : 0), 0);
+  const { ascent, descent, lineHeight } = lineMetrics(ctx, fontPx(opts.pointsize));
+  const textHeight = ascent + descent + Math.max(0, lines.length - 1) * lineHeight;
+  return {
+    textWidth,
+    textHeight,
+    width: Math.max(1, Math.ceil(textWidth + 2 * pad)),
+    height: Math.max(1, Math.ceil(textHeight + 2 * pad))
+  };
+}
+function textAlignments(horizontalAlign, verticalAlign, alignment) {
+  const axis = (primary, fallback, neg, pos) => {
+    const src = typeof primary === "string" && primary.trim() ? primary : fallback;
+    if (typeof src === "string") {
+      if (src.includes(neg)) return neg;
+      if (src.includes(pos)) return pos;
+    }
+    return "center";
+  };
+  return {
+    halign: axis(horizontalAlign, alignment, "left", "right"),
+    valign: axis(verticalAlign, alignment, "top", "bottom")
+  };
+}
+function textLayerOffset(layout, horizontalAlign, verticalAlign, alignment, scale) {
+  const { halign, valign } = textAlignments(horizontalAlign, verticalAlign, alignment);
+  const sx = Number.isFinite(scale[0]) ? scale[0] : 1;
+  const sy = Number.isFinite(scale[1]) ? scale[1] : 1;
+  const ox = halign === "left" ? 0.5 : halign === "right" ? -0.5 : 0;
+  const oy = valign === "top" ? -0.5 : valign === "bottom" ? 0.5 : 0;
+  return [ox * layout.textWidth * sx, oy * layout.textHeight * sy];
+}
+function drawTextToCanvas(canvas, text, opts) {
+  const width = Math.max(1, Math.round(opts.width));
+  const height = Math.max(1, Math.round(opts.height));
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  const px = fontPx(opts.pointsize);
+  ctx.font = `${px}px ${resolveFontFamily(opts.font)}`;
+  ctx.fillStyle = opts.color ? `rgb(${opts.color[0]}, ${opts.color[1]}, ${opts.color[2]})` : "#ffffff";
+  ctx.textBaseline = "alphabetic";
+  const pad = paddingOf(opts.padding);
+  const { halign } = textAlignments(opts.horizontalAlign, opts.verticalAlign, opts.alignment);
+  const { ascent, lineHeight } = lineMetrics(ctx, px);
+  const lines = splitLines(text);
+  ctx.textAlign = halign;
+  const anchorX = halign === "left" ? pad : halign === "right" ? width - pad : width / 2;
+  lines.forEach((line, i) => {
+    ctx.fillText(line, anchorX, pad + ascent + i * lineHeight);
+  });
+}
+function createTextTexture(text, opts) {
+  const canvas = document.createElement("canvas");
+  drawTextToCanvas(canvas, text, opts);
+  const tex = new CanvasTexture(canvas);
+  tex.needsUpdate = true;
+  return tex;
+}
+function createTextDriver(canvas, opts, nextText, initialText) {
+  const drawOpts = { ...opts };
+  let layout = measureTextLayout(initialText, drawOpts);
+  let last = initialText;
+  return {
+    get layout() {
+      return layout;
+    },
+    update(now) {
+      const text = nextText(now);
+      if (text === null || text === last) return false;
+      layout = measureTextLayout(text, drawOpts);
+      drawTextToCanvas(canvas, text, { ...drawOpts, width: layout.width, height: layout.height });
+      last = text;
+      return true;
+    }
+  };
+}
+function createScriptDriver(canvas, opts, binding, initialText = "") {
+  return createTextDriver(canvas, opts, () => binding.update(), initialText);
+}
+function createClockDriver(canvas, opts, props, initialText) {
+  return createTextDriver(canvas, opts, (now) => formatClockText(now, props), initialText);
+}
+
 // src/client/threejs-player.ts
 var DEFAULT_PARTICLE_CAPACITY = 1024;
 var MAX_PARTICLE_CAPACITY = 2048;
@@ -23005,6 +23159,7 @@ var ThreeScenePlayer = class {
     this.backgroundEntries.set(id, {
       mesh,
       origin: [opts.origin[0], opts.origin[1], opts.origin[2]],
+      size: [w, h],
       scale: [s[0], s[1], s[2] ?? 1],
       angles: [a[0], a[1], a[2]],
       alpha: mod.a,
@@ -23178,6 +23333,23 @@ var ThreeScenePlayer = class {
         else mat.color.setRGB(mod.r, mod.g, mod.b);
       }
     }
+  }
+  // 文本图层 resize：按新画布尺寸重建 quad 几何（PlaneGeometry 尺寸不可变），scale 不变
+  // ⇒ 世界尺寸 = 新尺寸 × scale。未知 id / 尺寸未变 → no-op（不重建几何）。
+  // ⚠️ 画布纹理必须 dispose：three r170 在 WebGL2 用**不可变** texStorage2D（只在首次上传
+  // 分配存储），画布尺寸变了以后 texSubImage2D 越界、上传被 GL 静默丢弃 ⇒ 屏幕上仍是旧画布
+  // 被拉伸。dispose 后下一次渲染按新尺寸重新分配存储。
+  resizeBackground(id, size) {
+    const entry = this.backgroundEntries.get(id);
+    if (!entry) return;
+    const [w, h] = size;
+    if (w === entry.size[0] && h === entry.size[1]) return;
+    entry.size = [w, h];
+    const old = entry.mesh.geometry;
+    entry.mesh.geometry = new PlaneGeometry(w, h);
+    old.dispose();
+    const map = entry.mesh.material.map;
+    if (map && map.isCanvasTexture) map.dispose();
   }
   // Task 3：粒子图层。`simVerticesGetter` 每帧返回模拟器当前顶点（摊平 Float32Array，
   // 每粒子 `[pos3, size, uv2, color3, alpha]` 10 浮点——来自 wasm `SceneParticleSim::build_instance_vertices`）。
@@ -23464,7 +23636,18 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
         sceneH
       });
       backgroundIds.push(id);
-      if (layer.driver) textDrivers.push({ texture: layer.texture, driver: layer.driver });
+      if (layer.driver) {
+        textDrivers.push({
+          texture: layer.texture,
+          driver: layer.driver,
+          backgroundId: id,
+          origin: obj.origin,
+          scale: obj.scale,
+          horizontalAlign: obj.horizontalAlign,
+          verticalAlign: obj.verticalAlign,
+          alignment: obj.alignment
+        });
+      }
     } else if (obj.kind === "particle" && obj.particle) {
       const p = assets.particles?.get(obj.id);
       if (!p || !assets.createParticleSim) continue;
@@ -23500,7 +23683,15 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
   }
   player.setAnimationLoop((dt) => {
     for (const sim of sims) sim.update(dt);
-    for (const t of textDrivers) if (t.driver.update(/* @__PURE__ */ new Date())) t.texture.needsUpdate = true;
+    for (const t of textDrivers) {
+      if (!t.driver.update(/* @__PURE__ */ new Date())) continue;
+      t.texture.needsUpdate = true;
+      const layout = t.driver.layout;
+      const off = textLayerOffset(layout, t.horizontalAlign, t.verticalAlign, t.alignment, t.scale);
+      const o = t.origin;
+      player.update_background(t.backgroundId, [o[0] + off[0], o[1] + off[1], o[2]]);
+      player.resizeBackground(t.backgroundId, [layout.width, layout.height]);
+    }
   });
   return { player, sims, backgroundIds, particleLayers };
 }
@@ -23926,160 +24117,6 @@ async function loadTexTexture(url, opts) {
   const info = parseTex(buf);
   if (!info) return null;
   return textureFromTex(info, opts);
-}
-
-// src/client/text-object.ts
-var POINTSIZE_TO_PX = 4;
-var DEFAULT_POINTSIZE = 12;
-var WE_SYSTEM_FONTS = {
-  systemfont_arial: "Arial, Helvetica, sans-serif",
-  systemfont_consolas: 'Consolas, "Courier New", monospace',
-  systemfont_couriernew: '"Courier New", Courier, monospace',
-  systemfont_timesnewroman: '"Times New Roman", Times, serif',
-  systemfont_segoeui: '"Segoe UI", Tahoma, sans-serif',
-  systemfont_tahoma: "Tahoma, Geneva, sans-serif",
-  systemfont_verdana: "Verdana, Geneva, sans-serif",
-  systemfont_georgia: "Georgia, serif",
-  systemfont_impact: "Impact, Charcoal, sans-serif",
-  systemfont_lucidaconsole: '"Lucida Console", Monaco, monospace',
-  systemfont_comicsansms: '"Comic Sans MS", cursive'
-};
-function resolveFontFamily(font) {
-  if (typeof font !== "string" || !font.trim()) return "sans-serif";
-  const name = font.trim();
-  const sys = WE_SYSTEM_FONTS[name.toLowerCase()];
-  if (sys) return sys;
-  if (name.toLowerCase().startsWith("systemfont_")) return "sans-serif";
-  if (/[/\\]/.test(name) || /\.[a-zA-Z0-9]{2,4}$/.test(name)) return "sans-serif";
-  return name.includes(" ") ? `"${name}"` : name;
-}
-function fontPx(pointsize) {
-  const raw = typeof pointsize === "number" && isFinite(pointsize) && pointsize > 0 ? pointsize : DEFAULT_POINTSIZE;
-  return Math.min(1024, Math.max(1, Math.round(raw * POINTSIZE_TO_PX)));
-}
-function fontCss(font, pointsize) {
-  return `${fontPx(pointsize)}px ${resolveFontFamily(font)}`;
-}
-function splitLines(text) {
-  return String(text).split("\n").map((line) => line.replace(/\t/g, ""));
-}
-function lineMetrics(ctx, px) {
-  const m = ctx.measureText("Mg");
-  const ascent = Number.isFinite(m.fontBoundingBoxAscent) && m.fontBoundingBoxAscent > 0 ? m.fontBoundingBoxAscent : px * 0.8;
-  const descent = Number.isFinite(m.fontBoundingBoxDescent) && m.fontBoundingBoxDescent > 0 ? m.fontBoundingBoxDescent : px * 0.2;
-  return { ascent, descent, lineHeight: ascent + descent };
-}
-function measureContext() {
-  if (typeof document === "undefined") return null;
-  try {
-    return document.createElement("canvas").getContext("2d");
-  } catch {
-    return null;
-  }
-}
-function paddingOf(padding) {
-  return typeof padding === "number" && isFinite(padding) && padding > 0 ? padding : 0;
-}
-function measureTextLayout(text, opts = {}) {
-  const pad = paddingOf(opts.padding);
-  const ctx = measureContext();
-  if (!ctx) {
-    const px = fontPx(opts.pointsize);
-    const lines2 = splitLines(text);
-    const longest = lines2.reduce((n, l) => Math.max(n, l.length), 2);
-    return {
-      textWidth: px * 0.5 * longest,
-      textHeight: px * lines2.length,
-      width: Math.max(1, Math.ceil(px * 0.5 * longest + 2 * pad)),
-      height: Math.max(1, Math.ceil(px * lines2.length + 2 * pad))
-    };
-  }
-  ctx.font = fontCss(opts.font, opts.pointsize);
-  const lines = splitLines(text);
-  const widths = lines.map((line) => ctx.measureText(line).width);
-  const textWidth = widths.reduce((n, w) => Math.max(n, isFinite(w) ? w : 0), 0);
-  const { ascent, descent, lineHeight } = lineMetrics(ctx, fontPx(opts.pointsize));
-  const textHeight = ascent + descent + Math.max(0, lines.length - 1) * lineHeight;
-  return {
-    textWidth,
-    textHeight,
-    width: Math.max(1, Math.ceil(textWidth + 2 * pad)),
-    height: Math.max(1, Math.ceil(textHeight + 2 * pad))
-  };
-}
-function textAlignments(horizontalAlign, verticalAlign, alignment) {
-  const axis = (primary, fallback, neg, pos) => {
-    const src = typeof primary === "string" && primary.trim() ? primary : fallback;
-    if (typeof src === "string") {
-      if (src.includes(neg)) return neg;
-      if (src.includes(pos)) return pos;
-    }
-    return "center";
-  };
-  return {
-    halign: axis(horizontalAlign, alignment, "left", "right"),
-    valign: axis(verticalAlign, alignment, "top", "bottom")
-  };
-}
-function textLayerOffset(layout, horizontalAlign, verticalAlign, alignment, scale) {
-  const { halign, valign } = textAlignments(horizontalAlign, verticalAlign, alignment);
-  const sx = Number.isFinite(scale[0]) ? scale[0] : 1;
-  const sy = Number.isFinite(scale[1]) ? scale[1] : 1;
-  const ox = halign === "left" ? 0.5 : halign === "right" ? -0.5 : 0;
-  const oy = valign === "top" ? -0.5 : valign === "bottom" ? 0.5 : 0;
-  return [ox * layout.textWidth * sx, oy * layout.textHeight * sy];
-}
-function drawTextToCanvas(canvas, text, opts) {
-  const width = Math.max(1, Math.round(opts.width));
-  const height = Math.max(1, Math.round(opts.height));
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-  const px = fontPx(opts.pointsize);
-  ctx.font = `${px}px ${resolveFontFamily(opts.font)}`;
-  ctx.fillStyle = opts.color ? `rgb(${opts.color[0]}, ${opts.color[1]}, ${opts.color[2]})` : "#ffffff";
-  ctx.textBaseline = "alphabetic";
-  const pad = paddingOf(opts.padding);
-  const { halign } = textAlignments(opts.horizontalAlign, opts.verticalAlign, opts.alignment);
-  const { ascent, lineHeight } = lineMetrics(ctx, px);
-  const lines = splitLines(text);
-  ctx.textAlign = halign;
-  const anchorX = halign === "left" ? pad : halign === "right" ? width - pad : width / 2;
-  lines.forEach((line, i) => {
-    ctx.fillText(line, anchorX, pad + ascent + i * lineHeight);
-  });
-}
-function createTextTexture(text, opts) {
-  const canvas = document.createElement("canvas");
-  drawTextToCanvas(canvas, text, opts);
-  const tex = new CanvasTexture(canvas);
-  tex.needsUpdate = true;
-  return tex;
-}
-function createScriptDriver(canvas, opts, binding, initialText = "") {
-  let last = initialText;
-  return {
-    update(_now) {
-      const text = binding.update();
-      if (text === null || text === "" || text === last) return false;
-      drawTextToCanvas(canvas, text, opts);
-      last = text;
-      return true;
-    }
-  };
-}
-function createClockDriver(canvas, opts, props, initialText) {
-  let last = initialText;
-  return {
-    update(now) {
-      const text = formatClockText(now, props);
-      if (text === last) return false;
-      drawTextToCanvas(canvas, text, opts);
-      last = text;
-      return true;
-    }
-  };
 }
 
 // src/client/shader/uniform-binder.ts

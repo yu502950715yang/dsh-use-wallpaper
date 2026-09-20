@@ -7,6 +7,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { ThreeScenePlayer, loadSceneToThree, resolvePixelRatio, frameCountFromDims, textureFrameCount, textureFrameGrid, specMaxcount, particleCapacity, specEmitterOrigin, simEmitterOffset, BLACKMYTH_OBJ_SCALE, DEFAULT_PARTICLE_CAPACITY, MAX_PARTICLE_CAPACITY } from '../src/client/threejs-player.js';
+import { textLayerOffset, type TextLayout } from '../src/client/text-object.js';
 import { coverRange } from '../src/client/scene-renderer.js';
 import { createCompositeGeometry, screenScalePx } from '../src/client/object-range.js';
 
@@ -56,7 +57,7 @@ describe('loadSceneToThree text 对象', () => {
   });
   const makeTextAssets = (layer?: {
     texture: THREE.Texture;
-    driver?: { update(now: Date): boolean };
+    driver?: { update(now: Date): boolean; readonly layout: TextLayout };
     size?: [number, number];
     anchorOffset?: [number, number];
   }) => ({
@@ -94,7 +95,7 @@ describe('loadSceneToThree text 对象', () => {
 
   it('帧循环驱动 clock：driver 返回 true 时置 texture.needsUpdate（version 递增）', () => {
     const tex = new THREE.DataTexture(new Uint8Array(4), 2, 2);
-    const driver = { update: vi.fn(() => true) };
+    const driver = { update: vi.fn(() => true), layout: { width: 400, height: 100, textWidth: 400, textHeight: 100 } };
     const assets = makeTextAssets({ texture: tex, driver });
     loadSceneToThree(scene, assets, document.createElement('canvas'));
     const before = tex.version;
@@ -105,12 +106,128 @@ describe('loadSceneToThree text 对象', () => {
 
   it('driver 返回 false（同一分钟）时不动纹理', () => {
     const tex = new THREE.DataTexture(new Uint8Array(4), 2, 2);
-    const driver = { update: vi.fn(() => false) };
+    const driver = { update: vi.fn(() => false), layout: { width: 400, height: 100, textWidth: 400, textHeight: 100 } };
     const assets = makeTextAssets({ texture: tex, driver });
     loadSceneToThree(scene, assets, document.createElement('canvas'));
     const before = tex.version;
     (assets.renderer as unknown as { _getLoop: () => (() => void) | null })._getLoop()!();
     expect(tex.version).toBe(before);
+  });
+});
+
+// 文本变化 → 帧循环必须按 driver.layout 同步 quad 的几何尺寸与中心（对齐 OME
+// update_text_layout：SetSize(text+2×padding) + apply_text_anchor）。否则新文本超出旧画布
+// 被裁切（2980088441 minute 层），或整体漂移。
+describe('loadSceneToThree text 动态 resize', () => {
+  const scene = JSON.stringify({
+    camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+    general: { orthogonalprojection: { width: 1920, height: 1080 } },
+    objects: [
+      {
+        id: 7, name: 'ClockMinute', origin: '1000 500 0', scale: '0.5 0.5 1', size: '400 100',
+        horizontalalign: 'left', verticalalign: 'bottom', text: { value: '12' },
+      },
+    ],
+  });
+  const SCALE = [0.5, 0.5, 1];
+  // padding 20（画布 = 文本 + 40），两版高度不变、只有文本宽变长/变短
+  const SMALL: TextLayout = { textWidth: 160, textHeight: 100, width: 200, height: 140 };
+  const LARGE: TextLayout = { textWidth: 360, textHeight: 100, width: 400, height: 140 };
+
+  function makeAssets(texIn?: THREE.Texture) {
+    const tex = texIn ?? new THREE.DataTexture(new Uint8Array(4), 2, 2);
+    const state = { changed: false, layout: SMALL as TextLayout };
+    const driver = { update: vi.fn(() => state.changed), get layout() { return state.layout; } };
+    const renderer = createMockRenderer();
+    return {
+      state, driver, tex, renderer,
+      assets: {
+        renderer: renderer as unknown as THREE.WebGLRenderer,
+        textLayers: new Map([[7, {
+          texture: tex,
+          driver,
+          size: [SMALL.width, SMALL.height] as [number, number],
+          anchorOffset: textLayerOffset(SMALL, 'left', 'bottom', undefined, SCALE),
+        }]]),
+      },
+    };
+  }
+
+  it('文本变长：quad 几何放大、锚点边（left/bottom）在世界里不动 ⇒ 原地生长', () => {
+    const { assets, state, renderer, tex } = makeAssets();
+    const result = loadSceneToThree(scene, assets, document.createElement('canvas'));
+    const mesh = result.player.scene.children[0] as THREE.Mesh;
+    // 装配期：几何 = 实测画布 200；中心 = origin + 锚点偏移 - 场景中心
+    expect((mesh.geometry as THREE.PlaneGeometry).parameters.width).toBe(200);
+    expect(mesh.position.x).toBeCloseTo(1000 + 160 / 2 * 0.5 - 960, 10);  // +40 → 80
+    expect(mesh.position.y).toBeCloseTo(500 + 100 / 2 * 0.5 - 540, 10);   // +25 → -15
+    // 文本左缘 / 下缘（halign left + valign bottom 的锚点边）= origin - padding×scale
+    const leftEdge0 = mesh.position.x - (200 / 2) * 0.5;
+    const bottomEdge0 = mesh.position.y - (140 / 2) * 0.5;
+
+    state.layout = LARGE;
+    state.changed = true;
+    const beforeVersion = tex.version;
+    renderer._getLoop()!();
+
+    expect(tex.version).toBeGreaterThan(beforeVersion);                    // 纹理已重传
+    expect((mesh.geometry as THREE.PlaneGeometry).parameters.width).toBe(400);
+    expect(mesh.position.x).toBeCloseTo(1000 + 360 / 2 * 0.5 - 960, 10);  // +90 → 130
+    expect(mesh.position.x - (400 / 2) * 0.5).toBeCloseTo(leftEdge0, 10);  // 左缘不动
+    expect(mesh.position.y - (140 / 2) * 0.5).toBeCloseTo(bottomEdge0, 10); // 下缘不动
+  });
+
+  it('文本变短：quad 几何缩小（同一锚点公式）', () => {
+    const { assets, state, renderer } = makeAssets();
+    state.layout = LARGE;
+    assets.textLayers.get(7)!.size = [LARGE.width, LARGE.height];
+    assets.textLayers.get(7)!.anchorOffset = textLayerOffset(LARGE, 'left', 'bottom', undefined, SCALE);
+    const result = loadSceneToThree(scene, assets, document.createElement('canvas'));
+    const mesh = result.player.scene.children[0] as THREE.Mesh;
+    expect((mesh.geometry as THREE.PlaneGeometry).parameters.width).toBe(400);
+    const leftEdge0 = mesh.position.x - (400 / 2) * 0.5;
+
+    state.layout = SMALL;
+    state.changed = true;
+    renderer._getLoop()!();
+
+    expect((mesh.geometry as THREE.PlaneGeometry).parameters.width).toBe(200);
+    expect(mesh.position.x).toBeCloseTo(1000 + 160 / 2 * 0.5 - 960, 10);
+    expect(mesh.position.x - (200 / 2) * 0.5).toBeCloseTo(leftEdge0, 10);
+  });
+
+  it('resizeBackground：未知 id / 尺寸未变 → no-op；新尺寸 → 换几何并释放旧几何', () => {
+    const { player } = makePlayer();
+    const tex = new THREE.DataTexture(new Uint8Array(4), 2, 2);
+    const id = player.addBackground({ origin: [0, 0, 0], size: [100, 50], scale: [1, 1, 1], texture: tex, sceneW: 1920, sceneH: 1080 });
+    const mesh = player.scene.children[0] as THREE.Mesh;
+    const geo0 = mesh.geometry;
+    const disposeSpy = vi.spyOn(geo0, 'dispose');
+    player.resizeBackground(999, [10, 10]);                 // 未知 id
+    player.resizeBackground(id, [100, 50]);                 // 尺寸未变
+    expect(mesh.geometry).toBe(geo0);
+    expect(disposeSpy).not.toHaveBeenCalled();
+    player.resizeBackground(id, [250, 50]);
+    expect(mesh.geometry).not.toBe(geo0);
+    expect(disposeSpy).toHaveBeenCalledTimes(1);
+    expect((mesh.geometry as THREE.PlaneGeometry).parameters.width).toBe(250);
+  });
+
+  // three r170 对 canvas 纹理在 WebGL2 走**不可变** texStorage2D（只在首次上传时分配存储），
+  // 画布尺寸变了以后 texSubImage2D 越界 → 上传被 GL 静默丢弃，屏幕上仍是旧画布被拉伸。
+  // ⇒ 尺寸变化必须 dispose 纹理，让下一次渲染按新尺寸重新分配存储（纯 needsUpdate 不够）。
+  it('画布尺寸变化 → dispose 纹理（否则新画布上传失败，屏幕一直是旧内容被拉伸）', () => {
+    const canvasTex = new THREE.CanvasTexture(document.createElement('canvas'));
+    const { assets, state, renderer, tex } = makeAssets(canvasTex);
+    expect(tex.isCanvasTexture).toBe(true);
+    const disposeSpy = vi.spyOn(tex, 'dispose');
+    loadSceneToThree(scene, assets, document.createElement('canvas'));
+    renderer._getLoop()!();                                 // 文本未变 → 不 resize、不 dispose
+    expect(disposeSpy).not.toHaveBeenCalled();
+    state.layout = LARGE;
+    state.changed = true;
+    renderer._getLoop()!();
+    expect(disposeSpy).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -21,6 +21,9 @@ import { parseSceneJson } from './scene-json.js';
 import { renderIntoRenderTarget } from './rt-render.js';
 // 应用级 Glow 的注入点类型（本任务只加 hook，装配在后续 Task）。
 import type { GlowStage } from './glow-stage.js';
+// 文本图层：帧内文本变化 → 按新 layout 同步 quad 尺寸与锚点中心（textLayerOffset）。
+import { textLayerOffset } from './text-object.js';
+import type { ClockDriver, TextLayout } from './text-object.js';
 
 // 背景图层条目：记录 WE 场景坐标与当前已应用状态，供 update_background 对齐既有
 // update_image 语义（undefined = 保持现状；无变化则跳过）。
@@ -28,6 +31,8 @@ type BackgroundEntry = {
   mesh: THREE.Mesh;
   // WE 场景坐标（创建时的 origin，未中心化）——update_background 用它重算 we_to_three 位置。
   origin: [number, number, number];
+  // 几何尺寸（世界单位，未缩放；mesh.scale 承载 WE scale）——resizeBackground 用它判定是否需重建。
+  size: [number, number];
   scale: [number, number, number];
   // WE 对象欧拉角（弧度；T·R·S 的 R）。记录创建值（update_background 暂不改角度）。
   angles: [number, number, number];
@@ -775,6 +780,7 @@ export class ThreeScenePlayer {
     this.backgroundEntries.set(id, {
       mesh,
       origin: [opts.origin[0], opts.origin[1], opts.origin[2]],
+      size: [w, h],
       scale: [s[0], s[1], s[2] ?? 1],
       angles: [a[0], a[1], a[2]],
       alpha: mod.a,
@@ -1015,6 +1021,24 @@ export class ThreeScenePlayer {
         else mat.color.setRGB(mod.r, mod.g, mod.b);
       }
     }
+  }
+
+  // 文本图层 resize：按新画布尺寸重建 quad 几何（PlaneGeometry 尺寸不可变），scale 不变
+  // ⇒ 世界尺寸 = 新尺寸 × scale。未知 id / 尺寸未变 → no-op（不重建几何）。
+  // ⚠️ 画布纹理必须 dispose：three r170 在 WebGL2 用**不可变** texStorage2D（只在首次上传
+  // 分配存储），画布尺寸变了以后 texSubImage2D 越界、上传被 GL 静默丢弃 ⇒ 屏幕上仍是旧画布
+  // 被拉伸。dispose 后下一次渲染按新尺寸重新分配存储。
+  resizeBackground(id: number, size: [number, number]): void {
+    const entry = this.backgroundEntries.get(id);
+    if (!entry) return;
+    const [w, h] = size;
+    if (w === entry.size[0] && h === entry.size[1]) return;
+    entry.size = [w, h];
+    const old = entry.mesh.geometry;
+    entry.mesh.geometry = new THREE.PlaneGeometry(w, h);
+    old.dispose();
+    const map = (entry.mesh.material as { map?: THREE.Texture | null }).map;
+    if (map && (map as THREE.CanvasTexture).isCanvasTexture) map.dispose();
   }
 
   // Task 3：粒子图层。`simVerticesGetter` 每帧返回模拟器当前顶点（摊平 Float32Array，
@@ -1412,12 +1436,13 @@ export interface SceneAssets {
   isolate?: Map<number, { objectId: number; rtWidth: number; rtHeight: number; worldW: number; worldH: number }>;
   // 渲染像素比档位（<1 降分辨率省显存/提流畅；缺省 1）。调用方算屏幕密度时必须用同一个数。
   qualityScale?: number;
-  // text 对象图层（对象 id → 纹理 + 可选 clock 驱动）：与 image 同路径渲染为背景 quad。
+  // text 对象图层（对象 id → 纹理 + 可选时钟/脚本驱动）：与 image 同路径渲染为背景 quad。
   // 调用方负责 visible 过滤、纹理创建与字体加载；此处只消费。
   // size = 装配期实测 canvas（文本 + 2×padding），anchorOffset = origin 锚点 → 中心偏移。
+  // driver.layout 是**最近一次文本**的实测布局：帧内文本变化时用它重算 quad 尺寸与锚点中心。
   textLayers?: Map<number, {
     texture: THREE.Texture;
-    driver?: { update(now: Date): boolean };
+    driver?: ClockDriver;
     size?: [number, number];
     anchorOffset?: [number, number];
   }>;
@@ -1519,8 +1544,17 @@ export function loadSceneToThree(
   const backgroundIds: number[] = [];
   const particleLayers: Array<{ id: number; sim: ParticleSim }> = [];
   const sims: ParticleSim[] = [];
-  // text 对象的时钟驱动（每帧判文本是否变化，变了才置 needsUpdate）。
-  const textDrivers: Array<{ texture: THREE.Texture; driver: { update(now: Date): boolean } }> = [];
+  // text 对象的时钟/脚本驱动（每帧判文本是否变化，变了才置 needsUpdate + 同步 quad）。
+  const textDrivers: Array<{
+    texture: THREE.Texture;
+    driver: ClockDriver;
+    backgroundId: number;                    // resizeBackground / update_background 的键
+    origin: [number, number, number];        // obj.origin（锚点，未加偏移）
+    scale: [number, number, number];
+    horizontalAlign?: string;
+    verticalAlign?: string;
+    alignment?: string;
+  }> = [];
 
   for (const obj of desc.objects) {
     if (obj.kind === 'image') {
@@ -1562,7 +1596,18 @@ export function loadSceneToThree(
         sceneH,
       });
       backgroundIds.push(id);
-      if (layer.driver) textDrivers.push({ texture: layer.texture, driver: layer.driver });
+      if (layer.driver) {
+        textDrivers.push({
+          texture: layer.texture,
+          driver: layer.driver,
+          backgroundId: id,
+          origin: obj.origin,
+          scale: obj.scale,
+          horizontalAlign: obj.horizontalAlign,
+          verticalAlign: obj.verticalAlign,
+          alignment: obj.alignment,
+        });
+      }
     } else if (obj.kind === 'particle' && obj.particle) {
       // 粒子对象：仅当调用方提供 spec + 模拟器工厂时装配（缺 spec/工厂 → 跳过该对象，绝不白屏，
       // 与缺失粒子纹理时白图兜底同语义）。
@@ -1612,8 +1657,17 @@ export function loadSceneToThree(
   // player.update(dt)（→ updateParticles(dt) 读 getter = sim.vertices()，sim 已在帧内推进）。
   player.setAnimationLoop((dt) => {
     for (const sim of sims) sim.update(dt);
-    // 时钟文本：文本变化才重绘（同分钟不重绘）→ 置 needsUpdate 触发纹理上传。
-    for (const t of textDrivers) if (t.driver.update(new Date())) t.texture.needsUpdate = true;
+    // 时钟/脚本文本：文本变化才重绘（同分钟不重绘）→ 置 needsUpdate 触发纹理上传，
+    // 并按新文本的实测布局同步 quad 尺寸与锚点中心（origin 是锚点 ⇒ 原地生长/收缩）。
+    for (const t of textDrivers) {
+      if (!t.driver.update(new Date())) continue;
+      t.texture.needsUpdate = true;
+      const layout = t.driver.layout;
+      const off = textLayerOffset(layout, t.horizontalAlign, t.verticalAlign, t.alignment, t.scale);
+      const o = t.origin;
+      player.update_background(t.backgroundId, [o[0] + off[0], o[1] + off[1], o[2]]);
+      player.resizeBackground(t.backgroundId, [layout.width, layout.height]);
+    }
   });
 
   return { player, sims, backgroundIds, particleLayers };

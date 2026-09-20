@@ -39,6 +39,8 @@ export declare function createTextTexture(text: string, opts: TextTextureOptions
 export interface ClockDriver {
     /** 文本变化时重绘 canvas 并返回 true（调用方据此置 texture.needsUpdate）。 */
     update(now: Date): boolean;
+    /** 最近一次文本的实测布局；文本变化后调用方据此同步 quad 尺寸与锚点偏移。 */
+    readonly layout: TextLayout;
 }
 export declare function createScriptDriver(canvas: HTMLCanvasElement, opts: TextTextureOptions, binding: TextScriptBinding, initialText?: string): ClockDriver;
 export declare function createClockDriver(canvas: HTMLCanvasElement, opts: TextTextureOptions, props: Record<string, unknown>, initialText: string): ClockDriver;

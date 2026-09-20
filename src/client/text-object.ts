@@ -1,6 +1,7 @@
 // src/client/text-object.ts —— WE text 对象文本渲染（T3.1 静态 + T3.3 时钟驱动 + 脚本驱动）
 // 把文本绘制到离屏 canvas（2D），包装为 THREE.CanvasTexture 供 quad 贴图。
-// 时钟/脚本走字**就地重绘同一 canvas**（只置 needsUpdate），不重建纹理。
+// 时钟/脚本走字**就地重绘同一 canvas**（不重建纹理）；文本变化时画布按新文本重算，
+// 调用方从 driver.layout 取新尺寸并同步 quad（见 threejs-player 帧循环）。
 //
 // 布局语义（对齐参考实现 open-wallpaper-engine 的 SceneTextObjectParser / TextLayouter）：
 //   ① 像素字号 = pointsize × 4（TextPointSizeToPx）；② 图层尺寸 = 实测文本 + 2×padding
@@ -241,6 +242,36 @@ export function createTextTexture(text: string, opts: TextTextureOptions): THREE
 export interface ClockDriver {
   /** 文本变化时重绘 canvas 并返回 true（调用方据此置 texture.needsUpdate）。 */
   update(now: Date): boolean;
+  /** 最近一次文本的实测布局；文本变化后调用方据此同步 quad 尺寸与锚点偏移。 */
+  readonly layout: TextLayout;
+}
+
+// 文本驱动公共实现（clock 与脚本同路径）：文本变化 → 按**新文本**重算布局 → 重设画布宽高
+// 并重绘（drawTextToCanvas 会重设 canvas 尺寸）→ 更新对外 layout。
+// 构造期**不**重绘：装配期已按 initialText 画过，重设 canvas 宽高会把已画内容清空；
+// 只按 initialText 实测一次布局（与装配期同口径，供调用方对齐）。
+function createTextDriver(
+  canvas: HTMLCanvasElement,
+  opts: TextTextureOptions,
+  nextText: (now: Date) => string | null,
+  initialText: string,
+): ClockDriver {
+  const drawOpts = { ...opts };
+  let layout = measureTextLayout(initialText, drawOpts);
+  let last = initialText;
+  return {
+    get layout(): TextLayout {
+      return layout;
+    },
+    update(now: Date): boolean {
+      const text = nextText(now);
+      if (text === null || text === last) return false;
+      layout = measureTextLayout(text, drawOpts);
+      drawTextToCanvas(canvas, text, { ...drawOpts, width: layout.width, height: layout.height });
+      last = text;
+      return true;
+    },
+  };
 }
 
 // 脚本驱动：每帧问脚本要新文本，变化才重绘（与 clock 驱动同形态，忽略 now）。
@@ -251,16 +282,7 @@ export function createScriptDriver(
   binding: TextScriptBinding,
   initialText = '',
 ): ClockDriver {
-  let last = initialText;
-  return {
-    update(_now: Date): boolean {
-      const text = binding.update();
-      if (text === null || text === '' || text === last) return false;
-      drawTextToCanvas(canvas, text, opts);
-      last = text;
-      return true;
-    },
-  };
+  return createTextDriver(canvas, opts, () => binding.update(), initialText);
 }
 
 // 时钟驱动：按 formatClockText 生成文本，**文本变化才重绘**（同分钟不重绘）。
@@ -270,14 +292,5 @@ export function createClockDriver(
   props: Record<string, unknown>,
   initialText: string,
 ): ClockDriver {
-  let last = initialText;
-  return {
-    update(now: Date): boolean {
-      const text = formatClockText(now, props);
-      if (text === last) return false;
-      drawTextToCanvas(canvas, text, opts);
-      last = text;
-      return true;
-    },
-  };
+  return createTextDriver(canvas, opts, (now) => formatClockText(now, props), initialText);
 }

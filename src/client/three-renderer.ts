@@ -35,6 +35,7 @@ import { createGlowStage, type GlowStage } from './glow-stage.js';
 import { readClientSettings, getUserPropertyValue } from './settings.js';
 import { resolveEffectChain, type CompiledEffectPass } from './shader/effect-chain.js';
 import { createTextTexture, measureTextLayout, textLayerOffset, createClockDriver, createScriptDriver } from './text-object.js';
+import type { ClockDriver } from './text-object.js';
 import { getTextScriptRuntime } from './text-script.js';
 import type { TextScriptBinding, TextScriptRuntime } from './text-script.js';
 import { detectScriptPattern, formatClockText } from './script-patterns.js';
@@ -290,7 +291,7 @@ export function createThreeSceneRenderer(opts?: {
         }
         const textLayers = new Map<number, {
           texture: Texture;
-          driver?: { update(now: Date): boolean };
+          driver?: ClockDriver;
           size?: [number, number];        // 画布尺寸（字体像素）= 实测文本 + 2×padding
           anchorOffset?: [number, number]; // origin 锚点 → quad 中心偏移（世界单位）
         }>();

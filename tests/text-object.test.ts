@@ -308,3 +308,61 @@ describe('createScriptDriver（text.script：脚本给出新文本，变化才�
     expect(ctx.fillText).not.toHaveBeenCalled();
   });
 });
+
+// 缺陷（用户截图确认）：画布尺寸只在装配期按首帧文本算一次，首帧之后再没重算 ⇒ 文本变长后
+// 超出旧画布、尾部被裁切（2980088441 的 minute 值层：装配期 `09` 2 字符，跨到 10 后 `"10"` 4 字符）。
+// 语义对齐 OME SceneTextObjectParser::update_text_layout：文本变化 → 重排 → SetSize(text+2×padding)。
+describe('文本变化 → 画布/布局按新文本重算（动态 resize）', () => {
+  let ctx: ReturnType<typeof makeMock2d>;
+  beforeEach(() => {
+    ctx = makeMock2d();
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(ctx as unknown as CanvasRenderingContext2D);
+  });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  // pointsize 40 → 160px 字号（mock 等宽 0.5em = 80px/字符）；padding 8 → 画布 = 文本宽 + 16
+  const OPTS = { pointsize: 40, padding: 8, horizontalAlign: 'center', width: 10, height: 10 };
+
+  it('文本变长：layout 与画布宽按新文本变大，行锚点用新画布宽', () => {
+    let text = '09';                       // 2 字符 → 160 + 16 = 176
+    const binding = { update: () => text, dispose: () => {} };
+    const canvas = document.createElement('canvas');
+    const driver = createScriptDriver(canvas, OPTS, binding, text);
+    expect(driver.layout).toMatchObject({ textWidth: 160, width: 176 });
+    text = '"10"';                         // 4 字符 → 320 + 16 = 336
+    expect(driver.update(new Date())).toBe(true);
+    expect(driver.layout).toMatchObject({ textWidth: 320, width: 336 });
+    expect(canvas.width).toBe(336);
+    expect(canvas.height).toBe(176);
+    // center 行锚点 = 新画布中心（用装配期的旧宽会画到别处）；基线 = padding + ascent
+    expect(ctx.fillText).toHaveBeenLastCalledWith('"10"', 168, 8 + 128);
+  });
+
+  it('文本变短：画布随之缩小', () => {
+    let text = '"10"';
+    const binding = { update: () => text, dispose: () => {} };
+    const canvas = document.createElement('canvas');
+    const driver = createScriptDriver(canvas, OPTS, binding, text);
+    expect(driver.layout.width).toBe(336);
+    text = '09';
+    expect(driver.update(new Date())).toBe(true);
+    expect(driver.layout).toMatchObject({ textWidth: 160, width: 176 });
+    expect(canvas.width).toBe(176);
+    expect(ctx.fillText).toHaveBeenLastCalledWith('09', 88, 136);
+  });
+
+  // clock 驱动与脚本驱动同路径：跨天 9 → 10 日时日期行变长（`Sep. 9 2026` → `Sep. 10 2026`）。
+  it('clock 驱动文本变化同样重算画布（不是只置 needsUpdate）', () => {
+    const props = { use24hFormat: true, delimiter: ':' };
+    const t0 = new Date(2026, 8, 9, 14, 5, 0);
+    const canvas = document.createElement('canvas');
+    const driver = createClockDriver(canvas, OPTS, props, formatClockText(t0, props));
+    // `14:05\nSep. 9 2026`：最长行 11 字符 → 880 + 16；两行高 = 128+32+160 + 16
+    expect(driver.layout).toMatchObject({ textWidth: 880, width: 896, textHeight: 320, height: 336 });
+    const t1 = new Date(2026, 8, 10, 14, 6, 0);
+    expect(driver.update(t1)).toBe(true);
+    expect(driver.layout).toMatchObject({ textWidth: 960, width: 976 });
+    expect(canvas.width).toBe(976);
+    expect(canvas.height).toBe(336);
+  });
+});

@@ -1082,10 +1082,17 @@ describe('three-renderer text 对象', () => {
     const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm, getTextScriptRuntime: async () => null });
     expect(await r.render('2851992662', document.createElement('canvas'), null)).toBe(true);
 
-    const assets = loadSceneToThree.mock.calls[0][1] as { textLayers: Map<number, { texture: unknown; driver?: { update(now: Date): boolean } }> };
+    const assets = loadSceneToThree.mock.calls[0][1] as { textLayers: Map<number, {
+      texture: unknown;
+      driver?: { update(now: Date): boolean; layout: { width: number; height: number; textWidth: number; textHeight: number } };
+      size?: [number, number];
+    }> };
     const layer = assets.textLayers.get(5)!;
     expect(layer.texture).toBeTruthy();
     expect(typeof layer.driver?.update).toBe('function');
+    // 驱动携带最近一次实测布局：帧循环按它 resize quad；必须与装配期画布尺寸同源
+    expect(layer.driver?.layout.width).toBe(layer.size![0]);
+    expect(layer.driver?.layout.height).toBe(layer.size![1]);
     expect(String(ctx2d.fillText.mock.calls[0][0])).toMatch(/\d{2}:\d{2}/);
     r.dispose();
   });

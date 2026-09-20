@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { GlowStage } from './glow-stage.js';
+import type { ClockDriver } from './text-object.js';
 export declare const DEFAULT_PARTICLE_CAPACITY = 1024;
 export declare const MAX_PARTICLE_CAPACITY = 2048;
 export declare function specMaxcount(specJson: string): number;
@@ -106,6 +107,7 @@ export declare class ThreeScenePlayer {
     private createCompositeQuadMaterial;
     private attachIsolated;
     update_background(id: number, origin?: [number, number, number], scale?: [number, number, number], alpha?: number, brightness?: number): void;
+    resizeBackground(id: number, size: [number, number]): void;
     addParticle(simVerticesGetter: () => Float32Array, opts: {
         tex?: THREE.Texture;
         frameCount: number;
@@ -161,9 +163,7 @@ export interface SceneAssets {
     qualityScale?: number;
     textLayers?: Map<number, {
         texture: THREE.Texture;
-        driver?: {
-            update(now: Date): boolean;
-        };
+        driver?: ClockDriver;
         size?: [number, number];
         anchorOffset?: [number, number];
     }>;
