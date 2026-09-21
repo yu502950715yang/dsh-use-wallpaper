@@ -66,7 +66,7 @@
 
 ## 4. 验收标准
 
-1. **A 档失败数 2 → 0**（用 `research/scan-pass-compile-failures.mjs --tiers=A` 复扫）：`2832263418` 的 `chromatic_aberration`、`3780477933` 的 `dot_matrix_mobile_fix`（唯一效果）必须恢复编译；两张壁纸的链进入 `lastOutput` 非空。
+1. **A 档失败数 2 → 1**（**2026-09-21 实施后订正**：原稿写"→ 0"，与 §3「不做 G1–G4」自相矛盾 —— 实测 F1–F7 后 `3780477933` 的 `dot_matrix_mobile_fix` 已恢复（链 `lastOutput` 由 false 变 true，单 shader 直编探针证明点阵**真的画了出来**），但 `2832263418` 的 `chromatic_aberration` **仍失败**，其残余 4 类错误全是 §3 明确排除的语义层：`float pointer = vec2 * float`（G3 隐式窄化）、`v_TexCoord += …`（G2 写只读 frag 输入）、`vec2 − vec4`（G3）、`vec3 = vec4`（G3）。**要归零必须做 G2（数据流分析）+ G3（类型推断），属独立一轮**。实施后的实际失败集合与逐条归属见 `AGENT.md` §7.1 第 10 条。
 2. **B 档失败数 8 → ≤5**（复扫）：`audioline`（F6）必须恢复；`Simple_Audio_Bars`（F4/F7）至少其第一层错误消失。**剩余失败逐条给出根因归属**（预期落在 G1/G4），不得含糊。
 3. **零新增失败**：比 A/B 两档的完整失败集合（本次基线的 8 条 + A 档 2 条）—— **不允许出现任何新的失败 pass**；这是硬约束（改 header 会影响全部 169 条链）。
 4. **单测**：每条修复都有对应单测（`tests/shader-headers.test.ts` / `tests/shader-preprocessor.test.ts`），覆盖：`mul` 各重载签名、`texSample2D` vec3/vec4、`fmod`/`lerp` 别名、宏重定义的 `#undef` 改写、赋值左值保护（含 `==`/`>=` 不误伤）、跨 `#if` 分支同名类型冲突。
