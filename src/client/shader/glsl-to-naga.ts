@@ -15,7 +15,7 @@
 //  - texSample2D(→texture(、texSample2DLod(→textureLod(、texture2D(→texture(。
 //  - #if 里的未定义宏 → #define X 0。
 import { WE_HEADERS } from './we-headers.js';
-import { extractIfIdentifiers, extractComboDefaults, normalizeFloatIntLiterals, floatifyIntVarUses, relaxGlsl3Strictness } from './shader-preprocessor.js';
+import { extractIfIdentifiers, extractComboDefaults, applyGlsl3StrictnessFixes, markHeaderText, stripHeaderMarks } from './shader-preprocessor.js';
 import type { CompiledEffectPass } from './effect-chain.js';
 import type { UniformValue } from './uniform-binder.js';
 import * as glslangNS from '@webgpu/glslang';
@@ -201,14 +201,15 @@ function broadcastFloatSwizzle(src: string): string {
 
 
 
-// 迭代展开 WE 内置头 include（头自带 #ifndef guard，迭代安全）。
+// 迭代展开 WE 内置头 include（头自带 #ifndef guard，迭代安全）。头文本用区段标记包裹，
+// 供 floatifyIntVarUses 跳过 header（见 shader-preprocessor.ts 的 HEADER_BEGIN 注释）。
 function expandIncludes(src: string): string {
   let out = src;
   let prev: string;
   do {
     prev = out;
     for (const [name, header] of Object.entries(WE_HEADERS)) {
-      out = out.split(`#include "${name}"`).join(header);
+      out = out.split(`#include "${name}"`).join(markHeaderText(header));
     }
   } while (out !== prev);
   return out;
@@ -523,7 +524,7 @@ function convertStage(
   // 先统一行尾（WE 安装目录 shader 为 CRLF，`\r` 会让 `(.*)$`/`$` 类正则锚点失配——JS `.` 不匹配 `\r`）。
   const hadExplicitCommon = src.includes('#include "common.h"');
   let s = expandIncludes(src.replace(/\r\n?/g, '\n'));
-  if (!hadExplicitCommon) s = WE_HEADERS['common.h'] + '\n' + s;
+  if (!hadExplicitCommon) s = markHeaderText(WE_HEADERS['common.h']) + '\n' + s;
 
   // 移除 WE 纹理包装（见 TEX_WRAPPER_* 注释），再全局改写为内建。
   s = s.replace(TEX_WRAPPER_2DLOD_RE, '').replace(TEX_WRAPPER_2D_RE, '');
@@ -540,9 +541,8 @@ function convertStage(
   //  - `const float x = <运行期表达式>` → const 降级（common_blur/blending 等）；
   //  - int 变量/字面量参与浮点运算 → desktop 也需显式转换（1.0/sampleCount 等）。
   //  顺序：normalize 补 .0 → floatify 包 float()（依赖 .0 已补）→ relax 去 const/改保留字。
-  s = normalizeFloatIntLiterals(s);
-  s = floatifyIntVarUses(s);
-  s = relaxGlsl3Strictness(s);
+  //  走共享入口：F6 的 int 上下文（int 变量赋值语句 / int 形参实参）保护必须横跨前两步。
+  s = applyGlsl3StrictnessFixes(s);
 
   // ④'' WE 自定义 sampler 类型 → Desktop/Vulkan 标准名。`sampler2DComparison` 是
   // WE 的深度比较采样类型（GLSL 3.30 方言名），Vulkan GLSL 无此名（应 sampler2DShadow），
@@ -675,7 +675,7 @@ function convertStage(
   // ⑨ 头部 #version 450；fragment 额外声明输出 o_Color。
   const defBlock = defines.length ? `${defines.join('\n')}\n` : '';
   const oColor = stage === 'frag' ? 'layout(location=0) out vec4 o_Color;\n' : '';
-  const glsl = `#version 450\n${defBlock}${oColor}${s}`;
+  const glsl = `#version 450\n${defBlock}${oColor}${stripHeaderMarks(s)}`;
 
   return { glsl, binds, nextBinding: bind + samplerCount };
 }

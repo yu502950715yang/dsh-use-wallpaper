@@ -315,3 +315,147 @@ describe('reconcileVaryingDeclarations（varying 声明跨 stage 兼容）', () 
     expect(r.warnings[0]).toContain('v_Bad');
   });
 });
+
+// ── F4：DEG2RAD/DEG2PCT 是我们多写的宏（WE 真实 common.h 没有这两个）─────────────
+// 反证：2911105183 的 Simple_Audio_Bars 自己定义的宏体与我们逐字相同 ⇒ 相同宏体重定义合法；
+// 3798688689 那份宏体不同（`2 * M_PI / 360.0`）才报 'DEG2RAD' : macro redefined。
+describe('F4 header 不再提供 DEG2RAD/DEG2PCT', () => {
+  it('common.h 里没有这两个 #define（shader 侧自行定义不受干扰）', () => {
+    const h = WE_HEADERS['common.h'] ?? '';
+    expect(h).not.toMatch(/#define\s+DEG2RAD\b/);
+    expect(h).not.toMatch(/#define\s+DEG2PCT\b/);
+  });
+  it('shader 自行 #define DEG2RAD（宏体不同）时输出无重定义', () => {
+    const out = preprocessWeShader('#define DEG2RAD 2 * M_PI / 360.0\nvoid main() { float x = 90.0 * DEG2RAD; }', {});
+    expect(out).toContain('#define DEG2RAD 2 * M_PI / 360.0');
+    expect(out.match(/#define\s+DEG2RAD\b/g)).toHaveLength(1); // 全文件仅此一处定义
+  });
+});
+
+// ── F5：shader 侧对「我们 header 已有宏」的 #define 改写成 #undef + #define ──────
+// GLSL 预处理把「不同的宏体重定义」当 ERROR（HLSL 只 warning）⇒ dot_matrix 的
+// `#define M_PI 3.1415926535897932384626433832795` 报 'M_PI' : macro redefined。
+describe('F5 header 已有宏被 shader 重定义 → #undef 后重定义（保留后者胜）', () => {
+  it('显式 include 的 shader：M_PI 重定义被改写且顺序正确', () => {
+    const src = '#include "common.h"\n#define M_PI 3.1415926535897932384626433832795\nvoid main() { float x = M_PI; }';
+    const out = preprocessWeShader(src, {});
+    const iHeader = out.indexOf('#define M_PI 3.14159265358979323846');
+    const iUndef = out.indexOf('#undef M_PI');
+    const iOverride = out.indexOf('#define M_PI 3.1415926535897932384626433832795');
+    expect(iHeader).toBeGreaterThan(-1);
+    expect(iUndef).toBeGreaterThan(iHeader);   // header 之后才 #undef
+    expect(iOverride).toBeGreaterThan(iUndef); // 立即重定义 ⇒ 后者胜
+  });
+  it('隐式注入 common.h 的 shader：覆盖仍然后置生效', () => {
+    const out = preprocessWeShader('#define M_PI 3.5\nvoid main() { float x = M_PI; }', {});
+    const iHeader = out.indexOf('#define M_PI 3.14159265358979323846');
+    const iUndef = out.indexOf('#undef M_PI');
+    const iOverride = out.indexOf('#define M_PI 3.5');
+    expect(iUndef).toBeGreaterThan(iHeader);
+    expect(iOverride).toBeGreaterThan(iUndef);
+  });
+  it('非 header 宏（如 combo 常量）的 #define 一字不动', () => {
+    const src = '#define OVERLAP_DRAW 1\n#define MY_FLAG 2\nvoid main() { float x = float(OVERLAP_DRAW); }';
+    const out = preprocessWeShader(src, {});
+    expect(out).toContain('#define OVERLAP_DRAW 1');
+    expect(out).toContain('#define MY_FLAG 2');
+    expect(out).not.toContain('#undef OVERLAP_DRAW');
+    expect(out).not.toContain('#undef MY_FLAG');
+  });
+});
+
+// ── F6：floatifyIntVarUses 的赋值左值保护（audioline 实测 `float(index) = …`）──────
+describe('F6 int 变量赋值语句保护', () => {
+  const src = [
+    'float getMirroredAudioValue(int index, int maxBand) {',
+    '  index = abs(index);',
+    '  if (index > maxBand) {',
+    '    index = maxBand - (index - maxBand);',
+    '  }',
+    '  index = clamp(index, 0, maxBand - 1);',
+    '  return float(index);',
+    '}',
+    'void main() {',
+    '  int index1 = 3;',
+    '  int maxBandInt = 8;',
+    '  float p0 = getMirroredAudioValue(index1, maxBandInt);',
+    '  gl_FragColor = vec4(p0);',
+    '}',
+  ].join('\n');
+  const out = preprocessWeShader(src, {});
+
+  it('左值不被包成 float(x)，右值保持 int（含字面量不被补 .0）', () => {
+    expect(out).not.toContain('float(index) =');
+    expect(out).toMatch(/index = abs\(index\);/);
+    expect(out).toMatch(/index = maxBand - \(index - maxBand\);/);
+    // int 上下文：clamp 的 0/1 必须保持整型字面量（补成 0.0/1.0 会 no matching overloaded function）
+    expect(out).toMatch(/index = clamp\(index, 0, maxBand - 1\);/);
+    expect(out).not.toContain('clamp(index, 0.0, maxBand - 1.0)');
+    expect(out).toContain('return float(index);'); // 显式转换保留
+  });
+
+  it('不与 ==/!=/>=/<= 冲突（比较两侧不受影响）', () => {
+    expect(out).toContain('index > maxBand');
+    expect(out).not.toContain('float(index) >');
+  });
+
+  it('int 形参的调用点参数保持 int（不产生 no matching overloaded function）', () => {
+    expect(out).toContain('getMirroredAudioValue(index1, maxBandInt)');
+    expect(out).not.toContain('float(index1)');
+    expect(out).not.toContain('float(maxBandInt)');
+  });
+});
+
+// ── 回归（2026-09-21 复扫）：shader 的 int 变量名与 header 宏参数/形参同名 ──────────
+// shake.vert 有 `for (int a = …)`；若 floatifyIntVarUses 覆盖 header，会把
+// `#define lerp(a, b, t)` 改成 `#define lerp(float(a), b, t)`、`mat2 mul(mat2 a, mat2 b)`
+// 改成 `mat2 mul(mat2 float(a), mat2 b)` ⇒ 19 张壁纸的 vertex shader 集体 syntax error。
+it('floatifyIntVarUses 跳过 header 区段（int 变量名不与宏参数/形参相撞）', () => {
+  const src = [
+    '#include "common.h"',
+    'void main() {',
+    '  float acc = 0.0;',
+    '  for (int a = 0; a < 4; ++a) acc += a * 0.5;',
+    '  gl_FragColor = vec4(acc, lerp(0.0, 1.0, 0.5), fmod(1.0, 2.0), 1.0);',
+    '}',
+  ].join('\n');
+  const out = preprocessWeShader(src, {});
+  // header 一字不动
+  expect(out).toContain('#define lerp(a, b, t) mix(a, b, t)');
+  expect(out).toContain('#define fmod(a, b) mod(a, b)');
+  expect(out).toContain('mat2 mul(mat2 a, mat2 b) { return b * a; }');
+  expect(out).not.toContain('float(a), b, t');
+  expect(out).not.toContain('mat2(float(a))');
+  // shader 主体里的 int 变量照常转换
+  expect(out).toContain('float(a) * 0.5');
+  // 区段标记不泄漏到最终源码
+  expect(out).not.toContain('__WE_HEADER_BEGIN__');
+  expect(out).not.toContain('__WE_HEADER_END__');
+});
+
+// ── F7：同名跨互斥 #if 分支类型不一致（Simple_Audio_Bars 的 `int bar` / `float bar`）──
+describe('F7 同名跨 #if 分支类型不一致 → 整名跳过', () => {
+  it('不产生 `float float(bar)`（最保守：该名完全不转换）', () => {
+    const src = [
+      '#if ANTIALIAS == 1',
+      '  float bar = 1.0;',
+      '#else',
+      '  int bar = 2;',
+      '#endif',
+      'void main() { float x = bar; gl_FragColor = vec4(x); }',
+    ].join('\n');
+    const out = preprocessWeShader(src, {});
+    expect(out).toContain('float bar = 1.0;');
+    expect(out).toContain('int bar = 2;');
+    expect(out).not.toContain('float float(bar)');
+    expect(out).not.toContain('float(bar)');
+  });
+
+  it('单一类型的 int 变量仍照常补 float()（不误伤）', () => {
+    const out = preprocessWeShader([
+      'const int sampleCount = 30;',
+      'void main() { float a = sampleCount - 1; gl_FragColor = vec4(a); }',
+    ].join('\n'), {});
+    expect(out).toContain('float(sampleCount) - 1');
+  });
+});

@@ -224,11 +224,18 @@ export function normalizeFloatIntLiterals(src: string): string {
 // 防止比较保护等把已保护的占位符当变量名吞进新保护块（2026-08-21 Simple_Audio_Bars 实测：
 // float((a - b) < 0.0) 截断后残留 ) 触发比较保护吞占位符 → 嵌套占位符还原错乱）。
 export function floatifyIntVarUses(src: string): string {
-  const intVars = new Set<string>();
-  // 排除 int 函数定义名（int funcName( 是函数不是变量）：(?!\s*\()
-  for (const m of src.matchAll(/\b(?:const\s+)?(?:uniform\s+)?(?:in\s+|out\s+)?int\s+(\w+)(?!\s*\()/g)) {
-    intVars.add(m[1]);
+  // 变量名收集只看 shader 主体：header 的形参/局部名（mat2 a、float x、const int format…）
+  // 不属于 shader 作用域，若混入会让主体里的同名 int 变量被 F7 误判为「类型不一致」而整名跳过。
+  const body = protectHeaderRegions(src, () => '');
+  const intVars = collectIntVarNames(body);
+  // F7（2026-09-21）：同名在别处声明为非 int（最典型：跨互斥 #if/#else 分支的
+  // `float bar` / `int bar`）时整名跳过。否则会把另一支写成 `float float(bar) = …`
+  // （Simple_Audio_Bars 实测 GLSL 'float' : syntax error）。最保守：该名完全不转换。
+  const nonIntDecls = new Set<string>();
+  for (const m of body.matchAll(/\b(?:const\s+)?(?:uniform\s+)?(?:in\s+|out\s+)?(?:float|vec[234]|mat[234]|uint|bool|double)\s+(\w+)(?!\s*\()/g)) {
+    nonIntDecls.add(m[1]);
   }
+  for (const name of [...intVars]) if (nonIntDecls.has(name)) intVars.delete(name);
   if (intVars.size === 0) return src;
   const protectedBlocks: string[] = [];
   const protect = (m: string) => {
@@ -237,10 +244,12 @@ export function floatifyIntVarUses(src: string): string {
     return token;
   };
   const restore = () => {
-    protectedBlocks.forEach((block, i) => {
+    // 逆序还原：后建的块可能把先建的 token 吞进自己的块文本（嵌套），顺序还原会让内层
+    // token 永远留在文本里（2026-09-21 实测 F6 的 `a = 0;` 被 for 头块吞掉 → 泄漏 token）。
+    for (let i = protectedBlocks.length - 1; i >= 0; i--) {
       // 函数式替换避免 block 中 $ 特殊字符；全局替换防同一 token 出现多次残留
-      out = out.replace(new RegExp(`0WEI_INTVAR_${i.toString(36)}__`, 'g'), () => block);
-    });
+      out = out.replace(new RegExp(`0WEI_INTVAR_${i.toString(36)}__`, 'g'), () => protectedBlocks[i]);
+    }
   };
   // int/float/ivec 构造保护：从 '(' 扫描配对 ')'（支持嵌套括号，防止 [^)]* 在
   // 内层 ) 截断 → 残留部分被后续比较保护误匹配）。返回替换后的完整字符串。
@@ -277,7 +286,26 @@ export function floatifyIntVarUses(src: string): string {
   out = out.replace(/\[[^\]]*\]/g, protect);
   //  - for 头：用三部分（init; cond; incr）匹配，每部分允许嵌套括号但无分号/花括号
   //    （原 `[^)]*` 在 int(...) 的内层 ) 截断 → 循环变量泄漏到保护段外被误转 float(a)）
+  //    ⚠️ 必须在 F6 之前：F6 会把 `for (int i = 0; …)` 的 `i = 0;` 先保护成 token，
+  //    头里就少一个 `;` → for 头保护失配（2026-09-21 实测）。
   out = out.replace(/for\s*\([^;{}]*;[^;{}]*;[^;{}]*\)/g, protect);
+  //  - F6（2026-09-21）：int 变量的赋值语句整体保护。左值被包成 `float(index) = …` 是
+  //    GLSL 'l-value required'；只保护左值还不够 —— `index = abs(float(index))` 仍是
+  //    float 赋 int，所以整条赋值语句（到同行分号）保持原样。
+  //    `(?!=)` 保证不与 `==`/`!=` 冲突；`>=`/`<=` 因第一个字符不是 `=` 天然不匹配。
+  for (const name of intVars) {
+    out = out.replace(new RegExp(`\\b${name}\\s*(?:[-+*/%&|^]|<<|>>)?=(?!=)[^\\n;]*;`, 'g'), protect);
+  }
+  //    兜底：跨行/无分号的赋值目标本身也不能被包成 float(x)
+  for (const name of intVars) {
+    out = out.replace(new RegExp(`\\b${name}\\s*(?:[-+*/%&|^]|<<|>>)?=(?!=)`, 'g'), protect);
+  }
+  //  - F6 补充：本地函数 int 形参位置上的实参必须保持 int。audioline 实测
+  //    `getMirroredAudioValue(int index, int maxBand)` 的调用点被包成 `float(index1)`
+  //    ⇒ GLSL 'no matching overloaded function'（float 实参无法隐式转 int）。
+  //    注：正常路径由 protectIntContexts 在补 .0 之前就保护（否则 `index1 - 1` 会先变 `1.0`），
+  //    这里保留一份以便直接调用本函数时仍然成立。
+  out = protectIntParamArgs(out, collectIntParamPositions(src), protect);
   //  - 自增/自减
   out = out.replace(/(?:\+\+|--)\s*\w+|\w+\s*(?:\+\+|--)/g, protect);
   //  - int/float/ivec 构造（配对括号，float(N) 内已是显式转换，不重复包）
@@ -289,6 +317,9 @@ export function floatifyIntVarUses(src: string): string {
   //    单侧兜底：另一侧是字面量/表达式（`x == 0.0`、`== x`）时，仍保护运算符与那一侧。
   out = out.replace(/[A-Za-z_]\w*\s*(?:==|!=|<=|>=|<|>)/g, protect);
   out = out.replace(/(?:==|!=|<=|>=|<|>)\s*[A-Za-z_]\w*/g, protect);
+  // header 区段整体保护：见 HEADER_BEGIN 注释（不能在 wrap 之前有别的 protect 把该 token 吞掉，
+  // 故放在这里——紧随其后就是 wrap，只有 restore）。
+  out = protectHeaderRegions(out, protect);
   // 剩余使用点：float(name)（与浮点字面量/变量/vec 混合运算、赋值、函数参数）
   for (const name of intVars) {
     out = out.replace(new RegExp(`\\b${name}\\b`, 'g'), `float(${name})`);
@@ -358,12 +389,181 @@ export function relaxGlsl3Strictness(src: string): string {
   return lines.join('\n');
 }
 
+// F5：我们 header 里定义过的宏名集合（只有这些宏被 shader 重定义时才会触发 GLSL 的
+// "macro redefined" ERROR）。放在模块级：header 是常量表，扫一次即可。
+const HEADER_MACRO_NAMES: ReadonlySet<string> = (() => {
+  const names = new Set<string>();
+  for (const header of Object.values(WE_HEADERS)) {
+    for (const m of header.matchAll(/^[ \t]*#define[ \t]+([A-Za-z_][A-Za-z0-9_]*)/gm)) names.add(m[1]);
+  }
+  return names;
+})();
+
+// 内置头文本的区段标记（注释形式，即使泄漏进 GLSL 也无副作用）：用于让
+// `floatifyIntVarUses` 的 int 变量改写**跳过 header**——header 的宏参数/形参名
+// （`#define lerp(a, b, t)`、`mat2 mul(mat2 a, mat2 b)`）会与 shader 里的同名 int 变量
+// （shake.vert 的 `for (int a = …)`）相撞，被改写成 `#define lerp(float(a), b, t)` ⇒ 语法错误。
+const HEADER_BEGIN = '/*__WE_HEADER_BEGIN__*/';
+const HEADER_END = '/*__WE_HEADER_END__*/';
+
+/** 用区段标记包住内置头文本（展开 include / 隐式注入时使用）。 */
+export function markHeaderText(text: string): string {
+  return `${HEADER_BEGIN}${text}${HEADER_END}`;
+}
+
+/** 剥掉区段标记（最终源码不需要它们）。 */
+export function stripHeaderMarks(text: string): string {
+  return text.split(HEADER_BEGIN).join('').split(HEADER_END).join('');
+}
+
+/** 把每个顶层 header 区段（含嵌套，如 common_composite.h 内的 common.h）整体交给 protect。 */
+function protectHeaderRegions(text: string, protect: (s: string) => string): string {
+  if (!text.includes(HEADER_BEGIN)) return text;
+  let out = '';
+  let depth = 0;
+  let start = 0;
+  let i = 0;
+  while (i < text.length) {
+    if (text.startsWith(HEADER_BEGIN, i)) {
+      if (depth === 0) { out += text.slice(start, i); start = i; }
+      depth++;
+      i += HEADER_BEGIN.length;
+    } else if (text.startsWith(HEADER_END, i)) {
+      depth--;
+      if (depth === 0) { out += protect(text.slice(start, i + HEADER_END.length)); start = i + HEADER_END.length; }
+      i += HEADER_END.length;
+    } else i++;
+  }
+  return out + text.slice(start);
+}
+
+/** 收集 int 变量名（排除 int 函数定义名 `int funcName(`）。 */
+function collectIntVarNames(text: string): Set<string> {
+  const out = new Set<string>();
+  for (const m of text.matchAll(/\b(?:const\s+)?(?:uniform\s+)?(?:in\s+|out\s+)?int\s+(\w+)(?!\s*\()/g)) out.add(m[1]);
+  return out;
+}
+
+/** 本地函数签名里 int 形参的位置（name → 参数下标集合）。 */
+function collectIntParamPositions(src: string): Map<string, Set<number>> {
+  const out = new Map<string, Set<number>>();
+  for (const m of src.matchAll(/\b(?:void|float|int|uint|bool|vec[234]|mat[234])\s+(\w+)\s*\(([^)]*)\)\s*\{/g)) {
+    const pos = new Set<number>();
+    m[2].split(',').forEach((p, i) => { if (/\bint\b/.test(p)) pos.add(i); });
+    if (pos.size) out.set(m[1], pos);
+  }
+  return out;
+}
+
+/** 保护「int 形参位置」上的实参跨度（调用点不能传 float 实参：GLSL 无 float→int 隐式转换）。 */
+function protectIntParamArgs(text: string, signatures: Map<string, Set<number>>, protect: (s: string) => string): string {
+  const fnNames = [...signatures.keys()];
+  if (!fnNames.length) return text;
+  const callRe = new RegExp(`(?<![\\w.])(${fnNames.join('|')})\\s*\\(`, 'g');
+  let res = '';
+  let last = 0;
+  let c: RegExpExecArray | null;
+  while ((c = callRe.exec(text))) {
+    // 跳过函数定义本身（其前缀是返回类型）
+    if (/\b(?:void|float|int|uint|bool|vec[234]|mat[234])\s+$/.test(text.slice(0, c.index))) continue;
+    const open = c.index + c[0].length; // '(' 之后
+    const args: Array<[number, number]> = [];
+    let depth = 1;
+    let i = open;
+    let argStart = open;
+    for (; i < text.length && depth > 0; i++) {
+      const ch = text[i];
+      if (ch === '(') depth++;
+      else if (ch === ')') { depth--; if (depth === 0) break; }
+      else if (ch === ',' && depth === 1) { args.push([argStart, i]); argStart = i + 1; }
+    }
+    if (depth !== 0) break; // 括号不配对：保守放弃
+    args.push([argStart, i]);
+    const positions = signatures.get(c[1]) as Set<number>;
+    res += text.slice(last, open);
+    let cursor = open;
+    for (let k = 0; k < args.length; k++) {
+      const [s, e] = args[k];
+      if (positions.has(k) && e > s) { res += text.slice(cursor, s) + protect(text.slice(s, e)); cursor = e; }
+    }
+    res += text.slice(cursor, i);
+    last = i;
+    callRe.lastIndex = i;
+  }
+  return res + text.slice(last);
+}
+
+// F6（2026-09-21）：int 上下文共享保护层。int 变量的赋值语句（`index = clamp(index, 0, BANDS-1)`）
+// 与 int 形参位置上的实参（`getMirroredAudioValue(index1 - 1, …)`）必须在**补 .0 之前**就整体
+// 保持原样：否则字面量先被补成 0.0/1.0 → GLSL 报 clamp 无匹配重载 / int-float 混算
+// （audioline 实测）。这一层横跨 normalize 与 floatify 两步，最后由调用方还原。
+export function protectIntContexts(src: string): { text: string; restore: (s: string) => string } {
+  const blocks: string[] = [];
+  const protect = (m: string) => {
+    const token = `0WEI_INTCTX_${blocks.length.toString(36)}__`;
+    blocks.push(m);
+    return token;
+  };
+  const body = protectHeaderRegions(src, () => '');
+  let text = src;
+  //  - int 变量的赋值语句（同行到分号）：整条是 int 上下文。声明行（前置类型关键字）跳过，
+  //    交给各步自己的 int 声明保护处理。
+  for (const name of collectIntVarNames(body)) {
+    const re = new RegExp(`(?<![\\w.])${name}\\s*(?:[-+*/%&|^]|<<|>>)?=(?!=)[^\\n;]*;`, 'g');
+    const spans: Array<[number, number]> = [];
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text))) {
+      const before = text.slice(Math.max(0, m.index - 24), m.index);
+      if (/\b(?:const|uniform|in|out|int|uint|float|bool|vec[234]|mat[234])\s+$/.test(before)) continue;
+      spans.push([m.index, m.index + m[0].length]);
+    }
+    for (const [s, e] of spans.reverse()) text = text.slice(0, s) + protect(text.slice(s, e)) + text.slice(e);
+  }
+  //  - int 形参位置上的实参
+  text = protectIntParamArgs(text, collectIntParamPositions(src), protect);
+  const restore = (s: string) => {
+    let out = s;
+    // 逆序还原：后建块可能吞掉先建 token（同 floatifyIntVarUses 的说明）
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      out = out.replace(new RegExp(`0WEI_INTCTX_${i.toString(36)}__`, 'g'), () => blocks[i]);
+    }
+    return out;
+  };
+  return { text, restore };
+}
+
+/** GLSL3 严格化三连（normalize 补 .0 → floatify 包 float() → relax 去 const/改保留字）。
+ *  F6 的 int 上下文跨度必须横跨 normalize 与 floatify（见 protectIntContexts），
+ *  relax 在还原之后跑，保留它对保留字/const 的改写。 */
+export function applyGlsl3StrictnessFixes(src: string): string {
+  const ctx = protectIntContexts(src);
+  let out = normalizeFloatIntLiterals(ctx.text);
+  out = floatifyIntVarUses(out);
+  out = ctx.restore(out);
+  return relaxGlsl3Strictness(out);
+}
+
+/** 把 shader 侧对 header 已有宏的 `#define X …` 改写成 `#undef X` + `#define X …`（保留 HLSL 后者胜）。 */
+function undefHeaderMacroRedefinitions(src: string): string {
+  return src.replace(
+    /^([ \t]*)#define[ \t]+([A-Za-z_][A-Za-z0-9_]*)([^\n]*)$/gm,
+    (whole, indent: string, name: string, rest: string) =>
+      // rest 含行尾 \r，\n 单独插入 ⇒ 不破坏 CRLF 行的宏体
+      HEADER_MACRO_NAMES.has(name) ? `${indent}#undef ${name}\n${indent}#define ${name}${rest}` : whole,
+  );
+}
+
 export function preprocessWeShader(source: string, combos: Record<string, number>): string {
+  // F5：shader 侧对「我们 header 已有宏」的 #define 改写成 #undef + #define。
+  // 缘由：GLSL 预处理把「同一宏名不同宏体的重定义」当 ERROR（HLSL 只 warning，后者胜），
+  // dot_matrix_mobile_fix 的 `#define M_PI 3.14…2795` 因此编译失败。
+  // 只改我们 header 里出现过的宏名；#undef 紧贴重定义 ⇒ 展开顺序上仍然后者胜。
+  const rewrittenSource = undefHeaderMacroRedefinitions(source);
   // GLSL 先声明后使用：sampler uniform 声明前置。
   // common_blur.h 的 blur13a/blur7a/blur3a 引用 g_Texture0，而 WE shader 源码中
   // sampler 声明在 include 之后 → 若不前置会 "g_Texture0 : undeclared identifier"。
   const samplerDecls: string[] = [];
-  const src = source.replace(/^\s*(uniform\s+sampler\w+\s+\w+\s*;.*)$/gm, (m) => {
+  const src = rewrittenSource.replace(/^\s*(uniform\s+sampler\w+\s+\w+\s*;.*)$/gm, (m) => {
     samplerDecls.push(m.trim());
     return '';
   });
@@ -378,22 +578,19 @@ export function preprocessWeShader(source: string, combos: Record<string, number
   do {
     prev = out;
     for (const [name, header] of Object.entries(WE_HEADERS)) {
-      out = out.split(`#include "${name}"`).join(header);
+      out = out.split(`#include "${name}"`).join(markHeaderText(header));
     }
   } while (out !== prev);
   // WE 引擎对所有效果 shader 隐式提供基础函数头（common.h）：
   // 全库实测 114/182 个 shader 无任何 include 却直接调用 mul/texSample2D/frac 等，
   // 故未显式 include common.h 的 shader 前置注入（guard 宏防止与显式 include 重复）
   if (!hadExplicitCommon) {
-    out = WE_HEADERS['common.h'] + '\n' + out;
+    out = markHeaderText(WE_HEADERS['common.h']) + '\n' + out;
   }
   out = rewriteAttributes(out);
-  out = normalizeFloatIntLiterals(out);
-  // int 变量使用点 float() 转换必须在本步（normalize 补 .0 之后、const 降级之前）：
-  // normalize 已把 `1` 补成 `1.0`，此处再处理 int **变量**（字面量不重复处理）；
-  // relaxGlsl3Strictness 的 const 降级依赖转换后的表达式（float(sampleCount) - 1.0）。
-  out = floatifyIntVarUses(out);
-  out = relaxGlsl3Strictness(out);
+  // int 变量相关的严格化三连（normalize → floatify → relax）走共享入口：
+  // F6 的 int 上下文保护必须横跨 normalize 与 floatify（见 protectIntContexts）。
+  out = applyGlsl3StrictnessFixes(out);
   // 注入 combo 宏（scene.json 提供的值优先，其余按 [COMBO] 注释 default 兜底）
   const defines = new Map<string, string>();
   for (const [k, v] of Object.entries(combos)) defines.set(k, String(v));
@@ -414,5 +611,6 @@ export function preprocessWeShader(source: string, combos: Record<string, number
   const defineLines = [...defines.entries()].map(([k, v]) => `#define ${k} ${v}`);
   // 前置组合：combo 宏 → sampler 声明 → shader 主体（sampler 必须在任何引用前）
   const prefix = [...defineLines, ...samplerDecls];
-  return prefix.length ? `${prefix.join('\n')}\n${out}` : out;
+  const body = stripHeaderMarks(out);
+  return prefix.length ? `${prefix.join('\n')}\n${body}` : body;
 }
