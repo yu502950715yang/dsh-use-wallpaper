@@ -21,8 +21,8 @@ const COMMON_H = `
 #define M_PI_2 6.28318530718
 #define SQRT_2 1.41421356237309504880
 #define SQRT_3 1.73205080756887729352
-#define DEG2RAD 0.01745329251994329576923690768489
-#define DEG2PCT 0.0027777777777777777777777777777
+// F4（2026-09-21）：DEG2RAD/DEG2PCT 是我们多写的宏——WE 真实 common.h 只有上面这 5 个
+// 常量宏。删除后 shader 侧自行 #define（Simple_Audio_Bars 两份宏体不同）不再报重定义。
 
 float frac(float x) { return fract(x); }
 vec2 frac(vec2 x) { return fract(x); }
@@ -35,6 +35,9 @@ vec3 saturate(vec3 x) { return clamp(x, 0.0, 1.0); }
 vec4 saturate(vec4 x) { return clamp(x, 0.0, 1.0); }
 
 vec4 texSample2D(sampler2D t, vec2 uv) { return texture2D(t, uv); }
+// F2（2026-09-21）：WE 内置按前两分量取 uv（chromatic_aberration 传 vec4）。
+vec4 texSample2D(sampler2D t, vec3 uv) { return texture2D(t, uv.xy); }
+vec4 texSample2D(sampler2D t, vec4 uv) { return texture2D(t, uv.xy); }
 vec4 texSample2DLod(sampler2D t, vec2 uv, float lod) { return textureLod(t, uv, lod); }
 
 vec2 rotateVec2(vec2 v, float r) {
@@ -59,6 +62,10 @@ vec2 rotateVec2(vec4 v, float r) { return rotateVec2(v.xy, r); }
 #define CAST4X4(x) mat4(x)
 // WE 的 atan2(y,x) 是 HLSL 风格；GLSL 内建为 atan(y,x)，仅映射名字（fisheye 等效果 shader）。
 #define atan2(y, x) atan(y, x)
+// F3（2026-09-21）：HLSL 内置名别名（chromatic_aberration 的 fmod、Simple_Audio_Bars 的 lerp）；
+// 用宏而非函数以覆盖标量/向量全部重载。
+#define fmod(a, b) mod(a, b)
+#define lerp(a, b, t) mix(a, b, t)
 
 // —— 以下为引擎真实 common.h 转写（D:\\Steam\\steamapps\\common\\wallpaper_engine\\assets\\shaders\\common.h）——
 vec3 hsv2rgb(vec3 c) {
@@ -83,8 +90,17 @@ float greyscale(vec3 color) {
 // —— 引擎转写结束 ——
 
 // WE 行主序约定：gl_Position = mul(vec4(a_Position,1), g_ModelViewProjectionMatrix)
-vec4 mul(vec4 v, mat4 m) { return m * v; }
+// F1（2026-09-21）：补齐 HLSL mul 全表。HLSL 把 matN(a,b,c,d) 读作行主序、GLSL 读作列主序，
+// 两者互为转置，故：mul(v,M) 与既有 m*v 同约定（行主序）；mul(M,v) 与 mul(A,B) 用转置形式。
+vec2 mul(vec2 v, mat2 m) { return m * v; }
 vec3 mul(vec3 v, mat3 m) { return m * v; }
+vec4 mul(vec4 v, mat4 m) { return m * v; }
+vec2 mul(mat2 m, vec2 v) { return v * m; }
+vec3 mul(mat3 m, vec3 v) { return v * m; }
+vec4 mul(mat4 m, vec4 v) { return v * m; }
+mat2 mul(mat2 a, mat2 b) { return b * a; }
+mat3 mul(mat3 a, mat3 b) { return b * a; }
+mat4 mul(mat4 a, mat4 b) { return b * a; }
 #endif
 `;
 

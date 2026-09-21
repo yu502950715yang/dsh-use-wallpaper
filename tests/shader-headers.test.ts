@@ -13,7 +13,8 @@ describe('WE 内置头文件（方言完备性）', () => {
   it('common.h 提供方言核心函数与常量', () => {
     const h = WE_HEADERS['common.h'] ?? '';
     // 注：mod2 由 Simple_Audio_Bars 自实现（避免重复定义冲突），不在 common.h
-    for (const token of ['texSample2D', 'mul', 'rotateVec2', 'CAST2', 'frac', 'saturate', 'M_PI', 'M_PI_2', 'DEG2RAD']) {
+    // 注：DEG2RAD/DEG2PCT 已按 F4 删除（WE 真实 common.h 里没有这两个宏，见下）
+    for (const token of ['texSample2D', 'mul', 'rotateVec2', 'CAST2', 'frac', 'saturate', 'M_PI', 'M_PI_2']) {
       expect(h, `common.h 缺少 ${token}`).toContain(token);
     }
   });
@@ -70,5 +71,45 @@ describe('WE 内置头文件（方言完备性）', () => {
   });
   it('common_vertex.h 提供 BuildTangentSpace', () => {
     expect(WE_HEADERS['common_vertex.h'] ?? '').toContain('BuildTangentSpace');
+  });
+});
+
+// ── F1/F2/F3：HLSL 方言重载与别名补全（全库扫描：mul 3 例、texSample2D 1 例、fmod/lerp 4 例）──
+describe('F1 mul 重载全表（HLSL mul 的行主序约定）', () => {
+  const h = WE_HEADERS['common.h'] ?? '';
+
+  it('vecN × matN 三个方阵重载齐备且沿用既有 m * v 约定', () => {
+    expect(h).toMatch(/vec2 mul\(vec2 v, mat2 m\)\s*\{ return m \* v; \}/);
+    expect(h).toMatch(/vec3 mul\(vec3 v, mat3 m\)\s*\{ return m \* v; \}/);
+    expect(h).toMatch(/vec4 mul\(vec4 v, mat4 m\)\s*\{ return m \* v; \}/);
+  });
+
+  it('matN × vecN 三个重载齐备（HLSL 行主序 = GLSL v * m）', () => {
+    expect(h).toMatch(/vec2 mul\(mat2 m, vec2 v\)\s*\{ return v \* m; \}/);
+    expect(h).toMatch(/vec3 mul\(mat3 m, vec3 v\)\s*\{ return v \* m; \}/);
+    expect(h).toMatch(/vec4 mul\(mat4 m, vec4 v\)\s*\{ return v \* m; \}/);
+  });
+
+  it('matN × matN 三个重载齐备（结果转置 ⇒ b * a）', () => {
+    expect(h).toMatch(/mat2 mul\(mat2 a, mat2 b\)\s*\{ return b \* a; \}/);
+    expect(h).toMatch(/mat3 mul\(mat3 a, mat3 b\)\s*\{ return b \* a; \}/);
+    expect(h).toMatch(/mat4 mul\(mat4 a, mat4 b\)\s*\{ return b \* a; \}/);
+  });
+});
+
+describe('F2 texSample2D 的 vec3/vec4 uv 重载', () => {
+  const h = WE_HEADERS['common.h'] ?? '';
+  it('vec3/vec4 uv 内部取 .xy（WE 内置按前两分量取 uv）', () => {
+    expect(h).toMatch(/vec4 texSample2D\(sampler2D t, vec3 uv\)\s*\{ return texture2D\(t, uv\.xy\); \}/);
+    expect(h).toMatch(/vec4 texSample2D\(sampler2D t, vec4 uv\)\s*\{ return texture2D\(t, uv\.xy\); \}/);
+    expect(h).toMatch(/vec4 texSample2D\(sampler2D t, vec2 uv\)\s*\{ return texture2D\(t, uv\); \}/);
+  });
+});
+
+describe('F3 HLSL 名字别名 fmod→mod、lerp→mix', () => {
+  const h = WE_HEADERS['common.h'] ?? '';
+  it('提供 fmod/lerp 别名（宏覆盖标量/向量全部重载）', () => {
+    expect(h).toMatch(/#define fmod\(a, b\) mod\(a, b\)/);
+    expect(h).toMatch(/#define lerp\(a, b, t\) mix\(a, b, t\)/);
   });
 });
