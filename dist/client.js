@@ -2352,6 +2352,10 @@ body[data-ds-dark-theme][data-we-wallpaper] [data-question-key] section{
 .wss-dir-row input{border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;padding:6px 10px;font:inherit;font-size:12px}
 /* \u5149\u6655\u5F00\u5173\u884C\uFF1A\u590D\u9009\u6846\u4E0E\u6587\u5B57\u4E0E\u5176\u4ED6\u63A7\u4EF6\uFF08.wss-dir-row\uFF09\u5DE6\u5BF9\u9F50\u3001\u540C\u4E00\u884C\u5C45\u4E2D */
 .wss-glow-row{display:flex;align-items:center;gap:6px;margin-bottom:8px;font-size:12px;color:var(--dsw-alias-label-secondary,var(--wp-text))}
+/* \u5149\u6655\u9608\u503C/\u5F3A\u5EA6\u6ED1\u6746\uFF1A\u6807\u7B7E\u4E0E\u6ED1\u6746\u7AD6\u6392\uFF0C\u6ED1\u6746\u5360\u6EE1\u5BBD\u5EA6 */
+.wss-glow{display:flex;flex-direction:column;gap:2px;margin:4px 0 10px}
+.wss-glow-slider{display:flex;flex-direction:column;gap:2px;font-size:12px;color:var(--dsw-alias-label-secondary,var(--wp-text))}
+.wss-glow-slider input[type=range]{width:100%;margin:0}
 /* \u7701\u7535/\u753B\u8D28\u6863\u4F4D\u533A\u5757\uFF1A\u590D\u7528\u5149\u6655\u884C\u7684\u6392\u7248\uFF0C\u884C\u8DDD\u66F4\u7D27 */
 .wss-power{display:flex;flex-direction:column;gap:2px;margin:4px 0 10px}
 .wss-quality{border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;padding:4px 8px;font:inherit;font-size:12px}
@@ -27580,6 +27584,9 @@ function createThreeSceneRenderer(opts) {
   let current = null;
   let currentStage = null;
   let currentGlow = null;
+  let glowOverride = null;
+  let glowFromSettings = null;
+  let glowSize = { width: 1, height: 1 };
   let paused = false;
   let qualityScale = 1;
   let onWindowResize = null;
@@ -27601,6 +27608,29 @@ function createThreeSceneRenderer(opts) {
     currentTextures = null;
     for (const b of currentScriptBindings) b.dispose();
     currentScriptBindings = [];
+  };
+  const effectiveGlow = () => ({
+    enabled: glowOverride?.enabled ?? glowFromSettings?.enabled ?? true,
+    threshold: glowOverride?.threshold ?? glowFromSettings?.threshold,
+    strength: glowOverride?.strength ?? glowFromSettings?.strength
+  });
+  const applyGlowRuntime = () => {
+    if (!current) return;
+    const glow = effectiveGlow();
+    if (!glow.enabled) {
+      if (currentGlow) {
+        currentGlow.dispose();
+        currentGlow = null;
+        current.player.setGlowStage(null);
+      }
+      return;
+    }
+    if (currentGlow) {
+      currentGlow.setOptions({ threshold: glow.threshold, strength: glow.strength });
+      return;
+    }
+    currentGlow = createGlowStage(glowSize.width, glowSize.height, { threshold: glow.threshold, strength: glow.strength });
+    current.player.setGlowStage(currentGlow);
   };
   const viewportSize = () => ({
     width: Math.max(1, Math.round(window.innerWidth || 0)),
@@ -27726,6 +27756,11 @@ function createThreeSceneRenderer(opts) {
         const effectChains = await collectObjectEffectChains(desc, loadFile);
         const settings = await readClientSettings();
         qualityScale = settings.qualityScale ?? 1;
+        glowFromSettings = {
+          enabled: settings.glowEnabled,
+          threshold: settings.glowThreshold,
+          strength: settings.glowStrength
+        };
         const dpr = resolvePixelRatio(
           typeof window !== "undefined" && window.devicePixelRatio ? window.devicePixelRatio : 1,
           qualityScale
@@ -27804,16 +27839,19 @@ function createThreeSceneRenderer(opts) {
           currentStage = stage;
         }
         currentGlow?.dispose();
-        currentGlow = settings.glowEnabled ? createGlowStage(fg.width, fg.height, {
-          threshold: settings.glowThreshold,
-          strength: settings.glowStrength
+        const glow = effectiveGlow();
+        currentGlow = glow.enabled ? createGlowStage(fg.width, fg.height, {
+          threshold: glow.threshold,
+          strength: glow.strength
         }) : null;
+        glowSize = { width: fg.width, height: fg.height };
         result.player.setGlowStage(currentGlow);
         if (paused) result.player.pause();
         onWindowResize = () => {
           if (!current) return;
           const { width, height } = viewportSize();
           current.player.resize(width, height);
+          glowSize = { width: fg.width, height: fg.height };
           currentStage?.onViewportResize(current.player.screenScalePx());
         };
         window.addEventListener("resize", onWindowResize);
@@ -27844,6 +27882,11 @@ function createThreeSceneRenderer(opts) {
       if (!current) return;
       current.player.setQualityScale(scale);
       currentStage?.onViewportResize(current.player.screenScalePx());
+    },
+    // 应用级 Glow 的运行期参数（面板即时生效）：已装配就地重配 / 装卸 stage，不必重选壁纸。
+    setGlow(patch) {
+      glowOverride = { ...glowOverride ?? {}, ...patch };
+      applyGlowRuntime();
     },
     // 释放当前 three 播放器 + wasm 模拟器（切壁纸/卸载时防泄漏）。
     dispose() {
@@ -27913,10 +27956,6 @@ function WallpaperSettingsSection(props) {
       setMessage("\u58C1\u7EB8\u5217\u8868\u5DF2\u5237\u65B0");
     }).catch(() => setMessage("\u5237\u65B0\u58C1\u7EB8\u5931\u8D25"));
   }, [fetchWallpapers]);
-  const toggleGlow = (0, import_react.useCallback)((enabled) => {
-    setSettings((prev) => prev ? { ...prev, glowEnabled: enabled } : prev);
-    void writeSettings({ glowEnabled: enabled }).then(() => setMessage(enabled ? "\u5149\u6655\u5DF2\u5F00\u542F" : "\u5149\u6655\u5DF2\u5173\u95ED"));
-  }, [writeSettings]);
   const applyRuntime = (0, import_react.useCallback)((patch) => {
     setSettings((prev) => prev ? { ...prev, ...patch } : prev);
     onRuntimeSettings(patch);
@@ -27964,16 +28003,54 @@ function WallpaperSettingsSection(props) {
       },
       w.id
     )) }),
-    settings && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-        "input",
-        {
-          type: "checkbox",
-          checked: settings.glowEnabled,
-          onChange: (e) => toggleGlow(e.target.checked)
-        }
-      ),
-      "\u5149\u6655\uFF08\u5207\u6362\u58C1\u7EB8\u540E\u751F\u6548\uFF09"
+    settings && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-glow", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "input",
+          {
+            type: "checkbox",
+            checked: settings.glowEnabled,
+            onChange: (e) => applyRuntime({ glowEnabled: e.target.checked })
+          }
+        ),
+        "\u5149\u6655\uFF08\u7ACB\u5373\u751F\u6548\uFF09"
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-slider", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+          "\u5149\u6655\u9608\u503C ",
+          settings.glowThreshold.toFixed(2)
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "input",
+          {
+            type: "range",
+            className: "wss-glow-threshold",
+            min: 0,
+            max: 0.99,
+            step: 0.01,
+            value: settings.glowThreshold,
+            onChange: (e) => applyRuntime({ glowThreshold: Number(e.target.value) })
+          }
+        )
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-slider", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+          "\u5149\u6655\u5F3A\u5EA6 ",
+          settings.glowStrength.toFixed(2)
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "input",
+          {
+            type: "range",
+            className: "wss-glow-strength",
+            min: 0,
+            max: 4,
+            step: 0.05,
+            value: settings.glowStrength,
+            onChange: (e) => applyRuntime({ glowStrength: Number(e.target.value) })
+          }
+        )
+      ] })
     ] }),
     settings && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-power", children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
@@ -28086,6 +28163,7 @@ function bootstrap(ctx) {
     const shouldPause = s.paused || s.pauseOnHidden && hidden;
     sceneRenderer.setPaused?.(shouldPause);
     sceneRenderer.setQualityScale?.(s.qualityScale);
+    sceneRenderer.setGlow?.({ enabled: s.glowEnabled, threshold: s.glowThreshold, strength: s.glowStrength });
     layer?.setPaused(shouldPause);
   };
   const selectWallpaper = (id) => {

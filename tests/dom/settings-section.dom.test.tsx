@@ -2,7 +2,7 @@ import { describe, expect, it, vi, afterEach } from 'vitest';
 import React from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react';
-import { WallpaperSettingsSection } from '../../src/client/settings-section.js';
+import { WallpaperSettingsSection, setWallpaperRuntimeHandler } from '../../src/client/settings-section.js';
 import type { ClientSettings } from '../../src/client/types.js';
 import type { ProbeResult } from '../../src/shared/types.js';
 
@@ -128,20 +128,72 @@ describe('WallpaperSettingsSection', () => {
     expect(writeSettings).toHaveBeenCalledWith({ wallpaperDir: 'D:/Custom/431960', weAssetsDir: 'D:/Custom/we' });
   });
 
-  it('点击「光晕」复选框 → 持久化 glowEnabled=false', async () => {
+  it('点击「光晕」复选框 → 立即下发（onRuntimeSettings）+ 持久化 glowEnabled=false', async () => {
     const writeSettings = vi.fn(async () => {});
-    mount({ writeSettings });
+    const onRuntimeSettings = vi.fn();
+    mount({ writeSettings, onRuntimeSettings });
     await flush();
     // 本文件无 @testing-library 依赖：沿用既有写法，按 label 取到「光晕」复选框
-    // （label 包裹 input ⇒ 该复选框即以「光晕（切换壁纸后生效）」为可访问名）
+    // （label 包裹 input ⇒ 该复选框即以「光晕（立即生效）」为可访问名）
     const label = container.querySelector('.wss-glow-row') as HTMLLabelElement | null;
-    expect(label?.textContent).toBe('光晕（切换壁纸后生效）');
+    expect(label?.textContent).toBe('光晕（立即生效）');
     const box = label!.querySelector('input[type="checkbox"]') as HTMLInputElement;
     expect(box.checked).toBe(true);
     box.click();
     await flush();
+    // 开关也走运行期通道：改完立刻生效（不必再切一次壁纸）
+    expect(onRuntimeSettings).toHaveBeenCalledWith({ glowEnabled: false });
     expect(writeSettings).toHaveBeenCalledWith({ glowEnabled: false });
     expect(box.checked).toBe(false);
+  });
+
+  // 应用级 Glow 的阈值/强度（2026-09-21）：此前只有 profile config 能改，且改完要切一次壁纸才生效。
+  it('光晕阈值/强度滑杆：显示当前值，拖动 → 立即下发 + 持久化（不必重选壁纸）', async () => {
+    const writeSettings = vi.fn(async () => {});
+    const onRuntimeSettings = vi.fn();
+    mount({ writeSettings, onRuntimeSettings });
+    await flush();
+    const th = container.querySelector('.wss-glow-threshold') as HTMLInputElement;
+    const st = container.querySelector('.wss-glow-strength') as HTMLInputElement;
+    expect(th).toBeTruthy();
+    expect(st).toBeTruthy();
+    // 范围与当前值（阈值 0–0.99、强度 0–4；当前值来自设置）
+    expect([th.type, th.min, th.max, th.value]).toEqual(['range', '0', '0.99', '0.65']);
+    expect([st.type, st.min, st.max, st.value]).toEqual(['range', '0', '4', '1']);
+    const setValue = (el: HTMLInputElement, value: string) => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+      setter.call(el, value);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    setValue(th, '0.5');
+    await flush();
+    expect(onRuntimeSettings).toHaveBeenCalledWith({ glowThreshold: 0.5 });
+    expect(writeSettings).toHaveBeenCalledWith({ glowThreshold: 0.5 });
+    expect(th.value).toBe('0.5'); // 受控：回写设置值
+    setValue(st, '2');
+    await flush();
+    expect(onRuntimeSettings).toHaveBeenCalledWith({ glowStrength: 2 });
+    expect(writeSettings).toHaveBeenCalledWith({ glowStrength: 2 });
+    expect(st.value).toBe('2');
+  });
+
+  // 槽位组件拿不到 props（settings.section 由 index.ts 注册）⇒ 生产上走共享 handler；
+  // 这里钉住「未传 onRuntimeSettings 时仍然下发」，否则面板改 Glow 在生产里会静默失效。
+  it('未传 onRuntimeSettings ⇒ 走 setWallpaperRuntimeHandler 注册的共享通道', async () => {
+    const shared = vi.fn();
+    setWallpaperRuntimeHandler(shared);
+    try {
+      mount();
+      await flush();
+      const st = container.querySelector('.wss-glow-strength') as HTMLInputElement;
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+      setter.call(st, '1.5');
+      st.dispatchEvent(new Event('input', { bubbles: true }));
+      await flush();
+      expect(shared).toHaveBeenCalledWith({ glowStrength: 1.5 });
+    } finally {
+      setWallpaperRuntimeHandler(() => {});
+    }
   });
 
   it('点击「刷新壁纸」→ 重新拉取列表并更新网格', async () => {

@@ -30,6 +30,11 @@ export interface SceneRendererLike {
     dispose(): void;
     setPaused?(paused: boolean): void;
     setQualityScale?(scale: number): void;
+    setGlow?(patch: {
+        enabled?: boolean;
+        threshold?: number;
+        strength?: number;
+    }): void;
 }
 export declare function createFallbackSceneRenderer(wasm: SceneRendererLike | null, _js: SceneRendererLike): SceneRendererLike;
 export declare function defaultLoadWasm(): Promise<WasmSceneModule | null>;

@@ -19,7 +19,7 @@ export interface WallpaperSettingsSectionProps {
   fetchProbe?: () => Promise<ProbeResult>;
   /** 切换/取消壁纸（index.ts 注入 controller.select，空 id = 取消） */
   onSelect?: (id: string) => void;
-  /** 运行期设置（暂停/画质档位）变更：index.ts 注入后立即下发给渲染器，无需重选壁纸 */
+  /** 运行期设置（光晕参数/暂停/画质档位）变更：index.ts 注入后立即下发给渲染器，无需重选壁纸 */
   onRuntimeSettings?: (patch: Partial<ClientSettings>) => void;
 }
 
@@ -95,14 +95,7 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
       .catch(() => setMessage('刷新壁纸失败'));
   }, [fetchWallpapers]);
 
-  // 应用级 Glow 开关：本地即时生效 + 持久化（同 select）；阈值/强度走 config 不上面板
-  const toggleGlow = useCallback((enabled: boolean) => {
-    setSettings((prev) => (prev ? { ...prev, glowEnabled: enabled } : prev));
-    void writeSettings({ glowEnabled: enabled })
-      .then(() => setMessage(enabled ? '光晕已开启' : '光晕已关闭'));
-  }, [writeSettings]);
-
-  // 省电与画质档位：本地即时生效（经共享 handler 下发渲染器）+ 持久化（不必重选壁纸）
+  // 省电 / 画质档位 / 光晕参数：本地即时生效（经共享 handler 下发渲染器）+ 持久化（不必重选壁纸）
   const applyRuntime = useCallback((patch: Partial<ClientSettings>) => {
     setSettings((prev) => (prev ? { ...prev, ...patch } : prev));
     onRuntimeSettings(patch);
@@ -160,16 +153,43 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
           </button>
         ))}
       </div>
-      {/* 应用级 Glow 开关（label 包裹 input ⇒ 复选框可访问名为「光晕…」） */}
+      {/* 应用级 Glow：开关 + 阈值/强度，改完**立即生效**（经运行期通道下发，不必重选壁纸） */}
       {settings && (
-        <label className="wss-glow-row">
-          <input
-            type="checkbox"
-            checked={settings.glowEnabled}
-            onChange={(e) => toggleGlow(e.target.checked)}
-          />
-          光晕（切换壁纸后生效）
-        </label>
+        <div className="wss-glow">
+          <label className="wss-glow-row">
+            <input
+              type="checkbox"
+              checked={settings.glowEnabled}
+              onChange={(e) => applyRuntime({ glowEnabled: e.target.checked })}
+            />
+            光晕（立即生效）
+          </label>
+          {/* 阈值：bright-pass 的亮度门槛（0–0.99）；强度：辉光回叠倍率（0–4） */}
+          <label className="wss-glow-slider">
+            <span>光晕阈值 {settings.glowThreshold.toFixed(2)}</span>
+            <input
+              type="range"
+              className="wss-glow-threshold"
+              min={0}
+              max={0.99}
+              step={0.01}
+              value={settings.glowThreshold}
+              onChange={(e) => applyRuntime({ glowThreshold: Number(e.target.value) })}
+            />
+          </label>
+          <label className="wss-glow-slider">
+            <span>光晕强度 {settings.glowStrength.toFixed(2)}</span>
+            <input
+              type="range"
+              className="wss-glow-strength"
+              min={0}
+              max={4}
+              step={0.05}
+              value={settings.glowStrength}
+              onChange={(e) => applyRuntime({ glowStrength: Number(e.target.value) })}
+            />
+          </label>
+        </div>
       )}
       {/* 省电 / 画质档位：立即生效（不必重选壁纸） */}
       {settings && (

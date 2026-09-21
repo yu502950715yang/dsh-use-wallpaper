@@ -121,13 +121,16 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 | `overlayOpacity` | `0.35` | 壁纸层上方遮罩的不透明度 |
 | `blurEnabled` / `blurRadius` | `false` / `12` | 背景模糊与半径 |
 | `kenBurns` | `true` | 图片壁纸的缓慢缩放动效 |
+| `glowEnabled` | `true` | 应用级光晕（全屏后处理，仅 scene 壁纸） |
+| `glowThreshold` | `0.65` | 光晕亮度门槛（0–0.99，越低发光区域越多） |
+| `glowStrength` | `1.0` | 光晕强度（0–4） |
 | `paused` | `false` | 暂停壁纸渲染（省电；视频壁纸同时停播） |
 | `pauseOnHidden` | `true` | 页面切到后台/最小化时自动暂停，回到前台恢复 |
 | `qualityScale` | `1` | 画质档位：渲染像素比倍率（0.5–1，越小越省显存） |
 
 优先级：用户设置 > profile `cordis.patch.yml` 的 `config` > 缺省。
 
-> ⚠️ **如实说明**：`overlayOpacity` / `blurEnabled` / `blurRadius` / `kenBurns` 目前**只有设置字段，设置面板里没有对应控件** —— 要调整需走 profile 配置。（此前 README 称「面板里可实时调节」，与代码不符，此处已订正。）`glowThreshold` / `glowStrength` 同样只走 profile 配置。**面板里有控件的是**：`glowEnabled`、`paused`、`pauseOnHidden`、`qualityScale`，改完立即生效。
+> ⚠️ **如实说明**：`overlayOpacity` / `blurEnabled` / `blurRadius` / `kenBurns` 目前**只有设置字段，设置面板里没有对应控件** —— 要调整需走 profile 配置。（此前 README 称「面板里可实时调节」，与代码不符，此处已订正。）**面板里有控件的是**：`glowEnabled`、`glowThreshold`、`glowStrength`、`paused`、`pauseOnHidden`、`qualityScale`，**改完立即生效**（不必重选壁纸）；其中光晕的阈值/强度是滑杆。
 
 ---
 
@@ -155,7 +158,7 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 - **粒子的自转没做**：花瓣、雪花的翻滚/倾斜看不到（位置和飘落速度是正常的）。
 - **文本对象的脚本已在沙箱里执行**：时间/日期会实时走字（VHS 时间与日期），把时/分/月/日拆成多个文本层的写法（如 2980088441 CodeTime）现在会显示成**真实的时间面板**。脚本在 quickjs 沙箱内运行（拿不到页面与网络）、带步数上限防死循环；某张壁纸的脚本跑不通时，退回内置时钟或跳过该文本层，**不会**再把作者的占位值（`12` / `mounth`）画到屏幕上。
 - **音频响应类壁纸不会随音乐律动**：频谱可视化那条效果目前不生效。
-- **应用级光晕（Glow）已实现并默认开启**（设置 → 壁纸 → 「光晕」可关；开关在**切换一次壁纸后**生效）：scene 壁纸的亮部（路灯、霓虹、云边）现在有与桌面版基本一致的光晕（实测云区亮度 p99：关 200 → 开 224，桌面 225），此前"桌面更亮"的主要差异来源即它。**仅 scene 壁纸**：视频 / 图片 / 网页壁纸的亮部仍与桌面有差。**目前只在一张壁纸（GTR）上真机验证过**。**如实标注**：Glow 开启时 base RT 无 MSAA（`samples` 缺省 0），可能影响粒子 billboard / 硬边锐度；**该项未测量**。
+- **应用级光晕（Glow）已实现并默认开启**（设置 → 壁纸 → 「光晕」；阈值/强度滑杆与开关**都改完立即生效**，不必重选壁纸）：scene 壁纸的亮部（路灯、霓虹、云边）现在有与桌面版基本一致的光晕（实测云区亮度 p99：关 200 → 开 224，桌面 225），此前"桌面更亮"的主要差异来源即它。**嫌亮/看不清就调低强度或调高阈值**（`strength` 0 = 等同关闭；`threshold` 越高只有更亮的区域发光）。**仅 scene 壁纸**：视频 / 图片 / 网页壁纸的亮部仍与桌面有差。**目前只在一张壁纸（GTR）上真机验证过**。**如实标注**：Glow 开启时 base RT 无 MSAA（`samples` 缺省 0），可能影响粒子 billboard / 硬边锐度；**该项未测量**。
 - **越大的壁纸越吃显存**：4K 分辨率下单张壁纸可能占用数百 MB 显存。追求省电/流畅可以用小分辨率或选择简单的壁纸。
 
 **环境要求**

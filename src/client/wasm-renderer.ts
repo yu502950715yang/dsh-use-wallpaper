@@ -255,6 +255,8 @@ export interface SceneRendererLike {
   setPaused?(paused: boolean): void;
   // 可选：画质档位（渲染像素比倍率）。
   setQualityScale?(scale: number): void;
+  // 可选：应用级 Glow 的运行期参数（开关/阈值/强度）；已装配时即时生效，无需重选壁纸。
+  setGlow?(patch: { enabled?: boolean; threshold?: number; strength?: number }): void;
 }
 
 // 强制 wasm、禁用 JS 回退：项目主目标为 wasm 播放——wasm 渲染器不可用（null，如无 WebGPU）

@@ -195,6 +195,12 @@ export function createThreeSceneRenderer(opts?: {
   let currentStage: ObjectEffectStage | null = null;
   // 本次装配的应用级 Glow stage（同上：闭包持有，teardown 释放）。
   let currentGlow: GlowStage | null = null;
+  // 应用级 Glow 的**运行期**下发值（面板改阈值/强度/开关）：非空即优先于设置的持久值。
+  let glowOverride: { enabled?: boolean; threshold?: number; strength?: number } | null = null;
+  // 最近一次装配时从设置读到的 Glow 值：运行期只改一项时，其余项以它为基准。
+  let glowFromSettings: { enabled: boolean; threshold: number; strength: number } | null = null;
+  // Glow stage 的尺寸基准 = 画布缓冲尺寸（运行期「打开」需要新建 stage 时用；resize 时同步）。
+  let glowSize = { width: 1, height: 1 };
   // 省电与画质档位（跨 render 有效）：render 内读设置同步，装配时就地应用。
   let paused = false;
   let qualityScale = 1;
@@ -226,6 +232,26 @@ export function createThreeSceneRenderer(opts?: {
     // 脚本 binding 独立于 GL 资源，但同样只在本次装配内有效（切壁纸不留 handle）。
     for (const b of currentScriptBindings) b.dispose();
     currentScriptBindings = [];
+  };
+  // 当前生效的 Glow 三值：运行期下发 > 装配时读到的设置（threshold/strength 缺省交给 glow-stage 归一）。
+  const effectiveGlow = () => ({
+    enabled: glowOverride?.enabled ?? glowFromSettings?.enabled ?? true,
+    threshold: glowOverride?.threshold ?? glowFromSettings?.threshold,
+    strength: glowOverride?.strength ?? glowFromSettings?.strength,
+  });
+  // 运行期即时应用 Glow（面板改完立刻可见，不必重选壁纸）：已装配 → 就地改 uniform 或装卸 stage；
+  // 未装配 → 只记状态，下次装配按新值生效。
+  const applyGlowRuntime = () => {
+    if (!current) return;
+    const glow = effectiveGlow();
+    if (!glow.enabled) {
+      if (currentGlow) { currentGlow.dispose(); currentGlow = null; current.player.setGlowStage(null); }
+      return;
+    }
+    // 已装配：只改两个 uniform（不重建 RT、不重渲），拖动滑杆每帧调用也只是写两个 float。
+    if (currentGlow) { currentGlow.setOptions({ threshold: glow.threshold, strength: glow.strength }); return; }
+    currentGlow = createGlowStage(glowSize.width, glowSize.height, { threshold: glow.threshold, strength: glow.strength });
+    current.player.setGlowStage(currentGlow);
   };
   // 当前窗口/视口尺寸（clamp ≥1，对齐 wasm-renderer 的 vw/vh 推导）。
   const viewportSize = () => ({
@@ -405,6 +431,12 @@ export function createThreeSceneRenderer(opts?: {
         // 缓冲必须用同一个渲染像素比（两者口径不一致会让整层模糊，见 AGENT.md §5.15/§5.21）。
         const settings = await readClientSettings();
         qualityScale = settings.qualityScale ?? 1;
+        // Glow 三值来自持久设置；运行期下发过则以后者为准（effectiveGlow 里合并）。
+        glowFromSettings = {
+          enabled: settings.glowEnabled,
+          threshold: settings.glowThreshold,
+          strength: settings.glowStrength,
+        };
         const dpr = resolvePixelRatio(
           typeof window !== 'undefined' && window.devicePixelRatio ? window.devicePixelRatio : 1,
           qualityScale,
@@ -529,12 +561,14 @@ export function createThreeSceneRenderer(opts?: {
         // **之外**——Glow 与「有无对象被隔离」无关；尺寸用画布缓冲（loadSceneToThree 内部已
         // player.resize(vw,vh) 按 dpr 设过），故 resize 由 player.resize 内部单点同步，此处不重复。
         currentGlow?.dispose();
-        currentGlow = settings.glowEnabled
+        const glow = effectiveGlow();
+        currentGlow = glow.enabled
           ? createGlowStage(fg.width, fg.height, {
-              threshold: settings.glowThreshold,
-              strength: settings.glowStrength,
+              threshold: glow.threshold,
+              strength: glow.strength,
             })
           : null;
+        glowSize = { width: fg.width, height: fg.height }; // 运行期「开 Glow」新建 stage 的尺寸基准
         result.player.setGlowStage(currentGlow);
         // 省电：装配时若已处于暂停态（如切到后台时换壁纸）→ 直接不排程。
         if (paused) result.player.pause();
@@ -547,6 +581,7 @@ export function createThreeSceneRenderer(opts?: {
           if (!current) return;
           const { width, height } = viewportSize();
           current.player.resize(width, height);
+          glowSize = { width: fg.width, height: fg.height }; // 运行期开 Glow 的尺寸基准随视口同步
           currentStage?.onViewportResize(current.player.screenScalePx());
         };
         window.addEventListener('resize', onWindowResize);
@@ -579,6 +614,11 @@ export function createThreeSceneRenderer(opts?: {
       if (!current) return;
       current.player.setQualityScale(scale);
       currentStage?.onViewportResize(current.player.screenScalePx());
+    },
+    // 应用级 Glow 的运行期参数（面板即时生效）：已装配就地重配 / 装卸 stage，不必重选壁纸。
+    setGlow(patch: { enabled?: boolean; threshold?: number; strength?: number }) {
+      glowOverride = { ...(glowOverride ?? {}), ...patch };
+      applyGlowRuntime();
     },
     // 释放当前 three 播放器 + wasm 模拟器（切壁纸/卸载时防泄漏）。
     dispose() {

@@ -359,6 +359,75 @@ describe('createThreeSceneRenderer', () => {
       Object.defineProperty(window, 'innerHeight', { configurable: true, value: 1080 });
     }
   });
+
+  // ── 运行期即时改 Glow（2026-09-21）：面板改阈值/强度/开关后**立刻**生效，不必重选壁纸 ────────
+  // 通道：settings-section → setWallpaperRuntimeHandler → index.ts applyRuntimeSettings →
+  //       sceneRenderer.setGlow(patch) → 已装配的 GlowStage.setOptions（只改两个 uniform，不重建 RT）。
+  it('setGlow({threshold,strength}) ⇒ 就地对已装配 stage setOptions（不重建、不重复交给 player）', async () => {
+    const player = prepareGlowRender();
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    await r.render('2851992662', document.createElement('canvas'), null); // 缺省设置 glowEnabled=true
+    const stage = vi.mocked(createGlowStage).mock.results[0].value!;
+
+    r.setGlow?.({ threshold: 0.4, strength: 3 });
+    expect(stage.setOptions).toHaveBeenCalledWith({ threshold: 0.4, strength: 3 });
+    expect(createGlowStage).toHaveBeenCalledTimes(1); // 没重建 stage
+    expect(player.setGlowStage).toHaveBeenCalledTimes(1); // 只在装配时交过一次
+    r.dispose();
+  });
+
+  it('setGlow({enabled:false}) ⇒ 立即释放 stage 并把 player 的 stage 置空（零 RT 残留）', async () => {
+    const player = prepareGlowRender();
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    await r.render('2851992662', document.createElement('canvas'), null);
+    const stage = vi.mocked(createGlowStage).mock.results[0].value!;
+
+    r.setGlow?.({ enabled: false });
+    expect(stage.dispose).toHaveBeenCalledTimes(1);
+    expect(player.setGlowStage).toHaveBeenLastCalledWith(null);
+    expect(createGlowStage).toHaveBeenCalledTimes(1);
+    r.dispose(); // 已关闭 ⇒ 不得二次 dispose
+    expect(stage.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('setGlow({enabled:true})（原本关闭）⇒ 用当前画布尺寸 + 持久参数新建 stage 交给 player', async () => {
+    stubSettings({ glowEnabled: false });
+    const player = prepareGlowRender();
+    const canvas = document.createElement('canvas');
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    await r.render('2851992662', canvas, null);
+    expect(createGlowStage).not.toHaveBeenCalled();
+
+    r.setGlow?.({ enabled: true });
+    expect(createGlowStage).toHaveBeenCalledTimes(1);
+    const [w, h, opts] = vi.mocked(createGlowStage).mock.calls[0];
+    expect([w, h]).toEqual([canvas.width, canvas.height]);
+    expect(opts).toEqual({ threshold: 0.65, strength: 1 }); // 关闭期间的值取持久设置（此处为 DEFAULTS）
+    expect(player.setGlowStage).toHaveBeenLastCalledWith(vi.mocked(createGlowStage).mock.results[0].value);
+    r.dispose();
+  });
+
+  it('setGlow 在首次装配前下发 ⇒ 状态跨 render 保留，且优先于持久设置', async () => {
+    stubSettings({ glowEnabled: true, glowThreshold: 0.9, glowStrength: 3 });
+    prepareGlowRender();
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    r.setGlow?.({ threshold: 0.3, strength: 2 }); // 尚无 player：只记状态
+    expect(createGlowStage).not.toHaveBeenCalled();
+
+    expect(await r.render('2851992662', document.createElement('canvas'), null)).toBe(true);
+    expect(vi.mocked(createGlowStage).mock.calls[0][2]).toEqual({ threshold: 0.3, strength: 2 });
+    r.dispose();
+  });
+
+  it('setGlow({enabled:false}) 在装配前下发 ⇒ 即便设置为开启也不建 stage（运行期开关优先）', async () => {
+    stubSettings({ glowEnabled: true });
+    prepareGlowRender();
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    r.setGlow?.({ enabled: false });
+    expect(await r.render('2851992662', document.createElement('canvas'), null)).toBe(true);
+    expect(createGlowStage).not.toHaveBeenCalled();
+    r.dispose();
+  });
 });
 
 // 对象级 `instanceoverride` 的接线：scene.json 的 particle 对象带 instanceoverride →
