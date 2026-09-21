@@ -122,8 +122,8 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 | `blurEnabled` / `blurRadius` | `false` / `12` | 背景模糊与半径 |
 | `kenBurns` | `true` | 图片壁纸的缓慢缩放动效 |
 | `glowEnabled` | `true` | 应用级光晕（全屏后处理，仅 scene 壁纸） |
-| `glowThreshold` | `0.65` | 光晕亮度门槛（0–0.99，越低发光区域越多） |
-| `glowStrength` | `1.0` | 光晕强度（0–4） |
+| `glowThreshold` | `0.75` | 光晕亮度门槛（0–0.99，越低发光区域越多） |
+| `glowStrength` | `0.4` | 光晕强度（0–4；2026-09-21 由 `1.0` 下调，防亮部过曝 —— 旧值在亮部多的壁纸上 `luma>200` 占比会涨 1.5 倍以上） |
 | `paused` | `false` | 暂停壁纸渲染（省电；视频壁纸同时停播） |
 | `pauseOnHidden` | `true` | 页面切到后台/最小化时自动暂停，回到前台恢复 |
 | `qualityScale` | `1` | 画质档位：渲染像素比倍率（0.5–1，越小越省显存） |
@@ -131,6 +131,8 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 优先级：用户设置 > profile `cordis.patch.yml` 的 `config` > 缺省。
 
 > ⚠️ **如实说明**：`overlayOpacity` / `blurEnabled` / `blurRadius` / `kenBurns` 目前**只有设置字段，设置面板里没有对应控件** —— 要调整需走 profile 配置。（此前 README 称「面板里可实时调节」，与代码不符，此处已订正。）**面板里有控件的是**：`glowEnabled`、`glowThreshold`、`glowStrength`、`paused`、`pauseOnHidden`、`qualityScale`，**改完立即生效**（不必重选壁纸）；其中光晕的阈值/强度是滑杆。
+>
+> ⚠️ 光晕默认值 `0.75` / `0.4` 是 2026-09-21 在 **6 张壁纸（含亮部多的）** 上扫参数网格后重定的保守档，**不是**与桌面 WE 逐像素对齐的结果（本机没有桌面截图可对照）——它只保证「亮部不过曝 + 光晕仍可感」。桌面是否更亮/更暗请以你自己的观感为准，面板滑杆可即时微调（详见 `AGENT.md` §7.1 的 2026-09-21 订正）。
 
 ---
 

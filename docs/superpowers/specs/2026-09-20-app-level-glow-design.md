@@ -1,7 +1,7 @@
 # 应用级 Glow（全屏后处理）— 设计文档
 
 - 日期：2026-09-20
-- 状态：**设计已确认，待写实施计划**（**2026-09-20 订正：已实现并默认开启**，实测见 `AGENT.md` §7.1 的「应用级后处理 ⇒ 已实现」子条；本文 §3.2 / §3.4 / §3.5 / §5 各有追加式订正）
+- 状态：**设计已确认，待写实施计划**（**2026-09-20 订正：已实现并默认开启**，实测见 `AGENT.md` §7.1 的「应用级后处理 ⇒ 已实现」子条；本文 §3.2 / §3.4 / §3.5 / §5 各有追加式订正。**2026-09-21 再订正：默认参数由 A 档 `0.65/1.0` 改为 `0.75/0.4`** —— 用户实测旧默认在亮部多的壁纸上过曝，网格重标定的完整数据见 `AGENT.md` §7.1 同名订正子条）
 - 项目根：`E:\code\dsh-use-wallpaper`
 - 关联：
   - `AGENT.md` §7.1 的「**应用级后处理（WE 的「后处理 / Glow」）未实现**」条 —— 本文要弥合的就是它（含 2026-09-16 的离线可行性实验与 A 档参数、2026-09-20 的真机 GPU 验收订正）
@@ -20,8 +20,10 @@
 
 **本轮范围（已与用户确认）**：
 - **只覆盖 scene 壁纸**（WebGL 内后处理）；video / image / web 壁纸维持现状（不预造跨类型抽象）。
-- **默认开启**，参数取离线实验的 **A 档**（`threshold = 0.65`、`strength = 1.0`）。
+- **默认开启**，参数取离线实验的 **A 档**（`threshold = 0.65`、`strength = 1.0`）。**⚠️ 2026-09-21 订正：默认参数已改为 `0.75 / 0.4`**（旧 A 档在亮部多的壁纸上过曝，原文保留作历史记录；网格数据见 `AGENT.md` §7.1）。
 - 设置面板**只加一个「光晕」开关**；阈值 / 强度走 profile `config`（与 `overlayOpacity` / `blurEnabled` / `blurRadius` / `kenBurns` 四个字段同待遇 —— README 已如实标注那四个字段没有面板控件，此处保持一致，不特殊化 Glow）。
+
+> **2026-09-21 订正（默认参数；本文件所有 `0.65 / 1.0` 的「缺省」含义均已作废）**：`0.75 / 0.4` 是 2026-09-21 在 6 张壁纸（含亮部最多的 `3789452668` 与历史基准 GTR）上扫 16 格参数网格后定的**保守档**，判据是「亮部不过曝 + 光晕仍可感」，**不是**与桌面逐像素对齐的结果（无桌面截图，`AGENT.md` §7.1 已如实标注）。改动落在 `src/client/settings.ts` 的 `DEFAULTS`、`src/host/settings.ts` 的 schema、`src/client/glow-stage.ts` 的 `GLOW_DEFAULTS` 三处。另：本稿原先写「面板只加开关」，`a854fc6` 起面板已有阈值/强度滑杆（即时生效）。
 
 ## 2. 事实基础
 
@@ -169,14 +171,14 @@ else this.renderer.render(this.scene, this.camera);   // 零回归路径
 
 **RT 类型**：优先 `HalfFloatType`（bright-pass 后累加精度更稳，WebGL2 均可支持），不可用时回退 `UnsignedByteType`。**不走 `renderIntoRenderTarget()` 以外的清屏路径**（§5.22 的透明清屏语义；Glow 链内每个 pass 都是全屏覆盖写，但入口必须一致）。
 
-**参数**：`normalizeGlowOptions` 统一 clamp（`threshold ∈ [0, 1)`、`strength ∈ [0, 4]`），缺省 `0.65 / 1.0`。参数变更只更新 uniform，**不重建 RT、不重编译 shader**（§5.11）。
+**参数**：`normalizeGlowOptions` 统一 clamp（`threshold ∈ [0, 1)`、`strength ∈ [0, 4]`），缺省 ~~`0.65 / 1.0`~~ **`0.75 / 0.4`（2026-09-21 订正，见 §1）**。参数变更只更新 uniform，**不重建 RT、不重编译 shader**（§5.11）。
 
 ### 3.5 设置与装配
 
 | 位置 | 改动 |
 |---|---|
 | `src/client/types.ts` | `ClientSettings` 加 `glowEnabled: boolean`、`glowThreshold: number`、`glowStrength: number` |
-| `src/client/settings.ts` | `DEFAULTS` 加 `glowEnabled: true` / `glowThreshold: 0.65` / `glowStrength: 1.0` |
+| `src/client/settings.ts` | `DEFAULTS` 加 `glowEnabled: true` / `glowThreshold` / `glowStrength`（**2026-09-21 起缺省值为 `0.75` / `0.4`**，原稿写的是 A 档 `0.65` / `1.0`） |
 | `src/host/settings.ts` | schema 同步三个字段（缺省值一致），使 profile `config` 可覆盖 |
 | `src/client/settings-section.tsx` | 只加一个「光晕」开关（写入 `glowEnabled`） |
 | `src/client/three-renderer.ts` | 按 `glowEnabled` 装配：`glowEnabled ? createGlowStage(player.renderer, {threshold, strength}) : null`，随后 `player.setGlowStage(stage)`；`teardown()` 里 `stage?.dispose()`；`resize` 路径同步 `stage.resize(...)` |
@@ -239,7 +241,7 @@ else this.renderer.render(this.scene, this.camera);   // 零回归路径
 ## 6. 风险与遗留
 
 - **参数未与桌面逐像素对照**：离线实验只对齐了区域统计（云区 p99 / 灯区均值），且"各级等权"是推测、WE 真实权重未知 ⇒ **落地后需用桌面截图再校准一次**（需要用户提供桌面 WE 截图）。
-- **A 档的灯区偏亮**（+8.0 vs 桌面 +5.1）：高光密集画面可能比桌面更亮；若实际观感偏亮，先调 `strength`（config 可改，无需改码）。
+- **A 档的灯区偏亮**（+8.0 vs 桌面 +5.1）：高光密集画面可能比桌面更亮；若实际观感偏亮，先调 `strength`（config 可改，无需改码）。**⚠️ 该风险已实际发生（2026-09-21 用户实测）**：旧 A 档在亮部多的壁纸上 `luma>200` 占比 ×1.5、纯白占比 41× ⇒ 默认已下调为 `0.75 / 0.4`（§1 订正）。
 - **颜色空间对齐是正确性关键**（§3.4）：若实现时域搞错，`threshold` 的语义会整体偏移（线性域的 0.65 ≈ sRGB 域的 0.83），表现为"几乎不发光"。端到端 p99 判据就是用来抓这个的。
 - **高 dpr / 大视口的显存**：base RT 随画布缓冲（= CSS 尺寸 × dpr）线性增长 —— 3440×1440@dpr1 约 20 MB、@dpr1.5 约 45 MB、3840×2160@dpr1 约 33 MB（RGBA8；HalfFloat 翻倍），另加约 0.66×base 的小 RT。开启后需实测；必要时按 `object-range` 的收口方式设定上限。
 - **跨类型语义缺口（如实标注）**：WE 的 postprocessing 对 video 壁纸同样生效，我们本轮只做 scene ⇒ **video / image / web 壁纸的亮部仍与桌面有差**。这是本轮**有意接受**的范围裁剪，不是遗漏。

@@ -3,9 +3,9 @@ import * as THREE from 'three';
 import { GLOW_DEFAULTS, normalizeGlowOptions, glowLevelSizes, createGlowStage } from '../src/client/glow-stage.js';
 
 describe('normalizeGlowOptions（参数 clamp：越界 / 非法一律收敛，不抛）', () => {
-  it('缺省 = 离线实验 A 档 (0.65 / 1.0)', () => {
-    expect(normalizeGlowOptions()).toEqual({ threshold: 0.65, strength: 1.0 });
-    expect(GLOW_DEFAULTS).toEqual({ threshold: 0.65, strength: 1.0 });
+  it('缺省 = 2026-09-21 网格标定档 (0.75 / 0.4)', () => {
+    expect(normalizeGlowOptions()).toEqual({ threshold: 0.75, strength: 0.4 });
+    expect(GLOW_DEFAULTS).toEqual({ threshold: 0.75, strength: 0.4 });
   });
 
   it('threshold 上界收敛到 0.99（不允许 1，否则除零）', () => {
@@ -23,8 +23,8 @@ describe('normalizeGlowOptions（参数 clamp：越界 / 非法一律收敛，�
   });
 
   it('NaN / 非数字回退缺省（不把 NaN 灌进 uniform）', () => {
-    expect(normalizeGlowOptions({ threshold: NaN, strength: NaN })).toEqual({ threshold: 0.65, strength: 1.0 });
-    expect(normalizeGlowOptions({ threshold: 'x' as unknown as number }).threshold).toBe(0.65);
+    expect(normalizeGlowOptions({ threshold: NaN, strength: NaN })).toEqual({ threshold: 0.75, strength: 0.4 });
+    expect(normalizeGlowOptions({ threshold: 'x' as unknown as number }).threshold).toBe(0.75);
   });
 
   it('区间内的值原样保留', () => {

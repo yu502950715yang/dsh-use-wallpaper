@@ -12,8 +12,8 @@ export interface GlowOptions {
   strength?: number;
 }
 
-/** 离线实验 A 档（最贴桌面）：见 spec §2.2。 */
-export const GLOW_DEFAULTS = { threshold: 0.65, strength: 1.0 } as const;
+/** 缺省参数 = 2026-09-21 多壁纸网格标定的保守档（旧 A 档 0.65/1.0 在亮部多的壁纸上过曝，见 AGENT.md §7.1）。 */
+export const GLOW_DEFAULTS = { threshold: 0.75, strength: 0.4 } as const;
 
 const THRESHOLD_MAX = 0.99; // 不允许 1：bright-pass 的分母是 (1 - t)
 const STRENGTH_MAX = 4;

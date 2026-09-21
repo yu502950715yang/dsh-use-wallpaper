@@ -402,7 +402,7 @@ describe('createThreeSceneRenderer', () => {
     expect(createGlowStage).toHaveBeenCalledTimes(1);
     const [w, h, opts] = vi.mocked(createGlowStage).mock.calls[0];
     expect([w, h]).toEqual([canvas.width, canvas.height]);
-    expect(opts).toEqual({ threshold: 0.65, strength: 1 }); // 关闭期间的值取持久设置（此处为 DEFAULTS）
+    expect(opts).toEqual({ threshold: 0.75, strength: 0.4 }); // 关闭期间的值取持久设置（此处为 DEFAULTS）
     expect(player.setGlowStage).toHaveBeenLastCalledWith(vi.mocked(createGlowStage).mock.results[0].value);
     r.dispose();
   });

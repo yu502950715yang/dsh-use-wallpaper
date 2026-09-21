@@ -12,7 +12,8 @@ const NS = 'wallpaper-engine';
 export const DEFAULTS: ClientSettings = {
   selectedWallpaperId: '', wallpaperDir: '', weAssetsDir: '',
   overlayOpacity: 0.35, blurEnabled: false, blurRadius: 12, kenBurns: true,
-  glowEnabled: true, glowThreshold: 0.65, glowStrength: 1.0,
+  // 光晕默认值 = 2026-09-21 多壁纸网格标定的保守档（旧 A 档 0.65/1.0 在亮部多的壁纸上过曝，见 AGENT.md §7.1）。
+  glowEnabled: true, glowThreshold: 0.75, glowStrength: 0.4,
   paused: false, pauseOnHidden: true, qualityScale: 1,
 };
 

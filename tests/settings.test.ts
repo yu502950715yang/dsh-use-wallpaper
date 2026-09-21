@@ -14,8 +14,8 @@ describe('wallpaper settings schema', () => {
       blurRadius: 12,
       kenBurns: true,
       glowEnabled: true,
-      glowThreshold: 0.65,
-      glowStrength: 1.0,
+      glowThreshold: 0.75,
+      glowStrength: 0.4,
     });
   });
   it('rejects opacity outside [0,1]', () => {

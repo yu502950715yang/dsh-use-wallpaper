@@ -21,7 +21,7 @@
 - **零回归**：`glowEnabled === false` 时**不建任何 RT / shader**，帧序与输出与今天逐字相同。
 - **颜色空间对齐（正确性关键）**：离线实验的 `threshold = 0.65` 标定在 **sRGB 字节域**，而主场景渲染进 RT 是**线性**值 ⇒ Glow shader 内必须「线性 → 手工转 sRGB → 算 luma / 阈值 / 模糊 → composite 后转回线性」（spec §3.4）。
 - 绝不白屏：运行期 Glow 失败 ⇒ 捕获、`console.warn`、**永久降级为直渲**，不中断壁纸、不触发 preview 回退。
-- 默认参数：`glowEnabled = true`、`glowThreshold = 0.65`、`glowStrength = 1.0`（离线实验 A 档）。
+- 默认参数：`glowEnabled = true`、`glowThreshold = 0.65`、`glowStrength = 1.0`（离线实验 A 档）。**（2026-09-21 订正：默认值已改为 `0.75` / `0.4`，见 `AGENT.md` §7.1；本文其余 `0.65`/`1.0` 均为当时的实施记录，勿当现状引用。）**
 - 测试命令：单文件 `node node_modules/vitest/vitest.mjs run tests/<file> --reporter=basic`；类型检查 `node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit`。
 - 构建：`npm run build`（tsc → `lib/`）+ `npm run build:client`（esbuild → `dist/`）；**`lib/`、`dist/` 必须一并提交**。
 - **测试基线**：全量有 **15 项既有失败**（`wasm-renderer` 7 / `scene-renderer` 6 / `verify-real-library` 1 / `dom/bootstrap.dom` 1），不得当成本次回归（逐项对照见 `AGENT.md` §7.11）。

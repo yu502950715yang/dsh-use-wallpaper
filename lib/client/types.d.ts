@@ -24,9 +24,9 @@ export interface ClientSettings {
     kenBurns: boolean;
     /** 应用级 Glow（对齐 WE 的 general.user.postprocessing）：整帧亮部发光。 */
     glowEnabled: boolean;
-    /** bright-pass 阈值（sRGB 域），缺省 0.65。 */
+    /** bright-pass 阈值（sRGB 域），缺省 0.75。 */
     glowThreshold: number;
-    /** 发光强度，缺省 1.0。 */
+    /** 发光强度，缺省 0.4。 */
     glowStrength: number;
     /** 手动暂停壁纸渲染（省电；scene 与视频壁纸生效）。 */
     paused: boolean;
