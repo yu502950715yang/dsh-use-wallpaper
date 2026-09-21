@@ -24929,8 +24929,8 @@ var COMMON_H = `
 #define M_PI_2 6.28318530718
 #define SQRT_2 1.41421356237309504880
 #define SQRT_3 1.73205080756887729352
-#define DEG2RAD 0.01745329251994329576923690768489
-#define DEG2PCT 0.0027777777777777777777777777777
+// F4\uFF082026-09-21\uFF09\uFF1ADEG2RAD/DEG2PCT \u662F\u6211\u4EEC\u591A\u5199\u7684\u5B8F\u2014\u2014WE \u771F\u5B9E common.h \u53EA\u6709\u4E0A\u9762\u8FD9 5 \u4E2A
+// \u5E38\u91CF\u5B8F\u3002\u5220\u9664\u540E shader \u4FA7\u81EA\u884C #define\uFF08Simple_Audio_Bars \u4E24\u4EFD\u5B8F\u4F53\u4E0D\u540C\uFF09\u4E0D\u518D\u62A5\u91CD\u5B9A\u4E49\u3002
 
 float frac(float x) { return fract(x); }
 vec2 frac(vec2 x) { return fract(x); }
@@ -24943,6 +24943,9 @@ vec3 saturate(vec3 x) { return clamp(x, 0.0, 1.0); }
 vec4 saturate(vec4 x) { return clamp(x, 0.0, 1.0); }
 
 vec4 texSample2D(sampler2D t, vec2 uv) { return texture2D(t, uv); }
+// F2\uFF082026-09-21\uFF09\uFF1AWE \u5185\u7F6E\u6309\u524D\u4E24\u5206\u91CF\u53D6 uv\uFF08chromatic_aberration \u4F20 vec4\uFF09\u3002
+vec4 texSample2D(sampler2D t, vec3 uv) { return texture2D(t, uv.xy); }
+vec4 texSample2D(sampler2D t, vec4 uv) { return texture2D(t, uv.xy); }
 vec4 texSample2DLod(sampler2D t, vec2 uv, float lod) { return textureLod(t, uv, lod); }
 
 vec2 rotateVec2(vec2 v, float r) {
@@ -24967,6 +24970,10 @@ vec2 rotateVec2(vec4 v, float r) { return rotateVec2(v.xy, r); }
 #define CAST4X4(x) mat4(x)
 // WE \u7684 atan2(y,x) \u662F HLSL \u98CE\u683C\uFF1BGLSL \u5185\u5EFA\u4E3A atan(y,x)\uFF0C\u4EC5\u6620\u5C04\u540D\u5B57\uFF08fisheye \u7B49\u6548\u679C shader\uFF09\u3002
 #define atan2(y, x) atan(y, x)
+// F3\uFF082026-09-21\uFF09\uFF1AHLSL \u5185\u7F6E\u540D\u522B\u540D\uFF08chromatic_aberration \u7684 fmod\u3001Simple_Audio_Bars \u7684 lerp\uFF09\uFF1B
+// \u7528\u5B8F\u800C\u975E\u51FD\u6570\u4EE5\u8986\u76D6\u6807\u91CF/\u5411\u91CF\u5168\u90E8\u91CD\u8F7D\u3002
+#define fmod(a, b) mod(a, b)
+#define lerp(a, b, t) mix(a, b, t)
 
 // \u2014\u2014 \u4EE5\u4E0B\u4E3A\u5F15\u64CE\u771F\u5B9E common.h \u8F6C\u5199\uFF08D:\\Steam\\steamapps\\common\\wallpaper_engine\\assets\\shaders\\common.h\uFF09\u2014\u2014
 vec3 hsv2rgb(vec3 c) {
@@ -24991,8 +24998,17 @@ float greyscale(vec3 color) {
 // \u2014\u2014 \u5F15\u64CE\u8F6C\u5199\u7ED3\u675F \u2014\u2014
 
 // WE \u884C\u4E3B\u5E8F\u7EA6\u5B9A\uFF1Agl_Position = mul(vec4(a_Position,1), g_ModelViewProjectionMatrix)
-vec4 mul(vec4 v, mat4 m) { return m * v; }
+// F1\uFF082026-09-21\uFF09\uFF1A\u8865\u9F50 HLSL mul \u5168\u8868\u3002HLSL \u628A matN(a,b,c,d) \u8BFB\u4F5C\u884C\u4E3B\u5E8F\u3001GLSL \u8BFB\u4F5C\u5217\u4E3B\u5E8F\uFF0C
+// \u4E24\u8005\u4E92\u4E3A\u8F6C\u7F6E\uFF0C\u6545\uFF1Amul(v,M) \u4E0E\u65E2\u6709 m*v \u540C\u7EA6\u5B9A\uFF08\u884C\u4E3B\u5E8F\uFF09\uFF1Bmul(M,v) \u4E0E mul(A,B) \u7528\u8F6C\u7F6E\u5F62\u5F0F\u3002
+vec2 mul(vec2 v, mat2 m) { return m * v; }
 vec3 mul(vec3 v, mat3 m) { return m * v; }
+vec4 mul(vec4 v, mat4 m) { return m * v; }
+vec2 mul(mat2 m, vec2 v) { return v * m; }
+vec3 mul(mat3 m, vec3 v) { return v * m; }
+vec4 mul(mat4 m, vec4 v) { return v * m; }
+mat2 mul(mat2 a, mat2 b) { return b * a; }
+mat3 mul(mat3 a, mat3 b) { return b * a; }
+mat4 mul(mat4 a, mat4 b) { return b * a; }
 #endif
 `;
 var COMMON_BLUR_H = `
@@ -25800,10 +25816,13 @@ function normalizeFloatIntLiterals(src) {
   return out;
 }
 function floatifyIntVarUses(src) {
-  const intVars = /* @__PURE__ */ new Set();
-  for (const m of src.matchAll(/\b(?:const\s+)?(?:uniform\s+)?(?:in\s+|out\s+)?int\s+(\w+)(?!\s*\()/g)) {
-    intVars.add(m[1]);
+  const body = protectHeaderRegions(src, () => "");
+  const intVars = collectIntVarNames(body);
+  const nonIntDecls = /* @__PURE__ */ new Set();
+  for (const m of body.matchAll(/\b(?:const\s+)?(?:uniform\s+)?(?:in\s+|out\s+)?(?:float|vec[234]|mat[234]|uint|bool|double)\s+(\w+)(?!\s*\()/g)) {
+    nonIntDecls.add(m[1]);
   }
+  for (const name of [...intVars]) if (nonIntDecls.has(name)) intVars.delete(name);
   if (intVars.size === 0) return src;
   const protectedBlocks = [];
   const protect = (m) => {
@@ -25812,9 +25831,9 @@ function floatifyIntVarUses(src) {
     return token;
   };
   const restore = () => {
-    protectedBlocks.forEach((block, i) => {
-      out = out.replace(new RegExp(`0WEI_INTVAR_${i.toString(36)}__`, "g"), () => block);
-    });
+    for (let i = protectedBlocks.length - 1; i >= 0; i--) {
+      out = out.replace(new RegExp(`0WEI_INTVAR_${i.toString(36)}__`, "g"), () => protectedBlocks[i]);
+    }
   };
   const protectConstructs = (text) => {
     const re = /\b(?:int|float|ivec[234])\s*\(/g;
@@ -25841,11 +25860,19 @@ function floatifyIntVarUses(src) {
   out = out.replace(/(?:\(|,)\s*(?:const\s+)?(?:in\s+|out\s+)?int\s+\w+(?=\s*[,)])/g, protect);
   out = out.replace(/\[[^\]]*\]/g, protect);
   out = out.replace(/for\s*\([^;{}]*;[^;{}]*;[^;{}]*\)/g, protect);
+  for (const name of intVars) {
+    out = out.replace(new RegExp(`\\b${name}\\s*(?:[-+*/%&|^]|<<|>>)?=(?!=)[^\\n;]*;`, "g"), protect);
+  }
+  for (const name of intVars) {
+    out = out.replace(new RegExp(`\\b${name}\\s*(?:[-+*/%&|^]|<<|>>)?=(?!=)`, "g"), protect);
+  }
+  out = protectIntParamArgs(out, collectIntParamPositions(src), protect);
   out = out.replace(/(?:\+\+|--)\s*\w+|\w+\s*(?:\+\+|--)/g, protect);
   out = protectConstructs(out);
   out = out.replace(/[A-Za-z_]\w*\s*(?:==|!=|<=|>=|<|>)\s*[A-Za-z_]\w*/g, protect);
   out = out.replace(/[A-Za-z_]\w*\s*(?:==|!=|<=|>=|<|>)/g, protect);
   out = out.replace(/(?:==|!=|<=|>=|<|>)\s*[A-Za-z_]\w*/g, protect);
+  out = protectHeaderRegions(out, protect);
   for (const name of intVars) {
     out = out.replace(new RegExp(`\\b${name}\\b`, "g"), `float(${name})`);
   }
@@ -25893,9 +25920,156 @@ function relaxGlsl3Strictness(src) {
   }
   return lines.join("\n");
 }
+var HEADER_MACRO_NAMES = (() => {
+  const names = /* @__PURE__ */ new Set();
+  for (const header of Object.values(WE_HEADERS)) {
+    for (const m of header.matchAll(/^[ \t]*#define[ \t]+([A-Za-z_][A-Za-z0-9_]*)/gm)) names.add(m[1]);
+  }
+  return names;
+})();
+var HEADER_BEGIN = "/*__WE_HEADER_BEGIN__*/";
+var HEADER_END = "/*__WE_HEADER_END__*/";
+function markHeaderText(text) {
+  return `${HEADER_BEGIN}${text}${HEADER_END}`;
+}
+function stripHeaderMarks(text) {
+  return text.split(HEADER_BEGIN).join("").split(HEADER_END).join("");
+}
+function protectHeaderRegions(text, protect) {
+  if (!text.includes(HEADER_BEGIN)) return text;
+  let out = "";
+  let depth = 0;
+  let start = 0;
+  let i = 0;
+  while (i < text.length) {
+    if (text.startsWith(HEADER_BEGIN, i)) {
+      if (depth === 0) {
+        out += text.slice(start, i);
+        start = i;
+      }
+      depth++;
+      i += HEADER_BEGIN.length;
+    } else if (text.startsWith(HEADER_END, i)) {
+      depth--;
+      if (depth === 0) {
+        out += protect(text.slice(start, i + HEADER_END.length));
+        start = i + HEADER_END.length;
+      }
+      i += HEADER_END.length;
+    } else i++;
+  }
+  return out + text.slice(start);
+}
+function collectIntVarNames(text) {
+  const out = /* @__PURE__ */ new Set();
+  for (const m of text.matchAll(/\b(?:const\s+)?(?:uniform\s+)?(?:in\s+|out\s+)?int\s+(\w+)(?!\s*\()/g)) out.add(m[1]);
+  return out;
+}
+function collectIntParamPositions(src) {
+  const out = /* @__PURE__ */ new Map();
+  for (const m of src.matchAll(/\b(?:void|float|int|uint|bool|vec[234]|mat[234])\s+(\w+)\s*\(([^)]*)\)\s*\{/g)) {
+    const pos = /* @__PURE__ */ new Set();
+    m[2].split(",").forEach((p, i) => {
+      if (/\bint\b/.test(p)) pos.add(i);
+    });
+    if (pos.size) out.set(m[1], pos);
+  }
+  return out;
+}
+function protectIntParamArgs(text, signatures, protect) {
+  const fnNames = [...signatures.keys()];
+  if (!fnNames.length) return text;
+  const callRe = new RegExp(`(?<![\\w.])(${fnNames.join("|")})\\s*\\(`, "g");
+  let res = "";
+  let last = 0;
+  let c;
+  while (c = callRe.exec(text)) {
+    if (/\b(?:void|float|int|uint|bool|vec[234]|mat[234])\s+$/.test(text.slice(0, c.index))) continue;
+    const open = c.index + c[0].length;
+    const args = [];
+    let depth = 1;
+    let i = open;
+    let argStart = open;
+    for (; i < text.length && depth > 0; i++) {
+      const ch = text[i];
+      if (ch === "(") depth++;
+      else if (ch === ")") {
+        depth--;
+        if (depth === 0) break;
+      } else if (ch === "," && depth === 1) {
+        args.push([argStart, i]);
+        argStart = i + 1;
+      }
+    }
+    if (depth !== 0) break;
+    args.push([argStart, i]);
+    const positions = signatures.get(c[1]);
+    res += text.slice(last, open);
+    let cursor = open;
+    for (let k = 0; k < args.length; k++) {
+      const [s, e] = args[k];
+      if (positions.has(k) && e > s) {
+        res += text.slice(cursor, s) + protect(text.slice(s, e));
+        cursor = e;
+      }
+    }
+    res += text.slice(cursor, i);
+    last = i;
+    callRe.lastIndex = i;
+  }
+  return res + text.slice(last);
+}
+function protectIntContexts(src) {
+  const blocks = [];
+  const protect = (m) => {
+    const token = `0WEI_INTCTX_${blocks.length.toString(36)}__`;
+    blocks.push(m);
+    return token;
+  };
+  const body = protectHeaderRegions(src, () => "");
+  let text = src;
+  for (const name of collectIntVarNames(body)) {
+    const re = new RegExp(`(?<![\\w.])${name}\\s*(?:[-+*/%&|^]|<<|>>)?=(?!=)[^\\n;]*;`, "g");
+    const spans = [];
+    let m;
+    while (m = re.exec(text)) {
+      const before = text.slice(Math.max(0, m.index - 24), m.index);
+      if (/\b(?:const|uniform|in|out|int|uint|float|bool|vec[234]|mat[234])\s+$/.test(before)) continue;
+      spans.push([m.index, m.index + m[0].length]);
+    }
+    for (const [s, e] of spans.reverse()) text = text.slice(0, s) + protect(text.slice(s, e)) + text.slice(e);
+  }
+  text = protectIntParamArgs(text, collectIntParamPositions(src), protect);
+  const restore = (s) => {
+    let out = s;
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      out = out.replace(new RegExp(`0WEI_INTCTX_${i.toString(36)}__`, "g"), () => blocks[i]);
+    }
+    return out;
+  };
+  return { text, restore };
+}
+function applyGlsl3StrictnessFixes(src) {
+  const ctx = protectIntContexts(src);
+  let out = normalizeFloatIntLiterals(ctx.text);
+  out = floatifyIntVarUses(out);
+  out = ctx.restore(out);
+  return relaxGlsl3Strictness(out);
+}
+function undefHeaderMacroRedefinitions(src) {
+  return src.replace(
+    /^([ \t]*)#define[ \t]+([A-Za-z_][A-Za-z0-9_]*)([^\n]*)$/gm,
+    (whole, indent, name, rest) => (
+      // rest 含行尾 \r，\n 单独插入 ⇒ 不破坏 CRLF 行的宏体
+      HEADER_MACRO_NAMES.has(name) ? `${indent}#undef ${name}
+${indent}#define ${name}${rest}` : whole
+    )
+  );
+}
 function preprocessWeShader(source, combos) {
+  const rewrittenSource = undefHeaderMacroRedefinitions(source);
   const samplerDecls = [];
-  const src = source.replace(/^\s*(uniform\s+sampler\w+\s+\w+\s*;.*)$/gm, (m) => {
+  const src = rewrittenSource.replace(/^\s*(uniform\s+sampler\w+\s+\w+\s*;.*)$/gm, (m) => {
     samplerDecls.push(m.trim());
     return "";
   });
@@ -25905,16 +26079,14 @@ function preprocessWeShader(source, combos) {
   do {
     prev = out;
     for (const [name, header] of Object.entries(WE_HEADERS)) {
-      out = out.split(`#include "${name}"`).join(header);
+      out = out.split(`#include "${name}"`).join(markHeaderText(header));
     }
   } while (out !== prev);
   if (!hadExplicitCommon) {
-    out = WE_HEADERS["common.h"] + "\n" + out;
+    out = markHeaderText(WE_HEADERS["common.h"]) + "\n" + out;
   }
   out = rewriteAttributes(out);
-  out = normalizeFloatIntLiterals(out);
-  out = floatifyIntVarUses(out);
-  out = relaxGlsl3Strictness(out);
+  out = applyGlsl3StrictnessFixes(out);
   const defines = /* @__PURE__ */ new Map();
   for (const [k, v] of Object.entries(combos)) defines.set(k, String(v));
   for (const [k, v] of extractComboDefaults(out)) {
@@ -25930,8 +26102,9 @@ function preprocessWeShader(source, combos) {
   }
   const defineLines = [...defines.entries()].map(([k, v]) => `#define ${k} ${v}`);
   const prefix = [...defineLines, ...samplerDecls];
+  const body = stripHeaderMarks(out);
   return prefix.length ? `${prefix.join("\n")}
-${out}` : out;
+${body}` : body;
 }
 
 // src/client/shader/effect-chain.ts
