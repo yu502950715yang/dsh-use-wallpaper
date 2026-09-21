@@ -167,6 +167,37 @@ describe('samplerModes：sampler 注释的 mode 标注（空槽纹理选择依�
   });
 });
 
+// ── samplerNames（槽预建范围的依据：全部 sampler 声明，不只带 mode 的槽）────────────
+// 回归（壁纸 2937346640 id=44 godrays_combine 近黑）：该 pass 的 sampler 全 `"hidden":true`（无 mode）
+// ⇒ samplerModes 为空；若槽预建范围只依赖 samplerModes，g_Texture1 就不会进 material.uniforms，
+// 而 three 的 uniformsList 只在换 program 时重算（探针渲染已冻住）⇒ bindSlot 之后补的槽永不上传。
+// 故这里记录**全部** sampler 声明名（含无 mode 的），执行器据此取最大 `g_Texture<N>` 下标 + 1。
+describe('samplerNames：全部 sampler 声明（槽预建范围的依据）', () => {
+  it('真实 godrays_combine.frag 片段：g_Texture2/0/1 全记录，samplerModes 仍为空', async () => {
+    const frag =
+      'uniform sampler2D g_Texture2; // {"hidden":true,"default":"_rt_FullFrameBuffer"}\n'
+      + 'uniform sampler2D g_Texture0; // {"hidden":true}\n'
+      + 'uniform sampler2D g_Texture1; // {"hidden":true}\n'
+      + 'void main() { gl_FragColor = vec4(1.0); }';
+    const chain = await resolveEffectChain(
+      { file: 'effects/mode/effect.json' },
+      async (n) => modeFixtures(frag).get(n) ?? null,
+    );
+    expect(chain![0].samplerNames).toEqual(['g_Texture2', 'g_Texture0', 'g_Texture1']);
+    expect(chain![0].samplerModes).toEqual({}); // mode 语义不变：只收带 mode 注解的槽
+  });
+
+  it('非 sampler 的 uniform 不入列；vert 侧声明的 sampler 同样收录', async () => {
+    const files = modeFixtures(
+      'uniform float strength;\nuniform sampler2D g_Texture1; // {"mode":"opacitymask"}\n'
+      + 'void main() { gl_FragColor = vec4(1.0); }',
+      'uniform sampler2D g_Texture2;\nvoid main() { gl_Position = vec4(position, 1.0); }',
+    );
+    const chain = await resolveEffectChain({ file: 'effects/mode/effect.json' }, async (n) => files.get(n) ?? null);
+    expect(chain![0].samplerNames).toEqual(['g_Texture2', 'g_Texture1']);
+  });
+});
+
 // ── combo 跨 stage 合并（2026-09-15，task-8c）───────────────────────────────────
 // WE 语义：combo 宏整 pass 共用（lwe ShaderUnit.cpp:694-714 / WE layerd WPSceneParser.cpp:1643-1644）。
 // `[COMBO] default` 常只写在一侧时，另一侧会兜底 `#define X 0` ⇒ 两侧注入不同 ⇒ 链接失败（wasm 路径的

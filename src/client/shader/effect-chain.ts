@@ -17,6 +17,11 @@ export interface CompiledEffectPass {
   // （opacitymask → 全 0、flowmask → 中灰；无 mode 的槽不碰，保持既有行为）。
   // 见 effect-runner.ts 的 resolveEmptySlotTexture / resolveSlotFallback。
   samplerModes: Record<string, string>;
+  // shader 声明的**全部** sampler uniform 名（vert → frag 顺序去重），不只带 mode 注解的槽。
+  // 用途：执行器据此取最大 `g_Texture<N>` 下标 + 1 作为**槽预建范围**（effectSlotCount）——
+  // 预建是 three 上传该槽的唯一机会：uniformsList 只在换 program 时重算，而 getMaterial 的
+  // 1×1 探针渲染会先把它冻住，之后 bindSlot 现场补建的槽永不上传（sampler 停在默认 unit 0）。
+  samplerNames: string[];
   blendMode: string;                     // material json 的 blending（normal/add/...）
   // ── RT 图信息（wasm RT 图执行器）──
   // effect.json passes[i].target：本 pass 写到的具名 RT（如 "_rt_QuarterCompoBuffer1"）。
@@ -110,12 +115,14 @@ export async function resolveEffectChain(
       for (const w of varying.warnings) console.warn(`[wallpaper-engine] ${w}`);
       const vertSrc = preprocessWeShader(varying.vert, combos);
       const fragSrc = preprocessWeShader(varying.frag, combos);
-      // sampler 槽的 mode 标注（空槽语义的唯一依据）：**必须扫未预处理的原始源** —— 
-      // preprocessWeShader 会把 `uniform sampler2D x; // {...}` 整行抽出来前置，
-      // 处理后再扫拿不到标注（注释已随行被搬走/丢失）。
-      // 合并顺序：vert → frag，同名（同一槽在两侧都声明）时以 frag 为准。
+      // sampler 槽的 mode 标注（空槽语义的唯一依据）与全部 sampler 名（槽预建范围的依据）：
+      // **必须扫未预处理的原始源** —— preprocessWeShader 会把 `uniform sampler2D x; // {...}`
+      // 整行抽出来前置，处理后再扫拿不到标注（注释已随行被搬走/丢失）。
+      // 合并顺序：vert → frag，同名（同一槽在两侧都声明）时 mode 以 frag 为准、名字去重。
       const samplerModes: Record<string, string> = {};
+      const samplerNames: string[] = [];
       for (const ann of extractUniformAnnotations(rawVert).concat(extractUniformAnnotations(rawFrag))) {
+        if (ann.type.startsWith('sampler') && !samplerNames.includes(ann.name)) samplerNames.push(ann.name);
         const mode = ann.annotation?.mode;
         if (typeof mode === 'string' && mode) samplerModes[ann.name] = mode;
       }
@@ -133,6 +140,7 @@ export async function resolveEffectChain(
         uniforms,
         textureSlots: textures,
         samplerModes,
+        samplerNames,
         blendMode: mat.passes?.[0]?.blending ?? 'normal',
         // RT 图信息：effect.json passes[i].target（写到的具名 RT）/bind（采样来源）；
         // scene.json pass 可覆写 target（如 scene 指定目标 RT）。缺省 target=null（最终输出）。

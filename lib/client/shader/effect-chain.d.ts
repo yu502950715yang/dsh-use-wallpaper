@@ -8,6 +8,7 @@ export interface CompiledEffectPass {
     uniforms: Map<string, UniformValue>;
     textureSlots: (string | null)[];
     samplerModes: Record<string, string>;
+    samplerNames: string[];
     blendMode: string;
     target: string | null;
     bind: {

@@ -24398,7 +24398,7 @@ function resolveEmptySlotTexture(mode) {
 }
 function effectSlotCount(pass) {
   let count = pass.textureSlots.length;
-  for (const name of Object.keys(pass.samplerModes ?? {})) {
+  for (const name of [...pass.samplerNames ?? [], ...Object.keys(pass.samplerModes ?? {})]) {
     const m = /^g_Texture(\d+)$/.exec(name);
     if (m) count = Math.max(count, Number(m[1]) + 1);
   }
@@ -25979,7 +25979,9 @@ async function resolveEffectChain(sceneEffect, loadFile) {
       const vertSrc = preprocessWeShader(varying.vert, combos);
       const fragSrc = preprocessWeShader(varying.frag, combos);
       const samplerModes = {};
+      const samplerNames = [];
       for (const ann of extractUniformAnnotations(rawVert).concat(extractUniformAnnotations(rawFrag))) {
+        if (ann.type.startsWith("sampler") && !samplerNames.includes(ann.name)) samplerNames.push(ann.name);
         const mode = ann.annotation?.mode;
         if (typeof mode === "string" && mode) samplerModes[ann.name] = mode;
       }
@@ -25997,6 +25999,7 @@ async function resolveEffectChain(sceneEffect, loadFile) {
         uniforms,
         textureSlots: textures,
         samplerModes,
+        samplerNames,
         blendMode: mat.passes?.[0]?.blending ?? "normal",
         // RT 图信息：effect.json passes[i].target（写到的具名 RT）/bind（采样来源）；
         // scene.json pass 可覆写 target（如 scene 指定目标 RT）。缺省 target=null（最终输出）。

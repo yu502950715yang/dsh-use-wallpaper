@@ -23,7 +23,7 @@ import { buildEffectPlan, NAMED_RT_LIMIT } from '../src/client/effect-graph.js';
 /** 测试用 pass 工厂（模块级：effectSlotCount 与 setPlan 两处 describe 共用）。 */
 const pass = (over: Partial<CompiledEffectPass> = {}): CompiledEffectPass => ({
   vertSrc: '', fragSrc: '', rawVert: '', rawFrag: '', combos: {}, uniforms: new Map(),
-  textureSlots: [], samplerModes: {}, blendMode: 'normal', target: null, bind: [], fboScale: {},
+  textureSlots: [], samplerModes: {}, samplerNames: [], blendMode: 'normal', target: null, bind: [], fboScale: {},
   ...over,
 });
 
@@ -256,6 +256,31 @@ describe('effectSlotCount / resolveSlotFallback（槽数补齐与逐槽兜底选
     expect(effectSlotCount(legacy)).toBe(2);
   });
 
+  // 回归（壁纸 2937346640 id=44 godrays_combine 近黑）：槽预建范围必须覆盖 **shader 声明的全部
+  // g_TextureN**，而不是只覆盖带 mode 注解的槽。该 pass 的 3 个 sampler 全 `"hidden":true`（无 mode）
+  // ⇒ samplerModes 为空；只按 samplerModes 算槽数得 0 ⇒ g_Texture1 不在 material.uniforms 里 ⇒
+  // three 的 uniformsList 只在换 program 时重算（探针渲染已把它冻住）⇒ 之后 bindSlot 补的
+  // g_Texture1 永不上传，sampler 停在默认 unit 0（读到 g_Texture0 的光线 RT）⇒ 输出近黑、alpha 2×。
+  it('声明了无 mode 注解的 sampler → 槽数仍取声明下标+1（godrays_combine 的 g_Texture1）', () => {
+    expect(effectSlotCount(pass({
+      textureSlots: [],
+      samplerModes: {},
+      samplerNames: ['g_Texture0', 'g_Texture1'],
+    }))).toBe(2);
+    // 声明到 g_Texture2、textures 数组为空 → 3（不是 0）
+    expect(effectSlotCount(pass({
+      textureSlots: [],
+      samplerModes: {},
+      samplerNames: ['g_Texture2', 'g_Texture0', 'g_Texture1'],
+    }))).toBe(3);
+    // 非 g_TextureN 的 sampler 名不参与槽数计算（口径同 samplerModes）
+    expect(effectSlotCount(pass({ textureSlots: [null], samplerModes: {}, samplerNames: ['g_Diffuse'] }))).toBe(1);
+    // 缺字段（早于本字段构造的 pass）→ 退回既有口径，不抛异常
+    const legacy = pass({ textureSlots: [null, 'a'] });
+    delete (legacy as Partial<CompiledEffectPass>).samplerNames;
+    expect(effectSlotCount(legacy)).toBe(2);
+  });
+
   it('g_Texture0 恒 null（链输入由 update 绑 readTex），与 mode 无关', () => {
     expect(resolveSlotFallback(pass({ textureSlots: [null, null], samplerModes: { g_Texture0: 'opacitymask' } }), 0)).toBeNull();
   });
@@ -336,6 +361,7 @@ describe('EffectRunner 纹理所有权（重挂链泄漏修复：只释放本实
     rawVert: '', rawFrag: '', combos: {}, uniforms: new Map(),
     textureSlots: [null, 'masks/x'],
     samplerModes: {},
+    samplerNames: ['g_Texture0'],
     blendMode: 'normal', target: null, bind: [], fboScale: {},
   });
   const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -410,6 +436,7 @@ describe('EffectRunner 空槽绑定（update 真绑到 uniform：空槽常量纹
       rawVert: '', rawFrag: '', combos: { MASK: 0 }, uniforms: new Map(),
       textureSlots: [null, null],
       samplerModes: { g_Texture2: 'opacitymask' },
+      samplerNames: ['g_Texture0', 'g_Texture1', 'g_Texture2'],
       blendMode: 'normal', target: null, bind: [], fboScale: {},
     };
     const input = new THREE.Texture();
@@ -442,6 +469,7 @@ describe('EffectRunner 空槽绑定（update 真绑到 uniform：空槽常量纹
       rawVert: '', rawFrag: '', combos: {}, uniforms: new Map(),
       textureSlots: [null],
       samplerModes: { g_Texture1: 'flowmask' },
+      samplerNames: ['g_Texture0', 'g_Texture1'],
       blendMode: 'normal', target: null, bind: [], fboScale: {},
     };
     runner.setChains([[shake]], '3743126786', { width: 16, height: 16 });
@@ -450,6 +478,36 @@ describe('EffectRunner 空槽绑定（update 真绑到 uniform：空槽常量纹
     expect(mat.uniforms['g_Texture1'].value).toBe(resolveEmptySlotTexture('flowmask'));
     expect(Array.from((mat.uniforms['g_Texture1'].value as THREE.DataTexture).image.data as Uint8Array))
       .toEqual([127, 127, 0, 255]);
+    runner.dispose();
+  });
+});
+
+// 回归（壁纸 2937346640 id=44 godrays_combine 近黑）：**预建槽 = three 能上传的唯一机会**。
+// three 0.170 的 uniformsList（program seq × material.uniforms）只在**换 program 时重算**，
+// 而 getMaterial 的 1×1 探针渲染必然先触发一次 ⇒ 探针之后由 bindSlot 现场补建的槽永不上传。
+describe('EffectRunner 槽预建范围（godrays_combine：无 mode 的 g_Texture1 也必须预建）', () => {
+  it('声明 g_Texture0/1（全 hidden、textures 为空）→ 两个槽都进 material.uniforms', async () => {
+    const { renderer, mats } = createBindRenderer();
+    const runner = new EffectRunner(renderer as never, 16, 16);
+    const combine: CompiledEffectPass = {
+      vertSrc: 'void main(){ gl_Position = vec4(position, 1.0); }',
+      fragSrc: 'uniform sampler2D g_Texture0;\nuniform sampler2D g_Texture1;\n'
+        + 'void main(){ gl_FragColor = vec4(1.0); }',
+      rawVert: '', rawFrag: '', combos: {}, uniforms: new Map(),
+      textureSlots: [],
+      samplerModes: {}, // 三个 sampler 全无 mode 注解（真实 godrays_combine.frag）
+      samplerNames: ['g_Texture0', 'g_Texture1'],
+      blendMode: 'normal', target: null, bind: [], fboScale: {},
+    };
+    runner.setChains([[combine]], '2937346640', { width: 16, height: 16 });
+    await runner.update(0, new THREE.Texture());
+
+    const mat = mats[mats.length - 1]; // 探针渲染与 pass 渲染是同一材质实例
+    expect(Object.keys(mat.uniforms)).toContain('g_Texture1');
+    // 无 mode 的未提供槽：预置值仍是 null（空槽兜底语义不变，只补一条 uniform 条目）
+    expect(mat.uniforms['g_Texture1'].value).toBeNull();
+    // 分辨率 uniform 同样铺到声明下标（否则 .z/.x 会 0/0 → NaN UV）
+    expect(mat.uniforms['g_Texture1Resolution']).toBeTruthy();
     runner.dispose();
   });
 });
@@ -582,7 +640,7 @@ function failingPass(over: Partial<CompiledEffectPass> = {}): CompiledEffectPass
     vertSrc: 'void main(){ gl_Position = vec4(position, 1.0); }',
     fragSrc: 'void main(){ gl_FragColor = vec4(1.0); }',
     rawVert: '', rawFrag: 'uniform sampler2D g_Texture0;',
-    combos: {}, uniforms: new Map(), textureSlots: [], samplerModes: {}, blendMode: 'normal',
+    combos: {}, uniforms: new Map(), textureSlots: [], samplerModes: {}, samplerNames: [], blendMode: 'normal',
     target: null, bind: [], fboScale: {},
     ...over,
   };
@@ -637,7 +695,7 @@ function failingPassFree(blend: string): CompiledEffectPass {
     vertSrc: 'void main(){ gl_Position = vec4(position, 1.0); }',
     fragSrc: 'uniform sampler2D g_Texture0; void main(){ gl_FragColor = vec4(1.0); }',
     rawVert: '', rawFrag: '', combos: {}, uniforms: new Map(), textureSlots: [],
-    samplerModes: {}, blendMode: blend, target: null, bind: [], fboScale: {},
+    samplerModes: {}, samplerNames: [], blendMode: blend, target: null, bind: [], fboScale: {},
   };
 }
 

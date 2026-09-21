@@ -14,7 +14,7 @@ import { PkgReader } from '../src/host/pkg-reader.js';
 function pass(over: Partial<CompiledEffectPass> = {}): CompiledEffectPass {
   return {
     vertSrc: '', fragSrc: '', rawVert: '', rawFrag: '',
-    combos: {}, uniforms: new Map(), textureSlots: [], samplerModes: {},
+    combos: {}, uniforms: new Map(), textureSlots: [], samplerModes: {}, samplerNames: [],
     blendMode: 'normal', target: null, bind: [], fboScale: {},
     ...over,
   };
