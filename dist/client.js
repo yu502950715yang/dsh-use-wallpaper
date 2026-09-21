@@ -27011,7 +27011,7 @@ var ObjectEffectStage = class {
 };
 
 // src/client/glow-stage.ts
-var GLOW_DEFAULTS = { threshold: 0.75, strength: 0.4 };
+var GLOW_DEFAULTS = { threshold: 0.65, strength: 0.35 };
 var THRESHOLD_MAX = 0.99;
 var STRENGTH_MAX = 4;
 function clamp2(v, lo, hi) {
@@ -27304,10 +27304,11 @@ var DEFAULTS = {
   blurEnabled: false,
   blurRadius: 12,
   kenBurns: true,
-  // 光晕默认值 = 2026-09-21 多壁纸网格标定的保守档（旧 A 档 0.65/1.0 在亮部多的壁纸上过曝，见 AGENT.md §7.1）。
+  // 光晕默认值 = 2026-09-21 用户在真机面板上定档（低阈值保留光晕、低强度压住过曝；
+  // 旧 A 档 0.65/1.0 在亮部多的壁纸上过曝，见 AGENT.md §7.1）。
   glowEnabled: true,
-  glowThreshold: 0.75,
-  glowStrength: 0.4,
+  glowThreshold: 0.65,
+  glowStrength: 0.35,
   paused: false,
   pauseOnHidden: true,
   qualityScale: 1

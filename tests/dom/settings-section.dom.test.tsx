@@ -13,7 +13,7 @@ import type { ProbeResult } from '../../src/shared/types.js';
 const BASE_SETTINGS: ClientSettings = {
   selectedWallpaperId: '1', wallpaperDir: '', weAssetsDir: '',
   overlayOpacity: 0.35, blurEnabled: false, blurRadius: 12, kenBurns: true,
-  glowEnabled: true, glowThreshold: 0.75, glowStrength: 0.4,
+  glowEnabled: true, glowThreshold: 0.65, glowStrength: 0.35,
   paused: false, pauseOnHidden: true, qualityScale: 1,
 };
 
@@ -158,8 +158,8 @@ describe('WallpaperSettingsSection', () => {
     expect(th).toBeTruthy();
     expect(st).toBeTruthy();
     // 范围与当前值（阈值 0–0.99、强度 0–4；当前值来自设置）
-    expect([th.type, th.min, th.max, th.value]).toEqual(['range', '0', '0.99', '0.75']);
-    expect([st.type, st.min, st.max, st.value]).toEqual(['range', '0', '4', '0.4']);
+    expect([th.type, th.min, th.max, th.value]).toEqual(['range', '0', '0.99', '0.65']);
+    expect([st.type, st.min, st.max, st.value]).toEqual(['range', '0', '4', '0.35']);
     const setValue = (el: HTMLInputElement, value: string) => {
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
       setter.call(el, value);

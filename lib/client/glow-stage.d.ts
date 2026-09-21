@@ -3,10 +3,10 @@ export interface GlowOptions {
     threshold?: number;
     strength?: number;
 }
-/** 缺省参数 = 2026-09-21 多壁纸网格标定的保守档（旧 A 档 0.65/1.0 在亮部多的壁纸上过曝，见 AGENT.md §7.1）。 */
+/** 缺省参数 = 2026-09-21 用户真机定档（低阈值保光晕、低强度压过曝；旧 A 档 0.65/1.0 在亮部多的壁纸上过曝，见 AGENT.md §7.1）。 */
 export declare const GLOW_DEFAULTS: {
-    readonly threshold: 0.75;
-    readonly strength: 0.4;
+    readonly threshold: 0.65;
+    readonly strength: 0.35;
 };
 /** 参数归一：缺省 / NaN / 越界一律收敛到合法区间，绝不把非法值灌进 uniform。 */
 export declare function normalizeGlowOptions(opts?: GlowOptions): Required<GlowOptions>;
