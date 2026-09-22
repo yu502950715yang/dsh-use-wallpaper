@@ -100,7 +100,7 @@
 
 ---
 
-## 5. 备用 / 未接入路径（`AGENT.md` §2.1）
+## 5. ~~备用 / 未接入路径~~ ⇒ **已于 2026-09-22 删除**
 
 ```
 scene 壁纸 ──► three.js 播放器（**唯一路径**，v0.3.0 起）
@@ -109,14 +109,17 @@ scene 壁纸 ──► three.js 播放器（**唯一路径**，v0.3.0 起）
              preview 图 + Ken Burns（永不白屏）
 ```
 
-- `wasm-renderer.ts`（`createWasmSceneRenderer` / `createFallbackSceneRenderer`）与 `scene-renderer.ts` 的 `renderScene`：**源码与单测保留，但运行时不再调用**（`index.ts` 仍 import 但未使用）。
-- wasm 渲染器有**完整的对象效果链**（对象 RT + 局部正交相机 + `EffectChain` ping-pong + 合成 quad UV 窗口 + GLSL→SPIR-V→WGSL 编译链）；其 RT 图执行的 `bind` 索引语义与 lwe 不符（只取 `bind[0]`、按 `g_Texture(i+1)` 对齐；权威语义是 `bind.index → g_Texture<index>`）。three 路径的具名 RT 图链已于 **2026-09-15（P2）**实现，**能力差已消除**。
-- **GPU（wasm）路径未消费 `instanceoverride`，也未应用对象 `angles`**：只接了 three 路径。用备用路径渲染同一张壁纸会有亮度与朝向差。
-- **wasm 效果链对 visualizer / text 对象不生效**：这两类恒走共享场景路径（绕过对象 RT / 效果链）。
-- **3 张壁纸在 wasm 路径判为 STATIC**（`2851992662` / `3392903359` / `3760200530`）：动画源是粒子（leaves/snow/bubbles），根因是 wasm 共享粒子路径动画未可见，属独立问题待专项。
-- **wasm 效果链的历史卡点（已绕开，勿重走）**：naga 24/25 的 **glsl frontend 编译不了含 `uniform sampler2D` 的 GLSL**，而几乎全部 WE 效果 shader 都采样 `g_Texture0`。现行链路是 **GLSL → `@webgpu/glslang` → SPIR-V → `spirv-webgpu-transform`（拆组合采样）→ naga `spv-in` → WGSL**；`chain_desc` 为空/解析失败才回退内置演示 pass（绝不白屏）。
-- **`g_ModelViewProjectionMatrix` 未由执行器提供**（材质 json 不给值 → 默认 0）。库内依赖 MVM 的效果都是「frag 效果 + vert passthrough」，故不受影响。
-- **`collect_bindings` 用文本扫描从 WGSL 提取纹理绑定**，对更复杂的多纹理 shader 待改进。
+`wasm-renderer.ts`（`createWasmSceneRenderer` / `createFallbackSceneRenderer`）、`scene-renderer.ts` 的 `renderScene`、
+`alignment.ts`、`scene-script.ts`、`shader/glsl-to-naga.ts` **已整体移除**（TS 侧 −4366 行，含 `@webgpu/glslang` 依赖与
+`dist/static/glslang.wasm`）；活口迁至 `scene-assets.ts` / `wasm-loader.ts` / `wallpaper-controller.ts`。详见 `AGENT.md` §7.14。
+
+原本记录在此的 6 条遗留（wasm 侧 `bind` 索引语义、未消费 `instanceoverride`、对 visualizer/text 不生效、
+3 张壁纸判 STATIC、naga `glsl` 前端卡点与 GLSL→SPIR-V 链路、`g_ModelViewProjectionMatrix` / `collect_bindings`）
+**随代码一起作废** —— 它们只描述那条不再存在的路径。需要时从 git 历史取回（删除前 HEAD = `65f759c`）。
+
+**⚠️ 仍未删除的是 Rust 侧**：`wasm/src/render/**`(4064 行) + `shaders/*.wgsl`(451) + `WeScene` + `scene.rs`/`tex.rs` 仍在仓库里，
+因为 `CpuParticleSim`（主路径在用）被 `#[cfg(feature = "render")]` 门控且本机装不上 `wasm32-unknown-unknown` 标准库
+⇒ `build:wasm` 跑不了，删了会与已入库的 `dist/static/we_scene_wasm_bg.wasm` 失配。详见 `AGENT.md` §7.14。
 
 ---
 
@@ -136,13 +139,17 @@ scene 壁纸 ──► three.js 播放器（**唯一路径**，v0.3.0 起）
 
 ## 7. 工程现状 / 测试
 
-- **全量 `vitest run` 有 15 项既有失败**（4 个文件：`wasm-renderer` 7 / `scene-renderer` 6 / `verify-real-library` 1 / `dom/bootstrap.dom` 1），均已确认在 v0.3.0 基线即失败；改动后请在 `git stash` 基线对比，**别把既有失败当成本次回归**。
-  - 其中 `wasm-renderer` 那 7 项已定位到一半：`createWasmSceneRenderer.render()` 的裸 `catch {}` 把异常静默吞成「返回 false」（现已补 `console.warn`）。第一层真因是 mock 与代码脱节（mock scene 缺 `set_particle_sim` / `update_particles`）；补全 mock 后仍暴露更深的断言问题（`scene.add_particle` 未被调用）。
+- **测试基线 = 4 项失败 / 919 项**（2026-09-22 实测）。早先记的「15 项既有失败」已过时，逐条见 `AGENT.md` §7.11：
+  - `dom/bootstrap.dom` 的 I1（真缺陷、未修）；`object-effects` / `effect-graph` 的**全库硬编码计数**漂移；`verify-real-library` 的 `130 vs 129`（**素材漂移**，非代码回归）。后 3 项依赖本机壁纸库，CI 上 `skipIf` 跳过。
+  - 已消失：`wasm-renderer` 7 项（死路径删除）＋ `scene-renderer` 6 项（陈旧 2048 期望改为实际 4096 口径）。
+  - 另修：`tests/shader/glsl-to-naga.test.ts` 曾让**全量 vitest 永久挂起**，随死路径删除后全量 ~15s 跑完。
+  - 基线登记 `scripts/known-failures.json`，CI 用 `scripts/check-known-failures.mjs` **只对新增失败判红**。
 - **验证手段**：
   - 单测：`tests/**/*.test.ts`（默认 node），`tests/dom/**` 走 jsdom。
-  - 全库解析回归：`tests/verify-real-library.test.ts`（全库 scene.pkg 的 scene.json / image 纹理 / particle 规格 / 效果链解析零失败）。
-  - **端到端渲染（推荐）**：`research/verify-colorblend.mjs` 的模式 —— 自起 http server + headless Edge + esbuild 打包 harness，**用生产代码**渲染真实纹理并逐像素判定。**不依赖 DSH token**。
-  - 全库浏览器回归：`research/verify-wasm-render.mjs` —— **当前跑不通**（硬编码 `?token=` 过期，401）。
+  - 全库解析回归：`tests/verify-real-library.test.ts`（全库 scene.pkg 的 scene.json / image 纹理 / particle 规格 / 效果链解析零失败；**依赖本机壁纸库**）。
+  - **端到端渲染（推荐）**：**`e2e/`（2026-09-22 起入库）** —— 自起 http server + headless Edge（自己 spawn + 手写裸 CDP，不依赖 playwright）+ esbuild 打包 harness，**用生产 `lib/`** 渲染真实素材并逐像素判定，**不依赖 DSH token**。参数走 `e2e/config.mjs`；判据失败**置非零退出码**。`npm run e2e:colorblend` / `e2e:hidpi` / `e2e:compare`。
+  - **CI**：`.github/workflows/ci.yml`（tsc + `lib/` 产物新鲜度 / vitest 新增失败 / Windows 渲染 e2e）。**未在真实 GitHub runner 上跑过**（本机无推送环境）。
+  - 全库浏览器回归：`research/verify-wasm-render.mjs` —— **已失效**（硬编码 `?token=` 过期，401），未入库。
 - **README 效果素材的录制脚本**：`research/dsh-record/record-showcase.ps1`（真实 DSH 页面 + ffmpeg gdigrab 录屏，裁掉地址栏）。
 - ⚠️ **README 里不要用 `<video>` 内嵌仓库内的 mp4 —— GitHub 上不会显示**（2026-09-14 实测，勿重走）：
   1. **GitHub 不重写 `<video>` 的相对路径**。它会把 `<img>` 的相对地址重写到 raw 域名，但不会对 `<video>` 这么做 ⇒ 浏览器按 README 所在页面路径去取 `github.com/<user>/<repo>/tree/<branch>/docs/videos/x.mp4`（HTML 页面），拿不到视频，显示为一片空白。

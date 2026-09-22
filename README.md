@@ -205,13 +205,15 @@ src/client/   浏览器侧（esbuild → dist/client.js），渲染主路径在�
               ├─ tex-loader.ts        TEXV0005 解码（RGBA/DXT/RG88/R8 + 幂填充裁剪 + sprite 帧 + 行序）
               ├─ object-effects.ts    对象级效果链编排（ObjectEffectStage）
               ├─ effect-runner.ts     效果执行器（uniform 绑定 / 纹理槽 / pass 推进）
-              ├─ wasm-renderer.ts     旧 WebGPU 渲染器（**运行时未接入**，保留备用）
-              ├─ scene-json / scene-renderer / scene-assets / alignment / visibility  场景解析与几何
+              ├─ scene-json / scene-assets / scene-graph / visibility  场景解析与几何
+              ├─ wasm-loader.ts       wasm 引擎加载（只服务 CPU 粒子模拟）
               └─ index / wallpaper-controller / background-layer / settings / styles  引导、控制、背景层、设置
 src/shared/   跨 host/client 类型（WallpaperInfo、SceneDescription、SceneObject 等）
-wasm/         Rust 引擎（wasm-bindgen）：lib / coords / scene / tex / particle / render（备用）
-scripts/      build-client.mjs（esbuild 打包 + wasm 复制）
+wasm/         Rust 引擎（wasm-bindgen）：particle（CPU 粒子模拟）—— 旧 WebGPU 渲染器已删除
+scripts/      build-client.mjs（esbuild 打包 + wasm 复制）；check-known-failures.mjs（CI 失败基线门禁）
 tests/        vitest 单测（node + jsdom 双环境）
+e2e/          端到端渲染验证（headless Edge + 生产 lib/ 逐像素判定，可上 CI）
+.github/      CI：tsc + lib/ 产物新鲜度 / vitest 新增失败 / Windows 渲染 e2e
 docs/         开发配置（dev-setup.md）；设计文档与实施计划（superpowers/*）；技术细节（technical-notes.md）；效果视频（videos/*）
 ```
 
@@ -236,11 +238,17 @@ pnpm run build          # tsc -p tsconfig.json → lib/（host 编译，strict�
 pnpm run build:wasm     # cd wasm && wasm-pack build --target web --release --features render → wasm/pkg/
 pnpm run build:client   # node scripts/build-client.mjs → dist/client.js
 pnpm test               # vitest run（node + jsdom 双环境）
+
+# 端到端渲染验证（headless Edge + 生产 lib/，逐像素判定；失败置非零退出码）
+pnpm run e2e:colorblend # 不依赖本机素材，CI 里跑的就是它
+pnpm run e2e:hidpi      # 需本机 Wallpaper Engine 壁纸库
+pnpm run e2e:compare    # A/B 截图逐像素对拍（零回归验收）
 ```
 
 - **改过 `wasm/`（Rust）必须先 `build:wasm` 再 `build:client`** —— client 复制的是 `wasm/pkg` 的现成产物，顺序反了会复制旧 wasm。
 - **client 侧改动（`dist/`）通常自动热重载**：web profile 始终挂载 `@deepseek-ai/dsh-client-hmr`，轮询 bundle 的 `mtime`/`size` 变化并推 `rebuilt` 帧。
 - **host 侧改动（`lib/`）必须重启 `dsh web`**（host 模块热重载默认 `disabled`）。
+- **CI**（`.github/workflows/ci.yml`）：`tsc` + `lib/` 产物新鲜度守卫、`vitest` 只对**新增**失败判红（基线在 `scripts/known-failures.json`）、Windows 上跑渲染 e2e（软件光栅化，不需要 GPU）。
 
 ---
 
