@@ -13,6 +13,9 @@ output/
 # 隔离 worktree 目录（using-git-worktrees）
 .worktrees/
 
+# e2e 运行产物：截图与临时浏览器 profile
+e2e/.out/
+
 # 旧 monorepo 遗留（含被锁定的 node_modules），不再入库
 packages/
 
