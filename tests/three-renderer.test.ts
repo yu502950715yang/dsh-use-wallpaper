@@ -16,15 +16,16 @@ vi.mock('../src/client/threejs-player.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/client/threejs-player.js')>()),
   loadSceneToThree: vi.fn(),
 }));
-vi.mock('../src/client/scene-renderer.js', () => ({
+vi.mock('../src/client/scene-assets.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/client/scene-assets.js')>()),
   resolveImageTexture: vi.fn(),
+  resolveParticleMaterial: vi.fn(),
 }));
 vi.mock('../src/client/tex-loader.js', () => ({
   loadTexTexture: vi.fn(),
 }));
-vi.mock('../src/client/wasm-renderer.js', () => ({
+vi.mock('../src/client/wasm-loader.js', () => ({
   defaultLoadWasm: vi.fn(),
-  resolveParticleMaterial: vi.fn(),
 }));
 // 应用级 Glow 的 stage 是 WebGL 资源（RT/材质），单测只关心装配时序 → 整体 mock。
 vi.mock('../src/client/glow-stage.js', () => ({
@@ -35,9 +36,9 @@ vi.mock('../src/client/glow-stage.js', () => ({
 
 import * as THREE from 'three';
 import { loadSceneToThree } from '../src/client/threejs-player.js';
-import { resolveImageTexture } from '../src/client/scene-renderer.js';
+import { resolveImageTexture, resolveParticleMaterial } from '../src/client/scene-assets.js';
 import { loadTexTexture } from '../src/client/tex-loader.js';
-import { defaultLoadWasm, resolveParticleMaterial } from '../src/client/wasm-renderer.js';
+import { defaultLoadWasm } from '../src/client/wasm-loader.js';
 import { createThreeSceneRenderer, particleBlend, collectObjectEffectChains, collectScriptSources, lastWorldTransformOf } from '../src/client/three-renderer.js';
 import { parseSceneJson } from '../src/client/scene-json.js';
 import { createGlowStage } from '../src/client/glow-stage.js';

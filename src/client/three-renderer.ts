@@ -23,10 +23,11 @@ import type { Material, Texture } from 'three';
 import { loadSceneToThree, resolvePixelRatio, type LoadedParticleAssets, type ParticleSim, type ThreeSceneLoadResult } from './threejs-player.js';
 import { parseSceneJson } from './scene-json.js';
 import { resolveWorldTransforms, type WorldTransform } from './scene-graph.js';
-import { resolveImageTexture, resolveTexPath } from './scene-renderer.js';
+import { resolveImageTexture, resolveTexPath, resolveParticleMaterial } from './scene-assets.js';
 import { loadTexTexture } from './tex-loader.js';
-import { defaultLoadWasm, resolveParticleMaterial } from './wasm-renderer.js';
-import type { LoadWasm, SceneRendererLike, WasmSceneModule } from './wasm-renderer.js';
+import { defaultLoadWasm } from './wasm-loader.js';
+import type { LoadWasm, WasmSceneModule } from './wasm-loader.js';
+import type { SceneRendererLike } from './wallpaper-controller.js';
 import type { SceneDescription } from '../shared/types.js';
 import {
   groupEffectsByObject, objectRtSize, particleWorldSize, screenScalePx,

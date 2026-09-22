@@ -1,7 +1,6 @@
-// 对象级效果链所需的共享纯函数。本文件断言两件事：
-//   ① 行为与搬移前一致（关键边界：幅值/钳制/下限、UV 窗口、等比与钳制语义）；
-//   ② scene-renderer.ts 的重新导出与 object-range.ts 是**同一个函数对象**
-//      （防止有人日后在 scene-renderer 里再写一份实现，造成两处漂移）。
+// 对象级效果链所需的共享纯函数（唯一定义处）：行为与关键边界（幅值/钳制/下限、UV 窗口、
+// 等比与钳制语义）。此前另有一条「scene-renderer 的 re-export 是同一函数对象」断言，
+// 随 scene-renderer 删除而移除。
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import {
@@ -11,7 +10,6 @@ import {
   uvWindow, createCompositeGeometry, coverRange, flipGeometryUvY,
   screenScalePx, objectRtSize,
 } from '../src/client/object-range.js';
-import * as sceneRenderer from '../src/client/scene-renderer.js';
 
 describe('object-range 常量', () => {
   it('CAMERA_DISTANCE=300 / OBJECT_RT_MAX=4096 / PARTICLE_DEFAULT_DISTANCE=64', () => {
@@ -58,8 +56,7 @@ describe('uvWindow / createCompositeGeometry', () => {
     expect(Math.min(...Array.from(pos).filter((_, i) => i % 3 === 0))).toBeCloseTo(-100, 5);
   });
   // v 约定翻转（2026-09-14）：对象 RT 取 WE 约定（v=0=图像顶部）后，合成 quad 必须把 v 翻回
-  // 显示约定才能正立贴回主场景。本函数**不**改 createCompositeGeometry 的默认行为
-  // （未迁移的调用方 = scene-renderer 保持逐字不变），故单独测。
+  // 显示约定才能正立贴回主场景。本函数**不**改 createCompositeGeometry 的默认行为，故单独测。
   it('flipGeometryUvY：v → 1-v（u 不动），且与 UV 窗口映射可交换', () => {
     const geo = createCompositeGeometry(100, 100, 100, 100); // 全窗口 ⇒ uv.y ∈ {0,1}
     flipGeometryUvY(geo);
@@ -190,14 +187,3 @@ describe('objectRtSize（屏占位口径；等比收口到 4096）', () => {
   });
 });
 
-describe('re-export 同一性（防两处实现漂移）', () => {
-  it('scene-renderer.ts 的导出与 object-range.ts 是同一函数对象', () => {
-    expect(sceneRenderer.objectCameraRange).toBe(objectCameraRange);
-    expect(sceneRenderer.uvWindow).toBe(uvWindow);
-    expect(sceneRenderer.createCompositeGeometry).toBe(createCompositeGeometry);
-    expect(sceneRenderer.coverRange).toBe(coverRange);
-    expect(sceneRenderer.materialModulation).toBe(materialModulation);
-    expect(sceneRenderer.PendingChainStore).toBe(PendingChainStore);
-    expect(sceneRenderer.CAMERA_DISTANCE).toBe(CAMERA_DISTANCE);
-  });
-});

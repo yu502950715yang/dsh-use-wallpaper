@@ -2,17 +2,17 @@ import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { createParticleSystem } from '../src/client/particles.js';
 import {
-  objectCameraRange, createObjectRenderTarget, resolveTexPath,
+  objectCameraRange, createObjectRenderTarget,
   groupEffectsByObject, uvWindow, createCompositeGeometry, PendingChainStore,
-  particleObjectRange, particleWorldSize, shouldUseObjectPath,
-  barAnchorOffsetY, updateVisualizerBars, materialModulation,
-} from '../src/client/scene-renderer.js';
+  particleObjectRange, particleWorldSize, shouldUseObjectPath, materialModulation,
+} from '../src/client/object-range.js';
+import { resolveTexPath } from '../src/client/scene-assets.js';
 import type { SceneObject } from '../src/shared/types.js';
 
-// scene-renderer 的 WebGLRenderer 无法在 node（无 WebGL）环境构造，
-// 这里用真实 THREE.BufferGeometry/BufferAttribute 复刻 addParticleSystem 的缓冲接线
-// 与帧循环刷新语义，验证「update 后必须再次调用 positions() 同步缓冲」这一关键行为
-// （防 Critical 回归：帧循环漏调 positions() 会每帧重传同一份全零数据，粒子静止在原点）。
+// 场景几何 / 尺寸 / 资产路径推导的纯函数测试（原作 scene-renderer 的 node 可测部分；
+// 其 WebGLRenderer 渲染路径已随未接入渲染器移除）。
+// 粒子缓冲部分用真实 THREE.BufferGeometry 复刻接线，验证「update 后必须再次调用 positions()
+// 同步缓冲」这一关键行为（防 Critical 回归：漏调会每帧重传全零数据，粒子静止在原点）。
 
 const emitter = { rate: 10, directions: [1, 0, 0] as [number, number, number], distanceMin: 5, distanceMax: 5 };
 const init = {
@@ -68,19 +68,15 @@ describe('resolveTexPath（材质 → tex 路径推导）', () => {
   });
 });
 
-describe('objectCameraRange（对象局部正交相机范围 = 尺寸×缩放，逐轴钳制 2048）', () => {
+describe('objectCameraRange（对象局部正交相机范围 = 尺寸×缩放，逐轴钳制 4096）', () => {
   it('常规：范围 = objSize × scale（中心原点，quad 精确填满 RT）', () => {
     expect(objectCameraRange([4, 4], [2.36, 2.36])).toEqual({ w: 9.44, h: 9.44 });
   });
-  it('超 2048 上限时逐轴钳制（6144×0.47891≈2942.4 → 2048）', () => {
-    // h 方向 3072×0.47891≈1471.2 < 2048 不钳制；用表达式断言避免手算舍入误差
-    expect(objectCameraRange([6144, 3072], [0.47891, 0.47891])).toEqual({
-      w: 2048,
-      h: 3072 * 0.47891,
-    });
+  it('超 4096 上限时逐轴钳制（6144 → 4096，未超限的轴不动）', () => {
+    expect(objectCameraRange([6144, 3072], [1, 1])).toEqual({ w: 4096, h: 3072 });
   });
   it('单轴超限只钳制该轴', () => {
-    expect(objectCameraRange([6144, 512], [1, 1])).toEqual({ w: 2048, h: 512 });
+    expect(objectCameraRange([6144, 512], [1, 1])).toEqual({ w: 4096, h: 512 });
   });
   it('零尺寸/零缩放时下限钳制为 1（不产生退化范围）', () => {
     expect(objectCameraRange([0, 0], [0, 0])).toEqual({ w: 1, h: 1 });
@@ -89,12 +85,8 @@ describe('objectCameraRange（对象局部正交相机范围 = 尺寸×缩放，
     // 2460786246 Lightning cloud 语义 scale.y=-0.18：RT 分辨率必须按幅值 300×0.18=54，
     // 而非负值被下限钳成 1px（RT 退化 → 镜像内容不可见）
     expect(objectCameraRange([400, 300], [1, -0.18])).toEqual({ w: 400, h: 54 });
-    // 负 scale 的钳制同样按幅值比较上限（-10000×1 → |−10000| > 2048 → 钳 2048）
-    expect(objectCameraRange([10000, 512], [1, 1])).toEqual({ w: 2048, h: 512 });
-    expect(objectCameraRange([6144, 3072], [-0.47891, -0.47891])).toEqual({
-      w: 2048,
-      h: 3072 * 0.47891,
-    });
+    // 负 scale 的钳制同样按幅值比较上限（-10000 → |−10000| > 4096 → 钳 4096）
+    expect(objectCameraRange([10000, 512], [-1, -1])).toEqual({ w: 4096, h: 512 });
   });
 });
 
@@ -252,26 +244,26 @@ describe('createCompositeGeometry（合成 quad：世界尺寸 = 未钳制 size�
   });
 });
 
-describe('particleObjectRange（粒子对象局部相机范围 = 发射距离×缩放，逐轴钳制 2048、下限 1）', () => {
+describe('particleObjectRange（粒子对象局部相机范围 = 发射距离×缩放，逐轴钳制 4096、下限 1）', () => {
   it('常规：范围 = distanceMax × scale（用发射距离估计粒子世界包围盒）', () => {
     expect(particleObjectRange({ distanceMax: 320 }, [1, 1])).toEqual({ w: 320, h: 320 });
     expect(particleObjectRange({ distanceMax: 100 }, [2, 3])).toEqual({ w: 200, h: 300 });
   });
-  it('超 2048 上限逐轴钳制（单轴超限只钳制该轴）', () => {
-    expect(particleObjectRange({ distanceMax: 4096 }, [1, 1])).toEqual({ w: 2048, h: 2048 });
-    expect(particleObjectRange({ distanceMax: 320 }, [10, 1])).toEqual({ w: 2048, h: 320 });
+  it('超 4096 上限逐轴钳制（单轴超限只钳制该轴）', () => {
+    expect(particleObjectRange({ distanceMax: 8192 }, [1, 1])).toEqual({ w: 4096, h: 4096 });
+    expect(particleObjectRange({ distanceMax: 320 }, [20, 1])).toEqual({ w: 4096, h: 320 });
   });
   it('缺/零 distanceMax（粒子对象无发射器字段）→ 默认 64 基准再 ×scale 并钳制', () => {
     expect(particleObjectRange({}, [1, 1])).toEqual({ w: 64, h: 64 });
     expect(particleObjectRange({ distanceMax: 0 }, [1, 1])).toEqual({ w: 64, h: 64 });
-    expect(particleObjectRange({}, [100, 1])).toEqual({ w: 2048, h: 64 });
+    expect(particleObjectRange({}, [100, 1])).toEqual({ w: 4096, h: 64 });
   });
   it('零缩放 → 下限钳制为 1（不产生退化范围）', () => {
     expect(particleObjectRange({ distanceMax: 320 }, [0, 0])).toEqual({ w: 1, h: 1 });
   });
   it('T4.4 负 scale.y（镜像）：相机范围取幅值 |distanceMax×scale|（粒子布局绕 origin 镜像，RT 分辨率按幅值）', () => {
     expect(particleObjectRange({ distanceMax: 320 }, [1, -0.5])).toEqual({ w: 320, h: 160 });
-    expect(particleObjectRange({ distanceMax: 4096 }, [-1, -1])).toEqual({ w: 2048, h: 2048 });
+    expect(particleObjectRange({ distanceMax: 8192 }, [-1, -1])).toEqual({ w: 4096, h: 4096 });
     expect(particleObjectRange({}, [-1, 1])).toEqual({ w: 64, h: 64 });
   });
 });
@@ -363,82 +355,4 @@ describe('materialModulation（T4.3 对象 color/alpha/brightness → 材质系�
     expect(m.a).toBe(0.25);
   });
 });
-// T3.3 visualizer 驱动：barAnchorOffsetY（alignment 锚点 → 中心锚定 quad 的 y 偏移）与
-// updateVisualizerBars（每帧按频谱刷新条高与锚定偏移）为纯函数（只操作 THREE.Mesh 变换，
-// node 可测，不触碰 WebGLRenderer）。语义对齐 Simple Visualizer 脚本：
-//   scale.y = amt * scriptProperties.scaleY；origin.y += 0（锚点 y 恒定）；
-//   origin.x += originX 在循环内累积（创建期已按 i+1 累加进 position.x，本函数不动 x）。
-describe('barAnchorOffsetY（alignment → 中心锚定 y 偏移）', () => {
-  it('centre / 缺省 → 0（中心即锚点）', () => {
-    expect(barAnchorOffsetY('centre', 20)).toBe(0);
-    expect(barAnchorOffsetY(undefined, 20)).toBe(0);
-  });
-  it('bottom → +h/2（锚点=底边，quad 中心上移半高，条向上生长）', () => {
-    expect(barAnchorOffsetY('bottom', 20)).toBe(10);
-  });
-  it('top → -h/2（锚点=顶边，quad 中心下移半高，条向下生长）', () => {
-    expect(barAnchorOffsetY('top', 20)).toBe(-10);
-  });
-});
 
-describe('updateVisualizerBars（每帧频谱驱动条高与锚定偏移）', () => {
-  const makeBars = (count: number) => {
-    const bars: THREE.Mesh[] = [];
-    for (let i = 0; i < count; i++) {
-      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial());
-      mesh.position.set(10 + i * 5, 0, 0); // 创建期已按脚本累积 origin.x
-      bars.push(mesh);
-    }
-    return bars;
-  };
-  const props = { barWidth: 1, scaleY: 20, originX: 5, barAlignmentdir: 'bottom' };
-
-  it('scale.y = freqData[i]/255 × scaleY；bottom 锚定 y = anchorY + h/2', () => {
-    const bars = makeBars(2);
-    updateVisualizerBars(bars, 10, props, new Uint8Array([255, 128]));
-    expect(bars[0].scale.y).toBe(20);                    // 255/255×20
-    expect(bars[0].position.y).toBe(10 + 10);            // anchorY + 20/2
-    expect(bars[1].scale.y).toBeCloseTo(128 / 255 * 20, 6);
-    expect(bars[1].position.y).toBeCloseTo(10 + (128 / 255 * 20) / 2, 6);
-  });
-  it('centre 锚定：y = anchorY（偏移 0）', () => {
-    const bars = makeBars(1);
-    updateVisualizerBars(bars, 5, { ...props, barAlignmentdir: 'centre' }, new Uint8Array([255]));
-    expect(bars[0].position.y).toBe(5);
-    expect(bars[0].scale.y).toBe(20);
-  });
-  it('top 锚定：y = anchorY - h/2', () => {
-    const bars = makeBars(1);
-    updateVisualizerBars(bars, 5, { ...props, barAlignmentdir: 'top' }, new Uint8Array([255]));
-    expect(bars[0].position.y).toBe(5 - 10);
-  });
-  it('缺 barAlignmentdir → 按 bottom 处理（视觉系默认自基线向上生长）', () => {
-    const bars = makeBars(1);
-    updateVisualizerBars(bars, 5, { barWidth: 1, scaleY: 20, originX: 5 }, new Uint8Array([255]));
-    expect(bars[0].position.y).toBe(5 + 10);
-  });
-  it('position.x 由创建期累积（i+1）×originX，本函数不改动 x', () => {
-    const bars = makeBars(3);
-    updateVisualizerBars(bars, 0, props, new Uint8Array([255, 128, 64]));
-    expect(bars.map((b) => b.position.x)).toEqual([10, 15, 20]);
-  });
-  it('freqData 为 null（无音频分析器）→ 全零高度（条不可见但存在，不崩）', () => {
-    const bars = makeBars(2);
-    updateVisualizerBars(bars, 0, props, null);
-    expect(bars[0].scale.y).toBe(0);
-    expect(bars[1].scale.y).toBe(0);
-  });
-  it('freqData 比条数短（防御）→ 按 i % len 循环取 bin', () => {
-    const bars = makeBars(4);
-    updateVisualizerBars(bars, 0, props, new Uint8Array([255, 0]));
-    expect(bars[0].scale.y).toBe(20);
-    expect(bars[1].scale.y).toBe(0);
-    expect(bars[2].scale.y).toBe(20);
-    expect(bars[3].scale.y).toBe(0);
-  });
-  it('scriptProperties 缺字段 → 兜底默认值（scaleY=10、originX=10），不崩', () => {
-    const bars = makeBars(1);
-    updateVisualizerBars(bars, 0, {}, new Uint8Array([255]));
-    expect(bars[0].scale.y).toBe(10);
-  });
-});

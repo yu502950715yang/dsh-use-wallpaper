@@ -3,14 +3,22 @@ import type { BackgroundLayer } from './background-layer.js';
 import { resolveBackground } from './background-layer.js';
 import { measureLuma, lumaToTextColor } from './luma.js';
 
+// scene 渲染器的接口形态（three-renderer 的生产实现与测试替身都按此形状提供）。
+export interface SceneRendererLike {
+  render(id: string, fg: HTMLCanvasElement, bg?: HTMLCanvasElement): Promise<boolean>;
+  // 释放渲染器持有的场景资源（壁纸切换/卸载时调用，防泄漏）。
+  dispose?(): void;
+  // 以下为可选运行期下发；未实现的渲染器忽略即可。
+  setPaused?(paused: boolean): void;
+  setQualityScale?(scale: number): void;
+  // 应用级 Glow 的运行期参数（开关/阈值/强度）；已装配时即时生效，无需重选壁纸。
+  setGlow?(patch: { enabled?: boolean; threshold?: number; strength?: number }): void;
+}
+
 export interface WallpaperControllerOptions {
   fetchList: () => Promise<WallpaperInfo[]>;
-  // Finding 2：dispose 可选——每次 select（含取消/切壁纸）时调用，释放渲染器持有的
-  // wasm 场景 + 脚本运行时（防泄漏）。仅注入 render 的旧实现不受影响（可选链兜底）。
-  sceneRenderer?: {
-    render(wallpaperId: string, fg: HTMLCanvasElement, bg?: HTMLCanvasElement): Promise<boolean>;
-    dispose?(): void;
-  };
+  // Finding 2：dispose 可选——每次 select（含取消/切壁纸）时调用，释放渲染器持有的资源（防泄漏）。
+  sceneRenderer?: SceneRendererLike;
 }
 
 // 文字颜色跟随壁纸亮度（2026-09-03）：测 preview 图平均亮度，选文字色写 --wp-chat-fg。

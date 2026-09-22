@@ -191,17 +191,6 @@ export function flipGeometryUvY(geometry: THREE.BufferGeometry): void {
   geometry.attributes.uv.needsUpdate = true;
 }
 
-// 按「contain」语义计算正交相机范围：场景完整可见、不变形，多出的方向留白（透明）。
-export function containRange(width: number, height: number, viewAspect: number) {
-  const sceneAspect = width / height;
-  if (sceneAspect > viewAspect) {
-    // 场景更宽 → 宽度铺满相机，垂直留白
-    return { w: width, h: width / viewAspect };
-  }
-  // 场景更窄 → 高度铺满相机，水平留白
-  return { w: height * viewAspect, h: height };
-}
-
 // 按「cover」语义计算正交相机范围：场景铺满视口、不变形，超出方向被裁剪。
 // 导出供 threejs-player.ts 复用（同一源语义，不重写）。
 //   场景固有尺寸 width×height × 视口宽高比 viewAspect → { w, h }（正交相机视锥尺寸）。

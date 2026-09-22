@@ -8,10 +8,6 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 // bundle 的模块注册由构建产物 wrapper（window.__ModuleLoader__.load）完成，
 // 源码 index.ts 只导出 apply/bootstrap —— 测试直接调用 apply(ctx)。
 
-vi.mock('../../src/client/scene-renderer.js', () => ({
-  renderScene: vi.fn(async () => false), // scene 渲染失败 → 触发 preview 回退（I6 路径）
-}));
-
 function jsonResp(body: unknown) {
   return { ok: true, status: 200, json: async () => body } as any;
 }

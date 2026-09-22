@@ -1,8 +1,6 @@
 import { injectWallpaperStyles } from './styles.js';
 import { createBackgroundLayer } from './background-layer.js';
 import { createWallpaperController } from './wallpaper-controller.js';
-import { renderScene } from './scene-renderer.js';
-import { createWasmSceneRenderer, createFallbackSceneRenderer } from './wasm-renderer.js';
 import { createThreeSceneRenderer } from './three-renderer.js';
 import { WallpaperSettingsSection, setWallpaperSelectHandler, setWallpaperRuntimeHandler } from './settings-section.js';
 import { readClientSettings, writeClientSettings, getUserPropertyValue, DEFAULTS, setSettingsCtx } from './settings.js';
@@ -13,18 +11,6 @@ declare global {
 }
 
 const SETTINGS_SECTION_ID = 'wallpaper-engine';
-
-// Task 5：three.js 播放器路径开关。URL 查询 `THREE_USE=1` 或全局 `window.__THREE_USE__==='1'`
-// 时启用 **新增** 的 three 播放路径（loadSceneToThree：背景 + 粒子，复用 SceneParticleSim）。
-// 缺省（0）→ 走既有 wasm/WebGPU 路径；`wasm-renderer` 保留备用（不删除），可随时对照。
-function isThreeUse(): boolean {
-  if (typeof window === 'undefined') return false;
-  try {
-    if (new URLSearchParams(window.location.search).get('THREE_USE') === '1') return true;
-  } catch { /* location 不可用 → 查全局 */ }
-  return String((window as any).__THREE_USE__) === '1';
-}
-
 
 export function bootstrap(ctx?: any): void {
   // DSH 0.1.2-rc.1：设置走 ctx.remote.settings（Typert），须注入 settingsCtx 供读写
@@ -68,14 +54,8 @@ export function bootstrap(ctx?: any): void {
     layer = createBackgroundLayer(root);
     controller = createWallpaperController(layer, {
       fetchList: async () => (await fetch('/wallpapers/list')).json(),
-      // Task 5：three.js 播放路径（背景 + 粒子）设为**默认**；wasm/WebGPU 路径保留作备用。
-      // three 创建失败时回退到 wasm（three-renderer 内部/controller 兜底），避免白屏。
+      // three.js 播放器是**唯一** scene 路径；渲染失败/零可见对象 → controller 回退 preview 图。
       sceneRenderer,
-      // Task 8 回退链（spec §7 第 1/2/3 条，三级语义）：
-      //   1. 无 WebGPU → createWasmSceneRenderer() 返回 null → 直接用 JS/Three.js 渲染器；
-      //   2. wasm 加载/初始化失败（render resolve false）→ 组合层降级调用 JS 渲染器；
-      //   3. wasm 与 JS 都渲染失败（零对象等，resolve false）→ controller 统一走 preview 图回退。
-      // wasm-renderer 保持单一职责：WebGPU 可用时尝试 wasm，失败返回 false 由组合层降级。
     });
     // 设置面板（settings-section）的壁纸切换/取消经共享 handler 委托 controller
     setWallpaperSelectHandler((id: string) => selectWallpaper(id));

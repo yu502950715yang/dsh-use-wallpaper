@@ -2,14 +2,13 @@
 // Task 1：three.js 场景骨架。WebGLRenderer 无法在 node/jsdom（无 WebGL）环境构造，
 // 测试按契约「可 mock renderer」注入 mock（真实 Scene/Camera/cover 数值仍可验证）。
 // 聚焦：构造后 scene/camera/renderer 存在；resize 更新 cover；update+render 不抛错；
-// 正交相机 cover 尺寸正确（复用 scene-renderer.coverRange 语义）。
+// 正交相机 cover 尺寸正确（复用 object-range.coverRange 语义）。
 
 import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { ThreeScenePlayer, loadSceneToThree, resolvePixelRatio, frameCountFromDims, textureFrameCount, textureFrameGrid, specMaxcount, particleCapacity, specEmitterOrigin, simEmitterOffset, BLACKMYTH_OBJ_SCALE, DEFAULT_PARTICLE_CAPACITY, MAX_PARTICLE_CAPACITY } from '../src/client/threejs-player.js';
 import { textLayerOffset, type TextLayout } from '../src/client/text-object.js';
-import { coverRange } from '../src/client/scene-renderer.js';
-import { createCompositeGeometry, screenScalePx } from '../src/client/object-range.js';
+import { coverRange, createCompositeGeometry, screenScalePx } from '../src/client/object-range.js';
 
 // 注入的 mock renderer：只测相机/场景/RAF 逻辑，不触碰 WebGL。
 function createMockRenderer() {
