@@ -190,6 +190,10 @@ export async function collectObjectEffectChains(
 export function collectScriptSources(desc: SceneDescription): Array<{ objectId: number; source: string }> {
   const out: Array<{ objectId: number; source: string }> = [];
   for (const obj of desc.objects) {
+    // 只收 **visible.script** 来源的脚本。`obj.script` 对 text 对象装的是 `text.script`，
+    // 那类归既有的 text-script.ts 运行时 —— 3798688689 的 701/837（两个时钟）就因此被重复
+    // 收集，而它们顶层调用 `createScriptProperties()`，在本 VM 里 eval 必失败（实测 GUI 日志）。
+    if (obj.visible?.kind !== 'script') continue;
     const s = (obj as { script?: unknown }).script;
     if (typeof s === 'string' && s.length > 0) out.push({ objectId: obj.id, source: s });
   }

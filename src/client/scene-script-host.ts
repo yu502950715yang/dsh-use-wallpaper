@@ -47,7 +47,7 @@ export class SceneScriptHost {
       onWarn: opts.onWarn,
     });
     if (!vm) return null;
-    for (const s of scripts) vm.load(s.source);
+    for (const s of scripts) vm.load(s.source, `obj ${s.objectId}`);
     vm.initAll();
     return new SceneScriptHost(anims, state, vm);
   }

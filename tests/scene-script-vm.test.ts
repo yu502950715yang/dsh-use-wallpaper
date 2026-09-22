@@ -136,4 +136,46 @@ describe('SceneScriptVm', () => {
     expect(() => vm!.dispose()).not.toThrow();
     expect(() => vm!.dispose()).not.toThrow();
   });
+
+  // ⚠️ 真实 GUI 回归（2026-09-22）：预算只减不增 ⇒ 长时间运行后报 `InternalError: interrupted`
+  // 并把所有脚本永久停用。headless e2e 只跑几帧测不出来，故用可注入的小预算做回归。
+  it('指令预算每次调用都重置（不会被累积耗尽）', async () => {
+    const { state, anims, userProps } = setup();
+    const warns: string[] = [];
+    const vm = await SceneScriptVm.create({
+      userProperties: userProps, state, anims,
+      onWarn: (m) => warns.push(m),
+      stepBudget: 200_000,
+    });
+    vm!.load(`export function update(){
+      var s = 0;
+      for (var i = 0; i < 200; i++) s += i;
+      thisScene.getLayerByID(11).alpha = s > 0 ? 1 : 0;
+    }`);
+    vm!.initAll();
+    for (let i = 0; i < 60; i++) vm!.updateAll();
+    expect(warns.filter((w) => w.includes('interrupted'))).toEqual([]);
+    expect(vm!.activeCount).toBe(1);
+    expect(state.read(11).alpha).toBe(1);
+    vm!.dispose();
+  });
+
+  // ⚠️ 真实 GUI 回归（2026-09-22）：221591「双击切歌」的 init 调 thisScene.getLayer(name).stop()
+  // —— 未实现的 WE API 必须走兜底 Proxy，否则单个缺失方法就 TypeError 并停用整个脚本。
+  it('未实现的 WE API（layer.stop 等）走兜底不抛错', async () => {
+    const { state, anims, userProps, warns } = setup();
+    const vm = await SceneScriptVm.create({ userProperties: userProps, state, anims, onWarn: (m) => warns.push(m) });
+    vm!.load(`export function init(){
+      thisScene.getLayer('某首歌').stop();
+      thisScene.getLayer('某首歌').play();
+      thisScene.getLayer('某首歌').setSomethingUnknown(1, 2);
+      thisScene.someUnknownApi().then();
+      thisScene.getLayerByID(12).alpha = 1;
+    }`);
+    vm!.initAll();
+    expect(warns).toEqual([]);
+    expect(vm!.activeCount).toBe(1);
+    expect(state.read(12).alpha).toBe(1);
+    vm!.dispose();
+  });
 });

@@ -27916,12 +27916,45 @@ function Vec4(x, y, z, w) { this.x = x || 0; this.y = y || 0; this.z = z || 0; t
 var IModelData = { POSITION: 0, UV: 1, COLOR: 2, NORMAL: 3, TANGENT: 4 };
 
 function __noop() {}
+
+// \u4E07\u80FD\u515C\u5E95\uFF1A**\u672A\u5B9E\u73B0\u7684 WE API \u4E00\u5F8B\u8FD4\u56DE\u300C\u53EF\u8C03\u7528\u7684 Proxy\u300D**\uFF0C\u907F\u514D\u5355\u4E2A\u7F3A\u5931\u65B9\u6CD5\u5C31\u8BA9\u6574\u4E2A\u811A\u672C
+// \u88AB\u505C\u7528\uFF08\u5B9E\u6D4B\uFF1A221591\u300C\u53CC\u51FB\u5207\u6B4C\u300D\u7684 thisScene.getLayer(name).stop() \u5C31\u662F\u8FD9\u79CD\uFF1B\u6CA1\u6709\u515C\u5E95\u65F6
+// init \u76F4\u63A5 TypeError \u5E76\u505C\u7528\u8BE5\u811A\u672C\uFF09\u3002\u5C5E\u6027\u8BFB\u53D6\u7ED9\u5B89\u5168\u9ED8\u8BA4\u503C\uFF08alpha=1 / visible=true / \u4F4D\u79FB 0\uFF09\u3002
+var __anyCache = {};
+function __any(path) {
+  if (__anyCache[path]) return __anyCache[path];
+  var p = new Proxy(function () {}, {
+    get: function (t, prop) {
+      if (typeof prop === 'symbol') return undefined;
+      if (prop === 'toString' || prop === 'valueOf') return function () { return 0; };
+      if (prop === 'alpha' || prop === 'opacity' || prop === 'brightness' || prop === 'baseAlpha') return 1;
+      if (prop === 'visible' || prop === 'active' || prop === 'shown' || prop === 'isPlaying') return true;
+      if (prop === 'x' || prop === 'y' || prop === 'z' || prop === 'w' || prop === 'h' || prop === 'rot') return 0;
+      return __any(path + '.' + String(prop));
+    },
+    set: function () { return true; },
+    apply: function () { return __any(path + '()'); }
+  });
+  __anyCache[path] = p;
+  return p;
+}
+// \u5DF2\u77E5\u6210\u5458\u8D70\u663E\u5F0F\u5B9E\u73B0\uFF08getter \u6B63\u5E38\u89E6\u53D1\uFF09\uFF0C\u672A\u77E5\u6210\u5458\u9000\u56DE __any\u3002
+function __wrap(base, path) {
+  return new Proxy(base, {
+    get: function (t, prop) {
+      if (typeof prop === 'symbol') return undefined;
+      return (prop in t) ? t[prop] : __any(path + '.' + String(prop));
+    },
+    set: function (t, prop, v) { t[prop] = v; return true; }
+  });
+}
+
 function __mkDummy(name) {
-  return {
+  return __wrap({
     __dummyName: name,
     applyData: __noop, setParent: __noop, setMaterialProperty: __noop,
     getMaterialProperty: function () { return 0; }, visible: true
-  };
+  }, 'dummy(' + name + ')');
 }
 
 var __animCache = {};
@@ -27942,6 +27975,7 @@ function __mkAnim(key, name) {
 var __layerCache = {};
 function __mkLayer(key) {
   if (__layerCache[key]) return __layerCache[key];
+  var path = 'layer(' + key + ')';
   var o = {
     __key: key,
     get alpha() { return __host.readNum(key, 'alpha'); },
@@ -27964,7 +27998,7 @@ function __mkLayer(key) {
     set color(v) { __host.writeVec(key, 'color', v.x, v.y, (v.z === undefined ? 0 : v.z)); },
     getAnimation: function (name) { return __mkAnim(key, String(name)); },
     getEffect: function (name) {
-      return { name: name, visible: true, setMaterialProperty: __noop, getMaterialProperty: function () { return 0; } };
+      return __wrap({ name: name, visible: true, setMaterialProperty: __noop, getMaterialProperty: function () { return 0; } }, path + '.fx(' + name + ')');
     },
     getModelData: function () { return __mkDummy('model'); },
     setMaterialProperty: __noop,
@@ -27972,25 +28006,25 @@ function __mkLayer(key) {
     setParent: __noop,
     setVisible: function (v) { __host.writeBool(key, 'visible', v); return v; }
   };
-  __layerCache[key] = o;
-  return o;
+  __layerCache[key] = __wrap(o, path);
+  return __layerCache[key];
 }
 
-var thisScene = {
+var thisScene = __wrap({
   getLayerByID: function (id) { return __mkLayer('id:' + id); },
   getLayer: function (n) { return __mkLayer('name:' + n); },
   createLayer: function (o) { return __mkLayer('new:' + ((o && o.name) ? o.name : 'anon')); },
   createModelData: function () { return __mkDummy('model'); }
-};
+}, 'thisScene');
 var getLayerByID = thisScene.getLayerByID;
 var getLayer = thisScene.getLayer;
 var createLayer = thisScene.createLayer;
 
-var engine = {
+var engine = __wrap({
   userProperties: {},
   registerAsset: function () { return __mkDummy('asset'); },
   get frametime() { return __host.frametime(); }
-};
+}, 'engine');
 var registerAsset = engine.registerAsset;
 
 var shared = {};
@@ -28007,6 +28041,9 @@ var SceneScriptVm = class _SceneScriptVm {
   anims;
   onWarn;
   dt = 1 / 60;
+  /** 单次脚本调用的指令预算（缺省 STEP_BUDGET；callOne 每次调用前重置）。 */
+  stepBudget;
+  budget;
   constructor(ctx, runtime, opts) {
     this.ctx = ctx;
     this.runtime = runtime;
@@ -28014,6 +28051,8 @@ var SceneScriptVm = class _SceneScriptVm {
     this.anims = opts.anims;
     this.onWarn = opts.onWarn ?? (() => {
     });
+    this.stepBudget = Number.isFinite(opts.stepBudget) && opts.stepBudget > 0 ? opts.stepBudget : STEP_BUDGET2;
+    this.budget = this.stepBudget;
   }
   /** 初始化 quickjs 并装好 prelude。失败返回 null（调用方退回"无脚本"路径，画面等于现状）。 */
   static async create(opts) {
@@ -28026,13 +28065,12 @@ var SceneScriptVm = class _SceneScriptVm {
       runtime = mod.newRuntime();
       runtime.setMemoryLimit(1024 * 1024 * 1024);
       runtime.setMaxStackSize(4 * 1024 * 1024);
-      let budget = STEP_BUDGET2;
-      runtime.setInterruptHandler(() => {
-        budget -= 1e4;
-        return budget <= 0;
-      });
       const ctx = runtime.newContext();
       const vm = new _SceneScriptVm(ctx, runtime, opts);
+      runtime.setInterruptHandler(() => {
+        vm.budget -= 1e4;
+        return vm.budget <= 0;
+      });
       if (!vm.installPrelude(opts)) {
         vm.dispose();
         return null;
@@ -28148,11 +28186,12 @@ var SceneScriptVm = class _SceneScriptVm {
     }
     return a;
   }
-  /** 装载一个模块脚本。返回 false = eval 失败（该脚本被跳过，其余继续）。 */
-  load(source) {
+  /** 装载一个模块脚本。返回 false = eval 失败（该脚本被跳过，其余继续）。
+   *  `label` 用于日志（应带 scene 对象 id —— 脚本首行都是 `'use strict';`，不带 id 无法定位）。 */
+  load(source, label) {
     const ctx = this.ctx;
     const sanitized = String(source ?? "").replace(/\bexport\s+/g, "");
-    const label = firstNonEmptyLine(sanitized);
+    const tag = label ?? firstNonEmptyLine(sanitized);
     const code = `globalThis.__mods.push((function(){
 ${sanitized}
 return {
@@ -28165,7 +28204,7 @@ return {
     const r = ctx.evalCode(code, "scene-script.js");
     if (r.error) {
       r.error.dispose();
-      this.warn(`SceneScript eval \u5931\u8D25\uFF0C\u5DF2\u8DF3\u8FC7\u8BE5\u811A\u672C\uFF08${label}\uFF09`);
+      this.warn(`SceneScript eval \u5931\u8D25\uFF0C\u5DF2\u8DF3\u8FC7\u8BE5\u811A\u672C\uFF08${tag}\uFF09`);
       return false;
     }
     r.value.dispose();
@@ -28188,7 +28227,7 @@ return {
       apply: grab("applyUserProperties"),
       click: grab("cursorClick"),
       active: true,
-      label
+      label: tag
     };
     this.handles.push(inst);
     for (const h of [m.init, m.update, m.apply, m.click]) if (h) this.handles.push(h);
@@ -28197,6 +28236,7 @@ return {
   }
   callOne(m, fn, mode) {
     if (!m.active || !fn) return;
+    this.budget = this.stepBudget;
     const ctx = this.ctx;
     let argH;
     if (mode === "props") {
@@ -28262,14 +28302,20 @@ return {
     } catch {
     }
   }
+  /** 错误文本：quickjs 的 TypeError 只给 "not a function" 这类无主语 message，必须带 stack 才能定位。 */
   errorText(errH) {
+    const ctx = this.ctx;
+    const grab = (prop) => {
+      const h = ctx.getProp(errH, prop);
+      const v = String(ctx.dump(h));
+      h.dispose();
+      return v;
+    };
     try {
-      const m = this.ctx.getProp(errH, "message");
-      const nameH = this.ctx.getProp(errH, "name");
-      const text = `${String(this.ctx.dump(nameH))}: ${String(this.ctx.dump(m))}`;
-      m.dispose();
-      nameH.dispose();
-      return text;
+      const name = grab("name");
+      const msg = grab("message");
+      const stack = grab("stack").split("\n").slice(0, 4).map((l) => l.trim()).join(" \u2190 ");
+      return `${name}: ${msg}  @${stack}`;
     } catch {
       return "(unknown error)";
     }
@@ -28322,7 +28368,7 @@ var SceneScriptHost = class _SceneScriptHost {
       onWarn: opts.onWarn
     });
     if (!vm) return null;
-    for (const s of scripts) vm.load(s.source);
+    for (const s of scripts) vm.load(s.source, `obj ${s.objectId}`);
     vm.initAll();
     return new _SceneScriptHost(anims, state, vm);
   }
@@ -28430,6 +28476,7 @@ async function collectObjectEffectChains(desc, loadFile) {
 function collectScriptSources(desc) {
   const out = [];
   for (const obj of desc.objects) {
+    if (obj.visible?.kind !== "script") continue;
     const s = obj.script;
     if (typeof s === "string" && s.length > 0) out.push({ objectId: obj.id, source: s });
   }

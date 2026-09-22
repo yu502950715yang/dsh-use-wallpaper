@@ -1433,4 +1433,15 @@ describe('collectScriptSources', () => {
     const desc = parseSceneJson(JSON.stringify({ objects: [{ id: 1, visible: { script: '', value: true } }] }));
     expect(collectScriptSources(desc)).toEqual([]);
   });
+
+  it('text 对象的 text.script 不被收集（归既有 text-script.ts 运行时）', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [{
+        id: 701, name: 'Time2',
+        text: { value: 'Time', script: "export var scriptProperties = createScriptProperties();\nexport function update(v){return v;}" },
+        visible: { user: 'time', value: true },
+      }],
+    }));
+    expect(collectScriptSources(desc)).toEqual([]);
+  });
 });

@@ -21,6 +21,8 @@ export interface SceneScriptVmOptions {
   state: LayerStateTable;
   anims: AnimRegistry;
   onWarn?: (msg: string) => void;
+  /** 单次脚本调用的指令预算（缺省 50M）。测试可传小值，验证「预算每次调用都重置」。 */
+  stepBudget?: number;
 }
 
 // 单脚本一次调用的指令预算：正常脚本远低于此；死循环在此被中断。
@@ -36,12 +38,45 @@ function Vec4(x, y, z, w) { this.x = x || 0; this.y = y || 0; this.z = z || 0; t
 var IModelData = { POSITION: 0, UV: 1, COLOR: 2, NORMAL: 3, TANGENT: 4 };
 
 function __noop() {}
+
+// 万能兜底：**未实现的 WE API 一律返回「可调用的 Proxy」**，避免单个缺失方法就让整个脚本
+// 被停用（实测：221591「双击切歌」的 thisScene.getLayer(name).stop() 就是这种；没有兜底时
+// init 直接 TypeError 并停用该脚本）。属性读取给安全默认值（alpha=1 / visible=true / 位移 0）。
+var __anyCache = {};
+function __any(path) {
+  if (__anyCache[path]) return __anyCache[path];
+  var p = new Proxy(function () {}, {
+    get: function (t, prop) {
+      if (typeof prop === 'symbol') return undefined;
+      if (prop === 'toString' || prop === 'valueOf') return function () { return 0; };
+      if (prop === 'alpha' || prop === 'opacity' || prop === 'brightness' || prop === 'baseAlpha') return 1;
+      if (prop === 'visible' || prop === 'active' || prop === 'shown' || prop === 'isPlaying') return true;
+      if (prop === 'x' || prop === 'y' || prop === 'z' || prop === 'w' || prop === 'h' || prop === 'rot') return 0;
+      return __any(path + '.' + String(prop));
+    },
+    set: function () { return true; },
+    apply: function () { return __any(path + '()'); }
+  });
+  __anyCache[path] = p;
+  return p;
+}
+// 已知成员走显式实现（getter 正常触发），未知成员退回 __any。
+function __wrap(base, path) {
+  return new Proxy(base, {
+    get: function (t, prop) {
+      if (typeof prop === 'symbol') return undefined;
+      return (prop in t) ? t[prop] : __any(path + '.' + String(prop));
+    },
+    set: function (t, prop, v) { t[prop] = v; return true; }
+  });
+}
+
 function __mkDummy(name) {
-  return {
+  return __wrap({
     __dummyName: name,
     applyData: __noop, setParent: __noop, setMaterialProperty: __noop,
     getMaterialProperty: function () { return 0; }, visible: true
-  };
+  }, 'dummy(' + name + ')');
 }
 
 var __animCache = {};
@@ -62,6 +97,7 @@ function __mkAnim(key, name) {
 var __layerCache = {};
 function __mkLayer(key) {
   if (__layerCache[key]) return __layerCache[key];
+  var path = 'layer(' + key + ')';
   var o = {
     __key: key,
     get alpha() { return __host.readNum(key, 'alpha'); },
@@ -84,7 +120,7 @@ function __mkLayer(key) {
     set color(v) { __host.writeVec(key, 'color', v.x, v.y, (v.z === undefined ? 0 : v.z)); },
     getAnimation: function (name) { return __mkAnim(key, String(name)); },
     getEffect: function (name) {
-      return { name: name, visible: true, setMaterialProperty: __noop, getMaterialProperty: function () { return 0; } };
+      return __wrap({ name: name, visible: true, setMaterialProperty: __noop, getMaterialProperty: function () { return 0; } }, path + '.fx(' + name + ')');
     },
     getModelData: function () { return __mkDummy('model'); },
     setMaterialProperty: __noop,
@@ -92,25 +128,25 @@ function __mkLayer(key) {
     setParent: __noop,
     setVisible: function (v) { __host.writeBool(key, 'visible', v); return v; }
   };
-  __layerCache[key] = o;
-  return o;
+  __layerCache[key] = __wrap(o, path);
+  return __layerCache[key];
 }
 
-var thisScene = {
+var thisScene = __wrap({
   getLayerByID: function (id) { return __mkLayer('id:' + id); },
   getLayer: function (n) { return __mkLayer('name:' + n); },
   createLayer: function (o) { return __mkLayer('new:' + ((o && o.name) ? o.name : 'anon')); },
   createModelData: function () { return __mkDummy('model'); }
-};
+}, 'thisScene');
 var getLayerByID = thisScene.getLayerByID;
 var getLayer = thisScene.getLayer;
 var createLayer = thisScene.createLayer;
 
-var engine = {
+var engine = __wrap({
   userProperties: {},
   registerAsset: function () { return __mkDummy('asset'); },
   get frametime() { return __host.frametime(); }
-};
+}, 'engine');
 var registerAsset = engine.registerAsset;
 
 var shared = {};
@@ -138,6 +174,9 @@ export class SceneScriptVm {
   private readonly anims: AnimRegistry;
   private readonly onWarn: (msg: string) => void;
   private dt = 1 / 60;
+  /** 单次脚本调用的指令预算（缺省 STEP_BUDGET；callOne 每次调用前重置）。 */
+  private readonly stepBudget: number;
+  private budget: number;
 
   private constructor(ctx: QuickJSContext, runtime: QuickJSRuntime, opts: SceneScriptVmOptions) {
     this.ctx = ctx;
@@ -145,6 +184,10 @@ export class SceneScriptVm {
     this.state = opts.state;
     this.anims = opts.anims;
     this.onWarn = opts.onWarn ?? ((): void => { /* 生产静默 */ });
+    this.stepBudget = Number.isFinite(opts.stepBudget) && (opts.stepBudget as number) > 0
+      ? (opts.stepBudget as number)
+      : STEP_BUDGET;
+    this.budget = this.stepBudget;
   }
 
   /** 初始化 quickjs 并装好 prelude。失败返回 null（调用方退回"无脚本"路径，画面等于现状）。 */
@@ -161,13 +204,15 @@ export class SceneScriptVm {
       runtime = mod.newRuntime();
       runtime.setMemoryLimit(1024 * 1024 * 1024);
       runtime.setMaxStackSize(4 * 1024 * 1024);
-      let budget = STEP_BUDGET;
-      runtime.setInterruptHandler(() => {
-        budget -= 10_000;
-        return budget <= 0;
-      });
       const ctx = runtime.newContext();
       const vm = new SceneScriptVm(ctx, runtime, opts);
+      // ⚠️ 指令预算必须**每次脚本调用前重置**（见 callOne）：只减不增的话，长时间运行后预算耗尽
+      // 会让所有脚本被永久中断 —— 实测 GUI 跑一会儿后报 `InternalError: interrupted`
+      // （headless e2e 只跑几帧，测不出来）。与 text-script.ts 的 resetBudget 同语义。
+      runtime.setInterruptHandler(() => {
+        vm.budget -= 10_000;
+        return vm.budget <= 0;
+      });
       if (!vm.installPrelude(opts)) {
         vm.dispose();
         return null;
@@ -293,11 +338,12 @@ export class SceneScriptVm {
     return a;
   }
 
-  /** 装载一个模块脚本。返回 false = eval 失败（该脚本被跳过，其余继续）。 */
-  load(source: string): boolean {
+  /** 装载一个模块脚本。返回 false = eval 失败（该脚本被跳过，其余继续）。
+   *  `label` 用于日志（应带 scene 对象 id —— 脚本首行都是 `'use strict';`，不带 id 无法定位）。 */
+  load(source: string, label?: string): boolean {
     const ctx = this.ctx;
     const sanitized = String(source ?? '').replace(/\bexport\s+/g, '');
-    const label = firstNonEmptyLine(sanitized);
+    const tag = label ?? firstNonEmptyLine(sanitized);
     const code = `globalThis.__mods.push((function(){
 ${sanitized}
 return {
@@ -310,7 +356,7 @@ return {
     const r = ctx.evalCode(code, 'scene-script.js');
     if (r.error) {
       r.error.dispose();
-      this.warn(`SceneScript eval 失败，已跳过该脚本（${label}）`);
+      this.warn(`SceneScript eval 失败，已跳过该脚本（${tag}）`);
       return false;
     }
     r.value.dispose();
@@ -335,7 +381,7 @@ return {
       apply: grab('applyUserProperties'),
       click: grab('cursorClick'),
       active: true,
-      label,
+      label: tag,
     };
     this.handles.push(inst);
     for (const h of [m.init, m.update, m.apply, m.click]) if (h) this.handles.push(h);
@@ -345,6 +391,7 @@ return {
 
   private callOne(m: LoadedModule, fn: QuickJSHandle | null, mode: 'value' | 'props'): void {
     if (!m.active || !fn) return;
+    this.budget = this.stepBudget; // 每个脚本每次调用一份新预算（见 create 的 handler 注释）
     const ctx = this.ctx;
     let argH: QuickJSHandle;
     if (mode === 'props') {
@@ -409,14 +456,20 @@ return {
     try { this.runtime.dispose(); } catch { /* gc 断言可忽略 */ }
   }
 
+  /** 错误文本：quickjs 的 TypeError 只给 "not a function" 这类无主语 message，必须带 stack 才能定位。 */
   private errorText(errH: QuickJSHandle): string {
+    const ctx = this.ctx;
+    const grab = (prop: string): string => {
+      const h = ctx.getProp(errH, prop);
+      const v = String(ctx.dump(h));
+      h.dispose();
+      return v;
+    };
     try {
-      const m = this.ctx.getProp(errH, 'message');
-      const nameH = this.ctx.getProp(errH, 'name');
-      const text = `${String(this.ctx.dump(nameH))}: ${String(this.ctx.dump(m))}`;
-      m.dispose();
-      nameH.dispose();
-      return text;
+      const name = grab('name');
+      const msg = grab('message');
+      const stack = grab('stack').split('\n').slice(0, 4).map((l) => l.trim()).join(' ← ');
+      return `${name}: ${msg}  @${stack}`;
     } catch {
       return '(unknown error)';
     }
