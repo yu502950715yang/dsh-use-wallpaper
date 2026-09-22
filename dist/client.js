@@ -22409,20 +22409,30 @@ function resolveVisibility(obj, userProps) {
 }
 
 // src/client/scene-json.ts
+function transformString(s) {
+  if (typeof s === "string") return s;
+  if (s && typeof s === "object" && typeof s.value === "string") {
+    return s.value;
+  }
+  return void 0;
+}
 function vec3(s) {
-  if (typeof s !== "string") return [0, 0, 0];
-  const parts = s.trim().split(/\s+/).map(Number);
+  const str = transformString(s);
+  if (str === void 0) return [0, 0, 0];
+  const parts = str.trim().split(/\s+/).map(Number);
   return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0];
 }
 function size2(s) {
-  if (typeof s !== "string") return void 0;
-  const parts = s.trim().split(/\s+/).map(Number);
+  const str = transformString(s);
+  if (str === void 0) return void 0;
+  const parts = str.trim().split(/\s+/).map(Number);
   if (parts.length < 2 || !isFinite(parts[0]) || !isFinite(parts[1])) return void 0;
   return [parts[0], parts[1]];
 }
 function scale3(s) {
-  if (typeof s !== "string") return [1, 1, 1];
-  const parts = s.trim().split(/\s+/).map(Number);
+  const str = transformString(s);
+  if (str === void 0) return [1, 1, 1];
+  const parts = str.trim().split(/\s+/).map(Number);
   return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0];
 }
 function optNum(s) {
@@ -22768,7 +22778,7 @@ function createClockDriver(canvas, opts, props, initialText) {
 // src/client/threejs-player.ts
 var DEFAULT_PARTICLE_CAPACITY = 1024;
 var MAX_PARTICLE_CAPACITY = 2048;
-var PARTICLE_FLOATS_PER_INSTANCE = 11;
+var PARTICLE_FLOATS_PER_INSTANCE = 13;
 function specMaxcount(specJson) {
   try {
     const v = JSON.parse(specJson).maxcount;
@@ -22827,9 +22837,9 @@ attribute float particleSize;
 attribute vec2 particleUv;
 attribute vec3 particleColor;
 attribute float particleAlpha;
-// \u7C92\u5B50\u5E73\u9762\u81EA\u65CB\u89D2\uFF08\u5F27\u5EA6\uFF0Cz \u8F74\u5355\u6807\u91CF\u8FD1\u4F3C\uFF09\uFF1A\u7531\u6A21\u62DF\u5668\u7684 rotationrandom \u521D\u59CB\u5316\u3001
-// angularmovement \u6BCF\u5E27\u63A8\u8FDB\uFF08p.rot += angular_vel[2]*dt\uFF09\u3002
-attribute float particleRot;
+// \u7C92\u5B50\u6B27\u62C9\u89D2\uFF08\u5F27\u5EA6\uFF0C**\u9010\u5206\u91CF**\uFF09\uFF1A\u7531\u6A21\u62DF\u5668\u7684 rotationrandom \u521D\u59CB\u5316\u3001
+// angularmovement \u6BCF\u5E27\u9010\u5206\u91CF\u63A8\u8FDB\uFF08p.rot[k] += angular_vel[k]*dt\uFF09\u3002
+attribute vec3 particleRot;
 // \u5BF9\u8C61\u53D8\u6362\uFF08WE \u7684\u7C92\u5B50 model matrix \u8BED\u4E49\uFF0C\u89C1 loadSceneToThree \u6CE8\u91CA\uFF09\uFF1A
 //   objCenter     \u5BF9\u8C61\u4E2D\u5FC3\uFF08\u4E16\u754C\u5750\u6807\uFF0Cwe_to_three \u540E\uFF09
 //   objScale      scene.json \u7684\u5BF9\u8C61 scale\uFF08\u9010\u8F74\uFF0C\u53EF\u4E3A\u8D1F = \u955C\u50CF\uFF09
@@ -22870,11 +22880,11 @@ void main() {
   // =\u300C\u4ECE\u6392\u6C14\u7BA1\u5411\u53F3\u4FA7\u98D8\u300D\uFF0C\u6F0F\u6389\u65CB\u8F6C\u540E\u70DF\u5C31\u76F4\u7740\u5F80\u4E0A\u8D70\u3002
   vec3 worldPos = objCenter + weObjectRotate(objScale * (emitterOrigin + local), objAngles);
   // \u7C92\u5B50 quad \u7684\u5C3A\u5BF8\u540C\u6837\u4E58\u5BF9\u8C61 scale\uFF08\u975E\u5747\u5300\uFF1Babs \u53BB\u6389\u955C\u50CF\u7684\u7B26\u53F7\uFF09\uFF0C\u5E76\u968F\u5BF9\u8C61\u89D2\u5EA6\u4E00\u8D77\u8F6C\u3002
-  // \u81EA\u65CB\u5148\u4E8E\u5BF9\u8C61\u65CB\u8F6C\uFF1A\u89D2\u70B9\u5728**\u7C92\u5B50\u5E73\u9762\u5185**\u7ED5\u4E2D\u5FC3\u8F6C particleRot\uFF08\u5BF9\u9F50\u5DF2\u5220\u9664\u7684 GPU billboard
-  // particle_billboard.wgsl \u7684 rotate(corner, rot.z)\uFF1B\u5168\u5E93 16/29 \u5F20\u58C1\u7EB8\u5E26 rotationrandom\uFF09\u3002
-  float spinC = cos(particleRot), spinS = sin(particleRot);
-  vec2 spun = vec2(position.x * spinC - position.y * spinS, position.x * spinS + position.y * spinC);
-  vec3 corner = weObjectRotate(abs(objScale) * vec3(spun * particleSize * 0.5, 0.0), objAngles);
+  // \u81EA\u65CB\u5148\u4E8E\u5BF9\u8C61\u65CB\u8F6C\uFF1A\u6309 WE ComputeParticleTangents\uFF08shaders/common_particles.h\uFF09\u7684**\u4E09\u8F74\u6B27\u62C9**
+  // \u65CB\u8F6C quad \u89D2\u70B9 \u2014\u2014 \u590D\u7528 weObjectRotate\uFF08R = Rz\xB7Ry\xB7Rx\uFF0C\u4E0E\u5BF9\u8C61\u89D2\u5EA6\u540C\u4E00\u7EA6\u5B9A\uFF09\u3002
+  // rot \u53EA\u6709 z \u5206\u91CF\u65F6\u9000\u5316\u4E3A\u5E73\u9762\u81EA\u65CB\uFF0C\u4E0E\u539F\u5B9E\u73B0\u9010\u50CF\u7D20\u4E00\u81F4\u3002
+  vec3 spun = weObjectRotate(vec3(position.xy, 0.0), particleRot);
+  vec3 corner = weObjectRotate(abs(objScale) * (spun * particleSize * 0.5), objAngles);
   worldPos += corner;
   gl_Position = projectionMatrix * modelViewMatrix * vec4(worldPos, 1.0);
   // \u26A0\uFE0F \u4FEE\u6B63\uFF1A\u7C92\u5B50\u662F 2D billboard\uFF08\u65E0\u6DF1\u5EA6\u6392\u5E8F\uFF0Cz \u4E0D\u53C2\u4E0E\u53EF\u89C1\u6027\uFF09\u3002three \u6B63\u4EA4\u76F8\u673A far/near \u4F1A\u628A
@@ -23464,7 +23474,7 @@ var ThreeScenePlayer = class {
     if (map && map.isCanvasTexture) map.dispose();
   }
   // Task 3：粒子图层。`simVerticesGetter` 每帧返回模拟器当前顶点（摊平 Float32Array，
-  // 每粒子 `[pos3, size, uv2, color3, alpha, rot]` 11 浮点——来自 wasm `SceneParticleSim::build_instance_vertices`）。
+  // 每粒子 `[pos3, size, uv2, color3, alpha, rot3]` 13 浮点——来自 wasm `SceneParticleSim::build_instance_vertices`）。
   // 渲染用 three.js `ShaderMaterial` billboard quad（每粒子一个实例，shader 由基础角点+位置/尺寸展开），
   // 模拟逻辑仍由 `SceneParticleSim` 承担（思路 1 核心：不重写模拟，只换渲染引擎）。
   // 返回分配的图层 id，供更新/释放引用。
@@ -23486,7 +23496,7 @@ var ThreeScenePlayer = class {
     const uvs = new InstancedBufferAttribute(new Float32Array(capacity * 2), 2);
     const colors = new InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
     const alphas = new InstancedBufferAttribute(new Float32Array(capacity), 1);
-    const rots = new InstancedBufferAttribute(new Float32Array(capacity), 1);
+    const rots = new InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
     geometry.setAttribute("particlePosition", positions);
     geometry.setAttribute("particleSize", sizes);
     geometry.setAttribute("particleUv", uvs);
@@ -23585,7 +23595,7 @@ var ThreeScenePlayer = class {
       this.writeParticleData(layer, data, count);
     }
   }
-  // 把 per-particle 摊平顶点（每粒子 11 浮点）拆到 6 个 instanced 属性并标记需重传。
+  // 把 per-particle 摊平顶点（每粒子 13 浮点）拆到 6 个 instanced 属性并标记需重传。
   // 容量不足时按需扩容（正常不会发生：容量 = sim 的 maxcount）——扩容后**必须**同步
   // `geometry._maxInstanceCount`（three 的首帧锁存值，见 addParticle 注释），否则 draw 仍按旧容量截断。
   writeParticleData(layer, data, count) {
@@ -23603,14 +23613,14 @@ var ThreeScenePlayer = class {
     layer.uvs = ensure(layer.uvs, 2, count * 2, "particleUv");
     layer.colors = ensure(layer.colors, 3, count * 3, "particleColor");
     layer.alphas = ensure(layer.alphas, 1, count, "particleAlpha");
-    layer.rots = ensure(layer.rots, 1, count, "particleRot");
+    layer.rots = ensure(layer.rots, 3, count * 3, "particleRot");
     const minCapacity = Math.min(
       Math.floor(layer.positions.array.length / 3),
       layer.sizes.array.length,
       Math.floor(layer.uvs.array.length / 2),
       Math.floor(layer.colors.array.length / 3),
       layer.alphas.array.length,
-      layer.rots.array.length
+      Math.floor(layer.rots.array.length / 3)
     );
     if (minCapacity > layer.capacity) {
       layer.capacity = minCapacity;
@@ -23634,7 +23644,9 @@ var ThreeScenePlayer = class {
       color[i * 3 + 1] = data[b + 7];
       color[i * 3 + 2] = data[b + 8];
       alpha[i] = data[b + 9];
-      rot[i] = data[b + 10];
+      rot[i * 3] = data[b + 10];
+      rot[i * 3 + 1] = data[b + 11];
+      rot[i * 3 + 2] = data[b + 12];
     }
     layer.positions.needsUpdate = true;
     layer.sizes.needsUpdate = true;

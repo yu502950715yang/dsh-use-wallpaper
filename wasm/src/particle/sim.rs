@@ -86,7 +86,7 @@ pub fn frame_center_uv(frame: f32, frame_count: u32) -> [f32; 2] {
 ///
 /// Task 3 为对齐 lwe 各 `create*RandomInitializer`，在 spawn 时补充设置两个初始属性：
 /// - `angular_vel`：`angularvelocityrandom` 的初始角速度（弧/秒，逐分量 lerp）。Task 4
-///   （angularmovement 算子）已把它消费进 `rot += angular_vel[z]*dt`（z 单标量近似）。
+///   （angularmovement 算子）已把它**逐分量**消费进 `rot[k] += angular_vel[k]*dt`。
 /// - `initial`：复位基准（对应 lwe `ParticleInstance::initial`，color/alpha/size/lifetime 存
 ///   spawn 时的初值），供 operators（alphafade/sizechange/colorchange，Task 4）按 `initial.*`
 ///   推导当前值；`max_life` 仍作 lifetime 基准（`initial.lifetime` 与其一致）。
@@ -97,7 +97,10 @@ pub fn frame_center_uv(frame: f32, frame_count: u32) -> [f32; 2] {
 pub struct SimParticle {
     pub pos: [f32; 3],
     pub vel: [f32; 3],
-    pub rot: f32,
+    /// 粒子欧拉角（弧度，逐分量）。**F4 起为三分量**：WE `RotationAttribute` 与 lwe
+    /// `CParticle::rotation` 都是 vec3，渲染侧按 WE `ComputeParticleTangents` 的三轴旋转构造
+    /// billboard 切向基；此前本模拟器只取 z 分量（单标量近似）。
+    pub rot: [f32; 3],
     pub angular_vel: [f32; 3],
     pub size: f32,
     pub alpha: f32,
@@ -319,7 +322,7 @@ fn curl_noise(p: [f32; 3]) -> [f32; 3] {
 pub enum ParticleOperator {
     /// movement：`pos += vel*dt`（先），再 `vel += gravity*dt`，再 `vel *= max(1-drag*dt,0)`。
     Movement { gravity: [f32; 3], drag: f32 },
-    /// angularMovement：`rot += angularVel[z]*dt`，再 `angularVel[z] += force[z]*dt`，再拖拽衰减，并 wrap 到 ±π。
+    /// angularMovement：逐分量 `rot[k] += angularVel[k]*dt`，再 `angularVel[k] += force[k]*dt`，再拖拽衰减，各轴 wrap 到 ±π。
     AngularMovement { force: [f32; 3], drag: f32 },
     /// alphaFade：梯形 fade-in/fade-out（`used=getLifetimePos`），`alpha = initial.alpha * fade`。
     AlphaFade { fade_in: f32, fade_out: f32 },
@@ -407,19 +410,21 @@ impl ParticleOperator {
             }
             ParticleOperator::AngularMovement { force, drag } => {
                 // lwe createAngularMovementOperator：`rotation += angularVelocity*dt*speed`；
-                // 本模拟器 `rot` 为 z 轴单标量近似（Task 3），故取 z 分量。再 `angularVelocity += force*dt*speed`，
-                // 拖拽衰减、wrap 到 ±π（speed=1.0）。
-                p.rot += p.angular_vel[2] * dt;
-                p.angular_vel[2] += force[2] * dt;
-                let drag_factor = (1.0 - drag * dt).max(0.0);
-                p.angular_vel[2] *= drag_factor;
+                // **逐分量**（lwe `CParticle.cpp:1073` `p.rotation += p.angularVelocity*dt*speed`，
+                // 随后对 x/y/z 各自 wrap 到 ±π，见 `:1087-1095`）。WE 的 rotationrandom 本就是
+                // vec3，故这里不再只取 z（旧实现是单标量近似）。speed=1.0。
                 let two_pi = std::f32::consts::TAU;
                 let pi = std::f32::consts::PI;
-                while p.rot > pi {
-                    p.rot -= two_pi;
-                }
-                while p.rot < -pi {
-                    p.rot += two_pi;
+                for k in 0..3 {
+                    p.rot[k] += p.angular_vel[k] * dt;
+                    p.angular_vel[k] += force[k] * dt;
+                    p.angular_vel[k] *= (1.0 - drag * dt).max(0.0);
+                    while p.rot[k] > pi {
+                        p.rot[k] -= two_pi;
+                    }
+                    while p.rot[k] < -pi {
+                        p.rot[k] += two_pi;
+                    }
                 }
             }
             ParticleOperator::AlphaFade { fade_in, fade_out } => {
@@ -640,12 +645,12 @@ pub struct ParticleInitSpec {
     pub color_max: [f32; 3],
     pub alpha_min: f32,
     pub alpha_max: f32,
-    /// rotationrandom：初始旋转角（弧度欧拉角，逐分量 [min,max]）。CPU spawn 取 z 轴（`[2]`）
-    /// 做单轴近似。缺省 [0,0,0]。
+    /// rotationrandom：初始旋转角（弧度欧拉角，逐分量 [min,max]）。x/y 范围全零时只取 z（随机流保护，
+    /// 见 spawn 注释）；缺省 [0,0,0]。
     pub rotation_min: [f32; 3],
     pub rotation_max: [f32; 3],
-    /// angularvelocityrandom：初始角速度（弧/秒，逐分量）。由 angularmovement 算子消费
-    /// （Task 4：`rot += angular_vel[z]*dt`，z 单标量近似）。
+    /// angularvelocityrandom：初始角速度（弧/秒，逐分量）。由 angularmovement 算子逐分量消费
+    /// （`rot[k] += angular_vel[k]*dt`）。
     pub angular_vel_min: [f32; 3],
     pub angular_vel_max: [f32; 3],
     /// turbulentvelocityrandom：spawn 时叠加的湍流初速（对应 lwe `createTurbulentVelocityRandomInitializer`
@@ -923,7 +928,7 @@ impl SceneParticleSim {
         //     size_exponent，WE/lwe 缺省 1.0，黑神话显式 2）。
         //   - alphaRandom / lifetimeRandom：`lerp(min,max,rand)`。
         //   - colorRandom：`lerp(min,max,rand)` 逐分量（已归一 0..1）。
-        //   - rotationRandom：旋转角（欧拉），本模拟器单轴近似取 z 分量。
+        //   - rotationRandom：旋转角（欧拉，逐分量；x/y 范围全零时只取 z，见下方随机流保护）。
         //   - angularVelocityRandom：`lerp(min,max,rand)` 逐分量（弧/秒）。
         //   - turbulentVelocityRandom：基于法向/前向正交基的随机方向扰动，scale×速度，加到 velocity。
         //   - frame：randomframe，0..spritesheetFrames-1。
@@ -970,10 +975,26 @@ impl SceneParticleSim {
         // instanceoverride.color/colorn：**直接覆盖**（官方 ParticleParser.cpp:373-382
         // `columns.colors[index] = value`，已转线性）。
         let color = self.override_spec.color.unwrap_or(color);
-        // rotationRandom：旋转角（欧拉，lwe 逐分量）；本模拟器单轴近似取 z。
-        let rot = lerp(i.rotation_min[2], i.rotation_max[2]);
-        // angularVelocityRandom：逐分量 lerp（弧/秒）。由 angularmovement 算子消费
-        // （Task 4：`rot += angular_vel[z]*dt`）。
+        // rotationRandom：旋转角（欧拉）。WE `VectorRandomProgram::Target::Rotation` 是 vec3，
+        // lwe `CParticle.cpp:786` 亦为 `randomVec3(min,max)` ⇒ 三轴都要取。
+        // ⚠️ **随机数流保护**：`lerp` 消费 RNG，而旧实现只取 z（1 次抽取）。若无条件改成 3 次，
+        // 后续所有抽取（velocity/size/alpha/frame…）整体偏移 ⇒ **全库每张壁纸的粒子外观都变**
+        // （统计等价但逐像素不同，2026-09-22 实测：无自旋壁纸也变 3.1%、纯 z 轴壁纸变 9.6%）。
+        // 故仅当壁纸**真的声明了 x/y 范围**时才多抽，其余保持 z 单抽 ⇒ 非多轴壁纸的流逐位不变。
+        let rot_xy_declared = i.rotation_min[0] != 0.0
+            || i.rotation_max[0] != 0.0
+            || i.rotation_min[1] != 0.0
+            || i.rotation_max[1] != 0.0;
+        let rot = if rot_xy_declared {
+            [
+                lerp(i.rotation_min[0], i.rotation_max[0]),
+                lerp(i.rotation_min[1], i.rotation_max[1]),
+                lerp(i.rotation_min[2], i.rotation_max[2]),
+            ]
+        } else {
+            [0.0, 0.0, lerp(i.rotation_min[2], i.rotation_max[2])]
+        };
+        // angularVelocityRandom：逐分量 lerp（弧/秒）。由 angularmovement 算子逐分量消费。
         let angular_vel = [
             lerp(i.angular_vel_min[0], i.angular_vel_max[0]),
             lerp(i.angular_vel_min[1], i.angular_vel_max[1]),
@@ -1111,19 +1132,19 @@ impl SceneParticleSim {
         });
     }
 
-    /// 输出**每粒子单点**顶点（11 浮点：`[pos3, size, uv2, color3, alpha, rot]`），供 three.js
-    /// 播放器 billboard（每粒子一个实例，shader 内展开 quad 角点并绕 `rot` 旋转）。
+    /// 输出**每粒子单点**顶点（13 浮点：`[pos3, size, uv2, color3, alpha, rot3]`），供 three.js
+    /// 播放器 billboard（每粒子一个实例，shader 内展开 quad 角点并按三轴旋转）。
     /// `uv2` = 帧子区**中心** uv（`frame_center_uv`：uv.x = (frame+0.5)/frame_count，uv.y = 0.5；
     /// 单帧 → [0.5,0.5]），供 fragment 多帧切片（`floor(uv.x*frame_count)` 还原帧号后取子区）。
-    /// `rot` = 粒子平面自旋角（弧度，z 轴单标量近似），由 `rotationrandom` 初始化、`angularmovement`
-    /// 每帧推进（见 `p.rot`）；渲染侧把 quad 角点绕粒子中心旋转该角度（对齐已删除的 GPU
-    /// `particle_billboard.wgsl` 的 `rotate(corner, rot.z)` 语义）。
+    /// `rot3` = 粒子欧拉角（弧度，**逐分量**），由 `rotationrandom` 初始化、`angularmovement` 每帧
+    /// 逐分量推进（见 `p.rot`）；渲染侧按 WE `ComputeParticleTangents` 的同一套旋转构造 quad 基向量
+    /// （rot 只有 z 分量时退化为平面自旋，与原实现逐像素一致）。
     ///
-    /// 字段顺序（每粒子 11 浮点，stride 44B）：
-    ///   `[0..3]` pos3；`[3]` size；`[4..6]` uv2；`[6..9]` color3；`[9]` alpha；`[10]` rot。
-    /// returns Vec 长度 = particles.len() × 11。
+    /// 字段顺序（每粒子 13 浮点，stride 52B）：
+    ///   `[0..3]` pos3；`[3]` size；`[4..6]` uv2；`[6..9]` color3；`[9]` alpha；`[10..13]` rot3。
+    /// returns Vec 长度 = particles.len() × 13。
     pub fn build_instance_vertices(&self) -> Vec<f32> {
-        let mut out = Vec::with_capacity(self.particles.len() * 11);
+        let mut out = Vec::with_capacity(self.particles.len() * 13);
         for p in &self.particles {
             let [ux, uy] = frame_center_uv(p.frame, self.spritesheet_frames);
             out.push(p.pos[0]);
@@ -1136,7 +1157,9 @@ impl SceneParticleSim {
             out.push(p.color[1]);
             out.push(p.color[2]);
             out.push(p.alpha);
-            out.push(p.rot);
+            out.push(p.rot[0]);
+            out.push(p.rot[1]);
+            out.push(p.rot[2]);
         }
         out
     }
@@ -1161,9 +1184,9 @@ mod tests {
         assert_eq!(frame_center_uv(2.7, 4), [0.625, 0.5]);
     }
 
-    /// Task 3：`build_instance_vertices` 输出**每粒子** 11 浮点
-    /// `[pos3,size,uv2,color3,alpha,rot]`，uv2 = 帧子区中心（frame_center_uv），
-    /// rot = 粒子平面自旋角（F4 起进入顶点流），供 three.js billboard 展开角点并旋转。
+    /// Task 3：`build_instance_vertices` 输出**每粒子** 13 浮点
+    /// `[pos3,size,uv2,color3,alpha,rot3]`，uv2 = 帧子区中心（frame_center_uv），
+    /// rot3 = 粒子欧拉角（弧度，逐分量；F4 起进入顶点流，渲染侧据此旋转 billboard 角点）。
     #[test]
     fn build_instance_vertices_flat_per_particle() {
         let mut sim = SceneParticleSim::new(
@@ -1201,7 +1224,7 @@ mod tests {
         sim.particles.push(SimParticle {
             pos: [1.0, 2.0, 3.0],
             vel: [0.0; 3],
-            rot: 0.75,
+            rot: [0.1, 0.2, 0.75],
             angular_vel: [0.0; 3],
             size: 40.0,
             alpha: 0.25,
@@ -1239,7 +1262,7 @@ mod tests {
             },
         });
         let v = sim.build_instance_vertices();
-        assert_eq!(v.len(), 11, "单粒子应输出 11 浮点");
+        assert_eq!(v.len(), 13, "单粒子应输出 13 浮点");
         assert_eq!(&v[0..3], &[1.0, 2.0, 3.0], "pos3");
         assert_eq!(v[3], 40.0, "size");
         // frame=2 → frame_center_uv(2, 4) = [(2+0.5)/4, 0.5] = [0.625, 0.5]。
@@ -1247,8 +1270,8 @@ mod tests {
         assert_eq!(v[5], 0.5, "uv.y");
         assert_eq!(&v[6..9], &[0.5, 0.6, 0.7], "color3");
         assert_eq!(v[9], 0.25, "alpha");
-        // F4：粒子平面自旋角进入顶点流（渲染侧据此旋转 billboard 角点）
-        assert_eq!(v[10], 0.75, "rot");
+        // F4：粒子欧拉角**三分量**进入顶点流（渲染侧按 WE ComputeParticleTangents 构造 quad 基向量）
+        assert_eq!(&v[10..13], &[0.1, 0.2, 0.75], "rot3");
     }
 
     /// Important I1：spawn 用 `self.init`（每壁纸 spec.init），而非黑神话硬编码。
@@ -1307,12 +1330,59 @@ mod tests {
         assert!((0.3..=0.6).contains(&p.color[2]), "color[2] 非黑神话 0.97，got {}", p.color[2]);
         // alpha 落在 init [alpha_min, alpha_max]。
         assert!((0.5..=0.9).contains(&p.alpha), "alpha 应来自 init，got {}", p.alpha);
-        // rot 单轴近似：落在 rotation_min[2]..rotation_max[2]。
-        assert!((-1.0..=1.0).contains(&p.rot), "rot 应来自 init 的 rotation，got {}", p.rot);
+        // rot 逐分量：x/y 声明了范围就各自 lerp，否则 x/y 恒 0、只 lerp z。
+        for k in 0..3 {
+            assert!((-1.0..=1.0).contains(&p.rot[k]), "rot[{}] 应来自 init 的 rotation，got {}", k, p.rot[k]);
+        }
         // frame 保留黑神话帧 0..3。
         assert!(p.frame >= 0.0 && p.frame < 4.0, "frame 应随机 0..3，got {}", p.frame);
         // max_life 跟随 life。
         assert_eq!(p.max_life, p.life, "max_life 应等于 life（spawn 时确定）");
+    }
+
+    /// ⚠️ **随机数流守卫回归**（F4 后续）：`rotationrandom` 的 x/y 范围全零时（纯 z、或该
+    /// initializer 根本不存在），spawn 必须**只抽 1 次**随机数，与旧实现一致 —— 否则之后的所有
+    /// 抽取（angular_vel/frame，以及下个粒子的全部字段）整体漂移，全库每张壁纸的粒子外观都会变。
+    /// 断言用「rotation **之后**才抽取」的 `angular_vel`：同种子下纯 z 必须与无 rotationrandom
+    /// 逐位相同；对照组（x 范围非零）证明该断言有区分力。
+    #[test]
+    fn z_only_rotation_keeps_rng_stream_unchanged() {
+        let spawn_after = |rot_min: [f32; 3], rot_max: [f32; 3]| {
+            let mut init = default_init();
+            init.rotation_min = rot_min;
+            init.rotation_max = rot_max;
+            // 取值随机且**在 rotation 之后**抽取，才能反映随机流是否被平移。
+            init.angular_vel_min = [-2.0; 3];
+            init.angular_vel_max = [2.0; 3];
+            let mut sim = SceneParticleSim::new(
+                ParticleEmitterSpec {
+                    rate: 0.0,
+                    origin: [0.0; 3],
+                    directions: [0.0; 3],
+                    dist_min: [0.0; 3],
+                    dist_max: [0.0; 3],
+                    is_sphere: false,
+                },
+                8,
+                [0.0; 3],
+                3840.0,
+                2160.0,
+                init,
+            );
+            // `rand()` 是进程级共享状态，跨实例无法独立播种 ⇒ 手动复位到其初值。
+            RNG_STATE.store(0x9E3779B9, Ordering::Relaxed);
+            sim.spawn();
+            sim.particles[0].angular_vel
+        };
+        let absent = spawn_after([0.0; 3], [0.0; 3]);
+        let z_only = spawn_after([0.0, 0.0, 1.4], [0.0, 0.0, 1.7]);
+        assert_eq!(
+            absent, z_only,
+            "纯 z 必须与无 rotationrandom 消耗同样多的随机数（rotation 之后的字段应逐位一致）"
+        );
+        // 对照组：x 范围非零 ⇒ 多抽 2 次，rotation 之后的字段必然不同。
+        let multi = spawn_after([-1.0, 0.0, 1.4], [1.0, 0.0, 1.7]);
+        assert_ne!(absent, multi, "多轴应多抽 2 次，后续随机字段应不同（证明上面的断言有区分力）");
     }
 
     /// 构造一个最小/缺省 init（粒子位置断言不依赖 init 字段值）。

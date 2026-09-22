@@ -3,7 +3,7 @@ import type { GlowStage } from './glow-stage.js';
 import type { ClockDriver } from './text-object.js';
 export declare const DEFAULT_PARTICLE_CAPACITY = 1024;
 export declare const MAX_PARTICLE_CAPACITY = 2048;
-export declare const PARTICLE_FLOATS_PER_INSTANCE = 11;
+export declare const PARTICLE_FLOATS_PER_INSTANCE = 13;
 export declare function specMaxcount(specJson: string): number;
 export declare function specEmitterOrigin(specJson: string): [number, number, number];
 export declare const BLACKMYTH_OBJ_SCALE: [number, number, number];

@@ -473,7 +473,7 @@ mod tests {
         let mut p = crate::particle::sim::SimParticle {
             pos: [0.0; 3],
             vel: [0.0; 3],
-            rot: 0.0,
+            rot: [0.0; 3],
             angular_vel: [0.0; 3],
             size: 5.0,
             alpha: 1.0,

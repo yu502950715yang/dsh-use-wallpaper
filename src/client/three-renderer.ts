@@ -14,8 +14,8 @@
 // 模拟（非 WebGPU），本路径**不需要 WebGPU**；wasm 模块仅用来加载 CpuParticleSim。
 //
 // 已知边界（Task 5 合约）：
-//   - 粒子 quad 自旋已实现（F4，2026-09-22）：`build_instance_vertices` 的 11 浮点含 `rot`，
-//     billboard 角点绕粒子中心旋转；位置/尺寸/颜色/alpha/帧仍随 sim 每帧推进。
+//   - 粒子 quad 自旋已实现（F4，2026-09-22）：`build_instance_vertices` 的 13 浮点含 `rot3`，
+//     顶点 shader 按 WE `ComputeParticleTangents` 的三轴欧拉旋转 quad 基向量（rot 仅 z 时退化为平面自旋）。
 //   - 可视性（visible.user/script 绑定）**只对 text 对象生效**（2026-09-21）；image/particle 的
 //     visible 仍未过滤（全库 22 个非平凡绑定里 16 个在这两类上）；
 //     loadSceneToThree 沿用「缺物件 spec/工厂则跳过该粒子对象」语义，绝不全屏失败。

@@ -6,8 +6,8 @@
 //! （`OperatorFunc` 语义——**每帧**对每个粒子跑）：
 //! - **movement**：`pos += vel*dt`（先），再 `vel += gravity*dt*speed`，再 `vel *= max(1-drag*dt,0)`，
 //!   `speed=1.0`（`instanceOverride.speed` 未建模）。黑神话 movement 无 gravity → vel 保持向下。
-//! - **angularMovement**：`rot += angularVel[z]*dt`（本模拟器 `rot` 为 z 单标量近似，Task 3），
-//!   再 `angularVel[z] += force[z]*dt`、拖拽衰减、wrap 到 ±π。
+//! - **angularMovement**：**逐分量** `rot[k] += angularVel[k]*dt`（lwe `CParticle.cpp:1073`），
+//!   再 `angularVel[k] += force[k]*dt`、拖拽衰减、各轴独立 wrap 到 ±π（`:1087-1095`）。
 //! - **alphaFade**：梯形（存与读 `SimParticle.fade_in/fade_out`；`used=getLifetimePos`；
 //!   `used<fadeIn → alpha=initial.alpha*used/fadeIn`；`used>fadeOut → alpha=initial.alpha*(1-used)/(1-fadeOut)`）。
 //! - **sizeChange / alphaChange / colorChange**：`fade_value(used, start, end, startVal, endVal)` 随时间。
@@ -74,6 +74,8 @@ fn mk_sim(operators: Vec<ParticleOperator>) -> SceneParticleSim {
 }
 
 /// 手工构造一个确定状态的粒子（字段全 pub，直接字面量；`initial` 复位基准取传入值）。
+/// `rot` 参数保持**标量**（写入 z 轴）——本文件的用例只考 z 轴自旋，三轴另有 `sim.rs` 单测
+/// （`z_only_rotation_keeps_rng_stream_unchanged`）与 `angular_movement_integrates_all_axes`。
 #[allow(clippy::too_many_arguments)]
 fn particle(
     pos: [f32; 3],
@@ -89,7 +91,7 @@ fn particle(
     SimParticle {
         pos,
         vel,
-        rot,
+        rot: [0.0, 0.0, rot],
         angular_vel,
         size,
         alpha,
@@ -181,8 +183,40 @@ fn movement_drag_decays_velocity() {
 }
 
 // ---------------------------------------------------------------------------
-// angularMovement：`rot += angularVel[z]*dt`（消费 Task 3 存的 angular_vel）。
+// angularMovement：逐分量 `rot[k] += angularVel[k]*dt`（消费 Task 3 存的 angular_vel）。
 // ---------------------------------------------------------------------------
+
+#[test]
+fn angular_movement_integrates_all_axes() {
+    // 三轴各自独立积分（F4 后续：rot 为欧拉三分量，不再只取 z）：
+    // rot=[0,0,0] + ω=[1,2,-3]*dt=0.5 → [0.5, 1.0, -1.5]。
+    let mut p = particle(
+        [0.0; 3],
+        [0.0; 3],
+        0.0,
+        [1.0, 2.0, -3.0],
+        16.0,
+        1.0,
+        10.0,
+        10.0,
+        [1.0; 3],
+    );
+    let op = ParticleOperator::AngularMovement {
+        force: [0.0; 3],
+        drag: 0.0,
+    };
+    op.apply(&mut p, 0.5, 0.0);
+    for (k, exp) in [0.5_f32, 1.0, -1.5].iter().enumerate() {
+        assert!(
+            (p.rot[k] - exp).abs() < 1e-6,
+            "rot[{}] = angVel[{}]*dt = {}, got {}",
+            k,
+            k,
+            exp,
+            p.rot[k]
+        );
+    }
+}
 
 #[test]
 fn angular_movement_integrates_rot_by_angular_vel() {
@@ -202,7 +236,7 @@ fn angular_movement_integrates_rot_by_angular_vel() {
         drag: 0.0,
     };
     op.apply(&mut p, 0.5, 0.0);
-    assert!((p.rot - 1.5).abs() < 1e-6, "rot += angVel[z]*dt = 3.0*0.5 = 1.5, got {}", p.rot);
+    assert!((p.rot[2] - 1.5).abs() < 1e-6, "rot[z] += angVel[z]*dt = 3.0*0.5 = 1.5, got {}", p.rot[2]);
     assert!((p.angular_vel[2] - 3.0).abs() < 1e-6, "force=0, drag=0 → angular_vel[z] 不变, got {}", p.angular_vel[2]);
 }
 
@@ -227,7 +261,7 @@ fn angular_movement_with_force_and_wrap() {
     };
     op.apply(&mut p, 1.0, 0.0);
     let expected = 7.0 - TWO_PI;
-    assert!((p.rot - expected).abs() < 1e-4, "rot 应被 wrap 到 ±π（7-2π≈0.7168）, got {}", p.rot);
+    assert!((p.rot[2] - expected).abs() < 1e-4, "rot[z] 应被 wrap 到 ±π（7-2π≈0.7168）, got {}", p.rot[2]);
     assert!((p.angular_vel[2] - 6.0).abs() < 1e-6, "angular_vel[z] += force[z]*dt = 6.0, got {}", p.angular_vel[2]);
 }
 
@@ -251,7 +285,7 @@ fn operators_apply_every_frame() {
     ));
     sim.update(0.5);
     sim.update(0.5);
-    assert!((sim.particles[0].rot - 2.0).abs() < 1e-6, "2 帧累计 rot=ω*2dt=2.0, got {}", sim.particles[0].rot);
+    assert!((sim.particles[0].rot[2] - 2.0).abs() < 1e-6, "2 帧累计 rot[z]=ω*2dt=2.0, got {}", sim.particles[0].rot[2]);
 }
 
 // ---------------------------------------------------------------------------

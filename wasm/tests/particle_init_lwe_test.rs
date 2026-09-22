@@ -202,7 +202,7 @@ fn lifetime_lerp() {
 }
 
 // ---------------------------------------------------------------------------
-// rotationrandom（z 单轴）/ angularvelocityrandom（逐分量）：均 `lerp(min,max,rand)`。
+// rotationrandom（逐分量）/ angularvelocityrandom（逐分量）：均 `lerp(min,max,rand)`。
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -214,17 +214,23 @@ fn rotation_and_angular_velocity_lerp() {
     init.angular_vel_max = [2.0, 2.0, 2.0];
     let ps = spawn_batch(init);
 
-    let rots: Vec<f32> = ps.iter().map(|p| p.rot).collect();
+    let rots: Vec<[f32; 3]> = ps.iter().map(|p| p.rot).collect();
     for p in &ps {
-        // rot：z 单轴近似。spawn 后 update 有 `rot += 0.5*dt`（dt=0.01 → 0.005）积分副作用，放宽 0.01。
-        assert!((-1.01..=1.01).contains(&p.rot), "rot 应∈[-1,1]，got {}", p.rot);
+        // rot：**逐分量**（F4 起三分量，此前只有 z）。spawn 后 update 有 `rot[k] += angular_vel[k]*dt`
+        // 积分副作用（dt=0.01 → 至多 0.02），故放宽到 1.02。
+        for k in 0..3 {
+            assert!((-1.02..=1.02).contains(&p.rot[k]), "rot[{}] 应∈[-1,1]，got {}", k, p.rot[k]);
+        }
         // angular_vel：逐分量 lerp（update 不消费，保持 spawn 初值）。
         for k in 0..3 {
             assert!((-2.0..=2.0).contains(&p.angular_vel[k]), "angular_vel[{}] 应∈[-2,2]，got {}", k, p.angular_vel[k]);
         }
     }
-    // 均值 ≈ 0（对称范围中点）。
-    assert!((mean(&rots) - 0.0).abs() < 0.1, "rot 均值应≈0，got {}", mean(&rots));
+    // 均值 ≈ 0（对称范围中点）—— **逐分量**（F4 起 rot 是三分量）。
+    for k in 0..3 {
+        let col: Vec<f32> = rots.iter().map(|r| r[k]).collect();
+        assert!((mean(&col) - 0.0).abs() < 0.1, "rot[{}] 均值应≈0，got {}", k, mean(&col));
+    }
     let ax: Vec<f32> = ps.iter().map(|p| p.angular_vel[0]).collect();
     assert!((mean(&ax) - 0.0).abs() < 0.2, "angular_vel.x 均值应≈0，got {}", mean(&ax));
 }
