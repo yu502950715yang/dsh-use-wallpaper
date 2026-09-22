@@ -22768,6 +22768,7 @@ function createClockDriver(canvas, opts, props, initialText) {
 // src/client/threejs-player.ts
 var DEFAULT_PARTICLE_CAPACITY = 1024;
 var MAX_PARTICLE_CAPACITY = 2048;
+var PARTICLE_FLOATS_PER_INSTANCE = 11;
 function specMaxcount(specJson) {
   try {
     const v = JSON.parse(specJson).maxcount;
@@ -22826,6 +22827,9 @@ attribute float particleSize;
 attribute vec2 particleUv;
 attribute vec3 particleColor;
 attribute float particleAlpha;
+// \u7C92\u5B50\u5E73\u9762\u81EA\u65CB\u89D2\uFF08\u5F27\u5EA6\uFF0Cz \u8F74\u5355\u6807\u91CF\u8FD1\u4F3C\uFF09\uFF1A\u7531\u6A21\u62DF\u5668\u7684 rotationrandom \u521D\u59CB\u5316\u3001
+// angularmovement \u6BCF\u5E27\u63A8\u8FDB\uFF08p.rot += angular_vel[2]*dt\uFF09\u3002
+attribute float particleRot;
 // \u5BF9\u8C61\u53D8\u6362\uFF08WE \u7684\u7C92\u5B50 model matrix \u8BED\u4E49\uFF0C\u89C1 loadSceneToThree \u6CE8\u91CA\uFF09\uFF1A
 //   objCenter     \u5BF9\u8C61\u4E2D\u5FC3\uFF08\u4E16\u754C\u5750\u6807\uFF0Cwe_to_three \u540E\uFF09
 //   objScale      scene.json \u7684\u5BF9\u8C61 scale\uFF08\u9010\u8F74\uFF0C\u53EF\u4E3A\u8D1F = \u955C\u50CF\uFF09
@@ -22866,7 +22870,11 @@ void main() {
   // =\u300C\u4ECE\u6392\u6C14\u7BA1\u5411\u53F3\u4FA7\u98D8\u300D\uFF0C\u6F0F\u6389\u65CB\u8F6C\u540E\u70DF\u5C31\u76F4\u7740\u5F80\u4E0A\u8D70\u3002
   vec3 worldPos = objCenter + weObjectRotate(objScale * (emitterOrigin + local), objAngles);
   // \u7C92\u5B50 quad \u7684\u5C3A\u5BF8\u540C\u6837\u4E58\u5BF9\u8C61 scale\uFF08\u975E\u5747\u5300\uFF1Babs \u53BB\u6389\u955C\u50CF\u7684\u7B26\u53F7\uFF09\uFF0C\u5E76\u968F\u5BF9\u8C61\u89D2\u5EA6\u4E00\u8D77\u8F6C\u3002
-  vec3 corner = weObjectRotate(abs(objScale) * vec3(position.xy * particleSize * 0.5, 0.0), objAngles);
+  // \u81EA\u65CB\u5148\u4E8E\u5BF9\u8C61\u65CB\u8F6C\uFF1A\u89D2\u70B9\u5728**\u7C92\u5B50\u5E73\u9762\u5185**\u7ED5\u4E2D\u5FC3\u8F6C particleRot\uFF08\u5BF9\u9F50\u5DF2\u5220\u9664\u7684 GPU billboard
+  // particle_billboard.wgsl \u7684 rotate(corner, rot.z)\uFF1B\u5168\u5E93 16/29 \u5F20\u58C1\u7EB8\u5E26 rotationrandom\uFF09\u3002
+  float spinC = cos(particleRot), spinS = sin(particleRot);
+  vec2 spun = vec2(position.x * spinC - position.y * spinS, position.x * spinS + position.y * spinC);
+  vec3 corner = weObjectRotate(abs(objScale) * vec3(spun * particleSize * 0.5, 0.0), objAngles);
   worldPos += corner;
   gl_Position = projectionMatrix * modelViewMatrix * vec4(worldPos, 1.0);
   // \u26A0\uFE0F \u4FEE\u6B63\uFF1A\u7C92\u5B50\u662F 2D billboard\uFF08\u65E0\u6DF1\u5EA6\u6392\u5E8F\uFF0Cz \u4E0D\u53C2\u4E0E\u53EF\u89C1\u6027\uFF09\u3002three \u6B63\u4EA4\u76F8\u673A far/near \u4F1A\u628A
@@ -23456,7 +23464,7 @@ var ThreeScenePlayer = class {
     if (map && map.isCanvasTexture) map.dispose();
   }
   // Task 3：粒子图层。`simVerticesGetter` 每帧返回模拟器当前顶点（摊平 Float32Array，
-  // 每粒子 `[pos3, size, uv2, color3, alpha]` 10 浮点——来自 wasm `SceneParticleSim::build_instance_vertices`）。
+  // 每粒子 `[pos3, size, uv2, color3, alpha, rot]` 11 浮点——来自 wasm `SceneParticleSim::build_instance_vertices`）。
   // 渲染用 three.js `ShaderMaterial` billboard quad（每粒子一个实例，shader 由基础角点+位置/尺寸展开），
   // 模拟逻辑仍由 `SceneParticleSim` 承担（思路 1 核心：不重写模拟，只换渲染引擎）。
   // 返回分配的图层 id，供更新/释放引用。
@@ -23471,18 +23479,20 @@ var ThreeScenePlayer = class {
     geometry.setIndex(new BufferAttribute(new Uint16Array(PARTICLE_QUAD_INDEX), 1));
     geometry.instanceCount = 0;
     const initial = simVerticesGetter();
-    const count = Math.floor(initial.length / 10);
+    const count = Math.floor(initial.length / PARTICLE_FLOATS_PER_INSTANCE);
     const capacity = particleCapacity(opts.maxInstances ?? 0, count);
     const positions = new InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
     const sizes = new InstancedBufferAttribute(new Float32Array(capacity), 1);
     const uvs = new InstancedBufferAttribute(new Float32Array(capacity * 2), 2);
     const colors = new InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
     const alphas = new InstancedBufferAttribute(new Float32Array(capacity), 1);
+    const rots = new InstancedBufferAttribute(new Float32Array(capacity), 1);
     geometry.setAttribute("particlePosition", positions);
     geometry.setAttribute("particleSize", sizes);
     geometry.setAttribute("particleUv", uvs);
     geometry.setAttribute("particleColor", colors);
     geometry.setAttribute("particleAlpha", alphas);
+    geometry.setAttribute("particleRot", rots);
     const material = new ShaderMaterial({
       uniforms: {
         map: { value: opts.tex ?? createWhiteTexture() },
@@ -23529,6 +23539,7 @@ var ThreeScenePlayer = class {
       uvs,
       colors,
       alphas,
+      rots,
       capacity,
       loggedFirstFrame: false,
       loggedCount: 0
@@ -23560,7 +23571,7 @@ var ThreeScenePlayer = class {
   updateParticles(dt) {
     for (const layer of this.particleLayers.values()) {
       const data = layer.getter();
-      const count = Math.floor(data.length / 10);
+      const count = Math.floor(data.length / PARTICLE_FLOATS_PER_INSTANCE);
       if (count > 0 && !layer.loggedFirstFrame) {
         layer.loggedFirstFrame = true;
         layer.loggedCount = count;
@@ -23574,7 +23585,7 @@ var ThreeScenePlayer = class {
       this.writeParticleData(layer, data, count);
     }
   }
-  // 把 per-particle 摊平顶点（每粒子 10 浮点）拆到 5 个 instanced 属性并标记需重传。
+  // 把 per-particle 摊平顶点（每粒子 11 浮点）拆到 6 个 instanced 属性并标记需重传。
   // 容量不足时按需扩容（正常不会发生：容量 = sim 的 maxcount）——扩容后**必须**同步
   // `geometry._maxInstanceCount`（three 的首帧锁存值，见 addParticle 注释），否则 draw 仍按旧容量截断。
   writeParticleData(layer, data, count) {
@@ -23592,12 +23603,14 @@ var ThreeScenePlayer = class {
     layer.uvs = ensure(layer.uvs, 2, count * 2, "particleUv");
     layer.colors = ensure(layer.colors, 3, count * 3, "particleColor");
     layer.alphas = ensure(layer.alphas, 1, count, "particleAlpha");
+    layer.rots = ensure(layer.rots, 1, count, "particleRot");
     const minCapacity = Math.min(
       Math.floor(layer.positions.array.length / 3),
       layer.sizes.array.length,
       Math.floor(layer.uvs.array.length / 2),
       Math.floor(layer.colors.array.length / 3),
-      layer.alphas.array.length
+      layer.alphas.array.length,
+      layer.rots.array.length
     );
     if (minCapacity > layer.capacity) {
       layer.capacity = minCapacity;
@@ -23608,8 +23621,9 @@ var ThreeScenePlayer = class {
     const uv = layer.uvs.array;
     const color = layer.colors.array;
     const alpha = layer.alphas.array;
+    const rot = layer.rots.array;
     for (let i = 0; i < count; i++) {
-      const b = i * 10;
+      const b = i * PARTICLE_FLOATS_PER_INSTANCE;
       pos[i * 3] = data[b];
       pos[i * 3 + 1] = data[b + 1];
       pos[i * 3 + 2] = data[b + 2];
@@ -23620,12 +23634,14 @@ var ThreeScenePlayer = class {
       color[i * 3 + 1] = data[b + 7];
       color[i * 3 + 2] = data[b + 8];
       alpha[i] = data[b + 9];
+      rot[i] = data[b + 10];
     }
     layer.positions.needsUpdate = true;
     layer.sizes.needsUpdate = true;
     layer.uvs.needsUpdate = true;
     layer.colors.needsUpdate = true;
     layer.alphas.needsUpdate = true;
+    layer.rots.needsUpdate = true;
     layer.geometry.instanceCount = count;
   }
   // 停止循环并释放 renderer 资源。

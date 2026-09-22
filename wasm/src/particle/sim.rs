@@ -82,18 +82,6 @@ pub fn frame_center_uv(frame: f32, frame_count: u32) -> [f32; 2] {
     [(idx + 0.5) / n, 0.5]
 }
 
-/// 把粒子 frame id 编码为 17 浮点流 `lifetime` 字段的值（lwe `renderSprites`：randomframe →
-/// `(frame + 0.5)/frames`，shader 用 `floor(frac(lifetime)×frames)` 还原帧号；单帧 → 0）。
-/// native 可测。
-pub fn frame_lifetime(frame: f32, frames: u32) -> f32 {
-    if frames <= 1 {
-        return 0.0;
-    }
-    let n = frames as f32;
-    let idx = frame.floor().clamp(0.0, n - 1.0);
-    (idx + 0.5) / n
-}
-
 /// 单粒子状态（对应 WE CParticle 的 `ParticleInstance`）。
 ///
 /// Task 3 为对齐 lwe 各 `create*RandomInitializer`，在 spawn 时补充设置两个初始属性：
@@ -1123,47 +1111,19 @@ impl SceneParticleSim {
         });
     }
 
-    /// 输出顶点缓冲：**每角点** 17 浮点（stride 68B），每粒子 4 角点 + 6 索引（对齐 lwe
-    /// `CParticle::renderSprites` 的 `fillVertices` 字段布局，见 `render/particle_render.rs`）。
-    /// 布局 `[pos3, (u,v,rot.z,size), color4, (vel3,lifetime), (rot.x,rot.y)]`：
-    /// - 4 角点的 uv 为该角点 0..1 帧内坐标，(0,1) 左下、(1,1) 右下、(1,0) 右上、(0,0) 左上（lwe）；
-    /// - `lifetime` 编码粒子帧（`(frame+0.5)/frames`，lwe randomframe 语义；单帧 → 0），
-    ///   供 shader `floor(frac(lifetime)×frames)` 还原帧并做 sprite sheet 切片；
-    /// - rot.x/rot.y 本模拟器不追踪（只存单标量 rot≈rot.z），置 0 保留字段占位。
-    /// returns Vec 长度 = particles.len() × 4。
-    pub fn build_vertices(&self) -> Vec<[f32; 17]> {
-        let mut out = Vec::with_capacity(self.particles.len() * 4);
-        for p in &self.particles {
-            // 帧编码 lifetime（lwe renderSprites：randomframe → (frame+0.5)/frames；单帧 → 0）。
-            let lifetime = frame_lifetime(p.frame, self.spritesheet_frames);
-            for (u, v) in [(0.0, 1.0), (1.0, 1.0), (1.0, 0.0), (0.0, 0.0)] {
-                out.push([
-                    p.pos[0], p.pos[1], p.pos[2],
-                    u, v, p.rot, p.size,
-                    p.color[0], p.color[1], p.color[2], p.alpha,
-                    p.vel[0], p.vel[1], p.vel[2], lifetime,
-                    0.0, 0.0, // rot.x, rot.y（未追踪）
-                ]);
-            }
-        }
-        out
-    }
-
-    /// 输出**每粒子单点**顶点（10 浮点：`[pos3, size, uv2, color3, alpha]`），供 three.js 播放器
-    /// billboard（每粒子一个实例，shader 内展开 quad 角点）。`uv2` = 帧子区**中心** uv
-    /// （`frame_center_uv`：uv.x = (frame+0.5)/frame_count，uv.y = 0.5；单帧 → [0.5,0.5]），
-    /// 供 fragment 多帧切片（`floor(uv.x*frame_count)` 还原帧号后取 1/frame_count 子区）。
+    /// 输出**每粒子单点**顶点（11 浮点：`[pos3, size, uv2, color3, alpha, rot]`），供 three.js
+    /// 播放器 billboard（每粒子一个实例，shader 内展开 quad 角点并绕 `rot` 旋转）。
+    /// `uv2` = 帧子区**中心** uv（`frame_center_uv`：uv.x = (frame+0.5)/frame_count，uv.y = 0.5；
+    /// 单帧 → [0.5,0.5]），供 fragment 多帧切片（`floor(uv.x*frame_count)` 还原帧号后取子区）。
+    /// `rot` = 粒子平面自旋角（弧度，z 轴单标量近似），由 `rotationrandom` 初始化、`angularmovement`
+    /// 每帧推进（见 `p.rot`）；渲染侧把 quad 角点绕粒子中心旋转该角度（对齐已删除的 GPU
+    /// `particle_billboard.wgsl` 的 `rotate(corner, rot.z)` 语义）。
     ///
-    /// 与 `build_vertices`（每角点 17 浮点、4 角点，供 wasm-renderer wgpu 路径）**不同**——本方法是
-    /// **新建**的 per-particle 输出（每粒子仅 1 个顶点，不做 4 角点展开），供思路 1 的 three.js
-    /// 播放器用，**不改动**既有 wasm-renderer 粒子渲染路径（`build_vertices`/`ParticleRenderPass`
-    /// 保持原样）。
-    ///
-    /// 字段顺序（每粒子 10 浮点，stride 40B）：
-    ///   `[0..3]` pos3；`[3]` size；`[4..6]` uv2（帧子区中心）；`[6..9]` color3；`[9]` alpha。
-    /// returns Vec 长度 = particles.len() × 10。
+    /// 字段顺序（每粒子 11 浮点，stride 44B）：
+    ///   `[0..3]` pos3；`[3]` size；`[4..6]` uv2；`[6..9]` color3；`[9]` alpha；`[10]` rot。
+    /// returns Vec 长度 = particles.len() × 11。
     pub fn build_instance_vertices(&self) -> Vec<f32> {
-        let mut out = Vec::with_capacity(self.particles.len() * 10);
+        let mut out = Vec::with_capacity(self.particles.len() * 11);
         for p in &self.particles {
             let [ux, uy] = frame_center_uv(p.frame, self.spritesheet_frames);
             out.push(p.pos[0]);
@@ -1176,6 +1136,7 @@ impl SceneParticleSim {
             out.push(p.color[1]);
             out.push(p.color[2]);
             out.push(p.alpha);
+            out.push(p.rot);
         }
         out
     }
@@ -1200,104 +1161,9 @@ mod tests {
         assert_eq!(frame_center_uv(2.7, 4), [0.625, 0.5]);
     }
 
-    #[test]
-    fn build_vertices_encodes_frame_center_uv() {
-        let mut sim = SceneParticleSim::new(
-            ParticleEmitterSpec {
-                rate: 0.0,
-                origin: [0.0; 3],
-                directions: [0.0; 3],
-                dist_min: [0.0; 3],
-                dist_max: [0.0; 3],
-                is_sphere: false,
-            },
-            8,
-            [0.0; 3],
-            3840.0,
-            2160.0,
-            ParticleInitSpec {
-                lifetime_min: 5.0,
-                lifetime_max: 10.0,
-                size_min: 30.0,
-                size_max: 50.0,
-                size_exponent: 2.0,
-                velocity_min: [-50.0, -50.0, 0.0],
-                velocity_max: [0.0, -15.0, 0.0],
-                color_min: [1.0, 0.83, 0.97],
-                color_max: [1.0, 0.83, 0.97],
-                alpha_min: 1.0,
-                alpha_max: 1.0,
-                rotation_min: [0.0; 3],
-                rotation_max: [0.0; 3],
-                angular_vel_min: [0.0; 3],
-                angular_vel_max: [0.0; 3],
-                turbulent: None,
-            },
-        );
-        sim.particles.push(SimParticle {
-            pos: [1.0, 2.0, 3.0],
-            vel: [0.0; 3],
-            rot: 0.0,
-            angular_vel: [0.0; 3],
-            size: 40.0,
-            alpha: 1.0,
-            life: 1.0,
-            max_life: 1.0,
-            color: [1.0, 0.83, 0.97],
-            frame: 2.0,
-            initial: SimInitial {
-                color: [1.0, 0.83, 0.97],
-                alpha: 1.0,
-                size: 40.0,
-                lifetime: 1.0,
-            },
-            fade_in: 0.0,
-            fade_out: 1.0,
-            oscillate_alpha: OscState {
-                frequency: 0.0,
-                scale: 1.0,
-                phase: 0.0,
-                base: 0.0,
-                initialized: false,
-            },
-            oscillate_size: OscState {
-                frequency: 0.0,
-                scale: 1.0,
-                phase: 0.0,
-                base: 0.0,
-                initialized: false,
-            },
-            oscillate_position: OscState3 {
-                frequency: [0.0; 3],
-                scale: [0.0; 3],
-                phase: [0.0; 3],
-                initialized: false,
-            },
-        });
-        let vs = sim.build_vertices();
-        assert_eq!(vs.len(), 4, "单粒子应输出 4 角点顶点");
-        // 布局 [pos3, (u,v,rot.z,size), color4, (vel3,lifetime), (rot.x,rot.y)]：每角点 17 浮点。
-        // 角点 0 = (u=0,v=1)（左下）。
-        assert_eq!(vs[0][3], 0.0, "角点 0 的 uv.x=0（左下）");
-        assert_eq!(vs[0][4], 1.0, "角点 0 的 uv.v=1（左下）");
-        assert_eq!(vs[0][6], 40.0, "size 应在 index 6（uv_rot_size.w）");
-        assert_eq!(vs[0][7], 1.0, "color[0] 应在 index 7");
-        assert_eq!(vs[0][10], 1.0, "alpha 应在 index 10");
-        // 角点 1 = (u=1,v=1)（右下）；角点 3 = (u=0,v=0)（左上）。
-        assert_eq!(vs[1][3], 1.0);
-        assert_eq!(vs[3][3], 0.0);
-        assert_eq!(vs[3][4], 0.0);
-        // lifetime 字段（index 14）编码 frame：rosepetals frame=2 → (2+0.5)/4 = 0.625。
-        assert_eq!(vs[0][14], 0.625, "lifetime 应编码第 2 帧（rosepetals frame 2）");
-        // 每角点字段数 = 17；四角点的 pos/size/color/alpha/vel/lifetime 一致（只 uv 不同）。
-        assert_eq!(vs[0].len(), 17);
-        assert_eq!(vs[0][0..3], vs[1][0..3]);
-        assert_eq!(vs[3][6], vs[0][6]);
-    }
-
-    /// Task 3：`build_instance_vertices` 输出**每粒子** 10 浮点 `[pos3,size,uv2,color3,alpha]`，
-    /// uv2 = 帧子区中心（frame_center_uv），供 three.js billboard（每粒子一实例，shader 展开角点）。
-    /// 与 `build_vertices`（每角点 17 浮点、4 角点）不同——这是思路 1 的 per-particle 输出。
+    /// Task 3：`build_instance_vertices` 输出**每粒子** 11 浮点
+    /// `[pos3,size,uv2,color3,alpha,rot]`，uv2 = 帧子区中心（frame_center_uv），
+    /// rot = 粒子平面自旋角（F4 起进入顶点流），供 three.js billboard 展开角点并旋转。
     #[test]
     fn build_instance_vertices_flat_per_particle() {
         let mut sim = SceneParticleSim::new(
@@ -1335,7 +1201,7 @@ mod tests {
         sim.particles.push(SimParticle {
             pos: [1.0, 2.0, 3.0],
             vel: [0.0; 3],
-            rot: 0.0,
+            rot: 0.75,
             angular_vel: [0.0; 3],
             size: 40.0,
             alpha: 0.25,
@@ -1373,7 +1239,7 @@ mod tests {
             },
         });
         let v = sim.build_instance_vertices();
-        assert_eq!(v.len(), 10, "单粒子应输出 10 浮点");
+        assert_eq!(v.len(), 11, "单粒子应输出 11 浮点");
         assert_eq!(&v[0..3], &[1.0, 2.0, 3.0], "pos3");
         assert_eq!(v[3], 40.0, "size");
         // frame=2 → frame_center_uv(2, 4) = [(2+0.5)/4, 0.5] = [0.625, 0.5]。
@@ -1381,6 +1247,8 @@ mod tests {
         assert_eq!(v[5], 0.5, "uv.y");
         assert_eq!(&v[6..9], &[0.5, 0.6, 0.7], "color3");
         assert_eq!(v[9], 0.25, "alpha");
+        // F4：粒子平面自旋角进入顶点流（渲染侧据此旋转 billboard 角点）
+        assert_eq!(v[10], 0.75, "rot");
     }
 
     /// Important I1：spawn 用 `self.init`（每壁纸 spec.init），而非黑神话硬编码。

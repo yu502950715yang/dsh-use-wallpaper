@@ -49,7 +49,7 @@ type BackgroundEntry = {
 type ParticleLayer = {
   id: number;
   // 每粒子数据来自 wasm `SceneParticleSim::build_instance_vertices`（摊平 Float32Array，
-  // 每粒子 `[pos3,size,uv2,color3,alpha]` 10 浮点）。getter 每帧刷新时返回当前顶点。
+  // 每粒子 `[pos3,size,uv2,color3,alpha,rot]` 11 浮点）。getter 每帧刷新时返回当前顶点。
   getter: () => Float32Array;
   frameCount: number;
   geometry: THREE.InstancedBufferGeometry;
@@ -63,6 +63,8 @@ type ParticleLayer = {
   uvs: THREE.InstancedBufferAttribute;
   colors: THREE.InstancedBufferAttribute;
   alphas: THREE.InstancedBufferAttribute;
+  // 粒子平面自旋角（弧度，逐粒子；F4 起进入顶点流）
+  rots: THREE.InstancedBufferAttribute;
   // 实例缓冲**容量**（= 每个 instanced attribute 的 count，即一次能画的最大粒子数）。
   // 关键：three 只在**首次渲染**时把该容量锁存进 `geometry._maxInstanceCount`（见 addParticle
   // 注释），故容量必须一次给足（sim 的 maxcount），运行期只改 `geometry.instanceCount`（0..capacity）。
@@ -81,6 +83,12 @@ type ParticleLayer = {
 // 上限与 wasm 粒子池 clamp [16, 2048]（render/particle_pass.rs）对齐，防异常 spec 爆内存。
 export const DEFAULT_PARTICLE_CAPACITY = 1024;
 export const MAX_PARTICLE_CAPACITY = 2048;
+
+// 每粒子摊平顶点浮点数 = Rust `SceneParticleSim::build_instance_vertices` 的布局长度
+// （`[pos3, size, uv2, color3, alpha, rot]`）。⚠️ 与 wasm 侧是**同一份契约**：
+// 改布局必须两侧同时改（Rust 有 `build_instance_vertices_flat_per_particle` 钉住 11）。
+// 用途：由扁平数组长度反推粒子数、以及拆属性时的步长 —— 用常量而非字面量，防漏改。
+export const PARTICLE_FLOATS_PER_INSTANCE = 11;
 
 // 从粒子 spec JSON 读 `maxcount`（= wasm `SceneParticleSim.maxcount`，同一份 JSON 的同一字段；
 // WE 的 JSON 里也可能是字符串 "50"）。缺省/非法/非正 → 0（调用方落到 DEFAULT_PARTICLE_CAPACITY）。
@@ -148,15 +156,19 @@ const PARTICLE_QUAD_CORNERS = new Float32Array([
 const PARTICLE_QUAD_INDEX: [number, number, number, number, number, number] = [0, 1, 2, 0, 2, 3];
 
 // 粒子 billboard 顶点 shader：每粒子一个实例，基础四边形 position=[-1,1]² 作角点，
-// worldPos = particlePosition + corner*half_size（half_size = particleSize/2），再用
-// modelViewMatrix×projectionMatrix（mvp）投影。position/normal/uv/矩阵由 three.js 自动注入；
-// 这里只补每粒子 instanced 属性（particlePosition/Size/Uv/Color/Alpha）与传递 varyings。
+// worldPos = particlePosition + corner*half_size（half_size = particleSize/2，corner 先绕
+// particleRot 自旋），再用 modelViewMatrix×projectionMatrix（mvp）投影。position/normal/uv/矩阵
+// 由 three.js 自动注入；这里只补每粒子 instanced 属性（particlePosition/Size/Uv/Color/Alpha/Rot）
+// 与传递 varyings。
 const PARTICLE_VERTEX_SHADER = `
 attribute vec3 particlePosition;
 attribute float particleSize;
 attribute vec2 particleUv;
 attribute vec3 particleColor;
 attribute float particleAlpha;
+// 粒子平面自旋角（弧度，z 轴单标量近似）：由模拟器的 rotationrandom 初始化、
+// angularmovement 每帧推进（p.rot += angular_vel[2]*dt）。
+attribute float particleRot;
 // 对象变换（WE 的粒子 model matrix 语义，见 loadSceneToThree 注释）：
 //   objCenter     对象中心（世界坐标，we_to_three 后）
 //   objScale      scene.json 的对象 scale（逐轴，可为负 = 镜像）
@@ -197,7 +209,11 @@ void main() {
   // =「从排气管向右侧飘」，漏掉旋转后烟就直着往上走。
   vec3 worldPos = objCenter + weObjectRotate(objScale * (emitterOrigin + local), objAngles);
   // 粒子 quad 的尺寸同样乘对象 scale（非均匀；abs 去掉镜像的符号），并随对象角度一起转。
-  vec3 corner = weObjectRotate(abs(objScale) * vec3(position.xy * particleSize * 0.5, 0.0), objAngles);
+  // 自旋先于对象旋转：角点在**粒子平面内**绕中心转 particleRot（对齐已删除的 GPU billboard
+  // particle_billboard.wgsl 的 rotate(corner, rot.z)；全库 16/29 张壁纸带 rotationrandom）。
+  float spinC = cos(particleRot), spinS = sin(particleRot);
+  vec2 spun = vec2(position.x * spinC - position.y * spinS, position.x * spinS + position.y * spinC);
+  vec3 corner = weObjectRotate(abs(objScale) * vec3(spun * particleSize * 0.5, 0.0), objAngles);
   worldPos += corner;
   gl_Position = projectionMatrix * modelViewMatrix * vec4(worldPos, 1.0);
   // ⚠️ 修正：粒子是 2D billboard（无深度排序，z 不参与可见性）。three 正交相机 far/near 会把
@@ -1060,7 +1076,7 @@ export class ThreeScenePlayer {
   }
 
   // Task 3：粒子图层。`simVerticesGetter` 每帧返回模拟器当前顶点（摊平 Float32Array，
-  // 每粒子 `[pos3, size, uv2, color3, alpha]` 10 浮点——来自 wasm `SceneParticleSim::build_instance_vertices`）。
+  // 每粒子 `[pos3, size, uv2, color3, alpha, rot]` 11 浮点——来自 wasm `SceneParticleSim::build_instance_vertices`）。
   // 渲染用 three.js `ShaderMaterial` billboard quad（每粒子一个实例，shader 由基础角点+位置/尺寸展开），
   // 模拟逻辑仍由 `SceneParticleSim` 承担（思路 1 核心：不重写模拟，只换渲染引擎）。
   // 返回分配的图层 id，供更新/释放引用。
@@ -1125,7 +1141,7 @@ export class ThreeScenePlayer {
 
     // 初始 getter 数据 → 首帧写入（容量固定，见下）。
     const initial = simVerticesGetter();
-    const count = Math.floor(initial.length / 10);
+    const count = Math.floor(initial.length / PARTICLE_FLOATS_PER_INSTANCE);
 
     // ⚠️ 实例缓冲容量必须**一次给足、之后不再替换属性**——这是「黑神话花瓣不可见 / 只有 1 个粒子」
     // 的根因（2026-09-10 定位，headless Edge + 真 GPU 实测）：
@@ -1157,11 +1173,13 @@ export class ThreeScenePlayer {
     const uvs = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 2), 2);
     const colors = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
     const alphas = new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1);
+    const rots = new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1);
     geometry.setAttribute('particlePosition', positions);
     geometry.setAttribute('particleSize', sizes);
     geometry.setAttribute('particleUv', uvs);
     geometry.setAttribute('particleColor', colors);
     geometry.setAttribute('particleAlpha', alphas);
+    geometry.setAttribute('particleRot', rots);
 
     // ShaderMaterial：billboard quad（pos + corner*half_size，mvp 用相机投影/视图）、
     // fragment 多帧 uv 切片（frame_count）、additive/alpha blend、softness、color*texel.rgb、alpha=texel.a*particle.alpha。
@@ -1232,6 +1250,7 @@ export class ThreeScenePlayer {
       uvs,
       colors,
       alphas,
+      rots,
       capacity,
       loggedFirstFrame: false,
       loggedCount: 0,
@@ -1264,7 +1283,7 @@ export class ThreeScenePlayer {
   updateParticles(dt: number): void {
     for (const layer of this.particleLayers.values()) {
       const data = layer.getter();
-      const count = Math.floor(data.length / 10);
+      const count = Math.floor(data.length / PARTICLE_FLOATS_PER_INSTANCE);
       // 诊断日志（真机 console 用；确定性判据），每层最多两行：
       //   ① 首次出现非零粒子时打一条，含 dt 与容量 —— dt≈0 / 缺本行 ⇒ 帧循环没在推进模拟；
       //   ② 粒子数首次达到容量（maxcount 满池）时再打一条 —— 证明「持续累积发射到 maxcount」。
@@ -1285,7 +1304,7 @@ export class ThreeScenePlayer {
     }
   }
 
-  // 把 per-particle 摊平顶点（每粒子 10 浮点）拆到 5 个 instanced 属性并标记需重传。
+  // 把 per-particle 摊平顶点（每粒子 11 浮点）拆到 6 个 instanced 属性并标记需重传。
   // 容量不足时按需扩容（正常不会发生：容量 = sim 的 maxcount）——扩容后**必须**同步
   // `geometry._maxInstanceCount`（three 的首帧锁存值，见 addParticle 注释），否则 draw 仍按旧容量截断。
   private writeParticleData(layer: ParticleLayer, data: Float32Array, count: number): void {
@@ -1308,14 +1327,16 @@ export class ThreeScenePlayer {
     layer.uvs = ensure(layer.uvs, 2, count * 2, 'particleUv');
     layer.colors = ensure(layer.colors, 3, count * 3, 'particleColor');
     layer.alphas = ensure(layer.alphas, 1, count, 'particleAlpha');
+    layer.rots = ensure(layer.rots, 1, count, 'particleRot');
 
-    // 实际容量 = 最小的「每实例元素数」换算回粒子数（5 个属性同步扩容，取最小以保守）。
+    // 实际容量 = 最小的「每实例元素数」换算回粒子数（6 个属性同步扩容，取最小以保守）。
     const minCapacity = Math.min(
       Math.floor((layer.positions.array as Float32Array).length / 3),
       (layer.sizes.array as Float32Array).length,
       Math.floor((layer.uvs.array as Float32Array).length / 2),
       Math.floor((layer.colors.array as Float32Array).length / 3),
       (layer.alphas.array as Float32Array).length,
+      (layer.rots.array as Float32Array).length,
     );
     if (minCapacity > layer.capacity) {
       // 超出预分配容量（spec 未声明 maxcount 或声明不准）→ 同步 three 锁存的实例容量。
@@ -1328,8 +1349,9 @@ export class ThreeScenePlayer {
     const uv = layer.uvs.array as Float32Array;
     const color = layer.colors.array as Float32Array;
     const alpha = layer.alphas.array as Float32Array;
+    const rot = layer.rots.array as Float32Array;
     for (let i = 0; i < count; i++) {
-      const b = i * 10;
+      const b = i * PARTICLE_FLOATS_PER_INSTANCE;
       pos[i * 3] = data[b];
       pos[i * 3 + 1] = data[b + 1];
       pos[i * 3 + 2] = data[b + 2];
@@ -1340,12 +1362,14 @@ export class ThreeScenePlayer {
       color[i * 3 + 1] = data[b + 7];
       color[i * 3 + 2] = data[b + 8];
       alpha[i] = data[b + 9];
+      rot[i] = data[b + 10];
     }
     layer.positions.needsUpdate = true;
     layer.sizes.needsUpdate = true;
     layer.uvs.needsUpdate = true;
     layer.colors.needsUpdate = true;
     layer.alphas.needsUpdate = true;
+    layer.rots.needsUpdate = true;
     layer.geometry.instanceCount = count;
   }
 

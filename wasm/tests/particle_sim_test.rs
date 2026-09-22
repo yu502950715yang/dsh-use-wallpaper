@@ -50,19 +50,19 @@ fn sim_spawns_and_moves_down() {
         sim.update(0.05);
     }
     assert!(sim.particles.len() > 0, "应有粒子");
-    let v = sim.build_vertices();
-    // 每粒子 4 角点（17 浮点流）→ v.len() = particles.len() × 4。
-    assert_eq!(v.len(), sim.particles.len() * 4, "每个 alive 粒子应输出 4 角点顶点");
+    let v = sim.build_instance_vertices();
+    // 每粒子 1 个顶点（11 浮点流）→ v.len() = particles.len() × 11。
+    assert_eq!(v.len(), sim.particles.len() * 11, "每个 alive 粒子应输出 1 个 per-particle 顶点");
 
     // 分布：粒子围绕中心原点（scene 语义，y 向上）上下分布（运动/分布真实断言，非空断言）。
-    // 每粒子取第 1 个角点（`p[1]` = pos.y，i 为角点基址 i*4）。
+    // 每粒子取 `g[1]` = pos.y（布局 [pos3, size, uv2, color3, alpha, rot]）。
     let mut moved_down = false;
     let mut any_up = false;
-    for g in v.chunks(4) {
-        if g[0][1] > 0.0 {
+    for g in v.chunks(11) {
+        if g[1] > 0.0 {
             any_up = true;
         }
-        if g[0][1] < 0.0 {
+        if g[1] < 0.0 {
             moved_down = true;
         }
     }
