@@ -66,8 +66,12 @@
 
 `tests/scene-renderer.test.ts` **改 import 到 `object-range.js` 并保留**——它是那 6 项既有失败的唯一位置，整删等于掩盖。`tests/object-range.test.ts:193-202` 的「同一函数对象」断言（锁定的就是待删 shim）必删。
 
-### A3 删 Rust
-删 `render/**` + `shaders/*.wgsl` + `WeScene` + `scene.rs`/`tex.rs`（连带去 `wgpu`/`web-sys`/`wasm-bindgen-futures`/`console_error_panic_hook`/`naga`/`spirv-webgpu-transform`/`lz4_flex`/`png`/`jpeg-decoder`）；`render` feature 瘦身改名；删 16 个 `render::` 相关 `wasm/tests/*.rs`。
+### A3 删 Rust ✅ 已完成（2026-09-22）
+删 `render/**`（7 文件）+ `shaders/*.wgsl`（6 个）+ `WeScene` + `scene.rs`/`tex.rs`（连带去 `wgpu`/`web-sys`/`wasm-bindgen-futures`/`console_error_panic_hook`/`naga`/`spirv-webgpu-transform`/`lz4_flex`/`png`/`jpeg-decoder`/`bytemuck`/`serde`）；`render` feature **改名 `cpu-sim`** 并只留 `dep:js-sys`；删 17 个 `render::`/`tex::`/`scene::` 测试文件；`coords.rs` 只留 `we_to_three`（其余 4 个 NDC 函数随渲染器走）。
+
+**as-built（实测）**：42 文件 **−10344 行**；`we_scene_wasm_bg.wasm` **3108 → 161 KB**、glue 73 → 11 KB；native `cargo test` **98 项全绿**（原 228）；`build:wasm` + `build:client` 通过；**端到端逐像素最大差 0**（dpr=1/2）。
+
+⚠️ **原「本机装不上 wasm32 target」的判断是错的**：`rustup target list --installed` 看不到它（标准库是本项目用 `research/install-wasm32-std.py` 手工放进 sysroot 的），但 `cargo check --target wasm32-unknown-unknown` 通过。
 
 ### A4 构建 / 产物 / 文档
 删 glslang 机制与 `dist/static/glslang.wasm`；**手工清 `lib/` 的 10 个陈旧产物**（tsc 不清理，而 `package.json:80-84 files: ["lib","dist"]` 会把它们发到 npm）；重建 `lib/` + `dist/`；回写 `AGENT.md` §2.1/§2.2/§3/§7 与 `docs/technical-notes.md` §5。
@@ -96,7 +100,8 @@
 
 ## 6. 已知边界（如实）
 
-- Rust 侧未编译验证：feature 瘦身后 `js-sys` 是否足矣、删 `render/` 后 14 个 wasm 测试是否纯死代码、wasm 体积下降幅度 —— 均**待 A3 实测**。
-- `tests/three-renderer.test.ts` 约 60 处 mock 调用点是否全部可改用 `opts.loadWasm` 注入 —— 只抽读，**未逐行验证**。
-- `dist/` 重建依赖 `wasm/pkg/`（gitignore）与 Rust 工具链，本机是否具备**未检查**。
-- 删掉备用 WebGPU 路径后，若将来要恢复须从 git 历史取回；本设计以「主路径已是唯一路径」为前提。
+- ~~Rust 侧未编译验证~~ ⇒ **已实测**：feature 瘦成 `["dep:js-sys"]` 后 `cargo check --target wasm32-unknown-unknown --features cpu-sim` 与 `wasm-pack build` 均通过，native `cargo test` 98 项全绿（wasm-opt 早已禁用，见 `Cargo.toml`）。
+- `tests/three-renderer.test.ts` 的 mock 调用点**改用 `vi.mock('wasm-loader.js')` + 对 `scene-assets.js` 做 `importOriginal` 部分 mock 后 47 项全绿**（未走 `opts.loadWasm` 注入那条路——把 `defaultLoadWasm` 放进独立的 `wasm-loader.ts` 正是为了保住可 mock 性）。
+- ~~`dist/` 重建依赖 `wasm/pkg/` 与 Rust 工具链，本机是否具备未检查~~ ⇒ **具备并已完成**：`build:wasm` → `build:client` → 端到端对拍全绿。
+- **仍未做**：`wasm32` 标准库在本机是「手工放进 sysroot」的非标准状态（`rustup target add` 因镜像 403 失败）—— 换机器/重装工具链时需重跑 `research/install-wasm32-std.py`，该脚本目前不入库（`research/` 被 gitignore）。
+- 删掉备用 WebGPU 路径后，若将来要恢复须从 git 历史取回（删除前 HEAD = `65f759c`）；本设计以「主路径已是唯一路径」为前提。

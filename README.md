@@ -235,7 +235,7 @@ preview 图 + Ken Burns（永不白屏）
 ```bash
 pnpm install
 pnpm run build          # tsc -p tsconfig.json → lib/（host 编译，strict）
-pnpm run build:wasm     # cd wasm && wasm-pack build --target web --release --features render → wasm/pkg/
+pnpm run build:wasm     # cd wasm && wasm-pack build --target web --release --features cpu-sim → wasm/pkg/
 pnpm run build:client   # node scripts/build-client.mjs → dist/client.js
 pnpm test               # vitest run（node + jsdom 双环境）
 

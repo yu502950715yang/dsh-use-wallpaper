@@ -128,7 +128,8 @@ function particleNames(id) {
 const bundle = (await esbuild.build({
   entryPoints: [join(here, '..', 'harness', 'harness-object-effects-entry.mjs')],
   bundle: true, format: 'esm', target: 'es2022', write: false, logLevel: 'silent',
-  alias: { '@webgpu/glslang': join(here, '..', 'lib', 'stub-glslang.mjs') },
+  // 2026-09-22：原 `alias: { '@webgpu/glslang': ... }` 已删除 —— `@webgpu/glslang`
+  // 随 WebGPU 渲染器（glsl-to-naga.ts）一起移除，bundle 里不再出现它。
 })).outputFiles[0].text;
 
 const HTML = `<!doctype html><html><head><meta charset="utf-8">

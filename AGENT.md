@@ -9,7 +9,7 @@
 - **形态**：单包仓库，仓库根即插件 `@dsh-use/wallpaper-engine`（`package.json` 已声明 `dsh.bundle`，可直接 `dsh plugin add github:...`）。
 - **能力**：扫描 Steam workshop 壁纸目录（默认 `D:/Steam/steamapps/workshop/content/431960`，可自动探测——注册表 + `libraryfolders.vdf` + 常见路径，见 `src/host/steam-paths.ts`——或手动配置，settings 热更新），在 DSH Web GUI 里渲染 scene 壁纸 / 播放视频 / 加载 web 页，其余回退 preview 图 + Ken Burns。
 - **入口**：DSH 设置对话框侧边栏「壁纸」菜单（client 经 `settings.section` slot 注册，见 `src/client/settings-section.tsx`）。
-- **技术栈**：Node ≥ 18、TypeScript strict、ESM-only；浏览器侧 three.js（WebGL）+ Rust/wgpu（wasm，仅粒子 CPU 模拟在用）；宿主侧 Cordis 插件体系。
+- **技术栈**：Node ≥ 18、TypeScript strict、ESM-only；浏览器侧 three.js（WebGL）+ Rust（wasm，**仅 CPU 粒子模拟**，已无 wgpu/WebGPU）；宿主侧 Cordis 插件体系。
 - **不依赖 WE 运行时**：host 侧自行解包 `PKGV0001` 容器与 `TEXV0005` 纹理（`src/host/pkg-reader.ts`、`src/client/tex-loader.ts`）。
 
 ## 2. 架构
@@ -35,7 +35,7 @@ scene 壁纸 ──► three.js 播放器（**唯一路径**，v0.3.0 起）
 - `src/host/`：Node 侧（Cordis 插件）。`scanner.ts` 扫描目录 → `WallpaperInfo`；`steam-paths.ts` 目录探测（`/wallpapers/probe`）；`pkg-reader.ts` 解包 PKGV0001；`routes.ts` HTTP 路由（读可变运行时目录，settings 热更新）；`settings.ts` 插件设置。
 - `src/client/`：浏览器侧（esbuild → `dist/client.js`，external react 等 DSH 共享模块）。`index.ts` 入口（bootstrap + `window.__wallpaperEngine` + 注册设置菜单）；`settings-section.tsx` 设置面板；`wallpaper-controller.ts` 选择/竞态/回退链；**`three-renderer.ts` + `threejs-player.ts` 是当前渲染主路径**；`wasm-renderer.ts` / `scene-renderer.ts` 为未接入的备用实现；**`object-effects.ts`（`ObjectEffectStage` 编排器）+ `object-range.ts`（对象范围/合成几何/UV 窗口等纯函数）是主路径的对象级效果链模块**，`effect-runner.ts`（`EffectRunner` 执行器）与 `shader/effect-chain.ts`（`resolveEffectChain` 链解析）自 2026-09-14 起被它们**接入主路径**（此前仅被未接入的 `scene-renderer.ts` 使用）；**`rt-render.ts`（`renderIntoRenderTarget`）是「渲染进 RenderTarget」的唯一入口，「渲染到 RT 必须透明清屏」这条不变量就落在这里（见 §5.22）**；`tex-loader.ts` TEXV0005 解码；`scene-json.ts` scene.json 解析；`background-layer.ts` / `settings.ts` / `styles.ts`。
 - `src/shared/`：跨 host/client 类型（`WallpaperInfo`、`SceneDescription`、`SceneObject` 等）。
-- `src/client/shader/`：WE shader 方言转译层（`effect-chain.ts` 解析、`shader-preprocessor.ts` 预处理、`glsl-to-naga.ts` 产 SPIR-V pass 描述、`uniform-binder.ts`、`we-headers.ts`）。
+- `src/client/shader/`：WE shader 方言转译层（`effect-chain.ts` 解析、`shader-preprocessor.ts` 预处理、`uniform-binder.ts`、`we-headers.ts`）—— 原 `glsl-to-naga.ts`（SPIR-V/naga 编译，只服务 WebGPU 渲染器）已随该渲染器删除（§7.14）。
 
 ### 2.3 坐标与对象变换约定（**勿再翻转 / 勿漏乘**）
 
@@ -51,7 +51,7 @@ scene 壁纸 ──► three.js 播放器（**唯一路径**，v0.3.0 起）
 ```bash
 npm test                 # vitest run（node + jsdom 双环境；全量约 15s，4 项既有失败见 §7.11）
 npm run build            # tsc -p tsconfig.json → lib/（strict）
-npm run build:wasm       # cd wasm && wasm-pack build --no-opt --target web --release --features render → wasm/pkg/
+npm run build:wasm       # cd wasm && wasm-pack build --no-opt --target web --release --features cpu-sim → wasm/pkg/
 npm run build:client     # esbuild → dist/client.js，并把 wasm/pkg/ 复制到 dist/static/
 npm run e2e:colorblend   # 渲染 e2e：colorBlendMode 逐像素判据（零本机素材依赖，可上 CI）
 npm run e2e:hidpi        # 渲染 e2e：dpr=1/2 的挂载期 RT 尺寸断言（需本机 WE 壁纸库）
@@ -126,7 +126,8 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
 6. **图像 `colorBlendMode`（→ shader combo `BLENDMODE`）不是 alpha 混合**，而是**额外追加一遍「读当前帧缓冲」的混合 pass**（WE 材质 `materials/util/effectpassthrough.json`，shader `genericimage3`；lwe `CImage.cpp:751-767`）：`ApplyBlending(BLENDMODE, A=背景, B=自己, 自己的 alpha)`，alpha 保持背景的。模式表在 **WE 明文 shader** `<WE>/assets/shaders/common_blending.h`：1=Darken 2=Multiply 3=ColorBurn … **6=Lighten 7=Screen** … 30=Tint **31=A+B×opacity** 32=A+A×B。three 侧用**预乘片元**（`vec4(rgb×tint×a, a)`）+ `CustomBlending` 复刻：7 → `(OneMinusDstColor, One)`、31 → `(One, One)`、6 → `MaxEquation`，alpha 用 `(Zero, One)`（**2026-09-14 `6bb3d71` 起**：对象级**隔离**路径不再复用这套内容材质 —— 混合语义整体移到**合成 quad**（`MeshBasicMaterial` + 同一套 `CustomBlending` 因子，采样的是非预乘的对象 RT），隔离内容材质只做普通 alpha 写入；见 §7.1 的 `colorBlendMode ∈ {6,7,31}` 条）。**未实现的模式回退普通 alpha 混合**（不静默画错）。关键性质：`BlendScreen(A, 0) = A` —— Screen 下纯黑底完全不改变背景（GTR 左上角黑块就是漏了这条：`clouds.tex` 78% 是不透明纯黑）。全库非零的只有 3 个对象：3743126786=7、2832263418=6、2460786246=31。
 7. **粒子 alpha 属性链**：透明度 = 生命周期衰减 × alpha（`alpharandom` 等经属性链传入），JS ShaderMaterial 与 wasm 粒子层双路径同语义；改 alpha 相关逻辑要双路径验证（`wasm/tests/particle_alpha_tests.rs` + `tests/particles.test.ts`）。
 8. **场景资源禁止浏览器缓存**：`/wallpapers/scene/<id>/asset` 返回 `Cache-Control: no-store`，改资源无需清缓存。
-9. **wasm 效果链的历史卡点（已绕开，勿重走）**：naga 24/25 的 **glsl frontend 编译不了含 `uniform sampler2D` 的 GLSL**（`NotImplemented("variable qualifier")`），而几乎全部 WE 效果 shader 都采样 `g_Texture0`。现行链路是 **GLSL → `@webgpu/glslang` → SPIR-V → `spirv-webgpu-transform`（把组合采样拆成独立 texture+sampler）→ naga `spv-in` → WGSL**（`glsl-to-naga.ts` 产 `chain_desc`，wasm 侧 `effect.rs::spv_to_wgsl` 编译）；`chain_desc` 为空/解析失败才回退内置演示 pass（绝不白屏）。
+9. ~~**wasm 效果链的历史卡点（已绕开，勿重走）**~~：naga 24/25 的 **glsl frontend 编译不了含 `uniform sampler2D` 的 GLSL**（`NotImplemented("variable qualifier")`），而几乎全部 WE 效果 shader 都采样 `g_Texture0`。现行链路是 **GLSL → `@webgpu/glslang` → SPIR-V → `spirv-webgpu-transform`（把组合采样拆成独立 texture+sampler）→ naga `spv-in` → WGSL**（`glsl-to-naga.ts` 产 `chain_desc`，wasm 侧 `effect.rs::spv_to_wgsl` 编译）；`chain_desc` 为空/解析失败才回退内置演示 pass（绝不白屏）。
+    - **2026-09-22 作废**：整条链路与它的所有依赖（`@webgpu/glslang`、`naga`、`spirv-webgpu-transform`、`glsl-to-naga.ts`、`effect.rs`）**已随 WebGPU 渲染器删除**（§7.14）。主路径的效果链走 three.js 的 GLSL 路径（`effect-chain.ts` + `effect-runner.ts`），与本条无关。仅作历史记录保留。
 10. **对象级效果链管线要点**（`wasm/src/render/mod.rs`，备用路径）：每带效果对象一条 `ObjectEffectEntry` / `ParticleObjectEffect`，流水线 = 内容 → 对象 RT → 效果链 ping-pong → 输出 RT → 合成 quad 贴回 surface；对象 RT 尺寸逐轴钳制 `[1, 4096]`，合成 quad **不钳制**、靠 UV 窗口只采样可见段。效果链创建失败 → 合成 quad 采样内容纹理（对象正常显示、无效果）。
     - **订正**：本条早先记「钳制 `[1, 2048]`」，与代码不符。实际值是 **4096** —— wasm 侧 `wasm/src/render/effect.rs:225` 的 `OBJECT_RT_MAX = 4096.0`，three 主路径 `src/client/object-range.ts:15` 的 `OBJECT_RT_MAX = 4096`（两条路径同值）。2048 会把满屏主图（如 2560×1440）钳小、主图被裁剪且合成 quad 只剩钳制窗口（Clamp 出竖直色条），故当初已提到 4096，只是文档没跟上（2026-09-14 订正）。
 11. **效果链的一切编译/建管线必须在加载时一次性完成**（`EffectChain::new` / `set_object_effect` / `set_particle_object_effect`）；`render_frame` / `render_object_effects` / `step` / `EffectChain::render` **不得**做 naga 编译或建管线（每帧只写 uniform + 建 bind group + 提交 pass）。
@@ -400,7 +401,10 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
     - **活口迁移（这是「不能整文件删」的原因）**：`resolveTexPath` / `resolveImageTexture` / `resolveParticleMaterial`（+ `PARTICLE_TEX_ALIASES` / `ParticleMaterialRef`）→ **`scene-assets.ts`**；`defaultLoadWasm` / `WasmSceneModule` / `LoadWasm` → **新建 `wasm-loader.ts`**（没塞进已 740 行的 `three-renderer.ts`，以保住测试对它的 `vi.mock` 能力）；`SceneRendererLike` → **`wallpaper-controller.ts`**（它才是消费方）。`lz4js.d.ts` **保留**（`tex-loader.ts` 在用）。
     - **连带删掉**：`@webgpu/glslang` 依赖、`build-client.mjs` 的 alias/插件/复制三段、**`dist/static/glslang.wasm`（922 KB，原本入库）**、10 个陈旧 `lib/` 产物。`dist/client.js` **1,267,761 → 1,244,549 字节**。
     - **验证（as-built）**：`tsc` 0 错误；全量 `vitest` **由挂起变为 ~15s 跑完**，失败 **17 → 4** 且**逐项身份不变、零新增**；`node --check dist/client.js` 通过；**端到端逐像素对拍** `3743126786`/`2683211654`：**dpr=1 完全相同（0/921600 像素有差异，最大差 0）**、dpr=2 仅 12 像素差 1（噪声）；两个 e2e 脚本 exit 0。
-    - **⚠️ Rust 侧未做（如实）**：`wasm/src/render/**`(4064 行) + `shaders/*.wgsl`(451) + `WeScene` + `scene.rs`/`tex.rs` **仍在**。原因：`CpuParticleSim` 被 `#[cfg(feature = "render")]` 门控（它要 `js-sys`），所以 `--features render` 不能直接删、只能瘦身改名；而本机 **`wasm32-unknown-unknown` 标准库装不上**（rustup 走的镜像对该组件返回 403，`RUSTUP_DIST_SERVER` 覆盖无效）⇒ `build:wasm` 无法运行。**删 Rust 却不重建 wasm 会让已入库的 `dist/static/we_scene_wasm_bg.wasm` 与源码失配，比不做更糟**，故整段推迟。`cargo test`（native）本可运行，但不足以覆盖 wasm 构建。
+    - **Rust 侧也已完成（同日）**：`wasm/src/render/**`（7 文件）＋ `shaders/*.wgsl`（6 个）＋ `WeScene` 全部 wasm-bindgen 导出 ＋ `scene.rs`/`tex.rs` 已删，共 **-10344 行 / 42 文件**；`coords.rs` 只留 `we_to_three`（`particle/sim.rs` 在用），其余 4 个 NDC 函数随渲染器一起走。`render` feature **改名 `cpu-sim` 且只留 `dep:js-sys`**（`CpuParticleSim::vertices` 仍要它），连带去掉 `wgpu`/`web-sys`/`wasm-bindgen-futures`/`console_error_panic_hook`/`naga`/`spirv-webgpu-transform`/`lz4_flex`/`png`/`jpeg-decoder`/`bytemuck`/`serde`；`package.json` 与 `build-client.mjs` 的提示同步改名。
+      - **收益**：`wasm/pkg/we_scene_wasm_bg.wasm` **3108 KB → 161 KB（−95%）**、glue 73 → 11 KB；`dist/static/` 合计 **4594 → 663 KB（−85%）**。
+      - **验证**：native `cargo test` **98 项全绿**（原 228；差额是被删渲染器的测试）；`cargo check --target wasm32-unknown-unknown --features cpu-sim` 通过；`build:wasm` + `build:client` 通过；**端到端逐像素完全相同**（dpr=1/2 最大差均 **0**，判据 B 仍 3.146）⇒ 证明删掉的确实是从未被调用的部分。
+      - **⚠️ 踩坑教训（差点误判成「做不到」）**：`rustup target list --installed` **只显示 x86_64**，据此我曾判定「wasm32 装不上、Rust 删除必须推迟」。实际本机 wasm32 标准库早由 `research/install-wasm32-std.py` 手工放进 toolchain 的 `lib/rustlib/wasm32-unknown-unknown`（绕过 rustup 登记，因为镜像对该组件返回 403）—— **`rustup target add` 失败不代表该 target 不可用**；判据应是 `cargo check --target <t>` 能否通过，而不是 rustup 的登记表。
     - **e2e 入库**：`research/` 里最小可运行集合（4 个基础库 + 2 个 harness 入口 + 2 个验收脚本 + fixture）迁入 `e2e/`，机器相关项统一走 `e2e/config.mjs`。**关键修正**：原先 288/301 个脚本 FAIL 仍返回 0，**补上 `process.exitCode` 门禁后才能真正当 CI 判据**（变异测试：改反一条判据 → exit 1）。`verify-colorblend.mjs` 的固定 `sleep(6000)` 改为轮询 `[probe]`（就绪即走）。**harness 不依赖 playwright**：自己 `spawn` Edge + 手写裸 CDP。
     - **CI**：`.github/workflows/ci.yml`，三 job 均 windows-latest（README 声明仅 Windows 实测，Linux 行为未验证）：tsc + `lib/` 产物新鲜度守卫、vitest 只对新增失败判红、headless Edge 渲染 e2e（SwiftShader 档，**不需要 GPU**）。**如实标注**：CI 本身**未在真实 GitHub runner 上跑过**（本机无推送环境），只有各步骤在本机逐条实跑过。
 

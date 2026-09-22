@@ -38,7 +38,7 @@ e2e/
   fixtures/    clouds-dxt1.png
 ```
 
-`stub-glslang.mjs` 是 esbuild 的 `alias` 目标（`verify-object-effects.mjs:324`），缺失则浏览器打包失败；**它随 Task A 删除 `@webgpu/glslang` 后即可一起删**。
+`stub-glslang.mjs` 是 esbuild 的 `alias` 目标（`verify-object-effects.mjs:324`），缺失则浏览器打包失败；**已随 Task A 删除 `@webgpu/glslang` 后一起删除**（2026-09-22 as-built：删掉 alias 与文件后 `verify-hidpi-object-rt.mjs` 实跑仍 exit 0，证明确实不再需要）。
 
 ### 3.2 参数化（抄仓库既有先例）
 

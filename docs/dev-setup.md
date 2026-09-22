@@ -17,8 +17,8 @@
 | pnpm | ≥ 8（推荐 9） | 本项目是 pnpm workspace，**使用 pnpm 而非 npm** |
 | TypeScript | devDependency（^5.9） | `pnpm run build`（tsc strict） |
 | Rust（cargo） | edition 2021，最新稳定版 | wasm 引擎 `wasm/` 源码 |
-| wasm32-unknown-unknown target | Rust 官方 target | **必须安装**，否则无法编译 wasm |
-| wasm-pack | 最新 | `pnpm run build:wasm`（`--target web --features render`） |
+| wasm32-unknown-unknown target | Rust 官方 target | **必须可用**，否则无法编译 wasm。⚠️ `rustup target add` 在本机因镜像 403 失败时，可用 `research/install-wasm32-std.py` 把已下载的组件手工放进 toolchain sysroot（**`rustup target list --installed` 不会显示它，但 `cargo check --target wasm32-unknown-unknown` 能通过**） |
+| wasm-pack | 最新 | `pnpm run build:wasm`（`--target web --features cpu-sim`） |
 | esbuild | devDependency | `pnpm run build:client` 打包 client |
 
 ### 1.1 安装命令（按顺序执行）
@@ -45,7 +45,7 @@ pnpm install
 
 ```bash
 pnpm run build          # tsc -p tsconfig.json → lib/（host 编译，strict）
-pnpm run build:wasm     # cd wasm && wasm-pack build --target web --release --features render → wasm/pkg/
+pnpm run build:wasm     # cd wasm && wasm-pack build --target web --release --features cpu-sim → wasm/pkg/
 pnpm run build:client   # node scripts/build-client.mjs → dist/client.js + 复制 wasm/粒子纹理到 dist/static/
 ```
 

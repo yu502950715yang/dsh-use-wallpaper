@@ -117,9 +117,10 @@ scene 壁纸 ──► three.js 播放器（**唯一路径**，v0.3.0 起）
 3 张壁纸判 STATIC、naga `glsl` 前端卡点与 GLSL→SPIR-V 链路、`g_ModelViewProjectionMatrix` / `collect_bindings`）
 **随代码一起作废** —— 它们只描述那条不再存在的路径。需要时从 git 历史取回（删除前 HEAD = `65f759c`）。
 
-**⚠️ 仍未删除的是 Rust 侧**：`wasm/src/render/**`(4064 行) + `shaders/*.wgsl`(451) + `WeScene` + `scene.rs`/`tex.rs` 仍在仓库里，
-因为 `CpuParticleSim`（主路径在用）被 `#[cfg(feature = "render")]` 门控且本机装不上 `wasm32-unknown-unknown` 标准库
-⇒ `build:wasm` 跑不了，删了会与已入库的 `dist/static/we_scene_wasm_bg.wasm` 失配。详见 `AGENT.md` §7.14。
+**⚠️ Rust 侧亦已删除（2026-09-22 同日）**：`wasm/src/render/**` + `shaders/*.wgsl` + `WeScene` + `scene.rs`/`tex.rs` 全部移除
+（-10344 行），`render` feature 改名 `cpu-sim` 且只留 `js-sys`（`CpuParticleSim::vertices` 仍需要）。**收益**：`we_scene_wasm_bg.wasm`
+3108 KB → **161 KB**、`dist/static/` 4594 → **663 KB**。**验证**：native `cargo test` 98 项全绿、`build:wasm` 通过、端到端逐像素
+**最大差 0**（dpr=1/2）。详见 `AGENT.md` §7.14。
 
 ---
 
