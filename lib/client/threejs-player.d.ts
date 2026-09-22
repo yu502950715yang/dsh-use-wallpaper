@@ -54,6 +54,7 @@ export declare class ThreeScenePlayer {
     private nextBackgroundId;
     private particleLayers;
     private nextParticleLayerId;
+    private readonly displayObjects;
     private isolated;
     private objectEffectStage;
     private glowStage;
@@ -79,6 +80,8 @@ export declare class ThreeScenePlayer {
     setObjectEffectStage(stage: ObjectEffectStage | null): void;
     /** 装配应用级 Glow（null = 关闭）。关闭时帧序与本方法加入前逐字相同。 */
     setGlowStage(stage: GlowStage | null): void;
+    /** 按 scene.json 对象 id 取最终显示的 three 对象（脚本图层桥用）。未登记 → undefined。 */
+    displayObject(objectId: number): THREE.Object3D | undefined;
     isolatedObjects(): IsolatedObject[];
     setObjectOutput(id: number, texture: THREE.Texture): void;
     resizeObjectRT(id: number, width: number, height: number): void;
@@ -95,6 +98,7 @@ export declare class ThreeScenePlayer {
         brightness?: number;
         sceneW: number;
         sceneH: number;
+        objectId?: number;
         isolate?: {
             objectId: number;
             rtWidth: number;
@@ -120,6 +124,7 @@ export declare class ThreeScenePlayer {
         objectAngles?: [number, number, number];
         emitterOrigin?: [number, number, number];
         maxInstances?: number;
+        objectId?: number;
         isolate?: {
             objectId: number;
             rtWidth: number;
@@ -172,6 +177,7 @@ export interface SceneAssets {
         size?: [number, number];
         anchorOffset?: [number, number];
     }>;
+    onFrame?: (dt: number) => void;
 }
 export interface ThreeSceneLoadResult {
     player: ThreeScenePlayer;

@@ -407,6 +407,11 @@ export class ThreeScenePlayer {
   private particleLayers = new Map<number, ParticleLayer>();
   private nextParticleLayerId = 0;
 
+  // scene 对象 id → **最终显示**的 three 对象（非隔离 = 内容 mesh；隔离 = 合成 quad）。
+  // 脚本的 LayerStateTable 键是 scene 对象 id，而 backgroundEntries/particleLayers 的键是图层
+  // 计数器 id —— 这里补一份同键空间映射，避免又出现一层「对象 id → 计数器 id」的翻译。
+  private readonly displayObjects = new Map<number, THREE.Object3D>();
+
   // 对象隔离条目（对象级效果链；空 Map = 本壁纸无带效果对象，帧序退化为原路径）。
   private isolated = new Map<number, IsolatedObject>();
   private objectEffectStage: ObjectEffectStage | null = null;
@@ -644,6 +649,11 @@ export class ThreeScenePlayer {
     this.glowStage = stage;
   }
 
+  /** 按 scene.json 对象 id 取最终显示的 three 对象（脚本图层桥用）。未登记 → undefined。 */
+  displayObject(objectId: number): THREE.Object3D | undefined {
+    return this.displayObjects.get(objectId);
+  }
+
   // 隔离对象条目（只读视图，供编排器拿 RT 纹理与尺寸）。
   isolatedObjects(): IsolatedObject[] {
     return [...this.isolated.values()];
@@ -716,6 +726,9 @@ export class ThreeScenePlayer {
     brightness?: number;
     sceneW: number;
     sceneH: number;
+    // scene.json 的**对象 id**（脚本图层桥的键）。与 isolate.objectId 不同：本字段**总是传**
+    // （非隔离对象也要能被脚本按对象 id 找到），而 isolate.objectId 只在隔离时传。
+    objectId?: number;
     // 对象隔离（对象级效果链）：五字段把三种量分开——
     //   objectId       = scene.json 的**对象 id**，即本隔离条目的键（见 attachIsolated 注释）；
     //   rtWidth/rtHeight = 对象 RT 的像素尺寸（= 世界尺寸 × 屏幕密度的屏占位，等比收口到 4096）；
@@ -788,6 +801,11 @@ export class ThreeScenePlayer {
       sceneW,
       sceneH,
     });
+    // scene 对象 id → 显示对象（隔离时是合成 quad —— 内容 mesh 只渲染进对象 RT，不进主场景）。
+    if (opts.objectId !== undefined) {
+      const shown = opts.isolate ? this.isolated.get(opts.isolate.objectId)?.quad : mesh;
+      if (shown) this.displayObjects.set(opts.objectId, shown);
+    }
     return id;
   }
 
@@ -1069,6 +1087,9 @@ export class ThreeScenePlayer {
       // 实例缓冲容量上界（= sim 的 maxcount / spec 的 maxcount；见 ParticleLayer.capacity 注释）。
       // 缺省 DEFAULT_PARTICLE_CAPACITY。
       maxInstances?: number;
+      // scene.json 的**对象 id**（脚本图层桥的键，语义同 addBackground.objectId）：**总是传**，
+      // 与只在隔离时传的 isolate.objectId 区分。
+      objectId?: number;
       // 对象隔离（对象级效果链；粒子对象同样可挂效果链）。五字段语义同 addBackground：
       //   objectId       = scene.json 的**对象 id**，即隔离条目的键；
       //   rtWidth/rtHeight = 对象 RT 像素尺寸（= 世界尺寸 × 屏幕密度的屏占位，等比收口到 4096）；
@@ -1230,6 +1251,11 @@ export class ThreeScenePlayer {
         { width: opts.isolate.rtWidth, height: opts.isolate.rtHeight },
         { x: center[0], y: center[1], z: center[2] }, [0, 0, 0], 0);
     }
+    // scene 对象 id → 显示对象（隔离时是合成 quad，否则是粒子对象本身）。
+    if (opts.objectId !== undefined) {
+      const shown = opts.isolate ? this.isolated.get(opts.isolate.objectId)?.quad : mesh;
+      if (shown) this.displayObjects.set(opts.objectId, shown);
+    }
     return id;
   }
 
@@ -1352,6 +1378,8 @@ export class ThreeScenePlayer {
       });
     }
     this.isolated.clear();
+    // 显示对象映射只持有引用，随上面各表的 dispose 一并失效。
+    this.displayObjects.clear();
     this.objectEffectStage = null;
     // 应用级 Glow 的 RT/shader 归 stage 所有，须在 renderer.dispose() 前释放。
     this.glowStage?.dispose();
@@ -1450,6 +1478,8 @@ export interface SceneAssets {
     size?: [number, number];
     anchorOffset?: [number, number];
   }>;
+  // 每帧扩展钩子（SceneScript 运行时）：在粒子/文本更新之前调用，可写 three 对象状态。
+  onFrame?: (dt: number) => void;
 }
 
 // `loadSceneToThree` 返回：播放器 + 已装配的模拟器/图层 id（供调用方驱动/释放/校验）。
@@ -1587,6 +1617,8 @@ export function loadSceneToThree(
         brightness: obj.brightness,
         sceneW,
         sceneH,
+        // 脚本图层桥的键 = scene 对象 id（**总是传**，与只在隔离时传的 isolate.objectId 区分）。
+        objectId: obj.id,
         // 对象级效果链：本对象带效果（调用方下发了隔离条件）→ 内容进 localScene 渲染到对象 RT，
         // 主场景放合成 quad；缺省不隔离，行为与今天逐字相同。隔离条目的键 = obj.id（值里的
         // objectId 同值），与 ObjectEffectStage 的键空间一致。
@@ -1609,6 +1641,7 @@ export function loadSceneToThree(
         texture: layer.texture,
         sceneW,
         sceneH,
+        objectId: obj.id,
       });
       backgroundIds.push(id);
       if (layer.driver) {
@@ -1659,6 +1692,8 @@ export function loadSceneToThree(
         // three 只在首帧锁存该容量（见 addParticle），必须按模拟器**最终**会产出的粒子数一次给足；
         // 缺 maxcount（旧格式/解析失败）→ addParticle 用 DEFAULT_PARTICLE_CAPACITY 兜底。
         maxInstances: specMaxcount(p.specJson),
+        // 脚本图层桥的键 = scene 对象 id（总是传）。
+        objectId: obj.id,
         // 对象级效果链：带效果的粒子对象同样隔离（对象 RT + 合成 quad）。世界尺寸由调用方按
         // `particleWorldSize(spec, scale)` 算好（player 不知道 spec 的 distanceMax）；缺省不隔离。
         // 隔离条目的键 = obj.id（值里的 objectId 同值），与 ObjectEffectStage 的键空间一致。
@@ -1672,6 +1707,8 @@ export function loadSceneToThree(
   // 播放循环：RAF 每帧先 sim.update(dt)（dt 由 setAnimationLoop 帧差分、clamp 0.1）再
   // player.update(dt)（→ updateParticles(dt) 读 getter = sim.vertices()，sim 已在帧内推进）。
   player.setAnimationLoop((dt) => {
+    // SceneScript 先跑：脚本状态是图层的权威来源，其写入在本帧渲染前生效。
+    assets.onFrame?.(dt);
     for (const sim of sims) sim.update(dt);
     // 时钟/脚本文本：文本变化才重绘（同分钟不重绘）→ 置 needsUpdate 触发纹理上传，
     // 并按新文本的实测布局同步 quad 尺寸与锚点中心（origin 是锚点 ⇒ 原地生长/收缩）。

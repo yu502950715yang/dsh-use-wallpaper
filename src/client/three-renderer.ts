@@ -41,6 +41,8 @@ import { getTextScriptRuntime } from './text-script.js';
 import type { TextScriptBinding, TextScriptRuntime } from './text-script.js';
 import { detectScriptPattern, formatClockText } from './script-patterns.js';
 import { resolveVisibility } from './visibility.js';
+import { SceneScriptHost } from './scene-script-host.js';
+import { applyLayerState } from './layer-state.js';
 
 // wasm `CpuParticleSim` 的构造器形态（wasm-bindgen 静态 `new`；`ParticleSim` 接口见
 // threejs-player.ts：update/vertices/frame_count/set_frame_count/particle_count/free）。
@@ -179,6 +181,21 @@ export async function collectObjectEffectChains(
   return out;
 }
 
+// 收集本次装配要执行的 SceneScript（按 scene.json 的 objects 顺序）。
+//
+// ⚠️ 收集范围**不能**限定在「参与渲染的对象」：3798688689 的 3 个总控（92000 粒子控制器、
+// 93000 信封拖尾、94000 场景控制器 —— 后者 348 KB）**没有** image/particle/text 字段，被
+// parseSceneJson 归到空粒子兜底分支；只在 image/util 分支派生 script 会静默丢掉它们，
+// 画面就仍然不动。scene-json 已改为按 visible.kind==='script' 与 kind 无关地派生。
+export function collectScriptSources(desc: SceneDescription): Array<{ objectId: number; source: string }> {
+  const out: Array<{ objectId: number; source: string }> = [];
+  for (const obj of desc.objects) {
+    const s = (obj as { script?: unknown }).script;
+    if (typeof s === 'string' && s.length > 0) out.push({ objectId: obj.id, source: s });
+  }
+  return out;
+}
+
 // 创建 three.js 播放器场景渲染器（sceneRenderer 接口）。
 // opts.loadWasm / opts.getTextScriptRuntime 可注入（测试）；缺省用生产实现。
 export function createThreeSceneRenderer(opts?: {
@@ -211,6 +228,11 @@ export function createThreeSceneRenderer(opts?: {
   let currentTextures: Map<number, Texture> | null = null;
   // 本次装配的 text 脚本 binding：每个都持有 quickjs 堆 handle，teardown 必须逐个 dispose。
   let currentScriptBindings: TextScriptBinding[] = [];
+  // 本次装配的 SceneScript 运行时（visible.script）：同样持有 quickjs ctx/handle，teardown 释放。
+  let currentScriptHost: SceneScriptHost | null = null;
+  // canvas 上的点击监听（脚本的 cursorClick；3798688689 的「切换按钮」靠它触发切换特效）。
+  let scriptClick: (() => void) | null = null;
+  let scriptClickTarget: HTMLCanvasElement | null = null;
   const teardown = () => {
     if (onWindowResize) {
       window.removeEventListener('resize', onWindowResize);
@@ -232,6 +254,12 @@ export function createThreeSceneRenderer(opts?: {
     // 脚本 binding 独立于 GL 资源，但同样只在本次装配内有效（切壁纸不留 handle）。
     for (const b of currentScriptBindings) b.dispose();
     currentScriptBindings = [];
+    // SceneScript 运行时（ctx + 全部句柄）同理由本次装配独占。
+    if (scriptClickTarget && scriptClick) scriptClickTarget.removeEventListener('click', scriptClick);
+    scriptClickTarget = null;
+    scriptClick = null;
+    currentScriptHost?.dispose();
+    currentScriptHost = null;
   };
   // 当前生效的 Glow 三值：运行期下发 > 装配时读到的设置（threshold/strength 缺省交给 glow-stage 归一）。
   const effectiveGlow = () => ({
@@ -427,6 +455,10 @@ export function createThreeSceneRenderer(opts?: {
           return new Uint8Array(await r.arrayBuffer());
         };
         const effectChains = await collectObjectEffectChains(desc, loadFile);
+        // ── SceneScript 运行时（visible.script）──────────────────────────────────────────
+        // 收集范围含 util 与「无媒体字段」的纯控制器对象（见 collectScriptSources 注释）；
+        // 脚本按 objects 顺序装载，它们靠全局 shared 互通（拆成多个 ctx 会静默失效）。
+        const scriptSources = collectScriptSources(desc);
         // 插件设置：一次读取。画质档位必须在算屏幕密度**之前**拿到——对象 RT 的尺寸基准与画布
         // 缓冲必须用同一个渲染像素比（两者口径不一致会让整层模糊，见 AGENT.md §5.15/§5.21）。
         const settings = await readClientSettings();
@@ -507,11 +539,44 @@ export function createThreeSceneRenderer(opts?: {
         // viewport 传真实窗口/视口尺寸（vw/vh）：ThreeScenePlayer 构造器已不再把 canvas 重置回场景
         // 尺寸，此处显式传给 loadSceneToThree → player.resize(vw,vh) 使 cover 相机按窗口宽高比裁剪
         // （Task5 修复：窗口比例 ≠ 场景比例时背景 cover 裁切而非 object-fit:fill 拉伸）。
-        const result = loadSceneToThree(sceneJson, { backgroundTextures, particles, createParticleSim, isolate, textLayers, qualityScale, worldTransforms }, fg, {
+        const result = loadSceneToThree(sceneJson, {
+          backgroundTextures, particles, createParticleSim, isolate, textLayers, qualityScale, worldTransforms,
+          // SceneScript 帧钩子：脚本状态是本帧渲染的权威来源，先 tick → 应用脏写入，
+          // 再走原有的粒子/文本更新与 render。host 未就绪（quickjs 加载中/失败）时直接返回。
+          onFrame: (dt) => {
+            const host = currentScriptHost;
+            const loaded = current;
+            if (!host || !loaded) return;
+            const dirty = host.tick(dt);
+            if (dirty.size === 0) return;
+            applyLayerState(dirty, (objectId) => {
+              const obj = loaded.player.displayObject(objectId);
+              return obj ? { object: obj, sceneW: desc.orthogonal.width, sceneH: desc.orthogonal.height } : undefined;
+            });
+          },
+        }, fg, {
           width: vw,
           height: vh,
         });
         current = result;
+
+        // 装配 SceneScript 运行时。失败（quickjs 不可用）→ host 为 null，onFrame 直接返回，
+        // 画面等于现状；绝不把脚本异常抛进帧循环。
+        if (scriptSources.length > 0) {
+          currentScriptHost = await SceneScriptHost.create({
+            scripts: scriptSources,
+            userProperties: userProps,
+            onWarn: (m) => console.warn(`[wallpaper-engine] ${m}`),
+          });
+          if (currentScriptHost) {
+            scriptClick = () => currentScriptHost?.click();
+            scriptClickTarget = fg;
+            fg.addEventListener?.('click', scriptClick);
+            console.log(
+              `[three] scene scripts id=${id} collected=${scriptSources.length} loaded=${currentScriptHost.scriptCount} active=${currentScriptHost.activeCount}`,
+            );
+          }
+        }
 
         // ── 装配 ObjectEffectStage（对象级效果链的编排器）──────────────────────────────
         // 键空间（本轮根治点）：isolate 表的键、player 隔离条目的 id（isolatedObjects()[].id）、

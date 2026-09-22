@@ -22427,13 +22427,15 @@ function parseSceneJson(raw) {
       // Ruling 5：所有对象（kind 不限）的 effects 按 objects 顺序保留（全库 122 条中 105 条在 image 对象上）
       effects: Array.isArray(o.effects) ? o.effects : void 0
     };
+    const fromVisibleScript = base.visible?.kind === "script" ? { script: base.visible.script, scriptProperties: base.visible.scriptProperties } : {};
     if (typeof o.particle === "string" && o.particle) {
       return {
         ...base,
         kind: "particle",
         particle: o.particle,
         // 对象级粒子实例覆盖（alpha/size/lifetime/speed/color × emitter rate）——原始 JSON 透传。
-        instanceOverrideJson: serializeInstanceOverride(o.instanceoverride)
+        instanceOverrideJson: serializeInstanceOverride(o.instanceoverride),
+        ...fromVisibleScript
       };
     }
     if (typeof o.image === "string" && o.image) {
@@ -22441,7 +22443,9 @@ function parseSceneJson(raw) {
         return {
           ...base,
           kind: "util",
-          image: o.image
+          image: o.image,
+          // util 不渲染但**承载 SceneScript 控制器**（94001「切换按钮」、221591「双击切歌」）
+          ...fromVisibleScript
         };
       }
       return {
@@ -22454,7 +22458,7 @@ function parseSceneJson(raw) {
         // WE 图像颜色混合模式（→ shader combo BLENDMODE；缺省 0 = Normal）。
         // 非数值/负数/非法 → 0（渲染侧只实现 6/7/31，其余回退普通 alpha 混合）。
         colorBlendMode: Math.max(0, Math.floor(optNum(o.colorBlendMode) ?? 0)),
-        ...base.visible?.kind === "script" ? { script: base.visible.script, scriptProperties: base.visible.scriptProperties } : {}
+        ...fromVisibleScript
       };
     }
     if (typeof o.text === "string" && o.text) {
@@ -22489,7 +22493,7 @@ function parseSceneJson(raw) {
         ...scriptFields(t)
       };
     }
-    return { ...base, kind: "particle", particle: "" };
+    return { ...base, kind: "particle", particle: "", ...fromVisibleScript };
   });
   const cc = typeof gen.clearcolor === "string" ? vec3(gen.clearcolor) : void 0;
   return {
@@ -22904,6 +22908,10 @@ var ThreeScenePlayer = class {
   // 粒子图层条目（Task 3）：按 addParticle 返回的 id 索引，更新粒子时用其 getter 刷新缓冲区。
   particleLayers = /* @__PURE__ */ new Map();
   nextParticleLayerId = 0;
+  // scene 对象 id → **最终显示**的 three 对象（非隔离 = 内容 mesh；隔离 = 合成 quad）。
+  // 脚本的 LayerStateTable 键是 scene 对象 id，而 backgroundEntries/particleLayers 的键是图层
+  // 计数器 id —— 这里补一份同键空间映射，避免又出现一层「对象 id → 计数器 id」的翻译。
+  displayObjects = /* @__PURE__ */ new Map();
   // 对象隔离条目（对象级效果链；空 Map = 本壁纸无带效果对象，帧序退化为原路径）。
   isolated = /* @__PURE__ */ new Map();
   objectEffectStage = null;
@@ -23083,6 +23091,10 @@ var ThreeScenePlayer = class {
   setGlowStage(stage) {
     this.glowStage = stage;
   }
+  /** 按 scene.json 对象 id 取最终显示的 three 对象（脚本图层桥用）。未登记 → undefined。 */
+  displayObject(objectId) {
+    return this.displayObjects.get(objectId);
+  }
   // 隔离对象条目（只读视图，供编排器拿 RT 纹理与尺寸）。
   isolatedObjects() {
     return [...this.isolated.values()];
@@ -23175,6 +23187,10 @@ var ThreeScenePlayer = class {
       sceneW,
       sceneH
     });
+    if (opts.objectId !== void 0) {
+      const shown = opts.isolate ? this.isolated.get(opts.isolate.objectId)?.quad : mesh;
+      if (shown) this.displayObjects.set(opts.objectId, shown);
+    }
     return id;
   }
   // 图层材质（**内容**材质）：colorBlendMode 已实现（6/7/31）→ 预乘 ShaderMaterial +
@@ -23453,6 +23469,10 @@ var ThreeScenePlayer = class {
         0
       );
     }
+    if (opts.objectId !== void 0) {
+      const shown = opts.isolate ? this.isolated.get(opts.isolate.objectId)?.quad : mesh;
+      if (shown) this.displayObjects.set(opts.objectId, shown);
+    }
     return id;
   }
   // 每帧刷新所有粒子图层：调用各自的 `simVerticesGetter()` 取当前顶点并写回 BufferAttribute。
@@ -23554,6 +23574,7 @@ var ThreeScenePlayer = class {
       });
     }
     this.isolated.clear();
+    this.displayObjects.clear();
     this.objectEffectStage = null;
     this.glowStage?.dispose();
     this.glowStage = null;
@@ -23629,6 +23650,8 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
         brightness: obj.brightness,
         sceneW,
         sceneH,
+        // 脚本图层桥的键 = scene 对象 id（**总是传**，与只在隔离时传的 isolate.objectId 区分）。
+        objectId: obj.id,
         // 对象级效果链：本对象带效果（调用方下发了隔离条件）→ 内容进 localScene 渲染到对象 RT，
         // 主场景放合成 quad；缺省不隔离，行为与今天逐字相同。隔离条目的键 = obj.id（值里的
         // objectId 同值），与 ObjectEffectStage 的键空间一致。
@@ -23647,7 +23670,8 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
         angles: t.angles,
         texture: layer.texture,
         sceneW,
-        sceneH
+        sceneH,
+        objectId: obj.id
       });
       backgroundIds.push(id);
       if (layer.driver) {
@@ -23687,6 +23711,8 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
         // three 只在首帧锁存该容量（见 addParticle），必须按模拟器**最终**会产出的粒子数一次给足；
         // 缺 maxcount（旧格式/解析失败）→ addParticle 用 DEFAULT_PARTICLE_CAPACITY 兜底。
         maxInstances: specMaxcount(p.specJson),
+        // 脚本图层桥的键 = scene 对象 id（总是传）。
+        objectId: obj.id,
         // 对象级效果链：带效果的粒子对象同样隔离（对象 RT + 合成 quad）。世界尺寸由调用方按
         // `particleWorldSize(spec, scale)` 算好（player 不知道 spec 的 distanceMax）；缺省不隔离。
         // 隔离条目的键 = obj.id（值里的 objectId 同值），与 ObjectEffectStage 的键空间一致。
@@ -23697,6 +23723,7 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
     }
   }
   player.setAnimationLoop((dt) => {
+    assets.onFrame?.(dt);
     for (const sim of sims) sim.update(dt);
     for (const t of textDrivers) {
       if (!t.driver.update(/* @__PURE__ */ new Date())) continue;
@@ -27677,6 +27704,654 @@ async function getTextScriptRuntime() {
   return runtimePromise;
 }
 
+// src/client/scene-anim.ts
+var NAME_RE = /"name"\s*:\s*"([^"]{1,200})"/g;
+var FPS_RE = /"fps"\s*:\s*(-?\d+(?:\.\d+)?)/g;
+var PAIR_RADIUS = 400;
+function extractAnimFps(scriptSource) {
+  const out = /* @__PURE__ */ new Map();
+  if (typeof scriptSource !== "string" || scriptSource.length === 0) return out;
+  const used = /* @__PURE__ */ new Set();
+  const stack = [];
+  let inStr = false;
+  let quote = "";
+  for (let i = 0; i < scriptSource.length; i++) {
+    const c = scriptSource[i];
+    if (inStr) {
+      if (c === "\\") i++;
+      else if (c === quote) inStr = false;
+      continue;
+    }
+    if (c === "/" && scriptSource[i + 1] === "/") {
+      const nl = scriptSource.indexOf("\n", i);
+      if (nl < 0) break;
+      i = nl;
+      continue;
+    }
+    if (c === "/" && scriptSource[i + 1] === "*") {
+      const close = scriptSource.indexOf("*/", i + 2);
+      if (close < 0) break;
+      i = close + 1;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      inStr = true;
+      quote = c;
+    } else if (c === "{") {
+      stack.push(i);
+    } else if (c === "}" && stack.length > 0) {
+      const start = stack.pop();
+      pairLiteral(scriptSource, start, i + 1, stack, used, out);
+    }
+  }
+  return out;
+}
+function pairLiteral(src, start, end, ancestors, used, out) {
+  const text = src.slice(start, end);
+  for (const m of text.matchAll(FPS_RE)) {
+    const localAt = m.index ?? 0;
+    const abs = start + localAt;
+    if (used.has(abs)) continue;
+    used.add(abs);
+    const v = Number(m[1]);
+    if (!Number.isFinite(v) || v <= 0) continue;
+    const name = nearestName(src, start, end, localAt) ?? outerName(src, ancestors[ancestors.length - 1], abs);
+    if (name && !out.has(name)) out.set(name, v);
+  }
+}
+function nearestName(src, from, to, at) {
+  let best = null;
+  let bestDist = Number.POSITIVE_INFINITY;
+  for (const m of src.slice(from, to).matchAll(NAME_RE)) {
+    const d = Math.abs((m.index ?? 0) - at);
+    if (d < bestDist) {
+      bestDist = d;
+      best = m[1];
+    }
+  }
+  return best;
+}
+function outerName(src, outerStart, abs) {
+  if (outerStart === void 0) return null;
+  const from = Math.max(outerStart, abs - PAIR_RADIUS);
+  const to = Math.min(src.length, abs + PAIR_RADIUS);
+  let best = null;
+  let bestDist = Number.POSITIVE_INFINITY;
+  for (const m of src.slice(from, to).matchAll(NAME_RE)) {
+    const d = Math.abs(from + (m.index ?? 0) - abs);
+    if (d < bestDist) {
+      bestDist = d;
+      best = m[1];
+    }
+  }
+  return best;
+}
+var AnimRegistry = class {
+  byKey = /* @__PURE__ */ new Map();
+  fpsTable;
+  defaultFps;
+  /** 已警告过的动画名（避免每帧刷屏）。 */
+  warned = /* @__PURE__ */ new Set();
+  constructor(fpsTable, defaultFps = 60) {
+    this.fpsTable = fpsTable;
+    this.defaultFps = Number.isFinite(defaultFps) && defaultFps > 0 ? defaultFps : 60;
+  }
+  /** 取（或创建）某动画的播放器。同一 (layerKey,name) 恒返回同一对象。 */
+  get(layerKey, name) {
+    const key = `${layerKey}|${name}`;
+    const hit = this.byKey.get(key);
+    if (hit) return hit.playback;
+    const fps = this.fpsOf(name);
+    const st = { frame: 0, fps, playing: false, playback: null };
+    st.playback = {
+      play: () => {
+        st.playing = true;
+      },
+      pause: () => {
+        st.playing = false;
+      },
+      stop: () => {
+        st.playing = false;
+        st.frame = 0;
+      },
+      isPlaying: () => st.playing,
+      setFrame: (v) => {
+        st.frame = Number.isFinite(v) ? v : 0;
+      },
+      getFrame: () => st.frame
+    };
+    this.byKey.set(key, st);
+    return st.playback;
+  }
+  /** 每帧推进所有在播播放器：frame += fps × dt。 */
+  tick(dt) {
+    if (!Number.isFinite(dt) || dt <= 0) return;
+    for (const st of this.byKey.values()) {
+      if (st.playing) st.frame += st.fps * dt;
+    }
+  }
+  playingCount() {
+    let n = 0;
+    for (const st of this.byKey.values()) if (st.playing) n++;
+    return n;
+  }
+  /** 本动画实际使用的 fps（诊断用）。 */
+  fpsOf(name) {
+    return this.fpsTable.get(name) ?? this.defaultFps;
+  }
+};
+
+// src/client/layer-state.ts
+function vecEq(a, b) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
+}
+function patchEq(a, b) {
+  return vecEq(a.origin, b.origin) && vecEq(a.angles, b.angles) && vecEq(a.scale, b.scale) && a.alpha === b.alpha && a.visible === b.visible;
+}
+function createLayerStateTable() {
+  const state = /* @__PURE__ */ new Map();
+  const dirty = /* @__PURE__ */ new Map();
+  return {
+    write(objectId, patch) {
+      const cur = state.get(objectId) ?? {};
+      const next = { ...cur, ...patch };
+      state.set(objectId, next);
+      if (!patchEq(cur, next)) dirty.set(objectId, { ...dirty.get(objectId), ...patch });
+    },
+    read(objectId) {
+      return { ...state.get(objectId) ?? {} };
+    },
+    takeDirty() {
+      const out = new Map(dirty);
+      dirty.clear();
+      return out;
+    },
+    size() {
+      return state.size;
+    }
+  };
+}
+var ALPHA_EPSILON = 2e-3;
+function writeOpacity(object, alpha) {
+  const mat = object.material;
+  const list = Array.isArray(mat) ? mat : mat ? [mat] : [];
+  for (const m of list) {
+    const anyMat = m;
+    if (typeof anyMat.opacity === "number") anyMat.opacity = alpha;
+    const u = anyMat.uniforms?.["opacity"];
+    if (u && typeof u.value === "number") u.value = alpha;
+  }
+}
+function applyLayerState(dirty, lookup) {
+  let applied = 0;
+  for (const [objectId, w] of dirty) {
+    const target = lookup(objectId);
+    if (!target) continue;
+    const obj = target.object;
+    if (w.origin) obj.position.set(w.origin[0] - target.sceneW / 2, w.origin[1] - target.sceneH / 2, w.origin[2]);
+    if (w.scale) obj.scale.set(w.scale[0], w.scale[1], w.scale[2]);
+    if (w.angles) obj.rotation.set(w.angles[0], w.angles[1], w.angles[2]);
+    const alpha = w.alpha;
+    if (alpha !== void 0) {
+      const a = Math.max(0, Math.min(1, alpha));
+      writeOpacity(obj, a);
+      obj.visible = a > ALPHA_EPSILON;
+    }
+    if (w.visible === false) obj.visible = false;
+    else if (w.visible === true && alpha === void 0) obj.visible = true;
+    applied++;
+  }
+  return applied;
+}
+
+// src/client/scene-script-vm.ts
+var STEP_BUDGET2 = 5e7;
+var PRELUDE2 = `
+var __mods = [];
+
+function Vec3(x, y, z) { this.x = x || 0; this.y = y || 0; this.z = z || 0; }
+function Vec4(x, y, z, w) { this.x = x || 0; this.y = y || 0; this.z = z || 0; this.w = w || 0; }
+var IModelData = { POSITION: 0, UV: 1, COLOR: 2, NORMAL: 3, TANGENT: 4 };
+
+function __noop() {}
+function __mkDummy(name) {
+  return {
+    __dummyName: name,
+    applyData: __noop, setParent: __noop, setMaterialProperty: __noop,
+    getMaterialProperty: function () { return 0; }, visible: true
+  };
+}
+
+var __animCache = {};
+function __mkAnim(key, name) {
+  var k = key + '|' + name;
+  if (__animCache[k]) return __animCache[k];
+  __animCache[k] = {
+    play: function () { __host.animPlay(key, name); },
+    pause: function () { __host.animPause(key, name); },
+    stop: function () { __host.animStop(key, name); },
+    isPlaying: function () { return __host.animIsPlaying(key, name); },
+    setFrame: function (v) { __host.animSetFrame(key, name, v); },
+    getFrame: function () { return __host.animGetFrame(key, name); }
+  };
+  return __animCache[k];
+}
+
+var __layerCache = {};
+function __mkLayer(key) {
+  if (__layerCache[key]) return __layerCache[key];
+  var o = {
+    __key: key,
+    get alpha() { return __host.readNum(key, 'alpha'); },
+    set alpha(v) { __host.writeNum(key, 'alpha', v); },
+    get baseAlpha() { return __host.readNum(key, 'baseAlpha'); },
+    set baseAlpha(v) { __host.writeNum(key, 'baseAlpha', v); },
+    get opacity() { return __host.readNum(key, 'opacity'); },
+    set opacity(v) { __host.writeNum(key, 'opacity', v); },
+    get visible() { return __host.readBool(key, 'visible'); },
+    set visible(v) { __host.writeBool(key, 'visible', v); },
+    get shown() { return __host.readBool(key, 'visible'); },
+    set shown(v) { __host.writeBool(key, 'visible', v); },
+    get origin() { var a = __host.readVec(key, 'origin'); return new Vec3(a[0], a[1], a[2]); },
+    set origin(v) { __host.writeVec(key, 'origin', v.x, v.y, (v.z === undefined ? 0 : v.z)); },
+    get angles() { var a = __host.readVec(key, 'angles'); return new Vec3(a[0], a[1], a[2]); },
+    set angles(v) { __host.writeVec(key, 'angles', v.x, v.y, (v.z === undefined ? 0 : v.z)); },
+    get scale() { var a = __host.readVec(key, 'scale'); return new Vec3(a[0], a[1], a[2]); },
+    set scale(v) { __host.writeVec(key, 'scale', v.x, v.y, (v.z === undefined ? 1 : v.z)); },
+    get color() { var a = __host.readVec(key, 'color'); return new Vec3(a[0], a[1], a[2]); },
+    set color(v) { __host.writeVec(key, 'color', v.x, v.y, (v.z === undefined ? 0 : v.z)); },
+    getAnimation: function (name) { return __mkAnim(key, String(name)); },
+    getEffect: function (name) {
+      return { name: name, visible: true, setMaterialProperty: __noop, getMaterialProperty: function () { return 0; } };
+    },
+    getModelData: function () { return __mkDummy('model'); },
+    setMaterialProperty: __noop,
+    getMaterialProperty: function () { return 0; },
+    setParent: __noop,
+    setVisible: function (v) { __host.writeBool(key, 'visible', v); return v; }
+  };
+  __layerCache[key] = o;
+  return o;
+}
+
+var thisScene = {
+  getLayerByID: function (id) { return __mkLayer('id:' + id); },
+  getLayer: function (n) { return __mkLayer('name:' + n); },
+  createLayer: function (o) { return __mkLayer('new:' + ((o && o.name) ? o.name : 'anon')); },
+  createModelData: function () { return __mkDummy('model'); }
+};
+var getLayerByID = thisScene.getLayerByID;
+var getLayer = thisScene.getLayer;
+var createLayer = thisScene.createLayer;
+
+var engine = {
+  userProperties: {},
+  registerAsset: function () { return __mkDummy('asset'); },
+  get frametime() { return __host.frametime(); }
+};
+var registerAsset = engine.registerAsset;
+
+var shared = {};
+var console = { log: __host.log, warn: __host.log, error: __host.log };
+true;
+`;
+var SceneScriptVm = class _SceneScriptVm {
+  ctx;
+  runtime;
+  handles = [];
+  modules = [];
+  animCache = /* @__PURE__ */ new Map();
+  state;
+  anims;
+  onWarn;
+  dt = 1 / 60;
+  constructor(ctx, runtime, opts) {
+    this.ctx = ctx;
+    this.runtime = runtime;
+    this.state = opts.state;
+    this.anims = opts.anims;
+    this.onWarn = opts.onWarn ?? (() => {
+    });
+  }
+  /** 初始化 quickjs 并装好 prelude。失败返回 null（调用方退回"无脚本"路径，画面等于现状）。 */
+  static async create(opts) {
+    let runtime = null;
+    try {
+      const wasmLocation = typeof window !== "undefined" ? "/wallpapers/static/quickjs.wasm" : void 0;
+      const mod = await newQuickJSWASMModuleFromVariant(
+        newVariant(src_default, wasmLocation ? { wasmLocation } : {})
+      );
+      runtime = mod.newRuntime();
+      runtime.setMemoryLimit(1024 * 1024 * 1024);
+      runtime.setMaxStackSize(4 * 1024 * 1024);
+      let budget = STEP_BUDGET2;
+      runtime.setInterruptHandler(() => {
+        budget -= 1e4;
+        return budget <= 0;
+      });
+      const ctx = runtime.newContext();
+      const vm = new _SceneScriptVm(ctx, runtime, opts);
+      if (!vm.installPrelude(opts)) {
+        vm.dispose();
+        return null;
+      }
+      return vm;
+    } catch {
+      try {
+        runtime?.dispose();
+      } catch {
+      }
+      return null;
+    }
+  }
+  keep(h) {
+    this.handles.push(h);
+    return h;
+  }
+  warn(msg) {
+    this.onWarn(msg);
+  }
+  installPrelude(opts) {
+    const ctx = this.ctx;
+    const host = ctx.newObject();
+    this.handles.push(host);
+    const define = (name, impl) => {
+      const fn = ctx.newFunction(name, (...args) => impl(...args));
+      ctx.setProp(host, name, fn);
+      this.handles.push(fn);
+    };
+    define("readNum", (k, p) => {
+      const prop = ctx.getString(p);
+      const w = this.state.read(this.keyOf(k));
+      const v = w[prop];
+      if (typeof v === "number") return ctx.newNumber(v);
+      return ctx.newNumber(prop === "scale" ? 1 : prop === "color" ? 1 : 1);
+    });
+    define("readBool", (k) => {
+      const w = this.state.read(this.keyOf(k));
+      return w.visible === false ? ctx.false : ctx.true;
+    });
+    define("readVec", (k, p) => {
+      const prop = ctx.getString(p);
+      const v = this.state.read(this.keyOf(k))[prop];
+      const arr = v ?? (prop === "scale" || prop === "color" ? [1, 1, 1] : [0, 0, 0]);
+      const out = ctx.newArray();
+      for (let i = 0; i < 3; i++) {
+        const h = ctx.newNumber(arr[i] ?? 0);
+        ctx.setProp(out, i, h);
+        h.dispose();
+      }
+      return out;
+    });
+    define("writeNum", (k, p, v) => {
+      const prop = ctx.getString(p);
+      const num = ctx.getNumber(v);
+      const patch = prop === "alpha" || prop === "opacity" || prop === "baseAlpha" ? { alpha: num } : {};
+      this.write(this.keyOf(k), patch);
+    });
+    define("writeBool", (k, _p, v) => {
+      this.write(this.keyOf(k), { visible: ctx.dump(v) === true });
+    });
+    define("writeVec", (k, p, x, y, z) => {
+      const prop = ctx.getString(p);
+      const arr = [ctx.getNumber(x), ctx.getNumber(y), ctx.getNumber(z)];
+      const patch = prop === "scale" ? { scale: arr } : prop === "origin" ? { origin: arr } : prop === "angles" ? { angles: arr } : prop === "color" ? { color: arr } : {};
+      this.write(this.keyOf(k), patch);
+    });
+    define("animPlay", (k, n) => {
+      this.anim(ctx.getString(k), ctx.getString(n)).play();
+    });
+    define("animPause", (k, n) => {
+      this.anim(ctx.getString(k), ctx.getString(n)).pause();
+    });
+    define("animStop", (k, n) => {
+      this.anim(ctx.getString(k), ctx.getString(n)).stop();
+    });
+    define("animIsPlaying", (k, n) => this.anim(ctx.getString(k), ctx.getString(n)).isPlaying() ? ctx.true : ctx.false);
+    define("animSetFrame", (k, n, v) => {
+      this.anim(ctx.getString(k), ctx.getString(n)).setFrame(ctx.getNumber(v));
+    });
+    define("animGetFrame", (k, n) => ctx.newNumber(this.anim(ctx.getString(k), ctx.getString(n)).getFrame()));
+    define("frametime", () => ctx.newNumber(this.dt));
+    define("log", () => {
+    });
+    ctx.setProp(ctx.global, "__host", host);
+    const propsJson = JSON.stringify(safeUserProperties(opts.userProperties));
+    const pre = ctx.evalCode(PRELUDE2.replace("userProperties: {}", () => `userProperties: ${propsJson}`), "scene-script-prelude.js");
+    if (pre.error) {
+      pre.error.dispose();
+      this.warn("SceneScript prelude \u521D\u59CB\u5316\u5931\u8D25");
+      return false;
+    }
+    pre.value.dispose();
+    return true;
+  }
+  /** prelude 的 key（`id:<scene对象id>` / `name:<名>` / `new:<名>`）→ scene 对象 id；非 id 形式返回 -1。 */
+  keyOf(h) {
+    const k = this.ctx.getString(h);
+    const m = /^id:(\d+)$/.exec(k);
+    return m ? Number(m[1]) : -1;
+  }
+  write(objectId, patch) {
+    if (objectId < 0) return;
+    if (Object.keys(patch).length === 0) return;
+    this.state.write(objectId, patch);
+  }
+  anim(layerKey, name) {
+    const key = `${layerKey}|${name}`;
+    let a = this.animCache.get(key);
+    if (!a) {
+      a = this.anims.get(layerKey, name);
+      this.animCache.set(key, a);
+    }
+    return a;
+  }
+  /** 装载一个模块脚本。返回 false = eval 失败（该脚本被跳过，其余继续）。 */
+  load(source) {
+    const ctx = this.ctx;
+    const sanitized = String(source ?? "").replace(/\bexport\s+/g, "");
+    const label = firstNonEmptyLine(sanitized);
+    const code = `globalThis.__mods.push((function(){
+${sanitized}
+return {
+  init: (typeof init === 'function') ? init : null,
+  update: (typeof update === 'function') ? update : null,
+  applyUserProperties: (typeof applyUserProperties === 'function') ? applyUserProperties : null,
+  cursorClick: (typeof cursorClick === 'function') ? cursorClick : null
+};
+})());`;
+    const r = ctx.evalCode(code, "scene-script.js");
+    if (r.error) {
+      r.error.dispose();
+      this.warn(`SceneScript eval \u5931\u8D25\uFF0C\u5DF2\u8DF3\u8FC7\u8BE5\u811A\u672C\uFF08${label}\uFF09`);
+      return false;
+    }
+    r.value.dispose();
+    const mods = ctx.getProp(ctx.global, "__mods");
+    const lenH = ctx.getProp(mods, "length");
+    const len = ctx.getNumber(lenH);
+    lenH.dispose();
+    const inst = ctx.getProp(mods, len - 1);
+    mods.dispose();
+    const grab = (name) => {
+      const h = ctx.getProp(inst, name);
+      if (ctx.typeof(h) === "function") return h;
+      h.dispose();
+      return null;
+    };
+    const m = {
+      instance: inst,
+      init: grab("init"),
+      update: grab("update"),
+      apply: grab("applyUserProperties"),
+      click: grab("cursorClick"),
+      active: true,
+      label
+    };
+    this.handles.push(inst);
+    for (const h of [m.init, m.update, m.apply, m.click]) if (h) this.handles.push(h);
+    this.modules.push(m);
+    return true;
+  }
+  callOne(m, fn, mode) {
+    if (!m.active || !fn) return;
+    const ctx = this.ctx;
+    let argH;
+    if (mode === "props") {
+      const engineH = ctx.getProp(ctx.global, "engine");
+      argH = ctx.getProp(engineH, "userProperties");
+      engineH.dispose();
+    } else {
+      argH = ctx.newString("");
+    }
+    const res = ctx.callFunction(fn, m.instance, argH);
+    argH.dispose();
+    if (res.error) {
+      const msg = this.errorText(res.error);
+      res.error.dispose();
+      m.active = false;
+      this.warn(`SceneScript \u629B\u9519\uFF0C\u5DF2\u505C\u7528\u8BE5\u811A\u672C\uFF08${m.label}\uFF09\uFF1A${msg}`);
+      return;
+    }
+    res.value.dispose();
+  }
+  /** 每帧时间（供 engine.frametime）。必须在 updateAll 之前设置。 */
+  setFrametime(dt) {
+    if (Number.isFinite(dt) && dt > 0) this.dt = dt;
+  }
+  /** 按装载顺序调 applyUserProperties（一次）与 init。 */
+  initAll() {
+    for (const m of this.modules) {
+      this.callOne(m, m.apply, "props");
+      this.callOne(m, m.init, "value");
+    }
+  }
+  /** 按装载顺序调 update（每帧）。 */
+  updateAll() {
+    for (const m of this.modules) this.callOne(m, m.update, "value");
+  }
+  /** 按装载顺序派发点击（cursorClick）。 */
+  clickAll() {
+    for (const m of this.modules) this.callOne(m, m.click, "value");
+  }
+  get loadedCount() {
+    return this.modules.length;
+  }
+  /** 仍可用的脚本数（抛错后被停用的不计）。 */
+  get activeCount() {
+    return this.modules.filter((m) => m.active).length;
+  }
+  dispose() {
+    for (const h of this.handles) {
+      try {
+        h.dispose();
+      } catch {
+      }
+    }
+    this.handles.length = 0;
+    this.modules.length = 0;
+    this.animCache.clear();
+    try {
+      this.ctx.dispose();
+    } catch {
+    }
+    try {
+      this.runtime.dispose();
+    } catch {
+    }
+  }
+  errorText(errH) {
+    try {
+      const m = this.ctx.getProp(errH, "message");
+      const nameH = this.ctx.getProp(errH, "name");
+      const text = `${String(this.ctx.dump(nameH))}: ${String(this.ctx.dump(m))}`;
+      m.dispose();
+      nameH.dispose();
+      return text;
+    } catch {
+      return "(unknown error)";
+    }
+  }
+};
+function safeUserProperties(props) {
+  const out = {};
+  for (const [k, v] of Object.entries(props ?? {})) {
+    if (v === void 0) continue;
+    if (typeof v === "string" && v.length > 120) continue;
+    out[k] = v;
+  }
+  return out;
+}
+function firstNonEmptyLine(s) {
+  for (const l of s.split("\n")) {
+    const t = l.trim();
+    if (t) return t.slice(0, 60);
+  }
+  return "";
+}
+
+// src/client/scene-script-host.ts
+var SceneScriptHost = class _SceneScriptHost {
+  anims;
+  state;
+  vm;
+  constructor(anims, state, vm) {
+    this.anims = anims;
+    this.state = state;
+    this.vm = vm;
+  }
+  /** 创建并装载。无脚本时返回一个"空 host"（tick 恒返回空表 = 画面等于现状）。
+   *  quickjs 初始化失败返回 null（调用方同样退回现状）。 */
+  static async create(opts) {
+    const scripts = (opts.scripts ?? []).filter((s) => typeof s?.source === "string" && s.source.length > 0);
+    const fpsTable = /* @__PURE__ */ new Map();
+    for (const s of scripts) {
+      for (const [name, fps] of extractAnimFps(s.source)) {
+        if (!fpsTable.has(name)) fpsTable.set(name, fps);
+      }
+    }
+    const anims = new AnimRegistry(fpsTable);
+    const state = createLayerStateTable();
+    if (scripts.length === 0) return new _SceneScriptHost(anims, state, null);
+    const vm = await SceneScriptVm.create({
+      userProperties: opts.userProperties ?? {},
+      state,
+      anims,
+      onWarn: opts.onWarn
+    });
+    if (!vm) return null;
+    for (const s of scripts) vm.load(s.source);
+    vm.initAll();
+    return new _SceneScriptHost(anims, state, vm);
+  }
+  /** 已装载的脚本数（eval 失败的不计）。 */
+  get scriptCount() {
+    return this.vm?.loadedCount ?? 0;
+  }
+  /** 仍可用的脚本数（抛错后被停用的不计）。 */
+  get activeCount() {
+    return this.vm?.activeCount ?? 0;
+  }
+  /** 每帧调用：先推进动画播放器（脚本 advanceFrame 的时间源），再跑各脚本 update。
+   *  返回本帧的脏写入（调用方应用后即丢弃）。 */
+  tick(dt) {
+    if (!this.vm) return /* @__PURE__ */ new Map();
+    this.vm.setFrametime(dt);
+    this.anims.tick(dt);
+    this.vm.updateAll();
+    return this.state.takeDirty();
+  }
+  /** 派发一次点击（3798688689 的「切换按钮」靠它触发 shared.we2dSwitchScene）。 */
+  click() {
+    this.vm?.clickAll();
+  }
+  dispose() {
+    this.vm?.dispose();
+  }
+};
+
 // src/client/three-renderer.ts
 var warnedKeys = /* @__PURE__ */ new Set();
 function warnOnce2(key, message) {
@@ -27752,6 +28427,14 @@ async function collectObjectEffectChains(desc, loadFile) {
   }
   return out;
 }
+function collectScriptSources(desc) {
+  const out = [];
+  for (const obj of desc.objects) {
+    const s = obj.script;
+    if (typeof s === "string" && s.length > 0) out.push({ objectId: obj.id, source: s });
+  }
+  return out;
+}
 function createThreeSceneRenderer(opts) {
   const loadWasm = opts?.loadWasm ?? defaultLoadWasm;
   const resolveTextScriptRuntime = opts?.getTextScriptRuntime ?? getTextScriptRuntime;
@@ -27767,6 +28450,9 @@ function createThreeSceneRenderer(opts) {
   let onWindowResize = null;
   let currentTextures = null;
   let currentScriptBindings = [];
+  let currentScriptHost = null;
+  let scriptClick = null;
+  let scriptClickTarget = null;
   const teardown = () => {
     if (onWindowResize) {
       window.removeEventListener("resize", onWindowResize);
@@ -27783,6 +28469,11 @@ function createThreeSceneRenderer(opts) {
     currentTextures = null;
     for (const b of currentScriptBindings) b.dispose();
     currentScriptBindings = [];
+    if (scriptClickTarget && scriptClick) scriptClickTarget.removeEventListener("click", scriptClick);
+    scriptClickTarget = null;
+    scriptClick = null;
+    currentScriptHost?.dispose();
+    currentScriptHost = null;
   };
   const effectiveGlow = () => ({
     enabled: glowOverride?.enabled ?? glowFromSettings?.enabled ?? true,
@@ -27929,6 +28620,7 @@ function createThreeSceneRenderer(opts) {
           return new Uint8Array(await r.arrayBuffer());
         };
         const effectChains = await collectObjectEffectChains(desc, loadFile);
+        const scriptSources = collectScriptSources(desc);
         const settings = await readClientSettings();
         qualityScale = settings.qualityScale ?? 1;
         glowFromSettings = {
@@ -27981,11 +28673,47 @@ function createThreeSceneRenderer(opts) {
             });
           }
         }
-        const result = loadSceneToThree(sceneJson, { backgroundTextures, particles, createParticleSim, isolate, textLayers, qualityScale, worldTransforms }, fg, {
+        const result = loadSceneToThree(sceneJson, {
+          backgroundTextures,
+          particles,
+          createParticleSim,
+          isolate,
+          textLayers,
+          qualityScale,
+          worldTransforms,
+          // SceneScript 帧钩子：脚本状态是本帧渲染的权威来源，先 tick → 应用脏写入，
+          // 再走原有的粒子/文本更新与 render。host 未就绪（quickjs 加载中/失败）时直接返回。
+          onFrame: (dt) => {
+            const host = currentScriptHost;
+            const loaded = current;
+            if (!host || !loaded) return;
+            const dirty = host.tick(dt);
+            if (dirty.size === 0) return;
+            applyLayerState(dirty, (objectId) => {
+              const obj = loaded.player.displayObject(objectId);
+              return obj ? { object: obj, sceneW: desc.orthogonal.width, sceneH: desc.orthogonal.height } : void 0;
+            });
+          }
+        }, fg, {
           width: vw,
           height: vh
         });
         current = result;
+        if (scriptSources.length > 0) {
+          currentScriptHost = await SceneScriptHost.create({
+            scripts: scriptSources,
+            userProperties: userProps,
+            onWarn: (m) => console.warn(`[wallpaper-engine] ${m}`)
+          });
+          if (currentScriptHost) {
+            scriptClick = () => currentScriptHost?.click();
+            scriptClickTarget = fg;
+            fg.addEventListener?.("click", scriptClick);
+            console.log(
+              `[three] scene scripts id=${id} collected=${scriptSources.length} loaded=${currentScriptHost.scriptCount} active=${currentScriptHost.activeCount}`
+            );
+          }
+        }
         let stage = null;
         let droppedEffects = 0;
         for (const [objId, chains] of effectChains) {

@@ -1894,3 +1894,145 @@ describe('ThreeScenePlayer 对象隔离', () => {
     expect(player.isolatedObjects()).toHaveLength(0);
   });
 });
+
+// 2026-09-22 Task 8：SceneScript 运行时需要的「scene 对象 id → 最终显示对象」映射与帧钩子。
+// 脚本的状态表键是 scene.json 的**对象 id**，而 backgroundEntries/particleLayers 的键是图层
+// 计数器 id —— 映射必须记**最终显示物**（隔离对象记合成 quad，内容 mesh 只渲染进对象 RT）。
+describe('ThreeScenePlayer displayObject 映射与 onFrame 帧钩子', () => {
+  function makeTexture(): THREE.Texture {
+    const tex = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+    tex.needsUpdate = true;
+    return tex;
+  }
+
+  // 最小 ParticleSim 桩（字段与既有 makeMockSim 同形，这里只需 update 的顺序与类型）。
+  function makeSim(order: string[] = []): {
+    update(dt: number): void; vertices(): Float32Array; frame_count(): number;
+    set_frame_count(n: number): void; particle_count(): number;
+  } {
+    return {
+      update: () => { order.push('sim.update'); },
+      vertices: () => new Float32Array(0),
+      frame_count: () => 1,
+      set_frame_count: () => {},
+      particle_count: () => 0,
+    };
+  }
+
+  it('非隔离对象返回其 mesh（= 主场景里的那个），未登记对象返回 undefined', () => {
+    const { player } = makePlayer(100, 100);
+    const id = player.addBackground({
+      origin: [50, 50, 0], size: [10, 10], scale: [1, 1, 1], texture: makeTexture(),
+      sceneW: 100, sceneH: 100, objectId: 42,
+    });
+    // 返回值仍是图层计数器 id（0），与 scene 对象 id 42 是两套编号。
+    expect(id).toBe(0);
+    expect(player.displayObject(42)).toBe(player.scene.children[0]);
+    expect(player.displayObject(42)).toBeInstanceOf(THREE.Mesh);
+    expect(player.displayObject(999)).toBeUndefined();
+  });
+
+  it('隔离对象的显示物是合成 quad，不是只渲染进对象 RT 的内容 mesh', () => {
+    const { player } = makePlayer(100, 100);
+    player.addBackground({
+      origin: [0, 0, 0], size: [10, 10], scale: [1, 1, 1], texture: makeTexture(),
+      sceneW: 100, sceneH: 100, objectId: 77,
+      isolate: { objectId: 77, rtWidth: 10, rtHeight: 10, worldW: 10, worldH: 10 },
+    });
+    const entry = player.isolatedObjects()[0];
+    expect(player.displayObject(77)).toBe(entry.quad);
+    expect(player.displayObject(77)).not.toBe(entry.localScene.children[0]);
+  });
+
+  it('不传 objectId（既有调用方）→ 不登记任何映射（零回归）', () => {
+    const { player } = makePlayer(100, 100);
+    player.addBackground({
+      origin: [50, 50, 0], size: [10, 10], scale: [1, 1, 1], sceneW: 100, sceneH: 100,
+    });
+    expect(player.scene.children).toHaveLength(1);
+    expect(player.displayObject(0)).toBeUndefined();
+    expect(player.displayObject(42)).toBeUndefined();
+  });
+
+  it('粒子图层同样按对象 id 登记（非隔离 = 粒子对象本身，隔离 = 合成 quad）', () => {
+    const { player } = makePlayer(100, 100);
+    player.addParticle(() => new Float32Array(0), { frameCount: 1, blend: 'alpha', objectId: 71 });
+    expect(player.displayObject(71)).toBe(player.scene.children[0]);
+    expect(player.displayObject(71)).toBeInstanceOf(THREE.Mesh);
+
+    const { player: p2 } = makePlayer(100, 100);
+    p2.addParticle(() => new Float32Array(0), {
+      frameCount: 1, blend: 'alpha', objectId: 72, objectCenter: [0, 0, 0],
+      isolate: { objectId: 72, rtWidth: 10, rtHeight: 10, worldW: 10, worldH: 10 },
+    });
+    const entry = p2.isolatedObjects()[0];
+    expect(p2.displayObject(72)).toBe(entry.quad);
+    expect(p2.displayObject(72)).not.toBe(entry.localScene.children[0]);
+  });
+
+  it('loadSceneToThree：image / text / particle 三处装配都按 scene 对象 id 登记显示物', () => {
+    const canvas = document.createElement('canvas');
+    const scene = JSON.stringify({
+      general: { orthogonalprojection: { width: 100, height: 100 } },
+      objects: [
+        { id: 10750, image: 'models/layers/l_10750.json', origin: '50 50 0', scale: '1 1 1', size: '10 10' },
+        { id: 5, origin: '50 50 0', scale: '1 1 1', size: '10 10', text: { value: 'x' } },
+        { id: 71, particle: 'particles/presets/p.json', origin: '50 50 0', scale: '1 1 1' },
+      ],
+    });
+    const r = loadSceneToThree(scene, {
+      renderer: createMockRenderer() as unknown as THREE.WebGLRenderer,
+      backgroundTextures: new Map([[10750, makeTexture()]]),
+      textLayers: new Map([[5, { texture: makeTexture(), size: [10, 10] as [number, number] }]]),
+      particles: new Map([[71, { specJson: '{}', blend: 'alpha' as const }]]),
+      createParticleSim: () => makeSim(),
+    }, canvas, { width: 100, height: 100 });
+    expect(r.player.displayObject(10750)).toBeInstanceOf(THREE.Mesh);
+    expect(r.player.displayObject(5)).toBeInstanceOf(THREE.Mesh);
+    expect(r.player.displayObject(71)).toBeInstanceOf(THREE.Mesh);
+    // 未参与渲染的对象（这里没有）查不到 → 脚本查询必须安全返回 undefined。
+    expect(r.player.displayObject(94000)).toBeUndefined();
+    r.player.dispose();
+  });
+
+  it('onFrame 每帧最先执行（早于 sim.update），可写 three 对象状态', () => {
+    const canvas = document.createElement('canvas');
+    const renderer = createMockRenderer();
+    const order: string[] = [];
+    const seen: number[] = [];
+    const scene = JSON.stringify({
+      general: { orthogonalprojection: { width: 100, height: 100 } },
+      objects: [{ id: 71, particle: 'particles/presets/p.json', origin: '50 50 0', scale: '1 1 1' }],
+    });
+    const r = loadSceneToThree(scene, {
+      renderer: renderer as unknown as THREE.WebGLRenderer,
+      particles: new Map([[71, { specJson: '{}', blend: 'alpha' as const }]]),
+      createParticleSim: () => makeSim(order),
+      onFrame: (dt) => { order.push('onFrame'); seen.push(dt); },
+    }, canvas, { width: 100, height: 100 });
+    // mock renderer 不跑 RAF：直接调它记录的帧体（既有 createMockRenderer 的 _getLoop）。
+    (renderer as unknown as { _getLoop: () => (() => void) | null })._getLoop()!();
+    expect(order).toEqual(['onFrame', 'sim.update']);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toBeGreaterThanOrEqual(0);
+    r.player.dispose();
+  });
+
+  it('不传 onFrame 时帧体行为不变（不抛错，sim 照常推进）', () => {
+    const canvas = document.createElement('canvas');
+    const renderer = createMockRenderer();
+    const order: string[] = [];
+    const scene = JSON.stringify({
+      general: { orthogonalprojection: { width: 100, height: 100 } },
+      objects: [{ id: 71, particle: 'particles/presets/p.json', origin: '50 50 0', scale: '1 1 1' }],
+    });
+    const r = loadSceneToThree(scene, {
+      renderer: renderer as unknown as THREE.WebGLRenderer,
+      particles: new Map([[71, { specJson: '{}', blend: 'alpha' as const }]]),
+      createParticleSim: () => makeSim(order),
+    }, canvas, { width: 100, height: 100 });
+    (renderer as unknown as { _getLoop: () => (() => void) | null })._getLoop()!();
+    expect(order).toEqual(['sim.update']);
+    r.player.dispose();
+  });
+});

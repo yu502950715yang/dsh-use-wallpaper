@@ -38,7 +38,8 @@ import { loadSceneToThree } from '../src/client/threejs-player.js';
 import { resolveImageTexture } from '../src/client/scene-renderer.js';
 import { loadTexTexture } from '../src/client/tex-loader.js';
 import { defaultLoadWasm, resolveParticleMaterial } from '../src/client/wasm-renderer.js';
-import { createThreeSceneRenderer, particleBlend, collectObjectEffectChains, lastWorldTransformOf } from '../src/client/three-renderer.js';
+import { createThreeSceneRenderer, particleBlend, collectObjectEffectChains, collectScriptSources, lastWorldTransformOf } from '../src/client/three-renderer.js';
+import { parseSceneJson } from '../src/client/scene-json.js';
 import { createGlowStage } from '../src/client/glow-stage.js';
 import { setSettingsCtx } from '../src/client/settings.js';
 import { ObjectEffectStage } from '../src/client/object-effects.js';
@@ -1408,5 +1409,28 @@ describe('three-renderer 场景树层级（parent → 世界变换）', () => {
     expect(assets.isolate!.get(OBJ_ID)!.worldW).toBeCloseTo(2560.01, 1);
     expect(assets.isolate!.get(OBJ_ID)!.worldH).toBeCloseTo(1575.39, 1);
     r.dispose();
+  });
+});
+
+// SceneScript 运行时（2026-09-22）：脚本收集必须按 objects 顺序、且**不遗漏**「无媒体字段」的
+// 纯控制器对象 —— 3798688689 的 3 个总控（92000/93000/94000）正是这一类，漏掉它们画面就不动。
+describe('collectScriptSources', () => {
+  it('按 objects 顺序收集 util / image / 兜底分支的脚本', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      general: { orthogonalprojection: { width: 100, height: 100 } },
+      objects: [
+        { id: 92000, name: '粒子控制器', visible: { script: 'export function update(){}', value: true } },
+        { id: 94001, name: '切换按钮', image: 'models/util/solidlayer.json', visible: { script: 'export function cursorClick(){}', value: true } },
+        { id: 221582, name: '字标', image: 'models/layers/l_1.json', visible: { script: 'export function update(){}', value: true } },
+        { id: 5, name: '无脚本', image: 'models/layers/l_2.json' },
+        { id: 6, name: '布尔 visible', image: 'models/layers/l_3.json', visible: false },
+      ],
+    }));
+    expect(collectScriptSources(desc).map((s) => s.objectId)).toEqual([92000, 94001, 221582]);
+  });
+
+  it('空描述返回空数组；空串脚本跳过', () => {
+    const desc = parseSceneJson(JSON.stringify({ objects: [{ id: 1, visible: { script: '', value: true } }] }));
+    expect(collectScriptSources(desc)).toEqual([]);
   });
 });

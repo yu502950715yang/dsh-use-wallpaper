@@ -601,3 +601,62 @@ describe('parseSceneJson visible 归一化（T4.2）', () => {
     expect((desc.objects[3] as any).colorBlendMode).toBe(0);
   });
 });
+
+// SceneScript 运行时（2026-09-22）：util 对象不渲染，但承载场景总控脚本——3798688689 的
+// 4 个总控全部挂在 models/util/* 上，若 util 分支不派生 script，这些脚本永远不会被执行。
+describe('parseSceneJson - util 对象的 visible.script', () => {
+  it('util 对象保留 script 与解包后的 scriptProperties', () => {
+    const raw = JSON.stringify({
+      objects: [{
+        id: 94000, name: '场景控制器',
+        image: 'models/util/solidlayer.json',
+        visible: {
+          script: "'use strict';\nexport function update(v){return v;}",
+          value: true,
+          scriptproperties: { fx_float: { user: 'fx_float', value: true } },
+        },
+      }],
+    });
+    const desc = parseSceneJson(raw);
+    const o = desc.objects[0] as any;
+    expect(o.kind).toBe('util');
+    expect(o.script).toContain('export function update');
+    expect(o.scriptProperties).toEqual({ fx_float: true });
+  });
+
+  it('无 script 的 util 对象不产生 script 字段', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [{ id: 1, image: 'models/util/solidlayer.json', visible: false }],
+    }));
+    expect((desc.objects[0] as any).script).toBeUndefined();
+  });
+
+  // ⚠️ 真实数据实测（3798688689）：3 个总控（92000 粒子 / 93000 拖尾 / 94000 场景控制器，
+  // 后者 348 KB）**没有** image/particle/text 字段，会落到 parseSceneJson 末尾的空粒子兜底分支。
+  // 只在 image/util 分支派生 script 的话，原始 15 个 visible.script 对象解析后只剩 12 个。
+  it('无 image/particle/text 的纯控制器对象（兜底分支）也派生 script', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [{
+        id: 94000, name: '场景控制器 · 双向切换与分类开关',
+        visible: { script: "'use strict';\nexport function update(v){return v;}", value: true },
+      }],
+    }));
+    const o = desc.objects[0] as any;
+    expect(o.kind).toBe('particle');
+    expect(o.particle).toBe('');
+    expect(o.script).toContain('export function update');
+  });
+
+  it('particle 非空的对象也保留 script', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [{
+        id: 7, name: 'p', particle: 'particles/a.json',
+        visible: { script: 'export function update(){}', value: true },
+      }],
+    }));
+    const o = desc.objects[0] as any;
+    expect(o.kind).toBe('particle');
+    expect(o.particle).toBe('particles/a.json');
+    expect(o.script).toContain('export function update');
+  });
+});
