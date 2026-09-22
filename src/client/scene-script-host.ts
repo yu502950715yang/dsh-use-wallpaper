@@ -23,11 +23,14 @@ export class SceneScriptHost {
   private readonly anims: AnimRegistry;
   private readonly state: LayerStateTable;
   private readonly vm: SceneScriptVm | null;
+  /** 各脚本对应的 scene 对象 id（与装载顺序一一对应）——把 update() 的返回值写回该对象的可见性。 */
+  private readonly objectIds: number[];
 
-  private constructor(anims: AnimRegistry, state: LayerStateTable, vm: SceneScriptVm | null) {
+  private constructor(anims: AnimRegistry, state: LayerStateTable, vm: SceneScriptVm | null, objectIds: number[]) {
     this.anims = anims;
     this.state = state;
     this.vm = vm;
+    this.objectIds = objectIds;
   }
 
   /** 创建并装载。无脚本时返回一个"空 host"（tick 恒返回空表 = 画面等于现状）。
@@ -43,7 +46,7 @@ export class SceneScriptHost {
     }
     const anims = new AnimRegistry(fpsTable);
     const state = createLayerStateTable();
-    if (scripts.length === 0) return new SceneScriptHost(anims, state, null);
+    if (scripts.length === 0) return new SceneScriptHost(anims, state, null, []);
 
     const vm = await SceneScriptVm.create({
       userProperties: opts.userProperties ?? {},
@@ -56,7 +59,7 @@ export class SceneScriptHost {
     if (!vm) return null;
     for (const s of scripts) vm.load(s.source, `obj ${s.objectId}`);
     vm.initAll();
-    return new SceneScriptHost(anims, state, vm);
+    return new SceneScriptHost(anims, state, vm, scripts.map((s) => s.objectId));
   }
 
   /** 已装载的脚本数（eval 失败的不计）。 */
@@ -75,7 +78,13 @@ export class SceneScriptHost {
     if (!this.vm) return new Map();
     this.vm.setFrametime(dt);
     this.anims.tick(dt);
-    this.vm.updateAll();
+    const results = this.vm.updateAll();
+    // `visible.script` 的 update() 返回值 = 该对象本帧是否可见（WE 语义）。只对布尔生效：
+    // 返回值缺失/畸形时保持现状，不误杀图层（脚本抛错时该脚本返回 undefined）。
+    for (let i = 0; i < results.length && i < this.objectIds.length; i++) {
+      const v = results[i];
+      if (typeof v === 'boolean') this.state.write(this.objectIds[i]!, { visible: v });
+    }
     return this.state.takeDirty();
   }
 

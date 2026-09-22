@@ -17,6 +17,8 @@ export declare class SceneScriptHost {
     private readonly anims;
     private readonly state;
     private readonly vm;
+    /** 各脚本对应的 scene 对象 id（与装载顺序一一对应）——把 update() 的返回值写回该对象的可见性。 */
+    private readonly objectIds;
     private constructor();
     /** 创建并装载。无脚本时返回一个"空 host"（tick 恒返回空表 = 画面等于现状）。
      *  quickjs 初始化失败返回 null（调用方同样退回现状）。 */

@@ -48,8 +48,13 @@ export declare class SceneScriptVm {
     setFrametime(dt: number): void;
     /** 按装载顺序调 applyUserProperties（一次）与 init。 */
     initAll(): void;
-    /** 按装载顺序调 update（每帧）。 */
-    updateAll(): void;
+    /**
+     * 按装载顺序调 update（每帧），返回各自的返回值。
+     *
+     * ⚠️ 返回值是 `visible.script` 的**信号源** —— WE 语义里它就是「该对象本帧是否可见」。
+     * 一期调用后把返回值丢弃了，于是 10 个歌曲字标全部显示（真机：两行歌名重影）。
+     */
+    updateAll(): unknown[];
     /** 按装载顺序派发点击（cursorClick）。 */
     clickAll(): void;
     get loadedCount(): number;

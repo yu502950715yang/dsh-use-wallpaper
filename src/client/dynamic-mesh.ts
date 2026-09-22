@@ -190,7 +190,8 @@ export class DynamicMeshRegistry {
     }
   }
 
-  setVisible(layerId: number, visible: boolean): void {    const layer = this.layers.get(layerId);
+  setVisible(layerId: number, visible: boolean): void {
+    const layer = this.layers.get(layerId);
     if (!layer) return;
     layer.visible = visible;
     layer.mesh.visible = visible;

@@ -94,4 +94,52 @@ describe('SceneScriptHost', () => {
     expect(d.get(7)?.alpha).toBe(1);
     host!.dispose();
   });
+
+  // visible.script 的返回值应用（2026-09-22）：10 个歌曲字标各挂一个 visible.script，
+  // 按 shared.we2dMusicIndex 择一显示；返回值被丢弃时它们会全部叠加（真机：歌名重影）。
+  it('visible.script 的布尔返回值写进状态表', async () => {
+    const host = await SceneScriptHost.create({
+      userProperties: {},
+      scripts: [
+        { objectId: 11, source: `export function update(){ return true; }` },
+        { objectId: 12, source: `export function update(){ return false; }` },
+        { objectId: 13, source: `export function update(){ return 'not-a-bool'; }` },
+      ],
+    });
+    const d = host!.tick(1 / 60);
+    expect(d.get(11)?.visible).toBe(true);
+    expect(d.get(12)?.visible).toBe(false);
+    expect(d.get(13)).toBeUndefined(); // 非布尔不写（畸形数据不误杀图层）
+    host!.dispose();
+  });
+
+  it('同一帧内 visible 与 alpha 是两条独立通道，互不覆盖', async () => {
+    const host = await SceneScriptHost.create({
+      userProperties: {},
+      scripts: [
+        { objectId: 1, source: `export function update(){ thisScene.getLayerByID(21).alpha = 0.5; return false; }` },
+        { objectId: 2, source: `export function update(){ thisScene.getLayerByID(21).alpha = 0.9; return true; }` },
+      ],
+    });
+    const d = host!.tick(1 / 60);
+    expect(d.get(21)?.alpha).toBeCloseTo(0.9); // 后执行者设的 alpha 生效
+    expect(d.get(1)?.visible).toBe(false);     // 各自的可见性也都在
+    expect(d.get(2)?.visible).toBe(true);
+    host!.dispose();
+  });
+
+  it('可见性随脚本返回值逐帧变化（切歌后另一个字标显示）', async () => {
+    const host = await SceneScriptHost.create({
+      userProperties: {},
+      scripts: [
+        { objectId: 31, source: `export function update(){ return shared.idx === 0; }` },
+        { objectId: 32, source: `export function update(){ return shared.idx === 1; }` },
+        { objectId: 30, source: `export function init(){ shared.idx = 0; } export function update(){ return true; }` },
+      ],
+    });
+    const d1 = host!.tick(1 / 60);
+    expect(d1.get(31)?.visible).toBe(true);
+    expect(d1.get(32)?.visible).toBe(false);
+    host!.dispose();
+  });
 });

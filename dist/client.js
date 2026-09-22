@@ -28319,7 +28319,7 @@ return {
     return true;
   }
   callOne(m, fn, mode) {
-    if (!m.active || !fn) return;
+    if (!m.active || !fn) return void 0;
     this.budget = this.stepBudget;
     const ctx = this.ctx;
     let argH;
@@ -28337,9 +28337,11 @@ return {
       res.error.dispose();
       m.active = false;
       this.warn(`SceneScript \u629B\u9519\uFF0C\u5DF2\u505C\u7528\u8BE5\u811A\u672C\uFF08${m.label}\uFF09\uFF1A${msg}`);
-      return;
+      return void 0;
     }
+    const value = ctx.dump(res.value);
     res.value.dispose();
+    return value;
   }
   /** 每帧时间（供 engine.frametime）。必须在 updateAll 之前设置。 */
   setFrametime(dt) {
@@ -28352,9 +28354,16 @@ return {
       this.callOne(m, m.init, "value");
     }
   }
-  /** 按装载顺序调 update（每帧）。 */
+  /**
+   * 按装载顺序调 update（每帧），返回各自的返回值。
+   *
+   * ⚠️ 返回值是 `visible.script` 的**信号源** —— WE 语义里它就是「该对象本帧是否可见」。
+   * 一期调用后把返回值丢弃了，于是 10 个歌曲字标全部显示（真机：两行歌名重影）。
+   */
   updateAll() {
-    for (const m of this.modules) this.callOne(m, m.update, "value");
+    const out = [];
+    for (const m of this.modules) out.push(this.callOne(m, m.update, "value"));
+    return out;
   }
   /** 按装载顺序派发点击（cursorClick）。 */
   clickAll() {
@@ -28427,10 +28436,13 @@ var SceneScriptHost = class _SceneScriptHost {
   anims;
   state;
   vm;
-  constructor(anims, state, vm) {
+  /** 各脚本对应的 scene 对象 id（与装载顺序一一对应）——把 update() 的返回值写回该对象的可见性。 */
+  objectIds;
+  constructor(anims, state, vm, objectIds) {
     this.anims = anims;
     this.state = state;
     this.vm = vm;
+    this.objectIds = objectIds;
   }
   /** 创建并装载。无脚本时返回一个"空 host"（tick 恒返回空表 = 画面等于现状）。
    *  quickjs 初始化失败返回 null（调用方同样退回现状）。 */
@@ -28444,7 +28456,7 @@ var SceneScriptHost = class _SceneScriptHost {
     }
     const anims = new AnimRegistry(fpsTable);
     const state = createLayerStateTable();
-    if (scripts.length === 0) return new _SceneScriptHost(anims, state, null);
+    if (scripts.length === 0) return new _SceneScriptHost(anims, state, null, []);
     const vm = await SceneScriptVm.create({
       userProperties: opts.userProperties ?? {},
       state,
@@ -28456,7 +28468,7 @@ var SceneScriptHost = class _SceneScriptHost {
     if (!vm) return null;
     for (const s of scripts) vm.load(s.source, `obj ${s.objectId}`);
     vm.initAll();
-    return new _SceneScriptHost(anims, state, vm);
+    return new _SceneScriptHost(anims, state, vm, scripts.map((s) => s.objectId));
   }
   /** 已装载的脚本数（eval 失败的不计）。 */
   get scriptCount() {
@@ -28472,7 +28484,11 @@ var SceneScriptHost = class _SceneScriptHost {
     if (!this.vm) return /* @__PURE__ */ new Map();
     this.vm.setFrametime(dt);
     this.anims.tick(dt);
-    this.vm.updateAll();
+    const results = this.vm.updateAll();
+    for (let i = 0; i < results.length && i < this.objectIds.length; i++) {
+      const v = results[i];
+      if (typeof v === "boolean") this.state.write(this.objectIds[i], { visible: v });
+    }
     return this.state.takeDirty();
   }
   /** 派发一次点击（3798688689 的「切换按钮」靠它触发 shared.we2dSwitchScene）。 */
@@ -29123,19 +29139,19 @@ function createThreeSceneRenderer(opts) {
             try {
               const matRaw = await loadFile(p.endsWith(".json") ? p : `${p}.json`);
               if (!matRaw) {
-                console.error(`[diag] \u6750\u8D28\u6587\u4EF6\u7F3A\u5931: ${p}`);
+                warnOnce2(`mesh-mat:${id}:${p}`, `\u52A8\u6001\u7F51\u683C\u6750\u8D28\u6587\u4EF6\u7F3A\u5931\uFF1A${p}`);
                 continue;
               }
               const spec = parseMeshMaterial(new TextDecoder().decode(matRaw));
               if (!spec) {
-                console.error(`[diag] \u6750\u8D28\u89E3\u6790\u5931\u8D25: ${p}`);
+                warnOnce2(`mesh-mat:${id}:${p}`, `\u52A8\u6001\u7F51\u683C\u6750\u8D28\u89E3\u6790\u5931\u8D25\uFF1A${p}`);
                 continue;
               }
               let tex = null;
               if (spec.texturePath) {
                 const texPath = resolveTexPath(p, spec.texturePath);
                 tex = await loadTexTexture(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(texPath)}`);
-                if (!tex) console.error(`[diag] \u7EB9\u7406\u52A0\u8F7D\u5931\u8D25: ${texPath}`);
+                if (!tex) warnOnce2(`mesh-tex:${id}:${texPath}`, `\u52A8\u6001\u7F51\u683C\u7EB9\u7406\u52A0\u8F7D\u5931\u8D25\uFF1A${texPath}\uFF08\u767D\u56FE\u515C\u5E95\uFF09`);
               }
               const mat = createMeshMaterial(spec, tex);
               materialTable.set(p, mat);

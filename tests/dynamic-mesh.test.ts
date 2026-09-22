@@ -183,6 +183,25 @@ describe('DynamicMeshRegistry', () => {
     expect(parent.children.length).toBe(0);
   });
 
+  // 以下两条特征测试针对 setMaterialForPath（Task 5 的材质异步回填通道，非 Task 1/2 范围）
+  it('setMaterialForPath 回填已建 mesh 的材质', () => {
+    const { registry } = mk();
+    const m = registry.createModel({ capacity: 1, vertexFormat: [0, 1, 2], materialPath: 'materials/x.json' })!;
+    const l = registry.createLayer(m, 'a');
+    const mat = new THREE.MeshBasicMaterial();
+    registry.setMaterialForPath('materials/x.json', mat);
+    expect(registry.meshOf(l)!.material).toBe(mat);
+  });
+
+  it('setMaterialForPath 之后新建的 layer 直接用该材质', () => {
+    const { registry } = mk();
+    const m = registry.createModel({ capacity: 1, vertexFormat: [0, 1, 2], materialPath: 'materials/x.json' })!;
+    const mat = new THREE.MeshBasicMaterial();
+    registry.setMaterialForPath('materials/x.json', mat);
+    const l = registry.createLayer(m, 'b');
+    expect(registry.meshOf(l)!.material).toBe(mat);
+  });
+
   it('未知 modelId 的 applyData/createLayer 安全返回', () => {
     const { registry } = mk();
     expect(() => registry.applyData(99, new Float32Array(36))).not.toThrow();

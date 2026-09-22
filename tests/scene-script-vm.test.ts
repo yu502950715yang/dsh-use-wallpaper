@@ -246,4 +246,18 @@ describe('SceneScriptVm', () => {
     expect(state.read(21).alpha).toBe(1);
     vm!.dispose();
   });
+
+  // visible.script 的信号源（2026-09-22）：`update(value)` 的**返回值**就是「该对象是否可见」。
+  // 一期调用后把返回值丢掉了 ⇒ 10 个歌曲字标全部显示、歌名重影。
+  it('updateAll 按装载顺序返回各脚本 update() 的返回值', async () => {
+    const { state, anims, userProps } = setup();
+    const vm = await SceneScriptVm.create({ userProperties: userProps, state, anims });
+    vm!.load(`export function update(value){ return true; }`);
+    vm!.load(`export function update(value){ return false; }`);
+    vm!.load(`export function update(value){ return 42; }`);
+    vm!.load(`export function init(){ thisScene.getLayerByID(1).alpha = 1; }`); // 无 update
+    vm!.initAll();
+    expect(vm!.updateAll()).toEqual([true, false, 42, undefined]);
+    vm!.dispose();
+  });
 });

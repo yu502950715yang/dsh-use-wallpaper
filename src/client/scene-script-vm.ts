@@ -483,8 +483,8 @@ return {
     return true;
   }
 
-  private callOne(m: LoadedModule, fn: QuickJSHandle | null, mode: 'value' | 'props'): void {
-    if (!m.active || !fn) return;
+  private callOne(m: LoadedModule, fn: QuickJSHandle | null, mode: 'value' | 'props'): unknown {
+    if (!m.active || !fn) return undefined;
     this.budget = this.stepBudget; // 每个脚本每次调用一份新预算（见 create 的 handler 注释）
     const ctx = this.ctx;
     let argH: QuickJSHandle;
@@ -502,9 +502,11 @@ return {
       res.error.dispose();
       m.active = false;
       this.warn(`SceneScript 抛错，已停用该脚本（${m.label}）：${msg}`);
-      return;
+      return undefined;
     }
+    const value = ctx.dump(res.value);
     res.value.dispose();
+    return value;
   }
 
   /** 每帧时间（供 engine.frametime）。必须在 updateAll 之前设置。 */
@@ -520,9 +522,16 @@ return {
     }
   }
 
-  /** 按装载顺序调 update（每帧）。 */
-  updateAll(): void {
-    for (const m of this.modules) this.callOne(m, m.update, 'value');
+  /**
+   * 按装载顺序调 update（每帧），返回各自的返回值。
+   *
+   * ⚠️ 返回值是 `visible.script` 的**信号源** —— WE 语义里它就是「该对象本帧是否可见」。
+   * 一期调用后把返回值丢弃了，于是 10 个歌曲字标全部显示（真机：两行歌名重影）。
+   */
+  updateAll(): unknown[] {
+    const out: unknown[] = [];
+    for (const m of this.modules) out.push(this.callOne(m, m.update, 'value'));
+    return out;
   }
 
   /** 按装载顺序派发点击（cursorClick）。 */
