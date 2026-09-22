@@ -49,6 +49,39 @@ describe('parseSceneJson', () => {
     expect((ok.objects[0] as any).scale).toEqual([2, 2, 1]);
     expect((ok.objects[0] as any).origin).toEqual([0, 0, 0]);
   });
+  it('变换字段的 {script,value} / {animation,value} 形态消费静态 value', () => {
+    // 库内实测 42 处非字符串写法（全部带 value），其中 10 处落在会被渲染的对象上；
+    // 此前一律被丢成默认值（origin → [0,0,0] 即场景原点）。见 AGENT.md §7.16。
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [
+        // 3798688689 obj701：text 的 origin/angles 是 {script, value}（真实作者坐标）
+        { id: 701, text: 'x', origin: { script: 's', value: '1983.24158 750.83368 0.00000' },
+          angles: { script: 's', value: '0.00000 0.00000 0.50615' }, scale: '1 1 1' },
+        // 2597392171 obj251：particle 的 origin 是 {animation, value}
+        { id: 251, particle: 'particles/p.json',
+          origin: { animation: { c0: [] }, value: '1505.36206 5257.40479 0.00000' }, scale: '1 1 1' },
+        // scale / size 的同类形态
+        { id: 3, image: 'models/a.json', origin: '0 0 0',
+          scale: { script: 's', value: '2 2 1' }, size: { animation: {}, value: '100 200' } },
+      ],
+    }));
+    const [t, p, img] = desc.objects as any[];
+    expect(t.origin).toEqual([1983.24158, 750.83368, 0]);
+    expect(t.angles[2]).toBeCloseTo(0.50615, 6);
+    expect(p.origin).toEqual([1505.36206, 5257.40479, 0]);
+    expect(img.scale).toEqual([2, 2, 1]);
+    expect(img.size).toEqual([100, 200]);
+  });
+  it('变换字段的对象形态**不含 value** 时仍回退默认（不引入未经验证的形态）', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [
+        { id: 1, image: 'models/a.json', origin: { animation: { c0: [] } }, scale: { script: 's' } },
+      ],
+    }));
+    const o = desc.objects[0] as any;
+    expect(o.origin).toEqual([0, 0, 0]); // 无静态值可用 ⇒ 维持原缺省
+    expect(o.scale).toEqual([1, 1, 1]);
+  });
   it('parent 字段解析（含容器对象）', () => {
     const desc = parseSceneJson(JSON.stringify({
       objects: [

@@ -89,6 +89,7 @@ const WINDOW = { w: 1400, h: 900 };
 const USE_COLOR = process.stdout.isTTY === true && !process.env.NO_COLOR;
 const RED = USE_COLOR ? '\x1b[31m' : '';
 const GRN = USE_COLOR ? '\x1b[32m' : '';
+const YEL = USE_COLOR ? '\x1b[33m' : '';
 const RST = USE_COLOR ? '\x1b[0m' : '';
 
 // ── scene.pkg 读取（与 research/verify-object-effects.mjs / scan-effect-multipass.mjs 同实现）──
@@ -389,6 +390,8 @@ try {
     // ⚠️ 这里必须**判定**，不能只打印：此前 e2e 全绿而真机模糊，正是因为没有任何一条断言看这个值。
     const mrt = r.state.mountedRt;
     let mountFail = false;
+    // 「无隔离对象」时断言循环一次都不跑 —— 那是**空断言**，必须与「通过」区分开（见结论段）。
+    let mountSkip = false;
     console.log('  ── 挂载期 RT 断言 ──');
     if (!mrt || mrt.ok !== true) {
       mountFail = true;
@@ -413,14 +416,20 @@ try {
           + `  | __fxApplyViewport() 之后 RT=${post ? post.join('×') : 'n/a'}`);
         if (!it.match) mountFail = true;
       }
-      if (mountFail) {
+      // ⚠️ 空断言防护：没有隔离对象（无 effects 的壁纸）时上面的循环一次都不跑，
+      // 若直接报 PASS 就是**假绿**（本项目历史上正因「看着全绿」漏过真缺陷，见提交 3fd6b00 与 AGENT §7.12）。
+      mountSkip = (mrt.items ?? []).length === 0;
+      if (mountSkip) {
+        console.log(`  ${YEL}[SKIP]${RST} 本壁纸**没有隔离对象**（无 effects 对象）⇒ 挂载期 RT 尺寸断言**无样本可判**`);
+        console.log(`  ${YEL}[SKIP]${RST} 这不等于通过：本次没有验证到任何对象 RT。要覆盖该断言请用带 effects 的壁纸。`);
+      } else if (mountFail) {
         console.log(`  ${RED}[FAIL] 挂载期 RT 尺寸与期望不符（期望口径：|world| × 屏幕密度，等比收口 4096）`);
         console.log(`  ${RED}[FAIL] 挂载期 RT 尺寸偏差 —— 这类缺陷曾被 onViewportResize 掩盖（见提交 3fd6b00）${RST}`);
       } else {
         console.log(`  ${GRN}[PASS]${RST} 挂载期 RT 尺寸 == 期望（|world| × 屏幕密度，等比收口 4096）`);
       }
     }
-    mountedAssertions.push({ dpr, fail: mountFail, sample: mrt });
+    mountedAssertions.push({ dpr, fail: mountFail, skip: mountSkip, sample: mrt });
     console.log(`  console error 条数=${r.consErrs.length}`);
     for (const e of r.consErrs.slice(0, 5)) console.log(`    [${e.level}] ${String(e.text).slice(0, 200)}`);
     // ★ 临时实验仪器输出（清晰度归因：RT 尺寸 / 采样过滤 / MSAA / 颜色空间的运行时事实）
@@ -503,6 +512,8 @@ try {
   console.log(`  断言口径：挂载期（__fxApplyViewport() 之前）的 player.isolatedObjects()[].rtWidth/rtHeight`
     + ` 必须 == |world| × 屏幕密度（画布缓冲宽 / cover 视锥宽），等比收口 4096。`);
   const mountFails = mountedAssertions.filter((m) => m.fail);
+  const mountSkips = mountedAssertions.filter((m) => m.skip);
+  const mountChecked = mountedAssertions.filter((m) => !m.skip && !m.fail);
   if (mountedAssertions.length === 0) {
     console.log(`  ${RED}[FAIL] 未采集到任何挂载期样本（所有 dpr 都失败或未跑）—— 断言未生效${RST}`);
     process.exitCode = 1;
@@ -520,8 +531,16 @@ try {
       + `本脚本后续的 __fxApplyViewport() 会用 stage 记录的未钳制 world 重算 RT，把挂载期的错误尺寸覆盖成正确尺寸，`
       + `因此像素比较/尺度判据全绿而真机（从不 resize）一直是错的。${RST}`);
     process.exitCode = 1; // 断言是**门禁**：不等即非零退出（可接 CI），不是只打印一行日志
+  } else if (mountChecked.length === 0) {
+    // 全部 dpr 都是「无隔离对象」⇒ 本次**没有产生任何断言样本**。退出码保持 0（不是失败），
+    // 但必须显式标注为 SKIP —— 空断言报 PASS 正是历史上漏掉真缺陷的方式（提交 3fd6b00）。
+    console.log(`  ${YEL}[SKIP]${RST} 未产生任何断言样本（dpr=${mountSkips.map((m) => m.dpr).join(',')} 均无隔离对象）`
+      + ` —— **不计为通过**；换一张带 effects 的壁纸才能真正验证该断言。`);
   } else {
-    console.log(`  ${GRN}[PASS]${RST} 挂载期 RT 尺寸断言全部通过（dpr=${mountedAssertions.map((m) => m.dpr).join(',')}）`);
+    console.log(`  ${GRN}[PASS]${RST} 挂载期 RT 尺寸断言全部通过（dpr=${mountChecked.map((m) => m.dpr).join(',')}）`);
+    if (mountSkips.length > 0) {
+      console.log(`  ${YEL}[SKIP]${RST} 另有 dpr=${mountSkips.map((m) => m.dpr).join(',')} 无隔离对象、未参与断言。`);
+    }
   }
   console.log(`\n产物目录：${OUT}`);
 } catch (e) {
