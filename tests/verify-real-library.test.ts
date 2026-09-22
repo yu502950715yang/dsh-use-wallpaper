@@ -167,14 +167,11 @@ describe.skipIf(!hasLibrary)('全库 scene.pkg 回归验证', () => {
     }
     // 硬断言：全库 scene 读取链路（解析/纹理推导/粒子规格）必须零失败
     expect(evidence).toEqual([]);
-    // Ruling 5：全库效果链总数必须钉住（初值 122 含 image 对象 105 条；来源
-    // research/scan-effects-owners.mjs 全库扫描）——若收集逻辑回归（如丢失
-    // image 对象 effects、退化为仅 util），数量下降但全部成功时 evidence 仍空，
-    // 因此数量断言防止"静默漏收集"。
-    // ⚠️ 这是**本机壁纸库的快照**（122 → 129 → 169）：只随素材变化，与代码无关。
-    // 2026-09-22 三方 A/B 证明（见 AGENT.md §7.11）：用同一份当前素材，本提交、v0.5.0、
-    // 以及写入 129 的 d27975e 三个代码状态都算出 **169** ⇒ 数字变化来自素材更新
-    // （库内 09-15/16/17/20 有壁纸被改动），不是收集逻辑回归。
-    expect(okEffect).toBe(169);
+    // 防「静默漏收集」：收集逻辑若回归（丢掉 image 对象 effects、退化为仅 util），
+    // 数量会掉但不产生 evidence ⇒ 这里只要求**非空**。
+    // ⚠️ 不再钉具体数字：全库计数是本机壁纸库的快照（122 → 129 → 169 一路随素材漂移，
+    // 三方 A/B 已证与代码无关，见 AGENT.md §7.11）。**精确计数与语义**由确定性层
+    // `tests/synthetic-library.test.ts`（合成 fixture，不依赖本机素材）负责。
+    expect(okEffect).toBeGreaterThan(0);
   });
 });
