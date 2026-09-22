@@ -271,6 +271,14 @@ fn vec3(v: &Value) -> [f32; 3] {
             a.get(1).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32,
             a.get(2).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32,
         ],
+        // JSON 数字：照 lwe `ObjectParser::parseVec3` 的 `is_number()` → **三轴同值**
+        //（与 `vec3_field` 同一语义）。**不是** [v,0,0] —— 那会让 `rotationrandom: -0.4`
+        // 变成 rot=0（CPU 取 z 分量），自旋静默失效；`direction` 类字段同理。
+        // 回归：1280029027/1429403119/2011060960/2911105183 的 light_shafts 用数字写法。
+        Value::Number(n) => {
+            let x = n.as_f64().unwrap_or(0.0) as f32;
+            [x, x, x]
+        }
         _ => [0.0; 3],
     }
 }
@@ -283,7 +291,8 @@ fn vec3(v: &Value) -> [f32; 3] {
 /// 见 `spec_to_emitter.rs` 的 `directions_default_1_1_0_when_absent` 回归测试。
 fn vec3_or(v: &Value, default: [f32; 3]) -> [f32; 3] {
     match v {
-        Value::String(_) | Value::Array(_) => vec3(v),
+        // 数字也交给 vec3（三轴同值）；否则 `directions: 1` 这类写法会被换成默认值而非报出原意。
+        Value::String(_) | Value::Array(_) | Value::Number(_) => vec3(v),
         _ => default,
     }
 }
@@ -297,11 +306,9 @@ fn vec3_or(v: &Value, default: [f32; 3]) -> [f32; 3] {
 /// 否则 boxrandom 各轴的散射范围会与 WE 不符（这正是 Crimson Stars「全屏白点」的成因）。
 fn vec3_field(v: &Value, default: [f32; 3]) -> [f32; 3] {
     match v {
-        Value::Number(n) => {
-            let x = n.as_f64().unwrap_or(default[0] as f64) as f32;
-            [x, x, x]
-        }
-        Value::String(_) | Value::Array(_) => vec3(v),
+        // 数字展开为 (v,v,v) 的语义由 `vec3` 统一负责（lwe parseVec3 的 is_number 分支）；
+        // 本变体只多一条「字段缺失/非法 → default」。
+        Value::Number(_) | Value::String(_) | Value::Array(_) => vec3(v),
         _ => default,
     }
 }
@@ -505,5 +512,46 @@ mod tests {
         let mov = spec.operators.iter().find(|o| o.kind == OperatorKind::Movement).expect("movement");
         assert_eq!(mov.params["gravity"].as_str().unwrap(), "0 100 0");
         assert!((mov.params["drag"].as_f64().unwrap() - 0.2).abs() < 1e-6);
+    }
+
+    // ── 裸数字写法的 vec3 字段（2026-09-22 修复：此前 `vec3`/`vec3_or` 只认 String|Array，
+    //    数字被静默丢成 [0,0,0] / 被换成默认值）──────────────────────────────────────────
+
+    #[test]
+    fn vec3_number_expands_to_three_axes() {
+        // lwe `ObjectParser::parseVec3`：is_number() → 三轴同值（**不是** [v,0,0]）
+        assert_eq!(vec3(&serde_json::json!(3)), [3.0, 3.0, 3.0]);
+        assert_eq!(vec3(&serde_json::json!(-0.4)), [-0.4, -0.4, -0.4]);
+        assert_eq!(vec3(&serde_json::json!(0)), [0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn rotation_random_accepts_bare_numbers() {
+        // 回归：1280029027 / 1429403119 / 2011060960 / 2911105183 的 light_shafts
+        // 写的是 `"min": -0.4, "max": -0.3`（数字）→ 本应得到约 −20° 的自旋，
+        // 修复前被解析成 0（CPU 取 z 分量 ⇒ lerp(0,0) = 0）⇒ 自旋静默失效。
+        let json = r#"{"emitter":[{"rate":1}],"initializer":[
+            {"name":"rotationrandom","min":-0.4,"max":-0.3}]}"#;
+        let spec = parse_particle_spec(json);
+        assert_eq!(spec.init.rotation_min.expect("rotation min"), [-0.4, -0.4, -0.4]);
+        assert_eq!(spec.init.rotation_max.expect("rotation max"), [-0.3, -0.3, -0.3]);
+        // CPU spawn 取 z 分量 → lerp(rotation[2]) 落在 (-0.4, -0.3)
+        assert!((-0.4..=-0.3).contains(&spec.init.rotation_min.unwrap()[2]));
+    }
+
+    #[test]
+    fn distance_field_keeps_number_semantics_after_unification() {
+        // `vec3_field` 改为复用 `vec3` 后语义不变：数字 → (v,v,v)、缺失 → default
+        let em = serde_json::json!({"distancemin": 50});
+        assert_eq!(vec3_field(&em["distancemin"], [0.0, 0.0, 0.0]), [50.0, 50.0, 50.0]);
+        assert_eq!(vec3_field(&em["distancemax"], [256.0, 256.0, 0.0]), [256.0, 256.0, 0.0]);
+    }
+
+    #[test]
+    fn vec3_or_uses_number_instead_of_default() {
+        // directions 写成裸数字时应按三轴同值解析，而不是被换成缺省 (1,1,0)
+        assert_eq!(vec3_or(&serde_json::json!(0.5), [1.0, 1.0, 0.0]), [0.5, 0.5, 0.5]);
+        // 缺失/非法仍走缺省
+        assert_eq!(vec3_or(&serde_json::Value::Null, [1.0, 1.0, 0.0]), [1.0, 1.0, 0.0]);
     }
 }
