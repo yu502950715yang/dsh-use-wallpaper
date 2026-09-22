@@ -1,0 +1,21 @@
+{
+  "_comment": "已知失败基线（详见 AGENT.md §7.11）。CI 只对**新增**失败判红：report 里出现本表之外的失败 → 退出 1；本表内的条目已修复（变绿）只告警，请随手删除对应项。依赖本机壁纸库的条目在 CI 上会因 skipIf 而不出现，属正常。",
+  "failures": [
+    {
+      "file": "tests/dom/bootstrap.dom.test.ts",
+      "name": "client bootstrap 集成 > I1: mount 恢复已保存的选中壁纸（settings.selectedWallpaperId → load + select）"
+    },
+    {
+      "file": "tests/object-effects.test.ts",
+      "name": "全库效果链分类（实测数字，勿随意放宽） > 线性链 25 种 / 106 次引用；具名 RT 图链 9 种 / 24 次引用"
+    },
+    {
+      "file": "tests/effect-graph.test.ts",
+      "name": "buildEffectPlan — 全库 RT 图链形态（实测数字，勿放宽） > 24 条 RT 图链：每条都有具名 RT、末 pass 写端非 named、无 droppedChains"
+    },
+    {
+      "file": "tests/verify-real-library.test.ts",
+      "name": "全库 scene.pkg 回归验证 > scene 读取链路零失败（scene.json / image 纹理 / particle 规格 / util 效果链）"
+    }
+  ]
+}

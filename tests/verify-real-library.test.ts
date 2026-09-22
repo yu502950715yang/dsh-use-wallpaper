@@ -63,12 +63,14 @@ function resolveImageTexPath(objImage: string, files: Map<string, Uint8Array>): 
   return { texPath, reason: '' };
 }
 
-describe('全库 scene.pkg 回归验证', () => {
+// 无本机壁纸库时**显式 skip**（而非在用例体内 return —— 那会让 CI 上「通过但什么都没测」的假绿）。
+// CI 上本用例必然 skip，全库解析回归只能在装了 WE 壁纸库的机器上跑。
+if (!hasLibrary) {
+  console.warn(`[verify-real-library] 未找到壁纸库 ${WALLPAPER_DIR} —— 全库解析回归本次跳过（CI 上属预期）`);
+}
+
+describe.skipIf(!hasLibrary)('全库 scene.pkg 回归验证', () => {
   it('scene 读取链路零失败（scene.json / image 纹理 / particle 规格 / util 效果链）', async () => {
-    if (!hasLibrary) {
-      console.log('本机无壁纸库，跳过全库验证');
-      return;
-    }
     const dirs = readdirSync(WALLPAPER_DIR, { withFileTypes: true })
       .filter(d => d.isDirectory()).map(d => d.name);
     const evidence: string[] = [];

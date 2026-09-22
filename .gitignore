@@ -16,6 +16,9 @@ output/
 # e2e 运行产物：截图与临时浏览器 profile
 e2e/.out/
 
+# vitest JSON 报告（CI 基线检查用，本地跑完可删）
+.vitest-report.json
+
 # 旧 monorepo 遗留（含被锁定的 node_modules），不再入库
 packages/
 

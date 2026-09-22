@@ -1,0 +1,96 @@
+name: CI
+
+# 三个门禁（设计见 docs/superpowers/specs/2026-09-22-e2e-harness-and-ci-design.md）：
+#   typecheck — tsc strict + **产物新鲜度**：lib/ 是入库的 tsc 产物，必须与 src 同步
+#   test      — vitest + 已知失败基线集合差（只对**新增**失败判红，见 AGENT.md §7.11）
+#   e2e       — 真实 headless Edge 渲染并逐像素判定（SwiftShader 档，**不需要 GPU**）
+#
+# 平台一律 windows-latest：项目 README 声明「仅 Windows 实测」，Linux 行为未验证，
+# 用 ubuntu 会引入无法在本机复现的失败面。dist/ 无法在 CI 重建（依赖被 gitignore 的
+# wasm/pkg/，需 Rust wasm 工具链），故产物守卫只覆盖 lib/。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: tsc（strict）
+        run: npx tsc -p tsconfig.json --noEmit
+      - name: lib/ 产物必须与 src 同步（重跑 tsc 后零差异）
+        run: |
+          npx tsc -p tsconfig.json
+          git diff --exit-code lib/
+        shell: bash
+
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: vitest（产出 JSON 报告）
+        run: npx vitest run --reporter=json --outputFile=.vitest-report.json
+        continue-on-error: true
+      - name: 只对新增失败判红
+        run: node scripts/check-known-failures.mjs .vitest-report.json
+
+  e2e:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: 定位 Edge（EDGE_PATH 兜底）
+        run: |
+          $candidates = @(
+            "$env:ProgramFiles(x86)\Microsoft\Edge\Application\msedge.exe",
+            "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe"
+          )
+          $edge = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $edge) { $edge = (Get-Command msedge.exe -ErrorAction SilentlyContinue).Source }
+          if (-not $edge) { throw "找不到 Edge，e2e 无法运行" }
+          "EDGE_PATH=$edge" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          Write-Host "Edge: $edge"
+        shell: pwsh
+      - name: colorBlendMode 渲染 e2e（逐像素判据）
+        run: node e2e/verify/verify-colorblend.mjs
+      - name: 上传截图（失败时排查用）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-shots
+          path: e2e/.out/
+          if-no-files-found: ignore
