@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createBackgroundLayer } from '../../src/client/background-layer.js';
+import {
+  createBackgroundLayer,
+  WEB_RESIZE_RELOAD_DELAY_MS,
+  WEB_RESIZE_RELOAD_TIMEOUT_MS,
+} from '../../src/client/background-layer.js';
 
 describe('createBackgroundLayer (DOM)', () => {
   it('renders image into fill and toggles kenburns class', () => {
@@ -155,6 +159,178 @@ describe('createBackgroundLayer (DOM)', () => {
       pauseSpy.mockRestore();
       playSpy.mockRestore();
     }
+  });
+
+  // web 壁纸自适应（2026-09-22 用户报告「调整浏览器大小时不跟着自适应」）：本库部分 web 壁纸
+  // 的脚本在初始化时把画布尺寸**快照**成 window.innerWidth/Height（`3789244610` 即如此，
+  // 全 bundle 无 resize 监听）。headless 实测：宿主 iframe 与子帧视口都正确跟随，瓶颈在壁纸内部；
+  // 跨源 iframe 无法注入脚本 ⇒ 只能按新视口**重建 iframe** 让壁纸重新初始化（重建实测有效）。
+  describe('web 壁纸 resize 自适应', () => {
+    const setViewport = (w: number, h: number) => {
+      Object.defineProperty(window, 'innerWidth', { value: w, configurable: true });
+      Object.defineProperty(window, 'innerHeight', { value: h, configurable: true });
+    };
+    const resetViewport = () => {
+      Reflect.deleteProperty(window, 'innerWidth');
+      Reflect.deleteProperty(window, 'innerHeight');
+    };
+    const framesOf = (root: HTMLElement) => [...root.querySelectorAll('.wp-bg-fill iframe')] as HTMLIFrameElement[];
+    const flush = async () => { for (let i = 0; i < 8; i += 1) await Promise.resolve(); };
+    async function setupWeb(root: HTMLElement, fetchSpy: ReturnType<typeof vi.spyOn>) {
+      const layer = createBackgroundLayer(root);
+      layer.showWeb('/wallpapers/web/9/index.html');
+      await flush(); // 探活是 promise 链，落地不需真实时间
+      expect(framesOf(root)).toHaveLength(1);
+      return { layer, frame: framesOf(root)[0] };
+    }
+
+    it('resize 后用新视口重建；新帧就绪前旧帧仍在画面里', async () => {
+      vi.useFakeTimers();
+      document.body.innerHTML = '';
+      const root = document.createElement('div');
+      document.body.appendChild(root);
+      setViewport(1280, 720);
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({} as Response);
+      try {
+        const { frame: old } = await setupWeb(root, fetchSpy);
+        setViewport(900, 520);
+        window.dispatchEvent(new Event('resize'));
+        await vi.advanceTimersByTimeAsync(WEB_RESIZE_RELOAD_DELAY_MS);
+
+        const pending = framesOf(root);
+        expect(pending).toHaveLength(2); // 预载帧已挂、旧帧未撤（避免白屏）
+        expect(pending[0]).toBe(old);
+        expect(pending[1].style.visibility).toBe('hidden');
+        expect(pending[1].getAttribute('src')).toBe(old.getAttribute('src')); // 复用探活结果
+        expect(pending[1].getAttribute('scrolling')).toBe('no');
+
+        pending[1].dispatchEvent(new Event('load'));
+        expect(framesOf(root)).toHaveLength(1);
+        expect(framesOf(root)[0]).toBe(pending[1]);
+        expect(framesOf(root)[0].style.visibility).toBe('');
+      } finally {
+        fetchSpy.mockRestore(); resetViewport(); vi.useRealTimers();
+      }
+    });
+
+    it('尺寸未变（只有 resize 事件）不重建', async () => {
+      vi.useFakeTimers();
+      document.body.innerHTML = '';
+      const root = document.createElement('div');
+      document.body.appendChild(root);
+      setViewport(1280, 720);
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({} as Response);
+      try {
+        await setupWeb(root, fetchSpy);
+        window.dispatchEvent(new Event('resize'));
+        await vi.advanceTimersByTimeAsync(WEB_RESIZE_RELOAD_DELAY_MS * 3);
+        expect(framesOf(root)).toHaveLength(1);
+      } finally {
+        fetchSpy.mockRestore(); resetViewport(); vi.useRealTimers();
+      }
+    });
+
+    it('非 web 背景（图片/视频）不因 resize 重建', async () => {
+      vi.useFakeTimers();
+      document.body.innerHTML = '';
+      const root = document.createElement('div');
+      document.body.appendChild(root);
+      setViewport(1280, 720);
+      try {
+        const layer = createBackgroundLayer(root);
+        layer.showImage('/p.gif', false);
+        setViewport(640, 360);
+        window.dispatchEvent(new Event('resize'));
+        await vi.advanceTimersByTimeAsync(WEB_RESIZE_RELOAD_DELAY_MS * 3);
+        expect(framesOf(root)).toHaveLength(0);
+        expect(root.querySelector('.wp-bg-fill img')).not.toBeNull();
+      } finally {
+        resetViewport(); vi.useRealTimers();
+      }
+    });
+
+    it('连续 resize 只重建一次（debounce 合并）', async () => {
+      vi.useFakeTimers();
+      document.body.innerHTML = '';
+      const root = document.createElement('div');
+      document.body.appendChild(root);
+      setViewport(1280, 720);
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({} as Response);
+      try {
+        await setupWeb(root, fetchSpy);
+        setViewport(1000, 600); window.dispatchEvent(new Event('resize'));
+        await vi.advanceTimersByTimeAsync(100);
+        setViewport(1100, 700); window.dispatchEvent(new Event('resize'));
+        await vi.advanceTimersByTimeAsync(100);
+        setViewport(1200, 800); window.dispatchEvent(new Event('resize'));
+        await vi.advanceTimersByTimeAsync(WEB_RESIZE_RELOAD_DELAY_MS);
+        expect(framesOf(root)).toHaveLength(2); // 旧帧 + 唯一一个预载帧
+      } finally {
+        fetchSpy.mockRestore(); resetViewport(); vi.useRealTimers();
+      }
+    });
+
+    it('预载期间切换壁纸：迟到的预载帧不落地', async () => {
+      vi.useFakeTimers();
+      document.body.innerHTML = '';
+      const root = document.createElement('div');
+      document.body.appendChild(root);
+      setViewport(1280, 720);
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({} as Response);
+      try {
+        const { layer } = await setupWeb(root, fetchSpy);
+        setViewport(900, 520);
+        window.dispatchEvent(new Event('resize'));
+        await vi.advanceTimersByTimeAsync(WEB_RESIZE_RELOAD_DELAY_MS);
+        const pending = framesOf(root)[1];
+        layer.showImage('/p.gif', false);
+        pending.dispatchEvent(new Event('load'));
+        expect(framesOf(root)).toHaveLength(0);
+        expect(root.querySelector('.wp-bg-fill img')).not.toBeNull();
+      } finally {
+        fetchSpy.mockRestore(); resetViewport(); vi.useRealTimers();
+      }
+    });
+
+    it('预载超时：撤掉预载帧、保留旧帧（宁可尺寸不对也不留白）', async () => {
+      vi.useFakeTimers();
+      document.body.innerHTML = '';
+      const root = document.createElement('div');
+      document.body.appendChild(root);
+      setViewport(1280, 720);
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({} as Response);
+      try {
+        const { frame: old } = await setupWeb(root, fetchSpy);
+        setViewport(900, 520);
+        window.dispatchEvent(new Event('resize'));
+        await vi.advanceTimersByTimeAsync(WEB_RESIZE_RELOAD_DELAY_MS);
+        expect(framesOf(root)).toHaveLength(2);
+        await vi.advanceTimersByTimeAsync(WEB_RESIZE_RELOAD_TIMEOUT_MS);
+        expect(framesOf(root)).toHaveLength(1);
+        expect(framesOf(root)[0]).toBe(old);
+      } finally {
+        fetchSpy.mockRestore(); resetViewport(); vi.useRealTimers();
+      }
+    });
+
+    it('showNone 后再 resize 不重建', async () => {
+      vi.useFakeTimers();
+      document.body.innerHTML = '';
+      const root = document.createElement('div');
+      document.body.appendChild(root);
+      setViewport(1280, 720);
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({} as Response);
+      try {
+        const { layer } = await setupWeb(root, fetchSpy);
+        layer.showNone();
+        setViewport(900, 520);
+        window.dispatchEvent(new Event('resize'));
+        await vi.advanceTimersByTimeAsync(WEB_RESIZE_RELOAD_DELAY_MS * 3);
+        expect(framesOf(root)).toHaveLength(0);
+      } finally {
+        fetchSpy.mockRestore(); resetViewport(); vi.useRealTimers();
+      }
+    });
   });
 });
 

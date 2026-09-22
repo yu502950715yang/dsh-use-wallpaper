@@ -54,6 +54,15 @@ export function webFrameSpec(wallpaperPath: string, loc: WebFrameLocation, altOr
   return { url: origin + wallpaperPath, sandbox: altOrigin ? 'allow-scripts allow-same-origin' : 'allow-scripts' };
 }
 
+// web 壁纸 resize 自适应（2026-09-22，用户报告「调整浏览器大小时不跟着自适应」）：
+// 部分 web 壁纸的脚本在初始化时把画布尺寸**快照**成 window.innerWidth/Height（实测
+// `3789244610` 的 index.min.js，且全 bundle 无 resize 监听），窗口变化后画面不再变。
+// 宿主 iframe 与子帧视口都正确跟随（headless 实测），跨源 iframe 又无法注入脚本
+// ⇒ 只能按新视口**重建 iframe** 让壁纸重新初始化（重建实测有效）。
+// debounce 到尺寸稳定后只重建一次；重建期保留旧帧直到新帧 load（不留白）。
+export const WEB_RESIZE_RELOAD_DELAY_MS = 300;
+export const WEB_RESIZE_RELOAD_TIMEOUT_MS = 8000;
+
 export interface BackgroundLayer {
   root: HTMLElement;
   showImage(url: string, kenBurns: boolean): void;
@@ -80,24 +89,50 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
   // frameToken：每次背景变更递增，作废尚未落地的 web iframe（另一主机名的探活是异步的）
   let frameToken = 0;
   let altOriginProbe: Promise<string | null> | null = null;
+  // 探活结果：重建帧时复用（探活只与另一主机名可达性有关，与路径无关）
+  let altOrigin: string | null = null;
   // 省电状态与当前视频元素（setPaused 对后者 pause/play）。
   let paused = false;
   let currentVideo: HTMLVideoElement | null = null;
 
-  function clear() { frameToken += 1; fill.replaceChildren(); currentVideo = null; }
+  // web 自适应状态：当前 web URL、已落地的 web 帧、基准视口、debounce 定时器、正在预载的帧
+  let webUrl: string | null = null;
+  let liveWebFrame: HTMLIFrameElement | null = null;
+  let viewW = 0;
+  let viewH = 0;
+  let webResizeTimer: ReturnType<typeof setTimeout> | null = null;
+  let pendingWebFrame: HTMLIFrameElement | null = null;
+  let resizeListening = false;
+
+  // 停掉 web 自适应（切到非 web 背景、清空背景、或换下一张 web 时调用）
+  function stopWebResizeReload(): void {
+    webUrl = null;
+    liveWebFrame = null;
+    if (webResizeTimer !== null) { clearTimeout(webResizeTimer); webResizeTimer = null; }
+    pendingWebFrame?.remove();
+    pendingWebFrame = null;
+    if (resizeListening) { window.removeEventListener('resize', onWindowResize); resizeListening = false; }
+  }
+
+  function clear() {
+    frameToken += 1;
+    fill.replaceChildren();
+    currentVideo = null;
+    stopWebResizeReload();
+  }
 
   // 探活：另一主机名上同一路径能取到即视为可达。no-cors 读不到响应体（跨源），
   // 故只有网络层失败才 reject —— 401/404 也算「该主机名可达」。
-  function probeAlternateOrigin(altOrigin: string, wallpaperPath: string): Promise<string | null> {
+  function probeAlternateOrigin(alt: string, wallpaperPath: string): Promise<string | null> {
     if (typeof fetch !== 'function') return Promise.resolve(null);
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), 1000);
-    return fetch(altOrigin + wallpaperPath, { mode: 'no-cors', signal: ac.signal })
-      .then(() => altOrigin, () => null)
+    return fetch(alt + wallpaperPath, { mode: 'no-cors', signal: ac.signal })
+      .then(() => alt, () => null)
       .finally(() => clearTimeout(timer));
   }
 
-  function attachWebFrame(spec: WebFrameSpec): void {
+  function makeWebFrame(spec: WebFrameSpec): HTMLIFrameElement {
     const frame = document.createElement('iframe');
     frame.src = spec.url;
     frame.className = 'wp-scene-canvas'; // 复用铺满尺寸样式
@@ -106,6 +141,58 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
     // 壁纸是背景、永不滚动：壁纸文档自身溢出时滚动条会吃掉视口（Firefox 实测 17px×2），
     // 其 100vw / innerWidth 尺寸又会因此反撑出另一条（AGENT.md §5.30）。
     frame.setAttribute('scrolling', 'no');
+    return frame;
+  }
+
+  function attachWebFrame(spec: WebFrameSpec): void {
+    liveWebFrame = makeWebFrame(spec);
+    fill.appendChild(liveWebFrame);
+  }
+
+  function currentViewport(): [number, number] {
+    return [Math.max(1, Math.round(window.innerWidth || 0)), Math.max(1, Math.round(window.innerHeight || 0))];
+  }
+
+  // 尺寸稳定后按新视口重建（见 WEB_RESIZE_RELOAD_DELAY_MS 处说明）。
+  function onWindowResize(): void {
+    if (!webUrl) return;
+    const [w, h] = currentViewport();
+    if (w === viewW && h === viewH) return; // 尺寸没变（如仅滚动条/dpr 变化）不重建
+    viewW = w;
+    viewH = h;
+    if (webResizeTimer !== null) clearTimeout(webResizeTimer);
+    webResizeTimer = setTimeout(reloadWebFrame, WEB_RESIZE_RELOAD_DELAY_MS);
+  }
+
+  function reloadWebFrame(): void {
+    webResizeTimer = null;
+    const url = webUrl;
+    if (!url || !liveWebFrame || !liveWebFrame.isConnected) return;
+    pendingWebFrame?.remove(); // 上一次预载作废（其 settle 靠 isConnected 判定，见下）
+    pendingWebFrame = null;
+    const token = frameToken;
+    const frame = makeWebFrame(webFrameSpec(url, window.location, altOrigin));
+    // 预载期不遮挡旧帧；用 visibility（而非 display）保留布局 ⇒ 壁纸读到的视口尺寸仍正确
+    frame.style.visibility = 'hidden';
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const settle = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      if (timer !== null) clearTimeout(timer);
+      if (pendingWebFrame === frame) pendingWebFrame = null;
+      // 期间已切换/清空（token 变）或帧已被移除 ⇒ 丢弃；预载失败则保留旧帧（宁可尺寸不对也不留白）
+      if (ok && token === frameToken && webUrl === url && frame.isConnected) {
+        fill.replaceChildren(frame);
+        liveWebFrame = frame;
+        frame.style.visibility = '';
+      } else {
+        frame.remove();
+      }
+    };
+    pendingWebFrame = frame;
+    frame.addEventListener('load', () => settle(true), { once: true });
+    timer = setTimeout(() => settle(false), WEB_RESIZE_RELOAD_TIMEOUT_MS);
     fill.appendChild(frame);
   }
 
@@ -142,9 +229,13 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
       markActive();
     },
     showWeb(url) {
+      stopWebResizeReload(); // 先停上一轮 web 的 debounce/预载（旧帧留到新帧就绪再撤）
       // 旧背景留到新 iframe 就绪再清，避免探活期间白屏
       const token = ++frameToken;
       markActive();
+      webUrl = url;
+      [viewW, viewH] = currentViewport(); // 基准视口：重建时判断尺寸是否真的变了
+      if (!resizeListening) { window.addEventListener('resize', onWindowResize); resizeListening = true; }
       const loc = window.location;
       const alt = alternateLoopbackOrigin(loc);
       if (!alt) {
@@ -152,7 +243,7 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
         attachWebFrame(webFrameSpec(url, loc, null));
         return;
       }
-      altOriginProbe ??= probeAlternateOrigin(alt, url);
+      altOriginProbe ??= probeAlternateOrigin(alt, url).then((origin) => { altOrigin = origin; return origin; });
       void altOriginProbe.then((origin) => {
         if (token !== frameToken) return; // 期间已切换/清空 → 丢弃
         fill.replaceChildren();

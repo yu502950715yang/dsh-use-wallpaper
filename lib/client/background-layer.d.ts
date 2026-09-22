@@ -13,6 +13,8 @@ export interface WebFrameSpec {
 }
 export declare function alternateLoopbackOrigin(loc: WebFrameLocation): string | null;
 export declare function webFrameSpec(wallpaperPath: string, loc: WebFrameLocation, altOrigin: string | null): WebFrameSpec;
+export declare const WEB_RESIZE_RELOAD_DELAY_MS = 300;
+export declare const WEB_RESIZE_RELOAD_TIMEOUT_MS = 8000;
 export interface BackgroundLayer {
     root: HTMLElement;
     showImage(url: string, kenBurns: boolean): void;

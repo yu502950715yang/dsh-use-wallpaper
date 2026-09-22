@@ -2591,6 +2591,8 @@ function webFrameSpec(wallpaperPath, loc, altOrigin) {
   const origin = altOrigin ?? `${loc.protocol}//${loc.hostname}${loc.port ? ":" + loc.port : ""}`;
   return { url: origin + wallpaperPath, sandbox: altOrigin ? "allow-scripts allow-same-origin" : "allow-scripts" };
 }
+var WEB_RESIZE_RELOAD_DELAY_MS = 300;
+var WEB_RESIZE_RELOAD_TIMEOUT_MS = 8e3;
 function createBackgroundLayer(root) {
   root.classList.add("wp-background-layer");
   const fill = document.createElement("div");
@@ -2601,26 +2603,94 @@ function createBackgroundLayer(root) {
   root.appendChild(overlay);
   let frameToken = 0;
   let altOriginProbe = null;
+  let altOrigin = null;
   let paused = false;
   let currentVideo = null;
+  let webUrl = null;
+  let liveWebFrame = null;
+  let viewW = 0;
+  let viewH = 0;
+  let webResizeTimer = null;
+  let pendingWebFrame = null;
+  let resizeListening = false;
+  function stopWebResizeReload() {
+    webUrl = null;
+    liveWebFrame = null;
+    if (webResizeTimer !== null) {
+      clearTimeout(webResizeTimer);
+      webResizeTimer = null;
+    }
+    pendingWebFrame?.remove();
+    pendingWebFrame = null;
+    if (resizeListening) {
+      window.removeEventListener("resize", onWindowResize);
+      resizeListening = false;
+    }
+  }
   function clear() {
     frameToken += 1;
     fill.replaceChildren();
     currentVideo = null;
+    stopWebResizeReload();
   }
-  function probeAlternateOrigin(altOrigin, wallpaperPath) {
+  function probeAlternateOrigin(alt, wallpaperPath) {
     if (typeof fetch !== "function") return Promise.resolve(null);
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), 1e3);
-    return fetch(altOrigin + wallpaperPath, { mode: "no-cors", signal: ac.signal }).then(() => altOrigin, () => null).finally(() => clearTimeout(timer));
+    return fetch(alt + wallpaperPath, { mode: "no-cors", signal: ac.signal }).then(() => alt, () => null).finally(() => clearTimeout(timer));
   }
-  function attachWebFrame(spec) {
+  function makeWebFrame(spec) {
     const frame = document.createElement("iframe");
     frame.src = spec.url;
     frame.className = "wp-scene-canvas";
     frame.setAttribute("sandbox", spec.sandbox);
     frame.setAttribute("allow", "autoplay; fullscreen");
     frame.setAttribute("scrolling", "no");
+    return frame;
+  }
+  function attachWebFrame(spec) {
+    liveWebFrame = makeWebFrame(spec);
+    fill.appendChild(liveWebFrame);
+  }
+  function currentViewport() {
+    return [Math.max(1, Math.round(window.innerWidth || 0)), Math.max(1, Math.round(window.innerHeight || 0))];
+  }
+  function onWindowResize() {
+    if (!webUrl) return;
+    const [w, h] = currentViewport();
+    if (w === viewW && h === viewH) return;
+    viewW = w;
+    viewH = h;
+    if (webResizeTimer !== null) clearTimeout(webResizeTimer);
+    webResizeTimer = setTimeout(reloadWebFrame, WEB_RESIZE_RELOAD_DELAY_MS);
+  }
+  function reloadWebFrame() {
+    webResizeTimer = null;
+    const url = webUrl;
+    if (!url || !liveWebFrame || !liveWebFrame.isConnected) return;
+    pendingWebFrame?.remove();
+    pendingWebFrame = null;
+    const token = frameToken;
+    const frame = makeWebFrame(webFrameSpec(url, window.location, altOrigin));
+    frame.style.visibility = "hidden";
+    let settled = false;
+    let timer = null;
+    const settle = (ok) => {
+      if (settled) return;
+      settled = true;
+      if (timer !== null) clearTimeout(timer);
+      if (pendingWebFrame === frame) pendingWebFrame = null;
+      if (ok && token === frameToken && webUrl === url && frame.isConnected) {
+        fill.replaceChildren(frame);
+        liveWebFrame = frame;
+        frame.style.visibility = "";
+      } else {
+        frame.remove();
+      }
+    };
+    pendingWebFrame = frame;
+    frame.addEventListener("load", () => settle(true), { once: true });
+    timer = setTimeout(() => settle(false), WEB_RESIZE_RELOAD_TIMEOUT_MS);
     fill.appendChild(frame);
   }
   function markActive() {
@@ -2653,8 +2723,15 @@ function createBackgroundLayer(root) {
       markActive();
     },
     showWeb(url) {
+      stopWebResizeReload();
       const token = ++frameToken;
       markActive();
+      webUrl = url;
+      [viewW, viewH] = currentViewport();
+      if (!resizeListening) {
+        window.addEventListener("resize", onWindowResize);
+        resizeListening = true;
+      }
       const loc = window.location;
       const alt = alternateLoopbackOrigin(loc);
       if (!alt) {
@@ -2662,7 +2739,10 @@ function createBackgroundLayer(root) {
         attachWebFrame(webFrameSpec(url, loc, null));
         return;
       }
-      altOriginProbe ??= probeAlternateOrigin(alt, url);
+      altOriginProbe ??= probeAlternateOrigin(alt, url).then((origin) => {
+        altOrigin = origin;
+        return origin;
+      });
       void altOriginProbe.then((origin) => {
         if (token !== frameToken) return;
         fill.replaceChildren();
