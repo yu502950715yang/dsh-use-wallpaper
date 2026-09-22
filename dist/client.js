@@ -24298,6 +24298,71 @@ async function loadTexTexture(url, opts) {
   return textureFromTex(info, opts);
 }
 
+// src/client/scene-assets.ts
+function resolveTexPath(matRef, texName) {
+  return texName.includes("/") ? "materials/" + texName + ".tex" : matRef.slice(0, matRef.lastIndexOf("/") + 1) + texName + ".tex";
+}
+async function resolveImageTexture(id, obj) {
+  try {
+    const modelResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(obj.image)}`);
+    if (!modelResp.ok) return null;
+    const model = await modelResp.json();
+    const matRef = model?.material;
+    if (typeof matRef !== "string" || !matRef) return null;
+    const matResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(matRef)}`);
+    if (!matResp.ok) return null;
+    const mat = await matResp.json();
+    const texName = mat?.passes?.[0]?.textures?.[0];
+    if (typeof texName !== "string" || !texName) return null;
+    return loadTexTexture(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(resolveTexPath(matRef, texName))}`);
+  } catch {
+    return null;
+  }
+}
+var PARTICLE_TEX_ALIASES = {
+  "presets/lightshaft": "light/light_shafts_0"
+};
+async function resolveParticleMaterial(id, specText) {
+  try {
+    const spec = JSON.parse(specText);
+    const matRef = spec?.material;
+    if (typeof matRef !== "string" || !matRef) return null;
+    const matResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(matRef)}`);
+    if (!matResp.ok) return null;
+    const mat = await matResp.json();
+    const pass0 = mat?.passes?.[0];
+    const blending = typeof pass0?.blending === "string" ? pass0.blending : null;
+    const texName = pass0?.textures?.[0];
+    if (typeof texName !== "string" || !texName) return { texUrl: null, blending };
+    const short = texName.startsWith("particle/") ? texName.slice("particle/".length) : texName;
+    const aliased = PARTICLE_TEX_ALIASES[short];
+    const name = aliased ? `particle/${aliased}` : texName;
+    return {
+      texUrl: `/wallpapers/particle-texture?name=${encodeURIComponent(name)}`,
+      blending
+    };
+  } catch {
+    return null;
+  }
+}
+
+// src/client/wasm-loader.ts
+var STATIC_BASE = "/wallpapers/static";
+var WASM_GLUE_FILE = "we_scene_wasm.js";
+var WASM_BIN_FILE = "we_scene_wasm_bg.wasm";
+async function defaultLoadWasm() {
+  try {
+    const mod = await import(
+      /* @vite-ignore */
+      `${STATIC_BASE}/${WASM_GLUE_FILE}`
+    );
+    await mod.default(`${STATIC_BASE}/${WASM_BIN_FILE}`);
+    return mod;
+  } catch {
+    return null;
+  }
+}
+
 // src/client/shader/uniform-binder.ts
 function isAudioUniform(name) {
   return name.startsWith("g_AudioSpectrum");
@@ -25024,6 +25089,530 @@ function blendModeToThree(mode) {
       return NormalBlending;
     default:
       return NoBlending;
+  }
+}
+
+// src/client/object-effects.ts
+function weVRowOrderLoader(load = loadTexTexture) {
+  return (url, opts) => load(url, { ...opts, rowOrder: "topDown" });
+}
+var ObjectEffectStage = class {
+  constructor(host, opts) {
+    this.host = host;
+    this.wallpaperId = opts.wallpaperId;
+    this.screenScale = opts.screenScale;
+  }
+  entries = /* @__PURE__ */ new Map();
+  wallpaperId;
+  /** 屏幕密度（设备像素 / 世界单位）：对象 RT 尺寸的唯一基准，随视口变化（onViewportResize）。 */
+  screenScale;
+  disposed = false;
+  // 串行链（约束 3）：busy = 有 runner 正在 update，queue = 等待中的 update 任务。
+  // 空闲时**同步**发起第一项（本帧立即开始推进，不推迟一个微任务——与场景级
+  // `void runner.update(...)` 的行为一致；player 的帧序是 render 之后才 advance，
+  // 因此此刻切换 RT 不会打扰本帧主场景渲染）；忙时排队，等前一项 settle 后再发起。
+  busy = false;
+  queue = [];
+  /** 去重告警集合（按 key 只打印一次，防每帧刷屏）。 */
+  warned = /* @__PURE__ */ new Set();
+  /** 当前屏幕密度（设备像素 / 世界单位）；同源下发契约见类头。 */
+  scale() {
+    const s = this.screenScale;
+    return Number.isFinite(s) && s > 0 ? s : 1;
+  }
+  /** 世界尺寸（场景像素）：resize 时按新预算重算 RT 像素尺寸的唯一来源。
+   *  调用顺序契约：three-renderer 先 setWorldSize 再 setObjectChains（后者不覆盖前者）。 */
+  setWorldSize(objId, worldW, worldH) {
+    if (this.disposed) return;
+    const entry = this.entries.get(objId);
+    if (entry) {
+      entry.worldW = worldW;
+      entry.worldH = worldH;
+      return;
+    }
+    this.entries.set(objId, { runner: null, chains: [], plan: null, worldW, worldH });
+  }
+  /** 挂载某对象的效果链（线性链与具名 RT 图链一视同仁，计划交执行器执行）。调用顺序契约：
+   *  player 先在 loadSceneToThree 内建好隔离条目，stage 再挂链（Task 5 的接线顺序：
+   *  setWorldSize → setObjectChains）；找不到隔离条目说明契约被破坏 → 明确告警一次，
+   *  绝不静默丢弃，也绝不猜尺寸。 */
+  setObjectChains(objId, chains) {
+    if (this.disposed) return;
+    if (chains.length === 0) return;
+    const view = this.host.isolatedObjects().find((o) => o.id === objId);
+    if (!view) {
+      this.warnOnce(`no-isolated:${objId}`, `\u5BF9\u8C61 ${objId} \u5C1A\u65E0\u9694\u79BB\u6761\u76EE\uFF0C\u6548\u679C\u94FE\u672A\u6302\u8F7D\uFF08\u8C03\u7528\u987A\u5E8F\u9519\u8BEF\uFF09`);
+      return;
+    }
+    this.mount(objId, chains, view.rtWidth, view.rtHeight);
+  }
+  /** 视口变化：按新的**屏幕密度**重算每个对象的 RT 像素尺寸，并用同一份链重挂（runner 内部 RT 跟随）。
+   *  ⚠️ 参数是「设备像素 / 世界单位」这一个标量（object-range.screenScalePx 的返回值），**不是**
+   *  视口宽高预算：旧实现传 `视口 × dpr` 当预算，成了「第二处独立预算」——挂载期与 resize 期
+   *  各算一遍、输入不同源时任何一次 resize 都会把 RT 打回旧口径（3fd6b00「挂载期 RT 正确、
+   *  resize 后被覆盖」这一漏检类的同源地雷）。密度必须由调用方从**主相机同一套 cover 语义**
+   *  取得（three-renderer 用 player.screenScalePx()，见其 resize 回调）。
+   *  ⚠️ 遍历 `this.entries` 的**所有**条目（不按有无 runner 过滤）：只 setWorldSize 过、链尚未挂载
+   *  的隔离对象同样要随视口重设 RT，否则视口放大后它一直用旧的小 RT（偏糊）、
+   *  视口缩小时又一直占着旧的大 RT（超额显存）。 */
+  onViewportResize(screenScale) {
+    if (this.disposed) return;
+    this.screenScale = screenScale;
+    for (const [id, entry] of this.entries) {
+      const size = objectRtSize(entry.worldW, entry.worldH, this.scale());
+      const view = this.host.isolatedObjects().find((o) => o.id === id);
+      if (!view) continue;
+      if (view.rtWidth === size.width && view.rtHeight === size.height) continue;
+      this.host.resizeObjectRT(id, size.width, size.height);
+      if (!entry.runner) continue;
+      entry.plan = buildEffectPlan(entry.chains, { baseWidth: size.width, baseHeight: size.height });
+      entry.runner.setPlan(entry.plan, entry.chains, this.wallpaperId, { width: size.width, height: size.height });
+      this.host.setObjectOutput(id, view.rtTexture);
+    }
+  }
+  /** 主场景渲染之前：链有输出才切合成 quad 的采样源；没有输出（首帧未就绪 / 该对象无 runner）
+   *  则**不动输出**——quad 保持采样对象 RT 原图，不黑屏（降级可见，不静默画错）。 */
+  bindOutputs() {
+    for (const view of this.host.isolatedObjects()) {
+      const out = this.entries.get(view.id)?.runner?.lastOutput() ?? null;
+      if (out) this.host.setObjectOutput(view.id, out);
+    }
+  }
+  /** 主场景渲染之后：串行推进各 runner 的 update（异步，不阻塞本帧；见类头约束 3）。 */
+  advance(time) {
+    if (this.disposed) return;
+    for (const view of this.host.isolatedObjects()) {
+      const runner = this.entries.get(view.id)?.runner;
+      if (!runner) continue;
+      runner.setAudioSpectrumSource(null);
+      this.enqueue(() => runner.update(time, view.rtTexture));
+    }
+  }
+  dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.queue.length = 0;
+    for (const entry of this.entries.values()) entry.runner?.dispose();
+    this.entries.clear();
+  }
+  // ── 测试/诊断钩子（不参与生产路径） ──
+  debugRunners() {
+    const out = /* @__PURE__ */ new Map();
+    for (const [id, e] of this.entries) if (e.runner) out.set(id, e.runner);
+    return out;
+  }
+  debugInjectRunner(id, runner) {
+    const view = this.host.isolatedObjects().find((o) => o.id === id);
+    this.entries.set(id, {
+      runner,
+      chains: [],
+      plan: null,
+      worldW: view ? view.rtWidth / this.scale() : 1,
+      worldH: view ? view.rtHeight / this.scale() : 1
+    });
+  }
+  /** 去重告警（同一 key 只打印一次，防每帧刷屏）。 */
+  warnOnce(key, message) {
+    if (this.warned.has(key)) return;
+    this.warned.add(key);
+    console.warn(`[wallpaper-engine] ${message}`);
+  }
+  /** 串行队列入队（约束 3 / 2：只调用既有的 update，不在此建材质）。 */
+  enqueue(task) {
+    if (this.busy) {
+      this.queue.push(task);
+      return;
+    }
+    this.busy = true;
+    this.runTask(task);
+  }
+  runTask(task) {
+    let result;
+    try {
+      result = task();
+    } catch (e) {
+      console.warn("[wallpaper-engine] \u5BF9\u8C61\u6548\u679C\u94FE\u66F4\u65B0\u5931\u8D25:", e);
+      this.finishTask();
+      return;
+    }
+    Promise.resolve(result).catch((e) => {
+      console.warn("[wallpaper-engine] \u5BF9\u8C61\u6548\u679C\u94FE\u66F4\u65B0\u5931\u8D25:", e);
+    }).then(() => {
+      this.finishTask();
+    });
+  }
+  finishTask() {
+    const next = this.queue.shift();
+    if (next) {
+      this.runTask(next);
+      return;
+    }
+    this.busy = false;
+  }
+  mount(objId, chains, rtW, rtH) {
+    let entry = this.entries.get(objId);
+    if (!entry) {
+      entry = { runner: null, chains, plan: null, worldW: rtW / this.scale(), worldH: rtH / this.scale() };
+      this.entries.set(objId, entry);
+    }
+    entry.chains = chains;
+    entry.plan = buildEffectPlan(chains, { baseWidth: rtW, baseHeight: rtH });
+    if (!entry.runner) {
+      entry.runner = new EffectRunner(this.host.renderer, rtW, rtH, { load: weVRowOrderLoader() });
+    }
+    entry.runner.setPlan(entry.plan, chains, this.wallpaperId, { width: rtW, height: rtH });
+  }
+};
+
+// src/client/glow-stage.ts
+var GLOW_DEFAULTS = { threshold: 0.65, strength: 0.35 };
+var THRESHOLD_MAX = 0.99;
+var STRENGTH_MAX = 4;
+function clamp2(v, lo, hi) {
+  return Math.min(hi, Math.max(lo, v));
+}
+function normalizeGlowOptions(opts) {
+  const t = Number(opts?.threshold);
+  const s = Number(opts?.strength);
+  return {
+    threshold: Number.isFinite(t) ? clamp2(t, 0, THRESHOLD_MAX) : GLOW_DEFAULTS.threshold,
+    strength: Number.isFinite(s) ? clamp2(s, 0, STRENGTH_MAX) : GLOW_DEFAULTS.strength
+  };
+}
+function glowLevelSizes(width, height) {
+  const out = [];
+  let w = Math.max(1, Math.floor(width));
+  let h = Math.max(1, Math.floor(height));
+  for (let i = 0; i < 3; i++) {
+    w = Math.max(1, Math.floor(w / 2));
+    h = Math.max(1, Math.floor(h / 2));
+    out.push({ w, h });
+  }
+  return out;
+}
+var VERT = `
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = vec4(position.xy, 0.0, 1.0);
+}
+`;
+var BRIGHT_FRAG = `
+uniform sampler2D tSrc;
+uniform float uThreshold;
+varying vec2 vUv;
+void main() {
+  vec3 c = texture2D(tSrc, vUv).rgb;
+  float luma = dot(c, vec3(0.299, 0.587, 0.114));
+  float k = max(0.0, luma - uThreshold) / max(1e-6, 1.0 - uThreshold);
+  gl_FragColor = vec4(c * k, 1.0);
+}
+`;
+var BLUR_FRAG = `
+uniform sampler2D tSrc;
+uniform vec2 uStep;
+varying vec2 vUv;
+void main() {
+  vec3 sum = vec3(0.0);
+  for (int i = 0; i < 9; i++) {
+    float o = float(i - 4);
+    sum += texture2D(tSrc, vUv + uStep * o).rgb;
+  }
+  gl_FragColor = vec4(sum / 9.0, 1.0);
+}
+`;
+var COPY_FRAG = `
+uniform sampler2D tSrc;
+varying vec2 vUv;
+void main() {
+  gl_FragColor = vec4(texture2D(tSrc, vUv).rgb, 1.0);
+}
+`;
+var COMPOSITE_FRAG = `
+uniform sampler2D tBase;
+uniform sampler2D tL1;
+uniform sampler2D tL2;
+uniform sampler2D tL3;
+uniform float uStrength;
+varying vec2 vUv;
+void main() {
+  vec3 base = texture2D(tBase, vUv).rgb;
+  vec3 glow = (texture2D(tL1, vUv).rgb + texture2D(tL2, vUv).rgb + texture2D(tL3, vUv).rgb) / 3.0;
+  gl_FragColor = vec4(clamp(base + glow * uStrength, 0.0, 1.0), 1.0);
+}
+`;
+var BLUR_RADII = [4, 6, 8];
+function rtOptions() {
+  return {
+    type: HalfFloatType,
+    // 浮点 RT：8 位在多次累加后会有 banding
+    format: RGBAFormat,
+    depthBuffer: false,
+    stencilBuffer: false,
+    generateMipmaps: false,
+    minFilter: LinearFilter,
+    magFilter: LinearFilter,
+    wrapS: ClampToEdgeWrapping,
+    // §5.19：RT 必须 CLAMP
+    wrapT: ClampToEdgeWrapping
+  };
+}
+function createGlowStage(width, height, opts) {
+  if (!(width > 0) || !(height > 0)) return null;
+  let options = normalizeGlowOptions(opts);
+  const quadScene = new Scene();
+  const quadCamera = new Camera();
+  const geometry = new PlaneGeometry(2, 2);
+  const placeholderMat = new MeshBasicMaterial();
+  const mesh = new Mesh(geometry, placeholderMat);
+  quadScene.add(mesh);
+  const brightMat = new ShaderMaterial({ vertexShader: VERT, fragmentShader: BRIGHT_FRAG, uniforms: { tSrc: { value: null }, uThreshold: { value: options.threshold } }, depthTest: false, depthWrite: false });
+  const blurMat = new ShaderMaterial({ vertexShader: VERT, fragmentShader: BLUR_FRAG, uniforms: { tSrc: { value: null }, uStep: { value: new Vector2() } }, depthTest: false, depthWrite: false });
+  const copyMat = new ShaderMaterial({ vertexShader: VERT, fragmentShader: COPY_FRAG, uniforms: { tSrc: { value: null } }, depthTest: false, depthWrite: false });
+  const compositeMat = new ShaderMaterial({ vertexShader: VERT, fragmentShader: COMPOSITE_FRAG, uniforms: { tBase: { value: null }, tL1: { value: null }, tL2: { value: null }, tL3: { value: null }, uStrength: { value: options.strength } }, depthTest: false, depthWrite: false });
+  let baseRT = null;
+  let levelRTs = [];
+  let levelSizes = [];
+  let glowFailed = false;
+  let disposed = false;
+  let baseRendered = false;
+  let hooked = false;
+  let hookSpent = false;
+  let hookedRenderer = null;
+  let prevOnShaderError;
+  function shaderErrorDetail(gl, program, vs, fs) {
+    const g = gl;
+    const take = (name, x) => {
+      const fn = g?.[name];
+      if (!x || typeof fn !== "function") return "";
+      try {
+        return (fn.call(g, x) ?? "").trim();
+      } catch {
+        return "";
+      }
+    };
+    return [
+      ["vertex", take("getShaderInfoLog", vs)],
+      ["fragment", take("getShaderInfoLog", fs)],
+      ["program", take("getProgramInfoLog", program)]
+    ].filter(([, text]) => text).map(([kind, text]) => `${kind}: ${text}`).join(" | ");
+  }
+  function installShaderErrorHook(r) {
+    if (hooked || hookSpent) return;
+    hookSpent = true;
+    hooked = true;
+    hookedRenderer = r;
+    const dbg = r.debug;
+    if (!dbg) return;
+    prevOnShaderError = dbg.onShaderError;
+    dbg.onShaderError = (...args) => {
+      glowFailed = true;
+      const detail = shaderErrorDetail(args[0], args[1], args[2], args[3]);
+      console.warn("[wallpaper-engine] \u5E94\u7528\u7EA7 Glow \u7684 shader \u7F16\u8BD1/\u94FE\u63A5\u5931\u8D25\uFF0C\u5DF2\u964D\u7EA7\u4E3A\u76F4\u6E32" + (detail ? `\uFF1A${detail}` : ""));
+      try {
+        prevOnShaderError?.(...args);
+      } catch {
+      }
+    };
+  }
+  function removeShaderErrorHook() {
+    if (!hooked) return;
+    const dbg = hookedRenderer ? hookedRenderer.debug : void 0;
+    if (dbg) dbg.onShaderError = prevOnShaderError;
+    hooked = false;
+    hookedRenderer = null;
+    prevOnShaderError = void 0;
+  }
+  const rtCount = () => (baseRT ? 1 : 0) + levelRTs.length;
+  function buildTargets(w, h) {
+    disposeTargets();
+    baseRT = new WebGLRenderTarget(Math.max(1, w), Math.max(1, h), rtOptions());
+    levelSizes = glowLevelSizes(w, h);
+    levelRTs = [];
+    for (const s of levelSizes) {
+      levelRTs.push(new WebGLRenderTarget(s.w, s.h, rtOptions()));
+      levelRTs.push(new WebGLRenderTarget(s.w, s.h, rtOptions()));
+    }
+  }
+  function disposeTargets() {
+    baseRT?.dispose();
+    baseRT = null;
+    for (const rt of levelRTs) rt.dispose();
+    levelRTs = [];
+  }
+  function runPass(r, mat, dst) {
+    mesh.material = mat;
+    if (dst) renderIntoRenderTarget(r, dst, quadScene, quadCamera);
+    else {
+      r.setRenderTarget(null);
+      r.render(quadScene, quadCamera);
+    }
+  }
+  function blurLevel(r, idx, a, b) {
+    const radius = BLUR_RADII[idx];
+    const size = levelSizes[idx];
+    blurMat.uniforms.tSrc.value = a.texture;
+    blurMat.uniforms.uStep.value.set(radius / 4 / size.w, 0);
+    runPass(r, blurMat, b);
+    blurMat.uniforms.tSrc.value = b.texture;
+    blurMat.uniforms.uStep.value.set(0, radius / 4 / size.h);
+    runPass(r, blurMat, a);
+  }
+  function copyBaseToCanvas(r) {
+    try {
+      copyMat.uniforms.tSrc.value = baseRT.texture;
+      runPass(r, copyMat, null);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  function renderGlowPasses(r) {
+    const [l1a, l1b, l2a, l2b, l3a, l3b] = levelRTs;
+    brightMat.uniforms.tSrc.value = baseRT.texture;
+    runPass(r, brightMat, l1a);
+    blurLevel(r, 0, l1a, l1b);
+    copyMat.uniforms.tSrc.value = l1a.texture;
+    runPass(r, copyMat, l2a);
+    blurLevel(r, 1, l2a, l2b);
+    copyMat.uniforms.tSrc.value = l2a.texture;
+    runPass(r, copyMat, l3a);
+    blurLevel(r, 2, l3a, l3b);
+    compositeMat.uniforms.tBase.value = baseRT.texture;
+    compositeMat.uniforms.tL1.value = l1a.texture;
+    compositeMat.uniforms.tL2.value = l2a.texture;
+    compositeMat.uniforms.tL3.value = l3a.texture;
+    compositeMat.uniforms.uStrength.value = options.strength;
+    runPass(r, compositeMat, null);
+  }
+  buildTargets(width, height);
+  return {
+    apply(r, scene, camera) {
+      if (disposed) return;
+      if (glowFailed) {
+        r.setRenderTarget(null);
+        r.render(scene, camera);
+        return;
+      }
+      try {
+        baseRendered = false;
+        renderIntoRenderTarget(r, baseRT, scene, camera);
+        baseRendered = true;
+        installShaderErrorHook(r);
+        renderGlowPasses(r);
+      } catch (e) {
+        glowFailed = true;
+        console.warn("[wallpaper-engine] \u5E94\u7528\u7EA7 Glow \u5931\u8D25\uFF0C\u5DF2\u964D\u7EA7\u4E3A\u76F4\u6E32\uFF1A" + String(e?.message ?? e));
+        if (baseRendered && copyBaseToCanvas(r)) return;
+        r.setRenderTarget(null);
+        r.render(scene, camera);
+      } finally {
+        removeShaderErrorHook();
+      }
+    },
+    resize(w, h) {
+      if (disposed) return;
+      if (!(w > 0) || !(h > 0)) return;
+      buildTargets(w, h);
+    },
+    setOptions(o) {
+      options = normalizeGlowOptions(o);
+      brightMat.uniforms.uThreshold.value = options.threshold;
+      compositeMat.uniforms.uStrength.value = options.strength;
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      removeShaderErrorHook();
+      disposeTargets();
+      geometry.dispose();
+      placeholderMat.dispose();
+      brightMat.dispose();
+      blurMat.dispose();
+      copyMat.dispose();
+      compositeMat.dispose();
+    },
+    // 仅供测试观测（不参与渲染语义）
+    get rtCount() {
+      return rtCount();
+    },
+    get levelSizes() {
+      return levelSizes;
+    },
+    get options() {
+      return options;
+    },
+    get glowFailed() {
+      return glowFailed;
+    }
+  };
+}
+
+// src/client/settings.ts
+var NS = "wallpaper-engine";
+var DEFAULTS = {
+  selectedWallpaperId: "",
+  wallpaperDir: "",
+  weAssetsDir: "",
+  overlayOpacity: 0.35,
+  blurEnabled: false,
+  blurRadius: 12,
+  kenBurns: true,
+  // 光晕默认值 = 2026-09-21 用户在真机面板上定档（低阈值保留光晕、低强度压住过曝；
+  // 旧 A 档 0.65/1.0 在亮部多的壁纸上过曝，见 AGENT.md §7.1）。
+  glowEnabled: true,
+  glowThreshold: 0.65,
+  glowStrength: 0.35,
+  paused: false,
+  pauseOnHidden: true,
+  qualityScale: 1
+};
+var settingsCtx = null;
+var lastGood = null;
+function setSettingsCtx(ctx) {
+  settingsCtx = ctx;
+  lastGood = null;
+}
+function settingsRemote() {
+  return settingsCtx?.remote?.settings ?? null;
+}
+async function readClientSettings() {
+  const remote = settingsRemote();
+  if (remote) {
+    try {
+      const resp = await remote.describe();
+      const value = resp?.ok ? resp.value : void 0;
+      if (typeof value === "object" && value !== null) {
+        const namespaces = value.namespaces;
+        const nsRow = namespaces?.find((n) => n.ns === NS);
+        const nsValue = nsRow?.value;
+        if (typeof nsValue === "object" && nsValue !== null) {
+          lastGood = { ...lastGood ?? DEFAULTS, ...nsValue };
+          return { ...lastGood };
+        }
+      }
+    } catch {
+    }
+  }
+  return { ...lastGood ?? DEFAULTS };
+}
+async function writeClientSettings(patch) {
+  const remote = settingsRemote();
+  if (!remote) return;
+  try {
+    await remote.update(NS, patch, void 0);
+  } catch {
+  }
+}
+var USERPROP_PREFIX = "we:userprop:";
+function getUserPropertyValue(key) {
+  if (typeof localStorage === "undefined") return void 0;
+  const raw = localStorage.getItem(USERPROP_PREFIX + key);
+  if (raw === null) return void 0;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return void 0;
   }
 }
 
@@ -26299,28 +26888,6 @@ async function resolveEffectChain(sceneEffect, loadFile) {
   }
 }
 
-// src/client/scene-renderer.ts
-function resolveTexPath(matRef, texName) {
-  return texName.includes("/") ? "materials/" + texName + ".tex" : matRef.slice(0, matRef.lastIndexOf("/") + 1) + texName + ".tex";
-}
-async function resolveImageTexture(id, obj) {
-  try {
-    const modelResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(obj.image)}`);
-    if (!modelResp.ok) return null;
-    const model = await modelResp.json();
-    const matRef = model?.material;
-    if (typeof matRef !== "string" || !matRef) return null;
-    const matResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(matRef)}`);
-    if (!matResp.ok) return null;
-    const mat = await matResp.json();
-    const texName = mat?.passes?.[0]?.textures?.[0];
-    if (typeof texName !== "string" || !texName) return null;
-    return loadTexTexture(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(resolveTexPath(matRef, texName))}`);
-  } catch {
-    return null;
-  }
-}
-
 // node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/index.mjs
 init_chunk_V2S4ZYJR();
 init_dist();
@@ -26387,1260 +26954,6 @@ function newMockExtensions(log) {
 // node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/index.mjs
 var variant = { type: "sync", importFFI: () => Promise.resolve().then(() => (init_ffi(), ffi_exports)).then((mod) => mod.QuickJSFFI), importModuleLoader: () => Promise.resolve().then(() => (init_emscripten_module_browser(), emscripten_module_browser_exports)).then((mod) => mod.default) };
 var src_default = variant;
-
-// node_modules/.pnpm/@webgpu+glslang@0.0.15/node_modules/@webgpu/glslang/dist/web-devel/glslang.js
-var Module = function() {
-  var _scriptDir = typeof document !== "undefined" && document.currentScript ? document.currentScript.src : void 0;
-  return function(Module2) {
-    Module2 = Module2 || {};
-    var c;
-    c || (c = typeof Module2 !== "undefined" ? Module2 : {});
-    c.compileGLSLZeroCopy = function(a, b, d, e) {
-      d = !!d;
-      switch (b) {
-        case "vertex":
-          var g = 0;
-          break;
-        case "fragment":
-          g = 4;
-          break;
-        case "compute":
-          g = 5;
-          break;
-        default:
-          throw Error("shader_stage must be 'vertex', 'fragment', or 'compute'.");
-      }
-      switch (e || "1.0") {
-        case "1.0":
-          var f = 65536;
-          break;
-        case "1.1":
-          f = 65792;
-          break;
-        case "1.2":
-          f = 66048;
-          break;
-        case "1.3":
-          f = 66304;
-          break;
-        case "1.4":
-          f = 66560;
-          break;
-        case "1.5":
-          f = 66816;
-          break;
-        default:
-          throw Error("spirv_version must be '1.0' ~ '1.5'.");
-      }
-      e = c._malloc(4);
-      b = c._malloc(4);
-      var h = aa([a, g, d, f, e, b]);
-      d = k(e);
-      a = k(b);
-      c._free(e);
-      c._free(b);
-      if (0 === h) throw Error("GLSL compilation failed");
-      e = {};
-      d /= 4;
-      e.data = c.HEAPU32.subarray(d, d + a);
-      e.free = function() {
-        c._destroy_output_buffer(h);
-      };
-      return e;
-    };
-    c.compileGLSL = function(a, b, d, e) {
-      a = c.compileGLSLZeroCopy(a, b, d, e);
-      b = a.data.slice();
-      a.free();
-      return b;
-    };
-    var p = {}, q;
-    for (q in c) c.hasOwnProperty(q) && (p[q] = c[q]);
-    var r = "./this.program", t = false, u = false;
-    t = "object" === typeof window;
-    u = "function" === typeof importScripts;
-    var v = "", w;
-    if (t || u) u ? v = self.location.href : document.currentScript && (v = document.currentScript.src), _scriptDir && (v = _scriptDir), 0 !== v.indexOf("blob:") ? v = v.substr(0, v.lastIndexOf("/") + 1) : v = "", u && (w = function(a) {
-      var b = new XMLHttpRequest();
-      b.open("GET", a, false);
-      b.responseType = "arraybuffer";
-      b.send(null);
-      return new Uint8Array(b.response);
-    });
-    var x = c.print || console.log.bind(console), y = c.printErr || console.warn.bind(console);
-    for (q in p) p.hasOwnProperty(q) && (c[q] = p[q]);
-    p = null;
-    c.thisProgram && (r = c.thisProgram);
-    var A;
-    c.wasmBinary && (A = c.wasmBinary);
-    "object" !== typeof WebAssembly && y("no native wasm support detected");
-    function k(a) {
-      var b = "i32";
-      "*" === b.charAt(b.length - 1) && (b = "i32");
-      switch (b) {
-        case "i1":
-          return B[a >> 0];
-        case "i8":
-          return B[a >> 0];
-        case "i16":
-          return ba[a >> 1];
-        case "i32":
-          return C[a >> 2];
-        case "i64":
-          return C[a >> 2];
-        case "float":
-          return ca[a >> 2];
-        case "double":
-          return da[a >> 3];
-        default:
-          D("invalid type for getValue: " + b);
-      }
-      return null;
-    }
-    var E, ea = new WebAssembly.Table({ initial: 859, maximum: 859, element: "anyfunc" }), fa = false;
-    function ha() {
-      var a = c._convert_glsl_to_spirv;
-      a || D("Assertion failed: Cannot call unknown function convert_glsl_to_spirv, make sure it is exported");
-      return a;
-    }
-    function aa(a) {
-      var b = "string number boolean number number number".split(" "), d = { string: function(a2) {
-        var b2 = 0;
-        if (null !== a2 && void 0 !== a2 && 0 !== a2) {
-          var d2 = (a2.length << 2) + 1;
-          b2 = G(d2);
-          ia(a2, H, b2, d2);
-        }
-        return b2;
-      }, array: function(a2) {
-        var b2 = G(a2.length);
-        B.set(a2, b2);
-        return b2;
-      } }, e = ha(), g = [], f = 0;
-      if (a) for (var h = 0; h < a.length; h++) {
-        var n = d[b[h]];
-        n ? (0 === f && (f = ja()), g[h] = n(a[h])) : g[h] = a[h];
-      }
-      a = e.apply(null, g);
-      0 !== f && ka(f);
-      return a;
-    }
-    var la = "undefined" !== typeof TextDecoder ? new TextDecoder("utf8") : void 0;
-    function I(a, b, d) {
-      var e = b + d;
-      for (d = b; a[d] && !(d >= e); ) ++d;
-      if (16 < d - b && a.subarray && la) return la.decode(a.subarray(b, d));
-      for (e = ""; b < d; ) {
-        var g = a[b++];
-        if (g & 128) {
-          var f = a[b++] & 63;
-          if (192 == (g & 224)) e += String.fromCharCode((g & 31) << 6 | f);
-          else {
-            var h = a[b++] & 63;
-            g = 224 == (g & 240) ? (g & 15) << 12 | f << 6 | h : (g & 7) << 18 | f << 12 | h << 6 | a[b++] & 63;
-            65536 > g ? e += String.fromCharCode(g) : (g -= 65536, e += String.fromCharCode(55296 | g >> 10, 56320 | g & 1023));
-          }
-        } else e += String.fromCharCode(g);
-      }
-      return e;
-    }
-    function ia(a, b, d, e) {
-      if (0 < e) {
-        e = d + e - 1;
-        for (var g = 0; g < a.length; ++g) {
-          var f = a.charCodeAt(g);
-          if (55296 <= f && 57343 >= f) {
-            var h = a.charCodeAt(++g);
-            f = 65536 + ((f & 1023) << 10) | h & 1023;
-          }
-          if (127 >= f) {
-            if (d >= e) break;
-            b[d++] = f;
-          } else {
-            if (2047 >= f) {
-              if (d + 1 >= e) break;
-              b[d++] = 192 | f >> 6;
-            } else {
-              if (65535 >= f) {
-                if (d + 2 >= e) break;
-                b[d++] = 224 | f >> 12;
-              } else {
-                if (d + 3 >= e) break;
-                b[d++] = 240 | f >> 18;
-                b[d++] = 128 | f >> 12 & 63;
-              }
-              b[d++] = 128 | f >> 6 & 63;
-            }
-            b[d++] = 128 | f & 63;
-          }
-        }
-        b[d] = 0;
-      }
-    }
-    "undefined" !== typeof TextDecoder && new TextDecoder("utf-16le");
-    var J, B, H, ba, C, ca, da;
-    function ma(a) {
-      J = a;
-      c.HEAP8 = B = new Int8Array(a);
-      c.HEAP16 = ba = new Int16Array(a);
-      c.HEAP32 = C = new Int32Array(a);
-      c.HEAPU8 = H = new Uint8Array(a);
-      c.HEAPU16 = new Uint16Array(a);
-      c.HEAPU32 = new Uint32Array(a);
-      c.HEAPF32 = ca = new Float32Array(a);
-      c.HEAPF64 = da = new Float64Array(a);
-    }
-    var na = c.TOTAL_MEMORY || 16777216;
-    c.wasmMemory ? E = c.wasmMemory : E = new WebAssembly.Memory({ initial: na / 65536 });
-    E && (J = E.buffer);
-    na = J.byteLength;
-    ma(J);
-    C[84916] = 5582704;
-    function K(a) {
-      for (; 0 < a.length; ) {
-        var b = a.shift();
-        if ("function" == typeof b) b();
-        else {
-          var d = b.J;
-          "number" === typeof d ? void 0 === b.H ? c.dynCall_v(d) : c.dynCall_vi(d, b.H) : d(void 0 === b.H ? null : b.H);
-        }
-      }
-    }
-    var oa = [], pa = [], qa = [], ra = [];
-    function sa() {
-      var a = c.preRun.shift();
-      oa.unshift(a);
-    }
-    var L = 0, M = null, N = null;
-    c.preloadedImages = {};
-    c.preloadedAudios = {};
-    function D(a) {
-      if (c.onAbort) c.onAbort(a);
-      x(a);
-      y(a);
-      fa = true;
-      throw new WebAssembly.RuntimeError("abort(" + a + "). Build with -s ASSERTIONS=1 for more info.");
-    }
-    function ta() {
-      var a = O;
-      return String.prototype.startsWith ? a.startsWith("data:application/octet-stream;base64,") : 0 === a.indexOf("data:application/octet-stream;base64,");
-    }
-    var O = "glslang.wasm";
-    if (!ta()) {
-      var ua = O;
-      O = c.locateFile ? c.locateFile(ua, v) : v + ua;
-    }
-    function wa() {
-      try {
-        if (A) return new Uint8Array(A);
-        if (w) return w(O);
-        throw "both async and sync fetching of the wasm failed";
-      } catch (a) {
-        D(a);
-      }
-    }
-    function xa() {
-      return A || !t && !u || "function" !== typeof fetch ? new Promise(function(a) {
-        a(wa());
-      }) : fetch(O, { credentials: "same-origin" }).then(function(a) {
-        if (!a.ok) throw "failed to load wasm binary file at '" + O + "'";
-        return a.arrayBuffer();
-      }).catch(function() {
-        return wa();
-      });
-    }
-    pa.push({ J: function() {
-      ya();
-    } });
-    var za = [null, [], []], P = 0;
-    function Aa() {
-      P += 4;
-      return C[P - 4 >> 2];
-    }
-    var Q = {}, Ba = {};
-    function Ca() {
-      if (!R) {
-        var a = { USER: "web_user", LOGNAME: "web_user", PATH: "/", PWD: "/", HOME: "/home/web_user", LANG: ("object" === typeof navigator && navigator.languages && navigator.languages[0] || "C").replace("-", "_") + ".UTF-8", _: r }, b;
-        for (b in Ba) a[b] = Ba[b];
-        var d = [];
-        for (b in a) d.push(b + "=" + a[b]);
-        R = d;
-      }
-      return R;
-    }
-    var R;
-    function S(a) {
-      return 0 === a % 4 && (0 !== a % 100 || 0 === a % 400);
-    }
-    function T(a, b) {
-      for (var d = 0, e = 0; e <= b; d += a[e++]) ;
-      return d;
-    }
-    var U = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31], W = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    function X(a, b) {
-      for (a = new Date(a.getTime()); 0 < b; ) {
-        var d = a.getMonth(), e = (S(a.getFullYear()) ? U : W)[d];
-        if (b > e - a.getDate()) b -= e - a.getDate() + 1, a.setDate(1), 11 > d ? a.setMonth(d + 1) : (a.setMonth(0), a.setFullYear(a.getFullYear() + 1));
-        else {
-          a.setDate(a.getDate() + b);
-          break;
-        }
-      }
-      return a;
-    }
-    function Da(a, b, d, e) {
-      function g(a2, b2, d2) {
-        for (a2 = "number" === typeof a2 ? a2.toString() : a2 || ""; a2.length < b2; ) a2 = d2[0] + a2;
-        return a2;
-      }
-      function f(a2, b2) {
-        return g(a2, b2, "0");
-      }
-      function h(a2, b2) {
-        function V(a3) {
-          return 0 > a3 ? -1 : 0 < a3 ? 1 : 0;
-        }
-        var d2;
-        0 === (d2 = V(a2.getFullYear() - b2.getFullYear())) && 0 === (d2 = V(a2.getMonth() - b2.getMonth())) && (d2 = V(a2.getDate() - b2.getDate()));
-        return d2;
-      }
-      function n(a2) {
-        switch (a2.getDay()) {
-          case 0:
-            return new Date(a2.getFullYear() - 1, 11, 29);
-          case 1:
-            return a2;
-          case 2:
-            return new Date(a2.getFullYear(), 0, 3);
-          case 3:
-            return new Date(
-              a2.getFullYear(),
-              0,
-              2
-            );
-          case 4:
-            return new Date(a2.getFullYear(), 0, 1);
-          case 5:
-            return new Date(a2.getFullYear() - 1, 11, 31);
-          case 6:
-            return new Date(a2.getFullYear() - 1, 11, 30);
-        }
-      }
-      function z(a2) {
-        a2 = X(new Date(a2.A + 1900, 0, 1), a2.G);
-        var b2 = n(new Date(a2.getFullYear() + 1, 0, 4));
-        return 0 >= h(n(new Date(a2.getFullYear(), 0, 4)), a2) ? 0 >= h(b2, a2) ? a2.getFullYear() + 1 : a2.getFullYear() : a2.getFullYear() - 1;
-      }
-      var m = C[e + 40 >> 2];
-      e = { N: C[e >> 2], M: C[e + 4 >> 2], D: C[e + 8 >> 2], C: C[e + 12 >> 2], B: C[e + 16 >> 2], A: C[e + 20 >> 2], F: C[e + 24 >> 2], G: C[e + 28 >> 2], X: C[e + 32 >> 2], L: C[e + 36 >> 2], O: m ? m ? I(H, m, void 0) : "" : "" };
-      d = d ? I(H, d, void 0) : "";
-      m = { "%c": "%a %b %d %H:%M:%S %Y", "%D": "%m/%d/%y", "%F": "%Y-%m-%d", "%h": "%b", "%r": "%I:%M:%S %p", "%R": "%H:%M", "%T": "%H:%M:%S", "%x": "%m/%d/%y", "%X": "%H:%M:%S", "%Ec": "%c", "%EC": "%C", "%Ex": "%m/%d/%y", "%EX": "%H:%M:%S", "%Ey": "%y", "%EY": "%Y", "%Od": "%d", "%Oe": "%e", "%OH": "%H", "%OI": "%I", "%Om": "%m", "%OM": "%M", "%OS": "%S", "%Ou": "%u", "%OU": "%U", "%OV": "%V", "%Ow": "%w", "%OW": "%W", "%Oy": "%y" };
-      for (var l in m) d = d.replace(new RegExp(l, "g"), m[l]);
-      var F = "Sunday Monday Tuesday Wednesday Thursday Friday Saturday".split(" "), va = "January February March April May June July August September October November December".split(" ");
-      m = {
-        "%a": function(a2) {
-          return F[a2.F].substring(0, 3);
-        },
-        "%A": function(a2) {
-          return F[a2.F];
-        },
-        "%b": function(a2) {
-          return va[a2.B].substring(0, 3);
-        },
-        "%B": function(a2) {
-          return va[a2.B];
-        },
-        "%C": function(a2) {
-          return f((a2.A + 1900) / 100 | 0, 2);
-        },
-        "%d": function(a2) {
-          return f(a2.C, 2);
-        },
-        "%e": function(a2) {
-          return g(a2.C, 2, " ");
-        },
-        "%g": function(a2) {
-          return z(a2).toString().substring(2);
-        },
-        "%G": function(a2) {
-          return z(a2);
-        },
-        "%H": function(a2) {
-          return f(a2.D, 2);
-        },
-        "%I": function(a2) {
-          a2 = a2.D;
-          0 == a2 ? a2 = 12 : 12 < a2 && (a2 -= 12);
-          return f(a2, 2);
-        },
-        "%j": function(a2) {
-          return f(a2.C + T(S(a2.A + 1900) ? U : W, a2.B - 1), 3);
-        },
-        "%m": function(a2) {
-          return f(a2.B + 1, 2);
-        },
-        "%M": function(a2) {
-          return f(a2.M, 2);
-        },
-        "%n": function() {
-          return "\n";
-        },
-        "%p": function(a2) {
-          return 0 <= a2.D && 12 > a2.D ? "AM" : "PM";
-        },
-        "%S": function(a2) {
-          return f(a2.N, 2);
-        },
-        "%t": function() {
-          return "	";
-        },
-        "%u": function(a2) {
-          return a2.F || 7;
-        },
-        "%U": function(a2) {
-          var b2 = new Date(a2.A + 1900, 0, 1), d2 = 0 === b2.getDay() ? b2 : X(b2, 7 - b2.getDay());
-          a2 = new Date(a2.A + 1900, a2.B, a2.C);
-          return 0 > h(d2, a2) ? f(Math.ceil((31 - d2.getDate() + (T(S(a2.getFullYear()) ? U : W, a2.getMonth() - 1) - 31) + a2.getDate()) / 7), 2) : 0 === h(d2, b2) ? "01" : "00";
-        },
-        "%V": function(a2) {
-          var b2 = n(new Date(a2.A + 1900, 0, 4)), d2 = n(new Date(a2.A + 1901, 0, 4)), e2 = X(new Date(a2.A + 1900, 0, 1), a2.G);
-          return 0 > h(e2, b2) ? "53" : 0 >= h(d2, e2) ? "01" : f(Math.ceil((b2.getFullYear() < a2.A + 1900 ? a2.G + 32 - b2.getDate() : a2.G + 1 - b2.getDate()) / 7), 2);
-        },
-        "%w": function(a2) {
-          return a2.F;
-        },
-        "%W": function(a2) {
-          var b2 = new Date(a2.A, 0, 1), d2 = 1 === b2.getDay() ? b2 : X(b2, 0 === b2.getDay() ? 1 : 7 - b2.getDay() + 1);
-          a2 = new Date(a2.A + 1900, a2.B, a2.C);
-          return 0 > h(d2, a2) ? f(Math.ceil((31 - d2.getDate() + (T(S(a2.getFullYear()) ? U : W, a2.getMonth() - 1) - 31) + a2.getDate()) / 7), 2) : 0 === h(d2, b2) ? "01" : "00";
-        },
-        "%y": function(a2) {
-          return (a2.A + 1900).toString().substring(2);
-        },
-        "%Y": function(a2) {
-          return a2.A + 1900;
-        },
-        "%z": function(a2) {
-          a2 = a2.L;
-          var b2 = 0 <= a2;
-          a2 = Math.abs(a2) / 60;
-          return (b2 ? "+" : "-") + String("0000" + (a2 / 60 * 100 + a2 % 60)).slice(-4);
-        },
-        "%Z": function(a2) {
-          return a2.O;
-        },
-        "%%": function() {
-          return "%";
-        }
-      };
-      for (l in m) 0 <= d.indexOf(l) && (d = d.replace(new RegExp(l, "g"), m[l](e)));
-      l = Ea(d);
-      if (l.length > b) return 0;
-      B.set(l, a);
-      return l.length - 1;
-    }
-    function Ea(a) {
-      for (var b = 0, d = 0; d < a.length; ++d) {
-        var e = a.charCodeAt(d);
-        55296 <= e && 57343 >= e && (e = 65536 + ((e & 1023) << 10) | a.charCodeAt(++d) & 1023);
-        127 >= e ? ++b : b = 2047 >= e ? b + 2 : 65535 >= e ? b + 3 : b + 4;
-      }
-      b = Array(b + 1);
-      ia(a, b, 0, b.length);
-      return b;
-    }
-    var Ga = {
-      f: function() {
-      },
-      c: function() {
-        c.___errno_location && (C[c.___errno_location() >> 2] = 63);
-        return -1;
-      },
-      n: function(a, b) {
-        P = b;
-        try {
-          var d = Aa();
-          var e = Aa();
-          if (-1 === d || 0 === e) var g = -28;
-          else {
-            var f = Q.K[d];
-            if (f && e === f.U) {
-              var h = (void 0).T(f.S);
-              Q.R(d, h, e, f.flags, f.offset);
-              (void 0).W(h);
-              Q.K[d] = null;
-              f.P && Fa(f.V);
-            }
-            g = 0;
-          }
-          return g;
-        } catch (n) {
-          return D(n), -n.I;
-        }
-      },
-      a: function() {
-      },
-      b: function() {
-        D();
-      },
-      k: function(a, b, d) {
-        H.set(H.subarray(b, b + d), a);
-      },
-      l: function(a) {
-        var b = B.length;
-        if (2147418112 < a) return false;
-        for (var d = 1; 4 >= d; d *= 2) {
-          var e = b * (1 + 0.2 / d);
-          e = Math.min(e, a + 100663296);
-          e = Math.max(16777216, a, e);
-          0 < e % 65536 && (e += 65536 - e % 65536);
-          a: {
-            try {
-              E.grow(Math.min(2147418112, e) - J.byteLength + 65535 >> 16);
-              ma(E.buffer);
-              var g = 1;
-              break a;
-            } catch (f) {
-            }
-            g = void 0;
-          }
-          if (g) return true;
-        }
-        return false;
-      },
-      d: function(a, b) {
-        var d = 0;
-        Ca().forEach(function(e, g) {
-          var f = b + d;
-          g = C[a + 4 * g >> 2] = f;
-          for (f = 0; f < e.length; ++f) B[g++ >> 0] = e.charCodeAt(f);
-          B[g >> 0] = 0;
-          d += e.length + 1;
-        });
-        return 0;
-      },
-      e: function(a, b) {
-        var d = Ca();
-        C[a >> 2] = d.length;
-        var e = 0;
-        d.forEach(function(a2) {
-          e += a2.length + 1;
-        });
-        C[b >> 2] = e;
-        return 0;
-      },
-      h: function() {
-        return 0;
-      },
-      j: function() {
-        return 0;
-      },
-      g: function(a, b, d, e) {
-        try {
-          for (var g = 0, f = 0; f < d; f++) {
-            for (var h = C[b + 8 * f >> 2], n = C[b + (8 * f + 4) >> 2], z = 0; z < n; z++) {
-              var m = H[h + z], l = za[a];
-              0 === m || 10 === m ? ((1 === a ? x : y)(I(l, 0)), l.length = 0) : l.push(m);
-            }
-            g += n;
-          }
-          C[e >> 2] = g;
-          return 0;
-        } catch (F) {
-          return D(F), F.I;
-        }
-      },
-      memory: E,
-      o: function() {
-      },
-      i: function() {
-      },
-      m: function(a, b, d, e) {
-        return Da(a, b, d, e);
-      },
-      table: ea
-    }, Ha = function() {
-      function a(a2) {
-        c.asm = a2.exports;
-        L--;
-        c.monitorRunDependencies && c.monitorRunDependencies(L);
-        0 == L && (null !== M && (clearInterval(M), M = null), N && (a2 = N, N = null, a2()));
-      }
-      function b(b2) {
-        a(b2.instance);
-      }
-      function d(a2) {
-        return xa().then(function(a3) {
-          return WebAssembly.instantiate(a3, e);
-        }).then(a2, function(a3) {
-          y("failed to asynchronously prepare wasm: " + a3);
-          D(a3);
-        });
-      }
-      var e = { env: Ga, wasi_snapshot_preview1: Ga };
-      L++;
-      c.monitorRunDependencies && c.monitorRunDependencies(L);
-      if (c.instantiateWasm) try {
-        return c.instantiateWasm(e, a);
-      } catch (g) {
-        return y("Module.instantiateWasm callback failed with error: " + g), false;
-      }
-      (function() {
-        if (A || "function" !== typeof WebAssembly.instantiateStreaming || ta() || "function" !== typeof fetch) return d(b);
-        fetch(O, { credentials: "same-origin" }).then(function(a2) {
-          return WebAssembly.instantiateStreaming(a2, e).then(b, function(a3) {
-            y("wasm streaming compile failed: " + a3);
-            y("falling back to ArrayBuffer instantiation");
-            d(b);
-          });
-        });
-      })();
-      return {};
-    }();
-    c.asm = Ha;
-    var ya = c.___wasm_call_ctors = function() {
-      return (ya = c.___wasm_call_ctors = c.asm.p).apply(null, arguments);
-    };
-    c._convert_glsl_to_spirv = function() {
-      return (c._convert_glsl_to_spirv = c.asm.q).apply(null, arguments);
-    };
-    c._destroy_output_buffer = function() {
-      return (c._destroy_output_buffer = c.asm.r).apply(null, arguments);
-    };
-    c._malloc = function() {
-      return (c._malloc = c.asm.s).apply(null, arguments);
-    };
-    var Fa = c._free = function() {
-      return (Fa = c._free = c.asm.t).apply(null, arguments);
-    }, ja = c.stackSave = function() {
-      return (ja = c.stackSave = c.asm.u).apply(null, arguments);
-    }, G = c.stackAlloc = function() {
-      return (G = c.stackAlloc = c.asm.v).apply(null, arguments);
-    }, ka = c.stackRestore = function() {
-      return (ka = c.stackRestore = c.asm.w).apply(null, arguments);
-    };
-    c.dynCall_vi = function() {
-      return (c.dynCall_vi = c.asm.x).apply(null, arguments);
-    };
-    c.dynCall_v = function() {
-      return (c.dynCall_v = c.asm.y).apply(null, arguments);
-    };
-    c.asm = Ha;
-    var Y;
-    c.then = function(a) {
-      if (Y) a(c);
-      else {
-        var b = c.onRuntimeInitialized;
-        c.onRuntimeInitialized = function() {
-          b && b();
-          a(c);
-        };
-      }
-      return c;
-    };
-    N = function Ia() {
-      Y || Z();
-      Y || (N = Ia);
-    };
-    function Z() {
-      function a() {
-        if (!Y && (Y = true, !fa)) {
-          K(pa);
-          K(qa);
-          if (c.onRuntimeInitialized) c.onRuntimeInitialized();
-          if (c.postRun) for ("function" == typeof c.postRun && (c.postRun = [c.postRun]); c.postRun.length; ) {
-            var a2 = c.postRun.shift();
-            ra.unshift(a2);
-          }
-          K(ra);
-        }
-      }
-      if (!(0 < L)) {
-        if (c.preRun) for ("function" == typeof c.preRun && (c.preRun = [c.preRun]); c.preRun.length; ) sa();
-        K(oa);
-        0 < L || (c.setStatus ? (c.setStatus("Running..."), setTimeout(function() {
-          setTimeout(function() {
-            c.setStatus("");
-          }, 1);
-          a();
-        }, 1)) : a());
-      }
-    }
-    c.run = Z;
-    if (c.preInit) for ("function" == typeof c.preInit && (c.preInit = [c.preInit]); 0 < c.preInit.length; ) c.preInit.pop()();
-    Z();
-    return Module2;
-  };
-}();
-
-// src/client/wasm-renderer.ts
-var STATIC_BASE = "/wallpapers/static";
-var WASM_GLUE_FILE = "we_scene_wasm.js";
-var WASM_BIN_FILE = "we_scene_wasm_bg.wasm";
-async function defaultLoadWasm() {
-  try {
-    const mod = await import(
-      /* @vite-ignore */
-      `${STATIC_BASE}/${WASM_GLUE_FILE}`
-    );
-    await mod.default(`${STATIC_BASE}/${WASM_BIN_FILE}`);
-    return mod;
-  } catch {
-    return null;
-  }
-}
-var PARTICLE_TEX_ALIASES = {
-  // "presets/lightshaft"（无下划线，EVA 坏引用）→ light_shafts 序列第 0 帧（光柱精灵）。
-  // 值为**去 particle/ 前缀**的形式（与下方 short 计算一致），拼回时统一加回 particle/。
-  "presets/lightshaft": "light/light_shafts_0"
-};
-async function resolveParticleMaterial(id, specText) {
-  try {
-    const spec = JSON.parse(specText);
-    const matRef = spec?.material;
-    if (typeof matRef !== "string" || !matRef) return null;
-    const matResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(matRef)}`);
-    if (!matResp.ok) return null;
-    const mat = await matResp.json();
-    const pass0 = mat?.passes?.[0];
-    const blending = typeof pass0?.blending === "string" ? pass0.blending : null;
-    const texName = pass0?.textures?.[0];
-    if (typeof texName !== "string" || !texName) return { texUrl: null, blending };
-    const short = texName.startsWith("particle/") ? texName.slice("particle/".length) : texName;
-    const aliased = PARTICLE_TEX_ALIASES[short];
-    const name = aliased ? `particle/${aliased}` : texName;
-    return {
-      texUrl: `/wallpapers/particle-texture?name=${encodeURIComponent(name)}`,
-      blending
-    };
-  } catch {
-    return null;
-  }
-}
-
-// src/client/object-effects.ts
-function weVRowOrderLoader(load = loadTexTexture) {
-  return (url, opts) => load(url, { ...opts, rowOrder: "topDown" });
-}
-var ObjectEffectStage = class {
-  constructor(host, opts) {
-    this.host = host;
-    this.wallpaperId = opts.wallpaperId;
-    this.screenScale = opts.screenScale;
-  }
-  entries = /* @__PURE__ */ new Map();
-  wallpaperId;
-  /** 屏幕密度（设备像素 / 世界单位）：对象 RT 尺寸的唯一基准，随视口变化（onViewportResize）。 */
-  screenScale;
-  disposed = false;
-  // 串行链（约束 3）：busy = 有 runner 正在 update，queue = 等待中的 update 任务。
-  // 空闲时**同步**发起第一项（本帧立即开始推进，不推迟一个微任务——与场景级
-  // `void runner.update(...)` 的行为一致；player 的帧序是 render 之后才 advance，
-  // 因此此刻切换 RT 不会打扰本帧主场景渲染）；忙时排队，等前一项 settle 后再发起。
-  busy = false;
-  queue = [];
-  /** 去重告警集合（按 key 只打印一次，防每帧刷屏）。 */
-  warned = /* @__PURE__ */ new Set();
-  /** 当前屏幕密度（设备像素 / 世界单位）；同源下发契约见类头。 */
-  scale() {
-    const s = this.screenScale;
-    return Number.isFinite(s) && s > 0 ? s : 1;
-  }
-  /** 世界尺寸（场景像素）：resize 时按新预算重算 RT 像素尺寸的唯一来源。
-   *  调用顺序契约：three-renderer 先 setWorldSize 再 setObjectChains（后者不覆盖前者）。 */
-  setWorldSize(objId, worldW, worldH) {
-    if (this.disposed) return;
-    const entry = this.entries.get(objId);
-    if (entry) {
-      entry.worldW = worldW;
-      entry.worldH = worldH;
-      return;
-    }
-    this.entries.set(objId, { runner: null, chains: [], plan: null, worldW, worldH });
-  }
-  /** 挂载某对象的效果链（线性链与具名 RT 图链一视同仁，计划交执行器执行）。调用顺序契约：
-   *  player 先在 loadSceneToThree 内建好隔离条目，stage 再挂链（Task 5 的接线顺序：
-   *  setWorldSize → setObjectChains）；找不到隔离条目说明契约被破坏 → 明确告警一次，
-   *  绝不静默丢弃，也绝不猜尺寸。 */
-  setObjectChains(objId, chains) {
-    if (this.disposed) return;
-    if (chains.length === 0) return;
-    const view = this.host.isolatedObjects().find((o) => o.id === objId);
-    if (!view) {
-      this.warnOnce(`no-isolated:${objId}`, `\u5BF9\u8C61 ${objId} \u5C1A\u65E0\u9694\u79BB\u6761\u76EE\uFF0C\u6548\u679C\u94FE\u672A\u6302\u8F7D\uFF08\u8C03\u7528\u987A\u5E8F\u9519\u8BEF\uFF09`);
-      return;
-    }
-    this.mount(objId, chains, view.rtWidth, view.rtHeight);
-  }
-  /** 视口变化：按新的**屏幕密度**重算每个对象的 RT 像素尺寸，并用同一份链重挂（runner 内部 RT 跟随）。
-   *  ⚠️ 参数是「设备像素 / 世界单位」这一个标量（object-range.screenScalePx 的返回值），**不是**
-   *  视口宽高预算：旧实现传 `视口 × dpr` 当预算，成了「第二处独立预算」——挂载期与 resize 期
-   *  各算一遍、输入不同源时任何一次 resize 都会把 RT 打回旧口径（3fd6b00「挂载期 RT 正确、
-   *  resize 后被覆盖」这一漏检类的同源地雷）。密度必须由调用方从**主相机同一套 cover 语义**
-   *  取得（three-renderer 用 player.screenScalePx()，见其 resize 回调）。
-   *  ⚠️ 遍历 `this.entries` 的**所有**条目（不按有无 runner 过滤）：只 setWorldSize 过、链尚未挂载
-   *  的隔离对象同样要随视口重设 RT，否则视口放大后它一直用旧的小 RT（偏糊）、
-   *  视口缩小时又一直占着旧的大 RT（超额显存）。 */
-  onViewportResize(screenScale) {
-    if (this.disposed) return;
-    this.screenScale = screenScale;
-    for (const [id, entry] of this.entries) {
-      const size = objectRtSize(entry.worldW, entry.worldH, this.scale());
-      const view = this.host.isolatedObjects().find((o) => o.id === id);
-      if (!view) continue;
-      if (view.rtWidth === size.width && view.rtHeight === size.height) continue;
-      this.host.resizeObjectRT(id, size.width, size.height);
-      if (!entry.runner) continue;
-      entry.plan = buildEffectPlan(entry.chains, { baseWidth: size.width, baseHeight: size.height });
-      entry.runner.setPlan(entry.plan, entry.chains, this.wallpaperId, { width: size.width, height: size.height });
-      this.host.setObjectOutput(id, view.rtTexture);
-    }
-  }
-  /** 主场景渲染之前：链有输出才切合成 quad 的采样源；没有输出（首帧未就绪 / 该对象无 runner）
-   *  则**不动输出**——quad 保持采样对象 RT 原图，不黑屏（降级可见，不静默画错）。 */
-  bindOutputs() {
-    for (const view of this.host.isolatedObjects()) {
-      const out = this.entries.get(view.id)?.runner?.lastOutput() ?? null;
-      if (out) this.host.setObjectOutput(view.id, out);
-    }
-  }
-  /** 主场景渲染之后：串行推进各 runner 的 update（异步，不阻塞本帧；见类头约束 3）。 */
-  advance(time) {
-    if (this.disposed) return;
-    for (const view of this.host.isolatedObjects()) {
-      const runner = this.entries.get(view.id)?.runner;
-      if (!runner) continue;
-      runner.setAudioSpectrumSource(null);
-      this.enqueue(() => runner.update(time, view.rtTexture));
-    }
-  }
-  dispose() {
-    if (this.disposed) return;
-    this.disposed = true;
-    this.queue.length = 0;
-    for (const entry of this.entries.values()) entry.runner?.dispose();
-    this.entries.clear();
-  }
-  // ── 测试/诊断钩子（不参与生产路径） ──
-  debugRunners() {
-    const out = /* @__PURE__ */ new Map();
-    for (const [id, e] of this.entries) if (e.runner) out.set(id, e.runner);
-    return out;
-  }
-  debugInjectRunner(id, runner) {
-    const view = this.host.isolatedObjects().find((o) => o.id === id);
-    this.entries.set(id, {
-      runner,
-      chains: [],
-      plan: null,
-      worldW: view ? view.rtWidth / this.scale() : 1,
-      worldH: view ? view.rtHeight / this.scale() : 1
-    });
-  }
-  /** 去重告警（同一 key 只打印一次，防每帧刷屏）。 */
-  warnOnce(key, message) {
-    if (this.warned.has(key)) return;
-    this.warned.add(key);
-    console.warn(`[wallpaper-engine] ${message}`);
-  }
-  /** 串行队列入队（约束 3 / 2：只调用既有的 update，不在此建材质）。 */
-  enqueue(task) {
-    if (this.busy) {
-      this.queue.push(task);
-      return;
-    }
-    this.busy = true;
-    this.runTask(task);
-  }
-  runTask(task) {
-    let result;
-    try {
-      result = task();
-    } catch (e) {
-      console.warn("[wallpaper-engine] \u5BF9\u8C61\u6548\u679C\u94FE\u66F4\u65B0\u5931\u8D25:", e);
-      this.finishTask();
-      return;
-    }
-    Promise.resolve(result).catch((e) => {
-      console.warn("[wallpaper-engine] \u5BF9\u8C61\u6548\u679C\u94FE\u66F4\u65B0\u5931\u8D25:", e);
-    }).then(() => {
-      this.finishTask();
-    });
-  }
-  finishTask() {
-    const next = this.queue.shift();
-    if (next) {
-      this.runTask(next);
-      return;
-    }
-    this.busy = false;
-  }
-  mount(objId, chains, rtW, rtH) {
-    let entry = this.entries.get(objId);
-    if (!entry) {
-      entry = { runner: null, chains, plan: null, worldW: rtW / this.scale(), worldH: rtH / this.scale() };
-      this.entries.set(objId, entry);
-    }
-    entry.chains = chains;
-    entry.plan = buildEffectPlan(chains, { baseWidth: rtW, baseHeight: rtH });
-    if (!entry.runner) {
-      entry.runner = new EffectRunner(this.host.renderer, rtW, rtH, { load: weVRowOrderLoader() });
-    }
-    entry.runner.setPlan(entry.plan, chains, this.wallpaperId, { width: rtW, height: rtH });
-  }
-};
-
-// src/client/glow-stage.ts
-var GLOW_DEFAULTS = { threshold: 0.65, strength: 0.35 };
-var THRESHOLD_MAX = 0.99;
-var STRENGTH_MAX = 4;
-function clamp2(v, lo, hi) {
-  return Math.min(hi, Math.max(lo, v));
-}
-function normalizeGlowOptions(opts) {
-  const t = Number(opts?.threshold);
-  const s = Number(opts?.strength);
-  return {
-    threshold: Number.isFinite(t) ? clamp2(t, 0, THRESHOLD_MAX) : GLOW_DEFAULTS.threshold,
-    strength: Number.isFinite(s) ? clamp2(s, 0, STRENGTH_MAX) : GLOW_DEFAULTS.strength
-  };
-}
-function glowLevelSizes(width, height) {
-  const out = [];
-  let w = Math.max(1, Math.floor(width));
-  let h = Math.max(1, Math.floor(height));
-  for (let i = 0; i < 3; i++) {
-    w = Math.max(1, Math.floor(w / 2));
-    h = Math.max(1, Math.floor(h / 2));
-    out.push({ w, h });
-  }
-  return out;
-}
-var VERT = `
-varying vec2 vUv;
-void main() {
-  vUv = uv;
-  gl_Position = vec4(position.xy, 0.0, 1.0);
-}
-`;
-var BRIGHT_FRAG = `
-uniform sampler2D tSrc;
-uniform float uThreshold;
-varying vec2 vUv;
-void main() {
-  vec3 c = texture2D(tSrc, vUv).rgb;
-  float luma = dot(c, vec3(0.299, 0.587, 0.114));
-  float k = max(0.0, luma - uThreshold) / max(1e-6, 1.0 - uThreshold);
-  gl_FragColor = vec4(c * k, 1.0);
-}
-`;
-var BLUR_FRAG = `
-uniform sampler2D tSrc;
-uniform vec2 uStep;
-varying vec2 vUv;
-void main() {
-  vec3 sum = vec3(0.0);
-  for (int i = 0; i < 9; i++) {
-    float o = float(i - 4);
-    sum += texture2D(tSrc, vUv + uStep * o).rgb;
-  }
-  gl_FragColor = vec4(sum / 9.0, 1.0);
-}
-`;
-var COPY_FRAG = `
-uniform sampler2D tSrc;
-varying vec2 vUv;
-void main() {
-  gl_FragColor = vec4(texture2D(tSrc, vUv).rgb, 1.0);
-}
-`;
-var COMPOSITE_FRAG = `
-uniform sampler2D tBase;
-uniform sampler2D tL1;
-uniform sampler2D tL2;
-uniform sampler2D tL3;
-uniform float uStrength;
-varying vec2 vUv;
-void main() {
-  vec3 base = texture2D(tBase, vUv).rgb;
-  vec3 glow = (texture2D(tL1, vUv).rgb + texture2D(tL2, vUv).rgb + texture2D(tL3, vUv).rgb) / 3.0;
-  gl_FragColor = vec4(clamp(base + glow * uStrength, 0.0, 1.0), 1.0);
-}
-`;
-var BLUR_RADII = [4, 6, 8];
-function rtOptions() {
-  return {
-    type: HalfFloatType,
-    // 浮点 RT：8 位在多次累加后会有 banding
-    format: RGBAFormat,
-    depthBuffer: false,
-    stencilBuffer: false,
-    generateMipmaps: false,
-    minFilter: LinearFilter,
-    magFilter: LinearFilter,
-    wrapS: ClampToEdgeWrapping,
-    // §5.19：RT 必须 CLAMP
-    wrapT: ClampToEdgeWrapping
-  };
-}
-function createGlowStage(width, height, opts) {
-  if (!(width > 0) || !(height > 0)) return null;
-  let options = normalizeGlowOptions(opts);
-  const quadScene = new Scene();
-  const quadCamera = new Camera();
-  const geometry = new PlaneGeometry(2, 2);
-  const placeholderMat = new MeshBasicMaterial();
-  const mesh = new Mesh(geometry, placeholderMat);
-  quadScene.add(mesh);
-  const brightMat = new ShaderMaterial({ vertexShader: VERT, fragmentShader: BRIGHT_FRAG, uniforms: { tSrc: { value: null }, uThreshold: { value: options.threshold } }, depthTest: false, depthWrite: false });
-  const blurMat = new ShaderMaterial({ vertexShader: VERT, fragmentShader: BLUR_FRAG, uniforms: { tSrc: { value: null }, uStep: { value: new Vector2() } }, depthTest: false, depthWrite: false });
-  const copyMat = new ShaderMaterial({ vertexShader: VERT, fragmentShader: COPY_FRAG, uniforms: { tSrc: { value: null } }, depthTest: false, depthWrite: false });
-  const compositeMat = new ShaderMaterial({ vertexShader: VERT, fragmentShader: COMPOSITE_FRAG, uniforms: { tBase: { value: null }, tL1: { value: null }, tL2: { value: null }, tL3: { value: null }, uStrength: { value: options.strength } }, depthTest: false, depthWrite: false });
-  let baseRT = null;
-  let levelRTs = [];
-  let levelSizes = [];
-  let glowFailed = false;
-  let disposed = false;
-  let baseRendered = false;
-  let hooked = false;
-  let hookSpent = false;
-  let hookedRenderer = null;
-  let prevOnShaderError;
-  function shaderErrorDetail(gl, program, vs, fs) {
-    const g = gl;
-    const take = (name, x) => {
-      const fn = g?.[name];
-      if (!x || typeof fn !== "function") return "";
-      try {
-        return (fn.call(g, x) ?? "").trim();
-      } catch {
-        return "";
-      }
-    };
-    return [
-      ["vertex", take("getShaderInfoLog", vs)],
-      ["fragment", take("getShaderInfoLog", fs)],
-      ["program", take("getProgramInfoLog", program)]
-    ].filter(([, text]) => text).map(([kind, text]) => `${kind}: ${text}`).join(" | ");
-  }
-  function installShaderErrorHook(r) {
-    if (hooked || hookSpent) return;
-    hookSpent = true;
-    hooked = true;
-    hookedRenderer = r;
-    const dbg = r.debug;
-    if (!dbg) return;
-    prevOnShaderError = dbg.onShaderError;
-    dbg.onShaderError = (...args) => {
-      glowFailed = true;
-      const detail = shaderErrorDetail(args[0], args[1], args[2], args[3]);
-      console.warn("[wallpaper-engine] \u5E94\u7528\u7EA7 Glow \u7684 shader \u7F16\u8BD1/\u94FE\u63A5\u5931\u8D25\uFF0C\u5DF2\u964D\u7EA7\u4E3A\u76F4\u6E32" + (detail ? `\uFF1A${detail}` : ""));
-      try {
-        prevOnShaderError?.(...args);
-      } catch {
-      }
-    };
-  }
-  function removeShaderErrorHook() {
-    if (!hooked) return;
-    const dbg = hookedRenderer ? hookedRenderer.debug : void 0;
-    if (dbg) dbg.onShaderError = prevOnShaderError;
-    hooked = false;
-    hookedRenderer = null;
-    prevOnShaderError = void 0;
-  }
-  const rtCount = () => (baseRT ? 1 : 0) + levelRTs.length;
-  function buildTargets(w, h) {
-    disposeTargets();
-    baseRT = new WebGLRenderTarget(Math.max(1, w), Math.max(1, h), rtOptions());
-    levelSizes = glowLevelSizes(w, h);
-    levelRTs = [];
-    for (const s of levelSizes) {
-      levelRTs.push(new WebGLRenderTarget(s.w, s.h, rtOptions()));
-      levelRTs.push(new WebGLRenderTarget(s.w, s.h, rtOptions()));
-    }
-  }
-  function disposeTargets() {
-    baseRT?.dispose();
-    baseRT = null;
-    for (const rt of levelRTs) rt.dispose();
-    levelRTs = [];
-  }
-  function runPass(r, mat, dst) {
-    mesh.material = mat;
-    if (dst) renderIntoRenderTarget(r, dst, quadScene, quadCamera);
-    else {
-      r.setRenderTarget(null);
-      r.render(quadScene, quadCamera);
-    }
-  }
-  function blurLevel(r, idx, a, b) {
-    const radius = BLUR_RADII[idx];
-    const size = levelSizes[idx];
-    blurMat.uniforms.tSrc.value = a.texture;
-    blurMat.uniforms.uStep.value.set(radius / 4 / size.w, 0);
-    runPass(r, blurMat, b);
-    blurMat.uniforms.tSrc.value = b.texture;
-    blurMat.uniforms.uStep.value.set(0, radius / 4 / size.h);
-    runPass(r, blurMat, a);
-  }
-  function copyBaseToCanvas(r) {
-    try {
-      copyMat.uniforms.tSrc.value = baseRT.texture;
-      runPass(r, copyMat, null);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-  function renderGlowPasses(r) {
-    const [l1a, l1b, l2a, l2b, l3a, l3b] = levelRTs;
-    brightMat.uniforms.tSrc.value = baseRT.texture;
-    runPass(r, brightMat, l1a);
-    blurLevel(r, 0, l1a, l1b);
-    copyMat.uniforms.tSrc.value = l1a.texture;
-    runPass(r, copyMat, l2a);
-    blurLevel(r, 1, l2a, l2b);
-    copyMat.uniforms.tSrc.value = l2a.texture;
-    runPass(r, copyMat, l3a);
-    blurLevel(r, 2, l3a, l3b);
-    compositeMat.uniforms.tBase.value = baseRT.texture;
-    compositeMat.uniforms.tL1.value = l1a.texture;
-    compositeMat.uniforms.tL2.value = l2a.texture;
-    compositeMat.uniforms.tL3.value = l3a.texture;
-    compositeMat.uniforms.uStrength.value = options.strength;
-    runPass(r, compositeMat, null);
-  }
-  buildTargets(width, height);
-  return {
-    apply(r, scene, camera) {
-      if (disposed) return;
-      if (glowFailed) {
-        r.setRenderTarget(null);
-        r.render(scene, camera);
-        return;
-      }
-      try {
-        baseRendered = false;
-        renderIntoRenderTarget(r, baseRT, scene, camera);
-        baseRendered = true;
-        installShaderErrorHook(r);
-        renderGlowPasses(r);
-      } catch (e) {
-        glowFailed = true;
-        console.warn("[wallpaper-engine] \u5E94\u7528\u7EA7 Glow \u5931\u8D25\uFF0C\u5DF2\u964D\u7EA7\u4E3A\u76F4\u6E32\uFF1A" + String(e?.message ?? e));
-        if (baseRendered && copyBaseToCanvas(r)) return;
-        r.setRenderTarget(null);
-        r.render(scene, camera);
-      } finally {
-        removeShaderErrorHook();
-      }
-    },
-    resize(w, h) {
-      if (disposed) return;
-      if (!(w > 0) || !(h > 0)) return;
-      buildTargets(w, h);
-    },
-    setOptions(o) {
-      options = normalizeGlowOptions(o);
-      brightMat.uniforms.uThreshold.value = options.threshold;
-      compositeMat.uniforms.uStrength.value = options.strength;
-    },
-    dispose() {
-      if (disposed) return;
-      disposed = true;
-      removeShaderErrorHook();
-      disposeTargets();
-      geometry.dispose();
-      placeholderMat.dispose();
-      brightMat.dispose();
-      blurMat.dispose();
-      copyMat.dispose();
-      compositeMat.dispose();
-    },
-    // 仅供测试观测（不参与渲染语义）
-    get rtCount() {
-      return rtCount();
-    },
-    get levelSizes() {
-      return levelSizes;
-    },
-    get options() {
-      return options;
-    },
-    get glowFailed() {
-      return glowFailed;
-    }
-  };
-}
-
-// src/client/settings.ts
-var NS = "wallpaper-engine";
-var DEFAULTS = {
-  selectedWallpaperId: "",
-  wallpaperDir: "",
-  weAssetsDir: "",
-  overlayOpacity: 0.35,
-  blurEnabled: false,
-  blurRadius: 12,
-  kenBurns: true,
-  // 光晕默认值 = 2026-09-21 用户在真机面板上定档（低阈值保留光晕、低强度压住过曝；
-  // 旧 A 档 0.65/1.0 在亮部多的壁纸上过曝，见 AGENT.md §7.1）。
-  glowEnabled: true,
-  glowThreshold: 0.65,
-  glowStrength: 0.35,
-  paused: false,
-  pauseOnHidden: true,
-  qualityScale: 1
-};
-var settingsCtx = null;
-var lastGood = null;
-function setSettingsCtx(ctx) {
-  settingsCtx = ctx;
-  lastGood = null;
-}
-function settingsRemote() {
-  return settingsCtx?.remote?.settings ?? null;
-}
-async function readClientSettings() {
-  const remote = settingsRemote();
-  if (remote) {
-    try {
-      const resp = await remote.describe();
-      const value = resp?.ok ? resp.value : void 0;
-      if (typeof value === "object" && value !== null) {
-        const namespaces = value.namespaces;
-        const nsRow = namespaces?.find((n) => n.ns === NS);
-        const nsValue = nsRow?.value;
-        if (typeof nsValue === "object" && nsValue !== null) {
-          lastGood = { ...lastGood ?? DEFAULTS, ...nsValue };
-          return { ...lastGood };
-        }
-      }
-    } catch {
-    }
-  }
-  return { ...lastGood ?? DEFAULTS };
-}
-async function writeClientSettings(patch) {
-  const remote = settingsRemote();
-  if (!remote) return;
-  try {
-    await remote.update(NS, patch, void 0);
-  } catch {
-  }
-}
-var USERPROP_PREFIX = "we:userprop:";
-function getUserPropertyValue(key) {
-  if (typeof localStorage === "undefined") return void 0;
-  const raw = localStorage.getItem(USERPROP_PREFIX + key);
-  if (raw === null) return void 0;
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return void 0;
-  }
-}
 
 // src/client/text-script.ts
 var STEP_BUDGET = 1e6;
@@ -29615,14 +28928,8 @@ function bootstrap(ctx) {
     layer = createBackgroundLayer(root);
     controller = createWallpaperController(layer, {
       fetchList: async () => (await fetch("/wallpapers/list")).json(),
-      // Task 5：three.js 播放路径（背景 + 粒子）设为**默认**；wasm/WebGPU 路径保留作备用。
-      // three 创建失败时回退到 wasm（three-renderer 内部/controller 兜底），避免白屏。
+      // three.js 播放器是**唯一** scene 路径；渲染失败/零可见对象 → controller 回退 preview 图。
       sceneRenderer
-      // Task 8 回退链（spec §7 第 1/2/3 条，三级语义）：
-      //   1. 无 WebGPU → createWasmSceneRenderer() 返回 null → 直接用 JS/Three.js 渲染器；
-      //   2. wasm 加载/初始化失败（render resolve false）→ 组合层降级调用 JS 渲染器；
-      //   3. wasm 与 JS 都渲染失败（零对象等，resolve false）→ controller 统一走 preview 图回退。
-      // wasm-renderer 保持单一职责：WebGPU 可用时尝试 wasm，失败返回 false 由组合层降级。
     });
     setWallpaperSelectHandler((id) => selectWallpaper(id));
     setWallpaperRuntimeHandler((patch) => {

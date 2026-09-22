@@ -1,5 +1,5 @@
 import { build } from 'esbuild';
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -33,47 +33,8 @@ const WRAP_TAIL = `
 });
 `;
 
-// Task 9（@webgpu/glslang 浏览器打包）：@webgpu/glslang 的包入口是 dist/node-devel
-// （Emscripten Node 版，运行读 fs/path/__dirname/process），在浏览器 bundle 会报
-// "Could not resolve fs/path"。改指向 dist/web-devel 构建（含 export default 的异步
-// 工厂 + .wasm asset，Emscripten web 版用 fetch 异步加载 wasm）。
-//   - alias：把 `@webgpu/glslang` 直接重定向到 web-devel 的 glslang.js。
-//   - loader：.wasm 作为 asset 处理（file loader）。本工程实际靠下方 fs 复制把
-//     glslang.wasm 放到 dist/static/，loader 在此仅为「若图里 import 了 .wasm 则按
-//     asset 产出」的安全兜底。
-//   - glslang-web-patch 插件：web-devel 工厂的 locateFile() 硬编码 `import.meta.url`
-//     定位 .wasm，而本 bundle 是 CJS（import.meta 为空对象 → 运行 TypeError）。改为读
-//     globalThis.__DSH_GLSLANG_BASE__（由 glsl-to-naga 侧设 /wallpapers/static/），从而
-//     在 DSH 插件静态路由下正确 fetch glslang.wasm（与 we_scene_wasm_bg.wasm 一致）。
-const GLSLANG_WEB = join(here, '..', 'node_modules', '@webgpu', 'glslang', 'dist', 'web-devel', 'glslang.js');
-const glslangWebPlugin = {
-  name: 'glslang-web-patch',
-  setup(build) {
-    build.onLoad({ filter: /web-devel[\\/]glslang\.js$/ }, (args) => {
-      let src = readFileSync(args.path, 'utf8');
-      // ① locateFile()：web-devel 工厂用 `import.meta.url` 定位 .wasm，而本 bundle 是 CJS
-      //   （import.meta 为空对象 → 运行 TypeError）。改为读 globalThis.__DSH_GLSLANG_BASE__。
-      src = src.replace(
-        /locateFile\(\)\s*\{[\s\S]*?\}/,
-        "locateFile(p) {\n" +
-          "          const base = (typeof globalThis !== 'undefined' && globalThis.__DSH_GLSLANG_BASE__) || '';\n" +
-          "          return base + (p || 'glslang.wasm');\n" +
-          "        }",
-      );
-      // ② web-devel 是双模文件（同时含 `module.exports = Module` 的 CJS 分支 + `export default`）。
-      //   esbuild CJS 输出会真实提供 module/exports，使 `module.exports = Module` 分支执行，
-      //   覆盖 ESM 命名空间（default），运行时报
-      //   "failed to apply loader entry ... cannot set property compileGLSLZeroCopy without provide"。
-      //   移除该 CJS/AMD 导出块（仅保留 ESM default），由 esbuild 做 ESM→CJS 转换。
-      src = src.replace(
-        /if \(typeof exports === 'object' && typeof module === 'object'\)[\s\S]*?exports\["Module"\] = Module;\s*/,
-        '// web-devel 的 CJS/AMD 导出已由 build-client.mjs 移除（仅保留 ESM default，避免覆盖命名空间）\n',
-      );
-      return { contents: src, loader: 'js' };
-    });
-  },
-};
-
+// 2026-09-22：`@webgpu/glslang` 的打包适配（alias + glslang-web-patch + glslang.wasm 复制）
+// 已随未接入的 WebGPU 渲染路径（src/client/shader/glsl-to-naga.ts）一起删除 —— 主路径不再需要它。
 const result = await build({
   entryPoints: ['src/client/index.ts'],
   bundle: true,
@@ -84,9 +45,6 @@ const result = await build({
   external: EXTERNAL,
   write: false,
   sourcemap: true,
-  alias: { '@webgpu/glslang': GLSLANG_WEB },
-  loader: { '.wasm': 'file' },
-  plugins: [glslangWebPlugin],
 });
 
 const mainOut = result.outputFiles.find((f) => f.path.endsWith('client.js'));
@@ -98,11 +56,9 @@ if (mapOut) writeFileSync('dist/client.js.map', mapOut.text);
 
 console.log('client bundle written to dist/client.js (external: ' + EXTERNAL.join(', ') + ')');
 
-// Task 8：把 wasm 引擎产物（wasm/pkg/）复制到 dist/static/，由 host 的
-// /wallpapers/static/<file> 路由服务（src/host/routes.ts）。wasm-renderer 运行时
-// 直接动态 import 入口（we_scene_wasm.js）并调用其默认导出 __wbg_init(wasmUrl)
-// 初始化——产物是 wasm-bindgen --target web 格式（单文件 glue + 独立 .wasm，
-// 入口内 import.meta.url 定位 wasm，默认导出即初始化函数）。
+// 把 wasm 引擎产物（wasm/pkg/）复制到 dist/static/，由 host 的 /wallpapers/static/<file> 路由服务。
+// 主路径用它加载 CpuParticleSim（纯 CPU 粒子模拟，不需要 WebGPU）。产物是 wasm-bindgen
+// --target web 格式（单文件 glue + 独立 .wasm，入口内 import.meta.url 定位 wasm，默认导出即初始化函数）。
 const pkgDir = join(here, '..', 'wasm', 'pkg');
 const outStatic = join(here, '..', 'dist', 'static');
 
@@ -122,20 +78,8 @@ for (const file of ['we_scene_wasm.js', 'we_scene_wasm_bg.wasm']) {
 }
 console.log('wasm assets copied to dist/static/ (we_scene_wasm.js, we_scene_wasm_bg.wasm)');
 
-// Task 9（@webgpu/glslang 浏览器打包）：把 web-devel 的 glslang.wasm 复制到 dist/static/，
-// 由 host 的 /wallpapers/static/glslang.wasm 路由服务。web-devel 工厂的 locateFile() 经
-// glslang-web-patch 插件改为读 globalThis.__DSH_GLSLANG_BASE__（= /wallpapers/static/），
-// 运行时 fetch 本文件；与 we_scene_wasm_bg.wasm 走同一静态路由，MIME 为 application/wasm。
-const GLSLANG_WASM_SRC = join(here, '..', 'node_modules', '@webgpu', 'glslang', 'dist', 'web-devel', 'glslang.wasm');
-if (existsSync(GLSLANG_WASM_SRC)) {
-  copyFileSync(GLSLANG_WASM_SRC, join(outStatic, 'glslang.wasm'));
-  console.log('glslang.wasm copied to dist/static/ (@webgpu/glslang web-devel)');
-} else {
-  console.warn(`[build:client] 未找到 ${GLSLANG_WASM_SRC}，跳过 glslang.wasm 复制（真实效果 shader 编译链不可用）`);
-}
-
 // text 脚本沙箱（quickjs）：wasm 复制到 dist/static/，运行时用 RELEASE_SYNC 变体 +
-// wasmLocation = '/wallpapers/static/quickjs.wasm'。与 glslang 不同：缺失即中止构建
+// wasmLocation = '/wallpapers/static/quickjs.wasm'。缺失即中止构建
 // （否则线上会静默退化成「脚本不执行」，用户看到的是空文本层）。
 const QUICKJS_WASM_SRC = join(here, '..', 'node_modules', '@jitl', 'quickjs-wasmfile-release-sync', 'dist', 'emscripten-module.wasm');
 if (!existsSync(QUICKJS_WASM_SRC)) {
@@ -149,10 +93,9 @@ console.log(`quickjs.wasm copied to dist/static/ (${(statSync(QUICKJS_WASM_SRC).
 // 这些纹理（fog1 / halo / light_shafts …）是 Wallpaper Engine 的第三方素材，早先按
 // 「静态化」方案复制成 `ptex-<斜杠转横线>.tex` 供 client 直接 fetch。代价是它们会被
 // `files: ["dist"]` 一并打进 npm 包 —— 实测解包体积 43.2 MB 里有 33.5 MB 是这批纹理
-// （245 个文件里 164 个），既无谓放大包体，也不符合 `.gitignore` 里「不再分发第三方素材」
-// 的既定意图。
+// （245 个文件里 164 个），既无谓放大包体，也不符合 `.gitignore` 里「不再分发第三方素材」的既定意图。
 //
-// 现在 client（`wasm-renderer.resolveParticleMaterial`）直接请求 host 路由
+// 现在 client（`scene-assets.resolveParticleMaterial`）直接请求 host 路由
 // `/wallpapers/particle-texture?name=particle/<路径>`，由 host 从**用户本机**的 WE 安装目录
 // `<weAssetsDir>/assets/materials` 读取原始字节（见 `src/host/routes.ts`）。
 // 因此本步骤无需任何构建期文件操作。

@@ -47,10 +47,6 @@ export declare function uvWindow(unclamped: number, clamped: number): {
 };
 export declare function createCompositeGeometry(worldW: number, worldH: number, rtW: number, rtH: number): THREE.PlaneGeometry;
 export declare function flipGeometryUvY(geometry: THREE.BufferGeometry): void;
-export declare function containRange(width: number, height: number, viewAspect: number): {
-    w: number;
-    h: number;
-};
 export declare function coverRange(width: number, height: number, viewAspect: number): {
     w: number;
     h: number;

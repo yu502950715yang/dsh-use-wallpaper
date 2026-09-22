@@ -1,5 +1,6 @@
 import { type WorldTransform } from './scene-graph.js';
-import type { LoadWasm, SceneRendererLike } from './wasm-renderer.js';
+import type { LoadWasm } from './wasm-loader.js';
+import type { SceneRendererLike } from './wallpaper-controller.js';
 import type { SceneDescription } from '../shared/types.js';
 import { type CompiledEffectPass } from './shader/effect-chain.js';
 import type { TextScriptRuntime } from './text-script.js';
