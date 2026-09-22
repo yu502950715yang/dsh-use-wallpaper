@@ -1,0 +1,5 @@
+export declare const PARTICLE_MESH_VERT = "\nattribute vec4 color;\nvarying vec2 v_TexCoord;\nvarying vec4 v_Color;\nvoid main() {\n  v_TexCoord = uv;\n  v_Color = color;\n  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);\n}\n";
+/** 颜色层（pkg 内缺 we2d_particle_mesh → 内置推断实现）。 */
+export declare const PARTICLE_MESH_FRAG = "\nuniform sampler2D g_Texture0;\nuniform vec4 g_Texture0Resolution;\nvarying vec2 v_TexCoord;\nvarying vec4 v_Color;\nvoid main() {\n  vec2 mapped = g_Texture0Resolution.zw / g_Texture0Resolution.xy;\n  vec4 c = texture2D(g_Texture0, v_TexCoord * mapped);\n  gl_FragColor = vec4(c.rgb * v_Color.rgb, c.a * v_Color.a);\n}\n";
+/** alpha 层（pkg 内有同名源时优先用 pkg，这里作兜底）。 */
+export declare const PARTICLE_ALPHA_FRAG = "\nuniform sampler2D g_Texture0;\nuniform vec4 g_Texture0Resolution;\nvarying vec2 v_TexCoord;\nvarying vec4 v_Color;\nvoid main() {\n  vec2 mapped = g_Texture0Resolution.zw / g_Texture0Resolution.xy;\n  vec4 c = texture2D(g_Texture0, v_TexCoord * mapped);\n  gl_FragColor = vec4(1.0, 1.0, 1.0, c.a * v_Color.a);\n}\n";

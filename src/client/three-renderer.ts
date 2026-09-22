@@ -19,11 +19,11 @@
 //   - 可视性（visible.user/script 绑定）**只对 text 对象生效**（2026-09-21）；image/particle 的
 //     visible 仍未过滤（全库 22 个非平凡绑定里 16 个在这两类上）；
 //     loadSceneToThree 沿用「缺物件 spec/工厂则跳过该粒子对象」语义，绝不全屏失败。
-import type { Texture } from 'three';
+import type { Material, Texture } from 'three';
 import { loadSceneToThree, resolvePixelRatio, type LoadedParticleAssets, type ParticleSim, type ThreeSceneLoadResult } from './threejs-player.js';
 import { parseSceneJson } from './scene-json.js';
 import { resolveWorldTransforms, type WorldTransform } from './scene-graph.js';
-import { resolveImageTexture } from './scene-renderer.js';
+import { resolveImageTexture, resolveTexPath } from './scene-renderer.js';
 import { loadTexTexture } from './tex-loader.js';
 import { defaultLoadWasm, resolveParticleMaterial } from './wasm-renderer.js';
 import type { LoadWasm, SceneRendererLike, WasmSceneModule } from './wasm-renderer.js';
@@ -43,6 +43,8 @@ import { detectScriptPattern, formatClockText } from './script-patterns.js';
 import { resolveVisibility } from './visibility.js';
 import { SceneScriptHost } from './scene-script-host.js';
 import { applyLayerState } from './layer-state.js';
+import { DynamicMeshRegistry } from './dynamic-mesh.js';
+import { createMeshMaterial, parseMeshMaterial } from './mesh-material.js';
 
 // wasm `CpuParticleSim` 的构造器形态（wasm-bindgen 静态 `new`；`ParticleSim` 接口见
 // threejs-player.ts：update/vertices/frame_count/set_frame_count/particle_count/free）。
@@ -234,6 +236,8 @@ export function createThreeSceneRenderer(opts?: {
   let currentScriptBindings: TextScriptBinding[] = [];
   // 本次装配的 SceneScript 运行时（visible.script）：同样持有 quickjs ctx/handle，teardown 释放。
   let currentScriptHost: SceneScriptHost | null = null;
+  // 本次装配的动态网格注册表（脚本 createModelData/createLayer 建的运行时 mesh），teardown 释放。
+  let currentMeshRegistry: DynamicMeshRegistry | null = null;
   // canvas 上的点击监听（脚本的 cursorClick；3798688689 的「切换按钮」靠它触发切换特效）。
   let scriptClick: (() => void) | null = null;
   let scriptClickTarget: HTMLCanvasElement | null = null;
@@ -264,6 +268,8 @@ export function createThreeSceneRenderer(opts?: {
     scriptClick = null;
     currentScriptHost?.dispose();
     currentScriptHost = null;
+    currentMeshRegistry?.dispose();
+    currentMeshRegistry = null;
   };
   // 当前生效的 Glow 三值：运行期下发 > 装配时读到的设置（threshold/strength 缺省交给 glow-stage 归一）。
   const effectiveGlow = () => ({
@@ -567,17 +573,54 @@ export function createThreeSceneRenderer(opts?: {
         // 装配 SceneScript 运行时。失败（quickjs 不可用）→ host 为 null，onFrame 直接返回，
         // 画面等于现状；绝不把脚本异常抛进帧循环。
         if (scriptSources.length > 0) {
+          // ── 动态网格（2026-09-22）：脚本 createModelData/createLayer/applyData 的落点 ──
+          // 材质表先为空、materialFor 返回兜底白图；脚本装载期（顶层 registerAsset）收集到路径后
+          // 立刻解析填表 ⇒ 最前面 1~2 帧用兜底材质，之后换真实材质（spec §6.4 的降级语义）。
+          const materialTable = new Map<string, Material>();
+          const materialPaths = new Set<string>();
+          const fallbackMaterial = createMeshMaterial(null, null);
+          const meshRegistry = new DynamicMeshRegistry({
+            parent: result.player.scene,
+            materialFor: (p) => (p ? materialTable.get(p) ?? fallbackMaterial : fallbackMaterial),
+            onWarn: (m) => warnOnce(`mesh:${id}`, m),
+          });
+          currentMeshRegistry = meshRegistry;
+
           currentScriptHost = await SceneScriptHost.create({
             scripts: scriptSources,
             userProperties: userProps,
+            dynamicMesh: meshRegistry,
+            onAsset: (p) => materialPaths.add(p),
             onWarn: (m) => console.warn(`[wallpaper-engine] ${m}`),
           });
+          // 解析材质资产：material json → three 材质；纹理 `source/xxx` → materials/source/xxx.tex
+          for (const p of materialPaths) {
+            if (materialTable.has(p)) continue;
+            try {
+              const matRaw = await loadFile(p.endsWith('.json') ? p : `${p}.json`);
+              if (!matRaw) { warnOnce(`mesh-mat:${id}:${p}`, `动态网格材质文件缺失：${p}`); continue; }
+              const spec = parseMeshMaterial(new TextDecoder().decode(matRaw));
+              if (!spec) { warnOnce(`mesh-mat:${id}:${p}`, `动态网格材质解析失败：${p}`); continue; }
+              let tex: Texture | null = null;
+              if (spec.texturePath) {
+                // 纹理走与 resolveImageTexture **同源**的路径推导 + 路由 URL（不要用 Blob URL：
+                // loadTexTexture 内部按 `/wallpapers/...` 路由与 .tex 解码链路工作）。
+                const texPath = resolveTexPath(p, spec.texturePath);
+                tex = await loadTexTexture(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(texPath)}`);
+                if (!tex) warnOnce(`mesh-tex:${id}:${texPath}`, `动态网格纹理加载失败：${texPath}（白图兜底）`);
+              }
+              const mat = createMeshMaterial(spec, tex);
+              materialTable.set(p, mat);
+              // 回填：脚本 init 期已建好的 mesh 此刻还挂着兜底白图材质（材质解析是异步的）
+              meshRegistry.setMaterialForPath(p, mat);
+            } catch { /* 单个材质失败 → 保持兜底白图，不影响其他网格 */ }
+          }
           if (currentScriptHost) {
             scriptClick = () => currentScriptHost?.click();
             scriptClickTarget = fg;
             fg.addEventListener?.('click', scriptClick);
             console.log(
-              `[three] scene scripts id=${id} collected=${scriptSources.length} loaded=${currentScriptHost.scriptCount} active=${currentScriptHost.activeCount}`,
+              `[three] scene scripts id=${id} collected=${scriptSources.length} loaded=${currentScriptHost.scriptCount} active=${currentScriptHost.activeCount} meshes=${meshRegistry.modelCount} materials=${materialTable.size}`,
             );
           }
         }

@@ -15,6 +15,7 @@ import { newQuickJSWASMModuleFromVariant, newVariant, RELEASE_SYNC } from 'quick
 import type { QuickJSContext, QuickJSRuntime, QuickJSHandle, QuickJSWASMModule } from 'quickjs-emscripten';
 import type { LayerStateTable, LayerWrite } from './layer-state.js';
 import type { AnimPlayback, AnimRegistry } from './scene-anim.js';
+import type { DynamicMeshRegistry } from './dynamic-mesh.js';
 
 export interface SceneScriptVmOptions {
   userProperties: Record<string, unknown>;
@@ -23,6 +24,10 @@ export interface SceneScriptVmOptions {
   onWarn?: (msg: string) => void;
   /** 单次脚本调用的指令预算（缺省 50M）。测试可传小值，验证「预算每次调用都重置」。 */
   stepBudget?: number;
+  /** 动态网格注册表；缺省时 createModelData/createLayer 仍是安全的哑对象（其他壁纸零影响）。 */
+  dynamicMesh?: DynamicMeshRegistry;
+  /** engine.registerAsset 的回调：装载期按此收集材质资产路径。 */
+  onAsset?: (materialPath: string) => void;
 }
 
 // 单脚本一次调用的指令预算：正常脚本远低于此；死循环在此被中断。
@@ -132,11 +137,53 @@ function __mkLayer(key) {
   return __layerCache[key];
 }
 
+// 运行时图层（脚本 createLayer 建的动态网格层）：visible 读写走宿主，其余方法走兜底。
+var __rtLayerCache = {};
+function __mkRuntimeLayer(id) {
+  if (__rtLayerCache[id]) return __rtLayerCache[id];
+  var o = {
+    __layerId: id,
+    alpha: 1, baseAlpha: 1, opacity: 1,
+    get visible() { return __host.layerVisible(id); },
+    set visible(v) { __host.setLayerVisible(id, !!v); },
+    get shown() { return __host.layerVisible(id); },
+    set shown(v) { __host.setLayerVisible(id, !!v); },
+    getAnimation: function (n) { return __mkAnim('rtlayer:' + id, String(n)); },
+    getEffect: function () { return { visible: true, setMaterialProperty: __noop, getMaterialProperty: function () { return 0; } }; },
+    getModelData: function () { return __mkDummy('model'); },
+    setMaterialProperty: __noop,
+    getMaterialProperty: function () { return 0; },
+    setParent: __noop,
+    setVisible: function (v) { __host.setLayerVisible(id, !!v); return v; }
+  };
+  __rtLayerCache[id] = __wrap(o, 'rtlayer(' + id + ')');
+  return __rtLayerCache[id];
+}
+
 var thisScene = __wrap({
   getLayerByID: function (id) { return __mkLayer('id:' + id); },
   getLayer: function (n) { return __mkLayer('name:' + n); },
-  createLayer: function (o) { return __mkLayer('new:' + ((o && o.name) ? o.name : 'anon')); },
-  createModelData: function () { return __mkDummy('model'); }
+  // 动态网格（2026-09-22）：真实的 createModelData / createLayer 桥。脚本只透传句柄 ——
+  // 模型句柄带 __modelId、图层句柄带 __layerId；顶点每帧经 __host.applyMeshData 上传。
+  createModelData: function (o) {
+    var s = (o && o.shapes && o.shapes[0]) || {};
+    var vb = s.vertexBuffer;
+    var capacity = vb ? Math.floor(vb.length / 36) : 0; // 每 quad 36 floats（9 floats/顶点 × 4）
+    var mat = (s.material && s.material.__assetPath) ? s.material.__assetPath : null;
+    var id = __host.createModel({ capacity: capacity, vertexFormat: s.vertexFormat, materialPath: mat });
+    return {
+      __modelId: id,
+      applyData: function (d) {
+        var v = (d && d.vertexBuffer) ? d.vertexBuffer : vb;
+        if (v && v.buffer) __host.applyMeshData(id, v.buffer);
+      }
+    };
+  },
+  createLayer: function (o) {
+    var mid = (o && o.model && o.model.__modelId !== undefined) ? o.model.__modelId : -1;
+    var lid = __host.createLayer(mid, String((o && o.name) || 'anon'));
+    return __mkRuntimeLayer(lid);
+  }
 }, 'thisScene');
 var getLayerByID = thisScene.getLayerByID;
 var getLayer = thisScene.getLayer;
@@ -144,7 +191,7 @@ var createLayer = thisScene.createLayer;
 
 var engine = __wrap({
   userProperties: {},
-  registerAsset: function () { return __mkDummy('asset'); },
+  registerAsset: function (p) { __host.registerAsset(String(p)); return { __assetPath: String(p) }; },
   get frametime() { return __host.frametime(); }
 }, 'engine');
 var registerAsset = engine.registerAsset;
@@ -173,6 +220,10 @@ export class SceneScriptVm {
   private readonly state: LayerStateTable;
   private readonly anims: AnimRegistry;
   private readonly onWarn: (msg: string) => void;
+  /** 动态网格注册表（createModelData/createLayer/applyData 的真实落点）；缺省 = stub 行为。 */
+  private readonly mesh: DynamicMeshRegistry | null;
+  /** engine.registerAsset 的回调（装载期用它解析材质资产路径）。 */
+  private readonly onAsset: ((materialPath: string) => void) | null;
   private dt = 1 / 60;
   /** 单次脚本调用的指令预算（缺省 STEP_BUDGET；callOne 每次调用前重置）。 */
   private readonly stepBudget: number;
@@ -184,6 +235,8 @@ export class SceneScriptVm {
     this.state = opts.state;
     this.anims = opts.anims;
     this.onWarn = opts.onWarn ?? ((): void => { /* 生产静默 */ });
+    this.mesh = opts.dynamicMesh ?? null;
+    this.onAsset = opts.onAsset ?? null;
     this.stepBudget = Number.isFinite(opts.stepBudget) && (opts.stepBudget as number) > 0
       ? (opts.stepBudget as number)
       : STEP_BUDGET;
@@ -298,6 +351,47 @@ export class SceneScriptVm {
     define('animGetFrame', (k, n) => ctx.newNumber(this.anim(ctx.getString(k), ctx.getString(n)).getFrame()));
     define('frametime', () => ctx.newNumber(this.dt));
     define('log', () => { /* 生产静默；需要时在这里转发到宿主 console */ });
+
+    // ── 动态网格原语（2026-09-22）：createModelData / createLayer / applyData 的真实落点。
+    //    未注入 registry 时全部退化为安全空操作（其他壁纸零影响）。──
+    define('registerAsset', (pH) => { this.onAsset?.(ctx.getString(pH)); });
+    define('createModel', (specH) => {
+      if (!this.mesh) return ctx.newNumber(-1);
+      const spec = ctx.dump(specH) as { capacity?: unknown; vertexFormat?: unknown; materialPath?: unknown } | null;
+      const id = this.mesh.createModel({
+        capacity: Number(spec?.capacity ?? 0),
+        vertexFormat: Array.isArray(spec?.vertexFormat) ? (spec.vertexFormat as number[]) : [],
+        materialPath: typeof spec?.materialPath === 'string' ? spec.materialPath : null,
+      });
+      return ctx.newNumber(id === null ? -1 : id);
+    });
+    define('createLayer', (modelH, nameH) => {
+      if (!this.mesh) return ctx.newNumber(-1);
+      return ctx.newNumber(this.mesh.createLayer(ctx.getNumber(modelH), ctx.getString(nameH)));
+    });
+    // 顶点上传：quickjs 的 ArrayBuffer → 宿主 Float32Array 视图。
+    // ⚠️ getArrayBuffer 返回的是 `_Lifetime{ value: Uint8Array }`（wasm 内存视图，byteOffset 非 0），
+    // 不是 Uint8Array 本身 —— 必须经 `.value` 取，并用 (buffer, byteOffset, len) 建视图。
+    define('applyMeshData', (modelH, bufH) => {
+      if (!this.mesh) return;
+      try {
+        const lifetime = ctx.getArrayBuffer(bufH);
+        try {
+          const bytes = lifetime.value;
+          const f32 = bytes.byteOffset % 4 === 0
+            ? new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength >> 2)
+            : new Float32Array(bytes.slice().buffer);
+          this.mesh.applyData(ctx.getNumber(modelH), f32);
+        } finally {
+          lifetime.dispose();
+        }
+      } catch (e) {
+        // 非 ArrayBuffer / 已释放 / 未对齐 → 丢该帧，不抛进帧循环（但要可观测，否则静默失败）
+        this.onWarn(`动态网格顶点上传失败：${e instanceof Error ? e.message : String(e)}`);
+      }
+    });
+    define('layerVisible', (idH) => (this.mesh && this.mesh.isVisible(ctx.getNumber(idH)) ? ctx.true : ctx.false));
+    define('setLayerVisible', (idH, vH) => { this.mesh?.setVisible(ctx.getNumber(idH), ctx.dump(vH) === true); });
 
     ctx.setProp(ctx.global, '__host', host);
 

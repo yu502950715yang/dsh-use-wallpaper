@@ -28010,11 +28010,53 @@ function __mkLayer(key) {
   return __layerCache[key];
 }
 
+// \u8FD0\u884C\u65F6\u56FE\u5C42\uFF08\u811A\u672C createLayer \u5EFA\u7684\u52A8\u6001\u7F51\u683C\u5C42\uFF09\uFF1Avisible \u8BFB\u5199\u8D70\u5BBF\u4E3B\uFF0C\u5176\u4F59\u65B9\u6CD5\u8D70\u515C\u5E95\u3002
+var __rtLayerCache = {};
+function __mkRuntimeLayer(id) {
+  if (__rtLayerCache[id]) return __rtLayerCache[id];
+  var o = {
+    __layerId: id,
+    alpha: 1, baseAlpha: 1, opacity: 1,
+    get visible() { return __host.layerVisible(id); },
+    set visible(v) { __host.setLayerVisible(id, !!v); },
+    get shown() { return __host.layerVisible(id); },
+    set shown(v) { __host.setLayerVisible(id, !!v); },
+    getAnimation: function (n) { return __mkAnim('rtlayer:' + id, String(n)); },
+    getEffect: function () { return { visible: true, setMaterialProperty: __noop, getMaterialProperty: function () { return 0; } }; },
+    getModelData: function () { return __mkDummy('model'); },
+    setMaterialProperty: __noop,
+    getMaterialProperty: function () { return 0; },
+    setParent: __noop,
+    setVisible: function (v) { __host.setLayerVisible(id, !!v); return v; }
+  };
+  __rtLayerCache[id] = __wrap(o, 'rtlayer(' + id + ')');
+  return __rtLayerCache[id];
+}
+
 var thisScene = __wrap({
   getLayerByID: function (id) { return __mkLayer('id:' + id); },
   getLayer: function (n) { return __mkLayer('name:' + n); },
-  createLayer: function (o) { return __mkLayer('new:' + ((o && o.name) ? o.name : 'anon')); },
-  createModelData: function () { return __mkDummy('model'); }
+  // \u52A8\u6001\u7F51\u683C\uFF082026-09-22\uFF09\uFF1A\u771F\u5B9E\u7684 createModelData / createLayer \u6865\u3002\u811A\u672C\u53EA\u900F\u4F20\u53E5\u67C4 \u2014\u2014
+  // \u6A21\u578B\u53E5\u67C4\u5E26 __modelId\u3001\u56FE\u5C42\u53E5\u67C4\u5E26 __layerId\uFF1B\u9876\u70B9\u6BCF\u5E27\u7ECF __host.applyMeshData \u4E0A\u4F20\u3002
+  createModelData: function (o) {
+    var s = (o && o.shapes && o.shapes[0]) || {};
+    var vb = s.vertexBuffer;
+    var capacity = vb ? Math.floor(vb.length / 36) : 0; // \u6BCF quad 36 floats\uFF089 floats/\u9876\u70B9 \xD7 4\uFF09
+    var mat = (s.material && s.material.__assetPath) ? s.material.__assetPath : null;
+    var id = __host.createModel({ capacity: capacity, vertexFormat: s.vertexFormat, materialPath: mat });
+    return {
+      __modelId: id,
+      applyData: function (d) {
+        var v = (d && d.vertexBuffer) ? d.vertexBuffer : vb;
+        if (v && v.buffer) __host.applyMeshData(id, v.buffer);
+      }
+    };
+  },
+  createLayer: function (o) {
+    var mid = (o && o.model && o.model.__modelId !== undefined) ? o.model.__modelId : -1;
+    var lid = __host.createLayer(mid, String((o && o.name) || 'anon'));
+    return __mkRuntimeLayer(lid);
+  }
 }, 'thisScene');
 var getLayerByID = thisScene.getLayerByID;
 var getLayer = thisScene.getLayer;
@@ -28022,7 +28064,7 @@ var createLayer = thisScene.createLayer;
 
 var engine = __wrap({
   userProperties: {},
-  registerAsset: function () { return __mkDummy('asset'); },
+  registerAsset: function (p) { __host.registerAsset(String(p)); return { __assetPath: String(p) }; },
   get frametime() { return __host.frametime(); }
 }, 'engine');
 var registerAsset = engine.registerAsset;
@@ -28040,6 +28082,10 @@ var SceneScriptVm = class _SceneScriptVm {
   state;
   anims;
   onWarn;
+  /** 动态网格注册表（createModelData/createLayer/applyData 的真实落点）；缺省 = stub 行为。 */
+  mesh;
+  /** engine.registerAsset 的回调（装载期用它解析材质资产路径）。 */
+  onAsset;
   dt = 1 / 60;
   /** 单次脚本调用的指令预算（缺省 STEP_BUDGET；callOne 每次调用前重置）。 */
   stepBudget;
@@ -28051,6 +28097,8 @@ var SceneScriptVm = class _SceneScriptVm {
     this.anims = opts.anims;
     this.onWarn = opts.onWarn ?? (() => {
     });
+    this.mesh = opts.dynamicMesh ?? null;
+    this.onAsset = opts.onAsset ?? null;
     this.stepBudget = Number.isFinite(opts.stepBudget) && opts.stepBudget > 0 ? opts.stepBudget : STEP_BUDGET2;
     this.budget = this.stepBudget;
   }
@@ -28154,6 +28202,42 @@ var SceneScriptVm = class _SceneScriptVm {
     define("animGetFrame", (k, n) => ctx.newNumber(this.anim(ctx.getString(k), ctx.getString(n)).getFrame()));
     define("frametime", () => ctx.newNumber(this.dt));
     define("log", () => {
+    });
+    define("registerAsset", (pH) => {
+      this.onAsset?.(ctx.getString(pH));
+    });
+    define("createModel", (specH) => {
+      if (!this.mesh) return ctx.newNumber(-1);
+      const spec = ctx.dump(specH);
+      const id = this.mesh.createModel({
+        capacity: Number(spec?.capacity ?? 0),
+        vertexFormat: Array.isArray(spec?.vertexFormat) ? spec.vertexFormat : [],
+        materialPath: typeof spec?.materialPath === "string" ? spec.materialPath : null
+      });
+      return ctx.newNumber(id === null ? -1 : id);
+    });
+    define("createLayer", (modelH, nameH) => {
+      if (!this.mesh) return ctx.newNumber(-1);
+      return ctx.newNumber(this.mesh.createLayer(ctx.getNumber(modelH), ctx.getString(nameH)));
+    });
+    define("applyMeshData", (modelH, bufH) => {
+      if (!this.mesh) return;
+      try {
+        const lifetime = ctx.getArrayBuffer(bufH);
+        try {
+          const bytes = lifetime.value;
+          const f32 = bytes.byteOffset % 4 === 0 ? new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength >> 2) : new Float32Array(bytes.slice().buffer);
+          this.mesh.applyData(ctx.getNumber(modelH), f32);
+        } finally {
+          lifetime.dispose();
+        }
+      } catch (e) {
+        this.onWarn(`\u52A8\u6001\u7F51\u683C\u9876\u70B9\u4E0A\u4F20\u5931\u8D25\uFF1A${e instanceof Error ? e.message : String(e)}`);
+      }
+    });
+    define("layerVisible", (idH) => this.mesh && this.mesh.isVisible(ctx.getNumber(idH)) ? ctx.true : ctx.false);
+    define("setLayerVisible", (idH, vH) => {
+      this.mesh?.setVisible(ctx.getNumber(idH), ctx.dump(vH) === true);
     });
     ctx.setProp(ctx.global, "__host", host);
     const propsJson = JSON.stringify(safeUserProperties(opts.userProperties));
@@ -28365,7 +28449,9 @@ var SceneScriptHost = class _SceneScriptHost {
       userProperties: opts.userProperties ?? {},
       state,
       anims,
-      onWarn: opts.onWarn
+      onWarn: opts.onWarn,
+      dynamicMesh: opts.dynamicMesh,
+      onAsset: opts.onAsset
     });
     if (!vm) return null;
     for (const s of scripts) vm.load(s.source, `obj ${s.objectId}`);
@@ -28397,6 +28483,272 @@ var SceneScriptHost = class _SceneScriptHost {
     this.vm?.dispose();
   }
 };
+
+// src/client/dynamic-mesh.ts
+function resolveVertexLayout(vertexFormat) {
+  if (!Array.isArray(vertexFormat) || vertexFormat.length !== 3) return null;
+  if (vertexFormat[0] !== 0 || vertexFormat[1] !== 1 || vertexFormat[2] !== 2) return null;
+  return { stride: 9, position: 0, uv: 3, color: 5 };
+}
+function inferQuadCount(buffer, layout, capacity) {
+  const quadFloats = layout.stride * 4;
+  if (!(buffer instanceof Float32Array) || buffer.length < quadFloats) return 0;
+  const cap = Math.min(capacity, Math.floor(buffer.length / quadFloats));
+  let last = -1;
+  for (let i = 0; i < cap; i++) {
+    const base = i * quadFloats;
+    for (let v = 0; v < 4; v++) {
+      const o = base + v * layout.stride + layout.position;
+      if (buffer[o] !== 0 || buffer[o + 1] !== 0) {
+        last = i;
+        break;
+      }
+    }
+  }
+  return last + 1;
+}
+var DynamicMeshRegistry = class {
+  parent;
+  materialFor;
+  onWarn;
+  models = /* @__PURE__ */ new Map();
+  layers = /* @__PURE__ */ new Map();
+  /** 已解析完成的材质（按资产路径）。脚本 init 期就建层，而材质解析是异步的 ⇒ 必须支持回填。 */
+  materialOverrides = /* @__PURE__ */ new Map();
+  nextModelId = 0;
+  nextLayerId = 0;
+  unsupported = 0;
+  warnedUnsupported = false;
+  constructor(opts) {
+    this.parent = opts.parent;
+    this.materialFor = opts.materialFor;
+    this.onWarn = opts.onWarn ?? (() => {
+    });
+  }
+  get modelCount() {
+    return this.models.size;
+  }
+  get unsupportedCount() {
+    return this.unsupported;
+  }
+  createModel(spec) {
+    const layout = resolveVertexLayout(spec.vertexFormat);
+    if (!layout) {
+      this.unsupported++;
+      if (!this.warnedUnsupported) {
+        this.warnedUnsupported = true;
+        this.onWarn(`\u52A8\u6001\u7F51\u683C\uFF1A\u4E0D\u652F\u6301\u7684 vertexFormat ${JSON.stringify(spec.vertexFormat)}\uFF0C\u5DF2\u8DF3\u8FC7\u8BE5 mesh`);
+      }
+      return null;
+    }
+    const capacity = Math.max(0, Math.floor(spec.capacity));
+    const geometry = new BufferGeometry();
+    geometry.setAttribute("position", new BufferAttribute(new Float32Array(capacity * 4 * 3), 3));
+    geometry.setAttribute("uv", new BufferAttribute(new Float32Array(capacity * 4 * 2), 2));
+    geometry.setAttribute("color", new BufferAttribute(new Float32Array(capacity * 4 * 4), 4));
+    const IndexArray = capacity * 4 > 65535 ? Uint32Array : Uint16Array;
+    const index = new IndexArray(capacity * 6);
+    for (let i = 0; i < capacity; i++) {
+      const a = i * 4, j = i * 6;
+      index[j] = a;
+      index[j + 1] = a + 1;
+      index[j + 2] = a + 2;
+      index[j + 3] = a;
+      index[j + 4] = a + 2;
+      index[j + 5] = a + 3;
+    }
+    geometry.setIndex(new BufferAttribute(index, 1));
+    geometry.setDrawRange(0, 0);
+    const id = this.nextModelId++;
+    this.models.set(id, { capacity, layout, geometry, materialPath: spec.materialPath, count: 0 });
+    return id;
+  }
+  createLayer(modelId, name) {
+    const model = this.models.get(modelId);
+    if (!model) return -1;
+    const path = model.materialPath;
+    const material = path ? this.materialOverrides.get(path) ?? this.materialFor(path) : this.materialFor(null);
+    const mesh = new Mesh(model.geometry, material);
+    mesh.name = name;
+    mesh.renderOrder = 1;
+    mesh.frustumCulled = false;
+    this.parent.add(mesh);
+    const id = this.nextLayerId++;
+    this.layers.set(id, { modelId, mesh, visible: true });
+    return id;
+  }
+  applyData(modelId, buffer) {
+    const model = this.models.get(modelId);
+    if (!model) return;
+    if (!(buffer instanceof Float32Array)) return;
+    const { layout, capacity, geometry } = model;
+    const quadFloats = layout.stride * 4;
+    const count = Math.min(inferQuadCount(buffer, layout, capacity), capacity);
+    const posAttr = geometry.getAttribute("position");
+    const uvAttr = geometry.getAttribute("uv");
+    const colAttr = geometry.getAttribute("color");
+    const usable = Math.min(count, Math.floor(buffer.length / quadFloats));
+    for (let i = 0; i < usable; i++) {
+      for (let v = 0; v < 4; v++) {
+        const src = i * quadFloats + v * layout.stride;
+        const dst = i * 4 + v;
+        posAttr.array[dst * 3] = buffer[src + layout.position];
+        posAttr.array[dst * 3 + 1] = buffer[src + layout.position + 1];
+        posAttr.array[dst * 3 + 2] = buffer[src + layout.position + 2];
+        uvAttr.array[dst * 2] = buffer[src + layout.uv];
+        uvAttr.array[dst * 2 + 1] = buffer[src + layout.uv + 1];
+        colAttr.array[dst * 4] = buffer[src + layout.color];
+        colAttr.array[dst * 4 + 1] = buffer[src + layout.color + 1];
+        colAttr.array[dst * 4 + 2] = buffer[src + layout.color + 2];
+        colAttr.array[dst * 4 + 3] = buffer[src + layout.color + 3];
+      }
+    }
+    if (usable > 0) {
+      markRange(posAttr, usable * 4 * 3);
+      markRange(uvAttr, usable * 4 * 2);
+      markRange(colAttr, usable * 4 * 4);
+    }
+    geometry.setDrawRange(0, usable * 6);
+    model.count = usable;
+  }
+  /**
+   * 材质解析完成后回填：替换**所有已建**（以及后续新建）mesh 上该路径的材质。
+   *
+   * 必须支持回填 —— 脚本在 init 期就调 createLayer，而材质 json 与 .tex 的解码是异步的，
+   * 早于它不可能完成；没有这条通道，所有网格都会永久停在兜底白图材质上（真机现象：
+   * 粒子渲染成一堆硬边白色方块）。
+   */
+  setMaterialForPath(materialPath, material) {
+    this.materialOverrides.set(materialPath, material);
+    for (const layer of this.layers.values()) {
+      const model = this.models.get(layer.modelId);
+      if (model?.materialPath === materialPath) layer.mesh.material = material;
+    }
+  }
+  setVisible(layerId, visible) {
+    const layer = this.layers.get(layerId);
+    if (!layer) return;
+    layer.visible = visible;
+    layer.mesh.visible = visible;
+  }
+  isVisible(layerId) {
+    return this.layers.get(layerId)?.visible ?? false;
+  }
+  geometryOf(modelId) {
+    return this.models.get(modelId)?.geometry ?? null;
+  }
+  meshOf(layerId) {
+    return this.layers.get(layerId)?.mesh ?? null;
+  }
+  dispose() {
+    for (const layer of this.layers.values()) {
+      this.parent.remove(layer.mesh);
+    }
+    this.layers.clear();
+    for (const model of this.models.values()) model.geometry.dispose();
+    this.models.clear();
+  }
+};
+function markRange(attr, count) {
+  attr.clearUpdateRanges();
+  attr.addUpdateRange(0, count);
+  attr.needsUpdate = true;
+}
+
+// src/client/mesh-shaders.ts
+var PARTICLE_MESH_VERT = `
+attribute vec4 color;
+varying vec2 v_TexCoord;
+varying vec4 v_Color;
+void main() {
+  v_TexCoord = uv;
+  v_Color = color;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`;
+var UV_FIX = `
+  vec2 mapped = g_Texture0Resolution.zw / g_Texture0Resolution.xy;
+`;
+var PARTICLE_MESH_FRAG = `
+uniform sampler2D g_Texture0;
+uniform vec4 g_Texture0Resolution;
+varying vec2 v_TexCoord;
+varying vec4 v_Color;
+void main() {${UV_FIX}  vec4 c = texture2D(g_Texture0, v_TexCoord * mapped);
+  gl_FragColor = vec4(c.rgb * v_Color.rgb, c.a * v_Color.a);
+}
+`;
+var PARTICLE_ALPHA_FRAG = `
+uniform sampler2D g_Texture0;
+uniform vec4 g_Texture0Resolution;
+varying vec2 v_TexCoord;
+varying vec4 v_Color;
+void main() {${UV_FIX}  vec4 c = texture2D(g_Texture0, v_TexCoord * mapped);
+  gl_FragColor = vec4(1.0, 1.0, 1.0, c.a * v_Color.a);
+}
+`;
+
+// src/client/mesh-material.ts
+function parseMeshMaterial(jsonText) {
+  if (typeof jsonText !== "string" || !jsonText) return null;
+  let json;
+  try {
+    json = JSON.parse(jsonText);
+  } catch {
+    return null;
+  }
+  const passes = json?.passes;
+  if (!Array.isArray(passes) || passes.length === 0) return null;
+  const p = passes[0];
+  const textures = Array.isArray(p.textures) ? p.textures : [];
+  const first = textures.length > 0 ? textures[0] : null;
+  return {
+    shader: typeof p.shader === "string" ? p.shader : "",
+    texturePath: typeof first === "string" && first ? first : null,
+    // spec §6.2：`add`/`additive` → 加性，其余（translucent 等）→ 常规混合
+    blending: /^(add|additive)$/i.test(String(p.blending ?? "")) ? "additive" : "normal",
+    // WE 的 cullmode 取值语义未确定；粒子/拖尾 quad 本来就要求双面可见，统一双面最安全
+    side: DoubleSide,
+    // depthtest 缺省开、depthwrite 缺省关（半透明粒子不该写深度）
+    depthTest: p.depthtest !== false,
+    depthWrite: p.depthwrite === true
+  };
+}
+var FALLBACK_SPEC = {
+  shader: "we2d_particle_mesh",
+  texturePath: null,
+  blending: "additive",
+  side: DoubleSide,
+  depthTest: true,
+  depthWrite: false
+};
+function createMeshMaterial(spec, texture) {
+  const s = spec ?? FALLBACK_SPEC;
+  const isAlpha = /alpha/i.test(s.shader);
+  const uniforms = {
+    g_Texture0: { value: texture ?? sharedWhiteTexture() },
+    // (内容宽, 内容高, 打包宽, 打包高)：(1,1,1,1) ⇒ shader 里的 uv 修正为恒等（见 mesh-shaders.ts）
+    g_Texture0Resolution: { value: new Vector4(1, 1, 1, 1) }
+  };
+  return new ShaderMaterial({
+    uniforms,
+    vertexShader: PARTICLE_MESH_VERT,
+    fragmentShader: isAlpha ? PARTICLE_ALPHA_FRAG : PARTICLE_MESH_FRAG,
+    transparent: true,
+    depthTest: s.depthTest,
+    depthWrite: s.depthWrite,
+    side: s.side,
+    blending: s.blending === "additive" ? AdditiveBlending : NormalBlending
+  });
+}
+var whiteTex = null;
+function sharedWhiteTexture() {
+  if (!whiteTex) {
+    whiteTex = new DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1, RGBAFormat);
+    whiteTex.needsUpdate = true;
+  }
+  return whiteTex;
+}
 
 // src/client/three-renderer.ts
 var warnedKeys = /* @__PURE__ */ new Set();
@@ -28498,6 +28850,7 @@ function createThreeSceneRenderer(opts) {
   let currentTextures = null;
   let currentScriptBindings = [];
   let currentScriptHost = null;
+  let currentMeshRegistry = null;
   let scriptClick = null;
   let scriptClickTarget = null;
   const teardown = () => {
@@ -28521,6 +28874,8 @@ function createThreeSceneRenderer(opts) {
     scriptClick = null;
     currentScriptHost?.dispose();
     currentScriptHost = null;
+    currentMeshRegistry?.dispose();
+    currentMeshRegistry = null;
   };
   const effectiveGlow = () => ({
     enabled: glowOverride?.enabled ?? glowFromSettings?.enabled ?? true,
@@ -28747,17 +29102,53 @@ function createThreeSceneRenderer(opts) {
         });
         current = result;
         if (scriptSources.length > 0) {
+          const materialTable = /* @__PURE__ */ new Map();
+          const materialPaths = /* @__PURE__ */ new Set();
+          const fallbackMaterial = createMeshMaterial(null, null);
+          const meshRegistry = new DynamicMeshRegistry({
+            parent: result.player.scene,
+            materialFor: (p) => p ? materialTable.get(p) ?? fallbackMaterial : fallbackMaterial,
+            onWarn: (m) => warnOnce2(`mesh:${id}`, m)
+          });
+          currentMeshRegistry = meshRegistry;
           currentScriptHost = await SceneScriptHost.create({
             scripts: scriptSources,
             userProperties: userProps,
+            dynamicMesh: meshRegistry,
+            onAsset: (p) => materialPaths.add(p),
             onWarn: (m) => console.warn(`[wallpaper-engine] ${m}`)
           });
+          for (const p of materialPaths) {
+            if (materialTable.has(p)) continue;
+            try {
+              const matRaw = await loadFile(p.endsWith(".json") ? p : `${p}.json`);
+              if (!matRaw) {
+                console.error(`[diag] \u6750\u8D28\u6587\u4EF6\u7F3A\u5931: ${p}`);
+                continue;
+              }
+              const spec = parseMeshMaterial(new TextDecoder().decode(matRaw));
+              if (!spec) {
+                console.error(`[diag] \u6750\u8D28\u89E3\u6790\u5931\u8D25: ${p}`);
+                continue;
+              }
+              let tex = null;
+              if (spec.texturePath) {
+                const texPath = resolveTexPath(p, spec.texturePath);
+                tex = await loadTexTexture(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(texPath)}`);
+                if (!tex) console.error(`[diag] \u7EB9\u7406\u52A0\u8F7D\u5931\u8D25: ${texPath}`);
+              }
+              const mat = createMeshMaterial(spec, tex);
+              materialTable.set(p, mat);
+              meshRegistry.setMaterialForPath(p, mat);
+            } catch {
+            }
+          }
           if (currentScriptHost) {
             scriptClick = () => currentScriptHost?.click();
             scriptClickTarget = fg;
             fg.addEventListener?.("click", scriptClick);
             console.log(
-              `[three] scene scripts id=${id} collected=${scriptSources.length} loaded=${currentScriptHost.scriptCount} active=${currentScriptHost.activeCount}`
+              `[three] scene scripts id=${id} collected=${scriptSources.length} loaded=${currentScriptHost.scriptCount} active=${currentScriptHost.activeCount} meshes=${meshRegistry.modelCount} materials=${materialTable.size}`
             );
           }
         }

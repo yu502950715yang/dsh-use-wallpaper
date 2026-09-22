@@ -1,9 +1,11 @@
 // SceneScript VM（quickjs 单上下文 + 宿主原语）的行为测试。
 // 覆盖：图层读写进状态表、userProperties 注入、异常隔离、动画播放器打通、stub 不抛错、handle 释放。
 import { describe, it, expect } from 'vitest';
+import * as THREE from 'three';
 import { SceneScriptVm } from '../src/client/scene-script-vm.js';
 import { createLayerStateTable } from '../src/client/layer-state.js';
 import { AnimRegistry } from '../src/client/scene-anim.js';
+import { DynamicMeshRegistry } from '../src/client/dynamic-mesh.js';
 
 function setup(userProps: Record<string, unknown> = {}, fps = new Map<string, number>()) {
   const state = createLayerStateTable();
@@ -176,6 +178,72 @@ describe('SceneScriptVm', () => {
     expect(warns).toEqual([]);
     expect(vm!.activeCount).toBe(1);
     expect(state.read(12).alpha).toBe(1);
+    vm!.dispose();
+  });
+
+  // 动态网格（2026-09-22）：脚本 createModelData/createLayer/applyData 落到 DynamicMeshRegistry。
+  it('createModelData / createLayer / applyData 接真实网格注册表', async () => {
+    const { state, anims, userProps } = setup();
+    const parent = new THREE.Scene();
+    const assets: string[] = [];
+    const warns: string[] = [];
+    const registry = new DynamicMeshRegistry({ parent, materialFor: () => new THREE.MeshBasicMaterial() });
+    const vm = await SceneScriptVm.create({
+      userProperties: userProps, state, anims, dynamicMesh: registry, onAsset: (p) => assets.push(p),
+      onWarn: (m) => warns.push(m),
+    });
+    vm!.load(`export function init(){
+      var mat = engine.registerAsset('materials/particles/emitter_00.json', true);
+      var verts = new Float32Array(2 * 36);
+      verts[0] = 100; verts[1] = 50; verts[5] = 1; verts[6] = 1; verts[7] = 1; verts[8] = 1;
+      var model = thisScene.createModelData({ boundingBoxMins: new Vec3(-1,-1,-1), boundingBoxMaxs: new Vec3(1,1,1),
+        shapes: [{ vertexBuffer: verts, indexBuffer: new Uint16Array(12),
+                   vertexFormat: [IModelData.POSITION, IModelData.UV, IModelData.COLOR], material: mat, isVertexBufferDynamic: true }] });
+      var layer = thisScene.createLayer({ model: model, name: '测试层', origin: new Vec3(0,0,0), perspective: false });
+      layer.visible = true;
+      model.applyData({ vertexBuffer: verts });
+    }`);
+    vm!.initAll();
+    expect(warns).toEqual([]);
+    expect(assets).toEqual(['materials/particles/emitter_00.json']);
+    expect(registry.modelCount).toBe(1);
+    const g = registry.geometryOf(0)!;
+    expect(g.getAttribute('position').array[0]).toBeCloseTo(100);
+    expect(g.getAttribute('position').array[1]).toBeCloseTo(50);
+    expect(g.drawRange.count).toBe(6);
+    expect(registry.meshOf(0)!.name).toBe('测试层');
+    expect(parent.children.length).toBe(1);
+    vm!.dispose();
+  });
+
+  it('未注入 dynamicMesh 时 createModelData 仍是安全哑对象（其他壁纸零影响）', async () => {
+    const { state, anims, userProps } = setup();
+    const vm = await SceneScriptVm.create({ userProperties: userProps, state, anims });
+    vm!.load(`export function init(){
+      var m = thisScene.createModelData({ shapes: [{ vertexBuffer: new Float32Array(36), vertexFormat: [0,1,2] }] });
+      var l = thisScene.createLayer({ model: m, name: 'x' });
+      l.visible = false;
+      m.applyData({ vertexBuffer: new Float32Array(36) });
+    }`);
+    expect(() => { vm!.initAll(); vm!.updateAll(); }).not.toThrow();
+    expect(vm!.activeCount).toBe(1);
+    vm!.dispose();
+  });
+
+  it('运行时图层的 visible 读写走宿主（脚本用它剔除空 mesh）', async () => {
+    const { state, anims, userProps } = setup();
+    const registry = new DynamicMeshRegistry({ parent: new THREE.Scene(), materialFor: () => new THREE.MeshBasicMaterial() });
+    const vm = await SceneScriptVm.create({ userProperties: userProps, state, anims, dynamicMesh: registry });
+    vm!.load(`export function init(){
+      var verts = new Float32Array(36); verts[0] = 1;
+      var m = thisScene.createModelData({ shapes: [{ vertexBuffer: verts, vertexFormat: [0,1,2] }] });
+      var l = thisScene.createLayer({ model: m, name: 'L' });
+      l.visible = false;
+      thisScene.getLayerByID(21).alpha = l.visible ? 0 : 1;
+    }`);
+    vm!.initAll();
+    expect(registry.isVisible(0)).toBe(false);
+    expect(state.read(21).alpha).toBe(1);
     vm!.dispose();
   });
 });

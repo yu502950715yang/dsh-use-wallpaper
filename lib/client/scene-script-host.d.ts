@@ -1,4 +1,5 @@
 import { type LayerWrite } from './layer-state.js';
+import type { DynamicMeshRegistry } from './dynamic-mesh.js';
 export interface SceneScriptHostOptions {
     /** 必须按 scene.json 的 objects 顺序传入（脚本靠 shared 互通，顺序影响 init 期状态）。 */
     scripts: Array<{
@@ -7,6 +8,10 @@ export interface SceneScriptHostOptions {
     }>;
     userProperties: Record<string, unknown>;
     onWarn?: (msg: string) => void;
+    /** 动态网格注册表：透传给 VM，让 createModelData/createLayer/applyData 有真实落点。 */
+    dynamicMesh?: DynamicMeshRegistry;
+    /** engine.registerAsset 的回调（装载期收集材质资产路径，由调用方解析成 three 材质）。 */
+    onAsset?: (materialPath: string) => void;
 }
 export declare class SceneScriptHost {
     private readonly anims;

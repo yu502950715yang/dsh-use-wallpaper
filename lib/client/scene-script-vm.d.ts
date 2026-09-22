@@ -1,5 +1,6 @@
 import type { LayerStateTable } from './layer-state.js';
 import type { AnimRegistry } from './scene-anim.js';
+import type { DynamicMeshRegistry } from './dynamic-mesh.js';
 export interface SceneScriptVmOptions {
     userProperties: Record<string, unknown>;
     state: LayerStateTable;
@@ -7,6 +8,10 @@ export interface SceneScriptVmOptions {
     onWarn?: (msg: string) => void;
     /** 单次脚本调用的指令预算（缺省 50M）。测试可传小值，验证「预算每次调用都重置」。 */
     stepBudget?: number;
+    /** 动态网格注册表；缺省时 createModelData/createLayer 仍是安全的哑对象（其他壁纸零影响）。 */
+    dynamicMesh?: DynamicMeshRegistry;
+    /** engine.registerAsset 的回调：装载期按此收集材质资产路径。 */
+    onAsset?: (materialPath: string) => void;
 }
 export declare class SceneScriptVm {
     private readonly ctx;
@@ -17,6 +22,10 @@ export declare class SceneScriptVm {
     private readonly state;
     private readonly anims;
     private readonly onWarn;
+    /** 动态网格注册表（createModelData/createLayer/applyData 的真实落点）；缺省 = stub 行为。 */
+    private readonly mesh;
+    /** engine.registerAsset 的回调（装载期用它解析材质资产路径）。 */
+    private readonly onAsset;
     private dt;
     /** 单次脚本调用的指令预算（缺省 STEP_BUDGET；callOne 每次调用前重置）。 */
     private readonly stepBudget;
