@@ -140,11 +140,12 @@ scene 壁纸 ──► three.js 播放器（**唯一路径**，v0.3.0 起）
 
 ## 7. 工程现状 / 测试
 
-- **测试基线 = 4 项失败 / 919 项**（2026-09-22 实测）。早先记的「15 项既有失败」已过时，逐条见 `AGENT.md` §7.11：
-  - `dom/bootstrap.dom` 的 I1（真缺陷、未修）；`object-effects` / `effect-graph` 的**全库硬编码计数**漂移；`verify-real-library` 的 `130 vs 129`（**素材漂移**，非代码回归）。后 3 项依赖本机壁纸库，CI 上 `skipIf` 跳过。
+- **测试基线 = 0 失败 / 919 项全绿**（2026-09-22）。`scripts/known-failures.json` 已清空（机制保留，用于拦新失败）。早先记的「15 项既有失败」已过时，逐条见 `AGENT.md` §7.11：
+  - **I1 是测试过时而非产品缺陷**：用例 `boot()` 不传 ctx 且 stub 了已废弃的 `fetch('/api/settings.describe')`，而设置自 DSH 0.1.2-rc.1 起走 `ctx.remote.settings.describe()` ⇒ 无 ctx 时 `readClientSettings()` 恒返回 `DEFAULTS`，恢复分支永不执行。已按仓库既有范例注入 `settingsCtx(...)`；变异测试（关掉 `index.ts` 的恢复分支）证明用例真的覆盖 I1。
+  - **3 项全库计数快照按实测刷新**（`object-effects` 142 次/41 种 + 27 次/10 种、`effect-graph` 27 条、`verify-real-library` 169）。**非代码回归**：同一份素材在 `d27975e` / `v0.5.0` / 当前 HEAD 三种代码状态下算出**相同的引用次数**（三方 A/B，见 §7.11）。
   - 已消失：`wasm-renderer` 7 项（死路径删除）＋ `scene-renderer` 6 项（陈旧 2048 期望改为实际 4096 口径）。
   - 另修：`tests/shader/glsl-to-naga.test.ts` 曾让**全量 vitest 永久挂起**，随死路径删除后全量 ~15s 跑完。
-  - 基线登记 `scripts/known-failures.json`，CI 用 `scripts/check-known-failures.mjs` **只对新增失败判红**。
+  - CI 用 `scripts/check-known-failures.mjs` **只对新增失败判红**（空基线下全绿 exit 0；注入失败 → exit 1，已变异验证）。
 - **验证手段**：
   - 单测：`tests/**/*.test.ts`（默认 node），`tests/dom/**` 走 jsdom。
   - 全库解析回归：`tests/verify-real-library.test.ts`（全库 scene.pkg 的 scene.json / image 纹理 / particle 规格 / 效果链解析零失败；**依赖本机壁纸库**）。

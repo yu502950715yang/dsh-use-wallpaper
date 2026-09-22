@@ -12,21 +12,27 @@ function jsonResp(body: unknown) {
   return { ok: true, status: 200, json: async () => body } as any;
 }
 
-function stubFetch(list: unknown[], settingsValue: unknown) {
+// 插件设置走 ctx.remote.settings（DSH 0.1.2-rc.1 起的 Typert 远程方法，见 settings.ts 文件头）。
+// ⚠️ 旧版 fetch('/api/settings.describe') 已不被识别 —— 曾按它写的用例永远读不到
+// selectedWallpaperId（恒返回 DEFAULTS），是 I1 用例长期失败的真因。
+function settingsCtx(settingsValue: unknown) {
+  return {
+    remote: {
+      settings: {
+        describe: async () => ({
+          ok: true,
+          value: { writable: true, hasDocument: true, namespaces: [{ ns: 'wallpaper-engine', value: settingsValue }] },
+        }),
+        update: async () => ({}),
+      },
+    },
+  };
+}
+
+// 壁纸列表仍走 host HTTP 路由（controller.fetchList → fetch('/wallpapers/list')）。
+function stubFetch(list: unknown[]) {
   const fetchMock = vi.fn(async (url: string) => {
     if (url === '/wallpapers/list') return jsonResp(list);
-    if (url === '/api/settings.describe') {
-      return jsonResp({
-        type: 'server-response', rpcId: 'r',
-        result: {
-          ok: true,
-          value: {
-            writable: true, hasDocument: true,
-            namespaces: [{ ns: 'wallpaper-engine', value: settingsValue }],
-          },
-        },
-      });
-    }
     return { ok: false, status: 404, json: async () => ({}) } as any;
   });
   vi.stubGlobal('fetch', fetchMock);
@@ -67,9 +73,8 @@ describe('client bootstrap 集成', () => {
   it('I1: mount 恢复已保存的选中壁纸（settings.selectedWallpaperId → load + select）', async () => {
     stubFetch(
       [{ id: '1', title: 'A', type: 'image', hasScene: false, hasPreviewGif: false, previewUrl: '/p1' }],
-      { ...EMPTY_SETTINGS, selectedWallpaperId: '1' },
     );
-    await boot();
+    await boot(settingsCtx({ ...EMPTY_SETTINGS, selectedWallpaperId: '1' }));
     await vi.waitFor(() => {
       const img = document.querySelector('.wp-background-layer .wp-bg-fill img') as HTMLImageElement | null;
       expect(img?.src).toContain('/p1');
@@ -78,9 +83,8 @@ describe('client bootstrap 集成', () => {
   it('I1: 未保存选中壁纸时挂载不触发 select', async () => {
     const fetchMock = stubFetch(
       [{ id: '1', title: 'A', type: 'image', hasScene: false, hasPreviewGif: false, previewUrl: '/p1' }],
-      EMPTY_SETTINGS,
     );
-    await boot();
+    await boot(settingsCtx(EMPTY_SETTINGS));
     await new Promise((r) => setTimeout(r, 20));
     const img = document.querySelector('.wp-background-layer .wp-bg-fill img') as HTMLImageElement | null;
     expect(img).toBeNull();
@@ -89,7 +93,6 @@ describe('client bootstrap 集成', () => {
   it('S1: bootstrap 注册设置菜单 settings.section（壁纸），不再注入 FAB', async () => {
     stubFetch(
       [{ id: '1', title: 'A', type: 'image', hasScene: false, hasPreviewGif: false, previewUrl: '/p1' }],
-      EMPTY_SETTINGS,
     );
     const { ctx, sections } = mockSlotsCtx();
     await boot(ctx);
@@ -103,7 +106,6 @@ describe('client bootstrap 集成', () => {
   it('I6: show(scene) 委托 controller，渲染失败回退 preview 图', async () => {
     stubFetch(
       [{ id: '2', title: 'S', type: 'scene', hasScene: true, hasPreviewGif: false, previewUrl: '/p2' }],
-      EMPTY_SETTINGS,
     );
     const api = await boot();
     api.show({ kind: 'scene', wallpaperId: '2' });
@@ -113,7 +115,7 @@ describe('client bootstrap 集成', () => {
     });
   });
   it('show(image) 直接显示图片（回归）', async () => {
-    stubFetch([], EMPTY_SETTINGS);
+    stubFetch([]);
     const api = await boot();
     api.show({ kind: 'image', url: '/p1', kenBurns: true });
     await vi.waitFor(() => {

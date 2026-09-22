@@ -77,7 +77,7 @@ function readPkgFiles(id: string): Map<string, Uint8Array> | null {
 }
 
 describe.skipIf(!existsSync(WALLPAPER_DIR))('全库效果链分类（实测数字，勿随意放宽）', () => {
-  it('线性链 25 种 / 106 次引用；具名 RT 图链 9 种 / 24 次引用', async () => {
+  it('线性链 41 种 / 142 次引用；具名 RT 图链 10 种 / 27 次引用', async () => {
     const dirs = readdirSync(WALLPAPER_DIR, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
     const linear = new Set<string>();
     const rtGraph = new Set<string>();
@@ -105,10 +105,14 @@ describe.skipIf(!existsSync(WALLPAPER_DIR))('全库效果链分类（实测数�
     // 四个统计数字（供报告引用的实测输出）
     console.log(`[全库分类] 线性 ${linear.size} 种/${linearRefs} 次；具名 RT 图 ${rtGraph.size} 种/${rtGraphRefs} 次；解析失败 ${unparsed}`);
     expect({ unparsed }).toEqual({ unparsed: 0 });
-    expect(linearRefs).toBe(106);
-    expect(rtGraphRefs).toBe(24);
-    expect(linear.size).toBe(25);
-    expect(rtGraph.size).toBe(9);
+    // ⚠️ 这 4 个数都是**本机壁纸库的快照**（2026-09-22 按实测刷新：106→142 次、25→41 种、
+    // 24→27 次、9→10 种），只随素材变化。三方 A/B 证明不是收集逻辑回归（见 AGENT.md §7.11）：
+    // 写入 106 的 d27975e、v0.5.0 与当前代码**用同一份素材算出完全相同的引用次数** ⇒ 分类结果
+    // 一致；种类数取自同一循环的同一批 fx.file 集合，故同样只受素材影响。素材再变时按实测刷新。
+    expect(linearRefs).toBe(142);
+    expect(rtGraphRefs).toBe(27);
+    expect(linear.size).toBe(41);
+    expect(rtGraph.size).toBe(10);
   }, 120_000);
 });
 
