@@ -1,291 +1,40 @@
 pub mod coords;
 pub mod particle;
-pub mod render;
-pub mod scene;
-pub mod tex;
 
-/// wasm 渲染运行时初始化（仅 render feature / wasm 构建可用）：
-/// 注册 console_error_panic_hook，浏览器里 Rust panic 打印到 console。
-/// JS 侧在模块加载后调用一次。
-#[cfg(feature = "render")]
-pub fn init_wasm_runtime() {
-    console_error_panic_hook::set_once();
-}
-
-// ===== wasm-bindgen 导出（WeScene）=====
+// ===== wasm-bindgen 导出（CpuParticleSim，供 three.js 播放器路径）=====
 //
-// 仅 render feature（wasm 构建）编译：WeScene 持有 render::Renderer（wgpu），
-// native `cargo test`（无 render feature）不编译本段。
+// three.js 播放器复用既有 CPU 粒子**模拟**：本结构只持有 `particle::SceneParticleSim`，
+// 由 `update(dt)` 推进、`vertices()` 返回**摊平**的每粒子顶点
+// （`[pos3,size,uv2,color3,alpha]`，每粒子 10 浮点）；渲染交给 three.js
+// （BufferGeometry + ShaderMaterial）—— 不重写模拟，只换渲染引擎。
 //
-// 异步初始化（wasm-bindgen 标准做法）：Renderer::new 内部
-// request_adapter/request_device 是 async，故导出 `async fn create(...)`，
-// wasm-bindgen 自动转 Promise，JS 侧 `await WeScene.create(canvas, w, h)`。
+// 仅 `cpu-sim` feature（wasm 构建，含 js-sys）下导出：`vertices()` 返回 `Float32Array`
+// 需要 `js-sys`。native `cargo test`（无该 feature）不编译本段，
+// `build_instance_vertices`（sim.rs，非门控）由 native 测试覆盖。
 
-#[cfg(feature = "render")]
+#[cfg(feature = "cpu-sim")]
 use wasm_bindgen::prelude::*;
 
-#[cfg(feature = "render")]
-#[wasm_bindgen]
-pub struct WeScene {
-    renderer: render::Renderer,
-    scene: Option<scene::SceneDesc>,
-    /// 视口像素尺寸（add_particle 的坐标映射用）。
-    vw: f32,
-    vh: f32,
-}
-
-#[cfg(feature = "render")]
-#[wasm_bindgen]
-impl WeScene {
-    /// 异步构造：初始化 WebGPU 渲染器并返回场景运行时。
-    /// JS 侧：`const scene = await WeScene.create(canvas, width, height);`
-    pub async fn create(
-        canvas: web_sys::HtmlCanvasElement,
-        width: u32,
-        height: u32,
-    ) -> Result<WeScene, JsValue> {
-        // Task 5 遗留修复：console_error_panic_hook 入 Cargo.toml 后从未调用，
-        // 在此注册一次（wasm panic → console.error 而非静默 trap）。
-        console_error_panic_hook::set_once();
-        let renderer = render::Renderer::new(&canvas, width, height)
-            .await
-            .map_err(|e| JsValue::from_str(&e))?;
-        Ok(WeScene {
-            renderer,
-            scene: None,
-            vw: width as f32,
-            vh: height as f32,
-        })
-    }
-
-    /// 调整画布尺寸（surface 重建 + 视口尺寸同步）。
-    pub fn resize(&mut self, w: u32, h: u32) {
-        self.vw = w as f32;
-        self.vh = h as f32;
-        self.renderer.resize(w, h);
-    }
-
-    /// 背景模式（cover 铺满）：wasm-renderer 的背景 canvas 用（前景保持 contain）。
-    pub fn set_cover(&mut self) {
-        self.renderer.set_cover();
-    }
-
-    /// 解析 scene.json（结构对齐 src/client/scene-json.ts）；scene_width/height 返回其正交尺寸。
-    pub fn load_scene(&mut self, json: &str) {
-        let desc = scene::parse_scene(json);
-        // Task 9 修复：把场景正交尺寸同步给渲染器（render_frame 的 contain 相机范围计算用）
-        self.renderer.set_scene_size(desc.orthogonal.0, desc.orthogonal.1);
-        // 场景 clearcolor → 渲染器（cover 背景模式清屏用，对齐 JS 版 bg 层底色）
-        self.renderer.set_clear_color(desc.clear_color);
-        self.scene = Some(desc);
-    }
-
-    /// 解码 .tex 字节并上传纹理（RGBA8888/DXT1/3/5/R8/RG88，TEXV0005 容器），
-    /// 登记为图片平面（render_frame 在粒子层之前绘制）。相同 asset_id 重复调用替换旧图。
-    /// 失败路径保留 console 诊断（parse/upload 失败是壁纸图片缺失的可观测原因）。
-    /// T4.3：color/alpha/brightness 为对象调制输入——空 Vec = 缺省（无调制，向后兼容）：
-    ///   color 0-255 量级 r g b（≥3 元素取前 3）；alpha 0-1（单元素）；brightness 乘法系数
-    ///   （单元素）。渲染时 image_tint 打包进 ImageUniform.tint（纹理 × tint）。
-    pub fn load_image(
-        &mut self,
-        asset_id: u32,
-        tex_bytes: &[u8],
-        origin: Vec<f32>,
-        scale: Vec<f32>,
-        size: Vec<f32>,
-        color: Vec<f32>,
-        alpha: Vec<f32>,
-        brightness: Vec<f32>,
-    ) {
-        let Some(img) = tex::parse_tex(tex_bytes) else {
-            web_sys::console::log_1(&JsValue::from_str(&format!("[wasm] load_image {asset_id}: parse_tex FAILED ({}B)", tex_bytes.len())));
-            return;
-        };
-        if let Some(tex) = self.renderer.upload_texture(&img) {
-            let size = if size.len() >= 2 { Some([size[0], size[1]]) } else { None };
-            // 空 Vec = 缺省（None）：向后兼容旧调用（仅 5 参数）与无调制对象
-            let tint_color = (color.len() >= 3).then(|| [color[0], color[1], color[2]]);
-            let tint_alpha = alpha.first().copied();
-            let tint_brightness = brightness.first().copied();
-            self.renderer.set_image(
-                asset_id, tex, arr3(&origin), arr3(&scale), size, img.width, img.height,
-                tint_color, tint_alpha, tint_brightness,
-            );
-        } else {
-            web_sys::console::log_1(&JsValue::from_str(&format!("[wasm] load_image {asset_id}: upload_texture FAILED")));
-        }
-    }
-
-    /// 每帧更新一个图片对象的状态（origin/scale/alpha/brightness）。
-    /// Option 语义：JS 传 undefined（wasm-bindgen 对 Option 接受 undefined/null）=
-    /// 保持现状。asset_id = 对象数组索引（与 load_image/add_particle 一致）。
-    pub fn update_image(
-        &mut self,
-        asset_id: u32,
-        origin: Option<Vec<f32>>,
-        scale: Option<Vec<f32>>,
-        alpha: Option<f32>,
-        brightness: Option<f32>,
-    ) {
-        let o = origin.map(|v| arr3(&v));
-        let s = scale.map(|v| arr3(&v));
-        self.renderer.update_image(asset_id, o, s, alpha, brightness);
-    }
-
-    /// 登记一个对象级效果链条目（M3/Task5）。对象内容（图片）需**先**经 `load_image` 上传；
-    /// 本方法把该对象从共享场景路径移除，改为走「内容 → 对象RT → 效果链 → 合成quad」。
-    /// `origin` = 对象中心（WE 坐标，已 applyAlignment）；`world_size` = size×scale（带符号）；
-    /// `rt_size` = 钳制后对象 RT 分辨率（局部相机范围）；`chain_desc` = 效果链 pass 描述
-    /// （Uint8Array = UTF-8 JSON；task-8 编译链集成：内含真实 WE shader 的 SPIR-V bytes 数组，
-    /// wasm 解析为 `EffectPassDesc` 走 spv_to_wgsl；解析失败/为空 → 内置演示 pass 兜底）。
-    /// 找不到内容 / 效果链失败 → 返回 Ok（零副作用，对象回退共享路径 / 采样内容，绝不白屏）。
-    pub async fn set_object_effect(
-        &mut self,
-        obj_id: u32,
-        origin: Vec<f32>,
-        world_size: Vec<f32>,
-        rt_size: Vec<f32>,
-        chain_desc: Vec<u8>,
-    ) -> Result<(), JsValue> {
-        let chain_desc = String::from_utf8_lossy(&chain_desc).into_owned();
-        self.renderer
-            .set_object_effect(obj_id, origin, world_size, rt_size, &chain_desc)
-            .await
-            .map_err(|e| JsValue::from_str(&e))
-    }
-
-    /// 每帧驱动所有对象级效果链（M3/Task5）：对象内容 → 对象RT → 效果链 ping-pong → 输出RT。
-    /// 由 `render`（render_frame）每帧开头自动调用；本导出供 JS 侧显式驱动（幂等，渲染主路径
-    /// 走 `scene.render()`）。
-    pub fn render_object_effects(&mut self) {
-        self.renderer.render_object_effects();
-    }
-
-    /// 装载粒子规格（emitter[0] + initializer + operator 解析）并构建 GPU 粒子管线。
-    /// tex_bytes 为粒子纹理（TEXV0005，2026-08-21 方案 A：WE 内置 fog/halo 纹理）；
-    /// 空字节 = 无纹理（纯色圆盘兜底，向后兼容旧调用）。
-    pub fn add_particle(&mut self, json: &str, origin: Vec<f32>, scale: Vec<f32>, tex_bytes: Vec<u8>) {
-        let spec = particle::parse_particle_spec(json);
-        let tex = if tex_bytes.is_empty() {
-            None
-        } else {
-            tex::parse_tex(&tex_bytes).and_then(|img| self.renderer.upload_texture(&img))
-        };
-        self.renderer
-            .set_particle(&spec, arr3(&origin), arr3(&scale), tex);
-    }
-
-    /// 装载粒子规格并构建 **CPU 模拟**粒子系统（Task 2 `SceneParticleSim`）+ billboard 渲染 pass
-    /// （Task 3 `ParticleRenderPass`），追加到渲染器（多系统并存，对齐 JS 版粒子密度；
-    /// 与 `add_particle`（GPU compute）互补，不互相替换）。
-    ///
-    /// `origin` 为对象中心（WE 坐标）；view 用 cover 相机范围（view_h 非 scene 2160，全局约束）；
-    /// 粒子**不乘 scale**。`tex_bytes` 为粒子纹理（TEXV0005，空字节 = 无纹理 → 1×1 白兜底）。
-    /// 每帧由 `update_particles(dt)` 推进、由 `render()`（render_frame）末尾叠加绘制。
-    pub fn set_particle_sim(&mut self, json: &str, origin: Vec<f32>, tex_bytes: Vec<u8>) {
-        let spec = particle::parse_particle_spec(json);
-        let tex = if tex_bytes.is_empty() {
-            None
-        } else {
-            tex::parse_tex(&tex_bytes).and_then(|img| self.renderer.upload_texture(&img))
-        };
-        self.renderer.set_particle_sim(&spec, arr3(&origin), tex);
-    }
-
-    /// 每帧推进所有 CPU 模拟粒子（`dt` 秒；JS 侧用 `performance.now` 差分）。
-    /// 渲染已由 `render()`（render_frame）在背景之后、粒子之上自动叠加。
-    pub fn update_particles(&mut self, dt: f32) {
-        self.renderer.update_particles(dt);
-    }
-
-    /// 登记一个粒子对象的对象级效果链条目（M4/Task6）。带 `effects` 的粒子对象走
-    /// 「粒子内容 → 对象RT → 效果链 ping-pong → 合成 quad」，复用 Task5 对象级管线。
-    /// `json` = 粒子规格（同 `add_particle`）；`origin`/`scale` 为对象变换；`tex_bytes` 为
-    /// 粒子纹理（TEXV0005，空 = 无纹理白兜底）；`world_size`/`rt_size` 由 JS 用
-    /// `particleWorldSize`（未钳制 distance×scale）/`particleObjectRange`（钳制）计算，
-    /// 缺省空 → wasm 用粒子纯函数从 distanceMax/scale 推导；`chain_desc` = 效果链 pass 描述
-    /// （Uint8Array = UTF-8 JSON，task-8 编译链集成：内含真实 WE shader 的 SPIR-V bytes 数组）。
-    pub async fn set_particle_object_effect(
-        &mut self,
-        obj_id: u32,
-        json: &str,
-        origin: Vec<f32>,
-        scale: Vec<f32>,
-        tex_bytes: Vec<u8>,
-        world_size: Vec<f32>,
-        rt_size: Vec<f32>,
-        chain_desc: Vec<u8>,
-    ) -> Result<(), JsValue> {
-        let spec = particle::parse_particle_spec(json);
-        let tex = if tex_bytes.is_empty() {
-            None
-        } else {
-            tex::parse_tex(&tex_bytes).and_then(|img| self.renderer.upload_texture(&img))
-        };
-        let chain_desc = String::from_utf8_lossy(&chain_desc).into_owned();
-        self.renderer
-            .set_particle_object_effect(
-                obj_id, &spec, arr3(&origin), arr3(&scale), tex,
-                world_size, rt_size, &chain_desc,
-            )
-            .await
-            .map_err(|e| JsValue::from_str(&e))
-    }
-
-    /// GPU 粒子模拟一帧（更新 uniform dt + 累计 elapsed + dispatch compute）。
-    pub fn step(&mut self, dt: f32) {
-        self.renderer.step(dt);
-    }
-
-    /// 渲染一帧到 canvas（清屏 + 粒子层）。
-    pub fn render(&mut self) {
-        self.renderer.render_frame();
-    }
-
-    /// 场景正交投影宽度（未 load_scene 时返回视口宽度）。
-    pub fn scene_width(&self) -> f32 {
-        self.scene.as_ref().map(|s| s.orthogonal.0).unwrap_or(self.vw)
-    }
-
-    /// 场景正交投影高度（未 load_scene 时返回视口高度）。
-    pub fn scene_height(&self) -> f32 {
-        self.scene.as_ref().map(|s| s.orthogonal.1).unwrap_or(self.vh)
-    }
-}
-
 /// Vec<f32>（JS Float32Array/Array）→ [f32; 3]；缺省补 0（对齐 WE 向量语义）。
-#[cfg(feature = "render")]
 fn arr3(v: &[f32]) -> [f32; 3] {
     [v.first().copied().unwrap_or(0.0), v.get(1).copied().unwrap_or(0.0), v.get(2).copied().unwrap_or(0.0)]
 }
 
-// ===== wasm-bindgen 导出（CpuParticleSim，供 three.js 播放器路径 Task 3）=====
-//
-// 思路 1（WE 场景 → three.js 播放器）的 CPU 粒子**模拟**复用：本结构与 `WeScene`（wgpu 渲染）
-// 解耦，只持有 `particle::SceneParticleSim`（既有 CPU 模拟器），由 `update(dt)` 推进、
-// `vertices()` 返回**摊平**的每粒子顶点（`[pos3,size,uv2,color3,alpha]`，每粒子 10 浮点）。
-// 渲染交给 three.js（BufferGeometry + ShaderMaterial），模拟仍用既有 CPU 代码——不重写模拟，
-// 只换渲染引擎（思路 1 核心价值）。
-//
-// 仅 render feature（wasm 构建，含 js-sys）下导出：`vertices()` 返回 `Float32Array`
-// （需 `js-sys`，其可选依赖由 render feature 开启）。native `cargo test`（无 render feature）
-// 不编译本段，`build_instance_vertices`（sim.rs，非门控）由 native 测试覆盖。
-
 /// 独立 CPU 粒子模拟器 wasm 导出（three.js 播放器路径用）。
-#[cfg(feature = "render")]
+#[cfg(feature = "cpu-sim")]
 #[wasm_bindgen]
 pub struct CpuParticleSim {
     sim: particle::SceneParticleSim,
 }
 
-#[cfg(feature = "render")]
+#[cfg(feature = "cpu-sim")]
 #[wasm_bindgen]
 impl CpuParticleSim {
     /// 从粒子规格 JSON + 对象中心构造 CPU 模拟器（复用 `particle::emitter_spec_to_particle`，
     /// 把 WE spec 的 emitter/initializer/operator 映射为 `SceneParticleSim`）。
     /// `origin` 为对象中心（WE 坐标）；`scene_w`/`scene_h` 为 scene 正交尺寸（we_to_three 用）。
     /// `override_json` 为 scene.json 对象的 `instanceoverride`（JSON 文本；**空串 = 无覆盖**，
-    /// 见 `particle::parse_particle_override`）——官方 `OverrideSpawnProgram` 语义：对 spawn 初值
+    /// 见 `particle::parse_particle_override`）—— 官方 `OverrideSpawnProgram` 语义：对 spawn 初值
     /// 乘 alpha/size/lifetime/speed、覆盖 color，并让 emitter rate 乘 `count`。
     /// sprite sheet 帧数缺省为 `DEFAULT_FRAME_COUNT`（4），渲染层按纹理尺寸用
     /// `set_frame_count` 覆写。返回 `Err`（spec 解析失败）→ JS 侧 Promise reject。
@@ -337,4 +86,3 @@ impl CpuParticleSim {
         js_sys::Float32Array::new_from_slice(&flat)
     }
 }
-

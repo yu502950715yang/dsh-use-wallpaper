@@ -1,10 +1,12 @@
-//! Task 0.3: wasm 粒子 alpha（alpharandom 解析 + EmitterParams 176B 布局）——TDD 测试。
+//! wasm 粒子 alpha 解析（alpharandom）——TDD 测试。
 //! 断言来自 task-0.3-brief.md；控制器裁定 P0-1：Particle.alpha 存 spawn 时生成的
 //! 初始 alpha，compute 不衰减（避免累积误差），渲染侧计算显示 alpha
 //! `v_life_alpha = clamp(life/max_life, 0, 1) * alpha`（对齐 JS 版 alphaAt 语义）。
+//!
+//! 2026-09-22：原第 3 个用例 `emitter_params_layout_176` 测的是 `render::particle_pass::EmitterParams`
+//! （GPU 粒子 uniform 布局），随 WebGPU 渲染器一起移除。
 
 use we_scene_wasm::particle::parse_particle_spec;
-use we_scene_wasm::render::particle_pass::EmitterParams;
 
 #[test]
 fn parse_alpha_random() {
@@ -24,10 +26,3 @@ fn alpha_defaults_to_one() {
     assert_eq!(spec.init.alpha_max, 1.0);
 }
 
-#[test]
-fn emitter_params_layout_176() {
-    // EmitterParams 新布局：11 × vec4 = 176B（dt/max_particles 后追加
-    // alpha_min/alpha_max，尾补 pad 保持 16 字节对齐，满足 uniform 绑定对齐）。
-    // 2026-08-31 算子内核扩容：尾部 pad 复用 + 追加 4 行 vec4 → 现在 15 × vec4 = 240B。
-    assert_eq!(std::mem::size_of::<EmitterParams>(), 240);
-}

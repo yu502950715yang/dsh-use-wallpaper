@@ -8,36 +8,17 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 default = []
-# 渲染层（wgpu）：仅 wasm 构建启用（native cargo test 只跑解析/数学模块）。
-# wgpu 的 SurfaceTarget::Canvas 变体仅存在于 wasm32 目标，native 无法编译渲染代码，
-# 故必须 feature 隔离（brief Step 4b）。wasm 构建：cargo build --target wasm32-unknown-unknown --features render
-render = ["dep:wgpu", "dep:web-sys", "dep:js-sys", "dep:wasm-bindgen-futures", "dep:console_error_panic_hook"]
+# CPU 粒子模拟的 wasm 导出（`CpuParticleSim`）：`vertices()` 返回 Float32Array，需要 js-sys。
+# three.js 播放器路径用；native `cargo test` 不开本 feature（只跑解析与模拟的纯逻辑）。
+# 2026-09-22：本 feature 原名叫 `render`，当时还含 wgpu/WebGPU 渲染器 —— 该渲染器与
+# `scene.rs`/`tex.rs`、naga、spirv-webgpu-transform、lz4_flex、png、jpeg-decoder、bytemuck
+# 等依赖已一并删除，名字改为诚实的 `cpu-sim`。
+cpu-sim = ["dep:js-sys"]
 
 [dependencies]
-serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-lz4_flex = "0.11"
-bytemuck = { version = "1", features = ["derive"] }
 wasm-bindgen = "0.2"
-wgpu = { version = "24", optional = true }
-web-sys = { version = "0.3", features = ["HtmlCanvasElement", "console"], optional = true }
 js-sys = { version = "0.3", optional = true }
-wasm-bindgen-futures = { version = "0.4", optional = true }
-console_error_panic_hook = { version = "0.1", optional = true }
-png = "0.17"
-jpeg-decoder = { version = "0.3", default-features = false }
-# GLSL→WGSL 编译/校验（naga 24）：效果链 shader 管线复用。
-# glsl-in（glsl 前端，演示/simple pass）/ wgsl-out（wgsl 写出）/ wgsl-in（validate_wgsl 解析校验）。
-# spv-in（SPIR-V 前端）：真实 WE 效果 shader 走 GLSL→SPIR-V→spirv-webgpu-transform→spv-in 链路。
-# 纯 naga + 字符串，native cargo test 可编译，不依赖 wgpu。
-naga = { version = "24", features = ["glsl-in", "wgsl-out", "wgsl-in", "spv-in"] }
-# spirv-webgpu-transform（0.1.6）：把 Vulkan 组合采样器（OpTypeSampledImage）拆成独立
-#   texture + sampler，使 naga spv-in 能处理 @webgpu/glslang 产出的组合采样 SPIR-V。
-#   纯 Rust + petgraph（无 C 依赖）。生产 wasm 构建与 native 测试均消费（见 effect::spv_to_wgsl）。
-spirv-webgpu-transform = "0.1.6"
-
-[dev-dependencies]
-crc32fast = "1.5.0"
 
 [package.metadata.wasm-pack.profile.release]
 # wasm-opt（binaryen）在本机沙箱下因权限拒绝（os error 5），且项目无需手工优化

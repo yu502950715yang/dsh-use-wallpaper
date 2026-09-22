@@ -67,7 +67,7 @@ const outStatic = join(here, '..', 'dist', 'static');
 // （全新克隆 / 未构建）时直接报错并提示，不静默失败在半路。
 for (const file of ['we_scene_wasm.js', 'we_scene_wasm_bg.wasm']) {
   if (!existsSync(join(pkgDir, file))) {
-    console.error(`[build:client] 缺少 wasm/pkg/${file} —— 请先运行 npm run build:wasm（cd wasm && wasm-pack build --target web --release --features render）`);
+    console.error(`[build:client] 缺少 wasm/pkg/${file} —— 请先运行 npm run build:wasm（cd wasm && wasm-pack build --target web --release --features cpu-sim）`);
     process.exit(1);
   }
 }
