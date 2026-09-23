@@ -345,12 +345,17 @@ body[data-ds-dark-theme][data-we-wallpaper] [data-sidebar-right-panel][data-side
   background:rgba(24,26,30,.62);
 }
 /* 全屏（data-sidebar-right-panel="fullscreen"）：面板铺满视口、本该盖住下层 UI。
-   半透明的底会让左侧栏与聊天内容透上来（实测 .96 仍有文字残影），故用不透明底色。 */
+   半透明的底会让左侧栏与聊天内容透上来（实测 .96 仍有文字残影），故用不透明底色。
+   2026-09-23：0.1.7 删掉了旧版面板容器的 z-index:10 ⇒ 容器 z-index:auto，而聊天输入框
+   （composerStack）是 z-index:1、面板 dock 是 z-index:40 但全透明 ⇒ 输入框浮在面板之上。
+   补 z-index:15（实测聊天内容层最高 10、DSH overlayLayer 为 20），恢复旧版「全屏盖住」行为。 */
 body[data-we-wallpaper] [data-sidebar-right-panel="fullscreen"]{
   background:#fff;
+  z-index:15;
 }
 body[data-ds-dark-theme][data-we-wallpaper] [data-sidebar-right-panel="fullscreen"]{
   background:rgb(24,26,30);
+  z-index:15;
 }
 `;
 export const WALLPAPER_CSS = CSS;

@@ -265,7 +265,8 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
     - **修法**：两条半透明底规则加 `[data-sidebar-right-open]` 限定（该属性三版都渲染：`"data-sidebar-right-open": expanded || void 0`）。
     - **⚠️ 加了属性限定后必须同时 `:not([data-sidebar-right-panel="fullscreen"])`**（用户当天即报告「全屏背景变透明」）：属性限定把半透明底的具体度从 (0,2,1) 抬到 (0,3,1)，压过了全屏那条 `body[data-we-wallpaper] [data-sidebar-right-panel="fullscreen"]` 的 (0,2,1)（暗色下是 (0,4,1) vs (0,3,1)），真机全屏面板算到 `rgba(255,255,255,.74)` ⇒ 壁纸透上来。用 `:not(...)` 让两个选择器**互斥**，不依赖源码顺序决胜。
     - **不要给 fullscreen 那两条加 open 限定**：`autoFullscreen`（视口 <768px）路径下 `setExpanded(false)` 与 `fullscreen=true` 可并存，加了会让全屏面板失去不透明底。
-    - **验证**：`tests/styles.test.ts` 断言「凡给 `[data-sidebar-right-panel]` 上半透明底的规则都必须带 open 限定且排除 fullscreen」；真机 0.1.7 三态实测 —— 收起 `rgba(0,0,0,0)`、展开(push) `rgba(255,255,255,.74)`、全屏 `rgb(255,255,255)`（dock 内容自身仍 transparent ⇒ 展开时这层底仍需保留）。
+    - **全屏还必须自带 `z-index:15`（用户同一天第三报：「全屏时 AI 聊天框仍显示」）**：0.1.7 删掉了旧版 `.P3OORG_panel{z-index:10}` ⇒ 容器 `z-index:auto`，而聊天输入框所在的 `wSkVaW_composerStack` 是 **z-index:1**、面板 dock 内容是 **z-index:40 但背景全透明** ⇒ 输入框浮在面板（z auto）之上、dock 又盖不住它（透明）。实测聊天内容层最高 `z-index:10`（dsh-client-ui-conversation）、DSH 自己的 `overlayLayer` 是 20、对话框 100+，故取 **15**（高于聊天、低于 DSH 遮罩/弹窗）。**排除法教训**：`.P3OORG_panel` 带 `pointer-events:none`，用 `elementFromPoint` 判断覆盖关系会得到假结论（必须临时 `pointer-events:auto` 或看 `elementsFromPoint` 栈 + 截图）。
+    - **验证**：`tests/styles.test.ts` 断言「凡给 `[data-sidebar-right-panel]` 上半透明底的规则都必须带 open 限定且排除 fullscreen」+「全屏两条规则必须带 10 < z-index < 20」；真机 0.1.7 三态实测 —— 收起 `rgba(0,0,0,0)`、展开(push) `rgba(255,255,255,.74)` 且与聊天区无重叠、全屏 `rgb(255,255,255)` + `z-index:15`（输入框中心点的 `elementsFromPoint` 栈里只剩面板元素，截图确认聊天 hero/输入框已被盖住）。dock 内容自身仍 transparent ⇒ 展开时这层底仍需保留。
 
 ## 6. 工作约定
 

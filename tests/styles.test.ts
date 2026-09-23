@@ -177,4 +177,18 @@ describe('styles 主题适配', () => {
     expect(WALLPAPER_CSS).toMatch(/\[data-sidebar-right-panel="fullscreen"\]\s*\{[^}]*background:#fff/);
     expect(WALLPAPER_CSS).toMatch(/\[data-ds-dark-theme\]\[data-we-wallpaper\]\s*\[data-sidebar-right-panel="fullscreen"\]\s*\{[^}]*background:rgb\(24,\s*26,\s*30\)/);
   });
+  it('全屏面板必须自带 z-index：盖住聊天输入框（z=1）且低于 DSH 遮罩层（z=20）', () => {
+    // 2026-09-23（用户报告全屏时聊天框仍显示）：0.1.7 的 .P3OORG_panel 去掉了旧版的
+    // z-index:10 ⇒ 容器 z-index:auto，而聊天输入框所在的 composerStack 是 z-index:1、
+    // 面板 dock 内容是 z-index:40 但全透明 ⇒ 半透明/不透明底都在输入框之下，输入框浮在面板上。
+    // 实测聊天内容层最高 z-index:10（dsh-client-ui-conversation），DSH 自己的 overlayLayer 是 20。
+    const rules = [...WALLPAPER_CSS.matchAll(/([^{}]+)\{([^}]*)\}/g)]
+      .filter(([, sel]) => sel.includes('[data-sidebar-right-panel="fullscreen"]') && !sel.includes(':not('));
+    expect(rules.length).toBe(2); // 浅色 + 深色各一条
+    for (const [, sel, body] of rules) {
+      const z = Number(/z-index:\s*(\d+)/.exec(body)?.[1] ?? NaN);
+      expect(z, sel.trim()).toBeGreaterThan(10);
+      expect(z, sel.trim()).toBeLessThan(20);
+    }
+  });
 });
