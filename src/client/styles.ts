@@ -331,11 +331,15 @@ body[data-we-wallpaper] [data-plugin-panel] [class*="crumb"]{
    工作区路径、工具图标条）直接压壁纸，浅色主题下黑字压在暗壁纸上大片发虚。
    底挂在这个内容容器上，而不是外层 [data-rightbar-col]：点「全屏」后 DSH 会把面板改成
    position:fixed 铺满视口、脱离 rightbarCol 的 576px 宽，挂外层会整片漏底（实测）。
-   自带底的子面板（终端、浏览器 iframe）会盖住这层，不受影响。 */
-body[data-we-wallpaper] [data-sidebar-right-panel]{
+   自带底的子面板（终端、浏览器 iframe）会盖住这层，不受影响。
+   2026-09-23 订正（0.1.7 起右栏出现常驻遮罩）：0.1.7 把「收起」从隐藏容器改成隐藏
+   dock 子内容（容器 position:absolute; right:0，仍占侧栏宽度且 visibility:visible），
+   收起态容器成了常驻透明空盒子 —— 半透明底必须限定 [data-sidebar-right-open]（三版
+   都渲染该属性），否则收起时整条右栏被画成遮罩。 */
+body[data-we-wallpaper] [data-sidebar-right-panel][data-sidebar-right-open]{
   background:rgba(255,255,255,.74);
 }
-body[data-ds-dark-theme][data-we-wallpaper] [data-sidebar-right-panel]{
+body[data-ds-dark-theme][data-we-wallpaper] [data-sidebar-right-panel][data-sidebar-right-open]{
   background:rgba(24,26,30,.62);
 }
 /* 全屏（data-sidebar-right-panel="fullscreen"）：面板铺满视口、本该盖住下层 UI。

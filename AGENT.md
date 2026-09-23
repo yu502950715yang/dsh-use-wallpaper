@@ -261,6 +261,11 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
     - **配置位置（用户侧，两版通吃）**：profile `cordis.patch.yml` 的 `- id: dsh-wallpaper-engine` + `config`。旧 `~/.dsh/settings.yaml` 已被 0.1.7 改名成 `settings.yaml.imported`（且 section 名与条目 id 不同名 ⇒ 未导入），profile `package.json` 的 `dsh.profile.config` 两版都不读。
     - **真机验收（2026-09-23，临时装的三个真实 DSH + headless Edge）**：0.1.5-rc.3 / 0.1.6-alpha.2 / 0.1.7-alpha.2 均 `/wallpapers/list` 200 / 5660B；旧版面板目录框显示 config 值、选中壁纸刷新后自动恢复（迁移前这两处都是坏的）；0.1.7 面板读到 config、点选壁纸把 `selectedWallpaperId` 写进 profile patch、刷新后自动恢复渲染（截图 `output/playwright/dsh017-rc2-wallpaper-restored.png`、`dsh015-rc3-panel-after-migration.png`）；`npm run e2e:colorblend` PASS（渲染零回归）。方案与清单见 `docs/superpowers/plans/2026-09-23-dsh-settings-compat-migration.md`。
 
+36. **右侧栏「常驻遮罩」＝ 0.1.7 改了收起方式（2026-09-23，用户报告新版本所有壁纸右半边发暗）**：0.1.7 起 `.P3OORG_panel` 不再有 `visibility:hidden` 与自带底色，收起改成隐藏 **dock 子内容**（`[data-dockkit-host=dock]` / `[data-dockkit-empty]` / `[data-dockkit-divider]` 走 `translateX(var(--dsh-sidebar-width)) + visibility:hidden`，`[data-sidebar-right-open]` 才恢复）⇒ 面板容器本身成了**常驻、可见的透明空盒子**（`position:absolute; right:0`，宽 = 侧栏宽度）。插件那条「给面板容器补半透明底」（本意是打开时面板文字可读）于是把这个空盒子画成常驻遮罩：暗色 `rgba(24,26,30,.62)`（用户截图）、浅色 `rgba(255,255,255,.74)`。旧版（≤0.1.6）容器自带 `visibility:hidden`（实测收起时该元素甚至不在 DOM）⇒ 同一条规则显不出底，所以是 0.1.7 独有回归。
+    - **修法**：两条半透明底规则加 `[data-sidebar-right-open]` 限定（该属性三版都渲染：`"data-sidebar-right-open": expanded || void 0`）。
+    - **不要给 fullscreen 那两条加该限定**：`autoFullscreen`（视口 <768px）路径下 `setExpanded(false)` 与 `fullscreen=true` 可并存，加了会让全屏面板漏出壁纸；且 fullscreen 用不透明底，不产生本条问题。
+    - **验证**：`tests/styles.test.ts` 断言「凡给 `[data-sidebar-right-panel]` 上半透明底的规则都必须带 open 限定」（防回退）；真机 0.1.7 收起态面板计算背景 `rgba(0,0,0,0)`、展开态 `rgba(255,255,255,.74)`（dock 内容自身仍 transparent ⇒ 这层底在展开时仍需保留）。
+
 ## 6. 工作约定
 
 - 回复、注释、文档、**提交信息一律简体中文**；代码、命令、文件名、技术术语保留原文。

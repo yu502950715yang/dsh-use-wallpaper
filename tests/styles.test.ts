@@ -155,14 +155,22 @@ describe('styles 主题适配', () => {
     // 页头不再加 text-shadow：会连 DSH 原生「＋ 添加插件」按钮的文字一起弄脏
     expect(WALLPAPER_CSS).not.toMatch(/pageHead[^{]*\{[^}]*text-shadow/);
   });
-  it('右侧栏（文件 / 终端 / 浏览器面板）补半透明底：挂在面板容器上，全屏也覆盖', () => {
+  it('右侧栏半透明底只作用于展开态；全屏仍用不透明底', () => {
     // 2026-09-18：面板内容容器原本全透明，内容直接压壁纸（浅色下大片发虚）。
     // 必须挂 [data-sidebar-right-panel]：点全屏后 DSH 把面板改成 position:fixed 铺满视口，
     // 挂外层 [data-rightbar-col]（仍 576px 宽）会整片漏底。
-    expect(WALLPAPER_CSS).toMatch(/body\[data-we-wallpaper\]\s*\[data-sidebar-right-panel\]\s*\{[^}]*background:rgba\(255,\s*255,\s*255,\s*\.7/);
-    expect(WALLPAPER_CSS).toMatch(/body\[data-ds-dark-theme\]\[data-we-wallpaper\]\s*\[data-sidebar-right-panel\]\s*\{[^}]*background:rgba\(24,\s*26,\s*30,\s*\.6/);
+    // 2026-09-23 订正：0.1.7 起「收起」改成隐藏 dock 子内容，面板容器本身常驻且可见
+    // （position:absolute/right:0，宽 = 侧栏宽度）⇒ 底必须限定 [data-sidebar-right-open]，
+    // 否则收起时整条右栏被画成常驻遮罩（真机现象）。该属性三版都渲染。
+    expect(WALLPAPER_CSS).toMatch(/body\[data-we-wallpaper\]\s*\[data-sidebar-right-panel\]\[data-sidebar-right-open\]\s*\{[^}]*background:rgba\(255,\s*255,\s*255,\s*\.7/);
+    expect(WALLPAPER_CSS).toMatch(/body\[data-ds-dark-theme\]\[data-we-wallpaper\]\s*\[data-sidebar-right-panel\]\[data-sidebar-right-open\]\s*\{[^}]*background:rgba\(24,\s*26,\s*30,\s*\.6/);
     // 底不再挂外层列（全屏会漏）
     expect(WALLPAPER_CSS.replace(/\/\*[\s\S]*?\*\//g, '')).not.toMatch(/\[data-rightbar-col\]\s*\{/);
+    // 不允许「未限定展开态就给面板上半透明底」的规则（全屏分支是不透明底，不在此列）
+    const unguarded = [...WALLPAPER_CSS.matchAll(/([^{}]*\[data-sidebar-right-panel\][^{}]*)\{([^}]*)\}/g)]
+      .filter(([sel, body]) => !sel.includes('data-sidebar-right-open')
+        && /background[^;]*rgba\([^)]*,\s*\.?\d*\.\d+\s*\)/.test(body));
+    expect(unguarded.map((m) => m[1].trim())).toEqual([]);
     // 全屏模式铺满视口，要用不透明底，否则左侧栏/聊天内容透上来（半透明实测仍有残影）
     expect(WALLPAPER_CSS).toMatch(/\[data-sidebar-right-panel="fullscreen"\]\s*\{[^}]*background:#fff/);
     expect(WALLPAPER_CSS).toMatch(/\[data-ds-dark-theme\]\[data-we-wallpaper\]\s*\[data-sidebar-right-panel="fullscreen"\]\s*\{[^}]*background:rgb\(24,\s*26,\s*30\)/);
