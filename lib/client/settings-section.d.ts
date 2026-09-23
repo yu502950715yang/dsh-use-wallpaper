@@ -3,8 +3,8 @@ import type { WallpaperInfo, ProbeResult } from '../shared/types.js';
 export interface WallpaperSettingsSectionProps {
     /** 读取当前设置（默认 RPC settings.describe） */
     fetchSettings?: () => Promise<ClientSettings>;
-    /** 持久化设置（默认 RPC settings.update） */
-    writeSettings?: (patch: Partial<ClientSettings>) => Promise<void>;
+    /** 持久化设置（默认 RPC settings.update）；返回 false = 未写入（服务端拒绝/无可用命名空间） */
+    writeSettings?: (patch: Partial<ClientSettings>) => Promise<boolean | void>;
     /** 拉取壁纸列表（默认 GET /wallpapers/list） */
     fetchWallpapers?: () => Promise<WallpaperInfo[]>;
     /** 自动探测候选路径（默认 GET /wallpapers/probe） */

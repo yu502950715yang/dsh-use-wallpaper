@@ -11,8 +11,8 @@ import { readClientSettings, writeClientSettings } from './settings.js';
 export interface WallpaperSettingsSectionProps {
   /** 读取当前设置（默认 RPC settings.describe） */
   fetchSettings?: () => Promise<ClientSettings>;
-  /** 持久化设置（默认 RPC settings.update） */
-  writeSettings?: (patch: Partial<ClientSettings>) => Promise<void>;
+  /** 持久化设置（默认 RPC settings.update）；返回 false = 未写入（服务端拒绝/无可用命名空间） */
+  writeSettings?: (patch: Partial<ClientSettings>) => Promise<boolean | void>;
   /** 拉取壁纸列表（默认 GET /wallpapers/list） */
   fetchWallpapers?: () => Promise<WallpaperInfo[]>;
   /** 自动探测候选路径（默认 GET /wallpapers/probe） */
@@ -81,7 +81,9 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
   const select = useCallback((id: string) => {
     onSelect(id);
     setSettings((prev) => (prev ? { ...prev, selectedWallpaperId: id } : prev));
-    void writeSettings({ selectedWallpaperId: id }).then(() => setMessage(id ? '壁纸已切换' : '已取消壁纸'));
+    void writeSettings({ selectedWallpaperId: id }).then((ok) => setMessage(ok === false
+      ? '保存失败：选择未持久化（详见控制台）'
+      : (id ? '壁纸已切换' : '已取消壁纸')));
   }, [onSelect, writeSettings]);
 
   // 刷新壁纸列表：重新从壁纸目录拉取最新列表（壁纸目录变更后手动刷新用）
@@ -105,7 +107,7 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
   // 保存手动输入的路径（空值 = 清除用户配置，回退默认）
   const saveDirs = useCallback(() => {
     void writeSettings({ wallpaperDir: wallpaperDir.trim(), weAssetsDir: weAssetsDir.trim() })
-      .then(() => setMessage('路径已保存'));
+      .then((ok) => setMessage(ok === false ? '保存失败：设置未写入（详见控制台）' : '路径已保存'));
   }, [wallpaperDir, weAssetsDir, writeSettings]);
 
   const runProbe = useCallback(() => {
@@ -117,7 +119,8 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
 
   const adopt = useCallback((path: string, key: 'wallpaperDir' | 'weAssetsDir') => {
     void writeSettings({ [key]: path } as Partial<ClientSettings>)
-      .then(() => {
+      .then((ok) => {
+        if (ok === false) { setMessage('保存失败：设置未写入（详见控制台）'); return; }
         if (key === 'wallpaperDir') setWallpaperDir(path);
         else setWeAssetsDir(path);
         setMessage('已采用探测路径');

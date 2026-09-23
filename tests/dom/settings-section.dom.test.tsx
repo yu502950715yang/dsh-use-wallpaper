@@ -128,6 +128,18 @@ describe('WallpaperSettingsSection', () => {
     expect(writeSettings).toHaveBeenCalledWith({ wallpaperDir: 'D:/Custom/431960', weAssetsDir: 'D:/Custom/we' });
   });
 
+  // 0.1.7 迁移后写入可能被服务端拒（settings/rejected）；面板不得谎报「已保存」。
+  it('保存失败（写入返回 false）→ 提示失败，不显示已保存', async () => {
+    const writeSettings = vi.fn(async () => false);
+    mount({ writeSettings });
+    await flush();
+    (container.querySelector('.wss-save-dirs') as HTMLElement).click();
+    await flush();
+    const message = container.querySelector('.wss-message')?.textContent ?? '';
+    expect(message).not.toContain('路径已保存');
+    expect(message).toContain('保存失败');
+  });
+
   it('点击「光晕」复选框 → 立即下发（onRuntimeSettings）+ 持久化 glowEnabled=false', async () => {
     const writeSettings = vi.fn(async () => {});
     const onRuntimeSettings = vi.fn();

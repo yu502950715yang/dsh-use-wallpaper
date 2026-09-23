@@ -1,3 +1,4 @@
+import { Config } from './settings.js';
 export declare const DEFAULT_STATIC_DIR: string;
 export declare const name = "dsh-wallpaper-engine";
 export interface WallpaperEngineConfig {
@@ -9,4 +10,5 @@ export interface WallpaperRuntimeState {
     weAssetsDir: string;
 }
 export declare function apply(ctx: any, config?: WallpaperEngineConfig): void;
+export { Config };
 export default apply;

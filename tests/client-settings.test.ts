@@ -27,6 +27,14 @@ function describeValue(namespacesVal: any) {
   } };
 }
 
+/** 只带一行、可指定 ns 的 describe 响应（0.1.7 的 ns = profile 条目 id）。 */
+function describeValueWithNs(ns: string, value: any) {
+  return { ok: true, value: {
+    writable: true, hasDocument: true,
+    namespaces: [{ ns, value }],
+  } };
+}
+
 describe('readClientSettings (ctx.remote.settings.describe)', () => {
   it('describe() 并解析 wallpaper-engine 命名空间', async () => {
     const describe = vi.fn(async () => describeValue({
@@ -72,16 +80,73 @@ describe('readClientSettings (ctx.remote.settings.describe)', () => {
 });
 
 describe('writeClientSettings (ctx.remote.settings.update)', () => {
-  it('update(ns, patch) 深合并写入 wallpaper-engine 命名空间', async () => {
+  it('读到旧版短名后，写回同一 ns（向后兼容）', async () => {
     const update = vi.fn(async () => ({ ok: true, value: { ns: 'wallpaper-engine', value: { selectedWallpaperId: '7' } } }));
-    stubRemote({ update });
+    stubRemote({ describe: vi.fn(async () => describeValue({})), update });
+    await readClientSettings();
     await writeClientSettings({ selectedWallpaperId: '7' });
     expect(update).toHaveBeenCalledTimes(1);
     expect(update).toHaveBeenCalledWith('wallpaper-engine', { selectedWallpaperId: '7' }, undefined);
   });
-  it('失败静默忽略（不抛错）', async () => {
+  it('未读过时先试条目 id，被拒后自动退旧短名', async () => {
+    const update = vi.fn(async (ns: string) => {
+      if (ns === 'wallpaper-engine') return { ok: true };
+      throw new Error('No configurable plugin entry');
+    });
+    stubRemote({ update });
+    await writeClientSettings({ selectedWallpaperId: '7' });
+    expect(update.mock.calls.map((c) => c[0])).toEqual(['dsh-wallpaper-engine', 'wallpaper-engine']);
+  });
+  it('全部失败 → console.warn，返回 false（不抛错、不再静默丢弃）', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     stubRemote({ update: vi.fn(async () => { throw new Error('net'); }) });
-    await expect(writeClientSettings({ selectedWallpaperId: '7' })).resolves.toBeUndefined();
+    await expect(writeClientSettings({ selectedWallpaperId: '7' })).resolves.toBe(false);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+  it('远端返回 ok:false 也算失败，继续试下一个 ns', async () => {
+    const update = vi.fn(async (ns: string) => (ns === 'wallpaper-engine'
+      ? { ok: true }
+      : { ok: false, error: { message: 'settings/rejected' } }));
+    stubRemote({ update });
+    await writeClientSettings({ selectedWallpaperId: '7' });
+    expect(update.mock.calls.map((c) => c[0])).toEqual(['dsh-wallpaper-engine', 'wallpaper-engine']);
+  });
+  it('返回布尔供面板提示（成功 true / 全失败 false）', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    stubRemote({ update: vi.fn(async () => ({ ok: true })) });
+    expect(await writeClientSettings({ selectedWallpaperId: '7' })).toBe(true);
+    stubRemote({ update: vi.fn(async () => { throw new Error('net'); }) });
+    expect(await writeClientSettings({ selectedWallpaperId: '7' })).toBe(false);
+    warn.mockRestore();
+  });
+});
+
+// DSH 0.1.7-alpha.1 起 settings 命名空间是 **profile 条目 id**（cordis.patch.yml 的 id），
+// 不再是插件短名；两版都要能读到值 ⇒ 需要按候选列表探测。
+describe('命名空间探测（新旧两版）', () => {
+  it('新版：ns=dsh-wallpaper-engine 时读到值', async () => {
+    stubRemote({ describe: vi.fn(async () => describeValueWithNs('dsh-wallpaper-engine', {
+      wallpaperDir: 'D:/w', weAssetsDir: 'D:/WE', selectedWallpaperId: '42', glowStrength: 0.5,
+    })) });
+    const s = await readClientSettings();
+    expect(s.wallpaperDir).toBe('D:/w');
+    expect(s.selectedWallpaperId).toBe('42');
+    expect(s.glowStrength).toBe(0.5);
+  });
+  it('两行都在时优先取条目 id 行', async () => {
+    stubRemote({ describe: vi.fn(async () => ({ ok: true, value: {
+      writable: true, hasDocument: true,
+      namespaces: [
+        { ns: 'wallpaper-engine', value: { wallpaperDir: 'OLD' } },
+        { ns: 'dsh-wallpaper-engine', value: { wallpaperDir: 'NEW' } },
+      ],
+    } })) });
+    expect((await readClientSettings()).wallpaperDir).toBe('NEW');
+  });
+  it('两行都没有时回退 DEFAULTS（不误报配置）', async () => {
+    stubRemote({ describe: vi.fn(async () => describeValueWithNs('some-other', { wallpaperDir: 'X' })) });
+    expect((await readClientSettings()).wallpaperDir).toBe('');
   });
 });
 

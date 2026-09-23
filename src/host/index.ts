@@ -1,6 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { settingsNamespace } from '@deepseek-ai/dsh-settings';
-import { WALLPAPER_NS, WallpaperSettingsSchema } from './settings.js';
+import { Config, WALLPAPER_NS, WallpaperSettingsSchema } from './settings.js';
 import { registerWallpaperRoutes } from './routes.js';
 
 // 壁纸目录与引擎目录不再提供写死缺省（不默认 D:/Steam）：必须由设置面板
@@ -20,35 +19,59 @@ export interface WallpaperEngineConfig {
   weAssetsDir?: string;
 }
 
-// 可变运行状态：路由每次请求读取实时值，settings 变更经 scope.watch 热更新（无需重启）。
+// 可变运行状态：路由每次请求读取实时值（见 routes.ts 的 dir()/assetsDir()）。
 export interface WallpaperRuntimeState {
   wallpaperDir: string;
   weAssetsDir: string;
 }
 
-// Cordis 函数插件：config 作为第二参数传入（dsh-host-webserver 等一致模式），
-// 不可访问 ctx.config（需 inject 声明）；这里用参数解构兼容 loader 注入。
+// Cordis 函数插件：config 作为第二参数传入（loader 注入）。
+// 设置双路径（详见 AGENT.md §5.34）：≤0.1.6 走 settings.register + scope.watch 动态注册；
+// ≥0.1.7 走 SettingsForms（无 register，命名空间是 profile 条目 id）。
+//
+// config 在 0.1.7 下是 volatile 活引用（对象级，需 .get()），旧版是普通对象 ⇒ 统一解引用。
+function configValue(config: unknown): WallpaperEngineConfig {
+  const value = config && typeof (config as any).get === 'function' ? (config as any).get() : config;
+  return (value ?? {}) as WallpaperEngineConfig;
+}
+
 export function apply(ctx: any, config?: WallpaperEngineConfig): void {
+  let userWallpaperDir = '';
+  let userWeAssetsDir = '';
   const state: WallpaperRuntimeState = {
-    wallpaperDir: config?.wallpaperDir ?? '',
-    weAssetsDir: config?.weAssetsDir ?? '',
+    get wallpaperDir() { return userWallpaperDir || configValue(config).wallpaperDir || ''; },
+    get weAssetsDir() { return userWeAssetsDir || configValue(config).weAssetsDir || ''; },
   };
   ctx.inject(['settings'], (settingsCtx: any) => {
-    const scope = settingsCtx.settings.register(settingsNamespace(WALLPAPER_NS), WallpaperSettingsSchema);
-    // 解析顺序：settings 用户值 > config；均为空即未配置（不再回退写死缺省）。
-    const applySettings = (value: any) => {
-      if (value?.wallpaperDir) state.wallpaperDir = value.wallpaperDir;
-      else state.wallpaperDir = config?.wallpaperDir ?? '';
-      if (value?.weAssetsDir) state.weAssetsDir = value.weAssetsDir;
-      else state.weAssetsDir = config?.weAssetsDir ?? '';
-    };
-    applySettings(scope.get());
-    scope.watch(applySettings);
+    const settings = settingsCtx?.settings;
+    try {
+      if (typeof settings?.register === 'function') {
+        // base 必须传：旧版面板与「选中壁纸自动恢复」都靠它读到 profile config。
+        const scope = settings.register(WALLPAPER_NS, WallpaperSettingsSchema, { base: configValue(config) });
+        const applySettings = (value: any) => {
+          userWallpaperDir = value?.wallpaperDir || '';
+          userWeAssetsDir = value?.weAssetsDir || '';
+        };
+        applySettings(scope.get());
+        scope.watch?.(applySettings);
+        return;
+      }
+      // 自带面板策略；owner 必须显式给插件 fiber（子级里默认是子 fiber）。
+      settings?.configure?.({ auto: false }, ctx.fiber);
+    } catch (error) {
+      // 设置初始化失败不得阻断插件主体（路由与渲染仍要工作）。
+      ctx.logger?.warn?.('[wallpaper-engine] 设置初始化失败：%s', error);
+    }
   });
   // 挂载壁纸 REST 路由（/wallpapers/list、/wallpapers/media、/wallpapers/scene、
   // /wallpapers/static、/wallpapers/web、/wallpapers/particle-texture、/wallpapers/probe）
   registerWallpaperRoutes(ctx, { state, staticDir: DEFAULT_STATIC_DIR });
 }
+
+// loader 的 unwrapExports 在存在 default 导出时丢弃命名导出 ⇒ Config 必须挂上来。
+(apply as any).Config = Config;
+
+export { Config };
 
 // Cordis loader 以默认导出作为插件入口（函数或含 apply 方法的对象）；
 // 命名导出保留给单元测试使用。

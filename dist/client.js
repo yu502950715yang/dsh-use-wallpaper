@@ -25577,7 +25577,7 @@ function createGlowStage(width, height, opts) {
 }
 
 // src/client/settings.ts
-var NS = "wallpaper-engine";
+var NS_CANDIDATES = ["dsh-wallpaper-engine", "wallpaper-engine"];
 var DEFAULTS = {
   selectedWallpaperId: "",
   wallpaperDir: "",
@@ -25597,9 +25597,11 @@ var DEFAULTS = {
 };
 var settingsCtx = null;
 var lastGood = null;
+var activeNs = null;
 function setSettingsCtx(ctx) {
   settingsCtx = ctx;
   lastGood = null;
+  activeNs = null;
 }
 function settingsRemote() {
   return settingsCtx?.remote?.settings ?? null;
@@ -25612,11 +25614,13 @@ async function readClientSettings() {
       const value = resp?.ok ? resp.value : void 0;
       if (typeof value === "object" && value !== null) {
         const namespaces = value.namespaces;
-        const nsRow = namespaces?.find((n) => n.ns === NS);
-        const nsValue = nsRow?.value;
-        if (typeof nsValue === "object" && nsValue !== null) {
-          lastGood = { ...lastGood ?? DEFAULTS, ...nsValue };
-          return { ...lastGood };
+        for (const ns of NS_CANDIDATES) {
+          const nsValue = namespaces?.find((n) => n.ns === ns)?.value;
+          if (typeof nsValue === "object" && nsValue !== null) {
+            activeNs = ns;
+            lastGood = { ...lastGood ?? DEFAULTS, ...nsValue };
+            return { ...lastGood };
+          }
         }
       }
     } catch {
@@ -25626,11 +25630,23 @@ async function readClientSettings() {
 }
 async function writeClientSettings(patch) {
   const remote = settingsRemote();
-  if (!remote) return;
-  try {
-    await remote.update(NS, patch, void 0);
-  } catch {
+  if (!remote) return false;
+  const order = activeNs ? [activeNs, ...NS_CANDIDATES.filter((n) => n !== activeNs)] : [...NS_CANDIDATES];
+  let lastError;
+  for (const ns of order) {
+    try {
+      const resp = await remote.update(ns, patch, void 0);
+      if (resp && resp.ok === false) {
+        lastError = resp.error;
+        continue;
+      }
+      return true;
+    } catch (error) {
+      lastError = error;
+    }
   }
+  console.warn(`[wallpaper-engine] \u8BBE\u7F6E\u5199\u5165\u5931\u8D25\uFF08\u5DF2\u5C1D\u8BD5 ${order.join(" / ")}\uFF09\uFF1A`, lastError);
+  return false;
 }
 var USERPROP_PREFIX = "we:userprop:";
 function getUserPropertyValue(key) {
@@ -28725,7 +28741,7 @@ function WallpaperSettingsSection(props) {
   const select = (0, import_react.useCallback)((id) => {
     onSelect(id);
     setSettings((prev) => prev ? { ...prev, selectedWallpaperId: id } : prev);
-    void writeSettings({ selectedWallpaperId: id }).then(() => setMessage(id ? "\u58C1\u7EB8\u5DF2\u5207\u6362" : "\u5DF2\u53D6\u6D88\u58C1\u7EB8"));
+    void writeSettings({ selectedWallpaperId: id }).then((ok) => setMessage(ok === false ? "\u4FDD\u5B58\u5931\u8D25\uFF1A\u9009\u62E9\u672A\u6301\u4E45\u5316\uFF08\u8BE6\u89C1\u63A7\u5236\u53F0\uFF09" : id ? "\u58C1\u7EB8\u5DF2\u5207\u6362" : "\u5DF2\u53D6\u6D88\u58C1\u7EB8"));
   }, [onSelect, writeSettings]);
   const refreshWallpapers = (0, import_react.useCallback)(() => {
     setMessage("");
@@ -28740,14 +28756,18 @@ function WallpaperSettingsSection(props) {
     void writeSettings(patch);
   }, [onRuntimeSettings, writeSettings]);
   const saveDirs = (0, import_react.useCallback)(() => {
-    void writeSettings({ wallpaperDir: wallpaperDir.trim(), weAssetsDir: weAssetsDir.trim() }).then(() => setMessage("\u8DEF\u5F84\u5DF2\u4FDD\u5B58"));
+    void writeSettings({ wallpaperDir: wallpaperDir.trim(), weAssetsDir: weAssetsDir.trim() }).then((ok) => setMessage(ok === false ? "\u4FDD\u5B58\u5931\u8D25\uFF1A\u8BBE\u7F6E\u672A\u5199\u5165\uFF08\u8BE6\u89C1\u63A7\u5236\u53F0\uFF09" : "\u8DEF\u5F84\u5DF2\u4FDD\u5B58"));
   }, [wallpaperDir, weAssetsDir, writeSettings]);
   const runProbe = (0, import_react.useCallback)(() => {
     setMessage("");
     void fetchProbe().then(setProbe).catch(() => setMessage("\u81EA\u52A8\u63A2\u6D4B\u5931\u8D25"));
   }, [fetchProbe]);
   const adopt = (0, import_react.useCallback)((path, key) => {
-    void writeSettings({ [key]: path }).then(() => {
+    void writeSettings({ [key]: path }).then((ok) => {
+      if (ok === false) {
+        setMessage("\u4FDD\u5B58\u5931\u8D25\uFF1A\u8BBE\u7F6E\u672A\u5199\u5165\uFF08\u8BE6\u89C1\u63A7\u5236\u53F0\uFF09");
+        return;
+      }
       if (key === "wallpaperDir") setWallpaperDir(path);
       else setWeAssetsDir(path);
       setMessage("\u5DF2\u91C7\u7528\u63A2\u6D4B\u8DEF\u5F84");

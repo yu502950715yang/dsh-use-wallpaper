@@ -79,6 +79,7 @@ $i.LinkType   # SymbolicLink / Junction；为空 = 落成了实体副本，需�
 - **client 侧改动（`dist/`）→ 自动热重载，无需重启**：web profile 始终挂载 `@deepseek-ai/dsh-client-hmr`（`dsh-web-app/cordis.patch.yml` 的 `client-hmr` 行，*always mounted*），它每 500ms 轮询每个 client bundle 的 `mtime`/`size`，变化即 `clientModules.rebuilt(id)` 重算 rev，并经 SSE `/plugins/events` 推给浏览器半重载。前提是 **bundle 文件真的被重写** —— `link:` 下重建仓库即可；`file:` 快照副本不会变，这正是旧结论「必须重启」的来源。
 - **host 侧改动（`lib/`）→ 需重启 `dsh web`**：host 侧模块热重载 `@deepseek-ai/cordis-plugin-hmr` 在 `dsh-base` 里是 `disabled: true`（*Module reload is opt-in per profile*），默认不生效。
 - **兜底**：HMR 未生效（SSE 断开 / 页面未打开 / 落成实体副本）时，把 `lib/`、`dist/` 复制进 profile 并重启 `dsh web` + 浏览器强刷。
+- **设置（壁纸目录 / 选中壁纸 / 光晕等）**：面板写入当前 DSH 的用户设置层 —— 0.1.7-alpha.1 起是 profile `cordis.patch.yml` 里条目 `dsh-wallpaper-engine` 的 `config`，≤0.1.6 是 `$DSH_HOME/settings.yaml`；**手工预置请写前者**（两版都读，见 §5.34）。
 - `lib/` 与 `dist/` **纳入版本控制**（`.gitignore` 不含它们；`wasm/pkg/` 与 `dist/static/ptex-*.tex` 才是忽略的）。发布包 `files` 白名单 = `lib` + `dist` + `cordis.patch.yml`，所以**提交与发布前两个产物都要是新的**。
 
 ### 3.3 验证手段
@@ -250,6 +251,15 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
     - **端到端（headless Edge/SwiftShader，1280×720，相位 5 s，`research/verify-hidpi-object-rt.mjs --id=2937346640 --dprs=1 --phase=5`）**：整屏平均亮度 **1.53 → 107.90**（摘掉全部效果链的参照图 108.36，差 0.46/255）；暗像素（luma<8）占比 **96.79% → 0.02%**；看图：修复前只有右上角时钟与左上几缕残光，修复后是完整的便利店橱窗 + 白发少女 + 暖橙火光。
     - **影响面（全库静扫 `research/_scan-slot-gap.mjs`，29 个 `scene.pkg` / 169 条链 / 240 个 pass）**：踩同一坑（声明了无 mode 注解且下标 ≥ 旧槽数的 sampler）的 **11 个 pass**，其中 **8 个**的该槽真的会被 `bind.index` 或 `textures[idx]` 绑定（即引擎本意要绑、却被静默丢弃），涉及 **5 张壁纸**：`3798688689`(4) / `2911105183`(3) / `2937346640`(2) / `2832263418`(1) / `2897292240`(1)。另有 **72 个 pass** 的槽数从 0→1 只是补上 `g_Texture0`（旧代码本就硬编码预建，行为不变）。
     - **遗留 / 未验证**：只有 `2937346640` 做了**像素级**端到端验证，其余 4 张壁纸的 10 个 pass 是静态认定 + 同一机制推断（未逐张出图）；预建更多槽只多几个 `uniform` / `Vector4` 条目与 `gl.uniform1i` 上传，**显存与绑定副作用未实测**；⇒ 通用教训：往 `material.uniforms` 里补条目必须在**首次渲染之前**完成，别指望「之后换 program 会重算」——1×1 探针渲染使该假设不成立。
+
+34. **DSH 设置系统双路径：兼容 0.1.5-rc.3 / 0.1.6-alpha.2（旧）与 0.1.7-alpha.2（新）——用户升级后「配置不好使」的根因与修法（2026-09-23）**：
+    - **断点**：0.1.7-alpha.1 起 `dsh-settings` 从 `SettingsProvider.register(ns, schema)` 换成 `SettingsForms`：命名空间 = **profile 条目 id**（本插件 `dsh-wallpaper-engine`，不再是短名 `wallpaper-engine`），表单只投影条目 `Config` 里 `.volatile()` 的字段（`volatileForm`，无 volatile 字段的条目不进 `describe()`），持久化到 profile `cordis.patch.yml`（旧版是 `$DSH_HOME/settings.yaml`）。旧插件于是：host 调 `settings.register` 命中 undefined（TypeError 在 `ctx.inject` 子 fiber 内被吞）、client 只找短名 ⇒ 永远匹配不到 ⇒ 回退 `DEFAULTS`：面板空、`/wallpapers/list` 空。
+    - **两个「真会崩」的点**：① `settingsNamespace` 自 0.1.2-rc.1 起就不在该包的导出里（静态命名导入 = **链接期 SyntaxError**，此前没炸只因解析到插件自带的 `dsh-settings@0.1.0-rc.8` 副本）⇒ **不得静态 import 该包**；② `.volatile()` 需 `schemastery ≥3.18.4`（3.18.1/3.18.2 无此 API）⇒ 依赖已升 `^3.18.4` 并更新 lockfile。
+    - **实现**：`src/host/settings.ts` 同时导出普通 `WallpaperSettingsSchema`（旧路径 `register` 用；volatile schema 在旧版解析取不到普通值）与 `Config = schema.volatile()`（新版 loader 用）；`Config` **必须挂在默认导出的 `apply` 上** —— loader 的 `unwrapExports` 在存在 default 导出时会丢弃命名导出。`apply` 内以 `typeof settings.register === 'function'` 分流：旧路径 `register(WALLPAPER_NS, WallpaperSettingsSchema, { base: configValue(config) })`（**base 必须传**，否则旧版面板读不到 config、也不会自动恢复选中壁纸），新路径 `configure({ auto: false }, ctx.fiber)`（owner 要显式给插件自身 fiber）。
+    - **volatile 读值（真机 list 为空的直接原因）**：0.1.7 交给插件的 `config` 是 schemastery 的活引用（对象级 volatile ⇒ `config.get()` 才拿到普通对象）；直接读 `config.wallpaperDir` 得到 `undefined`。`state` 一律用 getter + `configValue()` 解引用，**不得在 `apply` 里快照**（loader 就地更新引用）。
+    - **client**：`readClientSettings` 按候选 `['dsh-wallpaper-engine', 'wallpaper-engine']` 探测 `describe()` 行并记住命中的 ns；写入以该 ns 优先、其余候选兜底重试（`RemoteResult.ok === false` 也算失败），全失败 `console.warn` 且 `writeClientSettings` 返回 `false`，面板据此提示失败（此前静默 ⇒ 面板谎报「已保存」）。
+    - **配置位置（用户侧，两版通吃）**：profile `cordis.patch.yml` 的 `- id: dsh-wallpaper-engine` + `config`。旧 `~/.dsh/settings.yaml` 已被 0.1.7 改名成 `settings.yaml.imported`（且 section 名与条目 id 不同名 ⇒ 未导入），profile `package.json` 的 `dsh.profile.config` 两版都不读。
+    - **真机验收（2026-09-23，临时装的三个真实 DSH + headless Edge）**：0.1.5-rc.3 / 0.1.6-alpha.2 / 0.1.7-alpha.2 均 `/wallpapers/list` 200 / 5660B；旧版面板目录框显示 config 值、选中壁纸刷新后自动恢复（迁移前这两处都是坏的）；0.1.7 面板读到 config、点选壁纸把 `selectedWallpaperId` 写进 profile patch、刷新后自动恢复渲染（截图 `output/playwright/dsh017-rc2-wallpaper-restored.png`、`dsh015-rc3-panel-after-migration.png`）；`npm run e2e:colorblend` PASS（渲染零回归）。方案与清单见 `docs/superpowers/plans/2026-09-23-dsh-settings-compat-migration.md`。
 
 ## 6. 工作约定
 

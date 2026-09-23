@@ -6,8 +6,10 @@ import type { ClientSettings } from './types.js';
 // 导致设置读写静默回退默认值 → 保存丢失/刷新后壁纸消失）。
 // 插件 client 须在 index.ts 的 inject 声明 'remote','remote.settings'，并在
 // bootstrap 时 setSettingsCtx(ctx)，使本模块能经 ctx.remote.settings 访问。
-
-const NS = 'wallpaper-engine';
+//
+// ns：≤0.1.6 = 插件短名 `wallpaper-engine`，≥0.1.7 = profile 条目 id `dsh-wallpaper-engine`
+// ⇒ 按候选探测，命中后记住写回。
+const NS_CANDIDATES = ['dsh-wallpaper-engine', 'wallpaper-engine'] as const;
 
 export const DEFAULTS: ClientSettings = {
   selectedWallpaperId: '', wallpaperDir: '', weAssetsDir: '',
@@ -25,10 +27,14 @@ let settingsCtx: any = null;
 // —— DEFAULTS.glowEnabled = true，回默认会把用户明确关掉的 Glow 悄悄重新打开（约 12 MB 显存 + 每帧开销）。
 let lastGood: ClientSettings | null = null;
 
+/** 最近一次 describe 命中的命名空间（写入优先用它，避免写错版本）。 */
+let activeNs: string | null = null;
+
 /** 注入 client ctx：bootstrap(ctx) 时调用；无 ctx（node 测试/SSR）时回退默认值。 */
 export function setSettingsCtx(ctx: any): void {
   settingsCtx = ctx;
   lastGood = null; // ctx 换了（bootstrap / 换实例）⇒ 旧缓存不可信
+  activeNs = null;
 }
 
 /** remote.settings.describe() 的响应：{ ok, value } / { ok:false, error }。 */
@@ -46,12 +52,15 @@ export async function readClientSettings(): Promise<ClientSettings> {
       const value = resp?.ok ? resp.value : undefined;
       if (typeof value === 'object' && value !== null) {
         const namespaces = (value as { namespaces?: Array<{ ns?: unknown; value?: unknown }> }).namespaces;
-        const nsRow = namespaces?.find((n) => n.ns === NS);
-        const nsValue = nsRow?.value;
-        if (typeof nsValue === 'object' && nsValue !== null) {
-          // 未给的字段由「上次成功值（首次则 DEFAULTS）」补齐：一次读到残缺值也不该翻掉已知的开关。
-          lastGood = { ...(lastGood ?? DEFAULTS), ...(nsValue as Partial<ClientSettings>) };
-          return { ...lastGood };
+        // 候选顺序 = 条目 id 优先（0.1.7），再退旧短名（≤0.1.6）；只认实际存在的那一行。
+        for (const ns of NS_CANDIDATES) {
+          const nsValue = namespaces?.find((n) => n.ns === ns)?.value;
+          if (typeof nsValue === 'object' && nsValue !== null) {
+            activeNs = ns;
+            // 未给的字段由「上次成功值（首次则 DEFAULTS）」补齐：一次读到残缺值也不该翻掉已知的开关。
+            lastGood = { ...(lastGood ?? DEFAULTS), ...(nsValue as Partial<ClientSettings>) };
+            return { ...lastGood };
+          }
         }
       }
     } catch {
@@ -61,15 +70,28 @@ export async function readClientSettings(): Promise<ClientSettings> {
   return { ...(lastGood ?? DEFAULTS) };
 }
 
-export async function writeClientSettings(patch: Partial<ClientSettings>): Promise<void> {
+/** 写入成功返回 true；全部候选 ns 都失败返回 false（供面板提示，不再谎报已保存）。 */
+export async function writeClientSettings(patch: Partial<ClientSettings>): Promise<boolean> {
   const remote = settingsRemote();
-  if (!remote) return;
-  try {
-    // update(ns, patch, revision)：revision 不传（undefined）→ 无条件写。
-    await remote.update(NS, patch, undefined);
-  } catch {
-    // 写入失败静默（插件不因此中断）
+  if (!remote) return false;
+  // 写入顺序：最近读到的 ns 优先，其余候选按序兜底（未读先写时也能落到正确版本）。
+  const order = activeNs
+    ? [activeNs, ...NS_CANDIDATES.filter((n) => n !== activeNs)]
+    : [...NS_CANDIDATES];
+  let lastError: unknown;
+  for (const ns of order) {
+    try {
+      // update(ns, patch, revision)：revision 不传（undefined）→ 无条件写。
+      const resp: any = await remote.update(ns, patch, undefined);
+      if (resp && resp.ok === false) { lastError = resp.error; continue; }
+      return true;
+    } catch (error) {
+      lastError = error;
+    }
   }
+  // 全部失败不再静默（此前服务端 rejected，面板仍提示「已保存」）。
+  console.warn(`[wallpaper-engine] 设置写入失败（已尝试 ${order.join(' / ')}）：`, lastError);
+  return false;
 }
 
 // WE 用户属性读取（T4.2）：scene.json 的 visible:{user,value} 绑定按 key 查询用户
