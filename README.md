@@ -143,6 +143,8 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 > ```
 >
 > 旧版（≤0.1.6）的 `~/.dsh/settings.yaml` 若被 0.1.7 启动过一次，会被改名为 `settings.yaml.imported`，其中的壁纸段不会再被读取 —— 把值抄进上面的 `config` 即可。
+>
+> 说明：旧版兼容层是过渡性的。待 DSH 新版本稳定、本插件不再需要支持 ≤0.1.6 时，按 [迁移文档 §9「后续清理清单」](docs/superpowers/plans/2026-09-23-dsh-settings-compat-migration.md) 逐项移除（清单区分了可删的旧版专用代码、可简化的兼容技巧与**必须保留的 0.1.7 适配**）。
 
 > ⚠️ **如实说明**：`overlayOpacity` / `blurEnabled` / `blurRadius` / `kenBurns` 目前**只有设置字段，设置面板里没有对应控件** —— 要调整需走 profile 配置。（此前 README 称「面板里可实时调节」，与代码不符，此处已订正。）**面板里有控件的是**：`glowEnabled`、`glowThreshold`、`glowStrength`、`paused`、`pauseOnHidden`、`qualityScale`，**改完立即生效**（不必重选壁纸）；其中光晕的阈值/强度是滑杆。
 >

@@ -142,3 +142,32 @@ profile `cordis.patch.yml`（新旧通吃的位置）：
 | 真机 0.1.6-alpha.2（`%TEMP%\old-dsh-home`） | list 200/5660B；自动恢复渲染 ✓ |
 
 **未做**：`e2e:compare` 逐像素 A/B 未跑（改动不触碰渲染路径，已用 CI 门禁 `e2e:colorblend` 替代）；旧版 0.1.6-alpha.2 的面板读写未单独点验（与 0.1.5-rc.3 同一 `dsh-settings` 世代，代码路径相同）。
+
+## 9. 后续清理清单（等 DSH 发布新版本后执行；用户 2026-09-23 要求记录）
+
+**触发条件**：DSH 新版本稳定发布、且**本插件声明的最低支持版本 ≥ `0.1.7-alpha.1`**（即不再需要兼容 ≤0.1.6）。执行前先确认新版上设置与右侧栏行为无变化。
+
+### A. 可直接删除（旧版专用代码，含配套测试）
+
+1. `src/host/settings.ts`：`WallpaperSettingsSchema`（非 volatile）只为旧路径 `register` 而留。删掉它，`Config` 直接由 `z.object({...}).volatile()` 定义。
+2. `src/host/index.ts`：删除 `typeof settings?.register === 'function'` 的旧分支（`register(WALLPAPER_NS, WallpaperSettingsSchema, { base })` + `scope.watch`）与 `userWallpaperDir / userWeAssetsDir` 两个变量；`state` 的两个 getter 直接读 `configValue(config)`。保留 `try/catch` 降级。
+3. `src/client/settings.ts`：`NS_CANDIDATES` 与「逐个候选重试」收敛为单一 ns（`dsh-wallpaper-engine`，即本包 `cordis.patch.yml` 的条目 id）；删除旧短名 `wallpaper-engine` 回退。
+4. 测试：`tests/host-apply.test.ts` 的 `SettingsMode = 'legacy' | 'none'` 与三个旧路径用例；`tests/client-settings.test.ts` 的旧短名用例、重试阶梯用例（**保留**「写入失败 → `console.warn` + 返回 `false`」）。
+5. 文档：本文件 §1–§4 的旧版分支说明、`AGENT.md` §5.34 的旧版分支段、§5.36 里旧版对照段、`README.md` 的「同时支持 0.1.5-rc.3 / 0.1.6-alpha.2 与 0.1.7-alpha.2」表述。
+
+### B. 可简化（仅为不破坏旧版而写的技巧，删旧版后可还原）
+
+6. `src/client/styles.ts` 的 `body[data-we-wallpaper] :where([data-sidebar-right-panel="fullscreen"][data-sidebar-right-open]){z-index:15}`：`:where()` 只为**不覆盖旧版 DSH 自己的 `z-index:40`** 而存在。不再支持旧版后可改回普通具体度（例如并回全屏底那条规则）。**保留亦无副作用**；若简化，同步改 `tests/styles.test.ts` 中「z-index 规则具体度必须低于 `.P3OORG_panel[data-sidebar-right-panel=fullscreen]`」的断言。
+
+### C. 必须保留（属 **0.1.7 适配**，不是旧版适配，删了会在新版回归）
+
+7. `Config = schema.volatile()` + `(apply as any).Config = Config`（loader 的 `unwrapExports` 只认默认导出）。
+8. `configValue()` 的 volatile 解引用 + `state` getter 惰性读（0.1.7 的 `config` 是活引用，快照会导致面板保存不生效）。
+9. 右侧栏全部 CSS：`[data-sidebar-right-open]` 限定（收起态容器常驻）、`:not([data-sidebar-right-panel="fullscreen"])`、全屏不透明底 + z-index、以及**全屏也必须带 open 限定**（收起按钮不改 mode，「全屏+未展开」可达）。
+10. 依赖 `@deepseek-ai/schemastery ^3.18.4`（`.volatile()` 必需，**不要降回** 3.18.1/3.18.2）。
+
+### D. 执行时的验证
+
+11. `npm test`（应为全绿；删用例后总数下降属预期）+ `npm run build` + `npm run build:client` + `npm run e2e:colorblend`；真机新版四态右栏（push 收起/展开、fullscreen 展开/收起）+ 面板读写 + 刷新自动恢复。
+12. 完成后把本清单改写为「已完成（日期 / commit）」，并在 `AGENT.md` §7 第 13 条标注已办结。
+
