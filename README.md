@@ -81,7 +81,7 @@ dsh plugin --profile web install
 ```
 
 > 已发布到 npm，最新版本 **[0.4.3](https://www.npmjs.com/package/@dsh-use/wallpaper-engine)**。发布包只含 `lib` + `dist` + `cordis.patch.yml`（构建产物已随包提交，**装完无需本地构建**）。
->
+> 
 > npm 版与 GitHub 版的差别：npm 走版本发布，**更新节奏慢于仓库 `main`**；想第一时间拿到修复请用上面的 GitHub 方式。
 
 **本地开发（`link:` 符号链接，改码即时生效）**
@@ -131,9 +131,9 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 优先级：用户设置 > profile `cordis.patch.yml` 的 `config` > 缺省。
 
 > **DSH 版本兼容（2026-09-23）**：0.1.7-alpha.1 起 DSH 换了设置系统（命名空间 = profile **条目 id**，表单只认插件 `Config` 的 volatile 字段，改动写进 profile `cordis.patch.yml`）。本插件已做双路径适配，**同时支持 0.1.5-rc.3 / 0.1.6-alpha.2 与 0.1.7-alpha.2**（三版均真机验证：列表、面板读写、选中壁纸刷新后自动恢复）。
->
+> 
 > 想手工预置配置（两版通吃），写 profile `cordis.patch.yml`：
->
+> 
 > ```yaml
 > - id: dsh-wallpaper-engine
 >   config:
@@ -141,13 +141,13 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 >     weAssetsDir: D:/Steam/steamapps/common/wallpaper_engine
 >     selectedWallpaperId: "3789244610"
 > ```
->
+> 
 > 旧版（≤0.1.6）的 `~/.dsh/settings.yaml` 若被 0.1.7 启动过一次，会被改名为 `settings.yaml.imported`，其中的壁纸段不会再被读取 —— 把值抄进上面的 `config` 即可。
->
+> 
 > 说明：旧版兼容层是过渡性的。待 DSH 新版本稳定、本插件不再需要支持 ≤0.1.6 时，按 [迁移文档 §9「后续清理清单」](docs/superpowers/plans/2026-09-23-dsh-settings-compat-migration.md) 逐项移除（清单区分了可删的旧版专用代码、可简化的兼容技巧与**必须保留的 0.1.7 适配**）。
 
 > ⚠️ **如实说明**：`overlayOpacity` / `blurEnabled` / `blurRadius` / `kenBurns` 目前**只有设置字段，设置面板里没有对应控件** —— 要调整需走 profile 配置。（此前 README 称「面板里可实时调节」，与代码不符，此处已订正。）**面板里有控件的是**：`glowEnabled`、`glowThreshold`、`glowStrength`、`paused`、`pauseOnHidden`、`qualityScale`，**改完立即生效**（不必重选壁纸）；其中光晕的阈值/强度是滑杆。
->
+> 
 > ⚠️ 光晕默认值 `0.65` / `0.35` 是 **2026-09-21 由用户在真机面板上试出来的**（先按「亮部不过曝」把强度从 `1.0` 下调，阈值保持 `0.65` 以保留光晕感；6 张壁纸的参数网格数据见 `AGENT.md` §7.1）。它只保证「亮部不过曝 + 光晕仍可感」，**不是**与桌面 WE 逐像素对齐的结果 —— 你觉得还要更亮/更暗，面板两个滑杆可即时微调。
 
 ---
@@ -283,6 +283,7 @@ dsh plugin --profile web install
 - 代码：**MIT**。
 - 壁纸、纹理等素材版权归原作者 / Wallpaper Engine 所有；本插件只在其上渲染，**不重新分发第三方素材**（WE 内置纹理在运行时从你本机安装目录读取）。
 - 格式与行为语义对齐自 [linux-wallpaperengine](https://github.com/Almamu/linux-wallpaperengine) 及开源 Wallpaper Engine 逆向实现。
+- 感谢[Linux.do](https://linux.do)社区对本项目的推广。
 - README 中的效果视频由本插件的生产渲染代码在本机实测录制，仅用于展示。
 
 ---
@@ -293,3 +294,4 @@ dsh plugin --profile web install
 - [dsh-plugin 主题页](https://github.com/topics/dsh-plugin)
 - [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
 - [开发环境配置（docs/dev-setup.md）](docs/dev-setup.md)
+
