@@ -335,11 +335,13 @@ body[data-we-wallpaper] [data-plugin-panel] [class*="crumb"]{
    2026-09-23 订正（0.1.7 起右栏出现常驻遮罩）：0.1.7 把「收起」从隐藏容器改成隐藏
    dock 子内容（容器 position:absolute; right:0，仍占侧栏宽度且 visibility:visible），
    收起态容器成了常驻透明空盒子 —— 半透明底必须限定 [data-sidebar-right-open]（三版
-   都渲染该属性），否则收起时整条右栏被画成遮罩。 */
-body[data-we-wallpaper] [data-sidebar-right-panel][data-sidebar-right-open]{
+   都渲染该属性），否则收起时整条右栏被画成遮罩。
+   还必须 :not(fullscreen)：属性限定把半透明底提到 (0,3,1)，会盖过全屏那条 (0,2,1)
+   的不透明底 ⇒ 全屏面板漏出壁纸（真机回归）。两个选择器互斥，不靠先后顺序决胜。 */
+body[data-we-wallpaper] [data-sidebar-right-panel][data-sidebar-right-open]:not([data-sidebar-right-panel="fullscreen"]){
   background:rgba(255,255,255,.74);
 }
-body[data-ds-dark-theme][data-we-wallpaper] [data-sidebar-right-panel][data-sidebar-right-open]{
+body[data-ds-dark-theme][data-we-wallpaper] [data-sidebar-right-panel][data-sidebar-right-open]:not([data-sidebar-right-panel="fullscreen"]){
   background:rgba(24,26,30,.62);
 }
 /* 全屏（data-sidebar-right-panel="fullscreen"）：面板铺满视口、本该盖住下层 UI。

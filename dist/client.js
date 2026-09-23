@@ -2541,11 +2541,13 @@ body[data-we-wallpaper] [data-plugin-panel] [class*="crumb"]{
    2026-09-23 \u8BA2\u6B63\uFF080.1.7 \u8D77\u53F3\u680F\u51FA\u73B0\u5E38\u9A7B\u906E\u7F69\uFF09\uFF1A0.1.7 \u628A\u300C\u6536\u8D77\u300D\u4ECE\u9690\u85CF\u5BB9\u5668\u6539\u6210\u9690\u85CF
    dock \u5B50\u5185\u5BB9\uFF08\u5BB9\u5668 position:absolute; right:0\uFF0C\u4ECD\u5360\u4FA7\u680F\u5BBD\u5EA6\u4E14 visibility:visible\uFF09\uFF0C
    \u6536\u8D77\u6001\u5BB9\u5668\u6210\u4E86\u5E38\u9A7B\u900F\u660E\u7A7A\u76D2\u5B50 \u2014\u2014 \u534A\u900F\u660E\u5E95\u5FC5\u987B\u9650\u5B9A [data-sidebar-right-open]\uFF08\u4E09\u7248
-   \u90FD\u6E32\u67D3\u8BE5\u5C5E\u6027\uFF09\uFF0C\u5426\u5219\u6536\u8D77\u65F6\u6574\u6761\u53F3\u680F\u88AB\u753B\u6210\u906E\u7F69\u3002 */
-body[data-we-wallpaper] [data-sidebar-right-panel][data-sidebar-right-open]{
+   \u90FD\u6E32\u67D3\u8BE5\u5C5E\u6027\uFF09\uFF0C\u5426\u5219\u6536\u8D77\u65F6\u6574\u6761\u53F3\u680F\u88AB\u753B\u6210\u906E\u7F69\u3002
+   \u8FD8\u5FC5\u987B :not(fullscreen)\uFF1A\u5C5E\u6027\u9650\u5B9A\u628A\u534A\u900F\u660E\u5E95\u63D0\u5230 (0,3,1)\uFF0C\u4F1A\u76D6\u8FC7\u5168\u5C4F\u90A3\u6761 (0,2,1)
+   \u7684\u4E0D\u900F\u660E\u5E95 \u21D2 \u5168\u5C4F\u9762\u677F\u6F0F\u51FA\u58C1\u7EB8\uFF08\u771F\u673A\u56DE\u5F52\uFF09\u3002\u4E24\u4E2A\u9009\u62E9\u5668\u4E92\u65A5\uFF0C\u4E0D\u9760\u5148\u540E\u987A\u5E8F\u51B3\u80DC\u3002 */
+body[data-we-wallpaper] [data-sidebar-right-panel][data-sidebar-right-open]:not([data-sidebar-right-panel="fullscreen"]){
   background:rgba(255,255,255,.74);
 }
-body[data-ds-dark-theme][data-we-wallpaper] [data-sidebar-right-panel][data-sidebar-right-open]{
+body[data-ds-dark-theme][data-we-wallpaper] [data-sidebar-right-panel][data-sidebar-right-open]:not([data-sidebar-right-panel="fullscreen"]){
   background:rgba(24,26,30,.62);
 }
 /* \u5168\u5C4F\uFF08data-sidebar-right-panel="fullscreen"\uFF09\uFF1A\u9762\u677F\u94FA\u6EE1\u89C6\u53E3\u3001\u672C\u8BE5\u76D6\u4F4F\u4E0B\u5C42 UI\u3002

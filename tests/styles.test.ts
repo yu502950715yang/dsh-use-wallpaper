@@ -162,8 +162,10 @@ describe('styles 主题适配', () => {
     // 2026-09-23 订正：0.1.7 起「收起」改成隐藏 dock 子内容，面板容器本身常驻且可见
     // （position:absolute/right:0，宽 = 侧栏宽度）⇒ 底必须限定 [data-sidebar-right-open]，
     // 否则收起时整条右栏被画成常驻遮罩（真机现象）。该属性三版都渲染。
-    expect(WALLPAPER_CSS).toMatch(/body\[data-we-wallpaper\]\s*\[data-sidebar-right-panel\]\[data-sidebar-right-open\]\s*\{[^}]*background:rgba\(255,\s*255,\s*255,\s*\.7/);
-    expect(WALLPAPER_CSS).toMatch(/body\[data-ds-dark-theme\]\[data-we-wallpaper\]\s*\[data-sidebar-right-panel\]\[data-sidebar-right-open\]\s*\{[^}]*background:rgba\(24,\s*26,\s*30,\s*\.6/);
+    // 还必须用 :not(fullscreen) 排除全屏：属性限定把半透明底提到 (0,3,1)，会盖过全屏那条
+    // (0,2,1) 的不透明底 ⇒ 全屏面板漏出壁纸（真机回归）。
+    expect(WALLPAPER_CSS).toMatch(/body\[data-we-wallpaper\]\s*\[data-sidebar-right-panel\]\[data-sidebar-right-open\]:not\(\[data-sidebar-right-panel="fullscreen"\]\)\s*\{[^}]*background:rgba\(255,\s*255,\s*255,\s*\.7/);
+    expect(WALLPAPER_CSS).toMatch(/body\[data-ds-dark-theme\]\[data-we-wallpaper\]\s*\[data-sidebar-right-panel\]\[data-sidebar-right-open\]:not\(\[data-sidebar-right-panel="fullscreen"\]\)\s*\{[^}]*background:rgba\(24,\s*26,\s*30,\s*\.6/);
     // 底不再挂外层列（全屏会漏）
     expect(WALLPAPER_CSS.replace(/\/\*[\s\S]*?\*\//g, '')).not.toMatch(/\[data-rightbar-col\]\s*\{/);
     // 不允许「未限定展开态就给面板上半透明底」的规则（全屏分支是不透明底，不在此列）
