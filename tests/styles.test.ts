@@ -180,20 +180,32 @@ describe('styles 主题适配', () => {
     expect(WALLPAPER_CSS).toMatch(/\[data-sidebar-right-panel="fullscreen"\]\[data-sidebar-right-open\]\s*\{[^}]*background:#fff/);
     expect(WALLPAPER_CSS).toMatch(/\[data-ds-dark-theme\]\[data-we-wallpaper\]\s*\[data-sidebar-right-panel="fullscreen"\]\[data-sidebar-right-open\]\s*\{[^}]*background:rgb\(24,\s*26,\s*30\)/);
   });
-  it('全屏面板必须自带 z-index：盖住聊天输入框（z=1）且低于 DSH 遮罩层（z=20）', () => {
-    // 2026-09-23（用户报告全屏时聊天框仍显示）：0.1.7 的 .P3OORG_panel 去掉了旧版的
-    // z-index:10 ⇒ 容器 z-index:auto，而聊天输入框所在的 composerStack 是 z-index:1、
-    // 面板 dock 内容是 z-index:40 但全透明 ⇒ 半透明/不透明底都在输入框之下，输入框浮在面板上。
-    // 实测聊天内容层最高 z-index:10（dsh-client-ui-conversation），DSH 自己的 overlayLayer 是 20。
-    const rules = [...WALLPAPER_CSS.matchAll(/([^{}]+)\{([^}]*)\}/g)]
-      .filter(([, sel]) => sel.includes('[data-sidebar-right-panel="fullscreen"]') && !sel.includes(':not('));
-    expect(rules.length).toBe(2); // 浅色 + 深色各一条
-    for (const [, sel, body] of rules) {
-      // z-index 与底同理必须限定展开态，否则「全屏+收起」时 z=15 的空白盒子会盖住整个应用
-      expect(sel, sel.trim()).toContain('[data-sidebar-right-open]');
-      const z = Number(/z-index:\s*(\d+)/.exec(body)?.[1] ?? NaN);
-      expect(z, sel.trim()).toBeGreaterThan(10);
-      expect(z, sel.trim()).toBeLessThan(20);
+  it('全屏面板必须自带 z-index：盖住聊天（最高 z=10）、低于 DSH 遮罩（z=20），且不越权覆盖旧版 DSH 的 40', () => {
+    // 2026-09-23（用户报告全屏时聊天框仍显示）：0.1.7 的 .P3OORG_panel 去掉了 z-index ⇒ 容器
+    // z-index:auto，而聊天输入框所在的 composerStack 是 z-index:1、面板 dock 内容是 z-index:40
+    // 但全透明 ⇒ 输入框浮在面板上。实测聊天内容层最高 z-index:10（dsh-client-ui-conversation），
+    // DSH 自己的 overlayLayer 是 20，故取 15。
+    // 但旧版（≤0.1.6）DSH 自己给了 `.P3OORG_panel[data-sidebar-right-panel=fullscreen]{z-index:40}`
+    // ⇒ 该规则必须用 :where() 保持低具体度，否则会把旧版的 40 压成 15（真机 Chromium 层叠实测）。
+    const css = WALLPAPER_CSS.replace(/\/\*[\s\S]*?\*\//g, '');
+    const specificity = (sel: string) => {
+      const s = sel.replace(/:where\([^)]*\)/g, ''); // :where() 不贡献具体度
+      const ids = (s.match(/#[\w-]+/g) ?? []).length;
+      const classes = (s.match(/\.[\w-]+|\[[^\]]+\]|:(?!:)[\w-]+/g) ?? []).length;
+      const types = (s.match(/(?:^|[\s>+~])[a-zA-Z][\w-]*/g) ?? []).length;
+      return ids * 10000 + classes * 100 + types;
+    };
+    const zRules = [...css.matchAll(/([^{}]+)\{([^}]*)\}/g)]
+      .filter(([, sel, body]) => sel.includes('[data-sidebar-right-panel="fullscreen"]') && /z-index:\s*\d+/.test(body));
+    expect(zRules.length).toBe(1); // z-index 与主题无关，一条即可
+    const [sel, body] = [zRules[0][1].trim(), zRules[0][2]];
+    expect(sel).toContain('[data-sidebar-right-open]'); // 收起态不得生效（否则空白盒子盖住整个应用）
+    const z = Number(/z-index:\s*(\d+)/.exec(body)?.[1] ?? NaN);
+    expect(z).toBeGreaterThan(10);
+    expect(z).toBeLessThan(20);
+    for (const one of sel.split(',')) {
+      expect(specificity(one.trim()), one.trim())
+        .toBeLessThan(specificity('.P3OORG_panel[data-sidebar-right-panel=fullscreen]')); // 旧版 DSH 的 40 那条
     }
   });
 });
