@@ -173,9 +173,12 @@ describe('styles 主题适配', () => {
       .filter(([sel, body]) => !sel.includes('data-sidebar-right-open')
         && /background[^;]*rgba\([^)]*,\s*\.?\d*\.\d+\s*\)/.test(body));
     expect(unguarded.map((m) => m[1].trim())).toEqual([]);
-    // 全屏模式铺满视口，要用不透明底，否则左侧栏/聊天内容透上来（半透明实测仍有残影）
-    expect(WALLPAPER_CSS).toMatch(/\[data-sidebar-right-panel="fullscreen"\]\s*\{[^}]*background:#fff/);
-    expect(WALLPAPER_CSS).toMatch(/\[data-ds-dark-theme\]\[data-we-wallpaper\]\s*\[data-sidebar-right-panel="fullscreen"\]\s*\{[^}]*background:rgb\(24,\s*26,\s*30\)/);
+    // 全屏模式铺满视口，要用不透明底，否则左侧栏/聊天内容透上来（半透明实测仍有残影）；
+    // 但必须同时限定 [data-sidebar-right-open]：收起按钮只 toggleExpanded、不改 mode ⇒
+    // 「全屏 + 未展开」是可达状态（面板仍 width:100vw、dock 内容 visibility:hidden），
+    // 未限定时整块不透明底会盖住整个应用 ⇒ 页面全空（真机现象）。
+    expect(WALLPAPER_CSS).toMatch(/\[data-sidebar-right-panel="fullscreen"\]\[data-sidebar-right-open\]\s*\{[^}]*background:#fff/);
+    expect(WALLPAPER_CSS).toMatch(/\[data-ds-dark-theme\]\[data-we-wallpaper\]\s*\[data-sidebar-right-panel="fullscreen"\]\[data-sidebar-right-open\]\s*\{[^}]*background:rgb\(24,\s*26,\s*30\)/);
   });
   it('全屏面板必须自带 z-index：盖住聊天输入框（z=1）且低于 DSH 遮罩层（z=20）', () => {
     // 2026-09-23（用户报告全屏时聊天框仍显示）：0.1.7 的 .P3OORG_panel 去掉了旧版的
@@ -186,6 +189,8 @@ describe('styles 主题适配', () => {
       .filter(([, sel]) => sel.includes('[data-sidebar-right-panel="fullscreen"]') && !sel.includes(':not('));
     expect(rules.length).toBe(2); // 浅色 + 深色各一条
     for (const [, sel, body] of rules) {
+      // z-index 与底同理必须限定展开态，否则「全屏+收起」时 z=15 的空白盒子会盖住整个应用
+      expect(sel, sel.trim()).toContain('[data-sidebar-right-open]');
       const z = Number(/z-index:\s*(\d+)/.exec(body)?.[1] ?? NaN);
       expect(z, sel.trim()).toBeGreaterThan(10);
       expect(z, sel.trim()).toBeLessThan(20);
