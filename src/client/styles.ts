@@ -68,6 +68,10 @@ body[data-we-wallpaper]:not([data-ds-dark-theme]){
      设为半透明白让壁纸透出；!important 覆盖 DSH 主题分支的填充值（原先设 transparent
      覆盖不到 dark 分支，侧边栏仍被不透明底色挡住——2026-08-25 实测定位）。 */
   --dsw-specific-sidebar-fill:rgba(255,255,255,.5)!important;
+  /* 弹层菜单底（指令菜单 / 模型选择 / 任务菜单等 8 个包共用）：0.1.7 把它从
+     var(--dsw-alias-bg-layer-3)（不透明）改成 #f8f9fa94 + blur(40px) 的玻璃，壁纸透上来后
+     文字发虚 ⇒ 有壁纸时压回接近不透明（浅 .92 / 深 .94）。 */
+  --dsw-specific-menu:rgba(255,255,255,.92)!important;
 }
 /* 深色分支：气泡回 DSH 原生底色（深蓝实心），壁纸被气泡遮住；仅 message 容器透明。
    同浅色注释：2026-08-31 起 --dsw-specific-bubble 不再设 transparent */
@@ -76,6 +80,8 @@ body[data-ds-dark-theme][data-we-wallpaper]{
   /* --dsw-specific-bubble:transparent;  ← 移除，回 DSH 原生底色 */
   /* 深色：侧边栏根填充分支（同浅色注释），暗色半透明让壁纸透出 */
   --dsw-specific-sidebar-fill:rgba(24,26,30,.4)!important;
+  /* 弹层菜单底：同浅色分支注释（0.1.7 的深色值 #30313680 α≈.5 同样过透） */
+  --dsw-specific-menu:rgba(24,26,30,.94)!important;
 }
 
 /* ── 消息气泡（flowItem）回 DSH 原生样式（2026-08-31 决策） ──

@@ -165,6 +165,7 @@ profile `cordis.patch.yml`（新旧通吃的位置）：
 8. `configValue()` 的 volatile 解引用 + `state` getter 惰性读（0.1.7 的 `config` 是活引用，快照会导致面板保存不生效）。
 9. 右侧栏全部 CSS：`[data-sidebar-right-open]` 限定（收起态容器常驻）、`:not([data-sidebar-right-panel="fullscreen"])`、全屏不透明底 + z-index、以及**全屏也必须带 open 限定**（收起按钮不改 mode，「全屏+未展开」可达）。
 10. 依赖 `@deepseek-ai/schemastery ^3.18.4`（`.volatile()` 必需，**不要降回** 3.18.1/3.18.2）。
+11. `src/client/styles.ts` 里两条 `--dsw-specific-menu` 覆盖（浅 `.92` / 深 `.94`）：0.1.7 把该共享弹层底 token 改成了半透明玻璃（`#f8f9fa94`/`#30313680`），删了会让指令菜单/选择器文字重新发虚（见 `AGENT.md` §5.37）。
 
 ### D. 执行时的验证
 

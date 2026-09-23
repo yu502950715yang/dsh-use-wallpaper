@@ -208,4 +208,14 @@ describe('styles 主题适配', () => {
         .toBeLessThan(specificity('.P3OORG_panel[data-sidebar-right-panel=fullscreen]')); // 旧版 DSH 的 40 那条
     }
   });
+  it('弹层菜单底 --dsw-specific-menu 在有壁纸时必须提高不透明度（0.1.7 把它从 bg-layer-3 换成半透明玻璃）', () => {
+    // 2026-09-23（用户报告「输入框面板透明度太高，看不清文字」）：0.1.7 把该 token 从
+    // var(--dsw-alias-bg-layer-3)（不透明）改成字面量 #f8f9fa94 / #30313680（α≈.58/.50）
+    // 并加 backdrop-filter:blur(40px) ⇒ 壁纸透上来、指令菜单/模型选择等 8 个包的弹层文字发虚。
+    // 插件在有壁纸时把它压回接近不透明（浅 .92 / 深 .94），保持文字可读。
+    const light = /body\[data-we-wallpaper\]:not\(\[data-ds-dark-theme\]\)\s*\{[^}]*--dsw-specific-menu:rgba\(255,\s*255,\s*255,\s*\.9\d*\)!important/;
+    const dark = /body\[data-ds-dark-theme\]\[data-we-wallpaper\]\s*\{[^}]*--dsw-specific-menu:rgba\(2\d,\s*2\d,\s*3\d,\s*\.9\d*\)!important/;
+    expect(WALLPAPER_CSS).toMatch(light);
+    expect(WALLPAPER_CSS).toMatch(dark);
+  });
 });
