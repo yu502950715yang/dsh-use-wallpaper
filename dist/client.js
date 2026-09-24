@@ -22415,6 +22415,21 @@ function parseVisible(raw) {
   }
   return void 0;
 }
+function isStaticallyHidden(binding, userProps) {
+  if (!binding) return false;
+  switch (binding.kind) {
+    case "plain":
+      return !binding.value;
+    case "user": {
+      const p = userProps[binding.key ?? ""];
+      return typeof p === "boolean" ? !p : !binding.value;
+    }
+    case "script":
+      return false;
+    default:
+      return false;
+  }
+}
 function resolveVisibility(obj, userProps) {
   const v = obj.visible;
   if (!v) return true;
@@ -25167,6 +25182,8 @@ var ObjectEffectStage = class {
   queue = [];
   /** 去重告警集合（按 key 只打印一次，防每帧刷屏）。 */
   warned = /* @__PURE__ */ new Set();
+  /** 音频频谱源（A3）：每帧同一缓冲引用；null = 全零静音（无音频/音效关闭）。 */
+  audioSpectrum = null;
   /** 当前屏幕密度（设备像素 / 世界单位）；同源下发契约见类头。 */
   scale() {
     const s = this.screenScale;
@@ -25230,13 +25247,18 @@ var ObjectEffectStage = class {
       if (out) this.host.setObjectOutput(view.id, out);
     }
   }
+  /** 注入音频频谱源（A3，由 three-renderer 每帧刷新后转入）：效果链的音频 uniform 由它驱动。
+   *  null = 全零静音（无 sound / 音效开关关闭），行为与接线前一致。 */
+  setAudioSpectrum(source) {
+    this.audioSpectrum = source;
+  }
   /** 主场景渲染之后：串行推进各 runner 的 update（异步，不阻塞本帧；见类头约束 3）。 */
   advance(time) {
     if (this.disposed) return;
     for (const view of this.host.isolatedObjects()) {
       const runner = this.entries.get(view.id)?.runner;
       if (!runner) continue;
-      runner.setAudioSpectrumSource(null);
+      runner.setAudioSpectrumSource(this.audioSpectrum);
       this.enqueue(() => runner.update(time, view.rtTexture));
     }
   }
@@ -25617,7 +25639,9 @@ var DEFAULTS = {
   glowStrength: 0.35,
   paused: false,
   pauseOnHidden: true,
-  qualityScale: 1
+  qualityScale: 1,
+  // 壁纸音效（sound 对象 + 频谱驱动效果）：默认开启，与桌面 WE 一致；面板可关。
+  soundEnabled: true
 };
 var settingsCtx = null;
 var lastGood = null;
@@ -27165,6 +27189,72 @@ async function getTextScriptRuntime() {
   return runtimePromise;
 }
 
+// src/client/audio-input.ts
+function resolveAudioContextCtor() {
+  const g = globalThis;
+  return g.AudioContext ?? g.webkitAudioContext ?? null;
+}
+function createAudioAnalyzer() {
+  const Ctor = resolveAudioContextCtor();
+  if (!Ctor) return null;
+  try {
+    const context = new Ctor();
+    const analyser = context.createAnalyser();
+    analyser.fftSize = 128;
+    analyser.connect(context.destination);
+    const freqData = new Uint8Array(analyser.frequencyBinCount);
+    return {
+      context,
+      analyser,
+      freqData,
+      update() {
+        analyser.getByteFrequencyData(freqData);
+      }
+    };
+  } catch {
+    return null;
+  }
+}
+var gestureArmedContexts = /* @__PURE__ */ new WeakSet();
+function armGestureResume(context) {
+  if (typeof window === "undefined" || gestureArmedContexts.has(context)) return;
+  gestureArmedContexts.add(context);
+  const onGesture = () => {
+    detach();
+    if (context.state === "suspended") context.resume().catch(() => {
+    });
+  };
+  const detach = () => {
+    window.removeEventListener("pointerdown", onGesture);
+    window.removeEventListener("keydown", onGesture);
+    window.removeEventListener("touchstart", onGesture);
+  };
+  window.addEventListener("pointerdown", onGesture);
+  window.addEventListener("keydown", onGesture);
+  window.addEventListener("touchstart", onGesture);
+}
+async function playWallpaperSound(url, analyzer) {
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) return false;
+    const buf = await resp.arrayBuffer();
+    const audioBuffer = await analyzer.context.decodeAudioData(buf);
+    const source = analyzer.context.createBufferSource();
+    source.buffer = audioBuffer;
+    source.loop = true;
+    source.connect(analyzer.analyser);
+    if (analyzer.context.state === "suspended") {
+      analyzer.context.resume().catch(() => {
+      });
+      armGestureResume(analyzer.context);
+    }
+    source.start();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // src/client/scene-anim.ts
 var NAME_RE = /"name"\s*:\s*"([^"]{1,200})"/g;
 var FPS_RE = /"fps"\s*:\s*(-?\d+(?:\.\d+)?)/g;
@@ -28284,9 +28374,10 @@ function createEmptySim() {
     particle_count: () => 0
   };
 }
-async function collectObjectEffectChains(desc, loadFile) {
+async function collectObjectEffectChains(desc, loadFile, isHidden) {
   const out = /* @__PURE__ */ new Map();
   for (const group of groupEffectsByObject(desc.objects)) {
+    if (isHidden?.(group.obj)) continue;
     const chains = [];
     for (const fx of group.effects) {
       if (typeof fx?.file !== "string") continue;
@@ -28330,6 +28421,24 @@ function createThreeSceneRenderer(opts) {
   let currentMeshRegistry = null;
   let scriptClick = null;
   let scriptClickTarget = null;
+  let currentAudio = null;
+  let soundEnabledOverride = null;
+  let lastAudioSpec = null;
+  const stopAudio = () => {
+    const audio = currentAudio;
+    currentAudio = null;
+    if (audio) void audio.analyzer.context.close().catch(() => {
+    });
+  };
+  const startAudio = (id, sounds, enabled) => {
+    if (!enabled || sounds.length === 0) return;
+    const analyzer = createAudioAnalyzer();
+    if (!analyzer) return;
+    currentAudio = { analyzer, id, sounds };
+    for (const s of sounds) {
+      void playWallpaperSound(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(s)}`, analyzer);
+    }
+  };
   const teardown = () => {
     if (onWindowResize) {
       window.removeEventListener("resize", onWindowResize);
@@ -28353,6 +28462,7 @@ function createThreeSceneRenderer(opts) {
     currentScriptHost = null;
     currentMeshRegistry?.dispose();
     currentMeshRegistry = null;
+    stopAudio();
   };
   const effectiveGlow = () => ({
     enabled: glowOverride?.enabled ?? glowFromSettings?.enabled ?? true,
@@ -28409,7 +28519,14 @@ function createThreeSceneRenderer(opts) {
         const backgroundTextures = /* @__PURE__ */ new Map();
         currentTextures = backgroundTextures;
         const particles = /* @__PURE__ */ new Map();
+        const userProps = {};
         for (const obj of desc.objects) {
+          if (obj.visible?.kind === "user" && obj.visible.key) {
+            userProps[obj.visible.key] = getUserPropertyValue(obj.visible.key);
+          }
+        }
+        for (const obj of desc.objects) {
+          if (isStaticallyHidden(obj.visible, userProps)) continue;
           if (obj.kind === "image") {
             const tex = await resolveImageTexture(id, obj);
             if (tex) backgroundTextures.set(obj.id, tex);
@@ -28432,12 +28549,6 @@ function createThreeSceneRenderer(opts) {
               // particle_render SOFTNESS_* 语义）；此处不硬编码 0（无纹理白图兜底时硬边白方块
               // 会叠成白斑、单个粒子被看作方块——Task5 回归「粒子可见但不过曝/不遮背景」）。
             });
-          }
-        }
-        const userProps = {};
-        for (const obj of desc.objects) {
-          if (obj.visible?.kind === "user" && obj.visible.key) {
-            userProps[obj.visible.key] = getUserPropertyValue(obj.visible.key);
           }
         }
         const textLayers = /* @__PURE__ */ new Map();
@@ -28498,10 +28609,16 @@ function createThreeSceneRenderer(opts) {
           if (!r.ok) return null;
           return new Uint8Array(await r.arrayBuffer());
         };
-        const effectChains = await collectObjectEffectChains(desc, loadFile);
+        const effectChains = await collectObjectEffectChains(
+          desc,
+          loadFile,
+          (o) => isStaticallyHidden(o.visible, userProps)
+        );
         const scriptSources = collectScriptSources(desc);
         const settings = await readClientSettings();
         qualityScale = settings.qualityScale ?? 1;
+        lastAudioSpec = desc.sounds && desc.sounds.length > 0 ? { id, sounds: desc.sounds } : null;
+        startAudio(id, desc.sounds ?? [], soundEnabledOverride ?? settings.soundEnabled !== false);
         glowFromSettings = {
           enabled: settings.glowEnabled,
           threshold: settings.glowThreshold,
@@ -28514,6 +28631,7 @@ function createThreeSceneRenderer(opts) {
         const screenScale = screenScalePx(desc.orthogonal.width, desc.orthogonal.height, vw, vh, dpr);
         const isolate = /* @__PURE__ */ new Map();
         for (const obj of desc.objects) {
+          if (isStaticallyHidden(obj.visible, userProps)) continue;
           const chains = effectChains.get(obj.id);
           if (!chains || chains.length === 0) continue;
           if (obj.kind === "image") {
@@ -28563,6 +28681,8 @@ function createThreeSceneRenderer(opts) {
           // SceneScript 帧钩子：脚本状态是本帧渲染的权威来源，先 tick → 应用脏写入，
           // 再走原有的粒子/文本更新与 render。host 未就绪（quickjs 加载中/失败）时直接返回。
           onFrame: (dt) => {
+            currentAudio?.analyzer.update();
+            currentStage?.setAudioSpectrum(currentAudio?.analyzer.freqData ?? null);
             const host = currentScriptHost;
             const loaded = current;
             if (!host || !loaded) return;
@@ -28705,6 +28825,15 @@ function createThreeSceneRenderer(opts) {
     setGlow(patch) {
       glowOverride = { ...glowOverride ?? {}, ...patch };
       applyGlowRuntime();
+    },
+    // 音效开关（面板即时生效）：关 → 停声并释放 AudioContext；开 → 按上次规格重播。
+    setSoundEnabled(value) {
+      soundEnabledOverride = value;
+      if (!value) {
+        stopAudio();
+        return;
+      }
+      if (!currentAudio && lastAudioSpec) startAudio(lastAudioSpec.id, lastAudioSpec.sounds, true);
     },
     // 释放当前 three 播放器 + wasm 模拟器（切壁纸/卸载时防泄漏）。
     dispose() {
@@ -28914,6 +29043,18 @@ function WallpaperSettingsSection(props) {
         )
       ] })
     ] }),
+    settings && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "wss-sound-row", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "input",
+        {
+          type: "checkbox",
+          className: "wss-sound",
+          checked: settings.soundEnabled,
+          onChange: (e) => applyRuntime({ soundEnabled: e.target.checked })
+        }
+      ),
+      "\u58C1\u7EB8\u97F3\u6548"
+    ] }) }),
     /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-dirs", children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { children: "\u58C1\u7EB8\u76EE\u5F55" }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-dir-row", children: [
@@ -28986,6 +29127,7 @@ function bootstrap(ctx) {
     sceneRenderer.setPaused?.(shouldPause);
     sceneRenderer.setQualityScale?.(s.qualityScale);
     sceneRenderer.setGlow?.({ enabled: s.glowEnabled, threshold: s.glowThreshold, strength: s.glowStrength });
+    sceneRenderer.setSoundEnabled?.(s.soundEnabled);
     layer?.setPaused(shouldPause);
   };
   const selectWallpaper = (id) => {

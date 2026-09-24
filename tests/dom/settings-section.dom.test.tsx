@@ -14,7 +14,7 @@ const BASE_SETTINGS: ClientSettings = {
   selectedWallpaperId: '1', wallpaperDir: '', weAssetsDir: '',
   overlayOpacity: 0.35, blurEnabled: false, blurRadius: 12, kenBurns: true,
   glowEnabled: true, glowThreshold: 0.65, glowStrength: 0.35,
-  paused: false, pauseOnHidden: true, qualityScale: 1,
+  paused: false, pauseOnHidden: true, qualityScale: 1, soundEnabled: true,
 };
 
 const WALLPAPERS = [
@@ -263,5 +263,21 @@ describe('WallpaperSettingsSection', () => {
     await flush();
     expect(onRuntimeSettings).toHaveBeenCalledWith({ qualityScale: 0.5 });
     expect(writeSettings).toHaveBeenCalledWith({ qualityScale: 0.5 });
+  });
+
+  // 音频开关（2026-09-25）：默认开启（与桌面 WE 一致）；关掉后不播放壁纸音效，频谱效果也保持静止。
+  it('音效开关：默认勾选 → 关闭时即时下发 + 持久化 soundEnabled=false', async () => {
+    const writeSettings = vi.fn(async () => {});
+    const onRuntimeSettings = vi.fn();
+    mount({ writeSettings, onRuntimeSettings });
+    await flush();
+
+    const box = container.querySelector('.wss-sound') as HTMLInputElement;
+    expect(box).toBeTruthy();
+    expect(box.checked).toBe(true); // 缺省开启
+    box.click();
+    await flush();
+    expect(onRuntimeSettings).toHaveBeenCalledWith({ soundEnabled: false });
+    expect(writeSettings).toHaveBeenCalledWith({ soundEnabled: false });
   });
 });

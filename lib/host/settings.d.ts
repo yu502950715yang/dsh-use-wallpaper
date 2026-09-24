@@ -14,6 +14,7 @@ export declare const WallpaperSettingsSchema: z<Schemastery.ObjectS<NoInfer<{
     paused: z<boolean, boolean, "defined">;
     pauseOnHidden: z<boolean, boolean, "defined">;
     qualityScale: z<number, number, "defined">;
+    soundEnabled: z<boolean, boolean, "defined">;
 }>>, Schemastery.ObjectT<NoInfer<{
     selectedWallpaperId: z<string, string, "defined">;
     wallpaperDir: z<string, string, "defined">;
@@ -28,6 +29,7 @@ export declare const WallpaperSettingsSchema: z<Schemastery.ObjectS<NoInfer<{
     paused: z<boolean, boolean, "defined">;
     pauseOnHidden: z<boolean, boolean, "defined">;
     qualityScale: z<number, number, "defined">;
+    soundEnabled: z<boolean, boolean, "defined">;
 }>>, "plain">;
 export declare const Config: z<NoInfer<Schemastery.ObjectS<NoInfer<{
     selectedWallpaperId: z<string, string, "defined">;
@@ -43,6 +45,7 @@ export declare const Config: z<NoInfer<Schemastery.ObjectS<NoInfer<{
     paused: z<boolean, boolean, "defined">;
     pauseOnHidden: z<boolean, boolean, "defined">;
     qualityScale: z<number, number, "defined">;
+    soundEnabled: z<boolean, boolean, "defined">;
 }>>>, NoInfer<Schemastery.ObjectT<NoInfer<{
     selectedWallpaperId: z<string, string, "defined">;
     wallpaperDir: z<string, string, "defined">;
@@ -57,4 +60,5 @@ export declare const Config: z<NoInfer<Schemastery.ObjectS<NoInfer<{
     paused: z<boolean, boolean, "defined">;
     pauseOnHidden: z<boolean, boolean, "defined">;
     qualityScale: z<number, number, "defined">;
+    soundEnabled: z<boolean, boolean, "defined">;
 }>>>, "volatile">;

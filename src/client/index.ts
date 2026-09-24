@@ -38,6 +38,8 @@ export function bootstrap(ctx?: any): void {
     sceneRenderer.setQualityScale?.(s.qualityScale);
     // 应用级 Glow：开关/阈值/强度一并即时下发（已装配则就地改 uniform，无需重选壁纸）
     sceneRenderer.setGlow?.({ enabled: s.glowEnabled, threshold: s.glowThreshold, strength: s.glowStrength });
+    // 壁纸音效开关：关掉即时停声并释放 AudioContext（打开按上次规格重播）。
+    sceneRenderer.setSoundEnabled?.(s.soundEnabled);
     layer?.setPaused(shouldPause);
   };
   const selectWallpaper = (id: string) => {

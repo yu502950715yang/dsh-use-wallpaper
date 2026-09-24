@@ -10,6 +10,7 @@ export interface SceneRendererLike {
         threshold?: number;
         strength?: number;
     }): void;
+    setSoundEnabled?(enabled: boolean): void;
 }
 export interface WallpaperControllerOptions {
     fetchList: () => Promise<WallpaperInfo[]>;

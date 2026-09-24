@@ -283,6 +283,34 @@ describe('ObjectEffectStage', () => {
     expect(host._outputs.size).toBe(1);
   });
 
+  it('setAudioSpectrum：频谱源转发给每个 runner（缺省 null = 全零静音）', () => {
+    const host = createHost([
+      { id: 1, rtWidth: 10, rtHeight: 10 },
+      { id: 2, rtWidth: 10, rtHeight: 10 },
+    ]);
+    const stage = new ObjectEffectStage(host as never, { wallpaperId: 'w', screenScale: 1 });
+    const mk = () => ({
+      setChains: vi.fn(), setAudioSpectrumSource: vi.fn(), dispose: vi.fn(),
+      lastOutput: () => null, update: vi.fn(async () => null),
+    });
+    const r1 = mk();
+    const r2 = mk();
+    stage.debugInjectRunner(1, r1 as never);
+    stage.debugInjectRunner(2, r2 as never);
+
+    // 未注入频谱源（缺省）→ null（效果链保持全零，行为与改动前一致）
+    stage.advance(1);
+    expect(r1.setAudioSpectrumSource).toHaveBeenCalledWith(null);
+    expect(r2.setAudioSpectrumSource).toHaveBeenCalledWith(null);
+
+    // 注入后 → 每个 runner 都拿到**同一引用**（每帧刷新同一缓冲，避免逐 runner 拷贝）
+    const spec = new Uint8Array(64).fill(7);
+    stage.setAudioSpectrum(spec);
+    stage.advance(2);
+    expect(r1.setAudioSpectrumSource).toHaveBeenLastCalledWith(spec);
+    expect(r2.setAudioSpectrumSource).toHaveBeenLastCalledWith(spec);
+  });
+
   it('advance 串行：同一 runner 的第二次 update 在第一次完成后才发起', async () => {
     const host = createHost([{ id: 1, rtWidth: 10, rtHeight: 10 }]);
     const stage = new ObjectEffectStage(host as never, {

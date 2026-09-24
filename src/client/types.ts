@@ -26,4 +26,6 @@ export interface ClientSettings {
   pauseOnHidden: boolean;
   /** 画质档位：渲染像素比倍率（1 = 原生 dpr；0.5 = 半分辨率省显存/提流畅）。 */
   qualityScale: number;
+  /** 壁纸音效（sound 对象播放）并驱动音频频谱效果；缺省 true（对齐桌面 WE）。 */
+  soundEnabled: boolean;
 }

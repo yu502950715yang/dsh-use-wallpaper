@@ -33,6 +33,12 @@ vi.mock('../src/client/glow-stage.js', () => ({
     apply: vi.fn(), resize: vi.fn(), setOptions: vi.fn(), dispose: vi.fn(),
   })),
 }));
+// 音频输入（A3）：jsdom 无 Web Audio ⇒ 整体 mock，由各用例决定分析器/播放的返回值。
+const audioMocks = vi.hoisted(() => ({
+  createAudioAnalyzer: vi.fn(),
+  playWallpaperSound: vi.fn(async () => true),
+}));
+vi.mock('../src/client/audio-input.js', () => audioMocks);
 
 import * as THREE from 'three';
 import { loadSceneToThree } from '../src/client/threejs-player.js';
@@ -43,6 +49,8 @@ import { createThreeSceneRenderer, particleBlend, collectObjectEffectChains, col
 import { parseSceneJson } from '../src/client/scene-json.js';
 import { createGlowStage } from '../src/client/glow-stage.js';
 import { setSettingsCtx } from '../src/client/settings.js';
+import { SceneScriptHost } from '../src/client/scene-script-host.js';
+import { createAudioAnalyzer, playWallpaperSound } from '../src/client/audio-input.js';
 import { ObjectEffectStage } from '../src/client/object-effects.js';
 import type { CompiledEffectPass } from '../src/client/shader/effect-chain.js';
 import type { ClientSettings } from '../src/client/types.js';
@@ -113,6 +121,10 @@ beforeEach(() => {
   // window.innerWidth（jsdom 缺省 1024×768）
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1920 });
   Object.defineProperty(window, 'innerHeight', { configurable: true, value: 1080 });
+  // SceneScript 宿主在 jsdom 里会尝试加载 quickjs.wasm（路径推导失败 → 一条 ENOENT 噪声）。
+  // 本文件不测脚本运行时（只有 visible.script 的**收集**交给纯函数 collectScriptSources 覆盖），
+  // 故直接让它降级为 null：装配路径不受影响，测试输出保持纯净。
+  vi.spyOn(SceneScriptHost, 'create').mockResolvedValue(null as never);
 });
 
 describe('createThreeSceneRenderer', () => {
@@ -1444,5 +1456,258 @@ describe('collectScriptSources', () => {
       }],
     }));
     expect(collectScriptSources(desc)).toEqual([]);
+  });
+});
+
+// image / particle 的 visible 过滤（2026-09-25）：此前**只对 text** 应用，全库实测 134 个
+// 隐藏的 image/particle 里 125 个是布尔 false（3798688689 一张就 121 个）⇒ 会画出本应隐藏的图层。
+// 裁定：**布尔 / 用户属性**绑定在装载期静态过滤；**script 绑定一律保留** —— 其可见性是
+// visible.script 的运行期通道（applyLayerState），装载期剔掉会让脚本永远无法打开它。
+describe('three-renderer image/particle 的 visible 过滤', () => {
+  const sceneWith = (objects: Record<string, unknown>[]) => JSON.stringify({
+    camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+    general: { orthogonalprojection: { width: 1920, height: 1080 } },
+    objects,
+  });
+  const IMG = (id: number, name: string, visible: unknown) => ({
+    id, name, image: `models/${name}.json`, origin: '960 540 0', scale: '1 1 1', size: '400 400', visible,
+  });
+  const PART = (id: number, visible: unknown) => ({
+    id, name: `p${id}`, particle: 'particles/p.json', origin: '960 540 0', scale: '1 1 1', visible,
+  });
+  const PARTICLE_SPEC = JSON.stringify({ emitter: [], maxcount: 8 });
+
+  function stubRender() {
+    const player = {
+      dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setObjectEffectStage: vi.fn(),
+      isolatedObjects: () => [],
+    };
+    loadSceneToThree.mockReturnValue({ player, sims: [], backgroundIds: [0], particleLayers: [] } as never);
+    resolveImageTexture.mockResolvedValue(fakeTexture() as any);
+    const sim = makeMockSim();
+    defaultLoadWasm.mockResolvedValue({ CpuParticleSim: { new: vi.fn(() => sim) } } as any);
+    return player;
+  }
+
+  it('布尔 false 的 image/particle 不下发（不解析纹理）；true 照常下发', async () => {
+    stubAssetFetch(sceneWith([
+      IMG(13, 'a', true), IMG(14, 'b', false),
+      PART(71, true), PART(72, false),
+    ]), { 'particles/p.json': PARTICLE_SPEC });
+    stubRender();
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    await r.render('3798688689', document.createElement('canvas'), null);
+
+    const assets = loadSceneToThree.mock.calls[0][1];
+    expect(assets.backgroundTextures.has(13)).toBe(true);
+    expect(assets.backgroundTextures.has(14)).toBe(false);
+    expect(assets.particles.has(71)).toBe(true);
+    expect(assets.particles.has(72)).toBe(false);
+    // 隐藏对象连纹理都不该解析（少了这一步会白拉一次 .tex + 上传 GPU）
+    expect(resolveImageTexture).toHaveBeenCalledTimes(1);
+    expect(resolveImageTexture.mock.calls[0][1].id).toBe(13);
+    r.dispose();
+  });
+
+  it('script 绑定的 image 即使 value=false 仍下发（可见性归 visible.script 运行期通道）', async () => {
+    // 与布尔 false 混排：证明过滤「按绑定形态分流」，而不是把 value=false 一律剔掉。
+    stubAssetFetch(sceneWith([
+      IMG(14, 'b', false),
+      IMG(15, 'c', { script: 'export function update(v){ return v; }', value: false }),
+    ]), {});
+    stubRender();
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    await r.render('3798688689', document.createElement('canvas'), null);
+
+    const assets = loadSceneToThree.mock.calls[0][1];
+    expect(assets.backgroundTextures.has(14)).toBe(false);
+    expect(assets.backgroundTextures.has(15)).toBe(true);
+    r.dispose();
+  });
+
+  it('user 绑定的 image 按用户属性决定（键缺失回退 value；用户开启后下发）', async () => {
+    stubAssetFetch(sceneWith([IMG(16, 'd', { user: 'layer', value: false })]), {});
+    stubRender();
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    await r.render('3798688689', document.createElement('canvas'), null);
+    expect((loadSceneToThree.mock.calls[0][1] as { backgroundTextures: Map<number, unknown> }).backgroundTextures.has(16)).toBe(false);
+
+    localStorage.setItem('we:userprop:layer', 'true');
+    await r.render('3798688689', document.createElement('canvas'), null);
+    expect((loadSceneToThree.mock.calls[1][1] as { backgroundTextures: Map<number, unknown> }).backgroundTextures.has(16)).toBe(true);
+
+    localStorage.clear();
+    r.dispose();
+  });
+
+  it('被静态隐藏的对象不进 isolate 表（不建隔离条目），可见对象照旧隔离', async () => {
+    const withFx = (id: number, name: string, visible: unknown) => ({
+      ...IMG(id, name, visible), effects: [{ file: 'effects/w/effect.json' }],
+    });
+    stubAssetFetch(sceneWith([withFx(13, 'a', true), withFx(14, 'b', false)]), FX_FILES);
+    stubRender();
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    await r.render('3798688689', document.createElement('canvas'), null);
+
+    const assets = loadSceneToThree.mock.calls[0][1] as { isolate?: Map<number, unknown> };
+    expect(assets.isolate?.has(13)).toBe(true);
+    // 隐藏对象若仍隔离，player 会给它建隔离条目 + 合成 quad ⇒ 本应隐藏的层又画回来
+    expect(assets.isolate?.has(14) ?? false).toBe(false);
+    r.dispose();
+  });
+
+  it('被静态隐藏的对象的 effects 不解析（省掉一次 effect.json 请求）', async () => {
+    stubAssetFetch(sceneWith([
+      { ...IMG(13, 'a', true), effects: [{ file: 'effects/w/effect.json' }] },
+      { ...IMG(14, 'b', false), effects: [{ file: 'effects/hidden/effect.json' }] },
+    ]), {
+      ...FX_FILES,
+      'effects/hidden/effect.json': JSON.stringify({ passes: [{ material: 'materials/effects/w.json' }] }),
+    });
+    stubRender();
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    await r.render('3798688689', document.createElement('canvas'), null);
+
+    const urls = (globalThis.fetch as unknown as { mock: { calls: [string][] } }).mock.calls
+      .map((c) => String(c[0]));
+    expect(urls.some((u) => u.includes('effects%2Fw%2Feffect.json'))).toBe(true);
+    expect(urls.some((u) => u.includes('effects%2Fhidden'))).toBe(false);
+    r.dispose();
+  });
+});
+
+// 音频链路（A3，2026-09-25）：壁纸 sound 对象 → playWallpaperSound（出声）+ 每帧频谱 →
+// EffectRunner（`Simple_Audio_Bars` / `audioline` 等随频谱动）。装配期创建分析器，帧内 update()；
+// 开关（soundEnabled）关掉时**不创建 AudioContext**，切壁纸时 close 释放。
+describe('three-renderer 音频链路', () => {
+  const sceneWithSound = (objects: Record<string, unknown>[]) => JSON.stringify({
+    camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+    general: { orthogonalprojection: { width: 1920, height: 1080 } },
+    objects: [
+      { id: 13, name: 'bg', image: 'models/a.json', origin: '960 540 0', scale: '1 1 1', size: '1920 1080', visible: true },
+      { id: 35, name: 'audio', sound: ['sounds/a.flac'] },
+      { id: 36, name: 'audio2', sound: ['sounds/b.ogg'] },
+      ...objects,
+    ],
+  });
+
+  function fakeAnalyzer() {
+    return {
+      context: { close: vi.fn(async () => {}), state: 'running', resume: vi.fn(async () => {}) },
+      analyser: { connect: vi.fn() },
+      freqData: new Uint8Array(64),
+      update: vi.fn(),
+    };
+  }
+
+  function stubPlayer() {
+    const player = {
+      dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setObjectEffectStage: vi.fn(),
+      isolatedObjects: () => [],
+    };
+    loadSceneToThree.mockReturnValue({ player, sims: [], backgroundIds: [0], particleLayers: [] } as never);
+    resolveImageTexture.mockResolvedValue(fakeTexture() as any);
+    return player;
+  }
+
+  beforeEach(() => {
+    audioMocks.createAudioAnalyzer.mockReset();
+    audioMocks.playWallpaperSound.mockReset();
+    audioMocks.playWallpaperSound.mockResolvedValue(true);
+  });
+
+  it('装配期：desc.sounds → 逐个 playWallpaperSound（走 scene asset 路由，接同一分析器）', async () => {
+    const fake = fakeAnalyzer();
+    audioMocks.createAudioAnalyzer.mockReturnValue(fake);
+    stubAssetFetch(sceneWithSound([]), {});
+    stubPlayer();
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    await r.render('3798688689', document.createElement('canvas'), null);
+
+    expect(createAudioAnalyzer).toHaveBeenCalledTimes(1);
+    expect(playWallpaperSound).toHaveBeenCalledTimes(2);
+    const urls = playWallpaperSound.mock.calls.map((c) => decodeURIComponent(String(c[0])));
+    expect(urls[0]).toContain('/wallpapers/scene/3798688689/asset?name=sounds/a.flac');
+    expect(urls[1]).toContain('/wallpapers/scene/3798688689/asset?name=sounds/b.ogg');
+    expect(playWallpaperSound.mock.calls[0][1]).toBe(fake);
+    r.dispose();
+  });
+
+  it('soundEnabled=false → 不创建分析器、不播放（零 AudioContext 开销）', async () => {
+    stubSettings({ glowEnabled: false, soundEnabled: false });
+    audioMocks.createAudioAnalyzer.mockReturnValue(fakeAnalyzer());
+    stubAssetFetch(sceneWithSound([]), {});
+    stubPlayer();
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    await r.render('3798688689', document.createElement('canvas'), null);
+
+    expect(createAudioAnalyzer).not.toHaveBeenCalled();
+    expect(playWallpaperSound).not.toHaveBeenCalled();
+    r.dispose();
+  });
+
+  it('无 sound 的壁纸 → 不创建分析器（不白开 AudioContext）', async () => {
+    audioMocks.createAudioAnalyzer.mockReturnValue(fakeAnalyzer());
+    stubAssetFetch(JSON.stringify({
+      camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+      general: { orthogonalprojection: { width: 1920, height: 1080 } },
+      objects: [{ id: 13, name: 'bg', image: 'models/a.json', origin: '960 540 0', scale: '1 1 1', size: '1920 1080' }],
+    }), {});
+    stubPlayer();
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    await r.render('3743126786', document.createElement('canvas'), null);
+
+    expect(createAudioAnalyzer).not.toHaveBeenCalled();
+    r.dispose();
+  });
+
+  it('切壁纸（teardown）→ close 释放 AudioContext，不泄漏', async () => {
+    const fake = fakeAnalyzer();
+    audioMocks.createAudioAnalyzer.mockReturnValue(fake);
+    stubAssetFetch(sceneWithSound([]), {});
+    stubPlayer();
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    await r.render('3798688689', document.createElement('canvas'), null);
+    expect(fake.context.close).not.toHaveBeenCalled();
+
+    await r.render('3798688689', document.createElement('canvas'), null); // 第二次 render 先 teardown 上一次
+    expect(fake.context.close).toHaveBeenCalledTimes(1);
+    r.dispose();
+  });
+
+  it('帧内：onFrame 刷新频谱（analyzer.update()）', async () => {
+    const fake = fakeAnalyzer();
+    audioMocks.createAudioAnalyzer.mockReturnValue(fake);
+    stubAssetFetch(sceneWithSound([]), {});
+    stubPlayer();
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    await r.render('3798688689', document.createElement('canvas'), null);
+
+    const onFrame = (loadSceneToThree.mock.calls[0][1] as { onFrame?: (dt: number) => void }).onFrame;
+    expect(typeof onFrame).toBe('function');
+    onFrame!(0.016);
+    expect(fake.update).toHaveBeenCalledTimes(1);
+    r.dispose();
+  });
+
+  it('运行期开关：关 → 停声并释放 AudioContext；再开 → 重新创建并播放', async () => {
+    const fake1 = fakeAnalyzer();
+    audioMocks.createAudioAnalyzer.mockReturnValue(fake1);
+    stubAssetFetch(sceneWithSound([]), {});
+    stubPlayer();
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    await r.render('3798688689', document.createElement('canvas'), null);
+    expect(fake1.context.close).not.toHaveBeenCalled();
+
+    r.setSoundEnabled?.(false);
+    expect(fake1.context.close).toHaveBeenCalledTimes(1);
+    expect(audioMocks.playWallpaperSound).toHaveBeenCalledTimes(2); // 关闭不额外播放
+
+    const fake2 = fakeAnalyzer();
+    audioMocks.createAudioAnalyzer.mockReturnValue(fake2);
+    r.setSoundEnabled?.(true);
+    expect(createAudioAnalyzer).toHaveBeenCalledTimes(2);
+    expect(audioMocks.playWallpaperSound).toHaveBeenCalledTimes(4); // 两条 sound 重新播放
+    r.dispose();
   });
 });

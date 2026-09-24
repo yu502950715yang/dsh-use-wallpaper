@@ -33,6 +33,8 @@ export declare class ObjectEffectStage implements ObjectEffectStage {
     private queue;
     /** 去重告警集合（按 key 只打印一次，防每帧刷屏）。 */
     private warned;
+    /** 音频频谱源（A3）：每帧同一缓冲引用；null = 全零静音（无音频/音效关闭）。 */
+    private audioSpectrum;
     constructor(host: ObjectEffectHost, opts: {
         wallpaperId: string;
         screenScale: number;
@@ -57,6 +59,9 @@ export declare class ObjectEffectStage implements ObjectEffectStage {
      *  的隔离对象同样要随视口重设 RT，否则视口放大后它一直用旧的小 RT（偏糊）、
      *  视口缩小时又一直占着旧的大 RT（超额显存）。 */
     onViewportResize(screenScale: number): void;
+    /** 注入音频频谱源（A3，由 three-renderer 每帧刷新后转入）：效果链的音频 uniform 由它驱动。
+     *  null = 全零静音（无 sound / 音效开关关闭），行为与接线前一致。 */
+    setAudioSpectrum(source: Uint8Array | null): void;
     dispose(): void;
     debugRunners(): Map<number, EffectRunner>;
     debugInjectRunner(id: number, runner: EffectRunner): void;

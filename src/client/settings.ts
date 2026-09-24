@@ -18,6 +18,8 @@ export const DEFAULTS: ClientSettings = {
   // 旧 A 档 0.65/1.0 在亮部多的壁纸上过曝，见 AGENT.md §7.1）。
   glowEnabled: true, glowThreshold: 0.65, glowStrength: 0.35,
   paused: false, pauseOnHidden: true, qualityScale: 1,
+  // 壁纸音效（sound 对象 + 频谱驱动效果）：默认开启，与桌面 WE 一致；面板可关。
+  soundEnabled: true,
 };
 
 /** client cordis ctx（经 setSettingsCtx 注入，供 remote.settings 访问）。 */

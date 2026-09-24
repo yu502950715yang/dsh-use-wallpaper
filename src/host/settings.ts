@@ -22,6 +22,8 @@ export const WallpaperSettingsSchema = z.object({
   paused: z.boolean().default(false),
   pauseOnHidden: z.boolean().default(true),
   qualityScale: z.number().min(0.5).max(1).default(1),
+  // 壁纸音效（sound 对象播放 + 频谱驱动效果）：默认开启，与桌面 WE 一致。
+  soundEnabled: z.boolean().default(true),
 });
 
 // 0.1.7 表单只投影 volatile 字段；旧版 register 要普通 schema（volatile 在旧版取不到值）。

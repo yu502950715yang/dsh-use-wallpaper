@@ -13,6 +13,8 @@ export interface SceneRendererLike {
   setQualityScale?(scale: number): void;
   // 应用级 Glow 的运行期参数（开关/阈值/强度）；已装配时即时生效，无需重选壁纸。
   setGlow?(patch: { enabled?: boolean; threshold?: number; strength?: number }): void;
+  // 壁纸音效开关（含频谱驱动效果）：关掉即时停声并释放 AudioContext；打开按上次规格重播。
+  setSoundEnabled?(enabled: boolean): void;
 }
 
 export interface WallpaperControllerOptions {

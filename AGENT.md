@@ -274,6 +274,8 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
     - **跨版本**：旧版（≤0.1.6）该 token 本身就是不透明面，我们的覆盖会把菜单从「完全不透明」变成「92% / 94%」——8% 透出、文字仍清晰（旧版真机实测 token 计算值 = `rgba(255,255,255,.92)`）；属可接受的一致化，不是回归。
     - **验证**：`tests/styles.test.ts` 断言两条分支都覆盖该 token 且 α ≥ .9；真机 0.1.7 指令菜单（`_3e4SsG_menu`）计算背景 **`.58 → .92`**（手加 `data-ds-dark-theme` 后 `.94`），截图 `output/playwright/dsh017-menu-fixed-light.png` 文字清晰。
 
+38. **可见性有两套判定，别混用（2026-09-25）**：`resolveVisibility`（**text** 用；`script` 绑定按 `value` 静态定论）与 `isStaticallyHidden`（**image/particle** 用；**`script` 恒不隐藏**，交给 `visible.script` 的运行时通道）。把后者换成前者，会让 9 个脚本控制的图层在装载期被永久剔掉（脚本再也打不开它）；反过来给 image/particle 套 `resolveVisibility` 是这类改动的头号地雷。
+
 ## 6. 工作约定
 
 - 回复、注释、文档、**提交信息一律简体中文**；代码、命令、文件名、技术术语保留原文。
@@ -378,7 +380,7 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
       - **真机显存（nvidia-smi）**：720p **+113 MiB** / 1080p **+415 MiB**（相对档前基线；绝对占用受桌面前台进程影响，只读差值）。而对象 RT 的**静态估算**只有 13.6 / 30.5 MB ⇒ **静态估算低估 8–14×**（源纹理等未计入公式，公式自身也声明不计纹理槽贴图）。
       - **真机全量回归：37 PASS / 2 FAIL**，两项 FAIL 与 SwiftShader 基线**逐项相同**（都是 `[5]` 的 bloom 归因对照）⇒ **软件光栅化没有掩盖真缺陷**（这曾是 §5.20 的隐忧，现有实验证据）。⚠️ **2026-09-20 起该 `[5]` 口径失去鉴别力**：Glow 默认开启后开关两侧的全屏 p99 都钉在 255 ⇒ 由 1 PASS + 2 FAIL 变 3 FAIL；**不是 bloom 失效**（`[5-归因·主]` 的亮部诊断仍显示 bloom 有效），详见上方的「应用级后处理 ⇒ 已实现」子条。
       - **同机已验证可复现的环境事实**：完整权限下 `vitest` / headless Edge 均可运行（受限沙箱下后者因命名管道直接 FATAL，见 §5.13）。
-   - **音频响应效果不随频谱动（如实标注）**：three 主路径**没有音频源** —— `createAudioAnalyzer` 只被未接入的 `scene-renderer.ts` 引用，`ObjectEffectStage.advance` 每帧显式给 `EffectRunner` 传 `null`，音频 uniform 保持 binder 初始化的**全零**。因此 `Simple_Audio_Bars` / `audioline` 等属「**效果在、但不随频谱动**」，不是「不支持该效果」。**接音频仍未做**（P2「具名 RT 图执行器」不含音频）。
+   - ~~**音频响应效果不随频谱动（如实标注）**~~ ⇒ **已接入（A3，2026-09-25）**：装配期 `createAudioAnalyzer()` + 对 `desc.sounds` 逐个 `playWallpaperSound`，`ObjectEffectStage.setAudioSpectrum` 承接 `freqData`，`onFrame` 每帧 `analyzer.update()`，`teardown` 里 `context.close()`。达成、实测与未做项见下方第 20 条。**接线前的记录**（勿再引用为现状）：three 主路径没有音频源 —— `createAudioAnalyzer` 只被未接入的 `scene-renderer.ts` 引用，`ObjectEffectStage.advance` 每帧显式给 `EffectRunner` 传 `null`，音频 uniform 保持全零，`Simple_Audio_Bars` / `audioline` 属「效果在、但不随频谱动」。
    - **`colorBlendMode ∈ {6,7,31}` 的对象已进入隔离路径、其效果生效（2026-09-14 修复，提交 `6bb3d71`）**：旧结论「这类对象被有意排除在隔离之外 ⇒ 效果不生效（GTR 的云不滚动）」**已作废**。当时排除的原因仍然成立：这类模式把内容材质的结果 alpha 钉成「背景的 alpha」（`blendSrcAlpha=Zero / blendDstAlpha=One`），而对象 RT 是新清空的缓冲（alpha 0）⇒ RT alpha 恒 0 ⇒ 合成 quad 片元被乘成 0 ⇒ 对象会**整体不可见**（相对改动前是用户可见回归），故 P1 用 `BLEND_ISOLATION_UNSAFE` 换「保可见、牺牲效果」。**修法：把 WE 的混合语义从「内容材质」搬到「合成 quad」** —— 隔离路径的内容材质（`createLayerMaterial(..., forIsolation=true)`）**不再套用** `colorBlendMode` 的 `CustomBlending`，只把自己的 rgb + alpha 用普通 alpha 混合写进清空的 RT；**非隔离**路径（主场景直出）语义逐字不变。`createCompositeQuadMaterial` **统一用 `MeshBasicMaterial`**（采样**非预乘**的对象 RT）并按 `colorBlendMode` 设 `CustomBlending`（Screen → `OneMinusDstColor/One`，alpha 仍 `Zero/One` 保持背景）。`three-renderer` 里的 `BLEND_ISOLATION_UNSAFE` 守卫及其 `warnOnce('blend-isolation:...')` 已删除 —— 这类对象现在**正常进入隔离**、效果**生效**。全库 3 个非零对象：`3743126786` Clouds Back=7、`2832263418` audio_rainbow=6、`2460786246` Clock=31。
         - **实测证据（headless Edge、`lib/` 生产代码、dpr=1、`--no-particles`；报告 `.superpowers/sdd/2026-09-14-three-object-effects-pipeline/cloud-scroll-report.md`）**：① `--only-effect=2944127259/scroll` 相位 5 vs 6 变化 **68604 像素（7.44%）**，**全部落在 Clouds Back 的 quad 矩形内、矩形外 0 变化**；最优位移 **dx = −17px**（向左），与 `scroll.vert` 的 `speedx²·g_Time`（0.14²×1s = 0.0196 UV × 869px = **17.0px**）吻合；② **对象仍可见**：云区与「无效果」地板对照 MAD=0.925、平均亮度 59.51 vs 59.59；③ 三条链都生效（仅 `effects/opacity` 时云区平均亮度 59.51→41.10）；所有运行 console error = 0；单测 112 项全过。
         - **如实标注**：`colorBlendMode` 的 Screen 语义（`op·B`）是靠「内容以普通 alpha 混合写进清空 RT ⇒ RT.rgb 天然带 ×content-alpha」实现的，**未与桌面 WE 做逐像素对照**；e2e 只跑了 **dpr=1** 且全关粒子（`--no-particles` + `wasm=none`），**粒子隔离路径未端到端复验**。
@@ -454,6 +456,15 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
     - **覆盖（按当前生产 `vec3` 语义全库审计，脚本 `count-multiaxis.mjs`）**：自旋生效的 19/121 个对象中，**多轴（x 或 y 非零）6 个对象 / 6 张壁纸** —— 由 `rotationrandom` 触发 4 个：`1280029027` obj18、`1429403119` obj658、`2011060960` obj293、`2911105183` obj122；由 `angularvelocityrandom` 触发 2 个：`2851992662` obj71、`2897292240` obj3470。其余 13 个对象是纯 z，效果与 F4 时**完全一致**（z-only 时新旧实现严格等价）⇒ 本次改动**仅影响这 6 个对象**。
     - **⚠️ 轴序偏差（如实）**：本项目用 `Rz·Ry·Rx`（与对象 `angles` 同一约定），WE 的 `ComputeParticleTangents` 是 **`Rz·Rx·Ry`** ⇒ **仅多轴时**（即上述 6 个对象）结果与桌面可能不同，**未与桌面 WE 逐像素对照**（无桌面素材）。z-only 时两种顺序完全等价。
     - **⚠️ 样本口径变化**：`2011060960` **不再适合当「纯 z」回归样本** —— 其 obj293 的裸数字 `rotationrandom = -0.4 / -0.3` 经第 15 条修好后展开为三轴同值 `(−0.4, −0.4, −0.4)`，现在走多轴路径（F4 时它正是靠这个值生效的）。纯 z 回归改用 `2597392171`。
+
+19. **image / particle 的可见性过滤（A2，2026-09-25）**：此前**只对 text** 应用 `visible`，全库实测 **109 个布尔 `false` 的 image/particle 仍被下发**（`3798688689` 一张 105 个 —— 它是 kv1/kv2 双场景变体壁纸；另 3 张各 1~2 个），另有 9 个 `{script, value:false}` 与 16 个 `models/util/*`（后者归 `util`、本就不渲染）。修法：`visibility.ts` 新增 `isStaticallyHidden`（plain/user 静态判定；**script 恒不隐藏**，见 §5.38），在**纹理采集循环、`isolate` 准入、`collectObjectEffectChains`（新增可选 `isHidden` 谓词）**三处统一过滤；**text 仍走 `resolveVisibility`**（含 script 按 value 定论）—— 不借本次改动改它的行为。
+    - **实测（headless Edge + 生产 `lib/`，1280×720，`3798688689`，`--rtdump`）**：隔离对象 **11 → 0**、对象 RT 显存估算合计 **11.19 MB → 0.00 MB**、console error 均 **0**。那 11 个隔离对象正是「被隐藏且带 effects」的图层 —— 接线前每帧给它们建对象 RT + 跑效果链，而它们根本不显示；隐藏对象的纹理也不再解析。
+    - **零回归**：`2683211654`（无隐藏对象、A/A 噪声地板 0）改动前后**逐像素 0/921600 差异**（`e2e:compare` PASS）；`npm test` 51 文件全绿（+10 项新用例：纯函数 5 + 三张表 3 + `script` 绑定不被误杀 + user 绑定）。
+    - **如实标注**：`3798688689` 的画面**无可见变化** —— 隐藏层被上层 kv2 全屏层覆盖，且该壁纸 A/A 噪声地板高（历史 25.6%），故其 18.5% 像素差**不可归因**。A2 的收益是「不解析那些纹理 + 不为它们建对象 RT/效果链」，不是画面变化。
+
+20. **壁纸音效 + 音频频谱接线（A3，2026-09-25）**：`audio-input.ts`（`createAudioAnalyzer` / `playWallpaperSound`，含 autoplay 手势兜底）自 `scene-renderer.ts` 删除后成了**死代码**（零消费者），`object-effects.advance` 每帧给 runner 传 `null` ⇒ sound 不出声、频谱类效果不动（全库 **12/29 张含 sound 对象**）。现接线：装配期按 `desc.sounds` 逐个 `playWallpaperSound('/wallpapers/scene/<id>/asset?name=…')`（loop），新增设置 **`soundEnabled`（缺省 true，对齐桌面 WE）**+ 面板开关；`ObjectEffectStage.setAudioSpectrum` 承接 `freqData`（`advance` 里逐 runner 注入同一引用）；`onFrame` 每帧 `analyzer.update()`；`teardown` 里 `context.close()`（切壁纸不释放会累积 AudioContext）。运行期开关：关 → 停声 + close，开 → 按上次规格重播。
+    - **实测**：新增 8 项单测（装配 / URL / 开关 / 释放 / 频谱转发 / 运行期开关）；`npm test` **51 文件 965 项全绿**；`e2e:colorblend` 全 PASS；`e2e:hidpi` 的 `2683211654` 与改动前**逐像素 0 差异**、挂载期 RT 断言 PASS。
+    - **未做 / 未验证（如实）**：① **出声与「随频谱动」的真机观感未验证** —— headless Edge 无音频输出设备，e2e harness 也无音频观测点；② 3 条 `Simple_Audio_Bars` 链仍因 shader 方言缺陷（F8/G1，见第 10 条）编译失败；③ **visualizer 文本条**（`detectScriptPattern==='visualizer'`）挂在 util 对象上，属「util 层渲染」缺口，未做；④ `volume` / `playbackmode` 未消费（一律 loop；`2597392171` 的 `random` 为近似）。
 
 ### ~~备用 wasm / JS 路径~~ ⇒ **已删除（2026-09-22）**
 

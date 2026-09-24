@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { parseVisible, resolveVisibility } from '../src/client/visibility.js';
+import { parseVisible, resolveVisibility, isStaticallyHidden } from '../src/client/visibility.js';
 
 // T4.2 可见性绑定（user/script）：
 //   parseVisible —— scene.json 的 visible 字段（布尔 / {user,value} / {script,value}）
 //     归一化为 VisibleBinding（{kind:'plain'|'user'|'script', value, key?/script?}）；
 //   resolveVisibility —— 纯函数：注入用户属性表，求对象最终可见性（node 可测，
 //     不触碰渲染器/设置存储——renderScene 只负责把 getter 查询结果聚成 userProps 传入）。
+//   isStaticallyHidden —— 装载期静态隐藏判定（image/particle 用；script 绑定恒不隐藏）。
 
 describe('parseVisible（visible 字段归一化）', () => {
   it('布尔 → plain 绑定（value 原样保留）', () => {
@@ -85,5 +86,37 @@ describe('resolveVisibility（可见性解析：注入用户属性）', () => {
     // 解析器产出的 kind 恒为 plain/user/script；此处模拟运行时收到畸形绑定的防御场景
     const obj = { visible: { kind: 'unknown-kind' as unknown as 'plain', value: false } };
     expect(resolveVisibility(obj, {})).toBe(true);
+  });
+});
+
+// image/particle 的装载期静态隐藏（2026-09-25）。与 resolveVisibility 的关键差别：
+// **script 绑定恒不隐藏** —— 那类对象的可见性是 visible.script 的每帧返回值（applyLayerState），
+// 装载期就把它剔掉会让脚本永远无法把它打开（全库 9 个 image/particle 属此类）。
+describe('isStaticallyHidden（装载期静态隐藏判定）', () => {
+  it('无绑定 → 不隐藏（默认可见）', () => {
+    expect(isStaticallyHidden(undefined, {})).toBe(false);
+  });
+
+  it('plain → 取反 value', () => {
+    expect(isStaticallyHidden({ kind: 'plain', value: true }, {})).toBe(false);
+    expect(isStaticallyHidden({ kind: 'plain', value: false }, {})).toBe(true);
+  });
+
+  it('user 绑定：用户值为布尔时以用户值为准，键缺失/非布尔回退绑定 value', () => {
+    const on = { kind: 'user' as const, key: 'timeand', value: true };
+    expect(isStaticallyHidden(on, { timeand: false })).toBe(true);
+    expect(isStaticallyHidden(on, { timeand: true })).toBe(false);
+    const off = { kind: 'user' as const, key: 'timeand', value: false };
+    expect(isStaticallyHidden(off, {})).toBe(true);
+    expect(isStaticallyHidden(off, { timeand: 'yes' })).toBe(true);
+  });
+
+  it('script 绑定 → 恒不隐藏（value=false 也交给运行时 visible.script 通道）', () => {
+    expect(isStaticallyHidden({ kind: 'script', script: 'x()', value: false }, {})).toBe(false);
+    expect(isStaticallyHidden({ kind: 'script', script: 'x()', value: true }, {})).toBe(false);
+  });
+
+  it('kind 为未知值（畸形数据）→ 不隐藏（不误杀对象）', () => {
+    expect(isStaticallyHidden({ kind: 'unknown-kind' as unknown as 'plain', value: false }, {})).toBe(false);
   });
 });

@@ -227,6 +227,21 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
           </label>
         </div>
       )}
+      {/* 壁纸音效：默认开启（对齐桌面 WE）；关掉即停声，频谱类效果随之静止。
+          独立区块，不并入 wss-power（那里的复选框语义是省电 / 画质档位）。 */}
+      {settings && (
+        <div className="wss-sound-row">
+          <label className="wss-glow-row">
+            <input
+              type="checkbox"
+              className="wss-sound"
+              checked={settings.soundEnabled}
+              onChange={(e) => applyRuntime({ soundEnabled: e.target.checked })}
+            />
+            壁纸音效
+          </label>
+        </div>
+      )}
       <div className="wss-dirs">
         <h4>壁纸目录</h4>
         <label className="wss-dir-row">

@@ -123,6 +123,8 @@ export class ObjectEffectStage implements ObjectEffectStage {
   private queue: Array<() => unknown> = [];
   /** 去重告警集合（按 key 只打印一次，防每帧刷屏）。 */
   private warned = new Set<string>();
+  /** 音频频谱源（A3）：每帧同一缓冲引用；null = 全零静音（无音频/音效关闭）。 */
+  private audioSpectrum: Uint8Array | null = null;
 
   constructor(
     private readonly host: ObjectEffectHost,
@@ -212,13 +214,19 @@ export class ObjectEffectStage implements ObjectEffectStage {
     }
   }
 
+  /** 注入音频频谱源（A3，由 three-renderer 每帧刷新后转入）：效果链的音频 uniform 由它驱动。
+   *  null = 全零静音（无 sound / 音效开关关闭），行为与接线前一致。 */
+  setAudioSpectrum(source: Uint8Array | null): void {
+    this.audioSpectrum = source;
+  }
+
   /** 主场景渲染之后：串行推进各 runner 的 update（异步，不阻塞本帧；见类头约束 3）。 */
   advance(time: number): void {
     if (this.disposed) return;
     for (const view of this.host.isolatedObjects()) {
       const runner = this.entries.get(view.id)?.runner;
       if (!runner) continue;
-      runner.setAudioSpectrumSource(null); // three 主路径无音频源（spec §5.4），保持全零
+      runner.setAudioSpectrumSource(this.audioSpectrum); // 每帧注入同一引用（无音频时 null）
       this.enqueue(() => runner.update(time, view.rtTexture));
     }
   }
