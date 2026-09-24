@@ -133,132 +133,168 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
 
   return (
     <div className="wss-root">
-      <p className="wss-hint">选择壁纸背景，或取消以恢复默认背景。壁纸目录支持自动探测或手动填写。</p>
-      <div className="wss-current">
-        <span>当前壁纸：{currentTitle}</span>
-        <div className="wss-current-actions">
-          <button type="button" className="wss-refresh" onClick={refreshWallpapers}>刷新壁纸</button>
-          <button type="button" className="wss-cancel" onClick={() => select('')}>取消壁纸</button>
+      {/* 当前壁纸：信息条 */}
+      <section className="wss-section">
+        <div className="wss-current">
+          <div className="wss-current-info">
+            <span className="wss-current-label">当前壁纸</span>
+            <span className="wss-current-name" title={currentTitle}>{currentTitle}</span>
+          </div>
+          <div className="wss-current-actions">
+            <button type="button" className="wss-refresh" onClick={refreshWallpapers}>刷新壁纸</button>
+            <button type="button" className="wss-cancel" onClick={() => select('')}>取消壁纸</button>
+          </div>
         </div>
-      </div>
-      <div className="wss-grid">
-        {wallpapers.map((w) => (
-          <button
-            key={w.id}
-            type="button"
-            className={'wss-thumb' + (settings?.selectedWallpaperId === w.id ? ' wss-selected' : '')}
-            data-id={w.id}
-            onClick={() => select(w.id)}
-          >
-            {w.previewUrl ? <img src={w.previewUrl} alt={w.title} loading="lazy" /> : <span className="wss-no-preview">无预览</span>}
-            <span className="wss-badge">{w.type.toUpperCase()}</span>
-            <span className="wss-thumb-title">{w.title}</span>
-          </button>
-        ))}
-      </div>
-      {/* 应用级 Glow：开关 + 阈值/强度，改完**立即生效**（经运行期通道下发，不必重选壁纸） */}
+      </section>
+
+      {/* 壁纸库：16:9 缩略图卡片（类型 chip 在左下、选中加 ✓ 角标） */}
+      <section className="wss-section">
+        <header className="wss-section-head">
+          <h4 className="wss-section-title">壁纸库</h4>
+          <span className="wss-count">{wallpapers.length} 张</span>
+        </header>
+        <div className="wss-grid">
+          {wallpapers.map((w) => {
+            const selected = settings?.selectedWallpaperId === w.id;
+            return (
+              <button
+                key={w.id}
+                type="button"
+                className={'wss-thumb' + (selected ? ' wss-selected' : '')}
+                data-id={w.id}
+                title={w.title}
+                aria-pressed={selected}
+                onClick={() => select(w.id)}
+              >
+                <span className="wss-thumb-media">
+                  {w.previewUrl
+                    ? <img src={w.previewUrl} alt={w.title} loading="lazy" />
+                    : <span className="wss-no-preview">无预览</span>}
+                  <span className="wss-badge">{w.type.toUpperCase()}</span>
+                  {selected && <span className="wss-check" aria-hidden="true">✓</span>}
+                </span>
+                <span className="wss-thumb-title">{w.title}</span>
+              </button>
+            );
+          })}
+        </div>
+        {wallpapers.length === 0 && (
+          <p className="wss-empty">还没有壁纸。请在下方设置壁纸目录，或点「自动探测」。</p>
+        )}
+      </section>
+      {/* 显示效果：应用级 Glow（开关 + 阈值/强度，改完立即生效、不必重选壁纸） */}
       {settings && (
-        <div className="wss-glow">
-          <label className="wss-glow-row">
-            <input
-              type="checkbox"
-              checked={settings.glowEnabled}
-              onChange={(e) => applyRuntime({ glowEnabled: e.target.checked })}
-            />
-            光晕（立即生效）
-          </label>
-          {/* 阈值：bright-pass 的亮度门槛（0–0.99）；强度：辉光回叠倍率（0–4） */}
-          <label className="wss-glow-slider">
-            <span>光晕阈值 {settings.glowThreshold.toFixed(2)}</span>
-            <input
-              type="range"
-              className="wss-glow-threshold"
-              min={0}
-              max={0.99}
-              step={0.01}
-              value={settings.glowThreshold}
-              onChange={(e) => applyRuntime({ glowThreshold: Number(e.target.value) })}
-            />
-          </label>
-          <label className="wss-glow-slider">
-            <span>光晕强度 {settings.glowStrength.toFixed(2)}</span>
-            <input
-              type="range"
-              className="wss-glow-strength"
-              min={0}
-              max={4}
-              step={0.05}
-              value={settings.glowStrength}
-              onChange={(e) => applyRuntime({ glowStrength: Number(e.target.value) })}
-            />
-          </label>
-        </div>
+        <section className="wss-section">
+          <h4 className="wss-section-title">显示效果</h4>
+          <div className="wss-glow">
+            <label className="wss-glow-row">
+              <input
+                type="checkbox"
+                checked={settings.glowEnabled}
+                onChange={(e) => applyRuntime({ glowEnabled: e.target.checked })}
+              />
+              光晕（立即生效）
+            </label>
+            {/* 阈值：bright-pass 的亮度门槛（0–0.99）；强度：辉光回叠倍率（0–4） */}
+            <label className="wss-slider">
+              <span className="wss-slider-head">
+                <span>阈值</span>
+                <span className="wss-value">{settings.glowThreshold.toFixed(2)}</span>
+              </span>
+              <input
+                type="range"
+                className="wss-glow-threshold"
+                min={0}
+                max={0.99}
+                step={0.01}
+                value={settings.glowThreshold}
+                onChange={(e) => applyRuntime({ glowThreshold: Number(e.target.value) })}
+              />
+            </label>
+            <label className="wss-slider">
+              <span className="wss-slider-head">
+                <span>强度</span>
+                <span className="wss-value">{settings.glowStrength.toFixed(2)}</span>
+              </span>
+              <input
+                type="range"
+                className="wss-glow-strength"
+                min={0}
+                max={4}
+                step={0.05}
+                value={settings.glowStrength}
+                onChange={(e) => applyRuntime({ glowStrength: Number(e.target.value) })}
+              />
+            </label>
+          </div>
+        </section>
       )}
-      {/* 省电 / 画质档位：立即生效（不必重选壁纸） */}
+      {/* 性能与省电：同一张卡片；wss-power 仍只含两个复选框（画质档位是 select） */}
       {settings && (
-        <div className="wss-power">
-          <label className="wss-glow-row">
-            <input
-              type="checkbox"
-              checked={settings.paused}
-              onChange={(e) => applyRuntime({ paused: e.target.checked })}
-            />
-            暂停壁纸（省电）
-          </label>
-          <label className="wss-glow-row">
-            <input
-              type="checkbox"
-              checked={settings.pauseOnHidden}
-              onChange={(e) => applyRuntime({ pauseOnHidden: e.target.checked })}
-            />
-            切到后台时自动暂停
-          </label>
-          <label className="wss-glow-row">
-            <span>画质档位</span>
-            <select
-              className="wss-quality"
-              value={String(settings.qualityScale)}
-              onChange={(e) => applyRuntime({ qualityScale: Number(e.target.value) })}
-            >
-              <option value="1">原生（1×）</option>
-              <option value="0.75">省显存（0.75×）</option>
-              <option value="0.5">最省（0.5×）</option>
-            </select>
-          </label>
-        </div>
+        <section className="wss-section">
+          <h4 className="wss-section-title">性能与省电</h4>
+          <div className="wss-power">
+            <label className="wss-glow-row">
+              <input
+                type="checkbox"
+                checked={settings.paused}
+                onChange={(e) => applyRuntime({ paused: e.target.checked })}
+              />
+              暂停壁纸（省电）
+            </label>
+            <label className="wss-glow-row">
+              <input
+                type="checkbox"
+                checked={settings.pauseOnHidden}
+                onChange={(e) => applyRuntime({ pauseOnHidden: e.target.checked })}
+              />
+              切到后台时自动暂停
+            </label>
+            <label className="wss-row">
+              <span>画质档位</span>
+              <select
+                className="wss-quality"
+                value={String(settings.qualityScale)}
+                onChange={(e) => applyRuntime({ qualityScale: Number(e.target.value) })}
+              >
+                <option value="1">原生（1×）</option>
+                <option value="0.75">省显存（0.75×）</option>
+                <option value="0.5">最省（0.5×）</option>
+              </select>
+            </label>
+          </div>
+          {/* 壁纸音效：默认开启（对齐桌面 WE）；关掉即停声，频谱类效果随之静止 */}
+          <div className="wss-sound-row">
+            <label className="wss-glow-row">
+              <input
+                type="checkbox"
+                className="wss-sound"
+                checked={settings.soundEnabled}
+                onChange={(e) => applyRuntime({ soundEnabled: e.target.checked })}
+              />
+              壁纸音效
+            </label>
+          </div>
+        </section>
       )}
-      {/* 壁纸音效：默认开启（对齐桌面 WE）；关掉即停声，频谱类效果随之静止。
-          独立区块，不并入 wss-power（那里的复选框语义是省电 / 画质档位）。 */}
-      {settings && (
-        <div className="wss-sound-row">
-          <label className="wss-glow-row">
-            <input
-              type="checkbox"
-              className="wss-sound"
-              checked={settings.soundEnabled}
-              onChange={(e) => applyRuntime({ soundEnabled: e.target.checked })}
-            />
-            壁纸音效
-          </label>
-        </div>
-      )}
-      <div className="wss-dirs">
-        <h4>壁纸目录</h4>
-        <label className="wss-dir-row">
-          <span>壁纸目录（workshop）</span>
+      <section className="wss-section">
+        <h4 className="wss-section-title">壁纸目录</h4>
+        <p className="wss-section-desc">填 Wallpaper Engine 的两个目录；留空 = 未配置。也可以直接点「自动探测」采用探测结果。</p>
+        <label className="wss-field">
+          <span className="wss-field-label">壁纸目录（workshop）</span>
           <input
             className="wss-dir-workshop"
             value={wallpaperDir}
-            placeholder="例如 D:/Steam/steamapps/workshop/content/431960（留空 = 未配置）"
+            placeholder="例如 D:/Steam/steamapps/workshop/content/431960"
             onChange={(e) => setWallpaperDir(e.target.value)}
           />
         </label>
-        <label className="wss-dir-row">
-          <span>引擎目录（particle 纹理）</span>
+        <label className="wss-field">
+          <span className="wss-field-label">引擎目录（particle 纹理）</span>
           <input
             className="wss-dir-assets"
             value={weAssetsDir}
-            placeholder="例如 D:/Steam/steamapps/common/wallpaper_engine（留空 = 未配置）"
+            placeholder="例如 D:/Steam/steamapps/common/wallpaper_engine"
             onChange={(e) => setWeAssetsDir(e.target.value)}
           />
         </label>
@@ -268,26 +304,26 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
         </div>
         {probe && (
           <div className="wss-probe-result">
-            <h4>探测到的壁纸目录</h4>
+            <h5 className="wss-subtitle">探测到的壁纸目录</h5>
             {probe.workshop.map((c) => (
               <div key={c.path} className="wss-candidate" data-kind="workshop">
-                <span className="wss-candidate-path">{c.path}</span>
+                <span className="wss-candidate-path" title={c.path}>{c.path}</span>
                 <span className={c.exists ? 'wss-exists' : 'wss-missing'}>{c.exists ? '存在' : '不存在'}</span>
                 <button type="button" className="wss-adopt" data-path={c.path} onClick={() => adopt(c.path, 'wallpaperDir')}>采用</button>
               </div>
             ))}
-            <h4>探测到的引擎目录</h4>
+            <h5 className="wss-subtitle">探测到的引擎目录</h5>
             {probe.assets.map((c) => (
               <div key={c.path} className="wss-candidate" data-kind="assets">
-                <span className="wss-candidate-path">{c.path}</span>
+                <span className="wss-candidate-path" title={c.path}>{c.path}</span>
                 <span className={c.exists ? 'wss-exists' : 'wss-missing'}>{c.exists ? '存在' : '不存在'}</span>
                 <button type="button" className="wss-adopt" data-path={c.path} onClick={() => adopt(c.path, 'weAssetsDir')}>采用</button>
               </div>
             ))}
           </div>
         )}
-      </div>
-      {message && <p className="wss-message">{message}</p>}
+      </section>
+      {message && <p className="wss-message" role="status">{message}</p>}
     </div>
   );
 }

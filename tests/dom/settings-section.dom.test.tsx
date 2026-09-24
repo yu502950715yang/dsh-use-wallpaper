@@ -280,4 +280,30 @@ describe('WallpaperSettingsSection', () => {
     expect(onRuntimeSettings).toHaveBeenCalledWith({ soundEnabled: false });
     expect(writeSettings).toHaveBeenCalledWith({ soundEnabled: false });
   });
+
+  // 视觉重构（2026-09-25）：选中态与滑杆值有了自己的 DOM 钩子（行为契约不变）。
+  it('选中卡片渲染 ✓ 角标；未选中项没有', async () => {
+    mount();
+    await flush();
+    const thumbs = container.querySelectorAll('.wss-thumb');
+    expect(thumbs[0]!.querySelector('.wss-check')).toBeTruthy();
+    expect(thumbs[1]!.querySelector('.wss-check')).toBeNull();
+  });
+
+  it('滑杆值以独立 badge 显示，拖动后实时更新', async () => {
+    mount();
+    await flush();
+    let vals = container.querySelectorAll('.wss-value');
+    expect(vals.length).toBe(2);
+    expect(vals[0]!.textContent).toBe('0.65');
+    expect(vals[1]!.textContent).toBe('0.35');
+
+    const th = container.querySelector('.wss-glow-threshold') as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    setter.call(th, '0.5');
+    th.dispatchEvent(new Event('change', { bubbles: true }));
+    await flush();
+    vals = container.querySelectorAll('.wss-value');
+    expect(vals[0]!.textContent).toBe('0.50');
+  });
 });

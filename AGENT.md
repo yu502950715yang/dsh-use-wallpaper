@@ -276,6 +276,8 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
 
 38. **可见性有两套判定，别混用（2026-09-25）**：`resolveVisibility`（**text** 用；`script` 绑定按 `value` 静态定论）与 `isStaticallyHidden`（**image/particle** 用；**`script` 恒不隐藏**，交给 `visible.script` 的运行时通道）。把后者换成前者，会让 9 个脚本控制的图层在装载期被永久剔掉（脚本再也打不开它）；反过来给 image/particle 套 `resolveVisibility` 是这类改动的头号地雷。
 
+39. **设置面板的 DOM 钩子与样式断言被测试锁定（2026-09-25 UI 重设计）**：`tests/dom/settings-section.dom.test.tsx`（15 项）与 `tests/styles.test.ts` 钉住了这些选择器/文本，重排结构时必须保留：`.wss-thumb`（数量）、`.wss-thumb-title`（**textContent 精确等于壁纸名**）、`.wss-cancel`/`.wss-refresh`/`.wss-probe`/`.wss-save-dirs`/`.wss-adopt[data-path]`/`.wss-candidate[data-kind]`、`.wss-dir-workshop`/`.wss-dir-assets`、`.wss-glow-threshold`/`.wss-glow-strength`、`.wss-quality`、`.wss-sound`、**`.wss-power` 内恰好 2 个复选框**（音效开关**不能**并进去）、**首个 `.wss-glow-row` 的 textContent 必须精确等于「光晕（立即生效）」**；样式侧要求 `.wss-root` 规则含 `var(--dsw-alias-label-primary`、`.wss-cancel` 规则含 `var(--dsw-alias-border-l2`。2026-09-25 的重设计（分区卡片 + 16:9 缩略图 + 控件行两端对齐）就在这个约束下完成，**零断言改动**。
+
 ## 6. 工作约定
 
 - 回复、注释、文档、**提交信息一律简体中文**；代码、命令、文件名、技术术语保留原文。

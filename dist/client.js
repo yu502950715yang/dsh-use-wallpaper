@@ -2227,6 +2227,8 @@ body:not([data-ds-dark-theme]){
   --wp-badge-bg:rgba(0,0,0,.55);
   --wp-badge-fg:#fff;
   --wp-accent:#4f8cff;
+  /* \u4E3B\u6309\u94AE\u5E95\u8272\uFF1A\u6BD4 --wp-accent \u66F4\u6DF1\uFF0C\u767D\u5B57\u5BF9\u6BD4\u5EA6 \u22654.5:1\uFF08WCAG AA \u5C0F\u5B57\uFF09 */
+  --wp-accent-strong:#2563eb;
 }
 body[data-ds-dark-theme]{
   --wp-panel-bg:rgba(20,22,28,.92);
@@ -2235,6 +2237,7 @@ body[data-ds-dark-theme]{
   --wp-badge-bg:rgba(0,0,0,.65);
   --wp-badge-fg:#fff;
   --wp-accent:#4f8cff;
+  --wp-accent-strong:#2563eb;
 }
 
 /* \u2500\u2500 \u58C1\u7EB8\u6FC0\u6D3B\u5C42\u7EA7\u65B9\u6848\uFF08\u53C2\u8003 dsh-liang-skin\uFF09\uFF1A\u58C1\u7EB8\u5C42 z-index:0 + prepend \u5230 body \u6700\u524D\uFF1B
@@ -2340,38 +2343,65 @@ body[data-ds-dark-theme][data-we-wallpaper] [data-question-key] section{
 .wp-badge{position:absolute;top:2px;right:2px;font-size:9px;line-height:1;padding:2px 4px;border-radius:4px;background:var(--wp-badge-bg);color:var(--wp-badge-fg)}
 
 /* \u2500\u2500 \u8BBE\u7F6E\u5BF9\u8BDD\u6846 "\u58C1\u7EB8" \u9762\u677F\uFF08settings-section\uFF0C\u7528 DSH \u4E3B\u9898\u53D8\u91CF\uFF09 \u2500\u2500 */
-.wss-root{display:flex;flex-direction:column;gap:14px;color:var(--dsw-alias-label-primary,var(--wp-text));font-size:13px}
-.wss-hint{color:var(--dsw-alias-label-secondary,var(--wp-text));margin:0;font-size:12px;line-height:1.6}
-.wss-current{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px}
-.wss-current-actions{display:flex;gap:8px}
-.wss-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px;max-height:280px;overflow-y:auto;padding:2px}
-.wss-thumb{position:relative;display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px;background:var(--dsw-alias-bg-layer-3,transparent);border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));border-radius:10px;cursor:pointer;color:var(--dsw-alias-label-primary,var(--wp-text));font:inherit;min-width:0}
-.wss-thumb img{width:84px;height:84px;object-fit:cover;border-radius:8px;display:block}
-.wss-thumb .wss-no-preview{width:84px;height:84px;display:flex;align-items:center;justify-content:center;border-radius:8px;background:var(--dsw-alias-bg-module-platform,rgba(0,0,0,.08));font-size:11px;color:var(--dsw-alias-label-tertiary,var(--wp-text))}
-.wss-thumb-title{font-size:12px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.wss-thumb.wss-selected{border-color:var(--wp-accent);box-shadow:0 0 0 1px var(--wp-accent)}
-.wss-badge{position:absolute;top:2px;right:2px;font-size:9px;line-height:1;padding:2px 4px;border-radius:4px;background:var(--wp-badge-bg);color:var(--wp-badge-fg)}
-.wss-cancel,.wss-save-dirs,.wss-probe,.wss-adopt,.wss-refresh{border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;padding:6px 12px;font:inherit;font-size:12px;cursor:pointer}
-.wss-cancel:hover,.wss-save-dirs:hover,.wss-probe:hover,.wss-adopt:hover,.wss-refresh:hover{filter:brightness(1.08)}
-.wss-dirs h4{margin:10px 0 6px;font-size:13px}
-.wss-dir-row{display:flex;flex-direction:column;gap:4px;margin-bottom:8px;font-size:12px;color:var(--dsw-alias-label-secondary,var(--wp-text))}
-.wss-dir-row input{border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;padding:6px 10px;font:inherit;font-size:12px}
-/* \u5149\u6655\u5F00\u5173\u884C\uFF1A\u590D\u9009\u6846\u4E0E\u6587\u5B57\u4E0E\u5176\u4ED6\u63A7\u4EF6\uFF08.wss-dir-row\uFF09\u5DE6\u5BF9\u9F50\u3001\u540C\u4E00\u884C\u5C45\u4E2D */
-.wss-glow-row{display:flex;align-items:center;gap:6px;margin-bottom:8px;font-size:12px;color:var(--dsw-alias-label-secondary,var(--wp-text))}
-/* \u5149\u6655\u9608\u503C/\u5F3A\u5EA6\u6ED1\u6746\uFF1A\u6807\u7B7E\u4E0E\u6ED1\u6746\u7AD6\u6392\uFF0C\u6ED1\u6746\u5360\u6EE1\u5BBD\u5EA6 */
-.wss-glow{display:flex;flex-direction:column;gap:2px;margin:4px 0 10px}
-.wss-glow-slider{display:flex;flex-direction:column;gap:2px;font-size:12px;color:var(--dsw-alias-label-secondary,var(--wp-text))}
-.wss-glow-slider input[type=range]{width:100%;margin:0}
-/* \u7701\u7535/\u753B\u8D28\u6863\u4F4D\u533A\u5757\uFF1A\u590D\u7528\u5149\u6655\u884C\u7684\u6392\u7248\uFF0C\u884C\u8DDD\u66F4\u7D27 */
-.wss-power{display:flex;flex-direction:column;gap:2px;margin:4px 0 10px}
+.wss-root{display:flex;flex-direction:column;gap:12px;color:var(--dsw-alias-label-primary,var(--wp-text));font-size:13px;line-height:1.5}
+/* \u5206\u533A\u5361\u7247\uFF1A\u4E00\u5757\u8BBE\u7F6E\u4E00\u5F20\u5361\u7247\uFF08\u6807\u9898 + \u5185\u5BB9\uFF09 */
+.wss-section{border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));border-radius:12px;padding:12px 14px}
+.wss-section-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}
+.wss-section-title{margin:0;font-size:13px;font-weight:600}
+.wss-section-head .wss-section-title{margin:0}
+.wss-section-desc{margin:0 0 10px;font-size:12px;line-height:1.6;color:var(--dsw-alias-label-tertiary,var(--wp-text))}
+.wss-count{font-size:12px;color:var(--dsw-alias-label-tertiary,var(--wp-text))}
+/* \u5F53\u524D\u58C1\u7EB8\u6761 */
+.wss-current{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.wss-current-info{display:flex;flex-direction:column;gap:2px;min-width:0}
+.wss-current-label{font-size:11px;color:var(--dsw-alias-label-tertiary,var(--wp-text))}
+.wss-current-name{font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wss-current-actions{display:flex;gap:8px;flex:none}
+/* \u58C1\u7EB8\u5361\u7247\uFF1A16:9 \u9884\u89C8 + \u4E24\u884C\u6807\u9898\uFF08\u7C7B\u578B chip \u5DE6\u4E0B\u3001\u9009\u4E2D \u2713 \u53F3\u4E0A\uFF09 */
+.wss-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;max-height:320px;overflow-y:auto;padding:2px 4px 2px 2px}
+.wss-thumb{display:flex;flex-direction:column;gap:6px;padding:0;background:transparent;border:1px solid transparent;border-radius:10px;cursor:pointer;color:var(--dsw-alias-label-primary,var(--wp-text));font:inherit;text-align:left;min-width:0;transition:background-color .15s ease,transform .15s ease}
+.wss-thumb:hover{background:var(--dsw-alias-bg-module-platform,rgba(127,127,127,.1));transform:translateY(-1px)}
+.wss-thumb:focus-visible{outline:2px solid var(--wp-accent);outline-offset:2px}
+.wss-thumb-media{position:relative;display:block;width:100%;aspect-ratio:16/9;border-radius:8px;overflow:hidden;background:var(--dsw-alias-bg-module-platform,rgba(0,0,0,.12))}
+.wss-thumb-media img{width:100%;height:100%;object-fit:cover;display:block}
+.wss-thumb .wss-no-preview{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--dsw-alias-label-tertiary,var(--wp-text))}
+.wss-badge{position:absolute;left:6px;bottom:6px;font-size:9px;line-height:1;letter-spacing:.04em;padding:3px 5px;border-radius:4px;background:var(--wp-badge-bg);color:var(--wp-badge-fg)}
+.wss-check{position:absolute;right:6px;top:6px;width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;background:var(--wp-accent);color:#fff}
+.wss-thumb-title{font-size:12px;line-height:1.4;padding:0 2px 2px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word}
+.wss-thumb.wss-selected .wss-thumb-media{box-shadow:0 0 0 2px var(--wp-accent)}
+.wss-empty{margin:2px 0 0;font-size:12px;line-height:1.6;color:var(--dsw-alias-label-tertiary,var(--wp-text))}
+/* \u63A7\u4EF6\u884C\uFF1A\u6807\u7B7E\u5DE6\u3001\u63A7\u4EF6\u53F3\uFF0C\u7EDF\u4E00 30px \u884C\u9AD8\uFF08\u590D\u9009\u6846\u9760 order \u63A8\u5230\u53F3\u4FA7\uFF09 */
+.wss-row,.wss-glow-row{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:30px;margin:0;font-size:12px;color:var(--dsw-alias-label-secondary,var(--wp-text))}
+.wss-row input[type=checkbox],.wss-glow-row input[type=checkbox]{order:2;margin:0;flex:none}
+.wss-glow{display:flex;flex-direction:column;gap:10px;margin-top:8px}
+.wss-power{display:flex;flex-direction:column;gap:10px}
+.wss-sound-row{display:flex;flex-direction:column;margin-top:2px}
+/* \u6ED1\u6746\uFF1A\u6807\u7B7E\u884C\uFF08\u542B\u6570\u503C badge\uFF09+ \u5168\u5BBD\u6ED1\u6746 */
+.wss-slider{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--dsw-alias-label-secondary,var(--wp-text))}
+.wss-slider-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.wss-value{font-variant-numeric:tabular-nums;font-weight:600;color:var(--dsw-alias-label-primary,var(--wp-text))}
+.wss-slider input[type=range]{width:100%;margin:0;accent-color:var(--wp-accent)}
 .wss-quality{border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;padding:4px 8px;font:inherit;font-size:12px}
+/* \u6309\u94AE\uFF1A\u7EDF\u4E00\u57FA\u7840\u6837\u5F0F + hover / focus-visible */
+.wss-cancel,.wss-save-dirs,.wss-probe,.wss-adopt,.wss-refresh{border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;padding:6px 12px;font:inherit;font-size:12px;cursor:pointer;transition:filter .15s ease,background-color .15s ease}
+.wss-cancel:hover,.wss-save-dirs:hover,.wss-probe:hover,.wss-adopt:hover,.wss-refresh:hover{filter:brightness(1.08)}
+.wss-cancel:focus-visible,.wss-save-dirs:focus-visible,.wss-probe:focus-visible,.wss-adopt:focus-visible,.wss-refresh:focus-visible{outline:2px solid var(--wp-accent);outline-offset:2px}
+/* \u4E3B\u64CD\u4F5C\u6309\u94AE\uFF08\u5237\u65B0 / \u4FDD\u5B58\u8DEF\u5F84\uFF09\uFF1A\u5B9E\u5FC3\u5E95\uFF0C\u767D\u5B57\uFF08\u7528\u66F4\u6DF1 accent \u4FDD\u5BF9\u6BD4\u5EA6\uFF09 */
+.wss-refresh,.wss-save-dirs{background:var(--wp-accent-strong,#2563eb);border-color:var(--wp-accent-strong,#2563eb);color:#fff}
+/* \u76EE\u5F55\u5B57\u6BB5\u4E0E\u63A2\u6D4B\u7ED3\u679C */
+.wss-field{display:flex;flex-direction:column;gap:4px;margin-bottom:10px;font-size:12px;color:var(--dsw-alias-label-secondary,var(--wp-text))}
+.wss-field-label{color:var(--dsw-alias-label-secondary,var(--wp-text))}
+.wss-field input{border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;padding:7px 10px;font:inherit;font-size:12px}
+.wss-field input:focus-visible{outline:2px solid var(--wp-accent);outline-offset:1px}
 .wss-dir-actions{display:flex;gap:8px}
-.wss-probe-result{border-top:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));padding-top:10px;margin-top:4px}
-.wss-candidate{display:flex;align-items:center;gap:8px;padding:4px 0}
-.wss-candidate-path{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--dsw-alias-label-secondary,var(--wp-text))}
+.wss-probe-result{display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));padding-top:10px;margin-top:12px}
+.wss-subtitle{margin:2px 0 0;font-size:12px;font-weight:600}
+.wss-candidate{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:8px;background:var(--dsw-alias-bg-module-platform,rgba(127,127,127,.08))}
+.wss-candidate-path{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-family:ui-monospace,Consolas,monospace;color:var(--dsw-alias-label-secondary,var(--wp-text))}
 .wss-exists{color:var(--dsw-alias-state-success-primary,#4caf50);font-size:11px;white-space:nowrap}
 .wss-missing{color:var(--dsw-alias-label-tertiary,var(--wp-text));font-size:11px;white-space:nowrap}
 .wss-message{margin:0;font-size:12px;color:var(--dsw-alias-label-secondary,var(--wp-text))}
+@media (prefers-reduced-motion:reduce){.wss-thumb,.wss-cancel,.wss-save-dirs,.wss-probe,.wss-adopt,.wss-refresh{transition:none}.wss-thumb:hover{transform:none}}
 
 /* \u2500\u2500 \u6587\u5B57\u989C\u8272\u8DDF\u968F\u58C1\u7EB8\u4EAE\u5EA6\uFF082026-09-03 \u5B9A\u7A3F\uFF09 \u2500\u2500
    \u4E0D\u906E\u80CC\u666F\u3001\u4E0D\u6539\u58C1\u7EB8\u53EF\u89C1\u5EA6\uFF1B\u53EA\u8BA9\u6D88\u606F\u5217\uFF08[class*="flowItem"] \u5185\u4E3B\u8981\u6587\u672C\uFF09\u7684
@@ -28928,155 +28958,179 @@ function WallpaperSettingsSection(props) {
   }, [writeSettings]);
   const currentTitle = settings ? wallpapers.find((w) => w.id === settings.selectedWallpaperId)?.title ?? "\u65E0\uFF08\u9ED8\u8BA4\u80CC\u666F\uFF09" : "";
   return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-root", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-hint", children: "\u9009\u62E9\u58C1\u7EB8\u80CC\u666F\uFF0C\u6216\u53D6\u6D88\u4EE5\u6062\u590D\u9ED8\u8BA4\u80CC\u666F\u3002\u58C1\u7EB8\u76EE\u5F55\u652F\u6301\u81EA\u52A8\u63A2\u6D4B\u6216\u624B\u52A8\u586B\u5199\u3002" }),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-current", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
-        "\u5F53\u524D\u58C1\u7EB8\uFF1A",
-        currentTitle
+    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("section", { className: "wss-section", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-current", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-current-info", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-current-label", children: "\u5F53\u524D\u58C1\u7EB8" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-current-name", title: currentTitle, children: currentTitle })
       ] }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-current-actions", children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-refresh", onClick: refreshWallpapers, children: "\u5237\u65B0\u58C1\u7EB8" }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-cancel", onClick: () => select(""), children: "\u53D6\u6D88\u58C1\u7EB8" })
       ] })
-    ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "wss-grid", children: wallpapers.map((w) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
-      "button",
-      {
-        type: "button",
-        className: "wss-thumb" + (settings?.selectedWallpaperId === w.id ? " wss-selected" : ""),
-        "data-id": w.id,
-        onClick: () => select(w.id),
-        children: [
-          w.previewUrl ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("img", { src: w.previewUrl, alt: w.title, loading: "lazy" }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-no-preview", children: "\u65E0\u9884\u89C8" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-badge", children: w.type.toUpperCase() }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-thumb-title", children: w.title })
-        ]
-      },
-      w.id
-    )) }),
-    settings && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-glow", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-          "input",
-          {
-            type: "checkbox",
-            checked: settings.glowEnabled,
-            onChange: (e) => applyRuntime({ glowEnabled: e.target.checked })
-          }
-        ),
-        "\u5149\u6655\uFF08\u7ACB\u5373\u751F\u6548\uFF09"
-      ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-slider", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
-          "\u5149\u6655\u9608\u503C ",
-          settings.glowThreshold.toFixed(2)
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-          "input",
-          {
-            type: "range",
-            className: "wss-glow-threshold",
-            min: 0,
-            max: 0.99,
-            step: 0.01,
-            value: settings.glowThreshold,
-            onChange: (e) => applyRuntime({ glowThreshold: Number(e.target.value) })
-          }
-        )
-      ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-slider", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
-          "\u5149\u6655\u5F3A\u5EA6 ",
-          settings.glowStrength.toFixed(2)
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-          "input",
-          {
-            type: "range",
-            className: "wss-glow-strength",
-            min: 0,
-            max: 4,
-            step: 0.05,
-            value: settings.glowStrength,
-            onChange: (e) => applyRuntime({ glowStrength: Number(e.target.value) })
-          }
-        )
-      ] })
-    ] }),
-    settings && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-power", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-          "input",
-          {
-            type: "checkbox",
-            checked: settings.paused,
-            onChange: (e) => applyRuntime({ paused: e.target.checked })
-          }
-        ),
-        "\u6682\u505C\u58C1\u7EB8\uFF08\u7701\u7535\uFF09"
-      ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-          "input",
-          {
-            type: "checkbox",
-            checked: settings.pauseOnHidden,
-            onChange: (e) => applyRuntime({ pauseOnHidden: e.target.checked })
-          }
-        ),
-        "\u5207\u5230\u540E\u53F0\u65F6\u81EA\u52A8\u6682\u505C"
-      ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u753B\u8D28\u6863\u4F4D" }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
-          "select",
-          {
-            className: "wss-quality",
-            value: String(settings.qualityScale),
-            onChange: (e) => applyRuntime({ qualityScale: Number(e.target.value) }),
-            children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "1", children: "\u539F\u751F\uFF081\xD7\uFF09" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "0.75", children: "\u7701\u663E\u5B58\uFF080.75\xD7\uFF09" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "0.5", children: "\u6700\u7701\uFF080.5\xD7\uFF09" })
-            ]
-          }
-        )
-      ] })
-    ] }),
-    settings && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "wss-sound-row", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-        "input",
-        {
-          type: "checkbox",
-          className: "wss-sound",
-          checked: settings.soundEnabled,
-          onChange: (e) => applyRuntime({ soundEnabled: e.target.checked })
-        }
-      ),
-      "\u58C1\u7EB8\u97F3\u6548"
     ] }) }),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-dirs", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { children: "\u58C1\u7EB8\u76EE\u5F55" }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-dir-row", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u58C1\u7EB8\u76EE\u5F55\uFF08workshop\uFF09" }),
+    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("header", { className: "wss-section-head", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wss-section-title", children: "\u58C1\u7EB8\u5E93" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-count", children: [
+          wallpapers.length,
+          " \u5F20"
+        ] })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "wss-grid", children: wallpapers.map((w) => {
+        const selected = settings?.selectedWallpaperId === w.id;
+        return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+          "button",
+          {
+            type: "button",
+            className: "wss-thumb" + (selected ? " wss-selected" : ""),
+            "data-id": w.id,
+            title: w.title,
+            "aria-pressed": selected,
+            onClick: () => select(w.id),
+            children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-thumb-media", children: [
+                w.previewUrl ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("img", { src: w.previewUrl, alt: w.title, loading: "lazy" }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-no-preview", children: "\u65E0\u9884\u89C8" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-badge", children: w.type.toUpperCase() }),
+                selected && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-check", "aria-hidden": "true", children: "\u2713" })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-thumb-title", children: w.title })
+            ]
+          },
+          w.id
+        );
+      }) }),
+      wallpapers.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-empty", children: "\u8FD8\u6CA1\u6709\u58C1\u7EB8\u3002\u8BF7\u5728\u4E0B\u65B9\u8BBE\u7F6E\u58C1\u7EB8\u76EE\u5F55\uFF0C\u6216\u70B9\u300C\u81EA\u52A8\u63A2\u6D4B\u300D\u3002" })
+    ] }),
+    settings && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wss-section-title", children: "\u663E\u793A\u6548\u679C" }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-glow", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "input",
+            {
+              type: "checkbox",
+              checked: settings.glowEnabled,
+              onChange: (e) => applyRuntime({ glowEnabled: e.target.checked })
+            }
+          ),
+          "\u5149\u6655\uFF08\u7ACB\u5373\u751F\u6548\uFF09"
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-slider", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-slider-head", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u9608\u503C" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-value", children: settings.glowThreshold.toFixed(2) })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "input",
+            {
+              type: "range",
+              className: "wss-glow-threshold",
+              min: 0,
+              max: 0.99,
+              step: 0.01,
+              value: settings.glowThreshold,
+              onChange: (e) => applyRuntime({ glowThreshold: Number(e.target.value) })
+            }
+          )
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-slider", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-slider-head", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u5F3A\u5EA6" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-value", children: settings.glowStrength.toFixed(2) })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "input",
+            {
+              type: "range",
+              className: "wss-glow-strength",
+              min: 0,
+              max: 4,
+              step: 0.05,
+              value: settings.glowStrength,
+              onChange: (e) => applyRuntime({ glowStrength: Number(e.target.value) })
+            }
+          )
+        ] })
+      ] })
+    ] }),
+    settings && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wss-section-title", children: "\u6027\u80FD\u4E0E\u7701\u7535" }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-power", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "input",
+            {
+              type: "checkbox",
+              checked: settings.paused,
+              onChange: (e) => applyRuntime({ paused: e.target.checked })
+            }
+          ),
+          "\u6682\u505C\u58C1\u7EB8\uFF08\u7701\u7535\uFF09"
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "input",
+            {
+              type: "checkbox",
+              checked: settings.pauseOnHidden,
+              onChange: (e) => applyRuntime({ pauseOnHidden: e.target.checked })
+            }
+          ),
+          "\u5207\u5230\u540E\u53F0\u65F6\u81EA\u52A8\u6682\u505C"
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u753B\u8D28\u6863\u4F4D" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+            "select",
+            {
+              className: "wss-quality",
+              value: String(settings.qualityScale),
+              onChange: (e) => applyRuntime({ qualityScale: Number(e.target.value) }),
+              children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "1", children: "\u539F\u751F\uFF081\xD7\uFF09" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "0.75", children: "\u7701\u663E\u5B58\uFF080.75\xD7\uFF09" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "0.5", children: "\u6700\u7701\uFF080.5\xD7\uFF09" })
+              ]
+            }
+          )
+        ] })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "wss-sound-row", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "input",
+          {
+            type: "checkbox",
+            className: "wss-sound",
+            checked: settings.soundEnabled,
+            onChange: (e) => applyRuntime({ soundEnabled: e.target.checked })
+          }
+        ),
+        "\u58C1\u7EB8\u97F3\u6548"
+      ] }) })
+    ] }),
+    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wss-section-title", children: "\u58C1\u7EB8\u76EE\u5F55" }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc", children: "\u586B Wallpaper Engine \u7684\u4E24\u4E2A\u76EE\u5F55\uFF1B\u7559\u7A7A = \u672A\u914D\u7F6E\u3002\u4E5F\u53EF\u4EE5\u76F4\u63A5\u70B9\u300C\u81EA\u52A8\u63A2\u6D4B\u300D\u91C7\u7528\u63A2\u6D4B\u7ED3\u679C\u3002" }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-field", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-field-label", children: "\u58C1\u7EB8\u76EE\u5F55\uFF08workshop\uFF09" }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
           "input",
           {
             className: "wss-dir-workshop",
             value: wallpaperDir,
-            placeholder: "\u4F8B\u5982 D:/Steam/steamapps/workshop/content/431960\uFF08\u7559\u7A7A = \u672A\u914D\u7F6E\uFF09",
+            placeholder: "\u4F8B\u5982 D:/Steam/steamapps/workshop/content/431960",
             onChange: (e) => setWallpaperDir(e.target.value)
           }
         )
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-dir-row", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u5F15\u64CE\u76EE\u5F55\uFF08particle \u7EB9\u7406\uFF09" }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-field", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-field-label", children: "\u5F15\u64CE\u76EE\u5F55\uFF08particle \u7EB9\u7406\uFF09" }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
           "input",
           {
             className: "wss-dir-assets",
             value: weAssetsDir,
-            placeholder: "\u4F8B\u5982 D:/Steam/steamapps/common/wallpaper_engine\uFF08\u7559\u7A7A = \u672A\u914D\u7F6E\uFF09",
+            placeholder: "\u4F8B\u5982 D:/Steam/steamapps/common/wallpaper_engine",
             onChange: (e) => setWeAssetsDir(e.target.value)
           }
         )
@@ -29086,21 +29140,21 @@ function WallpaperSettingsSection(props) {
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-probe", onClick: runProbe, children: "\u81EA\u52A8\u63A2\u6D4B" })
       ] }),
       probe && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-probe-result", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { children: "\u63A2\u6D4B\u5230\u7684\u58C1\u7EB8\u76EE\u5F55" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h5", { className: "wss-subtitle", children: "\u63A2\u6D4B\u5230\u7684\u58C1\u7EB8\u76EE\u5F55" }),
         probe.workshop.map((c) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-candidate", "data-kind": "workshop", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-candidate-path", children: c.path }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-candidate-path", title: c.path, children: c.path }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: c.exists ? "wss-exists" : "wss-missing", children: c.exists ? "\u5B58\u5728" : "\u4E0D\u5B58\u5728" }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-adopt", "data-path": c.path, onClick: () => adopt(c.path, "wallpaperDir"), children: "\u91C7\u7528" })
         ] }, c.path)),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { children: "\u63A2\u6D4B\u5230\u7684\u5F15\u64CE\u76EE\u5F55" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h5", { className: "wss-subtitle", children: "\u63A2\u6D4B\u5230\u7684\u5F15\u64CE\u76EE\u5F55" }),
         probe.assets.map((c) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-candidate", "data-kind": "assets", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-candidate-path", children: c.path }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-candidate-path", title: c.path, children: c.path }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: c.exists ? "wss-exists" : "wss-missing", children: c.exists ? "\u5B58\u5728" : "\u4E0D\u5B58\u5728" }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-adopt", "data-path": c.path, onClick: () => adopt(c.path, "weAssetsDir"), children: "\u91C7\u7528" })
         ] }, c.path))
       ] })
     ] }),
-    message && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-message", children: message })
+    message && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-message", role: "status", children: message })
   ] });
 }
 
