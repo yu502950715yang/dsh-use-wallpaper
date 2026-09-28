@@ -273,6 +273,10 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
     - **修法**：浅色分支 `--dsw-specific-menu:rgba(255,255,255,.92)!important`、深色分支 `rgba(24,26,30,.94)!important`（与本插件其他面板 `.9` 口径一致；DSH 的 blur 保留；`!important` 覆盖 DSH 主题分支 `body, body *` 的定义）。
     - **跨版本**：旧版（≤0.1.6）该 token 本身就是不透明面，我们的覆盖会把菜单从「完全不透明」变成「92% / 94%」——8% 透出、文字仍清晰（旧版真机实测 token 计算值 = `rgba(255,255,255,.92)`）；属可接受的一致化，不是回归。
     - **验证**：`tests/styles.test.ts` 断言两条分支都覆盖该 token 且 α ≥ .9；真机 0.1.7 指令菜单（`_3e4SsG_menu`）计算背景 **`.58 → .92`**（手加 `data-ds-dark-theme` 后 `.94`），截图 `output/playwright/dsh017-menu-fixed-light.png` 文字清晰。
+    - **⚠️ 0.1.7-rc.2 再次回归并订正（2026-09-28，用户报告「用 `/` 调出的命令面板看不清内容」——与 rc.1 同一处观感）**：rc.2 把**公共菜单**迁到 `dsh-client-ui-primitives` 的 **`MenuSurface`** 组件，底由该组件的 `.material` 读取新 token **`--dsw-menu-surface-fill`**（`MenuSurface.module.css:26`），并把旧 token 变成它的**别名**（`--dsw-specific-menu:var(--dsw-menu-surface-fill)`；**仅 macOS** 保留接近不透明的 `#f8f9faf0` / `#303136f0`）⇒ **只覆盖旧 token 对这类菜单不再生效**（`dsh-client-ui-input-trigger` 的 `_3e4SsG_menu` CSS 在 rc.2 里已无 `background` 声明）。
+      - **实测（真实 GUI + 有壁纸，Playwright 量 `getComputedStyle`）**：`.material` 的 `background-color = rgba(248,249,250,.58)`、`--dsw-menu-surface-fill = #f8f9fa94`（DSH 原值）、`--dsw-specific-menu = rgba(255,255,255,.92)`（**我们的覆盖仍生效，只是菜单不读它**）⇒ 复现「半透明 + `blur(40px)` 下壁纸与文字混在一起」。
+      - **修法**：**两个 token 都覆盖**（浅 `.92` / 深 `.94`），DSH 的 `backdrop-filter` 保留；断言见 `tests/styles.test.ts` 新增用例（rc.2 起生效）。修复后同口径实测 `.58 → .92`（深色 `.94`），浅/深两态截图 `output/playwright/cmdk-fixed-*.png` 文字清晰。
+      - **通用教训**：DSH 把某类浮层的底从 token A 迁到 token B 时，插件的可读性覆盖必须**同时覆盖两个** —— 别名在非 macOS 上不再保留不透明度，且新组件可能完全不读旧 token。
 
 38. **可见性有两套判定，别混用（2026-09-25）**：`resolveVisibility`（**text** 用；`script` 绑定按 `value` 静态定论）与 `isStaticallyHidden`（**image/particle** 用；**`script` 恒不隐藏**，交给 `visible.script` 的运行时通道）。把后者换成前者，会让 9 个脚本控制的图层在装载期被永久剔掉（脚本再也打不开它）；反过来给 image/particle 套 `resolveVisibility` 是这类改动的头号地雷。
 

@@ -218,4 +218,15 @@ describe('styles 主题适配', () => {
     expect(WALLPAPER_CSS).toMatch(light);
     expect(WALLPAPER_CSS).toMatch(dark);
   });
+
+  it('命令面板（MenuSurface）读的 --dsw-menu-surface-fill 必须同样提高不透明度（0.1.7-rc.2 起公共菜单底改由它提供）', () => {
+    // 2026-09-28（用户报告「rc.2 下 / 调出的命令面板看不清」）：rc.2 把公共菜单迁到 MenuSurface
+    // 组件，背景由 primitives 的 MenuSurface.module.css 读 **--dsw-menu-surface-fill** 提供；
+    // 同时旧 token 退化为它的别名（非 macOS 上不再接近不透明）⇒ 只覆盖旧 token 对该菜单无效。
+    // 实测（真实 GUI，有壁纸）：material background = rgba(248,249,250,.58)，token 值 #f8f9fa94。
+    const light = /body\[data-we-wallpaper\]:not\(\[data-ds-dark-theme\]\)\s*\{[^}]*--dsw-menu-surface-fill:rgba\(255,\s*255,\s*255,\s*\.9\d*\)!important/;
+    const dark = /body\[data-ds-dark-theme\]\[data-we-wallpaper\]\s*\{[^}]*--dsw-menu-surface-fill:rgba\(2\d,\s*2\d,\s*3\d,\s*\.9\d*\)!important/;
+    expect(WALLPAPER_CSS).toMatch(light);
+    expect(WALLPAPER_CSS).toMatch(dark);
+  });
 });
