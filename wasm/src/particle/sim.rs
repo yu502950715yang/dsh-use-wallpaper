@@ -823,13 +823,21 @@ impl SceneParticleSim {
         }
         // 稳态存活数 = rate × 平均寿命（黑神话 20×7.5=150 → 受 maxcount=50 封顶）。
         let steady = ((self.emitter.rate * mean_life).ceil() as u32).clamp(1, self.maxcount);
+        // 出生相位策略：寿命**固定**且**池会满**（rate×寿命 ≥ maxcount）时，真实稳态是「同批同步」——
+        // 一批同龄粒子占满池子、一起飞、一起死，再补下一批（3793620838 的小鸟：life=25 固定、
+        // rate=20、maxcount=8；用户实测桌面「每隔半分钟一群小鸟飞过去」）。此时随机打散相位会把
+        // 「一群一起飞」摊成年龄均布的一片 ⇒ 每时每刻只剩零散几只可见（本次报告的「数量比桌面少」）。
+        // 寿命有随机范围时（全库 116 个对象）死亡本就错开、稳态自然分散 ⇒ 保持随机相位。
+        let fixed_life = (self.init.lifetime_max - self.init.lifetime_min).abs() <= 1e-6;
+        let pool_saturates = self.emitter.rate * mean_life >= self.maxcount as f32;
+        let synchronized = fixed_life && pool_saturates;
         let first = self.particles.len();
         for _ in 0..steady {
             if self.particles.len() as u32 >= self.maxcount {
                 break;
             }
-            // 出生相位随机（=「每片花瓣在不同时间/相位开始下落」）。
-            let age_frac = rand();
+            // 出生相位：同批同步 → 0（都是刚出生）；否则随机（=「每片花瓣在不同时间/相位开始下落」）。
+            let age_frac = if synchronized { 0.0 } else { rand() };
             self.spawn_with_age_frac(age_frac);
         }
         // 按各自 age 前滚各算子一次：位置 `pos += vel*age`（movement）、旋转 `rot += ω*age`
@@ -1288,6 +1296,74 @@ mod tests {
         let f0 = rf.build_instance_vertices()[4];
         rf.particles[0].life = life * 0.5;
         assert_eq!(rf.build_instance_vertices()[4], f0, "randomframe 的帧固定于 spawn");
+    }
+
+    fn mk_prewarm_sim(life_min: f32, life_max: f32, rate: f32, maxcount: u32) -> SceneParticleSim {
+        SceneParticleSim::new(
+            ParticleEmitterSpec {
+                rate,
+                origin: [0.0; 3],
+                directions: [1.0, 1.0, 0.0],
+                dist_min: [0.0; 3],
+                dist_max: [10.0, 10.0, 0.0],
+                is_sphere: false,
+            },
+            maxcount,
+            [0.0; 3],
+            3840.0,
+            2160.0,
+            ParticleInitSpec {
+                lifetime_min: life_min,
+                lifetime_max: life_max,
+                size_min: 10.0,
+                size_max: 10.0,
+                size_exponent: 1.0,
+                velocity_min: [0.0; 3],
+                velocity_max: [0.0; 3],
+                color_min: [1.0; 3],
+                color_max: [1.0; 3],
+                alpha_min: 1.0,
+                alpha_max: 1.0,
+                rotation_min: [0.0; 3],
+                rotation_max: [0.0; 3],
+                angular_vel_min: [0.0; 3],
+                angular_vel_max: [0.0; 3],
+                turbulent: None,
+            },
+        )
+    }
+
+    /// 寿命**固定**且**池会满**（rate×寿命 ≥ maxcount）时，真实稳态是「同批同步」——一批同龄粒子占满
+    /// 池子、一起飞、一起死，再补下一批 ⇒ prewarm 必须铺**同相位**（age≈0）。
+    /// 回归 3793620838：桌面上小鸟是「每隔半分钟一群一起飞过」（Birds：life=25 固定、rate=20、
+    /// maxcount=8 → 池满），此前 prewarm 把年龄随机打散成 0..25s ⇒ 每时每刻只剩零散几只可见。
+    #[test]
+    fn prewarm_keeps_fixed_life_saturated_pool_in_sync() {
+        let mut sim = mk_prewarm_sim(25.0, 25.0, 20.0, 8);
+        sim.prewarm();
+        assert_eq!(sim.particles.len(), 8, "应铺满 maxcount");
+        let ages: Vec<f32> = sim.particles.iter().map(particle_age).collect();
+        assert!(
+            ages.iter().all(|a| *a <= 1e-6),
+            "固定寿命 + 池满 → 同批同相位（age≈0），got {ages:?}"
+        );
+    }
+
+    /// 寿命**有随机范围**时（全库 116 个对象，如黑神话花瓣 5..10s）死亡本就错开，稳态自然分散 ⇒
+    /// prewarm 保持随机相位打散（既有行为，防「一批一起落」）。
+    ///
+    /// ⚠️ 规模取 4（而非真实壁纸的 50）：`rand()` 是**进程级**共享 Xorshift32，本测试消耗的随机数
+    /// 会落在并发运行的 `z_only_rotation_keeps_rng_stream_unchanged` 的窗口里（该测试复位 RNG 后
+    /// 立即 spawn）—— 消耗次数越少，干扰窗口越短。
+    #[test]
+    fn prewarm_still_staggers_random_life() {
+        let mut sim = mk_prewarm_sim(5.0, 10.0, 4.0, 4);
+        sim.prewarm();
+        assert_eq!(sim.particles.len(), 4);
+        let ages: Vec<f32> = sim.particles.iter().map(particle_age).collect();
+        let max = ages.iter().cloned().fold(0.0f32, f32::max);
+        // life ≥ 5s：任一 age_frac > 0.1 即 age > 0.5s；4 个全 ≤ 0.1 的概率 = 1e-4。
+        assert!(max > 0.5, "随机寿命 → 相位应打散，got {ages:?}");
     }
 
     /// Task 3：`build_instance_vertices` 输出**每粒子** 13 浮点
