@@ -155,6 +155,13 @@ const server = createServer((req, res) => {
   }
   if (p === '/wallpapers/particle-texture') {
     const name = url.searchParams.get('name') ?? '';
+    // 与生产路由同序（src/host/routes.ts）：壁纸 scene.pkg 先、引擎 assets 后。
+    // 壁纸自带粒子素材（3793620838 的小鸟）只存在于 pkg 内，缺这段就会 404 → 粒子退化成圆点。
+    const id = url.searchParams.get('id') ?? '';
+    if (id) {
+      const inPkg = pkgOf(id)?.get(`materials/${name}.tex`);
+      if (inPkg) return send(inPkg, 'application/octet-stream');
+    }
     const f = join(WE_ASSETS, 'materials', name + '.tex');
     if (!existsSync(f)) return send('nf', 'text/plain', 404);
     return send(readFileSync(f), 'application/octet-stream');

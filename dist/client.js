@@ -24462,7 +24462,7 @@ async function resolveParticleMaterial(id, specText) {
     const aliased = PARTICLE_TEX_ALIASES[short];
     const name = aliased ? `particle/${aliased}` : texName;
     return {
-      texUrl: `/wallpapers/particle-texture?name=${encodeURIComponent(name)}`,
+      texUrl: `/wallpapers/particle-texture?id=${encodeURIComponent(id)}&name=${encodeURIComponent(name)}`,
       blending
     };
   } catch {

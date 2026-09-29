@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { particlesFromSpec } from '../src/client/scene-assets.js';
+import { particlesFromSpec, resolveParticleMaterial } from '../src/client/scene-assets.js';
 import { readFileSync } from 'node:fs';
 
 describe('particlesFromSpec (v1 subset)', () => {
@@ -22,6 +22,41 @@ describe('particlesFromSpec (v1 subset)', () => {
   it('returns null when emitter or initializers missing', () => {
     expect(particlesFromSpec({})).toBeNull();
     expect(particlesFromSpec({ emitter: [] })).toBeNull();
+  });
+});
+
+describe('resolveParticleMaterial', () => {
+  // 回归（2026-09-29）：纹理 URL 必须带壁纸 id —— 否则 host 只在 WE 引擎目录找纹理，
+  // 打包在壁纸 scene.pkg 里的粒子纹理（3793620838 的两只鸟）取不到 → 渲染成圆点。
+  it('texUrl 携带壁纸 id，供 host 先在 scene.pkg 内查纹理', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        passes: [{ blending: 'translucent', textures: ['particle/BIRD TEST 3 FILTER'] }],
+      }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const r = await resolveParticleMaterial(
+        '3793620838',
+        JSON.stringify({ material: 'materials/particle/BIRD TEST 3 FILTER.json' }),
+      );
+      expect(r).toEqual({
+        texUrl: '/wallpapers/particle-texture?id=3793620838&name=particle%2FBIRD%20TEST%203%20FILTER',
+        blending: 'translucent',
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('材质不可得 → texUrl null（调用方走白图兜底）', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, json: async () => ({}) })));
+    try {
+      expect(await resolveParticleMaterial('1', JSON.stringify({ material: 'materials/x.json' }))).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 

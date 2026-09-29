@@ -302,6 +302,69 @@ describe('registerWallpaperRoutes', () => {
     expect(res.headers['Content-Type']).toBe('application/octet-stream');
   });
 
+  // 根因回归（2026-09-29，壁纸 3793620838「In the Mountains 21:9 w lofi」小鸟变圆点）：
+  // 粒子材质纹理若打包在壁纸自己的 scene.pkg（materials/<name>.tex）里，而引擎目录没有，
+  // 旧路由只查引擎目录 → 404 → client 白图兜底 + maskMode=0 → 粒子渲染成软圆点。
+  // WE 的挂载顺序是「壁纸目录/pkg 先于引擎 assets」（lwe Container::m_mountpoints 顺序遍历），
+  // 故这里 pkg 优先、引擎目录回退。
+  it('粒子纹理路由：带 id 时优先取壁纸 pkg 内的纹理', async () => {
+    const { makePkg } = await import('./fixtures/make-pkg.js');
+    const weDir = join(dir, 'we-assets');
+    const engineTex = join(weDir, 'assets', 'materials', 'particle');
+    mkdirSync(engineTex, { recursive: true });
+    writeFileSync(join(engineTex, 'BIRD TEST 3 FILTER.tex'), Buffer.from('ENGINE'));
+    const pkg = makePkg([
+      { name: 'scene.json', data: Buffer.from('{}', 'utf8') },
+      { name: 'materials/particle/BIRD TEST 3 FILTER.tex', data: Buffer.from('PKG') },
+    ]);
+    const wp = join(dir, '3793620838');
+    mkdirSync(wp, { recursive: true });
+    writeFileSync(join(wp, 'scene.pkg'), pkg);
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir, weAssetsDir: weDir });
+    const res = makeRes();
+    await routes.get('exact /wallpapers/particle-texture')!({
+      url: '/wallpapers/particle-texture?id=3793620838&name=' + encodeURIComponent('particle/BIRD TEST 3 FILTER'),
+    }, res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body.toString('utf8')).toBe('PKG');
+  });
+
+  it('粒子纹理路由：pkg 内没有该纹理时回退引擎目录', async () => {
+    const { makePkg } = await import('./fixtures/make-pkg.js');
+    const weDir = join(dir, 'we-assets');
+    const engineTex = join(weDir, 'assets', 'materials', 'particle', 'fog');
+    mkdirSync(engineTex, { recursive: true });
+    writeFileSync(join(engineTex, 'fog1.tex'), Buffer.from('ENGINE'));
+    const wp = join(dir, '9');
+    mkdirSync(wp, { recursive: true });
+    writeFileSync(join(wp, 'scene.pkg'), makePkg([{ name: 'scene.json', data: Buffer.from('{}', 'utf8') }]));
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir, weAssetsDir: weDir });
+    const res = makeRes();
+    await routes.get('exact /wallpapers/particle-texture')!(
+      { url: '/wallpapers/particle-texture?id=9&name=particle/fog/fog1' }, res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body.toString('utf8')).toBe('ENGINE');
+  });
+
+  it('粒子纹理路由：pkg 命中时不因未配 weAssetsDir 而失败', async () => {
+    const { makePkg } = await import('./fixtures/make-pkg.js');
+    const pkg = makePkg([
+      { name: 'scene.json', data: Buffer.from('{}', 'utf8') },
+      { name: 'materials/workshop/2478413376/particle/bird sprite sheet.tex', data: Buffer.from('PKG') },
+    ]);
+    const wp = join(dir, '3793620838');
+    mkdirSync(wp, { recursive: true });
+    writeFileSync(join(wp, 'scene.pkg'), pkg);
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
+    const res = makeRes();
+    await routes.get('exact /wallpapers/particle-texture')!({
+      url: '/wallpapers/particle-texture?id=3793620838&name='
+        + encodeURIComponent('workshop/2478413376/particle/bird sprite sheet'),
+    }, res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body.toString('utf8')).toBe('PKG');
+  });
+
   it('粒子纹理路由：非法 name（穿越）、不存在纹理、缺失 weAssetsDir 被拒绝', async () => {
     const weDir = join(dir, 'we-assets');
     mkdirSync(join(weDir, 'assets', 'materials'), { recursive: true });
