@@ -51,6 +51,10 @@ pub enum OperatorKind {
     AlphaChange,
     /// 按寿命线性插值调制 color（colorchange）。参数同上 + startvalue/endvalue 为 vec3。
     ColorChange,
+    /// controlpointattract：`diff = center - pos`，`|diff| < threshold` 时
+    /// `vel += normalize(diff) * scale * dt`（`scale` 为负 = **推离**控制点）。
+    /// 控制点位置来自 spec 的 `controlpoint[controlpoint]` + instanceoverride 的 `controlpointN`。
+    ControlPointAttract,
     Other,
 }
 
@@ -166,11 +170,22 @@ pub struct ParticleOverride {
     /// 颜色覆盖（已转线性 0-1）：`color`（legacy 0-255 → /255 再平方）优先，
     /// 否则 `colorn`（0-1 直接平方）。
     pub color: Option<[f32; 3]>,
+    /// `controlpoint0..7` 的位置覆盖（官方 `OverrideSpawnProgram` 的 `controlpointN`）。
+    /// 非 worldspace 的控制点：**累加**到 spec 的 `offset` 上；worldspace：整体替换为世界坐标。
+    pub controlpoints: [Option<[f32; 3]>; 8],
 }
 
 impl Default for ParticleOverride {
     fn default() -> Self {
-        Self { alpha: 1.0, size: 1.0, lifetime: 1.0, speed: 1.0, count: 1.0, color: None }
+        Self {
+            alpha: 1.0,
+            size: 1.0,
+            lifetime: 1.0,
+            speed: 1.0,
+            count: 1.0,
+            color: None,
+            controlpoints: [None; 8],
+        }
     }
 }
 
@@ -205,12 +220,30 @@ pub fn parse_particle_override(json: &str) -> Option<ParticleOverride> {
         speed: num("speed"),
         count: num("count"),
         color,
+        controlpoints: std::array::from_fn(|i| {
+            v.get(format!("controlpoint{i}").as_str()).map(|c| vec3(c))
+        }),
     })
 }
 
+/// scene 粒子 spec 的 `controlpoint[i]`（官方 `wpscene::ParticleControlpoint`，`ParticleObject.cppm:21-38`）：
+/// `offset` 是**相对粒子系统位置**的静态偏移；`flags` bit0 = `link_mouse`（跟随鼠标，本实现忽略鼠标
+/// 位移 —— DSH 壁纸无鼠标视差）、bit1 = `worldspace`（世界坐标，与粒子系统位置无关）。
+#[derive(Debug, Clone, Copy)]
+pub struct ControlPointSpec {
+    pub offset: [f32; 3],
+    pub link_mouse: bool,
+    pub worldspace: bool,
+}
+
+impl Default for ControlPointSpec {
+    fn default() -> Self {
+        Self { offset: [0.0; 3], link_mouse: false, worldspace: false }
+    }
+}
+
 #[derive(Debug, Clone)]
-pub struct ParticleSpec {
-    pub emitter: EmitterSpec,
+pub struct ParticleSpec {    pub emitter: EmitterSpec,
     pub init: InitSpec,
     pub operators: Vec<Operator>,
     /// WE 粒子系统的最大粒子数（spec 的 maxcount 字段，权威上限）。
@@ -227,6 +260,8 @@ pub struct ParticleSpec {
     pub animation_mode: AnimationMode,
     /// 序列帧倍率（spec 顶层 `sequencemultiplier`，缺省 1）：一个寿命内播放的动画轮数。
     pub sequence_multiplier: f32,
+    /// 控制点表（固定 8 槽，官方索引 0..7）。`controlpointattract` 用它定位控制点。
+    pub controlpoints: Vec<ControlPointSpec>,
 }
 
 /// 粒子渲染器类型（官方 renderer[]）。当前只消费 sprite / spritetrail。
@@ -371,6 +406,7 @@ pub fn parse_particle_spec(json: &str) -> ParticleSpec {
                 "sizechange" => OperatorKind::SizeChange,
                 "alphachange" => OperatorKind::AlphaChange,
                 "colorchange" => OperatorKind::ColorChange,
+                "controlpointattract" => OperatorKind::ControlPointAttract,
                 "angularmovement" => OperatorKind::AngularMovement,
                 _ => OperatorKind::Other,
             };
@@ -397,6 +433,23 @@ pub fn parse_particle_spec(json: &str) -> ParticleSpec {
 
     // WE maxcount：粒子系统最大数量（数字）。缺省/非正 → 0（未指定，estimate 回退）。
     let maxcount = scalar(&raw.get("maxcount").cloned().unwrap_or(Value::Null), 0.0).max(0.0) as u32;
+
+    // controlpoint[]：固定铺 8 槽（官方 0..7），按各条目的 `id` 落位（缺 id 用数组下标）。
+    let mut controlpoints = vec![ControlPointSpec::default(); 8];
+    if let Some(arr) = raw.get("controlpoint").and_then(|v| v.as_array()) {
+        for (slot, cp) in arr.iter().enumerate() {
+            let idx = cp.get("id").and_then(|v| v.as_u64()).map(|v| v as usize).unwrap_or(slot);
+            if idx >= 8 {
+                continue;
+            }
+            let flags = cp.get("flags").and_then(|v| v.as_u64()).unwrap_or(0);
+            controlpoints[idx] = ControlPointSpec {
+                offset: vec3(&cp["offset"]),
+                link_mouse: flags & 1 != 0,
+                worldspace: flags & 2 != 0,
+            };
+        }
+    }
 
     ParticleSpec {
         emitter: EmitterSpec {
@@ -444,6 +497,7 @@ pub fn parse_particle_spec(json: &str) -> ParticleSpec {
             &raw.get("sequencemultiplier").cloned().unwrap_or(Value::Null),
             1.0,
         ),
+        controlpoints,
     }
 }
 
@@ -505,6 +559,41 @@ mod tests {
         // randomframe → 帧在 spawn 时随机固定后不再推进。
         let r = parse_particle_spec(r#"{"emitter":[{"rate":20}],"animationmode":"randomframe"}"#);
         assert_eq!(r.animation_mode, AnimationMode::RandomFrame);
+    }
+
+    /// controlpointattract 与 `controlpoint[]`：算子只存 `controlpoint` 索引，位置来自 spec 的
+    /// `controlpoint[i]`（`offset` 相对粒子系统 + `flags`：bit0 `link_mouse`、bit1 `worldspace`）。
+    /// 3793620838 的 `Bird`：CP1 `flags=1`（link_mouse，非 worldspace）⇒ 局部偏移 (0,0,0) = 发射点。
+    #[test]
+    fn parses_controlpointattract_and_controlpoints() {
+        let json = r#"{"emitter":[{"rate":1}],"controlpoint":[{"id":0},{"id":1,"flags":1},
+            {"id":2,"flags":2,"offset":"0 -500 0"}],
+            "operator":[{"name":"controlpointattract","controlpoint":1,"origin":"0 0 0","scale":-200,"threshold":100}]}"#;
+        let spec = parse_particle_spec(json);
+        assert_eq!(spec.controlpoints.len(), 8, "控制点固定 8 槽（官方 0..7）");
+        assert!(spec.controlpoints[1].link_mouse);
+        assert!(!spec.controlpoints[1].worldspace);
+        assert!(spec.controlpoints[2].worldspace, "flags=2 → worldspace");
+        assert_eq!(spec.controlpoints[2].offset, [0.0, -500.0, 0.0]);
+        let op = spec
+            .operators
+            .iter()
+            .find(|o| o.kind == OperatorKind::ControlPointAttract)
+            .expect("controlpointattract 应被识别（此前归 Other 被跳过）");
+        assert_eq!(op.params["controlpoint"].as_i64().unwrap(), 1);
+    }
+
+    /// instanceoverride 的 `controlpointN`（数值 vec3）：非 worldspace 时**累加**到 spec 的 offset 上
+    /// （官方 `ParticleRuntime.cpp:607-620`）。
+    #[test]
+    fn parses_instanceoverride_controlpoints() {
+        let ov = parse_particle_override(
+            r#"{"controlpoint2":"1803.89 328.66 0","controlpoint7":"-2137.5 -809.67 0"}"#,
+        )
+        .unwrap();
+        assert_eq!(ov.controlpoints[2], Some([1803.89, 328.66, 0.0]));
+        assert_eq!(ov.controlpoints[7], Some([-2137.5, -809.67, 0.0]));
+        assert_eq!(ov.controlpoints[1], None, "未覆盖的控制点保持 None");
     }
 
     #[test]

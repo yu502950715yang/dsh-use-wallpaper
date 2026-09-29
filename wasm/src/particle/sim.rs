@@ -349,6 +349,11 @@ pub enum ParticleOperator {
     AlphaChange { start_time: f32, end_time: f32, start_value: f32, end_value: f32 },
     /// colorChange：逐分量 `color = initial.color * fadeValue(used, start, end, startVal.r/g/b, endVal.r/g/b)`。
     ColorChange { start_time: f32, end_time: f32, start_value: [f32; 3], end_value: [f32; 3] },
+    /// controlpointattract（官方 `ControlPointAttractOperator`）：`diff = center - pos`，
+    /// `|diff| < threshold` 时 `vel += normalize(diff) * scale * dt`（`scale` 负 = 推离控制点）。
+    /// `center` 是控制点的**局部空间**位置，由 `resolve_controlpoint_attract` 在 instanceoverride
+    /// 落地后填好（spec 的 offset + override 的 controlpointN）。
+    ControlPointAttract { cp_index: usize, center: [f32; 3], scale: f32, threshold: f32 },
     /// turbulence：对速度做 curl 噪声扰动（`vel += curlDir * mask * dt`）。
     /// `phase`/`turb_speed` 为**算子创建时**按 min/max 各随机一次（对齐 lwe 闭包捕获）。
     Turbulence {
@@ -441,6 +446,20 @@ impl ParticleOperator {
                     }
                     while p.rot[k] < -pi {
                         p.rot[k] += two_pi;
+                    }
+                }
+            }
+            ParticleOperator::ControlPointAttract { center, scale, threshold, .. } => {
+                // 官方 `ControlPointAttractOperator::Update`（OWE ParticleParser.cpp:1368-1386）：
+                //   difference = offset - position; if |difference| < threshold:
+                //       velocity += difference.normalized() * scale * dt
+                // `threshold` **不除以 2**（lwe 除以 2，以官方为准）；`scale` 为负 = 推离控制点。
+                let d = [center[0] - p.pos[0], center[1] - p.pos[1], center[2] - p.pos[2]];
+                let dist = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+                if dist > 1e-3 && dist < *threshold {
+                    let k = *scale * dt / dist;
+                    for i in 0..3 {
+                        p.vel[i] += d[i] * k;
                     }
                 }
             }
@@ -861,6 +880,35 @@ impl SceneParticleSim {
             let now = self.time + age;
             for op in &operators {
                 op.apply(&mut self.particles[idx], age, now);
+            }
+        }
+    }
+
+    /// 用 `spec.controlpoints`（基础偏移）与 `override_spec.controlpoints`（实例覆盖）填好
+    /// `ControlPointAttract` 算子的 `center`（**局部空间**坐标）。
+    ///
+    /// 非 worldspace（官方 `ParticleRuntime.cpp:607-620` 的 else 分支）：`center = base_offset + override`。
+    /// worldspace 的控制点需要对象的 world←spawn 变换（对象 angles/scale）—— 本模拟器暂不接收这两个
+    /// 参数，`spec_operators_to_sim` 对这类控制点**不生成算子**，故这里也无需处理。
+    pub fn resolve_controlpoint_attract(&mut self, cps: &[super::ControlPointSpec]) {
+        // ⚠️ 基准对齐（首次接入时踩过）：控制点的 `offset` 是**相对粒子系统位置**的偏移，而 `p.pos`
+        // 的基准 = `we_to_three(obj_origin)` + `emitter.origin × BLACKMYTH_OBJ_SCALE`（见
+        // `spawn_with_age_frac`）。若把控制点直接放在 (0,0,0)，`|cp - pos|` 恒大于 threshold，
+        // 算子等于没生效（实测跨度不变）。
+        let (cx, cy) = we_to_three(self.obj_origin[0], self.obj_origin[1], self.scene_w, self.scene_h);
+        let base = [
+            cx + self.emitter.origin[0] * BLACKMYTH_OBJ_SCALE[0],
+            cy + self.emitter.origin[1] * BLACKMYTH_OBJ_SCALE[1],
+            self.obj_origin[2] + self.emitter.origin[2] * BLACKMYTH_OBJ_SCALE[2],
+        ];
+        let ov = self.override_spec.controlpoints;
+        for op in &mut self.operators {
+            if let ParticleOperator::ControlPointAttract { cp_index, center, .. } = op {
+                let mut c = cps.get(*cp_index).map(|cp| cp.offset).unwrap_or([0.0; 3]);
+                if let Some(add) = ov.get(*cp_index).copied().flatten() {
+                    c = [c[0] + add[0], c[1] + add[1], c[2] + add[2]];
+                }
+                *center = [base[0] + c[0], base[1] + c[1], base[2] + c[2]];
             }
         }
     }
@@ -1379,6 +1427,80 @@ mod tests {
         let max = ages.iter().cloned().fold(0.0f32, f32::max);
         // life ≥ 5s：任一 age_frac > 0.1 即 age > 0.5s；4 个全 ≤ 0.1 的概率 = 1e-4。
         assert!(max > 0.5, "随机寿命 → 相位应打散，got {ages:?}");
+    }
+
+    /// controlpointattract（官方 `ControlPointAttractOperator::Update`）：
+    /// `diff = center - pos`，`|diff| < threshold` 时 `vel += normalize(diff) * scale * dt`
+    /// —— `scale` 为负即**推离**控制点。
+    ///
+    /// 回归 3793620838：`Bird`（乌鸦群）的 CP1 就在发射点（`flags=link_mouse` + offset 0 ⇒ 局部原点）、
+    /// `scale=-200`、`threshold=100`，而出生散射半径只有 0..35 ⇒ 桌面端每个新粒子都被径向推开
+    /// （初速 25 → ~200 px/s），整群因此四散；我们此前把该算子归为 Other 直接跳过 ⇒ 乌鸦挤成一条线。
+    #[test]
+    fn controlpoint_attract_pushes_within_threshold_only() {
+        let mut sim = mk_prewarm_sim(1.0, 1.0, 0.0, 4);
+        sim.operators = vec![ParticleOperator::ControlPointAttract {
+            cp_index: 1,
+            center: [0.0, 0.0, 0.0],
+            scale: -200.0,
+            threshold: 100.0,
+        }];
+        sim.particles.push(dummy_particle([10.0, 0.0, 0.0]));
+        sim.particles.push(dummy_particle([200.0, 0.0, 0.0]));
+        for p in &mut sim.particles {
+            p.vel = [0.0; 3];
+        }
+        sim.update(0.5);
+        // 内：diff = -10 → normalize = (-1,0,0) → v += (-1) * (-200) * 0.5 = +100（沿 +x 向外推）
+        assert!(
+            (sim.particles[0].vel[0] - 100.0).abs() < 1e-3,
+            "threshold 内应被径向推开，got {:?}",
+            sim.particles[0].vel
+        );
+        assert_eq!(sim.particles[1].vel[0], 0.0, "threshold 外不受力");
+    }
+
+    /// `resolve_controlpoint_attract` 的基准对齐：控制点 offset 是**相对粒子系统位置**的偏移，
+    /// 必须落在与 `p.pos` 相同的基准上（`we_to_three(obj_origin)`），否则 `|cp - pos|` 恒大于
+    /// threshold，算子静默失效（首次接入就是这样，实测跨度毫无变化）。
+    #[test]
+    fn resolve_controlpoint_attract_aligns_to_particle_position_basis() {
+        let mut sim = mk_prewarm_sim(1.0, 1.0, 0.0, 4); // obj_origin = (0,0,0)、scene 3840×2160
+        sim.obj_origin = [2000.0, 500.0, 0.0];
+        sim.operators = vec![ParticleOperator::ControlPointAttract {
+            cp_index: 1,
+            center: [0.0; 3],
+            scale: -200.0,
+            threshold: 100.0,
+        }];
+        sim.resolve_controlpoint_attract(&[crate::particle::ControlPointSpec::default(); 8]);
+        // we_to_three(2000, 500) = (2000-1920, 500-1080) = (80, -580)。
+        let ParticleOperator::ControlPointAttract { center, .. } = sim.operators[0] else {
+            panic!("应仍是 ControlPointAttract");
+        };
+        assert!((center[0] - 80.0).abs() < 1e-3, "x 应对齐到对象位置基准，got {center:?}");
+        assert!((center[1] + 580.0).abs() < 1e-3, "y 应对齐到对象位置基准，got {center:?}");
+    }
+
+    fn dummy_particle(pos: [f32; 3]) -> SimParticle {
+        SimParticle {
+            pos,
+            vel: [0.0; 3],
+            rot: [0.0; 3],
+            angular_vel: [0.0; 3],
+            size: 10.0,
+            alpha: 1.0,
+            life: 1.0,
+            max_life: 1.0,
+            color: [1.0; 3],
+            frame: 0.0,
+            initial: SimInitial { color: [1.0; 3], alpha: 1.0, size: 10.0, lifetime: 1.0 },
+            fade_in: 0.0,
+            fade_out: 1.0,
+            oscillate_alpha: OscState { frequency: 0.0, scale: 1.0, phase: 0.0, base: 0.0, initialized: false },
+            oscillate_size: OscState { frequency: 0.0, scale: 1.0, phase: 0.0, base: 0.0, initialized: false },
+            oscillate_position: OscState3 { frequency: [0.0; 3], scale: [0.0; 3], phase: [0.0; 3], initialized: false },
+        }
     }
 
     /// Task 3：`build_instance_vertices` 输出**每粒子** 13 浮点

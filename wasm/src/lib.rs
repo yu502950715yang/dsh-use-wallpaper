@@ -51,6 +51,8 @@ impl CpuParticleSim {
         if let Some(ov) = particle::parse_particle_override(override_json) {
             sim.override_spec = ov;
         }
+        // controlpointattract 的控制点位置必须等 instanceoverride 落地后再定（`controlpointN` 覆盖）。
+        sim.resolve_controlpoint_attract(&spec.controlpoints);
         // 预滚到「已经在飘」的稳态（修复「所有花瓣同时下落」）：首帧就铺满稳态相位错落的粒子
         // （每片随机出生 age，位置/旋转/alpha 按该 age 前滚），而不是空池冷启动、一批花瓣
         // 同相位平行下落。逐帧发射/算子语义不变（详见 `SceneParticleSim::prewarm` 注释）。

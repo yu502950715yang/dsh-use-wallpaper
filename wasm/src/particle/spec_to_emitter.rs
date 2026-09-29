@@ -193,7 +193,28 @@ pub fn spec_operators_to_sim(spec: &ParticleSpec) -> Vec<ParticleOperator> {
                     if p.get("endvalue").is_some() { v } else { [1.0, 1.0, 1.0] }
                 },
             }),
-            OperatorKind::Other => {} // 不可识别算子（vortex/controlpointattract 等）跳过
+            OperatorKind::ControlPointAttract => {
+                // 算子只带 `controlpoint` 索引；位置在 spec 的 `controlpoint[i]`（+ instanceoverride 的
+                // `controlpointN`）里，由 `SceneParticleSim::resolve_controlpoint_attract` 在其后填。
+                let cp_index = p
+                    .get("controlpoint")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0)
+                    .min(7) as usize;
+                // worldspace 控制点需要对象 world←spawn 变换（本模拟器未接收对象 angles/scale）⇒ 跳过，
+                // 保持「无该力」的既有行为，绝不用错坐标把画面推坏（3793620838 的 CP2/3/4 属此类；
+                // 造成「乌鸦挤成一条线」的是 **CP1**：link_mouse/非 worldspace(offset 0) = 正好在发射点）。
+                if spec.controlpoints.get(cp_index).map(|c| c.worldspace).unwrap_or(false) {
+                    continue;
+                }
+                ops.push(ParticleOperator::ControlPointAttract {
+                    cp_index,
+                    center: [0.0; 3], // 由 resolve_controlpoint_attract 按 spec + override 填
+                    scale: f("scale", 100.0),
+                    threshold: f("threshold", 1000.0),
+                });
+            }
+            OperatorKind::Other => {} // 不可识别算子（vortex 等）跳过
         }
     }
     if ops.is_empty() {

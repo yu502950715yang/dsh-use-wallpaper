@@ -61,7 +61,15 @@ fn sim_with(init: ParticleInitSpec, ov: ParticleOverride, rate: f32, maxcount: u
 
 #[test]
 fn override_multiplies_alpha_size_lifetime_speed() {
-    let ov = ParticleOverride { alpha: 0.03, size: 2.0, lifetime: 1.5, speed: 2.0, count: 1.0, color: None };
+    let ov = ParticleOverride {
+        alpha: 0.03,
+        size: 2.0,
+        lifetime: 1.5,
+        speed: 2.0,
+        count: 1.0,
+        color: None,
+        controlpoints: [None; 8],
+    };
     let mut sim = sim_with(determinate_init(), ov, 50_000.0, 64);
     sim.update(0.01);
     assert!(!sim.particles.is_empty(), "应有粒子");
