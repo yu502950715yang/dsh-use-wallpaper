@@ -202,9 +202,15 @@ pub fn spec_operators_to_sim(spec: &ParticleSpec) -> Vec<ParticleOperator> {
                     .unwrap_or(0)
                     .min(7) as usize;
                 // worldspace 控制点需要对象 world←spawn 变换（本模拟器未接收对象 angles/scale）⇒ 跳过，
-                // 保持「无该力」的既有行为，绝不用错坐标把画面推坏（3793620838 的 CP2/3/4 属此类；
-                // 造成「乌鸦挤成一条线」的是 **CP1**：link_mouse/非 worldspace(offset 0) = 正好在发射点）。
+                // 保持「无该力」的既有行为，绝不用错坐标把画面推坏（3793620838 的 CP2/3/4 属此类）。
                 if spec.controlpoints.get(cp_index).map(|c| c.worldspace).unwrap_or(false) {
+                    continue;
+                }
+                // link_mouse 控制点的位置 = 对象位置 + offset + **鼠标局部坐标**；桌面端鼠标居中 ⇒
+                // 它落在场景中央、离发射点极远（CP1：2180 ≫ threshold 100）⇒ 实际不推任何粒子。
+                // DSH 没有鼠标位置输入，若按 mouse_local=0 处理就等于把它钉在发射点上、凭空造出一个
+                // 强力排斥源（用户实测「乌鸦太分散」）⇒ 不生成算子。
+                if spec.controlpoints.get(cp_index).map(|c| c.link_mouse).unwrap_or(false) {
                     continue;
                 }
                 ops.push(ParticleOperator::ControlPointAttract {
@@ -230,6 +236,37 @@ pub fn spec_operators_to_sim(spec: &ParticleSpec) -> Vec<ParticleOperator> {
 mod tests {
     use super::*;
     use crate::particle::parse_particle_spec;
+
+    /// `link_mouse` 的控制点**不生成** `controlpointattract` 算子。
+    ///
+    /// 官方位置 = 对象位置 + `offset` + `mouse_local`：桌面端鼠标通常停在屏幕中央，这类控制点因此
+    /// 落在场景中央、**离发射点极远**（3793620838 的 CP1：发射点在场景外 x=-2180，鼠标居中 ⇒
+    /// 距离 2180 ≫ `threshold=100`）⇒ 桌面端它其实**不推任何粒子**。DSH 壁纸没有鼠标位置输入，
+    /// 若按 `mouse_local=0` 处理就等于把控制点钉死在发射点上，每个新粒子被径向猛推 ⇒ 整群炸开
+    /// （用户实测「乌鸦太分散」）。宁可让它不生效，也不要造出一个桌面上不存在的力。
+    #[test]
+    fn skips_link_mouse_controlpoint_attract() {
+        let json = r#"{"emitter":[{"rate":1}],
+            "controlpoint":[{"id":0},{"id":1,"flags":1},{"id":2,"flags":2}],
+            "operator":[
+              {"name":"controlpointattract","controlpoint":1,"scale":-200,"threshold":100},
+              {"name":"controlpointattract","controlpoint":2,"scale":-500,"threshold":100},
+              {"name":"controlpointattract","controlpoint":0,"scale":-200,"threshold":100}]}"#;
+        let spec = parse_particle_spec(json);
+        let ops = spec_operators_to_sim(&spec);
+        let cps: Vec<usize> = ops
+            .iter()
+            .filter_map(|o| match o {
+                ParticleOperator::ControlPointAttract { cp_index, .. } => Some(*cp_index),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            cps,
+            vec![0],
+            "只保留既非 link_mouse（CP1）也非 worldspace（CP2）的那个控制点"
+        );
+    }
 
     #[test]
     fn maps_rate_maxcount_and_directions() {
