@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { resolveBackground, alternateLoopbackOrigin, webFrameSpec } from '../src/client/background-layer.js';
+import {
+  resolveBackground,
+  alternateLoopbackOrigin,
+  webFrameSpec,
+  planWebFrameOrigin,
+  readTransportOrigin,
+} from '../src/client/background-layer.js';
 
 const base = { previewUrl: '/p.png', hasPreviewGif: false, hasScene: false } as any;
 
@@ -58,6 +64,46 @@ describe('webFrameSpec', () => {
       url: 'http://127.0.0.1:3080/wallpapers/web/9/index.html',
       sandbox: 'allow-scripts',
     });
+  });
+});
+
+// 桌面壳（DeepSeek Harness 桌面版）用自定义协议 dsh-app://app 承载 GUI：页面本身没有可互换的
+// 回环主机名，若不另找 origin 就会落到 opaque origin 沙箱 ⇒ 依赖 WebGL 贴图的 web 壁纸整片空白
+// （AGENT.md §5.30/§7，用户报告 3789244610 Night City Rain）。桌面壳通过官方接缝
+// `globalThis.__DSH_TRANSPORT__.streamBaseUrl` 提供其拥有 Host 的 HTTP origin。
+describe('readTransportOrigin', () => {
+  it('读取 streamBaseUrl 并规范化成 origin', () => {
+    expect(readTransportOrigin({ __DSH_TRANSPORT__: { streamBaseUrl: 'http://127.0.0.1:19387' } }))
+      .toBe('http://127.0.0.1:19387');
+    expect(readTransportOrigin({ __DSH_TRANSPORT__: { streamBaseUrl: 'http://127.0.0.1:19387/?token=x' } }))
+      .toBe('http://127.0.0.1:19387');
+  });
+  it('缺失、非字符串、非 http(s) 一律返回 null', () => {
+    expect(readTransportOrigin({})).toBeNull();
+    expect(readTransportOrigin({ __DSH_TRANSPORT__: {} })).toBeNull();
+    expect(readTransportOrigin({ __DSH_TRANSPORT__: { streamBaseUrl: 42 } })).toBeNull();
+    expect(readTransportOrigin({ __DSH_TRANSPORT__: { streamBaseUrl: 'file:///tmp/x' } })).toBeNull();
+    expect(readTransportOrigin({ __DSH_TRANSPORT__: { streamBaseUrl: 'not a url' } })).toBeNull();
+  });
+});
+
+describe('planWebFrameOrigin', () => {
+  const desktop = { protocol: 'dsh-app:', hostname: 'app', port: '' };
+  it('桌面壳页面用宿主 HTTP origin 承载（否则 WebGL 贴图必被判定跨源）', () => {
+    expect(planWebFrameOrigin(desktop, 'http://127.0.0.1:19387'))
+      .toEqual({ kind: 'transport', origin: 'http://127.0.0.1:19387' });
+  });
+  it('宿主 origin 与页面同源时不采用（iframe 必须与宿主页跨源）', () => {
+    expect(planWebFrameOrigin({ protocol: 'http:', hostname: '127.0.0.1', port: '19387' }, 'http://127.0.0.1:19387'))
+      .toEqual({ kind: 'probe', alternate: 'http://localhost:19387' });
+  });
+  it('web 版（回环页、无 transport）维持另一回环主机名探活，路径不变', () => {
+    expect(planWebFrameOrigin({ protocol: 'http:', hostname: 'localhost', port: '3080' }, null))
+      .toEqual({ kind: 'probe', alternate: 'http://127.0.0.1:3080' });
+  });
+  it('非回环页且无 transport：退回 opaque origin 兜底（局域网/隧道访问的既有降级）', () => {
+    expect(planWebFrameOrigin({ protocol: 'http:', hostname: '192.168.1.5', port: '3080' }, null))
+      .toEqual({ kind: 'fallback' });
   });
 });
 

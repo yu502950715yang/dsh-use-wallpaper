@@ -2645,6 +2645,22 @@ function alternateLoopbackOrigin(loc) {
   const alt = loc.hostname === "localhost" ? "127.0.0.1" : loc.hostname === "127.0.0.1" || loc.hostname === "::1" || loc.hostname === "[::1]" ? "localhost" : null;
   return alt === null ? null : `${loc.protocol}//${alt}${loc.port ? ":" + loc.port : ""}`;
 }
+function readTransportOrigin(globals = globalThis) {
+  const raw = globals.__DSH_TRANSPORT__?.streamBaseUrl;
+  if (typeof raw !== "string" || raw === "") return null;
+  try {
+    const url = new URL(raw);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.origin : null;
+  } catch {
+    return null;
+  }
+}
+function planWebFrameOrigin(loc, transportOrigin) {
+  const pageOrigin = `${loc.protocol}//${loc.hostname}${loc.port ? ":" + loc.port : ""}`;
+  if (transportOrigin !== null && transportOrigin !== pageOrigin) return { kind: "transport", origin: transportOrigin };
+  const alternate = alternateLoopbackOrigin(loc);
+  return alternate === null ? { kind: "fallback" } : { kind: "probe", alternate };
+}
 function webFrameSpec(wallpaperPath, loc, altOrigin) {
   const origin = altOrigin ?? `${loc.protocol}//${loc.hostname}${loc.port ? ":" + loc.port : ""}`;
   return { url: origin + wallpaperPath, sandbox: altOrigin ? "allow-scripts allow-same-origin" : "allow-scripts" };
@@ -2791,12 +2807,19 @@ function createBackgroundLayer(root) {
         resizeListening = true;
       }
       const loc = window.location;
-      const alt = alternateLoopbackOrigin(loc);
-      if (!alt) {
+      const plan = planWebFrameOrigin(loc, readTransportOrigin());
+      if (plan.kind === "transport") {
+        altOrigin = plan.origin;
+        fill.replaceChildren();
+        attachWebFrame(webFrameSpec(url, loc, plan.origin));
+        return;
+      }
+      if (plan.kind === "fallback") {
         fill.replaceChildren();
         attachWebFrame(webFrameSpec(url, loc, null));
         return;
       }
+      const alt = plan.alternate;
       altOriginProbe ??= probeAlternateOrigin(alt, url).then((origin) => {
         altOrigin = origin;
         return origin;

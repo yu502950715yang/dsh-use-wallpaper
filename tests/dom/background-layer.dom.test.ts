@@ -115,6 +115,32 @@ describe('createBackgroundLayer (DOM)', () => {
     }
   });
 
+  // 桌面壳（DeepSeek Harness 桌面版）用自定义协议 dsh-app://app 承载 GUI：没有可互换的回环主机名，
+  // 但有官方接缝 __DSH_TRANSPORT__.streamBaseUrl（宿主真实 HTTP origin）⇒ 用它承载壁纸，
+  // 壁纸与自身资源同源（WebGL 贴图可用）、与宿主页仍跨源（隔离不降级）。
+  it('showWeb：有 __DSH_TRANSPORT__ 时用宿主 HTTP origin 承载，且不探活', async () => {
+    document.body.innerHTML = '';
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    const g = globalThis as { __DSH_TRANSPORT__?: unknown };
+    g.__DSH_TRANSPORT__ = { ownsHost: true, streamBaseUrl: 'http://127.0.0.1:19387' };
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('no network in test'));
+    try {
+      const layer = createBackgroundLayer(root);
+      layer.showWeb('/wallpapers/web/3789244610/index.html');
+      await vi.waitFor(() => expect(root.querySelector('.wp-bg-fill iframe')).not.toBeNull());
+      const frame = root.querySelector('.wp-bg-fill iframe') as HTMLIFrameElement;
+      expect(frame.getAttribute('src')).toBe('http://127.0.0.1:19387/wallpapers/web/3789244610/index.html');
+      expect(frame.getAttribute('sandbox')).toBe('allow-scripts allow-same-origin');
+      expect(frame.getAttribute('scrolling')).toBe('no');
+      // transport origin 由桌面壳保证可达（它自己就用它做流式传输）⇒ 不做 no-cors 探活
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      delete g.__DSH_TRANSPORT__;
+      fetchSpy.mockRestore();
+    }
+  });
+
   it('showWeb：探活未落地就切换壁纸时，旧 iframe 不再落地', async () => {
     document.body.innerHTML = '';
     const root = document.createElement('div');
@@ -209,6 +235,32 @@ describe('createBackgroundLayer (DOM)', () => {
         expect(framesOf(root)[0]).toBe(pending[1]);
         expect(framesOf(root)[0].style.visibility).toBe('');
       } finally {
+        fetchSpy.mockRestore(); resetViewport(); vi.useRealTimers();
+      }
+    });
+
+    it('桌面壳：resize 重建复用 transport origin（不探活）', async () => {
+      vi.useFakeTimers();
+      document.body.innerHTML = '';
+      const root = document.createElement('div');
+      document.body.appendChild(root);
+      setViewport(1280, 720);
+      const g = globalThis as { __DSH_TRANSPORT__?: unknown };
+      g.__DSH_TRANSPORT__ = { streamBaseUrl: 'http://127.0.0.1:19387' };
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('no network in test'));
+      try {
+        const { frame: old } = await setupWeb(root, fetchSpy);
+        expect(old.getAttribute('src')).toBe('http://127.0.0.1:19387/wallpapers/web/9/index.html');
+        setViewport(900, 520);
+        window.dispatchEvent(new Event('resize'));
+        await vi.advanceTimersByTimeAsync(WEB_RESIZE_RELOAD_DELAY_MS);
+        const pending = framesOf(root);
+        expect(pending).toHaveLength(2); // 旧帧 + 预载帧
+        expect(pending[1].getAttribute('src')).toBe('http://127.0.0.1:19387/wallpapers/web/9/index.html');
+        expect(pending[1].getAttribute('sandbox')).toBe('allow-scripts allow-same-origin');
+        expect(fetchSpy).not.toHaveBeenCalled();
+      } finally {
+        delete g.__DSH_TRANSPORT__;
         fetchSpy.mockRestore(); resetViewport(); vi.useRealTimers();
       }
     });

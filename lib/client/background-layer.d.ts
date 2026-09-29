@@ -12,6 +12,22 @@ export interface WebFrameSpec {
     sandbox: string;
 }
 export declare function alternateLoopbackOrigin(loc: WebFrameLocation): string | null;
+export interface TransportGlobals {
+    __DSH_TRANSPORT__?: {
+        streamBaseUrl?: unknown;
+    };
+}
+export declare function readTransportOrigin(globals?: TransportGlobals): string | null;
+export type WebFrameOriginPlan = {
+    kind: 'transport';
+    origin: string;
+} | {
+    kind: 'probe';
+    alternate: string;
+} | {
+    kind: 'fallback';
+};
+export declare function planWebFrameOrigin(loc: WebFrameLocation, transportOrigin: string | null): WebFrameOriginPlan;
 export declare function webFrameSpec(wallpaperPath: string, loc: WebFrameLocation, altOrigin: string | null): WebFrameSpec;
 export declare const WEB_RESIZE_RELOAD_DELAY_MS = 300;
 export declare const WEB_RESIZE_RELOAD_TIMEOUT_MS = 8000;

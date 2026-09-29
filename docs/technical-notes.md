@@ -135,6 +135,7 @@ scene 壁纸 ──► three.js 播放器（**唯一路径**，v0.3.0 起）
 7. **WE 内置粒子/效果纹理走 host 路由，不随包分发**：`/wallpapers/particle-texture?name=<相对 assets/materials 的路径>`（`name` 不能无条件加 `particle/` 前缀 —— 有 `workshop/<id>/particle/...` 这类路径）。曾由 `build:client` 复制成 `dist/static/ptex-*.tex`，结果被 `files: ["dist"]` 打进 npm 包（解包 43 MB 里 33 MB 是它）。
 8. **音频管线**：`createAudioAnalyzer` 频谱 → EffectRunner 音频 uniform + visualizer 条高；autoplay 被拦时 context suspended、可视化全零，用户手势后恢复。
 9. **测试沙箱**：vitest / esbuild 依赖 service 子进程（命名管道），受限沙箱下报 `spawn EPERM` —— 需完整权限运行。
+10. **web 壁纸 iframe 的承载 origin 必须「与自身资源同源 + 与宿主跨源」**（`background-layer.ts` 的 `planWebFrameOrigin`）：① 桌面壳（`dsh-app://app`，无回环名）用官方接缝 `globalThis.__DSH_TRANSPORT__.streamBaseUrl`（宿主 HTTP origin，权威故不探活）；② 回环页（`dsh web`）用另一回环主机名 + 探活；③ 两者都没有才退回 opaque origin 兜底（届时 WebGL 类壁纸空白，见 `AGENT.md` §5.30/§7.13）。桌面版下顺带绕开 `dsh-app://` 代理（它会丢弃 `content-length`，大视频 66 MB 实测 `ERR_FAILED`）。
 
 ---
 
