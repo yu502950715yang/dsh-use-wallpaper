@@ -78,6 +78,10 @@ pub fn emitter_spec_to_particle(
     // （`update()` 逐帧按 `self.operators` 对每个粒子 apply）。缺省（spec 无 operators）由
     // `spec_operators_to_sim` 兜底为一个无重力/无阻力的 movement，保持既有匀速直线/静止行为。
     sim.operators = spec_operators_to_sim(spec);
+    // 精灵表动画（官方 `animationmode` + `sequencemultiplier`）：sequence 模式下帧号按寿命进度推进。
+    // 缺这一步整张精灵表只有一个随机固定帧 —— 3793620838 的小鸟因此不扇翅膀。
+    sim.animation_mode = spec.animation_mode;
+    sim.sequence_multiplier = spec.sequence_multiplier;
     sim
 }
 

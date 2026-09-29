@@ -25,7 +25,7 @@
 //! `update()` 注释）。
 
 use crate::coords::we_to_three;
-use super::{ParticleOverride, TurbulentInit};
+use super::{AnimationMode, ParticleOverride, TurbulentInit};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 /// 进程级 Xorshift32 状态（线程安全；跨实例共享，先简单占位，Task 4 换发射器级种子）。
@@ -80,6 +80,23 @@ pub fn frame_center_uv(frame: f32, frame_count: u32) -> [f32; 2] {
     let n = frame_count.max(1) as f32;
     let idx = frame.floor().clamp(0.0, n - 1.0);
     [(idx + 0.5) / n, 0.5]
+}
+
+/// sequence 动画的帧号（官方 `AnimationLifetime`：`(1 - life/initial_life) * sequence_multiplier`，
+/// 再乘帧数后按帧数 wrap）。
+///
+/// `age_frac` = 寿命进度 [0,1]；`sequence_multiplier` = 一个寿命内播放多少轮（spec 顶层字段）；
+/// `frames` = 精灵表帧数。返回 `[0, frames)` 的浮点帧号（`frame_center_uv` 再取整/钳制）。
+/// 单帧纹理（frames ≤ 1）恒返回 0：非精灵表粒子与动画模式无关。
+///
+/// 回归 3793620838「In the Mountains 21:9 w lofi」：小鸟 24 帧精灵表此前被当 randomframe 处理
+/// （spawn 随机固定 0..3 帧）→ 桌面上扇翅膀的小鸟在 DSH 里是静止的。
+pub fn sequence_frame(age_frac: f32, sequence_multiplier: f32, frames: u32) -> f32 {
+    let n = frames.max(1) as f32;
+    if n <= 1.0 {
+        return 0.0;
+    }
+    (age_frac.clamp(0.0, 1.0) * sequence_multiplier * n).rem_euclid(n)
 }
 
 /// 单粒子状态（对应 WE CParticle 的 `ParticleInstance`）。
@@ -692,6 +709,11 @@ pub struct SceneParticleSim {
     /// sprite sheet 总帧数（rosepetals 512×128 → 4；单帧纹理 → 1）。由渲染层在创建时按纹理尺寸
     /// 覆写（`set_particle_sim`）；`build_vertices` 用它把粒子 frame 编码进 17 浮点流的位置。
     pub spritesheet_frames: u32,
+    /// 精灵表动画模式（官方 `animationmode`；缺省 `Sequence`）。`RandomFrame` = 帧固定于 spawn，
+    /// `Sequence` = 帧号随寿命进度推进（见 `sequence_frame`）。
+    pub animation_mode: AnimationMode,
+    /// 序列帧倍率（官方 `sequencemultiplier`，缺省 1）：一个寿命内播放的动画轮数。
+    pub sequence_multiplier: f32,
 }
 
 impl SceneParticleSim {
@@ -723,6 +745,8 @@ impl SceneParticleSim {
             turb_last_time: 0.0,
             override_spec: ParticleOverride::default(),
             spritesheet_frames: DEFAULT_FRAME_COUNT,
+            animation_mode: AnimationMode::Sequence,
+            sequence_multiplier: 1.0,
         }
     }
 
@@ -1146,7 +1170,16 @@ impl SceneParticleSim {
     pub fn build_instance_vertices(&self) -> Vec<f32> {
         let mut out = Vec::with_capacity(self.particles.len() * 13);
         for p in &self.particles {
-            let [ux, uy] = frame_center_uv(p.frame, self.spritesheet_frames);
+            // 帧号：官方 `AnimationLifetime` —— sequence 按寿命进度推进（`sequence_multiplier` 决定
+            // 轮数），randomframe 用 spawn 时抽到的固定帧。
+            let frame = match self.animation_mode {
+                AnimationMode::RandomFrame => p.frame,
+                AnimationMode::Sequence => {
+                    let age_frac = if p.max_life > 0.0 { 1.0 - p.life / p.max_life } else { 0.0 };
+                    sequence_frame(age_frac, self.sequence_multiplier, self.spritesheet_frames)
+                }
+            };
+            let [ux, uy] = frame_center_uv(frame, self.spritesheet_frames);
             out.push(p.pos[0]);
             out.push(p.pos[1]);
             out.push(p.pos[2]);
@@ -1182,6 +1215,79 @@ mod tests {
         assert_eq!(frame_center_uv(-1.0, 4), [0.125, 0.5]);
         // 非整数 frame 取整（离散帧 id）。
         assert_eq!(frame_center_uv(2.7, 4), [0.625, 0.5]);
+    }
+
+    /// 序列帧（官方 `animationmode:"sequence"` + `sequencemultiplier`）：帧号 = 寿命进度 × 倍数 ×
+    /// 帧数，再按帧数 wrap。
+    /// 回归 3793620838「In the Mountains 21:9 w lofi」：此前所有粒子一律按 randomframe 处理 →
+    /// 24 帧小鸟精灵表只随机固定在 0..3 帧且**永不推进** → 桌面端会扇翅膀的小鸟在 DSH 里是静止的。
+    #[test]
+    fn sequence_frame_advances_with_lifetime_and_wraps() {
+        // Birds：sequencemultiplier=85、frames=20 → ageFrac 0.5 ⇒ 850 帧 ⇒ 850 % 20 = 10。
+        assert_eq!(sequence_frame(0.0, 85.0, 20), 0.0);
+        assert_eq!(sequence_frame(0.5, 85.0, 20), 10.0);
+        assert_eq!(sequence_frame(1.0, 85.0, 20), 0.0, "寿命走完回到第一帧（循环）");
+        // Bird：sequencemultiplier=10、frames=24 → ageFrac 0.05 ⇒ 12 帧。
+        assert_eq!(sequence_frame(0.05, 10.0, 24), 12.0);
+        // 单帧纹理恒 0（非精灵表不受影响）。
+        assert_eq!(sequence_frame(0.37, 85.0, 1), 0.0);
+    }
+
+    /// 动画模式决定 `build_instance_vertices` 的 uv.x：sequence 随寿命相位推进，randomframe 固定。
+    #[test]
+    fn build_vertices_frame_follows_animation_mode() {
+        fn mk(mode: AnimationMode) -> SceneParticleSim {
+            let mut sim = SceneParticleSim::new(
+                ParticleEmitterSpec {
+                    rate: 0.0,
+                    origin: [0.0; 3],
+                    directions: [0.0; 3],
+                    dist_min: [0.0; 3],
+                    dist_max: [0.0; 3],
+                    is_sphere: false,
+                },
+                8,
+                [0.0; 3],
+                3840.0,
+                2160.0,
+                ParticleInitSpec {
+                    lifetime_min: 2.0,
+                    lifetime_max: 2.0,
+                    size_min: 30.0,
+                    size_max: 30.0,
+                    size_exponent: 1.0,
+                    velocity_min: [0.0; 3],
+                    velocity_max: [0.0; 3],
+                    color_min: [1.0; 3],
+                    color_max: [1.0; 3],
+                    alpha_min: 1.0,
+                    alpha_max: 1.0,
+                    rotation_min: [0.0; 3],
+                    rotation_max: [0.0; 3],
+                    angular_vel_min: [0.0; 3],
+                    angular_vel_max: [0.0; 3],
+                    turbulent: None,
+                },
+            );
+            sim.animation_mode = mode;
+            sim.sequence_multiplier = 1.0;
+            sim.spritesheet_frames = 8;
+            sim.spawn();
+            sim
+        }
+        // sequence：ageFrac 0 → 帧 0（uv.x = 0.5/8 = 0.0625）；ageFrac 0.5 → 帧 4（4.5/8）。
+        let mut seq = mk(AnimationMode::Sequence);
+        let life = seq.particles[0].max_life;
+        assert_eq!(seq.build_instance_vertices()[4], 0.0625);
+        seq.particles[0].life = life * 0.5;
+        assert_eq!(seq.build_instance_vertices()[4], 0.5625);
+
+        // randomframe：帧号固定于 spawn，不随时钟推进。
+        let mut rf = mk(AnimationMode::RandomFrame);
+        let life = rf.particles[0].max_life;
+        let f0 = rf.build_instance_vertices()[4];
+        rf.particles[0].life = life * 0.5;
+        assert_eq!(rf.build_instance_vertices()[4], f0, "randomframe 的帧固定于 spawn");
     }
 
     /// Task 3：`build_instance_vertices` 输出**每粒子** 13 浮点
@@ -1221,6 +1327,9 @@ mod tests {
                 turbulent: None,
             },
         );
+        // 本用例验证的是「帧子区编码」（uv.x = (frame+0.5)/frames），与动画模式无关 ——
+        // 显式用 randomframe 固定帧，避免 sequence（按寿命推进）改写 frame。
+        sim.animation_mode = AnimationMode::RandomFrame;
         sim.particles.push(SimParticle {
             pos: [1.0, 2.0, 3.0],
             vel: [0.0; 3],

@@ -57,6 +57,15 @@ pub enum OperatorKind {
 #[derive(Debug, Clone)]
 pub struct Operator { pub kind: OperatorKind, pub params: Value }
 
+/// 精灵表动画模式（官方 `ParticleAnimationMode`，`SceneParticleObjectParser.cpp:94-102` 的
+/// `ToAnimMode`）：`"randomframe"` → 每个粒子在 spawn 时随机固定一帧；**其余值（含缺省）=
+/// `Sequence`** → 帧号随寿命进度推进，由 `sequencemultiplier` 决定一个寿命内播放多少轮。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum AnimationMode {
+    Sequence,
+    RandomFrame,
+}
+
 #[derive(Debug, Clone)]
 pub struct EmitterSpec {
     pub rate: f32,
@@ -214,6 +223,10 @@ pub struct ParticleSpec {
     /// 渲染侧据此推导混合模式（additive/alpha）与 overbright（读取 lwe material 的
     /// `ui_editor_properties_overbright` 常量）。缺失 → `None`（Translucent 兜底）。
     pub material: Option<String>,
+    /// 精灵表动画模式（spec 顶层 `animationmode`；缺省 `Sequence`）。
+    pub animation_mode: AnimationMode,
+    /// 序列帧倍率（spec 顶层 `sequencemultiplier`，缺省 1）：一个寿命内播放的动画轮数。
+    pub sequence_multiplier: f32,
 }
 
 /// 粒子渲染器类型（官方 renderer[]）。当前只消费 sprite / spritetrail。
@@ -422,6 +435,15 @@ pub fn parse_particle_spec(json: &str) -> ParticleSpec {
         maxcount,
         renderer,
         material: raw.get("material").and_then(|m| m.as_str()).map(|s| s.to_string()),
+        // 精灵表动画：官方 `ToAnimMode` 只把 "randomframe" 当随机固定帧，其余（含缺省）是 sequence。
+        animation_mode: match raw.get("animationmode").and_then(|v| v.as_str()) {
+            Some("randomframe") => AnimationMode::RandomFrame,
+            _ => AnimationMode::Sequence,
+        },
+        sequence_multiplier: scalar(
+            &raw.get("sequencemultiplier").cloned().unwrap_or(Value::Null),
+            1.0,
+        ),
     }
 }
 
@@ -464,6 +486,26 @@ fn orthogonal(v: [f32; 3]) -> [f32; 3] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_animationmode_and_sequencemultiplier() {
+        // 3793620838「In the Mountains 21:9 w lofi」：Bird/Birds 都是显式 sequence + 倍数
+        // （10 / 85）—— 帧必须按寿命推进，否则小鸟不扇翅膀。
+        let spec = parse_particle_spec(
+            r#"{"emitter":[{"rate":20}],"animationmode":"sequence","sequencemultiplier":85,"maxcount":8}"#,
+        );
+        assert_eq!(spec.animation_mode, AnimationMode::Sequence);
+        assert!((spec.sequence_multiplier - 85.0).abs() < 1e-6);
+
+        // 缺省 → sequence（官方 `ToAnimMode` 的 else 分支）；倍数缺省 1。
+        let d = parse_particle_spec(r#"{"emitter":[{"rate":20}]}"#);
+        assert_eq!(d.animation_mode, AnimationMode::Sequence);
+        assert!((d.sequence_multiplier - 1.0).abs() < 1e-6);
+
+        // randomframe → 帧在 spawn 时随机固定后不再推进。
+        let r = parse_particle_spec(r#"{"emitter":[{"rate":20}],"animationmode":"randomframe"}"#);
+        assert_eq!(r.animation_mode, AnimationMode::RandomFrame);
+    }
 
     #[test]
     fn turbulent_parses_scale_speed_and_orthonormalizes() {
