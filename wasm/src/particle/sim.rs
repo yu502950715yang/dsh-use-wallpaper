@@ -831,13 +831,21 @@ impl SceneParticleSim {
         let fixed_life = (self.init.lifetime_max - self.init.lifetime_min).abs() <= 1e-6;
         let pool_saturates = self.emitter.rate * mean_life >= self.maxcount as f32;
         let synchronized = fixed_life && pool_saturates;
+        // 同批的**出生窗口** = 池铺满耗时 `maxcount / rate`（Birds 8/20 = 0.4s、Bird 50/25 = 2s），
+        // 换算成寿命比例。批内粒子先后出生 ⇒ 沿飞行方向错开 `速度 × 出生时刻`，整群不是一点。
+        let batch_frac = if synchronized && self.emitter.rate > 0.0 {
+            (self.maxcount as f32 / self.emitter.rate / mean_life).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
         let first = self.particles.len();
         for _ in 0..steady {
             if self.particles.len() as u32 >= self.maxcount {
                 break;
             }
-            // 出生相位：同批同步 → 0（都是刚出生）；否则随机（=「每片花瓣在不同时间/相位开始下落」）。
-            let age_frac = if synchronized { 0.0 } else { rand() };
+            // 出生相位：同批同步 → 在该批出生窗口内随机（批内先后出生）；否则随机铺一个寿命
+            // （=「每片花瓣在不同时间/相位开始下落」）。
+            let age_frac = if synchronized { rand() * batch_frac } else { rand() };
             self.spawn_with_age_frac(age_frac);
         }
         // 按各自 age 前滚各算子一次：位置 `pos += vel*age`（movement）、旋转 `rot += ω*age`
@@ -1333,19 +1341,26 @@ mod tests {
         )
     }
 
-    /// 寿命**固定**且**池会满**（rate×寿命 ≥ maxcount）时，真实稳态是「同批同步」——一批同龄粒子占满
-    /// 池子、一起飞、一起死，再补下一批 ⇒ prewarm 必须铺**同相位**（age≈0）。
-    /// 回归 3793620838：桌面上小鸟是「每隔半分钟一群一起飞过」（Birds：life=25 固定、rate=20、
-    /// maxcount=8 → 池满），此前 prewarm 把年龄随机打散成 0..25s ⇒ 每时每刻只剩零散几只可见。
+    /// 寿命**固定**且**池会满**（rate×寿命 ≥ maxcount）时，真实稳态是「同批同步」——一批粒子占满
+    /// 池子、一起飞、一起死，再补下一批 ⇒ prewarm 必须铺同一批（而不是摊到一个寿命上）。
+    ///
+    /// 但「同批」不等于「同一点」：WE 按 `rate` 连续发射，池铺满要花 `maxcount/rate` 秒
+    /// （3793620838 的 Birds：8/20 = 0.4s；Bird：50/25 = 2s），批内粒子沿飞行方向因此错开
+    /// `速度 × 出生时刻` —— 全设 age=0 会把整群挤成一点（用户实测「位置太集中」）。
     #[test]
-    fn prewarm_keeps_fixed_life_saturated_pool_in_sync() {
+    fn prewarm_keeps_fixed_life_batch_spread_within_spawn_window() {
         let mut sim = mk_prewarm_sim(25.0, 25.0, 20.0, 8);
         sim.prewarm();
         assert_eq!(sim.particles.len(), 8, "应铺满 maxcount");
         let ages: Vec<f32> = sim.particles.iter().map(particle_age).collect();
+        let batch = 8.0 / 20.0; // 池铺满耗时 = maxcount / rate
         assert!(
-            ages.iter().all(|a| *a <= 1e-6),
-            "固定寿命 + 池满 → 同批同相位（age≈0），got {ages:?}"
+            ages.iter().all(|a| *a >= 0.0 && *a <= batch + 1e-6),
+            "同批年龄应落在该批出生窗口 0..{batch}s 内，got {ages:?}"
+        );
+        assert!(
+            ages.iter().any(|a| *a > batch * 0.1),
+            "批内应有粒子错开出生（不能全挤在 age=0），got {ages:?}"
         );
     }
 
