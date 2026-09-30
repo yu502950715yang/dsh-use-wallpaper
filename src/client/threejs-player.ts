@@ -153,6 +153,57 @@ export function textureTexelRatio(tex?: THREE.Texture): number {
   return frameH / frameW;
 }
 
+// spec.flags 的 perspective 位（bit2 = 4，OWE `ParticleObject.cppm:97` `perspective = 2, // 4`）：
+// WE 会给带该位的粒子对象换挂 `global_perspective` 相机（`SceneParticleObjectParser.cpp:397-398`），
+// 于是粒子有强烈的近大远小 —— Spider Man 4K 的雨粒 z∈[-1000,+970]，桌面近处雨滴比正交大近 10 倍。
+// 非法/缺失 → false（保持正交，与旧版逐像素一致）。
+export function specPerspective(specJson: string): boolean {
+  try {
+    const raw = (JSON.parse(specJson) as { flags?: unknown }).flags;
+    const n = typeof raw === 'string' ? parseFloat(raw) : typeof raw === 'number' ? raw : 0;
+    return Number.isFinite(n) && (Math.floor(n) & 4) !== 0;
+  } catch {
+    return false;
+  }
+}
+
+// WE 的粒子透视相机参数（正交场景内）：
+//   fov      = general.perspectiveoverridefov（>0 时），否则按**固定 1000 距离**反算
+//   distance = 场景高 / (2·tan(fov/2))
+// 对应 OWE `Algorism.cpp:8-17` 的 CalculatePersperctiveDistance / CalculatePersperctiveFov
+// 与 `SceneObjectParsers.cpp:59-85`（相机置于 (center.x, center.y, distance)，看向 z=0 平面）。
+export function particlePerspectiveCamera(opts: {
+  fov: number;
+  perspectiveOverrideFov: number;
+  sceneH: number;
+}): { fov: number; distance: number } {
+  const height = Number.isFinite(opts.sceneH) && opts.sceneH > 0 ? opts.sceneH : 1080;
+  const override = Number.isFinite(opts.perspectiveOverrideFov) ? opts.perspectiveOverrideFov : 0;
+  if (override > 0) {
+    const fov = override;
+    const k = Math.tan(((fov / 2) * Math.PI) / 180) * 2;
+    return { fov, distance: k > 0 ? height / k : 1000 };
+  }
+  // 无 override：距离固定 1000，fov 由它反算（OWE CalculatePersperctiveFov）。
+  const distance = 1000;
+  const k = height / distance / 2;
+  const fov = ((Math.atan(k) * 2) * 180) / Math.PI;
+  return { fov, distance };
+}
+
+// 由 WE 的透视相机参数构造**视图投影矩阵**（相机位于 (0,0,distance)、看向 -z、up=+Y，
+// 对应 OWE 把 global_perspective 节点放在场景中心 x/y + z=distance）。
+// near/far 只参与深度裁剪（正交场景里 WE 用反转 Z 5..15000），取足够宽的范围；顶点 shader 会把
+// clip.z 归中（0），故不影响可见性。缺省（未启用）返回单位透视矩阵 —— uniform 恒为合法 mat4。
+function particlePerspMatrix(p?: { fov: number; distance: number; aspect: number }): THREE.Matrix4 {
+  if (!p) return new THREE.Matrix4();
+  const cam = new THREE.PerspectiveCamera(p.fov, p.aspect > 0 ? p.aspect : 1, 1, 1e6);
+  cam.position.set(0, 0, p.distance);
+  cam.updateProjectionMatrix();
+  cam.updateMatrixWorld(true);
+  return new THREE.Matrix4().multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
+}
+
 // 从粒子 spec JSON 读 **emitter 的局部原点**（`emitter[0].origin`，WE 字符串 "x y z"）。
 // 与 wasm `spec_to_emitter::parse_particle_spec` 同源语义：只用**第一个** emitter、缺省 [0,0,0]、
 // 缺省 y **不翻**（本仓库 three 路径的 y 与背景同系，不翻）。非法/缺失 → [0,0,0]（绝不抛）。
@@ -238,6 +289,14 @@ uniform vec3 bmOffset;
 uniform float trailEnabled;
 uniform vec3 trailParams;
 uniform float texelRatio;
+// 粒子透视相机（spec.flags 的 perspective 位；2026-09-26）：
+//   perspEnabled  1 = 该层用 WE 的 global_perspective 相机投影（近大远小），0 = 主正交相机
+//   persp         该透视相机的**视图投影矩阵**（相机在 (0,0,distance)，看向 -z）——
+//                 shader 里的 worldPos 已是世界坐标，故直接相乘、不再叠 modelViewMatrix
+//   perspEye      相机眼位（世界坐标）= WE 的 g_EyePosition，供 trail 逐粒子算 eyeDirection
+uniform float perspEnabled;
+uniform mat4 persp;
+uniform vec3 perspEye;
 // 对象欧拉角（**弧度**）—— WE model matrix = T·R·S 的 R 部分。
 uniform vec3 objAngles;
 varying vec2 vCornerUv;
@@ -283,9 +342,12 @@ void main() {
     // ⚠️ 符号：WE 原文是 minus size*up*(v-0.5)*ratio，其 v=0 是**纹理顶行**；本插件的纹理经
     // tex-loader 行反转（v=1 = 图像顶行，与 sprite 路径「corner +Y ↔ 图像顶行」自洽），故这里取
     // 正号，让图像上端（雨滴亮头）落在 +速度方向 —— 与桌面端一致，否则拖尾头尾颠倒。
-    // 正交相机下视线方向是常数（viewMatrix 的相机 +Z 取反 = 世界空间视线方向），等价于 WE 的
-    // localPosition - eyePosition 方向（|v|=0 的退化已在外层排除，避免 WE 的 normalize(0) NaN）。
-    vec3 eyeDir = -normalize((viewMatrix * vec4(0.0, 0.0, 1.0, 0.0)).xyz);
+    // 正交相机下视线方向是常数（viewMatrix 的相机 +Z 取反 = 世界空间视线方向）；透视相机下
+    // eyeDirection 逐粒子为 worldPos - eye（WE 的 g_EyePosition 语义）。
+    // （|v|=0 的退化已在外层排除，避免 WE 的 normalize(0) NaN。）
+    vec3 eyeDir = perspEnabled > 0.5
+      ? normalize(worldPos - perspEye)
+      : -normalize((viewMatrix * vec4(0.0, 0.0, 1.0, 0.0)).xyz);
     float speed = length(particleVelocity);
     vec3 right = normalize(cross(eyeDir, particleVelocity));
     float trailLen = clamp(speed * trailParams.x, trailParams.z, trailParams.y);
@@ -300,7 +362,13 @@ void main() {
     vec3 corner = weObjectRotate(abs(objScale) * (spun * particleSize * 0.5), objAngles);
     worldPos += corner;
   }
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(worldPos, 1.0);
+  // 投影：带 spec.flags perspective 位的粒子层走 WE 的 global_perspective 相机（近大远小），
+  // 其余层走 three 注入的主（正交）投影矩阵 —— 非透视层的通路逐字不变（零回归）。
+  // ⚠️ 透视分支用 persp（视图投影矩阵）直接乘 worldPos（已是世界坐标），**不**再乘 modelViewMatrix
+  // （后者带的是主正交相机的视图）。
+  gl_Position = perspEnabled > 0.5
+    ? persp * vec4(worldPos, 1.0)
+    : projectionMatrix * modelViewMatrix * vec4(worldPos, 1.0);
   // ⚠️ 修正：粒子是 2D billboard（无深度排序，z 不参与可见性）。three 正交相机 far/near 会把
   // 视锥外的 z 裁剪掉，而 wasm billboard 早已把投影矩阵 z 行全 0（clip.z=0，见 particle_billboard.wgsl）
   // 防「emitter 球壳散射可到 ±750 的粒子被 z 裁剪 → 粒子不可见」。这里把 NDC z 强制归中（0），
@@ -1191,6 +1259,10 @@ export class ThreeScenePlayer {
       // 拖尾渲染条件（spec.renderer[0] == "spritetrail" 时由 `specRenderer()` 给出；缺省不启用）。
       // 三参数语义见 WE `common_particles.h` ComputeParticleTrailTangents → trailParams uniform。
       trail?: { length: number; maxLength: number; minLength: number };
+      // 粒子透视相机（spec.flags perspective 位；`particlePerspectiveCamera()` 给出参数）。
+      // 缺省不启用 → 顶点 shader 走主正交投影（既有行为逐像素不变）。
+      //   fov/distance = WE 的 global_perspective 相机参数；aspect = 场景宽/高。
+      perspective?: { fov: number; distance: number; aspect: number };
       // scene.json 的**对象 id**（脚本图层桥的键，语义同 addBackground.objectId）：**总是传**，
       // 与只在隔离时传的 isolate.objectId 区分。
       objectId?: number;
@@ -1298,6 +1370,10 @@ export class ThreeScenePlayer {
           ),
         },
         texelRatio: { value: textureTexelRatio(opts.tex) },
+        // 粒子透视相机（缺省关闭 → 走主正交投影，既有壁纸逐像素不变）。
+        perspEnabled: { value: opts.perspective ? 1.0 : 0.0 },
+        persp: { value: particlePerspMatrix(opts.perspective) },
+        perspEye: { value: new THREE.Vector3(0, 0, opts.perspective?.distance ?? 0) },
       },
       vertexShader: PARTICLE_VERTEX_SHADER,
       fragmentShader: PARTICLE_FRAGMENT_SHADER,
@@ -1830,6 +1906,18 @@ export function loadSceneToThree(
         // 拖尾渲染（spec.renderer[0] == "spritetrail"）：雨丝/风痕靠沿速度方向拉伸 billboard
         // 呈现（WE ComputeParticleTrailTangents）；非 spritetrail → 不传（sprite 外观零变化）。
         trail: trailSpec.kind === 'spritetrail' ? trailSpec : undefined,
+        // 粒子透视相机（spec.flags 的 perspective 位）：WE 给这类对象换挂 global_perspective 相机，
+        // 于是雨/雪/樱花等有近大远小的层次（Spider Man 4K 的雨桌面近处 ≈10×）。无该位 → 不传。
+        perspective: specPerspective(p.specJson)
+          ? (() => {
+              const cam = particlePerspectiveCamera({
+                fov: desc.fov ?? 50,
+                perspectiveOverrideFov: desc.perspectiveOverrideFov ?? 0,
+                sceneH,
+              });
+              return { fov: cam.fov, distance: cam.distance, aspect: sceneW / sceneH };
+            })()
+          : undefined,
         // 脚本图层桥的键 = scene 对象 id（总是传）。
         objectId: obj.id,
         // 对象级效果链：带效果的粒子对象同样隔离（对象 RT + 合成 quad）。世界尺寸由调用方按

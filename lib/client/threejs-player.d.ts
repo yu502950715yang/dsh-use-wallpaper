@@ -13,6 +13,15 @@ export interface ParticleRendererSpec {
 }
 export declare function specRenderer(specJson: string): ParticleRendererSpec;
 export declare function textureTexelRatio(tex?: THREE.Texture): number;
+export declare function specPerspective(specJson: string): boolean;
+export declare function particlePerspectiveCamera(opts: {
+    fov: number;
+    perspectiveOverrideFov: number;
+    sceneH: number;
+}): {
+    fov: number;
+    distance: number;
+};
 export declare function specEmitterOrigin(specJson: string): [number, number, number];
 export declare const BLACKMYTH_OBJ_SCALE: [number, number, number];
 export declare function simEmitterOffset(emitterOrigin: [number, number, number]): [number, number, number];
@@ -137,6 +146,11 @@ export declare class ThreeScenePlayer {
             length: number;
             maxLength: number;
             minLength: number;
+        };
+        perspective?: {
+            fov: number;
+            distance: number;
+            aspect: number;
         };
         objectId?: number;
         isolate?: {

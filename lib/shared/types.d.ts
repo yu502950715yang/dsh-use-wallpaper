@@ -109,6 +109,8 @@ export interface SceneDescription {
         width: number;
         height: number;
     };
+    fov?: number;
+    perspectiveOverrideFov?: number;
     clearColor?: [number, number, number];
     objects: SceneObject[];
     sounds?: string[];

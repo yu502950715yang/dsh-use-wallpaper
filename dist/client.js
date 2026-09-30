@@ -22674,6 +22674,10 @@ function optNum(s) {
 function optStr(s) {
   return typeof s === "string" && s.trim() ? s : void 0;
 }
+function numOr(s, dflt) {
+  const n = optNum(s);
+  return n === void 0 ? dflt : n;
+}
 function optAlpha(s) {
   const n = optNum(s);
   if (n === void 0) return void 0;
@@ -22826,6 +22830,10 @@ function parseSceneJson(raw) {
       width: Number(ortho.width ?? 1920),
       height: Number(ortho.height ?? 1080)
     },
+    // 粒子透视相机（2026-09-26）：`general.fov`（WE 缺省 50）与 `general.perspectiveoverridefov`
+    // （缺省 0 = 未覆盖）。仅带 `flags` perspective 位的粒子对象用它（见 threejs-player）。
+    fov: numOr(gen.fov, 50),
+    perspectiveOverrideFov: numOr(gen.perspectiveoverridefov, 0),
     clearColor: cc,
     objects,
     sounds: collectSounds(root)
@@ -23049,6 +23057,36 @@ function textureTexelRatio(tex) {
   const frameH = grid ? img.height / grid.rows : img.height;
   return frameH / frameW;
 }
+function specPerspective(specJson) {
+  try {
+    const raw = JSON.parse(specJson).flags;
+    const n = typeof raw === "string" ? parseFloat(raw) : typeof raw === "number" ? raw : 0;
+    return Number.isFinite(n) && (Math.floor(n) & 4) !== 0;
+  } catch {
+    return false;
+  }
+}
+function particlePerspectiveCamera(opts) {
+  const height = Number.isFinite(opts.sceneH) && opts.sceneH > 0 ? opts.sceneH : 1080;
+  const override = Number.isFinite(opts.perspectiveOverrideFov) ? opts.perspectiveOverrideFov : 0;
+  if (override > 0) {
+    const fov3 = override;
+    const k2 = Math.tan(fov3 / 2 * Math.PI / 180) * 2;
+    return { fov: fov3, distance: k2 > 0 ? height / k2 : 1e3 };
+  }
+  const distance = 1e3;
+  const k = height / distance / 2;
+  const fov2 = Math.atan(k) * 2 * 180 / Math.PI;
+  return { fov: fov2, distance };
+}
+function particlePerspMatrix(p) {
+  if (!p) return new Matrix4();
+  const cam = new PerspectiveCamera(p.fov, p.aspect > 0 ? p.aspect : 1, 1, 1e6);
+  cam.position.set(0, 0, p.distance);
+  cam.updateProjectionMatrix();
+  cam.updateMatrixWorld(true);
+  return new Matrix4().multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
+}
 function specEmitterOrigin(specJson) {
   const zero = [0, 0, 0];
   try {
@@ -23119,6 +23157,14 @@ uniform vec3 bmOffset;
 uniform float trailEnabled;
 uniform vec3 trailParams;
 uniform float texelRatio;
+// \u7C92\u5B50\u900F\u89C6\u76F8\u673A\uFF08spec.flags \u7684 perspective \u4F4D\uFF1B2026-09-26\uFF09\uFF1A
+//   perspEnabled  1 = \u8BE5\u5C42\u7528 WE \u7684 global_perspective \u76F8\u673A\u6295\u5F71\uFF08\u8FD1\u5927\u8FDC\u5C0F\uFF09\uFF0C0 = \u4E3B\u6B63\u4EA4\u76F8\u673A
+//   persp         \u8BE5\u900F\u89C6\u76F8\u673A\u7684**\u89C6\u56FE\u6295\u5F71\u77E9\u9635**\uFF08\u76F8\u673A\u5728 (0,0,distance)\uFF0C\u770B\u5411 -z\uFF09\u2014\u2014
+//                 shader \u91CC\u7684 worldPos \u5DF2\u662F\u4E16\u754C\u5750\u6807\uFF0C\u6545\u76F4\u63A5\u76F8\u4E58\u3001\u4E0D\u518D\u53E0 modelViewMatrix
+//   perspEye      \u76F8\u673A\u773C\u4F4D\uFF08\u4E16\u754C\u5750\u6807\uFF09= WE \u7684 g_EyePosition\uFF0C\u4F9B trail \u9010\u7C92\u5B50\u7B97 eyeDirection
+uniform float perspEnabled;
+uniform mat4 persp;
+uniform vec3 perspEye;
 // \u5BF9\u8C61\u6B27\u62C9\u89D2\uFF08**\u5F27\u5EA6**\uFF09\u2014\u2014 WE model matrix = T\xB7R\xB7S \u7684 R \u90E8\u5206\u3002
 uniform vec3 objAngles;
 varying vec2 vCornerUv;
@@ -23164,9 +23210,12 @@ void main() {
     // \u26A0\uFE0F \u7B26\u53F7\uFF1AWE \u539F\u6587\u662F minus size*up*(v-0.5)*ratio\uFF0C\u5176 v=0 \u662F**\u7EB9\u7406\u9876\u884C**\uFF1B\u672C\u63D2\u4EF6\u7684\u7EB9\u7406\u7ECF
     // tex-loader \u884C\u53CD\u8F6C\uFF08v=1 = \u56FE\u50CF\u9876\u884C\uFF0C\u4E0E sprite \u8DEF\u5F84\u300Ccorner +Y \u2194 \u56FE\u50CF\u9876\u884C\u300D\u81EA\u6D3D\uFF09\uFF0C\u6545\u8FD9\u91CC\u53D6
     // \u6B63\u53F7\uFF0C\u8BA9\u56FE\u50CF\u4E0A\u7AEF\uFF08\u96E8\u6EF4\u4EAE\u5934\uFF09\u843D\u5728 +\u901F\u5EA6\u65B9\u5411 \u2014\u2014 \u4E0E\u684C\u9762\u7AEF\u4E00\u81F4\uFF0C\u5426\u5219\u62D6\u5C3E\u5934\u5C3E\u98A0\u5012\u3002
-    // \u6B63\u4EA4\u76F8\u673A\u4E0B\u89C6\u7EBF\u65B9\u5411\u662F\u5E38\u6570\uFF08viewMatrix \u7684\u76F8\u673A +Z \u53D6\u53CD = \u4E16\u754C\u7A7A\u95F4\u89C6\u7EBF\u65B9\u5411\uFF09\uFF0C\u7B49\u4EF7\u4E8E WE \u7684
-    // localPosition - eyePosition \u65B9\u5411\uFF08|v|=0 \u7684\u9000\u5316\u5DF2\u5728\u5916\u5C42\u6392\u9664\uFF0C\u907F\u514D WE \u7684 normalize(0) NaN\uFF09\u3002
-    vec3 eyeDir = -normalize((viewMatrix * vec4(0.0, 0.0, 1.0, 0.0)).xyz);
+    // \u6B63\u4EA4\u76F8\u673A\u4E0B\u89C6\u7EBF\u65B9\u5411\u662F\u5E38\u6570\uFF08viewMatrix \u7684\u76F8\u673A +Z \u53D6\u53CD = \u4E16\u754C\u7A7A\u95F4\u89C6\u7EBF\u65B9\u5411\uFF09\uFF1B\u900F\u89C6\u76F8\u673A\u4E0B
+    // eyeDirection \u9010\u7C92\u5B50\u4E3A worldPos - eye\uFF08WE \u7684 g_EyePosition \u8BED\u4E49\uFF09\u3002
+    // \uFF08|v|=0 \u7684\u9000\u5316\u5DF2\u5728\u5916\u5C42\u6392\u9664\uFF0C\u907F\u514D WE \u7684 normalize(0) NaN\u3002\uFF09
+    vec3 eyeDir = perspEnabled > 0.5
+      ? normalize(worldPos - perspEye)
+      : -normalize((viewMatrix * vec4(0.0, 0.0, 1.0, 0.0)).xyz);
     float speed = length(particleVelocity);
     vec3 right = normalize(cross(eyeDir, particleVelocity));
     float trailLen = clamp(speed * trailParams.x, trailParams.z, trailParams.y);
@@ -23181,7 +23230,13 @@ void main() {
     vec3 corner = weObjectRotate(abs(objScale) * (spun * particleSize * 0.5), objAngles);
     worldPos += corner;
   }
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(worldPos, 1.0);
+  // \u6295\u5F71\uFF1A\u5E26 spec.flags perspective \u4F4D\u7684\u7C92\u5B50\u5C42\u8D70 WE \u7684 global_perspective \u76F8\u673A\uFF08\u8FD1\u5927\u8FDC\u5C0F\uFF09\uFF0C
+  // \u5176\u4F59\u5C42\u8D70 three \u6CE8\u5165\u7684\u4E3B\uFF08\u6B63\u4EA4\uFF09\u6295\u5F71\u77E9\u9635 \u2014\u2014 \u975E\u900F\u89C6\u5C42\u7684\u901A\u8DEF\u9010\u5B57\u4E0D\u53D8\uFF08\u96F6\u56DE\u5F52\uFF09\u3002
+  // \u26A0\uFE0F \u900F\u89C6\u5206\u652F\u7528 persp\uFF08\u89C6\u56FE\u6295\u5F71\u77E9\u9635\uFF09\u76F4\u63A5\u4E58 worldPos\uFF08\u5DF2\u662F\u4E16\u754C\u5750\u6807\uFF09\uFF0C**\u4E0D**\u518D\u4E58 modelViewMatrix
+  // \uFF08\u540E\u8005\u5E26\u7684\u662F\u4E3B\u6B63\u4EA4\u76F8\u673A\u7684\u89C6\u56FE\uFF09\u3002
+  gl_Position = perspEnabled > 0.5
+    ? persp * vec4(worldPos, 1.0)
+    : projectionMatrix * modelViewMatrix * vec4(worldPos, 1.0);
   // \u26A0\uFE0F \u4FEE\u6B63\uFF1A\u7C92\u5B50\u662F 2D billboard\uFF08\u65E0\u6DF1\u5EA6\u6392\u5E8F\uFF0Cz \u4E0D\u53C2\u4E0E\u53EF\u89C1\u6027\uFF09\u3002three \u6B63\u4EA4\u76F8\u673A far/near \u4F1A\u628A
   // \u89C6\u9525\u5916\u7684 z \u88C1\u526A\u6389\uFF0C\u800C wasm billboard \u65E9\u5DF2\u628A\u6295\u5F71\u77E9\u9635 z \u884C\u5168 0\uFF08clip.z=0\uFF0C\u89C1 particle_billboard.wgsl\uFF09
   // \u9632\u300Cemitter \u7403\u58F3\u6563\u5C04\u53EF\u5230 \xB1750 \u7684\u7C92\u5B50\u88AB z \u88C1\u526A \u2192 \u7C92\u5B50\u4E0D\u53EF\u89C1\u300D\u3002\u8FD9\u91CC\u628A NDC z \u5F3A\u5236\u5F52\u4E2D\uFF080\uFF09\uFF0C
@@ -23823,7 +23878,11 @@ var ThreeScenePlayer = class {
             opts.trail?.minLength ?? 0
           )
         },
-        texelRatio: { value: textureTexelRatio(opts.tex) }
+        texelRatio: { value: textureTexelRatio(opts.tex) },
+        // 粒子透视相机（缺省关闭 → 走主正交投影，既有壁纸逐像素不变）。
+        perspEnabled: { value: opts.perspective ? 1 : 0 },
+        persp: { value: particlePerspMatrix(opts.perspective) },
+        perspEye: { value: new Vector3(0, 0, opts.perspective?.distance ?? 0) }
       },
       vertexShader: PARTICLE_VERTEX_SHADER,
       fragmentShader: PARTICLE_FRAGMENT_SHADER,
@@ -24138,6 +24197,16 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
         // 拖尾渲染（spec.renderer[0] == "spritetrail"）：雨丝/风痕靠沿速度方向拉伸 billboard
         // 呈现（WE ComputeParticleTrailTangents）；非 spritetrail → 不传（sprite 外观零变化）。
         trail: trailSpec.kind === "spritetrail" ? trailSpec : void 0,
+        // 粒子透视相机（spec.flags 的 perspective 位）：WE 给这类对象换挂 global_perspective 相机，
+        // 于是雨/雪/樱花等有近大远小的层次（Spider Man 4K 的雨桌面近处 ≈10×）。无该位 → 不传。
+        perspective: specPerspective(p.specJson) ? (() => {
+          const cam = particlePerspectiveCamera({
+            fov: desc.fov ?? 50,
+            perspectiveOverrideFov: desc.perspectiveOverrideFov ?? 0,
+            sceneH
+          });
+          return { fov: cam.fov, distance: cam.distance, aspect: sceneW / sceneH };
+        })() : void 0,
         // 脚本图层桥的键 = scene 对象 id（总是传）。
         objectId: obj.id,
         // 对象级效果链：带效果的粒子对象同样隔离（对象 RT + 合成 quad）。世界尺寸由调用方按

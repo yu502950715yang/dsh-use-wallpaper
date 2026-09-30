@@ -6,7 +6,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
-import { ThreeScenePlayer, loadSceneToThree, resolvePixelRatio, frameCountFromDims, textureFrameCount, textureFrameGrid, specMaxcount, particleCapacity, specEmitterOrigin, simEmitterOffset, specRenderer, BLACKMYTH_OBJ_SCALE, DEFAULT_PARTICLE_CAPACITY, MAX_PARTICLE_CAPACITY, PARTICLE_FLOATS_PER_INSTANCE } from '../src/client/threejs-player.js';
+import { ThreeScenePlayer, loadSceneToThree, resolvePixelRatio, frameCountFromDims, textureFrameCount, textureFrameGrid, specMaxcount, particleCapacity, specEmitterOrigin, simEmitterOffset, specRenderer, specPerspective, particlePerspectiveCamera, BLACKMYTH_OBJ_SCALE, DEFAULT_PARTICLE_CAPACITY, MAX_PARTICLE_CAPACITY, PARTICLE_FLOATS_PER_INSTANCE } from '../src/client/threejs-player.js';
 import { textLayerOffset, type TextLayout } from '../src/client/text-object.js';
 import { coverRange, createCompositeGeometry, screenScalePx } from '../src/client/object-range.js';
 
@@ -843,6 +843,49 @@ describe('ThreeScenePlayer particle layer', () => {
     expect(mat2.uniforms.trailEnabled.value).toBe(0);
   });
 
+  it('specPerspective：spec.flags 的 perspective 位（bit2 = 4）→ 该粒子对象改用透视相机', () => {
+    expect(specPerspective('{"flags":4}')).toBe(true);
+    expect(specPerspective('{"flags":6}')).toBe(true); // 位 2 + 位 1（3790775478 的 ash.json）
+    expect(specPerspective('{"flags":"4"}')).toBe(true);
+    expect(specPerspective('{"flags":0}')).toBe(false);
+    expect(specPerspective('{}')).toBe(false);
+    expect(specPerspective('')).toBe(false);
+    expect(specPerspective('not json')).toBe(false);
+  });
+
+  // WE 的透视相机（正交场景内）：position.z = distance，fov 取 perspectiveoverridefov（>0 时）
+  // 否则按固定 1000 距离反算；distance = 高 / (2·tan(fov/2))（OWE Algorism.cpp:8-17）。
+  it('particlePerspectiveCamera：对齐 WE 的 CalculatePersperctiveDistance / Fov', () => {
+    const p90 = particlePerspectiveCamera({ fov: 50, perspectiveOverrideFov: 90, sceneH: 2160 });
+    expect(p90.fov).toBe(90);
+    expect(p90.distance).toBeCloseTo(1080, 9); // 2160 / (2·tan45°)（浮点，故 closeTo）
+    const auto = particlePerspectiveCamera({ fov: 50, perspectiveOverrideFov: 0, sceneH: 2160 });
+    expect(auto.distance).toBe(1000);
+    expect(auto.fov).toBeCloseTo((2 * Math.atan(2160 / 1000 / 2) * 180) / Math.PI, 6);
+    const small = particlePerspectiveCamera({ fov: 50, perspectiveOverrideFov: 0, sceneH: 1080 });
+    expect(small.distance).toBe(1000);
+    expect(small.fov).toBeCloseTo((2 * Math.atan(1080 / 1000 / 2) * 180) / Math.PI, 6);
+  });
+
+  it('addParticle：perspective 选项 → 透视投影 uniform（矩阵 + 相机眼位）；未传 → 关闭（正交零回归）', () => {
+    const { player } = makePlayer(1920, 1080);
+    player.addParticle(() => dataA, {
+      frameCount: 1, blend: 'additive',
+      perspective: { fov: 90, distance: 1080, aspect: 3840 / 2160 },
+    });
+    const mat = particleMesh(player).material as THREE.ShaderMaterial;
+    expect(mat.uniforms.perspEnabled.value).toBe(1);
+    expect(mat.uniforms.persp.value).toBeInstanceOf(THREE.Matrix4);
+    expect(mat.uniforms.perspEye.value.z).toBe(1080);
+    // 透视矩阵的 m[11]（透视项）非 0；正交投影矩阵该位恒 0。
+    expect((mat.uniforms.persp.value as THREE.Matrix4).elements[11]).not.toBe(0);
+
+    const p2 = makePlayer(1920, 1080);
+    p2.player.addParticle(() => dataA, { frameCount: 1, blend: 'additive' });
+    const mat2 = particleMesh(p2.player).material as THREE.ShaderMaterial;
+    expect(mat2.uniforms.perspEnabled.value).toBe(0);
+  });
+
   // 2026-09-10 Task5 深挖：InstancedBufferGeometry 的包围球只看**基础四边形**（[-1,1]²，半径≈1.41），
   // 不含 per-instance 位置；粒子实际散布在世界坐标 ±1200 处 → 任何按 boundingSphere 剔除的路径都会
   // 把整层判为离屏（整层不绘制 = 花瓣全丢）。故 mesh.frustumCulled=false **且** geometry.boundingSphere
@@ -1441,6 +1484,31 @@ describe('ThreeScenePlayer loadSceneToThree', () => {
     bad.userData = { sprite: { frames: 0, cols: 0, rows: 0 } };
     expect(textureFrameCount(bad)).toBe(1);
     expect(textureFrameGrid(bad)).toEqual({ cols: 1, rows: 1 });
+  });
+
+  it('loadSceneToThree：spec.flags 带 perspective 位 → 该粒子层启用透视投影；无该位 → 关闭', () => {
+    const mk = (specJson: string) => {
+      const canvas = document.createElement('canvas');
+      const assets = {
+        renderer: createMockRenderer() as unknown as THREE.WebGLRenderer,
+        backgroundTextures: new Map([[13, new THREE.DataTexture(new Uint8Array(4), 2, 2)]]),
+        particles: new Map([[71, { specJson, tex: new THREE.DataTexture(new Uint8Array(4), 512, 128), blend: 'alpha' as const }]]),
+        createParticleSim: vi.fn(() => makeMockSim()),
+      };
+      const r = loadSceneToThree(BLACKMYTH_SCENE, assets, canvas);
+      const mesh = r.player.scene.children.find(
+        (c) => (c as THREE.Mesh).material instanceof THREE.ShaderMaterial,
+      ) as THREE.Mesh;
+      return (mesh.material as THREE.ShaderMaterial).uniforms;
+    };
+    // 3660373677 的雨、2851992662 的樱花等：flags=4 → 透视（相机眼位在 +z，即 WE 的 distance）。
+    const persp = mk(JSON.stringify({ flags: 4, maxcount: 50, emitter: [{ rate: 20 }] }));
+    expect(persp.perspEnabled.value).toBe(1);
+    expect(persp.persp.value).toBeInstanceOf(THREE.Matrix4);
+    expect(persp.perspEye.value.z).toBeGreaterThan(0);
+    // 无 perspective 位（全库多数粒子）→ 保持正交投影（零回归）。
+    const ortho = mk(JSON.stringify({ flags: 0, maxcount: 50, emitter: [{ rate: 20 }] }));
+    expect(ortho.perspEnabled.value).toBe(0);
   });
 
   it('specEmitterOrigin / simEmitterOffset：解析 emitter[0].origin 并算黑神话偏移', () => {
