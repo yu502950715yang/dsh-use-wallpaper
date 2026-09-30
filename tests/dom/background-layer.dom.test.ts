@@ -141,6 +141,41 @@ describe('createBackgroundLayer (DOM)', () => {
     }
   });
 
+  // 启动首帧的跨源子帧视口竞态（2026-09-30 真机 bug，用户报「启动桌面版时壁纸加载不出来，
+  // 调整窗口大小才出现」）：未挂载的 iframe 一旦有 src 就立刻开始加载，而**跨源子帧（OOPIF）**
+  // 冷启动时父帧尚未给它分配盒子尺寸 ⇒ 子帧读到 `window.innerWidth/Height = 0`。壁纸
+  // `3789244610` 初始化时把视口快照成画布尺寸（自身无 resize 监听）⇒ 画布永远 0×0、画面空白，
+  // 直到一次窗口 resize 触发重建 iframe（站点实例已存在、尺寸正确）才显示。
+  // ⇒ 不变量：**先挂载 + 强制一次布局，之后才赋 src**。
+  it('showWeb：iframe 先挂载并强制布局，之后才赋 src（否则跨源子帧视口为 0）', async () => {
+    document.body.innerHTML = '';
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    const g = globalThis as { __DSH_TRANSPORT__?: unknown };
+    g.__DSH_TRANSPORT__ = { ownsHost: true, streamBaseUrl: 'http://127.0.0.1:19387' };
+    const seen: Array<{ connected: boolean; src: string | null }> = [];
+    const rectSpy = vi.spyOn(HTMLIFrameElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLIFrameElement) {
+      if (this.classList.contains('wp-scene-canvas')) {
+        seen.push({ connected: this.isConnected, src: this.getAttribute('src') });
+      }
+      return { width: 1280, height: 820 } as DOMRect;
+    });
+    try {
+      const layer = createBackgroundLayer(root);
+      layer.showWeb('/wallpapers/web/3789244610/index.html');
+      await vi.waitFor(() => expect(root.querySelector('.wp-bg-fill iframe')).not.toBeNull());
+      const frame = root.querySelector('.wp-bg-fill iframe') as HTMLIFrameElement;
+      expect(seen.length).toBeGreaterThan(0);
+      expect(seen[0].connected).toBe(true); // 强制布局发生在**挂载之后**
+      expect(seen[0].src).toBeNull();       // 且发生在**赋 src 之前**
+      expect(frame.getAttribute('src')).toBe('http://127.0.0.1:19387/wallpapers/web/3789244610/index.html');
+      expect(frame.getAttribute('sandbox')).toBe('allow-scripts allow-same-origin');
+    } finally {
+      rectSpy.mockRestore();
+      delete g.__DSH_TRANSPORT__;
+    }
+  });
+
   it('showWeb：探活未落地就切换壁纸时，旧 iframe 不再落地', async () => {
     document.body.innerHTML = '';
     const root = document.createElement('div');

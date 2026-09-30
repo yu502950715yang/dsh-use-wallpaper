@@ -2715,16 +2715,20 @@ function createBackgroundLayer(root) {
   }
   function makeWebFrame(spec) {
     const frame = document.createElement("iframe");
-    frame.src = spec.url;
     frame.className = "wp-scene-canvas";
     frame.setAttribute("sandbox", spec.sandbox);
     frame.setAttribute("allow", "autoplay; fullscreen");
     frame.setAttribute("scrolling", "no");
     return frame;
   }
+  function appendWebFrame(frame, url) {
+    fill.appendChild(frame);
+    frame.getBoundingClientRect();
+    frame.src = url;
+  }
   function attachWebFrame(spec) {
     liveWebFrame = makeWebFrame(spec);
-    fill.appendChild(liveWebFrame);
+    appendWebFrame(liveWebFrame, spec.url);
   }
   function currentViewport() {
     return [Math.max(1, Math.round(window.innerWidth || 0)), Math.max(1, Math.round(window.innerHeight || 0))];
@@ -2745,7 +2749,8 @@ function createBackgroundLayer(root) {
     pendingWebFrame?.remove();
     pendingWebFrame = null;
     const token = frameToken;
-    const frame = makeWebFrame(webFrameSpec(url, window.location, altOrigin));
+    const spec = webFrameSpec(url, window.location, altOrigin);
+    const frame = makeWebFrame(spec);
     frame.style.visibility = "hidden";
     let settled = false;
     let timer = null;
@@ -2765,7 +2770,7 @@ function createBackgroundLayer(root) {
     pendingWebFrame = frame;
     frame.addEventListener("load", () => settle(true), { once: true });
     timer = setTimeout(() => settle(false), WEB_RESIZE_RELOAD_TIMEOUT_MS);
-    fill.appendChild(frame);
+    appendWebFrame(frame, spec.url);
   }
   function markActive() {
     document.body.setAttribute("data-we-wallpaper", "true");

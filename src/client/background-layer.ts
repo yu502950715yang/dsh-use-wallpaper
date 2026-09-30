@@ -168,9 +168,12 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
       .finally(() => clearTimeout(timer));
   }
 
+  // ⚠️ **切勿在建元素时赋 src**（2026-09-30 真机 bug）：未挂载的 iframe 一旦有 src 就立刻开始加载，
+  // 而跨源子帧（OOPIF）冷启动时父帧尚未给它分配盒子尺寸 ⇒ 子帧的 `window.innerWidth/Height` 读到 **0**。
+  // 壁纸 `3789244610` 初始化时把画布尺寸快照成视口（且自身无 resize 监听）⇒ 画布永远停在 0×0，
+  // 启动后一直空白，只有用户调整窗口大小触发重建 iframe（此时站点实例已存在、视口正确）才显示。
   function makeWebFrame(spec: WebFrameSpec): HTMLIFrameElement {
     const frame = document.createElement('iframe');
-    frame.src = spec.url;
     frame.className = 'wp-scene-canvas'; // 复用铺满尺寸样式
     frame.setAttribute('sandbox', spec.sandbox);
     frame.setAttribute('allow', 'autoplay; fullscreen');
@@ -180,9 +183,16 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
     return frame;
   }
 
+  // 挂载 → 强制一次布局 → 再赋 src：**顺序即修复本身，勿调换**（见 makeWebFrame 注释）。
+  function appendWebFrame(frame: HTMLIFrameElement, url: string): void {
+    fill.appendChild(frame);
+    frame.getBoundingClientRect(); // 强制父帧完成布局，使子帧初始视口 = 元素盒子尺寸
+    frame.src = url;
+  }
+
   function attachWebFrame(spec: WebFrameSpec): void {
     liveWebFrame = makeWebFrame(spec);
-    fill.appendChild(liveWebFrame);
+    appendWebFrame(liveWebFrame, spec.url);
   }
 
   function currentViewport(): [number, number] {
@@ -207,7 +217,8 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
     pendingWebFrame?.remove(); // 上一次预载作废（其 settle 靠 isConnected 判定，见下）
     pendingWebFrame = null;
     const token = frameToken;
-    const frame = makeWebFrame(webFrameSpec(url, window.location, altOrigin));
+    const spec = webFrameSpec(url, window.location, altOrigin);
+    const frame = makeWebFrame(spec);
     // 预载期不遮挡旧帧；用 visibility（而非 display）保留布局 ⇒ 壁纸读到的视口尺寸仍正确
     frame.style.visibility = 'hidden';
     let settled = false;
@@ -229,7 +240,7 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
     pendingWebFrame = frame;
     frame.addEventListener('load', () => settle(true), { once: true });
     timer = setTimeout(() => settle(false), WEB_RESIZE_RELOAD_TIMEOUT_MS);
-    fill.appendChild(frame);
+    appendWebFrame(frame, spec.url); // 挂载 → 布局 → src（同 attachWebFrame 的不变量）
   }
 
   // 壁纸激活标记：有壁纸时挂 data-we-wallpaper（styles.ts 主题分支作用域），
