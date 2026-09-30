@@ -1220,19 +1220,22 @@ impl SceneParticleSim {
         });
     }
 
-    /// 输出**每粒子单点**顶点（13 浮点：`[pos3, size, uv2, color3, alpha, rot3]`），供 three.js
+    /// 输出**每粒子单点**顶点（16 浮点：`[pos3, size, uv2, color3, alpha, rot3, vel3]`），供 three.js
     /// 播放器 billboard（每粒子一个实例，shader 内展开 quad 角点并按三轴旋转）。
     /// `uv2` = 帧子区**中心** uv（`frame_center_uv`：uv.x = (frame+0.5)/frame_count，uv.y = 0.5；
     /// 单帧 → [0.5,0.5]），供 fragment 多帧切片（`floor(uv.x*frame_count)` 还原帧号后取子区）。
     /// `rot3` = 粒子欧拉角（弧度，**逐分量**），由 `rotationrandom` 初始化、`angularmovement` 每帧
     /// 逐分量推进（见 `p.rot`）；渲染侧按 WE `ComputeParticleTangents` 的同一套旋转构造 quad 基向量
     /// （rot 只有 z 分量时退化为平面自旋，与原实现逐像素一致）。
+    /// `vel3` = 粒子当前速度（世界单位/秒，即 `p.vel`）；仅 `spritetrail` 渲染器消费（WE
+    /// `ComputeParticleTrailTangents` 按速度方向拉伸 billboard），sprite 粒子忽略它。
     ///
-    /// 字段顺序（每粒子 13 浮点，stride 52B）：
-    ///   `[0..3]` pos3；`[3]` size；`[4..6]` uv2；`[6..9]` color3；`[9]` alpha；`[10..13]` rot3。
-    /// returns Vec 长度 = particles.len() × 13。
+    /// 字段顺序（每粒子 16 浮点，stride 64B）：
+    ///   `[0..3]` pos3；`[3]` size；`[4..6]` uv2；`[6..9]` color3；`[9]` alpha；`[10..13]` rot3；
+    ///   `[13..16]` vel3。
+    /// returns Vec 长度 = particles.len() × 16。
     pub fn build_instance_vertices(&self) -> Vec<f32> {
-        let mut out = Vec::with_capacity(self.particles.len() * 13);
+        let mut out = Vec::with_capacity(self.particles.len() * 16);
         for p in &self.particles {
             // 帧号：官方 `AnimationLifetime` —— sequence 按寿命进度推进（`sequence_multiplier` 决定
             // 轮数），randomframe 用 spawn 时抽到的固定帧。
@@ -1257,6 +1260,10 @@ impl SceneParticleSim {
             out.push(p.rot[0]);
             out.push(p.rot[1]);
             out.push(p.rot[2]);
+            // vel3：spritetrail 拉伸方向的数据源（sprite 渲染器不读）。
+            out.push(p.vel[0]);
+            out.push(p.vel[1]);
+            out.push(p.vel[2]);
         }
         out
     }
@@ -1503,9 +1510,11 @@ mod tests {
         }
     }
 
-    /// Task 3：`build_instance_vertices` 输出**每粒子** 13 浮点
-    /// `[pos3,size,uv2,color3,alpha,rot3]`，uv2 = 帧子区中心（frame_center_uv），
+    /// Task 3：`build_instance_vertices` 输出**每粒子** 16 浮点
+    /// `[pos3,size,uv2,color3,alpha,rot3,vel3]`，uv2 = 帧子区中心（frame_center_uv），
     /// rot3 = 粒子欧拉角（弧度，逐分量；F4 起进入顶点流，渲染侧据此旋转 billboard 角点）。
+    /// vel3（2026-09-26 起）：粒子当前速度（世界单位/秒）；`spritetrail` 渲染器按 WE
+    /// `ComputeParticleTrailTangents` 语义用它把 billboard 沿速度方向拉伸成长条雨丝。
     #[test]
     fn build_instance_vertices_flat_per_particle() {
         let mut sim = SceneParticleSim::new(
@@ -1545,7 +1554,7 @@ mod tests {
         sim.animation_mode = AnimationMode::RandomFrame;
         sim.particles.push(SimParticle {
             pos: [1.0, 2.0, 3.0],
-            vel: [0.0; 3],
+            vel: [-7.5, -3000.0, 0.5],
             rot: [0.1, 0.2, 0.75],
             angular_vel: [0.0; 3],
             size: 40.0,
@@ -1584,7 +1593,7 @@ mod tests {
             },
         });
         let v = sim.build_instance_vertices();
-        assert_eq!(v.len(), 13, "单粒子应输出 13 浮点");
+        assert_eq!(v.len(), 16, "单粒子应输出 16 浮点");
         assert_eq!(&v[0..3], &[1.0, 2.0, 3.0], "pos3");
         assert_eq!(v[3], 40.0, "size");
         // frame=2 → frame_center_uv(2, 4) = [(2+0.5)/4, 0.5] = [0.625, 0.5]。
@@ -1594,6 +1603,8 @@ mod tests {
         assert_eq!(v[9], 0.25, "alpha");
         // F4：粒子欧拉角**三分量**进入顶点流（渲染侧按 WE ComputeParticleTangents 构造 quad 基向量）
         assert_eq!(&v[10..13], &[0.1, 0.2, 0.75], "rot3");
+        // vel3：粒子当前速度（渲染侧按 WE ComputeParticleTrailTangents 算 spritetrail 拉伸方向）
+        assert_eq!(&v[13..16], &[-7.5, -3000.0, 0.5], "vel3");
     }
 
     /// Important I1：spawn 用 `self.init`（每壁纸 spec.init），而非黑神话硬编码。

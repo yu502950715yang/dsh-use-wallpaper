@@ -5,7 +5,7 @@ pub mod particle;
 //
 // three.js 播放器复用既有 CPU 粒子**模拟**：本结构只持有 `particle::SceneParticleSim`，
 // 由 `update(dt)` 推进、`vertices()` 返回**摊平**的每粒子顶点
-// （`[pos3,size,uv2,color3,alpha]`，每粒子 10 浮点）；渲染交给 three.js
+// （`[pos3,size,uv2,color3,alpha,rot3,vel3]`，每粒子 16 浮点）；渲染交给 three.js
 // （BufferGeometry + ShaderMaterial）—— 不重写模拟，只换渲染引擎。
 //
 // 仅 `cpu-sim` feature（wasm 构建，含 js-sys）下导出：`vertices()` 返回 `Float32Array`
@@ -80,9 +80,9 @@ impl CpuParticleSim {
         self.sim.spritesheet_frames = n.max(1);
     }
 
-    /// 把每粒子顶点摊平为 `Float32Array`：`[pos3, size, uv2, color3, alpha]`（每粒子 10 浮点，
-    /// 见 `SceneParticleSim::build_instance_vertices`），供 three.js 播放器 `updateParticles`
-    /// 每帧刷新 `BufferAttribute`。
+    /// 把每粒子顶点摊平为 `Float32Array`：`[pos3, size, uv2, color3, alpha, rot3, vel3]`
+    /// （每粒子 16 浮点，见 `SceneParticleSim::build_instance_vertices`），供 three.js 播放器
+    /// `updateParticles` 每帧刷新 `BufferAttribute`。
     pub fn vertices(&self) -> js_sys::Float32Array {
         let flat = self.sim.build_instance_vertices();
         js_sys::Float32Array::new_from_slice(&flat)

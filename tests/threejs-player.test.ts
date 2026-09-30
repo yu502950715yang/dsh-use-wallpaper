@@ -6,7 +6,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
-import { ThreeScenePlayer, loadSceneToThree, resolvePixelRatio, frameCountFromDims, textureFrameCount, textureFrameGrid, specMaxcount, particleCapacity, specEmitterOrigin, simEmitterOffset, BLACKMYTH_OBJ_SCALE, DEFAULT_PARTICLE_CAPACITY, MAX_PARTICLE_CAPACITY } from '../src/client/threejs-player.js';
+import { ThreeScenePlayer, loadSceneToThree, resolvePixelRatio, frameCountFromDims, textureFrameCount, textureFrameGrid, specMaxcount, particleCapacity, specEmitterOrigin, simEmitterOffset, specRenderer, BLACKMYTH_OBJ_SCALE, DEFAULT_PARTICLE_CAPACITY, MAX_PARTICLE_CAPACITY, PARTICLE_FLOATS_PER_INSTANCE } from '../src/client/threejs-player.js';
 import { textLayerOffset, type TextLayout } from '../src/client/text-object.js';
 import { coverRange, createCompositeGeometry, screenScalePx } from '../src/client/object-range.js';
 
@@ -714,17 +714,18 @@ describe('ThreeScenePlayer background layer', () => {
 // 验证 BufferGeometry（InstancedBufferGeometry）被正确填充、updateParticles 刷新 buffer、
 // blend/softness 设到 ShaderMaterial。
 describe('ThreeScenePlayer particle layer', () => {
-  // 每粒子 [pos3, size, uv2, color3, alpha, rot3]。helper 把平铺数组转 Float32Array。
+  // 每粒子 [pos3, size, uv2, color3, alpha, rot3, vel3]（16 浮点，见 PARTICLE_FLOATS_PER_INSTANCE）。
+  // helper 把平铺数组转 Float32Array。
   function makeVerts(...parts: number[][]): Float32Array {
     return new Float32Array(parts.flat());
   }
 
   // 2 粒子数据：
-  //   p0: pos(1,2,3) size40 uv(0.625,0.5) color(0.5,0.6,0.7) alpha0.25 rot(0.1,0.2,0.75)
-  //   p1: pos(-4,5,6) size20 uv(0.125,0.5) color(1,0,0) alpha0.5 rot(-0.3,0.4,-0.5)
+  //   p0: pos(1,2,3) size40 uv(0.625,0.5) color(0.5,0.6,0.7) alpha0.25 rot(0.1,0.2,0.75) vel(-0.5,-3000,0)
+  //   p1: pos(-4,5,6) size20 uv(0.125,0.5) color(1,0,0) alpha0.5 rot(-0.3,0.4,-0.5) vel(12,-20,3)
   const dataA = makeVerts(
-    [1, 2, 3, 40, 0.625, 0.5, 0.5, 0.6, 0.7, 0.25, 0.1, 0.2, 0.75],
-    [-4, 5, 6, 20, 0.125, 0.5, 1, 0, 0, 0.5, -0.3, 0.4, -0.5],
+    [1, 2, 3, 40, 0.625, 0.5, 0.5, 0.6, 0.7, 0.25, 0.1, 0.2, 0.75, -0.5, -3000, 0],
+    [-4, 5, 6, 20, 0.125, 0.5, 1, 0, 0, 0.5, -0.3, 0.4, -0.5, 12, -20, 3],
   );
 
   // 取 addParticle 后 scene 里的粒子 mesh（无背景时 scene.children[0]）。
@@ -734,7 +735,7 @@ describe('ThreeScenePlayer particle layer', () => {
     return mesh;
   }
 
-  it('addParticle：geometry 属性数/长度符合 sim 顶点（每粒子 [pos3,size,uv2,color3,alpha,rot]）', () => {
+  it('addParticle：geometry 属性数/长度符合 sim 顶点（每粒子 [pos3,size,uv2,color3,alpha,rot3,vel3]）', () => {
     const { player } = makePlayer(1920, 1080);
     player.addParticle(() => dataA, { frameCount: 4, blend: 'additive', softness: 0.3 });
     const mesh = particleMesh(player);
@@ -742,7 +743,7 @@ describe('ThreeScenePlayer particle layer', () => {
     expect(geom).toBeInstanceOf(THREE.InstancedBufferGeometry);
     expect(geom.instanceCount).toBe(2);
 
-    // 6 个 per-particle instanced 属性（position/size/uv/color/alpha/rot）。
+    // 7 个 per-particle instanced 属性（position/size/uv/color/alpha/rot/velocity）。
     // 属性按**实例容量**预分配（不是按当前粒子数）——three 首帧锁存容量，必须一次给足（见
     // addParticle 的根因注释），故此处断言「容量 ≥ 当前粒子数 + 各属性长度 = count×itemSize」，
     // 而非旧实现的「长度恰为 粒子数×itemSize」。
@@ -752,6 +753,7 @@ describe('ThreeScenePlayer particle layer', () => {
     const color = geom.getAttribute('particleColor') as THREE.InstancedBufferAttribute;
     const alpha = geom.getAttribute('particleAlpha') as THREE.InstancedBufferAttribute;
     const rot = geom.getAttribute('particleRot') as THREE.InstancedBufferAttribute;
+    const vel = geom.getAttribute('particleVelocity') as THREE.InstancedBufferAttribute;
     expect(pos.count).toBeGreaterThanOrEqual(2);
     expect((pos.array as Float32Array).length).toBe(pos.count * 3);
     expect((size.array as Float32Array).length).toBe(size.count);
@@ -759,6 +761,9 @@ describe('ThreeScenePlayer particle layer', () => {
     expect((color.array as Float32Array).length).toBe(color.count * 3);
     expect((alpha.array as Float32Array).length).toBe(alpha.count);
     expect((rot.array as Float32Array).length).toBe(rot.count * 3);
+    expect(vel).toBeDefined();
+    expect(vel.itemSize).toBe(3);
+    expect((vel.array as Float32Array).length).toBe(vel.count * 3);
 
     // 数据写回：p0 pos=(1,2,3)、size=40、uv=(0.625,0.5)、color=(0.5,0.6,0.7)、alpha=0.25、rot=0.75。
     expect(Array.from(pos.array as Float32Array).slice(0, 3)).toEqual([1, 2, 3]);
@@ -780,9 +785,62 @@ describe('ThreeScenePlayer particle layer', () => {
     expect(col0[1]).toBeCloseTo(0.6, 6);
     expect(col0[2]).toBeCloseTo(0.7, 6);
     expect((alpha.array as Float32Array)[0]).toBe(0.25);
+    // vel3（spritetrail 拉伸方向的数据源，2026-09-26）：来自 sim 顶点末 3 浮点。
+    const velArr = vel.array as Float32Array;
+    expect(velArr[0]).toBeCloseTo(-0.5, 6);
+    expect(velArr[1]).toBe(-3000);
+    expect(velArr[2]).toBe(0);
+    expect(velArr[3]).toBe(12);
+    expect(velArr[4]).toBe(-20);
+    expect(velArr[5]).toBe(3);
     // p1：pos=(-4,5,6)、size=20。
     expect(Array.from(pos.array as Float32Array).slice(3, 6)).toEqual([-4, 5, 6]);
     expect((size.array as Float32Array)[1]).toBe(20);
+  });
+
+  it('粒子顶点契约：每粒子 16 浮点（13 + vel3），与 wasm build_instance_vertices 同步', () => {
+    expect(PARTICLE_FLOATS_PER_INSTANCE).toBe(16);
+  });
+
+  // spritetrail（2026-09-26）：Wallpaper Engine 的雨丝/风痕靠 `renderer[0].name == "spritetrail"`
+  // 沿速度方向拉伸 billboard 呈现（WE `common_particles.h` 的 ComputeParticleTrailTangents）。
+  // 此前只解析不消费 → Spider Man 4K 的雨退化成 3.8px 方点、肉眼不可见。
+  it('specRenderer：解析 spec.renderer[0] —— spritetrail 取 length/maxlength/minlength；sprite/缺省/非法 → 不启用拖尾', () => {
+    expect(specRenderer(JSON.stringify({ renderer: [{ name: 'spritetrail', length: 0.005, maxlength: 100 }] })))
+      .toEqual({ kind: 'spritetrail', length: 0.005, maxLength: 100, minLength: 0 });
+    expect(specRenderer(JSON.stringify({ renderer: [{ name: 'spritetrail', length: 0.01, maxlength: 2, minlength: 0.5 }] })))
+      .toEqual({ kind: 'spritetrail', length: 0.01, maxLength: 2, minLength: 0.5 });
+    // 缺省值与 wasm `parse_particle_spec` 一致，并与 WE/lwe/OWE 口径相同
+    // （length 0.05 / maxlength 10 / minlength 0）—— 曾用 1.0/1.0 会让缺 maxlength 的预设没拖尾。
+    expect(specRenderer(JSON.stringify({ renderer: [{ name: 'spritetrail' }] })))
+      .toEqual({ kind: 'spritetrail', length: 0.05, maxLength: 10, minLength: 0 });
+    expect(specRenderer(JSON.stringify({ renderer: [{ name: 'sprite' }] })).kind).toBe('sprite');
+    // rope/ropetrail 与 wasm 侧一致地走 sprite 兜底（不白屏）。
+    expect(specRenderer(JSON.stringify({ renderer: [{ name: 'rope', subdivision: 4 }] })).kind).toBe('sprite');
+    expect(specRenderer('{}').kind).toBe('sprite');
+    expect(specRenderer('').kind).toBe('sprite');
+  });
+
+  it('addParticle：trail 选项 → 拖尾 uniform（参数 + 纹理高宽比）；未传 → 不启用（sprite 外观零回归）', () => {
+    const { player } = makePlayer(1920, 1080);
+    // 32×128 的雨滴纹理：textureRatio = 128/32 = 4（WE `g_Texture0Resolution.y / .x`）。
+    const dropTex = new THREE.DataTexture(new Uint8Array(32 * 128 * 4), 32, 128);
+    player.addParticle(() => dataA, {
+      frameCount: 1, blend: 'additive', tex: dropTex,
+      trail: { length: 0.005, maxLength: 100, minLength: 0 },
+    });
+    const mat = particleMesh(player).material as THREE.ShaderMaterial;
+    expect(mat.uniforms.trailEnabled.value).toBe(1);
+    expect(mat.uniforms.trailParams.value.x).toBeCloseTo(0.005, 6);
+    expect(mat.uniforms.trailParams.value.y).toBe(100);
+    expect(mat.uniforms.trailParams.value.z).toBe(0);
+    expect(mat.uniforms.texelRatio.value).toBeCloseTo(4, 6);
+
+    // 无 trail（既有全部壁纸）→ trailEnabled=0，顶点 shader 走原旋转分支（外观与今天逐像素一致）。
+    const p2 = makePlayer(1920, 1080);
+    p2.player.addParticle(() => dataA, { frameCount: 1, blend: 'additive' });
+    const mat2 = particleMesh(p2.player).material as THREE.ShaderMaterial;
+    expect(mat2.uniforms.trailEnabled.value).toBe(0);
   });
 
   // 2026-09-10 Task5 深挖：InstancedBufferGeometry 的包围球只看**基础四边形**（[-1,1]²，半径≈1.41），
@@ -926,9 +984,9 @@ describe('ThreeScenePlayer particle layer', () => {
     expect(geom.instanceCount).toBe(2);
 
     const dataB = makeVerts(
-      [7, 8, 9, 50, 0.875, 0.5, 0.1, 0.2, 0.3, 0.9, 0.1, 0, 0.25],
-      [10, 11, 12, 30, 0.375, 0.5, 0.4, 0.5, 0.6, 0.6, 0, 0.2, 1.5],
-      [-1, -2, -3, 15, 0.125, 0.5, 0.7, 0.8, 0.9, 0.1, -0.4, 0, -2.25],
+      [7, 8, 9, 50, 0.875, 0.5, 0.1, 0.2, 0.3, 0.9, 0.1, 0, 0.25, 0, -100, 0],
+      [10, 11, 12, 30, 0.375, 0.5, 0.4, 0.5, 0.6, 0.6, 0, 0.2, 1.5, 5, 0, 0],
+      [-1, -2, -3, 15, 0.125, 0.5, 0.7, 0.8, 0.9, 0.1, -0.4, 0, -2.25, 0, 0, -7],
     );
     verts = dataB;
     player.updateParticles(0.016);
@@ -980,7 +1038,7 @@ describe('ThreeScenePlayer particle layer', () => {
     expect(Math.min(geom.instanceCount, latch())).toBe(0); // 还没有粒子 → 不画（正确）
 
     // sim 推进到 50 个粒子（黑神话 leaves5 的 maxcount）→ draw 必须画满 50 个实例。
-    verts = makeVerts(...Array.from({ length: 50 }, (_, i) => [i, i, 0, 40, 0.625, 0.5, 1, 1, 1, 1, 0, 0, 0]));
+    verts = makeVerts(...Array.from({ length: 50 }, (_, i) => [i, i, 0, 40, 0.625, 0.5, 1, 1, 1, 1, 0, 0, 0, 0, -50, 0]));
     player.updateParticles(1 / 60);
     expect(geom.instanceCount).toBe(50);
     expect(Math.min(geom.instanceCount, latch())).toBe(50); // ← 旧实现此处是 0（容量锁死 0）
@@ -993,7 +1051,7 @@ describe('ThreeScenePlayer particle layer', () => {
     const geom = particleMesh(player).geometry as THREE.InstancedBufferGeometry;
     const a = geom.getAttribute('particlePosition') as THREE.InstancedBufferAttribute;
     expect(a.count).toBe(DEFAULT_PARTICLE_CAPACITY);
-    verts = makeVerts(...Array.from({ length: 30 }, (_, i) => [i, i, 0, 40, 0.625, 0.5, 1, 1, 1, 1, 0, 0, 0]));
+    verts = makeVerts(...Array.from({ length: 30 }, (_, i) => [i, i, 0, 40, 0.625, 0.5, 1, 1, 1, 1, 0, 0, 0, 0, -50, 0]));
     player.updateParticles(1 / 60);
     expect(Math.min(geom.instanceCount, a.meshPerAttribute * a.count)).toBe(30);
   });
@@ -1004,7 +1062,7 @@ describe('ThreeScenePlayer particle layer', () => {
     player.addParticle(() => verts, { frameCount: 4, blend: 'alpha', maxInstances: 2 });
     const geom = particleMesh(player).geometry as THREE.InstancedBufferGeometry;
     expect((geom as unknown as { _maxInstanceCount?: number })._maxInstanceCount).toBeUndefined(); // 未渲染过
-    verts = makeVerts(...Array.from({ length: 5 }, (_, i) => [i, 0, 0, 10, 0.625, 0.5, 1, 1, 1, 1, 0, 0, 0]));
+    verts = makeVerts(...Array.from({ length: 5 }, (_, i) => [i, 0, 0, 10, 0.625, 0.5, 1, 1, 1, 1, 0, 0, 0, 0, -50, 0]));
     player.updateParticles(1 / 60);
     const a = geom.getAttribute('particlePosition') as THREE.InstancedBufferAttribute;
     expect(a.count).toBeGreaterThanOrEqual(5);
@@ -1059,10 +1117,10 @@ describe('ThreeScenePlayer loadSceneToThree', () => {
     ],
   });
 
-  // 每粒子 [pos3, size, uv2, color3, alpha, rot3] 13 浮点（2 粒子），供 mock sim.vertices() 返回。
+  // 每粒子 [pos3, size, uv2, color3, alpha, rot3, vel3] 16 浮点（2 粒子），供 mock sim.vertices() 返回。
   const SIM_VERT = new Float32Array([
-    1, 2, 3, 40, 0.625, 0.5, 0.5, 0.6, 0.7, 0.25, 0.1, 0.2, 0.75,
-    -4, 5, 6, 20, 0.125, 0.5, 1, 0, 0, 0.5, -0.3, 0.4, -0.5,
+    1, 2, 3, 40, 0.625, 0.5, 0.5, 0.6, 0.7, 0.25, 0.1, 0.2, 0.75, 0, -3000, 0,
+    -4, 5, 6, 20, 0.125, 0.5, 1, 0, 0, 0.5, -0.3, 0.4, -0.5, 10, 0, -5,
   ]);
 
   // wasm CpuParticleSim 的 mock：记录 update/vertices 调用（可断言推进顺序），

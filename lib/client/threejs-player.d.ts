@@ -3,8 +3,16 @@ import type { GlowStage } from './glow-stage.js';
 import type { ClockDriver } from './text-object.js';
 export declare const DEFAULT_PARTICLE_CAPACITY = 1024;
 export declare const MAX_PARTICLE_CAPACITY = 2048;
-export declare const PARTICLE_FLOATS_PER_INSTANCE = 13;
+export declare const PARTICLE_FLOATS_PER_INSTANCE = 16;
 export declare function specMaxcount(specJson: string): number;
+export interface ParticleRendererSpec {
+    kind: 'sprite' | 'spritetrail';
+    length: number;
+    maxLength: number;
+    minLength: number;
+}
+export declare function specRenderer(specJson: string): ParticleRendererSpec;
+export declare function textureTexelRatio(tex?: THREE.Texture): number;
 export declare function specEmitterOrigin(specJson: string): [number, number, number];
 export declare const BLACKMYTH_OBJ_SCALE: [number, number, number];
 export declare function simEmitterOffset(emitterOrigin: [number, number, number]): [number, number, number];
@@ -125,6 +133,11 @@ export declare class ThreeScenePlayer {
         objectAngles?: [number, number, number];
         emitterOrigin?: [number, number, number];
         maxInstances?: number;
+        trail?: {
+            length: number;
+            maxLength: number;
+            minLength: number;
+        };
         objectId?: number;
         isolate?: {
             objectId: number;

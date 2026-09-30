@@ -23008,7 +23008,7 @@ function createClockDriver(canvas, opts, props, initialText) {
 // src/client/threejs-player.ts
 var DEFAULT_PARTICLE_CAPACITY = 1024;
 var MAX_PARTICLE_CAPACITY = 2048;
-var PARTICLE_FLOATS_PER_INSTANCE = 13;
+var PARTICLE_FLOATS_PER_INSTANCE = 16;
 function specMaxcount(specJson) {
   try {
     const v = JSON.parse(specJson).maxcount;
@@ -23017,6 +23017,37 @@ function specMaxcount(specJson) {
   } catch {
     return 0;
   }
+}
+function specRenderer(specJson) {
+  const sprite = { kind: "sprite", length: 0.05, maxLength: 10, minLength: 0 };
+  try {
+    const raw = JSON.parse(specJson).renderer;
+    const first = Array.isArray(raw) ? raw[0] : void 0;
+    if (!first || typeof first.name !== "string" || first.name !== "spritetrail") return sprite;
+    const num = (v, dflt) => {
+      const n = typeof v === "string" ? parseFloat(v) : typeof v === "number" ? v : NaN;
+      return Number.isFinite(n) ? n : dflt;
+    };
+    const r = first;
+    return {
+      kind: "spritetrail",
+      length: num(r.length, 0.05),
+      maxLength: num(r.maxlength, 10),
+      minLength: num(r.minlength, 0)
+    };
+  } catch {
+    return sprite;
+  }
+}
+function textureTexelRatio(tex) {
+  const grid = textureSpriteInfo(tex);
+  const img = Array.isArray(tex?.image) ? tex?.image[0] : tex?.image;
+  if (!img || typeof img.width !== "number" || typeof img.height !== "number" || img.width <= 0 || img.height <= 0) {
+    return 1;
+  }
+  const frameW = grid ? img.width / grid.cols : img.width;
+  const frameH = grid ? img.height / grid.rows : img.height;
+  return frameH / frameW;
 }
 function specEmitterOrigin(specJson) {
   const zero = [0, 0, 0];
@@ -23070,6 +23101,8 @@ attribute float particleAlpha;
 // \u7C92\u5B50\u6B27\u62C9\u89D2\uFF08\u5F27\u5EA6\uFF0C**\u9010\u5206\u91CF**\uFF09\uFF1A\u7531\u6A21\u62DF\u5668\u7684 rotationrandom \u521D\u59CB\u5316\u3001
 // angularmovement \u6BCF\u5E27\u9010\u5206\u91CF\u63A8\u8FDB\uFF08p.rot[k] += angular_vel[k]*dt\uFF09\u3002
 attribute vec3 particleRot;
+// \u7C92\u5B50\u5F53\u524D\u901F\u5EA6\uFF08\u4E16\u754C\u5355\u4F4D/\u79D2\uFF0C\u6765\u81EA wasm \u9876\u70B9\u6D41\u672B 3 \u6D6E\u70B9\uFF09\u3002\u4EC5 spritetrail \u6E32\u67D3\u5668\u6D88\u8D39\u3002
+attribute vec3 particleVelocity;
 // \u5BF9\u8C61\u53D8\u6362\uFF08WE \u7684\u7C92\u5B50 model matrix \u8BED\u4E49\uFF0C\u89C1 loadSceneToThree \u6CE8\u91CA\uFF09\uFF1A
 //   objCenter     \u5BF9\u8C61\u4E2D\u5FC3\uFF08\u4E16\u754C\u5750\u6807\uFF0Cwe_to_three \u540E\uFF09
 //   objScale      scene.json \u7684\u5BF9\u8C61 scale\uFF08\u9010\u8F74\uFF0C\u53EF\u4E3A\u8D1F = \u955C\u50CF\uFF09
@@ -23079,6 +23112,13 @@ uniform vec3 objCenter;
 uniform vec3 objScale;
 uniform vec3 emitterOrigin;
 uniform vec3 bmOffset;
+// spritetrail\uFF08WE genericparticle.vert + TRAILRENDERER combo\uFF0C2026-09-26\uFF09\uFF1A
+//   trailEnabled  1 = \u6309\u901F\u5EA6\u65B9\u5411\u62C9\u4F38 billboard\uFF08renderer[0].name == "spritetrail"\uFF09\uFF0C0 = \u539F\u65CB\u8F6C billboard
+//   trailParams   (length, maxlength, minlength) \u2014\u2014 \u5373 WE \u7684 g_RenderVar0.xyz
+//   texelRatio    \u7EB9\u7406 \u9AD8/\u5BBD\uFF08WE g_Texture0Resolution.y/.x\uFF09\uFF1B\u6CBF\u62D6\u5C3E\u65B9\u5411\u6309\u5B83\u8865\u507F\u7EB9\u7406\u957F\u5BBD\u6BD4
+uniform float trailEnabled;
+uniform vec3 trailParams;
+uniform float texelRatio;
 // \u5BF9\u8C61\u6B27\u62C9\u89D2\uFF08**\u5F27\u5EA6**\uFF09\u2014\u2014 WE model matrix = T\xB7R\xB7S \u7684 R \u90E8\u5206\u3002
 uniform vec3 objAngles;
 varying vec2 vCornerUv;
@@ -23113,9 +23153,34 @@ void main() {
   // \u81EA\u65CB\u5148\u4E8E\u5BF9\u8C61\u65CB\u8F6C\uFF1A\u6309 WE ComputeParticleTangents\uFF08shaders/common_particles.h\uFF09\u7684**\u4E09\u8F74\u6B27\u62C9**
   // \u65CB\u8F6C quad \u89D2\u70B9 \u2014\u2014 \u590D\u7528 weObjectRotate\uFF08R = Rz\xB7Ry\xB7Rx\uFF0C\u4E0E\u5BF9\u8C61\u89D2\u5EA6\u540C\u4E00\u7EA6\u5B9A\uFF09\u3002
   // rot \u53EA\u6709 z \u5206\u91CF\u65F6\u9000\u5316\u4E3A\u5E73\u9762\u81EA\u65CB\uFF0C\u4E0E\u539F\u5B9E\u73B0\u9010\u50CF\u7D20\u4E00\u81F4\u3002
-  vec3 spun = weObjectRotate(vec3(position.xy, 0.0), particleRot);
-  vec3 corner = weObjectRotate(abs(objScale) * (spun * particleSize * 0.5), objAngles);
-  worldPos += corner;
+  if (trailEnabled > 0.5 && length(particleVelocity) > 1e-6) {
+    // spritetrail\uFF1A\u590D\u523B WE ComputeParticleTrailTangents / ComputeParticlePosition
+    // \uFF08common_particles.h:42-59\uFF09\u2014\u2014
+    //   right = normalize(cross(eyeDirection, velocity))
+    //   up    = normalize(velocity) * clamp(|velocity| * length, minlength, maxlength)
+    //   pos   = p + size*right*(u-0.5) + size*up*(v-0.5)*textureRatio
+    // \u96E8\u4E1D/\u98CE\u75D5\u7684\u300C\u957F\u6761\u300D\u7531\u6B64\u800C\u6765\uFF08Spider Man 4K \u7684\u96E8\uFF1Asize 5.65 \xD7 clamp(3000\xD70.005)=15 \xD7 4 \u2248 339
+    // \u4E16\u754C\u5355\u4F4D \u2248 113px\uFF09\uFF0C\u6B64\u524D\u53EA\u753B size\xD7size \u7684\u65B9\u70B9\uFF081.9px\uFF09\u2192 \u8089\u773C\u4E0D\u53EF\u89C1\u3002
+    // \u26A0\uFE0F \u7B26\u53F7\uFF1AWE \u539F\u6587\u662F minus size*up*(v-0.5)*ratio\uFF0C\u5176 v=0 \u662F**\u7EB9\u7406\u9876\u884C**\uFF1B\u672C\u63D2\u4EF6\u7684\u7EB9\u7406\u7ECF
+    // tex-loader \u884C\u53CD\u8F6C\uFF08v=1 = \u56FE\u50CF\u9876\u884C\uFF0C\u4E0E sprite \u8DEF\u5F84\u300Ccorner +Y \u2194 \u56FE\u50CF\u9876\u884C\u300D\u81EA\u6D3D\uFF09\uFF0C\u6545\u8FD9\u91CC\u53D6
+    // \u6B63\u53F7\uFF0C\u8BA9\u56FE\u50CF\u4E0A\u7AEF\uFF08\u96E8\u6EF4\u4EAE\u5934\uFF09\u843D\u5728 +\u901F\u5EA6\u65B9\u5411 \u2014\u2014 \u4E0E\u684C\u9762\u7AEF\u4E00\u81F4\uFF0C\u5426\u5219\u62D6\u5C3E\u5934\u5C3E\u98A0\u5012\u3002
+    // \u6B63\u4EA4\u76F8\u673A\u4E0B\u89C6\u7EBF\u65B9\u5411\u662F\u5E38\u6570\uFF08viewMatrix \u7684\u76F8\u673A +Z \u53D6\u53CD = \u4E16\u754C\u7A7A\u95F4\u89C6\u7EBF\u65B9\u5411\uFF09\uFF0C\u7B49\u4EF7\u4E8E WE \u7684
+    // localPosition - eyePosition \u65B9\u5411\uFF08|v|=0 \u7684\u9000\u5316\u5DF2\u5728\u5916\u5C42\u6392\u9664\uFF0C\u907F\u514D WE \u7684 normalize(0) NaN\uFF09\u3002
+    vec3 eyeDir = -normalize((viewMatrix * vec4(0.0, 0.0, 1.0, 0.0)).xyz);
+    float speed = length(particleVelocity);
+    vec3 right = normalize(cross(eyeDir, particleVelocity));
+    float trailLen = clamp(speed * trailParams.x, trailParams.z, trailParams.y);
+    vec3 up = (particleVelocity / speed) * trailLen;
+    vec2 quadUv = position.xy * 0.5 + 0.5;
+    vec3 offset = particleSize * (right * (quadUv.x - 0.5) + up * (quadUv.y - 0.5) * texelRatio);
+    worldPos += weObjectRotate(abs(objScale) * offset, objAngles);
+  } else {
+    // sprite\uFF08\u65E2\u6709\u8DEF\u5F84\uFF0C\u9010\u5B57\u4E0D\u53D8\uFF09\uFF1A\u4E09\u8F74\u6B27\u62C9\u65CB\u8F6C quad \u89D2\u70B9\uFF1B|v|=0 \u7684 spritetrail \u4E5F\u9000\u5230\u8FD9\u91CC
+    // \uFF08WE \u7684 normalize(0) \u4F1A\u4EA7\u51FA NaN\u3001\u7C92\u5B50\u6D88\u5931\uFF0C\u672C\u63D2\u4EF6\u9009\u62E9\u753B\u51FA size \u65B9\u5757\u800C\u4E0D\u662F\u4E22\u7C92\u5B50\uFF09\u3002
+    vec3 spun = weObjectRotate(vec3(position.xy, 0.0), particleRot);
+    vec3 corner = weObjectRotate(abs(objScale) * (spun * particleSize * 0.5), objAngles);
+    worldPos += corner;
+  }
   gl_Position = projectionMatrix * modelViewMatrix * vec4(worldPos, 1.0);
   // \u26A0\uFE0F \u4FEE\u6B63\uFF1A\u7C92\u5B50\u662F 2D billboard\uFF08\u65E0\u6DF1\u5EA6\u6392\u5E8F\uFF0Cz \u4E0D\u53C2\u4E0E\u53EF\u89C1\u6027\uFF09\u3002three \u6B63\u4EA4\u76F8\u673A far/near \u4F1A\u628A
   // \u89C6\u9525\u5916\u7684 z \u88C1\u526A\u6389\uFF0C\u800C wasm billboard \u65E9\u5DF2\u628A\u6295\u5F71\u77E9\u9635 z \u884C\u5168 0\uFF08clip.z=0\uFF0C\u89C1 particle_billboard.wgsl\uFF09
@@ -23704,7 +23769,7 @@ var ThreeScenePlayer = class {
     if (map && map.isCanvasTexture) map.dispose();
   }
   // Task 3：粒子图层。`simVerticesGetter` 每帧返回模拟器当前顶点（摊平 Float32Array，
-  // 每粒子 `[pos3, size, uv2, color3, alpha, rot3]` 13 浮点——来自 wasm `SceneParticleSim::build_instance_vertices`）。
+  // 每粒子 `[pos3, size, uv2, color3, alpha, rot3, vel3]` 16 浮点——来自 wasm `SceneParticleSim::build_instance_vertices`）。
   // 渲染用 three.js `ShaderMaterial` billboard quad（每粒子一个实例，shader 由基础角点+位置/尺寸展开），
   // 模拟逻辑仍由 `SceneParticleSim` 承担（思路 1 核心：不重写模拟，只换渲染引擎）。
   // 返回分配的图层 id，供更新/释放引用。
@@ -23727,12 +23792,14 @@ var ThreeScenePlayer = class {
     const colors = new InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
     const alphas = new InstancedBufferAttribute(new Float32Array(capacity), 1);
     const rots = new InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
+    const velocities = new InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
     geometry.setAttribute("particlePosition", positions);
     geometry.setAttribute("particleSize", sizes);
     geometry.setAttribute("particleUv", uvs);
     geometry.setAttribute("particleColor", colors);
     geometry.setAttribute("particleAlpha", alphas);
     geometry.setAttribute("particleRot", rots);
+    geometry.setAttribute("particleVelocity", velocities);
     const material = new ShaderMaterial({
       uniforms: {
         map: { value: opts.tex ?? createWhiteTexture() },
@@ -23746,7 +23813,17 @@ var ThreeScenePlayer = class {
         objScale: { value: new Vector3(...opts.objectScale ?? [1, 1, 1]) },
         objAngles: { value: new Vector3(...opts.objectAngles ?? [0, 0, 0]) },
         emitterOrigin: { value: new Vector3(...opts.emitterOrigin ?? [0, 0, 0]) },
-        bmOffset: { value: new Vector3(...simEmitterOffset(opts.emitterOrigin ?? [0, 0, 0])) }
+        bmOffset: { value: new Vector3(...simEmitterOffset(opts.emitterOrigin ?? [0, 0, 0])) },
+        // spritetrail（缺省关闭 → 顶点 shader 走原旋转分支，既有壁纸逐像素不变）。
+        trailEnabled: { value: opts.trail ? 1 : 0 },
+        trailParams: {
+          value: new Vector3(
+            opts.trail?.length ?? 1,
+            opts.trail?.maxLength ?? 1,
+            opts.trail?.minLength ?? 0
+          )
+        },
+        texelRatio: { value: textureTexelRatio(opts.tex) }
       },
       vertexShader: PARTICLE_VERTEX_SHADER,
       fragmentShader: PARTICLE_FRAGMENT_SHADER,
@@ -23780,6 +23857,7 @@ var ThreeScenePlayer = class {
       colors,
       alphas,
       rots,
+      velocities,
       capacity,
       loggedFirstFrame: false,
       loggedCount: 0
@@ -23844,13 +23922,15 @@ var ThreeScenePlayer = class {
     layer.colors = ensure(layer.colors, 3, count * 3, "particleColor");
     layer.alphas = ensure(layer.alphas, 1, count, "particleAlpha");
     layer.rots = ensure(layer.rots, 3, count * 3, "particleRot");
+    layer.velocities = ensure(layer.velocities, 3, count * 3, "particleVelocity");
     const minCapacity = Math.min(
       Math.floor(layer.positions.array.length / 3),
       layer.sizes.array.length,
       Math.floor(layer.uvs.array.length / 2),
       Math.floor(layer.colors.array.length / 3),
       layer.alphas.array.length,
-      Math.floor(layer.rots.array.length / 3)
+      Math.floor(layer.rots.array.length / 3),
+      Math.floor(layer.velocities.array.length / 3)
     );
     if (minCapacity > layer.capacity) {
       layer.capacity = minCapacity;
@@ -23862,6 +23942,7 @@ var ThreeScenePlayer = class {
     const color = layer.colors.array;
     const alpha = layer.alphas.array;
     const rot = layer.rots.array;
+    const vel = layer.velocities.array;
     for (let i = 0; i < count; i++) {
       const b = i * PARTICLE_FLOATS_PER_INSTANCE;
       pos[i * 3] = data[b];
@@ -23877,6 +23958,9 @@ var ThreeScenePlayer = class {
       rot[i * 3] = data[b + 10];
       rot[i * 3 + 1] = data[b + 11];
       rot[i * 3 + 2] = data[b + 12];
+      vel[i * 3] = data[b + 13];
+      vel[i * 3 + 1] = data[b + 14];
+      vel[i * 3 + 2] = data[b + 15];
     }
     layer.positions.needsUpdate = true;
     layer.sizes.needsUpdate = true;
@@ -23884,6 +23968,7 @@ var ThreeScenePlayer = class {
     layer.colors.needsUpdate = true;
     layer.alphas.needsUpdate = true;
     layer.rots.needsUpdate = true;
+    layer.velocities.needsUpdate = true;
     layer.geometry.instanceCount = count;
   }
   // 停止循环并释放 renderer 资源。
@@ -24033,6 +24118,7 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
       const grid = textureFrameGrid(p.tex);
       sim.set_frame_count(frameCount);
       const emitterOrigin = specEmitterOrigin(p.specJson);
+      const trailSpec = specRenderer(p.specJson);
       const id = player.addParticle(() => sim.vertices(), {
         tex: p.tex,
         frameCount: sim.frame_count(),
@@ -24049,6 +24135,9 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
         // three 只在首帧锁存该容量（见 addParticle），必须按模拟器**最终**会产出的粒子数一次给足；
         // 缺 maxcount（旧格式/解析失败）→ addParticle 用 DEFAULT_PARTICLE_CAPACITY 兜底。
         maxInstances: specMaxcount(p.specJson),
+        // 拖尾渲染（spec.renderer[0] == "spritetrail"）：雨丝/风痕靠沿速度方向拉伸 billboard
+        // 呈现（WE ComputeParticleTrailTangents）；非 spritetrail → 不传（sprite 外观零变化）。
+        trail: trailSpec.kind === "spritetrail" ? trailSpec : void 0,
         // 脚本图层桥的键 = scene 对象 id（总是传）。
         objectId: obj.id,
         // 对象级效果链：带效果的粒子对象同样隔离（对象 RT + 合成 quad）。世界尺寸由调用方按

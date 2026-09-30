@@ -265,6 +265,10 @@ pub struct ParticleSpec {    pub emitter: EmitterSpec,
 }
 
 /// 粒子渲染器类型（官方 renderer[]）。当前只消费 sprite / spritetrail。
+///
+/// `SpriteTrail` 缺省值对齐 WE / lwe / OWE（lwe `ObjectParser.cpp:770-776`、
+/// OWE `ParticleObject.cppm:40-48`）：length 0.05、maxlength 10.0、minlength 0.0。
+/// length 是时间量纲的拉伸系数（`|v| × length` 再 clamp 到 [minlength, maxlength]）。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Renderer {
     Sprite,
@@ -414,15 +418,16 @@ pub fn parse_particle_spec(json: &str) -> ParticleSpec {
         }).collect();
 
     // renderer[]：第一个有效项决定类型。sprite 无参数；spritetrail 取
-    // length/maxlength/minlength；rope/ropetrail 当前交由 sprite 兜底（不白屏）。
+    // length/maxlength/minlength（缺省值对齐 WE/lwe/OWE：0.05 / 10 / 0，见 `Renderer::SpriteTrail`
+    // 的缺省值注释）；rope/ropetrail 当前交由 sprite 兜底（不白屏）。
     let renderer = raw.get("renderer").and_then(|r| r.as_array()).and_then(|a| a.first())
         .map(|r| {
             let name = obj_name(r);
             let g = |k: &str, d: f32| r.get(k).map(|v| scalar(v, d)).unwrap_or(d);
             match name {
                 "spritetrail" => Renderer::SpriteTrail {
-                    length: g("length", 1.0),
-                    max_length: g("maxlength", 1.0),
+                    length: g("length", 0.05),
+                    max_length: g("maxlength", 10.0),
                     min_length: g("minlength", 0.0),
                 },
                 "rope" => Renderer::Rope,
@@ -630,6 +635,23 @@ mod tests {
                 assert!((length - 0.01).abs() < 1e-6);
                 assert!((max_length - 2.0).abs() < 1e-6);
                 assert!((min_length - 0.5).abs() < 1e-6);
+            }
+            _ => panic!("应为 spritetrail"),
+        }
+    }
+
+    /// renderer 缺省值必须与 WE / lwe / OWE 一致：length 0.05、maxlength 10、minlength 0
+    /// （lwe `ObjectParser.cpp:770-776`、OWE `ParticleObject.cppm:40-48`）。
+    /// 曾用 1.0/1.0 → 缺 `maxlength` 的预设（sparktrails 等）拖尾被截到 1.0，几乎看不见。
+    #[test]
+    fn renderer_spritetrail_defaults_match_we() {
+        let json = r#"{"emitter":[{"rate":1}],"renderer":[{"name":"spritetrail"}]}"#;
+        let spec = parse_particle_spec(json);
+        match spec.renderer {
+            Renderer::SpriteTrail { length, max_length, min_length } => {
+                assert!((length - 0.05).abs() < 1e-6, "length 缺省应为 0.05，实际 {length}");
+                assert!((max_length - 10.0).abs() < 1e-6, "maxlength 缺省应为 10，实际 {max_length}");
+                assert!((min_length - 0.0).abs() < 1e-6, "minlength 缺省应为 0，实际 {min_length}");
             }
             _ => panic!("应为 spritetrail"),
         }

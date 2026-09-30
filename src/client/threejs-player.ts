@@ -49,7 +49,7 @@ type BackgroundEntry = {
 type ParticleLayer = {
   id: number;
   // 每粒子数据来自 wasm `SceneParticleSim::build_instance_vertices`（摊平 Float32Array，
-  // 每粒子 `[pos3,size,uv2,color3,alpha,rot3]` 13 浮点）。getter 每帧刷新时返回当前顶点。
+  // 每粒子 `[pos3,size,uv2,color3,alpha,rot3,vel3]` 16 浮点）。getter 每帧刷新时返回当前顶点。
   getter: () => Float32Array;
   frameCount: number;
   geometry: THREE.InstancedBufferGeometry;
@@ -65,6 +65,8 @@ type ParticleLayer = {
   alphas: THREE.InstancedBufferAttribute;
   // 粒子欧拉角（弧度，逐粒子三分量；F4 起进入顶点流）
   rots: THREE.InstancedBufferAttribute;
+  // 粒子速度（世界单位/秒，逐粒子三分量；spritetrail 用它算拖尾拉伸方向）
+  velocities: THREE.InstancedBufferAttribute;
   // 实例缓冲**容量**（= 每个 instanced attribute 的 count，即一次能画的最大粒子数）。
   // 关键：three 只在**首次渲染**时把该容量锁存进 `geometry._maxInstanceCount`（见 addParticle
   // 注释），故容量必须一次给足（sim 的 maxcount），运行期只改 `geometry.instanceCount`（0..capacity）。
@@ -85,10 +87,10 @@ export const DEFAULT_PARTICLE_CAPACITY = 1024;
 export const MAX_PARTICLE_CAPACITY = 2048;
 
 // 每粒子摊平顶点浮点数 = Rust `SceneParticleSim::build_instance_vertices` 的布局长度
-// （`[pos3, size, uv2, color3, alpha, rot3]`）。⚠️ 与 wasm 侧是**同一份契约**：
-// 改布局必须两侧同时改（Rust 有 `build_instance_vertices_flat_per_particle` 钉住 13）。
+// （`[pos3, size, uv2, color3, alpha, rot3, vel3]`）。⚠️ 与 wasm 侧是**同一份契约**：
+// 改布局必须两侧同时改（Rust 有 `build_instance_vertices_flat_per_particle` 钉住 16）。
 // 用途：由扁平数组长度反推粒子数、以及拆属性时的步长 —— 用常量而非字面量，防漏改。
-export const PARTICLE_FLOATS_PER_INSTANCE = 13;
+export const PARTICLE_FLOATS_PER_INSTANCE = 16;
 
 // 从粒子 spec JSON 读 `maxcount`（= wasm `SceneParticleSim.maxcount`，同一份 JSON 的同一字段；
 // WE 的 JSON 里也可能是字符串 "50"）。缺省/非法/非正 → 0（调用方落到 DEFAULT_PARTICLE_CAPACITY）。
@@ -100,6 +102,55 @@ export function specMaxcount(specJson: string): number {
   } catch {
     return 0;
   }
+}
+
+// 粒子渲染器（spec 顶层 `renderer[0]`）—— 与 wasm `parse_particle_spec` 同一套缺省值
+// （WE/lwe/OWE 口径：length 0.05、maxlength 10、minlength 0）：
+// sprite 无参数；rope/ropetrail 与 wasm 侧一致地按 sprite 兜底（本插件尚无 rope 渲染）。
+export interface ParticleRendererSpec {
+  kind: 'sprite' | 'spritetrail';
+  length: number;
+  maxLength: number;
+  minLength: number;
+}
+
+// 解析 spec JSON 的 `renderer[0]`。非法/缺失 → sprite（不启用拖尾，行为与旧版一致）。
+export function specRenderer(specJson: string): ParticleRendererSpec {
+  const sprite: ParticleRendererSpec = { kind: 'sprite', length: 0.05, maxLength: 10, minLength: 0 };
+  try {
+    const raw = (JSON.parse(specJson) as { renderer?: unknown }).renderer;
+    const first = Array.isArray(raw) ? (raw[0] as { name?: unknown } | undefined) : undefined;
+    if (!first || typeof first.name !== 'string' || first.name !== 'spritetrail') return sprite;
+    const num = (v: unknown, dflt: number): number => {
+      const n = typeof v === 'string' ? parseFloat(v) : typeof v === 'number' ? v : NaN;
+      return Number.isFinite(n) ? n : dflt;
+    };
+    const r = first as { length?: unknown; maxlength?: unknown; minlength?: unknown };
+    return {
+      kind: 'spritetrail',
+      length: num(r.length, 0.05),
+      maxLength: num(r.maxlength, 10),
+      minLength: num(r.minlength, 0),
+    };
+  } catch {
+    return sprite;
+  }
+}
+
+// 粒子纹理的「高/宽」比（WE `g_Texture0Resolution.y / g_Texture0Resolution.x`）：
+// 精灵表按**单帧**尺寸算（WE 的 SPRITESHEET 分支用 g_RenderVar1.w = 单帧宽高比）。
+// 缺省 1（无纹理 / 尺寸未知）⇒ 与旧行为一致。
+export function textureTexelRatio(tex?: THREE.Texture): number {
+  const grid = textureSpriteInfo(tex);
+  const img = (Array.isArray(tex?.image) ? tex?.image[0] : tex?.image) as
+    | { width?: unknown; height?: unknown }
+    | undefined;
+  if (!img || typeof img.width !== 'number' || typeof img.height !== 'number' || img.width <= 0 || img.height <= 0) {
+    return 1;
+  }
+  const frameW = grid ? img.width / grid.cols : img.width;
+  const frameH = grid ? img.height / grid.rows : img.height;
+  return frameH / frameW;
 }
 
 // 从粒子 spec JSON 读 **emitter 的局部原点**（`emitter[0].origin`，WE 字符串 "x y z"）。
@@ -169,6 +220,8 @@ attribute float particleAlpha;
 // 粒子欧拉角（弧度，**逐分量**）：由模拟器的 rotationrandom 初始化、
 // angularmovement 每帧逐分量推进（p.rot[k] += angular_vel[k]*dt）。
 attribute vec3 particleRot;
+// 粒子当前速度（世界单位/秒，来自 wasm 顶点流末 3 浮点）。仅 spritetrail 渲染器消费。
+attribute vec3 particleVelocity;
 // 对象变换（WE 的粒子 model matrix 语义，见 loadSceneToThree 注释）：
 //   objCenter     对象中心（世界坐标，we_to_three 后）
 //   objScale      scene.json 的对象 scale（逐轴，可为负 = 镜像）
@@ -178,6 +231,13 @@ uniform vec3 objCenter;
 uniform vec3 objScale;
 uniform vec3 emitterOrigin;
 uniform vec3 bmOffset;
+// spritetrail（WE genericparticle.vert + TRAILRENDERER combo，2026-09-26）：
+//   trailEnabled  1 = 按速度方向拉伸 billboard（renderer[0].name == "spritetrail"），0 = 原旋转 billboard
+//   trailParams   (length, maxlength, minlength) —— 即 WE 的 g_RenderVar0.xyz
+//   texelRatio    纹理 高/宽（WE g_Texture0Resolution.y/.x）；沿拖尾方向按它补偿纹理长宽比
+uniform float trailEnabled;
+uniform vec3 trailParams;
+uniform float texelRatio;
 // 对象欧拉角（**弧度**）—— WE model matrix = T·R·S 的 R 部分。
 uniform vec3 objAngles;
 varying vec2 vCornerUv;
@@ -212,9 +272,34 @@ void main() {
   // 自旋先于对象旋转：按 WE ComputeParticleTangents（shaders/common_particles.h）的**三轴欧拉**
   // 旋转 quad 角点 —— 复用 weObjectRotate（R = Rz·Ry·Rx，与对象角度同一约定）。
   // rot 只有 z 分量时退化为平面自旋，与原实现逐像素一致。
-  vec3 spun = weObjectRotate(vec3(position.xy, 0.0), particleRot);
-  vec3 corner = weObjectRotate(abs(objScale) * (spun * particleSize * 0.5), objAngles);
-  worldPos += corner;
+  if (trailEnabled > 0.5 && length(particleVelocity) > 1e-6) {
+    // spritetrail：复刻 WE ComputeParticleTrailTangents / ComputeParticlePosition
+    // （common_particles.h:42-59）——
+    //   right = normalize(cross(eyeDirection, velocity))
+    //   up    = normalize(velocity) * clamp(|velocity| * length, minlength, maxlength)
+    //   pos   = p + size*right*(u-0.5) + size*up*(v-0.5)*textureRatio
+    // 雨丝/风痕的「长条」由此而来（Spider Man 4K 的雨：size 5.65 × clamp(3000×0.005)=15 × 4 ≈ 339
+    // 世界单位 ≈ 113px），此前只画 size×size 的方点（1.9px）→ 肉眼不可见。
+    // ⚠️ 符号：WE 原文是 minus size*up*(v-0.5)*ratio，其 v=0 是**纹理顶行**；本插件的纹理经
+    // tex-loader 行反转（v=1 = 图像顶行，与 sprite 路径「corner +Y ↔ 图像顶行」自洽），故这里取
+    // 正号，让图像上端（雨滴亮头）落在 +速度方向 —— 与桌面端一致，否则拖尾头尾颠倒。
+    // 正交相机下视线方向是常数（viewMatrix 的相机 +Z 取反 = 世界空间视线方向），等价于 WE 的
+    // localPosition - eyePosition 方向（|v|=0 的退化已在外层排除，避免 WE 的 normalize(0) NaN）。
+    vec3 eyeDir = -normalize((viewMatrix * vec4(0.0, 0.0, 1.0, 0.0)).xyz);
+    float speed = length(particleVelocity);
+    vec3 right = normalize(cross(eyeDir, particleVelocity));
+    float trailLen = clamp(speed * trailParams.x, trailParams.z, trailParams.y);
+    vec3 up = (particleVelocity / speed) * trailLen;
+    vec2 quadUv = position.xy * 0.5 + 0.5;
+    vec3 offset = particleSize * (right * (quadUv.x - 0.5) + up * (quadUv.y - 0.5) * texelRatio);
+    worldPos += weObjectRotate(abs(objScale) * offset, objAngles);
+  } else {
+    // sprite（既有路径，逐字不变）：三轴欧拉旋转 quad 角点；|v|=0 的 spritetrail 也退到这里
+    // （WE 的 normalize(0) 会产出 NaN、粒子消失，本插件选择画出 size 方块而不是丢粒子）。
+    vec3 spun = weObjectRotate(vec3(position.xy, 0.0), particleRot);
+    vec3 corner = weObjectRotate(abs(objScale) * (spun * particleSize * 0.5), objAngles);
+    worldPos += corner;
+  }
   gl_Position = projectionMatrix * modelViewMatrix * vec4(worldPos, 1.0);
   // ⚠️ 修正：粒子是 2D billboard（无深度排序，z 不参与可见性）。three 正交相机 far/near 会把
   // 视锥外的 z 裁剪掉，而 wasm billboard 早已把投影矩阵 z 行全 0（clip.z=0，见 particle_billboard.wgsl）
@@ -1076,7 +1161,7 @@ export class ThreeScenePlayer {
   }
 
   // Task 3：粒子图层。`simVerticesGetter` 每帧返回模拟器当前顶点（摊平 Float32Array，
-  // 每粒子 `[pos3, size, uv2, color3, alpha, rot3]` 13 浮点——来自 wasm `SceneParticleSim::build_instance_vertices`）。
+  // 每粒子 `[pos3, size, uv2, color3, alpha, rot3, vel3]` 16 浮点——来自 wasm `SceneParticleSim::build_instance_vertices`）。
   // 渲染用 three.js `ShaderMaterial` billboard quad（每粒子一个实例，shader 由基础角点+位置/尺寸展开），
   // 模拟逻辑仍由 `SceneParticleSim` 承担（思路 1 核心：不重写模拟，只换渲染引擎）。
   // 返回分配的图层 id，供更新/释放引用。
@@ -1103,6 +1188,9 @@ export class ThreeScenePlayer {
       // 实例缓冲容量上界（= sim 的 maxcount / spec 的 maxcount；见 ParticleLayer.capacity 注释）。
       // 缺省 DEFAULT_PARTICLE_CAPACITY。
       maxInstances?: number;
+      // 拖尾渲染条件（spec.renderer[0] == "spritetrail" 时由 `specRenderer()` 给出；缺省不启用）。
+      // 三参数语义见 WE `common_particles.h` ComputeParticleTrailTangents → trailParams uniform。
+      trail?: { length: number; maxLength: number; minLength: number };
       // scene.json 的**对象 id**（脚本图层桥的键，语义同 addBackground.objectId）：**总是传**，
       // 与只在隔离时传的 isolate.objectId 区分。
       objectId?: number;
@@ -1174,12 +1262,14 @@ export class ThreeScenePlayer {
     const colors = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
     const alphas = new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1);
     const rots = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
+    const velocities = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
     geometry.setAttribute('particlePosition', positions);
     geometry.setAttribute('particleSize', sizes);
     geometry.setAttribute('particleUv', uvs);
     geometry.setAttribute('particleColor', colors);
     geometry.setAttribute('particleAlpha', alphas);
     geometry.setAttribute('particleRot', rots);
+    geometry.setAttribute('particleVelocity', velocities);
 
     // ShaderMaterial：billboard quad（pos + corner*half_size，mvp 用相机投影/视图）、
     // fragment 多帧 uv 切片（frame_count）、additive/alpha blend、softness、color*texel.rgb、alpha=texel.a*particle.alpha。
@@ -1198,6 +1288,16 @@ export class ThreeScenePlayer {
         objAngles: { value: new THREE.Vector3(...(opts.objectAngles ?? [0, 0, 0])) },
         emitterOrigin: { value: new THREE.Vector3(...(opts.emitterOrigin ?? [0, 0, 0])) },
         bmOffset: { value: new THREE.Vector3(...simEmitterOffset(opts.emitterOrigin ?? [0, 0, 0])) },
+        // spritetrail（缺省关闭 → 顶点 shader 走原旋转分支，既有壁纸逐像素不变）。
+        trailEnabled: { value: opts.trail ? 1.0 : 0.0 },
+        trailParams: {
+          value: new THREE.Vector3(
+            opts.trail?.length ?? 1,
+            opts.trail?.maxLength ?? 1,
+            opts.trail?.minLength ?? 0,
+          ),
+        },
+        texelRatio: { value: textureTexelRatio(opts.tex) },
       },
       vertexShader: PARTICLE_VERTEX_SHADER,
       fragmentShader: PARTICLE_FRAGMENT_SHADER,
@@ -1251,6 +1351,7 @@ export class ThreeScenePlayer {
       colors,
       alphas,
       rots,
+      velocities,
       capacity,
       loggedFirstFrame: false,
       loggedCount: 0,
@@ -1328,8 +1429,9 @@ export class ThreeScenePlayer {
     layer.colors = ensure(layer.colors, 3, count * 3, 'particleColor');
     layer.alphas = ensure(layer.alphas, 1, count, 'particleAlpha');
     layer.rots = ensure(layer.rots, 3, count * 3, 'particleRot');
+    layer.velocities = ensure(layer.velocities, 3, count * 3, 'particleVelocity');
 
-    // 实际容量 = 最小的「每实例元素数」换算回粒子数（6 个属性同步扩容，取最小以保守）。
+    // 实际容量 = 最小的「每实例元素数」换算回粒子数（7 个属性同步扩容，取最小以保守）。
     const minCapacity = Math.min(
       Math.floor((layer.positions.array as Float32Array).length / 3),
       (layer.sizes.array as Float32Array).length,
@@ -1337,6 +1439,7 @@ export class ThreeScenePlayer {
       Math.floor((layer.colors.array as Float32Array).length / 3),
       (layer.alphas.array as Float32Array).length,
       Math.floor((layer.rots.array as Float32Array).length / 3),
+      Math.floor((layer.velocities.array as Float32Array).length / 3),
     );
     if (minCapacity > layer.capacity) {
       // 超出预分配容量（spec 未声明 maxcount 或声明不准）→ 同步 three 锁存的实例容量。
@@ -1350,6 +1453,7 @@ export class ThreeScenePlayer {
     const color = layer.colors.array as Float32Array;
     const alpha = layer.alphas.array as Float32Array;
     const rot = layer.rots.array as Float32Array;
+    const vel = layer.velocities.array as Float32Array;
     for (let i = 0; i < count; i++) {
       const b = i * PARTICLE_FLOATS_PER_INSTANCE;
       pos[i * 3] = data[b];
@@ -1365,6 +1469,9 @@ export class ThreeScenePlayer {
       rot[i * 3] = data[b + 10];
       rot[i * 3 + 1] = data[b + 11];
       rot[i * 3 + 2] = data[b + 12];
+      vel[i * 3] = data[b + 13];
+      vel[i * 3 + 1] = data[b + 14];
+      vel[i * 3 + 2] = data[b + 15];
     }
     layer.positions.needsUpdate = true;
     layer.sizes.needsUpdate = true;
@@ -1372,6 +1479,7 @@ export class ThreeScenePlayer {
     layer.colors.needsUpdate = true;
     layer.alphas.needsUpdate = true;
     layer.rots.needsUpdate = true;
+    layer.velocities.needsUpdate = true;
     layer.geometry.instanceCount = count;
   }
 
@@ -1702,6 +1810,7 @@ export function loadSceneToThree(
       // 再按**本对象**的真实 scale 重建（DK 的 Ice/Torch 等层 scale 与黑神话差异极大，
       // 不做这一步会把它们画成全屏辉光斑，见 PARTICLE_VERTEX_SHADER 注释）。
       const emitterOrigin = specEmitterOrigin(p.specJson);
+      const trailSpec = specRenderer(p.specJson);
       const id = player.addParticle(() => sim.vertices(), {
         tex: p.tex,
         frameCount: sim.frame_count(),
@@ -1718,6 +1827,9 @@ export function loadSceneToThree(
         // three 只在首帧锁存该容量（见 addParticle），必须按模拟器**最终**会产出的粒子数一次给足；
         // 缺 maxcount（旧格式/解析失败）→ addParticle 用 DEFAULT_PARTICLE_CAPACITY 兜底。
         maxInstances: specMaxcount(p.specJson),
+        // 拖尾渲染（spec.renderer[0] == "spritetrail"）：雨丝/风痕靠沿速度方向拉伸 billboard
+        // 呈现（WE ComputeParticleTrailTangents）；非 spritetrail → 不传（sprite 外观零变化）。
+        trail: trailSpec.kind === 'spritetrail' ? trailSpec : undefined,
         // 脚本图层桥的键 = scene 对象 id（总是传）。
         objectId: obj.id,
         // 对象级效果链：带效果的粒子对象同样隔离（对象 RT + 合成 quad）。世界尺寸由调用方按
