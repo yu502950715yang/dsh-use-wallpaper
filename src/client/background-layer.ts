@@ -1,5 +1,6 @@
 import type { WallpaperInfo } from '../shared/types.js';
 import type { BackgroundPlan } from './types.js';
+import { outlineShadow } from './text-color.js';
 
 export function resolveBackground(info: WallpaperInfo): BackgroundPlan {
   // scene 与 unknown（project.json 无 type 字段但含 scene.pkg）都按场景渲染
@@ -109,6 +110,8 @@ export interface BackgroundLayer {
   setOverlayOpacity(v: number): void;
   setBlur(enabled: boolean, radius: number): void;
   setChatFg(color: string): void;
+  /** 文字描边（对立色阴影）：level 0 或空颜色 = 移除变量（无描边，既有观感）。 */
+  setChatOutline(color: string, level: number): void;
   /** 省电：暂停/恢复视频壁纸播放（scene 由渲染器负责；web 壁纸在 iframe 里无法受控）。 */
   setPaused(paused: boolean): void;
 }
@@ -334,6 +337,14 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
     setChatFg(color) {
       if (!color) document.documentElement.style.removeProperty('--wp-chat-fg');
       else document.documentElement.style.setProperty('--wp-chat-fg', color);
+    },
+    // 文字描边（2026-10-01）：与文字色同源——按文字色亮度取对立色阴影（亮字深边/暗字亮边），
+    // 写在 --wp-chat-outline，由 styles.ts 的贴壁纸文字消费者读取。0 档/空色 = 移除变量，
+    // 消费者 fallback 到 none ⇒ 默认观感与加此功能前一致（零回归）。
+    setChatOutline(color, level) {
+      const shadow = color ? outlineShadow(color, level) : null;
+      if (!shadow) document.documentElement.style.removeProperty('--wp-chat-outline');
+      else document.documentElement.style.setProperty('--wp-chat-outline', shadow);
     },
     // 省电：视频壁纸停/续播（web 壁纸在 iframe 内，插件无法控制）。
     setPaused(value) {

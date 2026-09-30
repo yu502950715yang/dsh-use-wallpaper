@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { ClientSettings } from './types.js';
 import type { WallpaperInfo, ProbeResult } from '../shared/types.js';
 import { readClientSettings, writeClientSettings } from './settings.js';
+import { TEXT_OUTLINE_MAX, normalizeHexColor, normalizeMode, normalizeOutlineLevel, outlineLabel } from './text-color.js';
 
 export interface WallpaperSettingsSectionProps {
   /** 读取当前设置（默认 RPC settings.describe） */
@@ -273,6 +274,57 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
                 onChange={(e) => applyRuntime({ soundEnabled: e.target.checked })}
               />
               壁纸音效
+            </label>
+          </div>
+        </section>
+      )}
+      {/* 文字可读性（2026-10-01，用户报告「某些壁纸文字看不清」）：贴壁纸的文字可手动指定颜色
+          （自动跟随壁纸亮度 / 白 / 黑 / 自定义），并可选描边（对立色阴影，背景花哨时最有效）。
+          改动经 applyRuntime → onRuntimeSettings 立即下发（index.ts 转 controller.applyTextStyle），
+          不必重选壁纸；被描边作用的只有贴壁纸的透明文字，实底气泡/卡片不受影响。 */}
+      {settings && (
+        <section className="wss-section">
+          <h4 className="wss-section-title">文字可读性</h4>
+          <p className="wss-section-desc">贴壁纸的文字（消息正文、标题、链接、聊天栏）看不清时，可固定文字颜色；背景花哨时开一点描边最有效。</p>
+          <div className="wss-textcolor">
+            <label className="wss-row">
+              <span>文字颜色</span>
+              <select
+                className="wss-textcolor-mode"
+                value={normalizeMode(settings.textColorMode)}
+                onChange={(e) => applyRuntime({ textColorMode: e.target.value })}
+              >
+                <option value="auto">自动（跟随壁纸亮度）</option>
+                <option value="white">白色</option>
+                <option value="black">黑色</option>
+                <option value="custom">自定义…</option>
+              </select>
+            </label>
+            {normalizeMode(settings.textColorMode) === 'custom' && (
+              <label className="wss-row">
+                <span>自定义颜色</span>
+                <input
+                  type="color"
+                  className="wss-textcolor-custom"
+                  value={normalizeHexColor(settings.textColor)}
+                  onChange={(e) => applyRuntime({ textColor: e.target.value })}
+                />
+              </label>
+            )}
+            <label className="wss-slider">
+              <span className="wss-slider-head">
+                <span>文字描边</span>
+                <span className="wss-value">{outlineLabel(settings.textOutline)}</span>
+              </span>
+              <input
+                type="range"
+                className="wss-textcolor-outline"
+                min={0}
+                max={TEXT_OUTLINE_MAX}
+                step={1}
+                value={normalizeOutlineLevel(settings.textOutline)}
+                onChange={(e) => applyRuntime({ textOutline: Number(e.target.value) })}
+              />
             </label>
           </div>
         </section>

@@ -20,6 +20,8 @@ export const DEFAULTS: ClientSettings = {
   paused: false, pauseOnHidden: true, qualityScale: 1,
   // 壁纸音效（sound 对象 + 频谱驱动效果）：默认开启，与桌面 WE 一致；面板可关。
   soundEnabled: true,
+  // 文字可读性（2026-10-01）：默认 auto + 无描边 = 与加此功能前的老用户观感一致（零回归）。
+  textColorMode: 'auto', textColor: '#ffffff', textOutline: 0,
 };
 
 /** client cordis ctx（经 setSettingsCtx 注入，供 remote.settings 访问）。 */

@@ -15,6 +15,7 @@ const BASE_SETTINGS: ClientSettings = {
   overlayOpacity: 0.35, blurEnabled: false, blurRadius: 12, kenBurns: true,
   glowEnabled: true, glowThreshold: 0.65, glowStrength: 0.35,
   paused: false, pauseOnHidden: true, qualityScale: 1, soundEnabled: true,
+  textColorMode: 'auto', textColor: '#ffffff', textOutline: 0,
 };
 
 const WALLPAPERS = [
@@ -294,9 +295,11 @@ describe('WallpaperSettingsSection', () => {
     mount();
     await flush();
     let vals = container.querySelectorAll('.wss-value');
-    expect(vals.length).toBe(2);
+    // 2026-10-01：新增「文字描边」滑杆 → badge 变为 3 个（阈值 / 强度 / 描边档位）
+    expect(vals.length).toBe(3);
     expect(vals[0]!.textContent).toBe('0.65');
     expect(vals[1]!.textContent).toBe('0.35');
+    expect(vals[2]!.textContent).toBe('关');
 
     const th = container.querySelector('.wss-glow-threshold') as HTMLInputElement;
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
@@ -305,5 +308,50 @@ describe('WallpaperSettingsSection', () => {
     await flush();
     vals = container.querySelectorAll('.wss-value');
     expect(vals[0]!.textContent).toBe('0.50');
+  });
+
+  // 文字可读性（2026-10-01，用户报告「某些壁纸文字看不清」）：设置面板手动指定文字颜色
+  // （自动/白/黑/自定义）与描边档位。改动经 onRuntimeSettings 立即下发（index.ts 转给
+  // controller.applyTextStyle），同时持久化——不必重选壁纸。
+  it('文字可读性：默认自动档 + 描边关；切模式与拖描边立即下发并持久化', async () => {
+    const onRuntimeSettings = vi.fn();
+    const writeSettings = vi.fn(async () => {});
+    mount({ onRuntimeSettings, writeSettings });
+    await flush();
+    const mode = container.querySelector('.wss-textcolor-mode') as HTMLSelectElement;
+    expect(mode.value).toBe('auto');
+    expect((container.querySelector('.wss-textcolor-outline') as HTMLInputElement).value).toBe('0');
+
+    mode.value = 'white';
+    mode.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(onRuntimeSettings).toHaveBeenCalledWith({ textColorMode: 'white' });
+    expect(writeSettings).toHaveBeenCalledWith({ textColorMode: 'white' });
+
+    const outline = container.querySelector('.wss-textcolor-outline') as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    setter.call(outline, '2');
+    outline.dispatchEvent(new Event('input', { bubbles: true }));
+    await flush();
+    expect(onRuntimeSettings).toHaveBeenCalledWith({ textOutline: 2 });
+    expect(container.querySelectorAll('.wss-value')[2]!.textContent).toBe('中');
+  });
+
+  it('文字可读性：仅「自定义」档渲染取色器，改色立即下发', async () => {
+    const onRuntimeSettings = vi.fn();
+    mount({ onRuntimeSettings, fetchSettings: async () => ({ ...BASE_SETTINGS, textColorMode: 'custom', textColor: '#123456' }) });
+    await flush();
+    const color = container.querySelector('.wss-textcolor-custom') as HTMLInputElement;
+    expect(color).toBeTruthy();
+    expect(color.value).toBe('#123456');
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    setter.call(color, '#00ff00');
+    color.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(onRuntimeSettings).toHaveBeenCalledWith({ textColor: '#00ff00' });
+  });
+
+  it('文字可读性：非自定义档不渲染取色器', async () => {
+    mount();
+    await flush();
+    expect(container.querySelector('.wss-textcolor-custom')).toBeNull();
   });
 });

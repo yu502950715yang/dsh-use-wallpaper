@@ -41,6 +41,8 @@ export interface BackgroundLayer {
     setOverlayOpacity(v: number): void;
     setBlur(enabled: boolean, radius: number): void;
     setChatFg(color: string): void;
+    /** 文字描边（对立色阴影）：level 0 或空颜色 = 移除变量（无描边，既有观感）。 */
+    setChatOutline(color: string, level: number): void;
     /** 省电：暂停/恢复视频壁纸播放（scene 由渲染器负责；web 壁纸在 iframe 里无法受控）。 */
     setPaused(paused: boolean): void;
 }

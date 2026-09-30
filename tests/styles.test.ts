@@ -77,7 +77,10 @@ describe('styles 主题适配', () => {
     // 2026-09-18：断言收窄到消息区（原为全局 not.toMatch(/text-shadow:/)）。
     // 原意未变——消息区的对比靠 scrim + 文字颜色，不用 text-shadow；插件管理页
     // 页头/分组标题的阴影是另一页面的处理，见文件末尾用例。
-    expect(WALLPAPER_CSS).not.toMatch(/\[class\*="flowItem"\][^{]*\{[^}]*text-shadow/);
+    // 2026-10-01 收窄：消息区的文字描边改为「用户可选」（--wp-chat-outline，0 档 = none，
+    // 默认仍是既有观感）。故不再禁止出现 text-shadow，但**不得硬编码**阴影值——
+    // 消息区只允许「消费该变量」或「显式复位 none」（实底区域挡继承）。
+    expect(WALLPAPER_CSS).not.toMatch(/\[class\*="flowItem"\][^{]*\{[^}]*text-shadow:(?!var\(--wp-chat-outline|none)/);
     expect(WALLPAPER_CSS).not.toMatch(/\[data-composer-card\][^{]*\{[^}]*text-shadow/);
     expect(WALLPAPER_CSS).not.toMatch(/\[data-question-key\][^{]*\{[^}]*text-shadow/);
   });
@@ -228,5 +231,38 @@ describe('styles 主题适配', () => {
     const dark = /body\[data-ds-dark-theme\]\[data-we-wallpaper\]\s*\{[^}]*--dsw-menu-surface-fill:rgba\(2\d,\s*2\d,\s*3\d,\s*\.9\d*\)!important/;
     expect(WALLPAPER_CSS).toMatch(light);
     expect(WALLPAPER_CSS).toMatch(dark);
+  });
+
+  // 文字可读性（2026-10-01，用户报告「某些壁纸文字看不清」）：设置面板可手动指定文字色并开描边。
+  // 描边值由 JS 按文字色亮度算好后写进 --wp-chat-outline；CSS 侧只负责消费它，
+  // fallback 到 none ⇒ 未开启（或 0 档）时观感与加此功能前一致。
+  it('贴壁纸文字消费 --wp-chat-outline（fallback none；默认无描边）', () => {
+    expect(WALLPAPER_CSS).toMatch(/text-shadow:var\(--wp-chat-outline,\s*none\)/);
+    // 消息列主要文本必须消费（否则用户开了描边在正文上不生效）
+    expect(WALLPAPER_CSS).toMatch(
+      /body\[data-we-wallpaper\]\s*\[class\*="flowItem"\]\s*p[\s\S]{0,1200}?text-shadow:var\(--wp-chat-outline/,
+    );
+    // 链接同样消费（深灰链接贴壁纸是最易看不清的一类）
+    expect(WALLPAPER_CSS).toMatch(/\[class\*="_file"\]\s*\{[^}]*text-shadow:var\(--wp-chat-outline/);
+  });
+  it('描边只作用于贴壁纸文字：实底区域（气泡/卡片/code）必须显式复位 text-shadow', () => {
+    const css = WALLPAPER_CSS.replace(/\/\*[\s\S]*?\*\//g, '');
+    // text-shadow 是**可继承**属性，且消息列的 `[class*="flowItem"] p/span/...` 规则同样命中
+    // 气泡与卡片内的同名元素 ⇒ 实底区域必须显式 `text-shadow:none` 把描边挡回去，
+    // 否则用户的描边会渗进实底文字（浅底黑边/深底白边都发脏）。
+    const bodies = (needle: string) =>
+      [...css.matchAll(/([^{}]+)\{([^}]*)\}/g)].filter(([, sel]) => sel.includes(needle)).map(([, , body]) => body);
+    for (const anchor of ['[class*="bubble"]', '[data-presented-file]', '[data-changed-files]', '[class*="flowItem"] code']) {
+      const hit = bodies(anchor);
+      expect(hit.length, anchor + ' 必须命中规则（防正则/选择器写错导致假通过）').toBeGreaterThan(0);
+      expect(hit.some((b) => /text-shadow:none/.test(b)), anchor + ' 需显式复位 text-shadow').toBe(true);
+    }
+    // 有自带底的其他区域同样不得消费描边变量
+    for (const anchor of ['[data-composer-card]', '[data-question-key]', '[data-plugin-panel]']) {
+      for (const body of bodies(anchor)) expect(body, anchor).not.toMatch(/--wp-chat-outline/);
+    }
+  });
+  it('面板文字可读性控件复用既有 wss-row / wss-slider，并给 color 输入最小样式', () => {
+    expect(WALLPAPER_CSS).toMatch(/\.wss-row input\[type=color\]\s*\{[^}]*width:\d+px/);
   });
 });

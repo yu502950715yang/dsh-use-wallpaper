@@ -2386,6 +2386,10 @@ body[data-ds-dark-theme][data-we-wallpaper] [data-question-key] section{
 .wss-value{font-variant-numeric:tabular-nums;font-weight:600;color:var(--dsw-alias-label-primary,var(--wp-text))}
 .wss-slider input[type=range]{width:100%;margin:0;accent-color:var(--wp-accent)}
 .wss-quality{border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;padding:4px 8px;font:inherit;font-size:12px}
+/* \u6587\u5B57\u53EF\u8BFB\u6027\uFF082026-10-01\uFF09\uFF1A\u989C\u8272\u9009\u62E9\u4E0E\u6863\u4F4D\u4E0B\u62C9\u590D\u7528 .wss-row\uFF1B\u539F\u751F color \u8F93\u5165\u8865\u6700\u5C0F\u6837\u5F0F
+   \uFF08\u9ED8\u8BA4\u5C3A\u5BF8\u5728\u5404\u5E73\u53F0\u4E0A\u4E0D\u4E00\u81F4\uFF0C\u4E14 DSH \u9762\u677F\u91CC\u6709\u81EA\u5DF1\u7684\u8FB9\u6846\u8BED\u8A00\uFF09\u3002 */
+.wss-row input[type=color]{width:44px;height:26px;order:2;flex:none;padding:0;border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));border-radius:6px;background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));cursor:pointer}
+.wss-textcolor{display:flex;flex-direction:column;gap:10px;margin-top:8px}
 /* \u6309\u94AE\uFF1A\u7EDF\u4E00\u57FA\u7840\u6837\u5F0F + hover / focus-visible */
 .wss-cancel,.wss-save-dirs,.wss-probe,.wss-adopt,.wss-refresh{border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;padding:6px 12px;font:inherit;font-size:12px;cursor:pointer;transition:filter .15s ease,background-color .15s ease}
 .wss-cancel:hover,.wss-save-dirs:hover,.wss-probe:hover,.wss-adopt:hover,.wss-refresh:hover{filter:brightness(1.08)}
@@ -2415,6 +2419,9 @@ body[data-ds-dark-theme][data-we-wallpaper] [data-question-key] section{
    \u26A0 code\uFF08\u884C\u5185\u4EE3\u7801\uFF09\u6709\u72EC\u7ACB\u4E0D\u900F\u660E\u80CC\u666F\uFF08\u6D45\u8272\u8FD1\u767D --dsw-alias-markdown-inline-code\uFF09\uFF0C
    \u5176\u6587\u5B57\u5FC5\u987B\u7528\u4E0E\u80CC\u666F\u5BF9\u6BD4\u7684 DSH \u4E3B\u9898\u8272\uFF08--dsw-alias-label-primary\uFF1A\u6D45=\u9ED1/\u6DF1=\u767D\uFF09\uFF0C
    \u4E0D\u80FD\u88AB --wp-chat-fg \u53CD\u8272\u2014\u2014\u5426\u5219\u6697\u58C1\u7EB8\u4E0B\u7236\u7EA7\u53D8\u767D\u5B57\uFF0Ccode \u7EE7\u627F\u6210\u767D\u5B57\u767D\u5E95\u3002
+   \uFF082026-10-01\uFF09\u8BE5\u53D8\u91CF\u4E5F\u53EF\u7531\u8BBE\u7F6E\u9762\u677F**\u624B\u52A8\u6307\u5B9A**\uFF08auto/\u767D/\u9ED1/\u81EA\u5B9A\u4E49\uFF09\uFF1B\u5E76\u65B0\u589E\u63CF\u8FB9\u53D8\u91CF
+   --wp-chat-outline\uFF08\u5BF9\u7ACB\u8272\u9634\u5F71\uFF0C\u6309\u5F53\u524D\u6587\u5B57\u8272\u7B97\uFF0C0 \u6863 = \u79FB\u9664\u53D8\u91CF = none\uFF09\u3002
+   \u26A0 \u63CF\u8FB9\u53EA\u52A0\u5728\u300C\u8D34\u58C1\u7EB8\u7684\u900F\u660E\u6587\u5B57\u300D\u4E0A\uFF1A\u5B9E\u5E95\u6C14\u6CE1/\u5361\u7247/code/\u8F93\u5165\u6846\u4E0D\u52A0\uFF08\u4F1A\u53D1\u810F\uFF09\u3002
    color \u662F\u53EF\u7EE7\u627F\u5C5E\u6027\uFF0C\u6545\u987B\u7ED9 code \u663E\u5F0F\u8986\u76D6\u7EE7\u627F\uFF08\u4E0D\u968F\u58C1\u7EB8\u4EAE\u5EA6\uFF0C\u53EA\u968F\u4E3B\u9898\uFF09\u3002 */
 body[data-we-wallpaper] [class*="flowItem"] p,
 body[data-we-wallpaper] [class*="flowItem"] span,
@@ -2427,6 +2434,7 @@ body[data-we-wallpaper] [class*="flowItem"] h3,
 body[data-we-wallpaper] [class*="flowItem"] blockquote,
 body[data-we-wallpaper] [class*="flowItem"] [class*="actions"]{
   color:var(--wp-chat-fg,var(--dsw-alias-label-primary,inherit));
+  text-shadow:var(--wp-chat-outline,none);
 }
 /* actions \u5185\u64CD\u4F5C SVG \u56FE\u6807\uFF08fill="currentColor" \u7EE7\u627F\u5BB9\u5668 color\uFF09\u8DDF\u968F\u58C1\u7EB8\u4EAE\u5EA6\u3002
    \u5BB9\u5668\u53CA\u7236\u80CC\u666F\u900F\u660E\uFF08\u8D34\u58C1\u7EB8\uFF09\uFF0C\u6545\u8DDF\u968F --wp-chat-fg \u53CD\u8272\u5B89\u5168\uFF0C\u4E0D\u4F1A\u767D\u5E95\u767D\u56FE\u6807\u3002 */
@@ -2440,6 +2448,7 @@ body[data-we-wallpaper] [class*="flowItem"] a,
 body[data-we-wallpaper] [class*="flowItem"] [class*="fileLink"],
 body[data-we-wallpaper] [class*="flowItem"] [class*="_file"]{
   color:var(--wp-chat-fg,var(--dsw-alias-label-primary,inherit));
+  text-shadow:var(--wp-chat-outline,none);
 }
 /* \u804A\u5929\u9876\u90E8 header\uFF08\u4F1A\u8BDD\u6807\u9898\u680F wSkVaW_header / headerActions / headerUtilities\uFF09\uFF1A
    \u80CC\u666F\u900F\u660E\u8D34\u58C1\u7EB8\uFF0C\u6587\u5B57/\u56FE\u6807\u7528\u56FA\u5B9A\u6DF1\u7070 \u2192 \u6697\u58C1\u7EB8\u4E0B\u770B\u4E0D\u6E05\u3002\u8DDF\u968F --wp-chat-fg \u53CD\u8272\u3002
@@ -2447,6 +2456,7 @@ body[data-we-wallpaper] [class*="flowItem"] [class*="_file"]{
 body[data-we-wallpaper] [class*="wSkVaW_header"],
 body[data-we-wallpaper] [class*="wSkVaW_header"] *{
   color:var(--wp-chat-fg,var(--dsw-alias-label-primary,inherit));
+  text-shadow:var(--wp-chat-outline,none);
 }
 /* li \u5217\u8868\u70B9\uFF08::marker\uFF09\uFF1ADSH \u7ED9 marker \u5355\u72EC\u8BBE\u6DF1\u7070\uFF08--dsw-alias-label-secondary\uFF09\uFF0C
    \u8986\u76D6\u4E86\u7EE7\u627F\uFF1Bli \u6587\u672C\u5DF2\u8DDF\u968F --wp-chat-fg \u4F46\u70B9\u4ECD\u662F\u6DF1\u7070 \u2192 \u6697\u58C1\u7EB8\u4E0B\u770B\u4E0D\u6E05\u3002
@@ -2454,10 +2464,12 @@ body[data-we-wallpaper] [class*="wSkVaW_header"] *{
 body[data-we-wallpaper] [class*="flowItem"] li::marker{
   color:var(--wp-chat-fg,var(--dsw-alias-label-primary,inherit));
 }
-/* \u884C\u5185\u4EE3\u7801/\u4EE3\u7801\u5757\uFF1A\u663E\u5F0F\u4E3B\u9898\u8272\uFF08\u8986\u76D6\u7236\u7EA7\u7EE7\u627F\u7684 --wp-chat-fg\uFF09\uFF0C\u4FDD\u8BC1\u4E0E\u5176\u80CC\u666F\u5BF9\u6BD4\u6B63\u786E */
+/* \u884C\u5185\u4EE3\u7801/\u4EE3\u7801\u5757\uFF1A\u663E\u5F0F\u4E3B\u9898\u8272\uFF08\u8986\u76D6\u7236\u7EA7\u7EE7\u627F\u7684 --wp-chat-fg\uFF09\uFF0C\u4FDD\u8BC1\u4E0E\u5176\u80CC\u666F\u5BF9\u6BD4\u6B63\u786E\uFF1B
+   text-shadow \u540C\u6837\u663E\u5F0F\u590D\u4F4D\uFF08\u5B83\u53EF\u7EE7\u627F\uFF0C\u4E14\u6D88\u606F\u5217 p/span \u89C4\u5219\u4F1A\u547D\u4E2D code \u5185\u7684\u6587\u5B57\uFF09\u3002 */
 body[data-we-wallpaper] [class*="flowItem"] code,
 body[data-we-wallpaper] [class*="flowItem"] pre code{
   color:var(--dsw-alias-label-primary,inherit);
+  text-shadow:none;
 }
 /* \u6D88\u606F\u6C14\u6CE1\uFF08.Sixlwa_bubble \u7B49\u6709 --dsw-specific-bubble \u80CC\u666F\uFF09\uFF1A\u6C14\u6CE1\u6709\u72EC\u7ACB\u4E0D\u900F\u660E\u80CC\u666F
    \uFF08\u6D45\u8272=\u6DE1\u84DD #edf3fe\u3001\u6DF1\u8272=\u6DF1\u7070\uFF09\uFF0C\u5185\u90E8\u6587\u5B57\u5FC5\u987B\u7528\u4E0E\u80CC\u666F\u5BF9\u6BD4\u7684\u4E3B\u9898\u8272\uFF08--dsw-alias-label-primary\uFF1A
@@ -2468,6 +2480,8 @@ body[data-we-wallpaper] [class*="flowItem"] [class*="bubble"] span,
 body[data-we-wallpaper] [class*="flowItem"] [class*="bubble"] li,
 body[data-we-wallpaper] [class*="flowItem"] [class*="bubble"] code{
   color:var(--dsw-alias-label-primary,inherit);
+  /* \u6C14\u6CE1\u6709\u5B9E\u5E95\uFF1A\u6587\u5B57\u63CF\u8FB9\u5FC5\u987B\u590D\u4F4D\uFF08\u5426\u5219\u7528\u6237\u7684\u63CF\u8FB9\u4F1A\u6E17\u8FDB\u6C14\u6CE1\u5185\uFF0C\u6D45\u5E95\u9ED1\u8FB9\u53D1\u810F\uFF09 */
+  text-shadow:none;
 }
 
 /* \u2500\u2500 \u81EA\u5E26\u5B9E\u5E95\u7684\u5361\u7247\uFF1A\u4E0D\u8DDF\u968F\u58C1\u7EB8\u4EAE\u5EA6\u53CD\u8272\uFF082026-09-18\uFF09 \u2500\u2500
@@ -2487,6 +2501,8 @@ body[data-we-wallpaper] [class*="flowItem"] [data-presented-file] *,
 body[data-we-wallpaper] [class*="flowItem"] [data-changed-files],
 body[data-we-wallpaper] [class*="flowItem"] [data-changed-files] *{
   color:var(--dsw-alias-label-primary,inherit);
+  /* \u5361\u7247\u6709\u5B9E\u5E95\uFF1A\u6587\u5B57\u63CF\u8FB9\u5FC5\u987B\u590D\u4F4D\uFF08\u53EF\u7EE7\u627F\u5C5E\u6027\u4F1A\u4ECE\u6D88\u606F\u5217\u89C4\u5219\u6E17\u8FDB\u6765\uFF09 */
+  text-shadow:none;
 }
 body[data-we-wallpaper] [class*="flowItem"] [data-presented-file] [class*="description"]{
   color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-primary));
@@ -2620,6 +2636,58 @@ function injectWallpaperStyles() {
   tag.dataset.pluginCss = id;
   tag.textContent = WALLPAPER_CSS;
   document.head.appendChild(tag);
+}
+
+// src/client/text-color.ts
+var TEXT_COLOR_MODES = ["auto", "white", "black", "custom"];
+var MANUAL_WHITE = "#ffffff";
+var MANUAL_BLACK = "#000000";
+var TEXT_OUTLINE_MAX = 3;
+var OUTLINE_FLIP_LUMA = 140;
+function normalizeMode(raw) {
+  return typeof raw === "string" && TEXT_COLOR_MODES.includes(raw) ? raw : "auto";
+}
+function normalizeHexColor(raw, fallback = MANUAL_WHITE) {
+  if (typeof raw !== "string") return fallback;
+  const v = raw.trim();
+  return /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(v) ? v.toLowerCase() : fallback;
+}
+function manualTextColor(mode, custom) {
+  switch (normalizeMode(mode)) {
+    case "white":
+      return MANUAL_WHITE;
+    case "black":
+      return MANUAL_BLACK;
+    case "custom":
+      return normalizeHexColor(custom, MANUAL_WHITE);
+    default:
+      return null;
+  }
+}
+function hexLuma(hex) {
+  const v = normalizeHexColor(hex, "#000000");
+  const full = v.length === 4 ? "#" + v[1] + v[1] + v[2] + v[2] + v[3] + v[3] : v;
+  const r = parseInt(full.slice(1, 3), 16);
+  const g = parseInt(full.slice(3, 5), 16);
+  const b = parseInt(full.slice(5, 7), 16);
+  return 0.299 * r + 0.587 * g + 0.114 * b;
+}
+function normalizeOutlineLevel(raw) {
+  const n = typeof raw === "number" ? raw : Number(raw);
+  if (!Number.isFinite(n)) return 0;
+  return Math.min(TEXT_OUTLINE_MAX, Math.max(0, Math.round(n)));
+}
+function outlineShadow(color, level) {
+  const lv = normalizeOutlineLevel(level);
+  if (lv === 0) return null;
+  const c = hexLuma(color) >= OUTLINE_FLIP_LUMA ? "rgba(0,0,0,.78)" : "rgba(255,255,255,.9)";
+  if (lv === 1) return `0 1px 2px ${c}`;
+  if (lv === 2) return `0 0 2px ${c},0 1px 3px ${c}`;
+  return `0 0 2px ${c},0 0 4px ${c},0 1px 4px ${c}`;
+}
+function outlineLabel(level) {
+  const lv = normalizeOutlineLevel(level);
+  return lv === 0 ? "\u5173" : lv === 1 ? "\u8F7B" : lv === 2 ? "\u4E2D" : "\u5F3A";
 }
 
 // src/client/background-layer.ts
@@ -2863,6 +2931,14 @@ function createBackgroundLayer(root) {
       if (!color) document.documentElement.style.removeProperty("--wp-chat-fg");
       else document.documentElement.style.setProperty("--wp-chat-fg", color);
     },
+    // 文字描边（2026-10-01）：与文字色同源——按文字色亮度取对立色阴影（亮字深边/暗字亮边），
+    // 写在 --wp-chat-outline，由 styles.ts 的贴壁纸文字消费者读取。0 档/空色 = 移除变量，
+    // 消费者 fallback 到 none ⇒ 默认观感与加此功能前一致（零回归）。
+    setChatOutline(color, level) {
+      const shadow = color ? outlineShadow(color, level) : null;
+      if (!shadow) document.documentElement.style.removeProperty("--wp-chat-outline");
+      else document.documentElement.style.setProperty("--wp-chat-outline", shadow);
+    },
     // 省电：视频壁纸停/续播（web 壁纸在 iframe 内，插件无法控制）。
     setPaused(value) {
       paused = value;
@@ -2934,25 +3010,69 @@ function measureLuma(url, opts) {
 }
 
 // src/client/wallpaper-controller.ts
-function applyChatFg(layer, info, gen, check) {
-  const url = info?.previewUrl;
-  if (!url) {
-    layer.setChatFg("");
-    return;
+function createTextStyler(layer, opts, genOf) {
+  const measure = opts.measurePreviewLuma ?? measureLuma;
+  let autoColor = null;
+  let autoColorFor;
+  function readStyle() {
+    const s = opts.textStyle?.();
+    return {
+      mode: normalizeMode(s?.mode),
+      custom: typeof s?.custom === "string" ? s.custom : "",
+      outline: normalizeOutlineLevel(s?.outline)
+    };
   }
-  void measureLuma(url).then((luma) => {
-    if (luma === null) {
-      layer.setChatFg("");
+  function clear() {
+    autoColor = null;
+    autoColorFor = void 0;
+    layer.setChatFg("");
+    layer.setChatOutline("", 0);
+  }
+  function apply2(info, forceMeasure = false) {
+    const { mode, custom, outline } = readStyle();
+    const manual = manualTextColor(mode, custom);
+    if (manual !== null) {
+      autoColor = null;
+      autoColorFor = void 0;
+      layer.setChatFg(manual);
+      layer.setChatOutline(manual, outline);
       return;
     }
-    if (check()) layer.setChatFg(lumaToTextColor(luma));
-  }).catch(() => {
-    layer.setChatFg("");
-  });
+    const cached = autoColorFor === info?.id ? autoColor : null;
+    if (cached) {
+      layer.setChatFg(cached);
+      layer.setChatOutline(cached, outline);
+      if (!forceMeasure) return;
+    }
+    const url = info?.previewUrl;
+    if (!url) {
+      if (!cached) clear();
+      return;
+    }
+    const gen = genOf();
+    void measure(url).then((luma) => {
+      if (gen !== genOf()) return;
+      if (readStyle().mode !== "auto") return;
+      if (luma === null) {
+        if (!cached) clear();
+        return;
+      }
+      const color = lumaToTextColor(luma);
+      autoColor = color;
+      autoColorFor = info?.id;
+      layer.setChatFg(color);
+      layer.setChatOutline(color, readStyle().outline);
+    }).catch(() => {
+      if (gen === genOf() && !cached) clear();
+    });
+  }
+  return { apply: apply2, clear };
 }
 function createWallpaperController(layer, opts) {
   let list = [];
   let selectGeneration = 0;
+  let currentInfo;
+  const textStyler = createTextStyler(layer, opts, () => selectGeneration);
   async function load() {
     list = await opts.fetchList();
     return list;
@@ -2962,7 +3082,8 @@ function createWallpaperController(layer, opts) {
     opts.sceneRenderer?.dispose?.();
     if (id === "") {
       layer.showNone();
-      layer.setChatFg("");
+      currentInfo = void 0;
+      textStyler.clear();
       return;
     }
     if (list.length === 0) {
@@ -3027,9 +3148,17 @@ function createWallpaperController(layer, opts) {
         layer.showNone();
         break;
     }
-    applyChatFg(layer, info, gen, () => gen === selectGeneration);
+    currentInfo = info;
+    textStyler.apply(info, true);
   }
-  return { load, select };
+  return {
+    load,
+    select,
+    // 设置面板改了文字颜色/描边 → 立即重新下发（不必重选壁纸）。
+    applyTextStyle() {
+      textStyler.apply(currentInfo);
+    }
+  };
 }
 
 // node_modules/.pnpm/three@0.170.0/node_modules/three/build/three.module.js
@@ -25703,7 +25832,11 @@ var DEFAULTS = {
   pauseOnHidden: true,
   qualityScale: 1,
   // 壁纸音效（sound 对象 + 频谱驱动效果）：默认开启，与桌面 WE 一致；面板可关。
-  soundEnabled: true
+  soundEnabled: true,
+  // 文字可读性（2026-10-01）：默认 auto + 无描边 = 与加此功能前的老用户观感一致（零回归）。
+  textColorMode: "auto",
+  textColor: "#ffffff",
+  textOutline: 0
 };
 var settingsCtx = null;
 var lastGood = null;
@@ -29140,6 +29273,59 @@ function WallpaperSettingsSection(props) {
         "\u58C1\u7EB8\u97F3\u6548"
       ] }) })
     ] }),
+    settings && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wss-section-title", children: "\u6587\u5B57\u53EF\u8BFB\u6027" }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc", children: "\u8D34\u58C1\u7EB8\u7684\u6587\u5B57\uFF08\u6D88\u606F\u6B63\u6587\u3001\u6807\u9898\u3001\u94FE\u63A5\u3001\u804A\u5929\u680F\uFF09\u770B\u4E0D\u6E05\u65F6\uFF0C\u53EF\u56FA\u5B9A\u6587\u5B57\u989C\u8272\uFF1B\u80CC\u666F\u82B1\u54E8\u65F6\u5F00\u4E00\u70B9\u63CF\u8FB9\u6700\u6709\u6548\u3002" }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-textcolor", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u6587\u5B57\u989C\u8272" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+            "select",
+            {
+              className: "wss-textcolor-mode",
+              value: normalizeMode(settings.textColorMode),
+              onChange: (e) => applyRuntime({ textColorMode: e.target.value }),
+              children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "auto", children: "\u81EA\u52A8\uFF08\u8DDF\u968F\u58C1\u7EB8\u4EAE\u5EA6\uFF09" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "white", children: "\u767D\u8272" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "black", children: "\u9ED1\u8272" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "custom", children: "\u81EA\u5B9A\u4E49\u2026" })
+              ]
+            }
+          )
+        ] }),
+        normalizeMode(settings.textColorMode) === "custom" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u81EA\u5B9A\u4E49\u989C\u8272" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "input",
+            {
+              type: "color",
+              className: "wss-textcolor-custom",
+              value: normalizeHexColor(settings.textColor),
+              onChange: (e) => applyRuntime({ textColor: e.target.value })
+            }
+          )
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-slider", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-slider-head", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u6587\u5B57\u63CF\u8FB9" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-value", children: outlineLabel(settings.textOutline) })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "input",
+            {
+              type: "range",
+              className: "wss-textcolor-outline",
+              min: 0,
+              max: TEXT_OUTLINE_MAX,
+              step: 1,
+              value: normalizeOutlineLevel(settings.textOutline),
+              onChange: (e) => applyRuntime({ textOutline: Number(e.target.value) })
+            }
+          )
+        ] })
+      ] })
+    ] }),
     /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section", children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wss-section-title", children: "\u58C1\u7EB8\u76EE\u5F55" }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc", children: "\u586B Wallpaper Engine \u7684\u4E24\u4E2A\u76EE\u5F55\uFF1B\u7559\u7A7A = \u672A\u914D\u7F6E\u3002\u4E5F\u53EF\u4EE5\u76F4\u63A5\u70B9\u300C\u81EA\u52A8\u63A2\u6D4B\u300D\u91C7\u7528\u63A2\u6D4B\u7ED3\u679C\u3002" }),
@@ -29215,6 +29401,7 @@ function bootstrap(ctx) {
     sceneRenderer.setGlow?.({ enabled: s.glowEnabled, threshold: s.glowThreshold, strength: s.glowStrength });
     sceneRenderer.setSoundEnabled?.(s.soundEnabled);
     layer?.setPaused(shouldPause);
+    controller?.applyTextStyle();
   };
   const selectWallpaper = (id) => {
     settings = { ...settings, selectedWallpaperId: id };
@@ -29229,7 +29416,13 @@ function bootstrap(ctx) {
     controller = createWallpaperController(layer, {
       fetchList: async () => (await fetch("/wallpapers/list")).json(),
       // three.js 播放器是**唯一** scene 路径；渲染失败/零可见对象 → controller 回退 preview 图。
-      sceneRenderer
+      sceneRenderer,
+      // 贴壁纸文字颜色/描边：实时读取设置（手动档直接固定色、跳过 preview 测量；auto 档沿用亮度测量）。
+      textStyle: () => ({
+        mode: settings.textColorMode,
+        custom: settings.textColor,
+        outline: settings.textOutline
+      })
     });
     setWallpaperSelectHandler((id) => selectWallpaper(id));
     setWallpaperRuntimeHandler((patch) => {

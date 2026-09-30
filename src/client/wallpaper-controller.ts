@@ -2,6 +2,7 @@ import type { WallpaperInfo } from '../shared/types.js';
 import type { BackgroundLayer } from './background-layer.js';
 import { resolveBackground } from './background-layer.js';
 import { measureLuma, lumaToTextColor } from './luma.js';
+import { type TextColorMode, manualTextColor, normalizeMode, normalizeOutlineLevel } from './text-color.js';
 
 // scene 渲染器的接口形态（three-renderer 的生产实现与测试替身都按此形状提供）。
 export interface SceneRendererLike {
@@ -17,22 +18,85 @@ export interface SceneRendererLike {
   setSoundEnabled?(enabled: boolean): void;
 }
 
+/** 贴壁纸文字样式（设置面板可改）：实时读取，故由 index.ts 以 getter 注入。 */
+export interface TextStyleSettings {
+  /** 'auto' | 'white' | 'black' | 'custom'（非法值按 auto 处理）。 */
+  mode: string;
+  /** 自定义色（仅 custom 档使用）。 */
+  custom: string;
+  /** 描边档位 0-3（0 = 关）。 */
+  outline: number;
+}
+
 export interface WallpaperControllerOptions {
   fetchList: () => Promise<WallpaperInfo[]>;
   // Finding 2：dispose 可选——每次 select（含取消/切壁纸）时调用，释放渲染器持有的资源（防泄漏）。
   sceneRenderer?: SceneRendererLike;
+  /** 文字颜色/描边设置（实时读取）。缺省 = auto 档、无描边（既有行为）。 */
+  textStyle?: () => TextStyleSettings;
+  /** preview 亮度测量；缺省用 luma.measureLuma（测试注入替身用）。 */
+  measurePreviewLuma?: (url: string) => Promise<number | null>;
 }
 
-// 文字颜色跟随壁纸亮度（2026-09-03）：测 preview 图平均亮度，选文字色写 --wp-chat-fg。
-// previewUrl 对 scene/video/image/web 均可用（渲染失败本就回退 preview），是跨类型最稳数据源。
-// 竞态防护：用 gen 校验，防止乱序覆盖。
-function applyChatFg(layer: BackgroundLayer, info: WallpaperInfo | undefined, gen: number, check: () => boolean): void {
-  const url = info?.previewUrl;
-  if (!url) { layer.setChatFg(''); return; }
-  void measureLuma(url).then((luma) => {
-    if (luma === null) { layer.setChatFg(''); return; } // 测量失败 → 回主题默认
-    if (check()) layer.setChatFg(lumaToTextColor(luma));
-  }).catch(() => { layer.setChatFg(''); });
+// 贴壁纸文字颜色与描边（2026-10-01，用户报告「某些壁纸文字看不清」）：
+//   · 手动档（white/black/custom）直接下发固定色，**不测 preview** —— 否则异步测量结果会覆盖手选色；
+//   · auto 档沿用 2026-09-03 的 preview 亮度测量（暗壁纸白字 / 亮壁纸黑字）；
+//   · 描边档位随文字色一起下发（对立色阴影由 background-layer 按文字色亮度算）。
+// 竞态防护：gen 校验（换了壁纸不覆盖）+ 落地前重读模式（期间改手动则不覆盖手选色）。
+function createTextStyler(layer: BackgroundLayer, opts: WallpaperControllerOptions, genOf: () => number) {
+  const measure = opts.measurePreviewLuma ?? measureLuma;
+  // 最近一次 auto 测光的结果及其壁纸 id（2026-10-01，用户报告「选自动时描边像不生效」）：
+  // 设置变更（改档位/描边）时**同步**复用该结果，用户拖滑杆即时可见，且不必重新测图；
+  // 换壁纸时 id 不匹配 ⇒ 不复用（各自重新测光）。
+  let autoColor: string | null = null;
+  let autoColorFor: string | undefined;
+
+  function readStyle(): { mode: TextColorMode; custom: string; outline: number } {
+    const s = opts.textStyle?.();
+    return {
+      mode: normalizeMode(s?.mode),
+      custom: typeof s?.custom === 'string' ? s.custom : '',
+      outline: normalizeOutlineLevel(s?.outline),
+    };
+  }
+  function clear(): void {
+    autoColor = null;
+    autoColorFor = undefined;
+    layer.setChatFg('');
+    layer.setChatOutline('', 0);
+  }
+  /** forceMeasure：select 展示壁纸时强制重测（新壁纸/重选）；设置变更时用缓存即可。 */
+  function apply(info: WallpaperInfo | undefined, forceMeasure = false): void {
+    const { mode, custom, outline } = readStyle();
+    const manual = manualTextColor(mode, custom);
+    if (manual !== null) {
+      autoColor = null;
+      autoColorFor = undefined;
+      layer.setChatFg(manual);
+      layer.setChatOutline(manual, outline);
+      return;
+    }
+    const cached = autoColorFor === info?.id ? autoColor : null;
+    if (cached) {
+      layer.setChatFg(cached);
+      layer.setChatOutline(cached, outline);
+      if (!forceMeasure) return; // 设置变更：直接用缓存，不再测图（拖动描边零延迟）
+    }
+    const url = info?.previewUrl;
+    if (!url) { if (!cached) clear(); return; } // 无 preview 可测 → 回主题默认（有缓存则保留）
+    const gen = genOf();
+    void measure(url).then((luma) => {
+      if (gen !== genOf()) return;                                  // 期间已切换壁纸
+      if (readStyle().mode !== 'auto') return;                      // 期间已改成手动档
+      if (luma === null) { if (!cached) clear(); return; }           // 测光失败：有上次结果则保留（不闪）
+      const color = lumaToTextColor(luma);
+      autoColor = color;
+      autoColorFor = info?.id;
+      layer.setChatFg(color);
+      layer.setChatOutline(color, readStyle().outline);              // 用最新档位
+    }).catch(() => { if (gen === genOf() && !cached) clear(); });
+  }
+  return { apply, clear };
 }
 
 export function createWallpaperController(
@@ -43,6 +107,9 @@ export function createWallpaperController(
   // I3：select 竞态防护 —— 每次 select 递增 generation，异步完成后（scene
   // 渲染回调等）校验 generation 未变才应用，防止乱序覆盖最新选择。
   let selectGeneration = 0;
+  // 当前展示的壁纸：设置面板改文字颜色/描边后，无需重选壁纸即可重新下发（applyTextStyle）。
+  let currentInfo: WallpaperInfo | undefined;
+  const textStyler = createTextStyler(layer, opts, () => selectGeneration);
 
   async function load(): Promise<WallpaperInfo[]> {
     list = await opts.fetchList();
@@ -58,7 +125,8 @@ export function createWallpaperController(
     // 同步生效并递增 generation，使进行中的旧选择异步回调被竞态防护丢弃。
     if (id === '') {
       layer.showNone();
-      layer.setChatFg(''); // 清文字颜色，回主题默认
+      currentInfo = undefined;
+      textStyler.clear(); // 清文字颜色与描边，回主题默认
       return;
     }
     // 列表未加载时自动拉取（show() 委托 select 的前提）；加载失败则静默放弃本次选择
@@ -132,10 +200,16 @@ export function createWallpaperController(
       }
       case 'none': layer.showNone(); break;
     }
-    // 文字颜色跟随壁纸亮度：switch 展示壁纸后，异步测 preview 亮度选文字色。
-    // applyChatFg 内部用 gen 校验防竞态；无 preview（测量失败）则清变量回主题默认。
-    applyChatFg(layer, info, gen, () => gen === selectGeneration);
+    // 贴壁纸文字颜色与描边：展示壁纸后下发（手动档＝固定色；auto 档＝异步测 preview 亮度）。
+    // 此处 forceMeasure=true：换了壁纸（或重选）必须重新测光，不复用上一张的缓存。
+    currentInfo = info;
+    textStyler.apply(info, true);
   }
 
-  return { load, select };
+  return {
+    load,
+    select,
+    // 设置面板改了文字颜色/描边 → 立即重新下发（不必重选壁纸）。
+    applyTextStyle(): void { textStyler.apply(currentInfo); },
+  };
 }

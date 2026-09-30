@@ -41,6 +41,8 @@ export function bootstrap(ctx?: any): void {
     // 壁纸音效开关：关掉即时停声并释放 AudioContext（打开按上次规格重播）。
     sceneRenderer.setSoundEnabled?.(s.soundEnabled);
     layer?.setPaused(shouldPause);
+    // 贴壁纸文字颜色/描边：面板改动即时生效（手动档换色 / auto 档重测 preview），不必重选壁纸。
+    controller?.applyTextStyle();
   };
   const selectWallpaper = (id: string) => {
     settings = { ...settings, selectedWallpaperId: id };
@@ -58,6 +60,12 @@ export function bootstrap(ctx?: any): void {
       fetchList: async () => (await fetch('/wallpapers/list')).json(),
       // three.js 播放器是**唯一** scene 路径；渲染失败/零可见对象 → controller 回退 preview 图。
       sceneRenderer,
+      // 贴壁纸文字颜色/描边：实时读取设置（手动档直接固定色、跳过 preview 测量；auto 档沿用亮度测量）。
+      textStyle: () => ({
+        mode: settings.textColorMode,
+        custom: settings.textColor,
+        outline: settings.textOutline,
+      }),
     });
     // 设置面板（settings-section）的壁纸切换/取消经共享 handler 委托 controller
     setWallpaperSelectHandler((id: string) => selectWallpaper(id));

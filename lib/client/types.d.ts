@@ -36,4 +36,11 @@ export interface ClientSettings {
     qualityScale: number;
     /** 壁纸音效（sound 对象播放）并驱动音频频谱效果；缺省 true（对齐桌面 WE）。 */
     soundEnabled: boolean;
+    /** 贴壁纸文字颜色模式：auto（跟随壁纸亮度，默认）/ white / black / custom。
+     *  宽松 string —— 远端值可能来自别的版本，由 text-color.normalizeMode 归一为 auto。 */
+    textColorMode: string;
+    /** 自定义文字颜色（#rgb / #rrggbb），仅 custom 档使用；非法值由 text-color 回退白色。 */
+    textColor: string;
+    /** 文字描边档位：0 = 关（默认）；1-3 递增（对立色阴影，背景花哨时的兜底层）。 */
+    textOutline: number;
 }

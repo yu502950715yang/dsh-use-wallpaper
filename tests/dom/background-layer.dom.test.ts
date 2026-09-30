@@ -419,5 +419,58 @@ describe('createBackgroundLayer (DOM)', () => {
       }
     });
   });
+
+  // 文字可读性（2026-10-01，用户报告「某些壁纸文字看不清」）：设置面板可手动指定文字色，
+  // 并可开文字描边（对立色阴影）——描边与背景无关，是亮暗差异大的壁纸上的兜底层。
+  // 两者都写在 documentElement 的 CSS 变量上（styles.ts 的消费者就近读取，无需重写样式）。
+  describe('setChatFg / setChatOutline（文字颜色与描边变量）', () => {
+    const root = () => { document.body.innerHTML = ''; const el = document.createElement('div'); document.body.appendChild(el); return el; };
+    const cleanup = () => {
+      document.documentElement.style.removeProperty('--wp-chat-fg');
+      document.documentElement.style.removeProperty('--wp-chat-outline');
+    };
+
+    it('setChatFg 写 --wp-chat-fg；空值移除变量（回主题默认）', () => {
+      cleanup();
+      const layer = createBackgroundLayer(root());
+      layer.setChatFg('#ffffff');
+      expect(document.documentElement.style.getPropertyValue('--wp-chat-fg')).toBe('#ffffff');
+      layer.setChatFg('');
+      expect(document.documentElement.style.getPropertyValue('--wp-chat-fg')).toBe('');
+      cleanup();
+    });
+
+    it('setChatOutline 按文字色亮度写对立色阴影（亮字深边 / 暗字亮边）', () => {
+      cleanup();
+      const layer = createBackgroundLayer(root());
+      layer.setChatOutline('#ffffff', 2);
+      expect(document.documentElement.style.getPropertyValue('--wp-chat-outline')).toContain('rgba(0,0,0,');
+      layer.setChatOutline('#000000', 2);
+      expect(document.documentElement.style.getPropertyValue('--wp-chat-outline')).toContain('rgba(255,255,255,');
+      cleanup();
+    });
+
+    it('0 档移除描边变量（默认无描边，既有观感不变）', () => {
+      cleanup();
+      const layer = createBackgroundLayer(root());
+      layer.setChatOutline('#ffffff', 1);
+      expect(document.documentElement.style.getPropertyValue('--wp-chat-outline')).not.toBe('');
+      layer.setChatOutline('#ffffff', 0);
+      expect(document.documentElement.style.getPropertyValue('--wp-chat-outline')).toBe('');
+      cleanup();
+    });
+
+    it('无文字色 / 非法颜色时不留下任何描边值（不把任意串写进样式）', () => {
+      cleanup();
+      const layer = createBackgroundLayer(root());
+      layer.setChatOutline('', 3);
+      expect(document.documentElement.style.getPropertyValue('--wp-chat-outline')).toBe('');
+      layer.setChatOutline('red;background:url(x)', 3);
+      const v = document.documentElement.style.getPropertyValue('--wp-chat-outline');
+      expect(v).toContain('rgba(255,255,255,');
+      expect(v).not.toContain('url(');
+      cleanup();
+    });
+  });
 });
 
