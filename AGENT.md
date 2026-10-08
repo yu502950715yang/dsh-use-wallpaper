@@ -54,6 +54,7 @@ npm run build            # tsc -p tsconfig.json → lib/（strict）
 npm run build:wasm       # cd wasm && wasm-pack build --no-opt --target web --release --features cpu-sim → wasm/pkg/
 npm run build:client     # esbuild → dist/client.js，并把 wasm/pkg/ 复制到 dist/static/
 npm run e2e:colorblend   # 渲染 e2e：colorBlendMode 逐像素判据（零本机素材依赖，可上 CI）
+npm run e2e:card         # 计算样式 e2e：通知卡片（turn-trigger）与代码块同底（零素材依赖，可上 CI）
 npm run e2e:hidpi        # 渲染 e2e：dpr=1/2 的挂载期 RT 尺寸断言（需本机 WE 壁纸库）
 npm run e2e:compare      # A/B 截图逐像素对拍（零回归验收）
 npx vitest run tests/xxx.test.ts --reporter=basic   # 跑单个文件
@@ -298,6 +299,11 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
     - **⚠️ `text-shadow` 是**可继承**属性，实底区域必须显式复位**：消息列那条规则组（`[class*="flowItem"] p/span/li/...`）会**同时命中气泡、present 卡片、changed-files 卡片、行内 code 内的同名元素**，描边会渗进去（浅底黑边、深底白边都发脏）。故这些实底区域各加 `text-shadow:none` 挡住 —— 这是端到端实测抓到的缺陷，纯 CSS 文本断言看不出来。
     - **修订（同日用户追问「选自动时描边是不是不生效」）**：`auto` 档原先每次下发都要重新测一次 preview 亮度 ⇒ 拖动描边滑杆要等测光回来才见效果（观感＝滑杆没反应），且每次拖动都重新加载一遍 preview 图。现按**壁纸 id 缓存**最近一次测光结果（`autoColor` / `autoColorFor`）：设置变更时**同步**复用（零延迟、不再测图）；`select` 路径传 `forceMeasure=true` 强制重测（换壁纸/重选不复用旧色）；测光瞬时失败但已有缓存时**保留旧值**（不闪回主题默认）。注意「该壁纸从未测光成功」（无 preview，或桌面壳下 preview 跨源被拒）时颜色与描边仍会一起回主题默认 —— 这是刻意的：没有文字色就没有可推导的对立色描边。
     - **验证**：`tests/styles.test.ts` 断言「描边只出现在贴壁纸文字上、实底区域必须显式复位且命中规则」；`tests/text-color.test.ts` + 控制器/设置/面板共新增 40 项，全量 1022 项全绿；`npm run build` + `build:client` 通过；真实 Chromium 计算样式端到端 `e2e/.out/text-outline-probe.mjs` 8 项全 PASS（默认 none → 写变量后正文带描边、气泡/code/卡片仍为 none → 移除变量后消失）。
+
+42. **通知卡片（turn-trigger）与代码块在**深色主题**下不同底 ⇒ 有壁纸时「收到任务消息」与代码块观感不一致（2026-10-08，用户报告两者颜色不一致）**：DSH 的卡片规则是 `background:var(--dsw-alias-turn-trigger-bg, var(--dsw-alias-markdown-code-block))`（`TurnTriggerNodeView`，`dsh-client-ui-chat`），而该 token 在 **深色**主题取 `--dsw-alias-interactive-bg-hover`（**#ffffff14，8% 白半透明**），代码块取 `--dsw-alias-markdown-code-block`（= `--dsw-static-neutral-bluish-900` **#1b1b1c 实色**）；**浅色**主题下它恰好等于代码块那个 token（`--dsw-static-neutral-bluish-50`）⇒ 只有深色暴露。插件把 `--dsw-alias-bg-base` 透明化让壁纸透出，卡片的 8% 白下面从页面底（#0f1115）换成了壁纸 ⇒ 卡片随壁纸变色、代码块恒定，差异被放大；插件又把 `--dsw-alias-border-l1` 提到 `rgba(180,180,180,.35)`，卡片轮廓更显眼。截图实测（1509×852）：代码块区众数 **(27,27,28) = #1b1b1c**（占 90% 像素）、卡片区众数是壁纸色 (20,25,32) 而非 #1b1b1c。
+    - **修法**：浅/深两个分支各覆盖 `--dsw-alias-turn-trigger-bg` 与 `--dsw-alias-turn-trigger-bg-hover` 为 `var(--dsw-alias-markdown-code-block)`（hover 同色，避免鼠标移上又透回壁纸）；卡内文字按**实底口径**复位 —— 文字 `--dsw-alias-label-primary` + `text-shadow:none`，header（图标/标题/时间）保留 `--dsw-alias-label-tertiary`、说明保留 `--dsw-alias-label-secondary`。
+    - **⚠ 两个坑**：① **token 覆盖必须写进浅/深分支**（(0,2,1)）—— DSH 自己的定义在 `body[data-ds-dark-theme]`（(0,1,1)），写成单条 `body[data-we-wallpaper]` 与它同具体度、只能靠样式表插入顺序取胜；② **卡内文字复位必须带 `[class*="flowItem"]` 前缀** —— 消息列反色规则 `[class*="flowItem"] p` 是 (0,2,2)，而通配后代 `[data-turn-trigger] *` 只有 (0,2,1)（`*` 不贡献具体度）⇒ 少了前缀压不过它、卡内仍是黑字压深底（**e2e 实测 FAIL 才抓到**，纯看 CSS 会以为写对了）。同源陷阱 §7 已记过一次：`styles.ts` 的 CSS 模板串里**注释也不能出现反引号**（本次写「必须带 flowItem 前缀」时误用，esbuild 直接报错）。
+    - **验证**：`tests/styles.test.ts` 新增 3 项（两分支 token 覆盖、卡内字色复位且具体度高于反色规则、层级色保留），全量 **1039 项全绿**；`npm run e2e:card`（`e2e/verify/verify-turn-trigger-card.mjs`：headless Edge + **从 `app.asar` 现场提取的 DSH 主题/组件 CSS** + esbuild 打包的插件 CSS + 真实类名 DOM）**9 项全 PASS** —— 修复前卡片 `rgba(255,255,255,0.08)` ≠ 代码块 `rgb(27,27,28)`；修复后两者都是 `rgb(27,27,28)`（浅色 `rgb(249,250,251)`）、hover 同色、卡内文字 `rgb(249,250,251)`，且**同页普通正文仍被 `--wp-chat-fg` 反成黑**（对照组，排除「反色规则根本没写对」的假通过）。分析与实测数据详见 `docs/2026-10-08-turn-trigger-card-vs-codeblock.md`。
 
 ## 6. 工作约定
 

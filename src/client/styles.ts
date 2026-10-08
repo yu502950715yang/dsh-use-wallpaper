@@ -78,6 +78,11 @@ body[data-we-wallpaper]:not([data-ds-dark-theme]){
      退化为它的别名 ⇒ 只覆盖旧 token 对这类菜单无效（2026-09-28 实测 material 底 = rgba(248,249,250,.58)）。 */
   --dsw-specific-menu:rgba(255,255,255,.92)!important;
   --dsw-menu-surface-fill:rgba(255,255,255,.92)!important;
+  /* 通知卡片（turn-trigger，「收到任务消息」）与代码块同底：DSH 深色主题给卡片的是
+     半透明 hover 色、代码块是实色 —— 页面底被透明化后卡片透壁纸，两块观感不一致
+     （AGENT.md §5.42）。hover 同色，避免鼠标移上又透回壁纸。 */
+  --dsw-alias-turn-trigger-bg:var(--dsw-alias-markdown-code-block);
+  --dsw-alias-turn-trigger-bg-hover:var(--dsw-alias-markdown-code-block);
 }
 /* 深色分支：气泡回 DSH 原生底色（深蓝实心），壁纸被气泡遮住；仅 message 容器透明。
    同浅色注释：2026-08-31 起 --dsw-specific-bubble 不再设 transparent */
@@ -89,6 +94,9 @@ body[data-ds-dark-theme][data-we-wallpaper]{
   /* 弹层菜单底：同浅色分支注释（深色值 #43454a73 α≈.45 同样过透）；**两个 token 都要覆盖** */
   --dsw-specific-menu:rgba(24,26,30,.94)!important;
   --dsw-menu-surface-fill:rgba(24,26,30,.94)!important;
+  /* 通知卡片（turn-trigger）与代码块同底：同浅色分支注释（AGENT.md §5.42） */
+  --dsw-alias-turn-trigger-bg:var(--dsw-alias-markdown-code-block);
+  --dsw-alias-turn-trigger-bg-hover:var(--dsw-alias-markdown-code-block);
 }
 
 /* ── 消息气泡（flowItem）回 DSH 原生样式（2026-08-31 决策） ──
@@ -278,6 +286,24 @@ body[data-we-wallpaper] [class*="flowItem"] [class*="bubble"] code{
   color:var(--dsw-alias-label-primary,inherit);
   /* 气泡有实底：文字描边必须复位（否则用户的描边会渗进气泡内，浅底黑边发脏） */
   text-shadow:none;
+}
+
+/* ── 通知卡片（turn-trigger，「收到任务消息」）是实底（AGENT.md §5.42） ──
+   与气泡/卡片同口径：卡内文字用主题色（不被 --wp-chat-fg 反色）、描边复位；
+   header（图标/标题/时间）与说明文字保留 DSH 的层级色。
+   ⚠ 必须带 [class*="flowItem"] 前缀：消息列反色规则是 [class*="flowItem"] p（(0,2,2)），
+   通配后代 [data-turn-trigger] * 只有 (0,2,1)（* 不贡献具体度）⇒ 少了前缀压不过它。 */
+body[data-we-wallpaper] [class*="flowItem"] [data-turn-trigger],
+body[data-we-wallpaper] [class*="flowItem"] [data-turn-trigger] *{
+  color:var(--dsw-alias-label-primary,inherit);
+  text-shadow:none;
+}
+body[data-we-wallpaper] [class*="flowItem"] [data-turn-trigger] > button,
+body[data-we-wallpaper] [class*="flowItem"] [data-turn-trigger] > button *{
+  color:var(--dsw-alias-label-tertiary,inherit);
+}
+body[data-we-wallpaper] [class*="flowItem"] [data-turn-trigger] [class*="explanation"]{
+  color:var(--dsw-alias-label-secondary,inherit);
 }
 
 /* ── 自带实底的卡片：不跟随壁纸亮度反色（2026-09-18） ──

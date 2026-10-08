@@ -2284,6 +2284,11 @@ body[data-we-wallpaper]:not([data-ds-dark-theme]){
      \u9000\u5316\u4E3A\u5B83\u7684\u522B\u540D \u21D2 \u53EA\u8986\u76D6\u65E7 token \u5BF9\u8FD9\u7C7B\u83DC\u5355\u65E0\u6548\uFF082026-09-28 \u5B9E\u6D4B material \u5E95 = rgba(248,249,250,.58)\uFF09\u3002 */
   --dsw-specific-menu:rgba(255,255,255,.92)!important;
   --dsw-menu-surface-fill:rgba(255,255,255,.92)!important;
+  /* \u901A\u77E5\u5361\u7247\uFF08turn-trigger\uFF0C\u300C\u6536\u5230\u4EFB\u52A1\u6D88\u606F\u300D\uFF09\u4E0E\u4EE3\u7801\u5757\u540C\u5E95\uFF1ADSH \u6DF1\u8272\u4E3B\u9898\u7ED9\u5361\u7247\u7684\u662F
+     \u534A\u900F\u660E hover \u8272\u3001\u4EE3\u7801\u5757\u662F\u5B9E\u8272 \u2014\u2014 \u9875\u9762\u5E95\u88AB\u900F\u660E\u5316\u540E\u5361\u7247\u900F\u58C1\u7EB8\uFF0C\u4E24\u5757\u89C2\u611F\u4E0D\u4E00\u81F4
+     \uFF08AGENT.md \xA75.42\uFF09\u3002hover \u540C\u8272\uFF0C\u907F\u514D\u9F20\u6807\u79FB\u4E0A\u53C8\u900F\u56DE\u58C1\u7EB8\u3002 */
+  --dsw-alias-turn-trigger-bg:var(--dsw-alias-markdown-code-block);
+  --dsw-alias-turn-trigger-bg-hover:var(--dsw-alias-markdown-code-block);
 }
 /* \u6DF1\u8272\u5206\u652F\uFF1A\u6C14\u6CE1\u56DE DSH \u539F\u751F\u5E95\u8272\uFF08\u6DF1\u84DD\u5B9E\u5FC3\uFF09\uFF0C\u58C1\u7EB8\u88AB\u6C14\u6CE1\u906E\u4F4F\uFF1B\u4EC5 message \u5BB9\u5668\u900F\u660E\u3002
    \u540C\u6D45\u8272\u6CE8\u91CA\uFF1A2026-08-31 \u8D77 --dsw-specific-bubble \u4E0D\u518D\u8BBE transparent */
@@ -2295,6 +2300,9 @@ body[data-ds-dark-theme][data-we-wallpaper]{
   /* \u5F39\u5C42\u83DC\u5355\u5E95\uFF1A\u540C\u6D45\u8272\u5206\u652F\u6CE8\u91CA\uFF08\u6DF1\u8272\u503C #43454a73 \u03B1\u2248.45 \u540C\u6837\u8FC7\u900F\uFF09\uFF1B**\u4E24\u4E2A token \u90FD\u8981\u8986\u76D6** */
   --dsw-specific-menu:rgba(24,26,30,.94)!important;
   --dsw-menu-surface-fill:rgba(24,26,30,.94)!important;
+  /* \u901A\u77E5\u5361\u7247\uFF08turn-trigger\uFF09\u4E0E\u4EE3\u7801\u5757\u540C\u5E95\uFF1A\u540C\u6D45\u8272\u5206\u652F\u6CE8\u91CA\uFF08AGENT.md \xA75.42\uFF09 */
+  --dsw-alias-turn-trigger-bg:var(--dsw-alias-markdown-code-block);
+  --dsw-alias-turn-trigger-bg-hover:var(--dsw-alias-markdown-code-block);
 }
 
 /* \u2500\u2500 \u6D88\u606F\u6C14\u6CE1\uFF08flowItem\uFF09\u56DE DSH \u539F\u751F\u6837\u5F0F\uFF082026-08-31 \u51B3\u7B56\uFF09 \u2500\u2500
@@ -2484,6 +2492,24 @@ body[data-we-wallpaper] [class*="flowItem"] [class*="bubble"] code{
   color:var(--dsw-alias-label-primary,inherit);
   /* \u6C14\u6CE1\u6709\u5B9E\u5E95\uFF1A\u6587\u5B57\u63CF\u8FB9\u5FC5\u987B\u590D\u4F4D\uFF08\u5426\u5219\u7528\u6237\u7684\u63CF\u8FB9\u4F1A\u6E17\u8FDB\u6C14\u6CE1\u5185\uFF0C\u6D45\u5E95\u9ED1\u8FB9\u53D1\u810F\uFF09 */
   text-shadow:none;
+}
+
+/* \u2500\u2500 \u901A\u77E5\u5361\u7247\uFF08turn-trigger\uFF0C\u300C\u6536\u5230\u4EFB\u52A1\u6D88\u606F\u300D\uFF09\u662F\u5B9E\u5E95\uFF08AGENT.md \xA75.42\uFF09 \u2500\u2500
+   \u4E0E\u6C14\u6CE1/\u5361\u7247\u540C\u53E3\u5F84\uFF1A\u5361\u5185\u6587\u5B57\u7528\u4E3B\u9898\u8272\uFF08\u4E0D\u88AB --wp-chat-fg \u53CD\u8272\uFF09\u3001\u63CF\u8FB9\u590D\u4F4D\uFF1B
+   header\uFF08\u56FE\u6807/\u6807\u9898/\u65F6\u95F4\uFF09\u4E0E\u8BF4\u660E\u6587\u5B57\u4FDD\u7559 DSH \u7684\u5C42\u7EA7\u8272\u3002
+   \u26A0 \u5FC5\u987B\u5E26 [class*="flowItem"] \u524D\u7F00\uFF1A\u6D88\u606F\u5217\u53CD\u8272\u89C4\u5219\u662F [class*="flowItem"] p\uFF08(0,2,2)\uFF09\uFF0C
+   \u901A\u914D\u540E\u4EE3 [data-turn-trigger] * \u53EA\u6709 (0,2,1)\uFF08* \u4E0D\u8D21\u732E\u5177\u4F53\u5EA6\uFF09\u21D2 \u5C11\u4E86\u524D\u7F00\u538B\u4E0D\u8FC7\u5B83\u3002 */
+body[data-we-wallpaper] [class*="flowItem"] [data-turn-trigger],
+body[data-we-wallpaper] [class*="flowItem"] [data-turn-trigger] *{
+  color:var(--dsw-alias-label-primary,inherit);
+  text-shadow:none;
+}
+body[data-we-wallpaper] [class*="flowItem"] [data-turn-trigger] > button,
+body[data-we-wallpaper] [class*="flowItem"] [data-turn-trigger] > button *{
+  color:var(--dsw-alias-label-tertiary,inherit);
+}
+body[data-we-wallpaper] [class*="flowItem"] [data-turn-trigger] [class*="explanation"]{
+  color:var(--dsw-alias-label-secondary,inherit);
 }
 
 /* \u2500\u2500 \u81EA\u5E26\u5B9E\u5E95\u7684\u5361\u7247\uFF1A\u4E0D\u8DDF\u968F\u58C1\u7EB8\u4EAE\u5EA6\u53CD\u8272\uFF082026-09-18\uFF09 \u2500\u2500

@@ -267,4 +267,49 @@ describe('styles 主题适配', () => {
   it('面板文字可读性控件复用既有 wss-row / wss-slider，并给 color 输入最小样式', () => {
     expect(WALLPAPER_CSS).toMatch(/\.wss-row input\[type=color\]\s*\{[^}]*width:\d+px/);
   });
+
+  // 通知卡片（turn-trigger，「收到任务消息」）与代码块同底（2026-10-08，用户报告两块配色不一致）：
+  // DSH 深色主题下卡片底读 --dsw-alias-turn-trigger-bg = --dsw-alias-interactive-bg-hover
+  // （#ffffff14 半透明），代码块读 --dsw-alias-markdown-code-block（#1b1b1c 实色）；
+  // 插件把 --dsw-alias-bg-base 透明化后卡片直接透壁纸 ⇒ 同屏两块观感不一致。
+  // 有壁纸时把卡片底（含 hover）统一到代码块同色。
+  it('通知卡片（turn-trigger）底与 hover 都统一到代码块底色（浅/深两侧都覆盖）', () => {
+    // 必须写进浅/深分支（特异性 (0,2,1)）：DSH 自己的定义是 body[data-ds-dark-theme]（(0,1,1)），
+    // 若写成单条 body[data-we-wallpaper]（同为 (0,1,1)）就只能靠样式表插入顺序取胜。
+    const light = /body\[data-we-wallpaper\]:not\(\[data-ds-dark-theme\]\)\s*\{([^}]*)\}/.exec(WALLPAPER_CSS)?.[1] ?? '';
+    const dark = /body\[data-ds-dark-theme\]\[data-we-wallpaper\]\s*\{([^}]*)\}/.exec(WALLPAPER_CSS)?.[1] ?? '';
+    for (const [name, body] of [['浅色', light], ['深色', dark]] as const) {
+      expect(body, name).toMatch(/--dsw-alias-turn-trigger-bg:var\(--dsw-alias-markdown-code-block\)/);
+      expect(body, name).toMatch(/--dsw-alias-turn-trigger-bg-hover:var\(--dsw-alias-markdown-code-block\)/);
+    }
+  });
+  it('通知卡片是实底：卡内文字用主题色（不被 --wp-chat-fg 反色）且描边复位', () => {
+    // --wp-chat-fg 按壁纸亮度反色，压在实底上会白底白字 / 深底黑字，故与气泡/present 卡片同口径复位。
+    // ⚠ 光写 [data-turn-trigger] * 不够：消息列的 `[class*="flowItem"] p` 具体度 (0,2,2) 高于
+    // 通配后代 (0,2,1)（`*` 不贡献具体度、`p` 贡献 1），属性会输给它 ⇒ 实测卡内仍是黑字。
+    const css = WALLPAPER_CSS.replace(/\/\*[\s\S]*?\*\//g, '');
+    const specificity = (sel: string) => {
+      const s = sel.replace(/:where\([^)]*\)/g, '');
+      const ids = (s.match(/#[\w-]+/g) ?? []).length;
+      const classes = (s.match(/\.[\w-]+|\[[^\]]+\]|:(?!:)[\w-]+/g) ?? []).length;
+      const types = (s.match(/(?:^|[\s>+~])[a-zA-Z][\w-]*/g) ?? []).length;
+      return ids * 10000 + classes * 100 + types;
+    };
+    const hit = [...css.matchAll(/([^{}]+)\{([^}]*)\}/g)]
+      .map((m) => [m[1], m[2]] as const)
+      .filter(([sel]) => sel.includes('[data-turn-trigger]'));
+    expect(hit.length, '必须命中 [data-turn-trigger] 规则（防选择器写错导致假通过）').toBeGreaterThan(0);
+    const colorRules = hit.filter(([, body]) => /color:var\(--dsw-alias-label-primary/.test(body));
+    expect(colorRules.length, '卡内文字须复位为 --dsw-alias-label-primary').toBeGreaterThan(0);
+    const shadowRules = hit.filter(([, body]) => /text-shadow:none/.test(body));
+    expect(shadowRules.length, '卡内容器须显式复位 text-shadow').toBeGreaterThan(0);
+    // 复位规则必须**每一条选择器**都压过消息列反色规则，否则卡内仍被反色
+    const floor = specificity('body[data-we-wallpaper] [class*="flowItem"] p');
+    const stronger = colorRules.some(([sel]) => sel.split(',').every((one) => specificity(one.trim()) > floor));
+    expect(stronger, '复位规则具体度必须高于 [class*="flowItem"] p 反色规则').toBe(true);
+  });
+  it('通知卡片 header 与说明文字保留 DSH 层级色', () => {
+    expect(WALLPAPER_CSS).toMatch(/\[data-turn-trigger\]\s*>\s*button[^{]*\{[^}]*color:var\(--dsw-alias-label-tertiary/);
+    expect(WALLPAPER_CSS).toMatch(/\[data-turn-trigger\]\s*\[class\*="explanation"\]\s*\{[^}]*color:var\(--dsw-alias-label-secondary/);
+  });
 });
