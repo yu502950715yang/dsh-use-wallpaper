@@ -80,9 +80,9 @@ export class CpuParticleSim {
         wasm.cpuparticlesim_update(this.__wbg_ptr, dt);
     }
     /**
-     * 把每粒子顶点摊平为 `Float32Array`：`[pos3, size, uv2, color3, alpha]`（每粒子 10 浮点，
-     * 见 `SceneParticleSim::build_instance_vertices`），供 three.js 播放器 `updateParticles`
-     * 每帧刷新 `BufferAttribute`。
+     * 把每粒子顶点摊平为 `Float32Array`：`[pos3, size, uv2, color3, alpha, rot3, vel3]`
+     * （每粒子 16 浮点，见 `SceneParticleSim::build_instance_vertices`），供 three.js 播放器
+     * `updateParticles` 每帧刷新 `BufferAttribute`。
      * @returns {Float32Array}
      */
     vertices() {

@@ -67,6 +67,7 @@ fn override_multiplies_alpha_size_lifetime_speed() {
         lifetime: 1.5,
         speed: 2.0,
         count: 1.0,
+        rate: 1.0,
         color: None,
         controlpoints: [None; 8],
     };
@@ -111,6 +112,53 @@ fn override_count_multiplies_emitter_rate() {
     let mut sim = sim_with(determinate_init(), ParticleOverride { count: 0.5, ..Default::default() }, 100.0, 600);
     sim.update(1.0); // rate×count×dt = 100×0.5×1 = 50 个
     assert_eq!(sim.particles.len(), 50, "count=0.5 应把 rate 100 压到 50/s");
+}
+
+/// `rate` 覆盖：`instanceoverride.rate` 是**发射速率乘数** —— OWE 用它缩放 Tick 的 dt
+/// （`ParticleRuntime.cpp:803-805`：`rate = instance_modifiers.Rate(); Advance(frame_time * rate, …)`），
+/// lwe 直接 `rate = emitter.rate × override.rate`（`CParticle.cpp:371`）。两家一致。
+/// 此前 wasm 只实现了 `count`（并被当作发射率乘数），`rate` 整块忽略 ⇒
+/// Spider Man 4K 的 26 个 Szikra（spec rate 0.2、override rate 2.4~4.2）慢 3~4 倍，
+/// Subway Station 的 Wind（override rate 0.05）快 20 倍。
+#[test]
+fn override_rate_multiplies_emitter_rate() {
+    let ov = parse_particle_override(r#"{"rate":2.5}"#).expect("应解析出 override");
+    assert!((ov.rate - 2.5).abs() < 1e-6, "rate 字段应被解析，got {}", ov.rate);
+    assert!((ParticleOverride::default().rate - 1.0).abs() < 1e-6, "缺省 rate = 1（恒等）");
+
+    // 发射量 = emitter.rate × override.rate × dt = 100 × 2.5 × 1 = 250
+    // （寿命取 100s：rate 同时缩放寿命，用短寿命会让粒子在本帧内就被回收、数不到 250）
+    let mut init = determinate_init();
+    init.lifetime_min = 100.0;
+    init.lifetime_max = 100.0;
+    let mut sim = sim_with(init, ParticleOverride { rate: 2.5, ..Default::default() }, 100.0, 600);
+    sim.update(1.0);
+    assert_eq!(sim.particles.len(), 250, "override.rate=2.5 应把 rate 100 提到 250/s");
+}
+
+/// `override.rate` 是**粒子系统时间缩放**，不是「只乘发射率」：
+/// OWE `ParticleSubSystem::Tick` 是 `Advance(frame_time * Rate(), frame_time, …)`
+/// （ParticleRuntime.cpp:803-805），而 `Advance` 把缩放后的 delta 写进 `m_frame.delta`
+/// （:572）并用于寿命衰减（:66 `lifetime -= context.delta`）⇒ 发射率 ×rate **且** 寿命 ÷rate
+/// ⇒ **占空比（同时存活数）不变**，只是闪得更快更短。
+/// 只乘发射率不缩寿命会让「同时亮着的粒子数」随 rate 线性变多 —— 用户实测 Spider Man 4K
+/// 的闪电火花「比桌面版多、频率快了不少」（该壁纸 rate 覆盖 2.4~4.2）。
+#[test]
+fn override_rate_keeps_duty_cycle() {
+    fn duty(rate_override: f32) -> usize {
+        let mut init = determinate_init();
+        init.lifetime_min = 0.1;
+        init.lifetime_max = 0.1;
+        let mut sim = sim_with(init, ParticleOverride { rate: rate_override, ..Default::default() }, 1000.0, 600);
+        for _ in 0..20 {
+            sim.update(0.05); // 跑到稳态
+        }
+        sim.particles.len()
+    }
+    let base = duty(1.0);
+    let fast = duty(4.0);
+    assert!(base > 50, "基准稳态应有粒子，got {base}");
+    assert_eq!(base, fast, "rate 只缩放系统时间 ⇒ 稳态存活数（占空比）不变");
 }
 
 /// 颜色覆盖：`colorn`（已归一 0-1）走 v²；legacy `color`（0-255）先 /255 再 v²。

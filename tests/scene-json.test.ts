@@ -10,6 +10,25 @@ describe('parseSceneJson', () => {
     expect(desc.camera.center).toEqual([35.931, -6.317, 0]);
     expect(desc.orthogonal).toEqual({ width: 2400, height: 1555 });
   });
+  // 粒子透视相机（2026-09-26）：spec 带 flags perspective 位的粒子对象在 WE 里改用
+  // `global_perspective` 相机渲染，其参数来自 general.fov / general.perspectiveoverridefov
+  // （OWE SceneObjectParsers.cpp:59-85）。缺省 fov=50、perspectiveoverridefov=0（= 未覆盖）。
+  it('parses general.fov / general.perspectiveoverridefov（粒子透视相机参数）', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      general: { fov: 50, perspectiveoverridefov: 90, orthogonalprojection: { width: 3840, height: 2160 } },
+      objects: [],
+    }));
+    expect(desc.fov).toBe(50);
+    expect(desc.perspectiveOverrideFov).toBe(90);
+  });
+  it('general.fov / perspectiveoverridefov 缺失 → WE 缺省 50 / 0', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      general: { orthogonalprojection: { width: 1920, height: 1080 } },
+      objects: [],
+    }));
+    expect(desc.fov).toBe(50);
+    expect(desc.perspectiveOverrideFov).toBe(0);
+  });
   it('parses objects into image and particle kinds', () => {
     const desc = parseSceneJson(raw);
     const imageObj = desc.objects.find((o) => o.kind === 'image') as any;

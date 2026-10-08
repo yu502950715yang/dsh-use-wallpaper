@@ -141,6 +141,12 @@ export type SceneObject = SceneImageObject | SceneParticleObject | SceneUtilObje
 export interface SceneDescription {
   camera: { center: [number, number, number]; eye: [number, number, number]; up: [number, number, number] };
   orthogonal: { width: number; height: number };
+  // 粒子透视相机参数（`general.fov` / `general.perspectiveoverridefov`）：
+  // spec 带 `flags` perspective 位的粒子对象在 WE 里改用 `global_perspective` 相机渲染
+  // （OWE `SceneParticleObjectParser.cpp:397-398`），其 fov/距离由这两个字段决定
+  // （缺省 fov=50、perspectiveoverridefov=0 = 未覆盖 → 用固定 1000 距离反算 fov）。
+  fov?: number;
+  perspectiveOverrideFov?: number;
   clearColor?: [number, number, number];
   objects: SceneObject[];
   // T3.4：壁纸音频。WE 音频对象（无 image/particle/text 的纯音频节点）携带 sound 数组

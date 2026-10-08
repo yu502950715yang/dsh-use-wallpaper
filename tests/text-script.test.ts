@@ -22,11 +22,46 @@ describe('getTextScriptRuntime', () => {
     b!.dispose();
   });
 
+  // 2026-09-30：WE 官方的下拉框 API 名是 `addCombo`（OWE Script.cpp:1203 `builder.addCombo = adder('Combo')`），
+  // 而本插件的 builder 只注册了不存在的 `addComboBox` ⇒ 用 addCombo 的脚本 eval 直接
+  // `TypeError: not a function` ⇒ bind 返回 null ⇒ 文本层被整层跳过（用户报告 Spider Man 4K
+  // 的「DAY」「DATE」两行字在 DSH 里消失，只剩 Clock）。
+  it('builder 支持 WE 官方方法名 addCombo（缺失会让整段脚本 bind 失败）', async () => {
+    const rt = await getTextScriptRuntime();
+    const s = `'use strict';
+export var scriptProperties = createScriptProperties()
+  .addCombo({ name: 'mode', label: 'Mode', options: [{ label: 'A', value: '1' }, { label: 'B', value: '2' }] })
+  .addCheckbox({ name: 'on', label: 'On', value: true })
+  .finish();
+export function update(v) { return scriptProperties.mode + '/' + scriptProperties.on; }`;
+    const b = rt!.bind(s, { mode: '2', on: false }, '');
+    expect(b).not.toBeNull();
+    expect(b!.update()).toBe('2/false');
+    b!.dispose();
+  });
+
+  it('未知 add* 方法可链式调用且不抛错（OWE 的长尾 stub 名单，Script.cpp:1206-1214）', async () => {
+    const rt = await getTextScriptRuntime();
+    const s = `'use strict';
+export var scriptProperties = createScriptProperties()
+  .addFoo({ name: 'x', value: 1 })
+  .addCombo({ name: 'y', value: 'z' })
+  .addAnimation({ name: 'a' })
+  .finish();
+export function update(v) { return scriptProperties.x + '' + scriptProperties.y; }`;
+    const b = rt!.bind(s, {}, '');
+    expect(b).not.toBeNull();
+    expect(b!.update()).toBe('1z');
+    b!.dispose();
+  });
+
   it('未知 add* 方法不崩（宽松 builder）', async () => {
     const rt = await getTextScriptRuntime();
-    const s = `export function update(v){ return 'ok'; }`;
+    const s = `export var p = createScriptProperties().addWhatever({ name: 'k', value: 'v' }).finish();
+export function update(v){ return p.k; }`;
     const b = rt!.bind(s, {}, '');
-    expect(b!.update()).toBe('ok');
+    expect(b).not.toBeNull();
+    expect(b!.update()).toBe('v');
     b!.dispose();
   });
 

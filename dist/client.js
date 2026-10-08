@@ -2305,33 +2305,35 @@ body[data-ds-dark-theme][data-we-wallpaper]{
    \u6CE8\u610F\uFF1A\u53EA\u79FB\u9664\u6C14\u6CE1\uFF08flowItem\uFF09\uFF0C\u5E95\u90E8\u8F93\u5165\u6846\uFF08data-composer-card\uFF09\u4E0E\u63D0\u95EE\u5F39\u7A97
    \uFF08data-question-key\uFF09\u4FDD\u7559\u63D2\u4EF6\u6DB2\u6001\u73BB\u7483\uFF0C\u4E0D\u52A8\u3002 \u2500\u2500 */
 
-/* \u2500\u2500 \u4EC5\u8F93\u5165\u6846\uFF08data-composer-card\uFF09\u4E0E\u63D0\u95EE\u5F39\u7A97\uFF08data-question-key\uFF09\u4FDD\u7559\u6DB2\u6001\u73BB\u7483\uFF1B
-   \u6D88\u606F\u6C14\u6CE1\uFF08flowItem\uFF09\u5DF2\u6539\u56DE DSH \u539F\u751F\uFF08\u89C1\u4E0A\u65B9\u6CE8\u91CA\uFF09\uFF0C\u4E0D\u518D\u88AB\u8986\u76D6\u3002 \u2500\u2500 */
+/* \u2500\u2500 \u8F93\u5165\u6846\uFF08data-composer-card\uFF09\u4E0E\u63D0\u95EE\u5F39\u7A97\uFF08data-question-key\uFF09\u7528\u300C\u534A\u900F\u660E\u5E95 + \u6E10\u53D8 + \u5185\u9634\u5F71\u300D
+   \u8868\u73B0\u73BB\u7483\u611F\uFF0C**\u523B\u610F\u4E0D\u7528 backdrop-filter**\uFF082026-10-08\uFF09\uFF1A
+   DSH \u684C\u9762\u7AEF\u5728\u300C\u6709\u58C1\u7EB8 + \u6B63\u5728\u8F93\u51FA\u300D\u65F6\uFF0C\u628A\u9F20\u6807\u653E\u5230\u300C\u505C\u6B62\u300D\u6309\u94AE\u4E0A\u4F1A\u51FA\u73B0\u6A2A\u5411\u6EDA\u52A8\u6761\u6765\u56DE\u95EA\u73B0\u3001
+   \u9875\u9762\u6837\u5F0F\u8DF3\u52A8\uFF08\u5173\u6389\u58C1\u7EB8\u5373\u6D88\u5931\uFF09\u3002\u4E8C\u5206\u5B9A\u4F4D\uFF1A\u53BB\u6389 backdrop-filter \u540E\u5B8C\u5168\u6D88\u5931\uFF1B
+   \u534A\u5F84\u4ECE 14px \u964D\u5230 5px \u65E0\u6548\u3001\u632A\u5230 ::before \u4F2A\u5143\u7D20\uFF08\u65E0\u540E\u4EE3\uFF0C\u6392\u9664 containing block \u5F71\u54CD\uFF09\u4E5F\u65E0\u6548
+   \u21D2 \u662F\u8BE5\u5C5E\u6027\u7684**\u5408\u6210\u5C42\u91CD\u91C7\u6837**\u526F\u4F5C\u7528\u4E0E DSH \u8F93\u5165\u6846\u533A\u57DF\u51B2\u7A81\uFF0C\u4E0E\u5F3A\u5EA6/\u5C42\u7EA7\u65E0\u5173\uFF0C\u6545\u76F4\u63A5\u79FB\u9664\uFF1B
+   \u5E95\u8272\u4E0D\u900F\u660E\u5EA6\u4ECE .5/.65 \u63D0\u5230 .62/.75 \u8865\u507F\u5931\u53BB\u7684\u6A21\u7CCA\u3002\u6D88\u606F\u6C14\u6CE1\uFF08flowItem\uFF09\u5DF2\u662F DSH \u539F\u751F\u3002
+   \u26A0 \u672C\u6A21\u677F\u5B57\u7B26\u4E32\u5185\u4E0D\u5F97\u51FA\u73B0\u53CD\u5F15\u53F7\uFF08\u4F1A\u63D0\u524D\u7EC8\u6B62 CSS \u6A21\u677F\uFF09\u3002 \u2500\u2500 */
 body[data-we-wallpaper] [data-composer-card]{
   border-radius:20px;
-  background-color:rgba(255,255,255,.5);
+  background-color:rgba(255,255,255,.62);
   background-image:linear-gradient(180deg,rgba(255,255,255,.18),rgba(255,255,255,.05) 38%,rgba(255,255,255,.02));
-  -webkit-backdrop-filter:blur(14px) saturate(1.7);
-  backdrop-filter:blur(14px) saturate(1.7);
   box-shadow:inset 0 1px 0 rgba(255,255,255,.4),inset 0 -1px 0 rgba(255,255,255,.08),0 4px 16px rgba(0,0,0,.1);
 }
 body[data-ds-dark-theme][data-we-wallpaper] [data-composer-card]{
-  background-color:rgba(24,26,30,.65);
+  background-color:rgba(24,26,30,.75);
   background-image:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.02) 38%,rgba(255,255,255,.03));
 }
 /* \u7528\u6237\u63D0\u95EE\u5F39\u7A97\uFF08ask_user_question\uFF09\uFF1A\u5176\u5361\u7247\uFF08Mbwy4a_card\uFF09\u539F\u4E3A transparent\uFF0C\u4E0E\u4E3B\u8F93\u5165\u6846
-   \uFF08data-composer-card\uFF09\u4E0D\u4E00\u81F4\u2014\u2014\u5957\u7528\u540C\u4E00\u6DB2\u6001\u73BB\u7483\u7EDF\u4E00\u89C6\u89C9\uFF082026-08-25\uFF09\u3002
+   \uFF08data-composer-card\uFF09\u7EDF\u4E00\u89C6\u89C9\uFF082026-08-25\uFF09\uFF0C\u5E76\u540C\u6837\u4E0D\u7528 backdrop-filter\uFF08\u89C1\u4E0A\u65B9\u6CE8\u91CA\uFF09\u3002
    [data-question-key] \u662F DSH user-question \u7EC4\u4EF6\u5916\u5C42 frame \u7684\u7A33\u5B9A\u5C5E\u6027\u3002 */
 body[data-we-wallpaper] [data-question-key] section{
   border-radius:20px;
-  background-color:rgba(255,255,255,.5);
+  background-color:rgba(255,255,255,.62);
   background-image:linear-gradient(180deg,rgba(255,255,255,.18),rgba(255,255,255,.05) 38%,rgba(255,255,255,.02));
-  -webkit-backdrop-filter:blur(14px) saturate(1.7);
-  backdrop-filter:blur(14px) saturate(1.7);
   box-shadow:inset 0 1px 0 rgba(255,255,255,.4),inset 0 -1px 0 rgba(255,255,255,.08),0 4px 16px rgba(0,0,0,.1);
 }
 body[data-ds-dark-theme][data-we-wallpaper] [data-question-key] section{
-  background-color:rgba(24,26,30,.65);
+  background-color:rgba(24,26,30,.75);
   background-image:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.02) 38%,rgba(255,255,255,.03));
 }
 /* \u4FA7\u8FB9\u680F\uFF1A\u80CC\u666F\u7531 --dsw-specific-sidebar-fill \u63A7\u5236\uFF08\u89C1\u4E0A\u65B9\u6D45/\u6DF1\u5206\u652F\uFF09\uFF0C\u6B64\u5904\u4E0D\u518D\u8986\u76D6
@@ -22674,6 +22676,10 @@ function optNum(s) {
 function optStr(s) {
   return typeof s === "string" && s.trim() ? s : void 0;
 }
+function numOr(s, dflt) {
+  const n = optNum(s);
+  return n === void 0 ? dflt : n;
+}
 function optAlpha(s) {
   const n = optNum(s);
   if (n === void 0) return void 0;
@@ -22826,6 +22832,10 @@ function parseSceneJson(raw) {
       width: Number(ortho.width ?? 1920),
       height: Number(ortho.height ?? 1080)
     },
+    // 粒子透视相机（2026-09-26）：`general.fov`（WE 缺省 50）与 `general.perspectiveoverridefov`
+    // （缺省 0 = 未覆盖）。仅带 `flags` perspective 位的粒子对象用它（见 threejs-player）。
+    fov: numOr(gen.fov, 50),
+    perspectiveOverrideFov: numOr(gen.perspectiveoverridefov, 0),
     clearColor: cc,
     objects,
     sounds: collectSounds(root)
@@ -23008,7 +23018,7 @@ function createClockDriver(canvas, opts, props, initialText) {
 // src/client/threejs-player.ts
 var DEFAULT_PARTICLE_CAPACITY = 1024;
 var MAX_PARTICLE_CAPACITY = 2048;
-var PARTICLE_FLOATS_PER_INSTANCE = 13;
+var PARTICLE_FLOATS_PER_INSTANCE = 16;
 function specMaxcount(specJson) {
   try {
     const v = JSON.parse(specJson).maxcount;
@@ -23017,6 +23027,82 @@ function specMaxcount(specJson) {
   } catch {
     return 0;
   }
+}
+function specRenderer(specJson) {
+  const sprite = { kind: "sprite", length: 0.05, maxLength: 10, minLength: 0 };
+  try {
+    const raw = JSON.parse(specJson).renderer;
+    const first = Array.isArray(raw) ? raw[0] : void 0;
+    if (!first || typeof first.name !== "string" || first.name !== "spritetrail") return sprite;
+    const num = (v, dflt) => {
+      const n = typeof v === "string" ? parseFloat(v) : typeof v === "number" ? v : NaN;
+      return Number.isFinite(n) ? n : dflt;
+    };
+    const r = first;
+    return {
+      kind: "spritetrail",
+      length: num(r.length, 0.05),
+      maxLength: num(r.maxlength, 10),
+      minLength: num(r.minlength, 0)
+    };
+  } catch {
+    return sprite;
+  }
+}
+function textureTexelRatio(tex) {
+  const grid = textureSpriteInfo(tex);
+  const img = Array.isArray(tex?.image) ? tex?.image[0] : tex?.image;
+  if (!img || typeof img.width !== "number" || typeof img.height !== "number" || img.width <= 0 || img.height <= 0) {
+    return 1;
+  }
+  const frameW = grid ? img.width / grid.cols : img.width;
+  const frameH = grid ? img.height / grid.rows : img.height;
+  return frameH / frameW;
+}
+function specPerspective(specJson) {
+  try {
+    const raw = JSON.parse(specJson).flags;
+    const n = typeof raw === "string" ? parseFloat(raw) : typeof raw === "number" ? raw : 0;
+    return Number.isFinite(n) && (Math.floor(n) & 4) !== 0;
+  } catch {
+    return false;
+  }
+}
+function specSparseEventSource(specJson) {
+  try {
+    const spec = JSON.parse(specJson);
+    const children = Array.isArray(spec.children) ? spec.children : [];
+    const hasEventSpawn = children.some((c) => c?.type === "eventspawn");
+    if (!hasEventSpawn) return false;
+    const maxcount = typeof spec.maxcount === "string" ? parseFloat(spec.maxcount) : spec.maxcount;
+    if (typeof maxcount !== "number" || !Number.isFinite(maxcount) || maxcount > 1) return false;
+    const first = Array.isArray(spec.emitter) ? spec.emitter[0] : void 0;
+    const rate = typeof first?.rate === "string" ? parseFloat(first.rate) : first?.rate;
+    return typeof rate === "number" && Number.isFinite(rate) && rate < 1;
+  } catch {
+    return false;
+  }
+}
+function particlePerspectiveCamera(opts) {
+  const height = Number.isFinite(opts.sceneH) && opts.sceneH > 0 ? opts.sceneH : 1080;
+  const override = Number.isFinite(opts.perspectiveOverrideFov) ? opts.perspectiveOverrideFov : 0;
+  if (override > 0) {
+    const fov3 = override;
+    const k2 = Math.tan(fov3 / 2 * Math.PI / 180) * 2;
+    return { fov: fov3, distance: k2 > 0 ? height / k2 : 1e3 };
+  }
+  const distance = 1e3;
+  const k = height / distance / 2;
+  const fov2 = Math.atan(k) * 2 * 180 / Math.PI;
+  return { fov: fov2, distance };
+}
+function particlePerspMatrix(p) {
+  if (!p) return new Matrix4();
+  const cam = new PerspectiveCamera(p.fov, p.aspect > 0 ? p.aspect : 1, 1, 1e6);
+  cam.position.set(0, 0, p.distance);
+  cam.updateProjectionMatrix();
+  cam.updateMatrixWorld(true);
+  return new Matrix4().multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
 }
 function specEmitterOrigin(specJson) {
   const zero = [0, 0, 0];
@@ -23070,6 +23156,8 @@ attribute float particleAlpha;
 // \u7C92\u5B50\u6B27\u62C9\u89D2\uFF08\u5F27\u5EA6\uFF0C**\u9010\u5206\u91CF**\uFF09\uFF1A\u7531\u6A21\u62DF\u5668\u7684 rotationrandom \u521D\u59CB\u5316\u3001
 // angularmovement \u6BCF\u5E27\u9010\u5206\u91CF\u63A8\u8FDB\uFF08p.rot[k] += angular_vel[k]*dt\uFF09\u3002
 attribute vec3 particleRot;
+// \u7C92\u5B50\u5F53\u524D\u901F\u5EA6\uFF08\u4E16\u754C\u5355\u4F4D/\u79D2\uFF0C\u6765\u81EA wasm \u9876\u70B9\u6D41\u672B 3 \u6D6E\u70B9\uFF09\u3002\u4EC5 spritetrail \u6E32\u67D3\u5668\u6D88\u8D39\u3002
+attribute vec3 particleVelocity;
 // \u5BF9\u8C61\u53D8\u6362\uFF08WE \u7684\u7C92\u5B50 model matrix \u8BED\u4E49\uFF0C\u89C1 loadSceneToThree \u6CE8\u91CA\uFF09\uFF1A
 //   objCenter     \u5BF9\u8C61\u4E2D\u5FC3\uFF08\u4E16\u754C\u5750\u6807\uFF0Cwe_to_three \u540E\uFF09
 //   objScale      scene.json \u7684\u5BF9\u8C61 scale\uFF08\u9010\u8F74\uFF0C\u53EF\u4E3A\u8D1F = \u955C\u50CF\uFF09
@@ -23079,6 +23167,21 @@ uniform vec3 objCenter;
 uniform vec3 objScale;
 uniform vec3 emitterOrigin;
 uniform vec3 bmOffset;
+// spritetrail\uFF08WE genericparticle.vert + TRAILRENDERER combo\uFF0C2026-09-26\uFF09\uFF1A
+//   trailEnabled  1 = \u6309\u901F\u5EA6\u65B9\u5411\u62C9\u4F38 billboard\uFF08renderer[0].name == "spritetrail"\uFF09\uFF0C0 = \u539F\u65CB\u8F6C billboard
+//   trailParams   (length, maxlength, minlength) \u2014\u2014 \u5373 WE \u7684 g_RenderVar0.xyz
+//   texelRatio    \u7EB9\u7406 \u9AD8/\u5BBD\uFF08WE g_Texture0Resolution.y/.x\uFF09\uFF1B\u6CBF\u62D6\u5C3E\u65B9\u5411\u6309\u5B83\u8865\u507F\u7EB9\u7406\u957F\u5BBD\u6BD4
+uniform float trailEnabled;
+uniform vec3 trailParams;
+uniform float texelRatio;
+// \u7C92\u5B50\u900F\u89C6\u76F8\u673A\uFF08spec.flags \u7684 perspective \u4F4D\uFF1B2026-09-26\uFF09\uFF1A
+//   perspEnabled  1 = \u8BE5\u5C42\u7528 WE \u7684 global_perspective \u76F8\u673A\u6295\u5F71\uFF08\u8FD1\u5927\u8FDC\u5C0F\uFF09\uFF0C0 = \u4E3B\u6B63\u4EA4\u76F8\u673A
+//   persp         \u8BE5\u900F\u89C6\u76F8\u673A\u7684**\u89C6\u56FE\u6295\u5F71\u77E9\u9635**\uFF08\u76F8\u673A\u5728 (0,0,distance)\uFF0C\u770B\u5411 -z\uFF09\u2014\u2014
+//                 shader \u91CC\u7684 worldPos \u5DF2\u662F\u4E16\u754C\u5750\u6807\uFF0C\u6545\u76F4\u63A5\u76F8\u4E58\u3001\u4E0D\u518D\u53E0 modelViewMatrix
+//   perspEye      \u76F8\u673A\u773C\u4F4D\uFF08\u4E16\u754C\u5750\u6807\uFF09= WE \u7684 g_EyePosition\uFF0C\u4F9B trail \u9010\u7C92\u5B50\u7B97 eyeDirection
+uniform float perspEnabled;
+uniform mat4 persp;
+uniform vec3 perspEye;
 // \u5BF9\u8C61\u6B27\u62C9\u89D2\uFF08**\u5F27\u5EA6**\uFF09\u2014\u2014 WE model matrix = T\xB7R\xB7S \u7684 R \u90E8\u5206\u3002
 uniform vec3 objAngles;
 varying vec2 vCornerUv;
@@ -23113,10 +23216,44 @@ void main() {
   // \u81EA\u65CB\u5148\u4E8E\u5BF9\u8C61\u65CB\u8F6C\uFF1A\u6309 WE ComputeParticleTangents\uFF08shaders/common_particles.h\uFF09\u7684**\u4E09\u8F74\u6B27\u62C9**
   // \u65CB\u8F6C quad \u89D2\u70B9 \u2014\u2014 \u590D\u7528 weObjectRotate\uFF08R = Rz\xB7Ry\xB7Rx\uFF0C\u4E0E\u5BF9\u8C61\u89D2\u5EA6\u540C\u4E00\u7EA6\u5B9A\uFF09\u3002
   // rot \u53EA\u6709 z \u5206\u91CF\u65F6\u9000\u5316\u4E3A\u5E73\u9762\u81EA\u65CB\uFF0C\u4E0E\u539F\u5B9E\u73B0\u9010\u50CF\u7D20\u4E00\u81F4\u3002
-  vec3 spun = weObjectRotate(vec3(position.xy, 0.0), particleRot);
-  vec3 corner = weObjectRotate(abs(objScale) * (spun * particleSize * 0.5), objAngles);
-  worldPos += corner;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(worldPos, 1.0);
+  if (trailEnabled > 0.5 && length(particleVelocity) > 1e-6) {
+    // spritetrail\uFF1A\u590D\u523B WE ComputeParticleTrailTangents / ComputeParticlePosition
+    // \uFF08common_particles.h:42-59\uFF09\u2014\u2014
+    //   right = normalize(cross(eyeDirection, velocity))
+    //   up    = normalize(velocity) * clamp(|velocity| * length, minlength, maxlength)
+    //   pos   = p + size*right*(u-0.5) + size*up*(v-0.5)*textureRatio
+    // \u96E8\u4E1D/\u98CE\u75D5\u7684\u300C\u957F\u6761\u300D\u7531\u6B64\u800C\u6765\uFF08Spider Man 4K \u7684\u96E8\uFF1Asize 5.65 \xD7 clamp(3000\xD70.005)=15 \xD7 4 \u2248 339
+    // \u4E16\u754C\u5355\u4F4D \u2248 113px\uFF09\uFF0C\u6B64\u524D\u53EA\u753B size\xD7size \u7684\u65B9\u70B9\uFF081.9px\uFF09\u2192 \u8089\u773C\u4E0D\u53EF\u89C1\u3002
+    // \u26A0\uFE0F \u7B26\u53F7\uFF1AWE \u539F\u6587\u662F minus size*up*(v-0.5)*ratio\uFF0C\u5176 v=0 \u662F**\u7EB9\u7406\u9876\u884C**\uFF1B\u672C\u63D2\u4EF6\u7684\u7EB9\u7406\u7ECF
+    // tex-loader \u884C\u53CD\u8F6C\uFF08v=1 = \u56FE\u50CF\u9876\u884C\uFF0C\u4E0E sprite \u8DEF\u5F84\u300Ccorner +Y \u2194 \u56FE\u50CF\u9876\u884C\u300D\u81EA\u6D3D\uFF09\uFF0C\u6545\u8FD9\u91CC\u53D6
+    // \u6B63\u53F7\uFF0C\u8BA9\u56FE\u50CF\u4E0A\u7AEF\uFF08\u96E8\u6EF4\u4EAE\u5934\uFF09\u843D\u5728 +\u901F\u5EA6\u65B9\u5411 \u2014\u2014 \u4E0E\u684C\u9762\u7AEF\u4E00\u81F4\uFF0C\u5426\u5219\u62D6\u5C3E\u5934\u5C3E\u98A0\u5012\u3002
+    // \u6B63\u4EA4\u76F8\u673A\u4E0B\u89C6\u7EBF\u65B9\u5411\u662F\u5E38\u6570\uFF08viewMatrix \u7684\u76F8\u673A +Z \u53D6\u53CD = \u4E16\u754C\u7A7A\u95F4\u89C6\u7EBF\u65B9\u5411\uFF09\uFF1B\u900F\u89C6\u76F8\u673A\u4E0B
+    // eyeDirection \u9010\u7C92\u5B50\u4E3A worldPos - eye\uFF08WE \u7684 g_EyePosition \u8BED\u4E49\uFF09\u3002
+    // \uFF08|v|=0 \u7684\u9000\u5316\u5DF2\u5728\u5916\u5C42\u6392\u9664\uFF0C\u907F\u514D WE \u7684 normalize(0) NaN\u3002\uFF09
+    vec3 eyeDir = perspEnabled > 0.5
+      ? normalize(worldPos - perspEye)
+      : -normalize((viewMatrix * vec4(0.0, 0.0, 1.0, 0.0)).xyz);
+    float speed = length(particleVelocity);
+    vec3 right = normalize(cross(eyeDir, particleVelocity));
+    float trailLen = clamp(speed * trailParams.x, trailParams.z, trailParams.y);
+    vec3 up = (particleVelocity / speed) * trailLen;
+    vec2 quadUv = position.xy * 0.5 + 0.5;
+    vec3 offset = particleSize * (right * (quadUv.x - 0.5) + up * (quadUv.y - 0.5) * texelRatio);
+    worldPos += weObjectRotate(abs(objScale) * offset, objAngles);
+  } else {
+    // sprite\uFF08\u65E2\u6709\u8DEF\u5F84\uFF0C\u9010\u5B57\u4E0D\u53D8\uFF09\uFF1A\u4E09\u8F74\u6B27\u62C9\u65CB\u8F6C quad \u89D2\u70B9\uFF1B|v|=0 \u7684 spritetrail \u4E5F\u9000\u5230\u8FD9\u91CC
+    // \uFF08WE \u7684 normalize(0) \u4F1A\u4EA7\u51FA NaN\u3001\u7C92\u5B50\u6D88\u5931\uFF0C\u672C\u63D2\u4EF6\u9009\u62E9\u753B\u51FA size \u65B9\u5757\u800C\u4E0D\u662F\u4E22\u7C92\u5B50\uFF09\u3002
+    vec3 spun = weObjectRotate(vec3(position.xy, 0.0), particleRot);
+    vec3 corner = weObjectRotate(abs(objScale) * (spun * particleSize * 0.5), objAngles);
+    worldPos += corner;
+  }
+  // \u6295\u5F71\uFF1A\u5E26 spec.flags perspective \u4F4D\u7684\u7C92\u5B50\u5C42\u8D70 WE \u7684 global_perspective \u76F8\u673A\uFF08\u8FD1\u5927\u8FDC\u5C0F\uFF09\uFF0C
+  // \u5176\u4F59\u5C42\u8D70 three \u6CE8\u5165\u7684\u4E3B\uFF08\u6B63\u4EA4\uFF09\u6295\u5F71\u77E9\u9635 \u2014\u2014 \u975E\u900F\u89C6\u5C42\u7684\u901A\u8DEF\u9010\u5B57\u4E0D\u53D8\uFF08\u96F6\u56DE\u5F52\uFF09\u3002
+  // \u26A0\uFE0F \u900F\u89C6\u5206\u652F\u7528 persp\uFF08\u89C6\u56FE\u6295\u5F71\u77E9\u9635\uFF09\u76F4\u63A5\u4E58 worldPos\uFF08\u5DF2\u662F\u4E16\u754C\u5750\u6807\uFF09\uFF0C**\u4E0D**\u518D\u4E58 modelViewMatrix
+  // \uFF08\u540E\u8005\u5E26\u7684\u662F\u4E3B\u6B63\u4EA4\u76F8\u673A\u7684\u89C6\u56FE\uFF09\u3002
+  gl_Position = perspEnabled > 0.5
+    ? persp * vec4(worldPos, 1.0)
+    : projectionMatrix * modelViewMatrix * vec4(worldPos, 1.0);
   // \u26A0\uFE0F \u4FEE\u6B63\uFF1A\u7C92\u5B50\u662F 2D billboard\uFF08\u65E0\u6DF1\u5EA6\u6392\u5E8F\uFF0Cz \u4E0D\u53C2\u4E0E\u53EF\u89C1\u6027\uFF09\u3002three \u6B63\u4EA4\u76F8\u673A far/near \u4F1A\u628A
   // \u89C6\u9525\u5916\u7684 z \u88C1\u526A\u6389\uFF0C\u800C wasm billboard \u65E9\u5DF2\u628A\u6295\u5F71\u77E9\u9635 z \u884C\u5168 0\uFF08clip.z=0\uFF0C\u89C1 particle_billboard.wgsl\uFF09
   // \u9632\u300Cemitter \u7403\u58F3\u6563\u5C04\u53EF\u5230 \xB1750 \u7684\u7C92\u5B50\u88AB z \u88C1\u526A \u2192 \u7C92\u5B50\u4E0D\u53EF\u89C1\u300D\u3002\u8FD9\u91CC\u628A NDC z \u5F3A\u5236\u5F52\u4E2D\uFF080\uFF09\uFF0C
@@ -23218,6 +23355,8 @@ var ThreeScenePlayer = class {
   sceneWidth;
   sceneHeight;
   viewWidth;
+  // 上次 resize 时用的 devicePixelRatio（供 render() 按需校准；DSH 桌面版窗口创建早于系统缩放生效）。
+  lastDpr = 0;
   viewHeight;
   // 渲染缓冲像素比 = 设备像素比 × 画质档位（resize 时重读设备像素比，跨屏拖动自适应）。
   pixelRatio;
@@ -23275,6 +23414,7 @@ var ThreeScenePlayer = class {
     this.viewWidth = w;
     this.viewHeight = h;
     this.pixelRatio = resolvePixelRatio(this.devicePixelRatio(), this.qualityScale);
+    this.lastDpr = this.devicePixelRatio();
     this.applyCover();
     const r = this.renderer;
     if (typeof r.setPixelRatio === "function") r.setPixelRatio(this.pixelRatio);
@@ -23405,6 +23545,7 @@ var ThreeScenePlayer = class {
   // 帧序与 setAnimationLoop 的帧体一致（不带 dt）：隔离内容 → bindOutputs → 主场景 → advance。
   // 装配了 glowStage 时主场景渲染委托给它（stage 内部渲染主场景到 RT 再做全屏 glow 合成）。
   render() {
+    if (this.devicePixelRatio() !== this.lastDpr) this.resize(this.viewWidth, this.viewHeight);
     if (this.isolated.size > 0) this.renderIsolatedContents();
     this.objectEffectStage?.bindOutputs();
     if (this.glowStage) this.glowStage.apply(this.renderer, this.scene, this.camera);
@@ -23704,7 +23845,7 @@ var ThreeScenePlayer = class {
     if (map && map.isCanvasTexture) map.dispose();
   }
   // Task 3：粒子图层。`simVerticesGetter` 每帧返回模拟器当前顶点（摊平 Float32Array，
-  // 每粒子 `[pos3, size, uv2, color3, alpha, rot3]` 13 浮点——来自 wasm `SceneParticleSim::build_instance_vertices`）。
+  // 每粒子 `[pos3, size, uv2, color3, alpha, rot3, vel3]` 16 浮点——来自 wasm `SceneParticleSim::build_instance_vertices`）。
   // 渲染用 three.js `ShaderMaterial` billboard quad（每粒子一个实例，shader 由基础角点+位置/尺寸展开），
   // 模拟逻辑仍由 `SceneParticleSim` 承担（思路 1 核心：不重写模拟，只换渲染引擎）。
   // 返回分配的图层 id，供更新/释放引用。
@@ -23727,12 +23868,14 @@ var ThreeScenePlayer = class {
     const colors = new InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
     const alphas = new InstancedBufferAttribute(new Float32Array(capacity), 1);
     const rots = new InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
+    const velocities = new InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
     geometry.setAttribute("particlePosition", positions);
     geometry.setAttribute("particleSize", sizes);
     geometry.setAttribute("particleUv", uvs);
     geometry.setAttribute("particleColor", colors);
     geometry.setAttribute("particleAlpha", alphas);
     geometry.setAttribute("particleRot", rots);
+    geometry.setAttribute("particleVelocity", velocities);
     const material = new ShaderMaterial({
       uniforms: {
         map: { value: opts.tex ?? createWhiteTexture() },
@@ -23746,7 +23889,21 @@ var ThreeScenePlayer = class {
         objScale: { value: new Vector3(...opts.objectScale ?? [1, 1, 1]) },
         objAngles: { value: new Vector3(...opts.objectAngles ?? [0, 0, 0]) },
         emitterOrigin: { value: new Vector3(...opts.emitterOrigin ?? [0, 0, 0]) },
-        bmOffset: { value: new Vector3(...simEmitterOffset(opts.emitterOrigin ?? [0, 0, 0])) }
+        bmOffset: { value: new Vector3(...simEmitterOffset(opts.emitterOrigin ?? [0, 0, 0])) },
+        // spritetrail（缺省关闭 → 顶点 shader 走原旋转分支，既有壁纸逐像素不变）。
+        trailEnabled: { value: opts.trail ? 1 : 0 },
+        trailParams: {
+          value: new Vector3(
+            opts.trail?.length ?? 1,
+            opts.trail?.maxLength ?? 1,
+            opts.trail?.minLength ?? 0
+          )
+        },
+        texelRatio: { value: textureTexelRatio(opts.tex) },
+        // 粒子透视相机（缺省关闭 → 走主正交投影，既有壁纸逐像素不变）。
+        perspEnabled: { value: opts.perspective ? 1 : 0 },
+        persp: { value: particlePerspMatrix(opts.perspective) },
+        perspEye: { value: new Vector3(0, 0, opts.perspective?.distance ?? 0) }
       },
       vertexShader: PARTICLE_VERTEX_SHADER,
       fragmentShader: PARTICLE_FRAGMENT_SHADER,
@@ -23780,6 +23937,7 @@ var ThreeScenePlayer = class {
       colors,
       alphas,
       rots,
+      velocities,
       capacity,
       loggedFirstFrame: false,
       loggedCount: 0
@@ -23844,13 +24002,15 @@ var ThreeScenePlayer = class {
     layer.colors = ensure(layer.colors, 3, count * 3, "particleColor");
     layer.alphas = ensure(layer.alphas, 1, count, "particleAlpha");
     layer.rots = ensure(layer.rots, 3, count * 3, "particleRot");
+    layer.velocities = ensure(layer.velocities, 3, count * 3, "particleVelocity");
     const minCapacity = Math.min(
       Math.floor(layer.positions.array.length / 3),
       layer.sizes.array.length,
       Math.floor(layer.uvs.array.length / 2),
       Math.floor(layer.colors.array.length / 3),
       layer.alphas.array.length,
-      Math.floor(layer.rots.array.length / 3)
+      Math.floor(layer.rots.array.length / 3),
+      Math.floor(layer.velocities.array.length / 3)
     );
     if (minCapacity > layer.capacity) {
       layer.capacity = minCapacity;
@@ -23862,6 +24022,7 @@ var ThreeScenePlayer = class {
     const color = layer.colors.array;
     const alpha = layer.alphas.array;
     const rot = layer.rots.array;
+    const vel = layer.velocities.array;
     for (let i = 0; i < count; i++) {
       const b = i * PARTICLE_FLOATS_PER_INSTANCE;
       pos[i * 3] = data[b];
@@ -23877,6 +24038,9 @@ var ThreeScenePlayer = class {
       rot[i * 3] = data[b + 10];
       rot[i * 3 + 1] = data[b + 11];
       rot[i * 3 + 2] = data[b + 12];
+      vel[i * 3] = data[b + 13];
+      vel[i * 3 + 1] = data[b + 14];
+      vel[i * 3 + 2] = data[b + 15];
     }
     layer.positions.needsUpdate = true;
     layer.sizes.needsUpdate = true;
@@ -23884,6 +24048,7 @@ var ThreeScenePlayer = class {
     layer.colors.needsUpdate = true;
     layer.alphas.needsUpdate = true;
     layer.rots.needsUpdate = true;
+    layer.velocities.needsUpdate = true;
     layer.geometry.instanceCount = count;
   }
   // 停止循环并释放 renderer 资源。
@@ -24027,12 +24192,14 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
     } else if (obj.kind === "particle" && obj.particle) {
       const p = assets.particles?.get(obj.id);
       if (!p || !assets.createParticleSim) continue;
+      if (specSparseEventSource(p.specJson)) continue;
       const t = world(obj);
       const sim = assets.createParticleSim(p.specJson, t.origin, sceneW, sceneH, p.overrideJson ?? "");
       const frameCount = textureFrameCount(p.tex);
       const grid = textureFrameGrid(p.tex);
       sim.set_frame_count(frameCount);
       const emitterOrigin = specEmitterOrigin(p.specJson);
+      const trailSpec = specRenderer(p.specJson);
       const id = player.addParticle(() => sim.vertices(), {
         tex: p.tex,
         frameCount: sim.frame_count(),
@@ -24049,6 +24216,19 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
         // three 只在首帧锁存该容量（见 addParticle），必须按模拟器**最终**会产出的粒子数一次给足；
         // 缺 maxcount（旧格式/解析失败）→ addParticle 用 DEFAULT_PARTICLE_CAPACITY 兜底。
         maxInstances: specMaxcount(p.specJson),
+        // 拖尾渲染（spec.renderer[0] == "spritetrail"）：雨丝/风痕靠沿速度方向拉伸 billboard
+        // 呈现（WE ComputeParticleTrailTangents）；非 spritetrail → 不传（sprite 外观零变化）。
+        trail: trailSpec.kind === "spritetrail" ? trailSpec : void 0,
+        // 粒子透视相机（spec.flags 的 perspective 位）：WE 给这类对象换挂 global_perspective 相机，
+        // 于是雨/雪/樱花等有近大远小的层次（Spider Man 4K 的雨桌面近处 ≈10×）。无该位 → 不传。
+        perspective: specPerspective(p.specJson) ? (() => {
+          const cam = particlePerspectiveCamera({
+            fov: desc.fov ?? 50,
+            perspectiveOverrideFov: desc.perspectiveOverrideFov ?? 0,
+            sceneH
+          });
+          return { fov: cam.fov, distance: cam.distance, aspect: sceneW / sceneH };
+        })() : void 0,
         // 脚本图层桥的键 = scene 对象 id（总是传）。
         objectId: obj.id,
         // 对象级效果链：带效果的粒子对象同样隔离（对象 RT + 合成 quad）。世界尺寸由调用方按
@@ -27248,13 +27428,19 @@ var PRELUDE = `
 function createScriptProperties() {
   var injected = (typeof __weScriptProps === 'object' && __weScriptProps) ? __weScriptProps : {};
   var defaults = {};
+  var proxy = null;
+  function add(o) { if (o && o.name) defaults[o.name] = o.value; return proxy; }
   var api = {
-    addCheckbox: add, addSlider: add, addComboBox: add, addColor: add,
-    addText: add, addTextInput: add, addFont: add, addUserProperty: add,
     finish: function () { return Object.assign({}, defaults, injected); }
   };
-  function add(o) { if (o && o.name) defaults[o.name] = o.value; return api; }
-  return api;
+  proxy = new Proxy(api, {
+    get: function (t, k) {
+      if (k in t) return t[k];
+      if (typeof k === 'string' && k.indexOf('add') === 0) return add;
+      return undefined;
+    }
+  });
+  return proxy;
 }
 true;
 `;
@@ -27293,6 +27479,8 @@ var QuickJSTextRuntime = class {
       })()`
     );
     if (r.error) {
+      const info = ctx.dump(r.error);
+      console.warn("[text-script] \u811A\u672C\u6267\u884C\u5931\u8D25\uFF0C\u8BE5\u6587\u672C\u5C42\u5C06\u56DE\u9000/\u8DF3\u8FC7\uFF1A", info?.message ?? String(info));
       r.error.dispose();
       props.dispose();
       return null;
@@ -27312,6 +27500,7 @@ var QuickJSTextRuntime = class {
     }
     let last = initialValue ?? "";
     let disposed = false;
+    let warned = false;
     return {
       update: () => {
         if (disposed) return null;
@@ -27320,6 +27509,11 @@ var QuickJSTextRuntime = class {
         const out = ctx.callFunction(updateFn, ctx.undefined, arg);
         arg.dispose();
         if (out.error) {
+          if (!warned) {
+            warned = true;
+            const info = ctx.dump(out.error);
+            console.warn("[text-script] update \u629B\u9519/\u8D85\u65F6\uFF0C\u4FDD\u6301\u4E0A\u4E00\u5E27\u6587\u672C\uFF1A", info?.message ?? String(info));
+          }
           out.error.dispose();
           return null;
         }

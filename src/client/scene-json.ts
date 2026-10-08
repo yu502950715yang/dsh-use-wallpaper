@@ -56,6 +56,13 @@ function optStr(s: unknown): string | undefined {
   return typeof s === 'string' && s.trim() ? s : undefined;
 }
 
+// 带缺省的数值字段（general.fov / perspectiveoverridefov）：数字/数字字符串 → 有限数值；
+// 否则回退 WE 缺省（见调用处的 50 / 0）。`perspectiveoverridefov` 允许显式 0（= 未覆盖）。
+function numOr(s: unknown, dflt: number): number {
+  const n = optNum(s);
+  return n === undefined ? dflt : n;
+}
+
 // 可选 alpha 字段（T4.3，WE NormalizeLayerAlpha 语义）：数值/数字字符串 → 有限值；
 // 归一化规则：>1 视为 0-100 百分比 /100（"50" → 0.5，"100" → 1），随后 clamp 0-1
 // （"200" → 2 → clamp 1；防御畸形数据）；缺省/非法 → undefined（渲染器按 1.0 处理）。
@@ -265,6 +272,10 @@ export function parseSceneJson(raw: string): SceneDescription {
       width: Number(ortho.width ?? 1920),
       height: Number(ortho.height ?? 1080),
     },
+    // 粒子透视相机（2026-09-26）：`general.fov`（WE 缺省 50）与 `general.perspectiveoverridefov`
+    // （缺省 0 = 未覆盖）。仅带 `flags` perspective 位的粒子对象用它（见 threejs-player）。
+    fov: numOr(gen.fov, 50),
+    perspectiveOverrideFov: numOr(gen.perspectiveoverridefov, 0),
     clearColor: cc,
     objects,
     sounds: collectSounds(root),
