@@ -529,6 +529,13 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
     - **验收**：vitest 新增 2 项（`specSparseEventSource` 的 5 组条件 + `loadSceneToThree` 建层数 0/1，先写并确认 RED）⇒ 全量 **1035 全绿**；e2e 探针 `--isolate` 的 `kept` 由 **30 → 4**（26 个 spark 层消失、4 层雨保留），整屏渲染正常；`e2e:colorblend` PASS。
     - **边界**：① 若日后发现 WE 真身其实会渲染（或该行为随版本变化），把 `specSparseEventSource` 改为恒返回 false 即可完全回退；② `children` 里的子粒子系统（`sparktrails`，一次爆发 100 颗）**仍未实现** —— 桌面上的「火花群」我们也没有，本条只去掉了多余的大光斑。
 
+26. **输入框毛玻璃（`backdrop-filter`）与 DSH 桌面端冲突 → 改为半透明底（2026-10-08；用户报告「桌面端聊天时把鼠标放到停止按钮上，横向滚动条来回闪现、页面样式跳动」）**：
+    - **症状与边界**：只在**有壁纸**时出现（关掉壁纸即完全消失 —— 用户实测确认）；**scene 与 video 壁纸都会**（⇒ 与渲染路径无关）；只在 DSH **正在流式输出**时出现（停止输出即无）；光标悬停「停止」按钮时最明显；表现为聊天输入框**下方**的**横向**滚动条来回闪现 + 页面跳动。
+    - **二分定位（每步只改一个变量）**：① 禁用插件整张样式表 → UI 被壁纸盖住 ✗（那张表含 `#root{position:relative;z-index:1}` 这类「内容必须在壁纸之上」的必需规则）⇒ **不能用整表禁用来验证**；② 以「壁纸层 `z-index:-1` + `#root` 恢复 static」替代 → **仍闪**（排除 `#root`）；③ 去掉 `[data-composer-card]` 的 `backdrop-filter` → **完全不闪** ✓；④ 半径 14px→5px → **仍闪**；⑤ 挪到 `::before` 伪元素（无后代 ⇒ 已排除 containing block 影响）→ 毛玻璃正常但**仍闪** ⇒ 是该属性的**合成层重采样**副作用，**与强度、层级都无关**。
+    - **改动**：`[data-composer-card]` 与 `[data-question-key] section` **去掉 `backdrop-filter` / `-webkit-backdrop-filter`**，用「半透明底（浅 .5→.62、深 .65→.75）+ 渐变 + 内阴影」保留玻璃观感。
+    - **验收**：改写 2 项 vitest 断言（现在断言**不得**出现 `backdrop-filter`，防回归）⇒ 全量 **1036 全绿**、`e2e:colorblend` PASS；用户真机确认「不闪了、输入框弹层正常」。
+    - **⚠ 教训**：① 验证「是不是插件 CSS 造成的」**不能禁用整张样式表**（会连带藏掉 UI，把实验做废）；② `overflow-x: clip` 只能藏掉滚动条这个**症状**，振荡仍在（实测：看不到滚动条但页面照样跳）—— 治标不治本，别用它收场；③ `styles.ts` 的 CSS 是**模板字符串**，注释或规则里出现反引号会提前终止模板（esbuild 报 `Expected ";"`）—— 与 GLSL 注释同一类坑。
+
 ### ~~备用 wasm / JS 路径~~ ⇒ **已删除（2026-09-22）**
 
 `wasm-renderer.ts` / `scene-renderer.ts` 及其 Rust 侧 `wasm/src/render/**` 已整体移除（见下面第 14 条）。

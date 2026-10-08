@@ -2305,33 +2305,35 @@ body[data-ds-dark-theme][data-we-wallpaper]{
    \u6CE8\u610F\uFF1A\u53EA\u79FB\u9664\u6C14\u6CE1\uFF08flowItem\uFF09\uFF0C\u5E95\u90E8\u8F93\u5165\u6846\uFF08data-composer-card\uFF09\u4E0E\u63D0\u95EE\u5F39\u7A97
    \uFF08data-question-key\uFF09\u4FDD\u7559\u63D2\u4EF6\u6DB2\u6001\u73BB\u7483\uFF0C\u4E0D\u52A8\u3002 \u2500\u2500 */
 
-/* \u2500\u2500 \u4EC5\u8F93\u5165\u6846\uFF08data-composer-card\uFF09\u4E0E\u63D0\u95EE\u5F39\u7A97\uFF08data-question-key\uFF09\u4FDD\u7559\u6DB2\u6001\u73BB\u7483\uFF1B
-   \u6D88\u606F\u6C14\u6CE1\uFF08flowItem\uFF09\u5DF2\u6539\u56DE DSH \u539F\u751F\uFF08\u89C1\u4E0A\u65B9\u6CE8\u91CA\uFF09\uFF0C\u4E0D\u518D\u88AB\u8986\u76D6\u3002 \u2500\u2500 */
+/* \u2500\u2500 \u8F93\u5165\u6846\uFF08data-composer-card\uFF09\u4E0E\u63D0\u95EE\u5F39\u7A97\uFF08data-question-key\uFF09\u7528\u300C\u534A\u900F\u660E\u5E95 + \u6E10\u53D8 + \u5185\u9634\u5F71\u300D
+   \u8868\u73B0\u73BB\u7483\u611F\uFF0C**\u523B\u610F\u4E0D\u7528 backdrop-filter**\uFF082026-10-08\uFF09\uFF1A
+   DSH \u684C\u9762\u7AEF\u5728\u300C\u6709\u58C1\u7EB8 + \u6B63\u5728\u8F93\u51FA\u300D\u65F6\uFF0C\u628A\u9F20\u6807\u653E\u5230\u300C\u505C\u6B62\u300D\u6309\u94AE\u4E0A\u4F1A\u51FA\u73B0\u6A2A\u5411\u6EDA\u52A8\u6761\u6765\u56DE\u95EA\u73B0\u3001
+   \u9875\u9762\u6837\u5F0F\u8DF3\u52A8\uFF08\u5173\u6389\u58C1\u7EB8\u5373\u6D88\u5931\uFF09\u3002\u4E8C\u5206\u5B9A\u4F4D\uFF1A\u53BB\u6389 backdrop-filter \u540E\u5B8C\u5168\u6D88\u5931\uFF1B
+   \u534A\u5F84\u4ECE 14px \u964D\u5230 5px \u65E0\u6548\u3001\u632A\u5230 ::before \u4F2A\u5143\u7D20\uFF08\u65E0\u540E\u4EE3\uFF0C\u6392\u9664 containing block \u5F71\u54CD\uFF09\u4E5F\u65E0\u6548
+   \u21D2 \u662F\u8BE5\u5C5E\u6027\u7684**\u5408\u6210\u5C42\u91CD\u91C7\u6837**\u526F\u4F5C\u7528\u4E0E DSH \u8F93\u5165\u6846\u533A\u57DF\u51B2\u7A81\uFF0C\u4E0E\u5F3A\u5EA6/\u5C42\u7EA7\u65E0\u5173\uFF0C\u6545\u76F4\u63A5\u79FB\u9664\uFF1B
+   \u5E95\u8272\u4E0D\u900F\u660E\u5EA6\u4ECE .5/.65 \u63D0\u5230 .62/.75 \u8865\u507F\u5931\u53BB\u7684\u6A21\u7CCA\u3002\u6D88\u606F\u6C14\u6CE1\uFF08flowItem\uFF09\u5DF2\u662F DSH \u539F\u751F\u3002
+   \u26A0 \u672C\u6A21\u677F\u5B57\u7B26\u4E32\u5185\u4E0D\u5F97\u51FA\u73B0\u53CD\u5F15\u53F7\uFF08\u4F1A\u63D0\u524D\u7EC8\u6B62 CSS \u6A21\u677F\uFF09\u3002 \u2500\u2500 */
 body[data-we-wallpaper] [data-composer-card]{
   border-radius:20px;
-  background-color:rgba(255,255,255,.5);
+  background-color:rgba(255,255,255,.62);
   background-image:linear-gradient(180deg,rgba(255,255,255,.18),rgba(255,255,255,.05) 38%,rgba(255,255,255,.02));
-  -webkit-backdrop-filter:blur(14px) saturate(1.7);
-  backdrop-filter:blur(14px) saturate(1.7);
   box-shadow:inset 0 1px 0 rgba(255,255,255,.4),inset 0 -1px 0 rgba(255,255,255,.08),0 4px 16px rgba(0,0,0,.1);
 }
 body[data-ds-dark-theme][data-we-wallpaper] [data-composer-card]{
-  background-color:rgba(24,26,30,.65);
+  background-color:rgba(24,26,30,.75);
   background-image:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.02) 38%,rgba(255,255,255,.03));
 }
 /* \u7528\u6237\u63D0\u95EE\u5F39\u7A97\uFF08ask_user_question\uFF09\uFF1A\u5176\u5361\u7247\uFF08Mbwy4a_card\uFF09\u539F\u4E3A transparent\uFF0C\u4E0E\u4E3B\u8F93\u5165\u6846
-   \uFF08data-composer-card\uFF09\u4E0D\u4E00\u81F4\u2014\u2014\u5957\u7528\u540C\u4E00\u6DB2\u6001\u73BB\u7483\u7EDF\u4E00\u89C6\u89C9\uFF082026-08-25\uFF09\u3002
+   \uFF08data-composer-card\uFF09\u7EDF\u4E00\u89C6\u89C9\uFF082026-08-25\uFF09\uFF0C\u5E76\u540C\u6837\u4E0D\u7528 backdrop-filter\uFF08\u89C1\u4E0A\u65B9\u6CE8\u91CA\uFF09\u3002
    [data-question-key] \u662F DSH user-question \u7EC4\u4EF6\u5916\u5C42 frame \u7684\u7A33\u5B9A\u5C5E\u6027\u3002 */
 body[data-we-wallpaper] [data-question-key] section{
   border-radius:20px;
-  background-color:rgba(255,255,255,.5);
+  background-color:rgba(255,255,255,.62);
   background-image:linear-gradient(180deg,rgba(255,255,255,.18),rgba(255,255,255,.05) 38%,rgba(255,255,255,.02));
-  -webkit-backdrop-filter:blur(14px) saturate(1.7);
-  backdrop-filter:blur(14px) saturate(1.7);
   box-shadow:inset 0 1px 0 rgba(255,255,255,.4),inset 0 -1px 0 rgba(255,255,255,.08),0 4px 16px rgba(0,0,0,.1);
 }
 body[data-ds-dark-theme][data-we-wallpaper] [data-question-key] section{
-  background-color:rgba(24,26,30,.65);
+  background-color:rgba(24,26,30,.75);
   background-image:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.02) 38%,rgba(255,255,255,.03));
 }
 /* \u4FA7\u8FB9\u680F\uFF1A\u80CC\u666F\u7531 --dsw-specific-sidebar-fill \u63A7\u5236\uFF08\u89C1\u4E0A\u65B9\u6D45/\u6DF1\u5206\u652F\uFF09\uFF0C\u6B64\u5904\u4E0D\u518D\u8986\u76D6
