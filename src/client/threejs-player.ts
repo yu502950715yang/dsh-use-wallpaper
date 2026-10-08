@@ -167,6 +167,27 @@ export function specPerspective(specJson: string): boolean {
   }
 }
 
+// 「稀疏事件源」粒子：spec 同时满足 ① children 含 type=eventspawn（子粒子由父粒子的生成事件触发）
+// ② maxcount ≤ 1 ③ emitter[0].rate < 1。桌面**不渲染**这类粒子（用户录屏 163 帧 / 5.4s 在
+// 3660373677 的 26 个 Szikra 坐标上逐帧「中心亮 vs 环带」判据全为 0），而本插件会画出直径约 200px 的白色柔光斑。
+// 机制未明：官方文档与 OWE/lwe 两个参考实现都认为此类父粒子应正常渲染，故本条按**观测**对齐；
+// 条件收窄到全库只命中该壁纸的 26 个对象（其余 83 个带 children 的对象是 eventfollow 等，不受影响）。非法/缺失 → false。
+export function specSparseEventSource(specJson: string): boolean {
+  try {
+    const spec = JSON.parse(specJson) as { children?: unknown; maxcount?: unknown; emitter?: unknown };
+    const children = Array.isArray(spec.children) ? spec.children : [];
+    const hasEventSpawn = children.some((c) => (c as { type?: unknown } | null | undefined)?.type === 'eventspawn');
+    if (!hasEventSpawn) return false;
+    const maxcount = typeof spec.maxcount === 'string' ? parseFloat(spec.maxcount) : spec.maxcount;
+    if (typeof maxcount !== 'number' || !Number.isFinite(maxcount) || maxcount > 1) return false;
+    const first = Array.isArray(spec.emitter) ? (spec.emitter[0] as { rate?: unknown } | undefined) : undefined;
+    const rate = typeof first?.rate === 'string' ? parseFloat(first.rate) : first?.rate;
+    return typeof rate === 'number' && Number.isFinite(rate) && rate < 1;
+  } catch {
+    return false;
+  }
+}
+
 // WE 的粒子透视相机参数（正交场景内）：
 //   fov      = general.perspectiveoverridefov（>0 时），否则按**固定 1000 距离**反算
 //   distance = 场景高 / (2·tan(fov/2))
@@ -1871,6 +1892,8 @@ export function loadSceneToThree(
       // 与缺失粒子纹理时白图兜底同语义）。
       const p = assets.particles?.get(obj.id);
       if (!p || !assets.createParticleSim) continue;
+      // 桌面不渲染的「稀疏事件源」粒子（见 specSparseEventSource 注释）→ 整层跳过，不建模拟器。
+      if (specSparseEventSource(p.specJson)) continue;
       const t = world(obj);
       // new CpuParticleSim(json, origin, sceneW, sceneH, overrideJson)（经工厂抽象：生产 wasm /
       // 测试 mock）。第 5 参 = 该对象 instanceoverride 的原始 JSON（无覆盖 → 空串）。

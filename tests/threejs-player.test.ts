@@ -6,7 +6,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
-import { ThreeScenePlayer, loadSceneToThree, resolvePixelRatio, frameCountFromDims, textureFrameCount, textureFrameGrid, specMaxcount, particleCapacity, specEmitterOrigin, simEmitterOffset, specRenderer, specPerspective, particlePerspectiveCamera, BLACKMYTH_OBJ_SCALE, DEFAULT_PARTICLE_CAPACITY, MAX_PARTICLE_CAPACITY, PARTICLE_FLOATS_PER_INSTANCE } from '../src/client/threejs-player.js';
+import { ThreeScenePlayer, loadSceneToThree, resolvePixelRatio, frameCountFromDims, textureFrameCount, textureFrameGrid, specMaxcount, particleCapacity, specEmitterOrigin, simEmitterOffset, specRenderer, specPerspective, particlePerspectiveCamera, specSparseEventSource, BLACKMYTH_OBJ_SCALE, DEFAULT_PARTICLE_CAPACITY, MAX_PARTICLE_CAPACITY, PARTICLE_FLOATS_PER_INSTANCE } from '../src/client/threejs-player.js';
 import { textLayerOffset, type TextLayout } from '../src/client/text-object.js';
 import { coverRange, createCompositeGeometry, screenScalePx } from '../src/client/object-range.js';
 
@@ -843,6 +843,24 @@ describe('ThreeScenePlayer particle layer', () => {
     expect(mat2.uniforms.trailEnabled.value).toBe(0);
   });
 
+  // 2026-10-08：用户桌面录屏 163 帧（5.4s）在 3660373677 的 26 个 Szikra 坐标上**没有任何白团**
+  // （逐帧「中心亮 vs 环带」判据全为 0），而本插件会渲染出大白柔光斑 ⇒ 按观测对齐：跳过这类
+  // 「稀疏事件源」粒子。条件收窄到三条同时成立，全库只命中该壁纸的 26 个对象。
+  it('specSparseEventSource：仅「eventspawn 子粒子 + maxcount≤1 + rate<1」判定为桌面不渲染', () => {
+    // 3660373677 的 spark.json（实测桌面无此光斑）
+    expect(specSparseEventSource(JSON.stringify({ children: [{ type: 'eventspawn' }], maxcount: 1, emitter: [{ rate: 0.2 }] }))).toBe(true);
+    // GTR 的流星（eventfollow + maxcount 16）→ 不受影响
+    expect(specSparseEventSource(JSON.stringify({ children: [{ type: 'eventfollow' }], maxcount: 16, emitter: [{ rate: 0.2 }] }))).toBe(false);
+    // Crimson Horizon 的流星（eventfollow ×2 + maxcount 100 + rate 6）→ 不受影响
+    expect(specSparseEventSource(JSON.stringify({ children: [{ type: 'eventfollow' }, { type: 'eventfollow' }], maxcount: 100, emitter: [{ rate: 6 }] }))).toBe(false);
+    // eventspawn 但池子/速率正常 → 不抑制
+    expect(specSparseEventSource(JSON.stringify({ children: [{ type: 'eventspawn' }], maxcount: 50, emitter: [{ rate: 10 }] }))).toBe(false);
+    expect(specSparseEventSource(JSON.stringify({ children: [{ type: 'eventspawn' }], maxcount: 1, emitter: [{ rate: 10 }] }))).toBe(false);
+    expect(specSparseEventSource('{}')).toBe(false);
+    expect(specSparseEventSource('')).toBe(false);
+    expect(specSparseEventSource('not json')).toBe(false);
+  });
+
   it('specPerspective：spec.flags 的 perspective 位（bit2 = 4）→ 该粒子对象改用透视相机', () => {
     expect(specPerspective('{"flags":4}')).toBe(true);
     expect(specPerspective('{"flags":6}')).toBe(true); // 位 2 + 位 1（3790775478 的 ash.json）
@@ -1509,6 +1527,22 @@ describe('ThreeScenePlayer loadSceneToThree', () => {
     // 无 perspective 位（全库多数粒子）→ 保持正交投影（零回归）。
     const ortho = mk(JSON.stringify({ flags: 0, maxcount: 50, emitter: [{ rate: 20 }] }));
     expect(ortho.perspEnabled.value).toBe(0);
+  });
+
+  it('loadSceneToThree：稀疏事件源 spark 不建粒子层（桌面无此光斑）；普通粒子照常建层', () => {
+    const mk = (specJson: string) => {
+      const canvas = document.createElement('canvas');
+      const assets = {
+        renderer: createMockRenderer() as unknown as THREE.WebGLRenderer,
+        backgroundTextures: new Map([[13, new THREE.DataTexture(new Uint8Array(4), 2, 2)]]),
+        particles: new Map([[71, { specJson, tex: new THREE.DataTexture(new Uint8Array(4), 64, 64), blend: 'alpha' as const }]]),
+        createParticleSim: vi.fn(() => makeMockSim()),
+      };
+      return loadSceneToThree(BLACKMYTH_SCENE, assets, canvas);
+    };
+    const sparkSpec = JSON.stringify({ children: [{ type: 'eventspawn' }], maxcount: 1, emitter: [{ rate: 0.2 }] });
+    expect(mk(sparkSpec).particleLayers.length).toBe(0);
+    expect(mk(JSON.stringify({ maxcount: 50, emitter: [{ rate: 20 }] })).particleLayers.length).toBe(1);
   });
 
   it('specEmitterOrigin / simEmitterOffset：解析 emitter[0].origin 并算黑神话偏移', () => {

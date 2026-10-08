@@ -521,6 +521,14 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
     - **验收**：Rust 新增两项 —— `override_rate_multiplies_emitter_rate`（rate=2.5 ⇒ 100/s 变 250/s）与 **`override_rate_keeps_duty_cycle`**（rate=1 与 rate=4 的稳态存活数必须相同；先写并确认 RED）；e2e A/B（`research/_rain-probe.mjs --sample-freq`：稳态后每 100ms 采样一次共 30 次，统计 26 个 Szikra 层「有粒子」占比）：**忽略 rate 6.4% → 只乘发射率 10.3% → 时间缩放 2.6%**（与理论 `0.2/s × 0.17s ≈ 3.4%` 一致）；cargo 全绿 + vitest **1033 全绿** + `e2e:colorblend` PASS。
     - **未做 / 边界（如实）**：① `count` 语义未动（见上）；② 子粒子系统（`spark.json` 的 `children: eventspawn → sparktrails`）**不实现** —— 它在 WE 里用**真实 dt**（`child->Tick(child_frame_time)`），与本条的时间缩放无关；③ override 字段的 `{script,user,value}` 包装仍由 wasm `scalar()` 取**缺省值**（DK WOTLK 的 rate 是音频脚本绑定；本库无 `{user,value}` 形态的样本）—— 已知缺口；④ `prewarm` 的 `mean_life` 仍未乘 `override.lifetime`（独立小缺口，本次未动）；⑤ 未与桌面 WE 逐帧对照（占空比按官方语义推导 + 实测印证）。
 
+25. **桌面不渲染的「稀疏事件源」粒子已按观测跳过（2026-10-08；用户报告 `3660373677`「桌面上没有、DSH 里会闪白色柔光团」）**：
+    - **决定性证据**：用户桌面录屏（1916×1076、30fps、**163 帧 / 5.4s**）逐帧在 26 个 `Szikra` 坐标上做「中心 r≤24 vs 环带 r=48-68」判据 —— **超阈值帧数全为 0**（各位置峰值差 −37 ~ +24，均未达 +20；偏高的两处放大后是人物身上的雨滴高光）；而本插件在同一批坐标上画出直径约 200px 的白色柔光团。
+    - **判定条件**：spec 同时满足 ① `children` 含 `type === "eventspawn"` ② `maxcount ≤ 1` ③ `emitter[0].rate < 1` ⇒ `specSparseEventSource()` 为真，`loadSceneToThree` **整层跳过**（不建模拟器）。全库扫描：命中**仅该壁纸的 26 个对象**（其余 83 个带 `children` 的对象是 `eventfollow` 等，不受影响）。
+    - **机制未明（如实记录）**：官方文档（`Rate`=每秒粒子数、`Duration` 缺省=永不消失、`Start Time`=预热、`event spawn`=父粒子生成时触发子粒子 —— [children](https://docs.wallpaperengine.io/en/scene/particles/component/children.html) / [general](https://docs.wallpaperengine.io/en/scene/particles/component/general.html)）与两个参考实现（OWE `ParticleRuntime.cpp:791-805`、lwe `CParticle.cpp:371`）都认为这类父粒子**应当**正常渲染 ⇒ 本插件此前的实现按规则是对的，本条是**按用户桌面的观测**对齐，并把条件收窄到只影响一张壁纸。
+    - **顺带排除的三个疑点**：`particle/halo` 是实心柔斑（解码 `.tex`：中心 α235 → 边缘 0）；`override.size` 是**乘数**（lwe `CParticle.cpp:738`、OWE `ParticleParser.cpp:369,1000`、本插件三方一致）；光斑位置与 `scene.json` 的 26 个 `origin` 精确重合（±10px 随机散射）。
+    - **验收**：vitest 新增 2 项（`specSparseEventSource` 的 5 组条件 + `loadSceneToThree` 建层数 0/1，先写并确认 RED）⇒ 全量 **1035 全绿**；e2e 探针 `--isolate` 的 `kept` 由 **30 → 4**（26 个 spark 层消失、4 层雨保留），整屏渲染正常；`e2e:colorblend` PASS。
+    - **边界**：① 若日后发现 WE 真身其实会渲染（或该行为随版本变化），把 `specSparseEventSource` 改为恒返回 false 即可完全回退；② `children` 里的子粒子系统（`sparktrails`，一次爆发 100 颗）**仍未实现** —— 桌面上的「火花群」我们也没有，本条只去掉了多余的大光斑。
+
 ### ~~备用 wasm / JS 路径~~ ⇒ **已删除（2026-09-22）**
 
 `wasm-renderer.ts` / `scene-renderer.ts` 及其 Rust 侧 `wasm/src/render/**` 已整体移除（见下面第 14 条）。

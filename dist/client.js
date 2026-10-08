@@ -23066,6 +23066,21 @@ function specPerspective(specJson) {
     return false;
   }
 }
+function specSparseEventSource(specJson) {
+  try {
+    const spec = JSON.parse(specJson);
+    const children = Array.isArray(spec.children) ? spec.children : [];
+    const hasEventSpawn = children.some((c) => c?.type === "eventspawn");
+    if (!hasEventSpawn) return false;
+    const maxcount = typeof spec.maxcount === "string" ? parseFloat(spec.maxcount) : spec.maxcount;
+    if (typeof maxcount !== "number" || !Number.isFinite(maxcount) || maxcount > 1) return false;
+    const first = Array.isArray(spec.emitter) ? spec.emitter[0] : void 0;
+    const rate = typeof first?.rate === "string" ? parseFloat(first.rate) : first?.rate;
+    return typeof rate === "number" && Number.isFinite(rate) && rate < 1;
+  } catch {
+    return false;
+  }
+}
 function particlePerspectiveCamera(opts) {
   const height = Number.isFinite(opts.sceneH) && opts.sceneH > 0 ? opts.sceneH : 1080;
   const override = Number.isFinite(opts.perspectiveOverrideFov) ? opts.perspectiveOverrideFov : 0;
@@ -24171,6 +24186,7 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
     } else if (obj.kind === "particle" && obj.particle) {
       const p = assets.particles?.get(obj.id);
       if (!p || !assets.createParticleSim) continue;
+      if (specSparseEventSource(p.specJson)) continue;
       const t = world(obj);
       const sim = assets.createParticleSim(p.specJson, t.origin, sceneW, sceneH, p.overrideJson ?? "");
       const frameCount = textureFrameCount(p.tex);

@@ -14,6 +14,7 @@ export interface ParticleRendererSpec {
 export declare function specRenderer(specJson: string): ParticleRendererSpec;
 export declare function textureTexelRatio(tex?: THREE.Texture): number;
 export declare function specPerspective(specJson: string): boolean;
+export declare function specSparseEventSource(specJson: string): boolean;
 export declare function particlePerspectiveCamera(opts: {
     fov: number;
     perspectiveOverrideFov: number;
