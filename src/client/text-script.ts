@@ -18,19 +18,33 @@ export interface TextScriptRuntime {
 // 单次调用（eval/update）的指令预算：正常脚本远低于此；死循环在此被中断。
 const STEP_BUDGET = 1_000_000;
 
-// WE 注入的 scriptProperties builder。宽松实现：未知 add* 方法登记后返回自身、不崩；
-// finish() = {...builder 默认值, ...scene.json 的 scriptproperties}（注入值优先，见 spec §2.3）。
+// WE 注入的 scriptProperties builder。`finish()` = {...builder 默认值, ...scene.json 的
+// scriptproperties}（注入值优先，见 spec §2.3）。
+// ⚠️ **不能只列方法名表**：WE 的 builder 方法名以 `add` 开头且有一长串长尾
+// （OWE `Script.cpp:1200-1214`：Slider / Checkbox / Text / Combo / Color / Delimiter +
+// Animation / Interpolator / AniMapper / Task / ChangedUserProperty / Listener /
+// SpaceToTimeDelimiter / SpaceToDateDelimiter / Value）。此前只注册了 8 个名字、且把官方的
+// `addCombo` 错写成不存在的 `addComboBox` ⇒ 用 `addCombo` 的脚本（Spider Man 4K 的
+// 「DAY」「DATE」、Crimson Horizon 的日期等）eval 直接 `TypeError: not a function`
+// ⇒ bind 返回 null ⇒ 整个文本层被跳过（2026-09-30 用户报告）。
+// 现改为 Proxy 兜底任意 `add*`：登记 name/value 后返回自身，链式 `.addX().addY().finish()` 不断。
 const PRELUDE = `
 function createScriptProperties() {
   var injected = (typeof __weScriptProps === 'object' && __weScriptProps) ? __weScriptProps : {};
   var defaults = {};
+  var proxy = null;
+  function add(o) { if (o && o.name) defaults[o.name] = o.value; return proxy; }
   var api = {
-    addCheckbox: add, addSlider: add, addComboBox: add, addColor: add,
-    addText: add, addTextInput: add, addFont: add, addUserProperty: add,
     finish: function () { return Object.assign({}, defaults, injected); }
   };
-  function add(o) { if (o && o.name) defaults[o.name] = o.value; return api; }
-  return api;
+  proxy = new Proxy(api, {
+    get: function (t, k) {
+      if (k in t) return t[k];
+      if (typeof k === 'string' && k.indexOf('add') === 0) return add;
+      return undefined;
+    }
+  });
+  return proxy;
 }
 true;
 `;
@@ -80,6 +94,10 @@ class QuickJSTextRuntime implements TextScriptRuntime {
       })()`,
     );
     if (r.error) {
+      // 诊断可见性（2026-09-30）：此前静默返回 null，导致「脚本 bind 失败 → 文本层整层消失」
+      // 只能靠外部探针复现（Spider Man 4K 的 DAY/DATE 就是这么消失的）。只打一条 warn，不抛。
+      const info = ctx.dump(r.error) as { message?: string } | undefined;
+      console.warn('[text-script] 脚本执行失败，该文本层将回退/跳过：', info?.message ?? String(info));
       r.error.dispose();
       props.dispose();
       return null;
@@ -100,6 +118,7 @@ class QuickJSTextRuntime implements TextScriptRuntime {
 
     let last = initialValue ?? '';
     let disposed = false;
+    let warned = false;
     return {
       update: (): string | null => {
         if (disposed) return null;
@@ -108,6 +127,11 @@ class QuickJSTextRuntime implements TextScriptRuntime {
         const out = ctx.callFunction(updateFn, ctx.undefined, arg);
         arg.dispose();
         if (out.error) {
+          if (!warned) {
+            warned = true; // 每帧调用，只报一次（脚本可能每帧都抛）
+            const info = ctx.dump(out.error) as { message?: string } | undefined;
+            console.warn('[text-script] update 抛错/超时，保持上一帧文本：', info?.message ?? String(info));
+          }
           out.error.dispose();
           return null; // 单脚本抛错/被中断 → 只停该脚本
         }

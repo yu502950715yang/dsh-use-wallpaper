@@ -503,6 +503,14 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
     - **零回归**：无 perspective 位的 `3765967112` A/B（上一提交 vs 本提交）差异 **176 px，全部落在同一个 22×10 的时钟文本区**（`research/_crop-zoom.mjs` 裁剪放大确认是 `04:57 PM` vs `05:11 PM` —— e2e 每次运行取真实时间），同版本两次运行的 44 px 差异也在同一区域 ⇒ **差异来源是时钟文本而非渲染**，其余像素逐点相同。
     - **未做 / 边界（如实）**：① 只处理 `flags` 的 perspective 位（bit2），其余位不动；② 相机 near/far 取 1..1e6（WE 在正交场景里用反转 Z 5..15000，只影响深度裁剪，shader 已把 clip.z 归中）；③ 粒子若落在 `distance` 之后（w<0）会翻转，本库无此样本、未加保护；④ 未与桌面 WE 逐像素对照（以用户目视为准）。
 
+23. **text 脚本 builder 改为「任意 `add*` 兜底」（2026-09-30；用户报告 `3660373677` 的「桌面有文字、DSH 里只剩时间」）**：
+    - **根因**：WE 的 `createScriptProperties()` builder 方法名以 `add` 开头（OWE `Script.cpp:1200-1214`：`addSlider` / `addCheckbox` / `addText` / **`addCombo`** / `addColor` / `addDelimiter` + Animation、Interpolator、AniMapper、Task、ChangedUserProperty、Listener、SpaceToTimeDelimiter、SpaceToDateDelimiter、Value 一长串 stub），而插件的 PRELUDE **只注册了 8 个名字、并把官方的 `addCombo` 错写成不存在的 `addComboBox`**。本壁纸的 `#366 "D a y"`、`#372 Date` 脚本第 9/23 行都调用 `.addCombo({...})` ⇒ eval 抛 `TypeError: not a function` ⇒ `bind()` 返回 null ⇒ 按「绝不画 `text.value` 占位值」的既有裁定**整层跳过**（`three-renderer.ts:437`）⇒ 画面只剩 Clock 的时间。
+    - **证据**：生产运行时探针（`research/_text-script-probe.mjs`）复现 —— `#359 Clock` bind=true（update `-08:41-`）、`#366`/`#372` bind=**false**；`detectScriptPattern` 三者都非 clock，故不会回退到时钟。最小验证（`research/_text-script-hypothesis.mjs`，只把 PRELUDE 换成 Proxy 兜底）：`#366 → "T H U R S D A Y"`、`#372 → "8 OCT 2026"`（系统时间 2026-10-08 周四 ✓）。
+    - **改动**：`text-script.ts` 的 PRELUDE 用 `Proxy` 兜底任意 `add*`（登记 `name/value` 后返回自身，链式 `.addX().addY().finish()` 不断）——不再依赖名字表；顺带补两条 `console.warn` 诊断（bind 失败 / update 抛错各只报一次），此前**静默返回 null** 让这类问题只能靠外部探针复现。
+    - **影响面**：全库 25 个 text 脚本里 **12 处**调用 `addCombo`，涉及 **3 张壁纸**（`3660373677`、`3765967112` Crimson Horizon、`3789452668` Knight in a red cloak）；其余脚本只用 `addCheckbox`/`addText`（原本就在白名单里）。
+    - **验收**：e2e 渲染该壁纸，右侧文本区由「只有 `-05:11-`」变为 **`T H U R S D A Y` + `8 OCT 2026` + 时间**三行（`research/_crop-zoom.mjs` 并排对比图）；单测新增 3 项（官方 `addCombo`、任意未知 `add*` 链式、把一条假绿用例改成真的调用未知方法）+ 全量 **1033 项全绿**；`e2e:colorblend` 全 PASS。
+    - **未做 / 边界（如实）**：① builder 只登记 `name/value`，不支持 WE 编辑器的 `kind` 元数据与运行期改写（与既有实现一致）；② 这些 text 对象自带的 `blurprecise` effects 仍**不挂链**（`groupEffectsByObject` 跳过 text，见第 1 条末尾）⇒ 桌面端这两行字带模糊、我们的是清晰字；③ 未做真机 GUI 目检。
+
 ### ~~备用 wasm / JS 路径~~ ⇒ **已删除（2026-09-22）**
 
 `wasm-renderer.ts` / `scene-renderer.ts` 及其 Rust 侧 `wasm/src/render/**` 已整体移除（见下面第 14 条）。

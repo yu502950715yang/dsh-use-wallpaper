@@ -27406,13 +27406,19 @@ var PRELUDE = `
 function createScriptProperties() {
   var injected = (typeof __weScriptProps === 'object' && __weScriptProps) ? __weScriptProps : {};
   var defaults = {};
+  var proxy = null;
+  function add(o) { if (o && o.name) defaults[o.name] = o.value; return proxy; }
   var api = {
-    addCheckbox: add, addSlider: add, addComboBox: add, addColor: add,
-    addText: add, addTextInput: add, addFont: add, addUserProperty: add,
     finish: function () { return Object.assign({}, defaults, injected); }
   };
-  function add(o) { if (o && o.name) defaults[o.name] = o.value; return api; }
-  return api;
+  proxy = new Proxy(api, {
+    get: function (t, k) {
+      if (k in t) return t[k];
+      if (typeof k === 'string' && k.indexOf('add') === 0) return add;
+      return undefined;
+    }
+  });
+  return proxy;
 }
 true;
 `;
@@ -27451,6 +27457,8 @@ var QuickJSTextRuntime = class {
       })()`
     );
     if (r.error) {
+      const info = ctx.dump(r.error);
+      console.warn("[text-script] \u811A\u672C\u6267\u884C\u5931\u8D25\uFF0C\u8BE5\u6587\u672C\u5C42\u5C06\u56DE\u9000/\u8DF3\u8FC7\uFF1A", info?.message ?? String(info));
       r.error.dispose();
       props.dispose();
       return null;
@@ -27470,6 +27478,7 @@ var QuickJSTextRuntime = class {
     }
     let last = initialValue ?? "";
     let disposed = false;
+    let warned = false;
     return {
       update: () => {
         if (disposed) return null;
@@ -27478,6 +27487,11 @@ var QuickJSTextRuntime = class {
         const out = ctx.callFunction(updateFn, ctx.undefined, arg);
         arg.dispose();
         if (out.error) {
+          if (!warned) {
+            warned = true;
+            const info = ctx.dump(out.error);
+            console.warn("[text-script] update \u629B\u9519/\u8D85\u65F6\uFF0C\u4FDD\u6301\u4E0A\u4E00\u5E27\u6587\u672C\uFF1A", info?.message ?? String(info));
+          }
           out.error.dispose();
           return null;
         }
