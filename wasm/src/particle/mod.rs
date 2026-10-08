@@ -167,6 +167,12 @@ pub struct ParticleOverride {
     pub speed: f32,
     /// emitter.rate 乘数（官方 `Count()`）。
     pub count: f32,
+    /// **发射速率乘数**（官方 `Rate()`）。OWE 用它缩放 Tick 的 dt
+    /// （`ParticleRuntime.cpp:803-805`：`rate = instance_modifiers.Rate(); Advance(frame_time * rate, …)`），
+    /// lwe 等价于 `rate = emitter.rate × override.rate`（`CParticle.cpp:371`）—— 两家一致。
+    /// ⚠️ 与 `count` 是**两个字段**：此前只实现 count（且当发射率乘数用）、rate 整块忽略，
+    /// 导致带 rate 覆盖的壁纸发射频率错（Spider Man 4K 的 Szikra 慢 3~4 倍、Subway Station 的 Wind 快 20 倍）。
+    pub rate: f32,
     /// 颜色覆盖（已转线性 0-1）：`color`（legacy 0-255 → /255 再平方）优先，
     /// 否则 `colorn`（0-1 直接平方）。
     pub color: Option<[f32; 3]>,
@@ -183,6 +189,7 @@ impl Default for ParticleOverride {
             lifetime: 1.0,
             speed: 1.0,
             count: 1.0,
+            rate: 1.0,
             color: None,
             controlpoints: [None; 8],
         }
@@ -219,6 +226,7 @@ pub fn parse_particle_override(json: &str) -> Option<ParticleOverride> {
         lifetime: num("lifetime"),
         speed: num("speed"),
         count: num("count"),
+        rate: num("rate"),
         color,
         controlpoints: std::array::from_fn(|i| {
             v.get(format!("controlpoint{i}").as_str()).map(|c| vec3(c))

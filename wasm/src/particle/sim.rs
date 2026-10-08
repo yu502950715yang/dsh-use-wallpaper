@@ -776,14 +776,24 @@ impl SceneParticleSim {
         // 然后发射 `min(toEmit, maxcount - alive)`。lwe 即使池满（count>=particles.size()）也
         // 会清零整数部分（不把计时器无限累加），此处用 `self.maxcount` 作为池容量等价实现。
         //
-        // 注 1：lwe 的 `rate = emitter.rate * instanceOverride.rate`；当前 wasm `ParticleEmitterSpec`
-        //       不含 instanceOverride，故直接用 `emitter.rate`（无乘数）。
+        // 注 1（2026-10-08 订正）：`override.rate` 是**粒子系统时间缩放**，不是「只乘发射率」。
+        //   OWE `ParticleSubSystem::Tick` = `Advance(frame_time * Rate(), frame_time, …)`
+        //   （ParticleRuntime.cpp:803-805），而 `Advance` 把缩放后的 delta 写进 `m_frame.delta`（:572）
+        //   并用于寿命衰减（:66 `lifetime -= context.delta`）⇒ 发射率 ×rate **且** 寿命 ÷rate
+        //   ⇒ **占空比不变**，只是闪得更快更短。只乘发射率会让「同时亮着的粒子数」随 rate 线性变多
+        //   （用户实测 Spider Man 4K 的闪电火花比桌面多 3 倍多）。
+        //   子粒子系统（`children: eventspawn`）在 WE 里用**真实 dt**（`child->Tick(child_frame_time)`），
+        //   本实现不支持 children，故无需区分。
+        //   `override.count` 仍**只乘发射率**（OWE `newEm.rate *= modifiers.Count()`，
+        //   SceneParticleObjectParser.cpp:264）；lwe 把 count 当池容量（maxcount×count）——两家分歧，
+        //   本实现沿用 OWE。
         // 注 2：lwe 的 `limitOnePerFrame`(flags&2)/`randomPeriodicEmission`(flags&4)/`delay`/
         //       `duration`/`periodicTimer`/`instantaneous` 均依赖 emitter 的 flags/delay 等字段，
         //       当前 wasm `ParticleEmitterSpec` 未携带这些字段（spec_to_emitter 只映射
         //       rate/origin/directions/dist_min/dist_max/is_sphere），故本任务**不实现、予以忽略**
         //       （任务契约「有则实现，无则忽略并注明」）。
-        self.emission_timer += dt * self.emitter.rate * self.override_spec.count;
+        let sdt = dt * self.override_spec.rate;
+        self.emission_timer += sdt * self.emitter.rate * self.override_spec.count;
         let to_emit = self.emission_timer as u32;
         self.emission_timer -= to_emit as f32;
         let alive = self.particles.len() as u32;
@@ -793,18 +803,18 @@ impl SceneParticleSim {
         }
 
         // 寿命推进（= lwe `age += dt`；本模拟器 countdown `life -= dt`，二者对 `getLifetimePos=age/lifetime`
-        // 等价：`age = max_life - life`）。放在 operators 之前（lwe `update()` 同序）。
+        // 等价：`age = max_life - life`）。放在 operators 之前（lwe `update()` 同序）。用 sdt（系统时间）。
         for p in &mut self.particles {
-            p.life -= dt;
+            p.life -= sdt;
         }
         // 累计帧时间（= lwe `m_time`）。
-        self.time += dt;
+        self.time += sdt;
 
         // 各算子逐帧对每个粒子跑（lwe `m_operators` 顺序；OperatorFn 语义，含黑神话 movement 无重力、
-        // angularMovement 消费 angular_vel、alphaFade 梯形、oscillate 正弦等）。
+        // angularMovement 消费 angular_vel、alphaFade 梯形、oscillate 正弦等）。运动/衰减同样走系统时间。
         for op in &self.operators {
             for p in &mut self.particles {
-                op.apply(p, dt, self.time);
+                op.apply(p, sdt, self.time);
             }
         }
 
@@ -837,23 +847,28 @@ impl SceneParticleSim {
     /// 且只对本次新增的粒子做相位前滚）。
     pub fn prewarm(&mut self) {
         let mean_life = 0.5 * (self.init.lifetime_min + self.init.lifetime_max);
-        if self.emitter.rate <= 0.0 || mean_life <= 0.0 || self.maxcount == 0 {
+        // 有效发射率与 update() 的发射项**同一口径**（emitter.rate × override.count）——
+        // ⚠️ **不含** `override.rate`：它缩放整个系统时间（发射率 ×rate、寿命 ÷rate 相消），
+        // 占空比与它无关，故稳态存活数的估计里也不该出现（否则冷启动粒子数会随 rate 变化）。
+        // （已知偏差：mean_life 未乘 override.lifetime，属另一处独立缺口，本次不动。）
+        let effective_rate = self.emitter.rate * self.override_spec.count;
+        if effective_rate <= 0.0 || mean_life <= 0.0 || self.maxcount == 0 {
             return;
         }
         // 稳态存活数 = rate × 平均寿命（黑神话 20×7.5=150 → 受 maxcount=50 封顶）。
-        let steady = ((self.emitter.rate * mean_life).ceil() as u32).clamp(1, self.maxcount);
+        let steady = ((effective_rate * mean_life).ceil() as u32).clamp(1, self.maxcount);
         // 出生相位策略：寿命**固定**且**池会满**（rate×寿命 ≥ maxcount）时，真实稳态是「同批同步」——
         // 一批同龄粒子占满池子、一起飞、一起死，再补下一批（3793620838 的小鸟：life=25 固定、
         // rate=20、maxcount=8；用户实测桌面「每隔半分钟一群小鸟飞过去」）。此时随机打散相位会把
         // 「一群一起飞」摊成年龄均布的一片 ⇒ 每时每刻只剩零散几只可见（本次报告的「数量比桌面少」）。
         // 寿命有随机范围时（全库 116 个对象）死亡本就错开、稳态自然分散 ⇒ 保持随机相位。
         let fixed_life = (self.init.lifetime_max - self.init.lifetime_min).abs() <= 1e-6;
-        let pool_saturates = self.emitter.rate * mean_life >= self.maxcount as f32;
+        let pool_saturates = effective_rate * mean_life >= self.maxcount as f32;
         let synchronized = fixed_life && pool_saturates;
         // 同批的**出生窗口** = 池铺满耗时 `maxcount / rate`（Birds 8/20 = 0.4s、Bird 50/25 = 2s），
         // 换算成寿命比例。批内粒子先后出生 ⇒ 沿飞行方向错开 `速度 × 出生时刻`，整群不是一点。
-        let batch_frac = if synchronized && self.emitter.rate > 0.0 {
-            (self.maxcount as f32 / self.emitter.rate / mean_life).clamp(0.0, 1.0)
+        let batch_frac = if synchronized && effective_rate > 0.0 {
+            (self.maxcount as f32 / effective_rate / mean_life).clamp(0.0, 1.0)
         } else {
             0.0
         };

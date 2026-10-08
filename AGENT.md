@@ -511,6 +511,16 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
     - **验收**：e2e 渲染该壁纸，右侧文本区由「只有 `-05:11-`」变为 **`T H U R S D A Y` + `8 OCT 2026` + 时间**三行（`research/_crop-zoom.mjs` 并排对比图）；单测新增 3 项（官方 `addCombo`、任意未知 `add*` 链式、把一条假绿用例改成真的调用未知方法）+ 全量 **1033 项全绿**；`e2e:colorblend` 全 PASS。
     - **未做 / 边界（如实）**：① builder 只登记 `name/value`，不支持 WE 编辑器的 `kind` 元数据与运行期改写（与既有实现一致）；② 这些 text 对象自带的 `blurprecise` effects 仍**不挂链**（`groupEffectsByObject` 跳过 text，见第 1 条末尾）⇒ 桌面端这两行字带模糊、我们的是清晰字；③ 未做真机 GUI 目检。
 
+24. **`instanceoverride.rate` 已实现 —— 它是「粒子系统时间缩放」，不是「发射率乘数」（2026-10-08；用户报告 `3660373677` 的闪电亮光与桌面不一致，修完第一版又报「比桌面多、频率快了不少」）**：
+    - **现象与根因**：26 个 `Szikra`（火花/闪光）对象的 spec 是 `particles/presets/spark.json`（**`maxcount: 1`**、`emitter.rate: 0.2`、`sizerandom 600~700` ⇒ 每颗是一团柔光斑），每个对象用 `instanceoverride` 覆盖 `rate`（2.4~4.2）、`lifetime`（0.69）、`size`（1.9）、`speed`（~4）。wasm 的 `ParticleOverride` **只有 `count`**、**`rate` 整块未解析** ⇒ 26 个光斑仍按 spec 的 0.2/s 发射，出现节奏与桌面不同。
+    - **语义判定（关键 —— 第一版就修错在这里）**：OWE `ParticleSubSystem::Tick` 是 `Advance(frame_time * Rate(), frame_time, …)`（ParticleRuntime.cpp:803-805），而 `Advance` 把**缩放后的** delta 写进 `m_frame.delta`（:572）并用于**寿命衰减**（:66 `lifetime -= context.delta`）⇒ `rate` 缩放的是**整个粒子系统的时间**：发射率 ×rate **且** 寿命 ÷rate ⇒ **占空比（同时亮着的粒子数）不变**，只是闪得更快更短。
+      - 第一版按 lwe 的 `rate = emitter.rate × override.rate`（CParticle.cpp:371，只作用发射）实现 ⇒ 占空比随 rate 线性变多（26 个火花的发光占空比 6.4% → 10.3%）⇒ 用户实测「闪烁的地方比桌面多、频率快了不少」。**两家参考实现在这里分歧，以 OWE 的 Tick 语义（时间缩放）为准** —— 它有寿命侧的证据链（`m_frame.delta` → `lifetime`），lwe 只是近似。
+      - `count` 仍**只乘发射率**（OWE `newEm.rate *= modifiers.Count()`，SceneParticleObjectParser.cpp:264）；lwe 把 count 当池容量（`maxCount × count`）—— 分歧仍在，本实现沿用 OWE。
+    - **改动**：`ParticleOverride` 增 `rate`（缺省 1）+ 解析 `num("rate")`；`update(dt)` 用 `sdt = dt × override.rate` 驱动**整帧**（发射累积、`life -= sdt`、`m_time += sdt`、算子 `apply(p, sdt, time)`）；`prewarm()` 的稳态估计**不含** rate（占空比与它无关，含它会让冷启动粒子数随 rate 变化）。
+    - **影响面**：全库 130 个带 `instanceoverride` 的粒子对象里 **60 个带 rate**（27 个带 count、18 个两者都有），涉及 **11 张壁纸** —— 例如 Subway Station 的 `Wind`（rate 0.05，此前我们**快 20 倍**）、Crimson Horizon 的流星（1.2）、GTR 风痕（2.5）、死亡搁浅的雨（0.6~1.2）、DK WOTLK 的雪（脚本绑定 rate，取静态值 1）。
+    - **验收**：Rust 新增两项 —— `override_rate_multiplies_emitter_rate`（rate=2.5 ⇒ 100/s 变 250/s）与 **`override_rate_keeps_duty_cycle`**（rate=1 与 rate=4 的稳态存活数必须相同；先写并确认 RED）；e2e A/B（`research/_rain-probe.mjs --sample-freq`：稳态后每 100ms 采样一次共 30 次，统计 26 个 Szikra 层「有粒子」占比）：**忽略 rate 6.4% → 只乘发射率 10.3% → 时间缩放 2.6%**（与理论 `0.2/s × 0.17s ≈ 3.4%` 一致）；cargo 全绿 + vitest **1033 全绿** + `e2e:colorblend` PASS。
+    - **未做 / 边界（如实）**：① `count` 语义未动（见上）；② 子粒子系统（`spark.json` 的 `children: eventspawn → sparktrails`）**不实现** —— 它在 WE 里用**真实 dt**（`child->Tick(child_frame_time)`），与本条的时间缩放无关；③ override 字段的 `{script,user,value}` 包装仍由 wasm `scalar()` 取**缺省值**（DK WOTLK 的 rate 是音频脚本绑定；本库无 `{user,value}` 形态的样本）—— 已知缺口；④ `prewarm` 的 `mean_life` 仍未乘 `override.lifetime`（独立小缺口，本次未动）；⑤ 未与桌面 WE 逐帧对照（占空比按官方语义推导 + 实测印证）。
+
 ### ~~备用 wasm / JS 路径~~ ⇒ **已删除（2026-09-22）**
 
 `wasm-renderer.ts` / `scene-renderer.ts` 及其 Rust 侧 `wasm/src/render/**` 已整体移除（见下面第 14 条）。
