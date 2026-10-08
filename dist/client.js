@@ -23353,6 +23353,8 @@ var ThreeScenePlayer = class {
   sceneWidth;
   sceneHeight;
   viewWidth;
+  // 上次 resize 时用的 devicePixelRatio（供 render() 按需校准；DSH 桌面版窗口创建早于系统缩放生效）。
+  lastDpr = 0;
   viewHeight;
   // 渲染缓冲像素比 = 设备像素比 × 画质档位（resize 时重读设备像素比，跨屏拖动自适应）。
   pixelRatio;
@@ -23410,6 +23412,7 @@ var ThreeScenePlayer = class {
     this.viewWidth = w;
     this.viewHeight = h;
     this.pixelRatio = resolvePixelRatio(this.devicePixelRatio(), this.qualityScale);
+    this.lastDpr = this.devicePixelRatio();
     this.applyCover();
     const r = this.renderer;
     if (typeof r.setPixelRatio === "function") r.setPixelRatio(this.pixelRatio);
@@ -23540,6 +23543,7 @@ var ThreeScenePlayer = class {
   // 帧序与 setAnimationLoop 的帧体一致（不带 dt）：隔离内容 → bindOutputs → 主场景 → advance。
   // 装配了 glowStage 时主场景渲染委托给它（stage 内部渲染主场景到 RT 再做全屏 glow 合成）。
   render() {
+    if (this.devicePixelRatio() !== this.lastDpr) this.resize(this.viewWidth, this.viewHeight);
     if (this.isolated.size > 0) this.renderIsolatedContents();
     this.objectEffectStage?.bindOutputs();
     if (this.glowStage) this.glowStage.apply(this.renderer, this.scene, this.camera);

@@ -61,6 +61,7 @@ export declare class ThreeScenePlayer {
     private sceneWidth;
     private sceneHeight;
     private viewWidth;
+    private lastDpr;
     private viewHeight;
     private pixelRatio;
     private qualityScale;

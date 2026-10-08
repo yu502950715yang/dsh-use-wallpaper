@@ -289,6 +289,25 @@ describe('ThreeScenePlayer 暂停与画质档位', () => {
     Object.defineProperty(window, 'devicePixelRatio', { value: orig, configurable: true });
   });
 
+  it('渲染一帧时按需校准 DPR（桌面版启动时 dpr 未就绪 → 不必重选壁纸即恢复锐利）', () => {
+    const orig = (window as { devicePixelRatio?: number }).devicePixelRatio;
+    try {
+      Object.defineProperty(window, 'devicePixelRatio', { value: 1, configurable: true });
+      const { player } = makePlayer();
+      player.resize(1600, 900);
+      expect(player.canvas.width).toBe(1600);
+      // 系统缩放这时才反映到该窗口（DSH 桌面版窗口创建早于 DPR 生效），窗口尺寸不变 ⇒ resize 不会被调用
+      Object.defineProperty(window, 'devicePixelRatio', { value: 1.25, configurable: true });
+      player.render();
+      expect(player.canvas.width).toBe(2000); // 1600 × 1.25，无需重新装配
+      // DPR 不变时不做无谓的 resize（幂等：再渲染一帧尺寸不变）
+      player.render();
+      expect(player.canvas.width).toBe(2000);
+    } finally {
+      Object.defineProperty(window, 'devicePixelRatio', { value: orig, configurable: true });
+    }
+  });
+
   it('pause 停止 RAF 排程，resume 重新排程（同一帧回调）', () => {
     const { player, mock } = makePlayer();
     const fn = vi.fn();
