@@ -23,6 +23,7 @@
     "e2e:colorblend": "node e2e/verify/verify-colorblend.mjs",
     "e2e:card": "node e2e/verify/verify-turn-trigger-card.mjs",
     "e2e:hidpi": "node e2e/verify/verify-hidpi-object-rt.mjs",
+    "e2e:textclock": "node e2e/verify/verify-text-clock-layer.mjs",
     "e2e:compare": "node e2e/verify/compare-shots.mjs"
   },
   "peerDependencies": {

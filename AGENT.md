@@ -56,6 +56,7 @@ npm run build:client     # esbuild → dist/client.js，并把 wasm/pkg/ 复制�
 npm run e2e:colorblend   # 渲染 e2e：colorBlendMode 逐像素判据（零本机素材依赖，可上 CI）
 npm run e2e:card         # 计算样式 e2e：通知卡片（turn-trigger）与代码块同底（零素材依赖，可上 CI）
 npm run e2e:hidpi        # 渲染 e2e：dpr=1/2 的挂载期 RT 尺寸断言（需本机 WE 壁纸库）
+npm run e2e:textclock    # 渲染 e2e：text 时钟层（魔兽之门 1922570576）是否真的画在画面上（需本机素材）
 npm run e2e:compare      # A/B 截图逐像素对拍（零回归验收）
 npx vitest run tests/xxx.test.ts --reporter=basic   # 跑单个文件
 ```
@@ -103,7 +104,7 @@ $i.LinkType   # SymbolicLink / Junction；为空 = 落成了实体副本，需�
     tests/                   Rust native 测试（cargo test，无需 wasm 目标）
   lib/                       tsc 产物（**入库**）
   dist/                      esbuild 产物 + dist/static/（wasm；**入库**）
-  tests/                     单测；tests/dom/ 走 jsdom
+  tests/                     单测；tests/dom/ 走 jsdom；tests/fixtures/ 真实素材 fixture
   e2e/                       端到端渲染验证（**入库**，2026-09-22 起）：config.mjs 统一参数
     lib/ harness/ verify/    像素工具 / esbuild harness 入口 / 验收脚本
     fixtures/                零素材依赖的 fixture（clouds-dxt1.png）
@@ -541,6 +542,14 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
     - **改动**：`[data-composer-card]` 与 `[data-question-key] section` **去掉 `backdrop-filter` / `-webkit-backdrop-filter`**，用「半透明底（浅 .5→.62、深 .65→.75）+ 渐变 + 内阴影」保留玻璃观感。
     - **验收**：改写 2 项 vitest 断言（现在断言**不得**出现 `backdrop-filter`，防回归）⇒ 全量 **1036 全绿**、`e2e:colorblend` PASS；用户真机确认「不闪了、输入框弹层正常」。
     - **⚠ 教训**：① 验证「是不是插件 CSS 造成的」**不能禁用整张样式表**（会连带藏掉 UI，把实验做废）；② `overflow-x: clip` 只能藏掉滚动条这个**症状**，振荡仍在（实测：看不到滚动条但页面照样跳）—— 治标不治本，别用它收场；③ `styles.ts` 的 CSS 是**模板字符串**，注释或规则里出现反引号会提前终止模板（esbuild 报 `Expected ";"`）—— 与 GLSL 注释同一类坑。
+
+27. **text 脚本里的 WE 模块 `import` 语句让整层文本消失 —— 已修（2026-10-10；用户报告「魔兽之门」`1922570576` 右下角没有时间数字）**：
+    - **根因**：WE 脚本的 `import * as WEMath from 'WEMath'` 导入的是**引擎注入的 WE 模块**（不是文件、不需要解析），而 `text-script.ts` 只剥了 `export`、把整条 import **原样**塞进 `(function(){ … })()` 里 eval ⇒ QuickJS 报 **`expecting '('`**（import 声明不能出现在函数体内）⇒ `bind()` 返回 null ⇒ 按「绝不画 `text.value` 占位值」的既有裁定**整层跳过**（`three-renderer.ts` 的 `obj.script && !binding && !isClock → continue`）。**该脚本压根没用到 WEMath** —— 纯粹的语法噪声害的。
+    - **证据**：生产运行时探针（`research/_probe-wow-text.mjs`）= `#778 name="3D Clock" pattern=null bind=false update=null` + `[text-script] 脚本执行失败…expecting '('`；全库扫描（`research/_scan-text-imports.mjs`，34 张 / 33 个 text 脚本）**只有这 1 条带 import**（所以影响面恰好一张壁纸）。
+    - **改动**：`text-script.ts` 新增 `rewriteWeModuleImports()`（**在 eval 之前**转写）——`import * as X from 'M'` → `var X = __weModule('M')`；`import { a, b as c } from 'M'` → `var a = __weModule('M').a` …。模块本身只给**最低限度的「不崩」shim**：命名空间是 object、点出来的成员是可调用的 noop（返回 undefined）。**刻意不实现** WEMath/WEColor 的真实函数（库里无样本可验，凭签名猜语义风险更大）——若脚本真用了它，画出来的是 `undefined`，仍好过整层消失。只匹配行首的真 import 语句，字符串/注释里的同形文本不被改写（有用例钉住）。
+    - **验收**：单测 3 项（魔兽之门真实脚本 fixture `tests/fixtures/1922570576/` → `09:04:05`；`* as` / `{ x }` 转写；注释/字符串里的 import 不被改写）+ 反向验证（把修复撤掉 ⇒ fixture 用例变**红**，证明确实是这条测试在守它）；全量 **1042 项全绿**；渲染 e2e **`npm run e2e:textclock`**（新入库，本机素材）10 项判据全 PASS —— **修复前装配**（把 `getTextScriptRuntime` 注入成「永远返回 null」= 与 bind 失败同一条分支）`player.displayObject(778)` 为 null、画面上没有该层；**生产装配**下该 text quad 落在右下角（norm 中心 0.68/0.87）、画布 702×301 上画出白色字形（亮像素 21109、字形 alpha 均值 247）、屏幕上「隐藏该层时暗、显示时亮」的像素 **2608 个其中 2246 个 luma>200（均值 237）**，且显示/隐藏的差异**严格落在该 quad 的屏幕矩形内**（26 k px 信号 vs 2 k px 噪声地板），其余像素不受影响。
+    - **边界（如实）**：① 该壁纸的字体 `fonts/CursedTimerUlil-Aznm.ttf` 在本机 pkg 内**取不到**（探针日志 `[404 asset]`），文本层用的是回退字体，数字形态与桌面 WE 的 LED 字体不同；② 未做真机 GUI 目检；③ `init()`（`thisScene.createLayer` 造阴影层）仍不执行，桌面端数字的立体阴影我们没有（既有缺口，本次未动）。
+    - **⚠ 教训（比本 bug 更值钱）**：e2e 的**坐标口径**必须先证伪再用。第一版判据把 canvas 的 y 方向当成了屏幕 quad 的正向（`flipY=true` + 纹理左上角语义），于是「数字明明清晰显示在画面上」却被量成「只亮 7 个灰阶」；改成**像素事实**口径（区域内「隐藏时暗、显示时亮」的像素 + 该层 quad 的屏幕矩形）后一切正常。**另一条**：结论「文本层几乎看不见」在裁剪放大图（`research/_crop-text-region.mjs`）面前当场翻案 —— 涉及「看起来不对」的判断，先看图再下结论。
 
 ### ~~备用 wasm / JS 路径~~ ⇒ **已删除（2026-09-22）**
 

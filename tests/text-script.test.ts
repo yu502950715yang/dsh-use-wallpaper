@@ -1,5 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { getTextScriptRuntime } from '../src/client/text-script.js';
+
+// 真实素材（魔兽之门 #778）：见 tests/fixtures/1922570576/README.md
+const WOW_CLOCK = JSON.parse(
+  readFileSync(new URL('./fixtures/1922570576/text-object-778.json', import.meta.url), 'utf8'),
+) as { text: { script: string; value: string } };
 
 // WE text 脚本真实形态：builder 声明属性 + update(value) 返回新文本。
 const SCRIPT = `'use strict';
@@ -108,4 +114,80 @@ export function update(v){ return p.k; }`;
     expect(good!.update()).toBe('still-alive');
     good!.dispose();
   });
+
+  // 2026-10-10：WE 脚本的 `import * as X from 'X'`（模块是引擎注入的 WE 模块，不是文件）此前**整条
+  // 语句被原样丢进 evalCode** ⇒ QuickJS 在函数体内报 `expecting '('`（import 语句不能出现在函数体里）
+  // ⇒ bind 返回 null ⇒ 该文本层被整层跳过（用户报告「魔兽之门」1922570576 右下角的时间数字不显示；
+  // 对象 #778 的脚本里根本没有用到 WEMath）。全库 33 个 text 脚本里只有这 1 条带 import。
+  it('WE 模块 import 不导致 bind 失败（魔兽之门 #778：import * as WEMath）', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 9, 10, 14, 5, 7)); // 2026-10-10 14:05:07
+    const rt = await getTextScriptRuntime();
+    const s = `'use strict';
+import * as WEMath from 'WEMath';
+let delimiter = ':';
+let showSeconds = true;
+let use24hFormat = true;
+export function update(value) {
+  let time = new Date();
+  let hours = use24hFormat ? ("00" + time.getHours()).slice(-2) : time.getHours();
+  let minutes = ("00" + time.getMinutes()).slice(-2);
+  let seconds = ("00" + time.getSeconds()).slice(-2);
+  value = hours + delimiter + minutes;
+  if (showSeconds) value += delimiter + seconds;
+  return value;
+}`;
+    const b = rt!.bind(s, {}, '<3D Clock>');
+    expect(b).not.toBeNull();
+    expect(b!.update()).toBe('14:05:07');
+    b!.dispose();
+  });
+
+  it('WE 模块 import 转成本地可用值（* as X → object；{ x } → 可调用 shim，缺实现不崩）', async () => {
+    const rt = await getTextScriptRuntime();
+    const ns = rt!.bind(
+      `import * as WEMath from 'WEMath';
+export function update(v) { return typeof WEMath; }`,
+      {}, '',
+    );
+    expect(ns).not.toBeNull();
+    expect(ns!.update()).toBe('object');
+    ns!.dispose();
+    const named = rt!.bind(
+      `import { clamp } from 'WEMath';
+export function update(v) { return typeof clamp; }`,
+      {}, '',
+    );
+    expect(named).not.toBeNull();
+    expect(named!.update()).toBe('function');
+    named!.dispose();
+  });
+
+  it('import 语句出现在字符串/注释里不被改写（只处理真正的 import 语句）', async () => {
+    const rt = await getTextScriptRuntime();
+    const b = rt!.bind(
+      `// import * as WEMath from 'WEMath';
+export function update(v) { return "import { x } from 'y'"; }`,
+      {}, '',
+    );
+    expect(b).not.toBeNull();
+    expect(b!.update()).toBe("import { x } from 'y'");
+    b!.dispose();
+  });
+
+  // 回归靶子：真实素材（tests/fixtures/1922570576/text-object-778.json，scene.pkg 原文逐字复制）。
+  // 这条脚本在修复前 bind 返回 null ⇒ 生产装配整层跳过 ⇒ 用户看不到右下角的时间数字。
+  it('真实素材：魔兽之门 #778「3D Clock」脚本 bind 成功并输出 HH:MM:SS', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 9, 10, 9, 4, 5)); // 2026-10-10 09:04:05
+    const rt = await getTextScriptRuntime();
+    const b = rt!.bind(WOW_CLOCK.text.script, {}, WOW_CLOCK.text.value);
+    expect(b).not.toBeNull();
+    expect(b!.update()).toBe('09:04:05');
+    b!.dispose();
+  });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });

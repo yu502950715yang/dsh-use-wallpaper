@@ -1,0 +1,19 @@
+{
+ "_note": "真实素材：#1922570576「魔兽之门」scene.pkg 内 scene.json 的对象 778（3D Clock）的 text 字段原文（未改动）。",
+ "_source": "D:/Steam/steamapps/workshop/content/431960/1922570576/scene.pkg → scene.json → objects[id=778].text",
+ "objectId": 778,
+ "name": "3D Clock",
+ "font": "fonts/CursedTimerUlil-Aznm.ttf",
+ "pointsize": 41,
+ "padding": 32,
+ "alpha": 0.8399999737739563,
+ "color": "1.000 1.000 1.000",
+ "horizontalalign": "center",
+ "verticalalign": "top",
+ "origin": "3288.206 440.731 0.000",
+ "size": "1061.000 186.000",
+ "text": {
+  "script": "'use strict';\n\nimport * as WEMath from 'WEMath';\n\n// This will be used to separate each element\nlet delimiter = ':';\n\n// Whether you want to see the seconds or not\nlet showSeconds = true;\n\n// Whether you want a 24h or 12h style format\nlet use24hFormat = true;\n\n/**\n * @param {String} value (for property 'text')\n */\nvar shadowLayer;\nexport function update(value) {\n\tlet time = new Date();\n\tvar hours;\n\tvar suffix = '';\n\tif (use24hFormat) {\n\t\thours = (\"00\" + time.getHours()).slice(-2);\n\t} else {\n\t\thours = time.getHours();\n\t\tsuffix = hours >= 12 ? 'PM' : 'AM';\n\t\thours %= 12;\n\t\tif (hours == 0) {\n\t\t\thours = 12;\n\t\t}\n\t}\n\tlet minutes = (\"00\" + time.getMinutes()).slice(-2);\n\tlet seconds = (\"00\" + time.getSeconds()).slice(-2);\n\tvalue = hours + delimiter + minutes;\n\tif (showSeconds) {\n\t\tvalue += delimiter + seconds;\n\t}\n\tif (!use24hFormat) {\n\t\tvalue += ' ' + suffix;\n\t}\n\n\t\n\treturn value;\n}\n\n/**\n * @param {String} value (for property 'text')\n */\nexport function init() {\n\tshadowLayer = thisScene.createLayer({\n\t\ttext: '',\n\t\tcolor: '0 0 0',\n\t\talpha: 1,\n\t\tpointsize: thisLayer.pointsize,\n\t\tfont: thisLayer.font,\n\t\tperspective: true\n\t});\n\t\n}\n",
+  "value": "<3D Clock>"
+ }
+}

@@ -27468,8 +27468,34 @@ function createScriptProperties() {
   });
   return proxy;
 }
+// WE \u811A\u672C\u91CC\u7684 import \u5BFC\u5165\u7684\u662F**\u5F15\u64CE\u6CE8\u5165\u7684 WE \u6A21\u5757**\uFF08WEMath / WEColor / WEVector \u2026\uFF09\uFF0C\u4E0D\u662F\u6587\u4EF6\u3002
+// \u8FD9\u91CC\u53EA\u63D0\u4F9B\u6700\u4F4E\u9650\u5EA6\u7684\u300C\u4E0D\u5D29\u300Dshim\uFF1A\u547D\u540D\u7A7A\u95F4\u662F object\u3001\u70B9\u51FA\u6765\u7684\u6210\u5458\u662F\u53EF\u8C03\u7528\u7684 noop\uFF08\u8FD4\u56DE
+// undefined\uFF09\u3002\u771F\u5B9E\u6210\u5458\u672A\u5B9E\u73B0 \u2014\u2014 \u7528\u4E86\u5B83\u7684\u811A\u672C\u4F1A\u628A 'undefined' \u753B\u8FDB\u6587\u672C\u5C42\uFF0C\u4F46\u4ECD**\u597D\u8FC7\u6574\u6BB5 bind
+// \u5931\u8D25\u5BFC\u81F4\u6574\u5C42\u6587\u672C\u6D88\u5931**\uFF08\u9B54\u517D\u4E4B\u95E8 #778 \u7684 import \u751A\u81F3\u6CA1\u88AB\u7528\u5230\uFF09\u3002\u5C06\u6765\u8981\u771F\u5B9E\u73B0\u53EA\u9700\u5728\u8FD9\u91CC\u52A0\u6210\u5458\u3002
+function __weModule(name) {
+  var noop = function () { return undefined; };
+  return new Proxy({}, {
+    get: function (t, k) { if (k === '__weModuleName') return name; return noop; }
+  });
+}
 true;
 `;
+function rewriteWeModuleImports(script) {
+  let out = script.replace(
+    /^[ \t]*import\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s+(['"])([^'"]+)\2[ \t]*;?/gm,
+    "var $1 = __weModule('$3');"
+  );
+  out = out.replace(
+    /^[ \t]*import\s*\{([^{}]*)\}\s*from\s+(['"])([^'"]+)\2[ \t]*;?/gm,
+    (_m, names, _q, mod) => names.split(",").map((n) => n.trim()).filter(Boolean).map((spec) => {
+      const parts = spec.split(/\s+as\s+/).map((s) => s.trim());
+      const imported = parts[0];
+      const local = parts[1] ?? imported;
+      return `var ${local} = __weModule('${mod}').${imported};`;
+    }).join(" ")
+  );
+  return out;
+}
 var QuickJSTextRuntime = class {
   constructor(ctx, runtime) {
     this.ctx = ctx;
@@ -27498,7 +27524,7 @@ var QuickJSTextRuntime = class {
       else if (typeof value === "string") ctx.setProp(props, key, ctx.newString(value));
     }
     ctx.setProp(ctx.global, "__weScriptProps", props);
-    const sanitized = script.replace(/\bexport\s+/g, "");
+    const sanitized = rewriteWeModuleImports(script.replace(/\bexport\s+/g, ""));
     const r = ctx.evalCode(
       `(function(){ ${PRELUDE} ${sanitized}
         return (typeof update === 'function') ? { update: update } : null;
