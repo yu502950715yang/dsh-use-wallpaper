@@ -85,7 +85,7 @@ jobs:
         run: node scripts/check-known-failures.mjs .vitest-report.json
       - name: 上传测试报告（失败时排查用）
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: vitest-report
           path: .vitest-report.json
@@ -136,7 +136,7 @@ jobs:
         # 只取「用例目录下的直接 PNG」（e2e/.out/<case>/*.png，实测 368 张）：递归 `**.png` 会把
         # Edge profile 里扩展自带的图标也算进来（实测 7455 张），传整个目录更是 ~137 MB/次
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-shots
           path: |
