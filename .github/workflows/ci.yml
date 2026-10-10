@@ -135,11 +135,11 @@ jobs:
           Write-Host "Edge: $edge (version $ver)"
           "EDGE_PATH=$edge" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
         shell: pwsh
-      # 入库的 e2e 里只有这两个零素材依赖（不需要 WE 库）；其余 3 个要本机 workshop 素材
+      # 只放**外部依赖在 runner 上也存在**的用例：colorblend 仅需入库 fixture + Edge + esbuild（本次 run 已实证通过）。
+      # turn-trigger 不行 —— 它要从本机 DSH 的 app.asar 现场提取主题/组件 CSS（`DSH_ASAR`/`--asar` 可覆盖）；
+      # hidpi / text-clock 需要本机 WE 壁纸库。三者都只在「有对应本机安装」时手动跑。
       - name: colorBlendMode 渲染 e2e（逐像素判据）
         run: node e2e/verify/verify-colorblend.mjs
-      - name: turn-trigger 卡片 e2e（计算样式判据）
-        run: node e2e/verify/verify-turn-trigger-card.mjs
       - name: 上传截图（失败时排查用）
         # 只取「用例目录下的直接 PNG」（e2e/.out/<case>/*.png，实测 368 张）：递归 `**.png` 会把
         # Edge profile 里扩展自带的图标也算进来（实测 7455 张），传整个目录更是 ~137 MB/次
