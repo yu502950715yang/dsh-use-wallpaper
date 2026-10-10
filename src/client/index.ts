@@ -12,6 +12,10 @@ declare global {
 
 const SETTINGS_SECTION_ID = 'wallpaper-engine';
 
+// 本实例收尾函数的全局登记点：DSH 的 rebuilt 重载会换掉模块实例（模块级变量全丢），
+// 只有挂在 window 上的引用能让新实例找到旧实例、先让它收尾（见 mount 的单例清理）。
+const TEARDOWN_KEY = '__wpEngineTeardown';
+
 export function bootstrap(ctx?: any): void {
   // DSH 0.1.2-rc.1：设置走 ctx.remote.settings（Typert），须注入 settingsCtx 供读写
   setSettingsCtx(ctx);
@@ -19,6 +23,10 @@ export function bootstrap(ctx?: any): void {
   let layer: ReturnType<typeof createBackgroundLayer> | null = null;
   let controller: ReturnType<typeof createWallpaperController> | null = null;
   let settings: ClientSettings = { ...DEFAULTS };
+  // 已收尾标记：ctx 释放（HMR drain 旧 fiber）后不得再有挂载/异步回调把插件复活。
+  let disposed = false;
+  // 本实例注册的 visibilitychange 监听（收尾时移除，否则每次重载留一份）。
+  let onVisibility: (() => void) | null = null;
   // three.js 场景渲染器：bootstrap 创建一次、跨壁纸复用（内部每次 render 重建 player）。
   // 这里持有引用，是为了把「省电 / 画质档位」直接下发——它们不在 controller 的渲染接口上。
   const sceneRenderer = createThreeSceneRenderer();
@@ -49,8 +57,43 @@ export function bootstrap(ctx?: any): void {
     void controller!.select(id).then(() => applySettingsToLayer(settings));
     void writeClientSettings({ selectedWallpaperId: id });
   };
+  // 本实例收尾：停 scene 渲染器（WebGL/wasm/音频）→ 清空并摘掉背景层 → 注销监听。
+  // 幂等（可被 ctx drain 与下一个实例的 mount 各调一次）。
+  const teardown = () => {
+    if (disposed) return;
+    disposed = true;
+    const root = layer?.root ?? null;
+    try { controller?.select(''); } catch { /* 收尾失败也必须摘层，否则又变成盖住新实例的残留层 */ }
+    layer = null;
+    controller = null;
+    root?.remove();
+    if (onVisibility) { document.removeEventListener('visibilitychange', onVisibility); onVisibility = null; }
+    if ((window as any)[TEARDOWN_KEY] === teardown) delete (window as any)[TEARDOWN_KEY];
+  };
+  // 单例清理：先让上一个实例自己收尾（释放 GL/音频/wasm），再按 DOM 兜底摘掉无主的残留层 ——
+  // 老版本插件没有 teardown（真机升级路径上会剩 9 层），只能靠这里连同它的 GL 上下文一起丢掉。
+  const dropStaleLayers = () => {
+    const previous = (window as any)[TEARDOWN_KEY];
+    if (typeof previous === 'function') {
+      try { previous(); } catch { /* 旧实例收尾失败不阻断本次挂载 */ }
+    }
+    // 无 WebGL 的环境（jsdom / 测试）不碰 canvas：它不可能持有 GL 上下文
+    const hasGl = typeof WebGL2RenderingContext !== 'undefined';
+    for (const el of Array.from(document.querySelectorAll('.wp-background-layer'))) {
+      if (hasGl) {
+        for (const canvas of Array.from(el.querySelectorAll('canvas'))) {
+          try { canvas.getContext('webgl2')?.getExtension('WEBGL_lose_context')?.loseContext(); } catch { /* 非 GL canvas / 已丢失 */ }
+        }
+      }
+      for (const video of Array.from(el.querySelectorAll('video'))) {
+        try { video.pause(); video.removeAttribute('src'); video.load(); } catch { /* 未插入 DOM 等，忽略 */ }
+      }
+      el.remove();
+    }
+  };
   const mount = () => {
-    if (layer) return;
+    if (disposed || layer) return;
+    dropStaleLayers();
     const root = document.createElement('div');
     // prepend 到 body 最前（在 #root 之前），配合 z-index:0 的壁纸层与 #root z-index:1 的层级方案
     // （参考 dsh-liang-skin 的做法），避免 z-index:-1 被 body/frame 不透明背景遮挡。
@@ -74,23 +117,24 @@ export function bootstrap(ctx?: any): void {
       settings = { ...settings, ...patch };
       applyRuntimeSettings(settings);
     });
+    // 切到后台/最小化 → 按设置自动暂停（省电），回到前台恢复。
+    onVisibility = () => applyRuntimeSettings(settings);
+    document.addEventListener('visibilitychange', onVisibility);
     // 读回已保存设置并应用到 layer（opacity/blur/kenBurns）与运行期项（暂停/画质档位）
     void readClientSettings().then((s) => {
+      if (disposed) return; // 期间已收尾（HMR drain）→ 不再复活
       settings = s;
       applySettingsToLayer(s);
       applyRuntimeSettings(s);
       // I1：恢复已保存的选中壁纸 —— 先 load 保证列表存在，再 select
       if (s.selectedWallpaperId && controller) {
         void controller.load().then(() => {
-          if (controller && settings.selectedWallpaperId) void controller.select(settings.selectedWallpaperId);
+          if (!disposed && controller && settings.selectedWallpaperId) void controller.select(settings.selectedWallpaperId);
         });
       }
     });
+    (window as any)[TEARDOWN_KEY] = teardown;
   };
-  // 切到后台/最小化 → 按设置自动暂停（省电），回到前台恢复。
-  if (typeof document !== 'undefined') {
-    document.addEventListener('visibilitychange', () => applyRuntimeSettings(settings));
-  }
   // 延迟到 DOM 就绪
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', mount, { once: true });
@@ -100,6 +144,8 @@ export function bootstrap(ctx?: any): void {
   // 暴露渲染 API（设置面板与外部调用）
   (window as any).__wallpaperEngine = {
     mount,
+    // 手动卸载（排查/救急用）：收尾并摘掉背景层；下次 mount 可重新挂载。
+    teardown,
     select(id: string) {
       mount();
       if (!controller) return;
@@ -135,6 +181,11 @@ export function bootstrap(ctx?: any): void {
       label: () => 'Wallpaper 壁纸',
     }, WallpaperSettingsSection));
   }
+  // ctx 释放（DSH client-hmr 的 rebuilt 重载会 drain 旧 fiber，再以全新状态重挂载插件）：
+  // 必须在这里收尾 —— 否则旧背景层留在 body 里，与 z-index 同为 0 的新层按 DOM 序压在上面
+  // ⇒ 新实例渲染的壁纸被旧层盖住（真机「选了魔兽之门仍显示三角洲」，层数累计到 9）。
+  if (typeof ctx?.effect === 'function') ctx.effect(() => teardown, 'wallpaper-engine: teardown');
+  else if (typeof ctx?.on === 'function') ctx.on('dispose', teardown);
 }
 
 // Cordis 客户端插件入口：client loader 期待模块导出「函数」或「含 apply 的对象」

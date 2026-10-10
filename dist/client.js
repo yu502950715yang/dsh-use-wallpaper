@@ -29627,12 +29627,15 @@ function WallpaperSettingsSection(props) {
 
 // src/client/index.ts
 var SETTINGS_SECTION_ID = "wallpaper-engine";
+var TEARDOWN_KEY = "__wpEngineTeardown";
 function bootstrap(ctx) {
   setSettingsCtx(ctx);
   injectWallpaperStyles();
   let layer = null;
   let controller = null;
   let settings = { ...DEFAULTS };
+  let disposed = false;
+  let onVisibility = null;
   const sceneRenderer = createThreeSceneRenderer();
   const applySettingsToLayer = (s) => {
     if (!layer) return;
@@ -29657,8 +29660,55 @@ function bootstrap(ctx) {
     void controller.select(id).then(() => applySettingsToLayer(settings));
     void writeClientSettings({ selectedWallpaperId: id });
   };
+  const teardown = () => {
+    if (disposed) return;
+    disposed = true;
+    const root = layer?.root ?? null;
+    try {
+      controller?.select("");
+    } catch {
+    }
+    layer = null;
+    controller = null;
+    root?.remove();
+    if (onVisibility) {
+      document.removeEventListener("visibilitychange", onVisibility);
+      onVisibility = null;
+    }
+    if (window[TEARDOWN_KEY] === teardown) delete window[TEARDOWN_KEY];
+  };
+  const dropStaleLayers = () => {
+    const previous = window[TEARDOWN_KEY];
+    if (typeof previous === "function") {
+      try {
+        previous();
+      } catch {
+      }
+    }
+    const hasGl = typeof WebGL2RenderingContext !== "undefined";
+    for (const el of Array.from(document.querySelectorAll(".wp-background-layer"))) {
+      if (hasGl) {
+        for (const canvas of Array.from(el.querySelectorAll("canvas"))) {
+          try {
+            canvas.getContext("webgl2")?.getExtension("WEBGL_lose_context")?.loseContext();
+          } catch {
+          }
+        }
+      }
+      for (const video of Array.from(el.querySelectorAll("video"))) {
+        try {
+          video.pause();
+          video.removeAttribute("src");
+          video.load();
+        } catch {
+        }
+      }
+      el.remove();
+    }
+  };
   const mount = () => {
-    if (layer) return;
+    if (disposed || layer) return;
+    dropStaleLayers();
     const root = document.createElement("div");
     document.body.prepend(root);
     layer = createBackgroundLayer(root);
@@ -29678,20 +29728,21 @@ function bootstrap(ctx) {
       settings = { ...settings, ...patch };
       applyRuntimeSettings(settings);
     });
+    onVisibility = () => applyRuntimeSettings(settings);
+    document.addEventListener("visibilitychange", onVisibility);
     void readClientSettings().then((s) => {
+      if (disposed) return;
       settings = s;
       applySettingsToLayer(s);
       applyRuntimeSettings(s);
       if (s.selectedWallpaperId && controller) {
         void controller.load().then(() => {
-          if (controller && settings.selectedWallpaperId) void controller.select(settings.selectedWallpaperId);
+          if (!disposed && controller && settings.selectedWallpaperId) void controller.select(settings.selectedWallpaperId);
         });
       }
     });
+    window[TEARDOWN_KEY] = teardown;
   };
-  if (typeof document !== "undefined") {
-    document.addEventListener("visibilitychange", () => applyRuntimeSettings(settings));
-  }
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", mount, { once: true });
   } else {
@@ -29699,6 +29750,8 @@ function bootstrap(ctx) {
   }
   window.__wallpaperEngine = {
     mount,
+    // 手动卸载（排查/救急用）：收尾并摘掉背景层；下次 mount 可重新挂载。
+    teardown,
     select(id) {
       mount();
       if (!controller) return;
@@ -29738,6 +29791,8 @@ function bootstrap(ctx) {
       label: () => "Wallpaper \u58C1\u7EB8"
     }, WallpaperSettingsSection));
   }
+  if (typeof ctx?.effect === "function") ctx.effect(() => teardown, "wallpaper-engine: teardown");
+  else if (typeof ctx?.on === "function") ctx.on("dispose", teardown);
 }
 function apply(ctx) {
   bootstrap(ctx);
