@@ -68,6 +68,8 @@ e2e/
 | `test` | ubuntu | `vitest run` + **已知失败 allowlist**（不用整文件 exclude —— `verify-real-library` 与 `bootstrap.dom` 各只 1 项失败，exclude 会白丢覆盖） |
 | `e2e` | windows-latest | 最小 e2e 集合，SwiftShader 档；`--gpu` 档**永久不可用**（标准 runner 无 GPU），需自托管 |
 
+> **as-built（2026-10-10）**：上表 ubuntu 未采纳 —— 三个 job 实际都跑 `windows-latest`（理由见 `ci.yml` 头注释：README 声明仅 Windows 实测，Linux 行为未验证）；`test` 门禁除「新增失败」外，**套件级错误 / 未处理异常也判红**（`scripts/check-known-failures.mjs`，未处理异常由 `tests/setup/no-unhandled.ts` 转成测试失败）；e2e 实际入 CI 的是 colorblend 与 turn-trigger 两个零素材依赖用例。
+
 `tests/verify-real-library.test.ts` 改为 `it.skipIf(!hasLibrary)` 并显式告警，消除「CI 恒绿」的假象。
 
 ## 5. 验收口径

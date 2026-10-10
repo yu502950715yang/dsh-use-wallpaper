@@ -19,6 +19,9 @@ function relFile(name) {
   return name.replace(/\\/g, '/').replace(/^.*?(tests\/)/, '$1');
 }
 
+/** 报错信息取首行、截断，避免把整段堆栈灌进 CI 日志。 */
+const firstLine = (v) => String(v ?? '').split('\n')[0].slice(0, 200);
+
 const report = JSON.parse(readFileSync(reportPath, 'utf8'));
 const baseline = JSON.parse(readFileSync(baselinePath, 'utf8'));
 const key = (file, name) => `${file}::${name}`;
@@ -48,6 +51,22 @@ console.log(`[known-failures] 总计 ${totals}，通过 ${passed}，失败 ${fai
 
 for (const f of stillFailing) console.log(`  基线内失败（预期）：${f.file} > ${f.name}`);
 for (const f of absent) console.log(`  ⚠️ 基线内条目本次未失败（已修复或本机跳过）：${f.file} > ${f.name}`);
+
+// 套件级错误（收集期失败、afterAll 守卫抛错等）：testResults[].status=failed 且 message 非空——
+// 普通断言失败的 message 是空串（失败信息在 assertionResults 里），仍走基线豁免；套件级错误
+// 没有可豁免的断言名，一律判红。unhandledErrors 仅作向前兼容：vitest 2.1 实测不输出该字段。
+const suiteErrors = (report.testResults ?? []).filter(
+  (t) => t.status === 'failed' && (String(t.message ?? '').trim() !== '' || (t.assertionResults ?? []).length === 0),
+);
+const unhandled = report.unhandledErrors ?? [];
+if (suiteErrors.length > 0 || unhandled.length > 0) {
+  console.error(
+    `\n[known-failures] 测试未能正常运行（套件级错误 ${suiteErrors.length} 个、未处理异常 ${unhandled.length} 个）：`,
+  );
+  for (const t of suiteErrors) console.error(`  SUITE ERROR  ${relFile(t.name ?? '')} — ${firstLine(t.message)}`);
+  for (const e of unhandled) console.error(`  UNHANDLED    ${firstLine(e?.message ?? e)}`);
+  process.exit(1);
+}
 
 if (added.length > 0) {
   console.error(`\n[known-failures] 出现 ${added.length} 项**新增失败**（基线之外）：`);

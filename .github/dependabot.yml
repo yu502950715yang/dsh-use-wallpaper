@@ -1,0 +1,9 @@
+# 动作主版本漂移是本仓库 CI 的主要故障源（Node20 → Node24 运行时迁移踩了三次提交）。
+# 只盯 github-actions：npm 依赖的更新由人工按需处理，避免噪音 PR。
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

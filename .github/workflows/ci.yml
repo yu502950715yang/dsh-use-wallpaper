@@ -1,13 +1,14 @@
 name: CI
 
 # 三个门禁（设计见 docs/superpowers/specs/2026-09-22-e2e-harness-and-ci-design.md）：
-#   typecheck — tsc strict + **产物新鲜度**：lib/ 是入库的 tsc 产物，必须与 src 同步
-#   test      — vitest + 已知失败基线集合差（只对**新增**失败判红，见 AGENT.md §7.11）
+#   typecheck — tsc strict + **产物新鲜度**：lib/（tsc）与 dist/client.js（esbuild）必须与 src 同步
+#   test      — vitest + 已知失败基线集合差（**新增**失败判红；套件级错误/未处理异常一律判红，见 AGENT.md §7.11）
 #   e2e       — 真实 headless Edge 渲染并逐像素判定（SwiftShader 档，**不需要 GPU**）
 #
 # 平台一律 windows-latest：项目 README 声明「仅 Windows 实测」，Linux 行为未验证，
-# 用 ubuntu 会引入无法在本机复现的失败面。dist/ 无法在 CI 重建（依赖被 gitignore 的
-# wasm/pkg/，需 Rust wasm 工具链），故产物守卫只覆盖 lib/。
+# 用 ubuntu 会引入无法在本机复现的失败面。产物守卫覆盖 lib/ 与 dist/client.js；后者先删入库副本
+# 再构建（避免「构建失败 ⇒ 文件没变 ⇒ 误判同步」），缺 wasm/pkg 时 build:client 在复制 wasm 阶段
+# exit 1 但 client.js 已写出，故用 || true 忽略。若首次 run 因跨机产物差异报红，删掉该步骤。
 #
 # ⚠️ 动作主版本必须跑在 **Node 24 运行时**上：GitHub 自 2026-06-16 起把 JS 动作的默认运行时换成
 # Node24，并于 **2026-09-23 彻底移除 Node20**（`ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION` 也不再可用，
@@ -27,6 +28,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# 只读代码 + 上传 artifact，不需要写权限
+permissions:
+  contents: read
+
 jobs:
   typecheck:
     runs-on: windows-latest
@@ -42,11 +47,22 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: tsc（strict）
-        run: npx tsc -p tsconfig.json --noEmit
+        run: pnpm exec tsc -p tsconfig.json --noEmit
       - name: lib/ 产物必须与 src 同步（重跑 tsc 后零差异）
+        # git diff 看不到未跟踪文件 ⇒ 先 git add -A 把「新增/删除的产物」也纳入比较
         run: |
-          npx tsc -p tsconfig.json
-          git diff --exit-code lib/
+          pnpm exec tsc -p tsconfig.json
+          git add -A -- lib/
+          git diff --cached --exit-code -- lib/
+        shell: bash
+      - name: dist/client.js 必须与 src 同步（不需要 wasm/pkg）
+        # 先删入库副本再构建，避免"构建失败 ⇒ 文件没变 ⇒ 误判为同步"；build:client 在缺 wasm/pkg 时
+        # 于「复制 wasm」阶段 exit 1，但 client.js 此时已写出 ⇒ 用 || true 忽略。本机实测构建产物与入库
+        # 版本 sha256 一致；若 CI 上此项报红（跨机 esbuild 产物差异），删掉本步骤并在头注释说明。
+        run: |
+          rm -f dist/client.js dist/client.js.map
+          node scripts/build-client.mjs || true
+          git diff --exit-code -- dist/client.js
         shell: bash
 
   test:
@@ -62,15 +78,26 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: vitest（产出 JSON 报告）
-        run: npx vitest run --reporter=json --outputFile=.vitest-report.json
+      - name: vitest（default 日志 + JSON 报告）
+        run: pnpm exec vitest run --reporter=default --reporter=json --outputFile=.vitest-report.json
         continue-on-error: true
-      - name: 只对新增失败判红
+      - name: 只对新增失败判红（套件级错误/未处理异常一律判红）
         run: node scripts/check-known-failures.mjs .vitest-report.json
+      - name: 上传测试报告（失败时排查用）
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: vitest-report
+          path: .vitest-report.json
+          include-hidden-files: true
+          if-no-files-found: ignore
 
   e2e:
     runs-on: windows-latest
     timeout-minutes: 20
+    # 判据阈值在本机 GPU 上标定；runner 是 SwiftShader 软渲染，放宽等待上限（config.mjs 默认 30s）
+    env:
+      E2E_TIMEOUT_MS: '90000'
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v5
@@ -82,31 +109,37 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       # ⚠️ GitHub 的 windows-latest 镜像**没有预装 Edge**（只有 Chrome），而本项目只声明支持
-      # Windows/Edge ⇒ 必须自己装。此前这步是「找不到就 throw」，从第一次运行起就一直失败。
-      # setup-edge@v1 自身跑在 node24 上（已核 action.yml），输出 edge-path 直接喂给 EDGE_PATH。
+      # Windows/Edge ⇒ 必须自己装（setup-edge@v1 跑在 node24 上，已核 action.yml）。
+      # 它只 setOutput('edge-path') + 把自己加进 PATH，**不导出 EDGE_PATH**，故下面这步负责转换；
+      # 不要回到候选路径探测：`$env:ProgramFiles(x86)` 会被 PowerShell 解析成 "C:\Program Files(x86)\…"
+      # （`(x86)` 成了字面量）⇒ 路径不存在，靠它探测在「Edge 没进 PATH」的机器上必假红。
       - name: 安装 Edge（实测渲染 e2e 用）
         id: edge
         uses: browser-actions/setup-edge@v1
-      - name: 确认 Edge 可用（兜底探测并复核 EDGE_PATH）
+      - name: 把 setup-edge 的 edge-path 导出为 EDGE_PATH
+        env:
+          EDGE_PATH: ${{ steps.edge.outputs.edge-path }}
         run: |
-          $candidates = @(
-            $env:EDGE_PATH,
-            "$env:ProgramFiles(x86)\Microsoft\Edge\Application\msedge.exe",
-            "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe"
-          ) | Where-Object { $_ -and (Test-Path $_) }
-          $edge = $candidates | Select-Object -First 1
-          if (-not $edge) { $edge = (Get-Command msedge.exe -ErrorAction SilentlyContinue).Source }
-          if (-not $edge) { throw "找不到 Edge，e2e 无法运行（setup-edge 也没装上）" }
-          $ver = (Get-Item $edge).VersionInfo.ProductVersion
-          Write-Host "Edge: $edge (version $ver)"
-          "EDGE_PATH=$edge" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          if (-not $env:EDGE_PATH -or -not (Test-Path $env:EDGE_PATH)) {
+            throw "setup-edge 未给出可用的 Edge 路径：'$env:EDGE_PATH'"
+          }
+          $ver = (Get-Item $env:EDGE_PATH).VersionInfo.ProductVersion
+          Write-Host "Edge: $env:EDGE_PATH (version $ver)"
+          "EDGE_PATH=$env:EDGE_PATH" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
         shell: pwsh
+      # 入库的 e2e 里只有这两个零素材依赖（不需要 WE 库）；其余 3 个要本机 workshop 素材
       - name: colorBlendMode 渲染 e2e（逐像素判据）
         run: node e2e/verify/verify-colorblend.mjs
+      - name: turn-trigger 卡片 e2e（计算样式判据）
+        run: node e2e/verify/verify-turn-trigger-card.mjs
       - name: 上传截图（失败时排查用）
+        # 只取「用例目录下的直接 PNG」（e2e/.out/<case>/*.png，实测 368 张）：递归 `**.png` 会把
+        # Edge profile 里扩展自带的图标也算进来（实测 7455 张），传整个目录更是 ~137 MB/次
         if: always()
         uses: actions/upload-artifact@v6
         with:
           name: e2e-shots
-          path: e2e/.out/
+          path: |
+            e2e/.out/*/*.png
+            e2e/.out/*.png
           if-no-files-found: ignore
