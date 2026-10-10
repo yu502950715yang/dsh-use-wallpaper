@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync, mkdirSync, rmSync, utimesSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { registerWallpaperRoutes, getPkgReader } from '../src/host/routes.js';
+import { makePkg } from './fixtures/make-pkg.js';
 
 // Fix round 1：测试与实现适配真实 WebRoute 形态
 // （{ kind: 'exact'|'prefix', path, handler(req, res) }，无 params/query 注入，
@@ -384,5 +385,134 @@ describe('registerWallpaperRoutes', () => {
     const r3 = makeRes();
     await routes.get('exact /wallpapers/particle-texture')!({ url: '/wallpapers/particle-texture?name=particle/fog/fog1' }, r3);
     expect(r3.statusCode).toBe(500);
+  });
+
+  // ── scene asset 的「引擎 assets 目录」回退（2026-10-10）────────────────────────────
+  // 根因：WE 把**引擎 assets 目录也挂在 VFS 的 `/`**（lwe WallpaperApplication.cpp:85-99 的挂载顺序：
+  // 壁纸目录 → scene.pkg → 引擎 assets），所以 scene.json 里的 `fonts/X.ttf` 是 VFS 相对路径，
+  // 文件可能只在 `<WE>/assets/fonts/` 里。此前该路由**只查 pkg** ⇒ 404 ⇒ 客户端回退 sans-serif。
+  // 全库实测：33 个带 font 的 text 对象里 21 个是文件路径，其中 **11 个只在引擎目录**（5 张壁纸），
+  // 用户报告「魔兽之门」1922570576 的 3D Clock 用的就是它（该 pkg 48 个条目里零字体文件）。
+  // 同类语义的先例：粒子纹理路由（2026-09-29 为 3793620838 的小鸟纹理加了同样的 pkg → 引擎回退）。
+  describe('scene asset 引擎目录回退（字体等引擎内置素材）', () => {
+    const FONT_REL = 'fonts/CursedTimerUlil-Aznm.ttf';       // 该壁纸 scene.json 里写的路径
+    const ENGINE_BYTES = Buffer.from('ENGINE-TTF-BYTES', 'utf8');
+    const PKG_BYTES = Buffer.from('PKG-TTF-BYTES', 'utf8');
+
+    /** 造一份「scene.pkg 里（默认）没有字体」的壁纸，并把字体放进引擎目录。 */
+    function makeFontFixture(opts: { engine?: boolean; inPkg?: boolean; weAssets?: boolean } = {}) {
+      const weDir = join(dir, 'we-assets');
+      if (opts.engine !== false) {
+        mkdirSync(join(weDir, 'assets', 'fonts'), { recursive: true });
+        writeFileSync(join(weDir, 'assets', FONT_REL), ENGINE_BYTES);
+      }
+      const wp = join(dir, '1922570576');
+      mkdirSync(wp, { recursive: true });
+      const entries = [{ name: 'scene.json', data: Buffer.from('{"objects":[]}', 'utf8') }];
+      if (opts.inPkg) entries.push({ name: FONT_REL, data: PKG_BYTES });
+      writeFileSync(join(wp, 'scene.pkg'), makePkg(entries));
+      registerWallpaperRoutes(makeCtx(), opts.weAssets === false
+        ? { wallpaperDir: dir }
+        : { wallpaperDir: dir, weAssetsDir: weDir });
+      return { weDir, wp };
+    }
+
+    it('pkg 未命中时回退引擎 assets 目录（font/ttf + no-store + 原始字节）', async () => {
+      makeFontFixture();
+      const res = makeRes();
+      await routes.get('prefix /wallpapers/scene')!(
+        { url: `/wallpapers/scene/1922570576/asset?name=${encodeURIComponent(FONT_REL)}` }, res);
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['Content-Type']).toBe('font/ttf');
+      expect(res.headers['Cache-Control']).toBe('no-store');
+      expect(res.body).toEqual(ENGINE_BYTES);
+    });
+
+    it('pkg 与引擎目录都有时以 pkg 优先（对齐 WE 挂载顺序）', async () => {
+      makeFontFixture({ inPkg: true });
+      const res = makeRes();
+      await routes.get('prefix /wallpapers/scene')!(
+        { url: `/wallpapers/scene/1922570576/asset?name=${encodeURIComponent(FONT_REL)}` }, res);
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toEqual(PKG_BYTES);
+    });
+
+    it('scene.pkg 不存在但引擎目录命中 → 200（引擎素材不依赖壁纸包）', async () => {
+      const weDir = join(dir, 'we-assets');
+      mkdirSync(join(weDir, 'assets', 'fonts'), { recursive: true });
+      writeFileSync(join(weDir, 'assets', FONT_REL), ENGINE_BYTES);
+      registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir, weAssetsDir: weDir });
+      const res = makeRes();
+      await routes.get('prefix /wallpapers/scene')!(
+        { url: `/wallpapers/scene/nopkg/asset?name=${encodeURIComponent(FONT_REL)}` }, res);
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toEqual(ENGINE_BYTES);
+    });
+
+    it('两处都没有 → 404；未配 weAssetsDir 且 pkg 未命中 → 404（不是 500）', async () => {
+      makeFontFixture({ engine: false });
+      const r1 = makeRes();
+      await routes.get('prefix /wallpapers/scene')!(
+        { url: `/wallpapers/scene/1922570576/asset?name=${encodeURIComponent(FONT_REL)}` }, r1);
+      expect(r1.statusCode).toBe(404);
+      expect(JSON.parse(r1.body.toString('utf8'))).toEqual({ error: 'no such asset' });
+
+      makeFontFixture({ weAssets: false });
+      const r2 = makeRes();
+      await routes.get('prefix /wallpapers/scene')!(
+        { url: `/wallpapers/scene/1922570576/asset?name=${encodeURIComponent(FONT_REL)}` }, r2);
+      expect(r2.statusCode).toBe(404);
+    });
+
+    it('穿越变体（%2e%2e%2f / ../）取不到引擎目录之外的文件', async () => {
+      const weDir = join(dir, 'we-assets');
+      mkdirSync(join(weDir, 'assets', 'fonts'), { recursive: true });
+      writeFileSync(join(weDir, 'assets', 'fonts', 'ok.ttf'), Buffer.from('OK'));
+      writeFileSync(join(weDir, 'secret'), Buffer.from('TOPSECRET'));
+      registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir, weAssetsDir: weDir });
+      const handler = routes.get('prefix /wallpapers/scene')!;
+
+      // 编码斜杠（不经过 WHATWG 规范化）→ 白名单含 '/' 故放行，但 resolveEngineAsset 拒绝 '..' ⇒ 404
+      const r1 = makeRes();
+      await handler({ url: '/wallpapers/scene/1922570576/asset?name=%2e%2e%2fsecret' }, r1);
+      expect([400, 404]).toContain(r1.statusCode);
+      expect(String(r1.body ?? '')).not.toContain('TOPSECRET');
+
+      // 原始 '../' 在 query 里不经规范化 → 白名单拒绝 → 400
+      const r2 = makeRes();
+      await handler({ url: '/wallpapers/scene/1922570576/asset?name=../secret' }, r2);
+      expect(r2.statusCode).toBe(400);
+
+      // 合法名仍可用（证明不是把整条路由打死）
+      const r3 = makeRes();
+      await handler({ url: '/wallpapers/scene/1922570576/asset?name=' + encodeURIComponent('fonts/ok.ttf') }, r3);
+      expect(r3.statusCode).toBe(200);
+      expect(r3.body.toString('utf8')).toBe('OK');
+    });
+
+    it('纯函数边界：isSafeAssetName / resolveEngineAsset', async () => {
+      const { isSafeAssetName, resolveEngineAsset } = await import('../src/host/routes.js');
+      expect(typeof isSafeAssetName).toBe('function');
+      expect(typeof resolveEngineAsset).toBe('function');
+      // 只放行相对路径
+      expect(isSafeAssetName('fonts/a.ttf')).toBe(true);
+      expect(isSafeAssetName('fonts/workshop/1/x.otf')).toBe(true);
+      expect(isSafeAssetName('')).toBe(false);
+      expect(isSafeAssetName('../secret')).toBe(false);
+      expect(isSafeAssetName('a/../b.ttf')).toBe(false);
+      expect(isSafeAssetName('..\\secret')).toBe(false);
+      expect(isSafeAssetName('/etc/passwd')).toBe(false);
+      // 解析：必须落在 <weAssetsDir>/assets 之内且是文件
+      const weDir = join(dir, 'we-assets');
+      mkdirSync(join(weDir, 'assets', 'fonts'), { recursive: true });
+      writeFileSync(join(weDir, 'assets', 'fonts', 'ok.ttf'), 'OK');
+      writeFileSync(join(weDir, 'secret'), 'TOPSECRET');
+      expect(resolveEngineAsset(weDir, 'fonts/ok.ttf')).toBe(join(weDir, 'assets', 'fonts', 'ok.ttf'));
+      expect(resolveEngineAsset(weDir, '../secret')).toBeNull();
+      // 跨盘绝对路径（Windows 上 resolve 会跳出 base）⇒ 必须为 null（不靠平台差异兜底）
+      expect(resolveEngineAsset(weDir, 'C:/windows/win.ini')).toBeNull();
+      expect(resolveEngineAsset(weDir, 'fonts/nope.ttf')).toBeNull();
+      expect(resolveEngineAsset(weDir, 'fonts')).toBeNull(); // 目录不是文件
+    });
   });
 });

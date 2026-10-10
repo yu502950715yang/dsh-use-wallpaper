@@ -72,6 +72,28 @@ function isSafeToken(s: string): boolean {
   return /^[A-Za-z0-9._-]+$/.test(s) && !s.includes('..');
 }
 
+// ── 引擎 assets 目录（VFS 的 `/`）─────────────────────────────────────────────────────
+// WE 把**引擎 assets 目录也挂载在 VFS 的 `/`** 上（lwe WallpaperApplication.cpp:85-99 的挂载顺序：
+// 壁纸目录 → scene.pkg → 引擎 assets → cwd），所以 scene.json 里的路径（`fonts/X.ttf`、
+// `materials/...`）是 **VFS 相对路径**，文件可能只在 `<WE 安装目录>/assets/` 里。
+// 全库实测：33 个带 font 的 text 对象里 21 个是文件路径，其中 **11 个只在引擎目录**（5 张壁纸）——
+// 用户报告「魔兽之门」1922570576 的 3D Clock 就是其一（该 scene.pkg 48 个条目里零字体文件）。
+// 只放行**相对路径**（绝对路径、'..'、Windows 分隔符一律拒绝）。
+export function isSafeAssetName(name: string): boolean {
+  return !!name && !name.includes('..') && !name.includes('\\') && !name.startsWith('/');
+}
+
+/** 解析「引擎目录 + VFS 相对路径」，并证明结果没有跳出 `<weAssetsDir>/assets`（resolve + 前缀比较，
+ *  与本文件其它路由同一手法）。越界 / 不存在 / 不是文件 → null（调用方按未命中继续）。 */
+export function resolveEngineAsset(weAssetsDir: string, name: string): string | null {
+  if (!isSafeAssetName(name)) return null;
+  const base = resolve(weAssetsDir, 'assets');
+  const full = resolve(base, name);
+  if (full !== base && !full.startsWith(base + sep)) return null;
+  if (!existsSync(full) || !statSync(full).isFile()) return null;
+  return full;
+}
+
 function json(res: any, code: number, value: unknown) {
   const body = Buffer.from(JSON.stringify(value), 'utf8');
   res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': body.length });
@@ -82,6 +104,17 @@ function json(res: any, code: number, value: unknown) {
 function sendTexture(res: any, body: Buffer): void {
   res.writeHead(200, {
     'Content-Type': 'application/octet-stream',
+    'Content-Length': body.length,
+    'Cache-Control': 'no-store',
+  });
+  res.end(body);
+}
+
+// 场景素材（pkg 条目 / 引擎目录文件）共用：MIME 按扩展名，动态内容禁缓存
+function sendFileAsset(res: any, name: string, body: Buffer): void {
+  const ext = '.' + (name.split('.').pop() ?? '').toLowerCase();
+  res.writeHead(200, {
+    'Content-Type': MIME[ext] ?? 'application/octet-stream',
     'Content-Length': body.length,
     'Cache-Control': 'no-store',
   });
@@ -171,23 +204,27 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
           return json(res, 400, { error: 'bad name' });
         }
         const pkgPath = join(dir(), id, 'scene.pkg');
-        if (!existsSync(pkgPath)) return json(res, 404, { error: 'no scene pkg' });
-        try {
-          const reader = getPkgReader(pkgPath);
-          const entry = reader.readEntry(name);
-          if (!entry) return json(res, 404, { error: 'no such asset' });
-          const ext = '.' + name.split('.').pop()?.toLowerCase();
-          // 场景资源是动态内容（pkg 内读取），禁止浏览器缓存，避免切壁纸后拿到陈旧数据
-          res.writeHead(200, {
-            'Content-Type': MIME[ext] ?? 'application/octet-stream',
-            'Content-Length': entry.length,
-            'Cache-Control': 'no-store',
-          });
-          res.end(entry);
-        } catch {
-          // 固定文案，不泄漏内部错误信息
-          json(res, 500, { error: 'internal error' });
+        // ① pkg 条目（WE 挂载顺序里壁纸包先于引擎 assets）
+        let entry: Buffer | null = null;
+        if (existsSync(pkgPath)) {
+          try {
+            entry = getPkgReader(pkgPath).readEntry(name);
+          } catch {
+            return json(res, 500, { error: 'internal error' });
+          }
         }
+        if (entry) return sendFileAsset(res, name, entry);
+        // ② 引擎 assets 目录回退（字体等 WE 内置素材；`weAssetsDir` 未配 → 直接 404）
+        const we = assetsDir();
+        const fromEngine = we ? resolveEngineAsset(we, name) : null;
+        if (fromEngine) {
+          try {
+            return sendFileAsset(res, name, readFileSync(fromEngine));
+          } catch {
+            // 读失败按未命中处理（下面的 404），不泄漏内部错误
+          }
+        }
+        return json(res, 404, { error: 'no such asset' });
       },
     });
 
