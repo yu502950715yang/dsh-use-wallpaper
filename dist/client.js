@@ -22904,9 +22904,10 @@ var WE_SYSTEM_FONTS = {
 function resolveFontFamily(font) {
   if (typeof font !== "string" || !font.trim()) return "sans-serif";
   const name = font.trim();
-  const sys = WE_SYSTEM_FONTS[name.toLowerCase()];
+  const base = (name.split(/[/\\]/).pop() ?? name).toLowerCase();
+  const sys = WE_SYSTEM_FONTS[base];
   if (sys) return sys;
-  if (name.toLowerCase().startsWith("systemfont_")) return "sans-serif";
+  if (base.startsWith("systemfont_")) return "sans-serif";
   if (/[/\\]/.test(name) || /\.[a-zA-Z0-9]{2,4}$/.test(name)) return "sans-serif";
   return name.includes(" ") ? `"${name}"` : name;
 }
@@ -28770,6 +28771,8 @@ var FONT_CACHE = /* @__PURE__ */ new Map();
 var fontSeq = 0;
 async function loadWallpaperFont(wallpaperId, font) {
   if (typeof font !== "string" || !font) return void 0;
+  const base = font.split("/").pop() ?? font;
+  if (base.toLowerCase().startsWith("systemfont_")) return void 0;
   if (!/\.(otf|ttf|ttc|woff2?)$/i.test(font)) return void 0;
   if (typeof FontFace === "undefined" || typeof document === "undefined" || !document.fonts) return void 0;
   const key = `${wallpaperId}:${font}`;
