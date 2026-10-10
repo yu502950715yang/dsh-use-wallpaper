@@ -12,18 +12,18 @@
 
 ## 🎬 在 DSH 里的真实效果
 
-下面两段动图都是**在 DSH Web GUI 的真实页面上**录的（不是离线贴图，也不是设计稿）：壁纸由插件在浏览器里实时渲染，DSH 界面叠加在其上。
+下面两段动图都是**在 DSH Web GUI 的真实页面上**录的（不是离线贴图，也不是设计稿）：壁纸由插件在浏览器里实时渲染 / 播放，DSH 界面叠加在其上。
 
 <table>
 <tr>
 <td width="50%" align="center">
 
-**Crimson Horizon · 星空雪山**
-<sub>Landscape</sub>
+**yuki恋冢爱**
+<sub>Video · Girls</sub>
 
-![Crimson Horizon 在 DSH 中的效果](docs/videos/crimson-horizon-dsh.gif)
+![yuki恋冢爱 在 DSH 中的效果](docs/videos/yuki-koizuka-dsh.gif)
 
-<sub>[▶ 完整视频（9s / mp4）](docs/videos/crimson-horizon-dsh.mp4)</sub>
+<sub>[▶ 完整视频（9s / mp4）](docs/videos/yuki-koizuka-dsh.mp4)</sub>
 
 </td>
 <td width="50%" align="center">
@@ -39,7 +39,7 @@
 </tr>
 </table>
 
-> **录制方式（如实说明）**：两段动图与视频都是在**真实运行的 DSH 页面**上、由本插件的生产构建（`lib/`）实时渲染本机 workshop 壁纸后录制的浏览器画面，未做后期合成；壁纸通过插件自身的切换入口 `window.__wallpaperEngine.select(id)` 切换，因此画面里只有 DSH 界面与壁纸本身。画面已裁掉浏览器地址栏。壁纸素材版权归原作者所有，此处仅作效果展示，不再分发。
+> **录制方式（如实说明）**：两段动图与视频都是在**真实运行的 DSH 页面**上、由本插件的生产构建（`lib/`）实时渲染本机 workshop 壁纸后录制的浏览器画面，未做后期合成；壁纸通过插件自身的切换入口 `window.__wallpaperEngine.select(id)` 切换，因此画面里只有 DSH 界面与壁纸本身。画面已裁掉浏览器窗口边框（地址栏 / 标题栏）。**yuki恋冢爱 是 HEVC（H.265）视频壁纸，这段用 Chrome 录制** —— 浏览器能否播出视频壁纸取决于它自身的解码能力（同一系统上 Edge 会黑屏、Chrome 正常），与插件无关。壁纸素材版权归原作者所有，此处仅作效果展示，不再分发。
 
 ---
 
@@ -206,6 +206,7 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 - **壁纸音效默认播放**（设置 → 壁纸可关），随声音变化的效果也会跟着动；频谱柱状可视化尚未支持。
 - **应用级光晕默认开启**（设置 → 壁纸 → 「光晕」，阈值 / 强度可调、改完立即生效）：这是"桌面更亮"的主要来源。**嫌亮就调低强度或调高阈值；觉得偏暗就把强度调到 1~1.5。** 仅对 scene 壁纸生效。
 - **输入框用半透明玻璃底**（不模糊），避免桌面端在输出回复时出现滚动条抖动。
+- **视频壁纸能不能播，取决于浏览器的解码能力**：视频壁纸直接交给浏览器的 `<video>` 解码 —— HEVC / H.265 需要系统装有对应的解码扩展，缺了它的浏览器会**停在黑背景**（不报错、也不退回封面图）；换 Chrome 等能解该编码的浏览器即可。上面展示的 yuki恋冢爱（HEVC）在 Edge 上就是这个下场。
 - **越大的壁纸越吃显存**：4K 分辨率下单张壁纸可能占用数百 MB 显存。追求省电/流畅可以用小分辨率或选择简单的壁纸。
 
 **环境要求**
