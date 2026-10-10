@@ -77,6 +77,9 @@ const HTML = `<!doctype html><html><head><meta charset="utf-8">
 <style>html,body{margin:0;background:#000}canvas{display:block}</style>
 </head><body><script type="module" src="/harness.js"></script></body></html>`;
 
+// 引擎目录命中的场景素材（探针用：证明字体真的是从 `<WE>/assets` 取的）
+const assetHits = [];
+
 const bundle = (await esbuild.build({
   entryPoints: [join(here, '..', 'harness', 'harness-text-clock-entry.mjs')],
   bundle: true, format: 'esm', target: 'es2022', write: false, logLevel: 'silent',
@@ -98,9 +101,20 @@ const server = createServer((req, res) => {
     }
     if (p.startsWith('/wallpapers/scene/')) {
       const name = url.searchParams.get('name') ?? '';
+      // 复刻 host 的两级查找：scene.pkg 优先，其次 **WE 引擎 assets 目录**
+      // （WE 把引擎 assets 也挂在 VFS 的 `/` 上，所以 `fonts/X.ttf` 这类路径可能只在引擎目录里；
+      //   「魔兽之门」1922570576 的 3D Clock 字体就是这种 —— 它的 scene.pkg 里零字体文件）。
       const entry = reader.readEntry(name);
-      if (!entry) { console.log('   [404 asset]', name); res.writeHead(404); return res.end('nf'); }
-      return send(entry, MIME[extname(name)] ?? 'application/octet-stream');
+      if (entry) return send(entry, MIME[extname(name)] ?? 'application/octet-stream');
+      const engineBase = resolve(join(WE, 'assets'));
+      const engine = name ? resolve(engineBase, name) : engineBase;
+      if (name.includes('..') || engine === engineBase || !engine.startsWith(engineBase)
+        || !existsSync(engine) || !statSync(engine).isFile()) {
+        console.log('   [404 asset]', name);
+        res.writeHead(404); return res.end('nf');
+      }
+      assetHits.push({ name, source: 'engine', bytes: statSync(engine).size });
+      return send(readFileSync(engine), MIME[extname(name)] ?? 'application/octet-stream');
     }
     if (p === '/wallpapers/particle-texture') {
       const name = url.searchParams.get('name') ?? '';
@@ -357,6 +371,12 @@ try {
       !!rect && (rect.norm[0] + rect.norm[2]) / 2 > 0.6 && (rect.norm[1] + rect.norm[3]) / 2 > 0.6],
     [`文本画布上画出了白色字形（亮像素 ${info.normal.textCanvas?.brightPixels ?? 0} 个，区域 ${JSON.stringify(info.normal.textCanvas?.brightBBox)}）`,
       (info.normal.textCanvas?.brightPixels ?? 0) > 500],
+    // 字体（2026-10-10）：`fonts/CursedTimerUlil-Aznm.ttf` 只存在于 <WE>/assets/fonts/（scene.pkg 里
+    // 零字体文件）⇒ host 的「引擎 assets 回退」必须命中，客户端才能拿到真身 LED 数码字体。
+    // 判据用**像素/几何事实**：用上真身字体后文本画布宽 884（回退 sans-serif 只有 702）。
+    [`字体从引擎目录命中且真的生效（请求命中 ${JSON.stringify(assetHits)}；画布宽 ${info.normal.textCanvas?.size?.[0] ?? '—'} ≥ 800 ⇒ 非回退字体）`,
+      assetHits.some((h) => h.name.endsWith('CursedTimerUlil-Aznm.ttf') && h.source === 'engine')
+      && (info.normal.textCanvas?.size?.[0] ?? 0) >= 800],
     [`字形 alpha 未被压淡（字形像素 alpha 均值 ${info.normal.textCanvas?.strokeAlphaMean ?? '—'} / 最小 ${info.normal.textCanvas?.strokeAlphaMin ?? '—'}，作者值 0.84×255≈214）`,
       (info.normal.textCanvas?.strokeAlphaMean ?? 0) > 150],
     [`屏幕上能读到白字（右下角「隐藏时暗、显示时亮」的像素 ${textPixels.textMaskPixels} 个，其中 luma>200 的 ${textPixels.brightTextPixels} 个，均值 ${textPixels.meanLuma}）`,
@@ -376,6 +396,7 @@ try {
   console.log('\n文本层信号 A/B（显示 vs 隐藏）:', JSON.stringify(dAB));
   console.log('噪声地板 A/A（显示 vs 再显示）:', JSON.stringify(dAA));
   console.log('白字像素（右下角、隐藏时暗显示时亮）:', JSON.stringify(textPixels));
+  console.log('引擎目录命中的场景素材:', JSON.stringify(assetHits));
   console.log('右下角亮像素（显示 / 隐藏 / 全屏）:', JSON.stringify({ show: brightShow.brightPixels, hide: brightHide.brightPixels, whole: brightWhole.brightPixels }));
   console.log(`截图：${OUT}`);
   if (!ok) process.exitCode = 1;

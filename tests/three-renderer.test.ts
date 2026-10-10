@@ -1158,8 +1158,7 @@ describe('three-renderer text 对象', () => {
   });
   afterEach(() => { vi.restoreAllMocks(); });
 
-  it('clock 脚本的 text → 下发 textLayers（纹理 + 每帧驱动），初始文本即时钟格式而非占位值', async () => {
-    stubAssetFetch(sceneWithText({ text: { value: '12:34', script: CLOCK_SCRIPT } }), {});
+  it('clock 脚本的 text → 下发 textLayers（纹理 + 每帧驱动），初始文本即时钟格式而非占位值', async () => {    stubAssetFetch(sceneWithText({ text: { value: '12:34', script: CLOCK_SCRIPT } }), {});
     stubTextRender();
     // 注入「运行时不可用」：单测不加载 quickjs wasm，clock 兜底路径才是本用例的断言对象。
     const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm, getTextScriptRuntime: async () => null });
@@ -1208,8 +1207,37 @@ describe('three-renderer text 对象', () => {
     r.dispose();
   });
 
-  it('非 clock 文本 → 有纹理、无驱动（静态文本不动）', async () => {
-    stubAssetFetch(sceneWithText({ text: { value: 'HELLO' } }), {});
+  // 字体加载（2026-10-10）：`systemfont_<family>` 是 WE 的**宿主系统字体别名**，永远不会在 pkg /
+  // 引擎 assets 目录里，且必须按 basename 判 —— scene.json 里存在 `fonts/systemfont_arial` 这种
+  // 带目录前缀的写法（OWE SceneTextObjectParser.cpp:290-292 同判据）。此前它被当成字体文件路径 ⇒
+  // 加载失败 ⇒ 落 sans-serif（正确结果是 Arial）。
+  // 真身字体路径（`fonts/X.ttf`）走另一条分支：有 FontFace 时请求 + 注册家族名，无 FontFace
+  // （jsdom/node）时静默返回 undefined、由调用方回退 —— 本用例只钉住「两条分支的选择」，
+  // 不假设运行环境有没有 FontFace。
+  it('字体：systemfont_*（含 fonts/ 前缀）解析为系统家族且不请求网络；真身字体路径不误判', async () => {
+    const fontUrls = () => (globalThis.fetch as unknown as { mock: { calls: [string][] } }).mock.calls
+      .map((c) => String(c[0]))
+      .filter((u) => u.includes('name=font'));
+
+    // ① 带目录前缀的系统字体别名：解析出的 CSS 家族应是 Arial，且**不**把它当字体文件去请求
+    stubAssetFetch(sceneWithText({ font: 'fonts/systemfont_arial', text: { value: 'HELLO' } }), {});
+    stubTextRender();
+    const r1 = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    await r1.render('2851992662', document.createElement('canvas'), null);
+    expect(fontUrls()).toEqual([]);
+    expect(ctx2d.font).toContain('Arial');
+
+    // ② 真身字体名（`fonts/X.ttf`）绝不能被解析成系统家族（它是文件路径）
+    stubAssetFetch(sceneWithText({ font: 'fonts/CursedTimerUlil-Aznm.ttf', text: { value: 'HELLO' } }), {});
+    const r2 = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    await r2.render('2851992662', document.createElement('canvas'), null);
+    expect(ctx2d.font).toBe('48px sans-serif'); // 无 FontFace 环境的回退口径
+
+    r1.dispose();
+    r2.dispose();
+  });
+
+  it('非 clock 文本 → 有纹理、无驱动（静态文本不动）', async () => {    stubAssetFetch(sceneWithText({ text: { value: 'HELLO' } }), {});
     stubTextRender();
     const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
     await r.render('2851992662', document.createElement('canvas'), null);

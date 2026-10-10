@@ -65,9 +65,13 @@ const WE_SYSTEM_FONTS: Record<string, string> = {
 function resolveFontFamily(font: string | undefined): string {
   if (typeof font !== 'string' || !font.trim()) return 'sans-serif';
   const name = font.trim();
-  const sys = WE_SYSTEM_FONTS[name.toLowerCase()];
+  // WE 的 `systemfont_<family>` 别名要按 **basename** 判：scene.json 里存在 `fonts/systemfont_arial`
+  // 这种带目录前缀的写法（OWE SceneTextObjectParser.cpp:290-292 的 is_systemfont 同判据），
+  // 否则会被下面的「含 '/' ⇒ 字体文件路径」规则吞掉、退成 sans-serif。
+  const base = (name.split(/[/\\]/).pop() ?? name).toLowerCase();
+  const sys = WE_SYSTEM_FONTS[base];
   if (sys) return sys;
-  if (name.toLowerCase().startsWith('systemfont_')) return 'sans-serif';
+  if (base.startsWith('systemfont_')) return 'sans-serif';
   if (/[/\\]/.test(name) || /\.[a-zA-Z0-9]{2,4}$/.test(name)) return 'sans-serif';
   return name.includes(' ') ? `"${name}"` : name;
 }
