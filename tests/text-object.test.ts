@@ -155,6 +155,15 @@ describe('drawTextToCanvas（就地重绘：时钟复用同一 canvas 与纹理�
     expect(ctx.font).toBe('128px Consolas, "Courier New", monospace');
     createTextTexture('y', { font: 'systemfont_arial', pointsize: 32, width: 100, height: 50 });
     expect(ctx.font).toBe('128px Arial, Helvetica, sans-serif');
+    // 带目录前缀的系统字体别名（WE 里真实存在的写法，如 `fonts/systemfont_arial`）：按 basename 判，
+    // 否则会被当字体文件路径回退 sans-serif（OWE SceneTextObjectParser.cpp:290-292 同判据）。
+    createTextTexture('y', { font: 'fonts/systemfont_arial', pointsize: 32, width: 100, height: 50 });
+    expect(ctx.font).toBe('128px Arial, Helvetica, sans-serif');
+    createTextTexture('y', { font: 'fonts/systemfont_consolas', pointsize: 32, width: 100, height: 50 });
+    expect(ctx.font).toBe('128px Consolas, "Courier New", monospace');
+    // 未知系统字体别名仍回退 sans-serif（不因带前缀就当成家族名）
+    createTextTexture('y', { font: 'fonts/systemfont_unknownfamily', pointsize: 32, width: 100, height: 50 });
+    expect(ctx.font).toBe('128px sans-serif');
     // M29：多词家族名在 CSS font 简写中必须加引号
     createTextTexture('z', { font: 'Times New Roman', pointsize: 20, width: 100, height: 50 });
     expect(ctx.font).toBe('80px "Times New Roman"');
