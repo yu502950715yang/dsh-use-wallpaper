@@ -81,17 +81,25 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: 定位 Edge（EDGE_PATH 兜底）
+      # ⚠️ GitHub 的 windows-latest 镜像**没有预装 Edge**（只有 Chrome），而本项目只声明支持
+      # Windows/Edge ⇒ 必须自己装。此前这步是「找不到就 throw」，从第一次运行起就一直失败。
+      # setup-edge@v1 自身跑在 node24 上（已核 action.yml），输出 edge-path 直接喂给 EDGE_PATH。
+      - name: 安装 Edge（实测渲染 e2e 用）
+        id: edge
+        uses: browser-actions/setup-edge@v1
+      - name: 确认 Edge 可用（兜底探测并复核 EDGE_PATH）
         run: |
           $candidates = @(
+            $env:EDGE_PATH,
             "$env:ProgramFiles(x86)\Microsoft\Edge\Application\msedge.exe",
             "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe"
-          )
-          $edge = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          ) | Where-Object { $_ -and (Test-Path $_) }
+          $edge = $candidates | Select-Object -First 1
           if (-not $edge) { $edge = (Get-Command msedge.exe -ErrorAction SilentlyContinue).Source }
-          if (-not $edge) { throw "找不到 Edge，e2e 无法运行" }
+          if (-not $edge) { throw "找不到 Edge，e2e 无法运行（setup-edge 也没装上）" }
+          $ver = (Get-Item $edge).VersionInfo.ProductVersion
+          Write-Host "Edge: $edge (version $ver)"
           "EDGE_PATH=$edge" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
-          Write-Host "Edge: $edge"
         shell: pwsh
       - name: colorBlendMode 渲染 e2e（逐像素判据）
         run: node e2e/verify/verify-colorblend.mjs
