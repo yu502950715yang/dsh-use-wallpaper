@@ -1,2 +1,7 @@
+# pnpm 9 也要求工作区文件里必须有 `packages` 字段（`pnpm/action-setup@v4` 的 `version: 9` 会执行
+# `pnpm store path`，缺字段时 pnpm 9 直接报 `packages field missing or empty` ⇒ CI 的 `cache: pnpm`
+# 步骤失败）。本仓库不是 monorepo，故显式声明空工作区；pnpm 10/11 同样接受。
+packages: []
+
 allowBuilds:
   esbuild: true

@@ -8,6 +8,14 @@ name: CI
 # 平台一律 windows-latest：项目 README 声明「仅 Windows 实测」，Linux 行为未验证，
 # 用 ubuntu 会引入无法在本机复现的失败面。dist/ 无法在 CI 重建（依赖被 gitignore 的
 # wasm/pkg/，需 Rust wasm 工具链），故产物守卫只覆盖 lib/。
+#
+# ⚠️ 动作主版本必须跑在 **Node 24 运行时**上：GitHub 自 2026-06-16 起把 JS 动作的默认运行时换成
+# Node24，并于 **2026-09-23 彻底移除 Node20**（`ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION` 也不再可用，
+# 见 github.blog 的两条 changelog）。跑在 node20 上的动作（checkout@v4 / setup-node@v4 /
+# upload-artifact@v4 / pnpm/action-setup@v5）会**直接失败**，且失败点在 `setup-node` 内部、与仓库代码无关。
+# 现行钉法：checkout@v5 / setup-node@v5 / upload-artifact@v6 / pnpm/action-setup@v5 ——
+# 除 upload-artifact 外都取「首个 node24 主版本」，避免跨多个大版本。
+# 验证方式：`curl -s https://raw.githubusercontent.com/<owner>/<repo>/<tag>/action.yml | grep using`。
 
 on:
   push:
@@ -24,11 +32,11 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v5
         with:
           version: 9
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: pnpm
@@ -45,11 +53,11 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v5
         with:
           version: 9
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: pnpm
@@ -64,11 +72,11 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v5
         with:
           version: 9
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: pnpm
@@ -89,7 +97,7 @@ jobs:
         run: node e2e/verify/verify-colorblend.mjs
       - name: 上传截图（失败时排查用）
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: e2e-shots
           path: e2e/.out/
