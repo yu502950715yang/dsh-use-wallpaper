@@ -108,24 +108,32 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # ⚠️ GitHub 的 windows-latest 镜像**没有预装 Edge**（只有 Chrome），而本项目只声明支持
-      # Windows/Edge ⇒ 必须自己装（setup-edge@v1 跑在 node24 上，已核 action.yml）。
-      # 它只 setOutput('edge-path') + 把自己加进 PATH，**不导出 EDGE_PATH**，故下面这步负责转换；
-      # 不要回到候选路径探测：`$env:ProgramFiles(x86)` 会被 PowerShell 解析成 "C:\Program Files(x86)\…"
-      # （`(x86)` 成了字面量）⇒ 路径不存在，靠它探测在「Edge 没进 PATH」的机器上必假红。
-      - name: 安装 Edge（实测渲染 e2e 用）
+      # 2026-10-10 首次真实 runner 实测订正：windows-latest **已预装 Edge**（`Program Files (x86)`），
+      # setup-edge 的 checkInstalled 命中后走 already-installed 分支 ⇒ **不设置 edge-path 输出**（只有真要
+      # 下载安装时才 setOutput），但它无条件 addPath。故 EDGE_PATH 由下面这步自己解析，action 输出只作
+      # 候选之一；另别写 `$env:ProgramFiles(x86)`——PowerShell 会解析成 "C:\Program Files(x86)\…"。
+      - name: 安装 Edge（镜像已装时会直接命中，不下载）
         id: edge
         uses: browser-actions/setup-edge@v1
-      - name: 把 setup-edge 的 edge-path 导出为 EDGE_PATH
+        continue-on-error: true
+      - name: 解析 Edge 路径并导出 EDGE_PATH
         env:
-          EDGE_PATH: ${{ steps.edge.outputs.edge-path }}
+          EDGE_FROM_ACTION: ${{ steps.edge.outputs.edge-path }}
         run: |
-          if (-not $env:EDGE_PATH -or -not (Test-Path $env:EDGE_PATH)) {
-            throw "setup-edge 未给出可用的 Edge 路径：'$env:EDGE_PATH'"
-          }
-          $ver = (Get-Item $env:EDGE_PATH).VersionInfo.ProductVersion
-          Write-Host "Edge: $env:EDGE_PATH (version $ver)"
-          "EDGE_PATH=$env:EDGE_PATH" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          $probe = @(
+            $env:EDGE_FROM_ACTION,
+            "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe",
+            "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe",
+            (Get-Command msedge.exe -ErrorAction SilentlyContinue).Source
+          )
+          $shown = ($probe | ForEach-Object { if ($_) { $_ } else { '<空>' } }) -join ' | '
+          Write-Host "setup-edge 输出 edge-path：'$env:EDGE_FROM_ACTION'"
+          Write-Host "候选：$shown"
+          $edge = $probe | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+          if (-not $edge) { throw "找不到 Edge：setup-edge 未装成，标准安装位与 PATH 也都没有 ⇒ e2e 无法运行。候选：$shown" }
+          $ver = (Get-Item $edge).VersionInfo.ProductVersion
+          Write-Host "Edge: $edge (version $ver)"
+          "EDGE_PATH=$edge" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
         shell: pwsh
       # 入库的 e2e 里只有这两个零素材依赖（不需要 WE 库）；其余 3 个要本机 workshop 素材
       - name: colorBlendMode 渲染 e2e（逐像素判据）
