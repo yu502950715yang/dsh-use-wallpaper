@@ -8,7 +8,7 @@ name: CI
 # 平台一律 windows-latest：项目 README 声明「仅 Windows 实测」，Linux 行为未验证，
 # 用 ubuntu 会引入无法在本机复现的失败面。产物守卫覆盖 lib/ 与 dist/client.js；后者先删入库副本
 # 再构建（避免「构建失败 ⇒ 文件没变 ⇒ 误判同步」），缺 wasm/pkg 时 build:client 在复制 wasm 阶段
-# exit 1 但 client.js 已写出，故用 || true 忽略。若首次 run 因跨机产物差异报红，删掉该步骤。
+# exit 1 但 client.js 已写出，故用 || true 忽略（2026-10-10 首次真实 run 实测绿）。
 #
 # ⚠️ 动作主版本必须跑在 **Node 24 运行时**上：GitHub 自 2026-06-16 起把 JS 动作的默认运行时换成
 # Node24，并于 **2026-09-23 彻底移除 Node20**（`ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION` 也不再可用，
@@ -58,7 +58,7 @@ jobs:
       - name: dist/client.js 必须与 src 同步（不需要 wasm/pkg）
         # 先删入库副本再构建，避免"构建失败 ⇒ 文件没变 ⇒ 误判为同步"；build:client 在缺 wasm/pkg 时
         # 于「复制 wasm」阶段 exit 1，但 client.js 此时已写出 ⇒ 用 || true 忽略。本机实测构建产物与入库
-        # 版本 sha256 一致；若 CI 上此项报红（跨机 esbuild 产物差异），删掉本步骤并在头注释说明。
+        # 版本 sha256 一致，且 2026-10-10 首次真实 run 实测**绿**（跨机产物一致）；若将来报红，删掉本步骤。
         run: |
           rm -f dist/client.js dist/client.js.map
           node scripts/build-client.mjs || true
