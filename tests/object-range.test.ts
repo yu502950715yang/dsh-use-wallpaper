@@ -9,6 +9,7 @@ import {
   createObjectRenderTarget, shouldUseObjectPath, groupEffectsByObject, PendingChainStore,
   uvWindow, createCompositeGeometry, coverRange, flipGeometryUvY,
   screenScalePx, objectRtSize, isolatedRtLongEdge, isolatedRtSize, sourcePixelsFromTexture,
+  fitIsolatedBudget, ISOLATED_RT_BUDGET_BYTES, ISOLATED_RT_BYTES_PER_PX,
 } from '../src/client/object-range.js';
 
 describe('object-range 常量', () => {
@@ -274,6 +275,68 @@ describe('sourcePixelsFromTexture（源尺寸提取与回退）', () => {
     expect(sourcePixelsFromTexture({ image: { width: 0, height: 100 } })).toBeNull();
     expect(sourcePixelsFromTexture({ image: { width: 100, height: -1 } })).toBeNull();
     expect(sourcePixelsFromTexture({ image: { width: Infinity, height: 100 } })).toBeNull();
+  });
+});
+
+// ── 显存预算护栏（Task 4）：全部隔离 RT 的像素总量折成字节，超预算时只等比收窄「升级幅度」──
+// 低配机最坏退回现状屏占位清晰度（下限由 isolatedRtSize 保证，本函数只负责不返回非法比例）。
+describe('fitIsolatedBudget（预算越界只压缩升级幅度）', () => {
+  const DENSITY = 0.375;
+  const items = [{ worldW: 5000, worldH: 2400, source: { width: 5000, height: 2400 } }];
+  // 复用被测函数自身的口径：给定比例下这批对象的 RT 总字节数
+  const bytesAt = (scale: number, list = items) => list.reduce((sum, it) => {
+    const rt = isolatedRtSize(it.worldW, it.worldH, DENSITY, it.source, { budgetScale: scale });
+    return sum + rt.width * rt.height;
+  }, 0) * ISOLATED_RT_BYTES_PER_PX;
+
+  it('预算充足 → 恰好 1（不动）', () => {
+    expect(fitIsolatedBudget(items, DENSITY, 384_000_000, 28)).toBe(1);
+    // 默认常量（ISOLATED_RT_BUDGET_BYTES / ISOLATED_RT_BYTES_PER_PX）下这批对象也在预算内
+    expect(fitIsolatedBudget(items, DENSITY)).toBe(1);
+  });
+  it('预算不足 → 返回 (0,1) 的比例，且该比例确实装得下（即能装下的最大）', () => {
+    const s = fitIsolatedBudget(items, DENSITY, 60_000_000, 28);
+    expect(s).toBeGreaterThan(0);
+    expect(s).toBeLessThan(1);
+    expect(bytesAt(s)).toBeLessThanOrEqual(60_000_000);
+    // 再放大 5%（远大于二分精度，故必跨过一个像素台阶）就超预算 ⇒ 不是随手给的小值
+    expect(bytesAt(Math.min(1, s * 1.05))).toBeGreaterThan(60_000_000);
+  });
+  it('预算再小也不低于屏占位（scale 不会压到 0）', () => {
+    const s = fitIsolatedBudget(items, DENSITY, 1_000, 28);
+    expect(s).toBeGreaterThan(0);
+    expect(s).toBeLessThanOrEqual(1);
+    // 连屏占位本身都超预算 ⇒ 返回最小合法比例，尺寸仍恒等于屏占位 1875×900（只升不降）
+    expect(isolatedRtSize(5000, 2400, DENSITY, items[0].source, { budgetScale: s }))
+      .toMatchObject({ width: 1875, height: 900 });
+  });
+  it('预算越小 → 比例越小（单调），输出恒在 (0,1] 内', () => {
+    const a = fitIsolatedBudget(items, DENSITY, 120_000_000, 28);
+    const b = fitIsolatedBudget(items, DENSITY, 60_000_000, 28);
+    const c = fitIsolatedBudget(items, DENSITY, 1_000, 28);
+    expect(a).toBeGreaterThanOrEqual(b);
+    expect(b).toBeGreaterThanOrEqual(c);
+    for (const s of [a, b, c]) {
+      expect(s).toBeGreaterThan(0);
+      expect(s).toBeLessThanOrEqual(1);
+    }
+  });
+  it('多个对象按总像素求和（不是逐个独立判定）', () => {
+    const two = [...items, { worldW: 2000, worldH: 1000, source: { width: 2000, height: 1000 } }];
+    const pair = fitIsolatedBudget(two, DENSITY, 60_000_000, 28);
+    expect(pair).toBeLessThan(fitIsolatedBudget(items, DENSITY, 60_000_000, 28));
+    expect(bytesAt(pair, two)).toBeLessThanOrEqual(60_000_000);
+  });
+  it('空 items → 1；非法预算/每像素字节（NaN/0/负/Infinity）→ 回退默认常量', () => {
+    expect(fitIsolatedBudget([], DENSITY)).toBe(1);
+    const base = fitIsolatedBudget(items, DENSITY, ISOLATED_RT_BUDGET_BYTES, ISOLATED_RT_BYTES_PER_PX);
+    for (const bad of [NaN, 0, -1, Infinity]) {
+      expect(fitIsolatedBudget(items, DENSITY, bad, ISOLATED_RT_BYTES_PER_PX)).toBe(base);
+      expect(fitIsolatedBudget(items, DENSITY, ISOLATED_RT_BUDGET_BYTES, bad)).toBe(base);
+    }
+    // 非法密度不产生 NaN/0 比例（密度由 isolatedRtSize 兜底为 1）
+    const nanDensity = fitIsolatedBudget(items, NaN, 60_000_000, 28);
+    expect(Number.isFinite(nanDensity) && nanDensity > 0).toBe(true);
   });
 });
 

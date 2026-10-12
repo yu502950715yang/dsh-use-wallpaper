@@ -337,3 +337,39 @@ export function sourcePixelsFromTexture(tex: TexLike | null | undefined): Source
   if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return null;
   return { width: w, height: h };
 }
+
+// 全部隔离对象 RT 的一次性显存预算（v1 常量）：覆盖实测最重单张对象并留余量。
+export const ISOLATED_RT_BUDGET_BYTES = 384_000_000;
+// 每像素字节数（RGBA8 颜色 + 深度，含 ping-pong 与具名 RT 分摊）。
+export const ISOLATED_RT_BYTES_PER_PX = 28;
+
+// 预算二分的下界：连屏占位都超预算时返回它，保证结果恒 > 0（不返回 0/负数）。
+const ISOLATED_RT_MIN_BUDGET_SCALE = 1e-4;
+
+// 显存护栏：把全部隔离对象的 RT 像素折成字节，超出 budgetBytes 时返回**能装下的最大**
+// budgetScale ∈ (0,1]（预算内恰好 1）；把比例交给 isolatedRtSize，就是只收窄升级幅度、
+// 下限恒为屏占位（只升不降）。像素总量随比例单调不减，故用二分逼近。
+export function fitIsolatedBudget(
+  items: Array<{ worldW: number; worldH: number; source: SourcePixels | null }>,
+  density: number,
+  budgetBytes: number = ISOLATED_RT_BUDGET_BYTES,
+  bytesPerPx: number = ISOLATED_RT_BYTES_PER_PX,
+): number {
+  // 非法预算/字节口径回退默认常量（否则 NaN 比较恒 false，会错误地一路压缩）
+  const budget = Number.isFinite(budgetBytes) && budgetBytes > 0 ? budgetBytes : ISOLATED_RT_BUDGET_BYTES;
+  const perPx = Number.isFinite(bytesPerPx) && bytesPerPx > 0 ? bytesPerPx : ISOLATED_RT_BYTES_PER_PX;
+  const pixelsAt = (scale: number): number => items.reduce((sum, it) => {
+    const rt = isolatedRtSize(it.worldW, it.worldH, density, it.source, { budgetScale: scale });
+    return sum + rt.width * rt.height;
+  }, 0);
+  const fits = (scale: number): boolean => pixelsAt(scale) * perPx <= budget;
+  if (fits(1)) return 1;
+  let lo = ISOLATED_RT_MIN_BUDGET_SCALE;
+  if (!fits(lo)) return lo; // 屏占位本身就超预算：没有可装下的比例，只能给最小合法值
+  let hi = 1;
+  for (let i = 0; i < 24; i++) {
+    const mid = (lo + hi) / 2;
+    if (fits(mid)) lo = mid; else hi = mid;
+  }
+  return lo;
+}
