@@ -9,7 +9,8 @@
 // 本模块不构造 three 场景、不持有 canvas；player 通过结构化接口（ObjectEffectStage）
 // 被注入，因此本模块不 import threejs-player.ts（避免循环依赖）。
 import type * as THREE from 'three';
-import { objectRtSize } from './object-range.js';
+import { fitIsolatedBudget, isolatedRtSize } from './object-range.js';
+import type { SourcePixels } from './object-range.js';
 import { EffectRunner } from './effect-runner.js';
 import type { EffectTexLoader } from './effect-runner.js';
 import { loadTexTexture } from './tex-loader.js';
@@ -60,14 +61,14 @@ export function isLinearEffectChain(passes: CompiledEffectPass[]): boolean {
   );
 }
 
-// 对象 RT 像素尺寸的口径（spec §5.2；实现在 object-range.objectRtSize，此处只做说明）：
-//   RT 像素 = |世界尺寸（场景像素，未钳制）| × 屏幕密度（1 世界单位 = 多少设备像素）
-//   → 等比收口到 4096。
-// 即 **对象在画布缓冲上的占位像素** —— 与合成 quad 在屏上的像素网格同一把尺子 ⇒ 采样比
+// 对象 RT 像素尺寸的口径（实现在 object-range.isolatedRtSize，此处只做说明）：
+//   屏占位 = |世界尺寸（场景像素，未钳制）| × 屏幕密度（1 世界单位 = 多少设备像素）；
+//   RT 目标长边 = max(屏占位长边, min(源纹理长边, 4096)) 等比收口、按预算收窄 ⇒ **只升不降**。
+// 屏占位即 **对象在画布缓冲上的占位像素** —— 与合成 quad 在屏上的像素网格同一把尺子 ⇒ 采样比
 // 恒为 1.0（旧口径「世界 × dpr 收口到视口 × dpr」与占位差 0.8%，实测锐度掉 52%，见
 // object-range.screenScalePx / objectRtSize 的注释与 clarity-report.md）。
-// 屏幕密度由 three-renderer 从**主相机同一套 cover 语义**算出并同源下发（mount 与
-// onViewportResize 两处同一个数，否则任何一次 resize 都会把 RT 打回旧口径）。
+// 屏幕密度由 three-renderer 从**主相机同一套 cover 语义**算出并同源下发；挂载期与 resize 期
+// 必须调同一个纯函数、同一份输入（世界尺寸 + 源纹理尺寸 + 预算），否则 resize 会打回旧口径。
 
 // ══ 编排器（Task 4）═══════════════════════════════════════════════════════════
 // 按对象挂效果链、每对象一个 EffectRunner、串行推进、resize 重算尺寸。
@@ -107,6 +108,8 @@ interface ObjectChainEntry {
   /** 世界尺寸（场景像素，未钳制、未乘屏幕密度）——resize 时用它按新屏幕密度重算 RT 像素尺寸。 */
   worldW: number;
   worldH: number;
+  /** 源纹理像素尺寸（隔离 RT 的升级上限来源）；未知（粒子对象 / 纹理未就绪）为 null ⇒ 回退屏占位。 */
+  source: SourcePixels | null;
 }
 
 export class ObjectEffectStage implements ObjectEffectStage {
@@ -140,17 +143,18 @@ export class ObjectEffectStage implements ObjectEffectStage {
     return Number.isFinite(s) && s > 0 ? s : 1;
   }
 
-  /** 世界尺寸（场景像素）：resize 时按新预算重算 RT 像素尺寸的唯一来源。
+  /** 世界尺寸 + 源纹理尺寸（场景像素）：resize 时按新预算重算 RT 像素尺寸的唯一来源。
    *  调用顺序契约：three-renderer 先 setWorldSize 再 setObjectChains（后者不覆盖前者）。 */
-  setWorldSize(objId: number, worldW: number, worldH: number): void {
+  setWorldSize(objId: number, worldW: number, worldH: number, source: SourcePixels | null = null): void {
     if (this.disposed) return;
     const entry = this.entries.get(objId);
     if (entry) {
       entry.worldW = worldW;
       entry.worldH = worldH;
+      entry.source = source;
       return;
     }
-    this.entries.set(objId, { runner: null, chains: [], plan: null, worldW, worldH });
+    this.entries.set(objId, { runner: null, chains: [], plan: null, worldW, worldH, source });
   }
 
   /** 挂载某对象的效果链（线性链与具名 RT 图链一视同仁，计划交执行器执行）。调用顺序契约：
@@ -172,6 +176,8 @@ export class ObjectEffectStage implements ObjectEffectStage {
   }
 
   /** 视口变化：按新的**屏幕密度**重算每个对象的 RT 像素尺寸，并用同一份链重挂（runner 内部 RT 跟随）。
+   *  尺寸口径与挂载期**同源**：同一纯函数 isolatedRtSize + 同一份输入（世界尺寸、源纹理尺寸、预算）
+   *  ——若这里另写一套屏占位算术，任何一次 resize 都会把已升到 4096 的 RT 打回屏占位（违反只升不降）。
    *  ⚠️ 参数是「设备像素 / 世界单位」这一个标量（object-range.screenScalePx 的返回值），**不是**
    *  视口宽高预算：旧实现传 `视口 × dpr` 当预算，成了「第二处独立预算」——挂载期与 resize 期
    *  各算一遍、输入不同源时任何一次 resize 都会把 RT 打回旧口径（3fd6b00「挂载期 RT 正确、
@@ -183,11 +189,16 @@ export class ObjectEffectStage implements ObjectEffectStage {
   onViewportResize(screenScale: number): void {
     if (this.disposed) return;
     this.screenScale = screenScale;
+    // 预算随视口重算（同一纯函数、同一份输入 ⇒ 与挂载期同源）；按**全部**条目算，与挂载期口径一致。
+    const budgetScale = fitIsolatedBudget(
+      [...this.entries].map(([objId, e]) => ({ objId, worldW: e.worldW, worldH: e.worldH, source: e.source })),
+      this.scale(),
+    );
     for (const [id, entry] of this.entries) {
       // 世界尺寸只由 setWorldSize 确定（唯一来源）。**不要**用 view.rtWidth / 密度 反推：
       // player 的 resizeObjectRT 会回写 rtWidth/rtHeight，反推等于把「已被上限收口的 RT」
       // 当世界尺寸，是不可逆的缩小（第一轮收口后永远回不到原尺寸）。
-      const size = objectRtSize(entry.worldW, entry.worldH, this.scale());
+      const size = isolatedRtSize(entry.worldW, entry.worldH, this.scale(), entry.source, { budgetScale });
       const view = this.host.isolatedObjects().find((o) => o.id === id);
       if (!view) continue;
       if (view.rtWidth === size.width && view.rtHeight === size.height) continue;
@@ -255,6 +266,7 @@ export class ObjectEffectStage implements ObjectEffectStage {
       plan: null,
       worldW: view ? view.rtWidth / this.scale() : 1,
       worldH: view ? view.rtHeight / this.scale() : 1,
+      source: null,
     });
   }
 
@@ -303,8 +315,8 @@ export class ObjectEffectStage implements ObjectEffectStage {
   private mount(objId: number, chains: CompiledEffectPass[][], rtW: number, rtH: number): void {
     let entry = this.entries.get(objId);
     if (!entry) {
-      // 反向从实测 RT 像素推世界尺寸（仅在 setWorldSize 未先行时兜底）。
-      entry = { runner: null, chains, plan: null, worldW: rtW / this.scale(), worldH: rtH / this.scale() };
+      // 反向从实测 RT 像素推世界尺寸（仅在 setWorldSize 未先行时兜底）；源尺寸未知 ⇒ null（回退屏占位）。
+      entry = { runner: null, chains, plan: null, worldW: rtW / this.scale(), worldH: rtH / this.scale(), source: null };
       this.entries.set(objId, entry);
     }
     // setWorldSize 可能已先建条目（three-renderer 的顺序是 setWorldSize → setObjectChains），

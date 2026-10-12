@@ -424,6 +424,66 @@ describe('ObjectEffectStage', () => {
     expect(host._resized[2]).toEqual({ id: 1, w: 50, h: 25 });
   });
 
+  // Task 6：resize 期与挂载期**同源**——两处都调 isolatedRtSize（同一纯函数、同一份输入）。
+  // 旧实现在 resize 期另算一遍「屏占位」算术 ⇒ 任何一次 resize（哪怕密度完全没变）都会把已经
+  // 升到 4096 的隔离 RT 打回屏占位，与全局约束「只升不降」冲突（本轮收口的中间态）。
+  it('resize 期同源：已按源纹理收口 4096 的 RT，同密度 resize 后仍是 4096（不被打回屏占位）', () => {
+    // 挂载期口径：世界 5000×2400、源纹理 5000×2400、密度 0.375 ⇒ 等比收口到 4096×1966
+    // （屏占位只有 1875×900——正是旧口径 resize 后会给的值）。
+    const host = createHost([{ id: 13, rtWidth: 4096, rtHeight: 1966 }]);
+    const stage = new ObjectEffectStage(host as never, {
+      wallpaperId: 'w', screenScale: 0.375,
+    });
+    stage.setWorldSize(13, 5000, 2400, { width: 5000, height: 2400 });
+    stage.onViewportResize(0.375); // 同一密度：尺寸口径必须与挂载期逐字一致
+    expect(host._resized).toEqual([]); // 旧实现算 1875×900 ⇒ 打回屏占位
+  });
+
+  it('resize 期同源：屏占位状态下的隔离对象，resize 按源纹理升到 4096（不是屏占位）', () => {
+    const host = createHost([{ id: 13, rtWidth: 1875, rtHeight: 900 }]);
+    const stage = new ObjectEffectStage(host as never, {
+      wallpaperId: 'w', screenScale: 0.375,
+    });
+    stage.setWorldSize(13, 5000, 2400, { width: 5000, height: 2400 });
+    stage.onViewportResize(0.375);
+    expect(host._resized).toEqual([{ id: 13, w: 4096, h: 1966 }]);
+    // 再 resize 同一密度：已收口 ⇒ 幂等（尺寸未变就不重设 RT，也不重挂链/回退输出）
+    stage.onViewportResize(0.375);
+    expect(host._resized).toHaveLength(1);
+  });
+
+  it('resize 期只升不降：source 未知（null）→ 等于屏占位，且不小于屏占位', () => {
+    const host = createHost([{ id: 13, rtWidth: 1, rtHeight: 1 }]);
+    const stage = new ObjectEffectStage(host as never, {
+      wallpaperId: 'w', screenScale: 0.375,
+    });
+    stage.setWorldSize(13, 5000, 2400, null); // 粒子对象/纹理未就绪一律传 null
+    stage.onViewportResize(0.375);
+    const last = host._resized.at(-1)!;
+    expect([last.w, last.h]).toEqual([Math.round(5000 * 0.375), Math.round(2400 * 0.375)]);
+    expect(last.w * last.h).toBeGreaterThanOrEqual(Math.round(5000 * 0.375) * Math.round(2400 * 0.375));
+  });
+
+  it('resize 期按**全部**条目重算预算：两个大源对象共享预算、按同一比例收窄', () => {
+    const host = createHost([
+      { id: 1, rtWidth: 1, rtHeight: 1 },
+      { id: 2, rtWidth: 1, rtHeight: 1 },
+    ]);
+    const stage = new ObjectEffectStage(host as never, {
+      wallpaperId: 'w', screenScale: 0.375,
+    });
+    const source = { width: 5000, height: 2400 };
+    stage.setWorldSize(1, 5000, 2400, source); // 有 runner 的条目
+    stage.setWorldSize(2, 5000, 2400, source); // 无 runner 的条目同样计入预算
+    stage.onViewportResize(0.375);
+    expect(host._resized.map((r) => [r.w, r.h])).toHaveLength(2);
+    const [a, b] = host._resized;
+    expect([a.w, a.h]).toEqual([b.w, b.h]); // 同一 budgetScale ⇒ 同尺寸
+    // 两张 4096 长边共 451 MB > 384 MB 预算 ⇒ 必须收窄（但恒不小于屏占位 1875×900）
+    expect(Math.max(a.w, a.h)).toBeLessThan(4096);
+    expect(Math.max(a.w, a.h)).toBeGreaterThan(1875);
+  });
+
   it('dispose 释放全部 runner', () => {
     const host = createHost([{ id: 1, rtWidth: 10, rtHeight: 10 }]);
     const stage = new ObjectEffectStage(host as never, {

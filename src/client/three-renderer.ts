@@ -563,6 +563,9 @@ export function createThreeSceneRenderer(opts?: {
           rt: isolatedRtSize(it.worldW, it.worldH, screenScale, it.source, { budgetScale }),
           worldW: it.worldW, worldH: it.worldH,
         }]));
+        // 源纹理尺寸表（键 = 对象 id）：与上面挂载期的尺寸计算**同一份数据**，resize 期同源复用
+        // （stage 只存下来，不重算源尺寸）。粒子对象不在表内 ⇒ 源未知 ⇒ 回退屏占位。
+        const sourceOf = new Map(isolateItems.map((it) => [it.objId, it.source]));
         // isolate 的键 = scene.json 的**对象 id**，值里的 objectId 同值：player 用 objectId 作
         // **隔离条目的键**（attachIsolated），ObjectEffectStage 也用同一把键 → 三者同键空间，
         // 不存在「对象 id → 图层计数器 id」的翻译层，也就不会撞键（见 threejs-player 的注释）。
@@ -722,7 +725,11 @@ export function createThreeSceneRenderer(opts?: {
           // 世界尺寸直接用 isolate 里已算好的世界尺寸（同一份计算的两个消费者），不另存一份映射；
           // 键一律用对象 id（= isolate 的键 = 隔离条目的 id）。
           for (const [objId, iso] of isolate) {
-            stage.setWorldSize(objId, iso.worldW, iso.worldH);
+            // 源尺寸与挂载期同一份数据（sourceOf）；未知（粒子对象/纹理未就绪）时不传第 4 参
+            // ——setWorldSize 的缺省即 null，语义相同且与既有 3 参调用点逐字一致。
+            const src = sourceOf.get(objId);
+            if (src) stage.setWorldSize(objId, iso.worldW, iso.worldH, src);
+            else stage.setWorldSize(objId, iso.worldW, iso.worldH);
           }
           for (const [objId, chains] of effectChains) {
             // 没有隔离条目的对象（util 层、缺粒子资源、blend 冲突跳过的）不挂链：挂也找不到 view，
