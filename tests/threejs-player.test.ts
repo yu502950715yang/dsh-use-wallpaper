@@ -1690,7 +1690,7 @@ describe('ThreeScenePlayer 对象隔离', () => {
 
   // ⚠️ 回归（2026-09-14，真机 HiDPI 反馈「很多 scene 壁纸错乱」）：局部正交相机的
   // left/right/top/bottom 是**世界坐标范围**（内容以世界单位绘制），必须覆盖对象的
-  // **钳制后世界尺寸**；RT 的像素尺寸只决定分辨率（= 世界 × dpr 收口），**不得**拿来当相机范围。
+  // **未钳制世界尺寸**；RT 的像素尺寸只决定分辨率（= 世界 × dpr 收口），**不得**拿来当相机范围。
   // 曾用 rtW/rtH 当相机范围：dpr>1 时相机多覆盖 dpr 倍 ⇒ 内容只占 RT 的 1/dpr、四周是空白，
   // 合成 quad 再按「全窗口」把它拉回世界尺寸 ⇒ 对象缩小 + 边缘 clamp 拉伸（HiDPI 屏整张壁纸错乱）。
   // 既有测试漏检的原因：那些用例的 rtWidth/rtHeight 恰好等于 worldW/worldH，且都不断言相机范围；
@@ -2167,6 +2167,62 @@ describe('ThreeScenePlayer 对象隔离', () => {
     } finally {
       Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: 1 });
     }
+  });
+
+  // ⚠️ 回归（Fix round 1，正确性）：合成采样标志不能只在挂载期算一次 —— resize 只改变屏占位，
+  // RT 的**像素尺寸可能不变**（源纹理收口口径下 4096 长期顶着上限）⇒ 缩小关系会反转，必须重估。
+  // 反例：4K 视口挂载时屏占位长边 5000 ≥ RT 4096 ⇒ 关 mip；窗口缩到 1280×720 后屏占位长边只剩
+  // 1500、RT 仍是 4096 ⇒ 合成已是 2.7× 缩小采样却无 mip ⇒ 走样被 resize 重新制造出来。
+  it('resize 后 RT 相对屏占位变成缩小采样 ⇒ 重估出 mipmap（generateMipmaps + LinearMipmapLinearFilter）', () => {
+    const { player } = makePlayer(5000, 2400);
+    player.setSceneSize(5000, 2400);
+    player.addBackground({
+      origin: [2500, 1200, 0], size: [5000, 2400], scale: [1, 1, 1], texture: makeTexture(),
+      sceneW: 5000, sceneH: 2400,
+      isolate: { objectId: 13, rtWidth: 4096, rtHeight: 1966, worldW: 5000, worldH: 2400 },
+    });
+    const entry = player.isolatedObjects().find((e) => e.id === 13)!;
+    // 挂载期：视口 = 场景（dpr=1）⇒ 屏占位长边 5000 > RT 长边 4096 ⇒ 不是缩小采样。
+    expect(player.screenScalePx()).toBe(1);
+    expect(entry.rt.texture.generateMipmaps).toBe(false);
+    // 窗口缩到 1280×720 ⇒ 屏占位长边 = 5000 × 720/2400 = 1500 < 4096 ⇒ 反转成缩小采样。
+    player.resize(1280, 720);
+    expect(player.screenScalePx()).toBeCloseTo(0.3, 10);
+    // ⚠️ 生产路径的重估点：窗口 resize 走 player.resize（three-renderer 的 onWindowResize），
+    // 而效果链编排器在「RT 像素尺寸未变」时会跳过 resizeObjectRT ⇒ 这里必须已经反转。
+    expect(entry.rt.texture.generateMipmaps).toBe(true);
+    expect(entry.rt.texture.minFilter).toBe(THREE.LinearMipmapLinearFilter);
+    // 直接调 resizeObjectRT（即使尺寸与挂载期**相同**，尺寸口径未变）也必须幂等重估。
+    player.resizeObjectRT(13, 4096, 1966);
+    expect([entry.rtWidth, entry.rtHeight]).toEqual([4096, 1966]);
+    expect(entry.rt.texture.generateMipmaps).toBe(true);
+    expect(entry.rt.texture.minFilter).toBe(THREE.LinearMipmapLinearFilter);
+  });
+
+  // 反方向：挂载期是缩小采样（开 mip），窗口放大后 RT 不再大于屏占位 ⇒ 必须重估回无 mip
+  // （否则白付 mipmap 生成开销与显存）。
+  it('resize 后 RT 不再相对屏占位缩小 ⇒ 重估回无 mip（generateMipmaps=false + LinearFilter）', () => {
+    const { player } = makePlayer(5000, 2400);
+    player.setSceneSize(5000, 2400);
+    // 先在 1280×720 的小窗口挂载：屏占位长边 1500 < RT 4096 ⇒ 缩小采样。
+    player.resize(1280, 720);
+    player.addBackground({
+      origin: [2500, 1200, 0], size: [5000, 2400], scale: [1, 1, 1], texture: makeTexture(),
+      sceneW: 5000, sceneH: 2400,
+      isolate: { objectId: 13, rtWidth: 4096, rtHeight: 1966, worldW: 5000, worldH: 2400 },
+    });
+    const entry = player.isolatedObjects().find((e) => e.id === 13)!;
+    expect(entry.rt.texture.generateMipmaps).toBe(true);
+    expect(entry.rt.texture.minFilter).toBe(THREE.LinearMipmapLinearFilter);
+    // 窗口放大到 3840×2160 ⇒ 屏占位长边 = 5000 × 0.9 = 4500 > RT 4096 ⇒ 不再缩小。
+    player.resize(3840, 2160);
+    expect(player.screenScalePx()).toBeCloseTo(0.9, 10);
+    // 同上：重估点在 player.resize（生产路径不会调用 resizeObjectRT，尺寸没变）。
+    expect(entry.rt.texture.generateMipmaps).toBe(false);
+    expect(entry.rt.texture.minFilter).toBe(THREE.LinearFilter);
+    player.resizeObjectRT(13, 4096, 1966);
+    expect(entry.rt.texture.generateMipmaps).toBe(false);
+    expect(entry.rt.texture.minFilter).toBe(THREE.LinearFilter);
   });
 });
 

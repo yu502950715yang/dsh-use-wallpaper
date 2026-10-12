@@ -692,6 +692,13 @@ export class ThreeScenePlayer {
     // 退回本类自持的 canvas（生产路径 renderer.domElement 就是它）。
     const buf = (this.renderer as { domElement?: HTMLCanvasElement }).domElement ?? this.canvas;
     this.glowStage?.resize(buf.width, buf.height);
+    // ③ 合成采样标志随**视口**重估：隔离对象的缩小关系（RT 像素 vs 屏占位）只由屏幕密度决定，
+    //    而 resize 正是改密度的那一步。不能只依赖 resizeObjectRT —— 调用方（效果链编排器）
+    //    在「RT 像素尺寸未变」时会跳过调用，而源纹理 ≥ 4096 收口时新老尺寸恰好相同
+    //    （4K 视口挂载 ⇒ 窗口缩到 1280×720 仍是 4096×1966）：那样判定反转却无重估 ⇒ 走样重现。
+    for (const entry of this.isolated.values()) {
+      this.applyCompositeSampling(entry.rt, entry.worldW, entry.worldH);
+    }
   }
 
   /** 画质档位：走 resize 路径重推画布缓冲与屏幕密度（对象 RT 的基准随之变化）。 */
@@ -878,12 +885,17 @@ export class ThreeScenePlayer {
     if (!entry) return;
     const w = Math.max(1, Math.round(width));
     const h = Math.max(1, Math.round(height));
-    if (entry.rt.width === w && entry.rt.height === h) return;
-    entry.rt.setSize(w, h);
-    // 扁平视图（rtWidth/rtHeight）必须与 rt 实际尺寸同步：编排器只读这两个字段，
-    // 留旧值会让它按过期尺寸算效果链的纹理槽分辨率。
-    entry.rtWidth = w;
-    entry.rtHeight = h;
+    if (entry.rt.width !== w || entry.rt.height !== h) {
+      entry.rt.setSize(w, h);
+      // 扁平视图（rtWidth/rtHeight）必须与 rt 实际尺寸同步：编排器只读这两个字段，
+      // 留旧值会让它按过期尺寸算效果链的纹理槽分辨率。
+      entry.rtWidth = w;
+      entry.rtHeight = h;
+    }
+    // ⚠️ 采样标志必须随**视口**重估，不能只在尺寸变化时（更不只挂载期）算一次：resize 只改变
+    // 屏占位，RT 像素尺寸可能不变（源纹理收口口径下 4096 长期顶着上限）⇒ 缩小关系会反转。
+    // 故本调用放在尺寸早退分支**之外**（`setSize` 会 dispose 纹理，写标志即时生效）。
+    this.applyCompositeSampling(entry.rt, entry.worldW, entry.worldH);
   }
 
   // 渲染所有隔离对象的内容到各自 RT（player 拥有 scene/camera，故渲染留在 player）。
@@ -1097,6 +1109,16 @@ export class ThreeScenePlayer {
     return mat;
   }
 
+  // 合成采样决策：RT 大于屏占位（源纹理收口 4096 的结果）⇒ 合成 quad 那一步是**缩小采样**，
+  // 必须开 mipmap 防走样。挂载期（attachIsolated）与重设分辨率（resizeObjectRT）都必须重估
+  // ——同一式子、同一份 this 状态（视口已在 resize 里更新），故抽成一处。
+  private applyCompositeSampling(rt: THREE.WebGLRenderTarget, worldW: number, worldH: number): void {
+    const minifying = Math.max(rt.width, rt.height)
+      > Math.max(Math.abs(worldW), Math.abs(worldH)) * this.screenScalePx() + 0.5;
+    rt.texture.generateMipmaps = minifying;
+    rt.texture.minFilter = minifying ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter;
+  }
+
   // 建立对象隔离条目：RT + 局部正交相机 + localScene + 主场景合成 quad。
   // localCamera 范围 = RT 分辨率（对象中心为原点，与场景像素 1:1）；合成 quad 用
   // createCompositeGeometry（世界尺寸含缩放、UV 按钳制窗口映射），position 承载对象在世界中
@@ -1130,13 +1152,9 @@ export class ThreeScenePlayer {
     // 粒子 billboard 即使铺满整屏也**有硬边**，必须保留（故满屏判定同时要求 kind === 'background'）。
     const isFullscreen = kind === 'background'
       && Math.abs(worldW) >= this.sceneWidth * 0.98 && Math.abs(worldH) >= this.sceneHeight * 0.98;
-    // RT 大于屏占位（源纹理收口 4096 的结果）⇒ 合成 quad 那一步是**缩小采样**，必须开 mipmap 防走样。
-    const minifying = Math.max(rtW, rtH) > Math.max(Math.abs(worldW), Math.abs(worldH)) * this.screenScalePx() + 0.5;
-    const rt = new THREE.WebGLRenderTarget(rtW, rtH, {
-      samples: isFullscreen ? 0 : 4,
-      generateMipmaps: minifying,
-      minFilter: minifying ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter,
-    });
+    const rt = new THREE.WebGLRenderTarget(rtW, rtH, { samples: isFullscreen ? 0 : 4 });
+    // 合成采样标志（缩小采样必须开 mipmap）——与 resizeObjectRT 共用同一处判定。
+    this.applyCompositeSampling(rt, worldW, worldH);
     // ⚠️ 局部正交相机的 left/right/top/bottom 是**世界坐标范围**（内容以世界单位绘制），
     // 所以相机必须覆盖**完整对象世界尺寸**；RT 的像素尺寸只决定分辨率（由 object-range.isolatedRtSize
     // 决定：≥ 屏占位、源纹理收口 4096）。这里两个坑都踩过：
