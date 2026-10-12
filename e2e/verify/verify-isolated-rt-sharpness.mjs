@@ -97,6 +97,11 @@ if (ONLY_RAW !== null && !ONLY) {
   process.exit(1);
 }
 const RUN = ONLY ? CASES.filter((c) => c.id === ONLY) : CASES;
+// 裸 `--id`（无值）在 argOf 里同样返回 null ⇒ 会静默跑全清单，与 `--id=` 同类，一并报错退出。
+if (ONLY_RAW === null && process.argv.includes('--id')) {
+  console.error('--id 需要一个非空壁纸 id（裸 `--id` 会静默跑全部，这里直接报错退出）');
+  process.exit(1);
+}
 if (ONLY && RUN.length === 0) { console.error(`--id=${ONLY} 不在 R29/A2 的清单里（${CASES.map((c) => c.id).join(', ')}）`); process.exit(1); }
 
 // ── 判据常量（独立复述 src 的口径；不 import lib，保证「期望值」与实现分离）──────────────────
