@@ -115,5 +115,5 @@ ud.fxRes = [mip.width, mip.height, mip.width, mip.height];
 
 ## 9. 合并 / 发布边界（勿误判「合并即修复」）
 
-- 本分支 `fix/mask-uv-npot` **从 `feat/isolated-object-rt-resolution` 切出**（切出点 = 该特性 HEAD `22e6fb4`）⇒ **合并本分支即同时并入该特性**（相对 `master` 领先 **38** 个提交 = 该特性 24 + 本遮罩修复 14，`git rev-list --count master..HEAD` 实测）。两个关注点耦合是 R1 的既定裁决（代价：回滚需分开处理）。
+- 本分支 `fix/mask-uv-npot` **从 `feat/isolated-object-rt-resolution` 切出**（切出点 = 该特性 HEAD `22e6fb4`）⇒ **合并本分支即同时并入该特性**（该特性 24 个提交 + 本遮罩修复 14 个提交，收尾文档提交另计；总数以 `git rev-list --count master..HEAD` 为准）。两个关注点耦合是 R1 的既定裁决（代价：回滚需分开处理）。
 - **合并本身不改变运行时行为**：`lib/`、`dist/` 是提交进仓库的构建产物，合并只改源码与文档。修复生效**必须**执行 Task 5（`npm run build && npm run build:client`）并**真机复看「湖面波动 / 树线不波动」**；⚠️ profile 符号链接到本仓库，重建会经 client-hmr 重挂正在运行的会话 ⇒ 需用户确认时机。
