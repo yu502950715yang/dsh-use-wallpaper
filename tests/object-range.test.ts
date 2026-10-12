@@ -8,7 +8,7 @@ import {
   materialModulation, objectCameraRange, particleObjectRange, particleWorldSize,
   createObjectRenderTarget, shouldUseObjectPath, groupEffectsByObject, PendingChainStore,
   uvWindow, createCompositeGeometry, coverRange, flipGeometryUvY,
-  screenScalePx, objectRtSize,
+  screenScalePx, objectRtSize, isolatedRtLongEdge, isolatedRtSize,
 } from '../src/client/object-range.js';
 
 describe('object-range 常量', () => {
@@ -184,6 +184,58 @@ describe('objectRtSize（屏占位口径；等比收口到 4096）', () => {
     expect(objectRtSize(200, 100, NaN)).toEqual({ width: 200, height: 100 });
     expect(objectRtSize(200, 100, 0)).toEqual({ width: 200, height: 100 });
     expect(objectRtSize(200, 100, -3)).toEqual({ width: 200, height: 100 });
+  });
+});
+
+// ── 隔离对象 RT 尺寸策略（方案 A′）：源纹理收口上限 + 只升不降 ────────────────────
+// 现状口径（objectRtSize）是屏占位 1×，桌面 WE 用源纹理原生尺寸 ⇒ 整屏背景偏糊；
+// 本策略把对象 RT 提到「源纹理长边（收口 4096）」的等比尺寸，下限恒为屏占位。
+describe('隔离对象 RT 尺寸（方案 A′）', () => {
+  it('源纹理比屏占位大 → 提到源纹理（受 4096 收口）', () => {
+    // 魔兽之门 harness 实测：密度 0.375、世界 5000×2400 → 屏占位 1875×900
+    const rt = isolatedRtSize(5000, 2400, 0.375, { width: 5000, height: 2400 });
+    expect(rt).toEqual({ width: 4096, height: 1966, upgraded: true });
+  });
+  it('源纹理比屏占位小 → 保持屏占位（只升不降护栏，1968789468 #13 那例）', () => {
+    const rt = isolatedRtSize(1920, 1063, 1.097, { width: 1920, height: 1063 });
+    expect(rt.upgraded).toBe(false);
+    expect(rt.width).toBe(Math.round(1920 * 1.097));
+    expect(rt.height).toBe(Math.round(1063 * 1.097));
+  });
+  it('源纹理未知 → 保持屏占位', () => {
+    const rt = isolatedRtSize(3840, 2160, 0.5, null);
+    expect(rt).toEqual({ width: 1920, height: 1080, upgraded: false });
+  });
+  it('等比收口：长边到 4096，另一轴按比例（不逐轴截断）', () => {
+    expect(isolatedRtLongEdge(1000, 7430, 4096)).toBe(4096);
+    expect(isolatedRtSize(7430, 4147, 0.25, { width: 7430, height: 4147 }))
+      .toEqual({ width: 4096, height: 2286, upgraded: true });
+  });
+  it('budgetScale 只收紧升级幅度，不跌破屏占位', () => {
+    const full = isolatedRtSize(5000, 2400, 0.375, { width: 5000, height: 2400 });
+    const cut = isolatedRtSize(5000, 2400, 0.375, { width: 5000, height: 2400 }, { budgetScale: 0.5 });
+    expect(cut.width).toBeLessThan(full.width);
+    expect(cut.width).toBeGreaterThanOrEqual(1875);
+  });
+  it('源尺寸非法或预算系数非 (0,1) → 视作不升级/不压缩，仍不跌破屏占位', () => {
+    // 源尺寸 NaN = 未知 → 升级幅度 0，退化回屏占位 1875×900
+    expect(isolatedRtSize(5000, 2400, 0.375, { width: NaN, height: NaN }))
+      .toEqual({ width: 1875, height: 900, upgraded: false });
+    const full = isolatedRtSize(5000, 2400, 0.375, { width: 5000, height: 2400 });
+    expect(isolatedRtSize(5000, 2400, 0.375, { width: 5000, height: 2400 }, { budgetScale: NaN })).toEqual(full);
+    expect(isolatedRtSize(5000, 2400, 0.375, { width: 5000, height: 2400 }, { budgetScale: 1 })).toEqual(full);
+  });
+  it('退化世界尺寸（0 / 非有限）不产生 NaN 或 <1 的 RT 尺寸', () => {
+    const zero = isolatedRtSize(0, 0, 1, { width: 5000, height: 5000 });
+    expect(Number.isFinite(zero.width) && zero.width >= 1).toBe(true);
+    expect(Number.isFinite(zero.height) && zero.height >= 1).toBe(true);
+    const nan = isolatedRtSize(NaN, NaN, 1, { width: 5000, height: 5000 });
+    expect(Number.isFinite(nan.width) && nan.width >= 1).toBe(true);
+    expect(Number.isFinite(nan.height) && nan.height >= 1).toBe(true);
+  });
+  it('cap 收窄 → 升级上限随之下降，仍等比且不低于屏占位', () => {
+    expect(isolatedRtSize(5000, 2400, 0.375, { width: 5000, height: 2400 }, { cap: 2048 }))
+      .toEqual({ width: 2048, height: 983, upgraded: true });
   });
 });
 

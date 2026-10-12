@@ -273,3 +273,43 @@ export function objectRtSize(
   const height = Math.max(1, Math.round(rawH * k));
   return { width, height };
 }
+
+// 源纹理像素尺寸（隔离对象 RT 的升级上限来源）；源未知时传 null。
+export interface SourcePixels { width: number; height: number }
+
+// 隔离对象 RT 的目标长边 = max(屏占位长边, min(源纹理长边, cap))——只升不降、受硬上限收口。
+export function isolatedRtLongEdge(occLongEdge: number, sourceLongEdge: number, cap = OBJECT_RT_MAX): number {
+  const occ = Number.isFinite(occLongEdge) && occLongEdge > 0 ? occLongEdge : 1;
+  const src = Number.isFinite(sourceLongEdge) && sourceLongEdge > 0 ? sourceLongEdge : 0;
+  const limit = Number.isFinite(cap) && cap > 0 ? cap : OBJECT_RT_MAX;
+  return Math.max(occ, Math.min(src, limit));
+}
+
+// 隔离对象 RT 像素尺寸（方案 A′）：以源纹理长边为目标、等比（两轴同一比例）收口 cap；
+// 下限恒为屏占位（objectRtSize，只升不降），budgetScale ∈ (0,1] 只压缩「超出屏占位的升级幅度」。
+export function isolatedRtSize(
+  worldW: number,
+  worldH: number,
+  density: number,
+  source: SourcePixels | null,
+  opts: { cap?: number; budgetScale?: number } = {},
+): { width: number; height: number; upgraded: boolean } {
+  const occ = objectRtSize(worldW, worldH, density, opts.cap ?? OBJECT_RT_MAX);
+  const occLong = Math.max(occ.width, occ.height);
+  const srcLong = source ? Math.max(source.width, source.height) : 0;
+  const bs = opts.budgetScale;
+  const scale = typeof bs === 'number' && Number.isFinite(bs) && bs > 0 && bs < 1 ? bs : 1;
+  // 升级幅度 = 源纹理目标长边 − 屏占位长边，按 budgetScale 收窄后叠加回屏占位
+  const targetLong = Math.max(occLong, occLong + (isolatedRtLongEdge(occLong, srcLong, opts.cap) - occLong) * scale);
+  if (targetLong <= occLong + 1e-6) return { ...occ, upgraded: false };
+  // 两轴取幅值（非有限按 0）、以最大者为等比基准：与 objectRtSize 同一把尺子；
+  // 基准为 0（退化尺寸）时比例取 1，避免 0 × Infinity = NaN 传到 WebGLRenderTarget。
+  const aw = Number.isFinite(worldW) ? Math.abs(worldW) : 0;
+  const ah = Number.isFinite(worldH) ? Math.abs(worldH) : 0;
+  const base = Math.max(aw, ah);
+  const k = base > 0 ? targetLong / base : 1;
+  const width = Math.max(1, Math.round(aw * k));
+  const height = Math.max(1, Math.round(ah * k));
+  // upgraded 按输出实际是否大于屏占位判定（退化尺寸下等比基准无意义，不谎报升级）
+  return { width, height, upgraded: width > occ.width || height > occ.height };
+}
