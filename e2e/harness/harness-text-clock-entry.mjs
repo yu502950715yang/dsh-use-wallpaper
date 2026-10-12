@@ -211,6 +211,20 @@ window.__glRendererInfo = () => {
   } catch { return { renderer: 'unknown', vendor: 'unknown', version: 'unknown' }; }
 };
 
+/** 只读观测：隔离对象 RT 实况（Task 9 验收网：锐度/外科性/FPS）。
+ *  `rt`/`world` = 像素尺寸与对象世界尺寸（world 供交叉核对，判据由脚本从素材独立算出）。 */
+window.__isoInfo = () => {
+  const p = window.__player;
+  if (!p || !p.isolated || typeof p.isolated.values !== 'function') return null;
+  return [...p.isolated.values()].map((o) => ({
+    obj: o.id, kind: o.kind,
+    rt: [o.rtWidth, o.rtHeight], world: [o.worldW, o.worldH],
+    samples: o.rt ? o.rt.samples : null,
+    mip: o.rt && o.rt.texture ? !!o.rt.texture.generateMipmaps : null,
+    minFilter: o.rt && o.rt.texture ? o.rt.texture.minFilter : null,
+  }));
+};
+
 console.log('[harness] ' + JSON.stringify({
   id, ok, err, broken: scriptRuntimeBroken,
   viewport: [VW, VH],
