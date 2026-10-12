@@ -313,6 +313,12 @@ try {
     console.log('   页面状态:', await evalJs(`JSON.stringify({ href: location.href, bodyHtml: document.body.innerHTML.slice(0, 80), scripts: [...document.scripts].map((s) => s.src) })`));
   }
   await sleep(600);
+  // [perf] 1080p FPS 门槛（AGENT.md P1）——先采基线，实现后再比一次；顺带打印真实渲染器自证非 SwiftShader
+  // 注：CDP 的 Runtime.evaluate 不支持顶层 await ⇒ 用 async IIFE 包一层。
+  try { console.log('  [perf] renderer:', JSON.stringify(await evalJs('JSON.stringify(window.__glRendererInfo())'))); }
+  catch (e) { console.log('  [perf] renderer 取用失败:', String(e).slice(0, 120)); }
+  try { console.log('  [perf]', await evalJs('(async () => JSON.stringify(await window.__fpsProbe(5000)))()')); }
+  catch (e) { console.log('  [perf] 采集失败:', String(e).slice(0, 120)); }
   await step('normal', false);
   await step('broken', true);
 
