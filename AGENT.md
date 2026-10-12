@@ -125,7 +125,7 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
 12. **音频管线**：`createAudioAnalyzer` 频谱 → EffectRunner 音频 uniform + visualizer 条高；壁纸 `sound` 数组经 `playWallpaperSound` 接入（autoplay 被拦时 context suspended、可视化全零，用户手势后恢复）；无 Web Audio → 全零静音；切壁纸必须 `context.close()`。
 13. **测试沙箱**：vitest / esbuild 依赖 service 子进程（命名管道），受限沙箱下报 `spawn EPERM`；同一条限制也让 **headless Edge 起不来**（mojo 平台通道 `拒绝访问`）⇒ **单测与端到端验收都必须完整权限**（别误判成 flag 或 Edge 装坏了）。
 14. **WE 内置纹理走 host 路由，不随包分发**：粒子/效果材质引用的 `particle/*`、`util/*` 等是 WE 的第三方素材，client 请求 `/wallpapers/particle-texture?name=<相对 assets/materials 的路径>`（可带 `id`），host **先在壁纸 `scene.pkg` 的 `materials/<name>.tex` 找、再回退 `<weAssetsDir>/assets/materials`**（顺序对齐 WE 挂载顺序）。`name` 是原始相对路径，**不能无条件加 `particle/` 前缀**；`util/*` 效果纹理也走同一路由（**不得**把 `util/noise` 与 `util/clouds_256` 映射成同一张程序化噪声）。普通 scene 素材（`fonts/*.ttf` 等）同样「pkg → 引擎 assets」两级查找。
-15. **对象级 RT 的三条不变量**：① **局部正交相机的 left/right/top/bottom 是「世界坐标范围」**，必须覆盖**完整对象世界尺寸**（拿 RT 像素当范围 ⇒ HiDPI 下对象缩小 + 边缘 clamp 拉伸；按 4096 钳制范围 ⇒ 边缘拉伸带，超限对象的正确代价是「分辨率低」而非几何裁剪）；② **RT 像素尺寸 = `|world| × 屏幕密度`**（= 屏占位像素），等比收口到 4096 —— 密度 = 画布缓冲宽 / cover 视锥宽（`object-range.screenScalePx`），**mount 与 resize 必须同源**，基准必须是**未钳制**的世界尺寸；③ **`isolate` 的键是 `scene.json` 的对象 id**（不是图层计数器），`isolatedObjects()` / `setObjectOutput()` / `resizeObjectRT()` 同一把键。
+15. **对象级 RT 的三条不变量**：① **局部正交相机的 left/right/top/bottom 是「世界坐标范围」**，必须覆盖**完整对象世界尺寸**（拿 RT 像素当范围 ⇒ HiDPI 下对象缩小 + 边缘 clamp 拉伸；按 4096 钳制范围 ⇒ 边缘拉伸带，超限对象的正确代价是「分辨率低」而非几何裁剪）；② **RT 像素尺寸 ≥ 屏占位**（= `max(屏占位, min(源纹理长边, 4096))`、单一等比收口 4096、**只升不降**；源纹理比屏占位小的对象保持屏占位，粒子 / 源尺寸未知的对象走 `object-range.objectRtSize` 的屏占位口径，见 `object-range.isolatedRtSize`）—— 密度 = 画布缓冲宽 / cover 视锥宽（`object-range.screenScalePx`），**mount 与 resize 必须同源**，基准必须是**未钳制**的世界尺寸；③ **`isolate` 的键是 `scene.json` 的对象 id**（不是图层计数器），`isolatedObjects()` / `setObjectOutput()` / `resizeObjectRT()` 同一把键。
 16. **效果纹理槽编号 + sampler `combo` 派生**：**`textures[i] → g_Texture(i)`**（不是 `i+1`）；sampler 声明带 `"combo":"X"` 时，该槽被绑定即置 `X = 1`（`scene.json` 的 `pass.combos` 显式值优先，必须在 `preprocessWeShader` **之前**）。两者写错会让**所有效果的纹理槽整体错位**或 mask 分支永不启用（效果全图生效）。
 17. **`g_TextureNResolution` 的 vec4 分量是 `(mip0.w, mip0.h, header.w, header.h)`**（lwe 约定），不是 `(w,h,1/w,1/h)`：效果 shader 用 `.z/.x` 缩放遮罩 UV，填 `1/w` 会把遮罩 UV 压成 ~0 ⇒ 本该局部的效果变成全图等量位移。`.tex` 的 header 尺寸可大于 image 尺寸（NPOT padding）。
 18. **R8 / RG88 有两套通道语义，不能混用**（`convertUnormToRgba(data, format, alphaPriority)`）：缺省 `true` = **粒子纹理**语义（形状/覆盖在 R 或 G 通道）；`false` = **效果纹理槽**语义（shader 直接读 `.r`/`.rg` 当遮罩数值）。**待办**：权威来源应是 `.tex` 头的 `TextureFlags_AlphaChannelPriority`（bit19），现由调用方路径推断。
@@ -154,6 +154,8 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
 42. **通知卡片与代码块在深色主题下不同底**：DSH 的卡片底 token 在深色取 8% 白半透明 ⇒ 透出壁纸后与代码块不一致。修法：浅/深分支各把 `--dsw-alias-turn-trigger-bg(-hover)` 覆盖为 `var(--dsw-alias-markdown-code-block)`，卡内文字按实底口径复位；⚠️ token 覆盖必须写进**浅/深分支**（具体度），卡内文字复位必须带 `[class*="flowItem"]` 前缀（否则压不过消息列反色规则）。
 43. **插件被重挂载（client-hmr 的 `rebuilt`）后必须只剩一份背景层**：旧 fiber 被 drain 后旧 DOM 不会被自动移除 ⇒ 每次重载叠一份 `.wp-background-layer`，两层 `z-index` 同为 0、DOM 序在后的**最老实例压在最上面**且再也不会收到 select（真机层数 9 ⇒ 「切壁纸怎么点都不换」）。约束：**凡是「插入 DOM / 起循环 / 开上下文」的挂载点都要同时具备幂等与收尾**（`ctx.effect` 收尾 + `mount()` 单例清理 + `window.__wpEngineTeardown` 跨模块实例交接）。
 
+44. **满屏隔离对象关 MSAA（结构性无效）+ RT 纹理的采样参数必须 `dispose()` 才下发**：① 满屏背景隔离对象的 RT 内只有一张盖满的 quad、没有轮廓边 ⇒ `samples=0` 与 `4` **逐像素相同（MAD=0.0000）**，关掉它把省下的显存换成分辨率；非满屏对象（贴片 / 粒子 billboard）保留 `4`（有真实几何边，一个都不能被关）；② **RT 纹理的采样参数只在 `setupRenderTarget`（首次使用或 `dispose()` 之后）下发**，`texture.needsUpdate` 对 RT 纹理**无效** ⇒ 采样判定翻转（mipmap 开 / 关）时必须 `rt.dispose()`，否则新的 `minFilter` 到不了 GL，且 `generateMipmaps=true` 会**每帧白生成 mip**。A/B 实测表与 three 源码行号见 `docs/fixes/conventions-details.md` §5.44。
+
 ## 6. 工作约定
 
 - 回复、注释、文档、**提交信息一律简体中文**；代码、命令、文件名、技术术语保留原文。
@@ -174,7 +176,7 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
 3. **粒子自旋的轴序偏差**：本项目用 `Rz·Ry·Rx`，WE 的 `ComputeParticleTangents` 是 `Rz·Rx·Ry` ⇒ **仅多轴自旋**（全库 6 个对象）结果可能与桌面不同，**未与桌面逐像素对照**；z-only 时两种顺序逐像素等价。
 10. **headless Edge 的 WebGPU 是 SwiftShader**（软件光栅化），非真实 GPU。**订正**：该结论**只对 WebGPU 成立** —— WebGL 加 `--use-angle=d3d11 --ignore-gpu-blocklist` 就能拿真 GPU（真机验收的代价只是一个 flag）。
 11. **测试基线口径**：`scripts/known-failures.json` 的基线**为空**（CI 只对**新增**失败判红；套件级错误不豁免）。全库计数是**本机壁纸库的快照**、随素材漂移 ⇒ 测试只断言非空，**不要在文档里钉数字**（当前实测打印：线性 42 种 / 168 次，具名 RT 11 种 / 38 次，解析失败 0）。
-12. **e2e harness 与真 GPU 的边界**：`verify-hidpi-object-rt.mjs` 已加「挂载期 RT 尺寸」断言（含独立 oracle 与变异验证），但**不覆盖「RT 尺寸对而贴屏映射错」**这一类缺陷；软件光栅化的性能数字**不能**替代真机 FPS。
+12. **e2e harness 与真 GPU 的边界**：`verify-hidpi-object-rt.mjs` 已加「挂载期 RT 尺寸」断言（含独立 oracle 与变异验证），`verify-isolated-rt-sharpness.mjs` 再加结构性判据 + 锐度双判据（口径见 §5.44 与 `TESTING.md`），但**不覆盖「RT 尺寸对而贴屏映射错」**这一类缺陷；而实测到的「背景糊」根因是**分辨率不足**（RT 只有屏占位 1×），不是贴屏映射错。软件光栅化的性能数字**不能**替代真机 FPS。
 16. **`{animation}` 的关键帧轨道播放未实现**：`{script,value}` / `{animation,value}` 形态已按 `value` 静态兜底，但 track/keyframe/mode/fps **全部未解析** ⇒ 轨道驱动的位移/缩放/旋转仍不生效；「新位置与桌面一致」未证实。
 30. **应用级 Glow 的范围边界**：只覆盖 **scene** 壁纸（且只测过 GTR 一张），而 WE 的 postprocessing 对 video 也生效 ⇒ **video / image / web 的亮部仍与桌面有差**；开启时 base RT **无 MSAA**（整帧从 canvas 的 `antialias:true` 掉到无 MSAA）；性能门槛（1080p FPS ≥ 30）**未在真机严格验证**（缺 GPU 耗时或有头浏览器帧率）；壁纸级 `general.bloom` **未实现**（全库 3 张：`2454403969`、`2937346640`、`3790775478`）。
 31. **`copybackground` 语义未实现**（读背景副本做倒影/涟漪的场景会缺内容）；`_rt_FullFrameBuffer`（当前帧缓冲）不绑白纹、只打去重降级告警（全库 1 处 `2597392171`）；**`colorBlendMode` 只实现 6/7/31**，其余模式回退普通 alpha 混合。
@@ -182,6 +184,8 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
 33. **非回环且非桌面壳的访问仍退回 opaque origin 沙箱**：局域网 IP / 隧道访问 GUI 时既无回环名也无 `__DSH_TRANSPORT__` ⇒ 依赖 WebGL 贴图的 web 壁纸空白（纯 DOM/CSS 的不受影响）。未做「另起端口」方案。
 34. **DSH 旧版（≤0.1.6）适配层待删**：0.1.7 起设置系统与右侧栏行为都变了，插件因此并存两套代码与样式。**判据**：README 声明的最低 DSH 版本 ≥ `0.1.7-alpha.1`（目前 README 只声明兼容三版），且本机与 CI 都不再跑旧版验收；清理清单见 `docs/superpowers/plans/2026-09-23-dsh-settings-compat-migration.md` §9。
 35. **壁纸侧的已知缺陷（不修，仅记录）**：`3789244610` 自身的 `city.jpg` 404、空 `<nav>` 让脚本抛 TypeError、文档溢出（见 §5.40 与 `docs/fixes/web-wallpaper-history.md`）；`3778198228` 给 video 写死 `object-fit:cover`（宽于 16:9 时裁掉约 15%）。
+
+36. **隔离对象 RT 分辨率的已知边界**：① 显存预算是**软保证** —— 预算小到装不下全部屏占位时无法再降，只能保住「只升不降」；② 预算只覆盖 **image** 隔离对象：挂载期输入只含 image，resize 期同一函数按 `entries` 计入了粒子的屏占位 ⇒ 两期输入集合不同（粒子 RT 恒为屏占位）；③ 视频纹理**未就绪时回退屏占位**，不做「就绪后重设 RT」；④ 精灵表按**源尺寸未知**处理（回退屏占位）；⑤ e2e 锐度判据的样本里粒子 / 精灵表对象**各 0 个**（判据无真实样本）；⑥ 锐度判据余量偏薄（逐块中位数最低约 **1.11**，阈值 1.05）。详见 `docs/superpowers/specs/2026-10-12-isolated-object-rt-resolution-design.md` §5 与「实测（实现后）」，脚本用法见 `TESTING.md`。
 
 ## 8. 历史归档
 

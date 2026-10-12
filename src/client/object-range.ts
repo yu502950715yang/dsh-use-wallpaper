@@ -315,7 +315,7 @@ export function isolatedRtSize(
 }
 
 // sourcePixelsFromTexture 的入参最小结构化类型（字段全可选）：three 的 Texture 结构兼容，
-// 但本模块不 import three，故只用结构描述（THREE.Texture 可直传）。
+// 本类型不依赖 three，只做结构描述（THREE.Texture 可直传）。
 export interface TexLike {
   image?: { width?: number; height?: number; videoWidth?: number; videoHeight?: number } | null;
   userData?: { sprite?: unknown } | null;
@@ -338,7 +338,8 @@ export function sourcePixelsFromTexture(tex: TexLike | null | undefined): Source
   return { width: w, height: h };
 }
 
-// 全部隔离对象 RT 的一次性显存预算（v1 常量）：覆盖实测最重单张对象并留余量。
+// 隔离对象 RT 的显存预算（v1 常量）：只把隔离的 **image** 对象计入（粒子不进预算，其 RT 仍是屏占位）；
+// 预算输入集合在挂载期与 resize 期的差异见 AGENT.md §7。
 export const ISOLATED_RT_BUDGET_BYTES = 384_000_000;
 // 每像素字节数（RGBA8 颜色 + 深度，含 ping-pong 与具名 RT 分摊）。
 export const ISOLATED_RT_BYTES_PER_PX = 28;
