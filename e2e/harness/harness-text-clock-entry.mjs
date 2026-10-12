@@ -225,6 +225,40 @@ window.__isoInfo = () => {
   }));
 };
 
+/** 只读观测（Task 3）：各隔离对象效果 pass 材质里 `g_TextureNResolution` 的实况。
+ *  判据 = 插件不按 .tex 头 padding 上传 ⇒ 四分量同值（z/x === 1）；形状不符一律返回 null，不抛异常。 */
+window.__fxResProbe = () => {
+  try {
+    const stage = window.__player && window.__player.objectEffectStage;
+    const entries = stage && stage.entries;
+    if (!entries || typeof entries[Symbol.iterator] !== 'function') return null;
+    const out = [];
+    for (const [objId, entry] of entries) {
+      const mats = entry && entry.runner && entry.runner.materials;
+      if (!mats || typeof mats.values !== 'function') continue;
+      for (const m of mats.values()) {
+        const us = m && m.uniforms;
+        if (!us || typeof us !== 'object') continue;
+        for (const name of Object.keys(us)) {
+          const mm = /^g_Texture(\d+)Resolution$/.exec(name);
+          if (!mm) continue;
+          const slot = Number(mm[1]);
+          const v = us[name] && us[name].value;
+          const t = us['g_Texture' + slot];
+          const img = t && t.value && t.value.image;
+          const dim = (n) => (typeof n === 'number' && Number.isFinite(n) ? n : null);
+          out.push({
+            obj: objId, slot,
+            x: v ? dim(v.x) : null, y: v ? dim(v.y) : null, z: v ? dim(v.z) : null, w: v ? dim(v.w) : null,
+            texImage: img ? [dim(img.width), dim(img.height)] : null,
+          });
+        }
+      }
+    }
+    return out;
+  } catch { return null; } // 任何形状不符走这里：探针是只读旁路，绝不把异常抛进判定流程
+};
+
 console.log('[harness] ' + JSON.stringify({
   id, ok, err, broken: scriptRuntimeBroken,
   viewport: [VW, VH],

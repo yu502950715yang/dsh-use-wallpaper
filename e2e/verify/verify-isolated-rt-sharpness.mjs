@@ -17,6 +17,9 @@
 //       verify-text-clock-layer 的判定段一致：只判失败类）。
 //   [7] **不声称「显存不会爆」**：384 MB 预算只是「尽力收窄升级幅度」的启发式，
 //       不是硬保证（见下方输出与 metrics.json 的 budgetNote）。
+//   [8] 遮罩槽分辨率口径：每个效果 pass 材质的 `g_TextureNResolution` 满足 |z/x − 1| < 1e-6；
+//       另对「魔兽之门」断言 2500×1200 遮罩槽已绑定（其它壁纸无该素材 ⇒ 打印 SKIP，非静默跳过）。
+//       探针（`window.__fxResProbe`）**无数据判 FAIL**，绝不因采不到样本而变成假绿。
 //
 // **锐度判据（双判据，仅在基线图存在时断言；R30 裁决）**：逐张与 `--baseline-dir` 里同 id 的 `<id>.png` 比：
 //   [S1] 全图 Laplacian（4 邻域）响应均方比 ≥ 2.0 —— 与 spec §2.2/§2.3 同族，两次独立测量都 ≥ 2.6；
@@ -593,6 +596,12 @@ try {
       if (Array.isArray(iso) && iso.length > 0) break;
       await sleep(300);
     }
+    // 遮罩槽口径探针（Task 3）：只读 `window.__fxResProbe()`；无探针/形状不符 ⇒ null，判定段按「无数据」FAIL
+    let fxRes = null;
+    try {
+      const raw = await evalJs('JSON.stringify(window.__fxResProbe ? window.__fxResProbe() : null)');
+      fxRes = raw ? JSON.parse(raw) : null;
+    } catch { fxRes = null; }
     const shotRes = await send2('Page.captureScreenshot', { format: 'png' });
     const shot = Buffer.from(shotRes.data, 'base64');
     const shotPath = join(SHOTS, `${c.id}.png`);
@@ -610,10 +619,12 @@ try {
     const fps = JSON.parse(await evalJs('(async () => JSON.stringify(await window.__fpsProbe(5000)))()') ?? 'null');
     const warns = logs.filter((l) => /\[wallpaper-engine\]|\[three\]/.test(l.text));
     const failWarns = warns.filter((w) => FAIL_WARN.test(w.text));
-    results.push({ case: c, analysis: ANALYSIS.get(c.id), viewport: vp, ready, iso: Array.isArray(iso) ? iso : null, shotPath, baselinePath, sharp, fps, warns, failWarns });
+    results.push({ case: c, analysis: ANALYSIS.get(c.id), viewport: vp, ready, iso: Array.isArray(iso) ? iso : null, fxRes, shotPath, baselinePath, sharp, fps, warns, failWarns });
     console.log(`  ready=${ready} 视口 innerW/H=${vp?.iw}×${vp?.ih} dpr=${vp?.dpr} 画布缓冲=${vp?.cw}×${vp?.ch}`
       + (isFirst ? `  渲染器=${rendererInfo.renderer}（${rendererInfo.version}）` : ''));
     console.log(`  隔离对象（__isoInfo）：${JSON.stringify(iso)}`);
+    // 遮罩槽口径探针的原始样本（判定段另出 PASS/FAIL；这里保证「判据真的采到了数据」肉眼可见）
+    console.log(`  遮罩槽口径（__fxResProbe）：${Array.isArray(fxRes) ? `${fxRes.length} 槽 ` + JSON.stringify(fxRes.map((x) => [x.obj, x.slot, x.x, x.y, x.z, x.w, x.texImage])) : '无数据（null）'}`);
     // 基线缺失必须显式打印（不得静默跳过、不得当 PASS 计数）
     if (!sharp) {
       console.log(`  SKIP  锐度判据：基线缺失 ⇒ 锐度判据跳过（结构性判据仍生效）  期望基线图：${relative(repo, baselinePath)}`);
@@ -684,6 +695,37 @@ try {
     }
     add('无失败类 [wallpaper-engine]/[three] 告警', r.failWarns.length === 0,
       r.failWarns.map((w) => w.text.slice(0, 120)).join(' | ') || `${r.warns.length} 条一般告警（逐条已打印）`);
+    // ── 遮罩槽分辨率口径（Task 3，真机装配）──────────────────────────────────────────────
+    // 插件不按 .tex 头 padding 上传 ⇒ `g_TextureNResolution` 四分量同值（= mip0 内容尺寸）⇒ 效果
+    // shader 的遮罩缩放 `uv * .z/.x` 退化为恒等；填分配尺寸会让 NPOT 遮罩按 分配/内容 挤向左上。
+    const fxRows = Array.isArray(r.fxRes) ? r.fxRes : null;
+    // 2500×1200 是「魔兽之门」专属遮罩素材 ⇒ 第二条判据只对该张有期望值（其它张明确打印，不静默跳过）
+    const maskAimed = c.id === '1922570576';
+    let fxSummary;
+    if (!fxRows || fxRows.length === 0) {
+      // 零样本**必须** FAIL：静默跳过会让这条判据形同不存在（上游改名/形状变化正是它的失守方式）
+      const why = `探针无数据（__fxResProbe() 返回 ${r.fxRes === null ? 'null' : '空数组'}）⇒ 口径无从判定，判 FAIL`;
+      add('遮罩槽分辨率口径 z/x === 1', false, why);
+      if (maskAimed) add('魔兽之门遮罩已绑定且口径为 1', false, why);
+      else console.log(`  SKIP  魔兽之门遮罩判据：本张 ${c.id} 无该专属遮罩素材，且探针无数据（口径判据已 FAIL）`);
+      fxSummary = { rows: 0, bad: null, mask: null, maskAimed, note: '探针无数据' };
+    } else {
+      // 分量缺失/非正也算异常：口径必须**可算**且为 1，不能靠「值假」蒙混成 PASS
+      const bad = fxRows.filter((row) => !(row.x > 0) || !(row.z > 0) || Math.abs(row.z / row.x - 1) > 1e-6);
+      add('遮罩槽分辨率口径 z/x === 1', bad.length === 0, bad.length
+        ? `${bad.length}/${fxRows.length} 处异常，例：obj=${bad[0].obj} slot=${bad[0].slot} z/x=${(bad[0].z / bad[0].x).toFixed(4)}`
+        : `${fxRows.length} 个槽全部为 1`);
+      const mask = fxRows.find((row) => Array.isArray(row.texImage) && row.texImage[0] === 2500 && row.texImage[1] === 1200);
+      if (maskAimed) {
+        add('魔兽之门遮罩已绑定且口径为 1', !!mask && mask.x > 0 && mask.z > 0 && Math.abs(mask.z / mask.x - 1) < 1e-6,
+          mask ? `obj=${mask.obj} slot=${mask.slot} tex=${mask.texImage} z/x=${(mask.z / mask.x).toFixed(4)}`
+            : `未找到 2500×1200 遮罩槽（共 ${fxRows.length} 槽：${fxRows.map((x) => `${x.obj}:${x.slot}`).join(' ')}）`);
+      } else {
+        console.log(`  SKIP  魔兽之门遮罩判据：2500×1200 是 1922570576 专属素材，本张 ${c.id} 不适用`
+          + `（该张口径判据已按 ${fxRows.length} 槽逐槽判定）`);
+      }
+      fxSummary = { rows: fxRows.length, bad: bad.length, mask: mask ?? null, maskAimed };
+    }
     // 锐度双判据（R30）：基线在才断言；基线缺失 → 明确跳过，不记 PASS 也不记 FAIL
     if (r.sharp && r.sharp.error) {
       add('锐度判据可算（基线图可与本次截图逐像素比对）', false, r.sharp.error);
@@ -711,6 +753,7 @@ try {
       id: c.id, name: c.name, ok: checks.every((x) => x.pass), checks,
       scene: [a.sceneW, a.sceneH], density: a.density, budgetScale: a.budgetScale,
       isolated: objRows, isolatedCount: objRows.length, totalRtPixels: totalPx,
+      fxResProbe: { criterion: 'g_TextureNResolution.z/.x === 1（未 padding 上传）', ...fxSummary },
       fps: r.fps?.fps ?? null, fpsFrames: r.fps?.frames ?? null, fpsChecked: USE_GPU,
       viewport: r.viewport, ready: r.ready,
       // 双判据数字：基线缺失记 { skipped, baseline }（不静默、不计 PASS）
