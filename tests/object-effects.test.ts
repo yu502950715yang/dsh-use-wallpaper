@@ -488,9 +488,8 @@ describe('ObjectEffectStage', () => {
     expect(host._resized.map((r) => [r.w, r.h])).toHaveLength(2);
     const [a, b] = host._resized;
     expect([a.w, a.h]).toEqual([b.w, b.h]); // 同一 budgetScale ⇒ 同尺寸
-    // 钉实际收窄值（旧断言只钉不等式 <4096 / >1875，任何「收窄一点点」都能过）：两张
-    // 4096×1966 合计 451 MB > 384 MB 预算 ⇒ 二分得到 budgetScale≈0.857947 ⇒ 3780×1814，
-    // 合计 383,987,520 B ≤ 384 MB（再大一档 3781×1815 = 384,190,940 B 就装不下）。
+    // 钉实际收窄值（旧断言只钉不等式 <4096 / >1875，任何「收窄一点点」都能过）：两张 4096×1966
+    // 合计 451 MB > 384 MB ⇒ budgetScale≈0.857947 ⇒ 3780×1814 = 383,987,520 B（3781×1815 = 384,300,840 B 装不下）。
     expect([a.w, a.h]).toEqual([3780, 1814]);
     expect(Math.max(a.w, a.h)).toBeLessThan(4096);
     expect(Math.max(a.w, a.h)).toBeGreaterThan(1875);

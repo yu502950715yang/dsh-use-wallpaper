@@ -1138,7 +1138,8 @@ describe('对象级效果链：隔离 RT 尺寸按源纹理收口 4096', () => {
     // 世界尺寸（合成 quad 的基准）= 纹理像素 × scale，未逐轴钳 4096。
     expect(vi.mocked(ObjectEffectStage.prototype.setWorldSize).mock.calls)
       .toEqual([[13, 8192, 4096, { width: 8192, height: 4096 }]]);
-    // RT = 源纹理等比收口 4096（本用例 dpr=1、屏占位长边恰为 5000）：4096 × 4096/8192 = 2048。
+    // RT = 源纹理等比收口 4096（源长边 8192 > cap；屏占位仅 3686×1843 = 8192×4096 × 密度 0.45）：
+    // 4096 × 4096/8192 = 2048。5000 是场景宽，不是屏占位长边。
     const iso = isolateOf().get(13)!;
     expect([iso.rtWidth, iso.rtHeight]).toEqual([4096, 2048]);
     expect(iso).toMatchObject({ worldW: 8192, worldH: 4096 });
@@ -2011,9 +2012,8 @@ describe('createThreeSceneRenderer webglcontextlost 回退 preview 接线', () =
     r.dispose();
   });
 
-  // R27 的另一半：上面的用例只覆盖「丢失作废在飞的 render」，「再 render 一次能重新装配」此前无覆盖。
-  // 若 contextLost 不在 render 入口复位（或 teardown 顺手把它留成 true），作废一次后本实例就再也
-  // 装配不出任何东西 —— 且**不会**报错，只会静默返回 false（最坏的一类回归）。
+  // R27 的另一半：上面的用例只覆盖「丢失作废在飞的 render」，本用例覆盖「再 render 一次能重新装配」。
+  // 若入口不复位 contextLost（或 teardown 留成 true），作废一次后本实例只会静默返回 false（最坏回归）。
   it('上下文丢失作废后，再 render() 一次仍能成功装配（contextLost 复位为 false）', async () => {
     const first = lostCanvas(); // 本用例自带 resolveImageTexture 实现，不依赖上一个用例的 gate
     let release!: () => void;
@@ -2045,6 +2045,28 @@ describe('createThreeSceneRenderer webglcontextlost 回退 preview 接线', () =
     // 复位是**性质**而非一次性侥幸：新 canvas 的丢失监听同样就位、带的是新壁纸 id。
     second.canvas.dispatchEvent(new Event('webglcontextlost', { cancelable: true }));
     expect(seen).toEqual(['1922570576', '2851992662']);
+    warn.mockRestore();
+    r.dispose();
+  });
+
+  it('本次装配无壁纸 id ⇒ 丢失只留「无 id」告警并早退（不回调、不回退 preview）', async () => {
+    const { canvas } = lostCanvas();
+    const seen: string[] = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    r.setOnContextLost?.((id) => seen.push(id));
+
+    // 监听在 render 的同步段注册（首个 await 之前）⇒ 空 id 也照样挂上，同步派发即可命中。
+    const pending = r.render('', canvas, null);
+    const evt = new Event('webglcontextlost', { cancelable: true });
+    canvas.dispatchEvent(evt);
+    expect(evt.defaultPrevented).toBe(true);
+    // 无 id 不得完全静默：必须是「无 id」专属那条，而不是「已回退 preview（壁纸 …）」。
+    expect(warn.mock.calls.map((c) => String(c[0])).filter((s) => s.includes('[wallpaper-engine]')))
+      .toEqual(['[wallpaper-engine] WebGL 上下文丢失，但无本次装配的壁纸 id，已停播（不回退 preview）']);
+    expect(seen).toEqual([]); // 没有 id 就没得回退 ⇒ 回调不得被调用
+    expect(loadSceneToThree).not.toHaveBeenCalled();
+    await expect(pending).resolves.toBe(false); // 丢失仍作废本次装配
     warn.mockRestore();
     r.dispose();
   });
