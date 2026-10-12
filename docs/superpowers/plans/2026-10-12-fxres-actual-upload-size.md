@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 让 `g_TextureNResolution`（`tex.userData.fxRes`）报告**纹理实际上传的宽高**，而不是 mip0 记录尺寸；四分量仍保持同值（`.z/.x === 1` 不得被破坏）。
+**Goal:** 让 `g_TextureNResolution`（`tex.userData.fxRes`）报告**纹理实际上传的宽高**，而不是 mip0 记录的 w/h；四分量仍保持同值（`.z/.x === 1` 不得被破坏）。
 
 **Architecture:** `withSprite()` 增两个参数 `(w, h)`，由四个产出纹理的分支各自传入「即将上传的宽高」；raw 走 `cropRowsToMap` 的返回、DXT 走 `cropCompressedToMap` 的返回（块对齐）、编码图像用解码 bitmap 尺寸、视频用 `video.videoWidth/Height`。分支外的语义一律不动。
 
@@ -47,7 +47,7 @@
 
 ```ts
 it('padded-raw：alloc 256×128 / image 100×50 / mip 256×128 ⇒ 报实际裁剪后的 [100,50,100,50]', async () => {
-  // 与既有 NPOT 用例同构，但断言「上传尺寸」而非「mip0 记录尺寸」——
+  // 与既有 NPOT 用例同构，但断言「上传尺寸」而非「mip0 记录的 w/h」——
   // 载荷为 raw RGBA8888（imageFormat 非 13/2），走 cropRowsToMap 行裁剪分支
   // …（用 tests/fixtures/make-tex.js 造：textureWidth/Height 256×128、imageWidth/Height 100×50、mip 256×128、format=RGBA8888）
   expect((tex!.userData as { fxRes: number[] }).fxRes).toEqual([100, 50, 100, 50]);
@@ -76,7 +76,7 @@ const withSprite = (tex: THREE.Texture, w: number, h: number): THREE.Texture => 
   const ud: Record<string, unknown> = { ...(tex.userData ?? {}) };
   if (info.sprite) ud.sprite = info.sprite;
   // g_TextureNResolution 四分量一律同值 = **实际会上传的宽高**：效果 shader 用 `.z/.x`
-  // 缩放遮罩 UV，比值必须为 1；报 mip0 记录尺寸会在裁剪类纹理上偏 分配/内容（见 AGENT.md §5.17）。
+  // 缩放遮罩 UV，比值必须为 1；报 mip0 记录的 w/h会在裁剪类纹理上偏 分配/内容（见 AGENT.md §5.17）。
   ud.fxRes = [w, h, w, h];
   tex.userData = ud;
   return tex;

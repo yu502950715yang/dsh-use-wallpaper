@@ -1,12 +1,12 @@
 # `g_TextureNResolution` 改为「各分支实际上传尺寸」设计
 
 **日期：** 2026-10-12
-**状态：** 待实施（用户已裁决：按语义正确性改动落地）
+**状态：** 已实现（分支 `fix/fxres-actual-upload-size`：`51a3b4f`（实现）、`687b038`（e2e 判据））
 **事实依据：** `.superpowers/sdd/2026-10-12-plugin-hygiene/a1-research.md`（11 条分支的逐条实测）
 
 ## 1. 问题
 
-`g_TextureNResolution` 的 vec4 现在四分量一律等于 **mip0 记录尺寸**（`tex-loader.ts` 的 `withSprite` 写入 `ud.fxRes`）。这对遮罩 UV 缩放是必需且正确的（`.z/.x === 1`），但它**不总是「实际上传尺寸」**：
+`g_TextureNResolution` 的 vec4 在改动前四分量一律等于 **mip0 记录的 w/h**（`tex-loader.ts` 的 `withSprite` 写入 `ud.fxRes`）。这对遮罩 UV 缩放是必需且正确的（`.z/.x === 1`），但它**不总是「实际上传尺寸」**：
 
 | 分支 | 实际上传尺寸 | 现口径（mip0 记录） | 差异 |
 |---|---|---|---|
@@ -51,9 +51,16 @@
 5. **目视**（预期无差异）：魔兽之门、GTR（DXT）、In the Mountains（sprite）。
 6. 发布：`npm run build` + `build:client`（需用户确认时机；本改动无观感变化，不急于上线）。
 
+**实测（实现后，2026-10-12）**：
+
+- `npm test`：**55 files / 1117 passed**（Task 1/2 收尾基线；Task 3 补 1 条 dom 用例后 **1118**）。
+- `node e2e/verify/verify-isolated-rt-sharpness.mjs --gpu`（8 张清单）：**8/8、0 FAIL、exit 0**；判据 [8]① 全槽 `|z/x − 1| < 1e-6` 全绿；判据 [8]② **234 个可比槽偏离 0**（357 槽中 **123 槽无 `texImage`** 不可比）。
+- **反向验证**（把 `src/client/tex-loader.ts` 回退到 A1 前）：`1429403119` 的 [8]② **21/56 → 0**、**exit 1 → 0**；恢复后 `git diff --stat` 为空。
+- 单测逐分支：padded-raw `[100,50,100,50]`；DXT 块对齐 **60×30 → 60×32**（仅 fixture，本机库 0 实例）；视频以 `videoWidth/Height` 为准；视频内在尺寸 0 ⇒ 回退 mip0 记录。
+
 ## 5. 边界与文档订正
 
-- `AGENT.md §5.17` 的「sprite + header padding ⇒ 本机库 0 实例」应**收紧为**「sprite + **mip0 记录 > image** ⇒ 0 实例」（实测 sprite + alloc≠image 有 2 例，但载荷无 padding）。
+- `AGENT.md §5.17` 已订正为「不变量**恒成立**」：真实残留是 `fxRes` **无法表达「内容域偏移」**（WE 的 `(内容宽,内容高,打包宽,打包高)`，`mesh-shaders.ts:26-32`）—— `cropToMap` 对 sprite 位（`flags & 4`）刻意不裁**不构成反例**（每分支只报一个 `(w,h)` 对）。
 - `AGENT.md §7.37`（原 follow-up）应改写为「已实现：`fxRes` = 各分支实际上传尺寸；**当前库内数值影响为 0**（B/C/D 类用法全在 slot 0 的 RT 回退）；DXT 块对齐（`ceil4`）是唯一代码层第三类，本机库 0 实例」。
 - `docs/fixes/conventions-details.md §5.17` 与设计文档同步。
 - 视频 1×1 兜底「故意不带 `fxRes`」加一行注释。

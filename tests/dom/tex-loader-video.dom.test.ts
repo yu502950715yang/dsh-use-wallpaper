@@ -150,6 +150,17 @@ describe('textureFromTex 视频纹理（flags bit5 = Video）', () => {
     expect((tex.userData as { fxRes?: number[] }).fxRes).toEqual([1920, 1080, 1920, 1080]);
   });
 
+  it('视频内在尺寸为 0（未解码却 readyState ≥ 2）⇒ fxRes 回退 mip0 记录的 [1280,720,1280,720]', async () => {
+    // 回退只为避免 uniform 变 (0,0,0,0)：0 时无从得知实际上传尺寸，故报 mip0 记录的 w/h。
+    const p = textureFromTex(videoTex());
+    await waitForListener(videos[0], 'loadeddata');
+    videos[0].videoWidth = 0;
+    videos[0].videoHeight = 0;
+    videos[0].dispatch('loadeddata');
+    const tex = (await p)!;
+    expect((tex.userData as { fxRes?: number[] }).fxRes).toEqual([1280, 720, 1280, 720]);
+  });
+
   it('dispose 时停播 + 撤销 Blob URL（GPU 资源释放兜不住解码中的 <video>）', async () => {
     const p = textureFromTex(videoTex());
     await waitForListener(videos[0], 'loadeddata');

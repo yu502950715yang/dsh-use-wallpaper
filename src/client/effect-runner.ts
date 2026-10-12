@@ -299,9 +299,9 @@ export function resolveTargetSize(
   };
 }
 
-// g_TextureNResolution 的 **vec4 分量**：四分量一律同值（= 纹理 mip0 记录尺寸）。WE 效果 shader
-// 用 `.z/.x` 缩放遮罩 UV（waterripple/shake），比值必须为 1，否则 NPOT padding 会按 分配/内容
-// 把遮罩挤向画面左上（见 AGENT.md §5.17）；RT 与未带 `fxRes` 的纹理走下方回退，同口径。
+// g_TextureNResolution 的 **vec4 分量**：四分量一律同值 = 纹理**各分支实际上传的宽高**（`fxRes`）。
+// WE 效果 shader 用 `.z/.x` 缩放遮罩 UV（waterripple/shake），比值必须为 1，否则遮罩会按 分配/内容
+// 挤向画面左上（见 AGENT.md §5.17）；RT 与未带 `fxRes` 的纹理走下方回退（自身尺寸，同为上传尺寸）。
 export function resolveTextureResolution4(
   tex: {
     image?: { width?: number; height?: number } | null;

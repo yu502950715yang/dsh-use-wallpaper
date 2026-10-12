@@ -261,7 +261,7 @@ const FLAG_CLAMP_UVS = 1 << 1;
 //     现由 `EffectRunner` 按调用方路径传 `{ alphaPriority: false }` 推断（效果槽语义）。
 
 // 2 的幂填充裁剪（与 wasm/src/tex.rs `crop_to_map` 同源语义，2026-09-10）：
-// TEXV0005 的 **mip 记录尺寸**（w/h）是**上传尺寸**（2 的幂，如 4096×2048），而头部 @34/@38
+// TEXV0005 的 **mip 记录尺寸**（w/h）若不裁剪就是**上传尺寸**（2 的幂，如 4096×2048），而头部 @34/@38
 // 的 width/height 是**逻辑内容宽高**（如 2400×1555）。内容在 mip0 **左上角**，右侧/底部是
 // 2 的幂填充（黑/透明）。若不裁剪就把整张上传纹理当 UV 0-1 采样：
 //   - 纹理宽高 = mip 尺寸（4096×2048）→ 图像内容只出现在 quad 的左上 map/mip 比例区域
@@ -471,7 +471,7 @@ export async function textureFromTex(info: TexInfo, opts?: TexLoadOptions): Prom
     const ud: Record<string, unknown> = { ...(tex.userData ?? {}) };
     if (info.sprite) ud.sprite = info.sprite;
     // g_TextureNResolution 四分量一律同值 = **本分支实际上传的宽高**：效果 shader 用 `.z/.x` 缩放
-    // 遮罩 UV，比值必须为 1；报 mip0 记录尺寸会在裁剪类纹理上偏 分配/内容（见 AGENT.md §5.17）。
+    // 遮罩 UV，比值必须为 1（见 AGENT.md §5.17）。
     ud.fxRes = [w, h, w, h];
     tex.userData = ud;
     return tex;
@@ -512,7 +512,7 @@ export async function textureFromTex(info: TexInfo, opts?: TexLoadOptions): Prom
       applyWrap(t, info);
       // 上传尺寸 = `<video>` 内在尺寸（VideoTexture 的 tex.image 即该元素），与 ThreeLayer 的上传同源。
       const v = t.image as HTMLVideoElement;
-      // 内在尺寸为 0（未解码却 readyState ≥ 2 的畸形素材）→ 回退 mip 记录尺寸，避免 uniform 变 (0,0,0,0)。
+      // 内在尺寸为 0（未解码却 readyState ≥ 2 的畸形素材）→ 无从得知实际尺寸，只能回退 mip0 记录的 w/h，避免 uniform 变 (0,0,0,0)。
       return withSprite(t, v.videoWidth || mip.width, v.videoHeight || mip.height);
     };
     const videoTex = await videoTextureFromMp4(mip.data, info, topDown, decorate);

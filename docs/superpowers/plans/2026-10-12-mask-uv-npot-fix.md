@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 让 `g_TextureNResolution` 的 `.z/.w` 取**同值**（= mip0 记录尺寸）⇒ `.z/.x` 恒为 1，使效果遮罩（水面波动等）回到作者指定的位置。
+**Goal:** 让 `g_TextureNResolution` 的 `.z/.w` 取**同值**（= mip0 记录的 w/h）⇒ `.z/.x` 恒为 1，使效果遮罩（水面波动等）回到作者指定的位置。
 
-**Architecture:** **本机库内不存在**按 `.tex` 头 padding 分配的纹理（`createImageBitmap` 解出即上传；原始像素载荷类经 `cropToMap` 裁到内容宽高后上传），但「mip0 记录尺寸 == 实际上传尺寸」**不是全称** —— 原始像素载荷类（`mip0 记录 == 分配`，51 个）上传的是 `cropToMap` 裁出的内容宽高，其 `.x/.y` 与真实纹理尺寸仍差约 1.6×（follow-up，见设计 §7）。把 `tex-loader` 写入 `userData.fxRes` 的 `.zw` 从 `.tex` 头里的分配尺寸改为 mip0 记录尺寸（**四分量同值**），即可让所有 `uv * z/x` 形式的遮罩 UV 缩放退化为恒等；`resolveTextureResolution4` 的既有回退（RT 与无 `fxRes` 纹理返回 `{x:w,y:h,z:w,w:h}`）本就是这一口径，无需改逻辑。
+**Architecture:** **本机库内不存在**按 `.tex` 头 padding 分配的纹理（`createImageBitmap` 解出即上传；原始像素载荷类经 `cropToMap` 裁到内容宽高后上传），但「mip0 记录的 w/h == 实际上传尺寸」**不是全称** —— 原始像素载荷类（`mip0 记录 == 分配`，51 个）上传的是 `cropToMap` 裁出的内容宽高，其 `.x/.y` 与真实纹理尺寸仍差约 1.6×（follow-up，见设计 §7）。把 `tex-loader` 写入 `userData.fxRes` 的 `.zw` 从 `.tex` 头里的分配尺寸改为 mip0 记录的 w/h（**四分量同值**），即可让所有 `uv * z/x` 形式的遮罩 UV 缩放退化为恒等；`resolveTextureResolution4` 的既有回退（RT 与无 `fxRes` 纹理返回 `{x:w,y:h,z:w,w:h}`）本就是这一口径，无需改逻辑。
 
 **Tech Stack:** TypeScript + three.js r170 + vitest（jsdom/node 双环境）+ Playwright/headless Edge（e2e，`--gpu`）。
 
@@ -25,7 +25,7 @@
 
 | 文件 | 职责 | 改动 |
 |---|---|---|
-| `src/client/tex-loader.ts` | `.tex` → three 纹理；`fxRes` 的唯一生产者 | `:471-473` 取值改为四分量同值（= mip0 记录尺寸）+ 注释订正 |
+| `src/client/tex-loader.ts` | `.tex` → three 纹理；`fxRes` 的唯一生产者 | `:471-473` 取值改为四分量同值（= mip0 记录的 w/h）+ 注释订正 |
 | `src/client/effect-runner.ts` | `g_TextureNResolution` 的 vec4 口径 | `:315-321` 注释订正（逻辑不动） |
 | `tests/tex-loader.test.ts` | tex-loader 单测 | 新增 3 条用例 |
 | `tests/effect-runner.test.ts` | 效果运行器单测 | 新增 1 条口径一致性用例 |
@@ -37,7 +37,7 @@
 
 ---
 
-### Task 1: `fxRes` 改为「四分量同值（= mip0 记录尺寸）」口径
+### Task 1: `fxRes` 改为「四分量同值（= mip0 记录的 w/h）」口径
 
 **Files:**
 - Modify: `src/client/tex-loader.ts:471-475`
@@ -45,14 +45,14 @@
 
 **Interfaces:**
 - Consumes: `textureFromTex(info: TexInfo, opts?): Promise<THREE.Texture | null>`（既有）；`tests/fixtures/make-tex.js` 的 `makeTex`（既有）
-- Produces: `tex.userData.fxRes: [number, number, number, number]`，语义固定为「**四分量一律同值（= mip0 记录尺寸）**」⇒ `[w, h, w, h]`（w/h = mip0 记录尺寸；所有纹理路径共用。对「`mip0 记录 == 分配`」的那一类它是分配尺寸、不是上传尺寸 —— follow-up 见设计 §7）
+- Produces: `tex.userData.fxRes: [number, number, number, number]`，语义固定为「**四分量一律同值（= mip0 记录的 w/h）**」⇒ `[w, h, w, h]`（w/h = mip0 记录的 w/h；所有纹理路径共用。对「`mip0 记录 == 分配`」的那一类它是分配尺寸、不是上传尺寸 —— follow-up 见设计 §7）
 
 - [x] **Step 1: 写失败测试**
 
 在 `tests/tex-loader.test.ts` 末尾追加（`makeTex`/`parseTex`/`textureFromTex`/`TEX_FORMAT` 已在文件头 import）：
 
 ```ts
-describe('fxRes：四分量一律同值（mip0 记录尺寸）⇒ 遮罩 UV 缩放为 1', () => {
+describe('fxRes：四分量一律同值（mip0 记录的 w/h）⇒ 遮罩 UV 缩放为 1', () => {
   const npot = () => makeTex({
     format: TEX_FORMAT.RGBA8888,
     flags: 2,
@@ -91,10 +91,10 @@ Expected: 第一条 FAIL —— `expected [ 100, 50, 256, 128 ] to deeply equal 
 
 - [x] **Step 3: 最小实现**
 
-`src/client/tex-loader.ts:471-475` 改为（下列 2 行即**实际提交**的注释；口径 =「四分量一律同值（= mip0 记录尺寸）」，见设计 §5.1）：
+`src/client/tex-loader.ts:471-475` 改为（下列 2 行即**实际提交**的注释；口径 =「四分量一律同值（= mip0 记录的 w/h）」，见设计 §5.1）：
 
 ```ts
-    // g_TextureNResolution 四分量一律同值（mip0 记录尺寸）：效果 shader 用 `.z/.x` 缩放
+    // g_TextureNResolution 四分量一律同值（mip0 记录的 w/h）：效果 shader 用 `.z/.x` 缩放
     // 遮罩 UV，比值必须为 1，否则 NPOT padding 会把遮罩按 分配/内容 挤向画面左上（见 AGENT.md §5.17）。
     ud.fxRes = [mip.width, mip.height, mip.width, mip.height];
 ```
@@ -111,7 +111,7 @@ Expected: 55 files / 1112 passed（1109 + 新增 3）
 
 ```bash
 git add src/client/tex-loader.ts tests/tex-loader.test.ts
-git commit -m "fix(client): 效果纹理的 g_TextureNResolution 四分量同值（= mip0 记录尺寸）"
+git commit -m "fix(client): 效果纹理的 g_TextureNResolution 四分量同值（= mip0 记录的 w/h）"
 ```
 
 ---
@@ -124,7 +124,7 @@ git commit -m "fix(client): 效果纹理的 g_TextureNResolution 四分量同值
 
 **Interfaces:**
 - Consumes: `resolveTextureResolution4(tex, fallbackW, fallbackH): {x,y,z,w}`（既有，签名不动）
-- Produces: 无新接口；用例固定「RT/无 `fxRes` 回退」与「`fxRes` 四分量同值（= mip0 记录尺寸）」两种来源**同口径**
+- Produces: 无新接口；用例固定「RT/无 `fxRes` 回退」与「`fxRes` 四分量同值（= mip0 记录的 w/h）」两种来源**同口径**
 
 - [x] **Step 1: 写失败测试**
 
@@ -154,7 +154,7 @@ Expected: Task 1 之后即 PASS；若把 Task 1 的 `.zw` 临时改回 `info.tex
 `src/client/effect-runner.ts:315-321` 注释改为：
 
 ```ts
-// g_TextureNResolution 的 **vec4 分量**：四分量一律同值（= 纹理 mip0 记录尺寸）。WE 效果 shader
+// g_TextureNResolution 的 **vec4 分量**：四分量一律同值（= 纹理 mip0 记录的 w/h）。WE 效果 shader
 // 用 `.z/.x` 缩放遮罩 UV（waterripple/shake），比值必须为 1，否则 NPOT padding 会按 分配/内容
 // 把遮罩挤向画面左上（见 AGENT.md §5.17）；RT 与未带 `fxRes` 的纹理走下方回退，同口径。
 ```
@@ -274,7 +274,7 @@ git commit -m "test(e2e): 钉住遮罩槽分辨率口径 z/x === 1"
 `AGENT.md` §5.17 的**旧口径表述**（lwe 约定：四分量分别取 mip0 与 header 尺寸）改为（下列即现文）：
 
 ```
-§5.17 g_TextureNResolution 四分量一律同值（= 纹理 mip0 记录尺寸）；效果 shader 用 `.z/.x`
+§5.17 g_TextureNResolution 四分量一律同值（= 纹理 mip0 记录的 w/h）；效果 shader 用 `.z/.x`
 缩放遮罩 UV，比值必须为 1。插件不按 .tex 头做 padding 分配，故填头里的分配尺寸会让 NPOT 纹理的
 遮罩按 分配/内容 挤向画面左上（真机：湖水波动跑到树上）。细节见 docs/fixes/conventions-details.md。
 ```

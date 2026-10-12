@@ -25,7 +25,7 @@ v_TexCoord.zw = vec2(v_TexCoord.x * g_Texture1Resolution.z / g_Texture1Resolutio
 ud.fxRes = [mip.width, mip.height, info.textureWidth, info.textureHeight];   // 修复前
 ```
 
-`.zw` 填的是 **`.tex` 头里的 padding 分配尺寸**，而插件上传的是 **未 padding 的 mip0 图**（`createImageBitmap` 解出的原始尺寸）。魔兽之门遮罩：分配 **4096×2048**、图像 **2500×1200** ⇒ 乘数 **1.6384 / 1.7067**（正确值是 **1**）。修复后为 `ud.fxRes = [mip.width, mip.height, mip.width, mip.height]`（`tex-loader.ts:475`），即「**四分量一律同值（= mip0 记录尺寸）** ⇒ `.z/.x` 恒为 1」。
+`.zw` 填的是 **`.tex` 头里的 padding 分配尺寸**，而插件上传的是 **未 padding 的 mip0 图**（`createImageBitmap` 解出的原始尺寸）。魔兽之门遮罩：分配 **4096×2048**、图像 **2500×1200** ⇒ 乘数 **1.6384 / 1.7067**（正确值是 **1**）。修复后为 `ud.fxRes = [mip.width, mip.height, mip.width, mip.height]`（`tex-loader.ts:475`），即「**四分量一律同值（= mip0 记录的 w/h）** ⇒ `.z/.x` 恒为 1」。
 
 **几何验算（`output/blur-analysis/mask_placement.py`，从 pkg 直接读遮罩图）**
 
@@ -47,8 +47,8 @@ ud.fxRes = [mip.width, mip.height, info.textureWidth, info.textureHeight];   // 
 | 类 | 表达式（归一化） | 出现（库级 / 旧 28 张） | 需要哪个量 |
 |---|---|---|---|
 | **A 遮罩/纹理 UV 缩放** | `v_TexCoord.zw = vec2(uv.x * z/x, uv.y * w/y)`（86+98）；`a_TexCoord` 版（20+38）；`v_TexCoordMask.zw = vec2(z/x, w/y)`（32）；`v_TexCoordMask.xy = …`（16+12+2）；`v_TexCoord.z *= z/x`（14）；`v_TexCoord.w *= w/y`（14）；**`vec2 t2 = .xy / .zw`（2）** | **334** / 268 | **比值**（现口径恒为 1） |
-| **B 尺寸（texel 步长 / 顶点偏移 / 归一化基准）** | `blurredCoords += 0.75 / zw`（6）；`offsetX/offsetY = g_Scale.x/y / z/w`（8+8）；`v_TexCoord.z/w = g_Scale.x/y / z/w`（9+9）；**`x / min(w, z)`（3）**；**`y / min(w, z)`（3）**；**`textureScale = .zw * g_TextureReductionScale`（1）** | **47** / 34 | **真实上传尺寸**（现口径 = mip0 记录尺寸） |
-| **C `.xy` 当尺寸** | `1.0 / xy`（10）；`0.5 / xy`（5）；`v_TexCoord.zw += 0.5 / xy`（5）；`v_StepSize = 1/vec4(-xy, xy)`（4）；`ApplyCompositeOffset(…, xy)`（4）；`v_PointerUV.xy *= 0.5 / xy`（1）；**`#define pixelSize (1.0 / .xy)`（2）** | **31** / 25 | **真实上传尺寸**（`.xy` 历来 = mip0 记录尺寸） |
+| **B 尺寸（texel 步长 / 顶点偏移 / 归一化基准）** | `blurredCoords += 0.75 / zw`（6）；`offsetX/offsetY = g_Scale.x/y / z/w`（8+8）；`v_TexCoord.z/w = g_Scale.x/y / z/w`（9+9）；**`x / min(w, z)`（3）**；**`y / min(w, z)`（3）**；**`textureScale = .zw * g_TextureReductionScale`（1）** | **47** / 34 | **真实上传尺寸**（现口径 = mip0 记录的 w/h） |
+| **C `.xy` 当尺寸** | `1.0 / xy`（10）；`0.5 / xy`（5）；`v_TexCoord.zw += 0.5 / xy`（5）；`v_StepSize = 1/vec4(-xy, xy)`（4）；`ApplyCompositeOffset(…, xy)`（4）；`v_PointerUV.xy *= 0.5 / xy`（1）；**`#define pixelSize (1.0 / .xy)`（2）** | **31** / 25 | **真实上传尺寸**（`.xy` 历来 = mip0 记录的 w/h） |
 | **D 宽高比 + 注释行** | 共 **14** 种表达式 / **59** 行 = **非注释 9 种 / 48 行**（`.x/.y` 4 种 14+4+2+2；`.z/.w` 2 种 14+6；`.y/.x` 1 种 2；`.zw/.xy` 1 种 2；**`.xy / .y` 1 种 2**）+ **注释行 5 种 / 11 行**（`.x/.y` 2 种 2+2；`.z/.w` 1 种 4；`.y/.x` 2 种 2+1）—— **48 + 11 = 59**，逐条清单见 `docs/fixes/conventions-details.md` §5.17 | **59** / 49 | 图像长宽比（同源） |
 
 四类合计 334+47+31+59 = **471**（旧口径 268+34+25+49 = 376）。
@@ -56,9 +56,9 @@ ud.fxRes = [mip.width, mip.height, info.textureWidth, info.textureHeight];   // 
 **结论（限定表述，勿再写成全称）**：在**已审计的全部 40 种用法**中，需要的是①**比值**（A 类 334 行：遮罩/纹理 UV 缩放；D 类 59 行：宽高比）与②**真实上传尺寸**（B 类 47 行 + C 类 31 行：texel 步长 / 顶点偏移 / 归一化基准）；**未发现**需要「分配尺寸」这个量的用法。其中 **8 种表达式显式把 `.z`/`.w` 当尺寸用**（B 类，如 `0.75/.zw`、`g_Scale.x/.z`、`min(w, z)`、`.zw * g_TextureReductionScale`），其正确值是**实际上传的纹理尺寸**：新口径对 `mip0 记录 == image` 的 **44** 个为**修正**，对 `mip0 记录 == 分配` 的 **51** 个**逐分量不变**、其 `.x/.y` / `.z/.w` 作为 texel 步长仍偏约 1.6×（**既有状态、非本次回归**，见 §7）。**新增的 8 种表达式对本机库当前零行为影响**（逐条上下文见 `docs/fixes/conventions-details.md` §5.17 归档表）：4 种只用 `.xy` / `.y` 或本身是注释行（本次修复只改 `.z/.w`）；另 4 种涉及 `.z/.w` —— `3780477933` 的 `min(w, z)` 两式与 `t2 = .xy / .zw`（该槽位 `g_Texture1` / `g_Texture2` 是材质默认 `util/clouds_256` / `util/white`，且该壁纸不在 23 张 NPOT 清单内）、`2911105183` 的 `skew.vert:25` `textureScale`（在 `#if MODE == 1` 内，而该壁纸 3 个 `skew` pass 全用默认 `MODE=0` ⇒ 不参与编译）。**没有任何一种属「真的需要分配尺寸」**（本机库内不存在按 padding 分配的纹理 —— 编码图像类按原图上传、原始像素载荷类经 `cropToMap` 裁到内容宽高后上传；⚠️ **若将来出现「raw 像素载荷 + sprite 位 + header padding」的纹理，`.z/.x = 1` 对它不再成立**，因为 `cropToMap` 对 `flags & 4` 刻意不裁剪，`src/client/tex-loader.ts:285`）。两条必须如实区分（勿再合写成一句）：
 
 - **A 类**要的是**比值** `.z/.x`，必须为 1 ⇒ 现口径（四分量同值）下退化为恒等 —— 这正是本次修复的目标。
-- **B 类**「texel 步长偏小 **1.64×**」**只在本次会变的那一类（44 个）成立**：它们 `mip0 记录 == image` ⇒ `.zw` 由分配尺寸回到 mip0 记录尺寸 = 实际上传尺寸，步长随之正确。**不变的那一类（51 个，原始像素载荷（带 padding））逐分量零改动**，其 `.x/.y` 作为 texel 步长仍偏约 1.6×（`fxRes` ≠ `cropToMap` 后的上传尺寸；**既有状态、非本次回归**，见 §7 的 follow-up）。
+- **B 类**「texel 步长偏小 **1.64×**」**只在本次会变的那一类（44 个）成立**：它们 `mip0 记录 == image` ⇒ `.zw` 由分配尺寸回到 mip0 记录的 w/h = 实际上传尺寸，步长随之正确。**不变的那一类（51 个，原始像素载荷（带 padding））逐分量零改动**，其 `.x/.y` 作为 texel 步长仍偏约 1.6×（`fxRes` ≠ `cropToMap` 后的上传尺寸；**既有状态、非本次回归**，见 §7 的 follow-up）。
 
-C 类（`.xy`）历来是 mip0 记录尺寸：对 44 类等于上传尺寸、对 51 类仍是分配尺寸（同上的既有偏差）。D 类内部还自相矛盾（`x/y` = 内容比 2.083、`z/w` = 分配比 2.0，同一文件两个「宽高比」相差 4%）；现口径下两者都取 mip0 记录尺寸。
+C 类（`.xy`）历来是 mip0 记录的 w/h：对 44 类等于上传尺寸、对 51 类仍是分配尺寸（同上的既有偏差）。D 类内部还自相矛盾（`x/y` = 内容比 2.083、`z/w` = 分配比 2.0，同一文件两个「宽高比」相差 4%）；现口径下两者都取 mip0 记录的 w/h。
 
 ## 4. 影响面（`output/blur-analysis/mask_scope.py`、`tex_padding_scope.py`、`fxres_npot_miprecord_scan.py`；**库级口径 `type.lower() == "scene"`，本机壁纸库快照 33 张**）
 
@@ -69,14 +69,14 @@ C 类（`.xy`）历来是 mip0 记录尺寸：对 44 类等于上传尺寸、对
 - 效果遮罩侧不受口径影响：`materials/masks/` 下 `header ≠ image` 的遮罩仍是 **41** 个（涉及 5 张：`1429403119` 21、`1922570576` 3、`1968789468` 4、`2011060960` 12、`2132420420` 1），其中**会变 15 个**（`1922570576` 3 + `2011060960` 11 + `2132420420` 1）、**不变 26 个**（`1429403119` 21 + `1968789468` 4 + `2011060960` 1）—— 用户报告的「魔兽之门」属会变那批。
 - 尺寸为 2 的幂的纹理 `header == image`，比值本就是 1 ⇒ 不受影响（这解释了「只有**有的**壁纸出问题」）。
 
-## 5. 决策：方案 A —— `fxRes` 四分量一律同值（= mip0 记录尺寸）
+## 5. 决策：方案 A —— `fxRes` 四分量一律同值（= mip0 记录的 w/h）
 
 ```ts
 ud.fxRes = [mip.width, mip.height, mip.width, mip.height];
 ```
 
 理由：
-1. **本机库内不存在**按 padding 分配的纹理 —— 上传的纹理被内容占满（44 类 = mip0 全图；51 类 = `cropToMap` 裁出的内容宽高）⇒ UV 缩放乘数必须是 1。⚠️ 代码层唯一例外是 `cropToMap` 对 `flags & 4`（sprite）**刻意不裁剪**（`src/client/tex-loader.ts:285`）：**若将来出现「raw 像素载荷 + sprite 位 + header padding」的纹理，`.z/.x = 1` 对它不再成立**（本机库 0 实例）。这与 `.xy`（历来是 mip0 记录尺寸）以及 `resolveTextureResolution4` 的**回退口径**（RT / 无 `fxRes` 纹理返回 `{x:w,y:h,z:w,w:h}`，见 `effect-runner.ts:330-332`）完全一致 —— 代码里早已存在「四分量同值 ⇒ `.z/.x === 1`」的先例。
+1. **本机库内不存在**按 padding 分配的纹理 —— 上传的纹理被内容占满（44 类 = mip0 全图；51 类 = `cropToMap` 裁出的内容宽高）⇒ UV 缩放乘数必须是 1。⚠️ 代码层唯一例外是 `cropToMap` 对 `flags & 4`（sprite）**刻意不裁剪**（`src/client/tex-loader.ts:285`）：**若将来出现「raw 像素载荷 + sprite 位 + header padding」的纹理，`.z/.x = 1` 对它不再成立**（本机库 0 实例）。这与 `.xy`（历来是 mip0 记录的 w/h）以及 `resolveTextureResolution4` 的**回退口径**（RT / 无 `fxRes` 纹理返回 `{x:w,y:h,z:w,w:h}`，见 `effect-runner.ts:330-332`）完全一致 —— 代码里早已存在「四分量同值 ⇒ `.z/.x === 1`」的先例。
 2. 审计（§3）的 **40 种用法中没有任何一处需要分配尺寸**（需要的是①比值、②真实上传尺寸）⇒ 不破坏任何现有意图。**只有会变的那一类（44 个）**顺带修正了 B 类（texel 步长偏小 1.64×）与 D 类的内部不一致；51 类逐分量零改动（其 `.x/.y` 仍 ≠ 上传尺寸，见 §7）。
 3. 成本：一行；不增加显存。
 
@@ -99,13 +99,13 @@ ud.fxRes = [mip.width, mip.height, mip.width, mip.height];
 - **不做真 padding 上传**（方案 B）。若将来要做，`.zw` 必须恢复为分配尺寸，并重新审计 §3 的 A/B 两类用法（届时不能再假设「四分量同值」）。
 - 不动 shader（shader 来自壁纸包，属 WE 官方实现）。
 - 不扩大本轮范围：`.tex` 的 `TEXV0005` padding 元数据接入、其它格式（TEXB0002/4、DXT）的 padding 语义留作后续。
-- 与本特性同源的隐患已随本次一并订正：`AGENT.md §5.17` 原注释把 `.z/.x` 描述为「内容/分配」但取值填反 ⇒ 现统一为「**四分量一律同值（= mip0 记录尺寸）⇒ `.z/.x` 恒为 1**」（`AGENT.md:130`、`effect-runner.ts:315-317`、`tex-loader.ts:473-474`、`tests/tex-loader.test.ts:815` 四处措辞同口径）。
+- 与本特性同源的隐患已随本次一并订正：`AGENT.md §5.17` 原注释把 `.z/.x` 描述为「内容/分配」但取值填反 ⇒ 现统一为「**四分量一律同值（= mip0 记录的 w/h）⇒ `.z/.x` 恒为 1**」（`AGENT.md:130`、`effect-runner.ts:315-317`、`tex-loader.ts:473-474`、`tests/tex-loader.test.ts:815` 四处措辞同口径）。
 
 ## 8. 涉及文件
 
 | 文件 | 改动 |
 |---|---|
-| `src/client/tex-loader.ts:473-475` | `fxRes` 取值改「四分量同值（= mip0 记录尺寸）」+ 注释订正（`fxRes` 的唯一生产者） |
+| `src/client/tex-loader.ts:473-475` | `fxRes` 取值改「四分量同值（= mip0 记录的 w/h）」+ 注释订正（`fxRes` 的唯一生产者） |
 | `src/client/effect-runner.ts:315-317` | `resolveTextureResolution4` 口径注释订正（逻辑零改动；函数体 `:318-333`，回退 `return { x: w, y: h, z: w, w: h }` 在 `:330-332`） |
 | `tests/tex-loader.test.ts:815-844` | NPOT / POT / 不变量三条用例（**唯一守卫生产代码**） |
 | `tests/effect-runner.test.ts:608-628` | 回退口径一致性用例（消费者侧契约钉，第 3 条仅灵敏度自证） |
