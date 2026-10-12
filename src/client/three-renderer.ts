@@ -725,11 +725,9 @@ export function createThreeSceneRenderer(opts?: {
           // 世界尺寸直接用 isolate 里已算好的世界尺寸（同一份计算的两个消费者），不另存一份映射；
           // 键一律用对象 id（= isolate 的键 = 隔离条目的 id）。
           for (const [objId, iso] of isolate) {
-            // 源尺寸与挂载期同一份数据（sourceOf）；未知（粒子对象/纹理未就绪）时不传第 4 参
-            // ——setWorldSize 的缺省即 null，语义相同且与既有 3 参调用点逐字一致。
-            const src = sourceOf.get(objId);
-            if (src) stage.setWorldSize(objId, iso.worldW, iso.worldH, src);
-            else stage.setWorldSize(objId, iso.worldW, iso.worldH);
+            // 源尺寸与挂载期同一份数据（sourceOf）；未知（粒子对象/纹理未就绪）显式下发
+            // null（统一下发形状，不靠缺省参数分支）。
+            stage.setWorldSize(objId, iso.worldW, iso.worldH, sourceOf.get(objId) ?? null);
           }
           for (const [objId, chains] of effectChains) {
             // 没有隔离条目的对象（util 层、缺粒子资源、blend 冲突跳过的）不挂链：挂也找不到 view，

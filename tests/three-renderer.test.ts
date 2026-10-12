@@ -763,8 +763,9 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
       objectId: 13, rtWidth: 3840, rtHeight: 2160, worldW: 3840, worldH: 2160,
     });
     expect(assets.isolate.has(60)).toBe(false);
-    // stage 的键 = 对象 id（13），不是图层计数器 id（带效果的对象是第 2 个 image → 旧实现为 1）。
-    expect(worldSpy.mock.calls).toEqual([[13, 3840, 2160]]);
+    // stage 的键 = 对象 id（13），不是图层计数器 id（带效果的对象是第 2 个 image → 旧实现为 1）；
+    // 第 4 参 = 源纹理像素（本用例 fakeTexture 无 image ⇒ 源未知 ⇒ null）。
+    expect(worldSpy.mock.calls).toEqual([[13, 3840, 2160, null]]);
     expect(chainsSpy.mock.calls.map((c) => c[0])).toEqual([13]);
     expect(chainsSpy.mock.calls[0][1]).toHaveLength(1);
     // 装配完成才注入 player（stage 非 null），供帧序调用 bindOutputs/advance。
@@ -868,7 +869,8 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     });
     // 键 = 对象 id 71：粒子图层 id 也是 0（与背景层计数器独立、各自从 0 起），旧实现下
     // 「同壁纸 image + particle 都隔离」会与背景条目的 0 撞键、互相覆盖。
-    expect(worldSpy.mock.calls).toEqual([[71, 200, 200]]);
+    // 粒子不在 isolateItems 内 ⇒ 源尺寸未知 ⇒ 第 4 参是显式 null（统一下发形状，不靠缺省参数）。
+    expect(worldSpy.mock.calls).toEqual([[71, 200, 200, null]]);
     expect(chainsSpy.mock.calls.map((c) => c[0])).toEqual([71]);
 
     worldSpy.mockRestore();
@@ -1118,6 +1120,21 @@ describe('对象级效果链：隔离 RT 尺寸按源纹理收口 4096', () => {
     const iso = isolateOf().get(246)!;
     expect(iso.rtWidth).toBe(Math.round(ORTHO.width * density));
     expect(iso.rtHeight).toBe(Math.round(ORTHO.height * density));
+    r.dispose();
+  });
+
+  it('调用点统一下发第 4 参：源尺寸已知传 SourcePixels、未知传 null（不是 undefined）', async () => {
+    stubAsset([bgObject(13), bgObject(246)]);
+    // 13 有源纹理、246 纹理未就绪（无 image ⇒ source = null）：一次渲染钉住两种下发形状。
+    resolveImageTexture.mockImplementation(async (_id, o) =>
+      (o.id === 13 ? { image: { ...SRC }, dispose: vi.fn() } : fakeTexture()) as never);
+
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    expect(await r.render('2851992662', document.createElement('canvas'), null)).toBe(true);
+
+    // 第 4 参 = 与挂载期尺寸计算同一份源纹理像素；源未知时是显式 null（缺参 = 3 参形状会让本断言变红）。
+    expect(vi.mocked(ObjectEffectStage.prototype.setWorldSize).mock.calls)
+      .toEqual([[13, 5000, 2400, { width: 5000, height: 2400 }], [246, 5000, 2400, null]]);
     r.dispose();
   });
 
