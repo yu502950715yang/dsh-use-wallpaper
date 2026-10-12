@@ -468,8 +468,8 @@ export async function textureFromTex(info: TexInfo, opts?: TexLoadOptions): Prom
   const withSprite = (tex: THREE.Texture): THREE.Texture => {
     const ud: Record<string, unknown> = { ...(tex.userData ?? {}) };
     if (info.sprite) ud.sprite = info.sprite;
-    // 未 padding 上传 ⇒ g_TextureNResolution 四分量一律取内容尺寸：效果 shader 用 `.z/.x`
-    // 缩放遮罩 UV，若填 .tex 头的分配尺寸会按 分配/内容 把遮罩挤向画面左上（见 AGENT.md §5.17）。
+    // g_TextureNResolution 四分量一律同值（mip0 记录尺寸）：效果 shader 用 `.z/.x` 缩放
+    // 遮罩 UV，比值必须为 1，否则 NPOT padding 会把遮罩按 分配/内容 挤向画面左上（见 AGENT.md §5.17）。
     ud.fxRes = [mip.width, mip.height, mip.width, mip.height];
     tex.userData = ud;
     return tex;
