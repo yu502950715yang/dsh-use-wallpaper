@@ -1,8 +1,8 @@
 // 隔离对象 RT 的 e2e 验收网：**绝对性质**（锐度上限口径 / 外科性 / FPS），在**生产装配**下可重复跑。
 //
 // 目的是把「源纹理收口 4096、只升不降、按显存预算等比收窄 + 满屏对象关 MSAA + RT 放大开 mipmap」
-// 这组性质变成一条命令（`npm run e2e:isolated-rt`）。判据**全部可从素材独立算出**，不提交/不比对
-// 参考图，也不用 base arm：
+// 这组性质变成一条命令（`npm run e2e:isolated-rt`）。**结构性判据**全部可从素材独立算出，不提交/
+// 不比对参考图、也不用 base arm；**锐度判据**另比本地基线图（`--baseline-dir`，缺失则明确跳过）：
 //   [1] 每个隔离对象的 RT 长边 === max(屏占位长边, min(源纹理长边, 4096))（预算收窄时按收窄后的期望），
 //       且 RT 像素总数 ≥ 屏占位像素总数（**只升不降**护栏）；屏占位 = |size × scale| × 屏幕密度，
 //       密度 = floor(视口宽 × dpr) / cover 视锥宽（与生产同一把尺子，本脚本独立复述）。
@@ -18,6 +18,16 @@
 //   [7] **不声称「显存不会爆」**：384 MB 预算只是「尽力收窄升级幅度」的启发式，
 //       不是硬保证（见下方输出与 metrics.json 的 budgetNote）。
 //
+// **锐度判据（双判据，仅在基线图存在时断言；R30 裁决）**：逐张与 `--baseline-dir` 里同 id 的 `<id>.png` 比：
+//   [S1] 全图 Laplacian（4 邻域）响应均方比 ≥ 2.0 —— 与 spec §2.2/§2.3 同族，两次独立测量都 ≥ 2.6；
+//   [S2] 逐 96×96 块「梯度/对比度」比的中位数 ≥ 1.05（块指标 = p99|∇| / (p98 − p2)，NCC ≥ 0.6 过滤
+//        动态内容块）—— 防「Laplacian 高但局部变糊」。两个数字都打印并写进 metrics.json。
+//   目录里缺该 `<id>.png` ⇒ **明确打印「基线缺失 ⇒ 锐度判据跳过（结构性判据仍生效）」**，不计 PASS、
+//   也不算 FAIL（不静默跳过）。承重判据仍是 [1]–[6]。
+//   采基线一行（`b21b1ac` = 本特性第一个提交 `cab0ab7` 的父提交；撤下实现后结构性判据会全红、退出码 1，
+//   但截图照出，采完必须恢复并重跑绿）。**不要用 `git stash`**：实现已提交，stash 是 no-op（实测）：
+//     git checkout b21b1ac -- src/; node e2e/verify/verify-isolated-rt-sharpness.mjs --gpu; Copy-Item e2e/.out/isolated-rt/shots/*.png e2e/.out/isolated-rt/baseline/; git checkout HEAD -- src/
+//
 // 被测对象 = **当前 `src/` 用仓库自己的 tsc 编译出的产物**（同 `npm run build` 的配置，输出到
 // gitignored 的 `e2e/.out/isolated-rt/lib`），harness 的 `lib/client/*` import 被 esbuild 重定向到它。
 // 理由：`lib/` 是 git 跟踪的产物、**落后于 src**（实测 `lib/client/object-range.js` 里没有
@@ -29,6 +39,7 @@
 // ⚠️ 依赖本机素材（workshop 5 张壁纸 + WE 安装目录）⇒ 不进 CI。必须带 `--gpu`（缺省即 GPU；
 //    `--swiftshader` 显式降级，此时 FPS 判据降级为 SKIP —— 软件光栅化的数字无意义）。
 // 用法：node e2e/verify/verify-isolated-rt-sharpness.mjs [--id=<壁纸id>] [--gpu] [--swiftshader]
+//        [--baseline-dir=<dir>（缺省 e2e/.out/isolated-rt/baseline/）]
 //        [--workshop=<dir>] [--assets=<dir>] [--port=9813] [--cdp-port=9228]
 // 退出码：0 = 全部判据通过；1 = 有判据失败或脚本异常。
 import { createServer } from 'node:http';
@@ -38,6 +49,7 @@ import { join, dirname, extname, resolve, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as esbuild from 'esbuild';
 import { OUT_DIR, WE_WORKSHOP, WE_ASSETS, httpPort, cdpPort, resolveEdgePath, TIMEOUT_MS, argOf, flagOf, requireFile } from '../config.mjs';
+import { decodePng } from '../lib/png-stats.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = join(here, '..', '..');
@@ -53,13 +65,14 @@ const WE = argOf('assets', WE_ASSETS);
 // 固定视口/dpr（判据里的屏幕密度必须与本脚本**自己声明的**视口一致；页面会被钉到同一组数字上）
 const VW = 1600, VH = 900, DPR = 1;
 
-// R29：spec 证据表里的 5 张各一次。minGain 只用于报告（锐度增益是**手工**对照，不进本脚本判据）。
+// R29：spec 证据表里的 5 张各一次。锐度阈值不再是 per-case（brief 的 1.45 继承自桌面截图口径，
+// 与逐块 A/B 不是同一统计量）；R30 改为全清单同一组双判据，见文件头 [S1]/[S2]。
 const CASES = [
-  { id: '1922570576', name: '魔兽之门', minGain: 1.45 },
-  { id: '3743126786', name: 'GTR', minGain: 1.10 },
-  { id: '3765967112', name: 'Crimson', minGain: 1.10 },
-  { id: '2911105183', name: 'Subway', minGain: 1.10 },
-  { id: '1429403119', name: 'Orange', minGain: 1.10 },
+  { id: '1922570576', name: '魔兽之门' },
+  { id: '3743126786', name: 'GTR' },
+  { id: '3765967112', name: 'Crimson' },
+  { id: '2911105183', name: 'Subway' },
+  { id: '1429403119', name: 'Orange' },
 ];
 const ONLY = argOf('id', null);
 const RUN = ONLY ? CASES.filter((c) => c.id === ONLY) : CASES;
@@ -69,6 +82,11 @@ if (ONLY && RUN.length === 0) { console.error(`--id=${ONLY} 不在 R29 的清单
 const OBJECT_RT_MAX = 4096;
 const BUDGET_BYTES = 384_000_000;
 const BYTES_PER_PX = 28;
+
+// ── 锐度判据常量与基线目录（R30 双判据；基线缺失 → 明确跳过，见文件头）─────────────────────
+const BASELINE_DIR = argOf('baseline-dir', join(OUT, 'baseline'));
+const BLOCK = 96, NCC_MIN = 0.6;
+const LAP_RATIO_MIN = 2.0, BLOCK_MEDIAN_MIN = 1.05;
 
 // ── 素材侧 oracle（纯 node：scene.pkg + .tex 头 → 期望 RT）────────────────────────────────
 const IDS = (n) => Math.max(1, Math.floor(n));
@@ -267,6 +285,106 @@ function analyseWallpaper(id, reader) {
   return { id, sceneW, sceneH, density, budgetScale, expected, itemCount: items.length };
 }
 
+// ── 锐度指标（相对基线图；口径与 spec §2.2/§2.3 同族，纯像素运算）─────────────────────────
+// 灰度（0.299R+0.587G+0.114B）；解码器也可能给出单通道灰度图。
+function lumaOf(img) {
+  const { width: w, height: h, channels: ch, data } = img;
+  const out = new Float32Array(w * h);
+  for (let i = 0, o = 0; i < out.length; i++, o += ch) {
+    out[i] = ch >= 3 ? 0.299 * data[o] + 0.587 * data[o + 1] + 0.114 * data[o + 2] : data[o];
+  }
+  return out;
+}
+// 已排序数组的线性插值分位数（numpy 缺省口径）。
+function percentile(sorted, p) {
+  const n = sorted.length;
+  if (n === 0) return 0;
+  if (n === 1) return sorted[0];
+  const idx = (p / 100) * (n - 1);
+  const lo = Math.floor(idx), hi = Math.ceil(idx);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
+}
+// 全图 Laplacian（4 邻域，内部像素）响应的**均方**：对「整体变清」敏感，对应 spec 的 Laplacian 列。
+function laplacianMeanSquare(gray, w, h) {
+  let sum = 0, n = 0;
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x;
+      const lap = gray[i - w] + gray[i + w] + gray[i - 1] + gray[i + 1] - 4 * gray[i];
+      sum += lap * lap; n++;
+    }
+  }
+  return n ? sum / n : 0;
+}
+// 块内像素值与中心差分梯度模（|∇| 只用整图内部像素，块边界不特殊处理）。
+function blockSamples(gray, w, h, x0, y0) {
+  const vals = [], grads = [];
+  for (let y = y0; y < y0 + BLOCK; y++) {
+    for (let x = x0; x < x0 + BLOCK; x++) {
+      const i = y * w + x;
+      vals.push(gray[i]);
+      if (x > 0 && y > 0 && x < w - 1 && y < h - 1) {
+        const gx = (gray[i + 1] - gray[i - 1]) / 2;
+        const gy = (gray[i + w] - gray[i - w]) / 2;
+        grads.push(Math.sqrt(gx * gx + gy * gy));
+      }
+    }
+  }
+  return { vals, grads };
+}
+// 两臂同块灰度的归一化互相关：< NCC_MIN 的块按「动态内容相位不同」丢弃，不参与中位数。
+function ncc(a, b) {
+  const n = a.length;
+  let ma = 0, mb = 0;
+  for (let i = 0; i < n; i++) { ma += a[i]; mb += b[i]; }
+  ma /= n; mb /= n;
+  let sab = 0, sa = 0, sb = 0;
+  for (let i = 0; i < n; i++) { const da = a[i] - ma, db = b[i] - mb; sab += da * db; sa += da * da; sb += db * db; }
+  if (sa <= 0 || sb <= 0) return 0; // 平坦块无相关可言
+  return sab / Math.sqrt(sa * sb);
+}
+// 块指标 = p99|∇| / (p98 − p2)（尺度无关的「梯度/对比度」；对比度 ~0 的平坦块返回 null）。
+function blockMetric(vals, grads) {
+  const sv = [...vals].sort((a, b) => a - b);
+  const sg = [...grads].sort((a, b) => a - b);
+  const contrast = percentile(sv, 98) - percentile(sv, 2);
+  if (!(contrast > 1e-6)) return null;
+  return percentile(sg, 99) / contrast;
+}
+// 双判据；唯一出口是「有结论」或 `{ error }`（基线缺失由调用方判定，不进这里）。
+function sharpenVsBaseline(basePng, curPng) {
+  const base = decodePng(basePng), cur = decodePng(curPng);
+  if (base.width !== cur.width || base.height !== cur.height) {
+    return { error: `基线/本次截图尺寸不一致：${base.width}×${base.height} vs ${cur.width}×${cur.height}` };
+  }
+  const w = cur.width, h = cur.height;
+  const A = lumaOf(base), B = lumaOf(cur);
+  const lapBase = laplacianMeanSquare(A, w, h), lapCur = laplacianMeanSquare(B, w, h);
+  const bw = Math.floor(w / BLOCK), bh = Math.floor(h / BLOCK);
+  const ratios = [];
+  let degenerate = 0, lowNcc = 0;
+  for (let by = 0; by < bh; by++) {
+    for (let bx = 0; bx < bw; bx++) {
+      const a = blockSamples(A, w, h, bx * BLOCK, by * BLOCK);
+      const b = blockSamples(B, w, h, bx * BLOCK, by * BLOCK);
+      const ma = blockMetric(a.vals, a.grads), mb = blockMetric(b.vals, b.grads);
+      if (ma === null || mb === null || ma <= 0) { degenerate++; continue; }
+      if (ncc(a.vals, b.vals) < NCC_MIN) { lowNcc++; continue; }
+      ratios.push(mb / ma);
+    }
+  }
+  ratios.sort((x, y) => x - y);
+  return {
+    lapRatio: lapBase > 0 ? lapCur / lapBase : Infinity, lapBase, lapCur,
+    blockMedian: ratios.length ? percentile(ratios, 50) : null,
+    blockP10: ratios.length ? percentile(ratios, 10) : null, blockP90: ratios.length ? percentile(ratios, 90) : null,
+    validBlocks: ratios.length, totalBlocks: bw * bh, degenerateBlocks: degenerate, lowNccBlocks: lowNcc,
+    block: BLOCK, nccMin: NCC_MIN,
+    pass: (lapBase > 0 ? lapCur / lapBase : Infinity) >= LAP_RATIO_MIN
+      && ratios.length > 0 && percentile(ratios, 50) >= BLOCK_MEDIAN_MIN,
+  };
+}
+
 // ── 被测产物：src 现编（tsc，同 npm run build 配置）→ 重定向 harness 的 lib/client import ──────
 const TMP_LIB = join(OUT, 'lib');
 function buildFreshLib() {
@@ -404,6 +522,8 @@ try {
   console.log(`[iso-rt] 视口 CSS ${VW}×${VH} dpr=${DPR}（页面会被钉到同一组数字）  GPU=${USE_GPU ? 'd3d11' : 'SwiftShader（--swiftshader：FPS 判据降级为 SKIP）'}`);
   console.log(`[iso-rt] 被测产物 = 现编 src（tsc → ${relative(repo, TMP_LIB)}），harness 的 lib/client import 已重定向`);
   console.log(`[iso-rt] 壁纸清单（R29）：${RUN.map((c) => `${c.id}(${c.name})`).join(', ')}  串行执行`);
+  console.log(`[iso-rt] 锐度基线目录：${relative(repo, BASELINE_DIR)}（${existsSync(BASELINE_DIR) ? `存在 ${readdirSync(BASELINE_DIR).filter((f) => f.endsWith('.png')).length} 张 png` : '不存在'}）`
+    + `；缺 <id>.png 的壁纸锐度判据跳过（结构性判据仍生效）`);
   for (const c of RUN) {
     const a = ANALYSIS.get(c.id);
     console.log(`[iso-rt]   ${c.id}: 场景 ${a.sceneW}×${a.sceneH} 密度=${a.density.toFixed(6)} `
@@ -477,20 +597,42 @@ try {
     const shot = Buffer.from(shotRes.data, 'base64');
     const shotPath = join(SHOTS, `${c.id}.png`);
     writeFileSync(shotPath, shot);
+    // 锐度判据（R30 双判据）：基线图存在才比；缺失就明确跳过（结构性判据照常，见文件头）
+    const baselinePath = join(BASELINE_DIR, `${c.id}.png`);
+    let sharp = null;
+    if (existsSync(baselinePath)) {
+      try {
+        sharp = sharpenVsBaseline(readFileSync(baselinePath), shot);
+      } catch (e) {
+        sharp = { error: `基线图不可用：${(e && e.message) || e}` };
+      }
+    }
     const fps = JSON.parse(await evalJs('(async () => JSON.stringify(await window.__fpsProbe(5000)))()') ?? 'null');
     const warns = logs.filter((l) => /\[wallpaper-engine\]|\[three\]/.test(l.text));
-    const failWarns = warns.filter((l) => FAIL_WARN.test(l.text));
-    results.push({ case: c, analysis: ANALYSIS.get(c.id), viewport: vp, ready, iso: Array.isArray(iso) ? iso : null, shotPath, fps, warns, failWarns });
+    const failWarns = warns.filter((w) => FAIL_WARN.test(w.text));
+    results.push({ case: c, analysis: ANALYSIS.get(c.id), viewport: vp, ready, iso: Array.isArray(iso) ? iso : null, shotPath, baselinePath, sharp, fps, warns, failWarns });
     console.log(`  ready=${ready} 视口 innerW/H=${vp?.iw}×${vp?.ih} dpr=${vp?.dpr} 画布缓冲=${vp?.cw}×${vp?.ch}`
       + (isFirst ? `  渲染器=${rendererInfo.renderer}（${rendererInfo.version}）` : ''));
     console.log(`  隔离对象（__isoInfo）：${JSON.stringify(iso)}`);
+    // 基线缺失必须显式打印（不得静默跳过、不得当 PASS 计数）
+    if (!sharp) {
+      console.log(`  SKIP  锐度判据：基线缺失 ⇒ 锐度判据跳过（结构性判据仍生效）  期望基线图：${relative(repo, baselinePath)}`);
+    } else if (sharp.error) {
+      console.log(`  锐度判据无法计算：${sharp.error}（判 FAIL）`);
+    } else {
+      console.log(`  锐度（vs 基线 ${relative(repo, baselinePath)}）：Laplacian 均方比=${sharp.lapRatio.toFixed(3)}`
+        + `（阈值 ≥${LAP_RATIO_MIN}；${sharp.lapBase.toFixed(2)} → ${sharp.lapCur.toFixed(2)}）`
+        + `  逐块梯度/对比度中位数=${sharp.blockMedian.toFixed(4)}（阈值 ≥${BLOCK_MEDIAN_MIN}）`);
+      console.log(`    有效块 ${sharp.validBlocks}/${sharp.totalBlocks}（退化 ${sharp.degenerateBlocks}、低 NCC ${sharp.lowNccBlocks}）`
+        + `  p10=${sharp.blockP10.toFixed(4)} p90=${sharp.blockP90.toFixed(4)}`);
+    }
     console.log(`  FPS=${fps?.fps ?? 'n/a'}（frames=${fps?.frames}）  告警 ${warns.length} 条（失败类 ${failWarns.length} 条）`);
     for (const w of warns.slice(0, 6)) console.log(`    [${w.level}] ${w.text.slice(0, 160)}`);
     console.log(`  截图：${relative(repo, shotPath)}`);
   }
 
   // ── 判定段 ─────────────────────────────────────────────────────────────────────────────
-  console.log('\n===== 判定（绝对性质：可从素材独立算出；不比对参考图）=====');
+  console.log('\n===== 判定（结构性判据 = 可从素材独立算出；锐度判据 = 基线存在时比基线图）=====');
   let ok = true;
   const caseMetrics = [];
   for (const r of results) {
@@ -538,6 +680,19 @@ try {
     }
     add('无失败类 [wallpaper-engine]/[three] 告警', r.failWarns.length === 0,
       r.failWarns.map((w) => w.text.slice(0, 120)).join(' | ') || `${r.warns.length} 条一般告警（逐条已打印）`);
+    // 锐度双判据（R30）：基线在才断言；基线缺失 → 明确跳过，不记 PASS 也不记 FAIL
+    if (r.sharp && r.sharp.error) {
+      add('锐度判据可算（基线图可与本次截图逐像素比对）', false, r.sharp.error);
+    } else if (r.sharp) {
+      add(`Laplacian 均方比 ≥ ${LAP_RATIO_MIN}（全图 4 邻域；spec §2.2/§2.3 同族）`, r.sharp.lapRatio >= LAP_RATIO_MIN,
+        `实测 ${r.sharp.lapRatio.toFixed(3)}（${r.sharp.lapBase.toFixed(2)} → ${r.sharp.lapCur.toFixed(2)}；基线 ${relative(repo, r.baselinePath)}）`);
+      add(`逐块梯度/对比度中位数 ≥ ${BLOCK_MEDIAN_MIN}（${BLOCK}×${BLOCK} 块、NCC ≥ ${NCC_MIN} 过滤，防局部变糊）`,
+        r.sharp.blockMedian !== null && r.sharp.blockMedian >= BLOCK_MEDIAN_MIN,
+        `实测 ${r.sharp.blockMedian === null ? 'n/a（无有效块）' : r.sharp.blockMedian.toFixed(4)}`
+        + `（有效块 ${r.sharp.validBlocks}/${r.sharp.totalBlocks}，退化 ${r.sharp.degenerateBlocks}，低 NCC ${r.sharp.lowNccBlocks}）`);
+    } else {
+      console.log(`  SKIP  锐度判据：基线缺失 ⇒ 锐度判据跳过（结构性判据仍生效）  ← 期望 ${relative(repo, r.baselinePath)}`);
+    }
     if (USE_GPU) {
       add(`FPS ≥ 30（__fpsProbe(5000)；本机 60Hz vsync ⇒ 只能当地板）`, (r.fps?.fps ?? 0) >= 30, `fps=${r.fps?.fps ?? 'n/a'}`);
     } else {
@@ -547,11 +702,15 @@ try {
     console.log(`  Σ 隔离对象 RT 像素（机器无关工作量代理）= ${(totalPx / 1e6).toFixed(3)} Mpx`
       + `（${totalPx} px；按 ${BYTES_PER_PX} B/px 粗估 ≈ ${(totalPx * BYTES_PER_PX / 1048576).toFixed(1)} MB，**不是显存保证**）`);
     caseMetrics.push({
-      id: c.id, name: c.name, minGainTarget: c.minGain, ok: checks.every((x) => x.pass), checks,
+      id: c.id, name: c.name, ok: checks.every((x) => x.pass), checks,
       scene: [a.sceneW, a.sceneH], density: a.density, budgetScale: a.budgetScale,
       isolated: objRows, isolatedCount: objRows.length, totalRtPixels: totalPx,
       fps: r.fps?.fps ?? null, fpsFrames: r.fps?.frames ?? null, fpsChecked: USE_GPU,
       viewport: r.viewport, ready: r.ready,
+      // 双判据数字：基线缺失记 { skipped, baseline }（不静默、不计 PASS）
+      sharpness: r.sharp
+        ? { baseline: relative(repo, r.baselinePath), lapRatioMin: LAP_RATIO_MIN, blockMedianMin: BLOCK_MEDIAN_MIN, ...r.sharp }
+        : { skipped: true, reason: '基线缺失 ⇒ 锐度判据跳过（结构性判据仍生效）', baseline: relative(repo, r.baselinePath) },
       warnings: r.warns.map((w) => `[${w.level}] ${w.text}`), failWarnings: r.failWarns.map((w) => w.text),
       shot: relative(repo, r.shotPath),
     });
@@ -567,16 +726,39 @@ try {
     // R14/如实：预算不是硬保证，只是「尽力收窄升级幅度」的启发式
     budgetNote: `显存预算 ${BUDGET_BYTES} B / ${BYTES_PER_PX} B/px 只在超预算时收窄「超出屏占位」的升级幅度，`
       + `下限恒为屏占位；**不构成「显存不会爆」的保证**（驱动/其他上下文/纹理本身都占显存）。`,
-    sharpnessNote: '本脚本不比对基线图；锐度增益是手工对照（96×96 块、NCC ≥ 0.6 过滤、取中位数），数据见 task-9-report.md。',
+    // R30：锐度 = 双判据，相对 --baseline-dir 里的基线图；缺基线则该张跳过（不静默、不计 PASS）
+    sharpnessNote: `锐度判据（基线存在时断言；基线目录缺 <id>.png 则明确跳过、不计 PASS）：`
+      + `[S1] 全图 Laplacian（4 邻域）均方比 ≥ ${LAP_RATIO_MIN}；`
+      + `[S2] 逐 ${BLOCK}×${BLOCK} 块「梯度/对比度」比（p99|∇| / (p98−p2)，NCC ≥ ${NCC_MIN} 过滤动态块）的中位数 ≥ ${BLOCK_MEDIAN_MIN}。`,
+    sharpnessCriteria: {
+      lapRatioMin: LAP_RATIO_MIN, blockMedianMin: BLOCK_MEDIAN_MIN, block: BLOCK, nccMin: NCC_MIN,
+      baselineDir: relative(repo, BASELINE_DIR),
+      luma: '0.299R + 0.587G + 0.114B',
+      laplacian: '4 邻域（内部像素）响应平方的均值，比值 = 本次 / 基线',
+      blockMetric: '块内 p99|∇|（中心差分梯度模）/ (p98 − p2)（灰度分位数，线性插值）；逐块比的中位数',
+      skipPolicy: '基线图缺失 ⇒ 该张锐度判据跳过（打印明确原因），结构性判据照常；不计 PASS、不计 FAIL',
+    },
     fpsNote: '本机 60Hz vsync ⇒ FPS 只能当**地板**用，测不出 60 以上的余量，也不覆盖低端 GPU/4K 屏。',
     serialNote: 'harness 端口与 Edge user-data-dir 固定 ⇒ 不得并行跑多份。',
     cases: caseMetrics,
     summary: { cases: caseMetrics.length, pass: caseMetrics.filter((m) => m.ok).length, fail: caseMetrics.filter((m) => !m.ok).length,
+      sharpnessChecked: caseMetrics.filter((m) => m.sharpness && !m.sharpness.skipped).length,
+      sharpnessSkipped: caseMetrics.filter((m) => m.sharpness && m.sharpness.skipped).length,
       totalRtPixels: spend, minFps: Math.min(...caseMetrics.map((m) => m.fps ?? Infinity)) },
   };
   writeFileSync(join(OUT, 'metrics.json'), JSON.stringify(metrics, null, 1));
   console.log(`\n===== 结论 =====`);
   console.log(`  壁纸 ${metrics.summary.pass}/${metrics.summary.cases} 通过；Σ 隔离对象 RT 像素（本轮 ${caseMetrics.length} 张**合计**，机器无关工作量代理）= ${(spend / 1e6).toFixed(3)} Mpx；最低 FPS = ${Number.isFinite(metrics.summary.minFps) ? metrics.summary.minFps : 'n/a'}`);
+  console.log(`  锐度双判据（基线目录 ${relative(repo, BASELINE_DIR)}）：`
+    + `${metrics.summary.sharpnessChecked}/${caseMetrics.length} 张已判`
+    + (metrics.summary.sharpnessSkipped ? `、${metrics.summary.sharpnessSkipped} 张**跳过**（基线缺失，结构性判据仍生效）` : ''));
+  for (const m of caseMetrics) {
+    const s = m.sharpness;
+    console.log(`    ${m.id}（${m.name}）：` + (s.skipped
+      ? `SKIP 基线缺失（期望 ${s.baseline}）`
+      : s.error ? `FAIL ${s.error}`
+        : `Laplacian 均方比=${s.lapRatio.toFixed(3)}（≥${LAP_RATIO_MIN}）  逐块中位数=${s.blockMedian.toFixed(4)}（≥${BLOCK_MEDIAN_MIN}）  有效块 ${s.validBlocks}/${s.totalBlocks}`));
+  }
   console.log(`  （每张壁纸的 Σ 见上方逐张输出与 metrics.json；显存预算按**单张**壁纸算，不要拿这张合计值当显存。）`);
   console.log(`  ${metrics.budgetNote}`);
   console.log(`  FPS 局限：${metrics.fpsNote}`);
