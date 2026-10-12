@@ -812,7 +812,7 @@ describe('cropToMap（2 的幂填充裁剪，EVA 背景露黑根因）', () => {
   });
 });
 
-describe('fxRes：未 padding 上传 ⇒ 四分量一律按内容尺寸', () => {
+describe('fxRes：四分量一律同值（mip0 记录尺寸）⇒ 遮罩 UV 缩放为 1', () => {
   const npot = () => makeTex({
     format: TEX_FORMAT.RGBA8888,
     flags: 2,

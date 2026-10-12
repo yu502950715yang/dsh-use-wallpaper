@@ -312,13 +312,9 @@ export function resolveTextureResolution(
   };
 }
 
-// g_TextureNResolution 的 **vec4 分量**（WE/lwe 约定）：`(mip0.w, mip0.h, header.w, header.h)`。
-// ⚠️ 不是 `(w, h, 1/w, 1/h)`：WE 的效果 shader 用 `.z/.x` 缩放纹理 UV，例如 shake.vert 的
-//   `v_TexCoord.zw = uv * g_Texture1Resolution.z / g_Texture1Resolution.x`
-// 若 .z 填 1/w，则 .z/.x = 1/w² → mask/方向图的 UV 被压成 ~0 → 所有像素采到同一角 ⇒
-// 本该只作用于 mask 区域的效果变成**全图等量位移**（真机「整屏晃动」的根因）。
-// 纹理经 `textureFromTex` 时把 `[mip0.w, mip0.h, header.w, header.h]` 存进 userData.fxRes；
-// 场景/对象 RT 与未带该字段的纹理按 lwe 约定视为 `(w, h, w, h)`。
+// g_TextureNResolution 的 **vec4 分量**：四分量一律同值（= 纹理 mip0 记录尺寸）。WE 效果 shader
+// 用 `.z/.x` 缩放遮罩 UV（waterripple/shake），比值必须为 1，否则 NPOT padding 会按 分配/内容
+// 把遮罩挤向画面左上（见 AGENT.md §5.17）；RT 与未带 `fxRes` 的纹理走下方回退，同口径。
 export function resolveTextureResolution4(
   tex: {
     image?: { width?: number; height?: number } | null;

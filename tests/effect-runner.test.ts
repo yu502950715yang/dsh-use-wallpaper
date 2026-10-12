@@ -9,6 +9,7 @@ import {
   pickWriteTarget,
   resolveTargetSize,
   resolveTextureResolution,
+  resolveTextureResolution4,
   fillAudioSpectrumUniform,
   describeEffectPass,
   EffectRunner,
@@ -601,6 +602,27 @@ describe('resolveTextureResolution（g_TextureNResolution 推导：image 有尺�
     tex.image = { width: 0, height: 0 };
     expect(resolveTextureResolution(tex, 1920, 1080)).toEqual({ width: 0, height: 0 });
     tex.dispose();
+  });
+});
+
+describe('g_TextureNResolution 口径（四分量同值 ⇒ 遮罩 UV 缩放为 1）', () => {
+  it('RT / 无 fxRes 的纹理回退为 (w, h, w, h)', () => {
+    expect(resolveTextureResolution4({ image: { width: 4096, height: 1966 } }, 1, 1))
+      .toEqual({ x: 4096, y: 1966, z: 4096, w: 1966 });
+  });
+
+  it('带 fxRes 的纹理按四分量返回，且 .z/.x 与 .w/.y 恒为 1', () => {
+    const t = resolveTextureResolution4(
+      { image: { width: 2500, height: 1200 }, userData: { fxRes: [2500, 1200, 2500, 1200] } }, 1, 1);
+    expect(t).toEqual({ x: 2500, y: 1200, z: 2500, w: 1200 });
+    expect(t.z / t.x).toBe(1);
+    expect(t.w / t.y).toBe(1);
+  });
+
+  it('旧口径（.zw = 分配尺寸）会被同一判据判红（判别力自证）', () => {
+    const old = resolveTextureResolution4(
+      { image: { width: 2500, height: 1200 }, userData: { fxRes: [2500, 1200, 4096, 2048] } }, 1, 1);
+    expect(old.z / old.x).toBeCloseTo(1.6384, 3);
   });
 });
 
