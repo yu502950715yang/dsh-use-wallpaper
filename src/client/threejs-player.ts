@@ -929,7 +929,7 @@ export class ThreeScenePlayer {
     objectId?: number;
     // 对象隔离（对象级效果链）：五字段把三种量分开——
     //   objectId       = scene.json 的**对象 id**，即本隔离条目的键（见 attachIsolated 注释）；
-    //   rtWidth/rtHeight = 对象 RT 的像素尺寸（= 世界尺寸 × 屏幕密度的屏占位，等比收口到 4096）；
+    //   rtWidth/rtHeight = 对象 RT 的像素尺寸（由 object-range.isolatedRtSize 决定：≥ 屏占位、源纹理收口 4096）；
     //   worldW/worldH = 合成 quad 的世界尺寸（= |size × scale|，**未钳制**幅值）。
     // 缺省不隔离（内容直接进主 scene，帧序与今天逐字相同）。
     isolate?: { objectId: number; rtWidth: number; rtHeight: number; worldW: number; worldH: number };
@@ -1126,25 +1126,26 @@ export class ThreeScenePlayer {
   ): void {
     const rtW = Math.max(1, Math.round(size.width));
     const rtH = Math.max(1, Math.round(size.height));
-    // MSAA 显式开（主 canvas 是 `antialias: true`，而 `WebGLRenderTarget` 的 `samples` 缺省 0）：
-    // 隔离内容里的**轮廓边**（粒子 billboard 的硬边）需要它。
-    // ⚠️ 但它**不是**「大幅背景壁纸整体变糊」的根因（2026-09-14 归因实测，此前这里的注释把它
-    // 当成了根因）：背景隔离内容是**一整块铺满 RT 的 quad**，RT 内没有任何轮廓边，samples=0 与
-    // samples=4 的成品**逐像素完全相同（MAD = 0.0000）**——MSAA 对该对象是结构性无效，不是被
-    // headless/SwiftShader 忽略（探针实测 MAX_SAMPLES=8、样例 FBO 正常、samples=4 时斜置边有
-    // 79 个混合像素）。真正的根因是**对象 RT 尺寸与屏占位不符导致的合成重采样**（比 0.992 的
-    // 双线性 + 亚纹素相位漂移 ⇒ 锐度 −52%），已由 object-range.objectRtSize 的「屏占位」口径
-    // 修掉，详见 .superpowers/sdd/2026-09-14-three-object-effects-pipeline/clarity-report.md。
-    const rt = new THREE.WebGLRenderTarget(rtW, rtH, { samples: 4 });
+    // MSAA 分型：只有「整块盖满 RT 的 background quad」内部没有轮廓边、MSAA 结构性无效 ⇒ 关掉；
+    // 粒子 billboard 即使铺满整屏也**有硬边**，必须保留（故满屏判定同时要求 kind === 'background'）。
+    const isFullscreen = kind === 'background'
+      && Math.abs(worldW) >= this.sceneWidth * 0.98 && Math.abs(worldH) >= this.sceneHeight * 0.98;
+    // RT 大于屏占位（源纹理收口 4096 的结果）⇒ 合成 quad 那一步是**缩小采样**，必须开 mipmap 防走样。
+    const minifying = Math.max(rtW, rtH) > Math.max(Math.abs(worldW), Math.abs(worldH)) * this.screenScalePx() + 0.5;
+    const rt = new THREE.WebGLRenderTarget(rtW, rtH, {
+      samples: isFullscreen ? 0 : 4,
+      generateMipmaps: minifying,
+      minFilter: minifying ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter,
+    });
     // ⚠️ 局部正交相机的 left/right/top/bottom 是**世界坐标范围**（内容以世界单位绘制），
-    // 所以相机必须覆盖**完整对象世界尺寸**；RT 的像素尺寸只决定分辨率（= 世界尺寸 × 屏幕密度，
-    // 由调用方按屏占位算出、上限 4096）。这里两个坑都踩过：
+    // 所以相机必须覆盖**完整对象世界尺寸**；RT 的像素尺寸只决定分辨率（由 object-range.isolatedRtSize
+    // 决定：≥ 屏占位、源纹理收口 4096）。这里两个坑都踩过：
     //   ① 拿 RT 像素当相机范围 → dpr>1 时相机多覆盖 dpr 倍 ⇒ 内容只占 RT 的 1/dpr、四周空白，
     //      合成 quad 再按全窗口拉回世界尺寸 ⇒ 对象缩小 + 边缘 clamp 拉伸（真机 HiDPI 整张壁纸错乱）；
     //   ② 把相机范围钳到 OBJECT_RT_MAX → RT 只覆盖对象的中央一块，UV 窗口外侧被 CLAMP 采样成
     //      **边缘拉伸带**（实测 GTR 3743126786 对象世界宽 7430 > 4096 ⇒ 右侧 22% 画面宽是条纹）。
     // 超限对象现在的代价只是**分辨率低**（欠采样），不再有几何错位 —— 硬上限属于 RT **像素**尺寸，
-    // 由 object-range.objectRtSize 负责钳制。
+    // 由 object-range.isolatedRtSize 负责收口。
     const camW = Math.max(1, Math.abs(worldW));
     const camH = Math.max(1, Math.abs(worldH));
     // ⚠️ **y 镜像局部相机**（top = -camH/2 < bottom = +camH/2，2026-09-14 v 约定修复）：
@@ -1297,7 +1298,7 @@ export class ThreeScenePlayer {
       objectId?: number;
       // 对象隔离（对象级效果链；粒子对象同样可挂效果链）。五字段语义同 addBackground：
       //   objectId       = scene.json 的**对象 id**，即隔离条目的键；
-      //   rtWidth/rtHeight = 对象 RT 像素尺寸（= 世界尺寸 × 屏幕密度的屏占位，等比收口到 4096）；
+      //   rtWidth/rtHeight = 对象 RT 像素尺寸（由 object-range.isolatedRtSize 决定：≥ 屏占位、源纹理收口 4096）；
       //   worldW/worldH = 合成 quad 世界尺寸（= particleWorldSize 的**未钳制**值）。
       // 粒子 spec 无 size 字段、player 也不知道 distanceMax，故世界尺寸必须由调用方算好传入。
       // 缺省不隔离（内容直接进主 scene，帧序与今天逐字相同）。
@@ -1698,7 +1699,7 @@ export interface SceneAssets {
   //   （见 attachIsolated），从而与 ObjectEffectStage / wasm PendingChainStore 共用同一把键，
   //   不再需要「对象 id → 图层计数器 id」的翻译层（那层在 image+particle 同时隔离时会键冲突）。
   //   其余字段把两种量分开（见 addBackground/addParticle 的 isolate 注释）：
-  //   rtWidth/rtHeight = 对象 RT 的像素尺寸（= 世界尺寸 × 屏幕密度的屏占位，等比收口到 4096）；
+  //   rtWidth/rtHeight = 对象 RT 的像素尺寸（由 object-range.isolatedRtSize 决定：≥ 屏占位、源纹理收口 4096）；
   //   worldW/worldH = 合成 quad 的世界尺寸（未钳制幅值）。
   isolate?: Map<number, { objectId: number; rtWidth: number; rtHeight: number; worldW: number; worldH: number }>;
   // 场景树世界变换（可选）：scene.json 的**对象 id** → 父链累积后的世界 origin/scale/angles。

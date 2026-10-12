@@ -2083,6 +2083,91 @@ describe('ThreeScenePlayer 对象隔离', () => {
     expect(rtDispose).toHaveBeenCalled();
     expect(player.isolatedObjects()).toHaveLength(0);
   });
+
+  // MSAA 分型（Task 7）：只有 `kind === 'background'` 且**两轴都**盖满场景（≥ 0.98×）的对象才是
+  // 「一整块铺满 RT 的 quad」——这种对象 RT 内没有任何轮廓边，MSAA 结构性无效，关掉省 32 B/px；
+  // 粒子 billboard 即使铺满整屏也**有硬边**，必须保留 MSAA（故判定必须同时要求 background）。
+  it('铺满整屏的 background 关 MSAA（samples=0），未铺满的 background 仍为 4', () => {
+    const { player } = makePlayer(5000, 2400);
+    player.setSceneSize(5000, 2400);
+    // ① 两轴都盖满 → 满屏 quad → samples 0
+    player.addBackground({
+      origin: [2500, 1200, 0], size: [5000, 2400], scale: [1, 1, 1], texture: makeTexture(),
+      sceneW: 5000, sceneH: 2400,
+      isolate: { objectId: 13, rtWidth: 4096, rtHeight: 1966, worldW: 5000, worldH: 2400 },
+    });
+    // ② 满宽但不满高（单轴达标不算满屏）→ 4
+    player.addBackground({
+      origin: [2500, 540, 0], size: [5000, 1080], scale: [1, 1, 1], texture: makeTexture(),
+      sceneW: 5000, sceneH: 2400,
+      isolate: { objectId: 246, rtWidth: 4096, rtHeight: 884, worldW: 5000, worldH: 1080 },
+    });
+    // ③ 贴片（两轴都不达标）→ 4
+    player.addBackground({
+      origin: [960, 540, 0], size: [1920, 1080], scale: [1, 1, 1], texture: makeTexture(),
+      sceneW: 5000, sceneH: 2400,
+      isolate: { objectId: 247, rtWidth: 1920, rtHeight: 1080, worldW: 1920, worldH: 1080 },
+    });
+    const samples = (id: number) => player.isolatedObjects().find((e) => e.id === id)!.rt.samples;
+    expect([samples(13), samples(246), samples(247)]).toEqual([0, 4, 4]);
+    // 尺寸未被本改动动到：RT 像素 = 调用方下发的口径，逐字透传（只升不降）。
+    const full = player.isolatedObjects().find((e) => e.id === 13)!;
+    expect([full.rtWidth, full.rtHeight]).toEqual([4096, 1966]);
+  });
+
+  // R20：粒子即使铺满整屏也保留 MSAA —— 满屏判定里的 `kind === 'background'` 是硬条件。
+  it('铺满整屏的 particle 仍开 MSAA（samples=4，billboard 有硬边）', () => {
+    const { player } = makePlayer(5000, 2400);
+    player.setSceneSize(5000, 2400);
+    player.addParticle(() => new Float32Array(0), {
+      frameCount: 1, blend: 'alpha', objectCenter: [0, 0, 0],
+      isolate: { objectId: 71, rtWidth: 4096, rtHeight: 1966, worldW: 5000, worldH: 2400 },
+    });
+    const entry = player.isolatedObjects().find((e) => e.id === 71)!;
+    expect(entry.kind).toBe('particle');
+    expect(entry.rt.samples).toBe(4);
+  });
+
+  // 合成 mipmap（Task 7）：RT 可能大于屏占位（源纹理收口 4096 的结果）⇒ 合成那一步是**缩小采样**，
+  // 不生成 mip 会高频走样/闪烁。
+  it('RT 大于屏占位时开合成 mipmap（generateMipmaps + LinearMipmapLinearFilter）', () => {
+    // dpr=2 ⇒ 屏幕密度 2：对象世界 1920×1080 的屏占位长边 = 3840 < RT 长边 4096。
+    Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: 2 });
+    try {
+      const { player } = makePlayer(5000, 2400);
+      player.setSceneSize(5000, 2400);
+      expect(player.screenScalePx()).toBe(2);
+      player.addBackground({
+        origin: [960, 540, 0], size: [1920, 1080], scale: [1, 1, 1], texture: makeTexture(),
+        sceneW: 5000, sceneH: 2400,
+        isolate: { objectId: 13, rtWidth: 4096, rtHeight: 2304, worldW: 1920, worldH: 1080 },
+      });
+      const rt = player.isolatedObjects().find((e) => e.id === 13)!.rt;
+      expect(rt.texture.generateMipmaps).toBe(true);
+      expect(rt.texture.minFilter).toBe(THREE.LinearMipmapLinearFilter);
+    } finally {
+      Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: 1 });
+    }
+  });
+
+  it('RT 不大于屏占位时不开 mipmap（保持 three 的既有无 mip 行为）', () => {
+    // dpr=2 ⇒ 满屏对象屏占位长边 = 10000 > RT 长边 4096（已顶硬上限、放大不上去）⇒ 不是缩小采样。
+    Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: 2 });
+    try {
+      const { player } = makePlayer(5000, 2400);
+      player.setSceneSize(5000, 2400);
+      player.addBackground({
+        origin: [2500, 1200, 0], size: [5000, 2400], scale: [1, 1, 1], texture: makeTexture(),
+        sceneW: 5000, sceneH: 2400,
+        isolate: { objectId: 13, rtWidth: 4096, rtHeight: 1966, worldW: 5000, worldH: 2400 },
+      });
+      const rt = player.isolatedObjects().find((e) => e.id === 13)!.rt;
+      expect(rt.texture.generateMipmaps).toBe(false);
+      expect(rt.texture.minFilter).toBe(THREE.LinearFilter);
+    } finally {
+      Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: 1 });
+    }
+  });
 });
 
 // 2026-09-22 Task 8：SceneScript 运行时需要的「scene 对象 id → 最终显示对象」映射与帧钩子。
