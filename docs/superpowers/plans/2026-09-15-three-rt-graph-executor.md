@@ -18,7 +18,7 @@
 - **帧内禁止编译/建管线/建 RT**（`AGENT.md` §5.11）：链解析、`setPlan`、材质与探针编译、具名 RT 创建全部发生在加载期或 resize 重挂期。
 - 渲染进任何 RenderTarget 必须走 `renderIntoRenderTarget()`（透明清屏，`AGENT.md` §5.22）。
 - RT 纹理保持 `ClampToEdgeWrapping`（`AGENT.md` §5.19）。
-- `g_TextureNResolution` 的 vec4 分量是 `(mip0.w, mip0.h, header.w, header.h)`（`AGENT.md` §5.17），一律经 `resolveTextureResolution4()` 取值。
+- `g_TextureNResolution` 的 vec4 四分量一律同值（= 纹理 mip0 记录尺寸，`AGENT.md` §5.17），一律经 `resolveTextureResolution4()` 取值。
 - 纯函数（可 node 测）与 WebGL 代码分离：所有新语义进 `src/client/effect-graph.ts`。
 - 测试命令：`npx vitest run tests/<file>.test.ts --reporter=basic`。
 - 全量 `vitest run` 有 **15 项既有失败**（`wasm-renderer` 7 / `scene-renderer` 6 / `verify-real-library` 1 / `dom/bootstrap.dom` 1），改动后与 `git stash` 基线对比，别当成本次回归。
