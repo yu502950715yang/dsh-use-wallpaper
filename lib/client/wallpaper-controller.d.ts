@@ -11,6 +11,7 @@ export interface SceneRendererLike {
         strength?: number;
     }): void;
     setSoundEnabled?(enabled: boolean): void;
+    setOnContextLost?(cb: ((id: string) => void) | null): void;
 }
 /** 贴壁纸文字样式（设置面板可改）：实时读取，故由 index.ts 以 getter 注入。 */
 export interface TextStyleSettings {

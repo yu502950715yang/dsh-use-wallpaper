@@ -129,6 +129,7 @@ export declare class ThreeScenePlayer {
     }): number;
     private createLayerMaterial;
     private createCompositeQuadMaterial;
+    private applyCompositeSampling;
     private attachIsolated;
     update_background(id: number, origin?: [number, number, number], scale?: [number, number, number], alpha?: number, brightness?: number): void;
     resizeBackground(id: number, size: [number, number]): void;

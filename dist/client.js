@@ -3101,6 +3101,12 @@ function createWallpaperController(layer, opts) {
   let selectGeneration = 0;
   let currentInfo;
   const textStyler = createTextStyler(layer, opts, () => selectGeneration);
+  opts.sceneRenderer?.setOnContextLost?.((id) => {
+    const fallback = list.find((w) => w.id === id) ?? currentInfo;
+    console.warn(`[wallpaper-engine] scene \u6E32\u67D3\u4E0D\u53EF\u7528\uFF08WebGL \u4E0A\u4E0B\u6587\u4E22\u5931\uFF09\uFF0C\u5DF2\u56DE\u9000 preview\uFF08\u58C1\u7EB8 ${id}\uFF09`);
+    if (fallback?.previewUrl) layer.showImage(fallback.previewUrl, !fallback.hasPreviewGif);
+    else layer.showNone();
+  });
   async function load() {
     list = await opts.fetchList();
     return list;
@@ -22568,6 +22574,62 @@ function objectRtSize(worldW, worldH, screenScale, cap = OBJECT_RT_MAX) {
   const height = Math.max(1, Math.round(rawH * k));
   return { width, height };
 }
+function isolatedRtLongEdge(occLongEdge, sourceLongEdge, cap = OBJECT_RT_MAX) {
+  const occ = Number.isFinite(occLongEdge) && occLongEdge > 0 ? occLongEdge : 1;
+  const src = Number.isFinite(sourceLongEdge) && sourceLongEdge > 0 ? sourceLongEdge : 0;
+  const limit = Number.isFinite(cap) && cap > 0 ? cap : OBJECT_RT_MAX;
+  return Math.max(occ, Math.min(src, limit));
+}
+function isolatedRtSize(worldW, worldH, density, source, opts = {}) {
+  const occ = objectRtSize(worldW, worldH, density, opts.cap ?? OBJECT_RT_MAX);
+  const occLong = Math.max(occ.width, occ.height);
+  const srcLong = source ? Math.max(source.width, source.height) : 0;
+  const bs = opts.budgetScale;
+  const scale = typeof bs === "number" && Number.isFinite(bs) && bs > 0 && bs < 1 ? bs : 1;
+  const targetLong = Math.max(occLong, occLong + (isolatedRtLongEdge(occLong, srcLong, opts.cap) - occLong) * scale);
+  if (targetLong <= occLong + 1e-6) return { ...occ, upgraded: false };
+  const aw = Number.isFinite(worldW) ? Math.abs(worldW) : 0;
+  const ah = Number.isFinite(worldH) ? Math.abs(worldH) : 0;
+  const base = Math.max(aw, ah);
+  const k = base > 0 ? targetLong / base : 1;
+  const width = Math.max(occ.width, Math.max(1, Math.round(aw * k)));
+  const height = Math.max(occ.height, Math.max(1, Math.round(ah * k)));
+  return { width, height, upgraded: width > occ.width || height > occ.height };
+}
+function sourcePixelsFromTexture(tex) {
+  if (!tex || !tex.image) return null;
+  if (tex.userData?.sprite) return null;
+  const img = tex.image;
+  const vw = Number(img.videoWidth);
+  const vh = Number(img.videoHeight);
+  if (Number.isFinite(vw) && vw > 0 && Number.isFinite(vh) && vh > 0) return { width: vw, height: vh };
+  const w = Number(img.width);
+  const h = Number(img.height);
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return null;
+  return { width: w, height: h };
+}
+var ISOLATED_RT_BUDGET_BYTES = 384e6;
+var ISOLATED_RT_BYTES_PER_PX = 28;
+var ISOLATED_RT_MIN_BUDGET_SCALE = 1e-4;
+function fitIsolatedBudget(items, density, budgetBytes = ISOLATED_RT_BUDGET_BYTES, bytesPerPx = ISOLATED_RT_BYTES_PER_PX) {
+  const budget = Number.isFinite(budgetBytes) && budgetBytes > 0 ? budgetBytes : ISOLATED_RT_BUDGET_BYTES;
+  const perPx = Number.isFinite(bytesPerPx) && bytesPerPx > 0 ? bytesPerPx : ISOLATED_RT_BYTES_PER_PX;
+  const pixelsAt = (scale) => items.reduce((sum, it) => {
+    const rt = isolatedRtSize(it.worldW, it.worldH, density, it.source, { budgetScale: scale });
+    return sum + rt.width * rt.height;
+  }, 0);
+  const fits = (scale) => pixelsAt(scale) * perPx <= budget;
+  if (fits(1)) return 1;
+  let lo = ISOLATED_RT_MIN_BUDGET_SCALE;
+  if (!fits(lo)) return lo;
+  let hi = 1;
+  for (let i = 0; i < 24; i++) {
+    const mid = (lo + hi) / 2;
+    if (fits(mid)) lo = mid;
+    else hi = mid;
+  }
+  return lo;
+}
 
 // src/client/script-patterns.ts
 function detectScriptPattern(src) {
@@ -23452,6 +23514,9 @@ var ThreeScenePlayer = class {
     if (this.canvas.height !== bufH) this.canvas.height = bufH;
     const buf = this.renderer.domElement ?? this.canvas;
     this.glowStage?.resize(buf.width, buf.height);
+    for (const entry of this.isolated.values()) {
+      this.applyCompositeSampling(entry.rt, entry.worldW, entry.worldH);
+    }
   }
   /** 画质档位：走 resize 路径重推画布缓冲与屏幕密度（对象 RT 的基准随之变化）。 */
   setQualityScale(scale) {
@@ -23615,10 +23680,12 @@ var ThreeScenePlayer = class {
     if (!entry) return;
     const w = Math.max(1, Math.round(width));
     const h = Math.max(1, Math.round(height));
-    if (entry.rt.width === w && entry.rt.height === h) return;
-    entry.rt.setSize(w, h);
-    entry.rtWidth = w;
-    entry.rtHeight = h;
+    if (entry.rt.width !== w || entry.rt.height !== h) {
+      entry.rt.setSize(w, h);
+      entry.rtWidth = w;
+      entry.rtHeight = h;
+    }
+    this.applyCompositeSampling(entry.rt, entry.worldW, entry.worldH);
   }
   // 渲染所有隔离对象的内容到各自 RT（player 拥有 scene/camera，故渲染留在 player）。
   // ⚠️ 必须走 renderIntoRenderTarget（透明清屏），直接 setRenderTarget + render 会画出黑块。
@@ -23765,6 +23832,16 @@ var ThreeScenePlayer = class {
     }
     return mat;
   }
+  // 合成采样决策：RT 大于屏占位（源纹理收口 4096 的结果）⇒ 合成 quad 那一步是**缩小采样**，
+  // 必须开 mipmap 防走样。调用点 ① attachIsolated ② resizeObjectRT ③ resize（同式子、同一份 this 状态）。
+  applyCompositeSampling(rt, worldW, worldH) {
+    const minifying = Math.max(rt.width, rt.height) > Math.max(Math.abs(worldW), Math.abs(worldH)) * this.screenScalePx() + 0.5;
+    const nextMin = minifying ? LinearMipmapLinearFilter : LinearFilter;
+    const flipped = rt.texture.minFilter !== nextMin;
+    rt.texture.generateMipmaps = minifying;
+    rt.texture.minFilter = nextMin;
+    if (flipped) rt.dispose();
+  }
   // 建立对象隔离条目：RT + 局部正交相机 + localScene + 主场景合成 quad。
   // localCamera 范围 = RT 分辨率（对象中心为原点，与场景像素 1:1）；合成 quad 用
   // createCompositeGeometry（世界尺寸含缩放、UV 按钳制窗口映射），position 承载对象在世界中
@@ -23784,7 +23861,9 @@ var ThreeScenePlayer = class {
   attachIsolated(objectId, kind, content, worldW, worldH, size, position, quadAngles, colorBlendMode) {
     const rtW = Math.max(1, Math.round(size.width));
     const rtH = Math.max(1, Math.round(size.height));
-    const rt = new WebGLRenderTarget(rtW, rtH, { samples: 4 });
+    const isFullscreen = kind === "background" && Math.abs(worldW) >= this.sceneWidth * 0.98 && Math.abs(worldH) >= this.sceneHeight * 0.98;
+    const rt = new WebGLRenderTarget(rtW, rtH, { samples: isFullscreen ? 0 : 4 });
+    this.applyCompositeSampling(rt, worldW, worldH);
     const camW = Math.max(1, Math.abs(worldW));
     const camH = Math.max(1, Math.abs(worldH));
     const localCamera = new OrthographicCamera(-camW / 2, camW / 2, -camH / 2, camH / 2, -1e3, 1e3);
@@ -25587,17 +25666,18 @@ var ObjectEffectStage = class {
     const s = this.screenScale;
     return Number.isFinite(s) && s > 0 ? s : 1;
   }
-  /** 世界尺寸（场景像素）：resize 时按新预算重算 RT 像素尺寸的唯一来源。
+  /** 世界尺寸 + 源纹理尺寸（场景像素）：resize 时按新预算重算 RT 像素尺寸的唯一来源。
    *  调用顺序契约：three-renderer 先 setWorldSize 再 setObjectChains（后者不覆盖前者）。 */
-  setWorldSize(objId, worldW, worldH) {
+  setWorldSize(objId, worldW, worldH, source = null) {
     if (this.disposed) return;
     const entry = this.entries.get(objId);
     if (entry) {
       entry.worldW = worldW;
       entry.worldH = worldH;
+      entry.source = source;
       return;
     }
-    this.entries.set(objId, { runner: null, chains: [], plan: null, worldW, worldH });
+    this.entries.set(objId, { runner: null, chains: [], plan: null, worldW, worldH, source });
   }
   /** 挂载某对象的效果链（线性链与具名 RT 图链一视同仁，计划交执行器执行）。调用顺序契约：
    *  player 先在 loadSceneToThree 内建好隔离条目，stage 再挂链（Task 5 的接线顺序：
@@ -25614,6 +25694,8 @@ var ObjectEffectStage = class {
     this.mount(objId, chains, view.rtWidth, view.rtHeight);
   }
   /** 视口变化：按新的**屏幕密度**重算每个对象的 RT 像素尺寸，并用同一份链重挂（runner 内部 RT 跟随）。
+   *  尺寸口径与挂载期**同源**：同一纯函数 isolatedRtSize + 同一口径（预算输入集合的差异见 AGENT.md §7.36）
+   *  ——若这里另写一套屏占位算术，任何一次 resize 都会把已升到 4096 的 RT 打回屏占位（违反只升不降）。
    *  ⚠️ 参数是「设备像素 / 世界单位」这一个标量（object-range.screenScalePx 的返回值），**不是**
    *  视口宽高预算：旧实现传 `视口 × dpr` 当预算，成了「第二处独立预算」——挂载期与 resize 期
    *  各算一遍、输入不同源时任何一次 resize 都会把 RT 打回旧口径（3fd6b00「挂载期 RT 正确、
@@ -25625,8 +25707,12 @@ var ObjectEffectStage = class {
   onViewportResize(screenScale) {
     if (this.disposed) return;
     this.screenScale = screenScale;
+    const budgetScale = fitIsolatedBudget(
+      [...this.entries].map(([objId, e]) => ({ objId, worldW: e.worldW, worldH: e.worldH, source: e.source })),
+      this.scale()
+    );
     for (const [id, entry] of this.entries) {
-      const size = objectRtSize(entry.worldW, entry.worldH, this.scale());
+      const size = isolatedRtSize(entry.worldW, entry.worldH, this.scale(), entry.source, { budgetScale });
       const view = this.host.isolatedObjects().find((o) => o.id === id);
       if (!view) continue;
       if (view.rtWidth === size.width && view.rtHeight === size.height) continue;
@@ -25680,7 +25766,8 @@ var ObjectEffectStage = class {
       chains: [],
       plan: null,
       worldW: view ? view.rtWidth / this.scale() : 1,
-      worldH: view ? view.rtHeight / this.scale() : 1
+      worldH: view ? view.rtHeight / this.scale() : 1,
+      source: null
     });
   }
   /** 去重告警（同一 key 只打印一次，防每帧刷屏）。 */
@@ -25724,7 +25811,7 @@ var ObjectEffectStage = class {
   mount(objId, chains, rtW, rtH) {
     let entry = this.entries.get(objId);
     if (!entry) {
-      entry = { runner: null, chains, plan: null, worldW: rtW / this.scale(), worldH: rtH / this.scale() };
+      entry = { runner: null, chains, plan: null, worldW: rtW / this.scale(), worldH: rtH / this.scale(), source: null };
       this.entries.set(objId, entry);
     }
     entry.chains = chains;
@@ -28868,6 +28955,9 @@ function createThreeSceneRenderer(opts) {
   let currentAudio = null;
   let soundEnabledOverride = null;
   let lastAudioSpec = null;
+  let contextLostHandler = null;
+  let contextLostCanvas = null;
+  let contextLost = false;
   const stopAudio = () => {
     const audio = currentAudio;
     currentAudio = null;
@@ -28883,10 +28973,26 @@ function createThreeSceneRenderer(opts) {
       void playWallpaperSound(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(s)}`, analyzer);
     }
   };
+  const onContextLost = (e) => {
+    e.preventDefault();
+    contextLost = true;
+    const id = contextLostCanvas?.dataset.wpId;
+    try {
+      teardown();
+    } catch {
+    }
+    if (!id) return;
+    console.warn(`[wallpaper-engine] WebGL \u4E0A\u4E0B\u6587\u4E22\u5931\uFF0C\u5DF2\u56DE\u9000 preview\uFF08\u58C1\u7EB8 ${id}\uFF09`);
+    contextLostHandler?.(id);
+  };
   const teardown = () => {
     if (onWindowResize) {
       window.removeEventListener("resize", onWindowResize);
       onWindowResize = null;
+    }
+    if (contextLostCanvas) {
+      contextLostCanvas.removeEventListener("webglcontextlost", onContextLost);
+      contextLostCanvas = null;
     }
     currentStage?.dispose();
     currentStage = null;
@@ -28907,6 +29013,11 @@ function createThreeSceneRenderer(opts) {
     currentMeshRegistry?.dispose();
     currentMeshRegistry = null;
     stopAudio();
+  };
+  const abortIfContextLost = () => {
+    if (!contextLost) return false;
+    teardown();
+    return true;
   };
   const effectiveGlow = () => ({
     enabled: glowOverride?.enabled ?? glowFromSettings?.enabled ?? true,
@@ -28938,13 +29049,19 @@ function createThreeSceneRenderer(opts) {
   return {
     async render(id, fg, _bg) {
       warnedKeys.clear();
+      contextLost = false;
       try {
         teardown();
+        fg.dataset.wpId = id;
+        fg.addEventListener("webglcontextlost", onContextLost, { once: true });
+        contextLostCanvas = fg;
         modulePromise ??= loadWasm();
         const mod = await modulePromise;
+        if (abortIfContextLost()) return false;
         const sceneJsonResp = await fetch(`/wallpapers/scene/${id}/asset?name=scene.json`);
         if (!sceneJsonResp.ok) return false;
         const sceneJson = await sceneJsonResp.text();
+        if (abortIfContextLost()) return false;
         const desc = parseSceneJson(sceneJson);
         const vw = Math.max(1, Math.round(window.innerWidth || desc.orthogonal.width));
         const vh = Math.max(1, Math.round(window.innerHeight || desc.orthogonal.height));
@@ -28995,6 +29112,7 @@ function createThreeSceneRenderer(opts) {
             });
           }
         }
+        if (abortIfContextLost()) return false;
         const textLayers = /* @__PURE__ */ new Map();
         let scriptRuntime = null;
         if (desc.objects.some((o) => o.kind === "text" && o.script && resolveVisibility(o, userProps))) {
@@ -29039,6 +29157,7 @@ function createThreeSceneRenderer(opts) {
             anchorOffset
           });
         }
+        if (abortIfContextLost()) return false;
         const cpSim = mod?.CpuParticleSim;
         const createParticleSim = cpSim ? (json, origin, sceneW, sceneH, overrideJson) => {
           try {
@@ -29060,6 +29179,7 @@ function createThreeSceneRenderer(opts) {
         );
         const scriptSources = collectScriptSources(desc);
         const settings = await readClientSettings();
+        if (abortIfContextLost()) return false;
         qualityScale = settings.qualityScale ?? 1;
         lastAudioSpec = desc.sounds && desc.sounds.length > 0 ? { id, sounds: desc.sounds } : null;
         startAudio(id, desc.sounds ?? [], soundEnabledOverride ?? settings.soundEnabled !== false);
@@ -29073,26 +29193,39 @@ function createThreeSceneRenderer(opts) {
           qualityScale
         );
         const screenScale = screenScalePx(desc.orthogonal.width, desc.orthogonal.height, vw, vh, dpr);
+        const isolateItems = desc.objects.filter((o) => o.kind === "image" && !isStaticallyHidden(o.visible, userProps) && (effectChains.get(o.id)?.length ?? 0) > 0).map((o) => {
+          const tex = backgroundTextures.get(o.id);
+          const s = o.scale;
+          const w = (o.size?.[0] ?? tex?.image?.width ?? 1) * s[0];
+          const h = (o.size?.[1] ?? tex?.image?.height ?? 1) * s[1];
+          return {
+            objId: o.id,
+            worldW: Math.abs(w),
+            worldH: Math.abs(h),
+            source: sourcePixelsFromTexture(tex)
+          };
+        });
+        const budgetScale = fitIsolatedBudget(isolateItems, screenScale);
+        const isolatedSizes = new Map(isolateItems.map((it) => [it.objId, {
+          rt: isolatedRtSize(it.worldW, it.worldH, screenScale, it.source, { budgetScale }),
+          worldW: it.worldW,
+          worldH: it.worldH
+        }]));
+        const sourceOf = new Map(isolateItems.map((it) => [it.objId, it.source]));
         const isolate = /* @__PURE__ */ new Map();
         for (const obj of desc.objects) {
           if (isStaticallyHidden(obj.visible, userProps)) continue;
           const chains = effectChains.get(obj.id);
           if (!chains || chains.length === 0) continue;
           if (obj.kind === "image") {
-            const tex = backgroundTextures.get(obj.id);
-            const texW = tex?.image?.width ?? obj.size?.[0] ?? 1;
-            const texH = tex?.image?.height ?? obj.size?.[1] ?? 1;
-            const w = obj.size?.[0] ?? texW;
-            const h = obj.size?.[1] ?? texH;
-            const s = obj.scale;
-            const world = { w: Math.abs(w * s[0]), h: Math.abs(h * s[1]) };
-            const rt = objectRtSize(world.w, world.h, screenScale);
+            const sized = isolatedSizes.get(obj.id);
+            if (!sized) continue;
             isolate.set(obj.id, {
               objectId: obj.id,
-              rtWidth: rt.width,
-              rtHeight: rt.height,
-              worldW: world.w,
-              worldH: world.h
+              rtWidth: sized.rt.width,
+              rtHeight: sized.rt.height,
+              worldW: sized.worldW,
+              worldH: sized.worldH
             });
           } else if (obj.kind === "particle") {
             const p = particles.get(obj.id);
@@ -29114,6 +29247,7 @@ function createThreeSceneRenderer(opts) {
             });
           }
         }
+        if (abortIfContextLost()) return false;
         const result = loadSceneToThree(sceneJson, {
           backgroundTextures,
           particles,
@@ -29193,6 +29327,7 @@ function createThreeSceneRenderer(opts) {
             );
           }
         }
+        if (abortIfContextLost()) return false;
         let stage = null;
         let droppedEffects = 0;
         for (const [objId, chains] of effectChains) {
@@ -29211,7 +29346,7 @@ function createThreeSceneRenderer(opts) {
             screenScale
           });
           for (const [objId, iso] of isolate) {
-            stage.setWorldSize(objId, iso.worldW, iso.worldH);
+            stage.setWorldSize(objId, iso.worldW, iso.worldH, sourceOf.get(objId) ?? null);
           }
           for (const [objId, chains] of effectChains) {
             if (!isolate.has(objId)) continue;
@@ -29237,6 +29372,7 @@ function createThreeSceneRenderer(opts) {
           currentStage?.onViewportResize(current.player.screenScalePx());
         };
         window.addEventListener("resize", onWindowResize);
+        if (abortIfContextLost()) return false;
         console.log(
           `[three] scene loaded id=${id} background=${result.backgroundIds.length} particleLayers=${result.particleLayers.length}`
         );
@@ -29264,6 +29400,10 @@ function createThreeSceneRenderer(opts) {
       if (!current) return;
       current.player.setQualityScale(scale);
       currentStage?.onViewportResize(current.player.screenScalePx());
+    },
+    // 上下文丢失回调（控制器注册，见 onContextLost）：传 null 撤销，可重复设。
+    setOnContextLost(cb) {
+      contextLostHandler = cb;
     },
     // 应用级 Glow 的运行期参数（面板即时生效）：已装配就地重配 / 装卸 stage，不必重选壁纸。
     setGlow(patch) {

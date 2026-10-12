@@ -56,3 +56,35 @@ export declare function objectRtSize(worldW: number, worldH: number, screenScale
     width: number;
     height: number;
 };
+export interface SourcePixels {
+    width: number;
+    height: number;
+}
+export declare function isolatedRtLongEdge(occLongEdge: number, sourceLongEdge: number, cap?: number): number;
+export declare function isolatedRtSize(worldW: number, worldH: number, density: number, source: SourcePixels | null, opts?: {
+    cap?: number;
+    budgetScale?: number;
+}): {
+    width: number;
+    height: number;
+    upgraded: boolean;
+};
+export interface TexLike {
+    image?: {
+        width?: number;
+        height?: number;
+        videoWidth?: number;
+        videoHeight?: number;
+    } | null;
+    userData?: {
+        sprite?: unknown;
+    } | null;
+}
+export declare function sourcePixelsFromTexture(tex: TexLike | null | undefined): SourcePixels | null;
+export declare const ISOLATED_RT_BUDGET_BYTES = 384000000;
+export declare const ISOLATED_RT_BYTES_PER_PX = 28;
+export declare function fitIsolatedBudget(items: Array<{
+    worldW: number;
+    worldH: number;
+    source: SourcePixels | null;
+}>, density: number, budgetBytes?: number, bytesPerPx?: number): number;

@@ -1,4 +1,5 @@
 import type * as THREE from 'three';
+import type { SourcePixels } from './object-range.js';
 import { EffectRunner } from './effect-runner.js';
 import type { EffectTexLoader } from './effect-runner.js';
 import type { CompiledEffectPass } from './shader/effect-chain.js';
@@ -41,15 +42,17 @@ export declare class ObjectEffectStage implements ObjectEffectStage {
     });
     /** 当前屏幕密度（设备像素 / 世界单位）；同源下发契约见类头。 */
     private scale;
-    /** 世界尺寸（场景像素）：resize 时按新预算重算 RT 像素尺寸的唯一来源。
+    /** 世界尺寸 + 源纹理尺寸（场景像素）：resize 时按新预算重算 RT 像素尺寸的唯一来源。
      *  调用顺序契约：three-renderer 先 setWorldSize 再 setObjectChains（后者不覆盖前者）。 */
-    setWorldSize(objId: number, worldW: number, worldH: number): void;
+    setWorldSize(objId: number, worldW: number, worldH: number, source?: SourcePixels | null): void;
     /** 挂载某对象的效果链（线性链与具名 RT 图链一视同仁，计划交执行器执行）。调用顺序契约：
      *  player 先在 loadSceneToThree 内建好隔离条目，stage 再挂链（Task 5 的接线顺序：
      *  setWorldSize → setObjectChains）；找不到隔离条目说明契约被破坏 → 明确告警一次，
      *  绝不静默丢弃，也绝不猜尺寸。 */
     setObjectChains(objId: number, chains: CompiledEffectPass[][]): void;
     /** 视口变化：按新的**屏幕密度**重算每个对象的 RT 像素尺寸，并用同一份链重挂（runner 内部 RT 跟随）。
+     *  尺寸口径与挂载期**同源**：同一纯函数 isolatedRtSize + 同一口径（预算输入集合的差异见 AGENT.md §7.36）
+     *  ——若这里另写一套屏占位算术，任何一次 resize 都会把已升到 4096 的 RT 打回屏占位（违反只升不降）。
      *  ⚠️ 参数是「设备像素 / 世界单位」这一个标量（object-range.screenScalePx 的返回值），**不是**
      *  视口宽高预算：旧实现传 `视口 × dpr` 当预算，成了「第二处独立预算」——挂载期与 resize 期
      *  各算一遍、输入不同源时任何一次 resize 都会把 RT 打回旧口径（3fd6b00「挂载期 RT 正确、
