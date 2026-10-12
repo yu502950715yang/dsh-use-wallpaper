@@ -156,10 +156,9 @@ Expected: Task 1 之后即 PASS；若把 Task 1 的 `.zw` 临时改回 `info.tex
 `src/client/effect-runner.ts:315-321` 注释改为：
 
 ```ts
-// g_TextureNResolution 的 **vec4 分量**：`[内容宽, 内容高, 内容宽, 内容高]`。
-// 插件从不 padding 上传 ⇒ 内容尺寸 == 分配尺寸；WE 效果 shader 用 `.z/.x` 缩放遮罩 UV
-// （如 waterripple.vert / shake.vert），故该比值必须为 1，否则遮罩整体错位（见 AGENT.md §5.17）。
-// 场景/对象 RT 与未带 `fxRes` 的纹理走下方回退，天然满足同一口径。
+// g_TextureNResolution 的 **vec4 分量**：四分量一律同值（= 纹理 mip0 记录尺寸）。WE 效果 shader
+// 用 `.z/.x` 缩放遮罩 UV（waterripple/shake），比值必须为 1，否则 NPOT padding 会按 分配/内容
+// 把遮罩挤向画面左上（见 AGENT.md §5.17）；RT 与未带 `fxRes` 的纹理走下方回退，同口径。
 ```
 
 - [ ] **Step 4: 跑测试确认绿**
@@ -277,9 +276,9 @@ git commit -m "test(e2e): 钉住遮罩槽分辨率口径 z/x === 1"
 `AGENT.md` §5.17 的 `(mip0.w, mip0.h, header.w, header.h)` 表述改为：
 
 ```
-§5.17 g_TextureNResolution = [内容宽, 内容高, 内容宽, 内容高]（未 padding 上传 ⇒ 四分量同值）。
-效果 shader 用 `.z/.x` 缩放遮罩 UV，比值必须为 1；填 `.tex` 头的分配尺寸会让遮罩按
-分配/内容 挤向画面左上（真机：湖水波动跑到树上）。细节见 docs/fixes/conventions-details.md。
+§5.17 g_TextureNResolution 四分量一律同值（= 纹理 mip0 记录尺寸）；效果 shader 用 `.z/.x`
+缩放遮罩 UV，比值必须为 1。插件不按 .tex 头做 padding 分配，故填头里的分配尺寸会让 NPOT 纹理的
+遮罩按 分配/内容 挤向画面左上（真机：湖水波动跑到树上）。细节见 docs/fixes/conventions-details.md。
 ```
 
 - [ ] **Step 2: 新增 §7 遗留条目**
