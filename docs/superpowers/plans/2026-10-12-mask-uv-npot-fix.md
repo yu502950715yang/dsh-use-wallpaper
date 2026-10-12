@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 让 `g_TextureNResolution` 的 `.z/.w` 反映**实际上传的纹理尺寸**，使效果遮罩（水面波动等）回到作者指定的位置。
+**Goal:** 让 `g_TextureNResolution` 的 `.z/.w` 取**同值**（= mip0 记录尺寸）⇒ `.z/.x` 恒为 1，使效果遮罩（水面波动等）回到作者指定的位置。
 
 **Architecture:** **本机库内不存在**按 `.tex` 头 padding 分配的纹理（`createImageBitmap` 解出即上传；原始像素载荷类经 `cropToMap` 裁到内容宽高后上传），但「mip0 记录尺寸 == 实际上传尺寸」**不是全称** —— 原始像素载荷类（`mip0 记录 == 分配`，51 个）上传的是 `cropToMap` 裁出的内容宽高，其 `.x/.y` 与真实纹理尺寸仍差约 1.6×（follow-up，见设计 §7）。把 `tex-loader` 写入 `userData.fxRes` 的 `.zw` 从 `.tex` 头里的分配尺寸改为 mip0 记录尺寸（**四分量同值**），即可让所有 `uv * z/x` 形式的遮罩 UV 缩放退化为恒等；`resolveTextureResolution4` 的既有回退（RT 与无 `fxRes` 纹理返回 `{x:w,y:h,z:w,w:h}`）本就是这一口径，无需改逻辑。
 
@@ -40,7 +40,7 @@
 ### Task 1: `fxRes` 改为「四分量同值（= mip0 记录尺寸）」口径
 
 **Files:**
-- Modify: `src/client/tex-loader.ts:471-478`
+- Modify: `src/client/tex-loader.ts:471-475`
 - Test: `tests/tex-loader.test.ts`（文件末尾追加 describe）
 
 **Interfaces:**
@@ -91,7 +91,7 @@ Expected: 第一条 FAIL —— `expected [ 100, 50, 256, 128 ] to deeply equal 
 
 - [x] **Step 3: 最小实现**
 
-`src/client/tex-loader.ts:471-478` 改为（下列 2 行即**实际提交**的注释；口径 =「四分量一律同值（= mip0 记录尺寸）」，见设计 §5.1）：
+`src/client/tex-loader.ts:471-475` 改为（下列 2 行即**实际提交**的注释；口径 =「四分量一律同值（= mip0 记录尺寸）」，见设计 §5.1）：
 
 ```ts
     // g_TextureNResolution 四分量一律同值（mip0 记录尺寸）：效果 shader 用 `.z/.x` 缩放
@@ -309,16 +309,16 @@ git commit -m "docs(agent): 回写遮罩 UV 的四分量同值口径与审计数
 
 ### Task 5（单独确认后执行）：重建产物
 
-**合并 / 发布边界（勿误判「合并即修复」）：** 本分支 `fix/mask-uv-npot` **从 `feat/isolated-object-rt-resolution` 切出**（切出点 = 该特性 HEAD `22e6fb4`）⇒ **合并本分支即同时并入该特性**（相对 `master` 领先 **24** 个提交）。**合并本身不改变运行时行为**（`lib/`、`dist/` 是提交进仓库的构建产物）—— 必须执行本任务的两条构建命令并**真机复看「湖面波动 / 树线不波动」**才算修复生效。
+**合并 / 发布边界（勿误判「合并即修复」）：** 本分支 `fix/mask-uv-npot` **从 `feat/isolated-object-rt-resolution` 切出**（切出点 = 该特性 HEAD `22e6fb4`）⇒ **合并本分支即同时并入该特性**（相对 `master` 领先 **特性 24 + 本分支 13 = 37 个提交**；另有设计与计划提交 `7ba4eca` 1 个 ⇒ `git rev-list --count master..HEAD` 实测 **38**）。**合并本身不改变运行时行为**（`lib/`、`dist/` 是提交进仓库的构建产物）—— 必须执行本任务的两条构建命令并**真机复看「湖面波动 / 树线不波动」**才算修复生效。
 
 **Files:**
 - Modify: `lib/**`、`dist/client.js(.map)`（构建产物）
 
-- [ ] **Step 1: 用户确认时机**（profile 符号链接到本仓库，重建会经 client-hmr 重挂正在运行的会话）
-- [ ] **Step 2:** `npm run build && npm run build:client`，两次 exit 0
-- [ ] **Step 3:** `grep -c "fxRes" lib/client/tex-loader.js` 命中；`dist/client.js` 命中
-- [ ] **Step 4:** `npm test` 全绿后提交 `chore(build): 重建 lib/ 与 dist/ 产物（遮罩 UV 口径修复）`
-- [ ] **Step 5: 真机确认**：壁纸「魔兽之门」湖面出现波动、树线不再波动
+- [x] **Step 1: 用户确认时机**（profile 符号链接到本仓库，重建会经 client-hmr 重挂正在运行的会话）
+- [x] **Step 2:** `npm run build && npm run build:client`，两次 exit 0
+- [x] **Step 3:** `grep -c "mip.width, mip.height, mip.width, mip.height" lib/client/tex-loader.js` = 1（`dist/client.js` 同为 1）；`grep -c "info.textureWidth, info.textureHeight" lib/client/tex-loader.js` = 0
+- [x] **Step 4:** `npm test` 全绿后提交 `chore(build): 重建 lib/ 与 dist/ 产物（遮罩 UV 口径修复）`
+- [x] **Step 5: 真机确认**：壁纸「魔兽之门」湖面出现波动、树线不再波动
 
 ---
 
@@ -336,5 +336,5 @@ git commit -m "docs(agent): 回写遮罩 UV 的四分量同值口径与审计数
 - 判据名与阈值（`z/x === 1`，容差 1e-6）在 Task 3 Step 2/4 一致。
 
 **已知风险**
-- 若某个 `.tex` 的 mip0 载荷尺寸与 `ImageWidth/Height` 不同（历史上见过合成 fixture 如此），`mip.width/height` 仍是**实际上传**的尺寸 ⇒ 口径仍自洽（这正是「内容占满纹理」的定义）。
+- 原始像素载荷类（`mip0 记录 == 分配`，51 个）上传的是 `cropToMap` 裁出的内容宽高，其 `.x/.y` 与实际上传尺寸仍差约 1.6×（follow-up 见设计文档 §7）。
 - e2e 探针依赖 TS `private` 运行期可读（既有 `__isoInfo` 已用同一手法）；若上游改名，探针返回 `null` 会跳过判据 —— Task 3 Step 2 已做 `rows && rows.length` 守卫，需在 Task 3 Step 3 确认**判据真的出现**（不是被跳过）。

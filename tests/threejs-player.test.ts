@@ -2085,7 +2085,7 @@ describe('ThreeScenePlayer 对象隔离', () => {
   });
 
   // MSAA 分型（Task 7）：只有 `kind === 'background'` 且**两轴都**盖满场景（≥ 0.98×）的对象才是
-  // 「一整块铺满 RT 的 quad」——这种对象 RT 内没有任何轮廓边，MSAA 结构性无效，关掉省 32 B/px；
+  // 「一整块铺满 RT 的 quad」——这种对象 RT 内没有任何轮廓边，MSAA 结构性无效，关掉省 24 B/px；
   // 粒子 billboard 即使铺满整屏也**有硬边**，必须保留 MSAA（故判定必须同时要求 background）。
   it('铺满整屏的 background 关 MSAA（samples=0），未铺满的 background 仍为 4', () => {
     const { player } = makePlayer(5000, 2400);

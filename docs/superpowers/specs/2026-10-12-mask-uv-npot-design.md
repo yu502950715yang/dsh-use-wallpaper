@@ -19,13 +19,13 @@ v_TexCoord.zw = vec2(v_TexCoord.x * g_Texture1Resolution.z / g_Texture1Resolutio
 
 `g_Texture1` 是遮罩。该式把「对象 UV」映射到遮罩纹理空间；乘数 `z/x`、`w/y` 在 **WE（按 padding 上传）语义**里是 **内容宽高 / 分配尺寸**（≤1：图像只占分配区的一角）。而插件上传的是**未 padding 的图**（内容占满整张纹理）⇒ 该乘数必须是 **1**。
 
-**本插件修复前的取值（`src/client/tex-loader.ts:478`；修复后为 `:473`）**
+**本插件修复前的取值（`src/client/tex-loader.ts:478`；修复后为 `:475`）**
 
 ```ts
 ud.fxRes = [mip.width, mip.height, info.textureWidth, info.textureHeight];   // 修复前
 ```
 
-`.zw` 填的是 **`.tex` 头里的 padding 分配尺寸**，而插件上传的是 **未 padding 的 mip0 图**（`createImageBitmap` 解出的原始尺寸）。魔兽之门遮罩：分配 **4096×2048**、图像 **2500×1200** ⇒ 乘数 **1.6384 / 1.7067**（正确值是 **1**）。修复后为 `ud.fxRes = [mip.width, mip.height, mip.width, mip.height]`（`tex-loader.ts:473`），即「**四分量一律同值（= mip0 记录尺寸）** ⇒ `.z/.x` 恒为 1」。
+`.zw` 填的是 **`.tex` 头里的 padding 分配尺寸**，而插件上传的是 **未 padding 的 mip0 图**（`createImageBitmap` 解出的原始尺寸）。魔兽之门遮罩：分配 **4096×2048**、图像 **2500×1200** ⇒ 乘数 **1.6384 / 1.7067**（正确值是 **1**）。修复后为 `ud.fxRes = [mip.width, mip.height, mip.width, mip.height]`（`tex-loader.ts:475`），即「**四分量一律同值（= mip0 记录尺寸）** ⇒ `.z/.x` 恒为 1」。
 
 **几何验算（`output/blur-analysis/mask_placement.py`，从 pkg 直接读遮罩图）**
 
@@ -86,7 +86,7 @@ ud.fxRes = [mip.width, mip.height, mip.width, mip.height];
 
 ## 6. 验收（2026-10-12 实测，分支 `fix/mask-uv-npot`：`b8df5e2`…`cdbdd56`）
 
-1. **单测（断言）**：`textureFromTex` 对 NPOT `.tex`（图像 100×50 / 分配 256×128 的 fixture）产出 `fxRes === [100,50,100,50]`；2 的幂纹理保持 `[w,h,w,h]`；不变量 `.z/.x === 1`、`.w/.y === 1`（`tests/tex-loader.test.ts:815-844`，**唯一守卫生产代码的三条断言** —— `tex-loader.ts:473` 一回退即红，尤其 `:824-827`、`:839-842`，不得削弱/删除）。`tests/effect-runner.test.ts:608-628` 是消费者侧契约钉（合成字面量、不调用 `textureFromTex`，第 3 条仅灵敏度自证）。全量 `npm test` = **55 files / 1115 passed**，exit 0。
+1. **单测（断言）**：`textureFromTex` 对 NPOT `.tex`（图像 100×50 / 分配 256×128 的 fixture）产出 `fxRes === [100,50,100,50]`；2 的幂纹理保持 `[w,h,w,h]`；不变量 `.z/.x === 1`、`.w/.y === 1`（`tests/tex-loader.test.ts:815-844`，**唯一守卫生产代码的三条断言** —— `tex-loader.ts:475` 一回退即红，尤其 `:824-827`、`:839-842`，不得削弱/删除）。`tests/effect-runner.test.ts:608-628` 是消费者侧契约钉（合成字面量、不调用 `textureFromTex`，第 3 条仅灵敏度自证）。全量 `npm test` = **55 files / 1115 passed**，exit 0。
 2. **反向验证**：临时把 `src/client/tex-loader.ts` 回退到修复前提交（`git checkout 7ba4eca -- src/client/tex-loader.ts`；任务已提交 ⇒ `git stash` 是 no-op）⇒ 单测必红（实测 `expected [ 100, 50, 256, 128 ] to deeply equal [ 100, 50, 100, 50 ]`、`expected 2.56 to be 1`），e2e 亦红（见 3）。
 3. **e2e 真机口径**：harness 探针（`e2e/harness/harness-text-clock-entry.mjs:228-260`）读 `__player.objectEffectStage` 内各 pass 材质的 `g_TextureNResolution` / `g_TextureN`（TS `private` 运行期可读，与既有 `__isoInfo` 同法）；判据在 `e2e/verify/verify-isolated-rt-sharpness.mjs:698-728`。实测（`--gpu`，串行）：单张 `1922570576` → 探针 **21 槽 `bad=0`**、遮罩 `obj=13 slot=1 tex=[2500,1200] z/x=1.0000`、**exit 0**；全清单 5 张 → **5/5、exit 0**（判据①覆盖 **262** 槽 = 21+65+8+88+80，零样本判 FAIL；判据②只对 `1922570576` 断言，其它 4 张打印**显式 SKIP**）；回退版本 → **exit 1**，`FAIL 遮罩槽分辨率口径 z/x === 1 ← 3/21 处异常，例：obj=13 slot=1 z/x=1.6384`（= 4096/2500，与该张 3 个 NPOT 遮罩条数、比值吻合）。
 4. **人眼对照**：`output/blur-analysis/mask_placement.png` 的叠加带（红 = 修复前口径落点 v≈0.46–0.58，绿 = 比值 1 落点 v≈0.78–0.99）与用户现象吻合；真机复看「湖面波动 / 树线不波动」属 Task 5（重建 `lib/`、`dist/` 后）确认项。
@@ -97,13 +97,13 @@ ud.fxRes = [mip.width, mip.height, mip.width, mip.height];
 - **不做真 padding 上传**（方案 B）。若将来要做，`.zw` 必须恢复为分配尺寸，并重新审计 §3 的 A/B 两类用法（届时不能再假设「四分量同值」）。
 - 不动 shader（shader 来自壁纸包，属 WE 官方实现）。
 - 不扩大本轮范围：`.tex` 的 `TEXV0005` padding 元数据接入、其它格式（TEXB0002/4、DXT）的 padding 语义留作后续。
-- 与本特性同源的隐患已随本次一并订正：`AGENT.md §5.17` 原注释把 `.z/.x` 描述为「内容/分配」但取值填反 ⇒ 现统一为「**四分量一律同值（= mip0 记录尺寸）⇒ `.z/.x` 恒为 1**」（`AGENT.md:130`、`effect-runner.ts:315-317`、`tex-loader.ts:471-472`、`tests/tex-loader.test.ts:815` 四处措辞同口径）。
+- 与本特性同源的隐患已随本次一并订正：`AGENT.md §5.17` 原注释把 `.z/.x` 描述为「内容/分配」但取值填反 ⇒ 现统一为「**四分量一律同值（= mip0 记录尺寸）⇒ `.z/.x` 恒为 1**」（`AGENT.md:130`、`effect-runner.ts:315-317`、`tex-loader.ts:473-474`、`tests/tex-loader.test.ts:815` 四处措辞同口径）。
 
 ## 8. 涉及文件
 
 | 文件 | 改动 |
 |---|---|
-| `src/client/tex-loader.ts:471-473` | `fxRes` 取值改「四分量同值（= mip0 记录尺寸）」+ 注释订正（`fxRes` 的唯一生产者） |
+| `src/client/tex-loader.ts:473-475` | `fxRes` 取值改「四分量同值（= mip0 记录尺寸）」+ 注释订正（`fxRes` 的唯一生产者） |
 | `src/client/effect-runner.ts:315-317` | `resolveTextureResolution4` 口径注释订正（逻辑零改动；函数体 `:318-333`，回退 `return { x: w, y: h, z: w, w: h }` 在 `:330-332`） |
 | `tests/tex-loader.test.ts:815-844` | NPOT / POT / 不变量三条用例（**唯一守卫生产代码**） |
 | `tests/effect-runner.test.ts:608-628` | 回退口径一致性用例（消费者侧契约钉，第 3 条仅灵敏度自证） |
@@ -115,5 +115,5 @@ ud.fxRes = [mip.width, mip.height, mip.width, mip.height];
 
 ## 9. 合并 / 发布边界（勿误判「合并即修复」）
 
-- 本分支 `fix/mask-uv-npot` **从 `feat/isolated-object-rt-resolution` 切出**（切出点 = 该特性 HEAD `22e6fb4`）⇒ **合并本分支即同时并入该特性**（相对 `master` 领先 **24** 个提交）。两个关注点耦合是 R1 的既定裁决（代价：回滚需分开处理）。
+- 本分支 `fix/mask-uv-npot` **从 `feat/isolated-object-rt-resolution` 切出**（切出点 = 该特性 HEAD `22e6fb4`）⇒ **合并本分支即同时并入该特性**（相对 `master` 领先 **特性 24 + 本分支 13 = 37 个提交**；另有设计与计划提交 `7ba4eca` 1 个 ⇒ `git rev-list --count master..HEAD` 实测 **38**）。两个关注点耦合是 R1 的既定裁决（代价：回滚需分开处理）。
 - **合并本身不改变运行时行为**：`lib/`、`dist/` 是提交进仓库的构建产物，合并只改源码与文档。修复生效**必须**执行 Task 5（`npm run build && npm run build:client`）并**真机复看「湖面波动 / 树线不波动」**；⚠️ profile 符号链接到本仓库，重建会经 client-hmr 重挂正在运行的会话 ⇒ 需用户确认时机。

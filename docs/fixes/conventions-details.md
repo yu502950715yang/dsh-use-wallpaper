@@ -71,7 +71,7 @@
     - 这两条加上下面两条纹理语义，就是 GTR 从「整屏晃动 + 整屏脉冲」回到桌面 WE「只抖排气管、女孩脸上反光一闪一闪」的全部原因（`3031158`）。
 ### §5.17
 
-17. **`g_TextureNResolution` 的 vec4 分量：四分量一律同值（= 纹理 mip0 记录尺寸）** —— 正确的不变量是「**四分量一律同值 ⇒ `.z/.x` 与 `.w/.y` 恒为 1**」，**不是**「四分量一律取 `header` 记录的内容宽高」（后者对「`mip0 记录 == 分配`」的原始像素载荷类不成立，见下方影响面）。效果 shader 用 `.z/.x` 缩放遮罩 UV（`waterripple.vert` / `shake.vert` 的 `v_TexCoord.zw = uv * g_Texture1Resolution.z / g_Texture1Resolution.x`），比值必须为 1；**本机库内不存在**按 padding 分配的纹理（编码图像类 `createImageBitmap` 解出即上传；原始像素载荷类经 `cropToMap` 裁到内容宽高后上传）⇒ 上传的纹理被内容占满 —— ⚠️ **代码层唯一例外**是 `cropToMap` 对 `flags & 4`（sprite）**刻意不裁剪**（`tex-loader.ts:285`）：**若将来出现「raw 像素载荷 + sprite 位 + header padding」的纹理，`.z/.x = 1` 对它不再成立**（本机库 0 实例）。填 `.tex` 头的分配尺寸会让 NPOT 遮罩按 分配/内容 挤向画面左上。为此 `textureFromTex` 把 `[mip.width, mip.height, mip.width, mip.height]` 写进 `tex.userData.fxRes`（`tex-loader.ts:471-473`，`fxRes` 的唯一生产者）；`resolveTextureResolution4` 读该字段，**RT 等无该字段的纹理按同口径回退为 `(w, h, w, h)`**（`effect-runner.ts:315-333`，回退 `return` 在 `:330-332`）。
+17. **`g_TextureNResolution` 的 vec4 分量：四分量一律同值（= 纹理 mip0 记录尺寸）** —— 正确的不变量是「**四分量一律同值 ⇒ `.z/.x` 与 `.w/.y` 恒为 1**」，**不是**「四分量一律取 `header` 记录的内容宽高」（后者对「`mip0 记录 == 分配`」的原始像素载荷类不成立，见下方影响面）。效果 shader 用 `.z/.x` 缩放遮罩 UV（`waterripple.vert` / `shake.vert` 的 `v_TexCoord.zw = uv * g_Texture1Resolution.z / g_Texture1Resolution.x`），比值必须为 1；**本机库内不存在**按 padding 分配的纹理（编码图像类 `createImageBitmap` 解出即上传；原始像素载荷类经 `cropToMap` 裁到内容宽高后上传）⇒ 上传的纹理被内容占满 —— ⚠️ **代码层唯一例外**是 `cropToMap` 对 `flags & 4`（sprite）**刻意不裁剪**（`tex-loader.ts:285`）：**若将来出现「raw 像素载荷 + sprite 位 + header padding」的纹理，`.z/.x = 1` 对它不再成立**（本机库 0 实例）。填 `.tex` 头的分配尺寸会让 NPOT 遮罩按 分配/内容 挤向画面左上。为此 `textureFromTex` 把 `[mip.width, mip.height, mip.width, mip.height]` 写进 `tex.userData.fxRes`（`tex-loader.ts:473-475`，`fxRes` 的唯一生产者）；`resolveTextureResolution4` 读该字段，**RT 等无该字段的纹理按同口径回退为 `(w, h, w, h)`**（`effect-runner.ts:315-333`，回退 `return` 在 `:330-332`）。
 
     **2026-10-12 修复归档（分支 `fix/mask-uv-npot`：`b8df5e2`…`cdbdd56`；触发 = 用户报告「魔兽之门湖面波动跑到湖上方树上」）** —— 审计脚本在 gitignored 的 `output/blur-analysis/`（`mask_placement.py` / `mask_scope.py` / `shader_audit.py` / `tex_padding_scope.py` / `fxres_npot_miprecord_scan.py`），数字全部随文留档（不能只留路径）：
 
@@ -130,7 +130,7 @@
       - 单张 `1922570576`：探针 **21 槽、`bad=0`**；命中遮罩 `obj=13 slot=1 tex=[2500,1200] z/x=1.0000`；两条判据 PASS，**exit 0**。
       - 全清单 5 张：**5/5、exit 0**；判据①在 **262** 槽（21+65+8+88+80）上逐槽要求 `|z/x − 1| < 1e-6`，**零样本判 FAIL**；判据②（2500×1200 遮罩已绑定且口径为 1）只对 `1922570576` 断言，其它 4 张打印**显式 SKIP**（该素材专属该张，不静默跳过）。
       - **反向验证**（临时把 `src/client/tex-loader.ts` 回退到修复前提交 `7ba4eca`）：**exit 1**，`FAIL 遮罩槽分辨率口径 z/x === 1 ← 3/21 处异常，例：obj=13 slot=1 z/x=1.6384`（**1.6384 = 4096/2500**，与该张 3 个 NPOT 遮罩的条数、比值完全吻合）。
-      - **谁守卫生产（勿写错）**：**唯一守卫生产代码的是 `tests/tex-loader.test.ts` 的三条 fxRes 用例**（`:824-827` 的 `[100,50,100,50]`、`:839-842` 的比值 1 —— `tex-loader.ts:473` 一回退它们就红，**不得削弱 / 删除**）；`tests/effect-runner.test.ts:608-628` 是**消费者侧契约钉**（用例内合成字面量、不调用 `textureFromTex`，其中第 3 条仅做判据灵敏度自证）。判据用法见 `TESTING.md` §2.5。
+      - **谁守卫生产（勿写错）**：**唯一守卫生产代码的是 `tests/tex-loader.test.ts` 的三条 fxRes 用例**（`:824-827` 的 `[100,50,100,50]`、`:839-842` 的比值 1 —— `tex-loader.ts:475` 一回退它们就红，**不得削弱 / 删除**）；`tests/effect-runner.test.ts:608-628` 是**消费者侧契约钉**（用例内合成字面量、不调用 `textureFromTex`，其中第 3 条仅做判据灵敏度自证）。判据用法见 `TESTING.md` §2.5。
 ### §5.18
 
 18. **R8 / RG88 有两套通道语义，不能混用**：`convertUnormToRgba(data, format, alphaPriority = true)`（`tex-loader.ts:490-515`）——

@@ -175,7 +175,7 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
 1. **对象级效果链：执行器能力已覆盖，但有对象类型不挂链**：`text` 对象的 effects 在收链阶段就被跳过（`groupEffectsByObject`），`util` / 无媒体字段的对象拿不到隔离条目 ⇒ 全库有 **21 条** effects 永不挂链（util 10 + none 11，每张壁纸一条汇总 `warn`）；**text 的 effects 连 warn 都没有**。**粒子对象挂载 effects 全库为 0** ⇒ 粒子隔离分支只有单测覆盖、无真实样本。端到端只逐像素验过少数样本，其余是分类学推断（详见 `docs/fixes/threejs-path-fixes.md`）。
 3. **粒子自旋的轴序偏差**：本项目用 `Rz·Ry·Rx`，WE 的 `ComputeParticleTangents` 是 `Rz·Rx·Ry` ⇒ **仅多轴自旋**（全库 6 个对象）结果可能与桌面不同，**未与桌面逐像素对照**；z-only 时两种顺序逐像素等价。
 10. **headless Edge 的 WebGPU 是 SwiftShader**（软件光栅化），非真实 GPU。**订正**：该结论**只对 WebGPU 成立** —— WebGL 加 `--use-angle=d3d11 --ignore-gpu-blocklist` 就能拿真 GPU（真机验收的代价只是一个 flag）。
-11. **测试基线口径**：`scripts/known-failures.json` 的基线**为空**（CI 只对**新增**失败判红；套件级错误不豁免）。全库计数是**本机壁纸库的快照**、随素材漂移 ⇒ 测试只断言非空，**不要在文档里钉数字**（当前实测打印：线性 42 种 / 168 次，具名 RT 11 种 / 38 次，解析失败 0）。
+11. **测试基线口径**：`scripts/known-failures.json` 的基线**为空**（CI 只对**新增**失败判红；套件级错误不豁免）。全库计数是**本机壁纸库的快照**、随素材漂移 ⇒ 测试只断言非空，**不要在文档里钉数字**（2026-09 快照：线性 42 种/168 次、具名 RT 11 种/38 次；该数字随素材漂移，以 `npx vitest run tests/object-effects.test.ts` 的 `[全库分类]` 行为准，见 `tests/object-effects.test.ts:106`）。
 12. **e2e harness 与真 GPU 的边界**：`verify-hidpi-object-rt.mjs` 已加「挂载期 RT 尺寸」断言（含独立 oracle 与变异验证），`verify-isolated-rt-sharpness.mjs` 再加结构性判据 + 锐度双判据（口径见 §5.44 与 `TESTING.md`），但**不覆盖「RT 尺寸对而贴屏映射错」**这一类缺陷；而实测到的「背景糊」根因是**分辨率不足**（RT 只有屏占位 1×），不是贴屏映射错。软件光栅化的性能数字**不能**替代真机 FPS。
 16. **`{animation}` 的关键帧轨道播放未实现**：`{script,value}` / `{animation,value}` 形态已按 `value` 静态兜底，但 track/keyframe/mode/fps **全部未解析** ⇒ 轨道驱动的位移/缩放/旋转仍不生效；「新位置与桌面一致」未证实。
 30. **应用级 Glow 的范围边界**：只覆盖 **scene** 壁纸（且只测过 GTR 一张），而 WE 的 postprocessing 对 video 也生效 ⇒ **video / image / web 的亮部仍与桌面有差**；开启时 base RT **无 MSAA**（整帧从 canvas 的 `antialias:true` 掉到无 MSAA）；性能门槛（1080p FPS ≥ 30）**未在真机严格验证**（缺 GPU 耗时或有头浏览器帧率）；壁纸级 `general.bloom` **未实现**（全库 3 张：`2454403969`、`2937346640`、`3790775478`）。
@@ -187,7 +187,7 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
 
 36. **隔离对象 RT 分辨率的已知边界**：① 显存预算是**软保证** —— 预算小到装不下全部屏占位时无法再降，只能保住「只升不降」；② 预算只覆盖 **image** 隔离对象：挂载期输入只含 image，resize 期同一函数按 `entries` 计入了粒子的屏占位 ⇒ 两期输入集合不同（粒子 RT 恒为屏占位）；③ 视频纹理**未就绪时回退屏占位**，不做「就绪后重设 RT」；④ 精灵表按**源尺寸未知**处理（回退屏占位）；⑤ e2e 锐度判据的样本里粒子 / 精灵表对象**各 0 个**（判据无真实样本）；⑥ 锐度判据余量偏薄（逐块中位数最低约 **1.11**，阈值 1.05）。详见 `docs/superpowers/specs/2026-10-12-isolated-object-rt-resolution-design.md` §5 与「实测（实现后）」，脚本用法见 `TESTING.md`。
 
-37. **`g_TextureNResolution` 只保证「四分量同值 ⇒ `.z/.x` 为 1」，不保证取到实际上传尺寸**：原始像素载荷类（`mip0 记录 == 分配`）上传前经 `cropToMap` 裁到 image 尺寸，故其 `.x/.y` 与真实纹理尺寸仍差约 1.6×，凡把 `.x/.y` / `.z/.w` 当 texel 步长用的用法仍偏小。要彻底对齐需让 `fxRes` 等于各分支最终上传尺寸（独立行为变更，需单独 A/B 验证）。细节与审计口径（**库级真值在 §3–§4**，含 `type` 大小写不敏感的定域）见 `docs/superpowers/specs/2026-10-12-mask-uv-npot-design.md`，follow-up 与边界见该文档 §7。另：合并本分支**本身不改变运行时行为**，须重建 `lib/`、`dist/` 并真机复看才算修复生效（见该文档 §9）。
+37. **`g_TextureNResolution` 只保证「四分量同值 ⇒ `.z/.x` 为 1」，不保证取到实际上传尺寸**：原始像素载荷类（`mip0 记录 == 分配`）上传前经 `cropToMap` 裁到 image 尺寸，故其 `.x/.y` 与真实纹理尺寸仍差约 1.6×，凡把 `.x/.y` / `.z/.w` 当 texel 步长用的用法仍偏小。要彻底对齐需让 `fxRes` 等于各分支最终上传尺寸（独立行为变更，需单独 A/B 验证）。细节与审计口径（**库级真值在 §3–§4**，含 `type` 大小写不敏感的定域）见 `docs/superpowers/specs/2026-10-12-mask-uv-npot-design.md`，follow-up 与边界见该文档 §7。另：本分支 `fix/mask-uv-npot` 从 `feat/isolated-object-rt-resolution` 切出（合并即并入该特性，相对 `master` 领先 **特性 24 + 本分支 13 = 37 个提交**；另有设计与计划提交 1 个 ⇒ `git rev-list --count master..HEAD` 实测 **38**），合并**本身不改变运行时行为**，须重建 `lib/`、`dist/` 并真机复看才算修复生效（见该文档 §9）。
 
 ## 8. 历史归档
 
