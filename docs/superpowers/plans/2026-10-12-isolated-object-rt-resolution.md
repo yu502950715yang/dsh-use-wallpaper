@@ -157,7 +157,7 @@ Expected: FAIL —— `isolatedRtSize is not a function`
 /** 源纹理像素尺寸（隔离对象 RT 的上限来源）。 */
 export interface SourcePixels { width: number; height: number }
 
-/** 隔离对象 RT 的长边：max(屏占位, min(源纹理长边, cap))；budgetScale ∈ (0,1] 只压缩升级幅度。 */
+/** 隔离对象 RT 的长边：max(屏占位长边, min(源纹理长边, cap))；budgetScale ∈ (0,1] 只压缩升级幅度。 */
 export function isolatedRtLongEdge(occLongEdge: number, sourceLongEdge: number, cap = OBJECT_RT_MAX): number {
   const occ = Number.isFinite(occLongEdge) && occLongEdge > 0 ? occLongEdge : 1;
   const src = Number.isFinite(sourceLongEdge) && sourceLongEdge > 0 ? sourceLongEdge : 0;
