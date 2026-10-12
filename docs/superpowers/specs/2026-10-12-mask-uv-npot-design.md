@@ -27,6 +27,8 @@ ud.fxRes = [mip.width, mip.height, info.textureWidth, info.textureHeight];   // 
 
 `.zw` 填的是 **`.tex` 头里的 padding 分配尺寸**，而插件上传的是 **未 padding 的 mip0 图**（`createImageBitmap` 解出的原始尺寸）。魔兽之门遮罩：分配 **4096×2048**、图像 **2500×1200** ⇒ 乘数 **1.6384 / 1.7067**（正确值是 **1**）。修复后为 `ud.fxRes = [mip.width, mip.height, mip.width, mip.height]`（`tex-loader.ts:475`），即「**四分量一律同值（= mip0 记录尺寸）** ⇒ `.z/.x` 恒为 1」。
 
+> 已被 A1 取代（`fxRes` = 各分支实际上传尺寸），见 `AGENT.md` §7.37
+
 **几何验算（`output/blur-analysis/mask_placement.py`，从 pkg 直接读遮罩图）**
 
 | 遮罩 | 水域在遮罩内的位置 | 修复前口径落到对象 UV | 修复后（比值=1，应为） |
@@ -71,6 +73,8 @@ C 类（`.xy`）历来是 mip0 记录尺寸：对 44 类等于上传尺寸、对
 
 ## 5. 决策：方案 A —— `fxRes` 四分量一律同值（= mip0 记录尺寸）
 
+> 已被 A1 取代（`fxRes` = 各分支实际上传尺寸），见 `AGENT.md` §7.37
+
 ```ts
 ud.fxRes = [mip.width, mip.height, mip.width, mip.height];
 ```
@@ -96,6 +100,9 @@ ud.fxRes = [mip.width, mip.height, mip.width, mip.height];
 ## 7. 边界与非目标
 
 - **follow-up（R4，未做）**：`g_TextureNResolution` 只保证「四分量同值 ⇒ `.z/.x` 为 1」，**不保证取到实际上传尺寸** —— **原始像素载荷类**（`mip0 记录 == 分配`，51 个）上传前经 `cropToMap` 裁到 image 尺寸，故其 `.x/.y` 与真实纹理尺寸仍差约 1.6×，凡把 `.x/.y` / `.z/.w` 当 texel 步长用的用法（§3 的 B/C 类）仍偏小（**既有状态、非本次回归**，其中 `1429403119` 的 `.xy` 例：`x=2048` 而 `texImage=[1280,720]`）。要彻底对齐需让 `fxRes` 等于各分支最终上传尺寸（RGBA/DXT 用 `cropped.width/height`、编码图像用 bitmap、视频用 mip），属**独立行为变更、需单独 A/B 验证**。已记入 `AGENT.md` §7.37。
+
+> 已被 A1 取代（`fxRes` = 各分支实际上传尺寸），见 `AGENT.md` §7.37
+
 - **不做真 padding 上传**（方案 B）。若将来要做，`.zw` 必须恢复为分配尺寸，并重新审计 §3 的 A/B 两类用法（届时不能再假设「四分量同值」）。
 - 不动 shader（shader 来自壁纸包，属 WE 官方实现）。
 - 不扩大本轮范围：`.tex` 的 `TEXV0005` padding 元数据接入、其它格式（TEXB0002/4、DXT）的 padding 语义留作后续。

@@ -512,8 +512,10 @@ export async function textureFromTex(info: TexInfo, opts?: TexLoadOptions): Prom
       applyWrap(t, info);
       // 上传尺寸 = `<video>` 内在尺寸（VideoTexture 的 tex.image 即该元素），与 ThreeLayer 的上传同源。
       const v = t.image as HTMLVideoElement;
-      // 内在尺寸为 0（未解码却 readyState ≥ 2 的畸形素材）→ 无从得知实际尺寸，只能回退 mip0 记录的 w/h，避免 uniform 变 (0,0,0,0)。
-      return withSprite(t, v.videoWidth || mip.width, v.videoHeight || mip.height);
+      // 任一分量非正（未解码却 readyState ≥ 2 的畸形素材）⇒ 两轴同源整对回退 mip0 记录，避免报出既非视频也非 mip 的一对。
+      const vw = v.videoWidth, vh = v.videoHeight;
+      const ready = vw > 0 && vh > 0;
+      return withSprite(t, ready ? vw : mip.width, ready ? vh : mip.height);
     };
     const videoTex = await videoTextureFromMp4(mip.data, info, topDown, decorate);
     if (videoTex) return videoTex;

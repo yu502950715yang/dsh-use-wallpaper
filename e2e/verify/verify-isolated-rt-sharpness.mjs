@@ -21,7 +21,7 @@
 //       不是硬保证（见下方输出与 metrics.json 的 budgetNote）。
 //   [8] 遮罩槽分辨率口径（两条）：① 每个效果 pass 材质的 `g_TextureNResolution` 满足 |z/x − 1| < 1e-6；
 //       ② `.x` === 探针读到的实际上传尺寸 `texImage[0]`（偏离 1 的槽数必须为 0；不可比的行 —— `texImage`
-//       为 null 或 x ≤ 0 —— 排除，零可比槽判 FAIL，与 ① 的零样本策略同精神）。
+//       为 null、x ≤ 0 或 `texImage[0]` ≤ 0 —— 排除，零可比槽判 FAIL，与 ① 的零样本策略同精神）。
 //       另对「魔兽之门」断言 2500×1200 遮罩槽已绑定（其它壁纸无该素材 ⇒ 打印 SKIP，非静默跳过）。
 //       探针（`window.__fxResProbe`）**无数据判 FAIL**，绝不因采不到样本而变成假绿。
 //   [9] oracle 与 src 逐字同语义（A2 订正，`--selftest` 跑纯函数自检）：变换字段解析照
@@ -826,7 +826,7 @@ try {
         ? `${bad.length}/${fxRows.length} 处异常，例：obj=${bad[0].obj} slot=${bad[0].slot} z/x=${(bad[0].z / bad[0].x).toFixed(4)}`
         : `${fxRows.length} 个槽全部为 1`);
       // 判据 [8]②（A1）：`.x/.y` = **各分支实际上传尺寸** ⇒ 必须与探针读到的上传尺寸 `texImage[0]` 相等。
-      // 不可比的行（`texImage` 为 null 或 x ≤ 0）按既有规则排除；**零可比槽判 FAIL**（同 [8]① 精神：
+      // 不可比的行（`texImage` 为 null、x ≤ 0 或 `texImage[0]` ≤ 0）按既有规则排除；**零可比槽判 FAIL**（同 [8]① 精神：
       // 采不到样本不得变成假绿）。阈值沿用 1e-6 —— 不放宽。原观察量字段保留在 metrics 里供诊断。
       const xComparable = fxRows.filter((row) => row.x > 0 && Array.isArray(row.texImage) && row.texImage[0] > 0);
       const xOverTex = xComparable.filter((row) => Math.abs(row.x / row.texImage[0] - 1) > 1e-6);
@@ -835,7 +835,7 @@ try {
       add('遮罩槽 fxRes === 实际上传尺寸（x / texImage[0] 偏离 1 的槽数 === 0）',
         xComparable.length > 0 && xOverTex.length === 0,
         xComparable.length === 0
-          ? `可比槽 0 / ${fxRows.length}（texImage 为 null 或 x ≤ 0 ⇒ 全部不可比）⇒ 无从判定，判 FAIL`
+          ? `可比槽 0 / ${fxRows.length}（texImage 为 null、x ≤ 0 或 texImage[0] ≤ 0 ⇒ 全部不可比）⇒ 无从判定，判 FAIL`
           : `可比槽 ${xComparable.length} / ${fxRows.length}，偏离 ${xOverTex.length}`
             + (xOverTexExamples.length ? `  例：${xOverTexExamples.join('；')}` : ''));
       console.log(`  [8]② x/texImage[0] 偏离 1 的槽：${xOverTex.length}/${xComparable.length} 可比槽`
@@ -921,8 +921,8 @@ try {
     },
     // [8]②：同一条数字既是判定项（逐张 checks）也保留在此观察量字段供诊断
     fxResProbeNote: 'fxResProbe.xOverTexImage 统计有 g_TextureN 绑定（texImage 可读）的槽里「x / texImage[0] ≠ 1」'
-      + '的条数：A1 后 fxRes 取各分支实际上传尺寸，该条数必须为 0（判据 [8]②，阈值 1e-6；texImage 为 null 或'
-      + ' x ≤ 0 的槽不可比而排除，零可比槽同样判 FAIL）。本字段与逐张 checks 里的同项判据同源，保留供诊断；'
+      + '的条数：A1 后 fxRes 取各分支实际上传尺寸，该条数必须为 0（判据 [8]②，阈值 1e-6；texImage 为 null、'
+      + ' x ≤ 0 或 texImage[0] ≤ 0 的槽不可比而排除，零可比槽同样判 FAIL）。本字段与逐张 checks 里的同项判据同源，保留供诊断；'
       + '判定口径另见每张的 fxResProbe.rows / bad。',
     fpsNote: '本机 60Hz vsync ⇒ FPS 只能当**地板**用，测不出 60 以上的余量，也不覆盖低端 GPU/4K 屏。',
     serialNote: 'harness 端口与 Edge user-data-dir 固定 ⇒ 不得并行跑多份。',

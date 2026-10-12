@@ -12,10 +12,12 @@
 |---|---|---|---|
 | 编码图像（ImageBitmap） | 解码 bitmap 尺寸 | == 解码尺寸 | 无（本机库 44/44） |
 | raw 早返回（sprite / 无 padding） | `cropToMap` 的 `(mipW,mipH)` | 同 | 无 |
-| **raw + 行裁剪**（51 例主体） | `cropRowsToMap` 的 `(cw,ch) = floor(min(image,mip))` | `(mipW,mipH)` | **偏 分配/内容 ≈ 1.6×** |
-| **DXT + 块裁剪** | `(ceil4(cw), ceil4(ch))` | `(mipW,mipH)` | 块对齐差（本机库 0 实例） |
+| **raw + 行裁剪**（50 例） | `cropRowsToMap` 的 `(cw,ch) = floor(min(image,mip))` | `(mipW,mipH)` | **偏 分配/内容 ≈ 1.6×** |
+| **DXT + 块裁剪**（1 例：GTR `clouds.tex`） | `(ceil4(cw), ceil4(ch))` | `(mipW,mipH)` | 2048×2048 → 1920×1080（宽 1.067×、高 1.896×）；`ceil4` 块对齐差本身**本机库 0 实例**（1920/1080 均 4 的倍数） |
 | 视频就绪 | `video.videoWidth/Height` | 同（alloc==image==mip0） | 无 |
 | 视频失败 1×1 | 无 `fxRes` ⇒ 回退 `(1,1,1,1)` | — | 无 |
+
+> 变更集 = **51** 个纹理 = **50** 个 padded raw + **1** 个 padded DXT（GTR `clouds.tex`）—— 与 `a1-research.md` §3.4（「51 = 50 raw + 1 DXT」）及 `output/blur-analysis/ci_fxres_scan.txt:3-53` 的 51 行逐条一致。
 
 ## 2. 为什么这不是可观测缺陷（承重事实）
 
@@ -40,11 +42,12 @@
 
 ## 4. 验收
 
-1. **单测逐分支**（现有 3 条 fixture 恰好 A1 前后同值，覆盖不到 51 类，必须补）：
-   - padded-raw：alloc 256×128 / image 100×50 / mip 256×128 ⇒ `fxRes === [100,50,100,50]`；
-   - DXT 块对齐：60×30 ⇒ `fxRes === [60,32,60,32]`（`ceil4`）；
-   - 视频：`mip0 ≠ 视频尺寸` 时以视频尺寸为准；
-   - 既有 3 条（`[100,50,100,50]`、2 的幂、`.z/.x === 1`）**不得削弱**。
+1. **单测逐分支**（现有 3 条 fixture 恰好 A1 前后同值，覆盖不到 51 类，必须补；实际落点 = `tests/tex-loader.test.ts:815-882` 的 6 条 + `tests/dom/tex-loader-video.dom.test.ts` 的 `:122`/`:138`/`:153`）：
+   - padded-raw（`tests/tex-loader.test.ts:845`）：alloc 256×128 / image 100×50 / mip 256×128 ⇒ `fxRes === [100,50,100,50]`；
+   - DXT 块对齐（`:871`）：60×30 ⇒ `fxRes === [60,32,60,32]`（`ceil4`；本机库唯一 padded DXT 的 1920×1080 均 4 的倍数 ⇒ 该偏差仍 0 实例）；
+   - sprite 早返回（`:857`）：flags 带 sprite 位 ⇒ 不裁、报 mip0 记录 256×128（与 padded-raw 组成判别对）；
+   - 视频（`tests/dom/tex-loader-video.dom.test.ts`）：`:138` `mip0 ≠ 视频尺寸` 时以视频尺寸为准；`:153` 内在尺寸 0 ⇒ 回退 mip0 记录；
+   - 既有 3 条（`:824`、`:829`、`:839`：`[100,50,100,50]`、2 的幂、`.z/.x === 1`）A1 前后同值，**不得削弱**。
 2. **不变量**：所有分支 `fxRes` 四分量仍彼此相等 ⇒ 判据① `z/x === 1` 在 e2e 8 张 / 357 槽保持全绿。
 3. **e2e 观察量收口并升级为判据**：`verify-isolated-rt-sharpness.mjs` 现有非判定观察量「`x/texImage[0] ≠ 1`」在 8 张清单上应为 **0**（A1 前 `1429403119` 是 21/56）⇒ 改为**判定项**（不可比的行——未绑纹理 `texImage: null`——按既有规则排除）。
 4. **回归**：`npm test` 全绿；`--selftest` 16/16；`verify-text-clock-layer --id=1922570576 --gpu` 11 项 PASS。
@@ -56,7 +59,7 @@
 - `npm test`：**55 files / 1117 passed**（Task 1/2 收尾基线；Task 3 补 1 条 dom 用例后 **1118**）。
 - `node e2e/verify/verify-isolated-rt-sharpness.mjs --gpu`（8 张清单）：**8/8、0 FAIL、exit 0**；判据 [8]① 全槽 `|z/x − 1| < 1e-6` 全绿；判据 [8]② **234 个可比槽偏离 0**（357 槽中 **123 槽无 `texImage`** 不可比）。
 - **反向验证**（把 `src/client/tex-loader.ts` 回退到 A1 前）：`1429403119` 的 [8]② **21/56 → 0**、**exit 1 → 0**；恢复后 `git diff --stat` 为空。
-- 单测逐分支：padded-raw `[100,50,100,50]`；DXT 块对齐 **60×30 → 60×32**（仅 fixture，本机库 0 实例）；视频以 `videoWidth/Height` 为准；视频内在尺寸 0 ⇒ 回退 mip0 记录。
+- 单测逐分支：padded-raw `[100,50,100,50]`；DXT 块对齐 **60×30 → 60×32**（`ceil4` 差只在该 fixture 出现：本机库唯一 padded DXT 的 image 1920×1080 均 4 的倍数）；视频以 `videoWidth/Height` 为准；视频内在尺寸 0 ⇒ 回退 mip0 记录（两轴同源）。
 
 ## 5. 边界与文档订正
 
