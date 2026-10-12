@@ -841,4 +841,28 @@ describe('fxRes：四分量一律同值（mip0 记录尺寸）⇒ 遮罩 UV 缩�
     expect(fx.fxRes[2] / fx.fxRes[0]).toBe(1);
     expect(fx.fxRes[3] / fx.fxRes[1]).toBe(1);
   });
+
+  it('padded-raw：分配 256×128 / 内容 100×50 / mip0 记录 256×128 ⇒ 报裁剪后的实际上传尺寸', async () => {
+    // 载荷带 2 的幂填充（mip0 记录 > image），raw RGBA8888 走 cropToMap 的行裁剪分支
+    const buf = makeTex({
+      format: TEX_FORMAT.RGBA8888, flags: 2,
+      textureWidth: 256, textureHeight: 128, imageWidth: 100, imageHeight: 50,
+      images: [[{ width: 256, height: 128, data: new Uint8Array(256 * 128 * 4) }]],
+    });
+    const tex = await textureFromTex(parseTex(buf)!);
+    expect(tex!.image.width).toBe(100);
+    expect((tex!.userData as { fxRes: number[] }).fxRes).toEqual([100, 50, 100, 50]);
+  });
+
+  it('DXT 块对齐：image 60×30 / mip0 记录 64×32 ⇒ 报 ceil4 后的 [60,32,60,32]', async () => {
+    const buf = makeTex({
+      format: TEX_FORMAT.DXT1, flags: 2,
+      textureWidth: 64, textureHeight: 32, imageWidth: 60, imageHeight: 30,
+      images: [[{ width: 64, height: 32, data: new Uint8Array((64 / 4) * (32 / 4) * 8).fill(0x11) }]],
+    });
+    const tex = await textureFromTex(parseTex(buf)!);
+    expect(tex!.image.width).toBe(60);
+    expect(tex!.image.height).toBe(32);
+    expect((tex!.userData as { fxRes: number[] }).fxRes).toEqual([60, 32, 60, 32]);
+  });
 });

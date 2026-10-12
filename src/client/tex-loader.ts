@@ -467,12 +467,12 @@ export async function textureFromTex(info: TexInfo, opts?: TexLoadOptions): Prom
   const topDown = opts?.rowOrder === 'topDown';
   // 精灵表信息（TEXS 段）随纹理带走：three.js 粒子路径需要**真实帧数与网格**做多帧 uv 切片
   // （否则 8×8 精灵表被当单帧 → 每个粒子画出整片网格亮点，见 parseSpriteSection 注释）。
-  const withSprite = (tex: THREE.Texture): THREE.Texture => {
+  const withSprite = (tex: THREE.Texture, w: number, h: number): THREE.Texture => {
     const ud: Record<string, unknown> = { ...(tex.userData ?? {}) };
     if (info.sprite) ud.sprite = info.sprite;
-    // g_TextureNResolution 四分量一律同值（mip0 记录尺寸）：效果 shader 用 `.z/.x` 缩放
-    // 遮罩 UV，比值必须为 1，否则 NPOT padding 会把遮罩按 分配/内容 挤向画面左上（见 AGENT.md §5.17）。
-    ud.fxRes = [mip.width, mip.height, mip.width, mip.height];
+    // g_TextureNResolution 四分量一律同值 = **本分支实际上传的宽高**：效果 shader 用 `.z/.x` 缩放
+    // 遮罩 UV，比值必须为 1；报 mip0 记录尺寸会在裁剪类纹理上偏 分配/内容（见 AGENT.md §5.17）。
+    ud.fxRes = [w, h, w, h];
     tex.userData = ud;
     return tex;
   };
@@ -510,7 +510,9 @@ export async function textureFromTex(info: TexInfo, opts?: TexLoadOptions): Prom
   if (isVideoTexPayload(info)) {
     const decorate = (t: THREE.Texture): THREE.Texture => {
       applyWrap(t, info);
-      return withSprite(t);
+      // 上传尺寸 = `<video>` 内在尺寸（VideoTexture 的 tex.image 即该元素），与 ThreeLayer 的上传同源。
+      const v = t.image as HTMLVideoElement;
+      return withSprite(t, v.videoWidth, v.videoHeight);
     };
     const videoTex = await videoTextureFromMp4(mip.data, info, topDown, decorate);
     if (videoTex) return videoTex;
@@ -519,6 +521,7 @@ export async function textureFromTex(info: TexInfo, opts?: TexLoadOptions): Prom
       `[wallpaper-engine] 视频纹理无法播放，回退为透明: flags=${info.flags} `
       + `${mip.width}x${mip.height} ${mip.data.length}B`,
     );
+    // 故意不带 fxRes：1×1 兜底由 resolveTextureResolution4 回退到 tex.image（= (1,1,1,1)）。
     return transparentTexture();
   }
   // 编码图像优先：imageFormat 是 FreeImage 枚举（JPEG/PNG/WEBP）时数据为编码字节流
@@ -541,7 +544,8 @@ export async function textureFromTex(info: TexInfo, opts?: TexLoadOptions): Prom
       tex.flipY = false;
       applyWrap(tex, info);
       applyLinearSampling(tex);
-      return withSprite(tex);
+      // 上传尺寸 = 解码后的 bitmap 尺寸（three 按 bitmap 宽高上传，与 mip0 记录无关）。
+      return withSprite(tex, bitmap.width, bitmap.height);
     } catch {
       return null;
     }
@@ -564,7 +568,8 @@ export async function textureFromTex(info: TexInfo, opts?: TexLoadOptions): Prom
     const tex = new THREE.DataTexture(rows, cropped.width, cropped.height, THREE.RGBAFormat);
     applyWrap(tex, info);
     applyLinearSampling(tex);
-    return withSprite(tex);
+    // 上传尺寸 = cropRowsToMap/cropToMap 的返回（早返回为 mip0 记录，行裁剪为 floor(min(image,mip))）。
+    return withSprite(tex, cropped.width, cropped.height);
   }
   const glFormat = FORMAT_TO_GL[info.format];
   if (glFormat) {
@@ -616,7 +621,8 @@ export async function textureFromTex(info: TexInfo, opts?: TexLoadOptions): Prom
     tex.generateMipmaps = false;
     applyWrap(tex, info);
     tex.needsUpdate = true;
-    return withSprite(tex);
+    // 上传尺寸 = cropCompressedToMap 的返回（块裁剪按 4 的倍数向上取整）。
+    return withSprite(tex, cropped.width, cropped.height);
   }
   return null;
 }

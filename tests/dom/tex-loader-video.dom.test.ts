@@ -135,6 +135,21 @@ describe('textureFromTex 视频纹理（flags bit5 = Video）', () => {
     expect((repeat.userData as { fxRes?: number[] }).fxRes).toEqual([1280, 720, 1280, 720]);
   });
 
+  it('mip0 记录 ≠ 视频内在尺寸 ⇒ fxRes 以视频尺寸为准', async () => {
+    // mip0 记录 1024×576，<video> 内在尺寸 1920×1080（视频分支不按 mip 记录报数）
+    const info = parseTex(makeTex({
+      flags: 32, container: 'TEXB0003', imageFormat: -1, format: TEX_FORMAT.RGBA8888,
+      images: [[{ width: 1024, height: 576, data: MP4 }]],
+    }))!;
+    const p = textureFromTex(info);
+    await waitForListener(videos[0], 'loadeddata');
+    videos[0].videoWidth = 1920;
+    videos[0].videoHeight = 1080;
+    videos[0].dispatch('loadeddata');
+    const tex = (await p)!;
+    expect((tex.userData as { fxRes?: number[] }).fxRes).toEqual([1920, 1080, 1920, 1080]);
+  });
+
   it('dispose 时停播 + 撤销 Blob URL（GPU 资源释放兜不住解码中的 <video>）', async () => {
     const p = textureFromTex(videoTex());
     await waitForListener(videos[0], 'loadeddata');
