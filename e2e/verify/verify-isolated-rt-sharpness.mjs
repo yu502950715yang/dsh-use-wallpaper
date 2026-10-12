@@ -620,11 +620,15 @@ try {
     } else if (sharp.error) {
       console.log(`  锐度判据无法计算：${sharp.error}（判 FAIL）`);
     } else {
+      // I3：零有效块（块全部退化或低 NCC）时 blockMedian/p10/p90 为 null ⇒ 打印 n/a，
+      // 绝不能 .toFixed（那会在写 metrics.json 之前抛掉，判定段与逐对象证据全丢）
+      const fmt = (v) => (v === null ? 'n/a（无有效块）' : v.toFixed(4));
       console.log(`  锐度（vs 基线 ${relative(repo, baselinePath)}）：Laplacian 均方比=${sharp.lapRatio.toFixed(3)}`
         + `（阈值 ≥${LAP_RATIO_MIN}；${sharp.lapBase.toFixed(2)} → ${sharp.lapCur.toFixed(2)}）`
-        + `  逐块梯度/对比度中位数=${sharp.blockMedian.toFixed(4)}（阈值 ≥${BLOCK_MEDIAN_MIN}）`);
+        + `  逐块梯度/对比度中位数=${fmt(sharp.blockMedian)}（阈值 ≥${BLOCK_MEDIAN_MIN}）`);
       console.log(`    有效块 ${sharp.validBlocks}/${sharp.totalBlocks}（退化 ${sharp.degenerateBlocks}、低 NCC ${sharp.lowNccBlocks}）`
-        + `  p10=${sharp.blockP10.toFixed(4)} p90=${sharp.blockP90.toFixed(4)}`);
+        + `  p10=${fmt(sharp.blockP10)} p90=${fmt(sharp.blockP90)}`
+        + (sharp.validBlocks === 0 ? '  ⇒ 无有效块，本张锐度判 FAIL（不是跳过）' : ''));
     }
     console.log(`  FPS=${fps?.fps ?? 'n/a'}（frames=${fps?.frames}）  告警 ${warns.length} 条（失败类 ${failWarns.length} 条）`);
     for (const w of warns.slice(0, 6)) console.log(`    [${w.level}] ${w.text.slice(0, 160)}`);
@@ -689,7 +693,9 @@ try {
       add(`逐块梯度/对比度中位数 ≥ ${BLOCK_MEDIAN_MIN}（${BLOCK}×${BLOCK} 块、NCC ≥ ${NCC_MIN} 过滤，防局部变糊）`,
         r.sharp.blockMedian !== null && r.sharp.blockMedian >= BLOCK_MEDIAN_MIN,
         `实测 ${r.sharp.blockMedian === null ? 'n/a（无有效块）' : r.sharp.blockMedian.toFixed(4)}`
-        + `（有效块 ${r.sharp.validBlocks}/${r.sharp.totalBlocks}，退化 ${r.sharp.degenerateBlocks}，低 NCC ${r.sharp.lowNccBlocks}）`);
+        + `（有效块 ${r.sharp.validBlocks}/${r.sharp.totalBlocks}，退化 ${r.sharp.degenerateBlocks}，低 NCC ${r.sharp.lowNccBlocks}`
+        // I3：零有效块 = 无从判定，显式记 FAIL（不是崩溃、也不是静默跳过）
+        + `${r.sharp.validBlocks === 0 ? ' ⇒ 无有效块，本项判 FAIL' : ''}）`);
     } else {
       console.log(`  SKIP  锐度判据：基线缺失 ⇒ 锐度判据跳过（结构性判据仍生效）  ← 期望 ${relative(repo, r.baselinePath)}`);
     }
@@ -737,6 +743,8 @@ try {
       laplacian: '4 邻域（内部像素）响应平方的均值，比值 = 本次 / 基线',
       blockMetric: '块内 p99|∇|（中心差分梯度模）/ (p98 − p2)（灰度分位数，线性插值）；逐块比的中位数',
       skipPolicy: '基线图缺失 ⇒ 该张锐度判据跳过（打印明确原因），结构性判据照常；不计 PASS、不计 FAIL',
+      // I3：零有效块（全部退化/低 NCC，如画面整体平坦）既不跳过也不崩溃，判 FAIL 并照常产出结论与 metrics
+      noValidBlocksPolicy: '有效块为 0 ⇒ 逐块中位数判据 FAIL（本张不计 PASS）；打印 n/a（无有效块），判定段与 metrics.json 照常产出',
     },
     fpsNote: '本机 60Hz vsync ⇒ FPS 只能当**地板**用，测不出 60 以上的余量，也不覆盖低端 GPU/4K 屏。',
     serialNote: 'harness 端口与 Edge user-data-dir 固定 ⇒ 不得并行跑多份。',
@@ -744,6 +752,9 @@ try {
     summary: { cases: caseMetrics.length, pass: caseMetrics.filter((m) => m.ok).length, fail: caseMetrics.filter((m) => !m.ok).length,
       sharpnessChecked: caseMetrics.filter((m) => m.sharpness && !m.sharpness.skipped).length,
       sharpnessSkipped: caseMetrics.filter((m) => m.sharpness && m.sharpness.skipped).length,
+      // I3：零有效块是 FAIL（已计入 fail），这里单独计数便于定位
+      sharpnessNoValidBlocks: caseMetrics.filter((m) => m.sharpness && !m.sharpness.skipped
+        && !m.sharpness.error && m.sharpness.validBlocks === 0).length,
       totalRtPixels: spend, minFps: Math.min(...caseMetrics.map((m) => m.fps ?? Infinity)) },
   };
   writeFileSync(join(OUT, 'metrics.json'), JSON.stringify(metrics, null, 1));
@@ -751,13 +762,16 @@ try {
   console.log(`  壁纸 ${metrics.summary.pass}/${metrics.summary.cases} 通过；Σ 隔离对象 RT 像素（本轮 ${caseMetrics.length} 张**合计**，机器无关工作量代理）= ${(spend / 1e6).toFixed(3)} Mpx；最低 FPS = ${Number.isFinite(metrics.summary.minFps) ? metrics.summary.minFps : 'n/a'}`);
   console.log(`  锐度双判据（基线目录 ${relative(repo, BASELINE_DIR)}）：`
     + `${metrics.summary.sharpnessChecked}/${caseMetrics.length} 张已判`
-    + (metrics.summary.sharpnessSkipped ? `、${metrics.summary.sharpnessSkipped} 张**跳过**（基线缺失，结构性判据仍生效）` : ''));
+    + (metrics.summary.sharpnessSkipped ? `、${metrics.summary.sharpnessSkipped} 张**跳过**（基线缺失，结构性判据仍生效）` : '')
+    + (metrics.summary.sharpnessNoValidBlocks ? `、${metrics.summary.sharpnessNoValidBlocks} 张**FAIL**（有效块为 0，锐度无从判定）` : ''));
   for (const m of caseMetrics) {
     const s = m.sharpness;
     console.log(`    ${m.id}（${m.name}）：` + (s.skipped
       ? `SKIP 基线缺失（期望 ${s.baseline}）`
       : s.error ? `FAIL ${s.error}`
-        : `Laplacian 均方比=${s.lapRatio.toFixed(3)}（≥${LAP_RATIO_MIN}）  逐块中位数=${s.blockMedian.toFixed(4)}（≥${BLOCK_MEDIAN_MIN}）  有效块 ${s.validBlocks}/${s.totalBlocks}`));
+        // I3：零有效块显式记 FAIL；null 只打印 n/a，不再 .toFixed 崩掉
+        : s.validBlocks === 0 ? `FAIL 无有效块（${s.totalBlocks} 块全部退化或低 NCC：退化 ${s.degenerateBlocks}、低 NCC ${s.lowNccBlocks}）⇒ 锐度无从判定`
+          : `Laplacian 均方比=${s.lapRatio.toFixed(3)}（≥${LAP_RATIO_MIN}）  逐块中位数=${s.blockMedian === null ? 'n/a（无有效块）' : s.blockMedian.toFixed(4)}（≥${BLOCK_MEDIAN_MIN}）  有效块 ${s.validBlocks}/${s.totalBlocks}`));
   }
   console.log(`  （每张壁纸的 Σ 见上方逐张输出与 metrics.json；显存预算按**单张**壁纸算，不要拿这张合计值当显存。）`);
   console.log(`  ${metrics.budgetNote}`);
