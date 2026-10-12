@@ -468,14 +468,11 @@ export async function textureFromTex(info: TexInfo, opts?: TexLoadOptions): Prom
   const withSprite = (tex: THREE.Texture): THREE.Texture => {
     const ud: Record<string, unknown> = { ...(tex.userData ?? {}) };
     if (info.sprite) ud.sprite = info.sprite;
-    // WE 的 `g_TextureNResolution` 用 lwe 约定 **(mip0.w, mip0.h, header.w, header.h)**，
-    // 不是 (w, h, 1/w, 1/h)。效果 shader 用 `.z/.x` 缩放 mask 的 UV，例如 shake.vert：
-    //   `v_TexCoord.zw = uv * g_Texture1Resolution.z / g_Texture1Resolution.x`
-    // header 尺寸（textureWidth/Height）可能大于 image 尺寸（NPOT padding），必须随纹理带走；
-    // 若 .z 退化成 1/w ⇒ .z/.x = 1/w² ⇒ mask 的 UV 被压成 ~0 ⇒ 所有像素采到 mask 的同一个角
-    // ⇒ 本该只作用于 mask 区域的 shake/pulse/foliagesway 变成**全图等量位移**
-    // （真机现象：GTR 整屏晃动而不是只抖排气管）。
-    ud.fxRes = [mip.width, mip.height, info.textureWidth, info.textureHeight];
+    // 插件**从不 padding 上传**（createImageBitmap 解出即上传），内容占满整张纹理 ⇒
+    // `g_TextureNResolution` 四分量一律按内容尺寸：`[w, h, w, h]`。效果 shader 的
+    // `uv * .z/.x`（如水波纹遮罩）因此退化为恒等；若填 .tex 头的分配尺寸，遮罩会被
+    // 按 分配/内容 的比例挤向画面左上（真机现象：湖面波动跑到湖水上方的树线上）。
+    ud.fxRes = [mip.width, mip.height, mip.width, mip.height];
     tex.userData = ud;
     return tex;
   };

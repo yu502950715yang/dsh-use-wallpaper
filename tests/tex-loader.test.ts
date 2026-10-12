@@ -811,3 +811,34 @@ describe('cropToMap（2 的幂填充裁剪，EVA 背景露黑根因）', () => {
     expect(tex.image.height).toBe(32);
   });
 });
+
+describe('fxRes：未 padding 上传 ⇒ 四分量一律按内容尺寸', () => {
+  const npot = () => makeTex({
+    format: TEX_FORMAT.RGBA8888,
+    flags: 2,
+    textureWidth: 256, textureHeight: 128,   // 分配（.tex 头）
+    imageWidth: 100, imageHeight: 50,        // 内容（mip0 载荷）
+    images: [[{ width: 100, height: 50, data: new Uint8Array(100 * 50 * 4) }]],
+  });
+
+  it('NPOT：分配 256×128 / 内容 100×50 ⇒ fxRes = [100,50,100,50]', async () => {
+    const tex = await textureFromTex(parseTex(npot())!);
+    expect((tex!.userData as { fxRes: number[] }).fxRes).toEqual([100, 50, 100, 50]);
+  });
+
+  it('2 的幂：分配 == 内容 ⇒ fxRes 不变', async () => {
+    const buf = makeTex({
+      format: TEX_FORMAT.RGBA8888, flags: 2,
+      textureWidth: 64, textureHeight: 64, imageWidth: 64, imageHeight: 64,
+      images: [[{ width: 64, height: 64, data: new Uint8Array(64 * 64 * 4) }]],
+    });
+    const tex = await textureFromTex(parseTex(buf)!);
+    expect((tex!.userData as { fxRes: number[] }).fxRes).toEqual([64, 64, 64, 64]);
+  });
+
+  it('遮罩 UV 缩放因数 z/x 与 w/y 恒为 1（waterripple.vert 口径）', async () => {
+    const fx = (await textureFromTex(parseTex(npot())!))!.userData as { fxRes: number[] };
+    expect(fx.fxRes[2] / fx.fxRes[0]).toBe(1);
+    expect(fx.fxRes[3] / fx.fxRes[1]).toBe(1);
+  });
+});
