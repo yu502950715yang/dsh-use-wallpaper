@@ -1116,7 +1116,7 @@ export class ThreeScenePlayer {
     rt.texture.generateMipmaps = minifying;
     rt.texture.minFilter = nextMin;
     // 判定翻转才 dispose 重建 RT：RT 纹理的采样参数只在 setupRenderTarget 下发（needsUpdate 无效，
-    // 见 AGENT.md §5.15）⇒ 不 dispose 则 minFilter 到不了 GL；未翻转时 dispose 等于每帧重建。
+    // 见 AGENT.md §5.44）⇒ 不 dispose 则 minFilter 到不了 GL；未翻转时 dispose 等于每帧重建。
     if (flipped) rt.dispose();
   }
 

@@ -218,6 +218,15 @@ describe('隔离对象 RT 尺寸（方案 A′）', () => {
     expect(cut.width).toBeLessThan(full.width);
     expect(cut.width).toBeGreaterThanOrEqual(1875);
   });
+  it('极端超预算（budgetScale=1e-4）下两轴都不跌破屏占位（长轴进位、短轴舍去也成立）', () => {
+    // I1 反例：occ 377×750（长轴 750 恰好进位）。旧实现只保「长轴 ≥ 屏占位长边」，
+    // 短轴 Math.round(2001 × 750.325/2001) = 376 ⇒ 比屏占位 377 少 1 px。
+    expect(objectRtSize(1004, 2001, 0.375)).toEqual({ width: 377, height: 750 });
+    const rt = isolatedRtSize(1004, 2001, 0.375, { width: 4000, height: 4000 }, { budgetScale: 1e-4 });
+    expect(rt.width).toBeGreaterThanOrEqual(377);
+    expect(rt.height).toBeGreaterThanOrEqual(750);
+    expect(rt.upgraded).toBe(false); // 压到底 = 屏占位本身，不谎报升级
+  });
   it('源尺寸非法或预算系数非 (0,1) → 视作不升级/不压缩，仍不跌破屏占位', () => {
     // 源尺寸 NaN = 未知 → 升级幅度 0，退化回屏占位 1875×900
     expect(isolatedRtSize(5000, 2400, 0.375, { width: NaN, height: NaN }))

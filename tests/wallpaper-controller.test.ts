@@ -171,6 +171,24 @@ describe('createWallpaperController WebGL 上下文丢失回退 preview（Task 8
     // 注册发生在构造期（此时还没有 currentInfo）；若实现快照了注册时的值，这里会拿到 /p2 或什么都不做。
     expect(layer.imageArgs.at(-1)).toEqual(['/p5', true]);
   });
+
+  it('select 进行中丢上下文 ⇒ 按回调参数（id）选对壁纸，不闪出上一张', async () => {
+    const r = sceneRendererStub();
+    const { layer, c } = controller(r, [sceneWall('2', '/p2'), sceneWall('9', '/p9')]);
+    await c.load();
+    await c.select('2');
+    expect(layer.calls.at(-1)).toBe('scene');
+    // 让 #9 的渲染挂起：此时 select('9') 还没走到 currentInfo = #9，currentInfo 仍是 #2
+    let release!: (ok: boolean) => void;
+    const gate = new Promise<boolean>((res) => { release = res; });
+    r.render = () => gate;
+    const pending = c.select('9');
+    // 渲染器回报的 id 是**正在渲染的那张**；旧实现只读 currentInfo ⇒ 拿到 #2 的 /p2
+    r.lost('9');
+    expect(layer.imageArgs.at(-1)).toEqual(['/p9', true]);
+    release(true);
+    await pending;
+  });
 });
 
 // 贴壁纸文字颜色（2026-10-01，用户报告「某些壁纸文字看不清」）：设置面板可手动指定文字色，

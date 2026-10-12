@@ -308,8 +308,10 @@ export function isolatedRtSize(
   const ah = Number.isFinite(worldH) ? Math.abs(worldH) : 0;
   const base = Math.max(aw, ah);
   const k = base > 0 ? targetLong / base : 1;
-  const width = Math.max(1, Math.round(aw * k));
-  const height = Math.max(1, Math.round(ah * k));
+  // 逐轴 clamp 到屏占位：只保证长轴 ≥ occLong 不够 —— budgetScale 极小时长轴 round 向上、
+  // 短轴 round 向下，短轴会比屏占位少 1 px（预算 1e-4 兜底可达）。
+  const width = Math.max(occ.width, Math.max(1, Math.round(aw * k)));
+  const height = Math.max(occ.height, Math.max(1, Math.round(ah * k)));
   // upgraded 按输出实际是否大于屏占位判定（退化尺寸下等比基准无意义，不谎报升级）
   return { width, height, upgraded: width > occ.width || height > occ.height };
 }

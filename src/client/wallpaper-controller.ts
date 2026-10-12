@@ -113,10 +113,12 @@ export function createWallpaperController(
   let currentInfo: WallpaperInfo | undefined;
   const textStyler = createTextStyler(layer, opts, () => selectGeneration);
   // WebGL 上下文丢失回退（Task 8）：渲染器重置（显存耗尽/驱动重置）后画面就是一块空白，
-  // 比「糊」严重 ⇒ 换成该壁纸的 preview 图。⚠️ 回调在**调用时**读 currentInfo（闭包，不是注册
-  // 时快照）：注册发生在构造期，那时还没有任何壁纸。
+  // 比「糊」严重 ⇒ 换成该壁纸的 preview 图。优先按回调参数 id 在当前列表里找：select 进行中
+  // 丢上下文时 currentInfo 还是**上一张**壁纸，只读它会先闪出上一张的 preview；找不到（如列表已
+  // 换、id 过期）再退回 currentInfo。⚠️ 回调在**调用时**读闭包（不是注册时快照）：注册发生在
+  // 构造期，那时还没有任何壁纸。
   opts.sceneRenderer?.setOnContextLost?.((id) => {
-    const fallback = currentInfo;
+    const fallback = list.find((w) => w.id === id) ?? currentInfo;
     console.warn(`[wallpaper-engine] scene 渲染不可用（WebGL 上下文丢失），已回退 preview（壁纸 ${id}）`);
     if (fallback?.previewUrl) layer.showImage(fallback.previewUrl, !fallback.hasPreviewGif);
     else layer.showNone();
