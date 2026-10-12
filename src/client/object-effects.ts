@@ -176,7 +176,7 @@ export class ObjectEffectStage implements ObjectEffectStage {
   }
 
   /** 视口变化：按新的**屏幕密度**重算每个对象的 RT 像素尺寸，并用同一份链重挂（runner 内部 RT 跟随）。
-   *  尺寸口径与挂载期**同源**：同一纯函数 isolatedRtSize + 同一口径（预算输入集合的差异见 AGENT.md §7）
+   *  尺寸口径与挂载期**同源**：同一纯函数 isolatedRtSize + 同一口径（预算输入集合的差异见 AGENT.md §7.36）
    *  ——若这里另写一套屏占位算术，任何一次 resize 都会把已升到 4096 的 RT 打回屏占位（违反只升不降）。
    *  ⚠️ 参数是「设备像素 / 世界单位」这一个标量（object-range.screenScalePx 的返回值），**不是**
    *  视口宽高预算：旧实现传 `视口 × dpr` 当预算，成了「第二处独立预算」——挂载期与 resize 期
@@ -189,7 +189,7 @@ export class ObjectEffectStage implements ObjectEffectStage {
   onViewportResize(screenScale: number): void {
     if (this.disposed) return;
     this.screenScale = screenScale;
-    // 预算随视口重算（同一纯函数 + 同一口径；预算输入集合的差异见 AGENT.md §7）；按**全部**条目算。
+    // 预算随视口重算（同一纯函数 + 同一口径；预算输入集合的差异见 AGENT.md §7.36）；按**全部**条目算。
     const budgetScale = fitIsolatedBudget(
       [...this.entries].map(([objId, e]) => ({ objId, worldW: e.worldW, worldH: e.worldH, source: e.source })),
       this.scale(),

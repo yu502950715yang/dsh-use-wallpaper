@@ -339,7 +339,7 @@ export function sourcePixelsFromTexture(tex: TexLike | null | undefined): Source
 }
 
 // 隔离对象 RT 的显存预算（v1 常量）：只把隔离的 **image** 对象计入（粒子不进预算，其 RT 仍是屏占位）；
-// 预算输入集合在挂载期与 resize 期的差异见 AGENT.md §7。
+// 预算输入集合在挂载期与 resize 期的差异见 AGENT.md §7.36。
 export const ISOLATED_RT_BUDGET_BYTES = 384_000_000;
 // 每像素字节数（RGBA8 颜色 + 深度，含 ping-pong 与具名 RT 分摊）。
 export const ISOLATED_RT_BYTES_PER_PX = 28;
