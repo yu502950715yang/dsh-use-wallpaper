@@ -315,8 +315,15 @@ try {
   await sleep(600);
   // [perf] 1080p FPS 门槛（AGENT.md P1）——先采基线，实现后再比一次；顺带打印真实渲染器自证非 SwiftShader
   // 注：CDP 的 Runtime.evaluate 不支持顶层 await ⇒ 用 async IIFE 包一层。
-  try { console.log('  [perf] renderer:', JSON.stringify(await evalJs('JSON.stringify(window.__glRendererInfo())'))); }
-  catch (e) { console.log('  [perf] renderer 取用失败:', String(e).slice(0, 120)); }
+  try {
+    // 探针已自带 JSON 序列化，勿再套一层（双重编码看不出字段）；软栅 / 取不到 ext 时 FPS 无意义，只告警。
+    const rendererJson = await evalJs('JSON.stringify(window.__glRendererInfo())');
+    console.log('  [perf] renderer:', rendererJson);
+    const rendererName = JSON.parse(rendererJson ?? '{}').renderer ?? 'unknown';
+    if (rendererName === 'unknown' || /swiftshader|software|llvmpipe/i.test(rendererName)) {
+      console.log(`  ⚠️ 渲染器非真 GPU（${rendererName}）⇒ 下面的 FPS 只是参考值，不作为判据`);
+    }
+  } catch (e) { console.log('  [perf] renderer 取用失败:', String(e).slice(0, 120)); }
   try { console.log('  [perf]', await evalJs('(async () => JSON.stringify(await window.__fpsProbe(5000)))()')); }
   catch (e) { console.log('  [perf] 采集失败:', String(e).slice(0, 120)); }
   await step('normal', false);
