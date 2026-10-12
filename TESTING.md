@@ -59,7 +59,7 @@
 
 ### 2.5 渲染 e2e：隔离对象 RT 分辨率（`npm run e2e:isolated-rt`）
 
-`e2e/verify/verify-isolated-rt-sharpness.mjs`：自起 http server + headless Edge（裸 CDP，不用 playwright）+ esbuild 打包 harness，渲染 5 张真实壁纸，逐隔离对象断言**结构性判据** —— RT 长边 === 素材侧独立算出的期望、`rtPx ≥ 屏占位`（只升不降）、满屏背景 `samples=0` / 其余 `samples=4`、mip 与「RT 长边 > 屏占位」一致、无失败类告警、FPS ≥ 30；基线图存在时再判**锐度双判据**：全图 Laplacian 均方比 ≥ 2.0 **且**逐 96×96 块「梯度/对比度」比中位数 ≥ 1.05。
+`e2e/verify/verify-isolated-rt-sharpness.mjs`：自起 http server + headless Edge（裸 CDP，不用 playwright）+ esbuild 打包 harness，渲染 5 张真实壁纸，逐隔离对象断言**结构性判据** —— RT 长边 === 素材侧独立算出的期望、`rtPx ≥ 屏占位`（只升不降）、满屏背景 `samples=0` / 其余 `samples=4`、mip 与「RT 长边 > 屏占位」一致、无失败类告警、FPS ≥ 30；另加**遮罩槽分辨率口径**两条判据（脚本头判据 [8]，探针 `window.__fxResProbe()`）：① 每个效果 pass 材质的 `g_TextureNResolution` 满足 `|z/x − 1| < 1e-6`（**对 5 张无条件生效**；探针无数据 ⇒ **判 FAIL**，绝不静默跳过）；②「魔兽之门」（`1922570576`）的 2500×1200 遮罩槽已绑定且口径为 1 —— 该素材是该张专属，**其余 4 张打印显式 `SKIP`**（不计 PASS 也不算 FAIL，不是静默跳过）。基线图存在时再判**锐度双判据**：全图 Laplacian 均方比 ≥ 2.0 **且**逐 96×96 块「梯度/对比度」比中位数 ≥ 1.05。
 
 | 项 | 说明 |
 |---|---|

@@ -127,7 +127,7 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
 14. **WE 内置纹理走 host 路由，不随包分发**：粒子/效果材质引用的 `particle/*`、`util/*` 等是 WE 的第三方素材，client 请求 `/wallpapers/particle-texture?name=<相对 assets/materials 的路径>`（可带 `id`），host **先在壁纸 `scene.pkg` 的 `materials/<name>.tex` 找、再回退 `<weAssetsDir>/assets/materials`**（顺序对齐 WE 挂载顺序）。`name` 是原始相对路径，**不能无条件加 `particle/` 前缀**；`util/*` 效果纹理也走同一路由（**不得**把 `util/noise` 与 `util/clouds_256` 映射成同一张程序化噪声）。普通 scene 素材（`fonts/*.ttf` 等）同样「pkg → 引擎 assets」两级查找。
 15. **对象级 RT 的三条不变量**：① **局部正交相机的 left/right/top/bottom 是「世界坐标范围」**，必须覆盖**完整对象世界尺寸**（拿 RT 像素当范围 ⇒ HiDPI 下对象缩小 + 边缘 clamp 拉伸；按 4096 钳制范围 ⇒ 边缘拉伸带，超限对象的正确代价是「分辨率低」而非几何裁剪）；② **RT 像素尺寸 ≥ 屏占位**（**屏占位 = |未钳制世界尺寸| × 屏幕密度**；目标长边 = `max(屏占位, min(源纹理长边, 4096))`，**软预算 `budgetScale` 可把它压到两者之间**，见 §7.36①；单一等比收口 4096、**只升不降**；源纹理比屏占位小的对象保持屏占位，粒子 / 源尺寸未知的对象走 `object-range.objectRtSize` 的屏占位口径，见 `object-range.isolatedRtSize`）—— 密度 = 画布缓冲宽 / cover 视锥宽（`object-range.screenScalePx`），**mount 与 resize 必须同源**，基准必须是**未钳制**的世界尺寸；③ **`isolate` 的键是 `scene.json` 的对象 id**（不是图层计数器），`isolatedObjects()` / `setObjectOutput()` / `resizeObjectRT()` 同一把键。
 16. **效果纹理槽编号 + sampler `combo` 派生**：**`textures[i] → g_Texture(i)`**（不是 `i+1`）；sampler 声明带 `"combo":"X"` 时，该槽被绑定即置 `X = 1`（`scene.json` 的 `pass.combos` 显式值优先，必须在 `preprocessWeShader` **之前**）。两者写错会让**所有效果的纹理槽整体错位**或 mask 分支永不启用（效果全图生效）。
-17. **`g_TextureNResolution` 的 vec4 分量是 `(mip0.w, mip0.h, header.w, header.h)`**（lwe 约定），不是 `(w,h,1/w,1/h)`：效果 shader 用 `.z/.x` 缩放遮罩 UV，填 `1/w` 会把遮罩 UV 压成 ~0 ⇒ 本该局部的效果变成全图等量位移。`.tex` 的 header 尺寸可大于 image 尺寸（NPOT padding）。
+17. **`g_TextureNResolution` 四分量一律同值（= mip0 记录尺寸）**；效果 shader 用 `.z/.x` 缩放遮罩 UV，比值必须为 1。插件**不按 `.tex` 头做 padding 分配**，故**填头里的分配尺寸**会让 NPOT 纹理的遮罩按 分配/内容 挤向画面左上（真机：湖水波动跑到树上）。细节见 `docs/fixes/conventions-details.md`。
 18. **R8 / RG88 有两套通道语义，不能混用**（`convertUnormToRgba(data, format, alphaPriority)`）：缺省 `true` = **粒子纹理**语义（形状/覆盖在 R 或 G 通道）；`false` = **效果纹理槽**语义（shader 直接读 `.r`/`.rg` 当遮罩数值）。**待办**：权威来源应是 `.tex` 头的 `TextureFlags_AlphaChannelPriority`（bit19），现由调用方路径推断。
 19. **`.tex` 的 flags 必须被消费**：`ClampUVs = 2`（bit1）→ WE 默认 **REPEAT**、仅带此位才 CLAMP（曾一律 clamp ⇒ `clouds` 整屏偏白且越来越白）；**待办**：`NoInterpolation = 1`（bit0）应 `NearestFilter`、`ClampUVsBorder = 8`（bit3）语义未验证。⚠️ **RT 纹理必须保持 CLAMP**（别在别处一律改成 repeat）。
 20. **纹理 v 轴约定**：WE 是 `v=0` = 图像顶部；显示路径翻行序后画面正确但**效果 shader 里的 v 语义与 WE 相反**（带符号方向量整体反向）。修法是**窄修**：只在效果链一侧按 WE 约定加载（`rowOrder` + 注入 topDown 加载器），并用「隔离局部相机 y 镜像 + 合成 quad `flipGeometryUvY`」抵消 —— **不要做全量迁移**（要改 4~8 个显示采样点，漏一处就是整图上下颠倒）。
@@ -186,6 +186,8 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
 35. **壁纸侧的已知缺陷（不修，仅记录）**：`3789244610` 自身的 `city.jpg` 404、空 `<nav>` 让脚本抛 TypeError、文档溢出（见 §5.40 与 `docs/fixes/web-wallpaper-history.md`）；`3778198228` 给 video 写死 `object-fit:cover`（宽于 16:9 时裁掉约 15%）。
 
 36. **隔离对象 RT 分辨率的已知边界**：① 显存预算是**软保证** —— 预算小到装不下全部屏占位时无法再降，只能保住「只升不降」；② 预算只覆盖 **image** 隔离对象：挂载期输入只含 image，resize 期同一函数按 `entries` 计入了粒子的屏占位 ⇒ 两期输入集合不同（粒子 RT 恒为屏占位）；③ 视频纹理**未就绪时回退屏占位**，不做「就绪后重设 RT」；④ 精灵表按**源尺寸未知**处理（回退屏占位）；⑤ e2e 锐度判据的样本里粒子 / 精灵表对象**各 0 个**（判据无真实样本）；⑥ 锐度判据余量偏薄（逐块中位数最低约 **1.11**，阈值 1.05）。详见 `docs/superpowers/specs/2026-10-12-isolated-object-rt-resolution-design.md` §5 与「实测（实现后）」，脚本用法见 `TESTING.md`。
+
+37. **`g_TextureNResolution` 只保证「四分量同值 ⇒ `.z/.x` 为 1」，不保证取到实际上传尺寸**：原始像素载荷类（`mip0 记录 == 分配`）上传前经 `cropToMap` 裁到 image 尺寸，故其 `.x/.y` 与真实纹理尺寸仍差约 1.6×，凡把 `.x/.y` / `.z/.w` 当 texel 步长用的用法仍偏小。要彻底对齐需让 `fxRes` 等于各分支最终上传尺寸（独立行为变更，需单独 A/B 验证）。
 
 ## 8. 历史归档
 

@@ -71,7 +71,46 @@
     - 这两条加上下面两条纹理语义，就是 GTR 从「整屏晃动 + 整屏脉冲」回到桌面 WE「只抖排气管、女孩脸上反光一闪一闪」的全部原因（`3031158`）。
 ### §5.17
 
-17. **`g_TextureNResolution` 的 vec4 分量是 `(mip0.w, mip0.h, header.w, header.h)`**（lwe 约定），**不是** `(w, h, 1/w, 1/h)`：效果 shader 用 `.z/.x` 缩放遮罩 UV（`shake.vert` 的 `v_TexCoord.zw = uv * g_Texture1Resolution.z / g_Texture1Resolution.x`），`.z` 填 `1/w` ⇒ `.z/.x = 1/w²` ⇒ 遮罩 UV 被压成 ~0 ⇒ 所有像素采到同一角 ⇒ 本该只作用于 mask 区域的效果变成**全图等量位移**。为此 `textureFromTex` 把 `[mip.width, mip.height, info.textureWidth, info.textureHeight]` 写进 `tex.userData.fxRes`（`tex-loader.ts:335-343`；header 尺寸可大于 image 尺寸 —— NPOT padding）；`resolveTextureResolution4` 读该字段，**RT 等无该字段的纹理按 lwe 约定视为 `(w, h, w, h)`**（`effect-runner.ts:108-130`、`:436-448`）。
+17. **`g_TextureNResolution` 的 vec4 分量：四分量一律同值（= 纹理 mip0 记录尺寸）** —— 正确的不变量是「**四分量一律同值 ⇒ `.z/.x` 与 `.w/.y` 恒为 1**」，**不是**「四分量取内容尺寸」（后者对「`mip0 记录 == 分配`」的原始像素载荷类不成立，见下方影响面）。效果 shader 用 `.z/.x` 缩放遮罩 UV（`waterripple.vert` / `shake.vert` 的 `v_TexCoord.zw = uv * g_Texture1Resolution.z / g_Texture1Resolution.x`），比值必须为 1；插件**从不 padding 上传**（编码图像类 `createImageBitmap` 解出即上传；原始像素载荷类经 `cropToMap` 裁到 image 尺寸后上传）⇒ **上传的纹理总是被内容占满**，填 `.tex` 头的分配尺寸会让 NPOT 遮罩按 分配/内容 挤向画面左上。为此 `textureFromTex` 把 `[mip.width, mip.height, mip.width, mip.height]` 写进 `tex.userData.fxRes`（`tex-loader.ts:471-473`，`fxRes` 的唯一生产者）；`resolveTextureResolution4` 读该字段，**RT 等无该字段的纹理按同口径回退为 `(w, h, w, h)`**（`effect-runner.ts:315-334`）。
+
+    **2026-10-12 修复归档（分支 `fix/mask-uv-npot`：`b8df5e2`…`cdbdd56`；触发 = 用户报告「魔兽之门湖面波动跑到湖上方树上」）** —— 审计脚本在 gitignored 的 `output/blur-analysis/`（`mask_placement.py` / `mask_scope.py` / `shader_audit.py` / `tex_padding_scope.py` / `fxres_npot_miprecord_scan.py`），数字全部随文留档（不能只留路径）：
+
+    - **遮罩几何验算**（`mask_placement.py`：从 `scene.pkg` 直接解码遮罩图，`1922570576`）—— 两张 `waterripple_mask` 的 `header(分配)=4096×2048 / mip0(内容)=2500×1200`，padding 比 **1.6384 × 1.7067**：
+
+      | 遮罩（`materials/masks/`） | 遮罩内「水域」非零区（遮罩自身 UV） | 旧口径落点（`uv × 分配/内容`） | 现口径落点（比值 = 1） |
+      |---|---|---|---|
+      | `waterripple_mask_c5b9…` | u∈[0.025, 0.366] **v∈[0.784, 0.862]** | u∈[0.015, 0.224] **v∈[0.459, 0.505]** | 同左（v∈[0.784, 0.862]） |
+      | `waterripple_mask_7413…` | u∈[0.393, 0.854] **v∈[0.828, 0.992]** | u∈[0.240, 0.521] **v∈[0.485, 0.581]** | 同左（v∈[0.828, 0.992]） |
+
+      水域（画面底部 v≈0.78–0.99）被旧口径整体搬到 v≈0.46–0.58，即树线一带 —— 与真机现象逐点吻合；叠加图 `output/blur-analysis/mask_placement.png`（红带 = 旧口径落点，绿带 = 比值 1 落点）。
+
+    - **全库 shader 表达式分类**（`shader_audit.py`：命中 **376** 行、归一化后 **32** 种表达式，scene 壁纸 28 张里带 shader 文本源的 17 张；旧稿记的 380 行 / 33 种含 `src/` 注释里被删掉的 4 行引文、1 种表达式，不是 shader 用法）：
+
+      | 类 | 表达式（归一化后，括号内为出现行数） | 行数 | 需要哪个量 |
+      |---|---|---|---|
+      | **A 遮罩 / 纹理 UV 缩放** | `v_TexCoord.zw = vec2(uv.x * .z/.x, uv.y * .w/.y)`（72+80）、`a_TexCoord` 版（16+32）、`v_TexCoordMask.zw = vec2(.z/.x, .w/.y)`（28）、`v_TexCoordMask.xy = …`（14+8+2）、`v_TexCoord.z *= .z/.x`（8）、`v_TexCoord.w *= .w/.y`（8） | **268** | **比值** `.z/.x`、`.w/.y`（须为 1） |
+      | **B texel 步长（当尺寸用）** | `blurredCoords += 0.75 / .zw`（6）、`offsetX/offsetY = g_Scale.x/y / .z/.w`（8+8）、`v_TexCoord.z/.w = g_Scale.x/y / .z/.w`（6+6） | **34** | **尺寸**（现口径 = mip0 记录尺寸） |
+      | **C `.xy` 当尺寸** | `vec2 offsets = 1.0 / .xy`（8）、`0.5 / .xy`（4）、`v_TexCoord.zw += 0.5 / .xy`（4）、`v_StepSize = 1.0 / vec4(-.xy, .xy)`（4）、`ApplyCompositeOffset(…, .xy)`（4）、`v_PointerUV.xy *= 0.5 / .xy`（1） | **25** | **尺寸**（`.xy` 历来 = mip0 记录尺寸） |
+      | **D 宽高比** | `.x/.y`（14+4+2+2）、`.z/.w`（14+4+2）、`.y/.x` 与 `.zw/.xy`（2+2+2）、注释行 `//float aspect = .z/.w`（4）与 2 条 src 注释（2+1） | **49** | 图像长宽比（内容） |
+
+      合计 268+34+25+49 = 376 = 命中行数。**结论：没有任何一种用法需要「分配尺寸」这个量。** 两条精确化（勿再写旧措辞）：① B 类「texel 步长偏小 1.64×」**只对本次会变的那一类（38 个）成立** —— 它们 `mip0 记录 == image` ⇒ `.zw` 从分配尺寸回到 mip0 记录尺寸 = 实际上传尺寸，步长随之正确（如魔兽之门的旧口径 `.z/.x` = 1.6384）；**50 个不变的那一类**（原始像素载荷，`mip0 记录 == 分配`）逐分量不变，其 `.x/.y` 作为 texel 步长仍偏约 1.6×（`fxRes` ≠ `cropToMap` 后的上传尺寸，**既有状态、非本次回归**，见 `AGENT.md` §7.37 的 follow-up）；② D 类内部仍矛盾（同文件里 `.x/.y` 内容比 2.083 vs `.z/.w` 分配比 2.0，相差 4%），现口径下两者都取 mip0 记录尺寸。
+
+    - **影响面**（`tex_padding_scope.py` + `fxres_npot_miprecord_scan.py`，本机壁纸库快照 = 33 张 scene 壁纸）：
+
+      | 口径 | 数字 |
+      |---|---|
+      | 全库 `.tex` | **175** 个（`materials/masks/` 92 / 其它 83） |
+      | `header ≠ image`（NPOT padding） | **88** 个（50%），分布 **21** 张壁纸 |
+      | 其中**会变**（`mip0 记录 == image`，编码图像 / 视频类） | **38** 个（`imageFormat=13` PNG 27 + `=2` JPEG 11；含遮罩 15） |
+      | 其中**不变**（`mip0 记录 == 分配`，**原始像素载荷（带 padding）**） | **50** 个（TEXB0003 `imageFormat=-1` 48 + TEXB0002 1 + TEXB0004 1；含遮罩 26） |
+
+      新值与旧值**逐分量相等 iff `mip0 记录 == 分配`**（库级头部扫描无第三类，二分穷尽）；50 类的上传路径是「mip0 载荷本身 = 分配尺寸，上传前经 `cropToMap` 裁到 image」⇒ 旧 `.z/.x` 本就是 `分配/分配 = 1`，本次**零改动**。⚠️ 该类的成因表述必须用「**原始像素载荷（带 padding）**」，**不得**写成「全部 `imageFormat=-1`」（库里另有 1 个 TEXB0002 其 `imageFormat` 为 None，同机制）。遮罩侧：`header ≠ image` 的遮罩共 **41** 个（涉及 5 张：`1429403119` 21 / `1922570576` 3 / `1968789468` 4 / `2011060960` 12 / `2132420420` 1），其中**会变 15 个**（`1922570576` 3 + `2011060960` 11 + `2132420420` 1）、**不变 26 个**（`1429403119` 21 + `1968789468` 4 + `2011060960` 1）—— 用户报告的「魔兽之门」属会变那批。
+
+    - **e2e 真机实测**（`e2e/verify/verify-isolated-rt-sharpness.mjs --gpu`，串行；探针 = `window.__fxResProbe()`，加在 `e2e/harness/harness-text-clock-entry.mjs:228-260`；两条判据在 `e2e/verify/verify-isolated-rt-sharpness.mjs:698-728`）：
+      - 单张 `1922570576`：探针 **21 槽、`bad=0`**；命中遮罩 `obj=13 slot=1 tex=[2500,1200] z/x=1.0000`；两条判据 PASS，**exit 0**。
+      - 全清单 5 张：**5/5、exit 0**；判据①在 **262** 槽（21+65+8+88+80）上逐槽要求 `|z/x − 1| < 1e-6`，**零样本判 FAIL**；判据②（2500×1200 遮罩已绑定且口径为 1）只对 `1922570576` 断言，其它 4 张打印**显式 SKIP**（该素材专属该张，不静默跳过）。
+      - **反向验证**（临时把 `src/client/tex-loader.ts` 回退到修复前提交 `7ba4eca`）：**exit 1**，`FAIL 遮罩槽分辨率口径 z/x === 1 ← 3/21 处异常，例：obj=13 slot=1 z/x=1.6384`（**1.6384 = 4096/2500**，与该张 3 个 NPOT 遮罩的条数、比值完全吻合）。
+      - **谁守卫生产（勿写错）**：**唯一守卫生产代码的是 `tests/tex-loader.test.ts` 的三条 fxRes 用例**（`:824-827` 的 `[100,50,100,50]`、`:839-842` 的比值 1 —— `tex-loader.ts:473` 一回退它们就红，**不得削弱 / 删除**）；`tests/effect-runner.test.ts:608-628` 是**消费者侧契约钉**（用例内合成字面量、不调用 `textureFromTex`，其中第 3 条仅做判据灵敏度自证）。判据用法见 `TESTING.md` §2.5。
 ### §5.18
 
 18. **R8 / RG88 有两套通道语义，不能混用**：`convertUnormToRgba(data, format, alphaPriority = true)`（`tex-loader.ts:490-515`）——
