@@ -313,15 +313,19 @@ try {
     console.log('   页面状态:', await evalJs(`JSON.stringify({ href: location.href, bodyHtml: document.body.innerHTML.slice(0, 80), scripts: [...document.scripts].map((s) => s.src) })`));
   }
   await sleep(600);
-  // [perf] 1080p FPS 门槛（AGENT.md P1）——先采基线，实现后再比一次；顺带打印真实渲染器自证非 SwiftShader
+  // [perf] 1080p FPS 参考值（AGENT.md P1 门槛不在本脚本判定）；顺带打印真实渲染器自证非软栅
   // 注：CDP 的 Runtime.evaluate 不支持顶层 await ⇒ 用 async IIFE 包一层。
   try {
     // 探针已自带 JSON 序列化，勿再套一层（双重编码看不出字段）；软栅 / 取不到 ext 时 FPS 无意义，只告警。
     const rendererJson = await evalJs('JSON.stringify(window.__glRendererInfo())');
     console.log('  [perf] renderer:', rendererJson);
     const rendererName = JSON.parse(rendererJson ?? '{}').renderer ?? 'unknown';
-    if (rendererName === 'unknown' || /swiftshader|software|llvmpipe/i.test(rendererName)) {
-      console.log(`  ⚠️ 渲染器非真 GPU（${rendererName}）⇒ 下面的 FPS 只是参考值，不作为判据`);
+    // 软栅含 WARP（`Microsoft Basic Render Driver`）；`unknown` 只是拿不到 `WEBGL_debug_renderer_info`。
+    const softRenderer = rendererName === 'unknown'
+      || /swiftshader|llvmpipe|software|basic render|softpipe|mesa offscreen/i.test(rendererName);
+    if (softRenderer) {
+      const why = rendererName === 'unknown' ? '拿不到渲染器信息（unknown）' : `软栅渲染器（${rendererName}）`;
+      console.log(`  ⚠️ ${why} ⇒ 下面的 FPS 不可当门禁（本脚本不把 FPS 作为判据，仅供参考）`);
     }
   } catch (e) { console.log('  [perf] renderer 取用失败:', String(e).slice(0, 120)); }
   try { console.log('  [perf]', await evalJs('(async () => JSON.stringify(await window.__fpsProbe(5000)))()')); }
