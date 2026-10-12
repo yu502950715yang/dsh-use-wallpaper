@@ -313,3 +313,27 @@ export function isolatedRtSize(
   // upgraded 按输出实际是否大于屏占位判定（退化尺寸下等比基准无意义，不谎报升级）
   return { width, height, upgraded: width > occ.width || height > occ.height };
 }
+
+// sourcePixelsFromTexture 的入参最小结构化类型（字段全可选）：three 的 Texture 结构兼容，
+// 但本模块不 import three，故只用结构描述（THREE.Texture 可直传）。
+export interface TexLike {
+  image?: { width?: number; height?: number; videoWidth?: number; videoHeight?: number } | null;
+  userData?: { sprite?: unknown } | null;
+}
+
+// 从 three 纹理取「源纹理像素尺寸」；取不到（缺失/非有限/≤0/视频未就绪/精灵表）一律 null，
+// 由调用方回退屏占位——即全局约束「只升不降」的落点。返回值恒为新建对象，不改写入参。
+export function sourcePixelsFromTexture(tex: TexLike | null | undefined): SourcePixels | null {
+  if (!tex || !tex.image) return null;
+  if (tex.userData?.sprite) return null; // 精灵表：图集尺寸 ≠ 对象分辨率（tex-loader 仅 flags bit2 时写入）
+  const img = tex.image;
+  // 视频分支必须先于普通图像：HTMLVideoElement.width/height 是元素属性（默认 0），
+  // 真实尺寸在 videoWidth/videoHeight；未就绪（=0）则落到 width/height → null。
+  const vw = Number(img.videoWidth);
+  const vh = Number(img.videoHeight);
+  if (Number.isFinite(vw) && vw > 0 && Number.isFinite(vh) && vh > 0) return { width: vw, height: vh };
+  const w = Number(img.width);
+  const h = Number(img.height);
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return null;
+  return { width: w, height: h };
+}

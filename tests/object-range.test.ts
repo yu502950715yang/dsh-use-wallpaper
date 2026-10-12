@@ -8,7 +8,7 @@ import {
   materialModulation, objectCameraRange, particleObjectRange, particleWorldSize,
   createObjectRenderTarget, shouldUseObjectPath, groupEffectsByObject, PendingChainStore,
   uvWindow, createCompositeGeometry, coverRange, flipGeometryUvY,
-  screenScalePx, objectRtSize, isolatedRtLongEdge, isolatedRtSize,
+  screenScalePx, objectRtSize, isolatedRtLongEdge, isolatedRtSize, sourcePixelsFromTexture,
 } from '../src/client/object-range.js';
 
 describe('object-range 常量', () => {
@@ -239,6 +239,41 @@ describe('隔离对象 RT 尺寸（方案 A′）', () => {
   it('cap 收窄 → 升级上限随之下降，仍等比且不低于屏占位', () => {
     expect(isolatedRtSize(5000, 2400, 0.375, { width: 5000, height: 2400 }, { cap: 2048 }))
       .toEqual({ width: 2048, height: 983, upgraded: true });
+  });
+});
+
+// ── 源尺寸提取（Task 3）：隔离 RT 的升级上限来源；取不到一律 null ⇒ 调用方回退屏占位 ──
+describe('sourcePixelsFromTexture（源尺寸提取与回退）', () => {
+  it('普通图像纹理 → image 尺寸（不是 NPOT padding 的 textureWidth/Height）', () => {
+    expect(sourcePixelsFromTexture({ image: { width: 5000, height: 2400 } })).toEqual({ width: 5000, height: 2400 });
+  });
+  it('视频纹理未就绪（videoWidth=0）→ null（回退屏占位）', () => {
+    expect(sourcePixelsFromTexture({ image: { width: 0, height: 0, videoWidth: 0, videoHeight: 0 } })).toBeNull();
+  });
+  it('视频就绪 → videoWidth/videoHeight', () => {
+    expect(sourcePixelsFromTexture({ image: { width: 1, height: 1, videoWidth: 1920, videoHeight: 1080 } }))
+      .toEqual({ width: 1920, height: 1080 });
+  });
+  it('精灵表 → null（图集尺寸 ≠ 对象分辨率）', () => {
+    expect(sourcePixelsFromTexture({ image: { width: 4096, height: 4096 }, userData: { sprite: { frames: 64 } } })).toBeNull();
+  });
+  it('缺失/NaN → null', () => {
+    expect(sourcePixelsFromTexture(null)).toBeNull();
+    expect(sourcePixelsFromTexture({ image: { width: NaN, height: NaN } })).toBeNull();
+  });
+  it('视频未就绪但元素 width/height 可用 → 落到 width/height 分支；返回新对象、不改写入参', () => {
+    const image = { width: 300, height: 150, videoWidth: 0, videoHeight: 0 };
+    const out = sourcePixelsFromTexture({ image });
+    expect(out).toEqual({ width: 300, height: 150 });
+    expect(out).not.toBe(image);
+    expect(image).toEqual({ width: 300, height: 150, videoWidth: 0, videoHeight: 0 });
+    // 未定义 / 非有限 / ≤0 一律 null，且不抛异常
+    expect(sourcePixelsFromTexture(undefined)).toBeNull();
+    expect(sourcePixelsFromTexture({})).toBeNull();
+    expect(sourcePixelsFromTexture({ image: null })).toBeNull();
+    expect(sourcePixelsFromTexture({ image: { width: 0, height: 100 } })).toBeNull();
+    expect(sourcePixelsFromTexture({ image: { width: 100, height: -1 } })).toBeNull();
+    expect(sourcePixelsFromTexture({ image: { width: Infinity, height: 100 } })).toBeNull();
   });
 });
 
