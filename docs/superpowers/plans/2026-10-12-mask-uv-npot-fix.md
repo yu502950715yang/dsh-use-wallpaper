@@ -245,9 +245,9 @@ Expected: 既有判据全 PASS + 新增 2 条 PASS；`metrics.json` 里能看到
 - [ ] **Step 4: 反向验证（判据有牙）**
 
 ```bash
-git stash push -- src/client/tex-loader.ts        # 或 git checkout HEAD~1 -- src/client/tex-loader.ts
+git checkout 7ba4eca -- src/client/tex-loader.ts   # 修复前版本（任务已提交，git stash 是 no-op）
 node e2e/verify/verify-isolated-rt-sharpness.mjs --id=1922570576 --gpu   # 期望 exit 1，报 z/x=1.6384
-git stash pop
+git checkout HEAD -- src/client/tex-loader.ts      # 恢复；git diff 应为空
 node e2e/verify/verify-isolated-rt-sharpness.mjs --id=1922570576 --gpu   # 期望 exit 0
 ```
 
