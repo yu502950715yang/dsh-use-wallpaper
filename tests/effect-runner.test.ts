@@ -8,7 +8,6 @@ import {
   resolveInputTexture,
   pickWriteTarget,
   resolveTargetSize,
-  resolveTextureResolution,
   resolveTextureResolution4,
   fillAudioSpectrumUniform,
   describeEffectPass,
@@ -574,34 +573,6 @@ describe('resolveTargetSize（setChains opts 尺寸决策：显式覆盖、缺�
   });
   it('width + height → 全部覆盖（对象级 RT 尺寸）', () => {
     expect(resolveTargetSize({ width: 1920, height: 1080 }, { width: 256, height: 128 })).toEqual({ width: 256, height: 128 });
-  });
-});
-
-describe('resolveTextureResolution（g_TextureNResolution 推导：image 有尺寸用实际，缺失回退默认）', () => {
-  it('image 有实际尺寸 → 用实际尺寸（对象纹理 / 槽纹理）', () => {
-    const tex = new THREE.Texture();
-    tex.image = { width: 320, height: 240 };
-    expect(resolveTextureResolution(tex, 1920, 1080)).toEqual({ width: 320, height: 240 });
-    tex.dispose();
-  });
-  it('RT 纹理 → 用其实际 image 尺寸（three 0.170 RT texture 自带 image {width,height,depth}，即对象 RT 分辨率）', () => {
-    const rt = new THREE.WebGLRenderTarget(64, 64);
-    expect(resolveTextureResolution(rt.texture, 1920, 1080)).toEqual({ width: 64, height: 64 });
-    rt.dispose();
-  });
-  it('image 为 null（普通未解码 Texture）→ 回退默认尺寸', () => {
-    const tex = new THREE.Texture(); // image 缺省 null
-    expect(resolveTextureResolution(tex, 1920, 1080)).toEqual({ width: 1920, height: 1080 });
-    tex.dispose();
-  });
-  it('null 纹理 → 回退默认尺寸', () => {
-    expect(resolveTextureResolution(null, 1920, 1080)).toEqual({ width: 1920, height: 1080 });
-  });
-  it('image 尺寸为 0 → 保留 0（?? 语义而非 ||，避免把合法 0 当缺失）', () => {
-    const tex = new THREE.Texture();
-    tex.image = { width: 0, height: 0 };
-    expect(resolveTextureResolution(tex, 1920, 1080)).toEqual({ width: 0, height: 0 });
-    tex.dispose();
   });
 });
 

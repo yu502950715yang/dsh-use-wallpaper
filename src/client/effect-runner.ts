@@ -299,19 +299,6 @@ export function resolveTargetSize(
   };
 }
 
-// g_TextureNResolution 推导：image 有尺寸用实际尺寸（three 0.170 的 RT 纹理自带 image
-// {width,height,depth}，即场景/对象 RT 分辨率）；image 缺失（未解码普通纹理）→ 回退默认。
-export function resolveTextureResolution(
-  tex: { image?: { width?: number; height?: number } | null } | null | undefined,
-  fallbackW: number,
-  fallbackH: number,
-): EffectTargetSize {
-  return {
-    width: tex?.image?.width ?? fallbackW,
-    height: tex?.image?.height ?? fallbackH,
-  };
-}
-
 // g_TextureNResolution 的 **vec4 分量**：四分量一律同值（= 纹理 mip0 记录尺寸）。WE 效果 shader
 // 用 `.z/.x` 缩放遮罩 UV（waterripple/shake），比值必须为 1，否则 NPOT padding 会按 分配/内容
 // 把遮罩挤向画面左上（见 AGENT.md §5.17）；RT 与未带 `fxRes` 的纹理走下方回退，同口径。

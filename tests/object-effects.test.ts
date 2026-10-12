@@ -117,6 +117,7 @@ describe.skipIf(!existsSync(WALLPAPER_DIR))('全库效果链分类（实测数�
 
 // ── 编排器（Task 4）：mock runner 与 host，node 环境不触碰 WebGL ──
 import { ObjectEffectStage, weVRowOrderLoader } from '../src/client/object-effects.js';
+import { isolatedRtSize, ISOLATED_RT_BYTES_PER_PX, ISOLATED_RT_BUDGET_BYTES } from '../src/client/object-range.js';
 import * as THREE from 'three';
 import { vi } from 'vitest';
 
@@ -436,7 +437,15 @@ describe('ObjectEffectStage', () => {
     });
     stage.setWorldSize(13, 5000, 2400, { width: 5000, height: 2400 });
     stage.onViewportResize(0.375); // 同一密度：尺寸口径必须与挂载期逐字一致
-    expect(host._resized).toEqual([]); // 旧实现算 1875×900 ⇒ 打回屏占位
+    // 挂载期口径逐字钉住：屏占位 = 1875×900，源纹理收口到 4096 ⇒ 4096×1966（旧实现 resize 后
+    // 会给 1875×900）。等价于「旧实现必须让 host._resized 出现一次 1875×900」。
+    expect(isolatedRtSize(5000, 2400, 0.375, { width: 5000, height: 2400 }))
+      .toEqual({ width: 4096, height: 1966, upgraded: true });
+    // 尺寸与挂载期**恰好**相同 ⇒ 一次 resize 都不发生（比只断言「没发生 resize」更严：
+    // 「先重设成 1875×900 再设回 4096×1966」这类往返也会让本断言变红）。
+    expect(host._resized).toEqual([]);
+    // 尺寸未变 ⇒ 不重挂链、不回退输出（entries 回写值同样是挂载期口径）。
+    expect(host._outputs.size).toBe(0);
   });
 
   it('resize 期同源：屏占位状态下的隔离对象，resize 按源纹理升到 4096（不是屏占位）', () => {
@@ -479,9 +488,13 @@ describe('ObjectEffectStage', () => {
     expect(host._resized.map((r) => [r.w, r.h])).toHaveLength(2);
     const [a, b] = host._resized;
     expect([a.w, a.h]).toEqual([b.w, b.h]); // 同一 budgetScale ⇒ 同尺寸
-    // 两张 4096 长边共 451 MB > 384 MB 预算 ⇒ 必须收窄（但恒不小于屏占位 1875×900）
+    // 钉实际收窄值（旧断言只钉不等式 <4096 / >1875，任何「收窄一点点」都能过）：两张
+    // 4096×1966 合计 451 MB > 384 MB 预算 ⇒ 二分得到 budgetScale≈0.857947 ⇒ 3780×1814，
+    // 合计 383,987,520 B ≤ 384 MB（再大一档 3781×1815 = 384,190,940 B 就装不下）。
+    expect([a.w, a.h]).toEqual([3780, 1814]);
     expect(Math.max(a.w, a.h)).toBeLessThan(4096);
     expect(Math.max(a.w, a.h)).toBeGreaterThan(1875);
+    expect((a.w * a.h + b.w * b.h) * ISOLATED_RT_BYTES_PER_PX).toBeLessThanOrEqual(ISOLATED_RT_BUDGET_BYTES);
   });
 
   it('dispose 释放全部 runner', () => {

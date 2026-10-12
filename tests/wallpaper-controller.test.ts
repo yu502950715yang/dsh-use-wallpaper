@@ -154,8 +154,11 @@ describe('createWallpaperController WebGL 上下文丢失回退 preview（Task 8
     await c.select('2');
     expect(layer.calls.at(-1)).toBe('scene');
 
+    // 回退路径自身 warn（壁纸 id）：spy 收口，保持测试输出干净。
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     r.lost('2');
     expect(layer.calls.at(-1)).toBe('none');
+    warn.mockRestore();
   });
 
   it('换壁纸后再丢失 ⇒ 用**当时**的 currentInfo（读到新壁纸的 preview，非注册时快照）', async () => {
@@ -167,9 +170,11 @@ describe('createWallpaperController WebGL 上下文丢失回退 preview（Task 8
     await c.select('5');
     expect(layer.calls.at(-1)).toBe('scene');
 
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     r.lost('5');
     // 注册发生在构造期（此时还没有 currentInfo）；若实现快照了注册时的值，这里会拿到 /p2 或什么都不做。
     expect(layer.imageArgs.at(-1)).toEqual(['/p5', true]);
+    warn.mockRestore();
   });
 
   it('select 进行中丢上下文 ⇒ 按回调参数（id）选对壁纸，不闪出上一张', async () => {
@@ -183,9 +188,11 @@ describe('createWallpaperController WebGL 上下文丢失回退 preview（Task 8
     const gate = new Promise<boolean>((res) => { release = res; });
     r.render = () => gate;
     const pending = c.select('9');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     // 渲染器回报的 id 是**正在渲染的那张**；旧实现只读 currentInfo ⇒ 拿到 #2 的 /p2
     r.lost('9');
     expect(layer.imageArgs.at(-1)).toEqual(['/p9', true]);
+    warn.mockRestore();
     release(true);
     await pending;
   });

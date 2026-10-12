@@ -263,6 +263,9 @@ export function createThreeSceneRenderer(opts?: {
   let lastAudioSpec: { id: string; sounds: string[] } | null = null;
   // 上下文丢失回调（由控制器注册：只有它知道当前壁纸的 preview 地址 —— 见 Task 8）。
   let contextLostHandler: ((id: string) => void) | null = null;
+  // 本次装配的壁纸 id（闭包持有）：不往调用方的 canvas 写 `data-wp-id`（那是外部 DOM 副作用），
+  // 也不再有「dataset 必须先于监听注册」的隐式次序依赖。
+  let contextLostId: string | null = null;
   // 本次装配注册了 `webglcontextlost` 监听的 canvas：teardown 必须移除（跨壁纸/跨 canvas 不残留）。
   let contextLostCanvas: HTMLCanvasElement | null = null;
   // 「上下文在本次 render 进行中丢失」标记：onContextLost 置位、render 入口复位（每实例闭包状态，
@@ -293,9 +296,13 @@ export function createThreeSceneRenderer(opts?: {
     e.preventDefault();
     // 先作废仍在飞的 render：它若继续装好 player 并返回 true，控制器会把 preview 换回失效 canvas。
     contextLost = true;
-    const id = contextLostCanvas?.dataset.wpId;
+    const id = contextLostId;
     try { teardown(); } catch { /* 释放失败不得掩盖回退 */ }
-    if (!id) return;
+    // 先告警再早退：没有 id 也不得让上下文丢失完全静默（诊断上必须留痕）。
+    if (!id) {
+      console.warn('[wallpaper-engine] WebGL 上下文丢失，但无本次装配的壁纸 id，已停播（不回退 preview）');
+      return;
+    }
     console.warn(`[wallpaper-engine] WebGL 上下文丢失，已回退 preview（壁纸 ${id}）`);
     contextLostHandler?.(id);
   };
@@ -310,6 +317,7 @@ export function createThreeSceneRenderer(opts?: {
       contextLostCanvas.removeEventListener('webglcontextlost', onContextLost);
       contextLostCanvas = null;
     }
+    contextLostId = null;
     // 先释放编排器（其 runner 持有对象 RT/材质），再释放播放器（player.dispose 会释放
     // renderer 与隔离 RT）——顺序反了会让 runner 的 dispose 触碰已释放的 GL 资源。
     currentStage?.dispose();
@@ -378,11 +386,11 @@ export function createThreeSceneRenderer(opts?: {
       try {
         // 替换/切壁纸前先释放上次播放器资源（首次渲染 no-op）。
         teardown();
-        // 上下文丢失监听：绑定在**本次装配的 canvas** 上（onContextLost 从它的 dataset 读壁纸 id，
-        // 故在 data 属性就位后注册；teardown 负责移除，不跨壁纸残留）。
-        fg.dataset.wpId = id;
-        fg.addEventListener('webglcontextlost', onContextLost, { once: true });
+        // 上下文丢失监听：绑定在**本次装配的 canvas** 上（壁纸 id 存在闭包 contextLostId 里，
+        // teardown 负责移除监听与 id，不跨壁纸残留）。
+        contextLostId = id;
         contextLostCanvas = fg;
+        fg.addEventListener('webglcontextlost', onContextLost, { once: true });
         // `CpuParticleSim` 是纯 CPU（无需 WebGPU）；模块初始化失败 → 仍可渲染背景，仅跳过粒子。
         modulePromise ??= loadWasm();
         const mod = await modulePromise;
@@ -590,10 +598,13 @@ export function createThreeSceneRenderer(opts?: {
         const screenScale = screenScalePx(desc.orthogonal.width, desc.orthogonal.height, vw, vh, dpr);
         // 隔离对象的尺寸表（挂载期唯一来源）：世界尺寸 = 未钳制 |size × 世界 scale|（含父链；缺 size 按纹理
         // 像素兜底，不得改用逐轴钳 4096 的相机范围），RT = min(源纹理长边, 4096) 等比收口、下限屏占位、按预算收窄。
+        // 准入判定抽成局部谓词：下面 isolate 段（只认 image）复用同一份条件，避免两处各写一份后漂移。
+        const isAdmittedImage = (o: SceneDescription['objects'][number]): o is SceneImageObject =>
+          o.kind === 'image'
+          && !isStaticallyHidden(o.visible, userProps)
+          && (effectChains.get(o.id)?.length ?? 0) > 0;
         const isolateItems = desc.objects
-          .filter((o): o is SceneImageObject => o.kind === 'image'
-            && !isStaticallyHidden(o.visible, userProps)
-            && (effectChains.get(o.id)?.length ?? 0) > 0)
+          .filter(isAdmittedImage)
           .map((o) => {
             const tex = backgroundTextures.get(o.id);
             const s = o.scale;
@@ -628,8 +639,12 @@ export function createThreeSceneRenderer(opts?: {
           // 无链 → 与收紧前逐字一致的早退（effectChains 只在链非空时入表）。
           if (!chains || chains.length === 0) continue;
           if (obj.kind === 'image') {
+            // 准入条件与上面的 isAdmittedImage 同一份（该谓词已含 effectChains 非空，故紧跟上面的早退）。
+            if (!isAdmittedImage(obj)) continue;
             // 尺寸取自上面的 isolateItems 段（同条件、同口径）；此处只做键空间转换。
             const sized = isolatedSizes.get(obj.id);
+            // 条件同 isAdmittedImage ⇒ 正常走不到这里；真漂移了**不得**悄悄不隔离：那会让「有链的
+            // 对象」退化成直渲（比给它一张小 RT 更违背「只升不降」）。
             if (!sized) continue;
             isolate.set(obj.id, {
               objectId: obj.id,
@@ -646,6 +661,8 @@ export function createThreeSceneRenderer(opts?: {
             const s = obj.scale;
             const world = particleWorldSize(spec, [s[0], s[1]]);
             // RT 像素尺寸 = 屏占位（世界尺寸 × 屏幕密度），等比收口到 4096（同上面两条约束）。
+            // ⚠️ 粒子不进预算（isolateItems 只含 image，见 object-range.fitIsolatedBudget）、RT 恒用
+            // 屏占位口径，不按源纹理升级（R19 边界；resize 期预算却计入粒子屏占位，见 AGENT.md §7.36②）。
             const rt = objectRtSize(world.w, world.h, screenScale);
             isolate.set(obj.id, {
               objectId: obj.id,

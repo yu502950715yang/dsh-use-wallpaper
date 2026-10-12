@@ -1123,6 +1123,28 @@ describe('对象级效果链：隔离 RT 尺寸按源纹理收口 4096', () => {
     r.dispose();
   });
 
+  it('对象缺 size ⇒ 世界尺寸走纹理像素兜底（不得改用逐轴钳 4096 的相机范围）', async () => {
+    // scene.json 的 image 对象没有 size 字段时（size2 → undefined），世界尺寸退到纹理 image 像素，
+    // 源纹理像素则走同一条 sourcePixelsFromTexture ⇒ 两者必须同时是 8192×4096。
+    stubAsset([{
+      id: 13, name: 'bg-nosize', image: 'models/13.json', origin: '0 0 0', scale: '1 1 1',
+      effects: [{ file: 'effects/w/effect.json' }],
+    }]);
+    resolveImageTexture.mockResolvedValue({ image: { width: 8192, height: 4096 }, dispose: vi.fn() } as never);
+
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    expect(await r.render('2851992662', document.createElement('canvas'), null)).toBe(true);
+
+    // 世界尺寸（合成 quad 的基准）= 纹理像素 × scale，未逐轴钳 4096。
+    expect(vi.mocked(ObjectEffectStage.prototype.setWorldSize).mock.calls)
+      .toEqual([[13, 8192, 4096, { width: 8192, height: 4096 }]]);
+    // RT = 源纹理等比收口 4096（本用例 dpr=1、屏占位长边恰为 5000）：4096 × 4096/8192 = 2048。
+    const iso = isolateOf().get(13)!;
+    expect([iso.rtWidth, iso.rtHeight]).toEqual([4096, 2048]);
+    expect(iso).toMatchObject({ worldW: 8192, worldH: 4096 });
+    r.dispose();
+  });
+
   it('调用点统一下发第 4 参：源尺寸已知传 SourcePixels、未知传 null（不是 undefined）', async () => {
     stubAsset([bgObject(13), bgObject(246)]);
     // 13 有源纹理、246 纹理未就绪（无 image ⇒ source = null）：一次渲染钉住两种下发形状。
@@ -1937,6 +1959,8 @@ describe('createThreeSceneRenderer webglcontextlost 回退 preview 接线', () =
 
   it('切壁纸（render 先 teardown）⇒ 旧 canvas 的监听被移除，新 canvas 的丢失只回调一次', async () => {
     const seen: string[] = [];
+    // 回退路径自身也打一条 warn（壁纸 id）：spy 收口，保持测试输出干净（只断言路径归属）。
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
     r.setOnContextLost?.((id) => seen.push(id));
     const first = lostCanvas();
@@ -1949,6 +1973,8 @@ describe('createThreeSceneRenderer webglcontextlost 回退 preview 接线', () =
     expect(seen).toEqual([]);
     second.canvas.dispatchEvent(new Event('webglcontextlost', { cancelable: true }));
     expect(seen).toEqual(['2851992662']);
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('2851992662'))).toBe(true);
+    warn.mockRestore();
     r.dispose();
   });
 
@@ -1981,6 +2007,44 @@ describe('createThreeSceneRenderer webglcontextlost 回退 preview 接线', () =
     // 没有安装 player：loadSceneToThree 是唯一的装配入口（不会留下僵尸帧循环/GL 资源）。
     expect(loadSceneToThree).not.toHaveBeenCalled();
     expect(seen).toEqual(['1922570576']); // 作废收尾不得二次回调
+    warn.mockRestore();
+    r.dispose();
+  });
+
+  // R27 的另一半：上面的用例只覆盖「丢失作废在飞的 render」，「再 render 一次能重新装配」此前无覆盖。
+  // 若 contextLost 不在 render 入口复位（或 teardown 顺手把它留成 true），作废一次后本实例就再也
+  // 装配不出任何东西 —— 且**不会**报错，只会静默返回 false（最坏的一类回归）。
+  it('上下文丢失作废后，再 render() 一次仍能成功装配（contextLost 复位为 false）', async () => {
+    const first = lostCanvas(); // 本用例自带 resolveImageTexture 实现，不依赖上一个用例的 gate
+    let release!: () => void;
+    const gate = new Promise<void>((res) => { release = res; });
+    let entered!: () => void;
+    const atAwait = new Promise<void>((res) => { entered = res; });
+    resolveImageTexture.mockImplementationOnce(async () => {
+      entered();
+      await gate;
+      return fakeTexture() as never;
+    });
+    const seen: string[] = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    r.setOnContextLost?.((id) => seen.push(id));
+
+    const pending = r.render('1922570576', first.canvas, null);
+    await atAwait;
+    first.canvas.dispatchEvent(new Event('webglcontextlost', { cancelable: true }));
+    release();
+    await expect(pending).resolves.toBe(false); // 第 1 次：作废
+    expect(seen).toEqual(['1922570576']);
+
+    // 第 2 次（同一个 renderer 实例、新的 canvas）：必须能重新装配并启动播放器。
+    const second = lostCanvas();
+    const before = loadSceneToThree.mock.calls.length;
+    await expect(r.render('2851992662', second.canvas, null)).resolves.toBe(true);
+    expect(loadSceneToThree.mock.calls.length).toBe(before + 1);
+    // 复位是**性质**而非一次性侥幸：新 canvas 的丢失监听同样就位、带的是新壁纸 id。
+    second.canvas.dispatchEvent(new Event('webglcontextlost', { cancelable: true }));
+    expect(seen).toEqual(['1922570576', '2851992662']);
     warn.mockRestore();
     r.dispose();
   });
