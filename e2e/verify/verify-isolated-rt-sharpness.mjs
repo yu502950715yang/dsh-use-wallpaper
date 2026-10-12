@@ -19,7 +19,9 @@
 //       verify-text-clock-layer 的判定段一致：只判失败类）。
 //   [7] **不声称「显存不会爆」**：384 MB 预算只是「尽力收窄升级幅度」的启发式，
 //       不是硬保证（见下方输出与 metrics.json 的 budgetNote）。
-//   [8] 遮罩槽分辨率口径：每个效果 pass 材质的 `g_TextureNResolution` 满足 |z/x − 1| < 1e-6；
+//   [8] 遮罩槽分辨率口径（两条）：① 每个效果 pass 材质的 `g_TextureNResolution` 满足 |z/x − 1| < 1e-6；
+//       ② `.x` === 探针读到的实际上传尺寸 `texImage[0]`（偏离 1 的槽数必须为 0；不可比的行 —— `texImage`
+//       为 null 或 x ≤ 0 —— 排除，零可比槽判 FAIL，与 ① 的零样本策略同精神）。
 //       另对「魔兽之门」断言 2500×1200 遮罩槽已绑定（其它壁纸无该素材 ⇒ 打印 SKIP，非静默跳过）。
 //       探针（`window.__fxResProbe`）**无数据判 FAIL**，绝不因采不到样本而变成假绿。
 //   [9] oracle 与 src 逐字同语义（A2 订正，`--selftest` 跑纯函数自检）：变换字段解析照
@@ -802,9 +804,9 @@ try {
     }
     add('无失败类 [wallpaper-engine]/[three] 告警', r.failWarns.length === 0,
       r.failWarns.map((w) => w.text.slice(0, 120)).join(' | ') || `${r.warns.length} 条一般告警（逐条已打印）`);
-    // ── 遮罩槽分辨率口径（Task 3，真机装配）──────────────────────────────────────────────
-    // 插件不按 .tex 头 padding 上传 ⇒ `g_TextureNResolution` 四分量同值（= mip0 记录尺寸）⇒ 效果
-    // shader 的遮罩缩放 `uv * .z/.x` 退化为恒等；填分配尺寸会让 NPOT 遮罩按 分配/内容 挤向左上。
+    // ── 遮罩槽分辨率口径（Task 3 / A1，真机装配）──────────────────────────────────────────
+    // `g_TextureNResolution` 四分量同值 = **各分支实际上传尺寸**（A1）⇒ 效果 shader 的遮罩缩放
+    // `uv * .z/.x` 为恒等，且 `.x/.y` 与探针读到的上传尺寸一致（两条判据分别钉这两件事）。
     const fxRows = Array.isArray(r.fxRes) ? r.fxRes : null;
     // 2500×1200 是「魔兽之门」专属遮罩素材 ⇒ 第二条判据只对该张有期望值（其它张明确打印，不静默跳过）
     const maskAimed = c.id === '1922570576';
@@ -813,6 +815,7 @@ try {
       // 零样本**必须** FAIL：静默跳过会让这条判据形同不存在（上游改名/形状变化正是它的失守方式）
       const why = `探针无数据（__fxResProbe() 返回 ${r.fxRes === null ? 'null' : '空数组'}）⇒ 口径无从判定，判 FAIL`;
       add('遮罩槽分辨率口径 z/x === 1', false, why);
+      add('遮罩槽 fxRes === 实际上传尺寸（x / texImage[0] 偏离 1 的槽数 === 0）', false, why);
       if (maskAimed) add('魔兽之门遮罩已绑定且口径为 1', false, why);
       else console.log(`  SKIP  魔兽之门遮罩判据：本张 ${c.id} 无该专属遮罩素材，且探针无数据（口径判据已 FAIL）`);
       fxSummary = { rows: 0, bad: null, mask: null, maskAimed, xOverTexImage: null, note: '探针无数据' };
@@ -822,14 +825,20 @@ try {
       add('遮罩槽分辨率口径 z/x === 1', bad.length === 0, bad.length
         ? `${bad.length}/${fxRows.length} 处异常，例：obj=${bad[0].obj} slot=${bad[0].slot} z/x=${(bad[0].z / bad[0].x).toFixed(4)}`
         : `${fxRows.length} 个槽全部为 1`);
-      // 非判定观察量（M4）：`.x/.y` 与**实际上传纹理尺寸**的偏离 —— design §7 的 follow-up（`fxRes` 取
-      // mip0 记录尺寸、不保证等于实际上传尺寸）在 e2e 的可见信号。**不参与 PASS/FAIL**（常驻命令必须仍全绿）。
-      // 只统计「有 texImage 可比」的槽：RT / 未绑定的槽没有上传尺寸可比（另计 slotsWithoutTexImage）。
+      // 判据 [8]②（A1）：`.x/.y` = **各分支实际上传尺寸** ⇒ 必须与探针读到的上传尺寸 `texImage[0]` 相等。
+      // 不可比的行（`texImage` 为 null 或 x ≤ 0）按既有规则排除；**零可比槽判 FAIL**（同 [8]① 精神：
+      // 采不到样本不得变成假绿）。阈值沿用 1e-6 —— 不放宽。原观察量字段保留在 metrics 里供诊断。
       const xComparable = fxRows.filter((row) => row.x > 0 && Array.isArray(row.texImage) && row.texImage[0] > 0);
       const xOverTex = xComparable.filter((row) => Math.abs(row.x / row.texImage[0] - 1) > 1e-6);
       const xOverTexExamples = xOverTex.slice(0, 2).map((row) => `obj=${row.obj} slot=${row.slot} x=${row.x}`
         + ` tex=${row.texImage.join('×')} x/texW=${(row.x / row.texImage[0]).toFixed(4)}`);
-      console.log(`  （非判定观察量）x/texImage[0] ≠ 1 的槽：${xOverTex.length}/${xComparable.length} 可比槽`
+      add('遮罩槽 fxRes === 实际上传尺寸（x / texImage[0] 偏离 1 的槽数 === 0）',
+        xComparable.length > 0 && xOverTex.length === 0,
+        xComparable.length === 0
+          ? `可比槽 0 / ${fxRows.length}（texImage 为 null 或 x ≤ 0 ⇒ 全部不可比）⇒ 无从判定，判 FAIL`
+          : `可比槽 ${xComparable.length} / ${fxRows.length}，偏离 ${xOverTex.length}`
+            + (xOverTexExamples.length ? `  例：${xOverTexExamples.join('；')}` : ''));
+      console.log(`  [8]② x/texImage[0] 偏离 1 的槽：${xOverTex.length}/${xComparable.length} 可比槽`
         + `（共 ${fxRows.length} 槽，其中 ${fxRows.length - xComparable.length} 槽无 texImage 不可比）`
         + (xOverTexExamples.length ? `  例：${xOverTexExamples.join('；')}` : ''));
       const mask = fxRows.find((row) => Array.isArray(row.texImage) && row.texImage[0] === 2500 && row.texImage[1] === 1200);
@@ -842,9 +851,10 @@ try {
           + `（该张口径判据已按 ${fxRows.length} 槽逐槽判定）`);
       }
       fxSummary = { rows: fxRows.length, bad: bad.length, mask: mask ?? null, maskAimed,
-        // 非判定（不参与 checks/ok）：design §7 的 follow-up 在 e2e 的可见信号
+        // 原观察量字段保留（诊断用）：同一条数字也是判据 [8]② 的依据
         xOverTexImage: { slotsNotOne: xOverTex.length, comparableSlots: xComparable.length, slots: fxRows.length,
-          slotsWithoutTexImage: fxRows.length - xComparable.length, examples: xOverTexExamples } };
+          slotsWithoutTexImage: fxRows.length - xComparable.length, examples: xOverTexExamples,
+          criterion: '偏离 1 的槽数 === 0 即判据 [8]②（不可比行排除、零可比槽判 FAIL，阈值 1e-6）' } };
     }
     // 锐度双判据（R30）：基线在才断言；基线缺失 → 明确跳过，不记 PASS 也不记 FAIL
     if (r.sharp && r.sharp.error) {
@@ -873,7 +883,7 @@ try {
       id: c.id, name: c.name, ok: checks.every((x) => x.pass), checks,
       scene: [a.sceneW, a.sceneH], density: a.density, budgetScale: a.budgetScale,
       isolated: objRows, isolatedCount: objRows.length, totalRtPixels: totalPx,
-      fxResProbe: { criterion: 'g_TextureNResolution.z/.x === 1（四分量同值 = mip0 记录尺寸）', ...fxSummary },
+      fxResProbe: { criterion: 'g_TextureNResolution.z/.x === 1（四分量同值 = 各分支实际上传尺寸；A1）', ...fxSummary },
       fps: r.fps?.fps ?? null, fpsFrames: r.fps?.frames ?? null, fpsChecked: USE_GPU,
       viewport: r.viewport, ready: r.ready,
       // 双判据数字：基线缺失记 { skipped, baseline }（不静默、不计 PASS）
@@ -909,10 +919,11 @@ try {
       // I3：零有效块（全部退化/低 NCC，如画面整体平坦）既不跳过也不崩溃，判 FAIL 并照常产出结论与 metrics
       noValidBlocksPolicy: '有效块为 0 ⇒ 逐块中位数判据 FAIL（本张不计 PASS）；打印 n/a（无有效块），判定段与 metrics.json 照常产出',
     },
-    // M4：遮罩槽口径探针的**非判定**观察量（design §7 的 follow-up 可见信号）；不参与 checks/ok
-    fxResProbeNote: 'fxResProbe.xOverTexImage 是**非判定观察量**（不参与 PASS/FAIL）：统计有 g_TextureN 绑定'
-      + '（texImage 可读）的槽里「x / texImage[0] ≠ 1」的条数 —— 即 fxRes 取的是 mip0 记录尺寸、'
-      + '而非各分支实际上传尺寸（design §7 的 follow-up）。判定口径见每张的 fxResProbe.rows / bad。',
+    // [8]②：同一条数字既是判定项（逐张 checks）也保留在此观察量字段供诊断
+    fxResProbeNote: 'fxResProbe.xOverTexImage 统计有 g_TextureN 绑定（texImage 可读）的槽里「x / texImage[0] ≠ 1」'
+      + '的条数：A1 后 fxRes 取各分支实际上传尺寸，该条数必须为 0（判据 [8]②，阈值 1e-6；texImage 为 null 或'
+      + ' x ≤ 0 的槽不可比而排除，零可比槽同样判 FAIL）。本字段与逐张 checks 里的同项判据同源，保留供诊断；'
+      + '判定口径另见每张的 fxResProbe.rows / bad。',
     fpsNote: '本机 60Hz vsync ⇒ FPS 只能当**地板**用，测不出 60 以上的余量，也不覆盖低端 GPU/4K 屏。',
     serialNote: 'harness 端口与 Edge user-data-dir 固定 ⇒ 不得并行跑多份。',
     cases: caseMetrics,
