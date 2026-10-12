@@ -1951,4 +1951,37 @@ describe('createThreeSceneRenderer webglcontextlost 回退 preview 接线', () =
     expect(seen).toEqual(['2851992662']);
     r.dispose();
   });
+
+  it('render 进行中丢失上下文 ⇒ 本次装配作废（返回 false、不安装 player、只回调一次）', async () => {
+    const { canvas } = lostCanvas();
+    // 把「贴图解析」这个 await 卡住：先发起 render，再派发丢失事件，最后放行 —— 复现
+    // 「丢失发生在 render 的 await 期间，而那次 render 恢复后仍装好 player 并返回 true」。
+    let release!: () => void;
+    const gate = new Promise<void>((res) => { release = res; });
+    let entered!: () => void;
+    const atAwait = new Promise<void>((res) => { entered = res; });
+    resolveImageTexture.mockImplementation(async () => {
+      entered();
+      await gate;
+      return fakeTexture() as never;
+    });
+    const seen: string[] = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    r.setOnContextLost?.((id) => seen.push(id));
+
+    const pending = r.render('1922570576', canvas, null);
+    await atAwait; // 此刻 render 挂在 await 上（仅剩放行 gate 才会继续），监听已就位
+    canvas.dispatchEvent(new Event('webglcontextlost', { cancelable: true }));
+    expect(seen).toEqual(['1922570576']);
+    release();
+
+    // 仍在飞的那次 render 必须作废：返回 true 会让控制器把 preview 换回一块失效 canvas。
+    await expect(pending).resolves.toBe(false);
+    // 没有安装 player：loadSceneToThree 是唯一的装配入口（不会留下僵尸帧循环/GL 资源）。
+    expect(loadSceneToThree).not.toHaveBeenCalled();
+    expect(seen).toEqual(['1922570576']); // 作废收尾不得二次回调
+    warn.mockRestore();
+    r.dispose();
+  });
 });

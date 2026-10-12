@@ -265,6 +265,9 @@ export function createThreeSceneRenderer(opts?: {
   let contextLostHandler: ((id: string) => void) | null = null;
   // 本次装配注册了 `webglcontextlost` 监听的 canvas：teardown 必须移除（跨壁纸/跨 canvas 不残留）。
   let contextLostCanvas: HTMLCanvasElement | null = null;
+  // 「上下文在本次 render 进行中丢失」标记：onContextLost 置位、render 入口复位（每实例闭包状态，
+  // 与 paused 同处）。长异步的 render 靠它在每个 await 后作废自己，不把回退掀翻。
+  let contextLost = false;
 
   const stopAudio = () => {
     const audio = currentAudio;
@@ -288,6 +291,8 @@ export function createThreeSceneRenderer(opts?: {
   // 一次性语义：只注册在本次装配的 canvas 上、`once` + teardown 移除 ⇒ 最多回调一次。
   const onContextLost = (e: Event) => {
     e.preventDefault();
+    // 先作废仍在飞的 render：它若继续装好 player 并返回 true，控制器会把 preview 换回失效 canvas。
+    contextLost = true;
     const id = contextLostCanvas?.dataset.wpId;
     try { teardown(); } catch { /* 释放失败不得掩盖回退 */ }
     if (!id) return;
@@ -332,6 +337,12 @@ export function createThreeSceneRenderer(opts?: {
     // 壁纸音效随本次装配一起释放（AudioContext 不 close 会一路累积到浏览器上限）。
     stopAudio();
   };
+  // 上下文已在本次 render 进行中丢失 ⇒ 作废本次装配：清理丢失后新建的残余对象，收尾与失败路径一致。
+  const abortIfContextLost = () => {
+    if (!contextLost) return false;
+    teardown();
+    return true;
+  };
   // 当前生效的 Glow 三值：运行期下发 > 装配时读到的设置（threshold/strength 缺省交给 glow-stage 归一）。
   const effectiveGlow = () => ({
     enabled: glowOverride?.enabled ?? glowFromSettings?.enabled ?? true,
@@ -362,6 +373,8 @@ export function createThreeSceneRenderer(opts?: {
       // 诊断去重集合的生命周期 = 当前壁纸：每次 render 清空，避免跨壁纸累积（换了壁纸后新壁纸的
       // 告警必须还能打印出来）。
       warnedKeys.clear();
+      // 新一次装配（新 canvas）重新开始：复位上一次的上下文丢失标记。
+      contextLost = false;
       try {
         // 替换/切壁纸前先释放上次播放器资源（首次渲染 no-op）。
         teardown();
@@ -373,10 +386,12 @@ export function createThreeSceneRenderer(opts?: {
         // `CpuParticleSim` 是纯 CPU（无需 WebGPU）；模块初始化失败 → 仍可渲染背景，仅跳过粒子。
         modulePromise ??= loadWasm();
         const mod = await modulePromise;
+        if (abortIfContextLost()) return false;
         // 拉取场景描述并解析（与 wasm-renderer 共用 parseSceneJson，对象归类/正交尺寸一致）。
         const sceneJsonResp = await fetch(`/wallpapers/scene/${id}/asset?name=scene.json`);
         if (!sceneJsonResp.ok) return false;
         const sceneJson = await sceneJsonResp.text();
+        if (abortIfContextLost()) return false;
         const desc = parseSceneJson(sceneJson);
         // 前景 canvas 逻辑尺寸 = 视口（对齐 wasm-renderer 的 vw/vh；cover 相机按此裁剪）。
         const vw = Math.max(1, Math.round(window.innerWidth || desc.orthogonal.width));
@@ -441,6 +456,8 @@ export function createThreeSceneRenderer(opts?: {
             });
           }
         }
+        // 上面的 image/particle 资源 await（贴图/粒子 spec/材质）可能横跨丢失事件。
+        if (abortIfContextLost()) return false;
         // ── text 对象（2026-09-21）────────────────────────────────────────────────
         // text 用 resolveVisibility（**含** script 绑定按 value 静态定论）：本库 text 全是脚本时钟，
         // 其中数个默认隐藏（2911105183 的 3 个 Clock 有 2 个 value=false），不过滤就会叠出多个时钟。
@@ -504,6 +521,8 @@ export function createThreeSceneRenderer(opts?: {
             anchorOffset,
           });
         }
+        // 上面的 text 资源 await（字体加载）同样可能横跨丢失事件（此后会推入脚本 binding）。
+        if (abortIfContextLost()) return false;
         // `createParticleSim`：wasm CpuParticleSim 构造器（测试可注入 loadWasm 得到假模块）。
         // 模块无 CpuParticleSim（如未编译 render feature）→ undefined → loadSceneToThree
         // 自动跳过粒子对象（只渲染背景）。
@@ -546,6 +565,8 @@ export function createThreeSceneRenderer(opts?: {
         // 插件设置：一次读取。画质档位必须在算屏幕密度**之前**拿到——对象 RT 的尺寸基准与画布
         // 缓冲必须用同一个渲染像素比（两者口径不一致会让整层模糊，见 AGENT.md §5.15/§5.21）。
         const settings = await readClientSettings();
+        // 设置读取之后要建渲染状态（画质档位/音频/glow），丢失则不再往下走。
+        if (abortIfContextLost()) return false;
         qualityScale = settings.qualityScale ?? 1;
         // 壁纸音效（A3）：sound 对象默认播放（对齐桌面 WE，可用面板关掉）。
         // 关掉时**不创建** AudioContext —— 否则 25/29 张无音效的壁纸也白开一个音频上下文。
@@ -634,6 +655,8 @@ export function createThreeSceneRenderer(opts?: {
           }
         }
 
+        // 装配前的最后一道闸：丢失则绝不安装 player（装上就是无人回收的僵尸帧循环 + GL 资源）。
+        if (abortIfContextLost()) return false;
         // 装配并启动播放（背景 + 粒子；setAnimationLoop 内部每帧 sim.update(dt) → 刷新 buffer）。
         // viewport 传真实窗口/视口尺寸（vw/vh）：ThreeScenePlayer 构造器已不再把 canvas 重置回场景
         // 尺寸，此处显式传给 loadSceneToThree → player.resize(vw,vh) 使 cover 相机按窗口宽高比裁剪
@@ -717,6 +740,8 @@ export function createThreeSceneRenderer(opts?: {
           }
         }
 
+        // SceneScript 宿主的创建/材质解析也是 await：丢失则连宿主带 player 一起作废。
+        if (abortIfContextLost()) return false;
         // ── 装配 ObjectEffectStage（对象级效果链的编排器）──────────────────────────────
         // 键空间（本轮根治点）：isolate 表的键、player 隔离条目的 id（isolatedObjects()[].id）、
         // stage 的键**都是 scene.json 的对象 id**——player 的 attachIsolated 直接用 obj.id 建条目。
@@ -791,6 +816,8 @@ export function createThreeSceneRenderer(opts?: {
           currentStage?.onViewportResize(current.player.screenScalePx());
         };
         window.addEventListener('resize', onWindowResize);
+        // 返回 true 之前的最后一道兜底：无论如何不得把「已丢失」的装配报告成成功（否则护栏被掀翻）。
+        if (abortIfContextLost()) return false;
         // 观测：确认走的是 three 路径（浏览器回归探测用）。
         console.log(
           `[three] scene loaded id=${id} background=${result.backgroundIds.length} particleLayers=${result.particleLayers.length}`,
