@@ -468,10 +468,8 @@ export async function textureFromTex(info: TexInfo, opts?: TexLoadOptions): Prom
   const withSprite = (tex: THREE.Texture): THREE.Texture => {
     const ud: Record<string, unknown> = { ...(tex.userData ?? {}) };
     if (info.sprite) ud.sprite = info.sprite;
-    // 插件**从不 padding 上传**（createImageBitmap 解出即上传），内容占满整张纹理 ⇒
-    // `g_TextureNResolution` 四分量一律按内容尺寸：`[w, h, w, h]`。效果 shader 的
-    // `uv * .z/.x`（如水波纹遮罩）因此退化为恒等；若填 .tex 头的分配尺寸，遮罩会被
-    // 按 分配/内容 的比例挤向画面左上（真机现象：湖面波动跑到湖水上方的树线上）。
+    // 未 padding 上传 ⇒ g_TextureNResolution 四分量一律取内容尺寸：效果 shader 用 `.z/.x`
+    // 缩放遮罩 UV，若填 .tex 头的分配尺寸会按 分配/内容 把遮罩挤向画面左上（见 AGENT.md §5.17）。
     ud.fxRes = [mip.width, mip.height, mip.width, mip.height];
     tex.userData = ud;
     return tex;
