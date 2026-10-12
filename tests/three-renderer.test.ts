@@ -47,6 +47,7 @@ import { loadTexTexture } from '../src/client/tex-loader.js';
 import { defaultLoadWasm } from '../src/client/wasm-loader.js';
 import { createThreeSceneRenderer, particleBlend, collectObjectEffectChains, collectScriptSources, lastWorldTransformOf } from '../src/client/three-renderer.js';
 import { parseSceneJson } from '../src/client/scene-json.js';
+import { screenScalePx, ISOLATED_RT_BUDGET_BYTES, ISOLATED_RT_BYTES_PER_PX } from '../src/client/object-range.js';
 import { createGlowStage } from '../src/client/glow-stage.js';
 import { setSettingsCtx } from '../src/client/settings.js';
 import { SceneScriptHost } from '../src/client/scene-script-host.js';
@@ -1036,6 +1037,105 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     worldSpy.mockRestore();
     chainsSpy.mockRestore();
     warn.mockRestore();
+    r.dispose();
+  });
+});
+
+// Task 5：挂载期隔离对象 RT 的新口径 —— min(源纹理长边, 4096) 等比收口、只升不降（下限仍是屏占位），
+// 并按显存预算等比收窄升级幅度。R13：默认 384 MB 只装得下 1 个 4096 收口对象，故钉「长边 = 4096」的用例只放 1 个。
+describe('对象级效果链：隔离 RT 尺寸按源纹理收口 4096', () => {
+  let origDpr: number;
+  beforeEach(() => {
+    origDpr = window.devicePixelRatio;
+    Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: 1 });
+  });
+  afterEach(() => {
+    Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: origDpr });
+    vi.restoreAllMocks();
+  });
+
+  // 场景 5000×2400 铺进 1920×1080 视口、dpr=1 ⇒ 屏幕密度 0.45 ⇒ 5000×2400 对象的屏占位
+  // 只有 2250×1080（= 旧口径的 RT）。
+  const ORTHO = { width: 5000, height: 2400 };
+  const SRC = { width: 5000, height: 2400 };
+  const OCC_LONG = 2250;
+
+  function bgObject(id: number): Record<string, unknown> {
+    return {
+      id, name: `bg-${id}`, image: `models/${id}.json`,
+      origin: '2500 1200 0', scale: '1 1 1', size: '5000 2400',
+      effects: [{ file: 'effects/w/effect.json' }],
+    };
+  }
+  function stubAsset(objects: Array<Record<string, unknown>>): void {
+    stubAssetFetch(JSON.stringify({
+      camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+      general: { orthogonalprojection: ORTHO },
+      objects,
+    }), FX_FILES);
+    defaultLoadWasm.mockResolvedValue(null); // 本场景无粒子
+    const player = {
+      dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setObjectEffectStage: vi.fn(),
+      renderer: {}, isolatedObjects: () => [],
+    };
+    loadSceneToThree.mockReturnValue({ player, sims: [], backgroundIds: [0], particleLayers: [] } as never);
+    // 链的 WebGL 部分（runner/材质）在 jsdom 里不可用：挂链打桩，只断言 isolate 表的尺寸。
+    vi.spyOn(ObjectEffectStage.prototype, 'setWorldSize').mockImplementation(() => {});
+    vi.spyOn(ObjectEffectStage.prototype, 'setObjectChains').mockImplementation(() => {});
+  }
+  function isolateOf(): Map<number, { rtWidth: number; rtHeight: number; worldW: number; worldH: number }> {
+    return (loadSceneToThree.mock.calls[0][1] as {
+      isolate: Map<number, { rtWidth: number; rtHeight: number; worldW: number; worldH: number }>;
+    }).isolate;
+  }
+
+  it('有源纹理的隔离对象：RT = 源纹理等比收口 4096（长边恰为上限，旧口径是 2250）', async () => {
+    stubAsset([bgObject(13)]); // R13(a)：只放 1 个隔离对象，预算充裕 ⇒ 长边必须恰为 4096
+    resolveImageTexture.mockResolvedValue({ image: { ...SRC }, dispose: vi.fn() } as never);
+
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    expect(await r.render('2851992662', document.createElement('canvas'), null)).toBe(true);
+
+    const iso = isolateOf().get(13)!;
+    expect(Math.max(iso.rtWidth, iso.rtHeight)).toBe(4096);
+    // 等比收口（非逐轴截断）：短边 = 4096 × 2400/5000 = 1966，而不是被钳成 4096。
+    expect(iso.rtWidth).toBe(4096);
+    expect(iso.rtHeight).toBe(1966);
+    // 世界尺寸（合成 quad 的基准）仍是未钳制的 |size × 世界 scale|。
+    expect(iso.worldW).toBe(5000);
+    expect(iso.worldH).toBe(2400);
+    r.dispose();
+  });
+
+  it('无源尺寸（纹理未就绪）的隔离对象：回退屏占位 —— 只升不降', async () => {
+    stubAsset([bgObject(246)]);
+    resolveImageTexture.mockResolvedValue(fakeTexture() as never); // 无 image ⇒ source = null
+
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    expect(await r.render('2851992662', document.createElement('canvas'), null)).toBe(true);
+
+    const density = screenScalePx(ORTHO.width, ORTHO.height, 1920, 1080, 1);
+    const iso = isolateOf().get(246)!;
+    expect(iso.rtWidth).toBe(Math.round(ORTHO.width * density));
+    expect(iso.rtHeight).toBe(Math.round(ORTHO.height * density));
+    r.dispose();
+  });
+
+  it('两个 4096 收口对象超预算 → 等比收窄升级幅度，且不低于屏占位', async () => {
+    stubAsset([bgObject(13), bgObject(246)]);
+    resolveImageTexture.mockResolvedValue({ image: { ...SRC }, dispose: vi.fn() } as never);
+
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    expect(await r.render('2851992662', document.createElement('canvas'), null)).toBe(true);
+
+    const a = isolateOf().get(13)!;
+    const b = isolateOf().get(246)!;
+    // 预算护栏生效：两对象合计不超 384 MB（未接线时各自 4096×1966 ⇒ 合计 ≈ 451 MB）。
+    expect((a.rtWidth * a.rtHeight + b.rtWidth * b.rtHeight) * ISOLATED_RT_BYTES_PER_PX)
+      .toBeLessThanOrEqual(ISOLATED_RT_BUDGET_BYTES);
+    // 只升不降：收窄的是升级幅度，下限仍是屏占位 2250×1080。
+    expect(Math.max(a.rtWidth, a.rtHeight)).toBeGreaterThan(OCC_LONG);
+    expect(a.rtWidth).toBe(b.rtWidth); // 同一 budgetScale + 同尺寸对象 ⇒ 同一 RT
     r.dispose();
   });
 });

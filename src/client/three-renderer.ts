@@ -28,9 +28,10 @@ import { loadTexTexture } from './tex-loader.js';
 import { defaultLoadWasm } from './wasm-loader.js';
 import type { LoadWasm, WasmSceneModule } from './wasm-loader.js';
 import type { SceneRendererLike } from './wallpaper-controller.js';
-import type { SceneDescription } from '../shared/types.js';
+import type { SceneDescription, SceneImageObject } from '../shared/types.js';
 import {
-  groupEffectsByObject, objectRtSize, particleWorldSize, screenScalePx,
+  fitIsolatedBudget, groupEffectsByObject, isolatedRtSize, objectRtSize, particleWorldSize,
+  screenScalePx, sourcePixelsFromTexture,
 } from './object-range.js';
 import { ObjectEffectStage } from './object-effects.js';
 import { createGlowStage, type GlowStage } from './glow-stage.js';
@@ -541,6 +542,27 @@ export function createThreeSceneRenderer(opts?: {
         // （见下方 onWindowResize），**不得**另起一套「视口 × dpr 预算」——那正是 3fd6b00
         // 「挂载期 RT 正确、任何一次 resize 又被打回旧口径」这一漏检类的同源地雷。
         const screenScale = screenScalePx(desc.orthogonal.width, desc.orthogonal.height, vw, vh, dpr);
+        // 隔离对象的尺寸表（挂载期唯一来源）：世界尺寸 = 未钳制 |size × 世界 scale|（含父链；缺 size 按纹理
+        // 像素兜底，不得改用逐轴钳 4096 的相机范围），RT = min(源纹理长边, 4096) 等比收口、下限屏占位、按预算收窄。
+        const isolateItems = desc.objects
+          .filter((o): o is SceneImageObject => o.kind === 'image'
+            && !isStaticallyHidden(o.visible, userProps)
+            && (effectChains.get(o.id)?.length ?? 0) > 0)
+          .map((o) => {
+            const tex = backgroundTextures.get(o.id);
+            const s = o.scale;
+            const w = (o.size?.[0] ?? (tex?.image?.width as number | undefined) ?? 1) * s[0];
+            const h = (o.size?.[1] ?? (tex?.image?.height as number | undefined) ?? 1) * s[1];
+            return {
+              objId: o.id, worldW: Math.abs(w), worldH: Math.abs(h),
+              source: sourcePixelsFromTexture(tex),
+            };
+          });
+        const budgetScale = fitIsolatedBudget(isolateItems, screenScale);
+        const isolatedSizes = new Map(isolateItems.map((it) => [it.objId, {
+          rt: isolatedRtSize(it.worldW, it.worldH, screenScale, it.source, { budgetScale }),
+          worldW: it.worldW, worldH: it.worldH,
+        }]));
         // isolate 的键 = scene.json 的**对象 id**，值里的 objectId 同值：player 用 objectId 作
         // **隔离条目的键**（attachIsolated），ObjectEffectStage 也用同一把键 → 三者同键空间，
         // 不存在「对象 id → 图层计数器 id」的翻译层，也就不会撞键（见 threejs-player 的注释）。
@@ -557,28 +579,13 @@ export function createThreeSceneRenderer(opts?: {
           // 无链 → 与收紧前逐字一致的早退（effectChains 只在链非空时入表）。
           if (!chains || chains.length === 0) continue;
           if (obj.kind === 'image') {
-            const tex = backgroundTextures.get(obj.id);
-            const texW = (tex?.image?.width as number | undefined) ?? obj.size?.[0] ?? 1;
-            const texH = (tex?.image?.height as number | undefined) ?? obj.size?.[1] ?? 1;
-            const w = obj.size?.[0] ?? texW;
-            const h = obj.size?.[1] ?? texH;
-            // 世界尺寸（未钳制幅值）= |size × 世界 scale| → 合成 quad 的几何尺寸，也是对象 RT
-            // 尺寸的**唯一基准**（RT 像素 = 世界尺寸 × 屏幕密度）。世界 scale 含父链累积。
-            const s = obj.scale;
-            const world = { w: Math.abs(w * s[0]), h: Math.abs(h * s[1]) };
-            // RT 像素尺寸 = 对象在画布缓冲上的**占位像素**（世界尺寸 × 屏幕密度），等比收口到 4096。
-            // ⚠️ 两条硬约束（都踩过，见 clarity-report.md）：
-            //   ① 基准必须是**未钳制**的世界尺寸，不是 objectCameraRange 的相机范围（后者逐轴钳到
-            //      4096）：7430×4147 会被钳成 4096×4096（比例失真），且分辨率被视口预算收口后实测
-            //      退到 **720×720**，贴回屏幕要放大 1.78× ⇒ 整层背景明显模糊；
-            //   ② 密度必须与主相机 cover 同源。旧口径「世界 × dpr 收口到视口 × dpr」与屏占位差
-            //      0.8%（GTR 3743126786 实测 1280×714 vs 占位 1290×720）⇒ 合成那一步是比 0.992 的
-            //      双线性缩小 + 亚纹素相位漂移 ⇒ 整层锐度实测 −52%（Laplacian 713 → 342），
-            //      且与 dpr 无关、加 MSAA 也无效（根因就是这一步重采样，不是抗锯齿）。
-            const rt = objectRtSize(world.w, world.h, screenScale);
+            // 尺寸取自上面的 isolateItems 段（同条件、同口径）；此处只做键空间转换。
+            const sized = isolatedSizes.get(obj.id);
+            if (!sized) continue;
             isolate.set(obj.id, {
               objectId: obj.id,
-              rtWidth: rt.width, rtHeight: rt.height, worldW: world.w, worldH: world.h,
+              rtWidth: sized.rt.width, rtHeight: sized.rt.height,
+              worldW: sized.worldW, worldH: sized.worldH,
             });
           } else if (obj.kind === 'particle') {
             const p = particles.get(obj.id);
@@ -589,7 +596,7 @@ export function createThreeSceneRenderer(opts?: {
             // 唯一基准）；局部相机范围由 player 按同一世界尺寸建立（见 particleWorldSize 注释）。
             const s = obj.scale;
             const world = particleWorldSize(spec, [s[0], s[1]]);
-            // RT 像素尺寸 = 屏占位（世界尺寸 × 屏幕密度），等比收口到 4096（同 image 分支的两条约束）。
+            // RT 像素尺寸 = 屏占位（世界尺寸 × 屏幕密度），等比收口到 4096（同上面两条约束）。
             const rt = objectRtSize(world.w, world.h, screenScale);
             isolate.set(obj.id, {
               objectId: obj.id,
