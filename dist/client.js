@@ -24698,7 +24698,7 @@ async function textureFromTex(info, opts) {
   const withSprite = (tex) => {
     const ud = { ...tex.userData ?? {} };
     if (info.sprite) ud.sprite = info.sprite;
-    ud.fxRes = [mip.width, mip.height, info.textureWidth, info.textureHeight];
+    ud.fxRes = [mip.width, mip.height, mip.width, mip.height];
     tex.userData = ud;
     return tex;
   };
