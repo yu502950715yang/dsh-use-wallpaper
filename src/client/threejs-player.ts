@@ -692,10 +692,8 @@ export class ThreeScenePlayer {
     // 退回本类自持的 canvas（生产路径 renderer.domElement 就是它）。
     const buf = (this.renderer as { domElement?: HTMLCanvasElement }).domElement ?? this.canvas;
     this.glowStage?.resize(buf.width, buf.height);
-    // ③ 合成采样标志随**视口**重估：隔离对象的缩小关系（RT 像素 vs 屏占位）只由屏幕密度决定，
-    //    而 resize 正是改密度的那一步。不能只依赖 resizeObjectRT —— 调用方（效果链编排器）
-    //    在「RT 像素尺寸未变」时会跳过调用，而源纹理 ≥ 4096 收口时新老尺寸恰好相同
-    //    （4K 视口挂载 ⇒ 窗口缩到 1280×720 仍是 4096×1966）：那样判定反转却无重估 ⇒ 走样重现。
+    // ③ 合成采样标志随**视口**重估（视口变化是密度变化的唯一入口）：编排器在「RT 像素尺寸未变」
+    //    时会跳过 resizeObjectRT，而源纹理收口 4096 时新老尺寸恰好相同（判定反转却无重估 ⇒ 走样重现）。
     for (const entry of this.isolated.values()) {
       this.applyCompositeSampling(entry.rt, entry.worldW, entry.worldH);
     }
@@ -892,9 +890,8 @@ export class ThreeScenePlayer {
       entry.rtWidth = w;
       entry.rtHeight = h;
     }
-    // ⚠️ 采样标志必须随**视口**重估，不能只在尺寸变化时（更不只挂载期）算一次：resize 只改变
-    // 屏占位，RT 像素尺寸可能不变（源纹理收口口径下 4096 长期顶着上限）⇒ 缩小关系会反转。
-    // 故本调用放在尺寸早退分支**之外**（`setSize` 会 dispose 纹理，写标志即时生效）。
+    // ⚠️ 采样标志必须随**视口**重估，不能只在尺寸变化时（更不只挂载期）算一次：resize 只改变屏占位，
+    // 而 RT 像素尺寸可能不变（源纹理收口口径下 4096 长期顶着上限）⇒ 故本调用放在尺寸早退分支**之外**。
     this.applyCompositeSampling(entry.rt, entry.worldW, entry.worldH);
   }
 
@@ -1110,13 +1107,17 @@ export class ThreeScenePlayer {
   }
 
   // 合成采样决策：RT 大于屏占位（源纹理收口 4096 的结果）⇒ 合成 quad 那一步是**缩小采样**，
-  // 必须开 mipmap 防走样。挂载期（attachIsolated）与重设分辨率（resizeObjectRT）都必须重估
-  // ——同一式子、同一份 this 状态（视口已在 resize 里更新），故抽成一处。
+  // 必须开 mipmap 防走样。调用点 ① attachIsolated ② resizeObjectRT ③ resize（同式子、同一份 this 状态）。
   private applyCompositeSampling(rt: THREE.WebGLRenderTarget, worldW: number, worldH: number): void {
     const minifying = Math.max(rt.width, rt.height)
       > Math.max(Math.abs(worldW), Math.abs(worldH)) * this.screenScalePx() + 0.5;
+    const nextMin = minifying ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter;
+    const flipped = rt.texture.minFilter !== nextMin;
     rt.texture.generateMipmaps = minifying;
-    rt.texture.minFilter = minifying ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter;
+    rt.texture.minFilter = nextMin;
+    // 判定翻转才 dispose 重建 RT：RT 纹理的采样参数只在 setupRenderTarget 下发（needsUpdate 无效，
+    // 见 AGENT.md §5.15）⇒ 不 dispose 则 minFilter 到不了 GL；未翻转时 dispose 等于每帧重建。
+    if (flipped) rt.dispose();
   }
 
   // 建立对象隔离条目：RT + 局部正交相机 + localScene + 主场景合成 quad。

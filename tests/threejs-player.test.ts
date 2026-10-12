@@ -2224,6 +2224,60 @@ describe('ThreeScenePlayer 对象隔离', () => {
     expect(entry.rt.texture.generateMipmaps).toBe(false);
     expect(entry.rt.texture.minFilter).toBe(THREE.LinearFilter);
   });
+
+  // ⚠️ 回归（Fix round 2，真实渲染器）：只写 rt.texture.minFilter 到不了 GL —— 采样参数**只在**
+  // setupRenderTarget 下发（`setTexture2D` 对 isRenderTargetTexture 整段跳过，needsUpdate 无效），
+  // 而它只在初次使用或 dispose 后重建。故判定翻转必须 dispose 让下次 setRenderTarget 重下发。
+  it('采样判定翻转（RT 像素尺寸不变）时 dispose 隔离 RT，让 minFilter 真正下发', () => {
+    const { player } = makePlayer(5000, 2400);
+    player.setSceneSize(5000, 2400);
+    player.addBackground({
+      origin: [2500, 1200, 0], size: [5000, 2400], scale: [1, 1, 1], texture: makeTexture(),
+      sceneW: 5000, sceneH: 2400,
+      isolate: { objectId: 13, rtWidth: 4096, rtHeight: 1966, worldW: 5000, worldH: 2400 },
+    });
+    const entry = player.isolatedObjects().find((e) => e.id === 13)!;
+    // 视口 = 场景（dpr=1）⇒ 屏占位长边 5000 > RT 4096 ⇒ 挂载期不缩小：无 mip。
+    expect(entry.rt.texture.minFilter).toBe(THREE.LinearFilter);
+    // spy 是 mock 下唯一可观测的「到 GL」代理：dispose ⇒ 下次 setRenderTarget 重跑 setupRenderTarget。
+    const rtDispose = vi.spyOn(entry.rt, 'dispose');
+    // 窗口缩到 1280×720 ⇒ 屏占位长边 1500 < 4096 ⇒ 翻转成缩小采样，RT 像素尺寸逐值不变。
+    player.resize(1280, 720);
+    expect([entry.rt.width, entry.rt.height]).toEqual([4096, 1966]);
+    expect(entry.rt.texture.minFilter).toBe(THREE.LinearMipmapLinearFilter);
+    expect(rtDispose).toHaveBeenCalledTimes(1);
+    // 同一判定再缩一次窗口：无翻转 ⇒ 不得再 dispose（否则等于每帧重建 RT）。
+    player.resize(1024, 576);
+    expect(entry.rt.texture.minFilter).toBe(THREE.LinearMipmapLinearFilter);
+    expect(rtDispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('采样判定未翻转时不得 dispose 隔离 RT（防每帧重建）', () => {
+    const { player } = makePlayer(5120, 2880);
+    player.setSceneSize(5000, 2400);
+    // 满屏对象：RT 长边 4096 顶住硬上限，屏占位长边按 cover 口径随视口变化。
+    player.addBackground({
+      origin: [2500, 1200, 0], size: [5000, 2400], scale: [1, 1, 1], texture: makeTexture(),
+      sceneW: 5000, sceneH: 2400,
+      isolate: { objectId: 13, rtWidth: 4096, rtHeight: 1966, worldW: 5000, worldH: 2400 },
+    });
+    const entry = player.isolatedObjects().find((e) => e.id === 13)!;
+    const minifying = () => 4096 > 5000 * player.screenScalePx() + 0.5;
+    // 两档视口的判定必须落在「同一侧且不缩小」，才谈得上「未翻转」。
+    expect(minifying()).toBe(false);
+    player.resize(3840, 2160);
+    expect(minifying()).toBe(false);
+    // 判定未翻转 ⇒ 不得 dispose（dispose 会让渲染器下一帧重建 RT）。
+    const rtDispose = vi.spyOn(entry.rt, 'dispose');
+    expect(entry.rt.texture.minFilter).toBe(THREE.LinearFilter);
+    player.resize(5120, 2880);
+    expect(minifying()).toBe(false);
+    expect(entry.rt.texture.minFilter).toBe(THREE.LinearFilter);
+    expect(rtDispose).not.toHaveBeenCalled();
+    player.resizeObjectRT(13, 4096, 1966);
+    expect(entry.rt.texture.minFilter).toBe(THREE.LinearFilter);
+    expect(rtDispose).not.toHaveBeenCalled();
+  });
 });
 
 // 2026-09-22 Task 8：SceneScript 运行时需要的「scene 对象 id → 最终显示对象」映射与帧钩子。
