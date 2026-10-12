@@ -1,7 +1,7 @@
 # 效果遮罩 UV 被 NPOT padding 比错误缩放（「波动位置不对」）设计
 
 **日期：** 2026-10-12
-**状态：** **已实现**（2026-10-12；分支 `fix/mask-uv-npot`：`b8df5e2`…`cdbdd56`；`npm test` 55 files / 1115 passed，e2e 5/5 exit 0，反向验证 exit 1）
+**状态：** **已实现**（2026-10-12；分支 `fix/mask-uv-npot`：`b8df5e2`…`cdbdd56`；`npm test` 55 files / 1115 passed，e2e 5/5 exit 0，反向验证 exit 1）。⚠️ **`lib/`、`dist/` 尚未重建 ⇒ 运行中的插件仍是旧行为**，须执行 Task 5（`npm run build && npm run build:client`）并真机复看「湖面波动 / 树线不波动」才算修复生效（见 §9 的合并/发布边界）
 **触发：** 用户报告「魔兽之门」湖水应有波动，实际波动出现在湖水上方的树木处；另有其它 scene 壁纸同类现象
 
 ## 1. 现象
@@ -17,7 +17,7 @@ v_TexCoord.zw = vec2(v_TexCoord.x * g_Texture1Resolution.z / g_Texture1Resolutio
                      v_TexCoord.y * g_Texture1Resolution.w / g_Texture1Resolution.y);
 ```
 
-`g_Texture1` 是遮罩。该式把「对象 UV」映射到遮罩纹理空间；乘数 `z/x`、`w/y` 在 **WE（按 padding 上传）语义**里是 **内容尺寸 / 分配尺寸**（≤1：图像只占分配区的一角）。而插件上传的是**未 padding 的图**（内容占满整张纹理）⇒ 该乘数必须是 **1**。
+`g_Texture1` 是遮罩。该式把「对象 UV」映射到遮罩纹理空间；乘数 `z/x`、`w/y` 在 **WE（按 padding 上传）语义**里是 **内容宽高 / 分配尺寸**（≤1：图像只占分配区的一角）。而插件上传的是**未 padding 的图**（内容占满整张纹理）⇒ 该乘数必须是 **1**。
 
 **本插件修复前的取值（`src/client/tex-loader.ts:478`；修复后为 `:473`）**
 
@@ -49,11 +49,11 @@ ud.fxRes = [mip.width, mip.height, info.textureWidth, info.textureHeight];   // 
 | **A 遮罩/纹理 UV 缩放** | `v_TexCoord.zw = vec2(uv.x * z/x, uv.y * w/y)`（86+98）；`a_TexCoord` 版（20+38）；`v_TexCoordMask.zw = vec2(z/x, w/y)`（32）；`v_TexCoordMask.xy = …`（16+12+2）；`v_TexCoord.z *= z/x`（14）；`v_TexCoord.w *= w/y`（14）；**`vec2 t2 = .xy / .zw`（2）** | **334** / 268 | **比值**（现口径恒为 1） |
 | **B 尺寸（texel 步长 / 顶点偏移 / 归一化基准）** | `blurredCoords += 0.75 / zw`（6）；`offsetX/offsetY = g_Scale.x/y / z/w`（8+8）；`v_TexCoord.z/w = g_Scale.x/y / z/w`（9+9）；**`x / min(w, z)`（3）**；**`y / min(w, z)`（3）**；**`textureScale = .zw * g_TextureReductionScale`（1）** | **47** / 34 | **真实上传尺寸**（现口径 = mip0 记录尺寸） |
 | **C `.xy` 当尺寸** | `1.0 / xy`（10）；`0.5 / xy`（5）；`v_TexCoord.zw += 0.5 / xy`（5）；`v_StepSize = 1/vec4(-xy, xy)`（4）；`ApplyCompositeOffset(…, xy)`（4）；`v_PointerUV.xy *= 0.5 / xy`（1）；**`#define pixelSize (1.0 / .xy)`（2）** | **31** / 25 | **真实上传尺寸**（`.xy` 历来 = mip0 记录尺寸） |
-| **D 宽高比 + 注释行** | `.x/.y`（14+4+2+2，另含注释行 2+2）；`.z/.w`（14+6，另含注释行 4）；`.y/.x`（2，另含注释行 2+1）；`.zw/.xy`（2）；**`.xy / .y`（2）** —— **注释行已含在上述各组，不另加** | **59** / 49 | 图像长宽比（同源） |
+| **D 宽高比 + 注释行** | 共 **14** 种表达式 / **59** 行 = **非注释 9 种 / 48 行**（`.x/.y` 4 种 14+4+2+2；`.z/.w` 2 种 14+6；`.y/.x` 1 种 2；`.zw/.xy` 1 种 2；**`.xy / .y` 1 种 2**）+ **注释行 5 种 / 11 行**（`.x/.y` 2 种 2+2；`.z/.w` 1 种 4；`.y/.x` 2 种 2+1）—— **48 + 11 = 59**，逐条清单见 `docs/fixes/conventions-details.md` §5.17 | **59** / 49 | 图像长宽比（同源） |
 
 四类合计 334+47+31+59 = **471**（旧口径 268+34+25+49 = 376）。
 
-**结论（限定表述，勿再写成全称）**：在**已审计的全部 40 种用法**中，需要的是①**比值**（A 类 334 行：遮罩/纹理 UV 缩放；D 类 59 行：宽高比）与②**真实上传尺寸**（B 类 47 行 + C 类 31 行：texel 步长 / 顶点偏移 / 归一化基准）；**未发现**需要「分配尺寸」这个量的用法。其中 **8 种表达式显式把 `.z`/`.w` 当尺寸用**（B 类，如 `0.75/.zw`、`g_Scale.x/.z`、`min(w, z)`、`.zw * g_TextureReductionScale`），其正确值是**实际上传的纹理尺寸**：新口径对 `mip0 记录 == image` 的 **44** 个为**修正**，对 `mip0 记录 == 分配` 的 **51** 个**逐分量不变**、其 `.x/.y` / `.z/.w` 作为 texel 步长仍偏约 1.6×（**既有状态、非本次回归**，见 §7）。**新增的 8 种表达式对本机库当前零行为影响**（逐条上下文见 `docs/fixes/conventions-details.md` §5.17 归档表）：4 种只用 `.xy` / `.y` 或本身是注释行（本次修复只改 `.z/.w`）；另 4 种涉及 `.z/.w` —— `3780477933` 的 `min(w, z)` 两式与 `t2 = .xy / .zw`（该槽位 `g_Texture1` / `g_Texture2` 是材质默认 `util/clouds_256` / `util/white`，且该壁纸不在 23 张 NPOT 清单内）、`2911105183` 的 `skew.vert:25` `textureScale`（在 `#if MODE == 1` 内，而该壁纸 3 个 `skew` pass 全用默认 `MODE=0` ⇒ 不参与编译）。**没有任何一种属「真的需要分配尺寸」**（本插件上传的纹理恒被内容占满，库内不存在按 padding 分配的纹理）。两条必须如实区分（勿再合写成一句）：
+**结论（限定表述，勿再写成全称）**：在**已审计的全部 40 种用法**中，需要的是①**比值**（A 类 334 行：遮罩/纹理 UV 缩放；D 类 59 行：宽高比）与②**真实上传尺寸**（B 类 47 行 + C 类 31 行：texel 步长 / 顶点偏移 / 归一化基准）；**未发现**需要「分配尺寸」这个量的用法。其中 **8 种表达式显式把 `.z`/`.w` 当尺寸用**（B 类，如 `0.75/.zw`、`g_Scale.x/.z`、`min(w, z)`、`.zw * g_TextureReductionScale`），其正确值是**实际上传的纹理尺寸**：新口径对 `mip0 记录 == image` 的 **44** 个为**修正**，对 `mip0 记录 == 分配` 的 **51** 个**逐分量不变**、其 `.x/.y` / `.z/.w` 作为 texel 步长仍偏约 1.6×（**既有状态、非本次回归**，见 §7）。**新增的 8 种表达式对本机库当前零行为影响**（逐条上下文见 `docs/fixes/conventions-details.md` §5.17 归档表）：4 种只用 `.xy` / `.y` 或本身是注释行（本次修复只改 `.z/.w`）；另 4 种涉及 `.z/.w` —— `3780477933` 的 `min(w, z)` 两式与 `t2 = .xy / .zw`（该槽位 `g_Texture1` / `g_Texture2` 是材质默认 `util/clouds_256` / `util/white`，且该壁纸不在 23 张 NPOT 清单内）、`2911105183` 的 `skew.vert:25` `textureScale`（在 `#if MODE == 1` 内，而该壁纸 3 个 `skew` pass 全用默认 `MODE=0` ⇒ 不参与编译）。**没有任何一种属「真的需要分配尺寸」**（本机库内不存在按 padding 分配的纹理 —— 编码图像类按原图上传、原始像素载荷类经 `cropToMap` 裁到内容宽高后上传；⚠️ **若将来出现「raw 像素载荷 + sprite 位 + header padding」的纹理，`.z/.x = 1` 对它不再成立**，因为 `cropToMap` 对 `flags & 4` 刻意不裁剪，`src/client/tex-loader.ts:285`）。两条必须如实区分（勿再合写成一句）：
 
 - **A 类**要的是**比值** `.z/.x`，必须为 1 ⇒ 现口径（四分量同值）下退化为恒等 —— 这正是本次修复的目标。
 - **B 类**「texel 步长偏小 **1.64×**」**只在本次会变的那一类（44 个）成立**：它们 `mip0 记录 == image` ⇒ `.zw` 由分配尺寸回到 mip0 记录尺寸 = 实际上传尺寸，步长随之正确。**不变的那一类（51 个，原始像素载荷（带 padding））逐分量零改动**，其 `.x/.y` 作为 texel 步长仍偏约 1.6×（`fxRes` ≠ `cropToMap` 后的上传尺寸；**既有状态、非本次回归**，见 §7 的 follow-up）。
@@ -63,8 +63,8 @@ C 类（`.xy`）历来是 mip0 记录尺寸：对 44 类等于上传尺寸、对
 ## 4. 影响面（`output/blur-analysis/mask_scope.py`、`tex_padding_scope.py`、`fxres_npot_miprecord_scan.py`；**库级口径 `type.lower() == "scene"`，本机壁纸库快照 33 张**）
 
 - 全库 **218** 个 `.tex` 中 **95 个（44%）** `header ≠ image`（NPOT padding），分布 **23 张壁纸**。这 95 个必须按「载荷是否 padding」二分（新值与旧值**逐分量相等 iff `mip0 记录 == 分配`**，库级头部扫描无第三类）：
-  - **44 个会变** —— **编码图像类（本库无视频样本）**（`mip0 记录 == image`，载荷未 padding；`imageFormat=13` 31 + `=2` 13，含遮罩 15）：旧 `.zw` = 分配尺寸 ⇒ `z/x = 分配/内容 ≠ 1`，本次修复真正改到它们（「魔兽之门」的 3 张 2500×1200 遮罩属此类）。
-  - **51 个不变** —— **原始像素载荷（带 padding）**（`mip0 记录 == 分配`；TEXB0003 `imageFormat=-1` 49 + TEXB0002 1 + TEXB0004 1，含遮罩 26）：上传前经 `cropToMap` 裁成 image 尺寸 ⇒ 旧 `z/x` 本就是 1，逐分量相同。⚠️ 这类成因一律写「**原始像素载荷（带 padding）**」，**不要**写成「全部 `imageFormat=-1`」（那 1 个 TEXB0002 的 `imageFormat` 为 None，机制相同）；会变的 44 类**不要**写成「视频类」（本库 `flags & 32` 视频样本数为 0）。
+  - **44 个会变** —— **编码图像类（NPOT 集合内无视频样本）**（`mip0 记录 == image`，载荷未 padding；`imageFormat=13` 31 + `=2` 13，含遮罩 15）：旧 `.zw` = 分配尺寸 ⇒ `z/x = 分配/内容 ≠ 1`，本次修复真正改到它们（「魔兽之门」的 3 张 2500×1200 遮罩属此类）。
+  - **51 个不变** —— **原始像素载荷（带 padding）**（`mip0 记录 == 分配`；TEXB0003 `imageFormat=-1` 49 + TEXB0002 1 + TEXB0004 1，含遮罩 26）：上传前经 `cropToMap` 裁成 image 尺寸 ⇒ 旧 `z/x` 本就是 1，逐分量相同。⚠️ 这类成因一律写「**原始像素载荷（带 padding）**」，**不要**写成「全部 `imageFormat=-1`」（那 1 个 TEXB0002 的 `imageFormat` 为 None，机制相同）；会变的 44 类**不要**写成「视频类」：**NPOT 集合内无视频样本** —— 库内另有 2 个视频样本（`2911105183` 的 `materials/CP_ads_01/02.tex`，`flags=35`、`alloc == image == 1280×720`、载荷含 `ftyp`），是 POT ⇒ **不在** 44/51 二分内。
   - **口径来源对照**：初稿记的 175 `.tex` / 88 NPOT / 21 张壁纸，是**只扫 `type == "scene"` 的 28 张**（大小写精确匹配漏掉 5 张 `type == "Scene"`）得到的结果；补全审计域后新增的 7 个 NPOT 落在 `2911105183`（6 个，均会变）与 `2236329190`（1 个，不变）。
 - 效果遮罩侧不受口径影响：`materials/masks/` 下 `header ≠ image` 的遮罩仍是 **41** 个（涉及 5 张：`1429403119` 21、`1922570576` 3、`1968789468` 4、`2011060960` 12、`2132420420` 1），其中**会变 15 个**（`1922570576` 3 + `2011060960` 11 + `2132420420` 1）、**不变 26 个**（`1429403119` 21 + `1968789468` 4 + `2011060960` 1）—— 用户报告的「魔兽之门」属会变那批。
 - 尺寸为 2 的幂的纹理 `header == image`，比值本就是 1 ⇒ 不受影响（这解释了「只有**有的**壁纸出问题」）。
@@ -76,7 +76,7 @@ ud.fxRes = [mip.width, mip.height, mip.width, mip.height];
 ```
 
 理由：
-1. 插件**从不 padding 上传** —— 上传的纹理**内容占满整张**（44 类 = mip0 全图；51 类 = `cropToMap` 裁出的内容）⇒ UV 缩放乘数必须是 1。这与 `.xy`（历来是 mip0 记录尺寸）以及 `resolveTextureResolution4` 的**回退口径**（RT / 无 `fxRes` 纹理返回 `{x:w,y:h,z:w,w:h}`，见 `effect-runner.ts:330-332`）完全一致 —— 代码里早已存在「四分量同值 ⇒ `.z/.x === 1`」的先例。
+1. **本机库内不存在**按 padding 分配的纹理 —— 上传的纹理被内容占满（44 类 = mip0 全图；51 类 = `cropToMap` 裁出的内容宽高）⇒ UV 缩放乘数必须是 1。⚠️ 代码层唯一例外是 `cropToMap` 对 `flags & 4`（sprite）**刻意不裁剪**（`src/client/tex-loader.ts:285`）：**若将来出现「raw 像素载荷 + sprite 位 + header padding」的纹理，`.z/.x = 1` 对它不再成立**（本机库 0 实例）。这与 `.xy`（历来是 mip0 记录尺寸）以及 `resolveTextureResolution4` 的**回退口径**（RT / 无 `fxRes` 纹理返回 `{x:w,y:h,z:w,w:h}`，见 `effect-runner.ts:330-332`）完全一致 —— 代码里早已存在「四分量同值 ⇒ `.z/.x === 1`」的先例。
 2. 审计（§3）的 **40 种用法中没有任何一处需要分配尺寸**（需要的是①比值、②真实上传尺寸）⇒ 不破坏任何现有意图。**只有会变的那一类（44 个）**顺带修正了 B 类（texel 步长偏小 1.64×）与 D 类的内部不一致；51 类逐分量零改动（其 `.x/.y` 仍 ≠ 上传尺寸，见 §7）。
 3. 成本：一行；不增加显存。
 
@@ -112,3 +112,8 @@ ud.fxRes = [mip.width, mip.height, mip.width, mip.height];
 | `AGENT.md` §5.17 / §7.37 | 口径订正 + follow-up 遗留条目 |
 | `docs/fixes/conventions-details.md` §5.17 | 归档审计数据（几何验算 / 表达式分类 / 影响面 / e2e 实测 / 生产守卫口径） |
 | `TESTING.md` §2.5 | 判据清单补两条 + 专属素材判据的 SKIP 语义 |
+
+## 9. 合并 / 发布边界（勿误判「合并即修复」）
+
+- 本分支 `fix/mask-uv-npot` **从 `feat/isolated-object-rt-resolution` 切出**（切出点 = 该特性 HEAD `22e6fb4`）⇒ **合并本分支即同时并入该特性**（相对 `master` 领先 **24** 个提交）。两个关注点耦合是 R1 的既定裁决（代价：回滚需分开处理）。
+- **合并本身不改变运行时行为**：`lib/`、`dist/` 是提交进仓库的构建产物，合并只改源码与文档。修复生效**必须**执行 Task 5（`npm run build && npm run build:client`）并**真机复看「湖面波动 / 树线不波动」**；⚠️ profile 符号链接到本仓库，重建会经 client-hmr 重挂正在运行的会话 ⇒ 需用户确认时机。

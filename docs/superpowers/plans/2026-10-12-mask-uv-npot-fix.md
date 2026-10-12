@@ -4,7 +4,7 @@
 
 **Goal:** 让 `g_TextureNResolution` 的 `.z/.w` 反映**实际上传的纹理尺寸**，使效果遮罩（水面波动等）回到作者指定的位置。
 
-**Architecture:** 插件从不 padding 上传（`createImageBitmap` 解出即上传；原始像素载荷类经 `cropToMap` 裁到 image 尺寸），所以「mip0 记录尺寸 == 实际上传尺寸」。把 `tex-loader` 写入 `userData.fxRes` 的 `.zw` 从 `.tex` 头里的分配尺寸改为 mip0 记录尺寸（**四分量同值**），即可让所有 `uv * z/x` 形式的遮罩 UV 缩放退化为恒等；`resolveTextureResolution4` 的既有回退（RT 与无 `fxRes` 纹理返回 `{x:w,y:h,z:w,w:h}`）本就是这一口径，无需改逻辑。
+**Architecture:** **本机库内不存在**按 `.tex` 头 padding 分配的纹理（`createImageBitmap` 解出即上传；原始像素载荷类经 `cropToMap` 裁到内容宽高后上传），但「mip0 记录尺寸 == 实际上传尺寸」**不是全称** —— 原始像素载荷类（`mip0 记录 == 分配`，51 个）上传的是 `cropToMap` 裁出的内容宽高，其 `.x/.y` 与真实纹理尺寸仍差约 1.6×（follow-up，见设计 §7）。把 `tex-loader` 写入 `userData.fxRes` 的 `.zw` 从 `.tex` 头里的分配尺寸改为 mip0 记录尺寸（**四分量同值**），即可让所有 `uv * z/x` 形式的遮罩 UV 缩放退化为恒等；`resolveTextureResolution4` 的既有回退（RT 与无 `fxRes` 纹理返回 `{x:w,y:h,z:w,w:h}`）本就是这一口径，无需改逻辑。
 
 **Tech Stack:** TypeScript + three.js r170 + vitest（jsdom/node 双环境）+ Playwright/headless Edge（e2e，`--gpu`）。
 
@@ -45,9 +45,9 @@
 
 **Interfaces:**
 - Consumes: `textureFromTex(info: TexInfo, opts?): Promise<THREE.Texture | null>`（既有）；`tests/fixtures/make-tex.js` 的 `makeTex`（既有）
-- Produces: `tex.userData.fxRes: [number, number, number, number]`，语义固定为 `[内容宽, 内容高, 内容宽, 内容高]`（所有纹理路径共用）
+- Produces: `tex.userData.fxRes: [number, number, number, number]`，语义固定为「**四分量一律同值（= mip0 记录尺寸）**」⇒ `[w, h, w, h]`（w/h = mip0 记录尺寸；所有纹理路径共用。对「`mip0 记录 == 分配`」的那一类它是分配尺寸、不是上传尺寸 —— follow-up 见设计 §7）
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 在 `tests/tex-loader.test.ts` 末尾追加（`makeTex`/`parseTex`/`textureFromTex`/`TEX_FORMAT` 已在文件头 import）：
 
@@ -84,29 +84,27 @@ describe('fxRes：四分量一律同值（mip0 记录尺寸）⇒ 遮罩 UV 缩�
 });
 ```
 
-- [ ] **Step 2: 跑测试确认红**
+- [x] **Step 2: 跑测试确认红**
 
 Run: `npx vitest run tests/tex-loader.test.ts -t fxRes`
 Expected: 第一条 FAIL —— `expected [ 100, 50, 256, 128 ] to deeply equal [ 100, 50, 100, 50 ]`（第三条同样 FAIL）
 
-- [ ] **Step 3: 最小实现**
+- [x] **Step 3: 最小实现**
 
-`src/client/tex-loader.ts:471-478` 改为（注释一并订正为「未 padding 上传」口径）：
+`src/client/tex-loader.ts:471-478` 改为（下列 2 行即**实际提交**的注释；口径 =「四分量一律同值（= mip0 记录尺寸）」，见设计 §5.1）：
 
 ```ts
-    // 插件**从不 padding 上传**（createImageBitmap 解出即上传 / 原始像素载荷经 cropToMap 裁到 image），
-    // 上传的纹理恒被内容占满 ⇒ `g_TextureNResolution` 四分量一律同值（= mip0 记录尺寸）：`[w, h, w, h]`。效果 shader 的
-    // `uv * .z/.x`（如水波纹遮罩）因此退化为恒等；若填 .tex 头的分配尺寸，遮罩会被
-    // 按 分配/内容 的比例挤向画面左上（真机现象：湖面波动跑到湖水上方的树线上）。
+    // g_TextureNResolution 四分量一律同值（mip0 记录尺寸）：效果 shader 用 `.z/.x` 缩放
+    // 遮罩 UV，比值必须为 1，否则 NPOT padding 会把遮罩按 分配/内容 挤向画面左上（见 AGENT.md §5.17）。
     ud.fxRes = [mip.width, mip.height, mip.width, mip.height];
 ```
 
-- [ ] **Step 4: 跑测试确认绿**
+- [x] **Step 4: 跑测试确认绿**
 
 Run: `npx vitest run tests/tex-loader.test.ts`
 Expected: PASS（含既有 `parseTex`/采样/精灵表用例）；特别确认 `tests/dom/tex-loader-video.dom.test.ts:135` 的 `[1280,720,1280,720]` 仍绿
 
-- [ ] **Step 5: 全量回归并提交**
+- [x] **Step 5: 全量回归并提交**
 
 Run: `npm test`
 Expected: 55 files / 1112 passed（1109 + 新增 3）
@@ -128,7 +126,7 @@ git commit -m "fix(client): 效果纹理的 g_TextureNResolution 四分量同值
 - Consumes: `resolveTextureResolution4(tex, fallbackW, fallbackH): {x,y,z,w}`（既有，签名不动）
 - Produces: 无新接口；用例固定「RT/无 `fxRes` 回退」与「`fxRes` 四分量同值（= mip0 记录尺寸）」两种来源**同口径**
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 在 `tests/effect-runner.test.ts` 追加（该文件已 import 目标函数；若未 import 则补 `resolveTextureResolution4`）：
 
@@ -146,12 +144,12 @@ describe('g_TextureNResolution 口径（未 padding 上传）', () => {
 });
 ```
 
-- [ ] **Step 2: 跑测试确认红/绿边界**
+- [x] **Step 2: 跑测试确认红/绿边界**
 
 Run: `npx vitest run tests/effect-runner.test.ts -t g_TextureNResolution`
 Expected: Task 1 之后即 PASS；若把 Task 1 的 `.zw` 临时改回 `info.textureWidth/textureHeight`，则 `tex.z / tex.x` 变 1.6384 ⇒ 该断言 FAIL（这就是它的判别力）
 
-- [ ] **Step 3: 订正注释（逻辑不动）**
+- [x] **Step 3: 订正注释（逻辑不动）**
 
 `src/client/effect-runner.ts:315-321` 注释改为：
 
@@ -161,12 +159,12 @@ Expected: Task 1 之后即 PASS；若把 Task 1 的 `.zw` 临时改回 `info.tex
 // 把遮罩挤向画面左上（见 AGENT.md §5.17）；RT 与未带 `fxRes` 的纹理走下方回退，同口径。
 ```
 
-- [ ] **Step 4: 跑测试确认绿**
+- [x] **Step 4: 跑测试确认绿**
 
 Run: `npx vitest run tests/effect-runner.test.ts tests/tex-loader.test.ts`
 Expected: 全绿
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add src/client/effect-runner.ts tests/effect-runner.test.ts
@@ -185,7 +183,7 @@ git commit -m "docs(client): 订正 g_TextureNResolution 的 vec4 口径注释�
 - Produces: `window.__fxResProbe(): Array<{ obj, slot, x, y, z, w, texImage }> | null`（e2e 专用只读探针）
 - Consumes: `__player.objectEffectStage.entries`（Map: objId → entry）与 `entry.runner.materials`（Map: key → `THREE.ShaderMaterial`），均按 TS `private` 运行期可读处理
 
-- [ ] **Step 1: 加探针**
+- [x] **Step 1: 加探针**
 
 `e2e/harness/harness-text-clock-entry.mjs` 的 `__isoInfo` 之后追加：
 
@@ -218,7 +216,7 @@ window.__fxResProbe = () => {
 };
 ```
 
-- [ ] **Step 2: 加判据**
+- [x] **Step 2: 加判据**
 
 `e2e/verify/verify-isolated-rt-sharpness.mjs` 的结构性判据段之后追加（该脚本已有 `evalJs` 与 `add(name, ok, detail)` 惯例）：
 
@@ -237,12 +235,12 @@ window.__fxResProbe = () => {
   }
 ```
 
-- [ ] **Step 3: 跑一次确认绿（真 GPU，串行）**
+- [x] **Step 3: 跑一次确认绿（真 GPU，串行）**
 
 Run: `node e2e/verify/verify-isolated-rt-sharpness.mjs --id=1922570576 --gpu`
 Expected: 既有判据全 PASS + 新增 2 条 PASS；`metrics.json` 里能看到遮罩槽 `z/x = 1`
 
-- [ ] **Step 4: 反向验证（判据有牙）**
+- [x] **Step 4: 反向验证（判据有牙）**
 
 ```bash
 git checkout 7ba4eca -- src/client/tex-loader.ts   # 修复前版本（任务已提交，git stash 是 no-op）
@@ -251,7 +249,7 @@ git checkout HEAD -- src/client/tex-loader.ts      # 恢复；git diff 应为空
 node e2e/verify/verify-isolated-rt-sharpness.mjs --id=1922570576 --gpu   # 期望 exit 0
 ```
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add e2e/harness/harness-text-clock-entry.mjs e2e/verify/verify-isolated-rt-sharpness.mjs
@@ -271,9 +269,9 @@ git commit -m "test(e2e): 钉住遮罩槽分辨率口径 z/x === 1"
 - Consumes: Task 1–3 的最终代码与 e2e 实测数字
 - Produces: 无代码接口
 
-- [ ] **Step 1: 订正 §5.17**
+- [x] **Step 1: 订正 §5.17**
 
-`AGENT.md` §5.17 的 `(mip0.w, mip0.h, header.w, header.h)` 表述改为：
+`AGENT.md` §5.17 的**旧口径表述**（lwe 约定：四分量分别取 mip0 与 header 尺寸）改为（下列即现文）：
 
 ```
 §5.17 g_TextureNResolution 四分量一律同值（= 纹理 mip0 记录尺寸）；效果 shader 用 `.z/.x`
@@ -281,7 +279,7 @@ git commit -m "test(e2e): 钉住遮罩槽分辨率口径 z/x === 1"
 遮罩按 分配/内容 挤向画面左上（真机：湖水波动跑到树上）。细节见 docs/fixes/conventions-details.md。
 ```
 
-- [ ] **Step 2: 新增 §7 遗留条目**
+- [x] **Step 2: 新增 §7 遗留条目**
 
 ```
 §7.37 `g_TextureNResolution` 只保证「四分量同值 ⇒ `.z/.x` 为 1」，**不保证取到实际上传尺寸**：
@@ -290,17 +288,17 @@ git commit -m "test(e2e): 钉住遮罩槽分辨率口径 z/x === 1"
 等于各分支最终上传尺寸（独立行为变更，需单独 A/B 验证）。
 ```
 
-- [ ] **Step 3: 归档审计数据**
+- [x] **Step 3: 归档审计数据**
 
 在 `docs/fixes/conventions-details.md` 为 §5.17 追加小节：遮罩几何验算表（v 0.78–0.86 → 0.46–0.51）、**库级口径（`type.lower() == "scene"`）**的表达式分类表（40 种 / 471 行；旧 28 张口径 32 种 / 376 行）、影响面（218 `.tex` 中 95 个 NPOT、23 张壁纸；旧口径 175 / 88 / 21）、审计脚本路径（`output/blur-analysis/{mask_placement,mask_scope,shader_audit,tex_padding_scope}.py`）。
 **注意**：`output/` 被 gitignore，数据需以文字/表格形式进文档，不能只留路径。
 
-- [ ] **Step 4: 跑全量测试与 e2e**
+- [x] **Step 4: 跑全量测试与 e2e**
 
 Run: `npm test` → 期望 55 files / 1112 passed
 Run: `node e2e/verify/verify-isolated-rt-sharpness.mjs --gpu` → 期望 5/5 张、含新增判据全 PASS、exit 0
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add AGENT.md docs/fixes/conventions-details.md docs/superpowers/specs/2026-10-12-mask-uv-npot-design.md
@@ -310,6 +308,8 @@ git commit -m "docs(agent): 回写遮罩 UV 的四分量同值口径与审计数
 ---
 
 ### Task 5（单独确认后执行）：重建产物
+
+**合并 / 发布边界（勿误判「合并即修复」）：** 本分支 `fix/mask-uv-npot` **从 `feat/isolated-object-rt-resolution` 切出**（切出点 = 该特性 HEAD `22e6fb4`）⇒ **合并本分支即同时并入该特性**（相对 `master` 领先 **24** 个提交）。**合并本身不改变运行时行为**（`lib/`、`dist/` 是提交进仓库的构建产物）—— 必须执行本任务的两条构建命令并**真机复看「湖面波动 / 树线不波动」**才算修复生效。
 
 **Files:**
 - Modify: `lib/**`、`dist/client.js(.map)`（构建产物）

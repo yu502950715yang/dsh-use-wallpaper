@@ -262,13 +262,13 @@ const FLAG_CLAMP_UVS = 1 << 1;
 
 // 2 的幂填充裁剪（与 wasm/src/tex.rs `crop_to_map` 同源语义，2026-09-10）：
 // TEXV0005 的 **mip 记录尺寸**（w/h）是**上传尺寸**（2 的幂，如 4096×2048），而头部 @34/@38
-// 的 width/height 是**逻辑内容尺寸**（如 2400×1555）。内容在 mip0 **左上角**，右侧/底部是
+// 的 width/height 是**逻辑内容宽高**（如 2400×1555）。内容在 mip0 **左上角**，右侧/底部是
 // 2 的幂填充（黑/透明）。若不裁剪就把整张上传纹理当 UV 0-1 采样：
 //   - 纹理宽高 = mip 尺寸（4096×2048）→ 图像内容只出现在 quad 的左上 map/mip 比例区域
 //     （EVA：58.6% 宽 × 75.9% 高），**右侧/底部露出填充黑边**——用户截图「EVA 背景只占左边约 2/3、
 //     右侧大片黑」的根因（quad 尺寸 2400×1555 与场景一致、cover 相机也正确，问题在纹理内容域）；
 //   - 「size 缺省回退纹理宽高」的对象也会拿到 4096×2048 这个错误的世界尺寸。
-// 裁剪后纹理尺寸 = 内容尺寸 → UV 0-1 恰好是内容，与 wasm 渲染路径（crop_to_map）产出一致。
+// 裁剪后纹理尺寸 = 头部记录的内容宽高 → UV 0-1 恰好是内容，与 wasm 渲染路径（crop_to_map）产出一致。
 // 无填充（map ≥ mip）/ sprite / map 非法（0）→ 原样返回（不复制数据，零开销）。
 export function cropToMap(
   data: Uint8Array<ArrayBuffer>,
@@ -282,6 +282,8 @@ export function cropToMap(
   const valid = Number.isFinite(mapWidth) && Number.isFinite(mapHeight) && mapWidth > 0 && mapHeight > 0;
   const cw = valid ? Math.min(Math.floor(mapWidth), mipWidth) : mipWidth;
   const ch = valid ? Math.min(Math.floor(mapHeight), mipHeight) : mipHeight;
+  // ⚠️ sprite 位（`flags & 4`）刻意不裁：若这类纹理的载荷带 padding，上传的是 mip0 整幅（含 padding），
+  // 此时「四分量同值 ⇒ `.z/.x = 1`」对它不再成立（本机库 0 实例；见 AGENT.md §5.17）。
   if ((flags & FLAG_SPRITE) !== 0 || (cw >= mipWidth && ch >= mipHeight)) {
     return { width: mipWidth, height: mipHeight, data };
   }

@@ -30,7 +30,7 @@
 ### 1.3 纹理 / 材质解码（`src/client/tex-loader.ts`）
 
 - `TEXV0005`：LZ4 解压；支持 **RGBA8888 / DXT1/3/5 / RG88 / R8**（RG88→`vec4(r,r,r,g)`、R8→`vec4(1,1,1,r)`，与 wasm 的 `r8_to_rgba_white_alpha` 对齐）。
-- **2 的幂填充裁剪**（`cropToMap`）：mip 记录的是 2 的幂上传尺寸，按头部逻辑内容尺寸裁剪（EVA 4096×2048→2400×1555），避免背景只占左上角、右侧露黑。
+- **2 的幂填充裁剪**（`cropToMap`）：**原始像素载荷（带 padding）**的 mip 记录尺寸 = `.tex` 头的分配尺寸，按头部记录的逻辑内容宽高裁到内容区（EVA 4096×2048→2400×1555），避免背景只占左上角、右侧露黑；**编码图像类**的 mip0 记录尺寸本就是内容宽高、无 padding 可裁（二分口径见 `AGENT.md` §5.17）。
 - **DXT 用 mip0 全分辨率 + `LinearFilter`**（不用 mipmap 过滤），避免大尺寸压缩纹理被三线性 mip 过滤糊化。
 - **sprite 精灵表**：解析 `TEXS000x` 段得到帧数与网格（如火把/雾 1024×1024 = 8×8=64 帧），shader 二维网格切片。
 - 行序统一（`flipRows` / DXT 块行 `flipCompressedRows`）。
@@ -58,7 +58,7 @@
 - **效果纹理槽编号 + sampler `combo` 派生**：
   - **`textures[i] → g_Texture(i)`**（**不是** `g_Texture(i+1)`），写错会让所有效果的纹理槽整体错位一个。
   - sampler 声明带 `"combo":"X"` 时，该槽被绑定即置 `X = 1`（必须在 `preprocessWeShader` **之前**）；缺失会让 `#if MASK` 的局部作用分支永不启用 ⇒ 效果全图生效。
-- **`g_TextureNResolution` 的 vec4 分量是 `(mip0.w, mip0.h, header.w, header.h)`**（lwe 约定），**不是** `(w, h, 1/w, 1/h)`：填错会让遮罩 UV 被压成 ~0 ⇒ 本该局部生效的效果变成全图等量位移。
+- **`g_TextureNResolution` 四分量一律同值（= 纹理 mip0 记录尺寸）** ⇒ `.z/.x` 与 `.w/.y` 恒为 1；效果 shader 用 `.z/.x` 缩放遮罩 UV（如 `waterripple.vert`），比值必须为 1。插件**不按 `.tex` 头做 padding 分配**，故填头里的分配尺寸会让 NPOT 纹理的遮罩按 分配/内容 挤向画面左上（真机：湖水波动跑到树上）。细节见 `AGENT.md` §5.17。
 - **R8 / RG88 有两套通道语义**（`convertUnormToRgba(data, format, alphaPriority)`）：`true`（缺省）= 粒子纹理语义（形状写在 R / G）；`false` = 效果纹理槽语义（`R8 → (r,r,r,1)`、`RG88 → (r,g,0,1)`，shader 直接读 `.r` / `.rg` 当遮罩数值）。按错语义 ⇒ 遮罩失效 ⇒ 效果覆盖全图。
   - ⚠️ **待办**：权威来源应是 `.tex` 头的 `TextureFlags_AlphaChannelPriority`（bit19），现由**调用方路径**推断；对当前库恰好正确，但语义来源错了。
 - **`colorBlendMode`（→ combo `BLENDMODE`）不是 alpha 混合**，而是**额外追加一遍「读当前帧缓冲」的混合 pass**（`ApplyBlending(BLENDMODE, A=背景, B=自己, 自己的 alpha)`），alpha 保持背景的。模式表在 WE 明文 `common_blending.h`。three 侧用**预乘片元** + `CustomBlending` 复刻。**未实现的模式回退普通 alpha 混合**（不静默画错）。全库非零只有 3 个对象：`3743126786`=7、`2832263418`=6、`2460786246`=31。关键性质：`BlendScreen(A, 0) = A`。

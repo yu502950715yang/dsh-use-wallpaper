@@ -708,13 +708,23 @@ try {
       add('遮罩槽分辨率口径 z/x === 1', false, why);
       if (maskAimed) add('魔兽之门遮罩已绑定且口径为 1', false, why);
       else console.log(`  SKIP  魔兽之门遮罩判据：本张 ${c.id} 无该专属遮罩素材，且探针无数据（口径判据已 FAIL）`);
-      fxSummary = { rows: 0, bad: null, mask: null, maskAimed, note: '探针无数据' };
+      fxSummary = { rows: 0, bad: null, mask: null, maskAimed, xOverTexImage: null, note: '探针无数据' };
     } else {
       // 分量缺失/非正也算异常：口径必须**可算**且为 1，不能靠「值假」蒙混成 PASS
       const bad = fxRows.filter((row) => !(row.x > 0) || !(row.z > 0) || Math.abs(row.z / row.x - 1) > 1e-6);
       add('遮罩槽分辨率口径 z/x === 1', bad.length === 0, bad.length
         ? `${bad.length}/${fxRows.length} 处异常，例：obj=${bad[0].obj} slot=${bad[0].slot} z/x=${(bad[0].z / bad[0].x).toFixed(4)}`
         : `${fxRows.length} 个槽全部为 1`);
+      // 非判定观察量（M4）：`.x/.y` 与**实际上传纹理尺寸**的偏离 —— design §7 的 follow-up（`fxRes` 取
+      // mip0 记录尺寸、不保证等于实际上传尺寸）在 e2e 的可见信号。**不参与 PASS/FAIL**（常驻命令必须仍全绿）。
+      // 只统计「有 texImage 可比」的槽：RT / 未绑定的槽没有上传尺寸可比（另计 slotsWithoutTexImage）。
+      const xComparable = fxRows.filter((row) => row.x > 0 && Array.isArray(row.texImage) && row.texImage[0] > 0);
+      const xOverTex = xComparable.filter((row) => Math.abs(row.x / row.texImage[0] - 1) > 1e-6);
+      const xOverTexExamples = xOverTex.slice(0, 2).map((row) => `obj=${row.obj} slot=${row.slot} x=${row.x}`
+        + ` tex=${row.texImage.join('×')} x/texW=${(row.x / row.texImage[0]).toFixed(4)}`);
+      console.log(`  （非判定观察量）x/texImage[0] ≠ 1 的槽：${xOverTex.length}/${xComparable.length} 可比槽`
+        + `（共 ${fxRows.length} 槽，其中 ${fxRows.length - xComparable.length} 槽无 texImage 不可比）`
+        + (xOverTexExamples.length ? `  例：${xOverTexExamples.join('；')}` : ''));
       const mask = fxRows.find((row) => Array.isArray(row.texImage) && row.texImage[0] === 2500 && row.texImage[1] === 1200);
       if (maskAimed) {
         add('魔兽之门遮罩已绑定且口径为 1', !!mask && mask.x > 0 && mask.z > 0 && Math.abs(mask.z / mask.x - 1) < 1e-6,
@@ -724,7 +734,10 @@ try {
         console.log(`  SKIP  魔兽之门遮罩判据：2500×1200 是 1922570576 专属素材，本张 ${c.id} 不适用`
           + `（该张口径判据已按 ${fxRows.length} 槽逐槽判定）`);
       }
-      fxSummary = { rows: fxRows.length, bad: bad.length, mask: mask ?? null, maskAimed };
+      fxSummary = { rows: fxRows.length, bad: bad.length, mask: mask ?? null, maskAimed,
+        // 非判定（不参与 checks/ok）：design §7 的 follow-up 在 e2e 的可见信号
+        xOverTexImage: { slotsNotOne: xOverTex.length, comparableSlots: xComparable.length, slots: fxRows.length,
+          slotsWithoutTexImage: fxRows.length - xComparable.length, examples: xOverTexExamples } };
     }
     // 锐度双判据（R30）：基线在才断言；基线缺失 → 明确跳过，不记 PASS 也不记 FAIL
     if (r.sharp && r.sharp.error) {
@@ -789,6 +802,10 @@ try {
       // I3：零有效块（全部退化/低 NCC，如画面整体平坦）既不跳过也不崩溃，判 FAIL 并照常产出结论与 metrics
       noValidBlocksPolicy: '有效块为 0 ⇒ 逐块中位数判据 FAIL（本张不计 PASS）；打印 n/a（无有效块），判定段与 metrics.json 照常产出',
     },
+    // M4：遮罩槽口径探针的**非判定**观察量（design §7 的 follow-up 可见信号）；不参与 checks/ok
+    fxResProbeNote: 'fxResProbe.xOverTexImage 是**非判定观察量**（不参与 PASS/FAIL）：统计有 g_TextureN 绑定'
+      + '（texImage 可读）的槽里「x / texImage[0] ≠ 1」的条数 —— 即 fxRes 取的是 mip0 记录尺寸、'
+      + '而非各分支实际上传尺寸（design §7 的 follow-up）。判定口径见每张的 fxResProbe.rows / bad。',
     fpsNote: '本机 60Hz vsync ⇒ FPS 只能当**地板**用，测不出 60 以上的余量，也不覆盖低端 GPU/4K 屏。',
     serialNote: 'harness 端口与 Edge user-data-dir 固定 ⇒ 不得并行跑多份。',
     cases: caseMetrics,

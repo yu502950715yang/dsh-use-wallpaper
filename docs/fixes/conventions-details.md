@@ -71,7 +71,7 @@
     - 这两条加上下面两条纹理语义，就是 GTR 从「整屏晃动 + 整屏脉冲」回到桌面 WE「只抖排气管、女孩脸上反光一闪一闪」的全部原因（`3031158`）。
 ### §5.17
 
-17. **`g_TextureNResolution` 的 vec4 分量：四分量一律同值（= 纹理 mip0 记录尺寸）** —— 正确的不变量是「**四分量一律同值 ⇒ `.z/.x` 与 `.w/.y` 恒为 1**」，**不是**「四分量取内容尺寸」（后者对「`mip0 记录 == 分配`」的原始像素载荷类不成立，见下方影响面）。效果 shader 用 `.z/.x` 缩放遮罩 UV（`waterripple.vert` / `shake.vert` 的 `v_TexCoord.zw = uv * g_Texture1Resolution.z / g_Texture1Resolution.x`），比值必须为 1；插件**从不 padding 上传**（编码图像类 `createImageBitmap` 解出即上传；原始像素载荷类经 `cropToMap` 裁到 image 尺寸后上传）⇒ **上传的纹理总是被内容占满**，填 `.tex` 头的分配尺寸会让 NPOT 遮罩按 分配/内容 挤向画面左上。为此 `textureFromTex` 把 `[mip.width, mip.height, mip.width, mip.height]` 写进 `tex.userData.fxRes`（`tex-loader.ts:471-473`，`fxRes` 的唯一生产者）；`resolveTextureResolution4` 读该字段，**RT 等无该字段的纹理按同口径回退为 `(w, h, w, h)`**（`effect-runner.ts:315-333`，回退 `return` 在 `:330-332`）。
+17. **`g_TextureNResolution` 的 vec4 分量：四分量一律同值（= 纹理 mip0 记录尺寸）** —— 正确的不变量是「**四分量一律同值 ⇒ `.z/.x` 与 `.w/.y` 恒为 1**」，**不是**「四分量一律取 `header` 记录的内容宽高」（后者对「`mip0 记录 == 分配`」的原始像素载荷类不成立，见下方影响面）。效果 shader 用 `.z/.x` 缩放遮罩 UV（`waterripple.vert` / `shake.vert` 的 `v_TexCoord.zw = uv * g_Texture1Resolution.z / g_Texture1Resolution.x`），比值必须为 1；**本机库内不存在**按 padding 分配的纹理（编码图像类 `createImageBitmap` 解出即上传；原始像素载荷类经 `cropToMap` 裁到内容宽高后上传）⇒ 上传的纹理被内容占满 —— ⚠️ **代码层唯一例外**是 `cropToMap` 对 `flags & 4`（sprite）**刻意不裁剪**（`tex-loader.ts:285`）：**若将来出现「raw 像素载荷 + sprite 位 + header padding」的纹理，`.z/.x = 1` 对它不再成立**（本机库 0 实例）。填 `.tex` 头的分配尺寸会让 NPOT 遮罩按 分配/内容 挤向画面左上。为此 `textureFromTex` 把 `[mip.width, mip.height, mip.width, mip.height]` 写进 `tex.userData.fxRes`（`tex-loader.ts:471-473`，`fxRes` 的唯一生产者）；`resolveTextureResolution4` 读该字段，**RT 等无该字段的纹理按同口径回退为 `(w, h, w, h)`**（`effect-runner.ts:315-333`，回退 `return` 在 `:330-332`）。
 
     **2026-10-12 修复归档（分支 `fix/mask-uv-npot`：`b8df5e2`…`cdbdd56`；触发 = 用户报告「魔兽之门湖面波动跑到湖上方树上」）** —— 审计脚本在 gitignored 的 `output/blur-analysis/`（`mask_placement.py` / `mask_scope.py` / `shader_audit.py` / `tex_padding_scope.py` / `fxres_npot_miprecord_scan.py`），数字全部随文留档（不能只留路径）：
 
@@ -92,7 +92,7 @@
       | **A 遮罩 / 纹理 UV 缩放** | `v_TexCoord.zw = vec2(uv.x * .z/.x, uv.y * .w/.y)`（86+98）、`a_TexCoord` 版（20+38）、`v_TexCoordMask.zw = vec2(.z/.x, .w/.y)`（32）、`v_TexCoordMask.xy = …`（16+12+2）、`v_TexCoord.z *= .z/.x`（14）、`v_TexCoord.w *= .w/.y`（14）、**`vec2 t2 = .xy / .zw`（2）** | **334** / 268 | **比值** `.z/.x`、`.w/.y`（须为 1） |
       | **B 尺寸（texel 步长 / 顶点偏移 / 归一化基准）** | `blurredCoords += 0.75 / .zw`（6）、`offsetX/offsetY = g_Scale.x/y / .z/.w`（8+8）、`v_TexCoord.z/.w = g_Scale.x/y / .z/.w`（9+9）、**`.x / min(.w, .z)`（3）**、**`.y / min(.w, .z)`（3）**、**`textureScale = .zw * g_TextureReductionScale`（1）** | **47** / 34 | **真实（上传）尺寸**（现口径 = mip0 记录尺寸） |
       | **C `.xy` 当尺寸** | `vec2 offsets = 1.0 / .xy`（10）、`0.5 / .xy`（5）、`v_TexCoord.zw += 0.5 / .xy`（5）、`v_StepSize = 1.0 / vec4(-.xy, .xy)`（4）、`ApplyCompositeOffset(…, .xy)`（4）、`v_PointerUV.xy *= 0.5 / .xy`（1）、**`#define pixelSize (1.0 / .xy)`（2）** | **31** / 25 | **真实（上传）尺寸**（`.xy` 历来 = mip0 记录尺寸） |
-      | **D 宽高比 + 注释行** | `.x/.y`（14+4+2+2，另含注释行 2+2）、`.z/.w`（14+6，另含注释行 4）、`.y/.x`（2，另含注释行 2+1）、`.zw/.xy`（2）、**`.xy / .y`（2）** —— **注释行已含在上述各组，不另加** | **59** / 49 | 图像长宽比（同源） |
+      | **D 宽高比 + 注释行** | 共 **14** 种 / **59** 行。**非注释 9 种 / 48 行**：`.x/.y` 4 种 —— `rippleTextureAdjustment = (x/y)`（14）、`ratio = x/y`（4）、`uv.x *= x/y`（2）、`x_norm = abs(uv.x)/(0.5*x/y)`（2）= 22；`.z/.w` 2 种 —— `aspect = z/w`（14）、`aspect = z/w * g_Ratio`（6）= 20；`.y/.x` 1 种 —— `v_PointerUV.w = y/-x`（2）；`.zw/.xy` 1 种 —— `mapped = zw/xy`（2）；**`.xy / .y` 1 种 —— `ratCorr = xy/y`（2）**。**注释行 5 种 / 11 行**：`//float ratio1 = x/y`（2）、`//float xyRatio = x/y`（2）、`//float aspect = z/w`（4）、`// 粒子纹理的「高/宽」比…`（2）、`//   texelRatio 纹理 高/宽…`（1）。**22+20+2+2+2 = 48，48+11 = 59**（`x`/`z` 等分量均指 `g_TextureNResolution`；逐条原文见 `output/blur-analysis/shader_audit_ci.txt`） | **59** / 49 | 图像长宽比（同源） |
 
       合计 334+47+31+59 = **471** = 命中行数（旧口径 268+34+25+49 = 376）。※ D 类的 `.zw/.xy`（2 行，REPO 自研 `mesh-shaders.ts` 的 UV 缩放比值）语义上近 A 类，为与旧稿可比仍计入 D。
 
@@ -108,10 +108,10 @@
       | 4 | `//float ratio1 = g_Texture1Resolution.x / g_Texture1Resolution.y;` | `3780477933` `…dot_matrix_mobile_fix.frag:70` | 注释行（非可执行） | 归 D 类：被注释的宽高比，无行为 |
       | 5 | `//float xyRatio = g_Texture0Resolution.x / g_Texture0Resolution.y;` | 同上 `:83` | 注释行（非可执行） | 同 #4 |
       | 6 | `vec2 ratCorr = g_Texture0Resolution.xy / g_Texture0Resolution.y;` | 同上 `:85` | **比值**（i） | 归 D 类：只用 `.xy` / `.y`，本次修复不改这两个分量 ⇒ 数值恒不变 |
-      | 7 | `vec2 t2 = g_Texture2Resolution.xy / g_Texture2Resolution.zw;`（用于 `texSample2D(g_Texture2, v_TexCoord.xy / t2)`，`:134`） | 同上 `:133` | **比值**（i） | 归 A 类：这是「打包/图像」比值式的遮罩 UV 缩放。旧口径 `.xy` = 内容、`.zw` = 分配 ⇒ `t2` = 内容/分配 = 0.61 ⇒ `uv / t2` = `uv × 1.64`，NPOT 遮罩会被采样到 `[0,1]` 之外并被 CLAMP —— 与 `waterripple` 同根因；新口径 `t2 = 1` ⇒ `uv × 1`，与本插件「上传纹理恒被内容占满」一致 ⇒ **修正**。该槽是材质默认 `util/white`（POT）且该壁纸无 NPOT `.tex` ⇒ 本机库当前数值不变 |
+      | 7 | `vec2 t2 = g_Texture2Resolution.xy / g_Texture2Resolution.zw;`（用于 `texSample2D(g_Texture2, v_TexCoord.xy / t2)`，`:134`） | 同上 `:133` | **比值**（i） | 归 A 类：这是「打包/图像」比值式的遮罩 UV 缩放。旧口径 `.xy` = 内容、`.zw` = 分配 ⇒ `t2` = 内容/分配 = 0.61 ⇒ `uv / t2` = `uv × 1.64`，NPOT 遮罩会被采样到 `[0,1]` 之外并被 CLAMP —— 与 `waterripple` 同根因；新口径 `t2 = 1` ⇒ `uv × 1`，与本插件的上传口径（内容占满整张纹理）一致 ⇒ **修正**。该槽是材质默认 `util/white`（POT）且该壁纸无 NPOT `.tex` ⇒ 本机库当前数值不变 |
       | 8 | `vec2 textureScale = g_Texture0Resolution.zw * g_TextureReductionScale;` | `2911105183` `shaders/effects/skew.vert:25` | **尺寸**（ii） | 归 B 类：把 `.zw` 当**像素尺寸**换算顶点偏移（`position.x += textureScale.x * …`）。该行在 `#if MODE == 1` 内，而该壁纸 3 个 `skew` pass（对象 `108`/`144`/`148`）都**未设 combos** ⇒ MODE 取默认 0（UV 模式）⇒ 该行不参与编译；`g_Texture0` 亦为 pass 链输入（RT）⇒ 本机库当前零影响。若将来某壁纸以 `MODE=1` 用它，则新口径给出的 `.zw` = mip0 记录尺寸 = 44 类的实际上传尺寸（**修正**），51 类不变（既有 1.6× 偏差） |
 
-      **没有任何一种新表达式属 (iii)「真的需要分配尺寸」**：本插件的上传纹理**恒被内容占满**（编码图像类 `createImageBitmap` 原图上传；原始像素载荷类 `cropToMap` 裁到 image 尺寸），库内不存在按 `.tex` 头 padding 分配的纹理 ⇒ 要求「分配尺寸」的用法在当前实现下无对象；将来若改做真 padding 上传（方案 B），才需要把 `.zw` 恢复为分配尺寸并重扫上表（见 `AGENT.md` §7.37）。
+      **没有任何一种新表达式属 (iii)「真的需要分配尺寸」**：**本机库内**不存在按 `.tex` 头 padding 分配的纹理（编码图像类 `createImageBitmap` 原图上传；原始像素载荷类 `cropToMap` 裁到内容宽高）⇒ 要求「分配尺寸」的用法在当前实现下无对象；⚠️ **代码层例外**是 `cropToMap` 对 `flags & 4`（sprite）**刻意不裁剪**（`tex-loader.ts:285`）⇒ **若将来出现「raw 像素载荷 + sprite 位 + header padding」的纹理，`.z/.x = 1` 对它不再成立**（本机库 0 实例）。将来若改做真 padding 上传（方案 B），才需要把 `.zw` 恢复为分配尺寸并重扫上表（见 `AGENT.md` §7.37）。
 
     - **影响面**（`tex_padding_scope.py` + `fxres_npot_miprecord_scan.py`；**库级口径 = `type.lower() == "scene"`，本机壁纸库快照 33 张**，对照列为初稿的 28 张 `type == "scene"` 精确匹配口径）：
 
@@ -119,12 +119,12 @@
       |---|---|---|
       | 全库 `.tex` | **218** 个（`materials/masks/` 113 / 其它 105） | 175 个（遮罩 92 / 其它 83） |
       | `header ≠ image`（NPOT padding） | **95** 个（44%），分布 **23** 张壁纸 | 88 个（50%），21 张壁纸 |
-      | 其中**会变**（`mip0 记录 == image`，**编码图像类（本库无视频样本）**） | **44** 个（`imageFormat=13` 31 + `=2` 13；含遮罩 **15**） | 38 个（27 + 11；含遮罩 15） |
+      | 其中**会变**（`mip0 记录 == image`，**编码图像类（NPOT 集合内无视频样本）**） | **44** 个（`imageFormat=13` 31 + `=2` 13；含遮罩 **15**） | 38 个（27 + 11；含遮罩 15） |
       | 其中**不变**（`mip0 记录 == 分配`，**原始像素载荷（带 padding）**） | **51** 个（TEXB0003 `imageFormat=-1` 49 + TEXB0002 1 + TEXB0004 1；含遮罩 **26**） | 50 个（48 + 1 + 1；含遮罩 26） |
 
       **数字变化的来源**：初稿的 175/88/21 是**只扫了 `type == "scene"` 的 28 张**（大小写精确匹配漏掉 5 张 `type == "Scene"`）⇒ 不是数字凭空变了，而是审计域被补全。新增的 7 个 NPOT 全部落在 `2911105183`（6 个，均会变）与 `2236329190`（1 个，不变）；**遮罩侧数字不受口径影响**（新增的 5 张壁纸只有 POT 遮罩）—— 库级 NPOT 遮罩仍是 **41** 个、仍只涉及 5 张（`1429403119` 21 / `1922570576` 3 / `1968789468` 4 / `2011060960` 12 / `2132420420` 1）。
 
-      新值与旧值**逐分量相等 iff `mip0 记录 == 分配`**（库级头部扫描无第三类，二分穷尽）；51 类的上传路径是「mip0 载荷本身 = 分配尺寸，上传前经 `cropToMap` 裁到 image」⇒ 旧 `.z/.x` 本就是 `分配/分配 = 1`，本次**零改动**。⚠️ 该类的成因表述必须用「**原始像素载荷（带 padding）**」，**不得**写成「全部 `imageFormat=-1`」（库里另有 1 个 TEXB0002 其 `imageFormat` 为 None，同机制）；只会变的 44 类**不得**写成「视频类」（本库 `flags & 32` 视频样本数为 **0**）。遮罩侧 `header ≠ image` 的 **41** 个中：**会变 15 个**（`1922570576` 3 + `2011060960` 11 + `2132420420` 1）、**不变 26 个**（`1429403119` 21 + `1968789468` 4 + `2011060960` 1）—— 用户报告的「魔兽之门」属会变那批。
+      新值与旧值**逐分量相等 iff `mip0 记录 == 分配`**（库级头部扫描无第三类，二分穷尽）；51 类的上传路径是「mip0 载荷本身 = 分配尺寸，上传前经 `cropToMap` 裁到 image」⇒ 旧 `.z/.x` 本就是 `分配/分配 = 1`，本次**零改动**。⚠️ 该类的成因表述必须用「**原始像素载荷（带 padding）**」，**不得**写成「全部 `imageFormat=-1`」（库里另有 1 个 TEXB0002 其 `imageFormat` 为 None，同机制）；只会变的 44 类**不得**写成「视频类」：**NPOT 集合内无视频样本** —— 库内另有 2 个视频样本（`2911105183` 的 `materials/CP_ads_01/02.tex`，`flags=35`、`alloc == image == 1280×720`、载荷含 `ftyp`），是 POT ⇒ **不在** 44/51 二分内（同文件 §5.23 记的「实测样本」即这两个，不矛盾）。遮罩侧 `header ≠ image` 的 **41** 个中：**会变 15 个**（`1922570576` 3 + `2011060960` 11 + `2132420420` 1）、**不变 26 个**（`1429403119` 21 + `1968789468` 4 + `2011060960` 1）—— 用户报告的「魔兽之门」属会变那批。
 
     - **e2e 真机实测**（`e2e/verify/verify-isolated-rt-sharpness.mjs --gpu`，串行；探针 = `window.__fxResProbe()`，加在 `e2e/harness/harness-text-clock-entry.mjs:228-260`；两条判据在 `e2e/verify/verify-isolated-rt-sharpness.mjs:698-728`）：
       - 单张 `1922570576`：探针 **21 槽、`bad=0`**；命中遮罩 `obj=13 slot=1 tex=[2500,1200] z/x=1.0000`；两条判据 PASS，**exit 0**。
