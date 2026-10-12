@@ -295,7 +295,7 @@ git commit -m "test(e2e): 钉住遮罩槽分辨率口径 z/x === 1"
 
 - [x] **Step 4: 跑全量测试与 e2e**
 
-Run: `npm test` → 期望 55 files / 1112 passed
+Run: `npm test` → 期望 55 files / 1115 passed
 Run: `node e2e/verify/verify-isolated-rt-sharpness.mjs --gpu` → 期望 5/5 张、含新增判据全 PASS、exit 0
 
 - [x] **Step 5: 提交**
@@ -309,7 +309,7 @@ git commit -m "docs(agent): 回写遮罩 UV 的四分量同值口径与审计数
 
 ### Task 5（单独确认后执行）：重建产物
 
-**合并 / 发布边界（勿误判「合并即修复」）：** 本分支 `fix/mask-uv-npot` **从 `feat/isolated-object-rt-resolution` 切出**（切出点 = 该特性 HEAD `22e6fb4`）⇒ **合并本分支即同时并入该特性**（相对 `master` 领先 **特性 24 + 本分支 13 = 37 个提交**；另有设计与计划提交 `7ba4eca` 1 个 ⇒ `git rev-list --count master..HEAD` 实测 **38**）。**合并本身不改变运行时行为**（`lib/`、`dist/` 是提交进仓库的构建产物）—— 必须执行本任务的两条构建命令并**真机复看「湖面波动 / 树线不波动」**才算修复生效。
+**合并 / 发布边界（勿误判「合并即修复」）：** 本分支 `fix/mask-uv-npot` **从 `feat/isolated-object-rt-resolution` 切出**（切出点 = 该特性 HEAD `22e6fb4`）⇒ **合并本分支即同时并入该特性**（相对 `master` 领先 **38** 个提交 = 该特性 24 + 本遮罩修复 14）。**合并本身不改变运行时行为**（`lib/`、`dist/` 是提交进仓库的构建产物）—— 本任务已完成两条构建命令（产物提交 `d7f6ec3`）并**真机复看通过**（魔兽之门 / Eva 01 / 守望先锋-Dva女警）。
 
 **Files:**
 - Modify: `lib/**`、`dist/client.js(.map)`（构建产物）

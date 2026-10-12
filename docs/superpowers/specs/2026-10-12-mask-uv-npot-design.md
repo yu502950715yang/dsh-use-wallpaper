@@ -1,7 +1,7 @@
 # 效果遮罩 UV 被 NPOT padding 比错误缩放（「波动位置不对」）设计
 
 **日期：** 2026-10-12
-**状态：** **已实现**（2026-10-12；分支 `fix/mask-uv-npot`：`b8df5e2`…`cdbdd56`；`npm test` 55 files / 1115 passed，e2e 5/5 exit 0，反向验证 exit 1）。⚠️ **`lib/`、`dist/` 尚未重建 ⇒ 运行中的插件仍是旧行为**，须执行 Task 5（`npm run build && npm run build:client`）并真机复看「湖面波动 / 树线不波动」才算修复生效（见 §9 的合并/发布边界）
+**状态：** **已实现并生效**（2026-10-12；分支 `fix/mask-uv-npot`：`b8df5e2`…`cdbdd56`；`npm test` 55 files / 1115 passed，e2e 5/5 exit 0，反向验证 exit 1）。✅ **`lib/`、`dist/` 已重建并提交（`d7f6ec3`）**，运行中的插件已切到新行为；真机目视 `1922570576` 魔兽之门（主诉）、`2011060960` Eva 01、`2132420420` 守望先锋-Dva女警 三张均无异常（见 §9 的合并/发布边界）
 **触发：** 用户报告「魔兽之门」湖水应有波动，实际波动出现在湖水上方的树木处；另有其它 scene 壁纸同类现象
 
 ## 1. 现象
@@ -89,7 +89,7 @@ ud.fxRes = [mip.width, mip.height, mip.width, mip.height];
 1. **单测（断言）**：`textureFromTex` 对 NPOT `.tex`（图像 100×50 / 分配 256×128 的 fixture）产出 `fxRes === [100,50,100,50]`；2 的幂纹理保持 `[w,h,w,h]`；不变量 `.z/.x === 1`、`.w/.y === 1`（`tests/tex-loader.test.ts:815-844`，**唯一守卫生产代码的三条断言** —— `tex-loader.ts:475` 一回退即红，尤其 `:824-827`、`:839-842`，不得削弱/删除）。`tests/effect-runner.test.ts:608-628` 是消费者侧契约钉（合成字面量、不调用 `textureFromTex`，第 3 条仅灵敏度自证）。全量 `npm test` = **55 files / 1115 passed**，exit 0。
 2. **反向验证**：临时把 `src/client/tex-loader.ts` 回退到修复前提交（`git checkout 7ba4eca -- src/client/tex-loader.ts`；任务已提交 ⇒ `git stash` 是 no-op）⇒ 单测必红（实测 `expected [ 100, 50, 256, 128 ] to deeply equal [ 100, 50, 100, 50 ]`、`expected 2.56 to be 1`），e2e 亦红（见 3）。
 3. **e2e 真机口径**：harness 探针（`e2e/harness/harness-text-clock-entry.mjs:228-260`）读 `__player.objectEffectStage` 内各 pass 材质的 `g_TextureNResolution` / `g_TextureN`（TS `private` 运行期可读，与既有 `__isoInfo` 同法）；判据在 `e2e/verify/verify-isolated-rt-sharpness.mjs:698-728`。实测（`--gpu`，串行）：单张 `1922570576` → 探针 **21 槽 `bad=0`**、遮罩 `obj=13 slot=1 tex=[2500,1200] z/x=1.0000`、**exit 0**；全清单 5 张 → **5/5、exit 0**（判据①覆盖 **262** 槽 = 21+65+8+88+80，零样本判 FAIL；判据②只对 `1922570576` 断言，其它 4 张打印**显式 SKIP**）；回退版本 → **exit 1**，`FAIL 遮罩槽分辨率口径 z/x === 1 ← 3/21 处异常，例：obj=13 slot=1 z/x=1.6384`（= 4096/2500，与该张 3 个 NPOT 遮罩条数、比值吻合）。
-4. **人眼对照**：`output/blur-analysis/mask_placement.png` 的叠加带（红 = 修复前口径落点 v≈0.46–0.58，绿 = 比值 1 落点 v≈0.78–0.99）与用户现象吻合；真机复看「湖面波动 / 树线不波动」属 Task 5（重建 `lib/`、`dist/` 后）确认项。
+4. **人眼对照**：`output/blur-analysis/mask_placement.png` 的叠加带（红 = 修复前口径落点 v≈0.46–0.58，绿 = 比值 1 落点 v≈0.78–0.99）与用户现象吻合；真机复看（重建 `lib/`、`dist/` 后）**已确认**：`1922570576` 魔兽之门（湖面波动回位、树线不再波动）、`2011060960` Eva 01、`2132420420` 守望先锋-Dva女警 三张均无异常。
 
 ## 7. 边界与非目标
 
@@ -115,5 +115,5 @@ ud.fxRes = [mip.width, mip.height, mip.width, mip.height];
 
 ## 9. 合并 / 发布边界（勿误判「合并即修复」）
 
-- 本分支 `fix/mask-uv-npot` **从 `feat/isolated-object-rt-resolution` 切出**（切出点 = 该特性 HEAD `22e6fb4`）⇒ **合并本分支即同时并入该特性**（相对 `master` 领先 **特性 24 + 本分支 13 = 37 个提交**；另有设计与计划提交 `7ba4eca` 1 个 ⇒ `git rev-list --count master..HEAD` 实测 **38**）。两个关注点耦合是 R1 的既定裁决（代价：回滚需分开处理）。
+- 本分支 `fix/mask-uv-npot` **从 `feat/isolated-object-rt-resolution` 切出**（切出点 = 该特性 HEAD `22e6fb4`）⇒ **合并本分支即同时并入该特性**（相对 `master` 领先 **38** 个提交 = 该特性 24 + 本遮罩修复 14，`git rev-list --count master..HEAD` 实测）。两个关注点耦合是 R1 的既定裁决（代价：回滚需分开处理）。
 - **合并本身不改变运行时行为**：`lib/`、`dist/` 是提交进仓库的构建产物，合并只改源码与文档。修复生效**必须**执行 Task 5（`npm run build && npm run build:client`）并**真机复看「湖面波动 / 树线不波动」**；⚠️ profile 符号链接到本仓库，重建会经 client-hmr 重挂正在运行的会话 ⇒ 需用户确认时机。

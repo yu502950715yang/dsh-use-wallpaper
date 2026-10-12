@@ -187,7 +187,7 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
 
 36. **隔离对象 RT 分辨率的已知边界**：① 显存预算是**软保证** —— 预算小到装不下全部屏占位时无法再降，只能保住「只升不降」；② 预算只覆盖 **image** 隔离对象：挂载期输入只含 image，resize 期同一函数按 `entries` 计入了粒子的屏占位 ⇒ 两期输入集合不同（粒子 RT 恒为屏占位）；③ 视频纹理**未就绪时回退屏占位**，不做「就绪后重设 RT」；④ 精灵表按**源尺寸未知**处理（回退屏占位）；⑤ e2e 锐度判据的样本里粒子 / 精灵表对象**各 0 个**（判据无真实样本）；⑥ 锐度判据余量偏薄（逐块中位数最低约 **1.11**，阈值 1.05）。详见 `docs/superpowers/specs/2026-10-12-isolated-object-rt-resolution-design.md` §5 与「实测（实现后）」，脚本用法见 `TESTING.md`。
 
-37. **`g_TextureNResolution` 只保证「四分量同值 ⇒ `.z/.x` 为 1」，不保证取到实际上传尺寸**：原始像素载荷类（`mip0 记录 == 分配`）上传前经 `cropToMap` 裁到 image 尺寸，故其 `.x/.y` 与真实纹理尺寸仍差约 1.6×，凡把 `.x/.y` / `.z/.w` 当 texel 步长用的用法仍偏小。要彻底对齐需让 `fxRes` 等于各分支最终上传尺寸（独立行为变更，需单独 A/B 验证）。细节与审计口径（**库级真值在 §3–§4**，含 `type` 大小写不敏感的定域）见 `docs/superpowers/specs/2026-10-12-mask-uv-npot-design.md`，follow-up 与边界见该文档 §7。另：本分支 `fix/mask-uv-npot` 从 `feat/isolated-object-rt-resolution` 切出（合并即并入该特性，相对 `master` 领先 **特性 24 + 本分支 13 = 37 个提交**；另有设计与计划提交 1 个 ⇒ `git rev-list --count master..HEAD` 实测 **38**），合并**本身不改变运行时行为**，须重建 `lib/`、`dist/` 并真机复看才算修复生效（见该文档 §9）。
+37. **`g_TextureNResolution` 只保证「四分量同值 ⇒ `.z/.x` 为 1」，不保证取到实际上传尺寸**：原始像素载荷类（`mip0 记录 == 分配`）上传前经 `cropToMap` 裁到 image 尺寸，故其 `.x/.y` 与真实纹理尺寸仍差约 1.6×，凡把 `.x/.y` / `.z/.w` 当 texel 步长用的用法仍偏小。要彻底对齐需让 `fxRes` 等于各分支最终上传尺寸（独立行为变更，需单独 A/B 验证）。细节与审计口径（**库级真值在 §3–§4**，含 `type` 大小写不敏感的定域）见 `docs/superpowers/specs/2026-10-12-mask-uv-npot-design.md`，follow-up 与边界见该文档 §7。另：本分支 `fix/mask-uv-npot` 从 `feat/isolated-object-rt-resolution` 切出（合并即并入该特性，相对 `master` 领先 **38** 个提交 = 该特性 24 + 本遮罩修复 14）；`lib/`、`dist/` 已在 `d7f6ec3` 重建并提交、真机复看三张无异常，**但合并本身不改变运行时行为**，故每次发布仍须重建产物（见该文档 §9）。
 
 ## 8. 历史归档
 
