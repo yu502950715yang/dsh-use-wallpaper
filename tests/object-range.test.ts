@@ -229,9 +229,12 @@ describe('隔离对象 RT 尺寸（方案 A′）', () => {
     const zero = isolatedRtSize(0, 0, 1, { width: 5000, height: 5000 });
     expect(Number.isFinite(zero.width) && zero.width >= 1).toBe(true);
     expect(Number.isFinite(zero.height) && zero.height >= 1).toBe(true);
+    // 1×1 并未真的大于屏占位（也是 1×1）⇒ 不得谎报升级
+    expect(zero.upgraded).toBe(false);
     const nan = isolatedRtSize(NaN, NaN, 1, { width: 5000, height: 5000 });
     expect(Number.isFinite(nan.width) && nan.width >= 1).toBe(true);
     expect(Number.isFinite(nan.height) && nan.height >= 1).toBe(true);
+    expect(nan.upgraded).toBe(false);
   });
   it('cap 收窄 → 升级上限随之下降，仍等比且不低于屏占位', () => {
     expect(isolatedRtSize(5000, 2400, 0.375, { width: 5000, height: 2400 }, { cap: 2048 }))
