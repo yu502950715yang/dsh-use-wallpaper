@@ -812,7 +812,7 @@ describe('cropToMap（2 的幂填充裁剪，EVA 背景露黑根因）', () => {
   });
 });
 
-describe('fxRes：四分量一律同值（mip0 记录尺寸）⇒ 遮罩 UV 缩放为 1', () => {
+describe('fxRes：四分量一律同值（= 各自实际上传尺寸）⇒ 遮罩 UV 缩放为 1', () => {
   const npot = () => makeTex({
     format: TEX_FORMAT.RGBA8888,
     flags: 2,
@@ -852,6 +852,20 @@ describe('fxRes：四分量一律同值（mip0 记录尺寸）⇒ 遮罩 UV 缩�
     const tex = await textureFromTex(parseTex(buf)!);
     expect(tex!.image.width).toBe(100);
     expect((tex!.userData as { fxRes: number[] }).fxRes).toEqual([100, 50, 100, 50]);
+  });
+
+  it('sprite 早返回：flags 带 sprite 位（&4）+ image 100×50 < mip0 记录 256×128 ⇒ 不裁、报 mip 记录', async () => {
+    // 与上一条 padded-raw 组成判别对：早返回路径（不裁）报 mip 记录 256×128，裁剪路径报 image 100×50。
+    const buf = makeTex({
+      format: TEX_FORMAT.RGBA8888, flags: 4,   // bit 2 = sprite（精灵表按整表寻址，见 cropToMap 早返回）
+      textureWidth: 256, textureHeight: 128, imageWidth: 100, imageHeight: 50,
+      images: [[{ width: 256, height: 128, data: new Uint8Array(256 * 128 * 4) }]],
+      sprite: { frames: 2, frameWidth: 128, frameHeight: 128 },
+    });
+    const tex = await textureFromTex(parseTex(buf)!);
+    expect(tex!.image.width).toBe(256);
+    expect(tex!.image.height).toBe(128);
+    expect((tex!.userData as { fxRes: number[] }).fxRes).toEqual([256, 128, 256, 128]);
   });
 
   it('DXT 块对齐：image 60×30 / mip0 记录 64×32 ⇒ 报 ceil4 后的 [60,32,60,32]', async () => {

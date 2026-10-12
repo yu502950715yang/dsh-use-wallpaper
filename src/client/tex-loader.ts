@@ -282,8 +282,8 @@ export function cropToMap(
   const valid = Number.isFinite(mapWidth) && Number.isFinite(mapHeight) && mapWidth > 0 && mapHeight > 0;
   const cw = valid ? Math.min(Math.floor(mapWidth), mipWidth) : mipWidth;
   const ch = valid ? Math.min(Math.floor(mapHeight), mipHeight) : mipHeight;
-  // ⚠️ sprite 位（`flags & 4`）刻意不裁：若这类纹理的载荷带 padding，上传的是 mip0 整幅（含 padding），
-  // 此时「四分量同值 ⇒ `.z/.x = 1`」对它不再成立（本机库 0 实例；见 AGENT.md §5.17）。
+  // ⚠️ sprite 位（`flags & 4`）刻意不裁：精灵表按整幅 mip 的帧网格寻址，裁 padding 会让帧坐标错位。
+  // 真实残留是**无法表达「内容域偏移」**（`(内容,内容,打包,打包)`，mesh-shaders.ts:26-32）；本实现每分支只报一个 `(w,h)` 对 ⇒「四分量同值」对它恒成立（AGENT.md §5.17）。
   if ((flags & FLAG_SPRITE) !== 0 || (cw >= mipWidth && ch >= mipHeight)) {
     return { width: mipWidth, height: mipHeight, data };
   }
@@ -512,7 +512,8 @@ export async function textureFromTex(info: TexInfo, opts?: TexLoadOptions): Prom
       applyWrap(t, info);
       // 上传尺寸 = `<video>` 内在尺寸（VideoTexture 的 tex.image 即该元素），与 ThreeLayer 的上传同源。
       const v = t.image as HTMLVideoElement;
-      return withSprite(t, v.videoWidth, v.videoHeight);
+      // 内在尺寸为 0（未解码却 readyState ≥ 2 的畸形素材）→ 回退 mip 记录尺寸，避免 uniform 变 (0,0,0,0)。
+      return withSprite(t, v.videoWidth || mip.width, v.videoHeight || mip.height);
     };
     const videoTex = await videoTextureFromMp4(mip.data, info, topDown, decorate);
     if (videoTex) return videoTex;
