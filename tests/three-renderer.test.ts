@@ -1856,3 +1856,99 @@ describe('three-renderer 音频链路', () => {
     r.dispose();
   });
 });
+
+// WebGL 上下文丢失（显存耗尽/驱动重置）回退（Task 8，护栏项）：隔离对象 RT 变大后显存压力上升，
+// 而现状下 context lost 就是**一块空白背景**（比「糊」严重得多）⇒ 渲染器必须停播并回调一次，
+// 由控制器换成该壁纸的 preview。三点契约：preventDefault、只触发一次、teardown 移除监听。
+describe('createThreeSceneRenderer webglcontextlost 回退 preview 接线', () => {
+  const LOST_SCENE = JSON.stringify({
+    camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+    general: { orthogonalprojection: { height: 1080, width: 1920 } },
+    objects: [{
+      id: 13, name: 'bg', image: 'models/a.json',
+      origin: '960 540 0', scale: '1 1 1', size: '1920 1080',
+    }],
+  });
+
+  // 造一张会丢上下文的画布：dispose 原实现没动过 → 监听必然残留，故必须在该处显式移除。
+  function lostCanvas(): { canvas: HTMLCanvasElement; tex: { dispose: ReturnType<typeof vi.fn> } } {
+    const tex = { dispose: vi.fn() };
+    resolveImageTexture.mockResolvedValue(tex as never);
+    resolveParticleMaterial.mockResolvedValue(null);
+    defaultLoadWasm.mockResolvedValue(null);
+    stubAssetFetch(LOST_SCENE, {});
+    loadSceneToThree.mockReturnValue({
+      player: { dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn() },
+      sims: [], backgroundIds: [0], particleLayers: [],
+    } as never);
+    return { canvas: document.createElement('canvas'), tex };
+  }
+
+  it('webglcontextlost ⇒ preventDefault + 回调一次（带壁纸 id），再派发不重复触发', async () => {
+    const { canvas, tex } = lostCanvas();
+    const seen: string[] = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    r.setOnContextLost?.((id) => seen.push(id));
+    await r.render('1922570576', canvas, null);
+
+    const evt = new Event('webglcontextlost', { cancelable: true });
+    canvas.dispatchEvent(evt);
+    // 不 preventDefault，浏览器就不会保留上下文状态、也不会给 restore 机会。
+    expect(evt.defaultPrevented).toBe(true);
+    expect(seen).toEqual(['1922570576']);
+    // 停掉当前播放器 + 释放本次装配资源（复用既有 teardown），并留一条可辨识告警。
+    expect((loadSceneToThree.mock.results.at(-1)!.value as any).player.dispose).toHaveBeenCalled();
+    expect(tex.dispose).toHaveBeenCalled();
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('1922570576'))).toBe(true);
+
+    // 一次性语义：同一 canvas（真实浏览器同一丢失事件可能被重复派发）不得二次回退。
+    canvas.dispatchEvent(new Event('webglcontextlost', { cancelable: true }));
+    expect(seen).toEqual(['1922570576']);
+    warn.mockRestore();
+    r.dispose();
+  });
+
+  it('未注册回调 / 传入 null ⇒ 上下文丢失仍安全（preventDefault + 停播，不抛）', async () => {
+    const { canvas } = lostCanvas();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    r.setOnContextLost?.(null);
+    await r.render('1922570576', canvas, null);
+
+    const evt = new Event('webglcontextlost', { cancelable: true });
+    expect(() => canvas.dispatchEvent(evt)).not.toThrow();
+    expect(evt.defaultPrevented).toBe(true);
+    warn.mockRestore();
+    r.dispose();
+  });
+
+  it('dispose 移除监听 ⇒ 之后的上下文丢失不再回调（不跨壁纸残留）', async () => {
+    const { canvas } = lostCanvas();
+    const seen: string[] = [];
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    r.setOnContextLost?.((id) => seen.push(id));
+    await r.render('1922570576', canvas, null);
+
+    r.dispose();
+    canvas.dispatchEvent(new Event('webglcontextlost', { cancelable: true }));
+    expect(seen).toEqual([]);
+  });
+
+  it('切壁纸（render 先 teardown）⇒ 旧 canvas 的监听被移除，新 canvas 的丢失只回调一次', async () => {
+    const seen: string[] = [];
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    r.setOnContextLost?.((id) => seen.push(id));
+    const first = lostCanvas();
+    await r.render('1922570576', first.canvas, null);
+    const second = lostCanvas();
+    await r.render('2851992662', second.canvas, null);
+
+    // 旧 canvas 的丢失事件不属于当前壁纸：其监听已随 teardown 移除，不得触发回退。
+    first.canvas.dispatchEvent(new Event('webglcontextlost', { cancelable: true }));
+    expect(seen).toEqual([]);
+    second.canvas.dispatchEvent(new Event('webglcontextlost', { cancelable: true }));
+    expect(seen).toEqual(['2851992662']);
+    r.dispose();
+  });
+});

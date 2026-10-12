@@ -16,6 +16,8 @@ export interface SceneRendererLike {
   setGlow?(patch: { enabled?: boolean; threshold?: number; strength?: number }): void;
   // 壁纸音效开关（含频谱驱动效果）：关掉即时停声并释放 AudioContext；打开按上次规格重播。
   setSoundEnabled?(enabled: boolean): void;
+  // 上下文丢失（显存耗尽/驱动重置）回调：渲染器停播后交回壁纸 id，由控制器换回该壁纸 preview。
+  setOnContextLost?(cb: ((id: string) => void) | null): void;
 }
 
 /** 贴壁纸文字样式（设置面板可改）：实时读取，故由 index.ts 以 getter 注入。 */
@@ -110,6 +112,15 @@ export function createWallpaperController(
   // 当前展示的壁纸：设置面板改文字颜色/描边后，无需重选壁纸即可重新下发（applyTextStyle）。
   let currentInfo: WallpaperInfo | undefined;
   const textStyler = createTextStyler(layer, opts, () => selectGeneration);
+  // WebGL 上下文丢失回退（Task 8）：渲染器重置（显存耗尽/驱动重置）后画面就是一块空白，
+  // 比「糊」严重 ⇒ 换成该壁纸的 preview 图。⚠️ 回调在**调用时**读 currentInfo（闭包，不是注册
+  // 时快照）：注册发生在构造期，那时还没有任何壁纸。
+  opts.sceneRenderer?.setOnContextLost?.((id) => {
+    const fallback = currentInfo;
+    console.warn(`[wallpaper-engine] scene 渲染不可用（WebGL 上下文丢失），已回退 preview（壁纸 ${id}）`);
+    if (fallback?.previewUrl) layer.showImage(fallback.previewUrl, !fallback.hasPreviewGif);
+    else layer.showNone();
+  });
 
   async function load(): Promise<WallpaperInfo[]> {
     list = await opts.fetchList();

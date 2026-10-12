@@ -1,3 +1,6 @@
+// @vitest-environment jsdom
+// ⚠️ 本文件用 jsdom：scene 分支要 `document.createElement('canvas')`（控制器只创建 fg 一个 canvas），
+// node 环境下 select 壁纸会直接抛 `document is not defined`。
 import { describe, expect, it, vi } from 'vitest';
 import { createWallpaperController } from '../src/client/wallpaper-controller.js';
 
@@ -5,11 +8,14 @@ function fakeLayer() {
   const calls: string[] = [];
   const fg: string[] = [];
   const outline: string[] = [];
+  // showImage 的**实参**（正文字符串串不带 kenBurns，回退断言需要它）。
+  const imageArgs: Array<[string, boolean]> = [];
   return {
     calls,
     fg,
     outline,
-    showImage: (u: string) => calls.push('image:' + u),
+    imageArgs,
+    showImage: (u: string, kenBurns: boolean) => { imageArgs.push([u, kenBurns]); calls.push('image:' + u); },
     showVideo: (u: string) => calls.push('video:' + u),
     showSceneCanvas: () => calls.push('scene'),
     showNone: () => calls.push('none'),
@@ -94,6 +100,76 @@ describe('createWallpaperController', () => {
     await c.load();      // 缓存旧列表（不含 '4'）
     await c.select('4'); // 选择新添加的壁纸
     expect(layer.calls.at(-1)).toBe('image:/p4'); // 修复后命中 preview 回退
+  });
+});
+
+// WebGL 上下文丢失回退（Task 8，护栏项）：渲染器只带回调，**只有控制器**知道当前壁纸的 preview
+// 地址 ⇒ 控制器在工厂体里注册回调，并在**调用时**读 currentInfo（闭包，不是注册时快照）。
+// 覆盖三条：切到 preview 图（gif 不带 Ken Burns）、无 preview 走 showNone、换壁纸后回退新壁纸。
+describe('createWallpaperController WebGL 上下文丢失回退 preview（Task 8）', () => {
+  const sceneWall = (id: string, previewUrl: string | null, gif = false) =>
+    ({ id, type: 'scene', hasScene: true, hasPreviewGif: gif, previewUrl, title: 's' }) as any;
+
+  /** 假渲染器：捕获控制器注册的回调（= setOnContextLost 的下游），供用例模拟上下文丢失。 */
+  function sceneRendererStub() {
+    let onLost: ((id: string) => void) | null = null;
+    return {
+      lost: (id: string) => onLost?.(id),
+      registered: () => onLost !== null,
+      render: async () => true,
+      setOnContextLost: (cb: ((id: string) => void) | null) => { onLost = cb; },
+    };
+  }
+
+  function controller(sceneRenderer: unknown, walls: unknown[]) {
+    const layer = fakeLayer();
+    const c = createWallpaperController(layer, {
+      fetchList: async () => walls as any,
+      // 测光恒有结果：避免异步测光失败路径干扰回退断言。
+      measurePreviewLuma: async () => 120,
+      sceneRenderer: sceneRenderer as any,
+    });
+    return { layer, c };
+  }
+
+  it('上下文丢失 ⇒ 回退当前壁纸 preview 图（gif 不启用 Ken Burns）', async () => {
+    const r = sceneRendererStub();
+    const { layer, c } = controller(r, [sceneWall('2', '/p2', true)]);
+    expect(r.registered()).toBe(true); // 工厂期就注册（不是等 scene 渲染时才注册）
+    await c.load();
+    await c.select('2');
+    expect(layer.calls.at(-1)).toBe('scene');
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    r.lost('2');
+    expect(layer.imageArgs.at(-1)).toEqual(['/p2', false]);
+    expect(warn.mock.calls.some((x) => String(x[0]).includes('上下文丢失'))).toBe(true);
+    warn.mockRestore();
+  });
+
+  it('上下文丢失但该壁纸无 preview ⇒ showNone（不留一块空白 canvas）', async () => {
+    const r = sceneRendererStub();
+    const { layer, c } = controller(r, [sceneWall('2', null)]);
+    await c.load();
+    await c.select('2');
+    expect(layer.calls.at(-1)).toBe('scene');
+
+    r.lost('2');
+    expect(layer.calls.at(-1)).toBe('none');
+  });
+
+  it('换壁纸后再丢失 ⇒ 用**当时**的 currentInfo（读到新壁纸的 preview，非注册时快照）', async () => {
+    const r = sceneRendererStub();
+    const walls = [sceneWall('2', '/p2'), sceneWall('5', '/p5')];
+    const { layer, c } = controller(r, walls);
+    await c.load();
+    await c.select('2');
+    await c.select('5');
+    expect(layer.calls.at(-1)).toBe('scene');
+
+    r.lost('5');
+    // 注册发生在构造期（此时还没有 currentInfo）；若实现快照了注册时的值，这里会拿到 /p2 或什么都不做。
+    expect(layer.imageArgs.at(-1)).toEqual(['/p5', true]);
   });
 });
 

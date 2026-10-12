@@ -261,6 +261,10 @@ export function createThreeSceneRenderer(opts?: {
   let soundEnabledOverride: boolean | null = null;
   // 最近一次装配的音频规格：运行期重新打开时按它重播（不必重选壁纸）。
   let lastAudioSpec: { id: string; sounds: string[] } | null = null;
+  // 上下文丢失回调（由控制器注册：只有它知道当前壁纸的 preview 地址 —— 见 Task 8）。
+  let contextLostHandler: ((id: string) => void) | null = null;
+  // 本次装配注册了 `webglcontextlost` 监听的 canvas：teardown 必须移除（跨壁纸/跨 canvas 不残留）。
+  let contextLostCanvas: HTMLCanvasElement | null = null;
 
   const stopAudio = () => {
     const audio = currentAudio;
@@ -280,10 +284,26 @@ export function createThreeSceneRenderer(opts?: {
     }
   };
 
+  // 上下文丢失（显存耗尽/驱动重置）→ 停播并交给上层换回该壁纸 preview（比留一块空白背景好）。
+  // 一次性语义：只注册在本次装配的 canvas 上、`once` + teardown 移除 ⇒ 最多回调一次。
+  const onContextLost = (e: Event) => {
+    e.preventDefault();
+    const id = contextLostCanvas?.dataset.wpId;
+    try { teardown(); } catch { /* 释放失败不得掩盖回退 */ }
+    if (!id) return;
+    console.warn(`[wallpaper-engine] WebGL 上下文丢失，已回退 preview（壁纸 ${id}）`);
+    contextLostHandler?.(id);
+  };
+
   const teardown = () => {
     if (onWindowResize) {
       window.removeEventListener('resize', onWindowResize);
       onWindowResize = null;
+    }
+    // 上下文丢失监听随本次装配一起移除（否则切壁纸后旧 canvas 的丢失事件还会回调新状态）。
+    if (contextLostCanvas) {
+      contextLostCanvas.removeEventListener('webglcontextlost', onContextLost);
+      contextLostCanvas = null;
     }
     // 先释放编排器（其 runner 持有对象 RT/材质），再释放播放器（player.dispose 会释放
     // renderer 与隔离 RT）——顺序反了会让 runner 的 dispose 触碰已释放的 GL 资源。
@@ -345,6 +365,11 @@ export function createThreeSceneRenderer(opts?: {
       try {
         // 替换/切壁纸前先释放上次播放器资源（首次渲染 no-op）。
         teardown();
+        // 上下文丢失监听：绑定在**本次装配的 canvas** 上（onContextLost 从它的 dataset 读壁纸 id，
+        // 故在 data 属性就位后注册；teardown 负责移除，不跨壁纸残留）。
+        fg.dataset.wpId = id;
+        fg.addEventListener('webglcontextlost', onContextLost, { once: true });
+        contextLostCanvas = fg;
         // `CpuParticleSim` 是纯 CPU（无需 WebGPU）；模块初始化失败 → 仍可渲染背景，仅跳过粒子。
         modulePromise ??= loadWasm();
         const mod = await modulePromise;
@@ -795,6 +820,10 @@ export function createThreeSceneRenderer(opts?: {
       if (!current) return;
       current.player.setQualityScale(scale);
       currentStage?.onViewportResize(current.player.screenScalePx());
+    },
+    // 上下文丢失回调（控制器注册，见 onContextLost）：传 null 撤销，可重复设。
+    setOnContextLost(cb: ((id: string) => void) | null): void {
+      contextLostHandler = cb;
     },
     // 应用级 Glow 的运行期参数（面板即时生效）：已装配就地重配 / 装卸 stage，不必重选壁纸。
     setGlow(patch: { enabled?: boolean; threshold?: number; strength?: number }) {
