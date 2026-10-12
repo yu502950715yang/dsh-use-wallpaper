@@ -226,7 +226,7 @@ window.__isoInfo = () => {
 };
 
 /** 只读观测（Task 3）：各隔离对象效果 pass 材质里 `g_TextureNResolution` 的实况。
- *  判据 = 插件不按 .tex 头 padding 上传 ⇒ 四分量同值（z/x === 1）；形状不符一律返回 null，不抛异常。 */
+ *  判据 = 插件不按 .tex 头 padding 上传 ⇒ 四分量同值（= mip0 记录尺寸，z/x === 1）；形状不符一律返回 null，不抛异常。 */
 window.__fxResProbe = () => {
   try {
     const stage = window.__player && window.__player.objectEffectStage;

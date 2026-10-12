@@ -4,7 +4,7 @@
 
 **Goal:** 让 `g_TextureNResolution` 的 `.z/.w` 反映**实际上传的纹理尺寸**，使效果遮罩（水面波动等）回到作者指定的位置。
 
-**Architecture:** 插件从不 padding 上传（`createImageBitmap` 解出即上传），所以「内容尺寸 == 分配尺寸」。把 `tex-loader` 写入 `userData.fxRes` 的 `.zw` 从 `.tex` 头里的分配尺寸改为 mip0 内容尺寸，即可让所有 `uv * z/x` 形式的遮罩 UV 缩放退化为恒等；`resolveTextureResolution4` 的既有回退（RT 与无 `fxRes` 纹理返回 `{x:w,y:h,z:w,w:h}`）本就是这一口径，无需改逻辑。
+**Architecture:** 插件从不 padding 上传（`createImageBitmap` 解出即上传；原始像素载荷类经 `cropToMap` 裁到 image 尺寸），所以「mip0 记录尺寸 == 实际上传尺寸」。把 `tex-loader` 写入 `userData.fxRes` 的 `.zw` 从 `.tex` 头里的分配尺寸改为 mip0 记录尺寸（**四分量同值**），即可让所有 `uv * z/x` 形式的遮罩 UV 缩放退化为恒等；`resolveTextureResolution4` 的既有回退（RT 与无 `fxRes` 纹理返回 `{x:w,y:h,z:w,w:h}`）本就是这一口径，无需改逻辑。
 
 **Tech Stack:** TypeScript + three.js r170 + vitest（jsdom/node 双环境）+ Playwright/headless Edge（e2e，`--gpu`）。
 
@@ -25,7 +25,7 @@
 
 | 文件 | 职责 | 改动 |
 |---|---|---|
-| `src/client/tex-loader.ts` | `.tex` → three 纹理；`fxRes` 的唯一生产者 | `:471-478` 取值改内容尺寸 + 注释订正 |
+| `src/client/tex-loader.ts` | `.tex` → three 纹理；`fxRes` 的唯一生产者 | `:471-473` 取值改为四分量同值（= mip0 记录尺寸）+ 注释订正 |
 | `src/client/effect-runner.ts` | `g_TextureNResolution` 的 vec4 口径 | `:315-321` 注释订正（逻辑不动） |
 | `tests/tex-loader.test.ts` | tex-loader 单测 | 新增 3 条用例 |
 | `tests/effect-runner.test.ts` | 效果运行器单测 | 新增 1 条口径一致性用例 |
@@ -37,7 +37,7 @@
 
 ---
 
-### Task 1: `fxRes` 改为内容尺寸口径
+### Task 1: `fxRes` 改为「四分量同值（= mip0 记录尺寸）」口径
 
 **Files:**
 - Modify: `src/client/tex-loader.ts:471-478`
@@ -52,7 +52,7 @@
 在 `tests/tex-loader.test.ts` 末尾追加（`makeTex`/`parseTex`/`textureFromTex`/`TEX_FORMAT` 已在文件头 import）：
 
 ```ts
-describe('fxRes：未 padding 上传 ⇒ 四分量一律按内容尺寸', () => {
+describe('fxRes：四分量一律同值（mip0 记录尺寸）⇒ 遮罩 UV 缩放为 1', () => {
   const npot = () => makeTex({
     format: TEX_FORMAT.RGBA8888,
     flags: 2,
@@ -94,8 +94,8 @@ Expected: 第一条 FAIL —— `expected [ 100, 50, 256, 128 ] to deeply equal 
 `src/client/tex-loader.ts:471-478` 改为（注释一并订正为「未 padding 上传」口径）：
 
 ```ts
-    // 插件**从不 padding 上传**（createImageBitmap 解出即上传），内容占满整张纹理 ⇒
-    // `g_TextureNResolution` 四分量一律按内容尺寸：`[w, h, w, h]`。效果 shader 的
+    // 插件**从不 padding 上传**（createImageBitmap 解出即上传 / 原始像素载荷经 cropToMap 裁到 image），
+    // 上传的纹理恒被内容占满 ⇒ `g_TextureNResolution` 四分量一律同值（= mip0 记录尺寸）：`[w, h, w, h]`。效果 shader 的
     // `uv * .z/.x`（如水波纹遮罩）因此退化为恒等；若填 .tex 头的分配尺寸，遮罩会被
     // 按 分配/内容 的比例挤向画面左上（真机现象：湖面波动跑到湖水上方的树线上）。
     ud.fxRes = [mip.width, mip.height, mip.width, mip.height];
@@ -113,7 +113,7 @@ Expected: 55 files / 1112 passed（1109 + 新增 3）
 
 ```bash
 git add src/client/tex-loader.ts tests/tex-loader.test.ts
-git commit -m "fix(client): 效果纹理的 g_TextureNResolution 按内容尺寸下发"
+git commit -m "fix(client): 效果纹理的 g_TextureNResolution 四分量同值（= mip0 记录尺寸）"
 ```
 
 ---
@@ -126,7 +126,7 @@ git commit -m "fix(client): 效果纹理的 g_TextureNResolution 按内容尺寸
 
 **Interfaces:**
 - Consumes: `resolveTextureResolution4(tex, fallbackW, fallbackH): {x,y,z,w}`（既有，签名不动）
-- Produces: 无新接口；用例固定「RT/无 `fxRes` 回退」与「`fxRes` 内容尺寸」两种来源**同口径**
+- Produces: 无新接口；用例固定「RT/无 `fxRes` 回退」与「`fxRes` 四分量同值（= mip0 记录尺寸）」两种来源**同口径**
 
 - [ ] **Step 1: 写失败测试**
 
@@ -134,7 +134,7 @@ git commit -m "fix(client): 效果纹理的 g_TextureNResolution 按内容尺寸
 
 ```ts
 describe('g_TextureNResolution 口径（未 padding 上传）', () => {
-  it('RT / 无 fxRes 的纹理回退为 (w,h,w,h)，与带 fxRes 的内容尺寸同口径', () => {
+  it('RT / 无 fxRes 的纹理回退为 (w,h,w,h)，与带 fxRes 的四分量同值口径一致', () => {
     const rt = resolveTextureResolution4({ image: { width: 4096, height: 1966 } }, 1, 1);
     expect(rt).toEqual({ x: 4096, y: 1966, z: 4096, w: 1966 });
     const tex = resolveTextureResolution4(
@@ -292,7 +292,7 @@ git commit -m "test(e2e): 钉住遮罩槽分辨率口径 z/x === 1"
 
 - [ ] **Step 3: 归档审计数据**
 
-在 `docs/fixes/conventions-details.md` 为 §5.17 追加小节：遮罩几何验算表（v 0.78–0.86 → 0.46–0.51）、33 种表达式分类表、影响面（175 `.tex` 中 88 个 NPOT、21 张壁纸）、审计脚本路径（`output/blur-analysis/{mask_placement,mask_scope,shader_audit,tex_padding_scope}.py`）。
+在 `docs/fixes/conventions-details.md` 为 §5.17 追加小节：遮罩几何验算表（v 0.78–0.86 → 0.46–0.51）、**库级口径（`type.lower() == "scene"`）**的表达式分类表（40 种 / 471 行；旧 28 张口径 32 种 / 376 行）、影响面（218 `.tex` 中 95 个 NPOT、23 张壁纸；旧口径 175 / 88 / 21）、审计脚本路径（`output/blur-analysis/{mask_placement,mask_scope,shader_audit,tex_padding_scope}.py`）。
 **注意**：`output/` 被 gitignore，数据需以文字/表格形式进文档，不能只留路径。
 
 - [ ] **Step 4: 跑全量测试与 e2e**
@@ -304,7 +304,7 @@ Run: `node e2e/verify/verify-isolated-rt-sharpness.mjs --gpu` → 期望 5/5 张
 
 ```bash
 git add AGENT.md docs/fixes/conventions-details.md docs/superpowers/specs/2026-10-12-mask-uv-npot-design.md
-git commit -m "docs(agent): 回写遮罩 UV 的内容尺寸口径与审计数据"
+git commit -m "docs(agent): 回写遮罩 UV 的四分量同值口径与审计数据"
 ```
 
 ---

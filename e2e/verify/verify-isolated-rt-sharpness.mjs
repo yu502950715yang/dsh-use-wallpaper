@@ -696,7 +696,7 @@ try {
     add('无失败类 [wallpaper-engine]/[three] 告警', r.failWarns.length === 0,
       r.failWarns.map((w) => w.text.slice(0, 120)).join(' | ') || `${r.warns.length} 条一般告警（逐条已打印）`);
     // ── 遮罩槽分辨率口径（Task 3，真机装配）──────────────────────────────────────────────
-    // 插件不按 .tex 头 padding 上传 ⇒ `g_TextureNResolution` 四分量同值（= mip0 内容尺寸）⇒ 效果
+    // 插件不按 .tex 头 padding 上传 ⇒ `g_TextureNResolution` 四分量同值（= mip0 记录尺寸）⇒ 效果
     // shader 的遮罩缩放 `uv * .z/.x` 退化为恒等；填分配尺寸会让 NPOT 遮罩按 分配/内容 挤向左上。
     const fxRows = Array.isArray(r.fxRes) ? r.fxRes : null;
     // 2500×1200 是「魔兽之门」专属遮罩素材 ⇒ 第二条判据只对该张有期望值（其它张明确打印，不静默跳过）
@@ -753,7 +753,7 @@ try {
       id: c.id, name: c.name, ok: checks.every((x) => x.pass), checks,
       scene: [a.sceneW, a.sceneH], density: a.density, budgetScale: a.budgetScale,
       isolated: objRows, isolatedCount: objRows.length, totalRtPixels: totalPx,
-      fxResProbe: { criterion: 'g_TextureNResolution.z/.x === 1（未 padding 上传）', ...fxSummary },
+      fxResProbe: { criterion: 'g_TextureNResolution.z/.x === 1（四分量同值 = mip0 记录尺寸）', ...fxSummary },
       fps: r.fps?.fps ?? null, fpsFrames: r.fps?.frames ?? null, fpsChecked: USE_GPU,
       viewport: r.viewport, ready: r.ready,
       // 双判据数字：基线缺失记 { skipped, baseline }（不静默、不计 PASS）
