@@ -1,7 +1,7 @@
 # 效果遮罩 UV 被 NPOT padding 比错误缩放（「波动位置不对」）设计
 
 **日期：** 2026-10-12
-**状态：** **已实现并生效**（2026-10-12；分支 `fix/mask-uv-npot`：`b8df5e2`…`cdbdd56`；`npm test` 55 files / 1115 passed，e2e 5/5 exit 0，反向验证 exit 1）。✅ **`lib/`、`dist/` 已重建并提交（`d7f6ec3`）**，运行中的插件已切到新行为；真机目视 `1922570576` 魔兽之门（主诉）、`2011060960` Eva 01、`2132420420` 守望先锋-Dva女警 三张均无异常（见 §9 的合并/发布边界）
+**状态：** **已实现并生效**（2026-10-12；分支 `fix/mask-uv-npot`：`b8df5e2`…`cdbdd56`；`npm test` 55 files / 1115 passed，e2e **8/8**（A2 扩清单后）exit 0，反向验证 exit 1）。✅ **`lib/`、`dist/` 已重建并提交（`d7f6ec3`）**，运行中的插件已切到新行为；真机目视 `1922570576` 魔兽之门（主诉）、`2011060960` Eva 01、`2132420420` 守望先锋-Dva女警 三张均无异常（见 §9 的合并/发布边界）
 **触发：** 用户报告「魔兽之门」湖水应有波动，实际波动出现在湖水上方的树木处；另有其它 scene 壁纸同类现象
 
 ## 1. 现象
@@ -88,7 +88,9 @@ ud.fxRes = [mip.width, mip.height, mip.width, mip.height];
 
 1. **单测（断言）**：`textureFromTex` 对 NPOT `.tex`（图像 100×50 / 分配 256×128 的 fixture）产出 `fxRes === [100,50,100,50]`；2 的幂纹理保持 `[w,h,w,h]`；不变量 `.z/.x === 1`、`.w/.y === 1`（`tests/tex-loader.test.ts:815-844`，**唯一守卫生产代码的三条断言** —— `tex-loader.ts:475` 一回退即红，尤其 `:824-827`、`:839-842`，不得削弱/删除）。`tests/effect-runner.test.ts:608-628` 是消费者侧契约钉（合成字面量、不调用 `textureFromTex`，第 3 条仅灵敏度自证）。全量 `npm test` = **55 files / 1115 passed**，exit 0。
 2. **反向验证**：临时把 `src/client/tex-loader.ts` 回退到修复前提交（`git checkout 7ba4eca -- src/client/tex-loader.ts`；任务已提交 ⇒ `git stash` 是 no-op）⇒ 单测必红（实测 `expected [ 100, 50, 256, 128 ] to deeply equal [ 100, 50, 100, 50 ]`、`expected 2.56 to be 1`），e2e 亦红（见 3）。
-3. **e2e 真机口径**：harness 探针（`e2e/harness/harness-text-clock-entry.mjs:228-260`）读 `__player.objectEffectStage` 内各 pass 材质的 `g_TextureNResolution` / `g_TextureN`（TS `private` 运行期可读，与既有 `__isoInfo` 同法）；判据在 `e2e/verify/verify-isolated-rt-sharpness.mjs:698-728`。实测（`--gpu`，串行）：单张 `1922570576` → 探针 **21 槽 `bad=0`**、遮罩 `obj=13 slot=1 tex=[2500,1200] z/x=1.0000`、**exit 0**；全清单 5 张 → **5/5、exit 0**（判据①覆盖 **262** 槽 = 21+65+8+88+80，零样本判 FAIL；判据②只对 `1922570576` 断言，其它 4 张打印**显式 SKIP**）；回退版本 → **exit 1**，`FAIL 遮罩槽分辨率口径 z/x === 1 ← 3/21 处异常，例：obj=13 slot=1 z/x=1.6384`（= 4096/2500，与该张 3 个 NPOT 遮罩条数、比值吻合）。
+3. **e2e 真机口径**：harness 探针（`e2e/harness/harness-text-clock-entry.mjs:228-260`）读 `__player.objectEffectStage` 内各 pass 材质的 `g_TextureNResolution` / `g_TextureN`（TS `private` 运行期可读，与既有 `__isoInfo` 同法）；判据在 `e2e/verify/verify-isolated-rt-sharpness.mjs:797-840`。实测（`--gpu`，串行）：单张 `1922570576` → 探针 **21 槽 `bad=0`**、遮罩 `obj=13 slot=1 tex=[2500,1200] z/x=1.0000`、**exit 0**；全清单 **8 张 → 8/8、exit 0**（判据①覆盖 **357** 槽 = 21+65+8+88+80+58+10+27，零样本判 FAIL；判据②只对 `1922570576` 断言，其它 7 张打印**显式 SKIP**）。⚠️ **清单已扩展（A2，2026-10-12）**：上句的 8 张 / 357 槽是扩清单后的实测值，扩清单前为 5 张 / 262 槽（21+65+8+88+80）；新增的 3 张是本次审计里遮罩受累的 `2011060960`（11 个遮罩变更 + NPOT 背景 3440×1440）、`2132420420`（1 个变更）、`1968789468`（4 个遮罩不变，作对照）。回退版本（`1922570576`）→ **exit 1**，`FAIL 遮罩槽分辨率口径 z/x === 1 ← 3/21 处异常，例：obj=13 slot=1 z/x=1.6384`（= 4096/2500，与该张 3 个 NPOT 遮罩条数、比值吻合）。
+   - **A2 新增壁纸的反向验证（同一次实测）**：`git checkout 7ba4eca -- src/client/tex-loader.ts` ⇒ `--id=2011060960` **exit 1**、`FAIL 遮罩槽分辨率口径 z/x === 1 ← 11/58 处异常，例：obj=634 slot=2 z/x=1.1907`（= 2048/1720；11 处与该张审计的「12 个 NPOT 遮罩 = **11 会变** + 1 不变」逐数吻合）；`git checkout HEAD -- src/client/tex-loader.ts` 恢复后同一命令 **exit 0**、`58 槽坏 0`。⇒ 新加入的壁纸判据**有牙**，不是靠素材恰好对齐而假绿。
+   - 附：oracle 的 `--selftest`（只跑纯函数，不需要素材/GPU）覆盖 A2 订正的四条语义（`{value:"…"}` 解析 / kind 兜底不隔离 / 精灵表回退屏占位 / 视频两态 mip），16 条断言；把任一条改回旧语义即 exit 1（已实测三条各自变红）。
 4. **人眼对照**：`output/blur-analysis/mask_placement.png` 的叠加带（红 = 修复前口径落点 v≈0.46–0.58，绿 = 比值 1 落点 v≈0.78–0.99）与用户现象吻合；真机复看（重建 `lib/`、`dist/` 后）**已确认**：`1922570576` 魔兽之门（湖面波动回位、树线不再波动）、`2011060960` Eva 01、`2132420420` 守望先锋-Dva女警 三张均无异常。
 
 ## 7. 边界与非目标
@@ -108,10 +110,12 @@ ud.fxRes = [mip.width, mip.height, mip.width, mip.height];
 | `tests/tex-loader.test.ts:815-844` | NPOT / POT / 不变量三条用例（**唯一守卫生产代码**） |
 | `tests/effect-runner.test.ts:608-628` | 回退口径一致性用例（消费者侧契约钉，第 3 条仅灵敏度自证） |
 | `e2e/harness/harness-text-clock-entry.mjs:228-260` | 新增只读探针 `window.__fxResProbe()`（紧接 `__isoInfo`，仅 e2e） |
-| `e2e/verify/verify-isolated-rt-sharpness.mjs:698-728` | 新增遮罩槽口径两条判据（采样 `:599-604`、原始样本打印 `:627`、写入 metrics `:756`、文件头判据 [8] `:20-22`） |
+| `e2e/verify/verify-isolated-rt-sharpness.mjs:798-841` | 新增遮罩槽口径两条判据（采样 `:696-701`、原始样本打印 `:724`、写入 metrics `:869`、文件头判据 [8] `:20-22`） |
+| `e2e/verify/verify-isolated-rt-sharpness.mjs:82-100` | **A2**：清单 5 张 → 8 张（+ `2011060960` / `2132420420` / `1968789468`）、`--id=` 空值报错退出 1 |
+| `e2e/verify/verify-isolated-rt-sharpness.mjs:112-346,348-386` | **A2**：oracle 与 src 同语义（`transformString`/`size2`/`scale3`/`kindOf`/精灵表/视频两态 mip）+ `--selftest` 自检（文件头判据 [9] `:23-26`） |
 | `AGENT.md` §5.17 / §7.37 | 口径订正 + follow-up 遗留条目 |
 | `docs/fixes/conventions-details.md` §5.17 | 归档审计数据（几何验算 / 表达式分类 / 影响面 / e2e 实测 / 生产守卫口径） |
-| `TESTING.md` §2.5 | 判据清单补两条 + 专属素材判据的 SKIP 语义 |
+| `TESTING.md` §2.5 | 判据清单补两条 + 专属素材判据的 SKIP 语义；**A2**：清单 5 张 → 8 张（含逐张加入理由）+ 判据①/②作用域 + `--selftest` |
 
 ## 9. 合并 / 发布边界（勿误判「合并即修复」）
 

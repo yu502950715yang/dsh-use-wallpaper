@@ -59,19 +59,31 @@
 
 ### 2.5 渲染 e2e：隔离对象 RT 分辨率（`npm run e2e:isolated-rt`）
 
-`e2e/verify/verify-isolated-rt-sharpness.mjs`：自起 http server + headless Edge（裸 CDP，不用 playwright）+ esbuild 打包 harness，渲染 5 张真实壁纸，逐隔离对象断言**结构性判据** —— RT 长边 === 素材侧独立算出的期望、`rtPx ≥ 屏占位`（只升不降）、满屏背景 `samples=0` / 其余 `samples=4`、mip 与「RT 长边 > 屏占位」一致、无失败类告警、FPS ≥ 30；另加**遮罩槽分辨率口径**两条判据（脚本头判据 [8]，探针 `window.__fxResProbe()`）：① 每个效果 pass 材质的 `g_TextureNResolution` 满足 `|z/x − 1| < 1e-6`（**对 5 张无条件生效**；探针无数据 ⇒ **判 FAIL**，绝不静默跳过）；②「魔兽之门」（`1922570576`）的 2500×1200 遮罩槽已绑定且口径为 1 —— 该素材是该张专属，**其余 4 张打印显式 `SKIP`**（不计 PASS 也不算 FAIL，不是静默跳过）。两条判据之外另在 `metrics.json` 的 `fxResProbe.xOverTexImage` 记一条**非判定**观察量：有 `texImage` 可比的槽里 `x / texImage[0] ≠ 1` 的条数 + 1–2 个示例（把设计文档 §7 的 follow-up「`fxRes` 取 mip0 记录尺寸、不保证等于实际上传尺寸」变成可见信号，**不参与 PASS/FAIL**，常驻命令仍必须全绿）。基线图存在时再判**锐度双判据**：全图 Laplacian 均方比 ≥ 2.0 **且**逐 96×96 块「梯度/对比度」比中位数 ≥ 1.05。
+`e2e/verify/verify-isolated-rt-sharpness.mjs`：自起 http server + headless Edge（裸 CDP，不用 playwright）+ esbuild 打包 harness，渲染 8 张真实壁纸，逐隔离对象断言**结构性判据** —— RT 长边 === 素材侧独立算出的期望、`rtPx ≥ 屏占位`（只升不降）、满屏背景 `samples=0` / 其余 `samples=4`、mip 与「RT 长边 > 屏占位」一致、无失败类告警、FPS ≥ 30；另加**遮罩槽分辨率口径**两条判据（脚本头判据 [8]，探针 `window.__fxResProbe()`）：① 每个效果 pass 材质的 `g_TextureNResolution` 满足 `|z/x − 1| < 1e-6`（**对全部 8 张、全部槽无条件生效**；探针无数据 ⇒ **判 FAIL**，绝不静默跳过）；②「魔兽之门」（`1922570576`）的 2500×1200 遮罩槽已绑定且口径为 1 —— 该素材是该张专属，**其余 7 张打印显式 `SKIP`**（不计 PASS 也不算 FAIL，不是静默跳过）。两条判据之外另在 `metrics.json` 的 `fxResProbe.xOverTexImage` 记一条**非判定**观察量：有 `texImage` 可比的槽里 `x / texImage[0] ≠ 1` 的条数 + 1–2 个示例（把设计文档 §7 的 follow-up「`fxRes` 取 mip0 记录尺寸、不保证等于实际上传尺寸」变成可见信号，**不参与 PASS/FAIL**，常驻命令仍必须全绿）。基线图存在时再判**锐度双判据**：全图 Laplacian 均方比 ≥ 2.0 **且**逐 96×96 块「梯度/对比度」比中位数 ≥ 1.05。
 
 | 项 | 说明 |
 |---|---|
 | 命令 | `npm run e2e:isolated-rt`（= `node e2e/verify/verify-isolated-rt-sharpness.mjs`） |
-| 范围 | 缺省串行跑固定清单 **5 张**：`1922570576`（魔兽之门）/ `3743126786`（GTR）/ `3765967112`（Crimson）/ `2911105183`（Subway）/ `1429403119`（Orange）；`--id=<id>` 单跑，只接受这 5 个 id（别的 id 直接报错退出 1） |
-| 耗时 | 整脚本约 **50 s**；单张 `--id=<id>` 约 **12 s**（页面与素材都在本地） |
+| 范围 | 缺省串行跑固定清单 **8 张**：`1922570576`（魔兽之门）/ `3743126786`（GTR）/ `3765967112`（Crimson）/ `2911105183`（Subway）/ `1429403119`（Orange）/ `2011060960`（Eva 01）/ `2132420420`（Dva女警）/ `1968789468`（Fantasy Sky Mantis）；`--id=<id>` 单跑，只接受这 8 个 id（别的 id 直接报错退出 1；`--id=` **空值**同样报错退出 1，不再静默跑全清单） |
+| 耗时 | 整脚本约 **80 s**（8 张，含开头把 `src/` 现编成 tsc 产物）；单张 `--id=<id>` 约 **11 s**（页面与素材都在本地） |
 | GPU | **必须真 GPU**：`--gpu` 与省略等价；显式 `--swiftshader` 时 FPS 判据降级为 SKIP（软件光栅化的数字无意义） |
 | 必须串行 | **不得并行跑多份**（也不要与其它 e2e 同时跑）：harness 的 HTTP 端口（`httpPort(9813)`）、CDP 端口（`9228`）与 Edge `--user-data-dir` 全部固定 ⇒ 并行会连到别的实例的页面（实测过「读到没有 `__ready` 的空页面」） |
 | 被测产物 | **当前 `src/` 现场用仓库自己的 `tsc` 编译出的产物**（输出到 gitignored 的 `e2e/.out/isolated-rt/lib`，harness 的 `lib/client/*` import 被 esbuild 重定向过去）—— 入库的 `lib/` 可能落后于 `src`，不重定向就会拿旧实现验收（详见设计文档 §5 的 R31） |
 | 其它参数 | `--baseline-dir=<dir>`（缺省 `e2e/.out/isolated-rt/baseline/`）、`--workshop=`、`--assets=`、`--port=`、`--cdp-port=` |
+| oracle 自检 | `--selftest`：只跑素材侧 oracle 的纯函数断言（变换字段 `{value:"…"}` 解析、size/scale 缺省、kind 兜底、精灵表回退、视频两态 mip），**不建 tsc 产物、不起 Edge、不需要素材**，16 条全过 exit 0 |
 | 产物 | 脚本写 `e2e/.out/isolated-rt/metrics.json` 与 `shots/<id>.png`（gitignore 内）；目录里的 `run-*.log` 是外壳重定向留的档（脚本自己不写日志文件） |
 | 退出码 | 0 = 判据全通过；1 = 有判据失败或脚本异常（是门禁，不是日志） |
+
+**清单与判据作用域（A2 扩展，2026-10-12）**：清单从 5 张扩到 **8 张**，新增的 3 张都来自遮罩 UV 修复的逐纹理审计（`docs/superpowers/specs/2026-10-12-mask-uv-npot-design.md` §4）：
+
+| id | 名称 | 为何加入 |
+|---|---|---|
+| `2011060960` | Eva 01 | 该张 **11 个遮罩**变更（waterripple/pulse/shake/blur_combine…）+ NPOT 背景 `53.tex`（3440×1440 / alloc 4096×2048）—— 修复前 `.z/.x` 偏 1.1907，是本次修复**覆盖面最大**的受累壁纸 |
+| `2132420420` | 守望先锋 - Dva女警 | 1 个遮罩变更 + 全屏 4K 背景（3840×2160 / alloc 4096×4096） |
+| `1968789468` | Fantasy Sky Mantis | 背景 `wallhaven-2ew3pm.tex` 变更、**4 个遮罩不变** ⇒ 作为「不变那批」的对照样本 |
+
+- **判据①（所有槽 `|z/x − 1| < 1e-6`，零样本判 FAIL）对全部 8 张、全部槽无条件生效**（实测 357 槽 = 21+65+8+88+80+58+10+27）。
+- **判据②（2500×1200 遮罩存在性）只对 `1922570576` 生效**，其余 7 张打印**显式 SKIP**（不计 PASS、不计 FAIL，也不静默）。
 
 **采基线**（锐度判据要和「实现前的同机截图」比；脚本头部注释里的那一行，逐字）：
 

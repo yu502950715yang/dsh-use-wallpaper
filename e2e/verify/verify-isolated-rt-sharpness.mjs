@@ -20,6 +20,10 @@
 //   [8] 遮罩槽分辨率口径：每个效果 pass 材质的 `g_TextureNResolution` 满足 |z/x − 1| < 1e-6；
 //       另对「魔兽之门」断言 2500×1200 遮罩槽已绑定（其它壁纸无该素材 ⇒ 打印 SKIP，非静默跳过）。
 //       探针（`window.__fxResProbe`）**无数据判 FAIL**，绝不因采不到样本而变成假绿。
+//   [9] oracle 与 src 逐字同语义（A2 订正，`--selftest` 跑纯函数自检）：变换字段解析照
+//       `scene-json.transformString`（含 `{value:"…"}`）、size/scale 照 `size2/scale3`、kind 照
+//       `parseSceneJson` 分支序（末尾纯控制器**不隔离**）、精灵表按源未知回退屏占位、视频两态的 mip
+//       按实测长边复算。判据①仍对**每一张每一槽**无条件生效。
 //
 // **锐度判据（双判据，仅在基线图存在时断言；R30 裁决）**：逐张与 `--baseline-dir` 里同 id 的 `<id>.png` 比：
 //   [S1] 全图 Laplacian（4 邻域）响应均方比 ≥ 2.0 —— 与 spec §2.2/§2.3 同族，两次独立测量都 ≥ 2.6；
@@ -39,14 +43,15 @@
 //
 // ⚠️ 串行假设：harness 端口固定（httpPort(9813)）+ Edge user-data-dir 固定 ⇒ **不得并行跑多份**，
 //    否则 CDP 会连到别的实例的页面（实测过「读到没有 __ready 的空页面」）。脚本内也全程单实例串行。
-// ⚠️ 依赖本机素材（workshop 5 张壁纸 + WE 安装目录）⇒ 不进 CI。必须带 `--gpu`（缺省即 GPU；
+// ⚠️ 依赖本机素材（workshop 8 张壁纸 + WE 安装目录）⇒ 不进 CI。必须带 `--gpu`（缺省即 GPU；
 //    `--swiftshader` 显式降级，此时 FPS 判据降级为 SKIP —— 软件光栅化的数字无意义）。
 // 用法：node e2e/verify/verify-isolated-rt-sharpness.mjs [--id=<壁纸id>] [--gpu] [--swiftshader]
+//        [--selftest（只跑 oracle 纯函数自检：不建 tsc 产物、不起 Edge、不需要素材）]
 //        [--baseline-dir=<dir>（缺省 e2e/.out/isolated-rt/baseline/）]
 //        [--workshop=<dir>] [--assets=<dir>] [--port=9813] [--cdp-port=9228]
 // 退出码：0 = 全部判据通过；1 = 有判据失败或脚本异常。
 import { createServer } from 'node:http';
-import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, readdirSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, writeSync, mkdirSync, existsSync, statSync, readdirSync, rmSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import { join, dirname, extname, resolve, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -68,18 +73,31 @@ const WE = argOf('assets', WE_ASSETS);
 // 固定视口/dpr（判据里的屏幕密度必须与本脚本**自己声明的**视口一致；页面会被钉到同一组数字上）
 const VW = 1600, VH = 900, DPR = 1;
 
-// R29：spec 证据表里的 5 张各一次。锐度阈值不再是 per-case（brief 的 1.45 继承自桌面截图口径，
-// 与逐块 A/B 不是同一统计量）；R30 改为全清单同一组双判据，见文件头 [S1]/[S2]。
+// R29：spec 证据表里的 5 张各一次（A2 另加 3 张遮罩受累壁纸，见下方 CASES 注释）。锐度阈值不再是
+// per-case（brief 的 1.45 继承自桌面截图口径，与逐块 A/B 不是同一统计量）；R30 改为全清单同一组
+// 双判据，见文件头 [S1]/[S2]。
+// A2：+3 张「本次遮罩修复的逐纹理审计」里的受累壁纸（判据①对它们逐槽无条件生效）——
+//   2011060960（11 个遮罩变更 + NPOT 背景 3440×1440）、2132420420（1 个遮罩变更）、
+//   1968789468（背景变更、4 个遮罩不变，作对照）。
 const CASES = [
   { id: '1922570576', name: '魔兽之门' },
   { id: '3743126786', name: 'GTR' },
   { id: '3765967112', name: 'Crimson' },
   { id: '2911105183', name: 'Subway' },
   { id: '1429403119', name: 'Orange' },
+  { id: '2011060960', name: 'Eva 01' },
+  { id: '2132420420', name: 'Dva女警' },
+  { id: '1968789468', name: 'Fantasy Sky Mantis' },
 ];
-const ONLY = argOf('id', null);
+const ONLY_RAW = argOf('id', null);
+const ONLY = ONLY_RAW === null ? null : String(ONLY_RAW).trim();
+// `--id=` 空值不得静默跑全部（argOf 返回 ''，falsy ⇒ 旧代码会跑全清单，把「单跑」变成「全跑」）
+if (ONLY_RAW !== null && !ONLY) {
+  console.error('--id 需要一个非空壁纸 id（`--id=` 空值会静默跑全部，这里直接报错退出）');
+  process.exit(1);
+}
 const RUN = ONLY ? CASES.filter((c) => c.id === ONLY) : CASES;
-if (ONLY && RUN.length === 0) { console.error(`--id=${ONLY} 不在 R29 的清单里（${CASES.map((c) => c.id).join(', ')}）`); process.exit(1); }
+if (ONLY && RUN.length === 0) { console.error(`--id=${ONLY} 不在 R29/A2 的清单里（${CASES.map((c) => c.id).join(', ')}）`); process.exit(1); }
 
 // ── 判据常量（独立复述 src 的口径；不 import lib，保证「期望值」与实现分离）──────────────────
 const OBJECT_RT_MAX = 4096;
@@ -95,7 +113,28 @@ const LAP_RATIO_MIN = 2.0, BLOCK_MEDIAN_MIN = 1.05;
 const IDS = (n) => Math.max(1, Math.floor(n));
 const readI32 = (b, p) => b[p] | (b[p + 1] << 8) | (b[p + 2] << 16) | (b[p + 3] << 24);
 const ascii = (b, p, n) => { let s = ''; for (let i = 0; i < n; i++) s += String.fromCharCode(b[p + i]); return s; };
-const nums = (s) => (typeof s === 'string' ? s.trim().split(/\s+/).map(Number) : []);
+// 变换字段（size/scale/origin/angles）的两种合法写法：裸字符串、`{value:"…"}`（脚本或关键帧绑定
+// 的静态近似）。与 `src/client/scene-json.ts:12-18` 的 transformString 同语义 —— **它是唯一权威**：
+// 只认裸字符串会把 `{value:"1200 777"}` 落成默认值 ⇒ 屏占位算错 ⇒ 假红（A2 修的 latent 1）。
+function transformString(s) {
+  if (typeof s === 'string') return s;
+  if (s && typeof s === 'object' && typeof s.value === 'string') return s.value;
+  return undefined;
+}
+const nums = (s) => { const t = transformString(s); return t === undefined ? [] : t.trim().split(/\s+/).map(Number); };
+// 与 scene-json 的 size2/scale3 同语义：size 需 ≥2 个有限数，否则 undefined（渲染器按纹理像素
+// 兜底——**两轴一起**兜底，不是逐轴）；scale 缺省 [1,1,1]，写了但缺项按 0（不得自行补 1）。
+function size2Of(s) {
+  const p = nums(s);
+  if (p.length < 2 || !Number.isFinite(p[0]) || !Number.isFinite(p[1])) return undefined;
+  return [p[0], p[1]];
+}
+function scale3Of(s) {
+  const t = transformString(s);
+  if (t === undefined) return [1, 1, 1];
+  const p = t.trim().split(/\s+/).map(Number);
+  return [p[0] ?? 0, p[1] ?? 0, p[2] ?? 0];
+}
 
 // `.tex` 头（TEXV0005 + TEXI0001）：ImageWidth/Height = mip0 的 image 尺寸（不是 textureWidth/Height
 // 的 NPOT padding 尺寸）——与 tex-loader.parseTex 同偏移，但本脚本只读头，不解 mip/LZ4。
@@ -156,39 +195,49 @@ const resolveTexPath = (matRef, texName) => (texName.includes('/')
   ? 'materials/' + texName + '.tex'
   : matRef.slice(0, matRef.lastIndexOf('/') + 1) + texName + '.tex');
 
-// 对象 → 源纹理像素尺寸。任一步缺失 → null（实现回退屏占位，与 spec §3.4 一致）。
+// 对象 → 源纹理像素尺寸（`source` = object-range.sourcePixelsFromTexture 的结果，取不到一律 null ⇒
+// 实现回退屏占位）与纹理 image 像素尺寸（`imagePixels` = 渲染器「缺 size」时的兜底值）。
 function sourcePixelsOf(reader, obj) {
+  const miss = (reason, texPath = null) => ({ source: null, imagePixels: null, texPath, reason });
   const load = (name) => reader.readEntry(name) ?? (existsSync(join(WE, 'assets', name)) ? readFileSync(join(WE, 'assets', name)) : null);
   const modelBuf = load(obj.image);
-  if (!modelBuf) return { source: null, texPath: null, reason: 'model-missing' };
+  if (!modelBuf) return miss('model-missing');
   let matRef;
-  try { matRef = JSON.parse(Buffer.from(modelBuf).toString('utf8'))?.material; } catch { return { source: null, texPath: null, reason: 'model-invalid' }; }
-  if (typeof matRef !== 'string' || !matRef) return { source: null, texPath: null, reason: 'no-material' };
+  try { matRef = JSON.parse(Buffer.from(modelBuf).toString('utf8'))?.material; } catch { return miss('model-invalid'); }
+  if (typeof matRef !== 'string' || !matRef) return miss('no-material');
   const matBuf = load(matRef);
-  if (!matBuf) return { source: null, texPath: null, reason: 'material-missing' };
+  if (!matBuf) return miss('material-missing');
   let texName;
-  try { texName = JSON.parse(Buffer.from(matBuf).toString('utf8'))?.passes?.[0]?.textures?.[0]; } catch { return { source: null, texPath: null, reason: 'material-invalid' }; }
-  if (typeof texName !== 'string' || !texName) return { source: null, texPath: null, reason: 'no-texture-slot' };
+  try { texName = JSON.parse(Buffer.from(matBuf).toString('utf8'))?.passes?.[0]?.textures?.[0]; } catch { return miss('material-invalid'); }
+  if (typeof texName !== 'string' || !texName) return miss('no-texture-slot');
   const texPath = resolveTexPath(matRef, texName);
   const texBuf = load(texPath);
-  if (!texBuf) return { source: null, texPath, reason: 'tex-missing' };
+  if (!texBuf) return miss('tex-missing', texPath);
   const h = texHeader(texBuf);
-  if (!h) return { source: null, texPath, reason: 'tex-header-invalid' };
+  if (!h) return miss('tex-header-invalid', texPath);
   if (h.video) {
     // 视频纹理：就绪前 videoWidth=0 ⇒ 实现回退屏占位；就绪后按视频尺寸升。两种都是合法结果（spec §3.4）。
     const dims = mp4Dims(mip0Payload(texBuf));
-    return { source: dims ? { width: Math.round(dims.width), height: Math.round(dims.height) } : null, texPath, reason: dims ? 'video' : 'video-dims-unknown', video: true };
+    const px = dims ? { width: Math.round(dims.width), height: Math.round(dims.height) } : null;
+    return { source: px, imagePixels: px, texPath, reason: px ? 'video' : 'video-dims-unknown', video: true };
   }
-  if (h.sprite) return { source: { width: h.imageW, height: h.imageH }, texPath, reason: 'sprite', sprite: true };
-  return { source: { width: h.imageW, height: h.imageH }, texPath, reason: 'ok' };
+  const px = { width: h.imageW, height: h.imageH };
+  // 精灵表：图集尺寸 ≠ 对象分辨率 ⇒ 实现按「源未知」处理（sourcePixelsFromTexture 见 userData.sprite
+  // 即返回 null ⇒ 回退屏占位）；但图集尺寸仍是「缺 size」时的兜底值（A2 修的 latent 3）。
+  if (h.sprite) return { source: null, imagePixels: px, texPath, reason: 'sprite', sprite: true };
+  return { source: px, imagePixels: px, texPath, reason: 'ok' };
 }
 
-// scene.json 的 kind 判定（parseSceneJson 同序：particle > image(util 单列) > text > 空粒子兜底）。
+// scene.json 的 kind 判定（与 parseSceneJson 的分支顺序、非空字符串条件逐字对齐）：
+// particle > image（models/util/ ⇒ util）> text（非空字符串 / 对象形态）> **controller**。
+// 末尾兜底对象在 parseSceneJson 里也叫 'particle'（`particle: ''`），但运行期 `particles` 表里没有它
+// ⇒ isolate 循环 `continue`，**不隔离也不渲染**；归成 'controller' 才不会把它当成「漏隔离」（latent 2）。
 function kindOf(o) {
   if (typeof o.particle === 'string' && o.particle) return 'particle';
   if (typeof o.image === 'string' && o.image) return o.image.startsWith('models/util/') ? 'util' : 'image';
-  if (o.text !== undefined && o.text !== null) return 'text';
-  return 'particle'; // 无媒体字段的纯控制器对象（particle: '' 兜底，不参与隔离）
+  if (typeof o.text === 'string' && o.text) return 'text';
+  if (typeof o.text === 'object' && o.text !== null && !Array.isArray(o.text)) return 'text';
+  return 'controller';
 }
 // 装载期静态隐藏（visibility.isStaticallyHidden）：plain/user 按 value 定论（e2e 页面无用户属性注入
 // ⇒ user 键缺失回退绑定 value），script 恒不隐藏。
@@ -254,19 +303,21 @@ function analyseWallpaper(id, reader) {
     if (!Array.isArray(o.effects) || o.effects.length === 0) continue;
     if (staticallyHidden(o.visible)) continue;
     const kind = kindOf(o);
+    // util / text / controller 都不隔离（text 无 effects 字段；util 不渲染；controller 不进 particles 表）
     if (kind !== 'image' && kind !== 'particle') continue;
-    const src = kind === 'image' ? sourcePixelsOf(reader, o) : { source: null, texPath: null, reason: 'particle' };
-    const size = nums(o.size), scale = nums(o.scale);
-    const sx = Number.isFinite(scale[0]) ? scale[0] : 1, sy = Number.isFinite(scale[1]) ? scale[1] : 1;
-    // 世界尺寸 = 未钳制 |size × scale|；缺 size 按纹理像素兜底（与 three-renderer 挂载期同式）。
-    const bw = Number.isFinite(size[0]) ? size[0] : (src.source?.width ?? 1);
-    const bh = Number.isFinite(size[1]) ? size[1] : (src.source?.height ?? 1);
+    const src = kind === 'image' ? sourcePixelsOf(reader, o) : { source: null, imagePixels: null, texPath: null, reason: 'particle' };
+    const size = size2Of(o.size), scale = scale3Of(o.scale);
+    const sx = scale[0], sy = scale[1];
+    // 世界尺寸 = 未钳制 |size × scale|；缺 size 按**纹理 image 像素**兜底（与 three-renderer 挂载期同式）
+    const bw = size ? size[0] : (src.imagePixels?.width ?? 1);
+    const bh = size ? size[1] : (src.imagePixels?.height ?? 1);
     items.push({
       obj: Number(o.id), kind, worldW: Math.abs(bw * sx), worldH: Math.abs(bh * sy),
       source: src.source, texPath: src.texPath, sourceReason: src.reason, video: !!src.video, sprite: !!src.sprite,
     });
   }
-  const budgetScale = fitIsolatedBudget(items, density);
+  // 预算输入只含隔离的 **image** 对象（object-range 注释 + three-renderer 的 isolateItems；粒子不进预算）
+  const budgetScale = fitIsolatedBudget(items.filter((it) => it.kind === 'image'), density);
   const expected = new Map();
   for (const it of items) {
     const sized = isolatedRtSize(it.worldW, it.worldH, density, it.source, budgetScale);
@@ -283,9 +334,55 @@ function analyseWallpaper(id, reader) {
       fullscreen: it.kind === 'image' && it.worldW >= sceneW * 0.98 && it.worldH >= sceneH * 0.98,
       expectSamples: it.kind === 'image' && it.worldW >= sceneW * 0.98 && it.worldH >= sceneH * 0.98 ? 0 : 4,
       expectMip: rtLong > occLong, // R28 口径（实现另有 +0.5 容差，整数尺寸下等价）
+      // 判据 [3] 对视频按**实测**长边复算（见 mipExpectation）
+      mipFromMeasured: it.video,
     });
   }
   return { id, sceneW, sceneH, density, budgetScale, expected, itemCount: items.length };
+}
+
+// 判据 [3] 的期望布尔：非视频照素材侧期望；视频用**实测**长边复算 —— 两个合法态（就绪/未就绪）各自
+// 都必须与 mip 自洽，这不是放宽（无论落在哪一态，mip 都必须是「RT 长边 > 屏占位长边」的真值）。
+const mipExpectation = (exp, rtLong) => (exp.mipFromMeasured ? rtLong > exp.occLong : exp.expectMip);
+
+// ── oracle 自检（`--selftest`）：只跑上面这些纯函数，不需要素材 / GPU / Edge / tsc ─────────────
+// 钉住 A2 订正过的语义（latent 1–4），将来有人把解析改回「只认裸字符串」或把 kind 兜底改回
+// 'particle' 时，这里会红。
+function selfTest() {
+  const rows = [];
+  const eq = (name, got, want) => rows.push({ name, pass: JSON.stringify(got) === JSON.stringify(want), got, want });
+  // latent 1：`{value:"…"}` 与裸字符串同解（transformString 是权威）
+  eq('nums 裸字符串', nums('1200 777.5 0'), [1200, 777.5, 0]);
+  eq('nums {value}', nums({ value: '1200 777.5 0' }), [1200, 777.5, 0]);
+  eq('nums 非字符串非 value', nums({ script: 'x' }), []);
+  eq('size2 需 ≥2 个有限数', size2Of('1200'), undefined);
+  eq('size2 {value}', size2Of({ value: '1200 777' }), [1200, 777]);
+  eq('scale3 缺省 [1,1,1]', scale3Of(undefined), [1, 1, 1]);
+  eq('scale3 缺项按 0', scale3Of('2 2'), [2, 2, 0]);
+  // latent 2：末尾兜底（纯控制器）不隔离 ⇒ 单独一类；真粒子 / util / text 才算
+  eq('kind 纯控制器', kindOf({ id: 1, effects: [] }), 'controller');
+  eq('kind 真粒子', kindOf({ id: 1, particle: 'particles/x.json' }), 'particle');
+  eq('kind util', kindOf({ id: 1, image: 'models/util/white.json' }), 'util');
+  eq('kind 空字符串 text 落兜底', kindOf({ id: 1, text: '' }), 'controller');
+  eq('kind text 对象', kindOf({ id: 1, text: { value: 'x' } }), 'text');
+  // latent 3：精灵表按「源未知」⇒ 期望长边 == 屏占位长边（不是图集长边）
+  eq('精灵表回退屏占位', [isolatedRtSize(100, 100, 4, null).width, isolatedRtSize(100, 100, 4, null).upgraded], [400, false]);
+  // latent 4：视频两态的 mip 期望按**实测**长边复算（就绪态 true / 未就绪态 false）
+  const videoExp = { occLong: 150, expectMip: true, mipFromMeasured: true };
+  eq('视频就绪 ⇒ mip true', mipExpectation(videoExp, 1280), true);
+  eq('视频未就绪 ⇒ mip false', mipExpectation(videoExp, 150), false);
+  eq('非视频仍照素材侧期望', mipExpectation({ occLong: 1600, expectMip: false, mipFromMeasured: false }, 1), false);
+  const bad = rows.filter((r) => !r.pass);
+  // 用 writeSync 而不是 console.log：后面紧跟 process.exit，管道上 console.log 可能被截断
+  writeSync(1, rows.map((r) => `  ${r.pass ? 'PASS' : 'FAIL'}  ${r.name}`
+    + (r.pass ? '' : `  ← got=${JSON.stringify(r.got)} want=${JSON.stringify(r.want)}`)).join('\n')
+    + `\n  oracle 自检：${rows.length - bad.length}/${rows.length} 通过\n`);
+  return bad.length === 0;
+}
+// 早退：自检不建 tsc 产物、不起 Edge、不需要本机素材（故此分支在任何素材访问之前）
+if (flagOf('selftest')) {
+  writeSync(1, '[iso-rt] --selftest：只跑 oracle 纯函数（不建产物、不起 Edge、不需要素材）\n');
+  process.exit(selfTest() ? 0 : 1);
 }
 
 // ── 锐度指标（相对基线图；口径与 spec §2.2/§2.3 同族，纯像素运算）─────────────────────────
@@ -683,13 +780,16 @@ try {
       add(`obj ${objId} 只升不降（RT 像素 ${rtPx} ≥ 屏占位 ${occPx}）`, rtPx >= occPx, `${rtPx} vs ${occPx}`);
       add(`obj ${objId} samples === ${exp.expectSamples}（满屏背景关 MSAA / 其余保留）`, got.samples === exp.expectSamples,
         `实测 ${got.samples}（kind=${got.kind} world=${got.world?.map((v) => Math.round(v)).join('×')} 满屏=${exp.fullscreen}）`);
-      add(`obj ${objId} mip === ${exp.expectMip}（RT 长边 ${rtLong} ${exp.expectMip ? '>' : '≤'} 屏占位长边 ${exp.occLong}）`,
-        got.mip === exp.expectMip, `实测 ${got.mip}（minFilter=${got.minFilter}）`);
+      // 判据 [3]：mip 必须与「RT 长边 > 屏占位长边」一致；视频按**实测**长边复算（两态各自自洽）
+      const expectMip = mipExpectation(exp, rtLong);
+      add(`obj ${objId} mip === ${expectMip}（RT 长边 ${rtLong} ${expectMip ? '>' : '≤'} 屏占位长边 ${exp.occLong}）`,
+        got.mip === expectMip, `实测 ${got.mip}（minFilter=${got.minFilter}）`
+        + (exp.mipFromMeasured ? `；视频两态（spec §3.4）：按实测长边复算` : ''));
       objRows.push({
         obj: objId, kind: got.kind, world: got.world ?? [exp.worldW, exp.worldH],
         source: exp.source ? [exp.source.width, exp.source.height] : null, sourceReason: exp.sourceReason, texPath: exp.texPath,
         occ: [exp.occ.width, exp.occ.height], expectedLong: exp.expectedLong, rt: got.rt, rtPixels: rtPx,
-        samples: got.samples, expectSamples: exp.expectSamples, mip: got.mip, expectMip: exp.expectMip,
+        samples: got.samples, expectSamples: exp.expectSamples, mip: got.mip, expectMip,
         fullscreen: exp.fullscreen, onlyUp: rtPx >= occPx, longOk,
       });
     }

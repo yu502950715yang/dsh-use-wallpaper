@@ -297,6 +297,7 @@ git commit -m "test(e2e): 钉住遮罩槽分辨率口径 z/x === 1"
 
 Run: `npm test` → 期望 55 files / 1115 passed
 Run: `node e2e/verify/verify-isolated-rt-sharpness.mjs --gpu` → 期望 5/5 张、含新增判据全 PASS、exit 0
+（**A2 起缺省清单已扩到 8 张、实测 8/8**；本行是修复当时的期望值，现行口径见 `TESTING.md` §2.5。）
 
 - [x] **Step 5: 提交**
 

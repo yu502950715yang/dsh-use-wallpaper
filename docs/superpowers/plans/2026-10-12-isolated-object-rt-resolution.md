@@ -641,7 +641,7 @@ const CASES = [
 ```
 
 判据（任一不过 → 退出码 1）：
-- 5 张壁纸的锐度比中位数 ≥ `minGain`；
+- 5 张壁纸的锐度比中位数 ≥ `minGain`（**A2 起缺省清单为 8 张**；本行是当时的清单口径，现行见 `TESTING.md` §2.5）；
 - 非满屏隔离对象的 `rt`/`samples` 与基线**逐字相同**（外科性）；
 - 满屏隔离对象 `samples === 0`、`mip === true`（当 RT > 屏占位）；
 - FPS ≥ 30；无新增 `console.warn` 里的 `[wallpaper-engine]` 效果链失败/超限告警。
