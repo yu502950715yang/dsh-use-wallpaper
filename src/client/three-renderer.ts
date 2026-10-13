@@ -459,10 +459,26 @@ export function createThreeSceneRenderer(opts?: {
             // 无纹理/解析失败 → tex undefined → 白图兜底；材质不可得 → blending null → 名启发式兜底。
             const mat = await resolveParticleMaterial(id, specText);
             const tex = mat?.texUrl ? (await loadTexTexture(mat.texUrl)) ?? undefined : undefined;
+            // 折射层（材质 REFRACT=1）另需槽 1 的法线/遮罩纹理（与槽 0 同一帧网格 UV）：缺失或
+            // 加载失败 ⇒ **不装配该层**（WE NORMALMAP=0 语义：位移恒 0、输出≡背景 ⇒ 无可见贡献）。
+            // 绝不回退白方块：槽 0 在这类材质里是 RGBA 全 255 的占位图，画出来就是白块/白竖条。
+            let refract: { normalTex: Texture; amount: number } | undefined;
+            if (mat?.refract) {
+              const normalTex = mat.normalTexUrl
+                ? (await loadTexTexture(mat.normalTexUrl)) ?? undefined
+                : undefined;
+              if (!normalTex) {
+                warnOnce(`refract-normal:${id}:${obj.id}`,
+                  `折射层槽 1 法线纹理缺失/加载失败，跳过该层（不画白方块）：object=${obj.id} ${mat.normalTexUrl ?? '(无槽1)'}`);
+                continue;
+              }
+              refract = { normalTex, amount: mat.refractAmount };
+            }
             particles.set(obj.id, {
               specJson: specText,
               tex,
               blend: particleBlend(mat?.blending, specText),
+              refract,
               // 对象级 instanceoverride（原始 JSON；无覆盖 → undefined → 工厂传空串）。
               // 由 wasm `CpuParticleSim` 按官方 OverrideSpawnProgram 语义应用：
               // alpha/size/lifetime/speed 乘数 + color 覆盖 + emitter rate × count。

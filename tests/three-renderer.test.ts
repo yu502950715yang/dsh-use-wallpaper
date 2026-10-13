@@ -237,6 +237,65 @@ describe('createThreeSceneRenderer', () => {
     r.dispose();
   });
 
+  // 粒子 REFRACT（材质 combo REFRACT=1）：槽 1 的法线/遮罩走**与槽 0 同一条** particle-texture
+  // 路由加载后随 `assets.particles[id].refract` 下发（player 据此启用 REFRACT define + 段边界快照）。
+  it('render：REFRACT=1 → 槽 1 走同一条路由加载并下发 refract{normalTex, amount}', async () => {
+    resolveImageTexture.mockResolvedValue(fakeTexture() as any);
+    resolveParticleMaterial.mockResolvedValue({
+      texUrl: '/wallpapers/particle-texture?id=2897292240&name=workshop%2F2446129945%2Fparticle%2Fparticles%20256x1280%20blank',
+      blending: 'translucent',
+      refract: true,
+      normalTexUrl: '/wallpapers/particle-texture?id=2897292240&name=workshop%2F2446129945%2Fparticle%2Fparticles%20256x1280N',
+      refractAmount: 0.07,
+    });
+    const slot0 = { slot: 0 };
+    const slot1 = { slot: 1 };
+    loadTexTexture.mockImplementation(async (url: string) => (String(url).endsWith('256x1280N') ? slot1 : slot0) as any);
+    const sim = makeMockSim();
+    defaultLoadWasm.mockResolvedValue({ CpuParticleSim: { new: vi.fn(() => sim) } } as any);
+    loadSceneToThree.mockReturnValue({
+      player: { dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn() },
+      sims: [sim], backgroundIds: [0], particleLayers: [{ id: 1, sim }],
+    });
+
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    const ok = await r.render('2897292240', document.createElement('canvas'), null);
+    expect(ok).toBe(true);
+    const assets = loadSceneToThree.mock.calls[0][1];
+    expect(loadTexTexture).toHaveBeenCalledWith('/wallpapers/particle-texture?id=2897292240&name=workshop%2F2446129945%2Fparticle%2Fparticles%20256x1280N');
+    expect(assets.particles.get(71).refract).toEqual({ normalTex: slot1, amount: 0.07 });
+    r.dispose();
+  });
+
+  // 槽 1 缺失/加载失败 ⇒ **不装配该层**（WE NORMALMAP=0 语义：位移恒 0、输出≡背景 ⇒ 无可见贡献）。
+  // 绝不回退白方块：这类材质的槽 0 是 RGBA 全 255 占位图，画出来就是白块/白竖条。
+  it('render：REFRACT=1 但槽 1 缺失或加载失败 → 不下发该粒子对象（不画白方块）', async () => {
+    for (const normalTexUrl of [null, '/wallpapers/particle-texture?id=1&name=missingN'] as const) {
+      vi.clearAllMocks();
+      resolveImageTexture.mockResolvedValue(fakeTexture() as any);
+      resolveParticleMaterial.mockResolvedValue({
+        texUrl: '/wallpapers/particle-texture?id=1&name=particle%2Fdot',
+        blending: 'translucent', refract: true, normalTexUrl, refractAmount: 0.05,
+      });
+      loadTexTexture.mockImplementation(async (url: string) => (String(url).includes('missingN') ? null : { slot: 0 }) as any);
+      defaultLoadWasm.mockResolvedValue({ CpuParticleSim: { new: vi.fn(() => makeMockSim()) } } as any);
+      loadSceneToThree.mockReturnValue({
+        player: { dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn() },
+        sims: [], backgroundIds: [0], particleLayers: [],
+      });
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+      const ok = await r.render('2897292240', document.createElement('canvas'), null);
+      const assets = loadSceneToThree.mock.calls[0][1];
+      expect(ok).toBe(true);                        // 背景仍在
+      expect(assets.particles.size).toBe(0);        // 该层未被装配 ⇒ 不进 scene
+      expect(assets.particles.has(71)).toBe(false);
+      expect(warn.mock.calls.some((c) => String(c[0]).includes('折射层槽 1'))).toBe(true);
+      r.dispose();
+      warn.mockRestore();
+    }
+  });
+
   it('render：CpuParticleSim.new 抛错 → 工厂返回空 sim（不整场失败）', async () => {
     resolveParticleMaterial.mockResolvedValue(null);
     defaultLoadWasm.mockResolvedValue({ CpuParticleSim: { new: vi.fn(() => { throw new Error('bad spec'); }) } } as any);

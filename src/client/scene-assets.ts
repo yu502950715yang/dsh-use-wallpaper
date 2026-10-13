@@ -98,6 +98,21 @@ export interface ParticleMaterialRef {
   texUrl: string | null;
   // 材质 json `passes[0].blending` **原文**（WE 权威混合模式）；拉取失败或无该字段 → null。
   blending: string | null;
+  // 折射层（WE combo `REFRACT === 1`，唯一判据）：`REFRACT: 0` / 无 `combos` ⇒ false（失败开放）。
+  refract: boolean;
+  // 槽 1（法线/遮罩）走**与槽 0 同一条** particle-texture 路由；缺失 → null（调用方不装配该层）。
+  normalTexUrl: string | null;
+  // 材质 `constantshadervalues.ui_editor_properties_refract_amount`；缺失 → WE 缺省 0.05。
+  refractAmount: number;
+}
+
+// 粒子纹理路由（槽 0/槽 1 共用）：name 是纹理的**原始相对路径**（多数 `particle/<...>`，也有
+// `workshop/<id>/particle/<...>`）⇒ 不能无条件加前缀；带壁纸 id 让 host 先在 scene.pkg 内查。
+function particleTextureUrl(id: string, texName: string): string {
+  const short = texName.startsWith('particle/') ? texName.slice('particle/'.length) : texName;
+  const aliased = PARTICLE_TEX_ALIASES[short];
+  const name = aliased ? `particle/${aliased}` : texName;
+  return `/wallpapers/particle-texture?id=${encodeURIComponent(id)}&name=${encodeURIComponent(name)}`;
 }
 
 // 解析粒子 spec 引用的材质 json（spec.material → passes[0]），一次拿到纹理 URL 与混合模式
@@ -115,22 +130,36 @@ export async function resolveParticleMaterial(
     const matResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(matRef)}`);
     if (!matResp.ok) return null;
     const mat: unknown = await matResp.json();
-    const pass0 = (mat as { passes?: { textures?: unknown[]; blending?: unknown }[] })?.passes?.[0];
+    const pass0 = (mat as {
+      passes?: {
+        textures?: unknown[];
+        blending?: unknown;
+        combos?: Record<string, unknown>;
+        constantshadervalues?: Record<string, unknown>;
+      }[];
+    })?.passes?.[0];
     const blending = typeof pass0?.blending === 'string' ? pass0.blending : null;
+    // 折射判据只认 WE 权威 combo（`REFRACT: 0` / 无 `combos` ⇒ false）：不做「白图/alpha 全 255」
+    // 之类素材启发式——那会误伤 additive 材质（DK 雪、EVA 光柱的槽 0 同样是白图）。
+    const refract = pass0?.combos?.REFRACT === 1;
+    const rawAmount = pass0?.constantshadervalues?.ui_editor_properties_refract_amount;
+    const refractAmount = typeof rawAmount === 'number' && Number.isFinite(rawAmount) ? rawAmount : 0.05;
     const texName: unknown = pass0?.textures?.[0];
-    if (typeof texName !== 'string' || !texName) return { texUrl: null, blending };
-    // 路由以 `<weAssetsDir>/assets/materials` 为基准，name 是纹理的**原始相对路径** —— 多数是
-    // `particle/<...>`，但也有 `workshop/<id>/particle/<...>`（如 2897292240 的雨），
-    // 所以**不能无条件加 `particle/` 前缀**；唯例外是别名表（命中后把前缀补回来）。
-    const short = texName.startsWith('particle/') ? texName.slice('particle/'.length) : texName;
-    const aliased = PARTICLE_TEX_ALIASES[short];
-    const name = aliased ? `particle/${aliased}` : texName;
-    // 纹理路由带壁纸 id：素材可能打包在壁纸自己的 scene.pkg（`materials/<name>.tex`）里，
-    // host 先在 pkg 内找、再回退 WE 引擎目录（WE 挂载顺序：pkg 先于引擎 assets）。
-    // 回归：3793620838 的小鸟纹理只在 pkg 内，缺 id 时旧路由必然 404 → 粒子退化成圆点。
+    // 槽 1 与槽 0 同一条路由（**不加** `materials/`、不走 resolveTexPath）；与 refract 无关地给出，
+    // 由调用方决定是否加载（仅折射层会加载）。
+    const normalName: unknown = pass0?.textures?.[1];
+    const normalTexUrl = typeof normalName === 'string' && normalName
+      ? particleTextureUrl(id, normalName)
+      : null;
+    if (typeof texName !== 'string' || !texName) {
+      return { texUrl: null, blending, refract, normalTexUrl, refractAmount };
+    }
     return {
-      texUrl: `/wallpapers/particle-texture?id=${encodeURIComponent(id)}&name=${encodeURIComponent(name)}`,
+      texUrl: particleTextureUrl(id, texName),
       blending,
+      refract,
+      normalTexUrl,
+      refractAmount,
     };
   } catch {
     return null;

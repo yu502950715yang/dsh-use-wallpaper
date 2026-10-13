@@ -44,6 +44,9 @@ describe('resolveParticleMaterial', () => {
       expect(r).toEqual({
         texUrl: '/wallpapers/particle-texture?id=3793620838&name=particle%2FBIRD%20TEST%203%20FILTER',
         blending: 'translucent',
+        refract: false,
+        normalTexUrl: null,
+        refractAmount: 0.05,
       });
     } finally {
       vi.unstubAllGlobals();
@@ -56,6 +59,128 @@ describe('resolveParticleMaterial', () => {
       expect(await resolveParticleMaterial('1', JSON.stringify({ material: 'materials/x.json' }))).toBeNull();
     } finally {
       vi.unstubAllGlobals();
+    }
+  });
+
+  // 折射层（WE combo REFRACT=1）：槽 1 是法线/遮罩纹理，必须走**与槽 0 完全相同**的
+  // particle-texture 路由（pkg 优先、空格与子目录原样保留），不得加 `materials/` 前缀。
+  it('REFRACT=1 + 槽1 ⇒ refract=true 且槽1 走同一条 particle-texture 路由', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        passes: [{
+          blending: 'translucent',
+          combos: { REFRACT: 1 },
+          textures: [
+            'workshop/2446129945/particle/particles 256x1280 blank',
+            'workshop/2446129945/particle/particles 256x1280N',
+          ],
+        }],
+      }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const r = await resolveParticleMaterial(
+        '2897292240',
+        JSON.stringify({ material: 'materials/workshop/2446129945/particle/halo_50_1.json' }),
+      );
+      expect(r).toEqual({
+        texUrl: '/wallpapers/particle-texture?id=2897292240&name=workshop%2F2446129945%2Fparticle%2Fparticles%20256x1280%20blank',
+        blending: 'translucent',
+        refract: true,
+        normalTexUrl: '/wallpapers/particle-texture?id=2897292240&name=workshop%2F2446129945%2Fparticle%2Fparticles%20256x1280N',
+        refractAmount: 0.05,
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('槽1 的 `particle/` 前缀与别名路由与槽 0 同源（含空格）', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        passes: [{ combos: { REFRACT: 1 }, textures: ['particle/dot 1', 'particle/normal 2'] }],
+      }),
+    })));
+    try {
+      const r = await resolveParticleMaterial('7', JSON.stringify({ material: 'materials/x.json' }));
+      expect(r!.texUrl).toBe('/wallpapers/particle-texture?id=7&name=particle%2Fdot%201');
+      expect(r!.normalTexUrl).toBe('/wallpapers/particle-texture?id=7&name=particle%2Fnormal%202');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  // 失败开放：判据只认 combo === 1，不做素材启发式（白图槽 0 的 additive 材质绝不能进 REFRACT）。
+  it('REFRACT=0 / 无 combos ⇒ refract=false（失败开放，不影响 blending 判定）', async () => {
+    for (const passes of [
+      [{ blending: 'additive', combos: { REFRACT: 0 }, textures: ['particle/snow'] }],
+      [{ blending: 'additive', textures: ['particle/snow'] }],
+      [{ blending: 'additive', combos: { REFRACT: '1' }, textures: ['particle/snow'] }],
+      [{ blending: 'additive', combos: {}, textures: ['particle/snow'] }],
+    ]) {
+      vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ passes }) })));
+      try {
+        const r = await resolveParticleMaterial('1', JSON.stringify({ material: 'materials/x.json' }));
+        expect(r!.refract).toBe(false);
+        expect(r!.blending).toBe('additive');
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    }
+  });
+
+  it('槽1 缺失 ⇒ refract=true 但 normalTexUrl=null（调用方不装配该层）', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        passes: [{ combos: { REFRACT: 1 }, textures: ['workshop/2446129945/particle/rain'] }],
+      }),
+    })));
+    try {
+      const r = await resolveParticleMaterial('2897292240', JSON.stringify({ material: 'materials/x.json' }));
+      expect(r!.refract).toBe(true);
+      expect(r!.normalTexUrl).toBeNull();
+      expect(r!.texUrl).not.toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('护栏：chromaticdot + additive + 无 combos ⇒ 不进 REFRACT 路径（白图槽 0 不得被判为折射）', async () => {
+    // 基线实地形态：1429403119 的 snowflat 材质 = additive + particle/chromaticdot（RGBA 全 255）。
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ passes: [{ blending: 'additive', textures: ['particle/chromaticdot'] }] }),
+    })));
+    try {
+      const r = await resolveParticleMaterial('1429403119', JSON.stringify({ material: 'materials/presets/snowflat.json' }));
+      expect(r!.refract).toBe(false);
+      expect(r!.normalTexUrl).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('refractAmount：缺省 0.05；显式值覆盖（非有限值回落缺省）', async () => {
+    for (const [cs, expected] of [
+      [undefined, 0.05],
+      [{}, 0.05],
+      [{ ui_editor_properties_refract_amount: 0.12 }, 0.12],
+      [{ ui_editor_properties_refract_amount: 0 }, 0],
+      [{ ui_editor_properties_refract_amount: '0.2' }, 0.05],
+    ] as const) {
+      vi.stubGlobal('fetch', vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ passes: [{ combos: { REFRACT: 1 }, textures: ['a'], constantshadervalues: cs }] }),
+      })));
+      try {
+        const r = await resolveParticleMaterial('1', JSON.stringify({ material: 'materials/x.json' }));
+        expect(r!.refractAmount).toBe(expected);
+      } finally {
+        vi.unstubAllGlobals();
+      }
     }
   });
 });

@@ -2733,6 +2733,198 @@ describe('ThreeScenePlayer 段渲染（frameCapture）', () => {
   });
 });
 
+// Task 4：粒子 REFRACT（材质 combo REFRACT=1）—— 首个真实消费者（2897292240 的雨层 obj #25/#36）。
+// 语义：片元按槽 1 的法线/遮罩把屏幕 UV 位移后采「本帧场景快照」；折射层自动成为段边界消费者。
+describe('ThreeScenePlayer 粒子 REFRACT', () => {
+  const NORMAL = new THREE.DataTexture(new Uint8Array([0, 128, 0, 128]), 2, 2);
+
+  /** 造一个折射粒子层（objectId = scene.json 对象 id，renderOrder 缺省 1 = 粒子）。 */
+  function addRefract(player: ThreeScenePlayer, objectId: number, amount = 0.05, renderOrder = 1): THREE.Mesh {
+    player.addParticle(() => new Float32Array(16), {
+      frameCount: 1,
+      blend: 'alpha',
+      objectId,
+      renderOrder,
+      refract: { normalTex: NORMAL, amount },
+    });
+    return player.displayObject(objectId) as THREE.Mesh;
+  }
+
+  /** 造 n 个背景对象（renderOrder 0..n-1，scene.json 对象 id 11,12,...）。 */
+  function addBackgrounds(player: ThreeScenePlayer, n: number): void {
+    for (let i = 0; i < n; i++) {
+      player.addBackground({
+        origin: [i * 10, 0, 0], size: [10, 10], scale: [1, 1, 1],
+        texture: new THREE.DataTexture(new Uint8Array(4), 2, 2),
+        sceneW: 100, sceneH: 100, objectId: 11 + i, renderOrder: i,
+      });
+    }
+  }
+
+  it('shader 文本契约：REFRACT 分支与屏幕 UV 位移逐行在源里', () => {
+    const { player } = makePlayer();
+    const mesh = addRefract(player, 22);
+    const mat = mesh.material as THREE.ShaderMaterial;
+    expect(mat.fragmentShader).toContain('#ifdef REFRACT');
+    expect(mat.fragmentShader).toContain('texture2D(refractNormal');
+    expect(mat.fragmentShader).toContain('vScreenCoord.xy / vScreenCoord.z');
+    expect(mat.fragmentShader).toContain('rgb *= texture2D(refractBg, rsUv).rgb');
+    expect(mat.fragmentShader).toContain('off.y = -off.y');
+    expect(mat.fragmentShader).toContain('off *= mask * vParticleAlpha');
+    expect(mat.vertexShader).toContain('gl_Position.xyw');
+    expect(mat.vertexShader).toContain('weObjectRotate(vec3(1.0, 0.0, 0.0)');
+    expect(mat.vertexShader).toContain('vScreenTangents = refractAmount * vec4(rRight.x, rUp.x, rRight.y, rUp.y)');
+    // 结构护栏（无 GPU 时唯一能挡住 GLSL 文本级错误的断言）：条件块一开一合、花括号配对。
+    for (const src of [mat.vertexShader, mat.fragmentShader]) {
+      const opens = src.split('#ifdef').length - 1;
+      expect(opens).toBeGreaterThan(0);
+      expect(opens).toBe(src.split('#endif').length - 1);
+      expect(src.split('{').length).toBe(src.split('}').length);
+    }
+    player.dispose();
+  });
+
+  it('折射层：defines.REFRACT===1、uniform 三项就位；消费者渲染时 refractBg 已指向本帧快照', () => {
+    const { player, mock } = makePlayer();
+    addBackgrounds(player, 1);                       // #11（段 1）
+    const mesh = addRefract(player, 22, 0.05);       // #22（段 2 = 消费者）
+    const mat = mesh.material as THREE.ShaderMaterial;
+    expect(mat.defines.REFRACT).toBe(1);
+    expect(mat.uniforms.refractAmount.value).toBe(0.05);
+    expect(mat.uniforms.refractNormal.value).toBe(NORMAL);
+    // 缺省 refractBg = 1×1 白（未接快照时不产生位移）。
+    const bgDefault = mat.uniforms.refractBg.value as THREE.DataTexture;
+    expect(bgDefault.image.width).toBe(1);
+    expect(bgDefault.image.height).toBe(1);
+
+    const cap = createFrameCapture(mock as unknown as THREE.WebGLRenderer);
+    // 折射层在 addParticle 里就登记为消费者 ⇒ 仅注入 capture 即激活（无需外部 registerFrameConsumer）。
+    player.setFrameCapture(cap);
+    expect(cap.active).toBe(true);
+
+    const bgAtRender: unknown[] = [];
+    mock._setOnRender((s) => { if (s === player.scene) bgAtRender.push(mat.uniforms.refractBg.value); });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    player.render();
+    player.render(); // 诊断日志只一条
+    // 首段 target === capture.target（段渲染）→ 2 段 + 末段合成
+    expect(mock._renders.map((r) => r.target)).toEqual([cap.target, cap.target, null, cap.target, cap.target, null]);
+    expect(mock._copies).toHaveLength(2);
+    // 段 1（#11，背景）时还是缺省白图；段 2（#22 折射层）时已是快照 ⇒ 消费者只采本帧背景。
+    expect(bgAtRender[0]).not.toBe(mock._copies[0].texture);
+    expect(bgAtRender[1]).toBe(mock._copies[0].texture);
+    expect(mat.uniforms.refractBg.value).toBe(mock._copies[1].texture);
+    const refractLogs = log.mock.calls.filter((c) => String(c[0]).includes('refract layer=22'));
+    expect(refractLogs).toHaveLength(1);
+    expect(String(refractLogs[0][0])).toBe('[three] refract layer=22 bg=1920x1080 amount=0.05');
+    log.mockRestore();
+    player.dispose();
+  });
+
+  it('非折射层：defines.REFRACT===undefined、不建 refract uniform、不登记消费者（帧序与现状一致）', () => {
+    const { player, mock } = makePlayer();
+    addBackgrounds(player, 1);
+    player.addParticle(() => new Float32Array(16), { frameCount: 1, blend: 'alpha', objectId: 22, renderOrder: 1 });
+    const mat = (player.displayObject(22) as THREE.Mesh).material as THREE.ShaderMaterial;
+    expect(mat.defines?.REFRACT).toBeUndefined();
+    expect(mat.uniforms.refractBg).toBeUndefined();
+    expect(mat.uniforms.refractNormal).toBeUndefined();
+    expect(mat.uniforms.refractAmount).toBeUndefined();
+    const cap = createFrameCapture(mock as unknown as THREE.WebGLRenderer);
+    player.setFrameCapture(cap);
+    expect(cap.active).toBe(false);
+    player.render();
+    expect(mock._renders.map((r) => r.target)).toEqual([null]); // 单次直渲，零分歧
+    expect(mock._copies).toHaveLength(0);
+    player.dispose();
+  });
+
+  it('隔离层（opts.isolate）不启用 REFRACT，也不登记消费者（对象 RT 的裁剪空间 ≠ 屏幕 UV）', () => {
+    const { player, mock } = makePlayer();
+    player.addParticle(() => new Float32Array(16), {
+      frameCount: 1, blend: 'alpha', objectId: 22,
+      isolate: { objectId: 22, rtWidth: 10, rtHeight: 10, worldW: 10, worldH: 10 },
+      refract: { normalTex: NORMAL, amount: 0.05 },
+    });
+    const entry = player.isolatedObjects()[0];
+    const mat = entry.localScene.children[0].material as THREE.ShaderMaterial;
+    expect(mat.defines?.REFRACT).toBeUndefined();
+    expect(mat.uniforms.refractBg).toBeUndefined();
+    const cap = createFrameCapture(mock as unknown as THREE.WebGLRenderer);
+    player.setFrameCapture(cap);
+    expect(cap.active).toBe(false);
+    player.render();
+    expect(mock._copies).toHaveLength(0);
+    player.dispose();
+  });
+
+  it('无可用 FrameCapture ⇒ 折射层隐藏并告警一次（快照不可用时绝不画白方块）', () => {
+    const { player, mock } = makePlayer();
+    const mesh = addRefract(player, 22);
+    expect(mesh.visible).toBe(true);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    player.render();
+    player.render();
+    expect(mesh.visible).toBe(false);
+    const refractWarns = warn.mock.calls.filter((c) => String(c[0]).includes('折射层'));
+    expect(refractWarns).toHaveLength(1);
+    expect(mock._renders.map((r) => r.target)).toEqual([null, null]);
+    warn.mockRestore();
+    player.dispose();
+  });
+
+  it('槽1 缺失（调用方不装配该层）⇒ 该粒子对象不入 scene、不建 sim（不可见而非白方块）', () => {
+    const canvas = document.createElement('canvas');
+    const scene = JSON.stringify({
+      general: { orthogonalprojection: { height: 1080, width: 1920 } },
+      objects: [{ id: 22, particle: 'particles/p.json', origin: '960 540 0', scale: '1 1 1' }],
+    });
+    const createParticleSim = vi.fn(() => ({
+      update: vi.fn(), vertices: vi.fn(() => new Float32Array(0)),
+      frame_count: vi.fn(() => 1), set_frame_count: vi.fn(), particle_count: vi.fn(() => 0),
+    }));
+    const result = loadSceneToThree(scene, {
+      renderer: createMockRenderer() as unknown as THREE.WebGLRenderer,
+      particles: new Map(), // ← three-renderer 在槽 1 缺失/加载失败时不下发条目
+      createParticleSim,
+    }, canvas);
+    expect(result.player.scene.children).toHaveLength(0);
+    expect(result.sims).toHaveLength(0);
+    expect(createParticleSim).not.toHaveBeenCalled();
+    result.player.dispose();
+  });
+
+  it('装配折射层（particles 带 refract）⇒ 该层登记为消费者并走段渲染', () => {
+    const canvas = document.createElement('canvas');
+    const mock = createMockRenderer();
+    const scene = JSON.stringify({
+      general: { orthogonalprojection: { height: 1080, width: 1920 } },
+      objects: [
+        { id: 11, image: 'models/a.json', origin: '960 540 0', scale: '1 1 1', size: '1920 1080' },
+        { id: 36, particle: 'particles/p.json', origin: '960 540 0', scale: '1 1 1' },
+      ],
+    });
+    const result = loadSceneToThree(scene, {
+      renderer: mock as unknown as THREE.WebGLRenderer,
+      backgroundTextures: new Map([[11, new THREE.DataTexture(new Uint8Array(4), 2, 2)]]),
+      particles: new Map([[36, { specJson: '{}', blend: 'alpha' as const, refract: { normalTex: NORMAL, amount: 0.05 } }]]),
+      createParticleSim: vi.fn(() => ({
+        update: vi.fn(), vertices: vi.fn(() => new Float32Array(0)),
+        frame_count: vi.fn(() => 1), set_frame_count: vi.fn(), particle_count: vi.fn(() => 0),
+      })),
+    }, canvas);
+    const mat = (result.player.displayObject(36) as THREE.Mesh).material as THREE.ShaderMaterial;
+    expect(mat.defines.REFRACT).toBe(1);
+    const cap = createFrameCapture(mock as unknown as THREE.WebGLRenderer);
+    result.player.setFrameCapture(cap);
+    expect(cap.active).toBe(true);
+    result.player.render();
+    expect(mock._renders[0].target).toBe(cap.target); // 首段 target === capture.target
+    result.player.dispose();
+  });
+});
+
+
 // 2026-09-22 Task 8：SceneScript 运行时需要的「scene 对象 id → 最终显示对象」映射与帧钩子。
 // 脚本的状态表键是 scene.json 的**对象 id**，而 backgroundEntries/particleLayers 的键是图层
 // 计数器 id —— 映射必须记**最终显示物**（隔离对象记合成 quad，内容 mesh 只渲染进对象 RT）。

@@ -81,6 +81,10 @@ type ParticleLayer = {
   // 已记录过的粒子数（倍增时再记一条，见 updateParticles）：用于在真机 console 里**看到计数增长**
   // （旧日志只在首帧非零时打一次 count=1，极易被误读为「只发射了 1 个粒子」）。
   loggedCount: number;
+  // 折射层（材质 combo REFRACT=1）：defines 里有 REFRACT，段边界快照写进 uniforms.refractBg。
+  refract: boolean;
+  // 折射诊断日志只打一次（首帧真的把快照接进 refractBg 时）。
+  loggedRefract: boolean;
 };
 
 // 粒子实例缓冲的**缺省容量**与上限。容量 = 「本层一次最多画多少个粒子」= 每个 instanced attribute
@@ -325,6 +329,13 @@ uniform mat4 persp;
 uniform vec3 perspEye;
 // 对象欧拉角（**弧度**）—— WE model matrix = T·R·S 的 R 部分。
 uniform vec3 objAngles;
+#ifdef REFRACT
+// 屏幕空间折射（WE genericparticle.vert 的 REFRACT 分支）：位移强度来自材质
+// ui_editor_properties_refract_amount，片元用它算屏幕 UV 偏移后采背景快照。
+uniform float refractAmount;
+varying vec3 vScreenCoord;      // gl_Position.xyw（.z 即 w，供片元做透视除法）
+varying vec4 vScreenTangents;   // (rRight.x, rUp.x, rRight.y, rUp.y) * refractAmount
+#endif
 varying vec2 vCornerUv;
 varying vec2 vParticleUv;
 varying vec3 vParticleColor;
@@ -400,6 +411,15 @@ void main() {
   // 防「emitter 球壳散射可到 ±750 的粒子被 z 裁剪 → 粒子不可见」。这里把 NDC z 强制归中（0），
   // 配合 material.depthTest=false（忽略深度），保证粒子不被相机深度范围裁剪（对齐 wasm 语义）。
   gl_Position.z = 0.0;
+#ifdef REFRACT
+  // 折射切线基（屏幕空间位移方向）：与上面 quad 角点展开同一旋转约定（先粒子自旋、再对象角度）。
+  // ⚠️ WE ComputeParticleTangents 的合成序是「先对象角度、后粒子自旋」，本文件相反；本层 rot 仅
+  // z 分量时两者等价（全库折射层仅 2897292240 的雨）。vScreenCoord 必须在 gl_Position 之后取。
+  vec3 rRight = normalize(weObjectRotate(weObjectRotate(vec3(1.0, 0.0, 0.0), particleRot), objAngles));
+  vec3 rUp = normalize(weObjectRotate(weObjectRotate(vec3(0.0, 1.0, 0.0), particleRot), objAngles));
+  vScreenCoord = gl_Position.xyw;
+  vScreenTangents = refractAmount * vec4(rRight.x, rUp.x, rRight.y, rUp.y);
+#endif
 }
 `;
 
@@ -419,6 +439,13 @@ uniform float frameCols;
 uniform float frameRows;
 uniform float softness;
 uniform float maskMode;
+#ifdef REFRACT
+// 折射层：refractNormal = 槽 1（法线/遮罩，与槽 0 同一帧子区 UV），refractBg = 本帧场景快照。
+uniform sampler2D refractNormal;
+uniform sampler2D refractBg;
+varying vec3 vScreenCoord;
+varying vec4 vScreenTangents;
+#endif
 varying vec2 vCornerUv;
 varying vec2 vParticleUv;
 varying vec3 vParticleColor;
@@ -440,6 +467,19 @@ void main() {
   float frameV = (rows - 1.0 - row + vCornerUv.y) / rows;
   vec2 texUv = vec2((col + vCornerUv.x) / cols, frameV);
   vec4 texel = texture2D(map, texUv);
+  vec3 rgb = vParticleColor * texel.rgb;
+#ifdef REFRACT
+  // 屏幕空间折射（WE genericparticle.frag:103-116 逐行）：法线取 R/G/A 通道，位移再乘遮罩与粒子 alpha。
+  vec4 nrm = texture2D(refractNormal, texUv);
+  float nx = nrm.a * 2.0 - 1.0;
+  float ny = nrm.g * 2.0 - 1.0;
+  float mask = nrm.r;
+  vec2 off = vScreenTangents.xy * nx + vScreenTangents.zw * ny;
+  off.y = -off.y;
+  off *= mask * vParticleAlpha;
+  vec2 rsUv = vScreenCoord.xy / vScreenCoord.z * 0.5 + 0.5 + off;
+  rgb *= texture2D(refractBg, rsUv).rgb;
+#endif
   // 圆盘软衰减（center→edge）。softness ∈ [0,1]：0=硬边（仅在 quad 边缘收尾），1=全柔（中心→边缘平滑衰减）。
   float dist = length(vCornerUv - 0.5) * 2.0;
   float edgeStart = clamp(1.0 - softness, 0.0001, 0.9999);
@@ -447,7 +487,7 @@ void main() {
   // mask_mode：1（真实纹理遮罩，形状=texel.a）↔ 0（无纹理软圆点，形状=disk）。
   float shape = mix(disk, texel.a, maskMode);
   float a = vParticleAlpha * shape;
-  gl_FragColor = vec4(vParticleColor * texel.rgb, a);
+  gl_FragColor = vec4(rgb, a);
 }
 `;
 
@@ -618,6 +658,10 @@ export class ThreeScenePlayer {
   private frameCapture: FrameCapture | null = null;
   // 消费者集合（键 = scene.json 对象 id）：段渲染时每个消费者**开启新的一段**，段数 = 消费者数 + 1。
   private readonly frameConsumers = new Set<number>();
+  // 折射层（键 = scene.json 对象 id → 粒子图层）：段边界把本帧快照写进它的 refractBg。
+  private readonly refractLayers = new Map<number, ParticleLayer>();
+  // 折射层「无可用快照 ⇒ 已隐藏」只做一次（防与脚本的 visible 状态每帧互踩）。
+  private refractHidden = false;
   // 已告警过的未匹配消费者（防每帧刷屏）。
   private readonly warnedConsumers = new Set<number>();
   // 末段合成用的全屏 quad（惰性建：只有真的走段渲染且 Glow 关闭时才建）。
@@ -854,6 +898,8 @@ export class ThreeScenePlayer {
     if (this.devicePixelRatio() !== this.lastDpr) this.resize(this.viewWidth, this.viewHeight);
     if (this.isolated.size > 0) this.renderIsolatedContents();
     this.objectEffectStage?.bindOutputs();
+    // 快照不可用（未注入/未激活）时折射层无从取样 ⇒ 隐藏一次（WE NORMALMAP=0 语义：输出≡背景）。
+    this.hideRefractWithoutCapture();
     if (this.frameCapture?.active) this.renderSegmented();
     else if (this.glowStage) this.glowStage.apply(this.renderer, this.scene, this.camera);
     else this.renderer.render(this.scene, this.camera);
@@ -883,6 +929,15 @@ export class ThreeScenePlayer {
     }
   }
 
+  // 折射层但没有可用快照（未注入 FrameCapture / 未激活）：不画（画出来只会是白方块），并告警一次。
+  private hideRefractWithoutCapture(): void {
+    if (this.refractHidden || this.refractLayers.size === 0) return;
+    if (this.frameCapture?.active === true) return;
+    this.refractHidden = true;
+    for (const layer of this.refractLayers.values()) layer.mesh.visible = false;
+    console.warn('[three] 折射层无可用帧内快照（FrameCapture 未激活）→ 隐藏该层，不画白方块');
+  }
+
   /**
    * 段渲染：按 renderOrder 升序把主场景顶层对象切成若干段（消费者**开启**新的一段，段数 = 消费者数 + 1），
    * 逐段渲染进 frameCapture.target（段间 autoClear=false 累积），消费者段的快照拍在该段 render **之前**，
@@ -899,12 +954,12 @@ export class ThreeScenePlayer {
     const prevClearColor = new THREE.Color();
     this.renderer.getClearColor(prevClearColor);
     const prevClearAlpha = this.renderer.getClearAlpha();
-    // ② 消费者对象 → 它在 scene.children 里的下标。
-    const consumerIndexes = new Set<number>();
+    // ② 消费者对象 → 它在 scene.children 里的下标（同时记住 scene.json 对象 id，供折射层的 refractBg 定位）。
+    const consumerObjectIdByIndex = new Map<number, number>();
     for (let i = 0; i < children.length; i++) {
       const obj = children[i];
       for (const objectId of this.frameConsumers) {
-        if (this.displayObjects.get(objectId) === obj) { consumerIndexes.add(i); break; }
+        if (this.displayObjects.get(objectId) === obj) { consumerObjectIdByIndex.set(i, objectId); break; }
       }
     }
     // ③ 切段：按 renderOrder 升序（稳定排序 ⇒ 同序号保持 scene 内顺序），消费者**开启**新的一段、
@@ -915,7 +970,7 @@ export class ThreeScenePlayer {
     const segments: Array<{ members: number[]; consumer: number | null }> = [];
     let current: { members: number[]; consumer: number | null } | null = null;
     for (const { i } of order) {
-      const isConsumer = consumerIndexes.has(i);
+      const isConsumer = consumerObjectIdByIndex.has(i);
       if (current === null || isConsumer) {
         if (current !== null) segments.push(current);
         current = { members: [], consumer: isConsumer ? i : null };
@@ -938,7 +993,23 @@ export class ThreeScenePlayer {
         }
         // ★ 快照拍在**本段 render 之前**：此刻 target 仍绑定 frameRT，内容 = 此前所有段已绘制的内容
         //   （WE 的「画该层之前 blit」语义；放在 render 之后会把消费者自己拍进去）。捕获无幂等性 ⇒ 每段一次。
-        if (segment.consumer !== null) capture.capture();
+        if (segment.consumer !== null) {
+          const snapshot = capture.capture();
+          // 折射消费者：在它被绘制之前把本帧快照接进 refractBg（快照逐帧覆盖，段外不持有引用）。
+          const consumerObjectId = consumerObjectIdByIndex.get(segment.consumer);
+          const refractLayer = consumerObjectId === undefined ? undefined : this.refractLayers.get(consumerObjectId);
+          if (refractLayer !== undefined && consumerObjectId !== undefined) {
+            refractLayer.material.uniforms.refractBg.value = snapshot;
+            if (!refractLayer.loggedRefract) {
+              refractLayer.loggedRefract = true;
+              const size = (snapshot as { image?: { width?: number; height?: number } }).image;
+              console.log(
+                `[three] refract layer=${consumerObjectId} bg=${size?.width ?? 0}x${size?.height ?? 0}` +
+                  ` amount=${refractLayer.material.uniforms.refractAmount.value}`,
+              );
+            }
+          }
+        }
         this.renderer.render(this.scene, this.camera);
       }
     } finally {
@@ -1433,6 +1504,10 @@ export class ThreeScenePlayer {
       // 缺省不启用 → 顶点 shader 走主正交投影（既有行为逐像素不变）。
       //   fov/distance = WE 的 global_perspective 相机参数；aspect = 场景宽/高。
       perspective?: { fov: number; distance: number; aspect: number };
+      // 屏幕空间折射（材质 combo REFRACT=1；由 three-renderer 按 `ParticleMaterialRef` 下发）：
+      //   normalTex = 槽 1 的法线/遮罩纹理（与 map 同一帧网格 UV）；amount = 位移强度。
+      // 缺省不启用（`defines` 里没有 REFRACT ⇒ program 与非折射层完全同源）。
+      refract?: { normalTex: THREE.Texture; amount: number };
       // scene.json 的**对象 id**（脚本图层桥的键，语义同 addBackground.objectId）：**总是传**，
       // 与只在隔离时传的 isolate.objectId 区分。
       objectId?: number;
@@ -1464,6 +1539,10 @@ export class ThreeScenePlayer {
     // 调用方显式传 softness 时以其为准（测试/精细控制）。
     const hasTex = !!opts.tex;
     const softness = opts.softness ?? (hasTex ? 0.15 : 1.0);
+    // 折射门槛（design §4.4）：隔离层渲染进对象 RT，其裁剪空间 ≠ 屏幕 UV ⇒ 不启用 REFRACT（等价 WE 的
+    // 「不折射」）；amount 非法回落 WE 缺省 0.05。
+    const refractEnabled = !!opts.refract && !opts.isolate;
+    const refractAmount = Number.isFinite(opts.refract?.amount) ? (opts.refract as { amount: number }).amount : 0.05;
 
     // InstancedBufferGeometry：基础 4 角点四边形（position）+ 索引；每粒子一个实例（instanced 属性）。
     const geometry = new THREE.InstancedBufferGeometry();
@@ -1526,6 +1605,15 @@ export class ThreeScenePlayer {
         frameRows: { value: frameRows },
         softness: { value: softness },
         maskMode: { value: hasTex ? 1.0 : 0.0 },
+        // 折射 uniform 只给折射层（非折射层连 uniform 都不建：零开销、零分歧）。
+        // refractBg 缺省 1×1 白 = 不做位移（快照由段渲染在消费者绘制前写入）。
+        ...(refractEnabled
+          ? {
+              refractNormal: { value: (opts.refract as { normalTex: THREE.Texture }).normalTex },
+              refractBg: { value: createWhiteTexture() },
+              refractAmount: { value: refractAmount },
+            }
+          : {}),
         // 对象变换（缺省恒等 → 顶点 shader 退化为旧的 worldPos = particlePosition + corner*size/2）。
         objCenter: { value: new THREE.Vector3(...(opts.objectCenter ?? [0, 0, 0])) },
         objScale: { value: new THREE.Vector3(...(opts.objectScale ?? [1, 1, 1])) },
@@ -1549,6 +1637,9 @@ export class ThreeScenePlayer {
       },
       vertexShader: PARTICLE_VERTEX_SHADER,
       fragmentShader: PARTICLE_FRAGMENT_SHADER,
+      // three 的 define 进 program cache key：非折射层的 program 与改动前完全同源
+      // （仅在折射时给 defines 键 —— 显式 undefined 会被 Material 构造器告警刷屏）。
+      ...(refractEnabled ? { defines: { REFRACT: 1 } } : {}),
       transparent: true,
       depthWrite: false,
       depthTest: false,
@@ -1601,6 +1692,8 @@ export class ThreeScenePlayer {
       capacity,
       loggedFirstFrame: false,
       loggedCount: 0,
+      refract: refractEnabled,
+      loggedRefract: false,
     };
     this.particleLayers.set(id, layer);
     // 立即写入首帧数据，保持 geometry 与 getter 一致（后续由 updateParticles 逐帧刷新）。
@@ -1621,6 +1714,12 @@ export class ThreeScenePlayer {
     if (opts.objectId !== undefined) {
       const shown = opts.isolate ? this.isolated.get(opts.isolate.objectId)?.quad : mesh;
       if (shown) this.displayObjects.set(opts.objectId, shown);
+    }
+    // 折射层必须在自己被绘制**之前**拿到本帧快照 ⇒ 它本身就是段边界消费者（displayObjects 已登记，
+    // 由 checkFrameConsumers 收口激活；setFrameCapture 若晚于本调用，激活发生在它那次评估里）。
+    if (refractEnabled && opts.objectId !== undefined) {
+      this.refractLayers.set(opts.objectId, layer);
+      this.registerFrameConsumer(opts.objectId);
     }
     return id;
   }
@@ -1769,6 +1868,7 @@ export class ThreeScenePlayer {
     this.frameCapture = null;
     this.frameConsumers.clear();
     this.warnedConsumers.clear();
+    this.refractLayers.clear();
     // 末段合成 quad 归本类所有，须在 renderer.dispose() 之前释放。
     this.compositeQuad?.dispose();
     this.compositeQuad = null;
@@ -1817,6 +1917,9 @@ export interface LoadedParticleAssets {
   // 模拟器按官方 OverrideSpawnProgram 语义消费（alpha/size/lifetime/speed 乘数 + color 覆盖 +
   // emitter rate × count）。GTR 3743126786 的烟柱靠它把 alpha 压到 0.03（桌面端几乎不可见）。
   overrideJson?: string;
+  // 折射层条件（材质 REFRACT=1 + 槽 1 法线纹理）：仅折射层下发；槽 1 缺失/加载失败时调用方
+  // **不装配该层**（WE NORMALMAP=0 语义：位移恒 0、输出≡背景 ⇒ 无可见贡献，绝不回退白方块）。
+  refract?: { normalTex: THREE.Texture; amount: number };
 }
 
 // 粒子模拟器工厂：从粒子规格 JSON + 对象中心构造模拟器。
@@ -2104,6 +2207,8 @@ export function loadSceneToThree(
               return { fov: cam.fov, distance: cam.distance, aspect: sceneW / sceneH };
             })()
           : undefined,
+        // 折射层（材质 combo REFRACT=1）：槽 1 法线/遮罩 + 位移强度；非折射层不传（零分歧）。
+        refract: p.refract,
         // 脚本图层桥的键 = scene 对象 id（总是传）。
         objectId: obj.id,
         // 唯一绘制序 = 本对象在 objects 数组中的下标。
