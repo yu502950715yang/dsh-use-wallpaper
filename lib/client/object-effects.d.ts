@@ -3,13 +3,30 @@ import type { SourcePixels } from './object-range.js';
 import { EffectRunner } from './effect-runner.js';
 import type { EffectTexLoader } from './effect-runner.js';
 import type { CompiledEffectPass } from './shader/effect-chain.js';
+import { type EffectPlan } from './effect-graph.js';
+export declare const ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER = false;
 export declare function weVRowOrderLoader(load?: EffectTexLoader): EffectTexLoader;
 export interface ObjectEffectStage {
     /** 主场景渲染之前：把每个隔离对象的合成 quad 绑到效果输出（或回退对象 RT 原图）。 */
     bindOutputs(): void;
     /** 主场景渲染之后：串行推进 runner.update（异步，不阻塞本帧）。 */
     advance(time: number): void;
+    /** 段边界（消费者被绘制**之前**）同步通知：该对象的链本帧用这张整帧快照（design §3.5）。
+     *  未携带纹理时向宿主拉取（`ObjectEffectHost.captureFullFrame()`）。
+     *  `snapshotVersion` = 捕获当刻的 `FrameCapture.snapshotVersion`：排队的 update 在**执行当刻**
+     *  与宿主提供的实时代号比较，不一致即按「无快照」走（resize/dispose 会重建快照，旧引用已 dispose）。 */
+    onSegmentBoundary(objectId: number, frameTexture?: THREE.Texture | null, snapshotVersion?: number): void;
+    /** 画布缓冲/视口变化：作废**尚未被 advance 消费**的本帧快照（`FrameCapture.resize()` 会 dispose
+     *  旧快照并重建）。已被 advance 带进闭包的那份由执行当刻的实时代号比较兜底。 */
+    notifyViewportResize(): void;
 }
+/** 该对象是否引用整帧快照（任一链的任一 pass 真的会采样它）⇒ 它**本应**是段边界消费者（§3.2/§3.5）。
+ *  ⚠️ 本轮该结论**不接线**（门控 `ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER = false`）：只保留判定能力
+ *  与单测，供 UV 口径验证后开启。
+ *  判定走**执行计划**（`plan.passes` + `pp.bindings`）—— 与 `EffectRunner.update` 的槽绑定同源；
+ *  不得改读原始 `pass.bind`：未解析名字的 bind 会被计划丢弃，那种形态下 update 实际绑的是
+ *  `textureSlots[j]`（两套口径会对同一 pass 给出相反结论）。 */
+export declare function referencesFrameSnapshot(chains: CompiledEffectPass[][], plan?: EffectPlan): boolean;
 export declare function isLinearEffectChain(passes: CompiledEffectPass[]): boolean;
 export interface IsolatedHostView {
     id: number;
@@ -22,6 +39,15 @@ export interface ObjectEffectHost {
     isolatedObjects(): IsolatedHostView[];
     setObjectOutput(id: number, texture: THREE.Texture): void;
     resizeObjectRT(id: number, width: number, height: number): void;
+    /** 段边界快照的拉取入口（§3.5）：拍一张「到此刻为止已绘制内容」；无 FrameCapture / 未激活 → null。 */
+    captureFullFrame(): THREE.Texture | null;
+    /** 快照代号的**实时**读取入口（= `FrameCapture.snapshotVersion`）：排队的 update 在**执行当刻**
+     *  读它，与捕获当刻记录的代号比较，不一致即按「无快照」走。无 FrameCapture 时返回 -1。
+     *  未实现 ⇒ 无从比较（退回「不因版本作废」，与接线前同语义）。 */
+    frameSnapshotVersion?(): number;
+    /** 把该对象登记为段边界消费者（player 的既有公开方法）：登记后 frameCapture 才会 active
+     *  ⇒ 段渲染与其段边界快照才会发生（不登记 ⇒ 本对象的链永远拿不到快照）。 */
+    registerFrameConsumer(objectId: number): void;
 }
 export declare class ObjectEffectStage implements ObjectEffectStage {
     private readonly host;
@@ -34,6 +60,8 @@ export declare class ObjectEffectStage implements ObjectEffectStage {
     private queue;
     /** 去重告警集合（按 key 只打印一次，防每帧刷屏）。 */
     private warned;
+    /** 本帧各对象在段边界拿到的整帧快照 + **捕获当刻**的快照代号（advance 消费后清空，快照逐帧覆盖）。 */
+    private boundarySnapshots;
     /** 音频频谱源（A3）：每帧同一缓冲引用；null = 全零静音（无音频/音效关闭）。 */
     private audioSpectrum;
     constructor(host: ObjectEffectHost, opts: {
@@ -65,6 +93,9 @@ export declare class ObjectEffectStage implements ObjectEffectStage {
     /** 注入音频频谱源（A3，由 three-renderer 每帧刷新后转入）：效果链的音频 uniform 由它驱动。
      *  null = 全零静音（无 sound / 音效开关关闭），行为与接线前一致。 */
     setAudioSpectrum(source: Uint8Array | null): void;
+    /** 执行当刻判「快照已换代」：实时代号 ≠ 捕获当刻代号 ⇒ 快照纹理已被 resize/dispose 换掉。
+     *  `-1`（宿主未提供代号）不作废 —— 无从比较时按既有语义照常使用。 */
+    private snapshotStale;
     dispose(): void;
     debugRunners(): Map<number, EffectRunner>;
     debugInjectRunner(id: number, runner: EffectRunner): void;
@@ -74,5 +105,7 @@ export declare class ObjectEffectStage implements ObjectEffectStage {
     private enqueue;
     private runTask;
     private finishTask;
+    /** `plan` 由调用方传入（`setObjectChains` 已按同一尺寸算过一份，且用它判定过消费者）：
+     *  再算一遍会让「判定用的计划」与「执行用的计划」可能分叉。 */
     private mount;
 }

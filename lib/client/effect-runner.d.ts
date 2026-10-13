@@ -5,7 +5,25 @@ import { type EffectPlan } from './effect-graph.js';
 export declare function resolveTextureSlotPath(path: string | null | undefined): string | null;
 export declare function isBuiltinTexturePath(path: string | null | undefined): boolean;
 export declare function builtinTextureUrl(path: string | null | undefined): string | null;
-export declare function resolveBuiltinTexture(path: string | null | undefined): THREE.Texture | null;
+export declare const FRAME_SNAPSHOT_RT = "_rt_FullFrameBuffer";
+/** 该槽路径是否指向整帧快照（只认这一个名字；`_rt_FullCompoBuffer1_23_40` 这类派生名一律 false）。 */
+export declare function isFrameSnapshotPath(path: string | null | undefined): boolean;
+/** 该纹理槽是否被**计划里的** bind 覆盖（覆盖 ⇒ `update` 实际绑的是 bind 的源，不是 `textureSlots[slot]`）。
+ *  「谁引用了整帧快照」的判定与实际槽绑定共用本函数 ⇒ 两处口径不可能分叉。 */
+export declare function slotBoundByBind(bindings: readonly {
+    slot: number;
+}[], slot: number): boolean;
+/** 该 pass 是否**真的**会采样整帧快照：`textures[j] = _rt_FullFrameBuffer` 且该槽未被 bind 覆盖。
+ *  ⚠️ bind 的**唯一来源必须是执行计划的 `pp.bindings`**（`update` 的槽绑定读的就是它）：原始
+ *  `pass.bind` 里未解析名字的 bind 会被 `buildEffectPlan` 丢弃，那种形态下 `update` 实际绑的是
+ *  `textureSlots[j]` —— 读 `pass.bind` 会对同一 pass 给出相反结论（两套来源，已废弃）。 */
+export declare function passSamplesFrameSnapshot(pass: CompiledEffectPass, bindings: readonly {
+    slot: number;
+}[]): boolean;
+/** 该对象是否引用整帧快照（判定完全基于执行计划）：任一**计划内** pass 会采样它 ⇒ 该对象就是段边界
+ *  消费者。计划里没有的 pass（`droppedChains`）不算 —— 它们不会执行。 */
+export declare function planSamplesFrameSnapshot(chains: CompiledEffectPass[][], plan: EffectPlan): boolean;
+export declare function resolveBuiltinTexture(path: string | null | undefined, frameTexture?: THREE.Texture | null): THREE.Texture | null;
 export declare function resolveEmptySlotTexture(mode: string | null | undefined): THREE.Texture | null;
 export declare function effectSlotCount(pass: CompiledEffectPass): number;
 export declare function resolveSlotFallback(pass: CompiledEffectPass, index: number): THREE.Texture | null;
@@ -94,7 +112,7 @@ export declare class EffectRunner {
      *  调用方还需排除「该槽已被 bind 覆盖」：那时实际用的是 bind 的源，拦截与告警都是误导。 */
     private isForeignRuntimeRt;
     private resolveTextureSlot;
-    update(time: number, input: THREE.WebGLRenderTarget | THREE.Texture): Promise<THREE.Texture | null>;
+    update(time: number, input: THREE.WebGLRenderTarget | THREE.Texture, frameTexture?: THREE.Texture | null): Promise<THREE.Texture | null>;
     lastOutput(): THREE.Texture | null;
     dispose(): void;
 }

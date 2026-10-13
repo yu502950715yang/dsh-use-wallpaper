@@ -21469,6 +21469,16 @@ var VideoTexture = class extends Texture {
     }
   }
 };
+var FramebufferTexture = class extends Texture {
+  constructor(width, height) {
+    super({ width, height });
+    this.isFramebufferTexture = true;
+    this.magFilter = NearestFilter;
+    this.minFilter = NearestFilter;
+    this.generateMipmaps = false;
+    this.needsUpdate = true;
+  }
+};
 var CompressedTexture = class extends Texture {
   constructor(mipmaps, width, height, format, type, mapping, wrapS, wrapT, magFilter, minFilter, anisotropy, colorSpace) {
     super(null, mapping, wrapS, wrapT, magFilter, minFilter, format, type, anisotropy, colorSpace);
@@ -22948,6 +22958,54 @@ function renderIntoRenderTarget(renderer, target, scene, camera) {
   return prevAlpha;
 }
 
+// src/client/composite-quad.ts
+var VERT = `
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = vec4(position.xy, 0.0, 1.0);
+}
+`;
+var FRAG = `
+uniform sampler2D tSrc;
+varying vec2 vUv;
+void main() {
+  gl_FragColor = vec4(texture2D(tSrc, vUv).rgb, 1.0);
+}
+`;
+function createCompositeQuad(renderer) {
+  const geometry = new PlaneGeometry(2, 2);
+  const camera = new OrthographicCamera(-1, 1, 1, -1, -1, 1);
+  const material = new ShaderMaterial({
+    uniforms: { tSrc: { value: null } },
+    vertexShader: VERT,
+    fragmentShader: FRAG,
+    depthTest: false,
+    depthWrite: false
+  });
+  const mesh = new Mesh(geometry, material);
+  mesh.frustumCulled = false;
+  const scene = new Scene();
+  scene.add(mesh);
+  let disposed = false;
+  return {
+    composite(r, texture) {
+      if (disposed) return;
+      material.uniforms.tSrc.value = texture;
+      r.render(scene, camera);
+    },
+    resize() {
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      geometry.dispose();
+      material.dispose();
+      scene.remove(mesh);
+    }
+  };
+}
+
 // src/client/text-object.ts
 var POINTSIZE_TO_PX = 4;
 var DEFAULT_POINTSIZE = 12;
@@ -23274,6 +23332,13 @@ uniform mat4 persp;
 uniform vec3 perspEye;
 // \u5BF9\u8C61\u6B27\u62C9\u89D2\uFF08**\u5F27\u5EA6**\uFF09\u2014\u2014 WE model matrix = T\xB7R\xB7S \u7684 R \u90E8\u5206\u3002
 uniform vec3 objAngles;
+#ifdef REFRACT
+// \u5C4F\u5E55\u7A7A\u95F4\u6298\u5C04\uFF08WE genericparticle.vert \u7684 REFRACT \u5206\u652F\uFF09\uFF1A\u4F4D\u79FB\u5F3A\u5EA6\u6765\u81EA\u6750\u8D28
+// ui_editor_properties_refract_amount\uFF0C\u7247\u5143\u7528\u5B83\u7B97\u5C4F\u5E55 UV \u504F\u79FB\u540E\u91C7\u80CC\u666F\u5FEB\u7167\u3002
+uniform float refractAmount;
+varying vec3 vScreenCoord;      // gl_Position.xyw\uFF08.z \u5373 w\uFF0C\u4F9B\u7247\u5143\u505A\u900F\u89C6\u9664\u6CD5\uFF09
+varying vec4 vScreenTangents;   // (rRight.x, rUp.x, rRight.y, rUp.y) * refractAmount
+#endif
 varying vec2 vCornerUv;
 varying vec2 vParticleUv;
 varying vec3 vParticleColor;
@@ -23349,6 +23414,16 @@ void main() {
   // \u9632\u300Cemitter \u7403\u58F3\u6563\u5C04\u53EF\u5230 \xB1750 \u7684\u7C92\u5B50\u88AB z \u88C1\u526A \u2192 \u7C92\u5B50\u4E0D\u53EF\u89C1\u300D\u3002\u8FD9\u91CC\u628A NDC z \u5F3A\u5236\u5F52\u4E2D\uFF080\uFF09\uFF0C
   // \u914D\u5408 material.depthTest=false\uFF08\u5FFD\u7565\u6DF1\u5EA6\uFF09\uFF0C\u4FDD\u8BC1\u7C92\u5B50\u4E0D\u88AB\u76F8\u673A\u6DF1\u5EA6\u8303\u56F4\u88C1\u526A\uFF08\u5BF9\u9F50 wasm \u8BED\u4E49\uFF09\u3002
   gl_Position.z = 0.0;
+#ifdef REFRACT
+  // \u6298\u5C04\u5207\u7EBF\u57FA\uFF08\u5C4F\u5E55\u7A7A\u95F4\u4F4D\u79FB\u65B9\u5411\uFF09\uFF1A\u4E0E\u4E0A\u9762 quad \u89D2\u70B9\u5C55\u5F00**\u540C\u4E00\u65CB\u8F6C\u7EA6\u5B9A\u4E0E\u540C\u4E00\u6B21\u5E8F**
+  // \uFF08\u5148\u7C92\u5B50\u81EA\u65CB\u3001\u518D\u5BF9\u8C61\u89D2\u5EA6\uFF09\uFF0C\u5BF9\u9F50 WE ComputeParticleTangents\uFF08common_particles.h:26-39
+  // \u5148\u7B97\u7C92\u5B50\u5207\u7EBF\u3001\u518D\u7531\u5BF9\u8C61 orientation \u53D8\u6362\uFF1Bgenericparticle.vert:85,117 \u540C\u5E8F\uFF09\u3002
+  // vScreenCoord \u5FC5\u987B\u5728 gl_Position \u4E4B\u540E\u53D6\u3002
+  vec3 rRight = normalize(weObjectRotate(weObjectRotate(vec3(1.0, 0.0, 0.0), particleRot), objAngles));
+  vec3 rUp = normalize(weObjectRotate(weObjectRotate(vec3(0.0, 1.0, 0.0), particleRot), objAngles));
+  vScreenCoord = gl_Position.xyw;
+  vScreenTangents = refractAmount * vec4(rRight.x, rUp.x, rRight.y, rUp.y);
+#endif
 }
 `;
 var PARTICLE_FRAGMENT_SHADER = `
@@ -23358,6 +23433,13 @@ uniform float frameCols;
 uniform float frameRows;
 uniform float softness;
 uniform float maskMode;
+#ifdef REFRACT
+// \u6298\u5C04\u5C42\uFF1ArefractNormal = \u69FD 1\uFF08\u6CD5\u7EBF/\u906E\u7F69\uFF0C\u4E0E\u69FD 0 \u540C\u4E00\u5E27\u5B50\u533A UV\uFF09\uFF0CrefractBg = \u672C\u5E27\u573A\u666F\u5FEB\u7167\u3002
+uniform sampler2D refractNormal;
+uniform sampler2D refractBg;
+varying vec3 vScreenCoord;
+varying vec4 vScreenTangents;
+#endif
 varying vec2 vCornerUv;
 varying vec2 vParticleUv;
 varying vec3 vParticleColor;
@@ -23379,6 +23461,19 @@ void main() {
   float frameV = (rows - 1.0 - row + vCornerUv.y) / rows;
   vec2 texUv = vec2((col + vCornerUv.x) / cols, frameV);
   vec4 texel = texture2D(map, texUv);
+  vec3 rgb = vParticleColor * texel.rgb;
+#ifdef REFRACT
+  // \u5C4F\u5E55\u7A7A\u95F4\u6298\u5C04\uFF08WE genericparticle.frag:103-116 \u9010\u884C\uFF09\uFF1A\u6CD5\u7EBF\u53D6 R/G/A \u901A\u9053\uFF0C\u4F4D\u79FB\u518D\u4E58\u906E\u7F69\u4E0E\u7C92\u5B50 alpha\u3002
+  vec4 nrm = texture2D(refractNormal, texUv);
+  float nx = nrm.a * 2.0 - 1.0;
+  float ny = nrm.g * 2.0 - 1.0;
+  float mask = nrm.r;
+  vec2 off = vScreenTangents.xy * nx + vScreenTangents.zw * ny;
+  off.y = -off.y;
+  off *= mask * vParticleAlpha;
+  vec2 rsUv = vScreenCoord.xy / vScreenCoord.z * 0.5 + 0.5 + off;
+  rgb *= texture2D(refractBg, rsUv).rgb;
+#endif
   // \u5706\u76D8\u8F6F\u8870\u51CF\uFF08center\u2192edge\uFF09\u3002softness \u2208 [0,1]\uFF1A0=\u786C\u8FB9\uFF08\u4EC5\u5728 quad \u8FB9\u7F18\u6536\u5C3E\uFF09\uFF0C1=\u5168\u67D4\uFF08\u4E2D\u5FC3\u2192\u8FB9\u7F18\u5E73\u6ED1\u8870\u51CF\uFF09\u3002
   float dist = length(vCornerUv - 0.5) * 2.0;
   float edgeStart = clamp(1.0 - softness, 0.0001, 0.9999);
@@ -23386,7 +23481,7 @@ void main() {
   // mask_mode\uFF1A1\uFF08\u771F\u5B9E\u7EB9\u7406\u906E\u7F69\uFF0C\u5F62\u72B6=texel.a\uFF09\u2194 0\uFF08\u65E0\u7EB9\u7406\u8F6F\u5706\u70B9\uFF0C\u5F62\u72B6=disk\uFF09\u3002
   float shape = mix(disk, texel.a, maskMode);
   float a = vParticleAlpha * shape;
-  gl_FragColor = vec4(vParticleColor * texel.rgb, a);
+  gl_FragColor = vec4(rgb, a);
 }
 `;
 function createWhiteTexture() {
@@ -23474,6 +23569,18 @@ var ThreeScenePlayer = class {
   objectEffectStage = null;
   // 应用级 Glow 注入点（null = 本壁纸不开 Glow，帧序退化为原路径）。
   glowStage = null;
+  // 帧内快照注入点（null 或 active=false = 本壁纸无消费者 ⇒ 帧序与改动前逐字相同）。
+  frameCapture = null;
+  // 消费者集合（键 = scene.json 对象 id）：段渲染时每个消费者**开启新的一段**，段数 = 消费者数 + 1。
+  frameConsumers = /* @__PURE__ */ new Set();
+  // 折射层（键 = scene.json 对象 id → 粒子图层）：段边界把本帧快照写进它的 refractBg。
+  refractLayers = /* @__PURE__ */ new Map();
+  // 折射层「无可用快照 ⇒ 已隐藏」只做一次（防与脚本的 visible 状态每帧互踩）。
+  refractHidden = false;
+  // 已告警过的未匹配消费者（防每帧刷屏）。
+  warnedConsumers = /* @__PURE__ */ new Set();
+  // 末段合成用的全屏 quad（惰性建：只有真的走段渲染且 Glow 关闭时才建）。
+  compositeQuad = null;
   // g_Time 时间原点（构造时刻），advance 传「自 player 创建起的秒数」。
   startedAt = typeof performance !== "undefined" ? performance.now() : 0;
   constructor(canvas, width, height, renderer, qualityScale = 1) {
@@ -23515,6 +23622,9 @@ var ThreeScenePlayer = class {
     if (this.canvas.height !== bufH) this.canvas.height = bufH;
     const buf = this.renderer.domElement ?? this.canvas;
     this.glowStage?.resize(buf.width, buf.height);
+    this.frameCapture?.resize(buf.width, buf.height);
+    this.objectEffectStage?.notifyViewportResize?.();
+    this.compositeQuad?.resize(buf.width, buf.height);
     for (const entry of this.isolated.values()) {
       this.applyCompositeSampling(entry.rt, entry.worldW, entry.worldH);
     }
@@ -23637,13 +23747,127 @@ var ThreeScenePlayer = class {
   // 手动渲染一帧（不依赖 RAF，供测试/调用方直接触发）。
   // 帧序与 setAnimationLoop 的帧体一致（不带 dt）：隔离内容 → bindOutputs → 主场景 → advance。
   // 装配了 glowStage 时主场景渲染委托给它（stage 内部渲染主场景到 RT 再做全屏 glow 合成）。
+  // ★ 只有 frameCapture?.active（本壁纸真有消费者）时才改走段渲染（renderSegmented），
+  //   否则调用序列与引入本分支前**逐字节一致**（结构性零回归）。
   render() {
     if (this.devicePixelRatio() !== this.lastDpr) this.resize(this.viewWidth, this.viewHeight);
     if (this.isolated.size > 0) this.renderIsolatedContents();
     this.objectEffectStage?.bindOutputs();
-    if (this.glowStage) this.glowStage.apply(this.renderer, this.scene, this.camera);
+    this.hideRefractWithoutCapture();
+    if (this.frameCapture?.active) this.renderSegmented();
+    else if (this.glowStage) this.glowStage.apply(this.renderer, this.scene, this.camera);
     else this.renderer.render(this.scene, this.camera);
     this.objectEffectStage?.advance(this.elapsedSeconds());
+  }
+  /** 注入帧内快照（null = 关闭）。契约见 frame-capture.ts；active=false 时帧序不变。 */
+  setFrameCapture(capture) {
+    this.frameCapture = capture;
+    this.checkFrameConsumers();
+  }
+  /** 登记一个「需要帧内快照」的消费者（键 = scene.json 对象 id）：它开启新的一段，快照拍在它**之前**。 */
+  registerFrameConsumer(objectId) {
+    this.frameConsumers.add(objectId);
+    this.checkFrameConsumers();
+  }
+  // 消费者集合与 capture.active 的唯一收口：命中显示对象 ⇒ 激活段渲染；未命中 ⇒ 一次性告警（该段边界不存在）。
+  checkFrameConsumers() {
+    for (const objectId of this.frameConsumers) {
+      if (this.displayObjects.has(objectId)) {
+        this.frameCapture?.use();
+        continue;
+      }
+      if (this.warnedConsumers.has(objectId)) continue;
+      this.warnedConsumers.add(objectId);
+      console.warn(`[three] \u5E27\u5185\u5FEB\u7167\u6D88\u8D39\u8005\u672A\u5339\u914D\u5230\u663E\u793A\u5BF9\u8C61\uFF08\u5DF2\u5FFD\u7565\uFF09: id=${objectId}`);
+    }
+  }
+  // 折射层但没有可用快照（未注入 FrameCapture / 未激活）：不画（画出来只会是白方块），并告警一次。
+  hideRefractWithoutCapture() {
+    if (this.refractHidden || this.refractLayers.size === 0) return;
+    if (this.frameCapture?.active === true) return;
+    this.refractHidden = true;
+    for (const layer of this.refractLayers.values()) layer.mesh.visible = false;
+    console.warn("[three] \u6298\u5C04\u5C42\u65E0\u53EF\u7528\u5E27\u5185\u5FEB\u7167\uFF08FrameCapture \u672A\u6FC0\u6D3B\uFF09\u2192 \u9690\u85CF\u8BE5\u5C42\uFF0C\u4E0D\u753B\u767D\u65B9\u5757");
+  }
+  /**
+   * 段渲染：按 renderOrder 升序把主场景顶层对象切成若干段（消费者**开启**新的一段，段数 = 消费者数 + 1），
+   * 逐段渲染进 frameCapture.target（段间 autoClear=false 累积），消费者段的快照拍在该段 render **之前**，
+   * 末段合成回默认 fb。WE 对齐点：lwe CScene.cpp:351-361 按 m_objectsByRenderOrder 逐个 render()；
+   * REFRACT 在画该层**前** blit 场景 FBO（CParticle.cpp:2069-2079）。
+   */
+  renderSegmented() {
+    const capture = this.frameCapture;
+    if (!capture) return;
+    const children = [...this.scene.children];
+    const prevAutoClear = this.renderer.autoClear !== false;
+    const prevVisible = children.map((o) => o.visible);
+    const prevClearColor = new Color();
+    this.renderer.getClearColor(prevClearColor);
+    const prevClearAlpha = this.renderer.getClearAlpha();
+    const consumerObjectIdByIndex = /* @__PURE__ */ new Map();
+    for (let i = 0; i < children.length; i++) {
+      const obj = children[i];
+      for (const objectId of this.frameConsumers) {
+        if (this.displayObjects.get(objectId) === obj) {
+          consumerObjectIdByIndex.set(i, objectId);
+          break;
+        }
+      }
+    }
+    const order = children.map((obj, i) => ({ obj, i })).sort((a, b) => a.obj.renderOrder - b.obj.renderOrder);
+    const segments = [];
+    let current = null;
+    for (const { i } of order) {
+      const isConsumer = consumerObjectIdByIndex.has(i);
+      if (current === null || isConsumer) {
+        if (current !== null) segments.push(current);
+        current = { members: [], consumer: isConsumer ? i : null };
+      }
+      current.members.push(i);
+    }
+    if (current !== null) segments.push(current);
+    try {
+      this.renderer.setRenderTarget(capture.target);
+      this.renderer.setClearColor(0, 1);
+      this.renderer.clear();
+      this.renderer.autoClear = false;
+      for (const segment of segments) {
+        const members = new Set(segment.members);
+        for (let i = 0; i < children.length; i++) {
+          children[i].visible = prevVisible[i] && members.has(i);
+        }
+        if (segment.consumer !== null) {
+          const snapshot = capture.capture();
+          const consumerObjectId = consumerObjectIdByIndex.get(segment.consumer);
+          if (consumerObjectId !== void 0) {
+            this.objectEffectStage?.onSegmentBoundary?.(consumerObjectId, snapshot, capture.snapshotVersion);
+          }
+          const refractLayer = consumerObjectId === void 0 ? void 0 : this.refractLayers.get(consumerObjectId);
+          if (refractLayer !== void 0 && consumerObjectId !== void 0) {
+            refractLayer.material.uniforms.refractBg.value = snapshot;
+            if (!refractLayer.loggedRefract) {
+              refractLayer.loggedRefract = true;
+              const size = snapshot.image;
+              console.log(
+                `[three] refract layer=${consumerObjectId} bg=${size?.width ?? 0}x${size?.height ?? 0} amount=${refractLayer.material.uniforms.refractAmount.value}`
+              );
+            }
+          }
+        }
+        this.renderer.render(this.scene, this.camera);
+      }
+    } finally {
+      this.renderer.autoClear = prevAutoClear;
+      this.renderer.setClearColor(prevClearColor, prevClearAlpha);
+      this.renderer.setRenderTarget(null);
+      for (let i = 0; i < children.length; i++) children[i].visible = prevVisible[i];
+    }
+    if (this.glowStage) {
+      this.glowStage.apply(this.renderer, this.scene, this.camera, capture.target);
+    } else {
+      this.compositeQuad ??= createCompositeQuad(this.renderer);
+      this.compositeQuad.composite(this.renderer, capture.target.texture);
+    }
   }
   // 对象级效果链的编排器注入点（null = 本壁纸无效果链，帧序退化为原路径）。
   setObjectEffectStage(stage) {
@@ -23670,6 +23894,22 @@ var ThreeScenePlayer = class {
     const mat = entry.quad.material;
     if (mat instanceof ShaderMaterial) mat.uniforms.map.value = texture;
     else if (mat instanceof MeshBasicMaterial) mat.map = texture;
+  }
+  // 段边界快照的拉取入口（ObjectEffectHost 契约，§3.5）：拍一张「到此刻为止已绘制内容」。
+  // 无 FrameCapture / 未激活（本壁纸无消费者）→ null；dispose 后 capture() 抛错 ⇒ 同样降级 null。
+  captureFullFrame() {
+    if (this.frameCapture?.active !== true) return null;
+    try {
+      return this.frameCapture.capture();
+    } catch {
+      return null;
+    }
+  }
+  // 快照代号的**实时**读取入口（ObjectEffectHost 契约）：编排器在排队的 update **执行当刻**读它，
+  // 与捕获当刻记录的代号比较 ⇒ 不一致即说明那张快照已被 resize/dispose 换掉，按「无快照」走。
+  // 无 FrameCapture 时返回 -1（任何捕获时代号都不等于 -1 ⇒ 一律视为已作废）。
+  frameSnapshotVersion() {
+    return this.frameCapture?.snapshotVersion ?? -1;
   }
   // 重设隔离对象的 RT 尺寸（视口/dpr 变化时由编排器调用）：**只改分辨率**。
   // 局部相机覆盖的世界范围（camW/camH）与合成几何的 UV 窗口都只依赖**世界尺寸**，与 RT 像素
@@ -23717,7 +23957,7 @@ var ThreeScenePlayer = class {
     const mod = materialModulation(void 0, opts.alpha, opts.brightness);
     const material = this.createLayerMaterial(opts.texture ?? null, opts.colorBlendMode ?? 0, mod, !!opts.isolate);
     const mesh = new Mesh(geometry, material);
-    mesh.renderOrder = 0;
+    mesh.renderOrder = opts.renderOrder ?? 0;
     const s = opts.scale;
     mesh.scale.set(s[0], s[1], s[2] ?? 1);
     const a = opts.angles ?? [0, 0, 0];
@@ -23736,7 +23976,7 @@ var ThreeScenePlayer = class {
         x: opts.origin[0] - sceneW / 2,
         y: opts.origin[1] - sceneH / 2,
         z: opts.origin[2]
-      }, [a[0], a[1], a[2]], opts.colorBlendMode ?? 0);
+      }, [a[0], a[1], a[2]], opts.colorBlendMode ?? 0, opts.renderOrder);
     } else {
       this.scene.add(mesh);
     }
@@ -23859,7 +24099,7 @@ var ThreeScenePlayer = class {
   //   - 背景：内容 mesh 的 rotation 已归零（RT 内容**不含**旋转）→ quad 承载对象 angles；
   //   - 粒子：内容 shader 里已施加 objAngles（RT 内容**已含**旋转）→ quadAngles 传 [0,0,0]，
   //     否则同一份旋转被施加两次。
-  attachIsolated(objectId, kind, content, worldW, worldH, size, position, quadAngles, colorBlendMode) {
+  attachIsolated(objectId, kind, content, worldW, worldH, size, position, quadAngles, colorBlendMode, renderOrder) {
     const rtW = Math.max(1, Math.round(size.width));
     const rtH = Math.max(1, Math.round(size.height));
     const isFullscreen = kind === "background" && Math.abs(worldW) >= this.sceneWidth * 0.98 && Math.abs(worldH) >= this.sceneHeight * 0.98;
@@ -23879,7 +24119,7 @@ var ThreeScenePlayer = class {
     );
     quad.position.set(position.x, position.y, position.z);
     quad.rotation.set(quadAngles[0], quadAngles[1], quadAngles[2]);
-    quad.renderOrder = kind === "particle" ? 1 : 0;
+    quad.renderOrder = renderOrder ?? (kind === "particle" ? 1 : 0);
     this.scene.add(quad);
     this.isolated.set(objectId, {
       id: objectId,
@@ -23962,6 +24202,8 @@ var ThreeScenePlayer = class {
     const frameRows = Number.isFinite(opts.frameRows) && opts.frameRows > 0 ? Math.max(1, Math.floor(opts.frameRows)) : 1;
     const hasTex = !!opts.tex;
     const softness = opts.softness ?? (hasTex ? 0.15 : 1);
+    const refractEnabled = !!opts.refract && !opts.isolate;
+    const refractAmount = Number.isFinite(opts.refract?.amount) ? opts.refract.amount : 0.05;
     const geometry = new InstancedBufferGeometry();
     geometry.setAttribute("position", new BufferAttribute(PARTICLE_QUAD_CORNERS, 3));
     geometry.setIndex(new BufferAttribute(new Uint16Array(PARTICLE_QUAD_INDEX), 1));
@@ -23991,6 +24233,13 @@ var ThreeScenePlayer = class {
         frameRows: { value: frameRows },
         softness: { value: softness },
         maskMode: { value: hasTex ? 1 : 0 },
+        // 折射 uniform 只给折射层（非折射层连 uniform 都不建：零开销、零分歧）。
+        // refractBg 缺省 1×1 白 = 不做位移（快照由段渲染在消费者绘制前写入）。
+        ...refractEnabled ? {
+          refractNormal: { value: opts.refract.normalTex },
+          refractBg: { value: createWhiteTexture() },
+          refractAmount: { value: refractAmount }
+        } : {},
         // 对象变换（缺省恒等 → 顶点 shader 退化为旧的 worldPos = particlePosition + corner*size/2）。
         objCenter: { value: new Vector3(...opts.objectCenter ?? [0, 0, 0]) },
         objScale: { value: new Vector3(...opts.objectScale ?? [1, 1, 1]) },
@@ -24014,6 +24263,9 @@ var ThreeScenePlayer = class {
       },
       vertexShader: PARTICLE_VERTEX_SHADER,
       fragmentShader: PARTICLE_FRAGMENT_SHADER,
+      // three 的 define 进 program cache key：非折射层的 program 与改动前完全同源
+      // （仅在折射时给 defines 键 —— 显式 undefined 会被 Material 构造器告警刷屏）。
+      ...refractEnabled ? { defines: { REFRACT: 1 } } : {},
       transparent: true,
       depthWrite: false,
       depthTest: false,
@@ -24023,7 +24275,7 @@ var ThreeScenePlayer = class {
     const mesh = new Mesh(geometry, material);
     mesh.frustumCulled = false;
     geometry.boundingSphere = new Sphere(new Vector3(0, 0, 0), Number.POSITIVE_INFINITY);
-    mesh.renderOrder = 1;
+    mesh.renderOrder = opts.renderOrder ?? 1;
     if (opts.isolate) {
       const c = opts.objectCenter ?? [0, 0, 0];
       mesh.position.set(-c[0], -c[1], -c[2]);
@@ -24047,7 +24299,9 @@ var ThreeScenePlayer = class {
       velocities,
       capacity,
       loggedFirstFrame: false,
-      loggedCount: 0
+      loggedCount: 0,
+      refract: refractEnabled,
+      loggedRefract: false
     };
     this.particleLayers.set(id, layer);
     this.writeParticleData(layer, initial, count);
@@ -24062,12 +24316,17 @@ var ThreeScenePlayer = class {
         { width: opts.isolate.rtWidth, height: opts.isolate.rtHeight },
         { x: center[0], y: center[1], z: center[2] },
         [0, 0, 0],
-        0
+        0,
+        opts.renderOrder
       );
     }
     if (opts.objectId !== void 0) {
       const shown = opts.isolate ? this.isolated.get(opts.isolate.objectId)?.quad : mesh;
       if (shown) this.displayObjects.set(opts.objectId, shown);
+    }
+    if (refractEnabled && opts.objectId !== void 0) {
+      this.refractLayers.set(opts.objectId, layer);
+      this.registerFrameConsumer(opts.objectId);
     }
     return id;
   }
@@ -24188,6 +24447,12 @@ var ThreeScenePlayer = class {
     this.objectEffectStage = null;
     this.glowStage?.dispose();
     this.glowStage = null;
+    this.frameCapture = null;
+    this.frameConsumers.clear();
+    this.warnedConsumers.clear();
+    this.refractLayers.clear();
+    this.compositeQuad?.dispose();
+    this.compositeQuad = null;
     this.renderer.dispose();
   }
 };
@@ -24244,7 +24509,7 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
   const particleLayers = [];
   const sims = [];
   const textDrivers = [];
-  for (const obj of desc.objects) {
+  for (const [renderOrder, obj] of desc.objects.entries()) {
     if (obj.kind === "image") {
       const t = world(obj);
       const id = player.addBackground({
@@ -24262,6 +24527,8 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
         sceneH,
         // 脚本图层桥的键 = scene 对象 id（**总是传**，与只在隔离时传的 isolate.objectId 区分）。
         objectId: obj.id,
+        // 唯一绘制序 = 本对象在 objects 数组中的下标。
+        renderOrder,
         // 对象级效果链：本对象带效果（调用方下发了隔离条件）→ 内容进 localScene 渲染到对象 RT，
         // 主场景放合成 quad；缺省不隔离，行为与今天逐字相同。隔离条目的键 = obj.id（值里的
         // objectId 同值），与 ObjectEffectStage 的键空间一致。
@@ -24281,7 +24548,9 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
         texture: layer.texture,
         sceneW,
         sceneH,
-        objectId: obj.id
+        objectId: obj.id,
+        // 唯一绘制序 = 本对象在 objects 数组中的下标。
+        renderOrder
       });
       backgroundIds.push(id);
       if (layer.driver) {
@@ -24336,8 +24605,12 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
           });
           return { fov: cam.fov, distance: cam.distance, aspect: sceneW / sceneH };
         })() : void 0,
+        // 折射层（材质 combo REFRACT=1）：槽 1 法线/遮罩 + 位移强度；非折射层不传（零分歧）。
+        refract: p.refract,
         // 脚本图层桥的键 = scene 对象 id（总是传）。
         objectId: obj.id,
+        // 唯一绘制序 = 本对象在 objects 数组中的下标。
+        renderOrder,
         // 对象级效果链：带效果的粒子对象同样隔离（对象 RT + 合成 quad）。世界尺寸由调用方按
         // `particleWorldSize(spec, scale)` 算好（player 不知道 spec 的 distanceMax）；缺省不隔离。
         // 隔离条目的键 = obj.id（值里的 objectId 同值），与 ObjectEffectStage 的键空间一致。
@@ -24870,6 +25143,12 @@ async function resolveImageTexture(id, obj) {
 var PARTICLE_TEX_ALIASES = {
   "presets/lightshaft": "light/light_shafts_0"
 };
+function particleTextureUrl(id, texName) {
+  const short = texName.startsWith("particle/") ? texName.slice("particle/".length) : texName;
+  const aliased = PARTICLE_TEX_ALIASES[short];
+  const name = aliased ? `particle/${aliased}` : texName;
+  return `/wallpapers/particle-texture?id=${encodeURIComponent(id)}&name=${encodeURIComponent(name)}`;
+}
 async function resolveParticleMaterial(id, specText) {
   try {
     const spec = JSON.parse(specText);
@@ -24880,14 +25159,21 @@ async function resolveParticleMaterial(id, specText) {
     const mat = await matResp.json();
     const pass0 = mat?.passes?.[0];
     const blending = typeof pass0?.blending === "string" ? pass0.blending : null;
+    const refract = pass0?.combos?.REFRACT === 1;
+    const rawAmount = pass0?.constantshadervalues?.ui_editor_properties_refract_amount;
+    const refractAmount = typeof rawAmount === "number" && Number.isFinite(rawAmount) ? rawAmount : 0.05;
     const texName = pass0?.textures?.[0];
-    if (typeof texName !== "string" || !texName) return { texUrl: null, blending };
-    const short = texName.startsWith("particle/") ? texName.slice("particle/".length) : texName;
-    const aliased = PARTICLE_TEX_ALIASES[short];
-    const name = aliased ? `particle/${aliased}` : texName;
+    const normalName = pass0?.textures?.[1];
+    const normalTexUrl = typeof normalName === "string" && normalName ? particleTextureUrl(id, normalName) : null;
+    if (typeof texName !== "string" || !texName) {
+      return { texUrl: null, blending, refract, normalTexUrl, refractAmount };
+    }
     return {
-      texUrl: `/wallpapers/particle-texture?id=${encodeURIComponent(id)}&name=${encodeURIComponent(name)}`,
-      blending
+      texUrl: particleTextureUrl(id, texName),
+      blending,
+      refract,
+      normalTexUrl,
+      refractAmount
     };
   } catch {
     return null;
@@ -25060,20 +25346,50 @@ function mulberry32(seed) {
   };
 }
 var BUILTIN_CACHE = /* @__PURE__ */ new Map();
+var FRAME_SNAPSHOT_RT = "_rt_FullFrameBuffer";
+function isFrameSnapshotPath(path) {
+  return !!path && path.replace(/\.tex$/, "") === FRAME_SNAPSHOT_RT;
+}
+function slotBoundByBind(bindings, slot) {
+  return bindings.some((b) => b.slot === slot);
+}
+function passSamplesFrameSnapshot(pass, bindings) {
+  return (pass.textureSlots ?? []).some(
+    (slot, j) => isFrameSnapshotPath(slot) && !slotBoundByBind(bindings, j)
+  );
+}
+function planSamplesFrameSnapshot(chains, plan) {
+  return plan.passes.some((pp) => {
+    const p = chains[pp.chainIndex]?.[pp.passIndex];
+    return p !== void 0 && passSamplesFrameSnapshot(p, pp.bindings);
+  });
+}
+var frameSnapshotWarned = false;
+function warnFrameSnapshotUnavailable() {
+  if (frameSnapshotWarned) return;
+  frameSnapshotWarned = true;
+  console.warn(
+    "[wallpaper-engine] \u5E27\u5185\u5FEB\u7167\u4E0D\u53EF\u7528\uFF1AresolveBuiltinTexture \u5BF9 _rt_FullFrameBuffer \u56DE\u9000 1\xD71 \u767D\u7EB9\uFF08\u6267\u884C\u5668 runner \u8DEF\u5F84\u4E0D\u8C03\u672C\u51FD\u6570\uFF1A\u5B83\u628A\u8BE5\u69FD\u7559\u7A7A\u5E76\u53E6\u6253\u4E00\u6761\u53BB\u91CD\u544A\u8B66\uFF09"
+  );
+}
 var BUILTIN_NOISE_SEEDS = {
   noise: 1370177149,
   // util/noise
   clouds256: 2115803701
   // util/clouds_256
 };
-function resolveBuiltinTexture(path) {
+function resolveBuiltinTexture(path, frameTexture) {
   if (!path) return null;
   const p = path.replace(/\.tex$/, "");
   let key;
   if (p === "util/white") key = "white";
   else if (p === "util/noise") key = "noise";
   else if (p === "util/clouds_256") key = "clouds256";
-  else if (p.startsWith("_rt_")) key = "white";
+  else if (isFrameSnapshotPath(p)) {
+    if (frameTexture) return frameTexture;
+    warnFrameSnapshotUnavailable();
+    key = "white";
+  } else if (p.startsWith("_rt_")) key = "white";
   else return null;
   const cached = BUILTIN_CACHE.get(key);
   if (cached) return cached;
@@ -25277,7 +25593,7 @@ var EffectRunner = class {
     this.clearTextures();
     for (const pass of chains.flat()) {
       for (const path of pass.textureSlots) {
-        if (path) void this.resolveTextureSlot(path);
+        if (path && !isFrameSnapshotPath(path)) void this.resolveTextureSlot(path);
       }
     }
   }
@@ -25317,7 +25633,7 @@ var EffectRunner = class {
     this.clearTextures();
     for (const pass of chains.flat()) {
       for (const path of pass.textureSlots) {
-        if (path) void this.resolveTextureSlot(path);
+        if (path && !isFrameSnapshotPath(path)) void this.resolveTextureSlot(path);
       }
     }
   }
@@ -25499,7 +25815,7 @@ var EffectRunner = class {
   // 帧循环用 lastOutput() 贴屏，last 保持最近完成输出，无帧间闪烁。
   // 有 plan 时按计划执行：写端三态（具名 RT / ping-pong）+ bind 按 g_Texture<index> 覆盖槽；
   // `previous` = 进入 target 序列前的输入（lwe CImage::configurePassTarget），逐链独立。
-  async update(time, input) {
+  async update(time, input, frameTexture = null) {
     if (this.updateInFlight) return null;
     this.updateInFlight = true;
     try {
@@ -25514,14 +25830,20 @@ var EffectRunner = class {
         for (let j = 0; j < slots; j++) {
           const path = p.textureSlots[j];
           const key = `${pp.chainIndex}:${pp.passIndex}:${j}`;
-          const boundByBind = pp.bindings.some((b) => b.slot === j);
-          if (path && !boundByBind && this.isForeignRuntimeRt(path, pp.chainIndex)) {
-            this.warnOnce(
-              `foreign-rt-slot:${this.id}:${key}:${path}`,
-              `[wallpaper-engine] \u7EB9\u7406\u69FD\u5F15\u7528\u4E86\u672C\u94FE\u672A\u58F0\u660E\u7684\u8FD0\u884C\u65F6 RT\uFF0C\u8DF3\u8FC7\u7ED1\u5B9A\uFF08\u69FD\u7559\u7A7A\uFF09: g_Texture${j} \u2190 ${path}\uFF08\u58C1\u7EB8 ${this.id}\uFF0Cpass ${pp.chainIndex}:${pp.passIndex}\uFF09`
-            );
-            slotTex.set(key, resolveSlotFallback(p, j));
-            continue;
+          const boundByBind = slotBoundByBind(pp.bindings, j);
+          if (path && !boundByBind) {
+            if (frameTexture && isFrameSnapshotPath(path)) {
+              slotTex.set(key, frameTexture);
+              continue;
+            }
+            if (this.isForeignRuntimeRt(path, pp.chainIndex)) {
+              this.warnOnce(
+                `foreign-rt-slot:${this.id}:${key}:${path}`,
+                `[wallpaper-engine] \u7EB9\u7406\u69FD\u5F15\u7528\u4E86\u672C\u94FE\u672A\u58F0\u660E\u7684\u8FD0\u884C\u65F6 RT\uFF0C\u8DF3\u8FC7\u7ED1\u5B9A\uFF08\u69FD\u7559\u7A7A\uFF09: g_Texture${j} \u2190 ${path}\uFF08\u58C1\u7EB8 ${this.id}\uFF0Cpass ${pp.chainIndex}:${pp.passIndex}\uFF09`
+              );
+              slotTex.set(key, resolveSlotFallback(p, j));
+              continue;
+            }
           }
           slotTex.set(key, path ? await this.resolveTextureSlot(path) : resolveSlotFallback(p, j));
         }
@@ -25641,8 +25963,12 @@ function blendModeToThree(mode) {
 }
 
 // src/client/object-effects.ts
+var ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER = false;
 function weVRowOrderLoader(load = loadTexTexture) {
   return (url, opts) => load(url, { ...opts, rowOrder: "topDown" });
+}
+function referencesFrameSnapshot(chains, plan) {
+  return planSamplesFrameSnapshot(chains, plan ?? buildEffectPlan(chains, { baseWidth: 1, baseHeight: 1 }));
 }
 var ObjectEffectStage = class {
   constructor(host, opts) {
@@ -25663,6 +25989,8 @@ var ObjectEffectStage = class {
   queue = [];
   /** 去重告警集合（按 key 只打印一次，防每帧刷屏）。 */
   warned = /* @__PURE__ */ new Set();
+  /** 本帧各对象在段边界拿到的整帧快照 + **捕获当刻**的快照代号（advance 消费后清空，快照逐帧覆盖）。 */
+  boundarySnapshots = /* @__PURE__ */ new Map();
   /** 音频频谱源（A3）：每帧同一缓冲引用；null = 全零静音（无音频/音效关闭）。 */
   audioSpectrum = null;
   /** 当前屏幕密度（设备像素 / 世界单位）；同源下发契约见类头。 */
@@ -25695,7 +26023,11 @@ var ObjectEffectStage = class {
       this.warnOnce(`no-isolated:${objId}`, `\u5BF9\u8C61 ${objId} \u5C1A\u65E0\u9694\u79BB\u6761\u76EE\uFF0C\u6548\u679C\u94FE\u672A\u6302\u8F7D\uFF08\u8C03\u7528\u987A\u5E8F\u9519\u8BEF\uFF09`);
       return;
     }
-    this.mount(objId, chains, view.rtWidth, view.rtHeight);
+    const plan = buildEffectPlan(chains, { baseWidth: view.rtWidth, baseHeight: view.rtHeight });
+    if (ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER && referencesFrameSnapshot(chains, plan)) {
+      this.host.registerFrameConsumer(objId);
+    }
+    this.mount(objId, chains, view.rtWidth, view.rtHeight, plan);
   }
   /** 视口变化：按新的**屏幕密度**重算每个对象的 RT 像素尺寸，并用同一份链重挂（runner 内部 RT 跟随）。
    *  尺寸口径与挂载期**同源**：同一纯函数 isolatedRtSize + 同一口径（预算输入集合的差异见 AGENT.md §7.36）
@@ -25730,6 +26062,7 @@ var ObjectEffectStage = class {
   /** 主场景渲染之前：链有输出才切合成 quad 的采样源；没有输出（首帧未就绪 / 该对象无 runner）
    *  则**不动输出**——quad 保持采样对象 RT 原图，不黑屏（降级可见，不静默画错）。 */
   bindOutputs() {
+    this.boundarySnapshots.clear();
     for (const view of this.host.isolatedObjects()) {
       const out = this.entries.get(view.id)?.runner?.lastOutput() ?? null;
       if (out) this.host.setObjectOutput(view.id, out);
@@ -25740,6 +26073,28 @@ var ObjectEffectStage = class {
   setAudioSpectrum(source) {
     this.audioSpectrum = source;
   }
+  /** 段边界（player 在消费者被绘制**之前**调用）：记下本帧快照，供**同一帧**的 advance 传进该对象的
+   *  runner ⇒ 链内 `_rt_FullFrameBuffer` 拿到本帧内容（不是上一帧）。不在此发起 update：推进统一走
+   *  advance 的串行锁（约束 3），每对象每帧恰好一次，g_Time 也沿用 advance 的时间。
+   *  `snapshotVersion` = **捕获当刻**的 `FrameCapture.snapshotVersion`；advance 把它连同纹理带进排队的
+   *  闭包，闭包**执行当刻**读宿主的实时代号比对（`snapshotStale`）—— 不一致说明快照已被 resize/dispose
+   *  换成新实例（旧的已 dispose），该对象的 update 按「无快照」（null）走。
+   *  ⚠️ 未清零的窗口：换代若正好落在 `runner.update` 内部 `await resolveTextureSlot(...)` 期间，这次
+   *  已经过校验的引用仍会被采样（极低频，见设计文档附录 A.4 ⑥）。 */
+  onSegmentBoundary(objectId, frameTexture, snapshotVersion) {
+    if (this.disposed) return;
+    const frameTex = frameTexture ?? this.host.captureFullFrame();
+    if (!frameTex) return;
+    const version = snapshotVersion ?? this.host.frameSnapshotVersion?.() ?? -1;
+    this.boundarySnapshots.set(objectId, { texture: frameTex, version });
+  }
+  /** 执行当刻判「快照已换代」：实时代号 ≠ 捕获当刻代号 ⇒ 快照纹理已被 resize/dispose 换掉。
+   *  `-1`（宿主未提供代号）不作废 —— 无从比较时按既有语义照常使用。 */
+  snapshotStale(versionAtCapture) {
+    if (versionAtCapture < 0) return false;
+    const live = this.host.frameSnapshotVersion?.();
+    return live !== void 0 && live !== versionAtCapture;
+  }
   /** 主场景渲染之后：串行推进各 runner 的 update（异步，不阻塞本帧；见类头约束 3）。 */
   advance(time) {
     if (this.disposed) return;
@@ -25747,13 +26102,26 @@ var ObjectEffectStage = class {
       const runner = this.entries.get(view.id)?.runner;
       if (!runner) continue;
       runner.setAudioSpectrumSource(this.audioSpectrum);
-      this.enqueue(() => runner.update(time, view.rtTexture));
+      const item = this.boundarySnapshots.get(view.id) ?? null;
+      this.enqueue(() => runner.update(
+        time,
+        view.rtTexture,
+        item !== null && !this.snapshotStale(item.version) ? item.texture : null
+      ));
     }
+    this.boundarySnapshots.clear();
+  }
+  /** 画布缓冲/视口变化：`FrameCapture.resize()` 会 dispose 旧快照并重建 ⇒ 作废**尚未被 advance 消费**
+   *  的本帧快照（已被 advance 带进闭包的那份，由执行当刻的实时代号比较兜底，见 advance）。 */
+  notifyViewportResize() {
+    if (this.disposed) return;
+    this.boundarySnapshots.clear();
   }
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
     this.queue.length = 0;
+    this.boundarySnapshots.clear();
     for (const entry of this.entries.values()) entry.runner?.dispose();
     this.entries.clear();
   }
@@ -25812,14 +26180,16 @@ var ObjectEffectStage = class {
     }
     this.busy = false;
   }
-  mount(objId, chains, rtW, rtH) {
+  /** `plan` 由调用方传入（`setObjectChains` 已按同一尺寸算过一份，且用它判定过消费者）：
+   *  再算一遍会让「判定用的计划」与「执行用的计划」可能分叉。 */
+  mount(objId, chains, rtW, rtH, plan) {
     let entry = this.entries.get(objId);
     if (!entry) {
       entry = { runner: null, chains, plan: null, worldW: rtW / this.scale(), worldH: rtH / this.scale(), source: null };
       this.entries.set(objId, entry);
     }
     entry.chains = chains;
-    entry.plan = buildEffectPlan(chains, { baseWidth: rtW, baseHeight: rtH });
+    entry.plan = plan;
     if (!entry.runner) {
       entry.runner = new EffectRunner(this.host.renderer, rtW, rtH, { load: weVRowOrderLoader() });
     }
@@ -25853,7 +26223,7 @@ function glowLevelSizes(width, height) {
   }
   return out;
 }
-var VERT = `
+var VERT2 = `
 varying vec2 vUv;
 void main() {
   vUv = uv;
@@ -25929,10 +26299,10 @@ function createGlowStage(width, height, opts) {
   const placeholderMat = new MeshBasicMaterial();
   const mesh = new Mesh(geometry, placeholderMat);
   quadScene.add(mesh);
-  const brightMat = new ShaderMaterial({ vertexShader: VERT, fragmentShader: BRIGHT_FRAG, uniforms: { tSrc: { value: null }, uThreshold: { value: options.threshold } }, depthTest: false, depthWrite: false });
-  const blurMat = new ShaderMaterial({ vertexShader: VERT, fragmentShader: BLUR_FRAG, uniforms: { tSrc: { value: null }, uStep: { value: new Vector2() } }, depthTest: false, depthWrite: false });
-  const copyMat = new ShaderMaterial({ vertexShader: VERT, fragmentShader: COPY_FRAG, uniforms: { tSrc: { value: null } }, depthTest: false, depthWrite: false });
-  const compositeMat = new ShaderMaterial({ vertexShader: VERT, fragmentShader: COMPOSITE_FRAG, uniforms: { tBase: { value: null }, tL1: { value: null }, tL2: { value: null }, tL3: { value: null }, uStrength: { value: options.strength } }, depthTest: false, depthWrite: false });
+  const brightMat = new ShaderMaterial({ vertexShader: VERT2, fragmentShader: BRIGHT_FRAG, uniforms: { tSrc: { value: null }, uThreshold: { value: options.threshold } }, depthTest: false, depthWrite: false });
+  const blurMat = new ShaderMaterial({ vertexShader: VERT2, fragmentShader: BLUR_FRAG, uniforms: { tSrc: { value: null }, uStep: { value: new Vector2() } }, depthTest: false, depthWrite: false });
+  const copyMat = new ShaderMaterial({ vertexShader: VERT2, fragmentShader: COPY_FRAG, uniforms: { tSrc: { value: null } }, depthTest: false, depthWrite: false });
+  const compositeMat = new ShaderMaterial({ vertexShader: VERT2, fragmentShader: COMPOSITE_FRAG, uniforms: { tBase: { value: null }, tL1: { value: null }, tL2: { value: null }, tL3: { value: null }, uStrength: { value: options.strength } }, depthTest: false, depthWrite: false });
   let baseRT = null;
   let levelRTs = [];
   let levelSizes = [];
@@ -26021,18 +26391,18 @@ function createGlowStage(width, height, opts) {
     blurMat.uniforms.uStep.value.set(0, radius / 4 / size.h);
     runPass(r, blurMat, a);
   }
-  function copyBaseToCanvas(r) {
+  function copyBaseToCanvas(r, base) {
     try {
-      copyMat.uniforms.tSrc.value = baseRT.texture;
+      copyMat.uniforms.tSrc.value = base;
       runPass(r, copyMat, null);
       return true;
     } catch {
       return false;
     }
   }
-  function renderGlowPasses(r) {
+  function renderGlowPasses(r, base) {
     const [l1a, l1b, l2a, l2b, l3a, l3b] = levelRTs;
-    brightMat.uniforms.tSrc.value = baseRT.texture;
+    brightMat.uniforms.tSrc.value = base;
     runPass(r, brightMat, l1a);
     blurLevel(r, 0, l1a, l1b);
     copyMat.uniforms.tSrc.value = l1a.texture;
@@ -26041,7 +26411,7 @@ function createGlowStage(width, height, opts) {
     copyMat.uniforms.tSrc.value = l2a.texture;
     runPass(r, copyMat, l3a);
     blurLevel(r, 2, l3a, l3b);
-    compositeMat.uniforms.tBase.value = baseRT.texture;
+    compositeMat.uniforms.tBase.value = base;
     compositeMat.uniforms.tL1.value = l1a.texture;
     compositeMat.uniforms.tL2.value = l2a.texture;
     compositeMat.uniforms.tL3.value = l3a.texture;
@@ -26050,23 +26420,24 @@ function createGlowStage(width, height, opts) {
   }
   buildTargets(width, height);
   return {
-    apply(r, scene, camera) {
+    apply(r, scene, camera, preRendered) {
       if (disposed) return;
       if (glowFailed) {
         r.setRenderTarget(null);
         r.render(scene, camera);
         return;
       }
+      const base = preRendered ?? baseRT;
       try {
         baseRendered = false;
-        renderIntoRenderTarget(r, baseRT, scene, camera);
+        if (!preRendered) renderIntoRenderTarget(r, baseRT, scene, camera);
         baseRendered = true;
         installShaderErrorHook(r);
-        renderGlowPasses(r);
+        renderGlowPasses(r, base.texture);
       } catch (e) {
         glowFailed = true;
         console.warn("[wallpaper-engine] \u5E94\u7528\u7EA7 Glow \u5931\u8D25\uFF0C\u5DF2\u964D\u7EA7\u4E3A\u76F4\u6E32\uFF1A" + String(e?.message ?? e));
-        if (baseRendered && copyBaseToCanvas(r)) return;
+        if (baseRendered && copyBaseToCanvas(r, base.texture)) return;
         r.setRenderTarget(null);
         r.render(scene, camera);
       } finally {
@@ -26108,6 +26479,117 @@ function createGlowStage(width, height, opts) {
     get glowFailed() {
       return glowFailed;
     }
+  };
+}
+
+// src/client/frame-capture.ts
+var TARGET_OPTIONS = {
+  type: UnsignedByteType,
+  format: RGBAFormat,
+  wrapS: ClampToEdgeWrapping,
+  wrapT: ClampToEdgeWrapping,
+  minFilter: LinearFilter,
+  magFilter: LinearFilter,
+  generateMipmaps: false,
+  colorSpace: NoColorSpace
+};
+function createFrameCapture(renderer, deps = {}) {
+  const buildTarget = deps.createTarget ?? ((w, h) => new WebGLRenderTarget(w, h, TARGET_OPTIONS));
+  const buildTexture = deps.createTexture ?? ((w, h) => new FramebufferTexture(w, h));
+  let active = false;
+  let disposed = false;
+  let hasSize = false;
+  let width = 0;
+  let height = 0;
+  let target = null;
+  let snapshot = null;
+  let snapshotVersion = 0;
+  function normalize2(v) {
+    return Number.isFinite(v) ? Math.max(1, Math.floor(v)) : 1;
+  }
+  function applySnapshotParams(tex) {
+    tex.minFilter = LinearFilter;
+    tex.magFilter = LinearFilter;
+    tex.wrapS = ClampToEdgeWrapping;
+    tex.wrapT = ClampToEdgeWrapping;
+    tex.generateMipmaps = false;
+    tex.colorSpace = NoColorSpace;
+  }
+  function newTarget(w, h) {
+    const rt = buildTarget(w, h);
+    applySnapshotParams(rt.texture);
+    return rt;
+  }
+  function newSnapshot(w, h) {
+    const tex = buildTexture(w, h);
+    applySnapshotParams(tex);
+    return tex;
+  }
+  function ensure() {
+    if (disposed) throw new Error("[wallpaper-engine] FrameCapture \u5DF2 dispose");
+    if (!hasSize) {
+      const size = renderer.getDrawingBufferSize(new Vector2());
+      width = normalize2(size.x);
+      height = normalize2(size.y);
+      hasSize = true;
+    }
+    if (target === null || snapshot === null) {
+      target = newTarget(width, height);
+      snapshot = newSnapshot(width, height);
+    }
+    return { target, snapshot };
+  }
+  function resize(w, h) {
+    if (disposed) return;
+    const nw = Math.floor(w);
+    const nh = Math.floor(h);
+    if (!Number.isFinite(nw) || !Number.isFinite(nh) || nw < 1 || nh < 1) return;
+    if (hasSize && nw === width && nh === height) return;
+    width = nw;
+    height = nh;
+    hasSize = true;
+    if (target !== null && snapshot !== null) {
+      target.setSize(nw, nh);
+      snapshot.dispose();
+      snapshot = newSnapshot(nw, nh);
+      snapshotVersion++;
+    }
+  }
+  function capture() {
+    const res = ensure();
+    renderer.copyFramebufferToTexture(res.snapshot);
+    return res.snapshot;
+  }
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    active = false;
+    target?.dispose();
+    snapshot?.dispose();
+    target = null;
+    snapshot = null;
+    snapshotVersion++;
+  }
+  function reset() {
+    active = false;
+  }
+  return {
+    get active() {
+      return active;
+    },
+    get target() {
+      return ensure().target;
+    },
+    get snapshotVersion() {
+      return snapshotVersion;
+    },
+    use() {
+      if (!disposed) active = true;
+    },
+    reset,
+    capture,
+    resize,
+    dispose
   };
 }
 
@@ -28663,14 +29145,16 @@ var DynamicMeshRegistry = class {
     this.models.set(id, { capacity, layout, geometry, materialPath: spec.materialPath, count: 0 });
     return id;
   }
-  createLayer(modelId, name) {
+  // renderOrder：宿主可传所属 scene.json 对象的数组下标（唯一绘制序，对齐 WE m_objectsByRenderOrder）；
+  // 缺省 1（生产侧映射未接线、延后）；脚本自建图层当前恒为 1 —— 层序唯一化只覆盖装配期对象。
+  createLayer(modelId, name, renderOrder) {
     const model = this.models.get(modelId);
     if (!model) return -1;
     const path = model.materialPath;
     const material = path ? this.materialOverrides.get(path) ?? this.materialFor(path) : this.materialFor(null);
     const mesh = new Mesh(model.geometry, material);
     mesh.name = name;
-    mesh.renderOrder = 1;
+    mesh.renderOrder = renderOrder ?? 1;
     mesh.frustumCulled = false;
     this.parent.add(mesh);
     const id = this.nextLayerId++;
@@ -28944,6 +29428,8 @@ function createThreeSceneRenderer(opts) {
   let current = null;
   let currentStage = null;
   let currentGlow = null;
+  let frameCapture = null;
+  let frameCaptureRenderer = null;
   let glowOverride = null;
   let glowFromSettings = null;
   let glowSize = { width: 1, height: 1 };
@@ -29059,6 +29545,7 @@ function createThreeSceneRenderer(opts) {
     async render(id, fg, _bg) {
       warnedKeys.clear();
       contextLost = false;
+      frameCapture?.reset();
       try {
         teardown();
         contextLostId = id;
@@ -29106,10 +29593,23 @@ function createThreeSceneRenderer(opts) {
             const specText = await specResp.text();
             const mat = await resolveParticleMaterial(id, specText);
             const tex = mat?.texUrl ? await loadTexTexture(mat.texUrl) ?? void 0 : void 0;
+            let refract;
+            if (mat?.refract) {
+              const normalTex = mat.normalTexUrl ? await loadTexTexture(mat.normalTexUrl) ?? void 0 : void 0;
+              if (!normalTex) {
+                warnOnce2(
+                  `refract-normal:${id}:${obj.id}`,
+                  `\u6298\u5C04\u5C42\u69FD 1 \u6CD5\u7EBF\u7EB9\u7406\u7F3A\u5931/\u52A0\u8F7D\u5931\u8D25\uFF0C\u8DF3\u8FC7\u8BE5\u5C42\uFF08\u4E0D\u753B\u767D\u65B9\u5757\uFF09\uFF1Aobject=${obj.id} ${mat.normalTexUrl ?? "(\u65E0\u69FD1)"}`
+                );
+                continue;
+              }
+              refract = { normalTex, amount: mat.refractAmount };
+            }
             particles.set(obj.id, {
               specJson: specText,
               tex,
               blend: particleBlend(mat?.blending, specText),
+              refract,
               // 对象级 instanceoverride（原始 JSON；无覆盖 → undefined → 工厂传空串）。
               // 由 wasm `CpuParticleSim` 按官方 OverrideSpawnProgram 语义应用：
               // alpha/size/lifetime/speed 乘数 + color 覆盖 + emitter rate × count。
@@ -29287,6 +29787,14 @@ function createThreeSceneRenderer(opts) {
           height: vh
         });
         current = result;
+        const captureRenderer = result.player.renderer;
+        if (frameCapture && frameCaptureRenderer !== captureRenderer) {
+          frameCapture.dispose();
+          frameCapture = null;
+        }
+        if (frameCapture === null) frameCapture = createFrameCapture(captureRenderer);
+        frameCaptureRenderer = captureRenderer;
+        result.player.setFrameCapture(frameCapture);
         if (scriptSources.length > 0) {
           const materialTable = /* @__PURE__ */ new Map();
           const materialPaths = /* @__PURE__ */ new Set();
@@ -29431,8 +29939,12 @@ function createThreeSceneRenderer(opts) {
       if (!currentAudio && lastAudioSpec) startAudio(lastAudioSpec.id, lastAudioSpec.sounds, true);
     },
     // 释放当前 three 播放器 + wasm 模拟器（切壁纸/卸载时防泄漏）。
+    // `frameCapture` 绑定创建它的 renderer：随本 renderer 的 dispose 一并释放（换 renderer 时已在 render 内换绑）。
     dispose() {
       teardown();
+      frameCapture?.dispose();
+      frameCapture = null;
+      frameCaptureRenderer = null;
     }
   };
 }

@@ -44,7 +44,7 @@ export declare class DynamicMeshRegistry {
     get modelCount(): number;
     get unsupportedCount(): number;
     createModel(spec: DynamicModelSpec): number | null;
-    createLayer(modelId: number, name: string): number;
+    createLayer(modelId: number, name: string, renderOrder?: number): number;
     applyData(modelId: number, buffer: Float32Array): void;
     /**
      * 材质解析完成后回填：替换**所有已建**（以及后续新建）mesh 上该路径的材质。

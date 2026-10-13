@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { GlowStage } from './glow-stage.js';
+import type { FrameCapture } from './frame-capture.js';
 import type { ClockDriver } from './text-object.js';
 export declare const DEFAULT_PARTICLE_CAPACITY = 1024;
 export declare const MAX_PARTICLE_CAPACITY = 2048;
@@ -51,6 +52,12 @@ export interface IsolatedObject {
 export interface ObjectEffectStage {
     bindOutputs(): void;
     advance(time: number): void;
+    /** 段边界（消费者被绘制**之前**）同步通知：该对象的效果链本帧用这张整帧快照（design §3.5）。
+     *  `snapshotVersion` = 捕获当刻的 `FrameCapture.snapshotVersion`：消费方在**执行当刻**与
+     *  `frameSnapshotVersion()` 的实时值比较，不一致即按「无快照」走（旧引用已 dispose）。 */
+    onSegmentBoundary?(objectId: number, frameTexture?: THREE.Texture | null, snapshotVersion?: number): void;
+    /** 画布缓冲/视口变化：作废尚未被 advance 消费的在途快照（resize 会重建快照纹理，旧引用已 dispose）。 */
+    notifyViewportResize?(): void;
 }
 export declare function resolvePixelRatio(devicePixelRatio: number, qualityScale: number): number;
 export declare class ThreeScenePlayer {
@@ -78,6 +85,12 @@ export declare class ThreeScenePlayer {
     private isolated;
     private objectEffectStage;
     private glowStage;
+    private frameCapture;
+    private readonly frameConsumers;
+    private readonly refractLayers;
+    private refractHidden;
+    private readonly warnedConsumers;
+    private compositeQuad;
     private readonly startedAt;
     constructor(canvas: HTMLCanvasElement, width: number, height: number, renderer?: THREE.WebGLRenderer, qualityScale?: number);
     resize(width: number, height: number): void;
@@ -97,6 +110,19 @@ export declare class ThreeScenePlayer {
     setAnimationLoop(fn?: (dt: number) => void): void;
     private installLoop;
     render(): void;
+    /** 注入帧内快照（null = 关闭）。契约见 frame-capture.ts；active=false 时帧序不变。 */
+    setFrameCapture(capture: FrameCapture | null): void;
+    /** 登记一个「需要帧内快照」的消费者（键 = scene.json 对象 id）：它开启新的一段，快照拍在它**之前**。 */
+    registerFrameConsumer(objectId: number): void;
+    private checkFrameConsumers;
+    private hideRefractWithoutCapture;
+    /**
+     * 段渲染：按 renderOrder 升序把主场景顶层对象切成若干段（消费者**开启**新的一段，段数 = 消费者数 + 1），
+     * 逐段渲染进 frameCapture.target（段间 autoClear=false 累积），消费者段的快照拍在该段 render **之前**，
+     * 末段合成回默认 fb。WE 对齐点：lwe CScene.cpp:351-361 按 m_objectsByRenderOrder 逐个 render()；
+     * REFRACT 在画该层**前** blit 场景 FBO（CParticle.cpp:2069-2079）。
+     */
+    private renderSegmented;
     setObjectEffectStage(stage: ObjectEffectStage | null): void;
     /** 装配应用级 Glow（null = 关闭）。关闭时帧序与本方法加入前逐字相同。 */
     setGlowStage(stage: GlowStage | null): void;
@@ -104,6 +130,8 @@ export declare class ThreeScenePlayer {
     displayObject(objectId: number): THREE.Object3D | undefined;
     isolatedObjects(): IsolatedObject[];
     setObjectOutput(id: number, texture: THREE.Texture): void;
+    captureFullFrame(): THREE.Texture | null;
+    frameSnapshotVersion(): number;
     resizeObjectRT(id: number, width: number, height: number): void;
     private renderIsolatedContents;
     elapsedSeconds(): number;
@@ -119,6 +147,7 @@ export declare class ThreeScenePlayer {
         sceneW: number;
         sceneH: number;
         objectId?: number;
+        renderOrder?: number;
         isolate?: {
             objectId: number;
             rtWidth: number;
@@ -155,7 +184,12 @@ export declare class ThreeScenePlayer {
             distance: number;
             aspect: number;
         };
+        refract?: {
+            normalTex: THREE.Texture;
+            amount: number;
+        };
         objectId?: number;
+        renderOrder?: number;
         isolate?: {
             objectId: number;
             rtWidth: number;
@@ -182,6 +216,10 @@ export interface LoadedParticleAssets {
     blend: 'additive' | 'alpha';
     softness?: number;
     overrideJson?: string;
+    refract?: {
+        normalTex: THREE.Texture;
+        amount: number;
+    };
 }
 export type ParticleSimFactory = (json: string, origin: [number, number, number], sceneW: number, sceneH: number, overrideJson: string) => ParticleSim;
 export interface SceneAssets {

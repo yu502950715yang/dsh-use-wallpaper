@@ -15,5 +15,8 @@ export declare function resolveImageTexture(id: string, obj: SceneImageObject): 
 export interface ParticleMaterialRef {
     texUrl: string | null;
     blending: string | null;
+    refract: boolean;
+    normalTexUrl: string | null;
+    refractAmount: number;
 }
 export declare function resolveParticleMaterial(id: string, specText: string): Promise<ParticleMaterialRef | null>;
