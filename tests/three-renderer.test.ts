@@ -384,14 +384,15 @@ describe('createThreeSceneRenderer', () => {
     };
   }
 
-  it('切壁纸（真 player）：player.dispose 不释放 capture，第二次装配复用同一实例且仍可用', async () => {
+  it('切壁纸（真 player + 同一 renderer）：player.dispose 不释放 capture，第二次装配复用同一实例且仍可用', async () => {
     stubSettings({ glowEnabled: false }); // 本用例只关心 capture 生命周期
     resolveImageTexture.mockResolvedValue(fakeTexture() as any);
     resolveParticleMaterial.mockResolvedValue(null);
     defaultLoadWasm.mockResolvedValue({ CpuParticleSim: { new: vi.fn(() => makeMockSim()) } } as any);
     const real = new ThreeScenePlayer(document.createElement('canvas'), 1280, 720, playerMockRenderer() as never);
     const firstSetCapture = vi.spyOn(real, 'setFrameCapture');
-    const second = { dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn() };
+    // 第二次装配带**同一个 renderer**（复用判据是 renderer 身份，不是 player 身份）。
+    const second = { renderer: real.renderer, dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn() };
     loadSceneToThree
       .mockReturnValueOnce({ player: real, sims: [], backgroundIds: [0], particleLayers: [] } as any)
       .mockReturnValueOnce({ player: second, sims: [], backgroundIds: [0], particleLayers: [] } as any);
@@ -409,6 +410,42 @@ describe('createThreeSceneRenderer', () => {
     expect(cap.target).toBeTruthy(); // 已释放的实例在这里会抛错
     r.dispose();                     // 只有创建者释放
     expect(disposeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  // 换壁纸 = 换 canvas = 换 renderer（wallpaper-controller 每次 select 都 createElement）：
+  // capture 必须换绑，否则 capture() 用旧 renderer 拍旧 canvas 的 framebuffer（快照取错内容）。
+  it('换 renderer（换 canvas）⇒ capture 换新实例、旧实例被释放、新实例绑新 renderer', async () => {
+    stubSettings({ glowEnabled: false });
+    resolveImageTexture.mockResolvedValue(fakeTexture() as any);
+    resolveParticleMaterial.mockResolvedValue(null);
+    defaultLoadWasm.mockResolvedValue({ CpuParticleSim: { new: vi.fn(() => makeMockSim()) } } as any);
+    const rendererA = playerMockRenderer();
+    const rendererB = playerMockRenderer();
+    const first = {
+      renderer: rendererA, dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(),
+    };
+    const second = {
+      renderer: rendererB, dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(),
+    };
+    loadSceneToThree
+      .mockReturnValueOnce({ player: first, sims: [], backgroundIds: [0], particleLayers: [] } as any)
+      .mockReturnValueOnce({ player: second, sims: [], backgroundIds: [0], particleLayers: [] } as any);
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    expect(await r.render('2851992662', document.createElement('canvas'), null)).toBe(true);
+    const capA = first.setFrameCapture.mock.calls[0][0]!;
+    const disposeA = vi.spyOn(capA, 'dispose');
+
+    expect(await r.render('2851992662', document.createElement('canvas'), null)).toBe(true);
+    const capB = second.setFrameCapture.mock.calls[0][0]!;
+    // 注意：不用 `not.toBe` 比对象——vitest 在 !pass 时会深比较其可枚举属性（含会抛错的 target getter）。
+    expect(capB === capA).toBe(false);           // 不再复用旧实例
+    expect(disposeA).toHaveBeenCalledTimes(1);   // 旧实例随换绑释放（RT/纹理不泄漏）
+    // 新实例绑的是新 renderer：惰性建资源读的是它的 drawingBuffer 尺寸，旧 renderer 不再被触碰。
+    expect(capB.target).toBeTruthy();
+    expect(rendererB.getDrawingBufferSize).toHaveBeenCalled();
+    expect(rendererA.getDrawingBufferSize).not.toHaveBeenCalled();
+    expect(() => capA.capture()).toThrow();      // 旧实例已 dispose，不得再拍
+    r.dispose();
   });
 
   it('dpr=2 ⇒ Glow 收到**画布缓冲**尺寸 1600×1200，不是 CSS 尺寸 800×600', async () => {

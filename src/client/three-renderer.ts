@@ -19,7 +19,7 @@
 //   - 可视性（visible.user/script 绑定）**只对 text 对象生效**（2026-09-21）；image/particle 的
 //     visible 仍未过滤（全库 22 个非平凡绑定里 16 个在这两类上）；
 //     loadSceneToThree 沿用「缺物件 spec/工厂则跳过该粒子对象」语义，绝不全屏失败。
-import type { Material, Texture } from 'three';
+import type { Material, Texture, WebGLRenderer } from 'three';
 import { loadSceneToThree, resolvePixelRatio, type LoadedParticleAssets, type ParticleSim, type ThreeSceneLoadResult } from './threejs-player.js';
 import { parseSceneJson } from './scene-json.js';
 import { resolveWorldTransforms, type WorldTransform } from './scene-graph.js';
@@ -35,7 +35,7 @@ import {
 } from './object-range.js';
 import { ObjectEffectStage } from './object-effects.js';
 import { createGlowStage, type GlowStage } from './glow-stage.js';
-// 帧内快照（Task 3）：段渲染目标 + 消费者边界快照；渲染器级单实例（跨 render 复用，dispose 时释放）。
+// 帧内快照（Task 3）：段渲染目标 + 消费者边界快照；按创建它的 renderer 复用，renderer 变化时换绑。
 import { createFrameCapture, type FrameCapture } from './frame-capture.js';
 import { readClientSettings, getUserPropertyValue } from './settings.js';
 import { resolveEffectChain, type CompiledEffectPass } from './shader/effect-chain.js';
@@ -233,9 +233,11 @@ export function createThreeSceneRenderer(opts?: {
   let currentStage: ObjectEffectStage | null = null;
   // 本次装配的应用级 Glow stage（同上：闭包持有，teardown 释放）。
   let currentGlow: GlowStage | null = null;
-  // 帧内快照（Task 3）：**渲染器级单实例**（跟随 renderer 生命周期，不随换壁纸重建）。
+  // 帧内快照（Task 3）：按**创建它的 renderer** 复用同一实例（capture() 内部用该 renderer 的
+  // copyFramebufferToTexture）；换壁纸会换 canvas/renderer ⇒ 绑定变了必须换新实例（否则拍到旧画布）。
   // 每次装配开始 `reset()` 复位 active，否则换壁纸后会永久走段渲染路径。
   let frameCapture: FrameCapture | null = null;
+  let frameCaptureRenderer: WebGLRenderer | null = null;
   // 应用级 Glow 的**运行期**下发值（面板改阈值/强度/开关）：非空即优先于设置的持久值。
   let glowOverride: { enabled?: boolean; threshold?: number; strength?: number } | null = null;
   // 最近一次装配时从设置读到的 Glow 值：运行期只改一项时，其余项以它为基准。
@@ -389,7 +391,7 @@ export function createThreeSceneRenderer(opts?: {
       // 新一次装配（新 canvas）重新开始：复位上一次的上下文丢失标记。
       contextLost = false;
       // 帧内快照（Task 3）：每次装配开始复位 active（消费者集合换了）——否则上一张壁纸的消费者
-      // 会让新壁纸也永久走段渲染路径。资源不释放（跨壁纸复用，见 frameCapture 注释）。
+      // 会让新壁纸也永久走段渲染路径。资源只在 renderer 变化时换绑（见 frameCapture 注释）。
       frameCapture?.reset();
       try {
         // 替换/切壁纸前先释放上次播放器资源（首次渲染 no-op）。
@@ -709,9 +711,15 @@ export function createThreeSceneRenderer(opts?: {
           height: vh,
         });
         current = result;
-        // 帧内快照（Task 3）：把渲染器级 capture 注入本播放器。消费者由后续任务按需 register
-        // （无消费者时 active=false ⇒ render() 走现状路径，结构性零回归）。
-        frameCapture ??= createFrameCapture(result.player.renderer);
+        // 帧内快照（Task 3）：把 capture 注入本播放器（无消费者时 active=false ⇒ 走现状路径，零回归）。
+        // renderer 身份变了（换 canvas/上下文）⇒ 旧实例绑的是旧 renderer，释放后按新 renderer 重建。
+        const captureRenderer = result.player.renderer;
+        if (frameCapture && frameCaptureRenderer !== captureRenderer) {
+          frameCapture.dispose();
+          frameCapture = null;
+        }
+        if (frameCapture === null) frameCapture = createFrameCapture(captureRenderer);
+        frameCaptureRenderer = captureRenderer;
         result.player.setFrameCapture(frameCapture);
 
         // 装配 SceneScript 运行时。失败（quickjs 不可用）→ host 为 null，onFrame 直接返回，
@@ -893,11 +901,12 @@ export function createThreeSceneRenderer(opts?: {
       if (!currentAudio && lastAudioSpec) startAudio(lastAudioSpec.id, lastAudioSpec.sounds, true);
     },
     // 释放当前 three 播放器 + wasm 模拟器（切壁纸/卸载时防泄漏）。
-    // `frameCapture` 是渲染器级资源：跨壁纸复用，随本 renderer 的 dispose 一并释放。
+    // `frameCapture` 绑定创建它的 renderer：随本 renderer 的 dispose 一并释放（换 renderer 时已在 render 内换绑）。
     dispose() {
       teardown();
       frameCapture?.dispose();
       frameCapture = null;
+      frameCaptureRenderer = null;
     },
   };
 }
