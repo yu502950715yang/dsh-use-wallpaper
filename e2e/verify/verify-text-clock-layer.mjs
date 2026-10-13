@@ -18,9 +18,12 @@
 //   [9]（**核心，2026-10-13 修复轮 2**）**同相位**强变化分子高于标定下限：接管 rAF（受控推帧）、把动画时钟
 //       （`performance.now`）与墙钟（`Date`）都钉死在同一时刻 ⇒ 「该层显示帧 vs 隐藏帧」的背景逐像素一致
 //       （两帧都隐藏的对照实测 0 px）。分子 = **全屏**逐像素最大通道差 ≥ 8 的像素数（弱阈值 Δ≥2 会把水面被
-//       该层带动的 ±2..4 量化级响应算进来）+ 亮度总量 `ink` 两个下限。
-//   [10] 同相位基线（两帧都隐藏时的背景残差：全屏 / 外扩盒 / 三站）必须 ≈0 —— 「背景真的抵消了」的自证。
-//   [11] 受控推帧生效（真正在推帧、帧内无异常）。 [12] 差异严格落在该文本 quad 的屏幕矩形内（零回归）。
+//       该层带动的量化级响应算进来：盒外逐像素差实测 maxΔ ≤7）+ 亮度总量 `ink` 两个下限。
+//   [10] 同相位基线（两帧都隐藏时的背景残差：全屏 / 外扩盒 / 三站）必须 ≈0 —— 「背景真的抵消了」的自证；
+//       **并且**断言墙钟冻结真的生效：两次「显示」帧的 A/A 残差 `spAA ≤ 60 px`（(2026-10-13 修复轮 3)
+//       此前这一半只打印不断言 ⇒ 墙钟一旦没冻住，内容变化会混进分子而全线假绿；负向对照见 `--live-wallclock`）。
+//   [11] 受控推帧生效（真正在推帧、帧内无异常）。 [12] 判据用**全屏 Δ≥8**（强阈值）差异的包围盒必须落在
+//       该文本 quad ±6 内；弱阈值 Δ≥2 下盒外仍有 ≤7 的量化级响应（判据行有 Δ≥8 限定，别按它写「严格」）。
 //   [13] 恢复显示后与隐藏前的差异回到噪声地板。 [14] 参考区几何有效（防 `diffPng` 静默 clamp）。
 //   [15]–[20] 牙（默认开，`--no-teeth` 关）：整层缺失 / 覆盖率 50% / 覆盖率 90% / 透明度 50% / 透明度 90%
 //       各断言 [9] 判假，并自证「能检出的最小衰减 ≤50%」。
@@ -43,6 +46,7 @@
 // ⚠️ 依赖本机素材（workshop 壁纸 + WE 安装目录），CI 上会因缺素材失败 —— 没有加进 ci.yml。
 // 用法：node e2e/verify/verify-text-clock-layer.mjs [--workshop=<dir>] [--assets=<dir>]
 //        [--port=9813] [--cdp-port=9228] [--gpu] [--no-teeth] [--sweep=<覆盖率列表>] [--dim=<透明度列表>]
+//        [--live-wallclock（负向对照：不冻墙钟 + 真实时间前进 1.2 s ⇒ [10] 必须判 FAIL）]
 //        （`--sweep`/`--dim` 只**追加**扫描档位；牙指定的 0.5 / 0.1 两档永远在列）
 import { createServer } from 'node:http';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, readdirSync } from 'node:fs';
@@ -64,8 +68,11 @@ const PORT = httpPort(9813);
 const CDP_PORT = cdpPort(9228);
 const USE_GPU = flagOf('gpu');
 const TEETH = !flagOf('no-teeth'); // 牙的标定自检**默认开**（成本 ≈1.2 s，见 header 与 TESTING.md §2.6）
+// `--live-wallclock` = **负向对照**（默认关，正常验收不跑）：不冻墙钟，并在两次「显示」帧之间让**真实**
+// 时间前进 1.2 s ⇒ 秒位必然跳动。用来证明 [10] 里新加的 `spAA ≤ 60 px` 那一半**真的会红**（不是只打印）。
+const LIVE_WALLCLOCK = flagOf('live-wallclock');
 // 判据 [9] 分子的「强变化」下限：逐像素最大通道差 ≥ 8 才计入（该层显示时水面有 ±2..4 的量化级响应，
-// 实测 Δ≥8 的部分全屏为 0 px ⇒ 8 留 2× 余量；见 §5.45 的「为什么不是 Δ≥2」）。
+// 实测 Δ≥8 的部分全屏为 0 px ⇒ 盒外上界只能**推出** ≤7 = STRONG_DELTA−1；见 §5.45 的「为什么不是 Δ≥2」）。
 const STRONG_DELTA = 8;
 
 const ID = argOf('id', WALLPAPER_ID);
@@ -236,6 +243,36 @@ function diffPng(a, b, vw, vh, box, minDelta = 2) {
     bbox: n ? [x0, y0, x1, y1] : null,
     centroid: n ? [sx / n, sy / n] : null,
   };
+}
+
+/** 只统计 `box` **之外**的差异（`minDelta` 缺省 2 = 全仓弱阈值）：盒外渗了多少像素、峰值多大、蔓延到哪。
+ *  只作对照打印（判据 [12] 用**强阈值**全屏包围盒）：弱阈值下盒外本来就有该层带动的量化级响应。 */
+function diffOutsidePng(a, b, vw, vh, box, minDelta = 2) {
+  const A = decodePng(a), B = decodePng(b);
+  const w = Math.min(A.width, vw), h = Math.min(A.height, vh);
+  const inBox = (x, y) => !!box && x >= box[0] && x <= box[2] && y >= box[1] && y <= box[3];
+  let n = 0, maxD = 0, over = 0;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (inBox(x, y)) continue;
+      const ia = (y * A.width + x) * A.channels, ib = (y * B.width + x) * B.channels;
+      const d = Math.max(
+        Math.abs(A.data[ia] - B.data[ib]),
+        Math.abs(A.data[ia + 1] - B.data[ib + 1]),
+        Math.abs(A.data[ia + 2] - B.data[ib + 2]),
+      );
+      if (d > maxD) maxD = d;
+      if (d >= minDelta) {
+        n++;
+        if (x < x0) x0 = x; if (x > x1) x1 = x;
+        if (y < y0) y0 = y; if (y > y1) y1 = y;
+        // 「外溢」= 变化像素超出 quad **边界**的最大距离（判据 [12] 的容差是 ±6 ⇒ 越出容差的部分 = 该值 − 6）。
+        if (box) over = Math.max(over, box[0] - x, x - box[2], box[1] - y, y - box[3]);
+      }
+    }
+  }
+  return { minDelta, changedPixels: n, maxDelta: maxD, bbox: n ? [x0, y0, x1, y1] : null, maxOverflowPx: over };
 }
 
 /** 统计某个矩形里的「亮像素」（三通道均 > 阈值）与区域基准亮度（中位数）。 */
@@ -452,7 +489,11 @@ try {
   // 一致（两帧都隐藏的对照实测 0 px）。剩下两帧只差「该层渲染出多少」。分子按**全屏 Δ≥8** 统计（见下）。
   console.log('\n--- 同相位采样（受控 rAF + 冻结动画时钟/墙钟）---');
   const frozenAt = await evalJs('window.__freezeClock()');
-  const frozenDate = JSON.parse(await evalJs('JSON.stringify(window.__freezeWallClock())'));
+  // 墙钟默认钉死（同相位的前提）。`--live-wallclock` 是**负向对照**：不冻墙钟 ⇒ 秒位随真实时间前进。
+  const frozenDate = LIVE_WALLCLOCK
+    ? JSON.parse(await evalJs('JSON.stringify(window.__unfreezeWallClock())'))
+    : JSON.parse(await evalJs('JSON.stringify(window.__freezeWallClock())'));
+  const wallClockState = JSON.parse(await evalJs('JSON.stringify(window.__wallClockState())'));
   /** 把 three 的帧循环停进受控队列（找不到待排队时放行真实 rAF 重新武装；期间 dt=0，背景不前进）。 */
   const parkLoop = async () => {
     let st = null;
@@ -496,8 +537,8 @@ try {
   const inkOf = (d) => Math.round(d.changedPixels * d.meanDelta); // 亮度总量 = Σ 逐像素最大通道差
   const arms = {};
   const armed = await parkLoop();
-  arms.frozenAt = frozenAt; arms.armed = armed; arms.frozenDate = frozenDate;
-  console.log(`  [同相位] 冻结动画时钟于 ${frozenAt} ms、墙钟于 ${frozenDate.iso}；受控 rAF 队列 ${armed.queued} 帧待推`);
+  arms.frozenAt = frozenAt; arms.armed = armed; arms.frozenDate = frozenDate; arms.wallClockState = wallClockState;
+  console.log(`  [同相位] 冻结动画时钟于 ${frozenAt} ms、墙钟于 ${frozenDate.iso}（frozen=${frozenDate.frozen}，Date 真身=${wallClockState.real}）；受控 rAF 队列 ${armed.queued} 帧待推`);
   // 主测必须在**健康装配**上：① 之前的流程刚把页面留在「缺失装配」（step broken2），先切回来；
   //   ② 材质/隔离对象的只读探针也要在这时候取（缺失装配下 `displayObject(778)` 是 null）。
   await switchAssembly(false);
@@ -507,22 +548,26 @@ try {
   //   · `spAB`   = 显示 vs 隐藏（**紧邻**的一对）⇒ [9] 的分子（该层自身的像素贡献，背景同相位）；
   //   · `spBase` = 隐藏 vs 隐藏（两帧都没有该层）⇒ **背景残差**：它才是分子里混进来的那一份，
   //                也是「同相位真的成立」的自证（[10]）；stations 用同一对算，覆盖 quad 之外。
-  //   · `spAA`   = 显示 vs 显示 ⇒ 该层**自身内容**的逐帧变化（本例脚本 `showSeconds=true`，
-  //                秒位重绘会重置画布宽度 ⇒ 整块字会挪 1–2 px），只作信息打印，**不当背景对照**。
+  //   · `spAA`   = 显示 vs 显示 ⇒ 该层**自身内容**的变化：墙钟冻住时恒为 0（实测多次全 0），而墙钟一旦
+  //                没冻住，秒位跳动会让它到千 px 量级 ⇒ (修复轮 3) 它进 [10] 的判定（`spAA ≤ SP_AA_MAX`）。
   const spOn = await phaseShot('healthy-on', {});
   const spOff = await phaseShot('healthy-off', { hidden: true });
+  // 负向对照：不冻墙钟时让**真实**时间前进 1.2 s，保证 on/on2 跨过秒位边界（99.9% 概率变成 ~100%）。
+  if (LIVE_WALLCLOCK) await sleep(1200);
   const spOn2 = await phaseShot('healthy-on2', {});
   const spOff2 = await phaseShot('healthy-off2', { hidden: true });
   console.log('  [同相位] 注入回执（覆盖率/透明度/可见性）:', JSON.stringify({ on: spOn.cov, off: spOff.toggle, on2: spOn2.toggle, off2: spOff2.toggle }));
   const spAB = diffPng(spOn.buf, spOff.buf, VW, VH, box);        // 外扩盒内、弱阈值（对照）
-  const spAA = diffPng(spOn.buf, spOn2.buf, VW, VH, box);        // 该层自身内容动画（应 0：墙钟已冻结）
+  const spAA = diffPng(spOn.buf, spOn2.buf, VW, VH, box);        // 该层自身内容变化（判据 [10] 的一半）
   const spBase = diffPng(spOff.buf, spOff2.buf, VW, VH, box);    // 背景残差（盒内，弱阈值）
   const spBaseFull = diffPng(spOff.buf, spOff2.buf, VW, VH);     // 背景残差（全屏，弱阈值）
   const spStations = stationCands.map((c) => ({ name: c.name, box: c.box, d: diffPng(spOff.buf, spOff2.buf, VW, VH, c.box) }));
   const spFullWeak = diffPng(spOn.buf, spOff.buf, VW, VH);       // 全屏弱阈值（含水面 ≤4 的量化级响应）
+  const spOutsideWeak = diffOutsidePng(spOn.buf, spOff.buf, VW, VH, box);          // 盒外弱阈值（量「外溢」多大）
+  const spOutsideStrong = diffOutsidePng(spOn.buf, spOff.buf, VW, VH, box, STRONG_DELTA); // 盒外强阈值（应 0）
   // 判据 [9] 的分子：**强变化像素**（逐像素最大通道差 ≥ STRONG_DELTA），全屏统计、不裁区域。
-  // 为什么加这个下限：该层显示时水面会有 ±2..4 的量化级响应（本例实测盒外全屏 maxΔ = 4），
-  // 弱阈值会把它们算进「贡献」；Δ≥8 时这部分实测为 **0 px**（余量 2×），剩下的才是该层真的画了东西。
+  // 为什么加这个下限：该层显示时水面会有量化级响应（盒外逐像素差实测见 `【对照】盒外` 行，
+  // 本轮实测 maxΔ ∈ [4,7]），弱阈值会把它们算进「贡献」；Δ≥8 时这部分为 **0 px**（可推上界 7 = Δ−1）。
   const spStrong = diffPng(spOn.buf, spOff.buf, VW, VH, null, STRONG_DELTA);
   const spStrongBox = diffPng(spOn.buf, spOff.buf, VW, VH, box, STRONG_DELTA); // 盒内同口径：与全屏值相等 ⇒ 盒外无强变化成分
   const spStrongBase = diffPng(spOff.buf, spOff2.buf, VW, VH, null, STRONG_DELTA);
@@ -559,7 +604,7 @@ try {
   console.log(`  [同相位] 缺失装配强变化 ${spBroken.changedPixels} px / ink ${inkOf(spBroken)}（toggle ${JSON.stringify(spbOn.toggle)}）`);
   writeFileSync(join(OUT, 'diff.json'), JSON.stringify({
     lib: libId, dAB, dAA, dReRepaired, dStations, liveFloorMedian, box, stationCands, areaMismatch, info,
-    samePhase: { arms, pumpStats, strongDelta: STRONG_DELTA, spStrong, spStrongBox, spStrongBase, spAB, spAA, spBase, spBaseFull, spStations, spFullWeak, sweep, spBroken, spBrokenStations },
+    samePhase: { arms, pumpStats, strongDelta: STRONG_DELTA, spStrong, spStrongBox, spStrongBase, spAB, spAA, spBase, spBaseFull, spStations, spFullWeak, spOutsideWeak, spOutsideStrong, sweep, spBroken, spBrokenStations },
   }, null, 1));
   const imgShow = decodePng(shots['iso-show']);
   const imgHide = decodePng(shots['iso-hide']);
@@ -597,17 +642,25 @@ try {
   //   但 ink 是直接的亮度口径（像素与 ink 两个下限都按实测标定，见脚本头/§5.45 的日志文件名）。
   // 【判据 10】同相位基线 = **两帧都隐藏**时的背景残差（全屏 + 外扩盒 + 三站）必须 ≈0：这是「背景真的
   //   抵消了」的自证，也是混进分子的背景上界（旧口径正是在这里失效：同一区域跨帧就有 1.3–1.4 万 px）。
+  //   **并且**（修复轮 3）断言墙钟冻结生效：`spAA`（两次「显示」帧的 A/A 残差）必须 ≤ `SP_AA_MAX` ——
+  //   否则内容变化会混进分子而全线假绿（此前这一半只打印）。
   const noise = Math.max(dAA.changedPixels, 1);
   const regionArea = box ? (box[2] - box[0] + 1) * (box[3] - box[1] + 1) : 0;
-  const SP_MIN_PIXELS = 7800;    // [9] 强变化像素下限（= 健康态实测最低 10507 的 ≈74% ⇒ 最坏余量 1.35×；见 §5.45 标定表）
-  const SP_MIN_INK = 480000;     // [9] 亮度总量下限（= 最差实测 ink 634875 的 ≈76% ⇒ 最坏余量 1.32×）
+  const SP_MIN_PIXELS = 7800;    // [9] 强变化像素下限（轮 2 宽内容实测最低 10507 的 ≈74% ⇒ 1.35×；轮 3 窄内容实测最低
+                                 //      8337 ⇒ 只剩 1.07×，是已知脆弱点，见 §5.45「[9] 阈值的内容依赖」）
+  const SP_MIN_INK = 480000;     // [9] 亮度总量下限（轮 2 最差 ink 634875 的 ≈76% ⇒ 1.32×；轮 3 最差 517145 ⇒ 1.08×）
   const SP_BASELINE_MAX = 600;   // [10] 背景残差绝对上限
+  const SP_AA_MAX = 60;          // [10] 「墙钟冻结生效」上限：冻结态 spAA 实测恒为 0 px（修复轮 3 连跑 5 次全 0），
+                                 //      60 px ≈ 外扩盒面积 27300 的 0.2%、≈ [9] 像素下限的 0.8%；而墙钟没冻住时
+                                 //      spAA 实测 1431 / 2435 px（`--live-wallclock` 两次负向对照，各只跳一个秒位数字）⇒ 余量 23.9×。
   const RESTORE_MAX_RATIO = 2;   // [13] 恢复态/quad 抖动（沿用修复轮 1 的封顶口径）
   const spPixels = spStrong.changedPixels;
   const spInk = inkOf(spStrong);
   const spBasePixels = Math.max(spStrongBase.changedPixels, spBaseFull.changedPixels, spBase.changedPixels, ...spStations.map((s) => s.d.changedPixels));
   const spBaselineOk = spStrongBase.changedPixels <= SP_BASELINE_MAX && spBaseFull.changedPixels <= SP_BASELINE_MAX
     && spBase.changedPixels <= SP_BASELINE_MAX && spStations.every((s) => s.d.changedPixels <= SP_BASELINE_MAX);
+  // 墙钟冻结自证：两次「显示」帧只差「那一段时间里该层的内容变了没有」（同相位下背景不前进）。
+  const spAaOk = spAA.changedPixels <= SP_AA_MAX;
   const spPass = spPixels > SP_MIN_PIXELS && spInk > SP_MIN_INK;
   const judgeSp = (px, ink) => px > SP_MIN_PIXELS && ink > SP_MIN_INK;
   // [13] 的区域面积封顶：`2·dAA+50` 在 dAA ≥ (面积−50)/2 ≈ 15309 px（quad 面积的一半）时**必然成立**
@@ -638,11 +691,11 @@ try {
       brightHide.meanLuma < brightShow.meanLuma - 2],
     [`同相位强变化分子高于标定下限（全屏 Δ≥${STRONG_DELTA} 的像素 ${spPixels} px > ${SP_MIN_PIXELS}、亮度总量 ${spInk} > ${SP_MIN_INK}；旧跨帧口径同一盒内是 ${dAB.changedPixels} px，混着水面自身的变化）`,
       spPass],
-    [`同相位基线 ≈0（两帧都隐藏 ⇒ 纯背景残差：全屏 Δ≥${STRONG_DELTA} ${spStrongBase.changedPixels} px、全屏 Δ≥2 ${spBaseFull.changedPixels} px、外扩盒 ${spBase.changedPixels} px、三站 ${spStations.map((s) => `${s.name}=${s.d.changedPixels}`).join(' / ')}；max ${spBasePixels} ≤ ${SP_BASELINE_MAX} px）`,
-      spBaselineOk],
+    [`同相位基线 ≈0 且内容（墙钟）冻结生效（两帧都隐藏 ⇒ 纯背景残差：全屏 Δ≥${STRONG_DELTA} ${spStrongBase.changedPixels} px、全屏 Δ≥2 ${spBaseFull.changedPixels} px、外扩盒 ${spBase.changedPixels} px、三站 ${spStations.map((s) => `${s.name}=${s.d.changedPixels}`).join(' / ')}；max ${spBasePixels} ≤ ${SP_BASELINE_MAX} px ⇒ ${spBaselineOk ? 'PASS' : 'FAIL'}｜两次显示帧 A/A 残差 ${spAA.changedPixels} px ≤ ${SP_AA_MAX} px ⇒ ${spAaOk ? 'PASS' : 'FAIL'}）`,
+      spBaselineOk && spAaOk],
     [`受控推帧生效（累计渲染 ${pumpStats.frames} 帧、帧内异常 ${pumpStats.errs}；冻结的是时钟而不是把循环停死）`,
       pumpStats.frames >= 8 && pumpStats.errs === 0],
-    [`隐藏/显示文本层的差异严格落在它自己的 quad 内（全屏 Δ≥${STRONG_DELTA} 差异包围盒 ${JSON.stringify(spStrong.bbox)} ⊆ quad ${JSON.stringify(rect?.canvasCss)} ±6）`,
+    [`隐藏/显示文本层的强阈值差异落在它自己的 quad 内（全屏 Δ≥${STRONG_DELTA} 差异包围盒 ${JSON.stringify(spStrong.bbox)} ⊆ quad ${JSON.stringify(rect?.canvasCss)} ±6；弱阈值 Δ≥2 下盒外仍会外溢 ${spOutsideWeak.changedPixels} px / 最远 ${spOutsideWeak.maxOverflowPx} px，故本判据不用弱阈值）`,
       !!spStrong.bbox && !!rect && spStrong.bbox[0] >= rect.canvasCss[0] - 6 && spStrong.bbox[1] >= rect.canvasCss[1] - 6
         && spStrong.bbox[2] <= rect.canvasCss[2] + 6 && spStrong.bbox[3] <= rect.canvasCss[3] + 6],
     [`恢复显示后与隐藏前的差异回到噪声地板（${dReRepaired.changedPixels} px ≤ min(quad 抖动 ${noise} px × ${RESTORE_MAX_RATIO} + 50, 区域面积 90% = ${restoreCap}) = ${restoreLimit} px）`,
@@ -697,9 +750,10 @@ try {
   console.log(`【对照】同相位弱阈值口径（全屏 Δ≥2，含水面被该层带动的 ±2..4）:`, JSON.stringify(spFullWeak));
   console.log('【对照】同相位外扩盒内弱阈值差分（该层在该区域的覆盖度）:', JSON.stringify(spAB));
   console.log(`【对照】强阈值口径（Δ≥${STRONG_DELTA}）盒内 ${spStrongBox.changedPixels} px vs 全屏 ${spStrong.changedPixels} px（相等 ⇒ 盒外无强变化成分）:`, JSON.stringify(spStrongBox));
-  console.log('【对照】同相位 A/A（两次显示；墙钟冻结后该层内容不动 ⇒ 应 0）:', JSON.stringify(spAA));
+  console.log(`【对照】盒外（quad 之外）弱阈值 Δ≥2 ${spOutsideWeak.changedPixels} px / maxΔ ${spOutsideWeak.maxDelta} / 最远外溢 ${spOutsideWeak.maxOverflowPx} px；强阈值 Δ≥${STRONG_DELTA} ${spOutsideStrong.changedPixels} px / maxΔ ${spOutsideStrong.maxDelta}:`, JSON.stringify({ weak: spOutsideWeak, strong: spOutsideStrong }));
+  console.log(`【对照】同相位 A/A（两次显示；判据 [10] 的「墙钟冻结生效」半边，应 ≤ ${SP_AA_MAX} px）:`, JSON.stringify(spAA));
   console.log(`同相位基线（两帧都隐藏 ⇒ 纯背景残差；判据 [10] 用它）:`,
-    JSON.stringify({ strong: spStrongBase, box: spBase, stations: spStations.map((s) => ({ name: s.name, box: s.box, changedPixels: s.d.changedPixels })), full: spBaseFull, max: spBasePixels }));
+    JSON.stringify({ strong: spStrongBase, box: spBase, stations: spStations.map((s) => ({ name: s.name, box: s.box, changedPixels: s.d.changedPixels })), full: spBaseFull, max: spBasePixels, aa: spAA.changedPixels, aaMax: SP_AA_MAX }));
   console.log(`同相位分子: 强变化 ${spPixels} px（> ${SP_MIN_PIXELS} = 余量 ${(spPixels / SP_MIN_PIXELS).toFixed(2)}×）、亮度总量 ${spInk}（> ${SP_MIN_INK} = 余量 ${(spInk / SP_MIN_INK).toFixed(2)}×）`);
   console.log(`受控推帧: 累计 ${pumpStats.frames} 帧、异常 ${pumpStats.errs}（受控队列 ${armed.queued} 帧/批）`);
   console.log('【对照】跨帧口径（旧）：文本层信号 A/B:', JSON.stringify(dAB));

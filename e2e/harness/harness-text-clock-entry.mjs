@@ -34,20 +34,31 @@ window.requestAnimationFrame = (cb) => {
 window.cancelAnimationFrame = (id2) => { if (!rafQueue.delete(id2)) realCancelRaf(id2); };
 window.__setRafControlled = (on) => { rafControlled = !!on; return { rafControlled, queued: rafQueue.size, vnow }; };
 window.__freezeClock = () => { vnow = realNow(); return vnow; };
+const RealDate = Date; // 反冻结用（必须在任何冻结之前取）
+let wallClockFrozen = false;
 /** 冻结**墙钟**：时钟脚本的文本是 `new Date()` 生成的（`lib/client/threejs-player.js:1617` 每帧喂给
  *  文本驱动，本例脚本 `showSeconds=true` ⇒ 秒位每秒重绘、quad 布局随之微调）——只冻 performance.now
  *  挡不住它。把 `Date` / `Date.now` 钉在同一时刻 ⇒ 文本内容也确定，两帧才只差「该层渲染出多少」。 */
 window.__freezeWallClock = () => {
-  const Real = Date;
-  const fixed = Real.now();
-  const Frozen = function (...args) { return args.length === 0 ? new Real(fixed) : new Real(...args); };
+  const fixed = RealDate.now();
+  const Frozen = function (...args) { return args.length === 0 ? new RealDate(fixed) : new RealDate(...args); };
   Frozen.now = () => fixed;
-  Frozen.parse = Real.parse;
-  Frozen.UTC = Real.UTC;
-  Frozen.prototype = Real.prototype;
+  Frozen.parse = RealDate.parse;
+  Frozen.UTC = RealDate.UTC;
+  Frozen.prototype = RealDate.prototype;
   window.Date = Frozen;
-  return { ms: fixed, iso: new Real(fixed).toISOString() };
+  wallClockFrozen = true;
+  return { ms: fixed, iso: new RealDate(fixed).toISOString(), frozen: true };
 };
+/** **反**冻结墙钟（只服务负向对照：验证「墙钟没冻住 ⇒ 判据必须红」，不影响默认路径）。
+ *  还原后 `Date` 随真实时间前进 ⇒ 两次「显示」帧跨越秒位边界时文本内容会变。 */
+window.__unfreezeWallClock = () => {
+  window.Date = RealDate;
+  wallClockFrozen = false;
+  return { ms: RealDate.now(), iso: new RealDate().toISOString(), frozen: false };
+};
+/** 只读自证：`Date` 现在是真身还是被钉死的替身（日志里打印，防「以为冻住了其实没冻」）。 */
+window.__wallClockState = () => ({ frozen: wallClockFrozen, real: window.Date === RealDate, now: window.Date.now() });
 /** 推进受控队列里的一帧（回调内新排的帧进入下一批）。返回本批执行数与残留队列长度。 */
 window.__pumpFrame = () => {
   const batch = [...rafQueue.values()];
@@ -128,11 +139,14 @@ window.__hideTextLayer = (objectId, hidden) => {
   return { objectId, prevVisible: prev, visible: o.visible };
 };
 
-// 原材质状态（对齐用：只改「这一层渲染出多少」，不改其它任何东西）。
+// 原材质状态（对齐用：只改「这一层渲染出多少」，不改其它任何东西）。按对象 id 缓存 `transparent`：
+// 条目不清理（每个被测对象最多 1 条，且后续每次注入都会按它还原），不是跨用例的状态泄漏。
 const origMat = new Map();
+// `localClippingEnabled` 是 renderer 级开关，注入覆盖率时会置 true ⇒ 记下原值，清掉裁剪面时还原。
+let origLocalClipping = null;
 
 /** 「该层只渲染了一部分」的注入开关（模拟部分衰减；不改 lib/，也不改几何参数 ⇒ 判据矩形不变）。
- *  `coverage` = 沿该 quad 自身局部 +x 轴保留的比例（1 = 全量 ⇒ 清掉裁剪面）。
+ *  `coverage` = 沿该 quad 自身局部 +x 轴保留的比例（1 = 全量 ⇒ 清掉裁剪面并还原 renderer 开关）。
  *  裁掉一半 ⇒ 屏幕上的字形像素/亮度总量大致按比例减少。 */
 window.__setTextCoverage = (objectId, coverage) => {
   const p = window.__player;
@@ -142,10 +156,14 @@ window.__setTextCoverage = (objectId, coverage) => {
   const w = (o.geometry && o.geometry.parameters && o.geometry.parameters.width) || 0;
   if (!(w > 0)) return null;
   const r = p.renderer;
-  if (r && typeof r === 'object') r.localClippingEnabled = true;
+  if (r && typeof r === 'object') {
+    if (origLocalClipping === null) origLocalClipping = !!r.localClippingEnabled;
+    r.localClippingEnabled = true;
+  }
   if (c >= 1) {
     o.material.clippingPlanes = null;
     o.material.needsUpdate = true;
+    if (r && origLocalClipping !== null) r.localClippingEnabled = origLocalClipping; // 还原：不留状态泄漏
     return { coverage: 1, clippingPlanes: 0, localClippingEnabled: !!r?.localClippingEnabled };
   }
   o.updateMatrixWorld(true);
