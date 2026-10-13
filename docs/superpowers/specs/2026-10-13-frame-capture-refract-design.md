@@ -240,3 +240,67 @@ rgb *= texture2D(refractBg, rsUv).rgb;
 | `output/blur-analysis/refract-rt-consumers.md` | `_rt_*` 全库爆炸半径（1 处真实消费者） |
 | `research/.lwe/src/WallpaperEngine/Render/**` | lwe 权威实现（`CScene.cpp`、`CParticle.cpp`、`CWallpaper.cpp`） |
 | `output/blur-analysis/ds-regression.md` | 本缺陷最初的根因取证 |
+
+---
+
+# 附录 A：执行结果与偏差（2026-10-13 收口回写）
+
+> 本附录**不改上面任何一条原设计**，只如实记录「实际做成了什么、与设计哪里不同、哪些没做」。台账（含全部 Ruling 与 deferred minors）：`.superpowers/sdd/2026-10-13-frame-capture-refract/progress.md`。
+
+## A.1 执行区间与提交
+
+| 任务 | 提交区间 | 说明 |
+|---|---|---|
+| Setup | `333537f`（spec）、`486740b`（plan） | 分支 `feat/frame-capture-refract` 自 `master` = `951bd7d` |
+| T1 FrameCapture 抽象（零接入） | `7a5185d` → `9a9040d` | 含两轮 fix（`capture()` 每次 blit、`reset()`、快照纹理参数、尺寸守卫） |
+| T2 `renderOrder` 唯一化 | `3f97f35` | 落点在 `loadSceneToThree`（`three-renderer.ts` 只做资源加载，不改） |
+| T3 段渲染骨架 + frameRT + 末段合成 + Glow 共用 | `8ae1d0a` → `cbbbdec` | 含两轮 fix（快照改到消费者段 render **之前**、段划分回到 N+1、capture 按创建它的 renderer 换绑） |
+| T4 粒子 REFRACT | `4f13857` | 槽 1 缺失/加载失败 ⇒ **不装配该层**（绝不回退白方块） |
+| T5 效果链 `_rt_FullFrameBuffer` | `9e919f1` | 引用该槽的链自动登记为段边界消费者（原接线缺口由实现者内联补齐，Lead 背书） |
+| T6 收口（本附录） | 见 `git log`（文档 + 单测） | 全量单测 / deferred minors / 文档回写 / `tsc --noEmit` |
+
+## A.2 实测数字
+
+- **全量单测**：起始 **1118**（本轮之前的基线）→ Task 5 结束 **1190** → 收口后 **1193**（`npx vitest run`：**57 files / 1193 passed**）。T6 新增的 3 条都在补 deferred minor 的钉子（`tests/frame-capture.test.ts` 的快照代号自增、`tests/object-effects.test.ts` 的 resize 作废在途快照、`tests/threejs-player.test.ts` 的 resize 必通知）；另在既有用例里补了非恒真断言（主场景 children 数、快照代号随通知下发、告警文案口径），**没有删除或放宽任何既有断言**。
+- **`tsc --noEmit -p tsconfig.json`**：exit 0。
+- **真机目视（用户确认，2026-10-13 14:28）**：`2897292240` 的雨层 **白块/白竖条消失，出现水滴/雨痕**。当时的产物状态 = **Task 4**（`npm run build` + `npm run build:client` 重建 `lib/` + `dist/client.js` 后经 DSH client-hmr 热重载），GLSL 真机编译通过（此前只有文本护栏）。⚠️ 该目视**不含** T5 的效果链消费者路径。
+
+## A.3 Ruling 更正（如实记录走过的弯路）
+
+**段划分最终为「仅在消费者之前切一刀」（段数 = 消费者数 + 1）**。执行中期曾按「消费者独占一段（前后各切一刀）」实现，并在台账里作为 Ruling 写下；Task 3 评审核对后指出：那种切法实际段数是 **2N+1**（不是当时记的 N+1），且支撑它的理由（「相邻消费者时后一个的快照会缺前一个已画的内容」）**不成立** —— 正确的对齐点是「快照拍在该消费者段 `render()` **之前**」（lwe `CParticle.cpp:2069-2079`），而这一点在 N+1 切法下同样成立。已改正：`renderSegmented()` 只在消费者处开新段，快照在该段 render 之前拍。R2 的字面（段数 = 消费者数 + 1）**未变**。
+
+## A.4 已知偏差与限制（做完的部分）
+
+| # | 偏差 / 限制 | 影响与状态 |
+|---|---|---|
+| ① | **效果链的执行时机**：实际是「段边界**同步选取快照** + 帧末 `advance` 推进」，与 §3.5 / R4 的字面（「到该消费者的段边界时同步执行 runner」）不同 | 帧序是 `bindOutputs → 段渲染（通知）→ advance`，快照**同帧**进入 runner（不落后一帧）；单消费者下内容与 R4 **等价**。代价：同一壁纸有 **≥2 个效果链消费者**时会同帧别名到同一张快照。本库只有 1 个（`2597392171` obj#50）⇒ **列为未来工作**（每消费者一份快照拷贝）。Task 5 评审的 Important #1 由 Lead 背书接受。 |
+| ② | **Glow 开启时仍多分配一张画布尺寸 `baseRT`**（未与 `frameRT` 共用） | 段渲染路径把 `frameRT` 作为 `preRendered` 传给 `glowStage.apply()`，`baseRT` 那张只被分配、不被使用（§3.2/R3 原意是共用）。**本轮不修**：改动会牵动既有 `rtCount` 断言（`tests/glow-stage.test.ts` 的 7）与 Glow 的失败回退路径 ⇒ 列为**后续优化**。 |
+| ③ | **隔离的折射层只关 `REFRACT` define，仍会画自己的槽 0** | `§4.4` 门槛的语义是「不启用 REFRACT define」；被隔离的折射层因此仍会把槽 0（实测 RGBA 全 255 的白图）画进自己的对象 RT。**本库 0 实例**，design §8.6 已列为不做。 |
+| ④ | **`FrameCapture` 只有一张快照纹理** | 快照逐帧覆盖 ⇒ 多消费者需要每消费者一份拷贝（与 ① 是同一件事的两面）。本库 1 个消费者，足够。 |
+| ⑤ | **本轮只做 `_rt_FullFrameBuffer` 一个名字** | `_rt_imageLayerComposite_*`（对象结果池，**7 处**）、对象材质 `BLENDMODE` 的 `_rt_FullFrameBuffer`（**161 材质**，R8）、6 个 JSONC 引擎 `effect.json` 的容错（R10）、`general.clearcolor` 消费（R11）**均未做**，仍按原行为（白纹 / 留空 + 去重告警 / 黑清屏），**另立任务**。 |
+
+## A.5 未做（本轮不覆盖，交 Lead 与用户统一安排）
+
+- **真机 e2e 逐像素对拍**（无消费者壁纸的零回归，`e2e/verify/compare-shots.mjs`）。
+- **性能 / 显存测量**（`2897292240` 段渲染开 / 关的帧时与 `renderer.info.memory`）⇒ 因此「半分辨率 `frameRT`」这条优化项是否必要**尚无数据**（见 A.4 ②）。
+- **9 个「粒子在前 image 在后」壁纸的目视**（口径差见 A.6）。
+- **产物重建与提交**（`npm run build*` 与 `lib/`、`dist/` 的提交）。
+- **客观证据补强**：原计划用项目自带 e2e harness 抓 `2897292240` 帧与 `output/blur-analysis/we-ab/` 的 WE 帧做统计对比（§7.2），本轮未执行。
+
+## A.6 与计划文本的口径差（事实订正）
+
+- plan / 本设计 §3.1 与 §7.2 写的「**7 个** pkg 叠加次序变化」是**未按 `visible` / 稀疏事件源过滤**的口径；Task 2 按实际会变的清单实测为 **9 个**：`1429403119` / `2597392171` / `2897292240` / `2911105183` / `2937346640` / `3743126786` / `3765967112` / `3793620838` / `3789452668`。
+- §3.3 的 `createFrameCapture(..., { rt })` **可选注入参数未实现**（T3 自持段目标、Glow 走 `preRendered` 第 4 参，不需要外部注入 RT）；若将来要让 capture 复用外部 RT，需另开一个小改动。
+- `tests/verify-real-library.test.ts` 的全库 REFRACT 集合断言**已从「恰为 `[halo_50_1.json]`」改为「∈ 集合 ∧ 与 `refract-scan.json` 基线一致」**：原写法与本文件既有「不钉本机素材快照」的约定冲突（用户装一张新折射壁纸就会假失败）。
+
+## A.7 收口时顺手修的 deferred minors（T6）
+
+1. `tests/threejs-player.test.ts` 里两处仍以 `renderOrder === 0 / === 1` 选「背景 / 粒子」的反模式 ⇒ 改用 `displayObject(13)` / `displayObject(22)`（该反模式在 fixture objects 序恰好为 `[image, particle]` 时才能通过）。
+2. 同一文件的 `expect(meshes).toHaveLength(4)` 对 4 元素 `.map()` **恒真** ⇒ 补 `expect(result.player.scene.children).toHaveLength(4)`（证明这些背景确实进了主场景）+ 非 `undefined` 断言。
+3. `src/client/dynamic-mesh.ts` 的 `createLayer` 注释（「缺省 1 = 背景之上、与既有粒子同层」）过期 ⇒ 订正为「缺省 1；生产侧映射未接线（延后），脚本自建图层当前恒为 1」。
+4. `src/client/threejs-player.ts` 折射顶点注释称 WE `ComputeParticleTangents` 是「先对象角度、后粒子自旋」——**与 WE 相反**（`common_particles.h:26-39` + `genericparticle.vert:85,117` 是粒子自旋在先），与本文件 `:368-370` 自相矛盾 ⇒ 改为「与 WE 同序」。
+   - ⚠️ **连带发现（未改，越界）**：`docs/fixes/threejs-path-fixes.md:167` 与 `AGENT.md` §7.3 记的是另一回事 ——「轴序偏差」：本项目 `Rz·Ry·Rx` vs WE `Rz·Rx·Ry`，仅多轴自旋（全库 6 个对象）可能不同。两处口径**并不冲突**（一个是次序、一个是轴序），但 §7.3 那条**仍然成立、未被本轮关闭**。
+5. `tests/verify-real-library.test.ts` 的全库 REFRACT 集合断言（见 A.6）。
+6. `effect-runner.ts` 的快照不可用告警：① 去掉因果推断（被 `bind` 覆盖的快照槽与快照无关，却会打出「半透明区会被压黑」）；② 点明两条路径的差别（**直接调 `resolveBuiltinTexture` 无快照 → 1×1 白纹** vs **runner 路径无快照 → 槽留空 + 每槽去重告警**）。
+7. **`resize()` 与异步 `update` 竞争 ⇒ 一帧黑**（`frame-capture.ts` 的 `dispose()` + 重建 vs 已交给异步串行 update 的快照）：修法 = ① `FrameCapture.snapshotVersion` 在重建/释放时自增，`ObjectEffectStage` 在执行当刻比对并丢弃作废引用（按「无快照」= 既有 null 语义走）；② `player.resize()` 通知 `notifyViewportResize()` 作废在途快照。**已补 3 条能钉住该行为的用例**（见 A.2）。
+

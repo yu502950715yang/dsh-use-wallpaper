@@ -113,6 +113,19 @@ git checkout b21b1ac -- src/; node e2e/verify/verify-isolated-rt-sharpness.mjs -
 
 ---
 
+### 2.7 段渲染与帧内快照的验收口径（2026-10-13，未在本轮执行）
+
+本轮的**单测**已覆盖段划分 / 快照时机 / 无消费者零回归（`tests/frame-capture.test.ts`、`tests/threejs-player.test.ts` 的「ThreeScenePlayer 段渲染（frameCapture）」describe、`tests/object-effects.test.ts`）；**真机逐像素对拍、9 个叠加次序变化壁纸的目视、性能/显存测量留给 Lead 与用户统一安排**。要跑时的口径：
+
+| 项 | 口径 |
+|---|---|
+| 改 `src/` 后 | **必须先 `npm run build`**（`e2e/verify/verify-hidpi-object-rt.mjs` 无 src 重定向，否则测的是旧 `lib/`；`verify-isolated-rt-sharpness.mjs` 自带 src 重定向） |
+| 零回归对拍 | 选**无消费者**的壁纸（如 `3793620838`）：`--tag=before` → 改动 → `--tag=after` → `npm run e2e:compare`；判据 `maxAbs ≤ 1` 且「差 ≥ 2 的像素数 = 0」 |
+| 预期可见变更 | 全库 **9** 个「粒子在前 image 在后」的 pkg（`1429403119` / `2597392171` / `2897292240` / `2911105183` / `2937346640` / `3743126786` / `3765967112` / `3793620838` / `3789452668`）叠加次序改变（对齐 WE，**不得当回归**）；`2897292240` 由白块变水滴；`2597392171` 的 obj#50 半透明区不再被压黑 |
+| 性能/显存 | `2897292240`「段渲染开 / 关」的帧时与 `renderer.info.memory.textures/geometries`；退化 > 15% 时把「半分辨率 `frameRT`」列为后续优化 |
+
+---
+
 ## 3. 卸载方法
 
 ### 3.1 标准卸载（推荐）

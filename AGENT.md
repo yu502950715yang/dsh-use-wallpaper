@@ -19,7 +19,8 @@
 ### 2.1 scene 渲染路径
 
 - **接线**：`index.ts` → `createThreeSceneRenderer()`（`three-renderer.ts`：拉 scene.json + 背景纹理 + 粒子条件 + 纹理材质）→ `loadSceneToThree()`（`threejs-player.ts`：正交 cover 相机 + 背景 mesh + 粒子 billboard）→ `setAnimationLoop` 每帧 `sim.update(dt)` 后刷新粒子缓冲。
-- **对象级效果链**：同一入口下多走两步 —— 解析每个对象的 `effects`（`shader/effect-chain.ts` 的 `resolveEffectChain`）→ `ObjectEffectStage`（`object-effects.ts`）编排：隔离对象进 `localScene` + 主场景放合成 quad，每帧 `renderIsolatedContents()`（内容 → 对象 RT）→ `stage.bindOutputs()` → 渲染主场景 → `stage.advance(time)`。无带效果对象时 stage 为 null，帧序退化为 `fn → update → render`。
+- **段渲染与帧内快照**（2026-10-13，§5.46）：无消费者时整条路径与本文之前**逐字节一致**；有消费者（粒子 `REFRACT`、效果链引用 `_rt_FullFrameBuffer`）时 `render()` 改走 `renderSegmented()` —— 按 `renderOrder` 升序逐段渲进 `frameCapture.target`，消费者段**绘制之前**拍一张帧内快照。`frame-capture.ts`（帧内快照：惰性建画布尺寸 RT + `FramebufferTexture` + `copyFramebufferToTexture`，语义 = WE 的 `_rt_FullFrameBuffer` / 场景 FBO）与 `composite-quad.ts`（末段把段渲染结果全屏恒等贴回默认 fb；开了 Glow 则改由 `glow-stage.apply(..., target)` 复用同一张 RT）是这条路径上新增的两个模块。
+- **对象级效果链**：同一入口下多走两步 —— 解析每个对象的 `effects`（`shader/effect-chain.ts` 的 `resolveEffectChain`）→ `ObjectEffectStage`（`object-effects.ts`）编排：隔离对象进 `localScene` + 主场景放合成 quad，每帧 `renderIsolatedContents()`（内容 → 对象 RT）→ `stage.bindOutputs()` → 渲染主场景 → `stage.advance(time)`。无带效果对象时 stage 为 null，帧序退化为 `fn → update → render`。段渲染开启时帧序多两处：消费者段边界 `stage.onSegmentBoundary(id, 快照, 快照代号)`（同步选取，runner 仍由帧末 `advance` 推进）、`resize()` 时 `stage.notifyViewportResize()`（作废在途快照）。
 - **粒子模拟不重写**：复用 wasm 的 `CpuParticleSim`（纯 CPU，无需 WebGPU）；renderer 只把 `sim.vertices()` 的**每粒子 16 浮点**（`[pos3,size,uv2,color3,alpha,rot3,vel3]`，见 `threejs-player.ts` 的 `PARTICLE_FLOATS_PER_INSTANCE`）画成 billboard。
 - **失败重试**：`wallpaper-controller.ts` 在 `render()` 返回 false 后用**新 canvas** 重试一次（防 WebGL 上下文污染），仍失败才落 preview。
 - **生命周期**：DSH 会在客户端 bundle 重建时**重新执行 bundle 并重挂载插件** —— 挂载必须幂等、必须有收尾（§5.43）。
@@ -156,6 +157,14 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
 
 44. **满屏隔离对象关 MSAA（结构性无效）+ RT 纹理的采样参数必须 `dispose()` 才下发**：① 满屏背景隔离对象的 RT 内只有一张盖满的 quad、没有轮廓边 ⇒ `samples=0` 与 `4` **逐像素相同（MAD=0.0000）**，关掉它把省下的显存换成分辨率；非满屏对象（贴片 / 粒子 billboard）保留 `4`（有真实几何边，一个都不能被关）；② **RT 纹理的采样参数只在 `setupRenderTarget`（首次使用或 `dispose()` 之后）下发**，`texture.needsUpdate` 对 RT 纹理**无效** ⇒ 采样判定翻转（mipmap 开 / 关）时必须 `rt.dispose()`，否则新的 `minFilter` 到不了 GL，且 `generateMipmaps=true` 会**每帧白生成 mip**。A/B 实测表与 three 源码行号见 `docs/fixes/conventions-details.md` §5.44。
 
+45. **段渲染与帧内快照的四条不变量**（2026-10-13，`frame-capture.ts` / `composite-quad.ts`；明细与偏差见 `docs/fixes/conventions-details.md` §5.46 与设计文档的执行附录）：
+    - **无消费者 ⇒ 帧序与本文档之前逐字节一致**：`render()` 只在 `frameCapture.active` 时改走 `renderSegmented()`，否则不建段目标、不切段、不合成（结构性零回归，靠既有渲染断言网 + 单测钉住）。
+    - **`autoClear` 只在段内 `try/finally` 临时关闭并在 `finally` 恢复**（连带 `clearColor` / `clearAlpha` / `renderTarget`）—— `rt-render.ts` 的调用点依赖它清屏；只有首段之前对整个段目标清屏一次，其余段累积。
+    - **每段只让本段对象可见，`finally` 里按原值恢复**（透明混合是累积的，留可见会被再画一遍 ⇒ 重复叠加）；`visible` 原本为 false 的对象不得被段逻辑改成 true。
+    - **快照拍在消费者被绘制之前且逐帧覆盖**：快照语义 = 「到这一刻为止已渲染进段目标的内容」（= WE 场景 FBO / `_rt_FullFrameBuffer`）；每个消费者边界恰好 `capture()` 一次（无幂等性），消费者**不得跨帧持有**该纹理引用。resize 会 `dispose` + 重建快照 ⇒ 已排队的异步消费方按 `snapshotVersion` 代号自查作废（`player.resize()` 同时通知 `notifyViewportResize()`）。
+
+46. **`_rt_FullFrameBuffer` 的语义与当前消费点**：`_rt_FullFrameBuffer` = 「到该对象被绘制那一刻为止，本帧已绘制的内容」= WE 的场景 FBO（lwe `CScene.cpp:351-361` 按 `m_objectsByRenderOrder` 逐个 render、`CParticle.cpp:2069-2079` 在画粒子层**之前** blit）。本轮实现：段边界 `copyFramebufferToTexture` 快照，**两条消费路径** —— ① 粒子 `REFRACT`（顶点切线基 + 片元 `genericparticle.frag:103-116` 位移采样）；② 引用该槽的效果链（`effect-runner` 把 `frameTexture` 绑到该槽；无快照时该槽**留空** + 每槽去重告警，而直接调 `resolveBuiltinTexture` 的路径回退 1×1 白纹）。本轮只做这一个名字：其它 `_rt_*`（含 `_rt_imageLayerComposite_*`）仍走「白纹 + 去重告警」不变（§7.31 / §7.38）。
+
 ## 6. 工作约定
 
 - 回复、注释、文档、**提交信息一律简体中文**；代码、命令、文件名、技术术语保留原文。
@@ -179,7 +188,7 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
 12. **e2e harness 与真 GPU 的边界**：`verify-hidpi-object-rt.mjs` 已加「挂载期 RT 尺寸」断言（含独立 oracle 与变异验证），`verify-isolated-rt-sharpness.mjs` 再加结构性判据 + 锐度双判据（口径见 §5.44 与 `TESTING.md`），但**不覆盖「RT 尺寸对而贴屏映射错」**这一类缺陷；而实测到的「背景糊」根因是**分辨率不足**（RT 只有屏占位 1×），不是贴屏映射错。软件光栅化的性能数字**不能**替代真机 FPS。
 16. **`{animation}` 的关键帧轨道播放未实现**：`{script,value}` / `{animation,value}` 形态已按 `value` 静态兜底，但 track/keyframe/mode/fps **全部未解析** ⇒ 轨道驱动的位移/缩放/旋转仍不生效；「新位置与桌面一致」未证实。
 30. **应用级 Glow 的范围边界**：只覆盖 **scene** 壁纸（且只测过 GTR 一张），而 WE 的 postprocessing 对 video 也生效 ⇒ **video / image / web 的亮部仍与桌面有差**；开启时 base RT **无 MSAA**（整帧从 canvas 的 `antialias:true` 掉到无 MSAA）；性能门槛（1080p FPS ≥ 30）**未在真机严格验证**（缺 GPU 耗时或有头浏览器帧率）；壁纸级 `general.bloom` **未实现**（全库 3 张：`2454403969`、`2937346640`、`3790775478`）。
-31. **`copybackground` 语义未实现**（读背景副本做倒影/涟漪的场景会缺内容）；`_rt_FullFrameBuffer`（当前帧缓冲）不绑白纹、只打去重降级告警（全库 1 处 `2597392171`）；**`colorBlendMode` 只实现 6/7/31**，其余模式回退普通 alpha 混合。
+31. **`copybackground` 语义未实现**（读背景副本做倒影/涟漪的场景会缺内容）；`colorBlendMode` 只实现 6/7/31，其余模式回退普通 alpha 混合。**订正**：`_rt_FullFrameBuffer` 已不再是「不绑白纹 + 只打降级告警」—— 本轮实现了帧内快照消费（§5.46），本条已结案。
 32. **web 壁纸的 resize 与失败回退**：跨源 iframe 拿不到子帧错误 ⇒ **无失败回退**（渲染失败停在空白而非 preview 图）；resize 靠**重建 iframe** ⇒ 跨屏拖动导致的 **dpr 变化不触发重建**，且重建会让壁纸动画从头开始（跨源探测不到壁纸是否快照了视口，故统一重建）。
 33. **非回环且非桌面壳的访问仍退回 opaque origin 沙箱**：局域网 IP / 隧道访问 GUI 时既无回环名也无 `__DSH_TRANSPORT__` ⇒ 依赖 WebGL 贴图的 web 壁纸空白（纯 DOM/CSS 的不受影响）。未做「另起端口」方案。
 34. **DSH 旧版（≤0.1.6）适配层待删**：0.1.7 起设置系统与右侧栏行为都变了，插件因此并存两套代码与样式。**判据**：README 声明的最低 DSH 版本 ≥ `0.1.7-alpha.1`（目前 README 只声明兼容三版），且本机与 CI 都不再跑旧版验收；清理清单见 `docs/superpowers/plans/2026-09-23-dsh-settings-compat-migration.md` §9。

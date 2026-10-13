@@ -192,6 +192,22 @@ function pkgFiles(id: string): Map<string, Uint8Array> | null {
   return unpack(new Uint8Array(readFileSync(p))).files;
 }
 
+/** 基线（`output/blur-analysis/refract-scan.json`）里 `combos.REFRACT === 1` 的材质名集合；
+ *  基线文件缺失或不可解析 → null（调用方跳过该交叉对照）。 */
+function baselineRefractMaterials(): Set<string> | null {
+  if (!existsSync(REFRACT_SCAN)) return null;
+  try {
+    const rows = JSON.parse(readFileSync(REFRACT_SCAN, 'utf8'))?.rows ?? [];
+    const out = new Set<string>();
+    for (const r of rows as Array<{ combos?: { REFRACT?: unknown }; material?: unknown }>) {
+      if (r?.combos?.REFRACT === 1 && typeof r.material === 'string') out.add(r.material);
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
+
 describe.skipIf(!hasLibrary || !hasRefractAsset)('粒子 REFRACT 真库对照', () => {
   it('halo_50_1.json：refract=true、槽 1 非空（走同一条 particle-texture 路由）、amount 缺省 0.05', async () => {
     const files = pkgFiles(REFRACT_WID);
@@ -217,7 +233,11 @@ describe.skipIf(!hasLibrary || !hasRefractAsset)('粒子 REFRACT 真库对照', 
     }
   });
 
-  it('全库扫描：combos.REFRACT=1 的粒子材质只有 halo_50_1.json（其余壁纸一律 false）', () => {
+  // ⚠️ 不钉「全库 REFRACT 材质 == [halo_50_1.json]」：本文件既有约定是**不钉本机素材快照**
+  // （见 :173 起「全库计数会随素材漂移」）—— 用户装一张新折射壁纸就会把这条钉死的断言打成假失败。
+  // 保留的判据：① 本机确实解析出 `refract=true` 的这一条（能力仍被真实素材验证）；
+  // ② 本机扫到的每个 REFRACT 材质都在研究者基线里（口径交叉核对，防解析口径漂移）。
+  it('全库扫描：本机解析出的 REFRACT 材质包含 halo_50_1.json，且都在 refract-scan.json 基线内', () => {
     const refractMaterials = new Set<string>();
     for (const dir of readdirSync(WALLPAPER_DIR, { withFileTypes: true }).filter((d) => d.isDirectory())) {
       const files = pkgFiles(dir.name);
@@ -240,12 +260,14 @@ describe.skipIf(!hasLibrary || !hasRefractAsset)('粒子 REFRACT 真库对照', 
         } catch { /* 非法 json 由上面那条回归用例兜底 */ }
       }
     }
-    expect([...refractMaterials].sort()).toEqual([REFRACT_MATERIAL]);
-    // 与研究者基线（output/blur-analysis/refract-scan.json）交叉核对：两处口径必须一致。
-    if (existsSync(REFRACT_SCAN)) {
-      const rows = JSON.parse(readFileSync(REFRACT_SCAN, 'utf8'))?.rows ?? [];
-      const baseline = new Set(rows.filter((r: any) => r?.combos?.REFRACT === 1).map((r: any) => r.material));
-      expect([...baseline].sort()).toEqual([REFRACT_MATERIAL]);
+    // ① 能力仍被本机真实素材验证（不是空集合恒真）。
+    expect(refractMaterials).toContain(REFRACT_MATERIAL);
+    // ② 与研究者基线交叉核对：两处口径必须一致。基线缺失/不可解析 → 跳过（不假失败）。
+    const baseline = baselineRefractMaterials();
+    if (baseline) {
+      for (const m of refractMaterials) {
+        expect(baseline, `本机扫到的 REFRACT 材质不在基线内（解析口径或素材已变）: ${m}`).toContain(m);
+      }
     }
   });
 });

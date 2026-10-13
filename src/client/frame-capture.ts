@@ -17,6 +17,12 @@ export interface FrameCapture {
    * 调用前须已把渲染目标绑到 target（本方法不切 target）；消费者不得跨帧持有该引用。
    */
   capture(): THREE.Texture;
+  /**
+   * 快照实例的代号：`resize()` 重建快照纹理 / `dispose()` 时自增。
+   * 消费方（effect-runner 的异步串行队列）在**用**快照前比对代号即可丢弃已作废的引用
+   * —— resize 会 dispose 旧快照，仍持有它的 update 会采到空纹理 ⇒ 该帧整块黑。
+   */
+  readonly snapshotVersion: number;
   /** 同步 target 与快照尺寸；尺寸变化会重建快照纹理（FramebufferTexture 无 setSize），旧引用作废。 */
   resize(width: number, height: number): void;
   /** 释放两张资源且幂等；此后 use()/resize() 静默无效，capture()/target 抛错（调用方据此降级）。 */
@@ -54,6 +60,8 @@ export function createFrameCapture(
   let height = 0;
   let target: THREE.WebGLRenderTarget | null = null;
   let snapshot: THREE.Texture | null = null;
+  // 快照实例代号：重建/释放快照时自增，供已排队的异步消费方判断自己手里那张是否已作废。
+  let snapshotVersion = 0;
 
   /** 建资源前的兜底：0 尺寸的 RT/FramebufferTexture 非法（画布隐藏时 drawingBuffer 可能为 0）。 */
   function normalize(v: number): number {
@@ -114,6 +122,7 @@ export function createFrameCapture(
       target.setSize(nw, nh);
       snapshot.dispose();
       snapshot = newSnapshot(nw, nh);
+      snapshotVersion++; // 旧引用作废（异步 update 可能仍握着它）
     }
   }
 
@@ -133,6 +142,7 @@ export function createFrameCapture(
     snapshot?.dispose();
     target = null;
     snapshot = null;
+    snapshotVersion++;
   }
 
   /** 只复位 active，不释放资源（dispose 后调用静默无害）。 */
@@ -143,6 +153,7 @@ export function createFrameCapture(
   return {
     get active() { return active; },
     get target() { return ensure().target; },
+    get snapshotVersion() { return snapshotVersion; },
     use() { if (!disposed) active = true; },
     reset,
     capture,

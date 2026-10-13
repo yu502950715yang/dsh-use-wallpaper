@@ -39,8 +39,10 @@ export interface ObjectEffectStage {
   /** 主场景渲染之后：串行推进 runner.update（异步，不阻塞本帧）。 */
   advance(time: number): void;
   /** 段边界（消费者被绘制**之前**）同步通知：该对象的链本帧用这张整帧快照（design §3.5）。
-   *  未携带纹理时向宿主拉取；player 侧的同名接口把本方法记为可选（玩家可不实现）。 */
-  onSegmentBoundary(objectId: number, frameTexture?: THREE.Texture | null): void;
+   *  未携带纹理时向宿主拉取；player 侧的同名接口把本方法记为可选（玩家可不实现）。
+   *  `snapshotVersion` 是 FrameCapture 的快照代号：排队的 update 执行前比对，不一致即丢弃
+   *  （resize/dispose 会把快照换成新实例，旧引用已 dispose ⇒ 采它会把该对象整块画黑）。 */
+  onSegmentBoundary(objectId: number, frameTexture?: THREE.Texture | null, snapshotVersion?: number): void;
 }
 
 // 线性可执行判定（spec §5.1）：链中每个 pass 都不写具名 RT，且 bind 与 EffectRunner 的
@@ -142,6 +144,12 @@ export class ObjectEffectStage implements ObjectEffectStage {
   private warned = new Set<string>();
   /** 本帧各对象在段边界拿到的整帧快照（键 = 对象 id）——advance 消费后清空（快照逐帧覆盖）。 */
   private boundarySnapshots = new Map<number, THREE.Texture>();
+  /** 段边界世代：每次记录快照时自增，排队的 update 执行前比对、不一致即丢弃（见 advance）。 */
+  private boundaryGeneration = 0;
+  /** 已作废到哪一个「快照代号」（视口变化 / FrameCapture 换实例时抬到当前代号 ⇒ 在途任务全部失效）。 */
+  private staleAtCaptureVersion = 0;
+  /** 最近一次段边界收到的快照代号（= FrameCapture.snapshotVersion；未携带时保持不动）。 */
+  private captureVersion = 0;
   /** 音频频谱源（A3）：每帧同一缓冲引用；null = 全零静音（无音频/音效关闭）。 */
   private audioSpectrum: Uint8Array | null = null;
 
@@ -256,11 +264,17 @@ export class ObjectEffectStage implements ObjectEffectStage {
 
   /** 段边界（player 在消费者被绘制**之前**调用）：记下本帧快照，供**同一帧**的 advance 传进该对象的
    *  runner ⇒ 链内 `_rt_FullFrameBuffer` 拿到本帧内容（不是上一帧）。不在此发起 update：推进统一走
-   *  advance 的串行锁（约束 3），每对象每帧恰好一次，g_Time 也沿用 advance 的时间。 */
-  onSegmentBoundary(objectId: number, frameTexture?: THREE.Texture | null): void {
+   *  advance 的串行锁（约束 3），每对象每帧恰好一次，g_Time 也沿用 advance 的时间。
+   *  `snapshotVersion` = FrameCapture 的快照代号：与入队读到的不一致 ⇒ 快照已被 resize 换成新实例
+   *  （旧的那张已 dispose），该对象的 update 按「无快照」（null）走，绝不采已释放纹理。 */
+  onSegmentBoundary(objectId: number, frameTexture?: THREE.Texture | null, snapshotVersion?: number): void {
     if (this.disposed) return;
     const frameTex = frameTexture ?? this.host.captureFullFrame(); // 未携带纹理 → 向宿主拉取
     if (!frameTex) return; // 无快照：该对象本帧的 frameTexture 保持 null（既有语义）
+    if (snapshotVersion !== undefined) this.captureVersion = snapshotVersion;
+    // 新快照入手 ⇒ 抬到新一代，之前排队的 update（含上一帧的）一律作废。
+    this.boundaryGeneration++;
+    this.staleAtCaptureVersion = this.captureVersion;
     this.boundarySnapshots.set(objectId, frameTex);
   }
 
@@ -273,10 +287,29 @@ export class ObjectEffectStage implements ObjectEffectStage {
       runner.setAudioSpectrumSource(this.audioSpectrum); // 每帧注入同一引用（无音频时 null）
       // 本帧段边界拍下的快照（若有）随本次 update 交给链；无则 null（不引用快照的链逐字不变）。
       const frameTex = this.boundarySnapshots.get(view.id) ?? null;
-      this.enqueue(() => runner.update(time, view.rtTexture, frameTex));
+      // 快照可能在**入队之后**被 resize 作废（FrameCapture 重建快照纹理、旧的已 dispose）：
+      // 把世代带进闭包，执行当刻再比对一次 —— 作废后该 runner 这一帧走「无快照」（既有 null
+      // 语义、链退回 1×1 白），而不是采样已释放的纹理（那会把该对象整块画黑）。
+      const generation = this.boundaryGeneration;
+      this.enqueue(() => runner.update(
+        time,
+        view.rtTexture,
+        this.staleAtCaptureVersion === this.captureVersion && this.boundaryGeneration === generation
+          ? frameTex
+          : null,
+      ));
     }
     // 快照内容逐帧覆盖 ⇒ 只能本帧用：清空后下一帧无边界通知时回到 null（不跨帧持有）。
     this.boundarySnapshots.clear();
+  }
+
+  /** 画布缓冲/视口变化：FrameCapture 会重建快照纹理（旧引用已 dispose）⇒ 作废在途快照。
+   *  在途 update 的闭包按世代自查（见 advance），此处只抬作废水位。 */
+  notifyViewportResize(): void {
+    if (this.disposed) return;
+    this.boundarySnapshots.clear();
+    this.staleAtCaptureVersion = this.captureVersion;
+    this.boundaryGeneration++;
   }
 
   dispose(): void {

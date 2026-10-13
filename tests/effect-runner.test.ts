@@ -123,6 +123,11 @@ describe('resolveBuiltinTexture（内置/运行时纹理回退）', () => {
     expect(second).toBe(first); // 模块级白图缓存：同一实例
     expect(warn).toHaveBeenCalledTimes(1); // 一次性告警（不每帧/每壁纸刷屏）
     expect(String(warn.mock.calls[0][0])).toContain('_rt_FullFrameBuffer');
+    // 文案口径（Task 6）：只陈述本函数自身行为（1×1 白纹），不做「半透明区会被压黑」这类因果推断，
+    // 并点明 runner 路径的区别（它不调本函数：槽留空 + 每槽去重告警）。
+    expect(String(warn.mock.calls[0][0])).toContain('resolveBuiltinTexture');
+    expect(String(warn.mock.calls[0][0])).toContain('槽留空');
+    expect(String(warn.mock.calls[0][0])).not.toContain('压黑');
     warn.mockRestore();
   });
 

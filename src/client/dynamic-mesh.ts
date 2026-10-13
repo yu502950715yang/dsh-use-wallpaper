@@ -122,7 +122,7 @@ export class DynamicMeshRegistry {
   }
 
   // renderOrder：宿主可传所属 scene.json 对象的数组下标（唯一绘制序，对齐 WE m_objectsByRenderOrder）；
-  // 缺省 1 = 背景（renderOrder 0）之上、与既有粒子同层。
+  // 缺省 1（生产侧映射未接线、延后）；脚本自建图层当前恒为 1 —— 层序唯一化只覆盖装配期对象。
   createLayer(modelId: number, name: string, renderOrder?: number): number {
     const model = this.models.get(modelId);
     if (!model) return -1;

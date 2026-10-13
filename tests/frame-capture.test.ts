@@ -161,4 +161,24 @@ describe('createFrameCapture', () => {
     cap.resize(2560, 1440); // 重建后的快照纹理同样受约束
     expectTexParams(cap.capture());
   });
+
+  // 消费方（effect-runner 的异步串行队列）可能在本帧快照入队**之后**遇到 resize：
+  // resize 会 dispose 旧快照并换新实例 ⇒ 仍握着旧引用的 update 会采到已释放纹理（该对象整块黑）。
+  // 故快照实例代号必须在「重建 / 释放」时自增，供消费方在执行当刻丢弃作废引用。
+  it('snapshotVersion 在 resize 重建快照 / dispose 时自增，尺寸未变时不变', () => {
+    const cap = createFrameCapture(fakeRenderer([]));
+    expect(cap.snapshotVersion).toBe(0);
+    cap.use();
+    cap.capture();
+    expect(cap.snapshotVersion).toBe(0); // 拍快照不换代（同一张纹理只被覆盖）
+    cap.resize(2560, 1440);
+    expect(cap.snapshotVersion).toBe(1); // 快照纹理被 dispose + 重建 ⇒ 旧引用作废
+    const v = cap.snapshotVersion;
+    cap.resize(2560, 1440); // 同尺寸：不重建
+    expect(cap.snapshotVersion).toBe(v);
+    cap.resize(Number.NaN, 100); // 非法尺寸：不动资源
+    expect(cap.snapshotVersion).toBe(v);
+    cap.dispose();
+    expect(cap.snapshotVersion).toBe(v + 1); // dispose 同样作废
+  });
 });

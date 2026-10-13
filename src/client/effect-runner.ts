@@ -76,13 +76,16 @@ export function passSamplesFrameSnapshot(pass: CompiledEffectPass): boolean {
 }
 
 // 快照不可用只告警一次（模块级）：每壁纸 / 每帧都刷会淹没日志。
+// 措辞只陈述**本函数**的行为，不外推对画面的影响：无快照时本函数把 `_rt_FullFrameBuffer`
+// 解析成 1×1 白纹；而执行器的 runner 路径**不调**本函数 —— 它把该槽留空、另打一条
+// 「跳过绑定（槽留空）」的每槽去重告警。被 `bind` 覆盖的槽两条路径都用不到快照。
 let frameSnapshotWarned = false;
 function warnFrameSnapshotUnavailable(): void {
   if (frameSnapshotWarned) return;
   frameSnapshotWarned = true;
   console.warn(
-    '[wallpaper-engine] 帧内快照不可用：_rt_FullFrameBuffer 回退 1×1 白'
-    + '（godrays 等合成链的半透明区会被压黑）',
+    '[wallpaper-engine] 帧内快照不可用：resolveBuiltinTexture 对 _rt_FullFrameBuffer 回退 1×1 白纹'
+    + '（执行器 runner 路径不调本函数：它把该槽留空并另打一条去重告警）',
   );
 }
 

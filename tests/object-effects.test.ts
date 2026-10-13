@@ -452,6 +452,45 @@ describe('ObjectEffectStage', () => {
     expect(host._outputs.size).toBe(0);
   });
 
+  // resize 与异步 update 竞争：`FrameCapture.resize()` 会 dispose 旧快照并重建新实例
+  //（FramebufferTexture 无 setSize），而快照此时可能已在串行队列里排队 —— 执行当刻再采它
+  // 就是采一张已释放的纹理（该对象整块黑一帧）。判据：作废后该帧按「无快照」走（null），
+  // 而不是把旧引用传进 runner。
+  it('resize 作废在途快照：排队的 update 执行当刻按「无快照」走，不采已释放纹理', async () => {
+    const host = createHost([{ id: 1, rtWidth: 10, rtHeight: 10 }]);
+    const stage = new ObjectEffectStage(host as never, { wallpaperId: 'w', screenScale: 1 });
+    const resolvers: Array<() => void> = [];
+    const frameTexArgs: unknown[] = [];
+    const runner = {
+      setChains: vi.fn(),
+      setPlan: vi.fn(),
+      setAudioSpectrumSource: vi.fn(),
+      update: vi.fn((_t: number, _input: unknown, frameTex: unknown = null) => {
+        frameTexArgs.push(frameTex);
+        return new Promise<null>((resolve) => resolvers.push(() => resolve(null)));
+      }),
+      lastOutput: vi.fn(() => null),
+      dispose: vi.fn(),
+    };
+    stage.debugInjectRunner(1, runner as never);
+    const snapshotA = new THREE.Texture();
+    stage.onSegmentBoundary(1, snapshotA, 0); // 本帧快照代号 0
+    stage.advance(1);                          // 第一帧的 update 在途（未 settle）
+    expect(frameTexArgs).toEqual([snapshotA]);
+    expect(runner.update.mock.calls[0][0]).toBe(1);
+    // 异步 update 未归，第二帧的推进排在队尾；此时 resize：快照被重建（代号 1）、旧引用已 dispose。
+    const snapshotB = new THREE.Texture();
+    stage.onSegmentBoundary(1, snapshotB, 1);
+    stage.advance(2);
+    expect(runner.update).toHaveBeenCalledTimes(1);
+    stage.notifyViewportResize(); // 画布缓冲变化：作废在途快照
+    resolvers[0]();               // 第一帧 settle ⇒ 排队的第二帧开始执行
+    await new Promise((r) => setTimeout(r, 0));
+    expect(runner.update).toHaveBeenCalledTimes(2);
+    expect(runner.update.mock.calls[1][0]).toBe(2);
+    expect(frameTexArgs[1]).toBeNull(); // 作废后不把旧快照传进链
+  });
+
   // ── Task 5：引用 `_rt_FullFrameBuffer` 的链必须把该对象登记为段边界消费者 ──
   // 不登记 ⇒ frameCapture 不 active ⇒ 段渲染不开启 ⇒ 段边界快照永不发生 ⇒ 快照恒为 null（白图）。
   // 惰性（design §3.2）：不引用的对象一律不登记，帧序与改动前逐字一致。

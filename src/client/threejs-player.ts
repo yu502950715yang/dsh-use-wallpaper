@@ -412,9 +412,10 @@ void main() {
   // 配合 material.depthTest=false（忽略深度），保证粒子不被相机深度范围裁剪（对齐 wasm 语义）。
   gl_Position.z = 0.0;
 #ifdef REFRACT
-  // 折射切线基（屏幕空间位移方向）：与上面 quad 角点展开同一旋转约定（先粒子自旋、再对象角度）。
-  // ⚠️ WE ComputeParticleTangents 的合成序是「先对象角度、后粒子自旋」，本文件相反；本层 rot 仅
-  // z 分量时两者等价（全库折射层仅 2897292240 的雨）。vScreenCoord 必须在 gl_Position 之后取。
+  // 折射切线基（屏幕空间位移方向）：与上面 quad 角点展开**同一旋转约定与同一次序**
+  // （先粒子自旋、再对象角度），对齐 WE ComputeParticleTangents（common_particles.h:26-39
+  // 先算粒子切线、再由对象 orientation 变换；genericparticle.vert:85,117 同序）。
+  // vScreenCoord 必须在 gl_Position 之后取。
   vec3 rRight = normalize(weObjectRotate(weObjectRotate(vec3(1.0, 0.0, 0.0), particleRot), objAngles));
   vec3 rUp = normalize(weObjectRotate(weObjectRotate(vec3(0.0, 1.0, 0.0), particleRot), objAngles));
   vScreenCoord = gl_Position.xyw;
@@ -593,8 +594,11 @@ export interface IsolatedObject {
 export interface ObjectEffectStage {
   bindOutputs(): void;
   advance(time: number): void;
-  /** 段边界（消费者被绘制**之前**）同步通知：该对象的效果链本帧用这张整帧快照（design §3.5）。 */
-  onSegmentBoundary?(objectId: number, frameTexture?: THREE.Texture | null): void;
+  /** 段边界（消费者被绘制**之前**）同步通知：该对象的效果链本帧用这张整帧快照（design §3.5）。
+   *  `snapshotVersion` = FrameCapture 的快照代号，供消费方丢弃 resize 之后已作废的引用。 */
+  onSegmentBoundary?(objectId: number, frameTexture?: THREE.Texture | null, snapshotVersion?: number): void;
+  /** 画布缓冲/视口变化：作废在途快照（resize 会重建快照纹理，旧引用已 dispose）。 */
+  notifyViewportResize?(): void;
 }
 
 // 渲染像素比 = 设备像素比 × 画质档位。画布缓冲与对象 RT 的屏幕密度都按它算，
@@ -753,6 +757,9 @@ export class ThreeScenePlayer {
     this.glowStage?.resize(buf.width, buf.height);
     // 帧内快照的段目标/快照纹理同样按画布缓冲尺寸（否则 RT 被拉伸、快照与屏幕 UV 错位）。
     this.frameCapture?.resize(buf.width, buf.height);
+    // 快照已重建（旧引用作废）⇒ 让编排器作废在途快照：异步串行 update 可能仍握着旧引用，
+    // 执行时采到已 dispose 的纹理就是该对象整块黑一帧（下游按世代自查，见 object-effects.advance）。
+    this.objectEffectStage?.notifyViewportResize?.();
     this.compositeQuad?.resize(buf.width, buf.height);
     // ③ 合成采样标志随**视口**重估（视口变化是密度变化的唯一入口）：编排器在「RT 像素尺寸未变」
     //    时会跳过 resizeObjectRT，而源纹理收口 4096 时新老尺寸恰好相同（判定反转却无重估 ⇒ 走样重现）。
@@ -999,9 +1006,9 @@ export class ThreeScenePlayer {
           const snapshot = capture.capture();
           const consumerObjectId = consumerObjectIdByIndex.get(segment.consumer);
           // §3.5：段边界**同步**通知编排器 ⇒ 该对象的效果链本帧用这张快照（而非上一帧）。
-          // 携带纹理 = 不重复 blit（同一张快照也供下面的折射路径使用）。
+          // 携带纹理 = 不重复 blit（同一张快照也供下面的折射路径使用）；代号供 resize 期自查作废。
           if (consumerObjectId !== undefined) {
-            this.objectEffectStage?.onSegmentBoundary?.(consumerObjectId, snapshot);
+            this.objectEffectStage?.onSegmentBoundary?.(consumerObjectId, snapshot, capture.snapshotVersion);
           }
           // 折射消费者：在它被绘制之前把本帧快照接进 refractBg（快照逐帧覆盖，段外不持有引用）。
           const refractLayer = consumerObjectId === undefined ? undefined : this.refractLayers.get(consumerObjectId);

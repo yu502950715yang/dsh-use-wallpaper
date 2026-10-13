@@ -1401,10 +1401,11 @@ describe('ThreeScenePlayer loadSceneToThree', () => {
     const result = loadSceneToThree(scene, assets, canvas);
 
     // 背景：addBackground 的 T·R·S → mesh.rotation 承载对象 angles（three 的欧拉单位=弧度）。
-    const bg = result.player.scene.children.find((c) => (c as THREE.Mesh).renderOrder === 0) as THREE.Mesh;
+    // 按 scene.json 对象 id 取显示对象：renderOrder 现在 = objects 数组下标，不再是「背景=0/粒子=1」的层标记。
+    const bg = result.player.displayObject(13) as THREE.Mesh;
     expect(bg.rotation.z).toBeCloseTo(0.5, 6);
     // 粒子：objAngles uniform 收到同一份对象 angles。
-    const part = result.player.scene.children.find((c) => (c as THREE.Mesh).renderOrder === 1) as THREE.Mesh;
+    const part = result.player.displayObject(22) as THREE.Mesh;
     const uniforms = (part.material as THREE.ShaderMaterial).uniforms;
     expect(uniforms.objAngles.value.z).toBeCloseTo(-1.20063, 5);
   });
@@ -1440,8 +1441,10 @@ describe('ThreeScenePlayer loadSceneToThree', () => {
     // 按对象 id 取显示对象：renderOrder 现在 = objects 数组下标，不能再当「背景层」的筛选条件
     // （四个对象的下标 0..3 恰好都曾是「背景」）。
     const meshes = [17, 246, 300, 301].map((id) => result.player.displayObject(id) as THREE.Mesh);
-    expect(meshes).toHaveLength(4);
+    expect(meshes).not.toContain(undefined); // 四个对象都进了 displayObjects（漏登记即假绿）
     expect(meshes.map((m) => m.renderOrder)).toEqual([0, 1, 2, 3]);
+    // 这四个背景确实进了主场景（`meshes` 的 length 由 4 元素 map 决定，是恒真断言）。
+    expect(result.player.scene.children).toHaveLength(4);
 
     // 缺省（mode=0）：保持既有普通 alpha 混合
     expect(meshes[0].material.blending).toBe(THREE.NormalBlending);
@@ -2568,12 +2571,12 @@ describe('ThreeScenePlayer 段渲染（frameCapture）', () => {
     cap.use();
     player.setFrameCapture(cap);
     player.registerFrameConsumer(22); // 3 个对象、1 个消费者 ⇒ 2 段
-    const notes: Array<{ id: number; tex: unknown; rendersBefore: number }> = [];
+    const notes: Array<{ id: number; tex: unknown; ver: unknown; rendersBefore: number }> = [];
     player.setObjectEffectStage({
       bindOutputs: () => {},
       advance: () => {},
-      onSegmentBoundary: (id: number, tex: THREE.Texture | null) => {
-        notes.push({ id, tex, rendersBefore: mock._renders.length });
+      onSegmentBoundary: (id: number, tex: THREE.Texture | null, ver?: number) => {
+        notes.push({ id, tex, ver, rendersBefore: mock._renders.length });
       },
     });
     mock._setOnRender(null);
@@ -2583,9 +2586,33 @@ describe('ThreeScenePlayer 段渲染（frameCapture）', () => {
     expect(boundary.map((n) => n.id)).toEqual([22]);
     expect(mock._copies).toHaveLength(1);
     expect(boundary[0].tex).toBe(mock._copies[0].texture);
+    // 快照代号随通知下发：消费方据此在执行当刻丢弃 resize 之后作废的引用（Task 6）
+    expect(boundary[0].ver).toBe(cap.snapshotVersion);
     // 通知发生在 #22 所在段 render **之前**（此刻只渲过第 1 段 #11，与快照同一时点）
     expect(boundary[0].rendersBefore).toBe(mock._copies[0].rendersBefore);
     expect(boundary[0].rendersBefore).toBe(1);
+    player.dispose();
+  });
+
+  // resize 与异步 update 竞争（Task 6）：`player.resize()` 会重建 FrameCapture 的快照纹理
+  //（旧引用已 dispose），而排队中的 runner.update 仍握着它 ⇒ 该对象会黑一帧。
+  // 契约：resize 时通知编排器作废在途快照（下游按世代丢弃，见 object-effects.advance）。
+  it('resize 通知编排器作废在途快照（画布缓冲尺寸未变时也通知）', () => {
+    const { player, mock } = makePlayer();
+    addThreeLayers(player);
+    const cap = createFrameCapture(mock as unknown as THREE.WebGLRenderer);
+    cap.use();
+    player.setFrameCapture(cap);
+    player.registerFrameConsumer(22);
+    // drawingBuffer 尺寸固定 1920×1080 ≠ 视口 × dpr ⇒ 缓冲尺寸不随本次 resize 变化
+    //（隔离出「通知」这一条判据：不依赖 FrameCapture.resize 的尺寸真的变了）。
+    const notify = vi.fn();
+    player.setObjectEffectStage({ bindOutputs: () => {}, advance: () => {}, notifyViewportResize: notify });
+    mock._setOnRender(null);
+    const before = cap.snapshotVersion;
+    player.resize(1234, 567);
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(cap.snapshotVersion).toBe(before); // 缓冲尺寸未变 ⇒ 快照未重建
     player.dispose();
   });
 

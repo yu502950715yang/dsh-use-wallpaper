@@ -352,6 +352,7 @@
     - **为什么必须 `dispose()`**：`generateMipmaps` 是**实时**读的（`WebGLTextures.js:108-112`；`updateRenderTargetMipmap` `:1937-1957` 在每次渲染进 RT 后被调用）⇒ 只改 `minFilter` 而不 dispose，会出现「**每帧白生成 mip，却仍按旧 `LINEAR` 采样**」＝判定翻转后画面没变好、还多付 mip 生成开销。修法：判定翻转时 `rt.dispose()`（`core/RenderTarget.js:154` 只 `dispatchEvent('dispose')`；`WebGLTextures.js:317-325` 的 `onRenderTargetDispose` 摘监听 + `:457` `properties.remove(renderTarget)`；`setupRenderTarget` 每次都重新 `addEventListener`（`:1715`）⇒ 无监听泄漏，下一帧按新参数重建）；**未翻转时不要 dispose**（那等于每帧重建 FBO）。翻转判据取 `rt.texture.minFilter`（离散、与写入同源），故**不会误 dispose**：新建 RT 缺省即 `LinearFilter` ⇒ `minifying=false` 时 `flipped=false`；`minifying=true` 时 `flipped=true`、确实会 dispose 一次，但此刻 RT 尚未 setup、监听尚未挂上，dispose 是 no-op，无害。
     - **回归**：`tests/threejs-player.test.ts` —— 满屏 background `samples=0` / 未铺满仍为 4、铺满整屏的 particle 仍开 MSAA、RT 不大于屏占位时不生成 mip（`generateMipmaps=false` + `LinearFilter` 与 three 缺省逐值相同）、resize 后重估（判定翻转 dispose 恰好 1 次 / 未翻转 0 次）。
 
+
 ### §5.45
 
 45. **文本层 e2e 判据 [9] 改为「同相位 + 相对字形足迹」口径；旧「增量口径 / 绝对阈值」的两代盲区已修；[10] 补上「墙钟冻结」断言（2026-10-13，测试标定；修复轮 2 → 修复轮 3 → 修复轮 4）**：
@@ -541,8 +542,11 @@
       当作地板抗噪能力的证据 —— 能自证地板与牙的是上面的多站/同相位表 + `--teeth` 行。
     - **不变量**：`src/`、`lib/`、`dist/`、其它脚本的判据/阈值零变更；`npm test` **55 files / 1118 passed**。
 
+### §5.46
 
-
-
-
-
+46. **段渲染与帧内快照的口径（2026-10-13，分支 `feat/frame-capture-refract`；对应 `AGENT.md` §5.45/§5.46）**：
+    - **段划分**：按 `renderOrder` 升序稳定排序顶层对象，**消费者开启新的一段**、其后非消费者与之同段 ⇒ **段数 = 消费者数 + 1**。`renderOrder` = **`scene.json` `objects` 数组下标**（`threejs-player.ts:2120` 的 `desc.objects.entries()`，每个可渲染对象唯一；隔离对象的合成 quad 沿用其宿主对象的下标），对齐 WE 的 `m_objectsByRenderOrder`（lwe `CScene.cpp:94-101/262-295`）。⚠️ **不要再把 `renderOrder` 当「层」用**：唯一化之后 `renderOrder === 0/1` 不再是「背景 / 粒子」的判据（测试若要区分层，用 `player.displayObject(<scene.json 对象 id>)`；全库有 9 个「粒子在前 image 在后」的 pkg 因此改变叠加次序，属对齐 WE 的预期变更，见设计文档执行附录）。
+    - **快照口径**：快照拍在消费者段 `render()` **之前**（= WE「画该层前 blit 场景 FBO」），内容 = 「到那一刻为止已渲染进段目标的内容」；**每个消费者边界恰好 `capture()` 一次**（`capture()` 无幂等性，多调一次就是多一次 blit + 覆盖内容）；快照**逐帧覆盖** ⇒ 消费者不得跨帧持有纹理引用。
+    - **`autoClear` / `visible` 的处置边界**：`autoClear`（连带 `clearColor`/`clearAlpha`/`renderTarget`）与各顶层对象 `visible` 只在 `renderSegmented()` 的 `try` 内被改写，`finally` 逐项恢复原值；每段只让本段对象可见（透明混合累积，留可见会被再画一遍）。`rt-render.ts` 的「透明清屏」不变量与段渲染无关、不得被本条改动（这是把 `autoClear` 限定在段内的原因）。
+    - **resize 与异步消费的竞争（已修）**：`FrameCapture.resize()` 会 `dispose` + 重建快照纹理（`FramebufferTexture` 无 `setSize`），而对象级效果链的 `runner.update` 是**异步串行**推进（可能已排队）⇒ 仍握着旧快照的 update 会采到已释放纹理（该对象整块黑一帧）。两条合起来的判据：① `FrameCapture.snapshotVersion` 在重建/释放时自增，消费方在执行当刻比对不一致即按「无快照」（null）走；② `player.resize()` 通知 `ObjectEffectStage.notifyViewportResize()` 作废在途快照。单测落点 `tests/frame-capture.test.ts`（代号自增）、`tests/object-effects.test.ts`（在途 update 作废后拿到 null）、`tests/threejs-player.test.ts`（resize 必通知，缓冲尺寸未变也通知）。
+    - **`_rt_*` 的处置边界（本轮只做 `_rt_FullFrameBuffer`）**：`_rt_FullFrameBuffer` 已实现（粒子 REFRACT + 引用该槽的效果链两条消费路径，见 `AGENT.md` §5.46）。**其它 `_rt_*` 名字与 `_rt_imageLayerComposite_*` 一律维持「槽留空 + 每槽去重告警」**，不绑 1×1 白纹（绑白等于凭空造内容，比留空更容易画错）；直接调 `resolveBuiltinTexture` 的路径仍回退 1×1 白纹并打**一次**模块级告警（措辞只陈述该函数自身行为，不外推对画面的影响 —— 被 `bind` 覆盖的槽与快照无关，不该打出「半透明区会被压黑」这类因果推断）。`_rt_imageLayerComposite_*`（对象结果池，7 处）、对象材质 `BLENDMODE` 的 `_rt_FullFrameBuffer`（161 材质）、6 个 JSONC 引擎 `effect.json` 的容错、`general.clearcolor` 消费**均另立任务**（design §8 / R7/R8/R10/R11）。
