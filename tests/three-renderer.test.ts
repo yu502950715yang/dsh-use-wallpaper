@@ -1166,10 +1166,11 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     r.dispose();
   });
 
-  // Task 5：引用 `_rt_FullFrameBuffer` 的效果链必须把该对象登记为段边界消费者。
-  // 不登记 ⇒ frameCapture 不 active ⇒ 段渲染不开启 ⇒ 段边界快照永不发生（`_rt_FullFrameBuffer`
-  // 只能退回 1×1 白 ⇒ obj#50 的半透明区被压黑）。链的 WebGL 部分不参与：只断言登记这一次调用。
-  it('链引用 _rt_FullFrameBuffer 的对象 → 登记为段边界消费者（不引用的不登记）', async () => {
+  // 最终审查 C2（按 R6 降级）：效果链的 `_rt_FullFrameBuffer` 消费者**本轮不启用**。装配路径仍
+  // 照常注入 capture、照常挂链（能力保留在执行器与纯函数里），但**不得**登记段边界消费者：
+  // 不登记 ⇒ frameCapture 不 active ⇒ 段渲染不开启 ⇒ 2597392171 的链行为 = 改动前（该槽留空 +
+  // 每槽去重告警）。登记行为与判定口径的单测：tests/object-effects.test.ts。
+  it('链引用 _rt_FullFrameBuffer：门控关闭 ⇒ 不登记段边界消费者（capture 仍照常注入）', async () => {
     stubAssetFetch(sceneWith([
       {
         id: 13, name: 'godrays', image: 'models/a.json',
@@ -1188,9 +1189,10 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     resolveImageTexture.mockResolvedValue(fakeTexture() as never);
     defaultLoadWasm.mockResolvedValue(null);
     const registerFrameConsumer = vi.fn();
+    const setFrameCapture = vi.fn();
     const player = {
       dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage: vi.fn(),
-      setGlowStage: vi.fn(), setFrameCapture: vi.fn(), registerFrameConsumer,
+      setGlowStage: vi.fn(), setFrameCapture, registerFrameConsumer,
       renderer: {},
       isolatedObjects: () => [
         { id: 13, kind: 'background', rtWidth: 3840, rtHeight: 2160, rtTexture: {} },
@@ -1198,14 +1200,15 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
       ],
     };
     loadSceneToThree.mockReturnValue({ player, sims: [], backgroundIds: [0, 1], particleLayers: [] } as never);
-    // 不替换 setObjectChains：本用例要走**真实**挂载路径（登记就发生在它内部）。
+    // 不替换 setObjectChains：本用例要走**真实**挂载路径（判定就发生在它内部）。
     vi.spyOn(ObjectEffectStage.prototype, 'setWorldSize').mockImplementation(() => {});
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
     expect(await r.render('2597392171', document.createElement('canvas'), null)).toBe(true);
-    // 只有引用快照的对象（13）被登记；#60 的链不引用 ⇒ 惰性不登记（帧序与现状逐字一致）。
-    expect(registerFrameConsumer.mock.calls).toEqual([[13]]);
+    // capture 接线不变（无消费者时 active=false ⇒ 帧序与改动前一致），但两个对象都**不**登记。
+    expect(setFrameCapture).toHaveBeenCalledTimes(1);
+    expect(registerFrameConsumer).not.toHaveBeenCalled();
     expect(warn.mock.calls.filter((c) => String(c[0]).includes('尚无隔离条目'))).toHaveLength(0);
     warn.mockRestore();
     r.dispose();

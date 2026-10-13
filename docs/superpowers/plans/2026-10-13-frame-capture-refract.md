@@ -338,6 +338,8 @@ git commit -m "feat(client): 粒子 REFRACT 采样背景做位移（玻璃水滴
 
 ### Task 5: 效果链消费者（`2597392171` godrays）
 
+> ⚠️ **后续状态（2026-10-13 最终审查 C2，按 R6 降级）**：本任务实现的「引用 `_rt_FullFrameBuffer` 的链自动登记为段边界消费者」接线**本轮不启用** —— 改为默认关闭的显式门控 `ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER = false`（`object-effects.ts`）。理由：该路径从未真机验收，且对象链的贴屏 quad UV 覆盖**对象窗口**、快照是**整画布**（v 约定还反向一次）。能力与单测保留，`2597392171` 回到改动前行为（该槽留空 + 每槽去重告警）；详见 spec 附录 A.4 ⑧ / A.9。
+
 **Files:**
 - Modify: `src/client/object-effects.ts`（`ObjectEffectHost` += `captureFullFrame()`；段边界同步执行 runner）
 - Modify: `src/client/effect-runner.ts`（`resolveBuiltinTexture` `:68-97` 的 `_rt_` 分支、`update()` 增加 frameTexture 入参、`:723-732` 的未声明槽处理）
@@ -401,7 +403,7 @@ Expected: 全绿；用例数 ≥ 基线 1118 + 本分支新增
 
 - [ ] **Step 2: 零回归对拍**
 
-`npm run build && npm run build:client`，然后用 `e2e/verify/compare-shots.mjs` 对**不含消费者**的壁纸（如 `3793620838`）改动前后逐像素对拍：`maxAbs ≤ 1` 且「差 ≥ 2 的像素数 = 0」。**改 `src/` 后必须先 build**（`verify-hidpi-object-rt.mjs:128-134` 无 src 重定向）。
+`npm run build && npm run build:client`，然后用 `e2e/verify/compare-shots.mjs` 对**同一张壁纸在「注入 `frameCapture` / 不注入」两种配置**下逐像素对拍：`maxAbs ≤ 1` 且「差 ≥ 2 的像素数 = 0」。**判据修正（2026-10-13 最终审查 I1）**：原口径「选不含消费者的壁纸（如 `3793620838`）改动前后对拍」自相矛盾 —— `3793620838` 本身在「`renderOrder` 唯一化会改叠加次序」的 9 个 pkg 清单里（`output/blur-analysis/render-order-refactor-survey.md`），只有「注入 / 不注入」这条才与 `renderOrder` 无关、对应「无消费者零回归」语义。**改 `src/` 后必须先 build**（`verify-hidpi-object-rt.mjs:128-134` 无 src 重定向）。本轮未执行（见 spec 附录 A.5）。
 
 - [ ] **Step 3: 7 个「粒子在前 image 在后」壁纸目视**
 

@@ -17,6 +17,13 @@ import { loadTexTexture } from './tex-loader.js';
 import type { CompiledEffectPass } from './shader/effect-chain.js';
 import { buildEffectPlan, type EffectPlan } from './effect-graph.js';
 
+// 效果链的 `_rt_FullFrameBuffer` 消费者**本轮不启用**（2026-10-13 最终审查 C2，按 R6 降级）：
+// 对象链的贴屏 quad UV 只覆盖**对象窗口**，而快照是**整画布**（v 约定还反向一次）⇒ 直采会错位，
+// 且该路径从未真机验收。启用前必须先解决「对象窗口 UV ↔ 整画布快照」的映射与 v 约定
+//（见设计文档 `2026-10-13-frame-capture-refract-design.md` 附录 A.4 ⑧）。
+// 关闭时行为 = 改动前：该槽留空 + 每槽去重告警；帧序不因效果链改变（能力保留在执行器与纯函数里）。
+export const ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER = false;
+
 // 效果纹理槽加载器（**必须与对象 RT 的 v 约定同一套**，2026-09-14）：
 //   对象 RT 由 `threejs-player.attachIsolated` 的 **y 镜像局部相机**渲染 ⇒ RT 的 v=0 = 图像**顶部**
 //   （= WE 约定：WE/lwe 直接上传 `.tex` 首行，v=0 也是图像顶部）。效果 shader 用 `v_TexCoord.y`
@@ -60,7 +67,9 @@ export interface ObjectEffectStage {
 //   - `fbos` 只对具名 RT 有意义：链内没有 target 时它没有消费者，不构成降级理由。
 // 具名 RT 图链（blur / blurprecise / godrays / bloom / shine / localcontrast / bokeh_blur）
 // 由 effect-graph 的 RT 图计划执行；本判定只作分类/回归口径用，生产路径不再按它跳过。
-/** 该对象是否引用整帧快照（任一链的任一 pass 真的会采样它）⇒ 它就是段边界消费者（§3.2/§3.5）。
+/** 该对象是否引用整帧快照（任一链的任一 pass 真的会采样它）⇒ 它**本应**是段边界消费者（§3.2/§3.5）。
+ *  ⚠️ 本轮该结论**不接线**（门控 `ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER = false`）：只保留判定能力
+ *  与单测，供 UV 口径验证后开启。
  *  判定走**执行计划**（`plan.passes` + `pp.bindings`）—— 与 `EffectRunner.update` 的槽绑定同源；
  *  不得改读原始 `pass.bind`：未解析名字的 bind 会被计划丢弃，那种形态下 update 实际绑的是
  *  `textureSlots[j]`（两套口径会对同一 pass 给出相反结论）。 */
@@ -200,12 +209,13 @@ export class ObjectEffectStage implements ObjectEffectStage {
       this.warnOnce(`no-isolated:${objId}`, `对象 ${objId} 尚无隔离条目，效果链未挂载（调用顺序错误）`);
       return;
     }
-    // 引用整帧快照的链 ⇒ 该对象必须成为段边界消费者：不登记则 frameCapture 不 active、段渲染不开启、
-    // 段边界快照永不发生 ⇒ `_rt_FullFrameBuffer` 只能退回白图（本任务的目标消费者 2597392171 obj#50）。
-    // 惰性：不引用的对象不登记（帧序与现状逐字一致）。顺序契约：player 已注入 FrameCapture（生产链路如此）。
+    // 引用整帧快照的链本应把该对象登记为段边界消费者（不登记 ⇒ frameCapture 不 active ⇒ 该链拿不到
+    // 快照），但该消费路径**本轮门控关闭**（`ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER`，理由见其定义）。
     // 判定与执行共用**同一份计划**（`pp.bindings` 为唯一来源，见 referencesFrameSnapshot）。
     const plan = buildEffectPlan(chains, { baseWidth: view.rtWidth, baseHeight: view.rtHeight });
-    if (referencesFrameSnapshot(chains, plan)) this.host.registerFrameConsumer(objId);
+    if (ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER && referencesFrameSnapshot(chains, plan)) {
+      this.host.registerFrameConsumer(objId);
+    }
     this.mount(objId, chains, view.rtWidth, view.rtHeight, plan);
   }
 

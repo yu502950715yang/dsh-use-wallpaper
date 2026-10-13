@@ -115,13 +115,14 @@ git checkout b21b1ac -- src/; node e2e/verify/verify-isolated-rt-sharpness.mjs -
 
 ### 2.7 段渲染与帧内快照的验收口径（2026-10-13，未在本轮执行）
 
-本轮的**单测**已覆盖段划分 / 快照时机 / 无消费者零回归（`tests/frame-capture.test.ts`、`tests/threejs-player.test.ts` 的「ThreeScenePlayer 段渲染（frameCapture）」describe、`tests/object-effects.test.ts`）；**真机逐像素对拍、9 个叠加次序变化壁纸的目视、性能/显存测量留给 Lead 与用户统一安排**。要跑时的口径：
+本轮的**单测**已覆盖段划分 / 快照时机 / 无消费者零回归（`tests/frame-capture.test.ts`、`tests/threejs-player.test.ts` 的「ThreeScenePlayer 段渲染（frameCapture）」describe 与「最终审查 C2：真实装配链路的帧快照消费者门控（端到端）」describe、`tests/object-effects.test.ts`）；**真机逐像素对拍、9 个叠加次序变化壁纸的目视、性能/显存测量留给 Lead 与用户统一安排**。要跑时的口径：
 
 | 项 | 口径 |
 |---|---|
 | 改 `src/` 后 | **必须先 `npm run build`**（`e2e/verify/verify-hidpi-object-rt.mjs` 无 src 重定向，否则测的是旧 `lib/`；`verify-isolated-rt-sharpness.mjs` 自带 src 重定向） |
-| 零回归对拍 | 选**无消费者**的壁纸（如 `3793620838`）：`--tag=before` → 改动 → `--tag=after` → `npm run e2e:compare`；判据 `maxAbs ≤ 1` 且「差 ≥ 2 的像素数 = 0」 |
-| 预期可见变更 | 全库 **9** 个「粒子在前 image 在后」的 pkg（`1429403119` / `2597392171` / `2897292240` / `2911105183` / `2937346640` / `3743126786` / `3765967112` / `3793620838` / `3789452668`）叠加次序改变（对齐 WE，**不得当回归**）；`2897292240` 由白块变水滴；`2597392171` 的 obj#50 半透明区不再被压黑 |
+| 零回归对拍 | **同一张壁纸在「注入 `frameCapture` / 不注入」两种配置下对拍**：`--tag=with` → 撤掉 capture 注入 → `--tag=without` → `npm run e2e:compare`；判据 `maxAbs ≤ 1` 且「差 ≥ 2 的像素数 = 0」。⚠️ **旧口径「选不含消费者的壁纸（如 `3793620838`）改动前后对拍」自相矛盾**：`3793620838` 本身在「`renderOrder` 唯一化会改叠加次序」的 9 个 pkg 清单里（`output/blur-analysis/render-order-refactor-survey.md`）⇒ 原理上不可能通过；只有「注入 / 不注入」这条与 `renderOrder` 无关，才对应「**无消费者**零回归」语义。**本轮未执行**（零回归当前只有单测证据，见设计文档附录 A.5） |
+| 预期可见变更 | 全库 **9** 个「粒子在前 image 在后」的 pkg（`1429403119` / `2597392171` / `2897292240` / `2911105183` / `2937346640` / `3743126786` / `3765967112` / `3793620838` / `3789452668`）叠加次序改变（对齐 WE，**不得当回归**）；`2897292240` 由白块变水滴。⚠️ **`2597392171` 的 obj#50 不在预期变更内**：效果链的 `_rt_FullFrameBuffer` 消费者按 R6 降级、门控关闭（`ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER = false`，见设计文档附录 A.4 ⑧）⇒ 该槽仍留空 + 每槽去重告警，可见效果待 UV 口径验证后再开 |
+| 段渲染成本 | **每段一次全场景 `render`**（靠 `visible` 排除其它段）⇒ **O(段数 × 场景）**，不是「每对象只光栅化一次」。实测 `2897292240`（2 个粒子消费者 / 3 段）：每帧 **3 次全场景 render + 2 次 `copyFramebufferToTexture` blit + 1 次 composite 合成**（改动前 1 次 render）；无消费者时仍 1 次（零回归） |
 | 性能/显存 | `2897292240`「段渲染开 / 关」的帧时与 `renderer.info.memory.textures/geometries`；退化 > 15% 时把「半分辨率 `frameRT`」列为后续优化 |
 
 ---

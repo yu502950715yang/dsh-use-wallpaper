@@ -1008,7 +1008,8 @@ export class ThreeScenePlayer {
           const snapshot = capture.capture();
           const consumerObjectId = consumerObjectIdByIndex.get(segment.consumer);
           // §3.5：段边界**同步**通知编排器 ⇒ 该对象的效果链本帧用这张快照（而非上一帧）。
-          // 携带纹理 = 不重复 blit（同一张快照也供下面的折射路径使用）；代号供 resize 期自查作废。
+          // 携带纹理 = 不重复 blit（同一张快照也供下面的折射路径使用）；代号随通知下发，
+          // 由消费方在**闭包执行当刻**读实时快照代号比对（resize 换代即作废）。
           if (consumerObjectId !== undefined) {
             this.objectEffectStage?.onSegmentBoundary?.(consumerObjectId, snapshot, capture.snapshotVersion);
           }

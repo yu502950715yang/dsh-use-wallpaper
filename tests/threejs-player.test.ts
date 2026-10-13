@@ -7,6 +7,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { ThreeScenePlayer, loadSceneToThree, resolvePixelRatio, frameCountFromDims, textureFrameCount, textureFrameGrid, specMaxcount, particleCapacity, specEmitterOrigin, simEmitterOffset, specRenderer, specPerspective, particlePerspectiveCamera, specSparseEventSource, BLACKMYTH_OBJ_SCALE, DEFAULT_PARTICLE_CAPACITY, MAX_PARTICLE_CAPACITY, PARTICLE_FLOATS_PER_INSTANCE } from '../src/client/threejs-player.js';
+import { ObjectEffectStage, ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER } from '../src/client/object-effects.js';
+import type { CompiledEffectPass } from '../src/client/shader/effect-chain.js';
 import { textLayerOffset, type TextLayout } from '../src/client/text-object.js';
 import { coverRange, createCompositeGeometry, screenScalePx } from '../src/client/object-range.js';
 import { createFrameCapture } from '../src/client/frame-capture.js';
@@ -3142,5 +3144,109 @@ describe('ThreeScenePlayer displayObject 映射与 onFrame 帧钩子', () => {
     (renderer as unknown as { _getLoop: () => (() => void) | null })._getLoop()!();
     expect(order).toEqual(['sim.update']);
     r.player.dispose();
+  });
+});
+
+// 最终审查（C2 降级 + 附带要求）：**真实装配链路**的端到端门控用例 —— 真 `loadSceneToThree`
+// （真 player、真 addParticle/attachIsolated）+ 真 `ObjectEffectStage` + 真 `createFrameCapture`。
+// 两条互补断言：① 门控关闭时引用 `_rt_FullFrameBuffer` 的效果链**不**登记消费者（active=false、
+// 帧序 = 改动前）；② 粒子 REFRACT（当前**唯一**消费点）经真实装配即登记 ⇒ active=true。
+describe('最终审查 C2：真实装配链路的帧快照消费者门控（端到端）', () => {
+  const NORMAL = new THREE.DataTexture(new Uint8Array([0, 128, 0, 128]), 2, 2);
+
+  function makeTexture(): THREE.Texture {
+    const tex = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+    tex.needsUpdate = true;
+    return tex;
+  }
+
+  function makeSim(order: string[] = []) {
+    let frameCount = 1;
+    return {
+      update: () => { order.push('update'); },
+      vertices: () => new Float32Array(0),
+      frame_count: () => frameCount,
+      set_frame_count: (n: number) => { frameCount = Math.max(1, n); },
+      particle_count: () => 0,
+    };
+  }
+
+  /** 最小 CompiledEffectPass：godrays_combine 形态（`textures[1] = "_rt_FullFrameBuffer"`）。 */
+  function frameSlotPass(): CompiledEffectPass {
+    return {
+      vertSrc: '', fragSrc: '', rawVert: '', rawFrag: '',
+      combos: {}, uniforms: new Map(), textureSlots: [null, '_rt_FullFrameBuffer'],
+      blendMode: 'normal', target: null, bind: [], fboScale: {},
+    };
+  }
+
+  it('门控关闭：真 player + 真 ObjectEffectStage 挂「引用快照」的链 ⇒ 不登记消费者（active=false、帧序同改动前）', () => {
+    expect(ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER).toBe(false);
+    const canvas = document.createElement('canvas');
+    const mock = createMockRenderer();
+    const scene = JSON.stringify({
+      general: { orthogonalprojection: { height: 1080, width: 1920 } },
+      objects: [{ id: 13, image: 'models/a.json', origin: '960 540 0', scale: '1 1 1', size: '1920 1080' }],
+    });
+    const result = loadSceneToThree(scene, {
+      renderer: mock as unknown as THREE.WebGLRenderer,
+      backgroundTextures: new Map([[13, makeTexture()]]),
+      // 生产链路里带效果链的对象一律被隔离（ObjectEffectStage 挂链的前提）
+      isolate: new Map([[13, { objectId: 13, rtWidth: 1920, rtHeight: 1080, worldW: 1920, worldH: 1080 }]]),
+    }, canvas);
+    const player = result.player;
+    const cap = createFrameCapture(mock as unknown as THREE.WebGLRenderer);
+    player.setFrameCapture(cap);
+    const stage = new ObjectEffectStage(player, { wallpaperId: '2597392171', screenScale: 1 });
+    player.setObjectEffectStage(stage);
+    // 与 three-renderer 同一顺序契约：先 setWorldSize，再 setObjectChains
+    stage.setWorldSize(13, 1920, 1080, null);
+    stage.setObjectChains(13, [[frameSlotPass()]]);
+    expect(cap.active).toBe(false); // 门控关闭 ⇒ 链不登记消费者（唯一登记入口就是 setObjectChains）
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    player.render();
+    // 主场景直渲一次、不拍快照、不合成 —— 与改动前逐字节一致（隔离内容那次渲进对象 RT，不算主场景）
+    expect(mock._renders.filter((r) => r.scene === player.scene).map((r) => r.target)).toEqual([null]);
+    expect(mock._copies).toHaveLength(0);
+    // 链行为 = 改动前：该槽**留空** + 每槽去重告警（不是「回退 1×1 白纹」那条路径）。
+    const slotWarns = warn.mock.calls.map((c) => String(c[0])).filter((m) => m.includes('跳过绑定（槽留空）'));
+    expect(slotWarns).toHaveLength(1);
+    expect(slotWarns[0]).toContain('_rt_FullFrameBuffer');
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('帧内快照不可用'))).toBe(false);
+    player.render();
+    // 去重：第二帧不再刷同一条告警（改动前口径）
+    expect(warn.mock.calls.map((c) => String(c[0])).filter((m) => m.includes('跳过绑定（槽留空）'))).toHaveLength(1);
+    warn.mockRestore();
+    player.dispose();
+  });
+
+  it('粒子 REFRACT 经真实装配即登记消费者（当前唯一消费点）⇒ 仅注入 capture 即 active=true', () => {
+    const canvas = document.createElement('canvas');
+    const mock = createMockRenderer();
+    const scene = JSON.stringify({
+      general: { orthogonalprojection: { height: 1080, width: 1920 } },
+      objects: [
+        { id: 13, image: 'models/a.json', origin: '960 540 0', scale: '1 1 1', size: '1920 1080' },
+        { id: 25, particle: 'particles/presets/halo_50_1.json', origin: '960 540 0', scale: '1 1 1' },
+      ],
+    });
+    const result = loadSceneToThree(scene, {
+      renderer: mock as unknown as THREE.WebGLRenderer,
+      backgroundTextures: new Map([[13, makeTexture()]]),
+      particles: new Map([[25, {
+        specJson: '{}', blend: 'alpha' as const,
+        refract: { normalTex: NORMAL, amount: 0.05 },
+      }]]),
+      createParticleSim: () => makeSim(),
+    }, canvas);
+    const cap = createFrameCapture(mock as unknown as THREE.WebGLRenderer);
+    expect(cap.active).toBe(false); // 仅装配、未注入 capture ⇒ 尚不激活
+    result.player.setFrameCapture(cap);
+    expect(cap.active).toBe(true);  // 折射层在 addParticle 内登记（无需外部 registerFrameConsumer）
+    result.player.render();
+    // 2 段（#13 段 → #25 消费者段）+ 1 次快照 + 末段合成
+    expect(mock._copies).toHaveLength(1);
+    expect(mock._renders.map((r) => r.target)).toEqual([cap.target, cap.target, null]);
+    result.player.dispose();
   });
 });

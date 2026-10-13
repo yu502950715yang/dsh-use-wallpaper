@@ -36,7 +36,7 @@
 1. 帧内快照能力：能在「某个消费者被绘制之前」拿到当前帧已绘制内容的纹理，语义对齐 WE 的场景 FBO。
 2. 段渲染骨架：渲染顺序对齐 WE 的对象序（顺带修正 DSH 现行 `image=0/particle=1` 二分造成的层序偏差）。
 3. 粒子 REFRACT：`2897292240` 画出 WE 的玻璃水滴。
-4. 效果链消费者：`2597392171` 的 godrays `_rt_FullFrameBuffer` 槽拿到快照纹理。
+4. 效果链消费者：`2597392171` 的 godrays `_rt_FullFrameBuffer` 槽拿到快照纹理（⚠️ **本轮未启用**：按 R6 降级为门控关闭，能力已就绪 —— 见 §3.5 状态注与附录 A.4 ⑧）。
 
 **非目标（见 §8）**：`_rt_imageLayerComposite_*`（对象结果池）、对象材质 `BLENDMODE` 的 `_rt_FullFrameBuffer` 消费点（161 材质）、HDR/HalfFloat 管线、`general.clearcolor` 消费、JSONC 效果文件容错。
 
@@ -58,6 +58,7 @@
   - 末段把 `frameRT` 全屏合成到默认 framebuffer（或交给 Glow）。
 - **惰性**：无消费者（无 REFRACT 层、无引用 `_rt_FullFrameBuffer` 的效果链）时**完全走现状路径** —— 不建 `frameRT`、不切段、不合成 ⇒ 结构性零回归。
 - 段数 = 消费者数 + 1。`2897292240` 为 3 段（背景段 → 快照 → 折射层段 → 雨幕/前景段）；`2597392171` 为 2 段。
+  - ⚠️ **成本（实测，见附录 A.4 ⑦）**：每段一次**全场景** `render`（靠 `visible` 排除其它段）⇒ **O(段数 × 场景）**，不是「每对象只光栅化一次」；`2897292240` 每帧 3 次全场景 render + 2 次 blit + 1 次 composite（改动前 1 次）。
 - 深度：主场景所有材质 `depthWrite=false`（粒子还 `depthTest=false`），跨段无深度污染；`frameRT` 带 depth，段间保留，与单次渲染一致。
 
 ### 3.3 快照 API
@@ -94,6 +95,7 @@ export function createFrameCapture(renderer: THREE.WebGLRenderer, opts?: { rt?: 
   - 同帧执行必须纳入 object-effects 既有的同一把串行锁，避免 ping-pong 写端错配。
   - `ObjectEffectHost` 增加 `captureFullFrame(): THREE.Texture | null`，`EffectRunner.update` 增加 frameTexture 入参。
 - **UV 口径**：WE 的对象链 pass 用对象 RT 的 `v_TexCoord`(`[0,1]`) 直接采全屏场景 FBO ⇒ DSH 同样**直采**整帧快照的同一 UV，**不做对象 rect → 画布 UV 映射**（映射反而是错的）。实现期用 `2597392171` 目视核对（若发现 WE 实为映射，再改；记录为验证点）。
+  - ⚠️ **本轮状态（R6 降级，2026-10-13 最终审查 C2）**：上面这条目视核对**未做**，且实际结构与该假定相反 —— 对象链的贴屏 quad UV 覆盖**对象窗口**，快照却是**整画布**（v 约定还反向一次）⇒ 直采有明确反向理由。故**本轮不启用**效果链的 `_rt_FullFrameBuffer` 消费者（`object-effects.ts` 的 `ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER = false`）：**能力已就绪，消费者待 UV 口径验证后再开**。偏差记录见附录 A.4 ⑧；本轮消费点只剩粒子 REFRACT。
 
 ### 3.6 不变量清单（实现与审查都要逐条核）
 
@@ -173,7 +175,7 @@ rgb *= texture2D(refractBg, rsUv).rgb;
 | R3 | `frameRT` = UnsignedByte 且与 Glow `baseRT` 共用 | 若将来引入 HDR 素材需改 HalfFloat（管线改动） |
 | R4 | 效果链在消费者段边界**同帧同步**执行（不沿用「主渲染后 advance」的上一帧快照） | 若与既有串行锁冲突，退化为「该对象不隔离 + 帧末执行」 |
 | R5 | 不做「临时近似版」单独上线；但任务顺序让粒子折射尽早可验收 | 用户晚一点看到水滴修复 |
-| R6 | `godrays`（`2597392171` obj#50）纳入本轮（能力的真实消费者） | 若其 UV 口径/写端尺寸出现未预期冲突，降级为「能力就绪 + 链维持现状」并另立任务 |
+| R6 | `godrays`（`2597392171` obj#50）纳入本轮（能力的真实消费者） | 若其 UV 口径/写端尺寸出现未预期冲突，降级为「能力就绪 + 链维持现状」并另立任务。⚠️ **该降级条件已触发**（2026-10-13 最终审查 C2：从未真机验收 + 对象窗口 UV ↔ 整画布快照反向结构理由）⇒ 本轮门控关闭，见 A.4 ⑧ |
 | R7 | `_rt_imageLayerComposite_*`（7 处）出本轮 → 另立任务 | 那 7 处继续维持现状（当前被 `bind=previous` 覆盖，非本次语义） |
 | R8 | 对象材质 `BLENDMODE` 的 `_rt_FullFrameBuffer`（161 材质）出本轮 → 另立任务 | 这些壁纸的对象路径仍只读槽 0（现状不变） |
 | R9 | 未知/派生 `_rt_` 名（如 `_rt_FullCompoBuffer1_23_40`）维持「白图 + 一次性告警」；顺手修「既是链内 target 又出现在 textures 且无 bind」的邻接 bug（本库 0 实例） | 未知名壁纸仍不正确（现状如此） |
@@ -195,16 +197,19 @@ rgb *= texture2D(refractBg, rsUv).rgb;
 | 7 | uniform 契约：`refractBg === snapshot`、`refractAmount === 0.05`、`defines.REFRACT === 1`；非折射层 `undefined` | 同上 |
 | 8 | RT 生命周期：`resize()` 后尺寸 = `canvas.width/height`；`dispose()` 全部释放 | 同上 + spy |
 | 9 | shader 文本契约：片元含 `#ifdef REFRACT`/`texture2D(refractNormal`/`vScreenCoord.xy / vScreenCoord.z`；顶点含 `gl_Position.xyw` 与 `weObjectRotate(vec3(1.0, 0.0, 0.0)` | `tests/threejs-player.test.ts`（纯字符串） |
-| 10 | 效果链：`_rt_FullFrameBuffer` 槽拿到 frameTexture（而非 1×1 白） | `tests/effect-runner.test.ts` / `tests/object-effects.test.ts` |
+| 10 | 效果链：`_rt_FullFrameBuffer` 槽拿到 frameTexture（而非 1×1 白）—— **能力层单测**（接线门控关闭，见 §3.5 状态注 / A.4 ⑧） | `tests/effect-runner.test.ts` / `tests/object-effects.test.ts` |
 | 11 | 真库对照：`2897292240/halo_50_1.json` ⇒ `refract=true`，全库其余材质 `false` | `tests/verify-real-library.test.ts` 先例 + `refract-scan.json` 基线 |
 
 ### 7.2 真机/e2e
 
-- **改动前后对拍（零回归）**：不含消费者的壁纸（如 `3793620838`）逐像素一致（`e2e/verify/compare-shots.mjs`：maxAbs≤1 且差≥2 像素数=0）。**改 `src/` 后必须先 `npm run build`**（`verify-hidpi-object-rt.mjs:128-134` 无 src 重定向，否则测的是旧 `lib/`）。
-- **7 个「粒子在前 image 在后」壁纸**：预期有差异，逐张目视确认是改善。
+- **零回归对拍（判据已于 2026-10-13 最终审查 I1 订正）**：**同一张壁纸在「注入 `frameCapture` / 不注入」两种配置下对拍**，要求逐像素一致（`e2e/verify/compare-shots.mjs`：`maxAbs ≤ 1` 且差 ≥ 2 的像素数 = 0）。只有这条与 `renderOrder` 唯一化无关，才对应「**无消费者**零回归」的语义。
+  - ⚠️ 原判据「选不含消费者的壁纸（如 `3793620838`）改动前后逐像素对拍」**自相矛盾**：`3793620838` 本身就在「`renderOrder` 唯一化会改叠加次序」的 9 个 pkg 清单里（`output/blur-analysis/render-order-refactor-survey.md`）⇒ 原理上不可能通过。
+  - ⚠️ **像素级对拍本轮未执行**（见附录 A.5）；零回归当前只有单测证据。
+  - **改 `src/` 后必须先 `npm run build`**（`verify-hidpi-object-rt.mjs:128-134` 无 src 重定向，否则测的是旧 `lib/`）。
+- **7 个「粒子在前 image 在后」壁纸**（实测口径为 9 个，见 A.6）：预期有差异，逐张目视确认是改善。
 - **`2897292240`**：白方块/白竖条消失；出现 WE 那种玻璃水滴；与 WE A/B 帧（`output/blur-analysis/we-ab/`）并排比对。
-- **`2597392171`**：obj#50 `柯西` 半透明区不再被压黑。
-- **性能**：`frameRT` 开启与否的帧时/显存记录（`2897292240` 每帧 +N 段渲染 + N 次快照 blit）。
+- **`2597392171`**：obj#50 `柯西` 半透明区不再被压黑 —— **本轮未启用（R6 降级）**：能力已就绪（`resolveBuiltinTexture` 的 `frameTexture` 支持 + 判定口径统一），消费者待对象窗口 UV ↔ 整画布快照的映射与 v 约定验证后再开（附录 A.4 ⑧）；本轮该槽行为 = 改动前（留空 + 每槽去重告警）。
+- **性能**：`frameRT` 开启与否的帧时/显存记录（`2897292240` 每帧 3 次全场景 render + 2 次快照 blit + 1 次 composite，对照改动前 1 次；成本口径见 A.4 ⑦）。本轮未测（A.5）。
 - 全量 `npx vitest run`（基线 **1118**）。
 
 ## 8. 不做的事（YAGNI / 另立任务）
@@ -256,12 +261,12 @@ rgb *= texture2D(refractBg, rsUv).rgb;
 | T2 `renderOrder` 唯一化 | `3f97f35` | 落点在 `loadSceneToThree`（`three-renderer.ts` 只做资源加载，不改） |
 | T3 段渲染骨架 + frameRT + 末段合成 + Glow 共用 | `8ae1d0a` → `cbbbdec` | 含两轮 fix（快照改到消费者段 render **之前**、段划分回到 N+1、capture 按创建它的 renderer 换绑） |
 | T4 粒子 REFRACT | `4f13857` | 槽 1 缺失/加载失败 ⇒ **不装配该层**（绝不回退白方块） |
-| T5 效果链 `_rt_FullFrameBuffer` | `9e919f1` | 引用该槽的链自动登记为段边界消费者（原接线缺口由实现者内联补齐，Lead 背书） |
+| T5 效果链 `_rt_FullFrameBuffer` | `9e919f1` | 引用该槽的链自动登记为段边界消费者（原接线缺口由实现者内联补齐，Lead 背书）。⚠️ **该接线已在最终审查 fix wave 按 R6 降级为门控关闭**（`ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER = false`，见 A.4 ⑧ / A.9）；能力与单测保留，`2597392171` 回到改动前行为。 |
 | T6 收口（本附录） | 见 `git log`（文档 + 单测） | 全量单测 / deferred minors / 文档回写 / `tsc --noEmit` |
 
 ## A.2 实测数字
 
-- **全量单测**：起始 **1118**（本轮之前的基线）→ Task 5 结束 **1190** → 收口（`167bc93`）**1193** → **Fix round 1 后 1195**（`npx vitest run`：**57 files / 1195 passed**）。T6 新增的用例都在补 deferred minor 的钉子（`tests/frame-capture.test.ts` 的快照代号自增、`tests/object-effects.test.ts` 的 resize 作废在途快照、`tests/threejs-player.test.ts` 的 resize 必通知）；Fix round 1 又把 `tests/object-effects.test.ts` 的一条竞争用例拆成三条（换代 ⇒ 无快照 / 未换代 ⇒ 不误伤 / 通知后未消费的快照被丢），净 +2。另在既有用例里补了非恒真断言（主场景 children 数、快照代号随通知下发、告警文案口径）。**除 A.7 #5 的 REFRACT 集合断言按裁决放宽外，其余既有断言只增不减**（该处两条 `toEqual([REFRACT_MATERIAL])` 确实已被替换，见 A.6 / A.7 #5；初版 A.2 写成「没有删除或放宽任何既有断言」，与 A.6/A.7 #5 自相矛盾，已在 Fix round 1 订正）。
+- **全量单测**：起始 **1118**（本轮之前的基线）→ Task 5 结束 **1190** → 收口（`167bc93`）**1193** → **Fix round 1 后 1195** → **最终审查 fix wave 后 1197**（`npx vitest run`：**57 files / 1197 passed**，`tsc --noEmit` exit 0）。T6 新增的用例都在补 deferred minor 的钉子（`tests/frame-capture.test.ts` 的快照代号自增、`tests/object-effects.test.ts` 的 resize 作废在途快照、`tests/threejs-player.test.ts` 的 resize 必通知）；Fix round 1 又把 `tests/object-effects.test.ts` 的一条竞争用例拆成三条（换代 ⇒ 无快照 / 未换代 ⇒ 不误伤 / 通知后未消费的快照被丢），净 +2。最终审查 fix wave 净 **+2**：新增「真实装配链路的帧快照消费者门控（端到端）」两条（门控关闭 ⇒ `active === false` / 粒子 REFRACT ⇒ `active === true`），另把两条既有用例的期望改为门控关闭后的行为（`tests/object-effects.test.ts` 的登记用例、`tests/three-renderer.test.ts` 的挂载用例 —— **不是删断言，而是把「登记」期望改成「不登记 + capture 仍注入」**）。另在既有用例里补了非恒真断言（主场景 children 数、快照代号随通知下发、告警文案口径）。**除 A.7 #5 的 REFRACT 集合断言按裁决放宽外，其余既有断言只增不减**（该处两条 `toEqual([REFRACT_MATERIAL])` 确实已被替换，见 A.6 / A.7 #5；初版 A.2 写成「没有删除或放宽任何既有断言」，与 A.6/A.7 #5 自相矛盾，已在 Fix round 1 订正）。
 - **`tsc --noEmit -p tsconfig.json`**：exit 0。
 - **真机目视（用户确认，2026-10-13 14:28）**：`2897292240` 的雨层 **白块/白竖条消失，出现水滴/雨痕**。当时的产物状态 = **Task 4**（`npm run build` + `npm run build:client` 重建 `lib/` + `dist/client.js` 后经 DSH client-hmr 热重载），GLSL 真机编译通过（此前只有文本护栏）。⚠️ 该目视**不含** T5 的效果链消费者路径。
 
@@ -279,11 +284,13 @@ rgb *= texture2D(refractBg, rsUv).rgb;
 | ④ | **`FrameCapture` 只有一张快照纹理** | 快照逐帧覆盖 ⇒ 多消费者需要每消费者一份拷贝（与 ① 是同一件事的两面）。本库 1 个消费者，足够。 |
 | ⑤ | **本轮只做 `_rt_FullFrameBuffer` 一个名字** | `_rt_imageLayerComposite_*`（对象结果池，**7 处**）、对象材质 `BLENDMODE` 的 `_rt_FullFrameBuffer`（**161 材质**，R8）、6 个 JSONC 引擎 `effect.json` 的容错（R10）、`general.clearcolor` 消费（R11）**均未做**，仍按原行为（白纹 / 留空 + 去重告警 / 黑清屏），**另立任务**。 |
 | ⑥ | **`runner.update` 内 `await resolveTextureSlot(...)` 期间仍有极低频窗口**（产生 resize 落在该 await 内） | 快照作废判据（实时代号比较）在**闭包执行当刻**生效；`update` 随后还要 `await` 其它槽的纹理加载，若 resize 正好落在这段 await 内，该次已经通过校验的引用仍会被采样一次（旧快照已 dispose）。清零要把校验挪到「绑定前最后一次 await 之后」，会牵动执行器结构 ⇒ **本轮按裁决不追求清零**：文档与注释一律写「已收窄跨帧窗口」而**不得**写「绝不采已释放纹理」。代码位置 `effect-runner.ts` 的 `resolveTextureSlot` 循环。 |
+| ⑦ | **段渲染的成本量级没有写进设计正文（I2 补）**：段渲染是「**每段一次全场景 `render`**，靠 `visible` 排除其它段」⇒ **O(段数 × 场景)**，**不是**「每对象只光栅化一次」 | 实测 `2897292240`（2 个粒子消费者 / 3 段）：每帧 **3 次全场景 `render` + 2 次 `copyFramebufferToTexture` blit + 1 次 composite 合成**（改动前 1 次 render）；无消费者时仍是 1 次 render（结构性零回归）。**代价如实记录**：段数随消费者数线性增长，且**每段都要遍历整个场景**（`visible` 过滤只省光栅化，不省遍历/提交）。因此「半分辨率 `frameRT`」（§8.7）的判断依据只能是**真机帧时**，本轮无数据（A.5）。 |
+| ⑧ | **效果链的 `_rt_FullFrameBuffer` 消费者按 R6 降级、本轮不启用**（2026-10-13 最终审查 C2） | 该路径**从未真机验收**（§3.5 自列为验证点却被跳过），且有明确反向结构理由：对象链的贴屏 quad UV 覆盖**对象窗口**，快照却是**整画布**（v 约定还反向一次）⇒ 直采会错位。故把「引用该槽的链自动 `registerFrameConsumer`」改为**默认关闭的显式门控** `object-effects.ts` 的 `ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER = false`（启用前须先解决对象窗口 UV ↔ 整画布快照的映射与 v 约定）。**保留**能力与单测：`resolveBuiltinTexture(path, frameTexture?)`、`slotBoundByBind` / `passSamplesFrameSnapshot` / `planSamplesFrameSnapshot`、`referencesFrameSnapshot`、`onSegmentBoundary` + `frameSnapshotVersion()` 宿主契约。**结果**：`2597392171` 回到改动前行为（该槽留空 + 每槽去重告警），`frameCapture.active` 只由粒子 REFRACT 决定；**godrays 的可见改善推迟到后续任务**（本轮零退步）。 |
 
 ## A.5 未做（本轮不覆盖，交 Lead 与用户统一安排）
 
-- **真机 e2e 逐像素对拍**（无消费者壁纸的零回归，`e2e/verify/compare-shots.mjs`）。
-- **性能 / 显存测量**（`2897292240` 段渲染开 / 关的帧时与 `renderer.info.memory`）⇒ 因此「半分辨率 `frameRT`」这条优化项是否必要**尚无数据**（见 A.4 ②）。
+- **真机 e2e 逐像素对拍（零回归）**：**本轮未执行**。判据已于 I1 订正为「**同一张壁纸在注入 / 不注入 `frameCapture` 两种配置下对拍**，要求逐像素一致（`maxAbs ≤ 1` 且差 ≥ 2 的像素数 = 0）」—— 与 `renderOrder` 唯一化无关（原判据用的 `3793620838` 本身就在 9 个「叠加次序会变」的 pkg 里，见 A.6 ⇒ 原理上不可能通过）。⇒ **零回归当前只有单测证据**：`tests/threejs-player.test.ts` 对无消费者路径的调用序列 / `target` / `clearAlpha` 断言（既有渲染断言网 + 段渲染 describe），以及**结构性事实** —— 生产代码里没有 `capture.use()` 的调用者（`use()` 只在 `registerFrameConsumer` 命中显示对象时被调用），且门控关闭后 `registerFrameConsumer` 只剩粒子 REFRACT 一个调用方（`threejs-player.ts` 的 `addParticle`）。
+- **性能 / 显存测量**（`2897292240` 段渲染开 / 关的帧时与 `renderer.info.memory`）⇒ 「半分辨率 `frameRT`」这条优化项是否必要**尚无数据**（见 A.4 ② / ⑦）。
 - **9 个「粒子在前 image 在后」壁纸的目视**（口径差见 A.6）。
 - **产物重建与提交**（`npm run build*` 与 `lib/`、`dist/` 的提交）。
 - **客观证据补强**：原计划用项目自带 e2e harness 抓 `2897292240` 帧与 `output/blur-analysis/we-ab/` 的 WE 帧做统计对比（§7.2），本轮未执行。
@@ -324,4 +331,19 @@ rgb *= texture2D(refractBg, rsUv).rgb;
 | Minor 4 | `notifyViewportResize()` 未在本模块导出的 `ObjectEffectStage` 接口声明（接口漂移） | 补声明 + 说明「作废尚未被 `advance` 消费的本帧快照」 |
 | Minor 5 | 「绝不采已释放纹理」一类绝对表述与 `await resolveTextureSlot` 窗口不符 | 文案改为「已收窄跨帧窗口」并记入 A.4 ⑥ / A.5；不追求清零 |
 | Minor 6 | `task-6-report.md` 把范围内的 `docs/**` 订正标成「越界」 | 报告订正该标签（报告在 `.superpowers/`，gitignored 不提交）；A.7 #4 的同类标签一并订正 |
+
+## A.9 最终整支审查 fix wave（2026-10-13，一次 fix 波次）
+
+最终整支审查（`951bd7d..c1bf467`）判 **No — With fixes**（Critical×2 + Important×3 + Minor×5）；C1（产物与 HEAD 不同源、需重建 + 自证 + 重跑目视）不在本波次内（由 Lead 在用户确认时机后统一做）。本波次逐条：
+
+| # | finding | 处置 |
+|---|---|---|
+| C2 | `2597392171` 的效果链 `_rt_FullFrameBuffer` 消费者从未真机验收，且对象窗口 UV ↔ 整画布快照有明确反向结构理由 | **按 R6 降级**：接线改为默认关闭的显式门控 `ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER = false`（`object-effects.ts`）；能力与单测全部保留；`2597392171` 回到改动前行为（槽留空 + 每槽去重告警），`frameCapture.active` 只由粒子 REFRACT 决定。偏差见 A.4 ⑧ |
+| I1 | 零回归对拍选了 `3793620838`，而它本身在「`renderOrder` 唯一化会改叠加次序」的 9 个 pkg 里 ⇒ 判据自相矛盾 | 判据改为「**同一张壁纸注入 / 不注入 `frameCapture` 两种配置下对拍**」（与 `renderOrder` 无关）；`TESTING.md` §2.7、§7.2、plan 同步；**本轮未真跑 e2e**，如实记入 A.5（零回归 = 单测证据 + 结构性事实） |
+| I2 | 段渲染的真实成本量级没写进文档（易被误读成「每对象只光栅化一次」） | A.4 ⑦ 明确写「**每段一次全场景 `render`** ⇒ O(段数 × 场景)」与实测数字（3 次 render + 2 次 blit + 1 次 composite vs 改动前 1 次）；§3.2 与 `AGENT.md` §5.45 各补一句指向它 |
+| I3 | `AGENT.md:22` 引用「§5.46」实际指向同文件 :157 的第 **45** 条（段渲染），而 `conventions-details.md` 的 §5.46 才是段渲染明细 | `AGENT.md:22` 引用改为 **§5.45**（同文件 45 = 段渲染、46 = `_rt_FullFrameBuffer`，编号自洽） |
+| M1 | `threejs-player.ts` 的快照注释仍写「代号供 resize 期自查作废」 | 改为与真实机制一致：「代号随通知下发，由消费方在**闭包执行当刻**读实时快照代号比对（resize 换代即作废）」 |
+| 附带 | 缺真实装配链路的端到端用例 | `tests/threejs-player.test.ts` 新增 describe「最终审查 C2：真实装配链路的帧快照消费者门控（端到端）」：① 真 `loadSceneToThree` + 真 `ObjectEffectStage` + 真 `createFrameCapture` ⇒ 链引用快照但 `active === false`、直渲 1 次、不拍快照、该槽留空 + 去重告警；② 折射粒子经真实装配 ⇒ 仅注入 capture 即 `active === true`、2 段 + 1 次快照 + 合成 |
+
+**明确不做（Lead 裁决，本波次确认未做）**：① 不动 `lib/`、`dist/`（未跑 `npm run build*`）；② 不做 rect→画布 UV 映射（C2 只降级）；③ 不把 `attachIsolated` 的 10 个位置参数改对象参数（deferred）；④ 不做 Glow `baseRT` 共用、不做真机对拍 / 性能测量 / 9 张目视。
 

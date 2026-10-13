@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { isLinearEffectChain, referencesFrameSnapshot } from '../src/client/object-effects.js';
+import { isLinearEffectChain, referencesFrameSnapshot, ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER } from '../src/client/object-effects.js';
 import { resolveEffectChain } from '../src/client/shader/effect-chain.js';
 import type { CompiledEffectPass } from '../src/client/shader/effect-chain.js';
 
@@ -542,10 +542,13 @@ describe('ObjectEffectStage', () => {
     expect(runner.update.mock.calls[0][2]).toBeNull();
   });
 
-  // ── Task 5：引用 `_rt_FullFrameBuffer` 的链必须把该对象登记为段边界消费者 ──
-  // 不登记 ⇒ frameCapture 不 active ⇒ 段渲染不开启 ⇒ 段边界快照永不发生 ⇒ 快照恒为 null（白图）。
-  // 惰性（design §3.2）：不引用的对象一律不登记，帧序与改动前逐字一致。
-  it('引用整帧快照的链 → 登记为段边界消费者；不引用 / 被 bind 覆盖 → 不登记', () => {
+  // ── 最终审查 C2（按 R6 降级）：效果链的 `_rt_FullFrameBuffer` 消费者**本轮不启用** ──
+  // 门控关闭 ⇒ 即使链真的引用快照（`referencesFrameSnapshot` = true，判定能力保留、单测仍在），
+  // 也**不**登记消费者 ⇒ frameCapture 不 active、段渲染不开启 ⇒ 行为 = 改动前（该槽留空 + 每槽
+  // 去重告警，帧序不因效果链改变）。门控打开（另立任务：先解决对象窗口 UV ↔ 整画布快照的映射与
+  // v 约定）后，本用例的 `_frameConsumers` 期望才变成 `[2]`。
+  it('门控关闭：引用整帧快照的链**不**登记消费者；判定能力保留（referencesFrameSnapshot 口径）', () => {
+    expect(ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER).toBe(false);
     const host = createHost([
       { id: 1, rtWidth: 10, rtHeight: 10 },
       { id: 2, rtWidth: 10, rtHeight: 10 },
@@ -558,8 +561,8 @@ describe('ObjectEffectStage', () => {
       textureSlots: [null, '_rt_FullFrameBuffer'],
       bind: [{ index: 1, name: 'previous' }],
     })]]);
-    expect(host._frameConsumers).toEqual([2]);
-    // 纯函数口径（与 EffectRunner.update 的槽绑定口径同源）
+    expect(host._frameConsumers).toEqual([]); // 门控关闭：一个也不登记
+    // 纯函数口径（与 EffectRunner.update 的槽绑定口径同源）—— 能力保留，供开启后接线
     expect(referencesFrameSnapshot([[pass({ textureSlots: [null, '_rt_FullFrameBuffer'] }) ]])).toBe(true);
     expect(referencesFrameSnapshot([[pass({ textureSlots: [null, '_rt_Bloom'] })]])).toBe(false);
     expect(referencesFrameSnapshot([
