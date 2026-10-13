@@ -1,24 +1,5 @@
-// Task 5：three.js 播放器生产入口（思路 1「WE 场景 → three.js 播放器」落地）。
-//
-// 作用：把 `loadSceneToThree`（Task 4）接进生产壁纸渲染路径，使**用户实际**通过 three.js
-// 播放器看到背景 + 粒子。本模块实现与 wasm-renderer 同构的 `SceneRendererLike`
-// （`render(id, fg, bg)` + `dispose()`），供 wallpaper-controller 直接使用：
-//   - 拉取 scene.json → 解析（parseSceneJson，与既有路径同源语义）；
-//   - 组装 `SceneAssets`：背景纹理（resolveImageTexture）+ 粒子条件（spec/tex/blend）+
-//     `createParticleSim` 工厂（wasm `CpuParticleSim`，复用既有 CPU 模拟，不重写模拟）；
-//   - `loadSceneToThree` 创建 ThreeScenePlayer（cover 正交相机 + 背景 Sprite + 粒子 billboard）
-//     并 `setAnimationLoop` 播放（每帧 sim.update(dt) 推进 → updateParticles 读 getter 刷新 buffer）。
-//
-// ⚠️ 与 wasm-renderer 的关系：本模块是**新增**的三条播放路径（`THREE_USE=1` 时启用），
-// **不改动/不删除** wasm-renderer（默认路径保持不变，可对照）。`CpuParticleSim` 是纯 CPU
-// 模拟（非 WebGPU），本路径**不需要 WebGPU**；wasm 模块仅用来加载 CpuParticleSim。
-//
-// 已知边界（Task 5 合约）：
-//   - 粒子 quad 自旋已实现（F4，2026-09-22）：`build_instance_vertices` 的 13 浮点含 `rot3`，
-//     顶点 shader 按 WE `ComputeParticleTangents` 的三轴欧拉旋转 quad 基向量（rot 仅 z 时退化为平面自旋）。
-//   - 可视性（visible.user/script 绑定）**只对 text 对象生效**（2026-09-21）；image/particle 的
-//     visible 仍未过滤（全库 22 个非平凡绑定里 16 个在这两类上）；
-//     loadSceneToThree 沿用「缺物件 spec/工厂则跳过该粒子对象」语义，绝不全屏失败。
+// three.js 播放器生产入口：实现与 wasm-renderer 同构的 `SceneRendererLike` 供 wallpaper-controller 使用。
+// ⚠️ 新增的播放路径（`THREE_USE=1` 启用），**不改动/不删除** wasm-renderer（默认路径不变）；纯 CPU 模拟，无需 WebGPU。
 import type { Material, Texture, WebGLRenderer } from 'three';
 import { loadSceneToThree, resolvePixelRatio, type LoadedParticleAssets, type ParticleSim, type ThreeSceneLoadResult } from './threejs-player.js';
 import { parseSceneJson } from './scene-json.js';
@@ -35,7 +16,7 @@ import {
 } from './object-range.js';
 import { ObjectEffectStage } from './object-effects.js';
 import { createGlowStage, type GlowStage } from './glow-stage.js';
-// 帧内快照（Task 3）：段渲染目标 + 消费者边界快照；按创建它的 renderer 复用，renderer 变化时换绑。
+// 帧内快照：段渲染目标 + 消费者边界快照；按创建它的 renderer 复用，renderer 变化时换绑。
 import { createFrameCapture, type FrameCapture } from './frame-capture.js';
 import { readClientSettings, getUserPropertyValue } from './settings.js';
 import { resolveEffectChain, type CompiledEffectPass } from './shader/effect-chain.js';
@@ -51,8 +32,7 @@ import { applyLayerState } from './layer-state.js';
 import { DynamicMeshRegistry } from './dynamic-mesh.js';
 import { createMeshMaterial, parseMeshMaterial } from './mesh-material.js';
 
-// wasm `CpuParticleSim` 的构造器形态（wasm-bindgen 静态 `new`；`ParticleSim` 接口见
-// threejs-player.ts：update/vertices/frame_count/set_frame_count/particle_count/free）。
+// wasm `CpuParticleSim` 的构造器形态（wasm-bindgen 静态 `new`；`ParticleSim` 接口见 threejs-player.ts）。
 type CpuParticleSimLike = {
   new: (
     json: string,
@@ -65,8 +45,7 @@ type CpuParticleSimLike = {
 
 type ThreeWasmModule = WasmSceneModule & { CpuParticleSim?: CpuParticleSimLike };
 
-// 去重告警（同一 key 只打印一次，防刷屏；与 object-effects.ts 的 warnOnce 同风格，本文件独立
-// 实现一份）。⚠️ 生命周期与「当前壁纸」绑定：render() 开头清空一次，避免跨壁纸累积而漏报。
+// 去重告警（同一 key 只打印一次，防刷屏）。⚠️ 生命周期 = 当前壁纸：render() 开头清空一次，避免跨壁纸累积而漏报。
 const warnedKeys = new Set<string>();
 function warnOnce(key: string, message: string): void {
   if (warnedKeys.has(key)) return;
@@ -80,16 +59,15 @@ export function lastWorldTransformOf(id: number): WorldTransform | null {
   return lastWorldTransforms?.get(id) ?? null;
 }
 
-// WE 字体（pkg 内 otf/ttf）经 FontFace 加载后按家族名绘制；失败或环境不支持（jsdom 无 FontFace）
-// → 回退系统 sans-serif。按「壁纸 id + 字体路径」缓存：同一壁纸的多个 text 对象共用一次加载。
+// WE 字体（pkg 内 otf/ttf）经 FontFace 加载后按家族名绘制；失败或环境不支持（jsdom 无 FontFace）→ 回退系统 sans-serif。
+// 按「壁纸 id + 字体路径」缓存：同一壁纸的多个 text 对象共用一次加载。
 const FONT_CACHE = new Map<string, Promise<string | null>>();
 let fontSeq = 0;
 async function loadWallpaperFont(wallpaperId: string, font: string | undefined): Promise<string | undefined> {
   if (typeof font !== 'string' || !font) return undefined;
-  // `systemfont_<family>` 是 WE 的**宿主系统字体别名**，永远不会在 pkg / 引擎 assets 目录里：
-  // 直接交给 resolveFontFamily 映射 CSS 家族，省一次必然落空的请求。必须按 **basename** 判 ——
-  // scene.json 里也存在 `fonts/systemfont_arial` 这种带目录前缀的写法（OWE SceneTextObjectParser.cpp:290-292），
-  // 此前它会被当成字体文件去加载、失败后落 sans-serif（而正确结果是 Arial）。
+  // `systemfont_<family>` 是 WE 的**宿主系统字体别名**，永远不会在 pkg / 引擎 assets 目录里：直接交给
+  // resolveFontFamily 映射 CSS 家族，省一次必然落空的请求。必须按 **basename** 判 —— scene.json 里也存在
+  // `fonts/systemfont_arial` 这种带目录前缀的写法（OWE SceneTextObjectParser.cpp:290-292），按全路径判会去加载文件、失败后落 sans-serif。
   const base = font.split('/').pop() ?? font;
   if (base.toLowerCase().startsWith('systemfont_')) return undefined;
   if (!/\.(otf|ttf|ttc|woff2?)$/i.test(font)) return undefined; // 家族名直接用
@@ -115,20 +93,12 @@ async function loadWallpaperFont(wallpaperId: string, font: string | undefined):
   return (await pending) ?? undefined;
 }
 
-// 粒子混合模式：**优先读材质 json 的 `passes[0].blending`**（WE 权威字段），缺失时才回退按
-// 材质名启发式（对齐 wasm `BlendMode::from_material`）。
+// 粒子混合模式：**优先读材质 json 的 `passes[0].blending`**（WE 权威字段），缺失时才回退按材质名启发式
+//（对齐 wasm `BlendMode::from_material`）。
 //
-// ⚠️ 这里是「DK WOTLK（44 层）满屏黑色小方块」的根因（2026-09-10 定位，真 GPU 实证）：
-// 旧实现只用 `/lightshaft|glow|additive/i` 匹配 **spec.material 的路径字符串**，而 WE 材质的
-// 辉光语义写在**材质 json 的 `blending` 字段**里、**路径名里通常没有这些字样**——DK 的 44 层
-// 材质是 `materials/presets/torch.json`、`materials/workshop/2111504995/presets/snowperspective.json`
-// 等，全部 `"blending": "additive"`，但路径名一个都不匹配 → 全被判成 NormalBlending。
-// （全库普查：粒子材质 `blending` = additive 45 / translucent 5，而路径名含 "lightshaft" 的只有
-//  `materials/presets/lightshaft.json` 一个。）后果：additive 材质的粒子走了 alpha 混合，
-// 而 additive 纹理（如 `particle/chromaticdot`，RGBA8888、**alpha 全 255**、形状写在 rgb 里——
-// 黑底 + 中央亮点）在 NormalBlending 下 = 不透明黑方块（rgb=0×color → 黑，alpha=1 → 不透明），
-// 即用户截图里 DK 满屏黑色小方块；同层的火/雾/尘被画成洗白的方块噪声而非辉光。
-// 修复：从材质 json 取 `blending` 真实值（'add'/'additive' → AdditiveBlending，其余 → alpha）。
+// ⚠️ 按路径名启发式会静默失效：WE 的辉光语义写在**材质 json 的 `blending` 字段**里，而**路径名里通常没有**
+// 相应字样 —— additive 材质的粒子会走 alpha 混合，其纹理（如 `particle/chromaticdot`：alpha 全 255、形状写在 rgb）
+// 画成**不透明黑方块**（DK WOTLK 满屏黑色小方块的根因），被画成方块噪声而非辉光。
 export function particleBlend(
   blending: string | null | undefined,
   specText: string,
@@ -149,7 +119,7 @@ export function particleBlend(
 }
 
 // 空粒子模拟器兜底：spec 解析失败（`CpuParticleSim.new` throw）时返回**零粒子**模拟器，
-// 使 loadSceneToThree 不因单个坏 spec 整场失败（对齐「失败只丢单个对象」原则，粒子层 0 实例）。
+// 使 loadSceneToThree 不因单个坏 spec 整场失败（对齐「失败只丢单个对象」原则）。
 function createEmptySim(): ParticleSim {
   return {
     update: () => {},
@@ -160,17 +130,12 @@ function createEmptySim(): ParticleSim {
   };
 }
 
-// 收集并解析「带效果对象」的链（spec §2.3：按 scene.json objects 顺序，每对象保留自身
-// effects，不展平）。text 对象不在范围（SceneTextObject 无 effects 字段）；解析失败的链
-// 过滤掉并 warn（该对象回退无效果显示，不黑屏）。
+// 收集并解析「带效果对象」的链：按 scene.json objects 顺序，每对象保留自身 effects（不展平）。
+// text 对象不在范围（SceneTextObject 无 effects 字段）；解析失败的链过滤掉并 warn（该对象回退无效果显示，不黑屏）。
 //
-// ⚠️ 本函数按 `groupEffectsByObject` 的口径收链，其中还包含 `models/util/*` 的 util 对象
-// （合成层/全屏层，全库 8 个对象 10 条效果）——它们在 loadSceneToThree 里**不渲染**，
-// 因此永远没有隔离条目。调用方按「是否真的隔离成功」再过滤一次（见 render() 的挂链循环），
-// 本函数保持「解析与分类」的单一职责。
-//
-// `loadFile` 内部是多次 await fetch（effect.json → material → shader 源），全部发生在**加载期**：
-// 帧内只写 uniform + 提交 pass，不建管线/不 fetch。
+// ⚠️ 收链口径含 `models/util/*` 的 util 对象（合成层/全屏层）——它们不渲染 ⇒ 永远没有隔离条目；
+// 调用方按「是否真的隔离成功」再过滤一次（见 render() 的挂链循环），本函数保持「解析与分类」单一职责。
+// `loadFile` 内部是多次 await fetch，全部发生在**加载期**：帧内只写 uniform + 提交 pass，不建管线/不 fetch。
 export async function collectObjectEffectChains(
   desc: SceneDescription,
   loadFile: (name: string) => Promise<Uint8Array | null>,
@@ -200,16 +165,13 @@ export async function collectObjectEffectChains(
 
 // 收集本次装配要执行的 SceneScript（按 scene.json 的 objects 顺序）。
 //
-// ⚠️ 收集范围**不能**限定在「参与渲染的对象」：3798688689 的 3 个总控（92000 粒子控制器、
-// 93000 信封拖尾、94000 场景控制器 —— 后者 348 KB）**没有** image/particle/text 字段，被
-// parseSceneJson 归到空粒子兜底分支；只在 image/util 分支派生 script 会静默丢掉它们，
-// 画面就仍然不动。scene-json 已改为按 visible.kind==='script' 与 kind 无关地派生。
+// ⚠️ 收集范围**不能**限定在「参与渲染的对象」：无 image/particle/text 字段的纯控制器对象会被
+// parseSceneJson 归到空粒子兜底分支，只按媒体字段派生 script 会静默丢掉它们，画面就仍然不动。
 export function collectScriptSources(desc: SceneDescription): Array<{ objectId: number; source: string }> {
   const out: Array<{ objectId: number; source: string }> = [];
   for (const obj of desc.objects) {
-    // 只收 **visible.script** 来源的脚本。`obj.script` 对 text 对象装的是 `text.script`，
-    // 那类归既有的 text-script.ts 运行时 —— 3798688689 的 701/837（两个时钟）就因此被重复
-    // 收集，而它们顶层调用 `createScriptProperties()`，在本 VM 里 eval 必失败（实测 GUI 日志）。
+    // 只收 **visible.script** 来源的脚本：`obj.script` 对 text 对象装的是 `text.script`，那类归既有的
+    // text-script.ts 运行时 —— 在这里一并收会与 text 路径重复装载（多份 runtime 状态）。
     if (obj.visible?.kind !== 'script') continue;
     const s = (obj as { script?: unknown }).script;
     if (typeof s === 'string' && s.length > 0) out.push({ objectId: obj.id, source: s });
@@ -217,8 +179,11 @@ export function collectScriptSources(desc: SceneDescription): Array<{ objectId: 
   return out;
 }
 
-// 创建 three.js 播放器场景渲染器（sceneRenderer 接口）。
-// opts.loadWasm / opts.getTextScriptRuntime 可注入（测试）；缺省用生产实现。
+// 创建 three.js 播放器场景渲染器（sceneRenderer 接口）。opts 两项可注入（测试），缺省用生产实现。
+//
+// 已知边界：粒子 quad 自旋按 WE `ComputeParticleTangents` 三轴欧拉旋转基向量；可见性走
+// isStaticallyHidden（image/particle，script 绑定不在装载期定论）/ resolveVisibility（text）两套判定，勿混用。
+// loadSceneToThree 沿用「缺 spec/工厂则跳过该粒子对象」语义，绝不全屏失败。
 export function createThreeSceneRenderer(opts?: {
   loadWasm?: LoadWasm;
   getTextScriptRuntime?: () => Promise<TextScriptRuntime | null>;
@@ -233,8 +198,7 @@ export function createThreeSceneRenderer(opts?: {
   let currentStage: ObjectEffectStage | null = null;
   // 本次装配的应用级 Glow stage（同上：闭包持有，teardown 释放）。
   let currentGlow: GlowStage | null = null;
-  // 帧内快照（Task 3）：按**创建它的 renderer** 复用同一实例（capture() 内部用该 renderer 的
-  // copyFramebufferToTexture）；换壁纸会换 canvas/renderer ⇒ 绑定变了必须换新实例（否则拍到旧画布）。
+  // 帧内快照：按**创建它的 renderer** 复用同一实例（换 canvas/renderer 必须换新实例，否则拍到旧画布）；
   // 每次装配开始 `reset()` 复位 active，否则换壁纸后会永久走段渲染路径。
   let frameCapture: FrameCapture | null = null;
   let frameCaptureRenderer: WebGLRenderer | null = null;
@@ -249,34 +213,34 @@ export function createThreeSceneRenderer(opts?: {
   let qualityScale = 1;
   // window.resize 监听：窗口尺寸变化时按新窗口比例重推 cover（对齐 wasm 窗口视口语义）。
   let onWindowResize: (() => void) | null = null;
-  // 本次装配的背景纹理：teardown 时显式 dispose（视频纹理的 `<video>`/Blob URL 清理挂在
-  // 纹理 dispose 事件上，renderer.dispose() 不会停解码）。见 AGENT.md §5.23。
+  // 本次装配的背景纹理：teardown 时显式 dispose（视频的 `<video>`/Blob URL 清理挂在纹理 dispose 事件上，
+  // renderer.dispose() 不会停解码）。见 AGENT.md §5.23。
   let currentTextures: Map<number, Texture> | null = null;
-  // 本次装配的 text 脚本 binding：每个都持有 quickjs 堆 handle，teardown 必须逐个 dispose。
+  // 本次装配的 text 脚本 binding（每个持 quickjs 堆 handle），teardown 必须逐个 dispose。
   let currentScriptBindings: TextScriptBinding[] = [];
-  // 本次装配的 SceneScript 运行时（visible.script）：同样持有 quickjs ctx/handle，teardown 释放。
+  // 本次装配的 SceneScript 运行时（visible.script）：持有 quickjs ctx/handle，teardown 释放。
   let currentScriptHost: SceneScriptHost | null = null;
   // 本次装配的动态网格注册表（脚本 createModelData/createLayer 建的运行时 mesh），teardown 释放。
   let currentMeshRegistry: DynamicMeshRegistry | null = null;
-  // canvas 上的点击监听（脚本的 cursorClick；3798688689 的「切换按钮」靠它触发切换特效）。
+  // canvas 上的点击监听（脚本的 cursorClick，触发脚本内的切换特效）。
   let scriptClick: (() => void) | null = null;
   let scriptClickTarget: HTMLCanvasElement | null = null;
-  // ── 壁纸音效（A3）──────────────────────────────────────────────────────────────
+  // ── 壁纸音效 ───────────────────────────────────────────────────────────────────
   // sound 对象 → playWallpaperSound（loop）→ analyser；频谱每帧喂给效果链（Simple_Audio_Bars 等）。
   let currentAudio: { analyzer: AudioAnalyzer; id: string; sounds: string[] } | null = null;
   // 运行期音效开关（面板 soundEnabled）：null = 未下发 ⇒ 用装配期读到的设置值。
   let soundEnabledOverride: boolean | null = null;
   // 最近一次装配的音频规格：运行期重新打开时按它重播（不必重选壁纸）。
   let lastAudioSpec: { id: string; sounds: string[] } | null = null;
-  // 上下文丢失回调（由控制器注册：只有它知道当前壁纸的 preview 地址 —— 见 Task 8）。
+  // 上下文丢失回调（由控制器注册：只有它知道当前壁纸的 preview 地址）。
   let contextLostHandler: ((id: string) => void) | null = null;
-  // 本次装配的壁纸 id（闭包持有）：不往调用方的 canvas 写 `data-wp-id`（那是外部 DOM 副作用），
+  // 本次装配的壁纸 id（闭包持有）：不往调用方的 canvas 写 `data-wp-id`（外部 DOM 副作用），
   // 也不再有「dataset 必须先于监听注册」的隐式次序依赖。
   let contextLostId: string | null = null;
   // 本次装配注册了 `webglcontextlost` 监听的 canvas：teardown 必须移除（跨壁纸/跨 canvas 不残留）。
   let contextLostCanvas: HTMLCanvasElement | null = null;
-  // 「上下文在本次 render 进行中丢失」标记：onContextLost 置位、render 入口复位（每实例闭包状态，
-  // 与 paused 同处）。长异步的 render 靠它在每个 await 后作废自己，不把回退掀翻。
+  // 「上下文在本次 render 进行中丢失」标记：onContextLost 置位、render 入口复位；长异步的 render
+  // 靠它在每个 await 后作废自己，不把回退掀翻。
   let contextLost = false;
 
   const stopAudio = () => {
@@ -325,8 +289,8 @@ export function createThreeSceneRenderer(opts?: {
       contextLostCanvas = null;
     }
     contextLostId = null;
-    // 先释放编排器（其 runner 持有对象 RT/材质），再释放播放器（player.dispose 会释放
-    // renderer 与隔离 RT）——顺序反了会让 runner 的 dispose 触碰已释放的 GL 资源。
+    // 顺序契约：先释放编排器（其 runner 持有对象 RT/材质），再释放播放器（player.dispose 会释放 renderer
+    // 与隔离 RT）——反了会让 runner 的 dispose 触碰已释放的 GL 资源。
     currentStage?.dispose();
     currentStage = null;
     // Glow stage 持有自己的 RT/材质，同样要在 player.dispose（释放 renderer）之前释放。
@@ -338,10 +302,10 @@ export function createThreeSceneRenderer(opts?: {
     // 纹理放在播放器之后释放（GPU 侧已随 renderer.dispose 收口，再触发纹理自身的清理钩子）。
     for (const tex of currentTextures?.values() ?? []) tex.dispose();
     currentTextures = null;
-    // 脚本 binding 独立于 GL 资源，但同样只在本次装配内有效（切壁纸不留 handle）。
+    // 脚本 binding 独立于 GL 资源，但同样只在本次装配内有效（切壁纸不留 handle）；SceneScript 运行时同理。
     for (const b of currentScriptBindings) b.dispose();
     currentScriptBindings = [];
-    // SceneScript 运行时（ctx + 全部句柄）同理由本次装配独占。
+
     if (scriptClickTarget && scriptClick) scriptClickTarget.removeEventListener('click', scriptClick);
     scriptClickTarget = null;
     scriptClick = null;
@@ -358,7 +322,7 @@ export function createThreeSceneRenderer(opts?: {
     teardown();
     return true;
   };
-  // 当前生效的 Glow 三值：运行期下发 > 装配时读到的设置（threshold/strength 缺省交给 glow-stage 归一）。
+  // 当前生效的 Glow 三值：运行期下发 > 装配时读到的设置（缺省交给 glow-stage 归一）。
   const effectiveGlow = () => ({
     enabled: glowOverride?.enabled ?? glowFromSettings?.enabled ?? true,
     threshold: glowOverride?.threshold ?? glowFromSettings?.threshold,
@@ -373,7 +337,7 @@ export function createThreeSceneRenderer(opts?: {
       if (currentGlow) { currentGlow.dispose(); currentGlow = null; current.player.setGlowStage(null); }
       return;
     }
-    // 已装配：只改两个 uniform（不重建 RT、不重渲），拖动滑杆每帧调用也只是写两个 float。
+    // 已装配：只改两个 uniform（不重建 RT），拖动滑杆每帧调用也只是写两个 float。
     if (currentGlow) { currentGlow.setOptions({ threshold: glow.threshold, strength: glow.strength }); return; }
     currentGlow = createGlowStage(glowSize.width, glowSize.height, { threshold: glow.threshold, strength: glow.strength });
     current.player.setGlowStage(currentGlow);
@@ -385,19 +349,16 @@ export function createThreeSceneRenderer(opts?: {
   });
   return {
     async render(id, fg, _bg) {
-      // 诊断去重集合的生命周期 = 当前壁纸：每次 render 清空，避免跨壁纸累积（换了壁纸后新壁纸的
-      // 告警必须还能打印出来）。
+      // 诊断去重集合的生命周期 = 当前壁纸：每次 render 清空，避免跨壁纸累积而漏报新壁纸的告警。
       warnedKeys.clear();
       // 新一次装配（新 canvas）重新开始：复位上一次的上下文丢失标记。
       contextLost = false;
-      // 帧内快照（Task 3）：每次装配开始复位 active（消费者集合换了）——否则上一张壁纸的消费者
-      // 会让新壁纸也永久走段渲染路径。资源只在 renderer 变化时换绑（见 frameCapture 注释）。
+      // 每次装配开始复位 active（消费者集合换了）——否则上一张壁纸的消费者会让新壁纸也永久走段渲染路径。
       frameCapture?.reset();
       try {
         // 替换/切壁纸前先释放上次播放器资源（首次渲染 no-op）。
         teardown();
-        // 上下文丢失监听：绑定在**本次装配的 canvas** 上（壁纸 id 存在闭包 contextLostId 里，
-        // teardown 负责移除监听与 id，不跨壁纸残留）。
+        // 上下文丢失监听绑定在**本次装配的 canvas** 上（id 存入闭包 contextLostId，teardown 一并移除）。
         contextLostId = id;
         contextLostCanvas = fg;
         fg.addEventListener('webglcontextlost', onContextLost, { once: true });
@@ -417,9 +378,8 @@ export function createThreeSceneRenderer(opts?: {
         fg.width = vw;
         fg.height = vh;
         // ── 场景树：折叠出每个对象的**世界变换** ────────────────────────────────────────
-        // ⚠️ 位置：任何消费对象变换的动作之前（纹理/粒子/隔离尺寸/文本锚点）。
-        // 无 parent 的对象逐字段不变（零回归）；世界值随 assets 下发给 loadSceneToThree，
-        // 由它统一替换 obj.origin/scale/angles（缺失时回退局部值）。
+        // ⚠️ 位置：任何消费对象变换的动作之前（纹理/粒子/隔离尺寸/文本锚点）；世界值随 assets 下发给
+        // loadSceneToThree，由它统一替换 obj.origin/scale/angles。
         const worldTransforms = resolveWorldTransforms(desc.objects);
         lastWorldTransforms = worldTransforms;
         for (const obj of desc.objects) {
@@ -434,8 +394,7 @@ export function createThreeSceneRenderer(opts?: {
         const backgroundTextures = new Map<number, Texture>();
         currentTextures = backgroundTextures; // teardown 负责 dispose（见 currentTextures 注释）
         const particles = new Map<number, LoadedParticleAssets>();
-        // 用户属性表（visible 的 {user,key} 绑定）：image/particle/text 三处过滤与 SceneScript
-        // 共用，故在对象循环之前建好。
+        // 用户属性表（visible 的 {user,key} 绑定）：三处过滤与 SceneScript 共用，故在对象循环之前建好。
         const userProps: Record<string, unknown> = {};
         for (const obj of desc.objects) {
           if (obj.visible?.kind === 'user' && obj.visible.key) {
@@ -443,11 +402,10 @@ export function createThreeSceneRenderer(opts?: {
           }
         }
         for (const obj of desc.objects) {
-          // 装载期静态隐藏（2026-09-25）：布尔 / 用户属性绑定在此定论；script 绑定不在此列
-          // （其可见性是 visible.script 的每帧返回值，装载期剔掉脚本就再也打不开它）。
+          // 装载期静态隐藏：布尔 / 用户属性绑定在此定论；script 绑定的可见性是每帧返回值，不能在装载期剔掉。
           if (isStaticallyHidden(obj.visible, userProps)) continue;
           if (obj.kind === 'image') {
-            // 图片对象纹理（scene-renderer.resolveImageTexture，复用同一模型→材质→tex 推导）。
+            // 图片对象纹理（与 scene-renderer 同一套模型→材质→tex 推导）。
             const tex = await resolveImageTexture(id, obj);
             if (tex) backgroundTextures.set(obj.id, tex);
           } else if (obj.kind === 'particle' && obj.particle) {
@@ -455,13 +413,12 @@ export function createThreeSceneRenderer(opts?: {
             const specResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(obj.particle)}`);
             if (!specResp.ok) continue;
             const specText = await specResp.text();
-            // 粒子材质（材质 json）→ 静态纹理 URL（ptex-*.tex）+ 混合模式（`passes[0].blending`）。
-            // 无纹理/解析失败 → tex undefined → 白图兜底；材质不可得 → blending null → 名启发式兜底。
+            // 材质 json → 静态纹理 URL（ptex-*.tex）+ 混合模式（`passes[0].blending`）。
+            // 无纹理/解析失败 → 白图兜底；材质不可得 → blending null → 名启发式兜底。
             const mat = await resolveParticleMaterial(id, specText);
             const tex = mat?.texUrl ? (await loadTexTexture(mat.texUrl)) ?? undefined : undefined;
-            // 折射层（材质 REFRACT=1）另需槽 1 的法线/遮罩纹理（与槽 0 同一帧网格 UV）：缺失或
-            // 加载失败 ⇒ **不装配该层**（WE NORMALMAP=0 语义：位移恒 0、输出≡背景 ⇒ 无可见贡献）。
-            // 绝不回退白方块：槽 0 在这类材质里是 RGBA 全 255 的占位图，画出来就是白块/白竖条。
+            // 折射层（材质 REFRACT=1）另需槽 1 的法线/遮罩纹理：缺失或加载失败 ⇒ **不装配该层**
+            //（WE NORMALMAP=0 语义：位移恒 0、输出≡背景）。绝不回退白方块：槽 0 在这类材质里是 RGBA 全 255 的占位图。
             let refract: { normalTex: Texture; amount: number } | undefined;
             if (mat?.refract) {
               const normalTex = mat.normalTexUrl
@@ -479,28 +436,23 @@ export function createThreeSceneRenderer(opts?: {
               tex,
               blend: particleBlend(mat?.blending, specText),
               refract,
-              // 对象级 instanceoverride（原始 JSON；无覆盖 → undefined → 工厂传空串）。
-              // 由 wasm `CpuParticleSim` 按官方 OverrideSpawnProgram 语义应用：
-              // alpha/size/lifetime/speed 乘数 + color 覆盖 + emitter rate × count。
-              // （GTR 3743126786 烟柱 alpha=0.03 靠它才与桌面端一致。）
+              // 对象级 instanceoverride：由 wasm `CpuParticleSim` 按官方 OverrideSpawnProgram 语义应用
+              //（alpha/size/lifetime/speed 乘数 + color 覆盖 + emitter rate × count）。无覆盖 → undefined → 工厂传空串。
               overrideJson: obj.instanceOverrideJson,
               // softness 缺省由 addParticle 按有无纹理推导（有纹理 0.15 / 无纹理 1.0，对齐 wasm
-              // particle_render SOFTNESS_* 语义）；此处不硬编码 0（无纹理白图兜底时硬边白方块
-              // 会叠成白斑、单个粒子被看作方块——Task5 回归「粒子可见但不过曝/不遮背景」）。
+              // particle_render SOFTNESS_*）；不得硬编码 0：无纹理白图兜底时硬边白方块会叠成白斑。
             });
           }
         }
         // 上面的 image/particle 资源 await（贴图/粒子 spec/材质）可能横跨丢失事件。
         if (abortIfContextLost()) return false;
-        // ── text 对象（2026-09-21）────────────────────────────────────────────────
-        // text 用 resolveVisibility（**含** script 绑定按 value 静态定论）：本库 text 全是脚本时钟，
-        // 其中数个默认隐藏（2911105183 的 3 个 Clock 有 2 个 value=false），不过滤就会叠出多个时钟。
-        // ⚠️ 与 image/particle 的 isStaticallyHidden 有意不同（后者放过 script 绑定）：text 的历史
-        // 口径保持原样，不借本次改动改它的行为。
+        // ── text 对象 ────────────────────────────────────────────────────────────────
+        // text 用 resolveVisibility（**含** script 绑定按 value 静态定论）：不过滤会叠出多个默认隐藏的脚本时钟。
+        // ⚠️ 与 image/particle 的 isStaticallyHidden 有意不同（后者放过 script 绑定），text 的历史口径保持原样。
         const textLayers = new Map<number, {
           texture: Texture;
           driver?: ClockDriver;
-          size?: [number, number];        // 画布尺寸（字体像素）= 实测文本 + 2×padding
+          size?: [number, number];        // 画布尺寸（字体像素）= 文本 + 2×padding
           anchorOffset?: [number, number]; // origin 锚点 → quad 中心偏移（世界单位）
         }>();
         // 只有可见的 text 脚本才实例化 quickjs runtime —— 无脚本壁纸不该付 wasm 实例化成本。
@@ -513,14 +465,12 @@ export function createThreeSceneRenderer(opts?: {
           if (!resolveVisibility(obj, userProps)) continue;
           const props = obj.scriptProperties ?? {};
           const isClock = obj.script ? detectScriptPattern(obj.script) === 'clock' : false;
-          // 优先序（2026-09-20 裁定）：脚本 bind 成功 → 脚本驱动；bind 失败且是 clock 形态 → 回退
-          // clock；都不可用 → 跳过。**绝不画 `text.value`**：它只是作者占位值（CodeTime 的 `"12"`、
-          // Crimson Horizon 的 `DAY`），画出来比不画更糟（2026-09-21 用户实测）。
+          // 优先序：脚本 bind 成功 → 脚本驱动；bind 失败且是 clock 形态 → 回退 clock；都不可用 → 跳过。
+          // **绝不画 `text.value`**：它只是作者占位值，画出来比不画更糟。
           const binding = obj.script && scriptRuntime ? scriptRuntime.bind(obj.script, props, obj.text) : null;
           if (obj.script && !binding && !isClock) continue;
-          // pkg 内字体经 FontFace 加载后返回家族名；未加载（系统字体名/加载失败）→ 传回 WE 原始
-          // 字体名，交给 resolveFontFamily 映射（systemfont_consolas → Consolas；否则原本会被
-          // 当成未知字体回退 sans-serif，CodeTime 的等宽代码块就散了）。
+          // pkg 内字体经 FontFace 加载后返回家族名；未加载（系统字体名/加载失败）→ 传回 WE 原始字体名，交给
+          // resolveFontFamily 映射（systemfont_consolas → Consolas；否则会被当成未知字体回退 sans-serif）。
           const initial = binding ? (binding.update() ?? '') : isClock ? formatClockText(new Date(), props) : obj.text;
           const font = (await loadWallpaperFont(id, obj.font)) ?? obj.font;
           const measureOpts = {
@@ -529,7 +479,7 @@ export function createThreeSceneRenderer(opts?: {
             padding: obj.padding,
             horizontalAlign: obj.horizontalAlign,
           };
-          // 图层尺寸 = measureText 实测文本 + 2×padding（scene.json 的 size 字段不参与）
+          // 图层尺寸 = measureText 文本 + 2×padding（scene.json 的 size 字段不参与）
           const layout = measureTextLayout(initial, measureOpts);
           const size = { w: layout.width, h: layout.height };
           const opts = { ...measureOpts, color: obj.color, width: size.w, height: size.h };
@@ -557,9 +507,8 @@ export function createThreeSceneRenderer(opts?: {
         }
         // 上面的 text 资源 await（字体加载）同样可能横跨丢失事件（此后会推入脚本 binding）。
         if (abortIfContextLost()) return false;
-        // `createParticleSim`：wasm CpuParticleSim 构造器（测试可注入 loadWasm 得到假模块）。
-        // 模块无 CpuParticleSim（如未编译 render feature）→ undefined → loadSceneToThree
-        // 自动跳过粒子对象（只渲染背景）。
+        // `createParticleSim`：wasm CpuParticleSim 构造器（测试可注入 loadWasm 得到假模块）；模块无
+        // CpuParticleSim → undefined → loadSceneToThree 自动跳过粒子对象（只渲染背景）。
         const cpSim = (mod as ThreeWasmModule | null)?.CpuParticleSim;
         const createParticleSim = cpSim
           ? (
@@ -578,12 +527,10 @@ export function createThreeSceneRenderer(opts?: {
             }
           : undefined;
 
-        // ── 对象级效果链：解析 + 隔离尺寸预算（spec §5.2）────────────────────────────
+        // ── 对象级效果链：解析 + 隔离尺寸预算 ─────────────────────────────────────────
         // ⚠️ 位置：必须在「组装 SceneAssets」的 objects 循环**之后**（本段依赖已被填充的
-        // backgroundTextures/particles：图片尺寸兜底、粒子 spec 的 distanceMax），且在
-        // loadSceneToThree 之前（isolate 要随 assets 一起下发）。
-        // ⚠️ 全部在**加载期**完成：resolveEffectChain 内部的多次 loadFile(fetch)、EffectRunner
-        // 创建与探针编译都在这里；帧内只写 uniform + 提交 pass。
+        // backgroundTextures/particles：图片尺寸兜底、粒子 spec 的 distanceMax），且在 loadSceneToThree 之前。
+        // ⚠️ 全部在**加载期**完成（resolveEffectChain 的多次 loadFile、EffectRunner 创建与探针编译）。
         const loadFile = async (name: string): Promise<Uint8Array | null> => {
           const r = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(name)}`);
           if (!r.ok) return null;
@@ -593,17 +540,16 @@ export function createThreeSceneRenderer(opts?: {
           desc, loadFile, (o) => isStaticallyHidden(o.visible, userProps),
         );
         // ── SceneScript 运行时（visible.script）──────────────────────────────────────────
-        // 收集范围含 util 与「无媒体字段」的纯控制器对象（见 collectScriptSources 注释）；
-        // 脚本按 objects 顺序装载，它们靠全局 shared 互通（拆成多个 ctx 会静默失效）。
+        // 收集范围含 util 与纯控制器对象（见 collectScriptSources）；脚本按 objects 顺序装载，靠全局
+        // shared 互通（拆成多个 ctx 会静默失效）。
         const scriptSources = collectScriptSources(desc);
-        // 插件设置：一次读取。画质档位必须在算屏幕密度**之前**拿到——对象 RT 的尺寸基准与画布
-        // 缓冲必须用同一个渲染像素比（两者口径不一致会让整层模糊，见 AGENT.md §5.15/§5.21）。
+        // 插件设置：一次读取。画质档位必须在算屏幕密度**之前**拿到——对象 RT 尺寸基准与画布缓冲必须用
+        // 同一个渲染像素比（口径不一致会让整层模糊，见 AGENT.md §5.15/§5.21）。
         const settings = await readClientSettings();
         // 设置读取之后要建渲染状态（画质档位/音频/glow），丢失则不再往下走。
         if (abortIfContextLost()) return false;
         qualityScale = settings.qualityScale ?? 1;
-        // 壁纸音效（A3）：sound 对象默认播放（对齐桌面 WE，可用面板关掉）。
-        // 关掉时**不创建** AudioContext —— 否则 25/29 张无音效的壁纸也白开一个音频上下文。
+        // 壁纸音效：sound 对象默认播放（对齐桌面 WE，可用面板关掉）。关掉时**不创建** AudioContext。
         lastAudioSpec = desc.sounds && desc.sounds.length > 0 ? { id, sounds: desc.sounds } : null;
         startAudio(id, desc.sounds ?? [], soundEnabledOverride ?? (settings.soundEnabled !== false));
         // Glow 三值来自持久设置；运行期下发过则以后者为准（effectiveGlow 里合并）。
@@ -616,11 +562,9 @@ export function createThreeSceneRenderer(opts?: {
           typeof window !== 'undefined' && window.devicePixelRatio ? window.devicePixelRatio : 1,
           qualityScale,
         );
-        // 屏幕密度（设备像素 / 世界单位）：对象 RT 尺寸的**唯一基准**，由主相机同一套 cover 语义
-        // 算出（object-range.screenScalePx 与 player.applyCover 共用 coverRange：同一份 scene 尺寸、
-        // 视口与 dpr ⇒ 同一个数）。窗口 resize 时用 `player.screenScalePx()` 重算同一个量
-        // （见下方 onWindowResize），**不得**另起一套「视口 × dpr 预算」——那正是 3fd6b00
-        // 「挂载期 RT 正确、任何一次 resize 又被打回旧口径」这一漏检类的同源地雷。
+        // 屏幕密度（设备像素 / 世界单位）= 对象 RT 尺寸的**唯一基准**，与主相机共用同一套 cover 语义
+        //（object-range.screenScalePx 与 player.applyCover 共用 coverRange）。窗口 resize 时用
+        // `player.screenScalePx()` 重算同一个量，**不得**另起一套「视口 × dpr 预算」。
         const screenScale = screenScalePx(desc.orthogonal.width, desc.orthogonal.height, vw, vh, dpr);
         // 隔离对象的尺寸表（挂载期唯一来源）：世界尺寸 = 未钳制 |size × 世界 scale|（含父链；缺 size 按纹理
         // 像素兜底，不得改用逐轴钳 4096 的相机范围），RT = min(源纹理长边, 4096) 等比收口、下限屏占位、按预算收窄。
@@ -646,26 +590,24 @@ export function createThreeSceneRenderer(opts?: {
           rt: isolatedRtSize(it.worldW, it.worldH, screenScale, it.source, { budgetScale }),
           worldW: it.worldW, worldH: it.worldH,
         }]));
-        // 源纹理尺寸表（键 = 对象 id）：与上面挂载期的尺寸计算**同一份数据**，resize 期同源复用
-        // （stage 只存下来，不重算源尺寸）。粒子对象不在表内 ⇒ 源未知 ⇒ 回退屏占位。
+        // 源纹理尺寸表（键 = 对象 id）：与挂载期的尺寸计算**同一份数据**，resize 期同源复用（不重算）。
+        // 粒子对象不在表内 ⇒ 源未知 ⇒ 回退屏占位。
         const sourceOf = new Map(isolateItems.map((it) => [it.objId, it.source]));
-        // isolate 的键 = scene.json 的**对象 id**，值里的 objectId 同值：player 用 objectId 作
-        // **隔离条目的键**（attachIsolated），ObjectEffectStage 也用同一把键 → 三者同键空间，
-        // 不存在「对象 id → 图层计数器 id」的翻译层，也就不会撞键（见 threejs-player 的注释）。
+        // isolate 的键 = scene.json 的**对象 id**（值里的 objectId 同值）：player 的隔离条目（attachIsolated）
+        // 与 ObjectEffectStage 用同一把键 ⇒ 三者同键空间，没有「对象 id → 图层计数器 id」翻译层，也就不会撞键。
         const isolate = new Map<
           number,
           { objectId: number; rtWidth: number; rtHeight: number; worldW: number; worldH: number }
         >();
-        // P2 起 isolate 准入 = 「有链」：线性链与具名 RT 图链都由 ObjectEffectStage 建 runner 与计划执行
-        // （Task 6 已反转旧的「链全为具名 RT 图链则不隔离」收紧准入，故这里不再有 rtGraphOnly 分支）。
+        // isolate 准入 = 「有链」：线性链与具名 RT 图链都由 ObjectEffectStage 建 runner 与计划执行。
         for (const obj of desc.objects) {
           // 静态隐藏的对象不隔离：隔离会给它建对象 RT + 合成 quad ⇒ 本应隐藏的层又画回来。
           if (isStaticallyHidden(obj.visible, userProps)) continue;
           const chains = effectChains.get(obj.id);
-          // 无链 → 与收紧前逐字一致的早退（effectChains 只在链非空时入表）。
+          // 无链 → 早退（effectChains 只在链非空时入表）。
           if (!chains || chains.length === 0) continue;
           if (obj.kind === 'image') {
-            // 准入条件与上面的 isAdmittedImage 同一份（该谓词已含 effectChains 非空，故紧跟上面的早退）。
+            // 准入条件与上面的 isAdmittedImage 同一份（该谓词已含 effectChains 非空）。
             if (!isAdmittedImage(obj)) continue;
             // 尺寸取自上面的 isolateItems 段（同条件、同口径）；此处只做键空间转换。
             const sized = isolatedSizes.get(obj.id);
@@ -682,13 +624,12 @@ export function createThreeSceneRenderer(opts?: {
             if (!p) continue;
             let spec: { distanceMax?: number } = {};
             try { spec = JSON.parse(p.specJson) as { distanceMax?: number }; } catch { /* 缺省 distanceMax */ }
-            // 世界尺寸用**未钳制**的 distanceMax × 世界 scale（quad 的世界占位，也是 RT 尺寸的
-            // 唯一基准）；局部相机范围由 player 按同一世界尺寸建立（见 particleWorldSize 注释）。
+            // 世界尺寸用**未钳制**的 distanceMax × 世界 scale（quad 的世界占位，也是 RT 尺寸的唯一基准）；
+            // 局部相机范围由 player 按同一世界尺寸建立（见 particleWorldSize）。
             const s = obj.scale;
             const world = particleWorldSize(spec, [s[0], s[1]]);
-            // RT 像素尺寸 = 屏占位（世界尺寸 × 屏幕密度），等比收口到 4096（同上面两条约束）。
-            // ⚠️ 粒子不进预算（isolateItems 只含 image，见 object-range.fitIsolatedBudget）、RT 恒用
-            // 屏占位口径，不按源纹理升级（R19 边界；resize 期预算却计入粒子屏占位，见 AGENT.md §7.36②）。
+            // RT 像素尺寸 = 屏占位（世界尺寸 × 屏幕密度），等比收口到 4096。⚠️ 粒子不进预算
+            //（isolateItems 只含 image）、RT 恒用屏占位口径而不按源纹理升级（见 AGENT.md §7.36②）。
             const rt = objectRtSize(world.w, world.h, screenScale);
             isolate.set(obj.id, {
               objectId: obj.id,
@@ -700,16 +641,14 @@ export function createThreeSceneRenderer(opts?: {
 
         // 装配前的最后一道闸：丢失则绝不安装 player（装上就是无人回收的僵尸帧循环 + GL 资源）。
         if (abortIfContextLost()) return false;
-        // 装配并启动播放（背景 + 粒子；setAnimationLoop 内部每帧 sim.update(dt) → 刷新 buffer）。
-        // viewport 传真实窗口/视口尺寸（vw/vh）：ThreeScenePlayer 构造器已不再把 canvas 重置回场景
-        // 尺寸，此处显式传给 loadSceneToThree → player.resize(vw,vh) 使 cover 相机按窗口宽高比裁剪
-        // （Task5 修复：窗口比例 ≠ 场景比例时背景 cover 裁切而非 object-fit:fill 拉伸）。
+        // 装配并启动播放。viewport 显式传真实窗口尺寸：ThreeScenePlayer 不再把 canvas 重置回场景尺寸，
+        // 由 player.resize(vw,vh) 使 cover 相机按窗口宽高比裁剪（窗口比例 ≠ 场景比例时是裁切而非拉伸）。
         const result = loadSceneToThree(sceneJson, {
           backgroundTextures, particles, createParticleSim, isolate, textLayers, qualityScale, worldTransforms,
           // SceneScript 帧钩子：脚本状态是本帧渲染的权威来源，先 tick → 应用脏写入，
           // 再走原有的粒子/文本更新与 render。host 未就绪（quickjs 加载中/失败）时直接返回。
           onFrame: (dt) => {
-            // 音频频谱（A3）：本帧渲染前刷新一次；advance 时 runner 读同一缓冲（无音频 → null）。
+            // 音频频谱：本帧渲染前刷新一次；runner 读同一缓冲（无音频 → null）。
             currentAudio?.analyzer.update();
             currentStage?.setAudioSpectrum(currentAudio?.analyzer.freqData ?? null);
             const host = currentScriptHost;
@@ -727,7 +666,7 @@ export function createThreeSceneRenderer(opts?: {
           height: vh,
         });
         current = result;
-        // 帧内快照（Task 3）：把 capture 注入本播放器（无消费者时 active=false ⇒ 走现状路径，零回归）。
+        // 把帧内快照 capture 注入本播放器（无消费者时 active=false ⇒ 走现状路径，零回归）。
         // renderer 身份变了（换 canvas/上下文）⇒ 旧实例绑的是旧 renderer，释放后按新 renderer 重建。
         const captureRenderer = result.player.renderer;
         if (frameCapture && frameCaptureRenderer !== captureRenderer) {
@@ -738,12 +677,12 @@ export function createThreeSceneRenderer(opts?: {
         frameCaptureRenderer = captureRenderer;
         result.player.setFrameCapture(frameCapture);
 
-        // 装配 SceneScript 运行时。失败（quickjs 不可用）→ host 为 null，onFrame 直接返回，
-        // 画面等于现状；绝不把脚本异常抛进帧循环。
+        // 装配 SceneScript 运行时。失败（quickjs 不可用）→ host 为 null，onFrame 直接返回，画面等于现状；
+        // 绝不把脚本异常抛进帧循环。
         if (scriptSources.length > 0) {
-          // ── 动态网格（2026-09-22）：脚本 createModelData/createLayer/applyData 的落点 ──
-          // 材质表先为空、materialFor 返回兜底白图；脚本装载期（顶层 registerAsset）收集到路径后
-          // 立刻解析填表 ⇒ 最前面 1~2 帧用兜底材质，之后换真实材质（spec §6.4 的降级语义）。
+          // ── 动态网格：脚本 createModelData/createLayer/applyData 的落点 ──
+          // 材质表先为空、materialFor 返回兜底白图；脚本装载期收集到路径后立刻解析填表 ⇒ 最前面
+          // 1~2 帧用兜底材质，之后换真实材质。
           const materialTable = new Map<string, Material>();
           const materialPaths = new Set<string>();
           const fallbackMaterial = createMeshMaterial(null, null);
@@ -771,15 +710,15 @@ export function createThreeSceneRenderer(opts?: {
               if (!spec) { warnOnce(`mesh-mat:${id}:${p}`, `动态网格材质解析失败：${p}`); continue; }
               let tex: Texture | null = null;
               if (spec.texturePath) {
-                // 纹理走与 resolveImageTexture **同源**的路径推导 + 路由 URL（不要用 Blob URL：
-                // loadTexTexture 内部按 `/wallpapers/...` 路由与 .tex 解码链路工作）。
+                // 纹理走与 resolveImageTexture **同源**的路径推导 + 路由 URL（用 Blob URL 会绕开
+                // loadTexTexture 依赖的 `/wallpapers/...` 路由与 .tex 解码链路）。
                 const texPath = resolveTexPath(p, spec.texturePath);
                 tex = await loadTexTexture(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(texPath)}`);
                 if (!tex) warnOnce(`mesh-tex:${id}:${texPath}`, `动态网格纹理加载失败：${texPath}（白图兜底）`);
               }
               const mat = createMeshMaterial(spec, tex);
               materialTable.set(p, mat);
-              // 回填：脚本 init 期已建好的 mesh 此刻还挂着兜底白图材质（材质解析是异步的）
+              // 回填：脚本 init 期已建好的 mesh 此刻还挂着兜底白图材质（材质解析是异步的）。
               meshRegistry.setMaterialForPath(p, mat);
             } catch { /* 单个材质失败 → 保持兜底白图，不影响其他网格 */ }
           }
@@ -796,16 +735,12 @@ export function createThreeSceneRenderer(opts?: {
         // SceneScript 宿主的创建/材质解析也是 await：丢失则连宿主带 player 一起作废。
         if (abortIfContextLost()) return false;
         // ── 装配 ObjectEffectStage（对象级效果链的编排器）──────────────────────────────
-        // 键空间（本轮根治点）：isolate 表的键、player 隔离条目的 id（isolatedObjects()[].id）、
-        // stage 的键**都是 scene.json 的对象 id**——player 的 attachIsolated 直接用 obj.id 建条目。
-        // 此前这里有一层「对象 id → 图层计数器 id」的翻译（用 result.backgroundIds /
-        // result.particleLayers 的游标复制 loadSceneToThree 的建层条件与顺序）：它脆弱（对侧一改
-        // 建层条件/顺序，测试全绿而效果链静默全失效），且两个图层计数器都从 0 起、同壁纸的隔离
-        // image 与隔离 particle 会撞键。该层已整体删除。
+        // 键空间：isolate 表的键、player 隔离条目的 id（isolatedObjects()[].id）、stage 的键**都是
+        // scene.json 的对象 id**。⚠️ 不得再引入「对象 id → 图层计数器 id」翻译层：对侧一改建层条件/顺序，
+        // 测试全绿而效果链静默全失效，且两个计数器都从 0 起、同一壁纸的隔离 image/particle 会撞键。
         //
-        // 挂在「不参与渲染的对象类型」（util 合成层/全屏层、缺粒子 spec/资源的对象）上的效果
-        // 不会得到隔离条目，因而无法挂链——为免它们被**静默丢弃**（诊断上完全不可见），按壁纸
-        // 汇总一条告警（每壁纸一条，不按对象刷屏）。
+        // 挂在「不参与渲染的对象类型」（util 合成层/全屏层、缺粒子 spec/资源的对象）上的效果拿不到隔离
+        // 条目、无法挂链——为免静默丢弃（诊断上完全不可见），按壁纸汇总一条告警（每壁纸一条，不按对象刷屏）。
         let stage: ObjectEffectStage | null = null;
         let droppedEffects = 0;
         for (const [objId, chains] of effectChains) {
@@ -817,33 +752,27 @@ export function createThreeSceneRenderer(opts?: {
           warnOnce(`unrendered-effects:${id}`,
             `${droppedEffects} 条效果挂在未参与渲染的对象类型上（util/音频），已跳过`);
         }
-        // 有对象被真正隔离才需要编排器：util 对象（models/util/*）带 effects 但不在
-        // loadSceneToThree 的渲染范围，永远没有隔离条目 → 挂链必然失败，故不建 stage
-        // （stage 为 null 时帧序与今天逐字相同）。
+        // 有对象被真正隔离才需要编排器：util 对象带 effects 但不在渲染范围、永远没有隔离条目 → 挂链必然失败。
         if (isolate.size > 0) {
           stage = new ObjectEffectStage(result.player, {
             wallpaperId: id, screenScale,
           });
           // 顺序契约：先 setWorldSize（尺寸的唯一来源），再 setObjectChains（后者不覆盖世界尺寸）。
-          // 世界尺寸直接用 isolate 里已算好的世界尺寸（同一份计算的两个消费者），不另存一份映射；
-          // 键一律用对象 id（= isolate 的键 = 隔离条目的 id）。
+          // 世界尺寸直接用 isolate 里已算好的值（同一份计算的两个消费者），不另存一份映射；键一律用对象 id。
           for (const [objId, iso] of isolate) {
-            // 源尺寸与挂载期同一份数据（sourceOf）；未知（粒子对象/纹理未就绪）显式下发
-            // null（统一下发形状，不靠缺省参数分支）。
+            // 源尺寸与挂载期同一份数据（sourceOf）；未知（粒子对象/纹理未就绪）显式下发 null（统一形状）。
             stage.setWorldSize(objId, iso.worldW, iso.worldH, sourceOf.get(objId) ?? null);
           }
           for (const [objId, chains] of effectChains) {
-            // 没有隔离条目的对象（util 层、缺粒子资源、blend 冲突跳过的）不挂链：挂也找不到 view，
-            // 只会产生误导性的「调用顺序错误」告警，且画不出内容。
+            // 没有隔离条目的对象不挂链：挂也找不到 view，只会产生误导性的「调用顺序错误」告警且画不出内容。
             if (!isolate.has(objId)) continue;
             stage.setObjectChains(objId, chains);
           }
           result.player.setObjectEffectStage(stage);
           currentStage = stage;
         }
-        // 应用级 Glow：按插件设置装配（关闭时零资源、帧序与输出零回归）。⚠️ 必须在 isolate 块
-        // **之外**——Glow 与「有无对象被隔离」无关；尺寸用画布缓冲（loadSceneToThree 内部已
-        // player.resize(vw,vh) 按 dpr 设过），故 resize 由 player.resize 内部单点同步，此处不重复。
+        // 应用级 Glow：按插件设置装配（关闭时零资源）。⚠️ 必须在 isolate 块**之外** —— Glow 与「有无对象被
+        // 隔离」无关；尺寸用画布缓冲，resize 由 player.resize 内部单点同步，此处不重复。
         currentGlow?.dispose();
         const glow = effectiveGlow();
         currentGlow = glow.enabled
@@ -856,11 +785,10 @@ export function createThreeSceneRenderer(opts?: {
         result.player.setGlowStage(currentGlow);
         // 省电：装配时若已处于暂停态（如切到后台时换壁纸）→ 直接不排程。
         if (paused) result.player.pause();
-        // 窗口尺寸变化 → 按新窗口比例重推 cover（对齐 wasm 路径的 window.innerWidth/Height 语义），
-        // 并把新的**屏幕密度**同步给效果链编排器（隔离对象 RT 随视口重设）。
-        // ⚠️ 密度取自 `player.screenScalePx()`（player 内部与 applyCover 同一套 state，
-        // 因此与刚执行的 `player.resize` 天然同源），不在这里另算一份 cover —— 挂载期与 resize
-        // 期两处各算一遍正是「RT 尺寸被 resize 打回旧口径」那类漏检的结构性原因。
+        // 窗口尺寸变化 → 按新窗口比例重推 cover（对齐 wasm 路径的 window.innerWidth/Height 语义），并把新的
+        // **屏幕密度**同步给效果链编排器（隔离对象 RT 随视口重设）。⚠️ 密度取自 `player.screenScalePx()`
+        //（与 applyCover 同一套 state，与刚执行的 `player.resize` 天然同源）——挂载期与 resize 期各算一遍
+        // 正是「RT 尺寸被 resize 打回旧口径」那类漏检的结构性原因。
         onWindowResize = () => {
           if (!current) return;
           const { width, height } = viewportSize();
@@ -869,7 +797,7 @@ export function createThreeSceneRenderer(opts?: {
           currentStage?.onViewportResize(current.player.screenScalePx());
         };
         window.addEventListener('resize', onWindowResize);
-        // 返回 true 之前的最后一道兜底：无论如何不得把「已丢失」的装配报告成成功（否则护栏被掀翻）。
+        // 返回 true 之前的最后一道兜底：不得把「已丢失」的装配报告成成功（否则护栏被掀翻）。
         if (abortIfContextLost()) return false;
         // 观测：确认走的是 three 路径（浏览器回归探测用）。
         console.log(
@@ -917,7 +845,7 @@ export function createThreeSceneRenderer(opts?: {
       if (!currentAudio && lastAudioSpec) startAudio(lastAudioSpec.id, lastAudioSpec.sounds, true);
     },
     // 释放当前 three 播放器 + wasm 模拟器（切壁纸/卸载时防泄漏）。
-    // `frameCapture` 绑定创建它的 renderer：随本 renderer 的 dispose 一并释放（换 renderer 时已在 render 内换绑）。
+    // `frameCapture` 绑定创建它的 renderer（换 renderer 时已在 render 内换绑），随本 renderer 一并释放。
     dispose() {
       teardown();
       frameCapture?.dispose();

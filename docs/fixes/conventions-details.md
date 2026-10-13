@@ -551,3 +551,67 @@
     - **resize 与异步消费的竞争（已收窄，未清零）**：`FrameCapture.resize()` 会 `dispose` + 重建快照纹理（`FramebufferTexture` 无 `setSize`），而对象级效果链的 `runner.update` 是**异步串行**推进（可能已排队）⇒ 仍握着旧快照的 update 会采到已释放纹理（该对象整块黑一帧）。判据两条：① 消费方把**捕获当刻**的 `FrameCapture.snapshotVersion` 带进排队的闭包，**执行当刻**读 `ObjectEffectHost.frameSnapshotVersion()`（= player 持有的实时代号，无 capture 时 -1）再比较，不一致即按「无快照」（null）走 —— 只认「真的换代」，判据不随帧序/段边界自增，故只是排到下一帧执行的 runner 不再被误伤；② `player.resize()` 通知 `ObjectEffectStage.notifyViewportResize()`，作废**尚未被 `advance` 消费**的本帧快照（已被带进闭包的那份由 ① 兜底）。⚠️ **未清零的窗口**：换代若正好落在 `runner.update` 内部 `await resolveTextureSlot(...)` 期间，这次已通过校验的引用仍会被采样一次（极低频；如实记在设计文档附录 A.4 ⑥，**不得**宣称「绝不采已释放纹理」）。单测落点 `tests/frame-capture.test.ts`（代号自增 / 同尺寸不变）、`tests/object-effects.test.ts`（实时代号变了 ⇒ 在途 update 按无快照；代号未变 ⇒ 不误伤；resize 落在「边界通知」与 `advance` 之间 ⇒ 丢弃未消费快照）、`tests/threejs-player.test.ts`（resize 必通知，缓冲尺寸未变也通知，且先建资源再断言）。
     - **`_rt_*` 的处置边界（本轮只做 `_rt_FullFrameBuffer`，且消费点只剩粒子 REFRACT）**：`_rt_FullFrameBuffer` 的帧内快照**能力**已实现，**当前唯一启用的消费点 = 粒子 `REFRACT`**（见 `AGENT.md` §5.46）。⚠️ **效果链消费点本轮门控关闭**（`object-effects.ts` 的 `ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER = false`，2026-10-13 最终审查按 R6 降级）：对象链的贴屏 quad UV 覆盖**对象窗口**、快照却是**整画布**（v 约定还反向一次）⇒ 该路径从未真机验收、直采会错位，**启用前须先解决映射与 v 约定**（设计文档附录 A.4 ⑧）；关闭时引用该槽的链行为 = 改动前（该槽**留空** + 每槽去重告警，`EffectRunner.update` 的 `frameTexture` 恒为 null）。能力与单测保留：`resolveBuiltinTexture(path, frameTexture?)`、`slotBoundByBind` / `passSamplesFrameSnapshot` / `planSamplesFrameSnapshot`、`onSegmentBoundary` + `frameSnapshotVersion()`、`referencesFrameSnapshot`。**其它 `_rt_*` 名字与 `_rt_imageLayerComposite_*` 一律维持「槽留空 + 每槽去重告警」**，不绑 1×1 白纹（绑白等于凭空造内容，比留空更容易画错）；直接调 `resolveBuiltinTexture` 的路径仍回退 1×1 白纹（其中只有 `_rt_FullFrameBuffer` 那一条会打**一次**模块级告警，其它 `_rt_*` 不告警；措辞只陈述该函数自身行为，不外推对画面的影响 —— 被 `bind` 覆盖的槽与快照无关，不该打出「半透明区会被压黑」这类因果推断）。`_rt_imageLayerComposite_*`（对象结果池，7 处）、对象材质 `BLENDMODE` 的 `_rt_FullFrameBuffer`（161 材质）、6 个 JSONC 引擎 `effect.json` 的容错、`general.clearcolor` 消费**均另立任务**（design §8 / R7/R8/R10/R11）。
     - **成本量级（2026-10-13 最终审查 I2 补）**：段渲染是「**每段一次全场景 `render`**，靠 `visible` 排除其它段」⇒ **O(段数 × 场景)**，不是「每对象只光栅化一次」。实测 `2897292240`（2 个粒子消费者 / 3 段）：每帧 **3 次全场景 render + 2 次 `copyFramebufferToTexture` blit + 1 次 composite 合成**（改动前 1 次 render）；无消费者时仍是 1 次 render（结构性零回归）。因此「半分辨率 `frameRT`」这类优化项的判据是**真机帧时**，本轮无数据（设计文档附录 A.4 ⑦ / A.5）。
+
+### §5.47 注释整理留档（2026-10-13）
+
+> 2026-10-13 注释整理时从 `src/client/**` 注释里压掉的细节中、活文档原先没有记录的部分，按条留档（数值取整理当时的实测值，不重算）。
+
+1. **粒子拖尾的符号反转：WE 取负号，本插件必须取正号**
+    - 口径：WE 原文（`common_particles.h:42-59`）是 `pos = p + size·right·(u−0.5) − size·up·(v−0.5)·textureRatio`，其 `v=0` = **纹理顶行**；本插件的纹理经 `tex-loader` 行反转（`v=1` = 图像顶行）⇒ trail 分支的 `up` 项必须取**正号**。
+    - 为什么：v 轴朝向与 WE 相反。§5.20 只规定「效果链一侧按 WE 约定加载」，**未**覆盖粒子拖尾这一处。
+    - 影响到哪：取负号会让拖尾**头尾颠倒**（雨丝 / 风痕方向反），长度与位置不受影响。
+    - 原注释位置：`src/client/threejs-player.ts` 顶点 shader 的 trail 分支（`trailEnabled` 附近的符号注释）。
+
+2. **空槽纹理的字节级依据（`opacitymask` / `flowmask`）**
+    - 口径：`opacitymask` → `(0,0,0,255)`，对齐 WE `<WE>/assets/materials/util/black.tex` 首像素 `00 00 00 ff`（shake 的 `g_Texture2` 的 `default`）；`flowmask` → `(127,127,0,255)`，对齐 `util/noflow.tex` 首像素 `7f 7f 00 ff`（shake 的 `g_Texture1` 的 `default`）。
+    - 为什么取 127 而非 128：`shake.frag` 的零点常量是 **0.498**，`127/255 = 0.498039` 是字节值里最接近的一个；`128/255 = 0.501961` 会留下 **+0.0078** 的残余位移，全 0 则是 **−0.996** 的满量程位移。
+    - 影响到哪：空槽绑错（three 兜底 1×1 全 0）会把 `flowmask` 变成满量程位移 ⇒ 整屏晃动。
+    - 原注释位置：`src/client/effect-runner.ts` 的 `resolveEmptySlotTexture`。
+
+3. **`_rt_FullFrameBuffer` 门控关闭的具体效果链消费点**
+    - 口径：该槽唯一真实消费者 = `2597392171` obj#50「柯西」的 `godrays_combine`（`textures[2]`，`COPYBG=1`）。
+    - 为什么：该消费路径由 `object-effects.ts` 的 `ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER = false` 门控关闭（对象窗口 UV ↔ 整画布快照的映射未验证，见 §5.46）；关闭时行为 = 改动前（槽留空 + 每槽去重告警）。
+    - 影响到哪：将来开启这条路径时，验收对象就是这张壁纸的这个对象。
+    - 原注释位置：`src/client/effect-runner.ts` 的 `FRAME_SNAPSHOT_RT` 常量注释。
+
+4. **`screenScalePx` / `objectRtSize` 量化归因里未留档的一段**
+    - 口径：预算放宽到 4096 时 **Laplacian 虚高到 2574，但 MAD 3.818（已走样）**、显存 **×10.2** ⇒ 放宽预算买到的是虚高锐度，不是真实细节。
+    - 为什么：这是「基准必须是未钳制世界尺寸、按屏占位收口」而不是「给足预算」的依据（与 §5.44「把省下的显存换成分辨率」同一权衡）。
+    - 影响到哪：`object-range.objectRtSize` 的 `cap` 参数取值与 §7.36① 的软预算口径。
+    - 原注释位置：`src/client/object-range.ts` 的 `screenScalePx` / `objectRtSize`。
+    - 已见：旧口径 `1280×714` vs 屏占位 `1290×720`（差 0.8%）、整层锐度 −52%（Laplacian 均方 713 → 342）、源纹理真实尺寸 `7430×4147` ⇒ **352 MB/对象** —— 已见 §5.15 ② / §5.21，未重复。
+
+5. **DXT 路径「只用 mip[0]、不传内嵌 mip 链」的三条理由及其量化依据**
+    - 口径：内嵌链对 `6144×3072` 只有 **5 级**（需 **13 级**）⇒ `texStorage2D(levels = mipmaps.length)` 分配的是**不可变存储**、之后补不了层级 ⇒ 该纹理**不是 mipmap complete**（采样结果由实现定义）；即使驱动宽松，`LinearMipmapLinearFilter` 的三线性过滤会在常见视口取到 mip1/mip2 ⇒ **发糊**（`LOD≈1.48`、可见跨度 ≈**5345 texel**）。
+    - 量化：锐度低 **31%**（4.25 vs 5.58 @1920×1080）与 **17%**（3200×1800，RTX 3060 / ANGLE D3D11）；补全链后像素级一致。
+    - 影响到哪：压缩纹理与 ImageBitmap / DataTexture 两条路径对齐（基础层 = mip0 全分辨率、`minFilter = LinearFilter`、`generateMipmaps=false`），且必须**先按 map 尺寸裁填充再翻行**（先翻后裁会让块行距错位）。
+    - 原注释位置：`src/client/tex-loader.ts` 的 `loadTexTexture`（DXT 分支的 mip 说明）+ `flipCompressedRows`。
+
+6. **粒子混合的量化普查（`particleBlend`）**
+    - 口径：全库粒子材质 `blending` = **additive 45 / translucent 5**；路径名含 `lightshaft` 的只有 **1** 个。
+    - 为什么：DK 的 **44 层**材质**全部**是 `"blending": "additive"`，但路径名不匹配 ⇒ 「按路径名启发式判混合」不成立，必须以材质 json 的 `blending` 字段为准（「不透明黑方块」的成因侧依据）。
+    - 影响到哪：`particleBlend` 的判定顺序（材质字段 → 名字启发式 additive → alpha → 不透明黑兜底）由此确定。
+    - 原注释位置：`src/client/three-renderer.ts` 的 `particleBlend`。
+
+7. **`applyWrap` 的量化后果（CP2077 `2454403969`）**
+    - 口径：`clouds.frag` 有意把 `cloudTexCoods.zw` 旋转到负象限，clamp 下 `cloud1` 塌到纹理最左列 ⇒ 整屏提亮 **62.45 → 75.75**，并在 **t≈77s** 后饱和。
+    - 为什么：该列 R 均值 **0.706** vs 全图 **0.494**，乘进 `cloudColor = cloud0*cloud1` 就抬亮整屏、且随时间越来越白。
+    - 影响到哪：`ClampUVs` 位必须被消费（默认 REPEAT、仅带位才 CLAMP），且**不得**把 wrap 设成全局默认（RT 纹理必须保持 CLAMP）。
+    - 原注释位置：`src/client/tex-loader.ts` 的 `applyWrap`。
+    - 已见：0.706 / 0.494 这一对读数与「全库 477 张中 105 张因此改 repeat」—— 已见 §5.19，未重复。
+
+8. **「bg 空 canvas」的历史因果**
+    - 口径：原注释记的是具体 CSS —— `.wp-scene-blur{width:100%;height:100%;transform:scale(1.1)}` 会把一张**从未被设置尺寸**的 HTML canvas（默认 300×150）拉伸到全屏。
+    - 为什么：插件只创建一个 canvas；多造的空 canvas 会让 `document.querySelector('canvas')` 读到被 CSS 拉伸的那张（尺寸与比例全错），真机排查时会误导归因。
+    - 影响到哪：canvas 的数量与尺寸写法不能被「顺手多建一个」破坏（挂载期与 resize 期的尺寸必须同源）。
+    - 原注释位置：`src/client/wallpaper-controller.ts`（背景空 canvas 处的注释）。
+
+**已见记录、未重复**（同批清点里活文档已有对应条目，故未另写）：
+
+- 粒子实例缓冲容量的首帧锁存（three r170 `setupVertexAttributes` 只锁存一次 `_maxInstanceCount`）—— 已见 `docs/technical-notes.md` 的「粒子系统」条，未重复。
+- `colorBlendMode ∈ {6,7,31}` 的 three 因子映射表（7 → `(OneMinusDstColor, One)`、31 → `(One, One)`、6 → `MaxEquation`，alpha 用 `(Zero, One)`）—— 已见 §5.6（§5.26 为预乘结论），未重复。
+- `specSparseEventSource` 的观测判据（`children` 含 `eventspawn` + `maxcount ≤ 1` + `emitter[0].rate < 1` ⇒ 整层跳过；全库命中 26 个对象）—— 已见 `docs/fixes/threejs-path-fixes.md` 第 25 条，未重复。
+- 段渲染的成本量级 `O(段数 × 场景)`（`2897292240`：每帧 3 次全场景 render + 2 次 blit + 1 次合成）—— 已见 §5.46 末条与 `AGENT.md` §5.45，未重复。
+- `notifyViewportResize()` 作废「尚未被 `advance` 消费」的本帧快照这一时点 —— 已见 §5.46，未重复。
+- `effectSlotCount` 漏算槽的症状（sampler 停在 unit 0 ⇒ 整屏近黑、alpha 恰为 2×）—— 已见 §5.33，未重复。
+- 「其余 `_rt_*`（`_rt_Bloom` / `_rt_QuarterCompoBuffer1` / 派生名）行为不变」的 design R7/R9 裁定编号 —— 语义已见 §5.46（槽留空 + 每槽去重告警），编号无活文档可指，未重复。

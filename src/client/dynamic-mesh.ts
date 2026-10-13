@@ -1,7 +1,7 @@
 // 动态网格（SceneScript 的 createModelData / createLayer / applyData）宿主侧实现。
 //
-// 数据形状（3798688689 实测）：vertexFormat = [POSITION, UV, COLOR]，stride = 9 floats/顶点
-// （pos 3 + uv 2 + color 4），每 quad 4 顶点 = 36 floats、6 索引。
+// 数据形状：vertexFormat = [POSITION, UV, COLOR]，stride = 9 floats/顶点（pos 3 + uv 2 + color 4），
+// 每 quad 4 顶点 = 36 floats、6 索引。
 import * as THREE from 'three';
 
 /** 顶点布局：各 attribute 在 stride 内的 float 偏移。 */
@@ -12,7 +12,7 @@ export interface VertexLayout {
   color: number;
 }
 
-/** 本期只支持实测到的那一种组合；其余返回 null（调用方跳过该 mesh 并 warn 一次）。 */
+/** 只支持这一种 vertexFormat 组合；其余返回 null（调用方跳过该 mesh 并 warn 一次）。 */
 export function resolveVertexLayout(vertexFormat: number[]): VertexLayout | null {
   if (!Array.isArray(vertexFormat) || vertexFormat.length !== 3) return null;
   if (vertexFormat[0] !== 0 || vertexFormat[1] !== 1 || vertexFormat[2] !== 2) return null;
@@ -24,8 +24,7 @@ export function resolveVertexLayout(vertexFormat: number[]): VertexLayout | null
  *
  * 脚本不告知 count，但它用 `vertices.fill(0, count*36, previous*36)` 清尾、且 quad() 不会产出
  * 「四个顶点 position 全 0」的退化 quad ⇒ 取最后一个非空 quad 的下标 + 1。
- * ⚠️ 这是本模块唯一的启发式：若将来遇到不清尾的脚本（复用旧数据），要改为按 applyData 的
- * 参数长度推断。
+ * ⚠️ 这是本模块唯一的启发式：若将来遇到不清尾的脚本（复用旧数据），要改为按 applyData 的参数长度推断。
  */
 export function inferQuadCount(buffer: Float32Array, layout: VertexLayout, capacity: number): number {
   const quadFloats = layout.stride * 4;
@@ -121,8 +120,8 @@ export class DynamicMeshRegistry {
     return id;
   }
 
-  // renderOrder：宿主可传所属 scene.json 对象的数组下标（唯一绘制序，对齐 WE m_objectsByRenderOrder）；
-  // 缺省 1（生产侧映射未接线、延后）；脚本自建图层当前恒为 1 —— 层序唯一化只覆盖装配期对象。
+  // renderOrder：宿主可传所属 scene.json 对象的数组下标（唯一绘制序，对齐 WE `m_objectsByRenderOrder`）；
+  // 缺省 1（生产侧映射未接线）；脚本自建图层的层序唯一化只覆盖装配期对象。
   createLayer(modelId: number, name: string, renderOrder?: number): number {
     const model = this.models.get(modelId);
     if (!model) return -1;
@@ -168,7 +167,7 @@ export class DynamicMeshRegistry {
       }
     }
     if (usable > 0) {
-      // 只标记实际使用区间 → 上传 114 KB/帧而不是全量 1.79 MB
+      // 只标记实际使用区间 → 只上传用到的部分而不是全量
       markRange(posAttr, usable * 4 * 3);
       markRange(uvAttr, usable * 4 * 2);
       markRange(colAttr, usable * 4 * 4);
@@ -180,9 +179,8 @@ export class DynamicMeshRegistry {
   /**
    * 材质解析完成后回填：替换**所有已建**（以及后续新建）mesh 上该路径的材质。
    *
-   * 必须支持回填 —— 脚本在 init 期就调 createLayer，而材质 json 与 .tex 的解码是异步的，
-   * 早于它不可能完成；没有这条通道，所有网格都会永久停在兜底白图材质上（真机现象：
-   * 粒子渲染成一堆硬边白色方块）。
+   * ⚠️ 必须支持回填 —— 脚本在 init 期就调 createLayer，而材质 json 与 .tex 的解码是异步的，早于它不可能
+   * 完成；没有这条通道，所有网格都会永久停在兜底白图材质上。
    */
   setMaterialForPath(materialPath: string, material: THREE.Material): void {
     this.materialOverrides.set(materialPath, material);

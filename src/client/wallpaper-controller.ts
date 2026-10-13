@@ -32,7 +32,7 @@ export interface TextStyleSettings {
 
 export interface WallpaperControllerOptions {
   fetchList: () => Promise<WallpaperInfo[]>;
-  // Finding 2：dispose 可选——每次 select（含取消/切壁纸）时调用，释放渲染器持有的资源（防泄漏）。
+  // dispose 可选 —— 每次 select（含取消/切壁纸）时调用，释放渲染器持有的资源（防泄漏）。
   sceneRenderer?: SceneRendererLike;
   /** 文字颜色/描边设置（实时读取）。缺省 = auto 档、无描边（既有行为）。 */
   textStyle?: () => TextStyleSettings;
@@ -40,16 +40,15 @@ export interface WallpaperControllerOptions {
   measurePreviewLuma?: (url: string) => Promise<number | null>;
 }
 
-// 贴壁纸文字颜色与描边（2026-10-01，用户报告「某些壁纸文字看不清」）：
+// 贴壁纸文字颜色与描边：
 //   · 手动档（white/black/custom）直接下发固定色，**不测 preview** —— 否则异步测量结果会覆盖手选色；
-//   · auto 档沿用 2026-09-03 的 preview 亮度测量（暗壁纸白字 / 亮壁纸黑字）；
-//   · 描边档位随文字色一起下发（对立色阴影由 background-layer 按文字色亮度算）。
+//   · auto 档按 preview 亮度测量（暗壁纸白字 / 亮壁纸黑字）；描边档位随文字色一起下发（对立色阴影由
+//     background-layer 按文字色亮度算）。
 // 竞态防护：gen 校验（换了壁纸不覆盖）+ 落地前重读模式（期间改手动则不覆盖手选色）。
 function createTextStyler(layer: BackgroundLayer, opts: WallpaperControllerOptions, genOf: () => number) {
   const measure = opts.measurePreviewLuma ?? measureLuma;
-  // 最近一次 auto 测光的结果及其壁纸 id（2026-10-01，用户报告「选自动时描边像不生效」）：
-  // 设置变更（改档位/描边）时**同步**复用该结果，用户拖滑杆即时可见，且不必重新测图；
-  // 换壁纸时 id 不匹配 ⇒ 不复用（各自重新测光）。
+  // 最近一次 auto 测光的结果及其壁纸 id：设置变更（改档位/描边）时**同步**复用该结果，用户拖滑杆即时
+  // 可见且不必重新测图；换壁纸时 id 不匹配 ⇒ 不复用（各自重新测光）。
   let autoColor: string | null = null;
   let autoColorFor: string | undefined;
 
@@ -106,16 +105,14 @@ export function createWallpaperController(
   opts: WallpaperControllerOptions,
 ) {
   let list: WallpaperInfo[] = [];
-  // I3：select 竞态防护 —— 每次 select 递增 generation，异步完成后（scene
-  // 渲染回调等）校验 generation 未变才应用，防止乱序覆盖最新选择。
+  // select 竞态防护：每次 select 递增 generation，异步完成后校验 generation 未变才应用，防乱序覆盖最新选择。
   let selectGeneration = 0;
   // 当前展示的壁纸：设置面板改文字颜色/描边后，无需重选壁纸即可重新下发（applyTextStyle）。
   let currentInfo: WallpaperInfo | undefined;
   const textStyler = createTextStyler(layer, opts, () => selectGeneration);
-  // WebGL 上下文丢失回退（Task 8）：渲染器重置（显存耗尽/驱动重置）后画面就是一块空白，
-  // 比「糊」严重 ⇒ 换成该壁纸的 preview 图。优先按回调参数 id 在当前列表里找：select 进行中
-  // 丢上下文时 currentInfo 还是**上一张**壁纸，只读它会先闪出上一张的 preview；找不到（如列表已
-  // 换、id 过期）再退回 currentInfo。⚠️ 回调在**调用时**读闭包（不是注册时快照）：注册发生在
+  // WebGL 上下文丢失回退：渲染器重置（显存耗尽/驱动重置）后画面就是一块空白 ⇒ 换成该壁纸的 preview 图。
+  // 优先按回调参数 id 在当前列表里找：select 进行中丢上下文时 currentInfo 还是**上一张**壁纸，只读它会先闪
+  // 出上一张的 preview；找不到再退回 currentInfo。⚠️ 回调在**调用时**读闭包（不是注册时快照）：注册发生在
   // 构造期，那时还没有任何壁纸。
   opts.sceneRenderer?.setOnContextLost?.((id) => {
     const fallback = list.find((w) => w.id === id) ?? currentInfo;
@@ -131,8 +128,8 @@ export function createWallpaperController(
 
   async function select(id: string): Promise<void> {
     const gen = ++selectGeneration;
-    // Finding 2：壁纸切换/取消时释放当前 scene 渲染器资源（wasm 场景 + 脚本运行时）。
-    // 旧渲染器的 raf 循环随 canvas 被替换/移除终止，但其持有的 scene/quickjs 需显式释放。
+    // 壁纸切换/取消时释放当前 scene 渲染器资源（wasm 场景 + 脚本运行时）；旧渲染器的 raf 循环随 canvas
+    // 被替换/移除终止，但其持有的 scene/quickjs 需显式释放。
     opts.sceneRenderer?.dispose?.();
     // 取消壁纸：空 id 直接清空背景层（恢复默认背景，露出 DSH 原生背景）。
     // 同步生效并递增 generation，使进行中的旧选择异步回调被竞态防护丢弃。
@@ -151,10 +148,9 @@ export function createWallpaperController(
       }
     }
     if (gen !== selectGeneration) return;
-    // I1 修复：controller 缓存的 list 只在为空时刷新（见上方），而设置面板的列表是
-    // 独立 fetch 维护的——新添加的壁纸会出现在面板列表却不在 controller 缓存里。
-    // 若 list.find(id) 找不到（旧缓存过期），重新拉取一次列表再查找，避免
-    // 「列表可见却选不中（无任何反应）」。重试后仍找不到才放弃。
+    // controller 缓存的 list 只在为空时刷新（见上方），而设置面板的列表是独立 fetch 维护的 —— 新添加的
+    // 壁纸会出现在面板列表却不在 controller 缓存里。若 list.find(id) 找不到（旧缓存过期），重新拉取一次
+    // 列表再查找，避免「列表可见却选不中」；重试后仍找不到才放弃。
     let info = list.find((w) => w.id === id);
     if (!info) {
       try {
@@ -173,23 +169,16 @@ export function createWallpaperController(
       case 'web': layer.showWeb(plan.url); break;
       case 'scene': {
         if (opts.sceneRenderer) {
-          // ⚠️ 只创建**一个** canvas（前景 = 渲染目标）——它就是页面上显示的那个。
-          // 2026-09-10 Task5 修复：此前这里额外 `document.createElement('canvas')` 出 `bg`
-          // 并交给 `showSceneCanvas(fg, bg)`，background-layer 会把它作为 `.wp-scene-blur`
-          // **先** append 进 `.wp-bg-fill`（DOM 序在前）。而**没有任何**存活路径给它设过尺寸
-          // （wasm-renderer 明确「bg 参数忽略」，three-renderer 的 `_bg` 同样忽略）→ 它永远停在
-          // HTML canvas 默认 **300×150**，再被 CSS `.wp-scene-blur{width:100%;height:100%;
-          // transform:scale(1.1)}` 拉伸到全屏。于是 `document.querySelector('canvas')`
-          // （取文档里第一个 canvas = 这个空的 300×150）读到的**不是** three 真正渲染的 canvas，
-          // 真机排查因此被误导成「渲染缓冲没设成视口尺寸 → 画面被放大模糊」。
-          // 现在不再创建这个死 canvas：DOM 里只剩 three 渲染/显示的那一个（尺寸 = 视口×dpr）。
+          // ⚠️ 只创建**一个** canvas（前景 = 渲染目标）——它就是页面上显示的那个。额外造一个空的 `bg` 交给
+          // background-layer 会在 DOM 里多一个**从未被设置尺寸**的 canvas（两个渲染路径都忽略 bg 参数），
+          // 它停在 HTML canvas 默认尺寸再被 CSS 拉伸到全屏，使 `document.querySelector('canvas')` 读到
+          // **不是**真正渲染的那个，真机排查因此被误导。
           const fg = document.createElement('canvas');
           try {
             let ok = await opts.sceneRenderer.render(plan.wallpaperId, fg);
             if (!ok) {
-              // Task 9 语义保留：wasm 失败时 fg 可能已被绑定 WebGPU context → 重建 canvas
-              // 重试一次（组合层对已失败壁纸直接返回 false；2026-08-21 起 JS 渲染已禁用，
-              // 重试仍走 wasm/组合层，最终失败落入下方 preview 回退）
+              // 失败时 fg 可能已被绑定 WebGPU context ⇒ 重建 canvas 重试一次（组合层对已失败壁纸直接返回
+              // false，重试仍失败就落入下方 preview 回退）。
               const fg2 = document.createElement('canvas');
               ok = await opts.sceneRenderer.render(plan.wallpaperId, fg2);
               if (ok) {

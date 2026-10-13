@@ -28,8 +28,7 @@ export function particlesFromSpec(root: any): { emitter: ParticleEmitterSpec; in
   const alpha = inits.find((i: any) => i.name === 'alpharandom');
   return {
     emitter: {
-      // rate/distanceMax 缺省值对齐真实 WE 语义（linux-wallpaperengine 逆向源码：
-      // rate=10、distancemax=256）；EVA Ashes 等 emitter 无 rate 字段，缺省 0 会导致永不发射
+      // rate/distanceMax 缺省值对齐真实 WE 语义（lwe：rate=10、distancemax=256）；缺 rate 字段时缺省 0 会导致永不发射
       rate: Number(em.rate ?? 10),
       directions: vec3(em.directions),
       distanceMin: Number(em.distancemin ?? 0),
@@ -58,7 +57,6 @@ export async function fetchParticleSpec(id: string, assetName: string): Promise<
 
 // WE 语义：material json 的 passes[0].textures[0] 是纹理槽位名 ——
 // 不含 '/' → 材质同目录下同名 .tex；含 '/' → 相对 materials/ 的路径（workshop 子目录纹理）。
-// 回归：旧实现丢 materials/ 前缀导致子目录纹理加载失败（见 git log）。
 export function resolveTexPath(matRef: string, texName: string): string {
   return texName.includes('/')
     ? 'materials/' + texName + '.tex'
@@ -85,9 +83,8 @@ export async function resolveImageTexture(id: string, obj: SceneImageObject): Pr
   }
 }
 
-// 别名映射：部分壁纸粒子材质引用**不存在的全局纹理**（坏引用，桌面版 WE 同样 fallback 纯色）——
-// 1280029027(EVA) 的 "presets/lightshaft" 在 WE 安装目录无对应文件，映射到真实光柱纹理。
-// 值为**去 particle/ 前缀**的短形式（与下方 short 计算一致），拼回时统一加回 particle/。
+// 别名映射：部分壁纸粒子材质引用**不存在的全局纹理**（坏引用，桌面版 WE 同样 fallback 纯色），
+// 映射到真实光柱纹理。值为**去 particle/ 前缀**的短形式（与下方 short 计算一致），拼回时统一加回 particle/。
 const PARTICLE_TEX_ALIASES: Record<string, string> = {
   'presets/lightshaft': 'light/light_shafts_0',
 };
@@ -115,10 +112,9 @@ function particleTextureUrl(id: string, texName: string): string {
   return `/wallpapers/particle-texture?id=${encodeURIComponent(id)}&name=${encodeURIComponent(name)}`;
 }
 
-// 解析粒子 spec 引用的材质 json（spec.material → passes[0]），一次拿到纹理 URL 与混合模式
-// （同源于一份 json，分开 fetch 会多一次往返）。
-// ⚠️ 混合模式必须取 `passes[0].blending` 字段值，不能按材质**文件名**猜：DK 等 44 层粒子的
-// 材质名里没有 "additive" 字样，按名猜会判成 NormalBlending（纹理 alpha 恒 1 → 硬边黑方块）。
+// 解析粒子 spec 引用的材质 json（spec.material → passes[0]），一次拿到纹理 URL 与混合模式（同源于一份 json）。
+// ⚠️ 混合模式必须取 `passes[0].blending` 字段值，不能按材质**文件名**猜：additive 材质的文件名里通常没有
+// 相应字样，按名猜会判成 NormalBlending（纹理 alpha 恒 1 → 硬边黑方块）。
 export async function resolveParticleMaterial(
   id: string,
   specText: string,
@@ -140,7 +136,7 @@ export async function resolveParticleMaterial(
     })?.passes?.[0];
     const blending = typeof pass0?.blending === 'string' ? pass0.blending : null;
     // 折射判据只认 WE 权威 combo（`REFRACT: 0` / 无 `combos` ⇒ false）：不做「白图/alpha 全 255」
-    // 之类素材启发式——那会误伤 additive 材质（DK 雪、EVA 光柱的槽 0 同样是白图）。
+    // 之类素材启发式——那会误伤 additive 材质（其槽 0 同样是白图）。
     const refract = pass0?.combos?.REFRACT === 1;
     const rawAmount = pass0?.constantshadervalues?.ui_editor_properties_refract_amount;
     const refractAmount = typeof rawAmount === 'number' && Number.isFinite(rawAmount) ? rawAmount : 0.05;

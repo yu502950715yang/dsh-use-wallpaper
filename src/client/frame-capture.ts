@@ -1,4 +1,3 @@
-// src/client/frame-capture.ts
 // 帧内快照：把「到这一刻为止已绘制的内容」拷进一张纹理，供折射等消费者读。
 // 语义 = WE 的 `_rt_FullFrameBuffer`（lwe CParticle.cpp:2069-2079 / CScene.cpp:351-361）。
 import * as THREE from 'three';
@@ -18,9 +17,8 @@ export interface FrameCapture {
    */
   capture(): THREE.Texture;
   /**
-   * 快照实例的代号：`resize()` 重建快照纹理 / `dispose()` 时自增。
-   * 消费方（对象效果链的异步串行队列）在**执行当刻**读它（`ObjectEffectHost.frameSnapshotVersion()`），
-   * 与**捕获当刻**记录的代号比较：不一致即说明手里那张已被 dispose，该帧按「无快照」走。
+   * 快照实例的代号：`resize()` 重建快照纹理 / `dispose()` 时自增。消费方（对象效果链的异步串行队列）
+   * 在**执行当刻**读它，与**捕获当刻**记录的代号比较：不一致即说明手里那张已被 dispose，按「无快照」走。
    */
   readonly snapshotVersion: number;
   /** 同步 target 与快照尺寸；尺寸变化会重建快照纹理（FramebufferTexture 无 setSize），旧引用作废。 */
@@ -29,8 +27,8 @@ export interface FrameCapture {
   dispose(): void;
 }
 
-// 显式写死非 sRGB 字节 RT 的参数：全链路 outputColorSpace = LinearSRGBColorSpace，
-// 缺省值将来若变会让快照域与效果链不一致（显式化以防回归）。
+// 显式写死非 sRGB 字节 RT 的参数：全链路 outputColorSpace = LinearSRGBColorSpace，缺省值将来若变
+// 会让快照域与效果链不一致（显式化以防回归）。
 const TARGET_OPTIONS: THREE.RenderTargetOptions = {
   type: THREE.UnsignedByteType,
   format: THREE.RGBAFormat,
@@ -128,8 +126,8 @@ export function createFrameCapture(
 
   function capture(): THREE.Texture {
     const res = ensure();
-    // 每次调用都拍一次（每个消费者在自己的段边界各拍一次），内容覆盖进同一张纹理。
-    // 不切 render target：copyFramebufferToTexture 拷的是**当前已绑定**的 framebuffer。
+    // 每次调用都拍一次（每个消费者在自己的段边界各拍一次），内容覆盖进同一张纹理。不切 render
+    // target：copyFramebufferToTexture 拷的是**当前已绑定**的 framebuffer。
     renderer.copyFramebufferToTexture(res.snapshot);
     return res.snapshot;
   }
