@@ -11,7 +11,7 @@ export interface ObjectEffectStage {
     bindOutputs(): void;
     /** 主场景渲染之后：串行推进 runner.update（异步，不阻塞本帧）。 */
     advance(time: number): void;
-    /** 段边界（消费者被绘制**之前**）同步通知：该对象的链本帧用这张整帧快照（design §3.5）。
+    /** 段边界（消费者被绘制**之前**）同步通知：该对象的链本帧用这张整帧快照（AGENT.md §5.46）。
      *  未携带纹理时向宿主拉取（`ObjectEffectHost.captureFullFrame()`）。
      *  `snapshotVersion` = 捕获当刻的 `FrameCapture.snapshotVersion`：排队的 update 在**执行当刻**
      *  与宿主提供的实时代号比较，不一致即按「无快照」走（resize/dispose 会重建快照，旧引用已 dispose）。 */
@@ -20,7 +20,7 @@ export interface ObjectEffectStage {
      *  旧快照并重建）。已被 advance 带进闭包的那份由执行当刻的实时代号比较兜底。 */
     notifyViewportResize(): void;
 }
-/** 该对象是否引用整帧快照（任一链的任一 pass 真的会采样它）⇒ 它**本应**是段边界消费者（§3.2/§3.5）。
+/** 该对象是否引用整帧快照（任一链的任一 pass 真的会采样它）⇒ 它**本应**是段边界消费者。
  *  ⚠️ 本轮该结论**不接线**（门控 `ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER = false`）：只保留判定能力
  *  与单测，供 UV 口径验证后开启。
  *  判定走**执行计划**（`plan.passes` + `pp.bindings`）—— 与 `EffectRunner.update` 的槽绑定同源；
@@ -39,7 +39,7 @@ export interface ObjectEffectHost {
     isolatedObjects(): IsolatedHostView[];
     setObjectOutput(id: number, texture: THREE.Texture): void;
     resizeObjectRT(id: number, width: number, height: number): void;
-    /** 段边界快照的拉取入口（§3.5）：拍一张「到此刻为止已绘制内容」；无 FrameCapture / 未激活 → null。 */
+    /** 段边界快照的拉取入口：拍一张「到此刻为止已绘制内容」；无 FrameCapture / 未激活 → null。 */
     captureFullFrame(): THREE.Texture | null;
     /** 快照代号的**实时**读取入口（= `FrameCapture.snapshotVersion`）：排队的 update 在**执行当刻**
      *  读它，与捕获当刻记录的代号比较，不一致即按「无快照」走。无 FrameCapture 时返回 -1。
@@ -62,7 +62,7 @@ export declare class ObjectEffectStage implements ObjectEffectStage {
     private warned;
     /** 本帧各对象在段边界拿到的整帧快照 + **捕获当刻**的快照代号（advance 消费后清空，快照逐帧覆盖）。 */
     private boundarySnapshots;
-    /** 音频频谱源（A3）：每帧同一缓冲引用；null = 全零静音（无音频/音效关闭）。 */
+    /** 音频频谱源：每帧同一缓冲引用；null = 全零静音（无音频/音效关闭）。 */
     private audioSpectrum;
     constructor(host: ObjectEffectHost, opts: {
         wallpaperId: string;
@@ -74,24 +74,21 @@ export declare class ObjectEffectStage implements ObjectEffectStage {
      *  调用顺序契约：three-renderer 先 setWorldSize 再 setObjectChains（后者不覆盖前者）。 */
     setWorldSize(objId: number, worldW: number, worldH: number, source?: SourcePixels | null): void;
     /** 挂载某对象的效果链（线性链与具名 RT 图链一视同仁，计划交执行器执行）。调用顺序契约：
-     *  player 先在 loadSceneToThree 内建好隔离条目，stage 再挂链（Task 5 的接线顺序：
-     *  setWorldSize → setObjectChains）；找不到隔离条目说明契约被破坏 → 明确告警一次，
-     *  绝不静默丢弃，也绝不猜尺寸。 */
+     *  player 先在 loadSceneToThree 内建好隔离条目，stage 再挂链（setWorldSize → setObjectChains）；
+     *  找不到隔离条目说明契约被破坏 → 明确告警一次，绝不静默丢弃，也绝不猜尺寸。 */
     setObjectChains(objId: number, chains: CompiledEffectPass[][]): void;
     /** 视口变化：按新的**屏幕密度**重算每个对象的 RT 像素尺寸，并用同一份链重挂（runner 内部 RT 跟随）。
      *  尺寸口径与挂载期**同源**：同一纯函数 isolatedRtSize + 同一口径（预算输入集合的差异见 AGENT.md §7.36）
-     *  ——若这里另写一套屏占位算术，任何一次 resize 都会把已升到 4096 的 RT 打回屏占位（违反只升不降）。
+     *  ——若这里另写一套屏占位算术，任何一次 resize 都会把 RT 打回屏占位（违反只升不降）。
      *  ⚠️ 参数是「设备像素 / 世界单位」这一个标量（object-range.screenScalePx 的返回值），**不是**
-     *  视口宽高预算：旧实现传 `视口 × dpr` 当预算，成了「第二处独立预算」——挂载期与 resize 期
-     *  各算一遍、输入不同源时任何一次 resize 都会把 RT 打回旧口径（3fd6b00「挂载期 RT 正确、
-     *  resize 后被覆盖」这一漏检类的同源地雷）。密度必须由调用方从**主相机同一套 cover 语义**
-     *  取得（three-renderer 用 player.screenScalePx()，见其 resize 回调）。
+     *  视口宽高预算：传 `视口 × dpr` 会成了「第二处独立预算」，输入不同源时任何一次 resize 都会把
+     *  RT 打回旧口径。密度必须由调用方从**主相机同一套 cover 语义**取得（three-renderer 用
+     *  player.screenScalePx()）。
      *  ⚠️ 遍历 `this.entries` 的**所有**条目（不按有无 runner 过滤）：只 setWorldSize 过、链尚未挂载
-     *  的隔离对象同样要随视口重设 RT，否则视口放大后它一直用旧的小 RT（偏糊）、
-     *  视口缩小时又一直占着旧的大 RT（超额显存）。 */
+     *  的隔离对象同样要随视口重设 RT，否则视口放大后一直用旧的小 RT（偏糊）、缩小时又占着旧的大 RT。 */
     onViewportResize(screenScale: number): void;
-    /** 注入音频频谱源（A3，由 three-renderer 每帧刷新后转入）：效果链的音频 uniform 由它驱动。
-     *  null = 全零静音（无 sound / 音效开关关闭），行为与接线前一致。 */
+    /** 注入音频频谱源（由 three-renderer 每帧刷新后转入）：效果链的音频 uniform 由它驱动；
+     *  null = 全零静音（无 sound / 音效开关关闭）。 */
     setAudioSpectrum(source: Uint8Array | null): void;
     /** 执行当刻判「快照已换代」：实时代号 ≠ 捕获当刻代号 ⇒ 快照纹理已被 resize/dispose 换掉。
      *  `-1`（宿主未提供代号）不作废 —— 无从比较时按既有语义照常使用。 */

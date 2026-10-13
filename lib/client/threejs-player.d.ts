@@ -52,11 +52,9 @@ export interface IsolatedObject {
 export interface ObjectEffectStage {
     bindOutputs(): void;
     advance(time: number): void;
-    /** 段边界（消费者被绘制**之前**）同步通知：该对象的效果链本帧用这张整帧快照（design §3.5）。
-     *  `snapshotVersion` = 捕获当刻的 `FrameCapture.snapshotVersion`：消费方在**执行当刻**与
-     *  `frameSnapshotVersion()` 的实时值比较，不一致即按「无快照」走（旧引用已 dispose）。 */
+    /** 段边界（消费者被绘制**之前**）同步通知：本帧快照 + 捕获当刻代号（语义见 object-effects.ts）。 */
     onSegmentBoundary?(objectId: number, frameTexture?: THREE.Texture | null, snapshotVersion?: number): void;
-    /** 画布缓冲/视口变化：作废尚未被 advance 消费的在途快照（resize 会重建快照纹理，旧引用已 dispose）。 */
+    /** 画布缓冲/视口变化：作废尚未被 advance 消费的在途快照（resize 会重建快照纹理）。 */
     notifyViewportResize?(): void;
 }
 export declare function resolvePixelRatio(devicePixelRatio: number, qualityScale: number): number;

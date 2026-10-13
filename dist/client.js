@@ -23315,14 +23315,14 @@ uniform vec3 objCenter;
 uniform vec3 objScale;
 uniform vec3 emitterOrigin;
 uniform vec3 bmOffset;
-// spritetrail\uFF08WE genericparticle.vert + TRAILRENDERER combo\uFF0C2026-09-26\uFF09\uFF1A
+// spritetrail\uFF08WE genericparticle.vert + TRAILRENDERER combo\uFF09\uFF1A
 //   trailEnabled  1 = \u6309\u901F\u5EA6\u65B9\u5411\u62C9\u4F38 billboard\uFF08renderer[0].name == "spritetrail"\uFF09\uFF0C0 = \u539F\u65CB\u8F6C billboard
 //   trailParams   (length, maxlength, minlength) \u2014\u2014 \u5373 WE \u7684 g_RenderVar0.xyz
 //   texelRatio    \u7EB9\u7406 \u9AD8/\u5BBD\uFF08WE g_Texture0Resolution.y/.x\uFF09\uFF1B\u6CBF\u62D6\u5C3E\u65B9\u5411\u6309\u5B83\u8865\u507F\u7EB9\u7406\u957F\u5BBD\u6BD4
 uniform float trailEnabled;
 uniform vec3 trailParams;
 uniform float texelRatio;
-// \u7C92\u5B50\u900F\u89C6\u76F8\u673A\uFF08spec.flags \u7684 perspective \u4F4D\uFF1B2026-09-26\uFF09\uFF1A
+// \u7C92\u5B50\u900F\u89C6\u76F8\u673A\uFF08spec.flags \u7684 perspective \u4F4D\uFF09\uFF1A
 //   perspEnabled  1 = \u8BE5\u5C42\u7528 WE \u7684 global_perspective \u76F8\u673A\u6295\u5F71\uFF08\u8FD1\u5927\u8FDC\u5C0F\uFF09\uFF0C0 = \u4E3B\u6B63\u4EA4\u76F8\u673A
 //   persp         \u8BE5\u900F\u89C6\u76F8\u673A\u7684**\u89C6\u56FE\u6295\u5F71\u77E9\u9635**\uFF08\u76F8\u673A\u5728 (0,0,distance)\uFF0C\u770B\u5411 -z\uFF09\u2014\u2014
 //                 shader \u91CC\u7684 worldPos \u5DF2\u662F\u4E16\u754C\u5750\u6807\uFF0C\u6545\u76F4\u63A5\u76F8\u4E58\u3001\u4E0D\u518D\u53E0 modelViewMatrix
@@ -23362,29 +23362,23 @@ void main() {
   //   particlePosition = objCenter + bmOffset + (\u6563\u5C04 + \u8FD0\u52A8)
   vec3 local = particlePosition - objCenter - bmOffset;
   // \u6309\u5BF9\u8C61 model matrix \u7684 **R\xB7S** \u53D8\u6362\u5230\u573A\u666F\u7A7A\u95F4\uFF08WE\uFF1Amvp = viewProj \xD7 translate(origin)
-  // \xD7 rotate(angles) \xD7 scale\uFF09\u3002\u26A0\uFE0F \u65CB\u8F6C**\u5FC5\u987B**\u5728\u8FD9\u91CC\u505A\uFF1A\u5168\u5E93 79 \u4E2A\u5BF9\u8C61\u5E26\u975E\u96F6 angles
-  // \uFF08\u7C92\u5B50 75 \u4E2A\uFF09\uFF0C\u6F0F\u6389\u5B83\u4F1A\u8BA9\u7C92\u5B50\u7684\u5C40\u90E8\u671D\u5411\u76F4\u63A5\u5F53\u4E16\u754C\u671D\u5411\u7528 \u2014\u2014 GTR 3743126786 \u7684\u70DF\u67F1
-  // angles.z = -1.20063\uFF08\u2248 -68.8\xB0\uFF09\u672C\u5E94\u628A\u5C40\u90E8 +Y\uFF08\u6E4D\u6D41\u7684 forward\uFF09\u8F6C\u5230\u4E16\u754C (0.932, 0.362)
-  // =\u300C\u4ECE\u6392\u6C14\u7BA1\u5411\u53F3\u4FA7\u98D8\u300D\uFF0C\u6F0F\u6389\u65CB\u8F6C\u540E\u70DF\u5C31\u76F4\u7740\u5F80\u4E0A\u8D70\u3002
+  // \xD7 rotate(angles) \xD7 scale\uFF09\u3002\u26A0\uFE0F \u65CB\u8F6C**\u5FC5\u987B**\u5728\u8FD9\u91CC\u505A\uFF1A\u6F0F\u6389\u5B83\u4F1A\u8BA9\u7C92\u5B50\u7684\u5C40\u90E8\u671D\u5411\u76F4\u63A5\u5F53\u4E16\u754C
+  // \u671D\u5411\u7528 \u2014\u2014 GTR 3743126786 \u7684\u70DF\u67F1 angles.z = -1.20063 \u672C\u5E94\u628A\u5C40\u90E8 +Y\uFF08\u6E4D\u6D41\u7684 forward\uFF09\u8F6C\u5230
+  // \u4E16\u754C (0.932, 0.362)\uFF08\u300C\u4ECE\u6392\u6C14\u7BA1\u5411\u53F3\u4FA7\u98D8\u300D\uFF09\uFF0C\u6F0F\u6389\u65CB\u8F6C\u540E\u70DF\u5C31\u76F4\u7740\u5F80\u4E0A\u8D70\u3002
   vec3 worldPos = objCenter + weObjectRotate(objScale * (emitterOrigin + local), objAngles);
-  // \u7C92\u5B50 quad \u7684\u5C3A\u5BF8\u540C\u6837\u4E58\u5BF9\u8C61 scale\uFF08\u975E\u5747\u5300\uFF1Babs \u53BB\u6389\u955C\u50CF\u7684\u7B26\u53F7\uFF09\uFF0C\u5E76\u968F\u5BF9\u8C61\u89D2\u5EA6\u4E00\u8D77\u8F6C\u3002
-  // \u81EA\u65CB\u5148\u4E8E\u5BF9\u8C61\u65CB\u8F6C\uFF1A\u6309 WE ComputeParticleTangents\uFF08shaders/common_particles.h\uFF09\u7684**\u4E09\u8F74\u6B27\u62C9**
-  // \u65CB\u8F6C quad \u89D2\u70B9 \u2014\u2014 \u590D\u7528 weObjectRotate\uFF08R = Rz\xB7Ry\xB7Rx\uFF0C\u4E0E\u5BF9\u8C61\u89D2\u5EA6\u540C\u4E00\u7EA6\u5B9A\uFF09\u3002
-  // rot \u53EA\u6709 z \u5206\u91CF\u65F6\u9000\u5316\u4E3A\u5E73\u9762\u81EA\u65CB\uFF0C\u4E0E\u539F\u5B9E\u73B0\u9010\u50CF\u7D20\u4E00\u81F4\u3002
+  // \u7C92\u5B50 quad \u7684\u5C3A\u5BF8\u540C\u6837\u4E58\u5BF9\u8C61 scale\uFF08\u975E\u5747\u5300\uFF1Babs \u53BB\u6389\u955C\u50CF\u7684\u7B26\u53F7\uFF09\u5E76\u968F\u5BF9\u8C61\u89D2\u5EA6\u4E00\u8D77\u8F6C\uFF1B\u81EA\u65CB\u5148\u4E8E\u5BF9\u8C61
+  // \u65CB\u8F6C\uFF08WE ComputeParticleTangents\uFF0Ccommon_particles.h\uFF1BR = Rz\xB7Ry\xB7Rx \u4E0E\u5BF9\u8C61\u89D2\u5EA6\u540C\u4E00\u7EA6\u5B9A\uFF09\u3002
   if (trailEnabled > 0.5 && length(particleVelocity) > 1e-6) {
-    // spritetrail\uFF1A\u590D\u523B WE ComputeParticleTrailTangents / ComputeParticlePosition
-    // \uFF08common_particles.h:42-59\uFF09\u2014\u2014
+    // spritetrail\uFF1A\u590D\u523B WE ComputeParticleTrailTangents / ComputeParticlePosition\uFF08common_particles.h:42-59\uFF09\u2014\u2014
     //   right = normalize(cross(eyeDirection, velocity))
     //   up    = normalize(velocity) * clamp(|velocity| * length, minlength, maxlength)
     //   pos   = p + size*right*(u-0.5) + size*up*(v-0.5)*textureRatio
-    // \u96E8\u4E1D/\u98CE\u75D5\u7684\u300C\u957F\u6761\u300D\u7531\u6B64\u800C\u6765\uFF08Spider Man 4K \u7684\u96E8\uFF1Asize 5.65 \xD7 clamp(3000\xD70.005)=15 \xD7 4 \u2248 339
-    // \u4E16\u754C\u5355\u4F4D \u2248 113px\uFF09\uFF0C\u6B64\u524D\u53EA\u753B size\xD7size \u7684\u65B9\u70B9\uFF081.9px\uFF09\u2192 \u8089\u773C\u4E0D\u53EF\u89C1\u3002
+    // |v|=0 \u7684\u9000\u5316\u5DF2\u5728\u5916\u5C42\u6392\u9664\uFF08\u907F\u514D WE \u7684 normalize(0) NaN\uFF09\u3002
+    //
     // \u26A0\uFE0F \u7B26\u53F7\uFF1AWE \u539F\u6587\u662F minus size*up*(v-0.5)*ratio\uFF0C\u5176 v=0 \u662F**\u7EB9\u7406\u9876\u884C**\uFF1B\u672C\u63D2\u4EF6\u7684\u7EB9\u7406\u7ECF
     // tex-loader \u884C\u53CD\u8F6C\uFF08v=1 = \u56FE\u50CF\u9876\u884C\uFF0C\u4E0E sprite \u8DEF\u5F84\u300Ccorner +Y \u2194 \u56FE\u50CF\u9876\u884C\u300D\u81EA\u6D3D\uFF09\uFF0C\u6545\u8FD9\u91CC\u53D6
-    // \u6B63\u53F7\uFF0C\u8BA9\u56FE\u50CF\u4E0A\u7AEF\uFF08\u96E8\u6EF4\u4EAE\u5934\uFF09\u843D\u5728 +\u901F\u5EA6\u65B9\u5411 \u2014\u2014 \u4E0E\u684C\u9762\u7AEF\u4E00\u81F4\uFF0C\u5426\u5219\u62D6\u5C3E\u5934\u5C3E\u98A0\u5012\u3002
-    // \u6B63\u4EA4\u76F8\u673A\u4E0B\u89C6\u7EBF\u65B9\u5411\u662F\u5E38\u6570\uFF08viewMatrix \u7684\u76F8\u673A +Z \u53D6\u53CD = \u4E16\u754C\u7A7A\u95F4\u89C6\u7EBF\u65B9\u5411\uFF09\uFF1B\u900F\u89C6\u76F8\u673A\u4E0B
-    // eyeDirection \u9010\u7C92\u5B50\u4E3A worldPos - eye\uFF08WE \u7684 g_EyePosition \u8BED\u4E49\uFF09\u3002
-    // \uFF08|v|=0 \u7684\u9000\u5316\u5DF2\u5728\u5916\u5C42\u6392\u9664\uFF0C\u907F\u514D WE \u7684 normalize(0) NaN\u3002\uFF09
+    // **\u6B63**\u53F7\uFF0C\u8BA9\u56FE\u50CF\u4E0A\u7AEF\uFF08\u96E8\u6EF4\u4EAE\u5934\uFF09\u843D\u5728 +\u901F\u5EA6\u65B9\u5411 \u2014\u2014 \u5426\u5219\u62D6\u5C3E\u5934\u5C3E\u98A0\u5012\u3002
+    // \u6B63\u4EA4\u76F8\u673A\u7684\u89C6\u7EBF\u65B9\u5411\u662F\u5E38\u6570\uFF08= viewMatrix \u7684\u76F8\u673A +Z \u53D6\u53CD\uFF09\uFF1B\u900F\u89C6\u76F8\u673A\u4E0B\u9010\u7C92\u5B50\u4E3A worldPos - eye\u3002
     vec3 eyeDir = perspEnabled > 0.5
       ? normalize(worldPos - perspEye)
       : -normalize((viewMatrix * vec4(0.0, 0.0, 1.0, 0.0)).xyz);
@@ -23409,10 +23403,9 @@ void main() {
   gl_Position = perspEnabled > 0.5
     ? persp * vec4(worldPos, 1.0)
     : projectionMatrix * modelViewMatrix * vec4(worldPos, 1.0);
-  // \u26A0\uFE0F \u4FEE\u6B63\uFF1A\u7C92\u5B50\u662F 2D billboard\uFF08\u65E0\u6DF1\u5EA6\u6392\u5E8F\uFF0Cz \u4E0D\u53C2\u4E0E\u53EF\u89C1\u6027\uFF09\u3002three \u6B63\u4EA4\u76F8\u673A far/near \u4F1A\u628A
-  // \u89C6\u9525\u5916\u7684 z \u88C1\u526A\u6389\uFF0C\u800C wasm billboard \u65E9\u5DF2\u628A\u6295\u5F71\u77E9\u9635 z \u884C\u5168 0\uFF08clip.z=0\uFF0C\u89C1 particle_billboard.wgsl\uFF09
-  // \u9632\u300Cemitter \u7403\u58F3\u6563\u5C04\u53EF\u5230 \xB1750 \u7684\u7C92\u5B50\u88AB z \u88C1\u526A \u2192 \u7C92\u5B50\u4E0D\u53EF\u89C1\u300D\u3002\u8FD9\u91CC\u628A NDC z \u5F3A\u5236\u5F52\u4E2D\uFF080\uFF09\uFF0C
-  // \u914D\u5408 material.depthTest=false\uFF08\u5FFD\u7565\u6DF1\u5EA6\uFF09\uFF0C\u4FDD\u8BC1\u7C92\u5B50\u4E0D\u88AB\u76F8\u673A\u6DF1\u5EA6\u8303\u56F4\u88C1\u526A\uFF08\u5BF9\u9F50 wasm \u8BED\u4E49\uFF09\u3002
+  // \u26A0\uFE0F \u7C92\u5B50\u662F 2D billboard\uFF08\u65E0\u6DF1\u5EA6\u6392\u5E8F\uFF0Cz \u4E0D\u53C2\u4E0E\u53EF\u89C1\u6027\uFF09\u21D2 \u628A NDC z \u5F3A\u5236\u5F52\u4E2D\uFF080\uFF09\uFF0C\u914D\u5408
+  // material.depthTest=false\uFF08\u5FFD\u7565\u6DF1\u5EA6\uFF09\uFF0C\u4FDD\u8BC1\u6563\u5C04\u5230 \xB1750 \u7684\u7C92\u5B50\u4E0D\u88AB\u76F8\u673A near/far \u88C1\u526A\u6389
+  // \uFF08\u5BF9\u9F50 wasm billboard \u7684 clip.z=0 \u8BED\u4E49\uFF0C\u89C1 particle_billboard.wgsl\uFF09\u3002
   gl_Position.z = 0.0;
 #ifdef REFRACT
   // \u6298\u5C04\u5207\u7EBF\u57FA\uFF08\u5C4F\u5E55\u7A7A\u95F4\u4F4D\u79FB\u65B9\u5411\uFF09\uFF1A\u4E0E\u4E0A\u9762 quad \u89D2\u70B9\u5C55\u5F00**\u540C\u4E00\u65CB\u8F6C\u7EA6\u5B9A\u4E0E\u540C\u4E00\u6B21\u5E8F**
@@ -23449,9 +23442,8 @@ void main() {
   // \u5E27\u53F7\u7531 uv.x \u7F16\u7801\uFF08\u5E27\u5B50\u533A\u4E2D\u5FC3\uFF0Csim frame_center_uv\uFF1A(frame+0.5)/n\uFF09\u2192 \u53CD\u89E3\u51FA\u79BB\u6563\u5E27\u53F7\u3002
   float frameIndex = floor(clamp(vParticleUv.x, 0.0, 0.999999) * n);
   frameIndex = min(frameIndex, n - 1.0);
-  // \u7CBE\u7075\u8868\u6309**\u4E8C\u7EF4\u7F51\u683C**\u5207\u7247\uFF08frameCols\xD7frameRows\uFF1B\u975E\u7CBE\u7075\u8868 cols=n\u3001rows=1\uFF0C\u4E0E\u65E7\u7684\u6A2A\u5411\u7B49\u5206\u7B49\u4EF7\uFF09\u3002
-  // \u26A0\uFE0F \u65E7\u5B9E\u73B0\u53EA\u505A\u6A2A\u5411\u7B49\u5206\uFF08texUv.x=(frameIndex+corner.x)/n\uFF09\uFF0C\u5BF9 WE \u7684 8\xD78=64 \u5E27\u7CBE\u7075\u8868
-  // \uFF08DK \u7684 fire1/fog1\uFF09\u4F1A\u628A\u6BCF\u6761 1/64 \u5BBD\u7684**\u7AD6\u6761**\u5F53\u4E00\u5E27 \u2192 \u5FC5\u987B\u7528\u7F51\u683C\u884C\u5217\u5B9A\u4F4D\u3002
+  // \u7CBE\u7075\u8868\u6309**\u4E8C\u7EF4\u7F51\u683C**\u5207\u7247\uFF08frameCols\xD7frameRows\uFF1B\u975E\u7CBE\u7075\u8868 cols=n\u3001rows=1\uFF09\uFF1AWE \u7684 8\xD78=64 \u5E27
+  // \u7CBE\u7075\u8868\uFF08DK \u7684 fire1/fog1\uFF09\u7528\u6A2A\u5411\u7B49\u5206\u4F1A\u628A\u6BCF\u6761 1/64 \u5BBD\u7684**\u7AD6\u6761**\u5F53\u4E00\u5E27\uFF0C\u5FC5\u987B\u6309\u884C\u5217\u5B9A\u4F4D\u3002
   float cols = max(frameCols, 1.0);
   float rows = max(frameRows, 1.0);
   float col = mod(frameIndex, cols);
@@ -23474,7 +23466,7 @@ void main() {
   vec2 rsUv = vScreenCoord.xy / vScreenCoord.z * 0.5 + 0.5 + off;
   rgb *= texture2D(refractBg, rsUv).rgb;
 #endif
-  // \u5706\u76D8\u8F6F\u8870\u51CF\uFF08center\u2192edge\uFF09\u3002softness \u2208 [0,1]\uFF1A0=\u786C\u8FB9\uFF08\u4EC5\u5728 quad \u8FB9\u7F18\u6536\u5C3E\uFF09\uFF0C1=\u5168\u67D4\uFF08\u4E2D\u5FC3\u2192\u8FB9\u7F18\u5E73\u6ED1\u8870\u51CF\uFF09\u3002
+  // \u5706\u76D8\u8F6F\u8870\u51CF\uFF08center\u2192edge\uFF09\u3002softness \u2208 [0,1]\uFF1A0=\u786C\u8FB9\uFF08\u4EC5\u5728 quad \u8FB9\u7F18\u6536\u5C3E\uFF09\uFF0C1=\u5168\u67D4\u3002
   float dist = length(vCornerUv - 0.5) * 2.0;
   float edgeStart = clamp(1.0 - softness, 0.0001, 0.9999);
   float disk = 1.0 - smoothstep(edgeStart, 1.0, dist);
@@ -23528,15 +23520,13 @@ var ThreeScenePlayer = class {
   renderer;
   scene;
   camera;
-  // 承载渲染的 canvas —— **就是调用方 append 到 DOM 显示的那一个**（three 渲染目标 + 页面显示
-  // 同一元素，不存在第二个离屏 canvas）。渲染缓冲尺寸不变量（见 resize）：
-  //   canvas.width/height === 视口逻辑尺寸 × pixelRatio（dpr）
-  // 而 CSS（`.wp-scene-canvas{width:100%;height:100%}`）= 视口逻辑尺寸 → 缓冲与物理像素 1:1，
-  // 既不模糊也不拉伸（2026-09-10 Task5：显式钉住该不变量，防「canvas 停在 HTML 默认 300×150
-  // 被 CSS 拉伸放大」这一整类回退）。
+  // 承载渲染的 canvas —— **就是调用方 append 到 DOM 显示的那一个**（渲染目标与页面显示
+  // 同一元素，不存在第二个离屏 canvas）。不变量（见 resize）：
+  //   canvas.width/height === 视口逻辑尺寸 × pixelRatio，而 CSS `.wp-scene-canvas` 是 100%/100%
+  // ⇒ 缓冲与物理像素 1:1，既不模糊也不拉伸（防「canvas 停在 HTML 默认 300×150 被 CSS 拉伸」）。
   canvas;
-  // 场景固有尺寸（WE 正交视口 view_w×view_h；scene.json 未就绪前用构造传入值，越过后
-  // 用 setSceneSize 更新）与当前视口尺寸（canvas 逻辑像素）。
+  // 场景固有尺寸（WE 正交视口 view_w×view_h；scene.json 未就绪前用构造传入的冗余值）与
+  // 当前视口尺寸（canvas 逻辑像素）。
   sceneWidth;
   sceneHeight;
   viewWidth;
@@ -23557,12 +23547,12 @@ var ThreeScenePlayer = class {
   // 背景图层条目（按 addBackground 返回的 id 索引，供 update_background 引用）。
   backgroundEntries = /* @__PURE__ */ new Map();
   nextBackgroundId = 0;
-  // 粒子图层条目（Task 3）：按 addParticle 返回的 id 索引，更新粒子时用其 getter 刷新缓冲区。
+  // 粒子图层条目：按 addParticle 返回的 id 索引，更新粒子时用其 getter 刷新缓冲区。
   particleLayers = /* @__PURE__ */ new Map();
   nextParticleLayerId = 0;
   // scene 对象 id → **最终显示**的 three 对象（非隔离 = 内容 mesh；隔离 = 合成 quad）。
   // 脚本的 LayerStateTable 键是 scene 对象 id，而 backgroundEntries/particleLayers 的键是图层
-  // 计数器 id —— 这里补一份同键空间映射，避免又出现一层「对象 id → 计数器 id」的翻译。
+  // 计数器 id —— 这里补一份同键空间映射，免去又一层「对象 id → 计数器 id」的翻译。
   displayObjects = /* @__PURE__ */ new Map();
   // 对象隔离条目（对象级效果链；空 Map = 本壁纸无带效果对象，帧序退化为原路径）。
   isolated = /* @__PURE__ */ new Map();
@@ -23660,19 +23650,17 @@ var ThreeScenePlayer = class {
   nowMs() {
     return typeof performance !== "undefined" ? performance.now() : this.startedAt;
   }
-  // 场景固有尺寸（scene.json 的 general.orthogonalprojection）就绪后设置，同时重推 cover。
-  // 构造传入的 width/height 只是缺省冗余值（「缺省用传入 width/height」）。
+  // 场景固有尺寸（scene.json 的 general.orthogonalprojection）就绪后设置，同时重推 cover；
+  // 构造传入的 width/height 只是缺省冗余值。
   setSceneSize(width, height) {
     this.sceneWidth = width;
     this.sceneHeight = height;
     this.applyCover();
   }
-  // 屏幕密度（设备像素 / 世界单位）：1 个世界单位在**画布缓冲**上占多少像素。
-  // 与 applyCover 同一套 cover 语义（同一份 sceneWidth/sceneHeight/viewWidth/viewHeight/pixelRatio
-  // ⇒ 同一个 coverRange）⇒ 与主相机实际铺满的像素网格同一把尺子。
-  // 消费者：对象 RT 的尺寸口径（RT 像素 = 对象世界尺寸 × 本密度 = 对象在屏上的占位像素，
-  // 见 object-range.objectRtSize）。挂载期由 three-renderer 用纯函数算出同一个数，resize 期
-  // 直接取本方法（player 的 state 刚被 resize 更新，天然与 cover 同源）。
+  // 屏幕密度（设备像素 / 世界单位）：1 个世界单位在**画布缓冲**上占多少像素。与 applyCover
+  // 同一套 cover 语义（同一份 sceneWidth/sceneHeight/viewWidth/viewHeight/pixelRatio）⇒ 与主相机
+  // 铺满的像素网格同一把尺子；对象 RT 的尺寸口径（RT 像素 = 对象世界尺寸 × 本密度）用它，
+  // 挂载期与 resize 期必须同源（见 AGENT.md §5.15）。
   screenScalePx() {
     return screenScalePx(
       this.sceneWidth,
@@ -23692,28 +23680,21 @@ var ThreeScenePlayer = class {
     this.camera.bottom = -fg.h / 2;
     this.camera.updateProjectionMatrix();
   }
-  // 每帧扩展钩子：驱动粒子图层刷新（Task 3）。Task 1 空实现；背景更新由 update_background
-  // 显式调用（对齐 wasm update_image 语义）。后续 Task 4 可在此挂背景/效果链更新。
+  // 每帧扩展钩子：驱动粒子图层刷新；背景更新由 update_background 显式调用（对齐 wasm
+  // update_image 语义）。
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   update(_dt) {
     this.updateParticles(_dt);
   }
-  // 启动帧循环（renderer.setAnimationLoop 内部 RAF）。每帧：外部回调 fn(dt) → update(dt)
-  // （内部钩子）→ render(scene, camera)。dt 用 performance.now 差分，clamp 0.1s 防 tab 切
-  // 后台 / RAF 停顿后 dt 过大把粒子瞬移出视口（同 wasm-renderer 语义）。
-  // Task 4 关键：fn(dt) 先于内部 update(dt)——fn 承载「模拟推进」（如 CpuParticleSim.update），
-  // 使 update（→ updateParticles 读 getter）拿到**本帧已推进**的顶点（sim 已在帧内 advance），
-  // 避免「先读旧顶点再推进」的一帧滞后。
+  // 启动帧循环（renderer.setAnimationLoop 内部 RAF）。每帧：外部回调 fn(dt) → update(dt) →
+  // render(scene, camera)。dt 用 performance.now 差分并 clamp 0.1s（防 tab 切后台后 dt 过大把粒子
+  // 瞬移出视口）。fn(dt) 必须先于内部 update(dt)：fn 承载「模拟推进」，使 updateParticles 读到的
+  // getter 是本帧**已推进**的顶点，避免一帧滞后。
   //
-  // ⚠️ 帧体必须整体 try/catch（关键，修复「黑神话花瓣不可见」这类「背景清晰但粒子永不出现」）：
-  // three r170 的 `WebGLAnimation.onAnimationFrame` 实现为
-  //   `animationLoop(time, frame); requestId = context.requestAnimationFrame(onAnimationFrame);`
-  // （three.module.js 13612-13618）——**重排下一帧的语句在回调之后**，且 three 不包裹 try/catch。
-  // 因此只要本帧回调抛出一次（wasm 模拟器 panic、顶点 getter 返回异常数据、纹理/材质 GL 错误…），
-  // `requestAnimationFrame` 就再也**不会被重新排程 → RAF 循环永久停摆**：canvas 停在最后成功绘制的
-  // 那一帧（= `loadSceneToThree` 时的首帧，此时 `instanceCount===0`）→ 用户看到「背景清晰但没有粒子」
-  // 且再无任何动画/诊断输出（sim 从未推进，粒子永远不出现）。此处把帧体包进 try/catch（**不重抛**），
-  // 保证 three 每帧都能重新排程 RAF：单帧异常只丢该帧，循环自愈；异常只记一次 warn（防刷屏）。
+  // ⚠️ 帧体必须整体 try/catch：three r170 的 `WebGLAnimation.onAnimationFrame` 把下一帧的
+  // `requestAnimationFrame` 重排写在回调**之后**且不包裹 try/catch（three.module.js 13612-13618）
+  // ⇒ 回调抛出一次就**再也不会重排下一帧，RAF 循环永久停摆**（画面停在最后一次成功绘制，表现为
+  // 「背景清晰但没有粒子」且再无诊断输出）。包住后单帧异常只丢该帧、循环自愈，异常只记一次 warn。
   setAnimationLoop(fn) {
     this.loopFn = fn ?? null;
     if (this.paused) {
@@ -23744,11 +23725,10 @@ var ThreeScenePlayer = class {
       }
     });
   }
-  // 手动渲染一帧（不依赖 RAF，供测试/调用方直接触发）。
-  // 帧序与 setAnimationLoop 的帧体一致（不带 dt）：隔离内容 → bindOutputs → 主场景 → advance。
-  // 装配了 glowStage 时主场景渲染委托给它（stage 内部渲染主场景到 RT 再做全屏 glow 合成）。
+  // 手动渲染一帧（不依赖 RAF，供测试/调用方直接触发）。帧序：隔离内容 → bindOutputs →
+  // Glow/主场景（或段渲染）→ advance。装配了 glowStage 时主场景渲染委托给它。
   // ★ 只有 frameCapture?.active（本壁纸真有消费者）时才改走段渲染（renderSegmented），
-  //   否则调用序列与引入本分支前**逐字节一致**（结构性零回归）。
+  //   否则调用序列与引入该分支前**逐字节一致**（结构性零回归）。
   render() {
     if (this.devicePixelRatio() !== this.lastDpr) this.resize(this.viewWidth, this.viewHeight);
     if (this.isolated.size > 0) this.renderIsolatedContents();
@@ -23895,7 +23875,7 @@ var ThreeScenePlayer = class {
     if (mat instanceof ShaderMaterial) mat.uniforms.map.value = texture;
     else if (mat instanceof MeshBasicMaterial) mat.map = texture;
   }
-  // 段边界快照的拉取入口（ObjectEffectHost 契约，§3.5）：拍一张「到此刻为止已绘制内容」。
+  // 段边界快照的拉取入口（ObjectEffectHost 契约）：拍一张「到此刻为止已绘制内容」。
   // 无 FrameCapture / 未激活（本壁纸无消费者）→ null；dispose 后 capture() 抛错 ⇒ 同样降级 null。
   captureFullFrame() {
     if (this.frameCapture?.active !== true) return null;
@@ -23905,16 +23885,14 @@ var ThreeScenePlayer = class {
       return null;
     }
   }
-  // 快照代号的**实时**读取入口（ObjectEffectHost 契约）：编排器在排队的 update **执行当刻**读它，
-  // 与捕获当刻记录的代号比较 ⇒ 不一致即说明那张快照已被 resize/dispose 换掉，按「无快照」走。
-  // 无 FrameCapture 时返回 -1（任何捕获时代号都不等于 -1 ⇒ 一律视为已作废）。
+  // 快照代号的**实时**读取入口（ObjectEffectHost 契约）：调用方在执行当刻读它并与捕获当刻的代号
+  // 比较，不一致即说明那张快照已被 resize/dispose 换掉。无 FrameCapture 时返回 -1（视为已作废）。
   frameSnapshotVersion() {
     return this.frameCapture?.snapshotVersion ?? -1;
   }
   // 重设隔离对象的 RT 尺寸（视口/dpr 变化时由编排器调用）：**只改分辨率**。
-  // 局部相机覆盖的世界范围（camW/camH）与合成几何的 UV 窗口都只依赖**世界尺寸**，与 RT 像素
-  // 无关，因此这里不得改动它们 —— 曾在此按 RT 像素重设相机视锥并重建几何，使 dpr>1 的对象
-  // 内容被缩小到 1/dpr 并露出边缘（真机 HiDPI 整张壁纸错乱的同一根因）。
+  // ⚠️ 局部相机覆盖的世界范围（camW/camH）与合成几何的 UV 窗口只依赖**世界尺寸**，与 RT 像素无关，
+  // 这里不得改动它们：按 RT 像素重设会让 dpr>1 的对象内容缩小到 1/dpr 并露出边缘。
   // `id` = 隔离条目的键 = scene.json 的对象 id。
   resizeObjectRT(id, width, height) {
     const entry = this.isolated.get(id);
@@ -23942,12 +23920,9 @@ var ThreeScenePlayer = class {
     const inPause = this.paused ? now - this.pausedAt : 0;
     return (now - this.startedAt - this.pausedTotal - inPause) / 1e3;
   }
-  // Task 2：背景图层（Sprite/Mesh）。用 we_to_three 中心化定位（three = we - scene/2，
-  // 左下原点 y 向上 → 中心原点 y 向上，y 不翻，与背景一致）；size×scale 定尺寸；
-  // alpha → material.opacity、brightness 调色（复用 scene-renderer.materialModulation：
-  // color 缺省全白 → rgb = clamp01(brightness)，a = clamp01(alpha)）。
-  // sceneW/sceneH 为场景固有尺寸（we_to_three 基准，通常 == setSceneSize 注入值）。
-  // 返回分配的背景 id，供 update_background 引用；与后续粒子共用同一相机（Task 1 cover）。
+  // 背景图层。用 we_to_three 中心化定位（three = we - scene/2，y 不翻）、size×scale 定尺寸、
+  // alpha/brightness 走 materialModulation（复用 scene-renderer 语义，见 AGENT.md §2.3）。
+  // sceneW/sceneH 为场景固有尺寸（we_to_three 基准）；返回背景 id，供 update_background 引用。
   addBackground(opts) {
     const sceneW = opts.sceneW;
     const sceneH = opts.sceneH;
@@ -24030,30 +24005,23 @@ var ThreeScenePlayer = class {
       depthWrite: false,
       // 隔离路径：WE 在对象有多个 pass 时把**首个 pass 强制成 BlendingMode_Normal（ONE/ZERO 覆盖）**
       // （lwe CImage.cpp：`(*first)->setBlendingMode(BlendingMode_Normal)`）⇒ 覆盖写，RT.rgb 保持
-      // 非预乘、透明度只走 alpha；否则 rgb 被预乘一次、合成再乘一次 ⇒ 半透明图层只剩一半亮度（§5.27）。
+      // 非预乘、透明度只走 alpha（AGENT.md §5.27）。
       blending: forIsolation ? NoBlending : NormalBlending,
-      // 隔离内容渲染进**y 镜像的局部相机**（对象 RT 取 WE 的 v 约定，见 attachIsolated）⇒
-      // 屏幕空间绕序被翻转，正面朝外的 quad 会被背面剔除掉（对象整体消失）。故隔离路径改双面；
-      // 非隔离（主场景直渲）继续保持 FrontSide，行为与引入前逐字一致。
+      // 隔离内容渲染进**y 镜像的局部相机**（对象 RT 取 WE 的 v 约定，见 attachIsolated）⇒ 屏幕空间
+      // 绕序被翻转，正面朝外的 quad 会被背面剔除（对象整体消失）⇒ 隔离路径必须双面。
       side: forIsolation ? DoubleSide : FrontSide
     });
     basic.color.setRGB(mod.r, mod.g, mod.b);
     basic.opacity = mod.a;
     return basic;
   }
-  // 合成 quad 的材质：只负责「把对象 RT 的像素采样回主场景」。
-  // ⚠️ 三点关键（都是踩过的坑）：
-  //   ① 必须独立构造，**不能 clone 内容材质**——粒子对象的内容材质是 InstancedBufferGeometry
-  //      专用的 billboard shader（依赖逐实例属性），普通 PlaneGeometry 没有这些属性会让
-  //      alpha 恒为 0（粒子隔离后完全不可见）；
-  //   ② **不再二次施加** alpha/brightness/color 调制——内容 mesh 的材质已把调制烘进 RT
-  //      （scene-renderer.ts 的既有结论），clone 后再乘一次会让 alpha=0.5 变成 0.25。
-  //   ③ **统一用 MeshBasicMaterial**：本 quad 采样的是对象 RT（内容材质在隔离路径不套 cb），
-  //      只有 cb（6/7/31）分支额外开 `premultipliedAlpha`（见下）。
-  // WE 的 `ApplyBlending` 语义用 three 的 CustomBlending 因子**在合成这一步**复刻，
-  // alpha 仍取背景的（`gl_FragColor.a = screen.a` ⇒ Zero/One）。
-  // 背景对象带非零 angles 时 quad 承载旋转，超过 90° 的旋转会翻转三角形绕序 —— 与内容材质
-  // （原 cb 分支用 DoubleSide）保持一致用 DoubleSide，避免旋转到背面时整块被背面剔除掉。
+  // 合成 quad 的材质：只负责「把对象 RT 的像素采样回主场景」。三点关键（都踩过）：
+  //   ① 必须独立构造，**不能 clone 内容材质**——粒子内容材质依赖逐实例属性，普通 PlaneGeometry 没有
+  //      这些属性会让 alpha 恒为 0（粒子完全不可见）；
+  //   ② **不再二次施加** alpha/brightness/color 调制（内容材质已把调制烘进 RT，再乘一次 alpha 变 a²）；
+  //   ③ 统一用 MeshBasicMaterial，只有 cb 分支额外开 `premultipliedAlpha`。
+  // WE 的 `ApplyBlending` 语义在**合成这一步**用 CustomBlending 因子复刻（alpha 取背景的 ⇒ Zero/One）；
+  // 带非零 angles 的对象由 quad 承载旋转，超过 90° 会翻转绕序 ⇒ 与内容材质一致用 DoubleSide。
   createCompositeQuadMaterial(texture, colorBlendMode) {
     const mat = new MeshBasicMaterial({
       map: texture,
@@ -24083,22 +24051,16 @@ var ThreeScenePlayer = class {
     rt.texture.minFilter = nextMin;
     if (flipped) rt.dispose();
   }
-  // 建立对象隔离条目：RT + 局部正交相机 + localScene + 主场景合成 quad。
-  // localCamera 范围 = RT 分辨率（对象中心为原点，与场景像素 1:1）；合成 quad 用
-  // createCompositeGeometry（世界尺寸含缩放、UV 按钳制窗口映射），position 承载对象在世界中
-  // 的位置。
+  // 建立对象隔离条目：RT + 局部正交相机 + localScene + 主场景合成 quad；合成 quad 用
+  // createCompositeGeometry（世界尺寸含缩放、UV 按钳制窗口映射），position 承载对象世界位置。
   //
-  // ⚠️ 第一个参数是 **scene.json 的对象 id**（键），不是本类的图层计数器 id：背景层与粒子层
-  // 各有一个从 0 起的独立计数器（nextBackgroundId / nextParticleLayerId），若拿它们当隔离条目的
-  // 键，同一壁纸同时有隔离 image 与隔离 particle 时两边都从 0 开始 → 后建的粒子条目**覆盖**先建的
-  // 背景条目（背景的 quad 从此采样一张永不被渲染的 RT，且 stageKey 把两个对象映到同一个键）→
-  // 静默画错。用对象 id 作键则与「isolate 表 / ObjectEffectStage / wasm PendingChainStore」
-  // 共用同一把键（全库实测对象 id = 12/13/17/20/…，两套计数器无法表达）。
-  //
-  // ⚠️ 旋转的分工**不可「统一」**：quadAngles 由调用方按「RT 内容是否已含旋转」决定——
-  //   - 背景：内容 mesh 的 rotation 已归零（RT 内容**不含**旋转）→ quad 承载对象 angles；
-  //   - 粒子：内容 shader 里已施加 objAngles（RT 内容**已含**旋转）→ quadAngles 传 [0,0,0]，
-  //     否则同一份旋转被施加两次。
+  // ⚠️ 第一个参数是 **scene.json 的对象 id**（键），不是本类的图层计数器 id：背景层与粒子层各有
+  // 一个从 0 起的独立计数器，拿它们当键时（同一壁纸同时隔离 image 与 particle）后建的粒子条目会
+  // **覆盖**先建的背景条目 ⇒ 静默画错。用对象 id 才能与 ObjectEffectStage / wasm PendingChainStore
+  // 共用同一把键。
+  // ⚠️ 旋转的分工**不可「统一」**：quadAngles 由调用方按「RT 内容是否已含旋转」决定 —— 背景内容
+  // 不旋转（quad 承载对象 angles）；粒子内容 shader 已施加 objAngles（quadAngles 传 [0,0,0]，
+  // 否则同一份旋转被施加两次）。
   attachIsolated(objectId, kind, content, worldW, worldH, size, position, quadAngles, colorBlendMode, renderOrder) {
     const rtW = Math.max(1, Math.round(size.width));
     const rtH = Math.max(1, Math.round(size.height));
@@ -24135,9 +24097,8 @@ var ThreeScenePlayer = class {
       worldH
     });
   }
-  // Task 2：更新背景图层状态，对齐既有 update_image 语义——undefined = 保持现状；
-  // 传入值若无变化（与当前已应用状态相等）则跳过该字段；未知 id → no-op。
-  // origin 为 WE 场景坐标，先按 we_to_three 中心化（origin - scene/2）再写 mesh.position。
+  // 更新背景图层状态，对齐既有 update_image 语义——undefined = 保持现状；与当前已应用状态相等的
+  // 字段跳过；未知 id → no-op。origin 是 WE 场景坐标，先按 we_to_three 中心化再写 mesh.position。
   update_background(id, origin, scale, alpha, brightness) {
     const entry = this.backgroundEntries.get(id);
     if (!entry) return;
@@ -24174,11 +24135,10 @@ var ThreeScenePlayer = class {
       }
     }
   }
-  // 文本图层 resize：按新画布尺寸重建 quad 几何（PlaneGeometry 尺寸不可变），scale 不变
-  // ⇒ 世界尺寸 = 新尺寸 × scale。未知 id / 尺寸未变 → no-op（不重建几何）。
-  // ⚠️ 画布纹理必须 dispose：three r170 在 WebGL2 用**不可变** texStorage2D（只在首次上传
-  // 分配存储），画布尺寸变了以后 texSubImage2D 越界、上传被 GL 静默丢弃 ⇒ 屏幕上仍是旧画布
-  // 被拉伸。dispose 后下一次渲染按新尺寸重新分配存储。
+  // 文本图层 resize：按新画布尺寸重建 quad 几何（PlaneGeometry 尺寸不可变），scale 不变 ⇒
+  // 世界尺寸 = 新尺寸 × scale。未知 id / 尺寸未变 → no-op。
+  // ⚠️ 画布纹理必须 dispose：three r170 在 WebGL2 用**不可变** texStorage2D，画布尺寸变了以后
+  // texSubImage2D 越界、上传被 GL 静默丢弃 ⇒ 屏幕上仍是旧画布被拉伸；dispose 后才按新尺寸分配存储。
   resizeBackground(id, size) {
     const entry = this.backgroundEntries.get(id);
     if (!entry) return;
@@ -24191,11 +24151,10 @@ var ThreeScenePlayer = class {
     const map = entry.mesh.material.map;
     if (map && map.isCanvasTexture) map.dispose();
   }
-  // Task 3：粒子图层。`simVerticesGetter` 每帧返回模拟器当前顶点（摊平 Float32Array，
-  // 每粒子 `[pos3, size, uv2, color3, alpha, rot3, vel3]` 16 浮点——来自 wasm `SceneParticleSim::build_instance_vertices`）。
-  // 渲染用 three.js `ShaderMaterial` billboard quad（每粒子一个实例，shader 由基础角点+位置/尺寸展开），
-  // 模拟逻辑仍由 `SceneParticleSim` 承担（思路 1 核心：不重写模拟，只换渲染引擎）。
-  // 返回分配的图层 id，供更新/释放引用。
+  // 粒子图层。`simVerticesGetter` 每帧返回模拟器当前顶点（摊平 Float32Array，每粒子
+  // `[pos3, size, uv2, color3, alpha, rot3, vel3]` 16 浮点，来自 wasm `SceneParticleSim::build_instance_vertices`）；
+  // 渲染用 three.js `ShaderMaterial` billboard quad（每粒子一个实例）；模拟逻辑仍由
+  // `SceneParticleSim` 承担（不重写模拟，只换渲染引擎）。返回分配的图层 id。
   addParticle(simVerticesGetter, opts) {
     const frameCount = Math.max(1, Math.floor(opts.frameCount));
     const frameCols = Number.isFinite(opts.frameCols) && opts.frameCols > 0 ? Math.max(1, Math.floor(opts.frameCols)) : frameCount;
@@ -24233,8 +24192,8 @@ var ThreeScenePlayer = class {
         frameRows: { value: frameRows },
         softness: { value: softness },
         maskMode: { value: hasTex ? 1 : 0 },
-        // 折射 uniform 只给折射层（非折射层连 uniform 都不建：零开销、零分歧）。
-        // refractBg 缺省 1×1 白 = 不做位移（快照由段渲染在消费者绘制前写入）。
+        // 折射 uniform 只给折射层（非折射层连 uniform 都不建：零开销、零分歧）。refractBg 缺省
+        // 1×1 白 = 不做位移（快照由段渲染在消费者绘制前写入）。
         ...refractEnabled ? {
           refractNormal: { value: opts.refract.normalTex },
           refractBg: { value: createWhiteTexture() },
@@ -24263,8 +24222,8 @@ var ThreeScenePlayer = class {
       },
       vertexShader: PARTICLE_VERTEX_SHADER,
       fragmentShader: PARTICLE_FRAGMENT_SHADER,
-      // three 的 define 进 program cache key：非折射层的 program 与改动前完全同源
-      // （仅在折射时给 defines 键 —— 显式 undefined 会被 Material 构造器告警刷屏）。
+      // three 的 define 进 program cache key：非折射层的 program 与改动前完全同源（仅在折射时
+      // 给 defines 键 —— 显式 undefined 会被 Material 构造器告警刷屏）。
       ...refractEnabled ? { defines: { REFRACT: 1 } } : {},
       transparent: true,
       depthWrite: false,
@@ -24349,7 +24308,7 @@ var ThreeScenePlayer = class {
       this.writeParticleData(layer, data, count);
     }
   }
-  // 把 per-particle 摊平顶点（每粒子 13 浮点）拆到 6 个 instanced 属性并标记需重传。
+  // 把 per-particle 摊平顶点（每粒子 16 浮点）拆到 7 个 instanced 属性并标记需重传。
   // 容量不足时按需扩容（正常不会发生：容量 = sim 的 maxcount）——扩容后**必须**同步
   // `geometry._maxInstanceCount`（three 的首帧锁存值，见 addParticle 注释），否则 draw 仍按旧容量截断。
   writeParticleData(layer, data, count) {
@@ -24529,9 +24488,8 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
         objectId: obj.id,
         // 唯一绘制序 = 本对象在 objects 数组中的下标。
         renderOrder,
-        // 对象级效果链：本对象带效果（调用方下发了隔离条件）→ 内容进 localScene 渲染到对象 RT，
-        // 主场景放合成 quad；缺省不隔离，行为与今天逐字相同。隔离条目的键 = obj.id（值里的
-        // objectId 同值），与 ObjectEffectStage 的键空间一致。
+        // 对象级效果链：带效果的对象其内容进 localScene 渲染到对象 RT，主场景放合成 quad；
+        // 缺省不隔离。隔离条目的键 = obj.id，与 ObjectEffectStage 的键空间一致。
         isolate: assets.isolate?.get(obj.id)
       });
       backgroundIds.push(id);
@@ -24588,15 +24546,14 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
         // 对象角度（弧度）：顶点 shader 用它把局部运动方向/发射点/quad 角点旋转到场景空间。
         objectAngles: t.angles,
         emitterOrigin,
-        // 实例缓冲容量 = spec 的 maxcount（= wasm `SceneParticleSim.maxcount`，模拟器的发射上限）。
-        // three 只在首帧锁存该容量（见 addParticle），必须按模拟器**最终**会产出的粒子数一次给足；
-        // 缺 maxcount（旧格式/解析失败）→ addParticle 用 DEFAULT_PARTICLE_CAPACITY 兜底。
+        // 实例缓冲容量 = spec 的 maxcount（= 模拟器的发射上限）。three 只在首帧锁存该容量
+        // （见 addParticle），必须按模拟器**最终**会产出的粒子数一次给足；缺 maxcount → 缺省兜底。
         maxInstances: specMaxcount(p.specJson),
         // 拖尾渲染（spec.renderer[0] == "spritetrail"）：雨丝/风痕靠沿速度方向拉伸 billboard
         // 呈现（WE ComputeParticleTrailTangents）；非 spritetrail → 不传（sprite 外观零变化）。
         trail: trailSpec.kind === "spritetrail" ? trailSpec : void 0,
         // 粒子透视相机（spec.flags 的 perspective 位）：WE 给这类对象换挂 global_perspective 相机，
-        // 于是雨/雪/樱花等有近大远小的层次（Spider Man 4K 的雨桌面近处 ≈10×）。无该位 → 不传。
+        // 于是雨/雪/樱花等有近大远小的层次。无该位 → 不传。
         perspective: specPerspective(p.specJson) ? (() => {
           const cam = particlePerspectiveCamera({
             fov: desc.fov ?? 50,
@@ -24613,7 +24570,6 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
         renderOrder,
         // 对象级效果链：带效果的粒子对象同样隔离（对象 RT + 合成 quad）。世界尺寸由调用方按
         // `particleWorldSize(spec, scale)` 算好（player 不知道 spec 的 distanceMax）；缺省不隔离。
-        // 隔离条目的键 = obj.id（值里的 objectId 同值），与 ObjectEffectStage 的键空间一致。
         isolate: assets.isolate?.get(obj.id)
       });
       particleLayers.push({ id, sim });
@@ -25541,13 +25497,12 @@ var EffectRunner = class {
   // 每 pass 独立场景（含全屏 quad）
   textures = /* @__PURE__ */ new Map();
   // 纹理槽缓存（key: `${id}:${path}`）
-  // 编译失败的 pass（key = 链内下标）：探针渲染一旦确认失败就缓存，后续帧直接返回 null 跳过，
-  // 不再「每帧重建材质 + 1×1 探针渲染 + 重复告警」（实测一个坏 pass 每帧 2 条 warning 刷屏）。
-  // 失败本来就是跳过该 pass（update 里 `continue`），故缓存**不改变执行语义**；setChains
-  // （换壁纸 / 重挂链 / resize 重挂）时清空，链变了要重新尝试编译。
+  // 编译失败的 pass（key = 链内下标）：探针渲染一旦确认失败就缓存，后续帧直接返回 null 跳过，不再
+  //「每帧重建材质 + 1×1 探针渲染 + 重复告警」。失败本来就是跳过该 pass（update 里 `continue`），
+  //  故缓存**不改变执行语义**；setChains（换壁纸 / 重挂链 / resize 重挂）时清空，链变了要重新尝试编译。
   failed = /* @__PURE__ */ new Set();
   plan = null;
-  // 具名 RT 池：key = `${chainIndex}:${name}`（作用域 = 单条链，见 effect-graph.ts 头注）
+  // 具名 RT 池：key = `${chainIndex}:${name}`（作用域 = 单条链，见 effect-graph.ts）
   namedRt = /* @__PURE__ */ new Map();
   // 已告警的 key（壁纸 id + 链序号）：resize 重挂会再次进入 setPlan，去重避免刷屏
   warnedKeys = /* @__PURE__ */ new Set();
@@ -25558,18 +25513,17 @@ var EffectRunner = class {
   // inFlight 标记 update 未完成时跳过本帧（last 保持上次输出，下一帧重试）；
   // 换壁纸后 textures 已清空 → 首帧加载完成前输出 input（场景 RT），不黑屏。
   updateInFlight = false;
-  // 音频频谱源（T3.2）：freqData 缓冲引用（scene-renderer 每帧刷新后注入）。
+  // 音频频谱源：freqData 缓冲引用（scene-renderer 每帧刷新后注入）。
   // null = 无分析器 → 音频 uniform 保持 binder 初始化的全零（静音，行为不变）。
   audioSpectrum = null;
   // 效果纹理槽加载器（缺省 `loadTexTexture`；可注入以携带 **v 约定** —— 见构造参数注释）。
   load;
-  // `opts.load`：纹理槽加载器（缺省 `loadTexTexture`）。**调用方用它携带纹理 v 约定**：
-  //   效果 shader 把 `v_TexCoord.y` 当**图像空间**坐标（flowmap 的带符号位移、clouds 的旋转/滚动、
-  //   foliagesway 的摆动方向…），而纹理由对象 RT 提供 —— 二者的 v 约定必须是**同一套**，
-  //   否则条带位置对而方向/斜度反（Crimson waterflow 真机「方向对但位置/斜度不对」）。
-  //   对象 RT 走 `threejs-player.attachIsolated` 的 y 镜像局部相机（v=0=图像顶部 = WE 约定），
-  //   故 `ObjectEffectStage` 注入 `rowOrder:'topDown'` 的 loader 与之对齐；
-  //   未注入的调用方（旧场景级路径）保持 `'bottomUp'`，行为与本参数引入前逐字一致。
+  // `opts.load`：纹理槽加载器（缺省 `loadTexTexture`）。**调用方用它携带纹理 v 约定**：效果 shader 把
+  //   `v_TexCoord.y` 当**图像空间**坐标（flowmap 的带符号位移、clouds 的旋转/滚动、foliagesway 的摆动方向…），
+  //   而纹理由对象 RT 提供 —— 二者的 v 约定必须**同一套**，否则条带位置对而方向/斜度反。
+  //   对象 RT 走 `threejs-player.attachIsolated` 的 y 镜像局部相机（v=0=图像顶部 = WE 约定），故
+  //   `ObjectEffectStage` 注入 `rowOrder:'topDown'` 的 loader 与之对齐；未注入的调用方（旧场景级路径）
+  //   保持 `'bottomUp'`，行为与本参数引入前逐字一致。
   constructor(renderer, width, height, opts = {}) {
     this.renderer = renderer;
     this.width = width;
@@ -25579,7 +25533,7 @@ var EffectRunner = class {
     this.rtB = new WebGLRenderTarget(width, height);
   }
   /** 挂载带具名 RT 的效果计划：建具名 RT 池 + 清材质缓存。**只允许在加载期 / resize 重挂期调用**（帧内不得建 RT，§5.11）。
-   *  材质与 1×1 探针编译不在本方法内 —— 仍由首个 update 帧的 getMaterial 懒建（帧内首次编译有停顿）。 */
+   *  材质与 1×1 探针编译不在本方法内 —— 仍由首个 update 帧的 getMaterial 懒建。 */
   setPlan(plan, chains, wallpaperId, opts) {
     this.plan = plan;
     this.chains = chains;
@@ -25637,8 +25591,7 @@ var EffectRunner = class {
       }
     }
   }
-  // 设置音频频谱源（T3.2）：传入频谱缓冲引用（可每帧刷新后重复注入同一引用，
-  // update() 渲染前从缓冲读取当前频谱）；null → 恢复全零静音（不回归）。
+  // 设置音频频谱源：传入频谱缓冲引用（可每帧刷新后重复注入同一引用）；null → 恢复全零静音（不回归）。
   setAudioSpectrumSource(source) {
     this.audioSpectrum = source;
   }
@@ -25660,8 +25613,7 @@ var EffectRunner = class {
   }
   /** 纹理槽缓存清理：**只释放本实例加载的纹理**，跳过模块级共享纹理（`BUILTIN_CACHE` /
    *  `EMPTY_SLOT_CACHE` —— 其它 runner 仍在复用，误释放会让它们采样到已删除的纹理）。
-   *  只 `.clear()` 不 dispose 会漏掉 `deleteTexture` ⇒ **同一 WebGL 上下文内**每次 resize 重挂链
-   *  泄漏该壁纸全部效果槽纹理（真机实测 +28 张/次，见 AGENT.md §7.13）。 */
+   *  ⚠️ 只 `.clear()` 不 dispose 会漏掉 `deleteTexture` ⇒ 每次 resize 重挂链泄漏该壁纸全部效果槽纹理。 */
   clearTextures() {
     for (const tex of this.textures.values()) {
       if (tex && !tex.userData?.__shared) tex.dispose();
@@ -25810,9 +25762,8 @@ var EffectRunner = class {
   async resolveTextureSlot(path) {
     return loadEffectTextureSlot(path, this.id, this.textures, this.load);
   }
-  // 串行化 + 输入参数化（Ruling P1-1）：input 可为场景 RT 或对象 RT 的纹理（任意 Texture）。
-  // 返回最终输出纹理；链为空或上一帧 update 未完成（纹理槽异步加载中）→ null。
-  // 帧循环用 lastOutput() 贴屏，last 保持最近完成输出，无帧间闪烁。
+  // 串行化 + 输入参数化：input 可为场景 RT 或对象 RT 的纹理（任意 Texture）。返回最终输出纹理；
+  // 链为空或上一帧 update 未完成（纹理槽异步加载中）→ null；帧循环用 lastOutput() 贴屏（无帧间闪烁）。
   // 有 plan 时按计划执行：写端三态（具名 RT / ping-pong）+ bind 按 g_Texture<index> 覆盖槽；
   // `previous` = 进入 target 序列前的输入（lwe CImage::configurePassTarget），逐链独立。
   async update(time, input, frameTexture = null) {
@@ -25982,16 +25933,15 @@ var ObjectEffectStage = class {
   screenScale;
   disposed = false;
   // 串行链（约束 3）：busy = 有 runner 正在 update，queue = 等待中的 update 任务。
-  // 空闲时**同步**发起第一项（本帧立即开始推进，不推迟一个微任务——与场景级
-  // `void runner.update(...)` 的行为一致；player 的帧序是 render 之后才 advance，
-  // 因此此刻切换 RT 不会打扰本帧主场景渲染）；忙时排队，等前一项 settle 后再发起。
+  // 空闲时**同步**发起第一项（本帧立即开始推进，不推迟一个微任务；player 的帧序是 render 之后才
+  // advance，故此刻切换 RT 不会打扰本帧主场景渲染）；忙时排队，等前一项 settle 后再发起。
   busy = false;
   queue = [];
   /** 去重告警集合（按 key 只打印一次，防每帧刷屏）。 */
   warned = /* @__PURE__ */ new Set();
   /** 本帧各对象在段边界拿到的整帧快照 + **捕获当刻**的快照代号（advance 消费后清空，快照逐帧覆盖）。 */
   boundarySnapshots = /* @__PURE__ */ new Map();
-  /** 音频频谱源（A3）：每帧同一缓冲引用；null = 全零静音（无音频/音效关闭）。 */
+  /** 音频频谱源：每帧同一缓冲引用；null = 全零静音（无音频/音效关闭）。 */
   audioSpectrum = null;
   /** 当前屏幕密度（设备像素 / 世界单位）；同源下发契约见类头。 */
   scale() {
@@ -26012,9 +25962,8 @@ var ObjectEffectStage = class {
     this.entries.set(objId, { runner: null, chains: [], plan: null, worldW, worldH, source });
   }
   /** 挂载某对象的效果链（线性链与具名 RT 图链一视同仁，计划交执行器执行）。调用顺序契约：
-   *  player 先在 loadSceneToThree 内建好隔离条目，stage 再挂链（Task 5 的接线顺序：
-   *  setWorldSize → setObjectChains）；找不到隔离条目说明契约被破坏 → 明确告警一次，
-   *  绝不静默丢弃，也绝不猜尺寸。 */
+   *  player 先在 loadSceneToThree 内建好隔离条目，stage 再挂链（setWorldSize → setObjectChains）；
+   *  找不到隔离条目说明契约被破坏 → 明确告警一次，绝不静默丢弃，也绝不猜尺寸。 */
   setObjectChains(objId, chains) {
     if (this.disposed) return;
     if (chains.length === 0) return;
@@ -26031,15 +25980,13 @@ var ObjectEffectStage = class {
   }
   /** 视口变化：按新的**屏幕密度**重算每个对象的 RT 像素尺寸，并用同一份链重挂（runner 内部 RT 跟随）。
    *  尺寸口径与挂载期**同源**：同一纯函数 isolatedRtSize + 同一口径（预算输入集合的差异见 AGENT.md §7.36）
-   *  ——若这里另写一套屏占位算术，任何一次 resize 都会把已升到 4096 的 RT 打回屏占位（违反只升不降）。
+   *  ——若这里另写一套屏占位算术，任何一次 resize 都会把 RT 打回屏占位（违反只升不降）。
    *  ⚠️ 参数是「设备像素 / 世界单位」这一个标量（object-range.screenScalePx 的返回值），**不是**
-   *  视口宽高预算：旧实现传 `视口 × dpr` 当预算，成了「第二处独立预算」——挂载期与 resize 期
-   *  各算一遍、输入不同源时任何一次 resize 都会把 RT 打回旧口径（3fd6b00「挂载期 RT 正确、
-   *  resize 后被覆盖」这一漏检类的同源地雷）。密度必须由调用方从**主相机同一套 cover 语义**
-   *  取得（three-renderer 用 player.screenScalePx()，见其 resize 回调）。
+   *  视口宽高预算：传 `视口 × dpr` 会成了「第二处独立预算」，输入不同源时任何一次 resize 都会把
+   *  RT 打回旧口径。密度必须由调用方从**主相机同一套 cover 语义**取得（three-renderer 用
+   *  player.screenScalePx()）。
    *  ⚠️ 遍历 `this.entries` 的**所有**条目（不按有无 runner 过滤）：只 setWorldSize 过、链尚未挂载
-   *  的隔离对象同样要随视口重设 RT，否则视口放大后它一直用旧的小 RT（偏糊）、
-   *  视口缩小时又一直占着旧的大 RT（超额显存）。 */
+   *  的隔离对象同样要随视口重设 RT，否则视口放大后一直用旧的小 RT（偏糊）、缩小时又占着旧的大 RT。 */
   onViewportResize(screenScale) {
     if (this.disposed) return;
     this.screenScale = screenScale;
@@ -26068,19 +26015,19 @@ var ObjectEffectStage = class {
       if (out) this.host.setObjectOutput(view.id, out);
     }
   }
-  /** 注入音频频谱源（A3，由 three-renderer 每帧刷新后转入）：效果链的音频 uniform 由它驱动。
-   *  null = 全零静音（无 sound / 音效开关关闭），行为与接线前一致。 */
+  /** 注入音频频谱源（由 three-renderer 每帧刷新后转入）：效果链的音频 uniform 由它驱动；
+   *  null = 全零静音（无 sound / 音效开关关闭）。 */
   setAudioSpectrum(source) {
     this.audioSpectrum = source;
   }
   /** 段边界（player 在消费者被绘制**之前**调用）：记下本帧快照，供**同一帧**的 advance 传进该对象的
    *  runner ⇒ 链内 `_rt_FullFrameBuffer` 拿到本帧内容（不是上一帧）。不在此发起 update：推进统一走
    *  advance 的串行锁（约束 3），每对象每帧恰好一次，g_Time 也沿用 advance 的时间。
-   *  `snapshotVersion` = **捕获当刻**的 `FrameCapture.snapshotVersion`；advance 把它连同纹理带进排队的
-   *  闭包，闭包**执行当刻**读宿主的实时代号比对（`snapshotStale`）—— 不一致说明快照已被 resize/dispose
-   *  换成新实例（旧的已 dispose），该对象的 update 按「无快照」（null）走。
+   *  `snapshotVersion` = **捕获当刻**的代号；advance 把它连同纹理带进排队的闭包，闭包**执行当刻**读
+   *  宿主的实时代号比对（`snapshotStale`）—— 不一致说明快照已被 resize/dispose 换成新实例（旧的已
+   *  dispose），该对象的 update 按「无快照」（null）走。
    *  ⚠️ 未清零的窗口：换代若正好落在 `runner.update` 内部 `await resolveTextureSlot(...)` 期间，这次
-   *  已经过校验的引用仍会被采样（极低频，见设计文档附录 A.4 ⑥）。 */
+   *  已经过校验的引用仍会被采样（极低频）。 */
   onSegmentBoundary(objectId, frameTexture, snapshotVersion) {
     if (this.disposed) return;
     const frameTex = frameTexture ?? this.host.captureFullFrame();
@@ -26286,7 +26233,7 @@ function rtOptions() {
     minFilter: LinearFilter,
     magFilter: LinearFilter,
     wrapS: ClampToEdgeWrapping,
-    // §5.19：RT 必须 CLAMP
+    // RT 必须 CLAMP（§5.19）
     wrapT: ClampToEdgeWrapping
   };
 }
@@ -29145,8 +29092,8 @@ var DynamicMeshRegistry = class {
     this.models.set(id, { capacity, layout, geometry, materialPath: spec.materialPath, count: 0 });
     return id;
   }
-  // renderOrder：宿主可传所属 scene.json 对象的数组下标（唯一绘制序，对齐 WE m_objectsByRenderOrder）；
-  // 缺省 1（生产侧映射未接线、延后）；脚本自建图层当前恒为 1 —— 层序唯一化只覆盖装配期对象。
+  // renderOrder：宿主可传所属 scene.json 对象的数组下标（唯一绘制序，对齐 WE `m_objectsByRenderOrder`）；
+  // 缺省 1（生产侧映射未接线）；脚本自建图层的层序唯一化只覆盖装配期对象。
   createLayer(modelId, name, renderOrder) {
     const model = this.models.get(modelId);
     if (!model) return -1;
@@ -29198,9 +29145,8 @@ var DynamicMeshRegistry = class {
   /**
    * 材质解析完成后回填：替换**所有已建**（以及后续新建）mesh 上该路径的材质。
    *
-   * 必须支持回填 —— 脚本在 init 期就调 createLayer，而材质 json 与 .tex 的解码是异步的，
-   * 早于它不可能完成；没有这条通道，所有网格都会永久停在兜底白图材质上（真机现象：
-   * 粒子渲染成一堆硬边白色方块）。
+   * ⚠️ 必须支持回填 —— 脚本在 init 期就调 createLayer，而材质 json 与 .tex 的解码是异步的，早于它不可能
+   * 完成；没有这条通道，所有网格都会永久停在兜底白图材质上。
    */
   setMaterialForPath(materialPath, material) {
     this.materialOverrides.set(materialPath, material);
@@ -29610,14 +29556,11 @@ function createThreeSceneRenderer(opts) {
               tex,
               blend: particleBlend(mat?.blending, specText),
               refract,
-              // 对象级 instanceoverride（原始 JSON；无覆盖 → undefined → 工厂传空串）。
-              // 由 wasm `CpuParticleSim` 按官方 OverrideSpawnProgram 语义应用：
-              // alpha/size/lifetime/speed 乘数 + color 覆盖 + emitter rate × count。
-              // （GTR 3743126786 烟柱 alpha=0.03 靠它才与桌面端一致。）
+              // 对象级 instanceoverride：由 wasm `CpuParticleSim` 按官方 OverrideSpawnProgram 语义应用
+              //（alpha/size/lifetime/speed 乘数 + color 覆盖 + emitter rate × count）。无覆盖 → undefined → 工厂传空串。
               overrideJson: obj.instanceOverrideJson
               // softness 缺省由 addParticle 按有无纹理推导（有纹理 0.15 / 无纹理 1.0，对齐 wasm
-              // particle_render SOFTNESS_* 语义）；此处不硬编码 0（无纹理白图兜底时硬边白方块
-              // 会叠成白斑、单个粒子被看作方块——Task5 回归「粒子可见但不过曝/不遮背景」）。
+              // particle_render SOFTNESS_*）；不得硬编码 0：无纹理白图兜底时硬边白方块会叠成白斑。
             });
           }
         }
@@ -29939,7 +29882,7 @@ function createThreeSceneRenderer(opts) {
       if (!currentAudio && lastAudioSpec) startAudio(lastAudioSpec.id, lastAudioSpec.sounds, true);
     },
     // 释放当前 three 播放器 + wasm 模拟器（切壁纸/卸载时防泄漏）。
-    // `frameCapture` 绑定创建它的 renderer：随本 renderer 的 dispose 一并释放（换 renderer 时已在 render 内换绑）。
+    // `frameCapture` 绑定创建它的 renderer（换 renderer 时已在 render 内换绑），随本 renderer 一并释放。
     dispose() {
       teardown();
       frameCapture?.dispose();

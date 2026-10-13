@@ -3,7 +3,7 @@ export interface GlowOptions {
     threshold?: number;
     strength?: number;
 }
-/** 缺省参数 = 2026-09-21 用户真机定档（低阈值保光晕、低强度压过曝；旧 A 档 0.65/1.0 在亮部多的壁纸上过曝，见 AGENT.md §7.1）。 */
+/** 缺省参数（低阈值保光晕、低强度压过曝；阈值过高会在亮部多的壁纸上过曝，见 AGENT.md §7.1）。 */
 export declare const GLOW_DEFAULTS: {
     readonly threshold: 0.65;
     readonly strength: 0.35;
@@ -17,8 +17,8 @@ export declare function glowLevelSizes(width: number, height: number): Array<{
 }>;
 export interface GlowStage {
     /**
-     * 跑一遍 Glow 链。`preRendered`（Task 3 段渲染）非空时**跳过自渲主场景**那一步，
-     * 直接把它当 base RT 做 bright-pass（调用方已把主场景写进该 RT，且它就是画布缓冲尺寸的段目标）。
+     * 跑一遍 Glow 链。`preRendered`（段渲染）非空时**跳过自渲主场景**那一步，直接把它当 base RT 做
+     * bright-pass（调用方已把主场景写进该 RT，且它就是画布缓冲尺寸的段目标）。
      */
     apply(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera, preRendered?: THREE.WebGLRenderTarget): void;
     resize(width: number, height: number): void;

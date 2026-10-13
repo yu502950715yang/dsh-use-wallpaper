@@ -14,9 +14,8 @@ export declare function slotBoundByBind(bindings: readonly {
     slot: number;
 }[], slot: number): boolean;
 /** 该 pass 是否**真的**会采样整帧快照：`textures[j] = _rt_FullFrameBuffer` 且该槽未被 bind 覆盖。
- *  ⚠️ bind 的**唯一来源必须是执行计划的 `pp.bindings`**（`update` 的槽绑定读的就是它）：原始
- *  `pass.bind` 里未解析名字的 bind 会被 `buildEffectPlan` 丢弃，那种形态下 `update` 实际绑的是
- *  `textureSlots[j]` —— 读 `pass.bind` 会对同一 pass 给出相反结论（两套来源，已废弃）。 */
+ *  ⚠️ bind 的**唯一来源必须是执行计划的 `pp.bindings`**（`update` 的槽绑定读的就是它）：未解析名字的
+ *  bind 会被 `buildEffectPlan` 丢弃，读 `pass.bind` 会对同一 pass 给出相反结论。 */
 export declare function passSamplesFrameSnapshot(pass: CompiledEffectPass, bindings: readonly {
     slot: number;
 }[]): boolean;
@@ -78,7 +77,7 @@ export declare class EffectRunner {
         load?: EffectTexLoader;
     });
     /** 挂载带具名 RT 的效果计划：建具名 RT 池 + 清材质缓存。**只允许在加载期 / resize 重挂期调用**（帧内不得建 RT，§5.11）。
-     *  材质与 1×1 探针编译不在本方法内 —— 仍由首个 update 帧的 getMaterial 懒建（帧内首次编译有停顿）。 */
+     *  材质与 1×1 探针编译不在本方法内 —— 仍由首个 update 帧的 getMaterial 懒建。 */
     setPlan(plan: EffectPlan, chains: CompiledEffectPass[][], wallpaperId: string, opts?: {
         width?: number;
         height?: number;
@@ -97,8 +96,7 @@ export declare class EffectRunner {
     private disposeMaterials;
     /** 纹理槽缓存清理：**只释放本实例加载的纹理**，跳过模块级共享纹理（`BUILTIN_CACHE` /
      *  `EMPTY_SLOT_CACHE` —— 其它 runner 仍在复用，误释放会让它们采样到已删除的纹理）。
-     *  只 `.clear()` 不 dispose 会漏掉 `deleteTexture` ⇒ **同一 WebGL 上下文内**每次 resize 重挂链
-     *  泄漏该壁纸全部效果槽纹理（真机实测 +28 张/次，见 AGENT.md §7.13）。 */
+     *  ⚠️ 只 `.clear()` 不 dispose 会漏掉 `deleteTexture` ⇒ 每次 resize 重挂链泄漏该壁纸全部效果槽纹理。 */
     private clearTextures;
     private getMaterial;
     private fillAudioUniforms;
