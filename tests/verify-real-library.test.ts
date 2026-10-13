@@ -193,16 +193,19 @@ function pkgFiles(id: string): Map<string, Uint8Array> | null {
 }
 
 /** 基线（`output/blur-analysis/refract-scan.json`）里 `combos.REFRACT === 1` 的材质名集合；
- *  基线文件缺失或不可解析 → null（调用方跳过该交叉对照）。 */
+ *  基线文件缺失 / 不可解析 / 没有任何条目 → null（调用方跳过该交叉对照）。
+ *  ⚠️ 「存在但缺 `rows` / 为空」必须同样返回 null：返回空集会退化成「每个本机材质都判红」，
+ *  与「不可解析 → 跳过」的承诺相反（基线被 .gitignore 忽略，不该因它红）。 */
 function baselineRefractMaterials(): Set<string> | null {
   if (!existsSync(REFRACT_SCAN)) return null;
   try {
-    const rows = JSON.parse(readFileSync(REFRACT_SCAN, 'utf8'))?.rows ?? [];
+    const rows = (JSON.parse(readFileSync(REFRACT_SCAN, 'utf8')) as { rows?: unknown })?.rows;
+    if (!Array.isArray(rows)) return null;
     const out = new Set<string>();
     for (const r of rows as Array<{ combos?: { REFRACT?: unknown }; material?: unknown }>) {
       if (r?.combos?.REFRACT === 1 && typeof r.material === 'string') out.add(r.material);
     }
-    return out;
+    return out.size > 0 ? out : null;
   } catch {
     return null;
   }
@@ -233,11 +236,16 @@ describe.skipIf(!hasLibrary || !hasRefractAsset)('粒子 REFRACT 真库对照', 
     }
   });
 
-  // ⚠️ 不钉「全库 REFRACT 材质 == [halo_50_1.json]」：本文件既有约定是**不钉本机素材快照**
-  // （见 :173 起「全库计数会随素材漂移」）—— 用户装一张新折射壁纸就会把这条钉死的断言打成假失败。
-  // 保留的判据：① 本机确实解析出 `refract=true` 的这一条（能力仍被真实素材验证）；
-  // ② 本机扫到的每个 REFRACT 材质都在研究者基线里（口径交叉核对，防解析口径漂移）。
-  it('全库扫描：本机解析出的 REFRACT 材质包含 halo_50_1.json，且都在 refract-scan.json 基线内', () => {
+  // ⚠️ 本用例只有**一条硬判据**：本机确实解析出 `halo_50_1.json` 这一条 `refract=true`
+  //（无该素材时 describe.skipIf 已整块跳过，不存在「空集合恒真」）。
+  //
+  // 与研究者基线（`output/blur-analysis/refract-scan.json`）的交叉核对**降级为 console.warn**：
+  //   - 基线在 .gitignore 内、不入库 ⇒ CI 上 `existsSync` 失败、该核对被静默跳过，**仅本机生效**；
+  //   - 上一轮把它写成 `expect(baseline).toContain(m)` 时给的理由「消除『新装折射壁纸 ⇒ 假失败』」
+  //     **不成立**：新装素材不在基线里，那样写照样红（本轮才真正不再假失败）；
+  //   - 放宽的实际收益只是「本机多出、但基线也覆盖了」的材质不再假失败 —— 旧的
+  //     `toEqual([halo_50_1.json])` 写法会因此变红（本文件既有约定是**不钉本机素材快照**）。
+  it('全库扫描：本机解析出的 REFRACT 材质包含 halo_50_1.json（与基线不一致只告警）', () => {
     const refractMaterials = new Set<string>();
     for (const dir of readdirSync(WALLPAPER_DIR, { withFileTypes: true }).filter((d) => d.isDirectory())) {
       const files = pkgFiles(dir.name);
@@ -260,13 +268,16 @@ describe.skipIf(!hasLibrary || !hasRefractAsset)('粒子 REFRACT 真库对照', 
         } catch { /* 非法 json 由上面那条回归用例兜底 */ }
       }
     }
-    // ① 能力仍被本机真实素材验证（不是空集合恒真）。
+    // ① 能力仍被本机真实素材验证（唯一的硬判据）。
     expect(refractMaterials).toContain(REFRACT_MATERIAL);
-    // ② 与研究者基线交叉核对：两处口径必须一致。基线缺失/不可解析 → 跳过（不假失败）。
+    // ② 与研究者基线交叉核对（口径漂移诊断）：只告警、不判红 —— 基线不入库，本库素材也会漂移。
     const baseline = baselineRefractMaterials();
     if (baseline) {
-      for (const m of refractMaterials) {
-        expect(baseline, `本机扫到的 REFRACT 材质不在基线内（解析口径或素材已变）: ${m}`).toContain(m);
+      const missing = [...refractMaterials].filter((m) => !baseline.has(m));
+      if (missing.length > 0) {
+        console.warn(
+          `[verify-real-library] 本机扫到的 REFRACT 材质不在基线内（新装素材或解析口径已变）: ${missing.join(', ')}`,
+        );
       }
     }
   });

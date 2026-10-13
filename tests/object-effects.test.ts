@@ -128,8 +128,8 @@ import { vi } from 'vitest';
 // 「纹理槽加载器按 WE v 约定注入」这条接线。
 const runnerCtorArgs = vi.hoisted(() => [] as unknown[][]);
 vi.mock('../src/client/effect-runner.js', async (importOriginal) => {
-  // 纯函数（如 passSamplesFrameSnapshot）保持**真实实现**：段边界消费者的判定口径必须与生产同源，
-  // 在 mock 里另写一份会在两侧漂移时仍然全绿。
+  // 纯函数（如 planSamplesFrameSnapshot / slotBoundByBind）保持**真实实现**：段边界消费者的判定
+  // 口径必须与生产同源（同一份计划 `pp.bindings`），在 mock 里另写一份会在两侧漂移时仍然全绿。
   const actual = await importOriginal<typeof import('../src/client/effect-runner.js')>();
   class EffectRunner {
     constructor(...args: unknown[]) { runnerCtorArgs.push(args); }
@@ -163,7 +163,10 @@ function createMockRunner() {
   return runner;
 }
 
-function createHost(entries: Array<{ id: number; rtWidth: number; rtHeight: number }>) {
+function createHost(
+  entries: Array<{ id: number; rtWidth: number; rtHeight: number }>,
+  opts: { frameSnapshotVersion?: () => number } = {},
+) {
   const outputs = new Map<number, THREE.Texture>();
   const resized: Array<{ id: number; w: number; h: number }> = [];
   const frameConsumers: number[] = [];
@@ -191,6 +194,9 @@ function createHost(entries: Array<{ id: number; rtWidth: number; rtHeight: numb
     },
     // Task 5：段边界通知未携带纹理时编排器的拉取入口（缺省 null = 无快照）。
     captureFullFrame: (): THREE.Texture | null => null,
+    // Task 6：快照代号的实时读取入口（真 player 返回 FrameCapture.snapshotVersion）；不传 = 宿主
+    // 不提供代号 ⇒ 编排器退回「不因版本作废」（与接线前同语义）。
+    frameSnapshotVersion: opts.frameSnapshotVersion,
     // Task 5：引用整帧快照的链会把自己登记为段边界消费者（player 的既有公开方法）。
     registerFrameConsumer: (objectId: number) => { frameConsumers.push(objectId); },
     _outputs: outputs,
@@ -454,10 +460,11 @@ describe('ObjectEffectStage', () => {
 
   // resize 与异步 update 竞争：`FrameCapture.resize()` 会 dispose 旧快照并重建新实例
   //（FramebufferTexture 无 setSize），而快照此时可能已在串行队列里排队 —— 执行当刻再采它
-  // 就是采一张已释放的纹理（该对象整块黑一帧）。判据：作废后该帧按「无快照」走（null），
-  // 而不是把旧引用传进 runner。
-  it('resize 作废在途快照：排队的 update 执行当刻按「无快照」走，不采已释放纹理', async () => {
-    const host = createHost([{ id: 1, rtWidth: 10, rtHeight: 10 }]);
+  // 就是采一张已释放的纹理（该对象整块黑一帧）。判据 = **执行当刻**读实时快照代号（宿主提供）
+  // 与捕获当刻记录的代号比较，不一致即按「无快照」走（null），而不是把旧引用传进 runner。
+  it('resize 换代（实时代号变了）⇒ 排队中的 update 执行当刻按「无快照」走，不采已释放纹理', async () => {
+    let live = 0; // 宿主（= player.frameSnapshotVersion()）读到的实时快照代号
+    const host = createHost([{ id: 1, rtWidth: 10, rtHeight: 10 }], { frameSnapshotVersion: () => live });
     const stage = new ObjectEffectStage(host as never, { wallpaperId: 'w', screenScale: 1 });
     const resolvers: Array<() => void> = [];
     const frameTexArgs: unknown[] = [];
@@ -474,21 +481,65 @@ describe('ObjectEffectStage', () => {
     };
     stage.debugInjectRunner(1, runner as never);
     const snapshotA = new THREE.Texture();
-    stage.onSegmentBoundary(1, snapshotA, 0); // 本帧快照代号 0
-    stage.advance(1);                          // 第一帧的 update 在途（未 settle）
+    stage.onSegmentBoundary(1, snapshotA, live); // 第一帧：捕获当刻代号 0
+    stage.advance(1);                            // 第一帧的 update 在途（未 settle）
     expect(frameTexArgs).toEqual([snapshotA]);
-    expect(runner.update.mock.calls[0][0]).toBe(1);
-    // 异步 update 未归，第二帧的推进排在队尾；此时 resize：快照被重建（代号 1）、旧引用已 dispose。
-    const snapshotB = new THREE.Texture();
-    stage.onSegmentBoundary(1, snapshotB, 1);
-    stage.advance(2);
+    stage.onSegmentBoundary(1, snapshotA, live); // 第二帧仍用这一张（代号还是 0）
+    stage.advance(2);                            // 排在队尾（第一帧未归）
     expect(runner.update).toHaveBeenCalledTimes(1);
-    stage.notifyViewportResize(); // 画布缓冲变化：作废在途快照
-    resolvers[0]();               // 第一帧 settle ⇒ 排队的第二帧开始执行
+    live = 1; // resize：FrameCapture 重建快照纹理（旧的那张已 dispose）⇒ 实时代号抬到 1
+    stage.notifyViewportResize();
+    resolvers[0](); // 第一帧 settle ⇒ 排队的第二帧开始执行
     await new Promise((r) => setTimeout(r, 0));
     expect(runner.update).toHaveBeenCalledTimes(2);
     expect(runner.update.mock.calls[1][0]).toBe(2);
-    expect(frameTexArgs[1]).toBeNull(); // 作废后不把旧快照传进链
+    expect(frameTexArgs[1]).toBeNull(); // 执行当刻代号不一致 ⇒ 不把已释放的快照传进链
+  });
+
+  // Minor 1：判据只能是「真的换代」。只是**排到下一帧**执行的 update 必须照常拿到快照
+  //（旧实现按「段边界世代」比较，会把这类 runner 一并作废 —— 快照白丢一帧）。
+  it('只是排到下一帧（实时代号未变）⇒ 快照照常传进链，不被误伤作废', async () => {
+    let live = 0;
+    const host = createHost([{ id: 1, rtWidth: 10, rtHeight: 10 }], { frameSnapshotVersion: () => live });
+    const stage = new ObjectEffectStage(host as never, { wallpaperId: 'w', screenScale: 1 });
+    const resolvers: Array<() => void> = [];
+    const frameTexArgs: unknown[] = [];
+    const runner = {
+      setChains: vi.fn(),
+      setPlan: vi.fn(),
+      setAudioSpectrumSource: vi.fn(),
+      update: vi.fn((_t: number, _input: unknown, frameTex: unknown = null) => {
+        frameTexArgs.push(frameTex);
+        return new Promise<null>((resolve) => resolvers.push(() => resolve(null)));
+      }),
+      lastOutput: vi.fn(() => null),
+      dispose: vi.fn(),
+    };
+    stage.debugInjectRunner(1, runner as never);
+    const snapshotA = new THREE.Texture();
+    stage.onSegmentBoundary(1, snapshotA, live);
+    stage.advance(1);                            // 在途
+    stage.onSegmentBoundary(1, snapshotA, live); // 代号未变（没有 resize）
+    stage.advance(2);                            // 排队
+    resolvers[0]();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(runner.update).toHaveBeenCalledTimes(2);
+    expect(frameTexArgs[1]).toBe(snapshotA); // 落后一帧 ≠ 换代：快照不得被丢
+    expect(live).toBe(0);
+  });
+
+  // `notifyViewportResize()` 的真实职责：作废**尚未被 advance 消费**的本帧快照
+  //（已被 advance 带进闭包的那份由上面的实时代号比对兜底）。用例故意让宿主不提供代号，
+  // 从而只剩这一条防线 —— 它必须真的起作用，不能是可省略的装饰。
+  it('resize 落在「段边界通知」与「advance」之间 ⇒ 未消费的假快照被丢弃（不发进链）', () => {
+    const host = createHost([{ id: 1, rtWidth: 10, rtHeight: 10 }]); // 宿主不提供代号
+    const stage = new ObjectEffectStage(host as never, { wallpaperId: 'w', screenScale: 1 });
+    const runner = createMockRunner();
+    stage.debugInjectRunner(1, runner as never);
+    stage.onSegmentBoundary(1, new THREE.Texture()); // 记号入表
+    stage.notifyViewportResize();                    // resize 在 advance 之前落地（旧快照已 dispose）
+    stage.advance(1);
+    expect(runner.update.mock.calls[0][2]).toBeNull();
   });
 
   // ── Task 5：引用 `_rt_FullFrameBuffer` 的链必须把该对象登记为段边界消费者 ──
@@ -514,6 +565,11 @@ describe('ObjectEffectStage', () => {
     expect(referencesFrameSnapshot([
       [pass({ textureSlots: [null, '_rt_FullFrameBuffer'], bind: [{ index: 1, name: 'previous' }] })],
     ])).toBe(false);
+    // 未解析名字的 bind 会被计划丢弃 ⇒ update 实际绑的仍是 `textureSlots[1]`（快照），故必须判 true。
+    // 旧口径读原始 `pass.bind` ⇒ 同一 pass 判 false，与 update 分叉（本库 0 实例，靠这条钉住）。
+    expect(referencesFrameSnapshot([
+      [pass({ textureSlots: [null, '_rt_FullFrameBuffer'], bind: [{ index: 1, name: '_rt_NotDeclared' }] })],
+    ])).toBe(true);
   });
 
   it('onViewportResize 按新屏幕密度等比重设 RT 尺寸（缩小→放大可逆；计划随新尺寸重建）', () => {

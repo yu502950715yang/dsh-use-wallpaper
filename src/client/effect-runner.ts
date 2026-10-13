@@ -66,13 +66,33 @@ export function isFrameSnapshotPath(path: string | null | undefined): boolean {
   return !!path && path.replace(/\.tex$/, '') === FRAME_SNAPSHOT_RT;
 }
 
+/** 该纹理槽是否被**计划里的** bind 覆盖（覆盖 ⇒ `update` 实际绑的是 bind 的源，不是 `textureSlots[slot]`）。
+ *  「谁引用了整帧快照」的判定与实际槽绑定共用本函数 ⇒ 两处口径不可能分叉。 */
+export function slotBoundByBind(bindings: readonly { slot: number }[], slot: number): boolean {
+  return bindings.some((b) => b.slot === slot);
+}
+
 /** 该 pass 是否**真的**会采样整帧快照：`textures[j] = _rt_FullFrameBuffer` 且该槽未被 bind 覆盖。
- *  口径必须与 update 的槽绑定一致（bind 覆盖时用的是 bind 的源）⇒ 判定结果 = 「有快照才有意义」。 */
-export function passSamplesFrameSnapshot(pass: CompiledEffectPass): boolean {
+ *  ⚠️ bind 的**唯一来源必须是执行计划的 `pp.bindings`**（`update` 的槽绑定读的就是它）：原始
+ *  `pass.bind` 里未解析名字的 bind 会被 `buildEffectPlan` 丢弃，那种形态下 `update` 实际绑的是
+ *  `textureSlots[j]` —— 读 `pass.bind` 会对同一 pass 给出相反结论（两套来源，已废弃）。 */
+export function passSamplesFrameSnapshot(
+  pass: CompiledEffectPass,
+  bindings: readonly { slot: number }[],
+): boolean {
   // `?? []`：缺字段（早于该字段构造的 pass）退回既有口径，不抛异常（同 effectSlotCount 的护栏）。
   return (pass.textureSlots ?? []).some(
-    (slot, j) => isFrameSnapshotPath(slot) && !(pass.bind ?? []).some((b) => b.index === j),
+    (slot, j) => isFrameSnapshotPath(slot) && !slotBoundByBind(bindings, j),
   );
+}
+
+/** 该对象是否引用整帧快照（判定完全基于执行计划）：任一**计划内** pass 会采样它 ⇒ 该对象就是段边界
+ *  消费者。计划里没有的 pass（`droppedChains`）不算 —— 它们不会执行。 */
+export function planSamplesFrameSnapshot(chains: CompiledEffectPass[][], plan: EffectPlan): boolean {
+  return plan.passes.some((pp) => {
+    const p = chains[pp.chainIndex]?.[pp.passIndex];
+    return p !== undefined && passSamplesFrameSnapshot(p, pp.bindings);
+  });
 }
 
 // 快照不可用只告警一次（模块级）：每壁纸 / 每帧都刷会淹没日志。
@@ -767,7 +787,7 @@ export class EffectRunner {
           const key = `${pp.chainIndex}:${pp.passIndex}:${j}`;
           // 该槽被本 pass 的 bind 覆盖时实际用的是 bind 的源（真实库 _rt_imageLayerComposite_*_a/_b
           // 共 6 处均如此）⇒ 不拦截、不告警，否则是误导性告警。
-          const boundByBind = pp.bindings.some((b) => b.slot === j);
+          const boundByBind = slotBoundByBind(pp.bindings, j);
           if (path && !boundByBind) {
             // 段边界快照（design §3.5）：`_rt_FullFrameBuffer` 有本帧快照就直接绑它 ——
             // 内容 = 该消费者被绘制**之前**本帧已画的内容（不是上一帧，也不是 1×1 白）。

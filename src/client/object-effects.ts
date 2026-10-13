@@ -11,7 +11,7 @@
 import type * as THREE from 'three';
 import { fitIsolatedBudget, isolatedRtSize } from './object-range.js';
 import type { SourcePixels } from './object-range.js';
-import { EffectRunner, passSamplesFrameSnapshot } from './effect-runner.js';
+import { EffectRunner, planSamplesFrameSnapshot } from './effect-runner.js';
 import type { EffectTexLoader } from './effect-runner.js';
 import { loadTexTexture } from './tex-loader.js';
 import type { CompiledEffectPass } from './shader/effect-chain.js';
@@ -39,10 +39,13 @@ export interface ObjectEffectStage {
   /** 主场景渲染之后：串行推进 runner.update（异步，不阻塞本帧）。 */
   advance(time: number): void;
   /** 段边界（消费者被绘制**之前**）同步通知：该对象的链本帧用这张整帧快照（design §3.5）。
-   *  未携带纹理时向宿主拉取；player 侧的同名接口把本方法记为可选（玩家可不实现）。
-   *  `snapshotVersion` 是 FrameCapture 的快照代号：排队的 update 执行前比对，不一致即丢弃
-   *  （resize/dispose 会把快照换成新实例，旧引用已 dispose ⇒ 采它会把该对象整块画黑）。 */
+   *  未携带纹理时向宿主拉取（`ObjectEffectHost.captureFullFrame()`）。
+   *  `snapshotVersion` = 捕获当刻的 `FrameCapture.snapshotVersion`：排队的 update 在**执行当刻**
+   *  与宿主提供的实时代号比较，不一致即按「无快照」走（resize/dispose 会重建快照，旧引用已 dispose）。 */
   onSegmentBoundary(objectId: number, frameTexture?: THREE.Texture | null, snapshotVersion?: number): void;
+  /** 画布缓冲/视口变化：作废**尚未被 advance 消费**的本帧快照（`FrameCapture.resize()` 会 dispose
+   *  旧快照并重建）。已被 advance 带进闭包的那份由执行当刻的实时代号比较兜底。 */
+  notifyViewportResize(): void;
 }
 
 // 线性可执行判定（spec §5.1）：链中每个 pass 都不写具名 RT，且 bind 与 EffectRunner 的
@@ -58,9 +61,12 @@ export interface ObjectEffectStage {
 // 具名 RT 图链（blur / blurprecise / godrays / bloom / shine / localcontrast / bokeh_blur）
 // 由 effect-graph 的 RT 图计划执行；本判定只作分类/回归口径用，生产路径不再按它跳过。
 /** 该对象是否引用整帧快照（任一链的任一 pass 真的会采样它）⇒ 它就是段边界消费者（§3.2/§3.5）。
- *  被 bind 覆盖的槽不算（那种情况执行器用的是 bind 的源，快照对它无意义）。 */
-export function referencesFrameSnapshot(chains: CompiledEffectPass[][]): boolean {
-  return chains.some((chain) => chain.some((p) => passSamplesFrameSnapshot(p)));
+ *  判定走**执行计划**（`plan.passes` + `pp.bindings`）—— 与 `EffectRunner.update` 的槽绑定同源；
+ *  不得改读原始 `pass.bind`：未解析名字的 bind 会被计划丢弃，那种形态下 update 实际绑的是
+ *  `textureSlots[j]`（两套口径会对同一 pass 给出相反结论）。 */
+export function referencesFrameSnapshot(chains: CompiledEffectPass[][], plan?: EffectPlan): boolean {
+  // 缺省自建一份计划（尺寸只用于具名 RT 的分配，与「哪个槽会被采样」无关）；调用方已有计划时应传入。
+  return planSamplesFrameSnapshot(chains, plan ?? buildEffectPlan(chains, { baseWidth: 1, baseHeight: 1 }));
 }
 
 export function isLinearEffectChain(passes: CompiledEffectPass[]): boolean {
@@ -109,6 +115,10 @@ export interface ObjectEffectHost {
   resizeObjectRT(id: number, width: number, height: number): void;
   /** 段边界快照的拉取入口（§3.5）：拍一张「到此刻为止已绘制内容」；无 FrameCapture / 未激活 → null。 */
   captureFullFrame(): THREE.Texture | null;
+  /** 快照代号的**实时**读取入口（= `FrameCapture.snapshotVersion`）：排队的 update 在**执行当刻**
+   *  读它，与捕获当刻记录的代号比较，不一致即按「无快照」走。无 FrameCapture 时返回 -1。
+   *  未实现 ⇒ 无从比较（退回「不因版本作废」，与接线前同语义）。 */
+  frameSnapshotVersion?(): number;
   /** 把该对象登记为段边界消费者（player 的既有公开方法）：登记后 frameCapture 才会 active
    *  ⇒ 段渲染与其段边界快照才会发生（不登记 ⇒ 本对象的链永远拿不到快照）。 */
   registerFrameConsumer(objectId: number): void;
@@ -142,14 +152,8 @@ export class ObjectEffectStage implements ObjectEffectStage {
   private queue: Array<() => unknown> = [];
   /** 去重告警集合（按 key 只打印一次，防每帧刷屏）。 */
   private warned = new Set<string>();
-  /** 本帧各对象在段边界拿到的整帧快照（键 = 对象 id）——advance 消费后清空（快照逐帧覆盖）。 */
-  private boundarySnapshots = new Map<number, THREE.Texture>();
-  /** 段边界世代：每次记录快照时自增，排队的 update 执行前比对、不一致即丢弃（见 advance）。 */
-  private boundaryGeneration = 0;
-  /** 已作废到哪一个「快照代号」（视口变化 / FrameCapture 换实例时抬到当前代号 ⇒ 在途任务全部失效）。 */
-  private staleAtCaptureVersion = 0;
-  /** 最近一次段边界收到的快照代号（= FrameCapture.snapshotVersion；未携带时保持不动）。 */
-  private captureVersion = 0;
+  /** 本帧各对象在段边界拿到的整帧快照 + **捕获当刻**的快照代号（advance 消费后清空，快照逐帧覆盖）。 */
+  private boundarySnapshots = new Map<number, { texture: THREE.Texture; version: number }>();
   /** 音频频谱源（A3）：每帧同一缓冲引用；null = 全零静音（无音频/音效关闭）。 */
   private audioSpectrum: Uint8Array | null = null;
 
@@ -199,8 +203,10 @@ export class ObjectEffectStage implements ObjectEffectStage {
     // 引用整帧快照的链 ⇒ 该对象必须成为段边界消费者：不登记则 frameCapture 不 active、段渲染不开启、
     // 段边界快照永不发生 ⇒ `_rt_FullFrameBuffer` 只能退回白图（本任务的目标消费者 2597392171 obj#50）。
     // 惰性：不引用的对象不登记（帧序与现状逐字一致）。顺序契约：player 已注入 FrameCapture（生产链路如此）。
-    if (referencesFrameSnapshot(chains)) this.host.registerFrameConsumer(objId);
-    this.mount(objId, chains, view.rtWidth, view.rtHeight);
+    // 判定与执行共用**同一份计划**（`pp.bindings` 为唯一来源，见 referencesFrameSnapshot）。
+    const plan = buildEffectPlan(chains, { baseWidth: view.rtWidth, baseHeight: view.rtHeight });
+    if (referencesFrameSnapshot(chains, plan)) this.host.registerFrameConsumer(objId);
+    this.mount(objId, chains, view.rtWidth, view.rtHeight, plan);
   }
 
   /** 视口变化：按新的**屏幕密度**重算每个对象的 RT 像素尺寸，并用同一份链重挂（runner 内部 RT 跟随）。
@@ -265,17 +271,26 @@ export class ObjectEffectStage implements ObjectEffectStage {
   /** 段边界（player 在消费者被绘制**之前**调用）：记下本帧快照，供**同一帧**的 advance 传进该对象的
    *  runner ⇒ 链内 `_rt_FullFrameBuffer` 拿到本帧内容（不是上一帧）。不在此发起 update：推进统一走
    *  advance 的串行锁（约束 3），每对象每帧恰好一次，g_Time 也沿用 advance 的时间。
-   *  `snapshotVersion` = FrameCapture 的快照代号：与入队读到的不一致 ⇒ 快照已被 resize 换成新实例
-   *  （旧的那张已 dispose），该对象的 update 按「无快照」（null）走，绝不采已释放纹理。 */
+   *  `snapshotVersion` = **捕获当刻**的 `FrameCapture.snapshotVersion`；advance 把它连同纹理带进排队的
+   *  闭包，闭包**执行当刻**读宿主的实时代号比对（`snapshotStale`）—— 不一致说明快照已被 resize/dispose
+   *  换成新实例（旧的已 dispose），该对象的 update 按「无快照」（null）走。
+   *  ⚠️ 未清零的窗口：换代若正好落在 `runner.update` 内部 `await resolveTextureSlot(...)` 期间，这次
+   *  已经过校验的引用仍会被采样（极低频，见设计文档附录 A.4 ⑥）。 */
   onSegmentBoundary(objectId: number, frameTexture?: THREE.Texture | null, snapshotVersion?: number): void {
     if (this.disposed) return;
     const frameTex = frameTexture ?? this.host.captureFullFrame(); // 未携带纹理 → 向宿主拉取
     if (!frameTex) return; // 无快照：该对象本帧的 frameTexture 保持 null（既有语义）
-    if (snapshotVersion !== undefined) this.captureVersion = snapshotVersion;
-    // 新快照入手 ⇒ 抬到新一代，之前排队的 update（含上一帧的）一律作废。
-    this.boundaryGeneration++;
-    this.staleAtCaptureVersion = this.captureVersion;
-    this.boundarySnapshots.set(objectId, frameTex);
+    // 代号：player 携带的最权威；未携带时读一次实时值；宿主也不提供 ⇒ -1（无从比较，不作废）。
+    const version = snapshotVersion ?? this.host.frameSnapshotVersion?.() ?? -1;
+    this.boundarySnapshots.set(objectId, { texture: frameTex, version });
+  }
+
+  /** 执行当刻判「快照已换代」：实时代号 ≠ 捕获当刻代号 ⇒ 快照纹理已被 resize/dispose 换掉。
+   *  `-1`（宿主未提供代号）不作废 —— 无从比较时按既有语义照常使用。 */
+  private snapshotStale(versionAtCapture: number): boolean {
+    if (versionAtCapture < 0) return false;
+    const live = this.host.frameSnapshotVersion?.();
+    return live !== undefined && live !== versionAtCapture;
   }
 
   /** 主场景渲染之后：串行推进各 runner 的 update（异步，不阻塞本帧；见类头约束 3）。 */
@@ -286,30 +301,26 @@ export class ObjectEffectStage implements ObjectEffectStage {
       if (!runner) continue;
       runner.setAudioSpectrumSource(this.audioSpectrum); // 每帧注入同一引用（无音频时 null）
       // 本帧段边界拍下的快照（若有）随本次 update 交给链；无则 null（不引用快照的链逐字不变）。
-      const frameTex = this.boundarySnapshots.get(view.id) ?? null;
-      // 快照可能在**入队之后**被 resize 作废（FrameCapture 重建快照纹理、旧的已 dispose）：
-      // 把世代带进闭包，执行当刻再比对一次 —— 作废后该 runner 这一帧走「无快照」（既有 null
-      // 语义、链退回 1×1 白），而不是采样已释放的纹理（那会把该对象整块画黑）。
-      const generation = this.boundaryGeneration;
+      const item = this.boundarySnapshots.get(view.id) ?? null;
+      // 快照可能在**入队之后**被 resize/dispose 作废（FrameCapture 重建快照纹理、旧的已 dispose）：
+      // 把捕获当刻的代号带进闭包，执行当刻读实时值再比一次 —— 不一致就按「无快照」（既有 null
+      // 语义、链退回 1×1 白）走，而不是采已释放的纹理（那会把该对象整块画黑）。
+      // 判据只看**真的换代**（代号变），不随段边界/帧序自增 ⇒ 只是排到下一帧执行的 update 不受影响。
       this.enqueue(() => runner.update(
         time,
         view.rtTexture,
-        this.staleAtCaptureVersion === this.captureVersion && this.boundaryGeneration === generation
-          ? frameTex
-          : null,
+        item !== null && !this.snapshotStale(item.version) ? item.texture : null,
       ));
     }
     // 快照内容逐帧覆盖 ⇒ 只能本帧用：清空后下一帧无边界通知时回到 null（不跨帧持有）。
     this.boundarySnapshots.clear();
   }
 
-  /** 画布缓冲/视口变化：FrameCapture 会重建快照纹理（旧引用已 dispose）⇒ 作废在途快照。
-   *  在途 update 的闭包按世代自查（见 advance），此处只抬作废水位。 */
+  /** 画布缓冲/视口变化：`FrameCapture.resize()` 会 dispose 旧快照并重建 ⇒ 作废**尚未被 advance 消费**
+   *  的本帧快照（已被 advance 带进闭包的那份，由执行当刻的实时代号比较兜底，见 advance）。 */
   notifyViewportResize(): void {
     if (this.disposed) return;
     this.boundarySnapshots.clear();
-    this.staleAtCaptureVersion = this.captureVersion;
-    this.boundaryGeneration++;
   }
 
   dispose(): void {
@@ -383,7 +394,9 @@ export class ObjectEffectStage implements ObjectEffectStage {
     this.busy = false;
   }
 
-  private mount(objId: number, chains: CompiledEffectPass[][], rtW: number, rtH: number): void {
+  /** `plan` 由调用方传入（`setObjectChains` 已按同一尺寸算过一份，且用它判定过消费者）：
+   *  再算一遍会让「判定用的计划」与「执行用的计划」可能分叉。 */
+  private mount(objId: number, chains: CompiledEffectPass[][], rtW: number, rtH: number, plan: EffectPlan): void {
     let entry = this.entries.get(objId);
     if (!entry) {
       // 反向从实测 RT 像素推世界尺寸（仅在 setWorldSize 未先行时兜底）；源尺寸未知 ⇒ null（回退屏占位）。
@@ -393,7 +406,7 @@ export class ObjectEffectStage implements ObjectEffectStage {
     // setWorldSize 可能已先建条目（three-renderer 的顺序是 setWorldSize → setObjectChains），
     // 此时保留其世界尺寸，不被 RT 尺寸/密度反推覆盖。
     entry.chains = chains;
-    entry.plan = buildEffectPlan(chains, { baseWidth: rtW, baseHeight: rtH });
+    entry.plan = plan;
     if (!entry.runner) {
       // 纹理槽按 WE 约定加载（v=0=图像顶部，与对象 RT 的 v 约定同一套，见 weVRowOrderLoader）。
       entry.runner = new EffectRunner(this.host.renderer, rtW, rtH, { load: weVRowOrderLoader() });

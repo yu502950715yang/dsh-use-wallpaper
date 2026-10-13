@@ -19,8 +19,8 @@ export interface FrameCapture {
   capture(): THREE.Texture;
   /**
    * 快照实例的代号：`resize()` 重建快照纹理 / `dispose()` 时自增。
-   * 消费方（effect-runner 的异步串行队列）在**用**快照前比对代号即可丢弃已作废的引用
-   * —— resize 会 dispose 旧快照，仍持有它的 update 会采到空纹理 ⇒ 该帧整块黑。
+   * 消费方（对象效果链的异步串行队列）在**执行当刻**读它（`ObjectEffectHost.frameSnapshotVersion()`），
+   * 与**捕获当刻**记录的代号比较：不一致即说明手里那张已被 dispose，该帧按「无快照」走。
    */
   readonly snapshotVersion: number;
   /** 同步 target 与快照尺寸；尺寸变化会重建快照纹理（FramebufferTexture 无 setSize），旧引用作废。 */

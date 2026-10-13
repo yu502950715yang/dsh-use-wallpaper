@@ -595,9 +595,10 @@ export interface ObjectEffectStage {
   bindOutputs(): void;
   advance(time: number): void;
   /** 段边界（消费者被绘制**之前**）同步通知：该对象的效果链本帧用这张整帧快照（design §3.5）。
-   *  `snapshotVersion` = FrameCapture 的快照代号，供消费方丢弃 resize 之后已作废的引用。 */
+   *  `snapshotVersion` = 捕获当刻的 `FrameCapture.snapshotVersion`：消费方在**执行当刻**与
+   *  `frameSnapshotVersion()` 的实时值比较，不一致即按「无快照」走（旧引用已 dispose）。 */
   onSegmentBoundary?(objectId: number, frameTexture?: THREE.Texture | null, snapshotVersion?: number): void;
-  /** 画布缓冲/视口变化：作废在途快照（resize 会重建快照纹理，旧引用已 dispose）。 */
+  /** 画布缓冲/视口变化：作废尚未被 advance 消费的在途快照（resize 会重建快照纹理，旧引用已 dispose）。 */
   notifyViewportResize?(): void;
 }
 
@@ -757,8 +758,9 @@ export class ThreeScenePlayer {
     this.glowStage?.resize(buf.width, buf.height);
     // 帧内快照的段目标/快照纹理同样按画布缓冲尺寸（否则 RT 被拉伸、快照与屏幕 UV 错位）。
     this.frameCapture?.resize(buf.width, buf.height);
-    // 快照已重建（旧引用作废）⇒ 让编排器作废在途快照：异步串行 update 可能仍握着旧引用，
-    // 执行时采到已 dispose 的纹理就是该对象整块黑一帧（下游按世代自查，见 object-effects.advance）。
+    // 快照已重建（旧引用作废）⇒ 让编排器作废尚未消费的在途快照：异步串行 update 可能仍握着旧引用，
+    // 执行时采到已 dispose 的纹理就是该对象整块黑一帧（已被 advance 带进闭包的那份由实时代号比对兜底，
+    // 见 object-effects.advance / player.frameSnapshotVersion）。
     this.objectEffectStage?.notifyViewportResize?.();
     this.compositeQuad?.resize(buf.width, buf.height);
     // ③ 合成采样标志随**视口**重估（视口变化是密度变化的唯一入口）：编排器在「RT 像素尺寸未变」
@@ -1083,6 +1085,13 @@ export class ThreeScenePlayer {
     } catch {
       return null; // 快照资源已释放：调用方按「无快照」降级，不把异常抛进帧循环
     }
+  }
+
+  // 快照代号的**实时**读取入口（ObjectEffectHost 契约）：编排器在排队的 update **执行当刻**读它，
+  // 与捕获当刻记录的代号比较 ⇒ 不一致即说明那张快照已被 resize/dispose 换掉，按「无快照」走。
+  // 无 FrameCapture 时返回 -1（任何捕获时代号都不等于 -1 ⇒ 一律视为已作废）。
+  frameSnapshotVersion(): number {
+    return this.frameCapture?.snapshotVersion ?? -1;
   }
 
   // 重设隔离对象的 RT 尺寸（视口/dpr 变化时由编排器调用）：**只改分辨率**。

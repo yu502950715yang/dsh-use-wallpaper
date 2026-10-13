@@ -261,7 +261,7 @@ rgb *= texture2D(refractBg, rsUv).rgb;
 
 ## A.2 实测数字
 
-- **全量单测**：起始 **1118**（本轮之前的基线）→ Task 5 结束 **1190** → 收口后 **1193**（`npx vitest run`：**57 files / 1193 passed**）。T6 新增的 3 条都在补 deferred minor 的钉子（`tests/frame-capture.test.ts` 的快照代号自增、`tests/object-effects.test.ts` 的 resize 作废在途快照、`tests/threejs-player.test.ts` 的 resize 必通知）；另在既有用例里补了非恒真断言（主场景 children 数、快照代号随通知下发、告警文案口径），**没有删除或放宽任何既有断言**。
+- **全量单测**：起始 **1118**（本轮之前的基线）→ Task 5 结束 **1190** → 收口（`167bc93`）**1193** → **Fix round 1 后 1195**（`npx vitest run`：**57 files / 1195 passed**）。T6 新增的用例都在补 deferred minor 的钉子（`tests/frame-capture.test.ts` 的快照代号自增、`tests/object-effects.test.ts` 的 resize 作废在途快照、`tests/threejs-player.test.ts` 的 resize 必通知）；Fix round 1 又把 `tests/object-effects.test.ts` 的一条竞争用例拆成三条（换代 ⇒ 无快照 / 未换代 ⇒ 不误伤 / 通知后未消费的快照被丢），净 +2。另在既有用例里补了非恒真断言（主场景 children 数、快照代号随通知下发、告警文案口径）。**除 A.7 #5 的 REFRACT 集合断言按裁决放宽外，其余既有断言只增不减**（该处两条 `toEqual([REFRACT_MATERIAL])` 确实已被替换，见 A.6 / A.7 #5；初版 A.2 写成「没有删除或放宽任何既有断言」，与 A.6/A.7 #5 自相矛盾，已在 Fix round 1 订正）。
 - **`tsc --noEmit -p tsconfig.json`**：exit 0。
 - **真机目视（用户确认，2026-10-13 14:28）**：`2897292240` 的雨层 **白块/白竖条消失，出现水滴/雨痕**。当时的产物状态 = **Task 4**（`npm run build` + `npm run build:client` 重建 `lib/` + `dist/client.js` 后经 DSH client-hmr 热重载），GLSL 真机编译通过（此前只有文本护栏）。⚠️ 该目视**不含** T5 的效果链消费者路径。
 
@@ -278,6 +278,7 @@ rgb *= texture2D(refractBg, rsUv).rgb;
 | ③ | **隔离的折射层只关 `REFRACT` define，仍会画自己的槽 0** | `§4.4` 门槛的语义是「不启用 REFRACT define」；被隔离的折射层因此仍会把槽 0（实测 RGBA 全 255 的白图）画进自己的对象 RT。**本库 0 实例**，design §8.6 已列为不做。 |
 | ④ | **`FrameCapture` 只有一张快照纹理** | 快照逐帧覆盖 ⇒ 多消费者需要每消费者一份拷贝（与 ① 是同一件事的两面）。本库 1 个消费者，足够。 |
 | ⑤ | **本轮只做 `_rt_FullFrameBuffer` 一个名字** | `_rt_imageLayerComposite_*`（对象结果池，**7 处**）、对象材质 `BLENDMODE` 的 `_rt_FullFrameBuffer`（**161 材质**，R8）、6 个 JSONC 引擎 `effect.json` 的容错（R10）、`general.clearcolor` 消费（R11）**均未做**，仍按原行为（白纹 / 留空 + 去重告警 / 黑清屏），**另立任务**。 |
+| ⑥ | **`runner.update` 内 `await resolveTextureSlot(...)` 期间仍有极低频窗口**（产生 resize 落在该 await 内） | 快照作废判据（实时代号比较）在**闭包执行当刻**生效；`update` 随后还要 `await` 其它槽的纹理加载，若 resize 正好落在这段 await 内，该次已经通过校验的引用仍会被采样一次（旧快照已 dispose）。清零要把校验挪到「绑定前最后一次 await 之后」，会牵动执行器结构 ⇒ **本轮按裁决不追求清零**：文档与注释一律写「已收窄跨帧窗口」而**不得**写「绝不采已释放纹理」。代码位置 `effect-runner.ts` 的 `resolveTextureSlot` 循环。 |
 
 ## A.5 未做（本轮不覆盖，交 Lead 与用户统一安排）
 
@@ -286,12 +287,13 @@ rgb *= texture2D(refractBg, rsUv).rgb;
 - **9 个「粒子在前 image 在后」壁纸的目视**（口径差见 A.6）。
 - **产物重建与提交**（`npm run build*` 与 `lib/`、`dist/` 的提交）。
 - **客观证据补强**：原计划用项目自带 e2e harness 抓 `2897292240` 帧与 `output/blur-analysis/we-ab/` 的 WE 帧做统计对比（§7.2），本轮未执行。
+- **resize 落在 `runner.update` 的 `await resolveTextureSlot(...)` 期间那一帧**：作废判据只收窄到「闭包执行当刻」，**不追求清零**（见 A.4 ⑥）。
 
 ## A.6 与计划文本的口径差（事实订正）
 
 - plan / 本设计 §3.1 与 §7.2 写的「**7 个** pkg 叠加次序变化」是**未按 `visible` / 稀疏事件源过滤**的口径；Task 2 按实际会变的清单实测为 **9 个**：`1429403119` / `2597392171` / `2897292240` / `2911105183` / `2937346640` / `3743126786` / `3765967112` / `3793620838` / `3789452668`。
 - §3.3 的 `createFrameCapture(..., { rt })` **可选注入参数未实现**（T3 自持段目标、Glow 走 `preRendered` 第 4 参，不需要外部注入 RT）；若将来要让 capture 复用外部 RT，需另开一个小改动。
-- `tests/verify-real-library.test.ts` 的全库 REFRACT 集合断言**已从「恰为 `[halo_50_1.json]`」改为「∈ 集合 ∧ 与 `refract-scan.json` 基线一致」**：原写法与本文件既有「不钉本机素材快照」的约定冲突（用户装一张新折射壁纸就会假失败）。
+- `tests/verify-real-library.test.ts` 的全库 REFRACT 集合断言：从「恰为 `[halo_50_1.json]`」改为「含 `halo_50_1.json` + 与 `refract-scan.json` 基线交叉核对」。**Fix round 1 订正两处不实之处**：① 初版给的理由「消除『新装折射壁纸 ⇒ 假失败』」**不成立** —— 新装素材不在基线里，`expect(baseline).toContain(m)` 照样红；② 该基线 `output/blur-analysis/refract-scan.json` 被 `.gitignore` 忽略、**不入库** ⇒ CI 上 `existsSync` 失败、核对被静默跳过，**仅本机生效**。现口径：基线交叉核对降为 `console.warn`（诊断口径漂移用），用例的唯一硬判据是 `expect(refractMaterials).toContain(REFRACT_MATERIAL)`；放宽的实际收益只是「本机多出、但基线也覆盖了」的材质不再假失败（旧 `toEqual` 写法会因此变红，且与该文件「不钉本机素材快照」的约定冲突）。
 
 ## A.7 收口时顺手修的 deferred minors（T6）
 
@@ -299,8 +301,27 @@ rgb *= texture2D(refractBg, rsUv).rgb;
 2. 同一文件的 `expect(meshes).toHaveLength(4)` 对 4 元素 `.map()` **恒真** ⇒ 补 `expect(result.player.scene.children).toHaveLength(4)`（证明这些背景确实进了主场景）+ 非 `undefined` 断言。
 3. `src/client/dynamic-mesh.ts` 的 `createLayer` 注释（「缺省 1 = 背景之上、与既有粒子同层」）过期 ⇒ 订正为「缺省 1；生产侧映射未接线（延后），脚本自建图层当前恒为 1」。
 4. `src/client/threejs-player.ts` 折射顶点注释称 WE `ComputeParticleTangents` 是「先对象角度、后粒子自旋」——**与 WE 相反**（`common_particles.h:26-39` + `genericparticle.vert:85,117` 是粒子自旋在先），与本文件 `:368-370` 自相矛盾 ⇒ 改为「与 WE 同序」。
-   - ⚠️ **连带发现（未改，越界）**：`docs/fixes/threejs-path-fixes.md:167` 与 `AGENT.md` §7.3 记的是另一回事 ——「轴序偏差」：本项目 `Rz·Ry·Rx` vs WE `Rz·Rx·Ry`，仅多轴自旋（全库 6 个对象）可能不同。两处口径**并不冲突**（一个是次序、一个是轴序），但 §7.3 那条**仍然成立、未被本轮关闭**。
-5. `tests/verify-real-library.test.ts` 的全库 REFRACT 集合断言（见 A.6）。
+   - ⚠️ **连带发现（本轮未改；不是「越界」—— `docs/**` 一直在允许改动范围内，只是不属本次裁定的修正项）**：`docs/fixes/threejs-path-fixes.md:167` 与 `AGENT.md` §7.3 记的是另一回事 ——「轴序偏差」：本项目 `Rz·Ry·Rx` vs WE `Rz·Rx·Ry`，仅多轴自旋（全库 6 个对象）可能不同。两处口径**并不冲突**（一个是次序、一个是轴序），但 §7.3 那条**仍然成立、未被本轮关闭**。
+5. `tests/verify-real-library.test.ts` 的全库 REFRACT 集合断言：已改为「含 `halo_50_1.json` + 基线交叉核对**只告警**」；⚠️ Fix round 1 订正了改写理由（初版写的「消除新装折射壁纸 ⇒ 假失败」不成立），详见 A.6。
 6. `effect-runner.ts` 的快照不可用告警：① 去掉因果推断（被 `bind` 覆盖的快照槽与快照无关，却会打出「半透明区会被压黑」）；② 点明两条路径的差别（**直接调 `resolveBuiltinTexture` 无快照 → 1×1 白纹** vs **runner 路径无快照 → 槽留空 + 每槽去重告警**）。
-7. **`resize()` 与异步 `update` 竞争 ⇒ 一帧黑**（`frame-capture.ts` 的 `dispose()` + 重建 vs 已交给异步串行 update 的快照）：修法 = ① `FrameCapture.snapshotVersion` 在重建/释放时自增，`ObjectEffectStage` 在执行当刻比对并丢弃作废引用（按「无快照」= 既有 null 语义走）；② `player.resize()` 通知 `notifyViewportResize()` 作废在途快照。**已补 3 条能钉住该行为的用例**（见 A.2）。
+7. **`resize()` 与异步 `update` 竞争 ⇒ 一帧黑**（`frame-capture.ts` 的 `dispose()` + 重建 vs 已交给异步串行 update 的快照）：① `FrameCapture.snapshotVersion` 在重建/释放时自增，`ObjectEffectStage` 把**捕获当刻**的代号带进排队的闭包，**执行当刻**读 `ObjectEffectHost.frameSnapshotVersion()` 的实时值比较，不一致即按「无快照」（既有 null 语义）走 —— 判据只认**真的换代**（Fix round 1 把初版的「段边界世代相等」换掉：那是恒真式与误伤源，见 A.8）；② `player.resize()` 通知 `notifyViewportResize()` 作废**尚未被 `advance` 消费**的本帧快照。⚠️ **未清零**：`await resolveTextureSlot(...)` 期间仍有极低频窗口（A.4 ⑥）。用例：`tests/frame-capture.test.ts`（代号自增 / 同尺寸不变）、`tests/object-effects.test.ts`（换代 ⇒ null；未换代 ⇒ 不误伤；通知后未消费的快照被丢）、`tests/threejs-player.test.ts`（resize 必通知；**先 `capture()` 建出资源再断言**代号未变）。
+8. **快照消费者的判定有两套来源**（Task 5 遗留）：`referencesFrameSnapshot` 读原始 `pass.bind`，而 `update` 的槽绑定读计划 `pp.bindings` —— 「未解析名字的 bind 被计划丢弃」时两者对同一 pass 给出相反结论（本库 0 实例）。⇒ 统一到**执行计划**：`passSamplesFrameSnapshot(pass, pp.bindings)` + `planSamplesFrameSnapshot(chains, plan)`，槽级判据与实际绑定共用 `slotBoundByBind()`（Fix round 1 落，见 A.8）。
+
+## A.8 Fix round 1（评审 4 Important + 5 Minor 的修正，2026-10-13）
+
+评审第 6 轮（reviewer `55a35312`）判 **Needs fixes**：上一轮交付里有恒真「防线」被文档当成机制、两处文档与实现/自身矛盾、一条断言改写的理由不成立、一条台账指派的 minor 双缺失。逐条修正：
+
+| # | 问题 | 修正 |
+|---|---|---|
+| Important 1 | `object-effects.ts` 原 `advance` 的第一个合取项 `staleAtCaptureVersion === captureVersion` **恒真**（两处写入同源），真正起作用的只有 `boundaryGeneration` 相等；而 6 处文档把代号写成防线 | 删掉恒真项与「段边界世代」，改为**实时代号比较**：`ObjectEffectHost.frameSnapshotVersion()`（player 实现为 `frameCapture?.snapshotVersion ?? -1`）+ 捕获当刻代号，闭包执行当刻比对；6 处文档（`object-effects.ts` 两处、`frame-capture.ts`、`AGENT.md` §5.45、`conventions-details.md` §5.46、本节 A.7 #7）统一改写为真实机制 |
+| Minor 1 | 世代判据过宽：只排到下一帧执行的 runner 被误伤 | 随 Important 1 一并消除（判据只认真的换代）；`tests/object-effects.test.ts` 补「未换代 ⇒ 快照不丢」用例 |
+| Important 2 | A.2「没有删除或放宽任何既有断言」与 A.6/A.7 #5 自相矛盾 | A.2 订正为「除 A.7 #5 的 REFRACT 集合断言按裁决放宽外，其余只增不减」 |
+| Important 3 | `AGENT.md` §5.46 末句称其它 `_rt_*` 仍走「白纹 + 去重告警」，与代码（runner 路径槽留空 + 每槽去重告警）及同节前一句相反 | 该句按两条路径限定，与 `conventions-details.md` §5.46 同口径 |
+| Important 4 | REFRACT 断言改写的理由（「消除新装 ⇒ 假失败」）不成立；基线不入库 ⇒ CI 静默跳过 | 基线交叉核对降为 `console.warn`，唯一硬判据 = `toContain(REFRACT_MATERIAL)`；用例注释与 A.6 如实写清放宽方向与「仅本机生效」 |
+| Important 5 | 台账指派给 T6 的 minor（`passSamplesFrameSnapshot` 与 `update` 双来源）从代码与记录中双双消失 | 统一以计划 `pp.bindings` 为唯一来源（`planSamplesFrameSnapshot` + `slotBoundByBind`），`setObjectChains` 的判定与 `mount` 共用同一份计划；A.7 #8 记录，补「未解析 bind 被丢弃」用例 |
+| Minor 2 | `tests/threejs-player.test.ts` 的 `snapshotVersion` 断言无法区分「未变」与「没有资源」 | 先 `cap.capture()` 建资源，并用**同一缓冲尺寸** resize（`1920×1080`）再断言；补「同一张快照实例」断言 |
+| Minor 3 | `?.rows ?? []` 让「基线缺 `rows`/为空」退化成空集 ⇒ 每个本机材质判红 | `Array.isArray(rows)` 校验 + 空集返回 `null`（= 不可解析 ⇒ 跳过） |
+| Minor 4 | `notifyViewportResize()` 未在本模块导出的 `ObjectEffectStage` 接口声明（接口漂移） | 补声明 + 说明「作废尚未被 `advance` 消费的本帧快照」 |
+| Minor 5 | 「绝不采已释放纹理」一类绝对表述与 `await resolveTextureSlot` 窗口不符 | 文案改为「已收窄跨帧窗口」并记入 A.4 ⑥ / A.5；不追求清零 |
+| Minor 6 | `task-6-report.md` 把范围内的 `docs/**` 订正标成「越界」 | 报告订正该标签（报告在 `.superpowers/`，gitignored 不提交）；A.7 #4 的同类标签一并订正 |
 

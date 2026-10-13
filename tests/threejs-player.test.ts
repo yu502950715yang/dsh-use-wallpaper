@@ -2596,7 +2596,8 @@ describe('ThreeScenePlayer 段渲染（frameCapture）', () => {
 
   // resize 与异步 update 竞争（Task 6）：`player.resize()` 会重建 FrameCapture 的快照纹理
   //（旧引用已 dispose），而排队中的 runner.update 仍握着它 ⇒ 该对象会黑一帧。
-  // 契约：resize 时通知编排器作废在途快照（下游按世代丢弃，见 object-effects.advance）。
+  // 契约：resize 时通知编排器作废尚未消费的在途快照（已被带进闭包的那份由实时代号比对兜底，
+  // 见 object-effects.advance / snapshotStale）。
   it('resize 通知编排器作废在途快照（画布缓冲尺寸未变时也通知）', () => {
     const { player, mock } = makePlayer();
     addThreeLayers(player);
@@ -2604,15 +2605,22 @@ describe('ThreeScenePlayer 段渲染（frameCapture）', () => {
     cap.use();
     player.setFrameCapture(cap);
     player.registerFrameConsumer(22);
-    // drawingBuffer 尺寸固定 1920×1080 ≠ 视口 × dpr ⇒ 缓冲尺寸不随本次 resize 变化
-    //（隔离出「通知」这一条判据：不依赖 FrameCapture.resize 的尺寸真的变了）。
+    // 画布缓冲尺寸未变时也必须通知（隔离出「通知」这一条判据：不依赖 FrameCapture.resize 真的换了尺寸）。
     const notify = vi.fn();
     player.setObjectEffectStage({ bindOutputs: () => {}, advance: () => {}, notifyViewportResize: notify });
     mock._setOnRender(null);
+    // 先真的建出快照资源：否则 `snapshotVersion` 停在 0 只是因为**根本没有资源**，
+    // 「尺寸未变 ⇒ 快照未重建」是恒真的假证据（Minor 2）。建出的尺寸 = 画布缓冲 1920×1080
+    //（FrameCapture 的尺寸来自 canvas；mock 无 domElement ⇒ 退回本类自持的 canvas），
+    // 故随后必须用**同一尺寸** resize 才算「缓冲尺寸未变」。
+    const snapshot = cap.capture();
     const before = cap.snapshotVersion;
-    player.resize(1234, 567);
+    player.resize(1920, 1080);
     expect(notify).toHaveBeenCalledTimes(1);
-    expect(cap.snapshotVersion).toBe(before); // 缓冲尺寸未变 ⇒ 快照未重建
+    expect(cap.snapshotVersion).toBe(before); // 缓冲尺寸未变 ⇒ 未重建快照（没有任何引用被作废）
+    expect(cap.capture()).toBe(snapshot);     // 同一张快照实例，可反证「未 dispose + 重建」
+    // 快照代号的实时读取入口（ObjectEffectHost 契约）：消费方在执行当刻据此比对作废。
+    expect(player.frameSnapshotVersion()).toBe(cap.snapshotVersion);
     player.dispose();
   });
 
