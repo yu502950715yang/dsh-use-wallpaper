@@ -13,6 +13,52 @@ import * as THREE from 'three';
 import { createThreeSceneRenderer } from '../../lib/client/three-renderer.js';
 import { ThreeScenePlayer } from '../../lib/client/threejs-player.js';
 
+// ── 受控帧推进 + 可冻结的动画时钟（修复轮 2：同相位采样）────────────────────────────
+// 目的：让「显示文本层」与「隐藏文本层」两帧的**背景像素完全一致**，两帧之差才只剩文本层自身。
+// 依据：生产帧体用 `performance.now()` 差分算 dt（`lib/client/threejs-player.js:665,672`）且模拟只按
+// dt 推进 ⇒ 把 now 钉住即 dt=0（背景不前进）；rAF 代理让帧只在 `__pumpFrame()` 时推进一帧。
+// 只改 e2e 观测侧；`lib/` 的时间源与帧序未动。
+const realRaf = window.requestAnimationFrame.bind(window);
+const realCancelRaf = window.cancelAnimationFrame.bind(window);
+const realNow = performance.now.bind(performance);
+let vnow = null;            // 非 null = 冻结在该时刻
+let rafControlled = false;  // true = rAF 回调入队，等 __pumpFrame()
+let rafSeq = 0;
+const rafQueue = new Map();
+performance.now = () => (vnow === null ? realNow() : vnow);
+window.requestAnimationFrame = (cb) => {
+  if (!rafControlled) return realRaf(cb);
+  rafQueue.set(++rafSeq, cb);
+  return rafSeq;
+};
+window.cancelAnimationFrame = (id2) => { if (!rafQueue.delete(id2)) realCancelRaf(id2); };
+window.__setRafControlled = (on) => { rafControlled = !!on; return { rafControlled, queued: rafQueue.size, vnow }; };
+window.__freezeClock = () => { vnow = realNow(); return vnow; };
+/** 冻结**墙钟**：时钟脚本的文本是 `new Date()` 生成的（`lib/client/threejs-player.js:1617` 每帧喂给
+ *  文本驱动，本例脚本 `showSeconds=true` ⇒ 秒位每秒重绘、quad 布局随之微调）——只冻 performance.now
+ *  挡不住它。把 `Date` / `Date.now` 钉在同一时刻 ⇒ 文本内容也确定，两帧才只差「该层渲染出多少」。 */
+window.__freezeWallClock = () => {
+  const Real = Date;
+  const fixed = Real.now();
+  const Frozen = function (...args) { return args.length === 0 ? new Real(fixed) : new Real(...args); };
+  Frozen.now = () => fixed;
+  Frozen.parse = Real.parse;
+  Frozen.UTC = Real.UTC;
+  Frozen.prototype = Real.prototype;
+  window.Date = Frozen;
+  return { ms: fixed, iso: new Real(fixed).toISOString() };
+};
+/** 推进受控队列里的一帧（回调内新排的帧进入下一批）。返回本批执行数与残留队列长度。 */
+window.__pumpFrame = () => {
+  const batch = [...rafQueue.values()];
+  rafQueue.clear();
+  let ran = 0, err = null;
+  for (const cb of batch) {
+    try { cb(performance.now()); ran++; } catch (e) { err = String((e && e.message) || e); }
+  }
+  return { ran, queued: rafQueue.size, err };
+};
+
 const q = new URLSearchParams(location.search);
 const id = q.get('id') ?? '';
 const broken = q.get('broken') === 'script';
@@ -80,6 +126,58 @@ window.__hideTextLayer = (objectId, hidden) => {
   const prev = o.visible;
   o.visible = !hidden;
   return { objectId, prevVisible: prev, visible: o.visible };
+};
+
+// 原材质状态（对齐用：只改「这一层渲染出多少」，不改其它任何东西）。
+const origMat = new Map();
+
+/** 「该层只渲染了一部分」的注入开关（模拟部分衰减；不改 lib/，也不改几何参数 ⇒ 判据矩形不变）。
+ *  `coverage` = 沿该 quad 自身局部 +x 轴保留的比例（1 = 全量 ⇒ 清掉裁剪面）。
+ *  裁掉一半 ⇒ 屏幕上的字形像素/亮度总量大致按比例减少。 */
+window.__setTextCoverage = (objectId, coverage) => {
+  const p = window.__player;
+  const o = p && p.displayObject(objectId);
+  if (!o || !o.material) return null;
+  const c = Math.max(0, Math.min(1, Number(coverage)));
+  const w = (o.geometry && o.geometry.parameters && o.geometry.parameters.width) || 0;
+  if (!(w > 0)) return null;
+  const r = p.renderer;
+  if (r && typeof r === 'object') r.localClippingEnabled = true;
+  if (c >= 1) {
+    o.material.clippingPlanes = null;
+    o.material.needsUpdate = true;
+    return { coverage: 1, clippingPlanes: 0, localClippingEnabled: !!r?.localClippingEnabled };
+  }
+  o.updateMatrixWorld(true);
+  const a = new THREE.Vector3(-w / 2, 0, 0); o.localToWorld(a);
+  const b = new THREE.Vector3(w / 2, 0, 0); o.localToWorld(b);
+  const axis = b.clone().sub(a);
+  const len = axis.length();
+  if (!(len > 0)) return null;
+  axis.divideScalar(len);
+  // 保留 `axis·(p − a) ≤ c·len` 的一侧：平面条件为 `normal·p + constant ≥ 0`。
+  const normal = axis.clone().negate();
+  o.material.clippingPlanes = [new THREE.Plane(normal, axis.dot(a) + c * len)];
+  o.material.needsUpdate = true;
+  return {
+    coverage: c, clippingPlanes: o.material.clippingPlanes.length,
+    localClippingEnabled: !!r?.localClippingEnabled, worldAxis: [+axis.x.toFixed(3), +axis.y.toFixed(3), +axis.z.toFixed(3)],
+  };
+};
+
+/** 「该层整体变淡」的注入开关（模拟亮度衰减；1 = 还原原状）。 */
+window.__setTextOpacity = (objectId, opacity) => {
+  const p = window.__player;
+  const o = p && p.displayObject(objectId);
+  if (!o || !o.material) return null;
+  const key = String(objectId);
+  if (!origMat.has(key)) origMat.set(key, { transparent: o.material.transparent });
+  const base = origMat.get(key);
+  const v = Math.max(0, Math.min(1, Number(opacity)));
+  o.material.opacity = v;
+  o.material.transparent = v < 1 ? true : base.transparent;
+  o.material.needsUpdate = true;
+  return { opacity: o.material.opacity, transparent: o.material.transparent, type: o.material.type };
 };
 
 /** 只读观测：把 text 图层的画布内容读回来（白色文本应在哪个像素区间、画布自身尺寸）。
