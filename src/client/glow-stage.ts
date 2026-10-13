@@ -46,7 +46,16 @@ export function glowLevelSizes(width: number, height: number): Array<{ w: number
 }
 
 export interface GlowStage {
-  apply(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera): void;
+  /**
+   * 跑一遍 Glow 链。`preRendered`（Task 3 段渲染）非空时**跳过自渲主场景**那一步，
+   * 直接把它当 base RT 做 bright-pass（调用方已把主场景写进该 RT，且它就是画布缓冲尺寸的段目标）。
+   */
+  apply(
+    renderer: THREE.WebGLRenderer,
+    scene: THREE.Scene,
+    camera: THREE.Camera,
+    preRendered?: THREE.WebGLRenderTarget,
+  ): void;
   resize(width: number, height: number): void;
   setOptions(opts: GlowOptions): void;
   dispose(): void;
@@ -247,11 +256,11 @@ export function createGlowStage(
     runPass(r, blurMat, a);
   }
 
-  // 失败回退用：把已渲好的 base RT 贴到 canvas（= 本帧的无 Glow 输出，且**不重复渲染主场景**）。
+  // 失败回退用：把已渲好的 base 贴到 canvas（= 本帧的无 Glow 输出，且**不重复渲染主场景**）。
   // 贴图本身失败（copy 材质也坏）返回 false，调用方退回直渲。
-  function copyBaseToCanvas(r: THREE.WebGLRenderer): boolean {
+  function copyBaseToCanvas(r: THREE.WebGLRenderer, base: THREE.Texture): boolean {
     try {
-      copyMat.uniforms.tSrc.value = baseRT!.texture;
+      copyMat.uniforms.tSrc.value = base;
       runPass(r, copyMat, null);
       return true;
     } catch {
@@ -261,10 +270,11 @@ export function createGlowStage(
 
   // 9 个 pass（主场景 → base RT 那一步在 apply 里、钩子之前做），顺序与离线实验的**链式**一致：
   // down → blur → 作为下一级输入（spec §2.2 / 表 §3.4）
-  function renderGlowPasses(r: THREE.WebGLRenderer): void {
+  // `base`：bright-pass 与 composite 采样的底图——自渲时是 baseRT，段渲染时是调用方的 frameRT。
+  function renderGlowPasses(r: THREE.WebGLRenderer, base: THREE.Texture): void {
     const [l1a, l1b, l2a, l2b, l3a, l3b] = levelRTs;
     // 1) bright-pass（含降采样）：base → L1a
-    brightMat.uniforms.tSrc.value = baseRT!.texture;
+    brightMat.uniforms.tSrc.value = base;
     runPass(r, brightMat, l1a);
     // 2–3) L1 模糊
     blurLevel(r, 0, l1a, l1b);
@@ -277,7 +287,7 @@ export function createGlowStage(
     // 8) L3 模糊（H + V 两个 pass 计入上一步之后）
     blurLevel(r, 2, l3a, l3b);
     // 9) composite：base + 三级等权上采样累加 → canvas
-    compositeMat.uniforms.tBase.value = baseRT!.texture;
+    compositeMat.uniforms.tBase.value = base;
     compositeMat.uniforms.tL1.value = l1a.texture;
     compositeMat.uniforms.tL2.value = l2a.texture;
     compositeMat.uniforms.tL3.value = l3a.texture;
@@ -288,24 +298,29 @@ export function createGlowStage(
   buildTargets(width, height);
 
   return {
-    apply(r, scene, camera) {
+    apply(r, scene, camera, preRendered) {
       if (disposed) return;
       if (glowFailed) { r.setRenderTarget(null); r.render(scene, camera); return; }
+      // 段渲染（Task 3）已把主场景写进 preRendered（= 同一张画布尺寸 RT）⇒ 跳过自渲那一步；
+      // 不传时逐字保持原行为（自渲 + 失败回退语义不变）。
+      const base = preRendered ?? baseRT!;
       try {
         // 1) 主场景 → base RT（透明清屏，§5.22）。**在装钩子之前**：钩子只盯我们自己的 4 个材质，
         //    否则场景材质的 shader 失败会被误判成 Glow 失败并永久降级。
         baseRendered = false;
-        renderIntoRenderTarget(r, baseRT!, scene, camera);
+        // 段渲染路径：内容已由调用方写进 preRendered ⇒ 不得再渲一次主场景（会双重绘制段内容）。
+        if (!preRendered) renderIntoRenderTarget(r, baseRT!, scene, camera);
         baseRendered = true;
         installShaderErrorHook(r);
-        renderGlowPasses(r);
+        renderGlowPasses(r, base.texture);
       } catch (e) {
         // 绝不白屏：一次失败即永久降级为直渲（运行期异常 / pass 失败）
         glowFailed = true;
         console.warn('[wallpaper-engine] 应用级 Glow 失败，已降级为直渲：' + String((e as Error)?.message ?? e));
-        // 本帧回退：主场景本帧已渲进 base RT（只渲了那一次）⇒ 贴到 canvas 即可；只有连 base 都
-        // 没渲成（内容不可信）才退回直渲。
-        if (baseRendered && copyBaseToCanvas(r)) return;
+        // 本帧回退：主场景本帧已渲进 base（只渲了那一次）⇒ 贴到 canvas 即可；只有连 base 都
+        // 没渲成（内容不可信）才退回直渲。段渲染路径 baseRendered 恒 false ⇒ 走直渲，
+        // **不会**把上一帧的 baseRT 陈旧内容糊上本帧（比直渲错得更远）。
+        if (baseRendered && copyBaseToCanvas(r, base.texture)) return;
         r.setRenderTarget(null);
         r.render(scene, camera);
       } finally {

@@ -21,6 +21,11 @@ import { parseSceneJson } from './scene-json.js';
 import { renderIntoRenderTarget } from './rt-render.js';
 // 应用级 Glow 的注入点类型（本任务只加 hook，装配在后续 Task）。
 import type { GlowStage } from './glow-stage.js';
+// 帧内快照（Task 3）：段渲染目标 + 消费者边界快照（语义 = WE 的 `_rt_FullFrameBuffer`）。
+import type { FrameCapture } from './frame-capture.js';
+// 段渲染末段把 frameRT 全屏合成回默认 fb（Glow 关闭时用）。
+import { createCompositeQuad } from './composite-quad.js';
+import type { CompositeQuad } from './composite-quad.js';
 // 文本图层：帧内文本变化 → 按新 layout 同步 quad 尺寸与锚点中心（textLayerOffset）。
 import { textLayerOffset } from './text-object.js';
 import type { ClockDriver, TextLayout } from './text-object.js';
@@ -609,6 +614,12 @@ export class ThreeScenePlayer {
   private objectEffectStage: ObjectEffectStage | null = null;
   // 应用级 Glow 注入点（null = 本壁纸不开 Glow，帧序退化为原路径）。
   private glowStage: GlowStage | null = null;
+  // 帧内快照注入点（null 或 active=false = 本壁纸无消费者 ⇒ 帧序与改动前逐字相同）。
+  private frameCapture: FrameCapture | null = null;
+  // 消费者集合（键 = scene.json 对象 id）：段渲染时每个消费者**独占一段**，段数 = 消费者数 + 1。
+  private readonly frameConsumers = new Set<number>();
+  // 末段合成用的全屏 quad（惰性建：只有真的走段渲染且 Glow 关闭时才建）。
+  private compositeQuad: CompositeQuad | null = null;
   // g_Time 时间原点（构造时刻），advance 传「自 player 创建起的秒数」。
   private readonly startedAt = typeof performance !== 'undefined' ? performance.now() : 0;
 
@@ -692,6 +703,9 @@ export class ThreeScenePlayer {
     // 退回本类自持的 canvas（生产路径 renderer.domElement 就是它）。
     const buf = (this.renderer as { domElement?: HTMLCanvasElement }).domElement ?? this.canvas;
     this.glowStage?.resize(buf.width, buf.height);
+    // 帧内快照的段目标/快照纹理同样按画布缓冲尺寸（否则 RT 被拉伸、快照与屏幕 UV 错位）。
+    this.frameCapture?.resize(buf.width, buf.height);
+    this.compositeQuad?.resize(buf.width, buf.height);
     // ③ 合成采样标志随**视口**重估（视口变化是密度变化的唯一入口）：编排器在「RT 像素尺寸未变」
     //    时会跳过 resizeObjectRT，而源纹理收口 4096 时新老尺寸恰好相同（判定反转却无重估 ⇒ 走样重现）。
     for (const entry of this.isolated.values()) {
@@ -828,6 +842,8 @@ export class ThreeScenePlayer {
   // 手动渲染一帧（不依赖 RAF，供测试/调用方直接触发）。
   // 帧序与 setAnimationLoop 的帧体一致（不带 dt）：隔离内容 → bindOutputs → 主场景 → advance。
   // 装配了 glowStage 时主场景渲染委托给它（stage 内部渲染主场景到 RT 再做全屏 glow 合成）。
+  // ★ 只有 frameCapture?.active（本壁纸真有消费者）时才改走段渲染（renderSegmented），
+  //   否则调用序列与引入本分支前**逐字节一致**（结构性零回归）。
   render(): void {
     // 按需校准渲染分辨率：DSH 桌面版窗口创建**早于**系统缩放生效 ⇒ 装配时 `devicePixelRatio`
     // 仍是 1，而 `resize()` 只在窗口尺寸变化时调用 ⇒ 缓冲一直小于屏幕物理像素、整幅画面被放大而
@@ -836,10 +852,96 @@ export class ThreeScenePlayer {
     if (this.devicePixelRatio() !== this.lastDpr) this.resize(this.viewWidth, this.viewHeight);
     if (this.isolated.size > 0) this.renderIsolatedContents();
     this.objectEffectStage?.bindOutputs();
-    if (this.glowStage) this.glowStage.apply(this.renderer, this.scene, this.camera);
+    if (this.frameCapture?.active) this.renderSegmented();
+    else if (this.glowStage) this.glowStage.apply(this.renderer, this.scene, this.camera);
     else this.renderer.render(this.scene, this.camera);
     // 链推进是异步串行的（纹理槽可能仍在加载），不阻塞本帧；本帧贴的是上一帧输出。
     this.objectEffectStage?.advance(this.elapsedSeconds());
+  }
+
+  /** 注入帧内快照（null = 关闭）。契约见 frame-capture.ts；active=false 时帧序不变。 */
+  setFrameCapture(capture: FrameCapture | null): void {
+    this.frameCapture = capture;
+  }
+
+  /** 登记一个「需要帧内快照」的消费者（键 = scene.json 对象 id）：它独占一段，快照拍在它**之前**。 */
+  registerFrameConsumer(objectId: number): void {
+    this.frameConsumers.add(objectId);
+  }
+
+  /**
+   * 段渲染：按 renderOrder 升序把主场景顶层对象切成若干段（每个消费者独占一段，段数 = 消费者数 + 1），
+   * 逐段渲染进 frameCapture.target（段间 autoClear=false 累积），消费者段渲染完成后拍一次快照，
+   * 末段合成回默认 fb。WE 对齐点：lwe CScene.cpp:351-361 按 m_objectsByRenderOrder 逐个 render()；
+   * REFRACT 在画该层**前** blit 场景 FBO（CParticle.cpp:2069-2079）。
+   */
+  private renderSegmented(): void {
+    const capture = this.frameCapture;
+    if (!capture) return;
+    const children = [...this.scene.children];
+    // ① 保存运行期状态：autoClear 与各顶层对象的 visible（段内会临时改写，必须原值恢复）。
+    const prevAutoClear = (this.renderer as { autoClear?: boolean }).autoClear !== false;
+    const prevVisible = children.map((o) => o.visible);
+    // ② 消费者对象 → 它在 scene.children 里的下标（快照必须拍在它自己被绘制**之前**）。
+    const consumerIndexes = new Set<number>();
+    for (let i = 0; i < children.length; i++) {
+      const obj = children[i];
+      for (const objectId of this.frameConsumers) {
+        if (this.displayObjects.get(objectId) === obj) { consumerIndexes.add(i); break; }
+      }
+    }
+    // ③ 切段：按 renderOrder 升序（稳定排序 ⇒ 同序号保持 scene 内顺序），**每个消费者独占一段**：
+    //    快照必须拍在消费者自己**之前**、且它自己不被重复绘制 ⇒ 消费者前后都断开（段数 = 消费者数 + 1）。
+    const order = children
+      .map((obj, i) => ({ obj, i }))
+      .sort((a, b) => a.obj.renderOrder - b.obj.renderOrder);
+    const segments: Array<{ members: number[]; consumers: number[] }> = [];
+    let current: number[] = [];
+    let currentConsumers: number[] = [];
+    const flush = () => {
+      if (current.length > 0) segments.push({ members: current, consumers: currentConsumers });
+      current = [];
+      currentConsumers = [];
+    };
+    for (const { i } of order) {
+      const isConsumer = consumerIndexes.has(i);
+      if (isConsumer) flush(); // 消费者之前断开（若上一段为空则本段就是首个消费者段）
+      current.push(i);
+      if (isConsumer) currentConsumers.push(i);
+      // 消费者之后立刻断开 ⇒ 该消费者独占一段，不会被后续对象拖进同一段。
+      if (isConsumer) flush();
+    }
+    flush();
+    try {
+      // ④ 段目标 = frameRT（画布缓冲尺寸）：清屏参数与默认 fb 一致（黑 + alpha 1）。
+      //    ⚠️ autoClear 只在段渲染范围内临时关闭——`rt-render.ts` 的 4 个调用点依赖它清屏。
+      this.renderer.setRenderTarget(capture.target);
+      this.renderer.setClearColor(0x000000, 1);
+      this.renderer.clear();
+      (this.renderer as { autoClear: boolean }).autoClear = false;
+      for (const segment of segments) {
+        // 只有本段对象可见：透明混合是累积的，留可见会被**再画一遍**（重复叠加）。
+        const members = new Set(segment.members);
+        for (let i = 0; i < children.length; i++) {
+          children[i].visible = prevVisible[i] && members.has(i);
+        }
+        this.renderer.render(this.scene, this.camera);
+        // 消费者边界：段渲染完成后、下一段开始前拍一次（capture() 无幂等性 ⇒ 恰好一次）。
+        for (let n = 0; n < segment.consumers.length; n++) capture.capture();
+      }
+    } finally {
+      (this.renderer as { autoClear: boolean }).autoClear = prevAutoClear;
+      this.renderer.setRenderTarget(null);
+      for (let i = 0; i < children.length; i++) children[i].visible = prevVisible[i];
+    }
+    // ⑤ 末段合成：Glow 开启时把 frameRT 交给 Glow（复用同一张，省掉它自渲主场景那次）；
+    //    关闭时用 composite-quad 全屏贴回默认 fb。
+    if (this.glowStage) {
+      this.glowStage.apply(this.renderer, this.scene, this.camera, capture.target);
+    } else {
+      this.compositeQuad ??= createCompositeQuad(this.renderer);
+      this.compositeQuad.composite(this.renderer, capture.target.texture);
+    }
   }
 
   // 对象级效果链的编排器注入点（null = 本壁纸无效果链，帧序退化为原路径）。
@@ -1648,6 +1750,12 @@ export class ThreeScenePlayer {
     // 应用级 Glow 的 RT/shader 归 stage 所有，须在 renderer.dispose() 前释放。
     this.glowStage?.dispose();
     this.glowStage = null;
+    // 段渲染的 frameRT/快照纹理与合成 quad 同样必须在 renderer.dispose() 之前释放。
+    this.frameCapture?.dispose();
+    this.frameCapture = null;
+    this.frameConsumers.clear();
+    this.compositeQuad?.dispose();
+    this.compositeQuad = null;
     this.renderer.dispose();
   }
 }

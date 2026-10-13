@@ -9,8 +9,10 @@ import * as THREE from 'three';
 import { ThreeScenePlayer, loadSceneToThree, resolvePixelRatio, frameCountFromDims, textureFrameCount, textureFrameGrid, specMaxcount, particleCapacity, specEmitterOrigin, simEmitterOffset, specRenderer, specPerspective, particlePerspectiveCamera, specSparseEventSource, BLACKMYTH_OBJ_SCALE, DEFAULT_PARTICLE_CAPACITY, MAX_PARTICLE_CAPACITY, PARTICLE_FLOATS_PER_INSTANCE } from '../src/client/threejs-player.js';
 import { textLayerOffset, type TextLayout } from '../src/client/text-object.js';
 import { coverRange, createCompositeGeometry, screenScalePx } from '../src/client/object-range.js';
+import { createFrameCapture } from '../src/client/frame-capture.js';
 
 // 注入的 mock renderer：只测相机/场景/RAF 逻辑，不触碰 WebGL。
+// Task 3 起还承载段渲染契约：autoClear 可读写、清屏参数可读、段边界 copyFramebufferToTexture 可观测。
 function createMockRenderer() {
   let loop: (() => void) | null = null;
   const setAnimationLoop = vi.fn((fn: (() => void) | null) => {
@@ -18,22 +20,42 @@ function createMockRenderer() {
   });
   // 清屏 alpha 与渲染目标都要记录：渲染到 RT 时必须清成透明黑（见 AGENT.md §5.22）。
   let clearAlpha = 1;
+  const clearColor = new THREE.Color(0, 0, 0);
   let currentTarget: unknown = null;
-  const renders: Array<{ scene: unknown; target: unknown; clearAlpha: number }> = [];
+  // ⚠️ `renders` 的既有形状 {scene,target,clearAlpha} 不得改动（大量断言依赖）；新增字段只追加。
+  const renders: Array<{ scene: unknown; target: unknown; clearAlpha: number; autoClear: boolean }> = [];
+  const copies: Array<{ texture: unknown; target: unknown }> = [];
   const renderer = {
     setSize: vi.fn(),
     setPixelRatio: vi.fn(),
-    render: vi.fn((scene: unknown) => { renders.push({ scene, target: currentTarget, clearAlpha }); }),
+    render: vi.fn((scene: unknown) => {
+      renders.push({ scene, target: currentTarget, clearAlpha, autoClear: renderer.autoClear });
+    }),
     // 对象隔离渲染（Task 3）：renderIsolatedContents 会切换渲染目标到对象 RT，
     // mock 需提供同名方法（no-op），否则隔离路径全部以 TypeError 失败。
     setRenderTarget: vi.fn((t: unknown = null) => { currentTarget = t; }),
     getClearAlpha: vi.fn(() => clearAlpha),
     setClearAlpha: vi.fn((v: number) => { clearAlpha = v; }),
+    // 段渲染：清屏参数（黑 + alpha 1，与默认 fb 一致）+ autoClear 可读写 + 显式 clear。
+    // 段渲染路径（Task 3）读取的三个接口，缺一个都会以 TypeError 整条路径失败。
+    getClearColor: vi.fn((c: THREE.Color) => c.copy(clearColor)),
+    setClearColor: vi.fn((c: THREE.ColorRepresentation, a = 1) => {
+      clearColor.set(c as THREE.ColorRepresentation);
+      clearAlpha = a;
+    }),
+    clear: vi.fn(),
+    autoClear: true,
+    // FrameCapture（Task 1）的两个依赖：快照 blit 与惰性建资源时的画布缓冲尺寸。
+    copyFramebufferToTexture: vi.fn((tex: unknown) => { copies.push({ texture: tex, target: currentTarget }); }),
+    getDrawingBufferSize: vi.fn((v: THREE.Vector2) => v.set(1920, 1080)),
     dispose: vi.fn(),
     setAnimationLoop,
     _getLoop: () => loop,
     _renders: renders,
+    _copies: copies,
     _clearAlpha: () => clearAlpha,
+    _clearColor: () => clearColor.clone(),
+    _currentTarget: () => currentTarget,
   };
   return renderer;
 }
@@ -2361,6 +2383,264 @@ describe('ThreeScenePlayer 对象隔离', () => {
     player.resizeObjectRT(13, 4096, 1966);
     expect(entry.rt.texture.minFilter).toBe(THREE.LinearFilter);
     expect(rtDispose).not.toHaveBeenCalled();
+  });
+});
+
+// 2026-10-13 Task 3：段渲染骨架（按 renderOrder 在消费者前切段 → 段边界拍快照 → 末段合成回默认 fb）。
+// 核心不变量：**无消费者时调用序列与现状逐字节一致**（本文件既有全部渲染断言即该不变量的回归网）。
+describe('ThreeScenePlayer 段渲染（frameCapture）', () => {
+  function makeTexture(): THREE.Texture {
+    const tex = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+    tex.needsUpdate = true;
+    return tex;
+  }
+
+  /** 造 3 个背景对象（renderOrder 0/1/2 = scene.json 对象 id 11/22/33）。 */
+  function addThreeLayers(player: ThreeScenePlayer): void {
+    for (const [i, objectId] of [11, 22, 33].entries()) {
+      player.addBackground({
+        origin: [i * 10, 0, 0], size: [10, 10], scale: [1, 1, 1], texture: makeTexture(),
+        sceneW: 100, sceneH: 100, objectId, renderOrder: i,
+      });
+    }
+  }
+
+  it('无消费者时调用序列与现状逐字节一致（1 次 render 到默认 fb）', () => {
+    const { player, mock } = makePlayer();
+    addThreeLayers(player);
+    const cap = createFrameCapture(mock as unknown as THREE.WebGLRenderer);
+    player.setFrameCapture(cap); // 未 use() → active=false
+    player.render();
+    expect(mock._renders.map((r) => r.target)).toEqual([null]);
+    expect(mock._renders[0].scene).toBe(player.scene);
+    expect(mock._copies).toHaveLength(0);        // 不拍快照
+    expect(mock.setRenderTarget).not.toHaveBeenCalled(); // 不切 target
+    player.dispose();
+  });
+
+  it('有消费者时：段渲染进 RT、段间 autoClear=false、末段合成回默认 fb', () => {
+    const { player, mock } = makePlayer();
+    addThreeLayers(player);
+    const cap = createFrameCapture(mock as unknown as THREE.WebGLRenderer);
+    cap.use();
+    player.setFrameCapture(cap);
+    player.registerFrameConsumer(22); // 第 2 个对象（renderOrder 1）是消费者 → 3 段（消费者独占一段）
+    player.render();
+    const targets = mock._renders.map((r) => r.target);
+    // 段 1（#11）→ RT，段 2（#22 消费者）→ RT，段 3（#33）→ RT，合成 → 默认 fb
+    expect(targets).toEqual([cap.target, cap.target, cap.target, null]);
+    // 段内 autoClear 必须为 false（累积），合成段恢复原值
+    expect(mock._renders.map((r) => r.autoClear)).toEqual([false, false, false, true]);
+    expect(mock.autoClear).toBe(true);           // 退出后恢复原值
+    expect(mock._currentTarget()).toBeNull();    // 退出后 target 已复位
+    // 现状默认 fb 的透明清屏不变量（clearAlpha=1/黑）在 RT 上保持一致
+    expect(mock._renders[0].clearAlpha).toBe(1);
+    expect(mock.setClearColor).toHaveBeenCalledWith(0x000000, 1);
+    player.dispose();
+  });
+
+  it('消费者边界恰好拍一次快照，且快照目标始终是当前绑定的段目标', () => {
+    const { player, mock } = makePlayer();
+    addThreeLayers(player);
+    const cap = createFrameCapture(mock as unknown as THREE.WebGLRenderer);
+    cap.use();
+    player.setFrameCapture(cap);
+    player.registerFrameConsumer(22);
+    player.registerFrameConsumer(33); // 两个消费者 ⇒ 3 段（renderOrder 0 / 1 / 2 各一段）、2 次快照
+    player.render();
+    expect(mock._copies).toHaveLength(2); // 每个消费者边界**恰好一次**（capture() 无幂等性）
+    // 段 1（#11）→ 拍快照 → 段 2（#22）→ 拍快照 → 段 3（#33）→ 合成
+    expect(mock._renders.length).toBe(4); // 3 段 + 1 次合成
+    expect(mock._copies.every((c) => c.target === cap.target)).toBe(true);
+    expect(mock._copies.every((c) => c.texture !== cap.target.texture)).toBe(true); // 快照纹理≠段目标纹理
+    player.dispose();
+  });
+
+  it('段渲染期间只有本段对象 visible；结束后全部恢复原值', () => {
+    const { player, mock } = makePlayer();
+    addThreeLayers(player);
+    const cap = createFrameCapture(mock as unknown as THREE.WebGLRenderer);
+    cap.use();
+    player.setFrameCapture(cap);
+    player.registerFrameConsumer(22);
+    // 记录每次 render 时三个顶层对象的 visible
+    const snapshots: boolean[][] = [];
+    (mock.render as unknown as { mockImplementation: (f: (s: unknown) => void) => void })
+      .mockImplementation((s: unknown) => {
+        if (s === player.scene) snapshots.push(player.scene.children.map((c) => c.visible));
+      });
+    player.render();
+    // 只有 #22 是消费者 ⇒ 3 段：#11 | #22（消费者独占）| #33
+    expect(snapshots).toEqual([
+      [true, false, false],  // 段 1：#11
+      [false, true, false],  // 段 2：#22（消费者独占一段）
+      [false, false, true],  // 段 3：#33
+    ]);
+    expect(player.scene.children.map((c) => c.visible)).toEqual([true, true, true]);
+    player.dispose();
+  });
+
+  it('原本 visible=false 的对象在段渲染期间保持 false、退出后仍为 false', () => {
+    const { player, mock } = makePlayer();
+    addThreeLayers(player);
+    player.scene.children[0].visible = false; // #11 本来不可见
+    const cap = createFrameCapture(mock as unknown as THREE.WebGLRenderer);
+    cap.use();
+    player.setFrameCapture(cap);
+    player.registerFrameConsumer(22);
+    const snapshots: boolean[][] = [];
+    (mock.render as unknown as { mockImplementation: (f: (s: unknown) => void) => void })
+      .mockImplementation((s: unknown) => {
+        if (s === player.scene) snapshots.push(player.scene.children.map((c) => c.visible));
+      });
+    player.render();
+    // 第 1 段虽包含 #11，但它本来就不可见 ⇒ 必须保持 false（不得被段逻辑改成 true）
+    expect(snapshots).toEqual([
+      [false, false, false],
+      [false, true, false],
+      [false, false, true],
+    ]);
+    expect(player.scene.children.map((c) => c.visible)).toEqual([false, true, true]);
+    player.dispose();
+  });
+
+  it('同一 renderOrder 上的两个消费者各自成段（快照不落在自己之后）', () => {
+    const { player, mock } = makePlayer();
+    // 三个对象同 renderOrder：唯一化（objects 下标）未落地时也必须逐个消费者切段。
+    for (const objectId of [11, 22, 33]) {
+      player.addBackground({
+        origin: [0, 0, 0], size: [10, 10], scale: [1, 1, 1], texture: makeTexture(),
+        sceneW: 100, sceneH: 100, objectId, renderOrder: 0,
+      });
+    }
+    const cap = createFrameCapture(mock as unknown as THREE.WebGLRenderer);
+    cap.use();
+    player.setFrameCapture(cap);
+    player.registerFrameConsumer(11); // 首个对象就是消费者
+    player.registerFrameConsumer(33); // 与 #22 同序，但仍是独立段
+    const snapshots: boolean[][] = [];
+    (mock.render as unknown as { mockImplementation: (f: (s: unknown) => void) => void })
+      .mockImplementation((s: unknown) => {
+        if (s === player.scene) snapshots.push(player.scene.children.map((c) => c.visible));
+      });
+    player.render();
+    expect(snapshots).toEqual([
+      [true, false, false],  // 段 1：#11（消费者）
+      [false, true, false],  // 段 2：#22
+      [false, false, true],  // 段 3：#33（消费者）
+    ]);
+    expect(mock._copies).toHaveLength(2);
+    player.dispose();
+  });
+
+  it('段渲染异常时 autoClear / renderTarget / visible 全部恢复（try/finally）', () => {
+    const { player, mock } = makePlayer();
+    addThreeLayers(player);
+    const cap = createFrameCapture(mock as unknown as THREE.WebGLRenderer);
+    cap.use();
+    player.setFrameCapture(cap);
+    player.registerFrameConsumer(22);
+    (mock.render as unknown as { mockImplementation: (f: () => void) => void })
+      .mockImplementation(() => { throw new Error('boom'); });
+    expect(() => player.render()).toThrow('boom');
+    expect(mock.autoClear).toBe(true);
+    expect(mock._currentTarget()).toBeNull();
+    expect(player.scene.children.map((c) => c.visible)).toEqual([true, true, true]);
+    player.dispose();
+  });
+
+  it('setFrameCapture(null) / reset() 后回到现状路径（不切段、不合成）', () => {
+    const { player, mock } = makePlayer();
+    addThreeLayers(player);
+    const cap = createFrameCapture(mock as unknown as THREE.WebGLRenderer);
+    cap.use();
+    player.setFrameCapture(cap);
+    player.registerFrameConsumer(22);
+    player.render();
+    const afterSegmented = mock._renders.length;
+    cap.reset(); // 装配新壁纸时的复位
+    player.render();
+    const tail = mock._renders.slice(afterSegmented);
+    expect(tail.map((r) => r.target)).toEqual([null]); // 又只剩一次主场景直渲
+    player.setFrameCapture(null);
+    player.render();
+    expect(mock._renders.slice(afterSegmented + 1).map((r) => r.target)).toEqual([null]);
+    player.dispose();
+  });
+
+  it('renderSegmented 不改变「隔离内容 → bindOutputs → 主场景 → advance」帧序', () => {
+    const { player, mock } = makePlayer();
+    const order: string[] = [];
+    (mock.render as unknown as { mockImplementation: (f: (s: unknown, c: unknown) => void) => void })
+      .mockImplementation((s: unknown) => { order.push(s === player.scene ? 'main' : 'isolated'); });
+    player.addBackground({
+      origin: [0, 0, 0], size: [10, 10], scale: [1, 1, 1], texture: makeTexture(),
+      sceneW: 100, sceneH: 100, objectId: 11, renderOrder: 0,
+      isolate: { objectId: 11, rtWidth: 10, rtHeight: 10, worldW: 10, worldH: 10 },
+    });
+    player.addBackground({
+      origin: [10, 0, 0], size: [10, 10], scale: [1, 1, 1], texture: makeTexture(),
+      sceneW: 100, sceneH: 100, objectId: 22, renderOrder: 1,
+    });
+    player.setObjectEffectStage({
+      bindOutputs: () => order.push('bind'),
+      advance: () => order.push('advance'),
+    });
+    const cap = createFrameCapture(mock as unknown as THREE.WebGLRenderer);
+    cap.use();
+    player.setFrameCapture(cap);
+    player.registerFrameConsumer(22);
+    player.render();
+    // 隔离内容在段渲染之前；对象效果链仍统一在段渲染前 bindOutputs（本任务不改链时机）
+    expect(order[0]).toBe('isolated');
+    expect(order[1]).toBe('bind');
+    expect(order[order.length - 1]).toBe('advance');
+    player.dispose();
+  });
+
+  it('Glow 开启时把 frameRT 交给 apply（第四参），不另建 composite-quad', () => {
+    const { player, mock } = makePlayer();
+    addThreeLayers(player);
+    const applied: unknown[][] = [];
+    player.setGlowStage({
+      apply: (...args: unknown[]) => { applied.push(args); },
+      resize: () => {}, setOptions: () => {}, dispose: () => {},
+    } as never);
+    const cap = createFrameCapture(mock as unknown as THREE.WebGLRenderer);
+    cap.use();
+    player.setFrameCapture(cap);
+    player.registerFrameConsumer(22);
+    player.render();
+    expect(applied).toHaveLength(1);
+    // args = [renderer, scene, camera, frameRT]
+    expect(applied[0][0]).toBe(mock);
+    expect(applied[0][1]).toBe(player.scene);
+    expect(applied[0][2]).toBe(player.camera);
+    expect(applied[0][3]).toBe(cap.target); // 复用同一张段目标，不自渲主场景
+    // Glow 路径由 stage 自己合成到 canvas ⇒ 玩家侧不得再多渲一次
+    expect(mock._renders.map((r) => r.target)).toEqual([cap.target, cap.target, cap.target]);
+    player.dispose();
+  });
+
+  it('resize 把画布缓冲尺寸转发给 capture（快照/段目标跟随 dpr）', () => {
+    const { player, mock } = makePlayer();
+    const cap = createFrameCapture(mock as unknown as THREE.WebGLRenderer);
+    cap.use();
+    player.setFrameCapture(cap);
+    const spy = vi.spyOn(cap, 'resize');
+    player.resize(800, 600);
+    expect(spy).toHaveBeenCalledWith(800, 600); // jsdom dpr=1 ⇒ 缓冲 == 视口
+    player.dispose();
+  });
+
+  it('dispose 释放 capture（RT/纹理不泄漏）', () => {
+    const { player, mock } = makePlayer();
+    const cap = createFrameCapture(mock as unknown as THREE.WebGLRenderer);
+    cap.use();
+    player.setFrameCapture(cap);
+    const rtDispose = vi.spyOn(cap.target, 'dispose');
+    player.dispose();
+    expect(rtDispose).toHaveBeenCalled();
   });
 });
 

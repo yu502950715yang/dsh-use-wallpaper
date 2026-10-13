@@ -204,6 +204,64 @@ describe('createGlowStage（RT 池与 pass 链）', () => {
     stage.dispose();
   });
 
+  // Task 3：段渲染已经把主场景写进 frameRT（= 同一张 base RT），Glow 只做 bright-pass + 模糊 + 合成，
+  // **不再自渲主场景**（省掉一次全场景渲染）。
+  it('传 preRendered 时不再渲染主场景：10 个 pass、bright-pass 采样该纹理', () => {
+    const { renderer, calls } = mockRenderer();
+    const stage = createGlowStage(1280, 720)!;
+    const pre = new THREE.WebGLRenderTarget(1280, 720);
+    stage.apply(renderer, scene, camera, pre);
+    // 主场景 1 次都没渲（11 - 1）；首个 pass 直接 bright-pass
+    expect(calls.render).toBe(10);
+    expect(calls.scenes.filter((s) => s === scene).length).toBe(0);
+    // 锁住 pass 链序：与自渲路径相比只是去掉了『主场景 → base RT』那一步
+    const seen = new Map<unknown, string>();
+    const seq = calls.setRenderTarget.map((t) => {
+      if (t === null) return 'canvas';
+      let label = seen.get(t);
+      if (label === undefined) { label = `rt${seen.size}`; seen.set(t, label); }
+      return label;
+    });
+    expect(seq).toEqual([
+      'rt0', 'canvas',  // 1) bright-pass → L1a
+      'rt1', 'canvas',  // 2) L1 H → L1b
+      'rt0', 'canvas',  // 3) L1 V → L1a（ping-pong 回写 a）
+      'rt2', 'canvas',  // 4) L1a → L2a（降采样）
+      'rt3', 'canvas',  // 5) L2 H → L2b
+      'rt2', 'canvas',  // 6) L2 V → L2a
+      'rt4', 'canvas',  // 7) L2a → L3a（降采样）
+      'rt5', 'canvas',  // 8) L3 H → L3b
+      'rt4', 'canvas',  // 9) L3 V → L3a（ping-pong 回写 a）
+      'canvas',         // 10) composite：base + L1a/L2a/L3a 等权累加 → canvas
+    ]);
+    expect(seen.size).toBe(6); // 只用了 3 级 × ping-pong 2（不再是 7：base 由调用方提供）
+    expect((stage as unknown as { glowFailed: boolean }).glowFailed).toBe(false);
+    stage.dispose();
+    pre.dispose();
+  });
+
+  it('preRendered 路径失败 ⇒ 同样永久降级，且本帧仍把 frameRT 贴回 canvas（不重渲主场景）', () => {
+    const { renderer, calls } = mockRenderer();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const stage = createGlowStage(1280, 720)!;
+    const pre = new THREE.WebGLRenderTarget(1280, 720);
+    let n = 0;
+    (renderer as unknown as { render: (s?: unknown) => void }).render = (s?: unknown) => {
+      calls.render += 1;
+      calls.scenes.push(s);
+      n += 1;
+      if (n === 1) throw new Error('boom'); // 第一个 pass（bright-pass）失败
+    };
+    stage.apply(renderer, scene, camera, pre);
+    expect((stage as unknown as { glowFailed: boolean }).glowFailed).toBe(true);
+    // 失败帧：内容已在 frameRT 里 ⇒ 贴回 canvas 即可，**不得**再渲一次主场景
+    expect(calls.scenes.filter((s) => s === scene).length).toBe(0);
+    expect(calls.scenes.length).toBe(2); // 失败的 pass + 回退贴图
+    warn.mockRestore();
+    stage.dispose();
+    pre.dispose();
+  });
+
   it('shader 链接失败（three 只调 onShaderError、不抛）⇒ 同样永久降级为直渲 + 告警带 GLSL 详情', () => {
     const { renderer, calls } = mockRenderer();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
