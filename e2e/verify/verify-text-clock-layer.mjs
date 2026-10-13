@@ -15,10 +15,16 @@
 //   [5] 字体从引擎目录命中（<WE>/assets/fonts/CursedTimerUlil-Aznm.ttf）。 [6] 字形 alpha 未被压淡。
 //   [7] 屏幕上能读到白字（右下角「隐藏该层时暗、显示时亮」的像素数与亮度 —— 因果绑定的口径，
 //       右下角本来就亮的粒子高光不算）。 [8] 隐藏该层后右下角确实变暗。
-//   [9]（**核心，2026-10-13 修复轮 2**）**同相位**强变化分子高于标定下限：接管 rAF（受控推帧）、把动画时钟
-//       （`performance.now`）与墙钟（`Date`）都钉死在同一时刻 ⇒ 「该层显示帧 vs 隐藏帧」的背景逐像素一致
-//       （两帧都隐藏的对照实测 0 px）。分子 = **全屏**逐像素最大通道差 ≥ 8 的像素数（弱阈值 Δ≥2 会把水面被
-//       该层带动的量化级响应算进来：盒外逐像素差实测 maxΔ ≤7）+ 亮度总量 `ink` 两个下限。
+//   [9]（**核心，2026-10-13 修复轮 2 → 修复轮 4 改相对口径**）**同相位 + 相对（尺度无关）**判据：接管 rAF
+//       （受控推帧）、把动画时钟（`performance.now`）与墙钟（`Date`）都钉死在同一时刻 ⇒ 「该层显示帧 vs
+//       隐藏帧」的背景逐像素一致（两帧都隐藏的对照实测 0 px），且时钟文本内容确定。
+//       分母 = **同一冻结帧内该层自身字形足迹** `glyphMask`（`__textGlyphScreenPixels`：把该层纹理按 quad
+//       投影反投到屏幕、按纹理足迹 alpha 均值 ≥15 取掩码；只读「该层纹理 + 几何」⇒ 与覆盖率/透明度注入
+//       无关）。两个分子都取**足迹内**的强变化（全屏 Δ≥8 中落在足迹外的那部分是它带动的屏幕空间光晕）：
+//       ① 点亮比例 = 足迹内 Δ≥8 像素数 ÷ 足迹（健康态 ≈0.96–0.99；文本衰减 k% ⇒ ≈1−k）；
+//       ② 平均亮度 = 足迹内亮度总量 ÷ 足迹（健康态 ≈124–130；透明度衰减只压亮度、几乎不减像素）。
+//       **绝对阈值（旧的 7800 px / 480000 ink）已删**：它们随时钟内容整体换挡（最窄内容 `11:11:11`
+//       健康态只有 4782 px / 338839 ink ⇒ 旧口径必然假红）。旧绝对值仍逐次打印作对照，但不进判定。
 //   [10] 同相位基线（两帧都隐藏时的背景残差：全屏 / 外扩盒 / 三站）必须 ≈0 —— 「背景真的抵消了」的自证；
 //       **并且**断言墙钟冻结真的生效：两次「显示」帧的 A/A 残差 `spAA ≤ 60 px`（(2026-10-13 修复轮 3)
 //       此前这一半只打印不断言 ⇒ 墙钟一旦没冻住，内容变化会混进分子而全线假绿；负向对照见 `--live-wallclock`）。
@@ -37,6 +43,10 @@
 // 阈值被顶到 7.4–8.6k ⇒ 部分衰减检不出（只有整层缺失必然红）。轮 2 改成**同相位**：两帧只差
 // 「该层渲染出多少」，背景残差实测 0 px ⇒ 阈值降到 7.8k/48 万（按实测标定），50% 的覆盖衰减与
 // 50% 的亮度衰减都能判红（逐档数字见 report fix-round-2.md 与 §5.45 的日志文件名）。
+// 为什么轮 4 又改成**相对口径**：那对绝对阈值随**冻结那一刻的时钟内容**整体换挡（分子 ≈ 点亮段数）——
+// 三个内容档实测全屏分子 14752 / 8337 / 4782 px（`08:08:08` / `10:14:41` / `11:11:11`），最窄档双双
+// 低于旧阈值 ⇒ 健康态假红；同一阈值还要同时压在「覆盖率 0.5 档最高 7022 px」之下，两侧最坏只差 1.28×。
+// 改相对后同一三档的比值 0.988 / 0.976 / 0.959（n=3，逐次日志见 fix-round-4.md 的表）。
 // 旧口径的跨帧数字仍打印（`【对照】跨帧口径（旧）`），用于对照「同相位消掉了多少背景噪声」。
 // [13] 恢复态判据沿用轮 1 的口径（外扩盒内两个「文本可见」帧的差异 ×2 + 50，并按区域面积 90% 封顶，
 // 否则 `2·dAA+50` 在 dAA ≥ 15309 px 时必然成立 = 恒真）。
@@ -46,6 +56,7 @@
 // ⚠️ 依赖本机素材（workshop 壁纸 + WE 安装目录），CI 上会因缺素材失败 —— 没有加进 ci.yml。
 // 用法：node e2e/verify/verify-text-clock-layer.mjs [--workshop=<dir>] [--assets=<dir>]
 //        [--port=9813] [--cdp-port=9228] [--gpu] [--no-teeth] [--sweep=<覆盖率列表>] [--dim=<透明度列表>]
+//        [--at=HH:MM:SS（把冻结墙钟钉到该本地时刻 ⇒ 时钟内容可控，用来验尺度无关性；缺省钉在当下）]
 //        [--live-wallclock（负向对照：不冻墙钟 + 真实时间前进 1.2 s ⇒ [10] 必须判 FAIL）]
 //        （`--sweep`/`--dim` 只**追加**扫描档位；牙指定的 0.5 / 0.1 两档永远在列）
 import { createServer } from 'node:http';
@@ -71,6 +82,25 @@ const TEETH = !flagOf('no-teeth'); // 牙的标定自检**默认开**（成本 �
 // `--live-wallclock` = **负向对照**（默认关，正常验收不跑）：不冻墙钟，并在两次「显示」帧之间让**真实**
 // 时间前进 1.2 s ⇒ 秒位必然跳动。用来证明 [10] 里新加的 `spAA ≤ 60 px` 那一半**真的会红**（不是只打印）。
 const LIVE_WALLCLOCK = flagOf('live-wallclock');
+// `--at=HH:MM:SS`（本地时间，默认关 = 钉在当下）：把冻结墙钟钉到指定时刻 ⇒ **时钟内容可控**。
+// 用途：[9] 改相对口径后，要在多个差异明显的内容档（全宽 `08:08:08` / 窄 `10:14:41` / 最窄 `11:11:11`）
+// 上验证「比值与内容无关」，而真实时间不可等；不指定时行为与修复轮 3 完全一致（钉在当下那一刻）。
+const AT_SPEC = argOf('at', '');
+function atMsOf(spec) {
+  const m = /^(\d{1,2}):(\d{2}):(\d{2})$/.exec(String(spec ?? ''));
+  if (!m) return null;
+  const d = new Date();
+  d.setHours(Number(m[1]), Number(m[2]), Number(m[3]), 0);
+  return d.getTime();
+}
+const AT_MS = AT_SPEC ? atMsOf(AT_SPEC) : null;
+if (AT_SPEC && AT_MS === null) throw new Error(`--at 需为本地 HH:MM:SS（收到 ${AT_SPEC}）`);
+/** 本地 `HH:MM:SS`（日志里自证「这一跑冻的是哪段时钟内容」）。 */
+function localHmsOf(ms) {
+  const d = new Date(ms);
+  const p2 = (n) => String(n).padStart(2, '0');
+  return `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
+}
 // 判据 [9] 分子的「强变化」下限：逐像素最大通道差 ≥ 8 才计入（该层显示时水面有 ±2..4 的量化级响应，
 // 实测 Δ≥8 的部分全屏为 0 px ⇒ 盒外上界只能**推出** ≤7 = STRONG_DELTA−1；见 §5.45 的「为什么不是 Δ≥2」）。
 const STRONG_DELTA = 8;
@@ -203,8 +233,11 @@ async function waitReady() {
 
 /** 逐像素比较两张同尺寸 PNG：返回差异统计与包围盒。
  *  `box` 给定时只统计该矩形（画布 CSS 像素）内的差异；缺省统计整个画布区域。
- *  `minDelta` = 计入统计的逐像素最大通道差下限（缺省 2 = 全仓 e2e 的「变过」口径）。 */
-function diffPng(a, b, vw, vh, box, minDelta = 2) {
+ *  `minDelta` = 计入统计的逐像素最大通道差下限（缺省 2 = 全仓 e2e 的「变过」口径）。
+ *  `maskSet` = 像素集合（打包 `y*VW+x`，见 `__textGlyphScreenPixels` 的 mask）；给了就额外统计
+ *  「落在掩码内」的变化像素数 `changedInMask` 与其亮度总量 `inkInMask`（判据 [9] 的两个相对分子：
+ *  足迹内的点亮比例与平均亮度 —— 剔除该层带动的光晕，只留它自己的字形足迹）。 */
+function diffPng(a, b, vw, vh, box, minDelta = 2, maskSet = null) {
   // 截图缺失时**报错**而不是静默 null 解引用（否则异常发生在深处，看不出是哪一步没拍到）。
   if (!a || !b) throw new Error(`截图缺失（${!a && !b ? 'A/B' : !a ? 'A' : 'B'} 为 undefined）`);
   const A = decodePng(a), B = decodePng(b);
@@ -214,7 +247,7 @@ function diffPng(a, b, vw, vh, box, minDelta = 2) {
   const y0b = box ? Math.max(0, box[1]) : 0;
   const x1b = box ? Math.min(w - 1, box[2]) : w - 1;
   const y1b = box ? Math.min(h - 1, box[3]) : h - 1;
-  let n = 0, maxD = 0, sx = 0, sy = 0, sumD = 0;
+  let n = 0, maxD = 0, sx = 0, sy = 0, sumD = 0, nMask = 0, sumMask = 0;
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (let y = y0b; y <= y1b; y++) {
     for (let x = x0b; x <= x1b; x++) {
@@ -226,6 +259,7 @@ function diffPng(a, b, vw, vh, box, minDelta = 2) {
       );
       if (d >= minDelta) {
         n++; sumD += d; sx += x; sy += y;
+        if (maskSet && maskSet.has(y * vw + x)) { nMask++; sumMask += d; }
         if (x < x0) x0 = x; if (x > x1) x1 = x;
         if (y < y0) y0 = y; if (y > y1) y1 = y;
       }
@@ -237,6 +271,8 @@ function diffPng(a, b, vw, vh, box, minDelta = 2) {
     size: [A.width, A.height],
     region: box ?? 'full',
     changedPixels: n,
+    changedInMask: maskSet ? nMask : null,
+    inkInMask: maskSet ? Math.round(sumMask) : null,
     changedRatio: total > 0 ? n / total : 0,
     maxDelta: maxD,
     meanDelta: n ? sumD / n : 0,
@@ -492,7 +528,7 @@ try {
   // 墙钟默认钉死（同相位的前提）。`--live-wallclock` 是**负向对照**：不冻墙钟 ⇒ 秒位随真实时间前进。
   const frozenDate = LIVE_WALLCLOCK
     ? JSON.parse(await evalJs('JSON.stringify(window.__unfreezeWallClock())'))
-    : JSON.parse(await evalJs('JSON.stringify(window.__freezeWallClock())'));
+    : JSON.parse(await evalJs(`JSON.stringify(window.__freezeWallClock(${AT_MS === null ? '' : AT_MS}))`));
   const wallClockState = JSON.parse(await evalJs('JSON.stringify(window.__wallClockState())'));
   /** 把 three 的帧循环停进受控队列（找不到待排队时放行真实 rAF 重新武装；期间 dt=0，背景不前进）。 */
   const parkLoop = async () => {
@@ -552,6 +588,15 @@ try {
   //                没冻住，秒位跳动会让它到千 px 量级 ⇒ (修复轮 3) 它进 [10] 的判定（`spAA ≤ SP_AA_MAX`）。
   const spOn = await phaseShot('healthy-on', {});
   const spOff = await phaseShot('healthy-off', { hidden: true });
+  // 判据 [9] 的**分母**：同一冻结帧内该层自身字形点亮的屏幕像素（`__textGlyphScreenPixels` 的 `mask`）。
+  // 它只读「该层纹理 + quad 投影」，与覆盖率/透明度注入无关 ⇒ 时钟内容（点亮段数）在分子分母里同时约掉。
+  // 分子取**该掩码内**的强变化像素（掩码外是该层带动的屏幕空间光晕：实测约 5 px 宽的边圈，随内容漂移，
+  // 不属于该层自己的字形）。同时取同帧纹理空间字形像素（`[4]` 口径）作对照读数。
+  const glyph = JSON.parse(await evalJs(`JSON.stringify(window.__textGlyphScreenPixels(${TEXT_OBJECT_ID}))`) ?? 'null');
+  const glyphCanvas = JSON.parse(await evalJs(`JSON.stringify(window.__textCanvasImage(${TEXT_OBJECT_ID}))`) ?? 'null');
+  const glyphMask = new Set(glyph?.mask ?? []);
+  const clockContent = AT_MS !== null ? AT_SPEC : localHmsOf(frozenDate.ms);
+  console.log(`  [同相位] 冻结内容（本地时钟文本）${clockContent}；该层自身字形足迹 ${glyphMask.size} px ${JSON.stringify({ ...glyph, mask: undefined })}、纹理空间亮像素 ${glyphCanvas?.brightPixels ?? '—'}`);
   // 负向对照：不冻墙钟时让**真实**时间前进 1.2 s，保证 on/on2 跨过秒位边界（99.9% 概率变成 ~100%）。
   if (LIVE_WALLCLOCK) await sleep(1200);
   const spOn2 = await phaseShot('healthy-on2', {});
@@ -565,10 +610,10 @@ try {
   const spFullWeak = diffPng(spOn.buf, spOff.buf, VW, VH);       // 全屏弱阈值（含水面 ≤4 的量化级响应）
   const spOutsideWeak = diffOutsidePng(spOn.buf, spOff.buf, VW, VH, box);          // 盒外弱阈值（量「外溢」多大）
   const spOutsideStrong = diffOutsidePng(spOn.buf, spOff.buf, VW, VH, box, STRONG_DELTA); // 盒外强阈值（应 0）
-  // 判据 [9] 的分子：**强变化像素**（逐像素最大通道差 ≥ STRONG_DELTA），全屏统计、不裁区域。
+  // 判据 [9] 的分子：**强变化像素**（逐像素最大通道差 ≥ STRONG_DELTA），全屏统计 + 掩码内计数。
   // 为什么加这个下限：该层显示时水面会有量化级响应（盒外逐像素差实测见 `【对照】盒外` 行，
   // 本轮实测 maxΔ ∈ [4,7]），弱阈值会把它们算进「贡献」；Δ≥8 时这部分为 **0 px**（可推上界 7 = Δ−1）。
-  const spStrong = diffPng(spOn.buf, spOff.buf, VW, VH, null, STRONG_DELTA);
+  const spStrong = diffPng(spOn.buf, spOff.buf, VW, VH, null, STRONG_DELTA, glyphMask);
   const spStrongBox = diffPng(spOn.buf, spOff.buf, VW, VH, box, STRONG_DELTA); // 盒内同口径：与全屏值相等 ⇒ 盒外无强变化成分
   const spStrongBase = diffPng(spOff.buf, spOff2.buf, VW, VH, null, STRONG_DELTA);
   // 部分衰减扫描（默认在 `--teeth` 下跑，也是「最小可检出衰减」的实测数据来源）：
@@ -582,15 +627,15 @@ try {
   if (TEETH) {
     for (const c of SWEEP_COV) {
       const img = await phaseShot(`cov${Math.round(c * 100)}`, { coverage: c });
-      const d = diffPng(img.buf, spOff.buf, VW, VH, null, STRONG_DELTA);
-      sweep.push({ knob: 'coverage', value: c, changedPixels: d.changedPixels, ink: inkOf(d), maxDelta: d.maxDelta, diffs: d, applied: img.cov });
-      console.log(`  [同相位] 覆盖率 ${c}: 强变化 ${d.changedPixels} px / ink ${inkOf(d)}（maxΔ ${d.maxDelta}）`);
+      const d = diffPng(img.buf, spOff.buf, VW, VH, null, STRONG_DELTA, glyphMask);
+      sweep.push({ knob: 'coverage', value: c, changedPixels: d.changedPixels, inMask: d.changedInMask, inkInMask: d.inkInMask, ink: inkOf(d), maxDelta: d.maxDelta, diffs: d, applied: img.cov });
+      console.log(`  [同相位] 覆盖率 ${c}: 强变化 ${d.changedPixels} px（字形足迹内 ${d.changedInMask}）/ ink ${inkOf(d)}（maxΔ ${d.maxDelta}）`);
     }
     for (const o of SWEEP_OP) {
       const img = await phaseShot(`op${Math.round(o * 100)}`, { opacity: o });
-      const d = diffPng(img.buf, spOff.buf, VW, VH, null, STRONG_DELTA);
-      sweep.push({ knob: 'opacity', value: o, changedPixels: d.changedPixels, ink: inkOf(d), maxDelta: d.maxDelta, diffs: d, applied: img.op });
-      console.log(`  [同相位] 透明度 ${o}: 强变化 ${d.changedPixels} px / ink ${inkOf(d)}（maxΔ ${d.maxDelta}）`);
+      const d = diffPng(img.buf, spOff.buf, VW, VH, null, STRONG_DELTA, glyphMask);
+      sweep.push({ knob: 'opacity', value: o, changedPixels: d.changedPixels, inMask: d.changedInMask, inkInMask: d.inkInMask, ink: inkOf(d), maxDelta: d.maxDelta, diffs: d, applied: img.op });
+      console.log(`  [同相位] 透明度 ${o}: 强变化 ${d.changedPixels} px（字形足迹内 ${d.changedInMask}）/ ink ${inkOf(d)}（maxΔ ${d.maxDelta}）`);
     }
   }
   // 缺失装配（= 修复前装配，文本层整层跳过）：同相位 A/B 须 ≈0 —— 该层不存在时两帧完全一样。
@@ -599,12 +644,12 @@ try {
   await switchAssembly(true);
   const spbOn = await phaseShot('broken-on', {});
   const spbOff = await phaseShot('broken-off', { hidden: true });
-  const spBroken = diffPng(spbOn.buf, spbOff.buf, VW, VH, null, STRONG_DELTA);
+  const spBroken = diffPng(spbOn.buf, spbOff.buf, VW, VH, null, STRONG_DELTA, glyphMask);
   const spBrokenStations = stationCands.map((c) => ({ name: c.name, box: c.box, d: diffPng(spbOn.buf, spbOff.buf, VW, VH, c.box) }));
   console.log(`  [同相位] 缺失装配强变化 ${spBroken.changedPixels} px / ink ${inkOf(spBroken)}（toggle ${JSON.stringify(spbOn.toggle)}）`);
   writeFileSync(join(OUT, 'diff.json'), JSON.stringify({
     lib: libId, dAB, dAA, dReRepaired, dStations, liveFloorMedian, box, stationCands, areaMismatch, info,
-    samePhase: { arms, pumpStats, strongDelta: STRONG_DELTA, spStrong, spStrongBox, spStrongBase, spAB, spAA, spBase, spBaseFull, spStations, spFullWeak, spOutsideWeak, spOutsideStrong, sweep, spBroken, spBrokenStations },
+    samePhase: { arms, pumpStats, strongDelta: STRONG_DELTA, clockContent, at: AT_SPEC || null, glyph: glyph ? { ...glyph, mask: `[${glyph.mask.length} px]` } : null, glyphCanvas, spStrong, spStrongBox, spStrongBase, spAB, spAA, spBase, spBaseFull, spStations, spFullWeak, spOutsideWeak, spOutsideStrong, sweep, spBroken, spBrokenStations },
   }, null, 1));
   const imgShow = decodePng(shots['iso-show']);
   const imgHide = decodePng(shots['iso-hide']);
@@ -646,23 +691,40 @@ try {
   //   否则内容变化会混进分子而全线假绿（此前这一半只打印）。
   const noise = Math.max(dAA.changedPixels, 1);
   const regionArea = box ? (box[2] - box[0] + 1) * (box[3] - box[1] + 1) : 0;
-  const SP_MIN_PIXELS = 7800;    // [9] 强变化像素下限（轮 2 宽内容实测最低 10507 的 ≈74% ⇒ 1.35×；轮 3 窄内容实测最低
-                                 //      8337 ⇒ 只剩 1.07×，是已知脆弱点，见 §5.45「[9] 阈值的内容依赖」）
-  const SP_MIN_INK = 480000;     // [9] 亮度总量下限（轮 2 最差 ink 634875 的 ≈76% ⇒ 1.32×；轮 3 最差 517145 ⇒ 1.08×）
+  // 【判据 9】**相对（尺度无关）口径**（2026-10-13 修复轮 4）：两个半边都用**同一冻结帧内该层自身
+  //   字形足迹**（`__textGlyphScreenPixels` 的 mask，只读「该层自己的纹理 + quad 投影」）作分母，
+  //   与覆盖率/透明度注入无关 ⇒ 时钟内容（点亮段数）在分子分母里同时约掉：
+  //   ① 点亮比例 = |强变化像素 ∩ 足迹| ÷ |足迹| —— 健康态 ≈1，文本衰减 k% ⇒ ≈ (1−k)（管「画出多少字形」）；
+  //   ② 平均亮度 = (足迹内强变化的亮度总量) ÷ |足迹| —— 管「字形有多亮」（透明度衰减只压亮度、几乎不减像素）。
+  //   **绝对阈值已删**（旧 `7800 px` / `480000 ink` 正是「内容窄就假红」的来源：分子 ≈ 点亮段数
+  //   ⇒ 窄内容健康态只有 8337 px，距 7800 仅 1.07×）。绝对值仍逐次打印作对照，但**不进判定**。
+  //   足迹外那部分强变化是该层带动的屏幕空间光晕（实测 quad 内约 5 px 宽的边圈），不是它自己的字形。
+  const SP_MIN_RATIO = 0.65;      // [9]① 足迹内点亮比例下限：健康态三内容档实测 0.959–0.988（最窄 `11:11:11` 最低）、
+                                  //       覆盖率 0.5 档实测 0.466–0.483（最宽 `08:08:08` 最高）⇒ 0.65 落在两者之间，
+                                  //       健康态余量 1.48×、衰减档余量 1.35×（取 0.55 会让衰减档只剩 1.18×，故不取）。
+  const SP_MIN_INK_RATIO = 88;    // [9]② 足迹内平均亮度下限（Δ/px）：健康态实测 124.3–129.7、透明度 0.5 档实测 60.5–62.2
+                                  //       ⇒ 88 两侧余量各 ≈1.41×（像素口径抓不住亮度衰减：透明度 0.1 档点亮比例仍有 0.76）。
   const SP_BASELINE_MAX = 600;   // [10] 背景残差绝对上限
   const SP_AA_MAX = 60;          // [10] 「墙钟冻结生效」上限：冻结态 spAA 实测恒为 0 px（修复轮 3 连跑 5 次全 0），
-                                 //      60 px ≈ 外扩盒面积 27300 的 0.2%、≈ [9] 像素下限的 0.8%；而墙钟没冻住时
-                                 //      spAA 实测 1431 / 2435 px（`--live-wallclock` 两次负向对照，各只跳一个秒位数字）⇒ 余量 23.9×。
+                                 //      60 px ≈ 外扩盒面积 27300 的 0.2%；而墙钟没冻住时 spAA 实测 1431 / 2435 px
+                                 //      （`--live-wallclock` 两次负向对照，各只跳一个秒位数字）⇒ 余量 23.9×。
   const RESTORE_MAX_RATIO = 2;   // [13] 恢复态/quad 抖动（沿用修复轮 1 的封顶口径）
   const spPixels = spStrong.changedPixels;
   const spInk = inkOf(spStrong);
+  // [9] 的分母 = 同帧字形足迹像素数（`glyphMask.size`）；分子 = 足迹内 Δ≥8 的像素数与它们的亮度总量。
+  const glyphPx = glyphMask.size;
+  const ratioOf = (inMask) => (inMask ?? 0) / Math.max(1, glyphPx);
+  const inkRatioOf = (inkInMask) => (inkInMask ?? 0) / Math.max(1, glyphPx);
+  const spRatio = ratioOf(spStrong.changedInMask);
+  const spInkRatio = inkRatioOf(spStrong.inkInMask);
   const spBasePixels = Math.max(spStrongBase.changedPixels, spBaseFull.changedPixels, spBase.changedPixels, ...spStations.map((s) => s.d.changedPixels));
   const spBaselineOk = spStrongBase.changedPixels <= SP_BASELINE_MAX && spBaseFull.changedPixels <= SP_BASELINE_MAX
     && spBase.changedPixels <= SP_BASELINE_MAX && spStations.every((s) => s.d.changedPixels <= SP_BASELINE_MAX);
   // 墙钟冻结自证：两次「显示」帧只差「那一段时间里该层的内容变了没有」（同相位下背景不前进）。
   const spAaOk = spAA.changedPixels <= SP_AA_MAX;
-  const spPass = spPixels > SP_MIN_PIXELS && spInk > SP_MIN_INK;
-  const judgeSp = (px, ink) => px > SP_MIN_PIXELS && ink > SP_MIN_INK;
+  // 判定式只吃**两个比值**（尺度无关）；绝对量（全屏 px / ink）仍打印作对照，但不进判定（它们随内容换挡）。
+  const judgeSp = (inMask, inkInMask) => ratioOf(inMask) > SP_MIN_RATIO && inkRatioOf(inkInMask) > SP_MIN_INK_RATIO;
+  const spPass = judgeSp(spStrong.changedInMask, spStrong.inkInMask);
   // [13] 的区域面积封顶：`2·dAA+50` 在 dAA ≥ (面积−50)/2 ≈ 15309 px（quad 面积的一半）时**必然成立**
   // = 恒真（S2 期实测 dAA 已达 17184 px）。封顶到区域面积的 0.9 ⇒ 阈值恒 < 面积，不再可能恒真。
   // 合法动画（水面 + 秒跳）在 `dReRepaired`（show2 vs repaired）与 `dAA`（show vs show2）两边同时出现，
@@ -689,7 +751,7 @@ try {
       textPixels.textMaskPixels > 800 && textPixels.brightTextPixels > 500],
     [`隐藏文本层后右下角变暗（区域均值 ${brightShow.meanLuma.toFixed(1)} → ${brightHide.meanLuma.toFixed(1)}）`,
       brightHide.meanLuma < brightShow.meanLuma - 2],
-    [`同相位强变化分子高于标定下限（全屏 Δ≥${STRONG_DELTA} 的像素 ${spPixels} px > ${SP_MIN_PIXELS}、亮度总量 ${spInk} > ${SP_MIN_INK}；旧跨帧口径同一盒内是 ${dAB.changedPixels} px，混着水面自身的变化）`,
+    [`同相位相对分子高于标定下限（冻结内容 ${clockContent}；自身字形足迹 ${glyphPx} px 内 Δ≥${STRONG_DELTA} 像素 ${spStrong.changedInMask} px = **${spRatio.toFixed(3)}** > ${SP_MIN_RATIO}，平均亮度 ${spStrong.inkInMask}÷${glyphPx} = **${spInkRatio.toFixed(1)}** > ${SP_MIN_INK_RATIO}；对照：全屏强变化 ${spPixels} px（含足迹外光晕 ${spPixels - spStrong.changedInMask} px）、全屏亮度总量 ${spInk}、纹理空间字形像素 ${glyphCanvas?.brightPixels ?? '—'}；旧跨帧口径同一盒内是 ${dAB.changedPixels} px，混着水面自身的变化）`,
       spPass],
     [`同相位基线 ≈0 且内容（墙钟）冻结生效（两帧都隐藏 ⇒ 纯背景残差：全屏 Δ≥${STRONG_DELTA} ${spStrongBase.changedPixels} px、全屏 Δ≥2 ${spBaseFull.changedPixels} px、外扩盒 ${spBase.changedPixels} px、三站 ${spStations.map((s) => `${s.name}=${s.d.changedPixels}`).join(' / ')}；max ${spBasePixels} ≤ ${SP_BASELINE_MAX} px ⇒ ${spBaselineOk ? 'PASS' : 'FAIL'}｜两次显示帧 A/A 残差 ${spAA.changedPixels} px ≤ ${SP_AA_MAX} px ⇒ ${spAaOk ? 'PASS' : 'FAIL'}）`,
       spBaselineOk && spAaOk],
@@ -712,15 +774,15 @@ try {
   if (TEETH) {
     const rowOf = (knob, value) => sweep.find((s) => s.knob === knob && s.value === value) ?? null;
     const pct = (x) => (x === null ? '—' : `${(x * 100).toFixed(0)}%`);
-    const redCov = sweep.filter((s) => s.knob === 'coverage' && !judgeSp(s.changedPixels, s.ink));
-    const redOp = sweep.filter((s) => s.knob === 'opacity' && !judgeSp(s.changedPixels, s.ink));
+    const redCov = sweep.filter((s) => s.knob === 'coverage' && !judgeSp(s.inMask, s.inkInMask));
+    const redOp = sweep.filter((s) => s.knob === 'opacity' && !judgeSp(s.inMask, s.inkInMask));
     // 「最小可检出衰减」= 扫描点里**仍判红**的最轻那一档。两个口径都给出：
     //   · `nominal` = 1 − 旋钮值（覆盖率/透明度，即「该层只渲染了这一份」）；判据自证用它（与档位同口径）；
-    //   · `measured` = 1 − 该档实测保留率（强变化 px / ink），是「实际贡献掉了多少」的独立读数。
+    //   · `measured` = 1 − 该档实测保留率（足迹内像素 / 足迹内亮度），是「实际贡献掉了多少」的独立读数。
     const nominal = (rows) => (rows.length ? 1 - Math.max(...rows.map((s) => s.value)) : null);
     // 实测口径取**最轻的那一档红**（保留率最大的红档）⇒ 两者都表示「刚能被检出」的衰减量。
-    const measuredPx = (rows) => (rows.length ? 1 - Math.max(...rows.map((s) => s.changedPixels)) / Math.max(1, spPixels) : null);
-    const measuredInk = (rows) => (rows.length ? 1 - Math.max(...rows.map((s) => s.ink)) / Math.max(1, spInk) : null);
+    const measuredPx = (rows) => (rows.length ? 1 - Math.max(...rows.map((s) => s.inMask)) / Math.max(1, spStrong.changedInMask) : null);
+    const measuredInk = (rows) => (rows.length ? 1 - Math.max(...rows.map((s) => s.inkInMask)) / Math.max(1, spStrong.inkInMask) : null);
     const minAttenCov = nominal(redCov);
     const minAttenOp = nominal(redOp);
     const atten = { covNominal: minAttenCov, covMeasuredPx: measuredPx(redCov), covMeasuredInk: measuredInk(redCov), opNominal: minAttenOp, opMeasuredPx: measuredPx(redOp), opMeasuredInk: measuredInk(redOp) };
@@ -728,18 +790,20 @@ try {
     const c10 = rowOf('coverage', 0.1);
     const o50 = rowOf('opacity', 0.5);
     const o10 = rowOf('opacity', 0.1);
-    teethSummary = { broken: { px: spBroken.changedPixels, ink: inkOf(spBroken) }, c50, c10, o50, o10, atten, sweep };
+    const rowTxt = (r) => (r ? `足迹内 ${r.inMask} px / 亮度 ${r.inkInMask} ⇒ 比值 ${ratioOf(r.inMask).toFixed(3)} / 亮度比 ${inkRatioOf(r.inkInMask).toFixed(1)}（全屏 ${r.changedPixels} px / ink ${r.ink}）` : '—');
+    const brokenTxt = `足迹内 ${spBroken.changedInMask} px / 亮度 ${spBroken.inkInMask} ⇒ 比值 ${ratioOf(spBroken.changedInMask).toFixed(3)} / 亮度比 ${inkRatioOf(spBroken.inkInMask).toFixed(1)}`;
+    teethSummary = { broken: { px: spBroken.changedPixels, inMask: spBroken.changedInMask, inkInMask: spBroken.inkInMask, ink: inkOf(spBroken), ratio: +ratioOf(spBroken.changedInMask).toFixed(3) }, glyphPx, c50, c10, o50, o10, atten, sweep };
     checks.push(
-      [`文本层缺失（整层跳过）时 [9] 判假（同相位强变化 ${spBroken.changedPixels} px / ink ${inkOf(spBroken)}，未达 ${SP_MIN_PIXELS} px / ${SP_MIN_INK}）`,
-        !judgeSp(spBroken.changedPixels, inkOf(spBroken))],
-      [`部分衰减 50%（覆盖率 0.5：该层只渲染左半）时 [9] 判假（强变化 ${c50?.changedPixels ?? '—'} px / ink ${c50?.ink ?? '—'}）`,
-        !!c50 && !judgeSp(c50.changedPixels, c50.ink)],
-      [`部分衰减 90%（覆盖率 0.1）时 [9] 判假（强变化 ${c10?.changedPixels ?? '—'} px / ink ${c10?.ink ?? '—'}）`,
-        !!c10 && !judgeSp(c10.changedPixels, c10.ink)],
-      [`亮度衰减 50%（透明度 0.5：整层变淡一半）时 [9] 判假（强变化 ${o50?.changedPixels ?? '—'} px / ink ${o50?.ink ?? '—'}）`,
-        !!o50 && !judgeSp(o50.changedPixels, o50.ink)],
-      [`亮度衰减 90%（透明度 0.1）时 [9] 判假（强变化 ${o10?.changedPixels ?? '—'} px / ink ${o10?.ink ?? '—'}）`,
-        !!o10 && !judgeSp(o10.changedPixels, o10.ink)],
+      [`文本层缺失（整层跳过）时 [9] 判假（${brokenTxt} ≤ ${SP_MIN_RATIO} / ${SP_MIN_INK_RATIO}，分母仍是该层的 ${glyphPx} px）`,
+        !judgeSp(spBroken.changedInMask, spBroken.inkInMask)],
+      [`部分衰减 50%（覆盖率 0.5：该层只渲染左半）时 [9] 判假（${rowTxt(c50)}）`,
+        !!c50 && !judgeSp(c50.inMask, c50.inkInMask)],
+      [`部分衰减 90%（覆盖率 0.1）时 [9] 判假（${rowTxt(c10)}）`,
+        !!c10 && !judgeSp(c10.inMask, c10.inkInMask)],
+      [`亮度衰减 50%（透明度 0.5：整层变淡一半）时 [9] 判假（${rowTxt(o50)}）`,
+        !!o50 && !judgeSp(o50.inMask, o50.inkInMask)],
+      [`亮度衰减 90%（透明度 0.1）时 [9] 判假（${rowTxt(o10)}）`,
+        !!o10 && !judgeSp(o10.inMask, o10.inkInMask)],
       [`[9] 能检出的最小文本层衰减 ≤50%（覆盖率口径 ${pct(minAttenCov)}（实测贡献损失 ${pct(atten.covMeasuredPx)}/px、${pct(atten.covMeasuredInk)}/ink）、亮度口径 ${pct(minAttenOp)}（实测 ${pct(atten.opMeasuredPx)}/px、${pct(atten.opMeasuredInk)}/ink）；扫描点 ${sweep.length} 个）`,
         minAttenCov !== null && minAttenCov <= 0.5 && minAttenOp !== null && minAttenOp <= 0.5],
     );
@@ -754,7 +818,14 @@ try {
   console.log(`【对照】同相位 A/A（两次显示；判据 [10] 的「墙钟冻结生效」半边，应 ≤ ${SP_AA_MAX} px）:`, JSON.stringify(spAA));
   console.log(`同相位基线（两帧都隐藏 ⇒ 纯背景残差；判据 [10] 用它）:`,
     JSON.stringify({ strong: spStrongBase, box: spBase, stations: spStations.map((s) => ({ name: s.name, box: s.box, changedPixels: s.d.changedPixels })), full: spBaseFull, max: spBasePixels, aa: spAA.changedPixels, aaMax: SP_AA_MAX }));
-  console.log(`同相位分子: 强变化 ${spPixels} px（> ${SP_MIN_PIXELS} = 余量 ${(spPixels / SP_MIN_PIXELS).toFixed(2)}×）、亮度总量 ${spInk}（> ${SP_MIN_INK} = 余量 ${(spInk / SP_MIN_INK).toFixed(2)}×）`);
+  console.log(`同相位分子（相对口径）: 足迹内强变化 ${spStrong.changedInMask} px ÷ 同帧字形足迹 ${glyphPx} px = **${spRatio.toFixed(3)}**（阈值 ${SP_MIN_RATIO} ⇒ 余量 ${(spRatio / SP_MIN_RATIO).toFixed(2)}×）；足迹内亮度 ${spStrong.inkInMask} ÷ ${glyphPx} = **${spInkRatio.toFixed(1)}**（阈值 ${SP_MIN_INK_RATIO} ⇒ 余量 ${(spInkRatio / SP_MIN_INK_RATIO).toFixed(2)}×）；对照绝对量：全屏强变化 ${spPixels} px（足迹外光晕 ${spPixels - spStrong.changedInMask} px）、全屏亮度总量 ${spInk}（**不进判定**）`);
+  console.log(`同帧字形分母（冻结内容 ${clockContent}）:`, JSON.stringify({
+    maskPx: glyphPx, maskBBox: glyph?.maskBBox ?? null, texels: glyph?.texels ?? null, texelsBright: glyph?.texelsBright ?? null,
+    support: glyph?.support ?? null, cov15: glyph?.cov15 ?? null, cov40: glyph?.cov40 ?? null, cov100: glyph?.cov100 ?? null,
+    quadScreen: glyph?.quadScreen ?? null, footprintTexels: glyph?.footprintTexels ?? null,
+    textureBrightPixels: glyphCanvas?.brightPixels ?? null,
+    ratioTextureSpace: glyphCanvas?.brightPixels ? +(spPixels / glyphCanvas.brightPixels).toFixed(3) : null,
+  }));
   console.log(`受控推帧: 累计 ${pumpStats.frames} 帧、异常 ${pumpStats.errs}（受控队列 ${armed.queued} 帧/批）`);
   console.log('【对照】跨帧口径（旧）：文本层信号 A/B:', JSON.stringify(dAB));
   console.log('【对照】跨帧口径（旧）：噪声 A/A（显示 vs 再显示，quad 内）:', JSON.stringify(dAA));
@@ -762,8 +833,8 @@ try {
     JSON.stringify({ stations: dStations.map((s) => ({ name: s.name, box: s.box, changedPixels: s.d.changedPixels, changedRatio: +s.d.changedRatio.toFixed(4) })), stats: floorStats, statistic: 'median', floorUsed: liveFloorMedian, line: stationLine }));
   if (teethSummary) {
     console.log('牙（整层缺失 + 衰减扫描）:', JSON.stringify(teethSummary));
-    console.log('衰减扫描表（同相位、与同一张隐藏帧比）:',
-      JSON.stringify(sweep.map((s) => ({ [s.knob]: s.value, px: s.changedPixels, ink: s.ink, maxDelta: s.maxDelta, red: !judgeSp(s.changedPixels, s.ink) }))));
+    console.log('衰减扫描表（同相位、与同一张隐藏帧比；ratio = 足迹内强变化 ÷ 足迹、inkRatio = 足迹内亮度 ÷ 足迹，red 按两者判）:',
+      JSON.stringify(sweep.map((s) => ({ [s.knob]: s.value, inMask: s.inMask, ratio: +ratioOf(s.inMask).toFixed(3), inkInMask: s.inkInMask, inkRatio: +inkRatioOf(s.inkInMask).toFixed(1), px: s.changedPixels, ink: s.ink, maxDelta: s.maxDelta, red: !judgeSp(s.inMask, s.inkInMask) }))));
   }
   console.log('白字像素（右下角、隐藏时暗显示时亮）:', JSON.stringify(textPixels));
   console.log('引擎目录命中的场景素材:', JSON.stringify(assetHits));

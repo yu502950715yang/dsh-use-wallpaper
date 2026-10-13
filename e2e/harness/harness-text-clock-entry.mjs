@@ -39,8 +39,9 @@ let wallClockFrozen = false;
 /** 冻结**墙钟**：时钟脚本的文本是 `new Date()` 生成的（`lib/client/threejs-player.js:1617` 每帧喂给
  *  文本驱动，本例脚本 `showSeconds=true` ⇒ 秒位每秒重绘、quad 布局随之微调）——只冻 performance.now
  *  挡不住它。把 `Date` / `Date.now` 钉在同一时刻 ⇒ 文本内容也确定，两帧才只差「该层渲染出多少」。 */
-window.__freezeWallClock = () => {
-  const fixed = RealDate.now();
+/** `ms` 给定时钉到该时刻（本地 `HH:MM:SS` 内容可控 ⇒ 判据可在多个内容档上验证尺度无关性），缺省钉在当下。 */
+window.__freezeWallClock = (ms) => {
+  const fixed = Number.isFinite(ms) ? ms : RealDate.now();
   const Frozen = function (...args) { return args.length === 0 ? new RealDate(fixed) : new RealDate(...args); };
   Frozen.now = () => fixed;
   Frozen.parse = RealDate.parse;
@@ -232,6 +233,97 @@ window.__textCanvasImage = (objectId) => {
     strokeAlphaMean: bright ? Math.round(sumA / bright) : 0,
     strokeAlphaMin: bright ? minA : 0,
   };
+};
+
+/** 只读观测：该层**自身字形**投影到屏幕后会点亮多少像素 —— 判据 [9] 的**尺度无关分母**。
+ *  只读「该层自己的纹理 + quad 投影」，不读渲染结果、不受覆盖率/透明度注入影响（注入不改纹理），
+ *  因此「分子 ÷ 它」时时钟内容（点亮段数）在两侧同时约掉。
+ *  口径 = 把屏幕像素反投影回 quad 局部平面取纹理坐标，再对它的**纹理足迹**（≈纹理像素/屏幕像素 ≈2.7²
+ *  个 texel，minify 时字形会被"糊"开一圈）求 alpha 均值 ≈ 该像素覆盖到的字形比例；按阈值计数。
+ *  返回的 `mask`（cov15）是判据 [9] 的分子掩码：**分子必须与它取交** —— 全屏强变化里还有该层带动的
+ *  屏幕空间光晕（实测 quad 内约 5 px 宽的边圈，同内容档 8337 px 里占 4739 px），那不是它自己的字形。 */
+window.__textGlyphScreenPixels = (objectId) => {
+  try {
+    const p = window.__player;
+    const o = p && p.displayObject(objectId);
+    if (!o || !o.geometry || !o.material) return null;
+    const prm = o.geometry.parameters || {};
+    const w = prm.width, h = prm.height;
+    if (!(w > 0) || !(h > 0)) return null;
+    const img = o.material.map && o.material.map.image;
+    if (!img || typeof img.getContext !== 'function') return null;
+    const W = img.width, H = img.height;
+    const data = img.getContext('2d').getImageData(0, 0, W, H).data;
+    const alphaAt = (tx, ty) => (tx < 0 || ty < 0 || tx >= W || ty >= H ? 0 : data[(ty * W + tx) * 4 + 3]);
+    let texels = 0, texelsBright = 0;
+    for (let i4 = 0; i4 < data.length; i4 += 4) {
+      if (data[i4 + 3] <= 8) continue;
+      texels++;
+      if (data[i4] > 200 && data[i4 + 1] > 200 && data[i4 + 2] > 200 && data[i4 + 3] > 100) texelsBright++;
+    }
+    // 局部平面 (x,y,0) → ndc 的齐次 3×3 = (projectionMatrix · matrixWorld) 的第 0/1/3 列（投影是 homography）。
+    p.scene.updateMatrixWorld(true);
+    p.camera.updateMatrixWorld(true);
+    const e = new THREE.Matrix4().multiplyMatrices(p.camera.projectionMatrix, o.matrixWorld).elements;
+    const [a, b, c] = [e[0], e[4], e[12]];   // 第 1 行
+    const [d, f, g] = [e[1], e[5], e[13]];   // 第 2 行
+    const [i2, j, k] = [e[3], e[7], e[15]];  // 第 3 行（齐次分母）
+    const ndcAt = (x, y) => {
+      const cw = i2 * x + j * y + k;
+      return [((a * x + b * y + c) / cw + 1) / 2 * VW, (1 - (d * x + f * y + g) / cw) / 2 * VH];
+    };
+    const corner = [[-w / 2, -h / 2], [w / 2, -h / 2], [-w / 2, h / 2], [w / 2, h / 2]].map(([x, y]) => ndcAt(x, y));
+    const csx = corner.map((q) => q[0]), csy = corner.map((q) => q[1]);
+    const bx0 = Math.max(0, Math.floor(Math.min(...csx))), bx1 = Math.min(VW - 1, Math.ceil(Math.max(...csx)));
+    const by0 = Math.max(0, Math.floor(Math.min(...csy))), by1 = Math.min(VH - 1, Math.ceil(Math.max(...csy)));
+    // 逆矩阵（ndc → 局部平面）：伴随矩阵 / 行列式。
+    const det = a * (f * k - g * j) - b * (d * k - g * i2) + c * (d * j - f * i2);
+    if (!(Math.abs(det) > 1e-12)) return null;
+    const inv = [
+      [(f * k - g * j) / det, (c * j - b * k) / det, (b * g - c * f) / det],
+      [(g * i2 - d * k) / det, (a * k - c * i2) / det, (c * d - a * g) / det],
+      [(d * j - f * i2) / det, (b * i2 - a * j) / det, (a * f - b * d) / det],
+    ];
+    const localAt = (nx, ny) => {
+      const cw = inv[2][0] * nx + inv[2][1] * ny + inv[2][2];
+      return [(inv[0][0] * nx + inv[0][1] * ny + inv[0][2]) / cw, (inv[1][0] * nx + inv[1][1] * ny + inv[1][2]) / cw];
+    };
+    // 纹理足迹半径（纹理像素 / 屏幕像素 / 2）：取 quad 两组对边的屏幕长度。
+    const len = (q1, q2) => Math.hypot(q1[0] - q2[0], q1[1] - q2[1]);
+    const sw = (len(corner[0], corner[1]) + len(corner[2], corner[3])) / 2;
+    const sh = (len(corner[0], corner[2]) + len(corner[1], corner[3])) / 2;
+    if (!(sw > 0) || !(sh > 0)) return null;
+    const rx = W / sw / 2, ry = H / sh / 2;
+    let support = 0, cov15 = 0, cov40 = 0, cov100 = 0;
+    const mask = []; // cov15 的像素（打包成 y*VW+x）：判据把分子限制在「该层自己的字形足迹」内，剔除它带动的光晕
+    let mx0 = Infinity, my0 = Infinity, mx1 = -Infinity, my1 = -Infinity;
+    for (let sy = by0; sy <= by1; sy++) {
+      for (let sx = bx0; sx <= bx1; sx++) {
+        const [x, y] = localAt(((sx + 0.5) / VW) * 2 - 1, 1 - ((sy + 0.5) / VH) * 2);
+        if (x < -w / 2 || x > w / 2 || y < -h / 2 || y > h / 2) continue; // quad 之外不计
+        // mapFlipY=true：画布行 0 → v=1
+        const cx = (x / w + 0.5) * W - 0.5, cy = (1 - (y / h + 0.5)) * H - 0.5;
+        let s = 0, n = 0;
+        for (let ty = Math.round(cy - ry); ty <= Math.round(cy + ry); ty++) {
+          for (let tx = Math.round(cx - rx); tx <= Math.round(cx + rx); tx++) { s += alphaAt(tx, ty); n++; }
+        }
+        const m = n ? s / n : 0;
+        if (m > 0) support++;
+        if (m >= 15) {
+          cov15++; mask.push(sy * VW + sx);
+          if (sx < mx0) mx0 = sx; if (sx > mx1) mx1 = sx;
+          if (sy < my0) my0 = sy; if (sy > my1) my1 = sy;
+        }
+        if (m >= 40) cov40++;
+        if (m >= 100) cov100++;
+      }
+    }
+    return {
+      size: [W, H], texels, texelsBright, support, cov15, cov40, cov100,
+      quadScreen: [bx0, by0, bx1, by1], footprintTexels: [+rx.toFixed(2), +ry.toFixed(2)],
+      mask, maskBBox: mask.length ? [mx0, my0, mx1, my1] : null,
+    };
+  } catch { return null; } // 只读旁路：形状不符一律 null，绝不把异常抛进判定流程
 };
 
 /** 诊断（只读）：dump 某个 scene 对象显示对象的材质参数 —— 核对「文本层用什么材质/混合/透明度画的」。 */
