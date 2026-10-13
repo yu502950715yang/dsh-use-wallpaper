@@ -728,6 +728,27 @@ describe('ThreeScenePlayer background layer', () => {
   });
 });
 
+// renderOrder 唯一化（层序对齐 WE `m_objectsByRenderOrder`，lwe CScene.cpp:94-101/262-295）：
+// 显式传入时生效；**不传时逐字保持原值**（背景 0 / 粒子 1），既有调用方不受影响。
+describe('ThreeScenePlayer renderOrder 透传', () => {
+  it('addBackground/addParticle：显式 renderOrder 生效，缺省仍是背景 0 / 粒子 1', () => {
+    const { player } = makePlayer(1920, 1080);
+    player.addBackground({
+      origin: [960, 540, 0], size: [100, 100], scale: [1, 1, 1],
+      sceneW: 1920, sceneH: 1080, renderOrder: 5,
+    });
+    player.addParticle(() => new Float32Array(0), { frameCount: 1, blend: 'alpha', renderOrder: 3 });
+    expect(player.scene.children.map((c) => (c as THREE.Mesh).renderOrder)).toEqual([5, 3]);
+
+    const d = makePlayer(1920, 1080);
+    d.player.addBackground({
+      origin: [960, 540, 0], size: [100, 100], scale: [1, 1, 1], sceneW: 1920, sceneH: 1080,
+    });
+    d.player.addParticle(() => new Float32Array(0), { frameCount: 1, blend: 'alpha' });
+    expect(d.player.scene.children.map((c) => (c as THREE.Mesh).renderOrder)).toEqual([0, 1]);
+  });
+});
+
 // Task 3：粒子图层（addParticle / updateParticles）。用 mock getter 提供 sim 顶点（每粒子
 // [pos3,size,uv2,color3,alpha,rot3] 13 浮点，对应 wasm SceneParticleSim::build_instance_vertices），
 // 验证 BufferGeometry（InstancedBufferGeometry）被正确填充、updateParticles 刷新 buffer、
@@ -1249,6 +1270,35 @@ describe('ThreeScenePlayer loadSceneToThree', () => {
     expect(bgMesh.position.y).toBeCloseTo(0, 6); // origin 1080 - 2160/2
   });
 
+  // renderOrder 唯一化：装配循环把 objects 数组下标作为 renderOrder 透传（WE 的绘制序 =
+  // m_objectsByRenderOrder，即 scene.json objects 序）。被 `continue` 跳过的对象**不改变**下标。
+  it('renderOrder = objects 数组下标（唯一；被跳过的对象不占位）', () => {
+    const canvas = document.createElement('canvas');
+    const scene = JSON.stringify({
+      general: { orthogonalprojection: { height: 1080, width: 1920 } },
+      objects: [
+        { id: 13, image: 'models/a.json', origin: '960 540 0', scale: '1 1 1', size: '1920 1080' },
+        // index 1：text 无 textLayers 条目 → 装配时 continue（下标仍是 1，不占 renderOrder）
+        { id: 20, text: { value: 'x' }, origin: '960 540 0', scale: '1 1 1', size: '400 100' },
+        { id: 22, particle: 'particles/presets/smoke2.json', origin: '5101 1089 0', scale: '1 1 1' },
+        { id: 30, image: 'models/b.json', origin: '100 100 0', scale: '1 1 1', size: '100 100' },
+      ],
+    });
+    const tex = () => new THREE.DataTexture(new Uint8Array(4), 2, 2);
+    const assets = {
+      renderer: createMockRenderer() as unknown as THREE.WebGLRenderer,
+      backgroundTextures: new Map([[13, tex()], [30, tex()]]),
+      particles: new Map([[22, { specJson: '{}', blend: 'alpha' as const }]]),
+      createParticleSim: vi.fn(() => makeMockSim()),
+    };
+    const result = loadSceneToThree(scene, assets, canvas);
+    expect(result.player.scene.children.map((c) => (c as THREE.Mesh).renderOrder)).toEqual([0, 2, 3]);
+    // scene 对象 id → 显示对象的 renderOrder = 该对象的数组下标（唯一，互不相同）
+    expect((result.player.displayObject(13) as THREE.Mesh).renderOrder).toBe(0);
+    expect((result.player.displayObject(22) as THREE.Mesh).renderOrder).toBe(2);
+    expect((result.player.displayObject(30) as THREE.Mesh).renderOrder).toBe(3);
+  });
+
   // 对象级 instanceoverride：`LoadedParticleAssets.overrideJson`（原始 JSON 文本）必须原样
   // 作为**第 5 参**交给模拟器工厂 → wasm `CpuParticleSim.new(...)`（Rust 按官方
   // OverrideSpawnProgram 语义应用 alpha/size/lifetime/speed/color × emitter rate）。
@@ -1357,8 +1407,11 @@ describe('ThreeScenePlayer loadSceneToThree', () => {
       backgroundTextures: new Map([[17, tex()], [246, tex()], [300, tex()], [301, tex()]]),
     };
     const result = loadSceneToThree(scene, assets, canvas);
-    const meshes = result.player.scene.children.filter((c) => (c as THREE.Mesh).renderOrder === 0) as THREE.Mesh[];
+    // 按对象 id 取显示对象：renderOrder 现在 = objects 数组下标，不能再当「背景层」的筛选条件
+    // （四个对象的下标 0..3 恰好都曾是「背景」）。
+    const meshes = [17, 246, 300, 301].map((id) => result.player.displayObject(id) as THREE.Mesh);
     expect(meshes).toHaveLength(4);
+    expect(meshes.map((m) => m.renderOrder)).toEqual([0, 1, 2, 3]);
 
     // 缺省（mode=0）：保持既有普通 alpha 混合
     expect(meshes[0].material.blending).toBe(THREE.NormalBlending);
@@ -1716,6 +1769,37 @@ describe('ThreeScenePlayer 对象隔离', () => {
     const uv = (entry.quad.geometry as THREE.PlaneGeometry).attributes.uv.array as Float32Array;
     expect(Math.min(...Array.from(uv))).toBeCloseTo(0, 5);
     expect(Math.max(...Array.from(uv))).toBeCloseTo(1, 5);
+  });
+
+  // renderOrder 唯一化：隔离对象在主场景里的代表是**合成 quad**（内容 mesh 只进对象 RT），
+  // 其 renderOrder 跟随宿主对象的数组下标；不传时仍是 kind 缺省（背景 0 / 粒子 1）。
+  it('隔离合成 quad 的 renderOrder 由调用方透传（缺省仍按 kind）', () => {
+    const { player } = makePlayer(1920, 1080);
+    player.addBackground({
+      origin: [960, 540, 0], size: [100, 100], scale: [1, 1, 1], texture: makeTexture(),
+      sceneW: 1920, sceneH: 1080, objectId: 13, renderOrder: 7,
+      isolate: { objectId: 13, rtWidth: 64, rtHeight: 64, worldW: 100, worldH: 100 },
+    });
+    player.addParticle(() => new Float32Array(0), {
+      frameCount: 1, blend: 'alpha', objectId: 71, renderOrder: 9,
+      isolate: { objectId: 71, rtWidth: 64, rtHeight: 64, worldW: 100, worldH: 100 },
+    });
+    expect(player.isolatedObjects().find((e) => e.id === 13)!.quad.renderOrder).toBe(7);
+    expect(player.isolatedObjects().find((e) => e.id === 71)!.quad.renderOrder).toBe(9);
+
+    // 不传 renderOrder：背景 quad 0、粒子 quad 1（与改动前逐字相同）
+    const d = makePlayer(1920, 1080);
+    d.player.addBackground({
+      origin: [960, 540, 0], size: [100, 100], scale: [1, 1, 1], texture: makeTexture(),
+      sceneW: 1920, sceneH: 1080, objectId: 14,
+      isolate: { objectId: 14, rtWidth: 64, rtHeight: 64, worldW: 100, worldH: 100 },
+    });
+    d.player.addParticle(() => new Float32Array(0), {
+      frameCount: 1, blend: 'alpha', objectId: 72,
+      isolate: { objectId: 72, rtWidth: 64, rtHeight: 64, worldW: 100, worldH: 100 },
+    });
+    expect(d.player.isolatedObjects().find((e) => e.id === 14)!.quad.renderOrder).toBe(0);
+    expect(d.player.isolatedObjects().find((e) => e.id === 72)!.quad.renderOrder).toBe(1);
   });
 
   it('世界尺寸超过 RT 像素上限时相机仍覆盖完整对象（不产生边缘拉伸带）', () => {

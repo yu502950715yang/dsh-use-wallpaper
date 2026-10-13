@@ -1251,6 +1251,47 @@ describe('对象级效果链接线（真实 loadSceneToThree 对侧校验）', (
     warn.mockRestore();
     r.dispose();
   });
+
+  // renderOrder 唯一化：真实装配循环把 objects 数组下标透传给 addBackground/addParticle
+  // （WE 绘制序 = m_objectsByRenderOrder，lwe CScene.cpp:94-101/262-295）。
+  it('真实 loadSceneToThree：按 objects 下标把唯一 renderOrder 透传给 addBackground/addParticle', async () => {
+    const actual = await vi.importActual<typeof import('../src/client/threejs-player.js')>(
+      '../src/client/threejs-player.js',
+    );
+    const bgSpy = vi.spyOn(actual.ThreeScenePlayer.prototype, 'addBackground');
+    const partSpy = vi.spyOn(actual.ThreeScenePlayer.prototype, 'addParticle');
+    try {
+      // 下标 0 image、1 particle、2 image（第 3 个对象用来确认下标不重复）
+      const scene = JSON.stringify({
+        general: { orthogonalprojection: { height: 1080, width: 1920 } },
+        objects: [
+          { id: 13, image: 'models/a.json', origin: '960 540 0', scale: '1 1 1', size: '1920 1080' },
+          { id: 22, particle: 'particles/p.json', origin: '100 100 0', scale: '1 1 1' },
+          { id: 30, image: 'models/b.json', origin: '100 100 0', scale: '1 1 1', size: '100 100' },
+        ],
+      });
+      const tex = () => new THREE.DataTexture(new Uint8Array(4), 2, 2);
+      const assets = {
+        renderer: createPlayerMockRenderer(),
+        backgroundTextures: new Map([[13, tex()], [30, tex()]]),
+        particles: new Map([[22, { specJson: '{}', blend: 'alpha' as const }]]),
+        createParticleSim: vi.fn(() => makeMockSim()),
+      };
+      const result = actual.loadSceneToThree(
+        scene,
+        assets as never,
+        document.createElement('canvas'),
+      );
+      // 透传给 player 的就是下标（addBackground 的第 1 参 / addParticle 的第 2 参）
+      expect(bgSpy.mock.calls.map((c) => c[0].renderOrder)).toEqual([0, 2]);
+      expect(partSpy.mock.calls.map((c) => c[1].renderOrder)).toEqual([1]);
+      // 玩家侧真正的绘制序：唯一且与下标一致
+      expect(result.player.scene.children.map((c) => (c as THREE.Mesh).renderOrder)).toEqual([0, 1, 2]);
+    } finally {
+      bgSpy.mockRestore();
+      partSpy.mockRestore();
+    }
+  });
 });
 
 // text 对象（2026-09-21）：主路径渲染 text（时钟每帧走字）；**只对 text** 应用 visible 过滤——

@@ -936,6 +936,9 @@ export class ThreeScenePlayer {
     // scene.json 的**对象 id**（脚本图层桥的键）。与 isolate.objectId 不同：本字段**总是传**
     // （非隔离对象也要能被脚本按对象 id 找到），而 isolate.objectId 只在隔离时传。
     objectId?: number;
+    // 唯一绘制序（= scene.json objects 数组下标，对齐 WE `m_objectsByRenderOrder`：lwe CScene.cpp:94-101）。
+    // 缺省 0（背景在粒子之前绘制）——缺省时行为与引入本字段前逐字相同。
+    renderOrder?: number;
     // 对象隔离（对象级效果链）：五字段把三种量分开——
     //   objectId       = scene.json 的**对象 id**，即本隔离条目的键（见 attachIsolated 注释）；
     //   rtWidth/rtHeight = 对象 RT 的像素尺寸（由 object-range.isolatedRtSize 决定：≥ 屏占位、源纹理收口 4096）；
@@ -958,8 +961,8 @@ export class ThreeScenePlayer {
     // 合成 quad（见 createLayerMaterial / createCompositeQuadMaterial 注释）。
     const material = this.createLayerMaterial(opts.texture ?? null, opts.colorBlendMode ?? 0, mod, !!opts.isolate);
     const mesh = new THREE.Mesh(geometry, material);
-    // renderOrder 0（缺省且显式）：背景在粒子（renderOrder 1）之前绘制（背景在下）。
-    mesh.renderOrder = 0;
+    // renderOrder 唯一化（调用方按 objects 下标传入）；缺省 0 = 背景在粒子之前绘制（背景在下）。
+    mesh.renderOrder = opts.renderOrder ?? 0;
     const s = opts.scale;
     mesh.scale.set(s[0], s[1], s[2] ?? 1);
     // 对象角度（弧度）：PlaneGeometry 以几何中心为 pivot，mesh.rotation 即 T·R·S 的 R。
@@ -992,7 +995,7 @@ export class ThreeScenePlayer {
         x: opts.origin[0] - sceneW / 2,
         y: opts.origin[1] - sceneH / 2,
         z: opts.origin[2],
-      }, [a[0], a[1], a[2]], opts.colorBlendMode ?? 0);
+      }, [a[0], a[1], a[2]], opts.colorBlendMode ?? 0, opts.renderOrder);
     } else {
       this.scene.add(mesh);
     }
@@ -1146,6 +1149,8 @@ export class ThreeScenePlayer {
     position: { x: number; y: number; z: number },
     quadAngles: [number, number, number],
     colorBlendMode: number,
+    // 宿主对象的唯一绘制序（= objects 下标，调用方透传）；缺省按 kind 回退（背景 0 / 粒子 1）。
+    renderOrder?: number,
   ): void {
     const rtW = Math.max(1, Math.round(size.width));
     const rtH = Math.max(1, Math.round(size.height));
@@ -1201,8 +1206,8 @@ export class ThreeScenePlayer {
     );
     quad.position.set(position.x, position.y, position.z);
     quad.rotation.set(quadAngles[0], quadAngles[1], quadAngles[2]);
-    // renderOrder 与对象原语义一致（背景 0 / 粒子 1），保证合成顺序不变。
-    quad.renderOrder = kind === 'particle' ? 1 : 0;
+    // 合成 quad 的唯一绘制序跟随宿主对象；缺省沿原语义（背景 0 / 粒子 1），合成顺序不变。
+    quad.renderOrder = renderOrder ?? (kind === 'particle' ? 1 : 0);
     this.scene.add(quad);
     // 键 = scene.json 的对象 id（调用方传入），不是本类自己的图层计数器 id——见本方法头注释。
     this.isolated.set(objectId, {
@@ -1315,6 +1320,8 @@ export class ThreeScenePlayer {
       // scene.json 的**对象 id**（脚本图层桥的键，语义同 addBackground.objectId）：**总是传**，
       // 与只在隔离时传的 isolate.objectId 区分。
       objectId?: number;
+      // 唯一绘制序（= scene.json objects 数组下标，语义同 addBackground）；缺省 1（粒子在背景之上）。
+      renderOrder?: number;
       // 对象隔离（对象级效果链；粒子对象同样可挂效果链）。五字段语义同 addBackground：
       //   objectId       = scene.json 的**对象 id**，即隔离条目的键；
       //   rtWidth/rtHeight = 对象 RT 像素尺寸（由 object-range.isolatedRtSize 决定：≥ 屏占位、源纹理收口 4096）；
@@ -1441,11 +1448,9 @@ export class ThreeScenePlayer {
     // 自定义 renderer/WebXR 路径）都会把整层判为「离屏」（粒子在世界坐标 ±1200 处，包围球在原点）
     // → 整层不绘制 = 花瓣全丢。显式给一个无限半径的包围球，使该不变量不依赖 `frustumCulled` 一处。
     geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), Number.POSITIVE_INFINITY);
-    // renderOrder 固定为 1：保证粒子 billboard 在透明渲染队列中**晚于**背景图层（renderOrder 0）
-    // 绘制，使粒子叠在背景之上（背景 transparent 同排透明队列，靠插入顺序易受排序扰动，见
-    // ThreeScenePlayer 背景/粒子同 z 的 reversePainterSortStable 稳定序）。这是「粒子不可见 /
-    // 与背景竞争」的确定性保险（第 4 条：确认粒子被画出来且不被背景盖住）。
-    mesh.renderOrder = 1;
+    // renderOrder 唯一化（调用方按 objects 下标传入，同排透明队列按它排序 ⇒ 与 WE 绘制序一致）；
+    // 缺省 1 = 粒子 billboard 晚于背景（renderOrder 0）绘制，即「粒子不被背景盖住」的确定性保险。
+    mesh.renderOrder = opts.renderOrder ?? 1;
     if (opts.isolate) {
       // 粒子隔离：世界位移改由「内容 mesh 的负中心平移」承载，**不要**改 objCenter/objAngles
       // uniform——shader 用 `local = particlePosition - objCenter - bmOffset` 反解局部坐标，
@@ -1494,7 +1499,7 @@ export class ThreeScenePlayer {
       // 键 = scene.json 的对象 id（调用方传入），不是上面的 nextParticleLayerId 图层计数器 id。
       this.attachIsolated(opts.isolate.objectId, 'particle', mesh, opts.isolate.worldW, opts.isolate.worldH,
         { width: opts.isolate.rtWidth, height: opts.isolate.rtHeight },
-        { x: center[0], y: center[1], z: center[2] }, [0, 0, 0], 0);
+        { x: center[0], y: center[1], z: center[2] }, [0, 0, 0], 0, opts.renderOrder);
     }
     // scene 对象 id → 显示对象（隔离时是合成 quad，否则是粒子对象本身）。
     if (opts.objectId !== undefined) {
@@ -1858,7 +1863,9 @@ export function loadSceneToThree(
     alignment?: string;
   }> = [];
 
-  for (const obj of desc.objects) {
+  // renderOrder = objects 数组下标（每对象唯一）：对齐 WE 的绘制序 `m_objectsByRenderOrder`
+  // （lwe CScene.cpp:94-101/262-295，全库 34/34 壁纸一致）；`continue` 分支不改变数组下标。
+  for (const [renderOrder, obj] of desc.objects.entries()) {
     if (obj.kind === 'image') {
       // 背景对象：we_to_three（addBackground 内部）+ 对象调制（alpha/brightness）→ 背景图层。
       // alignment 缺省 centre（addBackground 签名无 alignment，Task 2 裁决）；origin 直传世界值。
@@ -1878,6 +1885,8 @@ export function loadSceneToThree(
         sceneH,
         // 脚本图层桥的键 = scene 对象 id（**总是传**，与只在隔离时传的 isolate.objectId 区分）。
         objectId: obj.id,
+        // 唯一绘制序 = 本对象在 objects 数组中的下标。
+        renderOrder,
         // 对象级效果链：本对象带效果（调用方下发了隔离条件）→ 内容进 localScene 渲染到对象 RT，
         // 主场景放合成 quad；缺省不隔离，行为与今天逐字相同。隔离条目的键 = obj.id（值里的
         // objectId 同值），与 ObjectEffectStage 的键空间一致。
@@ -1901,6 +1910,8 @@ export function loadSceneToThree(
         sceneW,
         sceneH,
         objectId: obj.id,
+        // 唯一绘制序 = 本对象在 objects 数组中的下标。
+        renderOrder,
       });
       backgroundIds.push(id);
       if (layer.driver) {
@@ -1971,6 +1982,8 @@ export function loadSceneToThree(
           : undefined,
         // 脚本图层桥的键 = scene 对象 id（总是传）。
         objectId: obj.id,
+        // 唯一绘制序 = 本对象在 objects 数组中的下标。
+        renderOrder,
         // 对象级效果链：带效果的粒子对象同样隔离（对象 RT + 合成 quad）。世界尺寸由调用方按
         // `particleWorldSize(spec, scale)` 算好（player 不知道 spec 的 distanceMax）；缺省不隔离。
         // 隔离条目的键 = obj.id（值里的 objectId 同值），与 ObjectEffectStage 的键空间一致。

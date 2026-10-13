@@ -121,7 +121,9 @@ export class DynamicMeshRegistry {
     return id;
   }
 
-  createLayer(modelId: number, name: string): number {
+  // renderOrder：宿主可传所属 scene.json 对象的数组下标（唯一绘制序，对齐 WE m_objectsByRenderOrder）；
+  // 缺省 1 = 背景（renderOrder 0）之上、与既有粒子同层。
+  createLayer(modelId: number, name: string, renderOrder?: number): number {
     const model = this.models.get(modelId);
     if (!model) return -1;
     const path = model.materialPath;
@@ -130,7 +132,7 @@ export class DynamicMeshRegistry {
       : this.materialFor(null);
     const mesh = new THREE.Mesh(model.geometry, material);
     mesh.name = name;
-    mesh.renderOrder = 1; // 背景（renderOrder 0）之上、与既有粒子同层
+    mesh.renderOrder = renderOrder ?? 1;
     mesh.frustumCulled = false; // 顶点每帧变且可能在相机外，剔除交给 drawRange
     this.parent.add(mesh);
     const id = this.nextLayerId++;

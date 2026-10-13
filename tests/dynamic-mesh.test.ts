@@ -95,6 +95,14 @@ describe('DynamicMeshRegistry', () => {
     expect(mesh.name).toBe('发射器 1');
   });
 
+  // renderOrder 唯一化：宿主可显式给出（= 所属 scene.json 对象的数组下标）；缺省仍是 1。
+  it('createLayer 的 renderOrder 可选（缺省 1）', () => {
+    const { registry } = mk();
+    const m = registry.createModel({ capacity: 1, vertexFormat: [0, 1, 2], materialPath: null })!;
+    expect(registry.meshOf(registry.createLayer(m, 'a'))!.renderOrder).toBe(1);
+    expect(registry.meshOf(registry.createLayer(m, 'b', 7))!.renderOrder).toBe(7);
+  });
+
   it('applyData 写入顶点：position/uv/color 各自 updateRange，drawRange 只画使用的 quad', () => {
     const { registry } = mk();
     const m = registry.createModel({ capacity: 2, vertexFormat: [0, 1, 2], materialPath: null })!;
