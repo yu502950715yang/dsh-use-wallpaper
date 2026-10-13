@@ -97,6 +97,20 @@ git checkout b21b1ac -- src/; node e2e/verify/verify-isolated-rt-sharpness.mjs -
 
 **`[perf]` FPS 探针怎么读**：`__fpsProbe(5000)` 统计 5000 ms 内真实 rAF 回调次数（返回 `{fps, frames, ms}`）—— `npm run e2e:textclock` 打印成 `[perf] renderer: …` / `[perf] {"fps":60,"frames":301,"ms":5016}`，本脚本打印成 `FPS=60（frames=301）`。本机 60 Hz vsync 是**天花板**（`CurrentRefreshRate 60`）⇒ 这个数字只能当「有没有跌破」的**地板**（判据 30），**测不出 60 以上的余量**，也不覆盖低端 GPU / 4K 屏；`--swiftshader` 时判据自动 SKIP。另外 `e2e` 依赖 service 子进程与 headless Edge，受限沙箱下会起不来（见 `AGENT.md` §5.13）。
 
+### 2.6 渲染 e2e：文本时钟层（`npm run e2e:textclock`）
+
+`e2e/verify/verify-text-clock-layer.mjs`：只对「魔兽之门」`1922570576` 的文本层（scene 对象 778「3D Clock」= 右下角 LED 数码时钟）做真实渲染验证（自起 http server + headless Edge 裸 CDP + esbuild 打包 harness，渲染**入库 `lib/`**）。判据 **11 项**（脚本头 [1]–[5] 展开）：生产装配产生文本层 / 修复前装配不产生 / quad 落在右下角 / 文本画布画出白字 / 字体命中引擎目录 `<WE>/assets/fonts/CursedTimerUlil-Aznm.ttf` / 字形 alpha 未压淡 / 屏幕能读到白字 / 隐藏后右下角变暗 / **文本层贡献显著高于噪声地板（[9]）** / 差异不出 quad / 恢复显示后回到噪声地板（[10]）。
+
+| 项 | 说明 |
+|---|---|
+| 命令 | `npm run e2e:textclock`（= `node e2e/verify/verify-text-clock-layer.mjs`），真机加 `--gpu` |
+| 参数 | `--id`（缺省 `1922570576`）、`--gpu`、`--teeth`、`--workshop=`、`--assets=`、`--port=9813`、`--cdp-port=9228` |
+| 必须串行 | 端口 9813 / CDP 9228 / `--user-data-dir` 全固定 ⇒ **不得与其它 e2e 并行**；单次约 15–20 s |
+| 依赖 | 本机素材（workshop 壁纸 + WE 安装目录）⇒ **未加进 `ci.yml`**（CI 上只跑 colorBlend） |
+| 退出码 | 0 = 11 项全过；1 = 有判据失败或脚本异常 |
+
+**噪声地板口径（2026-10-13 重标定）**：判据 [9] 的分母**不再是文本 quad 自身的逐帧抖动** —— 该 quad 压在会动的水面上（「效果遮罩 UV 修复」把水波纹放回湖面后，quad 内逐帧 `changedRatio` 由 0.12 升到 0.46–0.56），拿它当分母等于把合法背景动画当噪声（实测比值在 1.72×–8.06× 之间跳）。现在地板取自**同 y 带、沿 x 镜像**的等宽等高对照区（脚本内 `floorBox`，无文本、背景同类），且与 A/B **同一跳 / 同一对截图** ⇒ 时空口径与信号对齐；实测量级 **3.4–4.1k px**（quad 自身 13–14k px），阈值 **5×**（沿用原判据、未调；实测 12 次正常态 **7.22–8.54×**、5 次「文本层缺失」态 **3.52–3.75×** ⇒ 它落在两组分布之间，余量 ≥1.44× / ≥1.33×）。判据 [10] 的分母保持 quad 内两个「文本可见」帧的差异（分子分母同区域 ⇒ 合法动画在两边同时出现、天然抵消），倍率 3 → 2。`--teeth` 是标定自检：额外在「文本层缺失」装配下测同一 quad 的 A/B，断言它**仍达不到** [9] 的阈值（该模式 exit 0 时共 12 项全过）。实测证据见 `docs/fixes/conventions-details.md` §5.45。
+
 ---
 
 ## 3. 卸载方法

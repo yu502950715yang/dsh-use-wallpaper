@@ -14,13 +14,22 @@
 //   [2] 文本层画布上真的画出了白色字形（亮像素数 / 包围盒），且字形 alpha 未被压淡。
 //   [3] 屏幕上能读到白字：右下角「隐藏该层时暗、显示时亮」的像素数与亮度（因果绑定的口径，
 //       右下角本来就亮的粒子高光不算）。
-//   [4] 同页「显示 → 隐藏 → 显示」的信号远高于噪声地板（重渲染会重置粒子相位，噪声地板 ~2k px）。
+//   [4] 同页「显示 → 隐藏 → 显示」的信号远高于**对照区**噪声地板（文本 quad 沿 x 镜像、同 y 带的
+//       等宽等高区域；旧口径拿 quad 自身当分母，会被 quad 底下的合法水面动画污染，见下）。
 //   [5] 差异**严格**落在该文本 quad 的屏幕矩形内（零回归）。
 // 退出码：0 = 全部判据通过；1 = 有判据失败或脚本异常（CI 门禁）。
 //
+// 噪声地板口径（2026-10-13 重标定）：该文本 quad 压在**动的水面**上（「效果遮罩 UV 修复」把水波纹
+// 放回湖面后，quad 内逐帧 changedRatio 由 0.12 升到 0.46+），拿 quad 自身的抖动当分母等于把合法背景
+// 动画当噪声 ⇒ [9] 必然 FAIL。现在地板取自**同 y 带、沿 x 镜像**的等宽等高对照区（`floorBox`，无文本、
+// 背景同类；实测量级 **3.4–4.1k px**，而 quad 自身是 13–14k px），且与 A/B **同一跳**（同一对截图）
+// ⇒ 时空口径与信号对齐。判据 [10] 的分母仍是 quad 内两个「文本可见」帧的差异（分子分母同区域，
+// 合法动画在两边同时出现 ⇒ 天然免疫）。
+// `--teeth`：额外在「文本层缺失」装配下再测一次同一 quad 的 A/B，断言它**仍达不到** [9] 的阈值（牙）。
+//
 // ⚠️ 依赖本机素材（workshop 壁纸 + WE 安装目录），CI 上会因缺素材失败 —— 没有加进 ci.yml。
 // 用法：node e2e/verify/verify-text-clock-layer.mjs [--workshop=<dir>] [--assets=<dir>]
-//        [--port=9813] [--cdp-port=9228] [--gpu]
+//        [--port=9813] [--cdp-port=9228] [--gpu] [--teeth]
 import { createServer } from 'node:http';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, readdirSync } from 'node:fs';
 import { spawn } from 'node:child_process';
@@ -39,6 +48,7 @@ mkdirSync(OUT, { recursive: true });
 const PORT = httpPort(9813);
 const CDP_PORT = cdpPort(9228);
 const USE_GPU = flagOf('gpu');
+const TEETH = flagOf('teeth'); // 标定自检：额外验证「文本层缺失」时判据 [9] 仍判红
 
 const ID = argOf('id', WALLPAPER_ID);
 const WS = argOf('workshop', WE_WORKSHOP);
@@ -347,11 +357,26 @@ try {
   const region = textRegion(VW, VH);
   // A/B 像素差异只在文本 quad 矩形内统计（外扩 2px），其余区域不计 —— 与「不外溢」判据同一口径。
   const box = rect ? [rect.canvasCss[0] - 2, rect.canvasCss[1] - 2, rect.canvasCss[2] + 3, rect.canvasCss[3] + 3] : null;
+  // 噪声地板对照区：把文本 quad 沿 x 镜像到画面另一侧（同 y 带、等宽等高、无文本、背景同类）。
+  // 与 A/B 用**同一对截图**（iso-show vs iso-hide）⇒ 时间间隔与信号完全对齐，只剩区域差异。
+  const floorBox = box ? [VW - 1 - box[2], box[1], VW - 1 - box[0], box[3]] : null;
   const dAB = diffPng(shots['iso-show'], shots['iso-hide'], VW, VH, box);
   const dAA = diffPng(shots['iso-show'], shots['iso-show2'], VW, VH, box);
   const dReRepaired = diffPng(shots['iso-show2'], shots.repaired, VW, VH, box);
+  const dFloor = diffPng(shots['iso-show'], shots['iso-hide'], VW, VH, floorBox);
   const dOut = diffPng(shots['iso-show'], shots['iso-hide'], VW, VH); // 全屏差异（判「不外溢」）
-  writeFileSync(join(OUT, 'diff.json'), JSON.stringify({ dAB, dAA, dReRepaired, dOut, info }, null, 1));
+  // `--teeth`：文本层缺失（broken 装配）下的同一 quad A/B —— 标定自检，证明 [9] 的牙还在。
+  let teeth = null;
+  if (TEETH && box) {
+    await isolateStep('iso-show-broken', false);
+    await isolateStep('iso-hide-broken', true);
+    await isolateStep('iso-show2-broken', false);
+    teeth = {
+      dAB: diffPng(shots['iso-show-broken'], shots['iso-hide-broken'], VW, VH, box),
+      dFloor: diffPng(shots['iso-show-broken'], shots['iso-hide-broken'], VW, VH, floorBox),
+    };
+  }
+  writeFileSync(join(OUT, 'diff.json'), JSON.stringify({ dAB, dAA, dReRepaired, dFloor, dOut, teeth, info }, null, 1));
   const imgShow = decodePng(shots['iso-show']);
   const imgHide = decodePng(shots['iso-hide']);
   // 白字实测：「隐藏文本层的那一帧是暗的、显示文本层的那一帧是亮的」像素 —— 这是与该文本层
@@ -379,7 +404,19 @@ try {
   const brightWhole = brightStats(imgShow, [0, 0, VW, VH], 200);
 
   console.log('\n===== 判定 =====');
+  // 噪声地板 = **对照区**（文本 quad 沿 x 镜像、同 y 带、等宽等高、无文本）在同一跳
+  // （iso-show vs iso-hide，与 A/B 同一对截图）上的固有抖动。实测 12 次正常态 + 5 次缺失态
+  // （--gpu、1600×900）：对照区地板 3414–4131 px（±9%），A/B（文本层贡献）28801–29862 px
+  // ⇒ 比值 **7.22–8.54×**；文本层缺失时同一 quad 的 A/B 12775–13173 px ⇒ 比值 **3.52–3.75×**。
+  // 阈值沿用原判据的 **5×**（不调），它落在两组分布之间 ⇒ 正常态余量 ≥1.44×、缺失态离阈值 ≥1.33×。
+  const floor = Math.max(dFloor.changedPixels, 1);
+  // [10] 的分母仍是 quad 内两个**文本可见**帧（iso-show vs iso-show2）的抖动：分子分母同区域、
+  // 同内容，合法背景动画在两边同时出现 ⇒ 对「水面变活」天然免疫（换成对照区地板会把
+  // quad/对照区的活动度之比 ≈3.6× 编进阈值，脆）。实测 dReRepaired/dAA = 0.97–1.22（12 次）⇒ K 取 2
+  // （余量 ≥1.64×）；同时避免旧 K=3 的阈值 41.7k 超过 quad 面积 30.7k 而变成恒真。
   const noise = Math.max(dAA.changedPixels, 1);
+  const SIGNAL_MIN_RATIO = 5;   // [9] 信号/对照区地板
+  const RESTORE_MAX_RATIO = 2;  // [10] 恢复态/quad 抖动
   const checks = [
     [`修复前装配不产生文本层 #${TEXT_OBJECT_ID}`, info.broken.rect === null && brokenVisible === null],
     [`生产装配产生文本层 #${TEXT_OBJECT_ID}（画布 ${rect?.textureImage?.join('×') ?? '—'}）`,
@@ -400,18 +437,27 @@ try {
       textPixels.textMaskPixels > 800 && textPixels.brightTextPixels > 500],
     [`隐藏文本层后右下角变暗（区域均值 ${brightShow.meanLuma.toFixed(1)} → ${brightHide.meanLuma.toFixed(1)}）`,
       brightHide.meanLuma < brightShow.meanLuma - 2],
-    [`文本层在画面上的贡献显著高于噪声地板（${dAB.changedPixels} px vs ${dAA.changedPixels} px，>5×）`,
-      dAB.changedPixels > noise * 5 && dAB.changedPixels > 200],
+    [`文本层在画面上的贡献显著高于对照区噪声地板（A/B ${dAB.changedPixels} px vs 对照区地板 ${dFloor.changedPixels} px = ${(dAB.changedPixels / floor).toFixed(2)}×，>${SIGNAL_MIN_RATIO}×）`,
+      dAB.changedPixels > floor * SIGNAL_MIN_RATIO && dAB.changedPixels > 200],
     [`隐藏/显示文本层的差异严格落在它自己的 quad 内（差异包围盒 ${JSON.stringify(dAB.bbox)} ⊆ quad ${JSON.stringify(rect?.canvasCss)}）`,
       !!dAB.bbox && !!rect && dAB.bbox[0] >= rect.canvasCss[0] - 6 && dAB.bbox[1] >= rect.canvasCss[1] - 6
         && dAB.bbox[2] <= rect.canvasCss[2] + 6 && dAB.bbox[3] <= rect.canvasCss[3] + 6],
-    ['恢复显示后与隐藏前的差异回到噪声地板（同页两步一致）',
-      dReRepaired.changedPixels <= noise * 3 + 50],
+    [`恢复显示后与隐藏前的差异回到噪声地板（${dReRepaired.changedPixels} px ≤ quad 抖动 ${noise} px × ${RESTORE_MAX_RATIO} + 50）`,
+      dReRepaired.changedPixels <= noise * RESTORE_MAX_RATIO + 50],
   ];
+  // 牙的验证（`--teeth`）：文本层缺失（broken 装配）时，同一 quad 的 A/B 必须**达不到** [9] 的阈值。
+  if (teeth) {
+    const tf = Math.max(teeth.dFloor.changedPixels, 1);
+    checks.push([
+      `文本层缺失时 [9] 仍判红（A/B ${teeth.dAB.changedPixels} px vs 对照区地板 ${teeth.dFloor.changedPixels} px = ${(teeth.dAB.changedPixels / tf).toFixed(2)}×，未达 ${SIGNAL_MIN_RATIO}×）`,
+      !(teeth.dAB.changedPixels > tf * SIGNAL_MIN_RATIO && teeth.dAB.changedPixels > 200)]);
+  }
   let ok = true;
   for (const [name, pass] of checks) { console.log(`  ${pass ? 'PASS' : 'FAIL'}  ${name}`); if (!pass) ok = false; }
   console.log('\n文本层信号 A/B（显示 vs 隐藏）:', JSON.stringify(dAB));
-  console.log('噪声地板 A/A（显示 vs 再显示）:', JSON.stringify(dAA));
+  console.log('噪声地板 A/A（显示 vs 再显示，quad 内）:', JSON.stringify(dAA));
+  console.log(`噪声地板对照区（同 y 带镜像 quad ${JSON.stringify(floorBox)}，与 A/B 同一跳）:`, JSON.stringify(dFloor));
+  if (teeth) console.log('牙的验证（文本层缺失时的同一 quad A/B 与对照区地板）:', JSON.stringify(teeth));
   console.log('白字像素（右下角、隐藏时暗显示时亮）:', JSON.stringify(textPixels));
   console.log('引擎目录命中的场景素材:', JSON.stringify(assetHits));
   console.log('右下角亮像素（显示 / 隐藏 / 全屏）:', JSON.stringify({ show: brightShow.brightPixels, hide: brightHide.brightPixels, whole: brightWhole.brightPixels }));

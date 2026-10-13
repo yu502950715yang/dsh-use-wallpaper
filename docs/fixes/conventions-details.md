@@ -352,3 +352,23 @@
     - **为什么必须 `dispose()`**：`generateMipmaps` 是**实时**读的（`WebGLTextures.js:108-112`；`updateRenderTargetMipmap` `:1937-1957` 在每次渲染进 RT 后被调用）⇒ 只改 `minFilter` 而不 dispose，会出现「**每帧白生成 mip，却仍按旧 `LINEAR` 采样**」＝判定翻转后画面没变好、还多付 mip 生成开销。修法：判定翻转时 `rt.dispose()`（`core/RenderTarget.js:154` 只 `dispatchEvent('dispose')`；`WebGLTextures.js:317-325` 的 `onRenderTargetDispose` 摘监听 + `:457` `properties.remove(renderTarget)`；`setupRenderTarget` 每次都重新 `addEventListener`（`:1715`）⇒ 无监听泄漏，下一帧按新参数重建）；**未翻转时不要 dispose**（那等于每帧重建 FBO）。翻转判据取 `rt.texture.minFilter`（离散、与写入同源），故**不会误 dispose**：新建 RT 缺省即 `LinearFilter` ⇒ `minifying=false` 时 `flipped=false`；`minifying=true` 时 `flipped=true`、确实会 dispose 一次，但此刻 RT 尚未 setup、监听尚未挂上，dispose 是 no-op，无害。
     - **回归**：`tests/threejs-player.test.ts` —— 满屏 background `samples=0` / 未铺满仍为 4、铺满整屏的 particle 仍开 MSAA、RT 不大于屏占位时不生成 mip（`generateMipmaps=false` + `LinearFilter` 与 three 缺省逐值相同）、resize 后重估（判定翻转 dispose 恰好 1 次 / 未翻转 0 次）。
 
+### §5.45
+
+45. **文本层 e2e 的噪声地板改到「同 y 带镜像对照区」；跨特性回归的归因由「隔离 RT 分辨率」订正为「遮罩 UV 修复把水波纹放回湖面」（2026-10-13，测试标定）**：
+    - **现象**：`e2e/verify/verify-text-clock-layer.mjs` 判据 **[9]「文本层贡献 > 5× 噪声地板」** 稳定 FAIL（A/B 稳定在 29640–30406 px，A/A 地板 13.9k–17.2k ⇒ 比值 1.72–2.13×）。**同一时间窗、同一台真机**（`--gpu`、RTX 3060 / D3D11、视口 1600×900 / dpr=1、`--id=1922570576`）对三种 `lib/` 状态各跑一次：
+
+      | 臂 | `lib/` 状态 | A/B（文本层贡献） | A/A（噪声地板，quad 内） | 比值 | 判定 |
+      |---|---|---|---|---|---|
+      | S0 | `1699434`（两次 PASS 时线上跑的产物） | 30406 px | **5697 px** | 5.34× | PASS（勉强） |
+      | S1 | `22e6fb4`（只上「隔离 RT 分辨率」特性） | 30264 px | **3756 px** | 8.06× | PASS |
+      | S2 | HEAD（两特性 + fxRes，重复两次） | 29701 / 29640 px | **13960 / 17184 px** | 2.13× / 1.72× | **FAIL** |
+
+    - **归因（实测闭环，取代此前「强假设」）**：**分辨率特性被排除**（S1 地板比 S0 还低）；抬高来自 **`d7f6ec3`「效果遮罩 UV 修复」把水波纹放回湖面** —— 文本 quad `[928,721,1264,811]` 压在湖面上 ⇒ 该区域 `changedRatio` 由 **0.12** 升到 **0.46–0.56**、A/A 差异包围盒由局部 `[1155,727,1246,799]` 扩到**整个 quad**；A/B 信号全程稳定（±2%，29701/29640）⇒ **文本层健康，判据是标定过期而非渲染缺陷**。
+    - **新地板口径**（落点）：`e2e/verify/verify-text-clock-layer.mjs:362` 取 `floorBox` = 文本 quad 沿 x 镜像到画面另一侧（同 y 带、等宽等高、无文本、背景同类；本例 `[335,721,671,811]`），`:366` 用**与 A/B 同一对截图**（`iso-show` vs `iso-hide`）统计 `dFloor` ⇒ 时间间隔与信号对齐，只剩区域差异。实测量级 **3414–4131 px**（对照区；同一时刻 quad 自身是 12.8k–14.4k px —— 旧口径正是拿后者当分母）。
+    - **阈值依据（不调阈值，只换地板）**：判据 [9] 仍是 `> 5×`（`SIGNAL_MIN_RATIO`，`:418`）。12 次正常态实测 A/B 28801–29862 px、地板 3414–4131 px ⇒ 比值 **7.22–8.54×**（余量 ≥1.44×）；5 次「文本层缺失」态 A/B 12775–13173 px ⇒ 比值 **3.52–3.75×**（离阈值 ≥1.33×）。对照：**旧口径同机比值在 1.72×–8.06× 之间跳**（同一份代码、同一张壁纸、只差时刻）。
+    - **牙的验证（原始数字）**：① `--teeth`（脚本内固定自检，在「文本层缺失」装配下重测同一 quad）⇒ A/B **13173 px** vs 对照区地板 **3510 px = 3.75×**，其余 4 次 12829/12775/13082/13115 px ⇒ 3.52–3.74× ⇒ **[9] 判 FAIL**；② 整跑版（一次性复制脚本、把两处 `step(…, false)` 改成 `true` ⇒ 全程无文本层）⇒ `FAIL 文本层在画面上的贡献显著高于对照区噪声地板（A/B 114788 px vs 对照区地板 114788 px = 1.00×，>5×）`、**退出码 1**（该状态下 `rect === null` ⇒ 两区域都退化成整帧，比值恰为 1.00×）。文本层正常时同一判据 PASS、exit 0。
+    - **稳定性（重标定后 `--gpu` 连跑 3 次）**：地板 3738 / 3495 / 3481 px ⇒ 比值 **7.99× / 8.43× / 8.54×**（旧口径的上下限相差 4.7×）。
+    - **判据 [10] 的口径**：分母保持 quad 内两个**文本可见**帧（`iso-show` vs `iso-show2`）的差异 —— 分子分母同区域、同内容，合法背景动画在两边同时出现 ⇒ 天然免疫；倍率按实测 `dReRepaired/dAA = 0.97–1.22`（12 次）由 **3 收到 2**（余量 ≥1.64×；同时去掉旧倍率下阈值 41.7k > quad 面积 30.7k 的恒真）。
+    - **文档订正清单**：`docs/superpowers/specs/2026-10-12-isolated-object-rt-resolution-design.md:181`（删掉「疑与 `lib/` 重建…尚未用旧 `lib/` 复跑」的强假设，改写为上述实测结论 + 新口径）、`.superpowers/sdd/2026-10-12-plugin-hygiene/progress.md` R7（追加订正条目）、`TESTING.md` §2.6（该脚本原先没有文档：新增判据清单表 + 新地板口径）、本条目。
+    - **不变量**：`src/`、其它脚本的判据/阈值、`lib/`、`dist/` 零变更；`npm test` **55 files / 1118 passed**。
+
