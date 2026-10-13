@@ -1,6 +1,6 @@
 # `fxRes` 改为各分支实际上传尺寸实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 让 `g_TextureNResolution`（`tex.userData.fxRes`）报告**纹理实际上传的宽高**，而不是 mip0 记录尺寸；四分量仍保持同值（`.z/.x === 1` 不得被破坏）。
 
@@ -43,7 +43,7 @@
 - Produces: `withSprite(tex: THREE.Texture, w: number, h: number): THREE.Texture`，写 `ud.fxRes = [w, h, w, h]`
 - Consumes: `cropRowsToMap(...)`、`cropCompressedToMap(...)` 的 `{width, height}`（既有返回）
 
-- [ ] **Step 1: 写失败测试**（三条，放 `tests/tex-loader.test.ts` 的 fxRes describe 内）
+- [x] **Step 1: 写失败测试**（三条，放 `tests/tex-loader.test.ts` 的 fxRes describe 内）
 
 ```ts
 it('padded-raw：alloc 256×128 / image 100×50 / mip 256×128 ⇒ 报实际裁剪后的 [100,50,100,50]', async () => {
@@ -64,12 +64,12 @@ it('视频：mip0 记录 ≠ 视频尺寸时以视频尺寸为准', async () => 
 });
 ```
 
-- [ ] **Step 2: 跑测试确认红**
+- [x] **Step 2: 跑测试确认红**
 
 Run: `npx vitest run tests/tex-loader.test.ts -t fxRes`
 Expected: padded-raw 与 DXT 两条 FAIL（现口径报 `[256,128,256,128]` / `[64,32,64,32]` 之类），视频那条视构造而定。
 
-- [ ] **Step 3: 最小实现**
+- [x] **Step 3: 最小实现**
 
 ```ts
 const withSprite = (tex: THREE.Texture, w: number, h: number): THREE.Texture => {
@@ -84,12 +84,12 @@ const withSprite = (tex: THREE.Texture, w: number, h: number): THREE.Texture => 
 ```
 4 个调用点分别传入：视频 `video.videoWidth/videoHeight`；编码图像解码后的 `bitmap.width/height`；raw `cropRowsToMap(...)` 的 `{width,height}`；DXT `cropCompressedToMap(...)` 的 `{width,height}`。
 
-- [ ] **Step 4: 跑测试确认绿**
+- [x] **Step 4: 跑测试确认绿**
 
 Run: `npx vitest run tests/tex-loader.test.ts tests/dom/tex-loader-video.dom.test.ts` → 全绿（含既有 3 条 `z/x === 1`）
 Run: `npm test` → 贴总数（应 = 基线 + 3）
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add src/client/tex-loader.ts tests/tex-loader.test.ts
@@ -107,10 +107,10 @@ git commit -m "fix(client): fxRes 改为各分支实际上传尺寸（四分量�
 - Consumes: `window.__fxResProbe()` 的 `{x, texImage}` 行
 - Produces: 新判据「`x / texImage[0]` 偏离 1 的槽数 === 0」（不可比行——`texImage` 为 `null` 或 `x <= 0`——按既有规则排除，并在 detail 里报「可比槽 N」）
 
-- [ ] **Step 1: 加判据**：沿用 `add(name, ok, detail)` 惯例，阈值仍用 `1e-6`；`metrics.json` 里保留原观察量字段（供诊断）。
-- [ ] **Step 2: 跑真机（串行）**：`node e2e/verify/verify-isolated-rt-sharpness.mjs --gpu` ⇒ 期望 **8/8、0 FAIL、exit 0**，新判据 PASS 且 detail 显示偏离槽数 **0**（A1 前 `1429403119` 为 21/56）。
-- [ ] **Step 3: 反向验证**：`git checkout <本计划前的 HEAD> -- src/client/tex-loader.ts` ⇒ 期望新判据 **FAIL**（21/56）、exit 1；`git checkout HEAD -- src/client/tex-loader.ts` 恢复 ⇒ exit 0，`git diff --stat` 为空。
-- [ ] **Step 4: 提交**
+- [x] **Step 1: 加判据**：沿用 `add(name, ok, detail)` 惯例，阈值仍用 `1e-6`；`metrics.json` 里保留原观察量字段（供诊断）。
+- [x] **Step 2: 跑真机（串行）**：`node e2e/verify/verify-isolated-rt-sharpness.mjs --gpu` ⇒ 期望 **8/8、0 FAIL、exit 0**，新判据 PASS 且 detail 显示偏离槽数 **0**（A1 前 `1429403119` 为 21/56）。
+- [x] **Step 3: 反向验证**：`git checkout <本计划前的 HEAD> -- src/client/tex-loader.ts` ⇒ 期望新判据 **FAIL**（21/56）、exit 1；`git checkout HEAD -- src/client/tex-loader.ts` 恢复 ⇒ exit 0，`git diff --stat` 为空。
+- [x] **Step 4: 提交**
 
 ```bash
 git add e2e/verify/verify-isolated-rt-sharpness.mjs
@@ -124,19 +124,19 @@ git commit -m "test(e2e): fxRes 上传尺寸观察量升级为判据（偏离 1 
 **Files:**
 - Modify: `AGENT.md`（§5.17、§7.37）、`docs/fixes/conventions-details.md`（§5.17）、`docs/superpowers/specs/2026-10-12-fxres-actual-upload-size-design.md`（状态 → 已实现）、`docs/superpowers/specs/2026-10-12-isolated-object-rt-resolution-design.md`（§7/R32 若涉及）、`src/client/effect-runner.ts`（注释）
 
-- [ ] **Step 1**：`AGENT.md §5.17` —— 口径改为「四分量同值 = **实际上传尺寸**」；sprite 隐患句收紧为「sprite + **mip0 记录 > image** ⇒ 本机库 0 实例」（实测 sprite + alloc≠image 有 2 例，但载荷无 padding）。
-- [ ] **Step 2**：`AGENT.md §7.37` 改写为「已实现」+ 三条事实（当前库内数值影响 0：B/C/D 类用法全在 slot 0 的 RT 回退；DXT `ceil4` 是唯一代码层第三类、本机库 0 实例；四分量同值不变量）。
-- [ ] **Step 3**：`docs/fixes/conventions-details.md §5.17` 归档本次实测数字（变更集 51 纹理 / 8 张壁纸；`xOverTexImage` 21/56 → 0）；`effect-runner.ts` 注释同步；视频 1×1 兜底加「故意不带 `fxRes`」一行。
-- [ ] **Step 4**：验证 `npm test` 全绿 + `--selftest` 16/16 + `git diff --stat` 范围；提交 `docs(agent): 回写 fxRes 实际上传尺寸口径与影响面`。
+- [x] **Step 1**：`AGENT.md §5.17` —— 口径改为「四分量同值 = **实际上传尺寸**」；sprite 隐患句收紧为「sprite + **mip0 记录 > image** ⇒ 本机库 0 实例」（实测 sprite + alloc≠image 有 2 例，但载荷无 padding）。
+- [x] **Step 2**：`AGENT.md §7.37` 改写为「已实现」+ 三条事实（当前库内数值影响 0：B/C/D 类用法全在 slot 0 的 RT 回退；DXT `ceil4` 是唯一代码层第三类、本机库 0 实例；四分量同值不变量）。
+- [x] **Step 3**：`docs/fixes/conventions-details.md §5.17` 归档本次实测数字（变更集 51 纹理 / 8 张壁纸；`xOverTexImage` 21/56 → 0）；`effect-runner.ts` 注释同步；视频 1×1 兜底加「故意不带 `fxRes`」一行。
+- [x] **Step 4**：验证 `npm test` 全绿 + `--selftest` 16/16 + `git diff --stat` 范围；提交 `docs(agent): 回写 fxRes 实际上传尺寸口径与影响面`。
 
 ---
 
 ### Task 4（单独确认后执行）：重建产物与目视
 
-- [ ] **Step 1**：用户确认时机 → `npm run build && npm run build:client`
-- [ ] **Step 2**：`grep -c` 校验 `lib/client/tex-loader.js` 的 `ud.fxRes = [w, h, w, h]` 形态（不再是 `[mip.width,…]`）
-- [ ] **Step 3**：`npm test` 全绿后提交 `chore(build): 重建 lib/ 与 dist/ 产物（fxRes 口径）`
-- [ ] **Step 4**：真机目视魔兽之门 / GTR（DXT）/ In the Mountains（sprite）⇒ **预期无差异**（本改动当前无可观测影响）
+- [x] **Step 1**：用户确认时机 → `npm run build && npm run build:client`
+- [x] **Step 2**：`grep -c` 校验 `lib/client/tex-loader.js` 的 `ud.fxRes = [w, h, w, h]` 形态（不再是 `[mip.width,…]`）
+- [x] **Step 3**：`npm test` 全绿后提交 `chore(build): 重建 lib/ 与 dist/ 产物（fxRes 口径）`
+- [x] **Step 4**：真机目视魔兽之门 / GTR（DXT）/ In the Mountains（sprite）⇒ **预期无差异**（本改动当前无可观测影响）
 
 ## Self-Review
 
