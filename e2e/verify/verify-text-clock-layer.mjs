@@ -56,9 +56,13 @@
 // ⚠️ 依赖本机素材（workshop 壁纸 + WE 安装目录），CI 上会因缺素材失败 —— 没有加进 ci.yml。
 // 用法：node e2e/verify/verify-text-clock-layer.mjs [--workshop=<dir>] [--assets=<dir>]
 //        [--port=9813] [--cdp-port=9228] [--gpu] [--no-teeth] [--sweep=<覆盖率列表>] [--dim=<透明度列表>]
-//        [--at=HH:MM:SS（把冻结墙钟钉到该本地时刻 ⇒ 时钟内容可控，用来验尺度无关性；缺省钉在当下）]
+//        [--at=HH:MM:SS（把冻结墙钟钉到该本地时刻 ⇒ 时钟内容可控，用来验尺度无关性；缺省钉在当下；
+//         时/分/秒越界（0–23 / 0–59 / 0–59）直接报错退出，不做归一化）]
 //        [--live-wallclock（负向对照：不冻墙钟 + 真实时间前进 1.2 s ⇒ [10] 必须判 FAIL）]
 //        （`--sweep`/`--dim` 只**追加**扫描档位；牙指定的 0.5 / 0.1 两档永远在列）
+// ⚠️ `--at` 只覆盖**内容**维度（冻结那一刻的时钟文本）。**换 quad 几何（对象世界尺寸 / 屏幕占位）或纹理尺寸
+//    后必须重标定**：掩码的**孔径 = 足迹半径**（`W/sw/2`，本例 1.33 texel ⇒ round 成 3×3 texel 积分窗口）
+//    与两个阈值（0.65 / 88）都只在本例几何（纹理 884×228 → 屏幕 ≈332×86）下成立，照原样跑会假红/假绿。
 import { createServer } from 'node:http';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, readdirSync } from 'node:fs';
 import { spawn } from 'node:child_process';
@@ -89,12 +93,18 @@ const AT_SPEC = argOf('at', '');
 function atMsOf(spec) {
   const m = /^(\d{1,2}):(\d{2}):(\d{2})$/.exec(String(spec ?? ''));
   if (!m) return null;
+  const [hh, mm, ss] = m.slice(1).map(Number);
+  // 范围校验：`setHours` 会把越界值静默进位（`25:00:00` → 次日 `01:00:00`）⇒ 冻结内容与请求不符，直接判非法。
+  if (hh > 23 || mm > 59 || ss > 59) return null;
   const d = new Date();
-  d.setHours(Number(m[1]), Number(m[2]), Number(m[3]), 0);
+  d.setHours(hh, mm, ss, 0);
   return d.getTime();
 }
 const AT_MS = AT_SPEC ? atMsOf(AT_SPEC) : null;
-if (AT_SPEC && AT_MS === null) throw new Error(`--at 需为本地 HH:MM:SS（收到 ${AT_SPEC}）`);
+if (AT_SPEC && AT_MS === null) {
+  console.error(`✗ --at 需为本地 24 小时制 HH:MM:SS（时 0–23、分 0–59、秒 0–59）；收到 ${AT_SPEC}`);
+  process.exit(1); // 不做静默归一化：那样日志会打着传入值、实际冻的却是另一天的时刻
+}
 /** 本地 `HH:MM:SS`（日志里自证「这一跑冻的是哪段时钟内容」）。 */
 function localHmsOf(ms) {
   const d = new Date(ms);
@@ -595,7 +605,8 @@ try {
   const glyph = JSON.parse(await evalJs(`JSON.stringify(window.__textGlyphScreenPixels(${TEXT_OBJECT_ID}))`) ?? 'null');
   const glyphCanvas = JSON.parse(await evalJs(`JSON.stringify(window.__textCanvasImage(${TEXT_OBJECT_ID}))`) ?? 'null');
   const glyphMask = new Set(glyph?.mask ?? []);
-  const clockContent = AT_MS !== null ? AT_SPEC : localHmsOf(frozenDate.ms);
+  // 日志打**实际冻结**的本地时刻（不直接回显 `--at` 传入串，避免「打印的」与「冻住的」不一致）。
+  const clockContent = AT_MS !== null ? localHmsOf(AT_MS) : localHmsOf(frozenDate.ms);
   console.log(`  [同相位] 冻结内容（本地时钟文本）${clockContent}；该层自身字形足迹 ${glyphMask.size} px ${JSON.stringify({ ...glyph, mask: undefined })}、纹理空间亮像素 ${glyphCanvas?.brightPixels ?? '—'}`);
   // 负向对照：不冻墙钟时让**真实**时间前进 1.2 s，保证 on/on2 跨过秒位边界（99.9% 概率变成 ~100%）。
   if (LIVE_WALLCLOCK) await sleep(1200);
@@ -822,7 +833,7 @@ try {
   console.log(`同帧字形分母（冻结内容 ${clockContent}）:`, JSON.stringify({
     maskPx: glyphPx, maskBBox: glyph?.maskBBox ?? null, texels: glyph?.texels ?? null, texelsBright: glyph?.texelsBright ?? null,
     support: glyph?.support ?? null, cov15: glyph?.cov15 ?? null, cov40: glyph?.cov40 ?? null, cov100: glyph?.cov100 ?? null,
-    quadScreen: glyph?.quadScreen ?? null, footprintTexels: glyph?.footprintTexels ?? null,
+    quadScreen: glyph?.quadScreen ?? null, footprintTexelRadius: glyph?.footprintTexelRadius ?? null,
     textureBrightPixels: glyphCanvas?.brightPixels ?? null,
     ratioTextureSpace: glyphCanvas?.brightPixels ? +(spPixels / glyphCanvas.brightPixels).toFixed(3) : null,
   }));

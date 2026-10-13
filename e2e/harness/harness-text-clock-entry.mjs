@@ -238,8 +238,9 @@ window.__textCanvasImage = (objectId) => {
 /** 只读观测：该层**自身字形**投影到屏幕后会点亮多少像素 —— 判据 [9] 的**尺度无关分母**。
  *  只读「该层自己的纹理 + quad 投影」，不读渲染结果、不受覆盖率/透明度注入影响（注入不改纹理），
  *  因此「分子 ÷ 它」时时钟内容（点亮段数）在两侧同时约掉。
- *  口径 = 把屏幕像素反投影回 quad 局部平面取纹理坐标，再对它的**纹理足迹**（≈纹理像素/屏幕像素 ≈2.7²
- *  个 texel，minify 时字形会被"糊"开一圈）求 alpha 均值 ≈ 该像素覆盖到的字形比例；按阈值计数。
+ *  口径 = 把屏幕像素反投影回 quad 局部平面取纹理坐标，再对它的**纹理足迹**（该像素处半径 1.33 texel 的
+ *  3×3 texel 积分窗口 ⇒ **面积** ≈2.7²，minify 时字形会被"糊"开一圈）求 alpha 均值 ≈ 该像素覆盖到的字形
+ *  比例；按阈值计数。换 quad 几何 / 纹理尺寸后这张足迹口径与判定阈值都要重标定（只标定在本例几何上）。
  *  返回的 `mask`（cov15）是判据 [9] 的分子掩码：**分子必须与它取交** —— 全屏强变化里还有该层带动的
  *  屏幕空间光晕（实测 quad 内约 5 px 宽的边圈，同内容档 8337 px 里占 4739 px），那不是它自己的字形。 */
 window.__textGlyphScreenPixels = (objectId) => {
@@ -288,7 +289,8 @@ window.__textGlyphScreenPixels = (objectId) => {
       const cw = inv[2][0] * nx + inv[2][1] * ny + inv[2][2];
       return [(inv[0][0] * nx + inv[0][1] * ny + inv[0][2]) / cw, (inv[1][0] * nx + inv[1][1] * ny + inv[1][2]) / cw];
     };
-    // 纹理足迹半径（纹理像素 / 屏幕像素 / 2）：取 quad 两组对边的屏幕长度。
+    // 纹理足迹**半径**（texel）= 纹理像素 / 屏幕像素 / 2：取 quad 两组对边的屏幕长度 ⇒ 同时是积分孔径。
+    // 循环实际覆盖 round 出的 (2·round(r)+1)² 个 texel（本例 1.33 ⇒ 3×3 块 ≈2.7² 的**面积**，不是 r²）。
     const len = (q1, q2) => Math.hypot(q1[0] - q2[0], q1[1] - q2[1]);
     const sw = (len(corner[0], corner[1]) + len(corner[2], corner[3])) / 2;
     const sh = (len(corner[0], corner[2]) + len(corner[1], corner[3])) / 2;
@@ -320,7 +322,7 @@ window.__textGlyphScreenPixels = (objectId) => {
     }
     return {
       size: [W, H], texels, texelsBright, support, cov15, cov40, cov100,
-      quadScreen: [bx0, by0, bx1, by1], footprintTexels: [+rx.toFixed(2), +ry.toFixed(2)],
+      quadScreen: [bx0, by0, bx1, by1], footprintTexelRadius: [+rx.toFixed(2), +ry.toFixed(2)],
       mask, maskBBox: mask.length ? [mx0, my0, mx1, my1] : null,
     };
   } catch { return null; } // 只读旁路：形状不符一律 null，绝不把异常抛进判定流程
