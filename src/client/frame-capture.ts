@@ -6,11 +6,14 @@ import * as THREE from 'three';
 export interface FrameCapture {
   /** 是否已有消费者：调用方据此决定走不走段渲染。 */
   readonly active: boolean;
-  /** 段渲染目标（画布尺寸）；首次读它或 capture() 时才建资源，无消费者时零 GPU 占用。 */
+  /** 段渲染目标（画布尺寸）。读取会构造 RT（有副作用），调用方应只在 active === true 时使用。 */
   readonly target: THREE.WebGLRenderTarget;
-  /** 声明本帧有消费者（激活），并开启一次新快照。 */
+  /** 声明本帧有消费者（激活）；不建任何 GPU 资源。 */
   use(): void;
-  /** 返回本帧快照（当前已绑定 framebuffer 的内容）；同一激活周期内只 blit 一次、复用同一张纹理。 */
+  /**
+   * 每次调用都 copyFramebufferToTexture 拍一次，返回同一张纹理实例（内容被覆盖）。
+   * 调用前须已把渲染目标绑到 target（本方法不切 target）；消费者不得跨帧持有该引用。
+   */
   capture(): THREE.Texture;
   /** 同步 target 与快照尺寸；尺寸变化会重建快照纹理（FramebufferTexture 无 setSize），旧引用作废。 */
   resize(width: number, height: number): void;
@@ -37,8 +40,6 @@ export function createFrameCapture(renderer: THREE.WebGLRenderer): FrameCapture 
   let hasSize = false;
   let width = 0;
   let height = 0;
-  /** 本次 use() 之后是否已拍过快照（同一次激活只 blit 一次）。 */
-  let captured = false;
   let target: THREE.WebGLRenderTarget | null = null;
   let snapshot: THREE.FramebufferTexture | null = null;
 
@@ -72,7 +73,6 @@ export function createFrameCapture(renderer: THREE.WebGLRenderer): FrameCapture 
     width = nw;
     height = nh;
     hasSize = true;
-    captured = false; // 新纹理是空的：同帧内的下一次 capture() 必须重拍
     if (target !== null && snapshot !== null) {
       target.setSize(nw, nh);
       snapshot.dispose();
@@ -82,11 +82,9 @@ export function createFrameCapture(renderer: THREE.WebGLRenderer): FrameCapture 
 
   function capture(): THREE.Texture {
     const res = ensure();
-    if (!captured) {
-      // 不切 render target：copyFramebufferToTexture 拷的是**当前已绑定**的 framebuffer。
-      renderer.copyFramebufferToTexture(res.snapshot);
-      captured = true;
-    }
+    // 每次调用都拍一次（每个消费者在自己的段边界各拍一次），内容覆盖进同一张纹理。
+    // 不切 render target：copyFramebufferToTexture 拷的是**当前已绑定**的 framebuffer。
+    renderer.copyFramebufferToTexture(res.snapshot);
     return res.snapshot;
   }
 
@@ -103,7 +101,7 @@ export function createFrameCapture(renderer: THREE.WebGLRenderer): FrameCapture 
   return {
     get active() { return active; },
     get target() { return ensure().target; },
-    use() { if (!disposed) { active = true; captured = false; } },
+    use() { if (!disposed) active = true; },
     capture,
     resize,
     dispose,

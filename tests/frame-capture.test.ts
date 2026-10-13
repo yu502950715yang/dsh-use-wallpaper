@@ -20,7 +20,7 @@ describe('createFrameCapture', () => {
     expect(calls).toEqual([]);
   });
 
-  it('use() 后 active=true；capture() 返回纹理且复用同一张', () => {
+  it('use() 后 active=true；每次 capture() 都拍一次且返回同一实例', () => {
     const calls: string[] = [];
     const cap = createFrameCapture(fakeRenderer(calls));
     cap.use();
@@ -28,7 +28,7 @@ describe('createFrameCapture', () => {
     const t2 = cap.capture();
     expect(cap.active).toBe(true);
     expect(t1).toBe(t2);
-    expect(calls).toEqual(['copy']);
+    expect(calls).toEqual(['copy', 'copy']);
   });
 
   it('resize() 后 target 尺寸 = 画布缓冲尺寸，快照纹理同尺寸', () => {
@@ -59,7 +59,7 @@ describe('createFrameCapture', () => {
     expect(cap.target.width).toBe(2560);
   });
 
-  it('resize() 换了新纹理：同一次激活内的下一次 capture() 必须重拍', () => {
+  it('resize() 换了新纹理：capture() 返回新尺寸的纹理并重拍', () => {
     const calls: string[] = [];
     const cap = createFrameCapture(fakeRenderer(calls));
     cap.use();
