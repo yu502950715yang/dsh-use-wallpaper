@@ -56,6 +56,36 @@ function mulberry32(seed: number) {
 
 const BUILTIN_CACHE = new Map<string, THREE.Texture>();
 
+// WE 的 `_rt_FullFrameBuffer` = 场景 FBO 本身（「到那一刻为止已绘制的内容」，lwe CScene.cpp:351-361）。
+// 本库唯一真实消费者：2597392171 obj#50 `柯西` 的 godrays_combine（textures[2]，COPYBG=1）。
+// 其余 `_rt_*`（`_rt_Bloom` / `_rt_QuarterCompoBuffer1` / 派生名）本轮**行为不变**（design R7/R9）。
+export const FRAME_SNAPSHOT_RT = '_rt_FullFrameBuffer';
+
+/** 该槽路径是否指向整帧快照（只认这一个名字；`_rt_FullCompoBuffer1_23_40` 这类派生名一律 false）。 */
+export function isFrameSnapshotPath(path: string | null | undefined): boolean {
+  return !!path && path.replace(/\.tex$/, '') === FRAME_SNAPSHOT_RT;
+}
+
+/** 该 pass 是否**真的**会采样整帧快照：`textures[j] = _rt_FullFrameBuffer` 且该槽未被 bind 覆盖。
+ *  口径必须与 update 的槽绑定一致（bind 覆盖时用的是 bind 的源）⇒ 判定结果 = 「有快照才有意义」。 */
+export function passSamplesFrameSnapshot(pass: CompiledEffectPass): boolean {
+  // `?? []`：缺字段（早于该字段构造的 pass）退回既有口径，不抛异常（同 effectSlotCount 的护栏）。
+  return (pass.textureSlots ?? []).some(
+    (slot, j) => isFrameSnapshotPath(slot) && !(pass.bind ?? []).some((b) => b.index === j),
+  );
+}
+
+// 快照不可用只告警一次（模块级）：每壁纸 / 每帧都刷会淹没日志。
+let frameSnapshotWarned = false;
+function warnFrameSnapshotUnavailable(): void {
+  if (frameSnapshotWarned) return;
+  frameSnapshotWarned = true;
+  console.warn(
+    '[wallpaper-engine] 帧内快照不可用：_rt_FullFrameBuffer 回退 1×1 白'
+    + '（godrays 等合成链的半透明区会被压黑）',
+  );
+}
+
 // 兜底程序化噪声的**逐路径种子**：`util/noise` 与 `util/clouds_256` 在 WE 里是**两张不同的纹理**
 // （noise.tex 263 KB / clouds_256.tex 200 KB）。此前把两者映射到同一个 key `'noise256'`（同一个实例）
 // 是明确的错 —— 共用一张会让语义完全不同的噪声（vhs 的扫描线/失真噪声 vs clouds 的形状噪声）
@@ -65,7 +95,10 @@ const BUILTIN_NOISE_SEEDS: Record<string, number> = {
   clouds256: 0x7e1c9a35, // util/clouds_256
 };
 
-export function resolveBuiltinTexture(path: string | null | undefined): THREE.Texture | null {
+export function resolveBuiltinTexture(
+  path: string | null | undefined,
+  frameTexture?: THREE.Texture | null,
+): THREE.Texture | null {
   if (!path) return null;
   // 兼容带 .tex 后缀的内置路径（'util/noise.tex' 这类 scene.json 写法）
   const p = path.replace(/\.tex$/, '');
@@ -73,7 +106,13 @@ export function resolveBuiltinTexture(path: string | null | undefined): THREE.Te
   if (p === 'util/white') key = 'white';
   else if (p === 'util/noise') key = 'noise';           // 与 clouds_256 分开（WE 里是两张不同纹理）
   else if (p === 'util/clouds_256') key = 'clouds256';
-  else if (p.startsWith('_rt_')) key = 'white'; // 运行时 RT 一期回退白（A6 合成层精化）
+  else if (isFrameSnapshotPath(p)) {
+    // 整帧快照：有本帧快照就直接给（**不进缓存** —— 内容逐帧覆盖，缓存会把它钉成常量）。
+    if (frameTexture) return frameTexture;
+    warnFrameSnapshotUnavailable();  // 无快照：维持 1×1 白回退 + 一次性告警（不白屏、不静默跳过）
+    key = 'white';
+  }
+  else if (p.startsWith('_rt_')) key = 'white'; // 其它运行时 RT 仍回退白（R7/R9 本轮不变）
   else return null;
   const cached = BUILTIN_CACHE.get(key);
   if (cached) return cached;
@@ -421,7 +460,8 @@ export class EffectRunner {
     this.clearTextures();
     for (const pass of chains.flat()) {
       for (const path of pass.textureSlots) {
-        if (path) void this.resolveTextureSlot(path);
+        // 整帧快照是逐帧的段边界产物：不预加载、不缓存（也免得在这里打「快照不可用」的日志）。
+        if (path && !isFrameSnapshotPath(path)) void this.resolveTextureSlot(path);
       }
     }
   }
@@ -472,7 +512,8 @@ export class EffectRunner {
     // 预加载让纹理尽快到位，减少 update 内 await 次数（并发窗口缩小）。
     for (const pass of chains.flat()) {
       for (const path of pass.textureSlots) {
-        if (path) void this.resolveTextureSlot(path);
+        // 整帧快照是逐帧的段边界产物：不预加载、不缓存（理由同 setPlan）。
+        if (path && !isFrameSnapshotPath(path)) void this.resolveTextureSlot(path);
       }
     }
   }
@@ -700,7 +741,11 @@ export class EffectRunner {
   // 帧循环用 lastOutput() 贴屏，last 保持最近完成输出，无帧间闪烁。
   // 有 plan 时按计划执行：写端三态（具名 RT / ping-pong）+ bind 按 g_Texture<index> 覆盖槽；
   // `previous` = 进入 target 序列前的输入（lwe CImage::configurePassTarget），逐链独立。
-  async update(time: number, input: THREE.WebGLRenderTarget | THREE.Texture): Promise<THREE.Texture | null> {
+  async update(
+    time: number,
+    input: THREE.WebGLRenderTarget | THREE.Texture,
+    frameTexture: THREE.Texture | null = null,
+  ): Promise<THREE.Texture | null> {
     if (this.updateInFlight) return null;
     this.updateInFlight = true;
     try {
@@ -720,16 +765,24 @@ export class EffectRunner {
           // 该槽被本 pass 的 bind 覆盖时实际用的是 bind 的源（真实库 _rt_imageLayerComposite_*_a/_b
           // 共 6 处均如此）⇒ 不拦截、不告警，否则是误导性告警。
           const boundByBind = pp.bindings.some((b) => b.slot === j);
-          if (path && !boundByBind && this.isForeignRuntimeRt(path, pp.chainIndex)) {
-            // `_rt_*` 不在本链具名 RT 表内 = 全局运行时 RT：解析只会拿到 1×1 白纹（凭空造内容），
-            // 故保持该槽默认（通常为 null），只告警一次。
-            this.warnOnce(
-              `foreign-rt-slot:${this.id}:${key}:${path}`,
-              `[wallpaper-engine] 纹理槽引用了本链未声明的运行时 RT，跳过绑定（槽留空）: `
-              + `g_Texture${j} ← ${path}（壁纸 ${this.id}，pass ${pp.chainIndex}:${pp.passIndex}）`,
-            );
-            slotTex.set(key, resolveSlotFallback(p, j));
-            continue;
+          if (path && !boundByBind) {
+            // 段边界快照（design §3.5）：`_rt_FullFrameBuffer` 有本帧快照就直接绑它 ——
+            // 内容 = 该消费者被绘制**之前**本帧已画的内容（不是上一帧，也不是 1×1 白）。
+            if (frameTexture && isFrameSnapshotPath(path)) {
+              slotTex.set(key, frameTexture);
+              continue;
+            }
+            if (this.isForeignRuntimeRt(path, pp.chainIndex)) {
+              // `_rt_*` 不在本链具名 RT 表内 = 全局运行时 RT：解析只会拿到 1×1 白纹（凭空造内容），
+              // 故保持该槽默认（通常为 null），只告警一次。
+              this.warnOnce(
+                `foreign-rt-slot:${this.id}:${key}:${path}`,
+                `[wallpaper-engine] 纹理槽引用了本链未声明的运行时 RT，跳过绑定（槽留空）: `
+                + `g_Texture${j} ← ${path}（壁纸 ${this.id}，pass ${pp.chainIndex}:${pp.passIndex}）`,
+              );
+              slotTex.set(key, resolveSlotFallback(p, j));
+              continue;
+            }
           }
           slotTex.set(key, path ? await this.resolveTextureSlot(path) : resolveSlotFallback(p, j));
         }

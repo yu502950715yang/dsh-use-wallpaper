@@ -11,7 +11,7 @@
 import type * as THREE from 'three';
 import { fitIsolatedBudget, isolatedRtSize } from './object-range.js';
 import type { SourcePixels } from './object-range.js';
-import { EffectRunner } from './effect-runner.js';
+import { EffectRunner, passSamplesFrameSnapshot } from './effect-runner.js';
 import type { EffectTexLoader } from './effect-runner.js';
 import { loadTexTexture } from './tex-loader.js';
 import type { CompiledEffectPass } from './shader/effect-chain.js';
@@ -38,6 +38,9 @@ export interface ObjectEffectStage {
   bindOutputs(): void;
   /** 主场景渲染之后：串行推进 runner.update（异步，不阻塞本帧）。 */
   advance(time: number): void;
+  /** 段边界（消费者被绘制**之前**）同步通知：该对象的链本帧用这张整帧快照（design §3.5）。
+   *  未携带纹理时向宿主拉取；player 侧的同名接口把本方法记为可选（玩家可不实现）。 */
+  onSegmentBoundary(objectId: number, frameTexture?: THREE.Texture | null): void;
 }
 
 // 线性可执行判定（spec §5.1）：链中每个 pass 都不写具名 RT，且 bind 与 EffectRunner 的
@@ -52,6 +55,12 @@ export interface ObjectEffectStage {
 //   - `fbos` 只对具名 RT 有意义：链内没有 target 时它没有消费者，不构成降级理由。
 // 具名 RT 图链（blur / blurprecise / godrays / bloom / shine / localcontrast / bokeh_blur）
 // 由 effect-graph 的 RT 图计划执行；本判定只作分类/回归口径用，生产路径不再按它跳过。
+/** 该对象是否引用整帧快照（任一链的任一 pass 真的会采样它）⇒ 它就是段边界消费者（§3.2/§3.5）。
+ *  被 bind 覆盖的槽不算（那种情况执行器用的是 bind 的源，快照对它无意义）。 */
+export function referencesFrameSnapshot(chains: CompiledEffectPass[][]): boolean {
+  return chains.some((chain) => chain.some((p) => passSamplesFrameSnapshot(p)));
+}
+
 export function isLinearEffectChain(passes: CompiledEffectPass[]): boolean {
   if (passes.length === 0) return false;
   // 与 EffectRunner 的固定绑定一致者才算线性：`g_Texture0` = 上一 pass 输出。
@@ -96,6 +105,11 @@ export interface ObjectEffectHost {
   isolatedObjects(): IsolatedHostView[];
   setObjectOutput(id: number, texture: THREE.Texture): void;
   resizeObjectRT(id: number, width: number, height: number): void;
+  /** 段边界快照的拉取入口（§3.5）：拍一张「到此刻为止已绘制内容」；无 FrameCapture / 未激活 → null。 */
+  captureFullFrame(): THREE.Texture | null;
+  /** 把该对象登记为段边界消费者（player 的既有公开方法）：登记后 frameCapture 才会 active
+   *  ⇒ 段渲染与其段边界快照才会发生（不登记 ⇒ 本对象的链永远拿不到快照）。 */
+  registerFrameConsumer(objectId: number): void;
 }
 
 // 单个隔离对象的链状态。
@@ -126,6 +140,8 @@ export class ObjectEffectStage implements ObjectEffectStage {
   private queue: Array<() => unknown> = [];
   /** 去重告警集合（按 key 只打印一次，防每帧刷屏）。 */
   private warned = new Set<string>();
+  /** 本帧各对象在段边界拿到的整帧快照（键 = 对象 id）——advance 消费后清空（快照逐帧覆盖）。 */
+  private boundarySnapshots = new Map<number, THREE.Texture>();
   /** 音频频谱源（A3）：每帧同一缓冲引用；null = 全零静音（无音频/音效关闭）。 */
   private audioSpectrum: Uint8Array | null = null;
 
@@ -172,6 +188,10 @@ export class ObjectEffectStage implements ObjectEffectStage {
       this.warnOnce(`no-isolated:${objId}`, `对象 ${objId} 尚无隔离条目，效果链未挂载（调用顺序错误）`);
       return;
     }
+    // 引用整帧快照的链 ⇒ 该对象必须成为段边界消费者：不登记则 frameCapture 不 active、段渲染不开启、
+    // 段边界快照永不发生 ⇒ `_rt_FullFrameBuffer` 只能退回白图（本任务的目标消费者 2597392171 obj#50）。
+    // 惰性：不引用的对象不登记（帧序与现状逐字一致）。顺序契约：player 已注入 FrameCapture（生产链路如此）。
+    if (referencesFrameSnapshot(chains)) this.host.registerFrameConsumer(objId);
     this.mount(objId, chains, view.rtWidth, view.rtHeight);
   }
 
@@ -219,6 +239,9 @@ export class ObjectEffectStage implements ObjectEffectStage {
   /** 主场景渲染之前：链有输出才切合成 quad 的采样源；没有输出（首帧未就绪 / 该对象无 runner）
    *  则**不动输出**——quad 保持采样对象 RT 原图，不黑屏（降级可见，不静默画错）。 */
   bindOutputs(): void {
+    // 本方法 = 每帧主渲染前的第一个钩子：在此丢弃上一帧未消费的快照（异常帧可能跳过 advance），
+    // 避免把过期（甚至已 dispose）的纹理带进下一帧。
+    this.boundarySnapshots.clear();
     for (const view of this.host.isolatedObjects()) {
       const out = this.entries.get(view.id)?.runner?.lastOutput() ?? null;
       if (out) this.host.setObjectOutput(view.id, out);
@@ -231,6 +254,16 @@ export class ObjectEffectStage implements ObjectEffectStage {
     this.audioSpectrum = source;
   }
 
+  /** 段边界（player 在消费者被绘制**之前**调用）：记下本帧快照，供**同一帧**的 advance 传进该对象的
+   *  runner ⇒ 链内 `_rt_FullFrameBuffer` 拿到本帧内容（不是上一帧）。不在此发起 update：推进统一走
+   *  advance 的串行锁（约束 3），每对象每帧恰好一次，g_Time 也沿用 advance 的时间。 */
+  onSegmentBoundary(objectId: number, frameTexture?: THREE.Texture | null): void {
+    if (this.disposed) return;
+    const frameTex = frameTexture ?? this.host.captureFullFrame(); // 未携带纹理 → 向宿主拉取
+    if (!frameTex) return; // 无快照：该对象本帧的 frameTexture 保持 null（既有语义）
+    this.boundarySnapshots.set(objectId, frameTex);
+  }
+
   /** 主场景渲染之后：串行推进各 runner 的 update（异步，不阻塞本帧；见类头约束 3）。 */
   advance(time: number): void {
     if (this.disposed) return;
@@ -238,8 +271,12 @@ export class ObjectEffectStage implements ObjectEffectStage {
       const runner = this.entries.get(view.id)?.runner;
       if (!runner) continue;
       runner.setAudioSpectrumSource(this.audioSpectrum); // 每帧注入同一引用（无音频时 null）
-      this.enqueue(() => runner.update(time, view.rtTexture));
+      // 本帧段边界拍下的快照（若有）随本次 update 交给链；无则 null（不引用快照的链逐字不变）。
+      const frameTex = this.boundarySnapshots.get(view.id) ?? null;
+      this.enqueue(() => runner.update(time, view.rtTexture, frameTex));
     }
+    // 快照内容逐帧覆盖 ⇒ 只能本帧用：清空后下一帧无边界通知时回到 null（不跨帧持有）。
+    this.boundarySnapshots.clear();
   }
 
   dispose(): void {
@@ -247,6 +284,7 @@ export class ObjectEffectStage implements ObjectEffectStage {
     this.disposed = true;
     // 丢弃尚未发起的排队任务：runner 即将被释放，再跑 update 只会碰已释放的 RT/材质。
     this.queue.length = 0;
+    this.boundarySnapshots.clear(); // 快照引用属本帧，dispose 后不得再被传进 runner
     for (const entry of this.entries.values()) entry.runner?.dispose();
     this.entries.clear();
   }

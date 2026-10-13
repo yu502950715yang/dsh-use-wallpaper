@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { isLinearEffectChain } from '../src/client/object-effects.js';
+import { isLinearEffectChain, referencesFrameSnapshot } from '../src/client/object-effects.js';
 import { resolveEffectChain } from '../src/client/shader/effect-chain.js';
 import type { CompiledEffectPass } from '../src/client/shader/effect-chain.js';
 
@@ -127,7 +127,10 @@ import { vi } from 'vitest';
 // `runnerCtorArgs` 记录构造参数（用 vi.hoisted 才能在 mock 工厂里引用）——用于断言
 // 「纹理槽加载器按 WE v 约定注入」这条接线。
 const runnerCtorArgs = vi.hoisted(() => [] as unknown[][]);
-vi.mock('../src/client/effect-runner.js', () => {
+vi.mock('../src/client/effect-runner.js', async (importOriginal) => {
+  // 纯函数（如 passSamplesFrameSnapshot）保持**真实实现**：段边界消费者的判定口径必须与生产同源，
+  // 在 mock 里另写一份会在两侧漂移时仍然全绿。
+  const actual = await importOriginal<typeof import('../src/client/effect-runner.js')>();
   class EffectRunner {
     constructor(...args: unknown[]) { runnerCtorArgs.push(args); }
     setChains = vi.fn();
@@ -137,19 +140,19 @@ vi.mock('../src/client/effect-runner.js', () => {
     lastOutput = vi.fn(() => null);
     dispose = vi.fn();
   }
-  return { EffectRunner };
+  return { ...actual, EffectRunner };
 });
 
 // mock runner：不触碰 WebGL，只记录调用顺序与入参。
 function createMockRunner() {
-  const calls: Array<{ time: number; input: unknown }> = [];
+  const calls: Array<{ time: number; input: unknown; frameTex: unknown }> = [];
   let last: THREE.Texture | null = null;
   const runner = {
     setChains: vi.fn(),
     setPlan: vi.fn(),
     setAudioSpectrumSource: vi.fn(),
-    update: vi.fn(async (time: number, input: unknown) => {
-      calls.push({ time, input });
+    update: vi.fn(async (time: number, input: unknown, frameTex: unknown = null) => {
+      calls.push({ time, input, frameTex });
       last = (input as THREE.WebGLRenderTarget).texture;
       return last;
     }),
@@ -163,6 +166,7 @@ function createMockRunner() {
 function createHost(entries: Array<{ id: number; rtWidth: number; rtHeight: number }>) {
   const outputs = new Map<number, THREE.Texture>();
   const resized: Array<{ id: number; w: number; h: number }> = [];
+  const frameConsumers: number[] = [];
   // 与真实 player 一致的两点（否则测不出「反推世界尺寸」的不可逆 bug）：
   //   1. resizeObjectRT 会**回写** rtWidth/rtHeight（threejs-player.ts:570-571）；
   //   2. 同一对象的 rtTexture 在 resize 前后不变（player 用 rt.setSize 复用同一个 RT，
@@ -185,8 +189,13 @@ function createHost(entries: Array<{ id: number; rtWidth: number; rtHeight: numb
       if (entry) { entry.rtWidth = w; entry.rtHeight = h; }
       resized.push({ id, w, h });
     },
+    // Task 5：段边界通知未携带纹理时编排器的拉取入口（缺省 null = 无快照）。
+    captureFullFrame: (): THREE.Texture | null => null,
+    // Task 5：引用整帧快照的链会把自己登记为段边界消费者（player 的既有公开方法）。
+    registerFrameConsumer: (objectId: number) => { frameConsumers.push(objectId); },
     _outputs: outputs,
     _resized: resized,
+    _frameConsumers: frameConsumers,
   };
   return host;
 }
@@ -378,6 +387,94 @@ describe('ObjectEffectStage', () => {
     await Promise.resolve();
     expect(order).toEqual(['first:start', 'first:end', 'second:start']);
     expect(second.update).toHaveBeenCalledTimes(1);
+  });
+
+  // ── Task 5（design §3.5）：效果链在**消费者段边界**拿到本帧快照 ──
+  // player 在段边界同步通知（onSegmentBoundary），编排器记录该对象本帧的快照，同一帧的
+  // advance 把它作为 frameTexture 传给 runner.update ⇒ `_rt_FullFrameBuffer` 拿到的是
+  // 「该对象绘制之前」的本帧内容（不是上一帧），且 update 仍走同一把串行锁。
+  it('段边界快照随本帧 advance 进入 runner（同帧，不落后一帧）', async () => {
+    const host = createHost([{ id: 1, rtWidth: 10, rtHeight: 10 }]);
+    const stage = new ObjectEffectStage(host as never, { wallpaperId: 'w', screenScale: 1 });
+    const runner = createMockRunner();
+    stage.debugInjectRunner(1, runner as never);
+    const snapshot = new THREE.Texture();
+    stage.onSegmentBoundary(1, snapshot); // player 在消费者被绘制之前同步通知
+    stage.advance(7);                     // 同一帧的 advance（快照立即被这一次 update 用掉）
+    expect(runner.update).toHaveBeenCalledTimes(1);
+    expect(runner.update.mock.calls[0][0]).toBe(7);
+    expect(runner.update.mock.calls[0][1]).toBe(host.isolatedObjects()[0].rtTexture);
+    expect(runner.update.mock.calls[0][2]).toBe(snapshot);
+    // 下一帧没有边界通知 ⇒ 回到 null（快照逐帧覆盖，编排器不得跨帧持有）
+    await new Promise((r) => setTimeout(r, 0)); // 让上一次 update settle（串行锁释放）
+    stage.advance(8);
+    expect(runner.update.mock.calls[1][2]).toBeNull();
+  });
+
+  it('同一帧对同一对象重复通知 → 仍只推进一次，最后一次边界的快照生效', () => {
+    const host = createHost([{ id: 1, rtWidth: 10, rtHeight: 10 }]);
+    const stage = new ObjectEffectStage(host as never, { wallpaperId: 'w', screenScale: 1 });
+    const runner = createMockRunner();
+    stage.debugInjectRunner(1, runner as never);
+    const first = new THREE.Texture();
+    const second = new THREE.Texture();
+    stage.onSegmentBoundary(1, first);
+    stage.onSegmentBoundary(1, second);
+    stage.advance(1);
+    expect(runner.update).toHaveBeenCalledTimes(1);
+    expect(runner.update.mock.calls[0][2]).toBe(second);
+  });
+
+  it('边界通知可省纹理：编排器向 host.captureFullFrame() 拉取；宿主给 null ⇒ 该帧无快照', async () => {
+    const host = createHost([{ id: 1, rtWidth: 10, rtHeight: 10 }]);
+    const pulled = new THREE.Texture();
+    let current: THREE.Texture | null = pulled;
+    host.captureFullFrame = () => current;
+    const stage = new ObjectEffectStage(host as never, { wallpaperId: 'w', screenScale: 1 });
+    const runner = createMockRunner();
+    stage.debugInjectRunner(1, runner as never);
+    stage.onSegmentBoundary(1); // 不带纹理：向宿主拉取
+    stage.advance(1);
+    expect(runner.update.mock.calls[0][2]).toBe(pulled);
+    current = null;
+    await new Promise((r) => setTimeout(r, 0)); // 串行锁释放后再推进下一帧
+    stage.onSegmentBoundary(1);
+    stage.advance(2);
+    expect(runner.update.mock.calls[1][2]).toBeNull();
+  });
+
+  it('未挂链的对象收到边界通知 → 不建 runner、不推进（快照由 player 自己消费）', () => {
+    const host = createHost([{ id: 9, rtWidth: 10, rtHeight: 10 }]);
+    const stage = new ObjectEffectStage(host as never, { wallpaperId: 'w', screenScale: 1 });
+    expect(() => stage.onSegmentBoundary(9, new THREE.Texture())).not.toThrow();
+    stage.advance(1);
+    expect(stage.debugRunners().size).toBe(0);
+    expect(host._outputs.size).toBe(0);
+  });
+
+  // ── Task 5：引用 `_rt_FullFrameBuffer` 的链必须把该对象登记为段边界消费者 ──
+  // 不登记 ⇒ frameCapture 不 active ⇒ 段渲染不开启 ⇒ 段边界快照永不发生 ⇒ 快照恒为 null（白图）。
+  // 惰性（design §3.2）：不引用的对象一律不登记，帧序与改动前逐字一致。
+  it('引用整帧快照的链 → 登记为段边界消费者；不引用 / 被 bind 覆盖 → 不登记', () => {
+    const host = createHost([
+      { id: 1, rtWidth: 10, rtHeight: 10 },
+      { id: 2, rtWidth: 10, rtHeight: 10 },
+      { id: 3, rtWidth: 10, rtHeight: 10 },
+    ]);
+    const stage = new ObjectEffectStage(host as never, { wallpaperId: '2597392171', screenScale: 1 });
+    stage.setObjectChains(1, [[pass()]]); // 普通链：不引用快照
+    stage.setObjectChains(2, [[pass({ textureSlots: [null, '_rt_FullFrameBuffer'] })]]); // godrays_combine 形态
+    stage.setObjectChains(3, [[pass({ // 该槽被 bind 覆盖 ⇒ 实际用的是 bind 的源，快照无意义
+      textureSlots: [null, '_rt_FullFrameBuffer'],
+      bind: [{ index: 1, name: 'previous' }],
+    })]]);
+    expect(host._frameConsumers).toEqual([2]);
+    // 纯函数口径（与 EffectRunner.update 的槽绑定口径同源）
+    expect(referencesFrameSnapshot([[pass({ textureSlots: [null, '_rt_FullFrameBuffer'] }) ]])).toBe(true);
+    expect(referencesFrameSnapshot([[pass({ textureSlots: [null, '_rt_Bloom'] })]])).toBe(false);
+    expect(referencesFrameSnapshot([
+      [pass({ textureSlots: [null, '_rt_FullFrameBuffer'], bind: [{ index: 1, name: 'previous' }] })],
+    ])).toBe(false);
   });
 
   it('onViewportResize 按新屏幕密度等比重设 RT 尺寸（缩小→放大可逆；计划随新尺寸重建）', () => {

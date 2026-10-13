@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { blendModeToThree } from '../src/client/effect-runner.js';
-import { resolveTextureSlotPath, resolveBuiltinTexture } from '../src/client/effect-runner.js';
+import { resolveTextureSlotPath, resolveBuiltinTexture, isFrameSnapshotPath } from '../src/client/effect-runner.js';
 import { builtinTextureUrl, isBuiltinTexturePath, loadEffectTextureSlot } from '../src/client/effect-runner.js';
 import {
   resolveInputTexture,
@@ -96,6 +96,45 @@ describe('resolveBuiltinTexture（内置/运行时纹理回退）', () => {
   });
   it('普通路径 → null（交给 fetch）', () => {
     expect(resolveBuiltinTexture('masks/x')).toBeNull();
+  });
+
+  // ── Task 5：`_rt_FullFrameBuffer` = WE 的整帧场景 FBO（「到那一刻为止已绘制的内容」）。
+  // 本库唯一真实消费者：2597392171 obj#50 godrays_combine 的 `textures[2]`（COPYBG=1）。
+  // 有本帧快照就原样返回（**不进缓存**：快照内容逐帧覆盖）；无快照维持 1×1 白 + 一次性告警。
+  it('_rt_FullFrameBuffer 有快照 → 原样返回同一引用（不走白图）', () => {
+    const fake = new THREE.Texture();
+    expect(isFrameSnapshotPath('_rt_FullFrameBuffer')).toBe(true);
+    expect(isFrameSnapshotPath('_rt_FullFrameBuffer.tex')).toBe(true);
+    expect(isFrameSnapshotPath('_rt_FullCompoBuffer1_23_40')).toBe(false);
+    expect(isFrameSnapshotPath('util/white')).toBe(false);
+    expect(isFrameSnapshotPath(null)).toBe(false);
+    expect(resolveBuiltinTexture('_rt_FullFrameBuffer', fake)).toBe(fake);
+    expect(resolveBuiltinTexture('_rt_FullFrameBuffer.tex', fake)).toBe(fake);
+  });
+
+  it('无快照 → 1×1 白且只告警一次（模块级去重；用全新模块实例稳定观测）', async () => {
+    vi.resetModules();
+    const mod = await import('../src/client/effect-runner.js');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const first = mod.resolveBuiltinTexture('_rt_FullFrameBuffer');
+    const second = mod.resolveBuiltinTexture('_rt_FullFrameBuffer');
+    expect(first).not.toBeNull();
+    expect([first!.image.width, first!.image.height]).toEqual([1, 1]);
+    expect(second).toBe(first); // 模块级白图缓存：同一实例
+    expect(warn).toHaveBeenCalledTimes(1); // 一次性告警（不每帧/每壁纸刷屏）
+    expect(String(warn.mock.calls[0][0])).toContain('_rt_FullFrameBuffer');
+    warn.mockRestore();
+  });
+
+  it('其它 _rt_* 名（_rt_Bloom / _rt_QuarterCompoBuffer1 / 派生名）保持白图且不认快照', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const white = resolveBuiltinTexture('util/white');
+    for (const p of ['_rt_Bloom', '_rt_QuarterCompoBuffer1', '_rt_FullCompoBuffer1_23_40', '_rt_imageLayerComposite_1_a']) {
+      expect(resolveBuiltinTexture(p)).toBe(white);
+      expect(resolveBuiltinTexture(p, new THREE.Texture())).toBe(white); // 快照只认 _rt_FullFrameBuffer
+    }
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 });
 
@@ -980,6 +1019,48 @@ describe('EffectRunner 按计划执行（具名 RT 写读 / previous 序列 / �
     expect(hits[0]).toContain('g_Texture1');
     await runner.update(1, new THREE.Texture()); // 第二帧不重复告警
     expect(warn.mock.calls.filter((c) => String(c[0]).includes('_rt_FullFrameBuffer')).length).toBe(1);
+    warn.mockRestore();
+    runner.dispose();
+  });
+
+  // Task 5（2597392171 obj#50 godrays_combine 的 `textures[2] = "_rt_FullFrameBuffer"`，
+  // COPYBG=1 → `mix(bg.rgb, albedo.rgb, albedo.a)`）：段边界快照必须绑到该槽。
+  it('godrays 的 g_Texture2（_rt_FullFrameBuffer）绑本帧快照；无快照仍留空 + 一次性告警', async () => {
+    const { renderer, mats } = createPlanRenderer();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // 最小 fixture：pass[0] 写光线 RT，pass[1]（godrays_combine）纹理槽 2 采样整帧背景。
+    const combine = pass({
+      target: '_rt_FullCompoBuffer1',
+      textureSlots: [null, null, '_rt_FullFrameBuffer'],
+      samplerNames: ['g_Texture0', 'g_Texture1', 'g_Texture2'],
+    });
+    const chain = [pass({ target: '_rt_Godrays1' }), combine];
+    const runner = new EffectRunner(renderer as never, 32, 16);
+    runner.setPlan(buildEffectPlan([chain], { baseWidth: 32, baseHeight: 16 }), [chain], '2597392171', { width: 32, height: 16 });
+    const input = new THREE.Texture();
+    const snapshot = new THREE.Texture();
+    await runner.update(0, input, snapshot);
+    expect(mats.at(-1)!.uniforms.g_Texture2.value).toBe(snapshot);
+    // 快照不可用（段渲染未激活）→ 维持既有拦截：槽留空 + 可辨识告警一次，绝不绑 1×1 白
+    await runner.update(1, input, null);
+    expect(mats.at(-1)!.uniforms.g_Texture2.value).toBeNull();
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes('_rt_FullFrameBuffer')).length).toBe(1);
+    warn.mockRestore();
+    runner.dispose();
+  });
+
+  // 零回归：帧快照只认 `_rt_FullFrameBuffer` 这一个名字，其余表外 `_rt_*` 槽行为逐字不变。
+  it('传了 frameTexture，不引用 _rt_FullFrameBuffer 的链仍逐字不变', async () => {
+    const { renderer, mats } = createPlanRenderer();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const chain = [pass({ target: '_rt_H', textureSlots: [null, '_rt_imageLayerComposite_1_b'] })];
+    const runner = new EffectRunner(renderer as never, 8, 8);
+    runner.setPlan(buildEffectPlan([chain], { baseWidth: 8, baseHeight: 8 }), [chain], 'wp', { width: 8, height: 8 });
+    const input = new THREE.Texture();
+    await runner.update(0, input, new THREE.Texture());
+    expect(mats[0].uniforms.g_Texture1.value).toBeNull();  // 表外 `_rt_*`：仍是留空
+    expect(mats[0].uniforms.g_Texture0.value).toBe(input); // 快照没有漫到槽 0
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes('_rt_imageLayerComposite_1_b')).length).toBe(1);
     warn.mockRestore();
     runner.dispose();
   });

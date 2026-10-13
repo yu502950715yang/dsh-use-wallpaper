@@ -2559,6 +2559,49 @@ describe('ThreeScenePlayer 段渲染（frameCapture）', () => {
     player.dispose();
   });
 
+  // Task 5（design §3.5）：段边界**同步**把本帧快照交给编排器 ⇒ 效果链的 `_rt_FullFrameBuffer`
+  // 拿到的是「该对象绘制之前」的本帧内容，而不是上一帧。
+  it('段边界同步通知编排器：快照即该边界唯一那次 blit 的纹理，且在消费者段渲染之前', () => {
+    const { player, mock } = makePlayer();
+    addThreeLayers(player);
+    const cap = createFrameCapture(mock as unknown as THREE.WebGLRenderer);
+    cap.use();
+    player.setFrameCapture(cap);
+    player.registerFrameConsumer(22); // 3 个对象、1 个消费者 ⇒ 2 段
+    const notes: Array<{ id: number; tex: unknown; rendersBefore: number }> = [];
+    player.setObjectEffectStage({
+      bindOutputs: () => {},
+      advance: () => {},
+      onSegmentBoundary: (id: number, tex: THREE.Texture | null) => {
+        notes.push({ id, tex, rendersBefore: mock._renders.length });
+      },
+    });
+    mock._setOnRender(null);
+    player.render();
+    const boundary = notes;
+    // 只通知消费者、恰好一次，且纹理 = 该边界唯一那次 capture（不重复 blit）
+    expect(boundary.map((n) => n.id)).toEqual([22]);
+    expect(mock._copies).toHaveLength(1);
+    expect(boundary[0].tex).toBe(mock._copies[0].texture);
+    // 通知发生在 #22 所在段 render **之前**（此刻只渲过第 1 段 #11，与快照同一时点）
+    expect(boundary[0].rendersBefore).toBe(mock._copies[0].rendersBefore);
+    expect(boundary[0].rendersBefore).toBe(1);
+    player.dispose();
+  });
+
+  it('captureFullFrame（ObjectEffectHost 契约）：未注入/未激活 → null，激活后拍一张并返回快照', () => {
+    const { player, mock } = makePlayer();
+    expect(player.captureFullFrame()).toBeNull(); // 未注入 FrameCapture
+    const cap = createFrameCapture(mock as unknown as THREE.WebGLRenderer);
+    player.setFrameCapture(cap);
+    expect(player.captureFullFrame()).toBeNull(); // 注入但未激活（本壁纸无消费者）
+    expect(mock._copies).toHaveLength(0);         // 未激活不拍
+    cap.use();
+    expect(player.captureFullFrame()).toBe(mock._copies[0].texture);
+    expect(mock._copies).toHaveLength(1);
+    player.dispose();
+  });
+
   it('段渲染异常时 autoClear / clearColor / renderTarget / visible 全部恢复（try/finally）', () => {
     const { player, mock } = makePlayer();
     addThreeLayers(player);

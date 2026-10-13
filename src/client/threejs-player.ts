@@ -593,6 +593,8 @@ export interface IsolatedObject {
 export interface ObjectEffectStage {
   bindOutputs(): void;
   advance(time: number): void;
+  /** 段边界（消费者被绘制**之前**）同步通知：该对象的效果链本帧用这张整帧快照（design §3.5）。 */
+  onSegmentBoundary?(objectId: number, frameTexture?: THREE.Texture | null): void;
 }
 
 // 渲染像素比 = 设备像素比 × 画质档位。画布缓冲与对象 RT 的屏幕密度都按它算，
@@ -995,8 +997,13 @@ export class ThreeScenePlayer {
         //   （WE 的「画该层之前 blit」语义；放在 render 之后会把消费者自己拍进去）。捕获无幂等性 ⇒ 每段一次。
         if (segment.consumer !== null) {
           const snapshot = capture.capture();
-          // 折射消费者：在它被绘制之前把本帧快照接进 refractBg（快照逐帧覆盖，段外不持有引用）。
           const consumerObjectId = consumerObjectIdByIndex.get(segment.consumer);
+          // §3.5：段边界**同步**通知编排器 ⇒ 该对象的效果链本帧用这张快照（而非上一帧）。
+          // 携带纹理 = 不重复 blit（同一张快照也供下面的折射路径使用）。
+          if (consumerObjectId !== undefined) {
+            this.objectEffectStage?.onSegmentBoundary?.(consumerObjectId, snapshot);
+          }
+          // 折射消费者：在它被绘制之前把本帧快照接进 refractBg（快照逐帧覆盖，段外不持有引用）。
           const refractLayer = consumerObjectId === undefined ? undefined : this.refractLayers.get(consumerObjectId);
           if (refractLayer !== undefined && consumerObjectId !== undefined) {
             refractLayer.material.uniforms.refractBg.value = snapshot;
@@ -1058,6 +1065,17 @@ export class ThreeScenePlayer {
     const mat = entry.quad.material;
     if (mat instanceof THREE.ShaderMaterial) mat.uniforms.map.value = texture;
     else if (mat instanceof THREE.MeshBasicMaterial) mat.map = texture;
+  }
+
+  // 段边界快照的拉取入口（ObjectEffectHost 契约，§3.5）：拍一张「到此刻为止已绘制内容」。
+  // 无 FrameCapture / 未激活（本壁纸无消费者）→ null；dispose 后 capture() 抛错 ⇒ 同样降级 null。
+  captureFullFrame(): THREE.Texture | null {
+    if (this.frameCapture?.active !== true) return null;
+    try {
+      return this.frameCapture.capture();
+    } catch {
+      return null; // 快照资源已释放：调用方按「无快照」降级，不把异常抛进帧循环
+    }
   }
 
   // 重设隔离对象的 RT 尺寸（视口/dpr 变化时由编排器调用）：**只改分辨率**。

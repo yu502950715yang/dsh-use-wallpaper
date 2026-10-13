@@ -728,6 +728,12 @@ const FX_FILES_RT_GRAPH: Record<string, string> = {
   }),
 };
 
+// Task 5：`textures[j] = "_rt_FullFrameBuffer"`（2597392171 obj#50 godrays_combine 的形态）。
+const FX_FILES_FRAME_RT: Record<string, string> = {
+  ...FX_FILES,
+  'effects/frame/effect.json': JSON.stringify({ passes: [{ material: 'materials/effects/w.json' }] }),
+};
+
 // fetch 桩：scene.json + 资源名 → 文本。资源同时提供 arrayBuffer 形态（与 three-renderer 的
 // loadFile 实现一致：`new Uint8Array(await r.arrayBuffer())`）。
 function stubAssetFetch(scene: string, files: Record<string, string>): void {
@@ -1156,6 +1162,51 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     expect(warn.mock.calls.filter((c) => String(c[0]).includes('效果需要具名 RT'))).toHaveLength(0);
     worldSpy.mockRestore();
     chainsSpy.mockRestore();
+    warn.mockRestore();
+    r.dispose();
+  });
+
+  // Task 5：引用 `_rt_FullFrameBuffer` 的效果链必须把该对象登记为段边界消费者。
+  // 不登记 ⇒ frameCapture 不 active ⇒ 段渲染不开启 ⇒ 段边界快照永不发生（`_rt_FullFrameBuffer`
+  // 只能退回 1×1 白 ⇒ obj#50 的半透明区被压黑）。链的 WebGL 部分不参与：只断言登记这一次调用。
+  it('链引用 _rt_FullFrameBuffer 的对象 → 登记为段边界消费者（不引用的不登记）', async () => {
+    stubAssetFetch(sceneWith([
+      {
+        id: 13, name: 'godrays', image: 'models/a.json',
+        origin: '960 540 0', scale: '1 1 1', size: '3840 2160',
+        effects: [{
+          file: 'effects/frame/effect.json',
+          passes: [{ textures: [null, '_rt_FullFrameBuffer'] }],
+        }],
+      },
+      {
+        id: 60, name: 'plain', image: 'models/b.json',
+        origin: '0 0 0', scale: '1 1 1', size: '1920 1080',
+        effects: [{ file: 'effects/w/effect.json' }],
+      },
+    ]), FX_FILES_FRAME_RT);
+    resolveImageTexture.mockResolvedValue(fakeTexture() as never);
+    defaultLoadWasm.mockResolvedValue(null);
+    const registerFrameConsumer = vi.fn();
+    const player = {
+      dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage: vi.fn(),
+      setGlowStage: vi.fn(), setFrameCapture: vi.fn(), registerFrameConsumer,
+      renderer: {},
+      isolatedObjects: () => [
+        { id: 13, kind: 'background', rtWidth: 3840, rtHeight: 2160, rtTexture: {} },
+        { id: 60, kind: 'background', rtWidth: 1920, rtHeight: 1080, rtTexture: {} },
+      ],
+    };
+    loadSceneToThree.mockReturnValue({ player, sims: [], backgroundIds: [0, 1], particleLayers: [] } as never);
+    // 不替换 setObjectChains：本用例要走**真实**挂载路径（登记就发生在它内部）。
+    vi.spyOn(ObjectEffectStage.prototype, 'setWorldSize').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    expect(await r.render('2597392171', document.createElement('canvas'), null)).toBe(true);
+    // 只有引用快照的对象（13）被登记；#60 的链不引用 ⇒ 惰性不登记（帧序与现状逐字一致）。
+    expect(registerFrameConsumer.mock.calls).toEqual([[13]]);
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes('尚无隔离条目'))).toHaveLength(0);
     warn.mockRestore();
     r.dispose();
   });
