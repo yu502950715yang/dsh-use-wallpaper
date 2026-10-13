@@ -22611,6 +22611,7 @@ function sourcePixelsFromTexture(tex) {
 var ISOLATED_RT_BUDGET_BYTES = 384e6;
 var ISOLATED_RT_BYTES_PER_PX = 28;
 var ISOLATED_RT_MIN_BUDGET_SCALE = 1e-4;
+var BUDGET_BISECT_STEPS = 24;
 function fitIsolatedBudget(items, density, budgetBytes = ISOLATED_RT_BUDGET_BYTES, bytesPerPx = ISOLATED_RT_BYTES_PER_PX) {
   const budget = Number.isFinite(budgetBytes) && budgetBytes > 0 ? budgetBytes : ISOLATED_RT_BUDGET_BYTES;
   const perPx = Number.isFinite(bytesPerPx) && bytesPerPx > 0 ? bytesPerPx : ISOLATED_RT_BYTES_PER_PX;
@@ -22623,7 +22624,7 @@ function fitIsolatedBudget(items, density, budgetBytes = ISOLATED_RT_BUDGET_BYTE
   let lo = ISOLATED_RT_MIN_BUDGET_SCALE;
   if (!fits(lo)) return lo;
   let hi = 1;
-  for (let i = 0; i < 24; i++) {
+  for (let i = 0; i < BUDGET_BISECT_STEPS; i++) {
     const mid = (lo + hi) / 2;
     if (fits(mid)) lo = mid;
     else hi = mid;
@@ -24695,10 +24696,10 @@ async function textureFromTex(info, opts) {
   const mip = info.mipmaps[0];
   if (!mip) return null;
   const topDown = opts?.rowOrder === "topDown";
-  const withSprite = (tex) => {
+  const withSprite = (tex, w, h) => {
     const ud = { ...tex.userData ?? {} };
     if (info.sprite) ud.sprite = info.sprite;
-    ud.fxRes = [mip.width, mip.height, mip.width, mip.height];
+    ud.fxRes = [w, h, w, h];
     tex.userData = ud;
     return tex;
   };
@@ -24715,7 +24716,10 @@ async function textureFromTex(info, opts) {
   if (isVideoTexPayload(info)) {
     const decorate = (t) => {
       applyWrap(t, info);
-      return withSprite(t);
+      const v = t.image;
+      const vw = v.videoWidth, vh = v.videoHeight;
+      const ready = vw > 0 && vh > 0;
+      return withSprite(t, ready ? vw : mip.width, ready ? vh : mip.height);
     };
     const videoTex = await videoTextureFromMp4(mip.data, info, topDown, decorate);
     if (videoTex) return videoTex;
@@ -24736,7 +24740,7 @@ async function textureFromTex(info, opts) {
       tex.flipY = false;
       applyWrap(tex, info);
       applyLinearSampling(tex);
-      return withSprite(tex);
+      return withSprite(tex, bitmap.width, bitmap.height);
     } catch {
       return null;
     }
@@ -24748,7 +24752,7 @@ async function textureFromTex(info, opts) {
     const tex = new DataTexture(rows, cropped.width, cropped.height, RGBAFormat);
     applyWrap(tex, info);
     applyLinearSampling(tex);
-    return withSprite(tex);
+    return withSprite(tex, cropped.width, cropped.height);
   }
   const glFormat = FORMAT_TO_GL[info.format];
   if (glFormat) {
@@ -24770,7 +24774,7 @@ async function textureFromTex(info, opts) {
     tex.generateMipmaps = false;
     applyWrap(tex, info);
     tex.needsUpdate = true;
-    return withSprite(tex);
+    return withSprite(tex, cropped.width, cropped.height);
   }
   return null;
 }
@@ -28956,6 +28960,7 @@ function createThreeSceneRenderer(opts) {
   let soundEnabledOverride = null;
   let lastAudioSpec = null;
   let contextLostHandler = null;
+  let contextLostId = null;
   let contextLostCanvas = null;
   let contextLost = false;
   const stopAudio = () => {
@@ -28976,12 +28981,15 @@ function createThreeSceneRenderer(opts) {
   const onContextLost = (e) => {
     e.preventDefault();
     contextLost = true;
-    const id = contextLostCanvas?.dataset.wpId;
+    const id = contextLostId;
     try {
       teardown();
     } catch {
     }
-    if (!id) return;
+    if (!id) {
+      console.warn("[wallpaper-engine] WebGL \u4E0A\u4E0B\u6587\u4E22\u5931\uFF0C\u4F46\u65E0\u672C\u6B21\u88C5\u914D\u7684\u58C1\u7EB8 id\uFF0C\u5DF2\u505C\u64AD\uFF08\u4E0D\u56DE\u9000 preview\uFF09");
+      return;
+    }
     console.warn(`[wallpaper-engine] WebGL \u4E0A\u4E0B\u6587\u4E22\u5931\uFF0C\u5DF2\u56DE\u9000 preview\uFF08\u58C1\u7EB8 ${id}\uFF09`);
     contextLostHandler?.(id);
   };
@@ -28994,6 +29002,7 @@ function createThreeSceneRenderer(opts) {
       contextLostCanvas.removeEventListener("webglcontextlost", onContextLost);
       contextLostCanvas = null;
     }
+    contextLostId = null;
     currentStage?.dispose();
     currentStage = null;
     currentGlow?.dispose();
@@ -29052,9 +29061,9 @@ function createThreeSceneRenderer(opts) {
       contextLost = false;
       try {
         teardown();
-        fg.dataset.wpId = id;
-        fg.addEventListener("webglcontextlost", onContextLost, { once: true });
+        contextLostId = id;
         contextLostCanvas = fg;
+        fg.addEventListener("webglcontextlost", onContextLost, { once: true });
         modulePromise ??= loadWasm();
         const mod = await modulePromise;
         if (abortIfContextLost()) return false;
@@ -29193,7 +29202,8 @@ function createThreeSceneRenderer(opts) {
           qualityScale
         );
         const screenScale = screenScalePx(desc.orthogonal.width, desc.orthogonal.height, vw, vh, dpr);
-        const isolateItems = desc.objects.filter((o) => o.kind === "image" && !isStaticallyHidden(o.visible, userProps) && (effectChains.get(o.id)?.length ?? 0) > 0).map((o) => {
+        const isAdmittedImage = (o) => o.kind === "image" && !isStaticallyHidden(o.visible, userProps) && (effectChains.get(o.id)?.length ?? 0) > 0;
+        const isolateItems = desc.objects.filter(isAdmittedImage).map((o) => {
           const tex = backgroundTextures.get(o.id);
           const s = o.scale;
           const w = (o.size?.[0] ?? tex?.image?.width ?? 1) * s[0];
@@ -29218,6 +29228,7 @@ function createThreeSceneRenderer(opts) {
           const chains = effectChains.get(obj.id);
           if (!chains || chains.length === 0) continue;
           if (obj.kind === "image") {
+            if (!isAdmittedImage(obj)) continue;
             const sized = isolatedSizes.get(obj.id);
             if (!sized) continue;
             isolate.set(obj.id, {

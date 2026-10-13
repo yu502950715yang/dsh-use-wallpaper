@@ -21,12 +21,6 @@ export declare function resolveTargetSize(current: EffectTargetSize, opts?: {
     width?: number;
     height?: number;
 }): EffectTargetSize;
-export declare function resolveTextureResolution(tex: {
-    image?: {
-        width?: number;
-        height?: number;
-    } | null;
-} | null | undefined, fallbackW: number, fallbackH: number): EffectTargetSize;
 export declare function resolveTextureResolution4(tex: {
     image?: {
         width?: number;
