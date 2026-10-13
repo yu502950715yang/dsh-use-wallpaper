@@ -41,7 +41,7 @@ const audioMocks = vi.hoisted(() => ({
 vi.mock('../src/client/audio-input.js', () => audioMocks);
 
 import * as THREE from 'three';
-import { loadSceneToThree } from '../src/client/threejs-player.js';
+import { loadSceneToThree, ThreeScenePlayer } from '../src/client/threejs-player.js';
 import { resolveImageTexture, resolveParticleMaterial } from '../src/client/scene-assets.js';
 import { loadTexTexture } from '../src/client/tex-loader.js';
 import { defaultLoadWasm } from '../src/client/wasm-loader.js';
@@ -370,6 +370,45 @@ describe('createThreeSceneRenderer', () => {
     const spy = vi.spyOn(capture, 'dispose');
     r.dispose();
     expect(spy).toHaveBeenCalled();
+  });
+
+  // 真 player 才能覆盖「player.dispose 有没有把注入的 capture 释放掉」——桩 player 的 dispose 是空的。
+  function playerMockRenderer() {
+    return {
+      setPixelRatio: vi.fn(), setSize: vi.fn(), setAnimationLoop: vi.fn(), render: vi.fn(),
+      setRenderTarget: vi.fn(), clear: vi.fn(), getClearAlpha: vi.fn(() => 1), setClearAlpha: vi.fn(),
+      getClearColor: vi.fn((c: THREE.Color) => c), setClearColor: vi.fn(),
+      copyFramebufferToTexture: vi.fn(),
+      getDrawingBufferSize: vi.fn((v: THREE.Vector2) => v.set(1280, 720)),
+      dispose: vi.fn(),
+    };
+  }
+
+  it('切壁纸（真 player）：player.dispose 不释放 capture，第二次装配复用同一实例且仍可用', async () => {
+    stubSettings({ glowEnabled: false }); // 本用例只关心 capture 生命周期
+    resolveImageTexture.mockResolvedValue(fakeTexture() as any);
+    resolveParticleMaterial.mockResolvedValue(null);
+    defaultLoadWasm.mockResolvedValue({ CpuParticleSim: { new: vi.fn(() => makeMockSim()) } } as any);
+    const real = new ThreeScenePlayer(document.createElement('canvas'), 1280, 720, playerMockRenderer() as never);
+    const firstSetCapture = vi.spyOn(real, 'setFrameCapture');
+    const second = { dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn() };
+    loadSceneToThree
+      .mockReturnValueOnce({ player: real, sims: [], backgroundIds: [0], particleLayers: [] } as any)
+      .mockReturnValueOnce({ player: second, sims: [], backgroundIds: [0], particleLayers: [] } as any);
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    expect(await r.render('2851992662', document.createElement('canvas'), null)).toBe(true);
+    const cap = firstSetCapture.mock.calls[0][0]!;
+    const disposeSpy = vi.spyOn(cap, 'dispose');
+    // 第二次 render = teardown 第一个（真）player + 装配第二个：bug 路径就是这一步把 capture 标成已释放
+    expect(await r.render('2851992662', document.createElement('canvas'), null)).toBe(true);
+    expect(disposeSpy).not.toHaveBeenCalled();
+    expect(second.setFrameCapture.mock.calls[0][0]).toBe(cap); // 同一实例（frameCapture ??= 复用）
+    expect(cap.active).toBe(false);
+    cap.use(); // 已释放的实例在这里会静默无效
+    expect(cap.active).toBe(true);
+    expect(cap.target).toBeTruthy(); // 已释放的实例在这里会抛错
+    r.dispose();                     // 只有创建者释放
+    expect(disposeSpy).toHaveBeenCalledTimes(1);
   });
 
   it('dpr=2 ⇒ Glow 收到**画布缓冲**尺寸 1600×1200，不是 CSS 尺寸 800×600', async () => {

@@ -310,16 +310,15 @@ export function createGlowStage(
         baseRendered = false;
         // 段渲染路径：内容已由调用方写进 preRendered ⇒ 不得再渲一次主场景（会双重绘制段内容）。
         if (!preRendered) renderIntoRenderTarget(r, baseRT!, scene, camera);
-        baseRendered = true;
+        baseRendered = true; // 两条路径到这里 base 都已有**本帧**内容（preRendered 由调用方写入）
         installShaderErrorHook(r);
         renderGlowPasses(r, base.texture);
       } catch (e) {
         // 绝不白屏：一次失败即永久降级为直渲（运行期异常 / pass 失败）
         glowFailed = true;
         console.warn('[wallpaper-engine] 应用级 Glow 失败，已降级为直渲：' + String((e as Error)?.message ?? e));
-        // 本帧回退：主场景本帧已渲进 base（只渲了那一次）⇒ 贴到 canvas 即可；只有连 base 都
-        // 没渲成（内容不可信）才退回直渲。段渲染路径 baseRendered 恒 false ⇒ 走直渲，
-        // **不会**把上一帧的 baseRT 陈旧内容糊上本帧（比直渲错得更远）。
+        // 本帧回退：base 里已是本帧内容（自渲路径刚渲过；preRendered 路径由调用方写进同一张）⇒
+        // 贴回 canvas 即可。只有连 base 都没渲成（baseRendered=false，内容不可信）才退回直渲。
         if (baseRendered && copyBaseToCanvas(r, base.texture)) return;
         r.setRenderTarget(null);
         r.render(scene, camera);

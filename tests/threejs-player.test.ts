@@ -22,14 +22,19 @@ function createMockRenderer() {
   let clearAlpha = 1;
   const clearColor = new THREE.Color(0, 0, 0);
   let currentTarget: unknown = null;
-  // ⚠️ `renders` 的既有形状 {scene,target,clearAlpha} 不得改动（大量断言依赖）；新增字段只追加。
+  // `renders` 的既有形状 {scene,target,clearAlpha} 不得改动（大量断言依赖）；新增字段只追加。
   const renders: Array<{ scene: unknown; target: unknown; clearAlpha: number; autoClear: boolean }> = [];
-  const copies: Array<{ texture: unknown; target: unknown }> = [];
+  // 帧内观测口：需要在 render **当刻**读 scene 状态（visible / 段边界）的用例挂这里，
+  // 不要替换 `render` 实现（那样会同时废掉 renders 记录 ⇒ 快照时序断言失真）。
+  let onRender: ((scene: unknown) => void) | null = null;
+  // `rendersBefore` = 拍快照时已发生的 render 次数：钉住「快照在消费者渲染**之前**」这条语义。
+  const copies: Array<{ texture: unknown; target: unknown; rendersBefore: number }> = [];
   const renderer = {
     setSize: vi.fn(),
     setPixelRatio: vi.fn(),
     render: vi.fn((scene: unknown) => {
       renders.push({ scene, target: currentTarget, clearAlpha, autoClear: renderer.autoClear });
+      onRender?.(scene);
     }),
     // 对象隔离渲染（Task 3）：renderIsolatedContents 会切换渲染目标到对象 RT，
     // mock 需提供同名方法（no-op），否则隔离路径全部以 TypeError 失败。
@@ -46,11 +51,14 @@ function createMockRenderer() {
     clear: vi.fn(),
     autoClear: true,
     // FrameCapture（Task 1）的两个依赖：快照 blit 与惰性建资源时的画布缓冲尺寸。
-    copyFramebufferToTexture: vi.fn((tex: unknown) => { copies.push({ texture: tex, target: currentTarget }); }),
+    copyFramebufferToTexture: vi.fn((tex: unknown) => {
+      copies.push({ texture: tex, target: currentTarget, rendersBefore: renders.length });
+    }),
     getDrawingBufferSize: vi.fn((v: THREE.Vector2) => v.set(1920, 1080)),
     dispose: vi.fn(),
     setAnimationLoop,
     _getLoop: () => loop,
+    _setOnRender: (fn: ((scene: unknown) => void) | null) => { onRender = fn; },
     _renders: renders,
     _copies: copies,
     _clearAlpha: () => clearAlpha,
@@ -2415,6 +2423,9 @@ describe('ThreeScenePlayer 段渲染（frameCapture）', () => {
     expect(mock._renders[0].scene).toBe(player.scene);
     expect(mock._copies).toHaveLength(0);        // 不拍快照
     expect(mock.setRenderTarget).not.toHaveBeenCalled(); // 不切 target
+    // 零回归钉子：不碰全局清屏参数，首段清屏口径仍是默认的 alpha=1
+    expect(mock.setClearColor).not.toHaveBeenCalled();
+    expect(mock._renders[0].clearAlpha).toBe(1);
     player.dispose();
   });
 
@@ -2424,13 +2435,13 @@ describe('ThreeScenePlayer 段渲染（frameCapture）', () => {
     const cap = createFrameCapture(mock as unknown as THREE.WebGLRenderer);
     cap.use();
     player.setFrameCapture(cap);
-    player.registerFrameConsumer(22); // 第 2 个对象（renderOrder 1）是消费者 → 3 段（消费者独占一段）
+    player.registerFrameConsumer(22); // 第 2 个对象（renderOrder 1）是消费者 → 2 段（#22 与其后的 #33 同段）
     player.render();
     const targets = mock._renders.map((r) => r.target);
-    // 段 1（#11）→ RT，段 2（#22 消费者）→ RT，段 3（#33）→ RT，合成 → 默认 fb
-    expect(targets).toEqual([cap.target, cap.target, cap.target, null]);
+    // 段 1（#11）→ RT，段 2（#22 消费者 + #33）→ RT，末段合成 → 默认 fb
+    expect(targets).toEqual([cap.target, cap.target, null]);
     // 段内 autoClear 必须为 false（累积），合成段恢复原值
-    expect(mock._renders.map((r) => r.autoClear)).toEqual([false, false, false, true]);
+    expect(mock._renders.map((r) => r.autoClear)).toEqual([false, false, true]);
     expect(mock.autoClear).toBe(true);           // 退出后恢复原值
     expect(mock._currentTarget()).toBeNull();    // 退出后 target 已复位
     // 现状默认 fb 的透明清屏不变量（clearAlpha=1/黑）在 RT 上保持一致
@@ -2439,7 +2450,7 @@ describe('ThreeScenePlayer 段渲染（frameCapture）', () => {
     player.dispose();
   });
 
-  it('消费者边界恰好拍一次快照，且快照目标始终是当前绑定的段目标', () => {
+  it('消费者边界的快照恰好一次，且拍在消费者被绘制之前（rendersBefore 钉子）', () => {
     const { player, mock } = makePlayer();
     addThreeLayers(player);
     const cap = createFrameCapture(mock as unknown as THREE.WebGLRenderer);
@@ -2449,10 +2460,28 @@ describe('ThreeScenePlayer 段渲染（frameCapture）', () => {
     player.registerFrameConsumer(33); // 两个消费者 ⇒ 3 段（renderOrder 0 / 1 / 2 各一段）、2 次快照
     player.render();
     expect(mock._copies).toHaveLength(2); // 每个消费者边界**恰好一次**（capture() 无幂等性）
+    // 快照必须发生在该消费者所在段的 render **之前**：#22 是第 2 段 ⇒ 拍时只渲过 1 段；
+    // #33 是第 3 段 ⇒ 拍时已渲过 2 段（若拍在段后则是 [2, 3]，消费者会把自己拍进去）。
+    expect(mock._copies.map((c) => c.rendersBefore)).toEqual([1, 2]);
     // 段 1（#11）→ 拍快照 → 段 2（#22）→ 拍快照 → 段 3（#33）→ 合成
     expect(mock._renders.length).toBe(4); // 3 段 + 1 次合成
     expect(mock._copies.every((c) => c.target === cap.target)).toBe(true);
     expect(mock._copies.every((c) => c.texture !== cap.target.texture)).toBe(true); // 快照纹理≠段目标纹理
+    player.dispose();
+  });
+
+  it('段渲染临时改动的 clearColor/clearAlpha 在 finally 恢复原值（不污染全局清屏状态）', () => {
+    const { player, mock } = makePlayer();
+    addThreeLayers(player);
+    mock.setClearColor(0x336699, 0.25); // 进入前是非默认值：恢复与否可观测
+    const cap = createFrameCapture(mock as unknown as THREE.WebGLRenderer);
+    cap.use();
+    player.setFrameCapture(cap);
+    player.registerFrameConsumer(22);
+    player.render();
+    expect(mock._renders[0].clearAlpha).toBe(1);        // 段内确实是黑 + alpha 1
+    expect(mock._clearAlpha()).toBe(0.25);              // 退出后恢复原 alpha
+    expect(mock._clearColor().getHex()).toBe(0x336699); // 退出后恢复原颜色
     player.dispose();
   });
 
@@ -2465,16 +2494,14 @@ describe('ThreeScenePlayer 段渲染（frameCapture）', () => {
     player.registerFrameConsumer(22);
     // 记录每次 render 时三个顶层对象的 visible
     const snapshots: boolean[][] = [];
-    (mock.render as unknown as { mockImplementation: (f: (s: unknown) => void) => void })
-      .mockImplementation((s: unknown) => {
-        if (s === player.scene) snapshots.push(player.scene.children.map((c) => c.visible));
-      });
+    mock._setOnRender((s) => {
+      if (s === player.scene) snapshots.push(player.scene.children.map((c) => c.visible));
+    });
     player.render();
-    // 只有 #22 是消费者 ⇒ 3 段：#11 | #22（消费者独占）| #33
+    // 只有 #22 是消费者 ⇒ 2 段：#11 | #22（消费者，与其后的 #33 同段）
     expect(snapshots).toEqual([
       [true, false, false],  // 段 1：#11
-      [false, true, false],  // 段 2：#22（消费者独占一段）
-      [false, false, true],  // 段 3：#33
+      [false, true, true],   // 段 2：#22（消费者）+ #33
     ]);
     expect(player.scene.children.map((c) => c.visible)).toEqual([true, true, true]);
     player.dispose();
@@ -2489,22 +2516,20 @@ describe('ThreeScenePlayer 段渲染（frameCapture）', () => {
     player.setFrameCapture(cap);
     player.registerFrameConsumer(22);
     const snapshots: boolean[][] = [];
-    (mock.render as unknown as { mockImplementation: (f: (s: unknown) => void) => void })
-      .mockImplementation((s: unknown) => {
-        if (s === player.scene) snapshots.push(player.scene.children.map((c) => c.visible));
-      });
+    mock._setOnRender((s) => {
+      if (s === player.scene) snapshots.push(player.scene.children.map((c) => c.visible));
+    });
     player.render();
     // 第 1 段虽包含 #11，但它本来就不可见 ⇒ 必须保持 false（不得被段逻辑改成 true）
     expect(snapshots).toEqual([
       [false, false, false],
-      [false, true, false],
-      [false, false, true],
+      [false, true, true],
     ]);
     expect(player.scene.children.map((c) => c.visible)).toEqual([false, true, true]);
     player.dispose();
   });
 
-  it('同一 renderOrder 上的两个消费者各自成段（快照不落在自己之后）', () => {
+  it('同一 renderOrder 上的两个消费者各自成段，快照都拍在自己之前', () => {
     const { player, mock } = makePlayer();
     // 三个对象同 renderOrder：唯一化（objects 下标）未落地时也必须逐个消费者切段。
     for (const objectId of [11, 22, 33]) {
@@ -2519,23 +2544,25 @@ describe('ThreeScenePlayer 段渲染（frameCapture）', () => {
     player.registerFrameConsumer(11); // 首个对象就是消费者
     player.registerFrameConsumer(33); // 与 #22 同序，但仍是独立段
     const snapshots: boolean[][] = [];
-    (mock.render as unknown as { mockImplementation: (f: (s: unknown) => void) => void })
-      .mockImplementation((s: unknown) => {
-        if (s === player.scene) snapshots.push(player.scene.children.map((c) => c.visible));
-      });
+    mock._setOnRender((s) => {
+      if (s === player.scene) snapshots.push(player.scene.children.map((c) => c.visible));
+    });
     player.render();
+    // 切段规则 = 消费者**开启**新的一段、其后非消费者同段 ⇒ #11 段含 #22，#33 开启第二段
     expect(snapshots).toEqual([
-      [true, false, false],  // 段 1：#11（消费者）
-      [false, true, false],  // 段 2：#22
-      [false, false, true],  // 段 3：#33（消费者）
+      [true, true, false],   // 段 1：#11（消费者）+ #22
+      [false, false, true],  // 段 2：#33（消费者）
     ]);
     expect(mock._copies).toHaveLength(2);
+    // 两个快照都在各自消费者被绘制之前：#11 是首个对象（拍时 0 段）、#33 拍时已渲过 1 段
+    expect(mock._copies.map((c) => c.rendersBefore)).toEqual([0, 1]);
     player.dispose();
   });
 
-  it('段渲染异常时 autoClear / renderTarget / visible 全部恢复（try/finally）', () => {
+  it('段渲染异常时 autoClear / clearColor / renderTarget / visible 全部恢复（try/finally）', () => {
     const { player, mock } = makePlayer();
     addThreeLayers(player);
+    mock.setClearColor(0x336699, 0.25); // 进入前是非默认值：恢复与否可观测
     const cap = createFrameCapture(mock as unknown as THREE.WebGLRenderer);
     cap.use();
     player.setFrameCapture(cap);
@@ -2546,6 +2573,8 @@ describe('ThreeScenePlayer 段渲染（frameCapture）', () => {
     expect(mock.autoClear).toBe(true);
     expect(mock._currentTarget()).toBeNull();
     expect(player.scene.children.map((c) => c.visible)).toEqual([true, true, true]);
+    expect(mock._clearAlpha()).toBe(0.25);
+    expect(mock._clearColor().getHex()).toBe(0x336699);
     player.dispose();
   });
 
@@ -2617,8 +2646,8 @@ describe('ThreeScenePlayer 段渲染（frameCapture）', () => {
     expect(applied[0][1]).toBe(player.scene);
     expect(applied[0][2]).toBe(player.camera);
     expect(applied[0][3]).toBe(cap.target); // 复用同一张段目标，不自渲主场景
-    // Glow 路径由 stage 自己合成到 canvas ⇒ 玩家侧不得再多渲一次
-    expect(mock._renders.map((r) => r.target)).toEqual([cap.target, cap.target, cap.target]);
+    // Glow 路径由 stage 自己合成到 canvas ⇒ 玩家侧不得再多渲一次（2 段：2 次 RT render）
+    expect(mock._renders.map((r) => r.target)).toEqual([cap.target, cap.target]);
     player.dispose();
   });
 
@@ -2633,14 +2662,74 @@ describe('ThreeScenePlayer 段渲染（frameCapture）', () => {
     player.dispose();
   });
 
-  it('dispose 释放 capture（RT/纹理不泄漏）', () => {
+  it('dispose 只解除 capture 引用、不释放它（创建者 three-renderer 独占释放）', () => {
     const { player, mock } = makePlayer();
     const cap = createFrameCapture(mock as unknown as THREE.WebGLRenderer);
     cap.use();
     player.setFrameCapture(cap);
+    const disposeSpy = vi.spyOn(cap, 'dispose');
     const rtDispose = vi.spyOn(cap.target, 'dispose');
     player.dispose();
-    expect(rtDispose).toHaveBeenCalled();
+    expect(disposeSpy).not.toHaveBeenCalled();
+    expect(rtDispose).not.toHaveBeenCalled();
+  });
+
+  it('装配 → dispose → 再装配复用同一 capture：仍可用（active/use()/capture() 正常）', () => {
+    const mock = createMockRenderer(); // 一个 renderer 跨两次装配（= 生产：渲染器级资源）
+    const cap = createFrameCapture(mock as unknown as THREE.WebGLRenderer);
+    // 第一次装配：注入 + 登记消费者 + 真的走一次段渲染
+    const first = makePlayer(1920, 1080, mock);
+    addThreeLayers(first.player);
+    first.player.setFrameCapture(cap);
+    first.player.registerFrameConsumer(22);
+    first.player.render();
+    expect(mock._copies).toHaveLength(1);
+    first.player.dispose(); // 切壁纸：不得把 capture 标记为已释放
+    cap.reset();            // 每次装配开始 three-renderer 都会 reset
+    expect(cap.active).toBe(false);
+    cap.use();              // 显式激活仍有效（Task 1 接口）
+    expect(cap.active).toBe(true);
+    cap.reset();
+    // 第二次装配（真实链路 = three-renderer 的 `frameCapture ??=` 复用同一实例）
+    const second = makePlayer(1920, 1080, mock);
+    addThreeLayers(second.player);
+    second.player.setFrameCapture(cap);
+    expect(cap.active).toBe(false);           // 仅注入 capture 还不算有消费者
+    second.player.registerFrameConsumer(22);  // 命中显示对象 ⇒ 自动激活
+    expect(cap.active).toBe(true);
+    expect(cap.target).toBeTruthy();          // 此前会抛「FrameCapture 已 dispose」
+    second.player.render();
+    expect(mock._copies).toHaveLength(2);     // 段渲染照常（此前会静默退化为直渲）
+    second.player.dispose();
+  });
+
+  it('registerFrameConsumer 命中显示对象才置 active（active 的唯一真值来源）', () => {
+    const { player, mock } = makePlayer();
+    addThreeLayers(player);
+    const cap = createFrameCapture(mock as unknown as THREE.WebGLRenderer);
+    player.setFrameCapture(cap);
+    expect(cap.active).toBe(false); // 未登记消费者
+    player.registerFrameConsumer(22);
+    expect(cap.active).toBe(true);  // 无需显式 use()
+    player.dispose();
+  });
+
+  it('登记了未匹配显示对象的消费者：告警一次且不激活段渲染', () => {
+    const { player, mock } = makePlayer();
+    addThreeLayers(player);
+    const cap = createFrameCapture(mock as unknown as THREE.WebGLRenderer);
+    player.setFrameCapture(cap);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    player.registerFrameConsumer(999); // 未登记进 displayObjects（该段边界不存在）
+    player.registerFrameConsumer(999); // 重复登记不重复告警
+    player.registerFrameConsumer(22);  // 命中 ⇒ 正常激活
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain('999');
+    expect(cap.active).toBe(true);
+    player.render();
+    expect(mock._renders.map((r) => r.target)).toEqual([cap.target, cap.target, null]); // 仍只有 #22 开段
+    warn.mockRestore();
+    player.dispose();
   });
 });
 

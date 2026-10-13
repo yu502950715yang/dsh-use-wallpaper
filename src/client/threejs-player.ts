@@ -616,8 +616,10 @@ export class ThreeScenePlayer {
   private glowStage: GlowStage | null = null;
   // 帧内快照注入点（null 或 active=false = 本壁纸无消费者 ⇒ 帧序与改动前逐字相同）。
   private frameCapture: FrameCapture | null = null;
-  // 消费者集合（键 = scene.json 对象 id）：段渲染时每个消费者**独占一段**，段数 = 消费者数 + 1。
+  // 消费者集合（键 = scene.json 对象 id）：段渲染时每个消费者**开启新的一段**，段数 = 消费者数 + 1。
   private readonly frameConsumers = new Set<number>();
+  // 已告警过的未匹配消费者（防每帧刷屏）。
+  private readonly warnedConsumers = new Set<number>();
   // 末段合成用的全屏 quad（惰性建：只有真的走段渲染且 Glow 关闭时才建）。
   private compositeQuad: CompositeQuad | null = null;
   // g_Time 时间原点（构造时刻），advance 传「自 player 创建起的秒数」。
@@ -862,16 +864,28 @@ export class ThreeScenePlayer {
   /** 注入帧内快照（null = 关闭）。契约见 frame-capture.ts；active=false 时帧序不变。 */
   setFrameCapture(capture: FrameCapture | null): void {
     this.frameCapture = capture;
+    this.checkFrameConsumers();
   }
 
-  /** 登记一个「需要帧内快照」的消费者（键 = scene.json 对象 id）：它独占一段，快照拍在它**之前**。 */
+  /** 登记一个「需要帧内快照」的消费者（键 = scene.json 对象 id）：它开启新的一段，快照拍在它**之前**。 */
   registerFrameConsumer(objectId: number): void {
     this.frameConsumers.add(objectId);
+    this.checkFrameConsumers();
+  }
+
+  // 消费者集合与 capture.active 的唯一收口：命中显示对象 ⇒ 激活段渲染；未命中 ⇒ 一次性告警（该段边界不存在）。
+  private checkFrameConsumers(): void {
+    for (const objectId of this.frameConsumers) {
+      if (this.displayObjects.has(objectId)) { this.frameCapture?.use(); continue; }
+      if (this.warnedConsumers.has(objectId)) continue;
+      this.warnedConsumers.add(objectId);
+      console.warn(`[three] 帧内快照消费者未匹配到显示对象（已忽略）: id=${objectId}`);
+    }
   }
 
   /**
-   * 段渲染：按 renderOrder 升序把主场景顶层对象切成若干段（每个消费者独占一段，段数 = 消费者数 + 1），
-   * 逐段渲染进 frameCapture.target（段间 autoClear=false 累积），消费者段渲染完成后拍一次快照，
+   * 段渲染：按 renderOrder 升序把主场景顶层对象切成若干段（消费者**开启**新的一段，段数 = 消费者数 + 1），
+   * 逐段渲染进 frameCapture.target（段间 autoClear=false 累积），消费者段的快照拍在该段 render **之前**，
    * 末段合成回默认 fb。WE 对齐点：lwe CScene.cpp:351-361 按 m_objectsByRenderOrder 逐个 render()；
    * REFRACT 在画该层**前** blit 场景 FBO（CParticle.cpp:2069-2079）。
    */
@@ -879,10 +893,13 @@ export class ThreeScenePlayer {
     const capture = this.frameCapture;
     if (!capture) return;
     const children = [...this.scene.children];
-    // ① 保存运行期状态：autoClear 与各顶层对象的 visible（段内会临时改写，必须原值恢复）。
+    // ① 保存运行期状态：autoClear / 清屏参数 / 各顶层对象 visible（段内会临时改写，必须原值恢复）。
     const prevAutoClear = (this.renderer as { autoClear?: boolean }).autoClear !== false;
     const prevVisible = children.map((o) => o.visible);
-    // ② 消费者对象 → 它在 scene.children 里的下标（快照必须拍在它自己被绘制**之前**）。
+    const prevClearColor = new THREE.Color();
+    this.renderer.getClearColor(prevClearColor);
+    const prevClearAlpha = this.renderer.getClearAlpha();
+    // ② 消费者对象 → 它在 scene.children 里的下标。
     const consumerIndexes = new Set<number>();
     for (let i = 0; i < children.length; i++) {
       const obj = children[i];
@@ -890,28 +907,22 @@ export class ThreeScenePlayer {
         if (this.displayObjects.get(objectId) === obj) { consumerIndexes.add(i); break; }
       }
     }
-    // ③ 切段：按 renderOrder 升序（稳定排序 ⇒ 同序号保持 scene 内顺序），**每个消费者独占一段**：
-    //    快照必须拍在消费者自己**之前**、且它自己不被重复绘制 ⇒ 消费者前后都断开（段数 = 消费者数 + 1）。
+    // ③ 切段：按 renderOrder 升序（稳定排序 ⇒ 同序号保持 scene 内顺序），消费者**开启**新的一段、
+    //    与其后的非消费者同段（段内至多一个消费者）⇒ 快照必然拍在该消费者自己被绘制**之前**。
     const order = children
       .map((obj, i) => ({ obj, i }))
       .sort((a, b) => a.obj.renderOrder - b.obj.renderOrder);
-    const segments: Array<{ members: number[]; consumers: number[] }> = [];
-    let current: number[] = [];
-    let currentConsumers: number[] = [];
-    const flush = () => {
-      if (current.length > 0) segments.push({ members: current, consumers: currentConsumers });
-      current = [];
-      currentConsumers = [];
-    };
+    const segments: Array<{ members: number[]; consumer: number | null }> = [];
+    let current: { members: number[]; consumer: number | null } | null = null;
     for (const { i } of order) {
       const isConsumer = consumerIndexes.has(i);
-      if (isConsumer) flush(); // 消费者之前断开（若上一段为空则本段就是首个消费者段）
-      current.push(i);
-      if (isConsumer) currentConsumers.push(i);
-      // 消费者之后立刻断开 ⇒ 该消费者独占一段，不会被后续对象拖进同一段。
-      if (isConsumer) flush();
+      if (current === null || isConsumer) {
+        if (current !== null) segments.push(current);
+        current = { members: [], consumer: isConsumer ? i : null };
+      }
+      current.members.push(i);
     }
-    flush();
+    if (current !== null) segments.push(current);
     try {
       // ④ 段目标 = frameRT（画布缓冲尺寸）：清屏参数与默认 fb 一致（黑 + alpha 1）。
       //    ⚠️ autoClear 只在段渲染范围内临时关闭——`rt-render.ts` 的 4 个调用点依赖它清屏。
@@ -925,12 +936,15 @@ export class ThreeScenePlayer {
         for (let i = 0; i < children.length; i++) {
           children[i].visible = prevVisible[i] && members.has(i);
         }
+        // ★ 快照拍在**本段 render 之前**：此刻 target 仍绑定 frameRT，内容 = 此前所有段已绘制的内容
+        //   （WE 的「画该层之前 blit」语义；放在 render 之后会把消费者自己拍进去）。捕获无幂等性 ⇒ 每段一次。
+        if (segment.consumer !== null) capture.capture();
         this.renderer.render(this.scene, this.camera);
-        // 消费者边界：段渲染完成后、下一段开始前拍一次（capture() 无幂等性 ⇒ 恰好一次）。
-        for (let n = 0; n < segment.consumers.length; n++) capture.capture();
       }
     } finally {
       (this.renderer as { autoClear: boolean }).autoClear = prevAutoClear;
+      // 清屏参数是本帧临时改的全局状态，恢复原值（不得把它留在黑 + alpha 1 上）。
+      this.renderer.setClearColor(prevClearColor, prevClearAlpha);
       this.renderer.setRenderTarget(null);
       for (let i = 0; i < children.length; i++) children[i].visible = prevVisible[i];
     }
@@ -1750,10 +1764,12 @@ export class ThreeScenePlayer {
     // 应用级 Glow 的 RT/shader 归 stage 所有，须在 renderer.dispose() 前释放。
     this.glowStage?.dispose();
     this.glowStage = null;
-    // 段渲染的 frameRT/快照纹理与合成 quad 同样必须在 renderer.dispose() 之前释放。
-    this.frameCapture?.dispose();
+    // 帧内快照**不在此释放**：它由创建者（three-renderer）独占释放并跨壁纸复用，
+    // 在此 dispose 会让下一个壁纸拿到「已释放」实例（use() 静默无效、读 target 抛错）。
     this.frameCapture = null;
     this.frameConsumers.clear();
+    this.warnedConsumers.clear();
+    // 末段合成 quad 归本类所有，须在 renderer.dispose() 之前释放。
     this.compositeQuad?.dispose();
     this.compositeQuad = null;
     this.renderer.dispose();
