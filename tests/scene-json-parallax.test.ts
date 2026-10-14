@@ -40,4 +40,26 @@ describe('scene.json 视差字段', () => {
     expect((parseSceneJson(scene({ parallaxDepth: '' })).objects[0] as any).parallaxDepth).toBeUndefined();
     expect((parseSceneJson(scene({ parallaxDepth: 5 })).objects[0] as any).parallaxDepth).toBeUndefined();
   });
+  it('particle 对象也产出 parallaxDepth', () => {
+    // 真实库 227 处 parallaxDepth 中 106 处（47%）在 particle 对象上，是最大的一支。
+    const d = parseSceneJson(JSON.stringify({ objects: [{ particle: 'particles/x.json', parallaxDepth: '1.00000 1.00000' }] }));
+    const obj = d.objects[0];
+    expect(obj.kind).toBe('particle');
+    expect(obj.kind === 'particle' && obj.parallaxDepth).toEqual([1, 1]);
+  });
+  it('text 对象也产出 parallaxDepth', () => {
+    const d = parseSceneJson(JSON.stringify({ objects: [{ text: 'x', parallaxDepth: '0.00000 2.00000' }] }));
+    const obj = d.objects[0];
+    expect(obj.kind).toBe('text');
+    expect(obj.kind === 'text' && obj.parallaxDepth).toEqual([0, 2]);
+  });
+  it('畸形输入守护：多余 token 取前两轴 / 单轴非数值 / 全空白 → 判据', () => {
+    const depth = (extra: Record<string, unknown>) => {
+      const obj = parseSceneJson(scene(extra)).objects[0];
+      return obj.kind === 'image' ? obj.parallaxDepth : undefined;
+    };
+    expect(depth({ parallaxDepth: '1 1 1' })).toEqual([1, 1]);
+    expect(depth({ parallaxDepth: '1 abc' })).toBeUndefined();
+    expect(depth({ parallaxDepth: '   ' })).toBeUndefined();
+  });
 });

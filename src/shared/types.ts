@@ -45,7 +45,14 @@ export interface VisibleBinding {
   scriptProperties?: Record<string, unknown>; // kind='script'：脚本参数（{user,value} 已解包）
 }
 
-export interface SceneImageObject {
+// 四种 kind 共有的对象字段（解析器 scene-json.ts 的 `base` 会 spread 进每个分支）：
+// 新增与 kind 无关的对象级字段一律加在这里，避免四处声明漂移。
+export interface SceneObjectBase {
+  /** WE 对象级视差深度（scene.json `parallaxDepth`，两根轴）；缺省 = OWE 的 {0,0} ⇒ 不参与视差。 */
+  parallaxDepth?: [number, number];
+}
+
+export interface SceneImageObject extends SceneObjectBase {
   kind: 'image'; id: number; name: string;
   origin: [number, number, number]; scale: [number, number, number];
   parent?: number;               // 场景树父对象 id（世界变换由 scene-graph 累积）
@@ -78,10 +85,8 @@ export interface SceneImageObject {
   // 全库非零的只有 3 个对象：3743126786 Clouds Back=7(Screen)、2832263418 audio_rainbow=6(Lighten)、
   // 2460786246 Clock=31(A+B×opacity)。Screen 对纯黑返回 A → 黑底自然「消失」。
   colorBlendMode?: number;
-  /** WE 对象级视差深度（scene.json `parallaxDepth`，两根轴）；缺省 = OWE 的 {0,0} ⇒ 不参与视差。 */
-  parallaxDepth?: [number, number];
 }
-export interface SceneParticleObject {
+export interface SceneParticleObject extends SceneObjectBase {
   kind: 'particle'; id: number; name: string;
   origin: [number, number, number]; scale: [number, number, number];
   parent?: number;               // 场景树父对象 id（世界变换由 scene-graph 累积）
@@ -102,7 +107,7 @@ export interface SceneParticleObject {
 // WE 内置合成层/全屏层/项目层对象（image 引用 models/util/*.json，pkg 内无此文件）。
 // 语义是效果链容器/控制节点而非纹理：一期不渲染（跳过），effects 字段为二期
 // 效果链（shader 后处理）渲染预留。
-export interface SceneUtilObject {
+export interface SceneUtilObject extends SceneObjectBase {
   kind: 'util'; id: number; name: string;
   origin: [number, number, number]; scale: [number, number, number];
   parent?: number;               // 场景树父对象 id（容器不渲染，但父链要靠它累积）
@@ -118,7 +123,7 @@ export interface SceneUtilObject {
 // 对象，如 2937346640 的 VHS Time and Date）。T3.1 静态渲染 text.value（离屏 canvas
 // 绘制 → CanvasTexture → 共享场景 quad）；T3.3 起 text.script 识别为 clock 时每帧
 // 按 scriptProperties 生成时间文本刷新纹理（静态值仅作缺省）。
-export interface SceneTextObject {
+export interface SceneTextObject extends SceneObjectBase {
   kind: 'text'; id: number; name: string;
   origin: [number, number, number]; scale: [number, number, number];
   parent?: number;               // 场景树父对象 id（世界变换由 scene-graph 累积）

@@ -30,7 +30,11 @@ export interface VisibleBinding {
     script?: string;
     scriptProperties?: Record<string, unknown>;
 }
-export interface SceneImageObject {
+export interface SceneObjectBase {
+    /** WE 对象级视差深度（scene.json `parallaxDepth`，两根轴）；缺省 = OWE 的 {0,0} ⇒ 不参与视差。 */
+    parallaxDepth?: [number, number];
+}
+export interface SceneImageObject extends SceneObjectBase {
     kind: 'image';
     id: number;
     name: string;
@@ -49,10 +53,8 @@ export interface SceneImageObject {
     alpha?: number;
     brightness?: number;
     colorBlendMode?: number;
-    /** WE 对象级视差深度（scene.json `parallaxDepth`，两根轴）；缺省 = OWE 的 {0,0} ⇒ 不参与视差。 */
-    parallaxDepth?: [number, number];
 }
-export interface SceneParticleObject {
+export interface SceneParticleObject extends SceneObjectBase {
     kind: 'particle';
     id: number;
     name: string;
@@ -66,7 +68,7 @@ export interface SceneParticleObject {
     effects?: unknown[];
     instanceOverrideJson?: string;
 }
-export interface SceneUtilObject {
+export interface SceneUtilObject extends SceneObjectBase {
     kind: 'util';
     id: number;
     name: string;
@@ -79,7 +81,7 @@ export interface SceneUtilObject {
     visible?: VisibleBinding;
     effects?: unknown[];
 }
-export interface SceneTextObject {
+export interface SceneTextObject extends SceneObjectBase {
     kind: 'text';
     id: number;
     name: string;

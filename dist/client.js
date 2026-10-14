@@ -22877,7 +22877,10 @@ function parseSceneJson(raw) {
       // 场景树：子对象变换相对父节点（容器 `none` 对象也保留，世界变换由 scene-graph.ts 累积）
       parent: optNum(o.parent),
       // Ruling 5：所有对象（kind 不限）的 effects 按 objects 顺序保留（全库 122 条中 105 条在 image 对象上）
-      effects: Array.isArray(o.effects) ? o.effects : void 0
+      effects: Array.isArray(o.effects) ? o.effects : void 0,
+      // 对象级 parallaxDepth 与 kind 无关（全库 227 处：particle 106 / image 91 / text 20 / other 10），
+      // 故落在 base 让所有分支都带出 —— Task 4 的粒子/文本注入 u_Parallax 全靠它。
+      parallaxDepth: optNum2(o.parallaxDepth)
     };
     const fromVisibleScript = base.visible?.kind === "script" ? { script: base.visible.script, scriptProperties: base.visible.scriptProperties } : {};
     if (typeof o.particle === "string" && o.particle) {
@@ -22910,7 +22913,6 @@ function parseSceneJson(raw) {
         // WE 图像颜色混合模式（→ shader combo BLENDMODE；缺省 0 = Normal）。
         // 非数值/负数/非法 → 0（渲染侧只实现 6/7/31，其余回退普通 alpha 混合）。
         colorBlendMode: Math.max(0, Math.floor(optNum(o.colorBlendMode) ?? 0)),
-        parallaxDepth: optNum2(o.parallaxDepth),
         ...fromVisibleScript
       };
     }
