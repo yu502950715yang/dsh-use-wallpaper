@@ -64,7 +64,8 @@ export interface WallpaperHealthHandler {
 let healthHandler: WallpaperHealthHandler | null = null;
 const healthSubscribers = new Set<(s: HealthSnapshot | null) => void>();
 
-export function setWallpaperHealthHandler(handler: WallpaperHealthHandler): void {
+/** 注册/撤销共享 handler（传 null = 撤销：面板回退到「读不到状态」的初始态）。 */
+export function setWallpaperHealthHandler(handler: WallpaperHealthHandler | null): void {
   healthHandler = handler;
 }
 

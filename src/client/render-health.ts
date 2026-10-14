@@ -1,11 +1,12 @@
 // scene 实时渲染看护：失败分级记忆 + 装配/首帧耗时打点。
 // 存储与时钟注入 ⇒ node 可测；硬失败落 localStorage（不可用时退化为会话内），软失败仅会话内。
 
-export type HardFailureKind = 'scene-json' | 'no-visible-objects' | 'context-lost' | 'exception';
+// 硬失败分级的**唯一声明**（类型由该数组派生）：新增种类只改这里一处。
+const HARD_KINDS = ['scene-json', 'no-visible-objects', 'context-lost', 'exception'] as const;
+
+export type HardFailureKind = typeof HARD_KINDS[number];
 export type SoftFailureKind = 'load-error';
 export type FailureKind = HardFailureKind | SoftFailureKind;
-
-const HARD_KINDS = ['scene-json', 'no-visible-objects', 'context-lost', 'exception'] as const;
 
 /** 硬失败 = 有证据表明「这张壁纸渲染不出来」⇒ 可落盘；软失败 = 可能是这次没供上 ⇒ 只记会话。 */
 export function isHardFailure(kind: FailureKind): kind is HardFailureKind {
@@ -116,10 +117,10 @@ export function createRenderHealthStore(opts: {
       if (storage && id) { try { storage.removeItem(keyOf(id)); } catch { /* 记忆已清，落盘失败不影响 */ } }
     },
     clearAll() {
+      // 只清失败记忆（硬/软/自动重试闸 + 落盘键）；session（成功结论与计时）不是失败记忆，保留。
       hard.clear();
       soft.clear();
       retried.clear();
-      session.clear();
       if (!storage) return;
       const keys: string[] = [];
       try {
@@ -133,16 +134,13 @@ export function createRenderHealthStore(opts: {
     snapshot(id) {
       const s = session.get(id);
       const timing = s?.timing ?? null;
-      const failure = currentHard(id);
-      // 硬失败是「这张壁纸渲染不出来」的结论 ⇒ 只要它在，ok 就是 false，直到显式 clear。
-      if (failure) return { wallpaperId: id, ok: false, failure, timing };
+      // failure = 失败记忆（硬失败优先，其次本次会话的软失败）；它与 ok 互不覆盖：
+      // ok = 本次会话最近一次装配结果 ⇒「现在正常 + 曾失败过」可同时成立（面板两行设计的依据）。
+      const hardHit = currentHard(id);
       const softHit = soft.get(id);
-      return {
-        wallpaperId: id,
-        ok: s?.ok ?? null,
-        failure: softHit ? { kind: softHit.kind, hard: false, at: softHit.at, detail: softHit.detail } : null,
-        timing,
-      };
+      const failure: HealthEntry | null = hardHit
+        ?? (softHit ? { kind: softHit.kind, hard: false, at: softHit.at, detail: softHit.detail } : null);
+      return { wallpaperId: id, ok: s?.ok ?? null, failure, timing };
     },
     shouldAutoRetry(id) {
       if (!id || retried.has(id)) return false;
@@ -157,11 +155,7 @@ export function createRenderHealthStore(opts: {
 
 /** 面板状态行文案（不含 HTML）：三种状态各一句可读中文，不暴露原始枚举。 */
 export function formatHealthLine(snap: HealthSnapshot, t: (s: string) => string): string {
-  const timing = snap.timing
-    ? t('装配 {assemble} ms · 首帧 {first} ms')
-        .replace('{assemble}', String(Math.round(snap.timing.assembleMs)))
-        .replace('{first}', String(Math.round(snap.timing.firstFrameMs)))
-    : '';
+  const timing = snap.timing ? formatTiming(snap.timing, t) : '';
   if (snap.failure) {
     const reason = FAILURE_TEXT[snap.failure.kind] ?? t('渲染失败');
     return t('上次失败：{reason}')
@@ -173,6 +167,14 @@ export function formatHealthLine(snap: HealthSnapshot, t: (s: string) => string)
   return t('尚未渲染（选择一张 scene 壁纸后这里显示状态）');
 }
 
+// 首帧耗时 < 0 = 还没出帧（暂停态下会长期如此）⇒ 不渲染该字段，否则文案里会出现「首帧 -1 ms」。
+function formatTiming(timing: RenderTiming, t: (s: string) => string): string {
+  const assemble = t('装配 {assemble} ms').replace('{assemble}', String(Math.round(timing.assembleMs)));
+  if (timing.firstFrameMs < 0) return assemble;
+  return assemble + ' · ' + t('首帧 {first} ms').replace('{first}', String(Math.round(timing.firstFrameMs)));
+}
+
+// ⚠️ 这五条不经 t()：当前无 i18n 层（settings-section 的 weT 是恒等透传）；接入 i18n 时须一并翻译。
 const FAILURE_TEXT: Record<FailureKind, string> = {
   'scene-json': '拿不到 scene.json',
   'no-visible-objects': '没有可显示的对象',

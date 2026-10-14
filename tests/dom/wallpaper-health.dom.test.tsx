@@ -39,21 +39,31 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 const boot = () => vi.advanceTimersByTimeAsync(0);
 const selectedIds = () => selectMock.mock.calls.map((c) => String(c[0]));
 
+// 收尾用例启动的实例：不能只 delete 全局登记点 —— 那样 visibilitychange 监听与在途定时器会跨用例累积。
+function teardownEngine() {
+  const api = (window as any).__wallpaperEngine;
+  try { api?.teardown?.(); } catch { /* 已收尾 */ }
+  delete (window as any).__wallpaperEngine;
+  delete (window as any).__wpEngineTeardown;
+}
+
 describe('window.__wallpaperEngine 看护入口', () => {
   beforeEach(() => {
     document.body.innerHTML = '';
     vi.clearAllMocks();
     localStorage.clear();
-    // 每个用例都从零开始：清掉上一个实例的全局登记点，否则新 mount 会先跑旧实例收尾（多一次 setOnHealth(null)）
-    delete (window as any).__wallpaperEngine;
-    delete (window as any).__wpEngineTeardown;
+    // 每个用例都从零开始：先让上一个用例的实例自己收尾（撤监听/清定时器），再清全局登记点。
+    teardownEngine();
     rendererOpts.value = null;
   });
-  afterEach(() => { vi.useRealTimers(); });
+  afterEach(() => { vi.useRealTimers(); teardownEngine(); });
   it('health / retryLive / clearRenderFailures 都在，且 retryLive 会清记忆并重选', async () => {
     bootstrap();
     await new Promise((r) => setTimeout(r, 0));
     const api = (window as any).__wallpaperEngine;
+    // 守卫：非当前选中壁纸读不到状态（mock renderer 恒返回 w1），选中它之后才读得到。
+    expect(api.health()).toBeNull();
+    api.select('w1');
     expect(api.health().ok).toBe(true);
     localStorage.setItem('we:renderfail:w1', JSON.stringify({ v: 1, kind: 'exception', detail: 'x', at: 1 }));
     api.clearRenderFailures();
@@ -271,7 +281,83 @@ describe('window.__wallpaperEngine 看护入口', () => {
     expect(handler.retry).toBeTypeOf('function');
     expect(handler.clearFailures).toBeTypeOf('function');
     handler.clearFailures();
-    expect(notifyWallpaperHealth).toHaveBeenLastCalledWith(null); // 清空失败记忆后状态行不留旧值
+    // E：清除失败记忆只清「失败记忆」，不抹掉「现在正常」⇒ 推送的是当前选中壁纸的真实快照，
+    // 而不是把状态行打成「尚未渲染」。
+    expect(notifyWallpaperHealth).toHaveBeenLastCalledWith(ok);
+  });
+
+  // Minor 6：health() 与面板 panelHealth 同一守卫 —— 当前壁纸不是 scene（video/none）时读不到状态。
+  it('health() 的 id 守卫：非当前选中壁纸时返回 null', async () => {
+    bootstrap();
+    await tick();
+    const api = engine();
+    expect(api.health()).toBeNull(); // 还没选中任何壁纸
+    api.select('w1');
+    expect(api.health()?.wallpaperId).toBe('w1');
+    api.show({ kind: 'video', url: '/x.mp4' }); // 非 scene 分支
+    expect(api.health()).toBeNull();
+  });
+
+  // Important 3：非 scene 分支（image/video/web/none）必须解绑选中项 —— 否则上一张 scene 的状态
+  // **持续**挂在面板上，且「重试实时渲染」会把用户刚换掉的那张 scene 选回来。
+  it('show({kind:"none"}) 解绑选中项：上一张 scene 的迟到事件不推面板，retryLive 不把它选回来', async () => {
+    bootstrap();
+    await tick();
+    const api = engine();
+    const onHealth = rendererMock.setOnHealth.mock.calls[0]![0] as (s: HealthSnapshot) => void;
+    api.select('w1');
+    vi.mocked(notifyWallpaperHealth).mockClear();
+
+    api.show({ kind: 'none' });
+    expect(api.health()).toBeNull();
+    expect(notifyWallpaperHealth).toHaveBeenLastCalledWith(null); // 面板立即刷新，不留上一张的旧文案
+    vi.mocked(notifyWallpaperHealth).mockClear();
+    // 上一张 scene 迟到的失败打点不得上屏
+    onHealth({
+      wallpaperId: 'w1', ok: false, timing: null,
+      failure: { kind: 'no-visible-objects', hard: true, at: 1, detail: '' },
+    });
+    expect(notifyWallpaperHealth).not.toHaveBeenCalled();
+
+    // 面板「重试实时渲染」不得把刚换掉的 scene 选回来
+    const calls = selectMock.mock.calls.length;
+    api.retryLive();
+    expect(selectMock.mock.calls.length).toBe(calls);
+  });
+
+  // Minor 12：硬失败落盘的**唯一用途** = 跨实例拦住自动重试（本用例是真实生产序列：
+  // 上次会话留下硬记忆 → 本次软失败排冷却 → 到期时 store 的硬记忆闸必须拦住重选）。
+  it('跨实例持久硬记忆拦住自动重试（硬失败落盘后不再自动重选）', async () => {
+    vi.useFakeTimers();
+    // 必须在 bootstrap 之前预置：store 在 bootstrap 里新建，读的就是这份 localStorage。
+    localStorage.setItem('we:renderfail:w1', JSON.stringify({ v: 1, kind: 'exception', detail: '上次会话', at: 1 }));
+    bootstrap();
+    await boot();
+    const store = rendererOpts.value!.healthStore;
+    const onHealth = rendererMock.setOnHealth.mock.calls[0]![0] as (s: HealthSnapshot) => void;
+    expect(store.snapshot('w1').failure?.hard).toBe(true); // 跨实例读回上次会话的硬失败
+
+    engine().select('w1');
+    store.recordSoft('w1', 'load-error', '断流');
+    onHealth(store.snapshot('w1'));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(selectedIds().filter((id) => id === 'w1')).toHaveLength(1); // 只有 api.select，没有自动重试
+  });
+
+  it('对照：同样的软失败但没有硬记忆 ⇒ 冷却到期自动重选一次', async () => {
+    vi.useFakeTimers();
+    expect(localStorage.getItem('we:renderfail:w1')).toBeNull(); // 前置：没有硬记忆
+    bootstrap();
+    await boot();
+    const store = rendererOpts.value!.healthStore;
+    const onHealth = rendererMock.setOnHealth.mock.calls[0]![0] as (s: HealthSnapshot) => void;
+
+    engine().select('w1');
+    store.recordSoft('w1', 'load-error', '断流');
+    onHealth(store.snapshot('w1'));
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(selectedIds().filter((id) => id === 'w1')).toHaveLength(2); // api.select + 一次自动重试
+    expect(selectMock).toHaveBeenLastCalledWith('w1');
   });
 
   it('面板读接口：选中项与快照壁纸不一致（非 scene 壁纸）⇒ 读不到状态（推 null 不串台）', async () => {

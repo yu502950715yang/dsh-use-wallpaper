@@ -1,4 +1,5 @@
-export type HardFailureKind = 'scene-json' | 'no-visible-objects' | 'context-lost' | 'exception';
+declare const HARD_KINDS: readonly ["scene-json", "no-visible-objects", "context-lost", "exception"];
+export type HardFailureKind = typeof HARD_KINDS[number];
 export type SoftFailureKind = 'load-error';
 export type FailureKind = HardFailureKind | SoftFailureKind;
 /** 硬失败 = 有证据表明「这张壁纸渲染不出来」⇒ 可落盘；软失败 = 可能是这次没供上 ⇒ 只记会话。 */
@@ -44,3 +45,4 @@ export declare function createRenderHealthStore(opts?: {
 }): RenderHealthStore;
 /** 面板状态行文案（不含 HTML）：三种状态各一句可读中文，不暴露原始枚举。 */
 export declare function formatHealthLine(snap: HealthSnapshot, t: (s: string) => string): string;
+export {};

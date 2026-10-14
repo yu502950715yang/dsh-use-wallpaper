@@ -61,6 +61,9 @@ export function lastWorldTransformOf(id: number): WorldTransform | null {
   return lastWorldTransforms?.get(id) ?? null;
 }
 
+// 订阅者异常只告警一次（模块级 once）：完全静默会让面板的 UI bug 不可见，每次刷屏又没用。
+let subscriberWarned = false;
+
 // WE 字体（pkg 内 otf/ttf）经 FontFace 加载后按家族名绘制；失败或环境不支持（jsdom 无 FontFace）→ 回退系统 sans-serif。
 // 按「壁纸 id + 字体路径」缓存：同一壁纸的多个 text 对象共用一次加载。
 const FONT_CACHE = new Map<string, Promise<string | null>>();
@@ -251,12 +254,15 @@ export function createThreeSceneRenderer(opts?: {
   const health = opts?.healthStore ?? createRenderHealthStore();
   let currentHealthId = '';
   let healthHandler: ((s: HealthSnapshot) => void) | null = null;
-  let renderStartedAt = 0;
-  // 首帧耗时只在「本次装配的第一次 onFrame」记一次；-1 = 还没出帧。
-  let firstFrameAt = -1;
   const publish = (snap: HealthSnapshot) => {
     if (!healthHandler) return;
-    try { healthHandler(snap); } catch { /* 订阅者异常不得影响渲染 */ }
+    try { healthHandler(snap); } catch (e) {
+      // 订阅者异常不得影响渲染，但首次必须留痕（否则 UI bug 彻底隐形）。
+      if (!subscriberWarned) {
+        subscriberWarned = true;
+        console.warn('[wallpaper-engine] 健康订阅者抛错（同类异常不再重复告警）:', e instanceof Error ? e.message : String(e));
+      }
+    }
   };
   // id 由调用方按**本次 render 的作用域**传入：render 可重叠（controller 允许 select 竞态），
   // 用实例级 currentHealthId 会把被取代那次 render 的结论记到新壁纸键上。
@@ -266,8 +272,8 @@ export function createThreeSceneRenderer(opts?: {
     else health.recordSoft(id, kind as SoftFailureKind, detail);
     publish(health.snapshot(id));
   };
-  const succeed = (id: string, assembleMs: number) => {
-    health.recordOk(id, { assembleMs, firstFrameMs: firstFrameAt });
+  const succeed = (id: string, assembleMs: number, firstFrameMs: number) => {
+    health.recordOk(id, { assembleMs, firstFrameMs });
     publish(health.snapshot(id));
   };
 
@@ -347,6 +353,10 @@ export function createThreeSceneRenderer(opts?: {
     // 壁纸音效随本次装配一起释放（AudioContext 不 close 会一路累积到浏览器上限）。
     stopAudio();
   };
+  // 失败出口一律收尾；收尾自身抛错不得改写已记下的失败原因（照 onContextLost 的写法）。
+  const teardownQuietly = () => {
+    try { teardown(); } catch { /* 收尾失败不掩盖失败原因 */ }
+  };
   // 上下文已在本次 render 进行中丢失 ⇒ 作废本次装配：清理丢失后新建的残余对象，收尾与失败路径一致。
   const abortIfContextLost = () => {
     if (!contextLost) return false;
@@ -387,10 +397,10 @@ export function createThreeSceneRenderer(opts?: {
       contextLost = false;
       // 每次装配开始复位 active（消费者集合换了）——否则上一张壁纸的消费者会让新壁纸也永久走段渲染路径。
       frameCapture?.reset();
-      // 看护归属：本次装配的壁纸 id + 计时起点；首帧标记等第一次 onFrame 来填。
+      // 看护归属：本次装配的壁纸 id。计时是**本次 render 的局部状态**（render 可重叠）：
+      // 实例级共享会把被取代那次的起点算进本次的装配/首帧耗时。
       currentHealthId = id;
-      renderStartedAt = performance.now();
-      firstFrameAt = -1;
+      const timer = { startedAt: performance.now(), firstFrameAt: -1 };
       // 装配耗时（本次 render 作用域）：装配出口记一次，首帧回填沿用它 —— 否则首帧慢时
       // 「首帧时刻 − 起始」会被当成装配耗时写回，面板显示装配 ≈ 首帧，夸大装配。
       let assembledMs = -1;
@@ -412,11 +422,13 @@ export function createThreeSceneRenderer(opts?: {
         } catch (e) {
           // 网络/磁盘一时没供上 ⇒ 软失败（不落盘，冷却后自动重试一次）
           fail(id, 'load-error', e instanceof Error ? e.message : String(e));
+          teardownQuietly();
           return false;
         }
         if (!sceneJsonResp.ok) {
           // 服务端明确回答「这份 scene.json 拿不到」⇒ 硬失败
           fail(id, 'scene-json', 'http ' + sceneJsonResp.status);
+          teardownQuietly();
           return false;
         }
         const sceneJson = await sceneJsonResp.text();
@@ -713,14 +725,14 @@ export function createThreeSceneRenderer(opts?: {
           },
         };
         // 首帧耗时：宿主注入的 onFrame 第一次被调用即「真的画出了一帧」。
-        // 归属用本闭包捕获的 id（本次装配），与出口打点同一套归属。
+        // 归属与计时都用本闭包捕获的本次 render 局部量（与出口打点同一套）。
         const userOnFrame = assets.onFrame;
         assets.onFrame = (dt: number) => {
-          if (firstFrameAt < 0) {
-            firstFrameAt = performance.now() - renderStartedAt;
+          if (timer.firstFrameAt < 0) {
+            timer.firstFrameAt = performance.now() - timer.startedAt;
             // 只补 firstFrameMs：沿用装配出口记下的耗时；装配还没到出口（-1）时先用首帧时刻占位，
             // 随后的出口会用真实装配耗时纠正它。
-            succeed(id, assembledMs >= 0 ? assembledMs : firstFrameAt);
+            succeed(id, assembledMs >= 0 ? assembledMs : timer.firstFrameAt, timer.firstFrameAt);
           }
           userOnFrame?.(dt);
         };
@@ -869,18 +881,18 @@ export function createThreeSceneRenderer(opts?: {
         // 零背景 + 零粒子 → 无内容，返回 false 由 controller 走 preview 兜底（不显示空 canvas）。
         if (result.backgroundIds.length === 0 && result.particleLayers.length === 0) {
           fail(id, 'no-visible-objects', 'background=0 particleLayers=0');
-          teardown();
+          teardownQuietly();
           return false;
         }
         // 打点必须在零可见对象判定**之后**：空场景不是成功。
-        assembledMs = performance.now() - renderStartedAt;
-        succeed(id, assembledMs);
+        assembledMs = performance.now() - timer.startedAt;
+        succeed(id, assembledMs, timer.firstFrameAt);
         return true;
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         console.warn('[three] scene render failed:', msg);
         fail(id, 'exception', msg);
-        teardown();
+        teardownQuietly();
         return false;
       }
     },

@@ -29,7 +29,8 @@ export interface WallpaperHealthHandler {
     retry(): void;
     clearFailures(): void;
 }
-export declare function setWallpaperHealthHandler(handler: WallpaperHealthHandler): void;
+/** 注册/撤销共享 handler（传 null = 撤销：面板回退到「读不到状态」的初始态）。 */
+export declare function setWallpaperHealthHandler(handler: WallpaperHealthHandler | null): void;
 /** 订阅健康变化（组件挂载时订阅、卸载时退订；index.ts 调 notifyWallpaperHealth 推送）。 */
 export declare function subscribeWallpaperHealth(cb: (s: HealthSnapshot | null) => void): () => void;
 /** 由 index.ts 的健康事件调用；也用于组件挂载时补一次当前值。 */

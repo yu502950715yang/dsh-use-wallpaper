@@ -3,7 +3,7 @@ import React from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react';
 import {
-  WallpaperSettingsSection, setWallpaperRuntimeHandler,
+  WallpaperSettingsSection, setWallpaperRuntimeHandler, setWallpaperSelectHandler,
   setWallpaperHealthHandler, subscribeWallpaperHealth, notifyWallpaperHealth,
 } from '../../src/client/settings-section.js';
 import type { ClientSettings } from '../../src/client/types.js';
@@ -66,7 +66,8 @@ const PROBE: ProbeResult = {
 };
 
 let container: HTMLElement;
-let root: Root;
+// null = 已卸载：用例内可能自行 unmount（验退订），afterEach 的第二次卸载不得再打同一个 root。
+let root: Root | null = null;
 
 async function flush() {
   await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
@@ -89,7 +90,10 @@ function mount(props: Partial<React.ComponentProps<typeof WallpaperSettingsSecti
 }
 
 async function unmount() {
-  await act(async () => { root.unmount(); });
+  if (!root) return;
+  const mounted = root;
+  root = null;
+  await act(async () => { mounted.unmount(); });
   container.remove();
 }
 
@@ -104,7 +108,15 @@ function teardownEngine() {
 const engine = () => (window as any).__wallpaperEngine;
 const statusText = () => (container.querySelector('.wss-live-status') as HTMLElement | null)?.textContent ?? '';
 
-afterEach(async () => { await unmount(); teardownEngine(); vi.restoreAllMocks(); });
+afterEach(async () => {
+  await unmount();
+  teardownEngine();
+  // 模块级共享 handler 随用例重置：否则上一个用例注册的那份会被下一个用例读到（顺序依赖）。
+  setWallpaperHealthHandler(null);
+  setWallpaperSelectHandler(() => {});
+  setWallpaperRuntimeHandler(() => {});
+  vi.restoreAllMocks();
+});
 
 describe('WallpaperSettingsSection', () => {
   it('渲染壁纸网格并标记当前选中项', async () => {
@@ -413,6 +425,9 @@ describe('WallpaperSettingsSection', () => {
     const status = container.querySelector('.wss-live-status');
     expect(status?.textContent).toContain('没有可显示的对象');
     expect((status as HTMLElement).dataset.state).toBe('failed'); // 主行即失败文案 ⇒ 失败态
+    // 首帧未出（firstFrameMs = -1）时不渲染该字段：初值进文案就是「首帧 -1 ms」。
+    expect(status?.textContent).not.toContain('首帧');
+    expect(status?.textContent).not.toContain('-1');
     expect(container.querySelector('.wss-live-memory')).toBeNull(); // 只有一条失败事实，不重复两行
     await act(async () => { (container.querySelector('.wss-live-retry') as HTMLButtonElement).click(); });
     expect(onRetryLive).toHaveBeenCalledTimes(1);
@@ -552,5 +567,53 @@ describe('WallpaperSettingsSection', () => {
     onHealth({ wallpaperId: 'wY', ok: true, failure: null, timing: { assembleMs: 33, firstFrameMs: 44 } });
     await flush();
     expect(statusText()).toContain('装配 33 ms');
+  });
+
+  // G：首帧未出时只有装配耗时（暂停态下 firstFrameMs 会长期是 -1）。
+  it('实时渲染卡片：首帧未出（-1）不显示首帧字段，装配耗时照常', async () => {
+    mount({
+      ...BASE_SETTINGS,
+      health: { wallpaperId: 'w1', ok: true, failure: null, timing: { assembleMs: 120, firstFrameMs: -1 } },
+    } as any);
+    await flush();
+    const text = statusText();
+    expect(text).toContain('实时渲染正常');
+    expect(text).toContain('装配 120 ms');
+    expect(text).not.toContain('首帧');
+    expect(text).not.toContain('-1');
+  });
+
+  // Important 3：非 scene 分支（image/video/web/none）不解绑选中项时，上一张 scene 的状态会**持续**
+  // 挂在面板上，且「重试实时渲染」会把用户刚换掉的那张 scene 选回来。
+  it('端到端：show({kind:"none"}) 之后上一张 scene 的迟到健康事件不得上屏、重试不得把它选回来', async () => {
+    e2eHealth.last = null;
+    e2eHealth.onHealth = null;
+    e2eSelect.mockClear();
+    bootstrap();
+    await flush();
+    const onHealth = e2eHealth.onHealth!;
+    mount({ onSelect: undefined, fetchSettings: async () => BASE_SETTINGS, writeSettings: async () => {} });
+    await flush();
+
+    engine().select('w1');
+    await flush();
+    onHealth({ wallpaperId: 'w1', ok: true, failure: null, timing: { assembleMs: 11, firstFrameMs: 22 } });
+    await flush();
+    expect(statusText()).toContain('实时渲染正常');
+
+    engine().show({ kind: 'none' }); // 公开 API 的非 scene 分支：必须同步解绑选中项
+    await flush();
+    expect(engine().health()).toBeNull();
+    expect(statusText()).toContain('尚未渲染');
+
+    const callsBeforeRetry = e2eSelect.mock.calls.length;
+    await act(async () => { (container.querySelector('.wss-live-retry') as HTMLButtonElement).click(); });
+    expect(e2eSelect.mock.calls.length).toBe(callsBeforeRetry); // 不得把刚换掉的 scene 选回来
+
+    // 上一张 scene 迟到的失败打点不得上屏
+    onHealth({ wallpaperId: 'w1', ok: false, timing: null, failure: { kind: 'no-visible-objects', hard: true, at: 1, detail: '' } });
+    await flush();
+    expect(statusText()).not.toContain('没有可显示的对象');
+    expect(statusText()).toContain('尚未渲染');
   });
 });

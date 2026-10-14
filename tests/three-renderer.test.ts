@@ -2533,10 +2533,14 @@ describe('scene 渲染看护：失败分类与打点', () => {
     expect(seen).toHaveLength(1);
     expect(r.getLastHealth?.()?.failure?.kind).toBe('scene-json');
 
-    // 订阅者抛错不得掀翻渲染（订阅方是 UI 代码）。
+    // 订阅者抛错不得掀翻渲染（订阅方是 UI 代码）；且**首次**异常必须留一条告警，否则 UI bug 彻底隐形。
+    const subWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     r.setOnHealth?.(() => { throw new Error('subscriber boom'); });
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, text: async () => SCENE_ONE_IMAGE })));
     await expect(r.render('wid-ok2', document.createElement('canvas'))).resolves.toBe(true);
+    await expect(r.render('wid-ok3', document.createElement('canvas'))).resolves.toBe(true);
+    expect(subWarn.mock.calls.filter((c) => String(c[0]).includes('订阅者'))).toHaveLength(1); // 只告警一次
+    subWarn.mockRestore();
     r.dispose();
   });
 
@@ -2608,6 +2612,106 @@ describe('scene 渲染看护：失败分类与打点', () => {
     expect(store.snapshot('A').ok).toBe(true);
     expect(store.snapshot('A').timing?.assembleMs).toBeGreaterThanOrEqual(0);
     expect(store.snapshot('B').failure?.kind).toBe('scene-json');
+    r.dispose();
+  });
+
+  // Minor 3：计时必须是**本次 render 的局部状态** —— 重叠 render 下（controller 允许 select 竞态）
+  // 共享的 renderStartedAt/firstFrameAt 会把被取代那次的起点算进本次装配/首帧耗时。
+  it('重叠 render：A 的装配/首帧耗时取自 A 自己的起点，不串到 B 的起点上', async () => {
+    const store = createRenderHealthStore({ storage: null });
+    resolveImageTexture.mockResolvedValue(fakeTexture() as never);
+    defaultLoadWasm.mockResolvedValue(null);
+    const frames = new Map<HTMLCanvasElement, (dt: number) => void>();
+    loadSceneToThree.mockImplementation((
+      _json: unknown, assets: { onFrame?: (dt: number) => void }, fg: HTMLCanvasElement,
+    ) => {
+      if (assets.onFrame) frames.set(fg, assets.onFrame);
+      return okPlayer();
+    });
+    // A 的 scene.json 响应悬挂 ⇒ B 先装配完成，A 随后完成（两次 render 重叠）。
+    let releaseA!: () => void;
+    const gateA = new Promise<void>((res) => { releaseA = res; });
+    let aAtFetch!: () => void;
+    const aFetching = new Promise<void>((res) => { aAtFetch = res; });
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
+      if (String(url).includes('/scene/A/')) { aAtFetch(); await gateA; }
+      return { ok: true, status: 200, text: async () => SCENE_ONE_IMAGE };
+    }));
+    // 受控单调时钟：把 performance.now 钉到测试自己推进的计数器上，耗时才可精确断言。
+    const hadOwnNow = Object.prototype.hasOwnProperty.call(performance, 'now');
+    const origNow = performance.now;
+    let clock = 0;
+    Object.defineProperty(performance, 'now', { configurable: true, writable: true, value: () => clock });
+    try {
+      const r = createThreeSceneRenderer({ healthStore: store });
+      const canvasA = document.createElement('canvas');
+      const pendingA = r.render('A', canvasA, null); // A 的起点 = 0
+      await aFetching;
+      clock = 100;
+      expect(await r.render('B', document.createElement('canvas'), null)).toBe(true); // B 的起点 = 100
+      clock = 200;
+      releaseA();
+      await expect(pendingA).resolves.toBe(true); // A 在 200 时刻装配完成
+      clock = 300;
+      frames.get(canvasA)?.(0.016); // A 的首帧在 300 时刻到来
+      expect(store.snapshot('A').timing).toEqual({ assembleMs: 200, firstFrameMs: 300 });
+      r.dispose();
+    } finally {
+      if (hadOwnNow) Object.defineProperty(performance, 'now', { configurable: true, writable: true, value: origNow });
+      else delete (performance as unknown as { now?: () => number }).now;
+    }
+  });
+
+  // Minor 4：no-visible-objects 出口的 teardown 抛错不得被外层 catch 改写成 exception（同一份快照被覆盖）。
+  it('零可见对象出口的 teardown 抛错 ⇒ 失败原因仍是 no-visible-objects（不被改写成 exception）', async () => {
+    const store = createRenderHealthStore({ storage: null });
+    resolveImageTexture.mockResolvedValue(null);
+    defaultLoadWasm.mockResolvedValue(null);
+    stubAssetFetch(SCENE_ONE_IMAGE, {});
+    loadSceneToThree.mockReturnValue({
+      player: {
+        dispose: () => { throw new Error('dispose boom'); },
+        resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(),
+      },
+      sims: [], backgroundIds: [], particleLayers: [],
+    } as never);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = createThreeSceneRenderer({ healthStore: store });
+    expect(await r.render('wid-empty-boom', document.createElement('canvas'))).toBe(false);
+    warn.mockRestore();
+    const snap = store.snapshot('wid-empty-boom');
+    expect(snap.failure?.kind).toBe('no-visible-objects');
+    expect(snap.failure?.detail).toBe('background=0 particleLayers=0');
+    // 不再 r.dispose()：stub 的 player.dispose 恒抛，本用例要的正是这个（收尾自身失败不得掩盖原因）。
+  });
+
+  // Minor 5（失败出口一律收尾）：早退出口也要 teardown —— 否则本次 canvas 的 webglcontextlost
+  // 监听留在实例上，迟到的丢失事件会把刚记下的失败结论改写掉。
+  it('scene-json 硬失败出口已收尾：本次 canvas 的上下文丢失监听被移除，失败结论不被迟到事件改写', async () => {
+    const store = createRenderHealthStore({ storage: null });
+    const r = createThreeSceneRenderer({ healthStore: store });
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 404, text: async () => '' })));
+    const fg = document.createElement('canvas');
+    expect(await r.render('wid-404-tail', fg)).toBe(false);
+    expect(store.snapshot('wid-404-tail').failure?.kind).toBe('scene-json');
+    const evt = new Event('webglcontextlost', { cancelable: true });
+    fg.dispatchEvent(evt);
+    expect(evt.defaultPrevented).toBe(false); // 监听已随收尾移除
+    expect(store.snapshot('wid-404-tail').failure?.kind).toBe('scene-json');
+    r.dispose();
+  });
+
+  it('load-error 软失败出口已收尾：监听被移除，软失败仍可自动重试', async () => {
+    const store = createRenderHealthStore({ storage: null, softCooldownMs: 0 });
+    const r = createThreeSceneRenderer({ healthStore: store });
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
+    const fg = document.createElement('canvas');
+    expect(await r.render('wid-net-tail', fg)).toBe(false);
+    const evt = new Event('webglcontextlost', { cancelable: true });
+    fg.dispatchEvent(evt);
+    expect(evt.defaultPrevented).toBe(false);
+    expect(store.snapshot('wid-net-tail').failure?.kind).toBe('load-error'); // 未被改写成 context-lost
+    expect(store.shouldAutoRetry('wid-net-tail')).toBe(true);
     r.dispose();
   });
 });

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   HEALTH_KEY_PREFIX, createRenderHealthStore, formatHealthLine, isHardFailure,
 } from '../src/client/render-health.js';
+import type { HardFailureKind } from '../src/client/render-health.js';
 
 // 内存 storage：与 localStorage 同形（node 环境无 localStorage）。
 function memStorage() {
@@ -23,6 +24,13 @@ describe('render-health 分级', () => {
     expect(isHardFailure('context-lost')).toBe(true);
     expect(isHardFailure('exception')).toBe(true);
     expect(isHardFailure('load-error')).toBe(false);
+  });
+
+  // HARD_KINDS 是 HardFailureKind 的**唯一声明**（类型由数组派生）；这条只钉「分级投影」不变。
+  it('硬失败种类集合与 HARD_KINDS 一致（恰 4 种、顺序无关）', () => {
+    const hardKinds: HardFailureKind[] = ['scene-json', 'no-visible-objects', 'context-lost', 'exception'];
+    expect(hardKinds).toHaveLength(4);
+    expect(hardKinds.every((k) => isHardFailure(k))).toBe(true);
   });
 });
 
@@ -70,8 +78,28 @@ describe('render-health 记忆', () => {
     expect(snap.failure).toBeNull();
     expect(snap.timing).toEqual({ assembleMs: 120, firstFrameMs: 480 });
     store.recordHard('7', 'scene-json', '404');
-    expect(store.snapshot('7').ok).toBe(false);
+    // ok = 最近一次装配结果（仍是 true）；硬记忆只进 failure —— 硬失败不再把 ok 钉死。
+    expect(store.snapshot('7').ok).toBe(true);
     expect(store.snapshot('7').failure?.kind).toBe('scene-json');
+  });
+
+  it('recordHard 单独发生（本次会话还没装配过）⇒ ok 为 null，不伪造 false', () => {
+    const store = createRenderHealthStore({ storage: null });
+    store.recordHard('8', 'no-visible-objects', '空场景');
+    const snap = store.snapshot('8');
+    expect(snap.ok).toBeNull(); // 「还没装配过」与「装配失败」是两件事
+    expect(snap.failure?.kind).toBe('no-visible-objects');
+    expect(snap.failure?.hard).toBe(true);
+  });
+
+  it('recordHard → recordOk：现在正常 + 曾硬失败可并存（面板两行设计要用的状态）', () => {
+    const store = createRenderHealthStore({ storage: null });
+    store.recordHard('9', 'context-lost', 'webglcontextlost');
+    store.recordOk('9', { assembleMs: 200, firstFrameMs: 260 });
+    const snap = store.snapshot('9');
+    expect(snap.ok).toBe(true);
+    expect(snap.failure?.kind).toBe('context-lost');
+    expect(snap.failure?.hard).toBe(true); // 硬记忆不因一次成功而消失（要显式 clear）
   });
 
   it('clearAll 清掉全部记忆键（面板「清除失败记忆」）', () => {
@@ -83,6 +111,30 @@ describe('render-health 记忆', () => {
     expect(store.snapshot('a').failure).toBeNull();
     expect(store.snapshot('b').failure).toBeNull();
     expect(s.dump().size).toBe(0);
+  });
+
+  it('clearAll 只清失败记忆，不抹掉「现在正常」与计时', () => {
+    const store = createRenderHealthStore({ storage: null });
+    store.recordHard('c', 'exception', 'x');
+    store.recordOk('c', { assembleMs: 120, firstFrameMs: 480 });
+    store.clearAll();
+    const snap = store.snapshot('c');
+    expect(snap.failure).toBeNull();
+    expect(snap.ok).toBe(true); // 成功结论不是失败记忆
+    expect(snap.timing).toEqual({ assembleMs: 120, firstFrameMs: 480 });
+  });
+
+  // Minor 12：硬失败落盘的唯一用途 —— 新实例（重开 App / 另一窗口）只从 storage 读得到它。
+  it('跨实例读回的硬记忆同样拦住自动重试（落盘硬记忆 + 本次软失败）', () => {
+    const s = memStorage();
+    s.setItem(HEALTH_KEY_PREFIX + 'x', JSON.stringify({ v: 1, kind: 'scene-json', detail: '404', at: 0 }));
+    const store = createRenderHealthStore({ storage: s, now: () => 99999, softCooldownMs: 0 });
+    store.recordSoft('x', 'load-error', '断流');
+    expect(store.shouldAutoRetry('x')).toBe(false);
+    // 对照：同一份软失败、没有硬记忆 ⇒ 冷却已过就该重试。
+    const plain = createRenderHealthStore({ storage: memStorage(), now: () => 99999, softCooldownMs: 0 });
+    plain.recordSoft('x', 'load-error', '断流');
+    expect(plain.shouldAutoRetry('x')).toBe(true);
   });
 
   it('storage 抛错（隐私模式/配额）不冒泡，退化为会话内记忆', () => {
@@ -111,5 +163,17 @@ describe('render-health 文案', () => {
     const line = formatHealthLine(store.snapshot('1'), t);
     expect(line).toContain('没有可显示的对象');
     expect(line).not.toContain('no-visible-objects');
+  });
+
+  it('首帧未出（-1）时不渲染「首帧」字段，装配耗时照常', () => {
+    const t = (s: string) => s;
+    // 暂停态下首帧可能长期不出；初值 -1 直接进文案就是「首帧 -1 ms」。
+    const line = formatHealthLine(
+      { wallpaperId: '1', ok: true, failure: null, timing: { assembleMs: 120, firstFrameMs: -1 } },
+      t,
+    );
+    expect(line).toContain('装配 120 ms');
+    expect(line).not.toContain('首帧');
+    expect(line).not.toContain('-1');
   });
 });

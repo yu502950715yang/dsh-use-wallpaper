@@ -29372,7 +29372,6 @@ function createRenderHealthStore(opts = {}) {
       hard.clear();
       soft.clear();
       retried.clear();
-      session.clear();
       if (!storage) return;
       const keys = [];
       try {
@@ -29392,15 +29391,10 @@ function createRenderHealthStore(opts = {}) {
     snapshot(id) {
       const s = session.get(id);
       const timing = s?.timing ?? null;
-      const failure = currentHard(id);
-      if (failure) return { wallpaperId: id, ok: false, failure, timing };
+      const hardHit = currentHard(id);
       const softHit = soft.get(id);
-      return {
-        wallpaperId: id,
-        ok: s?.ok ?? null,
-        failure: softHit ? { kind: softHit.kind, hard: false, at: softHit.at, detail: softHit.detail } : null,
-        timing
-      };
+      const failure = hardHit ?? (softHit ? { kind: softHit.kind, hard: false, at: softHit.at, detail: softHit.detail } : null);
+      return { wallpaperId: id, ok: s?.ok ?? null, failure, timing };
     },
     shouldAutoRetry(id) {
       if (!id || retried.has(id)) return false;
@@ -29415,13 +29409,18 @@ function createRenderHealthStore(opts = {}) {
   };
 }
 function formatHealthLine(snap, t) {
-  const timing = snap.timing ? t("\u88C5\u914D {assemble} ms \xB7 \u9996\u5E27 {first} ms").replace("{assemble}", String(Math.round(snap.timing.assembleMs))).replace("{first}", String(Math.round(snap.timing.firstFrameMs))) : "";
+  const timing = snap.timing ? formatTiming(snap.timing, t) : "";
   if (snap.failure) {
     const reason = FAILURE_TEXT[snap.failure.kind] ?? t("\u6E32\u67D3\u5931\u8D25");
     return t("\u4E0A\u6B21\u5931\u8D25\uFF1A{reason}").replace("{reason}", reason) + (snap.failure.hard ? t("\uFF08\u5DF2\u8BB0\u5FC6\uFF09") : t("\uFF08\u672C\u6B21\u4F1A\u8BDD\u5185\u8BB0\u5FC6\uFF09")) + (timing ? " \xB7 " + timing : "");
   }
   if (snap.ok === true) return t("\u5B9E\u65F6\u6E32\u67D3\u6B63\u5E38") + (timing ? " \xB7 " + timing : "");
   return t("\u5C1A\u672A\u6E32\u67D3\uFF08\u9009\u62E9\u4E00\u5F20 scene \u58C1\u7EB8\u540E\u8FD9\u91CC\u663E\u793A\u72B6\u6001\uFF09");
+}
+function formatTiming(timing, t) {
+  const assemble = t("\u88C5\u914D {assemble} ms").replace("{assemble}", String(Math.round(timing.assembleMs)));
+  if (timing.firstFrameMs < 0) return assemble;
+  return assemble + " \xB7 " + t("\u9996\u5E27 {first} ms").replace("{first}", String(Math.round(timing.firstFrameMs)));
 }
 var FAILURE_TEXT = {
   "scene-json": "\u62FF\u4E0D\u5230 scene.json",
@@ -29439,6 +29438,7 @@ function warnOnce2(key, message) {
   console.warn(`[wallpaper-engine] ${message}`);
 }
 var lastWorldTransforms = null;
+var subscriberWarned = false;
 var FONT_CACHE = /* @__PURE__ */ new Map();
 var fontSeq = 0;
 async function loadWallpaperFont(wallpaperId, font) {
@@ -29549,13 +29549,15 @@ function createThreeSceneRenderer(opts) {
   const health = opts?.healthStore ?? createRenderHealthStore();
   let currentHealthId = "";
   let healthHandler2 = null;
-  let renderStartedAt = 0;
-  let firstFrameAt = -1;
   const publish = (snap) => {
     if (!healthHandler2) return;
     try {
       healthHandler2(snap);
-    } catch {
+    } catch (e) {
+      if (!subscriberWarned) {
+        subscriberWarned = true;
+        console.warn("[wallpaper-engine] \u5065\u5EB7\u8BA2\u9605\u8005\u629B\u9519\uFF08\u540C\u7C7B\u5F02\u5E38\u4E0D\u518D\u91CD\u590D\u544A\u8B66\uFF09:", e instanceof Error ? e.message : String(e));
+      }
     }
   };
   const fail = (id, kind, detail) => {
@@ -29564,8 +29566,8 @@ function createThreeSceneRenderer(opts) {
     else health.recordSoft(id, kind, detail);
     publish(health.snapshot(id));
   };
-  const succeed = (id, assembleMs) => {
-    health.recordOk(id, { assembleMs, firstFrameMs: firstFrameAt });
+  const succeed = (id, assembleMs, firstFrameMs) => {
+    health.recordOk(id, { assembleMs, firstFrameMs });
     publish(health.snapshot(id));
   };
   const stopAudio = () => {
@@ -29629,6 +29631,12 @@ function createThreeSceneRenderer(opts) {
     currentMeshRegistry = null;
     stopAudio();
   };
+  const teardownQuietly = () => {
+    try {
+      teardown();
+    } catch {
+    }
+  };
   const abortIfContextLost = () => {
     if (!contextLost) return false;
     teardown();
@@ -29667,8 +29675,7 @@ function createThreeSceneRenderer(opts) {
       contextLost = false;
       frameCapture?.reset();
       currentHealthId = id;
-      renderStartedAt = performance.now();
-      firstFrameAt = -1;
+      const timer = { startedAt: performance.now(), firstFrameAt: -1 };
       let assembledMs = -1;
       try {
         teardown();
@@ -29683,10 +29690,12 @@ function createThreeSceneRenderer(opts) {
           sceneJsonResp = await fetch(`/wallpapers/scene/${id}/asset?name=scene.json`);
         } catch (e) {
           fail(id, "load-error", e instanceof Error ? e.message : String(e));
+          teardownQuietly();
           return false;
         }
         if (!sceneJsonResp.ok) {
           fail(id, "scene-json", "http " + sceneJsonResp.status);
+          teardownQuietly();
           return false;
         }
         const sceneJson = await sceneJsonResp.text();
@@ -29915,9 +29924,9 @@ function createThreeSceneRenderer(opts) {
         };
         const userOnFrame = assets.onFrame;
         assets.onFrame = (dt) => {
-          if (firstFrameAt < 0) {
-            firstFrameAt = performance.now() - renderStartedAt;
-            succeed(id, assembledMs >= 0 ? assembledMs : firstFrameAt);
+          if (timer.firstFrameAt < 0) {
+            timer.firstFrameAt = performance.now() - timer.startedAt;
+            succeed(id, assembledMs >= 0 ? assembledMs : timer.firstFrameAt, timer.firstFrameAt);
           }
           userOnFrame?.(dt);
         };
@@ -30036,17 +30045,17 @@ function createThreeSceneRenderer(opts) {
         );
         if (result.backgroundIds.length === 0 && result.particleLayers.length === 0) {
           fail(id, "no-visible-objects", "background=0 particleLayers=0");
-          teardown();
+          teardownQuietly();
           return false;
         }
-        assembledMs = performance.now() - renderStartedAt;
-        succeed(id, assembledMs);
+        assembledMs = performance.now() - timer.startedAt;
+        succeed(id, assembledMs, timer.firstFrameAt);
         return true;
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         console.warn("[three] scene render failed:", msg);
         fail(id, "exception", msg);
-        teardown();
+        teardownQuietly();
         return false;
       }
     },
@@ -30637,9 +30646,10 @@ function bootstrap(ctx) {
     setWallpaperHealthHandler({
       get: panelHealth,
       retry: retryLive,
+      // 清记忆后补推当前快照（不是 null）：clearAll 保留成功结论 ⇒ 状态行仍显示「实时渲染正常」。
       clearFailures: () => {
         clearRenderFailures();
-        notifyWallpaperHealth(null);
+        notifyWallpaperHealth(panelHealth());
       }
     });
     onVisibility = () => applyRuntimeSettings(settings);
@@ -30673,20 +30683,26 @@ function bootstrap(ctx) {
       void controller.select(id);
     },
     // 看护入口（面板与排查用）：读状态 / 重试当前壁纸 / 清空全部失败记忆。
-    health: () => sceneRenderer.getLastHealth?.() ?? null,
+    // health() 与面板读接口同一守卫：当前壁纸不是 scene（video/none/还没选）时返回 null。
+    health: () => panelHealth(),
     retryLive,
     clearRenderFailures,
     show(plan, opts) {
       mount();
       if (!layer) return;
       switch (plan.kind) {
+        // 非 scene 分支没有壁纸 id ⇒ 解绑选中项：否则上一张 scene 的状态会持续挂在面板上，
+        // 且「重试实时渲染」会把用户刚换掉的那张 scene 选回来。
         case "image":
+          settings = { ...settings, selectedWallpaperId: "" };
           layer.showImage(plan.url, plan.kenBurns);
           break;
         case "video":
+          settings = { ...settings, selectedWallpaperId: "" };
           layer.showVideo(plan.url);
           break;
         case "web":
+          settings = { ...settings, selectedWallpaperId: "" };
           layer.showWeb(plan.url);
           break;
         case "scene": {
@@ -30696,11 +30712,13 @@ function bootstrap(ctx) {
           break;
         }
         case "none":
+          settings = { ...settings, selectedWallpaperId: "" };
           layer.showNone();
           break;
       }
       if (opts?.opacity !== void 0) layer.setOverlayOpacity(opts.opacity);
       if (opts?.blur !== void 0) layer.setBlur(opts.blur, opts.blurRadius ?? 12);
+      if (plan.kind !== "scene") notifyWallpaperHealth(panelHealth());
     }
   };
   if (ctx?.slots?.inject && ctx?.slots?.register) {
