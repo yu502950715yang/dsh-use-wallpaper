@@ -2778,7 +2778,6 @@ describe('createThreeSceneRenderer 视差接线', () => {
   function parallaxPlayer() {
     return {
       dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn(),
-      setParallax: vi.fn(), setParallaxPointer: vi.fn(),
     };
   }
 

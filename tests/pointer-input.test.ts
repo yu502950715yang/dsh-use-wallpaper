@@ -19,6 +19,16 @@ describe('pointer-input', () => {
     expect(t.target()).toEqual({ x: 0, y: 1 });
     t.dispose();
   });
+  // 旧引用是快照：target() 每次换新对象、不就地改写 ⇒ 别处保存的引用不会被后续事件改写（契约见 pointer-input.ts）。
+  it('旧引用是快照：已取出的对象不被后续 pointermove 改写', () => {
+    const t = createPointerTracker({ viewport: () => ({ width: 100, height: 100 }) });
+    t.install();
+    const p = t.target();
+    move(70, 30);
+    expect(p).toEqual({ x: 0.5, y: 0.5 });
+    expect(t.target()).toEqual({ x: 0.7, y: 0.3 });
+    t.dispose();
+  });
   it('幂等安装：重复 install 只留一个监听；dispose 后不再更新', () => {
     const t = createPointerTracker({ viewport: () => ({ width: 100, height: 100 }) });
     t.install(); t.install();

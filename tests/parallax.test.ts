@@ -38,7 +38,7 @@ describe('advancePointer（OWE UniformSource.cpp:249-274 的指针滞后插值�
   // 滞后时钟封顶到 delay（Task 1 评审：手改掉 `Math.min(…, delay)` 后原 9 条用例全绿）。
   it('滞后时钟封顶到 delay：dt 超过 delay ⇒ amount = 1（否则 amount > 1、指针过冲）', () => {
     const target = { x: 1, y: 0.5 };
-    // 转交项给的原始例子：elapsed 0.4 + dt 0.5 若不封顶 = 0.9（amount 1.8）
+    // dt == delay 只会走到边界（去掉 Math.min 也通过 ⇒ 无判别力）；真正钉住封顶的是下一条 dt > delay 过冲例。
     const f = advancePointer({ value: { ...POINTER_CENTER }, elapsed: 0.4 }, target, cfg, 0.5);
     expect(f.elapsed).toBeCloseTo(0.5, 6);
     expect(f.value).toEqual(target);

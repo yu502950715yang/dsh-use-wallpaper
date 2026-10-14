@@ -33,13 +33,8 @@ export const POINTER_CENTER: PointerState = { x: 0.5, y: 0.5 };
 export interface PointerFollow { value: PointerState; elapsed: number }
 
 /**
- * 每帧向目标位置线性靠近（OWE UniformSource.cpp:249-274）：delay=0 立即跟随；delay>0 时每帧按
- * `min(dt, delay) / delay` 靠近（时间常数 ≈ delay 的一阶平滑，滞后感**每次**移动都在）。
- *
- * ⚠️ 与 OWE 字面写法的唯一偏离：OWE 每帧先 `SetPointerInput`（滞后时钟减去已流逝时间）再 `Advance`
- * （加回同一个 `frame.delta`），两者在同一帧内抵消 ⇒ `elapsed` 只剩「历史最大帧长」（`max(0,e−dt)+dt = e`）。
- * 本播放器 dt 被 clamp 到 0.1s，而本机唯一开视差壁纸的 delay 恰好是 0.1 ⇒ 一次长帧（切走标签页再切回）
- * 就会把 amount 永久打成 1、平滑消失。故这里每帧直接取 `min(dt, delay)`：稳态比例与 OWE 相同、不残留历史。
+ * 每帧向目标位置线性靠近（OWE UniformSource.cpp:249-274）：delay=0 立即跟随；delay>0 每帧按 min(dt, delay)/delay 靠近。
+ * 滞后时钟按「本帧」取、不得跨帧累积（OWE 的减/加同帧抵消，推导与理由见 AGENT.md §5.47）。
  */
 export function advancePointer(
   follow: PointerFollow,
