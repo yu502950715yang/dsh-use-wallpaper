@@ -49,7 +49,7 @@ function buildMdlFixture(opts: {
   pushU32(indices.byteLength);
   push([...new Uint8Array(indices.buffer)]);
 
-  // MDLS0004：magic(9) + u32 段尾 + u32 骨数；每骨 u8 flag + u32 id + i32 parent + u32 matSize + f32[16] + cstr json
+  // MDLS0004：magic(9) + u32 段尾 + u32 骨数；每骨 = 头（flag/id/parent/matSize）+ f32[16] + cstr json
   pushStr('MDLS0004');
   pushU32(0); pushU32(2);
   const bone = (id: number, parent: number, tx: number) => {
@@ -146,8 +146,7 @@ describe('mdl-parser', () => {
 });
 
 // ── 静态族夹具（本机实测口径）：无 MDLS/MDLA/MDLE 段标记 + 顶点块 stride 48 ─────────────
-// 头 9..20 实测字节 = 09 00 00 00 01 00 00 00 01 00 00 00（u32 读法 9/1/1，字段语义未确证）⇒ 材质串 @21；
-// 之后 7×u32 零 + u32 15（实测 @81，语义未确认）+ u32 vertexBytes（@85）；顶点 stride 48：pos.xy@+0/+4、uv@+40/+44。
+// 段头/字段偏移等实测口径见 AGENT.md §7.40，此处不复制；uv@+40/+44、pos.xy@+0/+4。
 const STATIC_STRIDE = 48;
 const STATIC_VERTEX_COUNT = 10;
 const STATIC_MATERIAL = 'materials/static.json';
@@ -251,6 +250,25 @@ describe('mdl-parser · 静态族（无段标记 + stride 候选集择一）', (
     expect(r.strideInfo?.reason).toBe('waste-too-high');
     expect(r.strideInfo?.maxIndex).toBe(2);
     expect(r.strideInfo?.candidates).toHaveLength(12);
+  });
+
+  it('紧覆盖 5% 边界：4.76% 收、正好 5% 拒（IEEE754 下 1−19/20 = 0.05000000000000004 > 0.05）', () => {
+    // 整数组合里唯一落在 5% 附近的是 vc=20/21：更大候选（56/72）装不下 maxIndex ⇒ 48 就是最小浪费率。
+    const under = parseMdl(buildStaticFixture({ vertexBytes: 48 * 21, indexValues: [0, 1, 19, 1, 2, 3] }));
+    expect(under.ok).toBe(true);
+    if (!under.ok) return;
+    expect(under.puppet.mesh.strideInfo!.stride).toBe(48);
+    expect(under.puppet.mesh.strideInfo!.reason).toBe('tight-coverage');
+    expect(under.puppet.mesh.strideInfo!.candidates.find((c) => c.stride === 48)!.waste).toBeCloseTo(1 - 20 / 21, 12);
+
+    const at = parseMdl(buildStaticFixture({ vertexBytes: 48 * 20, indexValues: [0, 1, 18] }));
+    expect(at.ok).toBe(false);
+    if (at.ok) return;
+    expect(at.error).toMatch(/^stride-waste:/);
+    expect(at.strideInfo?.stride).toBe(48);
+    expect(at.strideInfo?.reason).toBe('waste-too-high');
+    // 判据是「最小浪费率 > 0.05」：数学上正好 5% 的组合因浮点略超也被拒 ⇒ 实际收的是「< 5%」。
+    expect(at.strideInfo!.candidates.find((c) => c.stride === 48)!.waste).toBeGreaterThan(0.05);
   });
 });
 

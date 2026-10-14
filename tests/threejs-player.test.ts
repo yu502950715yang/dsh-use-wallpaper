@@ -3327,9 +3327,8 @@ describe('视差逐帧应用', () => {
     expect(node.position.x).toBe(0);
   });
 
-  // 零回归：全库 34 张里只有 1 张开视差，其余 33 张的 cfg 是 {enabled:false,…}（Task 5 无条件
-  // setParallax(desc.parallax)）。若关视差时**每帧**都写 position，就会盖掉脚本写同一对象的 origin
-  // （layer-state.applyLayerState 直接写 three 对象）⇒ 动态网格/可视化条静止。
+  // 零回归：全库 34 张里只有 1 张开视差，其余 33 张的 cfg 是 {enabled:false,…}。若关视差时**每帧**都写
+  // position，就会盖掉脚本写同一对象的 origin（layer-state.applyLayerState）⇒ 动态网格/可视化条静止。
   it('关视差：写回一次基准位后不再改写，脚本写入的 origin 不被覆盖', () => {
     const p = makePlayer();
     const id = p.addBackground({ origin: [960, 540, 0], size: [100, 100], scale: [1, 1, 1], sceneW: 1920, sceneH: 1080, parallaxDepth: [1, 1] });
@@ -3881,6 +3880,29 @@ describe('puppet 图层（addPuppet / image 分支 / 逐帧动画）', () => {
     // 摘掉即释放：这是该实例唯一的释放机会（player.dispose 只遍历仍在表里的图层）。
     expect(broken.disposed).toBe(1);
     expect(healthy.disposed).toBe(0);
+    warn.mockRestore();
+    player.dispose();
+  });
+
+  it('采样失败摘表 ⇒ 同 id 的 backgroundEntries/displayObjects 引用一并摘净，resizeBackground 不再换掉已 dispose 的蒙皮几何', () => {
+    const { player } = makePlayer(1920, 1080);
+    const broken = makePuppetStub([anim]);
+    broken.applyFrame = () => { throw new Error('骨骼矩阵爆炸'); };
+    const id = player.addPuppet({
+      objectId: 16, puppet: broken, origin: [960, 540, 0], scale: [1, 1, 1], angles: [0, 0, 0],
+      sceneW: 1920, sceneH: 1080,
+    });
+    const geometry = broken.mesh.geometry;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    player.update(0.1);
+    expect(broken.disposed).toBe(1);
+    // 残留 backgroundEntries 条目会让 resizeBackground（只查 puppetLayers）把已 dispose 的蒙皮几何换成
+    // PlaneGeometry。⚠️ 生产上只有文本层调它 ⇒ 这是潜在地雷而非现行活路径，故用注释钉住而不是删守卫。
+    player.resizeBackground(id, [200, 100]);
+    expect(broken.mesh.geometry).toBe(geometry);
+    expect(broken.mesh.geometry.type).toBe('BufferGeometry');
+    expect(player.displayObject(16)).toBeUndefined();          // 脚本桥不留悬垂引用
+    expect(() => player.backgroundMeshForTest(id)).toThrow();  // 图层条目也已摘除
     warn.mockRestore();
     player.dispose();
   });

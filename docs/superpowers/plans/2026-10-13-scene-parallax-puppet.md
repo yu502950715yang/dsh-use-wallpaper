@@ -1164,7 +1164,7 @@ describe.skipIf(!hasLib)('真实 puppet 样本（本机库）', () => {
     expect(r.puppet.mesh.vertexCount).toBeGreaterThan(0);
     expect(r.puppet.bones.length).toBeGreaterThan(0);
     expect(r.puppet.mesh.blendWeights, '打包族应带蒙皮权重').not.toBeNull();
-    // 动画：口径未在真实样本上确证前**只记录不断言**（见 AGENT.md §7.39）
+    // 动画：口径未在真实样本上确证前**只记录不断言**（见 AGENT.md §7.40）
     console.log(`[mdl] version=${r.puppet.version} verts=${r.puppet.mesh.vertexCount} bones=${r.puppet.bones.length} anims=${r.puppet.animations.length}`);
   });
 });
@@ -1174,7 +1174,7 @@ Run: `npx vitest run tests/mdl-real-library.test.ts --reporter=basic`
 
 Expected: 有库时 PASS 并打印一行 `[mdl] version=MDLV0021 verts=… bones=… anims=…`；无库时 **skip**（不进 CI 判红）。
 
-**若 `anims=0`**：说明本机样本的 MDLA 段布局与文档化口径不一致 —— **不要改测试去迁就**，把实测的段头十六进制记进 `AGENT.md` §7.39，并把该壁纸的动画列为未支持（如实标注），Task 8 仍可按「无动画的静态 puppet」交付。
+**若 `anims=0`**：说明本机样本的 MDLA 段布局与文档化口径不一致 —— **不要改测试去迁就**，把实测的段头十六进制记进 `AGENT.md` §7.40，并把该壁纸的动画列为未支持（如实标注），Task 8 仍可按「无动画的静态 puppet」交付。
 
 - [ ] **Step 6: 提交**
 

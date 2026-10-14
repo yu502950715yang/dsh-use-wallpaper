@@ -3191,7 +3191,7 @@ describe('createThreeSceneRenderer · puppet 真实链路护栏', () => {
       player: { dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn() },
       sims: [], backgroundIds: [], particleLayers: [], puppetLayers: [7],
     } as never);
-    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm, healthStore: store });
     expect(await r.render('wid-puppet-only-stub', document.createElement('canvas'), null)).toBe(true);
     expect(store.snapshot('wid-puppet-only-stub').failure).toBeNull();
     r.dispose();
@@ -3203,7 +3203,7 @@ describe('createThreeSceneRenderer · puppet 真实链路护栏', () => {
     resolveImageAssets.mockResolvedValue({ texture: null, puppetPath: 'models/p_puppet.mdl' } as never);
     defaultLoadWasm.mockResolvedValue(null);
     stubGuardFetch(PUPPET_ONLY, staticMdlBytes());
-    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm, healthStore: store });
     expect(await r.render('wid-puppet-only', document.createElement('canvas'), null)).toBe(true);
 
     const loaded = loadSceneToThree.mock.results.at(-1)!.value as {
@@ -3229,7 +3229,7 @@ describe('createThreeSceneRenderer · puppet 真实链路护栏', () => {
     defaultLoadWasm.mockResolvedValue(null);
     stubGuardFetch(PUPPET_AND_BG, null);                  // 该对象仍是可见内容（背景贴图）⇒ 不落 no-visible-objects
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm, healthStore: store });
 
     expect(await r.render('wid-md-degrade', document.createElement('canvas'), null)).toBe(true);
     const loaded = loadSceneToThree.mock.results.at(-1)!.value as {
@@ -3258,7 +3258,7 @@ describe('createThreeSceneRenderer · puppet 真实链路护栏', () => {
     stubGuardFetch(PUPPET_AND_BG, new Uint8Array(16));    // 16B 过短：解析必失败（真机上的损坏 pkg 形态）
 
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm, healthStore: store });
     expect(await r.render('wid-md-corrupt', document.createElement('canvas'), null)).toBe(true);
     const loaded = loadSceneToThree.mock.results.at(-1)!.value as {
       player: { displayObject(id: number): unknown };

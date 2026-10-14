@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
-// Task 7：MdlPuppet → three 网格/蒙皮。本机唯一 .mdl 样本是**静态族**（无 MDLS/MDLA）⇒ 蒙皮与动画
-// 路径全部由本文件的合成夹具覆盖，静态路径（blendIndices=null）才是本机可验的真实路径。
+// Task 7：MdlPuppet → three 网格/蒙皮；本机唯一 .mdl 是静态族 ⇒ 蒙皮/动画只由本文件的合成夹具覆盖。
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { createPuppetMaterial, createPuppetMesh } from '../src/client/puppet.js';
@@ -137,8 +136,7 @@ describe('puppet → three 网格/蒙皮', () => {
     expect(p.bones[1].position.x).toBeCloseTo(7, 5);
   });
 
-  // T8：player 逐帧喂进来的是 (elapsed × fps) % frameCount（循环播）。本用例钉住「回绕结果恒落在
-  // [0, frameCount)」这条不变量，以及它取到的关键帧真的对得上（不是越界夹取掩盖了公式错误）。
+  // T8：钉住回绕结果恒落在 [0, frameCount) 且取到对应关键帧（越界夹取会掩盖公式错误）。
   it('(elapsed×fps)%frameCount 回绕恒落在 [0, frameCount) 且取到对应关键帧', () => {
     const walk: MdlAnimation = {
       id: 3, name: 'walk', mode: 'loop', fps: 10, frameCount: 3,

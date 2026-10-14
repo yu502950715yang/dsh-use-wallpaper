@@ -863,6 +863,15 @@ export class ThreeScenePlayer {
           console.warn('[three] puppet 释放失败:', de instanceof Error ? de.message : String(de));
         } finally {
           this.puppetLayers.delete(id);
+          // 同 id 的另两张表引用一并摘净：残留 backgroundEntries 条目会让 resizeBackground（只查
+          // puppetLayers）把已 dispose 的蒙皮几何换成 PlaneGeometry；displayObjects 是脚本桥，不留悬垂引用。
+          const entry = this.backgroundEntries.get(id);
+          if (entry) {
+            this.backgroundEntries.delete(id);
+            for (const [objectId, obj] of this.displayObjects) {
+              if (obj === entry.mesh) this.displayObjects.delete(objectId);
+            }
+          }
         }
         console.warn('[three] puppet 动画采样失败（已丢弃该图层动画）:', e instanceof Error ? e.message : String(e));
       }

@@ -24077,6 +24077,13 @@ var ThreeScenePlayer = class {
           console.warn("[three] puppet \u91CA\u653E\u5931\u8D25:", de instanceof Error ? de.message : String(de));
         } finally {
           this.puppetLayers.delete(id);
+          const entry = this.backgroundEntries.get(id);
+          if (entry) {
+            this.backgroundEntries.delete(id);
+            for (const [objectId, obj] of this.displayObjects) {
+              if (obj === entry.mesh) this.displayObjects.delete(objectId);
+            }
+          }
         }
         console.warn("[three] puppet \u52A8\u753B\u91C7\u6837\u5931\u8D25\uFF08\u5DF2\u4E22\u5F03\u8BE5\u56FE\u5C42\u52A8\u753B\uFF09:", e instanceof Error ? e.message : String(e));
       }
