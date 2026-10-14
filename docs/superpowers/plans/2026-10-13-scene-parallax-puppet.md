@@ -629,7 +629,9 @@ Expected: FAIL —— `tickParallaxForTest is not a function`
 `loadSceneToThree` 的 image 分支（`:1979-1999`）与 text 分支（`:2009-2020`）把 `parallaxDepth` 传进去：
 
 ```ts
-        parallaxDepth: obj.kind === 'image' ? obj.parallaxDepth : undefined,
+        // Task 2 修订后所有 kind 都带该字段（`SceneObjectBase.parallaxDepth`）⇒ 直接透传；
+        // 别再写 `obj.kind === 'image' ? … : undefined`，那会丢掉 text 图层的视差（真实库 text 有 20 处）。
+        parallaxDepth: obj.parallaxDepth,
 ```
 
 测试读接口（仅测试用，命名带 `ForTest` 后缀以免被误当生产 API）：
