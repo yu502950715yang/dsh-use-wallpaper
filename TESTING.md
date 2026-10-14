@@ -138,14 +138,17 @@ git checkout b21b1ac -- src/; node e2e/verify/verify-isolated-rt-sharpness.mjs -
 
 1. 选一张 scene 壁纸 → Console 应出现 `[three] scene loaded id=…`，设置面板「实时渲染」状态行显示「实时渲染正常 · 装配 N ms · 首帧 M ms」。
 2. 在 Console 执行 `__wallpaperEngine.health()` → 返回 `ok:true` 与 timing。
-3. 模拟软失败：Console 执行下面这段（只影响当前页面，不碰磁盘），状态行应显示「上次失败：资源加载中断（本次会话内记忆）」，且 **localStorage 里不应出现 `we:renderfail:` 键**：
+3. 模拟软失败：Console 执行下面这段（只影响当前页面，不碰磁盘），状态行应显示「上次失败：资源加载中断（本次会话内记忆）」，且 **localStorage 里不应出现 `we:renderfail:` 键**。
+   ⚠️ **同一次选择会 render 两次**（首个 canvas 失败后 controller 会用新 canvas 重试一次）⇒ 脚本必须**吃掉两次**：只拦一次的话第二次 render 会成功并清掉软失败，状态行变回「实时渲染正常」，第 4 步的冷却重试也就永不触发（假阴性）。
 
 ```js
-// 拦一次 scene.json 请求并抛错，复现「网络中断」软失败
-const raw = window.fetch;
-let once = true;
+// 拦两次 scene.json：同一次选择会 render 两次（首个 canvas 失败后 controller 换新 canvas 再试一次）
+const raw = window.fetch; let left = 2;
 window.fetch = function (u, o) {
-  if (once && String(u).includes('scene.json')) { once = false; window.fetch = raw; return Promise.reject(new TypeError('Failed to fetch')); }
+  if (left > 0 && String(u).includes('scene.json')) {
+    left--; if (left === 0) window.fetch = raw;
+    return Promise.reject(new TypeError('Failed to fetch'));
+  }
   return raw.call(this, u, o);
 };
 __wallpaperEngine.select(__wallpaperEngine.health?.()?.wallpaperId || '');
@@ -155,6 +158,32 @@ __wallpaperEngine.select(__wallpaperEngine.health?.()?.wallpaperId || '');
 5. 模拟硬失败：把 fetch 改成对 `scene.json` 恒返回 `{ ok: false, status: 404 }`，重选壁纸 → 状态行显示「上次失败：拿不到 scene.json（已记忆，重开仍走降级）」，`localStorage.getItem('we:renderfail:<id>')` 有值。
 6. 点「重试实时渲染」→ 记忆被清、壁纸重新装配；点「清除失败记忆」→ 所有 `we:renderfail:` 键消失。
 7. 重开 App（或强刷页面）→ 若第 6 步没清，仍能看到上次的硬失败记忆。
+
+---
+
+### 2.9 零回归对拍：分支起点 vs 当前工作树（`e2e:compare`）
+
+改动过 `src/client/` 后必须重跑。判据：**两档 dpr 都 `maxAbs ≤ 1` 且「差 ≥ 2」像素数 = 0**（即 `compare-shots` 退出码 0）。
+
+```powershell
+# 1) 基准工作树（分支起点 7e30a9f = master 的 v0.7.0）；node_modules 用 junction 共享，不重装
+git worktree add .worktrees/before-health 7e30a9f
+cmd /c mklink /J E:\code\dsh-use-wallpaper\.worktrees\before-health\node_modules E:\code\dsh-use-wallpaper\node_modules
+# 2) 在基准工作树里出 before 截图（缺省壁纸 2683211654、dpr 1,2、冻结相位 5s）
+cd .worktrees\before-health; node e2e/verify/verify-hidpi-object-rt.mjs --tag=before; cd ..\..
+# 3) 把 before 截图拷回主工作树：compare-shots 只在**一个目录**里找一对同名图
+Copy-Item .worktrees\before-health\e2e\.out\hidpi-object-rt\before-*.png e2e\.out\hidpi-object-rt\
+# 4) 主工作树先 build 再出 after 截图（verify-hidpi-object-rt 无 src 重定向，用的是**入库 lib/**）
+npm run build; node e2e/verify/verify-hidpi-object-rt.mjs --tag=after
+# 5) 对拍（两档 dpr 各打一行判据；退出码 0 = 通过）
+node e2e/verify/compare-shots.mjs --tag-a=before --tag-b=after
+# 6) 收尾：junction 必须先删（否则 worktree remove 会跟着删掉实体 node_modules）
+cmd /c rmdir .worktrees\before-health\node_modules
+git worktree remove .worktrees\before-health --force
+```
+
+- ⚠️ `verify-hidpi-object-rt.mjs` **自身**在该基准上就会 exit 1（它自带的「挂载期 RT 尺寸」断言在 `7e30a9f` 上已 FAIL，前后两轮的值**逐字相同**）⇒ 本项门禁只认 `compare-shots` 的退出码；两个 tag 的退出码应当一致。
+- 归档位置：`.superpowers/sdd/2026-10-13-scene-live-watchdog/t5-shots/{before,after}-dpr{1,2}.png`（**本地归档、未入 git**）。
 
 ---
 
