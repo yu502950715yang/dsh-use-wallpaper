@@ -127,6 +127,37 @@ git checkout b21b1ac -- src/; node e2e/verify/verify-isolated-rt-sharpness.mjs -
 
 ---
 
+### 2.8 手工验收清单：scene 实时渲染看护（2026-10-13 Task 5，逐条勾）
+
+> **以下 7 步需要人在运行中的 DSH Web GUI 里操作（DevTools Console + 面板），属于本计划的最后一道人工验收，agent 无法代跑。**
+>
+> 前置：已 `pnpm run build` + `node scripts/build-client.mjs`，并**重启 harness**（只刷新页面不生效）；壁纸库里至少有一张 `type: scene` 的壁纸。
+> 用到的真实入口：`__wallpaperEngine.health()`（当前壁纸的看护快照）、`__wallpaperEngine.retryLive()`（重试实时渲染，等价面板「重试实时渲染」）、`__wallpaperEngine.clearRenderFailures()`（清全部失败记忆，等价面板「清除失败记忆」）；面板位置 = 设置 → 「实时渲染」状态行。
+
+在 DSH Web GUI 里：
+
+1. 选一张 scene 壁纸 → Console 应出现 `[three] scene loaded id=…`，设置面板「实时渲染」状态行显示「实时渲染正常 · 装配 N ms · 首帧 M ms」。
+2. 在 Console 执行 `__wallpaperEngine.health()` → 返回 `ok:true` 与 timing。
+3. 模拟软失败：Console 执行下面这段（只影响当前页面，不碰磁盘），状态行应显示「上次失败：资源加载中断（本次会话内记忆）」，且 **localStorage 里不应出现 `we:renderfail:` 键**：
+
+```js
+// 拦一次 scene.json 请求并抛错，复现「网络中断」软失败
+const raw = window.fetch;
+let once = true;
+window.fetch = function (u, o) {
+  if (once && String(u).includes('scene.json')) { once = false; window.fetch = raw; return Promise.reject(new TypeError('Failed to fetch')); }
+  return raw.call(this, u, o);
+};
+__wallpaperEngine.select(__wallpaperEngine.health?.()?.wallpaperId || '');
+```
+
+4. 冷却后（≥3s）应看到一次自动重选（Console 出现新的 `[three] scene loaded`），且**只重试一次**。
+5. 模拟硬失败：把 fetch 改成对 `scene.json` 恒返回 `{ ok: false, status: 404 }`，重选壁纸 → 状态行显示「上次失败：拿不到 scene.json（已记忆，重开仍走降级）」，`localStorage.getItem('we:renderfail:<id>')` 有值。
+6. 点「重试实时渲染」→ 记忆被清、壁纸重新装配；点「清除失败记忆」→ 所有 `we:renderfail:` 键消失。
+7. 重开 App（或强刷页面）→ 若第 6 步没清，仍能看到上次的硬失败记忆。
+
+---
+
 ## 3. 卸载方法
 
 ### 3.1 标准卸载（推荐）
