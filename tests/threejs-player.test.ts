@@ -3679,6 +3679,35 @@ describe('puppet 图层（addPuppet / image 分支 / 逐帧动画）', () => {
     expect((result.player.scene.children[0] as THREE.Mesh).geometry.type).toBe('PlaneGeometry');
   });
 
+  it('单个 puppet 的采样抛错 ⇒ 只丢弃该图层的动画，不中断帧循环/不连累其它图层', () => {
+    const { player } = makePlayer(1920, 1080);
+    const broken = makePuppetStub([anim]);
+    let calls = 0;
+    broken.applyFrame = () => { calls++; throw new Error('骨骼矩阵爆炸'); };
+    const healthy = makePuppetStub([anim]);
+    player.addPuppet({
+      objectId: 1, puppet: broken, origin: [960, 540, 0], scale: [1, 1, 1], angles: [0, 0, 0],
+      sceneW: 1920, sceneH: 1080,
+    });
+    player.addPuppet({
+      objectId: 2, puppet: healthy, origin: [960, 540, 0], scale: [1, 1, 1], angles: [0, 0, 0],
+      sceneW: 1920, sceneH: 1080,
+    });
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(() => player.update(0.1)).not.toThrow();   // 0.1s × 10fps = 帧号 1
+    expect(healthy.frames).toHaveLength(1);
+    expect(healthy.frames[0]).toBeCloseTo(1, 6);      // 健康图层照常采样
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('puppet 动画采样失败'))).toBe(true);
+    // 坏图层被摘掉：下一帧不再重复抛错（不刷屏），健康图层继续
+    player.update(0.1);
+    expect(calls).toBe(1);
+    expect(healthy.frames).toHaveLength(2);
+    expect(healthy.frames[1]).toBeCloseTo(2, 6);
+    warn.mockRestore();
+    player.dispose();
+  });
+
   it('player.dispose() 释放 puppet 实例（同一份图层生命周期）', () => {
     const { player } = makePlayer(1920, 1080);
     const stub = makePuppetStub([anim]);

@@ -24034,13 +24034,18 @@ var ThreeScenePlayer = class {
   // 尚未解析，本机唯一样本也没有 MDLA ⇒ 先取第一个；`mode` 一律按循环播（无实测样本可区分）。
   tickPuppets(dt) {
     if (this.puppetLayers.size === 0) return;
-    for (const layer of this.puppetLayers.values()) {
+    for (const [id, layer] of [...this.puppetLayers]) {
       const anim = layer.instance.animations[0];
       if (!anim) continue;
       layer.elapsed += dt;
       const fps = anim.fps > 0 ? anim.fps : 30;
       const frames = Math.max(1, anim.frameCount);
-      layer.instance.applyFrame(anim, layer.elapsed * fps % frames);
+      try {
+        layer.instance.applyFrame(anim, layer.elapsed * fps % frames);
+      } catch (e) {
+        this.puppetLayers.delete(id);
+        console.warn("[three] puppet \u52A8\u753B\u91C7\u6837\u5931\u8D25\uFF08\u5DF2\u4E22\u5F03\u8BE5\u56FE\u5C42\u52A8\u753B\uFF09:", e instanceof Error ? e.message : String(e));
+      }
     }
   }
   /** 相机视差配置（null = 未启用/已拆除 ⇒ 逐帧零成本早退；enabled=false 时下一帧把对象写回基准位置）。 */

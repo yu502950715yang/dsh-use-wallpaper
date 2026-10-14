@@ -829,13 +829,19 @@ export class ThreeScenePlayer {
   // 尚未解析，本机唯一样本也没有 MDLA ⇒ 先取第一个；`mode` 一律按循环播（无实测样本可区分）。
   private tickPuppets(dt: number): void {
     if (this.puppetLayers.size === 0) return;
-    for (const layer of this.puppetLayers.values()) {
+    for (const [id, layer] of [...this.puppetLayers]) {
       const anim = layer.instance.animations[0];
       if (!anim) continue;
       layer.elapsed += dt;
       const fps = anim.fps > 0 ? anim.fps : 30;
       const frames = Math.max(1, anim.frameCount);
-      layer.instance.applyFrame(anim, (layer.elapsed * fps) % frames);
+      try {
+        layer.instance.applyFrame(anim, (layer.elapsed * fps) % frames);
+      } catch (e) {
+        // 单个 puppet 采样失败不得升级成渲染失败（帧循环异常会整帧丢弃）：摘掉该图层，只留一条告警。
+        this.puppetLayers.delete(id);
+        console.warn('[three] puppet 动画采样失败（已丢弃该图层动画）:', e instanceof Error ? e.message : String(e));
+      }
     }
   }
 

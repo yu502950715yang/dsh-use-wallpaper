@@ -1413,19 +1413,20 @@ describe('对象级效果链：隔离 RT 尺寸按源纹理收口 4096', () => {
 //   ② ObjectEffectStage 收到的键就是同一个对象 id，且**找到了**该隔离条目（否则只会打印
 //      「尚无隔离条目，效果链未挂载（调用顺序错误）」）。
 // 任何一侧改动建层条件/顺序（或键空间再漂移）都会让本用例变红。
-describe('对象级效果链接线（真实 loadSceneToThree 对侧校验）', () => {
-  // jsdom 无 WebGL：真实 WebGLRenderer 构造即抛错，注入只覆盖 player 用到的接口。
-  function createPlayerMockRenderer() {
-    return {
-      setSize: vi.fn(),
-      setPixelRatio: vi.fn(),
-      render: vi.fn(),
-      setRenderTarget: vi.fn(),
-      dispose: vi.fn(),
-      setAnimationLoop: vi.fn(),
-    };
-  }
+// 真实 loadSceneToThree 用例（本文件多处）共用的 mock renderer：jsdom 无 WebGL ⇒ 真实 WebGLRenderer
+// 构造即抛错，故只覆盖 player 用到的接口。
+function createPlayerMockRenderer() {
+  return {
+    setSize: vi.fn(),
+    setPixelRatio: vi.fn(),
+    render: vi.fn(),
+    setRenderTarget: vi.fn(),
+    dispose: vi.fn(),
+    setAnimationLoop: vi.fn(),
+  };
+}
 
+describe('对象级效果链接线（真实 loadSceneToThree 对侧校验）', () => {
   it('真实 player 的隔离条目 id === 对象 id，stage 收到的键同为该对象 id', async () => {
     const OBJ_ID = 13;
     stubAssetFetch(JSON.stringify({
@@ -3088,6 +3089,23 @@ describe('createThreeSceneRenderer · puppet 真实链路护栏', () => {
     };
   }
 
+  it('puppet 图层**独占**可见内容（background=0 particle=0 puppet=1）⇒ 不算空场景，render 仍 true', async () => {
+    // 桩掉 loadSceneToThree 精确控制三项计数（真链路用例里 addBackground 的兜底会掩盖条件）。
+    // 日志行 `background=0 particleLayers=0 puppetLayers=1` 是这条口径的可观测证据。
+    const store = createRenderHealthStore({ storage: null });
+    resolveImageAssets.mockResolvedValue({ texture: null, puppetPath: null } as never);
+    defaultLoadWasm.mockResolvedValue(null);
+    stubAssetFetch(PUPPET_ONLY, {});
+    loadSceneToThree.mockReturnValue({
+      player: { dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn() },
+      sims: [], backgroundIds: [], particleLayers: [], puppetLayers: [7],
+    } as never);
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    expect(await r.render('wid-puppet-only-stub', document.createElement('canvas'), null)).toBe(true);
+    expect(store.snapshot('wid-puppet-only-stub').failure).toBeNull();
+    r.dispose();
+  });
+
   it('puppet-only 场景：puppet 图层计入可见对象 ⇒ 不落 no-visible-objects（真 Grid 挂进场景）', async () => {
     await withRealLoader();
     const store = createRenderHealthStore({ storage: null });
@@ -3139,20 +3157,29 @@ describe('createThreeSceneRenderer · puppet 真实链路护栏', () => {
     r.dispose();
   });
 
-  it('.mdl 能取到但解析失败（畸形字节）⇒ 同上，仅告警 + 退化（不落 no-visible-objects / 不写盘）', async () => {
+  it('.mdl 能取到但解析失败（畸形字节）⇒ 仅告警 + 退化成普通贴图，不落任何失败记忆', async () => {
     await withRealLoader();
     const storage = fakeStorage();
     const store = createRenderHealthStore({ storage });
-    resolveImageAssets.mockResolvedValue({ texture: null, puppetPath: 'models/p_puppet.mdl' } as never);
+    const tex = new THREE.DataTexture(new Uint8Array(4), 1, 1);
+    resolveImageAssets.mockResolvedValue({ texture: tex, puppetPath: 'models/p_puppet.mdl' } as never);
     defaultLoadWasm.mockResolvedValue(null);
-    // 静态族头部是可解析的，字节在此处被截断 ⇒ 顶点块缺失（真机上的损坏 pkg 形态）
-    stubGuardFetch(PUPPET_ONLY, staticMdlBytes().slice(0, 40));
+    stubGuardFetch(PUPPET_AND_BG, new Uint8Array(16));    // 16B 过短：解析必失败（真机上的损坏 pkg 形态）
+
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
-
-    // 该场景**确实**没有任何可见对象（唯一对象是解析失败的 puppet）⇒ no-visible-objects 是正确结论
-    expect(await r.render('wid-md-corrupt', document.createElement('canvas'), null)).toBe(false);
-    expect(store.snapshot('wid-md-corrupt').failure?.kind).toBe('no-visible-objects');
+    expect(await r.render('wid-md-corrupt', document.createElement('canvas'), null)).toBe(true);
+    const loaded = loadSceneToThree.mock.results.at(-1)!.value as {
+      player: { displayObject(id: number): unknown };
+      backgroundIds: number[]; puppetLayers: number[];
+    };
+    expect(loaded.puppetLayers).toEqual([]);              // 解析失败 ⇒ 没有 puppet 图层
+    expect(loaded.backgroundIds).toHaveLength(2);         // 该对象退化成普通贴图层
+    const degraded = loaded.player.displayObject(16) as THREE.Mesh;
+    expect((degraded.material as THREE.MeshBasicMaterial).map).toBe(tex);
+    // 关键：失败归因不是整场渲染失败（既不是 exception 也不是 no-visible-objects），也没有写盘
+    expect(store.snapshot('wid-md-corrupt').failure).toBeNull();
+    expect(storage.written).toEqual([]);
     expect(warn.mock.calls.some((c) => String(c[0]).includes('puppet 解析失败'))).toBe(true);
     warn.mockRestore();
     r.dispose();
