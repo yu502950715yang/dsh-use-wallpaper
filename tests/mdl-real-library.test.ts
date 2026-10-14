@@ -37,7 +37,10 @@ describe.skipIf(!hasLib)('真实 puppet 样本（本机库）', () => {
     expect(r.puppet.mesh.materialPath.endsWith('.json')).toBe(true);
     // 骨骼 / 蒙皮权重 / 动画：该样本实测**没有** MDLS/MDLA/MDLE 段（详见 AGENT.md §7.40）
     // ⇒ 只记录不断言；断言 bones>0 会把「如实解析出的空骨表」判成红，属迁就测试而非迁就事实。
-    console.log(`[mdl] version=${r.puppet.version} stride=${r.puppet.mesh.strideInfo.stride} verts=${r.puppet.mesh.vertexCount} indices=${r.puppet.mesh.indices.length} bones=${r.puppet.bones.length} anims=${r.puppet.animations.length}`);
-    console.log(`[mdl] maxIndex=${r.puppet.mesh.strideInfo.maxIndex} strideReason=${r.puppet.mesh.strideInfo.reason} blendWeights=${r.puppet.mesh.blendWeights === null ? 'null' : 'present'} material=${r.puppet.mesh.materialPath}`);
+    // 但「段不存在」是硬事实：段级诊断必须为 absent，否则 T8 会把解析失败当成「无动画」。
+    expect(r.puppet.segments).toEqual({ mdls: 'absent', mdla: 'absent' });
+    const info = r.puppet.mesh.strideInfo!; // 成功路径必填（接口上是可选字段）
+    console.log(`[mdl] version=${r.puppet.version} stride=${info.stride} verts=${r.puppet.mesh.vertexCount} indices=${r.puppet.mesh.indices.length} bones=${r.puppet.bones.length} anims=${r.puppet.animations.length} segments=${r.puppet.segments!.mdls}/${r.puppet.segments!.mdla}`);
+    console.log(`[mdl] maxIndex=${info.maxIndex} strideReason=${info.reason} blendWeights=${r.puppet.mesh.blendWeights === null ? 'null' : 'present'} material=${r.puppet.mesh.materialPath}`);
   });
 });

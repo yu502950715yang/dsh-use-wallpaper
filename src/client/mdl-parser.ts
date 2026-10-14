@@ -1,7 +1,5 @@
-// WE puppet 模型（.mdl）解析：MDLV（网格）+ MDLS（骨骼）+ MDLA（动画）三段。
-// 段布局依据上游 mdl-parse.js 文档化口径（MDLV0021/0023 打包族 stride 80；MDLA0006 头 + 36B 关键帧），
-// 并兼容本机实测的静态变体（无段标记 + stride 48 顶点）。静态族的 stride 由候选集 + 紧覆盖推出，
-// 推不出唯一紧覆盖就拒收（不猜）；畸形输入一律返回结构化错误、不抛。实测口径见 AGENT.md §7.40。
+// WE puppet 模型（.mdl）解析：MDLV（网格）+ MDLS（骨骼）+ MDLA（动画）；零依赖、畸形一律返回结构化错误。
+// 段布局的实测事实与未确证项见 AGENT.md §7.40（本文件只留结论与判据，不留推导）。
 
 export const MDL_VERTEX_STRIDE = 80;
 /** 静态族 stride 候选集：先筛「整除」、再筛「索引零越界」，最后按浪费率取最小。 */
@@ -13,14 +11,20 @@ const MAX_VERTEX_COUNT = 200_000;
 const KEYFRAME_BYTES = 36; // f32[3] pos + f32[4] quat + f32[2] scale
 const SUPPORTED_MDLV = ['MDLV0013', 'MDLV0016', 'MDLV0017', 'MDLV0019', 'MDLV0021', 'MDLV0023'];
 
-/**
- * 顶点记录布局表（键 = stride）：只有实测/文档化确认过的 stride 才敢解字段；
- * 选中但表里没有 ⇒ 拒收，不去猜 pos/uv 的偏移。
- */
+/** 顶点记录布局表（键 = stride）：只列确认过字段偏移的 stride；选中但不在表里 = 拒收，不猜偏移。 */
 const VERTEX_LAYOUTS: Record<number, { posZ: boolean; uv: number; skin: boolean }> = {
-  48: { posZ: false, uv: 40, skin: false }, // 实测静态变体：pos.xy@0 + 8 个常量 float + uv@40
+  48: { posZ: false, uv: 40, skin: false }, // 实测静态变体：pos.xy@0 + 8 个 float + uv@40
   80: { posZ: true, uv: 72, skin: true },   // 文档化打包族：pos/boneIdx@40/weights@56/uv@72
 };
+
+/** stride 命中原因（闭集，Task 7 可穷尽检查）。 */
+export type MdlStrideReason =
+  | 'packed-80'
+  | 'tight-coverage'
+  | 'waste-too-high'
+  | 'ambiguous'
+  | 'no-candidate'
+  | 'layout-unknown';
 
 /** 单个 stride 候选的判定痕迹（Task 7 排查用，不参与渲染）。 */
 export interface MdlStrideCandidate {
@@ -39,8 +43,7 @@ export interface MdlStrideCandidate {
 export interface MdlStrideInfo {
   /** 成功 = 实际用于解码的 stride；失败 = 本会选中的候选（0 = 无候选） */
   stride: number;
-  /** 命中原因：'packed-80'（蒙皮族固定）| 'tight-coverage' | 'waste-too-high' | 'ambiguous' | 'no-candidate' */
-  reason: string;
+  reason: MdlStrideReason;
   /** 索引缓冲里的最大索引 */
   maxIndex: number;
   /** 候选集全量判定（含被淘汰者与各自浪费率） */
@@ -55,11 +58,12 @@ export interface MdlMesh {
   indices: Uint16Array;
   vertexCount: number;
   materialPath: string;
-  /** stride 判定痕迹（选中的 stride + 候选集与浪费率），Task 7 排查用 */
-  strideInfo: MdlStrideInfo;
+  /** stride 判定痕迹（可选：接口加法）；成功路径必填，Task 7 排查用 */
+  strideInfo?: MdlStrideInfo;
 }
 
 export interface MdlBone {
+  /** bones 数组下标（文件 id 非 0..n-1 时已重排，见 MdlPuppet.boneIdMapping） */
   index: number;
   parent: number;
   bind: Float32Array; // 16 元素，列主序
@@ -72,6 +76,7 @@ export interface MdlKeyframe {
 }
 
 export interface MdlTrack {
+  /** bones 数组下标（= MdlBone.index；文件里的 id 已映射到下标） */
   boneId: number;
   keys: MdlKeyframe[];
 }
@@ -85,11 +90,27 @@ export interface MdlAnimation {
   tracks: MdlTrack[];
 }
 
+/** 段级状态：absent = 没有段标记；ok = 段解析完整；failed = 段在但没解完。 */
+export type MdlSegmentState = 'absent' | 'ok' | 'failed';
+
+/** 段级诊断：区分「段不存在」与「段存在但解析失败」（Task 8 用）。 */
+export interface MdlSegmentsInfo {
+  mdls: MdlSegmentState;
+  mdla: MdlSegmentState;
+}
+
+/** 骨骼 id 口径：'identity' = 文件 id 就是下标；'remapped' = 已按文件 id 升序重排。 */
+export type MdlBoneIdMapping = 'identity' | 'remapped';
+
 export interface MdlPuppet {
   version: string;
   mesh: MdlMesh;
   bones: MdlBone[];
   animations: MdlAnimation[];
+  /** 段级诊断（可选：接口加法）；T8 据此区分「无动画」与「动画解析失败」 */
+  segments?: MdlSegmentsInfo;
+  /** 骨骼 id 口径（可选：接口加法）；'remapped' 表示父索引与轨 boneId 已同步映射到下标 */
+  boneIdMapping?: MdlBoneIdMapping;
 }
 
 export type MdlParseResult =
@@ -147,13 +168,10 @@ function strideCandidates(vertexBytes: number, maxIndex: number): MdlStrideCandi
   });
 }
 
-/**
- * 静态族 stride 择一：整除 → 索引零越界 → 浪费率最小（紧覆盖）。
- * 并列或最小浪费率 > 5% 一律拒收：宁可解析失败，也不静默挑一个画错的 stride。
- */
+/** 静态族 stride 择一：整除 → 索引零越界 → 紧覆盖（浪费率最小）；并列或超 5% 一律拒收。 */
 function selectStride(vertexBytes: number, maxIndex: number): StrideSelection {
   const candidates = strideCandidates(vertexBytes, maxIndex);
-  const info = (stride: number, reason: string): MdlStrideInfo => ({ stride, reason, maxIndex, candidates });
+  const info = (stride: number, reason: MdlStrideReason): MdlStrideInfo => ({ stride, reason, maxIndex, candidates });
   const fits = candidates.filter((c) => c.inRange);
   if (fits.length === 0) {
     return { ok: false, hard: false, error: `stride-no-candidate:bytes=${vertexBytes}`, info: info(0, 'no-candidate') };
@@ -172,10 +190,7 @@ function selectStride(vertexBytes: number, maxIndex: number): StrideSelection {
   return { ok: true, stride: best[0].stride, info: info(best[0].stride, 'tight-coverage') };
 }
 
-/**
- * 校验一个顶点块候选并解码为 MdlMesh；不像顶点块即 miss（调用方继续试下一个位置）。
- * 两种排版共用「u32 顶点字节数 @offset-4 + 顶点流 + u32 索引字节数 + u16 索引」的段结构。
- */
+/** 校验一个顶点块候选并解码为 MdlMesh；不像顶点块即 miss（调用方继续试下一个位置）。 */
 function decodeMesh(
   buf: Uint8Array,
   dv: DataView,
@@ -223,10 +238,10 @@ function decodeMesh(
     strideInfo = picked.info;
   }
   const layout = VERTEX_LAYOUTS[stride];
-  // 选中但没确认过字段布局 ⇒ 拒收（把判定痕迹留给 Task 7 判断是不是新变体）
+  // 选中但没确认过字段布局 ⇒ 拒收，reason 记为布局缺口（Task 7 排查用）
   if (!layout) {
     const error = `stride-layout-unknown:${stride}:bytes=${vertexBytes}:maxIndex=${maxIndex}`;
-    return { kind: 'hard', error, info: strideInfo };
+    return { kind: 'hard', error, info: { ...strideInfo, reason: 'layout-unknown' } };
   }
   const vertexCount = vertexBytes / stride;
   const positions = new Float32Array(vertexCount * 3);
@@ -275,29 +290,29 @@ function decodeMesh(
   };
 }
 
-/**
- * 网格块定位：文档化锚点（两种填充长度都试）优先，然后从 9 起逐字节扫描（参考实现口径）。
- * 每个位置都试「蒙皮族（u32 顶点字节数 + stride 80）」与「静态族（同一段结构 + 候选集紧覆盖择一）」
- * 两种排版 —— 头部填充长度在样本间不固定，只能靠自洽校验认。
- */
+/** 网格块定位：文档化锚点（+32/+36 填充）优先，然后从 9 起逐字节扫描（参考实现口径）。 */
 function parseMesh(buf: Uint8Array, dv: DataView, meshLimit: number): { mesh: MdlMesh } | { error: string; info?: MdlStrideInfo } {
-  const [docMaterial, docAfterMat] = cstr(buf, 9, meshLimit);
-  const [materialPath] = cstr(buf, 21, meshLimit);
+  const [briefMaterial, afterMat] = cstr(buf, 9, meshLimit);
+  const [observedMaterial] = cstr(buf, 21, meshLimit);
+  /** 材质串宽窄两种口径；优先取以 .json 结尾者（窄口径常是真串的后缀，如 m.json）。 */
+  const materialOf = (family: MeshFamily): string => {
+    const cands = family === 'static' ? [observedMaterial, briefMaterial] : [briefMaterial, observedMaterial];
+    return cands.find((s) => s.endsWith('.json')) ?? cands[0];
+  };
   // 定位到块上的硬失败（stride 不唯一 / 无字段布局）要留痕：整份文件都找不出网格时上报，
   // 但不立即中止 —— 锚点与扫描都可能先撞上假块，立即中止会把本可解析的文件误拒。
   const hard: Array<{ error: string; info: MdlStrideInfo }> = [];
-  const attempt = (offset: number, family: MeshFamily, path: string): MdlMesh | null => {
-    const out = decodeMesh(buf, dv, meshLimit, offset, family, path);
+  const attempt = (offset: number, family: MeshFamily): MdlMesh | null => {
+    const out = decodeMesh(buf, dv, meshLimit, offset, family, materialOf(family));
     if (out.kind === 'ok') return out.mesh;
     if (out.kind === 'hard' && hard.length === 0) hard.push({ error: out.error, info: out.info });
     return null;
   };
-  // 文档化口径：magic(9) + u32 + u32 + 材质 cstr（NUL 后 32B/36B 填充）→ u32 顶点字节数
   for (const pad of [32, 36]) {
-    const offset = docAfterMat + pad + 4;
+    const offset = afterMat + pad + 4;
     if (offset + 12 > meshLimit) continue;
     for (const family of ['packed', 'static'] as const) {
-      const mesh = attempt(offset, family, family === 'static' ? materialPath : docMaterial);
+      const mesh = attempt(offset, family);
       if (mesh) return { mesh };
     }
   }
@@ -306,7 +321,7 @@ function parseMesh(buf: Uint8Array, dv: DataView, meshLimit: number): { mesh: Md
     const vertexBytes = dv.getUint32(offset - 4, true);
     if (vertexBytes === 0 || !STRIDE_CANDIDATES.some((s) => vertexBytes % s === 0)) continue;
     for (const family of ['static', 'packed'] as const) {
-      const mesh = attempt(offset, family, materialPath);
+      const mesh = attempt(offset, family);
       if (mesh) return { mesh };
     }
   }
@@ -323,29 +338,35 @@ function saneBind(dv: DataView, off: number): boolean {
     && dv.getFloat32(off + 44, true) === 0 && dv.getFloat32(off + 60, true) === 1;
 }
 
-/**
- * MDLS0004：magic(9) + u32 段尾 + u32 骨数；每骨 tmp + u32 id + i32 parent + u32 matSize + f32[16] + cstr json。
- * 头部实测 13B（矩阵紧接 matSize），另容 10B（参考实现的 u16 tmp 变体，本机无样本）靠矩阵合理性择一。
- */
-function parseBones(buf: Uint8Array, dv: DataView): MdlBone[] {
+/** 骨表：bones 已按文件 id 对齐下标；status 区分「没有段」与「段坏了」。 */
+interface BoneTable {
+  bones: MdlBone[];
+  status: MdlSegmentState;
+  /** 文件 id → bones 下标；null = identity（下标即文件 id） */
+  idToIndex: Map<number, number> | null;
+}
+
+/** MDLS：magic(9) + u32 段尾 + u32 骨数；每骨 13B 头（tmp+id+parent+matSize）或 10B 变体 + f32[16] + cstr。 */
+function parseBones(buf: Uint8Array, dv: DataView): BoneTable {
   const at = indexOfAscii(buf, 'MDLS');
-  if (at < 0 || at + 17 > buf.length) return [];
+  if (at < 0) return { bones: [], status: 'absent', idToIndex: null };
+  if (at + 17 > buf.length) return { bones: [], status: 'failed', idToIndex: null };
   const next = indexOfAscii(buf, 'MDLA'); // 骨表不得吞掉后续段
   let p = at + 13; // 跳过 magic(9) 与段尾字段
   const boneCount = dv.getUint32(p, true);
   p += 4;
-  const bones: MdlBone[] = [];
-  for (let b = 0; b < boneCount && bones.length < 512; b++) {
+  // fileId 用于 id 自洽校验；10B 变体没有 id 字段，按序号记（本机无样本，仅容错）
+  const raw: Array<{ fileId: number; parent: number; bind: Float32Array }> = [];
+  for (let b = 0; b < boneCount && raw.length < 512; b++) {
     let ok = false;
     for (const head of [13, 10]) {
       if (p + head + 64 > buf.length) continue;
       if (next >= 0 && p + head + 64 > next) continue; // 骨表不得吞掉后续段
       if (!saneBind(dv, p + head)) continue;
-      const len = dv.getUint32(p + head - 4, true);
-      if (len !== 64) continue;
+      if (dv.getUint32(p + head - 4, true) !== 64) continue; // matSize 必须 64
       const bind = new Float32Array(16);
       for (let i = 0; i < 16; i++) bind[i] = dv.getFloat32(p + head + i * 4, true);
-      bones.push({ index: b, parent: dv.getInt32(p + head - 8, true), bind });
+      raw.push({ fileId: head === 13 ? dv.getUint32(p + 1, true) : b, parent: dv.getInt32(p + head - 8, true), bind });
       p += head + 64;
       [, p] = cstr(buf, p, buf.length); // 跳过每骨的 JSON 约束串
       ok = true;
@@ -353,15 +374,20 @@ function parseBones(buf: Uint8Array, dv: DataView): MdlBone[] {
     }
     if (!ok) break;
   }
-  // 父索引必须在范围内（越界按根处理，避免建树时成环）
-  for (const bone of bones) if (bone.parent >= bones.length) bone.parent = -1;
-  return bones;
+  // 文件 id 不是 0..n-1 时按 id 升序重排，并同步父索引：T7 的 bones[boneId] 才不会错绑
+  const identity = raw.every((r, i) => r.fileId === i);
+  const order = raw.map((_, i) => i);
+  if (!identity) order.sort((x, y) => raw[x].fileId - raw[y].fileId || x - y);
+  const idToIndex = identity ? null : new Map(order.map((b, i) => [raw[b].fileId, i]));
+  const bones: MdlBone[] = order.map((b, i) => {
+    const parent = idToIndex ? idToIndex.get(raw[b].parent) : raw[b].parent;
+    // 父索引必须在范围内（越界按根处理，避免建树时成环）
+    return { index: i, parent: parent !== undefined && parent >= 0 && parent < raw.length ? parent : -1, bind: raw[b].bind };
+  });
+  return { bones, status: bones.length === boneCount ? 'ok' : 'failed', idToIndex };
 }
 
-/**
- * 动画头的轨数与轨表定位：文档化口径在 fps/frameCount 与轨数之间还有一个 u32，
- * 而约定的夹具少了这 4B ⇒ 两个候选偏移都试，只接受「轨表自洽」的那个。
- */
+/** 动画头的轨数与轨表定位：文档化口径与夹具口径差一个 u32 ⇒ 只接受「轨表自洽」的那个。 */
 function locateTracks(dv: DataView, p: number, bufLen: number): { trackCount: number; trackAt: number } | null {
   let best: { trackCount: number; trackAt: number; end: number } | null = null;
   for (const delta of [0, -4]) {
@@ -384,10 +410,16 @@ function locateTracks(dv: DataView, p: number, bufLen: number): { trackCount: nu
   return best ? { trackCount: best.trackCount, trackAt: best.trackAt } : null;
 }
 
-/** MDLA0006：magic(9) + u32 段尾 + u32 动画数；每动画头 + 35B 填充 + 每轨 u32 boneId / u32 trackBytes / 36B 关键帧。 */
-function parseAnimations(buf: Uint8Array, dv: DataView, boneCount: number): MdlAnimation[] {
+/** MDLA：magic(9) + u32 段尾 + u32 动画数；每动画头 + 35B 填充 + 每轨 boneId/trackBytes/36B 关键帧。 */
+function parseAnimations(
+  buf: Uint8Array,
+  dv: DataView,
+  boneCount: number,
+  idToIndex: Map<number, number> | null,
+): { animations: MdlAnimation[]; status: MdlSegmentState } {
   const at = indexOfAscii(buf, 'MDLA');
-  if (at < 0 || at + 17 > buf.length) return [];
+  if (at < 0) return { animations: [], status: 'absent' };
+  if (at + 17 > buf.length) return { animations: [], status: 'failed' };
   let p = at + 13;
   const animCount = dv.getUint32(p, true);
   p += 4;
@@ -410,12 +442,13 @@ function parseAnimations(buf: Uint8Array, dv: DataView, boneCount: number): MdlA
     let ok = true;
     for (let t = 0; t < located.trackCount; t++) {
       if (q + 8 > buf.length) { ok = false; break; }
-      const boneId = dv.getUint32(q, true);
+      const rawBoneId = dv.getUint32(q, true);
       const trackBytes = dv.getUint32(q + 4, true);
       q += 8;
+      const boneId = idToIndex ? (idToIndex.get(rawBoneId) ?? -1) : rawBoneId;
       // 轨自洽：36B 关键帧整数倍、不越界、boneId 在骨数内（boneCount 为 0 时不校验，交由消费方）
       if (trackBytes === 0 || trackBytes % KEYFRAME_BYTES !== 0 || q + trackBytes > buf.length) { ok = false; break; }
-      if (boneCount > 0 && boneId >= boneCount) { ok = false; break; }
+      if (boneCount > 0 && (boneId < 0 || boneId >= boneCount)) { ok = false; break; }
       const keyCount = trackBytes / KEYFRAME_BYTES;
       const keys: MdlKeyframe[] = [];
       for (let k = 0; k < keyCount; k++) {
@@ -435,7 +468,8 @@ function parseAnimations(buf: Uint8Array, dv: DataView, boneCount: number): MdlA
     if (frameCount > 0 && tracks.length > 0) out.push({ id, name, mode, fps, frameCount, tracks });
     p = q; // 下一动画紧接本动画轨表之后
   }
-  return out;
+  // 声明了几个就必须完整解出几个；否则是「段在但坏了」，不能静默当成「无动画」
+  return { animations: out, status: out.length === animCount ? 'ok' : 'failed' };
 }
 
 export function parseMdl(buf: Uint8Array): MdlParseResult {
@@ -459,9 +493,19 @@ export function parseMdl(buf: Uint8Array): MdlParseResult {
         ? { ok: false, error: located.error, strideInfo: located.info }
         : { ok: false, error: located.error };
     }
-    const bones = parseBones(buf, dv);
-    const animations = parseAnimations(buf, dv, bones.length);
-    return { ok: true, puppet: { version, mesh: located.mesh, bones, animations } };
+    const boneTable = parseBones(buf, dv);
+    const anim = parseAnimations(buf, dv, boneTable.bones.length, boneTable.idToIndex);
+    return {
+      ok: true,
+      puppet: {
+        version,
+        mesh: located.mesh,
+        bones: boneTable.bones,
+        animations: anim.animations,
+        segments: { mdls: boneTable.status, mdla: anim.status },
+        boneIdMapping: boneTable.idToIndex ? 'remapped' : 'identity',
+      },
+    };
   } catch {
     // 越界读取等异常一律收成结构化错误（契约：畸形输入不抛）
     return { ok: false, error: 'malformed' };

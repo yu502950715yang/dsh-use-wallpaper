@@ -58,6 +58,18 @@ function buildMdlFixture(): Uint8Array {
   return new Uint8Array(parts);
 }
 
+/** brief 夹具里顶点块起点（magic 9 + 材质串含 NUL + 32B 填充 + u32 顶点字节数），勿硬编码。 */
+const BRIEF_VERTICES_OFFSET = 9 + 'materials/m.json'.length + 1 + 32 + 4;
+
+/** 段标记在夹具里的偏移（头部长度会随字段调整，勿硬编码）。 */
+function markerAt(buf: Uint8Array, marker: string): number {
+  outer: for (let i = 0; i + marker.length <= buf.length; i++) {
+    for (let k = 0; k < marker.length; k++) if (buf[i + k] !== marker.charCodeAt(k)) continue outer;
+    return i;
+  }
+  return -1;
+}
+
 describe('mdl-parser', () => {
   it('解析 MDLV 顶点（stride 80：pos/boneIdx@40/weights@56/uv@72）与索引', () => {
     const r = parseMdl(buildMdlFixture());
@@ -115,19 +127,23 @@ describe('mdl-parser', () => {
 });
 
 // ── 静态族夹具（本机实测口径）：无 MDLS/MDLA/MDLE 段标记 + 顶点块 stride 48 ─────────────
-// 头 = magic(9) + u16 9 + u32 1 + u32 1 + u16 0（12B 二进制头 + 2B 对齐）⇒ 材质串 @21；
-// 之后 7×u32 零 + u32 15（语义未确认，原样保留）+ u32 vertexBytes（实测 @53+4k 口径）；
-// 顶点记录 stride 48：pos.xy @+0/+4、8 个常量 float @+8..+36、uv @+40/+44；随后 u32 索引字节数 + u16 索引。
+// 头 9..20 实测字节 = 09 00 00 00 01 00 00 00 01 00 00 00（u32 读法 9/1/1，字段语义未确证）⇒ 材质串 @21；
+// 之后 7×u32 零 + u32 15（实测 @81，语义未确认）+ u32 vertexBytes（@85）；顶点 stride 48：pos.xy@+0/+4、uv@+40/+44。
 const STATIC_STRIDE = 48;
 const STATIC_VERTEX_COUNT = 10;
-const STATIC_CONSTANTS = [0, 0, 0, 1, 1, 0, 0, 1]; // 实测在全部 1850 条记录上恒定（语义未知，不映射）
+const STATIC_MATERIAL = 'materials/static.json';
+/** 静态族夹具的 8 个 float @+8..+36：**只代表本夹具**（真实样本的 +28 每顶点都不同，见 AGENT.md §7.40）。 */
+const STATIC_CONSTANTS = [0, 0, 0, 1, 1, 0, 0, 1];
+
+/** 静态族夹具里顶点块起点（材质串 @21 + 7×u32 零 + u32 15 + u32 vertexBytes），勿硬编码。 */
+function staticVerticesOffset(): number { return 21 + STATIC_MATERIAL.length + 1 + 7 * 4 + 4 + 4; }
 
 /** 静态族夹具（字段可覆写以构造畸形变体）：返回可直接喂 parseMdl 的字节流。 */
 function buildStaticFixture(opts: { vertexBytes?: number; indexValues?: number[] } = {}): Uint8Array {
   const vertexBytes = opts.vertexBytes ?? STATIC_STRIDE * STATIC_VERTEX_COUNT;
   const indexValues = opts.indexValues ?? [0, 1, 2, 1, 2, 3, 4, 5, 6, 7, 8, 9];
-  const material = 'materials/static.json';
-  const verticesOffset = 21 + material.length + 1 + 7 * 4 + 4 + 4;
+  const material = STATIC_MATERIAL;
+  const verticesOffset = staticVerticesOffset();
   const indexLenOffset = verticesOffset + vertexBytes;
   const buf = new Uint8Array(indexLenOffset + 4 + indexValues.length * 2);
   const dv = new DataView(buf.buffer);
@@ -170,7 +186,8 @@ describe('mdl-parser · 静态族（无段标记 + stride 候选集择一）', (
   it('静态族 stride 判定：候选集 + 紧覆盖选出 48，诊断字段记下候选列表与各候选浪费率', () => {
     const r = parseMdl(buildStaticFixture());
     if (!r.ok) throw new Error(r.error);
-    const info = r.puppet.mesh.strideInfo;
+    expect(r.puppet.mesh.strideInfo).toBeDefined(); // 可选字段（接口加法）：成功路径必填
+    const info = r.puppet.mesh.strideInfo!;
     expect(info.stride).toBe(48);
     expect(info.reason).toBe('tight-coverage');
     expect(info.maxIndex).toBe(9);
@@ -186,17 +203,21 @@ describe('mdl-parser · 静态族（无段标记 + stride 候选集择一）', (
 
   it('静态族畸形变体：截断 / 坏 magic / 索引越界 / vertexBytes 不整除任何候选 ⇒ 各 {ok:false} 且不抛', () => {
     // 截断（顶点块中途切断）
-    const truncated = buildStaticFixture().slice(0, 79 + 200);
+    const truncated = buildStaticFixture().slice(0, staticVerticesOffset() + 200);
     expect(() => parseMdl(truncated)).not.toThrow();
     expect(parseMdl(truncated).ok).toBe(false);
     // 坏 magic
     const badMagic = buildStaticFixture();
     badMagic[0] = 0x58; // 'X'
     expect(parseMdl(badMagic).ok).toBe(false);
-    // 索引越界：stride 48 下 maxIndex 11 ≥ 10 顶点；紧覆盖会指向 40（无字段布局）⇒ 拒收
+    // 索引越界：stride 48 下 maxIndex 11 ≥ 10 顶点；紧覆盖会指向 40（无字段布局）⇒ 拒收并留痕
     const outOfRange = parseMdl(buildStaticFixture({ indexValues: [0, 1, 11, 1, 2, 3, 4, 5, 6, 7, 8, 9] }));
     expect(outOfRange.ok).toBe(false);
-    if (!outOfRange.ok) expect(outOfRange.error).toMatch(/^stride-/);
+    if (!outOfRange.ok) {
+      expect(outOfRange.error).toMatch(/^stride-/);
+      expect(outOfRange.strideInfo?.stride).toBe(40);
+      expect(outOfRange.strideInfo?.reason).toBe('layout-unknown');
+    }
     // vertexBytes 不整除候选集里任何成员（481 = 13 × 37，候选全是偶数）
     expect(parseMdl(buildStaticFixture({ vertexBytes: 481 })).ok).toBe(false);
   });
@@ -211,5 +232,93 @@ describe('mdl-parser · 静态族（无段标记 + stride 候选集择一）', (
     expect(r.strideInfo?.reason).toBe('waste-too-high');
     expect(r.strideInfo?.maxIndex).toBe(2);
     expect(r.strideInfo?.candidates).toHaveLength(12);
+  });
+});
+
+// ── 蒙皮族细节 + 失败路径诊断（接口加法；真实素材无 MDLS/MDLA，全部靠夹具口径） ─────────
+describe('mdl-parser · 蒙皮族细节与段级诊断', () => {
+  it('packed 族锚点命中：strideInfo 记为 packed-80，材质串取文档化 @9', () => {
+    const r = parseMdl(buildMdlFixture());
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.puppet.mesh.strideInfo).toBeDefined();
+    expect(r.puppet.mesh.strideInfo!.stride).toBe(MDL_VERTEX_STRIDE);
+    expect(r.puppet.mesh.strideInfo!.reason).toBe('packed-80');
+    expect(r.puppet.mesh.materialPath).toBe('materials/m.json');
+  });
+
+  it('权重和 ≠ 1 ⇒ blendIndices/blendWeights 置 null（几何仍解出，不把垃圾权重交给蒙皮）', () => {
+    const buf = buildMdlFixture();
+    new DataView(buf.buffer).setFloat32(BRIEF_VERTICES_OFFSET + 56, 0.5, true); // weights[0] 1 → 0.5（和 0.5）
+    const r = parseMdl(buf);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.puppet.mesh.blendIndices).toBeNull();
+    expect(r.puppet.mesh.blendWeights).toBeNull();
+    expect(r.puppet.mesh.vertexCount).toBe(3);
+  });
+
+  it('扫描命中时材质串取以 .json 结尾的宽口径，不退化成 @21 的后缀（如 m.json）', () => {
+    // 在材质串 NUL 之后补 8 B 零：文档化锚点（+32/+36 填充）读到 0 落空，只能靠扫描命中
+    const base = buildMdlFixture();
+    const at = 9 + 'materials/m.json'.length + 1;
+    const buf = new Uint8Array(base.length + 8);
+    buf.set(base.subarray(0, at));
+    buf.set(base.subarray(at), at + 8);
+    const r = parseMdl(buf);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.puppet.mesh.materialPath).toBe('materials/m.json');
+    expect(r.puppet.mesh.strideInfo!.stride).toBe(MDL_VERTEX_STRIDE);
+  });
+
+  it('无 MDLS/MDLA 标记 ⇒ segments 全 absent（T8 据此区分「无动画」与「动画解析失败」）', () => {
+    const r = parseMdl(buildStaticFixture());
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.puppet.segments).toEqual({ mdls: 'absent', mdla: 'absent' });
+  });
+
+  it('两段都在且解析完整 ⇒ segments 全 ok，骨 id 就是下标（identity）', () => {
+    const r = parseMdl(buildMdlFixture());
+    if (!r.ok) throw new Error(r.error);
+    expect(r.puppet.segments).toEqual({ mdls: 'ok', mdla: 'ok' });
+    expect(r.puppet.boneIdMapping).toBe('identity');
+  });
+
+  it('MDLS 在但骨表解析失败 ⇒ mdls=failed、bones=[]，mdla 仍 ok', () => {
+    const buf = buildMdlFixture();
+    // 骨 0 的 matSize 64 → 60：两个头部候选都不自洽 ⇒ 骨表拒收（不是「没有段」）
+    new DataView(buf.buffer).setUint32(markerAt(buf, 'MDLS') + 17 + 9, 60, true);
+    const r = parseMdl(buf);
+    if (!r.ok) throw new Error(r.error);
+    expect(r.puppet.bones).toEqual([]);
+    expect(r.puppet.segments).toEqual({ mdls: 'failed', mdla: 'ok' });
+  });
+
+  it('MDLA 在但轨表不自洽 ⇒ mdla=failed、animations=[]（不被静默当成「无动画」）', () => {
+    const buf = buildMdlFixture();
+    new DataView(buf.buffer).setUint32(buf.length - 2 * 36 - 8, 70, true); // 轨字节数 72 → 70（非 36 倍数）
+    const r = parseMdl(buf);
+    if (!r.ok) throw new Error(r.error);
+    expect(r.puppet.animations).toEqual([]);
+    expect(r.puppet.segments).toEqual({ mdls: 'ok', mdla: 'failed' });
+  });
+
+  it('骨骼文件 id 非 0..n-1 ⇒ 按 id 升序重排，父索引与轨 boneId 同步映射（不静默错绑）', () => {
+    const buf = buildMdlFixture();
+    const dv = new DataView(buf.buffer);
+    const mdls = markerAt(buf, 'MDLS');
+    const bone1 = mdls + 17 + 13 + 64 + 3; // 骨 0 记录 = 13B 头 + 64B 矩阵 + '{}' + NUL
+    dv.setUint32(mdls + 17 + 1, 5, true);        // 骨 0：文件 id 0 → 5
+    dv.setUint32(bone1 + 1, 9, true);            // 骨 1：文件 id 1 → 9
+    dv.setInt32(bone1 + 5, 5, true);             // 骨 1 的 parent 0 → 5（= 骨 0 的文件 id）
+    dv.setUint32(buf.length - 2 * 36 - 8, 9, true); // 轨 boneId 1 → 9（= 骨 1 的文件 id）
+    const r = parseMdl(buf);
+    if (!r.ok) throw new Error(r.error);
+    expect(r.puppet.boneIdMapping).toBe('remapped');
+    expect(r.puppet.bones.map((b) => b.index)).toEqual([0, 1]);
+    expect(r.puppet.bones[1].parent).toBe(0);                  // 文件 id 5 → 下标 0
+    expect(r.puppet.animations[0].tracks[0].boneId).toBe(1);    // 文件 id 9 → 下标 1 ⇒ bones[boneId] 对得上
   });
 });
