@@ -473,13 +473,17 @@ function parseAnimations(
 }
 
 /** 骨表按文件 id 重排时，顶点 blendIndices 必须同步映射到**新下标**（否则 T7 的 skinIndex 与 bones[] 错绑）。
- *  出现骨表里没有的 id ⇒ 整份蒙皮数据不可信，退化为静态网格（同「权重不自洽 ⇒ 不蒙皮」口径）。 */
+ *  只判**有权重**的槽（真机未用槽常是 0/垃圾 id）；有权重的槽映射不到 ⇒ 退化为静态网格并告警一次。 */
 function remapBlendIndices(mesh: MdlMesh, idToIndex: Map<number, number> | null): void {
   const src = mesh.blendIndices;
+  const weights = mesh.blendWeights;
   if (!idToIndex || !src) return;
   for (let i = 0; i < src.length; i++) {
+    // 权重为 0 的槽不参与蒙皮：其 id 即使是骨表里没有的垃圾值也不影响结果，不得据此丢弃整份蒙皮。
+    if (weights && weights[i] === 0) continue;
     const mapped = idToIndex.get(src[i]);
     if (mapped === undefined) {
+      console.warn(`[mdl] 顶点蒙皮槽引用了骨表里没有的骨骼文件 id=${src[i]} ⇒ 整份蒙皮退化为静态网格`);
       mesh.blendIndices = null;
       mesh.blendWeights = null;
       return;

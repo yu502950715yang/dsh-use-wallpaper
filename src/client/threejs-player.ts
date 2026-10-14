@@ -838,7 +838,9 @@ export class ThreeScenePlayer {
       try {
         layer.instance.applyFrame(anim, (layer.elapsed * fps) % frames);
       } catch (e) {
-        // 单个 puppet 采样失败不得升级成渲染失败（帧循环异常会整帧丢弃）：摘掉该图层，只留一条告警。
+        // 单个 puppet 采样失败不得升级成渲染失败（帧循环异常会整帧丢弃）：先释放再摘掉该图层，
+        // 否则 Skeleton/几何再也没有释放点（player.dispose 只遍历仍在表里的图层）。
+        layer.instance.dispose();
         this.puppetLayers.delete(id);
         console.warn('[three] puppet 动画采样失败（已丢弃该图层动画）:', e instanceof Error ? e.message : String(e));
       }
@@ -1329,11 +1331,19 @@ export class ThreeScenePlayer {
     sceneH: number;
     // 唯一绘制序（= scene.json objects 数组下标）；缺省 0（背景在粒子之前绘制）。
     renderOrder?: number;
+    // 对象级 alpha/brightness（同 addBackground，缺省 1/1 = 不改材质）；走 materialModulation 烘进 puppet 材质。
+    alpha?: number;
+    brightness?: number;
     // 对象级视差深度（同 addBackground）；缺省 undefined = 不参与视差。
     parallaxDepth?: [number, number];
   }): number {
     const { mesh } = opts.puppet;
     mesh.renderOrder = opts.renderOrder ?? 0;
+    // 对象级调制：与背景同一份公式（MeshBasicMaterial → color 乘亮度、opacity 取 alpha）；缺省 1/1 即原样。
+    const mod = materialModulation(undefined, opts.alpha, opts.brightness);
+    const mat = mesh.material as THREE.MeshBasicMaterial;
+    mat.color.setRGB(mod.r, mod.g, mod.b);
+    mat.opacity = mod.a;
     const s = opts.scale;
     mesh.scale.set(s[0], s[1], s[2] ?? 1);
     mesh.rotation.set(opts.angles[0], opts.angles[1], opts.angles[2]);
@@ -1349,8 +1359,8 @@ export class ThreeScenePlayer {
       size: [0, 0],
       scale: [s[0], s[1], s[2] ?? 1],
       angles: [opts.angles[0], opts.angles[1], opts.angles[2]],
-      alpha: 1,
-      brightness: 1,
+      alpha: mod.a,
+      brightness: opts.brightness ?? 1,
       sceneW: opts.sceneW,
       sceneH: opts.sceneH,
       parallaxNode: mesh,
@@ -1583,6 +1593,8 @@ export class ThreeScenePlayer {
   resizeBackground(id: number, size: [number, number]): void {
     const entry = this.backgroundEntries.get(id);
     if (!entry) return;
+    // puppet 图层（size=[0,0]）：几何是蒙皮网格自己的，换成 PlaneGeometry 会 dispose 掉它 ⇒ 早退。
+    if (this.puppetLayers.has(id)) return;
     const [w, h] = size;
     if (w === entry.size[0] && h === entry.size[1]) return;
     entry.size = [w, h];
@@ -2204,6 +2216,9 @@ export function loadSceneToThree(
           sceneW,
           sceneH,
           renderOrder,
+          // 对象级调制（alpha/brightness）：与背景 quad 同一份 scene.json 字段，同一套 materialModulation。
+          alpha: obj.alpha,
+          brightness: obj.brightness,
           parallaxDepth: obj.parallaxDepth,
         });
         backgroundIds.push(id);

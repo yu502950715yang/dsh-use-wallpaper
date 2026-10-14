@@ -257,6 +257,20 @@ describe('resolveImageAssets / fetchMdlBytes', () => {
     } finally { vi.unstubAllGlobals(); }
   });
 
+  // 纹理链在中途抛错时，已解析到的 puppetPath 不得被一并丢成 null：puppet 网格本就自带贴图兜底，
+  // 丢路径会让本该出图的 puppet 退化成白图。
+  it('纹理链中途抛错 ⇒ texture null 但已解析到的 puppetPath 保留', async () => {
+    let n = 0;
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      n++;
+      if (n === 1) return { ok: true, json: async () => ({ puppet: 'models/p.mdl', material: 'materials/m.json' }) };
+      return { ok: true, json: async () => { throw new Error('bad material json'); } };
+    }));
+    try {
+      expect(await resolveImageAssets('1', obj)).toEqual({ texture: null, puppetPath: 'models/p.mdl' });
+    } finally { vi.unstubAllGlobals(); }
+  });
+
   it('puppet 字段非字符串 / 空串 ⇒ 一律当没有（不当路径拼 URL）', async () => {
     for (const puppet of [42, '', null, { path: 'x.mdl' }]) {
       vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ puppet }) })));

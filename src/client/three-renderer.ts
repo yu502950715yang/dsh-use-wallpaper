@@ -670,8 +670,14 @@ export function createThreeSceneRenderer(opts?: {
           o.kind === 'image'
           && !isStaticallyHidden(o.visible, userProps)
           && (effectChains.get(o.id)?.length ?? 0) > 0;
+        // puppet 对象由直渲网格承载（对象 RT 隔离未覆盖蒙皮网格）⇒ 既不进隔离表，也不占源尺寸与显存预算。
+        const isPuppetRendered = (o: SceneDescription['objects'][number]): boolean =>
+          o.kind === 'image' && puppetMeshes.has(o.id);
+        // 带类型谓词，filter 后仍收窄成 SceneImageObject（下面要读 size）。
+        const isIsolatedImage = (o: SceneDescription['objects'][number]): o is SceneImageObject =>
+          isAdmittedImage(o) && !isPuppetRendered(o);
         const isolateItems = desc.objects
-          .filter(isAdmittedImage)
+          .filter(isIsolatedImage)
           .map((o) => {
             const tex = backgroundTextures.get(o.id);
             const s = o.scale;
@@ -704,6 +710,12 @@ export function createThreeSceneRenderer(opts?: {
           // 无链 → 早退（effectChains 只在链非空时入表）。
           if (!chains || chains.length === 0) continue;
           if (obj.kind === 'image') {
+            // puppet 对象走直渲网格：隔离/效果链不支持，且不得留幽灵条目挤占其它对象的 RT 预算 ⇒ fail-loud。
+            if (isPuppetRendered(obj)) {
+              warnOnce(`puppet-isolate:${id}:${obj.id}`,
+                `puppet 对象不支持对象级效果链，已按直渲处理（id=${obj.id}）`);
+              continue;
+            }
             // 准入条件与上面的 isAdmittedImage 同一份（该谓词已含 effectChains 非空）。
             if (!isAdmittedImage(obj)) continue;
             // 尺寸取自上面的 isolateItems 段（同条件、同口径）；此处只做键空间转换。
@@ -823,7 +835,7 @@ export function createThreeSceneRenderer(opts?: {
               if (!spec) { warnOnce(`mesh-mat:${id}:${p}`, `动态网格材质解析失败：${p}`); continue; }
               let tex: Texture | null = null;
               if (spec.texturePath) {
-                // 纹理走与 resolveImageTexture **同源**的路径推导 + 路由 URL（用 Blob URL 会绕开
+                // 纹理走与 resolveImageAssets **同源**的路径推导 + 路由 URL（用 Blob URL 会绕开
                 // loadTexTexture 依赖的 `/wallpapers/...` 路由与 .tex 解码链路）。
                 const texPath = resolveTexPath(p, spec.texturePath);
                 tex = await loadTexTexture(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(texPath)}`);
@@ -859,6 +871,8 @@ export function createThreeSceneRenderer(opts?: {
         for (const [objId, chains] of effectChains) {
           // 没有隔离条目 = 对象不参与渲染（util 层 / 缺粒子资源），并入本条汇总告警。
           if (isolate.has(objId)) continue;
+          // puppet 对象**参与渲染**（只是不套效果链），已由上面那条专属告警说明 ⇒ 不并入「未参与渲染」汇总。
+          if (puppetMeshes.has(objId)) continue;
           droppedEffects += chains.length;
         }
         if (droppedEffects > 0) {
@@ -919,16 +933,15 @@ export function createThreeSceneRenderer(opts?: {
         if (abortIfContextLost()) return false;
         // 观测：确认走的是 three 路径（浏览器回归探测用）。
         console.log(
-          `[three] scene loaded id=${id} background=${result.backgroundIds.length} particleLayers=${result.particleLayers.length} puppetLayers=${result.puppetLayers?.length ?? 0}`,
+          `[three] scene loaded id=${id} background=${result.backgroundIds.length} particleLayers=${result.particleLayers.length} puppetLayers=${result.puppetLayers.length}`,
         );
         // 零背景 + 零粒子 + 零 puppet → 无内容，返回 false 由 controller 走 preview 兜底（不显示空 canvas）。
-        // puppetLayers 缺省（旧调用方/测试桩）按 0 计。
         if (
           result.backgroundIds.length === 0
           && result.particleLayers.length === 0
-          && (result.puppetLayers?.length ?? 0) === 0
+          && result.puppetLayers.length === 0
         ) {
-          fail(id, 'no-visible-objects', 'background=0 particleLayers=0');
+          fail(id, 'no-visible-objects', 'background=0 particleLayers=0 puppetLayers=0');
           teardownQuietly();
           return false;
         }

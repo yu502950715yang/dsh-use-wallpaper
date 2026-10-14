@@ -63,18 +63,18 @@ export function resolveTexPath(matRef: string, texName: string): string {
     : matRef.slice(0, matRef.lastIndexOf('/') + 1) + texName + '.tex';
 }
 
-// 图片对象资源：obj.image → models/xxx.json → { material, puppet } 一次拉取，再各取一条链：
-// material → passes[0].textures[0] → .tex；puppet → `.mdl` 相对路径（本函数**不**下字节，交给调用方按需拉）。
-// 任一步失败按 null 返回（调用方走白图兜底，不阻断渲染）。
+// 图片对象资源：obj.image → models/xxx.json → { material, puppet } 一次拉取，再各取两条链（material → tex、
+// puppet → `.mdl` 路径，本函数不下字节）。任一步失败按 null 返回（白图兜底），但**纹理失败不丢已解析的 puppetPath**。
 export async function resolveImageAssets(
   id: string,
   obj: SceneImageObject,
 ): Promise<{ texture: THREE.Texture | null; puppetPath: string | null }> {
+  let puppetPath: string | null = null;
   try {
     const modelResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(obj.image)}`);
     if (!modelResp.ok) return { texture: null, puppetPath: null };
     const model = await modelResp.json();
-    const puppetPath = typeof model?.puppet === 'string' && model.puppet ? String(model.puppet) : null;
+    puppetPath = typeof model?.puppet === 'string' && model.puppet ? String(model.puppet) : null;
     const matRef: unknown = model?.material;
     if (typeof matRef !== 'string' || !matRef) return { texture: null, puppetPath };
     const matResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(matRef)}`);
@@ -85,7 +85,7 @@ export async function resolveImageAssets(
     const url = `/wallpapers/scene/${id}/asset?name=${encodeURIComponent(resolveTexPath(matRef, texName))}`;
     return { texture: await loadTexTexture(url), puppetPath };
   } catch {
-    return { texture: null, puppetPath: null };
+    return { texture: null, puppetPath };
   }
 }
 

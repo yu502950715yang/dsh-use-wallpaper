@@ -180,6 +180,8 @@ export declare class ThreeScenePlayer {
         sceneW: number;
         sceneH: number;
         renderOrder?: number;
+        alpha?: number;
+        brightness?: number;
         parallaxDepth?: [number, number];
     }): number;
     private createLayerMaterial;

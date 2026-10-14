@@ -177,6 +177,18 @@ describe('puppet → three 网格/蒙皮', () => {
     expect([...uv.array]).toEqual([0, 1, 0, 1, 0, 1]);
   });
 
+  // uv 翻转是就地改写：不拷贝入参的话，同一个 MdlPuppet 二次建网格会被翻回去（T8 复用同一实例时会踩）。
+  it('不改写入参：同一 MdlPuppet 二次建网格得到同一份 uv', () => {
+    const puppet = makePuppet();
+    const before = [...puppet.mesh.uvs];
+    const first = createPuppetMesh(puppet, material());
+    const uvFirst = [...(first.mesh.geometry.getAttribute('uv').array as Float32Array)];
+    expect([...puppet.mesh.uvs]).toEqual(before); // 入参未被改写
+    const second = createPuppetMesh(puppet, material());
+    const uvSecond = [...(second.mesh.geometry.getAttribute('uv').array as Float32Array)];
+    expect(uvSecond).toEqual(uvFirst);            // 二次建网格不二次翻转
+  });
+
   it('多根骨骼（父索引全 -1）全部挂进 mesh，否则游离骨的 matrixWorld 不更新', () => {
     const p = createPuppetMesh(makePuppet({
       bones: [

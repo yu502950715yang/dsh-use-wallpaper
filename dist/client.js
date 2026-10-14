@@ -24043,6 +24043,7 @@ var ThreeScenePlayer = class {
       try {
         layer.instance.applyFrame(anim, layer.elapsed * fps % frames);
       } catch (e) {
+        layer.instance.dispose();
         this.puppetLayers.delete(id);
         console.warn("[three] puppet \u52A8\u753B\u91C7\u6837\u5931\u8D25\uFF08\u5DF2\u4E22\u5F03\u8BE5\u56FE\u5C42\u52A8\u753B\uFF09:", e instanceof Error ? e.message : String(e));
       }
@@ -24427,6 +24428,10 @@ var ThreeScenePlayer = class {
   addPuppet(opts) {
     const { mesh } = opts.puppet;
     mesh.renderOrder = opts.renderOrder ?? 0;
+    const mod = materialModulation(void 0, opts.alpha, opts.brightness);
+    const mat = mesh.material;
+    mat.color.setRGB(mod.r, mod.g, mod.b);
+    mat.opacity = mod.a;
     const s = opts.scale;
     mesh.scale.set(s[0], s[1], s[2] ?? 1);
     mesh.rotation.set(opts.angles[0], opts.angles[1], opts.angles[2]);
@@ -24439,8 +24444,8 @@ var ThreeScenePlayer = class {
       size: [0, 0],
       scale: [s[0], s[1], s[2] ?? 1],
       angles: [opts.angles[0], opts.angles[1], opts.angles[2]],
-      alpha: 1,
-      brightness: 1,
+      alpha: mod.a,
+      brightness: opts.brightness ?? 1,
       sceneW: opts.sceneW,
       sceneH: opts.sceneH,
       parallaxNode: mesh,
@@ -24620,6 +24625,7 @@ var ThreeScenePlayer = class {
   resizeBackground(id, size) {
     const entry = this.backgroundEntries.get(id);
     if (!entry) return;
+    if (this.puppetLayers.has(id)) return;
     const [w, h] = size;
     if (w === entry.size[0] && h === entry.size[1]) return;
     entry.size = [w, h];
@@ -24969,6 +24975,9 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
           sceneW,
           sceneH,
           renderOrder,
+          // 对象级调制（alpha/brightness）：与背景 quad 同一份 scene.json 字段，同一套 materialModulation。
+          alpha: obj.alpha,
+          brightness: obj.brightness,
           parallaxDepth: obj.parallaxDepth
         });
         backgroundIds.push(id2);
@@ -25591,11 +25600,12 @@ function resolveTexPath(matRef, texName) {
   return texName.includes("/") ? "materials/" + texName + ".tex" : matRef.slice(0, matRef.lastIndexOf("/") + 1) + texName + ".tex";
 }
 async function resolveImageAssets(id, obj) {
+  let puppetPath = null;
   try {
     const modelResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(obj.image)}`);
     if (!modelResp.ok) return { texture: null, puppetPath: null };
     const model = await modelResp.json();
-    const puppetPath = typeof model?.puppet === "string" && model.puppet ? String(model.puppet) : null;
+    puppetPath = typeof model?.puppet === "string" && model.puppet ? String(model.puppet) : null;
     const matRef = model?.material;
     if (typeof matRef !== "string" || !matRef) return { texture: null, puppetPath };
     const matResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(matRef)}`);
@@ -25606,7 +25616,7 @@ async function resolveImageAssets(id, obj) {
     const url = `/wallpapers/scene/${id}/asset?name=${encodeURIComponent(resolveTexPath(matRef, texName))}`;
     return { texture: await loadTexTexture(url), puppetPath };
   } catch {
-    return { texture: null, puppetPath: null };
+    return { texture: null, puppetPath };
   }
 }
 async function fetchMdlBytes(id, path) {
@@ -25969,10 +25979,13 @@ function parseAnimations(buf, dv, boneCount, idToIndex) {
 }
 function remapBlendIndices(mesh, idToIndex) {
   const src = mesh.blendIndices;
+  const weights = mesh.blendWeights;
   if (!idToIndex || !src) return;
   for (let i = 0; i < src.length; i++) {
+    if (weights && weights[i] === 0) continue;
     const mapped = idToIndex.get(src[i]);
     if (mapped === void 0) {
+      console.warn(`[mdl] \u9876\u70B9\u8499\u76AE\u69FD\u5F15\u7528\u4E86\u9AA8\u8868\u91CC\u6CA1\u6709\u7684\u9AA8\u9ABC\u6587\u4EF6 id=${src[i]} \u21D2 \u6574\u4EFD\u8499\u76AE\u9000\u5316\u4E3A\u9759\u6001\u7F51\u683C`);
       mesh.blendIndices = null;
       mesh.blendWeights = null;
       return;
@@ -26031,7 +26044,7 @@ function createPuppetMesh(puppet, material) {
   const vertexCount = data.vertexCount > 0 ? data.vertexCount : Math.floor(data.positions.length / 3);
   const geometry = new BufferGeometry();
   geometry.setAttribute("position", new BufferAttribute(data.positions, 3));
-  const uvs = data.uvs.length === vertexCount * 2 ? data.uvs : new Float32Array(vertexCount * 2);
+  const uvs = data.uvs.length === vertexCount * 2 ? new Float32Array(data.uvs) : new Float32Array(vertexCount * 2);
   geometry.setAttribute("uv", new BufferAttribute(uvs, 2));
   flipGeometryUvY(geometry);
   const skinned = Boolean(data.blendIndices && data.blendWeights);
@@ -30858,7 +30871,9 @@ function createThreeSceneRenderer(opts) {
         );
         const screenScale = screenScalePx(desc.orthogonal.width, desc.orthogonal.height, vw, vh, dpr);
         const isAdmittedImage = (o) => o.kind === "image" && !isStaticallyHidden(o.visible, userProps) && (effectChains.get(o.id)?.length ?? 0) > 0;
-        const isolateItems = desc.objects.filter(isAdmittedImage).map((o) => {
+        const isPuppetRendered = (o) => o.kind === "image" && puppetMeshes.has(o.id);
+        const isIsolatedImage = (o) => isAdmittedImage(o) && !isPuppetRendered(o);
+        const isolateItems = desc.objects.filter(isIsolatedImage).map((o) => {
           const tex = backgroundTextures.get(o.id);
           const s = o.scale;
           const w = (o.size?.[0] ?? tex?.image?.width ?? 1) * s[0];
@@ -30883,6 +30898,13 @@ function createThreeSceneRenderer(opts) {
           const chains = effectChains.get(obj.id);
           if (!chains || chains.length === 0) continue;
           if (obj.kind === "image") {
+            if (isPuppetRendered(obj)) {
+              warnOnce2(
+                `puppet-isolate:${id}:${obj.id}`,
+                `puppet \u5BF9\u8C61\u4E0D\u652F\u6301\u5BF9\u8C61\u7EA7\u6548\u679C\u94FE\uFF0C\u5DF2\u6309\u76F4\u6E32\u5904\u7406\uFF08id=${obj.id}\uFF09`
+              );
+              continue;
+            }
             if (!isAdmittedImage(obj)) continue;
             const sized = isolatedSizes.get(obj.id);
             if (!sized) continue;
@@ -31017,6 +31039,7 @@ function createThreeSceneRenderer(opts) {
         let droppedEffects = 0;
         for (const [objId, chains] of effectChains) {
           if (isolate.has(objId)) continue;
+          if (puppetMeshes.has(objId)) continue;
           droppedEffects += chains.length;
         }
         if (droppedEffects > 0) {
@@ -31061,10 +31084,10 @@ function createThreeSceneRenderer(opts) {
         window.addEventListener("resize", onWindowResize);
         if (abortIfContextLost()) return false;
         console.log(
-          `[three] scene loaded id=${id} background=${result.backgroundIds.length} particleLayers=${result.particleLayers.length} puppetLayers=${result.puppetLayers?.length ?? 0}`
+          `[three] scene loaded id=${id} background=${result.backgroundIds.length} particleLayers=${result.particleLayers.length} puppetLayers=${result.puppetLayers.length}`
         );
-        if (result.backgroundIds.length === 0 && result.particleLayers.length === 0 && (result.puppetLayers?.length ?? 0) === 0) {
-          fail(id, "no-visible-objects", "background=0 particleLayers=0");
+        if (result.backgroundIds.length === 0 && result.particleLayers.length === 0 && result.puppetLayers.length === 0) {
+          fail(id, "no-visible-objects", "background=0 particleLayers=0 puppetLayers=0");
           teardownQuietly();
           return false;
         }

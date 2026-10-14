@@ -3596,6 +3596,27 @@ describe('puppet 图层（addPuppet / image 分支 / 逐帧动画）', () => {
     expect(player.backgroundMeshForTest(id)).toBe(stub.mesh);
   });
 
+  it('addPuppet 透传对象级 alpha/brightness（与背景同源 materialModulation）；缺省 1/1 逐像素不变', () => {
+    const { player } = makePlayer(1920, 1080);
+    const dim = makePuppetStub();
+    const plain = makePuppetStub();
+    player.addPuppet({
+      objectId: 1, puppet: dim, origin: [960, 540, 0], scale: [1, 1, 1], angles: [0, 0, 0],
+      sceneW: 1920, sceneH: 1080, alpha: 0.5, brightness: 0.5,
+    });
+    player.addPuppet({
+      objectId: 2, puppet: plain, origin: [960, 540, 0], scale: [1, 1, 1], angles: [0, 0, 0],
+      sceneW: 1920, sceneH: 1080,
+    });
+    const dm = dim.mesh.material as THREE.MeshBasicMaterial;
+    expect(dm.opacity).toBeCloseTo(0.5, 6);           // alpha → material.opacity
+    expect(dm.color.r).toBeCloseTo(0.5, 6);           // brightness 乘入 color（白 × 0.5）
+    expect([dm.color.g, dm.color.b]).toEqual([0.5, 0.5]);
+    const pm = plain.mesh.material as THREE.MeshBasicMaterial;
+    expect(pm.opacity).toBe(1);                       // 缺省 1/1 → 与改动前逐像素一致
+    expect(pm.color.toArray()).toEqual([1, 1, 1]);
+  });
+
   it('addPuppet 带 parallaxDepth ⇒ 与背景同一套视差位移；depth 缺失 ⇒ 不动', () => {
     const { player } = makePlayer(1920, 1080);
     const moved = makePuppetStub();
@@ -3679,6 +3700,42 @@ describe('puppet 图层（addPuppet / image 分支 / 逐帧动画）', () => {
     expect((result.player.scene.children[0] as THREE.Mesh).geometry.type).toBe('PlaneGeometry');
   });
 
+  it('loadSceneToThree：puppet 对象的 scene.json alpha/brightness 透传到网格材质', () => {
+    const scene = JSON.stringify({
+      camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+      general: { orthogonalprojection: { width: 1920, height: 1080 } },
+      objects: [{
+        id: 16, name: 'puppet', image: 'models/p.json', origin: '1000 600 0', scale: '2 2 1',
+        size: '100 100', alpha: 0.25, brightness: 0.5,
+      }],
+    });
+    const stub = makePuppetStub();
+    const result = loadSceneToThree(
+      scene,
+      { renderer: createMockRenderer() as unknown as THREE.WebGLRenderer, puppetMeshes: new Map([[16, stub]]) },
+      document.createElement('canvas'),
+    );
+    const mat = stub.mesh.material as THREE.MeshBasicMaterial;
+    expect(mat.opacity).toBeCloseTo(0.25, 6);
+    expect(mat.color.r).toBeCloseTo(0.5, 6);
+    expect(result.puppetLayers).toHaveLength(1);
+  });
+
+  it('resizeBackground 对 puppet 图层早退：不换成 PlaneGeometry、不 dispose 蒙皮几何', () => {
+    const { player } = makePlayer(1920, 1080);
+    const stub = makePuppetStub();
+    const geometry = stub.mesh.geometry;
+    const disposeSpy = vi.spyOn(geometry, 'dispose');
+    const id = player.addPuppet({
+      objectId: 1, puppet: stub, origin: [960, 540, 0], scale: [1, 1, 1], angles: [0, 0, 0],
+      sceneW: 1920, sceneH: 1080,
+    });
+    player.resizeBackground(id, [200, 100]);
+    expect(stub.mesh.geometry).toBe(geometry);
+    expect(geometry.type).toBe('BufferGeometry');
+    expect(disposeSpy).not.toHaveBeenCalled();
+  });
+
   it('单个 puppet 的采样抛错 ⇒ 只丢弃该图层的动画，不中断帧循环/不连累其它图层', () => {
     const { player } = makePlayer(1920, 1080);
     const broken = makePuppetStub([anim]);
@@ -3704,6 +3761,9 @@ describe('puppet 图层（addPuppet / image 分支 / 逐帧动画）', () => {
     expect(calls).toBe(1);
     expect(healthy.frames).toHaveLength(2);
     expect(healthy.frames[1]).toBeCloseTo(2, 6);
+    // 摘掉即释放：这是该实例唯一的释放机会（player.dispose 只遍历仍在表里的图层）。
+    expect(broken.disposed).toBe(1);
+    expect(healthy.disposed).toBe(0);
     warn.mockRestore();
     player.dispose();
   });

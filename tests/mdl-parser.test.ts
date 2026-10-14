@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { MDL_VERTEX_STRIDE, parseMdl } from '../src/client/mdl-parser.js';
 
 // ── 夹具：在测试里构造最小合法 MDLV0021 + MDLS0004 + MDLA0006 ──────────────────
@@ -10,6 +10,8 @@ function buildMdlFixture(opts: {
   boneTx?: [number, number];
   /** 每顶点绑的**文件 id**（默认 = 顶点序号，与原夹具逐字一致） */
   vertexBoneIds?: [number, number, number];
+  /** 逐顶点的 4 个槽位 id（缺省 = 4 槽同 vertexBoneIds；权重恒为 slot0=1、其余 0） */
+  vertexSlots?: Array<[number, number, number, number]>;
   /** 轨的**文件 id** */
   trackBoneId?: number;
 } = {}): Uint8Array {
@@ -18,11 +20,14 @@ function buildMdlFixture(opts: {
   const boneTx = opts.boneTx ?? [0, 5];
   const vertexBoneIds = opts.vertexBoneIds ?? [0, 1, 2];
   const trackBoneId = opts.trackBoneId ?? 1;
+  const slotsOf = (i: number): [number, number, number, number] =>
+    opts.vertexSlots?.[i] ?? [vertexBoneIds[i], vertexBoneIds[i], vertexBoneIds[i], vertexBoneIds[i]];
   const vertices = new DataView(new ArrayBuffer(MDL_VERTEX_STRIDE * 3));
   for (let i = 0; i < 3; i++) {
     const o = i * MDL_VERTEX_STRIDE;
     vertices.setFloat32(o, i, true); vertices.setFloat32(o + 4, i * 2, true); vertices.setFloat32(o + 8, 0, true);
-    for (let k = 0; k < 4; k++) vertices.setUint32(o + 40 + k * 4, vertexBoneIds[i], true); // boneIdx：各顶点绑文件 id
+    const slots = slotsOf(i);
+    for (let k = 0; k < 4; k++) vertices.setUint32(o + 40 + k * 4, slots[k], true); // boneIdx：各顶点绑文件 id
     vertices.setFloat32(o + 56, 1, true);                                            // weights[0] = 1
     vertices.setFloat32(o + 72, i / 2, true); vertices.setFloat32(o + 76, 0.5, true); // uv
   }
@@ -371,6 +376,32 @@ describe('mdl-parser · 重排路径下 blendIndices 与 bones[] 同口径', () 
     expect(r.puppet.mesh.blendWeights).toBeNull();
     expect(r.puppet.mesh.vertexCount).toBe(3);
     expect(r.puppet.bones.map((b) => b.bind[12])).toEqual([5, 9]);
+  });
+
+  // 真机 .mdl 的未用槽（权重 0）常是 0/垃圾值：只按「有权重的槽」判未知 id，否则整份蒙皮被静默丢弃。
+  it('零权重槽是骨表里没有的垃圾 id ⇒ 蒙皮仍成立（只判有权重的槽），不告警', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = parseMdl(buildMdlFixture({
+      ...REORDERED,
+      vertexSlots: [[9, 0, 0, 0], [5, 12345, 0, 0], [5, 0, 12345, 0]],
+    }));
+    if (!r.ok) throw new Error(r.error);
+    expect(r.puppet.mesh.blendIndices).not.toBeNull();
+    // 有权重的槽（slot 0）照旧重映射：文件 id 9 → 下标 1、5 → 下标 0
+    expect([...r.puppet.mesh.blendIndices!.filter((_, i) => i % 4 === 0)]).toEqual([1, 0, 0]);
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('退化为静态网格'))).toBe(false);
+    warn.mockRestore();
+  });
+
+  it('有权重的槽映射不到 ⇒ 退化静态网格并告警**一次**（告警里点出是哪个文件 id）', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = parseMdl(buildMdlFixture({ ...REORDERED, vertexSlots: [[9, 0, 0, 0], [5, 0, 0, 0], [7, 7, 7, 7]] }));
+    if (!r.ok) throw new Error(r.error);
+    expect(r.puppet.mesh.blendIndices).toBeNull();
+    const degraded = warn.mock.calls.filter((c) => String(c[0]).includes('退化为静态网格'));
+    expect(degraded).toHaveLength(1);
+    expect(String(degraded[0][0])).toContain('7');
+    warn.mockRestore();
   });
 
   it('回归护栏：文件 id 就是下标（identity）时不碰 blendIndices（原样带出）', () => {

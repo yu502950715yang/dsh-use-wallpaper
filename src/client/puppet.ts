@@ -1,6 +1,5 @@
-// MdlPuppet → three：骨骼层级 + 蒙皮网格 + 关键帧采样。
-// 蒙皮矩阵交给 three：bind() 时按**绑定姿态**算 boneInverses，逐帧 = 世界(动画) · 世界(绑定)⁻¹，正合 WE 语义。
-// 材质必须是 three 内建材质（只有内建材质会自动注入蒙皮 shader 代码）。
+// MdlPuppet → three：骨骼层级 + 蒙皮网格 + 关键帧采样。蒙皮矩阵交给 three：bind() 时按**绑定姿态**算
+// boneInverses，逐帧 = 世界(动画) · 世界(绑定)⁻¹（正合 WE 语义）；材质必须是内建材质才会注入蒙皮 shader。
 import * as THREE from 'three';
 import type { MdlAnimation, MdlPuppet } from './mdl-parser.js';
 // v 约定翻转的唯一实现（WE 的 UV 是 v=0=图像顶部，见 AGENT.md §7.20，不另写一份公式）。
@@ -37,8 +36,9 @@ export function createPuppetMesh(puppet: MdlPuppet, material: THREE.Material): P
   const vertexCount = data.vertexCount > 0 ? data.vertexCount : Math.floor(data.positions.length / 3);
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.BufferAttribute(data.positions, 3));
-  // uv 缺失/长度不符（畸形 puppet）⇒ 补零：否则材质拿到的 uv 属性越界读，纹理采样结果未定义。
-  const uvs = data.uvs.length === vertexCount * 2 ? data.uvs : new Float32Array(vertexCount * 2);
+  // uv 缺失/长度不符（畸形 puppet）⇒ 补零；长度符合则**拷贝** —— 下面的翻 v 是就地改写，
+  // 直接塞入参会把同一个 MdlPuppet 二次建网格时翻回去（T8 复用同一实例）。
+  const uvs = data.uvs.length === vertexCount * 2 ? new Float32Array(data.uvs) : new Float32Array(vertexCount * 2);
   geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
   // MDL 的 UV 是 WE 约定（v=0=图像顶部），而 `.tex` 按显示约定（行序已翻）加载 ⇒ 翻 v 才是正立画面。
   flipGeometryUvY(geometry);
