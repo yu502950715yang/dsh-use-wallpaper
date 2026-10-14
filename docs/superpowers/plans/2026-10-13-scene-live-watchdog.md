@@ -552,22 +552,21 @@ scene.json 拉取（`:370-372`）改为**单独 try/catch**，把「网络中断
   }
 ```
 
-**上下文丢失的记录点在 `onContextLost`（`:266-279`）**，因为「装配完成后、帧循环已经跑起来才丢上下文」是生产上最常见的路径（浏览器回收 / GPU 复位），而那条路径不会经过任何 `abortIfContextLost()` 调用点：
+**上下文丢失的记录点在 `onContextLost`（`:292-305`，原文见下）**，因为「装配完成后、帧循环已经跑起来才丢上下文」是生产上最常见的路径（浏览器回收 / GPU 复位），而那条路径不会经过任何 `abortIfContextLost()` 调用点。只需在既有函数体里插一行 `fail(...)`（`fail`/`publish` 定义在 `:257-270`，在本函数之前 ⇒ 无 TDZ 问题；`currentHealthId` 与 `contextLostId` 同源于本次 render）：
 
 ```ts
-  function onContextLost() {
+  const onContextLost = (e: Event) => {
+    e.preventDefault();
     contextLost = true;
-    // 硬失败：这张壁纸在本实例里已经渲染不出来，重新挂载才有意义。
-    // 记在这里（而不是 abortIfContextLost）⇒ 事件驱动、每次丢失恰好一条，覆盖装配期与运行期两条路径。
+    const id = contextLostId;                  // teardown 可能清掉它 ⇒ 先取（既有代码顺序，勿调换）
+    // 硬失败：记在事件侧 ⇒ 覆盖「装配期丢失」与「运行期丢失」两条路径，且每次丢失恰好一条。
     fail('context-lost', 'webglcontextlost');
-    teardown();
-    const id = contextLostId;
-    contextLostId = '';
-    if (id && contextLostHandler) contextLostHandler(id);
-  }
+    try { teardown(); } catch { /* 释放失败不得掩盖回退 */ }
+    …（以下既有告警与 contextLostHandler?.(id) 原样保留）
+  };
 ```
 
-（`{once: true}` 的监听 + `render()` 开头复位 `contextLost` ⇒ 同一次丢失只会触发一次；重新装配是新 canvas + 新监听，属新的一次丢失。）
+（`{once: true}` 的监听 + `render()` 开头复位 `contextLost` ⇒ 同一次丢失只会触发一次；重新装配是新 canvas + 新监听，属新的一次丢失。无 id 的全静默场景由 Task 1 的空 id 守卫兜住，`fail` 成为 no-op。）
 
 零可见对象出口（`:806-810`）改为：
 
