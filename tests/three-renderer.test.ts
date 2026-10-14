@@ -2397,6 +2397,30 @@ describe('scene 渲染看护：失败分类与打点', () => {
     r.dispose();
   });
 
+  it('首帧明显晚于装配 ⇒ assembleMs 不被首帧时刻抬高（首帧回填只补 firstFrameMs）', async () => {
+    const store = createRenderHealthStore({ storage: null });
+    let onFrame: ((dt: number) => void) | null = null;
+    resolveImageTexture.mockResolvedValue(fakeTexture() as never);
+    defaultLoadWasm.mockResolvedValue(null);
+    loadSceneToThree.mockImplementation((_json: unknown, assets: { onFrame?: (dt: number) => void }) => {
+      onFrame = assets.onFrame ?? null;
+      return okPlayer();
+    });
+    const r = createThreeSceneRenderer({ healthStore: store });
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, text: async () => SCENE_ONE_IMAGE })));
+    expect(await r.render('wid-late', document.createElement('canvas'))).toBe(true);
+    const assembled = store.snapshot('wid-late').timing?.assembleMs;
+    expect(assembled).toBeGreaterThanOrEqual(0);
+
+    await new Promise((res) => setTimeout(res, 25)); // 首帧确实晚于装配
+    onFrame?.(0.016);
+    const after = store.snapshot('wid-late').timing;
+    expect(after?.firstFrameMs).toBeGreaterThan((assembled ?? 0) + 20); // 首帧耗时刻意远晚于装配
+    // 回归点：旧实现把 firstFrameAt 当装配耗时写回（这里会写成 ≳25 的值），夸大装配
+    expect(after?.assembleMs).toBe(assembled);
+    r.dispose();
+  });
+
   it('零可见对象 → 硬失败 no-visible-objects，且不得同时记成功（判定在 succeed 之前）', async () => {
     const store = createRenderHealthStore({ storage: null });
     resolveImageTexture.mockResolvedValue(null);

@@ -391,6 +391,9 @@ export function createThreeSceneRenderer(opts?: {
       currentHealthId = id;
       renderStartedAt = performance.now();
       firstFrameAt = -1;
+      // 装配耗时（本次 render 作用域）：装配出口记一次，首帧回填沿用它 —— 否则首帧慢时
+      // 「首帧时刻 − 起始」会被当成装配耗时写回，面板显示装配 ≈ 首帧，夸大装配。
+      let assembledMs = -1;
       try {
         // 替换/切壁纸前先释放上次播放器资源（首次渲染 no-op）。
         teardown();
@@ -715,7 +718,9 @@ export function createThreeSceneRenderer(opts?: {
         assets.onFrame = (dt: number) => {
           if (firstFrameAt < 0) {
             firstFrameAt = performance.now() - renderStartedAt;
-            succeed(id, firstFrameAt);
+            // 只补 firstFrameMs：沿用装配出口记下的耗时；装配还没到出口（-1）时先用首帧时刻占位，
+            // 随后的出口会用真实装配耗时纠正它。
+            succeed(id, assembledMs >= 0 ? assembledMs : firstFrameAt);
           }
           userOnFrame?.(dt);
         };
@@ -868,7 +873,8 @@ export function createThreeSceneRenderer(opts?: {
           return false;
         }
         // 打点必须在零可见对象判定**之后**：空场景不是成功。
-        succeed(id, performance.now() - renderStartedAt);
+        assembledMs = performance.now() - renderStartedAt;
+        succeed(id, assembledMs);
         return true;
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);

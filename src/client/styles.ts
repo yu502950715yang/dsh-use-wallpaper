@@ -195,9 +195,9 @@ body[data-ds-dark-theme][data-we-wallpaper] [data-question-key] section{
 .wss-row input[type=color]{width:44px;height:26px;order:2;flex:none;padding:0;border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));border-radius:6px;background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));cursor:pointer}
 .wss-textcolor{display:flex;flex-direction:column;gap:10px;margin-top:8px}
 /* 按钮：统一基础样式 + hover / focus-visible */
-.wss-cancel,.wss-save-dirs,.wss-probe,.wss-adopt,.wss-refresh{border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;padding:6px 12px;font:inherit;font-size:12px;cursor:pointer;transition:filter .15s ease,background-color .15s ease}
-.wss-cancel:hover,.wss-save-dirs:hover,.wss-probe:hover,.wss-adopt:hover,.wss-refresh:hover{filter:brightness(1.08)}
-.wss-cancel:focus-visible,.wss-save-dirs:focus-visible,.wss-probe:focus-visible,.wss-adopt:focus-visible,.wss-refresh:focus-visible{outline:2px solid var(--wp-accent);outline-offset:2px}
+.wss-cancel,.wss-save-dirs,.wss-probe,.wss-adopt,.wss-refresh,.wss-live-retry,.wss-live-forget{border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;padding:6px 12px;font:inherit;font-size:12px;cursor:pointer;transition:filter .15s ease,background-color .15s ease}
+.wss-cancel:hover,.wss-save-dirs:hover,.wss-probe:hover,.wss-adopt:hover,.wss-refresh:hover,.wss-live-retry:hover,.wss-live-forget:hover{filter:brightness(1.08)}
+.wss-cancel:focus-visible,.wss-save-dirs:focus-visible,.wss-probe:focus-visible,.wss-adopt:focus-visible,.wss-refresh:focus-visible,.wss-live-retry:focus-visible,.wss-live-forget:focus-visible{outline:2px solid var(--wp-accent);outline-offset:2px}
 /* 主操作按钮（刷新 / 保存路径）：实心底，白字（用更深 accent 保对比度） */
 .wss-refresh,.wss-save-dirs{background:var(--wp-accent-strong,#2563eb);border-color:var(--wp-accent-strong,#2563eb);color:#fff}
 /* 目录字段与探测结果 */
@@ -213,7 +213,11 @@ body[data-ds-dark-theme][data-we-wallpaper] [data-question-key] section{
 .wss-exists{color:var(--dsw-alias-state-success-primary,#4caf50);font-size:11px;white-space:nowrap}
 .wss-missing{color:var(--dsw-alias-label-tertiary,var(--wp-text));font-size:11px;white-space:nowrap}
 .wss-message{margin:0;font-size:12px;color:var(--dsw-alias-label-secondary,var(--wp-text))}
-@media (prefers-reduced-motion:reduce){.wss-thumb,.wss-cancel,.wss-save-dirs,.wss-probe,.wss-adopt,.wss-refresh{transition:none}.wss-thumb:hover{transform:none}}
+/* 实时渲染状态行：主行讲现状、次级行讲失败记忆（两者可并存）；失败文案与记忆行用提示色。 */
+.wss-live-status{display:flex;flex-direction:column;gap:2px;margin-bottom:8px}
+.wss-live-status .wss-live-current,.wss-live-status .wss-live-memory{margin:0}
+.wss-live-status[data-state="failed"] .wss-live-current,.wss-live-status .wss-live-memory{color:var(--dsw-alias-state-error-primary,var(--wp-accent-strong))}
+@media (prefers-reduced-motion:reduce){.wss-thumb,.wss-cancel,.wss-save-dirs,.wss-probe,.wss-adopt,.wss-refresh,.wss-live-retry,.wss-live-forget{transition:none}.wss-thumb:hover{transform:none}}
 
 /* ── 文字颜色跟随壁纸亮度（2026-09-03 定稿） ──
    不遮背景、不改壁纸可见度；只让消息列（[class*="flowItem"] 内主要文本）的

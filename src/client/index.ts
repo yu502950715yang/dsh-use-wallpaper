@@ -2,7 +2,7 @@ import { injectWallpaperStyles } from './styles.js';
 import { createBackgroundLayer } from './background-layer.js';
 import { createWallpaperController } from './wallpaper-controller.js';
 import { createThreeSceneRenderer } from './three-renderer.js';
-import { WallpaperSettingsSection, setWallpaperSelectHandler, setWallpaperRuntimeHandler } from './settings-section.js';
+import { WallpaperSettingsSection, setWallpaperSelectHandler, setWallpaperRuntimeHandler, setWallpaperHealthHandler, notifyWallpaperHealth } from './settings-section.js';
 import { readClientSettings, writeClientSettings, getUserPropertyValue, DEFAULTS, setSettingsCtx } from './settings.js';
 import { createRenderHealthStore } from './render-health.js';
 import type { BackgroundPlan, ClientSettings } from './types.js';
@@ -49,7 +49,14 @@ export function bootstrap(ctx?: any): void {
   // 软失败冷却后自动重试一次（同一壁纸、每会话一次）；硬失败不自动重试。
   // 定时器按壁纸一份：共享一个的话，后一张壁纸的软失败会被前一张的定时器吞掉，没人给它排重试。
   const autoRetryTimers = new Map<string, number>();
+  // 面板读到的是「当前选中壁纸」的状态：选中项与快照壁纸不一致（非 scene 壁纸、还没渲染过）时
+  // 必须为空，否则会把上一张 scene 的结论串到面板上。
+  const panelHealth = (): HealthSnapshot | null => {
+    const snap = sceneRenderer.getLastHealth?.() ?? null;
+    return snap && snap.wallpaperId === settings.selectedWallpaperId ? snap : null;
+  };
   const onHealth = (snap: HealthSnapshot) => {
+    notifyWallpaperHealth(snap); // 先推面板：硬失败也要看到（下面的冷却重试只针对软失败）
     // 只对软失败排重试：硬失败有证据表明这张壁纸渲染不出来，重试只会重复失败。
     if (!snap.wallpaperId || !snap.failure || snap.failure.hard) return;
     const id = snap.wallpaperId;
@@ -91,7 +98,10 @@ export function bootstrap(ctx?: any): void {
   };
   const selectWallpaper = (id: string) => {
     settings = { ...settings, selectedWallpaperId: id };
-    void controller!.select(id).then(() => applySettingsToLayer(settings));
+    void controller!.select(id).then(() => {
+      applySettingsToLayer(settings);
+      notifyWallpaperHealth(panelHealth()); // 选中后补推一次：切壁纸即刷新状态行（不必等下一次健康事件）
+    });
     void writeClientSettings({ selectedWallpaperId: id });
   };
   // 本实例收尾：停 scene 渲染器（WebGL/wasm/音频）→ 清空并摘掉背景层 → 注销监听。
@@ -103,6 +113,7 @@ export function bootstrap(ctx?: any): void {
     for (const t of autoRetryTimers.values()) clearTimeout(t);
     autoRetryTimers.clear();
     sceneRenderer.setOnHealth?.(null);
+    notifyWallpaperHealth(null); // 收尾后状态行不得再显示已释放渲染器的旧状态（面板可能还开着）
     const root = layer?.root ?? null;
     try { controller?.select(''); } catch { /* 收尾失败也必须摘层，否则又变成盖住新实例的残留层 */ }
     layer = null;
@@ -157,6 +168,12 @@ export function bootstrap(ctx?: any): void {
     setWallpaperRuntimeHandler((patch) => {
       settings = { ...settings, ...patch };
       applyRuntimeSettings(settings);
+    });
+    // 设置面板「实时渲染」卡片：读状态 / 重试当前壁纸 / 清空全部失败记忆（与全局入口同一份实现）
+    setWallpaperHealthHandler({
+      get: panelHealth,
+      retry: retryLive,
+      clearFailures: () => { clearRenderFailures(); notifyWallpaperHealth(null); },
     });
     // 切到后台/最小化 → 按设置自动暂停（省电），回到前台恢复。
     onVisibility = () => applyRuntimeSettings(settings);

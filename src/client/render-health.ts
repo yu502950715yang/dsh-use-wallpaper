@@ -166,7 +166,7 @@ export function formatHealthLine(snap: HealthSnapshot, t: (s: string) => string)
     const reason = FAILURE_TEXT[snap.failure.kind] ?? t('渲染失败');
     return t('上次失败：{reason}')
       .replace('{reason}', reason)
-      + (snap.failure.hard ? t('（已记忆，重开仍走降级）') : t('（本次会话内记忆）'))
+      + (snap.failure.hard ? t('（已记忆）') : t('（本次会话内记忆）'))
       + (timing ? ' · ' + timing : '');
   }
   if (snap.ok === true) return t('实时渲染正常') + (timing ? ' · ' + timing : '');

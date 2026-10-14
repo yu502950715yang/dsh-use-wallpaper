@@ -29,6 +29,7 @@ vi.mock('../../src/client/three-renderer.js', () => ({
 }));
 
 import { bootstrap } from '../../src/client/index.js';
+import { setWallpaperHealthHandler, setWallpaperSelectHandler, notifyWallpaperHealth } from '../../src/client/settings-section.js';
 import type { HealthSnapshot } from '../../src/client/render-health.js';
 
 const engine = () => (window as any).__wallpaperEngine;
@@ -237,5 +238,56 @@ describe('window.__wallpaperEngine 看护入口', () => {
 
     expect(rendererMock.setOnHealth).toHaveBeenLastCalledWith(null); // 订阅已撤销
     expect(selectedIds().filter((id) => id === 'w1')).toHaveLength(1); // 只有 api.select，自动重试没发生
+  });
+
+  // Task 4：面板接线 —— 健康事件要推给订阅者（硬失败也不能漏），选中壁纸后补推一次，
+  // 且只推「当前选中壁纸」的状态（否则上一张 scene 的结论会串到面板上）。
+  it('面板接线：健康事件与选中后补推都进订阅者，非当前壁纸的状态不串台', async () => {
+    bootstrap();
+    await tick();
+    const handlerCalls = vi.mocked(setWallpaperHealthHandler).mock.calls;
+    const handler = handlerCalls[handlerCalls.length - 1]![0];
+    const onHealth = rendererMock.setOnHealth.mock.calls[0]![0] as (s: HealthSnapshot) => void;
+    const ok: HealthSnapshot = { wallpaperId: 'w1', ok: true, failure: null, timing: { assembleMs: 10, firstFrameMs: 20 } };
+    const hard: HealthSnapshot = {
+      wallpaperId: 'w1', ok: false, timing: null,
+      failure: { kind: 'no-visible-objects', hard: true, at: 1, detail: '' },
+    };
+
+    onHealth(ok);
+    expect(notifyWallpaperHealth).toHaveBeenLastCalledWith(ok);
+    onHealth(hard); // 硬失败也要推（冷却重试的早退不得挡住面板推送）
+    expect(notifyWallpaperHealth).toHaveBeenLastCalledWith(hard);
+
+    // 面板选壁纸 → controller.select 落地后补推一次（走共享 select handler，即面板路径）
+    const selectCalls = vi.mocked(setWallpaperSelectHandler).mock.calls;
+    (selectCalls[selectCalls.length - 1]![0] as (id: string) => void)('w1');
+    await tick();
+    expect(notifyWallpaperHealth).toHaveBeenLastCalledWith(ok);
+    expect(handler.get()).toEqual(ok);
+
+    // 面板打开时读到的也只认当前选中壁纸：mock renderer 的快照是 w1
+    expect(handler.retry).toBeTypeOf('function');
+    expect(handler.clearFailures).toBeTypeOf('function');
+    handler.clearFailures();
+    expect(notifyWallpaperHealth).toHaveBeenLastCalledWith(null); // 清空失败记忆后状态行不留旧值
+  });
+
+  it('面板读接口：选中项与快照壁纸不一致（非 scene 壁纸）⇒ 读不到状态（推 null 不串台）', async () => {
+    bootstrap();
+    await tick();
+    const handlerCalls = vi.mocked(setWallpaperHealthHandler).mock.calls;
+    const handler = handlerCalls[handlerCalls.length - 1]![0];
+    const selectCalls = vi.mocked(setWallpaperSelectHandler).mock.calls;
+    const selectWallpaper = selectCalls[selectCalls.length - 1]![0] as (id: string) => void;
+
+    selectWallpaper('video-1'); // mock renderer 的 getLastHealth 恒返回 wallpaperId 'w1'
+    await tick();
+    expect(handler.get()).toBeNull();
+    expect(notifyWallpaperHealth).toHaveBeenLastCalledWith(null);
+
+    selectWallpaper('w1');
+    await tick();
+    expect(handler.get()?.wallpaperId).toBe('w1');
   });
 });

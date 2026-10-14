@@ -2401,9 +2401,9 @@ body[data-ds-dark-theme][data-we-wallpaper] [data-question-key] section{
 .wss-row input[type=color]{width:44px;height:26px;order:2;flex:none;padding:0;border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));border-radius:6px;background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));cursor:pointer}
 .wss-textcolor{display:flex;flex-direction:column;gap:10px;margin-top:8px}
 /* \u6309\u94AE\uFF1A\u7EDF\u4E00\u57FA\u7840\u6837\u5F0F + hover / focus-visible */
-.wss-cancel,.wss-save-dirs,.wss-probe,.wss-adopt,.wss-refresh{border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;padding:6px 12px;font:inherit;font-size:12px;cursor:pointer;transition:filter .15s ease,background-color .15s ease}
-.wss-cancel:hover,.wss-save-dirs:hover,.wss-probe:hover,.wss-adopt:hover,.wss-refresh:hover{filter:brightness(1.08)}
-.wss-cancel:focus-visible,.wss-save-dirs:focus-visible,.wss-probe:focus-visible,.wss-adopt:focus-visible,.wss-refresh:focus-visible{outline:2px solid var(--wp-accent);outline-offset:2px}
+.wss-cancel,.wss-save-dirs,.wss-probe,.wss-adopt,.wss-refresh,.wss-live-retry,.wss-live-forget{border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;padding:6px 12px;font:inherit;font-size:12px;cursor:pointer;transition:filter .15s ease,background-color .15s ease}
+.wss-cancel:hover,.wss-save-dirs:hover,.wss-probe:hover,.wss-adopt:hover,.wss-refresh:hover,.wss-live-retry:hover,.wss-live-forget:hover{filter:brightness(1.08)}
+.wss-cancel:focus-visible,.wss-save-dirs:focus-visible,.wss-probe:focus-visible,.wss-adopt:focus-visible,.wss-refresh:focus-visible,.wss-live-retry:focus-visible,.wss-live-forget:focus-visible{outline:2px solid var(--wp-accent);outline-offset:2px}
 /* \u4E3B\u64CD\u4F5C\u6309\u94AE\uFF08\u5237\u65B0 / \u4FDD\u5B58\u8DEF\u5F84\uFF09\uFF1A\u5B9E\u5FC3\u5E95\uFF0C\u767D\u5B57\uFF08\u7528\u66F4\u6DF1 accent \u4FDD\u5BF9\u6BD4\u5EA6\uFF09 */
 .wss-refresh,.wss-save-dirs{background:var(--wp-accent-strong,#2563eb);border-color:var(--wp-accent-strong,#2563eb);color:#fff}
 /* \u76EE\u5F55\u5B57\u6BB5\u4E0E\u63A2\u6D4B\u7ED3\u679C */
@@ -2419,7 +2419,11 @@ body[data-ds-dark-theme][data-we-wallpaper] [data-question-key] section{
 .wss-exists{color:var(--dsw-alias-state-success-primary,#4caf50);font-size:11px;white-space:nowrap}
 .wss-missing{color:var(--dsw-alias-label-tertiary,var(--wp-text));font-size:11px;white-space:nowrap}
 .wss-message{margin:0;font-size:12px;color:var(--dsw-alias-label-secondary,var(--wp-text))}
-@media (prefers-reduced-motion:reduce){.wss-thumb,.wss-cancel,.wss-save-dirs,.wss-probe,.wss-adopt,.wss-refresh{transition:none}.wss-thumb:hover{transform:none}}
+/* \u5B9E\u65F6\u6E32\u67D3\u72B6\u6001\u884C\uFF1A\u4E3B\u884C\u8BB2\u73B0\u72B6\u3001\u6B21\u7EA7\u884C\u8BB2\u5931\u8D25\u8BB0\u5FC6\uFF08\u4E24\u8005\u53EF\u5E76\u5B58\uFF09\uFF1B\u5931\u8D25\u6587\u6848\u4E0E\u8BB0\u5FC6\u884C\u7528\u63D0\u793A\u8272\u3002 */
+.wss-live-status{display:flex;flex-direction:column;gap:2px;margin-bottom:8px}
+.wss-live-status .wss-live-current,.wss-live-status .wss-live-memory{margin:0}
+.wss-live-status[data-state="failed"] .wss-live-current,.wss-live-status .wss-live-memory{color:var(--dsw-alias-state-error-primary,var(--wp-accent-strong))}
+@media (prefers-reduced-motion:reduce){.wss-thumb,.wss-cancel,.wss-save-dirs,.wss-probe,.wss-adopt,.wss-refresh,.wss-live-retry,.wss-live-forget{transition:none}.wss-thumb:hover{transform:none}}
 
 /* \u2500\u2500 \u6587\u5B57\u989C\u8272\u8DDF\u968F\u58C1\u7EB8\u4EAE\u5EA6\uFF082026-09-03 \u5B9A\u7A3F\uFF09 \u2500\u2500
    \u4E0D\u906E\u80CC\u666F\u3001\u4E0D\u6539\u58C1\u7EB8\u53EF\u89C1\u5EA6\uFF1B\u53EA\u8BA9\u6D88\u606F\u5217\uFF08[class*="flowItem"] \u5185\u4E3B\u8981\u6587\u672C\uFF09\u7684
@@ -29410,6 +29414,22 @@ function createRenderHealthStore(opts = {}) {
     }
   };
 }
+function formatHealthLine(snap, t) {
+  const timing = snap.timing ? t("\u88C5\u914D {assemble} ms \xB7 \u9996\u5E27 {first} ms").replace("{assemble}", String(Math.round(snap.timing.assembleMs))).replace("{first}", String(Math.round(snap.timing.firstFrameMs))) : "";
+  if (snap.failure) {
+    const reason = FAILURE_TEXT[snap.failure.kind] ?? t("\u6E32\u67D3\u5931\u8D25");
+    return t("\u4E0A\u6B21\u5931\u8D25\uFF1A{reason}").replace("{reason}", reason) + (snap.failure.hard ? t("\uFF08\u5DF2\u8BB0\u5FC6\uFF09") : t("\uFF08\u672C\u6B21\u4F1A\u8BDD\u5185\u8BB0\u5FC6\uFF09")) + (timing ? " \xB7 " + timing : "");
+  }
+  if (snap.ok === true) return t("\u5B9E\u65F6\u6E32\u67D3\u6B63\u5E38") + (timing ? " \xB7 " + timing : "");
+  return t("\u5C1A\u672A\u6E32\u67D3\uFF08\u9009\u62E9\u4E00\u5F20 scene \u58C1\u7EB8\u540E\u8FD9\u91CC\u663E\u793A\u72B6\u6001\uFF09");
+}
+var FAILURE_TEXT = {
+  "scene-json": "\u62FF\u4E0D\u5230 scene.json",
+  "no-visible-objects": "\u6CA1\u6709\u53EF\u663E\u793A\u7684\u5BF9\u8C61",
+  "context-lost": "WebGL \u4E0A\u4E0B\u6587\u4E22\u5931",
+  "exception": "\u88C5\u914D\u5F02\u5E38",
+  "load-error": "\u8D44\u6E90\u52A0\u8F7D\u4E2D\u65AD"
+};
 
 // src/client/three-renderer.ts
 var warnedKeys = /* @__PURE__ */ new Set();
@@ -29528,13 +29548,13 @@ function createThreeSceneRenderer(opts) {
   let contextLost = false;
   const health = opts?.healthStore ?? createRenderHealthStore();
   let currentHealthId = "";
-  let healthHandler = null;
+  let healthHandler2 = null;
   let renderStartedAt = 0;
   let firstFrameAt = -1;
   const publish = (snap) => {
-    if (!healthHandler) return;
+    if (!healthHandler2) return;
     try {
-      healthHandler(snap);
+      healthHandler2(snap);
     } catch {
     }
   };
@@ -29649,6 +29669,7 @@ function createThreeSceneRenderer(opts) {
       currentHealthId = id;
       renderStartedAt = performance.now();
       firstFrameAt = -1;
+      let assembledMs = -1;
       try {
         teardown();
         contextLostId = id;
@@ -29896,7 +29917,7 @@ function createThreeSceneRenderer(opts) {
         assets.onFrame = (dt) => {
           if (firstFrameAt < 0) {
             firstFrameAt = performance.now() - renderStartedAt;
-            succeed(id, firstFrameAt);
+            succeed(id, assembledMs >= 0 ? assembledMs : firstFrameAt);
           }
           userOnFrame?.(dt);
         };
@@ -30018,7 +30039,8 @@ function createThreeSceneRenderer(opts) {
           teardown();
           return false;
         }
-        succeed(id, performance.now() - renderStartedAt);
+        assembledMs = performance.now() - renderStartedAt;
+        succeed(id, assembledMs);
         return true;
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -30073,7 +30095,7 @@ function createThreeSceneRenderer(opts) {
       return currentHealthId ? health.snapshot(currentHealthId) : null;
     },
     setOnHealth(cb) {
-      healthHandler = cb;
+      healthHandler2 = cb;
     }
   };
 }
@@ -30095,6 +30117,27 @@ var sharedOnRuntimeSettings = null;
 function setWallpaperRuntimeHandler(fn) {
   sharedOnRuntimeSettings = fn;
 }
+var healthHandler = null;
+var healthSubscribers = /* @__PURE__ */ new Set();
+function setWallpaperHealthHandler(handler) {
+  healthHandler = handler;
+}
+function subscribeWallpaperHealth(cb) {
+  healthSubscribers.add(cb);
+  return () => {
+    healthSubscribers.delete(cb);
+  };
+}
+function notifyWallpaperHealth(snap) {
+  for (const cb of Array.from(healthSubscribers)) {
+    try {
+      cb(snap);
+    } catch {
+    }
+  }
+}
+var weT = (s) => s;
+var EMPTY_HEALTH = { wallpaperId: "", ok: null, failure: null, timing: null };
 function WallpaperSettingsSection(props) {
   const fetchSettings = props.fetchSettings ?? readClientSettings;
   const writeSettings = props.writeSettings ?? writeClientSettings;
@@ -30110,6 +30153,11 @@ function WallpaperSettingsSection(props) {
   const [wallpaperDir, setWallpaperDir] = (0, import_react.useState)("");
   const [weAssetsDir, setWeAssetsDir] = (0, import_react.useState)("");
   const [message, setMessage] = (0, import_react.useState)("");
+  const [health, setHealth] = (0, import_react.useState)(props.health ?? null);
+  (0, import_react.useEffect)(() => {
+    setHealth(props.health ?? healthHandler?.get() ?? null);
+    return subscribeWallpaperHealth((s) => setHealth(s));
+  }, [props.health]);
   (0, import_react.useEffect)(() => {
     let alive = true;
     void (async () => {
@@ -30163,6 +30211,22 @@ function WallpaperSettingsSection(props) {
     });
   }, [writeSettings]);
   const currentTitle = settings ? wallpapers.find((w) => w.id === settings.selectedWallpaperId)?.title ?? "\u65E0\uFF08\u9ED8\u8BA4\u80CC\u666F\uFF09" : "";
+  const live = health ?? EMPTY_HEALTH;
+  const liveCurrent = live.ok === true ? formatHealthLine({ ...live, failure: null }, weT) : formatHealthLine(live, weT);
+  const liveMemory = live.ok === true && live.failure ? formatHealthLine({ ...live, ok: null, timing: null }, weT) : "";
+  const liveState = live.ok === true ? "ok" : live.failure ? "failed" : "idle";
+  const retryLive = () => {
+    if (props.onRetryLive) props.onRetryLive();
+    else if (healthHandler) healthHandler.retry();
+    else return;
+    setMessage("\u5DF2\u91CD\u8BD5\u5B9E\u65F6\u6E32\u67D3");
+  };
+  const forgetFailures = () => {
+    if (props.onClearRenderFailures) props.onClearRenderFailures();
+    else if (healthHandler) healthHandler.clearFailures();
+    else return;
+    setMessage("\u5DF2\u6E05\u9664\u5931\u8D25\u8BB0\u5FC6");
+  };
   return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-root", children: [
     /* @__PURE__ */ (0, import_jsx_runtime.jsx)("section", { className: "wss-section", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-current", children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-current-info", children: [
@@ -30257,6 +30321,17 @@ function WallpaperSettingsSection(props) {
             }
           )
         ] })
+      ] })
+    ] }),
+    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wss-section-title", children: "\u5B9E\u65F6\u6E32\u67D3" }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-live-status", "data-state": liveState, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc wss-live-current", children: liveCurrent }),
+        liveMemory && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc wss-live-memory", children: liveMemory })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-row", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-live-retry", onClick: retryLive, children: "\u91CD\u8BD5\u5B9E\u65F6\u6E32\u67D3" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-live-forget", onClick: forgetFailures, children: "\u6E05\u9664\u5931\u8D25\u8BB0\u5FC6" })
       ] })
     ] }),
     settings && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section", children: [
@@ -30441,7 +30516,12 @@ function bootstrap(ctx) {
     void controller.select(id);
   };
   const autoRetryTimers = /* @__PURE__ */ new Map();
+  const panelHealth = () => {
+    const snap = sceneRenderer.getLastHealth?.() ?? null;
+    return snap && snap.wallpaperId === settings.selectedWallpaperId ? snap : null;
+  };
   const onHealth = (snap) => {
+    notifyWallpaperHealth(snap);
     if (!snap.wallpaperId || !snap.failure || snap.failure.hard) return;
     const id = snap.wallpaperId;
     const existing = autoRetryTimers.get(id);
@@ -30476,7 +30556,10 @@ function bootstrap(ctx) {
   };
   const selectWallpaper = (id) => {
     settings = { ...settings, selectedWallpaperId: id };
-    void controller.select(id).then(() => applySettingsToLayer(settings));
+    void controller.select(id).then(() => {
+      applySettingsToLayer(settings);
+      notifyWallpaperHealth(panelHealth());
+    });
     void writeClientSettings({ selectedWallpaperId: id });
   };
   const teardown = () => {
@@ -30485,6 +30568,7 @@ function bootstrap(ctx) {
     for (const t of autoRetryTimers.values()) clearTimeout(t);
     autoRetryTimers.clear();
     sceneRenderer.setOnHealth?.(null);
+    notifyWallpaperHealth(null);
     const root = layer?.root ?? null;
     try {
       controller?.select("");
@@ -30549,6 +30633,14 @@ function bootstrap(ctx) {
     setWallpaperRuntimeHandler((patch) => {
       settings = { ...settings, ...patch };
       applyRuntimeSettings(settings);
+    });
+    setWallpaperHealthHandler({
+      get: panelHealth,
+      retry: retryLive,
+      clearFailures: () => {
+        clearRenderFailures();
+        notifyWallpaperHealth(null);
+      }
     });
     onVisibility = () => applyRuntimeSettings(settings);
     document.addEventListener("visibilitychange", onVisibility);

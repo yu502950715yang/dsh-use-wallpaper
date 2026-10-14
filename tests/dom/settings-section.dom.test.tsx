@@ -2,8 +2,12 @@ import { describe, expect, it, vi, afterEach } from 'vitest';
 import React from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react';
-import { WallpaperSettingsSection, setWallpaperRuntimeHandler } from '../../src/client/settings-section.js';
+import {
+  WallpaperSettingsSection, setWallpaperRuntimeHandler,
+  setWallpaperHealthHandler, subscribeWallpaperHealth, notifyWallpaperHealth,
+} from '../../src/client/settings-section.js';
 import type { ClientSettings } from '../../src/client/types.js';
+import type { HealthSnapshot } from '../../src/client/render-health.js';
 import type { ProbeResult } from '../../src/shared/types.js';
 
 // 壁纸设置面板（设置对话框 "壁纸" section）：
@@ -353,5 +357,98 @@ describe('WallpaperSettingsSection', () => {
     mount();
     await flush();
     expect(container.querySelector('.wss-textcolor-custom')).toBeNull();
+  });
+
+  // Task 4：实时渲染卡片（状态行 + 重试/清除入口）。状态行要同时讲「现在怎么样」与
+  // 「曾经失败过什么」—— ok 与 failure 可并存，只按其中一个渲染会自相矛盾。
+  it('实时渲染卡片：三态状态行 + 两个按钮回调', async () => {
+    const onRetryLive = vi.fn();
+    const onClearRenderFailures = vi.fn();
+    mount({
+      ...BASE_SETTINGS,
+      health: { wallpaperId: 'w1', ok: false, failure: { kind: 'no-visible-objects', hard: true, at: 1, detail: '' }, timing: { assembleMs: 120, firstFrameMs: -1 } },
+      onRetryLive,
+      onClearRenderFailures,
+    } as any);
+    await flush(); // createRoot 的首次渲染在 act 排队里，须等它落地再查 DOM
+    const status = container.querySelector('.wss-live-status');
+    expect(status?.textContent).toContain('没有可显示的对象');
+    expect((status as HTMLElement).dataset.state).toBe('failed'); // 主行即失败文案 ⇒ 失败态
+    expect(container.querySelector('.wss-live-memory')).toBeNull(); // 只有一条失败事实，不重复两行
+    await act(async () => { (container.querySelector('.wss-live-retry') as HTMLButtonElement).click(); });
+    expect(onRetryLive).toHaveBeenCalledTimes(1);
+    await act(async () => { (container.querySelector('.wss-live-forget') as HTMLButtonElement).click(); });
+    expect(onClearRenderFailures).toHaveBeenCalledTimes(1);
+  });
+
+  it('未渲染时不显示失败文案', async () => {
+    mount({ ...BASE_SETTINGS, health: { wallpaperId: 'w1', ok: null, failure: null, timing: null } } as any);
+    await flush();
+    expect(container.querySelector('.wss-live-status')?.textContent).toContain('尚未渲染');
+  });
+
+  it('实时渲染卡片：现在正常但曾失败过 ⇒ 两件事都要显示（成功不被失败记忆顶掉）', async () => {
+    mount({
+      ...BASE_SETTINGS,
+      health: {
+        wallpaperId: 'w1', ok: true, timing: { assembleMs: 120, firstFrameMs: 480 },
+        failure: { kind: 'context-lost', hard: true, at: 1, detail: '' },
+      },
+    } as any);
+    await flush();
+    const status = container.querySelector('.wss-live-status') as HTMLElement;
+    expect(status.textContent).toContain('实时渲染正常');
+    expect(status.textContent).toContain('装配 120 ms');
+    expect(status.textContent).toContain('首帧 480 ms');
+    expect(status.textContent).toContain('WebGL 上下文丢失');
+    expect(status.textContent).toContain('（已记忆）');
+    // 主行是「现在」的状态：不能让失败记忆把正常态标成失败
+    expect(status.dataset.state).toBe('ok');
+    expect((container.querySelector('.wss-live-memory') as HTMLElement).textContent).toContain('上次失败');
+  });
+
+  it('实时渲染卡片：正常态只有主行（无失败记忆行）', async () => {
+    mount({ ...BASE_SETTINGS, health: { wallpaperId: 'w1', ok: true, failure: null, timing: { assembleMs: 88, firstFrameMs: 210 } } } as any);
+    await flush();
+    const status = container.querySelector('.wss-live-status') as HTMLElement;
+    expect(status.textContent).toContain('实时渲染正常');
+    expect(status.textContent).toContain('装配 88 ms');
+    expect(status.textContent).toContain('首帧 210 ms');
+    expect(status.dataset.state).toBe('ok');
+    expect(container.querySelector('.wss-live-memory')).toBeNull();
+  });
+
+  it('实时渲染卡片：没有 props 时走共享 handler（订阅推送 + 两入口兜底 + 卸载退订）', async () => {
+    const retry = vi.fn();
+    const clearFailures = vi.fn();
+    setWallpaperHealthHandler({ get: () => null, retry, clearFailures });
+    mount();
+    await flush();
+    expect((container.querySelector('.wss-live-status') as HTMLElement).textContent).toContain('尚未渲染');
+
+    await act(async () => {
+      notifyWallpaperHealth({ wallpaperId: 'w9', ok: true, failure: null, timing: { assembleMs: 10, firstFrameMs: 20 } });
+    });
+    expect((container.querySelector('.wss-live-status') as HTMLElement).textContent).toContain('实时渲染正常');
+
+    await act(async () => { (container.querySelector('.wss-live-retry') as HTMLButtonElement).click(); });
+    await act(async () => { (container.querySelector('.wss-live-forget') as HTMLButtonElement).click(); });
+    expect(retry).toHaveBeenCalledTimes(1);
+    expect(clearFailures).toHaveBeenCalledTimes(1);
+    expect((container.querySelector('.wss-message') as HTMLElement).textContent).toContain('已清除失败记忆');
+
+    // 卸载后推送不得再落到已卸载的组件上（订阅已退订 ⇒ 不触发状态更新）
+    await unmount();
+    expect(() => notifyWallpaperHealth(null)).not.toThrow();
+  });
+
+  it('共享订阅入口：退订后不再收到推送', async () => {
+    const seen: (HealthSnapshot | null)[] = [];
+    const off = subscribeWallpaperHealth((s) => seen.push(s));
+    notifyWallpaperHealth({ wallpaperId: 'w1', ok: true, failure: null, timing: null });
+    expect(seen).toHaveLength(1);
+    off();
+    notifyWallpaperHealth(null);
+    expect(seen).toHaveLength(1); // 已退订 ⇒ 不再收到
   });
 });

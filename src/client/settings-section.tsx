@@ -8,6 +8,8 @@ import type { ClientSettings } from './types.js';
 import type { WallpaperInfo, ProbeResult } from '../shared/types.js';
 import { readClientSettings, writeClientSettings } from './settings.js';
 import { TEXT_OUTLINE_MAX, normalizeHexColor, normalizeMode, normalizeOutlineLevel, outlineLabel } from './text-color.js';
+import { formatHealthLine } from './render-health.js';
+import type { HealthSnapshot } from './render-health.js';
 
 export interface WallpaperSettingsSectionProps {
   /** 读取当前设置（默认 RPC settings.describe） */
@@ -22,6 +24,12 @@ export interface WallpaperSettingsSectionProps {
   onSelect?: (id: string) => void;
   /** 运行期设置（光晕参数/暂停/画质档位）变更：index.ts 注入后立即下发给渲染器，无需重选壁纸 */
   onRuntimeSettings?: (patch: Partial<ClientSettings>) => void;
+  /** 当前壁纸的渲染健康快照（由 index.ts 经 subscribeWallpaperHealth 推送；null = 还没选壁纸） */
+  health?: HealthSnapshot | null;
+  /** 重试实时渲染（默认走共享 handler 的 retry） */
+  onRetryLive?: () => void;
+  /** 清空失败记忆（默认走共享 handler 的 clearFailures） */
+  onClearRenderFailures?: () => void;
 }
 
 async function defaultFetchWallpapers(): Promise<WallpaperInfo[]> {
@@ -47,6 +55,37 @@ export function setWallpaperRuntimeHandler(fn: (patch: Partial<ClientSettings>) 
   sharedOnRuntimeSettings = fn;
 }
 
+/** 面板「实时渲染」卡片要的三件事：读状态、重试当前壁纸、清空全部失败记忆。 */
+export interface WallpaperHealthHandler {
+  get(): HealthSnapshot | null;
+  retry(): void;
+  clearFailures(): void;
+}
+let healthHandler: WallpaperHealthHandler | null = null;
+const healthSubscribers = new Set<(s: HealthSnapshot | null) => void>();
+
+export function setWallpaperHealthHandler(handler: WallpaperHealthHandler): void {
+  healthHandler = handler;
+}
+
+/** 订阅健康变化（组件挂载时订阅、卸载时退订；index.ts 调 notifyWallpaperHealth 推送）。 */
+export function subscribeWallpaperHealth(cb: (s: HealthSnapshot | null) => void): () => void {
+  healthSubscribers.add(cb);
+  return () => { healthSubscribers.delete(cb); };
+}
+
+/** 由 index.ts 的健康事件调用；也用于组件挂载时补一次当前值。 */
+export function notifyWallpaperHealth(snap: HealthSnapshot | null): void {
+  for (const cb of Array.from(healthSubscribers)) {
+    try { cb(snap); } catch { /* 单个订阅者异常不影响其它订阅者 */ }
+  }
+}
+
+// 本文件文案是中文硬编码（无 i18n 层）：formatHealthLine 要求传入翻译函数，这里透传。
+const weT = (s: string): string => s;
+// 还没选壁纸 / 还没推送过：状态行按「尚未渲染」呈现，不给 formatHealthLine 造一个假壁纸 id。
+const EMPTY_HEALTH: HealthSnapshot = { wallpaperId: '', ok: null, failure: null, timing: null };
+
 export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): JSX.Element {
   const fetchSettings = props.fetchSettings ?? readClientSettings;
   const writeSettings = props.writeSettings ?? writeClientSettings;
@@ -61,6 +100,13 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
   const [wallpaperDir, setWallpaperDir] = useState('');
   const [weAssetsDir, setWeAssetsDir] = useState('');
   const [message, setMessage] = useState('');
+  const [health, setHealth] = useState<HealthSnapshot | null>(props.health ?? null);
+
+  // 挂载时先取一次当前值（打开面板即显示状态），再订阅后续推送；卸载时退订。
+  useEffect(() => {
+    setHealth(props.health ?? healthHandler?.get() ?? null);
+    return subscribeWallpaperHealth((s) => setHealth(s));
+  }, [props.health]);
 
   useEffect(() => {
     let alive = true;
@@ -131,6 +177,32 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
   const currentTitle = settings
     ? (wallpapers.find((w) => w.id === settings.selectedWallpaperId)?.title ?? '无（默认背景）')
     : '';
+
+  // 实时渲染状态：ok（最近一次装配结果）与 failure（失败记忆）可并存 ⇒ 主行讲「现在怎么样」、
+  // 次级行讲「曾经失败过什么」；只按其中一个渲染会自相矛盾（现在正常时只剩失败文案）。
+  const live = health ?? EMPTY_HEALTH;
+  const liveCurrent = live.ok === true
+    ? formatHealthLine({ ...live, failure: null }, weT)
+    : formatHealthLine(live, weT);
+  const liveMemory = live.ok === true && live.failure
+    ? formatHealthLine({ ...live, ok: null, timing: null }, weT)
+    : '';
+  const liveState = live.ok === true ? 'ok' : (live.failure ? 'failed' : 'idle');
+
+  // 两个入口：props 优先（可嵌入/可测），否则走 index.ts 注册的共享 handler；
+  // 都没有时不谎报「已重试/已清除」（插件尚未挂载时是这种情况）。
+  const retryLive = () => {
+    if (props.onRetryLive) props.onRetryLive();
+    else if (healthHandler) healthHandler.retry();
+    else return;
+    setMessage('已重试实时渲染');
+  };
+  const forgetFailures = () => {
+    if (props.onClearRenderFailures) props.onClearRenderFailures();
+    else if (healthHandler) healthHandler.clearFailures();
+    else return;
+    setMessage('已清除失败记忆');
+  };
 
   return (
     <div className="wss-root">
@@ -230,6 +302,18 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
           </div>
         </section>
       )}
+      {/* 实时渲染：状态行 + 重试/清除入口（scene 壁纸渲染不出来时用户唯一的自救入口） */}
+      <section className="wss-section">
+        <h4 className="wss-section-title">实时渲染</h4>
+        <div className="wss-live-status" data-state={liveState}>
+          <p className="wss-section-desc wss-live-current">{liveCurrent}</p>
+          {liveMemory && <p className="wss-section-desc wss-live-memory">{liveMemory}</p>}
+        </div>
+        <div className="wss-row">
+          <button type="button" className="wss-live-retry" onClick={retryLive}>重试实时渲染</button>
+          <button type="button" className="wss-live-forget" onClick={forgetFailures}>清除失败记忆</button>
+        </div>
+      </section>
       {/* 性能与省电：同一张卡片；wss-power 仍只含两个复选框（画质档位是 select） */}
       {settings && (
         <section className="wss-section">
