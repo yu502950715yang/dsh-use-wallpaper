@@ -24053,10 +24053,8 @@ var ThreeScenePlayer = class {
     this.updateParticles(dt);
     this.tickPuppets(dt);
   }
-  // puppet 动画：按 dt × rate 推进已播时长 → 采样动画层选中的动画（v1 只应用**第一条可见层**，
-  // 多条时告警一次；`blend` 不参与混合）。scene.json **没有** animationlayers 字段时退回「播动画表
-  // 首个」（= 改动前的行为；本机 34 张真实 scene.json 无一带该字段，按空层处理会把既有动画静默关掉）；
-  // 显式空数组 / 无可见层 / 动画 id 不存在 ⇒ 不做动画（OWE `PuppetLayer::prepared()` 同义）。
+  // puppet 动画：按 dt × rate 推进已播时长 → 采样动画层选中的动画（v1 只应用第一条可见层）。
+  // 选层、缺省与 `frameCount <= 0` 等边界口径一律见 AGENT.md §2.1 与 §7.40，此处不复述。
   tickPuppets(dt) {
     if (this.puppetLayers.size === 0) return;
     for (const [id, layer] of [...this.puppetLayers]) {

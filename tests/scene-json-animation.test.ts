@@ -5,7 +5,9 @@ const s = (animationlayers: unknown) => JSON.stringify({
   objects: [{ id: 16, name: 'mama', image: 'models/x.json', origin: '1280 720 0', size: '2560 1440', animationlayers }],
 });
 
-describe('animationlayers 解析（OWE ObjectParser.cpp 的字段与缺省）', () => {
+// 字段与缺省出处 = lwe `research/.lwe/src/WallpaperEngine/Data/Parsers/ObjectParser.cpp:284`（`visible` 缺省 false，该字段在 lwe 从未被消费）；
+// 本仓照 brief 取 false，与 WE `visible{true}` 的差异与控制方裁定见 AGENT.md §7.40。
+describe('animationlayers 解析（字段与缺省）', () => {
   it('读 id/animation/rate/blend/visible，缺省 rate=1 blend=1 visible=false', () => {
     const d = parseSceneJson(s([{ id: 0, animation: 3 }]));
     const o = d.objects[0] as any;

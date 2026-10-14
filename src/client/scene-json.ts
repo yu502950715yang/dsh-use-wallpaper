@@ -58,7 +58,7 @@ function optStr(s: unknown): string | undefined {
 }
 
 // WE 动画层（scene.json `animationlayers`）：id/animation 必需（缺任一 ⇒ 整条跳过，不产出半截层）；
-// rate 缺省 1、blend 缺省 1、visible 缺省 false（缺省层不应用）。非数组 → undefined（= 无该字段）。
+// rate/blend 缺省 1、visible 缺省 false（出处 lwe `ObjectParser.cpp:284`，与 WE `visible{true}` 的差异见 AGENT.md §7.40）。非数组 → undefined。
 function parseAnimationLayers(raw: unknown): SceneImageObject['animationLayers'] {
   if (!Array.isArray(raw)) return undefined;
   const out: NonNullable<SceneImageObject['animationLayers']> = [];
