@@ -452,6 +452,8 @@ const SCENE_ONE_IMAGE = JSON.stringify({
 });
 ```
 
+⚠️ 装配**成功**路径（本节第三例）必须让 `loadWasm` 的 mock 返回一个可用 stub：该文件顶部是 `vi.mock('../src/client/wasm-loader.js', () => ({ defaultLoadWasm: vi.fn() }))`，`vi.fn()` 返回 `undefined`，装配期一旦触碰 `mod.CpuParticleSim` 就会落进 catch、被记成 `exception`。做法二选一：① 在 `loadWasm` 的 mock 里 `mockResolvedValue({ CpuParticleSim: class { … } })`；② 直接复用该文件里**已有的成功用例**（它必然已经解决了同一问题），只在其断言里补看护相关三条。**不得**为了让测试过而改 `three-renderer.ts` 的错误分类顺序。
+
 新增 import：
 
 ```ts
@@ -539,17 +541,33 @@ scene.json 拉取（`:370-372`）改为**单独 try/catch**，把「网络中断
         }
 ```
 
-`abortIfContextLost()` 为真而返回的那 8 处（`:368, 373, 448, 509, 550, 643, 736, 801`）不改控制流，只在 `abortIfContextLost` 内部记一次原因（改 `:320-324`）：
+`abortIfContextLost()` 为真而返回的那 8 处（`:368, 373, 448, 509, 550, 643, 736, 801`）不改控制流，也**不在这里记原因**（见下）：上下文丢失的记录点只能有一处，否则同一次丢失会被记两遍。
 
 ```ts
   function abortIfContextLost(): boolean {
     if (!contextLost) return false;
-    // 上下文丢失是硬失败：这张壁纸在本实例里已经渲染不出来，重新挂载才有意义。
-    fail('context-lost', 'webglcontextlost');
+    // 记录点在 onContextLost（唯一一次事件）——本函数只负责中止装配。
     teardown();
     return true;
   }
 ```
+
+**上下文丢失的记录点在 `onContextLost`（`:266-279`）**，因为「装配完成后、帧循环已经跑起来才丢上下文」是生产上最常见的路径（浏览器回收 / GPU 复位），而那条路径不会经过任何 `abortIfContextLost()` 调用点：
+
+```ts
+  function onContextLost() {
+    contextLost = true;
+    // 硬失败：这张壁纸在本实例里已经渲染不出来，重新挂载才有意义。
+    // 记在这里（而不是 abortIfContextLost）⇒ 事件驱动、每次丢失恰好一条，覆盖装配期与运行期两条路径。
+    fail('context-lost', 'webglcontextlost');
+    teardown();
+    const id = contextLostId;
+    contextLostId = '';
+    if (id && contextLostHandler) contextLostHandler(id);
+  }
+```
+
+（`{once: true}` 的监听 + `render()` 开头复位 `contextLost` ⇒ 同一次丢失只会触发一次；重新装配是新 canvas + 新监听，属新的一次丢失。）
 
 零可见对象出口（`:806-810`）改为：
 
@@ -710,6 +728,9 @@ describe('window.__wallpaperEngine 看护入口', () => {
     localStorage.setItem('we:renderfail:w1', JSON.stringify({ v: 1, kind: 'exception', detail: 'x', at: 1 }));
     api.clearRenderFailures();
     expect(localStorage.getItem('we:renderfail:w1')).toBeNull();
+    // retryLive 只清「当前选中壁纸」的记忆 ⇒ 先选中 w1（select 同步写本实例的 settings）
+    api.select('w1');
+    await new Promise((r) => setTimeout(r, 0));
     localStorage.setItem('we:renderfail:w1', JSON.stringify({ v: 1, kind: 'exception', detail: 'x', at: 1 }));
     api.retryLive();
     expect(localStorage.getItem('we:renderfail:w1')).toBeNull();
@@ -813,7 +834,6 @@ it('实时渲染卡片：三态状态行 + 两个按钮回调', async () => {
   const onClearRenderFailures = vi.fn();
   const { container } = mount({
     ...BASE_SETTINGS,
-    healthReady: true,
     health: { wallpaperId: 'w1', ok: false, failure: { kind: 'no-visible-objects', hard: true, at: 1, detail: '' }, timing: { assembleMs: 120, firstFrameMs: -1 } },
     onRetryLive,
     onClearRenderFailures,
@@ -827,7 +847,7 @@ it('实时渲染卡片：三态状态行 + 两个按钮回调', async () => {
 });
 
 it('未渲染时不显示失败文案', async () => {
-  const { container } = mount({ ...BASE_SETTINGS, healthReady: true, health: { wallpaperId: 'w1', ok: null, failure: null, timing: null } } as any);
+  const { container } = mount({ ...BASE_SETTINGS, health: { wallpaperId: 'w1', ok: null, failure: null, timing: null } } as any);
   expect(container.querySelector('.wss-live-status')?.textContent).toContain('尚未渲染');
 });
 ```
@@ -932,6 +952,12 @@ export function notifyWallpaperHealth(snap: HealthSnapshot | null): void {
 `tests/styles.test.ts` 追加断言：样式串里出现 `.wss-live-retry`、`.wss-live-forget`、`.wss-live-status`。
 
 - [ ] **Step 5: 在 `index.ts` 里把 handler 与推送接上**
+
+先把两个新符号加进 `index.ts:5` 那条既有的 settings-section import（**同一个 import 语句里追加**，不要新开一条）：
+
+```ts
+import { WallpaperSettingsSection, setWallpaperSelectHandler, setWallpaperRuntimeHandler, setWallpaperHealthHandler, notifyWallpaperHealth } from './settings-section.js';
+```
 
 ```ts
     setWallpaperHealthHandler({
