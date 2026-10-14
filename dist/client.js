@@ -30419,6 +30419,7 @@ function WallpaperSettingsSection(props) {
 
 // src/client/index.ts
 var SETTINGS_SECTION_ID = "wallpaper-engine";
+var SOFT_RETRY_DELAY_MS = 3e3;
 var TEARDOWN_KEY = "__wpEngineTeardown";
 function bootstrap(ctx) {
   setSettingsCtx(ctx);
@@ -30428,7 +30429,7 @@ function bootstrap(ctx) {
   let settings = { ...DEFAULTS };
   let disposed = false;
   let onVisibility = null;
-  const healthStore = createRenderHealthStore();
+  const healthStore = createRenderHealthStore({ softCooldownMs: SOFT_RETRY_DELAY_MS });
   const sceneRenderer = createThreeSceneRenderer({ healthStore });
   const clearRenderFailures = () => {
     healthStore.clearAll();
@@ -30441,16 +30442,18 @@ function bootstrap(ctx) {
   };
   let autoRetryTimer = 0;
   const onHealth = (snap) => {
-    if (!snap.wallpaperId) return;
-    if (!healthStore.shouldAutoRetry(snap.wallpaperId)) return;
-    healthStore.markAutoRetried(snap.wallpaperId);
-    if (autoRetryTimer) clearTimeout(autoRetryTimer);
+    if (!snap.wallpaperId || !snap.failure || snap.failure.hard) return;
+    if (autoRetryTimer) return;
     autoRetryTimer = window.setTimeout(() => {
       autoRetryTimer = 0;
       if (disposed || !controller) return;
       if (settings.selectedWallpaperId !== snap.wallpaperId) return;
+      const now = healthStore.snapshot(snap.wallpaperId);
+      if (!now.failure || now.failure.hard) return;
+      if (!healthStore.shouldAutoRetry(snap.wallpaperId)) return;
+      healthStore.markAutoRetried(snap.wallpaperId);
       void controller.select(snap.wallpaperId);
-    }, 0);
+    }, SOFT_RETRY_DELAY_MS);
   };
   sceneRenderer.setOnHealth?.(onHealth);
   const applySettingsToLayer = (s) => {

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const selectMock = vi.fn(async () => {});
 vi.mock('../../src/client/background-layer.js', () => ({
@@ -33,6 +33,9 @@ import type { HealthSnapshot } from '../../src/client/render-health.js';
 
 const engine = () => (window as any).__wallpaperEngine;
 const tick = () => new Promise((r) => setTimeout(r, 0));
+// 假时钟下等「启动期异步读设置」落地：它 resolve 后会把 settings 覆盖为已保存值，
+// 必须发生在驱动选中项之前，否则断言看到的选中项会被这次异步读清掉。
+const boot = () => vi.advanceTimersByTimeAsync(0);
 const selectedIds = () => selectMock.mock.calls.map((c) => String(c[0]));
 
 describe('window.__wallpaperEngine 看护入口', () => {
@@ -45,6 +48,7 @@ describe('window.__wallpaperEngine 看护入口', () => {
     delete (window as any).__wpEngineTeardown;
     rendererOpts.value = null;
   });
+  afterEach(() => { vi.useRealTimers(); });
   it('health / retryLive / clearRenderFailures 都在，且 retryLive 会清记忆并重选', async () => {
     bootstrap();
     await new Promise((r) => setTimeout(r, 0));
@@ -78,60 +82,96 @@ describe('window.__wallpaperEngine 看护入口', () => {
     expect(selectMock).toHaveBeenLastCalledWith('w1');
   });
 
-  it('软失败冷却后自动重试一次（仅当前选中；硬失败与已切走的不重试）', async () => {
+  it('软失败冷却到期后恰好自动重试一次；再推进时间不再重试', async () => {
+    vi.useFakeTimers(); // 用假时钟推进真实定时器，不用 mock Date.now 伪造「冷却已过」
     bootstrap();
-    await tick();
+    await boot();
     const store = rendererOpts.value!.healthStore;
     const onHealth = rendererMock.setOnHealth.mock.calls[0]![0] as (s: HealthSnapshot) => void;
     expect(typeof onHealth).toBe('function');
 
-    // 冷却闸用 store 自己的时钟：mock Date.now 让「上次软失败」看起来已过冷却。
-    let fakeNow = Date.now();
-    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => fakeNow);
-
     engine().select('w1');
     store.recordSoft('w1', 'load-error', '断流');
-    fakeNow += 5000;
     onHealth(store.snapshot('w1'));
-    await tick();
-    expect(selectedIds().filter((id) => id === 'w1')).toHaveLength(2); // api.select 一次 + 自动重试一次
 
-    onHealth(store.snapshot('w1')); // 每会话每壁纸只自动重试一次
-    await tick();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(selectedIds().filter((id) => id === 'w1')).toHaveLength(1); // 冷却未到 ⇒ 不重选
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(selectedIds().filter((id) => id === 'w1')).toHaveLength(2); // 冷却到期 ⇒ 恰好一次
+    expect(selectMock).toHaveBeenLastCalledWith('w1');
+
+    await vi.advanceTimersByTimeAsync(10000); // 每会话每壁纸一次：闸已用过，不再重试
     expect(selectedIds().filter((id) => id === 'w1')).toHaveLength(2);
-
-    localStorage.setItem('we:renderfail:w3', JSON.stringify({ v: 1, kind: 'no-visible-objects', detail: '', at: 1 }));
-    engine().select('w3');
-    onHealth(store.snapshot('w3'));
-    await tick();
-    expect(selectedIds().filter((id) => id === 'w3')).toHaveLength(1); // 硬失败：只有 api.select 那一次
-
-    store.recordSoft('w2', 'load-error', '断流');
-    fakeNow += 5000;
-    onHealth(store.snapshot('w2')); // 当前选中是 w3 ⇒ 不许把用户拽回 w2
-    await tick();
-    expect(selectedIds().filter((id) => id === 'w2')).toHaveLength(0);
-
-    nowSpy.mockRestore();
   });
 
-  it('teardown 撤销健康订阅，且挂起的自动重试不再落到已收尾的实例上', async () => {
+  it('冷却到期前用户已切走 ⇒ 不把用户拽回旧壁纸', async () => {
+    vi.useFakeTimers();
     bootstrap();
-    await tick();
+    await boot();
     const store = rendererOpts.value!.healthStore;
     const onHealth = rendererMock.setOnHealth.mock.calls[0]![0] as (s: HealthSnapshot) => void;
 
-    let fakeNow = Date.now();
-    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => fakeNow);
     engine().select('w1');
     store.recordSoft('w1', 'load-error', '断流');
-    fakeNow += 5000;
+    onHealth(store.snapshot('w1')); // 排一次 w1 的重试
+
+    engine().select('w3'); // 冷却未到就切走
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(selectedIds().filter((id) => id === 'w1')).toHaveLength(1); // 只有 api.select，没有自动重试
+    expect(selectMock).toHaveBeenLastCalledWith('w3');
+  });
+
+  it('软失败之后已成功渲染 ⇒ 不重试', async () => {
+    vi.useFakeTimers();
+    bootstrap();
+    await boot();
+    const store = rendererOpts.value!.healthStore;
+    const onHealth = rendererMock.setOnHealth.mock.calls[0]![0] as (s: HealthSnapshot) => void;
+
+    engine().select('w1');
+    store.recordSoft('w1', 'load-error', '断流');
+    onHealth(store.snapshot('w1')); // 排一次重试
+
+    store.recordOk('w1', { assembleMs: 10, firstFrameMs: 20 }); // 成功会清掉软失败
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(selectedIds().filter((id) => id === 'w1')).toHaveLength(1);
+    expect(store.snapshot('w1').failure).toBeNull();
+    expect(store.snapshot('w1').ok).toBe(true); // ok 与 failure 可并存，这里软失败已被成功清掉
+  });
+
+  it('硬失败不排自动重试', async () => {
+    vi.useFakeTimers();
+    bootstrap();
+    await boot();
+    const store = rendererOpts.value!.healthStore;
+    const onHealth = rendererMock.setOnHealth.mock.calls[0]![0] as (s: HealthSnapshot) => void;
+
+    engine().select('w3');
+    store.recordHard('w3', 'no-visible-objects', '空场景');
+    onHealth(store.snapshot('w3'));
+    await vi.advanceTimersByTimeAsync(10000);
+
+    expect(selectedIds().filter((id) => id === 'w3')).toHaveLength(1); // 只有 api.select
+    expect(store.snapshot('w3').failure?.hard).toBe(true);
+  });
+
+  it('teardown 撤销健康订阅，且挂起的自动重试不再落到已收尾的实例上', async () => {
+    vi.useFakeTimers();
+    bootstrap();
+    await boot();
+    const store = rendererOpts.value!.healthStore;
+    const onHealth = rendererMock.setOnHealth.mock.calls[0]![0] as (s: HealthSnapshot) => void;
+
+    engine().select('w1');
+    store.recordSoft('w1', 'load-error', '断流');
     onHealth(store.snapshot('w1')); // 排一次自动重试
     engine().teardown();
-    await tick();
+    await vi.advanceTimersByTimeAsync(10000);
 
     expect(rendererMock.setOnHealth).toHaveBeenLastCalledWith(null); // 订阅已撤销
     expect(selectedIds().filter((id) => id === 'w1')).toHaveLength(1); // 只有 api.select，自动重试没发生
-    nowSpy.mockRestore();
   });
 });
