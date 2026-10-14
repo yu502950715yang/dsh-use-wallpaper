@@ -6,12 +6,13 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
-import { ThreeScenePlayer, loadSceneToThree, resolvePixelRatio, frameCountFromDims, textureFrameCount, textureFrameGrid, specMaxcount, particleCapacity, specEmitterOrigin, simEmitterOffset, specRenderer, specPerspective, particlePerspectiveCamera, specSparseEventSource, BLACKMYTH_OBJ_SCALE, DEFAULT_PARTICLE_CAPACITY, MAX_PARTICLE_CAPACITY, PARTICLE_FLOATS_PER_INSTANCE } from '../src/client/threejs-player.js';
+import { ThreeScenePlayer, loadSceneToThree, resolvePixelRatio, frameCountFromDims, textureFrameCount, textureFrameGrid, specMaxcount, particleCapacity, specEmitterOrigin, simEmitterOffset, specRenderer, specPerspective, particlePerspectiveCamera, specSparseEventSource, BLACKMYTH_OBJ_SCALE, DEFAULT_PARTICLE_CAPACITY, MAX_PARTICLE_CAPACITY, PARTICLE_FLOATS_PER_INSTANCE, type ParticleSim } from '../src/client/threejs-player.js';
 import { ObjectEffectStage, ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER } from '../src/client/object-effects.js';
 import type { CompiledEffectPass } from '../src/client/shader/effect-chain.js';
 import { textLayerOffset, type TextLayout } from '../src/client/text-object.js';
 import { coverRange, createCompositeGeometry, screenScalePx } from '../src/client/object-range.js';
 import { createFrameCapture } from '../src/client/frame-capture.js';
+import type { PuppetInstance } from '../src/client/puppet.js';
 
 // 注入的 mock renderer：只测相机/场景/RAF 逻辑，不触碰 WebGL。
 // Task 3 起还承载段渲染契约：autoClear 可读写、清屏参数可读、段边界 copyFramebufferToTexture 可观测。
@@ -3248,5 +3249,672 @@ describe('最终审查 C2：真实装配链路的帧快照消费者门控（端�
     expect(mock._copies).toHaveLength(1);
     expect(mock._renders.map((r) => r.target)).toEqual([cap.target, cap.target, null]);
     result.player.dispose();
+  });
+});
+
+// Task 4：逐帧应用视差。视差 = **对象 model 矩阵的 2D 世界平移**（主相机与帧序都不动）：非隔离背景写
+// mesh、隔离对象写合成 quad、粒子层写顶点 shader 的 u_Parallax（隔离粒子层同样落在合成 quad 上，
+// 否则内容会在对象 RT 内被推出边界裁掉）。断言的都是真实位置数值，不是「函数被调用」。
+describe('视差逐帧应用', () => {
+  function makePlayer() {
+    const canvas = document.createElement('canvas');
+    const renderer = { setAnimationLoop: vi.fn(), setPixelRatio: vi.fn(), setSize: vi.fn(), render: vi.fn(), domElement: canvas } as any;
+    return new ThreeScenePlayer(canvas, 1920, 1080, renderer);
+  }
+
+  // 需要 RAF 帧体（installLoop 插桩）或 render 观测口的用例用完整 mock。
+  function makeLoopPlayer() {
+    const canvas = document.createElement('canvas');
+    const mock = createMockRenderer();
+    return { player: new ThreeScenePlayer(canvas, 1920, 1080, mock as unknown as THREE.WebGLRenderer), mock };
+  }
+
+  // 视差参数：amount=1 / delay=0（立即跟随）/ mouseInfluence=1 → shift = depth ⊙ (node + mouse)，
+  // mouse_x = (0.5 - px) × 1920、mouse_y = (py - 0.5) × 1080。
+  const ON = { enabled: true, amount: 1, delay: 0, mouseInfluence: 1 };
+
+  it('depth 非 0 的对象按 shift 平移；depth 0 的对象保持原位', () => {
+    const p = makePlayer();
+    const idA = p.addBackground({ origin: [960, 540, 0], size: [100, 100], scale: [1, 1, 1], sceneW: 1920, sceneH: 1080, parallaxDepth: [1, 1] });
+    const idB = p.addBackground({ origin: [960, 540, 0], size: [100, 100], scale: [1, 1, 1], sceneW: 1920, sceneH: 1080 });
+    p.setParallax({ enabled: true, amount: 1, delay: 0, mouseInfluence: 1 });
+    p.setParallaxPointer({ x: 1, y: 0.5 });
+    p.tickParallaxForTest(0.016);
+    const a = p.backgroundMeshForTest(idA);
+    const b = p.backgroundMeshForTest(idB);
+    expect(a.position.x).toBeCloseTo(-1920 / 2, 3); // 鼠标右移 → 向左
+    expect(b.position.x).toBeCloseTo(0, 6);         // depth 缺失 → 不动
+  });
+
+  it('关掉视差后对象回到基准位置', () => {
+    const p = makePlayer();
+    const id = p.addBackground({ origin: [960, 540, 0], size: [100, 100], scale: [1, 1, 1], sceneW: 1920, sceneH: 1080, parallaxDepth: [1, 1] });
+    p.setParallax({ enabled: true, amount: 1, delay: 0, mouseInfluence: 1 });
+    p.setParallaxPointer({ x: 1, y: 1 });
+    p.tickParallaxForTest(0.016);
+    p.setParallax({ enabled: false, amount: 0, delay: 0, mouseInfluence: 0 });
+    p.tickParallaxForTest(0.016);
+    expect(p.backgroundMeshForTest(id).position.x).toBeCloseTo(0, 6);
+    expect(p.backgroundMeshForTest(id).position.y).toBeCloseTo(0, 6);
+  });
+
+  it('depth=[0,0] 不动；指针回中 → 已平移的对象回到基准位', () => {
+    const p = makePlayer();
+    const idZero = p.addBackground({ origin: [960, 540, 0], size: [100, 100], scale: [1, 1, 1], sceneW: 1920, sceneH: 1080, parallaxDepth: [0, 0] });
+    const idDep = p.addBackground({ origin: [960, 540, 0], size: [100, 100], scale: [1, 1, 1], sceneW: 1920, sceneH: 1080, parallaxDepth: [1, 1] });
+    p.setParallax(ON);
+    p.setParallaxPointer({ x: 1, y: 1 });
+    p.tickParallaxForTest(0.016);
+    expect(p.backgroundMeshForTest(idZero).position.x).toBeCloseTo(0, 6);
+    expect(p.backgroundMeshForTest(idZero).position.y).toBeCloseTo(0, 6);
+    expect(p.backgroundMeshForTest(idDep).position.x).toBeCloseTo(-960, 3);
+    expect(p.backgroundMeshForTest(idDep).position.y).toBeCloseTo(540, 3);
+    // 指针居中 → mouse 项归零、node 项为 0（居中对象）⇒ 回基准位
+    p.setParallaxPointer({ x: 0.5, y: 0.5 });
+    p.tickParallaxForTest(0.016);
+    expect(p.backgroundMeshForTest(idDep).position.x).toBeCloseTo(0, 6);
+    expect(p.backgroundMeshForTest(idDep).position.y).toBeCloseTo(0, 6);
+  });
+
+  it('无配置（setParallax(null)）逐帧零成本早退，不触碰任何对象', () => {
+    const p = makePlayer();
+    const id = p.addBackground({ origin: [960, 540, 0], size: [100, 100], scale: [1, 1, 1], sceneW: 1920, sceneH: 1080, parallaxDepth: [1, 1] });
+    const node = p.backgroundMeshForTest(id);
+    const setSpy = vi.spyOn(node.position, 'set');
+    p.setParallaxPointer({ x: 1, y: 1 });
+    p.tickParallaxForTest(0.016);
+    expect(setSpy).not.toHaveBeenCalled();
+    expect(node.position.x).toBe(0);
+  });
+
+  // 零回归：全库 34 张里只有 1 张开视差，其余 33 张的 cfg 是 {enabled:false,…}。若关视差时**每帧**都写
+  // position，就会盖掉脚本写同一对象的 origin（layer-state.applyLayerState）⇒ 动态网格/可视化条静止。
+  it('关视差：写回一次基准位后不再改写，脚本写入的 origin 不被覆盖', () => {
+    const p = makePlayer();
+    const id = p.addBackground({ origin: [960, 540, 0], size: [100, 100], scale: [1, 1, 1], sceneW: 1920, sceneH: 1080, parallaxDepth: [1, 1] });
+    const node = p.backgroundMeshForTest(id);
+    p.setParallax(ON);
+    p.setParallaxPointer({ x: 1, y: 1 });
+    p.tickParallaxForTest(0.016);
+    expect(node.position.x).toBeCloseTo(-960, 3);
+
+    p.setParallax({ enabled: false, amount: 0, delay: 0, mouseInfluence: 0 });
+    p.tickParallaxForTest(0.016);
+    expect(node.position.x).toBeCloseTo(0, 6);   // 一次性写回基准位
+    expect(node.position.y).toBeCloseTo(0, 6);
+
+    node.position.set(120, -30, 0);              // 脚本写 origin（we_to_three 后的值）
+    p.tickParallaxForTest(0.016);
+    expect(node.position.x).toBeCloseTo(120, 6); // 关视差后不再被覆盖
+    expect(node.position.y).toBeCloseTo(-30, 6);
+  });
+
+  it('开视差但对象无 depth：不写 position（同样不盖掉脚本写入）', () => {
+    const p = makePlayer();
+    const id = p.addBackground({ origin: [960, 540, 0], size: [100, 100], scale: [1, 1, 1], sceneW: 1920, sceneH: 1080 });
+    const node = p.backgroundMeshForTest(id);
+    node.position.set(120, -30, 0);
+    p.setParallax(ON);
+    p.setParallaxPointer({ x: 1, y: 1 });
+    p.tickParallaxForTest(0.016);
+    expect(node.position.x).toBeCloseTo(120, 6);
+    expect(node.position.y).toBeCloseTo(-30, 6);
+  });
+
+  // 偏差②的残留面：`[0,0]` 字段存在但是 truthy ⇒ 旧谓词 `!entry.parallaxDepth` 判不出「不参与视差」
+  // ⇒ 每帧 position.set(基准位) 会盖掉脚本写同一对象的 origin（shift 恒 0 只是数值上不可见）。
+  it('depth=[0,0]（字段存在但全 0）不参与视差：脚本写入的 position 不被每帧覆盖', () => {
+    const p = makePlayer();
+    const id = p.addBackground({ origin: [960, 540, 0], size: [100, 100], scale: [1, 1, 1], sceneW: 1920, sceneH: 1080, parallaxDepth: [0, 0] });
+    const node = p.backgroundMeshForTest(id);
+    p.setParallax(ON);
+    p.setParallaxPointer({ x: 1, y: 1 });
+    node.position.set(7, 9, 0);                  // 脚本写 origin（layer-state.applyLayerState 直接写 three 对象）
+    p.tickParallaxForTest(0.016);
+    p.tickParallaxForTest(0.016);
+    expect(node.position.x).toBe(7);
+    expect(node.position.y).toBe(9);
+  });
+
+  it('粒子层 depth=[0,0]：u_Parallax 一次都不写（等于不接管该层）；[1,1] 的邻居照常写', () => {
+    const p = makePlayer();
+    const verts = () => new Float32Array([0, 0, 0, 10, 0, 0, 1, 1, 1, 1]);
+    p.addParticle(verts, { frameCount: 1, blend: 'alpha', objectCenter: [100, 50, 0], parallaxDepth: [0, 0] });
+    p.addParticle(verts, { frameCount: 1, blend: 'alpha', objectCenter: [100, 50, 0], parallaxDepth: [1, 1] });
+    const [meshZero, meshDep] = p.scene.children as THREE.Mesh[];
+    const uZero = (meshZero.material as THREE.ShaderMaterial).uniforms.u_Parallax;
+    const setSpy = vi.spyOn(uZero.value, 'set');
+    p.setParallax(ON);
+    p.setParallaxPointer({ x: 1, y: 0.5 });
+    p.tickParallaxForTest(0.016);
+    p.tickParallaxForTest(0.016);
+    expect(setSpy).not.toHaveBeenCalled();
+    expect(uZero.value.x).toBe(0);
+    expect(uZero.value.y).toBe(0);
+    // 同帧的邻居仍在动 ⇒ 上面「没写」不是整个循环被跳过
+    expect((meshDep.material as THREE.ShaderMaterial).uniforms.u_Parallax.value.x).toBeCloseTo(-860, 3);
+  });
+
+  it('隔离对象：平移写在合成 quad 上（内容 mesh 位置不动、quad rotation 不被视差改写）', () => {
+    const p = makePlayer();
+    const id = p.addBackground({
+      origin: [960, 540, 0], size: [100, 100], scale: [1, 1, 1], angles: [0, 0, 0.5],
+      texture: new THREE.DataTexture(new Uint8Array(4), 1, 1),
+      sceneW: 1920, sceneH: 1080, objectId: 13, parallaxDepth: [1, 1],
+      isolate: { objectId: 13, rtWidth: 100, rtHeight: 100, worldW: 100, worldH: 100 },
+    });
+    const entry = p.isolatedObjects().find((e) => e.id === 13)!;
+    // 隔离条目的 three 对象就是合成 quad（内容 mesh 只渲染进对象 RT，不在主场景）。
+    expect(p.backgroundMeshForTest(id)).toBe(entry.quad);
+    p.setParallax(ON);
+    p.setParallaxPointer({ x: 1, y: 1 });
+    p.tickParallaxForTest(0.016);
+    expect(entry.quad.position.x).toBeCloseTo(-960, 3);
+    expect(entry.quad.position.y).toBeCloseTo(540, 3);
+    // 只写 position：OWE 也是 Translation × model（平移在旋转之前 = 沿世界轴）。
+    expect(entry.quad.rotation.z).toBeCloseTo(0.5, 6);
+    const content = entry.localScene.children[0] as THREE.Mesh;
+    expect(content.position.x).toBe(0);
+    expect(content.position.y).toBe(0);
+  });
+
+  it('粒子层：depth 非 0 → u_Parallax 收到世界位移（含 node 项）；缺 depth → 恒 0', () => {
+    const p = makePlayer();
+    const verts = () => new Float32Array([0, 0, 0, 10, 0, 0, 1, 1, 1, 1]);
+    p.addParticle(verts, {
+      frameCount: 1, blend: 'alpha', objectCenter: [100, 50, 0], parallaxDepth: [1, 1],
+    });
+    p.addParticle(verts, { frameCount: 1, blend: 'alpha', objectCenter: [100, 50, 0] });
+    const [meshA, meshB] = p.scene.children as THREE.Mesh[];
+    const matA = meshA.material as THREE.ShaderMaterial;
+    const matB = meshB.material as THREE.ShaderMaterial;
+    p.setParallax(ON);
+    p.setParallaxPointer({ x: 1, y: 0.5 });
+    p.tickParallaxForTest(0.016);
+    // node = objCenter = (100, 50)；mouse_x = -960、mouse_y = 0 → shift = (-860, 50)
+    expect(matA.uniforms.u_Parallax.value.x).toBeCloseTo(-860, 3);
+    expect(matA.uniforms.u_Parallax.value.y).toBeCloseTo(50, 3);
+    expect(matB.uniforms.u_Parallax.value.x).toBeCloseTo(0, 6);
+    expect(matB.uniforms.u_Parallax.value.y).toBeCloseTo(0, 6);
+  });
+
+  it('隔离粒子层：平移落在合成 quad 上，RT 内容不偏移（否则内容被 RT 边界裁掉）', () => {
+    const p = makePlayer();
+    const verts = () => new Float32Array([0, 0, 0, 10, 0, 0, 1, 1, 1, 1]);
+    p.addParticle(verts, {
+      frameCount: 1, blend: 'alpha', objectCenter: [100, 50, 0], parallaxDepth: [1, 1],
+      isolate: { objectId: 71, rtWidth: 100, rtHeight: 100, worldW: 100, worldH: 100 },
+    });
+    const entry = p.isolatedObjects().find((e) => e.id === 71)!;
+    p.setParallax(ON);
+    p.setParallaxPointer({ x: 1, y: 0.5 });
+    p.tickParallaxForTest(0.016);
+    // node = objCenter = (100, 50)；shift = (100 - 960, 50 + 0) = (-860, 50) ⇒ 位置 = node + shift
+    expect(entry.quad.position.x).toBeCloseTo(-760, 3);
+    expect(entry.quad.position.y).toBeCloseTo(100, 3);
+    const content = entry.localScene.children[0] as THREE.Mesh;
+    expect(content.position.toArray().map((v) => v + 0)).toEqual([-100, -50, 0]);
+    const mat = content.material as THREE.ShaderMaterial;
+    expect(mat.uniforms.u_Parallax.value.x).toBe(0);
+    expect(mat.uniforms.u_Parallax.value.y).toBe(0);
+    // 反向：关视差后 quad 回对象中心
+    p.setParallax({ enabled: false, amount: 0, delay: 0, mouseInfluence: 0 });
+    p.tickParallaxForTest(0.016);
+    expect(entry.quad.position.x).toBeCloseTo(100, 6);
+    expect(entry.quad.position.y).toBeCloseTo(50, 6);
+  });
+
+  // 守卫：隔离层的位移只能落在合成 quad 上，quad 缺失时**必须跳过该层** —— 退化写 u_Parallax 会在
+  // 对象 RT 内平移内容并被 RT 边界裁掉（正是偏差①禁止的落点）。
+  it('隔离粒子层缺合成 quad：跳过该层，不退化为写 u_Parallax；同帧的非隔离层照常写', () => {
+    const p = makePlayer();
+    const verts = () => new Float32Array([0, 0, 0, 10, 0, 0, 1, 1, 1, 1]);
+    const captured: THREE.Mesh[] = [];
+    // 让 attachIsolated 不登记条目 ⇒ addParticle 里 `isolated.get(id)?.quad` 取到 undefined
+    //（真实成因：隔离条目缺失/被提前拆除），层本身仍是隔离层。
+    vi.spyOn(p as any, 'attachIsolated').mockImplementation((_id: number, _kind: string, content: THREE.Mesh) => {
+      captured.push(content);
+    });
+    p.addParticle(verts, {
+      frameCount: 1, blend: 'alpha', objectCenter: [100, 50, 0], parallaxDepth: [1, 1],
+      isolate: { objectId: 71, rtWidth: 100, rtHeight: 100, worldW: 100, worldH: 100 },
+    });
+    p.addParticle(verts, { frameCount: 1, blend: 'alpha', objectCenter: [100, 50, 0], parallaxDepth: [1, 1] });
+    const uIsolated = (captured[0].material as THREE.ShaderMaterial).uniforms.u_Parallax;
+    const setSpy = vi.spyOn(uIsolated.value, 'set');
+    const meshPlain = p.scene.children[0] as THREE.Mesh;
+    p.setParallax(ON);
+    p.setParallaxPointer({ x: 1, y: 0.5 });
+    p.tickParallaxForTest(0.016);
+    p.tickParallaxForTest(0.016);
+    expect(setSpy).not.toHaveBeenCalled();
+    expect(uIsolated.value.x).toBe(0);
+    expect((meshPlain.material as THREE.ShaderMaterial).uniforms.u_Parallax.value.x).toBeCloseTo(-860, 3);
+  });
+
+  it('帧循环：tickParallax 在 update 之后、render 之前', () => {
+    const { player, mock } = makeLoopPlayer();
+    const id = player.addBackground({ origin: [960, 540, 0], size: [100, 100], scale: [1, 1, 1], sceneW: 1920, sceneH: 1080, parallaxDepth: [1, 1] });
+    const node = player.backgroundMeshForTest(id);
+    const atUpdate: number[] = [];
+    const atRender: number[] = [];
+    const origUpdate = player.update.bind(player);
+    (player as unknown as { update: (dt: number) => void }).update = (dt: number) => {
+      atUpdate.push(node.position.x);
+      origUpdate(dt);
+    };
+    mock._setOnRender(() => atRender.push(node.position.x));
+    player.setParallax(ON);
+    player.setParallaxPointer({ x: 1, y: 0.5 });
+    player.setAnimationLoop();
+    mock._getLoop()!();
+    expect(atUpdate[0]).toBe(0);                   // update 当刻还没施加视差
+    expect(atRender[0]).toBeCloseTo(-960, 3);      // render 前已施加
+    player.dispose();
+  });
+
+  it('loadSceneToThree：image/text/particle 三种 kind 的 parallaxDepth 全部透传', () => {
+    const canvas = document.createElement('canvas');
+    const mock = createMockRenderer();
+    const scene = JSON.stringify({
+      general: { orthogonalprojection: { height: 1080, width: 1920 } },
+      objects: [
+        { id: 13, image: 'models/a.json', origin: '960 540 0', scale: '1 1 1', size: '100 100', parallaxDepth: '1.00000 1.00000' },
+        // text 的 parallaxDepth 同样要透传（真实库 20 处；写成 `kind === 'image' ? … : undefined` 会丢掉它）
+        { id: 20, text: { value: 'x' }, origin: '1160 640 0', scale: '1 1 1', size: '200 140', parallaxDepth: '1.00000 1.00000' },
+        { id: 22, particle: 'particles/presets/smoke2.json', origin: '1260 740 0', scale: '1 1 1', parallaxDepth: '1.00000 1.00000' },
+      ],
+    });
+    const tex = () => new THREE.DataTexture(new Uint8Array(4), 2, 2);
+    const sim: ParticleSim = {
+      update: vi.fn(), vertices: () => new Float32Array(0), frame_count: () => 1,
+      set_frame_count: vi.fn(), particle_count: () => 0,
+    };
+    const result = loadSceneToThree(scene, {
+      renderer: mock as unknown as THREE.WebGLRenderer,
+      backgroundTextures: new Map([[13, tex()]]),
+      textLayers: new Map([[20, { texture: tex(), size: [200, 140] as [number, number] }]]),
+      particles: new Map([[22, { specJson: '{}', blend: 'alpha' as const }]]),
+      createParticleSim: () => sim,
+    }, canvas);
+    const player = result.player;
+    player.setParallax(ON);
+    player.setParallaxPointer({ x: 1, y: 0.5 });
+    player.tickParallaxForTest(0.016);
+    // node = origin - 场景中心：image (0,0) / text (200,100) / particle (300,200)；mouse_x = -960。
+    // 位置 = node + shift = node + depth ⊙ (node - cam + mouse)。
+    expect(player.displayObject(13)!.position.x).toBeCloseTo(-960, 3);
+    expect(player.displayObject(20)!.position.x).toBeCloseTo(-560, 3);
+    expect(player.displayObject(20)!.position.y).toBeCloseTo(200, 3);
+    const pmat = (player.displayObject(22) as THREE.Mesh).material as THREE.ShaderMaterial;
+    expect(pmat.uniforms.u_Parallax.value.x).toBeCloseTo(-660, 3);
+    expect(pmat.uniforms.u_Parallax.value.y).toBeCloseTo(200, 3);
+    player.dispose();
+  });
+});
+
+// puppet 图层（Task 7）：装配（addPuppet）、逐帧采样与释放。本机唯一 .mdl 样本是静态族 ⇒ 这里用桩实例
+// 钉住**接线**（真实几何/骨骼数值由 tests/puppet.test.ts 覆盖）。
+describe('puppet 图层（addPuppet / image 分支 / 逐帧动画）', () => {
+  type PuppetStub = PuppetInstance & { frames: number[]; anims: number[]; disposed: number };
+
+  function makePuppetStub(animations: PuppetInstance['animations'] = []): PuppetStub {
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+    const stub: PuppetStub = {
+      mesh, bones: [], skeleton: null, animations,
+      frames: [], anims: [], disposed: 0,
+      applyFrame: (_anim, frame) => { stub.frames.push(frame); stub.anims.push(_anim.id); },
+      dispose: () => { stub.disposed++; },
+    };
+    return stub;
+  }
+
+  const anim = {
+    id: 7, name: 'idle', mode: 'loop', fps: 10, frameCount: 3,
+    tracks: [{ boneId: 0, keys: [{ pos: [0, 0, 0] as [number, number, number], rot: [0, 0, 0, 1] as [number, number, number, number], scale: [1, 1] as [number, number] }] }],
+  };
+
+  it('addPuppet：we_to_three 定位 + scale/angles/renderOrder + 脚本桥登记（与 addBackground 同一编号空间）', () => {
+    const { player } = makePlayer(1920, 1080);
+    const stub = makePuppetStub([anim]);
+    const id = player.addPuppet({
+      objectId: 16, puppet: stub, origin: [1000, 600, 3], scale: [2, 4, 1],
+      angles: [0.5, 0, 0], sceneW: 1920, sceneH: 1080, renderOrder: 5,
+    });
+    expect(id).toBe(0);                                   // 与 addBackground 共用图层计数器
+    expect(player.displayObject(16)).toBe(stub.mesh);      // scene 对象 id → 显示对象
+    expect(player.scene.children).toContain(stub.mesh);
+    // we_to_three = origin − viewport/2（y 不翻转，见 AGENT.md §2.3）
+    expect(stub.mesh.position.x).toBeCloseTo(40, 6);
+    expect(stub.mesh.position.y).toBeCloseTo(60, 6);
+    expect(stub.mesh.position.z).toBeCloseTo(3, 6);
+    expect(stub.mesh.scale.toArray()).toEqual([2, 4, 1]);
+    expect(stub.mesh.rotation.x).toBeCloseTo(0.5, 6);
+    expect(stub.mesh.renderOrder).toBe(5);
+    // 视差落点 = puppet 自身 mesh（不在隔离路径上，没有合成 quad）
+    expect(player.backgroundMeshForTest(id)).toBe(stub.mesh);
+  });
+
+  it('addPuppet 透传对象级 alpha/brightness（与背景同源 materialModulation）；缺省 1/1 逐像素不变', () => {
+    const { player } = makePlayer(1920, 1080);
+    const dim = makePuppetStub();
+    const plain = makePuppetStub();
+    player.addPuppet({
+      objectId: 1, puppet: dim, origin: [960, 540, 0], scale: [1, 1, 1], angles: [0, 0, 0],
+      sceneW: 1920, sceneH: 1080, alpha: 0.5, brightness: 0.5,
+    });
+    player.addPuppet({
+      objectId: 2, puppet: plain, origin: [960, 540, 0], scale: [1, 1, 1], angles: [0, 0, 0],
+      sceneW: 1920, sceneH: 1080,
+    });
+    const dm = dim.mesh.material as THREE.MeshBasicMaterial;
+    expect(dm.opacity).toBeCloseTo(0.5, 6);           // alpha → material.opacity
+    expect(dm.color.r).toBeCloseTo(0.5, 6);           // brightness 乘入 color（白 × 0.5）
+    expect([dm.color.g, dm.color.b]).toEqual([0.5, 0.5]);
+    const pm = plain.mesh.material as THREE.MeshBasicMaterial;
+    expect(pm.opacity).toBe(1);                       // 缺省 1/1 → 与改动前逐像素一致
+    expect(pm.color.toArray()).toEqual([1, 1, 1]);
+  });
+
+  it('addPuppet 带 parallaxDepth ⇒ 与背景同一套视差位移；depth 缺失 ⇒ 不动', () => {
+    const { player } = makePlayer(1920, 1080);
+    const moved = makePuppetStub();
+    const still = makePuppetStub();
+    player.addPuppet({
+      objectId: 1, puppet: moved, origin: [960, 540, 0], scale: [1, 1, 1], angles: [0, 0, 0],
+      sceneW: 1920, sceneH: 1080, parallaxDepth: [1, 1],
+    });
+    player.addPuppet({
+      objectId: 2, puppet: still, origin: [960, 540, 0], scale: [1, 1, 1], angles: [0, 0, 0],
+      sceneW: 1920, sceneH: 1080,
+    });
+    player.setParallax({ enabled: true, amount: 1, delay: 0, mouseInfluence: 1 });
+    player.setParallaxPointer({ x: 1, y: 0.5 });
+    player.tickParallaxForTest(0.016);
+    expect(moved.mesh.position.x).toBeCloseTo(-1920 / 2, 3); // 鼠标右移 → 内容左移
+    expect(still.mesh.position.x).toBeCloseTo(0, 6);
+  });
+
+  it('逐帧采样首个动画：帧号 = 已播秒数 × fps 对帧数取模；无动画层直接跳过', () => {
+    const { player } = makePlayer(1920, 1080);
+    const stub = makePuppetStub([anim]);
+    const silent = makePuppetStub();
+    player.addPuppet({
+      objectId: 1, puppet: stub, origin: [960, 540, 0], scale: [1, 1, 1], angles: [0, 0, 0],
+      sceneW: 1920, sceneH: 1080,
+    });
+    player.addPuppet({
+      objectId: 2, puppet: silent, origin: [960, 540, 0], scale: [1, 1, 1], angles: [0, 0, 0],
+      sceneW: 1920, sceneH: 1080,
+    });
+    player.update(0.05);   // 0.05s × 10fps = 0.5 帧
+    player.update(0.25);   // 累计 0.3s × 10fps = 3 帧 → 对 3 帧取模回到 0
+    expect(stub.frames).toEqual([0.5, 0]);
+    expect(silent.frames).toEqual([]);
+  });
+
+  it('animationLayers：只应用第一条可见层（按 id 找动画、rate 乘进时钟、visible=false 被过滤）', () => {
+    const { player } = makePlayer(1920, 1080);
+    // 动画表首个是 id=7（fps 10 / 3 帧），但层选的是 id=3（fps 20 / 4 帧）⇒ 选错动画会立刻在帧号上暴露。
+    const stub = makePuppetStub([
+      { ...anim, id: 7, name: 'idle', fps: 10, frameCount: 3 },
+      { ...anim, id: 3, name: 'walk', fps: 20, frameCount: 4 },
+    ]);
+    player.addPuppet({
+      objectId: 1, puppet: stub, origin: [960, 540, 0], scale: [1, 1, 1], angles: [0, 0, 0],
+      sceneW: 1920, sceneH: 1080,
+      animationLayers: [
+        { id: 0, animation: 3, rate: 1, blend: 1, visible: false },   // 不可见 ⇒ 不参与选择
+        { id: 1, animation: 3, rate: 2, blend: 1, visible: true },    // 第一条可见层：动画 3、rate 2
+        { id: 2, animation: 7, rate: 1, blend: 1, visible: true },    // 第二条可见层：v1 不应用
+      ],
+    });
+    player.update(0.1);    // 0.1s × rate 2 = 0.2s → 0.2 × 20fps = 4 帧 % 4 = 0
+    player.update(0.05);   // 累计 0.3s → 6 帧 % 4 = 2（回绕落在 [0, frameCount)）
+    expect(stub.anims).toEqual([3, 3]);
+    expect(stub.frames).toHaveLength(2);
+    expect(stub.frames[0]).toBeCloseTo(0, 6);
+    expect(stub.frames[1]).toBeCloseTo(2, 6);   // 帧号本身是浮点（0.3 × 20fps 对 4 取模）
+    player.dispose();
+  });
+
+  it('animationLayers 多条可见层：只应用第一条并告警一次（不逐帧刷屏）', () => {
+    const { player } = makePlayer(1920, 1080);
+    const stub = makePuppetStub([
+      { ...anim, id: 7, name: 'idle' },
+      { ...anim, id: 3, name: 'walk' },
+    ]);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    player.addPuppet({
+      objectId: 1, puppet: stub, origin: [960, 540, 0], scale: [1, 1, 1], angles: [0, 0, 0],
+      sceneW: 1920, sceneH: 1080,
+      animationLayers: [
+        { id: 0, animation: 7, rate: 1, blend: 1, visible: true },
+        { id: 1, animation: 3, rate: 1, blend: 1, visible: true },
+      ],
+    });
+    player.update(0.1);
+    player.update(0.1);
+    expect(stub.anims).toEqual([7, 7]);
+    const hits = warn.mock.calls.filter((c) => String(c[0]).includes('只应用第一条'));
+    expect(hits).toHaveLength(1);
+    expect(String(hits[0][0])).toContain('idle');
+    warn.mockRestore();
+    player.dispose();
+  });
+
+  it('animationLayers 为空数组/无可见层/动画 id 不存在/帧数为 0 ⇒ 不采样；字段缺失 ⇒ 播首个动画（零回归）', () => {
+    const { player } = makePlayer(1920, 1080);
+    const empty = makePuppetStub([{ ...anim, id: 3 }]);
+    const invisible = makePuppetStub([{ ...anim, id: 3 }]);
+    const missingAnim = makePuppetStub([{ ...anim, id: 7 }]);
+    const zeroFrames = makePuppetStub([{ ...anim, id: 3, frameCount: 0 }]);
+    const legacy = makePuppetStub([{ ...anim, id: 3 }]);
+    const base = { origin: [960, 540, 0] as [number, number, number], scale: [1, 1, 1] as [number, number, number], angles: [0, 0, 0] as [number, number, number], sceneW: 1920, sceneH: 1080 };
+    player.addPuppet({ objectId: 1, puppet: empty, ...base, animationLayers: [] });
+    player.addPuppet({ objectId: 2, puppet: invisible, ...base, animationLayers: [{ id: 0, animation: 3, rate: 1, blend: 1, visible: false }] });
+    player.addPuppet({ objectId: 3, puppet: missingAnim, ...base, animationLayers: [{ id: 0, animation: 99, rate: 1, blend: 1, visible: true }] });
+    player.addPuppet({ objectId: 4, puppet: zeroFrames, ...base, animationLayers: [{ id: 0, animation: 3, rate: 1, blend: 1, visible: true }] });
+    player.addPuppet({ objectId: 5, puppet: legacy, ...base });   // 无 animationLayers 字段
+    player.update(0.1);
+    expect([empty.frames, invisible.frames, missingAnim.frames, zeroFrames.frames]).toEqual([[], [], [], []]);
+    expect(legacy.anims).toEqual([3]);    // 改动前行为：取动画表首个、rate 1 循环
+    expect(legacy.frames).toEqual([1]);   // 0.1s × 10fps = 1 帧
+    player.dispose();
+  });
+
+  it('采样抛错且 dispose 也抛错 ⇒ 图层照样摘掉（不每帧重复抛、不把帧循环打断）', () => {
+    const { player } = makePlayer(1920, 1080);
+    const broken = makePuppetStub([anim]);
+    let calls = 0;
+    let disposes = 0;
+    broken.applyFrame = () => { calls++; throw new Error('骨骼矩阵爆炸'); };
+    broken.dispose = () => { disposes++; throw new Error('释放也炸'); };
+    player.addPuppet({
+      objectId: 1, puppet: broken, origin: [960, 540, 0], scale: [1, 1, 1], angles: [0, 0, 0],
+      sceneW: 1920, sceneH: 1080,
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // dispose 抛错也不得穿出帧循环（update 抛错会跳过 render ⇒ 本帧画面不更新）
+    expect(() => player.update(0.1)).not.toThrow();
+    expect([calls, disposes]).toEqual([1, 1]);
+    player.update(0.1);                          // delete 在 finally 里 ⇒ 下一帧不再重复抛
+    expect([calls, disposes]).toEqual([1, 1]);
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('puppet 动画采样失败'))).toBe(true);
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('puppet 释放失败'))).toBe(true);
+    warn.mockRestore();
+    player.dispose();
+  });
+
+  it('loadSceneToThree：scene.json 的 animationlayers 透传到选层（走 image 分支入参）', () => {
+    const scene = JSON.stringify({
+      camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+      general: { orthogonalprojection: { width: 1920, height: 1080 } },
+      objects: [{
+        id: 16, name: 'puppet', image: 'models/p.json', origin: '1000 600 0', scale: '2 2 1', size: '100 100',
+        animationlayers: [{ id: 0, animation: 3, rate: 1, blend: 1, visible: true }],
+      }],
+    });
+    const stub = makePuppetStub([
+      { ...anim, id: 7, fps: 10, frameCount: 3 },
+      { ...anim, id: 3, fps: 20, frameCount: 4 },
+    ]);
+    const result = loadSceneToThree(
+      scene,
+      { renderer: createMockRenderer() as unknown as THREE.WebGLRenderer, puppetMeshes: new Map([[16, stub]]) },
+      document.createElement('canvas'),
+    );
+    result.player.update(0.1);         // 0.1s × 20fps = 2 帧（选中动画 3 才会是 2；选 7 会是 1）
+    expect(stub.anims).toEqual([3]);
+    expect(stub.frames).toEqual([2]);
+    result.player.dispose();
+  });
+
+  it('loadSceneToThree：puppetMeshes 命中 ⇒ 走 addPuppet（不再建 quad），并计入 puppetLayers', () => {
+    const scene = JSON.stringify({
+      camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+      general: { orthogonalprojection: { width: 1920, height: 1080 } },
+      objects: [{ id: 16, name: 'puppet', image: 'models/p.json', origin: '1000 600 0', scale: '2 2 1', size: '100 100' }],
+    });
+    const stub = makePuppetStub([anim]);
+    const result = loadSceneToThree(
+      scene,
+      { renderer: createMockRenderer() as unknown as THREE.WebGLRenderer, puppetMeshes: new Map([[16, stub]]) },
+      document.createElement('canvas'),
+    );
+    expect(result.puppetLayers).toEqual(result.backgroundIds);   // 同一批图层 id
+    expect(result.backgroundIds).toHaveLength(1);
+    expect(result.player.displayObject(16)).toBe(stub.mesh);
+    expect(stub.mesh.position.x).toBeCloseTo(40, 6);
+    expect(stub.mesh.scale.toArray()).toEqual([2, 2, 1]);
+    // 该对象只有 puppet 一个显示物：主场景里除了 puppet mesh 没有额外的背景 quad
+    expect(result.player.scene.children).toEqual([stub.mesh]);
+    // 帧循环经 player.update 推进 → puppet 也被采样
+    result.player.update(0.2);   // 0.2s × 10fps = 2 帧
+    expect(stub.frames).toEqual([2]);
+  });
+
+  it('loadSceneToThree：puppetMeshes 未命中 ⇒ 维持既有背景 quad 路径（零回归）', () => {
+    const scene = JSON.stringify({
+      camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+      general: { orthogonalprojection: { width: 1920, height: 1080 } },
+      objects: [{ id: 16, name: 'bg', image: 'models/p.json', origin: '960 540 0', scale: '1 1 1', size: '100 100' }],
+    });
+    const tex = new THREE.DataTexture(new Uint8Array(4), 1, 1);
+    const result = loadSceneToThree(
+      scene,
+      {
+        renderer: createMockRenderer() as unknown as THREE.WebGLRenderer,
+        backgroundTextures: new Map([[16, tex]]),
+        puppetMeshes: new Map(),
+      },
+      document.createElement('canvas'),
+    );
+    expect(result.puppetLayers).toEqual([]);
+    expect(result.backgroundIds).toHaveLength(1);
+    expect(result.player.scene.children[0]).toBeInstanceOf(THREE.Mesh);
+    expect((result.player.scene.children[0] as THREE.Mesh).geometry.type).toBe('PlaneGeometry');
+  });
+
+  it('loadSceneToThree：puppet 对象的 scene.json alpha/brightness 透传到网格材质', () => {
+    const scene = JSON.stringify({
+      camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+      general: { orthogonalprojection: { width: 1920, height: 1080 } },
+      objects: [{
+        id: 16, name: 'puppet', image: 'models/p.json', origin: '1000 600 0', scale: '2 2 1',
+        size: '100 100', alpha: 0.25, brightness: 0.5,
+      }],
+    });
+    const stub = makePuppetStub();
+    const result = loadSceneToThree(
+      scene,
+      { renderer: createMockRenderer() as unknown as THREE.WebGLRenderer, puppetMeshes: new Map([[16, stub]]) },
+      document.createElement('canvas'),
+    );
+    const mat = stub.mesh.material as THREE.MeshBasicMaterial;
+    expect(mat.opacity).toBeCloseTo(0.25, 6);
+    expect(mat.color.r).toBeCloseTo(0.5, 6);
+    expect(result.puppetLayers).toHaveLength(1);
+  });
+
+  it('resizeBackground 对 puppet 图层早退：不换成 PlaneGeometry、不 dispose 蒙皮几何', () => {
+    const { player } = makePlayer(1920, 1080);
+    const stub = makePuppetStub();
+    const geometry = stub.mesh.geometry;
+    const disposeSpy = vi.spyOn(geometry, 'dispose');
+    const id = player.addPuppet({
+      objectId: 1, puppet: stub, origin: [960, 540, 0], scale: [1, 1, 1], angles: [0, 0, 0],
+      sceneW: 1920, sceneH: 1080,
+    });
+    player.resizeBackground(id, [200, 100]);
+    expect(stub.mesh.geometry).toBe(geometry);
+    expect(geometry.type).toBe('BufferGeometry');
+    expect(disposeSpy).not.toHaveBeenCalled();
+  });
+
+  it('单个 puppet 的采样抛错 ⇒ 只丢弃该图层的动画，不中断帧循环/不连累其它图层', () => {
+    const { player } = makePlayer(1920, 1080);
+    const broken = makePuppetStub([anim]);
+    let calls = 0;
+    broken.applyFrame = () => { calls++; throw new Error('骨骼矩阵爆炸'); };
+    const healthy = makePuppetStub([anim]);
+    player.addPuppet({
+      objectId: 1, puppet: broken, origin: [960, 540, 0], scale: [1, 1, 1], angles: [0, 0, 0],
+      sceneW: 1920, sceneH: 1080,
+    });
+    player.addPuppet({
+      objectId: 2, puppet: healthy, origin: [960, 540, 0], scale: [1, 1, 1], angles: [0, 0, 0],
+      sceneW: 1920, sceneH: 1080,
+    });
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(() => player.update(0.1)).not.toThrow();   // 0.1s × 10fps = 帧号 1
+    expect(healthy.frames).toHaveLength(1);
+    expect(healthy.frames[0]).toBeCloseTo(1, 6);      // 健康图层照常采样
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('puppet 动画采样失败'))).toBe(true);
+    // 坏图层被摘掉：下一帧不再重复抛错（不刷屏），健康图层继续
+    player.update(0.1);
+    expect(calls).toBe(1);
+    expect(healthy.frames).toHaveLength(2);
+    expect(healthy.frames[1]).toBeCloseTo(2, 6);
+    // 摘掉即释放：这是该实例唯一的释放机会（player.dispose 只遍历仍在表里的图层）。
+    expect(broken.disposed).toBe(1);
+    expect(healthy.disposed).toBe(0);
+    warn.mockRestore();
+    player.dispose();
+  });
+
+  it('采样失败摘表 ⇒ 同 id 的 backgroundEntries/displayObjects 引用一并摘净，resizeBackground 不再换掉已 dispose 的蒙皮几何', () => {
+    const { player } = makePlayer(1920, 1080);
+    const broken = makePuppetStub([anim]);
+    broken.applyFrame = () => { throw new Error('骨骼矩阵爆炸'); };
+    const id = player.addPuppet({
+      objectId: 16, puppet: broken, origin: [960, 540, 0], scale: [1, 1, 1], angles: [0, 0, 0],
+      sceneW: 1920, sceneH: 1080,
+    });
+    const geometry = broken.mesh.geometry;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    player.update(0.1);
+    expect(broken.disposed).toBe(1);
+    // 残留 backgroundEntries 条目会让 resizeBackground（只查 puppetLayers）把已 dispose 的蒙皮几何换成
+    // PlaneGeometry。⚠️ 生产上只有文本层调它 ⇒ 这是潜在地雷而非现行活路径，故用注释钉住而不是删守卫。
+    player.resizeBackground(id, [200, 100]);
+    expect(broken.mesh.geometry).toBe(geometry);
+    expect(broken.mesh.geometry.type).toBe('BufferGeometry');
+    expect(player.displayObject(16)).toBeUndefined();          // 脚本桥不留悬垂引用
+    expect(() => player.backgroundMeshForTest(id)).toThrow();  // 图层条目也已摘除
+    warn.mockRestore();
+    player.dispose();
+  });
+
+  it('player.dispose() 释放 puppet 实例（同一份图层生命周期）', () => {
+    const { player } = makePlayer(1920, 1080);
+    const stub = makePuppetStub([anim]);
+    player.addPuppet({
+      objectId: 1, puppet: stub, origin: [960, 540, 0], scale: [1, 1, 1], angles: [0, 0, 0],
+      sceneW: 1920, sceneH: 1080,
+    });
+    player.dispose();
+    expect(stub.disposed).toBe(1);
   });
 });

@@ -4,6 +4,10 @@
 
 **Goal:** 把 WE scene 里两处**当前完全没有实现**的能力补齐：① 鼠标视差（`general.cameraparallax*` + 对象 `parallaxDepth`），② puppet 骨骼模型（`models/*.json` 的 `puppet` 字段 → `.mdl` 二进制 → 骨骼蒙皮 + MDLA 动画）。完成后本机唯一的 puppet 壁纸 `3303428996`（死亡搁浅-玛玛）与 16 个带 `parallaxDepth` 的样本应从「静态/无动」变成与桌面 WE 同形的视差 + 骨骼动画。
 
+> **2026-10-14 实测修订（控制方）**：两条前提被真实素材推翻，验收口径相应下调 ——
+> - **本机唯一 `.mdl`（`3303428996`）是静态族网格**：无 `MDLS`/`MDLA`/`MDLE` 段、`stride=48 / 1850 顶点 / 10998 索引` ⇒ puppet 在本机只能验「静态网格出图」，**蒙皮与动画无真实样本**（只有合成夹具）；
+> - **`general.cameraparallax` 在本机 34 张 scene 壁纸里只有 1 张为 `true`（`3793620838`）**，其余 33 张视差无可见效果属预期 ⇒ 视差视觉验收只用那张样本。
+
 **Architecture:** 两个子系统，**先视差后 puppet**（视差小、可当天闭环；puppet 依赖前者建立的「逐帧对象位移」与「assets 装配」两条通路）。视差走 OWE 的权威公式（`research/audit-parallax-mechanism.md` §3.2：`shift = ((n − c) + mouse) ⊙ depth × amount`，**作用于对象 model 矩阵的 2D 平移，相机不动**），逐帧只写 `Object3D.position`，不碰相机与渲染帧序。puppet 走「解析 → `THREE.SkinnedMesh` + `THREE.Skeleton`」：MDLS 的本地绑定矩阵摆成骨骼层级后 `bind()`，three 自动得到 `World(anim) · World(bind)⁻¹` 蒙皮矩阵；MDLA 关键帧逐帧采样写回 `bone.position/quaternion/scale`。**不新增对象 kind**：puppet 是 `image` 对象的分支（`image` → `models/x.json` → `"puppet": "models/x_puppet.mdl"`），判别发生在资源解析阶段。
 
 **Tech Stack:** TypeScript、three.js r170（`SkinnedMesh` / `Skeleton` / `Bone` / `BufferGeometry` / `InstancedBufferGeometry`）、vitest（node + jsdom）、headless Edge（`e2e/`）
@@ -256,8 +260,11 @@ git commit -m "feat(parallax): 视差纯数学层（OWE 公式 + 指针延迟插
 **Interfaces:**
 - Consumes: Task 1 的 `ParallaxConfig` / `readParallaxConfig`
 - Produces:
-  - `SceneImageObject.parallaxDepth?: [number, number]`（缺省 `undefined` = OWE 的 `{0,0}` ⇒ 不动）
+  - `SceneObject.parallaxDepth?: [number, number]`（**所有 kind**：解析器把它放在对象 `base` 上；缺省 `undefined` = OWE 的 `{0,0}` ⇒ 不动）
   - `SceneDescription.parallax: ParallaxConfig`
+
+> **2026-10-14 修订（控制方亲测真实壁纸库后的裁定）**：原计划只让 **image** 分支产出 `parallaxDepth`，但真实库 34 张 scene 壁纸里 227 处该字段的分布是 **particle 106 / image 91 / text 20 / other 10** —— 47% 挂在粒子上，而 Task 4 要用它给粒子注 `u_Parallax`。若只做 image，粒子视差与本计划验收样本里的 5 个粒子对象都会永远取到 `undefined`。故改为放进对象 `base`，并给 `SceneParticleObject` / `SceneTextObject` 补字段类型。
+> 同一轮实测：`general.cameraparallax` 在本机 34 张里**只有 1 张为 `true`（`3793620838`）**、33 张为 `false` ⇒ Task 5 的视差视觉验收**必须用 `3793620838`**（原计划写的 `1280029027` 是 `false`，照它验收会白跑）；其余 33 张上视差无可见效果，须在文档中如实写明。
 
 - [ ] **Step 1: 写失败测试** `tests/scene-json-parallax.test.ts`
 
@@ -626,7 +633,9 @@ Expected: FAIL —— `tickParallaxForTest is not a function`
 `loadSceneToThree` 的 image 分支（`:1979-1999`）与 text 分支（`:2009-2020`）把 `parallaxDepth` 传进去：
 
 ```ts
-        parallaxDepth: obj.kind === 'image' ? obj.parallaxDepth : undefined,
+        // Task 2 修订后所有 kind 都带该字段（`SceneObjectBase.parallaxDepth`）⇒ 直接透传；
+        // 别再写 `obj.kind === 'image' ? … : undefined`，那会丢掉 text 图层的视差（真实库 text 有 20 处）。
+        parallaxDepth: obj.parallaxDepth,
 ```
 
 测试读接口（仅测试用，命名带 `ForTest` 后缀以免被误当生产 API）：
@@ -750,7 +759,7 @@ npm run build && npm run build:client   # lib/ 与 dist/client.js
 
 在 GUI 里逐条核对（写进 `TESTING.md`）：
 
-1. 选一张**带 `parallaxDepth`** 的壁纸（本机 16 个样本，例如 `1280029027`）→ 鼠标在窗口内移动，画面**整体**轻微反向漂移；鼠标停下后画面**平滑收尾**（`delay` 的滞后感）。
+1. 选 **`3793620838`**（本机 34 张里**唯一** `general.cameraparallax: true` 的壁纸；其余 33 张为 false，视差在那些壁纸上无可见效果、属预期）→ 鼠标在窗口内移动，画面**整体**轻微反向漂移；鼠标停下后画面**平滑收尾**（`delay` 的滞后感）。
 2. 选一张 `general.cameraparallax=false` 的壁纸 → **完全不动**（零回归）。
 3. 同一张壁纸里 `parallaxDepth` 为 `0 0` 的对象不动、非 0 的对象动（用 Chrome DevTools 的 Layers/像素对比确认「不是整屏平移」）。
 4. 切到别的壁纸再切回来 → 视差仍然工作（tracker 未被重复安装或提前卸载）。
@@ -1155,7 +1164,7 @@ describe.skipIf(!hasLib)('真实 puppet 样本（本机库）', () => {
     expect(r.puppet.mesh.vertexCount).toBeGreaterThan(0);
     expect(r.puppet.bones.length).toBeGreaterThan(0);
     expect(r.puppet.mesh.blendWeights, '打包族应带蒙皮权重').not.toBeNull();
-    // 动画：口径未在真实样本上确证前**只记录不断言**（见 AGENT.md §7.39）
+    // 动画：口径未在真实样本上确证前**只记录不断言**（见 AGENT.md §7.40）
     console.log(`[mdl] version=${r.puppet.version} verts=${r.puppet.mesh.vertexCount} bones=${r.puppet.bones.length} anims=${r.puppet.animations.length}`);
   });
 });
@@ -1165,7 +1174,7 @@ Run: `npx vitest run tests/mdl-real-library.test.ts --reporter=basic`
 
 Expected: 有库时 PASS 并打印一行 `[mdl] version=MDLV0021 verts=… bones=… anims=…`；无库时 **skip**（不进 CI 判红）。
 
-**若 `anims=0`**：说明本机样本的 MDLA 段布局与文档化口径不一致 —— **不要改测试去迁就**，把实测的段头十六进制记进 `AGENT.md` §7.39，并把该壁纸的动画列为未支持（如实标注），Task 8 仍可按「无动画的静态 puppet」交付。
+**若 `anims=0`**：说明本机样本的 MDLA 段布局与文档化口径不一致 —— **不要改测试去迁就**，把实测的段头十六进制记进 `AGENT.md` §7.40，并把该壁纸的动画列为未支持（如实标注），Task 8 仍可按「无动画的静态 puppet」交付。
 
 - [ ] **Step 6: 提交**
 
@@ -1640,10 +1649,11 @@ pnpm run build && pnpm run build:client
 # 重启 dsh web + 强刷 GUI
 ```
 
-1. 选 `3303428996`（死亡搁浅-玛玛）→ Console 应出现 `[three] scene loaded id=3303428996 background=N particleLayers=M`（`background` 计数把 puppet 图层算进去）。
-2. 画面里角色部件（身体/头发/裙子）应随动画**动起来**，且部件之间**不撕裂**（蒙皮正确）；与桌面 WE 同帧对拍截图比较。
-3. 若 Console 出现 `puppet 解析失败` → 记录实际的 MDL 段头十六进制（见 Task 6 Step 5 的冒烟输出），据此决定是补段布局还是如实标注为未支持。
-4. 其它 scene 壁纸（非 puppet，占绝大多数）**逐像素零回归**：`npm run e2e:hidpi -- --tag=before`（改动前）→ `--tag=after` → `npm run e2e:compare`。
+1. 选 `3303428996`（死亡搁浅-玛玛）→ Console 应出现 `[three] scene loaded id=3303428996 background=N particleLayers=M`（`background` 计数把 puppet 图层算进去），且**不出现** `puppet 解析失败`。
+2. **本机现实（Task 6 实测）**：该样本是**静态族**网格（无 `MDLS`/`MDLA`/`MDLE`，`segments=absent/absent`）⇒ 本机能验收的是「**静态 puppet 网格出图**」：角色轮廓应呈现为网格形状（`stride=48 / 1850 顶点 / 10998 索引`），与「只画一张 flat quad」的旧行为可区分；**不要**期待部件随动画动起来（该样本没有动画数据，期待落空不等于实现有错）。
+3. 蒙皮（骨骼绑定）与 MDLA 动画在本机**无法验收**（无真实素材）⇒ 它们只由 `tests/puppet.test.ts` 的合成夹具判据覆盖，边界见 §7 第 39 条。
+4. 若 Console 出现 `puppet 解析失败` → 记录实际的 MDL 段头十六进制，据此决定是补段布局还是如实标注为未支持。
+5. 其它 scene 壁纸（非 puppet，占绝大多数）**逐像素零回归**：按 `TESTING.md` §2.9 的口径跑 before/after 对拍（`maxAbs ≤ 1` 且「差≥2」像素 = 0）。
 
 - [ ] **Step 7: 文档**
 
@@ -1657,7 +1667,7 @@ pnpm run build && pnpm run build:client
 `AGENT.md` §7 追加（**如实标注**）：
 
 ```markdown
-39. **puppet / 视差的已知边界**：① `.mdl` 段布局按上游 `mdl-parse.js` 的文档化口径实现，**只在本机唯一样本 `3303428996` 上验证过**；其它 MDLV 版本（0013/0016/0017/0019/0023）只有合成夹具覆盖，无真实样本 ⇒ 可能整段脚本/绑定姿势（MDLE）失效；② 动画层只应用**第一条可见层**（`blend` 未参与混合）；③ 视差的传播组（父链锚点 + `disablepropagation`）**未实现**，按「每对象自算」近似（`research/audit-parallax-mechanism.md` §7.4 的口径）；④ `parallaxDepth` 缺省时不参与视差 —— WE 对 composite 容器有 `{1,1}` 缺省，本仓未实现该缺省；⑤ puppet 材质走 three 内建材质，WE 的 `colorBlendMode ≠ 0` 与自定义 shader（如 `genericimage4` 的特有分支）**未复刻**；⑥ 无 puppet 的 e2e 自动化判据（只有真机人工验收 + 非 puppet 壁纸的零回归对拍）。
+39. **puppet / 视差的已知边界**：① `.mdl` 的**蒙皮/动画段布局**（`MDLS`/`MDLA`/`MDLE`）按上游 `mdl-parse.js` 的文档化口径实现，**未在任何真实素材上确证** —— Task 6 实测本机唯一 `.mdl`（`3303428996`）是**静态族**：`MDLS`/`MDLA`/`MDLE`/`MDAT` 的 `indexOf` 全 `-1`、`stride=48 / 1850 顶点 / 10998 索引`、解析出 `segments=absent/absent` ⇒ 骨骼绑定与动画**只有合成夹具覆盖，本机无法验收**（Task 8 交付代码 + 夹具判据 + 本条边界）；其它 MDLV 版本（0013/0016/0017/0019/0023）同样只有夹具覆盖 ⇒ 可能整段脚本/绑定姿势（MDLE）失效；② 动画层只应用**第一条可见层**（`blend` 未参与混合）；③ 视差的传播组（父链锚点 + `disablepropagation`）**未实现**，按「每对象自算」近似（`research/audit-parallax-mechanism.md` §7.4 的口径）；④ `parallaxDepth` 缺省时不参与视差 —— WE 对 composite 容器有 `{1,1}` 缺省，本仓未实现该缺省；⑤ puppet 材质走 three 内建材质，WE 的 `colorBlendMode ≠ 0` 与自定义 shader（如 `genericimage4` 的特有分支）**未复刻**；⑥ 无 puppet 的 e2e 自动化判据（只有真机人工验收 + 非 puppet 壁纸的零回归对拍）。
 ```
 
 `TESTING.md` 增补 Task 5 Step 3 与 Task 8 Step 6 的两份手工验收清单（原文照抄）。

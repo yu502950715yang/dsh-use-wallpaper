@@ -4,7 +4,10 @@ import type { Material, Texture, WebGLRenderer } from 'three';
 import { loadSceneToThree, resolvePixelRatio, type LoadedParticleAssets, type ParticleSim, type SceneAssets, type ThreeSceneLoadResult } from './threejs-player.js';
 import { parseSceneJson } from './scene-json.js';
 import { resolveWorldTransforms, type WorldTransform } from './scene-graph.js';
-import { resolveImageTexture, resolveTexPath, resolveParticleMaterial } from './scene-assets.js';
+import { resolveImageAssets, fetchMdlBytes, resolveTexPath, resolveParticleMaterial } from './scene-assets.js';
+// puppet（.mdl）→ three 网格/蒙皮：解析、网格装配与材质都在这里接线（SceneAssets.puppetMeshes）。
+import { parseMdl } from './mdl-parser.js';
+import { createPuppetMaterial, createPuppetMesh, type PuppetInstance } from './puppet.js';
 import { loadTexTexture } from './tex-loader.js';
 import { defaultLoadWasm } from './wasm-loader.js';
 import type { LoadWasm, WasmSceneModule } from './wasm-loader.js';
@@ -33,6 +36,8 @@ import { DynamicMeshRegistry } from './dynamic-mesh.js';
 import { createMeshMaterial, parseMeshMaterial } from './mesh-material.js';
 import { createRenderHealthStore, isHardFailure } from './render-health.js';
 import type { HardFailureKind, HealthSnapshot, RenderHealthStore, SoftFailureKind } from './render-health.js';
+// 指针输入（相机视差的宿主侧）：归一化 [0,1] + 幂等装/卸。
+import { createPointerTracker } from './pointer-input.js';
 
 // wasm `CpuParticleSim` 的构造器形态（wasm-bindgen 静态 `new`；`ParticleSim` 接口见 threejs-player.ts）。
 type CpuParticleSimLike = {
@@ -320,6 +325,8 @@ export function createThreeSceneRenderer(opts?: {
       window.removeEventListener('resize', onWindowResize);
       onWindowResize = null;
     }
+    // 指针监听随本次装配一并卸掉（tracker 自身幂等，重复调用安全）——见 AGENT.md §5.43。
+    pointer.dispose();
     // 上下文丢失监听随本次装配一起移除（否则切壁纸后旧 canvas 的丢失事件还会回调新状态）。
     if (contextLostCanvas) {
       contextLostCanvas.removeEventListener('webglcontextlost', onContextLost);
@@ -390,6 +397,8 @@ export function createThreeSceneRenderer(opts?: {
     width: Math.max(1, Math.round(window.innerWidth || 0)),
     height: Math.max(1, Math.round(window.innerHeight || 0)),
   });
+  // 指针：整个 renderer 生命周期一个 tracker（幂等装/卸），每次 render 把最新值下发给 player。
+  const pointer = createPointerTracker();
   return {
     async render(id, fg, _bg) {
       // 诊断去重集合的生命周期 = 当前壁纸：每次 render 清空，避免跨壁纸累积而漏报新壁纸的告警。
@@ -456,6 +465,8 @@ export function createThreeSceneRenderer(opts?: {
         // ── 组装 SceneAssets：背景纹理 + 粒子条件 + 模拟器工厂 ──────────────────────────
         const backgroundTextures = new Map<number, Texture>();
         currentTextures = backgroundTextures; // teardown 负责 dispose（见 currentTextures 注释）
+        // puppet 实例（对象 id → 网格）：所有权交给 player（addPuppet 后由 player.dispose 释放）。
+        const puppetMeshes = new Map<number, PuppetInstance>();
         const particles = new Map<number, LoadedParticleAssets>();
         // 用户属性表（visible 的 {user,key} 绑定）：三处过滤与 SceneScript 共用，故在对象循环之前建好。
         const userProps: Record<string, unknown> = {};
@@ -468,9 +479,32 @@ export function createThreeSceneRenderer(opts?: {
           // 装载期静态隐藏：布尔 / 用户属性绑定在此定论；script 绑定的可见性是每帧返回值，不能在装载期剔掉。
           if (isStaticallyHidden(obj.visible, userProps)) continue;
           if (obj.kind === 'image') {
-            // 图片对象纹理（与 scene-renderer 同一套模型→材质→tex 推导）。
-            const tex = await resolveImageTexture(id, obj);
-            if (tex) backgroundTextures.set(obj.id, tex);
+            // 图片对象资源（与 scene-renderer 同一套模型→材质→tex 推导）：纹理与 puppet 路径同源于一次
+            // model json 拉取。
+            const { texture, puppetPath } = await resolveImageAssets(id, obj);
+            if (texture) backgroundTextures.set(obj.id, texture);
+            if (puppetPath) {
+              // puppet：.mdl → 蒙皮网格（有骨骼段才是 SkinnedMesh，本机样本是静态族 → 普通 Mesh）。
+              // 材质 = three 内建材质 + 普通 alpha（WE 的 colorBlendMode 自定义混合不复刻）。
+              try {
+                const bytes = await fetchMdlBytes(id, puppetPath);
+                const parsed = bytes ? parseMdl(bytes) : { ok: false as const, error: 'mdl-fetch-failed' };
+                if (parsed.ok) {
+                  const puppet = createPuppetMesh(
+                    parsed.puppet,
+                    createPuppetMaterial(texture ?? null, obj.colorBlendMode),
+                  );
+                  puppetMeshes.set(obj.id, puppet);
+                } else {
+                  // 取字节/解析失败 ⇒ 该对象退化成普通背景贴图（本节拍出图来源链的最末一级），只留一条告警。
+                  warnOnce(`puppet:${id}:${obj.id}`, `puppet 解析失败（object=${obj.id} ${puppetPath}）：${parsed.error}`);
+                }
+              } catch (e) {
+                // 畸形 .mdl 不得把整张壁纸拖成硬失败：退化成普通贴图（同「解析失败」口径）。
+                warnOnce(`puppet-throw:${id}:${obj.id}`,
+                  `puppet 装配异常（object=${obj.id} ${puppetPath}）：${e instanceof Error ? e.message : String(e)}`);
+              }
+            }
           } else if (obj.kind === 'particle' && obj.particle) {
             // 粒子 spec json（raw，供 CpuParticleSim::new 解析）。
             const specResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(obj.particle)}`);
@@ -636,8 +670,14 @@ export function createThreeSceneRenderer(opts?: {
           o.kind === 'image'
           && !isStaticallyHidden(o.visible, userProps)
           && (effectChains.get(o.id)?.length ?? 0) > 0;
+        // puppet 对象由直渲网格承载（对象 RT 隔离未覆盖蒙皮网格）⇒ 既不进隔离表，也不占源尺寸与显存预算。
+        const isPuppetRendered = (o: SceneDescription['objects'][number]): boolean =>
+          o.kind === 'image' && puppetMeshes.has(o.id);
+        // 带类型谓词，filter 后仍收窄成 SceneImageObject（下面要读 size）。
+        const isIsolatedImage = (o: SceneDescription['objects'][number]): o is SceneImageObject =>
+          isAdmittedImage(o) && !isPuppetRendered(o);
         const isolateItems = desc.objects
-          .filter(isAdmittedImage)
+          .filter(isIsolatedImage)
           .map((o) => {
             const tex = backgroundTextures.get(o.id);
             const s = o.scale;
@@ -670,6 +710,12 @@ export function createThreeSceneRenderer(opts?: {
           // 无链 → 早退（effectChains 只在链非空时入表）。
           if (!chains || chains.length === 0) continue;
           if (obj.kind === 'image') {
+            // puppet 对象走直渲网格：隔离/效果链不支持，且不得留幽灵条目挤占其它对象的 RT 预算 ⇒ fail-loud。
+            if (isPuppetRendered(obj)) {
+              warnOnce(`puppet-isolate:${id}:${obj.id}`,
+                `puppet 对象不支持对象级效果链，已按直渲处理（id=${obj.id}）`);
+              continue;
+            }
             // 准入条件与上面的 isAdmittedImage 同一份（该谓词已含 effectChains 非空）。
             if (!isAdmittedImage(obj)) continue;
             // 尺寸取自上面的 isolateItems 段（同条件、同口径）；此处只做键空间转换。
@@ -708,6 +754,7 @@ export function createThreeSceneRenderer(opts?: {
         // 由 player.resize(vw,vh) 使 cover 相机按窗口宽高比裁剪（窗口比例 ≠ 场景比例时是裁切而非拉伸）。
         const assets: SceneAssets = {
           backgroundTextures, particles, createParticleSim, isolate, textLayers, qualityScale, worldTransforms,
+          puppetMeshes,
           // SceneScript 帧钩子：脚本状态是本帧渲染的权威来源，先 tick → 应用脏写入，
           // 再走原有的粒子/文本更新与 render。host 未就绪（quickjs 加载中/失败）时直接返回。
           onFrame: (dt) => {
@@ -729,6 +776,8 @@ export function createThreeSceneRenderer(opts?: {
         // 归属与计时都用本闭包捕获的本次 render 局部量（与出口打点同一套）。
         const userOnFrame = assets.onFrame;
         assets.onFrame = (dt: number) => {
+          // 视差：每帧把指针的最新值下发给 player（插值在 player 的 tickParallax 内按 dt 推进）。
+          current?.player.setParallaxPointer(pointer.target());
           if (timer.firstFrameAt < 0) {
             timer.firstFrameAt = performance.now() - timer.startedAt;
             // 只补 firstFrameMs：沿用装配出口记下的耗时；装配还没到出口（-1）时先用首帧时刻占位，
@@ -786,7 +835,7 @@ export function createThreeSceneRenderer(opts?: {
               if (!spec) { warnOnce(`mesh-mat:${id}:${p}`, `动态网格材质解析失败：${p}`); continue; }
               let tex: Texture | null = null;
               if (spec.texturePath) {
-                // 纹理走与 resolveImageTexture **同源**的路径推导 + 路由 URL（用 Blob URL 会绕开
+                // 纹理走与 resolveImageAssets **同源**的路径推导 + 路由 URL（用 Blob URL 会绕开
                 // loadTexTexture 依赖的 `/wallpapers/...` 路由与 .tex 解码链路）。
                 const texPath = resolveTexPath(p, spec.texturePath);
                 tex = await loadTexTexture(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(texPath)}`);
@@ -822,6 +871,8 @@ export function createThreeSceneRenderer(opts?: {
         for (const [objId, chains] of effectChains) {
           // 没有隔离条目 = 对象不参与渲染（util 层 / 缺粒子资源），并入本条汇总告警。
           if (isolate.has(objId)) continue;
+          // puppet 对象**参与渲染**（只是不套效果链），已由上面那条专属告警说明 ⇒ 不并入「未参与渲染」汇总。
+          if (puppetMeshes.has(objId)) continue;
           droppedEffects += chains.length;
         }
         if (droppedEffects > 0) {
@@ -859,6 +910,11 @@ export function createThreeSceneRenderer(opts?: {
           : null;
         glowSize = { width: fg.width, height: fg.height }; // 运行期「开 Glow」新建 stage 的尺寸基准
         result.player.setGlowStage(currentGlow);
+        // 相机视差：配置来自 scene.json（缺省全 0 = 与加此功能前观感一致）。关闭态一律用 enabled:false
+        // 的**具体配置**表达（player 据此把对象写回一次基准位），绝不传 null —— null 会让 tickParallax
+        // 整体早退、不复位。
+        result.player.setParallax(desc.parallax);
+        pointer.install();
         // 省电：装配时若已处于暂停态（如切到后台时换壁纸）→ 直接不排程。
         if (paused) result.player.pause();
         // 窗口尺寸变化 → 按新窗口比例重推 cover（对齐 wasm 路径的 window.innerWidth/Height 语义），并把新的
@@ -877,11 +933,15 @@ export function createThreeSceneRenderer(opts?: {
         if (abortIfContextLost()) return false;
         // 观测：确认走的是 three 路径（浏览器回归探测用）。
         console.log(
-          `[three] scene loaded id=${id} background=${result.backgroundIds.length} particleLayers=${result.particleLayers.length}`,
+          `[three] scene loaded id=${id} background=${result.backgroundIds.length} particleLayers=${result.particleLayers.length} puppetLayers=${result.puppetLayers.length}`,
         );
-        // 零背景 + 零粒子 → 无内容，返回 false 由 controller 走 preview 兜底（不显示空 canvas）。
-        if (result.backgroundIds.length === 0 && result.particleLayers.length === 0) {
-          fail(id, 'no-visible-objects', 'background=0 particleLayers=0');
+        // 零背景 + 零粒子 + 零 puppet → 无内容，返回 false 由 controller 走 preview 兜底（不显示空 canvas）。
+        if (
+          result.backgroundIds.length === 0
+          && result.particleLayers.length === 0
+          && result.puppetLayers.length === 0
+        ) {
+          fail(id, 'no-visible-objects', 'background=0 particleLayers=0 puppetLayers=0');
           teardownQuietly();
           return false;
         }

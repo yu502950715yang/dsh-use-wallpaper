@@ -30,7 +30,11 @@ export interface VisibleBinding {
     script?: string;
     scriptProperties?: Record<string, unknown>;
 }
-export interface SceneImageObject {
+export interface SceneObjectBase {
+    /** WE 对象级视差深度（scene.json `parallaxDepth`，两根轴）；缺省 = OWE 的 {0,0} ⇒ 不参与视差。 */
+    parallaxDepth?: [number, number];
+}
+export interface SceneImageObject extends SceneObjectBase {
     kind: 'image';
     id: number;
     name: string;
@@ -49,8 +53,16 @@ export interface SceneImageObject {
     alpha?: number;
     brightness?: number;
     colorBlendMode?: number;
+    /** WE 动画层（scene.json `animationlayers`）：animation = MDLA 动画 id；visible=false 表示不应用。 */
+    animationLayers?: Array<{
+        id: number;
+        animation: number;
+        rate: number;
+        blend: number;
+        visible: boolean;
+    }>;
 }
-export interface SceneParticleObject {
+export interface SceneParticleObject extends SceneObjectBase {
     kind: 'particle';
     id: number;
     name: string;
@@ -64,7 +76,7 @@ export interface SceneParticleObject {
     effects?: unknown[];
     instanceOverrideJson?: string;
 }
-export interface SceneUtilObject {
+export interface SceneUtilObject extends SceneObjectBase {
     kind: 'util';
     id: number;
     name: string;
@@ -77,7 +89,7 @@ export interface SceneUtilObject {
     visible?: VisibleBinding;
     effects?: unknown[];
 }
-export interface SceneTextObject {
+export interface SceneTextObject extends SceneObjectBase {
     kind: 'text';
     id: number;
     name: string;
@@ -99,6 +111,13 @@ export interface SceneTextObject {
     scriptProperties?: Record<string, unknown>;
 }
 export type SceneObject = SceneImageObject | SceneParticleObject | SceneUtilObject | SceneTextObject;
+/** WE 相机视差配置（scene.json `general.cameraparallax*`；缺省全关/全 0，= OWE 解析器缺省）。 */
+export interface ParallaxConfig {
+    enabled: boolean;
+    amount: number;
+    delay: number;
+    mouseInfluence: number;
+}
 export interface SceneDescription {
     camera: {
         center: [number, number, number];
@@ -112,6 +131,8 @@ export interface SceneDescription {
     fov?: number;
     perspectiveOverrideFov?: number;
     clearColor?: [number, number, number];
+    /** 相机视差总配置（scene.json `general.cameraparallax*`，缺省全 0）。 */
+    parallax: ParallaxConfig;
     objects: SceneObject[];
     sounds?: string[];
 }

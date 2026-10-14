@@ -1125,8 +1125,8 @@ Lifetime used`) : new QuickJSUseAfterFree("Lifetime not alive");
         let ptr = this.ffi.QTS_GetGlobalObject(this.ctx.value);
         return this._global = this.memory.staticHeapValueHandle(ptr), this._global;
       }
-      newNumber(num) {
-        return this.memory.heapValueHandle(this.ffi.QTS_NewFloat64(this.ctx.value, num));
+      newNumber(num2) {
+        return this.memory.heapValueHandle(this.ffi.QTS_NewFloat64(this.ctx.value, num2));
       }
       newString(str) {
         let ptr = this.memory.newHeapCharPointer(str).consume((charHandle) => this.ffi.QTS_NewString(this.ctx.value, charHandle.value.ptr));
@@ -1143,12 +1143,12 @@ Lifetime used`) : new QuickJSUseAfterFree("Lifetime not alive");
       getWellKnownSymbol(name) {
         return this._Symbol ?? (this._Symbol = this.memory.manage(this.getProp(this.global, "Symbol"))), this.getProp(this._Symbol, name);
       }
-      newBigInt(num) {
+      newBigInt(num2) {
         if (!this._BigInt) {
           let bigIntHandle2 = this.getProp(this.global, "BigInt");
           this.memory.manage(bigIntHandle2), this._BigInt = new StaticLifetime(bigIntHandle2.value, this.runtime);
         }
-        let bigIntHandle = this._BigInt, asString = String(num);
+        let bigIntHandle = this._BigInt, asString = String(num2);
         return this.newString(asString).consume((handle) => this.unwrapResult(this.callFunction(bigIntHandle, this.undefined, handle)));
       }
       newObject(prototype) {
@@ -3255,6 +3255,8 @@ var ACESFilmicToneMapping = 4;
 var CustomToneMapping = 5;
 var AgXToneMapping = 6;
 var NeutralToneMapping = 7;
+var AttachedBindMode = "attached";
+var DetachedBindMode = "detached";
 var UVMapping = 300;
 var CubeReflectionMapping = 301;
 var CubeRefractionMapping = 302;
@@ -19974,7 +19976,7 @@ var WebGLRenderer = class {
     let _localClippingEnabled = false;
     const _currentProjectionMatrix = new Matrix4();
     const _projScreenMatrix = new Matrix4();
-    const _vector3 = new Vector3();
+    const _vector32 = new Vector3();
     const _vector4 = new Vector4();
     const _emptyScene = { background: null, fog: null, environment: null, overrideMaterial: null, isScene: true };
     let _renderBackground = false;
@@ -20922,7 +20924,7 @@ var WebGLRenderer = class {
         p_uniforms.setValue(_gl, "viewMatrix", camera.matrixWorldInverse);
         const uCamPos = p_uniforms.map.cameraPosition;
         if (uCamPos !== void 0) {
-          uCamPos.setValue(_gl, _vector3.setFromMatrixPosition(camera.matrixWorld));
+          uCamPos.setValue(_gl, _vector32.setFromMatrixPosition(camera.matrixWorld));
         }
         if (capabilities.logarithmicDepthBuffer) {
           p_uniforms.setValue(
@@ -21418,6 +21420,142 @@ var Scene = class extends Object3D {
     return data;
   }
 };
+var _basePosition = /* @__PURE__ */ new Vector3();
+var _skinIndex = /* @__PURE__ */ new Vector4();
+var _skinWeight = /* @__PURE__ */ new Vector4();
+var _vector3 = /* @__PURE__ */ new Vector3();
+var _matrix4 = /* @__PURE__ */ new Matrix4();
+var _vertex = /* @__PURE__ */ new Vector3();
+var _sphere$4 = /* @__PURE__ */ new Sphere();
+var _inverseMatrix$2 = /* @__PURE__ */ new Matrix4();
+var _ray$2 = /* @__PURE__ */ new Ray();
+var SkinnedMesh = class extends Mesh {
+  constructor(geometry, material) {
+    super(geometry, material);
+    this.isSkinnedMesh = true;
+    this.type = "SkinnedMesh";
+    this.bindMode = AttachedBindMode;
+    this.bindMatrix = new Matrix4();
+    this.bindMatrixInverse = new Matrix4();
+    this.boundingBox = null;
+    this.boundingSphere = null;
+  }
+  computeBoundingBox() {
+    const geometry = this.geometry;
+    if (this.boundingBox === null) {
+      this.boundingBox = new Box3();
+    }
+    this.boundingBox.makeEmpty();
+    const positionAttribute = geometry.getAttribute("position");
+    for (let i = 0; i < positionAttribute.count; i++) {
+      this.getVertexPosition(i, _vertex);
+      this.boundingBox.expandByPoint(_vertex);
+    }
+  }
+  computeBoundingSphere() {
+    const geometry = this.geometry;
+    if (this.boundingSphere === null) {
+      this.boundingSphere = new Sphere();
+    }
+    this.boundingSphere.makeEmpty();
+    const positionAttribute = geometry.getAttribute("position");
+    for (let i = 0; i < positionAttribute.count; i++) {
+      this.getVertexPosition(i, _vertex);
+      this.boundingSphere.expandByPoint(_vertex);
+    }
+  }
+  copy(source, recursive) {
+    super.copy(source, recursive);
+    this.bindMode = source.bindMode;
+    this.bindMatrix.copy(source.bindMatrix);
+    this.bindMatrixInverse.copy(source.bindMatrixInverse);
+    this.skeleton = source.skeleton;
+    if (source.boundingBox !== null) this.boundingBox = source.boundingBox.clone();
+    if (source.boundingSphere !== null) this.boundingSphere = source.boundingSphere.clone();
+    return this;
+  }
+  raycast(raycaster, intersects) {
+    const material = this.material;
+    const matrixWorld = this.matrixWorld;
+    if (material === void 0) return;
+    if (this.boundingSphere === null) this.computeBoundingSphere();
+    _sphere$4.copy(this.boundingSphere);
+    _sphere$4.applyMatrix4(matrixWorld);
+    if (raycaster.ray.intersectsSphere(_sphere$4) === false) return;
+    _inverseMatrix$2.copy(matrixWorld).invert();
+    _ray$2.copy(raycaster.ray).applyMatrix4(_inverseMatrix$2);
+    if (this.boundingBox !== null) {
+      if (_ray$2.intersectsBox(this.boundingBox) === false) return;
+    }
+    this._computeIntersections(raycaster, intersects, _ray$2);
+  }
+  getVertexPosition(index, target) {
+    super.getVertexPosition(index, target);
+    this.applyBoneTransform(index, target);
+    return target;
+  }
+  bind(skeleton, bindMatrix) {
+    this.skeleton = skeleton;
+    if (bindMatrix === void 0) {
+      this.updateMatrixWorld(true);
+      this.skeleton.calculateInverses();
+      bindMatrix = this.matrixWorld;
+    }
+    this.bindMatrix.copy(bindMatrix);
+    this.bindMatrixInverse.copy(bindMatrix).invert();
+  }
+  pose() {
+    this.skeleton.pose();
+  }
+  normalizeSkinWeights() {
+    const vector = new Vector4();
+    const skinWeight = this.geometry.attributes.skinWeight;
+    for (let i = 0, l = skinWeight.count; i < l; i++) {
+      vector.fromBufferAttribute(skinWeight, i);
+      const scale = 1 / vector.manhattanLength();
+      if (scale !== Infinity) {
+        vector.multiplyScalar(scale);
+      } else {
+        vector.set(1, 0, 0, 0);
+      }
+      skinWeight.setXYZW(i, vector.x, vector.y, vector.z, vector.w);
+    }
+  }
+  updateMatrixWorld(force) {
+    super.updateMatrixWorld(force);
+    if (this.bindMode === AttachedBindMode) {
+      this.bindMatrixInverse.copy(this.matrixWorld).invert();
+    } else if (this.bindMode === DetachedBindMode) {
+      this.bindMatrixInverse.copy(this.bindMatrix).invert();
+    } else {
+      console.warn("THREE.SkinnedMesh: Unrecognized bindMode: " + this.bindMode);
+    }
+  }
+  applyBoneTransform(index, vector) {
+    const skeleton = this.skeleton;
+    const geometry = this.geometry;
+    _skinIndex.fromBufferAttribute(geometry.attributes.skinIndex, index);
+    _skinWeight.fromBufferAttribute(geometry.attributes.skinWeight, index);
+    _basePosition.copy(vector).applyMatrix4(this.bindMatrix);
+    vector.set(0, 0, 0);
+    for (let i = 0; i < 4; i++) {
+      const weight = _skinWeight.getComponent(i);
+      if (weight !== 0) {
+        const boneIndex = _skinIndex.getComponent(i);
+        _matrix4.multiplyMatrices(skeleton.bones[boneIndex].matrixWorld, skeleton.boneInverses[boneIndex]);
+        vector.addScaledVector(_vector3.copy(_basePosition).applyMatrix4(_matrix4), weight);
+      }
+    }
+    return vector.applyMatrix4(this.bindMatrixInverse);
+  }
+};
+var Bone = class extends Object3D {
+  constructor() {
+    super();
+    this.isBone = true;
+    this.type = "Bone";
+  }
+};
 var DataTexture = class extends Texture {
   constructor(data = null, width = 1, height = 1, format, type, mapping, wrapS, wrapT, magFilter = NearestFilter, minFilter = NearestFilter, anisotropy, colorSpace) {
     super(null, mapping, wrapS, wrapT, magFilter, minFilter, format, type, anisotropy, colorSpace);
@@ -21426,6 +21564,144 @@ var DataTexture = class extends Texture {
     this.generateMipmaps = false;
     this.flipY = false;
     this.unpackAlignment = 1;
+  }
+};
+var _offsetMatrix = /* @__PURE__ */ new Matrix4();
+var _identityMatrix = /* @__PURE__ */ new Matrix4();
+var Skeleton = class _Skeleton {
+  constructor(bones = [], boneInverses = []) {
+    this.uuid = generateUUID();
+    this.bones = bones.slice(0);
+    this.boneInverses = boneInverses;
+    this.boneMatrices = null;
+    this.boneTexture = null;
+    this.init();
+  }
+  init() {
+    const bones = this.bones;
+    const boneInverses = this.boneInverses;
+    this.boneMatrices = new Float32Array(bones.length * 16);
+    if (boneInverses.length === 0) {
+      this.calculateInverses();
+    } else {
+      if (bones.length !== boneInverses.length) {
+        console.warn("THREE.Skeleton: Number of inverse bone matrices does not match amount of bones.");
+        this.boneInverses = [];
+        for (let i = 0, il = this.bones.length; i < il; i++) {
+          this.boneInverses.push(new Matrix4());
+        }
+      }
+    }
+  }
+  calculateInverses() {
+    this.boneInverses.length = 0;
+    for (let i = 0, il = this.bones.length; i < il; i++) {
+      const inverse = new Matrix4();
+      if (this.bones[i]) {
+        inverse.copy(this.bones[i].matrixWorld).invert();
+      }
+      this.boneInverses.push(inverse);
+    }
+  }
+  pose() {
+    for (let i = 0, il = this.bones.length; i < il; i++) {
+      const bone = this.bones[i];
+      if (bone) {
+        bone.matrixWorld.copy(this.boneInverses[i]).invert();
+      }
+    }
+    for (let i = 0, il = this.bones.length; i < il; i++) {
+      const bone = this.bones[i];
+      if (bone) {
+        if (bone.parent && bone.parent.isBone) {
+          bone.matrix.copy(bone.parent.matrixWorld).invert();
+          bone.matrix.multiply(bone.matrixWorld);
+        } else {
+          bone.matrix.copy(bone.matrixWorld);
+        }
+        bone.matrix.decompose(bone.position, bone.quaternion, bone.scale);
+      }
+    }
+  }
+  update() {
+    const bones = this.bones;
+    const boneInverses = this.boneInverses;
+    const boneMatrices = this.boneMatrices;
+    const boneTexture = this.boneTexture;
+    for (let i = 0, il = bones.length; i < il; i++) {
+      const matrix = bones[i] ? bones[i].matrixWorld : _identityMatrix;
+      _offsetMatrix.multiplyMatrices(matrix, boneInverses[i]);
+      _offsetMatrix.toArray(boneMatrices, i * 16);
+    }
+    if (boneTexture !== null) {
+      boneTexture.needsUpdate = true;
+    }
+  }
+  clone() {
+    return new _Skeleton(this.bones, this.boneInverses);
+  }
+  computeBoneTexture() {
+    let size = Math.sqrt(this.bones.length * 4);
+    size = Math.ceil(size / 4) * 4;
+    size = Math.max(size, 4);
+    const boneMatrices = new Float32Array(size * size * 4);
+    boneMatrices.set(this.boneMatrices);
+    const boneTexture = new DataTexture(boneMatrices, size, size, RGBAFormat, FloatType);
+    boneTexture.needsUpdate = true;
+    this.boneMatrices = boneMatrices;
+    this.boneTexture = boneTexture;
+    return this;
+  }
+  getBoneByName(name) {
+    for (let i = 0, il = this.bones.length; i < il; i++) {
+      const bone = this.bones[i];
+      if (bone.name === name) {
+        return bone;
+      }
+    }
+    return void 0;
+  }
+  dispose() {
+    if (this.boneTexture !== null) {
+      this.boneTexture.dispose();
+      this.boneTexture = null;
+    }
+  }
+  fromJSON(json, bones) {
+    this.uuid = json.uuid;
+    for (let i = 0, l = json.bones.length; i < l; i++) {
+      const uuid = json.bones[i];
+      let bone = bones[uuid];
+      if (bone === void 0) {
+        console.warn("THREE.Skeleton: No bone found with UUID:", uuid);
+        bone = new Bone();
+      }
+      this.bones.push(bone);
+      this.boneInverses.push(new Matrix4().fromArray(json.boneInverses[i]));
+    }
+    this.init();
+    return this;
+  }
+  toJSON() {
+    const data = {
+      metadata: {
+        version: 4.6,
+        type: "Skeleton",
+        generator: "Skeleton.toJSON"
+      },
+      bones: [],
+      boneInverses: []
+    };
+    data.uuid = this.uuid;
+    const bones = this.bones;
+    const boneInverses = this.boneInverses;
+    for (let i = 0, l = bones.length; i < l; i++) {
+      const bone = bones[i];
+      data.bones.push(bone.uuid);
+      const boneInverse = boneInverses[i];
+      data.boneInverses.push(boneInverse.toArray());
+    }
+    return data;
   }
 };
 var InstancedBufferAttribute = class extends BufferAttribute {
@@ -22646,6 +22922,47 @@ function fitIsolatedBudget(items, density, budgetBytes = ISOLATED_RT_BUDGET_BYTE
   return lo;
 }
 
+// src/client/parallax.ts
+var DEFAULT_PARALLAX = { enabled: false, amount: 0, delay: 0, mouseInfluence: 0 };
+function num(v, fallback) {
+  const n = typeof v === "string" ? Number(v) : v;
+  return typeof n === "number" && Number.isFinite(n) ? n : fallback;
+}
+function readParallaxConfig(gen) {
+  if (typeof gen !== "object" || gen === null) return { ...DEFAULT_PARALLAX };
+  const g = gen;
+  return {
+    enabled: g.cameraparallax === true,
+    amount: num(g.cameraparallaxamount, 0),
+    delay: num(g.cameraparallaxdelay, 0),
+    mouseInfluence: num(g.cameraparallaxmouseinfluence, 0)
+  };
+}
+var POINTER_CENTER = { x: 0.5, y: 0.5 };
+function advancePointer(follow, target, cfg, dt) {
+  const delay = Math.max(0, cfg.delay);
+  const elapsed = Math.min(Math.max(0, dt), delay);
+  const amount = delay > 0 ? elapsed / delay : 1;
+  return {
+    elapsed,
+    value: {
+      x: follow.value.x + (target.x - follow.value.x) * amount,
+      y: follow.value.y + (target.y - follow.value.y) * amount
+    }
+  };
+}
+function parallaxShift(o) {
+  if (!o.cfg.enabled) return [0, 0];
+  if (o.depth[0] === 0 && o.depth[1] === 0) return [0, 0];
+  const mouseX = (0.5 - o.pointer.x) * o.orthoW * o.cfg.mouseInfluence;
+  const mouseY = (o.pointer.y - 0.5) * o.orthoH * o.cfg.mouseInfluence;
+  const nz = (v) => v === 0 ? 0 : v;
+  return [
+    nz(o.depth[0] * o.cfg.amount * (o.nodeX - o.camX + mouseX)),
+    nz(o.depth[1] * o.cfg.amount * (o.nodeY - o.camY + mouseY))
+  ];
+}
+
 // src/client/script-patterns.ts
 function detectScriptPattern(src) {
   if (typeof src !== "string") return null;
@@ -22779,6 +23096,31 @@ function optNum(s) {
 function optStr(s) {
   return typeof s === "string" && s.trim() ? s : void 0;
 }
+function parseAnimationLayers(raw) {
+  if (!Array.isArray(raw)) return void 0;
+  const out = [];
+  for (const item of raw) {
+    if (typeof item !== "object" || item === null) continue;
+    const o = item;
+    const id = optNum(o.id);
+    const animation = optNum(o.animation);
+    if (id === void 0 || animation === void 0) continue;
+    out.push({
+      id,
+      animation,
+      rate: optNum(o.rate) ?? 1,
+      blend: optNum(o.blend) ?? 1,
+      visible: o.visible === true
+    });
+  }
+  return out;
+}
+function optNum2(s) {
+  if (typeof s !== "string" || !s.trim()) return void 0;
+  const p = s.trim().split(/\s+/).map(Number);
+  if (p.length < 2 || !Number.isFinite(p[0]) || !Number.isFinite(p[1])) return void 0;
+  return [p[0], p[1]];
+}
 function numOr(s, dflt) {
   const n = optNum(s);
   return n === void 0 ? dflt : n;
@@ -22854,7 +23196,10 @@ function parseSceneJson(raw) {
       // 场景树：子对象变换相对父节点（容器 `none` 对象也保留，世界变换由 scene-graph.ts 累积）
       parent: optNum(o.parent),
       // Ruling 5：所有对象（kind 不限）的 effects 按 objects 顺序保留（全库 122 条中 105 条在 image 对象上）
-      effects: Array.isArray(o.effects) ? o.effects : void 0
+      effects: Array.isArray(o.effects) ? o.effects : void 0,
+      // 对象级 parallaxDepth 与 kind 无关（全库 227 处：particle 106 / image 91 / text 20 / other 10），
+      // 故落在 base 让所有分支都带出 —— Task 4 的粒子/文本注入 u_Parallax 全靠它。
+      parallaxDepth: optNum2(o.parallaxDepth)
     };
     const fromVisibleScript = base.visible?.kind === "script" ? { script: base.visible.script, scriptProperties: base.visible.scriptProperties } : {};
     if (typeof o.particle === "string" && o.particle) {
@@ -22887,6 +23232,8 @@ function parseSceneJson(raw) {
         // WE 图像颜色混合模式（→ shader combo BLENDMODE；缺省 0 = Normal）。
         // 非数值/负数/非法 → 0（渲染侧只实现 6/7/31，其余回退普通 alpha 混合）。
         colorBlendMode: Math.max(0, Math.floor(optNum(o.colorBlendMode) ?? 0)),
+        // T8：WE 动画层（puppet 的 MDLA 动画选择元数据）；undefined = 无该字段。
+        animationLayers: parseAnimationLayers(o.animationlayers),
         ...fromVisibleScript
       };
     }
@@ -22940,6 +23287,8 @@ function parseSceneJson(raw) {
     fov: numOr(gen.fov, 50),
     perspectiveOverrideFov: numOr(gen.perspectiveoverridefov, 0),
     clearColor: cc,
+    // 相机视差总开关与系数（general.cameraparallax*）；缺省全 0 = 与加此功能前观感一致。
+    parallax: readParallaxConfig(gen),
     objects,
     sounds: collectSounds(root)
   };
@@ -23186,16 +23535,16 @@ function specRenderer(specJson) {
     const raw = JSON.parse(specJson).renderer;
     const first = Array.isArray(raw) ? raw[0] : void 0;
     if (!first || typeof first.name !== "string" || first.name !== "spritetrail") return sprite;
-    const num = (v, dflt) => {
+    const num2 = (v, dflt) => {
       const n = typeof v === "string" ? parseFloat(v) : typeof v === "number" ? v : NaN;
       return Number.isFinite(n) ? n : dflt;
     };
     const r = first;
     return {
       kind: "spritetrail",
-      length: num(r.length, 0.05),
-      maxLength: num(r.maxlength, 10),
-      minLength: num(r.minlength, 0)
+      length: num2(r.length, 0.05),
+      maxLength: num2(r.maxlength, 10),
+      minLength: num2(r.minlength, 0)
     };
   } catch {
     return sprite;
@@ -23336,6 +23685,9 @@ uniform mat4 persp;
 uniform vec3 perspEye;
 // \u5BF9\u8C61\u6B27\u62C9\u89D2\uFF08**\u5F27\u5EA6**\uFF09\u2014\u2014 WE model matrix = T\xB7R\xB7S \u7684 R \u90E8\u5206\u3002
 uniform vec3 objAngles;
+// \u5BF9\u8C61\u7EA7\u89C6\u5DEE\u7684**\u4E16\u754C\u5E73\u79FB**\uFF08tickParallax \u9010\u5E27\u5199\uFF1B0 = \u5173\u89C6\u5DEE\uFF09\u3002\u7B49\u4EF7\u4E8E\u628A\u6574\u4E2A\u5BF9\u8C61\u6CBF\u4E16\u754C\u8F74\u5E73\u79FB\uFF0C
+// \u4E0E model matrix \u7684 T \u540C\u8BED\u4E49 \u21D2 \u52A0\u5728 worldPos \u7EC4\u88C5\u5B8C\u6210\u4E4B\u540E\u3001\u6295\u5F71\u4E4B\u524D\u3002
+uniform vec2 u_Parallax;
 #ifdef REFRACT
 // \u5C4F\u5E55\u7A7A\u95F4\u6298\u5C04\uFF08WE genericparticle.vert \u7684 REFRACT \u5206\u652F\uFF09\uFF1A\u4F4D\u79FB\u5F3A\u5EA6\u6765\u81EA\u6750\u8D28
 // ui_editor_properties_refract_amount\uFF0C\u7247\u5143\u7528\u5B83\u7B97\u5C4F\u5E55 UV \u504F\u79FB\u540E\u91C7\u80CC\u666F\u5FEB\u7167\u3002
@@ -23400,6 +23752,9 @@ void main() {
     vec3 corner = weObjectRotate(abs(objScale) * (spun * particleSize * 0.5), objAngles);
     worldPos += corner;
   }
+  // \u89C6\u5DEE\uFF1A\u6CBF\u4E16\u754C\u8F74\u5E73\u79FB\u6574\u4E2A\u5BF9\u8C61\uFF080 = \u9010\u5B57\u4E0D\u53D8\uFF09\u3002
+  worldPos.x += u_Parallax.x;
+  worldPos.y += u_Parallax.y;
   // \u6295\u5F71\uFF1A\u5E26 spec.flags perspective \u4F4D\u7684\u7C92\u5B50\u5C42\u8D70 WE \u7684 global_perspective \u76F8\u673A\uFF08\u8FD1\u5927\u8FDC\u5C0F\uFF09\uFF0C
   // \u5176\u4F59\u5C42\u8D70 three \u6CE8\u5165\u7684\u4E3B\uFF08\u6B63\u4EA4\uFF09\u6295\u5F71\u77E9\u9635 \u2014\u2014 \u975E\u900F\u89C6\u5C42\u7684\u901A\u8DEF\u9010\u5B57\u4E0D\u53D8\uFF08\u96F6\u56DE\u5F52\uFF09\u3002
   // \u26A0\uFE0F \u900F\u89C6\u5206\u652F\u7528 persp\uFF08\u89C6\u56FE\u6295\u5F71\u77E9\u9635\uFF09\u76F4\u63A5\u4E58 worldPos\uFF08\u5DF2\u662F\u4E16\u754C\u5750\u6807\uFF09\uFF0C**\u4E0D**\u518D\u4E58 modelViewMatrix
@@ -23548,9 +23903,17 @@ var ThreeScenePlayer = class {
   // 已安装的帧回调（resume 时用它重新排程）。
   loopFn = null;
   lastTime = 0;
+  // 视差状态：配置 + 宿主指针目标 + 跟随值（延迟插值状态）。cfg 为 null 时 tickParallax 立即返回。
+  parallaxCfg = null;
+  parallaxTarget = { ...POINTER_CENTER };
+  parallaxFollow = { value: { ...POINTER_CENTER }, elapsed: 0 };
   // 背景图层条目（按 addBackground 返回的 id 索引，供 update_background 引用）。
   backgroundEntries = /* @__PURE__ */ new Map();
   nextBackgroundId = 0;
+  // puppet 图层（键 = 同一把图层计数器 id）：instance 用于逐帧采样动画，dispose 时释放骨骼/资源。
+  // layers = 已过滤 `visible !== false` 的动画层（null = scene.json **没有** animationlayers 字段）；
+  // warned = 多条可见层的告警只打一次（防每帧刷屏）。
+  puppetLayers = /* @__PURE__ */ new Map();
   // 粒子图层条目：按 addParticle 返回的 id 索引，更新粒子时用其 getter 刷新缓冲区。
   particleLayers = /* @__PURE__ */ new Map();
   nextParticleLayerId = 0;
@@ -23684,11 +24047,131 @@ var ThreeScenePlayer = class {
     this.camera.bottom = -fg.h / 2;
     this.camera.updateProjectionMatrix();
   }
-  // 每帧扩展钩子：驱动粒子图层刷新；背景更新由 update_background 显式调用（对齐 wasm
-  // update_image 语义）。
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  update(_dt) {
-    this.updateParticles(_dt);
+  // 每帧扩展钩子：驱动粒子图层刷新 + puppet 动画采样；背景更新由 update_background 显式调用
+  //（对齐 wasm update_image 语义）。
+  update(dt) {
+    this.updateParticles(dt);
+    this.tickPuppets(dt);
+  }
+  // puppet 动画：按 dt × rate 推进已播时长 → 采样动画层选中的动画（v1 只应用第一条可见层）。
+  // 选层、缺省与 `frameCount <= 0` 等边界口径一律见 AGENT.md §2.1 与 §7.40，此处不复述。
+  tickPuppets(dt) {
+    if (this.puppetLayers.size === 0) return;
+    for (const [id, layer] of [...this.puppetLayers]) {
+      const layers = layer.layers;
+      const active = layers?.[0];
+      const anim = layers === null ? layer.instance.animations[0] : active ? layer.instance.animations.find((a) => a.id === active.animation) : void 0;
+      if (!anim || anim.frameCount <= 0) continue;
+      if (layers && layers.length > 1 && !layer.warned) {
+        layer.warned = true;
+        console.warn(`[three] puppet \u56FE\u5C42 ${id} \u6709 ${layers.length} \u6761\u52A8\u753B\u5C42\uFF0Cv1 \u53EA\u5E94\u7528\u7B2C\u4E00\u6761\uFF08${anim.name}\uFF09`);
+      }
+      layer.elapsed += dt * (active ? Math.max(0, active.rate) : 1);
+      const fps = anim.fps > 0 ? anim.fps : 30;
+      try {
+        layer.instance.applyFrame(anim, layer.elapsed * fps % anim.frameCount);
+      } catch (e) {
+        try {
+          layer.instance.dispose();
+        } catch (de) {
+          console.warn("[three] puppet \u91CA\u653E\u5931\u8D25:", de instanceof Error ? de.message : String(de));
+        } finally {
+          this.puppetLayers.delete(id);
+          const entry = this.backgroundEntries.get(id);
+          if (entry) {
+            this.backgroundEntries.delete(id);
+            for (const [objectId, obj] of this.displayObjects) {
+              if (obj === entry.mesh) this.displayObjects.delete(objectId);
+            }
+          }
+        }
+        console.warn("[three] puppet \u52A8\u753B\u91C7\u6837\u5931\u8D25\uFF08\u5DF2\u4E22\u5F03\u8BE5\u56FE\u5C42\u52A8\u753B\uFF09:", e instanceof Error ? e.message : String(e));
+      }
+    }
+  }
+  /** 相机视差配置（null = 未启用/已拆除 ⇒ 逐帧零成本早退；enabled=false 时下一帧把对象写回基准位置）。 */
+  setParallax(cfg) {
+    this.parallaxCfg = cfg;
+  }
+  /** 宿主指针监听的最新归一化位置（[0,1]）；插值在本类的 tickParallax 内按 dt 推进。 */
+  setParallaxPointer(p) {
+    this.parallaxTarget = p;
+  }
+  /** 测试用：取某背景条目的 three 对象（隔离对象返回合成 quad）。 */
+  backgroundMeshForTest(id) {
+    return this.backgroundEntries.get(id).parallaxNode;
+  }
+  /** 测试用：直接推进一帧视差。 */
+  tickParallaxForTest(dt) {
+    this.tickParallax(dt);
+  }
+  // 逐帧：推进指针插值，并按 parallaxDepth 把**对象平移**写进各自的落点（非隔离 = mesh、
+  // 隔离 = 合成 quad、粒子 = 顶点 shader 的 u_Parallax）。相机不动 —— 视差只是 model 平移。
+  // ⚠️ 「不参与视差」（关视差 / depth 缺失 / depth 两根轴全 0）只写回**一次**基准位：每帧无条件写
+  // position 会盖掉脚本对同一对象的 origin 写入（layer-state.applyLayerState 直接写 three 对象）
+  // ⇒ 动态网格静止；而全库 34 张里只有 1 张开视差，其 pkg 内仍有 3 个对象的 depth 真值为全 0。
+  tickParallax(dt) {
+    const cfg = this.parallaxCfg;
+    if (!cfg) return;
+    this.parallaxFollow = advancePointer(this.parallaxFollow, this.parallaxTarget, cfg, dt);
+    for (const entry of this.backgroundEntries.values()) {
+      const x = entry.origin[0] - entry.sceneW / 2;
+      const y = entry.origin[1] - entry.sceneH / 2;
+      const z = entry.origin[2];
+      const d = entry.parallaxDepth;
+      const depth = d && (d[0] !== 0 || d[1] !== 0) ? d : null;
+      if (!cfg.enabled || !depth) {
+        if (entry.parallaxApplied) {
+          entry.parallaxNode.position.set(x, y, z);
+          entry.parallaxApplied = false;
+        }
+        continue;
+      }
+      const [sx, sy] = parallaxShift({
+        pointer: this.parallaxFollow.value,
+        // OWE 的 ortho 是**场景**正交尺寸（general.orthogonalprojection），不是窗口尺寸。
+        orthoW: this.sceneWidth,
+        orthoH: this.sceneHeight,
+        nodeX: x,
+        nodeY: y,
+        // three 坐标下主相机位于场景中心（we_to_three 已把中心移到原点）。
+        camX: 0,
+        camY: 0,
+        depth,
+        cfg
+      });
+      entry.parallaxNode.position.set(x + sx, y + sy, z);
+      entry.parallaxApplied = true;
+    }
+    for (const layer of this.particleLayers.values()) {
+      const [cx, cy] = layer.parallaxCenter;
+      const u = layer.material.uniforms.u_Parallax;
+      if (layer.parallaxIsolated && !layer.parallaxQuad) continue;
+      const d = layer.parallaxDepth;
+      const depth = d && (d[0] !== 0 || d[1] !== 0) ? d : null;
+      if (!cfg.enabled || !depth) {
+        if (layer.parallaxApplied) {
+          if (layer.parallaxQuad) layer.parallaxQuad.position.set(cx, cy, layer.parallaxQuad.position.z);
+          else u?.value.set(0, 0);
+          layer.parallaxApplied = false;
+        }
+        continue;
+      }
+      const [sx, sy] = parallaxShift({
+        pointer: this.parallaxFollow.value,
+        orthoW: this.sceneWidth,
+        orthoH: this.sceneHeight,
+        nodeX: cx,
+        nodeY: cy,
+        camX: 0,
+        camY: 0,
+        depth,
+        cfg
+      });
+      if (layer.parallaxQuad) layer.parallaxQuad.position.set(cx + sx, cy + sy, layer.parallaxQuad.position.z);
+      else u?.value.set(sx, sy);
+      layer.parallaxApplied = true;
+    }
   }
   // 启动帧循环（renderer.setAnimationLoop 内部 RAF）。每帧：外部回调 fn(dt) → update(dt) →
   // render(scene, camera)。dt 用 performance.now 差分并 clamp 0.1s（防 tab 切后台后 dt 过大把粒子
@@ -23720,6 +24203,7 @@ var ThreeScenePlayer = class {
         this.lastTime = now;
         fn?.(dt);
         this.update(dt);
+        this.tickParallax(dt);
         this.render();
       } catch (e) {
         if (!warned) {
@@ -23968,12 +24452,51 @@ var ThreeScenePlayer = class {
       alpha: mod.a,
       brightness: opts.brightness ?? 1,
       sceneW,
-      sceneH
+      sceneH,
+      // 隔离时位移的载体是合成 quad（内容只进对象 RT）；attachIsolated 在本方法之前登记 quad。
+      parallaxNode: opts.isolate ? this.isolated.get(opts.isolate.objectId)?.quad ?? mesh : mesh,
+      parallaxDepth: opts.parallaxDepth
     });
     if (opts.objectId !== void 0) {
       const shown = opts.isolate ? this.isolated.get(opts.isolate.objectId)?.quad : mesh;
       if (shown) this.displayObjects.set(opts.objectId, shown);
     }
+    return id;
+  }
+  // puppet 图层：SkinnedMesh（带骨骼）或静态网格 + 视差登记。返回图层 id（与 addBackground 同一编号空间）。
+  // 几何/材质所有权在 PuppetInstance（dispose 时释放）；此处只把 mesh 挂进场景并登记视差/脚本桥。
+  addPuppet(opts) {
+    const { mesh } = opts.puppet;
+    mesh.renderOrder = opts.renderOrder ?? 0;
+    const mod = materialModulation(void 0, opts.alpha, opts.brightness);
+    const mat = mesh.material;
+    mat.color.setRGB(mod.r, mod.g, mod.b);
+    mat.opacity = mod.a;
+    const s = opts.scale;
+    mesh.scale.set(s[0], s[1], s[2] ?? 1);
+    mesh.rotation.set(opts.angles[0], opts.angles[1], opts.angles[2]);
+    mesh.position.set(opts.origin[0] - opts.sceneW / 2, opts.origin[1] - opts.sceneH / 2, opts.origin[2]);
+    this.scene.add(mesh);
+    const id = this.nextBackgroundId++;
+    this.backgroundEntries.set(id, {
+      mesh,
+      origin: [opts.origin[0], opts.origin[1], opts.origin[2]],
+      size: [0, 0],
+      scale: [s[0], s[1], s[2] ?? 1],
+      angles: [opts.angles[0], opts.angles[1], opts.angles[2]],
+      alpha: mod.a,
+      brightness: opts.brightness ?? 1,
+      sceneW: opts.sceneW,
+      sceneH: opts.sceneH,
+      parallaxNode: mesh,
+      parallaxDepth: opts.parallaxDepth
+    });
+    this.puppetLayers.set(id, {
+      instance: opts.puppet,
+      layers: opts.animationLayers === void 0 ? null : opts.animationLayers.filter((l) => l.visible !== false),
+      elapsed: 0
+    });
+    this.displayObjects.set(opts.objectId, mesh);
     return id;
   }
   // 图层材质（**内容**材质）：colorBlendMode 已实现（6/7/31）→ 预乘 ShaderMaterial +
@@ -24146,6 +24669,7 @@ var ThreeScenePlayer = class {
   resizeBackground(id, size) {
     const entry = this.backgroundEntries.get(id);
     if (!entry) return;
+    if (this.puppetLayers.has(id)) return;
     const [w, h] = size;
     if (w === entry.size[0] && h === entry.size[1]) return;
     entry.size = [w, h];
@@ -24222,7 +24746,9 @@ var ThreeScenePlayer = class {
         // 粒子透视相机（缺省关闭 → 走主正交投影，既有壁纸逐像素不变）。
         perspEnabled: { value: opts.perspective ? 1 : 0 },
         persp: { value: particlePerspMatrix(opts.perspective) },
-        perspEye: { value: new Vector3(0, 0, opts.perspective?.distance ?? 0) }
+        perspEye: { value: new Vector3(0, 0, opts.perspective?.distance ?? 0) },
+        // 对象级视差的世界平移（逐帧由 tickParallax 写；0 = 与加视差前逐像素相同）。
+        u_Parallax: { value: new Vector2(0, 0) }
       },
       vertexShader: PARTICLE_VERTEX_SHADER,
       fragmentShader: PARTICLE_FRAGMENT_SHADER,
@@ -24264,7 +24790,9 @@ var ThreeScenePlayer = class {
       loggedFirstFrame: false,
       loggedCount: 0,
       refract: refractEnabled,
-      loggedRefract: false
+      loggedRefract: false,
+      parallaxDepth: opts.parallaxDepth,
+      parallaxCenter: [(opts.objectCenter ?? [0, 0, 0])[0], (opts.objectCenter ?? [0, 0, 0])[1]]
     };
     this.particleLayers.set(id, layer);
     this.writeParticleData(layer, initial, count);
@@ -24282,6 +24810,8 @@ var ThreeScenePlayer = class {
         0,
         opts.renderOrder
       );
+      layer.parallaxIsolated = true;
+      layer.parallaxQuad = this.isolated.get(opts.isolate.objectId)?.quad;
     }
     if (opts.objectId !== void 0) {
       const shown = opts.isolate ? this.isolated.get(opts.isolate.objectId)?.quad : mesh;
@@ -24388,6 +24918,8 @@ var ThreeScenePlayer = class {
       entry.mesh.material.dispose();
     }
     this.backgroundEntries.clear();
+    for (const layer of this.puppetLayers.values()) layer.instance.dispose();
+    this.puppetLayers.clear();
     for (const layer of this.particleLayers.values()) {
       layer.geometry.dispose();
       layer.material.dispose();
@@ -24469,12 +25001,35 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
   const vh = viewport?.height ?? sceneH;
   if (vw > 0 && vh > 0) player.resize(vw, vh);
   const backgroundIds = [];
+  const puppetLayers = [];
   const particleLayers = [];
   const sims = [];
   const textDrivers = [];
   for (const [renderOrder, obj] of desc.objects.entries()) {
     if (obj.kind === "image") {
       const t = world(obj);
+      const puppet = assets.puppetMeshes?.get(obj.id);
+      if (puppet) {
+        const id2 = player.addPuppet({
+          objectId: obj.id,
+          puppet,
+          origin: t.origin,
+          scale: t.scale,
+          angles: t.angles,
+          sceneW,
+          sceneH,
+          renderOrder,
+          // 对象级调制（alpha/brightness）：与背景 quad 同一份 scene.json 字段，同一套 materialModulation。
+          alpha: obj.alpha,
+          brightness: obj.brightness,
+          parallaxDepth: obj.parallaxDepth,
+          // 动画层（T8）：逐帧选层由 player 负责，装配期只透传解析结果（undefined = 字段缺失）。
+          animationLayers: obj.animationLayers
+        });
+        backgroundIds.push(id2);
+        puppetLayers.push(id2);
+        continue;
+      }
       const id = player.addBackground({
         origin: t.origin,
         size: obj.size,
@@ -24494,7 +25049,10 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
         renderOrder,
         // 对象级效果链：带效果的对象其内容进 localScene 渲染到对象 RT，主场景放合成 quad；
         // 缺省不隔离。隔离条目的键 = obj.id，与 ObjectEffectStage 的键空间一致。
-        isolate: assets.isolate?.get(obj.id)
+        isolate: assets.isolate?.get(obj.id),
+        // 视差深度：Task 2 修订后**所有 kind** 都带该字段（SceneObjectBase.parallaxDepth）⇒ 直接透传；
+        // 写成 `obj.kind === 'image' ? … : undefined` 会丢掉 text 图层的视差（真实库 20 处）。
+        parallaxDepth: obj.parallaxDepth
       });
       backgroundIds.push(id);
     } else if (obj.kind === "text") {
@@ -24512,7 +25070,9 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
         sceneH,
         objectId: obj.id,
         // 唯一绘制序 = 本对象在 objects 数组中的下标。
-        renderOrder
+        renderOrder,
+        // 视差深度同 image 分支：直接透传对象级字段（text 也有 parallaxDepth）。
+        parallaxDepth: obj.parallaxDepth
       });
       backgroundIds.push(id);
       if (layer.driver) {
@@ -24574,7 +25134,9 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
         renderOrder,
         // 对象级效果链：带效果的粒子对象同样隔离（对象 RT + 合成 quad）。世界尺寸由调用方按
         // `particleWorldSize(spec, scale)` 算好（player 不知道 spec 的 distanceMax）；缺省不隔离。
-        isolate: assets.isolate?.get(obj.id)
+        isolate: assets.isolate?.get(obj.id),
+        // 视差深度：真实库 parallaxDepth 有 106 处落在 particle 对象上（最大的一支）。
+        parallaxDepth: obj.parallaxDepth
       });
       particleLayers.push({ id, sim });
       sims.push(sim);
@@ -24593,7 +25155,7 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
       player.resizeBackground(t.backgroundId, [layout.width, layout.height]);
     }
   });
-  return { player, sims, backgroundIds, particleLayers };
+  return { player, sims, backgroundIds, particleLayers, puppetLayers };
 }
 
 // src/client/scene-graph.ts
@@ -25083,19 +25645,31 @@ async function loadTexTexture(url, opts) {
 function resolveTexPath(matRef, texName) {
   return texName.includes("/") ? "materials/" + texName + ".tex" : matRef.slice(0, matRef.lastIndexOf("/") + 1) + texName + ".tex";
 }
-async function resolveImageTexture(id, obj) {
+async function resolveImageAssets(id, obj) {
+  let puppetPath = null;
   try {
     const modelResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(obj.image)}`);
-    if (!modelResp.ok) return null;
+    if (!modelResp.ok) return { texture: null, puppetPath: null };
     const model = await modelResp.json();
+    puppetPath = typeof model?.puppet === "string" && model.puppet ? String(model.puppet) : null;
     const matRef = model?.material;
-    if (typeof matRef !== "string" || !matRef) return null;
+    if (typeof matRef !== "string" || !matRef) return { texture: null, puppetPath };
     const matResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(matRef)}`);
-    if (!matResp.ok) return null;
+    if (!matResp.ok) return { texture: null, puppetPath };
     const mat = await matResp.json();
     const texName = mat?.passes?.[0]?.textures?.[0];
-    if (typeof texName !== "string" || !texName) return null;
-    return loadTexTexture(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(resolveTexPath(matRef, texName))}`);
+    if (typeof texName !== "string" || !texName) return { texture: null, puppetPath };
+    const url = `/wallpapers/scene/${id}/asset?name=${encodeURIComponent(resolveTexPath(matRef, texName))}`;
+    return { texture: await loadTexTexture(url), puppetPath };
+  } catch {
+    return { texture: null, puppetPath };
+  }
+}
+async function fetchMdlBytes(id, path) {
+  try {
+    const resp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(path)}`);
+    if (!resp.ok) return null;
+    return new Uint8Array(await resp.arrayBuffer());
   } catch {
     return null;
   }
@@ -25138,6 +25712,448 @@ async function resolveParticleMaterial(id, specText) {
   } catch {
     return null;
   }
+}
+
+// src/client/mdl-parser.ts
+var MDL_VERTEX_STRIDE = 80;
+var STRIDE_CANDIDATES = [24, 28, 32, 36, 40, 44, 48, 52, 56, 64, 72, 80];
+var MAX_STRIDE_WASTE = 0.05;
+var MIN_VERTEX_COUNT = 3;
+var MAX_VERTEX_COUNT = 2e5;
+var KEYFRAME_BYTES = 36;
+var SUPPORTED_MDLV = ["MDLV0013", "MDLV0016", "MDLV0017", "MDLV0019", "MDLV0021", "MDLV0023"];
+var VERTEX_LAYOUTS = {
+  48: { posZ: false, uv: 40, skin: false },
+  // 实测静态变体：pos.xy@0 + 8 个 float + uv@40
+  80: { posZ: true, uv: 72, skin: true }
+  // 文档化打包族：pos/boneIdx@40/weights@56/uv@72
+};
+function ascii2(buf, at, len) {
+  let s = "";
+  for (let i = 0; i < len; i++) s += String.fromCharCode(buf[at + i] ?? 0);
+  return s;
+}
+function cstr(buf, at, limit = buf.length) {
+  let e = at;
+  while (e < limit && e < buf.length && buf[e] !== 0) e++;
+  let s = "";
+  for (let i = at; i < e; i++) s += String.fromCharCode(buf[i]);
+  return [s, Math.min(e + 1, limit)];
+}
+function indexOfAscii(buf, marker) {
+  outer: for (let i = 0; i + marker.length <= buf.length; i++) {
+    for (let k = 0; k < marker.length; k++) if (buf[i + k] !== marker.charCodeAt(k)) continue outer;
+    return i;
+  }
+  return -1;
+}
+var MISS = { kind: "miss" };
+function strideCandidates(vertexBytes, maxIndex) {
+  return STRIDE_CANDIDATES.map((stride) => {
+    const divides = vertexBytes % stride === 0;
+    const vertexCount = divides ? vertexBytes / stride : 0;
+    const inRange = divides && vertexCount >= MIN_VERTEX_COUNT && vertexCount <= MAX_VERTEX_COUNT && maxIndex < vertexCount;
+    return { stride, vertexCount, divides, inRange, waste: inRange ? 1 - (maxIndex + 1) / vertexCount : -1 };
+  });
+}
+function selectStride(vertexBytes, maxIndex) {
+  const candidates = strideCandidates(vertexBytes, maxIndex);
+  const info = (stride, reason) => ({ stride, reason, maxIndex, candidates });
+  const fits = candidates.filter((c) => c.inRange);
+  if (fits.length === 0) {
+    return { ok: false, hard: false, error: `stride-no-candidate:bytes=${vertexBytes}`, info: info(0, "no-candidate") };
+  }
+  const minWaste = Math.min(...fits.map((c) => c.waste));
+  const best = fits.filter((c) => c.waste <= minWaste + 1e-9);
+  if (best.length > 1) {
+    const strides = best.map((c) => c.stride).join("/");
+    return { ok: false, hard: true, error: `stride-ambiguous:${strides}:bytes=${vertexBytes}:maxIndex=${maxIndex}`, info: info(best[0].stride, "ambiguous") };
+  }
+  if (minWaste > MAX_STRIDE_WASTE) {
+    const error = `stride-waste:${minWaste.toFixed(4)}:stride=${best[0].stride}:bytes=${vertexBytes}:maxIndex=${maxIndex}`;
+    return { ok: false, hard: true, error, info: info(best[0].stride, "waste-too-high") };
+  }
+  return { ok: true, stride: best[0].stride, info: info(best[0].stride, "tight-coverage") };
+}
+function decodeMesh(buf, dv, limit, verticesOffset, family, materialPath) {
+  const vertexBytes = dv.getUint32(verticesOffset - 4, true);
+  if (vertexBytes === 0) return MISS;
+  const indexLenOffset = verticesOffset + vertexBytes;
+  if (indexLenOffset + 4 > limit || indexLenOffset + 4 > buf.length) return MISS;
+  const indexBytes = dv.getUint32(indexLenOffset, true);
+  const indicesOffset = indexLenOffset + 4;
+  if (indexBytes === 0 || indexBytes % 6 !== 0) return MISS;
+  if (indicesOffset + indexBytes > limit || indicesOffset + indexBytes > buf.length) return MISS;
+  const indexCount = indexBytes / 2;
+  const indices = new Uint16Array(indexCount);
+  let maxIndex = 0;
+  const staticCap = vertexBytes / STRIDE_CANDIDATES[0];
+  for (let i = 0; i < indexCount; i++) {
+    const v = dv.getUint16(indicesOffset + i * 2, true);
+    indices[i] = v;
+    if (v > maxIndex) maxIndex = v;
+    if (family === "static" && v >= staticCap) return MISS;
+  }
+  let stride;
+  let strideInfo;
+  if (family === "packed") {
+    if (vertexBytes % MDL_VERTEX_STRIDE !== 0) return MISS;
+    const vertexCount2 = vertexBytes / MDL_VERTEX_STRIDE;
+    if (vertexCount2 < MIN_VERTEX_COUNT || vertexCount2 > MAX_VERTEX_COUNT) return MISS;
+    let bad = 0;
+    for (let i = 0; i < indexCount; i++) if (indices[i] >= vertexCount2) bad++;
+    if (bad > indexCount * 0.02) return MISS;
+    stride = MDL_VERTEX_STRIDE;
+    strideInfo = { stride, reason: "packed-80", maxIndex, candidates: strideCandidates(vertexBytes, maxIndex) };
+  } else {
+    const picked = selectStride(vertexBytes, maxIndex);
+    if (!picked.ok) return picked.hard ? { kind: "hard", error: picked.error, info: picked.info } : MISS;
+    stride = picked.stride;
+    strideInfo = picked.info;
+  }
+  const layout = VERTEX_LAYOUTS[stride];
+  if (!layout) {
+    const error = `stride-layout-unknown:${stride}:bytes=${vertexBytes}:maxIndex=${maxIndex}`;
+    return { kind: "hard", error, info: { ...strideInfo, reason: "layout-unknown" } };
+  }
+  const vertexCount = vertexBytes / stride;
+  const positions = new Float32Array(vertexCount * 3);
+  const uvs = new Float32Array(vertexCount * 2);
+  const blendIndices = layout.skin ? new Uint16Array(vertexCount * 4) : null;
+  const blendWeights = layout.skin ? new Float32Array(vertexCount * 4) : null;
+  let weightOk = true;
+  for (let i = 0; i < vertexCount; i++) {
+    const o = verticesOffset + i * stride;
+    const x = dv.getFloat32(o, true);
+    const y = dv.getFloat32(o + 4, true);
+    const z = layout.posZ ? dv.getFloat32(o + 8, true) : 0;
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return MISS;
+    if (Math.abs(x) > 1e6 || Math.abs(y) > 1e6 || Math.abs(z) > 1e6) return MISS;
+    positions[i * 3] = x;
+    positions[i * 3 + 1] = y;
+    positions[i * 3 + 2] = z;
+    uvs[i * 2] = dv.getFloat32(o + layout.uv, true);
+    uvs[i * 2 + 1] = dv.getFloat32(o + layout.uv + 4, true);
+    if (layout.skin && blendIndices && blendWeights) {
+      let sum = 0;
+      for (let k = 0; k < 4; k++) {
+        blendIndices[i * 4 + k] = dv.getUint32(o + 40 + k * 4, true);
+        const w = dv.getFloat32(o + 56 + k * 4, true);
+        blendWeights[i * 4 + k] = w;
+        sum += w;
+      }
+      if (Math.abs(sum - 1) > 0.05) weightOk = false;
+    }
+  }
+  if (!Number.isFinite(uvs[0]) || !Number.isFinite(uvs[uvs.length - 1])) return MISS;
+  return {
+    kind: "ok",
+    mesh: {
+      positions,
+      uvs,
+      // 权重不自洽 ⇒ 按静态网格渲染（不蒙皮），不把垃圾权重交给蒙皮
+      blendIndices: layout.skin && weightOk ? blendIndices : null,
+      blendWeights: layout.skin && weightOk ? blendWeights : null,
+      indices,
+      vertexCount,
+      materialPath,
+      strideInfo
+    }
+  };
+}
+function parseMesh(buf, dv, meshLimit) {
+  const [briefMaterial, afterMat] = cstr(buf, 9, meshLimit);
+  const [observedMaterial] = cstr(buf, 21, meshLimit);
+  const materialOf = (family) => {
+    const cands = family === "static" ? [observedMaterial, briefMaterial] : [briefMaterial, observedMaterial];
+    return cands.find((s) => s.endsWith(".json")) ?? cands[0];
+  };
+  const hard = [];
+  const attempt = (offset, family) => {
+    const out = decodeMesh(buf, dv, meshLimit, offset, family, materialOf(family));
+    if (out.kind === "ok") return out.mesh;
+    if (out.kind === "hard" && hard.length === 0) hard.push({ error: out.error, info: out.info });
+    return null;
+  };
+  for (const pad of [32, 36]) {
+    const offset = afterMat + pad + 4;
+    if (offset + 12 > meshLimit) continue;
+    for (const family of ["packed", "static"]) {
+      const mesh = attempt(offset, family);
+      if (mesh) return { mesh };
+    }
+  }
+  for (let offset = 9; offset + 12 < meshLimit; offset++) {
+    const vertexBytes = dv.getUint32(offset - 4, true);
+    if (vertexBytes === 0 || !STRIDE_CANDIDATES.some((s) => vertexBytes % s === 0)) continue;
+    for (const family of ["static", "packed"]) {
+      const mesh = attempt(offset, family);
+      if (mesh) return { mesh };
+    }
+  }
+  return hard.length > 0 ? { error: hard[0].error, info: hard[0].info } : { error: "mesh-parse-failed" };
+}
+function saneBind(dv, off) {
+  for (let i = 0; i < 16; i++) {
+    const v = dv.getFloat32(off + i * 4, true);
+    if (!Number.isFinite(v) || Math.abs(v) > 1e6) return false;
+  }
+  return dv.getFloat32(off + 12, true) === 0 && dv.getFloat32(off + 28, true) === 0 && dv.getFloat32(off + 44, true) === 0 && dv.getFloat32(off + 60, true) === 1;
+}
+function parseBones(buf, dv) {
+  const at = indexOfAscii(buf, "MDLS");
+  if (at < 0) return { bones: [], status: "absent", idToIndex: null };
+  if (at + 17 > buf.length) return { bones: [], status: "failed", idToIndex: null };
+  const next = indexOfAscii(buf, "MDLA");
+  let p = at + 13;
+  const boneCount = dv.getUint32(p, true);
+  p += 4;
+  const raw = [];
+  for (let b = 0; b < boneCount && raw.length < 512; b++) {
+    let ok = false;
+    for (const head of [13, 10]) {
+      if (p + head + 64 > buf.length) continue;
+      if (next >= 0 && p + head + 64 > next) continue;
+      if (!saneBind(dv, p + head)) continue;
+      if (dv.getUint32(p + head - 4, true) !== 64) continue;
+      const bind = new Float32Array(16);
+      for (let i = 0; i < 16; i++) bind[i] = dv.getFloat32(p + head + i * 4, true);
+      raw.push({ fileId: head === 13 ? dv.getUint32(p + 1, true) : b, parent: dv.getInt32(p + head - 8, true), bind });
+      p += head + 64;
+      [, p] = cstr(buf, p, buf.length);
+      ok = true;
+      break;
+    }
+    if (!ok) break;
+  }
+  const identity = raw.every((r, i) => r.fileId === i);
+  const order = raw.map((_, i) => i);
+  if (!identity) order.sort((x, y) => raw[x].fileId - raw[y].fileId || x - y);
+  const idToIndex = identity ? null : new Map(order.map((b, i) => [raw[b].fileId, i]));
+  const bones = order.map((b, i) => {
+    const parent = idToIndex ? idToIndex.get(raw[b].parent) : raw[b].parent;
+    return { index: i, parent: parent !== void 0 && parent >= 0 && parent < raw.length ? parent : -1, bind: raw[b].bind };
+  });
+  return { bones, status: bones.length === boneCount ? "ok" : "failed", idToIndex };
+}
+function locateTracks(dv, p, bufLen) {
+  let best = null;
+  for (const delta of [0, -4]) {
+    const t = p + delta;
+    if (t < 0 || t + 4 > bufLen) continue;
+    const count = dv.getUint32(t, true);
+    if (count < 1 || count > 256) continue;
+    const at = t + 4 + 35;
+    let ok = true;
+    let q = at;
+    for (let k = 0; k < count; k++) {
+      if (q + 8 > bufLen) {
+        ok = false;
+        break;
+      }
+      const bytes = dv.getUint32(q + 4, true);
+      if (bytes === 0 || bytes % KEYFRAME_BYTES !== 0 || q + 8 + bytes > bufLen) {
+        ok = false;
+        break;
+      }
+      q += 8 + bytes;
+    }
+    if (ok && (!best || bufLen - q < bufLen - best.end)) best = { trackCount: count, trackAt: at, end: q };
+  }
+  return best ? { trackCount: best.trackCount, trackAt: best.trackAt } : null;
+}
+function parseAnimations(buf, dv, boneCount, idToIndex) {
+  const at = indexOfAscii(buf, "MDLA");
+  if (at < 0) return { animations: [], status: "absent" };
+  if (at + 17 > buf.length) return { animations: [], status: "failed" };
+  let p = at + 13;
+  const animCount = dv.getUint32(p, true);
+  p += 4;
+  const out = [];
+  for (let a = 0; a < animCount && out.length < 64; a++) {
+    if (p + 8 > buf.length) break;
+    const id = dv.getUint32(p, true);
+    p += 8;
+    let name;
+    [name, p] = cstr(buf, p);
+    let mode;
+    [mode, p] = cstr(buf, p);
+    if (p + 20 + 35 > buf.length) break;
+    const fpsRaw = dv.getFloat32(p, true);
+    const frameCount = dv.getUint32(p + 4, true);
+    const located = locateTracks(dv, p + 12, buf.length);
+    if (!located) break;
+    let q = located.trackAt;
+    const tracks = [];
+    let ok = true;
+    for (let t = 0; t < located.trackCount; t++) {
+      if (q + 8 > buf.length) {
+        ok = false;
+        break;
+      }
+      const rawBoneId = dv.getUint32(q, true);
+      const trackBytes = dv.getUint32(q + 4, true);
+      q += 8;
+      const boneId = idToIndex ? idToIndex.get(rawBoneId) ?? -1 : rawBoneId;
+      if (trackBytes === 0 || trackBytes % KEYFRAME_BYTES !== 0 || q + trackBytes > buf.length) {
+        ok = false;
+        break;
+      }
+      if (boneCount > 0 && (boneId < 0 || boneId >= boneCount)) {
+        ok = false;
+        break;
+      }
+      const keyCount = trackBytes / KEYFRAME_BYTES;
+      const keys = [];
+      for (let k = 0; k < keyCount; k++) {
+        const o = q + k * KEYFRAME_BYTES;
+        keys.push({
+          pos: [dv.getFloat32(o, true), dv.getFloat32(o + 4, true), dv.getFloat32(o + 8, true)],
+          rot: [dv.getFloat32(o + 12, true), dv.getFloat32(o + 16, true), dv.getFloat32(o + 20, true), dv.getFloat32(o + 24, true)],
+          scale: [dv.getFloat32(o + 28, true), dv.getFloat32(o + 32, true)]
+        });
+      }
+      q += trackBytes;
+      tracks.push({ boneId, keys });
+    }
+    if (!ok) break;
+    const fps = Number.isFinite(fpsRaw) && fpsRaw > 0 && fpsRaw <= 240 ? fpsRaw : 30;
+    if (frameCount > 0 && tracks.length > 0) out.push({ id, name, mode, fps, frameCount, tracks });
+    p = q;
+  }
+  return { animations: out, status: out.length === animCount ? "ok" : "failed" };
+}
+function remapBlendIndices(mesh, idToIndex) {
+  const src = mesh.blendIndices;
+  const weights = mesh.blendWeights;
+  if (!idToIndex || !src) return;
+  for (let i = 0; i < src.length; i++) {
+    if (weights && weights[i] === 0) continue;
+    const mapped = idToIndex.get(src[i]);
+    if (mapped === void 0) {
+      console.warn(`[mdl] \u9876\u70B9\u8499\u76AE\u69FD\u5F15\u7528\u4E86\u9AA8\u8868\u91CC\u6CA1\u6709\u7684\u9AA8\u9ABC\u6587\u4EF6 id=${src[i]} \u21D2 \u6574\u4EFD\u8499\u76AE\u9000\u5316\u4E3A\u9759\u6001\u7F51\u683C`);
+      mesh.blendIndices = null;
+      mesh.blendWeights = null;
+      return;
+    }
+    src[i] = mapped;
+  }
+}
+function parseMdl(buf) {
+  if (!(buf instanceof Uint8Array)) return { ok: false, error: "not-bytes" };
+  if (buf.length < 16) return { ok: false, error: "too-short" };
+  const version = ascii2(buf, 0, 8);
+  if (!version.startsWith("MDLV") || !SUPPORTED_MDLV.includes(version)) {
+    return { ok: false, error: "unsupported-header:" + version };
+  }
+  try {
+    const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+    let meshLimit = buf.length;
+    for (const marker of ["MDLS", "MDLA"]) {
+      const at = indexOfAscii(buf, marker);
+      if (at >= 0 && at < meshLimit) meshLimit = at;
+    }
+    const located = parseMesh(buf, dv, meshLimit);
+    if ("error" in located) {
+      return located.info ? { ok: false, error: located.error, strideInfo: located.info } : { ok: false, error: located.error };
+    }
+    const boneTable = parseBones(buf, dv);
+    remapBlendIndices(located.mesh, boneTable.idToIndex);
+    const anim = parseAnimations(buf, dv, boneTable.bones.length, boneTable.idToIndex);
+    return {
+      ok: true,
+      puppet: {
+        version,
+        mesh: located.mesh,
+        bones: boneTable.bones,
+        animations: anim.animations,
+        segments: { mdls: boneTable.status, mdla: anim.status },
+        boneIdMapping: boneTable.idToIndex ? "remapped" : "identity"
+      }
+    };
+  } catch {
+    return { ok: false, error: "malformed" };
+  }
+}
+
+// src/client/puppet.ts
+var _qa = new Quaternion();
+var _qb = new Quaternion();
+function decomposeBind(bone, bind) {
+  new Matrix4().fromArray(bind).decompose(bone.position, bone.quaternion, bone.scale);
+}
+function createPuppetMaterial(map, _colorBlendMode) {
+  return new MeshBasicMaterial({ map, transparent: true, side: DoubleSide, depthWrite: false });
+}
+function createPuppetMesh(puppet, material) {
+  const { mesh: data, bones: boneDefs, animations } = puppet;
+  const vertexCount = data.vertexCount > 0 ? data.vertexCount : Math.floor(data.positions.length / 3);
+  const geometry = new BufferGeometry();
+  geometry.setAttribute("position", new BufferAttribute(data.positions, 3));
+  const uvs = data.uvs.length === vertexCount * 2 ? new Float32Array(data.uvs) : new Float32Array(vertexCount * 2);
+  geometry.setAttribute("uv", new BufferAttribute(uvs, 2));
+  flipGeometryUvY(geometry);
+  const skinned = Boolean(data.blendIndices && data.blendWeights);
+  if (skinned) {
+    geometry.setAttribute("skinIndex", new BufferAttribute(data.blendIndices, 4));
+    geometry.setAttribute("skinWeight", new BufferAttribute(data.blendWeights, 4));
+  }
+  geometry.setIndex(new BufferAttribute(data.indices, 1));
+  const bones = boneDefs.map(() => new Bone());
+  const roots = [];
+  boneDefs.forEach((def, i) => {
+    decomposeBind(bones[i], def.bind);
+    if (def.parent >= 0 && def.parent < bones.length && def.parent !== i) bones[def.parent].add(bones[i]);
+    else roots.push(bones[i]);
+  });
+  let mesh;
+  let skeleton = null;
+  if (skinned && bones.length > 0) {
+    const sm = new SkinnedMesh(geometry, material);
+    for (const root of roots) sm.add(root);
+    sm.updateMatrixWorld(true);
+    skeleton = new Skeleton(bones);
+    sm.bind(skeleton);
+    mesh = sm;
+  } else {
+    mesh = new Mesh(geometry, material);
+  }
+  return {
+    mesh,
+    bones,
+    skeleton,
+    animations,
+    applyFrame(anim, frame) {
+      const last = Math.max(0, anim.frameCount - 1);
+      const f = Math.min(Math.max(0, Math.floor(frame)), last);
+      const next = Math.min(f + 1, last);
+      const t = last === 0 ? 0 : Math.min(Math.max(0, frame - f), 1);
+      for (const track of anim.tracks) {
+        const bone = bones[track.boneId];
+        if (!bone || track.keys.length === 0) continue;
+        const a = track.keys[Math.min(f, track.keys.length - 1)];
+        const b = track.keys[Math.min(next, track.keys.length - 1)];
+        bone.position.set(
+          a.pos[0] + (b.pos[0] - a.pos[0]) * t,
+          a.pos[1] + (b.pos[1] - a.pos[1]) * t,
+          a.pos[2] + (b.pos[2] - a.pos[2]) * t
+        );
+        _qa.set(a.rot[0], a.rot[1], a.rot[2], a.rot[3]);
+        _qb.set(b.rot[0], b.rot[1], b.rot[2], b.rot[3]);
+        bone.quaternion.copy(_qa).slerp(_qb, t);
+        bone.scale.set(
+          a.scale[0] + (b.scale[0] - a.scale[0]) * t,
+          a.scale[1] + (b.scale[1] - a.scale[1]) * t,
+          1
+        );
+      }
+    },
+    dispose() {
+      geometry.dispose();
+      skeleton?.dispose();
+      material.dispose();
+    }
+  };
 }
 
 // src/client/wasm-loader.ts
@@ -28690,8 +29706,8 @@ var SceneScriptVm = class _SceneScriptVm {
     });
     define("writeNum", (k, p, v) => {
       const prop = ctx.getString(p);
-      const num = ctx.getNumber(v);
-      const patch = prop === "alpha" || prop === "opacity" || prop === "baseAlpha" ? { alpha: num } : {};
+      const num2 = ctx.getNumber(v);
+      const patch = prop === "alpha" || prop === "opacity" || prop === "baseAlpha" ? { alpha: num2 } : {};
       this.write(this.keyOf(k), patch);
     });
     define("writeBool", (k, _p, v) => {
@@ -29430,6 +30446,42 @@ var FAILURE_TEXT = {
   "load-error": "\u8D44\u6E90\u52A0\u8F7D\u4E2D\u65AD"
 };
 
+// src/client/pointer-input.ts
+function createPointerTracker(opts = {}) {
+  const host = opts.target ?? (typeof window !== "undefined" ? window : null);
+  const viewport = opts.viewport ?? (() => ({
+    width: typeof window === "undefined" ? 0 : window.innerWidth || 0,
+    height: typeof window === "undefined" ? 0 : window.innerHeight || 0
+  }));
+  let current = { ...POINTER_CENTER };
+  let installed = false;
+  const clamp01 = (v) => v < 0 ? 0 : v > 1 ? 1 : v;
+  const onMove = (ev) => {
+    const e = ev;
+    const { width, height } = viewport();
+    if (!(width > 0) || !(height > 0)) return;
+    current = { x: clamp01(Number(e.clientX) / width), y: clamp01(Number(e.clientY) / height) };
+  };
+  return {
+    install() {
+      if (installed || !host) return;
+      installed = true;
+      host.addEventListener("pointermove", onMove, { passive: true });
+    },
+    dispose() {
+      if (!installed || !host) return;
+      installed = false;
+      host.removeEventListener("pointermove", onMove);
+      current = { ...POINTER_CENTER };
+    },
+    // 只读快照：每次移动/卸载换成一个**新对象**（不就地改写）⇒ 调用方持有的旧引用是那一刻的值，
+    // 交给别处保存（如 player.setParallaxPointer）不会被后续事件改写；返回对象本身不得写入。
+    target() {
+      return current;
+    }
+  };
+}
+
 // src/client/three-renderer.ts
 var warnedKeys = /* @__PURE__ */ new Set();
 function warnOnce2(key, message) {
@@ -29606,6 +30658,7 @@ function createThreeSceneRenderer(opts) {
       window.removeEventListener("resize", onWindowResize);
       onWindowResize = null;
     }
+    pointer.dispose();
     if (contextLostCanvas) {
       contextLostCanvas.removeEventListener("webglcontextlost", onContextLost);
       contextLostCanvas = null;
@@ -29669,6 +30722,7 @@ function createThreeSceneRenderer(opts) {
     width: Math.max(1, Math.round(window.innerWidth || 0)),
     height: Math.max(1, Math.round(window.innerHeight || 0))
   });
+  const pointer = createPointerTracker();
   return {
     async render(id, fg, _bg) {
       warnedKeys.clear();
@@ -29717,6 +30771,7 @@ function createThreeSceneRenderer(opts) {
         }
         const backgroundTextures = /* @__PURE__ */ new Map();
         currentTextures = backgroundTextures;
+        const puppetMeshes = /* @__PURE__ */ new Map();
         const particles = /* @__PURE__ */ new Map();
         const userProps = {};
         for (const obj of desc.objects) {
@@ -29727,8 +30782,28 @@ function createThreeSceneRenderer(opts) {
         for (const obj of desc.objects) {
           if (isStaticallyHidden(obj.visible, userProps)) continue;
           if (obj.kind === "image") {
-            const tex = await resolveImageTexture(id, obj);
-            if (tex) backgroundTextures.set(obj.id, tex);
+            const { texture, puppetPath } = await resolveImageAssets(id, obj);
+            if (texture) backgroundTextures.set(obj.id, texture);
+            if (puppetPath) {
+              try {
+                const bytes = await fetchMdlBytes(id, puppetPath);
+                const parsed = bytes ? parseMdl(bytes) : { ok: false, error: "mdl-fetch-failed" };
+                if (parsed.ok) {
+                  const puppet = createPuppetMesh(
+                    parsed.puppet,
+                    createPuppetMaterial(texture ?? null, obj.colorBlendMode)
+                  );
+                  puppetMeshes.set(obj.id, puppet);
+                } else {
+                  warnOnce2(`puppet:${id}:${obj.id}`, `puppet \u89E3\u6790\u5931\u8D25\uFF08object=${obj.id} ${puppetPath}\uFF09\uFF1A${parsed.error}`);
+                }
+              } catch (e) {
+                warnOnce2(
+                  `puppet-throw:${id}:${obj.id}`,
+                  `puppet \u88C5\u914D\u5F02\u5E38\uFF08object=${obj.id} ${puppetPath}\uFF09\uFF1A${e instanceof Error ? e.message : String(e)}`
+                );
+              }
+            }
           } else if (obj.kind === "particle" && obj.particle) {
             const specResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(obj.particle)}`);
             if (!specResp.ok) continue;
@@ -29842,7 +30917,9 @@ function createThreeSceneRenderer(opts) {
         );
         const screenScale = screenScalePx(desc.orthogonal.width, desc.orthogonal.height, vw, vh, dpr);
         const isAdmittedImage = (o) => o.kind === "image" && !isStaticallyHidden(o.visible, userProps) && (effectChains.get(o.id)?.length ?? 0) > 0;
-        const isolateItems = desc.objects.filter(isAdmittedImage).map((o) => {
+        const isPuppetRendered = (o) => o.kind === "image" && puppetMeshes.has(o.id);
+        const isIsolatedImage = (o) => isAdmittedImage(o) && !isPuppetRendered(o);
+        const isolateItems = desc.objects.filter(isIsolatedImage).map((o) => {
           const tex = backgroundTextures.get(o.id);
           const s = o.scale;
           const w = (o.size?.[0] ?? tex?.image?.width ?? 1) * s[0];
@@ -29867,6 +30944,13 @@ function createThreeSceneRenderer(opts) {
           const chains = effectChains.get(obj.id);
           if (!chains || chains.length === 0) continue;
           if (obj.kind === "image") {
+            if (isPuppetRendered(obj)) {
+              warnOnce2(
+                `puppet-isolate:${id}:${obj.id}`,
+                `puppet \u5BF9\u8C61\u4E0D\u652F\u6301\u5BF9\u8C61\u7EA7\u6548\u679C\u94FE\uFF0C\u5DF2\u6309\u76F4\u6E32\u5904\u7406\uFF08id=${obj.id}\uFF09`
+              );
+              continue;
+            }
             if (!isAdmittedImage(obj)) continue;
             const sized = isolatedSizes.get(obj.id);
             if (!sized) continue;
@@ -29906,6 +30990,7 @@ function createThreeSceneRenderer(opts) {
           textLayers,
           qualityScale,
           worldTransforms,
+          puppetMeshes,
           // SceneScript 帧钩子：脚本状态是本帧渲染的权威来源，先 tick → 应用脏写入，
           // 再走原有的粒子/文本更新与 render。host 未就绪（quickjs 加载中/失败）时直接返回。
           onFrame: (dt) => {
@@ -29924,6 +31009,7 @@ function createThreeSceneRenderer(opts) {
         };
         const userOnFrame = assets.onFrame;
         assets.onFrame = (dt) => {
+          current?.player.setParallaxPointer(pointer.target());
           if (timer.firstFrameAt < 0) {
             timer.firstFrameAt = performance.now() - timer.startedAt;
             succeed(id, assembledMs >= 0 ? assembledMs : timer.firstFrameAt, timer.firstFrameAt);
@@ -29999,6 +31085,7 @@ function createThreeSceneRenderer(opts) {
         let droppedEffects = 0;
         for (const [objId, chains] of effectChains) {
           if (isolate.has(objId)) continue;
+          if (puppetMeshes.has(objId)) continue;
           droppedEffects += chains.length;
         }
         if (droppedEffects > 0) {
@@ -30030,6 +31117,8 @@ function createThreeSceneRenderer(opts) {
         }) : null;
         glowSize = { width: fg.width, height: fg.height };
         result.player.setGlowStage(currentGlow);
+        result.player.setParallax(desc.parallax);
+        pointer.install();
         if (paused) result.player.pause();
         onWindowResize = () => {
           if (!current) return;
@@ -30041,10 +31130,10 @@ function createThreeSceneRenderer(opts) {
         window.addEventListener("resize", onWindowResize);
         if (abortIfContextLost()) return false;
         console.log(
-          `[three] scene loaded id=${id} background=${result.backgroundIds.length} particleLayers=${result.particleLayers.length}`
+          `[three] scene loaded id=${id} background=${result.backgroundIds.length} particleLayers=${result.particleLayers.length} puppetLayers=${result.puppetLayers.length}`
         );
-        if (result.backgroundIds.length === 0 && result.particleLayers.length === 0) {
-          fail(id, "no-visible-objects", "background=0 particleLayers=0");
+        if (result.backgroundIds.length === 0 && result.particleLayers.length === 0 && result.puppetLayers.length === 0) {
+          fail(id, "no-visible-objects", "background=0 particleLayers=0 puppetLayers=0");
           teardownQuietly();
           return false;
         }

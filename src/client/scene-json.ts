@@ -1,4 +1,5 @@
-import type { SceneDescription, SceneObject } from '../shared/types.js';
+import type { SceneDescription, SceneImageObject, SceneObject } from '../shared/types.js';
+import { readParallaxConfig } from './parallax.js';
 import { parseScriptProperties } from './script-patterns.js';
 import { parseVisible } from './visibility.js';
 
@@ -54,6 +55,36 @@ function optNum(s: unknown): number | undefined {
 // 可选字符串字段（text 的 horizontalalign/verticalalign 等）：非空字符串 → 原值；否则 undefined
 function optStr(s: unknown): string | undefined {
   return typeof s === 'string' && s.trim() ? s : undefined;
+}
+
+// WE 动画层（scene.json `animationlayers`）：id/animation 必需（缺任一 ⇒ 整条跳过，不产出半截层）；
+// rate/blend 缺省 1、visible 缺省 false（出处 lwe `ObjectParser.cpp:284`，与 WE `visible{true}` 的差异见 AGENT.md §7.40）。非数组 → undefined。
+function parseAnimationLayers(raw: unknown): SceneImageObject['animationLayers'] {
+  if (!Array.isArray(raw)) return undefined;
+  const out: NonNullable<SceneImageObject['animationLayers']> = [];
+  for (const item of raw) {
+    if (typeof item !== 'object' || item === null) continue;
+    const o = item as Record<string, unknown>;
+    const id = optNum(o.id);
+    const animation = optNum(o.animation);
+    if (id === undefined || animation === undefined) continue;
+    out.push({
+      id,
+      animation,
+      rate: optNum(o.rate) ?? 1,
+      blend: optNum(o.blend) ?? 1,
+      visible: o.visible === true,
+    });
+  }
+  return out;
+}
+
+// WE 对象级 parallaxDepth：两根轴的空格分隔字符串（与 origin/size 同形）；缺省/畸形 → undefined。
+function optNum2(s: unknown): [number, number] | undefined {
+  if (typeof s !== 'string' || !s.trim()) return undefined;
+  const p = s.trim().split(/\s+/).map(Number);
+  if (p.length < 2 || !Number.isFinite(p[0]) || !Number.isFinite(p[1])) return undefined;
+  return [p[0], p[1]];
 }
 
 // 带缺省的数值字段（general.fov / perspectiveoverridefov）：数字/数字字符串 → 有限数值；
@@ -172,6 +203,9 @@ export function parseSceneJson(raw: string): SceneDescription {
       parent: optNum(o.parent),
       // Ruling 5：所有对象（kind 不限）的 effects 按 objects 顺序保留（全库 122 条中 105 条在 image 对象上）
       effects: Array.isArray(o.effects) ? o.effects : undefined,
+      // 对象级 parallaxDepth 与 kind 无关（全库 227 处：particle 106 / image 91 / text 20 / other 10），
+      // 故落在 base 让所有分支都带出 —— Task 4 的粒子/文本注入 u_Parallax 全靠它。
+      parallaxDepth: optNum2(o.parallaxDepth),
     };
     // visible.script 的派生**与 kind 无关**（2026-09-22）：3798688689 的 3 个 SceneScript 总控
     // （92000 粒子 / 93000 拖尾 / 94000 场景控制器，后者 348 KB）**没有** image/particle/text
@@ -216,6 +250,8 @@ export function parseSceneJson(raw: string): SceneDescription {
         // WE 图像颜色混合模式（→ shader combo BLENDMODE；缺省 0 = Normal）。
         // 非数值/负数/非法 → 0（渲染侧只实现 6/7/31，其余回退普通 alpha 混合）。
         colorBlendMode: Math.max(0, Math.floor(optNum(o.colorBlendMode) ?? 0)),
+        // T8：WE 动画层（puppet 的 MDLA 动画选择元数据）；undefined = 无该字段。
+        animationLayers: parseAnimationLayers(o.animationlayers),
         ...fromVisibleScript,
       };
     }
@@ -277,6 +313,8 @@ export function parseSceneJson(raw: string): SceneDescription {
     fov: numOr(gen.fov, 50),
     perspectiveOverrideFov: numOr(gen.perspectiveoverridefov, 0),
     clearColor: cc,
+    // 相机视差总开关与系数（general.cameraparallax*）；缺省全 0 = 与加此功能前观感一致。
+    parallax: readParallaxConfig(gen),
     objects,
     sounds: collectSounds(root),
   };

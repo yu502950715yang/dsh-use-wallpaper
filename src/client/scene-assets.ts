@@ -63,21 +63,38 @@ export function resolveTexPath(matRef: string, texName: string): string {
     : matRef.slice(0, matRef.lastIndexOf('/') + 1) + texName + '.tex';
 }
 
-// 图片对象纹理：obj.image → models/xxx.json → material → passes[0].textures[0] → .tex。
-// 任一步失败返回 null（调用方走白图兜底，不阻断渲染）。
-export async function resolveImageTexture(id: string, obj: SceneImageObject): Promise<THREE.Texture | null> {
+// 图片对象资源：obj.image → models/xxx.json → { material, puppet } 一次拉取，再各取两条链（material → tex、
+// puppet → `.mdl` 路径，本函数不下字节）。任一步失败按 null 返回（白图兜底），但**纹理失败不丢已解析的 puppetPath**。
+export async function resolveImageAssets(
+  id: string,
+  obj: SceneImageObject,
+): Promise<{ texture: THREE.Texture | null; puppetPath: string | null }> {
+  let puppetPath: string | null = null;
   try {
     const modelResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(obj.image)}`);
-    if (!modelResp.ok) return null;
+    if (!modelResp.ok) return { texture: null, puppetPath: null };
     const model = await modelResp.json();
+    puppetPath = typeof model?.puppet === 'string' && model.puppet ? String(model.puppet) : null;
     const matRef: unknown = model?.material;
-    if (typeof matRef !== 'string' || !matRef) return null;
+    if (typeof matRef !== 'string' || !matRef) return { texture: null, puppetPath };
     const matResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(matRef)}`);
-    if (!matResp.ok) return null;
+    if (!matResp.ok) return { texture: null, puppetPath };
     const mat = await matResp.json();
     const texName: unknown = mat?.passes?.[0]?.textures?.[0];
-    if (typeof texName !== 'string' || !texName) return null;
-    return loadTexTexture(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(resolveTexPath(matRef, texName))}`);
+    if (typeof texName !== 'string' || !texName) return { texture: null, puppetPath };
+    const url = `/wallpapers/scene/${id}/asset?name=${encodeURIComponent(resolveTexPath(matRef, texName))}`;
+    return { texture: await loadTexTexture(url), puppetPath };
+  } catch {
+    return { texture: null, puppetPath };
+  }
+}
+
+// `.mdl` 原始字节（走既有 scene asset 路由，pkg 内条目）；失败返回 null（调用方退化为普通贴图）。
+export async function fetchMdlBytes(id: string, path: string): Promise<Uint8Array | null> {
+  try {
+    const resp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(path)}`);
+    if (!resp.ok) return null;
+    return new Uint8Array(await resp.arrayBuffer());
   } catch {
     return null;
   }
