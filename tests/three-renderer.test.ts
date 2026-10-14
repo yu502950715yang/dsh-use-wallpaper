@@ -1405,14 +1405,6 @@ describe('对象级效果链：隔离 RT 尺寸按源纹理收口 4096', () => {
   });
 });
 
-// ── 对侧回归（审查 Important 1）：真实 loadSceneToThree 与 renderer 走同一条链路 ──────────────
-// 上面这些用例把整个 `threejs-player.js` mock 掉，于是「renderer 传出的键」与「player 实际建的
-// 隔离条目 id」被同一条 mock 一起隔离——两边都写错也全绿。本用例用 `vi.importActual` 跑**真实**的
-// loadSceneToThree（注入 mock renderer，写法对齐 tests/threejs-player.test.ts），断言：
-//   ① 真实 player 的 `isolatedObjects()` 里存在 `id === 对象 id` 的条目；
-//   ② ObjectEffectStage 收到的键就是同一个对象 id，且**找到了**该隔离条目（否则只会打印
-//      「尚无隔离条目，效果链未挂载（调用顺序错误）」）。
-// 任何一侧改动建层条件/顺序（或键空间再漂移）都会让本用例变红。
 // 真实 loadSceneToThree 用例（本文件多处）共用的 mock renderer：jsdom 无 WebGL ⇒ 真实 WebGLRenderer
 // 构造即抛错，故只覆盖 player 用到的接口。
 function createPlayerMockRenderer() {
@@ -1426,6 +1418,14 @@ function createPlayerMockRenderer() {
   };
 }
 
+// ── 对侧回归（审查 Important 1）：真实 loadSceneToThree 与 renderer 走同一条链路 ──────────────
+// 上面这些用例把整个 `threejs-player.js` mock 掉，于是「renderer 传出的键」与「player 实际建的
+// 隔离条目 id」被同一条 mock 一起隔离——两边都写错也全绿。本用例用 `vi.importActual` 跑**真实**的
+// loadSceneToThree（注入 mock renderer，写法对齐 tests/threejs-player.test.ts），断言：
+//   ① 真实 player 的 `isolatedObjects()` 里存在 `id === 对象 id` 的条目；
+//   ② ObjectEffectStage 收到的键就是同一个对象 id，且**找到了**该隔离条目（否则只会打印
+//      「尚无隔离条目，效果链未挂载（调用顺序错误）」）。
+// 任何一侧改动建层条件/顺序（或键空间再漂移）都会让本用例变红。
 describe('对象级效果链接线（真实 loadSceneToThree 对侧校验）', () => {
   it('真实 player 的隔离条目 id === 对象 id，stage 收到的键同为该对象 id', async () => {
     const OBJ_ID = 13;
