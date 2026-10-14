@@ -1,4 +1,5 @@
 import type { SceneDescription, SceneObject } from '../shared/types.js';
+import { readParallaxConfig } from './parallax.js';
 import { parseScriptProperties } from './script-patterns.js';
 import { parseVisible } from './visibility.js';
 
@@ -54,6 +55,14 @@ function optNum(s: unknown): number | undefined {
 // 可选字符串字段（text 的 horizontalalign/verticalalign 等）：非空字符串 → 原值；否则 undefined
 function optStr(s: unknown): string | undefined {
   return typeof s === 'string' && s.trim() ? s : undefined;
+}
+
+// WE 对象级 parallaxDepth：两根轴的空格分隔字符串（与 origin/size 同形）；缺省/畸形 → undefined。
+function optNum2(s: unknown): [number, number] | undefined {
+  if (typeof s !== 'string' || !s.trim()) return undefined;
+  const p = s.trim().split(/\s+/).map(Number);
+  if (p.length < 2 || !Number.isFinite(p[0]) || !Number.isFinite(p[1])) return undefined;
+  return [p[0], p[1]];
 }
 
 // 带缺省的数值字段（general.fov / perspectiveoverridefov）：数字/数字字符串 → 有限数值；
@@ -216,6 +225,7 @@ export function parseSceneJson(raw: string): SceneDescription {
         // WE 图像颜色混合模式（→ shader combo BLENDMODE；缺省 0 = Normal）。
         // 非数值/负数/非法 → 0（渲染侧只实现 6/7/31，其余回退普通 alpha 混合）。
         colorBlendMode: Math.max(0, Math.floor(optNum(o.colorBlendMode) ?? 0)),
+        parallaxDepth: optNum2(o.parallaxDepth),
         ...fromVisibleScript,
       };
     }
@@ -277,6 +287,8 @@ export function parseSceneJson(raw: string): SceneDescription {
     fov: numOr(gen.fov, 50),
     perspectiveOverrideFov: numOr(gen.perspectiveoverridefov, 0),
     clearColor: cc,
+    // 相机视差总开关与系数（general.cameraparallax*）；缺省全 0 = 与加此功能前观感一致。
+    parallax: readParallaxConfig(gen),
     objects,
     sounds: collectSounds(root),
   };

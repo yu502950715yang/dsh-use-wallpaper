@@ -49,6 +49,8 @@ export interface SceneImageObject {
     alpha?: number;
     brightness?: number;
     colorBlendMode?: number;
+    /** WE 对象级视差深度（scene.json `parallaxDepth`，两根轴）；缺省 = OWE 的 {0,0} ⇒ 不参与视差。 */
+    parallaxDepth?: [number, number];
 }
 export interface SceneParticleObject {
     kind: 'particle';
@@ -119,6 +121,8 @@ export interface SceneDescription {
     fov?: number;
     perspectiveOverrideFov?: number;
     clearColor?: [number, number, number];
+    /** 相机视差总配置（scene.json `general.cameraparallax*`，缺省全 0）。 */
+    parallax: ParallaxConfig;
     objects: SceneObject[];
     sounds?: string[];
 }

@@ -78,6 +78,8 @@ export interface SceneImageObject {
   // 全库非零的只有 3 个对象：3743126786 Clouds Back=7(Screen)、2832263418 audio_rainbow=6(Lighten)、
   // 2460786246 Clock=31(A+B×opacity)。Screen 对纯黑返回 A → 黑底自然「消失」。
   colorBlendMode?: number;
+  /** WE 对象级视差深度（scene.json `parallaxDepth`，两根轴）；缺省 = OWE 的 {0,0} ⇒ 不参与视差。 */
+  parallaxDepth?: [number, number];
 }
 export interface SceneParticleObject {
   kind: 'particle'; id: number; name: string;
@@ -156,6 +158,8 @@ export interface SceneDescription {
   fov?: number;
   perspectiveOverrideFov?: number;
   clearColor?: [number, number, number];
+  /** 相机视差总配置（scene.json `general.cameraparallax*`，缺省全 0）。 */
+  parallax: ParallaxConfig;
   objects: SceneObject[];
   // T3.4：壁纸音频。WE 音频对象（无 image/particle/text 的纯音频节点）携带 sound 数组
   // （资源名，如 2937346640 id=35 的 ["sounds/yutaka hirasaka - acro.flac"]）；

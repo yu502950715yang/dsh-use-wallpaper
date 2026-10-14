@@ -1125,8 +1125,8 @@ Lifetime used`) : new QuickJSUseAfterFree("Lifetime not alive");
         let ptr = this.ffi.QTS_GetGlobalObject(this.ctx.value);
         return this._global = this.memory.staticHeapValueHandle(ptr), this._global;
       }
-      newNumber(num) {
-        return this.memory.heapValueHandle(this.ffi.QTS_NewFloat64(this.ctx.value, num));
+      newNumber(num2) {
+        return this.memory.heapValueHandle(this.ffi.QTS_NewFloat64(this.ctx.value, num2));
       }
       newString(str) {
         let ptr = this.memory.newHeapCharPointer(str).consume((charHandle) => this.ffi.QTS_NewString(this.ctx.value, charHandle.value.ptr));
@@ -1143,12 +1143,12 @@ Lifetime used`) : new QuickJSUseAfterFree("Lifetime not alive");
       getWellKnownSymbol(name) {
         return this._Symbol ?? (this._Symbol = this.memory.manage(this.getProp(this.global, "Symbol"))), this.getProp(this._Symbol, name);
       }
-      newBigInt(num) {
+      newBigInt(num2) {
         if (!this._BigInt) {
           let bigIntHandle2 = this.getProp(this.global, "BigInt");
           this.memory.manage(bigIntHandle2), this._BigInt = new StaticLifetime(bigIntHandle2.value, this.runtime);
         }
-        let bigIntHandle = this._BigInt, asString = String(num);
+        let bigIntHandle = this._BigInt, asString = String(num2);
         return this.newString(asString).consume((handle) => this.unwrapResult(this.callFunction(bigIntHandle, this.undefined, handle)));
       }
       newObject(prototype) {
@@ -22646,6 +22646,23 @@ function fitIsolatedBudget(items, density, budgetBytes = ISOLATED_RT_BUDGET_BYTE
   return lo;
 }
 
+// src/client/parallax.ts
+var DEFAULT_PARALLAX = { enabled: false, amount: 0, delay: 0, mouseInfluence: 0 };
+function num(v, fallback) {
+  const n = typeof v === "string" ? Number(v) : v;
+  return typeof n === "number" && Number.isFinite(n) ? n : fallback;
+}
+function readParallaxConfig(gen) {
+  if (typeof gen !== "object" || gen === null) return { ...DEFAULT_PARALLAX };
+  const g = gen;
+  return {
+    enabled: g.cameraparallax === true,
+    amount: num(g.cameraparallaxamount, 0),
+    delay: num(g.cameraparallaxdelay, 0),
+    mouseInfluence: num(g.cameraparallaxmouseinfluence, 0)
+  };
+}
+
 // src/client/script-patterns.ts
 function detectScriptPattern(src) {
   if (typeof src !== "string") return null;
@@ -22779,6 +22796,12 @@ function optNum(s) {
 function optStr(s) {
   return typeof s === "string" && s.trim() ? s : void 0;
 }
+function optNum2(s) {
+  if (typeof s !== "string" || !s.trim()) return void 0;
+  const p = s.trim().split(/\s+/).map(Number);
+  if (p.length < 2 || !Number.isFinite(p[0]) || !Number.isFinite(p[1])) return void 0;
+  return [p[0], p[1]];
+}
 function numOr(s, dflt) {
   const n = optNum(s);
   return n === void 0 ? dflt : n;
@@ -22887,6 +22910,7 @@ function parseSceneJson(raw) {
         // WE 图像颜色混合模式（→ shader combo BLENDMODE；缺省 0 = Normal）。
         // 非数值/负数/非法 → 0（渲染侧只实现 6/7/31，其余回退普通 alpha 混合）。
         colorBlendMode: Math.max(0, Math.floor(optNum(o.colorBlendMode) ?? 0)),
+        parallaxDepth: optNum2(o.parallaxDepth),
         ...fromVisibleScript
       };
     }
@@ -22940,6 +22964,8 @@ function parseSceneJson(raw) {
     fov: numOr(gen.fov, 50),
     perspectiveOverrideFov: numOr(gen.perspectiveoverridefov, 0),
     clearColor: cc,
+    // 相机视差总开关与系数（general.cameraparallax*）；缺省全 0 = 与加此功能前观感一致。
+    parallax: readParallaxConfig(gen),
     objects,
     sounds: collectSounds(root)
   };
@@ -23186,16 +23212,16 @@ function specRenderer(specJson) {
     const raw = JSON.parse(specJson).renderer;
     const first = Array.isArray(raw) ? raw[0] : void 0;
     if (!first || typeof first.name !== "string" || first.name !== "spritetrail") return sprite;
-    const num = (v, dflt) => {
+    const num2 = (v, dflt) => {
       const n = typeof v === "string" ? parseFloat(v) : typeof v === "number" ? v : NaN;
       return Number.isFinite(n) ? n : dflt;
     };
     const r = first;
     return {
       kind: "spritetrail",
-      length: num(r.length, 0.05),
-      maxLength: num(r.maxlength, 10),
-      minLength: num(r.minlength, 0)
+      length: num2(r.length, 0.05),
+      maxLength: num2(r.maxlength, 10),
+      minLength: num2(r.minlength, 0)
     };
   } catch {
     return sprite;
@@ -28690,8 +28716,8 @@ var SceneScriptVm = class _SceneScriptVm {
     });
     define("writeNum", (k, p, v) => {
       const prop = ctx.getString(p);
-      const num = ctx.getNumber(v);
-      const patch = prop === "alpha" || prop === "opacity" || prop === "baseAlpha" ? { alpha: num } : {};
+      const num2 = ctx.getNumber(v);
+      const patch = prop === "alpha" || prop === "opacity" || prop === "baseAlpha" ? { alpha: num2 } : {};
       this.write(this.keyOf(k), patch);
     });
     define("writeBool", (k, _p, v) => {
