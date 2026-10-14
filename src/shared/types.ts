@@ -138,6 +138,14 @@ export interface SceneTextObject {
 }
 export type SceneObject = SceneImageObject | SceneParticleObject | SceneUtilObject | SceneTextObject;
 
+/** WE 相机视差配置（scene.json `general.cameraparallax*`；缺省全关/全 0，= OWE 解析器缺省）。 */
+export interface ParallaxConfig {
+  enabled: boolean;
+  amount: number;
+  delay: number;
+  mouseInfluence: number;
+}
+
 export interface SceneDescription {
   camera: { center: [number, number, number]; eye: [number, number, number]; up: [number, number, number] };
   orthogonal: { width: number; height: number };
