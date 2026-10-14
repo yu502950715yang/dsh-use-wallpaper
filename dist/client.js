@@ -30440,20 +30440,20 @@ function bootstrap(ctx) {
     if (!id || !controller) return;
     void controller.select(id);
   };
-  let autoRetryTimer = 0;
+  const autoRetryTimers = /* @__PURE__ */ new Map();
   const onHealth = (snap) => {
     if (!snap.wallpaperId || !snap.failure || snap.failure.hard) return;
-    if (autoRetryTimer) return;
-    autoRetryTimer = window.setTimeout(() => {
-      autoRetryTimer = 0;
+    const id = snap.wallpaperId;
+    const existing = autoRetryTimers.get(id);
+    if (existing) clearTimeout(existing);
+    autoRetryTimers.set(id, window.setTimeout(() => {
+      autoRetryTimers.delete(id);
       if (disposed || !controller) return;
-      if (settings.selectedWallpaperId !== snap.wallpaperId) return;
-      const now = healthStore.snapshot(snap.wallpaperId);
-      if (!now.failure || now.failure.hard) return;
-      if (!healthStore.shouldAutoRetry(snap.wallpaperId)) return;
-      healthStore.markAutoRetried(snap.wallpaperId);
-      void controller.select(snap.wallpaperId);
-    }, SOFT_RETRY_DELAY_MS);
+      if (settings.selectedWallpaperId !== id) return;
+      if (!healthStore.shouldAutoRetry(id)) return;
+      healthStore.markAutoRetried(id);
+      void controller.select(id);
+    }, SOFT_RETRY_DELAY_MS));
   };
   sceneRenderer.setOnHealth?.(onHealth);
   const applySettingsToLayer = (s) => {
@@ -30482,10 +30482,8 @@ function bootstrap(ctx) {
   const teardown = () => {
     if (disposed) return;
     disposed = true;
-    if (autoRetryTimer) {
-      clearTimeout(autoRetryTimer);
-      autoRetryTimer = 0;
-    }
+    for (const t of autoRetryTimers.values()) clearTimeout(t);
+    autoRetryTimers.clear();
     sceneRenderer.setOnHealth?.(null);
     const root = layer?.root ?? null;
     try {
@@ -30556,7 +30554,7 @@ function bootstrap(ctx) {
     document.addEventListener("visibilitychange", onVisibility);
     void readClientSettings().then((s) => {
       if (disposed) return;
-      settings = s;
+      settings = { ...s, selectedWallpaperId: settings.selectedWallpaperId || s.selectedWallpaperId };
       applySettingsToLayer(s);
       applyRuntimeSettings(s);
       if (s.selectedWallpaperId && controller) {

@@ -105,6 +105,70 @@ describe('window.__wallpaperEngine 看护入口', () => {
     expect(selectedIds().filter((id) => id === 'w1')).toHaveLength(2);
   });
 
+  it('同一次 select 的两次软失败打点（fg→fg2）⇒ 冷却按后一次重排，到期恰好重试一次', async () => {
+    vi.useFakeTimers();
+    bootstrap();
+    await boot();
+    const store = rendererOpts.value!.healthStore;
+    const onHealth = rendererMock.setOnHealth.mock.calls[0]![0] as (s: HealthSnapshot) => void;
+
+    engine().select('w1');
+    store.recordSoft('w1', 'load-error', '断流 fg');
+    onHealth(store.snapshot('w1')); // 第一次打点：排冷却
+    await vi.advanceTimersByTimeAsync(1); // 让第二次打点比第一次晚 ≥1ms（store 的 at 会被刷新）
+    store.recordSoft('w1', 'load-error', '断流 fg2');
+    onHealth(store.snapshot('w1')); // 第二次打点：必须按完整冷却重排，否则到期时 now-at < 冷却
+
+    await vi.advanceTimersByTimeAsync(2999);
+    expect(selectedIds().filter((id) => id === 'w1')).toHaveLength(1); // 冷却未到 ⇒ 不重选
+    await vi.advanceTimersByTimeAsync(1);
+    expect(selectedIds().filter((id) => id === 'w1')).toHaveLength(2); // 冷却到期 ⇒ 恰好一次
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(selectedIds().filter((id) => id === 'w1')).toHaveLength(2); // 不再有第二次
+  });
+
+  it('两张壁纸各自软失败 ⇒ 各自都有重试；w2 不被 w1 的定时器挡掉、w1 不被拽回', async () => {
+    vi.useFakeTimers();
+    bootstrap();
+    await boot();
+    const store = rendererOpts.value!.healthStore;
+    const onHealth = rendererMock.setOnHealth.mock.calls[0]![0] as (s: HealthSnapshot) => void;
+
+    engine().select('w1');
+    store.recordSoft('w1', 'load-error', '断流');
+    onHealth(store.snapshot('w1')); // w1 排一次重试
+    engine().select('w2'); // 用户切到 w2
+    store.recordSoft('w2', 'load-error', '断流');
+    onHealth(store.snapshot('w2')); // w2 也必须有自己的重试
+
+    await vi.advanceTimersByTimeAsync(3000);
+
+    // 序列：用户选 w1 / 用户选 w2 / 自动重试 w2 —— w1 到期时已不是当前选中，不重选
+    expect(selectedIds()).toEqual(['w1', 'w2', 'w2']);
+  });
+
+  it('启动窗口内用户已选的壁纸不被异步读回的持久值冲掉', async () => {
+    vi.useFakeTimers();
+    // 真机 describe() 是一次远程往返（可晚数百 ms）：这里用受控 promise 复刻「读回迟到」
+    let resolveDescribe!: (v: unknown) => void;
+    const describe = vi.fn(() => new Promise((r) => { resolveDescribe = r; }));
+    bootstrap({ remote: { settings: { describe } } });
+    await boot();
+
+    engine().select('w1'); // 读回尚未落地
+    resolveDescribe({ ok: true, value: { namespaces: [{ ns: 'dsh-wallpaper-engine', value: { selectedWallpaperId: 'w0' } }] } });
+    await boot();
+    await boot(); // controller.load().then(…) 的下一跳
+
+    const hard = JSON.stringify({ v: 1, kind: 'exception', detail: 'x', at: 1 });
+    localStorage.setItem('we:renderfail:w1', hard);
+    localStorage.setItem('we:renderfail:w0', hard);
+    engine().retryLive(); // retryLive 只清「当前选中壁纸」的记忆 ⇒ 用它观测选中项
+    expect(localStorage.getItem('we:renderfail:w1')).toBeNull(); // 选中项仍是 w1
+    expect(localStorage.getItem('we:renderfail:w0')).toBe(hard); // w0 的记忆没被动
+    expect(selectedIds()).not.toContain('w0'); // 也没把壁纸切回 w0
+  });
+
   it('冷却到期前用户已切走 ⇒ 不把用户拽回旧壁纸', async () => {
     vi.useFakeTimers();
     bootstrap();

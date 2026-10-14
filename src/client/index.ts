@@ -47,23 +47,24 @@ export function bootstrap(ctx?: any): void {
     void controller.select(id);
   };
   // 软失败冷却后自动重试一次（同一壁纸、每会话一次）；硬失败不自动重试。
-  let autoRetryTimer = 0;
+  // 定时器按壁纸一份：共享一个的话，后一张壁纸的软失败会被前一张的定时器吞掉，没人给它排重试。
+  const autoRetryTimers = new Map<string, number>();
   const onHealth = (snap: HealthSnapshot) => {
     // 只对软失败排重试：硬失败有证据表明这张壁纸渲染不出来，重试只会重复失败。
     if (!snap.wallpaperId || !snap.failure || snap.failure.hard) return;
-    if (autoRetryTimer) return; // 已有一次待发生 ⇒ 不叠加
-    // 打点即此刻 ⇒ 冷却闸此刻必为假，必须等到冷却到期再问闸（否则自动重试永不触发）。
-    autoRetryTimer = window.setTimeout(() => {
-      autoRetryTimer = 0;
+    const id = snap.wallpaperId;
+    // 每次软失败都按完整冷却重排（先撤旧的）：同一次 select 会连打两次点（fg→fg2），
+    // 第二次把 store 的 at 推晚了，沿用旧到期时刻就会算出 now-at < 冷却 ⇒ 闸假、永不重试。
+    const existing = autoRetryTimers.get(id);
+    if (existing) clearTimeout(existing);
+    autoRetryTimers.set(id, window.setTimeout(() => {
+      autoRetryTimers.delete(id);
       if (disposed || !controller) return;
-      // 四项守卫：仍是当前选中 / 仍是同一个软失败 / 闸没用过 / 没被清过记忆。
-      if (settings.selectedWallpaperId !== snap.wallpaperId) return;
-      const now = healthStore.snapshot(snap.wallpaperId);
-      if (!now.failure || now.failure.hard) return;
-      if (!healthStore.shouldAutoRetry(snap.wallpaperId)) return;
-      healthStore.markAutoRetried(snap.wallpaperId);
-      void controller.select(snap.wallpaperId);
-    }, SOFT_RETRY_DELAY_MS);
+      if (settings.selectedWallpaperId !== id) return; // 用户已切走 ⇒ 不把人家拽回来
+      if (!healthStore.shouldAutoRetry(id)) return; // 兜底：期间已成功 / 记忆被清 / 已被别的路径重试过
+      healthStore.markAutoRetried(id); // 每会话每壁纸一次（重试后再次软失败不会成环）
+      void controller.select(id);
+    }, SOFT_RETRY_DELAY_MS));
   };
   sceneRenderer.setOnHealth?.(onHealth);
   const applySettingsToLayer = (s: ClientSettings) => {
@@ -98,8 +99,9 @@ export function bootstrap(ctx?: any): void {
   const teardown = () => {
     if (disposed) return;
     disposed = true;
-    // 收尾：撤掉挂起的自动重试与健康订阅（否则延迟的回调会落到已释放的渲染器/层上）。
-    if (autoRetryTimer) { clearTimeout(autoRetryTimer); autoRetryTimer = 0; }
+    // 收尾：撤掉全部在途的自动重试与健康订阅（否则延迟的回调会落到已释放的渲染器/层上）。
+    for (const t of autoRetryTimers.values()) clearTimeout(t);
+    autoRetryTimers.clear();
     sceneRenderer.setOnHealth?.(null);
     const root = layer?.root ?? null;
     try { controller?.select(''); } catch { /* 收尾失败也必须摘层，否则又变成盖住新实例的残留层 */ }
@@ -162,7 +164,8 @@ export function bootstrap(ctx?: any): void {
     // 读回已保存设置并应用到 layer（opacity/blur/kenBurns）与运行期项（暂停/画质档位）
     void readClientSettings().then((s) => {
       if (disposed) return; // 期间已收尾（HMR drain）→ 不再复活
-      settings = s;
+      // 启动窗口内用户可能已经选过壁纸 ⇒ 异步读回的持久值不得把它冲掉（否则 retryLive/自动重试定位不到）
+      settings = { ...s, selectedWallpaperId: settings.selectedWallpaperId || s.selectedWallpaperId };
       applySettingsToLayer(s);
       applyRuntimeSettings(s);
       // I1：恢复已保存的选中壁纸 —— 先 load 保证列表存在，再 select
