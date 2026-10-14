@@ -303,18 +303,6 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
           </div>
         </section>
       )}
-      {/* 实时渲染：状态行 + 重试/清除入口（scene 壁纸渲染不出来时用户唯一的自救入口） */}
-      <section className="wss-section">
-        <h4 className="wss-section-title">实时渲染</h4>
-        <div className="wss-live-status" data-state={liveState}>
-          <p className="wss-section-desc wss-live-current">{liveCurrent}</p>
-          {liveMemory && <p className="wss-section-desc wss-live-memory">{liveMemory}</p>}
-        </div>
-        <div className="wss-row">
-          <button type="button" className="wss-live-retry" onClick={retryLive}>重试实时渲染</button>
-          <button type="button" className="wss-live-forget" onClick={forgetFailures}>清除失败记忆</button>
-        </div>
-      </section>
       {/* 性能与省电：同一张卡片；wss-power 仍只含两个复选框（画质档位是 select） */}
       {settings && (
         <section className="wss-section">
@@ -459,6 +447,19 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
             ))}
           </div>
         )}
+      </section>
+      {/* 实时渲染：状态行 + 重试/清除入口。—— 放在面板最末：它不是日常操作，
+          只在「scene 壁纸渲染不出来」时才是用户唯一的自救入口。 */}
+      <section className="wss-section">
+        <h4 className="wss-section-title">实时渲染</h4>
+        <div className="wss-live-status" data-state={liveState}>
+          <p className="wss-section-desc wss-live-current">{liveCurrent}</p>
+          {liveMemory && <p className="wss-section-desc wss-live-memory">{liveMemory}</p>}
+        </div>
+        <div className="wss-row">
+          <button type="button" className="wss-live-retry" onClick={retryLive}>重试实时渲染</button>
+          <button type="button" className="wss-live-forget" onClick={forgetFailures}>清除失败记忆</button>
+        </div>
       </section>
       {message && <p className="wss-message" role="status">{message}</p>}
     </div>

@@ -30332,17 +30332,6 @@ function WallpaperSettingsSection(props) {
         ] })
       ] })
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wss-section-title", children: "\u5B9E\u65F6\u6E32\u67D3" }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-live-status", "data-state": liveState, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc wss-live-current", children: liveCurrent }),
-        liveMemory && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc wss-live-memory", children: liveMemory })
-      ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-row", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-live-retry", onClick: retryLive, children: "\u91CD\u8BD5\u5B9E\u65F6\u6E32\u67D3" }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-live-forget", onClick: forgetFailures, children: "\u6E05\u9664\u5931\u8D25\u8BB0\u5FC6" })
-      ] })
-    ] }),
     settings && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section", children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wss-section-title", children: "\u6027\u80FD\u4E0E\u7701\u7535" }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-power", children: [
@@ -30495,6 +30484,17 @@ function WallpaperSettingsSection(props) {
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: c.exists ? "wss-exists" : "wss-missing", children: c.exists ? "\u5B58\u5728" : "\u4E0D\u5B58\u5728" }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-adopt", "data-path": c.path, onClick: () => adopt(c.path, "weAssetsDir"), children: "\u91C7\u7528" })
         ] }, c.path))
+      ] })
+    ] }),
+    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wss-section-title", children: "\u5B9E\u65F6\u6E32\u67D3" }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-live-status", "data-state": liveState, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc wss-live-current", children: liveCurrent }),
+        liveMemory && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc wss-live-memory", children: liveMemory })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-row", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-live-retry", onClick: retryLive, children: "\u91CD\u8BD5\u5B9E\u65F6\u6E32\u67D3" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-live-forget", onClick: forgetFailures, children: "\u6E05\u9664\u5931\u8D25\u8BB0\u5FC6" })
       ] })
     ] }),
     message && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-message", role: "status", children: message })
