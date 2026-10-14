@@ -53,6 +53,14 @@ export interface SceneImageObject extends SceneObjectBase {
     alpha?: number;
     brightness?: number;
     colorBlendMode?: number;
+    /** WE 动画层（scene.json `animationlayers`）：animation = MDLA 动画 id；visible=false 表示不应用。 */
+    animationLayers?: Array<{
+        id: number;
+        animation: number;
+        rate: number;
+        blend: number;
+        visible: boolean;
+    }>;
 }
 export interface SceneParticleObject extends SceneObjectBase {
     kind: 'particle';

@@ -85,6 +85,8 @@ export interface SceneImageObject extends SceneObjectBase {
   // 全库非零的只有 3 个对象：3743126786 Clouds Back=7(Screen)、2832263418 audio_rainbow=6(Lighten)、
   // 2460786246 Clock=31(A+B×opacity)。Screen 对纯黑返回 A → 黑底自然「消失」。
   colorBlendMode?: number;
+  /** WE 动画层（scene.json `animationlayers`）：animation = MDLA 动画 id；visible=false 表示不应用。 */
+  animationLayers?: Array<{ id: number; animation: number; rate: number; blend: number; visible: boolean }>;
 }
 export interface SceneParticleObject extends SceneObjectBase {
   kind: 'particle'; id: number; name: string;

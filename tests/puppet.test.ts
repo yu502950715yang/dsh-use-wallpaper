@@ -137,6 +137,36 @@ describe('puppet → three 网格/蒙皮', () => {
     expect(p.bones[1].position.x).toBeCloseTo(7, 5);
   });
 
+  // T8：player 逐帧喂进来的是 (elapsed × fps) % frameCount（循环播）。本用例钉住「回绕结果恒落在
+  // [0, frameCount)」这条不变量，以及它取到的关键帧真的对得上（不是越界夹取掩盖了公式错误）。
+  it('(elapsed×fps)%frameCount 回绕恒落在 [0, frameCount) 且取到对应关键帧', () => {
+    const walk: MdlAnimation = {
+      id: 3, name: 'walk', mode: 'loop', fps: 10, frameCount: 3,
+      tracks: [{
+        boneId: 1,
+        keys: [
+          { pos: [5, 0, 0], rot: [0, 0, 0, 1], scale: [1, 1] },
+          { pos: [9, 0, 0], rot: [0, 0, 0, 1], scale: [1, 1] },
+          { pos: [13, 0, 0], rot: [0, 0, 0, 1], scale: [1, 1] },
+        ],
+      }],
+    };
+    const p = createPuppetMesh(makePuppet({ animations: [walk] }), material());
+    const frameAt = (elapsed: number) => (elapsed * walk.fps) % walk.frameCount;
+    for (let t = 0; t < 1.2; t += 0.01) {
+      expect(frameAt(t)).toBeGreaterThanOrEqual(0);
+      expect(frameAt(t)).toBeLessThan(walk.frameCount);
+    }
+    p.applyFrame(walk, frameAt(0));     // 帧 0
+    expect(p.bones[1].position.x).toBeCloseTo(5, 5);
+    p.applyFrame(walk, frameAt(0.2));   // 帧 2（末帧）
+    expect(p.bones[1].position.x).toBeCloseTo(13, 5);
+    p.applyFrame(walk, frameAt(0.3));   // 3 帧 % 3 = 0 ⇒ 回绕回首帧
+    expect(p.bones[1].position.x).toBeCloseTo(5, 5);
+    p.applyFrame(walk, frameAt(0.45));  // 4.5 帧 % 3 = 1.5 ⇒ 帧 1 与帧 2 之间
+    expect(p.bones[1].position.x).toBeCloseTo(11, 5);
+  });
+
   it('轨 boneId 越界 / 空轨 / 未知动画不影响其他骨骼（不抛、不写坏）', () => {
     const p = createPuppetMesh(makePuppet(), material());
     p.applyFrame({

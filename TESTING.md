@@ -185,6 +185,7 @@ git worktree remove .worktrees\before-health --force
 - ⚠️ `verify-hidpi-object-rt.mjs` **自身**在该基准上就会 exit 1（它自带的「挂载期 RT 尺寸」断言在 `7e30a9f` 上已 FAIL，前后两轮的值**逐字相同**）⇒ 本项门禁只认 `compare-shots` 的退出码；两个 tag 的退出码应当一致。
 - 归档位置：`.superpowers/sdd/2026-10-13-scene-live-watchdog/t5-shots/{before,after}-dpr{1,2}.png`（**本地归档、未入 git**）。
 - **视差轮（2026-10-13 Task 5）的基准换成 `6aa5375`**（= `feat/scene-parallax-puppet` 的分支起点，覆盖 Task 1-5 全部改动），worktree 名 `before-parallax`；归档 `.superpowers/sdd/2026-10-13-scene-parallax-puppet/t5-shots/{before,after}-dpr{1,2}.png`。缺省样本 `2683211654` 的 `general.cameraparallax=false` ⇒ 预期逐像素一致（或 ≤1 LSB）。
+- **puppet 轮（2026-10-13 Task 8）的基准 = `0a84cbb`**（puppet 特性开工前的最后一个提交），worktree 名 `before-puppet`；归档 `.superpowers/sdd/2026-10-13-scene-parallax-puppet/t8-shots/{before,after}-dpr{1,2}.png`。实测 `dpr=1/2` 均 `maxAbs=1`、「差 ≥ 2」像素 0（`compare-shots` exit 0）；两个 tag 的 `verify-hidpi-object-rt.mjs` 自身都是 exit 1（挂载期 RT 尺寸断言，前后逐字相同）。⚠️ 收尾时该脚本起的 headless Edge **不会自己退出**（profile 落在 `e2e/.out/...` 与 worktree 里）⇒ 删 worktree / 删目录前先按 profile 路径过滤掉这些 e2e 进程（不要动用户自己的 Edge 窗口）。
 
 ---
 
@@ -209,6 +210,22 @@ git worktree remove .worktrees\before-health --force
 // V4 的监听计数（Chrome/Edge DevTools Console 专有 API）：切走 / 切回各记一次，比前后差值（≥1 且不变即通过）
 getEventListeners(window).pointermove?.length
 ```
+
+---
+
+### 2.11 手工验收清单：puppet 静态网格与动画边界（2026-10-13 Task 8，逐条勾）
+
+> **需人在运行中的 DSH Web GUI 里操作（选壁纸 + DevTools Console），agent 无法代跑。**
+>
+> 前置：已 `npm run build` + `npm run build:client`，并**重启 harness**（host 侧改动不热重载）后**强刷** GUI。
+> ⚠️ **先读这条**：本机唯一 `.mdl` 样本（`3303428996` 死亡搁浅-玛玛）是**静态族**（无 `MDLS`/`MDLA`/`MDLE` 段，`bones=0`/`anims=0`）⇒ **动画在本机无法验收**（没有任何带 MDLA 的真实素材，实测 34 个真实 `scene.json` 也**没有一个**含 `animationlayers`）。本机能验收的只有「静态 puppet 网格出图」与「非 puppet 壁纸零回归」；蒙皮与动画只有 `tests/puppet.test.ts` / `tests/threejs-player.test.ts` 的合成夹具覆盖（边界见 `AGENT.md` §7.40）。
+
+| # | 步骤 | 期望结果 | 失败表现 |
+|---|---|---|---|
+| P1 | 选 `3303428996`，看画面里的角色 | 角色呈**静态网格**形状（轮廓/几何面片，`stride=48 / 1850 顶点 / 10998 索引`），与「只画一张 flat quad」可区分 | 只有一张矩形贴图（退化成背景 quad）/ 角色完全不出现 |
+| P2 | 同一次选择看 Console | **不出现** `puppet 解析失败`；出现 `[three] scene loaded id=3303428996 background=N particleLayers=M puppetLayers=1`（`background` 计数把 puppet 图层算进去） | 出现 `puppet 解析失败` ⇒ 记下实际 MDL 段头十六进制，据此决定补段布局还是如实标注未支持（§7.40） |
+| P3 | 其它 scene 壁纸（本机 34 张里除 `3303428996` 全是非 puppet） | **逐像素零回归**：按 §2.9 跑 before/after 对拍，判据 `maxAbs ≤ 1` 且「差 ≥ 2」像素 = 0 | 对拍红 ⇒ 帧序/装配被动过（本轮以 `0a84cbb` 为基准实测：dpr1/dpr2 两档 `maxAbs=1`、差 ≥ 2 像素 0、`compare-shots` exit 0） |
+| P4 | 动画观察（**本机不可验收**） | 无 MDLA 素材 ⇒ **不要期待**部件随动画动起来（期待落空 ≠ 实现有错）；动画路径只由合成夹具判据覆盖（`animationlayers` 只应用第一条可见层、`(已播秒数 × rate × fps) % frameCount` 回绕落在 `[0, frameCount)`） | 拿「本机 puppet 会动」当判据 = 无依据；真拿到带 MDLA 的素材后再补真机观察项 |
 
 ---
 

@@ -1,4 +1,4 @@
-import type { SceneDescription, SceneObject } from '../shared/types.js';
+import type { SceneDescription, SceneImageObject, SceneObject } from '../shared/types.js';
 import { readParallaxConfig } from './parallax.js';
 import { parseScriptProperties } from './script-patterns.js';
 import { parseVisible } from './visibility.js';
@@ -55,6 +55,28 @@ function optNum(s: unknown): number | undefined {
 // 可选字符串字段（text 的 horizontalalign/verticalalign 等）：非空字符串 → 原值；否则 undefined
 function optStr(s: unknown): string | undefined {
   return typeof s === 'string' && s.trim() ? s : undefined;
+}
+
+// WE 动画层（scene.json `animationlayers`）：id/animation 必需（缺任一 ⇒ 整条跳过，不产出半截层）；
+// rate 缺省 1、blend 缺省 1、visible 缺省 false（缺省层不应用）。非数组 → undefined（= 无该字段）。
+function parseAnimationLayers(raw: unknown): SceneImageObject['animationLayers'] {
+  if (!Array.isArray(raw)) return undefined;
+  const out: NonNullable<SceneImageObject['animationLayers']> = [];
+  for (const item of raw) {
+    if (typeof item !== 'object' || item === null) continue;
+    const o = item as Record<string, unknown>;
+    const id = optNum(o.id);
+    const animation = optNum(o.animation);
+    if (id === undefined || animation === undefined) continue;
+    out.push({
+      id,
+      animation,
+      rate: optNum(o.rate) ?? 1,
+      blend: optNum(o.blend) ?? 1,
+      visible: o.visible === true,
+    });
+  }
+  return out;
 }
 
 // WE 对象级 parallaxDepth：两根轴的空格分隔字符串（与 origin/size 同形）；缺省/畸形 → undefined。
@@ -228,6 +250,8 @@ export function parseSceneJson(raw: string): SceneDescription {
         // WE 图像颜色混合模式（→ shader combo BLENDMODE；缺省 0 = Normal）。
         // 非数值/负数/非法 → 0（渲染侧只实现 6/7/31，其余回退普通 alpha 混合）。
         colorBlendMode: Math.max(0, Math.floor(optNum(o.colorBlendMode) ?? 0)),
+        // T8：WE 动画层（puppet 的 MDLA 动画选择元数据）；undefined = 无该字段。
+        animationLayers: parseAnimationLayers(o.animationlayers),
         ...fromVisibleScript,
       };
     }

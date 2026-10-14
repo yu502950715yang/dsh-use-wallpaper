@@ -3557,14 +3557,14 @@ describe('视差逐帧应用', () => {
 // puppet 图层（Task 7）：装配（addPuppet）、逐帧采样与释放。本机唯一 .mdl 样本是静态族 ⇒ 这里用桩实例
 // 钉住**接线**（真实几何/骨骼数值由 tests/puppet.test.ts 覆盖）。
 describe('puppet 图层（addPuppet / image 分支 / 逐帧动画）', () => {
-  type PuppetStub = PuppetInstance & { frames: number[]; disposed: number };
+  type PuppetStub = PuppetInstance & { frames: number[]; anims: number[]; disposed: number };
 
   function makePuppetStub(animations: PuppetInstance['animations'] = []): PuppetStub {
     const mesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
     const stub: PuppetStub = {
       mesh, bones: [], skeleton: null, animations,
-      frames: [], disposed: 0,
-      applyFrame: (_anim, frame) => { stub.frames.push(frame); },
+      frames: [], anims: [], disposed: 0,
+      applyFrame: (_anim, frame) => { stub.frames.push(frame); stub.anims.push(_anim.id); },
       dispose: () => { stub.disposed++; },
     };
     return stub;
@@ -3652,6 +3652,123 @@ describe('puppet 图层（addPuppet / image 分支 / 逐帧动画）', () => {
     player.update(0.25);   // 累计 0.3s × 10fps = 3 帧 → 对 3 帧取模回到 0
     expect(stub.frames).toEqual([0.5, 0]);
     expect(silent.frames).toEqual([]);
+  });
+
+  it('animationLayers：只应用第一条可见层（按 id 找动画、rate 乘进时钟、visible=false 被过滤）', () => {
+    const { player } = makePlayer(1920, 1080);
+    // 动画表首个是 id=7（fps 10 / 3 帧），但层选的是 id=3（fps 20 / 4 帧）⇒ 选错动画会立刻在帧号上暴露。
+    const stub = makePuppetStub([
+      { ...anim, id: 7, name: 'idle', fps: 10, frameCount: 3 },
+      { ...anim, id: 3, name: 'walk', fps: 20, frameCount: 4 },
+    ]);
+    player.addPuppet({
+      objectId: 1, puppet: stub, origin: [960, 540, 0], scale: [1, 1, 1], angles: [0, 0, 0],
+      sceneW: 1920, sceneH: 1080,
+      animationLayers: [
+        { id: 0, animation: 3, rate: 1, blend: 1, visible: false },   // 不可见 ⇒ 不参与选择
+        { id: 1, animation: 3, rate: 2, blend: 1, visible: true },    // 第一条可见层：动画 3、rate 2
+        { id: 2, animation: 7, rate: 1, blend: 1, visible: true },    // 第二条可见层：v1 不应用
+      ],
+    });
+    player.update(0.1);    // 0.1s × rate 2 = 0.2s → 0.2 × 20fps = 4 帧 % 4 = 0
+    player.update(0.05);   // 累计 0.3s → 6 帧 % 4 = 2（回绕落在 [0, frameCount)）
+    expect(stub.anims).toEqual([3, 3]);
+    expect(stub.frames).toHaveLength(2);
+    expect(stub.frames[0]).toBeCloseTo(0, 6);
+    expect(stub.frames[1]).toBeCloseTo(2, 6);   // 帧号本身是浮点（0.3 × 20fps 对 4 取模）
+    player.dispose();
+  });
+
+  it('animationLayers 多条可见层：只应用第一条并告警一次（不逐帧刷屏）', () => {
+    const { player } = makePlayer(1920, 1080);
+    const stub = makePuppetStub([
+      { ...anim, id: 7, name: 'idle' },
+      { ...anim, id: 3, name: 'walk' },
+    ]);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    player.addPuppet({
+      objectId: 1, puppet: stub, origin: [960, 540, 0], scale: [1, 1, 1], angles: [0, 0, 0],
+      sceneW: 1920, sceneH: 1080,
+      animationLayers: [
+        { id: 0, animation: 7, rate: 1, blend: 1, visible: true },
+        { id: 1, animation: 3, rate: 1, blend: 1, visible: true },
+      ],
+    });
+    player.update(0.1);
+    player.update(0.1);
+    expect(stub.anims).toEqual([7, 7]);
+    const hits = warn.mock.calls.filter((c) => String(c[0]).includes('只应用第一条'));
+    expect(hits).toHaveLength(1);
+    expect(String(hits[0][0])).toContain('idle');
+    warn.mockRestore();
+    player.dispose();
+  });
+
+  it('animationLayers 为空数组/无可见层/动画 id 不存在/帧数为 0 ⇒ 不采样；字段缺失 ⇒ 播首个动画（零回归）', () => {
+    const { player } = makePlayer(1920, 1080);
+    const empty = makePuppetStub([{ ...anim, id: 3 }]);
+    const invisible = makePuppetStub([{ ...anim, id: 3 }]);
+    const missingAnim = makePuppetStub([{ ...anim, id: 7 }]);
+    const zeroFrames = makePuppetStub([{ ...anim, id: 3, frameCount: 0 }]);
+    const legacy = makePuppetStub([{ ...anim, id: 3 }]);
+    const base = { origin: [960, 540, 0] as [number, number, number], scale: [1, 1, 1] as [number, number, number], angles: [0, 0, 0] as [number, number, number], sceneW: 1920, sceneH: 1080 };
+    player.addPuppet({ objectId: 1, puppet: empty, ...base, animationLayers: [] });
+    player.addPuppet({ objectId: 2, puppet: invisible, ...base, animationLayers: [{ id: 0, animation: 3, rate: 1, blend: 1, visible: false }] });
+    player.addPuppet({ objectId: 3, puppet: missingAnim, ...base, animationLayers: [{ id: 0, animation: 99, rate: 1, blend: 1, visible: true }] });
+    player.addPuppet({ objectId: 4, puppet: zeroFrames, ...base, animationLayers: [{ id: 0, animation: 3, rate: 1, blend: 1, visible: true }] });
+    player.addPuppet({ objectId: 5, puppet: legacy, ...base });   // 无 animationLayers 字段
+    player.update(0.1);
+    expect([empty.frames, invisible.frames, missingAnim.frames, zeroFrames.frames]).toEqual([[], [], [], []]);
+    expect(legacy.anims).toEqual([3]);    // 改动前行为：取动画表首个、rate 1 循环
+    expect(legacy.frames).toEqual([1]);   // 0.1s × 10fps = 1 帧
+    player.dispose();
+  });
+
+  it('采样抛错且 dispose 也抛错 ⇒ 图层照样摘掉（不每帧重复抛、不把帧循环打断）', () => {
+    const { player } = makePlayer(1920, 1080);
+    const broken = makePuppetStub([anim]);
+    let calls = 0;
+    let disposes = 0;
+    broken.applyFrame = () => { calls++; throw new Error('骨骼矩阵爆炸'); };
+    broken.dispose = () => { disposes++; throw new Error('释放也炸'); };
+    player.addPuppet({
+      objectId: 1, puppet: broken, origin: [960, 540, 0], scale: [1, 1, 1], angles: [0, 0, 0],
+      sceneW: 1920, sceneH: 1080,
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // dispose 抛错也不得穿出帧循环（update 抛错会跳过 render ⇒ 本帧画面不更新）
+    expect(() => player.update(0.1)).not.toThrow();
+    expect([calls, disposes]).toEqual([1, 1]);
+    player.update(0.1);                          // delete 在 finally 里 ⇒ 下一帧不再重复抛
+    expect([calls, disposes]).toEqual([1, 1]);
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('puppet 动画采样失败'))).toBe(true);
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('puppet 释放失败'))).toBe(true);
+    warn.mockRestore();
+    player.dispose();
+  });
+
+  it('loadSceneToThree：scene.json 的 animationlayers 透传到选层（走 image 分支入参）', () => {
+    const scene = JSON.stringify({
+      camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+      general: { orthogonalprojection: { width: 1920, height: 1080 } },
+      objects: [{
+        id: 16, name: 'puppet', image: 'models/p.json', origin: '1000 600 0', scale: '2 2 1', size: '100 100',
+        animationlayers: [{ id: 0, animation: 3, rate: 1, blend: 1, visible: true }],
+      }],
+    });
+    const stub = makePuppetStub([
+      { ...anim, id: 7, fps: 10, frameCount: 3 },
+      { ...anim, id: 3, fps: 20, frameCount: 4 },
+    ]);
+    const result = loadSceneToThree(
+      scene,
+      { renderer: createMockRenderer() as unknown as THREE.WebGLRenderer, puppetMeshes: new Map([[16, stub]]) },
+      document.createElement('canvas'),
+    );
+    result.player.update(0.1);         // 0.1s × 20fps = 2 帧（选中动画 3 才会是 2；选 7 会是 1）
+    expect(stub.anims).toEqual([3]);
+    expect(stub.frames).toEqual([2]);
+    result.player.dispose();
   });
 
   it('loadSceneToThree：puppetMeshes 命中 ⇒ 走 addPuppet（不再建 quad），并计入 puppetLayers', () => {

@@ -27,6 +27,8 @@ import { POINTER_CENTER, advancePointer, parallaxShift } from './parallax.js';
 import type { ParallaxConfig, PointerFollow, PointerState } from './parallax.js';
 // puppet（.mdl 蒙皮网格）：实例由调用方装配，本类只负责挂进场景、逐帧采样动画与释放。
 import type { PuppetInstance } from './puppet.js';
+// 动画层元数据（scene.json 的 `animationlayers`）类型取自 shared 的字段声明，避免两处漂移。
+import type { SceneImageObject } from '../shared/types.js';
 
 // 背景图层条目：记录 WE 场景坐标与当前已应用状态，供 update_background 对齐既有
 // update_image 语义（undefined = 保持现状；无变化则跳过）。
@@ -636,7 +638,14 @@ export class ThreeScenePlayer {
   private nextBackgroundId = 0;
 
   // puppet 图层（键 = 同一把图层计数器 id）：instance 用于逐帧采样动画，dispose 时释放骨骼/资源。
-  private puppetLayers = new Map<number, { instance: PuppetInstance; elapsed: number }>();
+  // layers = 已过滤 `visible !== false` 的动画层（null = scene.json **没有** animationlayers 字段）；
+  // warned = 多条可见层的告警只打一次（防每帧刷屏）。
+  private puppetLayers = new Map<number, {
+    instance: PuppetInstance;
+    layers: NonNullable<SceneImageObject['animationLayers']> | null;
+    elapsed: number;
+    warned?: boolean;
+  }>();
 
   // 粒子图层条目：按 addParticle 返回的 id 索引，更新粒子时用其 getter 刷新缓冲区。
   private particleLayers = new Map<number, ParticleLayer>();
@@ -825,23 +834,40 @@ export class ThreeScenePlayer {
     this.tickPuppets(dt);
   }
 
-  // puppet 动画：按 dt 推进已播时长 → 采样**首个**动画。WE 的动画层选择元数据（`animationLayers`）本仓
-  // 尚未解析，本机唯一样本也没有 MDLA ⇒ 先取第一个；`mode` 一律按循环播（无实测样本可区分）。
+  // puppet 动画：按 dt × rate 推进已播时长 → 采样动画层选中的动画（v1 只应用**第一条可见层**，
+  // 多条时告警一次；`blend` 不参与混合）。scene.json **没有** animationlayers 字段时退回「播动画表
+  // 首个」（= 改动前的行为；本机 34 张真实 scene.json 无一带该字段，按空层处理会把既有动画静默关掉）；
+  // 显式空数组 / 无可见层 / 动画 id 不存在 ⇒ 不做动画（OWE `PuppetLayer::prepared()` 同义）。
   private tickPuppets(dt: number): void {
     if (this.puppetLayers.size === 0) return;
     for (const [id, layer] of [...this.puppetLayers]) {
-      const anim = layer.instance.animations[0];
-      if (!anim) continue;
-      layer.elapsed += dt;
+      const layers = layer.layers;
+      const active = layers?.[0];
+      const anim = layers === null
+        ? layer.instance.animations[0]
+        : (active ? layer.instance.animations.find((a) => a.id === active.animation) : undefined);
+      if (!anim || anim.frameCount <= 0) continue;
+      if (layers && layers.length > 1 && !layer.warned) {
+        layer.warned = true;
+        console.warn(`[three] puppet 图层 ${id} 有 ${layers.length} 条动画层，v1 只应用第一条（${anim.name}）`);
+      }
+      layer.elapsed += dt * (active ? Math.max(0, active.rate) : 1);
+      // 帧号 = (已播秒数 × fps) % frameCount（循环播）；fps 非法时兜回 30（与改动前同一兜底）。
       const fps = anim.fps > 0 ? anim.fps : 30;
-      const frames = Math.max(1, anim.frameCount);
       try {
-        layer.instance.applyFrame(anim, (layer.elapsed * fps) % frames);
+        layer.instance.applyFrame(anim, (layer.elapsed * fps) % anim.frameCount);
       } catch (e) {
         // 单个 puppet 采样失败不得升级成渲染失败（帧循环异常会整帧丢弃）：先释放再摘掉该图层，
         // 否则 Skeleton/几何再也没有释放点（player.dispose 只遍历仍在表里的图层）。
-        layer.instance.dispose();
-        this.puppetLayers.delete(id);
+        // ⚠️ `delete` 必须在 finally 里：dispose 抛错时也要摘表，否则该图层留在表内、每帧重复抛。
+        try {
+          layer.instance.dispose();
+        } catch (de) {
+          // dispose 自身抛错同样不得穿出帧循环（抛出去会让本帧 render 被跳过 = 画面不更新）。
+          console.warn('[three] puppet 释放失败:', de instanceof Error ? de.message : String(de));
+        } finally {
+          this.puppetLayers.delete(id);
+        }
         console.warn('[three] puppet 动画采样失败（已丢弃该图层动画）:', e instanceof Error ? e.message : String(e));
       }
     }
@@ -1336,6 +1362,8 @@ export class ThreeScenePlayer {
     brightness?: number;
     // 对象级视差深度（同 addBackground）；缺省 undefined = 不参与视差。
     parallaxDepth?: [number, number];
+    // scene.json 的 `animationlayers`（T8）：undefined = 字段缺失（逐帧退回「播动画表首个」）。
+    animationLayers?: SceneImageObject['animationLayers'];
   }): number {
     const { mesh } = opts.puppet;
     mesh.renderOrder = opts.renderOrder ?? 0;
@@ -1366,7 +1394,14 @@ export class ThreeScenePlayer {
       parallaxNode: mesh,
       parallaxDepth: opts.parallaxDepth,
     });
-    this.puppetLayers.set(id, { instance: opts.puppet, elapsed: 0 });
+    // 动画层：字段缺失记 null（逐帧区分「无元数据」与「显式无可见层」），存在则先按 visible 过滤。
+    this.puppetLayers.set(id, {
+      instance: opts.puppet,
+      layers: opts.animationLayers === undefined
+        ? null
+        : opts.animationLayers.filter((l) => l.visible !== false),
+      elapsed: 0,
+    });
     // scene 对象 id → 显示对象（脚本 layer.visible/alpha 的落点，与 addBackground 同语义）。
     this.displayObjects.set(opts.objectId, mesh);
     return id;
@@ -2220,6 +2255,8 @@ export function loadSceneToThree(
           alpha: obj.alpha,
           brightness: obj.brightness,
           parallaxDepth: obj.parallaxDepth,
+          // 动画层（T8）：逐帧选层由 player 负责，装配期只透传解析结果（undefined = 字段缺失）。
+          animationLayers: obj.animationLayers,
         });
         backgroundIds.push(id);
         puppetLayers.push(id);

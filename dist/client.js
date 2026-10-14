@@ -23096,6 +23096,25 @@ function optNum(s) {
 function optStr(s) {
   return typeof s === "string" && s.trim() ? s : void 0;
 }
+function parseAnimationLayers(raw) {
+  if (!Array.isArray(raw)) return void 0;
+  const out = [];
+  for (const item of raw) {
+    if (typeof item !== "object" || item === null) continue;
+    const o = item;
+    const id = optNum(o.id);
+    const animation = optNum(o.animation);
+    if (id === void 0 || animation === void 0) continue;
+    out.push({
+      id,
+      animation,
+      rate: optNum(o.rate) ?? 1,
+      blend: optNum(o.blend) ?? 1,
+      visible: o.visible === true
+    });
+  }
+  return out;
+}
 function optNum2(s) {
   if (typeof s !== "string" || !s.trim()) return void 0;
   const p = s.trim().split(/\s+/).map(Number);
@@ -23213,6 +23232,8 @@ function parseSceneJson(raw) {
         // WE 图像颜色混合模式（→ shader combo BLENDMODE；缺省 0 = Normal）。
         // 非数值/负数/非法 → 0（渲染侧只实现 6/7/31，其余回退普通 alpha 混合）。
         colorBlendMode: Math.max(0, Math.floor(optNum(o.colorBlendMode) ?? 0)),
+        // T8：WE 动画层（puppet 的 MDLA 动画选择元数据）；undefined = 无该字段。
+        animationLayers: parseAnimationLayers(o.animationlayers),
         ...fromVisibleScript
       };
     }
@@ -23890,6 +23911,8 @@ var ThreeScenePlayer = class {
   backgroundEntries = /* @__PURE__ */ new Map();
   nextBackgroundId = 0;
   // puppet 图层（键 = 同一把图层计数器 id）：instance 用于逐帧采样动画，dispose 时释放骨骼/资源。
+  // layers = 已过滤 `visible !== false` 的动画层（null = scene.json **没有** animationlayers 字段）；
+  // warned = 多条可见层的告警只打一次（防每帧刷屏）。
   puppetLayers = /* @__PURE__ */ new Map();
   // 粒子图层条目：按 addParticle 返回的 id 索引，更新粒子时用其 getter 刷新缓冲区。
   particleLayers = /* @__PURE__ */ new Map();
@@ -24030,21 +24053,33 @@ var ThreeScenePlayer = class {
     this.updateParticles(dt);
     this.tickPuppets(dt);
   }
-  // puppet 动画：按 dt 推进已播时长 → 采样**首个**动画。WE 的动画层选择元数据（`animationLayers`）本仓
-  // 尚未解析，本机唯一样本也没有 MDLA ⇒ 先取第一个；`mode` 一律按循环播（无实测样本可区分）。
+  // puppet 动画：按 dt × rate 推进已播时长 → 采样动画层选中的动画（v1 只应用**第一条可见层**，
+  // 多条时告警一次；`blend` 不参与混合）。scene.json **没有** animationlayers 字段时退回「播动画表
+  // 首个」（= 改动前的行为；本机 34 张真实 scene.json 无一带该字段，按空层处理会把既有动画静默关掉）；
+  // 显式空数组 / 无可见层 / 动画 id 不存在 ⇒ 不做动画（OWE `PuppetLayer::prepared()` 同义）。
   tickPuppets(dt) {
     if (this.puppetLayers.size === 0) return;
     for (const [id, layer] of [...this.puppetLayers]) {
-      const anim = layer.instance.animations[0];
-      if (!anim) continue;
-      layer.elapsed += dt;
+      const layers = layer.layers;
+      const active = layers?.[0];
+      const anim = layers === null ? layer.instance.animations[0] : active ? layer.instance.animations.find((a) => a.id === active.animation) : void 0;
+      if (!anim || anim.frameCount <= 0) continue;
+      if (layers && layers.length > 1 && !layer.warned) {
+        layer.warned = true;
+        console.warn(`[three] puppet \u56FE\u5C42 ${id} \u6709 ${layers.length} \u6761\u52A8\u753B\u5C42\uFF0Cv1 \u53EA\u5E94\u7528\u7B2C\u4E00\u6761\uFF08${anim.name}\uFF09`);
+      }
+      layer.elapsed += dt * (active ? Math.max(0, active.rate) : 1);
       const fps = anim.fps > 0 ? anim.fps : 30;
-      const frames = Math.max(1, anim.frameCount);
       try {
-        layer.instance.applyFrame(anim, layer.elapsed * fps % frames);
+        layer.instance.applyFrame(anim, layer.elapsed * fps % anim.frameCount);
       } catch (e) {
-        layer.instance.dispose();
-        this.puppetLayers.delete(id);
+        try {
+          layer.instance.dispose();
+        } catch (de) {
+          console.warn("[three] puppet \u91CA\u653E\u5931\u8D25:", de instanceof Error ? de.message : String(de));
+        } finally {
+          this.puppetLayers.delete(id);
+        }
         console.warn("[three] puppet \u52A8\u753B\u91C7\u6837\u5931\u8D25\uFF08\u5DF2\u4E22\u5F03\u8BE5\u56FE\u5C42\u52A8\u753B\uFF09:", e instanceof Error ? e.message : String(e));
       }
     }
@@ -24451,7 +24486,11 @@ var ThreeScenePlayer = class {
       parallaxNode: mesh,
       parallaxDepth: opts.parallaxDepth
     });
-    this.puppetLayers.set(id, { instance: opts.puppet, elapsed: 0 });
+    this.puppetLayers.set(id, {
+      instance: opts.puppet,
+      layers: opts.animationLayers === void 0 ? null : opts.animationLayers.filter((l) => l.visible !== false),
+      elapsed: 0
+    });
     this.displayObjects.set(opts.objectId, mesh);
     return id;
   }
@@ -24978,7 +25017,9 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
           // 对象级调制（alpha/brightness）：与背景 quad 同一份 scene.json 字段，同一套 materialModulation。
           alpha: obj.alpha,
           brightness: obj.brightness,
-          parallaxDepth: obj.parallaxDepth
+          parallaxDepth: obj.parallaxDepth,
+          // 动画层（T8）：逐帧选层由 player 负责，装配期只透传解析结果（undefined = 字段缺失）。
+          animationLayers: obj.animationLayers
         });
         backgroundIds.push(id2);
         puppetLayers.push(id2);
