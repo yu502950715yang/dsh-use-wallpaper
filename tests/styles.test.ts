@@ -268,6 +268,17 @@ describe('styles 主题适配', () => {
     expect(WALLPAPER_CSS).toMatch(/\.wss-row input\[type=color\]\s*\{[^}]*width:\d+px/);
   });
 
+  // Task 4：实时渲染卡片（状态行 + 重试/清除按钮）的类名必须在样式里落地，
+  // 且按钮要进既有的按钮基样式与 reduced-motion 列表（否则动效与其它按钮不一致）。
+  it('实时渲染卡片：状态行与两个按钮都有样式，按钮进基样式与 reduced-motion 列表', () => {
+    for (const cls of ['.wss-live-status', '.wss-live-retry', '.wss-live-forget']) {
+      expect(WALLPAPER_CSS).toContain(cls);
+    }
+    expect(WALLPAPER_CSS).toMatch(/\.wss-live-status\[data-state="failed"\][^{]*\{[^}]*color:var\(/);
+    expect(WALLPAPER_CSS).toMatch(/\.wss-cancel[^{]*\.wss-live-retry[^{]*\.wss-live-forget[^{]*\{[^}]*var\(--dsw-alias-border-l2/);
+    expect(WALLPAPER_CSS).toMatch(/prefers-reduced-motion[^{]*\{[^}]*\.wss-live-retry[^}]*\.wss-live-forget[^}]*transition:none/);
+  });
+
   // 通知卡片（turn-trigger，「收到任务消息」）与代码块同底（2026-10-08，用户报告两块配色不一致）：
   // DSH 深色主题下卡片底读 --dsw-alias-turn-trigger-bg = --dsw-alias-interactive-bg-hover
   // （#ffffff14 半透明），代码块读 --dsw-alias-markdown-code-block（#1b1b1c 实色）；

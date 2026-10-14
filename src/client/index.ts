@@ -2,15 +2,21 @@ import { injectWallpaperStyles } from './styles.js';
 import { createBackgroundLayer } from './background-layer.js';
 import { createWallpaperController } from './wallpaper-controller.js';
 import { createThreeSceneRenderer } from './three-renderer.js';
-import { WallpaperSettingsSection, setWallpaperSelectHandler, setWallpaperRuntimeHandler } from './settings-section.js';
+import { WallpaperSettingsSection, setWallpaperSelectHandler, setWallpaperRuntimeHandler, setWallpaperHealthHandler, notifyWallpaperHealth } from './settings-section.js';
 import { readClientSettings, writeClientSettings, getUserPropertyValue, DEFAULTS, setSettingsCtx } from './settings.js';
+import { createRenderHealthStore } from './render-health.js';
 import type { BackgroundPlan, ClientSettings } from './types.js';
+import type { HealthSnapshot } from './render-health.js';
 
 declare global {
   interface Window { __ModuleLoader__?: any; __DSH_BOOT__?: any; }
 }
 
 const SETTINGS_SECTION_ID = 'wallpaper-engine';
+
+// 软失败冷却重试的等待时长：与 store 的 softCooldownMs 同一常量（单一事实源），
+// 否则「等到冷却到期再问闸」与 store 的判定会各自漂移。
+const SOFT_RETRY_DELAY_MS = 3000;
 
 // 本实例收尾函数的全局登记点：DSH 的 rebuilt 重载会换掉模块实例（模块级变量全丢），
 // 只有挂在 window 上的引用能让新实例找到旧实例、先让它收尾（见 mount 的单例清理）。
@@ -27,9 +33,49 @@ export function bootstrap(ctx?: any): void {
   let disposed = false;
   // 本实例注册的 visibilitychange 监听（收尾时移除，否则每次重载留一份）。
   let onVisibility: (() => void) | null = null;
+  // 看护存储：与 renderer 共用同一实例（面板/全局入口读的是同一份记忆）。
+  const healthStore = createRenderHealthStore({ softCooldownMs: SOFT_RETRY_DELAY_MS });
   // three.js 场景渲染器：bootstrap 创建一次、跨壁纸复用（内部每次 render 重建 player）。
   // 这里持有引用，是为了把「省电 / 画质档位」直接下发——它们不在 controller 的渲染接口上。
-  const sceneRenderer = createThreeSceneRenderer();
+  const sceneRenderer = createThreeSceneRenderer({ healthStore });
+  // 两个可复用入口：全局 API 与面板共享 handler 都调它们（只此一份实现）。
+  const clearRenderFailures = () => { healthStore.clearAll(); };
+  const retryLive = () => {
+    const id = settings.selectedWallpaperId;
+    if (id) healthStore.clear(id);
+    if (!id || !controller) return;
+    void controller.select(id);
+  };
+  // 软失败冷却后自动重试一次（同一壁纸、每会话一次）；硬失败不自动重试。
+  // 定时器按壁纸一份：共享一个的话，后一张壁纸的软失败会被前一张的定时器吞掉，没人给它排重试。
+  const autoRetryTimers = new Map<string, number>();
+  // 面板读到的是「当前选中壁纸」的状态：选中项与快照壁纸不一致（非 scene 壁纸、还没渲染过）时
+  // 必须为空，否则会把上一张 scene 的结论串到面板上。
+  const panelHealth = (): HealthSnapshot | null => {
+    const snap = sceneRenderer.getLastHealth?.() ?? null;
+    return snap && snap.wallpaperId === settings.selectedWallpaperId ? snap : null;
+  };
+  const onHealth = (snap: HealthSnapshot) => {
+    // 只推「当前选中壁纸」：切走后旧壁纸迟到的打点会常驻面板，而 get() 已是 null、
+    // 该失败文案对应的「重试」还会作用到另一张壁纸（读实时选中项，不用缓存值）。
+    if (snap.wallpaperId === settings.selectedWallpaperId) notifyWallpaperHealth(snap);
+    // 只对软失败排重试：硬失败有证据表明这张壁纸渲染不出来，重试只会重复失败。
+    if (!snap.wallpaperId || !snap.failure || snap.failure.hard) return;
+    const id = snap.wallpaperId;
+    // 每次软失败都按完整冷却重排（先撤旧的）：同一次 select 会连打两次点（fg→fg2），
+    // 第二次把 store 的 at 推晚了，沿用旧到期时刻就会算出 now-at < 冷却 ⇒ 闸假、永不重试。
+    const existing = autoRetryTimers.get(id);
+    if (existing) clearTimeout(existing);
+    autoRetryTimers.set(id, window.setTimeout(() => {
+      autoRetryTimers.delete(id);
+      if (disposed || !controller) return;
+      if (settings.selectedWallpaperId !== id) return; // 用户已切走 ⇒ 不把人家拽回来
+      if (!healthStore.shouldAutoRetry(id)) return; // 兜底：期间已成功 / 记忆被清 / 已被别的路径重试过
+      healthStore.markAutoRetried(id); // 每会话每壁纸一次（重试后再次软失败不会成环）
+      void controller.select(id);
+    }, SOFT_RETRY_DELAY_MS));
+  };
+  sceneRenderer.setOnHealth?.(onHealth);
   const applySettingsToLayer = (s: ClientSettings) => {
     if (!layer) return;
     layer.setOverlayOpacity(s.overlayOpacity);
@@ -54,7 +100,10 @@ export function bootstrap(ctx?: any): void {
   };
   const selectWallpaper = (id: string) => {
     settings = { ...settings, selectedWallpaperId: id };
-    void controller!.select(id).then(() => applySettingsToLayer(settings));
+    void controller!.select(id).then(() => {
+      applySettingsToLayer(settings);
+      notifyWallpaperHealth(panelHealth()); // 选中后补推一次：切壁纸即刷新状态行（不必等下一次健康事件）
+    });
     void writeClientSettings({ selectedWallpaperId: id });
   };
   // 本实例收尾：停 scene 渲染器（WebGL/wasm/音频）→ 清空并摘掉背景层 → 注销监听。
@@ -62,6 +111,11 @@ export function bootstrap(ctx?: any): void {
   const teardown = () => {
     if (disposed) return;
     disposed = true;
+    // 收尾：撤掉全部在途的自动重试与健康订阅（否则延迟的回调会落到已释放的渲染器/层上）。
+    for (const t of autoRetryTimers.values()) clearTimeout(t);
+    autoRetryTimers.clear();
+    sceneRenderer.setOnHealth?.(null);
+    notifyWallpaperHealth(null); // 收尾后状态行不得再显示已释放渲染器的旧状态（面板可能还开着）
     const root = layer?.root ?? null;
     try { controller?.select(''); } catch { /* 收尾失败也必须摘层，否则又变成盖住新实例的残留层 */ }
     layer = null;
@@ -117,13 +171,21 @@ export function bootstrap(ctx?: any): void {
       settings = { ...settings, ...patch };
       applyRuntimeSettings(settings);
     });
+    // 设置面板「实时渲染」卡片：读状态 / 重试当前壁纸 / 清空全部失败记忆（与全局入口同一份实现）
+    setWallpaperHealthHandler({
+      get: panelHealth,
+      retry: retryLive,
+      // 清记忆后补推当前快照（不是 null）：clearAll 保留成功结论 ⇒ 状态行仍显示「实时渲染正常」。
+      clearFailures: () => { clearRenderFailures(); notifyWallpaperHealth(panelHealth()); },
+    });
     // 切到后台/最小化 → 按设置自动暂停（省电），回到前台恢复。
     onVisibility = () => applyRuntimeSettings(settings);
     document.addEventListener('visibilitychange', onVisibility);
     // 读回已保存设置并应用到 layer（opacity/blur/kenBurns）与运行期项（暂停/画质档位）
     void readClientSettings().then((s) => {
       if (disposed) return; // 期间已收尾（HMR drain）→ 不再复活
-      settings = s;
+      // 启动窗口内用户可能已经选过壁纸 ⇒ 异步读回的持久值不得把它冲掉（否则 retryLive/自动重试定位不到）
+      settings = { ...s, selectedWallpaperId: settings.selectedWallpaperId || s.selectedWallpaperId };
       applySettingsToLayer(s);
       applyRuntimeSettings(s);
       // I1：恢复已保存的选中壁纸 —— 先 load 保证列表存在，再 select
@@ -149,25 +211,51 @@ export function bootstrap(ctx?: any): void {
     select(id: string) {
       mount();
       if (!controller) return;
+      // 同步记住选中项：retryLive / 自动重试按「当前选中的壁纸」定位（面板路径见 selectWallpaper）。
+      settings = { ...settings, selectedWallpaperId: id };
       void controller.select(id);
     },
+    // 看护入口（面板与排查用）：读状态 / 重试当前壁纸 / 清空全部失败记忆。
+    // health() 与面板读接口同一守卫：当前壁纸不是 scene（video/none/还没选）时返回 null。
+    health: () => panelHealth(),
+    retryLive,
+    clearRenderFailures,
     show(plan: BackgroundPlan, opts?: { opacity?: number; blur?: boolean; blurRadius?: number }) {
       mount();
       if (!layer) return;
       switch (plan.kind) {
-        case 'image': layer.showImage(plan.url, plan.kenBurns); break;
-        case 'video': layer.showVideo(plan.url); break;
-        case 'web': layer.showWeb(plan.url); break;
+        // 非 scene 分支没有壁纸 id ⇒ 解绑选中项：否则上一张 scene 的状态会持续挂在面板上，
+        // 且「重试实时渲染」会把用户刚换掉的那张 scene 选回来。
+        case 'image':
+          settings = { ...settings, selectedWallpaperId: '' };
+          layer.showImage(plan.url, plan.kenBurns);
+          break;
+        case 'video':
+          settings = { ...settings, selectedWallpaperId: '' };
+          layer.showVideo(plan.url);
+          break;
+        case 'web':
+          settings = { ...settings, selectedWallpaperId: '' };
+          layer.showWeb(plan.url);
+          break;
         case 'scene': {
           // I6：委托 controller.select —— 统一 scene 渲染与 preview 回退语义
           // （渲染失败回退 preview 图，与 controller 一致），并受竞态防护约束
+          // 先同步选中项：健康事件只推「当前选中壁纸」，不同步会把真实显示中的状态挡掉。
+          settings = { ...settings, selectedWallpaperId: plan.wallpaperId };
           void controller!.select(plan.wallpaperId).catch(() => {});
           break;
         }
-        case 'none': layer.showNone(); break;
+        case 'none':
+          settings = { ...settings, selectedWallpaperId: '' };
+          layer.showNone();
+          break;
       }
       if (opts?.opacity !== undefined) layer.setOverlayOpacity(opts.opacity);
       if (opts?.blur !== undefined) layer.setBlur(opts.blur, opts.blurRadius ?? 12);
+      // 非 scene 分支已解绑选中项 ⇒ 补推一次（与 selectWallpaper 同款）：面板立刻刷新，
+      // 不留上一张 scene 的旧文案（panelHealth 此时读到的已是 null）。
+      if (plan.kind !== 'scene') notifyWallpaperHealth(panelHealth());
     },
   };
   // 注册 DSH 设置对话框侧边栏 "Wallpaper 壁纸" 菜单（settings.section slot）：

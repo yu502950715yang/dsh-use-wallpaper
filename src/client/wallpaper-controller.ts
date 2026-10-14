@@ -3,6 +3,7 @@ import type { BackgroundLayer } from './background-layer.js';
 import { resolveBackground } from './background-layer.js';
 import { measureLuma, lumaToTextColor } from './luma.js';
 import { type TextColorMode, manualTextColor, normalizeMode, normalizeOutlineLevel } from './text-color.js';
+import type { HealthSnapshot } from './render-health.js';
 
 // scene 渲染器的接口形态（three-renderer 的生产实现与测试替身都按此形状提供）。
 export interface SceneRendererLike {
@@ -18,6 +19,9 @@ export interface SceneRendererLike {
   setSoundEnabled?(enabled: boolean): void;
   // 上下文丢失（显存耗尽/驱动重置）回调：渲染器停播后交回壁纸 id，由控制器换回该壁纸 preview。
   setOnContextLost?(cb: ((id: string) => void) | null): void;
+  // scene 渲染看护（Task 2）：当前壁纸的健康快照 + 每次打点的订阅（面板/全局入口消费）。
+  getLastHealth?(): HealthSnapshot | null;
+  setOnHealth?(cb: ((s: HealthSnapshot) => void) | null): void;
 }
 
 /** 贴壁纸文字样式（设置面板可改）：实时读取，故由 index.ts 以 getter 注入。 */

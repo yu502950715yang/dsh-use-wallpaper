@@ -2401,9 +2401,9 @@ body[data-ds-dark-theme][data-we-wallpaper] [data-question-key] section{
 .wss-row input[type=color]{width:44px;height:26px;order:2;flex:none;padding:0;border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));border-radius:6px;background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));cursor:pointer}
 .wss-textcolor{display:flex;flex-direction:column;gap:10px;margin-top:8px}
 /* \u6309\u94AE\uFF1A\u7EDF\u4E00\u57FA\u7840\u6837\u5F0F + hover / focus-visible */
-.wss-cancel,.wss-save-dirs,.wss-probe,.wss-adopt,.wss-refresh{border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;padding:6px 12px;font:inherit;font-size:12px;cursor:pointer;transition:filter .15s ease,background-color .15s ease}
-.wss-cancel:hover,.wss-save-dirs:hover,.wss-probe:hover,.wss-adopt:hover,.wss-refresh:hover{filter:brightness(1.08)}
-.wss-cancel:focus-visible,.wss-save-dirs:focus-visible,.wss-probe:focus-visible,.wss-adopt:focus-visible,.wss-refresh:focus-visible{outline:2px solid var(--wp-accent);outline-offset:2px}
+.wss-cancel,.wss-save-dirs,.wss-probe,.wss-adopt,.wss-refresh,.wss-live-retry,.wss-live-forget{border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;padding:6px 12px;font:inherit;font-size:12px;cursor:pointer;transition:filter .15s ease,background-color .15s ease}
+.wss-cancel:hover,.wss-save-dirs:hover,.wss-probe:hover,.wss-adopt:hover,.wss-refresh:hover,.wss-live-retry:hover,.wss-live-forget:hover{filter:brightness(1.08)}
+.wss-cancel:focus-visible,.wss-save-dirs:focus-visible,.wss-probe:focus-visible,.wss-adopt:focus-visible,.wss-refresh:focus-visible,.wss-live-retry:focus-visible,.wss-live-forget:focus-visible{outline:2px solid var(--wp-accent);outline-offset:2px}
 /* \u4E3B\u64CD\u4F5C\u6309\u94AE\uFF08\u5237\u65B0 / \u4FDD\u5B58\u8DEF\u5F84\uFF09\uFF1A\u5B9E\u5FC3\u5E95\uFF0C\u767D\u5B57\uFF08\u7528\u66F4\u6DF1 accent \u4FDD\u5BF9\u6BD4\u5EA6\uFF09 */
 .wss-refresh,.wss-save-dirs{background:var(--wp-accent-strong,#2563eb);border-color:var(--wp-accent-strong,#2563eb);color:#fff}
 /* \u76EE\u5F55\u5B57\u6BB5\u4E0E\u63A2\u6D4B\u7ED3\u679C */
@@ -2419,7 +2419,11 @@ body[data-ds-dark-theme][data-we-wallpaper] [data-question-key] section{
 .wss-exists{color:var(--dsw-alias-state-success-primary,#4caf50);font-size:11px;white-space:nowrap}
 .wss-missing{color:var(--dsw-alias-label-tertiary,var(--wp-text));font-size:11px;white-space:nowrap}
 .wss-message{margin:0;font-size:12px;color:var(--dsw-alias-label-secondary,var(--wp-text))}
-@media (prefers-reduced-motion:reduce){.wss-thumb,.wss-cancel,.wss-save-dirs,.wss-probe,.wss-adopt,.wss-refresh{transition:none}.wss-thumb:hover{transform:none}}
+/* \u5B9E\u65F6\u6E32\u67D3\u72B6\u6001\u884C\uFF1A\u4E3B\u884C\u8BB2\u73B0\u72B6\u3001\u6B21\u7EA7\u884C\u8BB2\u5931\u8D25\u8BB0\u5FC6\uFF08\u4E24\u8005\u53EF\u5E76\u5B58\uFF09\uFF1B\u5931\u8D25\u6587\u6848\u4E0E\u8BB0\u5FC6\u884C\u7528\u63D0\u793A\u8272\u3002 */
+.wss-live-status{display:flex;flex-direction:column;gap:2px;margin-bottom:8px}
+.wss-live-status .wss-live-current,.wss-live-status .wss-live-memory{margin:0}
+.wss-live-status[data-state="failed"] .wss-live-current,.wss-live-status .wss-live-memory{color:var(--dsw-alias-state-error-primary,var(--wp-accent-strong))}
+@media (prefers-reduced-motion:reduce){.wss-thumb,.wss-cancel,.wss-save-dirs,.wss-probe,.wss-adopt,.wss-refresh,.wss-live-retry,.wss-live-forget{transition:none}.wss-thumb:hover{transform:none}}
 
 /* \u2500\u2500 \u6587\u5B57\u989C\u8272\u8DDF\u968F\u58C1\u7EB8\u4EAE\u5EA6\uFF082026-09-03 \u5B9A\u7A3F\uFF09 \u2500\u2500
    \u4E0D\u906E\u80CC\u666F\u3001\u4E0D\u6539\u58C1\u7EB8\u53EF\u89C1\u5EA6\uFF1B\u53EA\u8BA9\u6D88\u606F\u5217\uFF08[class*="flowItem"] \u5185\u4E3B\u8981\u6587\u672C\uFF09\u7684
@@ -29280,6 +29284,152 @@ function sharedWhiteTexture() {
   return whiteTex;
 }
 
+// src/client/render-health.ts
+var HARD_KINDS = ["scene-json", "no-visible-objects", "context-lost", "exception"];
+function isHardFailure(kind) {
+  return HARD_KINDS.includes(kind);
+}
+var HEALTH_KEY_PREFIX = "we:renderfail:";
+var SCHEMA_VERSION = 1;
+var DEFAULT_SOFT_COOLDOWN_MS = 3e3;
+function defaultStorage() {
+  try {
+    return typeof localStorage === "undefined" ? null : localStorage;
+  } catch {
+    return null;
+  }
+}
+function createRenderHealthStore(opts = {}) {
+  const storage = opts.storage === void 0 ? defaultStorage() : opts.storage;
+  const now = opts.now ?? (() => Date.now());
+  const cooldown = opts.softCooldownMs ?? DEFAULT_SOFT_COOLDOWN_MS;
+  const hard = /* @__PURE__ */ new Map();
+  const soft = /* @__PURE__ */ new Map();
+  const retried = /* @__PURE__ */ new Set();
+  const session = /* @__PURE__ */ new Map();
+  const keyOf = (id) => HEALTH_KEY_PREFIX + id;
+  const readStored = (id) => {
+    if (!storage || !id) return null;
+    let raw = null;
+    try {
+      raw = storage.getItem(keyOf(id));
+    } catch {
+      return null;
+    }
+    if (!raw) return null;
+    try {
+      const v = JSON.parse(raw);
+      if (v?.v !== SCHEMA_VERSION || typeof v.kind !== "string") return null;
+      const kind = v.kind;
+      if (!isHardFailure(kind)) return null;
+      return { kind, hard: true, at: Number(v.at) || 0, detail: String(v.detail ?? "") };
+    } catch {
+      return null;
+    }
+  };
+  const writeHard = (id, kind, detail) => {
+    const entry = { kind, hard: true, at: now(), detail: String(detail).slice(0, 200) };
+    hard.set(id, entry);
+    if (!storage) return;
+    try {
+      storage.setItem(keyOf(id), JSON.stringify({
+        v: SCHEMA_VERSION,
+        kind: entry.kind,
+        detail: entry.detail,
+        at: entry.at
+      }));
+    } catch {
+    }
+  };
+  const currentHard = (id) => readStored(id) ?? hard.get(id) ?? null;
+  return {
+    recordHard(id, kind, detail) {
+      if (!id) return;
+      writeHard(id, kind, detail);
+    },
+    recordSoft(id, kind, detail) {
+      if (!id) return;
+      soft.set(id, { kind, detail: String(detail), at: now() });
+    },
+    recordOk(id, timing) {
+      if (!id) return;
+      soft.delete(id);
+      session.set(id, { ok: true, timing });
+    },
+    clear(id) {
+      hard.delete(id);
+      soft.delete(id);
+      retried.delete(id);
+      session.delete(id);
+      if (storage && id) {
+        try {
+          storage.removeItem(keyOf(id));
+        } catch {
+        }
+      }
+    },
+    clearAll() {
+      hard.clear();
+      soft.clear();
+      retried.clear();
+      if (!storage) return;
+      const keys = [];
+      try {
+        for (let i = 0; i < storage.length; i++) {
+          const k = storage.key(i);
+          if (k && k.startsWith(HEALTH_KEY_PREFIX)) keys.push(k);
+        }
+      } catch {
+      }
+      for (const k of keys) {
+        try {
+          storage.removeItem(k);
+        } catch {
+        }
+      }
+    },
+    snapshot(id) {
+      const s = session.get(id);
+      const timing = s?.timing ?? null;
+      const hardHit = currentHard(id);
+      const softHit = soft.get(id);
+      const failure = hardHit ?? (softHit ? { kind: softHit.kind, hard: false, at: softHit.at, detail: softHit.detail } : null);
+      return { wallpaperId: id, ok: s?.ok ?? null, failure, timing };
+    },
+    shouldAutoRetry(id) {
+      if (!id || retried.has(id)) return false;
+      if (currentHard(id)) return false;
+      const hit = soft.get(id);
+      if (!hit) return false;
+      return now() - hit.at >= cooldown;
+    },
+    markAutoRetried(id) {
+      if (id) retried.add(id);
+    }
+  };
+}
+function formatHealthLine(snap, t) {
+  const timing = snap.timing ? formatTiming(snap.timing, t) : "";
+  if (snap.failure) {
+    const reason = FAILURE_TEXT[snap.failure.kind] ?? t("\u6E32\u67D3\u5931\u8D25");
+    return t("\u4E0A\u6B21\u5931\u8D25\uFF1A{reason}").replace("{reason}", reason) + (snap.failure.hard ? t("\uFF08\u5DF2\u8BB0\u5FC6\uFF09") : t("\uFF08\u672C\u6B21\u4F1A\u8BDD\u5185\u8BB0\u5FC6\uFF09")) + (timing ? " \xB7 " + timing : "");
+  }
+  if (snap.ok === true) return t("\u5B9E\u65F6\u6E32\u67D3\u6B63\u5E38") + (timing ? " \xB7 " + timing : "");
+  return t("\u5C1A\u672A\u6E32\u67D3\uFF08\u9009\u62E9\u4E00\u5F20 scene \u58C1\u7EB8\u540E\u8FD9\u91CC\u663E\u793A\u72B6\u6001\uFF09");
+}
+function formatTiming(timing, t) {
+  const assemble = t("\u88C5\u914D {assemble} ms").replace("{assemble}", String(Math.round(timing.assembleMs)));
+  if (timing.firstFrameMs < 0) return assemble;
+  return assemble + " \xB7 " + t("\u9996\u5E27 {first} ms").replace("{first}", String(Math.round(timing.firstFrameMs)));
+}
+var FAILURE_TEXT = {
+  "scene-json": "\u62FF\u4E0D\u5230 scene.json",
+  "no-visible-objects": "\u6CA1\u6709\u53EF\u663E\u793A\u7684\u5BF9\u8C61",
+  "context-lost": "WebGL \u4E0A\u4E0B\u6587\u4E22\u5931",
+  "exception": "\u88C5\u914D\u5F02\u5E38",
+  "load-error": "\u8D44\u6E90\u52A0\u8F7D\u4E2D\u65AD"
+};
+
 // src/client/three-renderer.ts
 var warnedKeys = /* @__PURE__ */ new Set();
 function warnOnce2(key, message) {
@@ -29288,6 +29438,7 @@ function warnOnce2(key, message) {
   console.warn(`[wallpaper-engine] ${message}`);
 }
 var lastWorldTransforms = null;
+var subscriberWarned = false;
 var FONT_CACHE = /* @__PURE__ */ new Map();
 var fontSeq = 0;
 async function loadWallpaperFont(wallpaperId, font) {
@@ -29395,6 +29546,30 @@ function createThreeSceneRenderer(opts) {
   let contextLostId = null;
   let contextLostCanvas = null;
   let contextLost = false;
+  const health = opts?.healthStore ?? createRenderHealthStore();
+  let currentHealthId = "";
+  let healthHandler2 = null;
+  const publish = (snap) => {
+    if (!healthHandler2) return;
+    try {
+      healthHandler2(snap);
+    } catch (e) {
+      if (!subscriberWarned) {
+        subscriberWarned = true;
+        console.warn("[wallpaper-engine] \u5065\u5EB7\u8BA2\u9605\u8005\u629B\u9519\uFF08\u540C\u7C7B\u5F02\u5E38\u4E0D\u518D\u91CD\u590D\u544A\u8B66\uFF09:", e instanceof Error ? e.message : String(e));
+      }
+    }
+  };
+  const fail = (id, kind, detail) => {
+    const hard = isHardFailure(kind);
+    if (hard) health.recordHard(id, kind, detail);
+    else health.recordSoft(id, kind, detail);
+    publish(health.snapshot(id));
+  };
+  const succeed = (id, assembleMs, firstFrameMs) => {
+    health.recordOk(id, { assembleMs, firstFrameMs });
+    publish(health.snapshot(id));
+  };
   const stopAudio = () => {
     const audio = currentAudio;
     currentAudio = null;
@@ -29414,6 +29589,7 @@ function createThreeSceneRenderer(opts) {
     e.preventDefault();
     contextLost = true;
     const id = contextLostId;
+    fail(id ?? "", "context-lost", "webglcontextlost");
     try {
       teardown();
     } catch {
@@ -29455,9 +29631,15 @@ function createThreeSceneRenderer(opts) {
     currentMeshRegistry = null;
     stopAudio();
   };
+  const teardownQuietly = () => {
+    try {
+      teardown();
+    } catch {
+    }
+  };
   const abortIfContextLost = () => {
     if (!contextLost) return false;
-    teardown();
+    teardownQuietly();
     return true;
   };
   const effectiveGlow = () => ({
@@ -29492,6 +29674,9 @@ function createThreeSceneRenderer(opts) {
       warnedKeys.clear();
       contextLost = false;
       frameCapture?.reset();
+      currentHealthId = id;
+      const timer = { startedAt: performance.now(), firstFrameAt: -1 };
+      let assembledMs = -1;
       try {
         teardown();
         contextLostId = id;
@@ -29500,8 +29685,19 @@ function createThreeSceneRenderer(opts) {
         modulePromise ??= loadWasm();
         const mod = await modulePromise;
         if (abortIfContextLost()) return false;
-        const sceneJsonResp = await fetch(`/wallpapers/scene/${id}/asset?name=scene.json`);
-        if (!sceneJsonResp.ok) return false;
+        let sceneJsonResp;
+        try {
+          sceneJsonResp = await fetch(`/wallpapers/scene/${id}/asset?name=scene.json`);
+        } catch (e) {
+          fail(id, "load-error", e instanceof Error ? e.message : String(e));
+          teardownQuietly();
+          return false;
+        }
+        if (!sceneJsonResp.ok) {
+          fail(id, "scene-json", "http " + sceneJsonResp.status);
+          teardownQuietly();
+          return false;
+        }
         const sceneJson = await sceneJsonResp.text();
         if (abortIfContextLost()) return false;
         const desc = parseSceneJson(sceneJson);
@@ -29702,7 +29898,7 @@ function createThreeSceneRenderer(opts) {
           }
         }
         if (abortIfContextLost()) return false;
-        const result = loadSceneToThree(sceneJson, {
+        const assets = {
           backgroundTextures,
           particles,
           createParticleSim,
@@ -29725,7 +29921,16 @@ function createThreeSceneRenderer(opts) {
               return obj ? { object: obj, sceneW: desc.orthogonal.width, sceneH: desc.orthogonal.height } : void 0;
             });
           }
-        }, fg, {
+        };
+        const userOnFrame = assets.onFrame;
+        assets.onFrame = (dt) => {
+          if (timer.firstFrameAt < 0) {
+            timer.firstFrameAt = performance.now() - timer.startedAt;
+            succeed(id, assembledMs >= 0 ? assembledMs : timer.firstFrameAt, timer.firstFrameAt);
+          }
+          userOnFrame?.(dt);
+        };
+        const result = loadSceneToThree(sceneJson, assets, fg, {
           width: vw,
           height: vh
         });
@@ -29839,13 +30044,18 @@ function createThreeSceneRenderer(opts) {
           `[three] scene loaded id=${id} background=${result.backgroundIds.length} particleLayers=${result.particleLayers.length}`
         );
         if (result.backgroundIds.length === 0 && result.particleLayers.length === 0) {
-          teardown();
+          fail(id, "no-visible-objects", "background=0 particleLayers=0");
+          teardownQuietly();
           return false;
         }
+        assembledMs = performance.now() - timer.startedAt;
+        succeed(id, assembledMs, timer.firstFrameAt);
         return true;
       } catch (e) {
-        console.warn("[three] scene render failed:", e instanceof Error ? e.message : String(e));
-        teardown();
+        const msg = e instanceof Error ? e.message : String(e);
+        console.warn("[three] scene render failed:", msg);
+        fail(id, "exception", msg);
+        teardownQuietly();
         return false;
       }
     },
@@ -29888,6 +30098,13 @@ function createThreeSceneRenderer(opts) {
       frameCapture?.dispose();
       frameCapture = null;
       frameCaptureRenderer = null;
+    },
+    // 看护读接口：设置面板与 `window.__wallpaperEngine.health()` 用它取当前壁纸状态。
+    getLastHealth() {
+      return currentHealthId ? health.snapshot(currentHealthId) : null;
+    },
+    setOnHealth(cb) {
+      healthHandler2 = cb;
     }
   };
 }
@@ -29909,6 +30126,27 @@ var sharedOnRuntimeSettings = null;
 function setWallpaperRuntimeHandler(fn) {
   sharedOnRuntimeSettings = fn;
 }
+var healthHandler = null;
+var healthSubscribers = /* @__PURE__ */ new Set();
+function setWallpaperHealthHandler(handler) {
+  healthHandler = handler;
+}
+function subscribeWallpaperHealth(cb) {
+  healthSubscribers.add(cb);
+  return () => {
+    healthSubscribers.delete(cb);
+  };
+}
+function notifyWallpaperHealth(snap) {
+  for (const cb of Array.from(healthSubscribers)) {
+    try {
+      cb(snap);
+    } catch {
+    }
+  }
+}
+var weT = (s) => s;
+var EMPTY_HEALTH = { wallpaperId: "", ok: null, failure: null, timing: null };
 function WallpaperSettingsSection(props) {
   const fetchSettings = props.fetchSettings ?? readClientSettings;
   const writeSettings = props.writeSettings ?? writeClientSettings;
@@ -29924,6 +30162,11 @@ function WallpaperSettingsSection(props) {
   const [wallpaperDir, setWallpaperDir] = (0, import_react.useState)("");
   const [weAssetsDir, setWeAssetsDir] = (0, import_react.useState)("");
   const [message, setMessage] = (0, import_react.useState)("");
+  const [health, setHealth] = (0, import_react.useState)(props.health ?? null);
+  (0, import_react.useEffect)(() => {
+    setHealth(props.health ?? healthHandler?.get() ?? null);
+    return subscribeWallpaperHealth((s) => setHealth(s));
+  }, [props.health]);
   (0, import_react.useEffect)(() => {
     let alive = true;
     void (async () => {
@@ -29977,6 +30220,22 @@ function WallpaperSettingsSection(props) {
     });
   }, [writeSettings]);
   const currentTitle = settings ? wallpapers.find((w) => w.id === settings.selectedWallpaperId)?.title ?? "\u65E0\uFF08\u9ED8\u8BA4\u80CC\u666F\uFF09" : "";
+  const live = health ?? EMPTY_HEALTH;
+  const liveCurrent = live.ok === true ? formatHealthLine({ ...live, failure: null }, weT) : formatHealthLine(live, weT);
+  const liveMemory = live.ok === true && live.failure ? formatHealthLine({ ...live, ok: null, timing: null }, weT) : "";
+  const liveState = live.ok === true ? "ok" : live.failure ? "failed" : "idle";
+  const retryLive = () => {
+    if (props.onRetryLive) props.onRetryLive();
+    else if (healthHandler) healthHandler.retry();
+    else return;
+    setMessage("\u5DF2\u91CD\u8BD5\u5B9E\u65F6\u6E32\u67D3");
+  };
+  const forgetFailures = () => {
+    if (props.onClearRenderFailures) props.onClearRenderFailures();
+    else if (healthHandler) healthHandler.clearFailures();
+    else return;
+    setMessage("\u5DF2\u6E05\u9664\u5931\u8D25\u8BB0\u5FC6");
+  };
   return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-root", children: [
     /* @__PURE__ */ (0, import_jsx_runtime.jsx)("section", { className: "wss-section", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-current", children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-current-info", children: [
@@ -30227,12 +30486,24 @@ function WallpaperSettingsSection(props) {
         ] }, c.path))
       ] })
     ] }),
+    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wss-section-title", children: "\u5B9E\u65F6\u6E32\u67D3" }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-live-status", "data-state": liveState, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc wss-live-current", children: liveCurrent }),
+        liveMemory && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc wss-live-memory", children: liveMemory })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-row", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-live-retry", onClick: retryLive, children: "\u91CD\u8BD5\u5B9E\u65F6\u6E32\u67D3" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-live-forget", onClick: forgetFailures, children: "\u6E05\u9664\u5931\u8D25\u8BB0\u5FC6" })
+      ] })
+    ] }),
     message && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-message", role: "status", children: message })
   ] });
 }
 
 // src/client/index.ts
 var SETTINGS_SECTION_ID = "wallpaper-engine";
+var SOFT_RETRY_DELAY_MS = 3e3;
 var TEARDOWN_KEY = "__wpEngineTeardown";
 function bootstrap(ctx) {
   setSettingsCtx(ctx);
@@ -30242,7 +30513,38 @@ function bootstrap(ctx) {
   let settings = { ...DEFAULTS };
   let disposed = false;
   let onVisibility = null;
-  const sceneRenderer = createThreeSceneRenderer();
+  const healthStore = createRenderHealthStore({ softCooldownMs: SOFT_RETRY_DELAY_MS });
+  const sceneRenderer = createThreeSceneRenderer({ healthStore });
+  const clearRenderFailures = () => {
+    healthStore.clearAll();
+  };
+  const retryLive = () => {
+    const id = settings.selectedWallpaperId;
+    if (id) healthStore.clear(id);
+    if (!id || !controller) return;
+    void controller.select(id);
+  };
+  const autoRetryTimers = /* @__PURE__ */ new Map();
+  const panelHealth = () => {
+    const snap = sceneRenderer.getLastHealth?.() ?? null;
+    return snap && snap.wallpaperId === settings.selectedWallpaperId ? snap : null;
+  };
+  const onHealth = (snap) => {
+    if (snap.wallpaperId === settings.selectedWallpaperId) notifyWallpaperHealth(snap);
+    if (!snap.wallpaperId || !snap.failure || snap.failure.hard) return;
+    const id = snap.wallpaperId;
+    const existing = autoRetryTimers.get(id);
+    if (existing) clearTimeout(existing);
+    autoRetryTimers.set(id, window.setTimeout(() => {
+      autoRetryTimers.delete(id);
+      if (disposed || !controller) return;
+      if (settings.selectedWallpaperId !== id) return;
+      if (!healthStore.shouldAutoRetry(id)) return;
+      healthStore.markAutoRetried(id);
+      void controller.select(id);
+    }, SOFT_RETRY_DELAY_MS));
+  };
+  sceneRenderer.setOnHealth?.(onHealth);
   const applySettingsToLayer = (s) => {
     if (!layer) return;
     layer.setOverlayOpacity(s.overlayOpacity);
@@ -30263,12 +30565,19 @@ function bootstrap(ctx) {
   };
   const selectWallpaper = (id) => {
     settings = { ...settings, selectedWallpaperId: id };
-    void controller.select(id).then(() => applySettingsToLayer(settings));
+    void controller.select(id).then(() => {
+      applySettingsToLayer(settings);
+      notifyWallpaperHealth(panelHealth());
+    });
     void writeClientSettings({ selectedWallpaperId: id });
   };
   const teardown = () => {
     if (disposed) return;
     disposed = true;
+    for (const t of autoRetryTimers.values()) clearTimeout(t);
+    autoRetryTimers.clear();
+    sceneRenderer.setOnHealth?.(null);
+    notifyWallpaperHealth(null);
     const root = layer?.root ?? null;
     try {
       controller?.select("");
@@ -30334,11 +30643,20 @@ function bootstrap(ctx) {
       settings = { ...settings, ...patch };
       applyRuntimeSettings(settings);
     });
+    setWallpaperHealthHandler({
+      get: panelHealth,
+      retry: retryLive,
+      // 清记忆后补推当前快照（不是 null）：clearAll 保留成功结论 ⇒ 状态行仍显示「实时渲染正常」。
+      clearFailures: () => {
+        clearRenderFailures();
+        notifyWallpaperHealth(panelHealth());
+      }
+    });
     onVisibility = () => applyRuntimeSettings(settings);
     document.addEventListener("visibilitychange", onVisibility);
     void readClientSettings().then((s) => {
       if (disposed) return;
-      settings = s;
+      settings = { ...s, selectedWallpaperId: settings.selectedWallpaperId || s.selectedWallpaperId };
       applySettingsToLayer(s);
       applyRuntimeSettings(s);
       if (s.selectedWallpaperId && controller) {
@@ -30361,32 +30679,46 @@ function bootstrap(ctx) {
     select(id) {
       mount();
       if (!controller) return;
+      settings = { ...settings, selectedWallpaperId: id };
       void controller.select(id);
     },
+    // 看护入口（面板与排查用）：读状态 / 重试当前壁纸 / 清空全部失败记忆。
+    // health() 与面板读接口同一守卫：当前壁纸不是 scene（video/none/还没选）时返回 null。
+    health: () => panelHealth(),
+    retryLive,
+    clearRenderFailures,
     show(plan, opts) {
       mount();
       if (!layer) return;
       switch (plan.kind) {
+        // 非 scene 分支没有壁纸 id ⇒ 解绑选中项：否则上一张 scene 的状态会持续挂在面板上，
+        // 且「重试实时渲染」会把用户刚换掉的那张 scene 选回来。
         case "image":
+          settings = { ...settings, selectedWallpaperId: "" };
           layer.showImage(plan.url, plan.kenBurns);
           break;
         case "video":
+          settings = { ...settings, selectedWallpaperId: "" };
           layer.showVideo(plan.url);
           break;
         case "web":
+          settings = { ...settings, selectedWallpaperId: "" };
           layer.showWeb(plan.url);
           break;
         case "scene": {
+          settings = { ...settings, selectedWallpaperId: plan.wallpaperId };
           void controller.select(plan.wallpaperId).catch(() => {
           });
           break;
         }
         case "none":
+          settings = { ...settings, selectedWallpaperId: "" };
           layer.showNone();
           break;
       }
       if (opts?.opacity !== void 0) layer.setOverlayOpacity(opts.opacity);
       if (opts?.blur !== void 0) layer.setBlur(opts.blur, opts.blurRadius ?? 12);
+      if (plan.kind !== "scene") notifyWallpaperHealth(panelHealth());
     }
   };
   if (ctx?.slots?.inject && ctx?.slots?.register) {

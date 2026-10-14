@@ -1,5 +1,6 @@
 import type { WallpaperInfo } from '../shared/types.js';
 import type { BackgroundLayer } from './background-layer.js';
+import type { HealthSnapshot } from './render-health.js';
 export interface SceneRendererLike {
     render(id: string, fg: HTMLCanvasElement, bg?: HTMLCanvasElement): Promise<boolean>;
     dispose?(): void;
@@ -12,6 +13,8 @@ export interface SceneRendererLike {
     }): void;
     setSoundEnabled?(enabled: boolean): void;
     setOnContextLost?(cb: ((id: string) => void) | null): void;
+    getLastHealth?(): HealthSnapshot | null;
+    setOnHealth?(cb: ((s: HealthSnapshot) => void) | null): void;
 }
 /** 贴壁纸文字样式（设置面板可改）：实时读取，故由 index.ts 以 getter 注入。 */
 export interface TextStyleSettings {
