@@ -2412,6 +2412,33 @@ describe('scene 渲染看护：失败分类与打点', () => {
     r.dispose();
   });
 
+  it('装配成功、帧循环已跑起来后丢上下文 → 硬失败 context-lost（事件路径，唯一记录点）', async () => {
+    const store = createRenderHealthStore({ storage: null });
+    resolveImageTexture.mockResolvedValue(fakeTexture() as never);
+    defaultLoadWasm.mockResolvedValue(null);
+    stubAssetFetch(SCENE_ONE_IMAGE, {});
+    loadSceneToThree.mockReturnValue(okPlayer() as never);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = createThreeSceneRenderer({ healthStore: store });
+    const seen: HealthSnapshot[] = [];
+    r.setOnHealth?.((s) => seen.push(s));
+    const canvas = document.createElement('canvas');
+    expect(await r.render('wid-live', canvas)).toBe(true);
+    expect(store.snapshot('wid-live').failure).toBeNull(); // 装配成功这一刻还没有失败
+
+    // 生产上最常见的一条：装配完成后浏览器回收 / GPU 复位 ⇒ 不经过任何 abortIfContextLost 检查点。
+    canvas.dispatchEvent(new Event('webglcontextlost', { cancelable: true }));
+    const snap = store.snapshot('wid-live');
+    expect(snap.failure?.kind).toBe('context-lost');
+    expect(snap.failure?.hard).toBe(true);
+    expect(seen).toHaveLength(2); // 成功出口一次 + 丢失一次
+    // 记录点唯一：同一次丢失不得被记两遍（once + teardown 移除监听）。
+    canvas.dispatchEvent(new Event('webglcontextlost', { cancelable: true }));
+    expect(seen).toHaveLength(2);
+    warn.mockRestore();
+    r.dispose();
+  });
+
   it('render 进行中丢上下文 → 硬失败 context-lost（8 个作废检查点只记一次）', async () => {
     const store = createRenderHealthStore({ storage: null });
     let release!: () => void;

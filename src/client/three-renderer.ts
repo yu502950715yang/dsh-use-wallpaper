@@ -294,6 +294,9 @@ export function createThreeSceneRenderer(opts?: {
     // 先作废仍在飞的 render：它若继续装好 player 并返回 true，控制器会把 preview 换回失效 canvas。
     contextLost = true;
     const id = contextLostId;
+    // 硬失败只在这里记一次（事件驱动）：覆盖「装配进行中」与「装配完成、帧循环已跑起来后」两条路径；
+    // abortIfContextLost 只管中止装配，不再记录（否则同一次丢失会被记两遍）。
+    fail('context-lost', 'webglcontextlost');
     try { teardown(); } catch { /* 释放失败不得掩盖回退 */ }
     // 先告警再早退：没有 id 也不得让上下文丢失完全静默（诊断上必须留痕）。
     if (!id) {
@@ -345,8 +348,7 @@ export function createThreeSceneRenderer(opts?: {
   // 上下文已在本次 render 进行中丢失 ⇒ 作废本次装配：清理丢失后新建的残余对象，收尾与失败路径一致。
   const abortIfContextLost = () => {
     if (!contextLost) return false;
-    // 上下文丢失是硬失败：这张壁纸在本实例里已经渲染不出来，重新挂载才有意义。
-    fail('context-lost', 'webglcontextlost');
+    // 记录点在 onContextLost（唯一一次事件）——本函数只负责中止装配。
     teardown();
     return true;
   };

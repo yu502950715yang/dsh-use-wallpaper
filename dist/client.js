@@ -29567,6 +29567,7 @@ function createThreeSceneRenderer(opts) {
     e.preventDefault();
     contextLost = true;
     const id = contextLostId;
+    fail("context-lost", "webglcontextlost");
     try {
       teardown();
     } catch {
@@ -29610,7 +29611,6 @@ function createThreeSceneRenderer(opts) {
   };
   const abortIfContextLost = () => {
     if (!contextLost) return false;
-    fail("context-lost", "webglcontextlost");
     teardown();
     return true;
   };
