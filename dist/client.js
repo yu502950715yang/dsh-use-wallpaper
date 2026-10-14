@@ -23769,8 +23769,9 @@ var ThreeScenePlayer = class {
   }
   // 逐帧：推进指针插值，并按 parallaxDepth 把**对象平移**写进各自的落点（非隔离 = mesh、
   // 隔离 = 合成 quad、粒子 = 顶点 shader 的 u_Parallax）。相机不动 —— 视差只是 model 平移。
-  // ⚠️ 关视差只写回**一次**基准位：每帧无条件写 position 会盖掉脚本对同一对象的 origin 写入
-  // （layer-state.applyLayerState 直接写 three 对象）⇒ 动态网格静止；而全库 34 张里只有 1 张开视差。
+  // ⚠️ 「不参与视差」（关视差 / depth 缺失 / depth 两根轴全 0）只写回**一次**基准位：每帧无条件写
+  // position 会盖掉脚本对同一对象的 origin 写入（layer-state.applyLayerState 直接写 three 对象）
+  // ⇒ 动态网格静止；而全库 34 张里只有 1 张开视差、22 条 entry 带 "0.00000 0.00000"。
   tickParallax(dt) {
     const cfg = this.parallaxCfg;
     if (!cfg) return;
@@ -23779,7 +23780,9 @@ var ThreeScenePlayer = class {
       const x = entry.origin[0] - entry.sceneW / 2;
       const y = entry.origin[1] - entry.sceneH / 2;
       const z = entry.origin[2];
-      if (!cfg.enabled || !entry.parallaxDepth) {
+      const d = entry.parallaxDepth;
+      const depth = d && (d[0] !== 0 || d[1] !== 0) ? d : null;
+      if (!cfg.enabled || !depth) {
         if (entry.parallaxApplied) {
           entry.parallaxNode.position.set(x, y, z);
           entry.parallaxApplied = false;
@@ -23796,7 +23799,7 @@ var ThreeScenePlayer = class {
         // three 坐标下主相机位于场景中心（we_to_three 已把中心移到原点）。
         camX: 0,
         camY: 0,
-        depth: entry.parallaxDepth,
+        depth,
         cfg
       });
       entry.parallaxNode.position.set(x + sx, y + sy, z);
@@ -23805,7 +23808,10 @@ var ThreeScenePlayer = class {
     for (const layer of this.particleLayers.values()) {
       const [cx, cy] = layer.parallaxCenter;
       const u = layer.material.uniforms.u_Parallax;
-      if (!cfg.enabled || !layer.parallaxDepth) {
+      if (layer.parallaxIsolated && !layer.parallaxQuad) continue;
+      const d = layer.parallaxDepth;
+      const depth = d && (d[0] !== 0 || d[1] !== 0) ? d : null;
+      if (!cfg.enabled || !depth) {
         if (layer.parallaxApplied) {
           if (layer.parallaxQuad) layer.parallaxQuad.position.set(cx, cy, layer.parallaxQuad.position.z);
           else u?.value.set(0, 0);
@@ -23821,7 +23827,7 @@ var ThreeScenePlayer = class {
         nodeY: cy,
         camX: 0,
         camY: 0,
-        depth: layer.parallaxDepth,
+        depth,
         cfg
       });
       if (layer.parallaxQuad) layer.parallaxQuad.position.set(cx + sx, cy + sy, layer.parallaxQuad.position.z);
@@ -24429,6 +24435,7 @@ var ThreeScenePlayer = class {
         0,
         opts.renderOrder
       );
+      layer.parallaxIsolated = true;
       layer.parallaxQuad = this.isolated.get(opts.isolate.objectId)?.quad;
     }
     if (opts.objectId !== void 0) {

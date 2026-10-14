@@ -92,6 +92,9 @@ type ParticleLayer = {
   parallaxDepth?: [number, number];
   parallaxCenter: [number, number];
   parallaxQuad?: THREE.Object3D;
+  // opts.isolate 有值（= 本层渲染进对象 RT）即真：quad 意外缺失时 tickParallax 靠它跳过本层，
+  // 不退化写 u_Parallax（RT 内平移会被 RT 边界裁掉）。
+  parallaxIsolated?: boolean;
   // 本类**当前**是否在该层上留着位移（true ⇒ 关视差时写回一次；见 tickParallax）。
   parallaxApplied?: boolean;
 };
@@ -839,8 +842,9 @@ export class ThreeScenePlayer {
 
   // 逐帧：推进指针插值，并按 parallaxDepth 把**对象平移**写进各自的落点（非隔离 = mesh、
   // 隔离 = 合成 quad、粒子 = 顶点 shader 的 u_Parallax）。相机不动 —— 视差只是 model 平移。
-  // ⚠️ 关视差只写回**一次**基准位：每帧无条件写 position 会盖掉脚本对同一对象的 origin 写入
-  // （layer-state.applyLayerState 直接写 three 对象）⇒ 动态网格静止；而全库 34 张里只有 1 张开视差。
+  // ⚠️ 「不参与视差」（关视差 / depth 缺失 / depth 两根轴全 0）只写回**一次**基准位：每帧无条件写
+  // position 会盖掉脚本对同一对象的 origin 写入（layer-state.applyLayerState 直接写 three 对象）
+  // ⇒ 动态网格静止；而全库 34 张里只有 1 张开视差、22 条 entry 带 "0.00000 0.00000"。
   private tickParallax(dt: number): void {
     const cfg = this.parallaxCfg;
     if (!cfg) return;
@@ -849,7 +853,11 @@ export class ThreeScenePlayer {
       const x = entry.origin[0] - entry.sceneW / 2;
       const y = entry.origin[1] - entry.sceneH / 2;
       const z = entry.origin[2];
-      if (!cfg.enabled || !entry.parallaxDepth) {
+      // depth 全 0（scene.json 里有真值 "0.00000 0.00000"）与缺省同义 = 不参与视差：shift 恒 0，
+      // 但**写**这个动作本身会覆盖脚本位移，故必须归到「不写」分支。
+      const d = entry.parallaxDepth;
+      const depth = d && (d[0] !== 0 || d[1] !== 0) ? d : null;
+      if (!cfg.enabled || !depth) {
         if (entry.parallaxApplied) {
           entry.parallaxNode.position.set(x, y, z);
           entry.parallaxApplied = false;
@@ -864,7 +872,7 @@ export class ThreeScenePlayer {
         nodeX: x, nodeY: y,
         // three 坐标下主相机位于场景中心（we_to_three 已把中心移到原点）。
         camX: 0, camY: 0,
-        depth: entry.parallaxDepth,
+        depth,
         cfg,
       });
       entry.parallaxNode.position.set(x + sx, y + sy, z);
@@ -875,7 +883,12 @@ export class ThreeScenePlayer {
     for (const layer of this.particleLayers.values()) {
       const [cx, cy] = layer.parallaxCenter;
       const u = (layer.material.uniforms as Record<string, { value: THREE.Vector2 }>).u_Parallax;
-      if (!cfg.enabled || !layer.parallaxDepth) {
+      // 隔离层的位移落点只有 quad：quad 意外缺失时跳过本层，**不得**退化写 u_Parallax（那正是会
+      // 被 RT 边界裁掉的落点）。
+      if (layer.parallaxIsolated && !layer.parallaxQuad) continue;
+      const d = layer.parallaxDepth;
+      const depth = d && (d[0] !== 0 || d[1] !== 0) ? d : null;
+      if (!cfg.enabled || !depth) {
         if (layer.parallaxApplied) {
           if (layer.parallaxQuad) layer.parallaxQuad.position.set(cx, cy, layer.parallaxQuad.position.z);
           else u?.value.set(0, 0);
@@ -889,7 +902,7 @@ export class ThreeScenePlayer {
         orthoH: this.sceneHeight,
         nodeX: cx, nodeY: cy,
         camX: 0, camY: 0,
-        depth: layer.parallaxDepth,
+        depth,
         cfg,
       });
       if (layer.parallaxQuad) layer.parallaxQuad.position.set(cx + sx, cy + sy, layer.parallaxQuad.position.z);
@@ -1727,6 +1740,7 @@ export class ThreeScenePlayer {
         { width: opts.isolate.rtWidth, height: opts.isolate.rtHeight },
         { x: center[0], y: center[1], z: center[2] }, [0, 0, 0], 0, opts.renderOrder);
       // 隔离层的视差落点是合成 quad（内容 mesh 在对象 RT 内坐标为 -objCenter，不能在那里平移）。
+      layer.parallaxIsolated = true;
       layer.parallaxQuad = this.isolated.get(opts.isolate.objectId)?.quad;
     }
     // scene 对象 id → 显示对象（隔离时是合成 quad，否则是粒子对象本身）。

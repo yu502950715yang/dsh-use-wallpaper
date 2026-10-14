@@ -3361,6 +3361,40 @@ describe('视差逐帧应用', () => {
     expect(node.position.y).toBeCloseTo(-30, 6);
   });
 
+  // 偏差②的残留面：`[0,0]` 字段存在但是 truthy ⇒ 旧谓词 `!entry.parallaxDepth` 判不出「不参与视差」
+  // ⇒ 每帧 position.set(基准位) 会盖掉脚本写同一对象的 origin（shift 恒 0 只是数值上不可见）。
+  it('depth=[0,0]（字段存在但全 0）不参与视差：脚本写入的 position 不被每帧覆盖', () => {
+    const p = makePlayer();
+    const id = p.addBackground({ origin: [960, 540, 0], size: [100, 100], scale: [1, 1, 1], sceneW: 1920, sceneH: 1080, parallaxDepth: [0, 0] });
+    const node = p.backgroundMeshForTest(id);
+    p.setParallax(ON);
+    p.setParallaxPointer({ x: 1, y: 1 });
+    node.position.set(7, 9, 0);                  // 脚本写 origin（layer-state.applyLayerState 直接写 three 对象）
+    p.tickParallaxForTest(0.016);
+    p.tickParallaxForTest(0.016);
+    expect(node.position.x).toBe(7);
+    expect(node.position.y).toBe(9);
+  });
+
+  it('粒子层 depth=[0,0]：u_Parallax 一次都不写（等于不接管该层）；[1,1] 的邻居照常写', () => {
+    const p = makePlayer();
+    const verts = () => new Float32Array([0, 0, 0, 10, 0, 0, 1, 1, 1, 1]);
+    p.addParticle(verts, { frameCount: 1, blend: 'alpha', objectCenter: [100, 50, 0], parallaxDepth: [0, 0] });
+    p.addParticle(verts, { frameCount: 1, blend: 'alpha', objectCenter: [100, 50, 0], parallaxDepth: [1, 1] });
+    const [meshZero, meshDep] = p.scene.children as THREE.Mesh[];
+    const uZero = (meshZero.material as THREE.ShaderMaterial).uniforms.u_Parallax;
+    const setSpy = vi.spyOn(uZero.value, 'set');
+    p.setParallax(ON);
+    p.setParallaxPointer({ x: 1, y: 0.5 });
+    p.tickParallaxForTest(0.016);
+    p.tickParallaxForTest(0.016);
+    expect(setSpy).not.toHaveBeenCalled();
+    expect(uZero.value.x).toBe(0);
+    expect(uZero.value.y).toBe(0);
+    // 同帧的邻居仍在动 ⇒ 上面「没写」不是整个循环被跳过
+    expect((meshDep.material as THREE.ShaderMaterial).uniforms.u_Parallax.value.x).toBeCloseTo(-860, 3);
+  });
+
   it('隔离对象：平移写在合成 quad 上（内容 mesh 位置不动、quad rotation 不被视差改写）', () => {
     const p = makePlayer();
     const id = p.addBackground({
@@ -3428,6 +3462,34 @@ describe('视差逐帧应用', () => {
     p.tickParallaxForTest(0.016);
     expect(entry.quad.position.x).toBeCloseTo(100, 6);
     expect(entry.quad.position.y).toBeCloseTo(50, 6);
+  });
+
+  // 守卫：隔离层的位移只能落在合成 quad 上，quad 缺失时**必须跳过该层** —— 退化写 u_Parallax 会在
+  // 对象 RT 内平移内容并被 RT 边界裁掉（正是偏差①禁止的落点）。
+  it('隔离粒子层缺合成 quad：跳过该层，不退化为写 u_Parallax；同帧的非隔离层照常写', () => {
+    const p = makePlayer();
+    const verts = () => new Float32Array([0, 0, 0, 10, 0, 0, 1, 1, 1, 1]);
+    const captured: THREE.Mesh[] = [];
+    // 让 attachIsolated 不登记条目 ⇒ addParticle 里 `isolated.get(id)?.quad` 取到 undefined
+    //（真实成因：隔离条目缺失/被提前拆除），层本身仍是隔离层。
+    vi.spyOn(p as any, 'attachIsolated').mockImplementation((_id: number, _kind: string, content: THREE.Mesh) => {
+      captured.push(content);
+    });
+    p.addParticle(verts, {
+      frameCount: 1, blend: 'alpha', objectCenter: [100, 50, 0], parallaxDepth: [1, 1],
+      isolate: { objectId: 71, rtWidth: 100, rtHeight: 100, worldW: 100, worldH: 100 },
+    });
+    p.addParticle(verts, { frameCount: 1, blend: 'alpha', objectCenter: [100, 50, 0], parallaxDepth: [1, 1] });
+    const uIsolated = (captured[0].material as THREE.ShaderMaterial).uniforms.u_Parallax;
+    const setSpy = vi.spyOn(uIsolated.value, 'set');
+    const meshPlain = p.scene.children[0] as THREE.Mesh;
+    p.setParallax(ON);
+    p.setParallaxPointer({ x: 1, y: 0.5 });
+    p.tickParallaxForTest(0.016);
+    p.tickParallaxForTest(0.016);
+    expect(setSpy).not.toHaveBeenCalled();
+    expect(uIsolated.value.x).toBe(0);
+    expect((meshPlain.material as THREE.ShaderMaterial).uniforms.u_Parallax.value.x).toBeCloseTo(-860, 3);
   });
 
   it('帧循环：tickParallax 在 update 之后、render 之前', () => {
