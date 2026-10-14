@@ -1,13 +1,51 @@
 // WE puppet 模型（.mdl）解析：MDLV（网格）+ MDLS（骨骼）+ MDLA（动画）三段。
 // 段布局依据上游 mdl-parse.js 文档化口径（MDLV0021/0023 打包族 stride 80；MDLA0006 头 + 36B 关键帧），
-// 并兼容本机实测的静态变体（12B 固定头 + stride 48 顶点，段标记不存在）。畸形输入返回结构化错误、不抛
-// ——解析不了的 puppet 只能退化成普通贴图，不该拖垮整张壁纸。实测证据与口径差异见 AGENT.md §7.39。
+// 并兼容本机实测的静态变体（无段标记 + stride 48 顶点）。静态族的 stride 由候选集 + 紧覆盖推出，
+// 推不出唯一紧覆盖就拒收（不猜）；畸形输入一律返回结构化错误、不抛。实测口径见 AGENT.md §7.40。
 
 export const MDL_VERTEX_STRIDE = 80;
-/** 实测静态变体（本机唯一样本）的顶点记录：pos.xy@0 + 8 个常量 float + uv@40，共 12 float。 */
-const STATIC_VERTEX_STRIDE = 48;
+/** 静态族 stride 候选集：先筛「整除」、再筛「索引零越界」，最后按浪费率取最小。 */
+const STRIDE_CANDIDATES = [24, 28, 32, 36, 40, 44, 48, 52, 56, 64, 72, 80];
+/** 紧覆盖下限：最小浪费率超过它就不认这个块（宁可拒收，也不静默画错）。 */
+const MAX_STRIDE_WASTE = 0.05;
+const MIN_VERTEX_COUNT = 3;
+const MAX_VERTEX_COUNT = 200_000;
 const KEYFRAME_BYTES = 36; // f32[3] pos + f32[4] quat + f32[2] scale
 const SUPPORTED_MDLV = ['MDLV0013', 'MDLV0016', 'MDLV0017', 'MDLV0019', 'MDLV0021', 'MDLV0023'];
+
+/**
+ * 顶点记录布局表（键 = stride）：只有实测/文档化确认过的 stride 才敢解字段；
+ * 选中但表里没有 ⇒ 拒收，不去猜 pos/uv 的偏移。
+ */
+const VERTEX_LAYOUTS: Record<number, { posZ: boolean; uv: number; skin: boolean }> = {
+  48: { posZ: false, uv: 40, skin: false }, // 实测静态变体：pos.xy@0 + 8 个常量 float + uv@40
+  80: { posZ: true, uv: 72, skin: true },   // 文档化打包族：pos/boneIdx@40/weights@56/uv@72
+};
+
+/** 单个 stride 候选的判定痕迹（Task 7 排查用，不参与渲染）。 */
+export interface MdlStrideCandidate {
+  stride: number;
+  /** vertexBytes / stride（不整除时为 0） */
+  vertexCount: number;
+  /** vertexBytes % stride === 0 */
+  divides: boolean;
+  /** 通过「整除 + 顶点数在界内 + 索引零越界」 */
+  inRange: boolean;
+  /** 浪费率 = 1 − (maxIndex + 1) / vertexCount；未通过 inRange 时为 -1 */
+  waste: number;
+}
+
+/** 顶点块 stride 是怎么定下来的（Task 7 排查用，不参与渲染）。 */
+export interface MdlStrideInfo {
+  /** 成功 = 实际用于解码的 stride；失败 = 本会选中的候选（0 = 无候选） */
+  stride: number;
+  /** 命中原因：'packed-80'（蒙皮族固定）| 'tight-coverage' | 'waste-too-high' | 'ambiguous' | 'no-candidate' */
+  reason: string;
+  /** 索引缓冲里的最大索引 */
+  maxIndex: number;
+  /** 候选集全量判定（含被淘汰者与各自浪费率） */
+  candidates: MdlStrideCandidate[];
+}
 
 export interface MdlMesh {
   positions: Float32Array;
@@ -17,6 +55,8 @@ export interface MdlMesh {
   indices: Uint16Array;
   vertexCount: number;
   materialPath: string;
+  /** stride 判定痕迹（选中的 stride + 候选集与浪费率），Task 7 排查用 */
+  strideInfo: MdlStrideInfo;
 }
 
 export interface MdlBone {
@@ -52,7 +92,10 @@ export interface MdlPuppet {
   animations: MdlAnimation[];
 }
 
-export type MdlParseResult = { ok: true; puppet: MdlPuppet } | { ok: false; error: string };
+export type MdlParseResult =
+  | { ok: true; puppet: MdlPuppet }
+  /** strideInfo 只在因 stride 判定而拒收时带上（Task 7 排查用） */
+  | { ok: false; error: string; strideInfo?: MdlStrideInfo };
 
 function ascii(buf: Uint8Array, at: number, len: number): string {
   let s = '';
@@ -78,111 +121,196 @@ function indexOfAscii(buf: Uint8Array, marker: string): number {
   return -1;
 }
 
+/** 顶点块的两个族：蒙皮（打包）族 stride 固定 80；静态族 stride 由候选集 + 紧覆盖择一。 */
+type MeshFamily = 'packed' | 'static';
+
+/** 一次顶点块解码的结局：ok / hard（定位到了但不该猜 ⇒ 拒收）/ miss（不像顶点块 ⇒ 继续找）。 */
+type DecodeOutcome =
+  | { kind: 'ok'; mesh: MdlMesh }
+  | { kind: 'hard'; error: string; info: MdlStrideInfo }
+  | { kind: 'miss' };
+
+const MISS: DecodeOutcome = { kind: 'miss' };
+
+/** stride 择一结果：无候选是软失败（继续找别的块），并列/浪费超标是硬失败（拒收）。 */
+type StrideSelection =
+  | { ok: true; stride: number; info: MdlStrideInfo }
+  | { ok: false; hard: boolean; error: string; info: MdlStrideInfo };
+
+/** 候选集全量判定：整除 → 顶点数在界内且索引零越界 → 浪费率（未通过 inRange 记 -1）。 */
+function strideCandidates(vertexBytes: number, maxIndex: number): MdlStrideCandidate[] {
+  return STRIDE_CANDIDATES.map((stride) => {
+    const divides = vertexBytes % stride === 0;
+    const vertexCount = divides ? vertexBytes / stride : 0;
+    const inRange = divides && vertexCount >= MIN_VERTEX_COUNT && vertexCount <= MAX_VERTEX_COUNT && maxIndex < vertexCount;
+    return { stride, vertexCount, divides, inRange, waste: inRange ? 1 - (maxIndex + 1) / vertexCount : -1 };
+  });
+}
+
 /**
- * 校验一个顶点块候选并解码为 MdlMesh；任何自洽校验不过返回 null（调用方继续试下一个候选）。
- * 文档化口径：u32 顶点字节数 + 顶点流 + u32 索引字节数 + u16 索引。
- * 实测静态口径：u32 顶点数 + u32 顶点字节数 + 顶点流 + u32 索引字节数 + u16 索引。
+ * 静态族 stride 择一：整除 → 索引零越界 → 浪费率最小（紧覆盖）。
+ * 并列或最小浪费率 > 5% 一律拒收：宁可解析失败，也不静默挑一个画错的 stride。
+ */
+function selectStride(vertexBytes: number, maxIndex: number): StrideSelection {
+  const candidates = strideCandidates(vertexBytes, maxIndex);
+  const info = (stride: number, reason: string): MdlStrideInfo => ({ stride, reason, maxIndex, candidates });
+  const fits = candidates.filter((c) => c.inRange);
+  if (fits.length === 0) {
+    return { ok: false, hard: false, error: `stride-no-candidate:bytes=${vertexBytes}`, info: info(0, 'no-candidate') };
+  }
+  const minWaste = Math.min(...fits.map((c) => c.waste));
+  // 同一 vertexBytes 下各候选顶点数互不相同 ⇒ 并列实际不会出现，保留为「不猜」的守卫
+  const best = fits.filter((c) => c.waste <= minWaste + 1e-9);
+  if (best.length > 1) {
+    const strides = best.map((c) => c.stride).join('/');
+    return { ok: false, hard: true, error: `stride-ambiguous:${strides}:bytes=${vertexBytes}:maxIndex=${maxIndex}`, info: info(best[0].stride, 'ambiguous') };
+  }
+  if (minWaste > MAX_STRIDE_WASTE) {
+    const error = `stride-waste:${minWaste.toFixed(4)}:stride=${best[0].stride}:bytes=${vertexBytes}:maxIndex=${maxIndex}`;
+    return { ok: false, hard: true, error, info: info(best[0].stride, 'waste-too-high') };
+  }
+  return { ok: true, stride: best[0].stride, info: info(best[0].stride, 'tight-coverage') };
+}
+
+/**
+ * 校验一个顶点块候选并解码为 MdlMesh；不像顶点块即 miss（调用方继续试下一个位置）。
+ * 两种排版共用「u32 顶点字节数 @offset-4 + 顶点流 + u32 索引字节数 + u16 索引」的段结构。
  */
 function decodeMesh(
   buf: Uint8Array,
   dv: DataView,
   limit: number,
   verticesOffset: number,
-  kind: 'puppet' | 'static',
+  family: MeshFamily,
   materialPath: string,
-): MdlMesh | null {
-  const stride = kind === 'puppet' ? MDL_VERTEX_STRIDE : STATIC_VERTEX_STRIDE;
+): DecodeOutcome {
   const vertexBytes = dv.getUint32(verticesOffset - 4, true);
+  if (vertexBytes === 0) return MISS;
   const indexLenOffset = verticesOffset + vertexBytes;
-  if (vertexBytes === 0 || vertexBytes % stride !== 0) return null;
-  const vertexCount = vertexBytes / stride;
-  if (vertexCount < 3 || vertexCount > 200_000) return null;
-  if (indexLenOffset + 4 > limit || indexLenOffset + 4 > buf.length) return null;
+  if (indexLenOffset + 4 > limit || indexLenOffset + 4 > buf.length) return MISS;
   const indexBytes = dv.getUint32(indexLenOffset, true);
   const indicesOffset = indexLenOffset + 4;
   // 索引必是三角列表：偶数 + 3 的倍数
-  if (indexBytes === 0 || indexBytes % 6 !== 0) return null;
-  if (indicesOffset + indexBytes > limit || indicesOffset + indexBytes > buf.length) return null;
+  if (indexBytes === 0 || indexBytes % 6 !== 0) return MISS;
+  if (indicesOffset + indexBytes > limit || indicesOffset + indexBytes > buf.length) return MISS;
   const indexCount = indexBytes / 2;
   const indices = new Uint16Array(indexCount);
-  let bad = 0;
+  let maxIndex = 0;
+  // 静态族早退：任一索引 ≥ vertexBytes/24（最小候选也是 24B/顶点）⇒ 没有候选装得下它
+  const staticCap = vertexBytes / STRIDE_CANDIDATES[0];
   for (let i = 0; i < indexCount; i++) {
     const v = dv.getUint16(indicesOffset + i * 2, true);
     indices[i] = v;
-    if (v >= vertexCount) bad++;
+    if (v > maxIndex) maxIndex = v;
+    if (family === 'static' && v >= staticCap) return MISS;
   }
-  if (bad > indexCount * 0.02) return null;
+  let stride: number;
+  let strideInfo: MdlStrideInfo;
+  if (family === 'packed') {
+    // 蒙皮族：stride 恒为 80（brief 契约），索引允许 2% 越界 —— 与基线行为一致，不做紧覆盖择一
+    if (vertexBytes % MDL_VERTEX_STRIDE !== 0) return MISS;
+    const vertexCount = vertexBytes / MDL_VERTEX_STRIDE;
+    if (vertexCount < MIN_VERTEX_COUNT || vertexCount > MAX_VERTEX_COUNT) return MISS;
+    let bad = 0;
+    for (let i = 0; i < indexCount; i++) if (indices[i] >= vertexCount) bad++;
+    if (bad > indexCount * 0.02) return MISS;
+    stride = MDL_VERTEX_STRIDE;
+    strideInfo = { stride, reason: 'packed-80', maxIndex, candidates: strideCandidates(vertexBytes, maxIndex) };
+  } else {
+    const picked = selectStride(vertexBytes, maxIndex);
+    if (!picked.ok) return picked.hard ? { kind: 'hard', error: picked.error, info: picked.info } : MISS;
+    stride = picked.stride;
+    strideInfo = picked.info;
+  }
+  const layout = VERTEX_LAYOUTS[stride];
+  // 选中但没确认过字段布局 ⇒ 拒收（把判定痕迹留给 Task 7 判断是不是新变体）
+  if (!layout) {
+    const error = `stride-layout-unknown:${stride}:bytes=${vertexBytes}:maxIndex=${maxIndex}`;
+    return { kind: 'hard', error, info: strideInfo };
+  }
+  const vertexCount = vertexBytes / stride;
   const positions = new Float32Array(vertexCount * 3);
   const uvs = new Float32Array(vertexCount * 2);
-  const blendIndices = kind === 'puppet' ? new Uint16Array(vertexCount * 4) : null;
-  const blendWeights = kind === 'puppet' ? new Float32Array(vertexCount * 4) : null;
+  const blendIndices = layout.skin ? new Uint16Array(vertexCount * 4) : null;
+  const blendWeights = layout.skin ? new Float32Array(vertexCount * 4) : null;
   let weightOk = true;
   for (let i = 0; i < vertexCount; i++) {
     const o = verticesOffset + i * stride;
     const x = dv.getFloat32(o, true);
     const y = dv.getFloat32(o + 4, true);
-    const z = kind === 'puppet' ? dv.getFloat32(o + 8, true) : 0;
+    const z = layout.posZ ? dv.getFloat32(o + 8, true) : 0;
     // 位置合理性：非有限或量级失控 ⇒ 这个候选是垃圾块（选错会把顶点炸到 1e28）
-    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return null;
-    if (Math.abs(x) > 1e6 || Math.abs(y) > 1e6 || Math.abs(z) > 1e6) return null;
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return MISS;
+    if (Math.abs(x) > 1e6 || Math.abs(y) > 1e6 || Math.abs(z) > 1e6) return MISS;
     positions[i * 3] = x;
     positions[i * 3 + 1] = y;
     positions[i * 3 + 2] = z;
-    const uvOff = kind === 'puppet' ? 72 : 40;
-    uvs[i * 2] = dv.getFloat32(o + uvOff, true);
-    uvs[i * 2 + 1] = dv.getFloat32(o + uvOff + 4, true);
-    if (kind === 'puppet') {
+    uvs[i * 2] = dv.getFloat32(o + layout.uv, true);
+    uvs[i * 2 + 1] = dv.getFloat32(o + layout.uv + 4, true);
+    if (layout.skin && blendIndices && blendWeights) {
       let sum = 0;
       for (let k = 0; k < 4; k++) {
-        blendIndices![i * 4 + k] = dv.getUint32(o + 40 + k * 4, true);
+        blendIndices[i * 4 + k] = dv.getUint32(o + 40 + k * 4, true);
         const w = dv.getFloat32(o + 56 + k * 4, true);
-        blendWeights![i * 4 + k] = w;
+        blendWeights[i * 4 + k] = w;
         sum += w;
       }
       if (Math.abs(sum - 1) > 0.05) weightOk = false;
     }
   }
-  if (!Number.isFinite(uvs[0]) || !Number.isFinite(uvs[uvs.length - 1])) return null;
+  if (!Number.isFinite(uvs[0]) || !Number.isFinite(uvs[uvs.length - 1])) return MISS;
   return {
-    positions,
-    uvs,
-    // 权重不自洽 ⇒ 按静态网格渲染（不蒙皮），不把垃圾权重交给蒙皮
-    blendIndices: kind === 'puppet' && weightOk ? blendIndices : null,
-    blendWeights: kind === 'puppet' && weightOk ? blendWeights : null,
-    indices,
-    vertexCount,
-    materialPath,
+    kind: 'ok',
+    mesh: {
+      positions,
+      uvs,
+      // 权重不自洽 ⇒ 按静态网格渲染（不蒙皮），不把垃圾权重交给蒙皮
+      blendIndices: layout.skin && weightOk ? blendIndices : null,
+      blendWeights: layout.skin && weightOk ? blendWeights : null,
+      indices,
+      vertexCount,
+      materialPath,
+      strideInfo,
+    },
   };
 }
 
 /**
  * 网格块定位：文档化锚点（两种填充长度都试）优先，然后从 9 起逐字节扫描（参考实现口径）。
- * 每个位置都试「打包族（u32 顶点字节数 + stride 80）」与「实测静态变体（u32 顶点数 +
- * u32 顶点字节数 + stride 48）」两种排版 —— 头部填充长度在样本间不固定，只能靠自洽校验认。
+ * 每个位置都试「蒙皮族（u32 顶点字节数 + stride 80）」与「静态族（同一段结构 + 候选集紧覆盖择一）」
+ * 两种排版 —— 头部填充长度在样本间不固定，只能靠自洽校验认。
  */
-function parseMesh(buf: Uint8Array, dv: DataView, meshLimit: number): MdlMesh | null {
+function parseMesh(buf: Uint8Array, dv: DataView, meshLimit: number): { mesh: MdlMesh } | { error: string; info?: MdlStrideInfo } {
   const [docMaterial, docAfterMat] = cstr(buf, 9, meshLimit);
   const [materialPath] = cstr(buf, 21, meshLimit);
+  // 定位到块上的硬失败（stride 不唯一 / 无字段布局）要留痕：整份文件都找不出网格时上报，
+  // 但不立即中止 —— 锚点与扫描都可能先撞上假块，立即中止会把本可解析的文件误拒。
+  const hard: Array<{ error: string; info: MdlStrideInfo }> = [];
+  const attempt = (offset: number, family: MeshFamily, path: string): MdlMesh | null => {
+    const out = decodeMesh(buf, dv, meshLimit, offset, family, path);
+    if (out.kind === 'ok') return out.mesh;
+    if (out.kind === 'hard' && hard.length === 0) hard.push({ error: out.error, info: out.info });
+    return null;
+  };
   // 文档化口径：magic(9) + u32 + u32 + 材质 cstr（NUL 后 32B/36B 填充）→ u32 顶点字节数
   for (const pad of [32, 36]) {
     const offset = docAfterMat + pad + 4;
     if (offset + 12 > meshLimit) continue;
-    for (const kind of ['puppet', 'static'] as const) {
-      const mesh = decodeMesh(buf, dv, meshLimit, offset, kind, kind === 'static' ? materialPath : docMaterial);
-      if (mesh) return mesh;
+    for (const family of ['packed', 'static'] as const) {
+      const mesh = attempt(offset, family, family === 'static' ? materialPath : docMaterial);
+      if (mesh) return { mesh };
     }
   }
   for (let offset = 9; offset + 12 < meshLimit; offset++) {
-    // 便宜预筛：至少一种排版的顶点字节数要整除（否则 decodeMesh 必然拒绝）
-    const v80 = dv.getUint32(offset - 4, true);
-    const v48 = dv.getUint32(offset, true);
-    if (!(v80 > 0 && v80 % MDL_VERTEX_STRIDE === 0) && !(v48 > 0 && v48 % STATIC_VERTEX_STRIDE === 0)) continue;
-    for (const kind of ['static', 'puppet'] as const) {
-      const mesh = decodeMesh(buf, dv, meshLimit, offset, kind, materialPath);
-      if (mesh) return mesh;
+    // 便宜预筛：顶点字节数（@offset-4）至少要能被某个候选 stride 整除，否则 decodeMesh 必然拒绝
+    const vertexBytes = dv.getUint32(offset - 4, true);
+    if (vertexBytes === 0 || !STRIDE_CANDIDATES.some((s) => vertexBytes % s === 0)) continue;
+    for (const family of ['static', 'packed'] as const) {
+      const mesh = attempt(offset, family, materialPath);
+      if (mesh) return { mesh };
     }
   }
-  return null;
+  return hard.length > 0 ? { error: hard[0].error, info: hard[0].info } : { error: 'mesh-parse-failed' };
 }
 
 /** 绑定矩阵合理性：全有限、量级可控、最后一行是齐次行 (0,0,0,1)。 */
@@ -325,11 +453,15 @@ export function parseMdl(buf: Uint8Array): MdlParseResult {
       const at = indexOfAscii(buf, marker);
       if (at >= 0 && at < meshLimit) meshLimit = at;
     }
-    const mesh = parseMesh(buf, dv, meshLimit);
-    if (!mesh) return { ok: false, error: 'mesh-parse-failed' };
+    const located = parseMesh(buf, dv, meshLimit);
+    if ('error' in located) {
+      return located.info
+        ? { ok: false, error: located.error, strideInfo: located.info }
+        : { ok: false, error: located.error };
+    }
     const bones = parseBones(buf, dv);
     const animations = parseAnimations(buf, dv, bones.length);
-    return { ok: true, puppet: { version, mesh, bones, animations } };
+    return { ok: true, puppet: { version, mesh: located.mesh, bones, animations } };
   } catch {
     // 越界读取等异常一律收成结构化错误（契约：畸形输入不抛）
     return { ok: false, error: 'malformed' };

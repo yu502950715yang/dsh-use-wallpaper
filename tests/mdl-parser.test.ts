@@ -113,3 +113,103 @@ describe('mdl-parser', () => {
     expect(parseMdl(buf).ok).toBe(true);
   });
 });
+
+// ── 静态族夹具（本机实测口径）：无 MDLS/MDLA/MDLE 段标记 + 顶点块 stride 48 ─────────────
+// 头 = magic(9) + u16 9 + u32 1 + u32 1 + u16 0（12B 二进制头 + 2B 对齐）⇒ 材质串 @21；
+// 之后 7×u32 零 + u32 15（语义未确认，原样保留）+ u32 vertexBytes（实测 @53+4k 口径）；
+// 顶点记录 stride 48：pos.xy @+0/+4、8 个常量 float @+8..+36、uv @+40/+44；随后 u32 索引字节数 + u16 索引。
+const STATIC_STRIDE = 48;
+const STATIC_VERTEX_COUNT = 10;
+const STATIC_CONSTANTS = [0, 0, 0, 1, 1, 0, 0, 1]; // 实测在全部 1850 条记录上恒定（语义未知，不映射）
+
+/** 静态族夹具（字段可覆写以构造畸形变体）：返回可直接喂 parseMdl 的字节流。 */
+function buildStaticFixture(opts: { vertexBytes?: number; indexValues?: number[] } = {}): Uint8Array {
+  const vertexBytes = opts.vertexBytes ?? STATIC_STRIDE * STATIC_VERTEX_COUNT;
+  const indexValues = opts.indexValues ?? [0, 1, 2, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+  const material = 'materials/static.json';
+  const verticesOffset = 21 + material.length + 1 + 7 * 4 + 4 + 4;
+  const indexLenOffset = verticesOffset + vertexBytes;
+  const buf = new Uint8Array(indexLenOffset + 4 + indexValues.length * 2);
+  const dv = new DataView(buf.buffer);
+  const ascii = (s: string, at: number) => { for (let i = 0; i < s.length; i++) buf[at + i] = s.charCodeAt(i); };
+  ascii('MDLV0021', 0);
+  dv.setUint16(9, 9, true);
+  dv.setUint32(11, 1, true);
+  dv.setUint32(15, 1, true);
+  ascii(material, 21); // 结束 NUL 落在下一字节（默认 0）
+  dv.setUint32(verticesOffset - 8, 15, true);
+  dv.setUint32(verticesOffset - 4, vertexBytes, true);
+  for (let i = 0; i < Math.floor(vertexBytes / STATIC_STRIDE); i++) {
+    const o = verticesOffset + i * STATIC_STRIDE;
+    dv.setFloat32(o, i, true); dv.setFloat32(o + 4, i * 2, true);
+    for (let k = 0; k < STATIC_CONSTANTS.length; k++) dv.setFloat32(o + 8 + k * 4, STATIC_CONSTANTS[k], true);
+    dv.setFloat32(o + 40, i / 4, true); dv.setFloat32(o + 44, 0.25, true);
+  }
+  dv.setUint32(indexLenOffset, indexValues.length * 2, true);
+  for (let i = 0; i < indexValues.length; i++) dv.setUint16(indexLenOffset + 4 + i * 2, indexValues[i], true);
+  return buf;
+}
+
+describe('mdl-parser · 静态族（无段标记 + stride 候选集择一）', () => {
+  it('静态族夹具：无 MDLS/MDLA ⇒ bones/animations 为空、blendWeights=null，几何按 stride 48 解码', () => {
+    const r = parseMdl(buildStaticFixture());
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const { mesh } = r.puppet;
+    expect(mesh.vertexCount).toBe(STATIC_VERTEX_COUNT);
+    expect([...mesh.positions.slice(0, 6)]).toEqual([0, 0, 0, 1, 2, 0]);
+    expect([...mesh.uvs.slice(0, 4)]).toEqual([0, 0.25, 0.25, 0.25]);
+    expect([...mesh.indices]).toEqual([0, 1, 2, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(mesh.blendIndices).toBeNull();
+    expect(mesh.blendWeights).toBeNull();
+    expect(mesh.materialPath).toBe('materials/static.json');
+    expect(r.puppet.bones).toEqual([]);
+    expect(r.puppet.animations).toEqual([]);
+  });
+
+  it('静态族 stride 判定：候选集 + 紧覆盖选出 48，诊断字段记下候选列表与各候选浪费率', () => {
+    const r = parseMdl(buildStaticFixture());
+    if (!r.ok) throw new Error(r.error);
+    const info = r.puppet.mesh.strideInfo;
+    expect(info.stride).toBe(48);
+    expect(info.reason).toBe('tight-coverage');
+    expect(info.maxIndex).toBe(9);
+    expect(info.candidates.map((c) => c.stride)).toEqual([24, 28, 32, 36, 40, 44, 48, 52, 56, 64, 72, 80]);
+    const by = new Map(info.candidates.map((c) => [c.stride, c]));
+    expect(by.get(48)!.waste).toBe(0);                 // 紧覆盖：1850 ≈ maxIndex+1
+    expect(by.get(40)!.waste).toBeCloseTo(1 - 10 / 12, 6);
+    expect(by.get(80)!.inRange).toBe(false);           // 6 顶点 < maxIndex 9 ⇒ 越界
+    expect(by.get(28)!.divides).toBe(false);
+    // 其余能容纳全部索引的候选浪费率都 > 5% ⇒ 48 是唯一紧覆盖者
+    for (const c of info.candidates) if (c.inRange && c.stride !== 48) expect(c.waste).toBeGreaterThan(0.05);
+  });
+
+  it('静态族畸形变体：截断 / 坏 magic / 索引越界 / vertexBytes 不整除任何候选 ⇒ 各 {ok:false} 且不抛', () => {
+    // 截断（顶点块中途切断）
+    const truncated = buildStaticFixture().slice(0, 79 + 200);
+    expect(() => parseMdl(truncated)).not.toThrow();
+    expect(parseMdl(truncated).ok).toBe(false);
+    // 坏 magic
+    const badMagic = buildStaticFixture();
+    badMagic[0] = 0x58; // 'X'
+    expect(parseMdl(badMagic).ok).toBe(false);
+    // 索引越界：stride 48 下 maxIndex 11 ≥ 10 顶点；紧覆盖会指向 40（无字段布局）⇒ 拒收
+    const outOfRange = parseMdl(buildStaticFixture({ indexValues: [0, 1, 11, 1, 2, 3, 4, 5, 6, 7, 8, 9] }));
+    expect(outOfRange.ok).toBe(false);
+    if (!outOfRange.ok) expect(outOfRange.error).toMatch(/^stride-/);
+    // vertexBytes 不整除候选集里任何成员（481 = 13 × 37，候选全是偶数）
+    expect(parseMdl(buildStaticFixture({ vertexBytes: 481 })).ok).toBe(false);
+  });
+
+  it('stride 判定不猜：最小浪费率 >5% 时返回结构化错误与诊断，不落网格', () => {
+    const r = parseMdl(buildStaticFixture({ vertexBytes: 432, indexValues: [0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2] }));
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toMatch(/^stride-waste:/);
+    // 诊断要说清「本会选中谁、为什么不要」：432B 下唯一最紧的是 72（6 顶点，浪费 50%）
+    expect(r.strideInfo?.stride).toBe(72);
+    expect(r.strideInfo?.reason).toBe('waste-too-high');
+    expect(r.strideInfo?.maxIndex).toBe(2);
+    expect(r.strideInfo?.candidates).toHaveLength(12);
+  });
+});
