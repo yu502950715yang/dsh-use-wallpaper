@@ -258,15 +258,17 @@ export function createThreeSceneRenderer(opts?: {
     if (!healthHandler) return;
     try { healthHandler(snap); } catch { /* 订阅者异常不得影响渲染 */ }
   };
-  const fail = (kind: HardFailureKind | SoftFailureKind, detail: string) => {
+  // id 由调用方按**本次 render 的作用域**传入：render 可重叠（controller 允许 select 竞态），
+  // 用实例级 currentHealthId 会把被取代那次 render 的结论记到新壁纸键上。
+  const fail = (id: string, kind: HardFailureKind | SoftFailureKind, detail: string) => {
     const hard = isHardFailure(kind);
-    if (hard) health.recordHard(currentHealthId, kind as HardFailureKind, detail);
-    else health.recordSoft(currentHealthId, kind as SoftFailureKind, detail);
-    publish(health.snapshot(currentHealthId));
+    if (hard) health.recordHard(id, kind as HardFailureKind, detail);
+    else health.recordSoft(id, kind as SoftFailureKind, detail);
+    publish(health.snapshot(id));
   };
-  const succeed = (assembleMs: number) => {
-    health.recordOk(currentHealthId, { assembleMs, firstFrameMs: firstFrameAt });
-    publish(health.snapshot(currentHealthId));
+  const succeed = (id: string, assembleMs: number) => {
+    health.recordOk(id, { assembleMs, firstFrameMs: firstFrameAt });
+    publish(health.snapshot(id));
   };
 
   const stopAudio = () => {
@@ -295,8 +297,8 @@ export function createThreeSceneRenderer(opts?: {
     contextLost = true;
     const id = contextLostId;
     // 硬失败只在这里记一次（事件驱动）：覆盖「装配进行中」与「装配完成、帧循环已跑起来后」两条路径；
-    // abortIfContextLost 只管中止装配，不再记录（否则同一次丢失会被记两遍）。
-    fail('context-lost', 'webglcontextlost');
+    // abortIfContextLost 只管中止装配，不再记录（否则同一次丢失会被记两遍）。归属用监听所属的那次装配。
+    fail(id ?? '', 'context-lost', 'webglcontextlost');
     try { teardown(); } catch { /* 释放失败不得掩盖回退 */ }
     // 先告警再早退：没有 id 也不得让上下文丢失完全静默（诊断上必须留痕）。
     if (!id) {
@@ -406,12 +408,12 @@ export function createThreeSceneRenderer(opts?: {
           sceneJsonResp = await fetch(`/wallpapers/scene/${id}/asset?name=scene.json`);
         } catch (e) {
           // 网络/磁盘一时没供上 ⇒ 软失败（不落盘，冷却后自动重试一次）
-          fail('load-error', e instanceof Error ? e.message : String(e));
+          fail(id, 'load-error', e instanceof Error ? e.message : String(e));
           return false;
         }
         if (!sceneJsonResp.ok) {
           // 服务端明确回答「这份 scene.json 拿不到」⇒ 硬失败
-          fail('scene-json', 'http ' + sceneJsonResp.status);
+          fail(id, 'scene-json', 'http ' + sceneJsonResp.status);
           return false;
         }
         const sceneJson = await sceneJsonResp.text();
@@ -708,12 +710,12 @@ export function createThreeSceneRenderer(opts?: {
           },
         };
         // 首帧耗时：宿主注入的 onFrame 第一次被调用即「真的画出了一帧」。
+        // 归属用本闭包捕获的 id（本次装配），与出口打点同一套归属。
         const userOnFrame = assets.onFrame;
         assets.onFrame = (dt: number) => {
           if (firstFrameAt < 0) {
             firstFrameAt = performance.now() - renderStartedAt;
-            health.recordOk(id, { assembleMs: performance.now() - renderStartedAt, firstFrameMs: firstFrameAt });
-            publish(health.snapshot(id));
+            succeed(id, firstFrameAt);
           }
           userOnFrame?.(dt);
         };
@@ -861,17 +863,17 @@ export function createThreeSceneRenderer(opts?: {
         );
         // 零背景 + 零粒子 → 无内容，返回 false 由 controller 走 preview 兜底（不显示空 canvas）。
         if (result.backgroundIds.length === 0 && result.particleLayers.length === 0) {
-          fail('no-visible-objects', 'background=0 particleLayers=0');
+          fail(id, 'no-visible-objects', 'background=0 particleLayers=0');
           teardown();
           return false;
         }
         // 打点必须在零可见对象判定**之后**：空场景不是成功。
-        succeed(performance.now() - renderStartedAt);
+        succeed(id, performance.now() - renderStartedAt);
         return true;
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         console.warn('[three] scene render failed:', msg);
-        fail('exception', msg);
+        fail(id, 'exception', msg);
         teardown();
         return false;
       }

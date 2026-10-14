@@ -2515,4 +2515,75 @@ describe('scene 渲染看护：失败分类与打点', () => {
     await expect(r.render('wid-ok2', document.createElement('canvas'))).resolves.toBe(true);
     r.dispose();
   });
+
+  // 归属回归：controller 允许 select 重叠（wallpaper-controller 的 generation 竞态 + 两次 await render），
+  // 故「上一次 render 的结论」绝不能落到当前壁纸键上。
+  it('A 的 render 未决期间 B 开始 render：A 的失败必须落在 A 的键上，B 的快照不受影响', async () => {
+    const store = createRenderHealthStore({ storage: null });
+    resolveImageTexture.mockResolvedValue(fakeTexture() as never);
+    defaultLoadWasm.mockResolvedValue(null);
+    loadSceneToThree.mockReturnValue(okPlayer() as never);
+    // A 的 scene.json 响应悬挂（慢盘/慢网），B 走正常路径 ⇒ 两次 render 重叠。
+    let releaseA!: () => void;
+    const gateA = new Promise<void>((res) => { releaseA = res; });
+    let aAtFetch!: () => void;
+    const aFetching = new Promise<void>((res) => { aAtFetch = res; });
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
+      if (String(url).includes('/scene/A/')) {
+        aAtFetch();
+        await gateA;
+        return { ok: false, status: 404, text: async () => '' }; // A 最终硬失败
+      }
+      return { ok: true, status: 200, text: async () => SCENE_ONE_IMAGE };
+    }));
+    const r = createThreeSceneRenderer({ healthStore: store });
+
+    const pendingA = r.render('A', document.createElement('canvas'), null);
+    await aFetching; // A 已挂在 fetch 上（await 未决），此时 B 的 render 顶上
+    expect(await r.render('B', document.createElement('canvas'), null)).toBe(true);
+    expect(store.snapshot('B').ok).toBe(true); // B 走成功出口，快照已是「好」
+    releaseA();
+    await expect(pendingA).resolves.toBe(false);
+
+    // 关键：A 的结论只能写在 A 上。写错键 ⇒ B 被记忆成「拿不到 scene.json」且不再自动重试。
+    expect(store.snapshot('A').failure?.kind).toBe('scene-json');
+    expect(store.snapshot('A').failure?.hard).toBe(true);
+    const snapB = store.snapshot('B');
+    expect(snapB.failure).toBeNull();
+    expect(snapB.ok).toBe(true);
+    r.dispose();
+  });
+
+  it('A 的 render 未决期间 B 以硬失败告终：A 随后装配成功仍须记在 A 上', async () => {
+    const store = createRenderHealthStore({ storage: null });
+    resolveImageTexture.mockResolvedValue(fakeTexture() as never);
+    defaultLoadWasm.mockResolvedValue(null);
+    loadSceneToThree.mockReturnValue(okPlayer() as never);
+    let releaseA!: () => void;
+    const gateA = new Promise<void>((res) => { releaseA = res; });
+    let aAtFetch!: () => void;
+    const aFetching = new Promise<void>((res) => { aAtFetch = res; });
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
+      if (String(url).includes('/scene/A/')) {
+        aAtFetch();
+        await gateA;
+        return { ok: true, status: 200, text: async () => SCENE_ONE_IMAGE }; // A 最终装配成功
+      }
+      return { ok: false, status: 404, text: async () => '' }; // B 硬失败
+    }));
+    const r = createThreeSceneRenderer({ healthStore: store });
+
+    const pendingA = r.render('A', document.createElement('canvas'), null);
+    await aFetching;
+    expect(await r.render('B', document.createElement('canvas'), null)).toBe(false);
+    expect(store.snapshot('B').failure?.kind).toBe('scene-json');
+    releaseA();
+    await expect(pendingA).resolves.toBe(true);
+
+    // 成功同样按本次 render 的 id 记：A 的装配耗时不得写进 B（B 的硬失败结论也不得被抹掉）。
+    expect(store.snapshot('A').ok).toBe(true);
+    expect(store.snapshot('A').timing?.assembleMs).toBeGreaterThanOrEqual(0);
+    expect(store.snapshot('B').failure?.kind).toBe('scene-json');
+    r.dispose();
+  });
 });

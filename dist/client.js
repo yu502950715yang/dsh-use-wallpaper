@@ -29538,15 +29538,15 @@ function createThreeSceneRenderer(opts) {
     } catch {
     }
   };
-  const fail = (kind, detail) => {
+  const fail = (id, kind, detail) => {
     const hard = isHardFailure(kind);
-    if (hard) health.recordHard(currentHealthId, kind, detail);
-    else health.recordSoft(currentHealthId, kind, detail);
-    publish(health.snapshot(currentHealthId));
+    if (hard) health.recordHard(id, kind, detail);
+    else health.recordSoft(id, kind, detail);
+    publish(health.snapshot(id));
   };
-  const succeed = (assembleMs) => {
-    health.recordOk(currentHealthId, { assembleMs, firstFrameMs: firstFrameAt });
-    publish(health.snapshot(currentHealthId));
+  const succeed = (id, assembleMs) => {
+    health.recordOk(id, { assembleMs, firstFrameMs: firstFrameAt });
+    publish(health.snapshot(id));
   };
   const stopAudio = () => {
     const audio = currentAudio;
@@ -29567,7 +29567,7 @@ function createThreeSceneRenderer(opts) {
     e.preventDefault();
     contextLost = true;
     const id = contextLostId;
-    fail("context-lost", "webglcontextlost");
+    fail(id ?? "", "context-lost", "webglcontextlost");
     try {
       teardown();
     } catch {
@@ -29661,11 +29661,11 @@ function createThreeSceneRenderer(opts) {
         try {
           sceneJsonResp = await fetch(`/wallpapers/scene/${id}/asset?name=scene.json`);
         } catch (e) {
-          fail("load-error", e instanceof Error ? e.message : String(e));
+          fail(id, "load-error", e instanceof Error ? e.message : String(e));
           return false;
         }
         if (!sceneJsonResp.ok) {
-          fail("scene-json", "http " + sceneJsonResp.status);
+          fail(id, "scene-json", "http " + sceneJsonResp.status);
           return false;
         }
         const sceneJson = await sceneJsonResp.text();
@@ -29896,8 +29896,7 @@ function createThreeSceneRenderer(opts) {
         assets.onFrame = (dt) => {
           if (firstFrameAt < 0) {
             firstFrameAt = performance.now() - renderStartedAt;
-            health.recordOk(id, { assembleMs: performance.now() - renderStartedAt, firstFrameMs: firstFrameAt });
-            publish(health.snapshot(id));
+            succeed(id, firstFrameAt);
           }
           userOnFrame?.(dt);
         };
@@ -30015,16 +30014,16 @@ function createThreeSceneRenderer(opts) {
           `[three] scene loaded id=${id} background=${result.backgroundIds.length} particleLayers=${result.particleLayers.length}`
         );
         if (result.backgroundIds.length === 0 && result.particleLayers.length === 0) {
-          fail("no-visible-objects", "background=0 particleLayers=0");
+          fail(id, "no-visible-objects", "background=0 particleLayers=0");
           teardown();
           return false;
         }
-        succeed(performance.now() - renderStartedAt);
+        succeed(id, performance.now() - renderStartedAt);
         return true;
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         console.warn("[three] scene render failed:", msg);
-        fail("exception", msg);
+        fail(id, "exception", msg);
         teardown();
         return false;
       }
