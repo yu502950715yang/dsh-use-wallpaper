@@ -254,6 +254,7 @@ describe('window.__wallpaperEngine 看护入口', () => {
       failure: { kind: 'no-visible-objects', hard: true, at: 1, detail: '' },
     };
 
+    engine().select('w1'); // 打点只对「当前选中壁纸」生效 ⇒ 先选中它
     onHealth(ok);
     expect(notifyWallpaperHealth).toHaveBeenLastCalledWith(ok);
     onHealth(hard); // 硬失败也要推（冷却重试的早退不得挡住面板推送）
@@ -289,5 +290,30 @@ describe('window.__wallpaperEngine 看护入口', () => {
     selectWallpaper('w1');
     await tick();
     expect(handler.get()?.wallpaperId).toBe('w1');
+  });
+
+  // fix round 1（Important）：切走后旧壁纸迟到的打点不得覆盖面板（onHealth 的 id 守卫）。
+  it('面板接线：切走后迟到的旧壁纸健康事件不推面板，当前壁纸的事件照推', async () => {
+    bootstrap();
+    await tick();
+    const onHealth = rendererMock.setOnHealth.mock.calls[0]![0] as (s: HealthSnapshot) => void;
+    const w1ok: HealthSnapshot = { wallpaperId: 'w1', ok: true, failure: null, timing: { assembleMs: 10, firstFrameMs: 20 } };
+
+    engine().select('w1');
+    onHealth(w1ok);
+    expect(notifyWallpaperHealth).toHaveBeenLastCalledWith(w1ok); // 当前选中 ⇒ 照推
+
+    engine().select('w2'); // 用户切走（或切到已取消的空 id）
+    vi.mocked(notifyWallpaperHealth).mockClear();
+    const late: HealthSnapshot = {
+      wallpaperId: 'w1', ok: false, timing: null,
+      failure: { kind: 'no-visible-objects', hard: true, at: 1, detail: '' },
+    };
+    onHealth(late);
+    expect(notifyWallpaperHealth).not.toHaveBeenCalled(); // 迟到的旧壁纸打点被守卫挡掉
+
+    const w2ok: HealthSnapshot = { wallpaperId: 'w2', ok: true, failure: null, timing: { assembleMs: 1, firstFrameMs: 2 } };
+    onHealth(w2ok);
+    expect(notifyWallpaperHealth).toHaveBeenLastCalledWith(w2ok); // 守卫不误伤当前壁纸
   });
 });

@@ -14,6 +14,34 @@ import type { ProbeResult } from '../../src/shared/types.js';
 // 网格切换 / 取消壁纸 / 路径配置（手动 + 自动探测）。数据与动作经 props 注入
 // （默认走真实 API），测试只关心组件行为。
 
+// ── 端到端接线（index.ts）的替身：面板仍是真实组件，只把渲染器/控制器/层/样式替身掉，
+// 断言落在 .wss-live-status 的 textContent 上（健康事件是否真的上屏）。
+const e2eSelect = vi.hoisted(() => vi.fn(async () => {}));
+const e2eHealth = vi.hoisted(() => ({
+  last: null as HealthSnapshot | null,
+  onHealth: null as ((s: HealthSnapshot) => void) | null,
+}));
+vi.mock('../../src/client/background-layer.js', () => ({
+  createBackgroundLayer: () => ({
+    root: document.createElement('div'),
+    setOverlayOpacity() {}, setBlur() {}, setPaused() {},
+    showNone() {}, showImage() {}, showVideo() {}, showWeb() {},
+  }),
+}));
+vi.mock('../../src/client/wallpaper-controller.js', () => ({
+  createWallpaperController: () => ({ load: async () => {}, select: e2eSelect, applyTextStyle() {} }),
+}));
+vi.mock('../../src/client/styles.js', () => ({ injectWallpaperStyles: vi.fn() }));
+vi.mock('../../src/client/three-renderer.js', () => ({
+  createThreeSceneRenderer: () => ({
+    getLastHealth: () => e2eHealth.last,
+    setOnHealth: (fn: ((s: HealthSnapshot) => void) | null) => { e2eHealth.onHealth = fn; },
+    setPaused() {}, setQualityScale() {}, setGlow() {}, setSoundEnabled() {}, dispose() {},
+  }),
+}));
+
+import { bootstrap } from '../../src/client/index.js';
+
 const BASE_SETTINGS: ClientSettings = {
   selectedWallpaperId: '1', wallpaperDir: '', weAssetsDir: '',
   overlayOpacity: 0.35, blurEnabled: false, blurRadius: 12, kenBurns: true,
@@ -65,7 +93,18 @@ async function unmount() {
   container.remove();
 }
 
-afterEach(async () => { await unmount(); vi.restoreAllMocks(); });
+// 收尾本用例启动的 index.ts 实例（否则下一个用例的 bootstrap 会先跑旧实例收尾）。
+function teardownEngine() {
+  const api = (window as any).__wallpaperEngine;
+  try { api?.teardown?.(); } catch { /* 已收尾 */ }
+  delete (window as any).__wallpaperEngine;
+  delete (window as any).__wpEngineTeardown;
+}
+
+const engine = () => (window as any).__wallpaperEngine;
+const statusText = () => (container.querySelector('.wss-live-status') as HTMLElement | null)?.textContent ?? '';
+
+afterEach(async () => { await unmount(); teardownEngine(); vi.restoreAllMocks(); });
 
 describe('WallpaperSettingsSection', () => {
   it('渲染壁纸网格并标记当前选中项', async () => {
@@ -450,5 +489,68 @@ describe('WallpaperSettingsSection', () => {
     off();
     notifyWallpaperHealth(null);
     expect(seen).toHaveLength(1); // 已退订 ⇒ 不再收到
+  });
+
+  // fix round 1（Important）：切走之后旧壁纸迟到的健康事件不得覆盖面板 —— 面板常驻显示
+  // 已被取代壁纸的状态时，get() 已是 null，失败文案对应的「重试」还会作用到另一张壁纸。
+  it('端到端：切走后迟到的旧壁纸失败事件不覆盖面板（只有当前选中壁纸的状态上屏）', async () => {
+    e2eHealth.last = null;
+    e2eHealth.onHealth = null;
+    e2eSelect.mockClear();
+    bootstrap();
+    await flush(); // 启动异步读设置先落地，否则本次驱动会被这一次读回覆盖
+    const onHealth = e2eHealth.onHealth!;
+    // onSelect: undefined 必须显式给：mount 的默认 props 里注入了 noop onSelect，
+    // 不给它就永远走不到 index.ts 注册的共享 handler（这条用例要验的正是那条路径）。
+    mount({ onSelect: undefined, fetchSettings: async () => BASE_SETTINGS, writeSettings: async () => {} });
+    await flush();
+
+    // 选中 '1'（scene）后它的正常状态上屏
+    (container.querySelectorAll('.wss-thumb')[0] as HTMLElement).click();
+    await flush();
+    expect(e2eSelect).toHaveBeenLastCalledWith('1');
+    e2eHealth.last = { wallpaperId: '1', ok: true, failure: null, timing: { assembleMs: 30, firstFrameMs: 60 } };
+    onHealth(e2eHealth.last);
+    await flush();
+    expect(statusText()).toContain('实时渲染正常');
+
+    // 切到 '2'（视频）：选中项已不是 '1'
+    (container.querySelectorAll('.wss-thumb')[1] as HTMLElement).click();
+    await flush();
+    expect(e2eSelect).toHaveBeenLastCalledWith('2');
+    expect(statusText()).not.toContain('实时渲染正常'); // 换壁纸即刷新状态行（选中项变了）
+
+    // '1' 迟到的硬失败：面板不得显示它的失败文案
+    onHealth({ wallpaperId: '1', ok: false, timing: null, failure: { kind: 'no-visible-objects', hard: true, at: 1, detail: '' } });
+    await flush();
+    expect(statusText()).not.toContain('没有可显示的对象');
+    expect(statusText()).toContain('尚未渲染');
+  });
+
+  // fix round 1（Important）：公开 API 换壁纸也要同步选中项，否则新守卫会把真实显示中的
+  // 壁纸状态挡掉（settings 还是旧值）。
+  it('端到端：__wallpaperEngine.select 与 show(scene) 之后，该壁纸的健康状态能上屏', async () => {
+    e2eHealth.last = null;
+    e2eHealth.onHealth = null;
+    e2eSelect.mockClear();
+    bootstrap();
+    await flush();
+    const onHealth = e2eHealth.onHealth!;
+    mount({ onSelect: undefined, fetchSettings: async () => BASE_SETTINGS, writeSettings: async () => {} });
+    await flush();
+
+    engine().select('wX');
+    await flush();
+    onHealth({ wallpaperId: 'wX', ok: true, failure: null, timing: { assembleMs: 11, firstFrameMs: 22 } });
+    await flush();
+    expect(statusText()).toContain('实时渲染正常');
+    expect(statusText()).toContain('装配 11 ms');
+
+    engine().show({ kind: 'scene', wallpaperId: 'wY' }); // 公开 API 的 scene 路径
+    await flush();
+    expect(e2eSelect).toHaveBeenLastCalledWith('wY');
+    onHealth({ wallpaperId: 'wY', ok: true, failure: null, timing: { assembleMs: 33, firstFrameMs: 44 } });
+    await flush();
+    expect(statusText()).toContain('装配 33 ms');
   });
 });

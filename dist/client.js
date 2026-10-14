@@ -30521,7 +30521,7 @@ function bootstrap(ctx) {
     return snap && snap.wallpaperId === settings.selectedWallpaperId ? snap : null;
   };
   const onHealth = (snap) => {
-    notifyWallpaperHealth(snap);
+    if (snap.wallpaperId === settings.selectedWallpaperId) notifyWallpaperHealth(snap);
     if (!snap.wallpaperId || !snap.failure || snap.failure.hard) return;
     const id = snap.wallpaperId;
     const existing = autoRetryTimers.get(id);
@@ -30690,6 +30690,7 @@ function bootstrap(ctx) {
           layer.showWeb(plan.url);
           break;
         case "scene": {
+          settings = { ...settings, selectedWallpaperId: plan.wallpaperId };
           void controller.select(plan.wallpaperId).catch(() => {
           });
           break;
