@@ -256,8 +256,11 @@ git commit -m "feat(parallax): 视差纯数学层（OWE 公式 + 指针延迟插
 **Interfaces:**
 - Consumes: Task 1 的 `ParallaxConfig` / `readParallaxConfig`
 - Produces:
-  - `SceneImageObject.parallaxDepth?: [number, number]`（缺省 `undefined` = OWE 的 `{0,0}` ⇒ 不动）
+  - `SceneObject.parallaxDepth?: [number, number]`（**所有 kind**：解析器把它放在对象 `base` 上；缺省 `undefined` = OWE 的 `{0,0}` ⇒ 不动）
   - `SceneDescription.parallax: ParallaxConfig`
+
+> **2026-10-14 修订（控制方亲测真实壁纸库后的裁定）**：原计划只让 **image** 分支产出 `parallaxDepth`，但真实库 34 张 scene 壁纸里 227 处该字段的分布是 **particle 106 / image 91 / text 20 / other 10** —— 47% 挂在粒子上，而 Task 4 要用它给粒子注 `u_Parallax`。若只做 image，粒子视差与本计划验收样本里的 5 个粒子对象都会永远取到 `undefined`。故改为放进对象 `base`，并给 `SceneParticleObject` / `SceneTextObject` 补字段类型。
+> 同一轮实测：`general.cameraparallax` 在本机 34 张里**只有 1 张为 `true`（`3793620838`）**、33 张为 `false` ⇒ Task 5 的视差视觉验收**必须用 `3793620838`**（原计划写的 `1280029027` 是 `false`，照它验收会白跑）；其余 33 张上视差无可见效果，须在文档中如实写明。
 
 - [ ] **Step 1: 写失败测试** `tests/scene-json-parallax.test.ts`
 
@@ -750,7 +753,7 @@ npm run build && npm run build:client   # lib/ 与 dist/client.js
 
 在 GUI 里逐条核对（写进 `TESTING.md`）：
 
-1. 选一张**带 `parallaxDepth`** 的壁纸（本机 16 个样本，例如 `1280029027`）→ 鼠标在窗口内移动，画面**整体**轻微反向漂移；鼠标停下后画面**平滑收尾**（`delay` 的滞后感）。
+1. 选 **`3793620838`**（本机 34 张里**唯一** `general.cameraparallax: true` 的壁纸；其余 33 张为 false，视差在那些壁纸上无可见效果、属预期）→ 鼠标在窗口内移动，画面**整体**轻微反向漂移；鼠标停下后画面**平滑收尾**（`delay` 的滞后感）。
 2. 选一张 `general.cameraparallax=false` 的壁纸 → **完全不动**（零回归）。
 3. 同一张壁纸里 `parallaxDepth` 为 `0 0` 的对象不动、非 0 的对象动（用 Chrome DevTools 的 Layers/像素对比确认「不是整屏平移」）。
 4. 切到别的壁纸再切回来 → 视差仍然工作（tracker 未被重复安装或提前卸载）。
