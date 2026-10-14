@@ -22,6 +22,7 @@
 - **段渲染与帧内快照**（2026-10-13，§5.45）：无消费者时整条路径与本文之前**逐字节一致**；有消费者（当前**只有**粒子 `REFRACT`）时 `render()` 改走 `renderSegmented()` —— 按 `renderOrder` 升序逐段渲进 `frameCapture.target`，消费者段**绘制之前**拍一张帧内快照。⚠️ **成本 = O(段数 × 场景)**：每段一次**全场景** `render`（靠 `visible` 排除其它段），不是「每对象只光栅化一次」（实测数字见 §5.45 与设计文档附录 A.4 ⑦）。效果链引用 `_rt_FullFrameBuffer` 的消费者**本轮门控关闭**（`object-effects.ts` 的 `ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER = false`，§5.46）。`frame-capture.ts`（帧内快照：惰性建画布尺寸 RT + `FramebufferTexture` + `copyFramebufferToTexture`，语义 = WE 的 `_rt_FullFrameBuffer` / 场景 FBO）与 `composite-quad.ts`（末段把段渲染结果全屏恒等贴回默认 fb；开了 Glow 则改由 `glow-stage.apply(..., target)` 复用同一张 RT）是这条路径上新增的两个模块。
 - **对象级效果链**：同一入口下多走两步 —— 解析每个对象的 `effects`（`shader/effect-chain.ts` 的 `resolveEffectChain`）→ `ObjectEffectStage`（`object-effects.ts`）编排：隔离对象进 `localScene` + 主场景放合成 quad，每帧 `renderIsolatedContents()`（内容 → 对象 RT）→ `stage.bindOutputs()` → 渲染主场景 → `stage.advance(time)`。无带效果对象时 stage 为 null，帧序退化为 `fn → update → render`。段渲染开启时帧序多两处：消费者段边界 `stage.onSegmentBoundary(id, 快照, 快照代号)`（同步选取，runner 仍由帧末 `advance` 推进）、`resize()` 时 `stage.notifyViewportResize()`（作废在途快照）。
 - **粒子模拟不重写**：复用 wasm 的 `CpuParticleSim`（纯 CPU，无需 WebGPU）；renderer 只把 `sim.vertices()` 的**每粒子 16 浮点**（`[pos3,size,uv2,color3,alpha,rot3,vel3]`，见 `threejs-player.ts` 的 `PARTICLE_FLOATS_PER_INSTANCE`）画成 billboard。
+- **相机视差**（2026-10-13）：装配时 `three-renderer.ts` 把 `scene.json` 的 `general.cameraparallax*` **原样**下发 `player.setParallax(desc.parallax)`（关闭态用 `enabled:false` 的配置表达、**从不传 null**），并把 `pointer-input.createPointerTracker()` 的归一化指针经 `assets.onFrame` **逐帧**交给 `player.setParallaxPointer`；窗口监听随实例装/卸（`teardown` 里 `pointer.dispose()`，§5.43）。插值语义与两个坑见 §5.47、机制局限见 §7.39。
 - **失败重试**：`wallpaper-controller.ts` 在 `render()` 返回 false 后用**新 canvas** 重试一次（防 WebGL 上下文污染），仍失败才落 preview。
 - **渲染看护**（2026-10-13）：`render()` 的失败细化为结构化原因（`scene-json` / `no-visible-objects` / `context-lost` / `exception` = **硬失败**，`load-error` = **软失败**），经 `render-health.ts` 分级记忆：硬失败按壁纸落 `localStorage`（`we:renderfail:<id>`）、软失败仅会话内并在冷却后自动重试一次；面板「实时渲染」卡片显示状态并提供重试/清除；排查入口 `__wallpaperEngine.health()`。对渲染像素路径**零改动**（`e2e:compare` 零回归）。**本轮实测**（2026-10-14，最终修复轮复跑）：基准 = 分支起点 `7e30a9f`（= master 的 v0.7.0），壁纸 `2683211654`，dpr **1 与 2 都产出了可比截图**，`e2e:compare` 两档全部 `maxAbs=0`、「差≥2」像素 0（前后 PNG 的 SHA256 逐字节相同）。对拍归档在 `.superpowers/sdd/2026-10-13-scene-live-watchdog/t5-shots/{before,after}-dpr{1,2}.png` —— **本地归档、未入 git**（`.superpowers/` 与 `e2e/.out/` 都在 `.gitignore`）；重跑口径见 `TESTING.md` §2.9。⚠️ `e2e/.out/` 会被后续 e2e 运行覆盖（其中 `before-dpr1-out.png` / `before-dpr1-rt.png` 仍是 2026-09-30 另一轮的残留）⇒ 回查基准对拍请用上面的 `t5-shots/` 归档，不要依赖 `e2e/.out/`。
 - **生命周期**：DSH 会在客户端 bundle 重建时**重新执行 bundle 并重挂载插件** —— 挂载必须幂等、必须有收尾（§5.43）。
@@ -40,6 +41,7 @@
 - **对象 model matrix = T·R·S**；其中 `angles` 是**弧度**（OWE `SceneNode.cpp:15`），旋转顺序 **R = Rz·Ry·Rx**（OWE `ParticleRuntime.cpp:25-28`）。
 - 粒子世界坐标：`worldPos = objCenter + R(angles) · (scale ⊙ (emitterOrigin + local))`（`threejs-player.ts` 的 `PARTICLE_VERTEX_SHADER`）。
 - 背景 mesh：`position / rotation / scale` 直接对应 T / R / S（three 的 `Object3D` 变换顺序本就是 T·R·S）。
+- **视差**（`cameraparallax`）也是**对象 model 矩阵的平移**（相机不动）：`shift = depth ⊙ ((node − cam) + mouse) × amount`，`mouse = ((0.5−px)·W, (py−0.5)·H) × mouseInfluence`（`W/H` = 场景正交尺寸）。`depth` 全 0 或关视差的对象**不写** `position` —— 每帧无条件写会盖掉脚本对同一对象 `origin` 的写入（§7.39）。
 
 ## 3. 构建、测试与集成
 
@@ -167,6 +169,8 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
 
 46. **`_rt_FullFrameBuffer` 的语义与当前消费点**：`_rt_FullFrameBuffer` = 「到该对象被绘制那一刻为止，本帧已绘制的内容」= WE 的场景 FBO（lwe `CScene.cpp:351-361` 按 `m_objectsByRenderOrder` 逐个 render、`CParticle.cpp:2069-2079` 在画粒子层**之前** blit）。本轮实现：段边界 `copyFramebufferToTexture` 快照，**当前唯一启用的消费点 = 粒子 `REFRACT`**（顶点切线基 + 片元 `genericparticle.frag:103-116` 位移采样）。⚠️ **效果链消费点本轮门控关闭**（`object-effects.ts` 的 `ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER = false`，按 R6 降级）：对象链的贴屏 quad UV 覆盖**对象窗口**、快照却是**整画布**（v 约定还反向一次）⇒ 该路径从未真机验收、直采会错位，启用前须先解决映射（设计文档附录 A.4 ⑧）；关闭时引用该槽的效果链行为 = 改动前（该槽**留空** + 每槽去重告警）。能力（`resolveBuiltinTexture(path, frameTexture?)` / `planSamplesFrameSnapshot` / `slotBoundByBind` / `onSegmentBoundary` 宿主契约）与单测**保留**。本轮只做这一个名字：其它 `_rt_*`（含 `_rt_imageLayerComposite_*`）分两条路径 —— **直接调 `resolveBuiltinTexture`** 的仍回退 1×1 白纹（只有 `_rt_FullFrameBuffer` 那一条会打一次模块级告警）；**效果链 runner 路径**对一切未声明的 `_rt_*` 一律**槽留空 + 每槽去重告警**（`resolveSlotFallback` 返回 null），不绑白纹（§7.31 / §7.38）。
 
+47. **视差的 `delay` 必须按「每帧重置滞后时钟」实现**（`parallax.ts` 的 `advancePointer`）：OWE 每帧先 `SetPointerInput`（滞后时钟减去已流逝时间）再 `Advance`（加回同一个 `frame.delta`），两者同帧抵消 ⇒ 字面累积只会让 `elapsed` 停在**历史最大帧长**；本播放器 dt 被 clamp 到 **0.1s**，而本机唯一开视差壁纸的 `cameraparallaxdelay` 恰好 **0.1** ⇒ 一次长帧（切走标签页再切回）就把它永久打成「完全跟手」。故取 `min(dt, delay)`：稳态比例与 OWE 相同、无历史残留。**判据** = `tests/parallax.test.ts` 的「滞后时钟封顶到 delay」「delay>0：每帧按 min(dt,delay)/delay 靠近」两条（变异实测会红）。
+
 ## 6. 工作约定
 
 - 回复、注释、文档、**提交信息一律简体中文**；代码、命令、文件名、技术术语保留原文。
@@ -201,6 +205,8 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
 37. **`g_TextureNResolution` = 各分支实际上传尺寸（A1 已实现）**：`fxRes` 由 `withSprite` 按分支写「即将上传的宽高」（视频 `videoWidth/Height`、编码图像解码尺寸、raw `cropToMap`/`cropRowsToMap` 尺寸、DXT `ceil4` 尺寸），**四分量同值 ⇒ `.z/.x === 1` 恒成立**。**本项目前数值影响为 0**：把 `.x/.y` / `.z/.w` 当尺寸用的 B/C/D 类用法**逐条都在 `g_Texture0`**，而 slot 0 每帧被绑成 pass 输入 RT、走无 `fxRes` 的回退（RT 自身尺寸 = 其上传尺寸）；唯一 slot≥1 的尺寸用法（`3780477933` 的 `min(.w,.z)`）落在 POT 纹理上、比值本就为 1。⚠️ **唯一代码层第三类**是 DXT 的块对齐（`ceil4`）⇒ `fxRes` 可比重内容宽高多出至多 3 像素（**本机库 0 实例**，只在单测 fixture 出现）。细节与实测见 `docs/fixes/conventions-details.md` §5.17 与 `docs/superpowers/specs/2026-10-12-fxres-actual-upload-size-design.md`。
 
 38. **看护的已知边界**：① 失败记忆落在 **localStorage**（同 origin 多窗口共享，但从另一个 origin 访问 GUI 时不共享，且不同步到其它机器）；② 软失败只记会话内，**重开即忘**；③ 首帧耗时是「宿主 `onFrame` 第一次被调用」，不等于「首帧已上屏」（浏览器合成时机不可观测）；④ 无装配**超时中断**（慢盘上仍会一直等），本计划只观测不打断；⑤ 失败记忆落 localStorage ⇒ **从另一个 origin 打开 GUI 时不共享**（本机同一 GUI 的另一个端口看不到既有失败记忆）。**以下几条本轮已修，记录在此以免回退**：⑥ `show({kind:'image'|'video'|'web'|'none'})` 经公开 API 直切时拿不到壁纸 id ⇒ 上一张 scene 的迟到打点曾**持续**上屏、且「重试实时渲染」会把它选回来 —— **本轮已修**（这四个分支同步解绑选中项并补推一次面板，见 `index.ts` 的 `show()`）；⑦ `snapshot.ok` = 本次会话最近一次装配结果、`snapshot.failure` = 失败记忆，**两者可并存**（硬/软失败都不覆盖装配结论：曾硬失败而现已正常 ⇒ `ok:true` + `failure.hard:true`）⇒ 消费方必须**两件都看**，只看 `ok` 会漏掉失败记忆；⑧ 首帧慢时面板曾把 `assembleMs` 抬高（把「首帧时刻 − 起始」当成装配耗时写回）—— **本轮已修**（装配出口记一次、首帧只回填 `firstFrameMs`）；⑨ 面板在首帧未出（`firstFrameMs < 0`，暂停态下会长期如此）时曾显示「首帧 **-1** ms」—— **本轮已修**（`formatHealthLine` 不渲染该字段，装配耗时照常）。
+
+39. **视差的机制局限：开视差时，脚本对同一对象 `origin` 的写入每帧被丢弃** —— 基准位取自**创建期**的 `entry.origin`，`tickParallax` 每帧写 `position = 基准位 + shift`；而 OWE 是 shift 与脚本 model 平移**叠加**。**影响面 = 该壁纸里所有带 `parallaxDepth` 的对象**（本机唯一开视差的 `3793620838` 里 22 个，其中 3 个 depth 全 0 不参与），不是「34 张里的 1 张」那么小。**当前本机无实害**（该 pkg 内无 `.js` 脚本）；真遇到「脚本位移 + 视差」同对象的壁纸，须先按叠加语义改 `tickParallax`。验收观察项见 `TESTING.md` §2.10。
 
 ## 8. 历史归档
 

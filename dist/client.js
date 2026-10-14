@@ -22665,7 +22665,7 @@ function readParallaxConfig(gen) {
 var POINTER_CENTER = { x: 0.5, y: 0.5 };
 function advancePointer(follow, target, cfg, dt) {
   const delay = Math.max(0, cfg.delay);
-  const elapsed = Math.min(follow.elapsed + Math.max(0, dt), delay);
+  const elapsed = Math.min(Math.max(0, dt), delay);
   const amount = delay > 0 ? elapsed / delay : 1;
   return {
     elapsed,
@@ -22680,9 +22680,10 @@ function parallaxShift(o) {
   if (o.depth[0] === 0 && o.depth[1] === 0) return [0, 0];
   const mouseX = (0.5 - o.pointer.x) * o.orthoW * o.cfg.mouseInfluence;
   const mouseY = (o.pointer.y - 0.5) * o.orthoH * o.cfg.mouseInfluence;
+  const nz = (v) => v === 0 ? 0 : v;
   return [
-    o.depth[0] * o.cfg.amount * (o.nodeX - o.camX + mouseX),
-    o.depth[1] * o.cfg.amount * (o.nodeY - o.camY + mouseY)
+    nz(o.depth[0] * o.cfg.amount * (o.nodeX - o.camX + mouseX)),
+    nz(o.depth[1] * o.cfg.amount * (o.nodeY - o.camY + mouseY))
   ];
 }
 
@@ -29592,6 +29593,42 @@ var FAILURE_TEXT = {
   "load-error": "\u8D44\u6E90\u52A0\u8F7D\u4E2D\u65AD"
 };
 
+// src/client/pointer-input.ts
+function createPointerTracker(opts = {}) {
+  const host = opts.target ?? (typeof window !== "undefined" ? window : null);
+  const viewport = opts.viewport ?? (() => ({
+    width: typeof window === "undefined" ? 0 : window.innerWidth || 0,
+    height: typeof window === "undefined" ? 0 : window.innerHeight || 0
+  }));
+  let current = { ...POINTER_CENTER };
+  let installed = false;
+  const clamp01 = (v) => v < 0 ? 0 : v > 1 ? 1 : v;
+  const onMove = (ev) => {
+    const e = ev;
+    const { width, height } = viewport();
+    if (!(width > 0) || !(height > 0)) return;
+    current = { x: clamp01(Number(e.clientX) / width), y: clamp01(Number(e.clientY) / height) };
+  };
+  return {
+    install() {
+      if (installed || !host) return;
+      installed = true;
+      host.addEventListener("pointermove", onMove, { passive: true });
+    },
+    dispose() {
+      if (!installed || !host) return;
+      installed = false;
+      host.removeEventListener("pointermove", onMove);
+      current = { ...POINTER_CENTER };
+    },
+    // 只读快照：每次移动/卸载换成一个**新对象**（不就地改写）⇒ 调用方持有的旧引用是那一刻的值，
+    // 交给别处保存（如 player.setParallaxPointer）不会被后续事件改写；返回对象本身不得写入。
+    target() {
+      return current;
+    }
+  };
+}
+
 // src/client/three-renderer.ts
 var warnedKeys = /* @__PURE__ */ new Set();
 function warnOnce2(key, message) {
@@ -29768,6 +29805,7 @@ function createThreeSceneRenderer(opts) {
       window.removeEventListener("resize", onWindowResize);
       onWindowResize = null;
     }
+    pointer.dispose();
     if (contextLostCanvas) {
       contextLostCanvas.removeEventListener("webglcontextlost", onContextLost);
       contextLostCanvas = null;
@@ -29831,6 +29869,7 @@ function createThreeSceneRenderer(opts) {
     width: Math.max(1, Math.round(window.innerWidth || 0)),
     height: Math.max(1, Math.round(window.innerHeight || 0))
   });
+  const pointer = createPointerTracker();
   return {
     async render(id, fg, _bg) {
       warnedKeys.clear();
@@ -30086,6 +30125,7 @@ function createThreeSceneRenderer(opts) {
         };
         const userOnFrame = assets.onFrame;
         assets.onFrame = (dt) => {
+          current?.player.setParallaxPointer(pointer.target());
           if (timer.firstFrameAt < 0) {
             timer.firstFrameAt = performance.now() - timer.startedAt;
             succeed(id, assembledMs >= 0 ? assembledMs : timer.firstFrameAt, timer.firstFrameAt);
@@ -30192,6 +30232,8 @@ function createThreeSceneRenderer(opts) {
         }) : null;
         glowSize = { width: fg.width, height: fg.height };
         result.player.setGlowStage(currentGlow);
+        result.player.setParallax(desc.parallax);
+        pointer.install();
         if (paused) result.player.pause();
         onWindowResize = () => {
           if (!current) return;

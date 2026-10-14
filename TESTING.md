@@ -184,6 +184,31 @@ git worktree remove .worktrees\before-health --force
 
 - ⚠️ `verify-hidpi-object-rt.mjs` **自身**在该基准上就会 exit 1（它自带的「挂载期 RT 尺寸」断言在 `7e30a9f` 上已 FAIL，前后两轮的值**逐字相同**）⇒ 本项门禁只认 `compare-shots` 的退出码；两个 tag 的退出码应当一致。
 - 归档位置：`.superpowers/sdd/2026-10-13-scene-live-watchdog/t5-shots/{before,after}-dpr{1,2}.png`（**本地归档、未入 git**）。
+- **视差轮（2026-10-13 Task 5）的基准换成 `6aa5375`**（= `feat/scene-parallax-puppet` 的分支起点，覆盖 Task 1-5 全部改动），worktree 名 `before-parallax`；归档 `.superpowers/sdd/2026-10-13-scene-parallax-puppet/t5-shots/{before,after}-dpr{1,2}.png`。缺省样本 `2683211654` 的 `general.cameraparallax=false` ⇒ 预期逐像素一致（或 ≤1 LSB）。
+
+---
+
+### 2.10 手工验收清单：相机视差（2026-10-13 Task 5，逐条勾）
+
+> **需人在运行中的 DSH Web GUI 里操作（鼠标在窗口内移动 + DevTools），agent 无法代跑。**
+>
+> 前置：已 `npm run build` + `npm run build:client`，并**重启 harness**（host 侧改动不热重载）后**强刷** GUI。
+
+**验收样本 = `3793620838`**（本机 34 张里**唯一** `general.cameraparallax: true`：`amount=0.08 / delay=0.1 / mouseinfluence=0.5`，22 个对象带 `parallaxDepth`、其中 3 个为 `0 0`）。**其余 33 张 `cameraparallax=false`** ⇒ 在那些壁纸上**视差无可见效果属预期**，不要误判为失败。
+
+| # | 步骤 | 期望结果 | 失败表现 |
+|---|---|---|---|
+| V1 | 选 `3793620838`，鼠标在窗口内缓慢移动 | 画面**整体**轻微**反向**漂移（鼠标右移 → 内容左移），幅度很小（amount=0.08） | 完全不动 → 接线未生效（Console 看有无 `[three] scene loaded id=3793620838`） |
+| V2 | 鼠标停下 | 画面**平滑收尾**（不是立刻停死，也不是过冲）—— `delay=0.1` 的滞后感 | 一停就死 = `delay` 插值未生效（§5.47） |
+| V3 | 选一张 `cameraparallax=false` 的壁纸（如缺省样本 `2683211654`） | 画面**完全不动**（零回归） | 动 = 关闭态没走「不写 position」分支 |
+| V4 | 切到别的壁纸再切回 `3793620838` | 视差**仍然工作**；Console 里 `getEventListeners(window).pointermove` 仍**恰好 1 个**（不叠加、也没被提前卸掉） | 失效 → tracker 装/卸不配对；多个监听 → §5.43 类问题 |
+| V5 | 面板「暂停」壁纸后移动鼠标 | 画面**不动**（帧循环停了，视差随之停）；恢复后视差回来 | 还在动 → 暂停没停帧循环 |
+| V6 | **交叉观察项**（转交项 6 / §7.39）：在 `3793620838` 上盯住**带脚本位移**的对象（该 pkg 内**无 `.js` 脚本** ⇒ 本机预期看不到该症状） | 有脚本位移的视差壁纸里，脚本位移对象若「不动了」= 每帧写 `position` 盖掉了脚本写入 | 本机无样本可证伪；真遇到须按 §7.39 改叠加语义 |
+
+```js
+// V4 的监听计数（Chrome/Edge DevTools Console 专有 API）
+getEventListeners(window).pointermove?.length
+```
 
 ---
 

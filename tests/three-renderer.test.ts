@@ -138,7 +138,7 @@ describe('createThreeSceneRenderer', () => {
     const sim = makeMockSim();
     defaultLoadWasm.mockResolvedValue({ CpuParticleSim: { new: vi.fn(() => sim) } } as any);
     loadSceneToThree.mockReturnValue({
-      player: { dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn() },
+      player: { dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn() },
       sims: [sim],
       backgroundIds: [0],
       particleLayers: [{ id: 1, sim }],
@@ -184,7 +184,7 @@ describe('createThreeSceneRenderer', () => {
     const texB = { dispose: vi.fn() };
     resolveImageTexture.mockResolvedValue(texA as any);
     loadSceneToThree.mockReturnValue({
-      player: { dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn() },
+      player: { dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn() },
       sims: [], backgroundIds: [0], particleLayers: [],
     });
     const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
@@ -213,7 +213,7 @@ describe('createThreeSceneRenderer', () => {
     const sim = makeMockSim();
     defaultLoadWasm.mockResolvedValue({ CpuParticleSim: { new: vi.fn(() => sim) } } as any);
     loadSceneToThree.mockReturnValue({
-      player: { dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn() },
+      player: { dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn() },
       sims: [sim],
       backgroundIds: [0],
       particleLayers: [{ id: 1, sim }],
@@ -256,7 +256,7 @@ describe('createThreeSceneRenderer', () => {
     const sim = makeMockSim();
     defaultLoadWasm.mockResolvedValue({ CpuParticleSim: { new: vi.fn(() => sim) } } as any);
     loadSceneToThree.mockReturnValue({
-      player: { dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn() },
+      player: { dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn() },
       sims: [sim], backgroundIds: [0], particleLayers: [{ id: 1, sim }],
     });
 
@@ -282,7 +282,7 @@ describe('createThreeSceneRenderer', () => {
       loadTexTexture.mockImplementation(async (url: string) => (String(url).includes('missingN') ? null : { slot: 0 }) as any);
       defaultLoadWasm.mockResolvedValue({ CpuParticleSim: { new: vi.fn(() => makeMockSim()) } } as any);
       loadSceneToThree.mockReturnValue({
-        player: { dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn() },
+        player: { dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn() },
         sims: [], backgroundIds: [0], particleLayers: [],
       });
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -301,7 +301,7 @@ describe('createThreeSceneRenderer', () => {
   it('render：CpuParticleSim.new 抛错 → 工厂返回空 sim（不整场失败）', async () => {
     resolveParticleMaterial.mockResolvedValue(null);
     defaultLoadWasm.mockResolvedValue({ CpuParticleSim: { new: vi.fn(() => { throw new Error('bad spec'); }) } } as any);
-    loadSceneToThree.mockReturnValue({ player: { dispose: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn() }, sims: [], backgroundIds: [0], particleLayers: [] });
+    loadSceneToThree.mockReturnValue({ player: { dispose: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn() }, sims: [], backgroundIds: [0], particleLayers: [] });
 
     const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
     const ok = await r.render('2851992662', document.createElement('canvas'), null);
@@ -316,7 +316,7 @@ describe('createThreeSceneRenderer', () => {
   it('render：零背景 + 零粒子 → 返回 false（controller 走 preview）', async () => {
     resolveImageTexture.mockResolvedValue(null);
     defaultLoadWasm.mockResolvedValue({ CpuParticleSim: { new: vi.fn(() => makeMockSim()) } } as any);
-    loadSceneToThree.mockReturnValue({ player: { dispose: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn() }, sims: [], backgroundIds: [], particleLayers: [] });
+    loadSceneToThree.mockReturnValue({ player: { dispose: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn() }, sims: [], backgroundIds: [], particleLayers: [] });
 
     const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
     const ok = await r.render('2851992662', document.createElement('canvas'), null);
@@ -327,7 +327,7 @@ describe('createThreeSceneRenderer', () => {
     resolveImageTexture.mockResolvedValue(fakeTexture() as any);
     resolveParticleMaterial.mockResolvedValue(null);
     // 模拟返回带 resize 的 player（真实 ThreeScenePlayer 的接口）。
-    const player = { dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn() };
+    const player = { dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn() };
     defaultLoadWasm.mockResolvedValue({ CpuParticleSim: { new: vi.fn(() => makeMockSim()) } } as any);
     loadSceneToThree.mockReturnValue({ player, sims: [], backgroundIds: [0], particleLayers: [] });
 
@@ -356,7 +356,7 @@ describe('createThreeSceneRenderer', () => {
     resolveImageTexture.mockResolvedValue(fakeTexture() as any);
     resolveParticleMaterial.mockResolvedValue(null);
     defaultLoadWasm.mockResolvedValue({ CpuParticleSim: { new: vi.fn(() => makeMockSim()) } } as any);
-    const player = { dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn() };
+    const player = { dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn() };
     loadSceneToThree.mockReturnValue({ player, sims: [], backgroundIds: [0], particleLayers: [] } as any);
     return player;
   }
@@ -453,7 +453,7 @@ describe('createThreeSceneRenderer', () => {
     const real = new ThreeScenePlayer(document.createElement('canvas'), 1280, 720, playerMockRenderer() as never);
     const firstSetCapture = vi.spyOn(real, 'setFrameCapture');
     // 第二次装配带**同一个 renderer**（复用判据是 renderer 身份，不是 player 身份）。
-    const second = { renderer: real.renderer, dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn() };
+    const second = { renderer: real.renderer, dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn() };
     loadSceneToThree
       .mockReturnValueOnce({ player: real, sims: [], backgroundIds: [0], particleLayers: [] } as any)
       .mockReturnValueOnce({ player: second, sims: [], backgroundIds: [0], particleLayers: [] } as any);
@@ -483,10 +483,10 @@ describe('createThreeSceneRenderer', () => {
     const rendererA = playerMockRenderer();
     const rendererB = playerMockRenderer();
     const first = {
-      renderer: rendererA, dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(),
+      renderer: rendererA, dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn(),
     };
     const second = {
-      renderer: rendererB, dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(),
+      renderer: rendererB, dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn(),
     };
     loadSceneToThree
       .mockReturnValueOnce({ player: first, sims: [], backgroundIds: [0], particleLayers: [] } as any)
@@ -649,7 +649,7 @@ describe('createThreeSceneRenderer instanceoverride 接线', () => {
     const cpNew = vi.fn(() => sim);
     defaultLoadWasm.mockResolvedValue({ CpuParticleSim: { new: cpNew } } as any);
     loadSceneToThree.mockReturnValue({
-      player: { dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn() },
+      player: { dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn() },
       sims: [sim],
       backgroundIds: [],
       particleLayers: [{ id: 0, sim }],
@@ -908,7 +908,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     const setObjectEffectStage = vi.fn();
     const player = {
       dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage,
-      setGlowStage: vi.fn(), setFrameCapture: vi.fn(),
+      setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn(),
       renderer: {},
       // 隔离条目的键 = 对象 id（真实 player 由 attachIsolated(obj.id) 建条目）。
       isolatedObjects: () => [{ id: 13, kind: 'background', rtWidth: 1920, rtHeight: 1080, rtTexture: {} }],
@@ -976,7 +976,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     defaultLoadWasm.mockResolvedValue(null);
     const player = {
       dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage: vi.fn(),
-      setGlowStage: vi.fn(), setFrameCapture: vi.fn(),
+      setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn(),
       renderer: {},
       isolatedObjects: () => [{ id: 13, kind: 'background', rtWidth: 1920, rtHeight: 1080, rtTexture: {} }],
       screenScalePx: vi.fn(() => 0.5),
@@ -1020,7 +1020,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     const setObjectEffectStage = vi.fn();
     const player = {
       dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage,
-      setGlowStage: vi.fn(), setFrameCapture: vi.fn(),
+      setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn(),
       renderer: {},
       isolatedObjects: () => [{ id: 71, kind: 'particle', rtWidth: 400, rtHeight: 400, rtTexture: {} }],
     };
@@ -1059,7 +1059,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     const setObjectEffectStage = vi.fn();
     const player = {
       dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage,
-      setGlowStage: vi.fn(), setFrameCapture: vi.fn(),
+      setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn(),
       renderer: {},
       isolatedObjects: () => [],
     };
@@ -1101,7 +1101,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     defaultLoadWasm.mockResolvedValue(null);
     const player = {
       dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage: vi.fn(),
-      setGlowStage: vi.fn(), setFrameCapture: vi.fn(),
+      setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn(),
       renderer: {},
       isolatedObjects: () => [{ id: 13, kind: 'background', rtWidth: 1920, rtHeight: 1080, rtTexture: {} }],
     };
@@ -1145,7 +1145,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     defaultLoadWasm.mockResolvedValue(null);
     const player = {
       dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage: vi.fn(),
-      setGlowStage: vi.fn(), setFrameCapture: vi.fn(),
+      setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn(),
       renderer: {},
       // P2 起这类对象进入隔离（真实 player 会为 isolate 里每个对象建条目）
       isolatedObjects: () => [{ id: 13, kind: 'background', rtWidth: 3840, rtHeight: 2160, rtTexture: {} }],
@@ -1195,6 +1195,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     const player = {
       dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage: vi.fn(),
       setGlowStage: vi.fn(), setFrameCapture, registerFrameConsumer,
+      setParallax: vi.fn(), setParallaxPointer: vi.fn(),
       renderer: {},
       isolatedObjects: () => [
         { id: 13, kind: 'background', rtWidth: 3840, rtHeight: 2160, rtTexture: {} },
@@ -1236,7 +1237,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     defaultLoadWasm.mockResolvedValue(null);
     const player = {
       dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage: vi.fn(),
-      setGlowStage: vi.fn(), setFrameCapture: vi.fn(),
+      setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn(),
       renderer: {},
       isolatedObjects: () => [{ id: 13, kind: 'background', rtWidth: 1920, rtHeight: 1080, rtTexture: {} }],
     };
@@ -1298,7 +1299,7 @@ describe('对象级效果链：隔离 RT 尺寸按源纹理收口 4096', () => {
     }), FX_FILES);
     defaultLoadWasm.mockResolvedValue(null); // 本场景无粒子
     const player = {
-      dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setObjectEffectStage: vi.fn(),
+      dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn(), setObjectEffectStage: vi.fn(),
       renderer: {}, isolatedObjects: () => [],
     };
     loadSceneToThree.mockReturnValue({ player, sims: [], backgroundIds: [0], particleLayers: [] } as never);
@@ -1534,7 +1535,7 @@ describe('three-renderer text 对象', () => {
 
   function stubTextRender() {
     const player = {
-      dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setObjectEffectStage: vi.fn(),
+      dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn(), setObjectEffectStage: vi.fn(),
       isolatedObjects: () => [],
     };
     loadSceneToThree.mockReturnValue({ player, sims: [], backgroundIds: [0], particleLayers: [] } as never);
@@ -1767,7 +1768,7 @@ describe('three-renderer text 对象', () => {
 describe('three-renderer 场景树层级（parent → 世界变换）', () => {
   function scriptPlayer() {
     return {
-      dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setObjectEffectStage: vi.fn(),
+      dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn(), setObjectEffectStage: vi.fn(),
       isolatedObjects: () => [],
     };
   }
@@ -1909,7 +1910,7 @@ describe('three-renderer image/particle 的 visible 过滤', () => {
 
   function stubRender() {
     const player = {
-      dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setObjectEffectStage: vi.fn(),
+      dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn(), setObjectEffectStage: vi.fn(),
       isolatedObjects: () => [],
     };
     loadSceneToThree.mockReturnValue({ player, sims: [], backgroundIds: [0], particleLayers: [] } as never);
@@ -2032,7 +2033,7 @@ describe('three-renderer 音频链路', () => {
 
   function stubPlayer() {
     const player = {
-      dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setObjectEffectStage: vi.fn(),
+      dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn(), setObjectEffectStage: vi.fn(),
       isolatedObjects: () => [],
     };
     loadSceneToThree.mockReturnValue({ player, sims: [], backgroundIds: [0], particleLayers: [] } as never);
@@ -2163,7 +2164,7 @@ describe('createThreeSceneRenderer webglcontextlost 回退 preview 接线', () =
     defaultLoadWasm.mockResolvedValue(null);
     stubAssetFetch(LOST_SCENE, {});
     loadSceneToThree.mockReturnValue({
-      player: { dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn() },
+      player: { dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn() },
       sims: [], backgroundIds: [0], particleLayers: [],
     } as never);
     return { canvas: document.createElement('canvas'), tex };
@@ -2342,10 +2343,10 @@ describe('scene 渲染看护：失败分类与打点', () => {
     objects: [{ id: 1, name: 'bg', image: 'models/bg.json', origin: '960.00000 540.00000 0.00000', size: '1920.00000 1080.00000' }],
   });
 
-  // 成功出口的 player 替身：setFrameCapture/setGlowStage 缺一个就会落进 catch 被记成 exception。
+  // 成功出口的 player 替身：setFrameCapture/setGlowStage/setParallax 缺一个就会落进 catch 被记成 exception。
   function okPlayer() {
     return {
-      player: { dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn() },
+      player: { dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn() },
       sims: [], backgroundIds: [1], particleLayers: [],
     };
   }
@@ -2671,7 +2672,7 @@ describe('scene 渲染看护：失败分类与打点', () => {
     loadSceneToThree.mockReturnValue({
       player: {
         dispose: () => { throw new Error('dispose boom'); },
-        resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(),
+        resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn(),
       },
       sims: [], backgroundIds: [], particleLayers: [],
     } as never);
@@ -2705,7 +2706,7 @@ describe('scene 渲染看护：失败分类与打点', () => {
     loadSceneToThree.mockReturnValue({
       player: {
         dispose: () => { throw new Error('dispose boom'); },
-        resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(),
+        resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn(),
       },
       sims: [], backgroundIds: [1], particleLayers: [],
     } as never);
@@ -2755,5 +2756,110 @@ describe('scene 渲染看护：失败分类与打点', () => {
     expect(store.snapshot('wid-net-tail').failure?.kind).toBe('load-error'); // 未被改写成 context-lost
     expect(store.shouldAutoRetry('wid-net-tail')).toBe(true);
     r.dispose();
+  });
+});
+
+// Task 5：视差接线（scene.json 的 general.cameraparallax* → player.setParallax；指针逐帧下发 + 随实例收尾）。
+// 断言的都是「player 收到了什么值 / window 上的监听是否随实例装卸」，不是「函数被调用过」。
+describe('createThreeSceneRenderer 视差接线', () => {
+  // 本文件缺省的 fetch 桩只回同一份 SCENE；需要变场景的用例用这个重新 stub（只改 general 字段）。
+  function stubSceneWithGeneral(general: Record<string, unknown>): void {
+    const scene = JSON.parse(SCENE) as { general: Record<string, unknown> };
+    Object.assign(scene.general, general);
+    const fixed = JSON.stringify(scene);
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (String(url).includes('name=scene.json')) return { ok: true, text: async () => fixed };
+      if (String(url).includes('leaves5.json')) return { ok: true, text: async () => '{"material":"presets/lightshaft"}' };
+      return { ok: false, text: async () => '' };
+    }));
+  }
+
+  // 成功装配的 player 替身：接口新增方法缺一个就会落进 catch 被记成 exception（false），不再是真装配。
+  function parallaxPlayer() {
+    return {
+      dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn(),
+      setParallax: vi.fn(), setParallaxPointer: vi.fn(),
+    };
+  }
+
+  function prepareParallaxRender() {
+    resolveImageTexture.mockResolvedValue(fakeTexture() as any);
+    resolveParticleMaterial.mockResolvedValue(null);
+    defaultLoadWasm.mockResolvedValue({ CpuParticleSim: { new: vi.fn(() => makeMockSim()) } } as any);
+    const player = parallaxPlayer();
+    loadSceneToThree.mockReturnValue({ player, sims: [], backgroundIds: [0], particleLayers: [] } as any);
+    return player;
+  }
+
+  function movePointer(x: number, y: number): void {
+    const ev = new Event('pointermove') as any;
+    ev.clientX = x; ev.clientY = y;
+    window.dispatchEvent(ev);
+  }
+
+  // 关闭态必须是**具体配置**（enabled:false）而不是 null：player 只在 cfg.enabled=false 时把对象写回
+  // 一次基准位，cfg=null 会让 tickParallax 整体早退 ⇒ 上一张壁纸留下的位移不复位。
+  it('关视差（cameraparallax 缺省）⇒ player 收到 enabled:false 的配置（不是 null）', async () => {
+    const player = prepareParallaxRender();
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    expect(await r.render('2851992662', document.createElement('canvas'), null)).toBe(true);
+    expect(player.setParallax).toHaveBeenCalledTimes(1);
+    expect(player.setParallax).toHaveBeenCalledWith({ enabled: false, amount: 0, delay: 0, mouseInfluence: 0 });
+    r.dispose();
+  });
+
+  it('开视差 ⇒ 四个字段原样透传给 player.setParallax', async () => {
+    stubSceneWithGeneral({
+      cameraparallax: true, cameraparallaxamount: 0.5, cameraparallaxdelay: 0.1, cameraparallaxmouseinfluence: 1,
+    });
+    const player = prepareParallaxRender();
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    expect(await r.render('2851992662', document.createElement('canvas'), null)).toBe(true);
+    expect(player.setParallax).toHaveBeenCalledWith({ enabled: true, amount: 0.5, delay: 0.1, mouseInfluence: 1 });
+    r.dispose();
+  });
+
+  it('指针逐帧下发：onFrame 把归一化指针交给 player（未移动 = 居中；window 的 pointermove 能改到它）', async () => {
+    const player = prepareParallaxRender();
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    expect(await r.render('2851992662', document.createElement('canvas'), null)).toBe(true);
+    const onFrame = loadSceneToThree.mock.calls[0][1].onFrame as (dt: number) => void;
+    onFrame(0.016);
+    expect(player.setParallaxPointer).toHaveBeenLastCalledWith({ x: 0.5, y: 0.5 });
+    // jsdom 视口 1920×1080（beforeEach）⇒ (480,270) 归一化为 (0.25,0.25)
+    movePointer(480, 270);
+    onFrame(0.016);
+    expect(player.setParallaxPointer).toHaveBeenLastCalledWith({ x: 0.25, y: 0.25 });
+    expect(player.setParallaxPointer).toHaveBeenCalledTimes(2);
+    r.dispose();
+  });
+
+  it('监听随实例收尾：切壁纸先卸后装、不叠加；卸载复位居中（切回后仍生效）', async () => {
+    const addSpy = vi.spyOn(window, 'addEventListener');
+    const removeSpy = vi.spyOn(window, 'removeEventListener');
+    const player = prepareParallaxRender();
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    expect(await r.render('2851992662', document.createElement('canvas'), null)).toBe(true);
+    const handler = addSpy.mock.calls.find((c) => c[0] === 'pointermove')?.[1];
+    expect(typeof handler).toBe('function');
+    const onFrameA = loadSceneToThree.mock.calls[0][1].onFrame as (dt: number) => void;
+    movePointer(480, 270);
+    onFrameA(0.016);
+    expect(player.setParallaxPointer).toHaveBeenLastCalledWith({ x: 0.25, y: 0.25 });
+
+    // 第二次 render = 先 teardown（卸监听 + 复位居中）再装：同一 handler 重新挂上，不叠加。
+    expect(await r.render('2851992662', document.createElement('canvas'), null)).toBe(true);
+    const pointerAdds = addSpy.mock.calls.filter((c) => c[0] === 'pointermove');
+    expect(pointerAdds.map((c) => c[1])).toEqual([handler, handler]);
+    expect(removeSpy.mock.calls.filter((c) => c[0] === 'pointermove')).toEqual([['pointermove', handler]]);
+    const onFrameB = loadSceneToThree.mock.calls[1][1].onFrame as (dt: number) => void;
+    onFrameB(0.016);
+    expect(player.setParallaxPointer).toHaveBeenLastCalledWith({ x: 0.5, y: 0.5 }); // 卸载时复位居中
+    movePointer(960, 810);
+    onFrameB(0.016);
+    expect(player.setParallaxPointer).toHaveBeenLastCalledWith({ x: 0.5, y: 0.75 }); // 重挂后仍生效
+
+    r.dispose();
+    expect(removeSpy.mock.calls.filter((c) => c[0] === 'pointermove')).toHaveLength(2);
   });
 });

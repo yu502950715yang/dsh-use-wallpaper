@@ -33,6 +33,8 @@ import { DynamicMeshRegistry } from './dynamic-mesh.js';
 import { createMeshMaterial, parseMeshMaterial } from './mesh-material.js';
 import { createRenderHealthStore, isHardFailure } from './render-health.js';
 import type { HardFailureKind, HealthSnapshot, RenderHealthStore, SoftFailureKind } from './render-health.js';
+// 指针输入（相机视差的宿主侧）：归一化 [0,1] + 幂等装/卸。
+import { createPointerTracker } from './pointer-input.js';
 
 // wasm `CpuParticleSim` 的构造器形态（wasm-bindgen 静态 `new`；`ParticleSim` 接口见 threejs-player.ts）。
 type CpuParticleSimLike = {
@@ -320,6 +322,8 @@ export function createThreeSceneRenderer(opts?: {
       window.removeEventListener('resize', onWindowResize);
       onWindowResize = null;
     }
+    // 指针监听随本次装配一并卸掉（tracker 自身幂等，重复调用安全）——见 AGENT.md §5.43。
+    pointer.dispose();
     // 上下文丢失监听随本次装配一起移除（否则切壁纸后旧 canvas 的丢失事件还会回调新状态）。
     if (contextLostCanvas) {
       contextLostCanvas.removeEventListener('webglcontextlost', onContextLost);
@@ -390,6 +394,8 @@ export function createThreeSceneRenderer(opts?: {
     width: Math.max(1, Math.round(window.innerWidth || 0)),
     height: Math.max(1, Math.round(window.innerHeight || 0)),
   });
+  // 指针：整个 renderer 生命周期一个 tracker（幂等装/卸），每次 render 把最新值下发给 player。
+  const pointer = createPointerTracker();
   return {
     async render(id, fg, _bg) {
       // 诊断去重集合的生命周期 = 当前壁纸：每次 render 清空，避免跨壁纸累积而漏报新壁纸的告警。
@@ -729,6 +735,8 @@ export function createThreeSceneRenderer(opts?: {
         // 归属与计时都用本闭包捕获的本次 render 局部量（与出口打点同一套）。
         const userOnFrame = assets.onFrame;
         assets.onFrame = (dt: number) => {
+          // 视差：每帧把指针的最新值下发给 player（插值在 player 的 tickParallax 内按 dt 推进）。
+          current?.player.setParallaxPointer(pointer.target());
           if (timer.firstFrameAt < 0) {
             timer.firstFrameAt = performance.now() - timer.startedAt;
             // 只补 firstFrameMs：沿用装配出口记下的耗时；装配还没到出口（-1）时先用首帧时刻占位，
@@ -859,6 +867,11 @@ export function createThreeSceneRenderer(opts?: {
           : null;
         glowSize = { width: fg.width, height: fg.height }; // 运行期「开 Glow」新建 stage 的尺寸基准
         result.player.setGlowStage(currentGlow);
+        // 相机视差：配置来自 scene.json（缺省全 0 = 与加此功能前观感一致）。关闭态一律用 enabled:false
+        // 的**具体配置**表达（player 据此把对象写回一次基准位），绝不传 null —— null 会让 tickParallax
+        // 整体早退、不复位。
+        result.player.setParallax(desc.parallax);
+        pointer.install();
         // 省电：装配时若已处于暂停态（如切到后台时换壁纸）→ 直接不排程。
         if (paused) result.player.pause();
         // 窗口尺寸变化 → 按新窗口比例重推 cover（对齐 wasm 路径的 window.innerWidth/Height 语义），并把新的

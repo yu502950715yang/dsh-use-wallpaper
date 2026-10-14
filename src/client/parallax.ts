@@ -29,10 +29,18 @@ export function readParallaxConfig(gen: unknown): ParallaxConfig {
 export interface PointerState { x: number; y: number }
 export const POINTER_CENTER: PointerState = { x: 0.5, y: 0.5 };
 
-/** 指针跟随状态：elapsed 是 OWE 的 m_pointer_delayed_time（累积到 delay 即完全跟随）。 */
+/** 指针跟随状态：`value` = 当前插值位置；`elapsed` = **本帧**的滞后时钟（见 advancePointer）。 */
 export interface PointerFollow { value: PointerState; elapsed: number }
 
-/** 每帧向目标位置线性靠近（OWE UniformSource.cpp:263-274）：elapsed 封顶到 delay，delay=0 立即跟随。 */
+/**
+ * 每帧向目标位置线性靠近（OWE UniformSource.cpp:249-274）：delay=0 立即跟随；delay>0 时每帧按
+ * `min(dt, delay) / delay` 靠近（时间常数 ≈ delay 的一阶平滑，滞后感**每次**移动都在）。
+ *
+ * ⚠️ 与 OWE 字面写法的唯一偏离：OWE 每帧先 `SetPointerInput`（滞后时钟减去已流逝时间）再 `Advance`
+ * （加回同一个 `frame.delta`），两者在同一帧内抵消 ⇒ `elapsed` 只剩「历史最大帧长」（`max(0,e−dt)+dt = e`）。
+ * 本播放器 dt 被 clamp 到 0.1s，而本机唯一开视差壁纸的 delay 恰好是 0.1 ⇒ 一次长帧（切走标签页再切回）
+ * 就会把 amount 永久打成 1、平滑消失。故这里每帧直接取 `min(dt, delay)`：稳态比例与 OWE 相同、不残留历史。
+ */
 export function advancePointer(
   follow: PointerFollow,
   target: PointerState,
@@ -40,7 +48,7 @@ export function advancePointer(
   dt: number,
 ): PointerFollow {
   const delay = Math.max(0, cfg.delay);
-  const elapsed = Math.min(follow.elapsed + Math.max(0, dt), delay);
+  const elapsed = Math.min(Math.max(0, dt), delay);
   const amount = delay > 0 ? elapsed / delay : 1;
   return {
     elapsed,
@@ -72,8 +80,10 @@ export function parallaxShift(o: {
   if (o.depth[0] === 0 && o.depth[1] === 0) return [0, 0];
   const mouseX = (0.5 - o.pointer.x) * o.orthoW * o.cfg.mouseInfluence;
   const mouseY = (o.pointer.y - 0.5) * o.orthoH * o.cfg.mouseInfluence;
+  // -0 归一：零轴（0 × 负数）与 amount=0 都会产出 IEEE-754 的 -0，让下游 `toEqual` 式精确断言假失败。
+  const nz = (v: number) => (v === 0 ? 0 : v);
   return [
-    o.depth[0] * o.cfg.amount * (o.nodeX - o.camX + mouseX),
-    o.depth[1] * o.cfg.amount * (o.nodeY - o.camY + mouseY),
+    nz(o.depth[0] * o.cfg.amount * (o.nodeX - o.camX + mouseX)),
+    nz(o.depth[1] * o.cfg.amount * (o.nodeY - o.camY + mouseY)),
   ];
 }

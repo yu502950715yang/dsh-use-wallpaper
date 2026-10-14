@@ -2,7 +2,7 @@ import type { PointerState } from './parallax.js';
 export interface PointerTracker {
     install(): void;
     dispose(): void;
-    target(): PointerState;
+    target(): Readonly<PointerState>;
 }
 export declare function createPointerTracker(opts?: {
     target?: EventTarget;

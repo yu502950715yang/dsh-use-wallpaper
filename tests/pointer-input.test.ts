@@ -39,4 +39,33 @@ describe('pointer-input', () => {
     move(20, 20);
     expect(reads).toBe(1);
   });
+  // `installed` 守卫本身（上面两条在「重复挂监听」下同样为绿）⇒ 用计数 target 直接数挂/卸次数。
+  it('installed 守卫：重复 install 只挂一次监听；dispose 卸同一个 handler 且可再挂', () => {
+    const adds: Array<[string, unknown]> = [];
+    const removes: Array<[string, unknown]> = [];
+    const target = {
+      addEventListener: (type: string, fn: unknown) => adds.push([type, fn]),
+      removeEventListener: (type: string, fn: unknown) => removes.push([type, fn]),
+    } as unknown as EventTarget;
+    const t = createPointerTracker({ target });
+    t.install(); t.install(); t.install();
+    expect(adds).toEqual([['pointermove', expect.any(Function)]]);
+    t.dispose();
+    expect(removes).toEqual([['pointermove', adds[0][1]]]);
+    t.dispose(); // 幂等：未挂载时不再重复移除
+    expect(removes).toHaveLength(1);
+    t.install(); // 卸载后可重挂（切壁纸 = teardown → render 再次 install）
+    expect(adds).toHaveLength(2);
+    expect(adds[1][1]).toBe(adds[0][1]);
+  });
+  // 退化视口（0 / 负 / NaN）⇒ 忽略事件、保持居中：除零会产出 Infinity/NaN 并被 clamp 成 0/1 的假位置。
+  it('退化视口 ⇒ 事件被忽略，target() 恒居中', () => {
+    for (const vp of [{ width: 0, height: 0 }, { width: -5, height: -5 }, { width: NaN, height: NaN }, { width: 100, height: 0 }]) {
+      const t = createPointerTracker({ viewport: () => vp });
+      t.install();
+      move(10, 10);
+      expect(t.target()).toEqual({ x: 0.5, y: 0.5 });
+      t.dispose();
+    }
+  });
 });
