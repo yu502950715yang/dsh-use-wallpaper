@@ -4,7 +4,9 @@ import { createWallpaperController } from './wallpaper-controller.js';
 import { createThreeSceneRenderer } from './three-renderer.js';
 import { WallpaperSettingsSection, setWallpaperSelectHandler, setWallpaperRuntimeHandler } from './settings-section.js';
 import { readClientSettings, writeClientSettings, getUserPropertyValue, DEFAULTS, setSettingsCtx } from './settings.js';
+import { createRenderHealthStore } from './render-health.js';
 import type { BackgroundPlan, ClientSettings } from './types.js';
+import type { HealthSnapshot } from './render-health.js';
 
 declare global {
   interface Window { __ModuleLoader__?: any; __DSH_BOOT__?: any; }
@@ -27,9 +29,35 @@ export function bootstrap(ctx?: any): void {
   let disposed = false;
   // 本实例注册的 visibilitychange 监听（收尾时移除，否则每次重载留一份）。
   let onVisibility: (() => void) | null = null;
+  // 看护存储：与 renderer 共用同一实例（面板/全局入口读的是同一份记忆）。
+  const healthStore = createRenderHealthStore();
   // three.js 场景渲染器：bootstrap 创建一次、跨壁纸复用（内部每次 render 重建 player）。
   // 这里持有引用，是为了把「省电 / 画质档位」直接下发——它们不在 controller 的渲染接口上。
-  const sceneRenderer = createThreeSceneRenderer();
+  const sceneRenderer = createThreeSceneRenderer({ healthStore });
+  // 两个可复用入口：全局 API 与面板共享 handler 都调它们（只此一份实现）。
+  const clearRenderFailures = () => { healthStore.clearAll(); };
+  const retryLive = () => {
+    const id = settings.selectedWallpaperId;
+    if (id) healthStore.clear(id);
+    if (!id || !controller) return;
+    void controller.select(id);
+  };
+  // 软失败冷却后自动重试一次（同一壁纸、每会话一次）；硬失败不自动重试。
+  let autoRetryTimer = 0;
+  const onHealth = (snap: HealthSnapshot) => {
+    if (!snap.wallpaperId) return;
+    if (!healthStore.shouldAutoRetry(snap.wallpaperId)) return;
+    healthStore.markAutoRetried(snap.wallpaperId);
+    if (autoRetryTimer) clearTimeout(autoRetryTimer);
+    autoRetryTimer = window.setTimeout(() => {
+      autoRetryTimer = 0;
+      if (disposed || !controller) return;
+      // 只有「这张壁纸仍是当前选择」才重试，避免用户已切走却被拽回。
+      if (settings.selectedWallpaperId !== snap.wallpaperId) return;
+      void controller.select(snap.wallpaperId);
+    }, 0);
+  };
+  sceneRenderer.setOnHealth?.(onHealth);
   const applySettingsToLayer = (s: ClientSettings) => {
     if (!layer) return;
     layer.setOverlayOpacity(s.overlayOpacity);
@@ -62,6 +90,9 @@ export function bootstrap(ctx?: any): void {
   const teardown = () => {
     if (disposed) return;
     disposed = true;
+    // 收尾：撤掉挂起的自动重试与健康订阅（否则延迟的回调会落到已释放的渲染器/层上）。
+    if (autoRetryTimer) { clearTimeout(autoRetryTimer); autoRetryTimer = 0; }
+    sceneRenderer.setOnHealth?.(null);
     const root = layer?.root ?? null;
     try { controller?.select(''); } catch { /* 收尾失败也必须摘层，否则又变成盖住新实例的残留层 */ }
     layer = null;
@@ -149,8 +180,14 @@ export function bootstrap(ctx?: any): void {
     select(id: string) {
       mount();
       if (!controller) return;
+      // 同步记住选中项：retryLive / 自动重试按「当前选中的壁纸」定位（面板路径见 selectWallpaper）。
+      settings = { ...settings, selectedWallpaperId: id };
       void controller.select(id);
     },
+    // 看护入口（面板与排查用）：读状态 / 重试当前壁纸 / 清空全部失败记忆。
+    health: () => sceneRenderer.getLastHealth?.() ?? null,
+    retryLive,
+    clearRenderFailures,
     show(plan: BackgroundPlan, opts?: { opacity?: number; blur?: boolean; blurRadius?: number }) {
       mount();
       if (!layer) return;

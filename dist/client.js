@@ -30428,7 +30428,31 @@ function bootstrap(ctx) {
   let settings = { ...DEFAULTS };
   let disposed = false;
   let onVisibility = null;
-  const sceneRenderer = createThreeSceneRenderer();
+  const healthStore = createRenderHealthStore();
+  const sceneRenderer = createThreeSceneRenderer({ healthStore });
+  const clearRenderFailures = () => {
+    healthStore.clearAll();
+  };
+  const retryLive = () => {
+    const id = settings.selectedWallpaperId;
+    if (id) healthStore.clear(id);
+    if (!id || !controller) return;
+    void controller.select(id);
+  };
+  let autoRetryTimer = 0;
+  const onHealth = (snap) => {
+    if (!snap.wallpaperId) return;
+    if (!healthStore.shouldAutoRetry(snap.wallpaperId)) return;
+    healthStore.markAutoRetried(snap.wallpaperId);
+    if (autoRetryTimer) clearTimeout(autoRetryTimer);
+    autoRetryTimer = window.setTimeout(() => {
+      autoRetryTimer = 0;
+      if (disposed || !controller) return;
+      if (settings.selectedWallpaperId !== snap.wallpaperId) return;
+      void controller.select(snap.wallpaperId);
+    }, 0);
+  };
+  sceneRenderer.setOnHealth?.(onHealth);
   const applySettingsToLayer = (s) => {
     if (!layer) return;
     layer.setOverlayOpacity(s.overlayOpacity);
@@ -30455,6 +30479,11 @@ function bootstrap(ctx) {
   const teardown = () => {
     if (disposed) return;
     disposed = true;
+    if (autoRetryTimer) {
+      clearTimeout(autoRetryTimer);
+      autoRetryTimer = 0;
+    }
+    sceneRenderer.setOnHealth?.(null);
     const root = layer?.root ?? null;
     try {
       controller?.select("");
@@ -30547,8 +30576,13 @@ function bootstrap(ctx) {
     select(id) {
       mount();
       if (!controller) return;
+      settings = { ...settings, selectedWallpaperId: id };
       void controller.select(id);
     },
+    // 看护入口（面板与排查用）：读状态 / 重试当前壁纸 / 清空全部失败记忆。
+    health: () => sceneRenderer.getLastHealth?.() ?? null,
+    retryLive,
+    clearRenderFailures,
     show(plan, opts) {
       mount();
       if (!layer) return;
