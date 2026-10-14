@@ -1,7 +1,7 @@
 // three.js 播放器生产入口：实现与 wasm-renderer 同构的 `SceneRendererLike` 供 wallpaper-controller 使用。
 // ⚠️ 新增的播放路径（`THREE_USE=1` 启用），**不改动/不删除** wasm-renderer（默认路径不变）；纯 CPU 模拟，无需 WebGPU。
 import type { Material, Texture, WebGLRenderer } from 'three';
-import { loadSceneToThree, resolvePixelRatio, type LoadedParticleAssets, type ParticleSim, type ThreeSceneLoadResult } from './threejs-player.js';
+import { loadSceneToThree, resolvePixelRatio, type LoadedParticleAssets, type ParticleSim, type SceneAssets, type ThreeSceneLoadResult } from './threejs-player.js';
 import { parseSceneJson } from './scene-json.js';
 import { resolveWorldTransforms, type WorldTransform } from './scene-graph.js';
 import { resolveImageTexture, resolveTexPath, resolveParticleMaterial } from './scene-assets.js';
@@ -31,6 +31,8 @@ import { SceneScriptHost } from './scene-script-host.js';
 import { applyLayerState } from './layer-state.js';
 import { DynamicMeshRegistry } from './dynamic-mesh.js';
 import { createMeshMaterial, parseMeshMaterial } from './mesh-material.js';
+import { createRenderHealthStore, isHardFailure } from './render-health.js';
+import type { HardFailureKind, HealthSnapshot, RenderHealthStore, SoftFailureKind } from './render-health.js';
 
 // wasm `CpuParticleSim` 的构造器形态（wasm-bindgen 静态 `new`；`ParticleSim` 接口见 threejs-player.ts）。
 type CpuParticleSimLike = {
@@ -187,6 +189,8 @@ export function collectScriptSources(desc: SceneDescription): Array<{ objectId: 
 export function createThreeSceneRenderer(opts?: {
   loadWasm?: LoadWasm;
   getTextScriptRuntime?: () => Promise<TextScriptRuntime | null>;
+  // 看护存储：不传则自建一个（localStorage 可用时落盘）。注入点存在是为了单测不碰真实存储。
+  healthStore?: RenderHealthStore;
 }): SceneRendererLike {
   const loadWasm = opts?.loadWasm ?? defaultLoadWasm;
   const resolveTextScriptRuntime = opts?.getTextScriptRuntime ?? getTextScriptRuntime;
@@ -242,6 +246,28 @@ export function createThreeSceneRenderer(opts?: {
   // 「上下文在本次 render 进行中丢失」标记：onContextLost 置位、render 入口复位；长异步的 render
   // 靠它在每个 await 后作废自己，不把回退掀翻。
   let contextLost = false;
+
+  // ── 渲染看护状态（Task 2）────────────────────────────────────────────────
+  const health = opts?.healthStore ?? createRenderHealthStore();
+  let currentHealthId = '';
+  let healthHandler: ((s: HealthSnapshot) => void) | null = null;
+  let renderStartedAt = 0;
+  // 首帧耗时只在「本次装配的第一次 onFrame」记一次；-1 = 还没出帧。
+  let firstFrameAt = -1;
+  const publish = (snap: HealthSnapshot) => {
+    if (!healthHandler) return;
+    try { healthHandler(snap); } catch { /* 订阅者异常不得影响渲染 */ }
+  };
+  const fail = (kind: HardFailureKind | SoftFailureKind, detail: string) => {
+    const hard = isHardFailure(kind);
+    if (hard) health.recordHard(currentHealthId, kind as HardFailureKind, detail);
+    else health.recordSoft(currentHealthId, kind as SoftFailureKind, detail);
+    publish(health.snapshot(currentHealthId));
+  };
+  const succeed = (assembleMs: number) => {
+    health.recordOk(currentHealthId, { assembleMs, firstFrameMs: firstFrameAt });
+    publish(health.snapshot(currentHealthId));
+  };
 
   const stopAudio = () => {
     const audio = currentAudio;
@@ -319,6 +345,8 @@ export function createThreeSceneRenderer(opts?: {
   // 上下文已在本次 render 进行中丢失 ⇒ 作废本次装配：清理丢失后新建的残余对象，收尾与失败路径一致。
   const abortIfContextLost = () => {
     if (!contextLost) return false;
+    // 上下文丢失是硬失败：这张壁纸在本实例里已经渲染不出来，重新挂载才有意义。
+    fail('context-lost', 'webglcontextlost');
     teardown();
     return true;
   };
@@ -355,6 +383,10 @@ export function createThreeSceneRenderer(opts?: {
       contextLost = false;
       // 每次装配开始复位 active（消费者集合换了）——否则上一张壁纸的消费者会让新壁纸也永久走段渲染路径。
       frameCapture?.reset();
+      // 看护归属：本次装配的壁纸 id + 计时起点；首帧标记等第一次 onFrame 来填。
+      currentHealthId = id;
+      renderStartedAt = performance.now();
+      firstFrameAt = -1;
       try {
         // 替换/切壁纸前先释放上次播放器资源（首次渲染 no-op）。
         teardown();
@@ -367,8 +399,19 @@ export function createThreeSceneRenderer(opts?: {
         const mod = await modulePromise;
         if (abortIfContextLost()) return false;
         // 拉取场景描述并解析（与 wasm-renderer 共用 parseSceneJson，对象归类/正交尺寸一致）。
-        const sceneJsonResp = await fetch(`/wallpapers/scene/${id}/asset?name=scene.json`);
-        if (!sceneJsonResp.ok) return false;
+        let sceneJsonResp: Response;
+        try {
+          sceneJsonResp = await fetch(`/wallpapers/scene/${id}/asset?name=scene.json`);
+        } catch (e) {
+          // 网络/磁盘一时没供上 ⇒ 软失败（不落盘，冷却后自动重试一次）
+          fail('load-error', e instanceof Error ? e.message : String(e));
+          return false;
+        }
+        if (!sceneJsonResp.ok) {
+          // 服务端明确回答「这份 scene.json 拿不到」⇒ 硬失败
+          fail('scene-json', 'http ' + sceneJsonResp.status);
+          return false;
+        }
         const sceneJson = await sceneJsonResp.text();
         if (abortIfContextLost()) return false;
         const desc = parseSceneJson(sceneJson);
@@ -643,7 +686,7 @@ export function createThreeSceneRenderer(opts?: {
         if (abortIfContextLost()) return false;
         // 装配并启动播放。viewport 显式传真实窗口尺寸：ThreeScenePlayer 不再把 canvas 重置回场景尺寸，
         // 由 player.resize(vw,vh) 使 cover 相机按窗口宽高比裁剪（窗口比例 ≠ 场景比例时是裁切而非拉伸）。
-        const result = loadSceneToThree(sceneJson, {
+        const assets: SceneAssets = {
           backgroundTextures, particles, createParticleSim, isolate, textLayers, qualityScale, worldTransforms,
           // SceneScript 帧钩子：脚本状态是本帧渲染的权威来源，先 tick → 应用脏写入，
           // 再走原有的粒子/文本更新与 render。host 未就绪（quickjs 加载中/失败）时直接返回。
@@ -661,7 +704,18 @@ export function createThreeSceneRenderer(opts?: {
               return obj ? { object: obj, sceneW: desc.orthogonal.width, sceneH: desc.orthogonal.height } : undefined;
             });
           },
-        }, fg, {
+        };
+        // 首帧耗时：宿主注入的 onFrame 第一次被调用即「真的画出了一帧」。
+        const userOnFrame = assets.onFrame;
+        assets.onFrame = (dt: number) => {
+          if (firstFrameAt < 0) {
+            firstFrameAt = performance.now() - renderStartedAt;
+            health.recordOk(id, { assembleMs: performance.now() - renderStartedAt, firstFrameMs: firstFrameAt });
+            publish(health.snapshot(id));
+          }
+          userOnFrame?.(dt);
+        };
+        const result = loadSceneToThree(sceneJson, assets, fg, {
           width: vw,
           height: vh,
         });
@@ -805,12 +859,17 @@ export function createThreeSceneRenderer(opts?: {
         );
         // 零背景 + 零粒子 → 无内容，返回 false 由 controller 走 preview 兜底（不显示空 canvas）。
         if (result.backgroundIds.length === 0 && result.particleLayers.length === 0) {
+          fail('no-visible-objects', 'background=0 particleLayers=0');
           teardown();
           return false;
         }
+        // 打点必须在零可见对象判定**之后**：空场景不是成功。
+        succeed(performance.now() - renderStartedAt);
         return true;
       } catch (e) {
-        console.warn('[three] scene render failed:', e instanceof Error ? e.message : String(e));
+        const msg = e instanceof Error ? e.message : String(e);
+        console.warn('[three] scene render failed:', msg);
+        fail('exception', msg);
         teardown();
         return false;
       }
@@ -851,6 +910,13 @@ export function createThreeSceneRenderer(opts?: {
       frameCapture?.dispose();
       frameCapture = null;
       frameCaptureRenderer = null;
+    },
+    // 看护读接口：设置面板与 `window.__wallpaperEngine.health()` 用它取当前壁纸状态。
+    getLastHealth(): HealthSnapshot | null {
+      return currentHealthId ? health.snapshot(currentHealthId) : null;
+    },
+    setOnHealth(cb: ((s: HealthSnapshot) => void) | null): void {
+      healthHandler = cb;
     },
   };
 }

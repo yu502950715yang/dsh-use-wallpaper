@@ -29280,6 +29280,137 @@ function sharedWhiteTexture() {
   return whiteTex;
 }
 
+// src/client/render-health.ts
+var HARD_KINDS = ["scene-json", "no-visible-objects", "context-lost", "exception"];
+function isHardFailure(kind) {
+  return HARD_KINDS.includes(kind);
+}
+var HEALTH_KEY_PREFIX = "we:renderfail:";
+var SCHEMA_VERSION = 1;
+var DEFAULT_SOFT_COOLDOWN_MS = 3e3;
+function defaultStorage() {
+  try {
+    return typeof localStorage === "undefined" ? null : localStorage;
+  } catch {
+    return null;
+  }
+}
+function createRenderHealthStore(opts = {}) {
+  const storage = opts.storage === void 0 ? defaultStorage() : opts.storage;
+  const now = opts.now ?? (() => Date.now());
+  const cooldown = opts.softCooldownMs ?? DEFAULT_SOFT_COOLDOWN_MS;
+  const hard = /* @__PURE__ */ new Map();
+  const soft = /* @__PURE__ */ new Map();
+  const retried = /* @__PURE__ */ new Set();
+  const session = /* @__PURE__ */ new Map();
+  const keyOf = (id) => HEALTH_KEY_PREFIX + id;
+  const readStored = (id) => {
+    if (!storage || !id) return null;
+    let raw = null;
+    try {
+      raw = storage.getItem(keyOf(id));
+    } catch {
+      return null;
+    }
+    if (!raw) return null;
+    try {
+      const v = JSON.parse(raw);
+      if (v?.v !== SCHEMA_VERSION || typeof v.kind !== "string") return null;
+      const kind = v.kind;
+      if (!isHardFailure(kind)) return null;
+      return { kind, hard: true, at: Number(v.at) || 0, detail: String(v.detail ?? "") };
+    } catch {
+      return null;
+    }
+  };
+  const writeHard = (id, kind, detail) => {
+    const entry = { kind, hard: true, at: now(), detail: String(detail).slice(0, 200) };
+    hard.set(id, entry);
+    if (!storage) return;
+    try {
+      storage.setItem(keyOf(id), JSON.stringify({
+        v: SCHEMA_VERSION,
+        kind: entry.kind,
+        detail: entry.detail,
+        at: entry.at
+      }));
+    } catch {
+    }
+  };
+  const currentHard = (id) => readStored(id) ?? hard.get(id) ?? null;
+  return {
+    recordHard(id, kind, detail) {
+      if (!id) return;
+      writeHard(id, kind, detail);
+    },
+    recordSoft(id, kind, detail) {
+      if (!id) return;
+      soft.set(id, { kind, detail: String(detail), at: now() });
+    },
+    recordOk(id, timing) {
+      if (!id) return;
+      soft.delete(id);
+      session.set(id, { ok: true, timing });
+    },
+    clear(id) {
+      hard.delete(id);
+      soft.delete(id);
+      retried.delete(id);
+      session.delete(id);
+      if (storage && id) {
+        try {
+          storage.removeItem(keyOf(id));
+        } catch {
+        }
+      }
+    },
+    clearAll() {
+      hard.clear();
+      soft.clear();
+      retried.clear();
+      session.clear();
+      if (!storage) return;
+      const keys = [];
+      try {
+        for (let i = 0; i < storage.length; i++) {
+          const k = storage.key(i);
+          if (k && k.startsWith(HEALTH_KEY_PREFIX)) keys.push(k);
+        }
+      } catch {
+      }
+      for (const k of keys) {
+        try {
+          storage.removeItem(k);
+        } catch {
+        }
+      }
+    },
+    snapshot(id) {
+      const s = session.get(id);
+      const timing = s?.timing ?? null;
+      const failure = currentHard(id);
+      if (failure) return { wallpaperId: id, ok: false, failure, timing };
+      const softHit = soft.get(id);
+      return {
+        wallpaperId: id,
+        ok: s?.ok ?? null,
+        failure: softHit ? { kind: softHit.kind, hard: false, at: softHit.at, detail: softHit.detail } : null,
+        timing
+      };
+    },
+    shouldAutoRetry(id) {
+      if (!id || retried.has(id)) return false;
+      if (currentHard(id)) return false;
+      const hit = soft.get(id);
+      if (!hit) return false;
+      return now() - hit.at >= cooldown;
+    },
+    markAutoRetried(id) {
+      if (id) retried.add(id);
+    }
+  };
+}
+
 // src/client/three-renderer.ts
 var warnedKeys = /* @__PURE__ */ new Set();
 function warnOnce2(key, message) {
@@ -29395,6 +29526,28 @@ function createThreeSceneRenderer(opts) {
   let contextLostId = null;
   let contextLostCanvas = null;
   let contextLost = false;
+  const health = opts?.healthStore ?? createRenderHealthStore();
+  let currentHealthId = "";
+  let healthHandler = null;
+  let renderStartedAt = 0;
+  let firstFrameAt = -1;
+  const publish = (snap) => {
+    if (!healthHandler) return;
+    try {
+      healthHandler(snap);
+    } catch {
+    }
+  };
+  const fail = (kind, detail) => {
+    const hard = isHardFailure(kind);
+    if (hard) health.recordHard(currentHealthId, kind, detail);
+    else health.recordSoft(currentHealthId, kind, detail);
+    publish(health.snapshot(currentHealthId));
+  };
+  const succeed = (assembleMs) => {
+    health.recordOk(currentHealthId, { assembleMs, firstFrameMs: firstFrameAt });
+    publish(health.snapshot(currentHealthId));
+  };
   const stopAudio = () => {
     const audio = currentAudio;
     currentAudio = null;
@@ -29457,6 +29610,7 @@ function createThreeSceneRenderer(opts) {
   };
   const abortIfContextLost = () => {
     if (!contextLost) return false;
+    fail("context-lost", "webglcontextlost");
     teardown();
     return true;
   };
@@ -29492,6 +29646,9 @@ function createThreeSceneRenderer(opts) {
       warnedKeys.clear();
       contextLost = false;
       frameCapture?.reset();
+      currentHealthId = id;
+      renderStartedAt = performance.now();
+      firstFrameAt = -1;
       try {
         teardown();
         contextLostId = id;
@@ -29500,8 +29657,17 @@ function createThreeSceneRenderer(opts) {
         modulePromise ??= loadWasm();
         const mod = await modulePromise;
         if (abortIfContextLost()) return false;
-        const sceneJsonResp = await fetch(`/wallpapers/scene/${id}/asset?name=scene.json`);
-        if (!sceneJsonResp.ok) return false;
+        let sceneJsonResp;
+        try {
+          sceneJsonResp = await fetch(`/wallpapers/scene/${id}/asset?name=scene.json`);
+        } catch (e) {
+          fail("load-error", e instanceof Error ? e.message : String(e));
+          return false;
+        }
+        if (!sceneJsonResp.ok) {
+          fail("scene-json", "http " + sceneJsonResp.status);
+          return false;
+        }
         const sceneJson = await sceneJsonResp.text();
         if (abortIfContextLost()) return false;
         const desc = parseSceneJson(sceneJson);
@@ -29702,7 +29868,7 @@ function createThreeSceneRenderer(opts) {
           }
         }
         if (abortIfContextLost()) return false;
-        const result = loadSceneToThree(sceneJson, {
+        const assets = {
           backgroundTextures,
           particles,
           createParticleSim,
@@ -29725,7 +29891,17 @@ function createThreeSceneRenderer(opts) {
               return obj ? { object: obj, sceneW: desc.orthogonal.width, sceneH: desc.orthogonal.height } : void 0;
             });
           }
-        }, fg, {
+        };
+        const userOnFrame = assets.onFrame;
+        assets.onFrame = (dt) => {
+          if (firstFrameAt < 0) {
+            firstFrameAt = performance.now() - renderStartedAt;
+            health.recordOk(id, { assembleMs: performance.now() - renderStartedAt, firstFrameMs: firstFrameAt });
+            publish(health.snapshot(id));
+          }
+          userOnFrame?.(dt);
+        };
+        const result = loadSceneToThree(sceneJson, assets, fg, {
           width: vw,
           height: vh
         });
@@ -29839,12 +30015,16 @@ function createThreeSceneRenderer(opts) {
           `[three] scene loaded id=${id} background=${result.backgroundIds.length} particleLayers=${result.particleLayers.length}`
         );
         if (result.backgroundIds.length === 0 && result.particleLayers.length === 0) {
+          fail("no-visible-objects", "background=0 particleLayers=0");
           teardown();
           return false;
         }
+        succeed(performance.now() - renderStartedAt);
         return true;
       } catch (e) {
-        console.warn("[three] scene render failed:", e instanceof Error ? e.message : String(e));
+        const msg = e instanceof Error ? e.message : String(e);
+        console.warn("[three] scene render failed:", msg);
+        fail("exception", msg);
         teardown();
         return false;
       }
@@ -29888,6 +30068,13 @@ function createThreeSceneRenderer(opts) {
       frameCapture?.dispose();
       frameCapture = null;
       frameCaptureRenderer = null;
+    },
+    // 看护读接口：设置面板与 `window.__wallpaperEngine.health()` 用它取当前壁纸状态。
+    getLastHealth() {
+      return currentHealthId ? health.snapshot(currentHealthId) : null;
+    },
+    setOnHealth(cb) {
+      healthHandler = cb;
     }
   };
 }

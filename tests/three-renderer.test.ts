@@ -46,6 +46,8 @@ import { resolveImageTexture, resolveParticleMaterial } from '../src/client/scen
 import { loadTexTexture } from '../src/client/tex-loader.js';
 import { defaultLoadWasm } from '../src/client/wasm-loader.js';
 import { createThreeSceneRenderer, particleBlend, collectObjectEffectChains, collectScriptSources, lastWorldTransformOf } from '../src/client/three-renderer.js';
+import { createRenderHealthStore } from '../src/client/render-health.js';
+import type { HealthSnapshot } from '../src/client/render-health.js';
 import { parseSceneJson } from '../src/client/scene-json.js';
 import { screenScalePx, ISOLATED_RT_BUDGET_BYTES, ISOLATED_RT_BYTES_PER_PX } from '../src/client/object-range.js';
 import { createGlowStage } from '../src/client/glow-stage.js';
@@ -2328,6 +2330,162 @@ describe('createThreeSceneRenderer webglcontextlost 回退 preview 接线', () =
     expect(loadSceneToThree).not.toHaveBeenCalled();
     await expect(pending).resolves.toBe(false); // 丢失仍作废本次装配
     warn.mockRestore();
+    r.dispose();
+  });
+});
+
+// Task 2：render 的每个出口对**当前壁纸 id** 打一条结构化原因（硬失败落盘/软失败仅会话），
+// 并把装配耗时与首帧耗时写进同一份快照。断言看的是 store 快照（真实行为），不是「某方法被调用」。
+describe('scene 渲染看护：失败分类与打点', () => {
+  const SCENE_ONE_IMAGE = JSON.stringify({
+    general: { orthogonalprojection: { width: 1920, height: 1080 } },
+    objects: [{ id: 1, name: 'bg', image: 'models/bg.json', origin: '960.00000 540.00000 0.00000', size: '1920.00000 1080.00000' }],
+  });
+
+  // 成功出口的 player 替身：setFrameCapture/setGlowStage 缺一个就会落进 catch 被记成 exception。
+  function okPlayer() {
+    return {
+      player: { dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn() },
+      sims: [], backgroundIds: [1], particleLayers: [],
+    };
+  }
+
+  it('scene.json 404 → 硬失败 scene-json', async () => {
+    const store = createRenderHealthStore({ storage: null });
+    const r = createThreeSceneRenderer({ healthStore: store });
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 404, text: async () => '' })));
+    const fg = document.createElement('canvas');
+    expect(await r.render('wid-404', fg)).toBe(false);
+    expect(store.snapshot('wid-404').failure?.kind).toBe('scene-json');
+    expect(store.snapshot('wid-404').failure?.hard).toBe(true);
+  });
+
+  it('scene.json fetch 抛错 → 软失败 load-error（不落盘、可自动重试）', async () => {
+    const store = createRenderHealthStore({ storage: null, softCooldownMs: 0 });
+    const r = createThreeSceneRenderer({ healthStore: store });
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
+    const fg = document.createElement('canvas');
+    expect(await r.render('wid-net', fg)).toBe(false);
+    const snap = store.snapshot('wid-net');
+    expect(snap.failure?.kind).toBe('load-error');
+    expect(snap.failure?.hard).toBe(false);
+    expect(store.shouldAutoRetry('wid-net')).toBe(true);
+  });
+
+  it('装配成功 → 记 ok 与装配耗时，并在首帧回调处补 firstFrameMs', async () => {
+    const store = createRenderHealthStore({ storage: null });
+    let onFrame: ((dt: number) => void) | null = null;
+    resolveImageTexture.mockResolvedValue(fakeTexture() as never);
+    defaultLoadWasm.mockResolvedValue(null);
+    loadSceneToThree.mockImplementation((_json: unknown, assets: { onFrame?: (dt: number) => void }) => {
+      onFrame = assets.onFrame ?? null; // 宿主注入的每帧钩子：首帧计时挂在这里
+      return okPlayer();
+    });
+    const r = createThreeSceneRenderer({ healthStore: store });
+    const published: HealthSnapshot[] = [];
+    r.setOnHealth?.((s) => { published.push(s); });
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, text: async () => SCENE_ONE_IMAGE })));
+    expect(await r.render('wid-ok', document.createElement('canvas'))).toBe(true);
+    const before = store.snapshot('wid-ok').timing;
+    expect(before?.assembleMs).toBeGreaterThanOrEqual(0);
+    expect(before?.firstFrameMs).toBe(-1); // 首帧还没发生
+    onFrame?.(0.016);
+    expect(store.snapshot('wid-ok').timing?.firstFrameMs).toBeGreaterThanOrEqual(0);
+    expect(published).toHaveLength(2); // 成功出口一次 + 首帧一次
+    onFrame?.(0.016);
+    expect(published).toHaveLength(2); // 第二帧不再打点（首帧计时是「第一次出帧」）
+    r.dispose();
+  });
+
+  it('零可见对象 → 硬失败 no-visible-objects，且不得同时记成功（判定在 succeed 之前）', async () => {
+    const store = createRenderHealthStore({ storage: null });
+    resolveImageTexture.mockResolvedValue(null);
+    defaultLoadWasm.mockResolvedValue(null);
+    stubAssetFetch(SCENE_ONE_IMAGE, {});
+    loadSceneToThree.mockReturnValue({ ...okPlayer(), backgroundIds: [], particleLayers: [] } as never);
+    const r = createThreeSceneRenderer({ healthStore: store });
+    expect(await r.render('wid-empty', document.createElement('canvas'))).toBe(false);
+    const snap = store.snapshot('wid-empty');
+    expect(snap.failure?.kind).toBe('no-visible-objects');
+    expect(snap.failure?.hard).toBe(true);
+    expect(snap.timing).toBeNull(); // 空场景打到成功出口就会留下装配耗时 ⇒ 顺序回归在这里现形
+    r.dispose();
+  });
+
+  it('render 进行中丢上下文 → 硬失败 context-lost（8 个作废检查点只记一次）', async () => {
+    const store = createRenderHealthStore({ storage: null });
+    let release!: () => void;
+    const gate = new Promise<void>((res) => { release = res; });
+    let entered!: () => void;
+    const atAwait = new Promise<void>((res) => { entered = res; });
+    resolveImageTexture.mockImplementation(async () => {
+      entered();
+      await gate;
+      return fakeTexture() as never;
+    });
+    defaultLoadWasm.mockResolvedValue(null);
+    stubAssetFetch(SCENE_ONE_IMAGE, {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = createThreeSceneRenderer({ healthStore: store });
+    const seen: HealthSnapshot[] = [];
+    r.setOnHealth?.((s) => seen.push(s));
+
+    const canvas = document.createElement('canvas');
+    const pending = r.render('wid-lost', canvas, null);
+    await atAwait; // render 挂在贴图解析上，丢失监听已就位
+    canvas.dispatchEvent(new Event('webglcontextlost', { cancelable: true }));
+    release();
+    await expect(pending).resolves.toBe(false);
+    expect(seen).toHaveLength(1);
+    expect(store.snapshot('wid-lost').failure?.kind).toBe('context-lost');
+    expect(store.snapshot('wid-lost').failure?.hard).toBe(true);
+    warn.mockRestore();
+    r.dispose();
+  });
+
+  it('装配抛异常 → 硬失败 exception（detail 保留原始 message）', async () => {
+    const store = createRenderHealthStore({ storage: null });
+    resolveImageTexture.mockRejectedValue(new Error('纹理爆炸'));
+    defaultLoadWasm.mockResolvedValue(null);
+    stubAssetFetch(SCENE_ONE_IMAGE, {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = createThreeSceneRenderer({ healthStore: store });
+    expect(await r.render('wid-throw', document.createElement('canvas'))).toBe(false);
+    const snap = store.snapshot('wid-throw');
+    expect(snap.failure?.kind).toBe('exception');
+    expect(snap.failure?.hard).toBe(true);
+    expect(snap.failure?.detail).toBe('纹理爆炸');
+    warn.mockRestore();
+    r.dispose();
+  });
+
+  it('getLastHealth / setOnHealth：读当前壁纸快照、订阅可撤销、订阅者异常不影响渲染', async () => {
+    const store = createRenderHealthStore({ storage: null });
+    resolveImageTexture.mockResolvedValue(fakeTexture() as never);
+    defaultLoadWasm.mockResolvedValue(null);
+    loadSceneToThree.mockReturnValue(okPlayer() as never);
+    const r = createThreeSceneRenderer({ healthStore: store });
+    expect(r.getLastHealth?.()).toBeNull(); // 还没渲染过 ⇒ 无可归属的状态
+
+    const seen: HealthSnapshot[] = [];
+    r.setOnHealth?.((s) => { seen.push(s); });
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, text: async () => SCENE_ONE_IMAGE })));
+    await r.render('wid-ok', document.createElement('canvas'));
+    expect(r.getLastHealth?.()?.wallpaperId).toBe('wid-ok');
+    expect(r.getLastHealth?.()?.ok).toBe(true);
+    expect(seen).toHaveLength(1); // 成功出口打点一次
+
+    // 撤销订阅后不再收到打点（面板关闭/卸载时用得上）。
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 404, text: async () => '' })));
+    r.setOnHealth?.(null);
+    await r.render('wid-404', document.createElement('canvas'));
+    expect(seen).toHaveLength(1);
+    expect(r.getLastHealth?.()?.failure?.kind).toBe('scene-json');
+
+    // 订阅者抛错不得掀翻渲染（订阅方是 UI 代码）。
+    r.setOnHealth?.(() => { throw new Error('subscriber boom'); });
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, text: async () => SCENE_ONE_IMAGE })));
+    await expect(r.render('wid-ok2', document.createElement('canvas'))).resolves.toBe(true);
     r.dispose();
   });
 });
