@@ -22,6 +22,9 @@ import type { CompositeQuad } from './composite-quad.js';
 // 文本图层：帧内文本变化 → 按新 layout 同步 quad 尺寸与锚点中心（textLayerOffset）。
 import { textLayerOffset } from './text-object.js';
 import type { ClockDriver, TextLayout } from './text-object.js';
+// 视差（Task 1 的纯数学层）：配置 + 指针 + 延迟插值 + 逐对象位移公式；唯一应用点 = 本文件的 tickParallax。
+import { POINTER_CENTER, advancePointer, parallaxShift } from './parallax.js';
+import type { ParallaxConfig, PointerFollow, PointerState } from './parallax.js';
 
 // 背景图层条目：记录 WE 场景坐标与当前已应用状态，供 update_background 对齐既有
 // update_image 语义（undefined = 保持现状；无变化则跳过）。
@@ -39,6 +42,12 @@ type BackgroundEntry = {
   // 该背景创建时用的场景固有尺寸（we_to_three 中心化基准 = origin - scene/2）。
   sceneW: number;
   sceneH: number;
+  // 视差：node = 实际承载世界位置的 three 对象（非隔离 = mesh，隔离 = 合成 quad）；
+  // depth 来自 scene.json 的 parallaxDepth（缺省 undefined = 不参与视差）。
+  parallaxNode: THREE.Object3D;
+  parallaxDepth?: [number, number];
+  // 本类**当前**是否在该 node 上留着位移（true ⇒ 关视差时写回一次基准位；见 tickParallax）。
+  parallaxApplied?: boolean;
 };
 
 // 粒子图层条目：记录 three.js billboard quad 的 GPU 资源与配套模拟取顶点 getter。
@@ -77,6 +86,14 @@ type ParticleLayer = {
   refract: boolean;
   // 折射诊断日志只打一次（首帧真的把快照接进 refractBg 时）。
   loggedRefract: boolean;
+  // 视差：parallaxDepth 来自 scene.json；世界位移的落点分两处 —— 非隔离层写顶点 shader 的
+  // u_Parallax（worldPos 偏移），隔离层必须写合成 quad 的 position（内容进对象 RT，在 RT 内
+  // 平移会被 RT 边界裁掉）。parallaxCenter = objCenter 的 x/y（three 世界坐标）。
+  parallaxDepth?: [number, number];
+  parallaxCenter: [number, number];
+  parallaxQuad?: THREE.Object3D;
+  // 本类**当前**是否在该层上留着位移（true ⇒ 关视差时写回一次；见 tickParallax）。
+  parallaxApplied?: boolean;
 };
 
 // 粒子实例缓冲的**缺省容量**：每个 instanced attribute 的 count 必须 ≥ 模拟器最终产出的粒子数
@@ -313,6 +330,9 @@ uniform mat4 persp;
 uniform vec3 perspEye;
 // 对象欧拉角（**弧度**）—— WE model matrix = T·R·S 的 R 部分。
 uniform vec3 objAngles;
+// 对象级视差的**世界平移**（tickParallax 逐帧写；0 = 关视差）。等价于把整个对象沿世界轴平移，
+// 与 model matrix 的 T 同语义 ⇒ 加在 worldPos 组装完成之后、投影之前。
+uniform vec2 u_Parallax;
 #ifdef REFRACT
 // 屏幕空间折射（WE genericparticle.vert 的 REFRACT 分支）：位移强度来自材质
 // ui_editor_properties_refract_amount，片元用它算屏幕 UV 偏移后采背景快照。
@@ -377,6 +397,9 @@ void main() {
     vec3 corner = weObjectRotate(abs(objScale) * (spun * particleSize * 0.5), objAngles);
     worldPos += corner;
   }
+  // 视差：沿世界轴平移整个对象（0 = 逐字不变）。
+  worldPos.x += u_Parallax.x;
+  worldPos.y += u_Parallax.y;
   // 投影：带 spec.flags perspective 位的粒子层走 WE 的 global_perspective 相机（近大远小），
   // 其余层走 three 注入的主（正交）投影矩阵 —— 非透视层的通路逐字不变（零回归）。
   // ⚠️ 透视分支用 persp（视图投影矩阵）直接乘 worldPos（已是世界坐标），**不**再乘 modelViewMatrix
@@ -598,6 +621,11 @@ export class ThreeScenePlayer {
 
   private lastTime = 0;
 
+  // 视差状态：配置 + 宿主指针目标 + 跟随值（延迟插值状态）。cfg 为 null 时 tickParallax 立即返回。
+  private parallaxCfg: ParallaxConfig | null = null;
+  private parallaxTarget: PointerState = { ...POINTER_CENTER };
+  private parallaxFollow: PointerFollow = { value: { ...POINTER_CENTER }, elapsed: 0 };
+
   // 背景图层条目（按 addBackground 返回的 id 索引，供 update_background 引用）。
   private backgroundEntries = new Map<number, BackgroundEntry>();
   private nextBackgroundId = 0;
@@ -789,6 +817,87 @@ export class ThreeScenePlayer {
     this.updateParticles(_dt);
   }
 
+  /** 相机视差配置（null = 未启用/已拆除 ⇒ 逐帧零成本早退；enabled=false 时下一帧把对象写回基准位置）。 */
+  setParallax(cfg: ParallaxConfig | null): void {
+    this.parallaxCfg = cfg;
+  }
+
+  /** 宿主指针监听的最新归一化位置（[0,1]）；插值在本类的 tickParallax 内按 dt 推进。 */
+  setParallaxPointer(p: PointerState): void {
+    this.parallaxTarget = p;
+  }
+
+  /** 测试用：取某背景条目的 three 对象（隔离对象返回合成 quad）。 */
+  backgroundMeshForTest(id: number): THREE.Object3D {
+    return this.backgroundEntries.get(id)!.parallaxNode;
+  }
+
+  /** 测试用：直接推进一帧视差。 */
+  tickParallaxForTest(dt: number): void {
+    this.tickParallax(dt);
+  }
+
+  // 逐帧：推进指针插值，并按 parallaxDepth 把**对象平移**写进各自的落点（非隔离 = mesh、
+  // 隔离 = 合成 quad、粒子 = 顶点 shader 的 u_Parallax）。相机不动 —— 视差只是 model 平移。
+  // ⚠️ 关视差只写回**一次**基准位：每帧无条件写 position 会盖掉脚本对同一对象的 origin 写入
+  // （layer-state.applyLayerState 直接写 three 对象）⇒ 动态网格静止；而全库 34 张里只有 1 张开视差。
+  private tickParallax(dt: number): void {
+    const cfg = this.parallaxCfg;
+    if (!cfg) return;
+    this.parallaxFollow = advancePointer(this.parallaxFollow, this.parallaxTarget, cfg, dt);
+    for (const entry of this.backgroundEntries.values()) {
+      const x = entry.origin[0] - entry.sceneW / 2;
+      const y = entry.origin[1] - entry.sceneH / 2;
+      const z = entry.origin[2];
+      if (!cfg.enabled || !entry.parallaxDepth) {
+        if (entry.parallaxApplied) {
+          entry.parallaxNode.position.set(x, y, z);
+          entry.parallaxApplied = false;
+        }
+        continue;
+      }
+      const [sx, sy] = parallaxShift({
+        pointer: this.parallaxFollow.value,
+        // OWE 的 ortho 是**场景**正交尺寸（general.orthogonalprojection），不是窗口尺寸。
+        orthoW: this.sceneWidth,
+        orthoH: this.sceneHeight,
+        nodeX: x, nodeY: y,
+        // three 坐标下主相机位于场景中心（we_to_three 已把中心移到原点）。
+        camX: 0, camY: 0,
+        depth: entry.parallaxDepth,
+        cfg,
+      });
+      entry.parallaxNode.position.set(x + sx, y + sy, z);
+      entry.parallaxApplied = true;
+    }
+    // 粒子层：非隔离层把位移注入顶点 shader（= 对象局部的世界平移）；隔离层写合成 quad（在对象
+    // RT 内平移会被 RT 边界裁掉）。
+    for (const layer of this.particleLayers.values()) {
+      const [cx, cy] = layer.parallaxCenter;
+      const u = (layer.material.uniforms as Record<string, { value: THREE.Vector2 }>).u_Parallax;
+      if (!cfg.enabled || !layer.parallaxDepth) {
+        if (layer.parallaxApplied) {
+          if (layer.parallaxQuad) layer.parallaxQuad.position.set(cx, cy, layer.parallaxQuad.position.z);
+          else u?.value.set(0, 0);
+          layer.parallaxApplied = false;
+        }
+        continue;
+      }
+      const [sx, sy] = parallaxShift({
+        pointer: this.parallaxFollow.value,
+        orthoW: this.sceneWidth,
+        orthoH: this.sceneHeight,
+        nodeX: cx, nodeY: cy,
+        camX: 0, camY: 0,
+        depth: layer.parallaxDepth,
+        cfg,
+      });
+      if (layer.parallaxQuad) layer.parallaxQuad.position.set(cx + sx, cy + sy, layer.parallaxQuad.position.z);
+      else u?.value.set(sx, sy);
+      layer.parallaxApplied = true;
+    }
+  }
+
   // 启动帧循环（renderer.setAnimationLoop 内部 RAF）。每帧：外部回调 fn(dt) → update(dt) →
   // render(scene, camera)。dt 用 performance.now 差分并 clamp 0.1s（防 tab 切后台后 dt 过大把粒子
   // 瞬移出视口）。fn(dt) 必须先于内部 update(dt)：fn 承载「模拟推进」，使 updateParticles 读到的
@@ -822,6 +931,7 @@ export class ThreeScenePlayer {
         this.lastTime = now;
         fn?.(dt);
         this.update(dt);
+        this.tickParallax(dt);   // 视差是纯位置写入：无配置时立即返回
         // 帧序统一在 render() 内（隔离内容 → bindOutputs → Glow/主场景 → advance），两处不再漂移。
         this.render();
       } catch (e) {
@@ -1095,6 +1205,8 @@ export class ThreeScenePlayer {
     //   worldW/worldH    = 合成 quad 的世界尺寸（= |size × scale|，**未钳制**幅值）。
     // 缺省不隔离（内容直接进主 scene，帧序不变）。
     isolate?: { objectId: number; rtWidth: number; rtHeight: number; worldW: number; worldH: number };
+    // 对象级视差深度（scene.json 的 parallaxDepth，两根轴）；缺省 undefined = 不参与视差。
+    parallaxDepth?: [number, number];
   }): number {
     const sceneW = opts.sceneW;
     const sceneH = opts.sceneH;
@@ -1154,6 +1266,9 @@ export class ThreeScenePlayer {
       brightness: opts.brightness ?? 1,
       sceneW,
       sceneH,
+      // 隔离时位移的载体是合成 quad（内容只进对象 RT）；attachIsolated 在本方法之前登记 quad。
+      parallaxNode: opts.isolate ? (this.isolated.get(opts.isolate.objectId)?.quad ?? mesh) : mesh,
+      parallaxDepth: opts.parallaxDepth,
     });
     // scene 对象 id → 显示对象（隔离时是合成 quad —— 内容 mesh 只渲染进对象 RT，不进主场景）。
     if (opts.objectId !== undefined) {
@@ -1437,6 +1552,8 @@ export class ThreeScenePlayer {
       // 对象隔离（对象级效果链；五字段语义同 addBackground，世界尺寸 = particleWorldSize 的
       // **未钳制**值）：粒子 spec 无 size 字段、player 也不知道 distanceMax，必须由调用方算好传入。
       isolate?: { objectId: number; rtWidth: number; rtHeight: number; worldW: number; worldH: number };
+      // 对象级视差深度（scene.json 的 parallaxDepth，两根轴）；缺省 undefined = 不参与视差。
+      parallaxDepth?: [number, number];
     },
   ): number {
     const frameCount = Math.max(1, Math.floor(opts.frameCount));
@@ -1535,6 +1652,8 @@ export class ThreeScenePlayer {
         perspEnabled: { value: opts.perspective ? 1.0 : 0.0 },
         persp: { value: particlePerspMatrix(opts.perspective) },
         perspEye: { value: new THREE.Vector3(0, 0, opts.perspective?.distance ?? 0) },
+        // 对象级视差的世界平移（逐帧由 tickParallax 写；0 = 与加视差前逐像素相同）。
+        u_Parallax: { value: new THREE.Vector2(0, 0) },
       },
       vertexShader: PARTICLE_VERTEX_SHADER,
       fragmentShader: PARTICLE_FRAGMENT_SHADER,
@@ -1592,6 +1711,8 @@ export class ThreeScenePlayer {
       loggedCount: 0,
       refract: refractEnabled,
       loggedRefract: false,
+      parallaxDepth: opts.parallaxDepth,
+      parallaxCenter: [(opts.objectCenter ?? [0, 0, 0])[0], (opts.objectCenter ?? [0, 0, 0])[1]],
     };
     this.particleLayers.set(id, layer);
     // 立即写入首帧数据，保持 geometry 与 getter 一致（后续由 updateParticles 逐帧刷新）。
@@ -1605,6 +1726,8 @@ export class ThreeScenePlayer {
       this.attachIsolated(opts.isolate.objectId, 'particle', mesh, opts.isolate.worldW, opts.isolate.worldH,
         { width: opts.isolate.rtWidth, height: opts.isolate.rtHeight },
         { x: center[0], y: center[1], z: center[2] }, [0, 0, 0], 0, opts.renderOrder);
+      // 隔离层的视差落点是合成 quad（内容 mesh 在对象 RT 内坐标为 -objCenter，不能在那里平移）。
+      layer.parallaxQuad = this.isolated.get(opts.isolate.objectId)?.quad;
     }
     // scene 对象 id → 显示对象（隔离时是合成 quad，否则是粒子对象本身）。
     if (opts.objectId !== undefined) {
@@ -1996,6 +2119,9 @@ export function loadSceneToThree(
         // 对象级效果链：带效果的对象其内容进 localScene 渲染到对象 RT，主场景放合成 quad；
         // 缺省不隔离。隔离条目的键 = obj.id，与 ObjectEffectStage 的键空间一致。
         isolate: assets.isolate?.get(obj.id),
+        // 视差深度：Task 2 修订后**所有 kind** 都带该字段（SceneObjectBase.parallaxDepth）⇒ 直接透传；
+        // 写成 `obj.kind === 'image' ? … : undefined` 会丢掉 text 图层的视差（真实库 20 处）。
+        parallaxDepth: obj.parallaxDepth,
       });
       backgroundIds.push(id);
     } else if (obj.kind === 'text') {
@@ -2017,6 +2143,8 @@ export function loadSceneToThree(
         objectId: obj.id,
         // 唯一绘制序 = 本对象在 objects 数组中的下标。
         renderOrder,
+        // 视差深度同 image 分支：直接透传对象级字段（text 也有 parallaxDepth）。
+        parallaxDepth: obj.parallaxDepth,
       });
       backgroundIds.push(id);
       if (layer.driver) {
@@ -2091,6 +2219,8 @@ export function loadSceneToThree(
         // 对象级效果链：带效果的粒子对象同样隔离（对象 RT + 合成 quad）。世界尺寸由调用方按
         // `particleWorldSize(spec, scale)` 算好（player 不知道 spec 的 distanceMax）；缺省不隔离。
         isolate: assets.isolate?.get(obj.id),
+        // 视差深度：真实库 parallaxDepth 有 106 处落在 particle 对象上（最大的一支）。
+        parallaxDepth: obj.parallaxDepth,
       });
       particleLayers.push({ id, sim });
       sims.push(sim);

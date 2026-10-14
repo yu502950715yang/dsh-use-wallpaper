@@ -22662,6 +22662,29 @@ function readParallaxConfig(gen) {
     mouseInfluence: num(g.cameraparallaxmouseinfluence, 0)
   };
 }
+var POINTER_CENTER = { x: 0.5, y: 0.5 };
+function advancePointer(follow, target, cfg, dt) {
+  const delay = Math.max(0, cfg.delay);
+  const elapsed = Math.min(follow.elapsed + Math.max(0, dt), delay);
+  const amount = delay > 0 ? elapsed / delay : 1;
+  return {
+    elapsed,
+    value: {
+      x: follow.value.x + (target.x - follow.value.x) * amount,
+      y: follow.value.y + (target.y - follow.value.y) * amount
+    }
+  };
+}
+function parallaxShift(o) {
+  if (!o.cfg.enabled) return [0, 0];
+  if (o.depth[0] === 0 && o.depth[1] === 0) return [0, 0];
+  const mouseX = (0.5 - o.pointer.x) * o.orthoW * o.cfg.mouseInfluence;
+  const mouseY = (o.pointer.y - 0.5) * o.orthoH * o.cfg.mouseInfluence;
+  return [
+    o.depth[0] * o.cfg.amount * (o.nodeX - o.camX + mouseX),
+    o.depth[1] * o.cfg.amount * (o.nodeY - o.camY + mouseY)
+  ];
+}
 
 // src/client/script-patterns.ts
 function detectScriptPattern(src) {
@@ -23364,6 +23387,9 @@ uniform mat4 persp;
 uniform vec3 perspEye;
 // \u5BF9\u8C61\u6B27\u62C9\u89D2\uFF08**\u5F27\u5EA6**\uFF09\u2014\u2014 WE model matrix = T\xB7R\xB7S \u7684 R \u90E8\u5206\u3002
 uniform vec3 objAngles;
+// \u5BF9\u8C61\u7EA7\u89C6\u5DEE\u7684**\u4E16\u754C\u5E73\u79FB**\uFF08tickParallax \u9010\u5E27\u5199\uFF1B0 = \u5173\u89C6\u5DEE\uFF09\u3002\u7B49\u4EF7\u4E8E\u628A\u6574\u4E2A\u5BF9\u8C61\u6CBF\u4E16\u754C\u8F74\u5E73\u79FB\uFF0C
+// \u4E0E model matrix \u7684 T \u540C\u8BED\u4E49 \u21D2 \u52A0\u5728 worldPos \u7EC4\u88C5\u5B8C\u6210\u4E4B\u540E\u3001\u6295\u5F71\u4E4B\u524D\u3002
+uniform vec2 u_Parallax;
 #ifdef REFRACT
 // \u5C4F\u5E55\u7A7A\u95F4\u6298\u5C04\uFF08WE genericparticle.vert \u7684 REFRACT \u5206\u652F\uFF09\uFF1A\u4F4D\u79FB\u5F3A\u5EA6\u6765\u81EA\u6750\u8D28
 // ui_editor_properties_refract_amount\uFF0C\u7247\u5143\u7528\u5B83\u7B97\u5C4F\u5E55 UV \u504F\u79FB\u540E\u91C7\u80CC\u666F\u5FEB\u7167\u3002
@@ -23428,6 +23454,9 @@ void main() {
     vec3 corner = weObjectRotate(abs(objScale) * (spun * particleSize * 0.5), objAngles);
     worldPos += corner;
   }
+  // \u89C6\u5DEE\uFF1A\u6CBF\u4E16\u754C\u8F74\u5E73\u79FB\u6574\u4E2A\u5BF9\u8C61\uFF080 = \u9010\u5B57\u4E0D\u53D8\uFF09\u3002
+  worldPos.x += u_Parallax.x;
+  worldPos.y += u_Parallax.y;
   // \u6295\u5F71\uFF1A\u5E26 spec.flags perspective \u4F4D\u7684\u7C92\u5B50\u5C42\u8D70 WE \u7684 global_perspective \u76F8\u673A\uFF08\u8FD1\u5927\u8FDC\u5C0F\uFF09\uFF0C
   // \u5176\u4F59\u5C42\u8D70 three \u6CE8\u5165\u7684\u4E3B\uFF08\u6B63\u4EA4\uFF09\u6295\u5F71\u77E9\u9635 \u2014\u2014 \u975E\u900F\u89C6\u5C42\u7684\u901A\u8DEF\u9010\u5B57\u4E0D\u53D8\uFF08\u96F6\u56DE\u5F52\uFF09\u3002
   // \u26A0\uFE0F \u900F\u89C6\u5206\u652F\u7528 persp\uFF08\u89C6\u56FE\u6295\u5F71\u77E9\u9635\uFF09\u76F4\u63A5\u4E58 worldPos\uFF08\u5DF2\u662F\u4E16\u754C\u5750\u6807\uFF09\uFF0C**\u4E0D**\u518D\u4E58 modelViewMatrix
@@ -23576,6 +23605,10 @@ var ThreeScenePlayer = class {
   // 已安装的帧回调（resume 时用它重新排程）。
   loopFn = null;
   lastTime = 0;
+  // 视差状态：配置 + 宿主指针目标 + 跟随值（延迟插值状态）。cfg 为 null 时 tickParallax 立即返回。
+  parallaxCfg = null;
+  parallaxTarget = { ...POINTER_CENTER };
+  parallaxFollow = { value: { ...POINTER_CENTER }, elapsed: 0 };
   // 背景图层条目（按 addBackground 返回的 id 索引，供 update_background 引用）。
   backgroundEntries = /* @__PURE__ */ new Map();
   nextBackgroundId = 0;
@@ -23718,6 +23751,84 @@ var ThreeScenePlayer = class {
   update(_dt) {
     this.updateParticles(_dt);
   }
+  /** 相机视差配置（null = 未启用/已拆除 ⇒ 逐帧零成本早退；enabled=false 时下一帧把对象写回基准位置）。 */
+  setParallax(cfg) {
+    this.parallaxCfg = cfg;
+  }
+  /** 宿主指针监听的最新归一化位置（[0,1]）；插值在本类的 tickParallax 内按 dt 推进。 */
+  setParallaxPointer(p) {
+    this.parallaxTarget = p;
+  }
+  /** 测试用：取某背景条目的 three 对象（隔离对象返回合成 quad）。 */
+  backgroundMeshForTest(id) {
+    return this.backgroundEntries.get(id).parallaxNode;
+  }
+  /** 测试用：直接推进一帧视差。 */
+  tickParallaxForTest(dt) {
+    this.tickParallax(dt);
+  }
+  // 逐帧：推进指针插值，并按 parallaxDepth 把**对象平移**写进各自的落点（非隔离 = mesh、
+  // 隔离 = 合成 quad、粒子 = 顶点 shader 的 u_Parallax）。相机不动 —— 视差只是 model 平移。
+  // ⚠️ 关视差只写回**一次**基准位：每帧无条件写 position 会盖掉脚本对同一对象的 origin 写入
+  // （layer-state.applyLayerState 直接写 three 对象）⇒ 动态网格静止；而全库 34 张里只有 1 张开视差。
+  tickParallax(dt) {
+    const cfg = this.parallaxCfg;
+    if (!cfg) return;
+    this.parallaxFollow = advancePointer(this.parallaxFollow, this.parallaxTarget, cfg, dt);
+    for (const entry of this.backgroundEntries.values()) {
+      const x = entry.origin[0] - entry.sceneW / 2;
+      const y = entry.origin[1] - entry.sceneH / 2;
+      const z = entry.origin[2];
+      if (!cfg.enabled || !entry.parallaxDepth) {
+        if (entry.parallaxApplied) {
+          entry.parallaxNode.position.set(x, y, z);
+          entry.parallaxApplied = false;
+        }
+        continue;
+      }
+      const [sx, sy] = parallaxShift({
+        pointer: this.parallaxFollow.value,
+        // OWE 的 ortho 是**场景**正交尺寸（general.orthogonalprojection），不是窗口尺寸。
+        orthoW: this.sceneWidth,
+        orthoH: this.sceneHeight,
+        nodeX: x,
+        nodeY: y,
+        // three 坐标下主相机位于场景中心（we_to_three 已把中心移到原点）。
+        camX: 0,
+        camY: 0,
+        depth: entry.parallaxDepth,
+        cfg
+      });
+      entry.parallaxNode.position.set(x + sx, y + sy, z);
+      entry.parallaxApplied = true;
+    }
+    for (const layer of this.particleLayers.values()) {
+      const [cx, cy] = layer.parallaxCenter;
+      const u = layer.material.uniforms.u_Parallax;
+      if (!cfg.enabled || !layer.parallaxDepth) {
+        if (layer.parallaxApplied) {
+          if (layer.parallaxQuad) layer.parallaxQuad.position.set(cx, cy, layer.parallaxQuad.position.z);
+          else u?.value.set(0, 0);
+          layer.parallaxApplied = false;
+        }
+        continue;
+      }
+      const [sx, sy] = parallaxShift({
+        pointer: this.parallaxFollow.value,
+        orthoW: this.sceneWidth,
+        orthoH: this.sceneHeight,
+        nodeX: cx,
+        nodeY: cy,
+        camX: 0,
+        camY: 0,
+        depth: layer.parallaxDepth,
+        cfg
+      });
+      if (layer.parallaxQuad) layer.parallaxQuad.position.set(cx + sx, cy + sy, layer.parallaxQuad.position.z);
+      else u?.value.set(sx, sy);
+      layer.parallaxApplied = true;
+    }
+  }
   // 启动帧循环（renderer.setAnimationLoop 内部 RAF）。每帧：外部回调 fn(dt) → update(dt) →
   // render(scene, camera)。dt 用 performance.now 差分并 clamp 0.1s（防 tab 切后台后 dt 过大把粒子
   // 瞬移出视口）。fn(dt) 必须先于内部 update(dt)：fn 承载「模拟推进」，使 updateParticles 读到的
@@ -23748,6 +23859,7 @@ var ThreeScenePlayer = class {
         this.lastTime = now;
         fn?.(dt);
         this.update(dt);
+        this.tickParallax(dt);
         this.render();
       } catch (e) {
         if (!warned) {
@@ -23996,7 +24108,10 @@ var ThreeScenePlayer = class {
       alpha: mod.a,
       brightness: opts.brightness ?? 1,
       sceneW,
-      sceneH
+      sceneH,
+      // 隔离时位移的载体是合成 quad（内容只进对象 RT）；attachIsolated 在本方法之前登记 quad。
+      parallaxNode: opts.isolate ? this.isolated.get(opts.isolate.objectId)?.quad ?? mesh : mesh,
+      parallaxDepth: opts.parallaxDepth
     });
     if (opts.objectId !== void 0) {
       const shown = opts.isolate ? this.isolated.get(opts.isolate.objectId)?.quad : mesh;
@@ -24250,7 +24365,9 @@ var ThreeScenePlayer = class {
         // 粒子透视相机（缺省关闭 → 走主正交投影，既有壁纸逐像素不变）。
         perspEnabled: { value: opts.perspective ? 1 : 0 },
         persp: { value: particlePerspMatrix(opts.perspective) },
-        perspEye: { value: new Vector3(0, 0, opts.perspective?.distance ?? 0) }
+        perspEye: { value: new Vector3(0, 0, opts.perspective?.distance ?? 0) },
+        // 对象级视差的世界平移（逐帧由 tickParallax 写；0 = 与加视差前逐像素相同）。
+        u_Parallax: { value: new Vector2(0, 0) }
       },
       vertexShader: PARTICLE_VERTEX_SHADER,
       fragmentShader: PARTICLE_FRAGMENT_SHADER,
@@ -24292,7 +24409,9 @@ var ThreeScenePlayer = class {
       loggedFirstFrame: false,
       loggedCount: 0,
       refract: refractEnabled,
-      loggedRefract: false
+      loggedRefract: false,
+      parallaxDepth: opts.parallaxDepth,
+      parallaxCenter: [(opts.objectCenter ?? [0, 0, 0])[0], (opts.objectCenter ?? [0, 0, 0])[1]]
     };
     this.particleLayers.set(id, layer);
     this.writeParticleData(layer, initial, count);
@@ -24310,6 +24429,7 @@ var ThreeScenePlayer = class {
         0,
         opts.renderOrder
       );
+      layer.parallaxQuad = this.isolated.get(opts.isolate.objectId)?.quad;
     }
     if (opts.objectId !== void 0) {
       const shown = opts.isolate ? this.isolated.get(opts.isolate.objectId)?.quad : mesh;
@@ -24522,7 +24642,10 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
         renderOrder,
         // 对象级效果链：带效果的对象其内容进 localScene 渲染到对象 RT，主场景放合成 quad；
         // 缺省不隔离。隔离条目的键 = obj.id，与 ObjectEffectStage 的键空间一致。
-        isolate: assets.isolate?.get(obj.id)
+        isolate: assets.isolate?.get(obj.id),
+        // 视差深度：Task 2 修订后**所有 kind** 都带该字段（SceneObjectBase.parallaxDepth）⇒ 直接透传；
+        // 写成 `obj.kind === 'image' ? … : undefined` 会丢掉 text 图层的视差（真实库 20 处）。
+        parallaxDepth: obj.parallaxDepth
       });
       backgroundIds.push(id);
     } else if (obj.kind === "text") {
@@ -24540,7 +24663,9 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
         sceneH,
         objectId: obj.id,
         // 唯一绘制序 = 本对象在 objects 数组中的下标。
-        renderOrder
+        renderOrder,
+        // 视差深度同 image 分支：直接透传对象级字段（text 也有 parallaxDepth）。
+        parallaxDepth: obj.parallaxDepth
       });
       backgroundIds.push(id);
       if (layer.driver) {
@@ -24602,7 +24727,9 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
         renderOrder,
         // 对象级效果链：带效果的粒子对象同样隔离（对象 RT + 合成 quad）。世界尺寸由调用方按
         // `particleWorldSize(spec, scale)` 算好（player 不知道 spec 的 distanceMax）；缺省不隔离。
-        isolate: assets.isolate?.get(obj.id)
+        isolate: assets.isolate?.get(obj.id),
+        // 视差深度：真实库 parallaxDepth 有 106 处落在 particle 对象上（最大的一支）。
+        parallaxDepth: obj.parallaxDepth
       });
       particleLayers.push({ id, sim });
       sims.push(sim);
