@@ -2685,6 +2685,48 @@ describe('scene 渲染看护：失败分类与打点', () => {
     // 不再 r.dispose()：stub 的 player.dispose 恒抛，本用例要的正是这个（收尾自身失败不得掩盖原因）。
   });
 
+  // 追加 nit（2026-10-14）：abortIfContextLost 的收尾若抛错，曾一路冒到 render 外层 catch，把 onContextLost
+  // 已记下的 context-lost 改写成 exception（同一份快照被覆盖）⇒ 装配中止但结论必须是 context-lost。
+  it('装配进行中丢上下文 + 收尾抛错 ⇒ render 返回 false，失败仍是 context-lost（不被改写成 exception）', async () => {
+    const store = createRenderHealthStore({ storage: null });
+    const scene = JSON.stringify({
+      general: { orthogonalprojection: { width: 1920, height: 1080 } },
+      objects: [
+        { id: 1, name: 'bg', image: 'models/bg.json', origin: '960.00000 540.00000 0.00000', size: '1920.00000 1080.00000' },
+        // 纯控制器对象：只为让装配在 player 装好**之后**还有一处 await（脚本宿主）可挂起。
+        { id: 2, name: 'ctl', visible: { script: 'export function update(){}', value: true } },
+      ],
+    });
+    resolveImageTexture.mockResolvedValue(fakeTexture() as never);
+    defaultLoadWasm.mockResolvedValue(null);
+    stubAssetFetch(scene, {});
+    // 收尾抛错：player.dispose 恒抛 —— onContextLost 那次被它自己的 try 吞掉，abortIfContextLost 那一次
+    // （旧实现走裸 teardown）会冒到外层 catch 并改写失败原因。
+    loadSceneToThree.mockReturnValue({
+      player: {
+        dispose: () => { throw new Error('dispose boom'); },
+        resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(),
+      },
+      sims: [], backgroundIds: [1], particleLayers: [],
+    } as never);
+    let release!: () => void;
+    const gate = new Promise<void>((res) => { release = res; });
+    let entered!: () => void;
+    const atAwait = new Promise<void>((res) => { entered = res; });
+    vi.spyOn(SceneScriptHost, 'create').mockImplementation(async () => { entered(); await gate; return null as never; });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = createThreeSceneRenderer({ healthStore: store });
+    const canvas = document.createElement('canvas');
+    const pending = r.render('wid-lost-boom', canvas, null);
+    await atAwait; // player 已装好、装配挂在脚本宿主上 ⇒ 丢失事件此刻到达
+    canvas.dispatchEvent(new Event('webglcontextlost', { cancelable: true }));
+    release();
+    await expect(pending).resolves.toBe(false);                                  // ① 中止装配 = false，不抛出/reject
+    expect(store.snapshot('wid-lost-boom').failure?.kind).toBe('context-lost');  // ② 收尾失败不得改写结论
+    warn.mockRestore();
+    // 不再 r.dispose()：stub 的 player.dispose 恒抛，本用例要的正是这个（收尾自身失败不得掩盖原因）。
+  });
+
   // Minor 5（失败出口一律收尾）：早退出口也要 teardown —— 否则本次 canvas 的 webglcontextlost
   // 监听留在实例上，迟到的丢失事件会把刚记下的失败结论改写掉。
   it('scene-json 硬失败出口已收尾：本次 canvas 的上下文丢失监听被移除，失败结论不被迟到事件改写', async () => {

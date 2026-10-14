@@ -29639,7 +29639,7 @@ function createThreeSceneRenderer(opts) {
   };
   const abortIfContextLost = () => {
     if (!contextLost) return false;
-    teardown();
+    teardownQuietly();
     return true;
   };
   const effectiveGlow = () => ({

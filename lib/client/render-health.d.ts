@@ -1,4 +1,4 @@
-declare const HARD_KINDS: readonly ["scene-json", "no-visible-objects", "context-lost", "exception"];
+export declare const HARD_KINDS: readonly ["scene-json", "no-visible-objects", "context-lost", "exception"];
 export type HardFailureKind = typeof HARD_KINDS[number];
 export type SoftFailureKind = 'load-error';
 export type FailureKind = HardFailureKind | SoftFailureKind;
@@ -45,4 +45,3 @@ export declare function createRenderHealthStore(opts?: {
 }): RenderHealthStore;
 /** 面板状态行文案（不含 HTML）：三种状态各一句可读中文，不暴露原始枚举。 */
 export declare function formatHealthLine(snap: HealthSnapshot, t: (s: string) => string): string;
-export {};

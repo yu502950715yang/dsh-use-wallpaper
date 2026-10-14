@@ -361,7 +361,8 @@ export function createThreeSceneRenderer(opts?: {
   const abortIfContextLost = () => {
     if (!contextLost) return false;
     // 记录点在 onContextLost（唯一一次事件）——本函数只负责中止装配。
-    teardown();
+    // 收尾失败不得掩盖 context-lost 结论（裸 teardown 抛错会被外层 catch 改写成 exception）。
+    teardownQuietly();
     return true;
   };
   // 当前生效的 Glow 三值：运行期下发 > 装配时读到的设置（缺省交给 glow-stage 归一）。

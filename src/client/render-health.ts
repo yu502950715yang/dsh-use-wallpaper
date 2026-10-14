@@ -2,7 +2,8 @@
 // 存储与时钟注入 ⇒ node 可测；硬失败落 localStorage（不可用时退化为会话内），软失败仅会话内。
 
 // 硬失败分级的**唯一声明**（类型由该数组派生）：新增种类只改这里一处。
-const HARD_KINDS = ['scene-json', 'no-visible-objects', 'context-lost', 'exception'] as const;
+// 导出是为了让测试直接断言这份集合本身（而不是复制一份字面量）。
+export const HARD_KINDS = ['scene-json', 'no-visible-objects', 'context-lost', 'exception'] as const;
 
 export type HardFailureKind = typeof HARD_KINDS[number];
 export type SoftFailureKind = 'load-error';

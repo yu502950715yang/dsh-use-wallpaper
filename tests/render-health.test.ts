@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
-  HEALTH_KEY_PREFIX, createRenderHealthStore, formatHealthLine, isHardFailure,
+  HEALTH_KEY_PREFIX, HARD_KINDS, createRenderHealthStore, formatHealthLine, isHardFailure,
 } from '../src/client/render-health.js';
-import type { HardFailureKind } from '../src/client/render-health.js';
+import type { FailureKind } from '../src/client/render-health.js';
 
 // 内存 storage：与 localStorage 同形（node 环境无 localStorage）。
 function memStorage() {
@@ -26,11 +26,15 @@ describe('render-health 分级', () => {
     expect(isHardFailure('load-error')).toBe(false);
   });
 
-  // HARD_KINDS 是 HardFailureKind 的**唯一声明**（类型由数组派生）；这条只钉「分级投影」不变。
-  it('硬失败种类集合与 HARD_KINDS 一致（恰 4 种、顺序无关）', () => {
-    const hardKinds: HardFailureKind[] = ['scene-json', 'no-visible-objects', 'context-lost', 'exception'];
-    expect(hardKinds).toHaveLength(4);
-    expect(hardKinds.every((k) => isHardFailure(k))).toBe(true);
+  // HARD_KINDS 是 HardFailureKind 的**唯一声明**（类型由它派生）⇒ 直接断言这份集合本身，
+  // 不再复制字面量（旧写法断言的是局部数组，isHardFailure 恒真也照样绿）。
+  it('硬失败种类 = HARD_KINDS 的完整投影，且软失败种类不得被判硬', () => {
+    expect([...HARD_KINDS].sort()).toEqual(['context-lost', 'exception', 'no-visible-objects', 'scene-json']);
+    expect(HARD_KINDS.every((k) => isHardFailure(k))).toBe(true);
+    // 反向：'load-error' 必须是软失败（恒真的 isHardFailure 会让这条红）
+    expect(isHardFailure('load-error')).toBe(false);
+    const all: FailureKind[] = [...HARD_KINDS, 'load-error'];
+    expect(all.filter((k) => isHardFailure(k))).toEqual([...HARD_KINDS]);
   });
 });
 
