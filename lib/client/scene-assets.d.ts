@@ -11,7 +11,11 @@ export declare function fetchParticleSpec(id: string, assetName: string): Promis
     init: ParticleInitializerSpec;
 } | null>;
 export declare function resolveTexPath(matRef: string, texName: string): string;
-export declare function resolveImageTexture(id: string, obj: SceneImageObject): Promise<THREE.Texture | null>;
+export declare function resolveImageAssets(id: string, obj: SceneImageObject): Promise<{
+    texture: THREE.Texture | null;
+    puppetPath: string | null;
+}>;
+export declare function fetchMdlBytes(id: string, path: string): Promise<Uint8Array | null>;
 export interface ParticleMaterialRef {
     texUrl: string | null;
     blending: string | null;

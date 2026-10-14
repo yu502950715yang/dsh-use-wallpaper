@@ -3,6 +3,7 @@ import type { GlowStage } from './glow-stage.js';
 import type { FrameCapture } from './frame-capture.js';
 import type { ClockDriver } from './text-object.js';
 import type { ParallaxConfig, PointerState } from './parallax.js';
+import type { PuppetInstance } from './puppet.js';
 export declare const DEFAULT_PARTICLE_CAPACITY = 1024;
 export declare const MAX_PARTICLE_CAPACITY = 2048;
 export declare const PARTICLE_FLOATS_PER_INSTANCE = 16;
@@ -81,6 +82,7 @@ export declare class ThreeScenePlayer {
     private parallaxFollow;
     private backgroundEntries;
     private nextBackgroundId;
+    private puppetLayers;
     private particleLayers;
     private nextParticleLayerId;
     private readonly displayObjects;
@@ -108,7 +110,8 @@ export declare class ThreeScenePlayer {
     setSceneSize(width: number, height: number): void;
     screenScalePx(): number;
     private applyCover;
-    update(_dt: number): void;
+    update(dt: number): void;
+    private tickPuppets;
     /** 相机视差配置（null = 未启用/已拆除 ⇒ 逐帧零成本早退；enabled=false 时下一帧把对象写回基准位置）。 */
     setParallax(cfg: ParallaxConfig | null): void;
     /** 宿主指针监听的最新归一化位置（[0,1]）；插值在本类的 tickParallax 内按 dt 推进。 */
@@ -166,6 +169,17 @@ export declare class ThreeScenePlayer {
             worldW: number;
             worldH: number;
         };
+        parallaxDepth?: [number, number];
+    }): number;
+    addPuppet(opts: {
+        objectId: number;
+        puppet: PuppetInstance;
+        origin: [number, number, number];
+        scale: [number, number, number];
+        angles: [number, number, number];
+        sceneW: number;
+        sceneH: number;
+        renderOrder?: number;
         parallaxDepth?: [number, number];
     }): number;
     private createLayerMaterial;
@@ -238,6 +252,7 @@ export type ParticleSimFactory = (json: string, origin: [number, number, number]
 export interface SceneAssets {
     renderer?: THREE.WebGLRenderer;
     backgroundTextures?: Map<number, THREE.Texture>;
+    puppetMeshes?: Map<number, PuppetInstance>;
     particles?: Map<number, LoadedParticleAssets>;
     createParticleSim?: ParticleSimFactory;
     isolate?: Map<number, {
@@ -265,6 +280,7 @@ export interface ThreeSceneLoadResult {
     player: ThreeScenePlayer;
     sims: ParticleSim[];
     backgroundIds: number[];
+    puppetLayers: number[];
     particleLayers: Array<{
         id: number;
         sim: ParticleSim;

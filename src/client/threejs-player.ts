@@ -25,6 +25,8 @@ import type { ClockDriver, TextLayout } from './text-object.js';
 // 视差（Task 1 的纯数学层）：配置 + 指针 + 延迟插值 + 逐对象位移公式；唯一应用点 = 本文件的 tickParallax。
 import { POINTER_CENTER, advancePointer, parallaxShift } from './parallax.js';
 import type { ParallaxConfig, PointerFollow, PointerState } from './parallax.js';
+// puppet（.mdl 蒙皮网格）：实例由调用方装配，本类只负责挂进场景、逐帧采样动画与释放。
+import type { PuppetInstance } from './puppet.js';
 
 // 背景图层条目：记录 WE 场景坐标与当前已应用状态，供 update_background 对齐既有
 // update_image 语义（undefined = 保持现状；无变化则跳过）。
@@ -633,6 +635,9 @@ export class ThreeScenePlayer {
   private backgroundEntries = new Map<number, BackgroundEntry>();
   private nextBackgroundId = 0;
 
+  // puppet 图层（键 = 同一把图层计数器 id）：instance 用于逐帧采样动画，dispose 时释放骨骼/资源。
+  private puppetLayers = new Map<number, { instance: PuppetInstance; elapsed: number }>();
+
   // 粒子图层条目：按 addParticle 返回的 id 索引，更新粒子时用其 getter 刷新缓冲区。
   private particleLayers = new Map<number, ParticleLayer>();
   private nextParticleLayerId = 0;
@@ -813,11 +818,25 @@ export class ThreeScenePlayer {
     this.camera.updateProjectionMatrix();
   }
 
-  // 每帧扩展钩子：驱动粒子图层刷新；背景更新由 update_background 显式调用（对齐 wasm
-  // update_image 语义）。
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  update(_dt: number): void {
-    this.updateParticles(_dt);
+  // 每帧扩展钩子：驱动粒子图层刷新 + puppet 动画采样；背景更新由 update_background 显式调用
+  //（对齐 wasm update_image 语义）。
+  update(dt: number): void {
+    this.updateParticles(dt);
+    this.tickPuppets(dt);
+  }
+
+  // puppet 动画：按 dt 推进已播时长 → 采样**首个**动画。WE 的动画层选择元数据（`animationLayers`）本仓
+  // 尚未解析，本机唯一样本也没有 MDLA ⇒ 先取第一个；`mode` 一律按循环播（无实测样本可区分）。
+  private tickPuppets(dt: number): void {
+    if (this.puppetLayers.size === 0) return;
+    for (const layer of this.puppetLayers.values()) {
+      const anim = layer.instance.animations[0];
+      if (!anim) continue;
+      layer.elapsed += dt;
+      const fps = anim.fps > 0 ? anim.fps : 30;
+      const frames = Math.max(1, anim.frameCount);
+      layer.instance.applyFrame(anim, (layer.elapsed * fps) % frames);
+    }
   }
 
   /** 相机视差配置（null = 未启用/已拆除 ⇒ 逐帧零成本早退；enabled=false 时下一帧把对象写回基准位置）。 */
@@ -1288,6 +1307,52 @@ export class ThreeScenePlayer {
       const shown = opts.isolate ? this.isolated.get(opts.isolate.objectId)?.quad : mesh;
       if (shown) this.displayObjects.set(opts.objectId, shown);
     }
+    return id;
+  }
+
+  // puppet 图层：SkinnedMesh（带骨骼）或静态网格 + 视差登记。返回图层 id（与 addBackground 同一编号空间）。
+  // 几何/材质所有权在 PuppetInstance（dispose 时释放）；此处只把 mesh 挂进场景并登记视差/脚本桥。
+  addPuppet(opts: {
+    objectId: number;
+    puppet: PuppetInstance;
+    origin: [number, number, number];
+    scale: [number, number, number];
+    // 对象欧拉角（**弧度**，scene.json 的 angles；与 addBackground 同口径）。
+    angles: [number, number, number];
+    sceneW: number;
+    sceneH: number;
+    // 唯一绘制序（= scene.json objects 数组下标）；缺省 0（背景在粒子之前绘制）。
+    renderOrder?: number;
+    // 对象级视差深度（同 addBackground）；缺省 undefined = 不参与视差。
+    parallaxDepth?: [number, number];
+  }): number {
+    const { mesh } = opts.puppet;
+    mesh.renderOrder = opts.renderOrder ?? 0;
+    const s = opts.scale;
+    mesh.scale.set(s[0], s[1], s[2] ?? 1);
+    mesh.rotation.set(opts.angles[0], opts.angles[1], opts.angles[2]);
+    // we_to_three：origin - scene/2（y 不翻，见 AGENT.md §2.3）。
+    mesh.position.set(opts.origin[0] - opts.sceneW / 2, opts.origin[1] - opts.sceneH / 2, opts.origin[2]);
+    this.scene.add(mesh);
+    const id = this.nextBackgroundId++;
+    // 复用背景条目：视差逐帧写位、player.dispose 释放几何/材质、脚本层桥都走同一条路径。
+    // （同一条目会被两条释放路径各 dispose 一次 —— three 的 dispose 幂等。）
+    this.backgroundEntries.set(id, {
+      mesh,
+      origin: [opts.origin[0], opts.origin[1], opts.origin[2]],
+      size: [0, 0],
+      scale: [s[0], s[1], s[2] ?? 1],
+      angles: [opts.angles[0], opts.angles[1], opts.angles[2]],
+      alpha: 1,
+      brightness: 1,
+      sceneW: opts.sceneW,
+      sceneH: opts.sceneH,
+      parallaxNode: mesh,
+      parallaxDepth: opts.parallaxDepth,
+    });
+    this.puppetLayers.set(id, { instance: opts.puppet, elapsed: 0 });
+    // scene 对象 id → 显示对象（脚本 layer.visible/alpha 的落点，与 addBackground 同语义）。
+    this.displayObjects.set(opts.objectId, mesh);
     return id;
   }
 
@@ -1868,6 +1933,9 @@ export class ThreeScenePlayer {
       (entry.mesh.material as THREE.Material).dispose();
     }
     this.backgroundEntries.clear();
+    // puppet：骨骼纹理与实例资源由 PuppetInstance 释放（几何/材质与上面的条目共用，dispose 幂等）。
+    for (const layer of this.puppetLayers.values()) layer.instance.dispose();
+    this.puppetLayers.clear();
     // 释放粒子图层几何/材质（texture 所有权在外，随 scene 清理，不在此 dispose）。
     for (const layer of this.particleLayers.values()) {
       layer.geometry.dispose();
@@ -1963,6 +2031,9 @@ export interface SceneAssets {
   renderer?: THREE.WebGLRenderer;
   // 背景纹理：image 对象 id → THREE.Texture（缺省 = 无纹理 MeshBasicMaterial，纯色/留白）。
   backgroundTextures?: Map<number, THREE.Texture>;
+  // puppet 图层（scene 对象 id → 实例）：调用方解析 `.mdl` 并建好网格后交进来；缺条目 = 该 image
+  // 对象按普通背景贴图渲染（本机唯一 .mdl 样本是静态族，走的就是这条路径的另一半）。
+  puppetMeshes?: Map<number, PuppetInstance>;
   // 粒子条件：particle 对象 id → 规格/纹理/混合。
   particles?: Map<number, LoadedParticleAssets>;
   // 粒子模拟器构造器（wasm CpuParticleSim 的包装；测试注入 mock）。
@@ -1997,8 +2068,10 @@ export interface ThreeSceneLoadResult {
   player: ThreeScenePlayer;
   // 已创建的粒子模拟器（按 scene.json objects 顺序）；长度 = 有粒子 spec + createParticleSim 的粒子对象数。
   sims: ParticleSim[];
-  // 背景图层 id（addBackground 返回值，按 objects 顺序）；长度 = image 对象数。
+  // 背景图层 id（addBackground / addPuppet 返回值，按 objects 顺序）；长度 = image 对象数。
   backgroundIds: number[];
+  // puppet 图层 id（addPuppet 返回值）：上面 backgroundIds 的子集，单独给出供调用方判定「有没有可见对象」。
+  puppetLayers: number[];
   // 粒子图层 id（addParticle 返回值）与其对应 sim 的配对。
   particleLayers: Array<{ id: number; sim: ParticleSim }>;
 }
@@ -2092,6 +2165,7 @@ export function loadSceneToThree(
   if (vw > 0 && vh > 0) player.resize(vw, vh);
 
   const backgroundIds: number[] = [];
+  const puppetLayers: number[] = [];
   const particleLayers: Array<{ id: number; sim: ParticleSim }> = [];
   const sims: ParticleSim[] = [];
   // text 对象的时钟/脚本驱动（每帧判文本是否变化，变了才置 needsUpdate + 同步 quad）。
@@ -2110,9 +2184,28 @@ export function loadSceneToThree(
   // （lwe CScene.cpp:94-101/262-295）；`continue` 分支不改变数组下标。
   for (const [renderOrder, obj] of desc.objects.entries()) {
     if (obj.kind === 'image') {
+      const t = world(obj);
+      // puppet 对象：几何/骨骼/材质已由调用方按 `.mdl` 建好 ⇒ 不走 addBackground 的 quad 路径
+      //（贴图已作为 puppet 材质的 map 注入）。视差/脚本桥/绘制序与背景同口径。
+      const puppet = assets.puppetMeshes?.get(obj.id);
+      if (puppet) {
+        const id = player.addPuppet({
+          objectId: obj.id,
+          puppet,
+          origin: t.origin,
+          scale: t.scale,
+          angles: t.angles,
+          sceneW,
+          sceneH,
+          renderOrder,
+          parallaxDepth: obj.parallaxDepth,
+        });
+        backgroundIds.push(id);
+        puppetLayers.push(id);
+        continue;
+      }
       // 背景对象：we_to_three（addBackground 内部）+ 对象调制（alpha/brightness）→ 背景图层；
       // alignment 缺省 centre（addBackground 签名无 alignment），origin 直传世界值。
-      const t = world(obj);
       const id = player.addBackground({
         origin: t.origin,
         size: obj.size,
@@ -2260,5 +2353,5 @@ export function loadSceneToThree(
     }
   });
 
-  return { player, sims, backgroundIds, particleLayers };
+  return { player, sims, backgroundIds, particleLayers, puppetLayers };
 }

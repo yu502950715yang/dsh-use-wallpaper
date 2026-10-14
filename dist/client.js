@@ -3255,6 +3255,8 @@ var ACESFilmicToneMapping = 4;
 var CustomToneMapping = 5;
 var AgXToneMapping = 6;
 var NeutralToneMapping = 7;
+var AttachedBindMode = "attached";
+var DetachedBindMode = "detached";
 var UVMapping = 300;
 var CubeReflectionMapping = 301;
 var CubeRefractionMapping = 302;
@@ -19974,7 +19976,7 @@ var WebGLRenderer = class {
     let _localClippingEnabled = false;
     const _currentProjectionMatrix = new Matrix4();
     const _projScreenMatrix = new Matrix4();
-    const _vector3 = new Vector3();
+    const _vector32 = new Vector3();
     const _vector4 = new Vector4();
     const _emptyScene = { background: null, fog: null, environment: null, overrideMaterial: null, isScene: true };
     let _renderBackground = false;
@@ -20922,7 +20924,7 @@ var WebGLRenderer = class {
         p_uniforms.setValue(_gl, "viewMatrix", camera.matrixWorldInverse);
         const uCamPos = p_uniforms.map.cameraPosition;
         if (uCamPos !== void 0) {
-          uCamPos.setValue(_gl, _vector3.setFromMatrixPosition(camera.matrixWorld));
+          uCamPos.setValue(_gl, _vector32.setFromMatrixPosition(camera.matrixWorld));
         }
         if (capabilities.logarithmicDepthBuffer) {
           p_uniforms.setValue(
@@ -21418,6 +21420,142 @@ var Scene = class extends Object3D {
     return data;
   }
 };
+var _basePosition = /* @__PURE__ */ new Vector3();
+var _skinIndex = /* @__PURE__ */ new Vector4();
+var _skinWeight = /* @__PURE__ */ new Vector4();
+var _vector3 = /* @__PURE__ */ new Vector3();
+var _matrix4 = /* @__PURE__ */ new Matrix4();
+var _vertex = /* @__PURE__ */ new Vector3();
+var _sphere$4 = /* @__PURE__ */ new Sphere();
+var _inverseMatrix$2 = /* @__PURE__ */ new Matrix4();
+var _ray$2 = /* @__PURE__ */ new Ray();
+var SkinnedMesh = class extends Mesh {
+  constructor(geometry, material) {
+    super(geometry, material);
+    this.isSkinnedMesh = true;
+    this.type = "SkinnedMesh";
+    this.bindMode = AttachedBindMode;
+    this.bindMatrix = new Matrix4();
+    this.bindMatrixInverse = new Matrix4();
+    this.boundingBox = null;
+    this.boundingSphere = null;
+  }
+  computeBoundingBox() {
+    const geometry = this.geometry;
+    if (this.boundingBox === null) {
+      this.boundingBox = new Box3();
+    }
+    this.boundingBox.makeEmpty();
+    const positionAttribute = geometry.getAttribute("position");
+    for (let i = 0; i < positionAttribute.count; i++) {
+      this.getVertexPosition(i, _vertex);
+      this.boundingBox.expandByPoint(_vertex);
+    }
+  }
+  computeBoundingSphere() {
+    const geometry = this.geometry;
+    if (this.boundingSphere === null) {
+      this.boundingSphere = new Sphere();
+    }
+    this.boundingSphere.makeEmpty();
+    const positionAttribute = geometry.getAttribute("position");
+    for (let i = 0; i < positionAttribute.count; i++) {
+      this.getVertexPosition(i, _vertex);
+      this.boundingSphere.expandByPoint(_vertex);
+    }
+  }
+  copy(source, recursive) {
+    super.copy(source, recursive);
+    this.bindMode = source.bindMode;
+    this.bindMatrix.copy(source.bindMatrix);
+    this.bindMatrixInverse.copy(source.bindMatrixInverse);
+    this.skeleton = source.skeleton;
+    if (source.boundingBox !== null) this.boundingBox = source.boundingBox.clone();
+    if (source.boundingSphere !== null) this.boundingSphere = source.boundingSphere.clone();
+    return this;
+  }
+  raycast(raycaster, intersects) {
+    const material = this.material;
+    const matrixWorld = this.matrixWorld;
+    if (material === void 0) return;
+    if (this.boundingSphere === null) this.computeBoundingSphere();
+    _sphere$4.copy(this.boundingSphere);
+    _sphere$4.applyMatrix4(matrixWorld);
+    if (raycaster.ray.intersectsSphere(_sphere$4) === false) return;
+    _inverseMatrix$2.copy(matrixWorld).invert();
+    _ray$2.copy(raycaster.ray).applyMatrix4(_inverseMatrix$2);
+    if (this.boundingBox !== null) {
+      if (_ray$2.intersectsBox(this.boundingBox) === false) return;
+    }
+    this._computeIntersections(raycaster, intersects, _ray$2);
+  }
+  getVertexPosition(index, target) {
+    super.getVertexPosition(index, target);
+    this.applyBoneTransform(index, target);
+    return target;
+  }
+  bind(skeleton, bindMatrix) {
+    this.skeleton = skeleton;
+    if (bindMatrix === void 0) {
+      this.updateMatrixWorld(true);
+      this.skeleton.calculateInverses();
+      bindMatrix = this.matrixWorld;
+    }
+    this.bindMatrix.copy(bindMatrix);
+    this.bindMatrixInverse.copy(bindMatrix).invert();
+  }
+  pose() {
+    this.skeleton.pose();
+  }
+  normalizeSkinWeights() {
+    const vector = new Vector4();
+    const skinWeight = this.geometry.attributes.skinWeight;
+    for (let i = 0, l = skinWeight.count; i < l; i++) {
+      vector.fromBufferAttribute(skinWeight, i);
+      const scale = 1 / vector.manhattanLength();
+      if (scale !== Infinity) {
+        vector.multiplyScalar(scale);
+      } else {
+        vector.set(1, 0, 0, 0);
+      }
+      skinWeight.setXYZW(i, vector.x, vector.y, vector.z, vector.w);
+    }
+  }
+  updateMatrixWorld(force) {
+    super.updateMatrixWorld(force);
+    if (this.bindMode === AttachedBindMode) {
+      this.bindMatrixInverse.copy(this.matrixWorld).invert();
+    } else if (this.bindMode === DetachedBindMode) {
+      this.bindMatrixInverse.copy(this.bindMatrix).invert();
+    } else {
+      console.warn("THREE.SkinnedMesh: Unrecognized bindMode: " + this.bindMode);
+    }
+  }
+  applyBoneTransform(index, vector) {
+    const skeleton = this.skeleton;
+    const geometry = this.geometry;
+    _skinIndex.fromBufferAttribute(geometry.attributes.skinIndex, index);
+    _skinWeight.fromBufferAttribute(geometry.attributes.skinWeight, index);
+    _basePosition.copy(vector).applyMatrix4(this.bindMatrix);
+    vector.set(0, 0, 0);
+    for (let i = 0; i < 4; i++) {
+      const weight = _skinWeight.getComponent(i);
+      if (weight !== 0) {
+        const boneIndex = _skinIndex.getComponent(i);
+        _matrix4.multiplyMatrices(skeleton.bones[boneIndex].matrixWorld, skeleton.boneInverses[boneIndex]);
+        vector.addScaledVector(_vector3.copy(_basePosition).applyMatrix4(_matrix4), weight);
+      }
+    }
+    return vector.applyMatrix4(this.bindMatrixInverse);
+  }
+};
+var Bone = class extends Object3D {
+  constructor() {
+    super();
+    this.isBone = true;
+    this.type = "Bone";
+  }
+};
 var DataTexture = class extends Texture {
   constructor(data = null, width = 1, height = 1, format, type, mapping, wrapS, wrapT, magFilter = NearestFilter, minFilter = NearestFilter, anisotropy, colorSpace) {
     super(null, mapping, wrapS, wrapT, magFilter, minFilter, format, type, anisotropy, colorSpace);
@@ -21426,6 +21564,144 @@ var DataTexture = class extends Texture {
     this.generateMipmaps = false;
     this.flipY = false;
     this.unpackAlignment = 1;
+  }
+};
+var _offsetMatrix = /* @__PURE__ */ new Matrix4();
+var _identityMatrix = /* @__PURE__ */ new Matrix4();
+var Skeleton = class _Skeleton {
+  constructor(bones = [], boneInverses = []) {
+    this.uuid = generateUUID();
+    this.bones = bones.slice(0);
+    this.boneInverses = boneInverses;
+    this.boneMatrices = null;
+    this.boneTexture = null;
+    this.init();
+  }
+  init() {
+    const bones = this.bones;
+    const boneInverses = this.boneInverses;
+    this.boneMatrices = new Float32Array(bones.length * 16);
+    if (boneInverses.length === 0) {
+      this.calculateInverses();
+    } else {
+      if (bones.length !== boneInverses.length) {
+        console.warn("THREE.Skeleton: Number of inverse bone matrices does not match amount of bones.");
+        this.boneInverses = [];
+        for (let i = 0, il = this.bones.length; i < il; i++) {
+          this.boneInverses.push(new Matrix4());
+        }
+      }
+    }
+  }
+  calculateInverses() {
+    this.boneInverses.length = 0;
+    for (let i = 0, il = this.bones.length; i < il; i++) {
+      const inverse = new Matrix4();
+      if (this.bones[i]) {
+        inverse.copy(this.bones[i].matrixWorld).invert();
+      }
+      this.boneInverses.push(inverse);
+    }
+  }
+  pose() {
+    for (let i = 0, il = this.bones.length; i < il; i++) {
+      const bone = this.bones[i];
+      if (bone) {
+        bone.matrixWorld.copy(this.boneInverses[i]).invert();
+      }
+    }
+    for (let i = 0, il = this.bones.length; i < il; i++) {
+      const bone = this.bones[i];
+      if (bone) {
+        if (bone.parent && bone.parent.isBone) {
+          bone.matrix.copy(bone.parent.matrixWorld).invert();
+          bone.matrix.multiply(bone.matrixWorld);
+        } else {
+          bone.matrix.copy(bone.matrixWorld);
+        }
+        bone.matrix.decompose(bone.position, bone.quaternion, bone.scale);
+      }
+    }
+  }
+  update() {
+    const bones = this.bones;
+    const boneInverses = this.boneInverses;
+    const boneMatrices = this.boneMatrices;
+    const boneTexture = this.boneTexture;
+    for (let i = 0, il = bones.length; i < il; i++) {
+      const matrix = bones[i] ? bones[i].matrixWorld : _identityMatrix;
+      _offsetMatrix.multiplyMatrices(matrix, boneInverses[i]);
+      _offsetMatrix.toArray(boneMatrices, i * 16);
+    }
+    if (boneTexture !== null) {
+      boneTexture.needsUpdate = true;
+    }
+  }
+  clone() {
+    return new _Skeleton(this.bones, this.boneInverses);
+  }
+  computeBoneTexture() {
+    let size = Math.sqrt(this.bones.length * 4);
+    size = Math.ceil(size / 4) * 4;
+    size = Math.max(size, 4);
+    const boneMatrices = new Float32Array(size * size * 4);
+    boneMatrices.set(this.boneMatrices);
+    const boneTexture = new DataTexture(boneMatrices, size, size, RGBAFormat, FloatType);
+    boneTexture.needsUpdate = true;
+    this.boneMatrices = boneMatrices;
+    this.boneTexture = boneTexture;
+    return this;
+  }
+  getBoneByName(name) {
+    for (let i = 0, il = this.bones.length; i < il; i++) {
+      const bone = this.bones[i];
+      if (bone.name === name) {
+        return bone;
+      }
+    }
+    return void 0;
+  }
+  dispose() {
+    if (this.boneTexture !== null) {
+      this.boneTexture.dispose();
+      this.boneTexture = null;
+    }
+  }
+  fromJSON(json, bones) {
+    this.uuid = json.uuid;
+    for (let i = 0, l = json.bones.length; i < l; i++) {
+      const uuid = json.bones[i];
+      let bone = bones[uuid];
+      if (bone === void 0) {
+        console.warn("THREE.Skeleton: No bone found with UUID:", uuid);
+        bone = new Bone();
+      }
+      this.bones.push(bone);
+      this.boneInverses.push(new Matrix4().fromArray(json.boneInverses[i]));
+    }
+    this.init();
+    return this;
+  }
+  toJSON() {
+    const data = {
+      metadata: {
+        version: 4.6,
+        type: "Skeleton",
+        generator: "Skeleton.toJSON"
+      },
+      bones: [],
+      boneInverses: []
+    };
+    data.uuid = this.uuid;
+    const bones = this.bones;
+    const boneInverses = this.boneInverses;
+    for (let i = 0, l = bones.length; i < l; i++) {
+      const bone = bones[i];
+      data.bones.push(bone.uuid);
+      const boneInverse = boneInverses[i];
+      data.boneInverses.push(boneInverse.toArray());
+    }
+    return data;
   }
 };
 var InstancedBufferAttribute = class extends BufferAttribute {
@@ -23613,6 +23889,8 @@ var ThreeScenePlayer = class {
   // 背景图层条目（按 addBackground 返回的 id 索引，供 update_background 引用）。
   backgroundEntries = /* @__PURE__ */ new Map();
   nextBackgroundId = 0;
+  // puppet 图层（键 = 同一把图层计数器 id）：instance 用于逐帧采样动画，dispose 时释放骨骼/资源。
+  puppetLayers = /* @__PURE__ */ new Map();
   // 粒子图层条目：按 addParticle 返回的 id 索引，更新粒子时用其 getter 刷新缓冲区。
   particleLayers = /* @__PURE__ */ new Map();
   nextParticleLayerId = 0;
@@ -23746,11 +24024,24 @@ var ThreeScenePlayer = class {
     this.camera.bottom = -fg.h / 2;
     this.camera.updateProjectionMatrix();
   }
-  // 每帧扩展钩子：驱动粒子图层刷新；背景更新由 update_background 显式调用（对齐 wasm
-  // update_image 语义）。
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  update(_dt) {
-    this.updateParticles(_dt);
+  // 每帧扩展钩子：驱动粒子图层刷新 + puppet 动画采样；背景更新由 update_background 显式调用
+  //（对齐 wasm update_image 语义）。
+  update(dt) {
+    this.updateParticles(dt);
+    this.tickPuppets(dt);
+  }
+  // puppet 动画：按 dt 推进已播时长 → 采样**首个**动画。WE 的动画层选择元数据（`animationLayers`）本仓
+  // 尚未解析，本机唯一样本也没有 MDLA ⇒ 先取第一个；`mode` 一律按循环播（无实测样本可区分）。
+  tickPuppets(dt) {
+    if (this.puppetLayers.size === 0) return;
+    for (const layer of this.puppetLayers.values()) {
+      const anim = layer.instance.animations[0];
+      if (!anim) continue;
+      layer.elapsed += dt;
+      const fps = anim.fps > 0 ? anim.fps : 30;
+      const frames = Math.max(1, anim.frameCount);
+      layer.instance.applyFrame(anim, layer.elapsed * fps % frames);
+    }
   }
   /** 相机视差配置（null = 未启用/已拆除 ⇒ 逐帧零成本早退；enabled=false 时下一帧把对象写回基准位置）。 */
   setParallax(cfg) {
@@ -24124,6 +24415,34 @@ var ThreeScenePlayer = class {
       const shown = opts.isolate ? this.isolated.get(opts.isolate.objectId)?.quad : mesh;
       if (shown) this.displayObjects.set(opts.objectId, shown);
     }
+    return id;
+  }
+  // puppet 图层：SkinnedMesh（带骨骼）或静态网格 + 视差登记。返回图层 id（与 addBackground 同一编号空间）。
+  // 几何/材质所有权在 PuppetInstance（dispose 时释放）；此处只把 mesh 挂进场景并登记视差/脚本桥。
+  addPuppet(opts) {
+    const { mesh } = opts.puppet;
+    mesh.renderOrder = opts.renderOrder ?? 0;
+    const s = opts.scale;
+    mesh.scale.set(s[0], s[1], s[2] ?? 1);
+    mesh.rotation.set(opts.angles[0], opts.angles[1], opts.angles[2]);
+    mesh.position.set(opts.origin[0] - opts.sceneW / 2, opts.origin[1] - opts.sceneH / 2, opts.origin[2]);
+    this.scene.add(mesh);
+    const id = this.nextBackgroundId++;
+    this.backgroundEntries.set(id, {
+      mesh,
+      origin: [opts.origin[0], opts.origin[1], opts.origin[2]],
+      size: [0, 0],
+      scale: [s[0], s[1], s[2] ?? 1],
+      angles: [opts.angles[0], opts.angles[1], opts.angles[2]],
+      alpha: 1,
+      brightness: 1,
+      sceneW: opts.sceneW,
+      sceneH: opts.sceneH,
+      parallaxNode: mesh,
+      parallaxDepth: opts.parallaxDepth
+    });
+    this.puppetLayers.set(id, { instance: opts.puppet, elapsed: 0 });
+    this.displayObjects.set(opts.objectId, mesh);
     return id;
   }
   // 图层材质（**内容**材质）：colorBlendMode 已实现（6/7/31）→ 预乘 ShaderMaterial +
@@ -24544,6 +24863,8 @@ var ThreeScenePlayer = class {
       entry.mesh.material.dispose();
     }
     this.backgroundEntries.clear();
+    for (const layer of this.puppetLayers.values()) layer.instance.dispose();
+    this.puppetLayers.clear();
     for (const layer of this.particleLayers.values()) {
       layer.geometry.dispose();
       layer.material.dispose();
@@ -24625,12 +24946,30 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
   const vh = viewport?.height ?? sceneH;
   if (vw > 0 && vh > 0) player.resize(vw, vh);
   const backgroundIds = [];
+  const puppetLayers = [];
   const particleLayers = [];
   const sims = [];
   const textDrivers = [];
   for (const [renderOrder, obj] of desc.objects.entries()) {
     if (obj.kind === "image") {
       const t = world(obj);
+      const puppet = assets.puppetMeshes?.get(obj.id);
+      if (puppet) {
+        const id2 = player.addPuppet({
+          objectId: obj.id,
+          puppet,
+          origin: t.origin,
+          scale: t.scale,
+          angles: t.angles,
+          sceneW,
+          sceneH,
+          renderOrder,
+          parallaxDepth: obj.parallaxDepth
+        });
+        backgroundIds.push(id2);
+        puppetLayers.push(id2);
+        continue;
+      }
       const id = player.addBackground({
         origin: t.origin,
         size: obj.size,
@@ -24756,7 +25095,7 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
       player.resizeBackground(t.backgroundId, [layout.width, layout.height]);
     }
   });
-  return { player, sims, backgroundIds, particleLayers };
+  return { player, sims, backgroundIds, particleLayers, puppetLayers };
 }
 
 // src/client/scene-graph.ts
@@ -25246,19 +25585,30 @@ async function loadTexTexture(url, opts) {
 function resolveTexPath(matRef, texName) {
   return texName.includes("/") ? "materials/" + texName + ".tex" : matRef.slice(0, matRef.lastIndexOf("/") + 1) + texName + ".tex";
 }
-async function resolveImageTexture(id, obj) {
+async function resolveImageAssets(id, obj) {
   try {
     const modelResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(obj.image)}`);
-    if (!modelResp.ok) return null;
+    if (!modelResp.ok) return { texture: null, puppetPath: null };
     const model = await modelResp.json();
+    const puppetPath = typeof model?.puppet === "string" && model.puppet ? String(model.puppet) : null;
     const matRef = model?.material;
-    if (typeof matRef !== "string" || !matRef) return null;
+    if (typeof matRef !== "string" || !matRef) return { texture: null, puppetPath };
     const matResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(matRef)}`);
-    if (!matResp.ok) return null;
+    if (!matResp.ok) return { texture: null, puppetPath };
     const mat = await matResp.json();
     const texName = mat?.passes?.[0]?.textures?.[0];
-    if (typeof texName !== "string" || !texName) return null;
-    return loadTexTexture(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(resolveTexPath(matRef, texName))}`);
+    if (typeof texName !== "string" || !texName) return { texture: null, puppetPath };
+    const url = `/wallpapers/scene/${id}/asset?name=${encodeURIComponent(resolveTexPath(matRef, texName))}`;
+    return { texture: await loadTexTexture(url), puppetPath };
+  } catch {
+    return { texture: null, puppetPath: null };
+  }
+}
+async function fetchMdlBytes(id, path) {
+  try {
+    const resp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(path)}`);
+    if (!resp.ok) return null;
+    return new Uint8Array(await resp.arrayBuffer());
   } catch {
     return null;
   }
@@ -25301,6 +25651,445 @@ async function resolveParticleMaterial(id, specText) {
   } catch {
     return null;
   }
+}
+
+// src/client/mdl-parser.ts
+var MDL_VERTEX_STRIDE = 80;
+var STRIDE_CANDIDATES = [24, 28, 32, 36, 40, 44, 48, 52, 56, 64, 72, 80];
+var MAX_STRIDE_WASTE = 0.05;
+var MIN_VERTEX_COUNT = 3;
+var MAX_VERTEX_COUNT = 2e5;
+var KEYFRAME_BYTES = 36;
+var SUPPORTED_MDLV = ["MDLV0013", "MDLV0016", "MDLV0017", "MDLV0019", "MDLV0021", "MDLV0023"];
+var VERTEX_LAYOUTS = {
+  48: { posZ: false, uv: 40, skin: false },
+  // 实测静态变体：pos.xy@0 + 8 个 float + uv@40
+  80: { posZ: true, uv: 72, skin: true }
+  // 文档化打包族：pos/boneIdx@40/weights@56/uv@72
+};
+function ascii2(buf, at, len) {
+  let s = "";
+  for (let i = 0; i < len; i++) s += String.fromCharCode(buf[at + i] ?? 0);
+  return s;
+}
+function cstr(buf, at, limit = buf.length) {
+  let e = at;
+  while (e < limit && e < buf.length && buf[e] !== 0) e++;
+  let s = "";
+  for (let i = at; i < e; i++) s += String.fromCharCode(buf[i]);
+  return [s, Math.min(e + 1, limit)];
+}
+function indexOfAscii(buf, marker) {
+  outer: for (let i = 0; i + marker.length <= buf.length; i++) {
+    for (let k = 0; k < marker.length; k++) if (buf[i + k] !== marker.charCodeAt(k)) continue outer;
+    return i;
+  }
+  return -1;
+}
+var MISS = { kind: "miss" };
+function strideCandidates(vertexBytes, maxIndex) {
+  return STRIDE_CANDIDATES.map((stride) => {
+    const divides = vertexBytes % stride === 0;
+    const vertexCount = divides ? vertexBytes / stride : 0;
+    const inRange = divides && vertexCount >= MIN_VERTEX_COUNT && vertexCount <= MAX_VERTEX_COUNT && maxIndex < vertexCount;
+    return { stride, vertexCount, divides, inRange, waste: inRange ? 1 - (maxIndex + 1) / vertexCount : -1 };
+  });
+}
+function selectStride(vertexBytes, maxIndex) {
+  const candidates = strideCandidates(vertexBytes, maxIndex);
+  const info = (stride, reason) => ({ stride, reason, maxIndex, candidates });
+  const fits = candidates.filter((c) => c.inRange);
+  if (fits.length === 0) {
+    return { ok: false, hard: false, error: `stride-no-candidate:bytes=${vertexBytes}`, info: info(0, "no-candidate") };
+  }
+  const minWaste = Math.min(...fits.map((c) => c.waste));
+  const best = fits.filter((c) => c.waste <= minWaste + 1e-9);
+  if (best.length > 1) {
+    const strides = best.map((c) => c.stride).join("/");
+    return { ok: false, hard: true, error: `stride-ambiguous:${strides}:bytes=${vertexBytes}:maxIndex=${maxIndex}`, info: info(best[0].stride, "ambiguous") };
+  }
+  if (minWaste > MAX_STRIDE_WASTE) {
+    const error = `stride-waste:${minWaste.toFixed(4)}:stride=${best[0].stride}:bytes=${vertexBytes}:maxIndex=${maxIndex}`;
+    return { ok: false, hard: true, error, info: info(best[0].stride, "waste-too-high") };
+  }
+  return { ok: true, stride: best[0].stride, info: info(best[0].stride, "tight-coverage") };
+}
+function decodeMesh(buf, dv, limit, verticesOffset, family, materialPath) {
+  const vertexBytes = dv.getUint32(verticesOffset - 4, true);
+  if (vertexBytes === 0) return MISS;
+  const indexLenOffset = verticesOffset + vertexBytes;
+  if (indexLenOffset + 4 > limit || indexLenOffset + 4 > buf.length) return MISS;
+  const indexBytes = dv.getUint32(indexLenOffset, true);
+  const indicesOffset = indexLenOffset + 4;
+  if (indexBytes === 0 || indexBytes % 6 !== 0) return MISS;
+  if (indicesOffset + indexBytes > limit || indicesOffset + indexBytes > buf.length) return MISS;
+  const indexCount = indexBytes / 2;
+  const indices = new Uint16Array(indexCount);
+  let maxIndex = 0;
+  const staticCap = vertexBytes / STRIDE_CANDIDATES[0];
+  for (let i = 0; i < indexCount; i++) {
+    const v = dv.getUint16(indicesOffset + i * 2, true);
+    indices[i] = v;
+    if (v > maxIndex) maxIndex = v;
+    if (family === "static" && v >= staticCap) return MISS;
+  }
+  let stride;
+  let strideInfo;
+  if (family === "packed") {
+    if (vertexBytes % MDL_VERTEX_STRIDE !== 0) return MISS;
+    const vertexCount2 = vertexBytes / MDL_VERTEX_STRIDE;
+    if (vertexCount2 < MIN_VERTEX_COUNT || vertexCount2 > MAX_VERTEX_COUNT) return MISS;
+    let bad = 0;
+    for (let i = 0; i < indexCount; i++) if (indices[i] >= vertexCount2) bad++;
+    if (bad > indexCount * 0.02) return MISS;
+    stride = MDL_VERTEX_STRIDE;
+    strideInfo = { stride, reason: "packed-80", maxIndex, candidates: strideCandidates(vertexBytes, maxIndex) };
+  } else {
+    const picked = selectStride(vertexBytes, maxIndex);
+    if (!picked.ok) return picked.hard ? { kind: "hard", error: picked.error, info: picked.info } : MISS;
+    stride = picked.stride;
+    strideInfo = picked.info;
+  }
+  const layout = VERTEX_LAYOUTS[stride];
+  if (!layout) {
+    const error = `stride-layout-unknown:${stride}:bytes=${vertexBytes}:maxIndex=${maxIndex}`;
+    return { kind: "hard", error, info: { ...strideInfo, reason: "layout-unknown" } };
+  }
+  const vertexCount = vertexBytes / stride;
+  const positions = new Float32Array(vertexCount * 3);
+  const uvs = new Float32Array(vertexCount * 2);
+  const blendIndices = layout.skin ? new Uint16Array(vertexCount * 4) : null;
+  const blendWeights = layout.skin ? new Float32Array(vertexCount * 4) : null;
+  let weightOk = true;
+  for (let i = 0; i < vertexCount; i++) {
+    const o = verticesOffset + i * stride;
+    const x = dv.getFloat32(o, true);
+    const y = dv.getFloat32(o + 4, true);
+    const z = layout.posZ ? dv.getFloat32(o + 8, true) : 0;
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return MISS;
+    if (Math.abs(x) > 1e6 || Math.abs(y) > 1e6 || Math.abs(z) > 1e6) return MISS;
+    positions[i * 3] = x;
+    positions[i * 3 + 1] = y;
+    positions[i * 3 + 2] = z;
+    uvs[i * 2] = dv.getFloat32(o + layout.uv, true);
+    uvs[i * 2 + 1] = dv.getFloat32(o + layout.uv + 4, true);
+    if (layout.skin && blendIndices && blendWeights) {
+      let sum = 0;
+      for (let k = 0; k < 4; k++) {
+        blendIndices[i * 4 + k] = dv.getUint32(o + 40 + k * 4, true);
+        const w = dv.getFloat32(o + 56 + k * 4, true);
+        blendWeights[i * 4 + k] = w;
+        sum += w;
+      }
+      if (Math.abs(sum - 1) > 0.05) weightOk = false;
+    }
+  }
+  if (!Number.isFinite(uvs[0]) || !Number.isFinite(uvs[uvs.length - 1])) return MISS;
+  return {
+    kind: "ok",
+    mesh: {
+      positions,
+      uvs,
+      // 权重不自洽 ⇒ 按静态网格渲染（不蒙皮），不把垃圾权重交给蒙皮
+      blendIndices: layout.skin && weightOk ? blendIndices : null,
+      blendWeights: layout.skin && weightOk ? blendWeights : null,
+      indices,
+      vertexCount,
+      materialPath,
+      strideInfo
+    }
+  };
+}
+function parseMesh(buf, dv, meshLimit) {
+  const [briefMaterial, afterMat] = cstr(buf, 9, meshLimit);
+  const [observedMaterial] = cstr(buf, 21, meshLimit);
+  const materialOf = (family) => {
+    const cands = family === "static" ? [observedMaterial, briefMaterial] : [briefMaterial, observedMaterial];
+    return cands.find((s) => s.endsWith(".json")) ?? cands[0];
+  };
+  const hard = [];
+  const attempt = (offset, family) => {
+    const out = decodeMesh(buf, dv, meshLimit, offset, family, materialOf(family));
+    if (out.kind === "ok") return out.mesh;
+    if (out.kind === "hard" && hard.length === 0) hard.push({ error: out.error, info: out.info });
+    return null;
+  };
+  for (const pad of [32, 36]) {
+    const offset = afterMat + pad + 4;
+    if (offset + 12 > meshLimit) continue;
+    for (const family of ["packed", "static"]) {
+      const mesh = attempt(offset, family);
+      if (mesh) return { mesh };
+    }
+  }
+  for (let offset = 9; offset + 12 < meshLimit; offset++) {
+    const vertexBytes = dv.getUint32(offset - 4, true);
+    if (vertexBytes === 0 || !STRIDE_CANDIDATES.some((s) => vertexBytes % s === 0)) continue;
+    for (const family of ["static", "packed"]) {
+      const mesh = attempt(offset, family);
+      if (mesh) return { mesh };
+    }
+  }
+  return hard.length > 0 ? { error: hard[0].error, info: hard[0].info } : { error: "mesh-parse-failed" };
+}
+function saneBind(dv, off) {
+  for (let i = 0; i < 16; i++) {
+    const v = dv.getFloat32(off + i * 4, true);
+    if (!Number.isFinite(v) || Math.abs(v) > 1e6) return false;
+  }
+  return dv.getFloat32(off + 12, true) === 0 && dv.getFloat32(off + 28, true) === 0 && dv.getFloat32(off + 44, true) === 0 && dv.getFloat32(off + 60, true) === 1;
+}
+function parseBones(buf, dv) {
+  const at = indexOfAscii(buf, "MDLS");
+  if (at < 0) return { bones: [], status: "absent", idToIndex: null };
+  if (at + 17 > buf.length) return { bones: [], status: "failed", idToIndex: null };
+  const next = indexOfAscii(buf, "MDLA");
+  let p = at + 13;
+  const boneCount = dv.getUint32(p, true);
+  p += 4;
+  const raw = [];
+  for (let b = 0; b < boneCount && raw.length < 512; b++) {
+    let ok = false;
+    for (const head of [13, 10]) {
+      if (p + head + 64 > buf.length) continue;
+      if (next >= 0 && p + head + 64 > next) continue;
+      if (!saneBind(dv, p + head)) continue;
+      if (dv.getUint32(p + head - 4, true) !== 64) continue;
+      const bind = new Float32Array(16);
+      for (let i = 0; i < 16; i++) bind[i] = dv.getFloat32(p + head + i * 4, true);
+      raw.push({ fileId: head === 13 ? dv.getUint32(p + 1, true) : b, parent: dv.getInt32(p + head - 8, true), bind });
+      p += head + 64;
+      [, p] = cstr(buf, p, buf.length);
+      ok = true;
+      break;
+    }
+    if (!ok) break;
+  }
+  const identity = raw.every((r, i) => r.fileId === i);
+  const order = raw.map((_, i) => i);
+  if (!identity) order.sort((x, y) => raw[x].fileId - raw[y].fileId || x - y);
+  const idToIndex = identity ? null : new Map(order.map((b, i) => [raw[b].fileId, i]));
+  const bones = order.map((b, i) => {
+    const parent = idToIndex ? idToIndex.get(raw[b].parent) : raw[b].parent;
+    return { index: i, parent: parent !== void 0 && parent >= 0 && parent < raw.length ? parent : -1, bind: raw[b].bind };
+  });
+  return { bones, status: bones.length === boneCount ? "ok" : "failed", idToIndex };
+}
+function locateTracks(dv, p, bufLen) {
+  let best = null;
+  for (const delta of [0, -4]) {
+    const t = p + delta;
+    if (t < 0 || t + 4 > bufLen) continue;
+    const count = dv.getUint32(t, true);
+    if (count < 1 || count > 256) continue;
+    const at = t + 4 + 35;
+    let ok = true;
+    let q = at;
+    for (let k = 0; k < count; k++) {
+      if (q + 8 > bufLen) {
+        ok = false;
+        break;
+      }
+      const bytes = dv.getUint32(q + 4, true);
+      if (bytes === 0 || bytes % KEYFRAME_BYTES !== 0 || q + 8 + bytes > bufLen) {
+        ok = false;
+        break;
+      }
+      q += 8 + bytes;
+    }
+    if (ok && (!best || bufLen - q < bufLen - best.end)) best = { trackCount: count, trackAt: at, end: q };
+  }
+  return best ? { trackCount: best.trackCount, trackAt: best.trackAt } : null;
+}
+function parseAnimations(buf, dv, boneCount, idToIndex) {
+  const at = indexOfAscii(buf, "MDLA");
+  if (at < 0) return { animations: [], status: "absent" };
+  if (at + 17 > buf.length) return { animations: [], status: "failed" };
+  let p = at + 13;
+  const animCount = dv.getUint32(p, true);
+  p += 4;
+  const out = [];
+  for (let a = 0; a < animCount && out.length < 64; a++) {
+    if (p + 8 > buf.length) break;
+    const id = dv.getUint32(p, true);
+    p += 8;
+    let name;
+    [name, p] = cstr(buf, p);
+    let mode;
+    [mode, p] = cstr(buf, p);
+    if (p + 20 + 35 > buf.length) break;
+    const fpsRaw = dv.getFloat32(p, true);
+    const frameCount = dv.getUint32(p + 4, true);
+    const located = locateTracks(dv, p + 12, buf.length);
+    if (!located) break;
+    let q = located.trackAt;
+    const tracks = [];
+    let ok = true;
+    for (let t = 0; t < located.trackCount; t++) {
+      if (q + 8 > buf.length) {
+        ok = false;
+        break;
+      }
+      const rawBoneId = dv.getUint32(q, true);
+      const trackBytes = dv.getUint32(q + 4, true);
+      q += 8;
+      const boneId = idToIndex ? idToIndex.get(rawBoneId) ?? -1 : rawBoneId;
+      if (trackBytes === 0 || trackBytes % KEYFRAME_BYTES !== 0 || q + trackBytes > buf.length) {
+        ok = false;
+        break;
+      }
+      if (boneCount > 0 && (boneId < 0 || boneId >= boneCount)) {
+        ok = false;
+        break;
+      }
+      const keyCount = trackBytes / KEYFRAME_BYTES;
+      const keys = [];
+      for (let k = 0; k < keyCount; k++) {
+        const o = q + k * KEYFRAME_BYTES;
+        keys.push({
+          pos: [dv.getFloat32(o, true), dv.getFloat32(o + 4, true), dv.getFloat32(o + 8, true)],
+          rot: [dv.getFloat32(o + 12, true), dv.getFloat32(o + 16, true), dv.getFloat32(o + 20, true), dv.getFloat32(o + 24, true)],
+          scale: [dv.getFloat32(o + 28, true), dv.getFloat32(o + 32, true)]
+        });
+      }
+      q += trackBytes;
+      tracks.push({ boneId, keys });
+    }
+    if (!ok) break;
+    const fps = Number.isFinite(fpsRaw) && fpsRaw > 0 && fpsRaw <= 240 ? fpsRaw : 30;
+    if (frameCount > 0 && tracks.length > 0) out.push({ id, name, mode, fps, frameCount, tracks });
+    p = q;
+  }
+  return { animations: out, status: out.length === animCount ? "ok" : "failed" };
+}
+function remapBlendIndices(mesh, idToIndex) {
+  const src = mesh.blendIndices;
+  if (!idToIndex || !src) return;
+  for (let i = 0; i < src.length; i++) {
+    const mapped = idToIndex.get(src[i]);
+    if (mapped === void 0) {
+      mesh.blendIndices = null;
+      mesh.blendWeights = null;
+      return;
+    }
+    src[i] = mapped;
+  }
+}
+function parseMdl(buf) {
+  if (!(buf instanceof Uint8Array)) return { ok: false, error: "not-bytes" };
+  if (buf.length < 16) return { ok: false, error: "too-short" };
+  const version = ascii2(buf, 0, 8);
+  if (!version.startsWith("MDLV") || !SUPPORTED_MDLV.includes(version)) {
+    return { ok: false, error: "unsupported-header:" + version };
+  }
+  try {
+    const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+    let meshLimit = buf.length;
+    for (const marker of ["MDLS", "MDLA"]) {
+      const at = indexOfAscii(buf, marker);
+      if (at >= 0 && at < meshLimit) meshLimit = at;
+    }
+    const located = parseMesh(buf, dv, meshLimit);
+    if ("error" in located) {
+      return located.info ? { ok: false, error: located.error, strideInfo: located.info } : { ok: false, error: located.error };
+    }
+    const boneTable = parseBones(buf, dv);
+    remapBlendIndices(located.mesh, boneTable.idToIndex);
+    const anim = parseAnimations(buf, dv, boneTable.bones.length, boneTable.idToIndex);
+    return {
+      ok: true,
+      puppet: {
+        version,
+        mesh: located.mesh,
+        bones: boneTable.bones,
+        animations: anim.animations,
+        segments: { mdls: boneTable.status, mdla: anim.status },
+        boneIdMapping: boneTable.idToIndex ? "remapped" : "identity"
+      }
+    };
+  } catch {
+    return { ok: false, error: "malformed" };
+  }
+}
+
+// src/client/puppet.ts
+var _qa = new Quaternion();
+var _qb = new Quaternion();
+function decomposeBind(bone, bind) {
+  new Matrix4().fromArray(bind).decompose(bone.position, bone.quaternion, bone.scale);
+}
+function createPuppetMaterial(map, _colorBlendMode) {
+  return new MeshBasicMaterial({ map, transparent: true, side: DoubleSide, depthWrite: false });
+}
+function createPuppetMesh(puppet, material) {
+  const { mesh: data, bones: boneDefs, animations } = puppet;
+  const vertexCount = data.vertexCount > 0 ? data.vertexCount : Math.floor(data.positions.length / 3);
+  const geometry = new BufferGeometry();
+  geometry.setAttribute("position", new BufferAttribute(data.positions, 3));
+  const uvs = data.uvs.length === vertexCount * 2 ? data.uvs : new Float32Array(vertexCount * 2);
+  geometry.setAttribute("uv", new BufferAttribute(uvs, 2));
+  flipGeometryUvY(geometry);
+  const skinned = Boolean(data.blendIndices && data.blendWeights);
+  if (skinned) {
+    geometry.setAttribute("skinIndex", new BufferAttribute(data.blendIndices, 4));
+    geometry.setAttribute("skinWeight", new BufferAttribute(data.blendWeights, 4));
+  }
+  geometry.setIndex(new BufferAttribute(data.indices, 1));
+  const bones = boneDefs.map(() => new Bone());
+  const roots = [];
+  boneDefs.forEach((def, i) => {
+    decomposeBind(bones[i], def.bind);
+    if (def.parent >= 0 && def.parent < bones.length && def.parent !== i) bones[def.parent].add(bones[i]);
+    else roots.push(bones[i]);
+  });
+  let mesh;
+  let skeleton = null;
+  if (skinned && bones.length > 0) {
+    const sm = new SkinnedMesh(geometry, material);
+    for (const root of roots) sm.add(root);
+    sm.updateMatrixWorld(true);
+    skeleton = new Skeleton(bones);
+    sm.bind(skeleton);
+    mesh = sm;
+  } else {
+    mesh = new Mesh(geometry, material);
+  }
+  return {
+    mesh,
+    bones,
+    skeleton,
+    animations,
+    applyFrame(anim, frame) {
+      const last = Math.max(0, anim.frameCount - 1);
+      const f = Math.min(Math.max(0, Math.floor(frame)), last);
+      const next = Math.min(f + 1, last);
+      const t = last === 0 ? 0 : Math.min(Math.max(0, frame - f), 1);
+      for (const track of anim.tracks) {
+        const bone = bones[track.boneId];
+        if (!bone || track.keys.length === 0) continue;
+        const a = track.keys[Math.min(f, track.keys.length - 1)];
+        const b = track.keys[Math.min(next, track.keys.length - 1)];
+        bone.position.set(
+          a.pos[0] + (b.pos[0] - a.pos[0]) * t,
+          a.pos[1] + (b.pos[1] - a.pos[1]) * t,
+          a.pos[2] + (b.pos[2] - a.pos[2]) * t
+        );
+        _qa.set(a.rot[0], a.rot[1], a.rot[2], a.rot[3]);
+        _qb.set(b.rot[0], b.rot[1], b.rot[2], b.rot[3]);
+        bone.quaternion.copy(_qa).slerp(_qb, t);
+        bone.scale.set(
+          a.scale[0] + (b.scale[0] - a.scale[0]) * t,
+          a.scale[1] + (b.scale[1] - a.scale[1]) * t,
+          1
+        );
+      }
+    },
+    dispose() {
+      geometry.dispose();
+      skeleton?.dispose();
+      material.dispose();
+    }
+  };
 }
 
 // src/client/wasm-loader.ts
@@ -29918,6 +30707,7 @@ function createThreeSceneRenderer(opts) {
         }
         const backgroundTextures = /* @__PURE__ */ new Map();
         currentTextures = backgroundTextures;
+        const puppetMeshes = /* @__PURE__ */ new Map();
         const particles = /* @__PURE__ */ new Map();
         const userProps = {};
         for (const obj of desc.objects) {
@@ -29928,8 +30718,28 @@ function createThreeSceneRenderer(opts) {
         for (const obj of desc.objects) {
           if (isStaticallyHidden(obj.visible, userProps)) continue;
           if (obj.kind === "image") {
-            const tex = await resolveImageTexture(id, obj);
-            if (tex) backgroundTextures.set(obj.id, tex);
+            const { texture, puppetPath } = await resolveImageAssets(id, obj);
+            if (texture) backgroundTextures.set(obj.id, texture);
+            if (puppetPath) {
+              try {
+                const bytes = await fetchMdlBytes(id, puppetPath);
+                const parsed = bytes ? parseMdl(bytes) : { ok: false, error: "mdl-fetch-failed" };
+                if (parsed.ok) {
+                  const puppet = createPuppetMesh(
+                    parsed.puppet,
+                    createPuppetMaterial(texture ?? null, obj.colorBlendMode)
+                  );
+                  puppetMeshes.set(obj.id, puppet);
+                } else {
+                  warnOnce2(`puppet:${id}:${obj.id}`, `puppet \u89E3\u6790\u5931\u8D25\uFF08object=${obj.id} ${puppetPath}\uFF09\uFF1A${parsed.error}`);
+                }
+              } catch (e) {
+                warnOnce2(
+                  `puppet-throw:${id}:${obj.id}`,
+                  `puppet \u88C5\u914D\u5F02\u5E38\uFF08object=${obj.id} ${puppetPath}\uFF09\uFF1A${e instanceof Error ? e.message : String(e)}`
+                );
+              }
+            }
           } else if (obj.kind === "particle" && obj.particle) {
             const specResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(obj.particle)}`);
             if (!specResp.ok) continue;
@@ -30107,6 +30917,7 @@ function createThreeSceneRenderer(opts) {
           textLayers,
           qualityScale,
           worldTransforms,
+          puppetMeshes,
           // SceneScript 帧钩子：脚本状态是本帧渲染的权威来源，先 tick → 应用脏写入，
           // 再走原有的粒子/文本更新与 render。host 未就绪（quickjs 加载中/失败）时直接返回。
           onFrame: (dt) => {
@@ -30245,9 +31056,9 @@ function createThreeSceneRenderer(opts) {
         window.addEventListener("resize", onWindowResize);
         if (abortIfContextLost()) return false;
         console.log(
-          `[three] scene loaded id=${id} background=${result.backgroundIds.length} particleLayers=${result.particleLayers.length}`
+          `[three] scene loaded id=${id} background=${result.backgroundIds.length} particleLayers=${result.particleLayers.length} puppetLayers=${result.puppetLayers?.length ?? 0}`
         );
-        if (result.backgroundIds.length === 0 && result.particleLayers.length === 0) {
+        if (result.backgroundIds.length === 0 && result.particleLayers.length === 0 && (result.puppetLayers?.length ?? 0) === 0) {
           fail(id, "no-visible-objects", "background=0 particleLayers=0");
           teardownQuietly();
           return false;

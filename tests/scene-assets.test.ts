@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { particlesFromSpec, resolveParticleMaterial } from '../src/client/scene-assets.js';
+import { fetchMdlBytes, particlesFromSpec, resolveImageAssets, resolveParticleMaterial } from '../src/client/scene-assets.js';
+import type { SceneImageObject } from '../src/shared/types.js';
 import { readFileSync } from 'node:fs';
 
 describe('particlesFromSpec (v1 subset)', () => {
@@ -214,5 +215,78 @@ describe('particlesFromSpec on real EVA fixtures', () => {
     expect(spec.init.sizeMax).toBe(50);
     expect(spec.init.velocityMin).toEqual([-50, -50, 0]);
     expect(spec.init.velocityMax).toEqual([50, 0, 0]);
+  });
+});
+
+// Task 7：image 对象的**一次** model json 拉取同时给出纹理与 puppet 路径；`.mdl` 字节单独按需拉。
+describe('resolveImageAssets / fetchMdlBytes', () => {
+  const obj = { image: 'models/20240220213723_1_puppet.json' } as SceneImageObject;
+  const MODEL_URL = '/wallpapers/scene/3303428996/asset?name=models%2F20240220213723_1_puppet.json';
+
+  it('model json 只拉一次：puppet 字段原样带出（material 缺失 ⇒ texture null，但 puppetPath 仍有效）', async () => {
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      calls.push(String(url));
+      return { ok: true, json: async () => ({ puppet: 'models/20240220213723_1_puppet.mdl' }) };
+    }));
+    try {
+      expect(await resolveImageAssets('3303428996', obj)).toEqual({
+        texture: null,
+        puppetPath: 'models/20240220213723_1_puppet.mdl',
+      });
+      expect(calls).toEqual([MODEL_URL]);
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it('无 puppet 字段（普通 image 对象）⇒ puppetPath null，纹理链行为与改动前一致', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ material: 'materials/m.json' }) })));
+    try {
+      // 材质拉取同 URL 的 mock 会拿到 {material} ⇒ 无 passes[0].textures[0] ⇒ texture null
+      expect(await resolveImageAssets('1', obj)).toEqual({ texture: null, puppetPath: null });
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it('model json 拿不到 / 网络异常 ⇒ 两条链都 null（调用方走白图兜底，不阻断）', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, json: async () => ({}) })));
+    try {
+      expect(await resolveImageAssets('1', obj)).toEqual({ texture: null, puppetPath: null });
+    } finally { vi.unstubAllGlobals(); }
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('net'); }));
+    try {
+      expect(await resolveImageAssets('1', obj)).toEqual({ texture: null, puppetPath: null });
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it('puppet 字段非字符串 / 空串 ⇒ 一律当没有（不当路径拼 URL）', async () => {
+    for (const puppet of [42, '', null, { path: 'x.mdl' }]) {
+      vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ puppet }) })));
+      try {
+        expect((await resolveImageAssets('1', obj)).puppetPath).toBeNull();
+      } finally { vi.unstubAllGlobals(); }
+    }
+  });
+
+  it('fetchMdlBytes：走 scene asset 路由（路径 encode）→ Uint8Array；非 ok / 异常 → null', async () => {
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      calls.push(String(url));
+      return { ok: true, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer };
+    }));
+    try {
+      const bytes = await fetchMdlBytes('3303428996', 'models/a_puppet.mdl');
+      expect(bytes).toBeInstanceOf(Uint8Array);
+      expect([...bytes!]).toEqual([1, 2, 3]);
+      expect(calls).toEqual(['/wallpapers/scene/3303428996/asset?name=models%2Fa_puppet.mdl']);
+    } finally { vi.unstubAllGlobals(); }
+
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, arrayBuffer: async () => new ArrayBuffer(0) })));
+    try {
+      expect(await fetchMdlBytes('1', 'models/a.mdl')).toBeNull();
+    } finally { vi.unstubAllGlobals(); }
+
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('net'); }));
+    try {
+      expect(await fetchMdlBytes('1', 'models/a.mdl')).toBeNull();
+    } finally { vi.unstubAllGlobals(); }
   });
 });

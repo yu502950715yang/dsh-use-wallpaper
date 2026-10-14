@@ -12,6 +12,7 @@ import type { CompiledEffectPass } from '../src/client/shader/effect-chain.js';
 import { textLayerOffset, type TextLayout } from '../src/client/text-object.js';
 import { coverRange, createCompositeGeometry, screenScalePx } from '../src/client/object-range.js';
 import { createFrameCapture } from '../src/client/frame-capture.js';
+import type { PuppetInstance } from '../src/client/puppet.js';
 
 // 注入的 mock renderer：只测相机/场景/RAF 逻辑，不触碰 WebGL。
 // Task 3 起还承载段渲染契约：autoClear 可读写、清屏参数可读、段边界 copyFramebufferToTexture 可观测。
@@ -3550,5 +3551,142 @@ describe('视差逐帧应用', () => {
     expect(pmat.uniforms.u_Parallax.value.x).toBeCloseTo(-660, 3);
     expect(pmat.uniforms.u_Parallax.value.y).toBeCloseTo(200, 3);
     player.dispose();
+  });
+});
+
+// puppet 图层（Task 7）：装配（addPuppet）、逐帧采样与释放。本机唯一 .mdl 样本是静态族 ⇒ 这里用桩实例
+// 钉住**接线**（真实几何/骨骼数值由 tests/puppet.test.ts 覆盖）。
+describe('puppet 图层（addPuppet / image 分支 / 逐帧动画）', () => {
+  type PuppetStub = PuppetInstance & { frames: number[]; disposed: number };
+
+  function makePuppetStub(animations: PuppetInstance['animations'] = []): PuppetStub {
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+    const stub: PuppetStub = {
+      mesh, bones: [], skeleton: null, animations,
+      frames: [], disposed: 0,
+      applyFrame: (_anim, frame) => { stub.frames.push(frame); },
+      dispose: () => { stub.disposed++; },
+    };
+    return stub;
+  }
+
+  const anim = {
+    id: 7, name: 'idle', mode: 'loop', fps: 10, frameCount: 3,
+    tracks: [{ boneId: 0, keys: [{ pos: [0, 0, 0] as [number, number, number], rot: [0, 0, 0, 1] as [number, number, number, number], scale: [1, 1] as [number, number] }] }],
+  };
+
+  it('addPuppet：we_to_three 定位 + scale/angles/renderOrder + 脚本桥登记（与 addBackground 同一编号空间）', () => {
+    const { player } = makePlayer(1920, 1080);
+    const stub = makePuppetStub([anim]);
+    const id = player.addPuppet({
+      objectId: 16, puppet: stub, origin: [1000, 600, 3], scale: [2, 4, 1],
+      angles: [0.5, 0, 0], sceneW: 1920, sceneH: 1080, renderOrder: 5,
+    });
+    expect(id).toBe(0);                                   // 与 addBackground 共用图层计数器
+    expect(player.displayObject(16)).toBe(stub.mesh);      // scene 对象 id → 显示对象
+    expect(player.scene.children).toContain(stub.mesh);
+    // we_to_three = origin − viewport/2（y 不翻转，见 AGENT.md §2.3）
+    expect(stub.mesh.position.x).toBeCloseTo(40, 6);
+    expect(stub.mesh.position.y).toBeCloseTo(60, 6);
+    expect(stub.mesh.position.z).toBeCloseTo(3, 6);
+    expect(stub.mesh.scale.toArray()).toEqual([2, 4, 1]);
+    expect(stub.mesh.rotation.x).toBeCloseTo(0.5, 6);
+    expect(stub.mesh.renderOrder).toBe(5);
+    // 视差落点 = puppet 自身 mesh（不在隔离路径上，没有合成 quad）
+    expect(player.backgroundMeshForTest(id)).toBe(stub.mesh);
+  });
+
+  it('addPuppet 带 parallaxDepth ⇒ 与背景同一套视差位移；depth 缺失 ⇒ 不动', () => {
+    const { player } = makePlayer(1920, 1080);
+    const moved = makePuppetStub();
+    const still = makePuppetStub();
+    player.addPuppet({
+      objectId: 1, puppet: moved, origin: [960, 540, 0], scale: [1, 1, 1], angles: [0, 0, 0],
+      sceneW: 1920, sceneH: 1080, parallaxDepth: [1, 1],
+    });
+    player.addPuppet({
+      objectId: 2, puppet: still, origin: [960, 540, 0], scale: [1, 1, 1], angles: [0, 0, 0],
+      sceneW: 1920, sceneH: 1080,
+    });
+    player.setParallax({ enabled: true, amount: 1, delay: 0, mouseInfluence: 1 });
+    player.setParallaxPointer({ x: 1, y: 0.5 });
+    player.tickParallaxForTest(0.016);
+    expect(moved.mesh.position.x).toBeCloseTo(-1920 / 2, 3); // 鼠标右移 → 内容左移
+    expect(still.mesh.position.x).toBeCloseTo(0, 6);
+  });
+
+  it('逐帧采样首个动画：帧号 = 已播秒数 × fps 对帧数取模；无动画层直接跳过', () => {
+    const { player } = makePlayer(1920, 1080);
+    const stub = makePuppetStub([anim]);
+    const silent = makePuppetStub();
+    player.addPuppet({
+      objectId: 1, puppet: stub, origin: [960, 540, 0], scale: [1, 1, 1], angles: [0, 0, 0],
+      sceneW: 1920, sceneH: 1080,
+    });
+    player.addPuppet({
+      objectId: 2, puppet: silent, origin: [960, 540, 0], scale: [1, 1, 1], angles: [0, 0, 0],
+      sceneW: 1920, sceneH: 1080,
+    });
+    player.update(0.05);   // 0.05s × 10fps = 0.5 帧
+    player.update(0.25);   // 累计 0.3s × 10fps = 3 帧 → 对 3 帧取模回到 0
+    expect(stub.frames).toEqual([0.5, 0]);
+    expect(silent.frames).toEqual([]);
+  });
+
+  it('loadSceneToThree：puppetMeshes 命中 ⇒ 走 addPuppet（不再建 quad），并计入 puppetLayers', () => {
+    const scene = JSON.stringify({
+      camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+      general: { orthogonalprojection: { width: 1920, height: 1080 } },
+      objects: [{ id: 16, name: 'puppet', image: 'models/p.json', origin: '1000 600 0', scale: '2 2 1', size: '100 100' }],
+    });
+    const stub = makePuppetStub([anim]);
+    const result = loadSceneToThree(
+      scene,
+      { renderer: createMockRenderer() as unknown as THREE.WebGLRenderer, puppetMeshes: new Map([[16, stub]]) },
+      document.createElement('canvas'),
+    );
+    expect(result.puppetLayers).toEqual(result.backgroundIds);   // 同一批图层 id
+    expect(result.backgroundIds).toHaveLength(1);
+    expect(result.player.displayObject(16)).toBe(stub.mesh);
+    expect(stub.mesh.position.x).toBeCloseTo(40, 6);
+    expect(stub.mesh.scale.toArray()).toEqual([2, 2, 1]);
+    // 该对象只有 puppet 一个显示物：主场景里除了 puppet mesh 没有额外的背景 quad
+    expect(result.player.scene.children).toEqual([stub.mesh]);
+    // 帧循环经 player.update 推进 → puppet 也被采样
+    result.player.update(0.2);   // 0.2s × 10fps = 2 帧
+    expect(stub.frames).toEqual([2]);
+  });
+
+  it('loadSceneToThree：puppetMeshes 未命中 ⇒ 维持既有背景 quad 路径（零回归）', () => {
+    const scene = JSON.stringify({
+      camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+      general: { orthogonalprojection: { width: 1920, height: 1080 } },
+      objects: [{ id: 16, name: 'bg', image: 'models/p.json', origin: '960 540 0', scale: '1 1 1', size: '100 100' }],
+    });
+    const tex = new THREE.DataTexture(new Uint8Array(4), 1, 1);
+    const result = loadSceneToThree(
+      scene,
+      {
+        renderer: createMockRenderer() as unknown as THREE.WebGLRenderer,
+        backgroundTextures: new Map([[16, tex]]),
+        puppetMeshes: new Map(),
+      },
+      document.createElement('canvas'),
+    );
+    expect(result.puppetLayers).toEqual([]);
+    expect(result.backgroundIds).toHaveLength(1);
+    expect(result.player.scene.children[0]).toBeInstanceOf(THREE.Mesh);
+    expect((result.player.scene.children[0] as THREE.Mesh).geometry.type).toBe('PlaneGeometry');
+  });
+
+  it('player.dispose() 释放 puppet 实例（同一份图层生命周期）', () => {
+    const { player } = makePlayer(1920, 1080);
+    const stub = makePuppetStub([anim]);
+    player.addPuppet({
+      objectId: 1, puppet: stub, origin: [960, 540, 0], scale: [1, 1, 1], angles: [0, 0, 0],
+      sceneW: 1920, sceneH: 1080,
+    });
+    player.dispose();
+    expect(stub.disposed).toBe(1);
   });
 });

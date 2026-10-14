@@ -3,12 +3,26 @@ import { MDL_VERTEX_STRIDE, parseMdl } from '../src/client/mdl-parser.js';
 
 // ── 夹具：在测试里构造最小合法 MDLV0021 + MDLS0004 + MDLA0006 ──────────────────
 // 布局按上游 mdl-parse.js 的文档化段结构（本文件即「解析器 ↔ 夹具」的同一份口径）。
-function buildMdlFixture(): Uint8Array {
+function buildMdlFixture(opts: {
+  /** 文件 id（骨 0 / 骨 1）；非升序即触发重排路径 */
+  boneIds?: [number, number];
+  boneParents?: [number, number];
+  boneTx?: [number, number];
+  /** 每顶点绑的**文件 id**（默认 = 顶点序号，与原夹具逐字一致） */
+  vertexBoneIds?: [number, number, number];
+  /** 轨的**文件 id** */
+  trackBoneId?: number;
+} = {}): Uint8Array {
+  const boneIds = opts.boneIds ?? [0, 1];
+  const boneParents = opts.boneParents ?? [-1, 0];
+  const boneTx = opts.boneTx ?? [0, 5];
+  const vertexBoneIds = opts.vertexBoneIds ?? [0, 1, 2];
+  const trackBoneId = opts.trackBoneId ?? 1;
   const vertices = new DataView(new ArrayBuffer(MDL_VERTEX_STRIDE * 3));
   for (let i = 0; i < 3; i++) {
     const o = i * MDL_VERTEX_STRIDE;
     vertices.setFloat32(o, i, true); vertices.setFloat32(o + 4, i * 2, true); vertices.setFloat32(o + 8, 0, true);
-    for (let k = 0; k < 4; k++) vertices.setUint32(o + 40 + k * 4, i, true);          // boneIdx：三角各绑一根骨
+    for (let k = 0; k < 4; k++) vertices.setUint32(o + 40 + k * 4, vertexBoneIds[i], true); // boneIdx：各顶点绑文件 id
     vertices.setFloat32(o + 56, 1, true);                                            // weights[0] = 1
     vertices.setFloat32(o + 72, i / 2, true); vertices.setFloat32(o + 76, 0.5, true); // uv
   }
@@ -39,7 +53,7 @@ function buildMdlFixture(): Uint8Array {
     for (const v of m) pushF32(v);
     pushStr('{}');
   };
-  bone(0, -1, 0); bone(1, 0, 5);
+  bone(boneIds[0], boneParents[0], boneTx[0]); bone(boneIds[1], boneParents[1], boneTx[1]);
 
   // MDLA0006：magic(9) + u32 段尾 + u32 动画数
   pushStr('MDLA0006');
@@ -49,7 +63,7 @@ function buildMdlFixture(): Uint8Array {
   pushF32(30);                               // fps
   pushU32(2); pushU32(0); pushU32(1);        // frameCount / unk / trackCount
   for (let i = 0; i < 35; i++) parts.push(0); // 固定 35B 填充
-  pushU32(1); pushU32(36 * 2);               // track：boneId=1 / trackBytes
+  pushU32(trackBoneId); pushU32(36 * 2);     // track：boneId（文件 id） / trackBytes
   for (const tx of [5, 9]) {                 // 两帧：pos + 四元数 xyzw + scale xy
     pushF32(tx); pushF32(0); pushF32(0);
     pushF32(0); pushF32(0); pushF32(0); pushF32(1);
@@ -320,5 +334,49 @@ describe('mdl-parser · 蒙皮族细节与段级诊断', () => {
     expect(r.puppet.bones.map((b) => b.index)).toEqual([0, 1]);
     expect(r.puppet.bones[1].parent).toBe(0);                  // 文件 id 5 → 下标 0
     expect(r.puppet.animations[0].tracks[0].boneId).toBe(1);    // 文件 id 9 → 下标 1 ⇒ bones[boneId] 对得上
+  });
+});
+
+// ── 承重项：骨骼按文件 id 重排时，顶点 blendIndices 必须同步重映射（否则 T7 的 skinIndex 错绑） ──
+describe('mdl-parser · 重排路径下 blendIndices 与 bones[] 同口径', () => {
+  // 文件里的骨顺序 = [id 9, id 5]（降序）⇒ 解析后按 id 升序重排：[id 5, id 9]
+  const REORDERED = {
+    boneIds: [9, 5] as [number, number],
+    boneParents: [5, -1] as [number, number],   // 骨 id 9 的父 = 文件 id 5
+    boneTx: [9, 5] as [number, number],         // bind 平移 = 文件 id（判别用）
+    vertexBoneIds: [9, 5, 5] as [number, number, number],
+    trackBoneId: 9,                            // 轨指向文件 id 9
+  };
+
+  it('重排后 blendIndices 映射到新的下标（不是文件 id），且与 bones[] 指向同一根骨', () => {
+    const r = parseMdl(buildMdlFixture(REORDERED));
+    if (!r.ok) throw new Error(r.error);
+    expect(r.puppet.boneIdMapping).toBe('remapped');
+    // 重排结果：下标 0 = 文件 id 5、下标 1 = 文件 id 9（bind 平移记的就是文件 id）
+    expect(r.puppet.bones.map((b) => b.bind[12])).toEqual([5, 9]);
+    expect(r.puppet.bones[1].parent).toBe(0);
+    // 顶点 0 绑文件 id 9 ⇒ 新下标 1；顶点 1/2 绑文件 id 5 ⇒ 新下标 0
+    expect([...r.puppet.mesh.blendIndices!.filter((_, i) => i % 4 === 0)]).toEqual([1, 0, 0]);
+    // 判别性：逐顶点用 skinIndex 查 bones[]，取到的骨必须正是该顶点绑的那根
+    const idx = r.puppet.mesh.blendIndices!;
+    expect([0, 1, 2].map((v) => r.puppet.bones[idx[v * 4]].bind[12])).toEqual([9, 5, 5]);
+    // 轨 boneId 与顶点蒙皮同口径：轨指向文件 id 9 ⇒ 下标 1（与顶点 0 同一根骨）
+    expect(r.puppet.animations[0].tracks[0].boneId).toBe(idx[0]);
+  });
+
+  it('顶点引用了骨表里没有的文件 id ⇒ 整份蒙皮不可信，退化为静态网格（几何仍解出）', () => {
+    const r = parseMdl(buildMdlFixture({ ...REORDERED, vertexBoneIds: [9, 5, 7] })); // 7 不在骨表
+    if (!r.ok) throw new Error(r.error);
+    expect(r.puppet.mesh.blendIndices).toBeNull();
+    expect(r.puppet.mesh.blendWeights).toBeNull();
+    expect(r.puppet.mesh.vertexCount).toBe(3);
+    expect(r.puppet.bones.map((b) => b.bind[12])).toEqual([5, 9]);
+  });
+
+  it('回归护栏：文件 id 就是下标（identity）时不碰 blendIndices（原样带出）', () => {
+    const r = parseMdl(buildMdlFixture());
+    if (!r.ok) throw new Error(r.error);
+    expect(r.puppet.boneIdMapping).toBe('identity');
+    expect([...r.puppet.mesh.blendIndices!.filter((_, i) => i % 4 === 0)]).toEqual([0, 1, 2]);
   });
 });

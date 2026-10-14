@@ -472,6 +472,22 @@ function parseAnimations(
   return { animations: out, status: out.length === animCount ? 'ok' : 'failed' };
 }
 
+/** 骨表按文件 id 重排时，顶点 blendIndices 必须同步映射到**新下标**（否则 T7 的 skinIndex 与 bones[] 错绑）。
+ *  出现骨表里没有的 id ⇒ 整份蒙皮数据不可信，退化为静态网格（同「权重不自洽 ⇒ 不蒙皮」口径）。 */
+function remapBlendIndices(mesh: MdlMesh, idToIndex: Map<number, number> | null): void {
+  const src = mesh.blendIndices;
+  if (!idToIndex || !src) return;
+  for (let i = 0; i < src.length; i++) {
+    const mapped = idToIndex.get(src[i]);
+    if (mapped === undefined) {
+      mesh.blendIndices = null;
+      mesh.blendWeights = null;
+      return;
+    }
+    src[i] = mapped;
+  }
+}
+
 export function parseMdl(buf: Uint8Array): MdlParseResult {
   if (!(buf instanceof Uint8Array)) return { ok: false, error: 'not-bytes' };
   if (buf.length < 16) return { ok: false, error: 'too-short' };
@@ -494,6 +510,8 @@ export function parseMdl(buf: Uint8Array): MdlParseResult {
         : { ok: false, error: located.error };
     }
     const boneTable = parseBones(buf, dv);
+    // 承重项：骨骼已按文件 id 重排 ⇒ 顶点蒙皮索引同步到下标，与轨 boneId 同口径。
+    remapBlendIndices(located.mesh, boneTable.idToIndex);
     const anim = parseAnimations(buf, dv, boneTable.bones.length, boneTable.idToIndex);
     return {
       ok: true,
