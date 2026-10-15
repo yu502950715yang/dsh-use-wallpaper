@@ -3252,9 +3252,9 @@ describe('最终审查 C2：真实装配链路的帧快照消费者门控（端�
   });
 });
 
-// Task 4：逐帧应用视差。视差 = **对象 model 矩阵的 2D 世界平移**（主相机与帧序都不动）：非隔离背景写
-// mesh、隔离对象写合成 quad、粒子层写顶点 shader 的 u_Parallax（隔离粒子层同样落在合成 quad 上，
-// 否则内容会在对象 RT 内被推出边界裁掉）。断言的都是真实位置数值，不是「函数被调用」。
+// Task 4：逐帧应用视差 = **对象 model 矩阵的 2D 世界平移**（相机与帧序不动）：非隔离背景写 mesh、隔离对象写
+// 合成 quad、粒子层写顶点 shader 的 u_Parallax（隔离粒子层同样落 quad，否则内容会在对象 RT 内被裁掉）。
+// 断言的都是真实位置数值而非「函数被调用」；口径见 AGENT.md §2.3。
 describe('视差逐帧应用', () => {
   function makePlayer() {
     const canvas = document.createElement('canvas');
