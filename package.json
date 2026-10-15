@@ -25,7 +25,8 @@
     "e2e:hidpi": "node e2e/verify/verify-hidpi-object-rt.mjs",
     "e2e:isolated-rt": "node e2e/verify/verify-isolated-rt-sharpness.mjs",
     "e2e:textclock": "node e2e/verify/verify-text-clock-layer.mjs --gpu",
-    "e2e:compare": "node e2e/verify/compare-shots.mjs"
+    "e2e:compare": "node e2e/verify/compare-shots.mjs",
+    "verify:local": "node scripts/verify-local.mjs"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1"
