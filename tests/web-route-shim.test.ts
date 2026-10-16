@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { registerWallpaperRoutes } from '../src/host/routes.js';
-import { POINTER_SHIM_SOURCE } from '../src/client/pointer-shim.js';
+import { POINTER_SHIM_SOURCE } from '../src/shared/pointer-shim.js';
 
 const WE_WORKSHOP = process.env.WE_WORKSHOP ?? 'D:/Steam/steamapps/workshop/content/431960';
 const EVA5 = join(WE_WORKSHOP, '1184182304');

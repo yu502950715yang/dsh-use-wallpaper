@@ -18,7 +18,7 @@ import { join, dirname, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { OUT_DIR, httpPort, cdpPort, resolveEdgePath, TIMEOUT_MS, argOf } from '../config.mjs';
 import { decodePng } from '../lib/png-stats.mjs';
-import { injectPointerShim } from '../../lib/client/pointer-shim.js';
+import { injectPointerShim } from '../../lib/shared/pointer-shim.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const OUT = join(OUT_DIR, 'web-pointer-parallax');

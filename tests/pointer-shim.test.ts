@@ -10,7 +10,7 @@ import {
   POINTER_SHIM_SOURCE,
   escapeShimForInlineScript,
   injectPointerShim,
-} from '../src/client/pointer-shim.js';
+} from '../src/shared/pointer-shim.js';
 
 const WE_WORKSHOP = process.env.WE_WORKSHOP ?? 'D:/Steam/steamapps/workshop/content/431960';
 const EVA5 = join(WE_WORKSHOP, '1184182304', 'js');

@@ -34,7 +34,7 @@
 
 - `src/host/`：Node 侧（Cordis 插件）。`scanner.ts` 扫描目录 → `WallpaperInfo`；`steam-paths.ts` 目录探测（`/wallpapers/probe`）；`pkg-reader.ts` 解包 PKGV；`routes.ts` HTTP 路由（每次请求读实时目录，settings 热更新；对 web 壁纸的 HTML 注入指针 shim，见 §5.48）；`settings.ts` 插件设置（双路径，见 §5.34）。
 - `src/client/`：浏览器侧（esbuild → `dist/client.js`，external react 等 DSH 共享模块）。主路径：`index.ts`（bootstrap + `window.__wallpaperEngine` + 注册设置菜单）、`wallpaper-controller.ts`（选择/竞态/回退链）、`three-renderer.ts` + `threejs-player.ts`（渲染）、`object-effects.ts` + `object-range.ts` + `effect-runner.ts` + `effect-graph.ts`（对象级效果链）、`rt-render.ts`（「渲染进 RT」的唯一入口，透明清屏不变量落在这里）、`tex-loader.ts`（TEXV0005 解码）、`scene-json.ts` / `scene-graph.ts` / `visibility.ts`、`text-object.ts` + `text-script.ts` + `scene-script-vm.ts` + `scene-script-host.ts` + `scene-anim.ts` + `layer-state.ts` + `dynamic-mesh.ts`（text / 脚本 / 动态网格）、`glow-stage.ts`（应用级 Glow）、`audio-input.ts`、`background-layer.ts` / `settings.ts` / `styles.ts` / `settings-section.tsx`。
-- `src/shared/`：跨 host/client 类型（`WallpaperInfo`、`SceneDescription`、`SceneObject` 等）。
+- `src/shared/`：跨 host/client 的类型与**两端共用的常量/纯函数**（`types.ts` 的 `WallpaperInfo` / `SceneDescription` / `SceneObject` 等；`pointer-shim.ts` 的 shim 源码与 HTML 注入 —— host 侧要把它内联进响应、client 侧与测试要按同一契约断言，故不能放在任一侧）。
 - `src/client/shader/`：WE shader 方言转译层（`effect-chain.ts` 解析、`shader-preprocessor.ts` 预处理、`uniform-binder.ts`、`we-headers.ts`）。
 
 ### 2.3 坐标与对象变换约定（**勿再翻转 / 勿漏乘**）
