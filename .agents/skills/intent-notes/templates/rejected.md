@@ -10,7 +10,7 @@ Status: rejected — {{一句话说明为什么否决}}
 
 {{当时的提案，冻结保留，不要改写成对立面。}}
 
-## 涉及仓库
+## Affected repositories
 
 - `{{仓库名}}` 不涉及
 

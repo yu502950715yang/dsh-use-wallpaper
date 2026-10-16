@@ -22,7 +22,7 @@ WE 效果链的 shader 是 **HLSL 方言**，本仓库靠自己的翻译层把�
 
 因此本轮**不承诺"8 条全修好"**：验收口径是 **A 档失败数 2 → 1**，残余失败逐条给出根因归属。
 
-## 涉及仓库
+## Affected repositories
 
 - `dsh-use-wallpaper` 分支 `master` commits `a33e7aa` `8189dc9`
 

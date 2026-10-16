@@ -19,7 +19,7 @@ scene 走 **three.js 播放器**，且它是**唯一**渲染路径：把 WE 场�
 
 WE 语义疑问的权威来源随之固定为：**WE 安装目录下的明文 shader/材质**（`<WE>/assets/shaders`、`<WE>/assets/materials`）与 `research/open-wallpaper-engine`（C++）、`research/.lwe`（linux-wallpaperengine）。
 
-## 涉及仓库
+## Affected repositories
 
 - `dsh-use-wallpaper` 分支 `master` commits `dcd28c1` `3eea1c9`
 

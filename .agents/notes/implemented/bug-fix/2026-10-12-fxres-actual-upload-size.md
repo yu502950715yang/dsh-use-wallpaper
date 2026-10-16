@@ -19,7 +19,7 @@ Status: implemented
 
 **四个分量一律同值** ⇒ `.z/.x === 1` 恒成立（这正是"没做 padding"应有的口径）。代价是**零额外请求**：材质 JSON 本来就在手上，只改填哪个数。判据是 `tests/` 的通道保真用例与 e2e 的「`z/x === 1` 且偏离必须为 0」。
 
-## 涉及仓库
+## Affected repositories
 
 - `dsh-use-wallpaper` 分支 `master` commits `51a3b4f` `cdbdd56`
 

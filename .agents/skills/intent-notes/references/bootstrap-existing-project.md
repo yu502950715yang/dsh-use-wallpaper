@@ -48,7 +48,17 @@ node "<skill-dir>/scripts/init.ts" "<项目根>"
 
 收割出的笔记若原始材料确实没记录备选方案，在 `## Alternatives considered` 位置写 `<!-- alternatives: not-recorded -->`。
 
-## 阶段 4：转入日常
+## 阶段 4：给已有归档上封印
+
+存量项目往往已有 `archived/` 笔记（本 skill 之前没有封印机制）。在阶段 3 结束后跑一次全量封印，把整棵归档树记进 `archived/manifest.json`：
+
+```bash
+node "<skill-dir>/scripts/verify-note-seal.ts" "<项目根>/.agents/notes" --write
+```
+
+**必须在开始用 hook 之前做**：没有 manifest 时门禁 4 会把每篇归档笔记都报成「未封存」。这一步是一次性的——此后每归档一篇跑 `--write` 只追加。
+
+## 阶段 5：转入日常
 
 之后所有命中 `SKILL.md` 第一节清单的改动由 AI 顺手写新笔记。**初始化是一次性的，运行是持续的。**
 
@@ -66,7 +76,7 @@ node "<skill-dir>/scripts/init.ts" "<项目根>"
 
 ## 非代码工作目录（另一种形态）
 
-目标不是代码仓库，而是需求 / PRD / 资料文件夹时，流程按 `references/plain-directory-mode.md` 走。与上面四个阶段的差别：
+目标不是代码仓库，而是需求 / PRD / 资料文件夹时，流程按 `references/plain-directory-mode.md` 走。与上面五个阶段的差别：
 
 - **阶段 1**：同一个 `init`，但由 agent 代劳版本控制（`init` 会 `git init`）；目录必须在**本地磁盘**
 - **阶段 2**：**不需要**给子仓库铺指针（没有子仓库），只需写工作目录自己的 `AGENTS.md`

@@ -21,7 +21,7 @@
 | `proposed/` | 实施前评审的提案，尚未构建（或仅部分构建） |
 | `implemented/` | 已交付，并与代码保持同步：路径、符号、默认值变了就**就地改**（只改事实，不改决策） |
 | `rejected/` | 讨论后被否决；仅当它仍能避免一个诱人的错误时保留 |
-| `archived/` | 冻结的历史。只有 `implemented/` 能进这里，路径中刻意不含 `implemented` 层 |
+| `archived/` | 冻结的历史。只有 `implemented/` 能进这里，路径中刻意不含 `implemented` 层。内容由 `archived/manifest.json` 的 SHA-256 封印保护：单篇改动、删除，以及**删掉 `manifest.json` / 删掉整棵归档树后重跑 `--write`** 都判红（封印清单只追加）。要改内容跑 `--reseal` 并写明理由，误归档先删文件再跑 `--forget`；确实要重新起封印才用 `--write --first-seal` |
 
 `Status:` 行必须与所在目录一致。**唯一例外是 `archived/`**：它保持 `Status: implemented`，另在紧接的一行写 `Archived: YYYY-MM-DD`。
 

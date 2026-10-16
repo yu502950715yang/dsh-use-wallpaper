@@ -26,7 +26,7 @@ DSH `0.1.7-alpha.1` 把设置子系统从「插件动态注册命名空间」换
 - **client 双 ns**（`src/client/settings.ts`）：候选 `['dsh-wallpaper-engine', 'wallpaper-engine']`，`describe()` 后取**实际存在**的那一行并记住命中的 ns（写回时用它）；两版都没有时按 value 形状兜底。**写入失败不再静默**：`console.warn` + 返回 `false`（原来的 `.catch(() => {})` 会造成"提示已保存但没生效"）。
 - **解析优先级两版统一**：schema 默认值 → profile entry config → 用户设置。手工预置配置一律写 profile `cordis.patch.yml` 里该条目的 `config`（新旧通吃的位置）。
 
-## 涉及仓库
+## Affected repositories
 
 - `dsh-use-wallpaper` 分支 `master` commits `f68d59c` `d397084`
 

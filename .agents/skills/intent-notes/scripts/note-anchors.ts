@@ -1,5 +1,5 @@
 /**
- * 解析并校验笔记的「涉及仓库」声明。
+ * 解析并校验笔记的「Affected repositories」声明。
  *
  * 与 DSH 的差别：DSH 是 monorepo，笔记不需要声明涉及哪个仓库；
  * 本体系面向 polyrepo，声明必须锚定到真实的仓库、分支与 commit，
@@ -27,29 +27,42 @@ export interface ParseResult {
   errors: string[]
 }
 
-const SECTION = '## 涉及仓库'
+const SECTION = '## Affected repositories'
+/** 旧的中文段头：硬切换后不再接受，只为报出改名指引而保留识别。 */
+const LEGACY_SECTION = '## 涉及仓库'
 const NOT_INVOLVED = /^-\s+`([^`]+)`\s+不涉及\s*$/
 /** 段头允许 ≤3 空格缩进，`##` 后至少一个空白（空格或制表符）；段内遇到任何二级标题即结束。 */
-const SECTION_HEADER = /^ {0,3}##[ \t]+涉及仓库[ \t]*$/
+const SECTION_HEADER = /^ {0,3}##[ \t]+Affected repositories[ \t]*$/
+const LEGACY_HEADER = /^ {0,3}##[ \t]+涉及仓库[ \t]*$/
 const ANY_H2 = /^ {0,3}##[ \t]/
 
 /**
- * 从笔记正文解析「涉及仓库」段。
+ * 从笔记正文解析「Affected repositories」段。
  *
  * 代码围栏内的 `##` 不算文档结构（围栏判定见 note-text.ts，两处门禁共用）——
  * 否则记录本格式的笔记会把围栏里的示例段头当成真段头，既误红合法笔记、又漏掉真锚点。
  *
- * 只校验**第一个**段：出现第二个 `## 涉及仓库` 即报错，否则重复段会整段逃过校验（假绿）。
+ * 只校验**第一个**段：出现第二个 `## Affected repositories` 即报错，否则重复段会整段逃过校验（假绿）。
+ * 旧中文段头 `## 涉及仓库` 一律判红并给出改名指引——段名统一为英文后两套写法并存会让契约分叉。
  */
 export function parseAnchors(text: string): ParseResult {
   const prose = fenceAwareLines(text)
+  const errors: string[] = []
+  const legacy = prose.filter(l => LEGACY_HEADER.test(l.text))
+  if (legacy.length > 0) {
+    errors.push(
+      `第 ${(legacy[0]?.index ?? 0) + 1} 行：\`${LEGACY_SECTION}\` 已改名为 \`${SECTION}\`，请改段头`,
+    )
+  }
+
   const headers = prose.filter(l => SECTION_HEADER.test(l.text))
   const first = headers[0]
   if (first === undefined) {
-    return { repos: [], errors: [`缺少 \`${SECTION}\` 段`] }
+    // 已给出改名指引时不再叠一条「缺少段」：两条错误会让唯一修法被埋掉
+    if (legacy.length === 0) errors.push(`缺少 \`${SECTION}\` 段`)
+    return { repos: [], errors }
   }
 
-  const errors: string[] = []
   const duplicate = headers[1]
   if (duplicate !== undefined) {
     errors.push(

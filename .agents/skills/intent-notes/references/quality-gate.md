@@ -1,15 +1,16 @@
 # 写完自检
 
-结构靠脚本，意思靠人点头。先跑门禁 1、2 拿到机检结论，再过下面五项人工判断，最后向用户报告**缺口与写得好的地方**，总量 ≤5 行。
+结构靠脚本，意思靠人点头。先跑门禁 1、2、4 拿到机检结论，再过下面五项人工判断，最后向用户报告**缺口与写得好的地方**，总量 ≤5 行。
 
-## 0. 先跑门禁 1、2
+## 0. 先跑门禁 1、2、4
 
 ```bash
 node "<skill-dir>/scripts/verify-note-tree.ts"   "<notes 根>"   # 门禁 1：结构、目录深度、文件名、相对链接
 node "<skill-dir>/scripts/verify-note-format.ts" "<notes 根>"   # 门禁 2：头块、Status、必备节、Alternatives
+node "<skill-dir>/scripts/verify-note-seal.ts"   "<notes 根>"   # 门禁 4：归档封印（改了归档 / 忘了 --write 都在这报）
 ```
 
-**门禁 1 / 2 接 notes 根（`<项目根>/.agents/notes`），门禁 3 接项目根**——参数语义不同是这里最容易踩的坑；门禁 3（`verify-note-anchors.ts`）查什么见第 4 项。红了**就地修完再往下走**，不要带着红门禁交给人。
+**门禁 1 / 2 / 4 接 notes 根（`<项目根>/.agents/notes`），门禁 3 接项目根**——参数语义不同是这里最容易踩的坑；门禁 3（`verify-note-anchors.ts`）查什么见第 4 项。红了**就地修完再往下走**，不要带着红门禁交给人。
 
 ## 1. Problem 能独立成立吗
 

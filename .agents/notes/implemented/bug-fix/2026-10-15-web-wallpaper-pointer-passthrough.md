@@ -23,7 +23,7 @@ web 壁纸的「跟随鼠标」在插件里**整类失效**，且症状看不出
 - **生命周期**：指针监听只在 web 帧存活期间挂着，并跟着**可见帧**重挂（resize 重建会换帧）、用 token 作废旧闭包；`detachPointerPost` 在切背景 / 清空时摘掉。
 - **范围**：对所有 web 壁纸生效，不做开关，不写死壁纸 id。
 
-## 涉及仓库
+## Affected repositories
 
 - `dsh-use-wallpaper` 分支 `master` commits `6a62e0f` `746ad1b`
 

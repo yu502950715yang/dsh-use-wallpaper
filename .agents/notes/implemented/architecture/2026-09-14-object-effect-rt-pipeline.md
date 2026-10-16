@@ -19,7 +19,7 @@ WE 的对象级 `effects` 是对**该对象**做的后处理链：可能多 pass
 - **降级必须显式，绝不静默画错**：写具名 RT 的 pass 编译失败 ⇒ **整条计划放弃**（回退对象 RT 原图）；引用链内不存在的 `_rt_*` 保持默认、不绑白纹 + 按槽去重告警；单链具名 RT > 16 张 ⇒ 该链不挂；effect 级 `visible === false` 整条不挂链（那是作者正常内容，不打降级告警）。
 - **混合语义落在合成 quad 上**：`colorBlendMode ∈ {6,7,31}` 的语义是 `mix(A, Blend(A,B), opacity)`，而这三个模式的颜色因子都不看 alpha ⇒ 必须把图层 alpha **预乘进 rgb**（否则全强度盖住画面，GTR「云挡住人物」），内容侧改回普通 alpha 写入。合成 quad 还必须**透明清屏**（`rt-render.ts` 是唯一入口）。
 
-## 涉及仓库
+## Affected repositories
 
 - `dsh-use-wallpaper` 分支 `master` commits `076ad36` `ecfcc10` `6bb3d71`
 

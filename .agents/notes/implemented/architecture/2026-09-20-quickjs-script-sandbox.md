@@ -20,7 +20,7 @@ WE 场景里带脚本的壁纸（`visible.script`、text 的脚本、`createLaye
 - **不扩展旧 `scene-script.ts`**（其 class / `IThisPropertyObject` 语义与本 VM 不同，且该文件已随 wasm 渲染路径删除）；**`text.script` 也不收进 SceneScript VM** —— 它顶层调用 `createScriptProperties()`，在新 VM 里必然失败（把两者混收时收集数从 17 变 15 才对，这个数字本身就是判据）。
 - 未实现的 WE API 用 **Proxy 兜底**，否则一个 `TypeError` 会让整个脚本停摆。
 
-## 涉及仓库
+## Affected repositories
 
 - `dsh-use-wallpaper` 分支 `master` commits `9afc674` `11c27cf`
 

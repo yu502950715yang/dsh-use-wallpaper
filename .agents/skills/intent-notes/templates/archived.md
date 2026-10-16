@@ -11,7 +11,7 @@ Archived: {{YYYY-MM-DD}}
 
 {{现在时描述已交付事实。}}
 
-## 涉及仓库
+## Affected repositories
 
 - `{{仓库名}}` 分支 `{{分支名}}` commits `{{短哈希}}`
 

@@ -21,7 +21,7 @@ WE 的鼠标视差（`general.cameraparallax*` + 对象 `parallaxDepth`）在本
 - 配置解析对畸形值一律回落缺省（`cameraparallax=false` / 其余 0），**不误开视差**；`parallaxDepth` 缺省/畸形 ⇒ `undefined`。
 - `parallaxDepth` 放在**对象 `base`** 上（所有 kind 通用），不是只给 image：真实库 227 处该字段里 47% 挂在粒子上，只做 image 会让粒子视差永远取到 `undefined`。
 
-## 涉及仓库
+## Affected repositories
 
 - `dsh-use-wallpaper` 分支 `master` commits `3a49580`
 

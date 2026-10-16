@@ -11,11 +11,12 @@ description: 在交付项目或工作目录里留下并维护决策笔记（Agen
 
 ## 零、会话开始先查改动
 
-**工作目录里存在 `.agents/notes/` 时，会话开始先做三件事**：
+**工作目录里存在 `.agents/notes/` 时，会话开始先做四件事**：
 
 1. `git status --short` —— 有未提交改动，说明产物被改过，必须走第一节判定
 2. `git log --oneline -5` —— 有 agent 未记录的新提交，同样走第一节判定
 3. `node "<skill-dir>/scripts/verify-note-anchors.ts" "<工作目录>"` —— 红了先按报错处理，再谈本次任务
+4. `node "<skill-dir>/scripts/audit-notes.ts" "<工作目录>/.agents/notes"` —— 打印 `implemented/` 候选清单（存续天数、字数、入链数），当场过一遍：有该归档的就归档并封印。它只读、不写文件；但笔记树结构有问题时按门禁 1 的口径报错退非 0
 
 门禁不会自己启动：没有这一步，「该写却没写」没有任何机制能发现。
 
@@ -48,16 +49,17 @@ description: 在交付项目或工作目录里留下并维护决策笔记（Agen
 
 ## 四、硬规则
 
-**骨架标记不可翻译、不可改写。** 第 1 / 3 / 4 行与各生命周期的**必备段头**由门禁按字面匹配（标题只校验前缀 `# Agent Note: `，段头允许 ≤3 空格缩进、`##` 后空格或制表符），一律照抄：`# Agent Note: `、`Status: `、`Archived: `、`## Problem`、`## Proposal`、`## Decision`、`## Alternatives considered`、`## Acceptance criteria`、`## Risks`、`## Consequences` 保持英文，`## 涉及仓库` 保持中文。**…自由节…** 的段头和全部正文才用中文写——把 `## Problem` 译成 `## 问题` 会直接判红。
+**骨架标记不可翻译、不可改写。** 第 1 / 3 / 4 行与各生命周期的**必备段头**由门禁按字面匹配（标题只校验前缀 `# Agent Note: `，段头允许 ≤3 空格缩进、`##` 后空格或制表符），一律照抄：`# Agent Note: `、`Status: `、`Archived: `、`## Problem`、`## Proposal`、`## Decision`、`## Alternatives considered`、`## Acceptance criteria`、`## Risks`、`## Consequences`、`## Affected repositories` 保持英文。**…自由节…** 的段头和全部正文才用中文写——把 `## Problem` 译成 `## 问题` 会直接判红。
 
 1. 前三行严格为 `# Agent Note: <标题>`、空行、`Status: <状态>`；`Status` 必须与所在目录一致——**唯一例外是 `archived/`**：它保持 `Status: implemented`，并在第 4 行写 `Archived: YYYY-MM-DD`（其余生命周期的第 4 行必须为空）。
 2. `## Alternatives considered` **必写**：每个真考虑过的备选，先写它最强的理由，再解释为什么不用。没有过的选项不要编。存量收割的笔记若原始材料确实未记录备选，写 `<!-- alternatives: not-recorded -->`。
 3. 一条笔记**永远不被改写成另一个决定**；决定或理由翻转 → 新开一篇并互链。
 4. `implemented` 描述**已交付事实**（现在时）；路径、符号、默认值变了就地改，**不要追加变更流水账**。
-5. 每篇必须声明**涉及仓库**（`## 涉及仓库` 一节）：polyrepo 项目列出所有相关子仓库，单仓库项目也列出那唯一一个；锚点由门禁实时校验，**本节缺失会被锚点门禁直接判红**——没有逃生标记，「没有涉及仓库」也要写成一行 `` - `仓库名` 不涉及 ``（仓库名照抄 `config.yml` 里的声明），不是省略本节——整行只写「不涉及」两个字会被判「无法解析」（`archived/` 豁免，见 `references/archiving.md`）。
+5. 每篇必须声明**涉及仓库**（`## Affected repositories` 一节）：polyrepo 项目列出所有相关子仓库，单仓库项目也列出那唯一一个；锚点由门禁实时校验，**本节缺失会被锚点门禁直接判红**——没有逃生标记，「没有涉及仓库」也要写成一行 `` - `仓库名` 不涉及 ``（仓库名照抄 `config.yml` 里的声明），不是省略本节——整行只写「不涉及」两个字会被判「无法解析」（`archived/` 豁免，见 `references/archiving.md`）。
 6. 代码与笔记在**同一次改动**里落地（不是"同一次提交"）：笔记在项目根、代码在子仓库时，按「子仓库先提交代码 → 容器仓库提交笔记」成批提交——笔记的 commit 锚点只能指向**已存在**的 commit。别让笔记漂到下一个需求。同一仓库内（含非代码工作目录）同理：**先提交产物 → 再写笔记 → 最后提交笔记**。
-7. 新建前先搜同主题旧笔记，命中就就地更新或互链，不留重复记录。
+7. 新建前先搜同主题旧笔记（判据、分类与取代处理见第 9 条），不留重复记录。
 8. 本次改动若暴露了**会挡住后来者的既有问题**（例如项目约定的验证命令在当前基线就跑不通），在本次这篇笔记的自由节或 `## Risks` 里写一行并标明"既有、本次未修"——只留在会话里，下一个人会撞同一面墙。
+9. 新建或更新笔记前，先按模块名或机制关键词搜 `.agents/notes/` 活跃目录树并**当场分类**：无关 / 部分重叠（互链）/ 完全吸收（合并）/ 过时。出现**完全取代**时，在同一批改动里归档被取代的 `implemented` 笔记并跑封印（门禁 4，见 `references/archiving.md`）。分类结果与这篇新笔记一起落盘，**不留到以后大扫除**。
 
 ## 五、详细规则（按需读取）
 
@@ -73,13 +75,20 @@ description: 在交付项目或工作目录里留下并维护决策笔记（Agen
 
 ## 六、交给人之前
 
-**先跑脚本门禁，再做人看的那五项。** 写完笔记立刻跑门禁 1、门禁 2（两者都在本 skill 基目录下的 `scripts/`）：
+**先跑脚本门禁，再做人看的那五项。** 写完笔记立刻跑门禁 1、门禁 2、门禁 4（都在本 skill 基目录下的 `scripts/`）：
 
 ```bash
 node "<skill-dir>/scripts/verify-note-tree.ts"   "<项目根>/.agents/notes"   # 门禁 1：结构
 node "<skill-dir>/scripts/verify-note-format.ts" "<项目根>/.agents/notes"   # 门禁 2：格式
+node "<skill-dir>/scripts/verify-note-seal.ts"   "<项目根>/.agents/notes"   # 门禁 4：归档封印
 ```
 
-**门禁 1 / 2 接 notes 根，门禁 3 接项目根**——参数语义不同，别把项目根喂给门禁 1（门禁 3 见第零节那条 `verify-note-anchors.ts` 命令）。红了**就地修完再向用户报告**，不要带着红门禁交付。
+**归档了就必须封印**：把笔记移进 `archived/` 后立刻跑 `verify-note-seal.ts … --write`，否则门禁 4 会报「未封存」；**`archived/manifest.json` 要与笔记一起 `git add`**（hook 会单独查这一条，漏了就退 1）。
+
+**归档会改路径，入站链接要在同一批里修完**：活跃笔记指向 `implemented/{class}/…` 的相对链接在归档后立刻断链，门禁 1 判红——重定向到取代它的新篇，或改写为归档路径（当引用是故意引史）；处置细则见 `references/archiving.md`。
+
+**机械闸门（推荐装一次）**：`node "<skill-dir>/scripts/install-hook.ts" "<项目根>"` 会把门禁 4 / 1 / 2 装进 `.git/hooks/pre-commit`——归档有变就查封印，笔记有变就查结构格式，只改代码的 commit 零开销。装了它，「忘了跑门禁」就不再依赖记性。
+
+**门禁 1 / 2 / 4 接 notes 根，门禁 3 接项目根**——参数语义不同，别把项目根喂给门禁 1（门禁 3 见第零节那条 `verify-note-anchors.ts` 命令；`install-hook.ts` 与门禁 3 同为项目根）。红了**就地修完再向用户报告**，不要带着红门禁交付。
 
 再按 `references/quality-gate.md` 过五项人工自检（全是语义判断，脚本替不了），只向用户报告**缺口与写得好的地方**（≤5 行），缺口给具体修法。

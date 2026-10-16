@@ -74,10 +74,10 @@ export function collectCommitContext(repoName: string, repoPath: string, sha: st
   return ctx
 }
 
-/** 片段用法。整段粘贴会让笔记出现第二个 `## 涉及仓库` 段头，门禁 3 判「重复段」。 */
+/** 片段用法。整段粘贴会让笔记出现第二个 `## Affected repositories` 段头，门禁 3 判「重复段」。 */
 const USAGE = [
   '> 这是补写笔记的素材**片段，不是笔记**：不要整段粘贴。',
-  '> `## 涉及仓库` 段里只有锚点行要搬进笔记的锚点段（段头不要重复），其余事实据此重写正文。',
+  '> `## Affected repositories` 段里只有锚点行要搬进笔记的锚点段（段头不要重复），其余事实据此重写正文。',
 ]
 
 /**
@@ -120,7 +120,7 @@ export function renderBackfill(ctx: CommitContext, matchedNotes: string[]): stri
 
   const lines: string[] = []
   lines.push(...USAGE, '')
-  lines.push('## 涉及仓库', '')
+  lines.push('## Affected repositories', '')
   lines.push(`- \`${ctx.repo}\` 分支 \`${primaryBranch}\` commits \`${ctx.sha}\``)
   lines.push('', '## 待补写的事实', '')
   lines.push(`- 提交：\`${ctx.sha}\` ${ctx.subject}`)

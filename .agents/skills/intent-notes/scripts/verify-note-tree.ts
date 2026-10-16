@@ -2,53 +2,18 @@
  * 门禁 1：结构。消费 note-tree.ts 的结果并补上它不覆盖的检查（笔记间相对链接）。
  *
  * 检查思路移植自 DeepSeek Harness 的 scripts/verify-agent-note-tree.ts（MIT, Copyright (c) 2026 DeepSeek）；
- * 相对链接的断链检查为本项目新增。
+ * 相对链接的断链检查为本项目新增。链接解析在 note-links.ts，与 audit 的入链统计共用。
  *
  * 用法：node scripts/verify-note-tree.ts [notes 根]（省略则取 <cwd>/.agents/notes；门禁 3 接的是项目根）
- * root 省略时取 <cwd>/.agents/notes。
  */
 import { readFileSync, existsSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { ARCHIVE_DIR, walkAgentNoteTree } from './note-tree.ts'
+import { isIndentedCodeBlock, localLinkTargets } from './note-links.ts'
 import { fenceAwareLines, toLines } from './note-text.ts'
 
 const root = resolve(process.argv[2] ?? join(process.cwd(), '.agents', 'notes'))
 const { notes, errors } = walkAgentNoteTree(root)
-
-/** `##` 前缩进 ≥4 且自成一段的行是缩进代码块；列表续行前面不是空行，不会被误判。 */
-function isIndentedCodeBlock(line: string, prev: string | undefined): boolean {
-  return /^ {4,}\S/.test(line) && (prev === undefined || prev.trim() === '')
-}
-
-/**
- * 提取一行的**本地**链接目标（行内链接 + 引用式定义）。
- *
- * - 行内代码 span 与 HTML 注释里的示例链接不算真链接（与代码围栏豁免同口径）
- * - 任意 scheme（`mailto:` 等）与协议相对 URL（`//host/x`）不是仓库内路径，跳过
- * - 目标先 %XX 解码、再去锚点与查询串，才能与磁盘上的真实文件名对齐
- */
-function localLinkTargets(line: string): string[] {
-  const out: string[] = []
-  const push = (raw: string): void => {
-    let target = raw.trim().replace(/^</, '').replace(/>$/, '')
-    if (target === '' || target.startsWith('#')) return
-    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(target) || target.startsWith('//')) return
-    try {
-      target = decodeURIComponent(target)
-    } catch {
-      // 非法 %XX：按原样去查，让它照常报断链，而不是静默放过
-    }
-    target = (target.split('#')[0] ?? '').split('?')[0] ?? ''
-    if (target !== '') out.push(target)
-  }
-  const text = line.replace(/<!--.*?-->/g, '').replace(/`+[^`]*`+/g, '')
-  // 行内链接必须容忍空格与 `<...>`；引用式定义（`[ref]: path`）同样是真链接
-  for (const re of [/\]\(\s*(<[^>]*>|[^)]*?)\s*\)/g, /^\s*\[[^\]]+\]:\s*(\S+)/g]) {
-    let m: RegExpExecArray | null
-    while ((m = re.exec(text)) !== null) push(m[1] ?? '')
-  }
-  return out
-}
 
 for (const note of notes) {
   // 归档笔记已冻结（不再编辑、移动、重格式化）：与门禁 3 同口径，链接不再实时校验

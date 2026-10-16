@@ -21,7 +21,7 @@ WE 的效果与粒子能**读「到这一刻为止本帧已经画了什么」**�
 
 **成本量级必须说清**：段渲染是「**每段一次全场景 `render`**，靠 `visible` 排除其它段」⇒ **O(段数 × 场景)**，**不是**「每对象只光栅化一次」。实测 `2897292240` 每帧 3 次全场景 render + 2 次 blit + 1 次 composite（改动前 1 次）。
 
-## 涉及仓库
+## Affected repositories
 
 - `dsh-use-wallpaper` 分支 `master` commits `7a5185d` `4f13857`
 

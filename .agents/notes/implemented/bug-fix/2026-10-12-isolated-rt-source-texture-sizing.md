@@ -26,7 +26,7 @@ RT = 世界尺寸 × (targetLong / max(|worldW|,|worldH|))，等比、按 target
 - **MSAA 分型**：铺满整屏（world 覆盖 ≥98% 场景）⇒ `samples: 0`（RT 内只有一张盖满的 quad，没有轮廓边，实测 `samples=0` 与 `4` 逐像素完全相同 MAD=0.0000，省下的 24 B/px 用来买分辨率）；贴片与粒子 billboard 保留 `samples: 4`（有真实几何边）。
 - **预算守卫**：RT 一旦大于屏占位，合成那一步就是缩小采样 ⇒ 给隔离 RT 开 `generateMipmaps + LinearMipmapLinearFilter`（RT 未放大时保持原行为）；`fitIsolatedBudget` 按每像素字节模型估算总占用，超 384 MB 预算时**等比下调升级幅度**，下限恒为各对象屏占位（最坏退回现状，不会比今天更糊）。v1 预算走常量、不新增面板设置项（避免动被测试锁定的 DOM 钩子）。
 
-## 涉及仓库
+## Affected repositories
 
 - `dsh-use-wallpaper` 分支 `master` commits `cab0ab7` `65f810a` `fb8476f`
 

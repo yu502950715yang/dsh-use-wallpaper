@@ -62,20 +62,21 @@ git -C "<工作目录>" commit -m "chore: 建立 Agent Notes 骨架"
 3. 按 `SKILL.md` 第一节判**要不要写笔记**
 4. `git add` **指定文件**（不要 `git add -A`，免得把密码、原始素材、临时文件带进去）
 5. `git commit`：中文，一句话说清改了什么
-6. 写笔记（若需要）：在 `## 涉及仓库` 段写锚点行，格式真源是 `references/note-format.md` 的「涉及仓库」一节。这里只说两点最容易踩的：
+6. 写笔记（若需要）：在 `## Affected repositories` 段写锚点行，格式真源是 `references/note-format.md` 的「Affected repositories」一节。这里只说两点最容易踩的：
 
    - 锚点行必须**顶格写、不要缩进**：门禁按行首匹配，缩进会被判「无法解析」
    - 三个占位换真值：仓库名用工作目录名（即 `config.yml` 里 `path: .` 那条的 `name`），分支名用 `git branch --show-current` 的结果，短哈希用上一步 commit 的短哈希
 
    以 `templates/implemented.md` 起步时，模板里 ``- `{{不涉及的仓库名}}` 不涉及`` 那一行**若没有对应仓库就整行删掉**——留着会被门禁 3 报「仓库 `占位内容` 未在项目声明中」，而本形态的首篇笔记没有第二个仓库，必然命中。
-7. 跑**门禁 1、2**：本形态没有 CI、没有子仓库，这两条脚本是唯一的机检兜底——
+7. 跑**门禁 1、2、4**：本形态没有 CI、没有子仓库，这三条脚本是机检兜底——`init` 已建四生命周期，工作目录里同样有 `archived/`，也能用 `install-hook.ts "<工作目录>"` 装 pre-commit 闸门：
 
    ```bash
    node "<skill-dir>/scripts/verify-note-tree.ts"   "<工作目录>/.agents/notes"   # 门禁 1：结构
    node "<skill-dir>/scripts/verify-note-format.ts" "<工作目录>/.agents/notes"   # 门禁 2：格式
+   node "<skill-dir>/scripts/verify-note-seal.ts"   "<工作目录>/.agents/notes"   # 门禁 4：归档封印
    ```
 
-   参数语义：门禁 1 / 2 接 **notes 根**（`<工作目录>/.agents/notes`），门禁 3 接**项目根**（即 `SKILL.md` 第零节那条 `verify-note-anchors.ts`）。红了就地修完再提交笔记。
+   参数语义：门禁 1 / 2 / 4 接 **notes 根**（`<工作目录>/.agents/notes`），门禁 3 与 `install-hook.ts` 接**项目根**（门禁 3 即 `SKILL.md` 第零节那条 `verify-note-anchors.ts`）；第零节的 `audit-notes.ts` 同样接 notes 根，它只读、不写文件，但笔记树结构有问题时按门禁 1 的口径报错退非 0。红了就地修完再提交笔记；归档后跑 `--write` 时，`archived/manifest.json` 要与被归档的笔记**一起提交**。
 8. 提交笔记，**产物先提交、笔记后提交**（笔记的 commit 锚点只能指向已存在的 commit）：
 
    ```bash

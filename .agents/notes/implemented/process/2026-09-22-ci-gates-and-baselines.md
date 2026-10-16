@@ -20,7 +20,7 @@ CI 要在这个仓库上做门禁，撞上三个现实：
 - **产物新鲜度是门禁**：CI 重跑 `tsc` / `build:client` 后 `git diff` 必须为零。`lib/` 用 `git add -A -- lib/` + `git diff --cached`（原 `git diff` 看不到**新增**产物）；`dist/client.js` 先删入库副本再构建，避免"构建失败 ⇒ 文件没变 ⇒ 误判同步"。
 - **本地一条命令复刻全部**：`node scripts/verify-local.mjs`（= `npm run verify:local`）跑 tsc、`lib/` 与 `dist/client.js` 新鲜度、tests 类型基线、vitest + 失败基线、e2e colorblend 与仓库卫生（不得有未提交的**已跟踪**改动），逐条打印 PASS/FAIL 并以非零码退出。
 
-## 涉及仓库
+## Affected repositories
 
 - `dsh-use-wallpaper` 分支 `master` commits `3718011` `5716d95` `48a9ac2`
 

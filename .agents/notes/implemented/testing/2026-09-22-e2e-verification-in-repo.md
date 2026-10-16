@@ -22,7 +22,7 @@ Status: implemented
 
 **as-built 订正（2026-10-10）**：设计里 `typecheck`/`test` 两个 job 写的是 ubuntu，实际三个 job 都跑 `windows-latest`（README 只声明 Windows 实测，Linux 行为未验证）；`test` 门禁除"新增失败"外，套件级错误与未处理异常也判红；e2e 实际入 CI 的只有 `e2e:colorblend`（`e2e:card` 要从本机 DSH 的 `app.asar` 提主题 CSS，2026-10-10 首次真实 run 红，已移除）。
 
-## 涉及仓库
+## Affected repositories
 
 - `dsh-use-wallpaper` 分支 `master` commits `65f759c` `3718011`
 
