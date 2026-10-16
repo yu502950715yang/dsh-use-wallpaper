@@ -30,3 +30,6 @@ wasm/pkg/
 # 目录 <weAssetsDir>/assets/materials 直读原始字节，故正常构建不会再产生这些文件。
 # 规则保留作兜底：万一有历史产物或手工复制残留，也不会误入库 / 误进 npm 包（避免再分发第三方素材）。
 dist/static/ptex-*.tex
+# --- Intent Notes ---
+/.research-mpkg/
+/.research-mpkg-3120/

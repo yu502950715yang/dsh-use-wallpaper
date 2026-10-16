@@ -1,0 +1,10 @@
+project: "dsh-use-wallpaper"
+repos:
+  - path: "."
+    name: "dsh-use-wallpaper"
+# `.research-mpkg*` 是 DSH 包解包出的临时副本（非协作仓库），research/ 下两个深层仓库是参考实现源码，
+# 均不进 repos：笔记锚点只会指向本仓库。
+sources:
+  - docs/superpowers/specs
+  - docs/superpowers/plans
+  - docs/superpowers/sdd

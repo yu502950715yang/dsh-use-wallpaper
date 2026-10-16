@@ -183,6 +183,7 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
 - 实施前读 `docs/superpowers/specs/` 对应设计文档；重大变更走技能流程（brainstorming → 设计文档 → writing-plans → TDD）。
 - 渲染 / 坐标 / 粒子 / 材质语义的改动：先写失败测试，改完跑相关 vitest + 必要时用 §3.3 的端到端渲染验证，最后把结论与遗留如实写进本文件。
 - **如实标注**：能力未达成就在 §7 写明，不要宣称「全库支持」。**不要在本文件里钉会漂的数字**（测试项数、全库计数）；需要时给「怎么测」而不是「测出来是多少」。
+- **决策留笔记**：改了行为 / 架构 / 跨文件契约 / 流程与工具链 / 测试策略 / 落盘与网络格式时，在 `.agents/notes/{lifecycle}/{class}/` 下新建或就地更新**决策笔记**——契约与现状写在本文件与 `docs/`，笔记只写**为什么**与**放弃了什么**，两者互链；规则见 `.agents/skills/intent-notes/SKILL.md` 与 `.agents/notes/README.md`。会话开始先 `git status --short` 并跑 `node .agents/skills/intent-notes/scripts/verify-note-anchors.ts .`。
 
 ## 7. 当前遗留（如实状态，勿虚标）
 
@@ -232,6 +233,7 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
 | `docs/fixes/web-wallpaper-history.md` | web 壁纸的定位过程与已修记录 |
 | `docs/fixes/verification-ci-history.md` | 验证手段、CI 三个坑、测试基线的历史记录 + 精简前的 §3.3 长段 |
 | `docs/superpowers/specs/`、`docs/superpowers/plans/` | 各轮设计文档与实施计划（**改动前必读**） |
+| `.agents/notes/{lifecycle}/{class}/` | **决策笔记**：只记「为什么」与「放弃了什么」；契约与现状仍以本文件 §5/§7 为准，两者互链 |
 | git 历史（`AGENT.md` 的上一个版本） | 精简前含 §1–§4 / §6 旧措辞的完整文档 |
 
 归档文件只作查阅：**新的结论、边界与遗留写回本文件的 §5 / §7**，不要往归档文件里追加。
