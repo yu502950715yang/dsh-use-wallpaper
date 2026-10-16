@@ -61,8 +61,17 @@ if (errors.length === 0 && r.status !== 0) {
   process.exit(1);
 }
 
-const baseline = existsSync(baselinePath) ? JSON.parse(readFileSync(baselinePath, 'utf8')) : { errors: {} };
-const known = baseline.errors ?? {};
+// 基线缺失/损坏要点名：否则会打印成百上千条假「新增」，把人引到错方向（缺失时不自动生成，避免静默放宽棘轮）。
+let known = {};
+if (!existsSync(baselinePath)) {
+  console.error(`\n[known-type-errors] 基线文件不存在：${baselinePath}（视为全部新增；首次使用请跑 --update 生成）`);
+} else {
+  try {
+    known = JSON.parse(readFileSync(baselinePath, 'utf8')).errors ?? {};
+  } catch (e) {
+    console.error(`\n[known-type-errors] 基线文件无法解析：${baselinePath} —— ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
 const added = [];
 const grown = [];
 const shrunk = [];

@@ -79,7 +79,7 @@ npx vitest run tests/xxx.test.ts --reporter=basic   # 跑单个文件
 ### 3.3 验证手段
 
 - **单测**：`tests/**/*.test.ts` 默认 node，`tests/dom/**` 走 jsdom（`vitest.config.ts`）；`scripts/known-failures.json` 是空的**新增失败**基线（CI 只对新增失败判红，见 §7.11）。
-- **测试侧类型检查**：`npm run typecheck:tests`（= `scripts/check-known-type-errors.mjs`，跑 `tsconfig.tests.json`）把 `tests/**` 纳入 `tsc --noEmit` —— vitest 走 esbuild 不做类型检查，测试用字面量构造的接口改坏了本不会红。基线 `scripts/known-type-errors.json` 是 `(文件, TS 错误码)` 计数的**棘轮**（只增不放过），更新用 `--update`。
+- **测试侧类型检查**：`npm run typecheck:tests`（= `scripts/check-known-type-errors.mjs`，跑 `tsconfig.tests.json`）把 `tests/**` 纳入 `tsc --noEmit` —— vitest 走 esbuild 不做类型检查，测试用字面量构造的接口改坏了本不会红。基线 `scripts/known-type-errors.json` 是 `(文件, TS 错误码)` 计数的**棘轮**（只增不放过），更新用 `--update`。⚠️ 两处已知盲区（别把它当全覆盖）：① `vi.fn()` / `Mock<any>` 造的桩**不受接口约束**（`mockReturnValue` 的实参不参与检查）⇒ 这类测试桩改坏接口不会红；② 同文件同码「计数守恒的位置互换」会漏判（指纹不含行号，也不含消息）。
 - **全库解析回归**：`tests/verify-real-library.test.ts`（全库 scene.pkg 的 scene.json / image 纹理 / particle 规格 / 效果链解析零失败）。**依赖本机壁纸库**，无库时 `skipIf` 跳过并告警 —— CI 上等于不跑。
 - **端到端渲染（推荐）**：`e2e/`（自起 http server + headless Edge（自己 `spawn` + 手写裸 CDP，**不依赖 playwright**）+ esbuild 打包 harness，**用生产 `lib/`** 渲染真实素材并逐像素判定，**不依赖 DSH token**）。机器相关项一律走 `e2e/config.mjs`；判据失败**置非零退出码**（是 CI 门禁，不是日志）。
 - **零回归对拍**：`npm run e2e:hidpi -- --tag=before` → 改动 → `--tag=after` → `npm run e2e:compare`。判据：最大差 ≤ 1 且「差≥2」像素为 0。
