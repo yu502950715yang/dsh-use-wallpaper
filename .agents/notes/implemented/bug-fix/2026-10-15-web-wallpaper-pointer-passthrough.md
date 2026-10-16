@@ -17,7 +17,7 @@ web 壁纸的「跟随鼠标」在插件里**整类失效**，且症状看不出
 
 **宿主 → iframe 的单向指针直传**，两侧都不动 `pointer-events`、也不碰壁纸文件：
 
-- **host 注入**：`/wallpapers/web` 对 `.html` 响应在 `<head>` 后内联插入 `src/client/pointer-shim.ts` 的 `POINTER_SHIM_SOURCE`（转义 `</script` 与 `<!--`；无锚点返回 null ⇒ 原样返回，绝不改坏）。
+- **host 注入**：`/wallpapers/web` 对 `.html` 响应在 `<head>` 后内联插入 `src/shared/pointer-shim.ts` 的 `POINTER_SHIM_SOURCE`（转义 `</script` 与 `<!--`；无锚点返回 null ⇒ 原样返回，绝不改坏）。放 `shared/` 而不是 `client/`：host 要把它内联进响应，客户端与测试要按同一契约断言，它本来就不属于任何一侧。
 - **shim 的手段是「直接调用」而非「派发」**：patch `EventTarget.prototype.addEventListener` 记下壁纸注册的 mouse 类 handler，收 `postMessage` 后**直接调用它**（`new MouseEvent` 仍然构造，作为 event 参数）。`pointer-events:none` 下恰恰**不存在可派发的目标**，所以事件转发这条路本来就是死的 —— 这是整个方案的关键取舍。
 - **坐标给两份**：宿主按 iframe 盒子算的像素 `px/py`（避开屏幕坐标 / `object-fit` / 缩放折算链）优先，缺失或越界时回退归一化 `nx/ny × iframe 自身视口`（桌面壳的宿主视口可以比 iframe 视口大，此时只有归一化值正确）。
 - **生命周期**：指针监听只在 web 帧存活期间挂着，并跟着**可见帧**重挂（resize 重建会换帧）、用 token 作废旧闭包；`detachPointerPost` 在切背景 / 清空时摘掉。
@@ -25,7 +25,7 @@ web 壁纸的「跟随鼠标」在插件里**整类失效**，且症状看不出
 
 ## 涉及仓库
 
-- `dsh-use-wallpaper` 分支 `master` commits `6a62e0f`
+- `dsh-use-wallpaper` 分支 `master` commits `6a62e0f` `746ad1b`
 
 ## Alternatives considered
 

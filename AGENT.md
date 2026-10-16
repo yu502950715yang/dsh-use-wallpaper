@@ -176,12 +176,12 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
 
 47. **视差的 `delay` 必须按「每帧重置滞后时钟」实现**（`parallax.ts` 的 `advancePointer`）：OWE 每帧先 `SetPointerInput`（滞后时钟减去已流逝时间）再 `Advance`（加回同一个 `frame.delta`），两者同帧抵消 ⇒ 字面累积只会让 `elapsed` 停在**历史最大帧长**；本播放器 dt 被 clamp 到 **0.1s**，而本机唯一开视差壁纸的 `cameraparallaxdelay` 恰好 **0.1** ⇒ 一次长帧（切走标签页再切回）就把它永久打成「完全跟手」。故取 `min(dt, delay)`：稳态比例与 OWE 相同、无历史残留。**判据** = `tests/parallax.test.ts` 的「滞后时钟封顶到 delay」「delay>0：每帧按 min(dt,delay)/delay 靠近」两条（变异实测会红）。
 
-48. **web 壁纸的「跟随鼠标」靠宿主直传指针，不改 `pointer-events`**（2026-10-15）：背景层的 `pointer-events:none`（`styles.ts:3`，背景不得吃 GUI 的点击）意味着壁纸 iframe **永远收不到** `mousemove`，而 web 壁纸普遍把视差绑在**自己 window 的 `mousemove`** 上（实测样本 `1184182304` 的 `jquery.parallax`）⇒ 这类壁纸在插件里恒为静态。链路：宿主 `pointermove`（capture/passive，仅 web 帧存活期间挂）→ 按 iframe 盒子算 `nx/ny` + 真实 `clientX/Y` → `postMessage({__wpPointer:1,…})` → iframe 内 shim（`/wallpapers/web` 对 `.html` **内联注入**，`src/client/pointer-shim.ts`）**直接调用**它记录的 mouse handler（不经 DOM 派发 —— `pointer-events:none` 下正是不存在可派发目标）。
+48. **web 壁纸的「跟随鼠标」靠宿主直传指针，不改 `pointer-events`**（2026-10-15）：背景层的 `pointer-events:none`（`styles.ts:3`，背景不得吃 GUI 的点击）意味着壁纸 iframe **永远收不到** `mousemove`，而 web 壁纸普遍把视差绑在**自己 window 的 `mousemove`** 上（实测样本 `1184182304` 的 `jquery.parallax`）⇒ 这类壁纸在插件里恒为静态。链路：宿主 `pointermove`（capture/passive，仅 web 帧存活期间挂）→ 按 iframe 盒子算 `nx/ny` + 真实 `clientX/Y` → `postMessage({__wpPointer:1,…})` → iframe 内 shim（`/wallpapers/web` 对 `.html` **内联注入**，`src/shared/pointer-shim.ts`）**直接调用**它记录的 mouse handler（不经 DOM 派发 —— `pointer-events:none` 下正是不存在可派发目标）。
     - shim 只保留**最后一个** mouse 类监听（单个 handler 无法重复注册）；真实用法（一个 `window.mousemove`）落在此契约内，单测逐条钉住。
     - 注入必须插在壁纸自带脚本**之前**（`<head>` 后；无 `<head>` 退 `<html>` 后、无锚点即返回 null 原样返回）；⚠️ 内联脚本在 `document.write` 期间会**静默不执行**，故 `__WE_*` 初始化存在时不得走内联路径（本仓无此路径）。
     - 坐标优先用宿主按 iframe 盒子换算的 `px/py`（避开屏幕坐标/`object-fit`/缩放折算链），越界或缺失时回退 `nx/ny × iframe 自身视口`（桌面壳的宿主视口可大于 iframe 视口，此时只有归一化值正确）。
     - 只合成 mouse 事件，不合成 wheel/click/键盘；iframe 重建（resize）后指针监听必须跟着**可见帧**重挂并作废旧 token。
-    - 判据：`tests/pointer-shim.test.ts`（真实 `jquery.parallax` 夹具：raw 零位移 / shim 位移跟随 / `removeEventListener` 语义不被 patch 破坏）+ `tests/web-route-shim.test.ts`（真实路由注入、非 HTML 逐字节不变）+ `npm run e2e:web-pointer`（真机像素级 A/B）。
+    - 判据：`tests/pointer-shim.test.ts`（真实 `jquery.parallax` 夹具：raw 零位移 / shim 位移跟随 / `removeEventListener` 语义不被 patch 破坏）+ `tests/web-route-shim.test.ts`（真实路由注入、非 HTML 逐字节不变）+ `npm run e2e:web-pointer`（真机像素级 A/B，raw 零位移对 shim 位移 > 20px）。
 
 ## 6. 工作约定
 
