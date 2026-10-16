@@ -23,6 +23,7 @@
 - **对象级效果链**：同一入口下多走两步 —— 解析每个对象的 `effects`（`shader/effect-chain.ts` 的 `resolveEffectChain`）→ `ObjectEffectStage`（`object-effects.ts`）编排：隔离对象进 `localScene` + 主场景放合成 quad，每帧 `renderIsolatedContents()`（内容 → 对象 RT）→ `stage.bindOutputs()` → 渲染主场景 → `stage.advance(time)`。无带效果对象时 stage 为 null，帧序退化为 `fn → update → render`。段渲染开启时帧序多两处：消费者段边界 `stage.onSegmentBoundary(id, 快照, 快照代号)`（同步选取，runner 仍由帧末 `advance` 推进）、`resize()` 时 `stage.notifyViewportResize()`（作废在途快照）。
 - **粒子模拟不重写**：复用 wasm 的 `CpuParticleSim`（纯 CPU，无需 WebGPU）；renderer 只把 `sim.vertices()` 的**每粒子 16 浮点**（`[pos3,size,uv2,color3,alpha,rot3,vel3]`，见 `threejs-player.ts` 的 `PARTICLE_FLOATS_PER_INSTANCE`）画成 billboard。
 - **相机视差**（2026-10-13）：装配时 `three-renderer.ts` 把 `scene.json` 的 `general.cameraparallax*` **原样**下发 `player.setParallax(desc.parallax)`（关闭态用 `enabled:false` 的配置表达、**从不传 null**），并把 `pointer-input.createPointerTracker()` 的归一化指针经 `assets.onFrame` **逐帧**交给 `player.setParallaxPointer`；窗口监听随实例装/卸（`teardown` 里 `pointer.dispose()`，§5.43）。插值语义与两个坑见 §5.47、机制局限见 §7.39。
+- **web 壁纸的鼠标跟随**（2026-10-15，§5.48）：背景层 `pointer-events:none` ⇒ 壁纸 iframe 收不到 `mousemove`，故由 host 在 `/wallpapers/web` 的 `.html` 响应里内联注入 `pointer-shim.ts` 的 shim，client 侧 `background-layer.ts` 用 `pointer-post.ts` 把宿主的 `pointermove` 经 `postMessage` 直传给**可见**帧；iframe 内 shim 直接调用壁纸自己注册的 mouse handler。**与 scene 视差是两条互不相干的通路**（后者读 `cameraparallax*`/`parallaxDepth`，只作用于 three 场景）。
 - **失败重试**：`wallpaper-controller.ts` 在 `render()` 返回 false 后用**新 canvas** 重试一次（防 WebGL 上下文污染），仍失败才落 preview。
 - **puppet 骨骼模型与动画层**（2026-10-13）：`image` → `models/*.json` 的 `puppet` 字段 → `.mdl`（MDLV/MDLS/MDLA）→ `THREE.SkinnedMesh` + `Skeleton`（`puppet.ts`）；蒙皮矩阵交给 three 的 `bind()`（= `World(动画)·World(绑定)⁻¹`），MDLA 关键帧逐帧采样写回骨骼。逐帧推进在 `threejs-player.tickPuppets`：已播时长 `+= dt × rate`，帧号 = `(已播时长 × fps) % frameCount`（循环播）；动画选择走 scene.json 的 `animationlayers`（`scene-json.ts` 解析 → `addPuppet` 入参），**只应用第一条可见层**（`visible !== false`；`blend` 不参与混合），多条可见层告警一次；**字段缺失**退回「播动画表首个」= 改动前的行为（本机实测 34 张真实 `scene.json` 无一带该字段，按空层处理会静默关掉既有动画；**除 `frameCount <= 0`**：旧实现会采样帧 0，现直接不采样）。单个 puppet 采样失败**只丢该图层**：`try { dispose() } finally { delete }` 保证先释放再摘表（`dispose()` 只遍历表内图层 ⇒ 不摘表就再无释放点），dispose 抛错也不穿出帧循环（否则本帧 `render` 被跳过），不升级成整帧渲染失败。⚠️ **本机唯一 `.mdl` 是静态族**（无 MDLS/MDLA ⇒ `bones=0`/`anims=0`）⇒ **蒙皮与动画只有合成夹具覆盖**，真机只能验「静态网格出图」；段布局与动画层缺省口径见 §7.40。
 - **渲染看护**（2026-10-13）：`render()` 的失败细化为结构化原因（`scene-json` / `no-visible-objects` / `context-lost` / `exception` = **硬失败**，`load-error` = **软失败**），经 `render-health.ts` 分级记忆：硬失败按壁纸落 `localStorage`（`we:renderfail:<id>`）、软失败仅会话内并在冷却后自动重试一次；面板「实时渲染」卡片显示状态并提供重试/清除；排查入口 `__wallpaperEngine.health()`。对渲染像素路径**零改动**（`e2e:compare` 零回归）。**本轮实测**（2026-10-14，最终修复轮复跑）：基准 = 分支起点 `7e30a9f`（= master 的 v0.7.0），壁纸 `2683211654`，dpr **1 与 2 都产出了可比截图**，`e2e:compare` 两档全部 `maxAbs=0`、「差≥2」像素 0（前后 PNG 的 SHA256 逐字节相同）。对拍归档在 `.superpowers/sdd/2026-10-13-scene-live-watchdog/t5-shots/{before,after}-dpr{1,2}.png` —— **本地归档、未入 git**（`.superpowers/` 与 `e2e/.out/` 都在 `.gitignore`）；重跑口径见 `TESTING.md` §2.9。⚠️ `e2e/.out/` 会被后续 e2e 运行覆盖（其中 `before-dpr1-out.png` / `before-dpr1-rt.png` 仍是 2026-09-30 另一轮的残留）⇒ 回查基准对拍请用上面的 `t5-shots/` 归档，不要依赖 `e2e/.out/`。
@@ -31,7 +32,7 @@
 
 ### 2.2 host / client / shared 分层
 
-- `src/host/`：Node 侧（Cordis 插件）。`scanner.ts` 扫描目录 → `WallpaperInfo`；`steam-paths.ts` 目录探测（`/wallpapers/probe`）；`pkg-reader.ts` 解包 PKGV；`routes.ts` HTTP 路由（每次请求读实时目录，settings 热更新）；`settings.ts` 插件设置（双路径，见 §5.34）。
+- `src/host/`：Node 侧（Cordis 插件）。`scanner.ts` 扫描目录 → `WallpaperInfo`；`steam-paths.ts` 目录探测（`/wallpapers/probe`）；`pkg-reader.ts` 解包 PKGV；`routes.ts` HTTP 路由（每次请求读实时目录，settings 热更新；对 web 壁纸的 HTML 注入指针 shim，见 §5.48）；`settings.ts` 插件设置（双路径，见 §5.34）。
 - `src/client/`：浏览器侧（esbuild → `dist/client.js`，external react 等 DSH 共享模块）。主路径：`index.ts`（bootstrap + `window.__wallpaperEngine` + 注册设置菜单）、`wallpaper-controller.ts`（选择/竞态/回退链）、`three-renderer.ts` + `threejs-player.ts`（渲染）、`object-effects.ts` + `object-range.ts` + `effect-runner.ts` + `effect-graph.ts`（对象级效果链）、`rt-render.ts`（「渲染进 RT」的唯一入口，透明清屏不变量落在这里）、`tex-loader.ts`（TEXV0005 解码）、`scene-json.ts` / `scene-graph.ts` / `visibility.ts`、`text-object.ts` + `text-script.ts` + `scene-script-vm.ts` + `scene-script-host.ts` + `scene-anim.ts` + `layer-state.ts` + `dynamic-mesh.ts`（text / 脚本 / 动态网格）、`glow-stage.ts`（应用级 Glow）、`audio-input.ts`、`background-layer.ts` / `settings.ts` / `styles.ts` / `settings-section.tsx`。
 - `src/shared/`：跨 host/client 类型（`WallpaperInfo`、`SceneDescription`、`SceneObject` 等）。
 - `src/client/shader/`：WE shader 方言转译层（`effect-chain.ts` 解析、`shader-preprocessor.ts` 预处理、`uniform-binder.ts`、`we-headers.ts`）。
@@ -57,6 +58,7 @@ npm run e2e:colorblend   # 渲染 e2e：colorBlendMode 逐像素判据（零本�
 npm run e2e:card         # 计算样式 e2e：通知卡片与代码块同底（需本机 DSH 的 app.asar，不可上 CI）
 npm run e2e:hidpi        # 渲染 e2e：dpr=1/2 的挂载期 RT 尺寸断言（需本机 WE 壁纸库）
 npm run e2e:textclock    # 渲染 e2e：text 时钟层（魔兽之门 1922570576）是否真的画在画面上（需本机素材）
+npm run e2e:web-pointer  # 渲染 e2e：web 壁纸跟随鼠标（1184182304）真机像素级 A/B（需本机素材）
 npm run e2e:compare      # A/B 截图逐像素对拍（零回归验收）
 npx vitest run tests/xxx.test.ts --reporter=basic   # 跑单个文件
 ```
@@ -173,6 +175,13 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
 46. **`_rt_FullFrameBuffer` 的语义与当前消费点**：`_rt_FullFrameBuffer` = 「到该对象被绘制那一刻为止，本帧已绘制的内容」= WE 的场景 FBO（lwe `CScene.cpp:351-361` 按 `m_objectsByRenderOrder` 逐个 render、`CParticle.cpp:2069-2079` 在画粒子层**之前** blit）。本轮实现：段边界 `copyFramebufferToTexture` 快照，**当前唯一启用的消费点 = 粒子 `REFRACT`**（顶点切线基 + 片元 `genericparticle.frag:103-116` 位移采样）。⚠️ **效果链消费点本轮门控关闭**（`object-effects.ts` 的 `ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER = false`，按 R6 降级）：对象链的贴屏 quad UV 覆盖**对象窗口**、快照却是**整画布**（v 约定还反向一次）⇒ 该路径从未真机验收、直采会错位，启用前须先解决映射（设计文档附录 A.4 ⑧）；关闭时引用该槽的效果链行为 = 改动前（该槽**留空** + 每槽去重告警）。能力（`resolveBuiltinTexture(path, frameTexture?)` / `planSamplesFrameSnapshot` / `slotBoundByBind` / `onSegmentBoundary` 宿主契约）与单测**保留**。本轮只做这一个名字：其它 `_rt_*`（含 `_rt_imageLayerComposite_*`）分两条路径 —— **直接调 `resolveBuiltinTexture`** 的仍回退 1×1 白纹（只有 `_rt_FullFrameBuffer` 那一条会打一次模块级告警）；**效果链 runner 路径**对一切未声明的 `_rt_*` 一律**槽留空 + 每槽去重告警**（`resolveSlotFallback` 返回 null），不绑白纹（§7.31 / §7.38）。
 
 47. **视差的 `delay` 必须按「每帧重置滞后时钟」实现**（`parallax.ts` 的 `advancePointer`）：OWE 每帧先 `SetPointerInput`（滞后时钟减去已流逝时间）再 `Advance`（加回同一个 `frame.delta`），两者同帧抵消 ⇒ 字面累积只会让 `elapsed` 停在**历史最大帧长**；本播放器 dt 被 clamp 到 **0.1s**，而本机唯一开视差壁纸的 `cameraparallaxdelay` 恰好 **0.1** ⇒ 一次长帧（切走标签页再切回）就把它永久打成「完全跟手」。故取 `min(dt, delay)`：稳态比例与 OWE 相同、无历史残留。**判据** = `tests/parallax.test.ts` 的「滞后时钟封顶到 delay」「delay>0：每帧按 min(dt,delay)/delay 靠近」两条（变异实测会红）。
+
+48. **web 壁纸的「跟随鼠标」靠宿主直传指针，不改 `pointer-events`**（2026-10-15）：背景层的 `pointer-events:none`（`styles.ts:3`，背景不得吃 GUI 的点击）意味着壁纸 iframe **永远收不到** `mousemove`，而 web 壁纸普遍把视差绑在**自己 window 的 `mousemove`** 上（实测样本 `1184182304` 的 `jquery.parallax`）⇒ 这类壁纸在插件里恒为静态。链路：宿主 `pointermove`（capture/passive，仅 web 帧存活期间挂）→ 按 iframe 盒子算 `nx/ny` + 真实 `clientX/Y` → `postMessage({__wpPointer:1,…})` → iframe 内 shim（`/wallpapers/web` 对 `.html` **内联注入**，`src/client/pointer-shim.ts`）**直接调用**它记录的 mouse handler（不经 DOM 派发 —— `pointer-events:none` 下正是不存在可派发目标）。
+    - shim 只保留**最后一个** mouse 类监听（单个 handler 无法重复注册）；真实用法（一个 `window.mousemove`）落在此契约内，单测逐条钉住。
+    - 注入必须插在壁纸自带脚本**之前**（`<head>` 后；无 `<head>` 退 `<html>` 后、无锚点即返回 null 原样返回）；⚠️ 内联脚本在 `document.write` 期间会**静默不执行**，故 `__WE_*` 初始化存在时不得走内联路径（本仓无此路径）。
+    - 坐标优先用宿主按 iframe 盒子换算的 `px/py`（避开屏幕坐标/`object-fit`/缩放折算链），越界或缺失时回退 `nx/ny × iframe 自身视口`（桌面壳的宿主视口可大于 iframe 视口，此时只有归一化值正确）。
+    - 只合成 mouse 事件，不合成 wheel/click/键盘；iframe 重建（resize）后指针监听必须跟着**可见帧**重挂并作废旧 token。
+    - 判据：`tests/pointer-shim.test.ts`（真实 `jquery.parallax` 夹具：raw 零位移 / shim 位移跟随 / `removeEventListener` 语义不被 patch 破坏）+ `tests/web-route-shim.test.ts`（真实路由注入、非 HTML 逐字节不变）+ `npm run e2e:web-pointer`（真机像素级 A/B）。
 
 ## 6. 工作约定
 

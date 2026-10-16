@@ -231,6 +231,28 @@ getEventListeners(window).pointermove?.length
 
 ---
 
+### 2.12 web 壁纸跟随鼠标（`npm run e2e:web-pointer` + 手工验收，2026-10-15）
+
+> 自动化判据（先跑这个，它已覆盖「像素真的动了」）：`npm run e2e:web-pointer` —— 自起 server + headless Edge，
+> 父页复刻 `.wp-background-layer{pointer-events:none}` 与跨源 iframe，用**生产** `injectPointerShim()` 注入，
+> 再派发真实鼠标移动，A/B 比较**鼠标进入前**与移动后的图层位移与截图。判据 = raw 模式零位移零像素变化、
+> shim 模式位移 > 20px 且像素变化 > 2%（缺本机素材 `1184182304` 时跳过）。口径与遗留见 `AGENT.md` §5.48。
+
+> **以下手工项需人在运行中的 DSH Web GUI 里操作**（agent 无法代跑）。
+> 前置：已 `npm run build` + `npm run build:client`，**重启 harness**（host 侧改动不热重载）后**强刷** GUI。
+
+**验收样本 = `1184182304`（EVA初号机暴走-5，`type: web`，五层 `jquery.parallax`）。** 本机其它 web 壁纸若不依赖 `mousemove`，本项**无可见变化属预期**。
+
+| # | 步骤 | 期望结果 | 失败表现 |
+|---|---|---|---|
+| W1 | 选 `1184182304`，鼠标在窗口内缓慢移动 | 五层图层**跟随鼠标轻微反向偏移**（鼠标右移 → 内容左移），移动越远偏移越大 | 完全不动 → 指针直传未生效（Network 里 index.html 响应应含 `__wpPointerShimInstalled`） |
+| W2 | 鼠标停在角落不动 | 偏移**停住**（`friction=0.1` 收敛，无抖动/漂移） | 一直漂 = 每帧重复喂了不同坐标 |
+| W3 | 切到非 web 壁纸再切回 `1184182304` | 视差**仍然工作**；Console 里 `getEventListeners(window).pointermove` **切走前后数量不变** | 失效 → 装/卸不配对；数量递增 → §5.43 类问题 |
+| W4 | 切换窗口大小（触发 web 帧重建）后移动鼠标 | 视差**仍然工作**（重建后的新帧同样被直传覆盖） | 重建后失效 → 指针监听没跟着新帧重挂 |
+| W5 | 在同一张壁纸上确认背景仍然**不吃点击** | GUI 面板/按钮点击、文本选择一切正常 | 点击被背景吞掉 → 有人去掉了 `pointer-events:none`（**不要**用这个办法修视差） |
+
+---
+
 ## 3. 卸载方法
 
 ### 3.1 标准卸载（推荐）

@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { scanWallpapers } from './scanner.js';
+import { injectPointerShim } from '../client/pointer-shim.js';
 import { PkgReader } from './pkg-reader.js';
 import { probeSteamPaths, readSteamInstallPathFromRegistry, readLibraryFoldersVdf, DEFAULT_STEAM_ROOTS } from './steam-paths.js';
 import type { WallpaperInfo } from '../shared/types.js';
@@ -289,12 +290,19 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
         try {
           const body = readFileSync(p);
           const ext = '.' + rel.split('.').pop()?.toLowerCase();
+          // HTML 注入指针 shim（AGENT.md §5.48）：背景层 pointer-events:none ⇒ 壁纸 iframe 收不到
+          // mousemove，视差类 web 壁纸恒为静态。注入失败（无锚点/非 UTF-8 安全）则原样返回，绝不改坏。
+          let out = body;
+          if (ext === '.html' || ext === '.htm') {
+            const patched = injectPointerShim(body.toString('utf8'));
+            if (patched !== null) out = Buffer.from(patched, 'utf8');
+          }
           res.writeHead(200, {
             'Content-Type': MIME[ext] ?? 'application/octet-stream',
-            'Content-Length': body.length,
+            'Content-Length': out.length,
             'Cache-Control': 'no-store',
           });
-          res.end(body);
+          res.end(out);
         } catch {
           json(res, 500, { error: 'internal error' });
         }

@@ -1,6 +1,7 @@
 import type { WallpaperInfo } from '../shared/types.js';
 import type { BackgroundPlan } from './types.js';
 import { outlineShadow } from './text-color.js';
+import { computePointerPost } from './pointer-post.js';
 
 export function resolveBackground(info: WallpaperInfo): BackgroundPlan {
   // scene 与 unknown（project.json 无 type 字段但含 scene.pkg）都按场景渲染
@@ -130,6 +131,37 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
   let altOriginProbe: Promise<string | null> | null = null;
   // 探活结果：重建帧时复用（探活只与另一主机名可达性有关，与路径无关）
   let altOrigin: string | null = null;
+  // 指针直传（AGENT.md §5.48）：背景层是 pointer-events:none ⇒ 鼠标进不了 iframe，视差类 web
+  // 壁纸（jquery.parallax 等）恒为静态；故由宿主把指针坐标 postMessage 进去，iframe 内 shim 合成
+  // mousemove。卸载时必须摘监听，否则 HMR/切壁纸会叠加。
+  let pointerPostToken = 0;
+  let pointerPostFn: ((ev: Event) => void) | null = null;
+  let pointerTarget: Window | null = null;
+
+  function detachPointerPost(): void {
+    pointerPostToken += 1;
+    if (pointerPostFn) window.removeEventListener('pointermove', pointerPostFn, true);
+    pointerPostFn = null;
+    pointerTarget = null;
+  }
+
+  // 只有在 web 帧存活期间才挂：非 web 背景不该为它付监听成本。
+  function attachPointerPost(frame: HTMLIFrameElement): void {
+    pointerPostToken += 1;
+    const token = pointerPostToken;
+    pointerTarget = frame.contentWindow;
+    const onMove = (ev: Event) => {
+      const fwin = frame.contentWindow;
+      // token 变 / 帧已换（resize 重建）/ 帧已摘除（预载用的隐藏帧）/ 窗口不可达 ⇒ 丢弃，不往错的帧发坐标。
+      if (token !== pointerPostToken || !fwin || fwin !== pointerTarget || !frame.isConnected) return;
+      const payload = computePointerPost(ev as PointerEvent, frame.getBoundingClientRect(), 1);
+      if (!payload) return;
+      try { fwin.postMessage(payload, '*'); } catch { /* 帧已卸载：忽略 */ }
+    };
+    pointerPostFn = onMove;
+    window.addEventListener('pointermove', onMove, { capture: true, passive: true });
+  }
+
   // 省电状态与当前视频元素（setPaused 对后者 pause/play）。
   let paused = false;
   let currentVideo: HTMLVideoElement | null = null;
@@ -147,6 +179,7 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
   function stopWebResizeReload(): void {
     webUrl = null;
     liveWebFrame = null;
+    detachPointerPost();
     if (webResizeTimer !== null) { clearTimeout(webResizeTimer); webResizeTimer = null; }
     pendingWebFrame?.remove();
     pendingWebFrame = null;
@@ -196,6 +229,7 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
   function attachWebFrame(spec: WebFrameSpec): void {
     liveWebFrame = makeWebFrame(spec);
     appendWebFrame(liveWebFrame, spec.url);
+    attachPointerPost(liveWebFrame);
   }
 
   function currentViewport(): [number, number] {
@@ -236,6 +270,7 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
         fill.replaceChildren(frame);
         liveWebFrame = frame;
         frame.style.visibility = '';
+        attachPointerPost(frame); // 指针直传跟着**可见**帧走（预载帧在 hidden 期间不该收坐标）
       } else {
         frame.remove();
       }
