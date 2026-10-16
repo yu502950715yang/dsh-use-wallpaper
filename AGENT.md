@@ -79,10 +79,11 @@ npx vitest run tests/xxx.test.ts --reporter=basic   # 跑单个文件
 ### 3.3 验证手段
 
 - **单测**：`tests/**/*.test.ts` 默认 node，`tests/dom/**` 走 jsdom（`vitest.config.ts`）；`scripts/known-failures.json` 是空的**新增失败**基线（CI 只对新增失败判红，见 §7.11）。
+- **测试侧类型检查**：`npm run typecheck:tests`（= `scripts/check-known-type-errors.mjs`，跑 `tsconfig.tests.json`）把 `tests/**` 纳入 `tsc --noEmit` —— vitest 走 esbuild 不做类型检查，测试用字面量构造的接口改坏了本不会红。基线 `scripts/known-type-errors.json` 是 `(文件, TS 错误码)` 计数的**棘轮**（只增不放过），更新用 `--update`。
 - **全库解析回归**：`tests/verify-real-library.test.ts`（全库 scene.pkg 的 scene.json / image 纹理 / particle 规格 / 效果链解析零失败）。**依赖本机壁纸库**，无库时 `skipIf` 跳过并告警 —— CI 上等于不跑。
 - **端到端渲染（推荐）**：`e2e/`（自起 http server + headless Edge（自己 `spawn` + 手写裸 CDP，**不依赖 playwright**）+ esbuild 打包 harness，**用生产 `lib/`** 渲染真实素材并逐像素判定，**不依赖 DSH token**）。机器相关项一律走 `e2e/config.mjs`；判据失败**置非零退出码**（是 CI 门禁，不是日志）。
 - **零回归对拍**：`npm run e2e:hidpi -- --tag=before` → 改动 → `--tag=after` → `npm run e2e:compare`。判据：最大差 ≤ 1 且「差≥2」像素为 0。
-- **CI**：`.github/workflows/ci.yml`（tsc + `lib/`/`dist/client.js` 产物新鲜度守卫 / vitest 新增失败 / Windows 渲染 e2e）。已知失败基线在 `scripts/known-failures.json`。CI 的三个历史坑（动作运行时 Node24、runner 的 Edge、`pnpm-workspace.yaml` 需 `packages` 字段）与排查过程见 `docs/fixes/verification-ci-history.md`。
+- **CI**：`.github/workflows/ci.yml`（tsc + `lib/`/`dist/client.js` 产物新鲜度守卫 / tests 侧类型检查棘轮 / vitest 新增失败 / Windows 渲染 e2e）。已知失败基线在 `scripts/known-failures.json`，类型错误基线在 `scripts/known-type-errors.json`。CI 的三个历史坑（动作运行时 Node24、runner 的 Edge、`pnpm-workspace.yaml` 需 `packages` 字段）与排查过程见 `docs/fixes/verification-ci-history.md`。
 - **测试环境**：vitest / esbuild / headless Edge 都依赖 service 子进程，**受限沙箱下会失败**（见 §5.13）。
 
 ## 4. 目录
@@ -101,8 +102,9 @@ npx vitest run tests/xxx.test.ts --reporter=basic   # 跑单个文件
     lib/ harness/ verify/    像素工具 / esbuild harness 入口 / 验收脚本
     fixtures/                零素材依赖的 fixture（clouds-dxt1.png）
     .out/                    运行产物（gitignore）
-  scripts/                   build-client.mjs / check-known-failures.mjs / known-failures.json
-  .github/workflows/ci.yml   CI：tsc + 产物新鲜度 / vitest 新增失败 / Windows 渲染 e2e
+  scripts/                   build-client.mjs / check-known-failures.mjs / known-failures.json / check-known-type-errors.mjs / known-type-errors.json
+  tsconfig.tests.json        tests 侧类型检查（noEmit + rootDir "."；门禁 1d 用）
+  .github/workflows/ci.yml   CI：tsc + 产物新鲜度 / tests 类型棘轮 / vitest 新增失败 / Windows 渲染 e2e
 docs/superpowers/
   specs/                     设计文档（改动前必读）
   plans/                     实施计划与修复记录
@@ -191,7 +193,7 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
 1. **对象级效果链：执行器能力已覆盖，但有对象类型不挂链**：`text` 对象的 effects 在收链阶段就被跳过（`groupEffectsByObject`），`util` / 无媒体字段的对象拿不到隔离条目 ⇒ 全库有 **21 条** effects 永不挂链（util 10 + none 11，每张壁纸一条汇总 `warn`）；**text 的 effects 连 warn 都没有**。**粒子对象挂载 effects 全库为 0** ⇒ 粒子隔离分支只有单测覆盖、无真实样本。端到端只逐像素验过少数样本，其余是分类学推断（详见 `docs/fixes/threejs-path-fixes.md`）。
 3. **粒子自旋的轴序偏差**：本项目用 `Rz·Ry·Rx`，WE 的 `ComputeParticleTangents` 是 `Rz·Rx·Ry` ⇒ **仅多轴自旋**（全库 6 个对象）结果可能与桌面不同，**未与桌面逐像素对照**；z-only 时两种顺序逐像素等价。
 10. **headless Edge 的 WebGPU 是 SwiftShader**（软件光栅化），非真实 GPU。**订正**：该结论**只对 WebGPU 成立** —— WebGL 加 `--use-angle=d3d11 --ignore-gpu-blocklist` 就能拿真 GPU（真机验收的代价只是一个 flag）。
-11. **测试基线口径**：`scripts/known-failures.json` 的基线**为空**（CI 只对**新增**失败判红；套件级错误不豁免）。全库计数是**本机壁纸库的快照**、随素材漂移 ⇒ 测试只断言非空，**不要在文档里钉数字**（2026-09 快照：线性 42 种/168 次、具名 RT 11 种/38 次；该数字随素材漂移，以 `npx vitest run tests/object-effects.test.ts` 的 `[全库分类]` 行为准，见 `tests/object-effects.test.ts:106`）。
+11. **测试基线口径**：`scripts/known-failures.json` 的基线**为空**（CI 只对**新增**失败判红；套件级错误不豁免）。`scripts/known-type-errors.json` 是另一半：tests 侧 `tsc` 类型错误按 `(文件, TS 错误码)` 计数的**棘轮**，基线内不红、**新键或计数变大即红**（计数变小只提示；行号不进指纹）；确认要放宽才 `node scripts/check-known-type-errors.mjs --update`。全库计数是**本机壁纸库的快照**、随素材漂移 ⇒ 测试只断言非空，**不要在文档里钉数字**（2026-09 快照：线性 42 种/168 次、具名 RT 11 种/38 次；该数字随素材漂移，以 `npx vitest run tests/object-effects.test.ts` 的 `[全库分类]` 行为准，见 `tests/object-effects.test.ts:106`）。
 12. **e2e harness 与真 GPU 的边界**：`verify-hidpi-object-rt.mjs` 已加「挂载期 RT 尺寸」断言（含独立 oracle 与变异验证），`verify-isolated-rt-sharpness.mjs` 再加结构性判据 + 锐度双判据（口径见 §5.44 与 `TESTING.md`），但**不覆盖「RT 尺寸对而贴屏映射错」**这一类缺陷；而实测到的「背景糊」根因是**分辨率不足**（RT 只有屏占位 1×），不是贴屏映射错。软件光栅化的性能数字**不能**替代真机 FPS。
 16. **`{animation}` 的关键帧轨道播放未实现**：`{script,value}` / `{animation,value}` 形态已按 `value` 静态兜底，但 track/keyframe/mode/fps **全部未解析** ⇒ 轨道驱动的位移/缩放/旋转仍不生效；「新位置与桌面一致」未证实。
 30. **应用级 Glow 的范围边界**：只覆盖 **scene** 壁纸（且只测过 GTR 一张），而 WE 的 postprocessing 对 video 也生效 ⇒ **video / image / web 的亮部仍与桌面有差**；开启时 base RT **无 MSAA**（整帧从 canvas 的 `antialias:true` 掉到无 MSAA）；性能门槛（1080p FPS ≥ 30）**未在真机严格验证**（缺 GPU 耗时或有头浏览器帧率）；壁纸级 `general.bloom` **未实现**（全库 3 张：`2454403969`、`2937346640`、`3790775478`）。

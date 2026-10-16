@@ -17,6 +17,7 @@
   },
   "scripts": {
     "test": "vitest run",
+    "typecheck:tests": "node scripts/check-known-type-errors.mjs",
     "build": "tsc -p tsconfig.json",
     "build:wasm": "cd wasm && wasm-pack build --no-opt --target web --release --features cpu-sim",
     "build:client": "node scripts/build-client.mjs",

@@ -50,7 +50,13 @@ gate('门禁 1c：dist/client.js 新鲜度', () => {
   return { ok: d.code === 0, detail: d.code === 0 ? '0 diff' : '产物与 src 不同步（已还原入库副本）' };
 });
 
-// ④ vitest + 已知失败基线（新增失败/套件级错误才判红）
+// ④ tests 侧类型检查基线（tsconfig.tests.json 把 tests/** 纳入 noEmit；只对新增/加重的类型错误判红）
+gate('门禁 1d：tests 类型检查基线', () => {
+  const r = sh('node', ['scripts/check-known-type-errors.mjs']);
+  return { ok: r.status === 0, detail: `exit ${r.status}` };
+});
+
+// ⑤ vitest + 已知失败基线（新增失败/套件级错误才判红）
 gate('门禁 2：vitest + 已知失败基线', () => {
   const r = sh('pnpm', ['exec', 'vitest', 'run', '--reporter=default', '--reporter=json', '--outputFile=.vitest-report.json']);
   const k = sh('node', ['scripts/check-known-failures.mjs', '.vitest-report.json']);

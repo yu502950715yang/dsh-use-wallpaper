@@ -6,6 +6,8 @@
 
 ## 1. 前置条件
 
+> 门禁提示：`tests/**` 的类型检查是**棘轮**——`npm run typecheck:tests` 只对新增/加重的类型错误判红；确需放宽时跑 `node scripts/check-known-type-errors.mjs --update` 重建 `scripts/known-type-errors.json`（口径见 AGENT.md §7.11），**只增不放过**。
+
 | 项目 | 要求 |
 |---|---|
 | 安装 | 已在 profile 的 `package.json` 登记依赖与 bundles，已在 `cordis.patch.yml` 写入 insert 配置，并执行过 `pnpm install` |

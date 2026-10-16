@@ -64,6 +64,10 @@ jobs:
           node scripts/build-client.mjs || true
           git diff --exit-code -- dist/client.js
         shell: bash
+      - name: tests 侧类型检查（只对新增类型错误判红）
+        # tsconfig.json 只 include src/**，vitest 走 esbuild 不做类型检查 ⇒ tests 改坏 src 接口不会红。
+        # tsconfig.tests.json 把 tests/** 纳入 noEmit 检查，基线口径 = (文件, TS 错误码) 计数（AGENT.md §7.11）。
+        run: node scripts/check-known-type-errors.mjs
 
   test:
     runs-on: windows-latest
