@@ -2722,6 +2722,22 @@ function outlineLabel(level) {
   return lv === 0 ? "\u5173" : lv === 1 ? "\u8F7B" : lv === 2 ? "\u4E2D" : "\u5F3A";
 }
 
+// src/client/pointer-post.ts
+function computePointerPost(ev, box, tag) {
+  const { width: w, height: h } = box;
+  if (!(w > 0) || !(h > 0)) return null;
+  const x = Number(ev.clientX) - box.left;
+  const y = Number(ev.clientY) - box.top;
+  const inside = x >= 0 && x <= w && y >= 0 && y <= h;
+  return {
+    __wpPointer: tag,
+    nx: x / w,
+    ny: y / h,
+    px: inside ? Math.round(x) : -1,
+    py: inside ? Math.round(y) : -1
+  };
+}
+
 // src/client/background-layer.ts
 function resolveBackground(info) {
   if ((info.type === "scene" || info.type === "unknown") && info.hasScene) {
@@ -2778,6 +2794,32 @@ function createBackgroundLayer(root) {
   let frameToken = 0;
   let altOriginProbe = null;
   let altOrigin = null;
+  let pointerPostToken = 0;
+  let pointerPostFn = null;
+  let pointerTarget = null;
+  function detachPointerPost() {
+    pointerPostToken += 1;
+    if (pointerPostFn) window.removeEventListener("pointermove", pointerPostFn, true);
+    pointerPostFn = null;
+    pointerTarget = null;
+  }
+  function attachPointerPost(frame) {
+    pointerPostToken += 1;
+    const token = pointerPostToken;
+    pointerTarget = frame.contentWindow;
+    const onMove = (ev) => {
+      const fwin = frame.contentWindow;
+      if (token !== pointerPostToken || !fwin || fwin !== pointerTarget || !frame.isConnected) return;
+      const payload = computePointerPost(ev, frame.getBoundingClientRect(), 1);
+      if (!payload) return;
+      try {
+        fwin.postMessage(payload, "*");
+      } catch {
+      }
+    };
+    pointerPostFn = onMove;
+    window.addEventListener("pointermove", onMove, { capture: true, passive: true });
+  }
   let paused = false;
   let currentVideo = null;
   let webUrl = null;
@@ -2790,6 +2832,7 @@ function createBackgroundLayer(root) {
   function stopWebResizeReload() {
     webUrl = null;
     liveWebFrame = null;
+    detachPointerPost();
     if (webResizeTimer !== null) {
       clearTimeout(webResizeTimer);
       webResizeTimer = null;
@@ -2829,6 +2872,7 @@ function createBackgroundLayer(root) {
   function attachWebFrame(spec) {
     liveWebFrame = makeWebFrame(spec);
     appendWebFrame(liveWebFrame, spec.url);
+    attachPointerPost(liveWebFrame);
   }
   function currentViewport() {
     return [Math.max(1, Math.round(window.innerWidth || 0)), Math.max(1, Math.round(window.innerHeight || 0))];
@@ -2863,6 +2907,7 @@ function createBackgroundLayer(root) {
         fill.replaceChildren(frame);
         liveWebFrame = frame;
         frame.style.visibility = "";
+        attachPointerPost(frame);
       } else {
         frame.remove();
       }
