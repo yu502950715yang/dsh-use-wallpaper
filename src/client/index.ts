@@ -5,6 +5,7 @@ import { createThreeSceneRenderer } from './three-renderer.js';
 import { WallpaperSettingsSection, setWallpaperSelectHandler, setWallpaperRuntimeHandler, setWallpaperHealthHandler, notifyWallpaperHealth } from './settings-section.js';
 import { readClientSettings, writeClientSettings, getUserPropertyValue, DEFAULTS, setSettingsCtx } from './settings.js';
 import { createRenderHealthStore } from './render-health.js';
+import { markRecent } from './library-view.js';
 import type { BackgroundPlan, ClientSettings } from './types.js';
 import type { HealthSnapshot } from './render-health.js';
 
@@ -101,6 +102,7 @@ export function bootstrap(ctx?: any): void {
     settings = { ...settings, selectedWallpaperId: id };
     void controller!.select(id).then(() => {
       applySettingsToLayer(settings);
+      markRecent(id); // 切换成功才记入「最近使用」（空 id = 取消，markRecent 内部忽略）
       notifyWallpaperHealth(panelHealth()); // 选中后补推一次：切壁纸即刷新状态行（不必等下一次健康事件）
     });
     void writeClientSettings({ selectedWallpaperId: id });
@@ -243,6 +245,7 @@ export function bootstrap(ctx?: any): void {
           // （渲染失败回退 preview 图，与 controller 一致），并受竞态防护约束
           // 先同步选中项：健康事件只推「当前选中壁纸」，不同步会把真实显示中的状态挡掉。
           settings = { ...settings, selectedWallpaperId: plan.wallpaperId };
+          markRecent(plan.wallpaperId); // 公开 API 直接显示 scene 也计入「最近使用」
           void controller!.select(plan.wallpaperId).catch(() => {});
           break;
         }

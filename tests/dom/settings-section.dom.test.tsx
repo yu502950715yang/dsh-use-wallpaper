@@ -114,6 +114,8 @@ const statusText = () => (container.querySelector('.wss-live-status') as HTMLEle
 afterEach(async () => {
   await unmount();
   teardownEngine();
+  // 收藏/隐藏/最近使用落 localStorage：逐用例清空，避免污染同文件后续用例。
+  localStorage.clear();
   // 模块级共享 handler 随用例重置：否则上一个用例注册的那份会被下一个用例读到（顺序依赖）。
   setWallpaperHealthHandler(null);
   setWallpaperSelectHandler(() => {});
@@ -648,5 +650,116 @@ describe('WallpaperSettingsSection', () => {
     setValue(container.querySelector('.wss-fit-mode') as HTMLSelectElement, 'contain');
     await flush();
     expect(onRuntimeSettings).toHaveBeenCalledWith({ fitMode: 'contain' });
+  });
+
+  // v0.8 壁纸库：搜索 / 收藏 / 隐藏与恢复（localStorage 持久化；隐藏不打断播放）。
+  it('壁纸库：搜索、类型筛选、收藏、隐藏/恢复', async () => {
+    localStorage.clear();
+    mount();
+    await flush();
+    const setValue = (el: HTMLInputElement, value: string) => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+      setter.call(el, value);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    setValue(container.querySelector('.wss-search') as HTMLInputElement, 'A');
+    await flush();
+    expect(container.querySelectorAll('.wss-thumb')).toHaveLength(1);
+
+    (container.querySelector('.wss-fav[data-id="1"]') as HTMLElement).click();
+    await flush();
+    (container.querySelector('.wss-fav-only') as HTMLInputElement).click();
+    await flush();
+    expect(container.querySelectorAll('.wss-thumb')).toHaveLength(1);
+
+    (container.querySelector('.wss-hide[data-id="1"]') as HTMLElement).click();
+    await flush();
+    expect(container.querySelectorAll('.wss-thumb')).toHaveLength(0);
+    (container.querySelector('.wss-show-hidden') as HTMLInputElement).click();
+    await flush();
+    expect(container.querySelectorAll('.wss-thumb')).toHaveLength(1);
+    localStorage.clear();
+  });
+
+  it('壁纸库：收藏/隐藏按钮不触发切换壁纸（stopPropagation）', async () => {
+    localStorage.clear();
+    const onSelect = vi.fn();
+    mount({ onSelect });
+    await flush();
+    (container.querySelector('.wss-fav[data-id="1"]') as HTMLElement).click();
+    await flush();
+    expect(onSelect).not.toHaveBeenCalled();
+    expect((container.querySelector('.wss-fav[data-id="1"]') as HTMLElement).getAttribute('aria-pressed')).toBe('true');
+
+    (container.querySelector('.wss-hide[data-id="1"]') as HTMLElement).click();
+    await flush();
+    expect(onSelect).not.toHaveBeenCalled(); // 隐藏只影响列表过滤，不调用 select/取消播放
+    expect(container.querySelector('.wss-thumb[data-id="1"]')).toBeNull();
+    expect((container.querySelector('.wss-current-name') as HTMLElement).textContent).toBe('EVA');
+    localStorage.clear();
+  });
+
+  it('壁纸库：类型筛选与最近使用排序', async () => {
+    localStorage.clear();
+    mount();
+    await flush();
+    const setSelect = (el: HTMLSelectElement, value: string) => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!;
+      setter.call(el, value);
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    setSelect(container.querySelector('.wss-type-filter') as HTMLSelectElement, 'video');
+    await flush();
+    expect([...container.querySelectorAll<HTMLElement>('.wss-thumb')].map((el) => el.dataset.id)).toEqual(['2']);
+
+    // 最近使用在挂载时读取：重挂载前先写 localStorage，再切 sort=recent
+    await unmount();
+    localStorage.setItem('we:recent', JSON.stringify({ '2': Date.now() }));
+    mount();
+    await flush();
+    setSelect(container.querySelector('.wss-sort') as HTMLSelectElement, 'recent');
+    await flush();
+    expect([...container.querySelectorAll<HTMLElement>('.wss-thumb')].map((el) => el.dataset.id)).toEqual(['2', '1']);
+    localStorage.clear();
+  });
+
+  it('壁纸库：全部隐藏且未开启显示 → 空结果文案含隐藏数量', async () => {
+    localStorage.clear();
+    mount();
+    await flush();
+    (container.querySelector('.wss-hide[data-id="1"]') as HTMLElement).click();
+    await flush();
+    (container.querySelector('.wss-hide[data-id="2"]') as HTMLElement).click();
+    await flush();
+    expect(container.querySelectorAll('.wss-thumb')).toHaveLength(0);
+    expect((container.querySelector('.wss-empty') as HTMLElement).textContent).toContain('隐藏 2 张');
+    localStorage.clear();
+  });
+
+  // v0.8：最近使用由 index.ts 在切换成功 / 公开 API 显示 scene 时写入。
+  it('端到端：selectWallpaper 成功后与 show(scene) 都写入最近使用', async () => {
+    localStorage.clear();
+    e2eSelect.mockClear();
+    bootstrap();
+    await flush();
+    mount({ onSelect: undefined, fetchSettings: async () => BASE_SETTINGS, writeSettings: async () => {} });
+    await flush();
+    (container.querySelectorAll('.wss-thumb')[1] as HTMLElement).click();
+    await flush();
+    expect(e2eSelect).toHaveBeenLastCalledWith('2');
+    expect(typeof (JSON.parse(localStorage.getItem('we:recent') ?? '{}') as Record<string, unknown>)['2']).toBe('number');
+
+    // 切到「最近使用」：重读存储后刚选中的 2 排到 1 前面
+    const sort = container.querySelector('.wss-sort') as HTMLSelectElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!;
+    setter.call(sort, 'recent');
+    sort.dispatchEvent(new Event('change', { bubbles: true }));
+    await flush();
+    expect([...container.querySelectorAll<HTMLElement>('.wss-thumb')].map((el) => el.dataset.id)).toEqual(['2', '1']);
+
+    engine().show({ kind: 'scene', wallpaperId: 'wY' });
+    await flush();
+    expect(typeof (JSON.parse(localStorage.getItem('we:recent') ?? '{}') as Record<string, unknown>)['wY']).toBe('number');
+    localStorage.clear();
   });
 });

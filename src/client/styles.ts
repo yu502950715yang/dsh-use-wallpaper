@@ -159,6 +159,21 @@ body[data-ds-dark-theme][data-we-wallpaper] [data-question-key] section{
 .wss-section-head .wss-section-title{margin:0}
 .wss-section-desc{margin:0 0 10px;font-size:12px;line-height:1.6;color:var(--dsw-alias-label-tertiary,var(--wp-text))}
 .wss-count{font-size:12px;color:var(--dsw-alias-label-tertiary,var(--wp-text))}
+/* 壁纸库工具栏：搜索框 + 类型/排序下拉 + 收藏/隐藏过滤 */
+.wss-library-tools{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:10px}
+.wss-search{flex:1 1 160px;min-width:0;border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;padding:6px 10px;font:inherit;font-size:12px}
+.wss-search:focus-visible{outline:2px solid var(--wp-accent);outline-offset:1px}
+.wss-tool{display:flex;align-items:center;gap:4px;font-size:12px;color:var(--dsw-alias-label-secondary,var(--wp-text));white-space:nowrap}
+.wss-tool input[type=checkbox]{margin:0;accent-color:var(--wp-accent)}
+/* 卡片角标操作（收藏/隐藏）：绝对定位在卡片左上，悬停不改变卡片布局 */
+.wss-thumb-wrap{position:relative;min-width:0}
+.wss-thumb-wrap > .wss-thumb{width:100%}
+.wss-thumb-actions{position:absolute;left:6px;top:6px;display:flex;gap:4px;z-index:1}
+.wss-fav,.wss-hide{display:flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0;border:0;border-radius:6px;background:var(--wp-badge-bg);color:var(--wp-badge-fg);font:inherit;font-size:12px;line-height:1;cursor:pointer}
+.wss-fav:hover,.wss-hide:hover{filter:brightness(1.25)}
+.wss-fav:focus-visible,.wss-hide:focus-visible{outline:2px solid var(--wp-accent);outline-offset:2px}
+.wss-fav-on{color:var(--dsw-alias-state-warning-primary,#f5b301)}
+.wss-hide-on{color:var(--dsw-alias-label-tertiary,#d0d0d0)}
 /* 当前壁纸条 */
 .wss-current{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .wss-current-info{display:flex;flex-direction:column;gap:2px;min-width:0}
@@ -189,7 +204,7 @@ body[data-ds-dark-theme][data-we-wallpaper] [data-question-key] section{
 .wss-slider-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .wss-value,.wss-effect-value{font-variant-numeric:tabular-nums;font-weight:600;color:var(--dsw-alias-label-primary,var(--wp-text))}
 .wss-slider input[type=range]{width:100%;margin:0;accent-color:var(--wp-accent)}
-.wss-quality,.wss-fit-mode{border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;padding:4px 8px;font:inherit;font-size:12px}
+.wss-quality,.wss-fit-mode,.wss-type-filter,.wss-sort{border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;padding:4px 8px;font:inherit;font-size:12px}
 /* 文字可读性（2026-10-01）：颜色选择与档位下拉复用 .wss-row；原生 color 输入补最小样式
    （默认尺寸在各平台上不一致，且 DSH 面板里有自己的边框语言）。 */
 .wss-row input[type=color]{width:44px;height:26px;order:2;flex:none;padding:0;border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));border-radius:6px;background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));cursor:pointer}

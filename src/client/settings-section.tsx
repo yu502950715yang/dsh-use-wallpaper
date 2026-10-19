@@ -5,11 +5,13 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import type { ClientSettings, FitMode } from './types.js';
-import type { WallpaperInfo, ProbeResult } from '../shared/types.js';
+import type { WallpaperInfo, WallpaperKind, ProbeResult } from '../shared/types.js';
 import { readClientSettings, writeClientSettings } from './settings.js';
 import { TEXT_OUTLINE_MAX, normalizeHexColor, normalizeMode, normalizeOutlineLevel, outlineLabel } from './text-color.js';
 import { formatHealthLine } from './render-health.js';
 import type { HealthSnapshot } from './render-health.js';
+import { filterLibrary, loadLibraryState, toggleFavorite, toggleHidden } from './library-view.js';
+import type { LibraryFilter, LibraryState } from './library-view.js';
 
 export interface WallpaperSettingsSectionProps {
   /** 读取当前设置（默认 RPC settings.describe） */
@@ -102,6 +104,12 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
   const [weAssetsDir, setWeAssetsDir] = useState('');
   const [message, setMessage] = useState('');
   const [health, setHealth] = useState<HealthSnapshot | null>(props.health ?? null);
+  // 壁纸库筛选状态：收藏/隐藏/最近使用来自 localStorage（挂载时读一次，操作后即时落盘）。
+  const [libState, setLibState] = useState<LibraryState>(loadLibraryState);
+  const [filter, setFilter] = useState<LibraryFilter>({
+    query: '', types: [], favoritesOnly: false, showHidden: false, sort: 'default',
+  });
+  const visibleWallpapers = filterLibrary(wallpapers, filter, libState);
 
   // 挂载时先取一次当前值（打开面板即显示状态），再订阅后续推送；卸载时退订。
   useEffect(() => {
@@ -221,39 +229,133 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
         </div>
       </section>
 
-      {/* 壁纸库：16:9 缩略图卡片（类型 chip 在左下、选中加 ✓ 角标） */}
+      {/* 壁纸库：工具栏（搜索/类型/收藏/隐藏/排序）+ 16:9 缩略图卡片（类型 chip 左下、选中 ✓ 右上） */}
       <section className="wss-section">
         <header className="wss-section-head">
           <h4 className="wss-section-title">壁纸库</h4>
           <span className="wss-count">{wallpapers.length} 张</span>
         </header>
+        <div className="wss-library-tools">
+          <input
+            type="search"
+            className="wss-search"
+            placeholder="搜索壁纸标题"
+            aria-label="搜索壁纸标题"
+            value={filter.query}
+            onChange={(e) => setFilter((f) => ({ ...f, query: e.target.value }))}
+          />
+          <select
+            className="wss-type-filter"
+            aria-label="按类型筛选"
+            value={filter.types[0] ?? 'all'}
+            onChange={(e) => setFilter((f) => ({
+              ...f,
+              types: e.target.value === 'all' ? [] : [e.target.value as WallpaperKind],
+            }))}
+          >
+            <option value="all">全部类型</option>
+            <option value="scene">Scene</option>
+            <option value="video">视频</option>
+            <option value="web">Web</option>
+            <option value="image">图片</option>
+          </select>
+          <label className="wss-tool">
+            <input
+              type="checkbox"
+              className="wss-fav-only"
+              checked={filter.favoritesOnly}
+              onChange={(e) => setFilter((f) => ({ ...f, favoritesOnly: e.target.checked }))}
+            />
+            仅收藏
+          </label>
+          <label className="wss-tool">
+            <input
+              type="checkbox"
+              className="wss-show-hidden"
+              checked={filter.showHidden}
+              onChange={(e) => setFilter((f) => ({ ...f, showHidden: e.target.checked }))}
+            />
+            显示已隐藏
+          </label>
+          <select
+            className="wss-sort"
+            aria-label="排序方式"
+            value={filter.sort}
+            onChange={(e) => {
+              const sort = e.target.value as LibraryFilter['sort'];
+              setFilter((f) => ({ ...f, sort }));
+              // 面板开着时选中壁纸由 index.ts 写入最近使用；切到该排序时只重读 recent（保留会话内收藏/隐藏）。
+              if (sort === 'recent') setLibState((prev) => ({ ...prev, recent: loadLibraryState().recent }));
+            }}
+          >
+            <option value="default">默认排序</option>
+            <option value="recent">最近使用</option>
+            <option value="title">标题排序</option>
+          </select>
+        </div>
         <div className="wss-grid">
-          {wallpapers.map((w) => {
+          {visibleWallpapers.map((w) => {
             const selected = settings?.selectedWallpaperId === w.id;
+            const favorite = libState.favorites.has(w.id);
+            const hidden = libState.hidden.has(w.id);
             return (
-              <button
-                key={w.id}
-                type="button"
-                className={'wss-thumb' + (selected ? ' wss-selected' : '')}
-                data-id={w.id}
-                title={w.title}
-                aria-pressed={selected}
-                onClick={() => select(w.id)}
-              >
-                <span className="wss-thumb-media">
-                  {w.previewUrl
-                    ? <img src={w.previewUrl} alt={w.title} loading="lazy" />
-                    : <span className="wss-no-preview">无预览</span>}
-                  <span className="wss-badge">{w.type.toUpperCase()}</span>
-                  {selected && <span className="wss-check" aria-hidden="true">✓</span>}
+              <div key={w.id} className="wss-thumb-wrap">
+                <button
+                  type="button"
+                  className={'wss-thumb' + (selected ? ' wss-selected' : '')}
+                  data-id={w.id}
+                  title={w.title}
+                  aria-pressed={selected}
+                  onClick={() => select(w.id)}
+                >
+                  <span className="wss-thumb-media">
+                    {w.previewUrl
+                      ? <img src={w.previewUrl} alt={w.title} loading="lazy" />
+                      : <span className="wss-no-preview">无预览</span>}
+                    <span className="wss-badge">{w.type.toUpperCase()}</span>
+                    {selected && <span className="wss-check" aria-hidden="true">✓</span>}
+                  </span>
+                  <span className="wss-thumb-title">{w.title}</span>
+                </button>
+                {/* 收藏/隐藏是卡片的兄弟节点（避免按钮嵌套）；stopPropagation 兜底不触发选壁纸 */}
+                <span className="wss-thumb-actions">
+                  <button
+                    type="button"
+                    className={'wss-fav' + (favorite ? ' wss-fav-on' : '')}
+                    data-id={w.id}
+                    title={favorite ? '取消收藏' : '收藏'}
+                    aria-label={favorite ? '取消收藏' : '收藏'}
+                    aria-pressed={favorite}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setLibState((prev) => toggleFavorite(w.id, prev));
+                    }}
+                  >
+                    {favorite ? '★' : '☆'}
+                  </button>
+                  <button
+                    type="button"
+                    className={'wss-hide' + (hidden ? ' wss-hide-on' : '')}
+                    data-id={w.id}
+                    title={hidden ? '取消隐藏' : '隐藏这张壁纸'}
+                    aria-label={hidden ? '取消隐藏' : '隐藏这张壁纸'}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setLibState((prev) => toggleHidden(w.id, prev));
+                    }}
+                  >
+                    {hidden ? '↺' : '✕'}
+                  </button>
                 </span>
-                <span className="wss-thumb-title">{w.title}</span>
-              </button>
+              </div>
             );
           })}
         </div>
         {wallpapers.length === 0 && (
           <p className="wss-empty">还没有壁纸。请在下方设置壁纸目录，或点「自动探测」。</p>
+        )}
+        {wallpapers.length > 0 && visibleWallpapers.length === 0 && (
+          <p className="wss-empty">没有匹配的壁纸（隐藏 {libState.hidden.size} 张）</p>
         )}
       </section>
       {/* 显示效果：壁纸画面观感（遮罩/模糊/KenBurns/适配模式）与应用级 Glow，改完立即生效、不必重选壁纸 */}
