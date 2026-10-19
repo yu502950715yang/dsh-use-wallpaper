@@ -32,6 +32,13 @@ export const WallpaperSettingsSchema = z.object({
   textColorMode: z.string().default('auto'),
   textColor: z.string().default('#ffffff'),
   textOutline: z.number().min(0).max(3).default(0),
+  // v0.8 显示/轮播：fitMode 与 rotationOrder 用宽松 string（白名单归一在 client，防旧值被拒）；
+  // rotationIntervalMs 钳在 1-30 分钟。
+  fitMode: z.string().default('cover'),
+  rotationEnabled: z.boolean().default(false),
+  rotationIntervalMs: z.number().min(60000).max(1800000).default(300000),
+  rotationOrder: z.string().default('sequential'),
+  frameCacheEnabled: z.boolean().default(true),
 });
 
 // 0.1.7 表单只投影 volatile 字段；旧版 register 要普通 schema（volatile 在旧版取不到值）。

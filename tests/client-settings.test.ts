@@ -10,6 +10,8 @@ const FULL_DEFAULTS = {
   glowEnabled: true, glowThreshold: 0.65, glowStrength: 0.35,
   paused: false, pauseOnHidden: true, qualityScale: 1, soundEnabled: true,
   textColorMode: 'auto', textColor: '#ffffff', textOutline: 0,
+  fitMode: 'cover', rotationEnabled: false, rotationIntervalMs: 300000,
+  rotationOrder: 'sequential', frameCacheEnabled: true,
 };
 
 afterEach(() => { vi.unstubAllGlobals(); setSettingsCtx(null); });
@@ -45,7 +47,7 @@ describe('readClientSettings (ctx.remote.settings.describe)', () => {
     stubRemote({ describe });
     const s = await readClientSettings();
     // 命名空间未给的字段由 DEFAULTS 补齐（含 Glow 三字段）
-    expect(s).toEqual({ selectedWallpaperId: '42', wallpaperDir: 'D:/Steam/w', weAssetsDir: 'D:/WE', overlayOpacity: 0.5, blurEnabled: true, blurRadius: 20, kenBurns: false, glowEnabled: true, glowThreshold: 0.65, glowStrength: 0.35, paused: false, pauseOnHidden: true, qualityScale: 1, soundEnabled: true, textColorMode: 'auto', textColor: '#ffffff', textOutline: 0 });
+    expect(s).toEqual({ selectedWallpaperId: '42', wallpaperDir: 'D:/Steam/w', weAssetsDir: 'D:/WE', overlayOpacity: 0.5, blurEnabled: true, blurRadius: 20, kenBurns: false, glowEnabled: true, glowThreshold: 0.65, glowStrength: 0.35, paused: false, pauseOnHidden: true, qualityScale: 1, soundEnabled: true, textColorMode: 'auto', textColor: '#ffffff', textOutline: 0, fitMode: 'cover', rotationEnabled: false, rotationIntervalMs: 300000, rotationOrder: 'sequential', frameCacheEnabled: true });
     expect(describe).toHaveBeenCalledTimes(1);
   });
   it('命名空间缺失 → 回退默认值', async () => {
@@ -163,6 +165,13 @@ describe('DEFAULTS（客户端缺省值）', () => {
     expect(DEFAULTS.textColorMode).toBe('auto');
     expect(DEFAULTS.textColor).toBe('#ffffff');
     expect(DEFAULTS.textOutline).toBe(0);
+  });
+  it('v0.8 新字段进入 client DEFAULTS 且宽松解析', () => {
+    expect(DEFAULTS.fitMode).toBe('cover');
+    expect(DEFAULTS.rotationEnabled).toBe(false);
+    expect(DEFAULTS.rotationIntervalMs).toBe(300000);
+    expect(DEFAULTS.rotationOrder).toBe('sequential');
+    expect(DEFAULTS.frameCacheEnabled).toBe(true);
   });
 });
 

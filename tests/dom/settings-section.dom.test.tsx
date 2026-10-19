@@ -48,6 +48,8 @@ const BASE_SETTINGS: ClientSettings = {
   glowEnabled: true, glowThreshold: 0.65, glowStrength: 0.35,
   paused: false, pauseOnHidden: true, qualityScale: 1, soundEnabled: true,
   textColorMode: 'auto', textColor: '#ffffff', textOutline: 0,
+  fitMode: 'cover', rotationEnabled: false, rotationIntervalMs: 300000,
+  rotationOrder: 'sequential', frameCacheEnabled: true,
 };
 
 const WALLPAPERS = [
