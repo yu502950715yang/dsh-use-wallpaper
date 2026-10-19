@@ -1,5 +1,6 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, existsSync } from 'node:fs';
+import { EventEmitter } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { apply } from '../src/host/index.js';
@@ -11,6 +12,7 @@ import { apply } from '../src/host/index.js';
 
 let dirA: string;
 let dirB: string;
+let savedDataDirEnv: string | undefined;
 let registered: Array<{ kind: string; path: string }>;
 let handlers: Map<string, (req: any, res: any) => void>;
 
@@ -90,26 +92,48 @@ async function listIds(dirCtx: { scope: any }, dir: string) {
 beforeEach(() => {
   dirA = mkdtempSync(join(tmpdir(), 'wp-a-'));
   dirB = mkdtempSync(join(tmpdir(), 'wp-b-'));
+  // 数据目录指向临时目录，避免单测写入真实 ~/.dsh-use-wallpaper
+  savedDataDirEnv = process.env.DSH_USE_WALLPAPER_DATA_DIR;
+  process.env.DSH_USE_WALLPAPER_DATA_DIR = join(dirA, 'data');
   registered = [];
   handlers = new Map();
 });
 afterEach(() => {
+  if (savedDataDirEnv === undefined) delete process.env.DSH_USE_WALLPAPER_DATA_DIR;
+  else process.env.DSH_USE_WALLPAPER_DATA_DIR = savedDataDirEnv;
   rmSync(dirA, { recursive: true, force: true });
   rmSync(dirB, { recursive: true, force: true });
 });
 
 describe('apply (host entry)', () => {
-  it('注册 settings 命名空间并挂载 7 条壁纸路由（含 /wallpapers/probe）', () => {
+  it('注册 settings 命名空间并挂载 8 条壁纸路由（含 /wallpapers/frame）', () => {
     apply(makeCtx().ctx);
     expect(registered).toEqual([
       { kind: 'exact', path: '/wallpapers/list' },
       { kind: 'prefix', path: '/wallpapers/media' },
       { kind: 'prefix', path: '/wallpapers/scene' },
+      { kind: 'prefix', path: '/wallpapers/frame' },
       { kind: 'prefix', path: '/wallpapers/static' },
       { kind: 'prefix', path: '/wallpapers/web' },
       { kind: 'exact', path: '/wallpapers/particle-texture' },
       { kind: 'exact', path: '/wallpapers/probe' },
     ]);
+  });
+  it('抓帧路由写入 apply 接线后的数据目录', async () => {
+    seedWallpaper(dirA, 'f1');
+    apply(makeCtx().ctx);
+    const frameRoute = handlers.get('prefix /wallpapers/frame')!;
+    const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(8)]);
+    const req: any = new EventEmitter();
+    req.url = '/wallpapers/frame/f1';
+    req.method = 'POST';
+    req.headers = { 'content-type': 'image/png', 'content-length': String(png.length) };
+    req.resume = () => {};
+    setImmediate(() => { req.emit('data', png); req.emit('end'); });
+    const res = makeRes();
+    await frameRoute(req, res);
+    expect(res.statusCode).toBe(201);
+    expect(existsSync(join(dirA, 'data', 'frames', 'f1.png'))).toBe(true);
   });
   it('路由扫描使用 config.wallpaperDir（settings 未配置时）', async () => {
     seedWallpaper(dirA, '9');
@@ -155,7 +179,7 @@ describe('apply 双路径（0.1.7 新模型）', () => {
     expect(configure).toHaveBeenCalledWith({ auto: false }, ctx.fiber);
     expect(registerCalls).toHaveLength(0);
     // 路由仍全部挂载
-    expect(registered).toHaveLength(7);
+    expect(registered).toHaveLength(8);
   });
 
   it('新版：路由读 loader config，且 config 是活引用（apply 之后改值即生效）', async () => {
@@ -210,6 +234,6 @@ describe('apply 双路径（0.1.7 新模型）', () => {
   it('两种形状都不匹配时（未来再改）不抛错，仅降级', () => {
     const { ctx } = makeCtx(undefined, 'none');
     expect(() => apply(ctx)).not.toThrow();
-    expect(registered).toHaveLength(7);
+    expect(registered).toHaveLength(8);
   });
 });

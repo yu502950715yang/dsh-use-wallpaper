@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { Config, WALLPAPER_NS, WallpaperSettingsSchema } from './settings.js';
 import { registerWallpaperRoutes } from './routes.js';
+import { ensureDataDir, resolveDataDir } from './data-dir.js';
 
 // 壁纸目录与引擎目录不再提供写死缺省（不默认 D:/Steam）：必须由设置面板
 // （自动探测 / 手动填写）或 profile config 显式配置；两者都未配置即视为未配置，
@@ -64,8 +65,13 @@ export function apply(ctx: any, config?: WallpaperEngineConfig): void {
     }
   });
   // 挂载壁纸 REST 路由（/wallpapers/list、/wallpapers/media、/wallpapers/scene、
-  // /wallpapers/static、/wallpapers/web、/wallpapers/particle-texture、/wallpapers/probe）
-  registerWallpaperRoutes(ctx, { state, staticDir: DEFAULT_STATIC_DIR });
+  // /wallpapers/frame、/wallpapers/static、/wallpapers/web、/wallpapers/particle-texture、
+  // /wallpapers/probe）；dataDir 用于抓帧 PNG 缓存（可经 DSH_USE_WALLPAPER_DATA_DIR 迁移）。
+  registerWallpaperRoutes(ctx, {
+    state,
+    staticDir: DEFAULT_STATIC_DIR,
+    dataDir: ensureDataDir(resolveDataDir()),
+  });
 }
 
 // loader 的 unwrapExports 在存在 default 导出时丢弃命名导出 ⇒ Config 必须挂上来。
