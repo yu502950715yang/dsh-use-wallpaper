@@ -2,9 +2,10 @@ import { injectWallpaperStyles } from './styles.js';
 import { createBackgroundLayer } from './background-layer.js';
 import { createWallpaperController } from './wallpaper-controller.js';
 import { createThreeSceneRenderer } from './three-renderer.js';
-import { WallpaperSettingsSection, setWallpaperSelectHandler, setWallpaperRuntimeHandler, setWallpaperHealthHandler, notifyWallpaperHealth } from './settings-section.js';
+import { WallpaperSettingsSection, setWallpaperSelectHandler, setWallpaperRuntimeHandler, setWallpaperHealthHandler, setWallpaperMediaHandler, notifyWallpaperHealth, notifyWallpaperMedia } from './settings-section.js';
 import { readClientSettings, writeClientSettings, getUserPropertyValue, DEFAULTS, setSettingsCtx } from './settings.js';
 import { createRenderHealthStore } from './render-health.js';
+import { createMediaHealthStore } from './media-health.js';
 import { markRecent } from './library-view.js';
 import type { BackgroundPlan, ClientSettings } from './types.js';
 import type { HealthSnapshot } from './render-health.js';
@@ -23,6 +24,13 @@ const SOFT_RETRY_DELAY_MS = 3000;
 // 只有挂在 window 上的引用能让新实例找到旧实例、先让它收尾（见 mount 的单例清理）。
 const TEARDOWN_KEY = '__wpEngineTeardown';
 
+// show() 只拿到视频 URL：失败提示需要归属 id（解析不到也不影响面板文案）。
+function videoWallpaperId(url: string): string {
+  const m = /\/wallpapers\/media\/([^/]+)\/file/.exec(url);
+  if (!m) return url;
+  try { return decodeURIComponent(m[1]!); } catch { return m[1]!; } // 非法百分号编码不抛
+}
+
 export function bootstrap(ctx?: any): void {
   // DSH 0.1.2-rc.1：设置走 ctx.remote.settings（Typert），须注入 settingsCtx 供读写
   setSettingsCtx(ctx);
@@ -32,6 +40,13 @@ export function bootstrap(ctx?: any): void {
   let settings: ClientSettings = { ...DEFAULTS };
   // 已收尾标记：ctx 释放（HMR drain 旧 fiber）后不得再有挂载/异步回调把插件复活。
   let disposed = false;
+  // 视频解码失败记忆（内存、不落盘）：面板只提示最近一条；重新选壁纸时清除。
+  const mediaHealth = createMediaHealthStore();
+  const unsubscribeMedia = mediaHealth.subscribe((failure) => {
+    if (!disposed) notifyWallpaperMedia(failure);
+  });
+  // 背景切换代号：show() 的视频结果（1.5s 超时）迟到时，不得落到期间已换上的新壁纸。
+  let backgroundToken = 0;
   // 本实例注册的 visibilitychange 监听（收尾时移除，否则每次重载留一份）。
   let onVisibility: (() => void) | null = null;
   // 看护存储：与 renderer 共用同一实例（面板/全局入口读的是同一份记忆）。
@@ -99,6 +114,8 @@ export function bootstrap(ctx?: any): void {
     controller?.applyTextStyle();
   };
   const selectWallpaper = (id: string) => {
+    backgroundToken += 1;
+    mediaHealth.clear(); // 重新选壁纸即清掉上一条媒体失败提示
     settings = { ...settings, selectedWallpaperId: id };
     void controller!.select(id).then(() => {
       applySettingsToLayer(settings);
@@ -116,6 +133,8 @@ export function bootstrap(ctx?: any): void {
     for (const t of autoRetryTimers.values()) clearTimeout(t);
     autoRetryTimers.clear();
     sceneRenderer.setOnHealth?.(null);
+    setWallpaperMediaHandler(null); // 面板媒体失败提示回初始态
+    unsubscribeMedia();
     notifyWallpaperHealth(null); // 收尾后状态行不得再显示已释放渲染器的旧状态（面板可能还开着）
     const root = layer?.root ?? null;
     try { controller?.select(''); } catch { /* 收尾失败也必须摘层，否则又变成盖住新实例的残留层 */ }
@@ -164,6 +183,12 @@ export function bootstrap(ctx?: any): void {
         custom: settings.textColor,
         outline: settings.textOutline,
       }),
+      // 视频编码兜底：失败回退 preview 由 controller 完成，这里只记失败供面板提示。
+      // 期间已切走（selectedWallpaperId 变了）的迟到失败不上报。
+      onMediaFailure: (id, kind) => {
+        if (settings.selectedWallpaperId !== id) return;
+        mediaHealth.set(id, kind);
+      },
     });
     // 设置面板（settings-section）的壁纸切换/取消经共享 handler 委托 controller
     setWallpaperSelectHandler((id: string) => selectWallpaper(id));
@@ -179,6 +204,11 @@ export function bootstrap(ctx?: any): void {
       retry: retryLive,
       // 清记忆后补推当前快照（不是 null）：clearAll 保留成功结论 ⇒ 状态行仍显示「实时渲染正常」。
       clearFailures: () => { clearRenderFailures(); notifyWallpaperHealth(panelHealth()); },
+    });
+    // 设置面板「媒体失败提示」：读最近一条视频解码失败；清除按钮回空态。
+    setWallpaperMediaHandler({
+      get: mediaHealth.get,
+      clear: () => { mediaHealth.clear(); },
     });
     // 切到后台/最小化 → 按设置自动暂停（省电），回到前台恢复。
     onVisibility = () => applyRuntimeSettings(settings);
@@ -213,6 +243,8 @@ export function bootstrap(ctx?: any): void {
     select(id: string) {
       mount();
       if (!controller) return;
+      backgroundToken += 1;
+      mediaHealth.clear(); // 手动切换同样清掉上一条媒体失败提示
       // 同步记住选中项：retryLive / 自动重试按「当前选中的壁纸」定位（面板路径见 selectWallpaper）。
       settings = { ...settings, selectedWallpaperId: id };
       void controller.select(id);
@@ -225,6 +257,8 @@ export function bootstrap(ctx?: any): void {
     show(plan: BackgroundPlan, opts?: { opacity?: number; blur?: boolean; blurRadius?: number }) {
       mount();
       if (!layer) return;
+      const token = ++backgroundToken;
+      mediaHealth.clear(); // 换任何背景都先撤掉上一条视频失败提示
       switch (plan.kind) {
         // 非 scene 分支没有壁纸 id ⇒ 解绑选中项：否则上一张 scene 的状态会持续挂在面板上，
         // 且「重试实时渲染」会把用户刚换掉的那张 scene 选回来。
@@ -234,7 +268,12 @@ export function bootstrap(ctx?: any): void {
           break;
         case 'video':
           settings = { ...settings, selectedWallpaperId: '' };
-          layer.showVideo(plan.url);
+          // show() 的 video plan 没有 preview 字段：失败只记录供面板提示，不假回退图片
+          // （controller 路径才有壁纸信息，由它回退 preview）。
+          void layer.showVideo(plan.url).then((result) => {
+            if (result === 'ok' || disposed || token !== backgroundToken) return;
+            mediaHealth.set(videoWallpaperId(plan.url), result);
+          });
           break;
         case 'web':
           settings = { ...settings, selectedWallpaperId: '' };

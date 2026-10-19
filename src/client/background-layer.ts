@@ -100,11 +100,16 @@ export function webFrameSpec(wallpaperPath: string, loc: WebFrameLocation, altOr
 // debounce 到尺寸稳定后只重建一次；重建期保留旧帧直到新帧 load（不留白）。
 export const WEB_RESIZE_RELOAD_DELAY_MS = 300;
 export const WEB_RESIZE_RELOAD_TIMEOUT_MS = 8000;
+// 视频首帧兜底：1.5s 内没有 loadeddata（编码不受支持/文件异常时浏览器可能既不 error 也不出帧）。
+export const VIDEO_LOAD_TIMEOUT_MS = 1500;
+
+export type VideoLoadResult = 'ok' | 'unsupported' | 'timeout';
 
 export interface BackgroundLayer {
   root: HTMLElement;
   showImage(url: string, kenBurns: boolean): void;
-  showVideo(url: string): void;
+  /** 加载视频并等首帧：error → unsupported，1.5s 无 loadeddata → timeout。 */
+  showVideo(url: string): Promise<VideoLoadResult>;
   showWeb(url: string): void;
   showSceneCanvas(canvas: HTMLCanvasElement, blurCanvas?: HTMLCanvasElement): void;
   showNone(): void;
@@ -324,16 +329,33 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
     showVideo(url) {
       clear();
       const video = document.createElement('video');
-      video.src = url;
       video.autoplay = true;
       video.loop = true;
       video.muted = true;
       video.playsInline = true;
       applyFit(video);
-      fill.appendChild(video);
       currentVideo = video;
+      // 先注册监听与超时再赋 src：缓存命中时事件可能紧跟 src 同步到达，晚注册会漏掉。
+      // clear() 换掉旧视频时不等旧 Promise：超时会兜底收尾，避免永久悬挂。
+      const result = new Promise<VideoLoadResult>((resolve) => {
+        let settled = false;
+        let timer: ReturnType<typeof setTimeout> | null = null;
+        // 成功/失败/超时都要落定一次并清掉定时器（否则测试与生产都留悬挂 timer）。
+        const done = (r: VideoLoadResult) => {
+          if (settled) return;
+          settled = true;
+          if (timer !== null) clearTimeout(timer);
+          resolve(r);
+        };
+        timer = setTimeout(() => done('timeout'), VIDEO_LOAD_TIMEOUT_MS);
+        video.addEventListener('loadeddata', () => done('ok'), { once: true });
+        video.addEventListener('error', () => done('unsupported'), { once: true });
+      });
+      video.src = url;
+      fill.appendChild(video);
       if (paused) video.pause(); // 暂停态下换壁纸：新视频同样不播
       markActive();
+      return result;
     },
     showWeb(url) {
       stopWebResizeReload(); // 先停上一轮 web 的 debounce/预载（旧帧留到新帧就绪再撤）

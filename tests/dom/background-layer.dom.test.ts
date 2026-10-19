@@ -1,9 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createBackgroundLayer,
   WEB_RESIZE_RELOAD_DELAY_MS,
   WEB_RESIZE_RELOAD_TIMEOUT_MS,
 } from '../../src/client/background-layer.js';
+
+afterEach(() => { vi.useRealTimers(); });
 
 describe('createBackgroundLayer (DOM)', () => {
   it('renders image into fill and toggles kenburns class', () => {
@@ -523,6 +525,37 @@ describe('createBackgroundLayer (DOM)', () => {
     layer.showImage('/p.gif', false);
     layer.setKenBurns(true);
     expect(layer.root.querySelector('img')?.classList.contains('wp-kenburns')).toBe(false);
+  });
+
+  // v0.8 视频编码兜底：showVideo 三态（error = 编码不支持 / loadeddata = 可播 / 1.5s 超时）。
+  it('视频 loadeddata → ok；error → unsupported', async () => {
+    const layer = createBackgroundLayer(document.createElement('div'));
+    const p1 = layer.showVideo('/ok.mp4');
+    layer.root.querySelector('video')!.dispatchEvent(new Event('loadeddata'));
+    await expect(p1).resolves.toBe('ok');
+
+    const p2 = layer.showVideo('/bad.mp4');
+    layer.root.querySelector('video')!.dispatchEvent(new Event('error'));
+    await expect(p2).resolves.toBe('unsupported');
+  });
+
+  it('视频 1.5s 内无 loadeddata → timeout', async () => {
+    vi.useFakeTimers();
+    const layer = createBackgroundLayer(document.createElement('div'));
+    const p = layer.showVideo('/slow.mp4');
+    await vi.advanceTimersByTimeAsync(1600);
+    await expect(p).resolves.toBe('timeout');
+    vi.useRealTimers();
+  });
+
+  it('视频事件落地后清除超时定时器（不留悬挂 timer）', async () => {
+    vi.useFakeTimers();
+    const layer = createBackgroundLayer(document.createElement('div'));
+    const p = layer.showVideo('/ok.mp4');
+    layer.root.querySelector('video')!.dispatchEvent(new Event('loadeddata'));
+    await expect(p).resolves.toBe('ok');
+    expect(vi.getTimerCount()).toBe(0);
+    vi.useRealTimers();
   });
 });
 

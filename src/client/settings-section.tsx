@@ -10,6 +10,7 @@ import { readClientSettings, writeClientSettings } from './settings.js';
 import { TEXT_OUTLINE_MAX, normalizeHexColor, normalizeMode, normalizeOutlineLevel, outlineLabel } from './text-color.js';
 import { formatHealthLine } from './render-health.js';
 import type { HealthSnapshot } from './render-health.js';
+import type { MediaFailure, MediaFailureKind } from './media-health.js';
 import { filterLibrary, loadLibraryState, toggleFavorite, toggleHidden } from './library-view.js';
 import type { LibraryFilter, LibraryState } from './library-view.js';
 
@@ -84,10 +85,47 @@ export function notifyWallpaperHealth(snap: HealthSnapshot | null): void {
   }
 }
 
+/** 面板「媒体失败提示」要的两件事：读当前失败 / 清除。 */
+export interface WallpaperMediaHandler {
+  get(): MediaFailure | null;
+  clear(): void;
+}
+let mediaHandler: WallpaperMediaHandler | null = null;
+const mediaSubscribers = new Set<(failure: MediaFailure | null) => void>();
+
+/** 注册/撤销共享 handler（传 null = 面板回到「无失败」初始态，并清掉已显示的提示）。 */
+export function setWallpaperMediaHandler(handler: WallpaperMediaHandler | null): void {
+  mediaHandler = handler;
+  pushMedia(handler?.get() ?? null);
+}
+
+/** 订阅媒体失败变化（组件挂载时订阅、卸载时退订）。 */
+export function subscribeWallpaperMedia(cb: (failure: MediaFailure | null) => void): () => void {
+  mediaSubscribers.add(cb);
+  return () => { mediaSubscribers.delete(cb); };
+}
+
+/** 由 index.ts 的媒体失败事件调用；handler 未注册时不推（面板已回初始态，迟到的失败不得复活提示）。 */
+export function notifyWallpaperMedia(failure: MediaFailure | null): void {
+  if (!mediaHandler) return;
+  pushMedia(failure);
+}
+
+function pushMedia(failure: MediaFailure | null): void {
+  for (const cb of Array.from(mediaSubscribers)) {
+    try { cb(failure); } catch { /* 单个订阅者异常不影响其它订阅者 */ }
+  }
+}
+
 // 本文件文案是中文硬编码（无 i18n 层）：formatHealthLine 要求传入翻译函数，这里透传。
 const weT = (s: string): string => s;
 // 还没选壁纸 / 还没推送过：状态行按「尚未渲染」呈现，不给 formatHealthLine 造一个假壁纸 id。
 const EMPTY_HEALTH: HealthSnapshot = { wallpaperId: '', ok: null, failure: null, timing: null };
+// 两类失败分开说：编码解不了 vs 迟迟没有首帧；都提示换浏览器/转码（与设计 D4 一致）。
+const MEDIA_FAILURE_TEXT: Record<MediaFailureKind, string> = {
+  unsupported: '视频壁纸解码失败：浏览器无法解码该视频（可能是 HEVC/H.265），已回退到预览图；建议改用 Chrome 或转换为 H.264/VP9 编码。',
+  timeout: '视频壁纸加载超时：1.5 秒内没有出现首帧，可能编码不受支持或文件异常，已回退到预览图；建议改用 Chrome 或检查视频文件。',
+};
 
 export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): JSX.Element {
   const fetchSettings = props.fetchSettings ?? readClientSettings;
@@ -104,6 +142,8 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
   const [weAssetsDir, setWeAssetsDir] = useState('');
   const [message, setMessage] = useState('');
   const [health, setHealth] = useState<HealthSnapshot | null>(props.health ?? null);
+  // 媒体失败（视频解码）：handler 由 index.ts 注册，提示条在其卡片下方显示。
+  const [mediaFailure, setMediaFailure] = useState<MediaFailure | null>(mediaHandler?.get() ?? null);
   // 壁纸库筛选状态：收藏/隐藏/最近使用来自 localStorage（挂载时读一次，操作后即时落盘）。
   const [libState, setLibState] = useState<LibraryState>(loadLibraryState);
   const [filter, setFilter] = useState<LibraryFilter>({
@@ -116,6 +156,11 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
     setHealth(props.health ?? healthHandler?.get() ?? null);
     return subscribeWallpaperHealth((s) => setHealth(s));
   }, [props.health]);
+
+  useEffect(() => {
+    setMediaFailure(mediaHandler?.get() ?? null);
+    return subscribeWallpaperMedia((f) => setMediaFailure(f));
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -211,6 +256,10 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
     else if (healthHandler) healthHandler.clearFailures();
     else return;
     setMessage('已清除失败记忆');
+  };
+  const dismissMediaFailure = () => {
+    mediaHandler?.clear();
+    setMediaFailure(null); // 立即隐藏；真实 handler 也会经订阅推送 null
   };
 
   return (
@@ -625,6 +674,15 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
           <button type="button" className="wss-live-forget" onClick={forgetFailures}>清除失败记忆</button>
         </div>
       </section>
+      {/* 视频编码兜底：失败回退预览后在这里明确告知原因与自救方式（只提示最近一条）。 */}
+      {mediaFailure && (
+        <section className="wss-section wss-media-failure" data-kind={mediaFailure.kind}>
+          <p className="wss-section-desc">{MEDIA_FAILURE_TEXT[mediaFailure.kind]}</p>
+          <div className="wss-row">
+            <button type="button" className="wss-media-dismiss" onClick={dismissMediaFailure}>知道了</button>
+          </div>
+        </section>
+      )}
       {message && <p className="wss-message" role="status">{message}</p>}
     </div>
   );

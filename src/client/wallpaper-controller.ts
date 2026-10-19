@@ -42,6 +42,8 @@ export interface WallpaperControllerOptions {
   textStyle?: () => TextStyleSettings;
   /** preview 亮度测量；缺省用 luma.measureLuma（测试注入替身用）。 */
   measurePreviewLuma?: (url: string) => Promise<number | null>;
+  /** 视频解码失败（编码不支持/首帧超时）→ 面板提示用；回退 preview 由控制器自行完成。 */
+  onMediaFailure?: (id: string, result: 'unsupported' | 'timeout') => void;
 }
 
 // 贴壁纸文字颜色与描边：
@@ -168,7 +170,16 @@ export function createWallpaperController(
     }
     const plan = resolveBackground(info);
     switch (plan.kind) {
-      case 'video': layer.showVideo(plan.url); break;
+      case 'video': {
+        const result = await layer.showVideo(plan.url);
+        if (gen !== selectGeneration) return; // 期间已切换：旧视频的失败结果不得覆盖新壁纸
+        if (result !== 'ok') {
+          opts.onMediaFailure?.(info.id, result);
+          if (info.previewUrl) layer.showImage(info.previewUrl, !info.hasPreviewGif);
+          else layer.showNone();
+        }
+        break;
+      }
       case 'image': layer.showImage(plan.url, plan.kenBurns); break;
       case 'web': layer.showWeb(plan.url); break;
       case 'scene': {

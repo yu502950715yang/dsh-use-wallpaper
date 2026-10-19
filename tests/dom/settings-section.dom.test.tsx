@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react';
 import {
   WallpaperSettingsSection, setWallpaperRuntimeHandler, setWallpaperSelectHandler,
-  setWallpaperHealthHandler, subscribeWallpaperHealth, notifyWallpaperHealth,
+  setWallpaperHealthHandler, setWallpaperMediaHandler, subscribeWallpaperHealth, notifyWallpaperHealth,
 } from '../../src/client/settings-section.js';
 import type { ClientSettings } from '../../src/client/types.js';
 import type { HealthSnapshot } from '../../src/client/render-health.js';
@@ -17,6 +17,10 @@ import type { ProbeResult } from '../../src/shared/types.js';
 // ── 端到端接线（index.ts）的替身：面板仍是真实组件，只把渲染器/控制器/层/样式替身掉，
 // 断言落在 .wss-live-status 的 textContent 上（健康事件是否真的上屏）。
 const e2eSelect = vi.hoisted(() => vi.fn(async () => {}));
+// index 的 show({kind:'video'}) 走 layer.showVideo 三态；默认 ok，失败用例按需覆盖。
+const e2eVideo = vi.hoisted(() => ({
+  showVideo: vi.fn(async (_url: string): Promise<'ok' | 'unsupported' | 'timeout'> => 'ok'),
+}));
 const e2eHealth = vi.hoisted(() => ({
   last: null as HealthSnapshot | null,
   onHealth: null as ((s: HealthSnapshot) => void) | null,
@@ -26,7 +30,7 @@ vi.mock('../../src/client/background-layer.js', () => ({
     root: document.createElement('div'),
     setOverlayOpacity() {}, setBlur() {}, setPaused() {},
     setKenBurns() {}, setFitMode() {},
-    showNone() {}, showImage() {}, showVideo() {}, showWeb() {},
+    showNone() {}, showImage() {}, showVideo: (url: string) => e2eVideo.showVideo(url), showWeb() {},
   }),
 }));
 vi.mock('../../src/client/wallpaper-controller.js', () => ({
@@ -118,6 +122,7 @@ afterEach(async () => {
   localStorage.clear();
   // 模块级共享 handler 随用例重置：否则上一个用例注册的那份会被下一个用例读到（顺序依赖）。
   setWallpaperHealthHandler(null);
+  setWallpaperMediaHandler(null);
   setWallpaperSelectHandler(() => {});
   setWallpaperRuntimeHandler(() => {});
   vi.restoreAllMocks();
@@ -761,5 +766,56 @@ describe('WallpaperSettingsSection', () => {
     await flush();
     expect(typeof (JSON.parse(localStorage.getItem('we:recent') ?? '{}') as Record<string, unknown>)['wY']).toBe('number');
     localStorage.clear();
+  });
+});
+
+// v0.8 视频编码兜底：失败提示只在有记录时出现，unsupported/timeout 文案区分，可清除与撤销。
+describe('媒体失败提示', () => {
+  it('媒体失败提示：有失败记录时显示明确文案，可清除', async () => {
+    const clear = vi.fn();
+    mount();
+    await flush();
+    await act(async () => {
+      setWallpaperMediaHandler({ get: () => ({ id: 'v1', kind: 'unsupported', at: Date.now() }), clear });
+    });
+    expect(container.textContent).toContain('浏览器无法解码');
+    expect(container.textContent).toContain('Chrome');
+    const box = container.querySelector('.wss-media-failure') as HTMLElement;
+    expect(box.dataset.kind).toBe('unsupported');
+    await act(async () => {
+      (box.querySelector('.wss-media-dismiss') as HTMLButtonElement).click();
+    });
+    expect(clear).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('.wss-media-failure')).toBeNull();
+  });
+
+  it('timeout 文案与 unsupported 区分；handler 撤销后面板回到「无失败」初始态', async () => {
+    mount();
+    await flush();
+    await act(async () => {
+      setWallpaperMediaHandler({ get: () => ({ id: 'v1', kind: 'timeout', at: Date.now() }), clear: vi.fn() });
+    });
+    expect(container.textContent).toContain('超时');
+    expect(container.textContent).not.toContain('浏览器无法解码');
+    await act(async () => { setWallpaperMediaHandler(null); });
+    expect(container.querySelector('.wss-media-failure')).toBeNull();
+  });
+
+  // 端到端（index.ts）：show(video) 失败 → 面板提示；换到其它背景 → 提示随即清除。
+  it('端到端：show({kind:"video"}) 解码失败上屏，换背景后清除', async () => {
+    teardownEngine();
+    e2eVideo.showVideo.mockResolvedValueOnce('unsupported');
+    bootstrap();
+    await flush();
+    mount({ onSelect: undefined, fetchSettings: async () => BASE_SETTINGS, writeSettings: async () => {} });
+    await flush();
+
+    engine().show({ kind: 'video', url: '/wallpapers/media/v1/file' });
+    await flush();
+    expect(container.textContent).toContain('浏览器无法解码');
+
+    engine().show({ kind: 'image', url: '/p1', kenBurns: true });
+    await flush();
+    expect(container.querySelector('.wss-media-failure')).toBeNull();
   });
 });

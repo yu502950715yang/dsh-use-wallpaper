@@ -16,7 +16,7 @@ function fakeLayer() {
     outline,
     imageArgs,
     showImage: (u: string, kenBurns: boolean) => { imageArgs.push([u, kenBurns]); calls.push('image:' + u); },
-    showVideo: (u: string) => calls.push('video:' + u),
+    showVideo: async (u: string) => { calls.push('video:' + u); return 'ok' as const; },
     showSceneCanvas: () => calls.push('scene'),
     showNone: () => calls.push('none'),
     setOverlayOpacity: () => {},
@@ -100,6 +100,72 @@ describe('createWallpaperController', () => {
     await c.load();      // 缓存旧列表（不含 '4'）
     await c.select('4'); // 选择新添加的壁纸
     expect(layer.calls.at(-1)).toBe('image:/p4'); // 修复后命中 preview 回退
+  });
+});
+
+// 视频编码兜底（v0.8）：showVideo 三态；失败时回退 preview、上报面板，且旧结果不得覆盖新选择。
+describe('createWallpaperController 视频编码兜底', () => {
+  const videoWall = (id: string, previewUrl: string | null, gif = false) =>
+    ({ id, type: 'video', file: 'a.mp4', hasScene: false, hasPreviewGif: gif, previewUrl, title: 'v' }) as any;
+
+  it('视频不支持 → 回退 preview 并上报 onMediaFailure', async () => {
+    const layer = fakeLayer();
+    layer.showVideo = vi.fn(async () => 'unsupported');
+    const onMediaFailure = vi.fn();
+    const c = createWallpaperController(layer, { fetchList: async () => list as any, onMediaFailure });
+    await c.load();
+    await c.select('1');
+    expect(layer.imageArgs.at(-1)).toEqual(['/p1', true]);
+    expect(onMediaFailure).toHaveBeenCalledWith('1', 'unsupported');
+  });
+
+  it('视频超时 → 回退 preview（gif 不启用 Ken Burns）并上报 timeout', async () => {
+    const layer = fakeLayer();
+    layer.showVideo = vi.fn(async () => 'timeout');
+    const onMediaFailure = vi.fn();
+    const c = createWallpaperController(layer, { fetchList: async () => [videoWall('9', '/p9', true)] as any, onMediaFailure });
+    await c.load();
+    await c.select('9');
+    expect(layer.imageArgs.at(-1)).toEqual(['/p9', false]);
+    expect(onMediaFailure).toHaveBeenCalledWith('9', 'timeout');
+  });
+
+  it('视频失败且无 preview → showNone（不留一块黑背景）', async () => {
+    const layer = fakeLayer();
+    layer.showVideo = vi.fn(async () => 'unsupported');
+    const onMediaFailure = vi.fn();
+    const c = createWallpaperController(layer, { fetchList: async () => [videoWall('9', null)] as any, onMediaFailure });
+    await c.load();
+    await c.select('9');
+    expect(layer.calls.at(-1)).toBe('none');
+    expect(onMediaFailure).toHaveBeenCalledWith('9', 'unsupported');
+  });
+
+  it('视频正常 → 不回退、不上报', async () => {
+    const layer = fakeLayer();
+    const onMediaFailure = vi.fn();
+    const c = createWallpaperController(layer, { fetchList: async () => list as any, onMediaFailure });
+    await c.load();
+    await c.select('1');
+    expect(layer.calls.at(-1)).toBe('video:/wallpapers/media/1/file');
+    expect(layer.imageArgs).toHaveLength(0);
+    expect(onMediaFailure).not.toHaveBeenCalled();
+  });
+
+  it('等待解码期间切换壁纸 → 旧失败结果不覆盖新壁纸、不上报', async () => {
+    const layer = fakeLayer();
+    let release!: (r: 'unsupported') => void;
+    layer.showVideo = vi.fn(() => new Promise<'unsupported'>((res) => { release = res; }));
+    const onMediaFailure = vi.fn();
+    const c = createWallpaperController(layer, { fetchList: async () => list as any, onMediaFailure });
+    await c.load();
+    const pending = c.select('1'); // 视频结果挂起
+    await c.select('3');           // 期间切到另一张壁纸
+    release('unsupported');
+    await pending;
+    expect(layer.calls.at(-1)).toBe('image:/p3');
+    expect(layer.imageArgs.at(-1)).toEqual(['/p3', false]);
+    expect(onMediaFailure).not.toHaveBeenCalled();
   });
 });
 
