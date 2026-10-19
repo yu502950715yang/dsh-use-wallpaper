@@ -110,7 +110,7 @@ export interface BackgroundLayer {
   showNone(): void;
   setOverlayOpacity(v: number): void;
   setBlur(enabled: boolean, radius: number): void;
-  /** 运行期切换当前图片的 Ken Burns 动画（不重建元素）。 */
+  /** 设置 Ken Burns 开关状态并即时应用到当前图片（不重建元素）。 */
   setKenBurns(enabled: boolean): void;
   /** 运行期切换画面适配模式（当前图片/视频即时生效）。 */
   setFitMode(mode: FitMode): void;
@@ -173,6 +173,8 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
   let currentImage: HTMLImageElement | null = null;
   // 当前图片是否允许 Ken Burns（GIF 预览为 false）：面板只能关，不能重新打开。
   let currentImageKenBurnsAllowed = false;
+  // 用户的 Ken Burns 开关状态：跨图片保留，供 showImage 等非面板路径复用（默认 true 同 DEFAULTS）。
+  let kenBurnsEnabled = true;
   let fitMode: FitMode = 'cover';
 
   function applyFit(el: HTMLElement | null): void {
@@ -313,10 +315,10 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
       const img = document.createElement('img');
       img.src = url;
       applyFit(img);
-      applyKenBurns(img, kenBurns);
+      currentImageKenBurnsAllowed = kenBurns;
+      applyKenBurns(img, kenBurnsEnabled && kenBurns);
       fill.appendChild(img);
       currentImage = img;
-      currentImageKenBurnsAllowed = kenBurns;
       markActive();
     },
     showVideo(url) {
@@ -388,7 +390,8 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
       fill.style.filter = enabled ? `blur(${radius}px)` : '';
     },
     setKenBurns(enabled) {
-      if (currentImage) applyKenBurns(currentImage, enabled && currentImageKenBurnsAllowed);
+      kenBurnsEnabled = enabled;
+      if (currentImage) applyKenBurns(currentImage, kenBurnsEnabled && currentImageKenBurnsAllowed);
     },
     setFitMode(mode) {
       fitMode = mode;

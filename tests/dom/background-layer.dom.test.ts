@@ -492,6 +492,14 @@ describe('createBackgroundLayer (DOM)', () => {
     expect(layer.root.querySelector('img')?.classList.contains('wp-kenburns')).toBe(false);
   });
 
+  // 回归（v0.8 review）：kenBurns=false 必须作为用户状态留在 layer，否则启动/回退路径的 showImage 会覆盖它。
+  it('先 setKenBurns(false) 再 showImage 普通 jpg，仍不加 wp-kenburns', () => {
+    const layer = createBackgroundLayer(document.createElement('div'));
+    layer.setKenBurns(false); // 启动时 applySettingsToLayer 先于 select，此刻还没有图片
+    layer.showImage('/a.jpg', true);
+    expect(layer.root.querySelector('img')?.classList.contains('wp-kenburns')).toBe(false);
+  });
+
   // GIF 预览以 showImage(..., false) 显示：面板开关不得把它重新打开（既有 per-wallpaper 语义）。
   it('setKenBurns(true) 不复活 GIF 预览的 Ken Burns', () => {
     const layer = createBackgroundLayer(document.createElement('div'));
