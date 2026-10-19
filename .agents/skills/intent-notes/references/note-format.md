@@ -56,6 +56,34 @@ Status: <状态>
 
 **引入新依赖时**（pom / package.json 里多一条），备选里必须有一条"不引入依赖"的写法——手写最小实现、复用已有能力，或改用它处已有的库——并说明为什么不够。缺了这条等于默认接受了新增的依赖树。
 
+## 生命周期迁移
+
+目录即状态，迁移 = 移文件 + 改 `Status` + 改骨架 + 改锚点，四件事在同一批改动里完成。
+
+### proposed → implemented
+
+1. `git mv` 到 `implemented/{class}/`；文件名日期不变（仍是首次提出日）。
+2. `Status:` 改为 `Status: implemented`。
+3. `## Proposal` 改写为 `## Decision`，用现在时写已交付事实。
+4. 删除 `## Acceptance criteria`：已验证的验收结果并入 `## Decision` 或 `## Consequences`。
+5. `## Risks` 可保留为自由节（放在 `Decision` 与 `Alternatives considered` 之间），或把剩余风险并入 `Consequences` 的代价。
+6. `## Affected repositories` 的「不涉及」换成真实分支与 commit（门禁 3 实时校验）。
+7. 修入站链接：迁移改了路径，活跃笔记里指向旧路径的相对链接要同批改完（门禁 1 判红）。
+8. 跑门禁 1、2、3、4。
+
+### proposed → rejected
+
+1. `git mv` 到 `rejected/{class}/`。
+2. `Status:` 改为 `Status: rejected — <一句话原因>`（em dash）。
+3. 骨架保持提案形态：`Proposal` / `Acceptance criteria` / `Risks` 都保留。
+4. 与取代它的 `implemented` 笔记互链；`rejected` 不归档。
+
+### implemented → archived
+
+见 `archiving.md`：移动 + 第 4 行 `Archived:` + 修入站链接 + 封印，四件事缺一不可。
+
+**通用**：任何生命周期迁移都会改路径——入站链接必须在同一批里修完，并跑门禁 1、2、3、4。
+
 ## Affected repositories
 
 **本节缺失会被锚点门禁直接判红**——`verify-note-anchors.ts` 找不到 `## Affected repositories` 段即报错，直接以非零码退出；没有 `<!-- n/a -->` 之类的逃生门；段内为空、行格式不对、出现第二个段头同样判红。所以「没有涉及仓库」也要写成一行 `` - `仓库名` 不涉及 ``，而不是省略本节——门禁的正则是 `` /^-\s+`([^`]+)`\s+不涉及\s*$/ ``（`scripts/note-anchors.ts`），整行只写「不涉及」两个字会被判「无法解析」。**唯一例外是 `archived/`**：归档笔记整篇豁免锚点校验，该段可省可留，见 `references/archiving.md`。
@@ -69,7 +97,7 @@ Status: <状态>
 - `uniapp` 不涉及
 ```
 
-每行一个仓库，两种形态：带分支与 commit，或明确写「不涉及」。**锚点会被实时校验**——分支或 commit 不存在、commit 不在声明的分支上，门禁都会报错。`commits` 后**只列短哈希**，不要在同一行附其他反引号内容（会被判为格式错误）。文件是否存在**由人工自检**，本门禁不校验（`gitTracksFile` 为预留能力，尚未接入）；自检时把路径写成 `<仓库名>:<仓库内相对路径>`，多仓库下才说得清是哪个仓库的文件。
+锚点行必须**顶格**写（行首第一个字符是 `-`），缩进会被门禁判「无法解析」。每行一个仓库，两种形态：带分支与 commit，或明确写「不涉及」。**锚点会被实时校验**——分支或 commit 不存在、commit 不在声明的分支上，门禁都会报错。`commits` 后**只列短哈希**，不要在同一行附其他反引号内容（会被判为格式错误）。文件是否存在**由人工自检**，本门禁不校验（`gitTracksFile` 为预留能力，尚未接入）；自检时把路径写成 `<仓库名>:<仓库内相对路径>`，多仓库下才说得清是哪个仓库的文件。
 
 项目根自身也是一个仓库：它的名字是 `.agents/intent-notes/config.yml` 里 `path: .` 对应的 `name`（默认取项目目录名）。单仓库项目下这就是唯一一行。
 
@@ -81,7 +109,7 @@ polyrepo 里笔记自己就住在容器仓库中，通常无法在本次提交�
 
 ## 自由节
 
-包拓扑、协议契约、schema 等放在 `Decision` 与 `Alternatives considered` 之间，保留可检索的机制名与 `must` / `may` / `never` 时序强调。一个事实只在一处讲透，其余用相对链接链过去。
+包拓扑、协议契约、schema 等放在 `Decision`（`proposed` / `rejected` 为 `Proposal`）与 `Alternatives considered` 之间，保留可检索的机制名与 `must` / `may` / `never` 时序强调。一个事实只在一处讲透，其余用相对链接链过去。
 
 ## 时态
 

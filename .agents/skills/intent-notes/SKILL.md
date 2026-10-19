@@ -11,22 +11,27 @@ description: 在交付项目或工作目录里留下并维护决策笔记（Agen
 
 ## 零、会话开始先查改动
 
-**工作目录里存在 `.agents/notes/` 时，会话开始先做四件事**：
+**术语**：`<skill-dir>` = 本 skill 的基目录（加载时给出的 Base directory）；`<项目根>` = 包含 `.agents/notes/` 的容器项目根——**polyrepo 里它是容器仓库，不是子仓库**；下文「工作目录」即 `<项目根>`。
+
+**工作目录里存在 `.agents/notes/` 时，会话开始先做五件事**：
 
 1. `git status --short` —— 有未提交改动，说明产物被改过，必须走第一节判定
 2. `git log --oneline -5` —— 有 agent 未记录的新提交，同样走第一节判定
 3. `node "<skill-dir>/scripts/verify-note-anchors.ts" "<工作目录>"` —— 红了先按报错处理，再谈本次任务
 4. `node "<skill-dir>/scripts/audit-notes.ts" "<工作目录>/.agents/notes"` —— 打印 `implemented/` 候选清单（存续天数、字数、入链数），当场过一遍：有该归档的就归档并封印。它只读、不写文件；但笔记树结构有问题时按门禁 1 的口径报错退非 0
+5. 看项目 `AGENTS.md`（或 harness 等效的常驻命令文件）在不在、有没有「改动命中清单就要留笔记」这一条——`init` 不生成它，四道门禁也都不看它，缺了只能靠这一步发现；缺就按 `references/bootstrap-existing-project.md` 阶段 2 补齐
 
 门禁不会自己启动：没有这一步，「该写却没写」没有任何机制能发现。
 
 ## 一、先判要不要写
 
-**命中以下任一项 → 必须写：**改了行为、改了架构、改了跨文件契约、改了流程与工具链、改了测试策略、改了落盘 / 网络 / 配置格式。
+**命中以下任一项 → 必须写：**改了行为、改了架构、改了跨文件契约、改了流程与工具链、改了测试策略、改了需求方向或范围、改了落盘 / 网络 / 配置格式。
 
 **机械改动 → 禁止写。** 纯排版格式化、错别字、无歧义重命名、不改行为的样式调整、不改行为的依赖补丁、版本打标、**照已有契约**的常规 CRUD（按现有类型与接口写的增删改查）、单模块内看 diff 即懂的显式逻辑修复。
 
-**看着像机械、其实是契约决策**：新建此前不存在的类型、字段集或接口形状。哪怕只写十几行，它决定了别人以后要照着写什么，必须写笔记。判据：**这次改动有没有为别人定下新的"必须这样写"？**
+**「依赖补丁、版本打标」只指版本号本身**——升级若顺带带来了新的门禁、纪律、流程或开销，它就不是机械改动，按下面一条写 `process`。
+
+**看着像机械、其实是契约决策**：新建此前不存在的类型、字段集或接口形状；新增或移除第三方依赖；**或者升级工具链自身**——换 `intent-notes` skill 版本、新增或删除一个 skill 及其 `references/`、装 / 换 pre-commit 闸门、硬切换段头或段名纪律、改门禁集合与会话开局动作。这类动作在文件层面像"照抄 / 删除一批外部文件"，但它改变的是「以后每次改动要遵守什么」。哪怕只写十几行，它决定了别人以后要照着写什么，必须写笔记。判据：**这次改动有没有为别人定下新的"必须这样写"？**
 
 判不准时从严。但记住：**过度留痕和完全不记，是同一个错误的两种样子。**
 
@@ -42,7 +47,7 @@ description: 在交付项目或工作目录里留下并维护决策笔记（Agen
 
 `topic-title` 是文件名里唯一的自由位：**英文小写、连字符分词、2–7 词**，写决策或机制名（如 `capability-seams`），不写动作与整句。
 
-生命周期四个状态：`proposed`（待评审）、`implemented`（已交付，与代码同步）、`rejected`（被否决）、`archived`（冻结的历史）。合法迁移只有三条：`proposed → implemented`、`proposed → rejected`、`implemented → archived`——`implemented` 不会变成 `rejected`（见 `references/archiving.md`）。
+生命周期四个状态：`proposed`（待评审）、`implemented`（已交付，与代码同步）、`rejected`（被否决）、`archived`（冻结的历史）。合法迁移只有三条：`proposed → implemented`、`proposed → rejected`、`implemented → archived`——`implemented` 不会变成 `rejected`（见 `references/archiving.md`）。**迁移的可执行步骤见 `references/note-format.md` 的「生命周期迁移」一节。**
 分类闭集（不许自造）：`feature`、`bug-fix`、`simplification`、`architecture`、`process`、`testing`。
 
 **禁止 `INDEX.md`**：集中式索引会与笔记树同时腐化，找笔记靠搜索与链接，不靠索引（门禁 1 在 `.agents/notes/` 根见到 `INDEX.md` 即判红）。
@@ -63,7 +68,7 @@ description: 在交付项目或工作目录里留下并维护决策笔记（Agen
 
 ## 五、详细规则（按需读取）
 
-- **填空模板**：`templates/proposed.md`、`implemented.md`、`archived.md`、`rejected.md` —— 新建笔记时以对应模板起步，把 `{{...}}` 占位替换为真实内容，**项目里没有对应实体的占位行整行删掉**（如单仓库项目下模板里的 ``- `{{不涉及的仓库名}}` 不涉及`` 必须删，替换成不存在的仓库名会被门禁 3 报「仓库 `X` 未在项目声明中」）
+- **填空模板**：`templates/proposed.md`、`implemented.md`、`archived.md`、`rejected.md` —— 新建笔记时以对应模板起步，把 `{{...}}` 占位替换为真实内容，**项目里没有对应实体的占位行整行删掉**（如单仓库项目下模板里的 ``- `{{不涉及的仓库名}}` 不涉及`` 必须删，替换成不存在的仓库名会被门禁 3 报「仓库 `X` 未在项目声明中」）。模板里的 HTML 注释与说明行不随笔记落盘——`## Affected repositories` 段内只允许锚点行，否则门禁 3 报「无法解析」。
 - 格式细则：`references/note-format.md`
 - 六分类判据：`references/classification.md`
 - 何时新建 / 就地改 / 归档 / 不该写：`references/when-to-write.md`
@@ -75,12 +80,13 @@ description: 在交付项目或工作目录里留下并维护决策笔记（Agen
 
 ## 六、交给人之前
 
-**先跑脚本门禁，再做人看的那五项。** 写完笔记立刻跑门禁 1、门禁 2、门禁 4（都在本 skill 基目录下的 `scripts/`）：
+**先跑脚本门禁，再做人看的那五项。** 写完笔记立刻跑门禁 1、门禁 2、门禁 3、门禁 4（都在本 skill 基目录下的 `scripts/`）：
 
 ```bash
-node "<skill-dir>/scripts/verify-note-tree.ts"   "<项目根>/.agents/notes"   # 门禁 1：结构
-node "<skill-dir>/scripts/verify-note-format.ts" "<项目根>/.agents/notes"   # 门禁 2：格式
-node "<skill-dir>/scripts/verify-note-seal.ts"   "<项目根>/.agents/notes"   # 门禁 4：归档封印
+node "<skill-dir>/scripts/verify-note-tree.ts"    "<项目根>/.agents/notes"   # 门禁 1：结构
+node "<skill-dir>/scripts/verify-note-format.ts"  "<项目根>/.agents/notes"   # 门禁 2：格式
+node "<skill-dir>/scripts/verify-note-anchors.ts" "<项目根>"                 # 门禁 3：锚点（唯一校验新写锚点的门禁）
+node "<skill-dir>/scripts/verify-note-seal.ts"    "<项目根>/.agents/notes"   # 门禁 4：归档封印
 ```
 
 **归档了就必须封印**：把笔记移进 `archived/` 后立刻跑 `verify-note-seal.ts … --write`，否则门禁 4 会报「未封存」；**`archived/manifest.json` 要与笔记一起 `git add`**（hook 会单独查这一条，漏了就退 1）。

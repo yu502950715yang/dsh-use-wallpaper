@@ -125,6 +125,23 @@ export function walkAgentNoteTree(root: string): { notes: AgentNote[]; errors: s
     errors.push(`structure: ${entry.name} — ${UNVERIFIABLE}`)
   }
 
+  // 分类目录名先单独校验：空的自造分类目录不含 .md，listMarkdown 看不见它，
+  // 「门禁拒绝闭集之外的目录」就会对空目录失效。按目录报一条，含笔记时不再逐篇重复。
+  const unknownClassDirs = new Set<string>()
+  for (const lifecycle of [...AGENT_NOTE_LIFECYCLES, ARCHIVE_DIR]) {
+    try {
+      for (const entry of readdirSync(join(root, lifecycle), { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue // 链接/特殊文件由 listMarkdown 报「无法校验」
+        if ((AGENT_NOTE_CLASSES as readonly string[]).includes(entry.name)) continue
+        const rel = `${lifecycle}/${entry.name}`
+        unknownClassDirs.add(rel)
+        errors.push(`structure: ${rel}/ — 未知分类目录 "${entry.name}"（允许：${AGENT_NOTE_CLASSES.join(', ')}）`)
+      }
+    } catch {
+      continue // 生命周期目录缺失/不可读：listMarkdown 会按原有口径报错
+    }
+  }
+
   for (const lifecycle of [...AGENT_NOTE_LIFECYCLES, ARCHIVE_DIR]) {
     for (const match of listMarkdown(root, lifecycle, errors).sort()) {
       const segs = match.split('/')
@@ -143,7 +160,10 @@ export function walkAgentNoteTree(root: string): { notes: AgentNote[]; errors: s
         continue
       }
       if (!(AGENT_NOTE_CLASSES as readonly string[]).includes(cls)) {
-        errors.push(`structure: ${match} — 未知分类目录 "${cls}"（允许：${AGENT_NOTE_CLASSES.join(', ')}）`)
+        // 目录级错误已在上面报过（含笔记时也只保留一条），避免同一问题刷屏
+        if (!unknownClassDirs.has(`${lifecycle}/${cls}`)) {
+          errors.push(`structure: ${match} — 未知分类目录 "${cls}"（允许：${AGENT_NOTE_CLASSES.join(', ')}）`)
+        }
         continue
       }
       if (!NOTE_FILENAME.test(base)) {

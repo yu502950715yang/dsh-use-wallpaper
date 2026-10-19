@@ -13,7 +13,7 @@ node "<skill-dir>/scripts/init.ts" "<项目根>"
 
 `<skill-dir>` 随安装形态变：skill 随项目走时它就在项目内（DSH 的落点如 `<项目根>/.agents/skills/intent-notes`，换 harness 可能是别的根）；skill 还留在独立开发仓库里时是 `<仓库>/skills/intent-notes`。**该放哪由 harness 的扫描根决定，不归本 skill 规定**；本文只约定一件事：**对自身文件的引用一律相对本 skill 基目录**——写死某一种形态的路径，换一种就 `ERR_MODULE_NOT_FOUND`。
 
-它做这些事：探测 git 子仓库清单 → 项目根 `git init`（若尚未）→ 建 `.agents/notes/` 四生命周期 × 六分类目录 → 写 `.agents/intent-notes/config.yml`（锚点门禁的仓库清单输入）与 `.agents/notes/README.md`（子仓库指针的落点）→ 追加 `.gitignore` 片段（只排除探测到的子仓库）。首次提交由人确认后执行：把 `.agents/`、`.gitignore` 与写好的 `AGENTS.md` 一起纳入容器仓库的第一次提交。此后每次改动的提交顺序是**子仓库先提交代码 → 容器仓库提交笔记**（笔记的 commit 锚点只能指向已存在的 commit，见 `SKILL.md` 硬规则 6）。
+它做这些事：探测 git 子仓库清单 → 项目根 `git init`（若尚未）→ 建 `.agents/notes/` 四生命周期 × 六分类目录 → 写 `.agents/intent-notes/config.yml`（锚点门禁的仓库清单输入）与 `.agents/notes/README.md`（子仓库指针的落点）→ 追加 `.gitignore` 片段（只排除探测到的子仓库）。**本阶段不提交**：首次提交放到阶段 2 写完 `AGENTS.md` 之后（见阶段 2 第 6 步）。此后每次改动的提交顺序是**子仓库先提交代码 → 容器仓库提交笔记**（笔记的 commit 锚点只能指向已存在的 commit，见 `SKILL.md` 硬规则 6）。
 
 **skill 文件本身不在 `init` 的职责内**：它必须整目录位于目标项目的某个 skill 扫描根下（DSH 项目级如 `<项目根>/.agents/skills/intent-notes/`）——`SKILL.md`、`references/`、`templates/`、`scripts/` **全部**（含 `scripts/note-text.ts` 这类被别的脚本 import 的模块，以及 `init.ts`、`backfill.ts`、`note-tree.ts` 等）。脚本彼此按同目录相对导入，只挑部分文件会在运行时 `ERR_MODULE_NOT_FOUND`；复制时**整目录搬，不要手挑**。
 
@@ -23,9 +23,11 @@ node "<skill-dir>/scripts/init.ts" "<项目根>"
 2. 提取当前真正生效的规矩：构建命令、代码风格、提交规范、子仓库边界、跨仓库协作规则
 3. **修正漂移**：把子仓库清单与磁盘实际目录对齐。清单来自 `.agents/intent-notes/config.yml` 的 `repos:` 段——比 `init` 探测到的更深层仓库，手工往这里补条目（`path:` / `name:` 键序不限；注释行任意缩进都安全）。**不要写行内注释**：`#` 会被当成值的一部分，该条 path 随即判「路径不存在」
 4. 每条规矩挂链接，指向对应笔记；笔记尚未写就时先指向已有的 spec / plan
-5. 在**每个子仓库的 `AGENT.md`** 追加一条指针：
+5. 在**每个子仓库的 `AGENT.md`** 追加一条指针（相对路径按该 `AGENT.md` 到项目根的深度换算：`init` 探测到的直接子仓库用 `../`；更深的仓库按其深度调整）：
 
-   > 重要改动需在本项目 `.agents/notes/` 留笔记；规则见 `../../AGENTS.md` 与 `../../.agents/notes/README.md`。
+   > 重要改动需在本项目 `.agents/notes/` 留笔记；规则见 `../AGENTS.md` 与 `../.agents/notes/README.md`。
+
+6. **首次提交（由人确认）**：把 `.agents/`、`.gitignore` 与写好的 `AGENTS.md` 一起纳入容器仓库的第一次提交。
 
 ## 阶段 3：选择性收割（AI 筛选 + AI 判断）
 

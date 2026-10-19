@@ -68,12 +68,13 @@ git -C "<工作目录>" commit -m "chore: 建立 Agent Notes 骨架"
    - 三个占位换真值：仓库名用工作目录名（即 `config.yml` 里 `path: .` 那条的 `name`），分支名用 `git branch --show-current` 的结果，短哈希用上一步 commit 的短哈希
 
    以 `templates/implemented.md` 起步时，模板里 ``- `{{不涉及的仓库名}}` 不涉及`` 那一行**若没有对应仓库就整行删掉**——留着会被门禁 3 报「仓库 `占位内容` 未在项目声明中」，而本形态的首篇笔记没有第二个仓库，必然命中。
-7. 跑**门禁 1、2、4**：本形态没有 CI、没有子仓库，这三条脚本是机检兜底——`init` 已建四生命周期，工作目录里同样有 `archived/`，也能用 `install-hook.ts "<工作目录>"` 装 pre-commit 闸门：
+7. 跑**门禁 1、2、3、4**：本形态没有 CI、没有子仓库，这四条脚本是机检兜底——`init` 已建四生命周期，工作目录里同样有 `archived/`，也能用 `install-hook.ts "<工作目录>"` 装 pre-commit 闸门：
 
    ```bash
-   node "<skill-dir>/scripts/verify-note-tree.ts"   "<工作目录>/.agents/notes"   # 门禁 1：结构
-   node "<skill-dir>/scripts/verify-note-format.ts" "<工作目录>/.agents/notes"   # 门禁 2：格式
-   node "<skill-dir>/scripts/verify-note-seal.ts"   "<工作目录>/.agents/notes"   # 门禁 4：归档封印
+   node "<skill-dir>/scripts/verify-note-tree.ts"    "<工作目录>/.agents/notes"   # 门禁 1：结构
+   node "<skill-dir>/scripts/verify-note-format.ts"  "<工作目录>/.agents/notes"   # 门禁 2：格式
+   node "<skill-dir>/scripts/verify-note-anchors.ts" "<工作目录>"                 # 门禁 3：锚点
+   node "<skill-dir>/scripts/verify-note-seal.ts"    "<工作目录>/.agents/notes"   # 门禁 4：归档封印
    ```
 
    参数语义：门禁 1 / 2 / 4 接 **notes 根**（`<工作目录>/.agents/notes`），门禁 3 与 `install-hook.ts` 接**项目根**（门禁 3 即 `SKILL.md` 第零节那条 `verify-note-anchors.ts`）；第零节的 `audit-notes.ts` 同样接 notes 根，它只读、不写文件，但笔记树结构有问题时按门禁 1 的口径报错退非 0。红了就地修完再提交笔记；归档后跑 `--write` 时，`archived/manifest.json` 要与被归档的笔记**一起提交**。

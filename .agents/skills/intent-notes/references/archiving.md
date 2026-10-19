@@ -15,7 +15,7 @@ Status: implemented
 Archived: YYYY-MM-DD
 ```
 
-其余骨架与 `implemented` 相同（`## Problem` → `## Decision` → `## Alternatives considered` → `## Consequences`）。门禁会校验第 4 行的存在与格式，也会拒绝归档笔记里的提案用语。可直接以 `templates/archived.md` 起步。
+其余骨架与 `implemented` 相同（`## Problem` → `## Decision` → `## Alternatives considered` → `## Consequences`）。门禁会校验第 4 行的存在与格式，也会拒绝归档笔记里的提案用语。**归档只移动既有笔记，不要用模板新建**；`templates/archived.md` 仅供对照格式。
 
 **归档笔记豁免锚点校验。** 锚点门禁（`verify-note-anchors.ts`）整篇跳过 `archived/` 下的笔记——归档已冻结、不再作为当前行为的权威依据，分支与 commit 不再实时核对；格式门禁的必备节里也不含 `## Affected repositories`。所以从 `implemented` 冻结成 `archived` 时，该段**可以省略，也可以保留原样**：段内的分支、commit 随代码漂移不算失效，不必为它更新锚点，也不会因此判红（`templates/archived.md` 仍带该段，照抄或删掉都合规）。
 
@@ -29,7 +29,7 @@ Archived: YYYY-MM-DD
 - 引用的是**历史快照本身**（"当初这么做，因为…"）→ 保留，改写为 `archived/` 下的路径；
 - 只是顺带提到 → 删掉这句引用。
 
-先搜再改：`grep -rn "<topic-title>" .agents/notes`。指向归档笔记的链接本身是允许的，只是不再被校验，所以重定向到新篇之前要确认新篇确实承载了那条理由。
+先搜再改：`grep -rn "<topic-title>" .agents/notes`。指向归档笔记的链接本身是允许的：活跃笔记里这些链接的**目标存在性仍由门禁 1 校验**，只有归档笔记自身的链接被豁免（不再跟着目标改名），所以重定向到新篇之前要确认新篇确实承载了那条理由。
 
 **归档笔记自己不再改**（冻结自归档时刻起）。`SKILL.md` 硬规则 3 要求「新开一篇并互链」，在归档场景下的落地方式是：在把旧篇移进 `archived/` 的**同一次改动**里，先在旧篇加一行指向新篇的说明，再连同 `Archived:` 行一起冻结；此后旧篇一个字都不动。
 
@@ -90,11 +90,15 @@ node "<skill-dir>/scripts/verify-note-seal.ts" "<notes 根>" --forget <class>/<f
 
 ## 被完全取代
 
-新笔记必须**先继承旧篇的全部独有内容**——决策依据、备选方案、后果、必需验证、明确指出的覆盖缺口——然后才允许删旧篇。**不得让 git 历史成为决策依据的唯一副本。**
+新笔记必须**先继承旧篇的全部独有内容**——决策依据、备选方案、后果、必需验证、明确指出的覆盖缺口——然后才允许把旧篇**归档并封印**（仅纯机械或小 UI 调整的旧篇按「删除，而不是归档」直接删除）。**不得让 git 历史成为决策依据的唯一副本。**
 
 ## 被部分取代
 
 两篇都留，互相加相对链接，只更新仍然成立的事实。
+
+## implemented 不会变成 rejected
+
+`rejected/` 只收**从未落地**的提案。已交付的决定被推翻时，不要把它改成 `rejected`：新开一篇 `implemented/` 记录新决定，与旧篇互链，旧篇按上文归档（或按删除判据直接删）。
 
 ## proposed 不归档
 
