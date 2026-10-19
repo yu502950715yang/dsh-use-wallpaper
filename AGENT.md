@@ -186,8 +186,9 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
 49. **v0.8 数据目录契约（抓帧缓存，2026-10-19）**：数据根 = `DSH_USE_WALLPAPER_DATA_DIR`（`trim` 后非空）否则 `~/.dsh-use-wallpaper`；抓帧目录 = `<数据根>/frames`（`data-dir.ts` 唯一入口，`routes.ts` 注入）。
     - 帧文件 `<id>.png` **原子写**（同目录 tmp + `rename`），GET 不会读到半截 PNG；id 走 `/^[A-Za-z0-9._-]+$/` 且禁 `..`，防路径穿越。
     - 限额：单张 ≤ **12MB**（超限 413，非 PNG 头 400），目录 ≤ **200 张**，超出按 mtime 淘汰最旧；淘汰/清理失败不影响本次写入。
-    - 所有帧响应（GET/HEAD）与 `video-probe` / `embedded-video` 都带 **`Cache-Control: no-store`**；帧缓存是派生数据，删掉只会让下次 scene 成功渲染时重抓（`frameCacheEnabled` 控制）。
+    - **2xx** 的帧响应与探测响应带 **`Cache-Control: no-store`**（GET/HEAD 命中帧、`video-probe` 200、`embedded-video` 命中 200）；4xx/5xx 走 `json()`，不带该头。帧缓存是派生数据，删掉只会让下次 scene 成功渲染时重抓（`frameCacheEnabled` 控制）。
     - 写入只发生在 scene **首帧成功**后（`onSceneLive` → `ensureSceneFrame`），失败只 `warn`，不影响渲染与降级链。
+    - 决策理由与放弃的备选见 [v0.8 降级链、轮播池、属性范围与抓帧落盘](.agents/notes/implemented/architecture/2026-10-19-v08-degradation-rotation-and-properties.md)。
 
 ## 6. 工作约定
 
@@ -238,7 +239,7 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
     - **动画层口径（T8）**：`scene.json` 的 `animationlayers` 由 `scene-json.ts` 解析（`id`/`animation` 必需，缺任一**整条跳过**，不产出半截层；`rate`/`blend` 缺省 1、`visible` 缺省 false），逐帧**只应用第一条可见层**（`threejs-player.tickPuppets`：帧号 = `(已播秒数 × rate × fps) % frameCount`，`fps` 非法兜回 30），`blend` / `additive` **未参与混合**。⚠️ **缺省 `visible=false`** 的出处是 **lwe** `research/.lwe/src/WallpaperEngine/Data/Parsers/ObjectParser.cpp:284`（`it.user("visible", properties, false)`，但该字段在 lwe 中**从未被消费**）；本仓**照 brief 取 false**，与 WE 渲染侧实测相反 —— `WPPuppetLayer::AnimationLayer` 两棵源码树都是 `bool visible { true }`（`.superpowers/we-layerd-src/third_party/wallpaper-engine-renderer/src/backend/scene/internal/animation/WPPuppet.hpp:114-118`、`research/open-wallpaper-engine/src/Scene/Pkg/Parse/Puppet/Puppet.cppm:251`，`WPImageObject.cpp:220` 的 `GET_JSON_NAME_VALUE_NOWARN` 不改初值）⇒ 真实素材里**省略 `visible` 的层在本仓不会被应用**。本机实测：34 个真实 `scene.json` **0 个**含 `animationlayers`、唯一含 `.mdl` 的样本是静态族 ⇒ 该差异**无真实素材可证伪**，待有素材再对齐；**控制方已裁定保留 `false`**（与计划书夹具 `visible:false` 一致，**勿改回 `true`**）。**字段缺失**时退回「播动画表首个」（= T7 行为，`tests/threejs-player.test.ts` 有断言；**除 `frameCount <= 0`**：旧实现会采样帧 0，现直接不采样）；显式空数组 / 无可见层 / 动画 id 不存在 / `frameCount ≤ 0` ⇒ 不做动画（OWE `PuppetLayer::prepared()` 同义）。
     - **未复刻与其它的边界（T8）**：puppet 材质走 three **内建材质**（`createPuppetMaterial` = 普通 alpha 混合），WE 的 `colorBlendMode ≠ 0` 与自定义 shader 分支**未复刻**（复刻要预乘 `ShaderMaterial`，会失去「内建材质才自动注入蒙皮 shader」这条前提）；**无 puppet 的 e2e 自动化判据** —— 只有真机人工验收（`TESTING.md` §2.11）+ 非 puppet 壁纸的零回归对拍。
 
-41. **v0.8 产品化边界（2026-10-19）**：**已修（记录在此以免回退）** —— ① 视频壁纸 HEVC/H.265 缺解码时不再停在黑背景：`showVideo` 在 `error` 或 1.5s 首帧超时返回 `unsupported` / `timeout`，controller 回退 preview（无 preview 则空态），面板按 `media-health` 分档提示（失败记忆只在**内存**，重开可重试；**不做** host ffmpeg 转码）；② `overlayOpacity` / `blurEnabled` / `blurRadius` / `kenBurns` / `fitMode` 已在「显示效果」面板有控件，点击即生效。**新边界**：
+41. **v0.8 产品化边界（2026-10-19）**（理由与取舍见[决策笔记](.agents/notes/implemented/architecture/2026-10-19-v08-degradation-rotation-and-properties.md)）：**已修（记录在此以免回退）** —— ① 视频壁纸 HEVC/H.265 缺解码时不再停在黑背景：`showVideo` 在 `error` 或 1.5s 首帧超时返回 `unsupported` / `timeout`，controller 回退 preview（无 preview 则空态），面板按 `media-health` 分档提示（失败记忆只在**内存**，重开可重试；**不做** host ffmpeg 转码）；② `overlayOpacity` / `blurEnabled` / `blurRadius` / `kenBurns` / `fitMode` 已在「显示效果」面板有控件，点击即生效。**新边界**：
     - ① **属性面板仅 bool**：只暴露 `project.json general.properties` 中 `type=bool`、且被 `scene.json` 某对象 `visible.user` 引用的键；写 `we:userprop:<key>`（localStorage）后**重装配**才生效。slider / color / combo 要渲染器消费对应绑定，留 v0.9；`editable=false` 丢弃。
     - ② **轮播失败跳过仅本会话**：`failed` 是内存 Set（不落盘，手动选择清空）；池 = 收藏 ≥2 张时只用收藏，否则全部非隐藏且 `type !== 'unknown'` 的壁纸；池 <2 张不切、面板显示原因并明示。
     - ③ **抓帧依赖 `readPixels`**：无 GPU / 上下文丢失 / 部分浏览器可能失败或读回全零；当前只对 context-lost 跳过，**无亮度门禁**（Task 6 评审已知），失败只 `warn`、不写缓存、不影响渲染 —— 真机验收待办（`TESTING.md` §2.13）。

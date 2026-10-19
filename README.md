@@ -60,7 +60,7 @@
 | 🔎 | **壁纸库管理** | 标题搜索、类型筛选、仅收藏、隐藏 / 恢复、最近使用排序；收藏与隐藏只存本地，不改壁纸文件、不打断当前播放 |
 | 🎛️ | **显示效果面板** | 遮罩不透明度、背景模糊、Ken Burns、画面适配（裁剪铺满 / 完整显示 / 拉伸铺满）都在面板里直接调，改完立即生效 |
 | 🎚️ | **用户属性面板** | 壁纸自带的可切换属性（v0.8 只做布尔可见性）在面板里直接开关，切换后自动重装配生效 |
-| 🛡️ | **永不白屏** | 任何壁纸渲染失败都有兜底：scene 走多级降级链，视频 / 图片 / 网页退回预览图；界面始终可用 |
+| 🛡️ | **失败不砸界面** | scene 渲染失败走**多级降级链**（内嵌 MP4 → 抓帧 → 预览图）；video 解码失败 / 首帧超时回退预览图并提示。**web 壁纸目前没有失败回退**（跨源 iframe 探测不到子帧错误，失败会停在空白）；界面本身始终可用 |
 | ⚙️ | **开箱即用** | 自动探测 Steam 壁纸目录（注册表 + Steam 库配置 + 常见路径），也可手动填写；改设置立刻生效，不用重启 |
 | 🚫 | **不依赖运行时** | 不需要 Wallpaper Engine 在后台运行；所需的引擎内置素材在你本机读取，不随插件分发第三方素材 |
 
@@ -143,7 +143,15 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 
 ## 🧰 配置项
 
-设置面板暴露的是**目录与选择**；其余是插件设置字段（可写在 profile `cordis.patch.yml` 的 `config` 中）：
+下表的**设置字段**都能写进 profile `cordis.patch.yml` 的 `config`（面板里改过的值优先）。面板按分区暴露的是：
+
+- **当前壁纸 / 壁纸目录**：`selectedWallpaperId`（缩略图点选）、`wallpaperDir` / `weAssetsDir`（手填 +「自动探测」）。
+- **显示效果**：`overlayOpacity`、`blurEnabled` / `blurRadius`、`kenBurns`、`fitMode`、`glowEnabled` / `glowThreshold` / `glowStrength`。
+- **性能与省电**：`paused`、`pauseOnHidden`、`qualityScale`、`soundEnabled`。
+- **轮播**：`rotationEnabled`、`rotationIntervalMs`、`rotationOrder`。
+- **文字可读性**：`textColorMode`、`textColor`、`textOutline`。
+
+`frameCacheEnabled` **没有面板控件**（默认 `true`；要改只能写 profile `config`）。壁纸库的搜索 / 收藏 / 隐藏 / 最近使用与布尔用户属性不是设置字段，只存 localStorage（见本节末尾）。
 
 | 字段 | 默认 | 说明 |
 |---|---|---|
@@ -164,7 +172,7 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 | `rotationEnabled` | `false` | 自动轮播开关 |
 | `rotationIntervalMs` | `300000` | 轮播间隔（1–30 分钟；面板档位为 1 / 5 / 10 / 30 分钟） |
 | `rotationOrder` | `sequential` | 轮播顺序：`sequential` 顺序 / `random` 随机 |
-| `frameCacheEnabled` | `true` | scene 首帧抓帧缓存（写入数据目录 `frames/`，供降级链使用） |
+| `frameCacheEnabled` | `true` | scene 首帧抓帧缓存（写入数据目录 `frames/`，供降级链使用）；面板无控件 |
 
 优先级：用户设置 > profile `cordis.patch.yml` 的 `config` > 缺省。
 
@@ -184,7 +192,7 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 > 
 > 说明：旧版兼容层是过渡性的。待 DSH 新版本稳定、本插件不再需要支持 ≤0.1.6 时，按 [迁移文档 §9「后续清理清单」](docs/superpowers/plans/2026-09-23-dsh-settings-compat-migration.md) 逐项移除（清单区分了可删的旧版专用代码、可简化的兼容技巧与**必须保留的 0.1.7 适配**）。
 
-> 💡 **面板能调什么**：`overlayOpacity`、`blurEnabled` / `blurRadius`、`kenBurns`、`fitMode` 在设置 →「显示效果」；`glowEnabled` / `glowThreshold` / `glowStrength` 也在这一区；`paused` / `pauseOnHidden` / `qualityScale` / `soundEnabled` 在「性能与省电」；轮播在「轮播」；搜索 / 收藏 / 隐藏 / 最近使用在「壁纸库」；布尔用户属性在「壁纸属性」；文字颜色与描边在「文字可读性」。以上**改完立即生效**（用户属性例外：切换后会重装配当前壁纸才生效）。这些字段仍可写进 profile `cordis.patch.yml` 的 `config`。
+> 💡 **设置字段与本地状态**：上表的都是**设置字段**，可写进 profile `cordis.patch.yml` 的 `config`；面板改动除用户属性（切换后重装配当前壁纸才生效）外都**立即生效**。壁纸库的**收藏 / 隐藏 / 最近使用**（`we:fav` / `we:hidden` / `we:recent`）与**布尔用户属性**（`we:userprop:<key>`）是浏览器侧 UI 状态，**只存 localStorage**，不能写进 profile config，也不跨浏览器 / 端口同步。
 > 
 > ⚠️ 光晕默认值 `0.65` / `0.35` 是 **2026-09-21 由用户在真机面板上试出来的**（先按「亮部不过曝」把强度从 `1.0` 下调，阈值保持 `0.65` 以保留光晕感；6 张壁纸的参数网格数据见 `AGENT.md` §7.1）。它只保证「亮部不过曝 + 光晕仍可感」，**不是**与桌面 WE 逐像素对齐的结果 —— 你觉得还要更亮/更暗，面板两个滑杆可即时微调。
 
@@ -196,7 +204,7 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 - **尽量还原原版观感**：混合方式、粒子大小、发光叠加、色调都照着 Wallpaper Engine 的规则来，并以桌面版逐像素对拍校准过。
 - **支持格式够全**：主流 scene 壁纸的纹理压缩格式（DXT1/3/5、RGBA、R8、RG88）与多帧精灵动画（火把、雾、光晕）都能解出原图，不会糊成一片或露黑边。
 - **高清屏不浪费**：按设备像素比渲染，Retina / 高 DPI 屏上线条依然锐利。
-- **出问题也不会砸掉你的界面**：任何一张壁纸渲染失败或算不出可见内容，就按**多级降级链**逐级回退（scene：内嵌 MP4 → 抓帧 → 预览图；其余壁纸：预览图），**不会白屏、不会黑屏卡死**。
+- **出问题也不会砸掉你的界面**：scene 渲染失败或算不出可见内容时按**多级降级链**逐级回退（内嵌 MP4 → 抓帧 → 预览图）；视频壁纸解码失败或首帧超时会回退预览图并提示。**web 壁纸没有失败回退**（跨源 iframe 探测不到子帧错误），但界面本身始终可用。
 - **换来这些的代价很小**：纯浏览器原生能力 + WebGL，**不需要 Wallpaper Engine 在后台运行**，也不需要 WebGPU。
 
 ---
