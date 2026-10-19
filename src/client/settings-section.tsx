@@ -10,7 +10,7 @@ import { readClientSettings, writeClientSettings } from './settings.js';
 import { TEXT_OUTLINE_MAX, normalizeHexColor, normalizeMode, normalizeOutlineLevel, outlineLabel } from './text-color.js';
 import { formatHealthLine } from './render-health.js';
 import type { HealthSnapshot } from './render-health.js';
-import type { MediaFailure, MediaFailureKind } from './media-health.js';
+import type { MediaFailure, MediaFailureKind, MediaFallback } from './media-health.js';
 import { filterLibrary, loadLibraryState, toggleFavorite, toggleHidden } from './library-view.js';
 import type { LibraryFilter, LibraryState } from './library-view.js';
 
@@ -121,10 +121,16 @@ function pushMedia(failure: MediaFailure | null): void {
 const weT = (s: string): string => s;
 // 还没选壁纸 / 还没推送过：状态行按「尚未渲染」呈现，不给 formatHealthLine 造一个假壁纸 id。
 const EMPTY_HEALTH: HealthSnapshot = { wallpaperId: '', ok: null, failure: null, timing: null };
-// 两类失败分开说：编码解不了 vs 迟迟没有首帧；都提示换浏览器/转码（与设计 D4 一致）。
-const MEDIA_FAILURE_TEXT: Record<MediaFailureKind, string> = {
-  unsupported: '视频壁纸解码失败：浏览器无法解码该视频（可能是 HEVC/H.265），已回退到预览图；建议改用 Chrome 或转换为 H.264/VP9 编码。',
-  timeout: '视频壁纸加载超时：1.5 秒内没有出现首帧，可能编码不受支持或文件异常，已回退到预览图；建议改用 Chrome 或检查视频文件。',
+// 按 kind × fallback 分档：只有真的显示了预览图才能说「已回退到预览图」；timeout 与 unsupported 仍需可区分。
+const MEDIA_FAILURE_TEXT: Record<MediaFailureKind, Record<MediaFallback, string>> = {
+  unsupported: {
+    preview: '该视频壁纸解码失败（可能是 HEVC/H.265），已回退到预览图；建议改用 Chrome 或转换编码。',
+    none: '该视频壁纸解码失败（可能是 HEVC/H.265），且没有可用的预览图；建议改用 Chrome 或转换编码。',
+  },
+  timeout: {
+    preview: '视频壁纸加载超时：1.5 秒内没有出现首帧，已回退到预览图；建议改用 Chrome 或检查视频文件。',
+    none: '视频壁纸加载超时：1.5 秒内没有出现首帧，且没有可用的预览图；建议改用 Chrome 或检查视频文件。',
+  },
 };
 
 export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): JSX.Element {
@@ -674,10 +680,10 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
           <button type="button" className="wss-live-forget" onClick={forgetFailures}>清除失败记忆</button>
         </div>
       </section>
-      {/* 视频编码兜底：失败回退预览后在这里明确告知原因与自救方式（只提示最近一条）。 */}
+      {/* 视频编码兜底：失败后（已回退预览图或无可回退）在这里告知原因与自救方式（只提示最近一条）。 */}
       {mediaFailure && (
         <section className="wss-section wss-media-failure" data-kind={mediaFailure.kind}>
-          <p className="wss-section-desc">{MEDIA_FAILURE_TEXT[mediaFailure.kind]}</p>
+          <p className="wss-section-desc">{MEDIA_FAILURE_TEXT[mediaFailure.kind][mediaFailure.fallback]}</p>
           <div className="wss-row">
             <button type="button" className="wss-media-dismiss" onClick={dismissMediaFailure}>知道了</button>
           </div>

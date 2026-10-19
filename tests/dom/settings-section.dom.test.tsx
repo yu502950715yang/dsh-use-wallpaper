@@ -776,9 +776,10 @@ describe('媒体失败提示', () => {
     mount();
     await flush();
     await act(async () => {
-      setWallpaperMediaHandler({ get: () => ({ id: 'v1', kind: 'unsupported', at: Date.now() }), clear });
+      setWallpaperMediaHandler({ get: () => ({ id: 'v1', kind: 'unsupported', fallback: 'preview', at: Date.now() }), clear });
     });
-    expect(container.textContent).toContain('浏览器无法解码');
+    expect(container.textContent).toContain('解码失败');
+    expect(container.textContent).toContain('已回退到预览图');
     expect(container.textContent).toContain('Chrome');
     const box = container.querySelector('.wss-media-failure') as HTMLElement;
     expect(box.dataset.kind).toBe('unsupported');
@@ -789,14 +790,26 @@ describe('媒体失败提示', () => {
     expect(container.querySelector('.wss-media-failure')).toBeNull();
   });
 
+  // 无 preview 回退时（show({kind:'video'}) / 无预览图壁纸）不得谎称「已回退到预览图」。
+  it('fallback=none 文案说明没有可用预览图，且不出现「已回退到预览图」', async () => {
+    mount();
+    await flush();
+    await act(async () => {
+      setWallpaperMediaHandler({ get: () => ({ id: 'v1', kind: 'unsupported', fallback: 'none', at: Date.now() }), clear: vi.fn() });
+    });
+    expect(container.textContent).toContain('没有可用的预览图');
+    expect(container.textContent).not.toContain('已回退到预览图');
+  });
+
   it('timeout 文案与 unsupported 区分；handler 撤销后面板回到「无失败」初始态', async () => {
     mount();
     await flush();
     await act(async () => {
-      setWallpaperMediaHandler({ get: () => ({ id: 'v1', kind: 'timeout', at: Date.now() }), clear: vi.fn() });
+      setWallpaperMediaHandler({ get: () => ({ id: 'v1', kind: 'timeout', fallback: 'preview', at: Date.now() }), clear: vi.fn() });
     });
     expect(container.textContent).toContain('超时');
-    expect(container.textContent).not.toContain('浏览器无法解码');
+    expect(container.textContent).toContain('已回退到预览图');
+    expect(container.textContent).not.toContain('解码失败');
     await act(async () => { setWallpaperMediaHandler(null); });
     expect(container.querySelector('.wss-media-failure')).toBeNull();
   });
@@ -812,7 +825,9 @@ describe('媒体失败提示', () => {
 
     engine().show({ kind: 'video', url: '/wallpapers/media/v1/file' });
     await flush();
-    expect(container.textContent).toContain('浏览器无法解码');
+    // show(video) 的 plan 没有 preview：失败只能记「未回退」，不得说已回退。
+    expect(container.textContent).toContain('没有可用的预览图');
+    expect(container.textContent).not.toContain('已回退到预览图');
 
     engine().show({ kind: 'image', url: '/p1', kenBurns: true });
     await flush();

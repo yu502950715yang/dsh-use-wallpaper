@@ -185,9 +185,9 @@ export function bootstrap(ctx?: any): void {
       }),
       // 视频编码兜底：失败回退 preview 由 controller 完成，这里只记失败供面板提示。
       // 期间已切走（selectedWallpaperId 变了）的迟到失败不上报。
-      onMediaFailure: (id, kind) => {
+      onMediaFailure: (id, kind, fallback) => {
         if (settings.selectedWallpaperId !== id) return;
-        mediaHealth.set(id, kind);
+        mediaHealth.set(id, kind, fallback);
       },
     });
     // 设置面板（settings-section）的壁纸切换/取消经共享 handler 委托 controller
@@ -268,11 +268,11 @@ export function bootstrap(ctx?: any): void {
           break;
         case 'video':
           settings = { ...settings, selectedWallpaperId: '' };
-          // show() 的 video plan 没有 preview 字段：失败只记录供面板提示，不假回退图片
+          // show() 的 video plan 没有 preview 字段：失败只记录（fallback='none'）供面板提示，不假回退图片
           // （controller 路径才有壁纸信息，由它回退 preview）。
           void layer.showVideo(plan.url).then((result) => {
             if (result === 'ok' || disposed || token !== backgroundToken) return;
-            mediaHealth.set(videoWallpaperId(plan.url), result);
+            mediaHealth.set(videoWallpaperId(plan.url), result, 'none');
           });
           break;
         case 'web':

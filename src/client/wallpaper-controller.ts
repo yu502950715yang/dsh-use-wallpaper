@@ -4,6 +4,7 @@ import { resolveBackground } from './background-layer.js';
 import { measureLuma, lumaToTextColor } from './luma.js';
 import { type TextColorMode, manualTextColor, normalizeMode, normalizeOutlineLevel } from './text-color.js';
 import type { HealthSnapshot } from './render-health.js';
+import type { MediaFallback } from './media-health.js';
 
 // scene 渲染器的接口形态（three-renderer 的生产实现与测试替身都按此形状提供）。
 export interface SceneRendererLike {
@@ -42,8 +43,8 @@ export interface WallpaperControllerOptions {
   textStyle?: () => TextStyleSettings;
   /** preview 亮度测量；缺省用 luma.measureLuma（测试注入替身用）。 */
   measurePreviewLuma?: (url: string) => Promise<number | null>;
-  /** 视频解码失败（编码不支持/首帧超时）→ 面板提示用；回退 preview 由控制器自行完成。 */
-  onMediaFailure?: (id: string, result: 'unsupported' | 'timeout') => void;
+  /** 视频解码失败（编码不支持/首帧超时）→ 面板提示用；`fallback` 为控制器实际回退的结果。 */
+  onMediaFailure?: (id: string, result: 'unsupported' | 'timeout', fallback: MediaFallback) => void;
 }
 
 // 贴壁纸文字颜色与描边：
@@ -174,7 +175,8 @@ export function createWallpaperController(
         const result = await layer.showVideo(plan.url);
         if (gen !== selectGeneration) return; // 期间已切换：旧视频的失败结果不得覆盖新壁纸
         if (result !== 'ok') {
-          opts.onMediaFailure?.(info.id, result);
+          const fallback: MediaFallback = info.previewUrl ? 'preview' : 'none';
+          opts.onMediaFailure?.(info.id, result, fallback);
           if (info.previewUrl) layer.showImage(info.previewUrl, !info.hasPreviewGif);
           else layer.showNone();
         }

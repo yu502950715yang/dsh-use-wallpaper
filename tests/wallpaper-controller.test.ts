@@ -116,7 +116,7 @@ describe('createWallpaperController 视频编码兜底', () => {
     await c.load();
     await c.select('1');
     expect(layer.imageArgs.at(-1)).toEqual(['/p1', true]);
-    expect(onMediaFailure).toHaveBeenCalledWith('1', 'unsupported');
+    expect(onMediaFailure).toHaveBeenCalledWith('1', 'unsupported', 'preview');
   });
 
   it('视频超时 → 回退 preview（gif 不启用 Ken Burns）并上报 timeout', async () => {
@@ -127,7 +127,7 @@ describe('createWallpaperController 视频编码兜底', () => {
     await c.load();
     await c.select('9');
     expect(layer.imageArgs.at(-1)).toEqual(['/p9', false]);
-    expect(onMediaFailure).toHaveBeenCalledWith('9', 'timeout');
+    expect(onMediaFailure).toHaveBeenCalledWith('9', 'timeout', 'preview');
   });
 
   it('视频失败且无 preview → showNone（不留一块黑背景）', async () => {
@@ -138,7 +138,7 @@ describe('createWallpaperController 视频编码兜底', () => {
     await c.load();
     await c.select('9');
     expect(layer.calls.at(-1)).toBe('none');
-    expect(onMediaFailure).toHaveBeenCalledWith('9', 'unsupported');
+    expect(onMediaFailure).toHaveBeenCalledWith('9', 'unsupported', 'none');
   });
 
   it('视频正常 → 不回退、不上报', async () => {
