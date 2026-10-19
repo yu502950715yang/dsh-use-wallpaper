@@ -1,5 +1,5 @@
 import type { WallpaperInfo } from '../shared/types.js';
-import type { BackgroundPlan } from './types.js';
+import type { BackgroundPlan, FitMode } from './types.js';
 export declare function resolveBackground(info: WallpaperInfo): BackgroundPlan;
 export declare function applyKenBurns(el: HTMLElement, enabled: boolean): void;
 export interface WebFrameLocation {
@@ -31,15 +31,22 @@ export declare function planWebFrameOrigin(loc: WebFrameLocation, transportOrigi
 export declare function webFrameSpec(wallpaperPath: string, loc: WebFrameLocation, altOrigin: string | null): WebFrameSpec;
 export declare const WEB_RESIZE_RELOAD_DELAY_MS = 300;
 export declare const WEB_RESIZE_RELOAD_TIMEOUT_MS = 8000;
+export declare const VIDEO_LOAD_TIMEOUT_MS = 1500;
+export type VideoLoadResult = 'ok' | 'unsupported' | 'timeout';
 export interface BackgroundLayer {
     root: HTMLElement;
     showImage(url: string, kenBurns: boolean): void;
-    showVideo(url: string): void;
+    /** 加载视频并等首帧：error → unsupported，1.5s 无 loadeddata → timeout。 */
+    showVideo(url: string): Promise<VideoLoadResult>;
     showWeb(url: string): void;
     showSceneCanvas(canvas: HTMLCanvasElement, blurCanvas?: HTMLCanvasElement): void;
     showNone(): void;
     setOverlayOpacity(v: number): void;
     setBlur(enabled: boolean, radius: number): void;
+    /** 设置 Ken Burns 开关状态并即时应用到当前图片（不重建元素）。 */
+    setKenBurns(enabled: boolean): void;
+    /** 运行期切换画面适配模式（当前图片/视频即时生效）。 */
+    setFitMode(mode: FitMode): void;
     setChatFg(color: string): void;
     /** 文字描边（对立色阴影）：level 0 或空颜色 = 移除变量（无描边，既有观感）。 */
     setChatOutline(color: string, level: number): void;

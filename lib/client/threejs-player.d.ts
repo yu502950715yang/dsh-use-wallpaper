@@ -77,6 +77,7 @@ export declare class ThreeScenePlayer {
     private pausedAt;
     private pausedTotal;
     private loopFn;
+    private pendingCapture;
     private lastTime;
     private parallaxCfg;
     private parallaxTarget;
@@ -125,6 +126,12 @@ export declare class ThreeScenePlayer {
     setAnimationLoop(fn?: (dt: number) => void): void;
     private installLoop;
     render(): void;
+    /**
+     * 请求抓取**下一帧**渲染结果（PNG 字节；首帧缓存用）。已有未决请求时返回 null（一帧只抓一张）。
+     * 必须在 render() 同一任务内读像素，故这里只登记请求、由 render() 末尾同步读取。
+     */
+    captureNextFrame(): Promise<Uint8Array | null>;
+    private flushCapture;
     /** 注入帧内快照（null = 关闭）。契约见 frame-capture.ts；active=false 时帧序不变。 */
     setFrameCapture(capture: FrameCapture | null): void;
     /** 登记一个「需要帧内快照」的消费者（键 = scene.json 对象 id）：它开启新的一段，快照拍在它**之前**。 */

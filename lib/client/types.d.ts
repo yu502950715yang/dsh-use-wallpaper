@@ -14,6 +14,10 @@ export type BackgroundPlan = {
 } | {
     kind: 'none';
 };
+/** 壁纸画面适配模式（stretch 对应 CSS object-fit: fill）。 */
+export type FitMode = 'cover' | 'contain' | 'stretch';
+/** 自动轮播顺序：顺序或随机。 */
+export type RotationOrder = 'sequential' | 'random';
 export interface ClientSettings {
     selectedWallpaperId: string;
     wallpaperDir: string;
@@ -43,4 +47,9 @@ export interface ClientSettings {
     textColor: string;
     /** 文字描边档位：0 = 关（默认）；1-3 递增（对立色阴影，背景花哨时的兜底层）。 */
     textOutline: number;
+    fitMode: FitMode;
+    rotationEnabled: boolean;
+    rotationIntervalMs: number;
+    rotationOrder: RotationOrder;
+    frameCacheEnabled: boolean;
 }

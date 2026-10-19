@@ -253,6 +253,37 @@ getEventListeners(window).pointermove?.length
 
 ---
 
+### 2.13 手工验收清单：v0.8 产品化（降级链/轮播/库/属性/视频兜底，逐条勾）
+
+> **以下需人在运行中的 DSH Web GUI 里操作（面板 + DevTools + 文件管理器），agent 无法代跑。**
+> 前置：已 `npm run build` + `npm run build:client`，**重启 harness**（host 侧改动不热重载）后**强刷** GUI；壁纸库里至少各有 1 张 scene / video 壁纸。
+> 数据目录：抓帧默认落 `~/.dsh-use-wallpaper/frames/`；设了 `DSH_USE_WALLPAPER_DATA_DIR` 时落 `<env>/frames/`（换 env 后需重启 harness）。
+> **本轮记录**：HEVC 回退与提示、抓帧 PNG 实际内容、轮播切换时的闪黑/卡顿观感，本任务无法在自动化里验证 ⇒ 列为「**待真机验收**」，请人工勾选并把结论写回本表。
+
+| # | 用例 | 步骤 | 期望结果 | 失败表现 |
+|---|---|---|---|---|
+| D1 | scene 失败 → 内嵌 MP4（`2911105183` / `3800645169`） | 1. 先正常选中，Console 出现 `[three] scene loaded id=…`。2. 用 §2.8 第 3 步的 fetch 拦截脚本让 `scene.json` 连续失败两次（把脚本末行 id 换成目标壁纸），重新 select。 | 画面切到壁纸包内的 MP4（Network 出现 `/wallpapers/scene/<id>/embedded-video` → 200 `video/mp4`），不黑屏；面板「实时渲染」显示失败记忆 | 仍停在 preview / 空态 → 先看 Network 的 `video-probe` 是否为 `{video:true}`；为 false = `.tex` 内 mp4 探测未命中 |
+| D2 | 抓帧生成与回退（无内嵌视频的 scene，如 `3793620838`） | 1. 确认 `frameCacheEnabled` 为开；删除 `<dataDir>/frames/<id>.png`。2. 选中该壁纸，等 `[three] scene loaded` 后再等 1–2s。3. 查文件；再用 D1 的拦截脚本制造 scene 失败。 | 文件出现且是合法 PNG（前 8 字节 `89 50 4E 47 0D 0A 1A 0A`）；`GET /wallpapers/frame/<id>` → 200 `image/png` + `Cache-Control: no-store`；失败后画面停在**抓帧图**而不是工坊封面 | 只有封面 → 抓帧没成功（Console 搜 `scene 抓帧失败`）；帧文件在但回退不到 → HEAD `/wallpapers/frame/<id>` 非 200 |
+| D3 | 抓帧目录迁移 | 设 `DSH_USE_WALLPAPER_DATA_DIR=<临时目录>` 后重启 harness，重做 D2；完成后拿掉 env 再重启。 | 帧写到 `<临时目录>/frames/<id>.png`，默认目录不再新增；拿掉 env 后回到 `~/.dsh-use-wallpaper/frames/` | 仍写默认目录 → env 未被读取（`src/host/data-dir.ts`） |
+| D4 | HEVC 视频（Edge，**待真机**） | 在 **Edge** 里选 `3802068825`（yuki恋冢爱，HEVC/H.265 视频壁纸）。 | 不再黑屏：回退到预览图；设置 →「Wallpaper 壁纸」面板出现「该视频壁纸解码失败（可能是 HEVC/H.265），已回退到预览图；建议改用 Chrome 或转换编码。」；点「知道了」可收起。Chrome 里同一张应正常播放（解码能力差异，不是插件缺陷） | 仍黑屏且无提示 → `media-health` 未接上 controller 的 `onMediaFailure`；有提示但画面仍黑 → 回退 preview 未显示 |
+| D5 | 轮播：1 分钟档 + 暂停 | 1. 保证 ≥2 张可见壁纸；开「自动轮播」、间隔「1 分钟」、顺序「顺序」。2. 等 ≥60s。3. 勾「暂停壁纸（省电）」再等 >60s。4. 取消暂停。 | 状态行 = `每 1 分钟 · 顺序 · 可轮播 N 张`；到点自动切下一张；暂停期间不再切；取消后重新计时 | 不切 → 定时器/池为空；暂停仍切 → 暂停联动失效；状态行说池 <2 但实际 ≥2 → 收藏/隐藏状态未同步 |
+| D6 | 轮播：收藏池与手动重置 | 1. 收藏 2 张（其余不收藏），开轮播。2. 等一次切换。3. 手动点选另一张壁纸。 | 只在这 2 张之间轮换，状态行「可轮播 2 张」；手动选择后计时重置（不会立刻又切） | 仍在全库轮换 → 收藏池未生效；手动后立刻切 → 未重置计时 |
+| D7 | 轮播：失败跳过（仅本会话） | 用 D1 的拦截脚本让池中某张 scene 硬失败（连续两次拿不到 `scene.json`），等轮播经过它；随后刷新页面再看。 | 本次会话跳过该张、不再被轮播选中；刷新后失败集清空（仍会再尝试） | 反复选中失败项 → `failed` 集合未生效；刷新后仍跳过 → 不该落盘的数据被持久化了 |
+| D8 | 库：搜索/类型/收藏/隐藏/恢复/最近 | 1. 搜索标题片段；2. 切类型筛选；3. 收藏 1 张并勾「仅收藏」；4. 隐藏**当前正在播**的壁纸；5. 勾「显示已隐藏」→ 点 ↺ 恢复；6. 排序切「最近使用」。 | 列表即时过滤；星标/隐藏状态刷新后保持（localStorage `we:fav` / `we:hidden` / `we:recent`）；隐藏只从列表消失、不打断当前播放；恢复后回到列表；「最近使用」把刚选过的排前 | 刷新后丢失 → localStorage 键名/读取不对；隐藏当前壁纸导致黑屏 → 隐藏不应改播放 |
+| D9 | 属性面板（`3793620838` / `2832263418`） | 选 `3793620838`（有 Birds / Clouds / Light shaft 三个 bool）；在「壁纸属性」里关掉 Clouds，等重装配；再关 Birds。 | 面板只在当前 scene 有可切换 bool 属性时出现；切换写 `we:userprop:<key>` 并**重装配**当前壁纸（Console 出现新的 `[three] scene loaded`）；刷新后开关状态保持 | 没有该 section → `/wallpapers/properties?id=` 返回空或该壁纸不是 scene；切了没变化 → 渲染器未读 `visible.user`；刷新回弹 → localStorage 未写入 |
+| D10 | 显示效果面板即时生效 | 在「显示效果」里拖动遮罩不透明度 / 模糊半径、开关背景模糊 / Ken Burns、切画面适配（裁剪铺满 / 完整显示 / 拉伸铺满）。 | 每项**改完立即生效**，无需重选壁纸；刷新后保持；`fitMode` 对 video / image 背景同样生效（拉伸 = `object-fit: fill`） | 需重选才生效 → 未走 runtime handler；刷新丢失 → 未持久化 |
+
+**勾选记录**（Task 9 留空，由真机验收人填写）：
+
+- [ ] D1 / D2 / D3：降级链、抓帧生成与目录迁移
+- [ ] D4：Edge HEVC 回退 + 提示（**待真机**）
+- [ ] D5 / D6 / D7：轮播切换、暂停、收藏池、失败跳过（**切换观感待真机**）
+- [ ] D8：库搜索 / 收藏 / 隐藏 / 恢复 / 最近使用
+- [ ] D9：属性开关切换后重装配
+- [ ] D10：显示效果面板即时生效
+
+---
+
 ## 3. 卸载方法
 
 ### 3.1 标准卸载（推荐）

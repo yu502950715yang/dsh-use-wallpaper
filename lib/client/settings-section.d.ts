@@ -1,6 +1,7 @@
 import type { ClientSettings } from './types.js';
-import type { WallpaperInfo, ProbeResult } from '../shared/types.js';
+import type { WallpaperInfo, ProbeResult, WallpaperUserProperty } from '../shared/types.js';
 import type { HealthSnapshot } from './render-health.js';
+import type { MediaFailure } from './media-health.js';
 export interface WallpaperSettingsSectionProps {
     /** 读取当前设置（默认 RPC settings.describe） */
     fetchSettings?: () => Promise<ClientSettings>;
@@ -10,8 +11,12 @@ export interface WallpaperSettingsSectionProps {
     fetchWallpapers?: () => Promise<WallpaperInfo[]>;
     /** 自动探测候选路径（默认 GET /wallpapers/probe） */
     fetchProbe?: () => Promise<ProbeResult>;
+    /** 拉取当前 scene 壁纸的用户属性（默认 GET /wallpapers/properties） */
+    fetchProperties?: (id: string) => Promise<WallpaperUserProperty[]>;
     /** 切换/取消壁纸（index.ts 注入 controller.select，空 id = 取消） */
     onSelect?: (id: string) => void;
+    /** 用户属性切换后重装配当前壁纸（默认走共享 handler 的 controller.select） */
+    onReselect?: (id: string) => void;
     /** 运行期设置（光晕参数/暂停/画质档位）变更：index.ts 注入后立即下发给渲染器，无需重选壁纸 */
     onRuntimeSettings?: (patch: Partial<ClientSettings>) => void;
     /** 当前壁纸的渲染健康快照（由 index.ts 经 subscribeWallpaperHealth 推送；null = 还没选壁纸） */
@@ -23,6 +28,7 @@ export interface WallpaperSettingsSectionProps {
 }
 export declare function setWallpaperSelectHandler(fn: (id: string) => void): void;
 export declare function setWallpaperRuntimeHandler(fn: (patch: Partial<ClientSettings>) => void): void;
+export declare function setWallpaperReselectHandler(handler: ((id: string) => void) | null): void;
 /** 面板「实时渲染」卡片要的三件事：读状态、重试当前壁纸、清空全部失败记忆。 */
 export interface WallpaperHealthHandler {
     get(): HealthSnapshot | null;
@@ -35,4 +41,15 @@ export declare function setWallpaperHealthHandler(handler: WallpaperHealthHandle
 export declare function subscribeWallpaperHealth(cb: (s: HealthSnapshot | null) => void): () => void;
 /** 由 index.ts 的健康事件调用；也用于组件挂载时补一次当前值。 */
 export declare function notifyWallpaperHealth(snap: HealthSnapshot | null): void;
+/** 面板「媒体失败提示」要的两件事：读当前失败 / 清除。 */
+export interface WallpaperMediaHandler {
+    get(): MediaFailure | null;
+    clear(): void;
+}
+/** 注册/撤销共享 handler（传 null = 面板回到「无失败」初始态，并清掉已显示的提示）。 */
+export declare function setWallpaperMediaHandler(handler: WallpaperMediaHandler | null): void;
+/** 订阅媒体失败变化（组件挂载时订阅、卸载时退订）。 */
+export declare function subscribeWallpaperMedia(cb: (failure: MediaFailure | null) => void): () => void;
+/** 由 index.ts 的媒体失败事件调用；handler 未注册时不推（面板已回初始态，迟到的失败不得复活提示）。 */
+export declare function notifyWallpaperMedia(failure: MediaFailure | null): void;
 export declare function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): JSX.Element;

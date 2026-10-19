@@ -10,6 +10,8 @@ export interface WallpaperRoutesOptions {
         wallpaperDir: string;
         weAssetsDir: string;
     };
+    /** 插件数据目录（抓帧 PNG 落 <dataDir>/frames）；缺省时抓帧写接口 500。 */
+    dataDir?: string;
 }
 export declare function getPkgReader(pkgPath: string): PkgReader;
 export declare function isSafeAssetName(name: string): boolean;
