@@ -423,3 +423,116 @@ describe('createWallpaperController 文字颜色（手动档优先于自动测�
     expect(layer.outline.at(-1)).toBe('outline:#f9fafb:1');      // 描边同样保留
   });
 });
+
+// scene 降级链（v0.8 Task 6）：渲染成功 → onSceneLive（后台抓帧入口）；
+// 失败/异常 → 可注入 sceneFallback（内嵌视频 → 抓帧 → preview）；降级自身抛错必须落回既有 preview。
+describe('createWallpaperController scene 降级链（Task 6）', () => {
+  const sceneWall = (id: string, previewUrl: string | null = '/p' + id, gif = false) =>
+    ({ id, type: 'scene', hasScene: true, hasPreviewGif: gif, previewUrl, title: 's' }) as any;
+
+  function make(opts: {
+    render?: () => Promise<boolean>;
+    walls?: unknown[];
+    onSceneLive?: (info: any) => void;
+    sceneFallback?: (info: any) => Promise<void>;
+  } = {}) {
+    const layer = fakeLayer();
+    const renderer = {
+      render: vi.fn(opts.render ?? (async () => true)),
+      setOnContextLost: vi.fn(),
+    };
+    const c = createWallpaperController(layer, {
+      fetchList: async () => (opts.walls ?? [sceneWall('2')]) as any,
+      sceneRenderer: renderer,
+      onSceneLive: opts.onSceneLive,
+      sceneFallback: opts.sceneFallback,
+      // 测光恒有结果：避免异步测光失败路径干扰回退断言。
+      measurePreviewLuma: async () => 120,
+    });
+    return { layer, c, renderer };
+  }
+
+  it('渲染成功 → showSceneCanvas 后调用 onSceneLive（带 info），不触发 sceneFallback', async () => {
+    const onSceneLive = vi.fn();
+    const sceneFallback = vi.fn(async () => {});
+    const { layer, c } = make({ onSceneLive, sceneFallback });
+    await c.load();
+    await c.select('2');
+    expect(layer.calls.at(-1)).toBe('scene');
+    expect(onSceneLive).toHaveBeenCalledTimes(1);
+    expect(onSceneLive.mock.calls[0][0]).toMatchObject({ id: '2' });
+    expect(sceneFallback).not.toHaveBeenCalled();
+  });
+
+  it('首次 render false、重建 canvas 重试成功 → 仍调用 onSceneLive（只一次）', async () => {
+    let n = 0;
+    const onSceneLive = vi.fn();
+    const { layer, c } = make({ render: async () => ++n > 1, onSceneLive });
+    await c.load();
+    await c.select('2');
+    expect(layer.calls.at(-1)).toBe('scene');
+    expect(onSceneLive).toHaveBeenCalledTimes(1);
+  });
+
+  it('渲染失败（两次 false）→ 调用 sceneFallback，由其决定显示内容；控制器不再叠加 preview', async () => {
+    const sceneFallback = vi.fn(async (_info: any) => {});
+    const onSceneLive = vi.fn();
+    const { layer, c } = make({ render: async () => false, sceneFallback, onSceneLive });
+    await c.load();
+    await c.select('2');
+    expect(sceneFallback).toHaveBeenCalledTimes(1);
+    expect(sceneFallback.mock.calls[0][0]).toMatchObject({ id: '2' });
+    expect(onSceneLive).not.toHaveBeenCalled();
+    expect(layer.imageArgs).toHaveLength(0); // 降级链负责显示，控制器不重复回 preview
+  });
+
+  it('render 抛异常 → 同样调用 sceneFallback（不向调用方抛）', async () => {
+    const sceneFallback = vi.fn(async () => {});
+    const { c } = make({ render: async () => { throw new Error('gl lost'); }, sceneFallback });
+    await c.load();
+    await expect(c.select('2')).resolves.toBeUndefined();
+    expect(sceneFallback).toHaveBeenCalledTimes(1);
+  });
+
+  it('无 sceneRenderer（渲染不可用）但注入了 sceneFallback → 仍走降级链', async () => {
+    const layer = fakeLayer();
+    const sceneFallback = vi.fn(async () => {});
+    const c = createWallpaperController(layer, {
+      fetchList: async () => [sceneWall('2')] as any,
+      sceneFallback,
+      measurePreviewLuma: async () => 120,
+    });
+    await c.load();
+    await c.select('2');
+    expect(sceneFallback).toHaveBeenCalledWith(expect.objectContaining({ id: '2' }));
+    expect(layer.imageArgs).toHaveLength(0);
+  });
+
+  it('sceneFallback 抛错 → 落回既有 preview（绝不白屏）', async () => {
+    const sceneFallback = vi.fn(async () => { throw new Error('fallback boom'); });
+    const { layer, c } = make({ render: async () => false, sceneFallback });
+    await c.load();
+    await expect(c.select('2')).resolves.toBeUndefined();
+    expect(layer.imageArgs.at(-1)).toEqual(['/p2', true]);
+  });
+
+  it('sceneFallback 抛错且无 preview → showNone（不留黑块）', async () => {
+    const layer = fakeLayer();
+    const c = createWallpaperController(layer, {
+      fetchList: async () => [sceneWall('6', null)] as any,
+      sceneRenderer: { render: vi.fn(async () => false), setOnContextLost: vi.fn() } as any,
+      sceneFallback: async () => { throw new Error('fallback boom'); },
+      measurePreviewLuma: async () => 120,
+    });
+    await c.load();
+    await c.select('6');
+    expect(layer.calls.at(-1)).toBe('none');
+  });
+
+  it('未经注入了 sceneFallback 时行为不变（scene 失败 → preview）', async () => {
+    const { layer, c } = make({ render: async () => false });
+    await c.load();
+    await c.select('2');
+    expect(layer.imageArgs.at(-1)).toEqual(['/p2', true]);
+  });
+});

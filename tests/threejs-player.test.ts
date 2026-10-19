@@ -3918,3 +3918,92 @@ describe('puppet 图层（addPuppet / image 分支 / 逐帧动画）', () => {
     expect(stub.disposed).toBe(1);
   });
 });
+
+// scene 抓帧（v0.8 Task 6）：captureNextFrame 必须在 render() 同一 JS 任务内读默认 framebuffer；
+// 失败/不支持只 resolve(null)，不得把异常抛进帧循环。
+describe('scene 抓帧 captureNextFrame', () => {
+  // mock renderer 追加抓帧接口：drawingBuffer 尺寸 + readPixels（生产上就是 THREE.WebGLRenderer 的两个成员）。
+  function captureMock() {
+    const mock = createMockRenderer();
+    const readPixels = vi.fn(
+      (_x: number, _y: number, _w: number, _h: number, _f: number, _t: number, out: Uint8Array) => {
+        out.fill(7);
+      },
+    );
+    const gl = { RGBA: 0x1908, UNSIGNED_BYTE: 0x1401, drawingBufferWidth: 2, drawingBufferHeight: 2, readPixels };
+    (mock as unknown as { getContext: () => unknown }).getContext = () => gl;
+    (mock as unknown as { domElement: { width: number; height: number } }).domElement = { width: 2, height: 2 };
+    return { mock, readPixels };
+  }
+
+  it('render() 末尾按 drawingBuffer 尺寸读默认 framebuffer（node 无 OffscreenCanvas ⇒ 编码返回 null）', async () => {
+    const { mock, readPixels } = captureMock();
+    const { player } = makePlayer(2, 2, mock);
+    const pending = player.captureNextFrame();
+    player.render();
+    await expect(pending).resolves.toBeNull();
+    expect(readPixels).toHaveBeenCalledWith(0, 0, 2, 2, 0x1908, 0x1401, expect.any(Uint8Array));
+    player.dispose();
+  });
+
+  it('同一时刻只允许一个 pending：第二次调用立即 null，本帧只读一次像素', async () => {
+    const { mock, readPixels } = captureMock();
+    const { player } = makePlayer(2, 2, mock);
+    const first = player.captureNextFrame();
+    const second = player.captureNextFrame();
+    await expect(second).resolves.toBeNull();
+    player.render();
+    await expect(first).resolves.toBeNull();
+    expect(readPixels).toHaveBeenCalledTimes(1);
+    player.dispose();
+  });
+
+  it('无 pending 时 render() 不读像素（对渲染零影响）', () => {
+    const { mock, readPixels } = captureMock();
+    const { player } = makePlayer(2, 2, mock);
+    player.render();
+    expect(readPixels).not.toHaveBeenCalled();
+    player.dispose();
+  });
+
+  it('dispose() 将未决请求 resolve(null)，不再读像素', async () => {
+    const { mock, readPixels } = captureMock();
+    const { player } = makePlayer(2, 2, mock);
+    const pending = player.captureNextFrame();
+    player.dispose();
+    await expect(pending).resolves.toBeNull();
+    expect(readPixels).not.toHaveBeenCalled();
+  });
+
+  it('读像素抛错 → resolve(null) 且只 warn（不抛进帧循环）', async () => {
+    const mock = createMockRenderer();
+    (mock as unknown as { getContext: () => unknown }).getContext = () => { throw new Error('context lost'); };
+    const { player } = makePlayer(2, 2, mock);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const pending = player.captureNextFrame();
+    expect(() => player.render()).not.toThrow();
+    await expect(pending).resolves.toBeNull();
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('抓帧'))).toBe(true);
+    warn.mockRestore();
+    player.dispose();
+  });
+
+  it('WebGL 上下文已丢失 → 跳过读像素（不把黑帧写进首帧缓存）', async () => {
+    const mock = createMockRenderer();
+    const readPixels = vi.fn();
+    (mock as unknown as { getContext: () => unknown }).getContext = () => ({
+      RGBA: 0x1908, UNSIGNED_BYTE: 0x1401, drawingBufferWidth: 2, drawingBufferHeight: 2,
+      readPixels, isContextLost: () => true,
+    });
+    const { player } = makePlayer(2, 2, mock);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const pending = player.captureNextFrame();
+    player.render();
+    await expect(pending).resolves.toBeNull();
+    expect(readPixels).not.toHaveBeenCalled();
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('上下文已丢失'))).toBe(true);
+    warn.mockRestore();
+    player.dispose();
+  });
+});
+

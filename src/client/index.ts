@@ -2,6 +2,7 @@ import { injectWallpaperStyles } from './styles.js';
 import { createBackgroundLayer } from './background-layer.js';
 import { createWallpaperController } from './wallpaper-controller.js';
 import { createThreeSceneRenderer } from './three-renderer.js';
+import { ensureSceneFrame, showSceneFallback } from './scene-fallback.js';
 import { WallpaperSettingsSection, setWallpaperSelectHandler, setWallpaperRuntimeHandler, setWallpaperHealthHandler, setWallpaperMediaHandler, notifyWallpaperHealth, notifyWallpaperMedia } from './settings-section.js';
 import { readClientSettings, writeClientSettings, getUserPropertyValue, DEFAULTS, setSettingsCtx } from './settings.js';
 import { createRenderHealthStore } from './render-health.js';
@@ -188,6 +189,33 @@ export function bootstrap(ctx?: any): void {
       onMediaFailure: (id, kind, fallback) => {
         if (settings.selectedWallpaperId !== id) return;
         mediaHealth.set(id, kind, fallback);
+      },
+      // scene 成功显示 → 后台抓首帧缓存（下次冷启动可直接作为降级帧）；失败只 warn，不阻塞渲染。
+      onSceneLive: (info) => {
+        if (!settings.frameCacheEnabled) return;
+        void ensureSceneFrame(info.id, {
+          fetch: window.fetch.bind(window),
+          // 抓帧前再确认仍是当前壁纸：HEAD 期间切走后渲染器已换成新壁纸，不得把新画面存进旧 id。
+          renderer: {
+            captureFrame: () => (settings.selectedWallpaperId === info.id
+              ? sceneRenderer.captureFrame?.() ?? Promise.resolve(null)
+              : Promise.resolve(null)),
+          },
+        });
+      },
+      // scene 渲染失败/不可用 → 多级降级链（内嵌视频 → 抓帧 → preview）；显示成功即清掉失败记忆。
+      sceneFallback: async (info) => {
+        // 降级链没有 generation 参数：用「仍是当前选中壁纸」守卫，防视频探测（≤1.5s）迟到后覆盖新壁纸。
+        const current = () => settings.selectedWallpaperId === info.id;
+        const result = await showSceneFallback(info, {
+          fetch: window.fetch.bind(window),
+          layer: {
+            showVideo: (url) => (current() ? layer!.showVideo(url) : Promise.resolve('unsupported' as const)),
+            showImage: (url, kenBurns) => { if (current()) layer!.showImage(url, kenBurns); },
+            showNone: () => { if (current()) layer!.showNone(); },
+          },
+        });
+        if ((result === 'video' || result === 'frame') && current()) healthStore.clear(info.id);
       },
     });
     // 设置面板（settings-section）的壁纸切换/取消经共享 handler 委托 controller
