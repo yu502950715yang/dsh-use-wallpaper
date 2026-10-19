@@ -294,6 +294,23 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
     : '';
   const liveState = live.ok === true ? 'ok' : (live.failure ? 'failed' : 'idle');
 
+  // 当前壁纸元信息（Hero）：预览/类型/状态直接从列表与健康快照推导，不额外请求。
+  const currentWallpaper = settings
+    ? wallpapers.find((w) => w.id === settings.selectedWallpaperId)
+    : undefined;
+  const heroStatus = !settings?.selectedWallpaperId
+    ? { tone: 'idle', text: '未选择壁纸' }
+    : liveState === 'ok'
+      ? { tone: 'ok', text: '实时渲染中' }
+      : liveState === 'failed'
+        ? { tone: 'danger', text: '实时渲染失败' }
+        : { tone: 'idle', text: '待渲染' };
+  // 快捷导航只做滚动定位（jsdom 没有 scrollIntoView 时静默跳过）。
+  const jumpTo = (id: string) => {
+    const el = document.getElementById(id);
+    if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
   // 轮播状态行：可轮播池按当前列表 + 收藏/隐藏实时算（池 <2 张时明确提示原因，不静默）。
   const rotationPoolSize = buildRotationPool(wallpapers, libState).length;
   const rotationStatus = rotationPoolSize < 2
@@ -321,19 +338,51 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
 
   return (
     <div className="wss-root">
-      {/* 当前壁纸：信息条 */}
-      <section className="wss-section">
-        <div className="wss-current">
-          <div className="wss-current-info">
-            <span className="wss-current-label">当前壁纸</span>
-            <span className="wss-current-name" title={currentTitle}>{currentTitle}</span>
+      {/* Hero：大预览 + 标题/类型/渲染状态 + 主操作，作为面板视觉锚点 */}
+      <section className="wss-section wss-hero" aria-label="当前壁纸">
+        <div className="wss-hero-media" data-empty={!currentWallpaper?.previewUrl}>
+          {currentWallpaper?.previewUrl
+            ? <img src={currentWallpaper.previewUrl} alt={currentTitle} />
+            : <span className="wss-hero-empty">还没有选择壁纸</span>}
+        </div>
+        <div className="wss-hero-info">
+          <div className="wss-current">
+            <div className="wss-current-info">
+              <span className="wss-current-label">当前壁纸</span>
+              <span className="wss-current-name" title={currentTitle}>{currentTitle}</span>
+            </div>
+            <div className="wss-current-actions">
+              <button type="button" className="wss-refresh" onClick={refreshWallpapers}>刷新</button>
+              <button type="button" className="wss-cancel" onClick={() => select('')}>取消壁纸</button>
+            </div>
           </div>
-          <div className="wss-current-actions">
-            <button type="button" className="wss-refresh" onClick={refreshWallpapers}>刷新壁纸</button>
-            <button type="button" className="wss-cancel" onClick={() => select('')}>取消壁纸</button>
+          <div className="wss-hero-meta">
+            {currentWallpaper && <span className="wss-type-badge">{currentWallpaper.type.toUpperCase()}</span>}
+            <span className="wss-hero-status" data-tone={heroStatus.tone}><i aria-hidden="true" />{heroStatus.text}</span>
+            {currentWallpaper?.hasScene && <span className="wss-chip">scene.pkg</span>}
+            <span className="wss-chip">{wallpapers.length} 张可用</span>
           </div>
         </div>
       </section>
+      {/* 视频编码兜底：失败后在此告知原因与自救方式（只提示最近一条） */}
+      {mediaFailure && (
+        <section className="wss-alert wss-media-failure" data-kind={mediaFailure.kind} role="status">
+          <p>{MEDIA_FAILURE_TEXT[mediaFailure.kind][mediaFailure.fallback]}</p>
+          <button type="button" className="wss-media-dismiss" onClick={dismissMediaFailure}>知道了</button>
+        </section>
+      )}
+      {/* 快捷导航：四组锚点，点击滚动定位 */}
+      <nav className="wss-nav" aria-label="壁纸设置快速定位">
+        {[
+          ['wss-anchor-library', '壁纸库'],
+          ['wss-anchor-appearance', '外观'],
+          ['wss-anchor-playback', '播放'],
+          ['wss-anchor-advanced', '高级'],
+        ].map(([id, label]) => (
+          <button key={id} type="button" className="wss-nav-item" onClick={() => jumpTo(id)}>{label}</button>
+        ))}
+      </nav>
+      <div className="wss-group" id="wss-anchor-library">
 
       {/* 壁纸库：工具栏（搜索/类型/收藏/隐藏/排序）+ 16:9 缩略图卡片（类型 chip 左下、选中 ✓ 右上） */}
       <section className="wss-section">
@@ -342,62 +391,66 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
           <span className="wss-count">{wallpapers.length} 张</span>
         </header>
         <div className="wss-library-tools">
-          <input
-            type="search"
-            className="wss-search"
-            placeholder="搜索壁纸标题"
-            aria-label="搜索壁纸标题"
-            value={filter.query}
-            onChange={(e) => setFilter((f) => ({ ...f, query: e.target.value }))}
-          />
-          <select
-            className="wss-type-filter"
-            aria-label="按类型筛选"
-            value={filter.types[0] ?? 'all'}
-            onChange={(e) => setFilter((f) => ({
-              ...f,
-              types: e.target.value === 'all' ? [] : [e.target.value as WallpaperKind],
-            }))}
-          >
-            <option value="all">全部类型</option>
-            <option value="scene">Scene</option>
-            <option value="video">视频</option>
-            <option value="web">Web</option>
-            <option value="image">图片</option>
-          </select>
-          <label className="wss-tool">
+          <div className="wss-search-row">
             <input
-              type="checkbox"
-              className="wss-fav-only"
-              checked={filter.favoritesOnly}
-              onChange={(e) => setFilter((f) => ({ ...f, favoritesOnly: e.target.checked }))}
+              type="search"
+              className="wss-search"
+              placeholder="搜索壁纸标题"
+              aria-label="搜索壁纸标题"
+              value={filter.query}
+              onChange={(e) => setFilter((f) => ({ ...f, query: e.target.value }))}
             />
-            仅收藏
-          </label>
-          <label className="wss-tool">
-            <input
-              type="checkbox"
-              className="wss-show-hidden"
-              checked={filter.showHidden}
-              onChange={(e) => setFilter((f) => ({ ...f, showHidden: e.target.checked }))}
-            />
-            显示已隐藏
-          </label>
-          <select
-            className="wss-sort"
-            aria-label="排序方式"
-            value={filter.sort}
-            onChange={(e) => {
-              const sort = e.target.value as LibraryFilter['sort'];
-              setFilter((f) => ({ ...f, sort }));
-              // 面板开着时选中壁纸由 index.ts 写入最近使用；切到该排序时只重读 recent（保留会话内收藏/隐藏）。
-              if (sort === 'recent') setLibState((prev) => ({ ...prev, recent: loadLibraryState().recent }));
-            }}
-          >
-            <option value="default">默认排序</option>
-            <option value="recent">最近使用</option>
-            <option value="title">标题排序</option>
-          </select>
+            <select
+              className="wss-sort"
+              aria-label="排序方式"
+              value={filter.sort}
+              onChange={(e) => {
+                const sort = e.target.value as LibraryFilter['sort'];
+                setFilter((f) => ({ ...f, sort }));
+                // 面板开着时选中壁纸由 index.ts 写入最近使用；切到该排序时只重读 recent（保留会话内收藏/隐藏）。
+                if (sort === 'recent') setLibState((prev) => ({ ...prev, recent: loadLibraryState().recent }));
+              }}
+            >
+              <option value="default">默认排序</option>
+              <option value="recent">最近使用</option>
+              <option value="title">标题排序</option>
+            </select>
+          </div>
+          <div className="wss-filter-row">
+            <select
+              className="wss-type-filter"
+              aria-label="按类型筛选"
+              value={filter.types[0] ?? 'all'}
+              onChange={(e) => setFilter((f) => ({
+                ...f,
+                types: e.target.value === 'all' ? [] : [e.target.value as WallpaperKind],
+              }))}
+            >
+              <option value="all">全部类型</option>
+              <option value="scene">Scene</option>
+              <option value="video">视频</option>
+              <option value="web">Web</option>
+              <option value="image">图片</option>
+            </select>
+            <label className="wss-tool">
+              <input
+                type="checkbox"
+                className="wss-fav-only"
+                checked={filter.favoritesOnly}
+                onChange={(e) => setFilter((f) => ({ ...f, favoritesOnly: e.target.checked }))}
+              />
+              仅收藏
+            </label>
+            <label className="wss-tool">
+              <input
+                type="checkbox"
+                className="wss-show-hidden"
+                checked={filter.showHidden}
+                onChange={(e) => setFilter((f) => ({ ...f, showHidden: e.target.checked }))}
+              />
+              显示已隐藏
+            </label>
+          </div>
         </div>
         <div className="wss-grid">
           {visibleWallpapers.map((w) => {
@@ -489,9 +542,11 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
           ))}
         </section>
       )}
+      </div>
+      <div className="wss-pair">
       {/* 显示效果：壁纸画面观感（遮罩/模糊/KenBurns/适配模式）与应用级 Glow，改完立即生效、不必重选壁纸 */}
       {settings && (
-        <section className="wss-section">
+        <section className="wss-section" id="wss-anchor-appearance">
           <h4 className="wss-section-title">显示效果</h4>
           <div className="wss-effects">
             <label className="wss-slider">
@@ -600,7 +655,7 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
       )}
       {/* 自动轮播（v0.8）：开启后按间隔自动切换；收藏 ≥2 张时只轮播收藏，池不足 2 张时明示原因。 */}
       {settings && (
-        <section className="wss-section">
+        <section className="wss-section" id="wss-anchor-playback">
           <h4 className="wss-section-title">轮播</h4>
           <div className="wss-rotation">
             <label className="wss-glow-row">
@@ -647,10 +702,16 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
           </div>
         </section>
       )}
+      </div>
+      <div className="wss-advanced" id="wss-anchor-advanced">
       {/* 性能与省电：同一张卡片；wss-power 仍只含两个复选框（画质档位是 select） */}
       {settings && (
-        <section className="wss-section">
-          <h4 className="wss-section-title">性能与省电</h4>
+        <details className="wss-details">
+          <summary className="wss-details-head">
+            <span className="wss-details-title">性能与省电</span>
+            <span className="wss-details-hint">暂停 · 画质 · 音效</span>
+          </summary>
+          <div className="wss-details-body">
           <div className="wss-power">
             <label className="wss-glow-row">
               <input
@@ -693,15 +754,20 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
               壁纸音效
             </label>
           </div>
-        </section>
+          </div>
+        </details>
       )}
       {/* 文字可读性（2026-10-01，用户报告「某些壁纸文字看不清」）：贴壁纸的文字可手动指定颜色
           （自动跟随壁纸亮度 / 白 / 黑 / 自定义），并可选描边（对立色阴影，背景花哨时最有效）。
           改动经 applyRuntime → onRuntimeSettings 立即下发（index.ts 转 controller.applyTextStyle），
           不必重选壁纸；被描边作用的只有贴壁纸的透明文字，实底气泡/卡片不受影响。 */}
       {settings && (
-        <section className="wss-section">
-          <h4 className="wss-section-title">文字可读性</h4>
+        <details className="wss-details">
+          <summary className="wss-details-head">
+            <span className="wss-details-title">文字可读性</span>
+            <span className="wss-details-hint">颜色 · 描边</span>
+          </summary>
+          <div className="wss-details-body">
           <p className="wss-section-desc">贴壁纸的文字（消息正文、标题、链接、聊天栏）看不清时，可固定文字颜色；背景花哨时开一点描边最有效。</p>
           <div className="wss-textcolor">
             <label className="wss-row">
@@ -744,10 +810,15 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
               />
             </label>
           </div>
-        </section>
+          </div>
+        </details>
       )}
-      <section className="wss-section">
-        <h4 className="wss-section-title">壁纸目录</h4>
+      <details className="wss-details">
+        <summary className="wss-details-head">
+          <span className="wss-details-title">壁纸目录</span>
+          <span className="wss-details-hint">{wallpaperDir && weAssetsDir ? '已配置' : '未配置'}</span>
+        </summary>
+        <div className="wss-details-body">
         <p className="wss-section-desc">填 Wallpaper Engine 的两个目录；留空 = 未配置。也可以直接点「自动探测」采用探测结果。</p>
         <label className="wss-field">
           <span className="wss-field-label">壁纸目录（workshop）</span>
@@ -791,11 +862,16 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
             ))}
           </div>
         )}
-      </section>
+        </div>
+      </details>
       {/* 实时渲染：状态行 + 重试/清除入口。—— 放在面板最末：它不是日常操作，
           只在「scene 壁纸渲染不出来」时才是用户唯一的自救入口。 */}
-      <section className="wss-section">
-        <h4 className="wss-section-title">实时渲染</h4>
+      <details className="wss-details" data-tone={liveState}>
+        <summary className="wss-details-head">
+          <span className="wss-details-title">实时渲染</span>
+          <span className="wss-details-hint" data-tone={liveState}>{liveState === 'ok' ? '正常' : liveState === 'failed' ? '需要处理' : '待机'}</span>
+        </summary>
+        <div className="wss-details-body">
         <div className="wss-live-status" data-state={liveState}>
           <p className="wss-section-desc wss-live-current">{liveCurrent}</p>
           {liveMemory && <p className="wss-section-desc wss-live-memory">{liveMemory}</p>}
@@ -804,16 +880,9 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
           <button type="button" className="wss-live-retry" onClick={retryLive}>重试实时渲染</button>
           <button type="button" className="wss-live-forget" onClick={forgetFailures}>清除失败记忆</button>
         </div>
-      </section>
-      {/* 视频编码兜底：失败后（已回退预览图或无可回退）在这里告知原因与自救方式（只提示最近一条）。 */}
-      {mediaFailure && (
-        <section className="wss-section wss-media-failure" data-kind={mediaFailure.kind}>
-          <p className="wss-section-desc">{MEDIA_FAILURE_TEXT[mediaFailure.kind][mediaFailure.fallback]}</p>
-          <div className="wss-row">
-            <button type="button" className="wss-media-dismiss" onClick={dismissMediaFailure}>知道了</button>
-          </div>
-        </section>
-      )}
+        </div>
+      </details>
+      </div>
       {message && <p className="wss-message" role="status">{message}</p>}
     </div>
   );

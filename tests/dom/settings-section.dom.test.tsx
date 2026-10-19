@@ -134,6 +134,45 @@ afterEach(async () => {
 });
 
 describe('WallpaperSettingsSection', () => {
+  it('v0.9 新布局：Hero 展示当前壁纸预览、类型与渲染状态', async () => {
+    mount();
+    await flush();
+    const hero = container.querySelector('.wss-hero') as HTMLElement | null;
+    expect(hero).toBeTruthy();
+    expect(hero!.querySelector('img')?.getAttribute('src')).toBe('/p1');
+    expect(hero!.querySelector('.wss-current-name')?.textContent).toBe('EVA');
+    expect(hero!.querySelector('.wss-type-badge')?.textContent).toBe('SCENE');
+    const status = hero!.querySelector('.wss-hero-status') as HTMLElement | null;
+    expect(status).toBeTruthy();
+    expect(status!.getAttribute('data-tone')).toBe('idle');
+  });
+
+  it('v0.9 新布局：快捷导航 4 个锚点，点击滚动到对应分组', async () => {
+    const scrollSpy = vi.fn();
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scrollSpy;
+    try {
+      mount();
+      await flush();
+      const items = [...container.querySelectorAll<HTMLElement>('.wss-nav-item')];
+      expect(items.map((el) => el.textContent)).toEqual(['壁纸库', '外观', '播放', '高级']);
+      expect(container.querySelector('#wss-anchor-advanced')).toBeTruthy();
+      items[3]!.click();
+      await flush();
+      expect(scrollSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
+  it('v0.9 新布局：高级设置默认折叠为 details', async () => {
+    mount();
+    await flush();
+    const details = [...container.querySelectorAll<HTMLDetailsElement>('details.wss-details')];
+    expect(details.length).toBeGreaterThanOrEqual(4);
+    expect(details.every((d) => d.open === false)).toBe(true);
+  });
+
   it('渲染壁纸网格并标记当前选中项', async () => {
     mount();
     await flush();

@@ -23,7 +23,7 @@ v0.8 之前，scene 渲染失败后只剩一张作者预览图：带内嵌视频
 
 ## Affected repositories
 
-- `dsh-use-wallpaper` 分支 `feat/v0.8-productization` commits `fb9ab21` `4027471` `dc7b04d` `f592c75` `8d888ed` `bc72524` `a3c4755` `7dd3b18` `49f8ca9` `35e8cd8` `f54038a` `5f51f47` `61ac3c1` `ba45eb4` `ac8f32c`，以及 final fix 收尾提交（属性键隔离 / 轮播冷启动 / 生命周期收口）
+- `dsh-use-wallpaper` 分支 `master` commits `fb9ab21` `4027471` `dc7b04d` `f592c75` `8d888ed` `bc72524` `a3c4755` `7dd3b18` `49f8ca9` `35e8cd8` `f54038a` `5f51f47` `61ac3c1` `ba45eb4` `ac8f32c` `5b8a9d7` `7306470`
 
 ## Alternatives considered
 
