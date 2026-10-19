@@ -23,6 +23,13 @@ export interface PkgEntry {
     offset: number;
     size: number;
 }
+export interface WallpaperUserProperty {
+    key: string;
+    label: string;
+    type: 'bool';
+    value: boolean;
+    order: number;
+}
 export interface VisibleBinding {
     kind: 'plain' | 'user' | 'script';
     value: boolean;

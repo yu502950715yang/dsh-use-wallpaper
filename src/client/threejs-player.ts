@@ -29,6 +29,8 @@ import type { ParallaxConfig, PointerFollow, PointerState } from './parallax.js'
 import type { PuppetInstance } from './puppet.js';
 // 动画层元数据（scene.json 的 `animationlayers`）类型取自 shared 的字段声明，避免两处漂移。
 import type { SceneImageObject } from '../shared/types.js';
+// 首帧缓存抓帧：GL 像素行序翻转 + PNG 编码（纯函数层，node 可注入 encoder 单测）。
+import { readPixelsToPng, type ReadPixelsGl } from './frame-export.js';
 
 // 背景图层条目：记录 WE 场景坐标与当前已应用状态，供 update_background 对齐既有
 // update_image 语义（undefined = 保持现状；无变化则跳过）。
@@ -625,6 +627,8 @@ export class ThreeScenePlayer {
   private pausedTotal = 0;
   // 已安装的帧回调（resume 时用它重新排程）。
   private loopFn: ((dt: number) => void) | null = null;
+  // 未决抓帧请求（null = 无）：同一时刻只允许一个；render() 末尾在同一 JS 任务内读像素后 resolve。
+  private pendingCapture: ((png: Uint8Array | null) => void) | null = null;
 
   private lastTime = 0;
 
@@ -1030,8 +1034,50 @@ export class ThreeScenePlayer {
     if (this.frameCapture?.active) this.renderSegmented();
     else if (this.glowStage) this.glowStage.apply(this.renderer, this.scene, this.camera);
     else this.renderer.render(this.scene, this.camera);
+    // 抓帧必须在最终画面渲染后的**同一 JS 任务**内读默认 framebuffer（挪到 rAF/定时器后内容已换）。
+    this.flushCapture();
     // 链推进是异步串行的（纹理槽可能仍在加载），不阻塞本帧；本帧贴的是上一帧输出。
     this.objectEffectStage?.advance(this.elapsedSeconds());
+  }
+
+  /**
+   * 请求抓取**下一帧**渲染结果（PNG 字节；首帧缓存用）。已有未决请求时返回 null（一帧只抓一张）。
+   * 必须在 render() 同一任务内读像素，故这里只登记请求、由 render() 末尾同步读取。
+   */
+  captureNextFrame(): Promise<Uint8Array | null> {
+    if (this.pendingCapture) return Promise.resolve(null);
+    return new Promise((resolve) => { this.pendingCapture = resolve; });
+  }
+
+  // render() 末尾调用：读像素/编码的失败只 warn 并 resolve(null)，绝不把异常抛进帧循环。
+  private flushCapture(): void {
+    const resolve = this.pendingCapture;
+    if (!resolve) return;
+    this.pendingCapture = null;
+    try {
+      const gl = this.renderer.getContext() as unknown as ReadPixelsGl & {
+        drawingBufferWidth?: number;
+        drawingBufferHeight?: number;
+        isContextLost?: () => boolean;
+      };
+      // 上下文已丢失时 readPixels 只会读回全零（没有异常），会把「黑帧」写进首帧缓存 ⇒ 直接跳过。
+      if (typeof gl.isContextLost === 'function' && gl.isContextLost()) {
+        console.warn('[three] scene 抓帧失败（WebGL 上下文已丢失），已跳过首帧缓存');
+        resolve(null);
+        return;
+      }
+      const dom = (this.renderer as { domElement?: { width?: number; height?: number } }).domElement;
+      // 画布缓冲尺寸优先取 GL 的 drawingBuffer*（= 实际可读像素区），mock/异常环境退回 domElement。
+      const width = Math.floor(gl.drawingBufferWidth || dom?.width || 0);
+      const height = Math.floor(gl.drawingBufferHeight || dom?.height || 0);
+      void readPixelsToPng(gl, width, height).then((png) => {
+        if (!png) console.warn('[three] scene 抓帧失败（读像素/编码不可用），已跳过首帧缓存');
+        resolve(png);
+      });
+    } catch (e) {
+      console.warn('[three] scene 抓帧失败（已跳过首帧缓存）:', e instanceof Error ? e.message : String(e));
+      resolve(null);
+    }
   }
 
   /** 注入帧内快照（null = 关闭）。契约见 frame-capture.ts；active=false 时帧序不变。 */
@@ -1984,6 +2030,9 @@ export class ThreeScenePlayer {
 
   // 停止循环并释放 renderer 资源。
   dispose(): void {
+    // 未决抓帧请求随播放器释放一并作废（否则 Promise 永不 settle）。
+    this.pendingCapture?.(null);
+    this.pendingCapture = null;
     this.renderer.setAnimationLoop(null);
     // 释放背景图层几何/材质（texture 所有权通常在外，随 scene 清理，不在此 dispose）。
     for (const entry of this.backgroundEntries.values()) {

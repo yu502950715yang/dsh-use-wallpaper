@@ -157,8 +157,26 @@ __wallpaperEngine.select(__wallpaperEngine.health?.()?.wallpaperId || '');
 ```
 
 4. 冷却后（≥3s）应看到一次自动重选（Console 出现新的 `[three] scene loaded`），且**只重试一次**。
-5. 模拟硬失败：把 fetch 改成对 `scene.json` 恒返回 `{ ok: false, status: 404 }`，重选壁纸 → 状态行显示「上次失败：拿不到 scene.json（已记忆，重开仍走降级）」，`localStorage.getItem('we:renderfail:<id>')` 有值。
-6. 点「重试实时渲染」→ 记忆被清、壁纸重新装配；点「清除失败记忆」→ 所有 `we:renderfail:` 键消失。
+5. 模拟硬失败：Console 执行下面这段（只拦目标壁纸的 `scene.json`，**恒**返回 404；同一次选择会 render 两次，两回都拿到 404）→ 状态行显示「上次失败：拿不到 scene.json（已记忆，重开仍走降级）」，`localStorage.getItem('we:renderfail:<id>')` 有值。
+
+```js
+// 硬失败：目标壁纸的 scene.json 恒 404（HTTP 非 2xx = 硬失败，落 localStorage）。把 <id> 换成目标壁纸。
+const failId = '<id>';
+const raw = window.fetch;
+window.fetch = function (u, o) {
+  const url = String(u);
+  if (url.includes(`/wallpapers/scene/${failId}/asset`) && url.includes('name=scene.json')) {
+    return Promise.resolve(new Response('{}', { status: 404, statusText: 'Not Found' }));
+  }
+  return raw.call(this, u, o);
+};
+window.__wpHardFailRestore = () => { window.fetch = raw; }; // 第 6 步重试前调用
+__wallpaperEngine.select(failId);
+```
+
+⚠️ 硬失败记忆与降级结果无关：降级到 `video` / `frame` **不会**清掉 `we:renderfail:` 键（降级成功只代表显示层成功；只有「重试实时渲染」/「清除失败记忆」才会清）。因此第 5 步在任何 scene 上都能看到跨刷新保留的「已记忆」，不必先删帧文件。
+
+6. 先在 Console 执行 `__wpHardFailRestore()` 还原 fetch，再点「重试实时渲染」→ 记忆被清、壁纸重新装配；点「清除失败记忆」→ 所有 `we:renderfail:` 键消失。
 7. 重开 App（或强刷页面）→ 若第 6 步没清，仍能看到上次的硬失败记忆。
 
 ---
@@ -250,6 +268,41 @@ getEventListeners(window).pointermove?.length
 | W3 | 切到非 web 壁纸再切回 `1184182304` | 视差**仍然工作**；Console 里 `getEventListeners(window).pointermove` **切走前后数量不变** | 失效 → 装/卸不配对；数量递增 → §5.43 类问题 |
 | W4 | 切换窗口大小（触发 web 帧重建）后移动鼠标 | 视差**仍然工作**（重建后的新帧同样被直传覆盖） | 重建后失效 → 指针监听没跟着新帧重挂 |
 | W5 | 在同一张壁纸上确认背景仍然**不吃点击** | GUI 面板/按钮点击、文本选择一切正常 | 点击被背景吞掉 → 有人去掉了 `pointer-events:none`（**不要**用这个办法修视差） |
+
+---
+
+### 2.13 手工验收清单：v0.8 产品化（降级链/轮播/库/属性/视频兜底，逐条勾）
+
+> **以下需人在运行中的 DSH Web GUI 里操作（面板 + DevTools + 文件管理器），agent 无法代跑。**
+> 前置：已 `npm run build` + `npm run build:client`，**重启 harness**（host 侧改动不热重载）后**强刷** GUI；壁纸库里至少各有 1 张 scene / video 壁纸。
+> 数据目录：抓帧默认落 `~/.dsh-use-wallpaper/frames/`；设了 `DSH_USE_WALLPAPER_DATA_DIR` 时落 `<env>/frames/`（换 env 后需重启 harness）。
+> **本轮记录**：HEVC 回退与提示、抓帧 PNG 实际内容、轮播切换时的闪黑/卡顿观感，本任务无法在自动化里验证 ⇒ 列为「**待真机验收**」，请人工勾选并把结论写回本表。
+
+| # | 用例 | 步骤 | 期望结果 | 失败表现 |
+|---|---|---|---|---|
+| D1 | scene 失败 → 内嵌 MP4（`2911105183` / `3800645169`） | 1. 先正常选中，Console 出现 `[three] scene loaded id=…`。2. 用 §2.8 第 3 步的 fetch 拦截脚本让 `scene.json` 连续失败两次（把脚本末行 id 换成目标壁纸），重新 select。3. **失败后立刻**看画面与 Network；等 ≥3s 观察自动重试。 | 画面切到壁纸包内的 MP4（Network 出现 `/wallpapers/scene/<id>/embedded-video` → 200 `video/mp4`），不黑屏；面板状态行同时显示「上次失败：资源加载中断（本次会话内记忆）」（降级成功不清记忆）；约 3s 后自动重试一次，属预期 | 仍停在 preview / 空态 → 先看 Network 的 `video-probe` 是否为 `{video:true}`；为 false = `.tex` 内 mp4 探测未命中 |
+| D2 | 抓帧生成与回退（无内嵌视频的 scene，如 `3793620838`） | 1. 确认 `frameCacheEnabled` 为开（默认 `true`；**面板没有该开关**，要关只能写 profile `cordis.patch.yml` 的 `config` 后重启 harness）；删除 `<dataDir>/frames/<id>.png`。2. 选中该壁纸，等 `[three] scene loaded` 后再等 1–2s。3. 查文件；再用 D1 的拦截脚本制造 scene 失败，**失败后立刻**看画面。 | 文件出现且是合法 PNG（前 8 字节 `89 50 4E 47 0D 0A 1A 0A`）；`GET /wallpapers/frame/<id>` → 200 `image/png` + `Cache-Control: no-store`；失败后画面先停在**抓帧图**而不是工坊封面，状态行显示软失败（本次会话内记忆）；约 3s 后自动重试可能换回实时渲染，属预期 | 只有封面 → 抓帧没成功（Console 搜 `scene 抓帧失败`（抓帧本身）或 `scene 首帧`（`scene-fallback.ts` 的探测/写入/缓存失败））；帧文件在但回退不到 → HEAD `/wallpapers/frame/<id>` 非 200 |
+| D3 | 抓帧目录迁移 | 设 `DSH_USE_WALLPAPER_DATA_DIR=<临时目录>` 后重启 harness，重做 D2；完成后拿掉 env 再重启。 | 帧写到 `<临时目录>/frames/<id>.png`，默认目录不再新增；拿掉 env 后回到 `~/.dsh-use-wallpaper/frames/` | 仍写默认目录 → env 未被读取（`src/host/data-dir.ts`） |
+| D4 | HEVC 视频（Edge，**待真机**） | 在 **Edge** 里选 `3802068825`（yuki恋冢爱，HEVC/H.265 视频壁纸）。 | 不再黑屏：回退到预览图；面板提示是两条可接受文案之一 —— `unsupported`：「该视频壁纸解码失败（可能是 HEVC/H.265），已回退到预览图；建议改用 Chrome 或转换编码。」；`timeout`（1.5s 无首帧）：「视频壁纸加载超时：1.5 秒内没有出现首帧，已回退到预览图；建议改用 Chrome 或检查视频文件。」；点「知道了」可收起。Chrome 里同一张应正常播放（解码能力差异，不是插件缺陷） | 仍黑屏且无提示 → `media-health` 未接上 controller 的 `onMediaFailure`；有提示但画面仍黑 → 回退 preview 未显示 |
+| D5 | 轮播：1 分钟档 + 暂停 | 1. 保证 ≥2 张可见壁纸；开「自动轮播」、间隔「1 分钟」、顺序「顺序」。2. 等 ≥60s。3. 勾「暂停壁纸（省电）」再等 >60s。4. 取消暂停。 | 状态行 = `每 1 分钟 · 顺序 · 可轮播 N 张`；到点自动切下一张；暂停期间不再切；取消后重新计时 | 不切 → 定时器/池为空；暂停仍切 → 暂停联动失效；状态行说池 <2 但实际 ≥2 → 收藏/隐藏状态未同步 |
+| D6 | 轮播：收藏池与手动重置 | 1. 收藏 2 张（其余不收藏），开轮播。2. 等一次切换。3. 手动点选另一张壁纸。 | 只在这 2 张之间轮换，状态行「可轮播 2 张」；手动选择后计时重置（不会立刻又切） | 仍在全库轮换 → 收藏池未生效；手动后立刻切 → 未重置计时 |
+| D7 | 轮播：失败跳过（仅本会话） | 1. 只收藏 2 张 scene（其余不收藏；其中一张为目标，如 `3793620838`）。2. 执行 §2.8 第 5 步的硬失败脚本（目标 `scene.json` 恒 404；脚本末尾会选中目标，面板出现「拿不到 scene.json（已记忆）」；降级成功也不清这条记忆）。3. **手动点选**另一张作为轮播起点（手动选择会清空本会话失败集，属预期），再开轮播（1 分钟档）。4. 第一拍轮到目标时它会再次硬失败并进入本会话失败集；之后几拍应跳过它（**中途不要再手动选壁纸**）。5. 刷新页面后再开轮播观察。 | 本会话轮播**跳过**该张（第一拍失败后不再选中它；状态行「可轮播 N 张」只按收藏 / 隐藏算、**不含**失败集，别拿它当判据）；刷新后轮播**会再尝试**该张（脚本已随刷新消失，它会正常渲染），但面板**仍显示**上次失败记忆（`we:renderfail:<id>` 还在）—— `rotation.failed` 已清空，两者同时成立才对 | 反复选中失败项 → `rotation.failed` 未生效；刷新后仍被轮播跳过 → 失败集被误落盘；把「面板仍记得」当成「轮播仍跳过」→ 混淆两套状态 |
+| D8 | 库：搜索/类型/收藏/隐藏/恢复/最近 | 1. 搜索标题片段；2. 切类型筛选；3. 收藏 1 张并勾「仅收藏」；4. 隐藏**当前正在播**的壁纸；5. 勾「显示已隐藏」→ 点 ↺ 恢复；6. 排序切「最近使用」。 | 列表即时过滤；星标/隐藏状态刷新后保持（localStorage `we:fav` / `we:hidden` / `we:recent`）；隐藏只从列表消失、不打断当前播放；恢复后回到列表；「最近使用」把刚选过的排前 | 刷新后丢失 → localStorage 键名/读取不对；隐藏当前壁纸导致黑屏 → 隐藏不应改播放 |
+| D9 | 属性面板（`3793620838` / `2832263418`） | 选 `3793620838`（有 Birds / Clouds / Light shaft 三个 bool）；在「壁纸属性」里关掉 Clouds，等重装配；再关 Birds。再切到另一张有同名属性键的 scene（本机 `2832263418` 与 `3811798465` 都有 bool `newproperty1`），确认开关互不影响。 | 面板只在当前 scene 有可切换 bool 属性时出现；切换写 `we:userprop:<wallpaperId>:<key>`（**按壁纸隔离**）并**重装配**当前壁纸（Console 出现新的 `[three] scene loaded`）；刷新后开关状态保持；两张壁纸的同名键互不串值（旧全局键只在没有 per-id 键时作读回退） | 没有该 section → `/wallpapers/properties?id=` 返回空或该壁纸不是 scene；切了没变化 → 渲染器未读 `visible.user`；刷新回弹 → localStorage 未写入；关一张影响另一张 → 仍写全局键 |
+| D10 | 显示效果面板即时生效 | 在「显示效果」里拖动遮罩不透明度 / 模糊半径、开关背景模糊 / Ken Burns、切画面适配（裁剪铺满 / 完整显示 / 拉伸铺满）。 | 每项**改完立即生效**，无需重选壁纸；刷新后保持；`fitMode` 对 video / image 背景同样生效（拉伸 = `object-fit: fill`） | 需重选才生效 → 未走 runtime handler；刷新丢失 → 未持久化 |
+
+> **D1/D2 注入的是「软失败」**（§2.8 第 3 步，`Promise.reject` → `load-error`）：渲染器只记会话内软失败；降级到 video/frame 成功**不再清**失败记忆（降级成功 ≠ live 渲染恢复），约 3s 后自动重试一次。所以这两项除了画面 / Network / 抓帧文件，也会在面板看到「上次失败：资源加载中断（本次会话内记忆）」，属正确状态。要验持久失败记忆与轮播跳过，用 §2.8 第 5 步的**硬失败**脚本（`scene.json` 恒 404 → `scene-json`，落 `we:renderfail:`），见 D7。
+>
+> **D7 的两套失败状态别混**：`we:renderfail:<id>` = 渲染看护的**硬失败记忆**（localStorage，跨刷新 / 重开仍在，面板状态行读它）；`rotation.failed` = 轮播调度器内存里的失败集合（**仅本会话**，刷新即清空，手动选壁纸也会清空）。D7 验的是后者 —— 刷新后**轮播会再尝试**该张，但面板**仍显示**上次失败记忆，两者同时成立才是正确行为。
+
+**勾选记录**（Task 9 留空，由真机验收人填写）：
+
+- [ ] D1 / D2 / D3：降级链、抓帧生成与目录迁移
+- [ ] D4：Edge HEVC 回退 + 提示（**待真机**）
+- [ ] D5 / D6 / D7：轮播切换、暂停、收藏池、失败跳过（**切换观感待真机**）
+- [ ] D8：库搜索 / 收藏 / 隐藏 / 恢复 / 最近使用
+- [ ] D9：属性开关切换后重装配
+- [ ] D10：显示效果面板即时生效
 
 ---
 

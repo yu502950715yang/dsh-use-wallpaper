@@ -4,11 +4,12 @@ import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react';
 import {
   WallpaperSettingsSection, setWallpaperRuntimeHandler, setWallpaperSelectHandler,
-  setWallpaperHealthHandler, subscribeWallpaperHealth, notifyWallpaperHealth,
+  setWallpaperHealthHandler, setWallpaperMediaHandler, setWallpaperReselectHandler,
+  subscribeWallpaperHealth, notifyWallpaperHealth,
 } from '../../src/client/settings-section.js';
 import type { ClientSettings } from '../../src/client/types.js';
 import type { HealthSnapshot } from '../../src/client/render-health.js';
-import type { ProbeResult } from '../../src/shared/types.js';
+import type { ProbeResult, WallpaperUserProperty } from '../../src/shared/types.js';
 
 // 壁纸设置面板（设置对话框 "壁纸" section）：
 // 网格切换 / 取消壁纸 / 路径配置（手动 + 自动探测）。数据与动作经 props 注入
@@ -17,6 +18,12 @@ import type { ProbeResult } from '../../src/shared/types.js';
 // ── 端到端接线（index.ts）的替身：面板仍是真实组件，只把渲染器/控制器/层/样式替身掉，
 // 断言落在 .wss-live-status 的 textContent 上（健康事件是否真的上屏）。
 const e2eSelect = vi.hoisted(() => vi.fn(async () => {}));
+// controller 的列表（轮播 getPool 读它）；各用例按需填充，默认空池 ⇒ 轮播不动。
+const e2eList = vi.hoisted(() => [] as any[]);
+// index 的 show({kind:'video'}) 走 layer.showVideo 三态；默认 ok，失败用例按需覆盖。
+const e2eVideo = vi.hoisted(() => ({
+  showVideo: vi.fn(async (_url: string): Promise<'ok' | 'unsupported' | 'timeout'> => 'ok'),
+}));
 const e2eHealth = vi.hoisted(() => ({
   last: null as HealthSnapshot | null,
   onHealth: null as ((s: HealthSnapshot) => void) | null,
@@ -25,11 +32,12 @@ vi.mock('../../src/client/background-layer.js', () => ({
   createBackgroundLayer: () => ({
     root: document.createElement('div'),
     setOverlayOpacity() {}, setBlur() {}, setPaused() {},
-    showNone() {}, showImage() {}, showVideo() {}, showWeb() {},
+    setKenBurns() {}, setFitMode() {},
+    showNone() {}, showImage() {}, showVideo: (url: string) => e2eVideo.showVideo(url), showWeb() {},
   }),
 }));
 vi.mock('../../src/client/wallpaper-controller.js', () => ({
-  createWallpaperController: () => ({ load: async () => {}, select: e2eSelect, applyTextStyle() {} }),
+  createWallpaperController: () => ({ load: async () => {}, select: e2eSelect, applyTextStyle() {}, getList: () => e2eList }),
 }));
 vi.mock('../../src/client/styles.js', () => ({ injectWallpaperStyles: vi.fn() }));
 vi.mock('../../src/client/three-renderer.js', () => ({
@@ -48,6 +56,8 @@ const BASE_SETTINGS: ClientSettings = {
   glowEnabled: true, glowThreshold: 0.65, glowStrength: 0.35,
   paused: false, pauseOnHidden: true, qualityScale: 1, soundEnabled: true,
   textColorMode: 'auto', textColor: '#ffffff', textOutline: 0,
+  fitMode: 'cover', rotationEnabled: false, rotationIntervalMs: 300000,
+  rotationOrder: 'sequential', frameCacheEnabled: true,
 };
 
 const WALLPAPERS = [
@@ -83,6 +93,7 @@ function mount(props: Partial<React.ComponentProps<typeof WallpaperSettingsSecti
       writeSettings={async () => {}}
       fetchWallpapers={async () => WALLPAPERS as any}
       fetchProbe={async () => PROBE}
+      fetchProperties={async () => []}
       onSelect={() => {}}
       {...props}
     />
@@ -111,10 +122,14 @@ const statusText = () => (container.querySelector('.wss-live-status') as HTMLEle
 afterEach(async () => {
   await unmount();
   teardownEngine();
+  // 收藏/隐藏/最近使用落 localStorage：逐用例清空，避免污染同文件后续用例。
+  localStorage.clear();
   // 模块级共享 handler 随用例重置：否则上一个用例注册的那份会被下一个用例读到（顺序依赖）。
   setWallpaperHealthHandler(null);
+  setWallpaperMediaHandler(null);
   setWallpaperSelectHandler(() => {});
   setWallpaperRuntimeHandler(() => {});
+  setWallpaperReselectHandler(null);
   vi.restoreAllMocks();
 });
 
@@ -615,5 +630,422 @@ describe('WallpaperSettingsSection', () => {
     await flush();
     expect(statusText()).not.toContain('没有可显示的对象');
     expect(statusText()).toContain('尚未渲染');
+  });
+
+  // v0.8 显示效果：遮罩/模糊/KenBurns/适配模式全部即时下发 + 持久化。
+  it('显示效果：遮罩不透明度/模糊/KenBurns/适配模式变化 → 即时下发 + 持久化', async () => {
+    const writeSettings = vi.fn(async () => {});
+    const onRuntimeSettings = vi.fn();
+    mount({ writeSettings, onRuntimeSettings });
+    await flush();
+    const setValue = (el: HTMLInputElement | HTMLSelectElement, value: string) => {
+      const proto = el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(proto, 'value')!.set!;
+      setter.call(el, value);
+      el.dispatchEvent(new Event(el instanceof HTMLSelectElement ? 'change' : 'input', { bubbles: true }));
+    };
+
+    setValue(container.querySelector('.wss-overlay-opacity') as HTMLInputElement, '0.6');
+    await flush();
+    expect(onRuntimeSettings).toHaveBeenCalledWith({ overlayOpacity: 0.6 });
+
+    (container.querySelector('.wss-blur-enabled') as HTMLInputElement).click();
+    await flush();
+    expect(onRuntimeSettings).toHaveBeenCalledWith({ blurEnabled: true });
+
+    (container.querySelector('.wss-kenburns') as HTMLInputElement).click();
+    await flush();
+    expect(onRuntimeSettings).toHaveBeenCalledWith({ kenBurns: false });
+
+    setValue(container.querySelector('.wss-fit-mode') as HTMLSelectElement, 'contain');
+    await flush();
+    expect(onRuntimeSettings).toHaveBeenCalledWith({ fitMode: 'contain' });
+  });
+
+  // v0.8 壁纸库：搜索 / 收藏 / 隐藏与恢复（localStorage 持久化；隐藏不打断播放）。
+  it('壁纸库：搜索、类型筛选、收藏、隐藏/恢复', async () => {
+    localStorage.clear();
+    mount();
+    await flush();
+    const setValue = (el: HTMLInputElement, value: string) => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+      setter.call(el, value);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    setValue(container.querySelector('.wss-search') as HTMLInputElement, 'A');
+    await flush();
+    expect(container.querySelectorAll('.wss-thumb')).toHaveLength(1);
+
+    (container.querySelector('.wss-fav[data-id="1"]') as HTMLElement).click();
+    await flush();
+    (container.querySelector('.wss-fav-only') as HTMLInputElement).click();
+    await flush();
+    expect(container.querySelectorAll('.wss-thumb')).toHaveLength(1);
+
+    (container.querySelector('.wss-hide[data-id="1"]') as HTMLElement).click();
+    await flush();
+    expect(container.querySelectorAll('.wss-thumb')).toHaveLength(0);
+    (container.querySelector('.wss-show-hidden') as HTMLInputElement).click();
+    await flush();
+    expect(container.querySelectorAll('.wss-thumb')).toHaveLength(1);
+    localStorage.clear();
+  });
+
+  it('壁纸库：收藏/隐藏按钮不触发切换壁纸（stopPropagation）', async () => {
+    localStorage.clear();
+    const onSelect = vi.fn();
+    mount({ onSelect });
+    await flush();
+    (container.querySelector('.wss-fav[data-id="1"]') as HTMLElement).click();
+    await flush();
+    expect(onSelect).not.toHaveBeenCalled();
+    expect((container.querySelector('.wss-fav[data-id="1"]') as HTMLElement).getAttribute('aria-pressed')).toBe('true');
+
+    (container.querySelector('.wss-hide[data-id="1"]') as HTMLElement).click();
+    await flush();
+    expect(onSelect).not.toHaveBeenCalled(); // 隐藏只影响列表过滤，不调用 select/取消播放
+    expect(container.querySelector('.wss-thumb[data-id="1"]')).toBeNull();
+    expect((container.querySelector('.wss-current-name') as HTMLElement).textContent).toBe('EVA');
+    localStorage.clear();
+  });
+
+  it('壁纸库：类型筛选与最近使用排序', async () => {
+    localStorage.clear();
+    mount();
+    await flush();
+    const setSelect = (el: HTMLSelectElement, value: string) => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!;
+      setter.call(el, value);
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    setSelect(container.querySelector('.wss-type-filter') as HTMLSelectElement, 'video');
+    await flush();
+    expect([...container.querySelectorAll<HTMLElement>('.wss-thumb')].map((el) => el.dataset.id)).toEqual(['2']);
+
+    // 最近使用在挂载时读取：重挂载前先写 localStorage，再切 sort=recent
+    await unmount();
+    localStorage.setItem('we:recent', JSON.stringify({ '2': Date.now() }));
+    mount();
+    await flush();
+    setSelect(container.querySelector('.wss-sort') as HTMLSelectElement, 'recent');
+    await flush();
+    expect([...container.querySelectorAll<HTMLElement>('.wss-thumb')].map((el) => el.dataset.id)).toEqual(['2', '1']);
+    localStorage.clear();
+  });
+
+  it('壁纸库：全部隐藏且未开启显示 → 空结果文案含隐藏数量', async () => {
+    localStorage.clear();
+    mount();
+    await flush();
+    (container.querySelector('.wss-hide[data-id="1"]') as HTMLElement).click();
+    await flush();
+    (container.querySelector('.wss-hide[data-id="2"]') as HTMLElement).click();
+    await flush();
+    expect(container.querySelectorAll('.wss-thumb')).toHaveLength(0);
+    expect((container.querySelector('.wss-empty') as HTMLElement).textContent).toContain('隐藏 2 张');
+    localStorage.clear();
+  });
+
+  // v0.8：最近使用由 index.ts 在切换成功 / 公开 API 显示 scene 时写入。
+  it('端到端：selectWallpaper 成功后与 show(scene) 都写入最近使用', async () => {
+    localStorage.clear();
+    e2eSelect.mockClear();
+    bootstrap();
+    await flush();
+    mount({ onSelect: undefined, fetchSettings: async () => BASE_SETTINGS, writeSettings: async () => {} });
+    await flush();
+    (container.querySelectorAll('.wss-thumb')[1] as HTMLElement).click();
+    await flush();
+    expect(e2eSelect).toHaveBeenLastCalledWith('2');
+    expect(typeof (JSON.parse(localStorage.getItem('we:recent') ?? '{}') as Record<string, unknown>)['2']).toBe('number');
+
+    // 切到「最近使用」：重读存储后刚选中的 2 排到 1 前面
+    const sort = container.querySelector('.wss-sort') as HTMLSelectElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!;
+    setter.call(sort, 'recent');
+    sort.dispatchEvent(new Event('change', { bubbles: true }));
+    await flush();
+    expect([...container.querySelectorAll<HTMLElement>('.wss-thumb')].map((el) => el.dataset.id)).toEqual(['2', '1']);
+
+    engine().show({ kind: 'scene', wallpaperId: 'wY' });
+    await flush();
+    expect(typeof (JSON.parse(localStorage.getItem('we:recent') ?? '{}') as Record<string, unknown>)['wY']).toBe('number');
+    localStorage.clear();
+  });
+});
+
+// v0.8 Task 8：自动轮播（开关/间隔/顺序经 applyRuntime 下发并持久化；状态行随设置与可轮播池实时更新）。
+describe('自动轮播', () => {
+  const rotationStatusText = () => (container.querySelector('.wss-rotation-status') as HTMLElement | null)?.textContent ?? '';
+  const setSelect = (el: HTMLSelectElement, value: string) => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!;
+    setter.call(el, value);
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+
+  it('开关/间隔/顺序改完即时下发并持久化；状态行显示间隔、顺序与可轮播张数', async () => {
+    const writeSettings = vi.fn(async () => {});
+    const onRuntimeSettings = vi.fn();
+    mount({ writeSettings, onRuntimeSettings });
+    await flush();
+
+    // 缺省 5 分钟 / 顺序 / 可轮播 2 张（WALLPAPERS 两张都不是 unknown 且未隐藏）
+    expect(rotationStatusText()).toContain('每 5 分钟');
+    expect(rotationStatusText()).toContain('顺序');
+    expect(rotationStatusText()).toContain('可轮播 2 张');
+
+    const enabled = container.querySelector('.wss-rotation-enabled') as HTMLInputElement;
+    expect(enabled.checked).toBe(false); // 默认关闭
+    enabled.click();
+    await flush();
+    expect(onRuntimeSettings).toHaveBeenCalledWith({ rotationEnabled: true });
+    expect(writeSettings).toHaveBeenCalledWith({ rotationEnabled: true });
+
+    const interval = container.querySelector('.wss-rotation-interval') as HTMLSelectElement;
+    setSelect(interval, '600000');
+    await flush();
+    expect(onRuntimeSettings).toHaveBeenCalledWith({ rotationIntervalMs: 600000 });
+    expect(writeSettings).toHaveBeenCalledWith({ rotationIntervalMs: 600000 });
+    expect(rotationStatusText()).toContain('每 10 分钟');
+
+    const order = container.querySelector('.wss-rotation-order') as HTMLSelectElement;
+    setSelect(order, 'random');
+    await flush();
+    expect(onRuntimeSettings).toHaveBeenCalledWith({ rotationOrder: 'random' });
+    expect(writeSettings).toHaveBeenCalledWith({ rotationOrder: 'random' });
+    expect(rotationStatusText()).toContain('随机');
+  });
+
+  it('可轮播池不足 2 张时给出明确提示（隐藏/单张）', async () => {
+    mount({ fetchWallpapers: async () => [WALLPAPERS[0]] as any });
+    await flush();
+    expect(rotationStatusText()).toBe('至少保留 2 张可轮播壁纸，或收藏 2 张以上');
+    await unmount();
+
+    mount();
+    await flush();
+    (container.querySelector('.wss-hide[data-id="2"]') as HTMLElement).click();
+    await flush();
+    expect(rotationStatusText()).toContain('至少保留 2 张可轮播壁纸，或收藏 2 张以上');
+    localStorage.clear();
+  });
+
+  // 端到端：面板开启轮播 → index.ts 调度器按间隔经 selectWallpaper 切换 → teardown 停表（HMR 不留双定时器）。
+  it('端到端：开启轮播后按间隔自动切换，teardown 后不再切换', async () => {
+    vi.useFakeTimers();
+    try {
+      e2eSelect.mockClear();
+      e2eList.length = 0;
+      e2eList.push(...WALLPAPERS);
+      bootstrap();
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      mount({ onSelect: undefined, fetchSettings: async () => BASE_SETTINGS, writeSettings: async () => {} });
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+      // 先手动选 '1'（index 的 settings.selectedWallpaperId 只有走共享 handler 才会同步）
+      (container.querySelector('.wss-thumb[data-id="1"]') as HTMLElement).click();
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(e2eSelect).toHaveBeenLastCalledWith('1');
+
+      (container.querySelector('.wss-rotation-enabled') as HTMLInputElement).click();
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      const before = e2eSelect.mock.calls.length;
+      await act(async () => { await vi.advanceTimersByTimeAsync(300000); });
+      expect(e2eSelect).toHaveBeenLastCalledWith('2');
+      expect(e2eSelect.mock.calls.length).toBeGreaterThan(before);
+
+      // teardown 撤掉轮播定时器：再过一个周期不得再切换
+      await act(async () => { teardownEngine(); });
+      const afterTeardown = e2eSelect.mock.calls.length;
+      await act(async () => { await vi.advanceTimersByTimeAsync(300000); });
+      expect(e2eSelect.mock.calls.length).toBe(afterTeardown);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// v0.8 视频编码兜底：失败提示只在有记录时出现，unsupported/timeout 文案区分，可清除与撤销。
+describe('媒体失败提示', () => {
+  it('媒体失败提示：有失败记录时显示明确文案，可清除', async () => {
+    const clear = vi.fn();
+    mount();
+    await flush();
+    await act(async () => {
+      setWallpaperMediaHandler({ get: () => ({ id: 'v1', kind: 'unsupported', fallback: 'preview', at: Date.now() }), clear });
+    });
+    expect(container.textContent).toContain('解码失败');
+    expect(container.textContent).toContain('已回退到预览图');
+    expect(container.textContent).toContain('Chrome');
+    const box = container.querySelector('.wss-media-failure') as HTMLElement;
+    expect(box.dataset.kind).toBe('unsupported');
+    await act(async () => {
+      (box.querySelector('.wss-media-dismiss') as HTMLButtonElement).click();
+    });
+    expect(clear).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('.wss-media-failure')).toBeNull();
+  });
+
+  // 无 preview 回退时（show({kind:'video'}) / 无预览图壁纸）不得谎称「已回退到预览图」。
+  it('fallback=none 文案说明没有可用预览图，且不出现「已回退到预览图」', async () => {
+    mount();
+    await flush();
+    await act(async () => {
+      setWallpaperMediaHandler({ get: () => ({ id: 'v1', kind: 'unsupported', fallback: 'none', at: Date.now() }), clear: vi.fn() });
+    });
+    expect(container.textContent).toContain('没有可用的预览图');
+    expect(container.textContent).not.toContain('已回退到预览图');
+  });
+
+  it('timeout 文案与 unsupported 区分；handler 撤销后面板回到「无失败」初始态', async () => {
+    mount();
+    await flush();
+    await act(async () => {
+      setWallpaperMediaHandler({ get: () => ({ id: 'v1', kind: 'timeout', fallback: 'preview', at: Date.now() }), clear: vi.fn() });
+    });
+    expect(container.textContent).toContain('超时');
+    expect(container.textContent).toContain('已回退到预览图');
+    expect(container.textContent).not.toContain('解码失败');
+    await act(async () => { setWallpaperMediaHandler(null); });
+    expect(container.querySelector('.wss-media-failure')).toBeNull();
+  });
+
+  // 端到端（index.ts）：show(video) 失败 → 面板提示；换到其它背景 → 提示随即清除。
+  it('端到端：show({kind:"video"}) 解码失败上屏，换背景后清除', async () => {
+    teardownEngine();
+    e2eVideo.showVideo.mockResolvedValueOnce('unsupported');
+    bootstrap();
+    await flush();
+    mount({ onSelect: undefined, fetchSettings: async () => BASE_SETTINGS, writeSettings: async () => {} });
+    await flush();
+
+    engine().show({ kind: 'video', url: '/wallpapers/media/v1/file' });
+    await flush();
+    // show(video) 的 plan 没有 preview：失败只能记「未回退」，不得说已回退。
+    expect(container.textContent).toContain('没有可用的预览图');
+    expect(container.textContent).not.toContain('已回退到预览图');
+
+    engine().show({ kind: 'image', url: '/p1', kenBurns: true });
+    await flush();
+    expect(container.querySelector('.wss-media-failure')).toBeNull();
+  });
+});
+
+// v0.8 Task 7：壁纸属性面板（仅选中 scene 且属性非空时渲染；布尔开关写 localStorage 后重装配）。
+describe('壁纸属性（用户布尔可见性）', () => {
+  const CLOUDS: WallpaperUserProperty = { key: 'clouds', label: '云层', type: 'bool', value: true, order: 2.5 };
+  const RAIN: WallpaperUserProperty = { key: 'rain', label: '雨', type: 'bool', value: true, order: 1 };
+
+  it('选中 scene 且属性非空 → 渲染「壁纸属性」section；存储值覆盖壁纸默认 value', async () => {
+    localStorage.setItem('we:userprop:clouds', 'false');
+    mount({ fetchProperties: async () => [CLOUDS, RAIN] });
+    await flush();
+    const boxes = [...container.querySelectorAll<HTMLInputElement>('.wss-userprop')];
+    expect(boxes).toHaveLength(2);
+    expect(boxes.map((b) => b.dataset.key)).toEqual(['clouds', 'rain']);
+    expect(boxes[0]!.checked).toBe(false); // localStorage 覆盖默认 true
+    expect(boxes[1]!.checked).toBe(true);
+    expect(container.textContent).toContain('壁纸属性');
+    expect(container.textContent).toContain('云层');
+    expect(container.textContent).toContain('切换后生效');
+    localStorage.clear();
+  });
+
+  it('切换 checkbox → 写当前壁纸的 per-id 键并触发当前壁纸重装配', async () => {
+    const reselect = vi.fn();
+    setWallpaperReselectHandler(reselect);
+    mount({ fetchProperties: async () => [CLOUDS] });
+    await flush();
+    const box = container.querySelector('.wss-userprop[data-key="clouds"]') as HTMLInputElement;
+    box.click();
+    await flush();
+    expect(localStorage.getItem('we:userprop:1:clouds')).toBe('false');
+    expect(localStorage.getItem('we:userprop:clouds')).toBeNull(); // 不再写全局键
+    expect(reselect).toHaveBeenCalledWith('1');
+    expect(box.checked).toBe(false);
+  });
+
+  it('per-wallpaper 隔离：切到另一张同名属性的 scene 读自己的值，不串上一张的开关', async () => {
+    // '1' 与 '3' 都是 scene 且都有 clouds（真实场景：EVA 与另一张都有 bool newproperty1）。
+    mount({
+      fetchProperties: async () => [CLOUDS],
+      fetchWallpapers: async () => [
+        ...WALLPAPERS,
+        { id: '3', title: 'EVA 2', type: 'scene', hasScene: true, hasPreviewGif: false, previewUrl: '/p3' },
+      ] as any,
+    });
+    await flush();
+    (container.querySelector('.wss-userprop[data-key="clouds"]') as HTMLInputElement).click();
+    await flush();
+    expect(localStorage.getItem('we:userprop:1:clouds')).toBe('false');
+
+    (container.querySelector('.wss-thumb[data-id="3"]') as HTMLElement).click();
+    await flush();
+    const box3 = container.querySelector('.wss-userprop[data-key="clouds"]') as HTMLInputElement;
+    expect(box3.checked).toBe(true); // 另一张壁纸仍是自己的默认值
+    box3.click();
+    await flush();
+    expect(localStorage.getItem('we:userprop:3:clouds')).toBe('false');
+    expect(localStorage.getItem('we:userprop:1:clouds')).toBe('false'); // 互不覆盖
+  });
+
+  it('props.onReselect 优先于共享 handler', async () => {
+    const shared = vi.fn();
+    const prop = vi.fn();
+    setWallpaperReselectHandler(shared);
+    mount({ fetchProperties: async () => [CLOUDS], onReselect: prop });
+    await flush();
+    (container.querySelector('.wss-userprop[data-key="clouds"]') as HTMLInputElement).click();
+    await flush();
+    expect(prop).toHaveBeenCalledWith('1');
+    expect(shared).not.toHaveBeenCalled();
+  });
+
+  it('非 scene / 空列表 / fetch 抛错 → 不渲染 section，不抛错', async () => {
+    // 非 scene：selectedWallpaperId='2' 是 video，不应请求属性
+    const fetchProperties = vi.fn(async () => [CLOUDS]);
+    mount({
+      fetchSettings: async () => ({ ...BASE_SETTINGS, selectedWallpaperId: '2' }),
+      fetchProperties,
+    });
+    await flush();
+    expect(container.querySelector('.wss-userprop')).toBeNull();
+    expect(fetchProperties).not.toHaveBeenCalled();
+    await unmount();
+
+    mount({ fetchProperties: async () => [] });
+    await flush();
+    expect(container.querySelector('.wss-userprop')).toBeNull();
+    await unmount();
+
+    mount({ fetchProperties: async () => { throw new Error('boom'); } });
+    await flush();
+    expect(container.querySelector('.wss-userprop')).toBeNull();
+    expect(container.textContent).toContain('EVA'); // 面板其它部分正常
+  });
+
+  it('切换壁纸 → 以新 id 重新 fetch，面板内容随属性更新', async () => {
+    const calls: string[] = [];
+    const fetchProperties = vi.fn(async (id: string) => {
+      calls.push(id);
+      return id === '1' ? [CLOUDS] : [RAIN];
+    });
+    mount({
+      fetchProperties,
+      fetchWallpapers: async () => [
+        ...WALLPAPERS,
+        { id: '3', title: 'EVA 2', type: 'scene', hasScene: true, hasPreviewGif: false, previewUrl: '/p3' },
+      ] as any,
+    });
+    await flush();
+    expect(calls).toEqual(['1']);
+    expect(container.querySelector('.wss-userprop[data-key="clouds"]')).not.toBeNull();
+
+    (container.querySelector('.wss-thumb[data-id="3"]') as HTMLElement).click();
+    await flush();
+    expect(calls).toEqual(['1', '3']);
+    expect(container.querySelector('.wss-userprop[data-key="clouds"]')).toBeNull();
+    expect(container.querySelector('.wss-userprop[data-key="rain"]')).not.toBeNull();
+    expect(container.textContent).toContain('雨');
   });
 });

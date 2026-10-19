@@ -1,5 +1,5 @@
 import type { WallpaperInfo } from '../shared/types.js';
-import type { BackgroundPlan } from './types.js';
+import type { BackgroundPlan, FitMode } from './types.js';
 import { outlineShadow } from './text-color.js';
 import { computePointerPost } from './pointer-post.js';
 
@@ -100,16 +100,25 @@ export function webFrameSpec(wallpaperPath: string, loc: WebFrameLocation, altOr
 // debounce 到尺寸稳定后只重建一次；重建期保留旧帧直到新帧 load（不留白）。
 export const WEB_RESIZE_RELOAD_DELAY_MS = 300;
 export const WEB_RESIZE_RELOAD_TIMEOUT_MS = 8000;
+// 视频首帧兜底：1.5s 内没有 loadeddata（编码不受支持/文件异常时浏览器可能既不 error 也不出帧）。
+export const VIDEO_LOAD_TIMEOUT_MS = 1500;
+
+export type VideoLoadResult = 'ok' | 'unsupported' | 'timeout';
 
 export interface BackgroundLayer {
   root: HTMLElement;
   showImage(url: string, kenBurns: boolean): void;
-  showVideo(url: string): void;
+  /** 加载视频并等首帧：error → unsupported，1.5s 无 loadeddata → timeout。 */
+  showVideo(url: string): Promise<VideoLoadResult>;
   showWeb(url: string): void;
   showSceneCanvas(canvas: HTMLCanvasElement, blurCanvas?: HTMLCanvasElement): void;
   showNone(): void;
   setOverlayOpacity(v: number): void;
   setBlur(enabled: boolean, radius: number): void;
+  /** 设置 Ken Burns 开关状态并即时应用到当前图片（不重建元素）。 */
+  setKenBurns(enabled: boolean): void;
+  /** 运行期切换画面适配模式（当前图片/视频即时生效）。 */
+  setFitMode(mode: FitMode): void;
   setChatFg(color: string): void;
   /** 文字描边（对立色阴影）：level 0 或空颜色 = 移除变量（无描边，既有观感）。 */
   setChatOutline(color: string, level: number): void;
@@ -165,6 +174,18 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
   // 省电状态与当前视频元素（setPaused 对后者 pause/play）。
   let paused = false;
   let currentVideo: HTMLVideoElement | null = null;
+  // 当前显示的图片与适配模式：供运行期切换（不重建元素）。
+  let currentImage: HTMLImageElement | null = null;
+  // 当前图片是否允许 Ken Burns（GIF 预览为 false）：面板只能关，不能重新打开。
+  let currentImageKenBurnsAllowed = false;
+  // 用户的 Ken Burns 开关状态：跨图片保留，供 showImage 等非面板路径复用（默认 true 同 DEFAULTS）。
+  let kenBurnsEnabled = true;
+  let fitMode: FitMode = 'cover';
+
+  function applyFit(el: HTMLElement | null): void {
+    if (!el) return;
+    el.style.objectFit = fitMode === 'stretch' ? 'fill' : fitMode;
+  }
 
   // web 自适应状态：当前 web URL、已落地的 web 帧、基准视口、debounce 定时器、正在预载的帧
   let webUrl: string | null = null;
@@ -189,6 +210,8 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
   function clear() {
     frameToken += 1;
     fill.replaceChildren();
+    currentImage = null;
+    currentImageKenBurnsAllowed = false;
     currentVideo = null;
     stopWebResizeReload();
   }
@@ -296,22 +319,43 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
       clear();
       const img = document.createElement('img');
       img.src = url;
-      applyKenBurns(img, kenBurns);
+      applyFit(img);
+      currentImageKenBurnsAllowed = kenBurns;
+      applyKenBurns(img, kenBurnsEnabled && kenBurns);
       fill.appendChild(img);
+      currentImage = img;
       markActive();
     },
     showVideo(url) {
       clear();
       const video = document.createElement('video');
-      video.src = url;
       video.autoplay = true;
       video.loop = true;
       video.muted = true;
       video.playsInline = true;
-      fill.appendChild(video);
+      applyFit(video);
       currentVideo = video;
+      // 先注册监听与超时再赋 src：缓存命中时事件可能紧跟 src 同步到达，晚注册会漏掉。
+      // clear() 换掉旧视频时不等旧 Promise：超时会兜底收尾，避免永久悬挂。
+      const result = new Promise<VideoLoadResult>((resolve) => {
+        let settled = false;
+        let timer: ReturnType<typeof setTimeout> | null = null;
+        // 成功/失败/超时都要落定一次并清掉定时器（否则测试与生产都留悬挂 timer）。
+        const done = (r: VideoLoadResult) => {
+          if (settled) return;
+          settled = true;
+          if (timer !== null) clearTimeout(timer);
+          resolve(r);
+        };
+        timer = setTimeout(() => done('timeout'), VIDEO_LOAD_TIMEOUT_MS);
+        video.addEventListener('loadeddata', () => done('ok'), { once: true });
+        video.addEventListener('error', () => done('unsupported'), { once: true });
+      });
+      video.src = url;
+      fill.appendChild(video);
       if (paused) video.pause(); // 暂停态下换壁纸：新视频同样不播
       markActive();
+      return result;
     },
     showWeb(url) {
       stopWebResizeReload(); // 先停上一轮 web 的 debounce/预载（旧帧留到新帧就绪再撤）
@@ -366,6 +410,15 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
     setOverlayOpacity(v) { overlay.style.opacity = String(v); },
     setBlur(enabled, radius) {
       fill.style.filter = enabled ? `blur(${radius}px)` : '';
+    },
+    setKenBurns(enabled) {
+      kenBurnsEnabled = enabled;
+      if (currentImage) applyKenBurns(currentImage, kenBurnsEnabled && currentImageKenBurnsAllowed);
+    },
+    setFitMode(mode) {
+      fitMode = mode;
+      applyFit(currentImage);
+      applyFit(currentVideo);
     },
     // 文字颜色跟随壁纸亮度（2026-09-03）：把颜色写为 --wp-chat-fg，
     // styles.ts 消息列文字消费者用它；null/空则移除（回主题默认）。移除时删变量。

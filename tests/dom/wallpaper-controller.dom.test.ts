@@ -7,11 +7,13 @@ function fakeLayer() {
   return {
     calls,
     showImage: (u: string, kenBurns: boolean) => calls.push({ name: 'image', args: [u, kenBurns] }),
-    showVideo: (u: string) => calls.push({ name: 'video', args: [u] }),
+    showVideo: async (u: string) => { calls.push({ name: 'video', args: [u] }); return 'ok' as const; },
     showSceneCanvas: (c: HTMLCanvasElement) => calls.push({ name: 'scene', args: [c] }),
     showNone: () => calls.push({ name: 'none', args: [] }),
     setOverlayOpacity: () => {},
     setBlur: () => {},
+    setKenBurns: () => {},
+    setFitMode: () => {},
   } as any;
 }
 

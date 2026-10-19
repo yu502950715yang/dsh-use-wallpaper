@@ -18,6 +18,11 @@ export declare const WallpaperSettingsSchema: z<Schemastery.ObjectS<NoInfer<{
     textColorMode: z<string, string, "defined">;
     textColor: z<string, string, "defined">;
     textOutline: z<number, number, "defined">;
+    fitMode: z<string, string, "defined">;
+    rotationEnabled: z<boolean, boolean, "defined">;
+    rotationIntervalMs: z<number, number, "defined">;
+    rotationOrder: z<string, string, "defined">;
+    frameCacheEnabled: z<boolean, boolean, "defined">;
 }>>, Schemastery.ObjectT<NoInfer<{
     selectedWallpaperId: z<string, string, "defined">;
     wallpaperDir: z<string, string, "defined">;
@@ -36,6 +41,11 @@ export declare const WallpaperSettingsSchema: z<Schemastery.ObjectS<NoInfer<{
     textColorMode: z<string, string, "defined">;
     textColor: z<string, string, "defined">;
     textOutline: z<number, number, "defined">;
+    fitMode: z<string, string, "defined">;
+    rotationEnabled: z<boolean, boolean, "defined">;
+    rotationIntervalMs: z<number, number, "defined">;
+    rotationOrder: z<string, string, "defined">;
+    frameCacheEnabled: z<boolean, boolean, "defined">;
 }>>, "plain">;
 export declare const Config: z<NoInfer<Schemastery.ObjectS<NoInfer<{
     selectedWallpaperId: z<string, string, "defined">;
@@ -55,6 +65,11 @@ export declare const Config: z<NoInfer<Schemastery.ObjectS<NoInfer<{
     textColorMode: z<string, string, "defined">;
     textColor: z<string, string, "defined">;
     textOutline: z<number, number, "defined">;
+    fitMode: z<string, string, "defined">;
+    rotationEnabled: z<boolean, boolean, "defined">;
+    rotationIntervalMs: z<number, number, "defined">;
+    rotationOrder: z<string, string, "defined">;
+    frameCacheEnabled: z<boolean, boolean, "defined">;
 }>>>, NoInfer<Schemastery.ObjectT<NoInfer<{
     selectedWallpaperId: z<string, string, "defined">;
     wallpaperDir: z<string, string, "defined">;
@@ -73,4 +88,9 @@ export declare const Config: z<NoInfer<Schemastery.ObjectS<NoInfer<{
     textColorMode: z<string, string, "defined">;
     textColor: z<string, string, "defined">;
     textOutline: z<number, number, "defined">;
+    fitMode: z<string, string, "defined">;
+    rotationEnabled: z<boolean, boolean, "defined">;
+    rotationIntervalMs: z<number, number, "defined">;
+    rotationOrder: z<string, string, "defined">;
+    frameCacheEnabled: z<boolean, boolean, "defined">;
 }>>>, "volatile">;

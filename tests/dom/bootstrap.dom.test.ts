@@ -90,6 +90,18 @@ describe('client bootstrap 集成', () => {
     expect(img).toBeNull();
     expect(fetchMock.mock.calls.filter((c) => c[0] === '/wallpapers/list')).toHaveLength(0);
   });
+  it('I2: 首次启用轮播但列表未 load ⇒ 懒加载一次；随后设置变更不重复拉列表', async () => {
+    const fetchMock = stubFetch(
+      [{ id: '1', title: 'A', type: 'image', hasScene: false, hasPreviewGif: false, previewUrl: '/p1' }],
+    );
+    await boot(settingsCtx({ ...EMPTY_SETTINGS, rotationEnabled: true }));
+    const listCalls = () => fetchMock.mock.calls.filter((c) => c[0] === '/wallpapers/list').length;
+    await vi.waitFor(() => expect(listCalls()).toBe(1));
+    // 列表已 load ⇒ 后续 applyRuntimeSettings（visibilitychange）不再重复拉
+    document.dispatchEvent(new Event('visibilitychange'));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(listCalls()).toBe(1);
+  });
   it('S1: bootstrap 注册设置菜单 settings.section（壁纸），不再注入 FAB', async () => {
     stubFetch(
       [{ id: '1', title: 'A', type: 'image', hasScene: false, hasPreviewGif: false, previewUrl: '/p1' }],

@@ -1,9 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createBackgroundLayer,
   WEB_RESIZE_RELOAD_DELAY_MS,
   WEB_RESIZE_RELOAD_TIMEOUT_MS,
 } from '../../src/client/background-layer.js';
+
+afterEach(() => { vi.useRealTimers(); });
 
 describe('createBackgroundLayer (DOM)', () => {
   it('renders image into fill and toggles kenburns class', () => {
@@ -471,6 +473,89 @@ describe('createBackgroundLayer (DOM)', () => {
       expect(v).not.toContain('url(');
       cleanup();
     });
+  });
+
+  // v0.8 显示效果：适配模式与 KenBurns 支持运行期切换（不重建媒体元素）。
+  it('setFitMode 对当前图片/视频生效，stretch → object-fit:fill', () => {
+    const layer = createBackgroundLayer(document.createElement('div'));
+    layer.showImage('/a.jpg', false);
+    layer.setFitMode('contain');
+    expect((layer.root.querySelector('img') as HTMLImageElement).style.objectFit).toBe('contain');
+    layer.setFitMode('stretch');
+    expect((layer.root.querySelector('img') as HTMLImageElement).style.objectFit).toBe('fill');
+  });
+
+  it('setKenBurns 对当前图片即时增删 class', () => {
+    const layer = createBackgroundLayer(document.createElement('div'));
+    layer.showImage('/a.jpg', true);
+    layer.setKenBurns(true);
+    expect(layer.root.querySelector('img')?.classList.contains('wp-kenburns')).toBe(true);
+    layer.setKenBurns(false);
+    expect(layer.root.querySelector('img')?.classList.contains('wp-kenburns')).toBe(false);
+  });
+
+  // 回归（v0.8 review）：kenBurns=false 必须作为用户状态留在 layer，否则启动/回退路径的 showImage 会覆盖它。
+  it('先 setKenBurns(false) 再 showImage 普通 jpg，仍不加 wp-kenburns', () => {
+    const layer = createBackgroundLayer(document.createElement('div'));
+    layer.setKenBurns(false); // 启动时 applySettingsToLayer 先于 select，此刻还没有图片
+    layer.showImage('/a.jpg', true);
+    expect(layer.root.querySelector('img')?.classList.contains('wp-kenburns')).toBe(false);
+  });
+
+  // GIF 预览以 showImage(..., false) 显示：面板开关不得把它重新打开（既有 per-wallpaper 语义）。
+  it('setKenBurns(true) 不复活 GIF 预览的 Ken Burns', () => {
+    const layer = createBackgroundLayer(document.createElement('div'));
+    layer.showImage('/p.gif', false);
+    layer.setKenBurns(true);
+    expect(layer.root.querySelector('img')?.classList.contains('wp-kenburns')).toBe(false);
+  });
+
+  it('setKenBurns 对普通 jpg 仍可启停', () => {
+    const layer = createBackgroundLayer(document.createElement('div'));
+    layer.showImage('/a.jpg', true);
+    layer.setKenBurns(false);
+    expect(layer.root.querySelector('img')?.classList.contains('wp-kenburns')).toBe(false);
+    layer.setKenBurns(true);
+    expect(layer.root.querySelector('img')?.classList.contains('wp-kenburns')).toBe(true);
+  });
+
+  it('换壁纸后不继承上一张的 Ken Burns 许可', () => {
+    const layer = createBackgroundLayer(document.createElement('div'));
+    layer.showImage('/a.jpg', true);
+    layer.showImage('/p.gif', false);
+    layer.setKenBurns(true);
+    expect(layer.root.querySelector('img')?.classList.contains('wp-kenburns')).toBe(false);
+  });
+
+  // v0.8 视频编码兜底：showVideo 三态（error = 编码不支持 / loadeddata = 可播 / 1.5s 超时）。
+  it('视频 loadeddata → ok；error → unsupported', async () => {
+    const layer = createBackgroundLayer(document.createElement('div'));
+    const p1 = layer.showVideo('/ok.mp4');
+    layer.root.querySelector('video')!.dispatchEvent(new Event('loadeddata'));
+    await expect(p1).resolves.toBe('ok');
+
+    const p2 = layer.showVideo('/bad.mp4');
+    layer.root.querySelector('video')!.dispatchEvent(new Event('error'));
+    await expect(p2).resolves.toBe('unsupported');
+  });
+
+  it('视频 1.5s 内无 loadeddata → timeout', async () => {
+    vi.useFakeTimers();
+    const layer = createBackgroundLayer(document.createElement('div'));
+    const p = layer.showVideo('/slow.mp4');
+    await vi.advanceTimersByTimeAsync(1600);
+    await expect(p).resolves.toBe('timeout');
+    vi.useRealTimers();
+  });
+
+  it('视频事件落地后清除超时定时器（不留悬挂 timer）', async () => {
+    vi.useFakeTimers();
+    const layer = createBackgroundLayer(document.createElement('div'));
+    const p = layer.showVideo('/ok.mp4');
+    layer.root.querySelector('video')!.dispatchEvent(new Event('loadeddata'));
+    await expect(p).resolves.toBe('ok');
+    expect(vi.getTimerCount()).toBe(0);
+    vi.useRealTimers();
   });
 });
 

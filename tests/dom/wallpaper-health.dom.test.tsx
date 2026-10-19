@@ -2,19 +2,33 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const selectMock = vi.fn(async () => {});
+// 捕获 controller 的入参：I3 要直接驱动 index.ts 接线的 sceneFallback（降级成功路径）。
+const controllerOpts = vi.hoisted(() => ({ value: null as any }));
 vi.mock('../../src/client/background-layer.js', () => ({
-  createBackgroundLayer: () => ({ root: document.createElement('div'), setOverlayOpacity() {}, setBlur() {}, setPaused() {}, showNone() {}, showImage() {}, showVideo() {}, showWeb() {} }),
+  createBackgroundLayer: () => ({ root: document.createElement('div'), setOverlayOpacity() {}, setBlur() {}, setPaused() {}, setKenBurns() {}, setFitMode() {}, showNone() {}, showImage() {}, showVideo: async () => 'ok', showWeb() {} }),
 }));
 vi.mock('../../src/client/wallpaper-controller.js', () => ({
-  createWallpaperController: () => ({ load: async () => {}, select: selectMock, applyTextStyle() {} }),
+  createWallpaperController: (_layer: any, opts: any) => {
+    controllerOpts.value = opts;
+    return { load: async () => [], select: selectMock, applyTextStyle() {}, getList: () => [] };
+  },
 }));
+// 降级链：I3 只关心「成功拿到 video/frame 后是否清记忆」，真实探测/抓帧流程不在此测。
+const sceneFallbackMock = vi.hoisted(() => ({
+  showSceneFallback: vi.fn(async () => 'frame' as 'video' | 'frame' | 'preview' | 'none'),
+  ensureSceneFrame: vi.fn(async () => null),
+}));
+vi.mock('../../src/client/scene-fallback.js', () => sceneFallbackMock);
 // settings-section 是 .tsx（依赖 React）：本测试只验 index.ts 的接线，把它整体替身掉
 vi.mock('../../src/client/settings-section.js', () => ({
   WallpaperSettingsSection: () => null,
   setWallpaperSelectHandler: vi.fn(),
   setWallpaperRuntimeHandler: vi.fn(),
   setWallpaperHealthHandler: vi.fn(),
+  setWallpaperMediaHandler: vi.fn(),
+  setWallpaperReselectHandler: vi.fn(),
   notifyWallpaperHealth: vi.fn(),
+  notifyWallpaperMedia: vi.fn(),
 }));
 vi.mock('../../src/client/styles.js', () => ({ injectWallpaperStyles: vi.fn() }));
 const rendererMock = vi.hoisted(() => ({
@@ -29,7 +43,7 @@ vi.mock('../../src/client/three-renderer.js', () => ({
 }));
 
 import { bootstrap } from '../../src/client/index.js';
-import { setWallpaperHealthHandler, setWallpaperSelectHandler, notifyWallpaperHealth } from '../../src/client/settings-section.js';
+import { setWallpaperHealthHandler, setWallpaperSelectHandler, setWallpaperReselectHandler, notifyWallpaperHealth } from '../../src/client/settings-section.js';
 import type { HealthSnapshot } from '../../src/client/render-health.js';
 
 const engine = () => (window as any).__wallpaperEngine;
@@ -401,5 +415,57 @@ describe('window.__wallpaperEngine 看护入口', () => {
     const w2ok: HealthSnapshot = { wallpaperId: 'w2', ok: true, failure: null, timing: { assembleMs: 1, firstFrameMs: 2 } };
     onHealth(w2ok);
     expect(notifyWallpaperHealth).toHaveBeenLastCalledWith(w2ok); // 守卫不误伤当前壁纸
+  });
+
+  // I3：降级成功只是「显示层成功」，live 渲染失败的事实要保留 —— 否则软失败的 3s 自动重试被取消。
+  const w1Info = { id: 'w1', title: 'S', type: 'scene', hasScene: true, hasPreviewGif: false, previewUrl: '/p1' };
+  it('I3: 软失败后降级到抓帧成功不清记忆 ⇒ 3s 冷却后仍自动重试一次', async () => {
+    vi.useFakeTimers();
+    bootstrap();
+    await boot();
+    const store = rendererOpts.value!.healthStore;
+    const onHealth = rendererMock.setOnHealth.mock.calls[0]![0] as (s: HealthSnapshot) => void;
+
+    engine().select('w1');
+    store.recordSoft('w1', 'load-error', '断流');
+    onHealth(store.snapshot('w1')); // 排 3s 冷却重试
+    sceneFallbackMock.showSceneFallback.mockResolvedValueOnce('frame');
+    await controllerOpts.value.sceneFallback(w1Info); // 降级到抓帧成功
+
+    expect(store.snapshot('w1').failure?.kind).toBe('load-error'); // 不 clear：失败事实保留
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(selectedIds().filter((id) => id === 'w1')).toHaveLength(2); // api.select + 自动重试
+  });
+
+  it('I3: 降级成功也不清硬失败记忆（面板「已记忆」跨刷新仍成立）', async () => {
+    bootstrap();
+    await tick();
+    const store = rendererOpts.value!.healthStore;
+
+    engine().select('w1');
+    store.recordHard('w1', 'exception', '装配异常');
+    sceneFallbackMock.showSceneFallback.mockResolvedValueOnce('frame');
+    await controllerOpts.value.sceneFallback(w1Info);
+
+    expect(store.snapshot('w1').failure?.hard).toBe(true);
+    expect(localStorage.getItem('we:renderfail:w1')).not.toBeNull();
+  });
+
+  // I4：面板属性开关拿的是自己的选中快照（可能晚于实际选中项）⇒ 陈旧 id 不得把壁纸切回去。
+  it('I4: 共享 reselect handler 收到陈旧 id 不重选，当前 id 才重选', async () => {
+    bootstrap();
+    await tick();
+    const calls = vi.mocked(setWallpaperReselectHandler).mock.calls;
+    const reselect = calls[calls.length - 1]![0] as (id: string) => void;
+
+    engine().select('w1');
+    selectMock.mockClear();
+    reselect('w2'); // 面板快照还是 w2（实际已是 w1）
+    await tick();
+    expect(selectMock).not.toHaveBeenCalled();
+
+    reselect('w1');
+    await tick();
+    expect(selectMock).toHaveBeenCalledWith('w1');
   });
 });

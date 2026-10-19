@@ -469,10 +469,11 @@ export function createThreeSceneRenderer(opts?: {
         const puppetMeshes = new Map<number, PuppetInstance>();
         const particles = new Map<number, LoadedParticleAssets>();
         // 用户属性表（visible 的 {user,key} 绑定）：三处过滤与 SceneScript 共用，故在对象循环之前建好。
+        // 按壁纸 id 读覆盖值 ⇒ 不同壁纸的同名属性键互不串（旧全局键由 getUserPropertyValue 回退）。
         const userProps: Record<string, unknown> = {};
         for (const obj of desc.objects) {
           if (obj.visible?.kind === 'user' && obj.visible.key) {
-            userProps[obj.visible.key] = getUserPropertyValue(obj.visible.key);
+            userProps[obj.visible.key] = getUserPropertyValue(obj.visible.key, id);
           }
         }
         for (const obj of desc.objects) {
@@ -985,6 +986,10 @@ export function createThreeSceneRenderer(opts?: {
       soundEnabledOverride = value;
       if (!value) { stopAudio(); return; }
       if (!currentAudio && lastAudioSpec) startAudio(lastAudioSpec.id, lastAudioSpec.sounds, true);
+    },
+    // 抓帧（v0.8 首帧缓存）：读取下一帧渲染结果；未装配/不支持 → null（调用方只跳过）。
+    async captureFrame(): Promise<Uint8Array | null> {
+      return current?.player?.captureNextFrame?.() ?? null;
     },
     // 释放当前 three 播放器 + wasm 模拟器（切壁纸/卸载时防泄漏）。
     // `frameCapture` 绑定创建它的 renderer（换 renderer 时已在 render 内换绑），随本 renderer 一并释放。

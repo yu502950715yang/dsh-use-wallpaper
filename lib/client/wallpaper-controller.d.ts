@@ -1,6 +1,7 @@
 import type { WallpaperInfo } from '../shared/types.js';
 import type { BackgroundLayer } from './background-layer.js';
 import type { HealthSnapshot } from './render-health.js';
+import type { MediaFallback } from './media-health.js';
 export interface SceneRendererLike {
     render(id: string, fg: HTMLCanvasElement, bg?: HTMLCanvasElement): Promise<boolean>;
     dispose?(): void;
@@ -15,6 +16,7 @@ export interface SceneRendererLike {
     setOnContextLost?(cb: ((id: string) => void) | null): void;
     getLastHealth?(): HealthSnapshot | null;
     setOnHealth?(cb: ((s: HealthSnapshot) => void) | null): void;
+    captureFrame?(): Promise<Uint8Array | null>;
 }
 /** 贴壁纸文字样式（设置面板可改）：实时读取，故由 index.ts 以 getter 注入。 */
 export interface TextStyleSettings {
@@ -32,9 +34,16 @@ export interface WallpaperControllerOptions {
     textStyle?: () => TextStyleSettings;
     /** preview 亮度测量；缺省用 luma.measureLuma（测试注入替身用）。 */
     measurePreviewLuma?: (url: string) => Promise<number | null>;
+    /** 视频解码失败（编码不支持/首帧超时）→ 面板提示用；`fallback` 为控制器实际回退的结果。 */
+    onMediaFailure?: (id: string, result: 'unsupported' | 'timeout', fallback: MediaFallback) => void;
+    /** scene 成功显示后的通知（index 用它触发首帧缓存抓帧）；不得阻塞渲染。 */
+    onSceneLive?: (info: WallpaperInfo) => void;
+    /** scene 渲染失败/不可用时的降级链（内嵌视频 → 抓帧 → preview）；抛错时控制器落回 preview。 */
+    sceneFallback?: (info: WallpaperInfo) => Promise<void>;
 }
 export declare function createWallpaperController(layer: BackgroundLayer, opts: WallpaperControllerOptions): {
     load: () => Promise<WallpaperInfo[]>;
     select: (id: string) => Promise<void>;
+    getList(): WallpaperInfo[];
     applyTextStyle(): void;
 };

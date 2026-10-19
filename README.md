@@ -39,7 +39,7 @@
 </tr>
 </table>
 
-> **录制方式（如实说明）**：两段动图与视频都是在**真实运行的 DSH 页面**上、由本插件的生产构建（`lib/`）实时渲染本机 workshop 壁纸后录制的浏览器画面，未做后期合成；壁纸通过插件自身的切换入口 `window.__wallpaperEngine.select(id)` 切换，因此画面里只有 DSH 界面与壁纸本身。画面已裁掉浏览器窗口边框（地址栏 / 标题栏）。**yuki恋冢爱 是 HEVC（H.265）视频壁纸，这段用 Chrome 录制** —— 浏览器能否播出视频壁纸取决于它自身的解码能力（同一系统上 Edge 会黑屏、Chrome 正常），与插件无关。壁纸素材版权归原作者所有，此处仅作效果展示，不再分发。
+> **录制方式（如实说明）**：两段动图与视频都是在**真实运行的 DSH 页面**上、由本插件的生产构建（`lib/`）实时渲染本机 workshop 壁纸后录制的浏览器画面，未做后期合成；壁纸通过插件自身的切换入口 `window.__wallpaperEngine.select(id)` 切换，因此画面里只有 DSH 界面与壁纸本身。画面已裁掉浏览器窗口边框（地址栏 / 标题栏）。**yuki恋冢爱 是 HEVC（H.265）视频壁纸，这段用 Chrome 录制** —— 浏览器能否**解码播放**视频壁纸取决于它自身的解码能力：同一系统上 Edge 缺少 HEVC 解码会回退到预览图并提示（v0.8 起），Chrome 正常播放。壁纸素材版权归原作者所有，此处仅作效果展示，不再分发。
 
 ---
 
@@ -50,11 +50,17 @@
 | 🎨 | **Scene 动态壁纸** | 在浏览器里实时算出来，不是静态图贴上去：背景图层与粒子系统各司其职，背景的缩放、透明度、亮度按原作者的设定还原 |
 | 🌊 | **粒子效果完整** | 雪、雨、花瓣、火星、雾、气泡等都按壁纸里的原始参数运动：重力、风向、湍流、寿命、颜色与大小渐变；**沿速度方向拉伸的拖尾**（雨丝、风痕、余烬，即 WE 的 `spritetrail`）也已实现 |
 | 🖼️ | **各种纹理都能解** | 主流压缩格式（DXT1/3/5、RGBA、R8、RG88）与多帧精灵动画（火把、雾、光晕）都能正确解出原图，不糊、不露黑边 |
-| 🎞️ | **视频 / 网页 / 图片壁纸** | 视频循环播放；网页壁纸在沙箱里加载；图片壁纸用预览图 + 缓慢缩放动效 |
+| 🎞️ | **视频 / 网页 / 图片壁纸** | 视频循环播放（编码不支持时自动回退预览并提示）；网页壁纸在沙箱里加载；图片壁纸用预览图 + 缓慢缩放动效 |
+| 🪜 | **多级降级链** | scene 渲染失败时依次尝试 **内嵌 MP4 → 抓帧 PNG → 作者预览图 → 空态**；每级失败只跳过，不白屏、不黑屏卡死 |
+| 🎬 | **视频编码兜底** | HEVC / H.265 等浏览器解不了的编码会**回退到预览图**，并在面板提示原因与自救建议，不再停在黑背景 |
 | 🧩 | **常见特效会动** | 水波、涟漪、水流、云飘、植物摆动、抖动、脉冲、淡入淡出，以及模糊、泛光、光轴、局部对比度这类需要多趟渲染的特效（少数特效仍然看不到，见下节） |
 | 🕒 | **文本对象会显示** | 壁纸里的时间/日期文本会实时走字（如 VHS 时间与日期），不再是空一块；带脚本的文本写法差异见下节 |
 | 🔋 | **省电与画质档位** | 一键暂停壁纸；切到后台自动暂停；渲染分辨率可降到 0.5× 省显存、提流畅 |
-| 🛡️ | **永不白屏** | 任何壁纸渲染失败，自动退回它的预览图，界面始终可用 |
+| 🔁 | **自动轮播** | 收藏 ≥2 张时只轮播收藏，否则轮播全部非隐藏壁纸；1 / 5 / 10 / 30 分钟、顺序或随机；暂停联动、手动选择重置计时、本轮失败跳过 |
+| 🔎 | **壁纸库管理** | 标题搜索、类型筛选、仅收藏、隐藏 / 恢复、最近使用排序；收藏与隐藏只存本地，不改壁纸文件、不打断当前播放 |
+| 🎛️ | **显示效果面板** | 遮罩不透明度、背景模糊、Ken Burns、画面适配（裁剪铺满 / 完整显示 / 拉伸铺满）都在面板里直接调，改完立即生效 |
+| 🎚️ | **用户属性面板** | 壁纸自带的可切换属性（v0.8 只做布尔可见性）在面板里直接开关，切换后自动重装配生效 |
+| 🛡️ | **失败不砸界面** | scene 渲染失败走**多级降级链**（内嵌 MP4 → 抓帧 → 预览图）；video 解码失败 / 首帧超时回退预览图并提示。**web 壁纸目前没有失败回退**（跨源 iframe 探测不到子帧错误，失败会停在空白）；界面本身始终可用 |
 | ⚙️ | **开箱即用** | 自动探测 Steam 壁纸目录（注册表 + Steam 库配置 + 常见路径），也可手动填写；改设置立刻生效，不用重启 |
 | 🚫 | **不依赖运行时** | 不需要 Wallpaper Engine 在后台运行；所需的引擎内置素材在你本机读取，不随插件分发第三方素材 |
 
@@ -137,16 +143,25 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 
 ## 🧰 配置项
 
-设置面板暴露的是**目录与选择**；其余是插件设置字段（可写在 profile `cordis.patch.yml` 的 `config` 中）：
+下表的**设置字段**都能写进 profile `cordis.patch.yml` 的 `config`（面板里改过的值优先）。面板按分区暴露的是：
+
+- **当前壁纸 / 壁纸目录**：`selectedWallpaperId`（缩略图点选）、`wallpaperDir` / `weAssetsDir`（手填 +「自动探测」）。
+- **显示效果**：`overlayOpacity`、`blurEnabled` / `blurRadius`、`kenBurns`、`fitMode`、`glowEnabled` / `glowThreshold` / `glowStrength`。
+- **性能与省电**：`paused`、`pauseOnHidden`、`qualityScale`、`soundEnabled`。
+- **轮播**：`rotationEnabled`、`rotationIntervalMs`、`rotationOrder`。
+- **文字可读性**：`textColorMode`、`textColor`、`textOutline`。
+
+`frameCacheEnabled` **没有面板控件**（默认 `true`；要改只能写 profile `config`）。壁纸库的**收藏 / 隐藏 / 最近使用**与布尔用户属性不是设置字段，只存 localStorage（见本节末尾）；**搜索 / 类型 / 排序是面板临时状态**，刷新即恢复默认。
 
 | 字段 | 默认 | 说明 |
 |---|---|---|
 | `selectedWallpaperId` | 空 | 选中的壁纸（空 = 恢复 DSH 默认背景） |
 | `wallpaperDir` | 空 | Steam workshop 壁纸目录 |
 | `weAssetsDir` | 空 | Wallpaper Engine 安装目录（读内置粒子/效果纹理） |
-| `overlayOpacity` | `0.35` | 壁纸层上方遮罩的不透明度 |
-| `blurEnabled` / `blurRadius` | `false` / `12` | 背景模糊与半径 |
-| `kenBurns` | `true` | 图片壁纸的缓慢缩放动效 |
+| `overlayOpacity` | `0.35` | 壁纸层上方遮罩的不透明度；面板「显示效果」可调 |
+| `blurEnabled` / `blurRadius` | `false` / `12` | 背景模糊与半径；面板「显示效果」可调 |
+| `kenBurns` | `true` | 图片壁纸的缓慢缩放动效；面板「显示效果」可调 |
+| `fitMode` | `cover` | 画面适配：`cover` 裁剪铺满 / `contain` 完整显示（可能留边）/ `stretch` 拉伸铺满；面板可调 |
 | `glowEnabled` | `true` | 应用级光晕（全屏后处理，仅 scene 壁纸） |
 | `glowThreshold` | `0.65` | 光晕亮度门槛（0–0.99，越低发光区域越多） |
 | `glowStrength` | `0.35` | 光晕强度（0–4；2026-09-21 由 `1.0` 下调，防亮部过曝 —— 旧值在亮部多的壁纸上 `luma>200` 占比会涨 1.5 倍以上） |
@@ -154,6 +169,10 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 | `pauseOnHidden` | `true` | 页面切到后台/最小化时自动暂停，回到前台恢复 |
 | `qualityScale` | `1` | 画质档位：渲染像素比倍率（0.5–1，越小越省显存） |
 | `soundEnabled` | `true` | 壁纸音效（sound 对象播放 + 驱动频谱类效果）；面板有开关，改完立即生效 |
+| `rotationEnabled` | `false` | 自动轮播开关 |
+| `rotationIntervalMs` | `300000` | 轮播间隔（1–30 分钟；面板档位为 1 / 5 / 10 / 30 分钟） |
+| `rotationOrder` | `sequential` | 轮播顺序：`sequential` 顺序 / `random` 随机 |
+| `frameCacheEnabled` | `true` | scene 首帧抓帧缓存（写入数据目录 `frames/`，供降级链使用）；面板无控件 |
 
 优先级：用户设置 > profile `cordis.patch.yml` 的 `config` > 缺省。
 
@@ -173,7 +192,7 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 > 
 > 说明：旧版兼容层是过渡性的。待 DSH 新版本稳定、本插件不再需要支持 ≤0.1.6 时，按 [迁移文档 §9「后续清理清单」](docs/superpowers/plans/2026-09-23-dsh-settings-compat-migration.md) 逐项移除（清单区分了可删的旧版专用代码、可简化的兼容技巧与**必须保留的 0.1.7 适配**）。
 
-> ⚠️ **如实说明**：`overlayOpacity` / `blurEnabled` / `blurRadius` / `kenBurns` 目前**只有设置字段，设置面板里没有对应控件** —— 要调整需走 profile 配置。（此前 README 称「面板里可实时调节」，与代码不符，此处已订正。）**面板里有控件的是**：`glowEnabled`、`glowThreshold`、`glowStrength`、`paused`、`pauseOnHidden`、`qualityScale`，**改完立即生效**（不必重选壁纸）；其中光晕的阈值/强度是滑杆。
+> 💡 **设置字段与本地状态**：上表的都是**设置字段**，可写进 profile `cordis.patch.yml` 的 `config`；面板改动除用户属性（切换后重装配当前壁纸才生效）外都**立即生效**。其中 `fitMode` / Ken Burns 只对图片 / 视频壁纸生效（scene 由渲染器自绘；Ken Burns 仅图片）。壁纸库的**收藏 / 隐藏 / 最近使用**（`we:fav` / `we:hidden` / `we:recent`）与**布尔用户属性**（`we:userprop:<wallpaperId>:<key>`）是浏览器侧 UI 状态，**只存 localStorage**，不能写进 profile config，也不跨浏览器 / 端口同步。
 > 
 > ⚠️ 光晕默认值 `0.65` / `0.35` 是 **2026-09-21 由用户在真机面板上试出来的**（先按「亮部不过曝」把强度从 `1.0` 下调，阈值保持 `0.65` 以保留光晕感；6 张壁纸的参数网格数据见 `AGENT.md` §7.1）。它只保证「亮部不过曝 + 光晕仍可感」，**不是**与桌面 WE 逐像素对齐的结果 —— 你觉得还要更亮/更暗，面板两个滑杆可即时微调。
 
@@ -185,7 +204,7 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 - **尽量还原原版观感**：混合方式、粒子大小、发光叠加、色调都照着 Wallpaper Engine 的规则来，并以桌面版逐像素对拍校准过。
 - **支持格式够全**：主流 scene 壁纸的纹理压缩格式（DXT1/3/5、RGBA、R8、RG88）与多帧精灵动画（火把、雾、光晕）都能解出原图，不会糊成一片或露黑边。
 - **高清屏不浪费**：按设备像素比渲染，Retina / 高 DPI 屏上线条依然锐利。
-- **出问题也不会砸掉你的界面**：任何一张壁纸渲染失败或算不出可见内容，就自动退回它的预览图（带缓慢缩放动效），**不会白屏、不会黑屏卡死**。
+- **出问题也不会砸掉你的界面**：scene 渲染失败或算不出可见内容时按**多级降级链**逐级回退（内嵌 MP4 → 抓帧 → 预览图）；视频壁纸解码失败或首帧超时会回退预览图并提示。**web 壁纸没有失败回退**（跨源 iframe 探测不到子帧错误），但界面本身始终可用。
 - **换来这些的代价很小**：纯浏览器原生能力 + WebGL，**不需要 Wallpaper Engine 在后台运行**，也不需要 WebGPU。
 
 ---
@@ -206,7 +225,9 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 - **壁纸音效默认播放**（设置 → 壁纸可关），随声音变化的效果也会跟着动；频谱柱状可视化尚未支持。
 - **应用级光晕默认开启**（设置 → 壁纸 → 「光晕」，阈值 / 强度可调、改完立即生效）：这是"桌面更亮"的主要来源。**嫌亮就调低强度或调高阈值；觉得偏暗就把强度调到 1~1.5。** 仅对 scene 壁纸生效。
 - **输入框用半透明玻璃底**（不模糊），避免桌面端在输出回复时出现滚动条抖动。
-- **视频壁纸能不能播，取决于浏览器的解码能力**：视频壁纸直接交给浏览器的 `<video>` 解码 —— HEVC / H.265 需要系统装有对应的解码扩展，缺了它的浏览器会**停在黑背景**（不报错、也不退回封面图）；换 Chrome 等能解该编码的浏览器即可。上面展示的 yuki恋冢爱（HEVC）在 Edge 上就是这个下场。
+- **视频壁纸能不能播，取决于浏览器的解码能力**：视频壁纸直接交给浏览器的 `<video>` 解码 —— HEVC / H.265 需要系统装有对应的解码扩展。**缺解码扩展时不再停在黑背景**：解码失败或 1.5 秒内没有首帧，会自动回退到预览图，并在设置 →「Wallpaper 壁纸」面板里提示原因（没有预览图则回退空态并同样提示）。想真正播放 HEVC，请换 Chrome 等能解该编码的浏览器，或把视频转成 H.264。
+- **scene 渲染失败时按多级降级链回退**：见下方「降级链（scene 渲染失败时）」小节。
+- **抓帧缓存放在本机数据目录**：scene 首帧渲染成功后会抓一张 PNG 存到 `~/.dsh-use-wallpaper/frames/`；设环境变量 `DSH_USE_WALLPAPER_DATA_DIR` 可整体搬走。单张 ≤ 12MB、最多 200 张（按修改时间淘汰最旧），随时可删 —— 删掉只会让下次渲染成功时重新抓，不影响画面。
 - **越大的壁纸越吃显存**：4K 分辨率下单张壁纸可能占用数百 MB 显存。追求省电/流畅可以用小分辨率或选择简单的壁纸。
 
 **环境要求**
@@ -215,6 +236,30 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 - **多个 Steam 库都能探测到**：自动探测读 `steamapps/libraryfolders.vdf`（新版 Steam 的实际位置）与 `config/` 副本；此前只读安装根，装在第二个库里的壁纸会探测不到。
 - **需要本机装有 Wallpaper Engine**：插件要从中读取内置的粒子与特效素材。没装或路径没配对时，粒子会退化为纯色圆点（画面仍在，不会白屏）。
 - **浏览器需支持 WebGL2**（Chrome / Edge 均可）；**为了更接近 Wallpaper Engine 的效果，推荐使用 Chrome**。不支持 WebGL2 时自动退回预览图。
+
+### 降级链（scene 渲染失败时）
+
+scene 壁纸是实时算出来的，素材写法又千差万别，所以渲染失败是正常可能出现的情况。此时画面按下面的顺序逐级回退，**每一级失败只跳过、不弹错、不白屏**：
+
+```
+实时渲染（three.js 播放器：背景图层 + 粒子）
+    │ 模块加载 / 装配失败，或渲染出 0 个可见对象 / 渲染异常
+    ▼
+① 内嵌 MP4 —— 作者打包在 .tex 里的视频纹理（动态画面优先）
+    │ 没有内嵌视频 / 解码失败 / 1.5s 内无首帧
+    ▼
+② 抓帧 PNG —— 上次成功渲染时缓存的当前画面（最接近作者构图）
+    │ 还没有抓到 / 帧文件已被删除
+    ▼
+③ 作者预览图 —— Wallpaper Engine 工坊页的封面（图片或 GIF）
+    │ 作者没有提供 preview
+    ▼
+④ 空态 —— 恢复 DSH 默认背景
+```
+
+- 顺序的理由：**动态优先于静态**（内嵌 MP4 是作者原意），**当前构图优先于封面**（抓帧比工坊封面更接近实际画面）。
+- 视频壁纸（非 scene）走另一条更短的链：`<video>` 解码 → 失败 / 首帧超时 → 预览图 → 空态，并在面板提示编码问题。
+- 抓帧缓存目录是 `~/.dsh-use-wallpaper/frames/`（可用 `DSH_USE_WALLPAPER_DATA_DIR` 覆盖），详见上面的「画面表现」。
 
 **发现壁纸有问题？欢迎反馈**
 
@@ -241,10 +286,13 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 <sub>面向开发者与贡献者 —— 只想用的话可以跳过这一节。</sub>
 
 <details>
-<summary>展开目录结构与渲染回退链</summary>
+<summary>展开目录结构与降级链</summary>
 
 ```
 src/host/     Node 侧（Cordis 插件）：扫描壁纸目录、解包 PKGV0001、HTTP 路由、Steam 路径探测、settings
+              ├─ data-dir / scene-frame-store  插件数据目录与抓帧 PNG 存储（原子写 + 限额淘汰）
+              ├─ scene-media-probe             从 .tex 头探测内嵌 MP4（video-probe / embedded-video）
+              └─ user-props                    project.json × scene.json 的布尔属性交集
 src/client/   浏览器侧（esbuild → dist/client.js），渲染主路径在这里
               ├─ threejs-player.ts    three.js 播放器（背景 Mesh + 粒子 billboard）
               ├─ three-renderer.ts    生产接线（loadSceneToThree + resize/dpr + 材质混合解析）
@@ -252,6 +300,9 @@ src/client/   浏览器侧（esbuild → dist/client.js），渲染主路径在�
               ├─ object-effects.ts    对象级效果链编排（ObjectEffectStage）
               ├─ effect-runner.ts     效果执行器（uniform 绑定 / 纹理槽 / pass 推进）
               ├─ scene-json / scene-assets / scene-graph / visibility  场景解析与几何
+              ├─ scene-fallback / frame-export  scene 降级链（内嵌 MP4 → 抓帧 → 预览）与首帧 PNG 导出
+              ├─ rotation / library-view / local-store  轮播调度、库筛选/收藏/隐藏、localStorage 封装
+              ├─ wallpaper-properties / media-health  布尔用户属性面板、视频解码失败提示
               ├─ wasm-loader.ts       wasm 引擎加载（只服务 CPU 粒子模拟）
               └─ index / wallpaper-controller / background-layer / settings / styles  引导、控制、背景层、设置
 src/shared/   跨 host/client 类型（WallpaperInfo、SceneDescription、SceneObject 等）
@@ -263,13 +314,25 @@ e2e/          端到端渲染验证（headless Edge + 生产 lib/ 逐像素判�
 docs/         开发配置（dev-setup.md）；设计文档与实施计划（superpowers/*）；技术细节（technical-notes.md）；效果视频（videos/*）
 ```
 
-**渲染回退链**
+**降级链**
 
 ```
+scene 壁纸：
 three.js 播放器（背景图层 + 粒子）
     │ 模块加载/创建失败，或渲染出 0 个可见对象
     ▼
-preview 图 + Ken Burns（永不白屏）
+内嵌 MP4（.tex 里的 Video 纹理）
+    │ 无 / 播放失败 / 1.5s 无首帧
+    ▼
+抓帧 PNG（<dataDir>/frames/<id>.png；默认 ~/.dsh-use-wallpaper）
+    │ 无缓存
+    ▼
+作者 preview 图 + Ken Burns
+    │ 无 preview
+    ▼
+空态（DSH 默认背景）
+
+video 壁纸：<video> 解码 → 失败 / 首帧超时 → preview 图 → 空态（面板提示编码问题）
 ```
 
 </details>

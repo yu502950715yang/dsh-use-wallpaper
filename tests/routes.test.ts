@@ -1,9 +1,11 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync, utimesSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, utimesSync, existsSync, readdirSync } from 'node:fs';
+import { EventEmitter } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { registerWallpaperRoutes, getPkgReader } from '../src/host/routes.js';
 import { makePkg } from './fixtures/make-pkg.js';
+import { makeTex } from './fixtures/make-tex.js';
 
 // Fix round 1：测试与实现适配真实 WebRoute 形态
 // （{ kind: 'exact'|'prefix', path, handler(req, res) }，无 params/query 注入，
@@ -42,6 +44,22 @@ function makeRes() {
   return res;
 }
 
+// 最小可读请求：EventEmitter + headers/method；body 在 handler 挂好监听后异步吐出
+function makeBodyReq(url: string, opts: { method?: string; headers?: Record<string, string>; body?: Buffer } = {}) {
+  const req: any = new EventEmitter();
+  req.url = url;
+  req.method = opts.method ?? 'GET';
+  req.headers = opts.headers ?? {};
+  req.resume = () => {};
+  if (opts.body) {
+    setImmediate(() => { req.emit('data', opts.body); req.emit('end'); });
+  }
+  return req;
+}
+
+const MP4 = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypisom'), Buffer.alloc(16)]);
+const FRAME_PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(16)]);
+
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'wp-route-'));
   staticDir = join(dir, 'static');
@@ -58,10 +76,12 @@ describe('registerWallpaperRoutes', () => {
       { kind: 'exact', path: '/wallpapers/list' },
       { kind: 'prefix', path: '/wallpapers/media' },
       { kind: 'prefix', path: '/wallpapers/scene' },
+      { kind: 'prefix', path: '/wallpapers/frame' },
       { kind: 'prefix', path: '/wallpapers/static' },
       { kind: 'prefix', path: '/wallpapers/web' },
       { kind: 'exact', path: '/wallpapers/particle-texture' },
       { kind: 'exact', path: '/wallpapers/probe' },
+      { kind: 'exact', path: '/wallpapers/properties' },
     ]);
   });
   it('serves list route returning scanned wallpapers', async () => {
@@ -514,5 +534,272 @@ describe('registerWallpaperRoutes', () => {
       expect(resolveEngineAsset(weDir, 'fonts/nope.ttf')).toBeNull();
       expect(resolveEngineAsset(weDir, 'fonts')).toBeNull(); // 目录不是文件
     });
+  });
+
+  // ── 降级链：内嵌 MP4 探测/取流 + 抓帧缓存 ─────────────────────────────────────────
+  it('video-probe / embedded-video / frame 路由', async () => {
+    const wallDir = mkdtempSync(join(tmpdir(), 'we-routes-'));
+    const wall = join(wallDir, '42');
+    mkdirSync(wall, { recursive: true });
+    writeFileSync(join(wall, 'project.json'), JSON.stringify({ type: 'Scene', file: 'scene.pkg' }));
+    writeFileSync(join(wall, 'scene.pkg'), makePkg([
+      { name: 'scene.json', data: Buffer.from(JSON.stringify({ objects: [] })) },
+      { name: 'materials/video.tex', data: makeTex({ flags: 32, container: 'TEXB0004', images: [[{ width: 2, height: 2, data: MP4 }]] }) },
+    ]));
+    const frameDir = mkdtempSync(join(tmpdir(), 'we-frames-'));
+    try {
+      registerWallpaperRoutes(makeCtx(), { wallpaperDir: wallDir, dataDir: frameDir });
+      const sceneRoute = routes.get('prefix /wallpapers/scene')!;
+      const frameRoute = routes.get('prefix /wallpapers/frame')!;
+
+      const probeRes = makeRes();
+      await sceneRoute({ url: '/wallpapers/scene/42/video-probe' }, probeRes);
+      expect(probeRes.statusCode).toBe(200);
+      expect(JSON.parse(probeRes.body.toString('utf8'))).toEqual({ video: true });
+
+      const videoRes = makeRes();
+      await sceneRoute({ url: '/wallpapers/scene/42/embedded-video' }, videoRes);
+      expect(videoRes.statusCode).toBe(200);
+      expect(videoRes.headers['Content-Type']).toBe('video/mp4');
+      expect(videoRes.headers['Cache-Control']).toBe('no-store');
+      expect(Buffer.from(videoRes.body).subarray(4, 8).toString('ascii')).toBe('ftyp');
+
+      // 无 pkg / 无样本 → 200 { video:false } 与 404（不是 500）
+      const noPkgProbe = makeRes();
+      await sceneRoute({ url: '/wallpapers/scene/99/video-probe' }, noPkgProbe);
+      expect(noPkgProbe.statusCode).toBe(200);
+      expect(JSON.parse(noPkgProbe.body.toString('utf8'))).toEqual({ video: false });
+      const noPkgVideo = makeRes();
+      await sceneRoute({ url: '/wallpapers/scene/99/embedded-video' }, noPkgVideo);
+      expect(noPkgVideo.statusCode).toBe(404);
+
+      const postRes = makeRes();
+      await frameRoute(makeBodyReq('/wallpapers/frame/42', {
+        method: 'POST',
+        headers: { 'content-type': 'image/png', 'content-length': String(FRAME_PNG.length) },
+        body: FRAME_PNG,
+      }), postRes);
+      expect(postRes.statusCode).toBe(201);
+      expect(JSON.parse(postRes.body.toString('utf8'))).toEqual({ ok: true });
+      expect(existsSync(join(frameDir, 'frames', '42.png'))).toBe(true);
+
+      const getRes = makeRes();
+      await frameRoute({ url: '/wallpapers/frame/42' }, getRes);
+      expect(getRes.statusCode).toBe(200);
+      expect(getRes.headers['Content-Type']).toBe('image/png');
+      expect(getRes.headers['Cache-Control']).toBe('no-store');
+      expect(Buffer.from(getRes.body).equals(FRAME_PNG)).toBe(true);
+
+      // HEAD 走 GET 分支（Node 对 HEAD 自动省略 body），Task 6 的存在性探测依赖它
+      const headRes = makeRes();
+      await frameRoute(makeBodyReq('/wallpapers/frame/42', { method: 'HEAD' }), headRes);
+      expect(headRes.statusCode).toBe(200);
+
+      const delRes = makeRes();
+      await frameRoute(makeBodyReq('/wallpapers/frame/42', { method: 'DELETE' }), delRes);
+      expect(delRes.statusCode).toBe(200);
+      expect(JSON.parse(delRes.body.toString('utf8'))).toEqual({ ok: true });
+
+      const goneRes = makeRes();
+      await frameRoute({ url: '/wallpapers/frame/42' }, goneRes);
+      expect(goneRes.statusCode).toBe(404);
+    } finally {
+      rmSync(wallDir, { recursive: true, force: true });
+      rmSync(frameDir, { recursive: true, force: true });
+    }
+  });
+
+  it('frame 路由：媒体类型/大小上限/缺失 dataDir/非法 id', async () => {
+    const frameDir = mkdtempSync(join(tmpdir(), 'we-frames-'));
+    try {
+      registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir, dataDir: frameDir });
+      const frameRoute = routes.get('prefix /wallpapers/frame')!;
+
+      // 非 image/png → 415
+      const wrongType = makeRes();
+      await frameRoute(makeBodyReq('/wallpapers/frame/1', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: Buffer.from('{}'),
+      }), wrongType);
+      expect(wrongType.statusCode).toBe(415);
+
+      // Content-Length 预检超限 → 413（无需真的发 body）
+      const declaredBig = makeRes();
+      await frameRoute(makeBodyReq('/wallpapers/frame/1', {
+        method: 'POST',
+        headers: { 'content-type': 'image/png', 'content-length': String(12 * 1024 * 1024 + 1) },
+      }), declaredBig);
+      expect(declaredBig.statusCode).toBe(413);
+
+      // 无 Content-Length，流式累计超限 → 413
+      const streamBig = makeRes();
+      await frameRoute(makeBodyReq('/wallpapers/frame/1', {
+        method: 'POST',
+        headers: { 'content-type': 'image/png' },
+        body: Buffer.concat([FRAME_PNG, Buffer.alloc(12 * 1024 * 1024)]),
+      }), streamBig);
+      expect(streamBig.statusCode).toBe(413);
+
+      // 未超限但不是 PNG → 400
+      const badPng = makeRes();
+      await frameRoute(makeBodyReq('/wallpapers/frame/1', {
+        method: 'POST', headers: { 'content-type': 'image/png' }, body: Buffer.from('not png'),
+      }), badPng);
+      expect(badPng.statusCode).toBe(400);
+
+      // 非法 id / 多段路径 → 400
+      const badId = makeRes();
+      await frameRoute({ url: '/wallpapers/frame/1%2F2' }, badId);
+      expect(badId.statusCode).toBe(400);
+      const extraSeg = makeRes();
+      await frameRoute({ url: '/wallpapers/frame/1/x' }, extraSeg);
+      expect(extraSeg.statusCode).toBe(400);
+      const badProbeId = makeRes();
+      await routes.get('prefix /wallpapers/scene')!({ url: '/wallpapers/scene/1%2F2/video-probe' }, badProbeId);
+      expect(badProbeId.statusCode).toBe(400);
+
+      // DELETE 幂等
+      const del1 = makeRes();
+      await frameRoute(makeBodyReq('/wallpapers/frame/2', { method: 'DELETE' }), del1);
+      const del2 = makeRes();
+      await frameRoute(makeBodyReq('/wallpapers/frame/2', { method: 'DELETE' }), del2);
+      expect(JSON.parse(del1.body.toString('utf8'))).toEqual({ ok: true });
+      expect(JSON.parse(del2.body.toString('utf8'))).toEqual({ ok: true });
+
+      // 无 dataDir：POST → 500；GET → 404（无帧，不误报 500）
+      registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
+      const noDataDirFrameRoute = routes.get('prefix /wallpapers/frame')!;
+      const noDataDirPost = makeRes();
+      await noDataDirFrameRoute(makeBodyReq('/wallpapers/frame/3', {
+        method: 'POST', headers: { 'content-type': 'image/png' }, body: FRAME_PNG,
+      }), noDataDirPost);
+      expect(noDataDirPost.statusCode).toBe(500);
+      const noDataDirGet = makeRes();
+      await noDataDirFrameRoute({ url: '/wallpapers/frame/3' }, noDataDirGet);
+      expect(noDataDirGet.statusCode).toBe(404);
+    } finally {
+      rmSync(frameDir, { recursive: true, force: true });
+    }
+  });
+
+  // ── v0.8 Task 7：壁纸用户属性（project.json bool ∩ scene.json visible.user）────────
+  it('GET /wallpapers/properties：返回 bool × visible.user 交集（label 去 HTML）', async () => {
+    const d = join(dir, 'props1');
+    mkdirSync(d, { recursive: true });
+    writeFileSync(join(d, 'project.json'), JSON.stringify({
+      type: 'scene',
+      general: { properties: {
+        clouds: { order: 2.5, text: '<b>云层</b>', type: 'bool', value: true },
+        speed: { order: 1, text: '速度', type: 'slider', value: 1 },
+        locked: { order: 3, text: '锁定', type: 'bool', value: true, editable: false },
+      } },
+    }));
+    writeFileSync(join(d, 'scene.pkg'), makePkg([{ name: 'scene.json', data: Buffer.from(JSON.stringify({
+      objects: [
+        { visible: { user: 'clouds', value: true } },
+        { visible: { user: 'speed', value: true } },
+        { visible: { user: 'locked', value: true } },
+        { visible: true },
+      ],
+    })) }]));
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
+    const res = makeRes();
+    await routes.get('exact /wallpapers/properties')!({ url: '/wallpapers/properties?id=props1' }, res);
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['Cache-Control']).toBe('no-store');
+    expect(JSON.parse(res.body.toString('utf8'))).toEqual({
+      properties: [{ key: 'clouds', label: '云层', type: 'bool', value: true, order: 2.5 }],
+    });
+    // 只读：请求后目录里没有新增/改写文件
+    expect(readdirSync(d).sort()).toEqual(['project.json', 'scene.pkg']);
+  });
+
+  it('GET /wallpapers/properties：非法/缺失 id → 400', async () => {
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
+    const handler = routes.get('exact /wallpapers/properties')!;
+    for (const url of [
+      '/wallpapers/properties',
+      '/wallpapers/properties?id=',
+      '/wallpapers/properties?id=..%2Fetc',
+      '/wallpapers/properties?id=a%2Fb',
+    ]) {
+      const res = makeRes();
+      await handler({ url }, res);
+      expect(res.statusCode).toBe(400);
+    }
+  });
+
+  it('GET /wallpapers/properties：project.json / scene.pkg / scene.json 缺失或解析失败 → 200 空数组（不 500）', async () => {
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
+    const handler = routes.get('exact /wallpapers/properties')!;
+    const bodyOf = (res: any) => JSON.parse(res.body.toString('utf8'));
+
+    // 目录都不存在（project.json 缺失）
+    let res = makeRes();
+    await handler({ url: '/wallpapers/properties?id=nope' }, res);
+    expect(res.statusCode).toBe(200);
+    expect(bodyOf(res)).toEqual({ properties: [] });
+
+    // project.json 坏 JSON
+    const bad = join(dir, 'bad');
+    mkdirSync(bad, { recursive: true });
+    writeFileSync(join(bad, 'project.json'), '{oops');
+    res = makeRes();
+    await handler({ url: '/wallpapers/properties?id=bad' }, res);
+    expect(res.statusCode).toBe(200);
+    expect(bodyOf(res)).toEqual({ properties: [] });
+
+    // 有 project.json 但没有 scene.pkg
+    const nopkg = join(dir, 'nopkg');
+    mkdirSync(nopkg, { recursive: true });
+    writeFileSync(join(nopkg, 'project.json'), JSON.stringify({
+      general: { properties: { clouds: { type: 'bool', value: true } } },
+    }));
+    res = makeRes();
+    await handler({ url: '/wallpapers/properties?id=nopkg' }, res);
+    expect(res.statusCode).toBe(200);
+    expect(bodyOf(res)).toEqual({ properties: [] });
+
+    // pkg 里没有 scene.json
+    const noscene = join(dir, 'noscene');
+    mkdirSync(noscene, { recursive: true });
+    writeFileSync(join(noscene, 'project.json'), JSON.stringify({ general: { properties: {} } }));
+    writeFileSync(join(noscene, 'scene.pkg'), makePkg([{ name: 'other.json', data: Buffer.from('{}') }]));
+    res = makeRes();
+    await handler({ url: '/wallpapers/properties?id=noscene' }, res);
+    expect(res.statusCode).toBe(200);
+    expect(bodyOf(res)).toEqual({ properties: [] });
+
+    // scene.json 坏 JSON
+    const badscene = join(dir, 'badscene');
+    mkdirSync(badscene, { recursive: true });
+    writeFileSync(join(badscene, 'project.json'), JSON.stringify({ general: { properties: {} } }));
+    writeFileSync(join(badscene, 'scene.pkg'), makePkg([{ name: 'scene.json', data: Buffer.from('{oops') }]));
+    res = makeRes();
+    await handler({ url: '/wallpapers/properties?id=badscene' }, res);
+    expect(res.statusCode).toBe(200);
+    expect(bodyOf(res)).toEqual({ properties: [] });
+  });
+
+  it('GET /wallpapers/properties：每次请求重读 project.json（不缓存可变状态）', async () => {
+    const d = join(dir, 'props2');
+    mkdirSync(d, { recursive: true });
+    const scenePkg = makePkg([{ name: 'scene.json', data: Buffer.from(JSON.stringify({
+      objects: [{ visible: { user: 'clouds', value: true } }],
+    })) }]);
+    writeFileSync(join(d, 'scene.pkg'), scenePkg);
+    writeFileSync(join(d, 'project.json'), JSON.stringify({
+      general: { properties: { clouds: { type: 'bool', value: true, text: '云层' } } },
+    }));
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
+    const handler = routes.get('exact /wallpapers/properties')!;
+    const first = makeRes();
+    await handler({ url: '/wallpapers/properties?id=props2' }, first);
+    expect(JSON.parse(first.body.toString('utf8')).properties).toHaveLength(1);
+
+    // 关掉该属性（去掉 properties 里的键）后同一进程内的下一次请求必须看到新值
+    writeFileSync(join(d, 'project.json'), JSON.stringify({ general: { properties: {} } }));
+    const second = makeRes();
+    await handler({ url: '/wallpapers/properties?id=props2' }, second);
+    expect(JSON.parse(second.body.toString('utf8'))).toEqual({ properties: [] });
   });
 });

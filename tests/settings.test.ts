@@ -32,6 +32,26 @@ describe('wallpaper settings schema', () => {
     // 未知模式不在 schema 层拒绝（client 归一为 auto），避免旧版面板写入即失败
     expect(WallpaperSettingsSchema({ textColorMode: 'whatever' }).textColorMode).toBe('whatever');
   });
+  it('v0.8 新字段有缺省值且 schema 往返保留', () => {
+    const parsed = WallpaperSettingsSchema({});
+    expect(parsed.fitMode).toBe('cover');
+    expect(parsed.rotationEnabled).toBe(false);
+    expect(parsed.rotationIntervalMs).toBe(300000);
+    expect(parsed.rotationOrder).toBe('sequential');
+    expect(parsed.frameCacheEnabled).toBe(true);
+    const round = WallpaperSettingsSchema({
+      ...parsed,
+      fitMode: 'contain',
+      rotationEnabled: true,
+      rotationIntervalMs: 60000,
+      rotationOrder: 'random',
+      frameCacheEnabled: false,
+    });
+    expect(round).toMatchObject({
+      fitMode: 'contain', rotationEnabled: true, rotationIntervalMs: 60000,
+      rotationOrder: 'random', frameCacheEnabled: false,
+    });
+  });
   it('rejects opacity outside [0,1]', () => {
     expect(() => WallpaperSettingsSchema({ overlayOpacity: 2 })).toThrow();
   });

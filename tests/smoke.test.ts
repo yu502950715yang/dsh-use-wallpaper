@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import * as host from '../src/host/index.js';
+import { DATA_DIR_ENV } from '../src/host/data-dir.js';
 
 describe('host entry', () => {
+  it('数据目录不指向真实 home（不依赖 setup 的临时目录前缀）', () => {
+    const dataDir = process.env[DATA_DIR_ENV];
+    expect(dataDir).toBeTruthy();
+    // setup 自建时是 tmpdir 下的随机目录；CI/外部显式设置 env 时尊重原值 —— 都不能是真实 home。
+    expect(dataDir).not.toBe(join(homedir(), '.dsh-use-wallpaper'));
+  });
   it('exports an apply function', () => {
     expect(typeof host.apply).toBe('function');
   });

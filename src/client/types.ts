@@ -5,6 +5,12 @@ export type BackgroundPlan =
   | { kind: 'web'; url: string }
   | { kind: 'none' };
 
+/** 壁纸画面适配模式（stretch 对应 CSS object-fit: fill）。 */
+export type FitMode = 'cover' | 'contain' | 'stretch';
+
+/** 自动轮播顺序：顺序或随机。 */
+export type RotationOrder = 'sequential' | 'random';
+
 export interface ClientSettings {
   selectedWallpaperId: string;
   // 壁纸目录与引擎目录（空 = 未配置，回退 config/缺省）；设置面板可写
@@ -35,4 +41,10 @@ export interface ClientSettings {
   textColor: string;
   /** 文字描边档位：0 = 关（默认）；1-3 递增（对立色阴影，背景花哨时的兜底层）。 */
   textOutline: number;
+  // v0.8 显示/轮播：画面适配、自动轮播（间隔/顺序）、scene 首帧缓存。
+  fitMode: FitMode;
+  rotationEnabled: boolean;
+  rotationIntervalMs: number;
+  rotationOrder: RotationOrder;
+  frameCacheEnabled: boolean;
 }

@@ -4,6 +4,7 @@ import { resolveBackground } from './background-layer.js';
 import { measureLuma, lumaToTextColor } from './luma.js';
 import { type TextColorMode, manualTextColor, normalizeMode, normalizeOutlineLevel } from './text-color.js';
 import type { HealthSnapshot } from './render-health.js';
+import type { MediaFallback } from './media-health.js';
 
 // scene 渲染器的接口形态（three-renderer 的生产实现与测试替身都按此形状提供）。
 export interface SceneRendererLike {
@@ -22,6 +23,8 @@ export interface SceneRendererLike {
   // scene 渲染看护（Task 2）：当前壁纸的健康快照 + 每次打点的订阅（面板/全局入口消费）。
   getLastHealth?(): HealthSnapshot | null;
   setOnHealth?(cb: ((s: HealthSnapshot) => void) | null): void;
+  // 抓取当前场景一帧 PNG（v0.8 首帧缓存）；不支持/失败 → null，绝不抛。
+  captureFrame?(): Promise<Uint8Array | null>;
 }
 
 /** 贴壁纸文字样式（设置面板可改）：实时读取，故由 index.ts 以 getter 注入。 */
@@ -42,6 +45,12 @@ export interface WallpaperControllerOptions {
   textStyle?: () => TextStyleSettings;
   /** preview 亮度测量；缺省用 luma.measureLuma（测试注入替身用）。 */
   measurePreviewLuma?: (url: string) => Promise<number | null>;
+  /** 视频解码失败（编码不支持/首帧超时）→ 面板提示用；`fallback` 为控制器实际回退的结果。 */
+  onMediaFailure?: (id: string, result: 'unsupported' | 'timeout', fallback: MediaFallback) => void;
+  /** scene 成功显示后的通知（index 用它触发首帧缓存抓帧）；不得阻塞渲染。 */
+  onSceneLive?: (info: WallpaperInfo) => void;
+  /** scene 渲染失败/不可用时的降级链（内嵌视频 → 抓帧 → preview）；抛错时控制器落回 preview。 */
+  sceneFallback?: (info: WallpaperInfo) => Promise<void>;
 }
 
 // 贴壁纸文字颜色与描边：
@@ -130,6 +139,11 @@ export function createWallpaperController(
     return list;
   }
 
+  // scene 成功显示后的通知（onSceneLive）：回调异常不得破坏 select（显示已完成，回调只负责后台抓帧）。
+  function notifyLive(info: WallpaperInfo): void {
+    try { opts.onSceneLive?.(info); } catch { /* 回调异常只吞掉，不影响已完成的显示 */ }
+  }
+
   async function select(id: string): Promise<void> {
     const gen = ++selectGeneration;
     // 壁纸切换/取消时释放当前 scene 渲染器资源（wasm 场景 + 脚本运行时）；旧渲染器的 raf 循环随 canvas
@@ -168,7 +182,17 @@ export function createWallpaperController(
     }
     const plan = resolveBackground(info);
     switch (plan.kind) {
-      case 'video': layer.showVideo(plan.url); break;
+      case 'video': {
+        const result = await layer.showVideo(plan.url);
+        if (gen !== selectGeneration) return; // 期间已切换：旧视频的失败结果不得覆盖新壁纸
+        if (result !== 'ok') {
+          const fallback: MediaFallback = info.previewUrl ? 'preview' : 'none';
+          opts.onMediaFailure?.(info.id, result, fallback);
+          if (info.previewUrl) layer.showImage(info.previewUrl, !info.hasPreviewGif);
+          else layer.showNone();
+        }
+        break;
+      }
       case 'image': layer.showImage(plan.url, plan.kenBurns); break;
       case 'web': layer.showWeb(plan.url); break;
       case 'scene': {
@@ -182,24 +206,39 @@ export function createWallpaperController(
             let ok = await opts.sceneRenderer.render(plan.wallpaperId, fg);
             if (!ok) {
               // 失败时 fg 可能已被绑定 WebGPU context ⇒ 重建 canvas 重试一次（组合层对已失败壁纸直接返回
-              // false，重试仍失败就落入下方 preview 回退）。
+              // false，重试仍失败就落入下方降级链）。
               const fg2 = document.createElement('canvas');
               ok = await opts.sceneRenderer.render(plan.wallpaperId, fg2);
               if (ok) {
                 if (gen !== selectGeneration) return;
                 layer.showSceneCanvas(fg2);
+                notifyLive(info);
                 break;
               }
             }
             if (gen !== selectGeneration) return; // 期间已切换 → 丢弃旧渲染结果
-            if (ok) { layer.showSceneCanvas(fg); break; }
+            if (ok) {
+              layer.showSceneCanvas(fg);
+              notifyLive(info);
+              break;
+            }
           } catch {
             if (gen !== selectGeneration) return;
-            // 渲染异常（reject）→ 与失败同等对待，落入回退
+            // 渲染异常（reject）→ 与失败同等对待，落入降级链
           }
         }
         if (gen !== selectGeneration) return;
-        // 渲染不可用/失败 → 回退 preview
+        // 渲染不可用/失败 → 可注入降级链（内嵌视频 → 抓帧 → preview）；降级自身抛错必须落回 preview。
+        if (opts.sceneFallback) {
+          try {
+            await opts.sceneFallback(info);
+            if (gen !== selectGeneration) return;
+            break;
+          } catch {
+            if (gen !== selectGeneration) return;
+          }
+        }
+        if (gen !== selectGeneration) return;
         if (info.previewUrl) layer.showImage(info.previewUrl, !info.hasPreviewGif);
         else layer.showNone();
         break;
@@ -215,6 +254,8 @@ export function createWallpaperController(
   return {
     load,
     select,
+    // 已加载的壁纸列表（轮播按它算轮播池；空 = 还没 load）。
+    getList(): WallpaperInfo[] { return list; },
     // 设置面板改了文字颜色/描边 → 立即重新下发（不必重选壁纸）。
     applyTextStyle(): void { textStyler.apply(currentInfo); },
   };

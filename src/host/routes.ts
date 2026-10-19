@@ -4,6 +4,10 @@ import { scanWallpapers } from './scanner.js';
 import { injectPointerShim } from '../shared/pointer-shim.js';
 import { PkgReader } from './pkg-reader.js';
 import { probeSteamPaths, readSteamInstallPathFromRegistry, readLibraryFoldersVdf, DEFAULT_STEAM_ROOTS } from './steam-paths.js';
+import { framesDirOf } from './data-dir.js';
+import { createSceneFrameStore, DEFAULT_MAX_FRAME_BYTES } from './scene-frame-store.js';
+import { extractEmbeddedMp4, probeEmbeddedMp4 } from './scene-media-probe.js';
+import { collectVisibleBoolProperties } from './user-props.js';
 import type { WallpaperInfo } from '../shared/types.js';
 
 export interface WallpaperRoutesOptions {
@@ -14,6 +18,8 @@ export interface WallpaperRoutesOptions {
   weAssetsDir?: string;
   /** 可变运行状态：每次请求读取实时值（host/index.ts 维护，settings 热更新） */
   state?: { wallpaperDir: string; weAssetsDir: string };
+  /** 插件数据目录（抓帧 PNG 落 <dataDir>/frames）；缺省时抓帧写接口 500。 */
+  dataDir?: string;
 }
 
 // I4：PkgReader 实例缓存 —— scene asset 每请求整包 readFileSync 成本高，
@@ -129,12 +135,47 @@ function parseUrl(req: any): { segs: string[]; search: URLSearchParams } {
   return { segs: u.pathname.split('/').filter(Boolean), search: u.searchParams };
 }
 
+// 读取 POST body：超限立即停止累积、丢弃剩余流并返回 too-large（调用方回 413）。
+function readBody(
+  req: any,
+  maxBytes: number,
+): Promise<{ ok: true; body: Buffer } | { ok: false; reason: 'too-large' | 'error' }> {
+  return new Promise((resolve) => {
+    const chunks: Buffer[] = [];
+    let total = 0;
+    let settled = false;
+    const finish = (result: { ok: true; body: Buffer } | { ok: false; reason: 'too-large' | 'error' }) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+    req.on('data', (chunk: any) => {
+      if (settled) return;
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      total += buf.length;
+      if (total > maxBytes) {
+        chunks.length = 0;
+        finish({ ok: false, reason: 'too-large' });
+        req.resume?.();
+        return;
+      }
+      chunks.push(buf);
+    });
+    req.on('end', () => finish({ ok: true, body: Buffer.concat(chunks) }));
+    req.on('error', () => finish({ ok: false, reason: 'error' }));
+    // 客户端中途断开时也必须 settle，否则 handler 的 await 永久悬挂
+    req.on('close', () => finish({ ok: false, reason: 'error' }));
+  });
+}
+
 export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions): void {
   ctx.inject(['webServer'], (httpCtx: any) => {
     const server = httpCtx.webServer;
     // 每次请求解析实时目录：state（热更新）优先，兼容旧静态 wallpaperDir 参数
     const dir = () => opts.state?.wallpaperDir ?? opts.wallpaperDir ?? '';
     const assetsDir = () => opts.state?.weAssetsDir ?? opts.weAssetsDir;
+    // 抓帧目录 = <dataDir>/frames（Task 1）；未配 dataDir 时写接口 500、读接口按无帧 404
+    const frameStore = opts.dataDir ? createSceneFrameStore(framesDirOf(opts.dataDir)) : null;
 
     server.register({
       kind: 'exact', path: '/wallpapers/list',
@@ -190,12 +231,31 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
 
     server.register({
       kind: 'prefix', path: '/wallpapers/scene',
-      // 匹配 /wallpapers/scene/<id>/asset
+      // 匹配 /wallpapers/scene/<id>/{asset|video-probe|embedded-video}
       handler: (_req: any, res: any) => {
         const { segs, search } = parseUrl(_req);
         if (segs.length < 4) return json(res, 400, { error: 'bad path' });
         const id = segs[2];
         const action = segs[3];
+        if (action === 'video-probe' || action === 'embedded-video') {
+          if (!isSafeToken(id)) return json(res, 400, { error: 'bad id' });
+          const pkgPath = join(dir(), id, 'scene.pkg');
+          if (action === 'video-probe') {
+            // 探测失败按无视频处理（降级链继续走抓帧/预览，不向调用方抛错）
+            const video = existsSync(pkgPath) && probeEmbeddedMp4(pkgPath);
+            res.setHeader?.('Cache-Control', 'no-store');
+            return json(res, 200, { video });
+          }
+          const hit = existsSync(pkgPath) ? extractEmbeddedMp4(pkgPath) : null;
+          if (!hit) return json(res, 404, { error: 'no embedded video' });
+          // 不做 Range：本场景是整包循环播放（v0.8 约定），一律 200 全量
+          res.writeHead(200, {
+            'Content-Type': 'video/mp4',
+            'Content-Length': hit.bytes.length,
+            'Cache-Control': 'no-store',
+          });
+          return res.end(hit.bytes);
+        }
         if (action !== 'asset') return json(res, 404, { error: 'no such action' });
         const name = search.get('name') ?? '';
         if (!isSafeToken(id)) return json(res, 400, { error: 'bad id' });
@@ -226,6 +286,54 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
           }
         }
         return json(res, 404, { error: 'no such asset' });
+      },
+    });
+
+    server.register({
+      kind: 'prefix', path: '/wallpapers/frame',
+      // 匹配 /wallpapers/frame/<id>：GET/HEAD 取帧、POST 存帧（仅 image/png）、DELETE 删帧
+      handler: async (_req: any, res: any) => {
+        const { segs } = parseUrl(_req);
+        if (segs.length !== 3) return json(res, 400, { error: 'bad path' });
+        const id = segs[2];
+        if (!isSafeToken(id)) return json(res, 400, { error: 'bad id' });
+        const method = String(_req.method ?? 'GET').toUpperCase();
+        if (method === 'POST') {
+          if (!frameStore) return json(res, 500, { error: 'no data dir' });
+          const type = String(_req.headers?.['content-type'] ?? '').split(';')[0].trim().toLowerCase();
+          if (type !== 'image/png') return json(res, 415, { error: 'unsupported media type' });
+          const declared = Number(_req.headers?.['content-length']);
+          if (Number.isFinite(declared) && declared > DEFAULT_MAX_FRAME_BYTES) {
+            _req.resume?.(); // 丢弃 body，避免连接残留
+            return json(res, 413, { error: 'too large' });
+          }
+          const body = await readBody(_req, DEFAULT_MAX_FRAME_BYTES);
+          if (!body.ok) {
+            return body.reason === 'too-large'
+              ? json(res, 413, { error: 'too large' })
+              : json(res, 400, { error: 'bad body' });
+          }
+          const result = frameStore.write(id, body.body);
+          if (!result.ok) {
+            if (result.reason === 'too-large') return json(res, 413, { error: 'too large' });
+            if (result.reason === 'bad-png') return json(res, 400, { error: 'bad png' });
+            return json(res, 500, { error: 'write failed' });
+          }
+          return json(res, 201, { ok: true });
+        }
+        if (method === 'DELETE') {
+          frameStore?.remove(id);
+          return json(res, 200, { ok: true });
+        }
+        if (method !== 'GET' && method !== 'HEAD') return json(res, 405, { error: 'method not allowed' });
+        const png = frameStore?.read(id) ?? null;
+        if (!png) return json(res, 404, { error: 'no frame' });
+        res.writeHead(200, {
+          'Content-Type': 'image/png',
+          'Content-Length': png.length,
+          'Cache-Control': 'no-store',
+        });
+        return res.end(png);
       },
     });
 
@@ -364,6 +472,35 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
           extraRoots: [...DEFAULT_STEAM_ROOTS],
         });
         json(res, 200, result);
+      },
+    });
+
+    server.register({
+      kind: 'exact', path: '/wallpapers/properties',
+      // v0.8 用户属性面板：project.json bool 属性 ∩ scene.json objects[].visible.user。
+      // 每次请求重读、任何文件缺失/坏 JSON 都按「无属性」返回 200（不把素材问题升级成 500）。
+      handler: (_req: any, res: any) => {
+        const { search } = parseUrl(_req);
+        const id = search.get('id') ?? '';
+        if (!isSafeToken(id)) return json(res, 400, { error: 'bad id' });
+        let projectJson: unknown = null;
+        let sceneJson: unknown = null;
+        try {
+          projectJson = JSON.parse(readFileSync(join(dir(), id, 'project.json'), 'utf8'));
+        } catch {
+          // project.json 缺失/不可读/坏 JSON → 属性为空
+        }
+        const pkgPath = join(dir(), id, 'scene.pkg');
+        if (existsSync(pkgPath)) {
+          try {
+            const entry = getPkgReader(pkgPath).readEntry('scene.json');
+            if (entry) sceneJson = JSON.parse(entry.toString('utf8'));
+          } catch {
+            // pkg 不可读 / 无 scene.json / 坏 JSON → 属性为空
+          }
+        }
+        res.setHeader?.('Cache-Control', 'no-store');
+        json(res, 200, { properties: collectVisibleBoolProperties(projectJson, sceneJson) });
       },
     });
   });

@@ -39,9 +39,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/util.js
+// ../../node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/util.js
 var require_util = __commonJS({
-  "node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/util.js"(exports) {
+  "../../node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/util.js"(exports) {
     exports.hashU32 = function hashU32(a) {
       a = a | 0;
       a = a + 2127912214 + (a << 12) | 0;
@@ -87,9 +87,9 @@ var require_util = __commonJS({
   }
 });
 
-// node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/xxh32.js
+// ../../node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/xxh32.js
 var require_xxh32 = __commonJS({
-  "node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/xxh32.js"(exports) {
+  "../../node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/xxh32.js"(exports) {
     var util = require_util();
     var prime1 = 2654435761;
     var prime2 = 2246822519;
@@ -165,9 +165,9 @@ var require_xxh32 = __commonJS({
   }
 });
 
-// node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/lz4.js
+// ../../node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/lz4.js
 var require_lz4 = __commonJS({
-  "node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/lz4.js"(exports) {
+  "../../node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/lz4.js"(exports) {
     var xxhash = require_xxh32();
     var util = require_util();
     var minMatch = 4;
@@ -512,10 +512,10 @@ var require_lz4 = __commonJS({
   }
 });
 
-// node_modules/.pnpm/@jitl+quickjs-ffi-types@0.32.0/node_modules/@jitl/quickjs-ffi-types/dist/index.mjs
+// ../../node_modules/.pnpm/@jitl+quickjs-ffi-types@0.32.0/node_modules/@jitl/quickjs-ffi-types/dist/index.mjs
 var EvalFlags, IntrinsicsFlags, JSPromiseStateEnum, GetOwnPropertyNamesFlags, IsEqualOp;
 var init_dist = __esm({
-  "node_modules/.pnpm/@jitl+quickjs-ffi-types@0.32.0/node_modules/@jitl/quickjs-ffi-types/dist/index.mjs"() {
+  "../../node_modules/.pnpm/@jitl+quickjs-ffi-types@0.32.0/node_modules/@jitl/quickjs-ffi-types/dist/index.mjs"() {
     EvalFlags = { JS_EVAL_TYPE_GLOBAL: 0, JS_EVAL_TYPE_MODULE: 1, JS_EVAL_TYPE_DIRECT: 2, JS_EVAL_TYPE_INDIRECT: 3, JS_EVAL_TYPE_MASK: 3, JS_EVAL_FLAG_STRICT: 8, JS_EVAL_FLAG_STRIP: 16, JS_EVAL_FLAG_COMPILE_ONLY: 32, JS_EVAL_FLAG_BACKTRACE_BARRIER: 64 };
     IntrinsicsFlags = { BaseObjects: 1, Date: 2, Eval: 4, StringNormalize: 8, RegExp: 16, RegExpCompiler: 32, JSON: 64, Proxy: 128, MapSet: 256, TypedArrays: 512, Promise: 1024, BigInt: 2048, BigFloat: 4096, BigDecimal: 8192, OperatorOverloading: 16384, BignumExt: 32768 };
     JSPromiseStateEnum = { Pending: 0, Fulfilled: 1, Rejected: 2 };
@@ -524,7 +524,7 @@ var init_dist = __esm({
   }
 });
 
-// node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/chunk-V2S4ZYJR.mjs
+// ../../node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/chunk-V2S4ZYJR.mjs
 function debugLog(...args) {
   QTS_DEBUG && console.log("quickjs-emscripten:", ...args);
 }
@@ -611,7 +611,7 @@ function applyModuleEvalRuntimeOptions(runtime, options) {
 }
 var __defProp2, __export2, QTS_DEBUG, errors_exports, QuickJSUnwrapError, QuickJSWrongOwner, QuickJSUseAfterFree, QuickJSNotImplemented, QuickJSAsyncifyError, QuickJSAsyncifySuspended, QuickJSMemoryLeakDetected, QuickJSEmscriptenModuleError, QuickJSUnknownIntrinsic, QuickJSPromisePending, QuickJSEmptyGetOwnPropertyNames, QuickJSHostRefRangeExceeded, QuickJSHostRefInvalid, AwaitYield, UsingDisposable, SymbolDispose, prototypeAsAny, Lifetime, StaticLifetime, WeakLifetime, Scope, AbstractDisposableResult, DisposableSuccess, DisposableFail, DisposableResult, QuickJSDeferredPromise, ModuleMemory, UnstableSymbol, DefaultIntrinsics, QuickJSIterator, INT32_MIN, INT32_MAX, INVALID_HOST_REF_ID, HostRefMap, HostRef, ContextMemory, QuickJSContext, QuickJSRuntime, QuickJSEmscriptenModuleCallbacks, QuickJSModuleCallbacks, QuickJSWASMModule;
 var init_chunk_V2S4ZYJR = __esm({
-  "node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/chunk-V2S4ZYJR.mjs"() {
+  "../../node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/chunk-V2S4ZYJR.mjs"() {
     init_dist();
     init_dist();
     __defProp2 = Object.defineProperty;
@@ -1642,7 +1642,7 @@ Attempted to suspend at:`);
   }
 });
 
-// node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/module-ES6BEMUI.mjs
+// ../../node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/module-ES6BEMUI.mjs
 var module_ES6BEMUI_exports = {};
 __export(module_ES6BEMUI_exports, {
   QuickJSModuleCallbacks: () => QuickJSModuleCallbacks,
@@ -1651,19 +1651,19 @@ __export(module_ES6BEMUI_exports, {
   applyModuleEvalRuntimeOptions: () => applyModuleEvalRuntimeOptions
 });
 var init_module_ES6BEMUI = __esm({
-  "node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/module-ES6BEMUI.mjs"() {
+  "../../node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/module-ES6BEMUI.mjs"() {
     init_chunk_V2S4ZYJR();
   }
 });
 
-// node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/ffi.mjs
+// ../../node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/ffi.mjs
 var ffi_exports = {};
 __export(ffi_exports, {
   QuickJSFFI: () => QuickJSFFI
 });
 var QuickJSFFI;
 var init_ffi = __esm({
-  "node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/ffi.mjs"() {
+  "../../node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/ffi.mjs"() {
     QuickJSFFI = class {
       constructor(module2) {
         this.module = module2;
@@ -1741,7 +1741,7 @@ var init_ffi = __esm({
   }
 });
 
-// node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/emscripten-module.browser.mjs
+// ../../node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/emscripten-module.browser.mjs
 var emscripten_module_browser_exports = {};
 __export(emscripten_module_browser_exports, {
   default: () => emscripten_module_browser_default
@@ -2188,7 +2188,7 @@ async function QuickJSRaw(moduleArg = {}) {
 }
 var import_meta, emscripten_module_browser_default;
 var init_emscripten_module_browser = __esm({
-  "node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/emscripten-module.browser.mjs"() {
+  "../../node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/emscripten-module.browser.mjs"() {
     import_meta = {};
     emscripten_module_browser_default = QuickJSRaw;
   }
@@ -2365,6 +2365,21 @@ body[data-ds-dark-theme][data-we-wallpaper] [data-question-key] section{
 .wss-section-head .wss-section-title{margin:0}
 .wss-section-desc{margin:0 0 10px;font-size:12px;line-height:1.6;color:var(--dsw-alias-label-tertiary,var(--wp-text))}
 .wss-count{font-size:12px;color:var(--dsw-alias-label-tertiary,var(--wp-text))}
+/* \u58C1\u7EB8\u5E93\u5DE5\u5177\u680F\uFF1A\u641C\u7D22\u6846 + \u7C7B\u578B/\u6392\u5E8F\u4E0B\u62C9 + \u6536\u85CF/\u9690\u85CF\u8FC7\u6EE4 */
+.wss-library-tools{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:10px}
+.wss-search{flex:1 1 160px;min-width:0;border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;padding:6px 10px;font:inherit;font-size:12px}
+.wss-search:focus-visible{outline:2px solid var(--wp-accent);outline-offset:1px}
+.wss-tool{display:flex;align-items:center;gap:4px;font-size:12px;color:var(--dsw-alias-label-secondary,var(--wp-text));white-space:nowrap}
+.wss-tool input[type=checkbox]{margin:0;accent-color:var(--wp-accent)}
+/* \u5361\u7247\u89D2\u6807\u64CD\u4F5C\uFF08\u6536\u85CF/\u9690\u85CF\uFF09\uFF1A\u7EDD\u5BF9\u5B9A\u4F4D\u5728\u5361\u7247\u5DE6\u4E0A\uFF0C\u60AC\u505C\u4E0D\u6539\u53D8\u5361\u7247\u5E03\u5C40 */
+.wss-thumb-wrap{position:relative;min-width:0}
+.wss-thumb-wrap > .wss-thumb{width:100%}
+.wss-thumb-actions{position:absolute;left:6px;top:6px;display:flex;gap:4px;z-index:1}
+.wss-fav,.wss-hide{display:flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0;border:0;border-radius:6px;background:var(--wp-badge-bg);color:var(--wp-badge-fg);font:inherit;font-size:12px;line-height:1;cursor:pointer}
+.wss-fav:hover,.wss-hide:hover{filter:brightness(1.25)}
+.wss-fav:focus-visible,.wss-hide:focus-visible{outline:2px solid var(--wp-accent);outline-offset:2px}
+.wss-fav-on{color:var(--dsw-alias-state-warning-primary,#f5b301)}
+.wss-hide-on{color:var(--dsw-alias-label-tertiary,#d0d0d0)}
 /* \u5F53\u524D\u58C1\u7EB8\u6761 */
 .wss-current{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .wss-current-info{display:flex;flex-direction:column;gap:2px;min-width:0}
@@ -2387,15 +2402,19 @@ body[data-ds-dark-theme][data-we-wallpaper] [data-question-key] section{
 /* \u63A7\u4EF6\u884C\uFF1A\u6807\u7B7E\u5DE6\u3001\u63A7\u4EF6\u53F3\uFF0C\u7EDF\u4E00 30px \u884C\u9AD8\uFF08\u590D\u9009\u6846\u9760 order \u63A8\u5230\u53F3\u4FA7\uFF09 */
 .wss-row,.wss-glow-row{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:30px;margin:0;font-size:12px;color:var(--dsw-alias-label-secondary,var(--wp-text))}
 .wss-row input[type=checkbox],.wss-glow-row input[type=checkbox]{order:2;margin:0;flex:none}
-.wss-glow{display:flex;flex-direction:column;gap:10px;margin-top:8px}
+.wss-glow,.wss-effects{display:flex;flex-direction:column;gap:10px;margin-top:8px}
 .wss-power{display:flex;flex-direction:column;gap:10px}
+/* \u8F6E\u64AD\uFF08v0.8\uFF09\uFF1A\u5F00\u5173 + \u95F4\u9694/\u987A\u5E8F\u4E0B\u62C9 + \u72B6\u6001\u884C\uFF1B\u53EF\u8F6E\u64AD\u6C60\u4E0D\u8DB3 2 \u5F20\u65F6\u72B6\u6001\u884C\u7528\u63D0\u793A\u8272\u3002 */
+.wss-rotation{display:flex;flex-direction:column;gap:10px}
+.wss-rotation-status{margin:0}
+.wss-rotation-status[data-state="empty"]{color:var(--dsw-alias-state-warning-primary,#f5b301)}
 .wss-sound-row{display:flex;flex-direction:column;margin-top:2px}
 /* \u6ED1\u6746\uFF1A\u6807\u7B7E\u884C\uFF08\u542B\u6570\u503C badge\uFF09+ \u5168\u5BBD\u6ED1\u6746 */
 .wss-slider{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--dsw-alias-label-secondary,var(--wp-text))}
 .wss-slider-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
-.wss-value{font-variant-numeric:tabular-nums;font-weight:600;color:var(--dsw-alias-label-primary,var(--wp-text))}
+.wss-value,.wss-effect-value{font-variant-numeric:tabular-nums;font-weight:600;color:var(--dsw-alias-label-primary,var(--wp-text))}
 .wss-slider input[type=range]{width:100%;margin:0;accent-color:var(--wp-accent)}
-.wss-quality{border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;padding:4px 8px;font:inherit;font-size:12px}
+.wss-quality,.wss-fit-mode,.wss-type-filter,.wss-sort,.wss-rotation-interval,.wss-rotation-order{border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;padding:4px 8px;font:inherit;font-size:12px}
 /* \u6587\u5B57\u53EF\u8BFB\u6027\uFF082026-10-01\uFF09\uFF1A\u989C\u8272\u9009\u62E9\u4E0E\u6863\u4F4D\u4E0B\u62C9\u590D\u7528 .wss-row\uFF1B\u539F\u751F color \u8F93\u5165\u8865\u6700\u5C0F\u6837\u5F0F
    \uFF08\u9ED8\u8BA4\u5C3A\u5BF8\u5728\u5404\u5E73\u53F0\u4E0A\u4E0D\u4E00\u81F4\uFF0C\u4E14 DSH \u9762\u677F\u91CC\u6709\u81EA\u5DF1\u7684\u8FB9\u6846\u8BED\u8A00\uFF09\u3002 */
 .wss-row input[type=color]{width:44px;height:26px;order:2;flex:none;padding:0;border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));border-radius:6px;background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));cursor:pointer}
@@ -2783,6 +2802,7 @@ function webFrameSpec(wallpaperPath, loc, altOrigin) {
 }
 var WEB_RESIZE_RELOAD_DELAY_MS = 300;
 var WEB_RESIZE_RELOAD_TIMEOUT_MS = 8e3;
+var VIDEO_LOAD_TIMEOUT_MS = 1500;
 function createBackgroundLayer(root) {
   root.classList.add("wp-background-layer");
   const fill = document.createElement("div");
@@ -2822,6 +2842,14 @@ function createBackgroundLayer(root) {
   }
   let paused = false;
   let currentVideo = null;
+  let currentImage = null;
+  let currentImageKenBurnsAllowed = false;
+  let kenBurnsEnabled = true;
+  let fitMode = "cover";
+  function applyFit(el) {
+    if (!el) return;
+    el.style.objectFit = fitMode === "stretch" ? "fill" : fitMode;
+  }
   let webUrl = null;
   let liveWebFrame = null;
   let viewW = 0;
@@ -2847,6 +2875,8 @@ function createBackgroundLayer(root) {
   function clear() {
     frameToken += 1;
     fill.replaceChildren();
+    currentImage = null;
+    currentImageKenBurnsAllowed = false;
     currentVideo = null;
     stopWebResizeReload();
   }
@@ -2929,22 +2959,40 @@ function createBackgroundLayer(root) {
       clear();
       const img = document.createElement("img");
       img.src = url;
-      applyKenBurns(img, kenBurns);
+      applyFit(img);
+      currentImageKenBurnsAllowed = kenBurns;
+      applyKenBurns(img, kenBurnsEnabled && kenBurns);
       fill.appendChild(img);
+      currentImage = img;
       markActive();
     },
     showVideo(url) {
       clear();
       const video = document.createElement("video");
-      video.src = url;
       video.autoplay = true;
       video.loop = true;
       video.muted = true;
       video.playsInline = true;
-      fill.appendChild(video);
+      applyFit(video);
       currentVideo = video;
+      const result = new Promise((resolve) => {
+        let settled = false;
+        let timer = null;
+        const done = (r) => {
+          if (settled) return;
+          settled = true;
+          if (timer !== null) clearTimeout(timer);
+          resolve(r);
+        };
+        timer = setTimeout(() => done("timeout"), VIDEO_LOAD_TIMEOUT_MS);
+        video.addEventListener("loadeddata", () => done("ok"), { once: true });
+        video.addEventListener("error", () => done("unsupported"), { once: true });
+      });
+      video.src = url;
+      fill.appendChild(video);
       if (paused) video.pause();
       markActive();
+      return result;
     },
     showWeb(url) {
       stopWebResizeReload();
@@ -3001,6 +3049,15 @@ function createBackgroundLayer(root) {
     },
     setBlur(enabled, radius) {
       fill.style.filter = enabled ? `blur(${radius}px)` : "";
+    },
+    setKenBurns(enabled) {
+      kenBurnsEnabled = enabled;
+      if (currentImage) applyKenBurns(currentImage, kenBurnsEnabled && currentImageKenBurnsAllowed);
+    },
+    setFitMode(mode) {
+      fitMode = mode;
+      applyFit(currentImage);
+      applyFit(currentVideo);
     },
     // 文字颜色跟随壁纸亮度（2026-09-03）：把颜色写为 --wp-chat-fg，
     // styles.ts 消息列文字消费者用它；null/空则移除（回主题默认）。移除时删变量。
@@ -3160,6 +3217,12 @@ function createWallpaperController(layer, opts) {
     list = await opts.fetchList();
     return list;
   }
+  function notifyLive(info) {
+    try {
+      opts.onSceneLive?.(info);
+    } catch {
+    }
+  }
   async function select(id) {
     const gen = ++selectGeneration;
     opts.sceneRenderer?.dispose?.();
@@ -3190,9 +3253,17 @@ function createWallpaperController(layer, opts) {
     }
     const plan = resolveBackground(info);
     switch (plan.kind) {
-      case "video":
-        layer.showVideo(plan.url);
+      case "video": {
+        const result = await layer.showVideo(plan.url);
+        if (gen !== selectGeneration) return;
+        if (result !== "ok") {
+          const fallback = info.previewUrl ? "preview" : "none";
+          opts.onMediaFailure?.(info.id, result, fallback);
+          if (info.previewUrl) layer.showImage(info.previewUrl, !info.hasPreviewGif);
+          else layer.showNone();
+        }
         break;
+      }
       case "image":
         layer.showImage(plan.url, plan.kenBurns);
         break;
@@ -3210,14 +3281,26 @@ function createWallpaperController(layer, opts) {
               if (ok) {
                 if (gen !== selectGeneration) return;
                 layer.showSceneCanvas(fg2);
+                notifyLive(info);
                 break;
               }
             }
             if (gen !== selectGeneration) return;
             if (ok) {
               layer.showSceneCanvas(fg);
+              notifyLive(info);
               break;
             }
+          } catch {
+            if (gen !== selectGeneration) return;
+          }
+        }
+        if (gen !== selectGeneration) return;
+        if (opts.sceneFallback) {
+          try {
+            await opts.sceneFallback(info);
+            if (gen !== selectGeneration) return;
+            break;
           } catch {
             if (gen !== selectGeneration) return;
           }
@@ -3237,6 +3320,10 @@ function createWallpaperController(layer, opts) {
   return {
     load,
     select,
+    // 已加载的壁纸列表（轮播按它算轮播池；空 = 还没 load）。
+    getList() {
+      return list;
+    },
     // 设置面板改了文字颜色/描边 → 立即重新下发（不必重选壁纸）。
     applyTextStyle() {
       textStyler.apply(currentInfo);
@@ -3244,7 +3331,7 @@ function createWallpaperController(layer, opts) {
   };
 }
 
-// node_modules/.pnpm/three@0.170.0/node_modules/three/build/three.module.js
+// ../../node_modules/.pnpm/three@0.170.0/node_modules/three/build/three.module.js
 var REVISION = "170";
 var CullFaceNone = 0;
 var CullFaceBack = 1;
@@ -23561,6 +23648,46 @@ function createClockDriver(canvas, opts, props, initialText) {
   return createTextDriver(canvas, opts, (now) => formatClockText(now, props), initialText);
 }
 
+// src/client/frame-export.ts
+function flipRgbaRows(rgba, width, height) {
+  const rowBytes = Math.max(0, Math.floor(width)) * 4;
+  const rows = Math.max(0, Math.floor(height));
+  const out = new Uint8Array(rowBytes * rows);
+  for (let y = 0; y < rows; y++) {
+    out.set(rgba.subarray(y * rowBytes, (y + 1) * rowBytes), (rows - 1 - y) * rowBytes);
+  }
+  return out;
+}
+async function encodeRgbaToPng(rgba, width, height, encode) {
+  try {
+    if (encode) return await encode(rgba, width, height);
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
+    const w = Math.floor(width);
+    const h = Math.floor(height);
+    if (typeof OffscreenCanvas !== "function") return null;
+    const canvas = new OffscreenCanvas(w, h);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.putImageData(new ImageData(new Uint8ClampedArray(rgba), w, h), 0, 0);
+    const blob = await canvas.convertToBlob({ type: "image/png" });
+    return new Uint8Array(await blob.arrayBuffer());
+  } catch {
+    return null;
+  }
+}
+async function readPixelsToPng(gl, width, height, encode) {
+  try {
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
+    const w = Math.floor(width);
+    const h = Math.floor(height);
+    const buf = new Uint8Array(w * h * 4);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+    return await encodeRgbaToPng(flipRgbaRows(buf, w, h), w, h, encode);
+  } catch {
+    return null;
+  }
+}
+
 // src/client/threejs-player.ts
 var DEFAULT_PARTICLE_CAPACITY = 1024;
 var MAX_PARTICLE_CAPACITY = 2048;
@@ -23947,6 +24074,8 @@ var ThreeScenePlayer = class {
   pausedTotal = 0;
   // 已安装的帧回调（resume 时用它重新排程）。
   loopFn = null;
+  // 未决抓帧请求（null = 无）：同一时刻只允许一个；render() 末尾在同一 JS 任务内读像素后 resolve。
+  pendingCapture = null;
   lastTime = 0;
   // 视差状态：配置 + 宿主指针目标 + 跟随值（延迟插值状态）。cfg 为 null 时 tickParallax 立即返回。
   parallaxCfg = null;
@@ -24270,7 +24399,42 @@ var ThreeScenePlayer = class {
     if (this.frameCapture?.active) this.renderSegmented();
     else if (this.glowStage) this.glowStage.apply(this.renderer, this.scene, this.camera);
     else this.renderer.render(this.scene, this.camera);
+    this.flushCapture();
     this.objectEffectStage?.advance(this.elapsedSeconds());
+  }
+  /**
+   * 请求抓取**下一帧**渲染结果（PNG 字节；首帧缓存用）。已有未决请求时返回 null（一帧只抓一张）。
+   * 必须在 render() 同一任务内读像素，故这里只登记请求、由 render() 末尾同步读取。
+   */
+  captureNextFrame() {
+    if (this.pendingCapture) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      this.pendingCapture = resolve;
+    });
+  }
+  // render() 末尾调用：读像素/编码的失败只 warn 并 resolve(null)，绝不把异常抛进帧循环。
+  flushCapture() {
+    const resolve = this.pendingCapture;
+    if (!resolve) return;
+    this.pendingCapture = null;
+    try {
+      const gl = this.renderer.getContext();
+      if (typeof gl.isContextLost === "function" && gl.isContextLost()) {
+        console.warn("[three] scene \u6293\u5E27\u5931\u8D25\uFF08WebGL \u4E0A\u4E0B\u6587\u5DF2\u4E22\u5931\uFF09\uFF0C\u5DF2\u8DF3\u8FC7\u9996\u5E27\u7F13\u5B58");
+        resolve(null);
+        return;
+      }
+      const dom = this.renderer.domElement;
+      const width = Math.floor(gl.drawingBufferWidth || dom?.width || 0);
+      const height = Math.floor(gl.drawingBufferHeight || dom?.height || 0);
+      void readPixelsToPng(gl, width, height).then((png) => {
+        if (!png) console.warn("[three] scene \u6293\u5E27\u5931\u8D25\uFF08\u8BFB\u50CF\u7D20/\u7F16\u7801\u4E0D\u53EF\u7528\uFF09\uFF0C\u5DF2\u8DF3\u8FC7\u9996\u5E27\u7F13\u5B58");
+        resolve(png);
+      });
+    } catch (e) {
+      console.warn("[three] scene \u6293\u5E27\u5931\u8D25\uFF08\u5DF2\u8DF3\u8FC7\u9996\u5E27\u7F13\u5B58\uFF09:", e instanceof Error ? e.message : String(e));
+      resolve(null);
+    }
   }
   /** 注入帧内快照（null = 关闭）。契约见 frame-capture.ts；active=false 时帧序不变。 */
   setFrameCapture(capture) {
@@ -24957,6 +25121,8 @@ var ThreeScenePlayer = class {
   }
   // 停止循环并释放 renderer 资源。
   dispose() {
+    this.pendingCapture?.(null);
+    this.pendingCapture = null;
     this.renderer.setAnimationLoop(null);
     for (const entry of this.backgroundEntries.values()) {
       entry.mesh.geometry.dispose();
@@ -27628,7 +27794,13 @@ var DEFAULTS = {
   // 文字可读性（2026-10-01）：默认 auto + 无描边 = 与加此功能前的老用户观感一致（零回归）。
   textColorMode: "auto",
   textColor: "#ffffff",
-  textOutline: 0
+  textOutline: 0,
+  // v0.8 显示/轮播：默认 cover / 关闭轮播 / 5 分钟 / 顺序 / 开帧缓存。
+  fitMode: "cover",
+  rotationEnabled: false,
+  rotationIntervalMs: 3e5,
+  rotationOrder: "sequential",
+  frameCacheEnabled: true
 };
 var settingsCtx = null;
 var lastGood = null;
@@ -27684,9 +27856,10 @@ async function writeClientSettings(patch) {
   return false;
 }
 var USERPROP_PREFIX = "we:userprop:";
-function getUserPropertyValue(key) {
+function getUserPropertyValue(key, wallpaperId) {
   if (typeof localStorage === "undefined") return void 0;
-  const raw = localStorage.getItem(USERPROP_PREFIX + key);
+  const scoped = wallpaperId ? localStorage.getItem(USERPROP_PREFIX + wallpaperId + ":" + key) : null;
+  const raw = scoped ?? localStorage.getItem(USERPROP_PREFIX + key);
   if (raw === null) return void 0;
   try {
     return JSON.parse(raw);
@@ -28967,7 +29140,7 @@ async function resolveEffectChain(sceneEffect, loadFile) {
   }
 }
 
-// node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/index.mjs
+// ../../node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/index.mjs
 init_chunk_V2S4ZYJR();
 init_dist();
 async function newQuickJSWASMModuleFromVariant(variantOrPromise) {
@@ -29030,7 +29203,7 @@ function newMockExtensions(log) {
   } };
 }
 
-// node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/index.mjs
+// ../../node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/index.mjs
 var variant = { type: "sync", importFFI: () => Promise.resolve().then(() => (init_ffi(), ffi_exports)).then((mod) => mod.QuickJSFFI), importModuleLoader: () => Promise.resolve().then(() => (init_emscripten_module_browser(), emscripten_module_browser_exports)).then((mod) => mod.default) };
 var src_default = variant;
 
@@ -30821,7 +30994,7 @@ function createThreeSceneRenderer(opts) {
         const userProps = {};
         for (const obj of desc.objects) {
           if (obj.visible?.kind === "user" && obj.visible.key) {
-            userProps[obj.visible.key] = getUserPropertyValue(obj.visible.key);
+            userProps[obj.visible.key] = getUserPropertyValue(obj.visible.key, id);
           }
         }
         for (const obj of desc.objects) {
@@ -31225,6 +31398,10 @@ function createThreeSceneRenderer(opts) {
       }
       if (!currentAudio && lastAudioSpec) startAudio(lastAudioSpec.id, lastAudioSpec.sounds, true);
     },
+    // 抓帧（v0.8 首帧缓存）：读取下一帧渲染结果；未装配/不支持 → null（调用方只跳过）。
+    async captureFrame() {
+      return current?.player?.captureNextFrame?.() ?? null;
+    },
     // 释放当前 three 播放器 + wasm 模拟器（切壁纸/卸载时防泄漏）。
     // `frameCapture` 绑定创建它的 renderer（换 renderer 时已在 render 内换绑），随本 renderer 一并释放。
     dispose() {
@@ -31243,8 +31420,304 @@ function createThreeSceneRenderer(opts) {
   };
 }
 
+// src/client/scene-fallback.ts
+var sceneVideoUrl = (id) => `/wallpapers/scene/${encodeURIComponent(id)}/embedded-video`;
+var frameUrl = (id) => `/wallpapers/frame/${encodeURIComponent(id)}`;
+async function probeEmbeddedVideo(id, fetchImpl) {
+  try {
+    const doFetch = fetchImpl ?? globalThis.fetch;
+    const res = await doFetch(`/wallpapers/scene/${encodeURIComponent(id)}/video-probe`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data?.video === true ? sceneVideoUrl(id) : null;
+  } catch {
+    return null;
+  }
+}
+var frameInFlight = /* @__PURE__ */ new Map();
+function ensureSceneFrame(id, deps) {
+  const running = frameInFlight.get(id);
+  if (running) return running;
+  const task = ensureSceneFrameInner(id, deps).finally(() => {
+    if (frameInFlight.get(id) === task) frameInFlight.delete(id);
+  });
+  frameInFlight.set(id, task);
+  return task;
+}
+async function ensureSceneFrameInner(id, deps) {
+  try {
+    const url = frameUrl(id);
+    const head = await deps.fetch(url, { method: "HEAD" });
+    if (head.ok) return;
+    if (head.status !== 404) {
+      console.warn(`[wallpaper-engine] scene \u9996\u5E27\u63A2\u6D4B\u5931\u8D25\uFF08HTTP ${head.status}\uFF0C\u5DF2\u8DF3\u8FC7\u7F13\u5B58\uFF09`);
+      return;
+    }
+    const png = await deps.renderer.captureFrame?.();
+    if (!png || png.length === 0) return;
+    const res = await deps.fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "image/png" },
+      // Uint8Array 的底层缓冲可能是 SharedArrayBuffer 等 ArrayBufferLike，BodyInit 只收 ArrayBuffer ⇒ 拷贝一份。
+      body: png.slice().buffer
+    });
+    if (!res.ok) console.warn(`[wallpaper-engine] scene \u9996\u5E27\u5199\u5165\u5931\u8D25\uFF08HTTP ${res.status}\uFF0C\u5DF2\u8DF3\u8FC7\uFF09`);
+  } catch (e) {
+    console.warn("[wallpaper-engine] scene \u9996\u5E27\u7F13\u5B58\u5931\u8D25\uFF08\u5DF2\u8DF3\u8FC7\uFF09:", e instanceof Error ? e.message : String(e));
+  }
+}
+async function showSceneFallback(info, deps) {
+  const videoUrl = await probeEmbeddedVideo(info.id, deps.fetch);
+  if (videoUrl) {
+    try {
+      if (await deps.layer.showVideo(videoUrl) === "ok") return "video";
+    } catch {
+    }
+  }
+  const frame = frameUrl(info.id);
+  const head = await deps.fetch(frame, { method: "HEAD" }).catch(() => null);
+  if (head?.ok) {
+    deps.layer.showImage(frame, false);
+    return "frame";
+  }
+  if (info.previewUrl) {
+    deps.layer.showImage(info.previewUrl, !info.hasPreviewGif);
+    return "preview";
+  }
+  deps.layer.showNone();
+  return "none";
+}
+
 // src/client/settings-section.tsx
 var import_react = require("react");
+
+// src/client/wallpaper-properties.ts
+async function fetchWallpaperProperties(id) {
+  try {
+    const r = await fetch(`/wallpapers/properties?id=${encodeURIComponent(id)}`);
+    if (!r.ok) return [];
+    const body = await r.json();
+    return Array.isArray(body?.properties) ? body.properties : [];
+  } catch {
+    return [];
+  }
+}
+function readBoolProperty(key, wallpaperId) {
+  const value = getUserPropertyValue(key, wallpaperId);
+  return typeof value === "boolean" ? value : void 0;
+}
+function writeBoolProperty(key, value, wallpaperId) {
+  if (typeof localStorage === "undefined") return;
+  const storageKey = wallpaperId ? `${USERPROP_PREFIX}${wallpaperId}:${key}` : USERPROP_PREFIX + key;
+  try {
+    localStorage.setItem(storageKey, JSON.stringify(value));
+  } catch {
+  }
+}
+
+// src/client/local-store.ts
+var STORAGE_KEYS = { favorites: "we:fav", hidden: "we:hidden", recent: "we:recent" };
+function storeOf(store) {
+  if (store) return store;
+  return typeof localStorage !== "undefined" ? localStorage : null;
+}
+function loadJson(key, fallback, store) {
+  const s = storeOf(store);
+  if (!s) return fallback;
+  try {
+    const raw = s.getItem(key);
+    return raw === null ? fallback : JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+}
+function saveJson(key, value, store) {
+  const s = storeOf(store);
+  if (!s) return false;
+  try {
+    s.setItem(key, JSON.stringify(value));
+    return true;
+  } catch {
+    return false;
+  }
+}
+function loadStringSet(key, store) {
+  const value = loadJson(key, [], store);
+  const ids = Array.isArray(value) ? value.filter((id) => typeof id === "string") : [];
+  return new Set(ids);
+}
+function saveStringSet(key, ids, store) {
+  saveJson(key, [...new Set(ids)], store);
+}
+
+// src/client/library-view.ts
+var RECENT_LIMIT = 200;
+function loadRecent() {
+  const value = loadJson(STORAGE_KEYS.recent, {});
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value;
+}
+function loadLibraryState() {
+  return {
+    favorites: loadStringSet(STORAGE_KEYS.favorites),
+    hidden: loadStringSet(STORAGE_KEYS.hidden),
+    recent: loadRecent()
+  };
+}
+function toggleFavorite(id, s = loadLibraryState()) {
+  const favorites = new Set(s.favorites);
+  if (favorites.has(id)) favorites.delete(id);
+  else favorites.add(id);
+  saveStringSet(STORAGE_KEYS.favorites, favorites);
+  return { ...s, favorites };
+}
+function toggleHidden(id, s = loadLibraryState()) {
+  const hidden = new Set(s.hidden);
+  if (hidden.has(id)) hidden.delete(id);
+  else hidden.add(id);
+  saveStringSet(STORAGE_KEYS.hidden, hidden);
+  return { ...s, hidden };
+}
+function markRecent(id, now = Date.now()) {
+  if (!id) return;
+  const recent = loadRecent();
+  recent[id] = now;
+  const kept = Object.entries(recent).sort(([, a], [, b]) => b - a).slice(0, RECENT_LIMIT);
+  saveJson(STORAGE_KEYS.recent, Object.fromEntries(kept));
+}
+function filterLibrary(list, f, s) {
+  const q = f.query.trim().toLowerCase();
+  let out = list.filter((w) => {
+    if (!f.showHidden && s.hidden.has(w.id)) return false;
+    if (f.favoritesOnly && !s.favorites.has(w.id)) return false;
+    if (f.types.length > 0 && !f.types.includes(w.type)) return false;
+    return q === "" || w.title.toLowerCase().includes(q);
+  });
+  if (f.sort === "recent") out = [...out].sort((a, b) => (s.recent[b.id] ?? 0) - (s.recent[a.id] ?? 0));
+  if (f.sort === "title") out = [...out].sort((a, b) => a.title.localeCompare(b.title));
+  return out;
+}
+
+// src/client/rotation.ts
+var ROTATION_INTERVAL_OPTIONS = [
+  { ms: 6e4, label: "1 \u5206\u949F" },
+  { ms: 3e5, label: "5 \u5206\u949F" },
+  { ms: 6e5, label: "10 \u5206\u949F" },
+  { ms: 18e5, label: "30 \u5206\u949F" }
+];
+function normalizeRotationOrder(raw) {
+  return raw === "random" ? "random" : "sequential";
+}
+function formatRotationInterval(ms) {
+  const value = typeof ms === "number" && Number.isFinite(ms) && ms > 0 ? ms : 3e5;
+  return `${Math.max(1, Math.round(value / 6e4))} \u5206\u949F`;
+}
+function buildRotationPool(list, state) {
+  const favorites = list.filter((w) => state.favorites.has(w.id));
+  if (favorites.length >= 2) return favorites;
+  return list.filter((w) => w.type !== "unknown" && !state.hidden.has(w.id));
+}
+function pickNext(pool, currentId, order, rand = Math.random) {
+  if (pool.length < 2) return null;
+  if (order === "random") {
+    const candidates = pool.filter((w) => w.id !== currentId);
+    if (candidates.length === 0) return null;
+    const index = Math.min(candidates.length - 1, Math.max(0, Math.floor(rand() * candidates.length)));
+    return candidates[index] ?? null;
+  }
+  const current = pool.findIndex((w) => w.id === currentId);
+  return pool[(current + 1) % pool.length] ?? null;
+}
+var timerHost = typeof window !== "undefined" ? window : globalThis;
+function createRotationScheduler(deps) {
+  const setTimer = deps.setTimeoutFn ?? ((fn, ms) => timerHost.setTimeout(fn, ms));
+  const clearTimer = deps.clearTimeoutFn ?? ((handle) => timerHost.clearTimeout(handle));
+  const now = deps.now ?? (() => Date.now());
+  const cfg = {
+    intervalMs: deps.intervalMs,
+    order: deps.order ?? "sequential"
+  };
+  const failed = /* @__PURE__ */ new Set();
+  let started = false;
+  let paused = false;
+  let timer = null;
+  let dueAt = null;
+  const clear = () => {
+    if (timer !== null) clearTimer(timer);
+    timer = null;
+    dueAt = null;
+  };
+  const schedule = () => {
+    clear();
+    if (!started || paused) return;
+    dueAt = now() + cfg.intervalMs;
+    timer = setTimer(() => {
+      void tick();
+    }, cfg.intervalMs);
+  };
+  const choose = () => {
+    const pool = deps.getPool();
+    let next = pickNext(pool, deps.getCurrentId(), cfg.order);
+    for (let i = 0; next && failed.has(next.id) && i < pool.length; i += 1) {
+      next = pickNext(pool, next.id, cfg.order);
+    }
+    return next && !failed.has(next.id) ? next : null;
+  };
+  const tick = async () => {
+    timer = null;
+    dueAt = null;
+    if (!started) return;
+    if (paused || deps.isPaused()) {
+      schedule();
+      return;
+    }
+    try {
+      const next = choose();
+      if (next) await deps.select(next.id);
+    } catch {
+    }
+    schedule();
+  };
+  return {
+    start() {
+      if (started) return;
+      started = true;
+      schedule();
+    },
+    stop() {
+      started = false;
+      clear();
+    },
+    setConfig(next) {
+      const intervalChanged = next.intervalMs !== void 0 && next.intervalMs !== cfg.intervalMs;
+      if (next.intervalMs !== void 0) cfg.intervalMs = next.intervalMs;
+      if (next.order !== void 0) cfg.order = next.order;
+      if (intervalChanged) schedule();
+    },
+    notifyManualSelect() {
+      failed.clear();
+      schedule();
+    },
+    markFailed(id) {
+      if (id) failed.add(id);
+    },
+    setPaused(next) {
+      if (next === paused) return;
+      paused = next;
+      if (paused) clear();
+      else schedule();
+    },
+    status() {
+      return {
+        enabled: started && !paused && !deps.isPaused(),
+        poolSize: deps.getPool().filter((w) => !failed.has(w.id)).length,
+        nextInMs: timer === null || dueAt === null ? null : Math.max(0, dueAt - now())
+      };
+    }
+  };
+}
+
+// src/client/settings-section.tsx
 var import_jsx_runtime = require("react/jsx-runtime");
 async function defaultFetchWallpapers() {
   return (await fetch("/wallpapers/list")).json();
@@ -31259,6 +31732,10 @@ function setWallpaperSelectHandler(fn) {
 var sharedOnRuntimeSettings = null;
 function setWallpaperRuntimeHandler(fn) {
   sharedOnRuntimeSettings = fn;
+}
+var sharedOnReselect = null;
+function setWallpaperReselectHandler(handler) {
+  sharedOnReselect = handler;
 }
 var healthHandler = null;
 var healthSubscribers = /* @__PURE__ */ new Set();
@@ -31279,14 +31756,51 @@ function notifyWallpaperHealth(snap) {
     }
   }
 }
+var mediaHandler = null;
+var mediaSubscribers = /* @__PURE__ */ new Set();
+function setWallpaperMediaHandler(handler) {
+  mediaHandler = handler;
+  pushMedia(handler?.get() ?? null);
+}
+function subscribeWallpaperMedia(cb) {
+  mediaSubscribers.add(cb);
+  return () => {
+    mediaSubscribers.delete(cb);
+  };
+}
+function notifyWallpaperMedia(failure) {
+  if (!mediaHandler) return;
+  pushMedia(failure);
+}
+function pushMedia(failure) {
+  for (const cb of Array.from(mediaSubscribers)) {
+    try {
+      cb(failure);
+    } catch {
+    }
+  }
+}
 var weT = (s) => s;
 var EMPTY_HEALTH = { wallpaperId: "", ok: null, failure: null, timing: null };
+var MEDIA_FAILURE_TEXT = {
+  unsupported: {
+    preview: "\u8BE5\u89C6\u9891\u58C1\u7EB8\u89E3\u7801\u5931\u8D25\uFF08\u53EF\u80FD\u662F HEVC/H.265\uFF09\uFF0C\u5DF2\u56DE\u9000\u5230\u9884\u89C8\u56FE\uFF1B\u5EFA\u8BAE\u6539\u7528 Chrome \u6216\u8F6C\u6362\u7F16\u7801\u3002",
+    none: "\u8BE5\u89C6\u9891\u58C1\u7EB8\u89E3\u7801\u5931\u8D25\uFF08\u53EF\u80FD\u662F HEVC/H.265\uFF09\uFF0C\u4E14\u6CA1\u6709\u53EF\u7528\u7684\u9884\u89C8\u56FE\uFF1B\u5EFA\u8BAE\u6539\u7528 Chrome \u6216\u8F6C\u6362\u7F16\u7801\u3002"
+  },
+  timeout: {
+    preview: "\u89C6\u9891\u58C1\u7EB8\u52A0\u8F7D\u8D85\u65F6\uFF1A1.5 \u79D2\u5185\u6CA1\u6709\u51FA\u73B0\u9996\u5E27\uFF0C\u5DF2\u56DE\u9000\u5230\u9884\u89C8\u56FE\uFF1B\u5EFA\u8BAE\u6539\u7528 Chrome \u6216\u68C0\u67E5\u89C6\u9891\u6587\u4EF6\u3002",
+    none: "\u89C6\u9891\u58C1\u7EB8\u52A0\u8F7D\u8D85\u65F6\uFF1A1.5 \u79D2\u5185\u6CA1\u6709\u51FA\u73B0\u9996\u5E27\uFF0C\u4E14\u6CA1\u6709\u53EF\u7528\u7684\u9884\u89C8\u56FE\uFF1B\u5EFA\u8BAE\u6539\u7528 Chrome \u6216\u68C0\u67E5\u89C6\u9891\u6587\u4EF6\u3002"
+  }
+};
 function WallpaperSettingsSection(props) {
   const fetchSettings = props.fetchSettings ?? readClientSettings;
   const writeSettings = props.writeSettings ?? writeClientSettings;
   const fetchWallpapers = props.fetchWallpapers ?? defaultFetchWallpapers;
   const fetchProbe = props.fetchProbe ?? defaultFetchProbe;
+  const fetchProperties = props.fetchProperties ?? fetchWallpaperProperties;
   const onSelect = props.onSelect ?? sharedOnSelect ?? (() => {
+  });
+  const onReselect = props.onReselect ?? sharedOnReselect ?? (() => {
   });
   const onRuntimeSettings = props.onRuntimeSettings ?? sharedOnRuntimeSettings ?? (() => {
   });
@@ -31297,10 +31811,28 @@ function WallpaperSettingsSection(props) {
   const [weAssetsDir, setWeAssetsDir] = (0, import_react.useState)("");
   const [message, setMessage] = (0, import_react.useState)("");
   const [health, setHealth] = (0, import_react.useState)(props.health ?? null);
+  const [mediaFailure, setMediaFailure] = (0, import_react.useState)(mediaHandler?.get() ?? null);
+  const [libState, setLibState] = (0, import_react.useState)(loadLibraryState);
+  const [properties, setProperties] = (0, import_react.useState)([]);
+  const [propValues, setPropValues] = (0, import_react.useState)({});
+  const [filter, setFilter] = (0, import_react.useState)({
+    query: "",
+    types: [],
+    favoritesOnly: false,
+    showHidden: false,
+    sort: "default"
+  });
+  const visibleWallpapers = filterLibrary(wallpapers, filter, libState);
+  const selectedId = settings?.selectedWallpaperId ?? "";
+  const selectedIsScene = !!selectedId && wallpapers.some((w) => w.id === selectedId && w.type === "scene");
   (0, import_react.useEffect)(() => {
     setHealth(props.health ?? healthHandler?.get() ?? null);
     return subscribeWallpaperHealth((s) => setHealth(s));
   }, [props.health]);
+  (0, import_react.useEffect)(() => {
+    setMediaFailure(mediaHandler?.get() ?? null);
+    return subscribeWallpaperMedia((f) => setMediaFailure(f));
+  }, []);
   (0, import_react.useEffect)(() => {
     let alive = true;
     void (async () => {
@@ -31318,6 +31850,27 @@ function WallpaperSettingsSection(props) {
       alive = false;
     };
   }, [fetchSettings, fetchWallpapers]);
+  (0, import_react.useEffect)(() => {
+    if (!selectedIsScene) {
+      setProperties([]);
+      setPropValues({});
+      return;
+    }
+    let alive = true;
+    void fetchProperties(selectedId).then((list) => {
+      if (!alive) return;
+      const items = Array.isArray(list) ? list : [];
+      setProperties(items);
+      setPropValues(Object.fromEntries(items.map((p) => [p.key, readBoolProperty(p.key, selectedId) ?? p.value])));
+    }).catch(() => {
+      if (!alive) return;
+      setProperties([]);
+      setPropValues({});
+    });
+    return () => {
+      alive = false;
+    };
+  }, [selectedId, selectedIsScene, fetchProperties]);
   const select = (0, import_react.useCallback)((id) => {
     onSelect(id);
     setSettings((prev) => prev ? { ...prev, selectedWallpaperId: id } : prev);
@@ -31358,6 +31911,8 @@ function WallpaperSettingsSection(props) {
   const liveCurrent = live.ok === true ? formatHealthLine({ ...live, failure: null }, weT) : formatHealthLine(live, weT);
   const liveMemory = live.ok === true && live.failure ? formatHealthLine({ ...live, ok: null, timing: null }, weT) : "";
   const liveState = live.ok === true ? "ok" : live.failure ? "failed" : "idle";
+  const rotationPoolSize = buildRotationPool(wallpapers, libState).length;
+  const rotationStatus = rotationPoolSize < 2 ? "\u81F3\u5C11\u4FDD\u7559 2 \u5F20\u53EF\u8F6E\u64AD\u58C1\u7EB8\uFF0C\u6216\u6536\u85CF 2 \u5F20\u4EE5\u4E0A" : `\u6BCF ${formatRotationInterval(settings?.rotationIntervalMs)} \xB7 ${normalizeRotationOrder(settings?.rotationOrder) === "sequential" ? "\u987A\u5E8F" : "\u968F\u673A"} \xB7 \u53EF\u8F6E\u64AD ${rotationPoolSize} \u5F20`;
   const retryLive = () => {
     if (props.onRetryLive) props.onRetryLive();
     else if (healthHandler) healthHandler.retry();
@@ -31369,6 +31924,10 @@ function WallpaperSettingsSection(props) {
     else if (healthHandler) healthHandler.clearFailures();
     else return;
     setMessage("\u5DF2\u6E05\u9664\u5931\u8D25\u8BB0\u5FC6");
+  };
+  const dismissMediaFailure = () => {
+    mediaHandler?.clear();
+    setMediaFailure(null);
   };
   return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-root", children: [
     /* @__PURE__ */ (0, import_jsx_runtime.jsx)("section", { className: "wss-section", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-current", children: [
@@ -31389,33 +31948,251 @@ function WallpaperSettingsSection(props) {
           " \u5F20"
         ] })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "wss-grid", children: wallpapers.map((w) => {
-        const selected = settings?.selectedWallpaperId === w.id;
-        return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
-          "button",
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-library-tools", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "input",
           {
-            type: "button",
-            className: "wss-thumb" + (selected ? " wss-selected" : ""),
-            "data-id": w.id,
-            title: w.title,
-            "aria-pressed": selected,
-            onClick: () => select(w.id),
+            type: "search",
+            className: "wss-search",
+            placeholder: "\u641C\u7D22\u58C1\u7EB8\u6807\u9898",
+            "aria-label": "\u641C\u7D22\u58C1\u7EB8\u6807\u9898",
+            value: filter.query,
+            onChange: (e) => setFilter((f) => ({ ...f, query: e.target.value }))
+          }
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+          "select",
+          {
+            className: "wss-type-filter",
+            "aria-label": "\u6309\u7C7B\u578B\u7B5B\u9009",
+            value: filter.types[0] ?? "all",
+            onChange: (e) => setFilter((f) => ({
+              ...f,
+              types: e.target.value === "all" ? [] : [e.target.value]
+            })),
             children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-thumb-media", children: [
-                w.previewUrl ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("img", { src: w.previewUrl, alt: w.title, loading: "lazy" }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-no-preview", children: "\u65E0\u9884\u89C8" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-badge", children: w.type.toUpperCase() }),
-                selected && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-check", "aria-hidden": "true", children: "\u2713" })
-              ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-thumb-title", children: w.title })
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "all", children: "\u5168\u90E8\u7C7B\u578B" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "scene", children: "Scene" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "video", children: "\u89C6\u9891" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "web", children: "Web" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "image", children: "\u56FE\u7247" })
             ]
-          },
-          w.id
-        );
+          }
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-tool", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "input",
+            {
+              type: "checkbox",
+              className: "wss-fav-only",
+              checked: filter.favoritesOnly,
+              onChange: (e) => setFilter((f) => ({ ...f, favoritesOnly: e.target.checked }))
+            }
+          ),
+          "\u4EC5\u6536\u85CF"
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-tool", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "input",
+            {
+              type: "checkbox",
+              className: "wss-show-hidden",
+              checked: filter.showHidden,
+              onChange: (e) => setFilter((f) => ({ ...f, showHidden: e.target.checked }))
+            }
+          ),
+          "\u663E\u793A\u5DF2\u9690\u85CF"
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+          "select",
+          {
+            className: "wss-sort",
+            "aria-label": "\u6392\u5E8F\u65B9\u5F0F",
+            value: filter.sort,
+            onChange: (e) => {
+              const sort = e.target.value;
+              setFilter((f) => ({ ...f, sort }));
+              if (sort === "recent") setLibState((prev) => ({ ...prev, recent: loadLibraryState().recent }));
+            },
+            children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "default", children: "\u9ED8\u8BA4\u6392\u5E8F" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "recent", children: "\u6700\u8FD1\u4F7F\u7528" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "title", children: "\u6807\u9898\u6392\u5E8F" })
+            ]
+          }
+        )
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "wss-grid", children: visibleWallpapers.map((w) => {
+        const selected = settings?.selectedWallpaperId === w.id;
+        const favorite = libState.favorites.has(w.id);
+        const hidden = libState.hidden.has(w.id);
+        return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-thumb-wrap", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+            "button",
+            {
+              type: "button",
+              className: "wss-thumb" + (selected ? " wss-selected" : ""),
+              "data-id": w.id,
+              title: w.title,
+              "aria-pressed": selected,
+              onClick: () => select(w.id),
+              children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-thumb-media", children: [
+                  w.previewUrl ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("img", { src: w.previewUrl, alt: w.title, loading: "lazy" }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-no-preview", children: "\u65E0\u9884\u89C8" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-badge", children: w.type.toUpperCase() }),
+                  selected && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-check", "aria-hidden": "true", children: "\u2713" })
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-thumb-title", children: w.title })
+              ]
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-thumb-actions", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "button",
+              {
+                type: "button",
+                className: "wss-fav" + (favorite ? " wss-fav-on" : ""),
+                "data-id": w.id,
+                title: favorite ? "\u53D6\u6D88\u6536\u85CF" : "\u6536\u85CF",
+                "aria-label": favorite ? "\u53D6\u6D88\u6536\u85CF" : "\u6536\u85CF",
+                "aria-pressed": favorite,
+                onClick: (e) => {
+                  e.stopPropagation();
+                  setLibState((prev) => toggleFavorite(w.id, prev));
+                },
+                children: favorite ? "\u2605" : "\u2606"
+              }
+            ),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "button",
+              {
+                type: "button",
+                className: "wss-hide" + (hidden ? " wss-hide-on" : ""),
+                "data-id": w.id,
+                title: hidden ? "\u53D6\u6D88\u9690\u85CF" : "\u9690\u85CF\u8FD9\u5F20\u58C1\u7EB8",
+                "aria-label": hidden ? "\u53D6\u6D88\u9690\u85CF" : "\u9690\u85CF\u8FD9\u5F20\u58C1\u7EB8",
+                onClick: (e) => {
+                  e.stopPropagation();
+                  setLibState((prev) => toggleHidden(w.id, prev));
+                },
+                children: hidden ? "\u21BA" : "\u2715"
+              }
+            )
+          ] })
+        ] }, w.id);
       }) }),
-      wallpapers.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-empty", children: "\u8FD8\u6CA1\u6709\u58C1\u7EB8\u3002\u8BF7\u5728\u4E0B\u65B9\u8BBE\u7F6E\u58C1\u7EB8\u76EE\u5F55\uFF0C\u6216\u70B9\u300C\u81EA\u52A8\u63A2\u6D4B\u300D\u3002" })
+      wallpapers.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-empty", children: "\u8FD8\u6CA1\u6709\u58C1\u7EB8\u3002\u8BF7\u5728\u4E0B\u65B9\u8BBE\u7F6E\u58C1\u7EB8\u76EE\u5F55\uFF0C\u6216\u70B9\u300C\u81EA\u52A8\u63A2\u6D4B\u300D\u3002" }),
+      wallpapers.length > 0 && visibleWallpapers.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { className: "wss-empty", children: [
+        "\u6CA1\u6709\u5339\u914D\u7684\u58C1\u7EB8\uFF08\u9690\u85CF ",
+        libState.hidden.size,
+        " \u5F20\uFF09"
+      ] })
+    ] }),
+    selectedIsScene && properties.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section wss-userprops", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wss-section-title", children: "\u58C1\u7EB8\u5C5E\u6027" }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc", children: "\u5207\u6362\u540E\u751F\u6548\uFF08\u4F1A\u91CD\u65B0\u88C5\u914D\u5F53\u524D\u58C1\u7EB8\uFF09\u3002" }),
+      properties.map((property) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "input",
+          {
+            type: "checkbox",
+            className: "wss-userprop",
+            "data-key": property.key,
+            checked: propValues[property.key] ?? property.value,
+            onChange: (e) => {
+              const checked = e.target.checked;
+              setPropValues((prev) => ({ ...prev, [property.key]: checked }));
+              writeBoolProperty(property.key, checked, selectedId);
+              onReselect(selectedId);
+            }
+          }
+        ),
+        property.label
+      ] }, property.key))
     ] }),
     settings && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section", children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wss-section-title", children: "\u663E\u793A\u6548\u679C" }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-effects", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-slider", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-slider-head", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u906E\u7F69\u4E0D\u900F\u660E\u5EA6" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-effect-value", children: settings.overlayOpacity.toFixed(2) })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "input",
+            {
+              type: "range",
+              className: "wss-overlay-opacity",
+              min: 0,
+              max: 1,
+              step: 0.01,
+              value: settings.overlayOpacity,
+              onChange: (e) => applyRuntime({ overlayOpacity: Number(e.target.value) })
+            }
+          )
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "input",
+            {
+              type: "checkbox",
+              className: "wss-blur-enabled",
+              checked: settings.blurEnabled,
+              onChange: (e) => applyRuntime({ blurEnabled: e.target.checked })
+            }
+          ),
+          "\u80CC\u666F\u6A21\u7CCA"
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-slider", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-slider-head", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u6A21\u7CCA\u534A\u5F84" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-effect-value", children: [
+              settings.blurRadius,
+              " px"
+            ] })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "input",
+            {
+              type: "range",
+              className: "wss-blur-radius",
+              min: 0,
+              max: 64,
+              step: 1,
+              value: settings.blurRadius,
+              onChange: (e) => applyRuntime({ blurRadius: Number(e.target.value) })
+            }
+          )
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "input",
+            {
+              type: "checkbox",
+              className: "wss-kenburns",
+              checked: settings.kenBurns,
+              onChange: (e) => applyRuntime({ kenBurns: e.target.checked })
+            }
+          ),
+          "Ken Burns \u7F13\u6162\u7F29\u653E"
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u753B\u9762\u9002\u914D" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+            "select",
+            {
+              className: "wss-fit-mode",
+              value: settings.fitMode,
+              onChange: (e) => applyRuntime({ fitMode: e.target.value }),
+              children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "cover", children: "\u88C1\u526A\u94FA\u6EE1" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "contain", children: "\u5B8C\u6574\u663E\u793A\uFF08\u53EF\u80FD\u7559\u8FB9\uFF09" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "stretch", children: "\u62C9\u4F38\u94FA\u6EE1" })
+              ]
+            }
+          )
+        ] })
+      ] }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-glow", children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
@@ -31464,6 +32241,54 @@ function WallpaperSettingsSection(props) {
             }
           )
         ] })
+      ] })
+    ] }),
+    settings && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wss-section-title", children: "\u8F6E\u64AD" }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-rotation", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "input",
+            {
+              type: "checkbox",
+              className: "wss-rotation-enabled",
+              checked: settings.rotationEnabled,
+              onChange: (e) => applyRuntime({ rotationEnabled: e.target.checked })
+            }
+          ),
+          "\u81EA\u52A8\u8F6E\u64AD"
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u5207\u6362\u95F4\u9694" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+            "select",
+            {
+              className: "wss-rotation-interval",
+              value: String(settings.rotationIntervalMs),
+              onChange: (e) => applyRuntime({ rotationIntervalMs: Number(e.target.value) }),
+              children: [
+                !ROTATION_INTERVAL_OPTIONS.some((o) => o.ms === settings.rotationIntervalMs) && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: String(settings.rotationIntervalMs), children: formatRotationInterval(settings.rotationIntervalMs) }),
+                ROTATION_INTERVAL_OPTIONS.map((o) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: String(o.ms), children: o.label }, o.ms))
+              ]
+            }
+          )
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u5207\u6362\u987A\u5E8F" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+            "select",
+            {
+              className: "wss-rotation-order",
+              value: normalizeRotationOrder(settings.rotationOrder),
+              onChange: (e) => applyRuntime({ rotationOrder: e.target.value }),
+              children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "sequential", children: "\u987A\u5E8F" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "random", children: "\u968F\u673A" })
+              ]
+            }
+          )
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc wss-rotation-status", "data-state": rotationPoolSize < 2 ? "empty" : "ready", children: rotationStatus })
       ] })
     ] }),
     settings && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section", children: [
@@ -31631,14 +32456,60 @@ function WallpaperSettingsSection(props) {
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-live-forget", onClick: forgetFailures, children: "\u6E05\u9664\u5931\u8D25\u8BB0\u5FC6" })
       ] })
     ] }),
+    mediaFailure && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section wss-media-failure", "data-kind": mediaFailure.kind, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc", children: MEDIA_FAILURE_TEXT[mediaFailure.kind][mediaFailure.fallback] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "wss-row", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-media-dismiss", onClick: dismissMediaFailure, children: "\u77E5\u9053\u4E86" }) })
+    ] }),
     message && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-message", role: "status", children: message })
   ] });
+}
+
+// src/client/media-health.ts
+function createMediaHealthStore(now = () => Date.now()) {
+  let current = null;
+  const subscribers = /* @__PURE__ */ new Set();
+  const notify = () => {
+    for (const cb of Array.from(subscribers)) {
+      try {
+        cb(current);
+      } catch {
+      }
+    }
+  };
+  return {
+    set(id, kind, fallback) {
+      if (!id) return;
+      current = { id, kind, fallback, at: now() };
+      notify();
+    },
+    get: () => current,
+    clear() {
+      if (current === null) return;
+      current = null;
+      notify();
+    },
+    subscribe(cb) {
+      subscribers.add(cb);
+      return () => {
+        subscribers.delete(cb);
+      };
+    }
+  };
 }
 
 // src/client/index.ts
 var SETTINGS_SECTION_ID = "wallpaper-engine";
 var SOFT_RETRY_DELAY_MS = 3e3;
 var TEARDOWN_KEY = "__wpEngineTeardown";
+function videoWallpaperId(url) {
+  const m = /\/wallpapers\/media\/([^/]+)\/file/.exec(url);
+  if (!m) return url;
+  try {
+    return decodeURIComponent(m[1]);
+  } catch {
+    return m[1];
+  }
+}
 function bootstrap(ctx) {
   setSettingsCtx(ctx);
   injectWallpaperStyles();
@@ -31646,9 +32517,25 @@ function bootstrap(ctx) {
   let controller = null;
   let settings = { ...DEFAULTS };
   let disposed = false;
+  const mediaHealth = createMediaHealthStore();
+  const unsubscribeMedia = mediaHealth.subscribe((failure) => {
+    if (!disposed) notifyWallpaperMedia(failure);
+  });
+  let backgroundToken = 0;
   let onVisibility = null;
   const healthStore = createRenderHealthStore({ softCooldownMs: SOFT_RETRY_DELAY_MS });
   const sceneRenderer = createThreeSceneRenderer({ healthStore });
+  let rotationPaused = false;
+  let rotationListLoadAttempted = false;
+  const rotation = createRotationScheduler({
+    getPool: () => buildRotationPool(controller?.getList() ?? [], loadLibraryState()),
+    getCurrentId: () => settings.selectedWallpaperId,
+    // manual=false：轮播自身的切换不得清空失败记忆（否则「本会话跳过」形同虚设）。
+    select: (id) => selectWallpaper(id, false),
+    isPaused: () => rotationPaused,
+    intervalMs: settings.rotationIntervalMs,
+    order: normalizeRotationOrder(settings.rotationOrder)
+  });
   const clearRenderFailures = () => {
     healthStore.clearAll();
   };
@@ -31664,6 +32551,7 @@ function bootstrap(ctx) {
     return snap && snap.wallpaperId === settings.selectedWallpaperId ? snap : null;
   };
   const onHealth = (snap) => {
+    if (snap.wallpaperId && snap.failure?.hard) rotation.markFailed(snap.wallpaperId);
     if (snap.wallpaperId === settings.selectedWallpaperId) notifyWallpaperHealth(snap);
     if (!snap.wallpaperId || !snap.failure || snap.failure.hard) return;
     const id = snap.wallpaperId;
@@ -31683,34 +32571,64 @@ function bootstrap(ctx) {
     if (!layer) return;
     layer.setOverlayOpacity(s.overlayOpacity);
     layer.setBlur(s.blurEnabled, s.blurRadius);
-    if (!s.kenBurns) {
-      layer.root.querySelectorAll(".wp-kenburns").forEach((el) => el.classList.remove("wp-kenburns"));
-    }
+    layer.setKenBurns(s.kenBurns);
+    layer.setFitMode(s.fitMode);
   };
   const applyRuntimeSettings = (s) => {
+    if (disposed) return;
     const hidden = typeof document !== "undefined" && document.visibilityState === "hidden";
     const shouldPause = s.paused || s.pauseOnHidden && hidden;
+    rotationPaused = shouldPause;
     sceneRenderer.setPaused?.(shouldPause);
     sceneRenderer.setQualityScale?.(s.qualityScale);
     sceneRenderer.setGlow?.({ enabled: s.glowEnabled, threshold: s.glowThreshold, strength: s.glowStrength });
     sceneRenderer.setSoundEnabled?.(s.soundEnabled);
     layer?.setPaused(shouldPause);
     controller?.applyTextStyle();
+    rotation.setConfig({ intervalMs: s.rotationIntervalMs, order: normalizeRotationOrder(s.rotationOrder) });
+    if (s.rotationEnabled) rotation.start();
+    else rotation.stop();
+    rotation.setPaused(shouldPause);
+    const c = controller;
+    if (s.rotationEnabled && c && !rotationListLoadAttempted && c.getList().length === 0) {
+      rotationListLoadAttempted = true;
+      void c.load().then(() => {
+        if (!disposed) rotationListLoadAttempted = false;
+      }).catch(() => {
+        if (!disposed) rotationListLoadAttempted = false;
+      });
+    }
   };
-  const selectWallpaper = (id) => {
+  async function selectWallpaper(id, manual = true) {
+    if (disposed) return;
+    backgroundToken += 1;
+    mediaHealth.clear();
     settings = { ...settings, selectedWallpaperId: id };
-    void controller.select(id).then(() => {
-      applySettingsToLayer(settings);
-      notifyWallpaperHealth(panelHealth());
-    });
     void writeClientSettings({ selectedWallpaperId: id });
-  };
+    if (!controller) return;
+    try {
+      await controller.select(id);
+    } catch {
+      return;
+    }
+    applySettingsToLayer(settings);
+    markRecent(id);
+    if (manual) rotation.notifyManualSelect();
+    notifyWallpaperHealth(panelHealth());
+  }
   const teardown = () => {
     if (disposed) return;
     disposed = true;
+    rotation.stop();
     for (const t of autoRetryTimers.values()) clearTimeout(t);
     autoRetryTimers.clear();
     sceneRenderer.setOnHealth?.(null);
+    setWallpaperSelectHandler(null);
+    setWallpaperRuntimeHandler(null);
+    setWallpaperHealthHandler(null);
+    setWallpaperMediaHandler(null);
+    setWallpaperReselectHandler(null);
+    unsubscribeMedia();
     notifyWallpaperHealth(null);
     const root = layer?.root ?? null;
     try {
@@ -31770,11 +32688,52 @@ function bootstrap(ctx) {
         mode: settings.textColorMode,
         custom: settings.textColor,
         outline: settings.textOutline
-      })
+      }),
+      // 视频编码兜底：失败回退 preview 由 controller 完成，这里只记失败供面板提示。
+      // 期间已切走（selectedWallpaperId 变了）的迟到失败不上报。
+      onMediaFailure: (id, kind, fallback) => {
+        if (settings.selectedWallpaperId !== id) return;
+        mediaHealth.set(id, kind, fallback);
+      },
+      // scene 成功显示 → 后台抓首帧缓存（下次冷启动可直接作为降级帧）；失败只 warn，不阻塞渲染。
+      onSceneLive: (info) => {
+        if (!settings.frameCacheEnabled) return;
+        void ensureSceneFrame(info.id, {
+          fetch: window.fetch.bind(window),
+          // 抓帧前再确认仍是当前壁纸：HEAD 期间切走后渲染器已换成新壁纸，不得把新画面存进旧 id。
+          renderer: {
+            captureFrame: () => settings.selectedWallpaperId === info.id ? sceneRenderer.captureFrame?.() ?? Promise.resolve(null) : Promise.resolve(null)
+          }
+        });
+      },
+      // scene 渲染失败/不可用 → 多级降级链（内嵌视频 → 抓帧 → preview）。
+      // 降级成功只是「显示层成功」，live 渲染失败的事实保留（软失败仍按 3s 冷却自动重试一次）。
+      sceneFallback: async (info) => {
+        const current = () => settings.selectedWallpaperId === info.id;
+        await showSceneFallback(info, {
+          fetch: window.fetch.bind(window),
+          layer: {
+            showVideo: (url) => current() ? layer.showVideo(url) : Promise.resolve("unsupported"),
+            showImage: (url, kenBurns) => {
+              if (current()) layer.showImage(url, kenBurns);
+            },
+            showNone: () => {
+              if (current()) layer.showNone();
+            }
+          }
+        });
+      }
     });
-    setWallpaperSelectHandler((id) => selectWallpaper(id));
+    setWallpaperSelectHandler((id) => {
+      void selectWallpaper(id);
+    });
+    setWallpaperReselectHandler((id) => {
+      if (disposed || settings.selectedWallpaperId !== id) return;
+      void controller?.select(id);
+    });
     setWallpaperRuntimeHandler((patch) => {
       settings = { ...settings, ...patch };
+      applySettingsToLayer(settings);
       applyRuntimeSettings(settings);
     });
     setWallpaperHealthHandler({
@@ -31784,6 +32743,12 @@ function bootstrap(ctx) {
       clearFailures: () => {
         clearRenderFailures();
         notifyWallpaperHealth(panelHealth());
+      }
+    });
+    setWallpaperMediaHandler({
+      get: mediaHealth.get,
+      clear: () => {
+        mediaHealth.clear();
       }
     });
     onVisibility = () => applyRuntimeSettings(settings);
@@ -31800,6 +32765,7 @@ function bootstrap(ctx) {
       }
     });
     window[TEARDOWN_KEY] = teardown;
+    if (settings.rotationEnabled) rotation.start();
   };
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", mount, { once: true });
@@ -31813,8 +32779,11 @@ function bootstrap(ctx) {
     select(id) {
       mount();
       if (!controller) return;
+      backgroundToken += 1;
+      mediaHealth.clear();
       settings = { ...settings, selectedWallpaperId: id };
       void controller.select(id);
+      rotation.notifyManualSelect();
     },
     // 看护入口（面板与排查用）：读状态 / 重试当前壁纸 / 清空全部失败记忆。
     // health() 与面板读接口同一守卫：当前壁纸不是 scene（video/none/还没选）时返回 null。
@@ -31824,6 +32793,8 @@ function bootstrap(ctx) {
     show(plan, opts) {
       mount();
       if (!layer) return;
+      const token = ++backgroundToken;
+      mediaHealth.clear();
       switch (plan.kind) {
         // 非 scene 分支没有壁纸 id ⇒ 解绑选中项：否则上一张 scene 的状态会持续挂在面板上，
         // 且「重试实时渲染」会把用户刚换掉的那张 scene 选回来。
@@ -31833,7 +32804,10 @@ function bootstrap(ctx) {
           break;
         case "video":
           settings = { ...settings, selectedWallpaperId: "" };
-          layer.showVideo(plan.url);
+          void layer.showVideo(plan.url).then((result) => {
+            if (result === "ok" || disposed || token !== backgroundToken) return;
+            mediaHealth.set(videoWallpaperId(plan.url), result, "none");
+          });
           break;
         case "web":
           settings = { ...settings, selectedWallpaperId: "" };
@@ -31841,6 +32815,7 @@ function bootstrap(ctx) {
           break;
         case "scene": {
           settings = { ...settings, selectedWallpaperId: plan.wallpaperId };
+          markRecent(plan.wallpaperId);
           void controller.select(plan.wallpaperId).catch(() => {
           });
           break;
