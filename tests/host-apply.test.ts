@@ -99,8 +99,8 @@ beforeEach(() => {
   handlers = new Map();
 });
 afterEach(() => {
-  if (savedDataDirEnv === undefined) delete process.env.DSH_USE_WALLPAPER_DATA_DIR;
-  else process.env.DSH_USE_WALLPAPER_DATA_DIR = savedDataDirEnv;
+  // 恢复到全局 setup 注入的临时目录，不能 delete（否则后续用例退回真实 home）
+  if (savedDataDirEnv !== undefined) process.env.DSH_USE_WALLPAPER_DATA_DIR = savedDataDirEnv;
   rmSync(dirA, { recursive: true, force: true });
   rmSync(dirB, { recursive: true, force: true });
 });
