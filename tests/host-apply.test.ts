@@ -120,6 +120,19 @@ describe('apply (host entry)', () => {
       { kind: 'exact', path: '/wallpapers/properties' },
     ]);
   });
+  it('数据目录无法创建时不阻断加载：路由仍挂载，抓帧写接口降级 500', async () => {
+    // env 指向一个普通文件 ⇒ mkdirSync 抛错；插件仍须完整加载（路由 9 条），抓帧退化为 500。
+    const blocker = join(dirA, 'not-a-dir');
+    writeFileSync(blocker, 'x');
+    process.env.DSH_USE_WALLPAPER_DATA_DIR = blocker;
+    expect(() => apply(makeCtx().ctx)).not.toThrow();
+    expect(registered).toHaveLength(9);
+    const frameRoute = handlers.get('prefix /wallpapers/frame')!;
+    const req: any = { method: 'POST', url: '/wallpapers/frame/f1', headers: { 'content-type': 'image/png' } };
+    const res = makeRes();
+    await frameRoute(req, res);
+    expect(res.statusCode).toBe(500);
+  });
   it('抓帧路由写入 apply 接线后的数据目录', async () => {
     seedWallpaper(dirA, 'f1');
     apply(makeCtx().ctx);

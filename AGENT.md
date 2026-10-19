@@ -240,10 +240,11 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
     - **未复刻与其它的边界（T8）**：puppet 材质走 three **内建材质**（`createPuppetMaterial` = 普通 alpha 混合），WE 的 `colorBlendMode ≠ 0` 与自定义 shader 分支**未复刻**（复刻要预乘 `ShaderMaterial`，会失去「内建材质才自动注入蒙皮 shader」这条前提）；**无 puppet 的 e2e 自动化判据** —— 只有真机人工验收（`TESTING.md` §2.11）+ 非 puppet 壁纸的零回归对拍。
 
 41. **v0.8 产品化边界（2026-10-19）**（理由与取舍见[决策笔记](.agents/notes/implemented/architecture/2026-10-19-v08-degradation-rotation-and-properties.md)）：**已修（记录在此以免回退）** —— ① 视频壁纸 HEVC/H.265 缺解码时不再停在黑背景：`showVideo` 在 `error` 或 1.5s 首帧超时返回 `unsupported` / `timeout`，controller 回退 preview（无 preview 则空态），面板按 `media-health` 分档提示（失败记忆只在**内存**，重开可重试；**不做** host ffmpeg 转码）；② `overlayOpacity` / `blurEnabled` / `blurRadius` / `kenBurns` / `fitMode` 已在「显示效果」面板有控件，点击即生效。**新边界**：
-    - ① **属性面板仅 bool**：只暴露 `project.json general.properties` 中 `type=bool`、且被 `scene.json` 某对象 `visible.user` 引用的键；写 `we:userprop:<key>`（localStorage）后**重装配**才生效。slider / color / combo 要渲染器消费对应绑定，留 v0.9；`editable=false` 丢弃。
+    - ① **属性面板仅 bool**：只暴露 `project.json general.properties` 中 `type=bool`、且被 `scene.json` 某对象 `visible.user` 引用的键；写 `we:userprop:<wallpaperId>:<key>`（localStorage，**按壁纸隔离**；读侧缺 per-id 键时回退旧全局键 `we:userprop:<key>`，不再写入）后**重装配**才生效。slider / color / combo 要渲染器消费对应绑定，留 v0.9；`editable=false` 丢弃。
     - ② **轮播失败跳过仅本会话**：`failed` 是内存 Set（不落盘，手动选择清空）；池 = 收藏 ≥2 张时只用收藏，否则全部非隐藏且 `type !== 'unknown'` 的壁纸；池 <2 张不切、面板显示原因并明示。
     - ③ **抓帧依赖 `readPixels`**：无 GPU / 上下文丢失 / 部分浏览器可能失败或读回全零；当前只对 context-lost 跳过，**无亮度门禁**（Task 6 评审已知），失败只 `warn`、不写缓存、不影响渲染 —— 真机验收待办（`TESTING.md` §2.13）。
     - ④ 抓帧数据目录契约见 §5.49；`frameCacheEnabled` 只影响是否抓帧，不影响降级链的读取。
+    - ⑤ **降级成功不清 live 失败记忆**：`sceneFallback` 显示 video / frame 后不 `healthStore.clear`。软失败仍按 3s 冷却自动重试一次（每会话每壁纸一次）；硬失败不自动重试（重试同一张渲染不出来的壁纸只会重复失败）。面板可能同时显示「降级画面 + 上次失败」，属真实状态，用户可手动重试 / 清除。
 
 ## 8. 历史归档
 

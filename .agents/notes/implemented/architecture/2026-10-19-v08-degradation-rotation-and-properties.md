@@ -12,10 +12,10 @@ v0.8 之前，scene 渲染失败后只剩一张作者预览图：带内嵌视频
 
 四条决策以「契约写进 `AGENT.md`，理由留在这里」的方式落地（契约见 `AGENT.md` §5.49 与 §7.41；设计与验收口径见 [v0.8 产品化设计](../../../../docs/superpowers/specs/2026-10-19-v0.8-productization-design.md)）：
 
-1. **scene 降级顺序 = 实时渲染 → 内嵌 MP4 → 抓帧 PNG → 作者 preview → 空态**。`src/client/scene-fallback.ts` 的 `showSceneFallback` 逐级尝试，视频播放必须返回 `'ok'` 才停在该层；`probeEmbeddedVideo` 探测 `/wallpapers/scene/:id/video-probe`，host 侧 `scene-media-probe.ts` 只在 `.tex` 头 204B 内认 flags bit5 + 合法 `ftyp` box，按 `(pkgPath, mtime)` 缓存。抓帧由 `frame-export.ts`（`readPixels` → 行序翻转 → PNG）与 `scene-frame-store.ts`（原子写 + 限额）完成，只在 scene 首帧成功后抓一次。
+1. **scene 降级顺序 = 实时渲染 → 内嵌 MP4 → 抓帧 PNG → 作者 preview → 空态**。`src/client/scene-fallback.ts` 的 `showSceneFallback` 逐级尝试，视频播放必须返回 `'ok'` 才停在该层；`probeEmbeddedVideo` 探测 `/wallpapers/scene/:id/video-probe`，host 侧 `scene-media-probe.ts` 只在 `.tex` 头 204B 内认 flags bit5 + 合法 `ftyp` box，按 `(pkgPath, mtime)` 缓存。抓帧由 `frame-export.ts`（`readPixels` → 行序翻转 → PNG）与 `scene-frame-store.ts`（原子写 + 限额）完成，只在 scene 首帧成功后抓一次。降级成功只代表显示层成功，**不清理 live 渲染失败记忆**：软失败仍按 3s 冷却自动重试一次（每会话每壁纸一次），硬失败不自动重试。
 2. **抓帧缓存落宿主数据目录，不落客户端存储**：`~/.dsh-use-wallpaper/frames/<id>.png`，`DSH_USE_WALLPAPER_DATA_DIR` 可整体迁移；单张 ≤12MB、目录 ≤200 张（按 mtime 淘汰最旧）；2xx 帧响应与探测响应一律 `Cache-Control: no-store`。抓帧是派生缓存，删掉只会让下次成功渲染时重抓。
 3. **轮播池 = 收藏（≥2 张时）否则全部非隐藏且非 `unknown` 壁纸**。`rotation.ts` 把池选择、下一张与定时调度拆成纯函数 + 可注入定时器；`failed` 是内存 Set（硬失败本会话跳过、不落盘），手动选择清空并重置计时，`paused` / `pauseOnHidden` 清表停走。
-4. **属性面板 v0.8 只做 bool 可见性**：host 的 `user-props.ts` 取 `project.json general.properties`（`type=bool`、非 `editable=false`）与 `scene.json` 中 `visible.user` 引用键的**交集**；面板写 `we:userprop:<key>` 后触发当前壁纸重装配才生效，slider / color / combo 留 v0.9。
+4. **属性面板 v0.8 只做 bool 可见性**：host 的 `user-props.ts` 取 `project.json general.properties`（`type=bool`、非 `editable=false`）与 `scene.json` 中 `visible.user` 引用键的**交集**；面板写 `we:userprop:<wallpaperId>:<key>`（**按壁纸隔离**，读侧缺键回退旧全局键 `we:userprop:<key>`）后触发当前壁纸重装配才生效，slider / color / combo 留 v0.9。
 
 视频壁纸的编码兜底是**另一条更短的链**（video → preview → 空态），失败记忆在 `media-health.ts` 内存里，只用于面板提示。
 
@@ -23,7 +23,7 @@ v0.8 之前，scene 渲染失败后只剩一张作者预览图：带内嵌视频
 
 ## Affected repositories
 
-- `dsh-use-wallpaper` 分支 `feat/v0.8-productization` commits `4027471` `f54038a` `5f51f47` `61ac3c1`
+- `dsh-use-wallpaper` 分支 `feat/v0.8-productization` commits `fb9ab21` `4027471` `dc7b04d` `f592c75` `8d888ed` `bc72524` `a3c4755` `7dd3b18` `49f8ca9` `35e8cd8` `f54038a` `5f51f47` `61ac3c1` `ba45eb4` `ac8f32c`，以及 final fix 收尾提交（属性键隔离 / 轮播冷启动 / 生命周期收口）
 
 ## Alternatives considered
 

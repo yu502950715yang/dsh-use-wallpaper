@@ -58,6 +58,8 @@ export function bootstrap(ctx?: any): void {
   const sceneRenderer = createThreeSceneRenderer({ healthStore });
   // 自动轮播：池/当前项/暂停都实时读取；启停由 applyRuntimeSettings 与 mount/teardown 同步。
   let rotationPaused = false;
+  // 首次启用轮播时列表可能还没 load（没选过壁纸）⇒ 懒加载一次；避免每次设置变更都重复拉。
+  let rotationListLoadAttempted = false;
   const rotation = createRotationScheduler({
     getPool: () => buildRotationPool(controller?.getList() ?? [], loadLibraryState()),
     getCurrentId: () => settings.selectedWallpaperId,
@@ -116,6 +118,7 @@ export function bootstrap(ctx?: any): void {
   };
   // 省电与画质档位：每次按「设置 + 当前可见性」重算（不做增量维护，避免状态漂移）。
   const applyRuntimeSettings = (s: ClientSettings) => {
+    if (disposed) return; // 收尾后旧 handler/监听仍可能回调：不得复活定时器或渲染器状态
     const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
     const shouldPause = s.paused || (s.pauseOnHidden && hidden);
     rotationPaused = shouldPause;
@@ -133,9 +136,19 @@ export function bootstrap(ctx?: any): void {
     if (s.rotationEnabled) rotation.start();
     else rotation.stop();
     rotation.setPaused(shouldPause);
+    // 冷启动：启用轮播但 controller 列表还没 load（用户没选过壁纸）⇒ 懒加载一次，否则轮播池恒空。
+    // 失败/空列表允许下次设置变更再试；列表非空后由长度守卫挡住重复拉取。
+    const c = controller;
+    if (s.rotationEnabled && c && !rotationListLoadAttempted && c.getList().length === 0) {
+      rotationListLoadAttempted = true;
+      void c.load()
+        .then(() => { if (!disposed) rotationListLoadAttempted = false; })
+        .catch(() => { if (!disposed) rotationListLoadAttempted = false; });
+    }
   };
   // 选择壁纸（面板/外部与轮播共用）：成功后才落层/写最近/刷新状态；manual=false（轮播自身切换）不清失败记忆。
   async function selectWallpaper(id: string, manual = true): Promise<void> {
+    if (disposed) return; // 收尾后轮播/面板的旧回调不得再驱动已释放的实例
     backgroundToken += 1;
     mediaHealth.clear(); // 重新选壁纸即清掉上一条媒体失败提示
     settings = { ...settings, selectedWallpaperId: id };
@@ -163,6 +176,10 @@ export function bootstrap(ctx?: any): void {
     for (const t of autoRetryTimers.values()) clearTimeout(t);
     autoRetryTimers.clear();
     sceneRenderer.setOnHealth?.(null);
+    // 面板仍可能开着：注销全部共享 handler，避免旧实例（已释放的 controller/renderer）被继续调用
+    setWallpaperSelectHandler(null);
+    setWallpaperRuntimeHandler(null);
+    setWallpaperHealthHandler(null);
     setWallpaperMediaHandler(null); // 面板媒体失败提示回初始态
     setWallpaperReselectHandler(null); // 面板属性开关不再指向已释放的 controller
     unsubscribeMedia();
@@ -233,11 +250,12 @@ export function bootstrap(ctx?: any): void {
           },
         });
       },
-      // scene 渲染失败/不可用 → 多级降级链（内嵌视频 → 抓帧 → preview）；显示成功即清掉失败记忆。
+      // scene 渲染失败/不可用 → 多级降级链（内嵌视频 → 抓帧 → preview）。
+      // 降级成功只是「显示层成功」，live 渲染失败的事实保留（软失败仍按 3s 冷却自动重试一次）。
       sceneFallback: async (info) => {
         // 降级链没有 generation 参数：用「仍是当前选中壁纸」守卫，防视频探测（≤1.5s）迟到后覆盖新壁纸。
         const current = () => settings.selectedWallpaperId === info.id;
-        const result = await showSceneFallback(info, {
+        await showSceneFallback(info, {
           fetch: window.fetch.bind(window),
           layer: {
             showVideo: (url) => (current() ? layer!.showVideo(url) : Promise.resolve('unsupported' as const)),
@@ -245,13 +263,17 @@ export function bootstrap(ctx?: any): void {
             showNone: () => { if (current()) layer!.showNone(); },
           },
         });
-        if ((result === 'video' || result === 'frame') && current()) healthStore.clear(info.id);
+        // 不在此清 healthStore：降级成功 ≠ live 渲染恢复，清了会取消软失败的 3s 自动重试并抹掉硬失败记忆。
       },
     });
     // 设置面板（settings-section）的壁纸切换/取消经共享 handler 委托 controller
     setWallpaperSelectHandler((id: string) => { void selectWallpaper(id); });
-    // 用户属性切换后重装配当前壁纸：属性值只在装配时读取，故重新 select（不弹提示/不写设置）
-    setWallpaperReselectHandler((id: string) => { void controller?.select(id); });
+    // 用户属性切换后重装配当前壁纸：属性值只在装配时读取，故重新 select（不弹提示/不写设置）。
+    // 面板可能还持有旧选中快照 ⇒ 只重装配仍是当前选中的那张，不把用户切走的壁纸拽回来。
+    setWallpaperReselectHandler((id: string) => {
+      if (disposed || settings.selectedWallpaperId !== id) return;
+      void controller?.select(id);
+    });
     // 设置面板改显示效果/省电/画质档位 → 立即下发（layer 与渲染器都要，不必重选壁纸）
     setWallpaperRuntimeHandler((patch) => {
       settings = { ...settings, ...patch };

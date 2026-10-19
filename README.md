@@ -151,7 +151,7 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 - **轮播**：`rotationEnabled`、`rotationIntervalMs`、`rotationOrder`。
 - **文字可读性**：`textColorMode`、`textColor`、`textOutline`。
 
-`frameCacheEnabled` **没有面板控件**（默认 `true`；要改只能写 profile `config`）。壁纸库的搜索 / 收藏 / 隐藏 / 最近使用与布尔用户属性不是设置字段，只存 localStorage（见本节末尾）。
+`frameCacheEnabled` **没有面板控件**（默认 `true`；要改只能写 profile `config`）。壁纸库的**收藏 / 隐藏 / 最近使用**与布尔用户属性不是设置字段，只存 localStorage（见本节末尾）；**搜索 / 类型 / 排序是面板临时状态**，刷新即恢复默认。
 
 | 字段 | 默认 | 说明 |
 |---|---|---|
@@ -161,7 +161,7 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 | `overlayOpacity` | `0.35` | 壁纸层上方遮罩的不透明度；面板「显示效果」可调 |
 | `blurEnabled` / `blurRadius` | `false` / `12` | 背景模糊与半径；面板「显示效果」可调 |
 | `kenBurns` | `true` | 图片壁纸的缓慢缩放动效；面板「显示效果」可调 |
-| `fitMode` | `cover` | 画面适配：`cover` 裁剪铺满 / `contain` 完整显示（留黑边）/ `stretch` 拉伸铺满；面板可调 |
+| `fitMode` | `cover` | 画面适配：`cover` 裁剪铺满 / `contain` 完整显示（可能留边）/ `stretch` 拉伸铺满；面板可调 |
 | `glowEnabled` | `true` | 应用级光晕（全屏后处理，仅 scene 壁纸） |
 | `glowThreshold` | `0.65` | 光晕亮度门槛（0–0.99，越低发光区域越多） |
 | `glowStrength` | `0.35` | 光晕强度（0–4；2026-09-21 由 `1.0` 下调，防亮部过曝 —— 旧值在亮部多的壁纸上 `luma>200` 占比会涨 1.5 倍以上） |
@@ -192,7 +192,7 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 > 
 > 说明：旧版兼容层是过渡性的。待 DSH 新版本稳定、本插件不再需要支持 ≤0.1.6 时，按 [迁移文档 §9「后续清理清单」](docs/superpowers/plans/2026-09-23-dsh-settings-compat-migration.md) 逐项移除（清单区分了可删的旧版专用代码、可简化的兼容技巧与**必须保留的 0.1.7 适配**）。
 
-> 💡 **设置字段与本地状态**：上表的都是**设置字段**，可写进 profile `cordis.patch.yml` 的 `config`；面板改动除用户属性（切换后重装配当前壁纸才生效）外都**立即生效**。壁纸库的**收藏 / 隐藏 / 最近使用**（`we:fav` / `we:hidden` / `we:recent`）与**布尔用户属性**（`we:userprop:<key>`）是浏览器侧 UI 状态，**只存 localStorage**，不能写进 profile config，也不跨浏览器 / 端口同步。
+> 💡 **设置字段与本地状态**：上表的都是**设置字段**，可写进 profile `cordis.patch.yml` 的 `config`；面板改动除用户属性（切换后重装配当前壁纸才生效）外都**立即生效**。其中 `fitMode` / Ken Burns 只对图片 / 视频壁纸生效（scene 由渲染器自绘；Ken Burns 仅图片）。壁纸库的**收藏 / 隐藏 / 最近使用**（`we:fav` / `we:hidden` / `we:recent`）与**布尔用户属性**（`we:userprop:<wallpaperId>:<key>`）是浏览器侧 UI 状态，**只存 localStorage**，不能写进 profile config，也不跨浏览器 / 端口同步。
 > 
 > ⚠️ 光晕默认值 `0.65` / `0.35` 是 **2026-09-21 由用户在真机面板上试出来的**（先按「亮部不过曝」把强度从 `1.0` 下调，阈值保持 `0.65` 以保留光晕感；6 张壁纸的参数网格数据见 `AGENT.md` §7.1）。它只保证「亮部不过曝 + 光晕仍可感」，**不是**与桌面 WE 逐像素对齐的结果 —— 你觉得还要更亮/更暗，面板两个滑杆可即时微调。
 

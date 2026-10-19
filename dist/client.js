@@ -27856,9 +27856,10 @@ async function writeClientSettings(patch) {
   return false;
 }
 var USERPROP_PREFIX = "we:userprop:";
-function getUserPropertyValue(key) {
+function getUserPropertyValue(key, wallpaperId) {
   if (typeof localStorage === "undefined") return void 0;
-  const raw = localStorage.getItem(USERPROP_PREFIX + key);
+  const scoped = wallpaperId ? localStorage.getItem(USERPROP_PREFIX + wallpaperId + ":" + key) : null;
+  const raw = scoped ?? localStorage.getItem(USERPROP_PREFIX + key);
   if (raw === null) return void 0;
   try {
     return JSON.parse(raw);
@@ -30993,7 +30994,7 @@ function createThreeSceneRenderer(opts) {
         const userProps = {};
         for (const obj of desc.objects) {
           if (obj.visible?.kind === "user" && obj.visible.key) {
-            userProps[obj.visible.key] = getUserPropertyValue(obj.visible.key);
+            userProps[obj.visible.key] = getUserPropertyValue(obj.visible.key, id);
           }
         }
         for (const obj of desc.objects) {
@@ -31491,7 +31492,6 @@ async function showSceneFallback(info, deps) {
 var import_react = require("react");
 
 // src/client/wallpaper-properties.ts
-var USERPROP_PREFIX2 = "we:userprop:";
 async function fetchWallpaperProperties(id) {
   try {
     const r = await fetch(`/wallpapers/properties?id=${encodeURIComponent(id)}`);
@@ -31502,14 +31502,15 @@ async function fetchWallpaperProperties(id) {
     return [];
   }
 }
-function readBoolProperty(key) {
-  const value = getUserPropertyValue(key);
+function readBoolProperty(key, wallpaperId) {
+  const value = getUserPropertyValue(key, wallpaperId);
   return typeof value === "boolean" ? value : void 0;
 }
-function writeBoolProperty(key, value) {
+function writeBoolProperty(key, value, wallpaperId) {
   if (typeof localStorage === "undefined") return;
+  const storageKey = wallpaperId ? `${USERPROP_PREFIX}${wallpaperId}:${key}` : USERPROP_PREFIX + key;
   try {
-    localStorage.setItem(USERPROP_PREFIX2 + key, JSON.stringify(value));
+    localStorage.setItem(storageKey, JSON.stringify(value));
   } catch {
   }
 }
@@ -31860,7 +31861,7 @@ function WallpaperSettingsSection(props) {
       if (!alive) return;
       const items = Array.isArray(list) ? list : [];
       setProperties(items);
-      setPropValues(Object.fromEntries(items.map((p) => [p.key, readBoolProperty(p.key) ?? p.value])));
+      setPropValues(Object.fromEntries(items.map((p) => [p.key, readBoolProperty(p.key, selectedId) ?? p.value])));
     }).catch(() => {
       if (!alive) return;
       setProperties([]);
@@ -32101,7 +32102,7 @@ function WallpaperSettingsSection(props) {
             onChange: (e) => {
               const checked = e.target.checked;
               setPropValues((prev) => ({ ...prev, [property.key]: checked }));
-              writeBoolProperty(property.key, checked);
+              writeBoolProperty(property.key, checked, selectedId);
               onReselect(selectedId);
             }
           }
@@ -32185,7 +32186,7 @@ function WallpaperSettingsSection(props) {
               onChange: (e) => applyRuntime({ fitMode: e.target.value }),
               children: [
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "cover", children: "\u88C1\u526A\u94FA\u6EE1" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "contain", children: "\u5B8C\u6574\u663E\u793A\uFF08\u7559\u9ED1\u8FB9\uFF09" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "contain", children: "\u5B8C\u6574\u663E\u793A\uFF08\u53EF\u80FD\u7559\u8FB9\uFF09" }),
                 /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "stretch", children: "\u62C9\u4F38\u94FA\u6EE1" })
               ]
             }
@@ -32525,6 +32526,7 @@ function bootstrap(ctx) {
   const healthStore = createRenderHealthStore({ softCooldownMs: SOFT_RETRY_DELAY_MS });
   const sceneRenderer = createThreeSceneRenderer({ healthStore });
   let rotationPaused = false;
+  let rotationListLoadAttempted = false;
   const rotation = createRotationScheduler({
     getPool: () => buildRotationPool(controller?.getList() ?? [], loadLibraryState()),
     getCurrentId: () => settings.selectedWallpaperId,
@@ -32573,6 +32575,7 @@ function bootstrap(ctx) {
     layer.setFitMode(s.fitMode);
   };
   const applyRuntimeSettings = (s) => {
+    if (disposed) return;
     const hidden = typeof document !== "undefined" && document.visibilityState === "hidden";
     const shouldPause = s.paused || s.pauseOnHidden && hidden;
     rotationPaused = shouldPause;
@@ -32586,8 +32589,18 @@ function bootstrap(ctx) {
     if (s.rotationEnabled) rotation.start();
     else rotation.stop();
     rotation.setPaused(shouldPause);
+    const c = controller;
+    if (s.rotationEnabled && c && !rotationListLoadAttempted && c.getList().length === 0) {
+      rotationListLoadAttempted = true;
+      void c.load().then(() => {
+        if (!disposed) rotationListLoadAttempted = false;
+      }).catch(() => {
+        if (!disposed) rotationListLoadAttempted = false;
+      });
+    }
   };
   async function selectWallpaper(id, manual = true) {
+    if (disposed) return;
     backgroundToken += 1;
     mediaHealth.clear();
     settings = { ...settings, selectedWallpaperId: id };
@@ -32610,6 +32623,9 @@ function bootstrap(ctx) {
     for (const t of autoRetryTimers.values()) clearTimeout(t);
     autoRetryTimers.clear();
     sceneRenderer.setOnHealth?.(null);
+    setWallpaperSelectHandler(null);
+    setWallpaperRuntimeHandler(null);
+    setWallpaperHealthHandler(null);
     setWallpaperMediaHandler(null);
     setWallpaperReselectHandler(null);
     unsubscribeMedia();
@@ -32690,10 +32706,11 @@ function bootstrap(ctx) {
           }
         });
       },
-      // scene 渲染失败/不可用 → 多级降级链（内嵌视频 → 抓帧 → preview）；显示成功即清掉失败记忆。
+      // scene 渲染失败/不可用 → 多级降级链（内嵌视频 → 抓帧 → preview）。
+      // 降级成功只是「显示层成功」，live 渲染失败的事实保留（软失败仍按 3s 冷却自动重试一次）。
       sceneFallback: async (info) => {
         const current = () => settings.selectedWallpaperId === info.id;
-        const result = await showSceneFallback(info, {
+        await showSceneFallback(info, {
           fetch: window.fetch.bind(window),
           layer: {
             showVideo: (url) => current() ? layer.showVideo(url) : Promise.resolve("unsupported"),
@@ -32705,13 +32722,13 @@ function bootstrap(ctx) {
             }
           }
         });
-        if ((result === "video" || result === "frame") && current()) healthStore.clear(info.id);
       }
     });
     setWallpaperSelectHandler((id) => {
       void selectWallpaper(id);
     });
     setWallpaperReselectHandler((id) => {
+      if (disposed || settings.selectedWallpaperId !== id) return;
       void controller?.select(id);
     });
     setWallpaperRuntimeHandler((patch) => {

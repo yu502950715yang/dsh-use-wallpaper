@@ -951,7 +951,7 @@ describe('壁纸属性（用户布尔可见性）', () => {
     localStorage.clear();
   });
 
-  it('切换 checkbox → 写 localStorage 并触发当前壁纸重装配', async () => {
+  it('切换 checkbox → 写当前壁纸的 per-id 键并触发当前壁纸重装配', async () => {
     const reselect = vi.fn();
     setWallpaperReselectHandler(reselect);
     mount({ fetchProperties: async () => [CLOUDS] });
@@ -959,9 +959,34 @@ describe('壁纸属性（用户布尔可见性）', () => {
     const box = container.querySelector('.wss-userprop[data-key="clouds"]') as HTMLInputElement;
     box.click();
     await flush();
-    expect(localStorage.getItem('we:userprop:clouds')).toBe('false');
+    expect(localStorage.getItem('we:userprop:1:clouds')).toBe('false');
+    expect(localStorage.getItem('we:userprop:clouds')).toBeNull(); // 不再写全局键
     expect(reselect).toHaveBeenCalledWith('1');
     expect(box.checked).toBe(false);
+  });
+
+  it('per-wallpaper 隔离：切到另一张同名属性的 scene 读自己的值，不串上一张的开关', async () => {
+    // '1' 与 '3' 都是 scene 且都有 clouds（真实场景：EVA 与另一张都有 bool newproperty1）。
+    mount({
+      fetchProperties: async () => [CLOUDS],
+      fetchWallpapers: async () => [
+        ...WALLPAPERS,
+        { id: '3', title: 'EVA 2', type: 'scene', hasScene: true, hasPreviewGif: false, previewUrl: '/p3' },
+      ] as any,
+    });
+    await flush();
+    (container.querySelector('.wss-userprop[data-key="clouds"]') as HTMLInputElement).click();
+    await flush();
+    expect(localStorage.getItem('we:userprop:1:clouds')).toBe('false');
+
+    (container.querySelector('.wss-thumb[data-id="3"]') as HTMLElement).click();
+    await flush();
+    const box3 = container.querySelector('.wss-userprop[data-key="clouds"]') as HTMLInputElement;
+    expect(box3.checked).toBe(true); // 另一张壁纸仍是自己的默认值
+    box3.click();
+    await flush();
+    expect(localStorage.getItem('we:userprop:3:clouds')).toBe('false');
+    expect(localStorage.getItem('we:userprop:1:clouds')).toBe('false'); // 互不覆盖
   });
 
   it('props.onReselect 优先于共享 handler', async () => {

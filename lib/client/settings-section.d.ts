@@ -26,8 +26,8 @@ export interface WallpaperSettingsSectionProps {
     /** 清空失败记忆（默认走共享 handler 的 clearFailures） */
     onClearRenderFailures?: () => void;
 }
-export declare function setWallpaperSelectHandler(fn: (id: string) => void): void;
-export declare function setWallpaperRuntimeHandler(fn: (patch: Partial<ClientSettings>) => void): void;
+export declare function setWallpaperSelectHandler(fn: ((id: string) => void) | null): void;
+export declare function setWallpaperRuntimeHandler(fn: ((patch: Partial<ClientSettings>) => void) | null): void;
 export declare function setWallpaperReselectHandler(handler: ((id: string) => void) | null): void;
 /** 面板「实时渲染」卡片要的三件事：读状态、重试当前壁纸、清空全部失败记忆。 */
 export interface WallpaperHealthHandler {

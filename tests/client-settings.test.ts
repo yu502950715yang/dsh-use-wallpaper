@@ -177,8 +177,8 @@ describe('DEFAULTS（客户端缺省值）', () => {
 
 // T4.2 WE 用户属性读取：插件设置（ClientSettings）不含壁纸级用户属性存储，
 // visible:{user,value} 绑定按 key 查询用户切换值——localStorage 持久化
-// （键 we:userprop:<key>，JSON 值）。缺失/损坏/无存储环境 → undefined，
-// resolveVisibility 据此回退绑定 value（不误杀对象）。
+// （键 we:userprop:<wallpaperId>:<key>；不带 id 或迁移期回退 we:userprop:<key>，JSON 值）。
+// 缺失/损坏/无存储环境 → undefined，resolveVisibility 据此回退绑定 value（不误杀对象）。
 describe('getUserPropertyValue（WE 用户属性 localStorage 存储）', () => {
   const storage = () => ({ getItem: vi.fn() } as any);
 
@@ -206,5 +206,36 @@ describe('getUserPropertyValue（WE 用户属性 localStorage 存储）', () => 
     ls.getItem.mockReturnValue('{oops');
     vi.stubGlobal('localStorage', ls);
     expect(getUserPropertyValue('x')).toBeUndefined();
+  });
+
+  // I1：带壁纸 id 时读 per-wallpaper 键（跨壁纸隔离）；旧全局键仅作读回退。
+  it('带 id：优先读 we:userprop:<id>:<key>，不串到其它壁纸', () => {
+    const map = new Map<string, string>([
+      ['we:userprop:2832263418:newproperty1', 'false'],
+      ['we:userprop:3811798465:newproperty1', 'true'],
+    ]);
+    const ls = { getItem: vi.fn((k: string) => map.get(k) ?? null) } as any;
+    vi.stubGlobal('localStorage', ls);
+    expect(getUserPropertyValue('newproperty1', '2832263418')).toBe(false);
+    expect(getUserPropertyValue('newproperty1', '3811798465')).toBe(true);
+    expect(ls.getItem).toHaveBeenCalledWith('we:userprop:2832263418:newproperty1');
+  });
+
+  it('带 id 但 per-id 键缺失 → 回退旧全局键（迁移兼容）', () => {
+    const map = new Map<string, string>([['we:userprop:clouds', 'true']]);
+    const ls = { getItem: vi.fn((k: string) => map.get(k) ?? null) } as any;
+    vi.stubGlobal('localStorage', ls);
+    expect(getUserPropertyValue('clouds', '42')).toBe(true);
+    expect(ls.getItem).toHaveBeenCalledWith('we:userprop:42:clouds');
+    expect(ls.getItem).toHaveBeenCalledWith('we:userprop:clouds');
+  });
+
+  it('无 id → 只读旧全局键（保持既有行为，不多拼 id 段）', () => {
+    const ls = storage();
+    ls.getItem.mockReturnValue('false');
+    vi.stubGlobal('localStorage', ls);
+    expect(getUserPropertyValue('clouds')).toBe(false);
+    expect(ls.getItem).toHaveBeenCalledTimes(1);
+    expect(ls.getItem).toHaveBeenCalledWith('we:userprop:clouds');
   });
 });

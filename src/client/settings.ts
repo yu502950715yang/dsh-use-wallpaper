@@ -103,16 +103,18 @@ export async function writeClientSettings(patch: Partial<ClientSettings>): Promi
 
 // WE 用户属性读取（T4.2）：scene.json 的 visible:{user,value} 绑定按 key 查询用户
 // 切换值。插件设置（ClientSettings）不含壁纸级用户属性存储——轻量实现用
-// localStorage 持久化（键 we:userprop:<key>，JSON 值；未来 picker/设置面板可按
-// 同一键写入，即用户切换入口）。无存储环境（node 测试/SSR）/键缺失/解析失败
+// localStorage 持久化（键 we:userprop:<wallpaperId>:<key>，JSON 值；旧版全局键
+// we:userprop:<key> 仅作读回退，迁移兼容）。无存储环境（node 测试/SSR）/键缺失/解析失败
 // → undefined（resolveVisibility 回退绑定 value，不误杀对象）。
 // 注：本函数不直接供 renderScene 调用——渲染器经 RenderSceneOptions.getUserProperty
 // 注入（见 scene-renderer.ts），测试可注入 stub 而不依赖存储。
-const USERPROP_PREFIX = 'we:userprop:';
+export const USERPROP_PREFIX = 'we:userprop:';
 
-export function getUserPropertyValue(key: string): unknown {
+export function getUserPropertyValue(key: string, wallpaperId?: string): unknown {
   if (typeof localStorage === 'undefined') return undefined;
-  const raw = localStorage.getItem(USERPROP_PREFIX + key);
+  // 带 id 时 per-wallpaper 键优先；缺失回退旧全局键（升级前的用户覆盖值仍生效）。
+  const scoped = wallpaperId ? localStorage.getItem(USERPROP_PREFIX + wallpaperId + ':' + key) : null;
+  const raw = scoped ?? localStorage.getItem(USERPROP_PREFIX + key);
   if (raw === null) return undefined;
   try {
     return JSON.parse(raw);

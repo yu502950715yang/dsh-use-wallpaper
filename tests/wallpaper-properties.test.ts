@@ -5,7 +5,8 @@ import {
 import type { WallpaperUserProperty } from '../src/shared/types.js';
 
 // v0.8 Task 7 client 侧：属性拉取 + 用户布尔值 localStorage 读写。
-// 存储契约与 getUserPropertyValue 一致：键 we:userprop:<key>，JSON 值；
+// 存储契约：带壁纸 id 时键 we:userprop:<wallpaperId>:<key>（跨壁纸隔离），
+// 读侧缺键回退旧全局键 we:userprop:<key>（迁移兼容）；无 id 保持旧行为。
 // 非 boolean（键缺失/坏 JSON/其它类型）→ undefined，写入无存储环境静默。
 
 const CLOUDS: WallpaperUserProperty = { key: 'clouds', label: '云层', type: 'bool', value: true, order: 2.5 };
@@ -38,6 +39,39 @@ describe('readBoolProperty / writeBoolProperty（localStorage 存储）', () => 
     writeBoolProperty('clouds', true);
     expect(storage.getItem('we:userprop:clouds')).toBe('true');
     expect(readBoolProperty('clouds')).toBe(true);
+  });
+
+  it('per-wallpaper 键：同一 key 两个 id 互不串值；旧全局键只读回退', () => {
+    const storage = memoryStorage();
+    vi.stubGlobal('localStorage', storage);
+    writeBoolProperty('newproperty1', false, '2832263418');
+    expect(storage.getItem('we:userprop:2832263418:newproperty1')).toBe('false');
+    expect(storage.getItem('we:userprop:newproperty1')).toBeNull(); // 不再写全局键
+    expect(readBoolProperty('newproperty1', '2832263418')).toBe(false);
+    // 另一张同名属性的壁纸看不到这家的覆盖值（真实串键场景：EVA × 另一张 bool newproperty1）
+    expect(readBoolProperty('newproperty1', '3811798465')).toBeUndefined();
+    writeBoolProperty('newproperty1', true, '3811798465');
+    expect(storage.getItem('we:userprop:3811798465:newproperty1')).toBe('true');
+    expect(readBoolProperty('newproperty1', '2832263418')).toBe(false);
+    expect(readBoolProperty('newproperty1', '3811798465')).toBe(true);
+  });
+
+  it('旧全局键回退：per-id 缺键时读旧值；per-id 有键时优先', () => {
+    const storage = memoryStorage();
+    vi.stubGlobal('localStorage', storage);
+    storage.setItem('we:userprop:clouds', 'false'); // 升级前写入的旧值
+    expect(readBoolProperty('clouds', '42')).toBe(false); // 迁移兼容：仍读得到
+    storage.setItem('we:userprop:42:clouds', 'true');
+    expect(readBoolProperty('clouds', '42')).toBe(true); // 新键优先
+    expect(readBoolProperty('clouds', '43')).toBe(false); // 其它壁纸仍回退旧值
+  });
+
+  it('无 id 保持旧行为（读写全局键 we:userprop:<key>）', () => {
+    const storage = memoryStorage();
+    vi.stubGlobal('localStorage', storage);
+    writeBoolProperty('clouds', false);
+    expect(storage.getItem('we:userprop:clouds')).toBe('false');
+    expect(readBoolProperty('clouds')).toBe(false);
   });
 
   it('键缺失 / 坏 JSON / 非 boolean → undefined（复用 getUserPropertyValue 契约）', () => {

@@ -53,14 +53,14 @@ async function defaultFetchProbe(): Promise<ProbeResult> {
 // 使 slot 渲染的组件（无法直接传 props）也能切换/取消壁纸。props.onSelect 优先。
 let sharedOnSelect: ((id: string) => void) | null = null;
 
-export function setWallpaperSelectHandler(fn: (id: string) => void): void {
+export function setWallpaperSelectHandler(fn: ((id: string) => void) | null): void {
   sharedOnSelect = fn;
 }
 
 // 运行期设置（省电/画质档位）的共享处理器：同样由 index.ts 注册（槽位组件无法直接传 props）。
 let sharedOnRuntimeSettings: ((patch: Partial<ClientSettings>) => void) | null = null;
 
-export function setWallpaperRuntimeHandler(fn: (patch: Partial<ClientSettings>) => void): void {
+export function setWallpaperRuntimeHandler(fn: ((patch: Partial<ClientSettings>) => void) | null): void {
   sharedOnRuntimeSettings = fn;
 }
 
@@ -218,7 +218,8 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
         if (!alive) return;
         const items = Array.isArray(list) ? list : [];
         setProperties(items);
-        setPropValues(Object.fromEntries(items.map((p) => [p.key, readBoolProperty(p.key) ?? p.value])));
+        // 初值按当前壁纸 id 读（per-wallpaper 覆盖值；缺键回退旧全局键）。
+        setPropValues(Object.fromEntries(items.map((p) => [p.key, readBoolProperty(p.key, selectedId) ?? p.value])));
       })
       .catch(() => {
         if (!alive) return;
@@ -479,7 +480,7 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
                 onChange={(e) => {
                   const checked = e.target.checked;
                   setPropValues((prev) => ({ ...prev, [property.key]: checked }));
-                  writeBoolProperty(property.key, checked);
+                  writeBoolProperty(property.key, checked, selectedId);
                   onReselect(selectedId);
                 }}
               />
@@ -549,7 +550,7 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
                 onChange={(e) => applyRuntime({ fitMode: e.target.value as FitMode })}
               >
                 <option value="cover">裁剪铺满</option>
-                <option value="contain">完整显示（留黑边）</option>
+                <option value="contain">完整显示（可能留边）</option>
                 <option value="stretch">拉伸铺满</option>
               </select>
             </label>
