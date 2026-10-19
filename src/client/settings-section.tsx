@@ -4,7 +4,7 @@
 // 数据与动作经 props 注入（默认走真实 API），便于 jsdom 单测。
 
 import { useCallback, useEffect, useState } from 'react';
-import type { ClientSettings, FitMode } from './types.js';
+import type { ClientSettings, FitMode, RotationOrder } from './types.js';
 import type { WallpaperInfo, WallpaperKind, ProbeResult, WallpaperUserProperty } from '../shared/types.js';
 import { readClientSettings, writeClientSettings } from './settings.js';
 import { fetchWallpaperProperties, readBoolProperty, writeBoolProperty } from './wallpaper-properties.js';
@@ -14,6 +14,7 @@ import type { HealthSnapshot } from './render-health.js';
 import type { MediaFailure, MediaFailureKind, MediaFallback } from './media-health.js';
 import { filterLibrary, loadLibraryState, toggleFavorite, toggleHidden } from './library-view.js';
 import type { LibraryFilter, LibraryState } from './library-view.js';
+import { ROTATION_INTERVAL_OPTIONS, buildRotationPool, formatRotationInterval, normalizeRotationOrder } from './rotation.js';
 
 export interface WallpaperSettingsSectionProps {
   /** 读取当前设置（默认 RPC settings.describe） */
@@ -291,6 +292,12 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
     ? formatHealthLine({ ...live, ok: null, timing: null }, weT)
     : '';
   const liveState = live.ok === true ? 'ok' : (live.failure ? 'failed' : 'idle');
+
+  // 轮播状态行：可轮播池按当前列表 + 收藏/隐藏实时算（池 <2 张时明确提示原因，不静默）。
+  const rotationPoolSize = buildRotationPool(wallpapers, libState).length;
+  const rotationStatus = rotationPoolSize < 2
+    ? '至少保留 2 张可轮播壁纸，或收藏 2 张以上'
+    : `每 ${formatRotationInterval(settings?.rotationIntervalMs)} · ${normalizeRotationOrder(settings?.rotationOrder) === 'sequential' ? '顺序' : '随机'} · 可轮播 ${rotationPoolSize} 张`;
 
   // 两个入口：props 优先（可嵌入/可测），否则走 index.ts 注册的共享 handler；
   // 都没有时不谎报「已重试/已清除」（插件尚未挂载时是这种情况）。
@@ -587,6 +594,55 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
                 onChange={(e) => applyRuntime({ glowStrength: Number(e.target.value) })}
               />
             </label>
+          </div>
+        </section>
+      )}
+      {/* 自动轮播（v0.8）：开启后按间隔自动切换；收藏 ≥2 张时只轮播收藏，池不足 2 张时明示原因。 */}
+      {settings && (
+        <section className="wss-section">
+          <h4 className="wss-section-title">轮播</h4>
+          <div className="wss-rotation">
+            <label className="wss-glow-row">
+              <input
+                type="checkbox"
+                className="wss-rotation-enabled"
+                checked={settings.rotationEnabled}
+                onChange={(e) => applyRuntime({ rotationEnabled: e.target.checked })}
+              />
+              自动轮播
+            </label>
+            <label className="wss-row">
+              <span>切换间隔</span>
+              <select
+                className="wss-rotation-interval"
+                value={String(settings.rotationIntervalMs)}
+                onChange={(e) => applyRuntime({ rotationIntervalMs: Number(e.target.value) })}
+              >
+                {/* 非面板写入的自定义间隔也如实显示（不静默归一到最近档位） */}
+                {!ROTATION_INTERVAL_OPTIONS.some((o) => o.ms === settings.rotationIntervalMs) && (
+                  <option value={String(settings.rotationIntervalMs)}>
+                    {formatRotationInterval(settings.rotationIntervalMs)}
+                  </option>
+                )}
+                {ROTATION_INTERVAL_OPTIONS.map((o) => (
+                  <option key={o.ms} value={String(o.ms)}>{o.label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="wss-row">
+              <span>切换顺序</span>
+              <select
+                className="wss-rotation-order"
+                value={normalizeRotationOrder(settings.rotationOrder)}
+                onChange={(e) => applyRuntime({ rotationOrder: e.target.value as RotationOrder })}
+              >
+                <option value="sequential">顺序</option>
+                <option value="random">随机</option>
+              </select>
+            </label>
+            <p className="wss-section-desc wss-rotation-status" data-state={rotationPoolSize < 2 ? 'empty' : 'ready'}>
+              {rotationStatus}
+            </p>
           </div>
         </section>
       )}

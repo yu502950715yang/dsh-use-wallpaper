@@ -7,7 +7,8 @@ import { WallpaperSettingsSection, setWallpaperSelectHandler, setWallpaperRuntim
 import { readClientSettings, writeClientSettings, getUserPropertyValue, DEFAULTS, setSettingsCtx } from './settings.js';
 import { createRenderHealthStore } from './render-health.js';
 import { createMediaHealthStore } from './media-health.js';
-import { markRecent } from './library-view.js';
+import { markRecent, loadLibraryState } from './library-view.js';
+import { buildRotationPool, createRotationScheduler, normalizeRotationOrder } from './rotation.js';
 import type { BackgroundPlan, ClientSettings } from './types.js';
 import type { HealthSnapshot } from './render-health.js';
 
@@ -55,6 +56,17 @@ export function bootstrap(ctx?: any): void {
   // three.js 场景渲染器：bootstrap 创建一次、跨壁纸复用（内部每次 render 重建 player）。
   // 这里持有引用，是为了把「省电 / 画质档位」直接下发——它们不在 controller 的渲染接口上。
   const sceneRenderer = createThreeSceneRenderer({ healthStore });
+  // 自动轮播：池/当前项/暂停都实时读取；启停由 applyRuntimeSettings 与 mount/teardown 同步。
+  let rotationPaused = false;
+  const rotation = createRotationScheduler({
+    getPool: () => buildRotationPool(controller?.getList() ?? [], loadLibraryState()),
+    getCurrentId: () => settings.selectedWallpaperId,
+    // manual=false：轮播自身的切换不得清空失败记忆（否则「本会话跳过」形同虚设）。
+    select: (id) => selectWallpaper(id, false),
+    isPaused: () => rotationPaused,
+    intervalMs: settings.rotationIntervalMs,
+    order: normalizeRotationOrder(settings.rotationOrder),
+  });
   // 两个可复用入口：全局 API 与面板共享 handler 都调它们（只此一份实现）。
   const clearRenderFailures = () => { healthStore.clearAll(); };
   const retryLive = () => {
@@ -73,6 +85,8 @@ export function bootstrap(ctx?: any): void {
     return snap && snap.wallpaperId === settings.selectedWallpaperId ? snap : null;
   };
   const onHealth = (snap: HealthSnapshot) => {
+    // 硬失败 ⇒ 本会话轮播跳过这张（软失败还会冷却重试，不跳过）。
+    if (snap.wallpaperId && snap.failure?.hard) rotation.markFailed(snap.wallpaperId);
     // 只推「当前选中壁纸」：切走后旧壁纸迟到的打点会常驻面板，而 get() 已是 null、
     // 该失败文案对应的「重试」还会作用到另一张壁纸（读实时选中项，不用缓存值）。
     if (snap.wallpaperId === settings.selectedWallpaperId) notifyWallpaperHealth(snap);
@@ -104,6 +118,7 @@ export function bootstrap(ctx?: any): void {
   const applyRuntimeSettings = (s: ClientSettings) => {
     const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
     const shouldPause = s.paused || (s.pauseOnHidden && hidden);
+    rotationPaused = shouldPause;
     sceneRenderer.setPaused?.(shouldPause);
     sceneRenderer.setQualityScale?.(s.qualityScale);
     // 应用级 Glow：开关/阈值/强度一并即时下发（已装配则就地改 uniform，无需重选壁纸）
@@ -113,23 +128,37 @@ export function bootstrap(ctx?: any): void {
     layer?.setPaused(shouldPause);
     // 贴壁纸文字颜色/描边：面板改动即时生效（手动档换色 / auto 档重测 preview），不必重选壁纸。
     controller?.applyTextStyle();
+    // 轮播：间隔/顺序随设置即时生效；启用开关同步启停（暂停/页面隐藏时停表）。
+    rotation.setConfig({ intervalMs: s.rotationIntervalMs, order: normalizeRotationOrder(s.rotationOrder) });
+    if (s.rotationEnabled) rotation.start();
+    else rotation.stop();
+    rotation.setPaused(shouldPause);
   };
-  const selectWallpaper = (id: string) => {
+  // 选择壁纸（面板/外部与轮播共用）：成功后才落层/写最近/刷新状态；manual=false（轮播自身切换）不清失败记忆。
+  async function selectWallpaper(id: string, manual = true): Promise<void> {
     backgroundToken += 1;
     mediaHealth.clear(); // 重新选壁纸即清掉上一条媒体失败提示
     settings = { ...settings, selectedWallpaperId: id };
-    void controller!.select(id).then(() => {
-      applySettingsToLayer(settings);
-      markRecent(id); // 切换成功才记入「最近使用」（空 id = 取消，markRecent 内部忽略）
-      notifyWallpaperHealth(panelHealth()); // 选中后补推一次：切壁纸即刷新状态行（不必等下一次健康事件）
-    });
     void writeClientSettings({ selectedWallpaperId: id });
-  };
+    if (!controller) return;
+    try {
+      await controller.select(id);
+    } catch {
+      // 单次切换失败保持现状（轮播下一拍再试；调用方均为 void 调用，不得产生 unhandled rejection）
+      return;
+    }
+    applySettingsToLayer(settings);
+    markRecent(id); // 切换成功才记入「最近使用」（空 id = 取消，markRecent 内部忽略）
+    if (manual) rotation.notifyManualSelect(); // 手动选择重置轮播计时并清失败记忆
+    notifyWallpaperHealth(panelHealth()); // 选中后补推一次：切壁纸即刷新状态行（不必等下一次健康事件）
+  }
   // 本实例收尾：停 scene 渲染器（WebGL/wasm/音频）→ 清空并摘掉背景层 → 注销监听。
   // 幂等（可被 ctx drain 与下一个实例的 mount 各调一次）。
   const teardown = () => {
     if (disposed) return;
     disposed = true;
+    // 撤掉轮播定时器：收尾/HMR 后不得再有挂载实例的自动切换（只允许存在一份）。
+    rotation.stop();
     // 收尾：撤掉全部在途的自动重试与健康订阅（否则延迟的回调会落到已释放的渲染器/层上）。
     for (const t of autoRetryTimers.values()) clearTimeout(t);
     autoRetryTimers.clear();
@@ -220,7 +249,7 @@ export function bootstrap(ctx?: any): void {
       },
     });
     // 设置面板（settings-section）的壁纸切换/取消经共享 handler 委托 controller
-    setWallpaperSelectHandler((id: string) => selectWallpaper(id));
+    setWallpaperSelectHandler((id: string) => { void selectWallpaper(id); });
     // 用户属性切换后重装配当前壁纸：属性值只在装配时读取，故重新 select（不弹提示/不写设置）
     setWallpaperReselectHandler((id: string) => { void controller?.select(id); });
     // 设置面板改显示效果/省电/画质档位 → 立即下发（layer 与渲染器都要，不必重选壁纸）
@@ -259,6 +288,8 @@ export function bootstrap(ctx?: any): void {
       }
     });
     (window as any)[TEARDOWN_KEY] = teardown;
+    // 启动时若已启用轮播则开始计时（读回设置前 settings 还是 DEFAULTS，真正启动在 applyRuntimeSettings）。
+    if (settings.rotationEnabled) rotation.start();
   };
   // 延迟到 DOM 就绪
   if (document.readyState === 'loading') {
@@ -279,6 +310,7 @@ export function bootstrap(ctx?: any): void {
       // 同步记住选中项：retryLive / 自动重试按「当前选中的壁纸」定位（面板路径见 selectWallpaper）。
       settings = { ...settings, selectedWallpaperId: id };
       void controller.select(id);
+      rotation.notifyManualSelect(); // 手动切换同样重置轮播计时并清失败记忆
     },
     // 看护入口（面板与排查用）：读状态 / 重试当前壁纸 / 清空全部失败记忆。
     // health() 与面板读接口同一守卫：当前壁纸不是 scene（video/none/还没选）时返回 null。

@@ -254,6 +254,8 @@ export function createWallpaperController(
   return {
     load,
     select,
+    // 已加载的壁纸列表（轮播按它算轮播池；空 = 还没 load）。
+    getList(): WallpaperInfo[] { return list; },
     // 设置面板改了文字颜色/描边 → 立即重新下发（不必重选壁纸）。
     applyTextStyle(): void { textStyler.apply(currentInfo); },
   };

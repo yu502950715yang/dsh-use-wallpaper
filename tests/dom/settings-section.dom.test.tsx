@@ -18,6 +18,8 @@ import type { ProbeResult, WallpaperUserProperty } from '../../src/shared/types.
 // ── 端到端接线（index.ts）的替身：面板仍是真实组件，只把渲染器/控制器/层/样式替身掉，
 // 断言落在 .wss-live-status 的 textContent 上（健康事件是否真的上屏）。
 const e2eSelect = vi.hoisted(() => vi.fn(async () => {}));
+// controller 的列表（轮播 getPool 读它）；各用例按需填充，默认空池 ⇒ 轮播不动。
+const e2eList = vi.hoisted(() => [] as any[]);
 // index 的 show({kind:'video'}) 走 layer.showVideo 三态；默认 ok，失败用例按需覆盖。
 const e2eVideo = vi.hoisted(() => ({
   showVideo: vi.fn(async (_url: string): Promise<'ok' | 'unsupported' | 'timeout'> => 'ok'),
@@ -35,7 +37,7 @@ vi.mock('../../src/client/background-layer.js', () => ({
   }),
 }));
 vi.mock('../../src/client/wallpaper-controller.js', () => ({
-  createWallpaperController: () => ({ load: async () => {}, select: e2eSelect, applyTextStyle() {} }),
+  createWallpaperController: () => ({ load: async () => {}, select: e2eSelect, applyTextStyle() {}, getList: () => e2eList }),
 }));
 vi.mock('../../src/client/styles.js', () => ({ injectWallpaperStyles: vi.fn() }));
 vi.mock('../../src/client/three-renderer.js', () => ({
@@ -769,6 +771,97 @@ describe('WallpaperSettingsSection', () => {
     await flush();
     expect(typeof (JSON.parse(localStorage.getItem('we:recent') ?? '{}') as Record<string, unknown>)['wY']).toBe('number');
     localStorage.clear();
+  });
+});
+
+// v0.8 Task 8：自动轮播（开关/间隔/顺序经 applyRuntime 下发并持久化；状态行随设置与可轮播池实时更新）。
+describe('自动轮播', () => {
+  const rotationStatusText = () => (container.querySelector('.wss-rotation-status') as HTMLElement | null)?.textContent ?? '';
+  const setSelect = (el: HTMLSelectElement, value: string) => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!;
+    setter.call(el, value);
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+
+  it('开关/间隔/顺序改完即时下发并持久化；状态行显示间隔、顺序与可轮播张数', async () => {
+    const writeSettings = vi.fn(async () => {});
+    const onRuntimeSettings = vi.fn();
+    mount({ writeSettings, onRuntimeSettings });
+    await flush();
+
+    // 缺省 5 分钟 / 顺序 / 可轮播 2 张（WALLPAPERS 两张都不是 unknown 且未隐藏）
+    expect(rotationStatusText()).toContain('每 5 分钟');
+    expect(rotationStatusText()).toContain('顺序');
+    expect(rotationStatusText()).toContain('可轮播 2 张');
+
+    const enabled = container.querySelector('.wss-rotation-enabled') as HTMLInputElement;
+    expect(enabled.checked).toBe(false); // 默认关闭
+    enabled.click();
+    await flush();
+    expect(onRuntimeSettings).toHaveBeenCalledWith({ rotationEnabled: true });
+    expect(writeSettings).toHaveBeenCalledWith({ rotationEnabled: true });
+
+    const interval = container.querySelector('.wss-rotation-interval') as HTMLSelectElement;
+    setSelect(interval, '600000');
+    await flush();
+    expect(onRuntimeSettings).toHaveBeenCalledWith({ rotationIntervalMs: 600000 });
+    expect(writeSettings).toHaveBeenCalledWith({ rotationIntervalMs: 600000 });
+    expect(rotationStatusText()).toContain('每 10 分钟');
+
+    const order = container.querySelector('.wss-rotation-order') as HTMLSelectElement;
+    setSelect(order, 'random');
+    await flush();
+    expect(onRuntimeSettings).toHaveBeenCalledWith({ rotationOrder: 'random' });
+    expect(writeSettings).toHaveBeenCalledWith({ rotationOrder: 'random' });
+    expect(rotationStatusText()).toContain('随机');
+  });
+
+  it('可轮播池不足 2 张时给出明确提示（隐藏/单张）', async () => {
+    mount({ fetchWallpapers: async () => [WALLPAPERS[0]] as any });
+    await flush();
+    expect(rotationStatusText()).toBe('至少保留 2 张可轮播壁纸，或收藏 2 张以上');
+    await unmount();
+
+    mount();
+    await flush();
+    (container.querySelector('.wss-hide[data-id="2"]') as HTMLElement).click();
+    await flush();
+    expect(rotationStatusText()).toContain('至少保留 2 张可轮播壁纸，或收藏 2 张以上');
+    localStorage.clear();
+  });
+
+  // 端到端：面板开启轮播 → index.ts 调度器按间隔经 selectWallpaper 切换 → teardown 停表（HMR 不留双定时器）。
+  it('端到端：开启轮播后按间隔自动切换，teardown 后不再切换', async () => {
+    vi.useFakeTimers();
+    try {
+      e2eSelect.mockClear();
+      e2eList.length = 0;
+      e2eList.push(...WALLPAPERS);
+      bootstrap();
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      mount({ onSelect: undefined, fetchSettings: async () => BASE_SETTINGS, writeSettings: async () => {} });
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+      // 先手动选 '1'（index 的 settings.selectedWallpaperId 只有走共享 handler 才会同步）
+      (container.querySelector('.wss-thumb[data-id="1"]') as HTMLElement).click();
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      expect(e2eSelect).toHaveBeenLastCalledWith('1');
+
+      (container.querySelector('.wss-rotation-enabled') as HTMLInputElement).click();
+      await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+      const before = e2eSelect.mock.calls.length;
+      await act(async () => { await vi.advanceTimersByTimeAsync(300000); });
+      expect(e2eSelect).toHaveBeenLastCalledWith('2');
+      expect(e2eSelect.mock.calls.length).toBeGreaterThan(before);
+
+      // teardown 撤掉轮播定时器：再过一个周期不得再切换
+      await act(async () => { teardownEngine(); });
+      const afterTeardown = e2eSelect.mock.calls.length;
+      await act(async () => { await vi.advanceTimersByTimeAsync(300000); });
+      expect(e2eSelect.mock.calls.length).toBe(afterTeardown);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
