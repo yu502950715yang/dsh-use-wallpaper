@@ -30,6 +30,16 @@ export interface WallpaperInfo {
 
 export interface PkgEntry { name: string; offset: number; size: number; }
 
+// v0.8 壁纸用户属性（仅布尔可见性）：project.json 的 bool 属性 ∩ scene.json
+// objects[].visible.user 的键。面板据此渲染开关，值经 localStorage 覆盖后重装配。
+export interface WallpaperUserProperty {
+  key: string;
+  label: string;
+  type: 'bool';
+  value: boolean;
+  order: number;
+}
+
 // WE 对象可见性绑定（T4.2）：scene.json 的 visible 字段三种形态归一化——
 //   true / false           → { kind:'plain', value }（静态开关）
 //   { user, value }        → { kind:'user', key, value }（用户属性键；value 为缺省可见性）

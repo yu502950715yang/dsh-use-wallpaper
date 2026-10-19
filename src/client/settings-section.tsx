@@ -5,8 +5,9 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import type { ClientSettings, FitMode } from './types.js';
-import type { WallpaperInfo, WallpaperKind, ProbeResult } from '../shared/types.js';
+import type { WallpaperInfo, WallpaperKind, ProbeResult, WallpaperUserProperty } from '../shared/types.js';
 import { readClientSettings, writeClientSettings } from './settings.js';
+import { fetchWallpaperProperties, readBoolProperty, writeBoolProperty } from './wallpaper-properties.js';
 import { TEXT_OUTLINE_MAX, normalizeHexColor, normalizeMode, normalizeOutlineLevel, outlineLabel } from './text-color.js';
 import { formatHealthLine } from './render-health.js';
 import type { HealthSnapshot } from './render-health.js';
@@ -23,8 +24,12 @@ export interface WallpaperSettingsSectionProps {
   fetchWallpapers?: () => Promise<WallpaperInfo[]>;
   /** 自动探测候选路径（默认 GET /wallpapers/probe） */
   fetchProbe?: () => Promise<ProbeResult>;
+  /** 拉取当前 scene 壁纸的用户属性（默认 GET /wallpapers/properties） */
+  fetchProperties?: (id: string) => Promise<WallpaperUserProperty[]>;
   /** 切换/取消壁纸（index.ts 注入 controller.select，空 id = 取消） */
   onSelect?: (id: string) => void;
+  /** 用户属性切换后重装配当前壁纸（默认走共享 handler 的 controller.select） */
+  onReselect?: (id: string) => void;
   /** 运行期设置（光晕参数/暂停/画质档位）变更：index.ts 注入后立即下发给渲染器，无需重选壁纸 */
   onRuntimeSettings?: (patch: Partial<ClientSettings>) => void;
   /** 当前壁纸的渲染健康快照（由 index.ts 经 subscribeWallpaperHealth 推送；null = 还没选壁纸） */
@@ -56,6 +61,14 @@ let sharedOnRuntimeSettings: ((patch: Partial<ClientSettings>) => void) | null =
 
 export function setWallpaperRuntimeHandler(fn: (patch: Partial<ClientSettings>) => void): void {
   sharedOnRuntimeSettings = fn;
+}
+
+// 用户属性切换后的重装配处理器：属性值存在 localStorage，渲染器只在装配时读取，
+// 故切换后需重新 select 当前壁纸（不弹提示、不写设置）。传 null = 撤销（teardown）。
+let sharedOnReselect: ((id: string) => void) | null = null;
+
+export function setWallpaperReselectHandler(handler: ((id: string) => void) | null): void {
+  sharedOnReselect = handler;
 }
 
 /** 面板「实时渲染」卡片要的三件事：读状态、重试当前壁纸、清空全部失败记忆。 */
@@ -138,7 +151,9 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
   const writeSettings = props.writeSettings ?? writeClientSettings;
   const fetchWallpapers = props.fetchWallpapers ?? defaultFetchWallpapers;
   const fetchProbe = props.fetchProbe ?? defaultFetchProbe;
+  const fetchProperties = props.fetchProperties ?? fetchWallpaperProperties;
   const onSelect = props.onSelect ?? sharedOnSelect ?? (() => {});
+  const onReselect = props.onReselect ?? sharedOnReselect ?? (() => {});
   const onRuntimeSettings = props.onRuntimeSettings ?? sharedOnRuntimeSettings ?? (() => {});
 
   const [settings, setSettings] = useState<ClientSettings | null>(null);
@@ -152,10 +167,15 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
   const [mediaFailure, setMediaFailure] = useState<MediaFailure | null>(mediaHandler?.get() ?? null);
   // 壁纸库筛选状态：收藏/隐藏/最近使用来自 localStorage（挂载时读一次，操作后即时落盘）。
   const [libState, setLibState] = useState<LibraryState>(loadLibraryState);
+  // 壁纸用户属性（v0.8 仅布尔可见性）：只对当前选中的 scene 壁纸拉取一次。
+  const [properties, setProperties] = useState<WallpaperUserProperty[]>([]);
+  const [propValues, setPropValues] = useState<Record<string, boolean>>({});
   const [filter, setFilter] = useState<LibraryFilter>({
     query: '', types: [], favoritesOnly: false, showHidden: false, sort: 'default',
   });
   const visibleWallpapers = filterLibrary(wallpapers, filter, libState);
+  const selectedId = settings?.selectedWallpaperId ?? '';
+  const selectedIsScene = !!selectedId && wallpapers.some((w) => w.id === selectedId && w.type === 'scene');
 
   // 挂载时先取一次当前值（打开面板即显示状态），再订阅后续推送；卸载时退订。
   useEffect(() => {
@@ -183,6 +203,29 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
     })();
     return () => { alive = false; };
   }, [fetchSettings, fetchWallpapers]);
+
+  // 切换壁纸时重新拉取属性；checkbox 初值 = localStorage 覆盖值，否则壁纸默认 value。
+  useEffect(() => {
+    if (!selectedIsScene) {
+      setProperties([]);
+      setPropValues({});
+      return;
+    }
+    let alive = true;
+    void fetchProperties(selectedId)
+      .then((list) => {
+        if (!alive) return;
+        const items = Array.isArray(list) ? list : [];
+        setProperties(items);
+        setPropValues(Object.fromEntries(items.map((p) => [p.key, readBoolProperty(p.key) ?? p.value])));
+      })
+      .catch(() => {
+        if (!alive) return;
+        setProperties([]);
+        setPropValues({});
+      });
+    return () => { alive = false; };
+  }, [selectedId, selectedIsScene, fetchProperties]);
 
   // 选择/取消壁纸：同步回调（controller 立即生效）+ 持久化
   const select = useCallback((id: string) => {
@@ -413,6 +456,31 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
           <p className="wss-empty">没有匹配的壁纸（隐藏 {libState.hidden.size} 张）</p>
         )}
       </section>
+      {/* 壁纸属性（v0.8 布尔可见性）：只对当前 scene 壁纸且确有可切换属性时显示；
+          开关写 localStorage，随后重装配当前壁纸（渲染器装配时读取属性值）。 */}
+      {selectedIsScene && properties.length > 0 && (
+        <section className="wss-section wss-userprops">
+          <h4 className="wss-section-title">壁纸属性</h4>
+          <p className="wss-section-desc">切换后生效（会重新装配当前壁纸）。</p>
+          {properties.map((property) => (
+            <label key={property.key} className="wss-row">
+              <input
+                type="checkbox"
+                className="wss-userprop"
+                data-key={property.key}
+                checked={propValues[property.key] ?? property.value}
+                onChange={(e) => {
+                  const checked = e.target.checked;
+                  setPropValues((prev) => ({ ...prev, [property.key]: checked }));
+                  writeBoolProperty(property.key, checked);
+                  onReselect(selectedId);
+                }}
+              />
+              {property.label}
+            </label>
+          ))}
+        </section>
+      )}
       {/* 显示效果：壁纸画面观感（遮罩/模糊/KenBurns/适配模式）与应用级 Glow，改完立即生效、不必重选壁纸 */}
       {settings && (
         <section className="wss-section">

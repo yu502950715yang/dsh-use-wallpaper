@@ -4,11 +4,12 @@ import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react';
 import {
   WallpaperSettingsSection, setWallpaperRuntimeHandler, setWallpaperSelectHandler,
-  setWallpaperHealthHandler, setWallpaperMediaHandler, subscribeWallpaperHealth, notifyWallpaperHealth,
+  setWallpaperHealthHandler, setWallpaperMediaHandler, setWallpaperReselectHandler,
+  subscribeWallpaperHealth, notifyWallpaperHealth,
 } from '../../src/client/settings-section.js';
 import type { ClientSettings } from '../../src/client/types.js';
 import type { HealthSnapshot } from '../../src/client/render-health.js';
-import type { ProbeResult } from '../../src/shared/types.js';
+import type { ProbeResult, WallpaperUserProperty } from '../../src/shared/types.js';
 
 // 壁纸设置面板（设置对话框 "壁纸" section）：
 // 网格切换 / 取消壁纸 / 路径配置（手动 + 自动探测）。数据与动作经 props 注入
@@ -90,6 +91,7 @@ function mount(props: Partial<React.ComponentProps<typeof WallpaperSettingsSecti
       writeSettings={async () => {}}
       fetchWallpapers={async () => WALLPAPERS as any}
       fetchProbe={async () => PROBE}
+      fetchProperties={async () => []}
       onSelect={() => {}}
       {...props}
     />
@@ -125,6 +127,7 @@ afterEach(async () => {
   setWallpaperMediaHandler(null);
   setWallpaperSelectHandler(() => {});
   setWallpaperRuntimeHandler(() => {});
+  setWallpaperReselectHandler(null);
   vi.restoreAllMocks();
 });
 
@@ -832,5 +835,99 @@ describe('媒体失败提示', () => {
     engine().show({ kind: 'image', url: '/p1', kenBurns: true });
     await flush();
     expect(container.querySelector('.wss-media-failure')).toBeNull();
+  });
+});
+
+// v0.8 Task 7：壁纸属性面板（仅选中 scene 且属性非空时渲染；布尔开关写 localStorage 后重装配）。
+describe('壁纸属性（用户布尔可见性）', () => {
+  const CLOUDS: WallpaperUserProperty = { key: 'clouds', label: '云层', type: 'bool', value: true, order: 2.5 };
+  const RAIN: WallpaperUserProperty = { key: 'rain', label: '雨', type: 'bool', value: true, order: 1 };
+
+  it('选中 scene 且属性非空 → 渲染「壁纸属性」section；存储值覆盖壁纸默认 value', async () => {
+    localStorage.setItem('we:userprop:clouds', 'false');
+    mount({ fetchProperties: async () => [CLOUDS, RAIN] });
+    await flush();
+    const boxes = [...container.querySelectorAll<HTMLInputElement>('.wss-userprop')];
+    expect(boxes).toHaveLength(2);
+    expect(boxes.map((b) => b.dataset.key)).toEqual(['clouds', 'rain']);
+    expect(boxes[0]!.checked).toBe(false); // localStorage 覆盖默认 true
+    expect(boxes[1]!.checked).toBe(true);
+    expect(container.textContent).toContain('壁纸属性');
+    expect(container.textContent).toContain('云层');
+    expect(container.textContent).toContain('切换后生效');
+    localStorage.clear();
+  });
+
+  it('切换 checkbox → 写 localStorage 并触发当前壁纸重装配', async () => {
+    const reselect = vi.fn();
+    setWallpaperReselectHandler(reselect);
+    mount({ fetchProperties: async () => [CLOUDS] });
+    await flush();
+    const box = container.querySelector('.wss-userprop[data-key="clouds"]') as HTMLInputElement;
+    box.click();
+    await flush();
+    expect(localStorage.getItem('we:userprop:clouds')).toBe('false');
+    expect(reselect).toHaveBeenCalledWith('1');
+    expect(box.checked).toBe(false);
+  });
+
+  it('props.onReselect 优先于共享 handler', async () => {
+    const shared = vi.fn();
+    const prop = vi.fn();
+    setWallpaperReselectHandler(shared);
+    mount({ fetchProperties: async () => [CLOUDS], onReselect: prop });
+    await flush();
+    (container.querySelector('.wss-userprop[data-key="clouds"]') as HTMLInputElement).click();
+    await flush();
+    expect(prop).toHaveBeenCalledWith('1');
+    expect(shared).not.toHaveBeenCalled();
+  });
+
+  it('非 scene / 空列表 / fetch 抛错 → 不渲染 section，不抛错', async () => {
+    // 非 scene：selectedWallpaperId='2' 是 video，不应请求属性
+    const fetchProperties = vi.fn(async () => [CLOUDS]);
+    mount({
+      fetchSettings: async () => ({ ...BASE_SETTINGS, selectedWallpaperId: '2' }),
+      fetchProperties,
+    });
+    await flush();
+    expect(container.querySelector('.wss-userprop')).toBeNull();
+    expect(fetchProperties).not.toHaveBeenCalled();
+    await unmount();
+
+    mount({ fetchProperties: async () => [] });
+    await flush();
+    expect(container.querySelector('.wss-userprop')).toBeNull();
+    await unmount();
+
+    mount({ fetchProperties: async () => { throw new Error('boom'); } });
+    await flush();
+    expect(container.querySelector('.wss-userprop')).toBeNull();
+    expect(container.textContent).toContain('EVA'); // 面板其它部分正常
+  });
+
+  it('切换壁纸 → 以新 id 重新 fetch，面板内容随属性更新', async () => {
+    const calls: string[] = [];
+    const fetchProperties = vi.fn(async (id: string) => {
+      calls.push(id);
+      return id === '1' ? [CLOUDS] : [RAIN];
+    });
+    mount({
+      fetchProperties,
+      fetchWallpapers: async () => [
+        ...WALLPAPERS,
+        { id: '3', title: 'EVA 2', type: 'scene', hasScene: true, hasPreviewGif: false, previewUrl: '/p3' },
+      ] as any,
+    });
+    await flush();
+    expect(calls).toEqual(['1']);
+    expect(container.querySelector('.wss-userprop[data-key="clouds"]')).not.toBeNull();
+
+    (container.querySelector('.wss-thumb[data-id="3"]') as HTMLElement).click();
+    await flush();
+    expect(calls).toEqual(['1', '3']);
+    expect(container.querySelector('.wss-userprop[data-key="clouds"]')).toBeNull();
+    expect(container.querySelector('.wss-userprop[data-key="rain"]')).not.toBeNull();
+    expect(container.textContent).toContain('雨');
   });
 });

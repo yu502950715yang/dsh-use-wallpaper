@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync, utimesSync, existsSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, utimesSync, existsSync, readdirSync } from 'node:fs';
 import { EventEmitter } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -81,6 +81,7 @@ describe('registerWallpaperRoutes', () => {
       { kind: 'prefix', path: '/wallpapers/web' },
       { kind: 'exact', path: '/wallpapers/particle-texture' },
       { kind: 'exact', path: '/wallpapers/probe' },
+      { kind: 'exact', path: '/wallpapers/properties' },
     ]);
   });
   it('serves list route returning scanned wallpapers', async () => {
@@ -678,5 +679,127 @@ describe('registerWallpaperRoutes', () => {
     } finally {
       rmSync(frameDir, { recursive: true, force: true });
     }
+  });
+
+  // ── v0.8 Task 7：壁纸用户属性（project.json bool ∩ scene.json visible.user）────────
+  it('GET /wallpapers/properties：返回 bool × visible.user 交集（label 去 HTML）', async () => {
+    const d = join(dir, 'props1');
+    mkdirSync(d, { recursive: true });
+    writeFileSync(join(d, 'project.json'), JSON.stringify({
+      type: 'scene',
+      general: { properties: {
+        clouds: { order: 2.5, text: '<b>云层</b>', type: 'bool', value: true },
+        speed: { order: 1, text: '速度', type: 'slider', value: 1 },
+        locked: { order: 3, text: '锁定', type: 'bool', value: true, editable: false },
+      } },
+    }));
+    writeFileSync(join(d, 'scene.pkg'), makePkg([{ name: 'scene.json', data: Buffer.from(JSON.stringify({
+      objects: [
+        { visible: { user: 'clouds', value: true } },
+        { visible: { user: 'speed', value: true } },
+        { visible: { user: 'locked', value: true } },
+        { visible: true },
+      ],
+    })) }]));
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
+    const res = makeRes();
+    await routes.get('exact /wallpapers/properties')!({ url: '/wallpapers/properties?id=props1' }, res);
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['Cache-Control']).toBe('no-store');
+    expect(JSON.parse(res.body.toString('utf8'))).toEqual({
+      properties: [{ key: 'clouds', label: '云层', type: 'bool', value: true, order: 2.5 }],
+    });
+    // 只读：请求后目录里没有新增/改写文件
+    expect(readdirSync(d).sort()).toEqual(['project.json', 'scene.pkg']);
+  });
+
+  it('GET /wallpapers/properties：非法/缺失 id → 400', async () => {
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
+    const handler = routes.get('exact /wallpapers/properties')!;
+    for (const url of [
+      '/wallpapers/properties',
+      '/wallpapers/properties?id=',
+      '/wallpapers/properties?id=..%2Fetc',
+      '/wallpapers/properties?id=a%2Fb',
+    ]) {
+      const res = makeRes();
+      await handler({ url }, res);
+      expect(res.statusCode).toBe(400);
+    }
+  });
+
+  it('GET /wallpapers/properties：project.json / scene.pkg / scene.json 缺失或解析失败 → 200 空数组（不 500）', async () => {
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
+    const handler = routes.get('exact /wallpapers/properties')!;
+    const bodyOf = (res: any) => JSON.parse(res.body.toString('utf8'));
+
+    // 目录都不存在（project.json 缺失）
+    let res = makeRes();
+    await handler({ url: '/wallpapers/properties?id=nope' }, res);
+    expect(res.statusCode).toBe(200);
+    expect(bodyOf(res)).toEqual({ properties: [] });
+
+    // project.json 坏 JSON
+    const bad = join(dir, 'bad');
+    mkdirSync(bad, { recursive: true });
+    writeFileSync(join(bad, 'project.json'), '{oops');
+    res = makeRes();
+    await handler({ url: '/wallpapers/properties?id=bad' }, res);
+    expect(res.statusCode).toBe(200);
+    expect(bodyOf(res)).toEqual({ properties: [] });
+
+    // 有 project.json 但没有 scene.pkg
+    const nopkg = join(dir, 'nopkg');
+    mkdirSync(nopkg, { recursive: true });
+    writeFileSync(join(nopkg, 'project.json'), JSON.stringify({
+      general: { properties: { clouds: { type: 'bool', value: true } } },
+    }));
+    res = makeRes();
+    await handler({ url: '/wallpapers/properties?id=nopkg' }, res);
+    expect(res.statusCode).toBe(200);
+    expect(bodyOf(res)).toEqual({ properties: [] });
+
+    // pkg 里没有 scene.json
+    const noscene = join(dir, 'noscene');
+    mkdirSync(noscene, { recursive: true });
+    writeFileSync(join(noscene, 'project.json'), JSON.stringify({ general: { properties: {} } }));
+    writeFileSync(join(noscene, 'scene.pkg'), makePkg([{ name: 'other.json', data: Buffer.from('{}') }]));
+    res = makeRes();
+    await handler({ url: '/wallpapers/properties?id=noscene' }, res);
+    expect(res.statusCode).toBe(200);
+    expect(bodyOf(res)).toEqual({ properties: [] });
+
+    // scene.json 坏 JSON
+    const badscene = join(dir, 'badscene');
+    mkdirSync(badscene, { recursive: true });
+    writeFileSync(join(badscene, 'project.json'), JSON.stringify({ general: { properties: {} } }));
+    writeFileSync(join(badscene, 'scene.pkg'), makePkg([{ name: 'scene.json', data: Buffer.from('{oops') }]));
+    res = makeRes();
+    await handler({ url: '/wallpapers/properties?id=badscene' }, res);
+    expect(res.statusCode).toBe(200);
+    expect(bodyOf(res)).toEqual({ properties: [] });
+  });
+
+  it('GET /wallpapers/properties：每次请求重读 project.json（不缓存可变状态）', async () => {
+    const d = join(dir, 'props2');
+    mkdirSync(d, { recursive: true });
+    const scenePkg = makePkg([{ name: 'scene.json', data: Buffer.from(JSON.stringify({
+      objects: [{ visible: { user: 'clouds', value: true } }],
+    })) }]);
+    writeFileSync(join(d, 'scene.pkg'), scenePkg);
+    writeFileSync(join(d, 'project.json'), JSON.stringify({
+      general: { properties: { clouds: { type: 'bool', value: true, text: '云层' } } },
+    }));
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
+    const handler = routes.get('exact /wallpapers/properties')!;
+    const first = makeRes();
+    await handler({ url: '/wallpapers/properties?id=props2' }, first);
+    expect(JSON.parse(first.body.toString('utf8')).properties).toHaveLength(1);
+
+    // 关掉该属性（去掉 properties 里的键）后同一进程内的下一次请求必须看到新值
+    writeFileSync(join(d, 'project.json'), JSON.stringify({ general: { properties: {} } }));
+    const second = makeRes();
+    await handler({ url: '/wallpapers/properties?id=props2' }, second);
+    expect(JSON.parse(second.body.toString('utf8'))).toEqual({ properties: [] });
   });
 });

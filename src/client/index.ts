@@ -3,7 +3,7 @@ import { createBackgroundLayer } from './background-layer.js';
 import { createWallpaperController } from './wallpaper-controller.js';
 import { createThreeSceneRenderer } from './three-renderer.js';
 import { ensureSceneFrame, showSceneFallback } from './scene-fallback.js';
-import { WallpaperSettingsSection, setWallpaperSelectHandler, setWallpaperRuntimeHandler, setWallpaperHealthHandler, setWallpaperMediaHandler, notifyWallpaperHealth, notifyWallpaperMedia } from './settings-section.js';
+import { WallpaperSettingsSection, setWallpaperSelectHandler, setWallpaperRuntimeHandler, setWallpaperHealthHandler, setWallpaperMediaHandler, setWallpaperReselectHandler, notifyWallpaperHealth, notifyWallpaperMedia } from './settings-section.js';
 import { readClientSettings, writeClientSettings, getUserPropertyValue, DEFAULTS, setSettingsCtx } from './settings.js';
 import { createRenderHealthStore } from './render-health.js';
 import { createMediaHealthStore } from './media-health.js';
@@ -135,6 +135,7 @@ export function bootstrap(ctx?: any): void {
     autoRetryTimers.clear();
     sceneRenderer.setOnHealth?.(null);
     setWallpaperMediaHandler(null); // 面板媒体失败提示回初始态
+    setWallpaperReselectHandler(null); // 面板属性开关不再指向已释放的 controller
     unsubscribeMedia();
     notifyWallpaperHealth(null); // 收尾后状态行不得再显示已释放渲染器的旧状态（面板可能还开着）
     const root = layer?.root ?? null;
@@ -220,6 +221,8 @@ export function bootstrap(ctx?: any): void {
     });
     // 设置面板（settings-section）的壁纸切换/取消经共享 handler 委托 controller
     setWallpaperSelectHandler((id: string) => selectWallpaper(id));
+    // 用户属性切换后重装配当前壁纸：属性值只在装配时读取，故重新 select（不弹提示/不写设置）
+    setWallpaperReselectHandler((id: string) => { void controller?.select(id); });
     // 设置面板改显示效果/省电/画质档位 → 立即下发（layer 与渲染器都要，不必重选壁纸）
     setWallpaperRuntimeHandler((patch) => {
       settings = { ...settings, ...patch };

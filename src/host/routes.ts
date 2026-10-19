@@ -7,6 +7,7 @@ import { probeSteamPaths, readSteamInstallPathFromRegistry, readLibraryFoldersVd
 import { framesDirOf } from './data-dir.js';
 import { createSceneFrameStore, DEFAULT_MAX_FRAME_BYTES } from './scene-frame-store.js';
 import { extractEmbeddedMp4, probeEmbeddedMp4 } from './scene-media-probe.js';
+import { collectVisibleBoolProperties } from './user-props.js';
 import type { WallpaperInfo } from '../shared/types.js';
 
 export interface WallpaperRoutesOptions {
@@ -471,6 +472,35 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
           extraRoots: [...DEFAULT_STEAM_ROOTS],
         });
         json(res, 200, result);
+      },
+    });
+
+    server.register({
+      kind: 'exact', path: '/wallpapers/properties',
+      // v0.8 用户属性面板：project.json bool 属性 ∩ scene.json objects[].visible.user。
+      // 每次请求重读、任何文件缺失/坏 JSON 都按「无属性」返回 200（不把素材问题升级成 500）。
+      handler: (_req: any, res: any) => {
+        const { search } = parseUrl(_req);
+        const id = search.get('id') ?? '';
+        if (!isSafeToken(id)) return json(res, 400, { error: 'bad id' });
+        let projectJson: unknown = null;
+        let sceneJson: unknown = null;
+        try {
+          projectJson = JSON.parse(readFileSync(join(dir(), id, 'project.json'), 'utf8'));
+        } catch {
+          // project.json 缺失/不可读/坏 JSON → 属性为空
+        }
+        const pkgPath = join(dir(), id, 'scene.pkg');
+        if (existsSync(pkgPath)) {
+          try {
+            const entry = getPkgReader(pkgPath).readEntry('scene.json');
+            if (entry) sceneJson = JSON.parse(entry.toString('utf8'));
+          } catch {
+            // pkg 不可读 / 无 scene.json / 坏 JSON → 属性为空
+          }
+        }
+        res.setHeader?.('Cache-Control', 'no-store');
+        json(res, 200, { properties: collectVisibleBoolProperties(projectJson, sceneJson) });
       },
     });
   });
