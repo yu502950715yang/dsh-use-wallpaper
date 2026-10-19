@@ -485,10 +485,35 @@ describe('createBackgroundLayer (DOM)', () => {
 
   it('setKenBurns 对当前图片即时增删 class', () => {
     const layer = createBackgroundLayer(document.createElement('div'));
-    layer.showImage('/a.jpg', false);
+    layer.showImage('/a.jpg', true);
     layer.setKenBurns(true);
     expect(layer.root.querySelector('img')?.classList.contains('wp-kenburns')).toBe(true);
     layer.setKenBurns(false);
+    expect(layer.root.querySelector('img')?.classList.contains('wp-kenburns')).toBe(false);
+  });
+
+  // GIF 预览以 showImage(..., false) 显示：面板开关不得把它重新打开（既有 per-wallpaper 语义）。
+  it('setKenBurns(true) 不复活 GIF 预览的 Ken Burns', () => {
+    const layer = createBackgroundLayer(document.createElement('div'));
+    layer.showImage('/p.gif', false);
+    layer.setKenBurns(true);
+    expect(layer.root.querySelector('img')?.classList.contains('wp-kenburns')).toBe(false);
+  });
+
+  it('setKenBurns 对普通 jpg 仍可启停', () => {
+    const layer = createBackgroundLayer(document.createElement('div'));
+    layer.showImage('/a.jpg', true);
+    layer.setKenBurns(false);
+    expect(layer.root.querySelector('img')?.classList.contains('wp-kenburns')).toBe(false);
+    layer.setKenBurns(true);
+    expect(layer.root.querySelector('img')?.classList.contains('wp-kenburns')).toBe(true);
+  });
+
+  it('换壁纸后不继承上一张的 Ken Burns 许可', () => {
+    const layer = createBackgroundLayer(document.createElement('div'));
+    layer.showImage('/a.jpg', true);
+    layer.showImage('/p.gif', false);
+    layer.setKenBurns(true);
     expect(layer.root.querySelector('img')?.classList.contains('wp-kenburns')).toBe(false);
   });
 });

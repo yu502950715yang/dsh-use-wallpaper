@@ -171,6 +171,8 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
   let currentVideo: HTMLVideoElement | null = null;
   // 当前显示的图片与适配模式：供运行期切换（不重建元素）。
   let currentImage: HTMLImageElement | null = null;
+  // 当前图片是否允许 Ken Burns（GIF 预览为 false）：面板只能关，不能重新打开。
+  let currentImageKenBurnsAllowed = false;
   let fitMode: FitMode = 'cover';
 
   function applyFit(el: HTMLElement | null): void {
@@ -202,6 +204,7 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
     frameToken += 1;
     fill.replaceChildren();
     currentImage = null;
+    currentImageKenBurnsAllowed = false;
     currentVideo = null;
     stopWebResizeReload();
   }
@@ -313,6 +316,7 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
       applyKenBurns(img, kenBurns);
       fill.appendChild(img);
       currentImage = img;
+      currentImageKenBurnsAllowed = kenBurns;
       markActive();
     },
     showVideo(url) {
@@ -384,7 +388,7 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
       fill.style.filter = enabled ? `blur(${radius}px)` : '';
     },
     setKenBurns(enabled) {
-      if (currentImage) applyKenBurns(currentImage, enabled);
+      if (currentImage) applyKenBurns(currentImage, enabled && currentImageKenBurnsAllowed);
     },
     setFitMode(mode) {
       fitMode = mode;
