@@ -80,9 +80,8 @@ export function bootstrap(ctx?: any): void {
     if (!layer) return;
     layer.setOverlayOpacity(s.overlayOpacity);
     layer.setBlur(s.blurEnabled, s.blurRadius);
-    if (!s.kenBurns) {
-      layer.root.querySelectorAll('.wp-kenburns').forEach((el) => el.classList.remove('wp-kenburns'));
-    }
+    layer.setKenBurns(s.kenBurns);
+    layer.setFitMode(s.fitMode);
   };
   // 省电与画质档位：每次按「设置 + 当前可见性」重算（不做增量维护，避免状态漂移）。
   const applyRuntimeSettings = (s: ClientSettings) => {
@@ -166,9 +165,10 @@ export function bootstrap(ctx?: any): void {
     });
     // 设置面板（settings-section）的壁纸切换/取消经共享 handler 委托 controller
     setWallpaperSelectHandler((id: string) => selectWallpaper(id));
-    // 设置面板改省电/画质档位 → 立即下发（不必重选壁纸）
+    // 设置面板改显示效果/省电/画质档位 → 立即下发（layer 与渲染器都要，不必重选壁纸）
     setWallpaperRuntimeHandler((patch) => {
       settings = { ...settings, ...patch };
+      applySettingsToLayer(settings);
       applyRuntimeSettings(settings);
     });
     // 设置面板「实时渲染」卡片：读状态 / 重试当前壁纸 / 清空全部失败记忆（与全局入口同一份实现）
@@ -181,7 +181,7 @@ export function bootstrap(ctx?: any): void {
     // 切到后台/最小化 → 按设置自动暂停（省电），回到前台恢复。
     onVisibility = () => applyRuntimeSettings(settings);
     document.addEventListener('visibilitychange', onVisibility);
-    // 读回已保存设置并应用到 layer（opacity/blur/kenBurns）与运行期项（暂停/画质档位）
+    // 读回已保存设置并应用到 layer（opacity/blur/kenBurns/fitMode）与运行期项（暂停/画质档位）
     void readClientSettings().then((s) => {
       if (disposed) return; // 期间已收尾（HMR drain）→ 不再复活
       // 启动窗口内用户可能已经选过壁纸 ⇒ 异步读回的持久值不得把它冲掉（否则 retryLive/自动重试定位不到）

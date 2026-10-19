@@ -1,5 +1,5 @@
 import type { WallpaperInfo } from '../shared/types.js';
-import type { BackgroundPlan } from './types.js';
+import type { BackgroundPlan, FitMode } from './types.js';
 import { outlineShadow } from './text-color.js';
 import { computePointerPost } from './pointer-post.js';
 
@@ -110,6 +110,10 @@ export interface BackgroundLayer {
   showNone(): void;
   setOverlayOpacity(v: number): void;
   setBlur(enabled: boolean, radius: number): void;
+  /** 运行期切换当前图片的 Ken Burns 动画（不重建元素）。 */
+  setKenBurns(enabled: boolean): void;
+  /** 运行期切换画面适配模式（当前图片/视频即时生效）。 */
+  setFitMode(mode: FitMode): void;
   setChatFg(color: string): void;
   /** 文字描边（对立色阴影）：level 0 或空颜色 = 移除变量（无描边，既有观感）。 */
   setChatOutline(color: string, level: number): void;
@@ -165,6 +169,14 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
   // 省电状态与当前视频元素（setPaused 对后者 pause/play）。
   let paused = false;
   let currentVideo: HTMLVideoElement | null = null;
+  // 当前显示的图片与适配模式：供运行期切换（不重建元素）。
+  let currentImage: HTMLImageElement | null = null;
+  let fitMode: FitMode = 'cover';
+
+  function applyFit(el: HTMLElement | null): void {
+    if (!el) return;
+    el.style.objectFit = fitMode === 'stretch' ? 'fill' : fitMode;
+  }
 
   // web 自适应状态：当前 web URL、已落地的 web 帧、基准视口、debounce 定时器、正在预载的帧
   let webUrl: string | null = null;
@@ -189,6 +201,7 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
   function clear() {
     frameToken += 1;
     fill.replaceChildren();
+    currentImage = null;
     currentVideo = null;
     stopWebResizeReload();
   }
@@ -296,8 +309,10 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
       clear();
       const img = document.createElement('img');
       img.src = url;
+      applyFit(img);
       applyKenBurns(img, kenBurns);
       fill.appendChild(img);
+      currentImage = img;
       markActive();
     },
     showVideo(url) {
@@ -308,6 +323,7 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
       video.loop = true;
       video.muted = true;
       video.playsInline = true;
+      applyFit(video);
       fill.appendChild(video);
       currentVideo = video;
       if (paused) video.pause(); // 暂停态下换壁纸：新视频同样不播
@@ -366,6 +382,14 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
     setOverlayOpacity(v) { overlay.style.opacity = String(v); },
     setBlur(enabled, radius) {
       fill.style.filter = enabled ? `blur(${radius}px)` : '';
+    },
+    setKenBurns(enabled) {
+      if (currentImage) applyKenBurns(currentImage, enabled);
+    },
+    setFitMode(mode) {
+      fitMode = mode;
+      applyFit(currentImage);
+      applyFit(currentVideo);
     },
     // 文字颜色跟随壁纸亮度（2026-09-03）：把颜色写为 --wp-chat-fg，
     // styles.ts 消息列文字消费者用它；null/空则移除（回主题默认）。移除时删变量。

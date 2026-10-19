@@ -12,6 +12,8 @@ function fakeLayer() {
     showNone: () => calls.push({ name: 'none', args: [] }),
     setOverlayOpacity: () => {},
     setBlur: () => {},
+    setKenBurns: () => {},
+    setFitMode: () => {},
   } as any;
 }
 

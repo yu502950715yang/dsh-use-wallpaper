@@ -4,7 +4,7 @@
 // 数据与动作经 props 注入（默认走真实 API），便于 jsdom 单测。
 
 import { useCallback, useEffect, useState } from 'react';
-import type { ClientSettings } from './types.js';
+import type { ClientSettings, FitMode } from './types.js';
 import type { WallpaperInfo, ProbeResult } from '../shared/types.js';
 import { readClientSettings, writeClientSettings } from './settings.js';
 import { TEXT_OUTLINE_MAX, normalizeHexColor, normalizeMode, normalizeOutlineLevel, outlineLabel } from './text-color.js';
@@ -256,10 +256,72 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
           <p className="wss-empty">还没有壁纸。请在下方设置壁纸目录，或点「自动探测」。</p>
         )}
       </section>
-      {/* 显示效果：应用级 Glow（开关 + 阈值/强度，改完立即生效、不必重选壁纸） */}
+      {/* 显示效果：壁纸画面观感（遮罩/模糊/KenBurns/适配模式）与应用级 Glow，改完立即生效、不必重选壁纸 */}
       {settings && (
         <section className="wss-section">
           <h4 className="wss-section-title">显示效果</h4>
+          <div className="wss-effects">
+            <label className="wss-slider">
+              <span className="wss-slider-head">
+                <span>遮罩不透明度</span>
+                <span className="wss-effect-value">{settings.overlayOpacity.toFixed(2)}</span>
+              </span>
+              <input
+                type="range"
+                className="wss-overlay-opacity"
+                min={0}
+                max={1}
+                step={0.01}
+                value={settings.overlayOpacity}
+                onChange={(e) => applyRuntime({ overlayOpacity: Number(e.target.value) })}
+              />
+            </label>
+            <label className="wss-row">
+              <input
+                type="checkbox"
+                className="wss-blur-enabled"
+                checked={settings.blurEnabled}
+                onChange={(e) => applyRuntime({ blurEnabled: e.target.checked })}
+              />
+              背景模糊
+            </label>
+            <label className="wss-slider">
+              <span className="wss-slider-head">
+                <span>模糊半径</span>
+                <span className="wss-effect-value">{settings.blurRadius} px</span>
+              </span>
+              <input
+                type="range"
+                className="wss-blur-radius"
+                min={0}
+                max={64}
+                step={1}
+                value={settings.blurRadius}
+                onChange={(e) => applyRuntime({ blurRadius: Number(e.target.value) })}
+              />
+            </label>
+            <label className="wss-row">
+              <input
+                type="checkbox"
+                className="wss-kenburns"
+                checked={settings.kenBurns}
+                onChange={(e) => applyRuntime({ kenBurns: e.target.checked })}
+              />
+              Ken Burns 缓慢缩放
+            </label>
+            <label className="wss-row">
+              <span>画面适配</span>
+              <select
+                className="wss-fit-mode"
+                value={settings.fitMode}
+                onChange={(e) => applyRuntime({ fitMode: e.target.value as FitMode })}
+              >
+                <option value="cover">裁剪铺满</option>
+                <option value="contain">完整显示（留黑边）</option>
+                <option value="stretch">拉伸铺满</option>
+              </select>
+            </label>
+          </div>
           <div className="wss-glow">
             <label className="wss-glow-row">
               <input

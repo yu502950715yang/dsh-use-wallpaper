@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const selectMock = vi.fn(async () => {});
 vi.mock('../../src/client/background-layer.js', () => ({
-  createBackgroundLayer: () => ({ root: document.createElement('div'), setOverlayOpacity() {}, setBlur() {}, setPaused() {}, showNone() {}, showImage() {}, showVideo() {}, showWeb() {} }),
+  createBackgroundLayer: () => ({ root: document.createElement('div'), setOverlayOpacity() {}, setBlur() {}, setPaused() {}, setKenBurns() {}, setFitMode() {}, showNone() {}, showImage() {}, showVideo() {}, showWeb() {} }),
 }));
 vi.mock('../../src/client/wallpaper-controller.js', () => ({
   createWallpaperController: () => ({ load: async () => {}, select: selectMock, applyTextStyle() {} }),

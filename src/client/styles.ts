@@ -181,15 +181,15 @@ body[data-ds-dark-theme][data-we-wallpaper] [data-question-key] section{
 /* 控件行：标签左、控件右，统一 30px 行高（复选框靠 order 推到右侧） */
 .wss-row,.wss-glow-row{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:30px;margin:0;font-size:12px;color:var(--dsw-alias-label-secondary,var(--wp-text))}
 .wss-row input[type=checkbox],.wss-glow-row input[type=checkbox]{order:2;margin:0;flex:none}
-.wss-glow{display:flex;flex-direction:column;gap:10px;margin-top:8px}
+.wss-glow,.wss-effects{display:flex;flex-direction:column;gap:10px;margin-top:8px}
 .wss-power{display:flex;flex-direction:column;gap:10px}
 .wss-sound-row{display:flex;flex-direction:column;margin-top:2px}
 /* 滑杆：标签行（含数值 badge）+ 全宽滑杆 */
 .wss-slider{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--dsw-alias-label-secondary,var(--wp-text))}
 .wss-slider-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
-.wss-value{font-variant-numeric:tabular-nums;font-weight:600;color:var(--dsw-alias-label-primary,var(--wp-text))}
+.wss-value,.wss-effect-value{font-variant-numeric:tabular-nums;font-weight:600;color:var(--dsw-alias-label-primary,var(--wp-text))}
 .wss-slider input[type=range]{width:100%;margin:0;accent-color:var(--wp-accent)}
-.wss-quality{border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;padding:4px 8px;font:inherit;font-size:12px}
+.wss-quality,.wss-fit-mode{border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;padding:4px 8px;font:inherit;font-size:12px}
 /* 文字可读性（2026-10-01）：颜色选择与档位下拉复用 .wss-row；原生 color 输入补最小样式
    （默认尺寸在各平台上不一致，且 DSH 面板里有自己的边框语言）。 */
 .wss-row input[type=color]{width:44px;height:26px;order:2;flex:none;padding:0;border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));border-radius:6px;background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));cursor:pointer}

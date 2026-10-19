@@ -472,5 +472,24 @@ describe('createBackgroundLayer (DOM)', () => {
       cleanup();
     });
   });
+
+  // v0.8 显示效果：适配模式与 KenBurns 支持运行期切换（不重建媒体元素）。
+  it('setFitMode 对当前图片/视频生效，stretch → object-fit:fill', () => {
+    const layer = createBackgroundLayer(document.createElement('div'));
+    layer.showImage('/a.jpg', false);
+    layer.setFitMode('contain');
+    expect((layer.root.querySelector('img') as HTMLImageElement).style.objectFit).toBe('contain');
+    layer.setFitMode('stretch');
+    expect((layer.root.querySelector('img') as HTMLImageElement).style.objectFit).toBe('fill');
+  });
+
+  it('setKenBurns 对当前图片即时增删 class', () => {
+    const layer = createBackgroundLayer(document.createElement('div'));
+    layer.showImage('/a.jpg', false);
+    layer.setKenBurns(true);
+    expect(layer.root.querySelector('img')?.classList.contains('wp-kenburns')).toBe(true);
+    layer.setKenBurns(false);
+    expect(layer.root.querySelector('img')?.classList.contains('wp-kenburns')).toBe(false);
+  });
 });
 

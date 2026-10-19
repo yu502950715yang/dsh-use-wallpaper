@@ -25,6 +25,7 @@ vi.mock('../../src/client/background-layer.js', () => ({
   createBackgroundLayer: () => ({
     root: document.createElement('div'),
     setOverlayOpacity() {}, setBlur() {}, setPaused() {},
+    setKenBurns() {}, setFitMode() {},
     showNone() {}, showImage() {}, showVideo() {}, showWeb() {},
   }),
 }));
@@ -617,5 +618,35 @@ describe('WallpaperSettingsSection', () => {
     await flush();
     expect(statusText()).not.toContain('没有可显示的对象');
     expect(statusText()).toContain('尚未渲染');
+  });
+
+  // v0.8 显示效果：遮罩/模糊/KenBurns/适配模式全部即时下发 + 持久化。
+  it('显示效果：遮罩不透明度/模糊/KenBurns/适配模式变化 → 即时下发 + 持久化', async () => {
+    const writeSettings = vi.fn(async () => {});
+    const onRuntimeSettings = vi.fn();
+    mount({ writeSettings, onRuntimeSettings });
+    await flush();
+    const setValue = (el: HTMLInputElement | HTMLSelectElement, value: string) => {
+      const proto = el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(proto, 'value')!.set!;
+      setter.call(el, value);
+      el.dispatchEvent(new Event(el instanceof HTMLSelectElement ? 'change' : 'input', { bubbles: true }));
+    };
+
+    setValue(container.querySelector('.wss-overlay-opacity') as HTMLInputElement, '0.6');
+    await flush();
+    expect(onRuntimeSettings).toHaveBeenCalledWith({ overlayOpacity: 0.6 });
+
+    (container.querySelector('.wss-blur-enabled') as HTMLInputElement).click();
+    await flush();
+    expect(onRuntimeSettings).toHaveBeenCalledWith({ blurEnabled: true });
+
+    (container.querySelector('.wss-kenburns') as HTMLInputElement).click();
+    await flush();
+    expect(onRuntimeSettings).toHaveBeenCalledWith({ kenBurns: false });
+
+    setValue(container.querySelector('.wss-fit-mode') as HTMLSelectElement, 'contain');
+    await flush();
+    expect(onRuntimeSettings).toHaveBeenCalledWith({ fitMode: 'contain' });
   });
 });
