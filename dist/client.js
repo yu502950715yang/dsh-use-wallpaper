@@ -2401,6 +2401,9 @@ body[data-ds-dark-theme] .wss-hero{background:linear-gradient(135deg,rgba(96,165
 .wss-pair{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;align-items:start}
 @container (max-width:620px){.wss-pair{grid-template-columns:minmax(0,1fr)}.wss-hero{flex-direction:column;align-items:stretch}.wss-hero-media{width:100%;flex:none}}
 @container (max-width:620px){.wss-hero-media{aspect-ratio:21/9}}
+/* \u58C1\u7EB8\u5E93\u5217\u6570\uFF1A\u771F\u5B9E DSH \u8BBE\u7F6E\u533A\u7EA6 560px \u2192 \u56FA\u5B9A 3 \u5217\uFF1B\u518D\u7A84\u964D 2 \u5217\uFF0C\u8D85\u5BBD\u5347 4 \u5217 */
+@container (max-width:440px){.wss-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@container (min-width:900px){.wss-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
 .wss-advanced{display:flex;flex-direction:column;gap:10px;scroll-margin-top:64px}
 .wss-details{border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));border-radius:14px;background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));overflow:hidden;transition:border-color .15s ease}
 .wss-details[open]{border-color:color-mix(in srgb,var(--wp-accent) 36%,var(--dsw-alias-border-l2,var(--wp-panel-border)))}
@@ -2425,7 +2428,7 @@ body[data-ds-dark-theme] .wss-hero{background:linear-gradient(135deg,rgba(96,165
 .wss-tool{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--dsw-alias-label-secondary,var(--wp-text));white-space:nowrap;cursor:pointer;padding:3px 2px}
 .wss-tool input[type=checkbox]{margin:0;accent-color:var(--wp-accent)}
 /* \u58C1\u7EB8\u5361\u7247\uFF1A16:9 \u9884\u89C8 + \u5355\u884C\u6807\u9898\uFF1Bhover/focus \u6D6E\u51FA\u6536\u85CF/\u9690\u85CF */
-.wss-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:12px;max-height:372px;overflow-y:auto;padding:2px;scrollbar-width:thin;scrollbar-color:rgba(127,127,127,.45) transparent}
+.wss-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;max-height:372px;overflow-y:auto;padding:2px;scrollbar-width:thin;scrollbar-color:rgba(127,127,127,.45) transparent}
 .wss-grid::-webkit-scrollbar{width:8px}
 .wss-grid::-webkit-scrollbar-thumb{background:rgba(127,127,127,.38);border-radius:4px}
 .wss-grid::-webkit-scrollbar-track{background:transparent}

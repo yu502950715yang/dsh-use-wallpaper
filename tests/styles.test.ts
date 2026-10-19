@@ -16,6 +16,11 @@ describe('styles 主题适配', () => {
     // 浅色主题下文字按近白底调校，壁纸透出后失去对比 → 压暗整条灰阶（竞品 1396-1403 同款）
     expect(WALLPAPER_CSS).toMatch(/body\[data-we-wallpaper\]:not\(\[data-ds-dark-theme\]\)\s*{[^}]*--dsw-alias-label-primary/);
   });
+  it('壁纸网格固定 3 列，窄面板降 2 列、超宽升 4 列（真实 DSH 设置区约 560px，不能只排 2 列）', () => {
+    expect(WALLPAPER_CSS).toMatch(/\.wss-grid\s*\{[^}]*grid-template-columns:repeat\(3,\s*minmax\(0,\s*1fr\)\)/);
+    expect(WALLPAPER_CSS).toMatch(/@container \(max-width:440px\)\s*\{\.wss-grid\{[^}]*grid-template-columns:repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
+    expect(WALLPAPER_CSS).toMatch(/@container \(min-width:900px\)\s*\{\.wss-grid\{[^}]*grid-template-columns:repeat\(4,\s*minmax\(0,\s*1fr\)\)/);
+  });
   it('设置面板 UI 用 CSS 变量而非硬编码深色（wss-root）', () => {
     expect(WALLPAPER_CSS).toMatch(/\.wss-root\s*{[^}]*var\(--dsw-alias-label-primary/);
   });
