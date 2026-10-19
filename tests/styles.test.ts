@@ -21,6 +21,12 @@ describe('styles 主题适配', () => {
     expect(WALLPAPER_CSS).toMatch(/@container \(max-width:440px\)\s*\{\.wss-grid\{[^}]*grid-template-columns:repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
     expect(WALLPAPER_CSS).toMatch(/@container \(min-width:900px\)\s*\{\.wss-grid\{[^}]*grid-template-columns:repeat\(4,\s*minmax\(0,\s*1fr\)\)/);
   });
+  it('Hero 在真实设置宽度保持左图右信息，仅 ≤440px 才堆叠（设计稿不能只在宽预览壳成立）', () => {
+    expect(WALLPAPER_CSS).toContain('@container (max-width:620px){.wss-hero-media{flex:0 0 160px;width:160px}}');
+    expect(WALLPAPER_CSS).toContain('@container (max-width:440px){.wss-hero{flex-direction:column');
+    expect(WALLPAPER_CSS).not.toContain('@container (max-width:620px){.wss-hero{');
+    expect(WALLPAPER_CSS).toContain('@container (max-width:600px){.wss-pair{grid-template-columns:minmax(0,1fr)}}');
+  });
   it('设置面板 UI 用 CSS 变量而非硬编码深色（wss-root）', () => {
     expect(WALLPAPER_CSS).toMatch(/\.wss-root\s*{[^}]*var\(--dsw-alias-label-primary/);
   });
