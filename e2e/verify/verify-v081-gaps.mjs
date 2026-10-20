@@ -584,8 +584,8 @@ try {
     };
   }
 
-  // ③ F13 image 精灵表：对照档删材质 combos.spritesheet（= 改动前整表渲染），
-  // 图标区域的 luma 方差必须显著下降（整表把 3 帧压进同一 quad，色彩/明暗跳变抬高方差）。
+  // ③ F13 image 精灵表：对照档删材质 combos.spritesheet（= 改动前整表渲染）。
+  // 判据：图标区域亮行组 1（单帧）vs ≥3（整表三帧竖排）；luma 方差（brief 判据）作辅助。
   console.log(`\n===== ③ F13 image 精灵表帧 UV =====`);
   console.log(`  壁纸=${SPRITE_ID}  视口 ${SPRITE_VIEW.w}×${SPRITE_VIEW.h}（竖长 → cover 1:1 取景，图标约 50px）`);
   const spriteAfter = await runVariant({ label: 'sprite-after', id: SPRITE_ID, view: SPRITE_VIEW, cdpPort: CDP_PORT + 3 });

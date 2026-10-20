@@ -4335,4 +4335,15 @@ describe('image 精灵表帧 UV（F13）', () => {
     expect(player.spritesheetUvForTest(999)).toBeNull();
     player.dispose();
   });
+
+  it('resizeBackground 换几何后仍写当前帧子矩形（新几何 UV 是整图，不能退回整表）', () => {
+    const { player } = makePlayer();
+    const id = player.addBackground({ ...IMG, texture: spriteTex(3, 1, 3) });
+    player.update(1.0); // 第 2 帧
+    player.resizeBackground(id, [128, 256]);
+    expect(player.spritesheetUvForTest(123)).toEqual({ u0: 0, v0: 1 / 3, u1: 1, v1: 2 / 3 });
+    const uv = planeUv(player);
+    [0, 2 / 3, 1, 2 / 3, 0, 1 / 3, 1, 1 / 3].forEach((exp, i) => expect(uv[i]).toBeCloseTo(exp, 6));
+    player.dispose();
+  });
 });
