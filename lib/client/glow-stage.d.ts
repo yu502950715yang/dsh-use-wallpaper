@@ -19,8 +19,9 @@ export interface GlowStage {
     /**
      * 跑一遍 Glow 链。`preRendered`（段渲染）非空时**跳过自渲主场景**那一步，直接把它当 base RT 做
      * bright-pass（调用方已把主场景写进该 RT，且它就是画布缓冲尺寸的段目标）。
+     * `outTarget`（两级串联）非空时 composite 写入该 RT（bloom → Glow）；缺省 null = 画布。
      */
-    apply(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera, preRendered?: THREE.WebGLRenderTarget): void;
+    apply(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera, preRendered?: THREE.WebGLRenderTarget | null, outTarget?: THREE.WebGLRenderTarget | null): void;
     resize(width: number, height: number): void;
     setOptions(opts: GlowOptions): void;
     dispose(): void;

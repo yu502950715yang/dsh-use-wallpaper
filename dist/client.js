@@ -23361,10 +23361,21 @@ function collectSounds(root) {
   }
   return out.length > 0 ? out : void 0;
 }
+function normalizeOverrideValue(v) {
+  if (Array.isArray(v)) return v.map(normalizeOverrideValue);
+  if (v && typeof v === "object") {
+    const o = v;
+    if ("value" in o && ("user" in o || "script" in o)) return normalizeOverrideValue(o.value);
+    const out = {};
+    for (const [k, x] of Object.entries(o)) out[k] = normalizeOverrideValue(x);
+    return out;
+  }
+  return v;
+}
 function serializeInstanceOverride(v) {
   if (typeof v !== "object" || v === null || Array.isArray(v)) return void 0;
   try {
-    const text = JSON.stringify(v);
+    const text = JSON.stringify(normalizeOverrideValue(v));
     return text && text !== "{}" ? text : void 0;
   } catch {
     return void 0;
@@ -23474,7 +23485,12 @@ function parseSceneJson(raw) {
     }
     return { ...base, kind: "particle", particle: "", ...fromVisibleScript };
   });
-  const cc = typeof gen.clearcolor === "string" ? vec3(gen.clearcolor) : void 0;
+  let cc = typeof gen.clearcolor === "string" ? vec3(gen.clearcolor) : void 0;
+  if (cc) {
+    const max = Math.max(cc[0], cc[1], cc[2]);
+    if (max > 0 && max <= 1) cc = [cc[0] * 255, cc[1] * 255, cc[2] * 255];
+  }
+  const bloom = gen.bloom === true ? { strength: numOr(gen.bloomstrength, 2), threshold: numOr(gen.bloomthreshold, 0.65) } : void 0;
   return {
     camera: {
       center: vec3(cam.center),
@@ -23490,6 +23506,7 @@ function parseSceneJson(raw) {
     fov: numOr(gen.fov, 50),
     perspectiveOverrideFov: numOr(gen.perspectiveoverridefov, 0),
     clearColor: cc,
+    bloom,
     // 相机视差总开关与系数（general.cameraparallax*）；缺省全 0 = 与加此功能前观感一致。
     parallax: readParallaxConfig(gen),
     objects,
@@ -24139,6 +24156,8 @@ var ThreeScenePlayer = class {
   pixelRatio;
   // 画质档位（< 1 = 降分辨率省显存/提流畅；1 = 原生 dpr）。
   qualityScale;
+  // 壁纸清屏色（WE general.clearcolor，0-255 → 工作色彩空间原值）；null = 用渲染器缺省黑。
+  clearColorValue = null;
   // 暂停（省电）：停 RAF 排程，并把暂停时长从 elapsedSeconds 里扣除（恢复后 g_Time 不跳）。
   paused = false;
   pausedAt = 0;
@@ -24171,6 +24190,10 @@ var ThreeScenePlayer = class {
   objectEffectStage = null;
   // 应用级 Glow 注入点（null = 本壁纸不开 Glow，帧序退化为原路径）。
   glowStage = null;
+  // 壁纸级 bloom 注入点（scene.json general.bloom*）：非空时先 bloom 再交给 Glow/合成。
+  bloomStage = null;
+  // bloom 的中间结果 RT（全画布缓冲尺寸）：仅装配 bloom 时惰性创建，由 resize 同步。
+  bloomRT = null;
   // 帧内快照注入点（null 或 active=false = 本壁纸无消费者 ⇒ 帧序与改动前逐字相同）。
   frameCapture = null;
   // 消费者集合（键 = scene.json 对象 id）：段渲染时每个消费者**开启新的一段**，段数 = 消费者数 + 1。
@@ -24185,7 +24208,7 @@ var ThreeScenePlayer = class {
   compositeQuad = null;
   // g_Time 时间原点（构造时刻），advance 传「自 player 创建起的秒数」。
   startedAt = typeof performance !== "undefined" ? performance.now() : 0;
-  constructor(canvas, width, height, renderer, qualityScale = 1) {
+  constructor(canvas, width, height, renderer, qualityScale = 1, opts = {}) {
     this.sceneWidth = width;
     this.sceneHeight = height;
     this.viewWidth = width;
@@ -24196,6 +24219,11 @@ var ThreeScenePlayer = class {
     this.camera.position.z = CAMERA_DISTANCE;
     this.renderer = renderer ?? new WebGLRenderer({ canvas, antialias: true });
     this.renderer.outputColorSpace = LinearSRGBColorSpace;
+    if (opts.clearColor) {
+      const [r, g, b] = opts.clearColor;
+      this.clearColorValue = new Color(r / 255, g / 255, b / 255);
+      this.renderer.setClearColor(this.clearColorValue, 1);
+    }
     this.qualityScale = Number.isFinite(qualityScale) && qualityScale > 0 ? qualityScale : 1;
     this.pixelRatio = resolvePixelRatio(this.devicePixelRatio(), this.qualityScale);
     const withSetPixelRatio = this.renderer;
@@ -24224,12 +24252,23 @@ var ThreeScenePlayer = class {
     if (this.canvas.height !== bufH) this.canvas.height = bufH;
     const buf = this.renderer.domElement ?? this.canvas;
     this.glowStage?.resize(buf.width, buf.height);
+    this.bloomStage?.resize(buf.width, buf.height);
+    this.bloomRT?.setSize(buf.width, buf.height);
     this.frameCapture?.resize(buf.width, buf.height);
     this.objectEffectStage?.notifyViewportResize?.();
     this.compositeQuad?.resize(buf.width, buf.height);
     for (const entry of this.isolated.values()) {
       this.applyCompositeSampling(entry.rt, entry.worldW, entry.worldH);
     }
+  }
+  // bloom 的中间结果 RT：按画布缓冲尺寸惰性创建并同步（与 Glow 各级 RT 同源）。
+  ensureBloomRT() {
+    const dom = this.renderer.domElement ?? this.canvas;
+    const w = Math.max(1, dom.width);
+    const h = Math.max(1, dom.height);
+    if (!this.bloomRT) this.bloomRT = new WebGLRenderTarget(w, h);
+    else if (this.bloomRT.width !== w || this.bloomRT.height !== h) this.bloomRT.setSize(w, h);
+    return this.bloomRT;
   }
   /** 画质档位：走 resize 路径重推画布缓冲与屏幕密度（对象 RT 的基准随之变化）。 */
   setQualityScale(scale) {
@@ -24468,7 +24507,15 @@ var ThreeScenePlayer = class {
     this.objectEffectStage?.bindOutputs();
     this.hideRefractWithoutCapture();
     if (this.frameCapture?.active) this.renderSegmented();
-    else if (this.glowStage) this.glowStage.apply(this.renderer, this.scene, this.camera);
+    else if (this.bloomStage) {
+      const bloomRT = this.ensureBloomRT();
+      this.bloomStage.apply(this.renderer, this.scene, this.camera, void 0, bloomRT);
+      if (this.glowStage) this.glowStage.apply(this.renderer, this.scene, this.camera, bloomRT);
+      else {
+        this.compositeQuad ??= createCompositeQuad(this.renderer);
+        this.compositeQuad.composite(this.renderer, bloomRT.texture);
+      }
+    } else if (this.glowStage) this.glowStage.apply(this.renderer, this.scene, this.camera);
     else this.renderer.render(this.scene, this.camera);
     this.flushCapture();
     this.objectEffectStage?.advance(this.elapsedSeconds());
@@ -24576,7 +24623,7 @@ var ThreeScenePlayer = class {
     if (current !== null) segments.push(current);
     try {
       this.renderer.setRenderTarget(capture.target);
-      this.renderer.setClearColor(0, 1);
+      this.renderer.setClearColor(this.clearColorValue ?? 0, 1);
       this.renderer.clear();
       this.renderer.autoClear = false;
       for (const segment of segments) {
@@ -24610,7 +24657,15 @@ var ThreeScenePlayer = class {
       this.renderer.setRenderTarget(null);
       for (let i = 0; i < children.length; i++) children[i].visible = prevVisible[i];
     }
-    if (this.glowStage) {
+    if (this.bloomStage) {
+      const bloomRT = this.ensureBloomRT();
+      this.bloomStage.apply(this.renderer, this.scene, this.camera, capture.target, bloomRT);
+      if (this.glowStage) this.glowStage.apply(this.renderer, this.scene, this.camera, bloomRT);
+      else {
+        this.compositeQuad ??= createCompositeQuad(this.renderer);
+        this.compositeQuad.composite(this.renderer, bloomRT.texture);
+      }
+    } else if (this.glowStage) {
       this.glowStage.apply(this.renderer, this.scene, this.camera, capture.target);
     } else {
       this.compositeQuad ??= createCompositeQuad(this.renderer);
@@ -24624,6 +24679,10 @@ var ThreeScenePlayer = class {
   /** 装配应用级 Glow（null = 关闭）。关闭时帧序与本方法加入前逐字相同。 */
   setGlowStage(stage) {
     this.glowStage = stage;
+  }
+  /** 装配壁纸级 bloom（null = 关闭）。关闭时帧序与本方法加入前逐字相同。 */
+  setBloomStage(stage) {
+    this.bloomStage = stage;
   }
   /** 按 scene.json 对象 id 取最终显示的 three 对象（脚本图层桥用）。未登记 → undefined。 */
   displayObject(objectId) {
@@ -25224,6 +25283,10 @@ var ThreeScenePlayer = class {
     this.objectEffectStage = null;
     this.glowStage?.dispose();
     this.glowStage = null;
+    this.bloomStage?.dispose();
+    this.bloomStage = null;
+    this.bloomRT?.dispose();
+    this.bloomRT = null;
     this.frameCapture = null;
     this.frameConsumers.clear();
     this.warnedConsumers.clear();
@@ -25277,7 +25340,14 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
     const w = assets.worldTransforms?.get(o.id);
     return w ? { origin: w.origin, scale: w.scale, angles: w.angles } : { origin: o.origin, scale: o.scale, angles: o.angles ?? [0, 0, 0] };
   };
-  const player = new ThreeScenePlayer(canvas, sceneW, sceneH, assets.renderer, assets.qualityScale);
+  const player = new ThreeScenePlayer(
+    canvas,
+    sceneW,
+    sceneH,
+    assets.renderer,
+    assets.qualityScale,
+    { clearColor: desc.clearColor }
+  );
   player.setSceneSize(sceneW, sceneH);
   const vw = viewport?.width ?? sceneW;
   const vh = viewport?.height ?? sceneH;
@@ -27643,16 +27713,16 @@ function createGlowStage(width, height, opts) {
     blurMat.uniforms.uStep.value.set(0, radius / 4 / size.h);
     runPass(r, blurMat, a);
   }
-  function copyBaseToCanvas(r, base) {
+  function copyBaseTo(r, base, dst) {
     try {
       copyMat.uniforms.tSrc.value = base;
-      runPass(r, copyMat, null);
+      runPass(r, copyMat, dst);
       return true;
     } catch {
       return false;
     }
   }
-  function renderGlowPasses(r, base) {
+  function renderGlowPasses(r, base, outTarget) {
     const [l1a, l1b, l2a, l2b, l3a, l3b] = levelRTs;
     brightMat.uniforms.tSrc.value = base;
     runPass(r, brightMat, l1a);
@@ -27668,15 +27738,18 @@ function createGlowStage(width, height, opts) {
     compositeMat.uniforms.tL2.value = l2a.texture;
     compositeMat.uniforms.tL3.value = l3a.texture;
     compositeMat.uniforms.uStrength.value = options.strength;
-    runPass(r, compositeMat, null);
+    runPass(r, compositeMat, outTarget ?? null);
   }
   buildTargets(width, height);
   return {
-    apply(r, scene, camera, preRendered) {
+    apply(r, scene, camera, preRendered, outTarget) {
       if (disposed) return;
       if (glowFailed) {
-        r.setRenderTarget(null);
-        r.render(scene, camera);
+        if (outTarget) renderIntoRenderTarget(r, outTarget, scene, camera);
+        else {
+          r.setRenderTarget(null);
+          r.render(scene, camera);
+        }
         return;
       }
       const base = preRendered ?? baseRT;
@@ -27685,11 +27758,11 @@ function createGlowStage(width, height, opts) {
         if (!preRendered) renderIntoRenderTarget(r, baseRT, scene, camera);
         baseRendered = true;
         installShaderErrorHook(r);
-        renderGlowPasses(r, base.texture);
+        renderGlowPasses(r, base.texture, outTarget ?? null);
       } catch (e) {
         glowFailed = true;
         console.warn("[wallpaper-engine] \u5E94\u7528\u7EA7 Glow \u5931\u8D25\uFF0C\u5DF2\u964D\u7EA7\u4E3A\u76F4\u6E32\uFF1A" + String(e?.message ?? e));
-        if (baseRendered && copyBaseToCanvas(r, base.texture)) return;
+        if (baseRendered && copyBaseTo(r, base.texture, outTarget ?? null)) return;
         r.setRenderTarget(null);
         r.render(scene, camera);
       } finally {
@@ -27732,6 +27805,15 @@ function createGlowStage(width, height, opts) {
       return glowFailed;
     }
   };
+}
+
+// src/client/bloom-stage.ts
+var BLOOM_STRENGTH = 2;
+var BLOOM_THRESHOLD = 0.65;
+function createBloomStage(width, height, opts) {
+  const strength = Number.isFinite(opts?.strength) ? opts.strength : BLOOM_STRENGTH;
+  const threshold = Number.isFinite(opts?.threshold) ? opts.threshold : BLOOM_THRESHOLD;
+  return createGlowStage(width, height, { strength, threshold });
 }
 
 // src/client/frame-capture.ts
@@ -30872,6 +30954,7 @@ function createThreeSceneRenderer(opts) {
   let current = null;
   let currentStage = null;
   let currentGlow = null;
+  let currentBloom = null;
   let frameCapture = null;
   let frameCaptureRenderer = null;
   let glowOverride = null;
@@ -30968,6 +31051,8 @@ function createThreeSceneRenderer(opts) {
     currentStage = null;
     currentGlow?.dispose();
     currentGlow = null;
+    currentBloom?.dispose();
+    currentBloom = null;
     current?.player.dispose();
     for (const sim of current?.sims ?? []) sim.free?.();
     current = null;
@@ -31420,6 +31505,13 @@ function createThreeSceneRenderer(opts) {
           }
           result.player.setObjectEffectStage(stage);
           currentStage = stage;
+        }
+        if (desc.bloom) {
+          currentBloom = createBloomStage(fg.width, fg.height, {
+            strength: desc.bloom.strength,
+            threshold: desc.bloom.threshold
+          });
+          result.player.setBloomStage(currentBloom);
         }
         currentGlow?.dispose();
         const glow = effectiveGlow();

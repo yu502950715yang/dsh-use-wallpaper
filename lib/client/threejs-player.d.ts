@@ -73,6 +73,7 @@ export declare class ThreeScenePlayer {
     private viewHeight;
     private pixelRatio;
     private qualityScale;
+    private clearColorValue;
     private paused;
     private pausedAt;
     private pausedTotal;
@@ -91,6 +92,8 @@ export declare class ThreeScenePlayer {
     private isolated;
     private objectEffectStage;
     private glowStage;
+    private bloomStage;
+    private bloomRT;
     private frameCapture;
     private readonly frameConsumers;
     private readonly refractLayers;
@@ -98,8 +101,11 @@ export declare class ThreeScenePlayer {
     private readonly warnedConsumers;
     private compositeQuad;
     private readonly startedAt;
-    constructor(canvas: HTMLCanvasElement, width: number, height: number, renderer?: THREE.WebGLRenderer, qualityScale?: number);
+    constructor(canvas: HTMLCanvasElement, width: number, height: number, renderer?: THREE.WebGLRenderer, qualityScale?: number, opts?: {
+        clearColor?: [number, number, number];
+    });
     resize(width: number, height: number): void;
+    private ensureBloomRT;
     /** 画质档位：走 resize 路径重推画布缓冲与屏幕密度（对象 RT 的基准随之变化）。 */
     setQualityScale(scale: number): void;
     /** 暂停帧循环（省电）：停 RAF 排程；暂停时长不计入 elapsedSeconds。 */
@@ -148,6 +154,8 @@ export declare class ThreeScenePlayer {
     setObjectEffectStage(stage: ObjectEffectStage | null): void;
     /** 装配应用级 Glow（null = 关闭）。关闭时帧序与本方法加入前逐字相同。 */
     setGlowStage(stage: GlowStage | null): void;
+    /** 装配壁纸级 bloom（null = 关闭）。关闭时帧序与本方法加入前逐字相同。 */
+    setBloomStage(stage: GlowStage | null): void;
     /** 按 scene.json 对象 id 取最终显示的 three 对象（脚本图层桥用）。未登记 → undefined。 */
     displayObject(objectId: number): THREE.Object3D | undefined;
     isolatedObjects(): IsolatedObject[];

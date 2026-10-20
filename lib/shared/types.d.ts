@@ -116,6 +116,7 @@ export interface SceneTextObject extends SceneObjectBase {
     padding?: number;
     script?: string;
     scriptProperties?: Record<string, unknown>;
+    effects?: unknown[];
 }
 export type SceneObject = SceneImageObject | SceneParticleObject | SceneUtilObject | SceneTextObject;
 /** WE 相机视差配置（scene.json `general.cameraparallax*`；缺省全关/全 0，= OWE 解析器缺省）。 */
@@ -124,6 +125,12 @@ export interface ParallaxConfig {
     amount: number;
     delay: number;
     mouseInfluence: number;
+}
+/** WE 音频对象（scene.json object.sound）：多文件 + 音量 + 播放模式（对齐 OWE SoundParser）。 */
+export interface SceneSoundObject {
+    files: string[];
+    volume: number;
+    playbackmode: 'loop' | 'random' | 'single';
 }
 export interface SceneDescription {
     camera: {
@@ -137,9 +144,15 @@ export interface SceneDescription {
     };
     fov?: number;
     perspectiveOverrideFov?: number;
+    /** 清屏色（scene.json `general.clearcolor`，已归一化到 0-255）。 */
     clearColor?: [number, number, number];
+    /** 壁纸级 bloom（WE general.bloom*，`bloom:true` 才产出；v0.8.1 只支持 threshold/strength）。 */
+    bloom?: {
+        strength: number;
+        threshold: number;
+    };
     /** 相机视差总配置（scene.json `general.cameraparallax*`，缺省全 0）。 */
     parallax: ParallaxConfig;
     objects: SceneObject[];
-    sounds?: string[];
+    sounds?: SceneSoundObject[];
 }

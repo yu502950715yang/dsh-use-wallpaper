@@ -25,6 +25,10 @@ export declare function particleWorldSize(spec: {
     w: number;
     h: number;
 };
+export declare function textWorldSize(size: [number, number], scale: [number, number]): {
+    w: number;
+    h: number;
+};
 export declare function createObjectRenderTarget(width: number, height: number): THREE.WebGLRenderTarget;
 export declare function shouldUseObjectPath(obj: {
     effects?: unknown;
