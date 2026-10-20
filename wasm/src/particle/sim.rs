@@ -824,6 +824,17 @@ impl SceneParticleSim {
         self.particles.retain(|p| p.life > 0.0);
     }
 
+    /// 预推进 starttime 秒（WE 语义：起播时系统已运行 N 秒）。固定 1/60 步长、上限 900 步。
+    pub fn advance_initial(&mut self, seconds: f32) {
+        if !(seconds > 0.0) {
+            return;
+        }
+        let steps = ((seconds * 60.0).ceil() as u32).min(900);
+        for _ in 0..steps {
+            self.update(1.0 / 60.0);
+        }
+    }
+
     /// 预滚到「已经在飘」的稳态（warm start）——**治「所有花瓣同时下落」**。
     ///
     /// 问题（2026-09-10 实测，见 `.superpowers/sdd/2026-09-08-scene-particle-lwe-alignment/task-5-report.md`）：
@@ -1449,6 +1460,61 @@ mod tests {
         let max = ages.iter().cloned().fold(0.0f32, f32::max);
         // life ≥ 5s：任一 age_frac > 0.1 即 age > 0.5s；4 个全 ≤ 0.1 的概率 = 1e-4。
         assert!(max > 0.5, "随机寿命 → 相位应打散，got {ages:?}");
+    }
+
+    /// starttime 预推进：`prewarm` 建好稳态后按 1/60 固定步长前滚，系统时间与粒子状态
+    /// 走正常 `update`（WE 起播即已运行 N 秒，相位/存活状态与桌面一致）。
+    #[test]
+    fn advance_initial_moves_system_time() {
+        let mut sim = mk_prewarm_sim(5.0, 10.0, 4.0, 4);
+        sim.prewarm();
+        sim.advance_initial(2.0);
+        assert!((sim.time - 2.0).abs() < 0.05, "time 应前推 2s，got {}", sim.time);
+        assert!(!sim.particles.is_empty(), "前推 2s 后池应非空（WE 起播已有粒子）");
+    }
+
+    /// `starttime=0`（缺省）必须是**彻底无操作**：粒子状态逐位不变、时钟不动
+    /// （= 改动前逐字节一致的判据）。
+    #[test]
+    fn advance_initial_zero_is_noop() {
+        let mut sim = mk_prewarm_sim(5.0, 10.0, 4.0, 4);
+        sim.prewarm();
+        let snap = |s: &SceneParticleSim| -> Vec<Vec<u32>> {
+            s.particles
+                .iter()
+                .map(|p| {
+                    // 位置/速度/旋转/角速度 + 标量字段全部按 f32 位模式比较（逐字节一致）。
+                    let mut bits: Vec<u32> = p
+                        .pos
+                        .iter()
+                        .chain(p.vel.iter())
+                        .chain(p.rot.iter())
+                        .chain(p.angular_vel.iter())
+                        .map(|f| f.to_bits())
+                        .collect();
+                    for f in [p.size, p.alpha, p.life, p.max_life, p.frame, p.color[0], p.color[1], p.color[2]] {
+                        bits.push(f.to_bits());
+                    }
+                    bits
+                })
+                .collect()
+        };
+        let before = snap(&sim);
+        sim.advance_initial(0.0);
+        assert_eq!(snap(&sim), before, "starttime=0 不得改动任何粒子（逐位一致）");
+        assert_eq!(sim.time, 0.0, "starttime=0 不得推进时钟");
+        // 负值同样忽略（不倒退模拟）。
+        sim.advance_initial(-3.0);
+        assert_eq!(snap(&sim), before, "负 starttime 应按 0 处理");
+        assert_eq!(sim.time, 0.0);
+    }
+
+    /// 前推上限 900 步（15s）：本机最大 starttime 只有 ~15s，更大的值截断以免起播卡顿。
+    #[test]
+    fn advance_initial_caps_at_900_steps() {
+        let mut sim = mk_prewarm_sim(5.0, 10.0, 0.0, 0); // rate=0：prewarm 早退，无粒子
+        sim.advance_initial(1000.0);
+        assert!((sim.time - 15.0).abs() < 0.01, "应截断到 900 步 = 15s，got {}", sim.time);
     }
 
     /// controlpointattract（官方 `ControlPointAttractOperator::Update`）：

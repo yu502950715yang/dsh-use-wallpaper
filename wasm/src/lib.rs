@@ -57,6 +57,8 @@ impl CpuParticleSim {
         // （每片随机出生 age，位置/旋转/alpha 按该 age 前滚），而不是空池冷启动、一批花瓣
         // 同相位平行下落。逐帧发射/算子语义不变（详见 `SceneParticleSim::prewarm` 注释）。
         sim.prewarm();
+        // starttime：先建稳态（prewarm）再前滚相位/存活状态（WE 起播即已运行 N 秒）。
+        sim.advance_initial(spec.starttime);
         Ok(CpuParticleSim { sim })
     }
 

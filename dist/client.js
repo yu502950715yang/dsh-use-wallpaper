@@ -22996,13 +22996,15 @@ function particleWorldSize(spec, scale) {
   const eff = effectiveParticleDistance(spec);
   return { w: eff * scale[0], h: eff * scale[1] };
 }
+function textWorldSize(size, scale) {
+  return { w: Math.abs(size[0] * scale[0]), h: Math.abs(size[1] * scale[1]) };
+}
 function shouldUseObjectPath(obj) {
   return Array.isArray(obj.effects) && obj.effects.length > 0;
 }
 function groupEffectsByObject(objects) {
   const groups = [];
   for (const obj of objects) {
-    if (obj.kind === "text") continue;
     if (shouldUseObjectPath(obj)) {
       groups.push({ obj, effects: obj.effects });
     }
@@ -23348,15 +23350,16 @@ function scriptFields(o) {
   return { script, scriptProperties };
 }
 function collectSounds(root) {
-  const sounds = [];
-  const objects = Array.isArray(root.objects) ? root.objects : [];
-  for (const o of objects) {
+  const out = [];
+  for (const o of Array.isArray(root.objects) ? root.objects : []) {
     if (!Array.isArray(o?.sound)) continue;
-    for (const s of o.sound) {
-      if (typeof s === "string" && s) sounds.push(s);
-    }
+    const files = o.sound.filter((s) => typeof s === "string" && !!s);
+    if (files.length === 0) continue;
+    const volume = typeof o.volume === "number" && Number.isFinite(o.volume) ? Math.max(0, Math.min(1, o.volume)) : 1;
+    const mode = o.playbackmode === "random" || o.playbackmode === "single" ? o.playbackmode : "loop";
+    out.push({ files, volume, playbackmode: mode });
   }
-  return sounds.length > 0 ? sounds : void 0;
+  return out.length > 0 ? out : void 0;
 }
 function serializeInstanceOverride(v) {
   if (typeof v !== "object" || v === null || Array.isArray(v)) return void 0;
@@ -24901,8 +24904,8 @@ var ThreeScenePlayer = class {
       worldH
     });
   }
-  // 更新背景图层状态，对齐既有 update_image 语义——undefined = 保持现状；与当前已应用状态相等的
-  // 字段跳过；未知 id → no-op。origin 是 WE 场景坐标，先按 we_to_three 中心化再写 mesh.position。
+  // 更新背景图层状态，对齐既有 update_image 语义——undefined = 保持现状；与当前状态相等的字段跳过；
+  // 未知 id → no-op。origin 是 WE 场景坐标，中心化后写承载位置的 node（隔离 = 合成 quad，内容 mesh 在 RT 内恒 0）。
   update_background(id, origin, scale, alpha, brightness) {
     const entry = this.backgroundEntries.get(id);
     if (!entry) return;
@@ -24910,7 +24913,7 @@ var ThreeScenePlayer = class {
       const [ox, oy, oz] = origin;
       if (ox !== entry.origin[0] || oy !== entry.origin[1] || oz !== entry.origin[2]) {
         entry.origin = [ox, oy, oz];
-        entry.mesh.position.set(ox - entry.sceneW / 2, oy - entry.sceneH / 2, oz);
+        entry.parallaxNode.position.set(ox - entry.sceneW / 2, oy - entry.sceneH / 2, oz);
       }
     }
     if (scale) {
@@ -25350,6 +25353,9 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
         objectId: obj.id,
         // 唯一绘制序 = 本对象在 objects 数组中的下标。
         renderOrder,
+        // 对象级效果链：带效果的对象其内容进 localScene 渲染到对象 RT，主场景放合成 quad；
+        // 缺省不隔离。隔离条目的键 = obj.id，与 ObjectEffectStage 的键空间一致。
+        isolate: assets.isolate?.get(obj.id),
         // 视差深度同 image 分支：直接透传对象级字段（text 也有 parallaxDepth）。
         parallaxDepth: obj.parallaxDepth
       });
@@ -29501,7 +29507,7 @@ function armGestureResume(context) {
   window.addEventListener("keydown", onGesture);
   window.addEventListener("touchstart", onGesture);
 }
-async function playWallpaperSound(url, analyzer) {
+async function playWallpaperSound(url, analyzer, opts) {
   try {
     const resp = await fetch(url);
     if (!resp.ok) return false;
@@ -29509,8 +29515,11 @@ async function playWallpaperSound(url, analyzer) {
     const audioBuffer = await analyzer.context.decodeAudioData(buf);
     const source = analyzer.context.createBufferSource();
     source.buffer = audioBuffer;
-    source.loop = true;
-    source.connect(analyzer.analyser);
+    source.loop = opts?.loop !== false;
+    const gain = analyzer.context.createGain();
+    gain.gain.value = opts?.volume ?? 1;
+    source.connect(gain);
+    gain.connect(analyzer.analyser);
     if (analyzer.context.state === "suspended") {
       analyzer.context.resume().catch(() => {
       });
@@ -30920,7 +30929,12 @@ function createThreeSceneRenderer(opts) {
     if (!analyzer) return;
     currentAudio = { analyzer, id, sounds };
     for (const s of sounds) {
-      void playWallpaperSound(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(s)}`, analyzer);
+      const file = s.playbackmode === "loop" ? s.files[0] : s.files[Math.floor(Math.random() * s.files.length)];
+      void playWallpaperSound(
+        `/wallpapers/scene/${id}/asset?name=${encodeURIComponent(file)}`,
+        analyzer,
+        { volume: s.volume, loop: s.playbackmode !== "single" }
+      );
     }
   };
   const onContextLost = (e) => {
@@ -31264,6 +31278,18 @@ function createThreeSceneRenderer(opts) {
               rtHeight: rt.height,
               worldW: Math.abs(world.w),
               worldH: Math.abs(world.h)
+            });
+          } else if (obj.kind === "text") {
+            const layer = textLayers.get(obj.id);
+            if (!layer?.size) continue;
+            const world = textWorldSize(layer.size, [obj.scale[0], obj.scale[1]]);
+            const rt = objectRtSize(world.w, world.h, screenScale);
+            isolate.set(obj.id, {
+              objectId: obj.id,
+              rtWidth: rt.width,
+              rtHeight: rt.height,
+              worldW: world.w,
+              worldH: world.h
             });
           }
         }

@@ -270,6 +270,8 @@ pub struct ParticleSpec {    pub emitter: EmitterSpec,
     pub sequence_multiplier: f32,
     /// 控制点表（固定 8 槽，官方索引 0..7）。`controlpointattract` 用它定位控制点。
     pub controlpoints: Vec<ControlPointSpec>,
+    /// WE 粒子系统起始时间（spec 顶层 `starttime` 秒）：系统起播时已运行 N 秒。
+    pub starttime: f32,
 }
 
 /// 粒子渲染器类型（官方 renderer[]）。当前只消费 sprite / spritetrail。
@@ -511,6 +513,7 @@ pub fn parse_particle_spec(json: &str) -> ParticleSpec {
             1.0,
         ),
         controlpoints,
+        starttime: scalar(&raw.get("starttime").cloned().unwrap_or(Value::Null), 0.0),
     }
 }
 
@@ -572,6 +575,19 @@ mod tests {
         // randomframe → 帧在 spawn 时随机固定后不再推进。
         let r = parse_particle_spec(r#"{"emitter":[{"rate":20}],"animationmode":"randomframe"}"#);
         assert_eq!(r.animation_mode, AnimationMode::RandomFrame);
+    }
+
+    /// spec 顶层 `starttime`（秒）：WE 里粒子系统起播时**已运行 N 秒**（F7）。
+    #[test]
+    fn parses_top_level_starttime() {
+        let spec = parse_particle_spec(r#"{"starttime": 3.5, "emitter": []}"#);
+        assert!((spec.starttime - 3.5).abs() < 1e-6, "starttime 应解析为 3.5，got {}", spec.starttime);
+    }
+
+    #[test]
+    fn starttime_defaults_to_zero() {
+        let spec = parse_particle_spec(r#"{"emitter": []}"#);
+        assert_eq!(spec.starttime, 0.0, "缺 starttime 应为 0（不预推进）");
     }
 
     /// controlpointattract 与 `controlpoint[]`：算子只存 `controlpoint` 索引，位置来自 spec 的
