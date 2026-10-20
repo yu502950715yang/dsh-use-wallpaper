@@ -1,6 +1,7 @@
 import type * as THREE from 'three';
 export interface LayerWrite {
     origin?: [number, number, number];
+    /** 脚本写入的角度（**度**，WE SceneScript 的 angles 单位；applyLayerState 落 three 时转弧度）。 */
     angles?: [number, number, number];
     scale?: [number, number, number];
     alpha?: number;

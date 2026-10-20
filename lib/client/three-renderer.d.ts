@@ -1,7 +1,7 @@
 import { type WorldTransform } from './scene-graph.js';
 import type { LoadWasm } from './wasm-loader.js';
 import type { SceneRendererLike } from './wallpaper-controller.js';
-import type { SceneDescription } from '../shared/types.js';
+import type { ObjectScriptProperty, SceneDescription } from '../shared/types.js';
 import { type CompiledEffectPass } from './shader/effect-chain.js';
 import type { TextScriptRuntime } from './text-script.js';
 import type { RenderHealthStore } from './render-health.js';
@@ -12,6 +12,7 @@ export declare function collectScriptSources(desc: SceneDescription): Array<{
     objectId: number;
     source: string;
     scriptProperties?: Record<string, unknown>;
+    property?: ObjectScriptProperty;
 }>;
 export declare function createThreeSceneRenderer(opts?: {
     loadWasm?: LoadWasm;

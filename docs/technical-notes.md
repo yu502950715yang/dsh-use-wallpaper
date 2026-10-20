@@ -10,7 +10,7 @@
 ### 1.1 three.js 播放器（当前主路径）
 
 - **背景图层**：每个 `image` 对象 → `Mesh`（`PlaneGeometry` + `MeshBasicMaterial`），按 `we_to_three`（场景中心化、**y 不翻**）定位，`scale` / `alpha` / `brightness` 与 WE 语义一致；`renderOrder=0`、`depthWrite=false`。
-- **image 精灵表帧 UV**（v0.8.1）：材质 `passes[0].combos.spritesheet` 为真且纹理带 TEXS 帧网格时，按行优先写当前帧 UV（1 fps 自动循环；`resizeBackground` 后重写）；不接脚本 `getTextureAnimation`（`AGENT.md` §7.42 ②）。
+- **image 精灵表帧 UV**（v0.8.1）：材质 `passes[0].combos.spritesheet` 为真且纹理带 TEXS 帧网格时，按行优先写当前帧 UV（无脚本控制时 1 fps 自动循环；`resizeBackground` 后重写）；对象级脚本可经 `thisLayer.getTextureAnimation` 控制 `pause/play/stop/setFrame`（如 `3765967112` 停在脚本帧）。生产 GUI 里背景层 `pointer-events:none` ⇒ 点击切帧不可达，按产品决策不做点击转发（`AGENT.md` §7.42 ②）。
 - **粒子系统**：每个 `particle` 对象 → `InstancedBufferGeometry`（每粒子 4 角点 billboard + `ShaderMaterial`）。实例属性 `particlePosition/Size/Uv/Color/Alpha` 按 spec 的 `maxcount` **一次性预分配**（避免 three r170 `_maxInstanceCount` 首帧锁存导致层不绘制），运行期只更新 `instanceCount`。
 - **粒子 shader**：billboard（`pos + corner*halfSize`）、`gl_Position.z=0`（2D，避开正交视锥裁剪）、多帧 sprite UV 网格切片（`frameCount` + cols/rows）、纹理 alpha 遮罩（有纹理 `shape=texel.a`、无纹理软圆盘）、`softness`、additive / alpha 混合。
 - **渲染循环**：`renderer.setAnimationLoop`（`dt` = `performance.now` 差分，clamp 0.1s）→ 逐 `CpuParticleSim.update(dt)` → 刷新实例缓冲 → `render`；帧体 `try/catch` **异常自愈**（three 的 RAF 一次异常会永久停摆）。

@@ -1,4 +1,4 @@
-import type { SceneDescription, SceneImageObject, SceneObject, SceneSoundObject } from '../shared/types.js';
+import type { ObjectScriptProperty, SceneDescription, SceneImageObject, SceneObject, SceneSoundObject } from '../shared/types.js';
 import { readParallaxConfig } from './parallax.js';
 import { parseScriptProperties } from './script-patterns.js';
 import { parseVisible } from './visibility.js';
@@ -146,13 +146,16 @@ function scriptFields(o: { script?: unknown; scriptproperties?: unknown } | unde
 // 其次 origin/scale/color；visible.script 仍走可见性通道（收集侧优先它）。
 function objectScriptFields(o: Record<string, unknown>): {
   objectScript?: string;
+  objectScriptProperty?: ObjectScriptProperty;
   objectScriptProperties?: Record<string, unknown>;
 } {
-  for (const field of ['angles', 'origin', 'scale', 'color']) {
+  for (const field of ['angles', 'origin', 'scale', 'color'] as const) {
     const v = o[field];
     if (!v || typeof v !== 'object' || Array.isArray(v)) continue;
     const f = scriptFields(v as { script?: unknown; scriptproperties?: unknown });
-    if (f.script) return { objectScript: f.script, objectScriptProperties: f.scriptProperties };
+    if (f.script) {
+      return { objectScript: f.script, objectScriptProperty: field, objectScriptProperties: f.scriptProperties };
+    }
   }
   return {};
 }

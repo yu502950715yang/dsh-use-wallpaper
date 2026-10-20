@@ -2009,8 +2009,10 @@ describe('collectScriptSources', () => {
     expect(srcs.map((s) => s.objectId)).toEqual([123, 5]);
     expect(srcs[0]!.source).toContain('getTextureAnimation');
     expect(srcs[0]!.scriptProperties).toEqual({ dayStart: 0, nightStart: 12 });
+    expect(srcs[0]!.property).toBe('angles'); // 属性脚本：update(value) 收/回 Vec3
     expect(srcs[1]!.source).toContain('return true');
     expect(srcs[1]!.scriptProperties).toBeUndefined();
+    expect(srcs[1]!.property).toBeUndefined(); // visible.script 不带属性（布尔语义）
   });
 });
 
@@ -3467,6 +3469,8 @@ describe('对象级脚本 → player 纹理动画接线', () => {
     expect(opts.scripts.map((s) => s.objectId)).toEqual([123]);
     expect(opts.scripts[0]!.source).toContain('getTextureAnimation');
     expect(opts.scripts[0]!.scriptProperties).toEqual({ dayStart: 0, nightStart: 12 });
+    expect(opts.scripts[0]!.property).toBe('angles'); // 属性脚本契约（update 收/回 Vec3）
+    expect(opts.wallpaperId).toBe('3765967112');       // localStorage 按壁纸隔离
     const tex = opts.textureAnimation!;
     tex.pause(123);
     tex.play(123);

@@ -12,7 +12,7 @@ import { loadTexTexture } from './tex-loader.js';
 import { defaultLoadWasm } from './wasm-loader.js';
 import type { LoadWasm, WasmSceneModule } from './wasm-loader.js';
 import type { SceneRendererLike } from './wallpaper-controller.js';
-import type { SceneDescription, SceneImageObject, SceneSoundObject } from '../shared/types.js';
+import type { ObjectScriptProperty, SceneDescription, SceneImageObject, SceneSoundObject } from '../shared/types.js';
 import {
   fitIsolatedBudget, groupEffectsByObject, isolatedRtSize, objectRtSize, particleWorldSize,
   screenScalePx, sourcePixelsFromTexture, textWorldSize,
@@ -178,25 +178,39 @@ export async function collectObjectEffectChains(
 //
 // ⚠️ 收集范围**不能**限定在「参与渲染的对象」：无 image/particle/text 字段的纯控制器对象会被
 // parseSceneJson 归到空粒子兜底分支，只按媒体字段派生 script 会静默丢掉它们，画面就仍然不动。
-// 脚本来源优先级：visible.script（可见性/视觉脚本）> objectScript（angles 等转换字段，对象级脚本）。
+// 脚本来源优先级：visible.script（可见性/视觉脚本）> objectScript（angles 等转换字段，对象级脚本）；
+// objectScript 额外带 property（angles/origin/scale/color），供 VM 的 update(value) 契约写回。
 export function collectScriptSources(
   desc: SceneDescription,
-): Array<{ objectId: number; source: string; scriptProperties?: Record<string, unknown> }> {
-  const out: Array<{ objectId: number; source: string; scriptProperties?: Record<string, unknown> }> = [];
+): Array<{
+  objectId: number;
+  source: string;
+  scriptProperties?: Record<string, unknown>;
+  property?: ObjectScriptProperty;
+}> {
+  const out: Array<{
+    objectId: number;
+    source: string;
+    scriptProperties?: Record<string, unknown>;
+    property?: ObjectScriptProperty;
+  }> = [];
   for (const obj of desc.objects) {
     // `obj.script` 对 text 对象装的是 `text.script`，那类归既有的 text-script.ts 运行时
     // —— 在这里一并收会与 text 路径重复装载（多份 runtime 状态）。
     const visibleScript = obj.visible?.kind === 'script'
       ? (obj as { script?: unknown }).script
       : undefined;
-    const source = typeof visibleScript === 'string' && visibleScript.length > 0
-      ? visibleScript
-      : obj.objectScript;
+    const fromVisible = typeof visibleScript === 'string' && visibleScript.length > 0;
+    const source = fromVisible ? visibleScript : obj.objectScript;
     if (typeof source !== 'string' || source.length === 0) continue;
-    const scriptProperties = typeof visibleScript === 'string' && visibleScript.length > 0
-      ? obj.visible?.scriptProperties
-      : obj.objectScriptProperties;
-    out.push(scriptProperties ? { objectId: obj.id, source, scriptProperties } : { objectId: obj.id, source });
+    const scriptProperties = fromVisible ? obj.visible?.scriptProperties : obj.objectScriptProperties;
+    const property = fromVisible ? undefined : obj.objectScriptProperty;
+    out.push({
+      objectId: obj.id,
+      source,
+      ...(scriptProperties ? { scriptProperties } : {}),
+      ...(property ? { property } : {}),
+    });
   }
   return out;
 }
@@ -861,6 +875,7 @@ export function createThreeSceneRenderer(opts?: {
           currentScriptHost = await SceneScriptHost.create({
             scripts: scriptSources,
             userProperties: userProps,
+            wallpaperId: id,
             dynamicMesh: meshRegistry,
             onAsset: (p) => materialPaths.add(p),
             onWarn: (m) => console.warn(`[wallpaper-engine] ${m}`),
@@ -899,6 +914,8 @@ export function createThreeSceneRenderer(opts?: {
           if (currentScriptHost) {
             scriptClick = () => currentScriptHost?.click();
             scriptClickTarget = fg;
+            // 生产不可达（背景层 pointer-events:none）；按 2026-10-20 产品决策不转发点击，
+            // 该监听只服务 e2e/harness（GUI 内点击循环为已知边界）。
             fg.addEventListener?.('click', scriptClick);
             console.log(
               `[three] scene scripts id=${id} collected=${scriptSources.length} loaded=${currentScriptHost.scriptCount} active=${currentScriptHost.activeCount} meshes=${meshRegistry.modelCount} materials=${materialTable.size}`,

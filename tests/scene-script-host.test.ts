@@ -180,6 +180,7 @@ describe('SceneScriptHost 对象级脚本', () => {
         objectId: 123,
         source: DAY_NIGHT_SCRIPT,
         scriptProperties: { dayStart: 0, nightStart: 12 },
+        property: 'angles',
       }],
     });
     expect(host!.scriptCount).toBe(1);
@@ -193,6 +194,24 @@ describe('SceneScriptHost 对象级脚本', () => {
     // update 不得覆盖已暂停的脚本帧（automatic 且状态未变 ⇒ 零写入）
     host!.tick(1 / 60);
     expect(tex.calls.length).toBe(5);
+    host!.dispose();
+  });
+
+  // 属性脚本契约（2026-10-20）：update(value) 的 Vec3 返回值写回 angles，经 applyLayerState 生效；
+  // 它**不是** visible 信号（visible.script 的布尔语义保持独立）。
+  it('属性脚本的 update(value) 写回 angles，且不参与 visible 判定', async () => {
+    const host = await SceneScriptHost.create({
+      userProperties: {},
+      scripts: [
+        { objectId: 358, property: 'angles', source: `export function update(v){ v.z = 0.5; return v; }` },
+        { objectId: 359, property: 'angles', source: `export function update(v){ v.z = 9; return true; }` },
+        { objectId: 360, source: `export function update(){ return false; }` },
+      ],
+    });
+    const d = host!.tick(1 / 60);
+    expect(d.get(358)?.angles).toEqual([0, 0, 0.5]);
+    expect(d.get(359)).toBeUndefined(); // 属性脚本返回布尔：不写属性也不写 visible
+    expect(d.get(360)?.visible).toBe(false); // visible.script 的布尔语义不变
     host!.dispose();
   });
 });

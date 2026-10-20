@@ -16,6 +16,7 @@ import type { QuickJSContext, QuickJSRuntime, QuickJSHandle, QuickJSWASMModule }
 import type { LayerStateTable, LayerWrite } from './layer-state.js';
 import type { AnimPlayback, AnimRegistry } from './scene-anim.js';
 import type { DynamicMeshRegistry } from './dynamic-mesh.js';
+import type { ObjectScriptProperty } from '../shared/types.js';
 
 export interface TextureAnimationHost {
   pause(objectId: number): void;
@@ -52,6 +53,8 @@ export interface SceneScriptVmOptions {
   timeOfDay?: () => number;
   /** localStorage 底层存储（缺省浏览器 localStorage，node/隐私模式退回内存）。 */
   storage?: SceneScriptStorage;
+  /** 壁纸 id：脚本 localStorage 按壁纸隔离（`we:scenescript:<wallpaperId>:<key>`）；缺省不加段。 */
+  wallpaperId?: string;
 }
 
 // 单脚本一次调用的指令预算：正常脚本远低于此；死循环在此被中断。
@@ -62,8 +65,13 @@ const STEP_BUDGET = 50_000_000;
 const PRELUDE = `
 var __mods = [];
 
+function Vec2(x, y) { this.x = x || 0; this.y = y || 0; }
 function Vec3(x, y, z) { this.x = x || 0; this.y = y || 0; this.z = z || 0; }
 function Vec4(x, y, z, w) { this.x = x || 0; this.y = y || 0; this.z = z || 0; this.w = w || 0; }
+// WE 脚本常用 copy()（2937346640 的 Simple Visualizer 在 update 里 baseOrigin.copy()）。
+Vec2.prototype.copy = function () { return new Vec2(this.x, this.y); };
+Vec3.prototype.copy = function () { return new Vec3(this.x, this.y, this.z); };
+Vec4.prototype.copy = function () { return new Vec4(this.x, this.y, this.z, this.w); };
 var IModelData = { POSITION: 0, UV: 1, COLOR: 2, NORMAL: 3, TANGENT: 4 };
 
 function __noop() {}
@@ -144,14 +152,15 @@ function __mkAnim(key, name) {
 var __texAnimCache = {};
 function __mkTextureAnimation(key) {
   if (__texAnimCache[key]) return __texAnimCache[key];
-  __texAnimCache[key] = {
+  // 未知成员（setSpeed 等）走 __wrap → __any，避免单个缺失方法 TypeError 停用脚本。
+  __texAnimCache[key] = __wrap({
     pause: function () { __host.texAnimPause(key); },
     play: function () { __host.texAnimPlay(key); },
     stop: function () { __host.texAnimStop(key); },
     isPlaying: function () { return __host.texAnimIsPlaying(key); },
     setFrame: function (frame) { __host.texAnimSetFrame(key, frame); },
     getFrame: function () { return __host.texAnimGetFrame(key); }
-  };
+  }, 'texanim(' + key + ')');
   return __texAnimCache[key];
 }
 
@@ -290,6 +299,10 @@ interface LoadedModule {
   label: string;
   /** 本模块所属对象的图层 key（`id:<id>`；无 objectId 时为空串）。 */
   layerKey: string;
+  /** 该脚本挂载的转换属性（angles 等）；null = 生命周期/visible.script 脚本。 */
+  property: ObjectScriptProperty | null;
+  /** 本模块所属 scene 对象 id（属性写回用；无 objectId 时 null）。 */
+  objectId: number | null;
 }
 
 export class SceneScriptVm {
@@ -311,6 +324,8 @@ export class SceneScriptVm {
   private readonly timeOfDay: () => number;
   /** localStorage 底层字符串存储。 */
   private readonly storage: SceneScriptStorage;
+  /** 壁纸 id（localStorage 键的隔离段；空串 = 兼容旧前缀）。 */
+  private readonly wallpaperId: string;
   /** 当前正在执行的脚本所属图层 key（`id:<对象 id>`；thisLayer 的解析依据）。 */
   private currentKey = '';
   private dt = 1 / 60;
@@ -329,6 +344,7 @@ export class SceneScriptVm {
     this.texAnim = opts.textureAnimation ?? null;
     this.timeOfDay = opts.timeOfDay ?? localTimeOfDay;
     this.storage = opts.storage ?? createDefaultStorage();
+    this.wallpaperId = typeof opts.wallpaperId === 'string' ? opts.wallpaperId : '';
     this.stepBudget = Number.isFinite(opts.stepBudget) && (opts.stepBudget as number) > 0
       ? (opts.stepBudget as number)
       : STEP_BUDGET;
@@ -466,16 +482,19 @@ export class SceneScriptVm {
       let v = 0;
       try { v = this.timeOfDay(); } catch { v = 0; }
       if (!Number.isFinite(v)) v = 0;
-      return ctx.newNumber(Math.min(1, Math.max(0, v)));
+      // 1 与 0 同义（次日午夜）：钳到 [0,1) 与注释/单测口径一致。
+      if (v <= 0) v = 0;
+      else if (v >= 1) v = 0.9999999999999999;
+      return ctx.newNumber(v);
     });
     define('lsGet', (k) => {
       let raw: string | null = null;
-      try { raw = this.storage.getItem(SCENE_SCRIPT_STORAGE_PREFIX + ctx.getString(k)); } catch { raw = null; }
+      try { raw = this.storage.getItem(this.storageKey(ctx.getString(k))); } catch { raw = null; }
       return raw === null || raw === undefined ? ctx.null : ctx.newString(raw);
     });
     define('lsSet', (k, v) => {
       try {
-        this.storage.setItem(SCENE_SCRIPT_STORAGE_PREFIX + ctx.getString(k), ctx.getString(v));
+        this.storage.setItem(this.storageKey(ctx.getString(k)), ctx.getString(v));
       } catch { /* 配额/隐私模式：脚本侧静默失败（与浏览器 localStorage 语义一致） */ }
     });
 
@@ -549,6 +568,13 @@ export class SceneScriptVm {
     this.state.write(objectId, patch);
   }
 
+  /** localStorage 键：按壁纸隔离（`we:scenescript:<wallpaperId>:<key>`）；无 id 时保持旧前缀。 */
+  private storageKey(key: string): string {
+    return this.wallpaperId
+      ? `${SCENE_SCRIPT_STORAGE_PREFIX}${this.wallpaperId}:${key}`
+      : SCENE_SCRIPT_STORAGE_PREFIX + key;
+  }
+
   private anim(layerKey: string, name: string): AnimPlayback {
     const key = `${layerKey}|${name}`;
     let a = this.animCache.get(key);
@@ -561,12 +587,14 @@ export class SceneScriptVm {
 
   /** 装载一个模块脚本。返回 false = eval 失败（该脚本被跳过，其余继续）。
    *  `label` 用于日志（应带 scene 对象 id —— 脚本首行都是 `'use strict';`，不带 id 无法定位）。
-   *  `objectId` 供 thisLayer 解析；`scriptProperties` 是 scene.json 的覆盖值（注入给 createScriptProperties）。 */
+   *  `objectId` 供 thisLayer 解析；`scriptProperties` 是 scene.json 的覆盖值（注入给 createScriptProperties）；
+   *  `property` 非空 = WE 属性脚本（angles/origin/scale/color）：update(value) 收/回 Vec3。 */
   load(
     source: string,
     label?: string,
     objectId?: number,
     scriptProperties?: Record<string, unknown>,
+    property?: ObjectScriptProperty,
   ): boolean {
     const ctx = this.ctx;
     const sanitized = String(source ?? '').replace(/\bexport\s+/g, '');
@@ -629,6 +657,8 @@ return {
       active: true,
       label: tag,
       layerKey: objectId === undefined ? '' : `id:${objectId}`,
+      property: objectId === undefined ? null : (property ?? null),
+      objectId: objectId === undefined ? null : objectId,
     };
     this.handles.push(inst);
     for (const h of [m.init, m.update, m.apply, m.click]) if (h) this.handles.push(h);
@@ -641,11 +671,15 @@ return {
     this.currentKey = m.layerKey; // thisLayer 解析依据：每次调用前指向当前脚本所属对象
     this.budget = this.stepBudget; // 每个脚本每次调用一份新预算（见 create 的 handler 注释）
     const ctx = this.ctx;
+    const isPropertyValue = mode === 'value' && m.property !== null;
     let argH: QuickJSHandle;
     if (mode === 'props') {
       const engineH = ctx.getProp(ctx.global, 'engine');
       argH = ctx.getProp(engineH, 'userProperties');
       engineH.dispose();
+    } else if (isPropertyValue) {
+      // WE 属性脚本契约：update(value)/init(value) 收**当前值**的 Vec3（脚本原地改或返回新值）。
+      argH = this.vecHandle(m.property!, m.objectId!);
     } else {
       argH = ctx.newString('');
     }
@@ -660,7 +694,28 @@ return {
     }
     const value = ctx.dump(res.value);
     res.value.dispose();
+    if (isPropertyValue) {
+      // 返回 Vec3-like 才写回属性；无返回/非向量 → 不动属性。属性返回值**不是** visible 信号。
+      const vec = vecLike(value);
+      if (vec) this.write(m.objectId!, { [m.property!]: vec } as LayerWrite);
+      return undefined;
+    }
     return value;
+  }
+
+  /** 当前属性值的 quickjs Vec3 句柄（属性脚本入参；缺省值与 readVec 同口径）。 */
+  private vecHandle(property: ObjectScriptProperty, objectId: number): QuickJSHandle {
+    const ctx = this.ctx;
+    const cur = this.state.read(objectId)[property];
+    const dflt: [number, number, number] = property === 'scale' || property === 'color' ? [1, 1, 1] : [0, 0, 0];
+    const arr = cur ?? dflt;
+    const obj = ctx.newObject();
+    for (const [i, axis] of (['x', 'y', 'z'] as const).entries()) {
+      const n = ctx.newNumber(arr[i] ?? dflt[i]);
+      ctx.setProp(obj, axis, n);
+      n.dispose();
+    }
+    return obj;
   }
 
   /** 每帧时间（供 engine.frametime）。必须在 updateAll 之前设置。 */
@@ -681,6 +736,7 @@ return {
    *
    * ⚠️ 返回值是 `visible.script` 的**信号源** —— WE 语义里它就是「该对象本帧是否可见」。
    * 一期调用后把返回值丢弃了，于是 10 个歌曲字标全部显示（真机：两行歌名重影）。
+   * 属性脚本（angles/origin/scale/color）的返回值已写回属性，这里一律返回 undefined（不混用）。
    */
   updateAll(): unknown[] {
     const out: unknown[] = [];
@@ -752,8 +808,18 @@ function firstNonEmptyLine(s: string): string {
   return '';
 }
 
+/** 把脚本返回值收窄成 Vec3（有有限数值 x/y/z 才算；其余返回 null = 不动属性）。 */
+function vecLike(v: unknown): [number, number, number] | null {
+  if (!v || typeof v !== 'object') return null;
+  const o = v as { x?: unknown; y?: unknown; z?: unknown };
+  if (typeof o.x !== 'number' || !Number.isFinite(o.x)) return null;
+  if (typeof o.y !== 'number' || !Number.isFinite(o.y)) return null;
+  if (typeof o.z !== 'number' || !Number.isFinite(o.z)) return null;
+  return [o.x, o.y, o.z];
+}
+
 /** engine.timeOfDay 缺省值：本地时钟的当天占比（0 = 午夜，0.5 = 正午）。 */
-function localTimeOfDay(): number {
+export function localTimeOfDay(): number {
   const d = new Date();
   const seconds = d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds() + d.getMilliseconds() / 1000;
   return seconds / 86400;

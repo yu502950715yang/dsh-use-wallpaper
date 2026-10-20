@@ -1,6 +1,7 @@
 import { type LayerWrite } from './layer-state.js';
 import type { TextureAnimationHost } from './scene-script-vm.js';
 import type { DynamicMeshRegistry } from './dynamic-mesh.js';
+import type { ObjectScriptProperty } from '../shared/types.js';
 export interface SceneScriptHostOptions {
     /** 必须按 scene.json 的 objects 顺序传入（脚本靠 shared 互通，顺序影响 init 期状态）。 */
     scripts: Array<{
@@ -8,6 +9,8 @@ export interface SceneScriptHostOptions {
         source: string;
         /** 对象脚本的 scene.json 覆盖值（createScriptProperties 注入；缺省用脚本内默认值）。 */
         scriptProperties?: Record<string, unknown>;
+        /** 对象级属性脚本挂载的属性名（有则 update(value) 收/回 Vec3；visible.script 无）。 */
+        property?: ObjectScriptProperty;
     }>;
     userProperties: Record<string, unknown>;
     onWarn?: (msg: string) => void;
@@ -19,6 +22,8 @@ export interface SceneScriptHostOptions {
     textureAnimation?: TextureAnimationHost;
     /** engine.timeOfDay 的 0-1 时间源（缺省本地时钟）。 */
     timeOfDay?: () => number;
+    /** 壁纸 id：脚本 localStorage 按壁纸隔离（`we:scenescript:<wallpaperId>:<key>`）。 */
+    wallpaperId?: string;
 }
 export declare class SceneScriptHost {
     private readonly anims;

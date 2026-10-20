@@ -55,6 +55,9 @@ export interface VisibleBinding {
   scriptProperties?: Record<string, unknown>; // kind='script'：脚本参数（{user,value} 已解包）
 }
 
+// 对象级脚本挂载的转换属性（WE 属性脚本 `update(value)` 的绑定目标）。
+export type ObjectScriptProperty = 'angles' | 'origin' | 'scale' | 'color';
+
 // 四种 kind 共有的对象字段（解析器 scene-json.ts 的 `base` 会 spread 进每个分支）：
 // 新增与 kind 无关的对象级字段一律加在这里，避免四处声明漂移。
 export interface SceneObjectBase {
@@ -63,6 +66,8 @@ export interface SceneObjectBase {
   /** 对象级脚本（angles/origin/scale/color 的 `{script, value}` 包装，优先级同字段顺序）； */
   /** visible.script 之外的脚本入口，如 3765967112 的日夜切换图标（angles.script）。 */
   objectScript?: string;
+  /** 该脚本挂载的属性名（决定 update(value) 的入参/写回目标；visible.script 无此字段）。 */
+  objectScriptProperty?: ObjectScriptProperty;
   objectScriptProperties?: Record<string, unknown>; // 该脚本的 scriptproperties（{user,value} 已解包）
 }
 

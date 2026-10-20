@@ -37,12 +37,15 @@ export interface VisibleBinding {
     script?: string;
     scriptProperties?: Record<string, unknown>;
 }
+export type ObjectScriptProperty = 'angles' | 'origin' | 'scale' | 'color';
 export interface SceneObjectBase {
     /** WE 对象级视差深度（scene.json `parallaxDepth`，两根轴）；缺省 = OWE 的 {0,0} ⇒ 不参与视差。 */
     parallaxDepth?: [number, number];
     /** 对象级脚本（angles/origin/scale/color 的 `{script, value}` 包装，优先级同字段顺序）； */
     /** visible.script 之外的脚本入口，如 3765967112 的日夜切换图标（angles.script）。 */
     objectScript?: string;
+    /** 该脚本挂载的属性名（决定 update(value) 的入参/写回目标；visible.script 无此字段）。 */
+    objectScriptProperty?: ObjectScriptProperty;
     objectScriptProperties?: Record<string, unknown>;
 }
 export interface SceneImageObject extends SceneObjectBase {

@@ -6,6 +6,7 @@ import type * as THREE from 'three';
 
 export interface LayerWrite {
   origin?: [number, number, number];
+  /** 脚本写入的角度（**度**，WE SceneScript 的 angles 单位；applyLayerState 落 three 时转弧度）。 */
   angles?: [number, number, number];
   scale?: [number, number, number];
   alpha?: number;
@@ -71,6 +72,9 @@ export interface DisplayTarget {
 /** alpha 折算下限：低于它视为不可见（spec §6.1 的 alpha≈0 折算）。 */
 const ALPHA_EPSILON = 0.002;
 
+/** WE SceneScript 的 angles 是度（官方 snippet：`%1*360` / `WEMath.rad2deg`）；three 用弧度。 */
+const DEG2RAD = Math.PI / 180;
+
 /** 尽力把 alpha 写到材质上：Mesh*Material 的 opacity、ShaderMaterial 的 uniforms.opacity.value。 */
 function writeOpacity(object: THREE.Object3D, alpha: number): void {
   const mat = (object as { material?: unknown }).material;
@@ -99,7 +103,7 @@ export function applyLayerState(
     // we_to_three：origin - scene/2（y 不翻，见 AGENT.md §2.3）。
     if (w.origin) obj.position.set(w.origin[0] - target.sceneW / 2, w.origin[1] - target.sceneH / 2, w.origin[2]);
     if (w.scale) obj.scale.set(w.scale[0], w.scale[1], w.scale[2]);
-    if (w.angles) obj.rotation.set(w.angles[0], w.angles[1], w.angles[2]);
+    if (w.angles) obj.rotation.set(w.angles[0] * DEG2RAD, w.angles[1] * DEG2RAD, w.angles[2] * DEG2RAD);
     const alpha = w.alpha;
     if (alpha !== undefined) {
       const a = Math.max(0, Math.min(1, alpha));

@@ -35,6 +35,7 @@ describe('scene-json：对象级脚本入口', () => {
     const obj = desc.objects[0]!;
     expect(obj.objectScript).toContain('getTextureAnimation');
     expect(obj.objectScript).toBe(DAY_NIGHT_SCRIPT);
+    expect(obj.objectScriptProperty).toBe('angles');
     expect(obj.objectScriptProperties).toEqual({ dayStart: 0, nightStart: 12 });
     // 静态 value 仍是当前可用的变换近似（解析行为零回归）
     expect(obj.origin).toEqual([0, 170.33264, 0]);
@@ -61,6 +62,9 @@ describe('scene-json：对象级脚本入口', () => {
     expect(desc.objects.map((o) => o.objectScript)).toEqual([
       'angles()', 'origin()', 'scale()', 'color()', undefined,
     ]);
+    expect(desc.objects.map((o) => o.objectScriptProperty)).toEqual([
+      'angles', 'origin', 'scale', 'color', undefined,
+    ]);
     expect(desc.objects[3]!.objectScriptProperties).toEqual({ tint: 7 });
   });
 
@@ -69,6 +73,7 @@ describe('scene-json：对象级脚本入口', () => {
       { id: 6, image: 'models/f.json', origin: '0 0 0', scale: '1 1 1', angles: '0 0 0' },
     ]));
     expect(desc.objects[0]!.objectScript).toBeUndefined();
+    expect(desc.objects[0]!.objectScriptProperty).toBeUndefined();
     expect(desc.objects[0]!.objectScriptProperties).toBeUndefined();
   });
 });

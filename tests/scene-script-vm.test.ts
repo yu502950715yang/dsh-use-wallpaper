@@ -1,15 +1,19 @@
 // SceneScript VM（quickjs 单上下文 + 宿主原语）的行为测试。
 // 覆盖：图层读写进状态表、userProperties 注入、异常隔离、动画播放器打通、stub 不抛错、handle 释放。
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
-import { SceneScriptVm } from '../src/client/scene-script-vm.js';
+import { SceneScriptVm, localTimeOfDay } from '../src/client/scene-script-vm.js';
 import { createLayerStateTable } from '../src/client/layer-state.js';
 import { AnimRegistry } from '../src/client/scene-anim.js';
 import { DynamicMeshRegistry } from '../src/client/dynamic-mesh.js';
 
 const DAY_NIGHT_SCRIPT = readFileSync(
   new URL('./fixtures/3765967112/day-night-script.js', import.meta.url),
+  'utf8',
+);
+const DAY_DATE_SCRIPT = readFileSync(
+  new URL('./fixtures/3789452668/day-date-script.js', import.meta.url),
   'utf8',
 );
 
@@ -336,19 +340,20 @@ describe('SceneScriptVm 对象级脚本 API', () => {
     const vm = await SceneScriptVm.create({
       userProperties: userProps, state, anims,
       textureAnimation: tex.host,
+      wallpaperId: '3765967112',
       storage: { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => { store.set(k, v); } },
     });
     vm!.load(DAY_NIGHT_SCRIPT, 'obj 123', 123, { dayStart: 8, nightStart: 20 });
     vm!.initAll();
     vm!.clickAll();
     expect(tex.calls.at(-1)).toBe('frame:123:1');
-    expect(store.get('we:scenescript:currentTimeState')).toBe('"day"');
+    expect(store.get('we:scenescript:3765967112:currentTimeState')).toBe('"day"');
     vm!.clickAll();
     expect(tex.calls.at(-1)).toBe('frame:123:2');
-    expect(store.get('we:scenescript:currentTimeState')).toBe('"night"');
+    expect(store.get('we:scenescript:3765967112:currentTimeState')).toBe('"night"');
     vm!.clickAll();
     expect(tex.calls.at(-1)).toBe('frame:123:0');
-    expect(store.get('we:scenescript:currentTimeState')).toBe('"automatic"');
+    expect(store.get('we:scenescript:3765967112:currentTimeState')).toBe('"automatic"');
     vm!.dispose();
   });
 
@@ -370,13 +375,37 @@ describe('SceneScriptVm 对象级脚本 API', () => {
     expect(t).toBeGreaterThanOrEqual(0);
     expect(t).toBeLessThan(1);
     vm2!.dispose();
+
+    // 越界值钳到 [0,1)：1 与 0 同义（次日午夜）。
+    const vm3 = await SceneScriptVm.create({ userProperties: userProps, state, anims, timeOfDay: () => 1 });
+    vm3!.load(`export function init(){ thisScene.getLayerByID(3).alpha = engine.timeOfDay; }`);
+    vm3!.initAll();
+    expect(state.read(3).alpha).toBeLessThan(1);
+    vm3!.dispose();
+    const vm4 = await SceneScriptVm.create({ userProperties: userProps, state, anims, timeOfDay: () => -0.5 });
+    vm4!.load(`export function init(){ thisScene.getLayerByID(4).alpha = engine.timeOfDay; }`);
+    vm4!.initAll();
+    expect(state.read(4).alpha).toBe(0);
+    vm4!.dispose();
   });
 
-  it('localStorage get/set 往返对象/字符串，缺失返回 null（前缀 + JSON）', async () => {
+  // 缺省映射必须用**本地** getHours（UTC 实现在 Asia/Shanghai 会把 06:00 算成 22:00）。
+  it('默认 localTimeOfDay = 本地时钟当天占比（06:00 → 0.25）', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date(2026, 9, 20, 6, 0, 0));
+      expect(localTimeOfDay()).toBeCloseTo(0.25, 9);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('localStorage get/set 往返对象/字符串，缺失返回 null（前缀 + 壁纸 id + JSON）', async () => {
     const { state, anims, userProps } = setup();
     const store = new Map<string, string>();
     const vm = await SceneScriptVm.create({
       userProperties: userProps, state, anims,
+      wallpaperId: '3765967112',
       storage: { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => { store.set(k, v); } },
     });
     vm!.load(`export function init(){
@@ -389,8 +418,141 @@ describe('SceneScriptVm 对象级脚本 API', () => {
     vm!.initAll();
     expect(state.read(1).alpha).toBe(1);
     expect(state.read(2).alpha).toBe(1);
-    expect(store.get('we:scenescript:currentTimeState')).toBe('"day"');
-    expect(JSON.parse(store.get('we:scenescript:obj')!)).toEqual({ a: [1, 2] });
+    expect(store.get('we:scenescript:3765967112:currentTimeState')).toBe('"day"');
+    expect(JSON.parse(store.get('we:scenescript:3765967112:obj')!)).toEqual({ a: [1, 2] });
+    vm!.dispose();
+  });
+
+  // 已存状态恢复（按壁纸隔离的键）：day → 重新 init 直接 setFrame(1)（太阳帧）。
+  it('localStorage 已存 day 时重新 init 回到 frame1', async () => {
+    const { state, anims, userProps } = setup();
+    const tex = fakeTexAnim();
+    const store = new Map<string, string>([['we:scenescript:3765967112:currentTimeState', '"day"']]);
+    const vm = await SceneScriptVm.create({
+      userProperties: userProps, state, anims,
+      textureAnimation: tex.host,
+      wallpaperId: '3765967112',
+      storage: { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => { store.set(k, v); } },
+    });
+    vm!.load(DAY_NIGHT_SCRIPT, 'obj 123', 123, { dayStart: 0, nightStart: 12 }, 'angles');
+    vm!.initAll();
+    expect(tex.calls).toEqual(['pause:123', 'frame:123:1']);
+    vm!.updateAll();
+    expect(tex.calls).toEqual(['pause:123', 'frame:123:1']); // 非 automatic 状态不再换帧
+    vm!.dispose();
+  });
+
+  // WE 属性脚本契约：update(value)/init(value) 收当前值 Vec3，返回 Vec3 写回属性。
+  // angles 用 WE 的脚本单位（度）存进 {state}；applyLayerState 落 three 时转弧度（layer-state.test.ts）。
+  it('属性脚本 init/update 收当前 Vec3，返回 Vec3 写回 angles；非向量/无返回不动属性', async () => {
+    const { state, anims, userProps, warns } = setup();
+    const vm = await SceneScriptVm.create({
+      userProperties: userProps, state, anims, onWarn: (m) => warns.push(m),
+    });
+    vm!.load(`export function init(v){ v.z = 0.25; return v; }
+      export function update(v){ v.z = 0.5; return v; }`, 'obj 200', 200, undefined, 'angles');
+    vm!.load(`export function update(v){ v.z = 9; return 'nope'; }`, 'obj 201', 201, undefined, 'angles');
+    vm!.load(`export function update(v){ v.z = 9; }`, 'obj 202', 202, undefined, 'angles');
+    vm!.initAll();
+    expect(state.read(200).angles).toEqual([0, 0, 0.25]);
+    vm!.updateAll();
+    expect(state.read(200).angles).toEqual([0, 0, 0.5]);
+    expect(state.read(201).angles).toBeUndefined();
+    expect(state.read(202).angles).toBeUndefined();
+    expect(warns).toEqual([]);
+    vm!.dispose();
+  });
+
+  // thisLayer.angles 与属性脚本同单位（度）：写入 90 后读回 90（three 侧转弧度由 applyLayerState 负责）。
+  it('thisLayer.angles 读写走 WE 脚本单位（度）', async () => {
+    const { state, anims, userProps } = setup();
+    const vm = await SceneScriptVm.create({ userProperties: userProps, state, anims });
+    vm!.load(`export function init(){ thisScene.getLayerByID(77).angles = new Vec3(0, 0, 90); }
+      export function update(){ thisScene.getLayerByID(78).alpha = thisScene.getLayerByID(77).angles.z; }`);
+    vm!.initAll();
+    expect(state.read(77).angles).toEqual([0, 0, 90]);
+    vm!.updateAll();
+    expect(state.read(78).alpha).toBe(90);
+    vm!.dispose();
+  });
+
+  // 真实库 2980088441 obj54：color 属性脚本返回 Vec3 —— 只记录（进状态表），不要求像素生效。
+  it('color 属性脚本返回 Vec3 只记录；init(value) 拿到当前颜色（默认 1,1,1）', async () => {
+    const { state, anims, userProps } = setup();
+    const vm = await SceneScriptVm.create({ userProperties: userProps, state, anims });
+    vm!.load(`export function init(v){ thisScene.getLayerByID(1).alpha = v.x; }
+      export function update(){ return new Vec3(0.25, 0.5, 0.75); }`, 'obj 54', 54, undefined, 'color');
+    vm!.initAll();
+    expect(state.read(1).alpha).toBe(1);
+    vm!.updateAll();
+    expect(state.read(54).color).toEqual([0.25, 0.5, 0.75]);
+    vm!.dispose();
+  });
+
+  // 多 object script：thisLayer 必须指向各自对象（key 不能串台）。
+  it('多 object script 的 thisLayer 各自绑定正确对象', async () => {
+    const { state, anims, userProps } = setup();
+    const tex = fakeTexAnim();
+    const vm = await SceneScriptVm.create({
+      userProperties: userProps, state, anims, textureAnimation: tex.host,
+    });
+    vm!.load(`export function init(){ thisLayer.getTextureAnimation().setFrame(1); }`, 'obj 101', 101);
+    vm!.load(`export function init(){ thisLayer.getTextureAnimation().setFrame(2); }`, 'obj 202', 202);
+    vm!.initAll();
+    expect(tex.calls).toEqual(['frame:101:1', 'frame:202:2']);
+    vm!.dispose();
+  });
+
+  // 真实 Fixture（Crimson 的 angles.script）：生命周期脚本不写 angles（update 无返回值）。
+  it('Crimson 真实脚本作为 angles 属性脚本时不写 angles', async () => {
+    const { state, anims, userProps } = setup();
+    const tex = fakeTexAnim();
+    const vm = await SceneScriptVm.create({
+      userProperties: userProps, state, anims,
+      textureAnimation: tex.host,
+      timeOfDay: () => 10 / 24,
+    });
+    vm!.load(DAY_NIGHT_SCRIPT, 'obj 123', 123, { dayStart: 0, nightStart: 12 }, 'angles');
+    vm!.initAll();
+    vm!.updateAll();
+    expect(state.read(123).angles).toBeUndefined();
+    vm!.dispose();
+  });
+
+  // 真实 Fixture（3789452668 obj80 的 visible.script）：每帧算日期字符串，返回值不是布尔 ⇒ 被忽略但不报错。
+  it('真实 Fixture：日期文本 visible.script 每帧执行不报错（返回字符串被忽略）', async () => {
+    const { state, anims, userProps, warns } = setup();
+    const vm = await SceneScriptVm.create({
+      userProperties: userProps, state, anims, onWarn: (m) => warns.push(m),
+    });
+    vm!.load(DAY_DATE_SCRIPT, 'obj 80', 80, {
+      addDelimiter: '/', alignVertical: false, dayFormat: '1', monthFormat: '1', showDay: true, useDelimiter: false,
+    });
+    vm!.initAll();
+    const out = vm!.updateAll();
+    expect(warns).toEqual([]);
+    expect(vm!.activeCount).toBe(1);
+    expect(typeof out[0]).toBe('string');
+    vm!.dispose();
+  });
+
+  // __mkTextureAnimation 未知成员（setSpeed 等）走 __wrap/__any，不得 TypeError 停用脚本。
+  it('getTextureAnimation 的未知方法走兜底不抛错', async () => {
+    const { state, anims, userProps, warns } = setup();
+    const tex = fakeTexAnim();
+    const vm = await SceneScriptVm.create({
+      userProperties: userProps, state, anims, textureAnimation: tex.host, onWarn: (m) => warns.push(m),
+    });
+    vm!.load(`export function init(){
+      var a = thisLayer.getTextureAnimation();
+      a.setSpeed(2);
+      a.pause();
+      thisScene.getLayerByID(1).alpha = 1;
+    }`, 'obj 303', 303);
+    vm!.initAll();
+    expect(warns).toEqual([]);
+    expect(vm!.activeCount).toBe(1);
+    expect(tex.calls).toEqual(['pause:303']);
     vm!.dispose();
   });
 });

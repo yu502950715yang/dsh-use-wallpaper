@@ -57,11 +57,11 @@ describe('applyLayerState', () => {
     expect(mesh.position.y).toBeCloseTo(200 - 720);
   });
 
-  it('scale / angles 直接落到对象', () => {
+  it('scale 直接落到对象；angles 按 WE 脚本单位（度）转弧度', () => {
     const { target, mesh } = mk(1);
-    applyLayerState(new Map([[1, { scale: [2, 3, 1], angles: [0, 0, -0.5] }]]), () => target);
+    applyLayerState(new Map([[1, { scale: [2, 3, 1], angles: [0, 0, -90] }]]), () => target);
     expect(mesh.scale.toArray()).toEqual([2, 3, 1]);
-    expect(mesh.rotation.z).toBeCloseTo(-0.5);
+    expect(mesh.rotation.z).toBeCloseTo(-Math.PI / 2);
   });
 
   it('visible=false 映射成 object.visible=false（alpha=0 等价表达）', () => {

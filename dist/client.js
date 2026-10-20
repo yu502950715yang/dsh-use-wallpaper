@@ -23354,7 +23354,9 @@ function objectScriptFields(o) {
     const v = o[field];
     if (!v || typeof v !== "object" || Array.isArray(v)) continue;
     const f = scriptFields(v);
-    if (f.script) return { objectScript: f.script, objectScriptProperties: f.scriptProperties };
+    if (f.script) {
+      return { objectScript: f.script, objectScriptProperty: field, objectScriptProperties: f.scriptProperties };
+    }
   }
   return {};
 }
@@ -29906,6 +29908,7 @@ function createLayerStateTable() {
   };
 }
 var ALPHA_EPSILON = 2e-3;
+var DEG2RAD2 = Math.PI / 180;
 function writeOpacity(object, alpha) {
   const mat = object.material;
   const list = Array.isArray(mat) ? mat : mat ? [mat] : [];
@@ -29924,7 +29927,7 @@ function applyLayerState(dirty, lookup) {
     const obj = target.object;
     if (w.origin) obj.position.set(w.origin[0] - target.sceneW / 2, w.origin[1] - target.sceneH / 2, w.origin[2]);
     if (w.scale) obj.scale.set(w.scale[0], w.scale[1], w.scale[2]);
-    if (w.angles) obj.rotation.set(w.angles[0], w.angles[1], w.angles[2]);
+    if (w.angles) obj.rotation.set(w.angles[0] * DEG2RAD2, w.angles[1] * DEG2RAD2, w.angles[2] * DEG2RAD2);
     const alpha = w.alpha;
     if (alpha !== void 0) {
       const a = Math.max(0, Math.min(1, alpha));
@@ -29944,8 +29947,13 @@ var STEP_BUDGET2 = 5e7;
 var PRELUDE2 = `
 var __mods = [];
 
+function Vec2(x, y) { this.x = x || 0; this.y = y || 0; }
 function Vec3(x, y, z) { this.x = x || 0; this.y = y || 0; this.z = z || 0; }
 function Vec4(x, y, z, w) { this.x = x || 0; this.y = y || 0; this.z = z || 0; this.w = w || 0; }
+// WE \u811A\u672C\u5E38\u7528 copy()\uFF082937346640 \u7684 Simple Visualizer \u5728 update \u91CC baseOrigin.copy()\uFF09\u3002
+Vec2.prototype.copy = function () { return new Vec2(this.x, this.y); };
+Vec3.prototype.copy = function () { return new Vec3(this.x, this.y, this.z); };
+Vec4.prototype.copy = function () { return new Vec4(this.x, this.y, this.z, this.w); };
 var IModelData = { POSITION: 0, UV: 1, COLOR: 2, NORMAL: 3, TANGENT: 4 };
 
 function __noop() {}
@@ -30026,14 +30034,15 @@ function __mkAnim(key, name) {
 var __texAnimCache = {};
 function __mkTextureAnimation(key) {
   if (__texAnimCache[key]) return __texAnimCache[key];
-  __texAnimCache[key] = {
+  // \u672A\u77E5\u6210\u5458\uFF08setSpeed \u7B49\uFF09\u8D70 __wrap \u2192 __any\uFF0C\u907F\u514D\u5355\u4E2A\u7F3A\u5931\u65B9\u6CD5 TypeError \u505C\u7528\u811A\u672C\u3002
+  __texAnimCache[key] = __wrap({
     pause: function () { __host.texAnimPause(key); },
     play: function () { __host.texAnimPlay(key); },
     stop: function () { __host.texAnimStop(key); },
     isPlaying: function () { return __host.texAnimIsPlaying(key); },
     setFrame: function (frame) { __host.texAnimSetFrame(key, frame); },
     getFrame: function () { return __host.texAnimGetFrame(key); }
-  };
+  }, 'texanim(' + key + ')');
   return __texAnimCache[key];
 }
 
@@ -30180,6 +30189,8 @@ var SceneScriptVm = class _SceneScriptVm {
   timeOfDay;
   /** localStorage 底层字符串存储。 */
   storage;
+  /** 壁纸 id（localStorage 键的隔离段；空串 = 兼容旧前缀）。 */
+  wallpaperId;
   /** 当前正在执行的脚本所属图层 key（`id:<对象 id>`；thisLayer 的解析依据）。 */
   currentKey = "";
   dt = 1 / 60;
@@ -30198,6 +30209,7 @@ var SceneScriptVm = class _SceneScriptVm {
     this.texAnim = opts.textureAnimation ?? null;
     this.timeOfDay = opts.timeOfDay ?? localTimeOfDay;
     this.storage = opts.storage ?? createDefaultStorage();
+    this.wallpaperId = typeof opts.wallpaperId === "string" ? opts.wallpaperId : "";
     this.stepBudget = Number.isFinite(opts.stepBudget) && opts.stepBudget > 0 ? opts.stepBudget : STEP_BUDGET2;
     this.budget = this.stepBudget;
   }
@@ -30332,12 +30344,14 @@ var SceneScriptVm = class _SceneScriptVm {
         v = 0;
       }
       if (!Number.isFinite(v)) v = 0;
-      return ctx.newNumber(Math.min(1, Math.max(0, v)));
+      if (v <= 0) v = 0;
+      else if (v >= 1) v = 0.9999999999999999;
+      return ctx.newNumber(v);
     });
     define("lsGet", (k) => {
       let raw = null;
       try {
-        raw = this.storage.getItem(SCENE_SCRIPT_STORAGE_PREFIX + ctx.getString(k));
+        raw = this.storage.getItem(this.storageKey(ctx.getString(k)));
       } catch {
         raw = null;
       }
@@ -30345,7 +30359,7 @@ var SceneScriptVm = class _SceneScriptVm {
     });
     define("lsSet", (k, v) => {
       try {
-        this.storage.setItem(SCENE_SCRIPT_STORAGE_PREFIX + ctx.getString(k), ctx.getString(v));
+        this.storage.setItem(this.storageKey(ctx.getString(k)), ctx.getString(v));
       } catch {
       }
     });
@@ -30407,6 +30421,10 @@ var SceneScriptVm = class _SceneScriptVm {
     if (Object.keys(patch).length === 0) return;
     this.state.write(objectId, patch);
   }
+  /** localStorage 键：按壁纸隔离（`we:scenescript:<wallpaperId>:<key>`）；无 id 时保持旧前缀。 */
+  storageKey(key) {
+    return this.wallpaperId ? `${SCENE_SCRIPT_STORAGE_PREFIX}${this.wallpaperId}:${key}` : SCENE_SCRIPT_STORAGE_PREFIX + key;
+  }
   anim(layerKey, name) {
     const key = `${layerKey}|${name}`;
     let a = this.animCache.get(key);
@@ -30418,8 +30436,9 @@ var SceneScriptVm = class _SceneScriptVm {
   }
   /** 装载一个模块脚本。返回 false = eval 失败（该脚本被跳过，其余继续）。
    *  `label` 用于日志（应带 scene 对象 id —— 脚本首行都是 `'use strict';`，不带 id 无法定位）。
-   *  `objectId` 供 thisLayer 解析；`scriptProperties` 是 scene.json 的覆盖值（注入给 createScriptProperties）。 */
-  load(source, label, objectId, scriptProperties) {
+   *  `objectId` 供 thisLayer 解析；`scriptProperties` 是 scene.json 的覆盖值（注入给 createScriptProperties）；
+   *  `property` 非空 = WE 属性脚本（angles/origin/scale/color）：update(value) 收/回 Vec3。 */
+  load(source, label, objectId, scriptProperties, property) {
     const ctx = this.ctx;
     const sanitized = String(source ?? "").replace(/\bexport\s+/g, "");
     const tag = label ?? firstNonEmptyLine(sanitized);
@@ -30476,7 +30495,9 @@ return {
       click: grab("cursorClick"),
       active: true,
       label: tag,
-      layerKey: objectId === void 0 ? "" : `id:${objectId}`
+      layerKey: objectId === void 0 ? "" : `id:${objectId}`,
+      property: objectId === void 0 ? null : property ?? null,
+      objectId: objectId === void 0 ? null : objectId
     };
     this.handles.push(inst);
     for (const h of [m.init, m.update, m.apply, m.click]) if (h) this.handles.push(h);
@@ -30488,11 +30509,14 @@ return {
     this.currentKey = m.layerKey;
     this.budget = this.stepBudget;
     const ctx = this.ctx;
+    const isPropertyValue = mode === "value" && m.property !== null;
     let argH;
     if (mode === "props") {
       const engineH = ctx.getProp(ctx.global, "engine");
       argH = ctx.getProp(engineH, "userProperties");
       engineH.dispose();
+    } else if (isPropertyValue) {
+      argH = this.vecHandle(m.property, m.objectId);
     } else {
       argH = ctx.newString("");
     }
@@ -30507,7 +30531,26 @@ return {
     }
     const value = ctx.dump(res.value);
     res.value.dispose();
+    if (isPropertyValue) {
+      const vec = vecLike(value);
+      if (vec) this.write(m.objectId, { [m.property]: vec });
+      return void 0;
+    }
     return value;
+  }
+  /** 当前属性值的 quickjs Vec3 句柄（属性脚本入参；缺省值与 readVec 同口径）。 */
+  vecHandle(property, objectId) {
+    const ctx = this.ctx;
+    const cur = this.state.read(objectId)[property];
+    const dflt = property === "scale" || property === "color" ? [1, 1, 1] : [0, 0, 0];
+    const arr = cur ?? dflt;
+    const obj = ctx.newObject();
+    for (const [i, axis] of ["x", "y", "z"].entries()) {
+      const n = ctx.newNumber(arr[i] ?? dflt[i]);
+      ctx.setProp(obj, axis, n);
+      n.dispose();
+    }
+    return obj;
   }
   /** 每帧时间（供 engine.frametime）。必须在 updateAll 之前设置。 */
   setFrametime(dt) {
@@ -30525,6 +30568,7 @@ return {
    *
    * ⚠️ 返回值是 `visible.script` 的**信号源** —— WE 语义里它就是「该对象本帧是否可见」。
    * 一期调用后把返回值丢弃了，于是 10 个歌曲字标全部显示（真机：两行歌名重影）。
+   * 属性脚本（angles/origin/scale/color）的返回值已写回属性，这里一律返回 undefined（不混用）。
    */
   updateAll() {
     const out = [];
@@ -30596,6 +30640,14 @@ function firstNonEmptyLine(s) {
   }
   return "";
 }
+function vecLike(v) {
+  if (!v || typeof v !== "object") return null;
+  const o = v;
+  if (typeof o.x !== "number" || !Number.isFinite(o.x)) return null;
+  if (typeof o.y !== "number" || !Number.isFinite(o.y)) return null;
+  if (typeof o.z !== "number" || !Number.isFinite(o.z)) return null;
+  return [o.x, o.y, o.z];
+}
 function localTimeOfDay() {
   const d = /* @__PURE__ */ new Date();
   const seconds = d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds() + d.getMilliseconds() / 1e3;
@@ -30650,10 +30702,13 @@ var SceneScriptHost = class _SceneScriptHost {
       dynamicMesh: opts.dynamicMesh,
       onAsset: opts.onAsset,
       textureAnimation: opts.textureAnimation,
-      timeOfDay: opts.timeOfDay
+      timeOfDay: opts.timeOfDay,
+      wallpaperId: opts.wallpaperId
     });
     if (!vm) return null;
-    for (const s of scripts) vm.load(s.source, `obj ${s.objectId}`, s.objectId, s.scriptProperties);
+    for (const s of scripts) {
+      vm.load(s.source, `obj ${s.objectId}`, s.objectId, s.scriptProperties, s.property);
+    }
     vm.initAll();
     return new _SceneScriptHost(anims, state, vm, scripts.map((s) => s.objectId));
   }
@@ -31219,10 +31274,17 @@ function collectScriptSources(desc) {
   const out = [];
   for (const obj of desc.objects) {
     const visibleScript = obj.visible?.kind === "script" ? obj.script : void 0;
-    const source = typeof visibleScript === "string" && visibleScript.length > 0 ? visibleScript : obj.objectScript;
+    const fromVisible = typeof visibleScript === "string" && visibleScript.length > 0;
+    const source = fromVisible ? visibleScript : obj.objectScript;
     if (typeof source !== "string" || source.length === 0) continue;
-    const scriptProperties = typeof visibleScript === "string" && visibleScript.length > 0 ? obj.visible?.scriptProperties : obj.objectScriptProperties;
-    out.push(scriptProperties ? { objectId: obj.id, source, scriptProperties } : { objectId: obj.id, source });
+    const scriptProperties = fromVisible ? obj.visible?.scriptProperties : obj.objectScriptProperties;
+    const property = fromVisible ? void 0 : obj.objectScriptProperty;
+    out.push({
+      objectId: obj.id,
+      source,
+      ...scriptProperties ? { scriptProperties } : {},
+      ...property ? { property } : {}
+    });
   }
   return out;
 }
@@ -31720,6 +31782,7 @@ function createThreeSceneRenderer(opts) {
           currentScriptHost = await SceneScriptHost.create({
             scripts: scriptSources,
             userProperties: userProps,
+            wallpaperId: id,
             dynamicMesh: meshRegistry,
             onAsset: (p) => materialPaths.add(p),
             onWarn: (m) => console.warn(`[wallpaper-engine] ${m}`),
