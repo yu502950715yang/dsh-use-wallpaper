@@ -282,3 +282,29 @@ describe.skipIf(!hasLibrary || !hasRefractAsset)('粒子 REFRACT 真库对照', 
     }
   });
 });
+
+// F21 真库回归：2859263090 的 2233/2236 把 instanceoverride 的 colorn/rate 写成 WE 的
+// {user|script,value} 包装 → 未解包时 wasm 得 vec3(对象)=[0,0,0]，additive 雪层变黑不可见。
+const F21_WID = '2859263090';
+const F21_PKG = join(WALLPAPER_DIR, F21_WID, 'scene.pkg');
+
+describe.skipIf(!hasLibrary || !existsSync(F21_PKG))('F21 instanceoverride 包装解包真库回归', () => {
+  it('2859263090 的 2233/2236：colorn/rate 的 {user|script,value} 包装解成标量', () => {
+    const files = pkgFiles(F21_WID);
+    expect(files).not.toBeNull();
+    const scRaw = files!.get('scene.json');
+    expect(scRaw).toBeTruthy();
+    const desc = parseSceneJson(Buffer.from(scRaw!).toString('utf8'));
+    const byId = new Map(desc.objects.map((o) => [o.id, o]));
+    const o2233 = byId.get(2233);
+    const o2236 = byId.get(2236);
+    expect(o2233?.kind).toBe('particle');
+    expect(o2236?.kind).toBe('particle');
+    const json2233 = JSON.parse((o2233 as { instanceOverrideJson?: string }).instanceOverrideJson!);
+    const json2236 = JSON.parse((o2236 as { instanceOverrideJson?: string }).instanceOverrideJson!);
+    expect(json2233.colorn).toBe('1.000 1.000 1.000'); // {user:null,value} → 标量（白色雪层）
+    expect(json2233.rate).toBe(1); // {script,value} → 标量
+    expect(json2236.colorn).toBe('1 1 1'); // 普通字符串不受影响
+    expect(json2236.rate).toBe(1);
+  });
+});

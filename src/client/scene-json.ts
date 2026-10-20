@@ -159,13 +159,25 @@ function collectSounds(root: any): SceneSoundObject[] | undefined {
   return out.length > 0 ? out : undefined;
 }
 
+// WE 的 {user|script, value} 编辑器包装：wasm 只认标量 → 递归解成内层 value（F21）。
+function normalizeOverrideValue(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(normalizeOverrideValue);
+  if (v && typeof v === 'object') {
+    const o = v as Record<string, unknown>;
+    if ('value' in o && ('user' in o || 'script' in o)) return normalizeOverrideValue(o.value);
+    const out: Record<string, unknown> = {};
+    for (const [k, x] of Object.entries(o)) out[k] = normalizeOverrideValue(x);
+    return out;
+  }
+  return v;
+}
+
 // scene.json 对象级 `instanceoverride`（粒子实例覆盖）→ **原始 JSON 文本**（供 wasm CPU 模拟器
-// `parse_particle_override` 消费）。JS 侧不做字段解析，避免与 Rust 两份语义漂移。
-// 非对象 / 数组 / null / 空对象 → undefined（= 无覆盖）。
+// `parse_particle_override` 消费）。JS 侧不解析字段语义，只解 WE 编辑器写入的包装（F21）；非对象/数组/null/空对象 → undefined。
 function serializeInstanceOverride(v: unknown): string | undefined {
   if (typeof v !== 'object' || v === null || Array.isArray(v)) return undefined;
   try {
-    const text = JSON.stringify(v);
+    const text = JSON.stringify(normalizeOverrideValue(v));
     return text && text !== '{}' ? text : undefined;
   } catch {
     return undefined;

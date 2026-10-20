@@ -659,6 +659,40 @@ describe('parseSceneJson visible 归一化（T4.2）', () => {
     expect((desc.objects[0] as any).instanceOverrideJson).toBeUndefined();
   });
 
+  // F21：真实素材 2859263090 的对象 2233「Perspective (runscript)」把 colorn 写成
+  // `{ user: null, value: "1.000 1.000 1.000" }`；wasm 只认标量 ⇒ 原样透传会 vec3(对象)
+  // 得 [0,0,0]，additive 雪层变黑不可见。解 WE 的 `{user|script, value}` 包装后才还原白色。
+  it('instanceoverride 的 {user,value} 包装被解包为标量字符串', () => {
+    const raw = JSON.stringify({
+      camera: {}, general: {}, objects: [
+        {
+          id: 9, name: 'snow', particle: 'particles/snow.json',
+          instanceoverride: { rate: 1, colorn: { user: null, value: '1.000 1.000 1.000' } },
+        },
+      ],
+    });
+    const desc = parseSceneJson(raw);
+    const p = desc.objects.find((o) => o.kind === 'particle') as any;
+    expect(JSON.parse(p.instanceOverrideJson).colorn).toBe('1.000 1.000 1.000');
+  });
+
+  it('instanceoverride 的 {script,value} 包装及嵌套/数组内包装递归解包', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [{
+        id: 10, particle: 'particles/snow.json',
+        instanceoverride: {
+          colorn: { script: 'return vec3(1,1,1);', scriptproperties: {}, value: '2.000 3.000 4.000' },
+          nested: { inner: { user: { name: 'u' }, value: 7 } },
+          list: [{ user: null, value: 1 }, 2],
+        },
+      }],
+    }));
+    const parsed = JSON.parse((desc.objects[0] as any).instanceOverrideJson);
+    expect(parsed.colorn).toBe('2.000 3.000 4.000');
+    expect(parsed.nested).toEqual({ inner: 7 });
+    expect(parsed.list).toEqual([1, 2]);
+  });
+
   // ---------------------------------------------------------------------------
   // 对象 `angles`（WE 对象欧拉角，**弧度**；缺省 (0,0,0)）。
   // 全库 79 个对象带非零 angles（粒子 75 / image 2 / text 1 / other 1），此前**完全未解析**
