@@ -824,14 +824,19 @@ impl SceneParticleSim {
         self.particles.retain(|p| p.life > 0.0);
     }
 
-    /// 预推进 starttime 秒（WE 语义：起播时系统已运行 N 秒）。固定 1/60 步长、上限 900 步。
+    /// 预推进 starttime 个 effect 秒（WE 语义：起播时系统已运行 N 秒），上限 900 步 = 15 effect-s。
+    /// starttime 与 `instanceoverride.rate` 无关（rate 只缩放每帧 Tick 的系统时间），故步长按 rate 换算。
     pub fn advance_initial(&mut self, seconds: f32) {
         if !(seconds > 0.0) {
             return;
         }
+        let rate = self.override_spec.rate;
+        if !(rate > 0.0) {
+            return;
+        }
         let steps = ((seconds * 60.0).ceil() as u32).min(900);
         for _ in 0..steps {
-            self.update(1.0 / 60.0);
+            self.update(1.0 / 60.0 / rate);
         }
     }
 
@@ -1471,6 +1476,21 @@ mod tests {
         sim.advance_initial(2.0);
         assert!((sim.time - 2.0).abs() < 0.05, "time 应前推 2s，got {}", sim.time);
         assert!(!sim.particles.is_empty(), "前推 2s 后池应非空（WE 起播已有粒子）");
+    }
+
+    /// starttime 是 **effect 秒**，与 `instanceoverride.rate` 无关（OWE `ParticleRuntime.cpp:738-766`：
+    /// rate 只在每帧 Tick 生效）⇒ `advance_initial(2.0)` 在 rate=2 下仍只推进 2 effect-s（不是 4s）。
+    #[test]
+    fn advance_initial_ignores_override_rate() {
+        let mut sim = mk_prewarm_sim(5.0, 10.0, 4.0, 4);
+        sim.prewarm();
+        sim.override_spec.rate = 2.0;
+        sim.advance_initial(2.0);
+        assert!(
+            (sim.time - 2.0).abs() < 0.05,
+            "starttime 应按 effect 秒推进（不乘 rate），got {}",
+            sim.time
+        );
     }
 
     /// `starttime=0`（缺省）必须是**彻底无操作**：粒子状态逐位不变、时钟不动
