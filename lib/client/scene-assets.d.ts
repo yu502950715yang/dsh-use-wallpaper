@@ -14,6 +14,7 @@ export declare function resolveTexPath(matRef: string, texName: string): string;
 export declare function resolveImageAssets(id: string, obj: SceneImageObject): Promise<{
     texture: THREE.Texture | null;
     puppetPath: string | null;
+    spriteSheet: boolean;
 }>;
 export declare function fetchMdlBytes(id: string, path: string): Promise<Uint8Array | null>;
 export interface ParticleMaterialRef {

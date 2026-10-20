@@ -85,6 +85,7 @@ export declare class ThreeScenePlayer {
     private parallaxFollow;
     private backgroundEntries;
     private nextBackgroundId;
+    private readonly spritesheetLayers;
     private puppetLayers;
     private particleLayers;
     private nextParticleLayerId;
@@ -120,6 +121,16 @@ export declare class ThreeScenePlayer {
     private applyCover;
     update(dt: number): void;
     private tickPuppets;
+    private registerSpriteSheet;
+    private applySpriteSheetFrame;
+    private updateSpriteSheets;
+    /** 测试用：取精灵表图层当前帧的 UV 子矩形（仅测试/诊断观测，不参与渲染）。 */
+    spritesheetUvForTest(objectId: number): {
+        u0: number;
+        v0: number;
+        u1: number;
+        v1: number;
+    } | null;
     /** 相机视差配置（null = 未启用/已拆除 ⇒ 逐帧零成本早退；enabled=false 时下一帧把对象写回基准位置）。 */
     setParallax(cfg: ParallaxConfig | null): void;
     /** 宿主指针监听的最新归一化位置（[0,1]）；插值在本类的 tickParallax 内按 dt 推进。 */

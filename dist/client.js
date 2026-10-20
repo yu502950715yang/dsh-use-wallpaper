@@ -24174,6 +24174,8 @@ var ThreeScenePlayer = class {
   // 背景图层条目（按 addBackground 返回的 id 索引，供 update_background 引用）。
   backgroundEntries = /* @__PURE__ */ new Map();
   nextBackgroundId = 0;
+  // 精灵表图层（键 = scene.json 对象 id；仅 image 材质带 combos.spritesheet 且纹理有 TEXS 元数据时登记）。
+  spritesheetLayers = /* @__PURE__ */ new Map();
   // puppet 图层（键 = 同一把图层计数器 id）：instance 用于逐帧采样动画，dispose 时释放骨骼/资源。
   // layers = 已过滤 `visible !== false` 的动画层（null = scene.json **没有** animationlayers 字段）；
   // warned = 多条可见层的告警只打一次（防每帧刷屏）。
@@ -24336,6 +24338,7 @@ var ThreeScenePlayer = class {
   update(dt) {
     this.updateParticles(dt);
     this.tickPuppets(dt);
+    this.updateSpriteSheets(dt);
   }
   // puppet 动画：按 dt × rate 推进已播时长 → 采样动画层选中的动画（v1 只应用第一条可见层）。
   // 选层、缺省与 `frameCount <= 0` 等边界口径一律见 AGENT.md §2.1 与 §7.40，此处不复述。
@@ -24372,6 +24375,63 @@ var ThreeScenePlayer = class {
         console.warn("[three] puppet \u52A8\u753B\u91C7\u6837\u5931\u8D25\uFF08\u5DF2\u4E22\u5F03\u8BE5\u56FE\u5C42\u52A8\u753B\uFF09:", e instanceof Error ? e.message : String(e));
       }
     }
+  }
+  // 登记精灵表图层：记下帧网格/原始 UV 并立刻写第 0 帧（首帧 render 前 update 尚未跑过）。
+  registerSpriteSheet(backgroundId, objectId, mesh, sprite) {
+    const attr = mesh.geometry.attributes?.uv;
+    const layer = {
+      backgroundId,
+      mesh,
+      frames: Math.max(1, Math.floor(sprite.frames)),
+      cols: Math.max(1, Math.floor(sprite.cols)),
+      rows: Math.max(1, Math.floor(sprite.rows)),
+      elapsed: 0,
+      fps: 1,
+      frame: -1,
+      baseUv: attr ? Float32Array.from(attr.array) : new Float32Array(0),
+      uv: { u0: 0, v0: 0, u1: 1, v1: 1 }
+    };
+    this.spritesheetLayers.set(objectId, layer);
+    this.applySpriteSheetFrame(layer, 0);
+  }
+  // 写当前帧子矩形：frame 按**行优先**（col = frame % cols，row = floor(frame / cols)）。
+  // v 方向：tex-loader 显示约定 v=0=图像底部，而 TEXS 的 row 0 = 表顶行 ⇒ 第 0 行落在高 v 段
+  //（与粒子 shader 的 (rows-1-row) 同源）；帧内 v 继续沿用 quad 原始 0/1 取向，不额外翻转。
+  applySpriteSheetFrame(layer, frame) {
+    const { cols, rows } = layer;
+    const col = (frame % cols + cols) % cols;
+    const row = Math.floor(frame / cols) % rows;
+    const u0 = col / cols;
+    const u1 = (col + 1) / cols;
+    const v0 = (rows - 1 - row) / rows;
+    const v1 = (rows - row) / rows;
+    const attr = layer.mesh.geometry.attributes?.uv;
+    if (attr) {
+      const arr = attr.array;
+      const base = layer.baseUv;
+      for (let i = 0; i < arr.length && i < base.length; i += 2) {
+        arr[i] = u0 + base[i] * (u1 - u0);
+        arr[i + 1] = v0 + base[i + 1] * (v1 - v0);
+      }
+      attr.needsUpdate = true;
+    }
+    layer.frame = frame;
+    layer.uv = { u0, v0, u1, v1 };
+  }
+  // 逐帧推进精灵表动画：dt 累加（不跟墙钟，暂停/回退不跳帧），帧号 = floor(elapsed × fps) % frames。
+  updateSpriteSheets(dt) {
+    if (this.spritesheetLayers.size === 0) return;
+    const step = Number.isFinite(dt) && dt > 0 ? dt : 0;
+    for (const layer of this.spritesheetLayers.values()) {
+      layer.elapsed += step;
+      const frame = Math.floor(layer.elapsed * layer.fps) % layer.frames;
+      if (frame !== layer.frame) this.applySpriteSheetFrame(layer, frame);
+    }
+  }
+  /** 测试用：取精灵表图层当前帧的 UV 子矩形（仅测试/诊断观测，不参与渲染）。 */
+  spritesheetUvForTest(objectId) {
+    const layer = this.spritesheetLayers.get(objectId);
+    return layer ? { ...layer.uv } : null;
   }
   /** 相机视差配置（null = 未启用/已拆除 ⇒ 逐帧零成本早退；enabled=false 时下一帧把对象写回基准位置）。 */
   setParallax(cfg) {
@@ -24753,8 +24813,11 @@ var ThreeScenePlayer = class {
   addBackground(opts) {
     const sceneW = opts.sceneW;
     const sceneH = opts.sceneH;
-    const w = opts.size?.[0] ?? opts.texture?.image?.width ?? 1;
-    const h = opts.size?.[1] ?? opts.texture?.image?.height ?? 1;
+    const sprite = opts.texture?.userData?.spritesheet === true ? textureSpriteInfo(opts.texture) : void 0;
+    const imgW = opts.texture?.image?.width;
+    const imgH = opts.texture?.image?.height;
+    const w = opts.size?.[0] ?? (sprite ? (imgW ?? 1) / sprite.cols : imgW ?? 1);
+    const h = opts.size?.[1] ?? (sprite ? (imgH ?? 1) / sprite.rows : imgH ?? 1);
     const geometry = new PlaneGeometry(w, h);
     const mod = materialModulation(void 0, opts.alpha, opts.brightness);
     const material = this.createLayerMaterial(opts.texture ?? null, opts.colorBlendMode ?? 0, mod, !!opts.isolate);
@@ -24799,6 +24862,9 @@ var ThreeScenePlayer = class {
     if (opts.objectId !== void 0) {
       const shown = opts.isolate ? this.isolated.get(opts.isolate.objectId)?.quad : mesh;
       if (shown) this.displayObjects.set(opts.objectId, shown);
+    }
+    if (opts.objectId !== void 0 && sprite && opts.texture?.userData?.spritesheet === true) {
+      this.registerSpriteSheet(id, opts.objectId, mesh, sprite);
     }
     return id;
   }
@@ -25015,6 +25081,12 @@ var ThreeScenePlayer = class {
     const old = entry.mesh.geometry;
     entry.mesh.geometry = new PlaneGeometry(w, h);
     old.dispose();
+    for (const layer of this.spritesheetLayers.values()) {
+      if (layer.backgroundId !== id) continue;
+      const attr = layer.mesh.geometry.attributes?.uv;
+      layer.baseUv = attr ? Float32Array.from(attr.array) : new Float32Array(0);
+      this.applySpriteSheetFrame(layer, Math.max(0, layer.frame));
+    }
     const map = entry.mesh.material.map;
     if (map && map.isCanvasTexture) map.dispose();
   }
@@ -25259,6 +25331,7 @@ var ThreeScenePlayer = class {
       entry.mesh.material.dispose();
     }
     this.backgroundEntries.clear();
+    this.spritesheetLayers.clear();
     for (const layer of this.puppetLayers.values()) layer.instance.dispose();
     this.puppetLayers.clear();
     for (const layer of this.particleLayers.values()) {
@@ -26004,20 +26077,24 @@ async function resolveImageAssets(id, obj) {
   let puppetPath = null;
   try {
     const modelResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(obj.image)}`);
-    if (!modelResp.ok) return { texture: null, puppetPath: null };
+    if (!modelResp.ok) return { texture: null, puppetPath: null, spriteSheet: false };
     const model = await modelResp.json();
     puppetPath = typeof model?.puppet === "string" && model.puppet ? String(model.puppet) : null;
     const matRef = model?.material;
-    if (typeof matRef !== "string" || !matRef) return { texture: null, puppetPath };
+    if (typeof matRef !== "string" || !matRef) return { texture: null, puppetPath, spriteSheet: false };
     const matResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(matRef)}`);
-    if (!matResp.ok) return { texture: null, puppetPath };
+    if (!matResp.ok) return { texture: null, puppetPath, spriteSheet: false };
     const mat = await matResp.json();
+    const combos = mat?.passes?.[0]?.combos;
+    const spriteSheet = combos?.spritesheet === 1 || combos?.SPRITESHEET === 1;
     const texName = mat?.passes?.[0]?.textures?.[0];
-    if (typeof texName !== "string" || !texName) return { texture: null, puppetPath };
+    if (typeof texName !== "string" || !texName) return { texture: null, puppetPath, spriteSheet };
     const url = `/wallpapers/scene/${id}/asset?name=${encodeURIComponent(resolveTexPath(matRef, texName))}`;
-    return { texture: await loadTexTexture(url), puppetPath };
+    const texture = await loadTexTexture(url);
+    if (texture && spriteSheet) texture.userData.spritesheet = true;
+    return { texture, puppetPath, spriteSheet };
   } catch {
-    return { texture: null, puppetPath };
+    return { texture: null, puppetPath, spriteSheet: false };
   }
 }
 async function fetchMdlBytes(id, path) {
