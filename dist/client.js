@@ -31446,7 +31446,9 @@ function createThreeSceneRenderer(opts) {
             const layer = textLayers.get(obj.id);
             if (!layer?.size) continue;
             const world = textWorldSize(layer.size, [obj.scale[0], obj.scale[1]]);
-            const rt = objectRtSize(world.w, world.h, screenScale);
+            const source = { width: layer.size[0], height: layer.size[1] };
+            const rt = isolatedRtSize(world.w, world.h, screenScale, source);
+            sourceOf.set(obj.id, source);
             isolate.set(obj.id, {
               objectId: obj.id,
               rtWidth: rt.width,

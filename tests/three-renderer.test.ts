@@ -1646,6 +1646,39 @@ describe('three-renderer text 对象', () => {
     r.dispose!();
   });
 
+  // 回归（v0.8.1 热修）：text 隔离 RT 的源分辨率下限 = 布局 canvas 像素。只按屏占位会把小字号
+  // 文本降到几十像素再跑效果链（blur 半径相对笔画过强 → Spider Man 日期/时钟糊成一片）。
+  it('text 隔离 RT 以布局像素为源分辨率下限（小视口下不按屏占位降采样）', async () => {
+    stubAssetFetch(sceneWithText({
+      scale: '1 1 1',
+      effects: [{ file: 'effects/w/effect.json' }],
+      text: { value: '12:34' },
+    }), FX_FILES);
+    stubTextRender();
+    const chainsSpy = vi.spyOn(ObjectEffectStage.prototype, 'setObjectChains').mockImplementation(() => {});
+    // 正交 1920×1080 + 视口 480×270 ⇒ 屏幕密度 0.25；世界 120×49 的屏占位仅 30×12。
+    const oldW = window.innerWidth;
+    const oldH = window.innerHeight;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 480 });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 270 });
+    try {
+      const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+      expect(await r.render('2851992662', document.createElement('canvas'))).toBe(true);
+      const assets = vi.mocked(loadSceneToThree).mock.calls[0][1] as {
+        isolate: Map<number, unknown>;
+      };
+      // 布局 canvas 120×49 长边 120 > 屏占位长边 30 ⇒ RT 升到 120×49（与布局 1:1，不糊）。
+      expect(assets.isolate.get(5)).toEqual({
+        objectId: 5, rtWidth: 120, rtHeight: 49, worldW: 120, worldH: 49,
+      });
+      chainsSpy.mockRestore();
+      r.dispose!();
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: oldW });
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: oldH });
+    }
+  });
+
   it('visible=false 的 text 被过滤（不下发）——否则会画出本应隐藏的时钟', async () => {
     stubAssetFetch(sceneWithText({ visible: false, text: { value: '12:34', script: CLOCK_SCRIPT } }), {});
     stubTextRender();
