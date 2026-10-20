@@ -29,6 +29,16 @@ describe('parseSceneJson', () => {
     expect(desc.fov).toBe(50);
     expect(desc.perspectiveOverrideFov).toBe(0);
   });
+  // F15：general.clearcolor 真实库为 0-1（如 2980088441），也有 0-255 写法；解析统一归一化到 0-255。
+  it('normalizes general.clearcolor from 0-1 or 0-255 to 0-255', () => {
+    const parse = (cc: string) => parseSceneJson(JSON.stringify({
+      general: { orthogonalprojection: { width: 1920, height: 1080 }, clearcolor: cc },
+      objects: [],
+    }));
+    expect(parse('0.06667 0.07843 0.09412').clearColor)
+      .toEqual([0.06667 * 255, 0.07843 * 255, 0.09412 * 255]);
+    expect(parse('17 20 24').clearColor).toEqual([17, 20, 24]);
+  });
   it('parses objects into image and particle kinds', () => {
     const desc = parseSceneJson(raw);
     const imageObj = desc.objects.find((o) => o.kind === 'image') as any;

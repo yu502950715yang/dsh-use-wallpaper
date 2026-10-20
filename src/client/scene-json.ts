@@ -296,7 +296,13 @@ export function parseSceneJson(raw: string): SceneDescription {
     // （见上方 fromVisibleScript 注释），故照常派生 script/scriptProperties。
     return { ...base, kind: 'particle' as const, particle: '', ...fromVisibleScript };
   });
-  const cc = typeof gen.clearcolor === 'string' ? vec3(gen.clearcolor) : undefined;
+  // general.clearcolor 双语义：真实库为 0-1 归一化（如 "0.06667 0.07843 0.09412"），也兼容 0-255；
+  // 判据同 optColor（max ≤ 1 ⇒ 视为 0-1 语义 ×255），player 接口仍按 0-255 使用。
+  let cc = typeof gen.clearcolor === 'string' ? vec3(gen.clearcolor) : undefined;
+  if (cc) {
+    const max = Math.max(cc[0], cc[1], cc[2]);
+    if (max > 0 && max <= 1) cc = [cc[0] * 255, cc[1] * 255, cc[2] * 255];
+  }
   return {
     camera: {
       center: vec3(cam.center),

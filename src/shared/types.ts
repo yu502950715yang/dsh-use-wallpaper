@@ -182,6 +182,7 @@ export interface SceneDescription {
   // （缺省 fov=50、perspectiveoverridefov=0 = 未覆盖 → 用固定 1000 距离反算 fov）。
   fov?: number;
   perspectiveOverrideFov?: number;
+  /** 清屏色（scene.json `general.clearcolor`，已归一化到 0-255）。 */
   clearColor?: [number, number, number];
   /** 相机视差总配置（scene.json `general.cameraparallax*`，缺省全 0）。 */
   parallax: ParallaxConfig;

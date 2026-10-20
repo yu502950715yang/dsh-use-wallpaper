@@ -108,7 +108,8 @@ describe('ThreeScenePlayer 清屏色（F15）', () => {
     const mock = createMockRenderer();
     const scene = JSON.stringify({
       camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
-      general: { orthogonalprojection: { width: 1920, height: 1080 }, clearcolor: '17 20 24' },
+      // 真实 scene.json 为 0-1 归一化（本机 37 张全部 ≤ 1；2980088441 原值即此）。
+      general: { orthogonalprojection: { width: 1920, height: 1080 }, clearcolor: '0.06667 0.07843 0.09412' },
       objects: [],
     });
     loadSceneToThree(scene, { renderer: mock as unknown as THREE.WebGLRenderer }, document.createElement('canvas'));
