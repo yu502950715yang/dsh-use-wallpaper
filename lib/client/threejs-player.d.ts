@@ -124,6 +124,14 @@ export declare class ThreeScenePlayer {
     private registerSpriteSheet;
     private applySpriteSheetFrame;
     private updateSpriteSheets;
+    pauseSpriteSheet(objectId: number): void;
+    playSpriteSheet(objectId: number): void;
+    /** 停播并回到第 0 帧（对齐 AnimPlayback.stop 的语义）。 */
+    stopSpriteSheet(objectId: number): void;
+    isSpriteSheetPlaying(objectId: number): boolean;
+    /** 立即写 UV（越界钳到 [0, frames-1]）；同时把 elapsed 对齐到该帧，play 后从这里继续。 */
+    setSpriteSheetFrame(objectId: number, frame: number): void;
+    getSpriteSheetFrame(objectId: number): number;
     /** 测试用：取精灵表图层当前帧的 UV 子矩形（仅测试/诊断观测，不参与渲染）。 */
     spritesheetUvForTest(objectId: number): {
         u0: number;

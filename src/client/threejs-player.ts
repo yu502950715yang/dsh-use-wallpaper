@@ -68,6 +68,8 @@ type SpriteSheetLayer = {
   elapsed: number;       // 已播秒数（dt 累加，不跟墙钟）
   fps: number;
   frame: number;         // 当前帧号（-1 = 尚未写入）
+  // 脚本 pause 后不再自动推进（play 恢复）；无脚本控制时保持 v0.8.1 的自动播放。
+  paused: boolean;
   // 原始（整图 [0,1]²）UV：每次按 base 重算子矩形——在已写过的 UV 上再映射会逐帧累积漂移。
   baseUv: Float32Array;
   uv: { u0: number; v0: number; u1: number; v1: number };
@@ -945,6 +947,7 @@ export class ThreeScenePlayer {
       elapsed: 0,
       fps: 1,
       frame: -1,
+      paused: false,
       baseUv: attr ? Float32Array.from(attr.array as ArrayLike<number>) : new Float32Array(0),
       uv: { u0: 0, v0: 0, u1: 1, v1: 1 },
     };
@@ -982,10 +985,50 @@ export class ThreeScenePlayer {
     if (this.spritesheetLayers.size === 0) return;
     const step = Number.isFinite(dt) && dt > 0 ? dt : 0;
     for (const layer of this.spritesheetLayers.values()) {
+      if (layer.paused) continue; // 脚本 pause 后停住；play 恢复
       layer.elapsed += step;
       const frame = Math.floor(layer.elapsed * layer.fps) % layer.frames;
       if (frame !== layer.frame) this.applySpriteSheetFrame(layer, frame);
     }
+  }
+
+  // ── 脚本的纹理动画控制（thisLayer.getTextureAnimation → 这里）；未登记 id 一律安全 no-op ──
+  pauseSpriteSheet(objectId: number): void {
+    const layer = this.spritesheetLayers.get(objectId);
+    if (layer) layer.paused = true;
+  }
+
+  playSpriteSheet(objectId: number): void {
+    const layer = this.spritesheetLayers.get(objectId);
+    if (layer) layer.paused = false;
+  }
+
+  /** 停播并回到第 0 帧（对齐 AnimPlayback.stop 的语义）。 */
+  stopSpriteSheet(objectId: number): void {
+    const layer = this.spritesheetLayers.get(objectId);
+    if (!layer) return;
+    layer.paused = true;
+    layer.elapsed = 0;
+    this.applySpriteSheetFrame(layer, 0);
+  }
+
+  isSpriteSheetPlaying(objectId: number): boolean {
+    return this.spritesheetLayers.get(objectId)?.paused === false;
+  }
+
+  /** 立即写 UV（越界钳到 [0, frames-1]）；同时把 elapsed 对齐到该帧，play 后从这里继续。 */
+  setSpriteSheetFrame(objectId: number, frame: number): void {
+    const layer = this.spritesheetLayers.get(objectId);
+    if (!layer) return;
+    const f = Number.isFinite(frame)
+      ? Math.min(layer.frames - 1, Math.max(0, Math.trunc(frame)))
+      : 0;
+    layer.elapsed = layer.fps > 0 ? f / layer.fps : 0;
+    this.applySpriteSheetFrame(layer, f);
+  }
+
+  getSpriteSheetFrame(objectId: number): number {
+    return this.spritesheetLayers.get(objectId)?.frame ?? -1;
   }
 
   /** 测试用：取精灵表图层当前帧的 UV 子矩形（仅测试/诊断观测，不参与渲染）。 */

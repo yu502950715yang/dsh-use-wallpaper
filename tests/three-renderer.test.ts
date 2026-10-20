@@ -1985,6 +1985,33 @@ describe('collectScriptSources', () => {
     }));
     expect(collectScriptSources(desc)).toEqual([]);
   });
+
+  // 对象级脚本入口（2026-10-20）：3765967112 的 angles.script 是唯一脚本来源（无 visible.script）。
+  it('转换字段的 objectScript 被收集（含 scriptProperties）；visible.script 优先', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [
+        {
+          id: 123, name: 'Day/Night', image: 'models/x.json',
+          angles: {
+            script: 'export function init(){ thisLayer.getTextureAnimation().pause(); }',
+            scriptproperties: { dayStart: 0, nightStart: 12 },
+            value: '0 0 0',
+          },
+        },
+        {
+          id: 5, name: 'both', image: 'models/y.json',
+          visible: { script: 'export function update(){return true;}', value: true },
+          angles: { script: 'export function init(){}', value: '0 0 0' },
+        },
+      ],
+    }));
+    const srcs = collectScriptSources(desc);
+    expect(srcs.map((s) => s.objectId)).toEqual([123, 5]);
+    expect(srcs[0]!.source).toContain('getTextureAnimation');
+    expect(srcs[0]!.scriptProperties).toEqual({ dayStart: 0, nightStart: 12 });
+    expect(srcs[1]!.source).toContain('return true');
+    expect(srcs[1]!.scriptProperties).toBeUndefined();
+  });
 });
 
 // image / particle 的 visible 过滤（2026-09-25）：此前**只对 text** 应用，全库实测 134 个
@@ -3401,5 +3428,56 @@ describe('createThreeSceneRenderer · puppet 真实链路护栏', () => {
     expect(warn.mock.calls.some((c) => String(c[0]).includes('puppet 解析失败'))).toBe(true);
     warn.mockRestore();
     r.dispose();
+  });
+});
+// 对象级脚本接线（2026-10-20）：3765967112 的 angles.script 被 render 收集，纹理动画回调
+// 落到本次装配的 player（pause/play/setFrame/getFrame）。执行本身的覆盖在 scene-script-host.test.ts。
+describe('对象级脚本 → player 纹理动画接线', () => {
+  it('render 把 angles.script 交给 SceneScriptHost，并把纹理动画回调接到 player', async () => {
+    const scene = JSON.stringify({
+      camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+      general: { orthogonalprojection: { width: 3840, height: 2160 } },
+      objects: [{
+        id: 123, name: 'Day/Night (Click)', image: 'models/workshop/x/dayNightToggleSprite.json',
+        origin: '1882.8114 1551.4239 0', scale: '0.2 0.2 0.2', size: '256 256',
+        angles: {
+          script: 'export function init(){ thisLayer.getTextureAnimation().pause(); }',
+          scriptproperties: { dayStart: 0, nightStart: 12 },
+          value: '0 0 0',
+        },
+      }],
+    });
+    stubAssetFetch(scene, {});
+    vi.mocked(resolveImageAssets).mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null } as never);
+    const player = {
+      dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(),
+      setParallax: vi.fn(), setParallaxPointer: vi.fn(), setObjectEffectStage: vi.fn(),
+      isolatedObjects: () => [], scene: new THREE.Scene(), renderer: {},
+      pauseSpriteSheet: vi.fn(), playSpriteSheet: vi.fn(), stopSpriteSheet: vi.fn(),
+      isSpriteSheetPlaying: vi.fn(() => false), setSpriteSheetFrame: vi.fn(), getSpriteSheetFrame: vi.fn(() => 2),
+    };
+    vi.mocked(loadSceneToThree).mockReturnValue({
+      player, sims: [], backgroundIds: [0], particleLayers: [], puppetLayers: [],
+    } as never);
+
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    await r.render('3765967112', document.createElement('canvas'));
+
+    const opts = vi.mocked(SceneScriptHost.create).mock.calls[0]![0];
+    expect(opts.scripts.map((s) => s.objectId)).toEqual([123]);
+    expect(opts.scripts[0]!.source).toContain('getTextureAnimation');
+    expect(opts.scripts[0]!.scriptProperties).toEqual({ dayStart: 0, nightStart: 12 });
+    const tex = opts.textureAnimation!;
+    tex.pause(123);
+    tex.play(123);
+    tex.stop(123);
+    tex.setFrame(123, 2);
+    expect(player.pauseSpriteSheet).toHaveBeenCalledWith(123);
+    expect(player.playSpriteSheet).toHaveBeenCalledWith(123);
+    expect(player.stopSpriteSheet).toHaveBeenCalledWith(123);
+    expect(player.setSpriteSheetFrame).toHaveBeenCalledWith(123, 2);
+    expect(tex.isPlaying(123)).toBe(false);
+    expect(tex.getFrame(123)).toBe(2);
+    r.dispose?.();
   });
 });

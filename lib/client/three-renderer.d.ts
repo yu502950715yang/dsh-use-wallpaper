@@ -11,6 +11,7 @@ export declare function collectObjectEffectChains(desc: SceneDescription, loadFi
 export declare function collectScriptSources(desc: SceneDescription): Array<{
     objectId: number;
     source: string;
+    scriptProperties?: Record<string, unknown>;
 }>;
 export declare function createThreeSceneRenderer(opts?: {
     loadWasm?: LoadWasm;

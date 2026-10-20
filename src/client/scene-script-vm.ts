@@ -17,6 +17,24 @@ import type { LayerStateTable, LayerWrite } from './layer-state.js';
 import type { AnimPlayback, AnimRegistry } from './scene-anim.js';
 import type { DynamicMeshRegistry } from './dynamic-mesh.js';
 
+export interface TextureAnimationHost {
+  pause(objectId: number): void;
+  play(objectId: number): void;
+  stop(objectId: number): void;
+  isPlaying(objectId: number): boolean;
+  setFrame(objectId: number, frame: number): void;
+  getFrame(objectId: number): number;
+}
+
+/** WE SceneScript localStorage 的底层字符串存储（前缀/序列化由本模块负责）。 */
+export interface SceneScriptStorage {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+}
+
+/** 场景脚本 localStorage 的键前缀（与插件其他 we:* 键隔离）。 */
+export const SCENE_SCRIPT_STORAGE_PREFIX = 'we:scenescript:';
+
 export interface SceneScriptVmOptions {
   userProperties: Record<string, unknown>;
   state: LayerStateTable;
@@ -28,6 +46,12 @@ export interface SceneScriptVmOptions {
   dynamicMesh?: DynamicMeshRegistry;
   /** engine.registerAsset 的回调：装载期按此收集材质资产路径。 */
   onAsset?: (materialPath: string) => void;
+  /** 对象级脚本的纹理动画（thisLayer.getTextureAnimation）；缺省 = 安全 no-op。 */
+  textureAnimation?: TextureAnimationHost;
+  /** engine.timeOfDay 的 0-1 时间源（缺省本地时钟；测试注入固定值）。 */
+  timeOfDay?: () => number;
+  /** localStorage 底层存储（缺省浏览器 localStorage，node/隐私模式退回内存）。 */
+  storage?: SceneScriptStorage;
 }
 
 // 单脚本一次调用的指令预算：正常脚本远低于此；死循环在此被中断。
@@ -43,6 +67,24 @@ function Vec4(x, y, z, w) { this.x = x || 0; this.y = y || 0; this.z = z || 0; t
 var IModelData = { POSITION: 0, UV: 1, COLOR: 2, NORMAL: 3, TANGENT: 4 };
 
 function __noop() {}
+
+// WE 的 scriptProperties builder（对象级脚本顶层就会调用，如 3765967112 的 addSlider）。
+// finish() = {...builder 默认值, ...scene.json 覆盖值}；add* 一律兜底（名字长尾见 text-script）。
+function createScriptProperties() {
+  var injected = (typeof __weScriptProps === 'object' && __weScriptProps) ? __weScriptProps : {};
+  var defaults = {};
+  var proxy = null;
+  function add(o) { if (o && o.name) defaults[o.name] = o.value; return proxy; }
+  var api = { finish: function () { return Object.assign({}, defaults, injected); } };
+  proxy = new Proxy(api, {
+    get: function (t, k) {
+      if (k in t) return t[k];
+      if (typeof k === 'string' && k.indexOf('add') === 0) return add;
+      return undefined;
+    }
+  });
+  return proxy;
+}
 
 // 万能兜底：**未实现的 WE API 一律返回「可调用的 Proxy」**，避免单个缺失方法就让整个脚本
 // 被停用（实测：221591「双击切歌」的 thisScene.getLayer(name).stop() 就是这种；没有兜底时
@@ -99,6 +141,20 @@ function __mkAnim(key, name) {
   return __animCache[k];
 }
 
+var __texAnimCache = {};
+function __mkTextureAnimation(key) {
+  if (__texAnimCache[key]) return __texAnimCache[key];
+  __texAnimCache[key] = {
+    pause: function () { __host.texAnimPause(key); },
+    play: function () { __host.texAnimPlay(key); },
+    stop: function () { __host.texAnimStop(key); },
+    isPlaying: function () { return __host.texAnimIsPlaying(key); },
+    setFrame: function (frame) { __host.texAnimSetFrame(key, frame); },
+    getFrame: function () { return __host.texAnimGetFrame(key); }
+  };
+  return __texAnimCache[key];
+}
+
 var __layerCache = {};
 function __mkLayer(key) {
   if (__layerCache[key]) return __layerCache[key];
@@ -124,6 +180,7 @@ function __mkLayer(key) {
     get color() { var a = __host.readVec(key, 'color'); return new Vec3(a[0], a[1], a[2]); },
     set color(v) { __host.writeVec(key, 'color', v.x, v.y, (v.z === undefined ? 0 : v.z)); },
     getAnimation: function (name) { return __mkAnim(key, String(name)); },
+    getTextureAnimation: function () { return __mkTextureAnimation(key); },
     getEffect: function (name) {
       return __wrap({ name: name, visible: true, setMaterialProperty: __noop, getMaterialProperty: function () { return 0; } }, path + '.fx(' + name + ')');
     },
@@ -192,11 +249,33 @@ var createLayer = thisScene.createLayer;
 var engine = __wrap({
   userProperties: {},
   registerAsset: function (p) { __host.registerAsset(String(p)); return { __assetPath: String(p) }; },
-  get frametime() { return __host.frametime(); }
+  get frametime() { return __host.frametime(); },
+  get timeOfDay() { return __host.timeOfDay(); }
 }, 'engine');
 var registerAsset = engine.registerAsset;
 
+// 当前脚本所属图层（宿主在每次调用前设置当前对象 key）；与 thisScene.getLayerByID 同一句柄缓存。
+Object.defineProperty(globalThis, 'thisLayer', {
+  get: function () { return __mkLayer(__host.currentLayerKey()); },
+  configurable: true
+});
+
 var shared = {};
+
+// WE SceneScript 的 localStorage（每键 JSON 序列化；宿主负责前缀与持久化）。
+var localStorage = __wrap({
+  get: function (k) {
+    var raw = __host.lsGet(String(k));
+    if (raw === null || raw === undefined) return null;
+    try { return JSON.parse(raw); } catch (e) { return null; }
+  },
+  set: function (k, v) {
+    var raw;
+    try { raw = JSON.stringify(v); } catch (e) { return; }
+    if (raw !== undefined) __host.lsSet(String(k), raw);
+  }
+}, 'localStorage');
+
 var console = { log: __host.log, warn: __host.log, error: __host.log };
 true;
 `;
@@ -209,6 +288,8 @@ interface LoadedModule {
   click: QuickJSHandle | null;
   active: boolean;
   label: string;
+  /** 本模块所属对象的图层 key（`id:<id>`；无 objectId 时为空串）。 */
+  layerKey: string;
 }
 
 export class SceneScriptVm {
@@ -224,6 +305,14 @@ export class SceneScriptVm {
   private readonly mesh: DynamicMeshRegistry | null;
   /** engine.registerAsset 的回调（装载期用它解析材质资产路径）。 */
   private readonly onAsset: ((materialPath: string) => void) | null;
+  /** 纹理动画宿主（对象级脚本的 thisLayer.getTextureAnimation）；null = 安全 no-op。 */
+  private readonly texAnim: TextureAnimationHost | null;
+  /** engine.timeOfDay 时间源。 */
+  private readonly timeOfDay: () => number;
+  /** localStorage 底层字符串存储。 */
+  private readonly storage: SceneScriptStorage;
+  /** 当前正在执行的脚本所属图层 key（`id:<对象 id>`；thisLayer 的解析依据）。 */
+  private currentKey = '';
   private dt = 1 / 60;
   /** 单次脚本调用的指令预算（缺省 STEP_BUDGET；callOne 每次调用前重置）。 */
   private readonly stepBudget: number;
@@ -237,6 +326,9 @@ export class SceneScriptVm {
     this.onWarn = opts.onWarn ?? ((): void => { /* 生产静默 */ });
     this.mesh = opts.dynamicMesh ?? null;
     this.onAsset = opts.onAsset ?? null;
+    this.texAnim = opts.textureAnimation ?? null;
+    this.timeOfDay = opts.timeOfDay ?? localTimeOfDay;
+    this.storage = opts.storage ?? createDefaultStorage();
     this.stepBudget = Number.isFinite(opts.stepBudget) && (opts.stepBudget as number) > 0
       ? (opts.stepBudget as number)
       : STEP_BUDGET;
@@ -352,6 +444,41 @@ export class SceneScriptVm {
     define('frametime', () => ctx.newNumber(this.dt));
     define('log', () => { /* 生产静默；需要时在这里转发到宿主 console */ });
 
+    // ── 对象级脚本原语（2026-10-20）：thisLayer / engine.timeOfDay / localStorage ──
+    define('currentLayerKey', () => ctx.newString(this.currentKey));
+    define('texAnimPause', (k) => { this.texAnim?.pause(this.keyOf(k)); });
+    define('texAnimPlay', (k) => { this.texAnim?.play(this.keyOf(k)); });
+    define('texAnimStop', (k) => { this.texAnim?.stop(this.keyOf(k)); });
+    define('texAnimIsPlaying', (k) => {
+      const id = this.keyOf(k);
+      return this.texAnim && id >= 0 && this.texAnim.isPlaying(id) ? ctx.true : ctx.false;
+    });
+    define('texAnimSetFrame', (k, f) => {
+      const id = this.keyOf(k);
+      if (this.texAnim && id >= 0) this.texAnim.setFrame(id, ctx.getNumber(f));
+    });
+    define('texAnimGetFrame', (k) => {
+      const id = this.keyOf(k);
+      return ctx.newNumber(this.texAnim && id >= 0 ? this.texAnim.getFrame(id) : -1);
+    });
+    // engine.timeOfDay：0-1 的本地时间（宿主可注入固定值；越界/非有限值钳到 [0,1)）。
+    define('timeOfDay', () => {
+      let v = 0;
+      try { v = this.timeOfDay(); } catch { v = 0; }
+      if (!Number.isFinite(v)) v = 0;
+      return ctx.newNumber(Math.min(1, Math.max(0, v)));
+    });
+    define('lsGet', (k) => {
+      let raw: string | null = null;
+      try { raw = this.storage.getItem(SCENE_SCRIPT_STORAGE_PREFIX + ctx.getString(k)); } catch { raw = null; }
+      return raw === null || raw === undefined ? ctx.null : ctx.newString(raw);
+    });
+    define('lsSet', (k, v) => {
+      try {
+        this.storage.setItem(SCENE_SCRIPT_STORAGE_PREFIX + ctx.getString(k), ctx.getString(v));
+      } catch { /* 配额/隐私模式：脚本侧静默失败（与浏览器 localStorage 语义一致） */ }
+    });
+
     // ── 动态网格原语（2026-09-22）：createModelData / createLayer / applyData 的真实落点。
     //    未注入 registry 时全部退化为安全空操作（其他壁纸零影响）。──
     define('registerAsset', (pH) => { this.onAsset?.(ctx.getString(pH)); });
@@ -433,8 +560,14 @@ export class SceneScriptVm {
   }
 
   /** 装载一个模块脚本。返回 false = eval 失败（该脚本被跳过，其余继续）。
-   *  `label` 用于日志（应带 scene 对象 id —— 脚本首行都是 `'use strict';`，不带 id 无法定位）。 */
-  load(source: string, label?: string): boolean {
+   *  `label` 用于日志（应带 scene 对象 id —— 脚本首行都是 `'use strict';`，不带 id 无法定位）。
+   *  `objectId` 供 thisLayer 解析；`scriptProperties` 是 scene.json 的覆盖值（注入给 createScriptProperties）。 */
+  load(
+    source: string,
+    label?: string,
+    objectId?: number,
+    scriptProperties?: Record<string, unknown>,
+  ): boolean {
     const ctx = this.ctx;
     const sanitized = String(source ?? '').replace(/\bexport\s+/g, '');
     const tag = label ?? firstNonEmptyLine(sanitized);
@@ -447,7 +580,26 @@ return {
   cursorClick: (typeof cursorClick === 'function') ? cursorClick : null
 };
 })());`;
+    this.currentKey = objectId === undefined ? '' : `id:${objectId}`;
+    // scene.json 的 scriptproperties → 全局 __weScriptProps（createScriptProperties().finish() 合并）。
+    // 每个模块 eval 前设置、eval 后清除：属性值属于各自脚本，不能泄漏给下一个模块。
+    const propsH = ctx.newObject();
+    for (const [key, value] of Object.entries(scriptProperties ?? {})) {
+      if (typeof value === 'boolean') ctx.setProp(propsH, key, value ? ctx.true : ctx.false);
+      else if (typeof value === 'number' && Number.isFinite(value)) {
+        const h = ctx.newNumber(value);
+        ctx.setProp(propsH, key, h);
+        h.dispose();
+      } else if (typeof value === 'string') {
+        const h = ctx.newString(value);
+        ctx.setProp(propsH, key, h);
+        h.dispose();
+      }
+    }
+    ctx.setProp(ctx.global, '__weScriptProps', propsH);
     const r = ctx.evalCode(code, 'scene-script.js');
+    ctx.setProp(ctx.global, '__weScriptProps', ctx.undefined);
+    propsH.dispose();
     if (r.error) {
       r.error.dispose();
       this.warn(`SceneScript eval 失败，已跳过该脚本（${tag}）`);
@@ -476,6 +628,7 @@ return {
       click: grab('cursorClick'),
       active: true,
       label: tag,
+      layerKey: objectId === undefined ? '' : `id:${objectId}`,
     };
     this.handles.push(inst);
     for (const h of [m.init, m.update, m.apply, m.click]) if (h) this.handles.push(h);
@@ -485,6 +638,7 @@ return {
 
   private callOne(m: LoadedModule, fn: QuickJSHandle | null, mode: 'value' | 'props'): unknown {
     if (!m.active || !fn) return undefined;
+    this.currentKey = m.layerKey; // thisLayer 解析依据：每次调用前指向当前脚本所属对象
     this.budget = this.stepBudget; // 每个脚本每次调用一份新预算（见 create 的 handler 注释）
     const ctx = this.ctx;
     let argH: QuickJSHandle;
@@ -596,4 +750,24 @@ function firstNonEmptyLine(s: string): string {
     if (t) return t.slice(0, 60);
   }
   return '';
+}
+
+/** engine.timeOfDay 缺省值：本地时钟的当天占比（0 = 午夜，0.5 = 正午）。 */
+function localTimeOfDay(): number {
+  const d = new Date();
+  const seconds = d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds() + d.getMilliseconds() / 1000;
+  return seconds / 86400;
+}
+
+/** localStorage 底层存储：浏览器用真实 Web Storage（隐私模式抛错 → 内存），node 测试用内存。 */
+function createDefaultStorage(): SceneScriptStorage {
+  try {
+    const ls = (globalThis as { localStorage?: SceneScriptStorage }).localStorage;
+    if (ls && typeof ls.getItem === 'function' && typeof ls.setItem === 'function') return ls;
+  } catch { /* SecurityError（禁用存储）→ 内存 */ }
+  const mem = new Map<string, string>();
+  return {
+    getItem: (k) => mem.get(k) ?? null,
+    setItem: (k, v) => { mem.set(k, v); },
+  };
 }

@@ -23349,6 +23349,15 @@ function scriptFields(o) {
   const scriptProperties = o?.scriptproperties !== void 0 ? parseScriptProperties(o.scriptproperties) : void 0;
   return { script, scriptProperties };
 }
+function objectScriptFields(o) {
+  for (const field of ["angles", "origin", "scale", "color"]) {
+    const v = o[field];
+    if (!v || typeof v !== "object" || Array.isArray(v)) continue;
+    const f = scriptFields(v);
+    if (f.script) return { objectScript: f.script, objectScriptProperties: f.scriptProperties };
+  }
+  return {};
+}
 function collectSounds(root) {
   const out = [];
   for (const o of Array.isArray(root.objects) ? root.objects : []) {
@@ -23413,7 +23422,9 @@ function parseSceneJson(raw) {
       effects: Array.isArray(o.effects) ? o.effects : void 0,
       // 对象级 parallaxDepth 与 kind 无关（全库 227 处：particle 106 / image 91 / text 20 / other 10），
       // 故落在 base 让所有分支都带出 —— Task 4 的粒子/文本注入 u_Parallax 全靠它。
-      parallaxDepth: optNum2(o.parallaxDepth)
+      parallaxDepth: optNum2(o.parallaxDepth),
+      // 转换字段里的对象脚本（angles.script 优先）；无脚本对象不产出这两个键。
+      ...objectScriptFields(o)
     };
     const fromVisibleScript = base.visible?.kind === "script" ? { script: base.visible.script, scriptProperties: base.visible.scriptProperties } : {};
     if (typeof o.particle === "string" && o.particle) {
@@ -24389,6 +24400,7 @@ var ThreeScenePlayer = class {
       elapsed: 0,
       fps: 1,
       frame: -1,
+      paused: false,
       baseUv: attr ? Float32Array.from(attr.array) : new Float32Array(0),
       uv: { u0: 0, v0: 0, u1: 1, v1: 1 }
     };
@@ -24424,10 +24436,42 @@ var ThreeScenePlayer = class {
     if (this.spritesheetLayers.size === 0) return;
     const step = Number.isFinite(dt) && dt > 0 ? dt : 0;
     for (const layer of this.spritesheetLayers.values()) {
+      if (layer.paused) continue;
       layer.elapsed += step;
       const frame = Math.floor(layer.elapsed * layer.fps) % layer.frames;
       if (frame !== layer.frame) this.applySpriteSheetFrame(layer, frame);
     }
+  }
+  // ── 脚本的纹理动画控制（thisLayer.getTextureAnimation → 这里）；未登记 id 一律安全 no-op ──
+  pauseSpriteSheet(objectId) {
+    const layer = this.spritesheetLayers.get(objectId);
+    if (layer) layer.paused = true;
+  }
+  playSpriteSheet(objectId) {
+    const layer = this.spritesheetLayers.get(objectId);
+    if (layer) layer.paused = false;
+  }
+  /** 停播并回到第 0 帧（对齐 AnimPlayback.stop 的语义）。 */
+  stopSpriteSheet(objectId) {
+    const layer = this.spritesheetLayers.get(objectId);
+    if (!layer) return;
+    layer.paused = true;
+    layer.elapsed = 0;
+    this.applySpriteSheetFrame(layer, 0);
+  }
+  isSpriteSheetPlaying(objectId) {
+    return this.spritesheetLayers.get(objectId)?.paused === false;
+  }
+  /** 立即写 UV（越界钳到 [0, frames-1]）；同时把 elapsed 对齐到该帧，play 后从这里继续。 */
+  setSpriteSheetFrame(objectId, frame) {
+    const layer = this.spritesheetLayers.get(objectId);
+    if (!layer) return;
+    const f = Number.isFinite(frame) ? Math.min(layer.frames - 1, Math.max(0, Math.trunc(frame))) : 0;
+    layer.elapsed = layer.fps > 0 ? f / layer.fps : 0;
+    this.applySpriteSheetFrame(layer, f);
+  }
+  getSpriteSheetFrame(objectId) {
+    return this.spritesheetLayers.get(objectId)?.frame ?? -1;
   }
   /** 测试用：取精灵表图层当前帧的 UV 子矩形（仅测试/诊断观测，不参与渲染）。 */
   spritesheetUvForTest(objectId) {
@@ -29895,6 +29939,7 @@ function applyLayerState(dirty, lookup) {
 }
 
 // src/client/scene-script-vm.ts
+var SCENE_SCRIPT_STORAGE_PREFIX = "we:scenescript:";
 var STEP_BUDGET2 = 5e7;
 var PRELUDE2 = `
 var __mods = [];
@@ -29904,6 +29949,24 @@ function Vec4(x, y, z, w) { this.x = x || 0; this.y = y || 0; this.z = z || 0; t
 var IModelData = { POSITION: 0, UV: 1, COLOR: 2, NORMAL: 3, TANGENT: 4 };
 
 function __noop() {}
+
+// WE \u7684 scriptProperties builder\uFF08\u5BF9\u8C61\u7EA7\u811A\u672C\u9876\u5C42\u5C31\u4F1A\u8C03\u7528\uFF0C\u5982 3765967112 \u7684 addSlider\uFF09\u3002
+// finish() = {...builder \u9ED8\u8BA4\u503C, ...scene.json \u8986\u76D6\u503C}\uFF1Badd* \u4E00\u5F8B\u515C\u5E95\uFF08\u540D\u5B57\u957F\u5C3E\u89C1 text-script\uFF09\u3002
+function createScriptProperties() {
+  var injected = (typeof __weScriptProps === 'object' && __weScriptProps) ? __weScriptProps : {};
+  var defaults = {};
+  var proxy = null;
+  function add(o) { if (o && o.name) defaults[o.name] = o.value; return proxy; }
+  var api = { finish: function () { return Object.assign({}, defaults, injected); } };
+  proxy = new Proxy(api, {
+    get: function (t, k) {
+      if (k in t) return t[k];
+      if (typeof k === 'string' && k.indexOf('add') === 0) return add;
+      return undefined;
+    }
+  });
+  return proxy;
+}
 
 // \u4E07\u80FD\u515C\u5E95\uFF1A**\u672A\u5B9E\u73B0\u7684 WE API \u4E00\u5F8B\u8FD4\u56DE\u300C\u53EF\u8C03\u7528\u7684 Proxy\u300D**\uFF0C\u907F\u514D\u5355\u4E2A\u7F3A\u5931\u65B9\u6CD5\u5C31\u8BA9\u6574\u4E2A\u811A\u672C
 // \u88AB\u505C\u7528\uFF08\u5B9E\u6D4B\uFF1A221591\u300C\u53CC\u51FB\u5207\u6B4C\u300D\u7684 thisScene.getLayer(name).stop() \u5C31\u662F\u8FD9\u79CD\uFF1B\u6CA1\u6709\u515C\u5E95\u65F6
@@ -29960,6 +30023,20 @@ function __mkAnim(key, name) {
   return __animCache[k];
 }
 
+var __texAnimCache = {};
+function __mkTextureAnimation(key) {
+  if (__texAnimCache[key]) return __texAnimCache[key];
+  __texAnimCache[key] = {
+    pause: function () { __host.texAnimPause(key); },
+    play: function () { __host.texAnimPlay(key); },
+    stop: function () { __host.texAnimStop(key); },
+    isPlaying: function () { return __host.texAnimIsPlaying(key); },
+    setFrame: function (frame) { __host.texAnimSetFrame(key, frame); },
+    getFrame: function () { return __host.texAnimGetFrame(key); }
+  };
+  return __texAnimCache[key];
+}
+
 var __layerCache = {};
 function __mkLayer(key) {
   if (__layerCache[key]) return __layerCache[key];
@@ -29985,6 +30062,7 @@ function __mkLayer(key) {
     get color() { var a = __host.readVec(key, 'color'); return new Vec3(a[0], a[1], a[2]); },
     set color(v) { __host.writeVec(key, 'color', v.x, v.y, (v.z === undefined ? 0 : v.z)); },
     getAnimation: function (name) { return __mkAnim(key, String(name)); },
+    getTextureAnimation: function () { return __mkTextureAnimation(key); },
     getEffect: function (name) {
       return __wrap({ name: name, visible: true, setMaterialProperty: __noop, getMaterialProperty: function () { return 0; } }, path + '.fx(' + name + ')');
     },
@@ -30053,11 +30131,33 @@ var createLayer = thisScene.createLayer;
 var engine = __wrap({
   userProperties: {},
   registerAsset: function (p) { __host.registerAsset(String(p)); return { __assetPath: String(p) }; },
-  get frametime() { return __host.frametime(); }
+  get frametime() { return __host.frametime(); },
+  get timeOfDay() { return __host.timeOfDay(); }
 }, 'engine');
 var registerAsset = engine.registerAsset;
 
+// \u5F53\u524D\u811A\u672C\u6240\u5C5E\u56FE\u5C42\uFF08\u5BBF\u4E3B\u5728\u6BCF\u6B21\u8C03\u7528\u524D\u8BBE\u7F6E\u5F53\u524D\u5BF9\u8C61 key\uFF09\uFF1B\u4E0E thisScene.getLayerByID \u540C\u4E00\u53E5\u67C4\u7F13\u5B58\u3002
+Object.defineProperty(globalThis, 'thisLayer', {
+  get: function () { return __mkLayer(__host.currentLayerKey()); },
+  configurable: true
+});
+
 var shared = {};
+
+// WE SceneScript \u7684 localStorage\uFF08\u6BCF\u952E JSON \u5E8F\u5217\u5316\uFF1B\u5BBF\u4E3B\u8D1F\u8D23\u524D\u7F00\u4E0E\u6301\u4E45\u5316\uFF09\u3002
+var localStorage = __wrap({
+  get: function (k) {
+    var raw = __host.lsGet(String(k));
+    if (raw === null || raw === undefined) return null;
+    try { return JSON.parse(raw); } catch (e) { return null; }
+  },
+  set: function (k, v) {
+    var raw;
+    try { raw = JSON.stringify(v); } catch (e) { return; }
+    if (raw !== undefined) __host.lsSet(String(k), raw);
+  }
+}, 'localStorage');
+
 var console = { log: __host.log, warn: __host.log, error: __host.log };
 true;
 `;
@@ -30074,6 +30174,14 @@ var SceneScriptVm = class _SceneScriptVm {
   mesh;
   /** engine.registerAsset 的回调（装载期用它解析材质资产路径）。 */
   onAsset;
+  /** 纹理动画宿主（对象级脚本的 thisLayer.getTextureAnimation）；null = 安全 no-op。 */
+  texAnim;
+  /** engine.timeOfDay 时间源。 */
+  timeOfDay;
+  /** localStorage 底层字符串存储。 */
+  storage;
+  /** 当前正在执行的脚本所属图层 key（`id:<对象 id>`；thisLayer 的解析依据）。 */
+  currentKey = "";
   dt = 1 / 60;
   /** 单次脚本调用的指令预算（缺省 STEP_BUDGET；callOne 每次调用前重置）。 */
   stepBudget;
@@ -30087,6 +30195,9 @@ var SceneScriptVm = class _SceneScriptVm {
     });
     this.mesh = opts.dynamicMesh ?? null;
     this.onAsset = opts.onAsset ?? null;
+    this.texAnim = opts.textureAnimation ?? null;
+    this.timeOfDay = opts.timeOfDay ?? localTimeOfDay;
+    this.storage = opts.storage ?? createDefaultStorage();
     this.stepBudget = Number.isFinite(opts.stepBudget) && opts.stepBudget > 0 ? opts.stepBudget : STEP_BUDGET2;
     this.budget = this.stepBudget;
   }
@@ -30191,6 +30302,53 @@ var SceneScriptVm = class _SceneScriptVm {
     define("frametime", () => ctx.newNumber(this.dt));
     define("log", () => {
     });
+    define("currentLayerKey", () => ctx.newString(this.currentKey));
+    define("texAnimPause", (k) => {
+      this.texAnim?.pause(this.keyOf(k));
+    });
+    define("texAnimPlay", (k) => {
+      this.texAnim?.play(this.keyOf(k));
+    });
+    define("texAnimStop", (k) => {
+      this.texAnim?.stop(this.keyOf(k));
+    });
+    define("texAnimIsPlaying", (k) => {
+      const id = this.keyOf(k);
+      return this.texAnim && id >= 0 && this.texAnim.isPlaying(id) ? ctx.true : ctx.false;
+    });
+    define("texAnimSetFrame", (k, f) => {
+      const id = this.keyOf(k);
+      if (this.texAnim && id >= 0) this.texAnim.setFrame(id, ctx.getNumber(f));
+    });
+    define("texAnimGetFrame", (k) => {
+      const id = this.keyOf(k);
+      return ctx.newNumber(this.texAnim && id >= 0 ? this.texAnim.getFrame(id) : -1);
+    });
+    define("timeOfDay", () => {
+      let v = 0;
+      try {
+        v = this.timeOfDay();
+      } catch {
+        v = 0;
+      }
+      if (!Number.isFinite(v)) v = 0;
+      return ctx.newNumber(Math.min(1, Math.max(0, v)));
+    });
+    define("lsGet", (k) => {
+      let raw = null;
+      try {
+        raw = this.storage.getItem(SCENE_SCRIPT_STORAGE_PREFIX + ctx.getString(k));
+      } catch {
+        raw = null;
+      }
+      return raw === null || raw === void 0 ? ctx.null : ctx.newString(raw);
+    });
+    define("lsSet", (k, v) => {
+      try {
+        this.storage.setItem(SCENE_SCRIPT_STORAGE_PREFIX + ctx.getString(k), ctx.getString(v));
+      } catch {
+      }
+    });
     define("registerAsset", (pH) => {
       this.onAsset?.(ctx.getString(pH));
     });
@@ -30259,8 +30417,9 @@ var SceneScriptVm = class _SceneScriptVm {
     return a;
   }
   /** 装载一个模块脚本。返回 false = eval 失败（该脚本被跳过，其余继续）。
-   *  `label` 用于日志（应带 scene 对象 id —— 脚本首行都是 `'use strict';`，不带 id 无法定位）。 */
-  load(source, label) {
+   *  `label` 用于日志（应带 scene 对象 id —— 脚本首行都是 `'use strict';`，不带 id 无法定位）。
+   *  `objectId` 供 thisLayer 解析；`scriptProperties` 是 scene.json 的覆盖值（注入给 createScriptProperties）。 */
+  load(source, label, objectId, scriptProperties) {
     const ctx = this.ctx;
     const sanitized = String(source ?? "").replace(/\bexport\s+/g, "");
     const tag = label ?? firstNonEmptyLine(sanitized);
@@ -30273,7 +30432,24 @@ return {
   cursorClick: (typeof cursorClick === 'function') ? cursorClick : null
 };
 })());`;
+    this.currentKey = objectId === void 0 ? "" : `id:${objectId}`;
+    const propsH = ctx.newObject();
+    for (const [key, value] of Object.entries(scriptProperties ?? {})) {
+      if (typeof value === "boolean") ctx.setProp(propsH, key, value ? ctx.true : ctx.false);
+      else if (typeof value === "number" && Number.isFinite(value)) {
+        const h = ctx.newNumber(value);
+        ctx.setProp(propsH, key, h);
+        h.dispose();
+      } else if (typeof value === "string") {
+        const h = ctx.newString(value);
+        ctx.setProp(propsH, key, h);
+        h.dispose();
+      }
+    }
+    ctx.setProp(ctx.global, "__weScriptProps", propsH);
     const r = ctx.evalCode(code, "scene-script.js");
+    ctx.setProp(ctx.global, "__weScriptProps", ctx.undefined);
+    propsH.dispose();
     if (r.error) {
       r.error.dispose();
       this.warn(`SceneScript eval \u5931\u8D25\uFF0C\u5DF2\u8DF3\u8FC7\u8BE5\u811A\u672C\uFF08${tag}\uFF09`);
@@ -30299,7 +30475,8 @@ return {
       apply: grab("applyUserProperties"),
       click: grab("cursorClick"),
       active: true,
-      label: tag
+      label: tag,
+      layerKey: objectId === void 0 ? "" : `id:${objectId}`
     };
     this.handles.push(inst);
     for (const h of [m.init, m.update, m.apply, m.click]) if (h) this.handles.push(h);
@@ -30308,6 +30485,7 @@ return {
   }
   callOne(m, fn, mode) {
     if (!m.active || !fn) return void 0;
+    this.currentKey = m.layerKey;
     this.budget = this.stepBudget;
     const ctx = this.ctx;
     let argH;
@@ -30418,6 +30596,25 @@ function firstNonEmptyLine(s) {
   }
   return "";
 }
+function localTimeOfDay() {
+  const d = /* @__PURE__ */ new Date();
+  const seconds = d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds() + d.getMilliseconds() / 1e3;
+  return seconds / 86400;
+}
+function createDefaultStorage() {
+  try {
+    const ls = globalThis.localStorage;
+    if (ls && typeof ls.getItem === "function" && typeof ls.setItem === "function") return ls;
+  } catch {
+  }
+  const mem = /* @__PURE__ */ new Map();
+  return {
+    getItem: (k) => mem.get(k) ?? null,
+    setItem: (k, v) => {
+      mem.set(k, v);
+    }
+  };
+}
 
 // src/client/scene-script-host.ts
 var SceneScriptHost = class _SceneScriptHost {
@@ -30451,10 +30648,12 @@ var SceneScriptHost = class _SceneScriptHost {
       anims,
       onWarn: opts.onWarn,
       dynamicMesh: opts.dynamicMesh,
-      onAsset: opts.onAsset
+      onAsset: opts.onAsset,
+      textureAnimation: opts.textureAnimation,
+      timeOfDay: opts.timeOfDay
     });
     if (!vm) return null;
-    for (const s of scripts) vm.load(s.source, `obj ${s.objectId}`);
+    for (const s of scripts) vm.load(s.source, `obj ${s.objectId}`, s.objectId, s.scriptProperties);
     vm.initAll();
     return new _SceneScriptHost(anims, state, vm, scripts.map((s) => s.objectId));
   }
@@ -31019,9 +31218,11 @@ async function collectObjectEffectChains(desc, loadFile, isHidden) {
 function collectScriptSources(desc) {
   const out = [];
   for (const obj of desc.objects) {
-    if (obj.visible?.kind !== "script") continue;
-    const s = obj.script;
-    if (typeof s === "string" && s.length > 0) out.push({ objectId: obj.id, source: s });
+    const visibleScript = obj.visible?.kind === "script" ? obj.script : void 0;
+    const source = typeof visibleScript === "string" && visibleScript.length > 0 ? visibleScript : obj.objectScript;
+    if (typeof source !== "string" || source.length === 0) continue;
+    const scriptProperties = typeof visibleScript === "string" && visibleScript.length > 0 ? obj.visible?.scriptProperties : obj.objectScriptProperties;
+    out.push(scriptProperties ? { objectId: obj.id, source, scriptProperties } : { objectId: obj.id, source });
   }
   return out;
 }
@@ -31521,7 +31722,16 @@ function createThreeSceneRenderer(opts) {
             userProperties: userProps,
             dynamicMesh: meshRegistry,
             onAsset: (p) => materialPaths.add(p),
-            onWarn: (m) => console.warn(`[wallpaper-engine] ${m}`)
+            onWarn: (m) => console.warn(`[wallpaper-engine] ${m}`),
+            // 对象级脚本的 thisLayer.getTextureAnimation → 本次 player 的精灵表控制。
+            textureAnimation: {
+              pause: (objId) => result.player.pauseSpriteSheet(objId),
+              play: (objId) => result.player.playSpriteSheet(objId),
+              stop: (objId) => result.player.stopSpriteSheet(objId),
+              isPlaying: (objId) => result.player.isSpriteSheetPlaying(objId),
+              setFrame: (objId, frame) => result.player.setSpriteSheetFrame(objId, frame),
+              getFrame: (objId) => result.player.getSpriteSheetFrame(objId)
+            }
           });
           for (const p of materialPaths) {
             if (materialTable.has(p)) continue;

@@ -178,14 +178,25 @@ export async function collectObjectEffectChains(
 //
 // ⚠️ 收集范围**不能**限定在「参与渲染的对象」：无 image/particle/text 字段的纯控制器对象会被
 // parseSceneJson 归到空粒子兜底分支，只按媒体字段派生 script 会静默丢掉它们，画面就仍然不动。
-export function collectScriptSources(desc: SceneDescription): Array<{ objectId: number; source: string }> {
-  const out: Array<{ objectId: number; source: string }> = [];
+// 脚本来源优先级：visible.script（可见性/视觉脚本）> objectScript（angles 等转换字段，对象级脚本）。
+export function collectScriptSources(
+  desc: SceneDescription,
+): Array<{ objectId: number; source: string; scriptProperties?: Record<string, unknown> }> {
+  const out: Array<{ objectId: number; source: string; scriptProperties?: Record<string, unknown> }> = [];
   for (const obj of desc.objects) {
-    // 只收 **visible.script** 来源的脚本：`obj.script` 对 text 对象装的是 `text.script`，那类归既有的
-    // text-script.ts 运行时 —— 在这里一并收会与 text 路径重复装载（多份 runtime 状态）。
-    if (obj.visible?.kind !== 'script') continue;
-    const s = (obj as { script?: unknown }).script;
-    if (typeof s === 'string' && s.length > 0) out.push({ objectId: obj.id, source: s });
+    // `obj.script` 对 text 对象装的是 `text.script`，那类归既有的 text-script.ts 运行时
+    // —— 在这里一并收会与 text 路径重复装载（多份 runtime 状态）。
+    const visibleScript = obj.visible?.kind === 'script'
+      ? (obj as { script?: unknown }).script
+      : undefined;
+    const source = typeof visibleScript === 'string' && visibleScript.length > 0
+      ? visibleScript
+      : obj.objectScript;
+    if (typeof source !== 'string' || source.length === 0) continue;
+    const scriptProperties = typeof visibleScript === 'string' && visibleScript.length > 0
+      ? obj.visible?.scriptProperties
+      : obj.objectScriptProperties;
+    out.push(scriptProperties ? { objectId: obj.id, source, scriptProperties } : { objectId: obj.id, source });
   }
   return out;
 }
@@ -853,6 +864,15 @@ export function createThreeSceneRenderer(opts?: {
             dynamicMesh: meshRegistry,
             onAsset: (p) => materialPaths.add(p),
             onWarn: (m) => console.warn(`[wallpaper-engine] ${m}`),
+            // 对象级脚本的 thisLayer.getTextureAnimation → 本次 player 的精灵表控制。
+            textureAnimation: {
+              pause: (objId) => result.player.pauseSpriteSheet(objId),
+              play: (objId) => result.player.playSpriteSheet(objId),
+              stop: (objId) => result.player.stopSpriteSheet(objId),
+              isPlaying: (objId) => result.player.isSpriteSheetPlaying(objId),
+              setFrame: (objId, frame) => result.player.setSpriteSheetFrame(objId, frame),
+              getFrame: (objId) => result.player.getSpriteSheetFrame(objId),
+            },
           });
           // 解析材质资产：material json → three 材质；纹理 `source/xxx` → materials/source/xxx.tex
           for (const p of materialPaths) {

@@ -6,17 +6,27 @@
 import { AnimRegistry, extractAnimFps } from './scene-anim.js';
 import { createLayerStateTable, type LayerStateTable, type LayerWrite } from './layer-state.js';
 import { SceneScriptVm } from './scene-script-vm.js';
+import type { TextureAnimationHost } from './scene-script-vm.js';
 import type { DynamicMeshRegistry } from './dynamic-mesh.js';
 
 export interface SceneScriptHostOptions {
   /** 必须按 scene.json 的 objects 顺序传入（脚本靠 shared 互通，顺序影响 init 期状态）。 */
-  scripts: Array<{ objectId: number; source: string }>;
+  scripts: Array<{
+    objectId: number;
+    source: string;
+    /** 对象脚本的 scene.json 覆盖值（createScriptProperties 注入；缺省用脚本内默认值）。 */
+    scriptProperties?: Record<string, unknown>;
+  }>;
   userProperties: Record<string, unknown>;
   onWarn?: (msg: string) => void;
   /** 动态网格注册表：透传给 VM，让 createModelData/createLayer/applyData 有真实落点。 */
   dynamicMesh?: DynamicMeshRegistry;
   /** engine.registerAsset 的回调（装载期收集材质资产路径，由调用方解析成 three 材质）。 */
   onAsset?: (materialPath: string) => void;
+  /** 对象级脚本的纹理动画落点（thisLayer.getTextureAnimation → player 的精灵表控制）。 */
+  textureAnimation?: TextureAnimationHost;
+  /** engine.timeOfDay 的 0-1 时间源（缺省本地时钟）。 */
+  timeOfDay?: () => number;
 }
 
 export class SceneScriptHost {
@@ -55,9 +65,11 @@ export class SceneScriptHost {
       onWarn: opts.onWarn,
       dynamicMesh: opts.dynamicMesh,
       onAsset: opts.onAsset,
+      textureAnimation: opts.textureAnimation,
+      timeOfDay: opts.timeOfDay,
     });
     if (!vm) return null;
-    for (const s of scripts) vm.load(s.source, `obj ${s.objectId}`);
+    for (const s of scripts) vm.load(s.source, `obj ${s.objectId}`, s.objectId, s.scriptProperties);
     vm.initAll();
     return new SceneScriptHost(anims, state, vm, scripts.map((s) => s.objectId));
   }

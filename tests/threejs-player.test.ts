@@ -4368,4 +4368,48 @@ describe('image 精灵表帧 UV（F13）', () => {
     [0, 2 / 3, 1, 2 / 3, 0, 1 / 3, 1, 1 / 3].forEach((exp, i) => expect(uv[i]).toBeCloseTo(exp, 6));
     player.dispose();
   });
+
+  // 对象级脚本控制（2026-10-20）：3765967112 的 angles.script init 会 pause + setFrame，
+  // 之后 updateSpriteSheets 不得再自动推进（桌面 WE 图标静止）。
+  it('pause 后 dt 推进不换帧；setFrame 立即写 UV；play 恢复自动推进', () => {
+    const { player } = makePlayer();
+    player.addBackground({ ...IMG, texture: spriteTex(3, 1, 3) });
+    expect(player.isSpriteSheetPlaying(123)).toBe(true);
+    player.pauseSpriteSheet(123);
+    expect(player.isSpriteSheetPlaying(123)).toBe(false);
+    player.update(5.0); // 5 秒足以自动播完一整轮
+    expect(player.getSpriteSheetFrame(123)).toBe(0);
+    expect(player.spritesheetUvForTest(123)).toEqual({ u0: 0, v0: 2 / 3, u1: 1, v1: 1 });
+    player.setSpriteSheetFrame(123, 2);
+    expect(player.getSpriteSheetFrame(123)).toBe(2);
+    expect(player.spritesheetUvForTest(123)).toEqual({ u0: 0, v0: 0, u1: 1, v1: 1 / 3 });
+    player.update(0.9); // 暂停期间仍不推进
+    expect(player.getSpriteSheetFrame(123)).toBe(2);
+    player.playSpriteSheet(123);
+    expect(player.isSpriteSheetPlaying(123)).toBe(true);
+    player.update(1.1); // elapsed 从 setFrame 的 2s 继续：3.1s → 第 0 帧
+    expect(player.getSpriteSheetFrame(123)).toBe(0);
+    player.dispose();
+  });
+
+  it('stop 停播并回到第 0 帧；未登记 id 的控制方法安全 no-op', () => {
+    const { player } = makePlayer();
+    player.addBackground({ ...IMG, texture: spriteTex(3, 1, 3) });
+    player.setSpriteSheetFrame(123, 1);
+    player.stopSpriteSheet(123);
+    expect(player.getSpriteSheetFrame(123)).toBe(0);
+    expect(player.isSpriteSheetPlaying(123)).toBe(false);
+    expect(player.spritesheetUvForTest(123)).toEqual({ u0: 0, v0: 2 / 3, u1: 1, v1: 1 });
+    player.update(3.0);
+    expect(player.getSpriteSheetFrame(123)).toBe(0);
+    expect(() => {
+      player.pauseSpriteSheet(999);
+      player.playSpriteSheet(999);
+      player.stopSpriteSheet(999);
+      player.setSpriteSheetFrame(999, 1);
+    }).not.toThrow();
+    expect(player.getSpriteSheetFrame(999)).toBe(-1);
+    expect(player.isSpriteSheetPlaying(999)).toBe(false);
+    player.dispose();
+  });
 });

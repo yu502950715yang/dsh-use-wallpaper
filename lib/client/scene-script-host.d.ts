@@ -1,10 +1,13 @@
 import { type LayerWrite } from './layer-state.js';
+import type { TextureAnimationHost } from './scene-script-vm.js';
 import type { DynamicMeshRegistry } from './dynamic-mesh.js';
 export interface SceneScriptHostOptions {
     /** 必须按 scene.json 的 objects 顺序传入（脚本靠 shared 互通，顺序影响 init 期状态）。 */
     scripts: Array<{
         objectId: number;
         source: string;
+        /** 对象脚本的 scene.json 覆盖值（createScriptProperties 注入；缺省用脚本内默认值）。 */
+        scriptProperties?: Record<string, unknown>;
     }>;
     userProperties: Record<string, unknown>;
     onWarn?: (msg: string) => void;
@@ -12,6 +15,10 @@ export interface SceneScriptHostOptions {
     dynamicMesh?: DynamicMeshRegistry;
     /** engine.registerAsset 的回调（装载期收集材质资产路径，由调用方解析成 three 材质）。 */
     onAsset?: (materialPath: string) => void;
+    /** 对象级脚本的纹理动画落点（thisLayer.getTextureAnimation → player 的精灵表控制）。 */
+    textureAnimation?: TextureAnimationHost;
+    /** engine.timeOfDay 的 0-1 时间源（缺省本地时钟）。 */
+    timeOfDay?: () => number;
 }
 export declare class SceneScriptHost {
     private readonly anims;

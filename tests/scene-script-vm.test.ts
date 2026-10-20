@@ -1,11 +1,17 @@
 // SceneScript VM（quickjs 单上下文 + 宿主原语）的行为测试。
 // 覆盖：图层读写进状态表、userProperties 注入、异常隔离、动画播放器打通、stub 不抛错、handle 释放。
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
 import { SceneScriptVm } from '../src/client/scene-script-vm.js';
 import { createLayerStateTable } from '../src/client/layer-state.js';
 import { AnimRegistry } from '../src/client/scene-anim.js';
 import { DynamicMeshRegistry } from '../src/client/dynamic-mesh.js';
+
+const DAY_NIGHT_SCRIPT = readFileSync(
+  new URL('./fixtures/3765967112/day-night-script.js', import.meta.url),
+  'utf8',
+);
 
 function setup(userProps: Record<string, unknown> = {}, fps = new Map<string, number>()) {
   const state = createLayerStateTable();
@@ -258,6 +264,133 @@ describe('SceneScriptVm', () => {
     vm!.load(`export function init(){ thisScene.getLayerByID(1).alpha = 1; }`); // 无 update
     vm!.initAll();
     expect(vm!.updateAll()).toEqual([true, false, 42, undefined]);
+    vm!.dispose();
+  });
+});
+
+// ── 对象级脚本的宿主 API（2026-10-20）：thisLayer.getTextureAnimation / engine.timeOfDay /
+//    localStorage / createScriptProperties。真实样本：3765967112 的 angles.script。
+describe('SceneScriptVm 对象级脚本 API', () => {
+  function fakeTexAnim() {
+    const calls: string[] = [];
+    let frame = 0;
+    let playing = true;
+    return {
+      calls,
+      host: {
+        pause: (id: number) => { calls.push(`pause:${id}`); playing = false; },
+        play: (id: number) => { calls.push(`play:${id}`); playing = true; },
+        stop: (id: number) => { calls.push(`stop:${id}`); playing = false; frame = 0; },
+        isPlaying: () => playing,
+        setFrame: (id: number, f: number) => { calls.push(`frame:${id}:${f}`); frame = f; },
+        getFrame: () => frame,
+      },
+    };
+  }
+
+  it('thisLayer 指向当前脚本所属对象；getTextureAnimation 走宿主且同一 key 复用同一对象', async () => {
+    const { state, anims, userProps } = setup();
+    const tex = fakeTexAnim();
+    const vm = await SceneScriptVm.create({
+      userProperties: userProps, state, anims, textureAnimation: tex.host,
+    });
+    vm!.load(`export function init(){
+      var a = thisLayer.getTextureAnimation();
+      a.pause();
+      a.setFrame(2);
+      a.play();
+      thisScene.getLayerByID(9).alpha = (a === thisLayer.getTextureAnimation() && a.getFrame() === 2 && a.isPlaying()) ? 1 : 0;
+    }`, 'obj 123', 123);
+    vm!.initAll();
+    expect(tex.calls).toEqual(['pause:123', 'frame:123:2', 'play:123']);
+    expect(state.read(9).alpha).toBe(1);
+    vm!.dispose();
+  });
+
+  it('真实 Fixture：scriptProperties 用 scene.json 覆盖（dayStart=0/nightStart=12），跨日夜边界才换帧', async () => {
+    const { state, anims, userProps } = setup();
+    const tex = fakeTexAnim();
+    let tod = 10 / 24; // 上午 = day（若用脚本缺省 8/20，13 点也仍是 day —— 覆盖值才让 13 点变 night）
+    const vm = await SceneScriptVm.create({
+      userProperties: userProps, state, anims,
+      textureAnimation: tex.host,
+      timeOfDay: () => tod,
+    });
+    vm!.load(DAY_NIGHT_SCRIPT, 'obj 123', 123, { dayStart: 0, nightStart: 12 });
+    vm!.initAll();
+    expect(tex.calls).toEqual(['pause:123', 'frame:123:0']); // automatic：init 只 pause + setFrame(0)
+    vm!.updateAll();
+    expect(tex.calls).toEqual(['pause:123', 'frame:123:0']); // 状态未变 ⇒ 不重写帧
+    tod = 13 / 24;
+    vm!.updateAll();
+    expect(tex.calls).toEqual(['pause:123', 'frame:123:0', 'frame:123:2']); // 跨入 night
+    vm!.updateAll();
+    expect(tex.calls.length).toBe(3); // 同状态不再写帧
+    vm!.dispose();
+  });
+
+  it('cursorClick 循环 automatic→day→night 并写 localStorage', async () => {
+    const { state, anims, userProps } = setup();
+    const tex = fakeTexAnim();
+    const store = new Map<string, string>();
+    const vm = await SceneScriptVm.create({
+      userProperties: userProps, state, anims,
+      textureAnimation: tex.host,
+      storage: { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => { store.set(k, v); } },
+    });
+    vm!.load(DAY_NIGHT_SCRIPT, 'obj 123', 123, { dayStart: 8, nightStart: 20 });
+    vm!.initAll();
+    vm!.clickAll();
+    expect(tex.calls.at(-1)).toBe('frame:123:1');
+    expect(store.get('we:scenescript:currentTimeState')).toBe('"day"');
+    vm!.clickAll();
+    expect(tex.calls.at(-1)).toBe('frame:123:2');
+    expect(store.get('we:scenescript:currentTimeState')).toBe('"night"');
+    vm!.clickAll();
+    expect(tex.calls.at(-1)).toBe('frame:123:0');
+    expect(store.get('we:scenescript:currentTimeState')).toBe('"automatic"');
+    vm!.dispose();
+  });
+
+  it('engine.timeOfDay 是宿主注入的 0-1 值；缺省走本地时钟且在有界区间', async () => {
+    const { state, anims, userProps } = setup();
+    const vm = await SceneScriptVm.create({
+      userProperties: userProps, state, anims,
+      timeOfDay: () => 14.5 / 24,
+    });
+    vm!.load(`export function init(){ thisScene.getLayerByID(1).alpha = engine.timeOfDay; }`);
+    vm!.initAll();
+    expect(state.read(1).alpha).toBeCloseTo(14.5 / 24, 6);
+    vm!.dispose();
+
+    const vm2 = await SceneScriptVm.create({ userProperties: userProps, state, anims });
+    vm2!.load(`export function init(){ thisScene.getLayerByID(2).alpha = engine.timeOfDay; }`);
+    vm2!.initAll();
+    const t = state.read(2).alpha!;
+    expect(t).toBeGreaterThanOrEqual(0);
+    expect(t).toBeLessThan(1);
+    vm2!.dispose();
+  });
+
+  it('localStorage get/set 往返对象/字符串，缺失返回 null（前缀 + JSON）', async () => {
+    const { state, anims, userProps } = setup();
+    const store = new Map<string, string>();
+    const vm = await SceneScriptVm.create({
+      userProperties: userProps, state, anims,
+      storage: { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => { store.set(k, v); } },
+    });
+    vm!.load(`export function init(){
+      localStorage.set('currentTimeState', 'day');
+      localStorage.set('obj', { a: [1, 2] });
+      var o = localStorage.get('obj');
+      thisScene.getLayerByID(1).alpha = (localStorage.get('currentTimeState') === 'day' && o.a[1] === 2) ? 1 : 0;
+      thisScene.getLayerByID(2).alpha = localStorage.get('missing') === null ? 1 : 0;
+    }`);
+    vm!.initAll();
+    expect(state.read(1).alpha).toBe(1);
+    expect(state.read(2).alpha).toBe(1);
+    expect(store.get('we:scenescript:currentTimeState')).toBe('"day"');
+    expect(JSON.parse(store.get('we:scenescript:obj')!)).toEqual({ a: [1, 2] });
     vm!.dispose();
   });
 });

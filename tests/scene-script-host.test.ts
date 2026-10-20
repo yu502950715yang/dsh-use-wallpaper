@@ -1,6 +1,30 @@
 // SceneScriptHost（编排层）行为测试：装载顺序、逐动画 fps 推进、脏写入、点击、降级。
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { SceneScriptHost } from '../src/client/scene-script-host.js';
+
+const DAY_NIGHT_SCRIPT = readFileSync(
+  new URL('./fixtures/3765967112/day-night-script.js', import.meta.url),
+  'utf8',
+);
+
+// 对象级脚本的纹理动画回调（three-renderer 接到 player 的同形接口）。
+function fakeTextureAnimation() {
+  const calls: string[] = [];
+  let frame = 0;
+  let playing = true;
+  return {
+    calls,
+    host: {
+      pause: (id: number) => { calls.push(`pause:${id}`); playing = false; },
+      play: (id: number) => { calls.push(`play:${id}`); playing = true; },
+      stop: (id: number) => { calls.push(`stop:${id}`); playing = false; frame = 0; },
+      isPlaying: () => playing,
+      setFrame: (id: number, f: number) => { calls.push(`frame:${id}:${f}`); frame = f; },
+      getFrame: () => frame,
+    },
+  };
+}
 
 describe('SceneScriptHost', () => {
   it('装载多个脚本并按传入顺序执行；后执行者看到先执行者写的 shared；同值不再脏', async () => {
@@ -140,6 +164,35 @@ describe('SceneScriptHost', () => {
     const d1 = host!.tick(1 / 60);
     expect(d1.get(31)?.visible).toBe(true);
     expect(d1.get(32)?.visible).toBe(false);
+    host!.dispose();
+  });
+});
+
+// 对象级脚本（3765967112 的 angles.script）：thisLayer 的纹理动画回调接到 player，脚本属性
+// 来自 scene.json（dayStart=0/nightStart=12），点击循环三态。
+describe('SceneScriptHost 对象级脚本', () => {
+  it('init 暂停纹理动画并写入起始帧；点击循环三态', async () => {
+    const tex = fakeTextureAnimation();
+    const host = await SceneScriptHost.create({
+      userProperties: {},
+      textureAnimation: tex.host,
+      scripts: [{
+        objectId: 123,
+        source: DAY_NIGHT_SCRIPT,
+        scriptProperties: { dayStart: 0, nightStart: 12 },
+      }],
+    });
+    expect(host!.scriptCount).toBe(1);
+    expect(tex.calls).toEqual(['pause:123', 'frame:123:0']);
+    host!.click();
+    expect(tex.calls.at(-1)).toBe('frame:123:1');
+    host!.click();
+    expect(tex.calls.at(-1)).toBe('frame:123:2');
+    host!.click();
+    expect(tex.calls.at(-1)).toBe('frame:123:0');
+    // update 不得覆盖已暂停的脚本帧（automatic 且状态未变 ⇒ 零写入）
+    host!.tick(1 / 60);
+    expect(tex.calls.length).toBe(5);
     host!.dispose();
   });
 });
