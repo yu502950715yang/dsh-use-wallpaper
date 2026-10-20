@@ -19,6 +19,7 @@ import {
 } from './object-range.js';
 import { ObjectEffectStage } from './object-effects.js';
 import { createGlowStage, type GlowStage } from './glow-stage.js';
+import { createBloomStage } from './bloom-stage.js';
 // 帧内快照：段渲染目标 + 消费者边界快照；按创建它的 renderer 复用，renderer 变化时换绑。
 import { createFrameCapture, type FrameCapture } from './frame-capture.js';
 import { readClientSettings, getUserPropertyValue } from './settings.js';
@@ -210,6 +211,8 @@ export function createThreeSceneRenderer(opts?: {
   let currentStage: ObjectEffectStage | null = null;
   // 本次装配的应用级 Glow stage（同上：闭包持有，teardown 释放）。
   let currentGlow: GlowStage | null = null;
+  // 本次装配的壁纸级 bloom stage（参数来自 scene.json general.bloom*，同上 teardown 释放）。
+  let currentBloom: GlowStage | null = null;
   // 帧内快照：按**创建它的 renderer** 复用同一实例（换 canvas/renderer 必须换新实例，否则拍到旧画布）；
   // 每次装配开始 `reset()` 复位 active，否则换壁纸后会永久走段渲染路径。
   let frameCapture: FrameCapture | null = null;
@@ -348,6 +351,8 @@ export function createThreeSceneRenderer(opts?: {
     // Glow stage 持有自己的 RT/材质，同样要在 player.dispose（释放 renderer）之前释放。
     currentGlow?.dispose();
     currentGlow = null;
+    currentBloom?.dispose();
+    currentBloom = null;
     current?.player.dispose();
     for (const sim of current?.sims ?? []) sim.free?.();
     current = null;
@@ -917,6 +922,15 @@ export function createThreeSceneRenderer(opts?: {
           }
           result.player.setObjectEffectStage(stage);
           currentStage = stage;
+        }
+        // 壁纸级 bloom：参数来自 scene.json general.bloom*（作者设定，非用户设置）；尺寸用画布缓冲。
+        // 仅有该字段时装配（新 player 的 bloomStage 初始即 null，无需显式清除）。
+        if (desc.bloom) {
+          currentBloom = createBloomStage(fg.width, fg.height, {
+            strength: desc.bloom.strength,
+            threshold: desc.bloom.threshold,
+          });
+          result.player.setBloomStage(currentBloom);
         }
         // 应用级 Glow：按插件设置装配（关闭时零资源）。⚠️ 必须在 isolate 块**之外** —— Glow 与「有无对象被
         // 隔离」无关；尺寸用画布缓冲，resize 由 player.resize 内部单点同步，此处不重复。

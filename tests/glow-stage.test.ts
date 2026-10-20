@@ -262,6 +262,79 @@ describe('createGlowStage（RT 池与 pass 链）', () => {
     pre.dispose();
   });
 
+  // F8：bloom 两级串联需要 composite 写进中间 RT（第 5 参 outTarget），其余 pass 的目标不变。
+  it('apply 传 outTarget：仅 composite 改写到该 RT，其余 pass 目标不变', () => {
+    const out = new THREE.WebGLRenderTarget(1280, 720);
+    const { renderer, calls } = mockRenderer();
+    const stage = createGlowStage(1280, 720)!;
+    stage.apply(renderer, scene, camera, undefined, out);
+    expect(calls.render).toBe(11);
+    // 与既有 pass 链测试同口径：把目标换成「首次出现编号」，node 无 WebGL 也能全序比对。
+    const seen = new Map<unknown, string>();
+    const seq = calls.setRenderTarget.map((t) => {
+      if (t === null) return 'canvas';
+      let label = seen.get(t);
+      if (label === undefined) { label = `rt${seen.size}`; seen.set(t, label); }
+      return label;
+    });
+    expect(seq).toEqual([
+      'rt0', 'canvas',  // 1) 主场景 → base RT
+      'rt1', 'canvas',  // 2) bright-pass → L1a
+      'rt2', 'canvas',  // 3) L1 H → L1b
+      'rt1', 'canvas',  // 4) L1 V → L1a
+      'rt3', 'canvas',  // 5) L1a → L2a
+      'rt4', 'canvas',  // 6) L2 H → L2b
+      'rt3', 'canvas',  // 7) L2 V → L2a
+      'rt5', 'canvas',  // 8) L2a → L3a
+      'rt6', 'canvas',  // 9) L3 H → L3b
+      'rt5', 'canvas',  // 10) L3 V → L3a
+      'rt7', 'canvas',  // 11) composite → outTarget（前置 10 步与不传时一致）
+    ]);
+    expect(seen.get(out)).toBe('rt7');
+    stage.dispose();
+    out.dispose();
+  });
+
+  it('preRendered + outTarget（段渲染 + bloom 串联）：不自渲主场景，composite 写 outTarget', () => {
+    const { renderer, calls } = mockRenderer();
+    const stage = createGlowStage(1280, 720)!;
+    const pre = new THREE.WebGLRenderTarget(1280, 720);
+    const out = new THREE.WebGLRenderTarget(1280, 720);
+    stage.apply(renderer, scene, camera, pre, out);
+    expect(calls.render).toBe(10);
+    expect(calls.setRenderTarget.slice(-2)).toEqual([out, null]);
+    expect(calls.scenes.filter((s) => s === scene).length).toBe(0);
+    stage.dispose();
+    pre.dispose();
+    out.dispose();
+  });
+
+  // 两级串联的失败兜底：bloom 失败时下游 Glow 还要读 outTarget，绝不能把回退内容只贴到画布（否则下游读到黑）。
+  it('传 outTarget 时 pass 失败：base 贴进 outTarget；永久降级后每帧主场景渲进 outTarget', () => {
+    const { renderer, calls } = mockRenderer();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const stage = createGlowStage(1280, 720)!;
+    const out = new THREE.WebGLRenderTarget(1280, 720);
+    let n = 0;
+    (renderer as unknown as { render: (s?: unknown) => void }).render = (s?: unknown) => {
+      calls.render += 1;
+      calls.scenes.push(s);
+      n += 1;
+      if (n === 2) throw new Error('boom'); // bright-pass 失败（base 已渲好）
+    };
+    stage.apply(renderer, scene, camera, undefined, out);
+    expect((stage as unknown as { glowFailed: boolean }).glowFailed).toBe(true);
+    expect(calls.scenes.filter((s) => s === scene).length).toBe(1); // 主场景只渲一次（base）
+    expect(calls.setRenderTarget.slice(-2)).toEqual([out, null]);  // 回退贴图写 outTarget，不写画布
+    // 之后：每帧主场景直接渲进 outTarget（下游 Glow 仍拿到本帧内容），不再跑 pass 链
+    stage.apply(renderer, scene, camera, undefined, out);
+    expect(calls.scenes.filter((s) => s === scene).length).toBe(2);
+    expect(calls.setRenderTarget.slice(-2)).toEqual([out, null]);
+    warn.mockRestore();
+    stage.dispose();
+    out.dispose();
+  });
+
   it('shader 链接失败（three 只调 onShaderError、不抛）⇒ 同样永久降级为直渲 + 告警带 GLSL 详情', () => {
     const { renderer, calls } = mockRenderer();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});

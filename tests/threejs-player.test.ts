@@ -2907,6 +2907,154 @@ describe('ThreeScenePlayer 段渲染（frameCapture）', () => {
   });
 });
 
+// v0.8.1 F8：壁纸级 bloom（scene.json general.bloom*）与应用级 Glow 的两级串联。
+// 顺序契约：bloom 先（写中间 RT）→ Glow 读中间 RT 合成到画布 / 无 Glow 时 composite-quad 贴回。
+describe('ThreeScenePlayer 壁纸级 bloom（F8）', () => {
+  /** bloom/glow 的最小 spy：记录 apply 实参、调用顺序与 resize 尺寸（诊断字段不进 GlowStage 接口）。 */
+  function stageSpy(tag: string, calls: string[], args: unknown[][], sizes: Array<[number, number]> = []) {
+    return {
+      apply: (...a: unknown[]) => { calls.push(tag); args.push(a); },
+      resize: (w: number, h: number) => { sizes.push([w, h]); },
+      setOptions: () => {},
+      dispose: () => {},
+    } as never;
+  }
+
+  function makeTexture(): THREE.Texture {
+    const tex = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+    tex.needsUpdate = true;
+    return tex;
+  }
+
+  /** 造 3 个背景对象（renderOrder 0/1/2 = scene.json 对象 id 11/22/33）。 */
+  function addLayers(player: ThreeScenePlayer): void {
+    for (const [i, objectId] of [11, 22, 33].entries()) {
+      player.addBackground({
+        origin: [i * 10, 0, 0], size: [10, 10], scale: [1, 1, 1], texture: makeTexture(),
+        sceneW: 100, sceneH: 100, objectId, renderOrder: i,
+      });
+    }
+  }
+
+  it('有壁纸 bloom 时先 bloom 再 glow（同一张中间 RT 串联，最终由 Glow 合成到画布）', () => {
+    const { player } = makePlayer();
+    const calls: string[] = [];
+    const bloomArgs: unknown[][] = [];
+    const glowArgs: unknown[][] = [];
+    player.setBloomStage(stageSpy('bloom', calls, bloomArgs));
+    player.setGlowStage(stageSpy('glow', calls, glowArgs));
+    player.render();
+    expect(calls).toEqual(['bloom', 'glow']);
+    // bloom 自渲主场景（前 3 参 = player 的 renderer/scene/camera），第 5 参 = 中间 RT
+    expect(bloomArgs[0][0]).toBe(player.renderer);
+    expect(bloomArgs[0][1]).toBe(player.scene);
+    expect(bloomArgs[0][2]).toBe(player.camera);
+    expect(bloomArgs[0][3]).toBeUndefined();
+    const middle = bloomArgs[0][4];
+    expect(middle).toBeInstanceOf(THREE.WebGLRenderTarget);
+    // glow 把同一张中间 RT 当 preRendered 读（第 4 参 = 段渲染/上游结果），不再自渲主场景
+    expect(glowArgs[0][3]).toBe(middle);
+  });
+
+  it('只有壁纸 bloom（Glow 关闭）时：bloom 写 RT 后由 composite-quad 贴回画布，不直渲主场景', () => {
+    const { player, mock } = makePlayer();
+    const calls: string[] = [];
+    const bloomArgs: unknown[][] = [];
+    player.setBloomStage(stageSpy('bloom', calls, bloomArgs));
+    const before = mock._renders.length;
+    player.render();
+    expect(calls).toEqual(['bloom']);
+    // 末段合成 = 一次默认 fb 渲染，且渲染的不是主场景（composite-quad 的全屏 quad）
+    const after = mock._renders.slice(before);
+    expect(after.length).toBe(1);
+    expect(after[0].scene).not.toBe(player.scene);
+    expect(after[0].target).toBeNull();
+  });
+
+  it('无壁纸 bloom 时 Glow 单独装配仍按原 3 参调用（零回归：不额外建中间 RT）', () => {
+    const { player } = makePlayer();
+    const calls: string[] = [];
+    const glowArgs: unknown[][] = [];
+    player.setGlowStage(stageSpy('glow', calls, glowArgs));
+    player.render();
+    expect(calls).toEqual(['glow']);
+    expect(glowArgs[0]).toHaveLength(3);
+  });
+
+  it('resize 同步 bloomStage 与 bloomRT（按画布缓冲尺寸）', () => {
+    const { player } = makePlayer();
+    const calls: string[] = [];
+    const bloomArgs: unknown[][] = [];
+    const sizes: Array<[number, number]> = [];
+    player.setBloomStage(stageSpy('bloom', calls, bloomArgs, sizes));
+    player.render(); // 惰性建中间 RT
+    player.resize(800, 600);
+    player.render();
+    const middle = bloomArgs[bloomArgs.length - 1][4] as THREE.WebGLRenderTarget;
+    // jsdom dpr=1 ⇒ 画布缓冲 == 视口
+    expect([middle.width, middle.height]).toEqual([800, 600]);
+    expect(sizes[sizes.length - 1]).toEqual([800, 600]);
+  });
+
+  it('dispose 释放 bloomStage 与中间 RT', () => {
+    const { player } = makePlayer();
+    let stageDisposed = 0;
+    const bloom = {
+      apply: () => {}, resize: () => {}, setOptions: () => {},
+      dispose: () => { stageDisposed += 1; },
+    };
+    player.setBloomStage(bloom as never);
+    player.render(); // 建 RT
+    const middle = (player as unknown as { bloomRT: THREE.WebGLRenderTarget | null }).bloomRT;
+    expect(middle).toBeInstanceOf(THREE.WebGLRenderTarget);
+    const rtDisposed = vi.spyOn(middle!, 'dispose');
+    player.dispose();
+    expect(stageDisposed).toBe(1);
+    expect(rtDisposed).toHaveBeenCalled();
+  });
+
+  it('段渲染末段：bloom 读 frameRT（第 4 参）写中间 RT，Glow 再读中间 RT', () => {
+    const { player, mock } = makePlayer();
+    addLayers(player);
+    const calls: string[] = [];
+    const bloomArgs: unknown[][] = [];
+    const glowArgs: unknown[][] = [];
+    player.setBloomStage(stageSpy('bloom', calls, bloomArgs));
+    player.setGlowStage(stageSpy('glow', calls, glowArgs));
+    const cap = createFrameCapture(mock as unknown as THREE.WebGLRenderer);
+    cap.use();
+    player.setFrameCapture(cap);
+    player.registerFrameConsumer(22);
+    player.render();
+    expect(calls).toEqual(['bloom', 'glow']);
+    expect(bloomArgs[0][3]).toBe(cap.target);       // 段渲染内容已写进 frameRT ⇒ bloom 不自渲主场景
+    expect(glowArgs[0][3]).toBe(bloomArgs[0][4]);   // Glow 读 bloom 的中间 RT
+    // 2 段 RT 渲染 + stage 接管末段（spy 不真渲）⇒ 不再向默认 fb 渲染
+    expect(mock._renders.map((r) => r.target)).toEqual([cap.target, cap.target]);
+    player.dispose();
+  });
+
+  it('段渲染末段且无 Glow：bloom 写中间 RT 后由 composite-quad 贴回默认 fb', () => {
+    const { player, mock } = makePlayer();
+    addLayers(player);
+    const calls: string[] = [];
+    const bloomArgs: unknown[][] = [];
+    player.setBloomStage(stageSpy('bloom', calls, bloomArgs));
+    const cap = createFrameCapture(mock as unknown as THREE.WebGLRenderer);
+    cap.use();
+    player.setFrameCapture(cap);
+    player.registerFrameConsumer(22);
+    player.render();
+    expect(calls).toEqual(['bloom']);
+    expect(bloomArgs[0][3]).toBe(cap.target);
+    const targets = mock._renders.map((r) => r.target);
+    expect(targets.slice(0, 2)).toEqual([cap.target, cap.target]); // 2 段
+    expect(targets[2]).toBeNull();                                 // composite-quad 贴回画布
+    expect(mock._renders[2].scene).not.toBe(player.scene);
+    player.dispose();
+  });
+});
+
 // Task 4：粒子 REFRACT（材质 combo REFRACT=1）—— 首个真实消费者（2897292240 的雨层 obj #25/#36）。
 // 语义：片元按槽 1 的法线/遮罩把屏幕 UV 位移后采「本帧场景快照」；折射层自动成为段边界消费者。
 describe('ThreeScenePlayer 粒子 REFRACT', () => {

@@ -47,12 +47,14 @@ export interface GlowStage {
   /**
    * 跑一遍 Glow 链。`preRendered`（段渲染）非空时**跳过自渲主场景**那一步，直接把它当 base RT 做
    * bright-pass（调用方已把主场景写进该 RT，且它就是画布缓冲尺寸的段目标）。
+   * `outTarget`（两级串联）非空时 composite 写入该 RT（bloom → Glow）；缺省 null = 画布。
    */
   apply(
     renderer: THREE.WebGLRenderer,
     scene: THREE.Scene,
     camera: THREE.Camera,
-    preRendered?: THREE.WebGLRenderTarget,
+    preRendered?: THREE.WebGLRenderTarget | null,
+    outTarget?: THREE.WebGLRenderTarget | null,
   ): void;
   resize(width: number, height: number): void;
   setOptions(opts: GlowOptions): void;
@@ -254,12 +256,12 @@ export function createGlowStage(
     runPass(r, blurMat, a);
   }
 
-  // 失败回退用：把已渲好的 base 贴到 canvas（= 本帧的无 Glow 输出，且**不重复渲染主场景**）。
-  // 贴图本身失败（copy 材质也坏）返回 false，调用方退回直渲。
-  function copyBaseToCanvas(r: THREE.WebGLRenderer, base: THREE.Texture): boolean {
+  // 失败回退用：把已渲好的 base 贴到 dst（null = canvas，= 本帧的无 Glow 输出，且**不重复渲染主场景**）。
+  // 两级串联（bloom）必须贴进 outTarget：下游 Glow 还要读它，只贴画布会让下游读到黑。贴图失败返回 false。
+  function copyBaseTo(r: THREE.WebGLRenderer, base: THREE.Texture, dst: THREE.WebGLRenderTarget | null): boolean {
     try {
       copyMat.uniforms.tSrc.value = base;
-      runPass(r, copyMat, null);
+      runPass(r, copyMat, dst);
       return true;
     } catch {
       return false;
@@ -268,8 +270,8 @@ export function createGlowStage(
 
   // 9 个 pass（主场景 → base RT 那一步在 apply 里、钩子之前做），顺序与离线实验的**链式**一致：
   // down → blur → 作为下一级输入。`base`：bright-pass 与 composite 采样的底图 —— 自渲时是 baseRT，
-  // 段渲染时是调用方的 frameRT。
-  function renderGlowPasses(r: THREE.WebGLRenderer, base: THREE.Texture): void {
+  // 段渲染时是调用方的 frameRT。`outTarget`：composite 的输出目标（null = 画布）。
+  function renderGlowPasses(r: THREE.WebGLRenderer, base: THREE.Texture, outTarget: THREE.WebGLRenderTarget | null): void {
     const [l1a, l1b, l2a, l2b, l3a, l3b] = levelRTs;
     // 1) bright-pass（含降采样）：base → L1a
     brightMat.uniforms.tSrc.value = base;
@@ -284,21 +286,26 @@ export function createGlowStage(
     copyMat.uniforms.tSrc.value = l2a.texture; runPass(r, copyMat, l3a);
     // 8) L3 模糊（H + V 两个 pass 计入上一步之后）
     blurLevel(r, 2, l3a, l3b);
-    // 9) composite：base + 三级等权上采样累加 → canvas
+    // 9) composite：base + 三级等权上采样累加 → canvas（两级串联时写 outTarget）
     compositeMat.uniforms.tBase.value = base;
     compositeMat.uniforms.tL1.value = l1a.texture;
     compositeMat.uniforms.tL2.value = l2a.texture;
     compositeMat.uniforms.tL3.value = l3a.texture;
     compositeMat.uniforms.uStrength.value = options.strength;
-    runPass(r, compositeMat, null);
+    runPass(r, compositeMat, outTarget ?? null);
   }
 
   buildTargets(width, height);
 
   return {
-    apply(r, scene, camera, preRendered) {
+    apply(r, scene, camera, preRendered, outTarget) {
       if (disposed) return;
-      if (glowFailed) { r.setRenderTarget(null); r.render(scene, camera); return; }
+      if (glowFailed) {
+        // 永久降级：两级串联时主场景仍须写进 outTarget（下游 Glow 读它），否则直渲画布。
+        if (outTarget) renderIntoRenderTarget(r, outTarget, scene, camera);
+        else { r.setRenderTarget(null); r.render(scene, camera); }
+        return;
+      }
       // 段渲染已把主场景写进 preRendered（= 同一张画布尺寸 RT）⇒ 跳过自渲那一步；不传时保持原行为。
       const base = preRendered ?? baseRT!;
       try {
@@ -309,14 +316,14 @@ export function createGlowStage(
         if (!preRendered) renderIntoRenderTarget(r, baseRT!, scene, camera);
         baseRendered = true; // 两条路径到这里 base 都已有**本帧**内容（preRendered 由调用方写入）
         installShaderErrorHook(r);
-        renderGlowPasses(r, base.texture);
+        renderGlowPasses(r, base.texture, outTarget ?? null);
       } catch (e) {
         // 绝不白屏：一次失败即永久降级为直渲（运行期异常 / pass 失败）
         glowFailed = true;
         console.warn('[wallpaper-engine] 应用级 Glow 失败，已降级为直渲：' + String((e as Error)?.message ?? e));
-        // 本帧回退：base 里已是本帧内容 ⇒ 贴回 canvas 即可。只有连 base 都没渲成
+        // 本帧回退：base 里已是本帧内容 ⇒ 贴回 outTarget/画布即可。只有连 base 都没渲成
         //（baseRendered=false，内容不可信）才退回直渲。
-        if (baseRendered && copyBaseToCanvas(r, base.texture)) return;
+        if (baseRendered && copyBaseTo(r, base.texture, outTarget ?? null)) return;
         r.setRenderTarget(null);
         r.render(scene, camera);
       } finally {

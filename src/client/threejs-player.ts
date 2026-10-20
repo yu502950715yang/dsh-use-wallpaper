@@ -667,6 +667,10 @@ export class ThreeScenePlayer {
   private objectEffectStage: ObjectEffectStage | null = null;
   // 应用级 Glow 注入点（null = 本壁纸不开 Glow，帧序退化为原路径）。
   private glowStage: GlowStage | null = null;
+  // 壁纸级 bloom 注入点（scene.json general.bloom*）：非空时先 bloom 再交给 Glow/合成。
+  private bloomStage: GlowStage | null = null;
+  // bloom 的中间结果 RT（全画布缓冲尺寸）：仅装配 bloom 时惰性创建，由 resize 同步。
+  private bloomRT: THREE.WebGLRenderTarget | null = null;
   // 帧内快照注入点（null 或 active=false = 本壁纸无消费者 ⇒ 帧序与改动前逐字相同）。
   private frameCapture: FrameCapture | null = null;
   // 消费者集合（键 = scene.json 对象 id）：段渲染时每个消费者**开启新的一段**，段数 = 消费者数 + 1。
@@ -762,6 +766,8 @@ export class ThreeScenePlayer {
     // 退回本类自持的 canvas（生产路径 renderer.domElement 就是它）。
     const buf = (this.renderer as { domElement?: HTMLCanvasElement }).domElement ?? this.canvas;
     this.glowStage?.resize(buf.width, buf.height);
+    this.bloomStage?.resize(buf.width, buf.height);
+    this.bloomRT?.setSize(buf.width, buf.height);
     // 帧内快照的段目标/快照纹理同样按画布缓冲尺寸（否则 RT 被拉伸、快照与屏幕 UV 错位）。
     this.frameCapture?.resize(buf.width, buf.height);
     // 快照已重建（旧引用作废）⇒ 让编排器作废尚未被 advance 消费的在途快照（已被带进闭包的
@@ -773,6 +779,16 @@ export class ThreeScenePlayer {
     for (const entry of this.isolated.values()) {
       this.applyCompositeSampling(entry.rt, entry.worldW, entry.worldH);
     }
+  }
+
+  // bloom 的中间结果 RT：按画布缓冲尺寸惰性创建并同步（与 Glow 各级 RT 同源）。
+  private ensureBloomRT(): THREE.WebGLRenderTarget {
+    const dom = (this.renderer as { domElement?: HTMLCanvasElement }).domElement ?? this.canvas;
+    const w = Math.max(1, dom.width);
+    const h = Math.max(1, dom.height);
+    if (!this.bloomRT) this.bloomRT = new THREE.WebGLRenderTarget(w, h);
+    else if (this.bloomRT.width !== w || this.bloomRT.height !== h) this.bloomRT.setSize(w, h);
+    return this.bloomRT;
   }
 
   /** 画质档位：走 resize 路径重推画布缓冲与屏幕密度（对象 RT 的基准随之变化）。 */
@@ -1042,7 +1058,16 @@ export class ThreeScenePlayer {
     // 快照不可用（未注入/未激活）时折射层无从取样 ⇒ 隐藏一次（WE NORMALMAP=0 语义：输出≡背景）。
     this.hideRefractWithoutCapture();
     if (this.frameCapture?.active) this.renderSegmented();
-    else if (this.glowStage) this.glowStage.apply(this.renderer, this.scene, this.camera);
+    else if (this.bloomStage) {
+      // 壁纸 bloom → 应用级 Glow（或 composite-quad）两级串联；中间结果落在 bloomRT。
+      const bloomRT = this.ensureBloomRT();
+      this.bloomStage.apply(this.renderer, this.scene, this.camera, undefined, bloomRT);
+      if (this.glowStage) this.glowStage.apply(this.renderer, this.scene, this.camera, bloomRT);
+      else {
+        this.compositeQuad ??= createCompositeQuad(this.renderer);
+        this.compositeQuad.composite(this.renderer, bloomRT.texture);
+      }
+    } else if (this.glowStage) this.glowStage.apply(this.renderer, this.scene, this.camera);
     else this.renderer.render(this.scene, this.camera);
     // 抓帧必须在最终画面渲染后的**同一 JS 任务**内读默认 framebuffer（挪到 rAF/定时器后内容已换）。
     this.flushCapture();
@@ -1207,9 +1232,17 @@ export class ThreeScenePlayer {
       this.renderer.setRenderTarget(null);
       for (let i = 0; i < children.length; i++) children[i].visible = prevVisible[i];
     }
-    // ⑤ 末段合成：Glow 开启时把 frameRT 交给 Glow（复用同一张，省掉它自渲主场景那次）；
-    //    关闭时用 composite-quad 全屏贴回默认 fb。
-    if (this.glowStage) {
+    // ⑤ 末段合成：有壁纸 bloom 时先 bloom（读 frameRT、写中间 RT），再 Glow 读中间 RT 合成到画布；
+    //    无 bloom 时路径与引入 bloom 前逐字相同（Glow 读 frameRT / composite-quad 贴 frameRT）。
+    if (this.bloomStage) {
+      const bloomRT = this.ensureBloomRT();
+      this.bloomStage.apply(this.renderer, this.scene, this.camera, capture.target, bloomRT);
+      if (this.glowStage) this.glowStage.apply(this.renderer, this.scene, this.camera, bloomRT);
+      else {
+        this.compositeQuad ??= createCompositeQuad(this.renderer);
+        this.compositeQuad.composite(this.renderer, bloomRT.texture);
+      }
+    } else if (this.glowStage) {
       this.glowStage.apply(this.renderer, this.scene, this.camera, capture.target);
     } else {
       this.compositeQuad ??= createCompositeQuad(this.renderer);
@@ -1225,6 +1258,11 @@ export class ThreeScenePlayer {
   /** 装配应用级 Glow（null = 关闭）。关闭时帧序与本方法加入前逐字相同。 */
   setGlowStage(stage: GlowStage | null): void {
     this.glowStage = stage;
+  }
+
+  /** 装配壁纸级 bloom（null = 关闭）。关闭时帧序与本方法加入前逐字相同。 */
+  setBloomStage(stage: GlowStage | null): void {
+    this.bloomStage = stage;
   }
 
   /** 按 scene.json 对象 id 取最终显示的 three 对象（脚本图层桥用）。未登记 → undefined。 */
@@ -2079,6 +2117,11 @@ export class ThreeScenePlayer {
     // 应用级 Glow 的 RT/shader 归 stage 所有，须在 renderer.dispose() 前释放。
     this.glowStage?.dispose();
     this.glowStage = null;
+    // 壁纸 bloom 的 stage 与中间 RT 同理。
+    this.bloomStage?.dispose();
+    this.bloomStage = null;
+    this.bloomRT?.dispose();
+    this.bloomRT = null;
     // 帧内快照**不在此释放**：它由创建者（three-renderer）独占释放并跨壁纸复用，在此 dispose 会让
     // 下一个壁纸拿到「已释放」实例（use() 静默无效、读 target 抛错）。
     this.frameCapture = null;

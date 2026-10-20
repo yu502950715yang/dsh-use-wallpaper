@@ -315,6 +315,10 @@ export function parseSceneJson(raw: string): SceneDescription {
     const max = Math.max(cc[0], cc[1], cc[2]);
     if (max > 0 && max <= 1) cc = [cc[0] * 255, cc[1] * 255, cc[2] * 255];
   }
+  // 壁纸级 bloom（WE general.bloom*）：仅 bloom===true 才产出；缺省 strength=2 / threshold=0.65。
+  const bloom = gen.bloom === true
+    ? { strength: numOr(gen.bloomstrength, 2), threshold: numOr(gen.bloomthreshold, 0.65) }
+    : undefined;
   return {
     camera: {
       center: vec3(cam.center),
@@ -330,6 +334,7 @@ export function parseSceneJson(raw: string): SceneDescription {
     fov: numOr(gen.fov, 50),
     perspectiveOverrideFov: numOr(gen.perspectiveoverridefov, 0),
     clearColor: cc,
+    bloom,
     // 相机视差总开关与系数（general.cameraparallax*）；缺省全 0 = 与加此功能前观感一致。
     parallax: readParallaxConfig(gen),
     objects,

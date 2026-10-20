@@ -184,6 +184,8 @@ export interface SceneDescription {
   perspectiveOverrideFov?: number;
   /** 清屏色（scene.json `general.clearcolor`，已归一化到 0-255）。 */
   clearColor?: [number, number, number];
+  /** 壁纸级 bloom（WE general.bloom*，`bloom:true` 才产出；v0.8.1 只支持 threshold/strength）。 */
+  bloom?: { strength: number; threshold: number };
   /** 相机视差总配置（scene.json `general.cameraparallax*`，缺省全 0）。 */
   parallax: ParallaxConfig;
   objects: SceneObject[];

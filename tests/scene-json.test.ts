@@ -39,6 +39,16 @@ describe('parseSceneJson', () => {
       .toEqual([0.06667 * 255, 0.07843 * 255, 0.09412 * 255]);
     expect(parse('17 20 24').clearColor).toEqual([17, 20, 24]);
   });
+  // F8：壁纸级 bloom（general.bloom*）——仅 bloom===true 才产出；缺省 strength=2 / threshold=0.65。
+  it('解析壁纸级 bloom（strength/threshold，缺省 2/0.65）', () => {
+    const parse = (general: Record<string, unknown>) =>
+      parseSceneJson(JSON.stringify({ camera: {}, general, objects: [] }));
+    expect(parse({ bloom: true }).bloom).toEqual({ strength: 2, threshold: 0.65 });
+    expect(parse({ bloom: true, bloomstrength: 0.98, bloomthreshold: 0.65 }).bloom)
+      .toEqual({ strength: 0.98, threshold: 0.65 });
+    expect(parse({ bloom: false }).bloom).toBeUndefined();
+    expect(parse({}).bloom).toBeUndefined();
+  });
   it('parses objects into image and particle kinds', () => {
     const desc = parseSceneJson(raw);
     const imageObj = desc.objects.find((o) => o.kind === 'image') as any;
