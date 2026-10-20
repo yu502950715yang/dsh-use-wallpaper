@@ -61,20 +61,24 @@ describe('glowLevelSizes（三级降采样尺寸：逐级取半、最小 1px）'
 
 /** 最小 renderer mock：只记录调用，不真编译 shader（node 无 WebGL）。 */
 function mockRenderer() {
+  let alpha = 1;
   const calls = {
     render: 0,
     setRenderTarget: [] as unknown[],
     hookAtRender: [] as boolean[],
     scenes: [] as unknown[], // 每次 render 的第一个实参（主场景 vs 全屏 quad）
+    clearAlphaAtRender: [] as number[], // 每次 render **当刻**的清屏 alpha
+    setClearAlpha: [] as number[],
   };
   const renderer = {
     debug: { onShaderError: undefined as ((...a: unknown[]) => void) | undefined },
-    getClearAlpha: () => 1,
-    setClearAlpha: (a: number) => { void a; },
+    getClearAlpha: () => alpha,
+    setClearAlpha: (a: number) => { alpha = a; calls.setClearAlpha.push(a); },
     setRenderTarget: (t: unknown) => { calls.setRenderTarget.push(t); },
     render: (s?: unknown) => {
       calls.render += 1;
       calls.scenes.push(s);
+      calls.clearAlphaAtRender.push(alpha);
       // 记录「这次 render 时 shader 失败钩子是否已安装」（钩子在位即为函数）
       calls.hookAtRender.push(typeof renderer.debug.onShaderError === 'function');
     },
@@ -122,6 +126,19 @@ describe('createGlowStage（RT 池与 pass 链）', () => {
       'canvas',         // 11) composite：base + L1a/L2a/L3a 等权累加 → canvas
     ]);
     expect(seen.size).toBe(7); // 1 base + 3 级 × ping-pong 2
+    stage.dispose();
+  });
+
+  // A1 [Critical]：base RT 是后处理底图，自渲必须保留 renderer 当前清屏 alpha —— 强制 0 时
+  // premultipliedAlpha 会把清屏 RGB 乘成 0 ⇒ 默认 Glow 下 general.clearcolor 变黑。
+  it('apply 自渲 base RT 时保留清屏 alpha（不再强制 0）', () => {
+    const { renderer, calls } = mockRenderer();
+    const stage = createGlowStage(1280, 720)!;
+    stage.apply(renderer, scene, camera);
+    // 第 1 次 render = 主场景 → base RT：当刻 alpha 必须仍是 1
+    expect(calls.clearAlphaAtRender[0]).toBe(1);
+    // 其余 pass / composite 结束后，渲染器清屏 alpha 恢复为 1（未被留在透明态）
+    expect(calls.clearAlphaAtRender[calls.clearAlphaAtRender.length - 1]).toBe(1);
     stage.dispose();
   });
 
@@ -330,6 +347,32 @@ describe('createGlowStage（RT 池与 pass 链）', () => {
     stage.apply(renderer, scene, camera, undefined, out);
     expect(calls.scenes.filter((s) => s === scene).length).toBe(2);
     expect(calls.setRenderTarget.slice(-2)).toEqual([out, null]);
+    warn.mockRestore();
+    stage.dispose();
+    out.dispose();
+  });
+
+  it('永久降级后写 outTarget 的主场景渲染保留清屏 alpha', () => {
+    const { renderer, calls } = mockRenderer();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const stage = createGlowStage(1280, 720)!;
+    const out = new THREE.WebGLRenderTarget(1280, 720);
+    const patched = renderer as unknown as { render: (s?: unknown) => void };
+    const origRender = patched.render.bind(renderer);
+    let n = 0;
+    patched.render = (s?: unknown) => {
+      origRender(s);
+      n += 1;
+      if (n === 2) throw new Error('boom'); // bright-pass 失败（base 已渲好）
+    };
+    stage.apply(renderer, scene, camera, undefined, out);
+    expect((stage as unknown as { glowFailed: boolean }).glowFailed).toBe(true);
+    const before = calls.clearAlphaAtRender.length;
+    stage.apply(renderer, scene, camera, undefined, out); // 永久降级：主场景 → outTarget
+    expect(calls.render).toBe(before + 1);
+    const idx = calls.scenes.findIndex((s, i) => i >= before && s === scene);
+    expect(idx).toBeGreaterThanOrEqual(before);
+    expect(calls.clearAlphaAtRender[idx]).toBe(1); // 保留清屏色（不被乘成黑）
     warn.mockRestore();
     stage.dispose();
     out.dispose();

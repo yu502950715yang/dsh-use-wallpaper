@@ -12,6 +12,7 @@ import type { CompiledEffectPass } from '../src/client/shader/effect-chain.js';
 import { textLayerOffset, type TextLayout } from '../src/client/text-object.js';
 import { coverRange, createCompositeGeometry, screenScalePx } from '../src/client/object-range.js';
 import { createFrameCapture } from '../src/client/frame-capture.js';
+import { createGlowStage } from '../src/client/glow-stage.js';
 import type { PuppetInstance } from '../src/client/puppet.js';
 
 // 注入的 mock renderer：只测相机/场景/RAF 逻辑，不触碰 WebGL。
@@ -114,6 +115,27 @@ describe('ThreeScenePlayer 清屏色（F15）', () => {
     });
     loadSceneToThree(scene, { renderer: mock as unknown as THREE.WebGLRenderer }, document.createElement('canvas'));
     expect(rawHex(mock._clearColor())).toBe('111418');
+  });
+
+  // A1 [Critical]：默认 Glow 开启时主场景先自渲进 base RT。若该步强制 clearAlpha=0，
+  // premultipliedAlpha 会把清屏 RGB 乘成 0 ⇒ clearcolor 壁纸变黑。base RT 必须保留清屏 alpha。
+  it('默认 Glow 自渲 baseRT 保留清屏 alpha（clearcolor 不被预乘成黑）', () => {
+    const mock = createMockRenderer();
+    const player = new ThreeScenePlayer(
+      document.createElement('canvas'), 1920, 1080, mock as unknown as THREE.WebGLRenderer, 1,
+      { clearColor: CLEAR },
+    );
+    const stage = createGlowStage(1920, 1080)!;
+    player.setGlowStage(stage);
+    player.render();
+    // 主场景只渲一次（进 base RT，不直渲画布），且当刻清屏 alpha 仍是 1
+    const sceneRenders = mock._renders.filter((r) => r.scene === player.scene);
+    expect(sceneRenders).toHaveLength(1);
+    expect(sceneRenders[0].target).not.toBeNull();
+    expect(sceneRenders[0].clearAlpha).toBe(1);
+    expect(mock._clearAlpha()).toBe(1);
+    stage.dispose();
+    player.dispose();
   });
 
   it('段渲染清屏改用同一清屏色（RT 段内与 finally 恢复都保持该色）', () => {

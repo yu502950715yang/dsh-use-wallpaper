@@ -23486,6 +23486,7 @@ function parseSceneJson(raw) {
     return { ...base, kind: "particle", particle: "", ...fromVisibleScript };
   });
   let cc = typeof gen.clearcolor === "string" ? vec3(gen.clearcolor) : void 0;
+  if (cc && !(isFinite(cc[0]) && isFinite(cc[1]) && isFinite(cc[2]))) cc = void 0;
   if (cc) {
     const max = Math.max(cc[0], cc[1], cc[2]);
     if (max > 0 && max <= 1) cc = [cc[0] * 255, cc[1] * 255, cc[2] * 255];
@@ -23515,11 +23516,11 @@ function parseSceneJson(raw) {
 }
 
 // src/client/rt-render.ts
-function renderIntoRenderTarget(renderer, target, scene, camera) {
+function renderIntoRenderTarget(renderer, target, scene, camera, options) {
   const caps = renderer;
   const canToggle = typeof caps.getClearAlpha === "function" && typeof caps.setClearAlpha === "function";
   const prevAlpha = canToggle ? caps.getClearAlpha() : null;
-  const needToggle = canToggle && prevAlpha !== 0;
+  const needToggle = options?.preserveClearAlpha !== true && canToggle && prevAlpha !== 0;
   if (needToggle) caps.setClearAlpha(0);
   try {
     renderer.setRenderTarget(target);
@@ -27822,7 +27823,7 @@ function createGlowStage(width, height, opts) {
     apply(r, scene, camera, preRendered, outTarget) {
       if (disposed) return;
       if (glowFailed) {
-        if (outTarget) renderIntoRenderTarget(r, outTarget, scene, camera);
+        if (outTarget) renderIntoRenderTarget(r, outTarget, scene, camera, { preserveClearAlpha: true });
         else {
           r.setRenderTarget(null);
           r.render(scene, camera);
@@ -27832,7 +27833,7 @@ function createGlowStage(width, height, opts) {
       const base = preRendered ?? baseRT;
       try {
         baseRendered = false;
-        if (!preRendered) renderIntoRenderTarget(r, baseRT, scene, camera);
+        if (!preRendered) renderIntoRenderTarget(r, baseRT, scene, camera, { preserveClearAlpha: true });
         baseRendered = true;
         installShaderErrorHook(r);
         renderGlowPasses(r, base.texture, outTarget ?? null);
@@ -31588,6 +31589,9 @@ function createThreeSceneRenderer(opts) {
             strength: desc.bloom.strength,
             threshold: desc.bloom.threshold
           });
+          if (!currentBloom) {
+            console.warn(`[wallpaper-engine] \u58C1\u7EB8 ${id} \u7684 bloom \u89C6\u53E3\u975E\u6CD5\uFF08${fg.width}\xD7${fg.height}\uFF09\uFF0C\u5DF2\u8DF3\u8FC7\u58C1\u7EB8\u7EA7 bloom`);
+          }
           result.player.setBloomStage(currentBloom);
         }
         currentGlow?.dispose();

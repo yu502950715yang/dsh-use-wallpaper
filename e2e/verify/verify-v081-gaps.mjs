@@ -5,8 +5,9 @@
 //
 //   ① F8 bloom（缺省 2454403969，general.bloom=true）：同页两档对照（原始 scene.json vs 服务端把
 //      general.bloom 改成 false），统计 luma>200 的亮部占比；开启档必须显著更高。
-//   ② F15 clearcolor（缺省 2980088441，general.clearcolor="0.06667 0.07843 0.09412"）：画布四角
-//      像素必须 ≈ #111418（每通道 ±8）。该场景只有居中文本对象，四角必为清屏色。
+//      另加**默认 Glow** 的 on/off 对照，锁住「bloom → 应用级 Glow」两级串联。
+//   ② F15 clearcolor（缺省 2980088441，general.clearcolor="0.06667 0.07843 0.09412"）：**默认 Glow**
+//      下画布四角像素必须 ≈ #111418（每通道 ±8）。该场景只有居中文本对象，四角必为清屏色。
 //   ③ F13 spritesheet（缺省 3765967112，图标材质 combos.spritesheet=1、TEXS 1 列×3 行）：对照档由
 //      服务端删掉材质的 combos.spritesheet（= 改动前的整表渲染）；判据要求图标区域 luma 方差
 //      低于「整表渲染」且不超过绝对上限（阈值用 before/after 标定，见 SPRITE_MAX_VARIANCE）。
@@ -19,10 +20,12 @@
 //        [--tag=v081] [--luma=200] [--clear-id=2980088441] [--sprite-id=3765967112]
 //        [--sprite-vw=1280] [--sprite-vh=2160]
 // 环境变量等价形式：ID / VW / VH / TAG / LUMA / CLEAR_ID / SPRITE_ID / SPRITE_VW / SPRITE_VH；
+// 数值型参数非有限值（NaN/Infinity）直接 throw（避免判据静默失效）。
 // 另需 WE_WORKSHOP（壁纸目录）与 WE_ASSETS（WE 安装目录）。
 // 退出码：0 = 判据通过；1 = 判据失败或脚本异常（CI 门禁）。
 //
-// 产物：e2e/.out/v081-gaps/<tag>-bloom-on.png / <tag>-bloom-off.png / <tag>-clearcolor.png /
+// 产物：e2e/.out/v081-gaps/<tag>-bloom-on.png / <tag>-bloom-off.png /
+//       <tag>-bloom-on-glow.png / <tag>-bloom-off-glow.png / <tag>-clearcolor.png /
 //       <tag>-sprite-after.png / <tag>-sprite-before.png / <tag>-summary.json
 import { createServer } from 'node:http';
 import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -45,9 +48,18 @@ const argOf = (name, dflt) => {
   return eq < 0 ? true : hit.slice(eq + 1);
 };
 const ID = String(argOf('id', process.env.ID ?? '2454403969'));
+// 数值参数统一经此解析：NaN/Infinity（含裸 `--flag`）直接 throw，避免判据静默退化成 0。
+function numArg(name, envName, dflt) {
+  const raw = argOf(name, process.env[envName] ?? dflt);
+  const n = Number(raw);
+  if (typeof raw === 'boolean' || !Number.isFinite(n)) {
+    throw new Error(`数值参数非法：--${name} / ${envName} = ${String(raw)}（必须是有限数值）`);
+  }
+  return n;
+}
 const VIEW = {
-  w: Math.max(1, Math.round(Number(argOf('vw', process.env.VW ?? 1280)))),
-  h: Math.max(1, Math.round(Number(argOf('vh', process.env.VH ?? 720)))),
+  w: Math.max(1, Math.round(numArg('vw', 'VW', 1280))),
+  h: Math.max(1, Math.round(numArg('vh', 'VH', 720))),
 };
 // F15 / F13 用的素材与视口（独立参数，互不影响 bloom 判据）。
 const CLEAR_ID = String(argOf('clear-id', process.env.CLEAR_ID ?? '2980088441'));
@@ -55,8 +67,8 @@ const SPRITE_ID = String(argOf('sprite-id', process.env.SPRITE_ID ?? '3765967112
 // 精灵表素材场景 3840×2160、图标约 50 世界单位；竖长视口（aspect < 场景）让 cover 相机 1:1 取景，
 // 图标在截图上约 50px（1280×720 时只有 ~17px，方差统计样本太小）。
 const SPRITE_VIEW = {
-  w: Math.max(1, Math.round(Number(argOf('sprite-vw', process.env.SPRITE_VW ?? 1280)))),
-  h: Math.max(1, Math.round(Number(argOf('sprite-vh', process.env.SPRITE_VH ?? 2160)))),
+  w: Math.max(1, Math.round(numArg('sprite-vw', 'SPRITE_VW', 1280))),
+  h: Math.max(1, Math.round(numArg('sprite-vh', 'SPRITE_VH', 2160))),
 };
 const WINDOW = { w: 1400, h: 900 };
 const TAG = String(argOf('tag', process.env.TAG ?? 'v081'));
@@ -66,22 +78,25 @@ mkdirSync(OUT, { recursive: true });
 // ── 判据常量（实现时用真实素材标定，见 task-7-report）──────────────────────────
 // luma = 0.299R + 0.587G + 0.114B；>200 视为「亮部」。2454403969 的 bloom 缺省参数
 // （threshold=0.65 / strength=0.98）会把 ≥0.65 的区域抬过 200，关闭档则不会。
-const LUMA_THRESHOLD = Math.max(0, Math.min(255, Number(argOf('luma', process.env.LUMA ?? 200))));
+const LUMA_THRESHOLD = Math.max(0, Math.min(255, numArg('luma', 'LUMA', 200)));
 // 开启档亮部占比必须比关闭档高出至少这么多（占全图比例）。标定：2454403969 实测
 // 2.245% vs 0.604% ⇒ delta≈1.64pp（同一时钟相位）；留 ~2× 裕度取 0.8pp。
-const MIN_RATIO_DELTA = Number(process.env.MIN_RATIO_DELTA ?? 0.008);
+const MIN_RATIO_DELTA = numArg('min-ratio-delta', 'MIN_RATIO_DELTA', 0.008);
+// 默认 Glow 档的 A/B 阈值（Glow 会整体抬亮部 ⇒ 与无 Glow 档分别标定）：2454403969 实测
+// bloom on 3.759% vs off 1.183% ⇒ delta≈2.58pp；留 ~2× 裕度取 1.2pp。
+const MIN_GLOW_RATIO_DELTA = numArg('min-glow-delta', 'MIN_GLOW_RATIO_DELTA', 0.012);
 // 开启档亮部占比下限：防止「两档都几乎全黑、差值恰好达标」的假阳性。
-const MIN_WITH_BLOOM_RATIO = Number(process.env.MIN_WITH_BLOOM_RATIO ?? 0.005);
+const MIN_WITH_BLOOM_RATIO = numArg('min-with-bloom-ratio', 'MIN_WITH_BLOOM_RATIO', 0.005);
 // F15：2980088441 的 general.clearcolor = "0.06667 0.07843 0.09412" ×255 = #111418。
 const CLEAR_RGB = [17, 20, 24];
-const CLEAR_TOL = Number(process.env.CLEAR_TOL ?? 8);
+const CLEAR_TOL = numArg('clear-tol', 'CLEAR_TOL', 8);
 // F13：图标区域 luma 方差与亮行组。整表渲染（对照档，3 帧压进同一 quad）三帧竖排 ⇒ 3 个亮行组、
 // 且把不同帧内容挤进同一区域 ⇒ 方差更高；单帧渲染 ⇒ 1 组。阈值由 before/after 实测标定：
 // 方差 单帧 3319.05 vs 整表 4473.26（比值 0.742）；亮行组 1 vs 3（minPx=8）。
-const SPRITE_MAX_VARIANCE = Number(process.env.SPRITE_MAX_VARIANCE ?? 3700);
-const SPRITE_MAX_BEFORE_RATIO = Number(process.env.SPRITE_MAX_BEFORE_RATIO ?? 0.8);
-const SPRITE_BRIGHT_LUMA = Number(process.env.SPRITE_BRIGHT_LUMA ?? 200);
-const SPRITE_BRIGHT_MIN_PX = Number(process.env.SPRITE_BRIGHT_MIN_PX ?? 8);
+const SPRITE_MAX_VARIANCE = numArg('sprite-max-variance', 'SPRITE_MAX_VARIANCE', 3700);
+const SPRITE_MAX_BEFORE_RATIO = numArg('sprite-max-before-ratio', 'SPRITE_MAX_BEFORE_RATIO', 0.8);
+const SPRITE_BRIGHT_LUMA = numArg('sprite-bright-luma', 'SPRITE_BRIGHT_LUMA', 200);
+const SPRITE_BRIGHT_MIN_PX = numArg('sprite-bright-min-px', 'SPRITE_BRIGHT_MIN_PX', 8);
 
 const PORT = httpPort(9832);
 const CDP_PORT = resolveCdpPort(9242);
@@ -225,11 +240,12 @@ function pngDims(buf) { return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20
 
 /**
  * 渲染一档并截图。每档独立 Edge 进程，避免模块态/GL 上下文跨档污染。
- * spec = { label, id, view, noBloom?, stripSpritesheet?, cdpPort }
- * 返回里带 `quads`（`__fxQuads()` 的视口像素矩形），供 Node 侧定位对象区域。
+ * spec = { label, id, view, noBloom?, stripSpritesheet?, glow?, cdpPort }
+ *   glow: 'off' | 'on' | 'default'（缺省 off；default = 不传 glow=，走 DEFAULTS(glowEnabled=true)）
+ * 返回里带 `quads`（`__fxQuads()` 的视口像素矩形）与 `glow`（`__fxGlowInfo()` 装配观测）。
  */
 async function runVariant(spec) {
-  const { label, id, view, noBloom = false, stripSpritesheet = false, cdpPort } = spec;
+  const { label, id, view, noBloom = false, stripSpritesheet = false, glow = 'off', cdpPort } = spec;
   const profile = join(OUT, `.edge-${TAG}-${label}`);
   const winW = Math.max(WINDOW.w, view.w);
   const winH = Math.max(WINDOW.h, view.h);
@@ -294,9 +310,10 @@ async function runVariant(spec) {
       width: winW, height: winH, deviceScaleFactor: 1, mobile: false,
     });
     await send('Page.addScriptToEvaluateOnNewDocument', { source: CLOCK_SHIM });
-    // 应用级 Glow 关闭（单一变量）；粒子整层跳过（相位确定性）。
+    // 应用级 Glow 档位（单一变量）：off / on 显式注入；default = 不传参 ⇒ 走 DEFAULTS(true)。
+    const glowQuery = glow === 'default' ? '' : `&glow=${glow}`;
     await send('Page.navigate', {
-      url: `http://127.0.0.1:${PORT}/?id=${id}&vw=${view.w}&vh=${view.h}&glow=off&wasm=none`,
+      url: `http://127.0.0.1:${PORT}/?id=${id}&vw=${view.w}&vh=${view.h}${glowQuery}&wasm=none`,
     });
     const t0 = Date.now();
     let ready = null;
@@ -317,10 +334,12 @@ async function runVariant(spec) {
     const dims = pngDims(buf);
     const pageLogs = await json('window.__fxLogs ?? []');
     const quads = await json('window.__fxQuads() ?? []');
+    // 装配观测：present=false 表示 Glow 真的没装配（glow=off 档必须为 false；default 档必须为 true）。
+    const glowInfo = await json('window.__fxGlowInfo ? window.__fxGlowInfo() : null');
     const errors = [...logs, ...(Array.isArray(pageLogs) ? pageLogs : [])]
       .filter((l) => l.level === 'error' || /shader 编译\/链接失败/.test(String(l.text)))
       .map((l) => String(l.text).slice(0, 300));
-    return { ok: true, label, id, ready, quads, size: [dims.w, dims.h], png: buf, errors };
+    return { ok: true, label, id, ready, quads, glow: glowInfo, size: [dims.w, dims.h], png: buf, errors };
   } catch (e) {
     return { ok: false, label, id, fail: e?.message ?? String(e) };
   } finally {
@@ -345,6 +364,41 @@ function brightStats(img, threshold) {
     size: [width, height], brightPixels: bright, ratio: bright / n,
     meanLuma: sum / n, threshold,
   };
+}
+
+/**
+ * 壁纸 bloom 的 A/B 亮部判据：on = bloom 开、off = bloom 关（同壁纸、同时钟相位）。
+ * 写两张 PNG、打印统计，返回 { onStats, offStats, delta, pass }。
+ */
+function bloomCompare(on, off, { glowLabel, minDelta, pngOn, pngOff }) {
+  const onImg = decodePng(on.png);
+  const offImg = decodePng(off.png);
+  const onStats = brightStats(onImg, LUMA_THRESHOLD);
+  const offStats = brightStats(offImg, LUMA_THRESHOLD);
+  const delta = onStats.ratio - offStats.ratio;
+  writeFileSync(join(OUT, pngOn), on.png);
+  writeFileSync(join(OUT, pngOff), off.png);
+
+  console.log(`\n===== 判据：壁纸 bloom 亮部像素占比（luma>${LUMA_THRESHOLD}，应用级 Glow=${glowLabel}）=====`);
+  console.log(`  bloom 开启：${onStats.brightPixels}/${onStats.size[0] * onStats.size[1]}`
+    + ` = ${(onStats.ratio * 100).toFixed(3)}%  平均 luma=${onStats.meanLuma.toFixed(2)}`);
+  console.log(`  bloom 关闭：${offStats.brightPixels}/${offStats.size[0] * offStats.size[1]}`
+    + ` = ${(offStats.ratio * 100).toFixed(3)}%  平均 luma=${offStats.meanLuma.toFixed(2)}`);
+  console.log(`  差值（开启 − 关闭）= ${(delta * 100).toFixed(3)} 个百分点（要求 ≥ ${(minDelta * 100).toFixed(2)}）`);
+  let pass = true;
+  if (delta < minDelta) {
+    console.log(`${RED}[FAIL]${RST} 壁纸 bloom 未产生足够的亮部增量：delta=${(delta * 100).toFixed(3)}% < ${(minDelta * 100).toFixed(2)}%`);
+    pass = false;
+  } else {
+    console.log(`${GRN}[PASS]${RST} 开启档亮部占比显著高于关闭档（差值 ${(delta * 100).toFixed(3)} 个百分点）`);
+  }
+  if (onStats.ratio < MIN_WITH_BLOOM_RATIO) {
+    console.log(`${RED}[FAIL]${RST} 开启档亮部占比过低（${(onStats.ratio * 100).toFixed(3)}% < ${(MIN_WITH_BLOOM_RATIO * 100).toFixed(2)}%），判据无意义`);
+    pass = false;
+  } else {
+    console.log(`${GRN}[PASS]${RST} 开启档亮部像素非空（${onStats.brightPixels} 个）`);
+  }
+  return { onStats, offStats, delta, pass };
 }
 
 /** 读一个像素（截图坐标系，左上原点）。 */
@@ -475,23 +529,28 @@ const summary = { bloom: null, clearcolor: null, spritesheet: null };
 try {
   await new Promise((r) => server.listen(PORT, r));
 
-  // ① F8 壁纸 bloom：同一壁纸两档对照。
+  // ① F8 壁纸 bloom：A 组 Glow=off 分离 bloom 自身效果；B 组**默认 Glow** 锁 bloom → Glow 串联。
   const sc = sceneOf(ID);
   const bloomField = sc.general?.bloom;
   console.log(`\n===== ① F8 壁纸 bloom =====`);
   console.log(`[v081] 壁纸=${ID}  场景=${sc.general?.orthogonalprojection?.width}×${sc.general?.orthogonalprojection?.height}`
     + `  对象数=${(sc.objects ?? []).length}  general.bloom=${JSON.stringify(bloomField)}`
     + `  bloomstrength=${JSON.stringify(sc.general?.bloomstrength)}  bloomthreshold=${JSON.stringify(sc.general?.bloomthreshold)}`);
-  console.log(`[v081] 视口 CSS ${VIEW.w}×${VIEW.h}  对照=同一壁纸（服务端把 general.bloom 改成 false）  应用级 Glow=off`);
+  console.log(`[v081] 视口 CSS ${VIEW.w}×${VIEW.h}  对照=同一壁纸（服务端把 general.bloom 改成 false）`
+    + `  A 组应用级 Glow=off / B 组默认 Glow`);
   let on = null;
   let off = null;
+  let glowOn = null;
+  let glowOff = null;
   if (bloomField !== true) {
     console.log(`${RED}[FAIL]${RST} 壁纸 ${ID} 的 scene.json 没有 general.bloom=true ⇒ 本判据无从对照`);
     failed = true;
   } else {
-    on = await runVariant({ label: 'bloom-on', id: ID, view: VIEW, cdpPort: CDP_PORT });
-    off = await runVariant({ label: 'bloom-off', id: ID, view: VIEW, noBloom: true, cdpPort: CDP_PORT + 1 });
-    for (const r of [on, off]) {
+    on = await runVariant({ label: 'bloom-on', id: ID, view: VIEW, glow: 'off', cdpPort: CDP_PORT });
+    off = await runVariant({ label: 'bloom-off', id: ID, view: VIEW, noBloom: true, glow: 'off', cdpPort: CDP_PORT + 1 });
+    glowOn = await runVariant({ label: 'bloom-on-glow', id: ID, view: VIEW, glow: 'default', cdpPort: CDP_PORT + 5 });
+    glowOff = await runVariant({ label: 'bloom-off-glow', id: ID, view: VIEW, noBloom: true, glow: 'default', cdpPort: CDP_PORT + 6 });
+    for (const r of [on, off, glowOn, glowOff]) {
       if (!r.ok) { console.log(`${RED}[FAIL]${RST} ${r.label} 渲染失败：${r.fail}`); failed = true; continue; }
       if (r.ready?.ok !== true) {
         console.log(`${RED}[FAIL]${RST} ${r.label} harness 报告 render 未成功：${JSON.stringify(r.ready)}`);
@@ -502,53 +561,60 @@ try {
       }
       for (const e of r.errors.slice(0, 5)) console.log(`${YEL}[WARN]${RST} ${r.label} 页面错误：${e}`);
     }
+    // Glow 装配自证：off 档必须真的没装配；默认档必须真的装配了（否则 B 组变成「off vs off」）。
+    if (on.ok && glowOn.ok) {
+      for (const [r, expectPresent] of [[on, false], [off, false], [glowOn, true], [glowOff, true]]) {
+        if (!r.ok) continue;
+        if (r.glow?.present !== expectPresent) {
+          console.log(`${RED}[FAIL]${RST} ${r.label} 的 Glow 装配状态异常：present=${JSON.stringify(r.glow?.present)}（期望 ${expectPresent}）`);
+          failed = true;
+        }
+      }
+    }
     if (!on.ok || !off.ok) {
       console.log(`${RED}[FAIL]${RST} bloom 两档渲染未完成，无法比较`);
       failed = true;
     } else {
-      const onImg = decodePng(on.png);
-      const offImg = decodePng(off.png);
-      const onStats = brightStats(onImg, LUMA_THRESHOLD);
-      const offStats = brightStats(offImg, LUMA_THRESHOLD);
-      const delta = onStats.ratio - offStats.ratio;
-      writeFileSync(join(OUT, `${TAG}-bloom-on.png`), on.png);
-      writeFileSync(join(OUT, `${TAG}-bloom-off.png`), off.png);
-
-      console.log(`\n===== 判据：壁纸 bloom 亮部像素占比（luma>${LUMA_THRESHOLD}）=====`);
-      console.log(`  bloom 开启：${onStats.brightPixels}/${onStats.size[0] * onStats.size[1]}`
-        + ` = ${(onStats.ratio * 100).toFixed(3)}%  平均 luma=${onStats.meanLuma.toFixed(2)}`);
-      console.log(`  bloom 关闭：${offStats.brightPixels}/${offStats.size[0] * offStats.size[1]}`
-        + ` = ${(offStats.ratio * 100).toFixed(3)}%  平均 luma=${offStats.meanLuma.toFixed(2)}`);
-      console.log(`  差值（开启 − 关闭）= ${(delta * 100).toFixed(3)} 个百分点（要求 ≥ ${(MIN_RATIO_DELTA * 100).toFixed(2)}）`);
-      if (delta < MIN_RATIO_DELTA) {
-        console.log(`${RED}[FAIL]${RST} 壁纸 bloom 未产生足够的亮部增量：delta=${(delta * 100).toFixed(3)}% < ${(MIN_RATIO_DELTA * 100).toFixed(2)}%`);
-        failed = true;
-      } else {
-        console.log(`${GRN}[PASS]${RST} 开启档亮部占比显著高于关闭档（差值 ${(delta * 100).toFixed(3)} 个百分点）`);
-      }
-      if (onStats.ratio < MIN_WITH_BLOOM_RATIO) {
-        console.log(`${RED}[FAIL]${RST} 开启档亮部占比过低（${(onStats.ratio * 100).toFixed(3)}% < ${(MIN_WITH_BLOOM_RATIO * 100).toFixed(2)}%），判据无意义`);
-        failed = true;
-      } else {
-        console.log(`${GRN}[PASS]${RST} 开启档亮部像素非空（${onStats.brightPixels} 个）`);
+      const a = bloomCompare(on, off, {
+        glowLabel: 'off', minDelta: MIN_RATIO_DELTA,
+        pngOn: `${TAG}-bloom-on.png`, pngOff: `${TAG}-bloom-off.png`,
+      });
+      if (!a.pass) failed = true;
+      let b = null;
+      if (glowOn.ok && glowOff.ok) {
+        b = bloomCompare(glowOn, glowOff, {
+          glowLabel: 'default', minDelta: MIN_GLOW_RATIO_DELTA,
+          pngOn: `${TAG}-bloom-on-glow.png`, pngOff: `${TAG}-bloom-off-glow.png`,
+        });
+        if (!b.pass) failed = true;
       }
       summary.bloom = {
         id: ID, view: VIEW, lumaThreshold: LUMA_THRESHOLD,
-        minRatioDelta: MIN_RATIO_DELTA, minWithBloomRatio: MIN_WITH_BLOOM_RATIO,
+        minRatioDelta: MIN_RATIO_DELTA, minGlowRatioDelta: MIN_GLOW_RATIO_DELTA,
+        minWithBloomRatio: MIN_WITH_BLOOM_RATIO,
         scene: { bloom: bloomField, bloomstrength: sc.general?.bloomstrength, bloomthreshold: sc.general?.bloomthreshold },
-        on: { ...onStats, png: `${TAG}-bloom-on.png` },
-        off: { ...offStats, png: `${TAG}-bloom-off.png` },
-        delta,
+        glowOff: {
+          on: { ...a.onStats, png: `${TAG}-bloom-on.png` },
+          off: { ...a.offStats, png: `${TAG}-bloom-off.png` },
+          delta: a.delta, pass: a.pass,
+        },
+        glowDefault: b && {
+          on: { ...b.onStats, png: `${TAG}-bloom-on-glow.png` },
+          off: { ...b.offStats, png: `${TAG}-bloom-off-glow.png` },
+          delta: b.delta, pass: b.pass,
+          glow: glowOn.glow,
+        },
         pass: !failed,
       };
     }
   }
 
-  // ② F15 清屏色：四角像素 = general.clearcolor（2980088441 → #111418）。
-  console.log(`\n===== ② F15 清屏色 =====`);
+  // ② F15 清屏色：**默认 Glow** 下四角像素 = general.clearcolor（2980088441 → #111418）。
+  // 默认 Glow 走 baseRT 自渲；若那里强制 clearAlpha=0，premultipliedAlpha 会把清屏色乘成黑。
+  console.log(`\n===== ② F15 清屏色（默认 Glow）=====`);
   const clearScene = sceneOf(CLEAR_ID);
   const clearRaw = clearScene?.general?.clearcolor;
-  const cc = await runVariant({ label: 'clearcolor', id: CLEAR_ID, view: VIEW, cdpPort: CDP_PORT + 2 });
+  const cc = await runVariant({ label: 'clearcolor', id: CLEAR_ID, view: VIEW, glow: 'default', cdpPort: CDP_PORT + 2 });
   if (!cc.ok) {
     console.log(`${RED}[FAIL]${RST} clearcolor 渲染失败：${cc.fail}`);
     failed = true;
@@ -556,6 +622,13 @@ try {
     if (cc.ready?.ok !== true) {
       console.log(`${RED}[FAIL]${RST} clearcolor harness 报告 render 未成功：${JSON.stringify(cc.ready)}`);
       failed = true;
+    }
+    // 必须真的处于默认 Glow 装配态（否则本档退化回无后处理的旧口径，抓不到 A1 回归）。
+    if (cc.glow?.present !== true) {
+      console.log(`${RED}[FAIL]${RST} clearcolor 档未装配默认 Glow（present=${JSON.stringify(cc.glow?.present)}）⇒ 判据无效`);
+      failed = true;
+    } else {
+      console.log(`  默认 Glow 已装配：rtCount=${cc.glow.rtCount}  options=${JSON.stringify(cc.glow.options)}  glowFailed=${cc.glow.glowFailed}`);
     }
     for (const e of cc.errors.slice(0, 5)) console.log(`${YEL}[WARN]${RST} clearcolor 页面错误：${e}`);
     const img = decodePng(cc.png);
@@ -580,7 +653,7 @@ try {
     summary.clearcolor = {
       id: CLEAR_ID, view: VIEW, clearcolorRaw: clearRaw,
       expected: CLEAR_RGB, tol: CLEAR_TOL, samples, size: [img.width, img.height],
-      png: `${TAG}-clearcolor.png`, pass: clearOk,
+      glow: cc.glow, png: `${TAG}-clearcolor.png`, pass: clearOk,
     };
   }
 

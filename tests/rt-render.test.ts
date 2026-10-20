@@ -45,6 +45,23 @@ describe('renderIntoRenderTarget', () => {
     expect(renderer._alpha()).toBe(0);
   });
 
+  // 后处理 baseRT 自渲：清的是整屏背景色，必须保留 renderer 当前 alpha（否则 premultipliedAlpha
+  // 把清屏 RGB 乘成 0 ⇒ 默认 Glow 下 clearcolor 变黑）。对象 RT 仍走缺省透明清屏。
+  it('preserveClearAlpha=true 时不改清屏 alpha，渲染后也不恢复（本就未改）', () => {
+    const renderer = createClearAlphaRenderer(1);
+    const prev = renderIntoRenderTarget(
+      renderer as unknown as THREE.WebGLRenderer,
+      new THREE.WebGLRenderTarget(4, 4),
+      new THREE.Scene(),
+      new THREE.Camera(),
+      { preserveClearAlpha: true },
+    );
+    expect(prev).toBe(1);
+    expect(renderer.setClearAlpha).not.toHaveBeenCalled();
+    expect(renderer._seen[0].alpha).toBe(1); // 渲染当刻 alpha 仍是 1（清屏色不被预乘成黑）
+    expect(renderer.setRenderTarget).toHaveBeenLastCalledWith(null);
+  });
+
   it('mock renderer 无 get/setClearAlpha 时静默跳过（不抛、照常渲染）', () => {
     const renderer = { setRenderTarget: vi.fn(), render: vi.fn() };
     const rt = new THREE.WebGLRenderTarget(2, 2);

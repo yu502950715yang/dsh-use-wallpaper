@@ -930,6 +930,10 @@ export function createThreeSceneRenderer(opts?: {
             strength: desc.bloom.strength,
             threshold: desc.bloom.threshold,
           });
+          // 非法视口（0/NaN）时 stage 为 null：不阻断装配，但要留痕（否则 bloom 静默失效）。
+          if (!currentBloom) {
+            console.warn(`[wallpaper-engine] 壁纸 ${id} 的 bloom 视口非法（${fg.width}×${fg.height}），已跳过壁纸级 bloom`);
+          }
           result.player.setBloomStage(currentBloom);
         }
         // 应用级 Glow：按插件设置装配（关闭时零资源）。⚠️ 必须在 isolate 块**之外** —— Glow 与「有无对象被

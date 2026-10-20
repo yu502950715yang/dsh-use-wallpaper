@@ -311,6 +311,8 @@ export function parseSceneJson(raw: string): SceneDescription {
   // general.clearcolor 双语义：真实库为 0-1 归一化（如 "0.06667 0.07843 0.09412"），也兼容 0-255；
   // 判据同 optColor（max ≤ 1 ⇒ 视为 0-1 语义 ×255），player 接口仍按 0-255 使用。
   let cc = typeof gen.clearcolor === 'string' ? vec3(gen.clearcolor) : undefined;
+  // 非有限值（"nan" / 畸形）不产出 clearColor ⇒ 走缺省黑（与 optColor 的 isFinite 口径一致）。
+  if (cc && !(isFinite(cc[0]) && isFinite(cc[1]) && isFinite(cc[2]))) cc = undefined;
   if (cc) {
     const max = Math.max(cc[0], cc[1], cc[2]);
     if (max > 0 && max <= 1) cc = [cc[0] * 255, cc[1] * 255, cc[2] * 255];

@@ -33,6 +33,9 @@ vi.mock('../src/client/glow-stage.js', () => ({
     apply: vi.fn(), resize: vi.fn(), setOptions: vi.fn(), dispose: vi.fn(),
   })),
 }));
+// 壁纸 bloom 同理（薄封装 GlowStage）；单独 mock 以便构造「非法视口 ⇒ null」的防御分支。
+const bloomMocks = vi.hoisted(() => ({ createBloomStage: vi.fn() }));
+vi.mock('../src/client/bloom-stage.js', () => bloomMocks);
 // 音频输入（A3）：jsdom 无 Web Audio ⇒ 整体 mock，由各用例决定分析器/播放的返回值。
 const audioMocks = vi.hoisted(() => ({
   createAudioAnalyzer: vi.fn(),
@@ -108,6 +111,7 @@ function stubSettings(patch: Partial<ClientSettings>): void {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  bloomMocks.createBloomStage.mockReset();
   setSettingsCtx(null); // 重置设置注入（回退 DEFAULTS）
   // 粒子材质解析缺省：材质 json 不可得（→ 调用方走材质名启发式兜底）——需要材质的用例自行覆盖。
   resolveParticleMaterial.mockResolvedValue(null);
@@ -176,6 +180,30 @@ describe('createThreeSceneRenderer', () => {
     // dispose 释放播放器
     r.dispose();
     expect((loadSceneToThree.mock.results[0].value as any).player.dispose).toHaveBeenCalled();
+  });
+
+  // A4：createBloomStage 返回 null（非法视口）时不得静默 —— 保留装配但 warn 一条带壁纸 id。
+  it('bloom stage 为 null（非法视口）→ 告警带壁纸 id，装配继续', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    bloomMocks.createBloomStage.mockReturnValue(null);
+    vi.mocked(resolveImageAssets).mockResolvedValue({ texture: fakeTexture() as any, puppetPath: null, spriteSheet: false });
+    const player = {
+      dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setBloomStage: vi.fn(),
+      setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn(),
+    };
+    vi.mocked(loadSceneToThree).mockReturnValue({ player, sims: [], backgroundIds: [0], particleLayers: [], puppetLayers: [] } as never);
+    stubAssetFetch(JSON.stringify({
+      camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+      general: { orthogonalprojection: { width: 1920, height: 1080 }, bloom: true },
+      objects: [{ id: 13, name: 'bg', image: 'models/a.json', origin: '960 540 0', scale: '1 1 1', size: '1920 1080' }],
+    }), {});
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    expect(await r.render('2454403969', document.createElement('canvas'))).toBe(true);
+    expect(bloomMocks.createBloomStage).toHaveBeenCalledTimes(1);
+    expect(player.setBloomStage).toHaveBeenCalledWith(null);
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('2454403969') && String(c[0]).includes('bloom'))).toBe(true);
+    warn.mockRestore();
+    r.dispose?.();
   });
 
   it('dispose / 切壁纸时释放本次装配的背景纹理（视频纹理的 <video>/Blob URL 不能被 renderer.dispose 兜住）', async () => {
@@ -2098,6 +2126,40 @@ describe('three-renderer 音频链路', () => {
     expect(urls[1]).toContain('/wallpapers/scene/3798688689/asset?name=sounds/b.ogg');
     expect(playWallpaperSound.mock.calls[0][1]).toBe(fake);
     r.dispose();
+  });
+
+  // A3 [Important]：SceneSoundObject 三态映射——loop 取 files[0] 循环；random / single 随机选一首，
+  // 但 single 不循环。断言第 3 参 {volume, loop} 与选曲 URL（random/single 用固定随机数）。
+  it('playbackmode 三态：loop 首曲循环、random 随机循环、single 随机一首不循环', async () => {
+    const fake = fakeAnalyzer();
+    audioMocks.createAudioAnalyzer.mockReturnValue(fake);
+    stubAssetFetch(JSON.stringify({
+      camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+      general: { orthogonalprojection: { width: 1920, height: 1080 } },
+      objects: [
+        { id: 41, name: 'loop', sound: ['sounds/l1.flac', 'sounds/l2.flac'], playbackmode: 'loop', volume: 0.5 },
+        { id: 42, name: 'random', sound: ['sounds/r1.flac', 'sounds/r2.flac'], playbackmode: 'random' },
+        { id: 43, name: 'single', sound: ['sounds/s1.flac', 'sounds/s2.flac'], playbackmode: 'single', volume: 0.25 },
+      ],
+    }), {});
+    stubPlayer();
+    const rand = vi.spyOn(Math, 'random').mockReturnValue(0.75); // 0.75×2 → 第 2 首
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    await r.render('3798688689', document.createElement('canvas'));
+    rand.mockRestore();
+
+    expect(playWallpaperSound).toHaveBeenCalledTimes(3);
+    const got = vi.mocked(playWallpaperSound).mock.calls.map((c) => ({
+      url: decodeURIComponent(String(c[0])),
+      opts: c[2] as { volume: number; loop: boolean },
+    }));
+    expect(got[0].url).toContain('sounds/l1.flac'); // loop：永远首曲
+    expect(got[0].opts).toEqual({ volume: 0.5, loop: true });
+    expect(got[1].url).toContain('sounds/r2.flac'); // random：随机一首
+    expect(got[1].opts).toEqual({ volume: 1, loop: true });
+    expect(got[2].url).toContain('sounds/s2.flac'); // single：随机一首
+    expect(got[2].opts).toEqual({ volume: 0.25, loop: false });
+    r.dispose?.();
   });
 
   it('soundEnabled=false → 不创建分析器、不播放（零 AudioContext 开销）', async () => {

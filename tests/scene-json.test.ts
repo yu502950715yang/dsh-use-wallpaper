@@ -39,6 +39,16 @@ describe('parseSceneJson', () => {
       .toEqual([0.06667 * 255, 0.07843 * 255, 0.09412 * 255]);
     expect(parse('17 20 24').clearColor).toEqual([17, 20, 24]);
   });
+  // A4：NaN / 非有限分量不产出 clearColor（走缺省黑），与 optColor 的 isFinite 口径一致。
+  it('clearcolor 含 NaN/非有限值 → 不产出 clearColor', () => {
+    const parse = (cc: string) => parseSceneJson(JSON.stringify({
+      general: { orthogonalprojection: { width: 1920, height: 1080 }, clearcolor: cc },
+      objects: [],
+    }));
+    expect(parse('nan 20 24').clearColor).toBeUndefined();
+    expect(parse('17 Infinity 24').clearColor).toBeUndefined();
+    expect(parse('17 20').clearColor).toEqual([17, 20, 0]); // 分量不足补 0（非 NaN，旧语义不变）
+  });
   // F8：壁纸级 bloom（general.bloom*）——仅 bloom===true 才产出；缺省 strength=2 / threshold=0.65。
   it('解析壁纸级 bloom（strength/threshold，缺省 2/0.65）', () => {
     const parse = (general: Record<string, unknown>) =>
