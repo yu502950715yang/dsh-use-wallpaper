@@ -10,6 +10,7 @@
 ### 1.1 three.js 播放器（当前主路径）
 
 - **背景图层**：每个 `image` 对象 → `Mesh`（`PlaneGeometry` + `MeshBasicMaterial`），按 `we_to_three`（场景中心化、**y 不翻**）定位，`scale` / `alpha` / `brightness` 与 WE 语义一致；`renderOrder=0`、`depthWrite=false`。
+- **image 精灵表帧 UV**（v0.8.1）：材质 `passes[0].combos.spritesheet` 为真且纹理带 TEXS 帧网格时，按行优先写当前帧 UV（1 fps 自动循环；`resizeBackground` 后重写）；不接脚本 `getTextureAnimation`（`AGENT.md` §7.42 ②）。
 - **粒子系统**：每个 `particle` 对象 → `InstancedBufferGeometry`（每粒子 4 角点 billboard + `ShaderMaterial`）。实例属性 `particlePosition/Size/Uv/Color/Alpha` 按 spec 的 `maxcount` **一次性预分配**（避免 three r170 `_maxInstanceCount` 首帧锁存导致层不绘制），运行期只更新 `instanceCount`。
 - **粒子 shader**：billboard（`pos + corner*halfSize`）、`gl_Position.z=0`（2D，避开正交视锥裁剪）、多帧 sprite UV 网格切片（`frameCount` + cols/rows）、纹理 alpha 遮罩（有纹理 `shape=texel.a`、无纹理软圆盘）、`softness`、additive / alpha 混合。
 - **渲染循环**：`renderer.setAnimationLoop`（`dt` = `performance.now` 差分，clamp 0.1s）→ 逐 `CpuParticleSim.update(dt)` → 刷新实例缓冲 → `render`；帧体 `try/catch` **异常自愈**（three 的 RAF 一次异常会永久停摆）。
@@ -18,6 +19,7 @@
 - **text 对象 + 脚本运行时**（2026-09-20）：与 image 同路径渲染为背景 quad（`CanvasTexture`）；**多行文本按 `\n` 分行绘制**（`fillText` 本身不处理换行）；驱动按「quickjs 沙箱执行 `text.script` → clock 硬编码兜底 → 跳过」取，文本变化才**就地重绘**同一 canvas；**只对 text 应用 `visible` 过滤**；pkg 内字体经 `FontFace` 加载、失败回退 sans-serif。沙箱实现、实测与未验证项见 `AGENT.md` §7.1 第 6 条。
 - **场景树层级变换**（2026-09-20）：`scene-json` 解析 `parent`，`src/client/scene-graph.ts` 的 `resolveWorldTransforms()` 在装载时把父链折叠成世界变换（`scale` 逐分量相乘、`origin` 经父旋转、`angles` 矩阵累积），随 `SceneAssets.worldTransforms` 下发，下游统一读世界值。反算基准与影响面见 `AGENT.md` §7.1 第 9 条。
 - **省电与画质档位**（2026-09-21）：`paused` / `pauseOnHidden`（停 RAF + 帧内防御 + `elapsedSeconds` 扣暂停时长）、`qualityScale`（渲染像素比 = 设备像素比 × 档位；画布缓冲与对象 RT 的屏幕密度走**同一个** `resolvePixelRatio`）；`resize()` 重读 `devicePixelRatio`（跨屏自适应）。见 `AGENT.md` §7.1 第 7 条。
+- **壁纸级后处理与清屏色**（v0.8.1）：`general.bloom*` → `bloom-stage.ts`（薄封装 GlowStage）→ player 按「壁纸 bloom → 应用级 Glow → 合成」串联；`general.clearcolor` 在 `parseSceneJson` 按 0-1/0-255 双语义归一化到 0-255，player 构造时 `setClearColor`（段渲染同色）。边界见 `AGENT.md` §7.42 ③⑥。
 
 ### 1.2 粒子模拟（Rust/wasm，`wasm/src/particle/`）
 
@@ -25,6 +27,7 @@
 
 - 照 linux-wallpaperengine `CParticle` 语义实现：`emitter`（`boxrandom` 逐轴 vec3 / `sphererandom` 球壳 cbrt）、`initializer`（`sizerandom`、lifetime / velocity / color / alpha / rotation / angularVelocity / turbulent）、`operator`（movement 重力/阻力、angularMovement、alphaFade 梯形、size/alpha/colorChange、turbulence、oscillateAlpha/Size/Position、寿命 compaction）。
 - **错落稳态（`prewarm`）**：启动时按 `min(maxcount, ceil(rate×平均寿命))` 铺入带**随机出生相位**的粒子，避免「一批同时下落、同时消失」。
+- **起播相位 `starttime`**（v0.8.1）：`CpuParticleSim::new` 在 `prewarm()` 后按 effect 秒预推进（步长 `1/60/rate`，上限 900 步 = 15 effect 秒），超限静默截断（`AGENT.md` §7.42 ⑤）。
 - `build_instance_vertices()` 输出每粒子 `[pos3, size, uv2, color3, alpha]`（10 浮点）喂给 three.js。
 
 ### 1.3 纹理 / 材质解码（`src/client/tex-loader.ts`）
@@ -49,7 +52,7 @@
 - **闪烁**：`oscillatealpha` 等算子接线，星点/火光按 spec 振荡。
 - **坐标与变换**（勿再翻转 / 勿漏乘）：WE 场景系 = 左下原点、y 向上；three 正交相机 = 中心原点、y 向上。映射 `three = we − viewport/2`，**y 不翻转**。对象 model matrix = `T·R·S`，`angles` 是**弧度**，旋转顺序 `R = Rz·Ry·Rx`。历史事故：曾用 `vh/2 − oy` 导致非居中对象上下镜像。
 - **`turbulentvelocityrandom` = `forward` 绕 `normal` 旋转**（不是「沿 normal 偏移」）：官方 `TurbulentVelocityRandomProgram` = curl 噪声采样 → 投影到垂直 normal 的平面 → 与 forward 求夹角 → `AngleAxisf(angle*scale + offset, normal) * forward`。方向**恒在垂直 normal 的平面内**。旧实现得到 `(0, cosθ, sinθ)`：x 恒 0、速度全进屏幕上不可见的 z 轴 → 粒子排成一条竖线。影响全库 **9 张壁纸**。
-- **对象级 `instanceoverride`**：`alpha/size/lifetime/speed` 是**乘数**，`color/colorn` 是**覆盖**（`UiColorToLinear` = v²），emitter rate **× `count`**；缺省恒等。JS 侧只透传原始 JSON，语义解析在 Rust（`particle::parse_particle_override`）。
+- **对象级 `instanceoverride`**：`alpha/size/lifetime/speed` 是**乘数**，`color/colorn` 是**覆盖**（`UiColorToLinear` = v²），emitter rate **× `count`**；缺省恒等。JS 只解 `{user|script,value}` 编辑器包装，数值语义仍在 Rust（`particle::parse_particle_override`）。
 - **`.tex` flags 必须被消费**（权威定义见 `.lwe/.../Texture.h`）：
   - `ClampUVs = 2`（bit1）—— **已修**：WE 默认 **REPEAT**，**仅带此位才 CLAMP**。曾一律落到 three 默认 `ClampToEdgeWrapping` ⇒ `clouds.frag` 有意把第二组 UV 旋转到负象限 ⇒ `cloud1` 全部塌到最左一列 ⇒ CP2077 整屏偏白且随时间越来越白。**全库 477 张 `.tex` 中 105 张因此由 clamp 改 repeat**。
   - `NoInterpolation = 1`（bit0）—— **待办**：`applyLinearSampling` 无条件设 `LinearFilter`，带此位的纹理（全库 4 张）本该 `NearestFilter` ⇒ 被插值偏糊。
@@ -67,11 +70,11 @@
 
 ## 3. 对象级效果链（effects）
 
-- **全库覆盖（P1 + P2，2026-09-15）**：线性链与 **24 条具名 RT 图链**（blurprecise×13、blur×3、localcontrast×2、godrays×2、bloom×2、shine×1、bokeh_blur×1）都由同一执行器按计划执行（**模板均已覆盖**；其中 10 条不挂链、画面无变化，见下条）；**原先「整条跳过 + 去重告警」的降级已删除**。
+- **全库覆盖（P1 + P2，2026-09-15）**：线性链与 **24 条具名 RT 图链**（blurprecise×13、blur×3、localcontrast×2、godrays×2、bloom×2、shine×1、bokeh_blur×1）都由同一执行器按计划执行（**模板均已覆盖**；其中 3 条因挂在 util 对象上而不挂链、画面无变化，见下条）；**原先「整条跳过 + 去重告警」的降级已删除**。
 - **新增的效果类别**：`blur` / `blurprecise` / `localcontrast` / `godrays` / `bloom` / `shine` / `bokeh_blur` 属 P2 新增。P1 已有的高频线性效应是 waterwaves 24 / shake 18 / opacity 8 / waterripple 7 / waterflow、pulse、perspective 各 5 / clouds、scroll、foliagesway 各 4 …。
 - **计数口径**：`106 线性 + 24 RT`（130 条效果引用）是**声明口径**（按 effect 链数、不过滤 `visible`）；其中 1 条线性链的 effect 级 `visible=false`（`2597392171` obj50 的 `effects/shake`）生产侧整条跳过（**`visible` 仅 three 主路径解析**；未接入的 `scene-renderer` / `wasm-renderer` 并源循环未过滤）⇒ three 的**执行口径 = 105 线性 + 24 RT**。
-- **10 条链在画面上看不到（不是能力差）**：24 条 RT 图链里 7 条挂在 `text` 对象（收链阶段就被过滤）、3 条挂在 `util` 对象（拿不到隔离条目 ⇒ 不挂链）；这两类对象的渲染是独立缺口。
-- **验收口径（如实）**：端到端（真实 WebGL 逐像素）跑过的样本是 `2683211654` / `2911105183` / `2011060960`（双链同名 RT）/ `2937346640`（godrays）/ `1968789468`（shine）/ `2597392171`（godrays）/ `3743126786`（16 pass bloom）/ `3765967112`（blurprecise 挂 text，链不挂载，只作「不报错」回归）/ `1429403119`（性能相对信号）；该轮共 **30 PASS / 2 FAIL**，2 条 FAIL **全是 `[5]` 的归因对照**（bloom 不抬全屏 p99），**不是回归**（明细见 `AGENT.md` §7.1 的表）。⚠️ **2026-09-20 起 `[5]` 的全屏 p99 口径失去鉴别力**：Glow 默认开启后开关两侧都钉在 255 ⇒ 由 1 PASS + 2 FAIL 变 3 FAIL；**这不是 bloom 失效**（`[5-归因·主]` 的亮部诊断仍显示 bloom 有效），而是该判据口径不再有鉴别力（见 `AGENT.md` §7.1 的「应用级后处理 ⇒ 已实现」子条）。其余效果类别的「可由现有执行器正确执行」仍是**分类学推断**，**不是逐个实测**。GTR 的 bloom 只测到**局部增亮**（p99 Δ=0），**未与桌面 WE 逐像素对照**。
+- **部分链在画面上看不到（不是能力差）**：24 条 RT 图链里 3 条挂在 `util` 对象（拿不到隔离条目 ⇒ 不挂链）；`text` 对象 v0.8.1 起已挂链（原先 7 条在收链阶段被过滤，边界见 `AGENT.md` §7.42 ①）。util 的渲染仍是独立缺口。
+- **验收口径（如实）**：端到端（真实 WebGL 逐像素）跑过的样本是 `2683211654` / `2911105183` / `2011060960`（双链同名 RT）/ `2937346640`（godrays）/ `1968789468`（shine）/ `2597392171`（godrays）/ `3743126786`（16 pass bloom）/ `3765967112`（blurprecise 挂 text，该轮只作「不报错」回归；v0.8.1 起已挂链）/ `1429403119`（性能相对信号）；该轮共 **30 PASS / 2 FAIL**，2 条 FAIL **全是 `[5]` 的归因对照**（bloom 不抬全屏 p99），**不是回归**（明细见 `AGENT.md` §7.1 的表）。⚠️ **2026-09-20 起 `[5]` 的全屏 p99 口径失去鉴别力**：Glow 默认开启后开关两侧都钉在 255 ⇒ 由 1 PASS + 2 FAIL 变 3 FAIL；**这不是 bloom 失效**（`[5-归因·主]` 的亮部诊断仍显示 bloom 有效），而是该判据口径不再有鉴别力（见 `AGENT.md` §7.1 的「应用级后处理 ⇒ 已实现」子条）。其余效果类别的「可由现有执行器正确执行」仍是**分类学推断**，**不是逐个实测**。GTR 的 bloom 只测到**局部增亮**（p99 Δ=0），**未与桌面 WE 逐像素对照**。
 - **P2 遗留（如实）**：`3789452668` 的 `effects/color_grading`（线性链）有 `varying` 类型不匹配（`vec4` vs `vec2`）⇒ 该链不生效；`2597392171` 的 godrays 引用了全局运行时 RT `_rt_FullFrameBuffer` ⇒ 该槽不绑（保持默认）+ 告警一次，其完整语义属非目标；**未做显存 cap**。
 - **对象 RT 的三条不变量**（改这块先读代码注释）：
   1. **局部正交相机的 left/right/top/bottom 是「世界坐标范围」**，必须覆盖**完整对象世界尺寸**。两个坑：拿 RT 像素当范围（dpr>1 时对象缩小 + 边缘 clamp 拉伸）；按 `OBJECT_RT_MAX`(4096) 钳制范围（超限对象只覆盖中央 ⇒ 边缘拉伸带）。超限对象的正确代价是「**分辨率低**」，**不是**几何裁剪。
@@ -79,7 +82,7 @@
   3. **`isolate` 的键是 `scene.json` 的对象 id**，不是 player 的图层计数器 id（两者撞键会让隔离 image 与 particle 互相覆盖）。
 - **`colorBlendMode ∈ {6,7,31}` 的对象已进入隔离路径、其效果生效**（2026-09-14 `6bb3d71`）：修法是把 WE 的混合语义从「内容材质」搬到「合成 quad」——隔离内容材质只做普通 alpha 写入，`createCompositeQuadMaterial` 统一用 `MeshBasicMaterial`（采样非预乘对象 RT）并按 `colorBlendMode` 设 `CustomBlending`。
 - **`refraction` 在 GLSL3 下编译失败**（引擎源码自身的 `float(format) == FORMAT_RG88` 缺陷）：效果不生效。**已修的是「失败被缓存」**——此前每帧重试 ⇒ 重建材质 + 探针渲染 + 2 条 warning（实测该页 146×2 条刷屏）；现在按 pass key 缓存失败，同一 key 只试一次。
-- **text 对象的 effects 被静默丢弃**：`groupEffectsByObject` 跳过 `kind === 'text'`，链在解析阶段就不进 `effectChains`（连汇总 warn 都没有）。实测样本 `3765967112` 的 4 条 `blurprecise` 全挂在 text 对象上。
+- **text 对象的 effects 已挂链（v0.8.1）**：`groupEffectsByObject` 不再跳过 text，隔离 RT / 合成 quad 尺寸在装配期冻结 ⇒ 时钟文本变宽时轻微裁边/拉伸（`AGENT.md` §7.42 ①）。实测样本 `3765967112` 的 4 条 `blurprecise` 挂在 text 对象上。
 - **21 条 effects 挂在 util / 音频等不参与渲染的对象类型上**（util:10 + none:11）：会被解析但不会挂链，每张壁纸打一条汇总 warn。
 - **粒子对象的效果链只有单测覆盖**：全库实测 particle 挂载 effects = 0，管线里的粒子隔离分支**无真实样本可验**。
 - ~~**链全为具名 RT 图链的对象不再隔离**（P2 前置优化）~~：**已作废（2026-09-15，P2）** —— `rtGraphOnly` 分支与其告警已删除，isolate 准入回到「至少有一条**可见**链」；原先不隔离的对象重新进入隔离路径，换来效果生效。
@@ -95,7 +98,7 @@
   - **2026-09-20 订正（真机 GPU 验收）**：上面的前提**不成立** —— 本机 headless Edge 加 `--use-angle=d3d11 --ignore-gpu-blocklist` 拿到的是**真实 RTX 3060 / ANGLE D3D11**（探针 `research/gpu-probe.mjs`；`verify-object-effects.mjs --gpu` 档内置 renderer 自证）。同时**判据要改**：headless 的 RAF 恒锁 **60Hz 节拍**（真机与软渲染都是 16.7ms）⇒ **帧间隔不可反推 FPS**，改用**代理判据**「每帧 `renderer.render` 提交耗时 ≤ 33.3ms」⇒ 1080p 中位数 **2.0ms**（p95 2.7）、占预算 **6%**，**达成**；严格验收仍缺 GPU 侧耗时（需 timer query 或有头浏览器）。**真机显存（nvidia-smi）**：同一壁纸 1080p **+415 MiB**（对象 RT 静态估算仅 30.5 MB ⇒ 低估 8–14×）。**真机全量回归 37 PASS / 2 FAIL**，FAIL 项与软渲染基线逐项相同。完整数据见 `AGENT.md` §7.1 的 2026-09-20 订正。
   - **同轮发现并修复的一处泄漏**：`EffectRunner` 的纹理槽缓存在同一 WebGL 上下文内 resize 重挂链时**每次泄漏 28 张 GPU 纹理**（`renderer.info.memory.textures` 107→303 等差增长）；切换壁纸因新建上下文而不显形。修法与证据见 `AGENT.md` §7.5。
 - **应用级 Glow 的显存与开销（2026-09-20 实测）**：base RT（画布缓冲尺寸）+ 6 张小 RT（三级各一对 ping-pong，合计约 **0.66×base** 面积）；实现用 `HalfFloatType`（RGBA8 口径翻倍）⇒ **720p 静态估算 ≈ 12 MB**（7 张 RT：1280×720 base + 640×360 / 320×180 / 160×90 各两张；逐张相加 = 12,211,200 B = **12.2 MB / 11.6 MiB**；Task 6 记的 **11.9 MB** 已作废，仅作历史记录），`renderer.info.memory.textures` 可精确核对（GTR **28 → 35，+7**）；spec 的 @3440×1440@dpr1 RGBA8 口径 ≈ 33 MB ⇒ HalfFloat 约 66 MB。**只统计 `glowEnabled` 时占用**，改阈值 / 强度不重建 RT。**开销**：每帧 CPU 侧 `renderer.render` 提交 **+0.1~+0.4 ms**（16.7ms 帧预算的 0.6~2.4%），**不含 GPU 时间**（真 GPU 光栅化异步，严格验收未做）。**`[6]` 显存泄漏探测仍 Δ 0**，但 5 次观测为 Δ0/Δ1/Δ0/Δ2/Δ0（开关两侧都出现过 Δ>0）⇒ 如实记为**零星残留 1~2 张、与 Glow 无关**（远小于修复前的 Δ196）。**如实**：只测了 GTR `3743126786` 一张壁纸；nvidia-smi 差值噪声 ±400 MiB，**不可用于定量**。完整数据见 `AGENT.md` §7.1 的 2026-09-20「已实现」子条。
-- **音频已接入（2026-09-25，A3）**：装配期 `createAudioAnalyzer()` + 对 `desc.sounds` 逐个 `playWallpaperSound`（`/wallpapers/scene/<id>/asset?name=…`，loop；新增设置 `soundEnabled`，默认开启），`onFrame` 每帧 `analyzer.update()` → `ObjectEffectStage.setAudioSpectrum(freqData)` → 各 `EffectRunner` 的音频 uniform，`teardown` 里 `context.close()`。**未验证**：出声与「随频谱动」的真机观感（headless 无音频设备）；3 条 `Simple_Audio_Bars` 链仍因 shader 方言失败；visualizer 文本条未做（挂在 util 对象上）；`volume` / `playbackmode` 未消费（一律 loop）。
+- **音频已接入（2026-09-25，A3）**：装配期 `createAudioAnalyzer()` + 对 `desc.sounds` 逐对象选一首 `playWallpaperSound`（`/wallpapers/scene/<id>/asset?name=…`，按 `playbackmode` / `volume`；新增设置 `soundEnabled`，默认开启），`onFrame` 每帧 `analyzer.update()` → `ObjectEffectStage.setAudioSpectrum(freqData)` → 各 `EffectRunner` 的音频 uniform，`teardown` 里 `context.close()`。**未验证**：出声与「随频谱动」的真机观感（headless 无音频设备）；3 条 `Simple_Audio_Bars` 链仍因 shader 方言失败；visualizer 文本条未做（挂在 util 对象上）。**v0.8.1**：`volume` 经 GainNode、`playbackmode` 按对象选一首（`single` 播一次、`random` 随机起点）；多文件 loop 轮播 / random 播完重随机未实现（`AGENT.md` §7.42 ④）。
 - **省电与画质档位**（2026-09-21）：`qualityScale` 让渲染像素比 = 设备像素比 × 档位（0.5–1），画布缓冲与对象 RT 的屏幕密度随之等比缩小 ⇒ 显存与填充率同比例下降；暂停停掉整条 RAF（`elapsedSeconds` 扣除暂停时长，恢复不跳帧）。**只有单测覆盖，无真机目检**；暂停的真实省电收益未测。
 
 ---

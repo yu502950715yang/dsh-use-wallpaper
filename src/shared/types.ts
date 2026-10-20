@@ -109,10 +109,10 @@ export interface SceneParticleObject extends SceneObjectBase {
   visible?: VisibleBinding;    // T4.2：可见性绑定（渲染前解析，不可见对象跳过）
   alignment?: string;          // 对象对齐锚点（同 image；渲染时按锚点换算中心，见 alignment.ts）
   effects?: unknown[];         // 对象效果链定义（Ruling 5：与 image/util 一致，按 objects 顺序展平）
-  // scene.json 的 `instanceoverride`（对象级粒子实例覆盖）**原始 JSON 文本**：WE 用它乘/覆盖
+  // scene.json 的 `instanceoverride`（对象级粒子实例覆盖）序列化后的 JSON 文本：WE 用它乘/覆盖
   // 粒子的 alpha/size/lifetime/speed/color（官方 `OverrideSpawnProgram`），并让 emitter rate
-  // 乘 count（`SceneParticleObjectParser.cpp:264`）。语义解析在 wasm CPU 模拟器
-  // （Rust `parse_particle_override`），JS 侧只透传 —— 避免两份语义漂移。
+  // 乘 count（`SceneParticleObjectParser.cpp:264`）。JS 只解 `{user|script,value}` 编辑器包装，
+  // 数值语义仍在 Rust（`parse_particle_override`）—— 避免两份语义漂移。
   // 回归背景：GTR 3743126786 的烟柱 `{alpha: 0.03, size: 2.09}` 就靠它把粒子压到几乎不可见。
   instanceOverrideJson?: string;
 }

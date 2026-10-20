@@ -33,7 +33,7 @@
 ### 2.2 host / client / shared 分层
 
 - `src/host/`：Node 侧（Cordis 插件）。`scanner.ts` 扫描目录 → `WallpaperInfo`；`steam-paths.ts` 目录探测（`/wallpapers/probe`）；`pkg-reader.ts` 解包 PKGV；`routes.ts` HTTP 路由（每次请求读实时目录，settings 热更新；对 web 壁纸的 HTML 注入指针 shim，见 §5.48）；`settings.ts` 插件设置（双路径，见 §5.34）；`data-dir.ts` / `scene-frame-store.ts`（数据目录与抓帧 PNG，见 §5.49）、`scene-media-probe.ts`（内嵌 MP4 探测）、`user-props.ts`（布尔用户属性交集，见 §7.41）。
-- `src/client/`：浏览器侧（esbuild → `dist/client.js`，external react 等 DSH 共享模块）。主路径：`index.ts`（bootstrap + `window.__wallpaperEngine` + 注册设置菜单）、`wallpaper-controller.ts`（选择/竞态/回退链）、`three-renderer.ts` + `threejs-player.ts`（渲染）、`object-effects.ts` + `object-range.ts` + `effect-runner.ts` + `effect-graph.ts`（对象级效果链）、`rt-render.ts`（「渲染进 RT」的唯一入口，透明清屏不变量落在这里）、`tex-loader.ts`（TEXV0005 解码）、`scene-json.ts` / `scene-graph.ts` / `visibility.ts`、`text-object.ts` + `text-script.ts` + `scene-script-vm.ts` + `scene-script-host.ts` + `scene-anim.ts` + `layer-state.ts` + `dynamic-mesh.ts`（text / 脚本 / 动态网格）、`glow-stage.ts`（应用级 Glow）、`audio-input.ts`、`scene-fallback.ts` / `frame-export.ts`（降级链与首帧导出）、`rotation.ts` / `library-view.ts` / `local-store.ts`（轮播 / 壁纸库 / 本地存储）、`wallpaper-properties.ts` / `media-health.ts`（布尔属性面板 / 视频解码失败提示）、`background-layer.ts` / `settings.ts` / `styles.ts` / `settings-section.tsx`。
+- `src/client/`：浏览器侧（esbuild → `dist/client.js`，external react 等 DSH 共享模块）。主路径：`index.ts`（bootstrap + `window.__wallpaperEngine` + 注册设置菜单）、`wallpaper-controller.ts`（选择/竞态/回退链）、`three-renderer.ts` + `threejs-player.ts`（渲染）、`object-effects.ts` + `object-range.ts` + `effect-runner.ts` + `effect-graph.ts`（对象级效果链）、`rt-render.ts`（「渲染进 RT」的唯一入口，透明清屏不变量落在这里）、`tex-loader.ts`（TEXV0005 解码）、`scene-json.ts` / `scene-graph.ts` / `visibility.ts`、`text-object.ts` + `text-script.ts` + `scene-script-vm.ts` + `scene-script-host.ts` + `scene-anim.ts` + `layer-state.ts` + `dynamic-mesh.ts`（text / 脚本 / 动态网格）、`glow-stage.ts`（应用级 Glow）、`bloom-stage.ts`（壁纸级 bloom，薄封装 GlowStage）、`audio-input.ts`（音效音量 / 播放模式）、`scene-fallback.ts` / `frame-export.ts`（降级链与首帧导出）、`rotation.ts` / `library-view.ts` / `local-store.ts`（轮播 / 壁纸库 / 本地存储）、`wallpaper-properties.ts` / `media-health.ts`（布尔属性面板 / 视频解码失败提示）、`background-layer.ts` / `settings.ts` / `styles.ts` / `settings-section.tsx`。
 - `src/shared/`：跨 host/client 的类型与**两端共用的常量/纯函数**（`types.ts` 的 `WallpaperInfo` / `SceneDescription` / `SceneObject` 等；`pointer-shim.ts` 的 shim 源码与 HTML 注入 —— host 侧要把它内联进响应、client 侧与测试要按同一契约断言，故不能放在任一侧）。
 - `src/client/shader/`：WE shader 方言转译层（`effect-chain.ts` 解析、`shader-preprocessor.ts` 预处理、`uniform-binder.ts`、`we-headers.ts`）。
 
@@ -58,6 +58,7 @@ npm run e2e:colorblend   # 渲染 e2e：colorBlendMode 逐像素判据（零本�
 npm run e2e:card         # 计算样式 e2e：通知卡片与代码块同底（需本机 DSH 的 app.asar，不可上 CI）
 npm run e2e:hidpi        # 渲染 e2e：dpr=1/2 的挂载期 RT 尺寸断言（需本机 WE 壁纸库）
 npm run e2e:textclock    # 渲染 e2e：text 时钟层（魔兽之门 1922570576）是否真的画在画面上（需本机素材）
+npm run e2e:verify-v081  # 渲染 e2e：v0.8.1 三项像素判据（bloom / clearcolor / spritesheet；需本机素材）
 npm run e2e:web-pointer  # 渲染 e2e：web 壁纸跟随鼠标（1184182304）真机像素级 A/B（需本机素材）
 npm run e2e:compare      # A/B 截图逐像素对拍（零回归验收）
 npx vitest run tests/xxx.test.ts --reporter=basic   # 跑单个文件
@@ -124,7 +125,7 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
 2. **`research/`、`wasm/pkg/`、`dist/static/ptex-*.tex` 是 gitignore**；`lib/`、`dist/` 其余部分**必须提交**（见 §3.2）。
 3. **对象 `angles`（弧度）必须应用**，否则局部朝向被当世界朝向。三个应用点：粒子顶点 shader、背景 `mesh.rotation`、util/text（字段解析保留，暂不做几何变换）。
 4. **`turbulentvelocityrandom` = `forward` 绕 `normal` 旋转**（不是「沿 normal 偏移」）：方向恒在垂直 normal 的平面内。旧实现写成 `forward*cosθ + normal*sinθ*scale` ⇒ 速度进屏幕上不可见的 z 轴、粒子排成竖线（影响 9 张壁纸）。
-5. **对象级 `instanceoverride`**（scene.json → 粒子）：`alpha/size/lifetime/speed` 是**乘数**，`color/colorn` 是**覆盖**（`UiColorToLinear` = v²，legacy `color` 先 /255），emitter rate **× `count`**；缺省恒等。JS 只透传原始 JSON，语义解析在 Rust。
+5. **对象级 `instanceoverride`**（scene.json → 粒子）：`alpha/size/lifetime/speed` 是**乘数**，`color/colorn` 是**覆盖**（`UiColorToLinear` = v²，legacy `color` 先 /255），emitter rate **× `count`**；缺省恒等。JS 只解 `{user|script,value}` 编辑器包装，数值语义仍在 Rust。
 6. **图像 `colorBlendMode`（→ shader combo `BLENDMODE`）不是 alpha 混合**，而是**额外追加一遍「读当前帧缓冲」的混合 pass**（WE 材质 `materials/util/effectpassthrough.json` / shader `genericimage3`；模式表在 WE 明文 `assets/shaders/common_blending.h`）。three 侧用**预乘片元** + `CustomBlending` 复刻；**未实现的模式回退普通 alpha 混合**（不静默画错）。全库非零的只有 3 个对象：`3743126786`=7、`2832263418`=6、`2460786246`=31。合成侧的三个约束见 §5.25/§5.26。
 7. **粒子 alpha 属性链**：透明度 = 生命周期衰减 × alpha（`alpharandom` 等经属性链传入），JS ShaderMaterial 与 wasm 粒子层**双路径同语义**；改 alpha 相关逻辑要双路径验证。
 8. **场景资源禁止浏览器缓存**：`/wallpapers/scene/<id>/asset` 返回 `Cache-Control: no-store`，改资源无需清缓存。
@@ -146,7 +147,7 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
 24. **uniform 注解里的嵌套对象必须完整解析**：非贪婪 `\{[\s\S]*?\}` 遇到内层 `}`（WE 注解普遍带 `"require":{...}`）会截断 ⇒ 注解整体丢失 ⇒ uniform 全零（`3303428996` 整屏黑）。要抓到行尾再用 `takeBalancedJson` 配对花括号。
 25. **效果 pass 的 `blending: "normal"` = 覆盖（`ONE/ZERO`）**，不是 alpha 混合（lwe `CPass.cpp::setupRenderFramebuffer`）：`Normal`/未知 → `NoBlending`，`Additive` → Additive，`Translucent` → Normal。写成 three 的 `NormalBlending` 会让 rgb 每过一个 pass 再乘一次自身 alpha ⇒ 半透明图层逐级趋零（GTR 云消失）。
 26. **`colorBlendMode ∈ {6,7,31}` 的合成 quad 必须把图层 alpha 预乘进 rgb**：`colorBlendMode` 语义是 `mix(A, Blend(A,B), opacity)`，而 Screen(7)/31/6 的颜色因子**都不看 alpha** ⇒ 不预乘就是全强度盖住画面（GTR「云挡住人物」）。内容侧已改普通 alpha 写入（混合语义整体移到合成 quad）。
-27. **GTR 云亮度 vs 桌面 WE 的差异来自「应用级后处理」**（WE `config.json` 的 `general.user.postprocessing`，作用于整帧、不属于任何壁纸字段）—— 插件**已实现**（`glow-stage.ts`，缺省 `0.65/0.35`）且只覆盖 **scene** 壁纸。⚠️ 壁纸级 `general.bloom`（全库 3 张）**仍未实现**。
+27. **GTR 云亮度 vs 桌面 WE 的差异来自「应用级后处理」**（WE `config.json` 的 `general.user.postprocessing`，作用于整帧、不属于任何壁纸字段）—— 插件**已实现**（`glow-stage.ts`，缺省 `0.65/0.35`）且只覆盖 **scene** 壁纸。⚠️ 壁纸级 `general.bloom`（全库 3 张）**v0.8.1 起已实现**（边界见 §7.42 ③）。
 28. **具名 RT 图链的执行语义（P2）**：加载期由 `buildEffectPlan`（`effect-graph.ts`）编译成静态计划，`EffectRunner.setPlan` 建**具名 RT 池**；帧内只查表绑槽 + 提交 pass。要点：`bind.index` = `g_Texture<index>` 且 `bind` 优先于 `textures`；**`previous` = 进入 target 序列前的输入**（不是上一 pass 输出）；具名 RT = 对象 RT ÷ `fbos.scale`，**池作用域 = 单条链**；**写具名 RT 的 pass 编译失败 ⇒ 整条计划放弃**（回退对象 RT 原图）；引用链内不存在的 `_rt_*` 保持默认不绑白纹 + 去重告警；effect 级 `visible === false` 整条不挂链（作者正常内容，不打降级告警）。
 29. **combo 宏必须跨 stage 合并**（`effect-chain.ts` 在两次 `preprocessWeShader` **之前**合并 vert/frag 两侧的 `[COMBO]` 默认值）：一侧从默认值取到 `NOISE 1`、另一侧被 `#if` 裸标识符兜底成 `0` ⇒ frag 引用 vert 未声明的 varying ⇒ **program 链接失败**（链接错误不在 shader info log 里）。**不要只特判某个宏**。
 30. **web 壁纸 iframe 必须「与自身资源同源 + 与宿主跨源」**：`sandbox="allow-scripts"`（无 `allow-same-origin`）是 opaque origin，壁纸**自己的** img/video 也算跨源 ⇒ WebGL `texImage2D` 抛 SecurityError、画面空白。承载 origin 优先级（`planWebFrameOrigin`）：**桌面壳公布的宿主 HTTP origin**（`globalThis.__DSH_TRANSPORT__.streamBaseUrl`，不探活）→ **回环页换另一回环主机名 + 探活** → 其余退回 opaque origin 兜底。
@@ -207,13 +208,13 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
 
 > **编号沿用历史**（多处代码注释与 `docs/superpowers/` 按 §7.x 引用，勿重排）：**空号 = 该条已结案、记录已移入 `docs/fixes/`**（如 §7.2 起的各「已修」条目）。§7.30+ 是本次精简新增的续号。
 
-1. **对象级效果链：执行器能力已覆盖，但有对象类型不挂链**：`text` 对象的 effects 在收链阶段就被跳过（`groupEffectsByObject`），`util` / 无媒体字段的对象拿不到隔离条目 ⇒ 全库有 **21 条** effects 永不挂链（util 10 + none 11，每张壁纸一条汇总 `warn`）；**text 的 effects 连 warn 都没有**。**粒子对象挂载 effects 全库为 0** ⇒ 粒子隔离分支只有单测覆盖、无真实样本。端到端只逐像素验过少数样本，其余是分类学推断（详见 `docs/fixes/threejs-path-fixes.md`）。
+1. **对象级效果链：执行器能力已覆盖，但仍有对象类型不挂链**：`util` / 无媒体字段的对象拿不到隔离条目 ⇒ 全库有 **21 条** effects 永不挂链（util 10 + none 11，每张壁纸一条汇总 `warn`）。`text` 对象的 effects 自 v0.8.1 起已挂链（隔离边界见 §7.42 ①）；**粒子对象挂载 effects 全库为 0** ⇒ 粒子隔离分支只有单测覆盖、无真实样本。端到端只逐像素验过少数样本，其余是分类学推断（详见 `docs/fixes/threejs-path-fixes.md`）。
 3. **粒子自旋的轴序偏差**：本项目用 `Rz·Ry·Rx`，WE 的 `ComputeParticleTangents` 是 `Rz·Rx·Ry` ⇒ **仅多轴自旋**（全库 6 个对象）结果可能与桌面不同，**未与桌面逐像素对照**；z-only 时两种顺序逐像素等价。
 10. **headless Edge 的 WebGPU 是 SwiftShader**（软件光栅化），非真实 GPU。**订正**：该结论**只对 WebGPU 成立** —— WebGL 加 `--use-angle=d3d11 --ignore-gpu-blocklist` 就能拿真 GPU（真机验收的代价只是一个 flag）。
 11. **测试基线口径**：`scripts/known-failures.json` 的基线**为空**（CI 只对**新增**失败判红；套件级错误不豁免）。`scripts/known-type-errors.json` 是另一半：tests 侧 `tsc` 类型错误按 `(文件, TS 错误码)` 计数的**棘轮**，基线内不红、**新键或计数变大即红**（计数变小只提示；行号不进指纹）；确认要放宽才 `node scripts/check-known-type-errors.mjs --update`。全库计数是**本机壁纸库的快照**、随素材漂移 ⇒ 测试只断言非空，**不要在文档里钉数字**（2026-09 快照：线性 42 种/168 次、具名 RT 11 种/38 次；该数字随素材漂移，以 `npx vitest run tests/object-effects.test.ts` 的 `[全库分类]` 行为准，见 `tests/object-effects.test.ts:106`）。
 12. **e2e harness 与真 GPU 的边界**：`verify-hidpi-object-rt.mjs` 已加「挂载期 RT 尺寸」断言（含独立 oracle 与变异验证），`verify-isolated-rt-sharpness.mjs` 再加结构性判据 + 锐度双判据（口径见 §5.44 与 `TESTING.md`），但**不覆盖「RT 尺寸对而贴屏映射错」**这一类缺陷；而实测到的「背景糊」根因是**分辨率不足**（RT 只有屏占位 1×），不是贴屏映射错。软件光栅化的性能数字**不能**替代真机 FPS。
 16. **`{animation}` 的关键帧轨道播放未实现**：`{script,value}` / `{animation,value}` 形态已按 `value` 静态兜底，但 track/keyframe/mode/fps **全部未解析** ⇒ 轨道驱动的位移/缩放/旋转仍不生效；「新位置与桌面一致」未证实。
-30. **应用级 Glow 的范围边界**：只覆盖 **scene** 壁纸（且只测过 GTR 一张），而 WE 的 postprocessing 对 video 也生效 ⇒ **video / image / web 的亮部仍与桌面有差**；开启时 base RT **无 MSAA**（整帧从 canvas 的 `antialias:true` 掉到无 MSAA）；性能门槛（1080p FPS ≥ 30）**未在真机严格验证**（缺 GPU 耗时或有头浏览器帧率）；壁纸级 `general.bloom` **未实现**（全库 3 张：`2454403969`、`2937346640`、`3790775478`）。
+30. **应用级 Glow 的范围边界**：只覆盖 **scene** 壁纸（且只测过 GTR 一张），而 WE 的 postprocessing 对 video 也生效 ⇒ **video / image / web 的亮部仍与桌面有差**；开启时 base RT **无 MSAA**（整帧从 canvas 的 `antialias:true` 掉到无 MSAA）；性能门槛（1080p FPS ≥ 30）**未在真机严格验证**（缺 GPU 耗时或有头浏览器帧率）；壁纸级 `general.bloom` **v0.8.1 起已实现**（全库 3 张：`2454403969`、`2937346640`、`3790775478`），新边界见 §7.42 ③。
 31. **`copybackground` 语义未实现**（读背景副本做倒影/涟漪的场景会缺内容）；`colorBlendMode` 只实现 6/7/31，其余模式回退普通 alpha 混合。**订正**：`_rt_FullFrameBuffer` 不再是「不绑白纹 + 只打降级告警」—— 粒子 `REFRACT` 的帧内快照消费已实现（§5.46）；**效果链**消费点本轮门控关闭（`ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER = false`，按 R6 降级），该槽在效果链里仍**留空 + 每槽去重告警**，待对象窗口 UV ↔ 整画布快照的映射验证后再开。
 32. **web 壁纸的 resize 与失败回退**：跨源 iframe 拿不到子帧错误 ⇒ **无失败回退**（渲染失败停在空白而非 preview 图）；resize 靠**重建 iframe** ⇒ 跨屏拖动导致的 **dpr 变化不触发重建**，且重建会让壁纸动画从头开始（跨源探测不到壁纸是否快照了视口，故统一重建）。
 33. **非回环且非桌面壳的访问仍退回 opaque origin 沙箱**：局域网 IP / 隧道访问 GUI 时既无回环名也无 `__DSH_TRANSPORT__` ⇒ 依赖 WebGL 贴图的 web 壁纸空白（纯 DOM/CSS 的不受影响）。未做「另起端口」方案。
@@ -245,6 +246,15 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
     - ③ **抓帧依赖 `readPixels`**：无 GPU / 上下文丢失 / 部分浏览器可能失败或读回全零；当前只对 context-lost 跳过，**无亮度门禁**（Task 6 评审已知），失败只 `warn`、不写缓存、不影响渲染 —— 真机验收待办（`TESTING.md` §2.13）。
     - ④ 抓帧数据目录契约见 §5.49；`frameCacheEnabled` 只影响是否抓帧，不影响降级链的读取。
     - ⑤ **降级成功不清 live 失败记忆**：`sceneFallback` 显示 video / frame 后不 `healthStore.clear`。软失败仍按 3s 冷却自动重试一次（每会话每壁纸一次）；硬失败不自动重试（重试同一张渲染不出来的壁纸只会重复失败）。面板可能同时显示「降级画面 + 上次失败」，属真实状态，用户可手动重试 / 清除。
+
+42. **v0.8.1 缺口修复的新边界（2026-10-20）**（设计见 `docs/superpowers/specs/2026-10-20-v0.8.1-gap-fixes-design.md`）：
+    - ① **text effects 已挂链，但隔离尺寸装配期冻结**：`groupEffectsByObject` 不再跳过 text，隔离 RT / 合成 quad 取装配期实测布局 × |scale|；时钟文本跨分钟变宽时仍按装配期尺寸采样（轻微裁边/拉伸），不自动重建 RT。`threejs-player.update_background` 的 origin 位移落在合成 quad（`parallaxNode`）而非 RT 内容 mesh。静态解析隐藏、但可见性脚本会点亮的 text 只收链、无图层，落入「效果挂在未参与渲染对象上」的汇总告警（仅文案不精确）。
+    - ② **精灵表只做自动 1 fps 帧 UV**：材质 `passes[0].combos.spritesheet` + TEXS 帧网格 ⇒ 行优先当前帧 UV（`resizeBackground` 后重写）；**未接脚本 `getTextureAnimation`** ⇒ 点击 / 脚本选帧不工作；`frametime` 与 image 材质的 `sequencemultiplier` 未解析；材质标记为精灵表但缺 TEXS 时回退整表（失败开放）。
+    - ③ **bloom 两级后处理**：`general.bloom === true` ⇒ `bloom-stage.ts` 薄封装 GlowStage（缺省 strength=2 / threshold=0.65），player 按「壁纸 bloom → 应用级 Glow → composite」串联（段渲染同序）；`bloomRT` 为 8-bit RGBA。**边界**：`general.hdr` 未实现；bloom + Glow 同时开启只有调用顺序单测、**无像素判据**；另两张 bloom 壁纸（`3790775478` / `2937346640`）需真机验收（e2e 只判 `2454403969`）。
+    - ④ **sound 每对象只播一首**：OWE 语义下 `loop` 从首曲起、`random` 装配时随机、`single` 随机选一首播一次；**多文件 loop 轮播 / random 播完重随机未实现**；单文件失败不尝试同对象其余文件；`volume` 的 `{user,value}` 包装未支持（非 number → 1）。
+    - ⑤ **starttime 预推进上限 900 步**：按 effect 秒（步长 `1/60/rate`）前滚，900 步 = 15 effect-s，超限**静默截断**（未 warn）；起播构造耗时未实测。**cargo 既有失败** `particle_override_test::override_rate_keeps_duty_cycle` 在本轮之前即存在（干净 HEAD 可复现），cargo 不在 CI 门禁，待另开任务订正测试期望。
+    - ⑥ **clearcolor 语义**：真实 `general.clearcolor` 是 **0-1** 归一化值，`parseSceneJson` 按 max≤1 ⇒ ×255 归一化，player 接口仍收 0-255；**`general.clearenabled` 未消费**（未解析）。OWE 源码未找到 clearcolor / clearenabled 解析，语义依据是 WE 编辑器行为与 `2980088441` 实测；透明区露出的底色待真机确认；`clearColor` 未做 clamp / 有限性校验。
+    - ⑦ **e2e 零回归口径**：`e2e:hidpi` 的挂载期 RT 尺寸断言在 v0.8.0 基线即 FAIL（既有失败，非本版引入）；`e2e:compare` 因 F7 预推进改变 `2683211654` 的雾相位属**预期变化**（记录为基线更新，不作为回归判据）。本版新增 `e2e:verify-v081` 三项像素判据（bloom / clearcolor / spritesheet）已 PASS；观感仍按 `TESTING.md` §2.14 真机验收。
 
 ## 8. 历史归档
 
