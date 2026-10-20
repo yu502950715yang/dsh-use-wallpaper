@@ -56,6 +56,23 @@ type BackgroundEntry = {
   parallaxApplied?: boolean;
 };
 
+// image 精灵表图层：按 TEXS 帧网格逐帧把当前帧子矩形写进 quad 的 uv（材质 combos.spritesheet=1）。
+// 帧率缺省 1fps（TEXS 的 frametime 未解析；WE 的 sequencemultiplier 在 image 材质中不存在）。
+type SpriteSheetLayer = {
+  // 所属背景图层计数器 id（resizeBackground 换几何后按它找回本层重写 UV）。
+  backgroundId: number;
+  mesh: THREE.Mesh;
+  frames: number;
+  cols: number;
+  rows: number;
+  elapsed: number;       // 已播秒数（dt 累加，不跟墙钟）
+  fps: number;
+  frame: number;         // 当前帧号（-1 = 尚未写入）
+  // 原始（整图 [0,1]²）UV：每次按 base 重算子矩形——在已写过的 UV 上再映射会逐帧累积漂移。
+  baseUv: Float32Array;
+  uv: { u0: number; v0: number; u1: number; v1: number };
+};
+
 // 粒子图层条目：记录 three.js billboard quad 的 GPU 资源与配套模拟取顶点 getter。
 // 每粒子一个**实例**（InstancedBufferGeometry 的 instanced attribute），顶点 shader 由
 // 基础四边形角点（position=[-1,1]²）+ 每粒子位置/尺寸展开成屏幕对齐的 billboard。
@@ -642,6 +659,8 @@ export class ThreeScenePlayer {
   // 背景图层条目（按 addBackground 返回的 id 索引，供 update_background 引用）。
   private backgroundEntries = new Map<number, BackgroundEntry>();
   private nextBackgroundId = 0;
+  // 精灵表图层（键 = scene.json 对象 id；仅 image 材质带 combos.spritesheet 且纹理有 TEXS 元数据时登记）。
+  private readonly spritesheetLayers = new Map<number, SpriteSheetLayer>();
 
   // puppet 图层（键 = 同一把图层计数器 id）：instance 用于逐帧采样动画，dispose 时释放骨骼/资源。
   // layers = 已过滤 `visible !== false` 的动画层（null = scene.json **没有** animationlayers 字段）；
@@ -862,6 +881,7 @@ export class ThreeScenePlayer {
   update(dt: number): void {
     this.updateParticles(dt);
     this.tickPuppets(dt);
+    this.updateSpriteSheets(dt);
   }
 
   // puppet 动画：按 dt × rate 推进已播时长 → 采样动画层选中的动画（v1 只应用第一条可见层）。
@@ -906,6 +926,72 @@ export class ThreeScenePlayer {
         console.warn('[three] puppet 动画采样失败（已丢弃该图层动画）:', e instanceof Error ? e.message : String(e));
       }
     }
+  }
+
+  // 登记精灵表图层：记下帧网格/原始 UV 并立刻写第 0 帧（首帧 render 前 update 尚未跑过）。
+  private registerSpriteSheet(
+    backgroundId: number,
+    objectId: number,
+    mesh: THREE.Mesh,
+    sprite: { frames: number; cols: number; rows: number },
+  ): void {
+    const attr = (mesh.geometry as THREE.BufferGeometry).attributes?.uv;
+    const layer: SpriteSheetLayer = {
+      backgroundId,
+      mesh,
+      frames: Math.max(1, Math.floor(sprite.frames)),
+      cols: Math.max(1, Math.floor(sprite.cols)),
+      rows: Math.max(1, Math.floor(sprite.rows)),
+      elapsed: 0,
+      fps: 1,
+      frame: -1,
+      baseUv: attr ? Float32Array.from(attr.array as ArrayLike<number>) : new Float32Array(0),
+      uv: { u0: 0, v0: 0, u1: 1, v1: 1 },
+    };
+    this.spritesheetLayers.set(objectId, layer);
+    this.applySpriteSheetFrame(layer, 0);
+  }
+
+  // 写当前帧子矩形：frame 按**行优先**（col = frame % cols，row = floor(frame / cols)）。
+  // v 方向：tex-loader 显示约定 v=0=图像底部，而 TEXS 的 row 0 = 表顶行 ⇒ 第 0 行落在高 v 段
+  //（与粒子 shader 的 (rows-1-row) 同源）；帧内 v 继续沿用 quad 原始 0/1 取向，不额外翻转。
+  private applySpriteSheetFrame(layer: SpriteSheetLayer, frame: number): void {
+    const { cols, rows } = layer;
+    const col = ((frame % cols) + cols) % cols;
+    const row = Math.floor(frame / cols) % rows;
+    const u0 = col / cols;
+    const u1 = (col + 1) / cols;
+    const v0 = (rows - 1 - row) / rows;
+    const v1 = (rows - row) / rows;
+    const attr = (layer.mesh.geometry as THREE.BufferGeometry).attributes?.uv;
+    if (attr) {
+      const arr = attr.array as Float32Array;
+      const base = layer.baseUv;
+      for (let i = 0; i < arr.length && i < base.length; i += 2) {
+        arr[i] = u0 + base[i] * (u1 - u0);
+        arr[i + 1] = v0 + base[i + 1] * (v1 - v0);
+      }
+      attr.needsUpdate = true;
+    }
+    layer.frame = frame;
+    layer.uv = { u0, v0, u1, v1 };
+  }
+
+  // 逐帧推进精灵表动画：dt 累加（不跟墙钟，暂停/回退不跳帧），帧号 = floor(elapsed × fps) % frames。
+  private updateSpriteSheets(dt: number): void {
+    if (this.spritesheetLayers.size === 0) return;
+    const step = Number.isFinite(dt) && dt > 0 ? dt : 0;
+    for (const layer of this.spritesheetLayers.values()) {
+      layer.elapsed += step;
+      const frame = Math.floor(layer.elapsed * layer.fps) % layer.frames;
+      if (frame !== layer.frame) this.applySpriteSheetFrame(layer, frame);
+    }
+  }
+
+  /** 测试用：取精灵表图层当前帧的 UV 子矩形（仅测试/诊断观测，不参与渲染）。 */
+  spritesheetUvForTest(objectId: number): { u0: number; v0: number; u1: number; v1: number } | null {
+    const layer = this.spritesheetLayers.get(objectId);
+    return layer ? { ...layer.uv } : null;
   }
 
   /** 相机视差配置（null = 未启用/已拆除 ⇒ 逐帧零成本早退；enabled=false 时下一帧把对象写回基准位置）。 */
@@ -1375,10 +1461,13 @@ export class ThreeScenePlayer {
   }): number {
     const sceneW = opts.sceneW;
     const sceneH = opts.sceneH;
-    // 背景尺寸 = size × scale。geometry 用未缩放 size、mesh.scale 承载 scale（同
-    // scene-renderer.setImageObject 语义）；size 缺省回退纹理宽高。
-    const w = opts.size?.[0] ?? (opts.texture?.image?.width as number | undefined) ?? 1;
-    const h = opts.size?.[1] ?? (opts.texture?.image?.height as number | undefined) ?? 1;
+    // 背景尺寸 = size × scale（geometry 未缩放、mesh.scale 承载 scale）；size 缺省回退纹理宽高。
+    // 精灵表（材质声明 spritesheet）回退**单帧**宽高；有 TEXS 但未声明的仍按整表尺寸（旧语义）。
+    const sprite = opts.texture?.userData?.spritesheet === true ? textureSpriteInfo(opts.texture) : undefined;
+    const imgW = opts.texture?.image?.width as number | undefined;
+    const imgH = opts.texture?.image?.height as number | undefined;
+    const w = opts.size?.[0] ?? (sprite ? (imgW ?? 1) / sprite.cols : (imgW ?? 1));
+    const h = opts.size?.[1] ?? (sprite ? (imgH ?? 1) / sprite.rows : (imgH ?? 1));
     const geometry = new THREE.PlaneGeometry(w, h);
     const mod = materialModulation(undefined, opts.alpha, opts.brightness);
     // ⚠️ 隔离对象（opts.isolate）走 forIsolation=true：内容材质**不套** cb，混合语义全部交给
@@ -1439,6 +1528,10 @@ export class ThreeScenePlayer {
     if (opts.objectId !== undefined) {
       const shown = opts.isolate ? this.isolated.get(opts.isolate.objectId)?.quad : mesh;
       if (shown) this.displayObjects.set(opts.objectId, shown);
+    }
+    // 精灵表：纹理带 spritesheet 标记 + TEXS 帧网格 ⇒ 逐帧接管 quad UV（缺任一条件保持整图）。
+    if (opts.objectId !== undefined && sprite && opts.texture?.userData?.spritesheet === true) {
+      this.registerSpriteSheet(id, opts.objectId, mesh, sprite);
     }
     return id;
   }
@@ -1735,6 +1828,13 @@ export class ThreeScenePlayer {
     const old = entry.mesh.geometry;
     entry.mesh.geometry = new THREE.PlaneGeometry(w, h);
     old.dispose();
+    // 精灵表图层：新几何的 UV 是整图 [0,1]² ⇒ 以它为新的 base 并立即重写当前帧子矩形。
+    for (const layer of this.spritesheetLayers.values()) {
+      if (layer.backgroundId !== id) continue;
+      const attr = (layer.mesh.geometry as THREE.BufferGeometry).attributes?.uv;
+      layer.baseUv = attr ? Float32Array.from(attr.array as ArrayLike<number>) : new Float32Array(0);
+      this.applySpriteSheetFrame(layer, Math.max(0, layer.frame));
+    }
     const map = (entry.mesh.material as { map?: THREE.Texture | null }).map;
     if (map && (map as THREE.CanvasTexture).isCanvasTexture) map.dispose();
   }
@@ -2088,6 +2188,8 @@ export class ThreeScenePlayer {
       (entry.mesh.material as THREE.Material).dispose();
     }
     this.backgroundEntries.clear();
+    // 精灵表图层只持有 mesh 引用，随背景释放一并失效。
+    this.spritesheetLayers.clear();
     // puppet：骨骼纹理与实例资源由 PuppetInstance 释放（几何/材质与上面的条目共用，dispose 幂等）。
     for (const layer of this.puppetLayers.values()) layer.instance.dispose();
     this.puppetLayers.clear();

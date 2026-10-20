@@ -4248,3 +4248,91 @@ describe('scene 抓帧 captureNextFrame', () => {
   });
 });
 
+
+// v0.8.1 F13：image 图层精灵表帧 UV（材质 combos.spritesheet=1 + TEXS 帧元数据）。
+// UV 子矩形 v 方向约定：v=0 = 图像底部（tex-loader 的显示约定），TEXS 的 row 0 = 表顶行
+// ⇒ 第 0 行落在高 v 段（与粒子 shader 的 (rows-1-row) 反转同源）。
+describe('image 精灵表帧 UV（F13）', () => {
+  const IMG = { origin: [0, 0, 0] as [number, number, number], size: [256, 256] as [number, number], scale: [1, 1, 1] as [number, number, number], sceneW: 1920, sceneH: 1080, objectId: 123 };
+  const spriteTex = (frames: number, cols: number, rows: number): THREE.Texture => {
+    const tex = new THREE.Texture();
+    tex.userData.sprite = { frames, cols, rows };
+    tex.userData.spritesheet = true;
+    return tex;
+  };
+  const planeUv = (player: ThreeScenePlayer): number[] => {
+    const mesh = player.scene.children[0] as THREE.Mesh;
+    return [...(mesh.geometry.attributes.uv.array as Float32Array)];
+  };
+
+  it('3 帧竖排：t=0 第 1 帧、t=1s 第 2 帧，geometry UV 写入当前帧子矩形', () => {
+    const { player } = makePlayer();
+    const tex = spriteTex(3, 1, 3);
+    player.addBackground({ ...IMG, texture: tex });
+    expect(player.spritesheetUvForTest(123)).toEqual({ u0: 0, v0: 2 / 3, u1: 1, v1: 1 });
+    player.update(1.0);
+    expect(player.spritesheetUvForTest(123)).toEqual({ u0: 0, v0: 1 / 3, u1: 1, v1: 2 / 3 });
+    // PlaneGeometry 顶点 UV 顺序：(0,1) (1,1) (0,0) (1,0)；Float32 uv 缓冲按 6 位小数比较。
+    const uv = planeUv(player);
+    [0, 2 / 3, 1, 2 / 3, 0, 1 / 3, 1, 1 / 3].forEach((exp, i) => expect(uv[i]).toBeCloseTo(exp, 6));
+    player.dispose();
+  });
+
+  it('帧率 1fps：0.5s 仍在第 1 帧，1.0s 才到第 2 帧', () => {
+    const { player } = makePlayer();
+    player.addBackground({ ...IMG, texture: spriteTex(3, 1, 3) });
+    player.update(0.5);
+    expect(player.spritesheetUvForTest(123)).toEqual({ u0: 0, v0: 2 / 3, u1: 1, v1: 1 });
+    player.update(0.5);
+    expect(player.spritesheetUvForTest(123)).toEqual({ u0: 0, v0: 1 / 3, u1: 1, v1: 2 / 3 });
+    player.dispose();
+  });
+
+  it('帧循环：t=2s 第 3 帧、t=3s 回到第 1 帧', () => {
+    const { player } = makePlayer();
+    player.addBackground({ ...IMG, texture: spriteTex(3, 1, 3) });
+    player.update(2.0);
+    expect(player.spritesheetUvForTest(123)).toEqual({ u0: 0, v0: 0, u1: 1, v1: 1 / 3 });
+    player.update(1.0);
+    expect(player.spritesheetUvForTest(123)).toEqual({ u0: 0, v0: 2 / 3, u1: 1, v1: 1 });
+    player.dispose();
+  });
+
+  it('二维网格：2×2 的第 3 帧 = 第 2 行第 1 列（floor 行列映射）', () => {
+    const { player } = makePlayer();
+    player.addBackground({ ...IMG, texture: spriteTex(4, 2, 2) });
+    player.update(2.0);
+    expect(player.spritesheetUvForTest(123)).toEqual({ u0: 0, v0: 0, u1: 0.5, v1: 0.5 });
+    player.dispose();
+  });
+
+  it('非 spritesheet 纹理：UV 不接管（整图 [0,1]² 保持不变）', () => {
+    const { player } = makePlayer();
+    const tex = new THREE.Texture(); // 普通 image 纹理（无 userData.spritesheet）
+    player.addBackground({ ...IMG, texture: tex });
+    const before = planeUv(player);
+    player.update(2.0);
+    expect(planeUv(player)).toEqual(before);
+    expect(player.spritesheetUvForTest(123)).toBeNull();
+    player.dispose();
+  });
+
+  it('有 spritesheet 标记但缺 TEXS 帧元数据 ⇒ 不接管 UV（失败开放，保持整图）', () => {
+    const { player } = makePlayer();
+    const tex = new THREE.Texture();
+    tex.userData.spritesheet = true;
+    player.addBackground({ ...IMG, texture: tex });
+    const before = planeUv(player);
+    player.update(1.0);
+    expect(planeUv(player)).toEqual(before);
+    expect(player.spritesheetUvForTest(123)).toBeNull();
+    player.dispose();
+  });
+
+  it('未登记的对象 id ⇒ null（不抛）', () => {
+    const { player } = makePlayer();
+    player.addBackground({ ...IMG, texture: spriteTex(3, 1, 3) });
+    expect(player.spritesheetUvForTest(999)).toBeNull();
+    player.dispose();
+  });
+});

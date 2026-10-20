@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { fetchMdlBytes, particlesFromSpec, resolveImageAssets, resolveParticleMaterial } from '../src/client/scene-assets.js';
 import type { SceneImageObject } from '../src/shared/types.js';
 import { readFileSync } from 'node:fs';
+import { makeTex } from './fixtures/make-tex.js';
+import { TEX_FORMAT } from '../src/client/tex-loader.js';
 
 describe('particlesFromSpec (v1 subset)', () => {
   it('maps Wallpaper Engine particle json to emitter/init spec', () => {
@@ -233,6 +235,7 @@ describe('resolveImageAssets / fetchMdlBytes', () => {
       expect(await resolveImageAssets('3303428996', obj)).toEqual({
         texture: null,
         puppetPath: 'models/20240220213723_1_puppet.mdl',
+        spriteSheet: false,
       });
       expect(calls).toEqual([MODEL_URL]);
     } finally { vi.unstubAllGlobals(); }
@@ -242,18 +245,18 @@ describe('resolveImageAssets / fetchMdlBytes', () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ material: 'materials/m.json' }) })));
     try {
       // 材质拉取同 URL 的 mock 会拿到 {material} ⇒ 无 passes[0].textures[0] ⇒ texture null
-      expect(await resolveImageAssets('1', obj)).toEqual({ texture: null, puppetPath: null });
+      expect(await resolveImageAssets('1', obj)).toEqual({ texture: null, puppetPath: null, spriteSheet: false });
     } finally { vi.unstubAllGlobals(); }
   });
 
   it('model json 拿不到 / 网络异常 ⇒ 两条链都 null（调用方走白图兜底，不阻断）', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, json: async () => ({}) })));
     try {
-      expect(await resolveImageAssets('1', obj)).toEqual({ texture: null, puppetPath: null });
+      expect(await resolveImageAssets('1', obj)).toEqual({ texture: null, puppetPath: null, spriteSheet: false });
     } finally { vi.unstubAllGlobals(); }
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('net'); }));
     try {
-      expect(await resolveImageAssets('1', obj)).toEqual({ texture: null, puppetPath: null });
+      expect(await resolveImageAssets('1', obj)).toEqual({ texture: null, puppetPath: null, spriteSheet: false });
     } finally { vi.unstubAllGlobals(); }
   });
 
@@ -267,7 +270,7 @@ describe('resolveImageAssets / fetchMdlBytes', () => {
       return { ok: true, json: async () => { throw new Error('bad material json'); } };
     }));
     try {
-      expect(await resolveImageAssets('1', obj)).toEqual({ texture: null, puppetPath: 'models/p.mdl' });
+      expect(await resolveImageAssets('1', obj)).toEqual({ texture: null, puppetPath: 'models/p.mdl', spriteSheet: false });
     } finally { vi.unstubAllGlobals(); }
   });
 
@@ -301,6 +304,84 @@ describe('resolveImageAssets / fetchMdlBytes', () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('net'); }));
     try {
       expect(await fetchMdlBytes('1', 'models/a.mdl')).toBeNull();
+    } finally { vi.unstubAllGlobals(); }
+  });
+});
+
+// v0.8.1 F13：image 图层精灵表。材质 `passes[0].combos.spritesheet=1`（真实素材
+// 3765967112 的 dayNightToggleSprite 材质）⇒ 纹理打 spritesheet 标记，player 据此按帧切 UV。
+describe('resolveImageAssets / 精灵表标记（F13）', () => {
+  const obj = { image: 'models/icon.json' } as SceneImageObject;
+  // 3 帧竖排（1 列 × 3 行）的最小精灵表 TEX（每帧 64×64，整表 64×192）。
+  const spriteTex = () => makeTex({
+    format: TEX_FORMAT.RGBA8888,
+    flags: 4, // sprite 位（TEXS 段存在）
+    images: [[{ width: 64, height: 192, data: new Uint8Array(64 * 192 * 4) }]],
+    sprite: { frames: 3, frameWidth: 64, frameHeight: 64 },
+  });
+
+  /** fetch 路由：models 路径 → model json；其余 json → 材质；.tex → 精灵表字节。 */
+  function stubFetch(material: unknown): void {
+    const tex = spriteTex();
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      const u = String(url);
+      if (u.includes('.tex')) {
+        return {
+          ok: true,
+          arrayBuffer: async () => tex.buffer.slice(tex.byteOffset, tex.byteOffset + tex.byteLength),
+        };
+      }
+      const body = u.includes('models') ? { material: 'materials/icon.json' } : material;
+      return { ok: true, json: async () => body };
+    }));
+  }
+
+  it('combos.spritesheet=1 ⇒ spriteSheet=true，纹理 userData 打 spritesheet 标记', async () => {
+    stubFetch({ passes: [{ shader: 'genericimage4', combos: { spritesheet: 1 }, textures: ['icon'] }] });
+    try {
+      const r = await resolveImageAssets('3765967112', obj);
+      expect(r.spriteSheet).toBe(true);
+      expect(r.texture?.userData.spritesheet).toBe(true);
+      // 纹理自带的 TEXS 元数据原样可读（帧网格 1×3）。
+      expect(r.texture?.userData.sprite).toEqual({ frames: 3, cols: 1, rows: 3 });
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it('大写 SPRITESHEET=1 同样识别（材质 key 大小写两种写法都认）', async () => {
+    stubFetch({ passes: [{ combos: { SPRITESHEET: 1 }, textures: ['icon'] }] });
+    try {
+      const r = await resolveImageAssets('1', obj);
+      expect(r.spriteSheet).toBe(true);
+      expect(r.texture?.userData.spritesheet).toBe(true);
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it('无 combos / spritesheet=0 ⇒ spriteSheet=false，纹理不标记', async () => {
+    for (const material of [
+      { passes: [{ textures: ['icon'] }] },
+      { passes: [{ combos: {}, textures: ['icon'] }] },
+      { passes: [{ combos: { spritesheet: 0 }, textures: ['icon'] }] },
+    ]) {
+      stubFetch(material);
+      try {
+        const r = await resolveImageAssets('1', obj);
+        expect(r.spriteSheet).toBe(false);
+        expect(r.texture).not.toBeNull();
+        expect(r.texture?.userData.spritesheet).toBeUndefined();
+      } finally { vi.unstubAllGlobals(); }
+    }
+  });
+
+  it('材质拿不到 ⇒ spriteSheet=false（失败开放，不影响其余字段）', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => (
+      String(url).includes('models')
+        ? { ok: true, json: async () => ({ material: 'materials/icon.json' }) }
+        : { ok: false, json: async () => ({}) }
+    )));
+    try {
+      expect(await resolveImageAssets('1', obj)).toEqual({
+        texture: null, puppetPath: null, spriteSheet: false,
+      });
     } finally { vi.unstubAllGlobals(); }
   });
 });

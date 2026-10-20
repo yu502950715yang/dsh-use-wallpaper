@@ -65,27 +65,33 @@ export function resolveTexPath(matRef: string, texName: string): string {
 
 // 图片对象资源：obj.image → models/xxx.json → { material, puppet } 一次拉取，再各取两条链（material → tex、
 // puppet → `.mdl` 路径，本函数不下字节）。任一步失败按 null 返回（白图兜底），但**纹理失败不丢已解析的 puppetPath**。
+// `spriteSheet` = 材质 `passes[0].combos.spritesheet`（帧动画标记；真实素材 key 有大小写两种写法）。
 export async function resolveImageAssets(
   id: string,
   obj: SceneImageObject,
-): Promise<{ texture: THREE.Texture | null; puppetPath: string | null }> {
+): Promise<{ texture: THREE.Texture | null; puppetPath: string | null; spriteSheet: boolean }> {
   let puppetPath: string | null = null;
   try {
     const modelResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(obj.image)}`);
-    if (!modelResp.ok) return { texture: null, puppetPath: null };
+    if (!modelResp.ok) return { texture: null, puppetPath: null, spriteSheet: false };
     const model = await modelResp.json();
     puppetPath = typeof model?.puppet === 'string' && model.puppet ? String(model.puppet) : null;
     const matRef: unknown = model?.material;
-    if (typeof matRef !== 'string' || !matRef) return { texture: null, puppetPath };
+    if (typeof matRef !== 'string' || !matRef) return { texture: null, puppetPath, spriteSheet: false };
     const matResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(matRef)}`);
-    if (!matResp.ok) return { texture: null, puppetPath };
+    if (!matResp.ok) return { texture: null, puppetPath, spriteSheet: false };
     const mat = await matResp.json();
+    const combos = mat?.passes?.[0]?.combos;
+    const spriteSheet = combos?.spritesheet === 1 || combos?.SPRITESHEET === 1;
     const texName: unknown = mat?.passes?.[0]?.textures?.[0];
-    if (typeof texName !== 'string' || !texName) return { texture: null, puppetPath };
+    if (typeof texName !== 'string' || !texName) return { texture: null, puppetPath, spriteSheet };
     const url = `/wallpapers/scene/${id}/asset?name=${encodeURIComponent(resolveTexPath(matRef, texName))}`;
-    return { texture: await loadTexTexture(url), puppetPath };
+    const texture = await loadTexTexture(url);
+    // 标记落在纹理上：player 只拿到 texture（不重走材质），据此决定是否按帧切 UV。
+    if (texture && spriteSheet) texture.userData.spritesheet = true;
+    return { texture, puppetPath, spriteSheet };
   } catch {
-    return { texture: null, puppetPath };
+    return { texture: null, puppetPath, spriteSheet: false };
   }
 }
 
