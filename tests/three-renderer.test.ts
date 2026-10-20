@@ -1598,9 +1598,10 @@ describe('three-renderer text 对象', () => {
     // mock player 没有隔离条目：接住真 stage 的挂链，避免它报「调用顺序错误」告警。
     const chainsSpy = vi.spyOn(ObjectEffectStage.prototype, 'setObjectChains').mockImplementation(() => {});
     const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
-    expect(await r.render('2851992662', document.createElement('canvas'), null)).toBe(true);
+    // bg 参数 render 内未使用，省略即可（不再为 null 补类型断言）。
+    expect(await r.render('2851992662', document.createElement('canvas'))).toBe(true);
 
-    const assets = loadSceneToThree.mock.calls[0][1] as {
+    const assets = vi.mocked(loadSceneToThree).mock.calls[0][1] as {
       textLayers: Map<number, { size?: [number, number] }>;
       isolate: Map<number, unknown>;
     };
@@ -1614,7 +1615,7 @@ describe('three-renderer text 对象', () => {
     expect(chainsSpy.mock.calls.map((c) => c[0])).toEqual([5]);
     expect(chainsSpy.mock.calls[0][1]).toHaveLength(1);
     chainsSpy.mockRestore();
-    r.dispose();
+    r.dispose!();
   });
 
   it('visible=false 的 text 被过滤（不下发）——否则会画出本应隐藏的时钟', async () => {
