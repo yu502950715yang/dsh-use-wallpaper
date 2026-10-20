@@ -77,6 +77,77 @@ function makePlayer(w = 1920, h = 1080, mock = createMockRenderer()) {
   return { player, mock };
 }
 
+// v0.8.1 F15：壁纸清屏色（general.clearcolor，0-255）。设置值按工作色彩空间（linear-srgb）原样写入，
+// 取 hex 必须显式指定该色彩空间，否则 getHexString 会按 sRGB 编码回写（17 → 0x49），与真实像素不符。
+const rawHex = (c: THREE.Color): string => c.getHexString(THREE.LinearSRGBColorSpace);
+
+describe('ThreeScenePlayer 清屏色（F15）', () => {
+  const CLEAR: [number, number, number] = [17, 20, 24];
+
+  it('构造 opts.clearColor → setClearColor 收到 0-255 归一化后的清屏色（alpha 1）', () => {
+    const mock = createMockRenderer();
+    new ThreeScenePlayer(
+      document.createElement('canvas'), 1920, 1080, mock as unknown as THREE.WebGLRenderer, 1,
+      { clearColor: CLEAR },
+    );
+    expect(mock.setClearColor).toHaveBeenCalledTimes(1);
+    const [color, alpha] = mock.setClearColor.mock.calls[0] as [THREE.Color, number];
+    expect(rawHex(color)).toBe('111418');
+    expect(alpha).toBe(1);
+    expect(rawHex(mock._clearColor())).toBe('111418');
+  });
+
+  it('未提供 clearColor → 不改渲染器清屏色（零回归：缺省仍为黑）', () => {
+    const mock = createMockRenderer();
+    new ThreeScenePlayer(document.createElement('canvas'), 1920, 1080, mock as unknown as THREE.WebGLRenderer);
+    expect(mock.setClearColor).not.toHaveBeenCalled();
+    expect(rawHex(mock._clearColor())).toBe('000000');
+  });
+
+  it('loadSceneToThree 按 general.clearcolor 装配清屏色', () => {
+    const mock = createMockRenderer();
+    const scene = JSON.stringify({
+      camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+      general: { orthogonalprojection: { width: 1920, height: 1080 }, clearcolor: '17 20 24' },
+      objects: [],
+    });
+    loadSceneToThree(scene, { renderer: mock as unknown as THREE.WebGLRenderer }, document.createElement('canvas'));
+    expect(rawHex(mock._clearColor())).toBe('111418');
+  });
+
+  it('段渲染清屏改用同一清屏色（RT 段内与 finally 恢复都保持该色）', () => {
+    const mock = createMockRenderer();
+    const player = new ThreeScenePlayer(
+      document.createElement('canvas'), 1920, 1080, mock as unknown as THREE.WebGLRenderer, 1,
+      { clearColor: CLEAR },
+    );
+    const tex = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+    for (const [i, objectId] of [11, 22].entries()) {
+      player.addBackground({
+        origin: [i * 10, 0, 0], size: [10, 10], scale: [1, 1, 1], texture: tex,
+        sceneW: 100, sceneH: 100, objectId, renderOrder: i,
+      });
+    }
+    const cap = createFrameCapture(mock as unknown as THREE.WebGLRenderer);
+    cap.use();
+    player.setFrameCapture(cap);
+    player.registerFrameConsumer(22); // 2 段：段 1（#11）| 段 2（#22 = 消费者）
+    mock.setClearColor.mockClear(); // 只观测渲染期的清屏调用（构造期那次已断言）
+    const seen: string[] = [];
+    mock._setOnRender((s) => {
+      if (s === player.scene) seen.push(rawHex(mock._clearColor()));
+    });
+    player.render();
+    // 段首 clear 与默认 fb 同色：两段 render 都发生在自定义清屏色下
+    expect(seen).toEqual(['111418', '111418']);
+    const segColor = mock.setClearColor.mock.calls[0][0] as THREE.Color;
+    expect(rawHex(segColor)).toBe('111418');
+    // finally 恢复的是「进入前的清屏色」= 同一自定义色（不是黑）
+    expect(rawHex(mock._clearColor())).toBe('111418');
+    player.dispose();
+  });
+});
+
 // text 对象（2026-09-21）：与 image 同路径渲染成背景 quad；clock 由 driver 每帧判断文本变化，
 // 变了才重绘 canvas 并置 texture.needsUpdate（同分钟不重绘，省开销）。
 describe('loadSceneToThree text 对象', () => {

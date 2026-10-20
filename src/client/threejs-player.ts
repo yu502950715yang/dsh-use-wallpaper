@@ -621,6 +621,8 @@ export class ThreeScenePlayer {
   private pixelRatio: number;
   // 画质档位（< 1 = 降分辨率省显存/提流畅；1 = 原生 dpr）。
   private qualityScale: number;
+  // 壁纸清屏色（WE general.clearcolor，0-255 → 工作色彩空间原值）；null = 用渲染器缺省黑。
+  private clearColorValue: THREE.Color | null = null;
   // 暂停（省电）：停 RAF 排程，并把暂停时长从 elapsedSeconds 里扣除（恢复后 g_Time 不跳）。
   private paused = false;
   private pausedAt = 0;
@@ -689,6 +691,8 @@ export class ThreeScenePlayer {
     renderer?: THREE.WebGLRenderer,
     // 画质档位（渲染像素比倍率，缺省 1 = 原生 dpr）；运行时用 setQualityScale 调整。
     qualityScale = 1,
+    // 播放器选项：clearColor = 壁纸清屏色（WE general.clearcolor，0-255）。
+    opts: { clearColor?: [number, number, number] } = {},
   ) {
     this.sceneWidth = width;
     this.sceneHeight = height;
@@ -710,6 +714,12 @@ export class ThreeScenePlayer {
     // three 缺省 `outputColorSpace=SRGBColorSpace` 会把线性值再编码 ⇒ 画面偏亮/过曝。强制
     // LinearSRGBColorSpace 使 `linearToOutputTexel` 恒等，纹理原始值直出。
     this.renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+    // 壁纸清屏色（WE general.clearcolor，0-255）；缺省保持渲染器缺省黑。
+    if (opts.clearColor) {
+      const [r, g, b] = opts.clearColor;
+      this.clearColorValue = new THREE.Color(r / 255, g / 255, b / 255);
+      this.renderer.setClearColor(this.clearColorValue, 1);
+    }
     // ⚠️ 必须显式设像素比：three 缺省 `pixelRatio=1`（缓冲 = 视口 CSS 像素），而 `.wp-scene-canvas`
     // 铺满窗口 ⇒ HiDPI 屏上缓冲被放大会让整幅画面（含粒子）**模糊**；按 devicePixelRatio 设后
     // 缓冲 = 物理像素。mock renderer 无 setPixelRatio，防御式跳过。
@@ -1152,10 +1162,10 @@ export class ThreeScenePlayer {
     }
     if (current !== null) segments.push(current);
     try {
-      // ④ 段目标 = frameRT（画布缓冲尺寸）：清屏参数与默认 fb 一致（黑 + alpha 1）。
+      // ④ 段目标 = frameRT（画布缓冲尺寸）：清屏色与默认 fb 一致（壁纸清屏色 + alpha 1）。
       //    ⚠️ autoClear 只在段渲染范围内临时关闭——`rt-render.ts` 的 4 个调用点依赖它清屏。
       this.renderer.setRenderTarget(capture.target);
-      this.renderer.setClearColor(0x000000, 1);
+      this.renderer.setClearColor(this.clearColorValue ?? 0x000000, 1);
       this.renderer.clear();
       (this.renderer as { autoClear: boolean }).autoClear = false;
       for (const segment of segments) {
@@ -1192,7 +1202,7 @@ export class ThreeScenePlayer {
       }
     } finally {
       (this.renderer as { autoClear: boolean }).autoClear = prevAutoClear;
-      // 清屏参数是本帧临时改的全局状态，恢复原值（不得留在黑 + alpha 1 上）。
+      // 清屏参数是本帧临时改的全局状态，恢复原值（不得留在段渲染的清屏值上）。
       this.renderer.setClearColor(prevClearColor, prevClearAlpha);
       this.renderer.setRenderTarget(null);
       for (let i = 0; i < children.length; i++) children[i].visible = prevVisible[i];
@@ -2265,7 +2275,10 @@ export function loadSceneToThree(
   };
   // 构造器传场景尺寸（视口缺省与场景同尺寸），再用**真实视口** resize：viewport 由调用方显式传入
   // （vw/vh = window.innerWidth/Height）；缺省回退场景尺寸（cover == 场景尺寸，无裁剪）。
-  const player = new ThreeScenePlayer(canvas, sceneW, sceneH, assets.renderer, assets.qualityScale);
+  // 清屏色随装配一次传入（desc.clearColor 已由 scene-json 从 general.clearcolor 解析）。
+  const player = new ThreeScenePlayer(
+    canvas, sceneW, sceneH, assets.renderer, assets.qualityScale, { clearColor: desc.clearColor },
+  );
   player.setSceneSize(sceneW, sceneH);
   const vw = viewport?.width ?? sceneW;
   const vh = viewport?.height ?? sceneH;
