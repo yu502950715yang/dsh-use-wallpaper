@@ -308,6 +308,7 @@ getEventListeners(window).pointermove?.length
 
 ### 2.14 手工验收清单：v0.8.1 缺口修复（bloom / 音效 / text effects / 精灵表 / clearcolor / starttime）
 
+> **独立可勾选清单（含记录表、已知边界、失败上报口径）**：[`docs/2026-10-20-v0.8.1-manual-test-checklist.md`](docs/2026-10-20-v0.8.1-manual-test-checklist.md)；本节为精简版。
 > **以下需人在运行中的 DSH Web GUI 里操作（目视 / 试听 + 面板），agent 无法代跑。**
 > 前置同 §2.13：已 `npm run build` + `npm run build:client`，**重启 harness** 后**强刷** GUI；壁纸库含下列素材。
 > **自动化已覆盖的部分**：`npm run e2e:verify-v081` 对 `2454403969`（bloom 亮部占比，应用级 Glow off + **默认 Glow** 两组 A/B）、`2980088441`（**默认 Glow** 下四角像素 ≈ `#111418`）、`3765967112`（精灵表图标单帧）三项做像素判据，**退出码 0 = 通过**；观感、音量与其余素材仍需人工确认。
