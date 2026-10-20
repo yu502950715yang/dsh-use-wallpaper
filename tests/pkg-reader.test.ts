@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { Buffer } from 'node:buffer';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { parsePkg, PkgReader } from '../src/host/pkg-reader.js';
 import { makePkg } from './fixtures/make-pkg.js';
 
@@ -57,5 +60,30 @@ describe('PkgReader', () => {
     const r = new PkgReader(pkg);
     expect(r.readEntry('../secret')).toBeNull();
     expect(r.readEntry('nope.json')).toBeNull();
+  });
+
+  // 路由流式读取需要的只读元数据：entryInfo 相对 dataStart，entryAbsRange 绝对区间（end 不含）
+  it('exposes entryInfo / entryAbsRange / pkgPath without changing readEntry', () => {
+    const { dataStart } = parsePkg(pkg);
+    const r = new PkgReader(pkg);
+    expect(r.pkgPath).toBe(''); // 内存包没有文件路径
+    expect(r.entryInfo('scene.json')).toEqual({ offset: 0, size: 14 });
+    expect(r.entryInfo('../secret')).toBeNull();
+    expect(r.entryAbsRange('scene.json')).toEqual({ start: dataStart, end: dataStart + 14 });
+    expect(r.entryAbsRange('materials/a.tex')).toEqual({ start: dataStart + 14, end: dataStart + 18 });
+    expect(r.entryAbsRange('nope')).toBeNull();
+  });
+
+  it('keeps the file path for createReadStream when constructed from a path', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wp-pkg-'));
+    const pkgPath = join(dir, 'scene.pkg');
+    try {
+      writeFileSync(pkgPath, pkg);
+      const r = new PkgReader(pkgPath);
+      expect(r.pkgPath).toBe(pkgPath);
+      expect(r.entryInfo('scene.json')).toEqual({ offset: 0, size: 14 });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

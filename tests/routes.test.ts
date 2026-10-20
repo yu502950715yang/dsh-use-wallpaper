@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync, utimesSync, existsSync, readdirSync } from 'node:fs';
 import { EventEmitter } from 'node:events';
+import { Writable } from 'node:stream';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { registerWallpaperRoutes, getPkgReader } from '../src/host/routes.js';
@@ -42,6 +43,34 @@ function makeRes() {
     end(b?: any) { this.body = b; this.ended = true; },
   };
   return res;
+}
+
+// 流式响应 mock：Writable 收集 chunk；pipe 事件用于区分流式与整块 Buffer 路径
+function makeStreamRes() {
+  const chunks: Buffer[] = [];
+  const res: any = new Writable({
+    write(chunk, _enc, cb) { chunks.push(Buffer.from(chunk)); cb(); },
+  });
+  res.statusCode = 200;
+  res.headers = {} as Record<string, string>;
+  res.piped = false;
+  res.setHeader = (k: string, v: string) => { res.headers[k] = v; };
+  res.writeHead = (c: number, h: Record<string, string>) => { res.statusCode = c; Object.assign(res.headers, h); };
+  res.on('pipe', () => { res.piped = true; });
+  res.done = new Promise<void>((resolve, reject) => {
+    res.on('finish', resolve);
+    res.on('error', reject);
+  });
+  Object.defineProperty(res, 'body', { get: () => Buffer.concat(chunks) });
+  return res;
+}
+
+// 壁纸目录 + scene.pkg（场景素材路由用）
+function makeScenePkg(id: string, files: Array<{ name: string; data: Uint8Array }>): void {
+  const d = join(dir, id);
+  mkdirSync(d, { recursive: true });
+  writeFileSync(join(d, 'project.json'), JSON.stringify({ type: 'scene' }));
+  writeFileSync(join(d, 'scene.pkg'), makePkg(files));
 }
 
 // 最小可读请求：EventEmitter + headers/method；body 在 handler 挂好监听后异步吐出
@@ -153,13 +182,141 @@ describe('registerWallpaperRoutes', () => {
     writeFileSync(join(d, 'project.json'), JSON.stringify({ type: 'scene' }));
     writeFileSync(join(d, 'scene.pkg'), pkg);
     registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
-    const res = makeRes();
+    // 音频 MIME 即使小于阈值也走流式（<audio> 边下边播），故用 Writable mock 收 chunk
+    const res = makeStreamRes();
     await routes.get('prefix /wallpapers/scene')!({
       url: '/wallpapers/scene/5/asset?name=sounds/yutaka%20hirasaka%20-%20acro.flac',
     }, res);
+    await res.done;
     expect(res.statusCode).toBe(200);
     expect(res.headers['Content-Type']).toBe('audio/flac');
+    expect(res.piped).toBe(true);
     expect(res.body.toString('utf8')).toBe('fLaC\x00fake-flac-bytes'); // 原始字节原样返回
+  });
+
+  it('scene asset 小条目仍走整块 Buffer：200 + Content-Length、无 Content-Range', async () => {
+    makeScenePkg('small', [{ name: 'scene.json', data: Buffer.from('{"objects":[]}', 'utf8') }]);
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
+    const res = makeRes();
+    await routes.get('prefix /wallpapers/scene')!({ url: '/wallpapers/scene/small/asset?name=scene.json' }, res);
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['Content-Length']).toBe(14);
+    expect(res.headers['Accept-Ranges']).toBe('bytes');
+    expect(res.headers['Content-Range']).toBeUndefined();
+    expect(res.body.toString('utf8')).toBe('{"objects":[]}');
+  });
+
+  it('scene asset 超过流式阈值 → createReadStream（pipe）且字节完整', async () => {
+    const data = Buffer.alloc(64, 0x5a);
+    makeScenePkg('big', [
+      { name: 'scene.json', data: Buffer.from('{"objects":[]}', 'utf8') },
+      { name: 'materials/blob.bin', data },
+    ]);
+    // 阈值调小：非音视频条目也走流式，验证 pkg 条目绝对偏移
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir, streamAssetBytes: 16 });
+    const res = makeStreamRes();
+    await routes.get('prefix /wallpapers/scene')!({ url: '/wallpapers/scene/big/asset?name=materials/blob.bin' }, res);
+    await res.done;
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['Content-Type']).toBe('application/octet-stream');
+    expect(res.headers['Content-Length']).toBe(64);
+    expect(res.piped).toBe(true);
+    expect(res.body.equals(data)).toBe(true);
+  });
+
+  it('scene asset Range（小条目，Buffer 切片）：bytes=0-3 / bytes=2- / bytes=-3', async () => {
+    makeScenePkg('r1', [{ name: 'scene.json', data: Buffer.from('{"objects":[]}', 'utf8') }]);
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
+    const handler = routes.get('prefix /wallpapers/scene')!;
+    const url = '/wallpapers/scene/r1/asset?name=scene.json';
+
+    const r1 = makeRes();
+    await handler(makeBodyReq(url, { headers: { range: 'bytes=0-3' } }), r1);
+    expect(r1.statusCode).toBe(206);
+    expect(r1.headers['Content-Range']).toBe('bytes 0-3/14');
+    expect(r1.headers['Content-Length']).toBe(4);
+    expect(r1.body.toString('utf8')).toBe('{"ob');
+
+    const r2 = makeRes();
+    await handler(makeBodyReq(url, { headers: { range: 'bytes=2-' } }), r2);
+    expect(r2.statusCode).toBe(206);
+    expect(r2.headers['Content-Range']).toBe('bytes 2-13/14');
+    expect(r2.body.toString('utf8')).toBe('objects":[]}');
+
+    const r3 = makeRes();
+    await handler(makeBodyReq(url, { headers: { range: 'bytes=-3' } }), r3);
+    expect(r3.statusCode).toBe(206);
+    expect(r3.headers['Content-Range']).toBe('bytes 11-13/14');
+    expect(r3.body.toString('utf8')).toBe('[]}');
+  });
+
+  it('scene asset Range（流式，pkg 条目绝对偏移）：bytes=2-5', async () => {
+    makeScenePkg('r2', [
+      { name: 'other.txt', data: Buffer.from('xxxx', 'utf8') },
+      { name: 'sounds/a.mp3', data: Buffer.from('ABCDEFGHIJ', 'utf8') },
+    ]);
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
+    const res = makeStreamRes();
+    await routes.get('prefix /wallpapers/scene')!(
+      makeBodyReq('/wallpapers/scene/r2/asset?name=sounds/a.mp3', { headers: { range: 'bytes=2-5' } }),
+      res,
+    );
+    await res.done;
+    expect(res.statusCode).toBe(206);
+    expect(res.headers['Content-Range']).toBe('bytes 2-5/10');
+    expect(res.headers['Content-Length']).toBe(4);
+    expect(res.piped).toBe(true);
+    expect(res.body.toString('utf8')).toBe('CDEF');
+  });
+
+  it('scene asset 非法/越界 Range → 416 + Content-Range: bytes */size', async () => {
+    makeScenePkg('r3', [{ name: 'scene.json', data: Buffer.from('{"objects":[]}', 'utf8') }]);
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
+    const handler = routes.get('prefix /wallpapers/scene')!;
+    const url = '/wallpapers/scene/r3/asset?name=scene.json';
+    for (const range of ['bytes=99-', 'bytes=abc', 'bytes=0-1,3-4', 'bytes=5-2']) {
+      const res = makeRes();
+      await handler(makeBodyReq(url, { headers: { range } }), res);
+      expect(res.statusCode, range).toBe(416);
+      expect(res.headers['Content-Range']).toBe('bytes */14');
+      expect(res.headers['Content-Length']).toBe(0);
+      expect(res.ended).toBe(true);
+    }
+  });
+
+  it('scene asset HEAD：与 GET 相同 headers、无 body（音频也不 pipe）', async () => {
+    makeScenePkg('h1', [{ name: 'sounds/a.mp3', data: Buffer.from('ABCDEFGHIJ', 'utf8') }]);
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
+    const res = makeStreamRes();
+    await routes.get('prefix /wallpapers/scene')!(
+      makeBodyReq('/wallpapers/scene/h1/asset?name=sounds/a.mp3', { method: 'HEAD' }),
+      res,
+    );
+    await res.done;
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['Content-Type']).toBe('audio/mpeg');
+    expect(res.headers['Content-Length']).toBe(10);
+    expect(res.headers['Accept-Ranges']).toBe('bytes');
+    expect(res.piped).toBe(false);
+    expect(res.body.length).toBe(0);
+  });
+
+  it('scene asset 引擎目录大文件：流式 + Range', async () => {
+    const weDir = join(dir, 'we-assets');
+    const soundsDir = join(weDir, 'assets', 'sounds');
+    mkdirSync(soundsDir, { recursive: true });
+    writeFileSync(join(soundsDir, 'big.mp3'), Buffer.from('0123456789', 'utf8'));
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir, weAssetsDir: weDir, streamAssetBytes: 4 });
+    const res = makeStreamRes();
+    await routes.get('prefix /wallpapers/scene')!(
+      makeBodyReq('/wallpapers/scene/e1/asset?name=sounds/big.mp3', { headers: { range: 'bytes=1-3' } }),
+      res,
+    );
+    await res.done;
+    expect(res.statusCode).toBe(206);
+    expect(res.headers['Content-Range']).toBe('bytes 1-3/10');
+    expect(res.piped).toBe(true);
+    expect(res.body.toString('utf8')).toBe('123');
   });
 
   it('rejects unknown scene action segment', async () => {

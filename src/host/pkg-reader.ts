@@ -49,6 +49,7 @@ export class PkgReader {
   private buf: Buffer;
   private entries: PkgEntry[];
   private dataStart: number;
+  private readonly pkgPathValue: string;
 
   constructor(pkgPathOrBuf: string | Uint8Array) {
     const buf = typeof pkgPathOrBuf === 'string' ? readFileSync(pkgPathOrBuf) : Buffer.from(pkgPathOrBuf);
@@ -56,15 +57,38 @@ export class PkgReader {
     this.buf = buf;
     this.entries = parsed.entries;
     this.dataStart = parsed.dataStart;
+    // 内存包没有路径（流式读取需要文件路径）；只读暴露给路由
+    this.pkgPathValue = typeof pkgPathOrBuf === 'string' ? pkgPathOrBuf : '';
+  }
+
+  get pkgPath(): string {
+    return this.pkgPathValue;
   }
 
   listEntries(): PkgEntry[] {
     return this.entries.map((e) => ({ ...e }));
   }
 
-  readEntry(name: string): Buffer | null {
+  private findEntry(name: string): PkgEntry | null {
     if (!isSafeName(name)) return null;
-    const e = this.entries.find((x) => x.name === name);
+    return this.entries.find((x) => x.name === name) ?? null;
+  }
+
+  entryInfo(name: string): { offset: number; size: number } | null {
+    const e = this.findEntry(name);
+    return e ? { offset: e.offset, size: e.size } : null;
+  }
+
+  // 绝对字节区间：start 含、end 不含（size = end - start），供 createReadStream 定位
+  entryAbsRange(name: string): { start: number; end: number } | null {
+    const e = this.findEntry(name);
+    if (!e) return null;
+    const start = this.dataStart + e.offset;
+    return { start, end: start + e.size };
+  }
+
+  readEntry(name: string): Buffer | null {
+    const e = this.findEntry(name);
     if (!e) return null;
     return this.buf.subarray(this.dataStart + e.offset, this.dataStart + e.offset + e.size);
   }

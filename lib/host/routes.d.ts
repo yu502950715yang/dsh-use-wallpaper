@@ -12,7 +12,10 @@ export interface WallpaperRoutesOptions {
     };
     /** 插件数据目录（抓帧 PNG 落 <dataDir>/frames）；缺省时抓帧写接口 500。 */
     dataDir?: string;
+    /** 场景素材流式阈值（测试可调小；缺省 STREAM_ASSET_BYTES） */
+    streamAssetBytes?: number;
 }
+export declare const STREAM_ASSET_BYTES: number;
 export declare function getPkgReader(pkgPath: string): PkgReader;
 export declare function isSafeAssetName(name: string): boolean;
 /** 解析「引擎目录 + VFS 相对路径」，并证明结果没有跳出 `<weAssetsDir>/assets`（resolve + 前缀比较，
