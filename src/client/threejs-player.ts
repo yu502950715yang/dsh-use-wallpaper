@@ -1626,7 +1626,8 @@ export class ThreeScenePlayer {
   }
 
   // 更新背景图层状态，对齐既有 update_image 语义——undefined = 保持现状；与当前已应用状态相等的
-  // 字段跳过；未知 id → no-op。origin 是 WE 场景坐标，先按 we_to_three 中心化再写 mesh.position。
+  // 字段跳过；未知 id → no-op。origin 是 WE 场景坐标，先按 we_to_three 中心化再写承载世界位置的 node
+  //（隔离对象 = 合成 quad；内容 mesh 在对象 RT 内坐标恒为 0）。
   update_background(
     id: number,
     origin?: [number, number, number],
@@ -1640,7 +1641,7 @@ export class ThreeScenePlayer {
       const [ox, oy, oz] = origin;
       if (ox !== entry.origin[0] || oy !== entry.origin[1] || oz !== entry.origin[2]) {
         entry.origin = [ox, oy, oz];
-        entry.mesh.position.set(ox - entry.sceneW / 2, oy - entry.sceneH / 2, oz);
+        entry.parallaxNode.position.set(ox - entry.sceneW / 2, oy - entry.sceneH / 2, oz);
       }
     }
     if (scale) {
@@ -2362,6 +2363,9 @@ export function loadSceneToThree(
         objectId: obj.id,
         // 唯一绘制序 = 本对象在 objects 数组中的下标。
         renderOrder,
+        // 对象级效果链：带效果的对象其内容进 localScene 渲染到对象 RT，主场景放合成 quad；
+        // 缺省不隔离。隔离条目的键 = obj.id，与 ObjectEffectStage 的键空间一致。
+        isolate: assets.isolate?.get(obj.id),
         // 视差深度同 image 分支：直接透传对象级字段（text 也有 parallaxDepth）。
         parallaxDepth: obj.parallaxDepth,
       });

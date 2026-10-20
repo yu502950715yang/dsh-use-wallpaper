@@ -15,7 +15,7 @@ import type { SceneRendererLike } from './wallpaper-controller.js';
 import type { SceneDescription, SceneImageObject } from '../shared/types.js';
 import {
   fitIsolatedBudget, groupEffectsByObject, isolatedRtSize, objectRtSize, particleWorldSize,
-  screenScalePx, sourcePixelsFromTexture,
+  screenScalePx, sourcePixelsFromTexture, textWorldSize,
 } from './object-range.js';
 import { ObjectEffectStage } from './object-effects.js';
 import { createGlowStage, type GlowStage } from './glow-stage.js';
@@ -141,7 +141,7 @@ function createEmptySim(): ParticleSim {
 }
 
 // 收集并解析「带效果对象」的链：按 scene.json objects 顺序，每对象保留自身 effects（不展平）。
-// text 对象不在范围（SceneTextObject 无 effects 字段）；解析失败的链过滤掉并 warn（该对象回退无效果显示，不黑屏）。
+// 解析失败的链过滤掉并 warn（该对象回退无效果显示，不黑屏）。
 //
 // ⚠️ 收链口径含 `models/util/*` 的 util 对象（合成层/全屏层）——它们不渲染 ⇒ 永远没有隔离条目；
 // 调用方按「是否真的隔离成功」再过滤一次（见 render() 的挂链循环），本函数保持「解析与分类」单一职责。
@@ -745,6 +745,17 @@ export function createThreeSceneRenderer(opts?: {
               objectId: obj.id,
               rtWidth: rt.width, rtHeight: rt.height,
               worldW: Math.abs(world.w), worldH: Math.abs(world.h),
+            });
+          } else if (obj.kind === 'text') {
+            // text 世界尺寸取装配期实测布局（时钟变宽时保持装配期尺寸，见 spec D1 边界）。
+            const layer = textLayers.get(obj.id);
+            if (!layer?.size) continue;
+            const world = textWorldSize(layer.size, [obj.scale[0], obj.scale[1]]);
+            const rt = objectRtSize(world.w, world.h, screenScale);
+            isolate.set(obj.id, {
+              objectId: obj.id,
+              rtWidth: rt.width, rtHeight: rt.height,
+              worldW: world.w, worldH: world.h,
             });
           }
         }

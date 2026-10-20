@@ -162,6 +162,16 @@ describe('parseSceneJson text 对象归类（T3.1）', () => {
     expect(o.text).toBe('12:00');
   });
 
+  it('text 对象的 effects 被解析保留', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      camera: {}, general: {}, objects: [
+        { id: 3, name: 't', text: '12:00', effects: [{ file: 'effects/waterwaves/effect.json' }] },
+      ],
+    }));
+    const text = desc.objects.find((o) => o.kind === 'text') as any;
+    expect(text.effects).toHaveLength(1);
+  });
+
   // 2980088441（CodeTime）实测：11 个对象里有 4 个的 text 是**字符串**（"const"/"clock"/"={"/"}"），
   // 此前只认对象形态 → 它们被归为「无引用对象」不渲染，画面上整行 `const clock = {` 与收尾 `}` 缺失。
   it('text 为字符串 → 归为 kind:text，text 取该字符串（CodeTime 的 const/clock/={/} 形态）', () => {

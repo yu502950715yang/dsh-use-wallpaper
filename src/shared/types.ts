@@ -154,6 +154,7 @@ export interface SceneTextObject extends SceneObjectBase {
   padding?: number;              // WE padding：文本框四周**等量**内边距（字体像素单位）
   script?: string;               // text.script（WE 文本脚本源码，T3.3 模式识别输入）
   scriptProperties?: Record<string, unknown>; // text.scriptproperties（{user,value} 已解包，T3.3）
+  effects?: unknown[];           // 对象效果链（与 image/particle 同语义，v0.8.1 起挂链）
 }
 export type SceneObject = SceneImageObject | SceneParticleObject | SceneUtilObject | SceneTextObject;
 

@@ -120,6 +120,27 @@ describe('loadSceneToThree text 对象', () => {
     expect(mesh.position.toArray()).toEqual([15, -5, 0]);
   });
 
+  // v0.8.1 F3：text 与 image 共用 addBackground 的隔离入口（有 effects 时进对象 RT）。
+  it('isolate 条目 → text 图层同样进隔离路径（不再走共享场景直渲）', () => {
+    const tex = new THREE.DataTexture(new Uint8Array(4), 2, 2);
+    const assets = {
+      ...makeTextAssets({ texture: tex, size: [600, 200] }),
+      isolate: new Map([[7, { objectId: 7, rtWidth: 300, rtHeight: 100, worldW: 600, worldH: 200 }]]),
+    };
+    const result = loadSceneToThree(scene, assets, document.createElement('canvas'));
+    expect(result.backgroundIds).toHaveLength(1);
+    expect(result.player.isolatedObjects()).toHaveLength(1);
+    expect(result.player.isolatedObjects()[0].id).toBe(7);
+    // update_background 必须移动合成 quad（内容 mesh 在对象 RT 内坐标恒为 0），
+    // 否则时钟跨分钟改 origin 会把内容移出对象 RT 视野。
+    const iso = result.player.isolatedObjects()[0];
+    const content = iso.localScene.children[0];
+    result.player.update_background(result.backgroundIds[0], [1000, 500, 0]);
+    expect(iso.quad.position.x).toBeCloseTo(1000 - 1920 / 2, 5);
+    expect(iso.quad.position.y).toBeCloseTo(500 - 1080 / 2, 5);
+    expect(content.position.toArray()).toEqual([0, 0, 0]);
+  });
+
   it('textLayers 无该对象条目 → 跳过（visible=false 由调用方过滤，player 不兜底）', () => {
     const result = loadSceneToThree(scene, makeTextAssets(), document.createElement('canvas'));
     expect(result.backgroundIds).toHaveLength(0);

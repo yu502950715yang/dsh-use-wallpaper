@@ -751,7 +751,7 @@ function stubAssetFetch(scene: string, files: Record<string, string>): void {
 }
 
 describe('collectObjectEffectChains（effects 解析与分类）', () => {
-  it('按对象收集 effects 并解析为链；无效对象（无 effects / text）被跳过', async () => {
+  it('按对象收集 effects 并解析为链；无 effects 对象被跳过', async () => {
     const desc = {
       camera: { center: [0, 0, 0], eye: [0, 0, 0], up: [0, 1, 0] },
       orthogonal: { width: 100, height: 100 },
@@ -1583,6 +1583,31 @@ describe('three-renderer text 对象', () => {
     expect(layer.driver?.layout.width).toBe(layer.size![0]);
     expect(layer.driver?.layout.height).toBe(layer.size![1]);
     expect(String(ctx2d.fillText.mock.calls[0][0])).toMatch(/\d{2}:\d{2}/);
+    r.dispose();
+  });
+
+  // v0.8.1 F3：text 带 effects 时按对象 id 进 isolate 表；世界尺寸 = 实测布局 × |scale|，
+  // RT 用屏占位口径（不是 scene.json 的 size）。
+  it('带 effects 的 text → isolate 按对象 id 下发，世界尺寸取实测布局 × scale', async () => {
+    stubAssetFetch(sceneWithText({
+      scale: '2 2 1',
+      effects: [{ file: 'effects/w/effect.json' }],
+      text: { value: '12:34' },
+    }), FX_FILES);
+    stubTextRender();
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    expect(await r.render('2851992662', document.createElement('canvas'), null)).toBe(true);
+
+    const assets = loadSceneToThree.mock.calls[0][1] as {
+      textLayers: Map<number, { size?: [number, number] }>;
+      isolate: Map<number, unknown>;
+    };
+    const layer = assets.textLayers.get(5)!;
+    // 实测布局 = 5 字符 × 48px×0.5 = 120 宽、字高 ceil(48) = 49；scale 2 → 世界 240×98。
+    expect(layer.size).toEqual([120, 49]);
+    expect(assets.isolate.get(5)).toEqual({
+      objectId: 5, rtWidth: 240, rtHeight: 98, worldW: 240, worldH: 98,
+    });
     r.dispose();
   });
 

@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import {
   CAMERA_DISTANCE, OBJECT_RT_MAX, PARTICLE_DEFAULT_DISTANCE,
-  materialModulation, objectCameraRange, particleObjectRange, particleWorldSize,
+  materialModulation, objectCameraRange, particleObjectRange, particleWorldSize, textWorldSize,
   createObjectRenderTarget, shouldUseObjectPath, groupEffectsByObject, PendingChainStore,
   uvWindow, createCompositeGeometry, coverRange, flipGeometryUvY,
   screenScalePx, objectRtSize, isolatedRtLongEdge, isolatedRtSize, sourcePixelsFromTexture,
@@ -84,7 +84,7 @@ describe('分组与调度谓词', () => {
     expect(shouldUseObjectPath({ effects: [{ file: 'a' }] })).toBe(true);
     expect(shouldUseObjectPath({})).toBe(false);
   });
-  it('groupEffectsByObject 按 objects 顺序保留每对象自身 effects，且跳过 text', () => {
+  it('groupEffectsByObject 按 objects 顺序保留每对象自身 effects（含 text）', () => {
     const objs = [
       { kind: 'image', id: 1, effects: [{ file: 'a' }] },
       { kind: 'text', id: 2, effects: [{ file: 'b' }] },
@@ -92,8 +92,24 @@ describe('分组与调度谓词', () => {
       { kind: 'image', id: 4 },
     ] as never[];
     const groups = groupEffectsByObject(objs);
-    expect(groups.map((g) => g.obj.id)).toEqual([1, 3]);
+    expect(groups.map((g) => g.obj.id)).toEqual([1, 2, 3]);
     expect(groups[0].effects).toEqual([{ file: 'a' }]);
+  });
+  it('text 对象带 effects 时参与效果分组', () => {
+    const text = {
+      kind: 'text', id: 7, name: 'clock', origin: [0, 0, 0], scale: [1, 1, 1],
+      text: '12:00', effects: [{ file: 'effects/blurprecise/effect.json' }],
+    } as never;
+    const groups = groupEffectsByObject([text]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].obj.id).toBe(7);
+  });
+});
+
+describe('textWorldSize', () => {
+  it('textWorldSize = 布局尺寸 × 世界缩放绝对值', () => {
+    expect(textWorldSize([200, 80], [2, 3])).toEqual({ w: 400, h: 240 });
+    expect(textWorldSize([200, 80], [-2, 3])).toEqual({ w: 400, h: 240 });
   });
 });
 

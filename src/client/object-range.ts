@@ -70,25 +70,31 @@ export function particleWorldSize(spec: { distanceMax?: number }, scale: [number
   return { w: eff * scale[0], h: eff * scale[1] };
 }
 
+// text 图层的世界尺寸 = 实测 canvas 布局 × |scale|（隔离 RT / 合成 quad 同一基准）。
+export function textWorldSize(
+  size: [number, number],
+  scale: [number, number],
+): { w: number; h: number } {
+  return { w: Math.abs(size[0] * scale[0]), h: Math.abs(size[1] * scale[1]) };
+}
+
 // 对象级渲染目标：按分辨率创建（浮点取整为整数像素，0/负数钳制 1 —— 保证
 // EffectRunner.ensureTargets 收到的尺寸恒为干净的正整数，不产生退化 RT）。
 export function createObjectRenderTarget(width: number, height: number): THREE.WebGLRenderTarget {
   return new THREE.WebGLRenderTarget(Math.max(1, Math.round(width)), Math.max(1, Math.round(height)));
 }
 
-// 对象级效果路径调度谓词：effects 非空数组 → 走对象 RT 路径。image 与 particle 对象共用（粒子对象同样
-// 可挂效果链，与 image 一致按 objects 顺序分组）；无效果对象保持共享场景路径。
+// 对象级效果路径调度谓词：effects 非空数组 → 走对象 RT 路径。image / particle / text 对象共用
+//（text v0.8.1 起同路径挂链）；无效果对象保持共享场景路径。
 export function shouldUseObjectPath(obj: { effects?: unknown }): obj is { effects: unknown[] } {
   return Array.isArray(obj.effects) && obj.effects.length > 0;
 }
 
 // 对象级效果链分组：按 scene.json objects 顺序提取带效果对象（effects 非空数组），每组保留该对象自己的
 // effects 数组（不展平 —— 旧全屏路径 flatMap 展平会让 foliagesway 等对象级效果整屏生效）。
-// text 对象不参与分组：text 永远走共享场景路径（SceneTextObject 无 effects 字段，见 shared/types.ts）。
 export function groupEffectsByObject(objects: SceneObject[]): Array<{ obj: SceneObject; effects: unknown[] }> {
   const groups: Array<{ obj: SceneObject; effects: unknown[] }> = [];
   for (const obj of objects) {
-    if (obj.kind === 'text') continue;
     if (shouldUseObjectPath(obj)) {
       groups.push({ obj, effects: obj.effects });
     }
