@@ -1625,9 +1625,8 @@ export class ThreeScenePlayer {
     });
   }
 
-  // 更新背景图层状态，对齐既有 update_image 语义——undefined = 保持现状；与当前已应用状态相等的
-  // 字段跳过；未知 id → no-op。origin 是 WE 场景坐标，先按 we_to_three 中心化再写承载世界位置的 node
-  //（隔离对象 = 合成 quad；内容 mesh 在对象 RT 内坐标恒为 0）。
+  // 更新背景图层状态，对齐既有 update_image 语义——undefined = 保持现状；与当前状态相等的字段跳过；
+  // 未知 id → no-op。origin 是 WE 场景坐标，中心化后写承载位置的 node（隔离 = 合成 quad，内容 mesh 在 RT 内恒 0）。
   update_background(
     id: number,
     origin?: [number, number, number],

@@ -1595,6 +1595,8 @@ describe('three-renderer text 对象', () => {
       text: { value: '12:34' },
     }), FX_FILES);
     stubTextRender();
+    // mock player 没有隔离条目：接住真 stage 的挂链，避免它报「调用顺序错误」告警。
+    const chainsSpy = vi.spyOn(ObjectEffectStage.prototype, 'setObjectChains').mockImplementation(() => {});
     const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
     expect(await r.render('2851992662', document.createElement('canvas'), null)).toBe(true);
 
@@ -1608,6 +1610,10 @@ describe('three-renderer text 对象', () => {
     expect(assets.isolate.get(5)).toEqual({
       objectId: 5, rtWidth: 240, rtHeight: 98, worldW: 240, worldH: 98,
     });
+    // 链按对象 id 5（不是图层计数器 id）挂载，且链非空。
+    expect(chainsSpy.mock.calls.map((c) => c[0])).toEqual([5]);
+    expect(chainsSpy.mock.calls[0][1]).toHaveLength(1);
+    chainsSpy.mockRestore();
     r.dispose();
   });
 
