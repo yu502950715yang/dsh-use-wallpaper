@@ -5,10 +5,16 @@ export interface AudioAnalyzer {
     update(): void;
 }
 export declare function createAudioAnalyzer(): AudioAnalyzer | null;
-export declare function playWallpaperSound(url: string, analyzer: {
+export interface PlaybackHandle {
+    stop(): void;
+}
+export declare const LARGE_AUDIO_BYTES: number;
+type SoundAnalyzer = {
     context: AudioContext;
     analyser: AnalyserNode;
-}, opts?: {
+};
+export declare function playWallpaperSound(url: string, analyzer: SoundAnalyzer | null, opts?: {
     volume?: number;
     loop?: boolean;
-}): Promise<boolean>;
+}): Promise<PlaybackHandle | null>;
+export {};

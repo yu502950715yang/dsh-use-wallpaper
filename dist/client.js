@@ -29713,10 +29713,104 @@ function armGestureResume(context) {
   window.addEventListener("keydown", onGesture);
   window.addEventListener("touchstart", onGesture);
 }
+var LARGE_AUDIO_BYTES = 32 * 1024 * 1024;
+function armGesturePlay(el, context) {
+  if (typeof window === "undefined") return () => {
+  };
+  const detach = () => {
+    window.removeEventListener("pointerdown", onGesture);
+    window.removeEventListener("keydown", onGesture);
+    window.removeEventListener("touchstart", onGesture);
+  };
+  const onGesture = () => {
+    detach();
+    if (context.state === "suspended") context.resume().catch(() => {
+    });
+    void el.play().catch(() => {
+    });
+  };
+  window.addEventListener("pointerdown", onGesture);
+  window.addEventListener("keydown", onGesture);
+  window.addEventListener("touchstart", onGesture);
+  return detach;
+}
+async function playLargeSound(url, analyzer, opts) {
+  if (typeof document === "undefined") throw new Error("no document");
+  const el = document.createElement("audio");
+  el.src = url;
+  el.loop = opts?.loop !== false;
+  el.volume = opts?.volume ?? 1;
+  el.preload = "auto";
+  const context = analyzer.context;
+  let source = null;
+  let gain = null;
+  let disarm = null;
+  let stopped = false;
+  const teardown = () => {
+    disarm?.();
+    disarm = null;
+    try {
+      el.pause();
+    } catch {
+    }
+    el.removeAttribute("src");
+    try {
+      el.load();
+    } catch {
+    }
+    try {
+      source?.disconnect();
+    } catch {
+    }
+    try {
+      gain?.disconnect();
+    } catch {
+    }
+  };
+  try {
+    source = context.createMediaElementSource(el);
+    gain = context.createGain();
+    gain.gain.value = opts?.volume ?? 1;
+    source.connect(gain);
+    gain.connect(analyzer.analyser);
+    if (context.state === "suspended") context.resume().catch(() => {
+    });
+    try {
+      await el.play();
+    } catch (err) {
+      if (err?.name !== "NotAllowedError") throw err;
+      disarm = armGesturePlay(el, context);
+    }
+    return {
+      stop() {
+        if (stopped) return;
+        stopped = true;
+        teardown();
+      }
+    };
+  } catch (err) {
+    teardown();
+    throw err;
+  }
+}
 async function playWallpaperSound(url, analyzer, opts) {
+  if (!analyzer?.context || !analyzer.analyser) return null;
   try {
     const resp = await fetch(url);
-    if (!resp.ok) return false;
+    if (!resp.ok) return null;
+    const declared = Number(resp.headers?.get?.("content-length") ?? NaN);
+    if (Number.isFinite(declared) && declared > LARGE_AUDIO_BYTES) {
+      try {
+        await resp.body?.cancel?.();
+      } catch {
+      }
+      try {
+        return await playLargeSound(url, analyzer, opts);
+      } catch (err) {
+        console.warn(`[wallpaper-engine] \u5927\u97F3\u9891\u6D41\u5F0F\u64AD\u653E\u5931\u8D25\uFF08${declared} \u5B57\u8282\uFF09`, err);
+        return null;
+      }
+    }
     const buf = await resp.arrayBuffer();
     const audioBuffer = await analyzer.context.decodeAudioData(buf);
     const source = analyzer.context.createBufferSource();
@@ -29732,9 +29826,27 @@ async function playWallpaperSound(url, analyzer, opts) {
       armGestureResume(analyzer.context);
     }
     source.start();
-    return true;
+    let stopped = false;
+    return {
+      stop() {
+        if (stopped) return;
+        stopped = true;
+        try {
+          source.stop();
+        } catch {
+        }
+        try {
+          source.disconnect();
+        } catch {
+        }
+        try {
+          gain.disconnect();
+        } catch {
+        }
+      }
+    };
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -31344,21 +31456,41 @@ function createThreeSceneRenderer(opts) {
   const stopAudio = () => {
     const audio = currentAudio;
     currentAudio = null;
-    if (audio) void audio.analyzer.context.close().catch(() => {
+    if (!audio) return;
+    for (const handle of audio.handles) {
+      try {
+        handle.stop();
+      } catch {
+      }
+    }
+    audio.handles.length = 0;
+    void audio.analyzer.context.close().catch(() => {
     });
   };
   const startAudio = (id, sounds, enabled) => {
     if (!enabled || sounds.length === 0) return;
     const analyzer = createAudioAnalyzer();
     if (!analyzer) return;
-    currentAudio = { analyzer, id, sounds };
+    const audio = { analyzer, id, sounds, handles: [] };
+    currentAudio = audio;
     for (const s of sounds) {
       const file = s.playbackmode === "loop" ? s.files[0] : s.files[Math.floor(Math.random() * s.files.length)];
       void playWallpaperSound(
         `/wallpapers/scene/${id}/asset?name=${encodeURIComponent(file)}`,
         analyzer,
         { volume: s.volume, loop: s.playbackmode !== "single" }
-      );
+      ).then((handle) => {
+        if (!handle) return;
+        if (currentAudio !== audio) {
+          try {
+            handle.stop();
+          } catch {
+          }
+          return;
+        }
+        audio.handles.push(handle);
+      }).catch(() => {
+      });
     }
   };
   const onContextLost = (e) => {

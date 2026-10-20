@@ -73,20 +73,112 @@ function armGestureResume(context: AudioContext): void {
   window.addEventListener('touchstart', onGesture);
 }
 
-// T3.4/v0.8.1 壁纸音频播放：fetch sound 资源 → decodeAudioData → AudioBufferSourceNode
-// → GainNode（音量）→ analyser（频谱可视化数据源）。loop/volume 由 opts 控制
-// （缺省 loop=true、volume=1，对齐 WE/OWE 语义）。返回 true 表示成功入列；任何失败
-// （fetch / 非 2xx / 解码失败 / analyzer 缺失）→ false（静默，不阻断渲染，调用方 fire-and-forget）。
-// autoplay：context suspended → 立即尝试 resume()（可能被拦，静默）+ 一次性手势监听
-// 兜底（见 armGestureResume）；恢复前音频不可闻、频谱全零（可视化条保持静止）。
+// 播放句柄：stop 停声并断开音频图（小文件停 AudioBufferSource，大文件停 <audio>）
+export interface PlaybackHandle {
+  stop(): void;
+}
+
+// 大音频阈值：超过后不整块解码（Crimson 的 132MB 睡眠音乐 decode 需要 GB 级 PCM）
+export const LARGE_AUDIO_BYTES = 32 * 1024 * 1024;
+
+type SoundAnalyzer = { context: AudioContext; analyser: AnalyserNode };
+
+// 一次性手势重试 el.play()（autoplay 拦截）；成功/停止时卸载三个监听
+function armGesturePlay(el: HTMLAudioElement, context: AudioContext): () => void {
+  if (typeof window === 'undefined') return () => {};
+  const detach = () => {
+    window.removeEventListener('pointerdown', onGesture);
+    window.removeEventListener('keydown', onGesture);
+    window.removeEventListener('touchstart', onGesture);
+  };
+  const onGesture = () => {
+    detach();
+    if (context.state === 'suspended') context.resume().catch(() => {});
+    void el.play().catch(() => {});
+  };
+  window.addEventListener('pointerdown', onGesture);
+  window.addEventListener('keydown', onGesture);
+  window.addEventListener('touchstart', onGesture);
+  return detach;
+}
+
+// 大音频流式链路：<audio> → MediaElementSource → Gain（音量）→ analyser；失败抛给调用方
+async function playLargeSound(
+  url: string,
+  analyzer: SoundAnalyzer,
+  opts: { volume?: number; loop?: boolean } | undefined,
+): Promise<PlaybackHandle> {
+  if (typeof document === 'undefined') throw new Error('no document');
+  const el = document.createElement('audio');
+  el.src = url;
+  el.loop = opts?.loop !== false;
+  el.volume = opts?.volume ?? 1;
+  el.preload = 'auto';
+  const context = analyzer.context;
+  let source: MediaElementAudioSourceNode | null = null;
+  let gain: GainNode | null = null;
+  let disarm: (() => void) | null = null;
+  let stopped = false;
+  const teardown = () => {
+    disarm?.();
+    disarm = null;
+    try { el.pause(); } catch { /* 元素已释放 */ }
+    el.removeAttribute('src');
+    try { el.load(); } catch { /* 元素已释放 */ }
+    try { source?.disconnect(); } catch { /* 节点已断 */ }
+    try { gain?.disconnect(); } catch { /* 节点已断 */ }
+  };
+  try {
+    source = context.createMediaElementSource(el);
+    gain = context.createGain();
+    gain.gain.value = opts?.volume ?? 1;
+    source.connect(gain);
+    gain.connect(analyzer.analyser);
+    // 与 decode 路径一致：suspended 先尝试恢复，可听性交给手势兜底
+    if (context.state === 'suspended') context.resume().catch(() => {});
+    try {
+      await el.play();
+    } catch (err) {
+      // 仅 autoplay 拦截走手势重试；格式/网络错误按失败上报（带字节数）
+      if ((err as { name?: string } | null)?.name !== 'NotAllowedError') throw err;
+      disarm = armGesturePlay(el, context);
+    }
+    return {
+      stop() {
+        if (stopped) return;
+        stopped = true;
+        teardown();
+      },
+    };
+  } catch (err) {
+    teardown();
+    throw err;
+  }
+}
+
+// T3.4/v0.8.1 壁纸音频播放：小文件 fetch → decodeAudioData → source → gain → analyser；
+// >32MB 大音频流式（<audio> + Range），返回句柄供 stop；失败 → null（静默，不阻断渲染）。
+// autoplay：suspended 立即 resume() + 一次性手势兜底（见 armGestureResume / armGesturePlay）。
 export async function playWallpaperSound(
   url: string,
-  analyzer: { context: AudioContext; analyser: AnalyserNode },
+  analyzer: SoundAnalyzer | null,
   opts?: { volume?: number; loop?: boolean },
-): Promise<boolean> {
+): Promise<PlaybackHandle | null> {
+  if (!analyzer?.context || !analyzer.analyser) return null;
   try {
     const resp = await fetch(url);
-    if (!resp.ok) return false;
+    if (!resp.ok) return null;
+    // 大文件分流：content-length 超阈值 → 取消整块 body，改 <audio> 自行 Range 流式
+    const declared = Number(resp.headers?.get?.('content-length') ?? NaN);
+    if (Number.isFinite(declared) && declared > LARGE_AUDIO_BYTES) {
+      try { await resp.body?.cancel?.(); } catch { /* 取消失败不阻塞 <audio> 自取 */ }
+      try {
+        return await playLargeSound(url, analyzer, opts);
+      } catch (err) {
+        console.warn(`[wallpaper-engine] 大音频流式播放失败（${declared} 字节）`, err);
+        return null;
+      }
+    }
     const buf = await resp.arrayBuffer();
     const audioBuffer = await analyzer.context.decodeAudioData(buf);
     const source = analyzer.context.createBufferSource();
@@ -103,9 +195,18 @@ export async function playWallpaperSound(
       armGestureResume(analyzer.context);
     }
     source.start();
-    return true;
+    let stopped = false;
+    return {
+      stop() {
+        if (stopped) return;
+        stopped = true;
+        try { source.stop(); } catch { /* 未起播/已停止 */ }
+        try { source.disconnect(); } catch { /* 节点已断 */ }
+        try { gain.disconnect(); } catch { /* 节点已断 */ }
+      },
+    };
   } catch {
-    // fetch/解码/无 Web Audio 等任何失败 → 静默返回 false（不抛错，不阻断渲染）
-    return false;
+    // fetch/解码/无 Web Audio 等任何失败 → 静默返回 null（不抛错，不阻断渲染）
+    return null;
   }
 }

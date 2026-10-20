@@ -30,7 +30,7 @@ import { getTextScriptRuntime } from './text-script.js';
 import type { TextScriptBinding, TextScriptRuntime } from './text-script.js';
 import { detectScriptPattern, formatClockText } from './script-patterns.js';
 import { resolveVisibility, isStaticallyHidden } from './visibility.js';
-import { createAudioAnalyzer, playWallpaperSound, type AudioAnalyzer } from './audio-input.js';
+import { createAudioAnalyzer, playWallpaperSound, type AudioAnalyzer, type PlaybackHandle } from './audio-input.js';
 import { SceneScriptHost } from './scene-script-host.js';
 import { applyLayerState } from './layer-state.js';
 import { DynamicMeshRegistry } from './dynamic-mesh.js';
@@ -267,7 +267,12 @@ export function createThreeSceneRenderer(opts?: {
   let scriptClickTarget: HTMLCanvasElement | null = null;
   // ── 壁纸音效 ───────────────────────────────────────────────────────────────────
   // sound 对象 → playWallpaperSound → analyser；频谱每帧喂给效果链（Simple_Audio_Bars 等）。
-  let currentAudio: { analyzer: AudioAnalyzer; id: string; sounds: SceneSoundObject[] } | null = null;
+  let currentAudio: {
+    analyzer: AudioAnalyzer;
+    id: string;
+    sounds: SceneSoundObject[];
+    handles: PlaybackHandle[];
+  } | null = null;
   // 运行期音效开关（面板 soundEnabled）：null = 未下发 ⇒ 用装配期读到的设置值。
   let soundEnabledOverride: boolean | null = null;
   // 最近一次装配的音频规格：运行期重新打开时按它重播（不必重选壁纸）。
@@ -313,15 +318,21 @@ export function createThreeSceneRenderer(opts?: {
   const stopAudio = () => {
     const audio = currentAudio;
     currentAudio = null;
-    // 必须 close：每个壁纸一个 AudioContext，切壁纸不释放会一路累积到浏览器上限。
-    if (audio) void audio.analyzer.context.close().catch(() => {});
+    if (!audio) return;
+    // 先停各 sound（buffer source / <audio>），再 close context（不释放会累积到浏览器上限）
+    for (const handle of audio.handles) {
+      try { handle.stop(); } catch { /* 单个失败不阻断其余收尾 */ }
+    }
+    audio.handles.length = 0;
+    void audio.analyzer.context.close().catch(() => {});
   };
 
   const startAudio = (id: string, sounds: SceneSoundObject[], enabled: boolean) => {
     if (!enabled || sounds.length === 0) return;
     const analyzer = createAudioAnalyzer();
     if (!analyzer) return; // 无 Web Audio → 静音回退（不阻断渲染）
-    currentAudio = { analyzer, id, sounds };
+    const audio = { analyzer, id, sounds, handles: [] as PlaybackHandle[] };
+    currentAudio = audio;
     // 失败的 sound（404/解码失败）在 playWallpaperSound 内部静默降级，不影响其余与画面。
     for (const s of sounds) {
       // 每个 sound 对象选一首（OWE SoundParser：loop 从第一首起，random/single 随机起点）。
@@ -332,7 +343,15 @@ export function createThreeSceneRenderer(opts?: {
         `/wallpapers/scene/${id}/asset?name=${encodeURIComponent(file)}`,
         analyzer,
         { volume: s.volume, loop: s.playbackmode !== 'single' },
-      );
+      ).then((handle) => {
+        if (!handle) return;
+        // 播放期间已被 stop/切壁纸 → 立即停掉迟到句柄，避免泄漏
+        if (currentAudio !== audio) {
+          try { handle.stop(); } catch { /* 已释放 */ }
+          return;
+        }
+        audio.handles.push(handle);
+      }).catch(() => {});
     }
   };
 
