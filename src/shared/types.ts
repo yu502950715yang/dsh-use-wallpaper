@@ -166,6 +166,13 @@ export interface ParallaxConfig {
   mouseInfluence: number;
 }
 
+/** WE 音频对象（scene.json object.sound）：多文件 + 音量 + 播放模式（对齐 OWE SoundParser）。 */
+export interface SceneSoundObject {
+  files: string[];                             // scene.json 对象 sound 数组（可能多文件）
+  volume: number;                              // 0-1，缺省 1（OWE 解析时 clamp）
+  playbackmode: 'loop' | 'random' | 'single';  // 缺省 loop
+}
+
 export interface SceneDescription {
   camera: { center: [number, number, number]; eye: [number, number, number]; up: [number, number, number] };
   orthogonal: { width: number; height: number };
@@ -179,9 +186,7 @@ export interface SceneDescription {
   /** 相机视差总配置（scene.json `general.cameraparallax*`，缺省全 0）。 */
   parallax: ParallaxConfig;
   objects: SceneObject[];
-  // T3.4：壁纸音频。WE 音频对象（无 image/particle/text 的纯音频节点）携带 sound 数组
-  // （资源名，如 2937346640 id=35 的 ["sounds/yutaka hirasaka - acro.flac"]）；
-  // 全库实测 sound 只挂在对象上（无根级字段），解析器按 objects 顺序收集全部条目。
-  // 无 sound 时缺省 undefined（渲染器 for..of desc.sounds ?? [] 跳过）。
-  sounds?: string[];
+  // 壁纸音频（T3.4/v0.8.1）：按 objects 顺序收集结构化 sound 对象（files/volume/playbackmode）；
+  // 全库实测 sound 只挂在对象上（无根级字段），无 sound 时 undefined（渲染器跳过）。
+  sounds?: SceneSoundObject[];
 }

@@ -73,17 +73,16 @@ function armGestureResume(context: AudioContext): void {
   window.addEventListener('touchstart', onGesture);
 }
 
-// T3.4 壁纸音频播放：fetch sound 资源 → decodeAudioData → AudioBufferSourceNode
-// （loop 播放——WE playbackmode 实测 9/10 为 loop，"random"（2597392171）近似为单曲
-// 循环；本接口只收 url，不携带 playbackmode/volume，保持最小）→ 接入 analyser
-// （频谱可视化数据源，visualizer 条/频谱效果从此拿到真实数据）。
-// 返回 true 表示成功入列；任何失败（fetch 错误 / 非 2xx / 解码失败 / analyzer 缺失）
-// → false（静默，不阻断渲染，调用方 fire-and-forget）。
+// T3.4/v0.8.1 壁纸音频播放：fetch sound 资源 → decodeAudioData → AudioBufferSourceNode
+// → GainNode（音量）→ analyser（频谱可视化数据源）。loop/volume 由 opts 控制
+// （缺省 loop=true、volume=1，对齐 WE/OWE 语义）。返回 true 表示成功入列；任何失败
+// （fetch / 非 2xx / 解码失败 / analyzer 缺失）→ false（静默，不阻断渲染，调用方 fire-and-forget）。
 // autoplay：context suspended → 立即尝试 resume()（可能被拦，静默）+ 一次性手势监听
 // 兜底（见 armGestureResume）；恢复前音频不可闻、频谱全零（可视化条保持静止）。
 export async function playWallpaperSound(
   url: string,
   analyzer: { context: AudioContext; analyser: AnalyserNode },
+  opts?: { volume?: number; loop?: boolean },
 ): Promise<boolean> {
   try {
     const resp = await fetch(url);
@@ -92,8 +91,12 @@ export async function playWallpaperSound(
     const audioBuffer = await analyzer.context.decodeAudioData(buf);
     const source = analyzer.context.createBufferSource();
     source.buffer = audioBuffer;
-    source.loop = true; // WE 默认 loop 播放
-    source.connect(analyzer.analyser);
+    source.loop = opts?.loop !== false;
+    // 音量经 GainNode 生效（OWE 在 PCM 上乘 volume，GainNode 等价）：source → gain → analyser
+    const gain = analyzer.context.createGain();
+    gain.gain.value = opts?.volume ?? 1;
+    source.connect(gain);
+    gain.connect(analyzer.analyser);
     // autoplay 策略：context suspended → 立即尝试恢复；被拦时由用户手势兜底
     if (analyzer.context.state === 'suspended') {
       analyzer.context.resume().catch(() => {});

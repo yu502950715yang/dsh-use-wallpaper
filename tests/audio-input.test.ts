@@ -97,15 +97,17 @@ describe('createAudioAnalyzer（音频频谱分析器工厂）', () => {
   });
 });
 
-// T3.4 壁纸音频播放：playWallpaperSound(url, analyzer) —— fetch sound 资源 → 原始字节
-// → decodeAudioData → AudioBufferSourceNode（loop 播放）→ 接入 analyser（频谱数据源；
-// analyser → destination 已在 createAudioAnalyzer 接好，本函数只插源）。任何失败
-// （fetch / 解码 / analyzer 缺失）→ 返回 false（静默，不阻断渲染）。autoplay 策略：
-// context suspended → 立即尝试 resume（可能被拦）+ 一次性手势监听（用户首次
-// pointerdown/keydown/touchstart 时重试恢复，恢复后自动卸载）。
+// T3.4/v0.8.1 壁纸音频播放：playWallpaperSound(url, analyzer, opts?) —— fetch sound 资源
+// → 原始字节 → decodeAudioData → AudioBufferSourceNode → GainNode（音量）→ analyser
+// （频谱数据源；analyser → destination 已在 createAudioAnalyzer 接好，本函数只插源与音量）。
+// loop 由 opts.loop 控制（缺省 true = WE 默认）；任何失败（fetch / 解码 / analyzer 缺失）
+// → 返回 false（静默，不阻断渲染）。autoplay 策略：context suspended → 立即尝试
+// resume（可能被拦）+ 一次性手势监听（用户首次 pointerdown/keydown/touchstart 时重试
+// 恢复，恢复后自动卸载）。
 describe('playWallpaperSound（壁纸音频播放，T3.4）', () => {
-  // 最小 analyzer mock：context（state/decodeAudioData/createBufferSource/resume）
-  // + analyser（复用 makeMockAnalyser）。source 模拟 AudioBufferSourceNode。
+  // 最小 analyzer mock：context（state/decodeAudioData/createBufferSource/createGain/resume）
+  // + analyser（复用 makeMockAnalyser）。source 模拟 AudioBufferSourceNode，
+  // gain 模拟 GainNode（gain.gain.value 为音量）。
   function makeAnalyzer(opts: { state?: 'running' | 'suspended' } = {}) {
     const analyser = makeMockAnalyser();
     const source = {
@@ -114,15 +116,20 @@ describe('playWallpaperSound（壁纸音频播放，T3.4）', () => {
       connect: vi.fn(),
       start: vi.fn(),
     };
+    const gain = {
+      gain: { value: 1 },
+      connect: vi.fn(),
+    };
     const context = {
       state: opts.state ?? 'running',
       destination: {},
       decodeAudioData: vi.fn(async () => ({ length: 2, duration: 10 }) as AudioBuffer),
       createBufferSource: vi.fn(() => source),
+      createGain: vi.fn(() => gain),
       // 模拟 autoplay 拦截：resume 始终 reject（context 保持 suspended）
       resume: vi.fn(async () => { throw new DOMException('blocked', 'NotAllowedError'); }),
     };
-    return { analyser, source, context };
+    return { analyser, source, gain, context };
   }
 
   // 默认成功 fetch（ok + 8B arrayBuffer）；resp 覆盖可模拟失败
@@ -147,16 +154,29 @@ describe('playWallpaperSound（壁纸音频播放，T3.4）', () => {
     return { win, listeners };
   }
 
-  it('成功路径：fetch → decode → source 接 analyser、loop=true、start，返回 true', async () => {
+  it('成功路径：fetch → decode → source → gain → analyser、loop=true、start，返回 true', async () => {
     stubFetch();
-    const { analyser, source, context } = makeAnalyzer();
+    const { analyser, source, gain, context } = makeAnalyzer();
     const ok = await playWallpaperSound('/wallpapers/scene/1/asset?name=sounds/a.flac', { context, analyser } as any);
     expect(ok).toBe(true);
     expect(context.decodeAudioData).toHaveBeenCalledTimes(1);
     expect(source.buffer).toEqual({ length: 2, duration: 10 }); // decode 结果挂到 source
-    expect(source.loop).toBe(true);                              // WE 默认 loop 播放
-    expect(source.connect).toHaveBeenCalledWith(analyser);       // 源 → 分析器（频谱数据）
+    expect(source.loop).toBe(true);                              // 缺省 loop=true（WE 默认）
+    expect(gain.gain.value).toBe(1);                             // 缺省音量 1
+    expect(source.connect).toHaveBeenCalledWith(gain);           // 源 → 音量 → 分析器
+    expect(gain.connect).toHaveBeenCalledWith(analyser);
     expect(source.start).toHaveBeenCalledTimes(1);
+  });
+
+  it('opts：volume 经 GainNode 生效，loop 可关闭（single 播放模式）', async () => {
+    stubFetch();
+    const { analyser, source, gain, context } = makeAnalyzer();
+    const ok = await playWallpaperSound('u', { context, analyser } as any, { volume: 0.31, loop: false });
+    expect(ok).toBe(true);
+    expect(gain.gain.value).toBeCloseTo(0.31, 5);
+    expect(source.loop).toBe(false);
+    expect(source.connect).toHaveBeenCalledWith(gain);           // source → gain → analyser
+    expect(gain.connect).toHaveBeenCalledWith(analyser);
   });
 
   it('fetch 非 2xx → 返回 false，不解码不播放', async () => {

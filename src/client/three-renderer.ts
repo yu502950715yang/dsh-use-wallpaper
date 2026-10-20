@@ -12,7 +12,7 @@ import { loadTexTexture } from './tex-loader.js';
 import { defaultLoadWasm } from './wasm-loader.js';
 import type { LoadWasm, WasmSceneModule } from './wasm-loader.js';
 import type { SceneRendererLike } from './wallpaper-controller.js';
-import type { SceneDescription, SceneImageObject } from '../shared/types.js';
+import type { SceneDescription, SceneImageObject, SceneSoundObject } from '../shared/types.js';
 import {
   fitIsolatedBudget, groupEffectsByObject, isolatedRtSize, objectRtSize, particleWorldSize,
   screenScalePx, sourcePixelsFromTexture, textWorldSize,
@@ -238,12 +238,12 @@ export function createThreeSceneRenderer(opts?: {
   let scriptClick: (() => void) | null = null;
   let scriptClickTarget: HTMLCanvasElement | null = null;
   // ── 壁纸音效 ───────────────────────────────────────────────────────────────────
-  // sound 对象 → playWallpaperSound（loop）→ analyser；频谱每帧喂给效果链（Simple_Audio_Bars 等）。
-  let currentAudio: { analyzer: AudioAnalyzer; id: string; sounds: string[] } | null = null;
+  // sound 对象 → playWallpaperSound → analyser；频谱每帧喂给效果链（Simple_Audio_Bars 等）。
+  let currentAudio: { analyzer: AudioAnalyzer; id: string; sounds: SceneSoundObject[] } | null = null;
   // 运行期音效开关（面板 soundEnabled）：null = 未下发 ⇒ 用装配期读到的设置值。
   let soundEnabledOverride: boolean | null = null;
   // 最近一次装配的音频规格：运行期重新打开时按它重播（不必重选壁纸）。
-  let lastAudioSpec: { id: string; sounds: string[] } | null = null;
+  let lastAudioSpec: { id: string; sounds: SceneSoundObject[] } | null = null;
   // 上下文丢失回调（由控制器注册：只有它知道当前壁纸的 preview 地址）。
   let contextLostHandler: ((id: string) => void) | null = null;
   // 本次装配的壁纸 id（闭包持有）：不往调用方的 canvas 写 `data-wp-id`（外部 DOM 副作用），
@@ -289,14 +289,22 @@ export function createThreeSceneRenderer(opts?: {
     if (audio) void audio.analyzer.context.close().catch(() => {});
   };
 
-  const startAudio = (id: string, sounds: string[], enabled: boolean) => {
+  const startAudio = (id: string, sounds: SceneSoundObject[], enabled: boolean) => {
     if (!enabled || sounds.length === 0) return;
     const analyzer = createAudioAnalyzer();
     if (!analyzer) return; // 无 Web Audio → 静音回退（不阻断渲染）
     currentAudio = { analyzer, id, sounds };
     // 失败的 sound（404/解码失败）在 playWallpaperSound 内部静默降级，不影响其余与画面。
     for (const s of sounds) {
-      void playWallpaperSound(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(s)}`, analyzer);
+      // 每个 sound 对象选一首（OWE SoundParser：loop 从第一首起，random/single 随机起点）。
+      const file = s.playbackmode === 'loop'
+        ? s.files[0]
+        : s.files[Math.floor(Math.random() * s.files.length)];
+      void playWallpaperSound(
+        `/wallpapers/scene/${id}/asset?name=${encodeURIComponent(file)}`,
+        analyzer,
+        { volume: s.volume, loop: s.playbackmode !== 'single' },
+      );
     }
   };
 

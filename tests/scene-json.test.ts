@@ -415,12 +415,13 @@ describe('text 对象 color 归一化（I3：0-1 与 0-255 双语义）', () => 
   });
 });
 
-// T3.4 sound 字段解析：WE 音频对象（无 image/particle/text 的纯音频节点）携带
+// T3.4/v0.8.1 sound 字段解析：WE 音频对象（无 image/particle/text 的纯音频节点）携带
 // sound 数组。实测（PkgReader 全库 26 个 scene.pkg）：10 个含 sound 的壁纸全部为
 // 对象级 sound 数组（如 2937346640 id=35：["sounds/yutaka hirasaka - acro.flac"]），
-// 无根级 sound 字段 → 按 objects 顺序收集所有对象 sound 数组的字符串条目。
-// 音频对象本身无可见内容，解析后落入空粒子兜底（不渲染，行为与现状一致）。
-describe('parseSceneJson sound 数组解析（T3.4）', () => {
+// 无根级 sound 字段 → 按 objects 顺序收集。v0.8.1 起每个对象产出结构化 SceneSoundObject
+// （多文件 + volume + playbackmode，语义对齐 OWE SoundParser）。
+// 音频对象本身无可见内容，解析后仍落入空粒子兜底（不渲染，行为与现状一致）。
+describe('parseSceneJson sound 对象解析（T3.4/v0.8.1）', () => {
   it('对象级 sound 数组 → SceneDescription.sounds（2937346640 id=35 实测形态）', () => {
     const desc = parseSceneJson(JSON.stringify({
       objects: [
@@ -432,7 +433,19 @@ describe('parseSceneJson sound 数组解析（T3.4）', () => {
         },
       ],
     }));
-    expect(desc.sounds).toEqual(['sounds/yutaka hirasaka - acro.flac']);
+    expect(desc.sounds).toEqual([{
+      files: ['sounds/yutaka hirasaka - acro.flac'], volume: 1, playbackmode: 'loop',
+    }]);
+  });
+
+  it('sound 对象被解析为结构化 SceneSoundObject（volume/playbackmode/多文件）', () => {
+    const raw = JSON.stringify({
+      camera: {}, general: {}, objects: [
+        { id: 1, name: 'bgm', sound: ['sounds/a.mp3', 'sounds/b.mp3'], volume: 0.31, playbackmode: 'random' },
+      ],
+    });
+    const desc = parseSceneJson(raw);
+    expect(desc.sounds).toEqual([{ files: ['sounds/a.mp3', 'sounds/b.mp3'], volume: 0.31, playbackmode: 'random' }]);
   });
 
   it('多对象 sound 按 objects 顺序收集（2597392171 实测：单对象 14 轨）', () => {
@@ -442,7 +455,10 @@ describe('parseSceneJson sound 数组解析（T3.4）', () => {
         { id: 2, sound: ['sounds/c.mp3'] },
       ],
     }));
-    expect(desc.sounds).toEqual(['sounds/a.mp3', 'sounds/b.mp3', 'sounds/c.mp3']);
+    expect(desc.sounds).toEqual([
+      { files: ['sounds/a.mp3', 'sounds/b.mp3'], volume: 1, playbackmode: 'loop' },
+      { files: ['sounds/c.mp3'], volume: 1, playbackmode: 'loop' },
+    ]);
   });
 
   it('无 sound 对象 → sounds 为 undefined（不误报空数组）', () => {
@@ -455,9 +471,25 @@ describe('parseSceneJson sound 数组解析（T3.4）', () => {
       objects: [
         { id: 1, sound: 'sounds/a.mp3' },              // 非数组 → 忽略
         { id: 2, sound: ['sounds/b.mp3', 42, null, ''] }, // 过滤非字符串/空串
+        { id: 3, sound: [42, ''] },                    // 过滤后无文件 → 整个对象忽略
       ],
     }));
-    expect(desc.sounds).toEqual(['sounds/b.mp3']);
+    expect(desc.sounds).toEqual([{ files: ['sounds/b.mp3'], volume: 1, playbackmode: 'loop' }]);
+  });
+
+  it('volume 越界/非数字与未知 playbackmode → 归一到 OWE 口径（clamp 0-1、回退 loop）', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [
+        { id: 1, sound: ['sounds/a.mp3'], volume: 2, playbackmode: 'shuffle' },
+        { id: 2, sound: ['sounds/b.mp3'], volume: -1 },
+        { id: 3, sound: ['sounds/c.mp3'], volume: 'loud', playbackmode: 'single' },
+      ],
+    }));
+    expect(desc.sounds).toEqual([
+      { files: ['sounds/a.mp3'], volume: 1, playbackmode: 'loop' },
+      { files: ['sounds/b.mp3'], volume: 0, playbackmode: 'loop' },
+      { files: ['sounds/c.mp3'], volume: 1, playbackmode: 'single' },
+    ]);
   });
 });
 

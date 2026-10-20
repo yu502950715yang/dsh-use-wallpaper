@@ -1,4 +1,4 @@
-import type { SceneDescription, SceneImageObject, SceneObject } from '../shared/types.js';
+import type { SceneDescription, SceneImageObject, SceneObject, SceneSoundObject } from '../shared/types.js';
 import { readParallaxConfig } from './parallax.js';
 import { parseScriptProperties } from './script-patterns.js';
 import { parseVisible } from './visibility.js';
@@ -142,22 +142,21 @@ function scriptFields(o: { script?: unknown; scriptproperties?: unknown } | unde
   return { script, scriptProperties };
 }
 
-// T3.4 sound 字段收集：WE 音频对象（无 image/particle/text 的纯音频节点，如
-// 2937346640 id=35）携带 sound 数组（资源名列表，如 ["sounds/yutaka hirasaka - acro.flac"]）。
-// PkgReader 全库 26 个 scene.pkg 实测：10 个含 sound 的壁纸全部为对象级 sound 数组
-// （无根级 sound 字段）→ 按 objects 顺序收集所有对象 sound 数组的字符串条目；
-// 非数组/非字符串条目过滤（畸形数据防御）。音频对象本身无可见内容，解析后仍落入
-// 空粒子兜底（kind:'particle' particle:''，不渲染，与现状一致）。
-function collectSounds(root: any): string[] | undefined {
-  const sounds: string[] = [];
-  const objects = Array.isArray(root.objects) ? root.objects : [];
-  for (const o of objects) {
+// sound 对象收集（T3.4/v0.8.1）：WE 音频节点携带 sound 文件数组；每对象产出结构化
+// SceneSoundObject（volume 缺省 1 并 clamp 0-1，playbackmode 缺省 loop，对齐 OWE SoundParser）。
+function collectSounds(root: any): SceneSoundObject[] | undefined {
+  const out: SceneSoundObject[] = [];
+  for (const o of Array.isArray(root.objects) ? root.objects : []) {
     if (!Array.isArray(o?.sound)) continue;
-    for (const s of o.sound) {
-      if (typeof s === 'string' && s) sounds.push(s);
-    }
+    const files = o.sound.filter((s: unknown): s is string => typeof s === 'string' && !!s);
+    if (files.length === 0) continue;
+    const volume = typeof o.volume === 'number' && Number.isFinite(o.volume)
+      ? Math.max(0, Math.min(1, o.volume))
+      : 1;
+    const mode = o.playbackmode === 'random' || o.playbackmode === 'single' ? o.playbackmode : 'loop';
+    out.push({ files, volume, playbackmode: mode });
   }
-  return sounds.length > 0 ? sounds : undefined;
+  return out.length > 0 ? out : undefined;
 }
 
 // scene.json 对象级 `instanceoverride`（粒子实例覆盖）→ **原始 JSON 文本**（供 wasm CPU 模拟器
