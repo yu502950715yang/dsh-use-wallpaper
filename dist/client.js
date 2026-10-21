@@ -29759,6 +29759,10 @@ async function playLargeSound(url, analyzer, opts) {
     } catch {
     }
     try {
+      el.remove();
+    } catch {
+    }
+    try {
       source?.disconnect();
     } catch {
     }
@@ -29773,14 +29777,57 @@ async function playLargeSound(url, analyzer, opts) {
     gain.gain.value = opts?.volume ?? 1;
     source.connect(gain);
     gain.connect(analyzer.analyser);
-    if (context.state === "suspended") context.resume().catch(() => {
-    });
+    if (context.state === "suspended") {
+      context.resume().catch(() => {
+      });
+      armGestureResume(context);
+    }
+    try {
+      el.style.display = "none";
+    } catch {
+    }
+    if (typeof document !== "undefined" && document.body) document.body.appendChild(el);
+    const w = globalThis;
+    w.__weAudioDebug = {
+      url,
+      get paused() {
+        return el.paused;
+      },
+      get muted() {
+        return el.muted;
+      },
+      get volume() {
+        return el.volume;
+      },
+      get currentTime() {
+        return el.currentTime;
+      },
+      get readyState() {
+        return el.readyState;
+      },
+      get error() {
+        return el.error?.code ?? null;
+      },
+      get contextState() {
+        return context.state;
+      },
+      get connected() {
+        return el.isConnected;
+      }
+    };
     try {
       await el.play();
     } catch (err) {
       if (err?.name !== "NotAllowedError") throw err;
+      console.warn("[wallpaper-engine] \u5927\u97F3\u9891\u64AD\u653E\u88AB\u6D4F\u89C8\u5668\u62E6\u622A\uFF08\u9700\u8981\u7528\u6237\u624B\u52BF\uFF09\uFF0C\u5DF2\u6CE8\u518C\u624B\u52BF\u91CD\u8BD5");
       disarm = armGesturePlay(el, context);
     }
+    console.info("[wallpaper-engine] \u5927\u97F3\u9891\u6D41\u5F0F\u64AD\u653E\u5DF2\u542F\u52A8", {
+      url: url.slice(-60),
+      contextState: context.state,
+      volume: el.volume,
+      loop: el.loop
+    });
     return {
       stop() {
         if (stopped) return;

@@ -177,17 +177,20 @@ describe('playWallpaperSound（壁纸音频播放，T3.4）', () => {
       loop: false,
       volume: 1,
       preload: '',
+      style: {},
       play: vi.fn(play ?? (async () => {})),
       pause: vi.fn(),
       removeAttribute: vi.fn((name: string) => { if (name === 'src') el.src = ''; }),
       load: vi.fn(),
+      remove: vi.fn(),
     };
+    const body = { appendChild: vi.fn() };
     const createElement = vi.fn((tag: string) => {
       if (tag !== 'audio') throw new Error(`unexpected element: ${tag}`);
       return el;
     });
-    vi.stubGlobal('document', { createElement });
-    return { el, createElement };
+    vi.stubGlobal('document', { createElement, body });
+    return { el, createElement, body };
   }
 
   // 大文件 fetch mock：content-length 超阈值；body.cancel 可断言被调用
@@ -306,7 +309,7 @@ describe('playWallpaperSound（壁纸音频播放，T3.4）', () => {
   // ── 大音频分流（Crimson 132MB mp3：decodeAudioData 会失败）────────────────────────
   it('content-length 超阈值 → 取消整块 body，走 <audio> 流式链路，返回 stop 句柄', async () => {
     const { cancel, arrayBuffer } = stubLargeFetch(LARGE_AUDIO_BYTES + 1);
-    const { el, createElement } = stubDocument();
+    const { el, createElement, body } = stubDocument();
     const { analyser, mediaSource, gain, context } = makeStreamingAnalyzer();
     const url = '/wallpapers/scene/9/asset?name=sounds/a.mp3';
     const handle = await playWallpaperSound(url, { context, analyser } as any, { volume: 0.4, loop: false });
@@ -318,6 +321,7 @@ describe('playWallpaperSound（壁纸音频播放，T3.4）', () => {
     expect(el.loop).toBe(false);
     expect(el.volume).toBeCloseTo(0.4, 5);
     expect(context.createMediaElementSource).toHaveBeenCalledWith(el);
+    expect(body.appendChild).toHaveBeenCalledWith(el); // 挂进 DOM：生命周期稳定 + DevTools 可查
     expect(mediaSource.connect).toHaveBeenCalledWith(gain); // source → gain → analyser
     expect(gain.connect).toHaveBeenCalledWith(analyser);
     expect(el.play).toHaveBeenCalledTimes(1);
@@ -326,6 +330,7 @@ describe('playWallpaperSound（壁纸音频播放，T3.4）', () => {
     expect(el.pause).toHaveBeenCalledTimes(1);
     expect(el.removeAttribute).toHaveBeenCalledWith('src');
     expect(el.load).toHaveBeenCalledTimes(1);
+    expect(el.remove).toHaveBeenCalledTimes(1);
     expect(mediaSource.disconnect).toHaveBeenCalledTimes(1);
     expect(gain.disconnect).toHaveBeenCalledTimes(1);
   });
@@ -339,29 +344,53 @@ describe('playWallpaperSound（壁纸音频播放，T3.4）', () => {
     expect(source.start).toHaveBeenCalledTimes(1);
   });
 
-  it('大音频 el.play() 被 autoplay 拒绝 → 注册一次性手势重试 play，成功后卸载监听', async () => {
+  it('大音频 play 成功但 context suspended → 仍注册手势恢复（否则元素在播但音频图静音）', async () => {
     stubLargeFetch();
     const { listeners } = stubWindow();
+    stubDocument();
+    const { analyser, context } = makeStreamingAnalyzer({ state: 'suspended' });
+    const handle = await playWallpaperSound('u', { context, analyser } as any);
+    expect(handle).not.toBeNull();
+    expect(context.resume).toHaveBeenCalledTimes(1); // 立即尝试恢复
+    expect(listeners.pointerdown?.length).toBe(1);   // 且注册了手势兜底
+    listeners.pointerdown![0]();
+    await Promise.resolve();
+    expect(context.resume).toHaveBeenCalledTimes(2);
+    expect(listeners.pointerdown?.length ?? 0).toBe(0);
+    handle!.stop();
+  });
+
+  it('大音频 el.play() 被 autoplay 拒绝 → warn + 注册一次性手势重试 play，成功后卸载监听', async () => {
+    stubLargeFetch();
+    const { listeners } = stubWindow();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const play = vi.fn()
       .mockRejectedValueOnce(new DOMException('blocked', 'NotAllowedError'))
       .mockResolvedValueOnce(undefined);
     const { el } = stubDocument(play as () => Promise<void>);
     const { analyser, context } = makeStreamingAnalyzer({ state: 'suspended' });
-    const handle = await playWallpaperSound('u', { context, analyser } as any);
-    expect(handle).not.toBeNull(); // 拦截不视为失败，等手势
-    expect(el.loop).toBe(true);    // 缺省 loop=true
-    expect(el.volume).toBe(1);     // 缺省音量 1
-    expect(context.resume).toHaveBeenCalledTimes(1);
-    expect(listeners.pointerdown?.length).toBe(1);
-    listeners.pointerdown![0]();
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(play).toHaveBeenCalledTimes(2);          // 手势重试 play
-    expect(context.resume).toHaveBeenCalledTimes(2); // 手势同时恢复 suspended context
-    expect(listeners.pointerdown?.length ?? 0).toBe(0);
-    expect(listeners.keydown?.length ?? 0).toBe(0);
-    expect(listeners.touchstart?.length ?? 0).toBe(0);
-    handle!.stop();
+    try {
+      const handle = await playWallpaperSound('u', { context, analyser } as any);
+      expect(handle).not.toBeNull(); // 拦截不视为失败，等手势
+      expect(el.loop).toBe(true);    // 缺省 loop=true
+      expect(el.volume).toBe(1);     // 缺省音量 1
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('被浏览器拦截'));
+      expect(context.resume).toHaveBeenCalledTimes(1);
+      // armGesturePlay 与 armGestureResume 各注册一组监听
+      expect(listeners.pointerdown?.length).toBe(2);
+      const fns = [...listeners.pointerdown!];
+      fns.forEach((fn) => fn());
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(play).toHaveBeenCalledTimes(2);          // 手势重试 play
+      expect(context.resume.mock.calls.length).toBeGreaterThanOrEqual(2); // 手势恢复 suspended context
+      expect(listeners.pointerdown?.length ?? 0).toBe(0);
+      expect(listeners.keydown?.length ?? 0).toBe(0);
+      expect(listeners.touchstart?.length ?? 0).toBe(0);
+      handle!.stop();
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('大音频 el.play() 非 autoplay 错误 → 返回 null + console.warn（含字节数），并清理元素/节点', async () => {

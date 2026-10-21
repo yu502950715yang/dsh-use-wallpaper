@@ -125,6 +125,7 @@ async function playLargeSound(
     try { el.pause(); } catch { /* 元素已释放 */ }
     el.removeAttribute('src');
     try { el.load(); } catch { /* 元素已释放 */ }
+    try { el.remove(); } catch { /* 元素未插入 */ }
     try { source?.disconnect(); } catch { /* 节点已断 */ }
     try { gain?.disconnect(); } catch { /* 节点已断 */ }
   };
@@ -134,15 +135,34 @@ async function playLargeSound(
     gain.gain.value = opts?.volume ?? 1;
     source.connect(gain);
     gain.connect(analyzer.analyser);
-    // 与 decode 路径一致：suspended 先尝试恢复，可听性交给手势兜底
-    if (context.state === 'suspended') context.resume().catch(() => {});
+    // 与 decode 路径一致：suspended 先 resume + 注册手势兜底；缺这步会「元素在播但音频图静音」
+    if (context.state === 'suspended') {
+      context.resume().catch(() => {});
+      armGestureResume(context);
+    }
+    // 元素挂进 DOM（生命周期稳定 + DevTools 可查）；stop 时移除
+    try { el.style.display = 'none'; } catch { /* 元素无 style */ }
+    if (typeof document !== 'undefined' && document.body) document.body.appendChild(el);
+    // 诊断快照：DevTools 里 `__weAudioDebug` 可看 paused/currentTime/contextState（元素由句柄持有）
+    const w = globalThis as unknown as { __weAudioDebug?: unknown };
+    w.__weAudioDebug = {
+      url, get paused() { return el.paused; }, get muted() { return el.muted; },
+      get volume() { return el.volume; }, get currentTime() { return el.currentTime; },
+      get readyState() { return el.readyState; }, get error() { return el.error?.code ?? null; },
+      get contextState() { return context.state; }, get connected() { return el.isConnected; },
+    };
     try {
       await el.play();
     } catch (err) {
       // 仅 autoplay 拦截走手势重试；格式/网络错误按失败上报（带字节数）
       if ((err as { name?: string } | null)?.name !== 'NotAllowedError') throw err;
+      console.warn('[wallpaper-engine] 大音频播放被浏览器拦截（需要用户手势），已注册手势重试');
       disarm = armGesturePlay(el, context);
     }
+    // 诊断：Console 过滤 `[wallpaper-engine]` 可见（含 context 状态；`__weAudioDebug` 可看实时值）
+    console.info('[wallpaper-engine] 大音频流式播放已启动', {
+      url: url.slice(-60), contextState: context.state, volume: el.volume, loop: el.loop,
+    });
     return {
       stop() {
         if (stopped) return;
