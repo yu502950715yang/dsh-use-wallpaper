@@ -671,7 +671,7 @@ export class EffectRunner {
     }
   }
 
-  // 写全局 uniform：按声明维度（vec2 → [x,y]；vec4 → [x,y,0,0]），未声明则跳过、不补建。
+  // 写全局 uniform：仅 vec2/vec4（按声明维度补零）；其它维度或未声明 → 跳过、不补建。
   private applyGlobalUniforms(material: THREE.ShaderMaterial): void {
     const entries: Array<[string, [number, number] | undefined]> = [
       ['g_PointerPosition', this.globalUniforms.pointerPosition],
@@ -682,9 +682,8 @@ export class EffectRunner {
       const uniform = material.uniforms[name];
       if (!uniform) continue;
       const dim = Array.isArray(uniform.value) ? uniform.value.length : 2;
-      uniform.value = dim > 2
-        ? [value[0], value[1], ...new Array(dim - 2).fill(0)]
-        : [value[0], value[1]];
+      if (dim !== 2 && dim !== 4) continue;
+      uniform.value = dim === 4 ? [value[0], value[1], 0, 0] : [value[0], value[1]];
     }
   }
 

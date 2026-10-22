@@ -62,7 +62,8 @@ export declare class ObjectEffectStage implements ObjectEffectStage {
     private warned;
     /** 本帧各对象在段边界拿到的整帧快照 + **捕获当刻**的快照代号（advance 消费后清空，快照逐帧覆盖）。 */
     private boundarySnapshots;
-    /** 最近一次段边界快照（player 同步）：`allowFrameSnapshot` 放行的链在无本帧边界通知时用它兜底。 */
+    /** 最近一次段边界快照（player 同步）：`allowFrameSnapshot` 放行的链在无本帧边界通知时用它兜底。
+     *  同帧多消费者时它只是**最后**一个段边界的快照 ⇒ 该槽仅在单消费者时语义明确。 */
     private frameSnapshot;
     /** util 专用 `_rt_FullFrameBuffer` 槽门控：缺省 undefined = 旧语义（边界快照照常交给链）。 */
     private readonly allowFrameSnapshot?;
@@ -110,9 +111,8 @@ export declare class ObjectEffectStage implements ObjectEffectStage {
     setFrameSnapshot(frameTexture: THREE.Texture | null): void;
     /** 测试/诊断：该对象的链是否真的会绑整帧快照（放行 + 链显式引用 `_rt_FullFrameBuffer`）。 */
     frameSnapshotBound(objectId: number): boolean;
-    /** 交给 runner 的快照纹理（执行当刻求值）：
-     *  - 缺省 `allowFrameSnapshot`：旧语义 = 本帧段边界快照（对象链门控仍由全局常量负责）；
-     *  - 有门控：未放行/未引用 ⇒ null（绝不把快照漏给对象链）；放行 ⇒ 边界快照优先、全局快照兜底。 */
+    /** 交给 runner 的快照纹理（执行当刻求值）：无门控 = 旧语义（本帧段边界快照）；
+     *  有门控：未放行/未引用 ⇒ null，放行 ⇒ 边界快照优先、全局快照（最后段边界）兜底。 */
     private frameTextureFor;
     dispose(): void;
     debugRunners(): Map<number, EffectRunner>;

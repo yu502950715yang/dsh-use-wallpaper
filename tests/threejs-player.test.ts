@@ -983,6 +983,36 @@ describe('ThreeScenePlayer background layer', () => {
     expect(mat.color.r).toBeCloseTo(0.8, 6);
   });
 
+  // 脚本/视差已经写过位置时，scale 更新只改尺寸；锚点偏移不变就**不得**写回基准位。
+  it('update_background：scale 更新但 alignment 偏移不变 → 保留既有位置（不覆盖视差/脚本位移）', () => {
+    const { player } = makePlayer(1000, 600);
+    const id = player.addBackground({
+      origin: [500, 300, 0], size: [100, 50], scale: [1, 1, 1], sceneW: 1000, sceneH: 600,
+    });
+    const node = player.backgroundMeshForTest(id);
+    node.position.set(12, -34, 5); // 已有位移（视差跟随或脚本写入）
+    player.update_background(id, undefined, [2, 3, 1]);
+    expect(node.scale.toArray()).toEqual([2, 3, 1]);
+    expect(node.position.toArray()).toEqual([12, -34, 5]);
+  });
+
+  it('update_background：scale 使 alignment 偏移变化 → 只平移偏移差（既有位移量保留）', () => {
+    const { player } = makePlayer(1000, 600);
+    const id = player.addBackground({
+      origin: [500, 300, 0], size: [100, 50], scale: [1, 1, 1],
+      alignment: 'bottomright', sceneW: 1000, sceneH: 600,
+    });
+    const node = player.backgroundMeshForTest(id);
+    expect(node.position.x).toBeCloseTo(-50, 6); // bottomright → (-w/2, +h/2)
+    expect(node.position.y).toBeCloseTo(25, 6);
+    node.position.x += 7;
+    node.position.y -= 3;
+    player.update_background(id, undefined, [2, 2, 1]);
+    // scale×2 ⇒ 偏移 (-100, +50)，差 (-50, +25)：只叠加差值，脚本/视差位移保留。
+    expect(node.position.x).toBeCloseTo(-50 + 7 - 50, 6);
+    expect(node.position.y).toBeCloseTo(25 - 3 + 25, 6);
+  });
+
   it('addBackground：mesh.renderOrder=0、material.depthWrite=false（背景在粒子之下绘制、不写深度遮粒子）', () => {
     const { player } = makePlayer(3840, 2160);
     player.addBackground({
@@ -3301,6 +3331,26 @@ describe('ThreeScenePlayer 段渲染（frameCapture）', () => {
     expect(uv[1]).toBeCloseTo((1 - 0.32) / 0.36, 5);
     expect(uv[2]).toBeCloseTo(1, 6);
     expect(uv[5]).toBeCloseTo((0 - 0.32) / 0.36, 5);
+    player.dispose();
+  });
+
+  // resize / 换 capture 都会重建或作废旧快照：上一帧的兜底引用必须清空，
+  // 否则渲染器每帧把它同步给 stage，放行的链会采到已 dispose 的纹理。
+  it('resize / setFrameCapture 清空 lastFrameSnapshot（旧快照不得同步回 stage）', () => {
+    const { player, mock } = makePlayer(1920, 1080);
+    addFullscreenUtil(player);
+    const cap = createFrameCapture(mock as unknown as THREE.WebGLRenderer);
+    player.setFrameCapture(cap);
+    player.registerFrameConsumer(54);
+    player.render();
+    expect(player.currentFrameSnapshot()).toBe(mock._copies[0].texture);
+    player.resize(1600, 900);
+    expect(player.currentFrameSnapshot()).toBeNull();
+    // 新 capture 尚未产生快照：旧 capture 的引用同样作废。
+    player.render();
+    expect(player.currentFrameSnapshot()).not.toBeNull();
+    player.setFrameCapture(createFrameCapture(mock as unknown as THREE.WebGLRenderer));
+    expect(player.currentFrameSnapshot()).toBeNull();
     player.dispose();
   });
 

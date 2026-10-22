@@ -1,6 +1,5 @@
 // v0.8.2 F13：image alignment 的锚点 → 中心偏移纯函数。
-// 语义与 WE `WPImageAlignment.hpp::ResolveImageAlignmentOffset` 同向：origin 钉在命名边/角
-// （left/top 等），中心相对 origin 偏移半个尺寸；与 text anchor（textLayerOffset）同一口径。
+// 语义与 WE `WPImageAlignment.hpp::ResolveImageAlignmentOffset`、text anchor（textLayerOffset）同向。
 import { describe, expect, it } from 'vitest';
 import { alignOffset } from '../src/client/alignment.js';
 

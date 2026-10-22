@@ -83,11 +83,8 @@ export function parallaxShift(o: {
   ];
 }
 
-/**
- * 效果 shader 全局 uniform（F18）：pointerPosition = 原始指针（y 向下）；
- * parallaxPosition = 0.5 + 中心化视差指针 × mouseinfluence（y 翻到向上，关视差 → 中性 0.5）。
- * `parallaxPointer` 传插值后的跟随值（player.parallaxPointer()），缺省用原始指针。
- */
+/** 效果 shader 全局 uniform（F18）：pointerPosition = 原始指针（y 向下）；
+ *  parallaxPosition = 0.5 + 中心化视差 × mouseinfluence（y 向上，关视差 = 中性 0.5）；第三参缺省用原始指针。 */
 export function effectPointerUniforms(
   pointer: PointerState,
   cfg: ParallaxConfig,

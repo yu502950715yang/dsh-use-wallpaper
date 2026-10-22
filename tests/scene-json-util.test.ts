@@ -39,7 +39,9 @@ describe('util 对象解析与内置材质', () => {
     expect(o.brightness).toBe(1);
   });
   it('内置材质：solid 取颜色，compose/project/fullscreen 直通', () => {
-    expect(resolveUtilMaterial('solid', { color: [10, 20, 30], alpha: 0.5 })).toMatchObject({ kind: 'solid', opacity: 0.5 });
+    const solid = resolveUtilMaterial('solid', { color: [10, 20, 30], alpha: 0.5 });
+    expect(solid).toMatchObject({ kind: 'solid', opacity: 0.5 });
+    expect(solid.color).toEqual([10, 20, 30]);
     expect(resolveUtilMaterial('project').kind).toBe('passthrough');
     expect(resolveUtilMaterial('compose').kind).toBe('passthrough');
     expect(resolveUtilMaterial('fullscreen').kind).toBe('passthrough');

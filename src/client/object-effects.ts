@@ -161,7 +161,8 @@ export class ObjectEffectStage implements ObjectEffectStage {
   private warned = new Set<string>();
   /** 本帧各对象在段边界拿到的整帧快照 + **捕获当刻**的快照代号（advance 消费后清空，快照逐帧覆盖）。 */
   private boundarySnapshots = new Map<number, { texture: THREE.Texture; version: number }>();
-  /** 最近一次段边界快照（player 同步）：`allowFrameSnapshot` 放行的链在无本帧边界通知时用它兜底。 */
+  /** 最近一次段边界快照（player 同步）：`allowFrameSnapshot` 放行的链在无本帧边界通知时用它兜底。
+   *  同帧多消费者时它只是**最后**一个段边界的快照 ⇒ 该槽仅在单消费者时语义明确。 */
   private frameSnapshot: THREE.Texture | null = null;
   /** util 专用 `_rt_FullFrameBuffer` 槽门控：缺省 undefined = 旧语义（边界快照照常交给链）。 */
   private readonly allowFrameSnapshot?: (objectId: number) => boolean;
@@ -235,9 +236,8 @@ export class ObjectEffectStage implements ObjectEffectStage {
       this.warnOnce(`no-isolated:${objId}`, `对象 ${objId} 尚无隔离条目，效果链未挂载（调用顺序错误）`);
       return;
     }
-    // 引用整帧快照的链本应把该对象登记为段边界消费者（不登记 ⇒ frameCapture 不 active ⇒ 该链拿不到
-    // 快照）。对象链的该消费路径**本轮仍关闭**（`ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER`）；util 内容
-    // 层由渲染器登记消费者，并经 `allowFrameSnapshot` 显式放行快照槽（见 advance 的 gating）。
+    // 引用整帧快照的链本应登记段边界消费者；对象链门控**本轮仍关闭**（ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER），
+    // util 内容层由渲染器登记消费者，并经 `allowFrameSnapshot` 显式放行快照槽（见 advance 的 gating）。
     // 判定与执行共用**同一份计划**（`pp.bindings` 为唯一来源，见 referencesFrameSnapshot）。
     const plan = buildEffectPlan(chains, { baseWidth: view.rtWidth, baseHeight: view.rtHeight });
     if (ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER && referencesFrameSnapshot(chains, plan)) {
@@ -371,9 +371,8 @@ export class ObjectEffectStage implements ObjectEffectStage {
     return this.entries.get(objectId)?.frameSnapshotBound === true;
   }
 
-  /** 交给 runner 的快照纹理（执行当刻求值）：
-   *  - 缺省 `allowFrameSnapshot`：旧语义 = 本帧段边界快照（对象链门控仍由全局常量负责）；
-   *  - 有门控：未放行/未引用 ⇒ null（绝不把快照漏给对象链）；放行 ⇒ 边界快照优先、全局快照兜底。 */
+  /** 交给 runner 的快照纹理（执行当刻求值）：无门控 = 旧语义（本帧段边界快照）；
+   *  有门控：未放行/未引用 ⇒ null，放行 ⇒ 边界快照优先、全局快照（最后段边界）兜底。 */
   private frameTextureFor(
     entry: ObjectChainEntry | undefined,
     item: { texture: THREE.Texture; version: number } | null,

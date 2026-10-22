@@ -810,4 +810,38 @@ describe('allowFrameSnapshot（util 专用快照槽门控）', () => {
     expect(stage.frameSnapshotBound(1)).toBe(false); // 探针只报告新门控，不改变旧路径
     stage.dispose();
   });
+
+  // 同帧多消费者：各自的段边界快照独立生效；只有「本帧没有边界通知」时才走全局兜底，
+  // 而全局兜底 = **最后**一个段边界的快照 ⇒ 该槽仅在单消费者时语义明确（见 frameSnapshot 字段注释）。
+  it('同帧多消费者：各自边界快照独立；全局兜底取最后段边界的快照', async () => {
+    const host = createHost([
+      { id: 58, rtWidth: 10, rtHeight: 10 },
+      { id: 37, rtWidth: 10, rtHeight: 10 },
+    ]);
+    const stage = new ObjectEffectStage(host as never, {
+      wallpaperId: 'w', screenScale: 1, allowFrameSnapshot: () => true,
+    });
+    stage.setObjectChains(58, referencing());
+    stage.setObjectChains(37, referencing());
+    const runnerOf = (id: number): MockRunnerView =>
+      stage.debugRunners().get(id) as unknown as MockRunnerView;
+    const snap58 = new THREE.Texture();
+    const snap37 = new THREE.Texture();
+    // 消费者按段边界依次拍快照：58 段先、37 段后；player 同时把「最近一次」同步给 stage。
+    stage.onSegmentBoundary(58, snap58);
+    stage.setFrameSnapshot(snap58);
+    stage.onSegmentBoundary(37, snap37);
+    stage.setFrameSnapshot(snap37);
+    stage.advance(1);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(snapshotCallArg(runnerOf(58), 0)).toBe(snap58);
+    expect(snapshotCallArg(runnerOf(37), 0)).toBe(snap37);
+    // 下一帧只有 58 收到边界通知：37 无本帧边界 ⇒ 全局兜底 = 最后段边界（58 段），不是 37 自己的快照。
+    stage.onSegmentBoundary(58, snap58);
+    stage.setFrameSnapshot(snap58);
+    stage.advance(2);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(snapshotCallArg(runnerOf(37), 1)).toBe(snap58);
+    stage.dispose();
+  });
 });

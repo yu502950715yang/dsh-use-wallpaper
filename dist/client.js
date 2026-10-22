@@ -24426,6 +24426,7 @@ var ThreeScenePlayer = class {
     this.bloomStage?.resize(buf.width, buf.height);
     this.bloomRT?.setSize(buf.width, buf.height);
     this.frameCapture?.resize(buf.width, buf.height);
+    this.lastFrameSnapshot = null;
     this.objectEffectStage?.notifyViewportResize?.();
     this.compositeQuad?.resize(buf.width, buf.height);
     for (const entry of this.isolated.values()) {
@@ -24825,6 +24826,7 @@ var ThreeScenePlayer = class {
   /** 注入帧内快照（null = 关闭）。契约见 frame-capture.ts；active=false 时帧序不变。 */
   setFrameCapture(capture) {
     this.frameCapture = capture;
+    this.lastFrameSnapshot = null;
     this.checkFrameConsumers();
   }
   /** 登记一个「需要帧内快照」的消费者（键 = scene.json 对象 id）：它开启新的一段，快照拍在它**之前**。 */
@@ -24979,9 +24981,8 @@ var ThreeScenePlayer = class {
     if (mat instanceof ShaderMaterial) mat.uniforms.map.value = texture;
     else if (mat instanceof MeshBasicMaterial) mat.map = texture;
   }
-  // util 层内容 = 整帧快照（T3）：真实 util 链读 `bind: previous`（层内容），所以快照必须成为内容。
-  // `opts.cover` = 快照在内容 mesh UV 空间的落点（缺省全 UV）；只有 passthrough 内容条目生效
-  //（solid 保留纯色）。UV 变换落在内容几何上（快照纹理是共享的，不能改它的 repeat/offset）。
+  // util 层内容 = 整帧快照（T3）：真实 util 链读 `bind: previous`（层内容），快照必须成为内容（solid 保留纯色）。
+  // `opts.cover` = 快照在内容 mesh UV 空间的落点；UV 变换落在内容几何上（快照纹理共享，不能改 repeat/offset）。
   setUtilContentTexture(objectId, texture, opts = {}) {
     const entry = this.utilContents.get(objectId);
     if (!entry) return;
@@ -25224,7 +25225,7 @@ var ThreeScenePlayer = class {
       scale: [s[0], s[1], s[2] ?? 1],
       angles: [opts.angles[0], opts.angles[1], opts.angles[2]],
       align: [0, 0],
-      // puppet 网格尚无 alignment 样本（F13 只覆盖 image quad；见任务报告 concerns）
+      // puppet 网格无 alignment 样本（F13 只覆盖 image quad；真实库 puppet 均为 center/缺省）
       alpha: mod.a,
       brightness: opts.brightness ?? 1,
       sceneW: opts.sceneW,
@@ -25416,12 +25417,12 @@ var ThreeScenePlayer = class {
       if (sx !== entry.scale[0] || sy !== entry.scale[1] || sz !== entry.scale[2]) {
         entry.scale = [sx, sy, sz];
         entry.mesh.scale.set(sx, sy, sz);
-        entry.align = alignmentWorldOffset(entry.size, entry.scale, entry.angles, entry.alignment);
-        entry.parallaxNode.position.set(
-          entry.origin[0] - entry.sceneW / 2 + entry.align[0],
-          entry.origin[1] - entry.sceneH / 2 + entry.align[1],
-          entry.origin[2]
-        );
+        const align = alignmentWorldOffset(entry.size, entry.scale, entry.angles, entry.alignment);
+        if (align[0] !== entry.align[0] || align[1] !== entry.align[1]) {
+          entry.parallaxNode.position.x += align[0] - entry.align[0];
+          entry.parallaxNode.position.y += align[1] - entry.align[1];
+          entry.align = align;
+        }
       }
     }
     if (alpha !== void 0) {
@@ -27576,7 +27577,7 @@ var EffectRunner = class {
       }
     }
   }
-  // 写全局 uniform：按声明维度（vec2 → [x,y]；vec4 → [x,y,0,0]），未声明则跳过、不补建。
+  // 写全局 uniform：仅 vec2/vec4（按声明维度补零）；其它维度或未声明 → 跳过、不补建。
   applyGlobalUniforms(material) {
     const entries = [
       ["g_PointerPosition", this.globalUniforms.pointerPosition],
@@ -27587,7 +27588,8 @@ var EffectRunner = class {
       const uniform = material.uniforms[name];
       if (!uniform) continue;
       const dim = Array.isArray(uniform.value) ? uniform.value.length : 2;
-      uniform.value = dim > 2 ? [value[0], value[1], ...new Array(dim - 2).fill(0)] : [value[0], value[1]];
+      if (dim !== 2 && dim !== 4) continue;
+      uniform.value = dim === 4 ? [value[0], value[1], 0, 0] : [value[0], value[1]];
     }
   }
   // 释放某 key 对应场景中全屏 quad 的 geometry 并移除场景缓存（编译失败/异常路径共用）
@@ -27822,7 +27824,8 @@ var ObjectEffectStage = class {
   warned = /* @__PURE__ */ new Set();
   /** 本帧各对象在段边界拿到的整帧快照 + **捕获当刻**的快照代号（advance 消费后清空，快照逐帧覆盖）。 */
   boundarySnapshots = /* @__PURE__ */ new Map();
-  /** 最近一次段边界快照（player 同步）：`allowFrameSnapshot` 放行的链在无本帧边界通知时用它兜底。 */
+  /** 最近一次段边界快照（player 同步）：`allowFrameSnapshot` 放行的链在无本帧边界通知时用它兜底。
+   *  同帧多消费者时它只是**最后**一个段边界的快照 ⇒ 该槽仅在单消费者时语义明确。 */
   frameSnapshot = null;
   /** util 专用 `_rt_FullFrameBuffer` 槽门控：缺省 undefined = 旧语义（边界快照照常交给链）。 */
   allowFrameSnapshot;
@@ -27969,9 +27972,8 @@ var ObjectEffectStage = class {
   frameSnapshotBound(objectId) {
     return this.entries.get(objectId)?.frameSnapshotBound === true;
   }
-  /** 交给 runner 的快照纹理（执行当刻求值）：
-   *  - 缺省 `allowFrameSnapshot`：旧语义 = 本帧段边界快照（对象链门控仍由全局常量负责）；
-   *  - 有门控：未放行/未引用 ⇒ null（绝不把快照漏给对象链）；放行 ⇒ 边界快照优先、全局快照兜底。 */
+  /** 交给 runner 的快照纹理（执行当刻求值）：无门控 = 旧语义（本帧段边界快照）；
+   *  有门控：未放行/未引用 ⇒ null，放行 ⇒ 边界快照优先、全局快照（最后段边界）兜底。 */
   frameTextureFor(entry, item) {
     const boundary = item !== null && !this.snapshotStale(item.version) ? item.texture : null;
     if (!this.allowFrameSnapshot) return boundary;
@@ -32400,8 +32402,10 @@ function createThreeSceneRenderer(opts) {
         assets.onFrame = (dt) => {
           const pointerState = pointer.target();
           current?.player.setParallaxPointer(pointerState);
-          const follow = current?.player.parallaxPointer?.() ?? pointerState;
-          currentStage?.setGlobalUniforms(effectPointerUniforms(pointerState, desc.parallax, follow));
+          if (currentStage) {
+            const follow = current?.player.parallaxPointer?.() ?? pointerState;
+            currentStage.setGlobalUniforms(effectPointerUniforms(pointerState, desc.parallax, follow));
+          }
           if (timer.firstFrameAt < 0) {
             timer.firstFrameAt = performance.now() - timer.startedAt;
             succeed(id, assembledMs >= 0 ? assembledMs : timer.firstFrameAt, timer.firstFrameAt);

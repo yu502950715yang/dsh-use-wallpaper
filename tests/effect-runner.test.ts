@@ -1171,6 +1171,16 @@ describe('EffectRunner.setGlobalUniforms（全局 uniform 注入）', () => {
     runner.dispose();
   });
 
+  it('非 2/4 维声明（vec3）→ 跳过、不改写（不猜语义）', async () => {
+    const { renderer, mats } = createBindRenderer();
+    const runner = new EffectRunner(renderer as never, 16, 16);
+    runner.setChains([[globalPass({ g_PointerPosition: [0, 0, 0] })]], 'wp', { width: 16, height: 16 });
+    runner.setGlobalUniforms({ pointerPosition: [0.2, 0.8] });
+    await runner.update(0, new THREE.Texture());
+    expect(mats[1].uniforms.g_PointerPosition.value).toEqual([0, 0, 0]);
+    runner.dispose();
+  });
+
   it('逐帧更新：第二次 update 用新的全局值（不是只在建材质时写一次）', async () => {
     const { renderer, mats } = createBindRenderer();
     const runner = new EffectRunner(renderer as never, 16, 16);

@@ -846,8 +846,8 @@ export class ThreeScenePlayer {
     this.bloomRT?.setSize(buf.width, buf.height);
     // 帧内快照的段目标/快照纹理同样按画布缓冲尺寸（否则 RT 被拉伸、快照与屏幕 UV 错位）。
     this.frameCapture?.resize(buf.width, buf.height);
-    // 快照已重建（旧引用作废）⇒ 让编排器作废尚未被 advance 消费的在途快照（已被带进闭包的
-    // 那份由实时代号比对兜底，见 object-effects.advance / player.frameSnapshotVersion）。
+    this.lastFrameSnapshot = null; // 快照已重建：上一帧的兜底引用作废，不得同步回 stage
+    // 让编排器作废尚未被 advance 消费的在途快照（已被带进闭包的那份由实时代号比较兜底）。
     this.objectEffectStage?.notifyViewportResize?.();
     this.compositeQuad?.resize(buf.width, buf.height);
     // ③ 合成采样标志随**视口**重估（视口变化是密度变化的唯一入口）：编排器在「RT 像素尺寸未变」
@@ -1311,6 +1311,7 @@ export class ThreeScenePlayer {
   /** 注入帧内快照（null = 关闭）。契约见 frame-capture.ts；active=false 时帧序不变。 */
   setFrameCapture(capture: FrameCapture | null): void {
     this.frameCapture = capture;
+    this.lastFrameSnapshot = null; // 新 capture 的快照尚未产生：旧引用（可能已 dispose）不得同步回 stage
     this.checkFrameConsumers();
   }
 
@@ -1490,9 +1491,8 @@ export class ThreeScenePlayer {
     else if (mat instanceof THREE.MeshBasicMaterial) mat.map = texture;
   }
 
-  // util 层内容 = 整帧快照（T3）：真实 util 链读 `bind: previous`（层内容），所以快照必须成为内容。
-  // `opts.cover` = 快照在内容 mesh UV 空间的落点（缺省全 UV）；只有 passthrough 内容条目生效
-  //（solid 保留纯色）。UV 变换落在内容几何上（快照纹理是共享的，不能改它的 repeat/offset）。
+  // util 层内容 = 整帧快照（T3）：真实 util 链读 `bind: previous`（层内容），快照必须成为内容（solid 保留纯色）。
+  // `opts.cover` = 快照在内容 mesh UV 空间的落点；UV 变换落在内容几何上（快照纹理共享，不能改 repeat/offset）。
   setUtilContentTexture(
     objectId: number,
     texture: THREE.Texture,
@@ -1853,7 +1853,7 @@ export class ThreeScenePlayer {
       size: [0, 0],
       scale: [s[0], s[1], s[2] ?? 1],
       angles: [opts.angles[0], opts.angles[1], opts.angles[2]],
-      align: [0, 0], // puppet 网格尚无 alignment 样本（F13 只覆盖 image quad；见任务报告 concerns）
+      align: [0, 0], // puppet 网格无 alignment 样本（F13 只覆盖 image quad；真实库 puppet 均为 center/缺省）
       alpha: mod.a,
       brightness: opts.brightness ?? 1,
       sceneW: opts.sceneW,
@@ -2104,13 +2104,13 @@ export class ThreeScenePlayer {
       if (sx !== entry.scale[0] || sy !== entry.scale[1] || sz !== entry.scale[2]) {
         entry.scale = [sx, sy, sz];
         entry.mesh.scale.set(sx, sy, sz);
-        // 锚点偏移随 scale 缩放 ⇒ 重算基准位（非隔离 = mesh、隔离 = 合成 quad）。
-        entry.align = alignmentWorldOffset(entry.size, entry.scale, entry.angles, entry.alignment);
-        entry.parallaxNode.position.set(
-          entry.origin[0] - entry.sceneW / 2 + entry.align[0],
-          entry.origin[1] - entry.sceneH / 2 + entry.align[1],
-          entry.origin[2],
-        );
+        // 锚点偏移随 scale 缩放；只有偏移真的变了才动位置（否则会把视差/脚本位移覆盖回基准位）。
+        const align = alignmentWorldOffset(entry.size, entry.scale, entry.angles, entry.alignment);
+        if (align[0] !== entry.align[0] || align[1] !== entry.align[1]) {
+          entry.parallaxNode.position.x += align[0] - entry.align[0];
+          entry.parallaxNode.position.y += align[1] - entry.align[1];
+          entry.align = align;
+        }
       }
     }
     if (alpha !== undefined) {
