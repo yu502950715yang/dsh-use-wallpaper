@@ -1522,6 +1522,50 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     warn.mockRestore();
     r.dispose();
   });
+
+  // 与 threejs-player 的「resize / setFrameCapture 清空 lastFrameSnapshot」配套：player 侧清空后，
+  // 渲染器每帧同步给 stage 的必须是 null（不是上一帧旧纹理），否则门控放行的链会采到已 dispose 的纹理。
+  it('每帧快照槽同步：player 快照为 null 时 stage 收到 null（不保留旧纹理）', async () => {
+    stubAssetFetch(sceneWith([
+      {
+        id: 13, name: 'bg', image: 'models/a.json',
+        origin: '960 540 0', scale: '1 1 1', size: '1920 1080',
+        effects: [{ file: 'effects/w/effect.json' }],
+      },
+    ]), FX_FILES);
+    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null });
+    defaultLoadWasm.mockResolvedValue(null);
+    const setObjectEffectStage = vi.fn();
+    const snap = fakeTexture() as unknown as THREE.Texture;
+    const currentFrameSnapshot = vi.fn<() => THREE.Texture | null>(() => snap);
+    const player = {
+      dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage,
+      setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn(),
+      currentFrameSnapshot,
+      renderer: {},
+      isolatedObjects: () => [{ id: 13, kind: 'background', rtWidth: 1920, rtHeight: 1080, rtTexture: {} }],
+    };
+    loadSceneToThree.mockReturnValue({ player, sims: [], backgroundIds: [0], particleLayers: [], puppetLayers: [], } as never);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    expect(await r.render('2911105183', document.createElement('canvas'), null)).toBe(true);
+    const stage = setObjectEffectStage.mock.calls[0][0] as ObjectEffectStage;
+    const sync = vi.spyOn(stage, 'setFrameSnapshot');
+    const onFrame = vi.mocked(loadSceneToThree).mock.calls[0][1].onFrame as (dt: number) => void;
+
+    onFrame(0.016);
+    expect(sync).toHaveBeenLastCalledWith(snap);
+    // 模拟 player.resize()/setFrameCapture() 已清空 lastFrameSnapshot。
+    currentFrameSnapshot.mockReturnValue(null);
+    onFrame(0.016);
+    expect(sync).toHaveBeenLastCalledWith(null);
+    expect(currentFrameSnapshot).toHaveBeenCalled();
+
+    sync.mockRestore();
+    warn.mockRestore();
+    r.dispose();
+  });
 });
 
 // Task 5：挂载期隔离对象 RT 的新口径 —— min(源纹理长边, 4096) 等比收口、只升不降（下限仍是屏占位），

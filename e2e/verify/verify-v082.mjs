@@ -15,13 +15,17 @@
 //      defaults 变体（服务端恢复 shader 默认圆点尺寸 + util/white opacitymask）指针 A/B 变化 ≥2%，
 //      且差异分成双簇、质心分别落在两个指针位置附近（bbox/centroid 断言，含 y 向下方向）。
 //
+// 硬门禁：任一档的 effect pass 编译失败（warn 文案 / `window.__fxShaderErrors`）⇒ 整轮 FAIL；
+// ① 还断言全屏 bbox 覆盖视口、目标 util 对象链就绪；③ 断言 diff bbox 落在已知文字区。
+// `--only` 必须来自白名单，且运行后所有期望判据都要**出现且 pass**（默认四组缺一即 FAIL）。
+//
 // 每个对照档独立 Edge 进程（模块态/GL 上下文不跨档污染）；生产卡片与帧序不变。
 //
 // 用法：node e2e/verify/verify-v082.mjs [--only=util,pulse,text,pointer] [--vw=1280] [--vh=720]
 //        [--tag=v082] [--port=9852] [--cdp-port=9262] + 各判据阈值（见 THRESHOLDS）
 // 环境变量等价形式：ONLY / VW / VH / TAG / E2E_PORT / E2E_CDP_PORT / MIN_UTIL_MEAN_ABS / ...
 // 另需 WE_WORKSHOP（壁纸目录）与 WE_ASSETS（WE 安装目录），见 e2e/config.mjs。
-// 退出码：0 = 四组判据全 PASS；1 = 有 FAIL 或脚本异常（CI 门禁）。
+// 退出码：0 = 四组判据全 PASS；1 = 有 FAIL、判据缺失或脚本异常（CI 门禁）。
 //
 // 产物：e2e/.out/v082/summary.json（含每判据实测数值与阈值）+ 各档 PNG / diff 图。
 import { createServer } from 'node:http';
@@ -47,12 +51,12 @@ const argOf = (name, dflt) => {
   const eq = hit.indexOf('=');
   return eq < 0 ? true : hit.slice(eq + 1);
 };
-// 数值参数统一经此解析：NaN/Infinity（含裸 `--flag`）直接 throw，避免判据静默退化。
+// 数值参数统一经此解析：空串 / NaN / Infinity（含裸 `--flag`）直接 throw，避免判据静默退化。
 function numArg(name, envName, dflt) {
   const raw = argOf(name, process.env[envName] ?? dflt);
   const n = Number(raw);
-  if (typeof raw === 'boolean' || !Number.isFinite(n)) {
-    throw new Error(`数值参数非法：--${name} / ${envName} = ${String(raw)}（必须是有限数值）`);
+  if (typeof raw === 'boolean' || String(raw).trim() === '' || !Number.isFinite(n)) {
+    throw new Error(`数值参数非法：--${name} / ${envName} = ${JSON.stringify(raw)}（必须是非空有限数值）`);
   }
   return n;
 }
@@ -71,8 +75,23 @@ const PHASE_MS = 5000;
 const PHASE_A_MS = Math.round(numArg('pulse-phase-a', 'PULSE_PHASE_A', 0));
 const PHASE_B_MS = Math.round(numArg('pulse-phase-b', 'PULSE_PHASE_B', 5000));
 
-const ONLY = String(argOf('only', process.env.ONLY ?? 'util,pulse,text,pointer'))
+// 判据白名单：`--only` 只接受这些键（`all` = 全跑）；未知/空 ⇒ 主流程 throw（summary 仍写 pass:false）。
+const CRITERIA_ORDER = ['util', 'pulse', 'text', 'pointer'];
+const CRITERIA_NAME = {
+  util: '2911105183-util-postprocess',
+  pulse: '2132420420-pulse',
+  text: '3765967112-text-brightness',
+  pointer: '3780477933-pointer-uniform',
+};
+const ONLY = String(argOf('only', process.env.ONLY ?? CRITERIA_ORDER.join(',')))
   .split(',').map((s) => s.trim()).filter(Boolean);
+const unknownOnly = ONLY.filter((k) => k !== 'all' && !CRITERIA_ORDER.includes(k));
+const onlyInvalid = ONLY.length === 0
+  ? `--only / ONLY 不能为空（可选：${[...CRITERIA_ORDER, 'all'].join(',')}）`
+  : unknownOnly.length > 0
+    ? `未知判据：${unknownOnly.join(',')}（可选：${[...CRITERIA_ORDER, 'all'].join(',')}）`
+    : null;
+const expectedKeys = ONLY.includes('all') ? [...CRITERIA_ORDER] : CRITERIA_ORDER.filter((k) => ONLY.includes(k));
 const want = (name) => ONLY.includes(name) || ONLY.includes('all');
 
 // ── 判据阈值（实现时用真实素材标定，见 task-3/4/6a 报告）──────────────────────────
@@ -81,12 +100,16 @@ const THRESHOLDS = {
   //    bokeh-only 2.929 / 48.05%；两者同开只会更大。取保守阈值（约 1/4 实测均值、1/9 变化占比）。
   utilMeanAbs: numArg('min-util-mean-abs', 'MIN_UTIL_MEAN_ABS', 3),
   utilChanged: numArg('min-util-changed-ratio', 'MIN_UTIL_CHANGED_RATIO', 0.05),
+  // ① 全屏覆盖：diff bbox 每边到视口边缘的未变化余量（px）。全屏后处理 ⇒ bbox 应贴满整屏。
+  utilBboxTol: Math.round(numArg('util-bbox-tol', 'UTIL_BBOX_TOL', 2)),
   // ② pulse（2132420420，冻结相位 5s vs 0s）：T3 实测 meanAbs=1.068 / changed=5.38%。
   pulseMeanAbs: numArg('min-pulse-mean-abs', 'MIN_PULSE_MEAN_ABS', 0.5),
   pulseChanged: numArg('min-pulse-changed-ratio', 'MIN_PULSE_CHANGED_RATIO', 0.02),
   // ③ text brightness（3765967112，全部 text brightness→1）：T4 实测 changed=963px / maxΔ=20。
   textChangedPx: Math.round(numArg('min-text-changed-px', 'MIN_TEXT_CHANGED_PX', 200)),
   textMaxDelta: numArg('min-text-max-delta', 'MIN_TEXT_MAX_DELTA', 8),
+  // ③ diff bbox 必须落在已知文字区（1600×900 下 [728,305,841,368]，T4 为 [721,305,847,367]）±容差。
+  textBboxTol: Math.round(numArg('text-bbox-tol', 'TEXT_BBOX_TOL', 16)),
   // ④ 指针 uniform（3780477933）：asis 必须≈0；defaults T6a 实测 changed=4.65%。
   pointerAsisMax: numArg('max-pointer-asis-changed', 'MAX_POINTER_ASIS_CHANGED', 0.001),
   pointerDefaultsMin: numArg('min-pointer-defaults-changed', 'MIN_POINTER_DEFAULTS_CHANGED', 0.02),
@@ -98,6 +121,9 @@ const ID_UTIL = String(argOf('util-id', process.env.UTIL_ID ?? '2911105183'));
 const ID_PULSE = String(argOf('pulse-id', process.env.PULSE_ID ?? '2132420420'));
 const ID_TEXT = String(argOf('text-id', process.env.TEXT_ID ?? '3765967112'));
 const ID_POINTER = String(argOf('pointer-id', process.env.POINTER_ID ?? '3780477933'));
+// ③ 已知文字区（1600×900 基准）；其它 TEXT_VIEW 按比例缩放后再加容差。
+const TEXT_BBOX_BASE_VIEW = [1600, 900];
+const TEXT_BBOX_BASE = [728, 305, 841, 368];
 const POINTER_A = [0.2, 0.2];
 const POINTER_B = [0.8, 0.8];
 
@@ -391,9 +417,19 @@ async function runPage(spec, capture) {
     if (!ready) throw new Error('harness 未就绪（90s 超时）');
     if (ready.ok !== true) throw new Error(`render 未成功：${JSON.stringify(ready.err ?? ready)}`);
     const vp = await json('window.__fxApplyViewport()');
+    if (vp?.ok !== true) throw new Error(`__fxApplyViewport 失败：${JSON.stringify(vp)}`);
     const stats = await json('window.__fxStats()');
     if (stats?.view?.[0] !== spec.view.w || stats?.view?.[1] !== spec.view.h) {
       throw new Error(`视口尺寸不符：${JSON.stringify(stats?.view)}（期望 ${spec.view.w}×${spec.view.h}）`);
+    }
+    if (vp.view?.[0] !== spec.view.w || vp.view?.[1] !== spec.view.h) {
+      throw new Error(`player 视口未生效：${JSON.stringify(vp.view)}（期望 ${spec.view.w}×${spec.view.h}）`);
+    }
+    if (stats?.canvasAttrW !== spec.view.w || stats?.canvasAttrH !== spec.view.h) {
+      throw new Error(`canvas 属性尺寸不符：${stats?.canvasAttrW}×${stats?.canvasAttrH}（期望 ${spec.view.w}×${spec.view.h}）`);
+    }
+    if (stats?.canvasCssW !== spec.view.w || stats?.canvasCssH !== spec.view.h) {
+      throw new Error(`canvas CSS 尺寸不符：${stats?.canvasCssW}×${stats?.canvasCssH}（期望 ${spec.view.w}×${spec.view.h}）`);
     }
     const shot = async () => {
       const s = await send('Page.captureScreenshot', {
@@ -430,11 +466,21 @@ async function runPage(spec, capture) {
     })()`);
     const result = await capture({ shot, setPhase, setPointer, uniformRead, evalJS, json });
     const pageLogs = await json('window.__fxLogs ?? []');
-    const errors = [...logs, ...(Array.isArray(pageLogs) ? pageLogs : [])]
+    const glShaderErrors = await json('window.__fxShaderErrors ?? []');
+    const allLogs = [...logs, ...(Array.isArray(pageLogs) ? pageLogs : [])];
+    const shaderErrors = [];
+    const addShaderError = (text) => {
+      const t = String(text).slice(0, 500);
+      if (t && !shaderErrors.includes(t)) shaderErrors.push(t);
+    };
+    // effect pass 编译失败只打 warn（不是 console.error）⇒ 必须按文案单独收；GL info log 是第二证据源。
+    for (const l of allLogs) if (/效果 pass 编译失败/.test(String(l.text))) addShaderError(l.text);
+    if (Array.isArray(glShaderErrors)) for (const e of glShaderErrors) addShaderError(e);
+    const errors = allLogs
       .filter((l) => l.level === 'error' || /shader 编译\/链接失败/.test(String(l.text)))
       .map((l) => String(l.text).slice(0, 300));
     const chains = await json('window.__fxChains ? window.__fxChains() : null');
-    return { ok: true, label: spec.label, ready, vp, stats, chains, errors, result };
+    return { ok: true, label: spec.label, ready, vp, stats, chains, errors, shaderErrors, result };
   } catch (e) {
     return { ok: false, label: spec.label, fail: e?.message ?? String(e) };
   } finally {
@@ -496,6 +542,42 @@ function checkReadyAll(runs) {
   return true;
 }
 
+// effect pass 编译失败是 warn 而非 error（three 跳过绘制不抛）⇒ 门禁必须单独收，否则页面上「少一层后处理」
+// 仍可能全 PASS。任一档命中即整轮失败（至少覆盖 ①，这里对四组统一收紧）。
+function checkShaderErrors(runs) {
+  const hits = [];
+  for (const r of runs) {
+    if (!r?.ok) continue;
+    for (const e of r.shaderErrors ?? []) hits.push({ label: r.label, text: e });
+  }
+  if (hits.length === 0) return true;
+  failed = true;
+  for (const h of hits.slice(0, 8)) console.log(`${RED}[FAIL]${RST} ${h.label} shader 编译错误：${h.text}`);
+  if (hits.length > 8) console.log(`${RED}[FAIL]${RST} ... 另有 ${hits.length - 8} 条 shader 错误`);
+  console.log(`${RED}[FAIL]${RST} effect pass / GL shader 编译失败 ⇒ 整轮失败（禁止假 PASS）`);
+  return false;
+}
+
+/** 全屏覆盖：diff bbox 每条边到视口边缘的未变化余量都 ≤ tol（证明是整屏后处理，不是局部一块）。 */
+function coversViewport(bbox, w, h, tol) {
+  if (!Array.isArray(bbox) || bbox.length !== 4) return false;
+  return bbox[0] <= tol && bbox[1] <= tol && (w - 1 - bbox[2]) <= tol && (h - 1 - bbox[3]) <= tol;
+}
+
+/** ③ 已知文字区（TEXT_VIEW 不是 1600×900 时按比例缩放）。 */
+function textBboxRegion() {
+  const sx = TEXT_VIEW.w / TEXT_BBOX_BASE_VIEW[0];
+  const sy = TEXT_VIEW.h / TEXT_BBOX_BASE_VIEW[1];
+  return [TEXT_BBOX_BASE[0] * sx, TEXT_BBOX_BASE[1] * sy, TEXT_BBOX_BASE[2] * sx, TEXT_BBOX_BASE[3] * sy];
+}
+
+/** diff bbox 必须整体落在文字区 ± tol；非文字区域的差异会把 bbox 撑出去 ⇒ FAIL。 */
+function withinTextRegion(bbox, tol) {
+  if (!Array.isArray(bbox) || bbox.length !== 4) return false;
+  const r = textBboxRegion();
+  return bbox[0] >= r[0] - tol && bbox[1] >= r[1] - tol && bbox[2] <= r[2] + tol && bbox[3] <= r[3] + tol;
+}
+
 // ① 2911105183 util 后处理（projectlayer bloom+bokeh）：启用档 vs 清空 effects 档。
 async function runUtilPostprocess() {
   console.log(`\n===== ① 2911105183 util 后处理（projectlayer bloom+bokeh）=====`);
@@ -513,7 +595,7 @@ async function runUtilPostprocess() {
   });
   if (!checkReadyAll([on, off]) || !on.ok || !off.ok) {
     recordPass('2911105183-util-postprocess', false, '渲染未完成');
-    return { id: ID_UTIL, view: VIEW, patched: offPatch.patched, pass: false };
+    return { id: ID_UTIL, view: VIEW, patched: offPatch.patched, pass: false, fail: '渲染未完成' };
   }
   writeFileSync(join(OUT, `${TAG}-291-util-on.png`), on.result.png);
   writeFileSync(join(OUT, `${TAG}-291-util-off.png`), off.result.png);
@@ -521,16 +603,30 @@ async function runUtilPostprocess() {
   const b = decodePng(off.result.png);
   const diff = meanAbsDiff(a, b);
   writeFileSync(join(OUT, `${TAG}-291-util-diff.png`), diffPng(a, b));
+  const shaderOk = checkShaderErrors([on, off]);
   const chainsOn = on.chains?.ready ?? null;
-  console.log(`  bloom+bokeh 开：chains=${JSON.stringify(chainsOn)}`);
+  // 对照改写命中的 util 对象（291 为 #58 projectlayer）必须真的挂上并产出了链；这只是 per-object 证据，
+  // per-pass 由上面的 shader 门禁与像素差共同钉住。
+  const targetIds = offPatch.patched.map((p) => Number(p.object));
+  const chainsTarget = Object.fromEntries(targetIds.map((id) => [id, chainsOn?.[String(id)] === true]));
+  const chainsTargetOk = targetIds.length > 0 && targetIds.every((id) => chainsTarget[id]);
+  const bboxOk = coversViewport(diff.bbox, VIEW.w, VIEW.h, THRESHOLDS.utilBboxTol);
+  console.log(`  bloom+bokeh 开：chains=${JSON.stringify(chainsOn)} 目标对象链就绪=${chainsTargetOk ? 'PASS' : 'FAIL'}（${JSON.stringify(chainsTarget)}）`);
   console.log(`  差分：meanAbs=${diff.meanAbs.toFixed(3)} changed=${diff.changed}（${pct(diff.changedRatio)}）max=${diff.max} bbox=${JSON.stringify(diff.bbox)}`);
+  console.log(`  全屏覆盖：bbox 每边余量 ≤${THRESHOLDS.utilBboxTol}px=${bboxOk ? 'PASS' : 'FAIL'}（视口 ${VIEW.w}×${VIEW.h}）`);
   console.log(`  阈值：meanAbs ≥ ${THRESHOLDS.utilMeanAbs} 且 changed ≥ ${pct(THRESHOLDS.utilChanged)}`);
-  const pass = diff.meanAbs >= THRESHOLDS.utilMeanAbs && diff.changedRatio >= THRESHOLDS.utilChanged;
-  recordPass('2911105183-util-postprocess', pass, `meanAbs=${diff.meanAbs.toFixed(3)} changed=${pct(diff.changedRatio)}`);
+  const pass = shaderOk && chainsTargetOk && bboxOk
+    && diff.meanAbs >= THRESHOLDS.utilMeanAbs && diff.changedRatio >= THRESHOLDS.utilChanged;
+  recordPass('2911105183-util-postprocess', pass,
+    `meanAbs=${diff.meanAbs.toFixed(3)} changed=${pct(diff.changedRatio)} bboxOk=${bboxOk} chainsTarget=${chainsTargetOk ? 'PASS' : 'FAIL'}`);
   criteria.utilPostprocess = {
-    id: ID_UTIL, view: VIEW, patched: offPatch.patched, chainsOn,
-    thresholds: { meanAbs: THRESHOLDS.utilMeanAbs, changedRatio: THRESHOLDS.utilChanged },
+    id: ID_UTIL, view: VIEW, patched: offPatch.patched, chainsOn, chainsTarget, chainsTargetOk,
+    thresholds: {
+      meanAbs: THRESHOLDS.utilMeanAbs, changedRatio: THRESHOLDS.utilChanged, bboxTol: THRESHOLDS.utilBboxTol,
+    },
+    bboxOk, shaderOk,
     diff, errors: { on: on.errors, off: off.errors },
+    shaderErrors: { on: on.shaderErrors, off: off.shaderErrors },
     png: { on: `${TAG}-291-util-on.png`, off: `${TAG}-291-util-off.png`, diff: `${TAG}-291-util-diff.png` },
     pass,
   };
@@ -551,7 +647,7 @@ async function runPulse() {
   });
   if (!checkReadyAll([page]) || !page.ok) {
     recordPass('2132420420-pulse', false, '渲染未完成');
-    return { id: ID_PULSE, view: VIEW, pass: false };
+    return { id: ID_PULSE, view: VIEW, pass: false, fail: '渲染未完成' };
   }
   writeFileSync(join(OUT, `${TAG}-213-pulse-a.png`), page.result.a);
   writeFileSync(join(OUT, `${TAG}-213-pulse-b.png`), page.result.b);
@@ -559,15 +655,17 @@ async function runPulse() {
   const b = decodePng(page.result.b);
   const diff = meanAbsDiff(a, b);
   writeFileSync(join(OUT, `${TAG}-213-pulse-diff.png`), diffPng(a, b));
+  const shaderOk = checkShaderErrors([page]);
   console.log(`  chains=${JSON.stringify(page.chains?.ready ?? null)}`);
   console.log(`  差分：meanAbs=${diff.meanAbs.toFixed(3)} changed=${diff.changed}（${pct(diff.changedRatio)}）max=${diff.max} bbox=${JSON.stringify(diff.bbox)}`);
   console.log(`  阈值：meanAbs ≥ ${THRESHOLDS.pulseMeanAbs} 且 changed ≥ ${pct(THRESHOLDS.pulseChanged)}`);
-  const pass = diff.meanAbs >= THRESHOLDS.pulseMeanAbs && diff.changedRatio >= THRESHOLDS.pulseChanged;
+  const pass = shaderOk
+    && diff.meanAbs >= THRESHOLDS.pulseMeanAbs && diff.changedRatio >= THRESHOLDS.pulseChanged;
   recordPass('2132420420-pulse', pass, `meanAbs=${diff.meanAbs.toFixed(3)} changed=${pct(diff.changedRatio)}`);
   criteria.pulse = {
     id: ID_PULSE, view: VIEW, phase: { a: PHASE_A_MS, b: PHASE_B_MS }, chains: page.chains?.ready ?? null,
     thresholds: { meanAbs: THRESHOLDS.pulseMeanAbs, changedRatio: THRESHOLDS.pulseChanged },
-    diff, errors: page.errors,
+    diff, errors: page.errors, shaderErrors: page.shaderErrors, shaderOk,
     png: { a: `${TAG}-213-pulse-a.png`, b: `${TAG}-213-pulse-b.png`, diff: `${TAG}-213-pulse-diff.png` },
     pass,
   };
@@ -591,7 +689,7 @@ async function runTextBrightness() {
   });
   if (!checkReadyAll([on, off]) || !on.ok || !off.ok) {
     recordPass('3765967112-text-brightness', false, '渲染未完成');
-    return { id: ID_TEXT, view: TEXT_VIEW, patched: offPatch.patched, pass: false };
+    return { id: ID_TEXT, view: TEXT_VIEW, patched: offPatch.patched, pass: false, fail: '渲染未完成' };
   }
   writeFileSync(join(OUT, `${TAG}-376-text-on.png`), on.result.png);
   writeFileSync(join(OUT, `${TAG}-376-text-off.png`), off.result.png);
@@ -599,14 +697,24 @@ async function runTextBrightness() {
   const b = decodePng(off.result.png);
   const diff = meanAbsDiff(a, b);
   writeFileSync(join(OUT, `${TAG}-376-text-diff.png`), diffPng(a, b));
+  const shaderOk = checkShaderErrors([on, off]);
+  const bboxRegion = textBboxRegion();
+  const bboxOk = withinTextRegion(diff.bbox, THRESHOLDS.textBboxTol);
   console.log(`  差分：changed=${diff.changed}px max=${diff.max} meanAbs=${diff.meanAbs.toFixed(3)} bbox=${JSON.stringify(diff.bbox)}`);
+  console.log(`  文字区：bbox 应落在 ${JSON.stringify(bboxRegion.map((v) => Math.round(v)))} ±${THRESHOLDS.textBboxTol}px=${bboxOk ? 'PASS' : 'FAIL'}`);
   console.log(`  阈值：changed ≥ ${THRESHOLDS.textChangedPx}px 且 maxΔ ≥ ${THRESHOLDS.textMaxDelta}`);
-  const pass = diff.changed >= THRESHOLDS.textChangedPx && diff.max >= THRESHOLDS.textMaxDelta;
-  recordPass('3765967112-text-brightness', pass, `changed=${diff.changed}px max=${diff.max} bbox=${JSON.stringify(diff.bbox)}`);
+  const pass = shaderOk && bboxOk
+    && diff.changed >= THRESHOLDS.textChangedPx && diff.max >= THRESHOLDS.textMaxDelta;
+  recordPass('3765967112-text-brightness', pass,
+    `changed=${diff.changed}px max=${diff.max} bbox=${JSON.stringify(diff.bbox)} textBboxOk=${bboxOk}`);
   criteria.textBrightness = {
     id: ID_TEXT, view: TEXT_VIEW, patched: offPatch.patched,
-    thresholds: { changedPx: THRESHOLDS.textChangedPx, maxDelta: THRESHOLDS.textMaxDelta },
+    bboxRegion, bboxOk, shaderOk,
+    thresholds: {
+      changedPx: THRESHOLDS.textChangedPx, maxDelta: THRESHOLDS.textMaxDelta, bboxTol: THRESHOLDS.textBboxTol,
+    },
     diff, errors: { on: on.errors, off: off.errors },
+    shaderErrors: { on: on.shaderErrors, off: off.shaderErrors },
     png: { on: `${TAG}-376-text-on.png`, off: `${TAG}-376-text-off.png`, diff: `${TAG}-376-text-diff.png` },
     pass,
   };
@@ -641,8 +749,9 @@ async function runPointerUniform() {
   const defaults = await runMode('defaults', defaultsPatch.text);
   if (!checkReadyAll([asis, defaults]) || !asis.ok || !defaults.ok) {
     recordPass('3780477933-pointer-uniform', false, '渲染未完成');
-    return { id: ID_POINTER, view: VIEW, patched: defaultsPatch.patched, pass: false };
+    return { id: ID_POINTER, view: VIEW, patched: defaultsPatch.patched, pass: false, fail: '渲染未完成' };
   }
+  const shaderOk = checkShaderErrors([asis, defaults]);
   const summarize = (mode, r) => {
     writeFileSync(join(OUT, `${TAG}-378-${mode}-a.png`), r.result.a);
     writeFileSync(join(OUT, `${TAG}-378-${mode}-b.png`), r.result.b);
@@ -657,7 +766,7 @@ async function runPointerUniform() {
   const defS = summarize('defaults', defaults);
   const asisUniformOk = uniformOk(asisS.uniform.a, POINTER_A) && uniformOk(asisS.uniform.b, POINTER_B);
   const defUniformOk = uniformOk(defS.uniform.a, POINTER_A) && uniformOk(defS.uniform.b, POINTER_B);
-  const asisPass = asisS.diff.changedRatio < THRESHOLDS.pointerAsisMax && asisUniformOk;
+  const asisPass = shaderOk && asisS.diff.changedRatio < THRESHOLDS.pointerAsisMax && asisUniformOk;
   const clusters = changedClusters(defS.a, defS.b, Math.round(VIEW.w / 2));
   const pa = [POINTER_A[0] * VIEW.w, POINTER_A[1] * VIEW.h];
   const pb = [POINTER_B[0] * VIEW.w, POINTER_B[1] * VIEW.h];
@@ -669,8 +778,9 @@ async function runPointerUniform() {
     && leftDist <= THRESHOLDS.pointerClusterRadiusPx
     && rightDist <= THRESHOLDS.pointerClusterRadiusPx
     && clusters.left.centroid[1] < VIEW.h / 2 && clusters.right.centroid[1] > VIEW.h / 2; // y 向下
-  const defaultsPass = defS.diff.changedRatio >= THRESHOLDS.pointerDefaultsMin && defUniformOk && clustersOk;
+  const defaultsPass = shaderOk && defS.diff.changedRatio >= THRESHOLDS.pointerDefaultsMin && defUniformOk && clustersOk;
   const pass = asisPass && defaultsPass;
+  console.log(`  shader 编译=${shaderOk ? 'PASS' : 'FAIL'}`);
   console.log(`  asis：uniform A/B=${asisUniformOk ? 'PASS' : 'FAIL'} changed=${pct(asisS.diff.changedRatio)}（阈值 <${pct(THRESHOLDS.pointerAsisMax)}）`);
   console.log(`  defaults：uniform A/B=${defUniformOk ? 'PASS' : 'FAIL'} changed=${defS.diff.changed}（${pct(defS.diff.changedRatio)}，阈值 ≥${pct(THRESHOLDS.pointerDefaultsMin)}）`);
   console.log(`  defaults 双簇：left=${clusters.left.count}px 质心=${JSON.stringify(clusters.left.centroid)}（指针 A ${JSON.stringify(pa)}，距离 ${leftDist.toFixed(1)}px）`
@@ -685,37 +795,63 @@ async function runPointerUniform() {
       defaultsMinChangedRatio: THRESHOLDS.pointerDefaultsMin,
       clusterRadiusPx: THRESHOLDS.pointerClusterRadiusPx,
     },
-    asis: { uniform: asisS.uniform, uniformOk: asisUniformOk, diff: asisS.diff, errors: asis.errors, png: asisS.png, pass: asisPass },
+    asis: {
+      uniform: asisS.uniform, uniformOk: asisUniformOk, diff: asisS.diff,
+      errors: asis.errors, shaderErrors: asis.shaderErrors, png: asisS.png, pass: asisPass,
+    },
     defaults: {
       uniform: defS.uniform, uniformOk: defUniformOk, diff: defS.diff,
-      clusters, clustersOk, errors: defaults.errors, png: defS.png, pass: defaultsPass,
+      clusters, clustersOk, errors: defaults.errors, shaderErrors: defaults.shaderErrors,
+      png: defS.png, pass: defaultsPass,
     },
+    shaderOk,
     pass,
   };
   return criteria.pointerUniform;
 }
 
 // ── 主流程 ────────────────────────────────────────────────────────────────────
+let runError = null;
 try {
+  if (onlyInvalid) throw new Error(onlyInvalid); // 参数错误也走 summary，不能留下上一轮的 pass:true
   await new Promise((r) => server.listen(PORT, r));
   console.log(`[v082] 视口 ${VIEW.w}×${VIEW.h}（text ${TEXT_VIEW.w}×${TEXT_VIEW.h}）  判据=${ONLY.join(',')}  端口=${PORT}`);
-  if (want('util')) await runUtilPostprocess();
-  if (want('pulse')) await runPulse();
-  if (want('text')) await runTextBrightness();
-  if (want('pointer')) await runPointerUniform();
+  if (want('util')) criteria[CRITERIA_NAME.util] = await runUtilPostprocess();
+  if (want('pulse')) criteria[CRITERIA_NAME.pulse] = await runPulse();
+  if (want('text')) criteria[CRITERIA_NAME.text] = await runTextBrightness();
+  if (want('pointer')) criteria[CRITERIA_NAME.pointer] = await runPointerUniform();
 } catch (e) {
-  console.error('ERROR:', e?.stack ?? e?.message ?? e);
+  runError = e?.message ?? String(e);
+  console.error('ERROR:', e?.stack ?? runError);
   failed = true;
 } finally {
   server.close();
 }
+
+// 期望判据必须全部出现且 pass：`--only` 白名单外的值已在上方 throw；默认四组缺一/任一 FAIL ⇒ exit 1。
+if (!onlyInvalid) {
+  for (const key of expectedKeys) {
+    const name = CRITERIA_NAME[key];
+    if (!criteria[name] || criteria[name].pass !== true) {
+      failed = true;
+      if (!criteria[name]) criteria[name] = { pass: false, fail: '渲染未完成' };
+      console.log(`${RED}[FAIL]${RST} 期望判据缺失或未通过：${name}`);
+    }
+  }
+}
+const coverage = onlyInvalid
+  ? null
+  : { expected: expectedKeys.map((k) => CRITERIA_NAME[k]), ok: expectedKeys.every((k) => criteria[CRITERIA_NAME[k]]?.pass === true) };
 const summary = {
   tag: TAG,
   view: VIEW,
   textView: TEXT_VIEW,
   only: ONLY,
+  expected: expectedKeys.map((k) => CRITERIA_NAME[k]),
+  coverage,
   thresholds: THRESHOLDS,
   criteria,
+  error: runError,
   pass: !failed,
 };
 const summaryPath = join(OUT, 'summary.json');

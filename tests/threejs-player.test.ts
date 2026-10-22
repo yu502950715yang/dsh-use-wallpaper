@@ -1011,6 +1011,10 @@ describe('ThreeScenePlayer background layer', () => {
     // scale×2 ⇒ 偏移 (-100, +50)，差 (-50, +25)：只叠加差值，脚本/视差位移保留。
     expect(node.position.x).toBeCloseTo(-50 + 7 - 50, 6);
     expect(node.position.y).toBeCloseTo(25 - 3 + 25, 6);
+    // 同一 scale 再更新一次必须幂等：偏移差不得重复叠加。
+    player.update_background(id, undefined, [2, 2, 1]);
+    expect(node.position.x).toBeCloseTo(-50 + 7 - 50, 6);
+    expect(node.position.y).toBeCloseTo(25 - 3 + 25, 6);
   });
 
   it('addBackground：mesh.renderOrder=0、material.depthWrite=false（背景在粒子之下绘制、不写深度遮粒子）', () => {
