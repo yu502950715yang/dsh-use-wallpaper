@@ -57,8 +57,16 @@ export interface ObjectEffectStage {
     advance(time: number): void;
     /** 段边界（消费者被绘制**之前**）同步通知：本帧快照 + 捕获当刻代号（语义见 object-effects.ts）。 */
     onSegmentBoundary?(objectId: number, frameTexture?: THREE.Texture | null, snapshotVersion?: number): void;
+    /** 段边界快照同步（`_rt_FullFrameBuffer` 槽门控用；只有 allowFrameSnapshot 放行的链才绑它）。 */
+    setFrameSnapshot?(frameTexture: THREE.Texture | null): void;
     /** 画布缓冲/视口变化：作废尚未被 advance 消费的在途快照（resize 会重建快照纹理）。 */
     notifyViewportResize?(): void;
+}
+export interface UtilContentCover {
+    sx: number;
+    sy: number;
+    sw: number;
+    sh: number;
 }
 export declare function resolvePixelRatio(devicePixelRatio: number, qualityScale: number): number;
 export declare class ThreeScenePlayer {
@@ -91,6 +99,8 @@ export declare class ThreeScenePlayer {
     private nextParticleLayerId;
     private readonly displayObjects;
     private isolated;
+    private readonly utilContents;
+    private lastFrameSnapshot;
     private objectEffectStage;
     private glowStage;
     private bloomStage;
@@ -179,6 +189,19 @@ export declare class ThreeScenePlayer {
     displayObject(objectId: number): THREE.Object3D | undefined;
     isolatedObjects(): IsolatedObject[];
     setObjectOutput(id: number, texture: THREE.Texture): void;
+    setUtilContentTexture(objectId: number, texture: THREE.Texture, opts?: {
+        cover?: UtilContentCover;
+    }): void;
+    /** 测试/诊断：util 内容当前纹理；solid / 非 util → null。 */
+    utilContentTextureForTest(objectId: number): THREE.Texture | null;
+    /** 测试/诊断：util 内容当前的快照覆盖矩形（内容 mesh UV 空间）。 */
+    utilContentUvForTest(objectId: number): UtilContentCover | null;
+    /** 最近一次段边界快照（渲染器每帧同步给 ObjectEffectStage 的 `_rt_FullFrameBuffer` 槽门控）。 */
+    currentFrameSnapshot(): THREE.Texture | null;
+    private registerUtilContent;
+    private utilContentCoverFor;
+    private applyUtilContentCover;
+    private renderUtilContent;
     captureFullFrame(): THREE.Texture | null;
     frameSnapshotVersion(): number;
     resizeObjectRT(id: number, width: number, height: number): void;

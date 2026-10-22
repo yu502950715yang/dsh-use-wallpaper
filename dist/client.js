@@ -24167,6 +24167,10 @@ void main() {
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }
 `;
+var FULL_UV_COVER = { sx: 0, sy: 0, sw: 1, sh: 1 };
+function sameCover(a, b) {
+  return a.sx === b.sx && a.sy === b.sy && a.sw === b.sw && a.sh === b.sh;
+}
 function resolvePixelRatio(devicePixelRatio, qualityScale) {
   const dpr = Number.isFinite(devicePixelRatio) && devicePixelRatio > 0 ? devicePixelRatio : 1;
   const scale = Number.isFinite(qualityScale) && qualityScale > 0 ? qualityScale : 1;
@@ -24226,6 +24230,10 @@ var ThreeScenePlayer = class {
   displayObjects = /* @__PURE__ */ new Map();
   // 对象隔离条目（对象级效果链；空 Map = 本壁纸无带效果对象，帧序退化为原路径）。
   isolated = /* @__PURE__ */ new Map();
+  // util 层内容输入（整帧快照）：键 = scene.json 对象 id；solid 层无条目（保留纯色内容）。
+  utilContents = /* @__PURE__ */ new Map();
+  // 最近一次段边界拍下的整帧快照（渲染器每帧同步给 ObjectEffectStage 的快照槽门控）。
+  lastFrameSnapshot = null;
   objectEffectStage = null;
   // 应用级 Glow 注入点（null = 本壁纸不开 Glow，帧序退化为原路径）。
   glowStage = null;
@@ -24764,7 +24772,16 @@ var ThreeScenePlayer = class {
         if (segment.consumer !== null) {
           const snapshot = capture.capture();
           const consumerObjectId = consumerObjectIdByIndex.get(segment.consumer);
+          this.lastFrameSnapshot = snapshot;
+          if (consumerObjectId !== void 0 && this.utilContents.has(consumerObjectId)) {
+            this.setUtilContentTexture(consumerObjectId, snapshot, {
+              cover: this.utilContentCoverFor(consumerObjectId) ?? void 0
+            });
+            this.renderUtilContent(consumerObjectId);
+            this.renderer.setRenderTarget(capture.target);
+          }
           if (consumerObjectId !== void 0) {
+            this.objectEffectStage?.setFrameSnapshot?.(snapshot);
             this.objectEffectStage?.onSegmentBoundary?.(consumerObjectId, snapshot, capture.snapshotVersion);
           }
           const refractLayer = consumerObjectId === void 0 ? void 0 : this.refractLayers.get(consumerObjectId);
@@ -24831,6 +24848,101 @@ var ThreeScenePlayer = class {
     const mat = entry.quad.material;
     if (mat instanceof ShaderMaterial) mat.uniforms.map.value = texture;
     else if (mat instanceof MeshBasicMaterial) mat.map = texture;
+  }
+  // util 层内容 = 整帧快照（T3）：真实 util 链读 `bind: previous`（层内容），所以快照必须成为内容。
+  // `opts.cover` = 快照在内容 mesh UV 空间的落点（缺省全 UV）；只有 passthrough 内容条目生效
+  //（solid 保留纯色）。UV 变换落在内容几何上（快照纹理是共享的，不能改它的 repeat/offset）。
+  setUtilContentTexture(objectId, texture, opts = {}) {
+    const entry = this.utilContents.get(objectId);
+    if (!entry) return;
+    const material = entry.mesh.material;
+    let changed = false;
+    if (material.map !== texture) {
+      material.map = texture;
+      material.opacity = 1;
+      material.needsUpdate = true;
+      entry.texture = texture;
+      changed = true;
+    }
+    const cover = opts.cover ?? FULL_UV_COVER;
+    if (changed || !sameCover(entry.cover, cover)) this.applyUtilContentCover(entry, cover);
+  }
+  /** 测试/诊断：util 内容当前纹理；solid / 非 util → null。 */
+  utilContentTextureForTest(objectId) {
+    return this.utilContents.get(objectId)?.texture ?? null;
+  }
+  /** 测试/诊断：util 内容当前的快照覆盖矩形（内容 mesh UV 空间）。 */
+  utilContentUvForTest(objectId) {
+    const cover = this.utilContents.get(objectId)?.cover;
+    return cover ? { ...cover } : null;
+  }
+  /** 最近一次段边界快照（渲染器每帧同步给 ObjectEffectStage 的 `_rt_FullFrameBuffer` 槽门控）。 */
+  currentFrameSnapshot() {
+    return this.lastFrameSnapshot;
+  }
+  // 登记 util 内容条目（内容 mesh 与快照内容区域的世界锚点）；solid 不登记（纯色内容不被替换）。
+  registerUtilContent(objectId, mesh, centerX, centerY) {
+    const uv = mesh.geometry.attributes?.uv;
+    if (!uv) return;
+    this.utilContents.set(objectId, {
+      mesh,
+      baseUv: Float32Array.from(uv.array),
+      cover: FULL_UV_COVER,
+      texture: null,
+      centerX,
+      centerY
+    });
+  }
+  // 快照覆盖矩形 = 主相机 cover 视锥（世界，中心 = 场景中心，与 applyCover 同源）在内容 mesh
+  // UV 空间的反解：u_tex = (u - sx)/sw。世界尺寸取**当前** mesh.scale × 几何（含镜像负值）。
+  utilContentCoverFor(objectId) {
+    const entry = this.utilContents.get(objectId);
+    if (!entry) return null;
+    const geometry = entry.mesh.geometry;
+    const gw = geometry.parameters?.width ?? 0;
+    const gh = geometry.parameters?.height ?? 0;
+    const worldW = entry.mesh.scale.x * gw;
+    const worldH = entry.mesh.scale.y * gh;
+    if (!(Math.abs(worldW) > 1e-6) || !(Math.abs(worldH) > 1e-6)) return null;
+    const cover = coverRange(this.sceneWidth, this.sceneHeight, this.viewWidth / this.viewHeight);
+    const left = entry.centerX - worldW / 2;
+    const bottom = entry.centerY - worldH / 2;
+    return {
+      sx: (-cover.w / 2 - left) / worldW,
+      sy: (-cover.h / 2 - bottom) / worldH,
+      sw: cover.w / worldW,
+      sh: cover.h / worldH
+    };
+  }
+  // 按覆盖矩形重写内容几何 UV（uv' = (uv - sx)/sw）：v=0 = 画面底 ⇒ 快照 v 约定不额外翻转。
+  applyUtilContentCover(entry, cover) {
+    entry.cover = cover;
+    const uv = entry.mesh.geometry.attributes?.uv;
+    if (!uv) return;
+    const arr = uv.array;
+    const rx = 1 / cover.sw;
+    const ry = 1 / cover.sh;
+    const ox = -cover.sx / cover.sw;
+    const oy = -cover.sy / cover.sh;
+    for (let i = 0; i < arr.length && i < entry.baseUv.length; i += 2) {
+      arr[i] = entry.baseUv[i] * rx + ox;
+      arr[i + 1] = entry.baseUv[i + 1] * ry + oy;
+    }
+    uv.needsUpdate = true;
+  }
+  // 段边界把快照内容立即重渲进该 util 层 RT（帧首那次用的是上一帧快照/透明占位）。
+  // 不走 renderIsolatedContents：那是帧边界观测点（e2e 帧计数/计时依赖它每帧恰好一次）。
+  renderUtilContent(objectId) {
+    const entry = this.isolated.get(objectId);
+    if (!entry) return;
+    const renderer = this.renderer;
+    const prevAutoClear = renderer.autoClear;
+    renderer.autoClear = true;
+    try {
+      renderIntoRenderTarget(this.renderer, entry.rt, entry.localScene, entry.localCamera);
+    } finally {
+      renderer.autoClear = prevAutoClear;
+    }
   }
   // 段边界快照的拉取入口（ObjectEffectHost 契约）：拍一张「到此刻为止已绘制内容」。
   // 无 FrameCapture / 未激活（本壁纸无消费者）→ null；dispose 后 capture() 抛错 ⇒ 同样降级 null。
@@ -24923,6 +25035,9 @@ var ThreeScenePlayer = class {
         y: origin[1] - sceneH / 2,
         z: origin[2]
       }, [a[0], a[1], a[2]], opts.colorBlendMode ?? 0, opts.renderOrder, compositeOpacity);
+      if (opts.util && opts.util !== "solid") {
+        this.registerUtilContent(opts.isolate.objectId, mesh, origin[0] - sceneW / 2, origin[1] - sceneH / 2);
+      }
     } else {
       this.scene.add(mesh);
     }
@@ -25463,6 +25578,8 @@ var ThreeScenePlayer = class {
       });
     }
     this.isolated.clear();
+    this.utilContents.clear();
+    this.lastFrameSnapshot = null;
     this.displayObjects.clear();
     this.objectEffectStage = null;
     this.glowStage?.dispose();
@@ -27509,6 +27626,7 @@ var ObjectEffectStage = class {
     this.host = host;
     this.wallpaperId = opts.wallpaperId;
     this.screenScale = opts.screenScale;
+    this.allowFrameSnapshot = opts.allowFrameSnapshot;
   }
   entries = /* @__PURE__ */ new Map();
   wallpaperId;
@@ -27524,6 +27642,10 @@ var ObjectEffectStage = class {
   warned = /* @__PURE__ */ new Set();
   /** 本帧各对象在段边界拿到的整帧快照 + **捕获当刻**的快照代号（advance 消费后清空，快照逐帧覆盖）。 */
   boundarySnapshots = /* @__PURE__ */ new Map();
+  /** 最近一次段边界快照（player 同步）：`allowFrameSnapshot` 放行的链在无本帧边界通知时用它兜底。 */
+  frameSnapshot = null;
+  /** util 专用 `_rt_FullFrameBuffer` 槽门控：缺省 undefined = 旧语义（边界快照照常交给链）。 */
+  allowFrameSnapshot;
   /** 音频频谱源：每帧同一缓冲引用；null = 全零静音（无音频/音效关闭）。 */
   audioSpectrum = null;
   /** 当前屏幕密度（设备像素 / 世界单位）；同源下发契约见类头。 */
@@ -27544,7 +27666,16 @@ var ObjectEffectStage = class {
       entry.budgeted = budgeted;
       return;
     }
-    this.entries.set(objId, { runner: null, chains: [], plan: null, worldW, worldH, source, budgeted });
+    this.entries.set(objId, {
+      runner: null,
+      chains: [],
+      plan: null,
+      worldW,
+      worldH,
+      source,
+      budgeted,
+      frameSnapshotBound: false
+    });
   }
   /** 挂载某对象的效果链（线性链与具名 RT 图链一视同仁，计划交执行器执行）。调用顺序契约：
    *  player 先在 loadSceneToThree 内建好隔离条目，stage 再挂链（setWorldSize → setObjectChains）；
@@ -27561,7 +27692,8 @@ var ObjectEffectStage = class {
     if (ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER && referencesFrameSnapshot(chains, plan)) {
       this.host.registerFrameConsumer(objId);
     }
-    this.mount(objId, chains, view.rtWidth, view.rtHeight, plan);
+    const frameSnapshotBound = this.allowFrameSnapshot?.(objId) === true && referencesFrameSnapshot(chains, plan);
+    this.mount(objId, chains, view.rtWidth, view.rtHeight, plan, frameSnapshotBound);
   }
   /** 视口变化：按新的**屏幕密度**重算每个对象的 RT 像素尺寸，并用同一份链重挂（runner 内部 RT 跟随）。
    *  尺寸口径与挂载期**同源**：同一纯函数 isolatedRtSize + 同一口径（预算输入集合的差异见 AGENT.md §7.36）
@@ -27635,25 +27767,43 @@ var ObjectEffectStage = class {
       if (!runner) continue;
       runner.setAudioSpectrumSource(this.audioSpectrum);
       const item = this.boundarySnapshots.get(view.id) ?? null;
-      this.enqueue(() => runner.update(
-        time,
-        view.rtTexture,
-        item !== null && !this.snapshotStale(item.version) ? item.texture : null
-      ));
+      const entry = this.entries.get(view.id);
+      this.enqueue(() => runner.update(time, view.rtTexture, this.frameTextureFor(entry, item)));
     }
     this.boundarySnapshots.clear();
+  }
+  /** 段边界快照同步（由 player 在每个段边界调用）：`allowFrameSnapshot` 放行的链在没有本帧
+   *  边界通知时用它兜底绑 `_rt_FullFrameBuffer` 槽。 */
+  setFrameSnapshot(frameTexture) {
+    if (this.disposed) return;
+    this.frameSnapshot = frameTexture;
+  }
+  /** 测试/诊断：该对象的链是否真的会绑整帧快照（放行 + 链显式引用 `_rt_FullFrameBuffer`）。 */
+  frameSnapshotBound(objectId) {
+    return this.entries.get(objectId)?.frameSnapshotBound === true;
+  }
+  /** 交给 runner 的快照纹理（执行当刻求值）：
+   *  - 缺省 `allowFrameSnapshot`：旧语义 = 本帧段边界快照（对象链门控仍由全局常量负责）；
+   *  - 有门控：未放行/未引用 ⇒ null（绝不把快照漏给对象链）；放行 ⇒ 边界快照优先、全局快照兜底。 */
+  frameTextureFor(entry, item) {
+    const boundary = item !== null && !this.snapshotStale(item.version) ? item.texture : null;
+    if (!this.allowFrameSnapshot) return boundary;
+    if (entry?.frameSnapshotBound !== true) return null;
+    return boundary ?? this.frameSnapshot;
   }
   /** 画布缓冲/视口变化：`FrameCapture.resize()` 会 dispose 旧快照并重建 ⇒ 作废**尚未被 advance 消费**
    *  的本帧快照（已被 advance 带进闭包的那份，由执行当刻的实时代号比较兜底，见 advance）。 */
   notifyViewportResize() {
     if (this.disposed) return;
     this.boundarySnapshots.clear();
+    this.frameSnapshot = null;
   }
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
     this.queue.length = 0;
     this.boundarySnapshots.clear();
+    this.frameSnapshot = null;
     for (const entry of this.entries.values()) entry.runner?.dispose();
     this.entries.clear();
   }
@@ -27672,7 +27822,8 @@ var ObjectEffectStage = class {
       worldW: view ? view.rtWidth / this.scale() : 1,
       worldH: view ? view.rtHeight / this.scale() : 1,
       source: null,
-      budgeted: false
+      budgeted: false,
+      frameSnapshotBound: false
     });
   }
   /** 去重告警（同一 key 只打印一次，防每帧刷屏）。 */
@@ -27715,14 +27866,24 @@ var ObjectEffectStage = class {
   }
   /** `plan` 由调用方传入（`setObjectChains` 已按同一尺寸算过一份，且用它判定过消费者）：
    *  再算一遍会让「判定用的计划」与「执行用的计划」可能分叉。 */
-  mount(objId, chains, rtW, rtH, plan) {
+  mount(objId, chains, rtW, rtH, plan, frameSnapshotBound) {
     let entry = this.entries.get(objId);
     if (!entry) {
-      entry = { runner: null, chains, plan: null, worldW: rtW / this.scale(), worldH: rtH / this.scale(), source: null, budgeted: false };
+      entry = {
+        runner: null,
+        chains,
+        plan: null,
+        worldW: rtW / this.scale(),
+        worldH: rtH / this.scale(),
+        source: null,
+        budgeted: false,
+        frameSnapshotBound
+      };
       this.entries.set(objId, entry);
     }
     entry.chains = chains;
     entry.plan = plan;
+    entry.frameSnapshotBound = frameSnapshotBound;
     if (!entry.runner) {
       entry.runner = new EffectRunner(this.host.renderer, rtW, rtH, { load: weVRowOrderLoader() });
     }
@@ -32025,6 +32186,7 @@ function createThreeSceneRenderer(opts) {
           onFrame: (dt) => {
             currentAudio?.analyzer.update();
             currentStage?.setAudioSpectrum(currentAudio?.analyzer.freqData ?? null);
+            currentStage?.setFrameSnapshot(current?.player.currentFrameSnapshot?.() ?? null);
             const host = currentScriptHost;
             const loaded = current;
             if (!host || !loaded) return;
@@ -32058,6 +32220,12 @@ function createThreeSceneRenderer(opts) {
         if (frameCapture === null) frameCapture = createFrameCapture(captureRenderer);
         frameCaptureRenderer = captureRenderer;
         result.player.setFrameCapture(frameCapture);
+        const utilContentIds = /* @__PURE__ */ new Set();
+        for (const objId of isolate.keys()) {
+          const obj = desc.objects.find((o) => o.id === objId);
+          if (obj?.kind === "util" && obj.layerKind !== "solid") utilContentIds.add(objId);
+        }
+        for (const utilId of utilContentIds) result.player.registerFrameConsumer(utilId);
         if (scriptSources.length > 0) {
           const materialTable = /* @__PURE__ */ new Map();
           const materialPaths = /* @__PURE__ */ new Set();
@@ -32136,7 +32304,10 @@ function createThreeSceneRenderer(opts) {
         if (isolate.size > 0) {
           stage = new ObjectEffectStage(result.player, {
             wallpaperId: id,
-            screenScale
+            screenScale,
+            // util 专用快照槽门控：只有 util 内容层允许把整帧快照绑到 `_rt_FullFrameBuffer`；
+            // 对象链门控（ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER）保持关闭。无 util 内容层 ⇒ 不下发。
+            allowFrameSnapshot: utilContentIds.size > 0 ? (objId) => utilContentIds.has(objId) : void 0
           });
           for (const [objId, iso] of isolate) {
             stage.setWorldSize(

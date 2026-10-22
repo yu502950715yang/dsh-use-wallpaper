@@ -742,3 +742,72 @@ describe('ObjectEffectStage', () => {
     expect(runner.dispose).toHaveBeenCalled();
   });
 });
+
+// ── v0.8.2 T3：util 专用 `_rt_FullFrameBuffer` 槽门控 ──
+// 真实 util 链读 `bind: previous`（层内容，由 player 的 util 内容输入提供），只有**显式引用**
+// 全局快照槽的链才需要把快照作为 g_TextureN 绑进去；且只允许 util 层（对象链门控保持关闭）。
+describe('allowFrameSnapshot（util 专用快照槽门控）', () => {
+  const referencing = () => [[pass({ textureSlots: [null, '_rt_FullFrameBuffer'] })]];
+  type MockRunnerView = { update: { mock: { calls: unknown[][] } } };
+  const snapshotCallArg = (runner: MockRunnerView, i: number): unknown =>
+    runner.update.mock.calls[i][2];
+
+  it('仅「允许 + 链显式引用」的条目绑定快照；不允许/未引用 → 不把快照交给链', async () => {
+    const host = createHost([
+      { id: 58, rtWidth: 10, rtHeight: 10 },
+      { id: 59, rtWidth: 10, rtHeight: 10 },
+      { id: 60, rtWidth: 10, rtHeight: 10 },
+    ]);
+    const stage = new ObjectEffectStage(host as never, {
+      wallpaperId: 'w', screenScale: 1,
+      allowFrameSnapshot: (id) => id === 58 || id === 59,
+    });
+    const runnerOf = (id: number): MockRunnerView =>
+      stage.debugRunners().get(id) as unknown as MockRunnerView;
+    const snap = new THREE.Texture();
+    stage.setFrameSnapshot(snap);
+    stage.setObjectChains(58, referencing()); // 允许 + 引用 → 绑定
+    stage.setObjectChains(59, [[pass()]]);    // 允许但未引用 → 不绑定
+    stage.setObjectChains(60, referencing()); // 引用但不允许（对象链保持关闭）→ 不绑定
+    expect(stage.frameSnapshotBound(58)).toBe(true);
+    expect(stage.frameSnapshotBound(59)).toBe(false);
+    expect(stage.frameSnapshotBound(60)).toBe(false);
+    const r58 = runnerOf(58);
+    const r59 = runnerOf(59);
+    const r60 = runnerOf(60);
+    stage.advance(1);
+    // 全局串行：一次 advance 只同步发起第一个 update，其余排队 —— 排空后再断言。
+    await new Promise((r) => setTimeout(r, 0));
+    // 58 用全局快照兜底（即使是链引用槽、但本帧没有段边界通知的形态）；59/60 一律 null。
+    expect(snapshotCallArg(r58, 0)).toBe(snap);
+    expect(snapshotCallArg(r59, 0)).toBeNull();
+    expect(snapshotCallArg(r60, 0)).toBeNull();
+    // 段边界快照优先于全局快照（同一帧内容），仍只对允许的链生效。
+    const boundary = new THREE.Texture();
+    stage.onSegmentBoundary(58, boundary);
+    stage.onSegmentBoundary(60, boundary);
+    stage.advance(2);
+    await new Promise((r) => setTimeout(r, 0)); // 排队的 59/60 也要跑完（全局串行）
+    expect(snapshotCallArg(r58, 1)).toBe(boundary);
+    expect(snapshotCallArg(r60, 1)).toBeNull();
+    // setFrameSnapshot(null)：清空全局兜底 ⇒ 允许的链在无边界通知时也拿不到快照。
+    stage.setFrameSnapshot(null);
+    stage.advance(3);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(snapshotCallArg(r58, 2)).toBeNull();
+    stage.dispose();
+  });
+
+  it('缺省 allowFrameSnapshot（旧调用方）→ 段边界快照照常交给链（零回归）', () => {
+    const host = createHost([{ id: 1, rtWidth: 10, rtHeight: 10 }]);
+    const stage = new ObjectEffectStage(host as never, { wallpaperId: 'w', screenScale: 1 });
+    const runner = createMockRunner();
+    stage.debugInjectRunner(1, runner as never);
+    const snapshot = new THREE.Texture();
+    stage.onSegmentBoundary(1, snapshot);
+    stage.advance(1);
+    expect(runner.update.mock.calls[0][2]).toBe(snapshot);
+    expect(stage.frameSnapshotBound(1)).toBe(false); // 探针只报告新门控，不改变旧路径
+    stage.dispose();
+  });
+});

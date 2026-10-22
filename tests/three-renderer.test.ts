@@ -1015,9 +1015,11 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
       },
     ]), FX_FILES);
     defaultLoadWasm.mockResolvedValue(null);
+    const registerFrameConsumer = vi.fn();
     const player = {
       dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage: vi.fn(),
       setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn(),
+      registerFrameConsumer,
       renderer: {},
       isolatedObjects: () => [
         { id: 58, kind: 'background', rtWidth: 1920, rtHeight: 1080, rtTexture: {} },
@@ -1056,6 +1058,8 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     expect(chainsSpy.mock.calls.map((c) => c[0])).toEqual([58, 37, 327]);
     // util 层不再算「挂在未参与渲染的对象类型上」。
     expect(warn.mock.calls.some((c) => String(c[0]).includes('未参与渲染'))).toBe(false);
+    // T3：passthrough util（58/37）登记为帧消费者（内容输入 = 整帧快照）；solid（327）不登记。
+    expect(registerFrameConsumer.mock.calls.map((c) => c[0])).toEqual([58, 37]);
 
     worldSpy.mockRestore();
     chainsSpy.mockRestore();
@@ -1075,9 +1079,11 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
       { id: 61, name: 'no-effects', image: 'models/util/solidlayer.json', size: '1000 1000', scale: '0.87 -0.98 1' },
     ]), FX_FILES);
     defaultLoadWasm.mockResolvedValue(null);
+    const registerFrameConsumer = vi.fn();
     const player = {
       dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage: vi.fn(),
       setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn(),
+      registerFrameConsumer,
       renderer: {}, isolatedObjects: () => [],
     };
     loadSceneToThree.mockReturnValue({ player, sims: [], backgroundIds: [0], particleLayers: [], puppetLayers: [] } as never);
@@ -1092,6 +1098,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     expect([...assets.isolate.keys()]).toEqual([54]);
     expect(worldSpy.mock.calls.map((c) => c[0])).toEqual([54]);
     expect(chainsSpy.mock.calls.map((c) => c[0])).toEqual([54]);
+    expect(registerFrameConsumer.mock.calls.map((c) => c[0])).toEqual([54]); // fullscreen = 内容输入消费者
     expect(warn.mock.calls.some((c) => String(c[0]).includes('未参与渲染'))).toBe(false);
 
     worldSpy.mockRestore();
@@ -1446,6 +1453,75 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     warn.mockRestore();
     r.dispose();
   });
+
+  // v0.8.2 T3：util 层内容输入 = 整帧快照 ⇒ 每个 **passthrough** util 层（project/fullscreen/
+  // compose）都登记为帧消费者（段边界才有快照可写成内容）；solid 保留纯色内容、不登记。
+  // `_rt_FullFrameBuffer` 槽门控只对「util + 链显式引用」开放：对象链（image）保持关闭。
+  it('util 内容输入：passthrough util 登记帧消费者；solid 与对象链不登记，槽门控只放行 util', async () => {
+    const framePass = { passes: [{ textures: [null, '_rt_FullFrameBuffer'] }] };
+    stubAssetFetch(sceneWith([
+      {
+        id: 13, name: 'image-godrays', image: 'models/a.json',
+        origin: '960 540 0', scale: '1 1 1', size: '1920 1080',
+        effects: [{ file: 'effects/frame/effect.json', ...framePass }],
+      },
+      {
+        id: 58, name: 'project', image: 'models/util/projectlayer.json',
+        origin: '960 540 0', scale: '1 1 1', size: '1920 1080',
+        effects: [{ file: 'effects/frame/effect.json', ...framePass }],
+      },
+      {
+        id: 37, name: 'compose', image: 'models/util/composelayer.json',
+        origin: '200 200 0', scale: '1 1 1', size: '400 850',
+        effects: [{ file: 'effects/w/effect.json' }], // 不引用全局快照槽（真实 util 链读 previous）
+      },
+      {
+        id: 327, name: 'solid', image: 'models/util/solidlayer.json',
+        origin: '0 0 0', scale: '0.87 -0.98 0.1', size: '1000 1000',
+        alpha: 0, color: '0.79 0.79 0.79',
+        effects: [{ file: 'effects/frame/effect.json', ...framePass }],
+      },
+    ]), FX_FILES_FRAME_RT);
+    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null });
+    defaultLoadWasm.mockResolvedValue(null);
+    const registerFrameConsumer = vi.fn();
+    const setFrameCapture = vi.fn();
+    const setObjectEffectStage = vi.fn();
+    const player = {
+      dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage,
+      setGlowStage: vi.fn(), setFrameCapture, registerFrameConsumer,
+      currentFrameSnapshot: () => null,
+      setParallax: vi.fn(), setParallaxPointer: vi.fn(),
+      renderer: {},
+      isolatedObjects: () => [
+        { id: 13, kind: 'background', rtWidth: 1920, rtHeight: 1080, rtTexture: {} },
+        { id: 58, kind: 'background', rtWidth: 1920, rtHeight: 1080, rtTexture: {} },
+        { id: 37, kind: 'background', rtWidth: 400, rtHeight: 850, rtTexture: {} },
+        { id: 327, kind: 'background', rtWidth: 870, rtHeight: 980, rtTexture: {} },
+      ],
+    };
+    loadSceneToThree.mockReturnValue({ player, sims: [], backgroundIds: [0, 1, 2, 3], particleLayers: [], puppetLayers: [], } as never);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    expect(await r.render('2911105183', document.createElement('canvas'), null)).toBe(true);
+
+    // 只有 passthrough util（58 project / 37 compose）登记；solid 327 与 image 13 不登记。
+    expect(registerFrameConsumer.mock.calls.map((c) => c[0])).toEqual([58, 37]);
+    // capture 必须先注入、再登记消费者（否则 checkFrameConsumers 命不中 → 不 active）。
+    expect(setFrameCapture.mock.invocationCallOrder[0])
+      .toBeLessThan(registerFrameConsumer.mock.invocationCallOrder[0]);
+    // 槽门控：util 58 的链显式引用 → 绑定；37 未引用 → 不绑定；solid/image 一律不绑定。
+    const stage = setObjectEffectStage.mock.calls[0][0] as ObjectEffectStage;
+    expect(stage.frameSnapshotBound(58)).toBe(true);
+    expect(stage.frameSnapshotBound(37)).toBe(false);
+    expect(stage.frameSnapshotBound(327)).toBe(false);
+    expect(stage.frameSnapshotBound(13)).toBe(false);
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes('尚无隔离条目'))).toHaveLength(0);
+
+    warn.mockRestore();
+    r.dispose();
+  });
 });
 
 // Task 5：挂载期隔离对象 RT 的新口径 —— min(源纹理长边, 4096) 等比收口、只升不降（下限仍是屏占位），
@@ -1483,6 +1559,7 @@ describe('对象级效果链：隔离 RT 尺寸按源纹理收口 4096', () => {
     defaultLoadWasm.mockResolvedValue(null); // 本场景无粒子
     const player = {
       dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn(), setObjectEffectStage: vi.fn(),
+      registerFrameConsumer: vi.fn(),
       renderer: {}, isolatedObjects: () => [],
     };
     loadSceneToThree.mockReturnValue({ player, sims: [], backgroundIds: [0], particleLayers: [], puppetLayers: [], } as never);

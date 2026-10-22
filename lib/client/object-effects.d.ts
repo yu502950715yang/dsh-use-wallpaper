@@ -62,11 +62,18 @@ export declare class ObjectEffectStage implements ObjectEffectStage {
     private warned;
     /** 本帧各对象在段边界拿到的整帧快照 + **捕获当刻**的快照代号（advance 消费后清空，快照逐帧覆盖）。 */
     private boundarySnapshots;
+    /** 最近一次段边界快照（player 同步）：`allowFrameSnapshot` 放行的链在无本帧边界通知时用它兜底。 */
+    private frameSnapshot;
+    /** util 专用 `_rt_FullFrameBuffer` 槽门控：缺省 undefined = 旧语义（边界快照照常交给链）。 */
+    private readonly allowFrameSnapshot?;
     /** 音频频谱源：每帧同一缓冲引用；null = 全零静音（无音频/音效关闭）。 */
     private audioSpectrum;
     constructor(host: ObjectEffectHost, opts: {
         wallpaperId: string;
         screenScale: number;
+        /** util 内容层的快照槽门控（渲染器按 util 内容 id 下发）；只有它放行 **且** 链真的引用
+         *  `_rt_FullFrameBuffer` 时，快照才作为纹理槽绑进链（对象链门控保持关闭）。 */
+        allowFrameSnapshot?: (objectId: number) => boolean;
     });
     /** 当前屏幕密度（设备像素 / 世界单位）；同源下发契约见类头。 */
     private scale;
@@ -94,6 +101,15 @@ export declare class ObjectEffectStage implements ObjectEffectStage {
     /** 执行当刻判「快照已换代」：实时代号 ≠ 捕获当刻代号 ⇒ 快照纹理已被 resize/dispose 换掉。
      *  `-1`（宿主未提供代号）不作废 —— 无从比较时按既有语义照常使用。 */
     private snapshotStale;
+    /** 段边界快照同步（由 player 在每个段边界调用）：`allowFrameSnapshot` 放行的链在没有本帧
+     *  边界通知时用它兜底绑 `_rt_FullFrameBuffer` 槽。 */
+    setFrameSnapshot(frameTexture: THREE.Texture | null): void;
+    /** 测试/诊断：该对象的链是否真的会绑整帧快照（放行 + 链显式引用 `_rt_FullFrameBuffer`）。 */
+    frameSnapshotBound(objectId: number): boolean;
+    /** 交给 runner 的快照纹理（执行当刻求值）：
+     *  - 缺省 `allowFrameSnapshot`：旧语义 = 本帧段边界快照（对象链门控仍由全局常量负责）；
+     *  - 有门控：未放行/未引用 ⇒ null（绝不把快照漏给对象链）；放行 ⇒ 边界快照优先、全局快照兜底。 */
+    private frameTextureFor;
     dispose(): void;
     debugRunners(): Map<number, EffectRunner>;
     debugInjectRunner(id: number, runner: EffectRunner): void;

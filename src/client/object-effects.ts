@@ -141,6 +141,9 @@ interface ObjectChainEntry {
   /** 是否参与 `fitIsolatedBudget`（resize 期预算输入集合）：与挂载期 isolateItems 一致 = 只有 image。
    *  util/particle/text 的 RT 不随预算收窄（util 若计入会把 image 的 4096 升级幅度挤回屏占位）。 */
   budgeted: boolean;
+  /** 该对象的链是否「被放行且显式引用整帧快照」（`allowFrameSnapshot` + referencesFrameSnapshot）：
+   *  只有它为 true 时 advance 才把快照交给 runner 绑 `_rt_FullFrameBuffer` 槽。 */
+  frameSnapshotBound: boolean;
 }
 
 export class ObjectEffectStage implements ObjectEffectStage {
@@ -158,15 +161,26 @@ export class ObjectEffectStage implements ObjectEffectStage {
   private warned = new Set<string>();
   /** 本帧各对象在段边界拿到的整帧快照 + **捕获当刻**的快照代号（advance 消费后清空，快照逐帧覆盖）。 */
   private boundarySnapshots = new Map<number, { texture: THREE.Texture; version: number }>();
+  /** 最近一次段边界快照（player 同步）：`allowFrameSnapshot` 放行的链在无本帧边界通知时用它兜底。 */
+  private frameSnapshot: THREE.Texture | null = null;
+  /** util 专用 `_rt_FullFrameBuffer` 槽门控：缺省 undefined = 旧语义（边界快照照常交给链）。 */
+  private readonly allowFrameSnapshot?: (objectId: number) => boolean;
   /** 音频频谱源：每帧同一缓冲引用；null = 全零静音（无音频/音效关闭）。 */
   private audioSpectrum: Uint8Array | null = null;
 
   constructor(
     private readonly host: ObjectEffectHost,
-    opts: { wallpaperId: string; screenScale: number },
+    opts: {
+      wallpaperId: string;
+      screenScale: number;
+      /** util 内容层的快照槽门控（渲染器按 util 内容 id 下发）；只有它放行 **且** 链真的引用
+       *  `_rt_FullFrameBuffer` 时，快照才作为纹理槽绑进链（对象链门控保持关闭）。 */
+      allowFrameSnapshot?: (objectId: number) => boolean;
+    },
   ) {
     this.wallpaperId = opts.wallpaperId;
     this.screenScale = opts.screenScale;
+    this.allowFrameSnapshot = opts.allowFrameSnapshot;
   }
 
   /** 当前屏幕密度（设备像素 / 世界单位）；同源下发契约见类头。 */
@@ -194,7 +208,16 @@ export class ObjectEffectStage implements ObjectEffectStage {
       entry.budgeted = budgeted;
       return;
     }
-    this.entries.set(objId, { runner: null, chains: [], plan: null, worldW, worldH, source, budgeted });
+    this.entries.set(objId, {
+      runner: null,
+      chains: [],
+      plan: null,
+      worldW,
+      worldH,
+      source,
+      budgeted,
+      frameSnapshotBound: false,
+    });
   }
 
   /** 挂载某对象的效果链（线性链与具名 RT 图链一视同仁，计划交执行器执行）。调用顺序契约：
@@ -211,13 +234,16 @@ export class ObjectEffectStage implements ObjectEffectStage {
       return;
     }
     // 引用整帧快照的链本应把该对象登记为段边界消费者（不登记 ⇒ frameCapture 不 active ⇒ 该链拿不到
-    // 快照），但该消费路径**本轮门控关闭**（`ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER`，理由见其定义）。
+    // 快照）。对象链的该消费路径**本轮仍关闭**（`ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER`）；util 内容
+    // 层由渲染器登记消费者，并经 `allowFrameSnapshot` 显式放行快照槽（见 advance 的 gating）。
     // 判定与执行共用**同一份计划**（`pp.bindings` 为唯一来源，见 referencesFrameSnapshot）。
     const plan = buildEffectPlan(chains, { baseWidth: view.rtWidth, baseHeight: view.rtHeight });
     if (ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER && referencesFrameSnapshot(chains, plan)) {
       this.host.registerFrameConsumer(objId);
     }
-    this.mount(objId, chains, view.rtWidth, view.rtHeight, plan);
+    const frameSnapshotBound = this.allowFrameSnapshot?.(objId) === true
+      && referencesFrameSnapshot(chains, plan);
+    this.mount(objId, chains, view.rtWidth, view.rtHeight, plan, frameSnapshotBound);
   }
 
   /** 视口变化：按新的**屏幕密度**重算每个对象的 RT 像素尺寸，并用同一份链重挂（runner 内部 RT 跟随）。
@@ -317,14 +343,37 @@ export class ObjectEffectStage implements ObjectEffectStage {
       // 再比一次 —— 不一致就按「无快照」（链退回 1×1 白）走，而不是采已释放的纹理（那会把该对象
       // 整块画黑）。判据只看**真的换代**（代号变），不随段边界/帧序自增 ⇒ 排到下一帧执行的 update
       // 不受影响。
-      this.enqueue(() => runner.update(
-        time,
-        view.rtTexture,
-        item !== null && !this.snapshotStale(item.version) ? item.texture : null,
-      ));
+      // 槽门控（frameTextureFor）在**执行当刻**求值：全局兜底快照以最新一份为准。
+      const entry = this.entries.get(view.id);
+      this.enqueue(() => runner.update(time, view.rtTexture, this.frameTextureFor(entry, item)));
     }
     // 快照内容逐帧覆盖 ⇒ 只能本帧用：清空后下一帧无边界通知时回到 null（不跨帧持有）。
     this.boundarySnapshots.clear();
+  }
+
+  /** 段边界快照同步（由 player 在每个段边界调用）：`allowFrameSnapshot` 放行的链在没有本帧
+   *  边界通知时用它兜底绑 `_rt_FullFrameBuffer` 槽。 */
+  setFrameSnapshot(frameTexture: THREE.Texture | null): void {
+    if (this.disposed) return;
+    this.frameSnapshot = frameTexture;
+  }
+
+  /** 测试/诊断：该对象的链是否真的会绑整帧快照（放行 + 链显式引用 `_rt_FullFrameBuffer`）。 */
+  frameSnapshotBound(objectId: number): boolean {
+    return this.entries.get(objectId)?.frameSnapshotBound === true;
+  }
+
+  /** 交给 runner 的快照纹理（执行当刻求值）：
+   *  - 缺省 `allowFrameSnapshot`：旧语义 = 本帧段边界快照（对象链门控仍由全局常量负责）；
+   *  - 有门控：未放行/未引用 ⇒ null（绝不把快照漏给对象链）；放行 ⇒ 边界快照优先、全局快照兜底。 */
+  private frameTextureFor(
+    entry: ObjectChainEntry | undefined,
+    item: { texture: THREE.Texture; version: number } | null,
+  ): THREE.Texture | null {
+    const boundary = item !== null && !this.snapshotStale(item.version) ? item.texture : null;
+    if (!this.allowFrameSnapshot) return boundary;
+    if (entry?.frameSnapshotBound !== true) return null;
+    return boundary ?? this.frameSnapshot;
   }
 
   /** 画布缓冲/视口变化：`FrameCapture.resize()` 会 dispose 旧快照并重建 ⇒ 作废**尚未被 advance 消费**
@@ -332,6 +381,7 @@ export class ObjectEffectStage implements ObjectEffectStage {
   notifyViewportResize(): void {
     if (this.disposed) return;
     this.boundarySnapshots.clear();
+    this.frameSnapshot = null; // 全局兜底同样已作废（旧快照纹理已被 dispose）
   }
 
   dispose(): void {
@@ -340,6 +390,7 @@ export class ObjectEffectStage implements ObjectEffectStage {
     // 丢弃尚未发起的排队任务：runner 即将被释放，再跑 update 只会碰已释放的 RT/材质。
     this.queue.length = 0;
     this.boundarySnapshots.clear(); // 快照引用属本帧，dispose 后不得再被传进 runner
+    this.frameSnapshot = null;
     for (const entry of this.entries.values()) entry.runner?.dispose();
     this.entries.clear();
   }
@@ -361,6 +412,7 @@ export class ObjectEffectStage implements ObjectEffectStage {
       worldH: view ? view.rtHeight / this.scale() : 1,
       source: null,
       budgeted: false,
+      frameSnapshotBound: false,
     });
   }
 
@@ -408,17 +460,28 @@ export class ObjectEffectStage implements ObjectEffectStage {
 
   /** `plan` 由调用方传入（`setObjectChains` 已按同一尺寸算过一份，且用它判定过消费者）：
    *  再算一遍会让「判定用的计划」与「执行用的计划」可能分叉。 */
-  private mount(objId: number, chains: CompiledEffectPass[][], rtW: number, rtH: number, plan: EffectPlan): void {
+  private mount(
+    objId: number,
+    chains: CompiledEffectPass[][],
+    rtW: number,
+    rtH: number,
+    plan: EffectPlan,
+    frameSnapshotBound: boolean,
+  ): void {
     let entry = this.entries.get(objId);
     if (!entry) {
       // 反向从实测 RT 像素推世界尺寸（仅在 setWorldSize 未先行时兜底）；源尺寸未知 ⇒ null（回退屏占位）。
-      entry = { runner: null, chains, plan: null, worldW: rtW / this.scale(), worldH: rtH / this.scale(), source: null, budgeted: false };
+      entry = {
+        runner: null, chains, plan: null, worldW: rtW / this.scale(), worldH: rtH / this.scale(),
+        source: null, budgeted: false, frameSnapshotBound,
+      };
       this.entries.set(objId, entry);
     }
     // setWorldSize 可能已先建条目（three-renderer 的顺序是 setWorldSize → setObjectChains），此时
     // 保留其世界尺寸，不被 RT 尺寸/密度反推覆盖。
     entry.chains = chains;
     entry.plan = plan;
+    entry.frameSnapshotBound = frameSnapshotBound;
     if (!entry.runner) {
       // 纹理槽按 WE 约定加载（v=0=图像顶部，与对象 RT 的 v 约定同一套，见 weVRowOrderLoader）。
       entry.runner = new EffectRunner(this.host.renderer, rtW, rtH, { load: weVRowOrderLoader() });

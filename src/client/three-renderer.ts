@@ -863,6 +863,8 @@ export function createThreeSceneRenderer(opts?: {
             // 音频频谱：本帧渲染前刷新一次；runner 读同一缓冲（无音频 → null）。
             currentAudio?.analyzer.update();
             currentStage?.setAudioSpectrum(currentAudio?.analyzer.freqData ?? null);
+            // util 快照槽门控：把 player 最近一次段边界快照同步给编排器（`_rt_FullFrameBuffer` 兜底）。
+            currentStage?.setFrameSnapshot(current?.player.currentFrameSnapshot?.() ?? null);
             const host = currentScriptHost;
             const loaded = current;
             if (!host || !loaded) return;
@@ -903,6 +905,15 @@ export function createThreeSceneRenderer(opts?: {
         if (frameCapture === null) frameCapture = createFrameCapture(captureRenderer);
         frameCaptureRenderer = captureRenderer;
         result.player.setFrameCapture(frameCapture);
+        // util 层内容输入（v0.8.2 T3）：真实 util 链读 `bind: previous`（层内容）⇒ 段边界拍快照写成
+        // 层内容，故每个 passthrough util 层（project/fullscreen/compose）都要登记帧消费者。
+        // solid 层内容是纯色（不随画面变化）⇒ 不登记、不参与快照槽门控。
+        const utilContentIds = new Set<number>();
+        for (const objId of isolate.keys()) {
+          const obj = desc.objects.find((o) => o.id === objId);
+          if (obj?.kind === 'util' && obj.layerKind !== 'solid') utilContentIds.add(objId);
+        }
+        for (const utilId of utilContentIds) result.player.registerFrameConsumer(utilId);
 
         // 装配 SceneScript 运行时。失败（quickjs 不可用）→ host 为 null，onFrame 直接返回，画面等于现状；
         // 绝不把脚本异常抛进帧循环。
@@ -997,6 +1008,11 @@ export function createThreeSceneRenderer(opts?: {
         if (isolate.size > 0) {
           stage = new ObjectEffectStage(result.player, {
             wallpaperId: id, screenScale,
+            // util 专用快照槽门控：只有 util 内容层允许把整帧快照绑到 `_rt_FullFrameBuffer`；
+            // 对象链门控（ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER）保持关闭。无 util 内容层 ⇒ 不下发。
+            allowFrameSnapshot: utilContentIds.size > 0
+              ? (objId) => utilContentIds.has(objId)
+              : undefined,
           });
           // 顺序契约：先 setWorldSize（尺寸的唯一来源），再 setObjectChains（后者不覆盖世界尺寸）。
           // 世界尺寸直接用 isolate 里已算好的值（同一份计算的两个消费者），不另存一份映射；键一律用对象 id。

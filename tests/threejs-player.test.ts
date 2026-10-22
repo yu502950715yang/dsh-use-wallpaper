@@ -3099,6 +3099,116 @@ describe('ThreeScenePlayer 段渲染（frameCapture）', () => {
     warn.mockRestore();
     player.dispose();
   });
+
+  // ── v0.8.2 F2 / T3：快照作为 util 层**内容输入**（真实 util 链读 bind: previous，不读
+  //    `_rt_FullFrameBuffer`）。段边界拍到快照后把它写成内容材质 map，并立即重渲该层内容进 RT
+  //    ⇒ 同一帧 advance 的效果链输入就是本帧内容（不是上一帧的透明占位）。
+  /** 全屏 util 层（2597392171 #54 形态）：场景 3840×6000、视口 1920×1080（竖构图被横向裁切）。 */
+  function addFullscreenUtil(player: ThreeScenePlayer): void {
+    player.setSceneSize(3840, 6000);
+    player.addBackground({
+      origin: [1920, 3000, 0], size: [3840, 6000], scale: [1, 1, 1],
+      sceneW: 3840, sceneH: 6000, objectId: 54, renderOrder: 0, util: 'fullscreen',
+      isolate: { objectId: 54, rtWidth: 640, rtHeight: 1000, worldW: 3840, worldH: 6000 },
+    });
+  }
+
+  it('util 层登记帧消费者 → 段边界把快照写成内容输入并重渲进 RT', () => {
+    const { player, mock } = makePlayer(1920, 1080);
+    addFullscreenUtil(player);
+    const cap = createFrameCapture(mock as unknown as THREE.WebGLRenderer);
+    player.setFrameCapture(cap);
+    expect(player.utilContentTextureForTest(54)).toBeNull(); // 帧消费者未登记前仍是透明占位
+    player.registerFrameConsumer(54);
+    expect(cap.active).toBe(true);
+    player.render();
+
+    // ① 段边界恰好一次快照，内容材质换成同一张快照纹理（不是占位）。
+    expect(mock._copies).toHaveLength(1);
+    const snap = mock._copies[0].texture as THREE.Texture;
+    expect(player.utilContentTextureForTest(54)).toBe(snap);
+    expect(player.currentFrameSnapshot()).toBe(snap);
+    const iso = player.isolatedObjects().find((o) => o.id === 54)!;
+    const content = iso.localScene.children[0] as THREE.Mesh;
+    const mat = content.material as THREE.MeshBasicMaterial;
+    expect(mat.map).toBe(snap);
+    expect(mat.opacity).toBe(1);
+
+    // ② 快照在帧首内容渲染**之后**、内容重渲**之前**：后者保证链输入是本帧内容。
+    expect(mock._copies[0].rendersBefore).toBe(1); // 帧首 renderIsolatedContents 已经画过一张
+    const contentRenders = mock._renders.filter((r) => r.scene === iso.localScene);
+    expect(contentRenders).toHaveLength(2);        // 帧首一次 + 段边界重渲一次
+    expect(mock._renders[1].scene).toBe(iso.localScene);
+    expect(mock._renders[1].target).toBe(iso.rt);
+
+    // ③ cover 映射：3840×6000 场景在 1920×1080 视口下 cover = 3840×2160（裁高度）⇒
+    //    快照占内容 mesh UV 的中间横带（sy=0.32, sh=0.36），**不是**拉伸到整块。
+    expect(player.utilContentUvForTest(54)!).toEqual({
+      sx: 0, sy: expect.closeTo(0.32, 6), sw: 1, sh: expect.closeTo(0.36, 6),
+    });
+    const uv = (content.geometry as THREE.PlaneGeometry).attributes.uv.array as Float32Array;
+    // PlaneGeometry 顶点 uv = [(0,1),(1,1),(0,0),(1,0)]；变换后 u 不变、v' = (v - 0.32)/0.36。
+    // v=1（画面顶）→ 1.889、v=0（画面底）→ -0.889：v 方向**不翻**（快照 v=0 = 画面底）。
+    expect(uv[0]).toBeCloseTo(0, 6);
+    expect(uv[1]).toBeCloseTo((1 - 0.32) / 0.36, 5);
+    expect(uv[2]).toBeCloseTo(1, 6);
+    expect(uv[5]).toBeCloseTo((0 - 0.32) / 0.36, 5);
+    player.dispose();
+  });
+
+  it('setUtilContentTexture：显式 cover 生效（探针回读 + 几何 UV 按 (u-sx)/sw 重写）', () => {
+    const { player } = makePlayer(1920, 1080);
+    addFullscreenUtil(player);
+    const tex = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+    tex.needsUpdate = true;
+    player.setUtilContentTexture(54, tex, { cover: { sx: 0, sy: 0.25, sw: 1, sh: 0.5 } });
+    expect(player.utilContentTextureForTest(54)).toBe(tex);
+    expect(player.utilContentUvForTest(54)).toEqual({ sx: 0, sy: 0.25, sw: 1, sh: 0.5 });
+    const iso = player.isolatedObjects().find((o) => o.id === 54)!;
+    const uv = ((iso.localScene.children[0] as THREE.Mesh).geometry as THREE.PlaneGeometry)
+      .attributes.uv.array as Float32Array;
+    expect(uv[1]).toBeCloseTo((1 - 0.25) / 0.5, 6); // 1.5
+    expect(uv[5]).toBeCloseTo((0 - 0.25) / 0.5, 6); // -0.5
+    // 无 cover 参数 = 全 UV（几何回到 [0,1]²）
+    player.setUtilContentTexture(54, tex);
+    expect(player.utilContentUvForTest(54)).toEqual({ sx: 0, sy: 0, sw: 1, sh: 1 });
+    expect(uv[1]).toBeCloseTo(1, 6);
+    expect(uv[5]).toBeCloseTo(0, 6);
+    player.dispose();
+  });
+
+  it('solid util 层保留纯色内容：快照只填 passthrough 内容（不建内容输入条目）', () => {
+    const { player } = makePlayer(1920, 1080);
+    player.addBackground({
+      origin: [960, 540, 0], size: [1000, 1000], scale: [1, 1, 1],
+      sceneW: 1920, sceneH: 1080, objectId: 327, renderOrder: 0, util: 'solid',
+      color: [255, 0, 0], alpha: 0.5,
+      isolate: { objectId: 327, rtWidth: 500, rtHeight: 500, worldW: 1000, worldH: 1000 },
+    });
+    player.setUtilContentTexture(327, new THREE.DataTexture(new Uint8Array(4), 1, 1));
+    expect(player.utilContentTextureForTest(327)).toBeNull();
+    const iso = player.isolatedObjects().find((o) => o.id === 327)!;
+    const mat = (iso.localScene.children[0] as THREE.Mesh).material as THREE.MeshBasicMaterial;
+    expect(mat.map ?? null).toBeNull();     // 纯色内容不被快照替换
+    expect(mat.color.r).toBeCloseTo(1, 6);  // 颜色仍在（#ff0000）
+    player.dispose();
+  });
+
+  it('无帧消费者：util 内容保持透明占位、帧序不变（零回归）', () => {
+    const { player, mock } = makePlayer(1920, 1080);
+    addFullscreenUtil(player);
+    const cap = createFrameCapture(mock as unknown as THREE.WebGLRenderer);
+    player.setFrameCapture(cap);           // 未登记消费者 ⇒ 不激活段渲染
+    player.render();
+    expect(cap.active).toBe(false);
+    expect(mock._copies).toHaveLength(0);
+    expect(player.utilContentTextureForTest(54)).toBeNull();
+    expect(mock._renders.filter((r) => r.scene === player.scene)).toHaveLength(1);
+    const mat = (player.isolatedObjects()[0].localScene.children[0] as THREE.Mesh)
+      .material as THREE.MeshBasicMaterial;
+    expect(mat.opacity).toBe(0);           // T2 的透明占位不变
+    player.dispose();
+  });
 });
 
 // v0.8.1 F8：壁纸级 bloom（scene.json general.bloom*）与应用级 Glow 的两级串联。
