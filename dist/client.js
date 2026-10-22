@@ -23129,6 +23129,18 @@ function fitIsolatedBudget(items, density, budgetBytes = ISOLATED_RT_BUDGET_BYTE
   return lo;
 }
 
+// src/client/alignment.ts
+function alignOffset(worldW, worldH, alignment) {
+  const a = typeof alignment === "string" ? alignment.toLowerCase() : "";
+  const half = (v) => Number.isFinite(v) ? Math.abs(v) / 2 : 0;
+  const w = half(worldW);
+  const h = half(worldH);
+  return {
+    x: a.includes("left") ? w : a.includes("right") ? -w : 0,
+    y: a.includes("top") ? -h : a.includes("bottom") ? h : 0
+  };
+}
+
 // src/client/parallax.ts
 var DEFAULT_PARALLAX = { enabled: false, amount: 0, delay: 0, mouseInfluence: 0 };
 function num(v, fallback) {
@@ -24270,6 +24282,12 @@ function resolvePixelRatio(devicePixelRatio, qualityScale) {
   const scale = Number.isFinite(qualityScale) && qualityScale > 0 ? qualityScale : 1;
   return dpr * scale;
 }
+function alignmentWorldOffset(size, scale, angles, alignment) {
+  const off = alignOffset(size[0], size[1], alignment);
+  if (off.x === 0 && off.y === 0) return [0, 0];
+  const v = new Vector3(off.x * scale[0], off.y * scale[1], 0).applyEuler(new Euler(angles[0], angles[1], angles[2]));
+  return [v.x, v.y];
+}
 var ThreeScenePlayer = class {
   renderer;
   scene;
@@ -24631,8 +24649,10 @@ var ThreeScenePlayer = class {
     if (!cfg) return;
     this.parallaxFollow = advancePointer(this.parallaxFollow, this.parallaxTarget, cfg, dt);
     for (const entry of this.backgroundEntries.values()) {
-      const x = entry.origin[0] - entry.sceneW / 2;
-      const y = entry.origin[1] - entry.sceneH / 2;
+      const bx = entry.origin[0] - entry.sceneW / 2;
+      const by = entry.origin[1] - entry.sceneH / 2;
+      const x = bx + entry.align[0];
+      const y = by + entry.align[1];
       const z = entry.origin[2];
       const d = entry.parallaxDepth;
       const depth = d && (d[0] !== 0 || d[1] !== 0) ? d : null;
@@ -24648,8 +24668,8 @@ var ThreeScenePlayer = class {
         // OWE 的 ortho 是**场景**正交尺寸（general.orthogonalprojection），不是窗口尺寸。
         orthoW: this.sceneWidth,
         orthoH: this.sceneHeight,
-        nodeX: x,
-        nodeY: y,
+        nodeX: bx,
+        nodeY: by,
         // three 坐标下主相机位于场景中心（we_to_three 已把中心移到原点）。
         camX: 0,
         camY: 0,
@@ -25101,7 +25121,7 @@ var ThreeScenePlayer = class {
     const w = size?.[0] ?? fallbackW;
     const h = size?.[1] ?? fallbackH;
     const geometry = new PlaneGeometry(w, h);
-    const mod = materialModulation(void 0, opts.alpha, opts.brightness);
+    const mod = materialModulation(opts.color, opts.alpha, opts.brightness);
     const material = opts.util ? this.createUtilLayerMaterial(
       resolveUtilMaterial(opts.util, { color: opts.color, alpha: opts.alpha }),
       !!opts.isolate,
@@ -25113,7 +25133,12 @@ var ThreeScenePlayer = class {
     mesh.scale.set(s[0], s[1], s[2] ?? 1);
     const a = opts.angles ?? [0, 0, 0];
     mesh.rotation.set(a[0], a[1], a[2]);
-    mesh.position.set(origin[0] - sceneW / 2, origin[1] - sceneH / 2, origin[2]);
+    const align = alignmentWorldOffset([w, h], s, a, opts.alignment);
+    mesh.position.set(
+      origin[0] - sceneW / 2 + align[0],
+      origin[1] - sceneH / 2 + align[1],
+      origin[2]
+    );
     const id = this.nextBackgroundId++;
     const worldW = opts.isolate?.worldW ?? Math.abs(w * s[0]);
     const worldH = opts.isolate?.worldH ?? Math.abs(h * s[1]);
@@ -25125,8 +25150,8 @@ var ThreeScenePlayer = class {
         width: opts.isolate.rtWidth,
         height: opts.isolate.rtHeight
       }, {
-        x: origin[0] - sceneW / 2,
-        y: origin[1] - sceneH / 2,
+        x: origin[0] - sceneW / 2 + align[0],
+        y: origin[1] - sceneH / 2 + align[1],
         z: origin[2]
       }, [a[0], a[1], a[2]], opts.colorBlendMode ?? 0, opts.renderOrder, compositeOpacity);
       if (opts.util && opts.util !== "solid") {
@@ -25141,6 +25166,9 @@ var ThreeScenePlayer = class {
       size: [w, h],
       scale: [s[0], s[1], s[2] ?? 1],
       angles: [a[0], a[1], a[2]],
+      align,
+      alignment: opts.alignment,
+      color: opts.color,
       alpha: mod.a,
       brightness: opts.brightness ?? 1,
       sceneW,
@@ -25179,6 +25207,8 @@ var ThreeScenePlayer = class {
       size: [0, 0],
       scale: [s[0], s[1], s[2] ?? 1],
       angles: [opts.angles[0], opts.angles[1], opts.angles[2]],
+      align: [0, 0],
+      // puppet 网格尚无 alignment 样本（F13 只覆盖 image quad；见任务报告 concerns）
       alpha: mod.a,
       brightness: opts.brightness ?? 1,
       sceneW: opts.sceneW,
@@ -25358,7 +25388,11 @@ var ThreeScenePlayer = class {
       const [ox, oy, oz] = origin;
       if (ox !== entry.origin[0] || oy !== entry.origin[1] || oz !== entry.origin[2]) {
         entry.origin = [ox, oy, oz];
-        entry.parallaxNode.position.set(ox - entry.sceneW / 2, oy - entry.sceneH / 2, oz);
+        entry.parallaxNode.position.set(
+          ox - entry.sceneW / 2 + entry.align[0],
+          oy - entry.sceneH / 2 + entry.align[1],
+          oz
+        );
       }
     }
     if (scale) {
@@ -25366,6 +25400,12 @@ var ThreeScenePlayer = class {
       if (sx !== entry.scale[0] || sy !== entry.scale[1] || sz !== entry.scale[2]) {
         entry.scale = [sx, sy, sz];
         entry.mesh.scale.set(sx, sy, sz);
+        entry.align = alignmentWorldOffset(entry.size, entry.scale, entry.angles, entry.alignment);
+        entry.parallaxNode.position.set(
+          entry.origin[0] - entry.sceneW / 2 + entry.align[0],
+          entry.origin[1] - entry.sceneH / 2 + entry.align[1],
+          entry.origin[2]
+        );
       }
     }
     if (alpha !== void 0) {
@@ -25380,7 +25420,7 @@ var ThreeScenePlayer = class {
     if (brightness !== void 0) {
       if (brightness !== entry.brightness) {
         entry.brightness = brightness;
-        const mod = materialModulation(void 0, entry.alpha, brightness);
+        const mod = materialModulation(entry.color, entry.alpha, brightness);
         const mat = entry.mesh.material;
         if (mat instanceof ShaderMaterial) mat.uniforms.tint.value.set(mod.r, mod.g, mod.b);
         else mat.color.setRGB(mod.r, mod.g, mod.b);
@@ -25783,6 +25823,9 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
         scale: t.scale,
         // WE 对象角度（弧度）→ mesh.rotation（three 的 Object3D 变换顺序即 T·R·S）。
         angles: t.angles,
+        // v0.8.2 F13：color tint（0-255）+ alignment（9 值锚点）。
+        color: obj.color,
+        alignment: obj.alignment,
         // WE 图像颜色混合模式（非 0 且已实现时改用预乘 + CustomBlending，见 addBackground）。
         colorBlendMode: obj.colorBlendMode,
         texture: assets.backgroundTextures?.get(obj.id),

@@ -8,6 +8,8 @@
 import * as THREE from 'three';
 // 几何/尺寸纯函数唯一实现在 object-range.ts（coverRange 在其处，scene-renderer 只做转手）。
 import { coverRange, CAMERA_DISTANCE, materialModulation, createCompositeGeometry, flipGeometryUvY, screenScalePx } from './object-range.js';
+// 对象 alignment：origin 是锚点，中心按锚点偏移（F13；与 text anchor 同口径）。
+import { alignOffset } from './alignment.js';
 import { parseSceneJson } from './scene-json.js';
 // 渲染进对象 RT 必须透明清屏（清屏 alpha=0），否则内容透明处/效果降 alpha 处会变成不透明黑
 // （根因见 rt-render.ts 与 AGENT.md §5.22）。
@@ -45,6 +47,10 @@ type BackgroundEntry = {
   scale: [number, number, number];
   // WE 对象欧拉角（弧度；T·R·S 的 R）。记录创建值（update_background 暂不改角度）。
   angles: [number, number, number];
+  // alignment 锚点偏移（世界坐标，已含 scale/angles）：基准位 = origin - scene/2 + 本值。
+  align: [number, number];
+  alignment?: string;
+  color?: [number, number, number]; // 对象 color（0-255）；brightness 更新时保持 tint 不被重置
   alpha: number;         // 已应用 material.opacity（0-1）
   brightness: number;    // 亮度乘法系数（原始值，materialModulation 内部 clamp）
   // 该背景创建时用的场景固有尺寸（we_to_three 中心化基准 = origin - scene/2）。
@@ -649,6 +655,20 @@ export function resolvePixelRatio(devicePixelRatio: number, qualityScale: number
   return dpr * scale;
 }
 
+// alignment 锚点偏移 → 世界坐标：局部半尺寸先乘 scale（含镜像），再按对象 angles 旋转（与 mesh TRS 同序）。
+function alignmentWorldOffset(
+  size: [number, number],
+  scale: [number, number, number],
+  angles: [number, number, number],
+  alignment?: string,
+): [number, number] {
+  const off = alignOffset(size[0], size[1], alignment);
+  if (off.x === 0 && off.y === 0) return [0, 0];
+  const v = new THREE.Vector3(off.x * scale[0], off.y * scale[1], 0)
+    .applyEuler(new THREE.Euler(angles[0], angles[1], angles[2]));
+  return [v.x, v.y];
+}
+
 export class ThreeScenePlayer {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene: THREE.Scene;
@@ -1102,8 +1122,12 @@ export class ThreeScenePlayer {
     if (!cfg) return;
     this.parallaxFollow = advancePointer(this.parallaxFollow, this.parallaxTarget, cfg, dt);
     for (const entry of this.backgroundEntries.values()) {
-      const x = entry.origin[0] - entry.sceneW / 2;
-      const y = entry.origin[1] - entry.sceneH / 2;
+      // 基准位 = 锚点 origin（we_to_three）+ alignment 偏移；视差 node 仍取**锚点原点**（alignment
+      // 是局部几何偏移，不参与视差的 node 坐标，否则 shift 会随锚点额外平移）。
+      const bx = entry.origin[0] - entry.sceneW / 2;
+      const by = entry.origin[1] - entry.sceneH / 2;
+      const x = bx + entry.align[0];
+      const y = by + entry.align[1];
       const z = entry.origin[2];
       // depth 全 0（scene.json 里有真值 "0.00000 0.00000"）与缺省同义 = 不参与视差：shift 恒 0，
       // 但**写**这个动作本身会覆盖脚本位移，故必须归到「不写」分支。
@@ -1121,7 +1145,7 @@ export class ThreeScenePlayer {
         // OWE 的 ortho 是**场景**正交尺寸（general.orthogonalprojection），不是窗口尺寸。
         orthoW: this.sceneWidth,
         orthoH: this.sceneHeight,
-        nodeX: x, nodeY: y,
+        nodeX: bx, nodeY: by,
         // three 坐标下主相机位于场景中心（we_to_three 已把中心移到原点）。
         camX: 0, camY: 0,
         depth,
@@ -1645,8 +1669,10 @@ export class ThreeScenePlayer {
     brightness?: number;
     // v0.8.2 F2：util 层无 pkg 纹理，按 layerKind 用内置材质（solid 纯色 / 其余直通占位）。
     util?: UtilLayerKind;
-    // util 纯色层颜色（0-255，scene.json 的 color）；仅 util=solid 使用，image 的 tint 是 F13。
+    // 对象颜色（0-255）：image tint 乘进内容材质（F13）；util=solid 作纯色。
     color?: [number, number, number];
+    // 对象 alignment（WE 9 值）：origin 是锚点，内容 mesh / 合成 quad 中心按锚点偏移（F13）。
+    alignment?: string;
     sceneW: number;
     sceneH: number;
     // scene.json 的**对象 id**（脚本图层桥的键）：本字段**总是传**（非隔离对象也要能被脚本按
@@ -1689,7 +1715,9 @@ export class ThreeScenePlayer {
     const w = size?.[0] ?? fallbackW;
     const h = size?.[1] ?? fallbackH;
     const geometry = new THREE.PlaneGeometry(w, h);
-    const mod = materialModulation(undefined, opts.alpha, opts.brightness);
+    // 内容材质调制：image 的 color tint × brightness 与 alpha 一次烘进（隔离路径同样烘进 RT；
+    // 合成 quad 保持中性，见 createCompositeQuadMaterial）。
+    const mod = materialModulation(opts.color, opts.alpha, opts.brightness);
     // ⚠️ 隔离对象（opts.isolate）走 forIsolation=true：内容材质**不套** cb，混合语义全部交给
     // 合成 quad（见 createLayerMaterial / createCompositeQuadMaterial 注释）。
     const material = opts.util
@@ -1707,8 +1735,14 @@ export class ThreeScenePlayer {
     // 对象角度（弧度）：PlaneGeometry 以几何中心为 pivot，mesh.rotation 即 T·R·S 的 R。
     const a = opts.angles ?? [0, 0, 0];
     mesh.rotation.set(a[0], a[1], a[2]);
+    // alignment：origin 是锚点，中心 = origin + 偏移（偏移先乘 scale、再随 angles 旋转）。
+    const align = alignmentWorldOffset([w, h], s, a, opts.alignment);
     // we_to_three：origin - scene/2（y 不翻）。
-    mesh.position.set(origin[0] - sceneW / 2, origin[1] - sceneH / 2, origin[2]);
+    mesh.position.set(
+      origin[0] - sceneW / 2 + align[0],
+      origin[1] - sceneH / 2 + align[1],
+      origin[2],
+    );
 
     // 图层 id（本方法返回值 = backgroundEntries 的键）由本类计数器分配；隔离条目的键是
     // **scene.json 的对象 id**（`opts.isolate.objectId`），两套编号互不相干（见 attachIsolated）。
@@ -1730,8 +1764,8 @@ export class ThreeScenePlayer {
         width: opts.isolate.rtWidth,
         height: opts.isolate.rtHeight,
       }, {
-        x: origin[0] - sceneW / 2,
-        y: origin[1] - sceneH / 2,
+        x: origin[0] - sceneW / 2 + align[0],
+        y: origin[1] - sceneH / 2 + align[1],
         z: origin[2],
       }, [a[0], a[1], a[2]], opts.colorBlendMode ?? 0, opts.renderOrder, compositeOpacity);
       // util 层内容输入（T3）：段边界把整帧快照写成内容。solid 的内容是纯色 ⇒ 不建条目。
@@ -1748,6 +1782,9 @@ export class ThreeScenePlayer {
       size: [w, h],
       scale: [s[0], s[1], s[2] ?? 1],
       angles: [a[0], a[1], a[2]],
+      align,
+      alignment: opts.alignment,
+      color: opts.color,
       alpha: mod.a,
       brightness: opts.brightness ?? 1,
       sceneW,
@@ -1811,6 +1848,7 @@ export class ThreeScenePlayer {
       size: [0, 0],
       scale: [s[0], s[1], s[2] ?? 1],
       angles: [opts.angles[0], opts.angles[1], opts.angles[2]],
+      align: [0, 0], // puppet 网格尚无 alignment 样本（F13 只覆盖 image quad；见任务报告 concerns）
       alpha: mod.a,
       brightness: opts.brightness ?? 1,
       sceneW: opts.sceneW,
@@ -2049,7 +2087,11 @@ export class ThreeScenePlayer {
       const [ox, oy, oz] = origin;
       if (ox !== entry.origin[0] || oy !== entry.origin[1] || oz !== entry.origin[2]) {
         entry.origin = [ox, oy, oz];
-        entry.parallaxNode.position.set(ox - entry.sceneW / 2, oy - entry.sceneH / 2, oz);
+        entry.parallaxNode.position.set(
+          ox - entry.sceneW / 2 + entry.align[0],
+          oy - entry.sceneH / 2 + entry.align[1],
+          oz,
+        );
       }
     }
     if (scale) {
@@ -2057,6 +2099,13 @@ export class ThreeScenePlayer {
       if (sx !== entry.scale[0] || sy !== entry.scale[1] || sz !== entry.scale[2]) {
         entry.scale = [sx, sy, sz];
         entry.mesh.scale.set(sx, sy, sz);
+        // 锚点偏移随 scale 缩放 ⇒ 重算基准位（非隔离 = mesh、隔离 = 合成 quad）。
+        entry.align = alignmentWorldOffset(entry.size, entry.scale, entry.angles, entry.alignment);
+        entry.parallaxNode.position.set(
+          entry.origin[0] - entry.sceneW / 2 + entry.align[0],
+          entry.origin[1] - entry.sceneH / 2 + entry.align[1],
+          entry.origin[2],
+        );
       }
     }
     if (alpha !== undefined) {
@@ -2072,8 +2121,8 @@ export class ThreeScenePlayer {
     if (brightness !== undefined) {
       if (brightness !== entry.brightness) {
         entry.brightness = brightness;
-        // brightness 调色：rgb = clamp01(brightness)，a 用当前 opacity（复用调制函数）。
-        const mod = materialModulation(undefined, entry.alpha, brightness);
+        // brightness 调色：rgb = clamp01(color/255 × brightness)；color 缺省 = 白（不丢 image tint）。
+        const mod = materialModulation(entry.color, entry.alpha, brightness);
         const mat = entry.mesh.material as THREE.MeshBasicMaterial | THREE.ShaderMaterial;
         if (mat instanceof THREE.ShaderMaterial) (mat.uniforms.tint.value as THREE.Vector3).set(mod.r, mod.g, mod.b);
         else mat.color.setRGB(mod.r, mod.g, mod.b);
@@ -2746,14 +2795,17 @@ export function loadSceneToThree(
         puppetLayers.push(id);
         continue;
       }
-      // 背景对象：we_to_three（addBackground 内部）+ 对象调制（alpha/brightness）→ 背景图层；
-      // alignment 缺省 centre（addBackground 签名无 alignment），origin 直传世界值。
+      // 背景对象：we_to_three（addBackground 内部）+ 对象调制（color/alpha/brightness）
+      // + alignment 锚点（F13）→ 背景图层。
       const id = player.addBackground({
         origin: t.origin,
         size: obj.size,
         scale: t.scale,
         // WE 对象角度（弧度）→ mesh.rotation（three 的 Object3D 变换顺序即 T·R·S）。
         angles: t.angles,
+        // v0.8.2 F13：color tint（0-255）+ alignment（9 值锚点）。
+        color: obj.color,
+        alignment: obj.alignment,
         // WE 图像颜色混合模式（非 0 且已实现时改用预乘 + CustomBlending，见 addBackground）。
         colorBlendMode: obj.colorBlendMode,
         texture: assets.backgroundTextures?.get(obj.id),

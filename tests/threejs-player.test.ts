@@ -845,6 +845,94 @@ describe('ThreeScenePlayer background layer', () => {
     expect(mat.color.b).toBeCloseTo(0.8, 6);
   });
 
+  // v0.8.2 F13：image alignment 决定 quad 原点 —— origin 是锚点，mesh/合成 quad 中心按
+  // WE ResolveImageAlignmentOffset 偏移（bottomright = 右下角钉在 origin）。
+  it('addBackground：alignment → 锚点偏移（bottomright：中心左移半宽、上移半高）', () => {
+    const { player } = makePlayer(1000, 600);
+    player.addBackground({
+      origin: [500, 300, 0], size: [100, 50], scale: [1, 1, 1],
+      alignment: 'bottomright', sceneW: 1000, sceneH: 600,
+    });
+    const mesh = player.scene.children[0] as THREE.Mesh;
+    expect(mesh.position.x).toBeCloseTo(-50, 6);
+    expect(mesh.position.y).toBeCloseTo(25, 6);
+  });
+
+  it('addBackground：alignment 偏移随 scale 缩放、随 angles 旋转（与 mesh TRS 同序）', () => {
+    const { player } = makePlayer(1000, 600);
+    // left：中心在 origin 右侧半宽；scale.x=2 ⇒ 世界偏移 100，再绕 z 转 90° ⇒ (0,100)。
+    player.addBackground({
+      origin: [500, 300, 0], size: [100, 50], scale: [2, 1, 1],
+      angles: [0, 0, Math.PI / 2], alignment: 'left', sceneW: 1000, sceneH: 600,
+    });
+    const mesh = player.scene.children[0] as THREE.Mesh;
+    expect(mesh.position.x).toBeCloseTo(0, 6);
+    expect(mesh.position.y).toBeCloseTo(100, 6);
+  });
+
+  it('隔离：alignment 落合成 quad 位置（内容 mesh 仍居中于 RT，二者中心一致）', () => {
+    const { player } = makePlayer(1000, 600);
+    player.addBackground({
+      origin: [500, 300, 0], size: [100, 50], scale: [1, 1, 1],
+      alignment: 'bottomright', sceneW: 1000, sceneH: 600, objectId: 13,
+      isolate: { objectId: 13, rtWidth: 100, rtHeight: 50, worldW: 100, worldH: 50 },
+    });
+    const entry = player.isolatedObjects().find((e) => e.id === 13)!;
+    expect(entry.quad.position.x).toBeCloseTo(-50, 6);
+    expect(entry.quad.position.y).toBeCloseTo(25, 6);
+    // 内容渲染进对象 RT 时居中（锚点偏移由合成 quad 承载，不在 RT 内重复偏移）。
+    expect((entry.localScene.children[0] as THREE.Mesh).position.toArray()).toEqual([0, 0, 0]);
+    // 脚本/显示对象看到的是合成 quad ⇒ 可见内容中心 = quad 位置。
+    expect(player.displayObject(13)).toBe(entry.quad);
+  });
+
+  it('视差基准位包含 alignment 偏移（开/关视差都不丢锚点）', () => {
+    const { player: p } = makePlayer(1920, 1080);
+    const id = p.addBackground({
+      origin: [960, 540, 0], size: [100, 50], scale: [1, 1, 1], alignment: 'bottomright',
+      parallaxDepth: [1, 1], sceneW: 1920, sceneH: 1080,
+    });
+    const node = p.backgroundMeshForTest(id);
+    expect(node.position.x).toBeCloseTo(-50, 6);
+    expect(node.position.y).toBeCloseTo(25, 6);
+    // 视差按**锚点 origin**（不含 alignment 偏移）算 shift：-960（指针右移）。
+    p.setParallax({ enabled: true, amount: 1, delay: 0, mouseInfluence: 1 });
+    p.setParallaxPointer({ x: 1, y: 0.5 });
+    p.tickParallaxForTest(0.016);
+    expect(node.position.x).toBeCloseTo(-50 - 960, 3);
+    expect(node.position.y).toBeCloseTo(25, 3);
+    // 关视差写回基准位：仍带 alignment 偏移（不是裸 origin - scene/2）。
+    p.setParallax({ enabled: false, amount: 0, delay: 0, mouseInfluence: 0 });
+    p.tickParallaxForTest(0.016);
+    expect(node.position.x).toBeCloseTo(-50, 6);
+    expect(node.position.y).toBeCloseTo(25, 6);
+  });
+
+  it('update_background：改 origin 后 alignment 偏移仍生效', () => {
+    const { player } = makePlayer(1000, 600);
+    const id = player.addBackground({
+      origin: [500, 300, 0], size: [100, 50], scale: [1, 1, 1],
+      alignment: 'bottomright', sceneW: 1000, sceneH: 600,
+    });
+    player.update_background(id, [400, 200, 0]);
+    const mesh = player.scene.children[0] as THREE.Mesh;
+    expect(mesh.position.x).toBeCloseTo(400 - 500 - 50, 6);
+    expect(mesh.position.y).toBeCloseTo(200 - 300 + 25, 6);
+  });
+
+  it('update_background：brightness 更新保留 image color tint（不重置为白）', () => {
+    const { player } = makePlayer(1000, 600);
+    const id = player.addBackground({
+      origin: [500, 300, 0], size: [100, 50], scale: [1, 1, 1],
+      color: [128, 64, 32], brightness: 1, sceneW: 1000, sceneH: 600,
+    });
+    player.update_background(id, undefined, undefined, undefined, 0.5);
+    const mat = (player.scene.children[0] as THREE.Mesh).material as THREE.MeshBasicMaterial;
+    expect(mat.color.r).toBeCloseTo(64 / 255, 6);  // 128/255 × 0.5
+    expect(mat.color.g).toBeCloseTo(32 / 255, 6);
+    expect(mat.color.b).toBeCloseTo(16 / 255, 6);
+  });
+
   it('update_background：更新 origin/scale/alpha/brightness（undefined 保持现状）', () => {
     const { player } = makePlayer(3840, 2160);
     const id = player.addBackground({
@@ -1452,6 +1540,30 @@ describe('ThreeScenePlayer loadSceneToThree', () => {
     expect(bgMesh.material).toBeInstanceOf(THREE.MeshBasicMaterial);
     expect(bgMesh.position.x).toBeCloseTo(0, 6); // origin 1920 - 3840/2
     expect(bgMesh.position.y).toBeCloseTo(0, 6); // origin 1080 - 2160/2
+  });
+
+  // v0.8.2 F13：image 的 color/alignment 必须从 scene.json 下发到 addBackground
+  //（color → 内容材质 tint，alignment → 锚点偏移；缺任一等于字段被静默忽略）。
+  it('image 的 color/alignment 下发（tint + 锚点偏移）', () => {
+    const canvas = document.createElement('canvas');
+    const scene = JSON.stringify({
+      general: { orthogonalprojection: { height: 600, width: 1000 } },
+      objects: [{
+        id: 13, image: 'models/a.json', origin: '500 300 0', scale: '1 1 1', size: '100 50',
+        color: '0.5 0.25 0.125', alignment: 'bottomright', alpha: 0.5, brightness: 1,
+      }],
+    });
+    const result = loadSceneToThree(
+      scene, { renderer: createMockRenderer() as unknown as THREE.WebGLRenderer }, canvas,
+    );
+    const mesh = result.player.displayObject(13) as THREE.Mesh;
+    expect(mesh.position.x).toBeCloseTo(-50, 6);
+    expect(mesh.position.y).toBeCloseTo(25, 6);
+    const mat = mesh.material as THREE.MeshBasicMaterial;
+    expect(mat.color.r).toBeCloseTo(0.5, 6);
+    expect(mat.color.g).toBeCloseTo(0.25, 6);
+    expect(mat.color.b).toBeCloseTo(0.125, 6);
+    expect(mat.opacity).toBeCloseTo(0.5, 6);
   });
 
   // renderOrder 唯一化：装配循环把 objects 数组下标作为 renderOrder 透传（WE 的绘制序 =

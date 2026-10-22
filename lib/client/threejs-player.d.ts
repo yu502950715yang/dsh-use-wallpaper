@@ -218,6 +218,7 @@ export declare class ThreeScenePlayer {
         brightness?: number;
         util?: UtilLayerKind;
         color?: [number, number, number];
+        alignment?: string;
         sceneW: number;
         sceneH: number;
         objectId?: number;
