@@ -153,6 +153,8 @@ export declare class ThreeScenePlayer {
     setParallax(cfg: ParallaxConfig | null): void;
     /** 宿主指针监听的最新归一化位置（[0,1]）；插值在本类的 tickParallax 内按 dt 推进。 */
     setParallaxPointer(p: PointerState): void;
+    /** 视差跟随的当前指针（插值后，[0,1] y 向下）：效果 shader 全局 uniform 的来源。 */
+    parallaxPointer(): PointerState;
     /** 测试用：取某背景条目的 three 对象（隔离对象返回合成 quad）。 */
     backgroundMeshForTest(id: number): THREE.Object3D;
     /** 测试用：直接推进一帧视差。 */

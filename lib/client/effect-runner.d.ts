@@ -27,6 +27,10 @@ export declare function resolveEmptySlotTexture(mode: string | null | undefined)
 export declare function effectSlotCount(pass: CompiledEffectPass): number;
 export declare function resolveSlotFallback(pass: CompiledEffectPass, index: number): THREE.Texture | null;
 export type EffectTexLoader = (url: string, opts?: TexLoadOptions) => Promise<THREE.Texture | null>;
+export interface EffectGlobalUniforms {
+    pointerPosition?: [number, number];
+    parallaxPosition?: [number, number];
+}
 export declare function loadEffectTextureSlot(path: string | null, id: string, cache: Map<string, THREE.Texture | null>, load?: EffectTexLoader, warn?: (message: string) => void): Promise<THREE.Texture | null>;
 export declare function resolveInputTexture(input: THREE.WebGLRenderTarget | THREE.Texture): THREE.Texture;
 export declare function pickWriteTarget(previous: THREE.WebGLRenderTarget | null, rtA: THREE.WebGLRenderTarget, rtB: THREE.WebGLRenderTarget): THREE.WebGLRenderTarget;
@@ -73,6 +77,7 @@ export declare class EffectRunner {
     private updateInFlight;
     private audioSpectrum;
     private readonly load;
+    private globalUniforms;
     constructor(renderer: THREE.WebGLRenderer, width: number, height: number, opts?: {
         load?: EffectTexLoader;
     });
@@ -92,6 +97,8 @@ export declare class EffectRunner {
         height?: number;
     }): void;
     setAudioSpectrumSource(source: Uint8Array | null): void;
+    /** 每帧注入全局 uniform（指针/视差）：未提供的字段保持上一次的值；shader 未声明则跳过。 */
+    setGlobalUniforms(uniforms: EffectGlobalUniforms): void;
     private ensureTargets;
     private disposeMaterials;
     /** 纹理槽缓存清理：**只释放本实例加载的纹理**，跳过模块级共享纹理（`BUILTIN_CACHE` /
@@ -100,6 +107,7 @@ export declare class EffectRunner {
     private clearTextures;
     private getMaterial;
     private fillAudioUniforms;
+    private applyGlobalUniforms;
     private disposeSceneQuads;
     private getScene;
     /** 绑一个槽：纹理 + g_TextureNResolution（vec4 口径见 AGENT.md §5.17）。 */

@@ -1118,3 +1118,101 @@ describe('EffectRunner 按计划执行（具名 RT 写读 / previous 序列 / �
     expect((runner as unknown as { plan: unknown }).plan).toBeNull();
   });
 });
+
+// ===== v0.8.2 F18：效果 shader 全局 uniform（g_PointerPosition / g_ParallaxPosition）。
+// 真实用法（3780477933 的 dot_matrix：`vec2 mouse = g_PointerPosition;`）是 vec2；
+// 官方文档也只声明 vec2，vec4 按声明维度补零（不可把 4 分量压成 2 分量——three 上传会失败）。=====
+describe('EffectRunner.setGlobalUniforms（全局 uniform 注入）', () => {
+  /** 带全局 uniform 声明的 pass：uniforms 值与 binder 的输出同形（vec2/vec4 维度正确）。 */
+  const globalPass = (uniforms: Record<string, number | number[]>): CompiledEffectPass =>
+    failingPass({ uniforms: new Map(Object.entries(uniforms)) });
+
+  /** 记录**每次 render 当刻**的全局 uniform（探针与正式 pass 是同一缓存的材质，只看最终值
+   *  无法证明「建材质时就已注入」⇒ 必须在 render 调用当刻取值）。 */
+  function createProbeAwareRenderer() {
+    const atRender: Array<{ pointer?: unknown; parallax?: unknown }> = [];
+    const renderer = {
+      debug: { onShaderError: null as null | ((...a: unknown[]) => void) },
+      setRenderTarget: vi.fn(),
+      render: vi.fn((scene: THREE.Scene) => {
+        const mesh = scene.children[0] as THREE.Mesh;
+        const material = mesh.material as THREE.ShaderMaterial;
+        atRender.push({
+          pointer: material.uniforms.g_PointerPosition?.value,
+          parallax: material.uniforms.g_ParallaxPosition?.value,
+        });
+      }),
+    };
+    return { renderer, atRender };
+  }
+
+  it('vec2：探针与 pass 渲染当刻都已是注入值', async () => {
+    const { renderer, atRender } = createProbeAwareRenderer();
+    const runner = new EffectRunner(renderer as never, 16, 16);
+    runner.setChains([[globalPass({ g_PointerPosition: [0, 0], g_ParallaxPosition: [0, 0] })]], 'wp', { width: 16, height: 16 });
+    runner.setGlobalUniforms({ pointerPosition: [0.25, 0.75], parallaxPosition: [0.4, 0.6] });
+    await runner.update(0, new THREE.Texture());
+    // atRender = [1×1 探针渲染, 本帧 pass 渲染]
+    expect(atRender).toEqual([
+      { pointer: [0.25, 0.75], parallax: [0.4, 0.6] },
+      { pointer: [0.25, 0.75], parallax: [0.4, 0.6] },
+    ]);
+    runner.dispose();
+  });
+
+  it('vec4 声明：保留 4 分量，xy = 注入值、zw 补零', async () => {
+    const { renderer, mats } = createBindRenderer();
+    const runner = new EffectRunner(renderer as never, 16, 16);
+    runner.setChains([[globalPass({ g_PointerPosition: [0, 0, 0, 0], g_ParallaxPosition: [0, 0, 0, 0] })]], 'wp', { width: 16, height: 16 });
+    runner.setGlobalUniforms({ pointerPosition: [0.2, 0.8], parallaxPosition: [0.1, 0.9] });
+    await runner.update(0, new THREE.Texture());
+    expect(mats[1].uniforms.g_PointerPosition.value).toEqual([0.2, 0.8, 0, 0]);
+    expect(mats[1].uniforms.g_ParallaxPosition.value).toEqual([0.1, 0.9, 0, 0]);
+    runner.dispose();
+  });
+
+  it('逐帧更新：第二次 update 用新的全局值（不是只在建材质时写一次）', async () => {
+    const { renderer, mats } = createBindRenderer();
+    const runner = new EffectRunner(renderer as never, 16, 16);
+    runner.setChains([[globalPass({ g_PointerPosition: [0, 0] })]], 'wp', { width: 16, height: 16 });
+    runner.setGlobalUniforms({ pointerPosition: [0.1, 0.2] });
+    await runner.update(0, new THREE.Texture());
+    expect(mats[mats.length - 1].uniforms.g_PointerPosition.value).toEqual([0.1, 0.2]);
+    runner.setGlobalUniforms({ pointerPosition: [0.7, 0.9] });
+    await runner.update(1, new THREE.Texture());
+    expect(mats[mats.length - 1].uniforms.g_PointerPosition.value).toEqual([0.7, 0.9]);
+    runner.dispose();
+  });
+
+  it('未声明该 uniform → 跳过、不报错、不凭空补建（缺失即不变）', async () => {
+    const { renderer, mats } = createBindRenderer();
+    const runner = new EffectRunner(renderer as never, 16, 16);
+    runner.setChains([[globalPass({ g_Time: 0 })]], 'wp', { width: 16, height: 16 });
+    runner.setGlobalUniforms({ pointerPosition: [0.25, 0.75], parallaxPosition: [0.4, 0.6] });
+    await expect(runner.update(0, new THREE.Texture())).resolves.not.toBeNull();
+    expect(mats[1].uniforms.g_PointerPosition).toBeUndefined();
+    expect(mats[1].uniforms.g_ParallaxPosition).toBeUndefined();
+    runner.dispose();
+  });
+
+  it('未调用 setGlobalUniforms → 保留 binder 默认值（零回归：无注入即不变）', async () => {
+    const { renderer, mats } = createBindRenderer();
+    const runner = new EffectRunner(renderer as never, 16, 16);
+    runner.setChains([[globalPass({ g_PointerPosition: [0, 0] })]], 'wp', { width: 16, height: 16 });
+    await runner.update(0, new THREE.Texture());
+    expect(mats[1].uniforms.g_PointerPosition.value).toEqual([0, 0]);
+    runner.dispose();
+  });
+
+  it('分次注入：未提供的字段保持上一次的值（不互相清空）', async () => {
+    const { renderer, mats } = createBindRenderer();
+    const runner = new EffectRunner(renderer as never, 16, 16);
+    runner.setChains([[globalPass({ g_PointerPosition: [0, 0], g_ParallaxPosition: [0, 0] })]], 'wp', { width: 16, height: 16 });
+    runner.setGlobalUniforms({ parallaxPosition: [0.4, 0.6] });
+    runner.setGlobalUniforms({ pointerPosition: [0.25, 0.75] });
+    await runner.update(0, new THREE.Texture());
+    expect(mats[1].uniforms.g_PointerPosition.value).toEqual([0.25, 0.75]);
+    expect(mats[1].uniforms.g_ParallaxPosition.value).toEqual([0.4, 0.6]);
+    runner.dispose();
+  });
+});

@@ -11,7 +11,7 @@ import type * as THREE from 'three';
 import { fitIsolatedBudget, isolatedRtSize } from './object-range.js';
 import type { SourcePixels } from './object-range.js';
 import { EffectRunner, planSamplesFrameSnapshot } from './effect-runner.js';
-import type { EffectTexLoader } from './effect-runner.js';
+import type { EffectGlobalUniforms, EffectTexLoader } from './effect-runner.js';
 import { loadTexTexture } from './tex-loader.js';
 import type { CompiledEffectPass } from './shader/effect-chain.js';
 import { buildEffectPlan, type EffectPlan } from './effect-graph.js';
@@ -167,6 +167,8 @@ export class ObjectEffectStage implements ObjectEffectStage {
   private readonly allowFrameSnapshot?: (objectId: number) => boolean;
   /** 音频频谱源：每帧同一缓冲引用；null = 全零静音（无音频/音效关闭）。 */
   private audioSpectrum: Uint8Array | null = null;
+  /** 效果 shader 全局 uniform（指针/视差）：每帧由渲染器下发，advance 随 update 交给各 runner。 */
+  private globalUniforms: EffectGlobalUniforms | null = null;
 
   constructor(
     private readonly host: ObjectEffectHost,
@@ -305,6 +307,11 @@ export class ObjectEffectStage implements ObjectEffectStage {
     this.audioSpectrum = source;
   }
 
+  /** 注入效果 shader 全局 uniform（指针/视差）：每帧调用，advance 时下发给各 runner。 */
+  setGlobalUniforms(uniforms: EffectGlobalUniforms): void {
+    this.globalUniforms = uniforms;
+  }
+
   /** 段边界（player 在消费者被绘制**之前**调用）：记下本帧快照，供**同一帧**的 advance 传进该对象的
    *  runner ⇒ 链内 `_rt_FullFrameBuffer` 拿到本帧内容（不是上一帧）。不在此发起 update：推进统一走
    *  advance 的串行锁（约束 3），每对象每帧恰好一次，g_Time 也沿用 advance 的时间。
@@ -337,6 +344,7 @@ export class ObjectEffectStage implements ObjectEffectStage {
       const runner = this.entries.get(view.id)?.runner;
       if (!runner) continue;
       runner.setAudioSpectrumSource(this.audioSpectrum); // 每帧注入同一引用（无音频时 null）
+      if (this.globalUniforms) runner.setGlobalUniforms(this.globalUniforms); // 指针/视差同上
       // 本帧段边界拍下的快照（若有）随本次 update 交给链；无则 null（不引用快照的链逐字不变）。
       const item = this.boundarySnapshots.get(view.id) ?? null;
       // 快照可能在**入队之后**被 resize/dispose 作废：把捕获当刻的代号带进闭包，执行当刻读实时值
@@ -391,6 +399,7 @@ export class ObjectEffectStage implements ObjectEffectStage {
     this.queue.length = 0;
     this.boundarySnapshots.clear(); // 快照引用属本帧，dispose 后不得再被传进 runner
     this.frameSnapshot = null;
+    this.globalUniforms = null;
     for (const entry of this.entries.values()) entry.runner?.dispose();
     this.entries.clear();
   }

@@ -39,6 +39,7 @@ import { createRenderHealthStore, isHardFailure } from './render-health.js';
 import type { HardFailureKind, HealthSnapshot, RenderHealthStore, SoftFailureKind } from './render-health.js';
 // 指针输入（相机视差的宿主侧）：归一化 [0,1] + 幂等装/卸。
 import { createPointerTracker } from './pointer-input.js';
+import { effectPointerUniforms } from './parallax.js';
 
 // wasm `CpuParticleSim` 的构造器形态（wasm-bindgen 静态 `new`；`ParticleSim` 接口见 threejs-player.ts）。
 type CpuParticleSimLike = {
@@ -887,7 +888,11 @@ export function createThreeSceneRenderer(opts?: {
         const userOnFrame = assets.onFrame;
         assets.onFrame = (dt: number) => {
           // 视差：每帧把指针的最新值下发给 player（插值在 player 的 tickParallax 内按 dt 推进）。
-          current?.player.setParallaxPointer(pointer.target());
+          const pointerState = pointer.target();
+          current?.player.setParallaxPointer(pointerState);
+          // 效果 shader 全局 uniform（F18）：原始指针 + 视差跟随值（关视差为中性 0.5）。
+          const follow = current?.player.parallaxPointer?.() ?? pointerState;
+          currentStage?.setGlobalUniforms(effectPointerUniforms(pointerState, desc.parallax, follow));
           if (timer.firstFrameAt < 0) {
             timer.firstFrameAt = performance.now() - timer.startedAt;
             // 只补 firstFrameMs：沿用装配出口记下的耗时；装配还没到出口（-1）时先用首帧时刻占位，

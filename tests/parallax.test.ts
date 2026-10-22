@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_PARALLAX, POINTER_CENTER, advancePointer, parallaxShift, readParallaxConfig } from '../src/client/parallax.js';
+import {
+  DEFAULT_PARALLAX, POINTER_CENTER, advancePointer, effectPointerUniforms, parallaxShift, readParallaxConfig,
+} from '../src/client/parallax.js';
 import type { PointerFollow } from '../src/client/parallax.js';
 
 describe('readParallaxConfig', () => {
@@ -80,5 +82,37 @@ describe('parallaxShift（OWE UniformSource.cpp:399-415）', () => {
     expect(sx).toBeCloseTo(100, 6);
     expect(Object.is(sy, 0)).toBe(true);
     expect([sx, sy]).toEqual([100, 0]);
+  });
+});
+
+// ===== v0.8.2 F18：效果 shader 全局 uniform 的取值口径 =====
+// 官方文档：g_PointerPosition = 归一化屏幕坐标（[0,1]）；g_ParallaxPosition = 归一化视差偏移
+// （0.5 = 无偏移）。参考实现（WPShaderValueUpdater）按 mouseinfluence 缩放、y 翻到向上；
+// 这里取**中心化后**的偏移（0.5 为中性），与 depthparallax 的 `para*2-1` 用法一致。
+describe('effectPointerUniforms（g_PointerPosition / g_ParallaxPosition 取值）', () => {
+  const cfg = { enabled: true, amount: 1, delay: 0, mouseInfluence: 1 };
+
+  it('pointerPosition = 原始归一化指针（y 向下，与 pointer-input 同一坐标空间）', () => {
+    const u = effectPointerUniforms({ x: 0.2, y: 0.8 }, cfg);
+    expect(u.pointerPosition).toEqual([0.2, 0.8]);
+  });
+
+  it('parallaxPosition：关视差 → 中性 0.5（视差偏移为零）', () => {
+    expect(effectPointerUniforms({ x: 0.2, y: 0.2 }, { ...cfg, enabled: false }).parallaxPosition).toEqual([0.5, 0.5]);
+    expect(effectPointerUniforms({ x: 0.2, y: 0.2 }, DEFAULT_PARALLAX).parallaxPosition).toEqual([0.5, 0.5]);
+  });
+
+  it('parallaxPosition：开视差 → 中心化后按 mouseInfluence 缩放，且 y 翻到向上', () => {
+    // 指针左上 (0.2,0.2) → 视差偏移 (-0.3,-0.3) → x=-0.3、y 翻成 +0.3
+    expect(effectPointerUniforms({ x: 0.2, y: 0.2 }, cfg).parallaxPosition).toEqual([0.2, 0.8]);
+    expect(effectPointerUniforms(POINTER_CENTER, cfg).parallaxPosition).toEqual([0.5, 0.5]);
+    // mouseInfluence = 0 → 无偏移（与关视差同值，但不依赖 enabled 分支）
+    expect(effectPointerUniforms({ x: 1, y: 0 }, { ...cfg, mouseInfluence: 0 }).parallaxPosition).toEqual([0.5, 0.5]);
+  });
+
+  it('第三个参数 = 插值后的视差指针：只影响 parallaxPosition，pointerPosition 仍取原始指针', () => {
+    const u = effectPointerUniforms({ x: 0.9, y: 0.1 }, cfg, { x: 0.2, y: 0.2 });
+    expect(u.pointerPosition).toEqual([0.9, 0.1]);
+    expect(u.parallaxPosition).toEqual([0.2, 0.8]);
   });
 });

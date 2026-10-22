@@ -1,7 +1,7 @@
 import type * as THREE from 'three';
 import type { SourcePixels } from './object-range.js';
 import { EffectRunner } from './effect-runner.js';
-import type { EffectTexLoader } from './effect-runner.js';
+import type { EffectGlobalUniforms, EffectTexLoader } from './effect-runner.js';
 import type { CompiledEffectPass } from './shader/effect-chain.js';
 import { type EffectPlan } from './effect-graph.js';
 export declare const ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER = false;
@@ -68,6 +68,8 @@ export declare class ObjectEffectStage implements ObjectEffectStage {
     private readonly allowFrameSnapshot?;
     /** 音频频谱源：每帧同一缓冲引用；null = 全零静音（无音频/音效关闭）。 */
     private audioSpectrum;
+    /** 效果 shader 全局 uniform（指针/视差）：每帧由渲染器下发，advance 随 update 交给各 runner。 */
+    private globalUniforms;
     constructor(host: ObjectEffectHost, opts: {
         wallpaperId: string;
         screenScale: number;
@@ -98,6 +100,8 @@ export declare class ObjectEffectStage implements ObjectEffectStage {
     /** 注入音频频谱源（由 three-renderer 每帧刷新后转入）：效果链的音频 uniform 由它驱动；
      *  null = 全零静音（无 sound / 音效开关关闭）。 */
     setAudioSpectrum(source: Uint8Array | null): void;
+    /** 注入效果 shader 全局 uniform（指针/视差）：每帧调用，advance 时下发给各 runner。 */
+    setGlobalUniforms(uniforms: EffectGlobalUniforms): void;
     /** 执行当刻判「快照已换代」：实时代号 ≠ 捕获当刻代号 ⇒ 快照纹理已被 resize/dispose 换掉。
      *  `-1`（宿主未提供代号）不作废 —— 无从比较时按既有语义照常使用。 */
     private snapshotStale;

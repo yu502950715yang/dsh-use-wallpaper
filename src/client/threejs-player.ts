@@ -1102,6 +1102,11 @@ export class ThreeScenePlayer {
     this.parallaxTarget = p;
   }
 
+  /** 视差跟随的当前指针（插值后，[0,1] y 向下）：效果 shader 全局 uniform 的来源。 */
+  parallaxPointer(): PointerState {
+    return this.parallaxFollow.value;
+  }
+
   /** 测试用：取某背景条目的 three 对象（隔离对象返回合成 quad）。 */
   backgroundMeshForTest(id: number): THREE.Object3D {
     return this.backgroundEntries.get(id)!.parallaxNode;

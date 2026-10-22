@@ -3258,6 +3258,90 @@ describe('createThreeSceneRenderer 视差接线', () => {
     r.dispose();
   });
 
+  // v0.8.2 F18：每帧把「原始指针」与「视差跟随指针」折算成效果 shader 的全局 uniform 下发。
+  // 场景带一个隔离对象（有 effects）才会装配 ObjectEffectStage —— 全局 uniform 的落点是 stage。
+  it('每帧下发全局 uniform：pointerPosition=原始指针、parallaxPosition=视差跟随值（y 翻转）', async () => {
+    stubAssetFetch(JSON.stringify({
+      camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+      general: {
+        orthogonalprojection: { width: 1920, height: 1080 },
+        cameraparallax: true, cameraparallaxamount: 0.5, cameraparallaxdelay: 0.1, cameraparallaxmouseinfluence: 1,
+      },
+      objects: [{
+        id: 13, name: 'bg', image: 'models/a.json', origin: '960 540 0', scale: '1 1 1', size: '1920 1080',
+        effects: [{ file: 'effects/w/effect.json' }],
+      }],
+    }), FX_FILES);
+    vi.mocked(resolveImageAssets).mockResolvedValue({ texture: fakeTexture() as any, puppetPath: null, spriteSheet: false });
+    vi.mocked(defaultLoadWasm).mockResolvedValue(null);
+    const follow: { x: number; y: number } = { x: 0.5, y: 0.5 };
+    const player = {
+      dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage: vi.fn(),
+      setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn(),
+      parallaxPointer: vi.fn(() => follow),
+      renderer: {},
+      isolatedObjects: () => [{ id: 13, kind: 'background', rtWidth: 1920, rtHeight: 1080, rtTexture: {} }],
+    };
+    vi.mocked(loadSceneToThree).mockReturnValue({
+      player, sims: [], backgroundIds: [0], particleLayers: [], puppetLayers: [],
+    } as never);
+    const globalSpy = vi.spyOn(ObjectEffectStage.prototype, 'setGlobalUniforms');
+
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    expect(await r.render('3780477933', document.createElement('canvas'))).toBe(true);
+    const onFrame = vi.mocked(loadSceneToThree).mock.calls[0][1].onFrame as (dt: number) => void;
+
+    onFrame(0.016);
+    expect(globalSpy).toHaveBeenLastCalledWith({ pointerPosition: [0.5, 0.5], parallaxPosition: [0.5, 0.5] });
+
+    // 视差跟随值滞后于原始指针：parallaxPosition 用它（x 中心化、y 翻到向上）。
+    follow.x = 0.2; follow.y = 0.2;
+    movePointer(480, 270); // 原始指针 (0.25,0.25)
+    onFrame(0.016);
+    expect(globalSpy).toHaveBeenLastCalledWith({
+      pointerPosition: [0.25, 0.25],
+      parallaxPosition: [0.2, 0.8],
+    });
+    expect(globalSpy).toHaveBeenCalledTimes(2);
+
+    globalSpy.mockRestore();
+    r.dispose?.();
+  });
+
+  // 关视差时 parallaxPosition 保持中性 0.5（无偏移）；player 未实现 parallaxPointer（旧/替身）也不得抛。
+  it('关视差 → parallaxPosition 中性；player 无 parallaxPointer 时回退原始指针', async () => {
+    stubAssetFetch(JSON.stringify({
+      camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+      general: { orthogonalprojection: { width: 1920, height: 1080 } },
+      objects: [{
+        id: 13, name: 'bg', image: 'models/a.json', origin: '960 540 0', scale: '1 1 1', size: '1920 1080',
+        effects: [{ file: 'effects/w/effect.json' }],
+      }],
+    }), FX_FILES);
+    vi.mocked(resolveImageAssets).mockResolvedValue({ texture: fakeTexture() as any, puppetPath: null, spriteSheet: false });
+    vi.mocked(defaultLoadWasm).mockResolvedValue(null);
+    const player = {
+      dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage: vi.fn(),
+      setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn(),
+      renderer: {},
+      isolatedObjects: () => [{ id: 13, kind: 'background', rtWidth: 1920, rtHeight: 1080, rtTexture: {} }],
+    };
+    vi.mocked(loadSceneToThree).mockReturnValue({
+      player, sims: [], backgroundIds: [0], particleLayers: [], puppetLayers: [],
+    } as never);
+    const globalSpy = vi.spyOn(ObjectEffectStage.prototype, 'setGlobalUniforms');
+
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    expect(await r.render('3780477933', document.createElement('canvas'))).toBe(true);
+    const onFrame = vi.mocked(loadSceneToThree).mock.calls[0][1].onFrame as (dt: number) => void;
+    movePointer(480, 270);
+    onFrame(0.016);
+    expect(globalSpy).toHaveBeenLastCalledWith({ pointerPosition: [0.25, 0.25], parallaxPosition: [0.5, 0.5] });
+
+    globalSpy.mockRestore();
+    r.dispose?.();
+  });
+
   it('监听随实例收尾：切壁纸先卸后装、不叠加；卸载复位居中（切回后仍生效）', async () => {
     const addSpy = vi.spyOn(window, 'addEventListener');
     const removeSpy = vi.spyOn(window, 'removeEventListener');

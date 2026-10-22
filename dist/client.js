@@ -23181,6 +23181,18 @@ function parallaxShift(o) {
     nz(o.depth[1] * o.cfg.amount * (o.nodeY - o.camY + mouseY))
   ];
 }
+function effectPointerUniforms(pointer, cfg, parallaxPointer = pointer) {
+  const pointerPosition = [pointer.x, pointer.y];
+  if (!cfg.enabled) return { pointerPosition, parallaxPosition: [0.5, 0.5] };
+  const mi = cfg.mouseInfluence;
+  return {
+    pointerPosition,
+    parallaxPosition: [
+      0.5 + (parallaxPointer.x - 0.5) * mi,
+      0.5 + (0.5 - parallaxPointer.y) * mi
+    ]
+  };
+}
 
 // src/client/script-patterns.ts
 function detectScriptPattern(src) {
@@ -24630,6 +24642,10 @@ var ThreeScenePlayer = class {
   /** 宿主指针监听的最新归一化位置（[0,1]）；插值在本类的 tickParallax 内按 dt 推进。 */
   setParallaxPointer(p) {
     this.parallaxTarget = p;
+  }
+  /** 视差跟随的当前指针（插值后，[0,1] y 向下）：效果 shader 全局 uniform 的来源。 */
+  parallaxPointer() {
+    return this.parallaxFollow.value;
   }
   /** 测试用：取某背景条目的 three 对象（隔离对象返回合成 quad）。 */
   backgroundMeshForTest(id) {
@@ -27359,6 +27375,8 @@ var EffectRunner = class {
   audioSpectrum = null;
   // 效果纹理槽加载器（缺省 `loadTexTexture`；可注入以携带 **v 约定** —— 见构造参数注释）。
   load;
+  // 全局 uniform（指针/视差）：未注入 = 空对象（既有 uniform 默认值不变，零回归）。
+  globalUniforms = {};
   // `opts.load`：纹理槽加载器（缺省 `loadTexTexture`）。**调用方用它携带纹理 v 约定**：效果 shader 把
   //   `v_TexCoord.y` 当**图像空间**坐标（flowmap 的带符号位移、clouds 的旋转/滚动、foliagesway 的摆动方向…），
   //   而纹理由对象 RT 提供 —— 二者的 v 约定必须**同一套**，否则条带位置对而方向/斜度反。
@@ -27436,6 +27454,10 @@ var EffectRunner = class {
   setAudioSpectrumSource(source) {
     this.audioSpectrum = source;
   }
+  /** 每帧注入全局 uniform（指针/视差）：未提供的字段保持上一次的值；shader 未声明则跳过。 */
+  setGlobalUniforms(uniforms) {
+    this.globalUniforms = { ...this.globalUniforms, ...uniforms };
+  }
   // RT 尺寸对齐：仅当目标尺寸与当前不一致才重建 ping-pong RT（避免 recreate churn）；
   // 重建后同步 this.width/this.height（getMaterial 预建 g_TextureNResolution 默认值跟随对象 RT 尺寸）。
   ensureTargets(w, h) {
@@ -27508,6 +27530,7 @@ var EffectRunner = class {
         depthWrite: false,
         blending: blendModeToThree(pass.blendMode)
       });
+      this.applyGlobalUniforms(material);
       let compileFailed = false;
       let vertLog = "";
       let fragLog = "";
@@ -27551,6 +27574,20 @@ var EffectRunner = class {
       if (isAudioUniform(name) && Array.isArray(u.value)) {
         fillAudioSpectrumUniform(u.value, src);
       }
+    }
+  }
+  // 写全局 uniform：按声明维度（vec2 → [x,y]；vec4 → [x,y,0,0]），未声明则跳过、不补建。
+  applyGlobalUniforms(material) {
+    const entries = [
+      ["g_PointerPosition", this.globalUniforms.pointerPosition],
+      ["g_ParallaxPosition", this.globalUniforms.parallaxPosition]
+    ];
+    for (const [name, value] of entries) {
+      if (!value) continue;
+      const uniform = material.uniforms[name];
+      if (!uniform) continue;
+      const dim = Array.isArray(uniform.value) ? uniform.value.length : 2;
+      uniform.value = dim > 2 ? [value[0], value[1], ...new Array(dim - 2).fill(0)] : [value[0], value[1]];
     }
   }
   // 释放某 key 对应场景中全屏 quad 的 geometry 并移除场景缓存（编译失败/异常路径共用）
@@ -27691,6 +27728,7 @@ var EffectRunner = class {
           }
         }
         if (material.uniforms["g_Time"]) material.uniforms["g_Time"].value = time;
+        this.applyGlobalUniforms(material);
         if (this.audioSpectrum) this.fillAudioUniforms(material, this.audioSpectrum);
         let writeTarget;
         if (pp.write.type === "named") {
@@ -27733,6 +27771,7 @@ var EffectRunner = class {
     this.plan = null;
     this.clearTextures();
     this.audioSpectrum = null;
+    this.globalUniforms = {};
   }
 };
 var SCREEN_CAMERA = new OrthographicCamera(-1, 1, 1, -1, -1e3, 1e3);
@@ -27789,6 +27828,8 @@ var ObjectEffectStage = class {
   allowFrameSnapshot;
   /** 音频频谱源：每帧同一缓冲引用；null = 全零静音（无音频/音效关闭）。 */
   audioSpectrum = null;
+  /** 效果 shader 全局 uniform（指针/视差）：每帧由渲染器下发，advance 随 update 交给各 runner。 */
+  globalUniforms = null;
   /** 当前屏幕密度（设备像素 / 世界单位）；同源下发契约见类头。 */
   scale() {
     const s = this.screenScale;
@@ -27878,6 +27919,10 @@ var ObjectEffectStage = class {
   setAudioSpectrum(source) {
     this.audioSpectrum = source;
   }
+  /** 注入效果 shader 全局 uniform（指针/视差）：每帧调用，advance 时下发给各 runner。 */
+  setGlobalUniforms(uniforms) {
+    this.globalUniforms = uniforms;
+  }
   /** 段边界（player 在消费者被绘制**之前**调用）：记下本帧快照，供**同一帧**的 advance 传进该对象的
    *  runner ⇒ 链内 `_rt_FullFrameBuffer` 拿到本帧内容（不是上一帧）。不在此发起 update：推进统一走
    *  advance 的串行锁（约束 3），每对象每帧恰好一次，g_Time 也沿用 advance 的时间。
@@ -27907,6 +27952,7 @@ var ObjectEffectStage = class {
       const runner = this.entries.get(view.id)?.runner;
       if (!runner) continue;
       runner.setAudioSpectrumSource(this.audioSpectrum);
+      if (this.globalUniforms) runner.setGlobalUniforms(this.globalUniforms);
       const item = this.boundarySnapshots.get(view.id) ?? null;
       const entry = this.entries.get(view.id);
       this.enqueue(() => runner.update(time, view.rtTexture, this.frameTextureFor(entry, item)));
@@ -27945,6 +27991,7 @@ var ObjectEffectStage = class {
     this.queue.length = 0;
     this.boundarySnapshots.clear();
     this.frameSnapshot = null;
+    this.globalUniforms = null;
     for (const entry of this.entries.values()) entry.runner?.dispose();
     this.entries.clear();
   }
@@ -32351,7 +32398,10 @@ function createThreeSceneRenderer(opts) {
         };
         const userOnFrame = assets.onFrame;
         assets.onFrame = (dt) => {
-          current?.player.setParallaxPointer(pointer.target());
+          const pointerState = pointer.target();
+          current?.player.setParallaxPointer(pointerState);
+          const follow = current?.player.parallaxPointer?.() ?? pointerState;
+          currentStage?.setGlobalUniforms(effectPointerUniforms(pointerState, desc.parallax, follow));
           if (timer.firstFrameAt < 0) {
             timer.firstFrameAt = performance.now() - timer.startedAt;
             succeed(id, assembledMs >= 0 ? assembledMs : timer.firstFrameAt, timer.firstFrameAt);

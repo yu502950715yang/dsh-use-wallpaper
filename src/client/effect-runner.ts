@@ -231,6 +231,12 @@ export type EffectTexLoader = (
   opts?: TexLoadOptions,
 ) => Promise<THREE.Texture | null>;
 
+// 效果 shader 全局 uniform（F18）：指针/视差由渲染器每帧下发，逐 pass 绑定时写入同名 uniform。
+export interface EffectGlobalUniforms {
+  pointerPosition?: [number, number];
+  parallaxPosition?: [number, number];
+}
+
 // 效果纹理槽解析：**优先级 ① util/* 真身（host 路由）→ ② 程序化回退 → ③ 壁纸 pkg 内资源**。
 //
 // ⚠️ 为什么 ① 必须在 ② 之前：程序化回退是同步的，若先走它，`util/noise` 会拿到 `mulberry32` 逐像素
@@ -409,6 +415,8 @@ export class EffectRunner {
   private audioSpectrum: Uint8Array | null = null;
   // 效果纹理槽加载器（缺省 `loadTexTexture`；可注入以携带 **v 约定** —— 见构造参数注释）。
   private readonly load: EffectTexLoader;
+  // 全局 uniform（指针/视差）：未注入 = 空对象（既有 uniform 默认值不变，零回归）。
+  private globalUniforms: EffectGlobalUniforms = {};
 
   // `opts.load`：纹理槽加载器（缺省 `loadTexTexture`）。**调用方用它携带纹理 v 约定**：效果 shader 把
   //   `v_TexCoord.y` 当**图像空间**坐标（flowmap 的带符号位移、clouds 的旋转/滚动、foliagesway 的摆动方向…），
@@ -512,6 +520,11 @@ export class EffectRunner {
     this.audioSpectrum = source;
   }
 
+  /** 每帧注入全局 uniform（指针/视差）：未提供的字段保持上一次的值；shader 未声明则跳过。 */
+  setGlobalUniforms(uniforms: EffectGlobalUniforms): void {
+    this.globalUniforms = { ...this.globalUniforms, ...uniforms };
+  }
+
   // RT 尺寸对齐：仅当目标尺寸与当前不一致才重建 ping-pong RT（避免 recreate churn）；
   // 重建后同步 this.width/this.height（getMaterial 预建 g_TextureNResolution 默认值跟随对象 RT 尺寸）。
   private ensureTargets(w: number, h: number): void {
@@ -600,6 +613,8 @@ export class EffectRunner {
         depthWrite: false,
         blending: blendModeToThree(pass.blendMode),
       });
+      // 建材质时就带上已注入的值（首帧探针不至于用 binder 默认 0）；update 每 pass 还会再写一次。
+      this.applyGlobalUniforms(material);
       // 预编译检测：three 惰性编译且 onShaderError 只在首次实际渲染触发，因此渲染一次 1×1 探针强制触发；
       // 编译失败时 three 跳过绘制不抛异常，由 onShaderError 探针置位。GLSL1 源码经 three 自动升级（WebGL2）。
       let compileFailed = false;
@@ -653,6 +668,23 @@ export class EffectRunner {
       if (isAudioUniform(name) && Array.isArray(u.value)) {
         fillAudioSpectrumUniform(u.value as number[], src);
       }
+    }
+  }
+
+  // 写全局 uniform：按声明维度（vec2 → [x,y]；vec4 → [x,y,0,0]），未声明则跳过、不补建。
+  private applyGlobalUniforms(material: THREE.ShaderMaterial): void {
+    const entries: Array<[string, [number, number] | undefined]> = [
+      ['g_PointerPosition', this.globalUniforms.pointerPosition],
+      ['g_ParallaxPosition', this.globalUniforms.parallaxPosition],
+    ];
+    for (const [name, value] of entries) {
+      if (!value) continue;
+      const uniform = material.uniforms[name];
+      if (!uniform) continue;
+      const dim = Array.isArray(uniform.value) ? uniform.value.length : 2;
+      uniform.value = dim > 2
+        ? [value[0], value[1], ...new Array(dim - 2).fill(0)]
+        : [value[0], value[1]];
     }
   }
 
@@ -829,6 +861,7 @@ export class EffectRunner {
           }
         }
         if (material.uniforms['g_Time']) material.uniforms['g_Time'].value = time;
+        this.applyGlobalUniforms(material);
         if (this.audioSpectrum) this.fillAudioUniforms(material, this.audioSpectrum);
 
         let writeTarget: THREE.WebGLRenderTarget;
@@ -875,6 +908,7 @@ export class EffectRunner {
     this.plan = null; // 计划与具名 RT 一并作废，避免 plannedPasses() 误判为有计划分支
     this.clearTextures();
     this.audioSpectrum = null;
+    this.globalUniforms = {};
   }
 }
 
