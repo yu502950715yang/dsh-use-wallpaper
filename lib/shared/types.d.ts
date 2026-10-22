@@ -127,6 +127,11 @@ export interface SceneTextObject extends SceneObjectBase {
     horizontalAlign?: string;
     verticalAlign?: string;
     padding?: number;
+    alpha?: number;
+    brightness?: number;
+    anchor?: string;
+    limitwidth?: boolean;
+    maxwidth?: number;
     script?: string;
     scriptProperties?: Record<string, unknown>;
     effects?: unknown[];

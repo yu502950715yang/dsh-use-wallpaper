@@ -1,4 +1,4 @@
-import type { ObjectScriptProperty, SceneDescription, SceneImageObject, SceneObject, SceneSoundObject, UtilLayerKind } from '../shared/types.js';
+import type { ObjectScriptProperty, SceneDescription, SceneImageObject, SceneObject, SceneSoundObject, SceneTextObject, UtilLayerKind } from '../shared/types.js';
 import { readParallaxConfig } from './parallax.js';
 import { parseScriptProperties } from './script-patterns.js';
 import { parseVisible } from './visibility.js';
@@ -55,6 +55,28 @@ function optNum(s: unknown): number | undefined {
 // 可选字符串字段（text 的 horizontalalign/verticalalign 等）：非空字符串 → 原值；否则 undefined
 function optStr(s: unknown): string | undefined {
   return typeof s === 'string' && s.trim() ? s : undefined;
+}
+
+// 可选布尔字段（text 的 limitwidth）：布尔或 "true"/"false"（大小写不敏感）→ 布尔；否则 undefined
+function optBool(s: unknown): boolean | undefined {
+  if (typeof s === 'boolean') return s;
+  if (typeof s !== 'string') return undefined;
+  const v = s.trim().toLowerCase();
+  return v === 'true' ? true : v === 'false' ? false : undefined;
+}
+
+// v0.8.2 F12 text 可见字段（两种 text 形态共用）：alpha 复用 optAlpha，brightness 缺省 1（同 image/util）；
+// anchor 原样（"none" 由渲染侧回退）、limitwidth 布尔、maxwidth 字体像素。非法字段各自忽略。
+function textVisibleFields(o: Record<string, unknown>): Pick<
+  SceneTextObject, 'alpha' | 'brightness' | 'anchor' | 'limitwidth' | 'maxwidth'
+> {
+  return {
+    alpha: optAlpha(o.alpha),
+    brightness: optNum(o.brightness) ?? 1,
+    anchor: optStr(o.anchor),
+    limitwidth: optBool(o.limitwidth),
+    maxwidth: optNum(o.maxwidth),
+  };
 }
 
 // WE 动画层（scene.json `animationlayers`）：id/animation 必需（缺任一 ⇒ 整条跳过，不产出半截层）；
@@ -318,6 +340,8 @@ export function parseSceneJson(raw: string): SceneDescription {
         horizontalAlign: optStr(o.horizontalalign),
         verticalAlign: optStr(o.verticalalign),
         padding: optNum(o.padding),
+        // v0.8.2 F12：alpha/brightness/anchor/limitwidth/maxwidth
+        ...textVisibleFields(o),
       };
     }
     if (typeof o.text === 'object' && o.text !== null && !Array.isArray(o.text)) {
@@ -333,6 +357,7 @@ export function parseSceneJson(raw: string): SceneDescription {
         horizontalAlign: optStr(o.horizontalalign),
         verticalAlign: optStr(o.verticalalign),
         padding: optNum(o.padding),
+        ...textVisibleFields(o),
         // T3.3：text.script 识别为 clock 时每帧刷新时间文本（scriptproperties 已解包）
         ...scriptFields(t),
       };

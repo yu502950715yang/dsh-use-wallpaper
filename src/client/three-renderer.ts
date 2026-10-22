@@ -633,12 +633,18 @@ export function createThreeSceneRenderer(opts?: {
             pointsize: obj.pointsize,
             padding: obj.padding,
             horizontalAlign: obj.horizontalAlign,
+            // v0.8.2 F12：限宽换行参与布局测量（驱动器重绘沿用同一 opts）
+            limitwidth: obj.limitwidth,
+            maxwidth: obj.maxwidth,
           };
           // 图层尺寸 = measureText 文本 + 2×padding（scene.json 的 size 字段不参与）
           const layout = measureTextLayout(initial, measureOpts);
           const size = { w: layout.width, h: layout.height };
-          const opts = { ...measureOpts, color: obj.color, width: size.w, height: size.h };
-          const anchorOffset = textLayerOffset(layout, obj.horizontalAlign, obj.verticalAlign, obj.alignment, obj.scale);
+          const opts = { ...measureOpts, color: obj.color, brightness: obj.brightness, width: size.w, height: size.h };
+          // F12：anchor（非 none）优先决定 origin 落在文本框哪条边
+          const anchorOffset = textLayerOffset(
+            layout, obj.horizontalAlign, obj.verticalAlign, obj.alignment, obj.scale, obj.anchor,
+          );
           if (binding) {
             // 初值取脚本首帧输出（传给 driver 避免首帧以相同文本重绘一次）。
             currentScriptBindings.push(binding);

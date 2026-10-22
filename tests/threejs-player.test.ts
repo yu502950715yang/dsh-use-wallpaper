@@ -260,6 +260,42 @@ describe('loadSceneToThree text 对象', () => {
     (assets.renderer as unknown as { _getLoop: () => (() => void) | null })._getLoop()!();
     expect(tex.version).toBe(before);
   });
+
+  // v0.8.2 F12：text 的 alpha 与 image 同口径 —— materialModulation 烘进**内容**材质 opacity；
+  // 隔离路径合成 quad 保持 1（内容已承载 alpha，再乘一次会变 a²）。brightness 由 canvas 侧承担，
+  // 不重复乘入材质（否则半透明会平方、>1 也会被 clamp 掉）。
+  it('text 对象 alpha → 内容材质 opacity（直渲/隔离同口径，合成 quad 不二次调制）', () => {
+    const sceneWithAlpha = JSON.stringify({
+      camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+      general: { orthogonalprojection: { width: 1920, height: 1080 } },
+      objects: [{
+        id: 7, name: 'Clock', origin: '960 540 0', scale: '1 1 1',
+        alpha: 0.5, brightness: 2.5, anchor: 'topright', limitwidth: true, maxwidth: 300,
+        text: { value: '12:34' },
+      }],
+    });
+    const tex = new THREE.DataTexture(new Uint8Array(4), 2, 2);
+    const direct = loadSceneToThree(
+      sceneWithAlpha,
+      makeTextAssets({ texture: tex, size: [400, 100] }),
+      document.createElement('canvas'),
+    );
+    const directMat = (direct.player.scene.children[0] as THREE.Mesh).material as THREE.MeshBasicMaterial;
+    expect(directMat.opacity).toBe(0.5);
+
+    const isolated = loadSceneToThree(
+      sceneWithAlpha,
+      {
+        ...makeTextAssets({ texture: tex, size: [400, 100] }),
+        isolate: new Map([[7, { objectId: 7, rtWidth: 400, rtHeight: 100, worldW: 400, worldH: 100 }]]),
+      },
+      document.createElement('canvas'),
+    );
+    const iso = isolated.player.isolatedObjects()[0];
+    expect((iso.localScene.children[0] as THREE.Mesh).material as THREE.MeshBasicMaterial)
+      .toMatchObject({ opacity: 0.5 });
+    expect((iso.quad.material as THREE.MeshBasicMaterial).opacity).toBe(1);
+  });
 });
 
 // 文本变化 → 帧循环必须按 driver.layout 同步 quad 的几何尺寸与中心（对齐 OME

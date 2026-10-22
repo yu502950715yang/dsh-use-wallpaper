@@ -2714,6 +2714,7 @@ export function loadSceneToThree(
     horizontalAlign?: string;
     verticalAlign?: string;
     alignment?: string;
+    anchor?: string;                         // F12：文本变化后重算锚点偏移时同样优先
   }> = [];
 
   // renderOrder = objects 数组下标（每对象唯一）：对齐 WE 的绘制序 `m_objectsByRenderOrder`
@@ -2786,6 +2787,9 @@ export function loadSceneToThree(
         scale: t.scale,
         angles: t.angles,
         texture: layer.texture,
+        // v0.8.2 F12：alpha 与 image 同口径（materialModulation → 内容材质 opacity，直渲/隔离一致）；
+        // brightness 已在 canvas 侧烘进纹理（见 text-object.drawTextToCanvas），此处不重复调制。
+        alpha: obj.alpha,
         sceneW,
         sceneH,
         objectId: obj.id,
@@ -2808,6 +2812,7 @@ export function loadSceneToThree(
           horizontalAlign: obj.horizontalAlign,
           verticalAlign: obj.verticalAlign,
           alignment: obj.alignment,
+          anchor: obj.anchor,
         });
       }
     } else if (obj.kind === 'util') {
@@ -2912,7 +2917,7 @@ export function loadSceneToThree(
       if (!t.driver.update(new Date())) continue;
       t.texture.needsUpdate = true;
       const layout = t.driver.layout;
-      const off = textLayerOffset(layout, t.horizontalAlign, t.verticalAlign, t.alignment, t.scale);
+      const off = textLayerOffset(layout, t.horizontalAlign, t.verticalAlign, t.alignment, t.scale, t.anchor);
       const o = t.origin;
       player.update_background(t.backgroundId, [o[0] + off[0], o[1] + off[1], o[2]]);
       player.resizeBackground(t.backgroundId, [layout.width, layout.height]);

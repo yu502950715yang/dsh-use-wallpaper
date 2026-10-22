@@ -17,19 +17,22 @@ const POINTSIZE_TO_PX = 4;
 // pointsize 缺省（OME wpscene::TextObject::pointsize = 12）
 const DEFAULT_POINTSIZE = 12;
 
-export interface TextTextureOptions {
-  font?: string;                    // WE 字体名（可能是文件路径，如 fonts/Atami-Regular.otf）
-  pointsize?: number;               // 字号（WE pointsize；像素字号 = pointsize × 4）
+// WE text 的限宽布局字段（F12）：limitwidth=true 且 maxwidth 有限正数时按词换行。
+export interface TextLayoutOptions {
+  limitwidth?: boolean;
+  maxwidth?: number;                // 限宽（字体像素，与 measureText 推进宽同空间）
+}
+
+export interface TextTextureOptions extends TextMeasureOptions {
   color?: [number, number, number]; // 文本颜色（0-255，WE color 的前 3 通道）
+  brightness?: number;              // 亮度系数（缺省 1；>1 用叠加绘制近似，见 drawTextToCanvas）
   width: number;                    // 画布宽（= measureTextLayout 实测文本 + 2×padding）
   height: number;                   // 画布高
-  padding?: number;                 // WE padding（文本四周等量内边距，字体像素单位）
-  horizontalAlign?: string;         // WE horizontalalign（行起点/多行对齐）
   verticalAlign?: string;           // WE verticalalign（只影响图层定位，不影响画布内绘制）
   alignment?: string;               // 9 种对齐锚点（halign/valign 缺省时由它推导）
 }
 
-export interface TextMeasureOptions {
+export interface TextMeasureOptions extends TextLayoutOptions {
   font?: string;
   pointsize?: number;
   padding?: number;
@@ -124,6 +127,45 @@ function paddingOf(padding: number | undefined): number {
   return typeof padding === 'number' && isFinite(padding) && padding > 0 ? padding : 0;
 }
 
+// 限宽阈值（font 像素）：limitwidth=true 且 maxwidth 有限正数才启用；0 = 不换行。
+function wrapWidthOf(opts: TextLayoutOptions): number {
+  if (opts.limitwidth !== true) return 0;
+  const w = opts.maxwidth;
+  return typeof w === 'number' && isFinite(w) && w > 0 ? w : 0;
+}
+
+// 按词贪心换行（WE limitwidth 语义）：行宽 ≤ maxWidth；单行本来不超宽时原样保留（不归一化空格）。
+// 单个词超宽时独占一行（不切词；真实库 limitwidth 全为 false，仅夹具路径覆盖，见 AGENT 边界）。
+function wrapLines(lines: string[], maxWidth: number, measure: (s: string) => number): string[] {
+  if (maxWidth <= 0) return lines;
+  const out: string[] = [];
+  for (const line of lines) {
+    if (measure(line) <= maxWidth) { out.push(line); continue; }
+    let cur = '';
+    for (const word of line.split(' ')) {
+      const next = cur === '' ? word : `${cur} ${word}`;
+      if (cur !== '' && measure(next) > maxWidth) {
+        out.push(cur);
+        cur = word;
+      } else {
+        cur = next;
+      }
+    }
+    out.push(cur);
+  }
+  return out;
+}
+
+// brightness 归一：非法（NaN/Infinity/负数）按 1；>4 与 4 视觉等价（白字叠加早已饱和）⇒ 上限防病态数据狂刷绘制。
+function brightnessOf(v: number | undefined): number {
+  if (typeof v !== 'number' || !isFinite(v) || v < 0) return 1;
+  return Math.min(4, v);
+}
+
+function clampByte(v: number): number {
+  return Math.max(0, Math.min(255, Math.round(v)));
+}
+
 // 实测文本布局（OME TextLayouter::SetText）：行宽 = measureText 推进宽，宽取最长行；
 // 高 = ascender + descender + (行数-1) × 行高；画布 = 文本 + 2×padding（四边等量）。
 export function measureTextLayout(text: string, opts: TextMeasureOptions = {}): TextLayout {
@@ -132,7 +174,8 @@ export function measureTextLayout(text: string, opts: TextMeasureOptions = {}): 
   if (!ctx) {
     // 无 2D 上下文（jsdom 未装 node-canvas）→ 按字号/行长估算，绝不退化成 0 尺寸画布
     const px = fontPx(opts.pointsize);
-    const lines = splitLines(text);
+    const estimate = (s: string) => s.length * px * 0.5;
+    const lines = wrapLines(splitLines(text), wrapWidthOf(opts), estimate);
     const longest = lines.reduce((n, l) => Math.max(n, l.length), 2);
     return {
       textWidth: px * 0.5 * longest,
@@ -142,8 +185,12 @@ export function measureTextLayout(text: string, opts: TextMeasureOptions = {}): 
     };
   }
   ctx.font = fontCss(opts.font, opts.pointsize);
-  const lines = splitLines(text);
-  const widths = lines.map((line) => ctx.measureText(line).width);
+  const measure = (line: string) => {
+    const w = ctx.measureText(line).width;
+    return isFinite(w) ? w : 0;
+  };
+  const lines = wrapLines(splitLines(text), wrapWidthOf(opts), measure);
+  const widths = lines.map(measure);
   const textWidth = widths.reduce((n, w) => Math.max(n, isFinite(w) ? w : 0), 0);
   const { ascent, descent, lineHeight } = lineMetrics(ctx, fontPx(opts.pointsize));
   const textHeight = ascent + descent + Math.max(0, lines.length - 1) * lineHeight;
@@ -166,13 +213,30 @@ export interface TextAlignments {
   valign: 'top' | 'center' | 'bottom';
 }
 
+// WE text 的 9 种动态锚点 → halign/valign（`none` 不在表内 = 不覆盖，回退 horizontalalign 族）。
+const WE_TEXT_ANCHORS: Record<string, TextAlignments> = {
+  center: { halign: 'center', valign: 'center' },
+  top: { halign: 'center', valign: 'top' },
+  topright: { halign: 'right', valign: 'top' },
+  right: { halign: 'right', valign: 'center' },
+  bottomright: { halign: 'right', valign: 'bottom' },
+  bottom: { halign: 'center', valign: 'bottom' },
+  bottomleft: { halign: 'left', valign: 'bottom' },
+  left: { halign: 'left', valign: 'center' },
+  topleft: { halign: 'left', valign: 'top' },
+};
+
 // OME SceneTextObjectParser::align_or_default：horizontalalign/verticalalign 非空时优先；
 // 缺省时从 alignment 里找 left/right（vertical 找 top/bottom），找不到即 center。
+// v0.8.2 F12：anchor（9 值）非 none 时**优先于** alignment 族（真实库 19 处 none 走回退）。
 export function textAlignments(
   horizontalAlign?: string,
   verticalAlign?: string,
   alignment?: string,
+  anchor?: string,
 ): TextAlignments {
+  const anchored = typeof anchor === 'string' ? WE_TEXT_ANCHORS[anchor.trim().toLowerCase()] : undefined;
+  if (anchored) return { ...anchored };
   const axis = (primary: string | undefined, fallback: string | undefined, neg: string, pos: string) => {
     const src = typeof primary === 'string' && primary.trim() ? primary : fallback;
     if (typeof src === 'string') {
@@ -196,8 +260,9 @@ export function textLayerOffset(
   verticalAlign: string | undefined,
   alignment: string | undefined,
   scale: readonly number[],
+  anchor?: string,
 ): [number, number] {
-  const { halign, valign } = textAlignments(horizontalAlign, verticalAlign, alignment);
+  const { halign, valign } = textAlignments(horizontalAlign, verticalAlign, alignment, anchor);
   const sx = Number.isFinite(scale[0]) ? scale[0] : 1;
   const sy = Number.isFinite(scale[1]) ? scale[1] : 1;
   const ox = halign === 'left' ? 0.5 : halign === 'right' ? -0.5 : 0;
@@ -209,6 +274,7 @@ export function textLayerOffset(
 // 画布尺寸取 opts（装配期由 measureTextLayout 定）；文本按 horizontalalign 定行起点、按
 // padding 排布，行基线 = padding + ascent + i × 行高（canvas y 向下）。verticalalign 只决定
 // 图层位置（见 textLayerOffset），不影响画布内绘制——画布本身就是文本框 + 四周 padding。
+// F12：limitwidth/maxwidth 与 measureTextLayout 同规则换行；brightness 用颜色调制 + 叠加近似。
 // 2D 上下文不可用时静默留白，不抛错。
 export function drawTextToCanvas(canvas: HTMLCanvasElement, text: string, opts: TextTextureOptions): void {
   const width = Math.max(1, Math.round(opts.width));
@@ -222,19 +288,47 @@ export function drawTextToCanvas(canvas: HTMLCanvasElement, text: string, opts: 
   // 否则整段 font 被浏览器视为非法而静默回退默认字体（单词家族不受影响）。
   // family 已是完整 CSS 家族列表（可能是 `Consolas, "Courier New", monospace`）→ 不再二次加引号。
   ctx.font = `${px}px ${resolveFontFamily(opts.font)}`;
-  ctx.fillStyle = opts.color ? `rgb(${opts.color[0]}, ${opts.color[1]}, ${opts.color[2]})` : '#ffffff';
   ctx.textBaseline = 'alphabetic';
   const pad = paddingOf(opts.padding);
+  // 行内对齐只看 horizontalalign/alignment 族；anchor 决定 quad 原点（见 textLayerOffset）。
   const { halign } = textAlignments(opts.horizontalAlign, opts.verticalAlign, opts.alignment);
   const { ascent, lineHeight } = lineMetrics(ctx, px);
-  const lines = splitLines(text);
+  const measure = (line: string) => {
+    const w = ctx.measureText(line).width;
+    return isFinite(w) ? w : 0;
+  };
+  // F12：与 measureTextLayout 同一换行规则（画布尺寸由装配期实测，重绘仍按同一 maxwidth）
+  const lines = wrapLines(splitLines(text), wrapWidthOf(opts), measure);
   // 行锚点按 halign：left → 文本框左缘（padding），center → 画布中心，right → 右缘；
   // textAlign 直接用 halign，避免再按行宽换算起点（padding 对称 ⇒ 文本框居中于画布）。
   ctx.textAlign = halign;
   const anchorX = halign === 'left' ? pad : halign === 'right' ? width - pad : width / 2;
-  lines.forEach((line, i) => {
-    ctx.fillText(line, anchorX, pad + ascent + i * lineHeight);
-  });
+  const drawLines = () => {
+    lines.forEach((line, i) => {
+      ctx.fillText(line, anchorX, pad + ascent + i * lineHeight);
+    });
+  };
+  // F12 brightness = 颜色乘系数（spec §3）：<1 直接压暗颜色；>1 再以 lighter 叠加同一字形近似增亮
+  // （白字 rgb 已饱和，叠加是唯一能表达 >1 的 canvas 路径）。绘制后复位合成状态，同一 ctx 可复用。
+  const b = brightnessOf(opts.brightness);
+  const rgb = opts.color ?? [255, 255, 255];
+  const base = rgb.map((c) => clampByte(c * Math.min(b, 1)));
+  ctx.fillStyle = b === 1 && !opts.color ? '#ffffff' : `rgb(${base.join(', ')})`;
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+  drawLines();
+  if (b > 1) {
+    const extra = b - 1;
+    const passes = Math.ceil(extra);
+    ctx.fillStyle = `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
+    ctx.globalCompositeOperation = 'lighter';
+    for (let i = 0; i < passes; i++) {
+      ctx.globalAlpha = Math.min(1, extra - i);
+      drawLines();
+    }
+  }
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = 'source-over';
 }
 
 // 把文本绘制到新建的离屏 canvas，返回 CanvasTexture（needsUpdate 已置位）。

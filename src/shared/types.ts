@@ -166,6 +166,12 @@ export interface SceneTextObject extends SceneObjectBase {
   horizontalAlign?: string;      // WE horizontalalign：文本框锚点/多行行对齐（left/center/right）
   verticalAlign?: string;        // WE verticalalign：origin 落在文本框哪条边（top/center/bottom）
   padding?: number;              // WE padding：文本框四周**等量**内边距（字体像素单位）
+  // v0.8.2 F12：text 可见字段
+  alpha?: number;                // 层透明度（optAlpha 归一化 0-1；缺省 1）
+  brightness?: number;           // 文本亮度系数（缺省 1；>1 在 canvas 侧用叠加绘制近似）
+  anchor?: string;               // 动态锚点（none/center/top/topright/right/... 9 值）；非 none 时优先于 alignment 族
+  limitwidth?: boolean;          // 宽度限制开关（true 时按 maxwidth 按词换行）
+  maxwidth?: number;             // 限宽（字体像素，与 measureText 同空间；真实素材为 500，缺省 undefined）
   script?: string;               // text.script（WE 文本脚本源码，T3.3 模式识别输入）
   scriptProperties?: Record<string, unknown>; // text.scriptproperties（{user,value} 已解包，T3.3）
   effects?: unknown[];           // 对象效果链（与 image/particle 同语义，v0.8.1 起挂链）

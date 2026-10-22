@@ -20,6 +20,9 @@ function makeMock2d() {
     fillStyle: '',
     textAlign: '',
     textBaseline: '',
+    // F12 brightness 的叠加绘制会改这两个状态（每轮绘制后必须复位）
+    globalCompositeOperation: 'source-over',
+    globalAlpha: 1,
     fillText: vi.fn(),
     measureText: vi.fn((s: string) => {
       const px = parseFloat(ctx.font) || 10;
@@ -384,5 +387,169 @@ describe('文本变化 → 画布/布局按新文本重算（动态 resize）', 
     expect(driver.layout).toMatchObject({ textWidth: 960, width: 976 });
     expect(canvas.width).toBe(976);
     expect(canvas.height).toBe(336);
+  });
+});
+
+// v0.8.2 F12：limitwidth/maxwidth 限宽换行。mock 等宽 0.5em ⇒ pointsize 10（40px 字号）每字符 20px。
+// '20 OCTOBER 2026' 单词宽 40 / 140 / 80；maxwidth 200 ⇒ 第一行 '20 OCTOBER' 恰好 200、'2026' 换行。
+describe('limitwidth / maxwidth（超宽按词换行）', () => {
+  let ctx: ReturnType<typeof makeMock2d>;
+  beforeEach(() => {
+    ctx = makeMock2d();
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(ctx as unknown as CanvasRenderingContext2D);
+  });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('超宽文本按词换行：行数增加，画布高 = 多行高度', () => {
+    const m = measureTextLayout('20 OCTOBER 2026', { pointsize: 10, limitwidth: true, maxwidth: 200 });
+    expect(m.textWidth).toBe(200);      // 最长行 '20 OCTOBER' = 40 + 20 + 140
+    expect(m.textHeight).toBe(80);      // 2 行 × 40px 行高
+    expect(m).toMatchObject({ width: 200, height: 80 });
+  });
+
+  it('limitwidth 缺省/false 或无 maxwidth → 不换行（旧行为零回归）', () => {
+    const raw = { textWidth: 300, textHeight: 40, width: 300, height: 40 };
+    expect(measureTextLayout('20 OCTOBER 2026', { pointsize: 10, maxwidth: 200 })).toEqual(raw);
+    expect(measureTextLayout('20 OCTOBER 2026', { pointsize: 10, limitwidth: false, maxwidth: 200 })).toEqual(raw);
+    expect(measureTextLayout('20 OCTOBER 2026', { pointsize: 10, limitwidth: true })).toEqual(raw);
+  });
+
+  it('逐词贪心：每行宽 ≤ maxwidth；单个超宽词独占一行（不切词）', () => {
+    const m = measureTextLayout('A BB CCC DDDD', { pointsize: 10, limitwidth: true, maxwidth: 100 });
+    // 宽 20 / 40 / 60 / 80：'A BB'=80、+ ' CCC'=160 超 ⇒ 换行；'CCC DDDD'=160 超 ⇒ 再换行
+    expect(m.textWidth).toBe(80);
+    expect(m.textHeight).toBe(120);
+    const long = measureTextLayout('AAAAAAAA', { pointsize: 10, limitwidth: true, maxwidth: 100 });
+    expect(long.textWidth).toBe(160);   // 8 × 20 = 160 > 100，但词内不切分
+    expect(long.textHeight).toBe(40);
+  });
+
+  it('drawTextToCanvas 与 measure 同一换行规则（逐行 fillText）', () => {
+    const canvas = document.createElement('canvas');
+    drawTextToCanvas(canvas, '20 OCTOBER 2026', {
+      pointsize: 10, width: 200, height: 80, limitwidth: true, maxwidth: 200,
+    });
+    expect(ctx.fillText.mock.calls.map((c) => c[0])).toEqual(['20 OCTOBER', '2026']);
+  });
+
+  it('驱动器重绘沿用 limitwidth（文本变化后仍换行）', () => {
+    const binding = { update: () => '20 OCTOBER 2026', dispose: () => {} };
+    const canvas = document.createElement('canvas');
+    const driver = createScriptDriver(canvas, {
+      width: 10, height: 10, pointsize: 10, limitwidth: true, maxwidth: 200,
+    }, binding, '');
+    expect(driver.update(new Date())).toBe(true);
+    expect(driver.layout).toMatchObject({ textWidth: 200, textHeight: 80 });
+    expect(ctx.fillText.mock.calls.map((c) => c[0])).toEqual(['20 OCTOBER', '2026']);
+  });
+});
+
+// v0.8.2 F12：anchor 是 9 种 WE 锚点值（none 表示不覆盖），优先于 alignment 族。
+describe('textAlignments(anchor) / textLayerOffset(anchor)（F12）', () => {
+  it('9 种 anchor → halign/valign', () => {
+    const cases: Array<[string, { halign: string; valign: string }]> = [
+      ['center', { halign: 'center', valign: 'center' }],
+      ['top', { halign: 'center', valign: 'top' }],
+      ['topright', { halign: 'right', valign: 'top' }],
+      ['right', { halign: 'right', valign: 'center' }],
+      ['bottomright', { halign: 'right', valign: 'bottom' }],
+      ['bottom', { halign: 'center', valign: 'bottom' }],
+      ['bottomleft', { halign: 'left', valign: 'bottom' }],
+      ['left', { halign: 'left', valign: 'center' }],
+      ['topleft', { halign: 'left', valign: 'top' }],
+    ];
+    for (const [anchor, want] of cases) {
+      expect(textAlignments(undefined, undefined, undefined, anchor)).toEqual(want);
+    }
+  });
+
+  it('anchor 优先于 horizontalalign/verticalalign/alignment', () => {
+    expect(textAlignments('center', 'center', 'center', 'topright')).toEqual({ halign: 'right', valign: 'top' });
+    expect(textAlignments('left', 'bottom', undefined, 'topleft')).toEqual({ halign: 'left', valign: 'top' });
+  });
+
+  it('anchor "none"/未知值/缺省 → 回退既有 alignment 族推导', () => {
+    expect(textAlignments('left', 'bottom', 'topright', 'none')).toEqual({ halign: 'left', valign: 'bottom' });
+    expect(textAlignments(undefined, undefined, 'bottomright', 'bogus')).toEqual({ halign: 'right', valign: 'bottom' });
+    expect(textAlignments(undefined, undefined, undefined)).toEqual({ halign: 'center', valign: 'center' });
+  });
+
+  it('textLayerOffset 按 anchor 决定 origin 落在文本框哪条边（topright → 右上缘）', () => {
+    const layout = { width: 120, height: 60, textWidth: 100, textHeight: 50 };
+    expect(textLayerOffset(layout, undefined, undefined, undefined, [1, 1, 1], 'topright')).toEqual([-50, -25]);
+    expect(textLayerOffset(layout, undefined, undefined, undefined, [2, 2, 1], 'bottomleft')).toEqual([100, 50]);
+    expect(textLayerOffset(layout, undefined, undefined, undefined, [1, 1, 1], 'none')).toEqual([0, 0]);
+  });
+});
+
+// v0.8.2 F12：brightness = 颜色乘系数；>1 用「同一字形再叠加一遍」近似增亮（canvas 侧，spec §3）。
+describe('drawTextToCanvas brightness（F12）', () => {
+  let ctx: ReturnType<typeof makeMock2d>;
+  beforeEach(() => {
+    ctx = makeMock2d();
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(ctx as unknown as CanvasRenderingContext2D);
+  });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  /** 记录每次 fillText 当刻的合成状态（brightness>1 时会有多次绘制）。 */
+  function recordPasses() {
+    const passes: Array<{ text: string; op: string; alpha: number }> = [];
+    ctx.fillText.mockImplementation((text: string) => {
+      passes.push({ text: String(text), op: String(ctx.globalCompositeOperation), alpha: ctx.globalAlpha });
+    });
+    return passes;
+  }
+
+  it('brightness 缺省/1 → 单次 source-over 绘制（旧行为零回归）', () => {
+    const passes = recordPasses();
+    drawTextToCanvas(document.createElement('canvas'), 'A', { pointsize: 10, width: 40, height: 40 });
+    drawTextToCanvas(document.createElement('canvas'), 'A', { pointsize: 10, width: 40, height: 40, brightness: 1 });
+    expect(passes).toEqual([
+      { text: 'A', op: 'source-over', alpha: 1 },
+      { text: 'A', op: 'source-over', alpha: 1 },
+    ]);
+  });
+
+  it('brightness < 1 → 颜色按系数压暗（单次绘制）', () => {
+    drawTextToCanvas(document.createElement('canvas'), 'A', {
+      pointsize: 10, width: 40, height: 40, color: [200, 100, 50], brightness: 0.5,
+    });
+    expect(ctx.fillStyle).toBe('rgb(100, 50, 25)');
+    expect(ctx.fillText).toHaveBeenCalledTimes(1);
+  });
+
+  it('brightness > 1 → 追加 lighter 叠加绘制（1.4 → 基色 + alpha 0.4 一遍）', () => {
+    const passes = recordPasses();
+    drawTextToCanvas(document.createElement('canvas'), 'AB', {
+      pointsize: 10, width: 60, height: 40, color: [200, 100, 50], brightness: 1.4,
+    });
+    expect(passes.map((p) => ({ text: p.text, op: p.op }))).toEqual([
+      { text: 'AB', op: 'source-over' },
+      { text: 'AB', op: 'lighter' },
+    ]);
+    expect(passes[0].alpha).toBe(1);
+    expect(passes[1].alpha).toBeCloseTo(0.4, 6);
+    // 叠加仍用完整颜色（不是压暗后的）；绘制结束复位合成状态，避免污染下一次重绘
+    expect(ctx.fillStyle).toBe('rgb(200, 100, 50)');
+    expect(ctx.globalCompositeOperation).toBe('source-over');
+    expect(ctx.globalAlpha).toBe(1);
+  });
+
+  it('brightness > 2 → 拆成多遍叠加，总系数 = brightness（2.39 → 1 + 1 + 0.39）', () => {
+    const passes = recordPasses();
+    drawTextToCanvas(document.createElement('canvas'), 'A', { pointsize: 10, width: 40, height: 40, brightness: 2.39 });
+    const add = passes.filter((p) => p.op === 'lighter');
+    expect(add).toHaveLength(2);
+    expect(add[0].alpha).toBe(1);
+    expect(add[1].alpha).toBeCloseTo(0.39, 6);
+    expect(add.reduce((n, p) => n + p.alpha, 0)).toBeCloseTo(1.39, 6);
+  });
+
+  it('brightness 非法（NaN/负数）→ 按 1 处理，不抛错', () => {
+    expect(() => drawTextToCanvas(document.createElement('canvas'), 'A', {
+      pointsize: 10, width: 40, height: 40, brightness: Number.NaN,
+    })).not.toThrow();
+    drawTextToCanvas(document.createElement('canvas'), 'A', { pointsize: 10, width: 40, height: 40, brightness: -2 });
+    expect(ctx.fillText).toHaveBeenCalledTimes(2);
   });
 });

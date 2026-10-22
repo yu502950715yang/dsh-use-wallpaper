@@ -23303,6 +23303,21 @@ function optNum(s) {
 function optStr(s) {
   return typeof s === "string" && s.trim() ? s : void 0;
 }
+function optBool(s) {
+  if (typeof s === "boolean") return s;
+  if (typeof s !== "string") return void 0;
+  const v = s.trim().toLowerCase();
+  return v === "true" ? true : v === "false" ? false : void 0;
+}
+function textVisibleFields(o) {
+  return {
+    alpha: optAlpha(o.alpha),
+    brightness: optNum(o.brightness) ?? 1,
+    anchor: optStr(o.anchor),
+    limitwidth: optBool(o.limitwidth),
+    maxwidth: optNum(o.maxwidth)
+  };
+}
 function parseAnimationLayers(raw) {
   if (!Array.isArray(raw)) return void 0;
   const out = [];
@@ -23492,7 +23507,9 @@ function parseSceneJson(raw) {
         // 图层尺寸/定位字段（两种 text 形态都要解析；缺省 → 由 alignment 推导）
         horizontalAlign: optStr(o.horizontalalign),
         verticalAlign: optStr(o.verticalalign),
-        padding: optNum(o.padding)
+        padding: optNum(o.padding),
+        // v0.8.2 F12：alpha/brightness/anchor/limitwidth/maxwidth
+        ...textVisibleFields(o)
       };
     }
     if (typeof o.text === "object" && o.text !== null && !Array.isArray(o.text)) {
@@ -23508,6 +23525,7 @@ function parseSceneJson(raw) {
         horizontalAlign: optStr(o.horizontalalign),
         verticalAlign: optStr(o.verticalalign),
         padding: optNum(o.padding),
+        ...textVisibleFields(o),
         // T3.3：text.script 识别为 clock 时每帧刷新时间文本（scriptproperties 已解包）
         ...scriptFields(t)
       };
@@ -23664,12 +23682,47 @@ function measureContext() {
 function paddingOf(padding) {
   return typeof padding === "number" && isFinite(padding) && padding > 0 ? padding : 0;
 }
+function wrapWidthOf(opts) {
+  if (opts.limitwidth !== true) return 0;
+  const w = opts.maxwidth;
+  return typeof w === "number" && isFinite(w) && w > 0 ? w : 0;
+}
+function wrapLines(lines, maxWidth, measure) {
+  if (maxWidth <= 0) return lines;
+  const out = [];
+  for (const line of lines) {
+    if (measure(line) <= maxWidth) {
+      out.push(line);
+      continue;
+    }
+    let cur = "";
+    for (const word of line.split(" ")) {
+      const next = cur === "" ? word : `${cur} ${word}`;
+      if (cur !== "" && measure(next) > maxWidth) {
+        out.push(cur);
+        cur = word;
+      } else {
+        cur = next;
+      }
+    }
+    out.push(cur);
+  }
+  return out;
+}
+function brightnessOf(v) {
+  if (typeof v !== "number" || !isFinite(v) || v < 0) return 1;
+  return Math.min(4, v);
+}
+function clampByte(v) {
+  return Math.max(0, Math.min(255, Math.round(v)));
+}
 function measureTextLayout(text, opts = {}) {
   const pad = paddingOf(opts.padding);
   const ctx = measureContext();
   if (!ctx) {
     const px = fontPx(opts.pointsize);
-    const lines2 = splitLines(text);
+    const estimate = (s) => s.length * px * 0.5;
+    const lines2 = wrapLines(splitLines(text), wrapWidthOf(opts), estimate);
     const longest = lines2.reduce((n, l) => Math.max(n, l.length), 2);
     return {
       textWidth: px * 0.5 * longest,
@@ -23679,8 +23732,12 @@ function measureTextLayout(text, opts = {}) {
     };
   }
   ctx.font = fontCss(opts.font, opts.pointsize);
-  const lines = splitLines(text);
-  const widths = lines.map((line) => ctx.measureText(line).width);
+  const measure = (line) => {
+    const w = ctx.measureText(line).width;
+    return isFinite(w) ? w : 0;
+  };
+  const lines = wrapLines(splitLines(text), wrapWidthOf(opts), measure);
+  const widths = lines.map(measure);
   const textWidth = widths.reduce((n, w) => Math.max(n, isFinite(w) ? w : 0), 0);
   const { ascent, descent, lineHeight } = lineMetrics(ctx, fontPx(opts.pointsize));
   const textHeight = ascent + descent + Math.max(0, lines.length - 1) * lineHeight;
@@ -23691,7 +23748,20 @@ function measureTextLayout(text, opts = {}) {
     height: Math.max(1, Math.ceil(textHeight + 2 * pad))
   };
 }
-function textAlignments(horizontalAlign, verticalAlign, alignment) {
+var WE_TEXT_ANCHORS = {
+  center: { halign: "center", valign: "center" },
+  top: { halign: "center", valign: "top" },
+  topright: { halign: "right", valign: "top" },
+  right: { halign: "right", valign: "center" },
+  bottomright: { halign: "right", valign: "bottom" },
+  bottom: { halign: "center", valign: "bottom" },
+  bottomleft: { halign: "left", valign: "bottom" },
+  left: { halign: "left", valign: "center" },
+  topleft: { halign: "left", valign: "top" }
+};
+function textAlignments(horizontalAlign, verticalAlign, alignment, anchor) {
+  const anchored = typeof anchor === "string" ? WE_TEXT_ANCHORS[anchor.trim().toLowerCase()] : void 0;
+  if (anchored) return { ...anchored };
   const axis = (primary, fallback, neg, pos) => {
     const src = typeof primary === "string" && primary.trim() ? primary : fallback;
     if (typeof src === "string") {
@@ -23705,8 +23775,8 @@ function textAlignments(horizontalAlign, verticalAlign, alignment) {
     valign: axis(verticalAlign, alignment, "top", "bottom")
   };
 }
-function textLayerOffset(layout, horizontalAlign, verticalAlign, alignment, scale) {
-  const { halign, valign } = textAlignments(horizontalAlign, verticalAlign, alignment);
+function textLayerOffset(layout, horizontalAlign, verticalAlign, alignment, scale, anchor) {
+  const { halign, valign } = textAlignments(horizontalAlign, verticalAlign, alignment, anchor);
   const sx = Number.isFinite(scale[0]) ? scale[0] : 1;
   const sy = Number.isFinite(scale[1]) ? scale[1] : 1;
   const ox = halign === "left" ? 0.5 : halign === "right" ? -0.5 : 0;
@@ -23722,17 +23792,41 @@ function drawTextToCanvas(canvas, text, opts) {
   if (!ctx) return;
   const px = fontPx(opts.pointsize);
   ctx.font = `${px}px ${resolveFontFamily(opts.font)}`;
-  ctx.fillStyle = opts.color ? `rgb(${opts.color[0]}, ${opts.color[1]}, ${opts.color[2]})` : "#ffffff";
   ctx.textBaseline = "alphabetic";
   const pad = paddingOf(opts.padding);
   const { halign } = textAlignments(opts.horizontalAlign, opts.verticalAlign, opts.alignment);
   const { ascent, lineHeight } = lineMetrics(ctx, px);
-  const lines = splitLines(text);
+  const measure = (line) => {
+    const w = ctx.measureText(line).width;
+    return isFinite(w) ? w : 0;
+  };
+  const lines = wrapLines(splitLines(text), wrapWidthOf(opts), measure);
   ctx.textAlign = halign;
   const anchorX = halign === "left" ? pad : halign === "right" ? width - pad : width / 2;
-  lines.forEach((line, i) => {
-    ctx.fillText(line, anchorX, pad + ascent + i * lineHeight);
-  });
+  const drawLines = () => {
+    lines.forEach((line, i) => {
+      ctx.fillText(line, anchorX, pad + ascent + i * lineHeight);
+    });
+  };
+  const b = brightnessOf(opts.brightness);
+  const rgb = opts.color ?? [255, 255, 255];
+  const base = rgb.map((c) => clampByte(c * Math.min(b, 1)));
+  ctx.fillStyle = b === 1 && !opts.color ? "#ffffff" : `rgb(${base.join(", ")})`;
+  ctx.globalCompositeOperation = "source-over";
+  ctx.globalAlpha = 1;
+  drawLines();
+  if (b > 1) {
+    const extra = b - 1;
+    const passes = Math.ceil(extra);
+    ctx.fillStyle = `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
+    ctx.globalCompositeOperation = "lighter";
+    for (let i = 0; i < passes; i++) {
+      ctx.globalAlpha = Math.min(1, extra - i);
+      drawLines();
+    }
+  }
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = "source-over";
 }
 function createTextTexture(text, opts) {
   const canvas = document.createElement("canvas");
@@ -25719,6 +25813,9 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
         scale: t.scale,
         angles: t.angles,
         texture: layer.texture,
+        // v0.8.2 F12：alpha 与 image 同口径（materialModulation → 内容材质 opacity，直渲/隔离一致）；
+        // brightness 已在 canvas 侧烘进纹理（见 text-object.drawTextToCanvas），此处不重复调制。
+        alpha: obj.alpha,
         sceneW,
         sceneH,
         objectId: obj.id,
@@ -25740,7 +25837,8 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
           scale: t.scale,
           horizontalAlign: obj.horizontalAlign,
           verticalAlign: obj.verticalAlign,
-          alignment: obj.alignment
+          alignment: obj.alignment,
+          anchor: obj.anchor
         });
       }
     } else if (obj.kind === "util") {
@@ -25825,7 +25923,7 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
       if (!t.driver.update(/* @__PURE__ */ new Date())) continue;
       t.texture.needsUpdate = true;
       const layout = t.driver.layout;
-      const off = textLayerOffset(layout, t.horizontalAlign, t.verticalAlign, t.alignment, t.scale);
+      const off = textLayerOffset(layout, t.horizontalAlign, t.verticalAlign, t.alignment, t.scale, t.anchor);
       const o = t.origin;
       player.update_background(t.backgroundId, [o[0] + off[0], o[1] + off[1], o[2]]);
       player.resizeBackground(t.backgroundId, [layout.width, layout.height]);
@@ -32005,12 +32103,22 @@ function createThreeSceneRenderer(opts) {
             font,
             pointsize: obj.pointsize,
             padding: obj.padding,
-            horizontalAlign: obj.horizontalAlign
+            horizontalAlign: obj.horizontalAlign,
+            // v0.8.2 F12：限宽换行参与布局测量（驱动器重绘沿用同一 opts）
+            limitwidth: obj.limitwidth,
+            maxwidth: obj.maxwidth
           };
           const layout = measureTextLayout(initial, measureOpts);
           const size = { w: layout.width, h: layout.height };
-          const opts2 = { ...measureOpts, color: obj.color, width: size.w, height: size.h };
-          const anchorOffset = textLayerOffset(layout, obj.horizontalAlign, obj.verticalAlign, obj.alignment, obj.scale);
+          const opts2 = { ...measureOpts, color: obj.color, brightness: obj.brightness, width: size.w, height: size.h };
+          const anchorOffset = textLayerOffset(
+            layout,
+            obj.horizontalAlign,
+            obj.verticalAlign,
+            obj.alignment,
+            obj.scale,
+            obj.anchor
+          );
           if (binding) {
             currentScriptBindings.push(binding);
             const scriptTexture = createTextTexture(initial, opts2);
