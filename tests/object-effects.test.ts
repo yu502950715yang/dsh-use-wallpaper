@@ -731,6 +731,45 @@ describe('ObjectEffectStage', () => {
     stage.dispose();
   });
 
+  // budgetScale 只施加 budgeted（image）：text 的源尺寸（布局像素）不进预算，若同样乘预算比例，
+  // resize 后 text RT 会小于挂载期口径（挂载期 isolatedRtSize 无 budgetScale）。
+  it('resize 期 budgetScale 只施加 budgeted：text 的 RT 与挂载期一致（不被 image 预算挤压）', () => {
+    const source = { width: 5000, height: 2400 };
+    const density = 0.375;
+    const textSource = { width: 917, height: 214 };
+    const imageMount = isolatedRtSize(5000, 2400, density, source);
+    const textMount = isolatedRtSize(97, 22, density, textSource);
+    expect([imageMount.width, imageMount.height]).toEqual([4096, 1966]);
+    expect([textMount.width, textMount.height]).toEqual([917, 208]);
+    const budget = fitIsolatedBudget([
+      { worldW: 5000, worldH: 2400, source },
+      { worldW: 5000, worldH: 2400, source },
+    ], density);
+    expect(budget).toBeLessThan(1);
+
+    const host = createHost([
+      { id: 1, rtWidth: imageMount.width, rtHeight: imageMount.height },
+      { id: 2, rtWidth: imageMount.width, rtHeight: imageMount.height },
+      { id: 30, rtWidth: textMount.width, rtHeight: textMount.height },
+    ]);
+    const stage = new ObjectEffectStage(host as never, {
+      wallpaperId: 'w', screenScale: density,
+    });
+    stage.setWorldSize(1, 5000, 2400, source, true);
+    stage.setWorldSize(2, 5000, 2400, source, true);
+    stage.setWorldSize(30, 97, 22, textSource, false); // text：源 = 布局像素，不进预算
+    stage.onViewportResize(density);
+    // image 按共享预算收窄；text 一次也不重设（旧实现会给 791×180）。
+    expect(host._resized.map((r) => r.id)).toEqual([1, 2]);
+    expect(host.isolatedObjects().find((o) => o.id === 30)).toMatchObject({
+      rtWidth: textMount.width, rtHeight: textMount.height,
+    });
+    // 反证：误施加同一 budgetScale 确实会缩小 text RT（不是恒等变换）。
+    const squeezed = isolatedRtSize(97, 22, density, textSource, { budgetScale: budget });
+    expect(squeezed.width).toBeLessThan(textMount.width);
+    stage.dispose();
+  });
+
   it('dispose 释放全部 runner', () => {
     const host = createHost([{ id: 1, rtWidth: 10, rtHeight: 10 }]);
     const stage = new ObjectEffectStage(host as never, {

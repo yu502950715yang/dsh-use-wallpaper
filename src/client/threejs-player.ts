@@ -757,6 +757,8 @@ export class ThreeScenePlayer {
   private refractHidden = false;
   // 已告警过的未匹配消费者（防每帧刷屏）。
   private readonly warnedConsumers = new Set<number>();
+  // 段边界快照失败只告警一次（防每帧刷屏）；失败时 util 层跳过、主场景继续。
+  private frameSnapshotWarned = false;
   // 末段合成用的全屏 quad（惰性建：只有真的走段渲染且 Glow 关闭时才建）。
   private compositeQuad: CompositeQuad | null = null;
   // g_Time 时间原点（构造时刻），advance 传「自 player 创建起的秒数」。
@@ -1396,18 +1398,27 @@ export class ThreeScenePlayer {
         // ★ 快照拍在**本段 render 之前**：此刻 target 仍绑定 frameRT，内容 = 此前所有段已绘制的内容
         //   （WE「画该层之前 blit」语义；放在 render 之后会把消费者自己拍进去）。捕获无幂等性 ⇒ 每段一次。
         if (segment.consumer !== null) {
-          const snapshot = capture.capture();
           const consumerObjectId = consumerObjectIdByIndex.get(segment.consumer);
-          this.lastFrameSnapshot = snapshot; // 槽门控的全局兜底（渲染器每帧同步给 stage）
-          // util 层：快照 = **层内容**（真实 util 链读 bind: previous）。写入内容材质并立即重渲
-          // 该层 RT ⇒ 本帧 advance 的链输入就是本帧画面（不是上一帧的透明占位）。
-          if (consumerObjectId !== undefined && this.utilContents.has(consumerObjectId)) {
-            this.setUtilContentTexture(consumerObjectId, snapshot, {
-              cover: this.utilContentCoverFor(consumerObjectId) ?? undefined,
-            });
-            this.renderUtilContent(consumerObjectId);
-            this.renderer.setRenderTarget(capture.target); // 重渲把目标复位成 null，段渲染要继续用 frameRT
+          // 快照失败（copy 抛错/资源已释放）只丢 util 这一层：不把异常抛给帧循环（否则整帧丢失）。
+          let snapshot: THREE.Texture | null = null;
+          try {
+            snapshot = capture.capture();
+            // util 层：快照 = **层内容**（真实 util 链读 bind: previous）。写入内容材质并立即重渲
+            // 该层 RT ⇒ 本帧 advance 的链输入就是本帧画面（不是上一帧的透明占位）。
+            if (consumerObjectId !== undefined && this.utilContents.has(consumerObjectId)) {
+              this.setUtilContentTexture(consumerObjectId, snapshot, {
+                cover: this.utilContentCoverFor(consumerObjectId) ?? undefined,
+              });
+              this.renderUtilContent(consumerObjectId);
+            }
+          } catch (e) {
+            snapshot = null;
+            this.warnFrameSnapshotFailure(e);
+          } finally {
+            // 重渲会把目标复位成 null（异常早退时也可能停在中间态），段渲染要继续用 frameRT。
+            this.renderer.setRenderTarget(capture.target);
           }
+          this.lastFrameSnapshot = snapshot; // 槽门控的全局兜底（渲染器每帧同步给 stage）
           // 段边界**同步**通知编排器 ⇒ 该对象的效果链本帧用这张快照（而非上一帧）。携带纹理 =
           // 不重复 blit（同一张快照也供下面折射路径用）；代号供消费方在执行当刻比对作废。
           if (consumerObjectId !== undefined) {
@@ -1416,7 +1427,7 @@ export class ThreeScenePlayer {
           }
           // 折射消费者：在它被绘制之前把本帧快照接进 refractBg（逐帧覆盖，段外不持有引用）。
           const refractLayer = consumerObjectId === undefined ? undefined : this.refractLayers.get(consumerObjectId);
-          if (refractLayer !== undefined && consumerObjectId !== undefined) {
+          if (refractLayer !== undefined && consumerObjectId !== undefined && snapshot !== null) {
             refractLayer.material.uniforms.refractBg.value = snapshot;
             if (!refractLayer.loggedRefract) {
               refractLayer.loggedRefract = true;
@@ -1453,6 +1464,16 @@ export class ThreeScenePlayer {
       this.compositeQuad ??= createCompositeQuad(this.renderer);
       this.compositeQuad.composite(this.renderer, capture.target.texture);
     }
+  }
+
+  // 段边界快照失败：只告警一次并跳过 util 层，主场景与后续帧继续（不把异常抛进帧循环）。
+  private warnFrameSnapshotFailure(e: unknown): void {
+    if (this.frameSnapshotWarned) return;
+    this.frameSnapshotWarned = true;
+    console.warn(
+      '[wallpaper-engine] 帧快照失败，util 层跳过:',
+      e instanceof Error ? e.message : String(e),
+    );
   }
 
   // 对象级效果链的编排器注入点（null = 本壁纸无效果链，帧序退化为原路径）。

@@ -24375,6 +24375,8 @@ var ThreeScenePlayer = class {
   refractHidden = false;
   // 已告警过的未匹配消费者（防每帧刷屏）。
   warnedConsumers = /* @__PURE__ */ new Set();
+  // 段边界快照失败只告警一次（防每帧刷屏）；失败时 util 层跳过、主场景继续。
+  frameSnapshotWarned = false;
   // 末段合成用的全屏 quad（惰性建：只有真的走段渲染且 Glow 关闭时才建）。
   compositeQuad = null;
   // g_Time 时间原点（构造时刻），advance 传「自 player 创建起的秒数」。
@@ -24902,22 +24904,29 @@ var ThreeScenePlayer = class {
           children[i].visible = prevVisible[i] && members.has(i);
         }
         if (segment.consumer !== null) {
-          const snapshot = capture.capture();
           const consumerObjectId = consumerObjectIdByIndex.get(segment.consumer);
-          this.lastFrameSnapshot = snapshot;
-          if (consumerObjectId !== void 0 && this.utilContents.has(consumerObjectId)) {
-            this.setUtilContentTexture(consumerObjectId, snapshot, {
-              cover: this.utilContentCoverFor(consumerObjectId) ?? void 0
-            });
-            this.renderUtilContent(consumerObjectId);
+          let snapshot = null;
+          try {
+            snapshot = capture.capture();
+            if (consumerObjectId !== void 0 && this.utilContents.has(consumerObjectId)) {
+              this.setUtilContentTexture(consumerObjectId, snapshot, {
+                cover: this.utilContentCoverFor(consumerObjectId) ?? void 0
+              });
+              this.renderUtilContent(consumerObjectId);
+            }
+          } catch (e) {
+            snapshot = null;
+            this.warnFrameSnapshotFailure(e);
+          } finally {
             this.renderer.setRenderTarget(capture.target);
           }
+          this.lastFrameSnapshot = snapshot;
           if (consumerObjectId !== void 0) {
             this.objectEffectStage?.setFrameSnapshot?.(snapshot);
             this.objectEffectStage?.onSegmentBoundary?.(consumerObjectId, snapshot, capture.snapshotVersion);
           }
           const refractLayer = consumerObjectId === void 0 ? void 0 : this.refractLayers.get(consumerObjectId);
-          if (refractLayer !== void 0 && consumerObjectId !== void 0) {
+          if (refractLayer !== void 0 && consumerObjectId !== void 0 && snapshot !== null) {
             refractLayer.material.uniforms.refractBg.value = snapshot;
             if (!refractLayer.loggedRefract) {
               refractLayer.loggedRefract = true;
@@ -24950,6 +24959,15 @@ var ThreeScenePlayer = class {
       this.compositeQuad ??= createCompositeQuad(this.renderer);
       this.compositeQuad.composite(this.renderer, capture.target.texture);
     }
+  }
+  // 段边界快照失败：只告警一次并跳过 util 层，主场景与后续帧继续（不把异常抛进帧循环）。
+  warnFrameSnapshotFailure(e) {
+    if (this.frameSnapshotWarned) return;
+    this.frameSnapshotWarned = true;
+    console.warn(
+      "[wallpaper-engine] \u5E27\u5FEB\u7167\u5931\u8D25\uFF0Cutil \u5C42\u8DF3\u8FC7:",
+      e instanceof Error ? e.message : String(e)
+    );
   }
   // 对象级效果链的编排器注入点（null = 本壁纸无效果链，帧序退化为原路径）。
   setObjectEffectStage(stage) {
@@ -27577,7 +27595,8 @@ var EffectRunner = class {
       }
     }
   }
-  // 写全局 uniform：仅 vec2/vec4（按声明维度补零）；其它维度或未声明 → 跳过、不补建。
+  // 写全局 uniform：仅当声明维度已经是 2/4 长度数组时写（vec4 按 [x,y,0,0]）；
+  // number / 非数组 / 其它长度 → 跳过、不猜维度（把 number 改写数组会让 three 上传失败）。
   applyGlobalUniforms(material) {
     const entries = [
       ["g_PointerPosition", this.globalUniforms.pointerPosition],
@@ -27586,8 +27605,8 @@ var EffectRunner = class {
     for (const [name, value] of entries) {
       if (!value) continue;
       const uniform = material.uniforms[name];
-      if (!uniform) continue;
-      const dim = Array.isArray(uniform.value) ? uniform.value.length : 2;
+      if (!uniform || !Array.isArray(uniform.value)) continue;
+      const dim = uniform.value.length;
       if (dim !== 2 && dim !== 4) continue;
       uniform.value = dim === 4 ? [value[0], value[1], 0, 0] : [value[0], value[1]];
     }
@@ -27897,7 +27916,9 @@ var ObjectEffectStage = class {
       this.scale()
     );
     for (const [id, entry] of this.entries) {
-      const size = isolatedRtSize(entry.worldW, entry.worldH, this.scale(), entry.source, { budgetScale });
+      const size = isolatedRtSize(entry.worldW, entry.worldH, this.scale(), entry.source, {
+        budgetScale: entry.budgeted ? budgetScale : void 0
+      });
       const view = this.host.isolatedObjects().find((o) => o.id === id);
       if (!view) continue;
       if (view.rtWidth === size.width && view.rtHeight === size.height) continue;

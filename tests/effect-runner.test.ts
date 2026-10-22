@@ -1181,6 +1181,19 @@ describe('EffectRunner.setGlobalUniforms（全局 uniform 注入）', () => {
     runner.dispose();
   });
 
+  it('非数组值（number）→ 跳过、不改写（不按 2 维猜测）', async () => {
+    const { renderer, mats } = createBindRenderer();
+    const runner = new EffectRunner(renderer as never, 16, 16);
+    // 声明成 float / 其它非数组类型时 binder 的 value 是 number：旧实现按「非数组 = 2 维」补成数组，
+    // 会把 float uniform 改写成 vec2（three 上传失败/数值错位）。
+    runner.setChains([[globalPass({ g_PointerPosition: 0.5, g_ParallaxPosition: 1 })]], 'wp', { width: 16, height: 16 });
+    runner.setGlobalUniforms({ pointerPosition: [0.2, 0.8], parallaxPosition: [0.1, 0.9] });
+    await runner.update(0, new THREE.Texture());
+    expect(mats[1].uniforms.g_PointerPosition.value).toBe(0.5);
+    expect(mats[1].uniforms.g_ParallaxPosition.value).toBe(1);
+    runner.dispose();
+  });
+
   it('逐帧更新：第二次 update 用新的全局值（不是只在建材质时写一次）', async () => {
     const { renderer, mats } = createBindRenderer();
     const runner = new EffectRunner(renderer as never, 16, 16);

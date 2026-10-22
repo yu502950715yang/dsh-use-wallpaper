@@ -3338,6 +3338,32 @@ describe('ThreeScenePlayer 段渲染（frameCapture）', () => {
     player.dispose();
   });
 
+  // 快照失败（copyFramebufferToTexture 抛错/资源已释放）⇒ 只告警一次并跳过 util 层：
+  // 不把异常抛进帧循环（否则整帧丢失），主场景段渲染与末段合成照旧。
+  it('段边界快照失败 → 不抛错、util 内容不被替换、只 warn 一次、主场景继续', () => {
+    const { player, mock } = makePlayer(1920, 1080);
+    addFullscreenUtil(player);
+    const cap = createFrameCapture(mock as unknown as THREE.WebGLRenderer);
+    player.setFrameCapture(cap);
+    player.registerFrameConsumer(54);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(cap, 'capture').mockImplementation(() => { throw new Error('copy 失败'); });
+
+    const before = mock._renders.length;
+    expect(() => player.render()).not.toThrow();
+    const frameRenders = mock._renders.slice(before);
+    expect(frameRenders.some((r) => r.target === cap.target)).toBe(true); // 段渲染继续
+    expect(frameRenders.some((r) => r.target === null)).toBe(true);       // 末段合成到画布
+    expect(player.utilContentTextureForTest(54)).toBeNull();              // 透明占位未被替换
+    expect(player.currentFrameSnapshot()).toBeNull();
+
+    expect(() => player.render()).not.toThrow(); // 第二帧同样失败：只 warn 一次
+    const snapshotWarns = warn.mock.calls.filter((c) => String(c[0]).includes('帧快照失败'));
+    expect(snapshotWarns).toHaveLength(1);
+    warn.mockRestore();
+    player.dispose();
+  });
+
   // resize / 换 capture 都会重建或作废旧快照：上一帧的兜底引用必须清空，
   // 否则渲染器每帧把它同步给 stage，放行的链会采到已 dispose 的纹理。
   it('resize / setFrameCapture 清空 lastFrameSnapshot（旧快照不得同步回 stage）', () => {

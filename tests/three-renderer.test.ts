@@ -1014,7 +1014,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
         effects: [{ file: 'effects/w/effect.json' }],
       },
     ]), FX_FILES);
-    defaultLoadWasm.mockResolvedValue(null);
+    vi.mocked(defaultLoadWasm).mockResolvedValue(null);
     const registerFrameConsumer = vi.fn();
     const player = {
       dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage: vi.fn(),
@@ -1027,7 +1027,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
         { id: 327, kind: 'background', rtWidth: 870, rtHeight: 980, rtTexture: {} },
       ],
     };
-    loadSceneToThree.mockReturnValue({
+    vi.mocked(loadSceneToThree).mockReturnValue({
       player, sims: [], backgroundIds: [0, 1, 2], particleLayers: [], puppetLayers: [],
     } as never);
     const worldSpy = vi.spyOn(ObjectEffectStage.prototype, 'setWorldSize').mockImplementation(() => {});
@@ -1035,17 +1035,17 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
-    expect(await r.render('2911105183', document.createElement('canvas'), null)).toBe(true);
+    expect(await r.render('2911105183', document.createElement('canvas'))).toBe(true);
 
-    const assets = loadSceneToThree.mock.calls[0][1];
+    const assets = vi.mocked(loadSceneToThree).mock.calls[0][1];
     // 场景/视口均 1920×1080、dpr=1 ⇒ 密度 1：RT = 世界尺寸。
-    expect(assets.isolate.get(58)).toEqual({
+    expect(assets.isolate!.get(58)).toEqual({
       objectId: 58, rtWidth: 1920, rtHeight: 1080, worldW: 1920, worldH: 1080,
     });
-    expect(assets.isolate.get(37)).toEqual({
+    expect(assets.isolate!.get(37)).toEqual({
       objectId: 37, rtWidth: 400, rtHeight: 850, worldW: 400, worldH: 850,
     });
-    expect(assets.isolate.get(327)).toEqual({
+    expect(assets.isolate!.get(327)).toEqual({
       objectId: 327, rtWidth: 870, rtHeight: 980, worldW: 870, worldH: 980,
     });
     // 链按对象 id 挂载（顺序 = objects 顺序），源尺寸显式 null（util 无 pkg 源纹理）；
@@ -1064,7 +1064,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     worldSpy.mockRestore();
     chainsSpy.mockRestore();
     warn.mockRestore();
-    r.dispose();
+    r.dispose?.();
   });
 
   // v0.8.2 Fix round 1（Minor 10）：util 准入只有「非静态隐藏 + 有非空效果链」——隐藏层不得被隔离
@@ -1078,7 +1078,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
       },
       { id: 61, name: 'no-effects', image: 'models/util/solidlayer.json', size: '1000 1000', scale: '0.87 -0.98 1' },
     ]), FX_FILES);
-    defaultLoadWasm.mockResolvedValue(null);
+    vi.mocked(defaultLoadWasm).mockResolvedValue(null);
     const registerFrameConsumer = vi.fn();
     const player = {
       dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage: vi.fn(),
@@ -1086,16 +1086,16 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
       registerFrameConsumer,
       renderer: {}, isolatedObjects: () => [],
     };
-    loadSceneToThree.mockReturnValue({ player, sims: [], backgroundIds: [0], particleLayers: [], puppetLayers: [] } as never);
+    vi.mocked(loadSceneToThree).mockReturnValue({ player, sims: [], backgroundIds: [0], particleLayers: [], puppetLayers: [] } as never);
     const worldSpy = vi.spyOn(ObjectEffectStage.prototype, 'setWorldSize').mockImplementation(() => {});
     const chainsSpy = vi.spyOn(ObjectEffectStage.prototype, 'setObjectChains').mockImplementation(() => {});
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
-    expect(await r.render('2851992662', document.createElement('canvas'), null)).toBe(true);
+    expect(await r.render('2851992662', document.createElement('canvas'))).toBe(true);
 
-    const assets = loadSceneToThree.mock.calls[0][1];
-    expect([...assets.isolate.keys()]).toEqual([54]);
+    const assets = vi.mocked(loadSceneToThree).mock.calls[0][1];
+    expect([...assets.isolate!.keys()]).toEqual([54]);
     expect(worldSpy.mock.calls.map((c) => c[0])).toEqual([54]);
     expect(chainsSpy.mock.calls.map((c) => c[0])).toEqual([54]);
     expect(registerFrameConsumer.mock.calls.map((c) => c[0])).toEqual([54]); // fullscreen = 内容输入消费者
@@ -1104,7 +1104,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     worldSpy.mockRestore();
     chainsSpy.mockRestore();
     warn.mockRestore();
-    r.dispose();
+    r.dispose?.();
   });
 
   // v0.8.2 Fix round 1（Minor 10）：util 世界尺寸取**父链折叠后的世界 scale**（3789452668 #327：
@@ -1121,22 +1121,22 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
         alpha: 0, color: '0.79 0.79 0.79', effects: [{ file: 'effects/w/effect.json' }],
       },
     ]), FX_FILES);
-    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null });
-    defaultLoadWasm.mockResolvedValue(null);
+    vi.mocked(resolveImageAssets).mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null, spriteSheet: false });
+    vi.mocked(defaultLoadWasm).mockResolvedValue(null);
     const player = {
       dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage: vi.fn(),
       setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn(),
       renderer: {}, isolatedObjects: () => [],
     };
-    loadSceneToThree.mockReturnValue({ player, sims: [], backgroundIds: [0], particleLayers: [], puppetLayers: [] } as never);
+    vi.mocked(loadSceneToThree).mockReturnValue({ player, sims: [], backgroundIds: [0], particleLayers: [], puppetLayers: [] } as never);
     const worldSpy = vi.spyOn(ObjectEffectStage.prototype, 'setWorldSize').mockImplementation(() => {});
     const chainsSpy = vi.spyOn(ObjectEffectStage.prototype, 'setObjectChains').mockImplementation(() => {});
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
-    expect(await r.render('2851992662', document.createElement('canvas'), null)).toBe(true);
+    expect(await r.render('2851992662', document.createElement('canvas'))).toBe(true);
 
-    const iso = (loadSceneToThree.mock.calls[0][1] as {
+    const iso = (vi.mocked(loadSceneToThree).mock.calls[0][1] as {
       isolate: Map<number, { rtWidth: number; rtHeight: number; worldW: number; worldH: number }>;
     }).isolate.get(327)!;
     // 世界 scale = 局部 0.87345/-0.97913 × 父 1.14488/1.13179 ⇒ ≈1.0/1.108 ⇒ world ≈1000×1108。
@@ -1150,7 +1150,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     worldSpy.mockRestore();
     chainsSpy.mockRestore();
     warn.mockRestore();
-    r.dispose();
+    r.dispose?.();
   });
 
   // 省电与画质档位（2026-09-21）：状态跨 render 保留；装配即应用；改档位要同步屏幕密度给 stage。
@@ -1431,7 +1431,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
       renderer: {},
       isolatedObjects: () => [{ id: 13, kind: 'background', rtWidth: 1920, rtHeight: 1080, rtTexture: {} }],
     };
-    loadSceneToThree.mockReturnValue({ player, sims: [], backgroundIds: [0], particleLayers: [], puppetLayers: [], } as never);
+    vi.mocked(loadSceneToThree).mockReturnValue({ player, sims: [], backgroundIds: [0], particleLayers: [], puppetLayers: [], } as never);
     const worldSpy = vi.spyOn(ObjectEffectStage.prototype, 'setWorldSize').mockImplementation(() => {});
     const chainsSpy = vi.spyOn(ObjectEffectStage.prototype, 'setObjectChains').mockImplementation(() => {});
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -1446,7 +1446,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     expect(String(skipped[0][0])).toContain('2 条效果');
     // 能隔离的对象照常挂链，不受汇总告警影响。
     expect(chainsSpy.mock.calls.map((c) => c[0])).toEqual([13]);
-    expect(loadSceneToThree.mock.calls[0][1].isolate.has(71)).toBe(false);
+    expect(vi.mocked(loadSceneToThree).mock.calls[0][1].isolate!.has(71)).toBe(false);
 
     worldSpy.mockRestore();
     chainsSpy.mockRestore();
@@ -1482,8 +1482,8 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
         effects: [{ file: 'effects/frame/effect.json', ...framePass }],
       },
     ]), FX_FILES_FRAME_RT);
-    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null });
-    defaultLoadWasm.mockResolvedValue(null);
+    vi.mocked(resolveImageAssets).mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null, spriteSheet: false });
+    vi.mocked(defaultLoadWasm).mockResolvedValue(null);
     const registerFrameConsumer = vi.fn();
     const setFrameCapture = vi.fn();
     const setObjectEffectStage = vi.fn();
@@ -1500,11 +1500,11 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
         { id: 327, kind: 'background', rtWidth: 870, rtHeight: 980, rtTexture: {} },
       ],
     };
-    loadSceneToThree.mockReturnValue({ player, sims: [], backgroundIds: [0, 1, 2, 3], particleLayers: [], puppetLayers: [], } as never);
+    vi.mocked(loadSceneToThree).mockReturnValue({ player, sims: [], backgroundIds: [0, 1, 2, 3], particleLayers: [], puppetLayers: [], } as never);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
-    expect(await r.render('2911105183', document.createElement('canvas'), null)).toBe(true);
+    expect(await r.render('2911105183', document.createElement('canvas'))).toBe(true);
 
     // 只有 passthrough util（58 project / 37 compose）登记；solid 327 与 image 13 不登记。
     expect(registerFrameConsumer.mock.calls.map((c) => c[0])).toEqual([58, 37]);
@@ -1520,7 +1520,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     expect(warn.mock.calls.filter((c) => String(c[0]).includes('尚无隔离条目'))).toHaveLength(0);
 
     warn.mockRestore();
-    r.dispose();
+    r.dispose?.();
   });
 
   // 与 threejs-player 的「resize / setFrameCapture 清空 lastFrameSnapshot」配套：player 侧清空后，
@@ -1533,8 +1533,8 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
         effects: [{ file: 'effects/w/effect.json' }],
       },
     ]), FX_FILES);
-    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null });
-    defaultLoadWasm.mockResolvedValue(null);
+    vi.mocked(resolveImageAssets).mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null, spriteSheet: false });
+    vi.mocked(defaultLoadWasm).mockResolvedValue(null);
     const setObjectEffectStage = vi.fn();
     const snap = fakeTexture() as unknown as THREE.Texture;
     const currentFrameSnapshot = vi.fn<() => THREE.Texture | null>(() => snap);
@@ -1545,11 +1545,11 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
       renderer: {},
       isolatedObjects: () => [{ id: 13, kind: 'background', rtWidth: 1920, rtHeight: 1080, rtTexture: {} }],
     };
-    loadSceneToThree.mockReturnValue({ player, sims: [], backgroundIds: [0], particleLayers: [], puppetLayers: [], } as never);
+    vi.mocked(loadSceneToThree).mockReturnValue({ player, sims: [], backgroundIds: [0], particleLayers: [], puppetLayers: [], } as never);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
-    expect(await r.render('2911105183', document.createElement('canvas'), null)).toBe(true);
+    expect(await r.render('2911105183', document.createElement('canvas'))).toBe(true);
     const stage = setObjectEffectStage.mock.calls[0][0] as ObjectEffectStage;
     const sync = vi.spyOn(stage, 'setFrameSnapshot');
     const onFrame = vi.mocked(loadSceneToThree).mock.calls[0][1].onFrame as (dt: number) => void;
@@ -1564,7 +1564,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
 
     sync.mockRestore();
     warn.mockRestore();
-    r.dispose();
+    r.dispose?.();
   });
 });
 
@@ -1717,10 +1717,10 @@ describe('对象级效果链：隔离 RT 尺寸按源纹理收口 4096', () => {
         effects: [{ file: 'effects/w/effect.json' }],
       },
     ]);
-    resolveImageAssets.mockResolvedValue({ texture: { image: { ...SRC }, dispose: vi.fn() } as never, puppetPath: null });
+    vi.mocked(resolveImageAssets).mockResolvedValue({ texture: { image: { ...SRC }, dispose: vi.fn() } as never, puppetPath: null, spriteSheet: false });
 
     const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
-    expect(await r.render('2911105183', document.createElement('canvas'), null)).toBe(true);
+    expect(await r.render('2911105183', document.createElement('canvas'))).toBe(true);
 
     const density = screenScalePx(ORTHO.width, ORTHO.height, 1920, 1080, 1);
     // 期望值按「只有 image 参与预算」的纯函数口径算；util 若被误计入，budgetScale 会更小 ⇒ 这里变红。
@@ -1738,7 +1738,7 @@ describe('对象级效果链：隔离 RT 尺寸按源纹理收口 4096', () => {
       rtWidth: Math.round(5000 * density), rtHeight: Math.round(2400 * density),
       worldW: 5000, worldH: 2400,
     });
-    r.dispose();
+    r.dispose?.();
   });
 });
 

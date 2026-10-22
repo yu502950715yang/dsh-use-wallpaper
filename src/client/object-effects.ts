@@ -272,7 +272,11 @@ export class ObjectEffectStage implements ObjectEffectStage {
       // 世界尺寸只由 setWorldSize 确定（唯一来源）。**不要**用 view.rtWidth / 密度 反推：
       // player 的 resizeObjectRT 会回写 rtWidth/rtHeight，反推等于把「已被上限收口的 RT」
       // 当世界尺寸，是不可逆的缩小（第一轮收口后永远回不到原尺寸）。
-      const size = isolatedRtSize(entry.worldW, entry.worldH, this.scale(), entry.source, { budgetScale });
+      // budgetScale 只收窄 image（budgeted）的升级幅度：text 的源尺寸不进预算，施加同比例会让
+      // resize 后的 RT 小于挂载期口径（与挂载期不同源）。
+      const size = isolatedRtSize(entry.worldW, entry.worldH, this.scale(), entry.source, {
+        budgetScale: entry.budgeted ? budgetScale : undefined,
+      });
       const view = this.host.isolatedObjects().find((o) => o.id === id);
       if (!view) continue;
       if (view.rtWidth === size.width && view.rtHeight === size.height) continue;

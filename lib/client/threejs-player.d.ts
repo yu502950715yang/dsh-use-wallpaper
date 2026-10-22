@@ -110,6 +110,7 @@ export declare class ThreeScenePlayer {
     private readonly refractLayers;
     private refractHidden;
     private readonly warnedConsumers;
+    private frameSnapshotWarned;
     private compositeQuad;
     private readonly startedAt;
     constructor(canvas: HTMLCanvasElement, width: number, height: number, renderer?: THREE.WebGLRenderer, qualityScale?: number, opts?: {
@@ -182,6 +183,7 @@ export declare class ThreeScenePlayer {
      * REFRACT 在画该层**前** blit 场景 FBO（CParticle.cpp:2069-2079）。
      */
     private renderSegmented;
+    private warnFrameSnapshotFailure;
     setObjectEffectStage(stage: ObjectEffectStage | null): void;
     /** 装配应用级 Glow（null = 关闭）。关闭时帧序与本方法加入前逐字相同。 */
     setGlowStage(stage: GlowStage | null): void;
