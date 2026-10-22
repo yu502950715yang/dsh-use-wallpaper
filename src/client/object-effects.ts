@@ -138,6 +138,9 @@ interface ObjectChainEntry {
   worldH: number;
   /** 源纹理像素尺寸（隔离 RT 的升级上限来源）；未知（粒子对象 / 纹理未就绪）为 null ⇒ 回退屏占位。 */
   source: SourcePixels | null;
+  /** 是否参与 `fitIsolatedBudget`（resize 期预算输入集合）：与挂载期 isolateItems 一致 = 只有 image。
+   *  util/particle/text 的 RT 不随预算收窄（util 若计入会把 image 的 4096 升级幅度挤回屏占位）。 */
+  budgeted: boolean;
 }
 
 export class ObjectEffectStage implements ObjectEffectStage {
@@ -173,17 +176,25 @@ export class ObjectEffectStage implements ObjectEffectStage {
   }
 
   /** 世界尺寸 + 源纹理尺寸（场景像素）：resize 时按新预算重算 RT 像素尺寸的唯一来源。
-   *  调用顺序契约：three-renderer 先 setWorldSize 再 setObjectChains（后者不覆盖前者）。 */
-  setWorldSize(objId: number, worldW: number, worldH: number, source: SourcePixels | null = null): void {
+   *  调用顺序契约：three-renderer 先 setWorldSize 再 setObjectChains（后者不覆盖前者）。
+   *  `budgeted` = 该对象是否计入 resize 期显存预算（挂载期 isolateItems 的集合 = image；缺省 false）。 */
+  setWorldSize(
+    objId: number,
+    worldW: number,
+    worldH: number,
+    source: SourcePixels | null = null,
+    budgeted = false,
+  ): void {
     if (this.disposed) return;
     const entry = this.entries.get(objId);
     if (entry) {
       entry.worldW = worldW;
       entry.worldH = worldH;
       entry.source = source;
+      entry.budgeted = budgeted;
       return;
     }
-    this.entries.set(objId, { runner: null, chains: [], plan: null, worldW, worldH, source });
+    this.entries.set(objId, { runner: null, chains: [], plan: null, worldW, worldH, source, budgeted });
   }
 
   /** 挂载某对象的效果链（线性链与具名 RT 图链一视同仁，计划交执行器执行）。调用顺序契约：
@@ -221,9 +232,12 @@ export class ObjectEffectStage implements ObjectEffectStage {
   onViewportResize(screenScale: number): void {
     if (this.disposed) return;
     this.screenScale = screenScale;
-    // 预算随视口重算（同一纯函数 + 同一口径；预算输入集合的差异见 AGENT.md §7.36）；按**全部**条目算。
+    // 预算随视口重算（同一纯函数 + 同一口径）；输入集合 = 挂载期 `isolateItems`（budgeted）：
+    // util/particle/text 的 RT 不参与预算，否则一次 resize 就会把 image 的升级幅度挤回屏占位。
     const budgetScale = fitIsolatedBudget(
-      [...this.entries].map(([objId, e]) => ({ objId, worldW: e.worldW, worldH: e.worldH, source: e.source })),
+      [...this.entries]
+        .filter(([, e]) => e.budgeted)
+        .map(([objId, e]) => ({ objId, worldW: e.worldW, worldH: e.worldH, source: e.source })),
       this.scale(),
     );
     for (const [id, entry] of this.entries) {
@@ -346,6 +360,7 @@ export class ObjectEffectStage implements ObjectEffectStage {
       worldW: view ? view.rtWidth / this.scale() : 1,
       worldH: view ? view.rtHeight / this.scale() : 1,
       source: null,
+      budgeted: false,
     });
   }
 
@@ -397,7 +412,7 @@ export class ObjectEffectStage implements ObjectEffectStage {
     let entry = this.entries.get(objId);
     if (!entry) {
       // 反向从实测 RT 像素推世界尺寸（仅在 setWorldSize 未先行时兜底）；源尺寸未知 ⇒ null（回退屏占位）。
-      entry = { runner: null, chains, plan: null, worldW: rtW / this.scale(), worldH: rtH / this.scale(), source: null };
+      entry = { runner: null, chains, plan: null, worldW: rtW / this.scale(), worldH: rtH / this.scale(), source: null, budgeted: false };
       this.entries.set(objId, entry);
     }
     // setWorldSize 可能已先建条目（three-renderer 的顺序是 setWorldSize → setObjectChains），此时

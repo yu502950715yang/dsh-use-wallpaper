@@ -24883,14 +24883,17 @@ var ThreeScenePlayer = class {
   addBackground(opts) {
     const sceneW = opts.sceneW;
     const sceneH = opts.sceneH;
+    const utilFull = opts.util === "project" || opts.util === "fullscreen";
+    const origin = utilFull ? [sceneW / 2, sceneH / 2, 0] : [opts.origin[0], opts.origin[1], opts.origin[2]];
+    const layerScale = utilFull ? [1, 1, 1] : [opts.scale[0], opts.scale[1], opts.scale[2] ?? 1];
+    const size = utilFull ? [sceneW, sceneH] : opts.size;
     const sprite = opts.util ? void 0 : opts.texture?.userData?.spritesheet === true ? textureSpriteInfo(opts.texture) : void 0;
     const imgW = opts.texture?.image?.width;
     const imgH = opts.texture?.image?.height;
-    const utilFull = opts.util === "project" || opts.util === "fullscreen";
     const fallbackW = opts.util ? utilFull ? sceneW : 1 : sprite ? (imgW ?? 1) / sprite.cols : imgW ?? 1;
     const fallbackH = opts.util ? utilFull ? sceneH : 1 : sprite ? (imgH ?? 1) / sprite.rows : imgH ?? 1;
-    const w = opts.size?.[0] ?? fallbackW;
-    const h = opts.size?.[1] ?? fallbackH;
+    const w = size?.[0] ?? fallbackW;
+    const h = size?.[1] ?? fallbackH;
     const geometry = new PlaneGeometry(w, h);
     const mod = materialModulation(void 0, opts.alpha, opts.brightness);
     const material = opts.util ? this.createUtilLayerMaterial(
@@ -24900,31 +24903,32 @@ var ThreeScenePlayer = class {
     ) : this.createLayerMaterial(opts.texture ?? null, opts.colorBlendMode ?? 0, mod, !!opts.isolate);
     const mesh = new Mesh(geometry, material);
     mesh.renderOrder = opts.renderOrder ?? 0;
-    const s = opts.scale;
+    const s = layerScale;
     mesh.scale.set(s[0], s[1], s[2] ?? 1);
     const a = opts.angles ?? [0, 0, 0];
     mesh.rotation.set(a[0], a[1], a[2]);
-    mesh.position.set(opts.origin[0] - sceneW / 2, opts.origin[1] - sceneH / 2, opts.origin[2]);
+    mesh.position.set(origin[0] - sceneW / 2, origin[1] - sceneH / 2, origin[2]);
     const id = this.nextBackgroundId++;
     const worldW = opts.isolate?.worldW ?? Math.abs(w * s[0]);
     const worldH = opts.isolate?.worldH ?? Math.abs(h * s[1]);
     if (opts.isolate) {
       mesh.position.set(0, 0, 0);
       mesh.rotation.set(0, 0, 0);
+      const compositeOpacity = opts.util ? mod.a : 1;
       this.attachIsolated(opts.isolate.objectId, "background", mesh, worldW, worldH, {
         width: opts.isolate.rtWidth,
         height: opts.isolate.rtHeight
       }, {
-        x: opts.origin[0] - sceneW / 2,
-        y: opts.origin[1] - sceneH / 2,
-        z: opts.origin[2]
-      }, [a[0], a[1], a[2]], opts.colorBlendMode ?? 0, opts.renderOrder);
+        x: origin[0] - sceneW / 2,
+        y: origin[1] - sceneH / 2,
+        z: origin[2]
+      }, [a[0], a[1], a[2]], opts.colorBlendMode ?? 0, opts.renderOrder, compositeOpacity);
     } else {
       this.scene.add(mesh);
     }
     this.backgroundEntries.set(id, {
       mesh,
-      origin: [opts.origin[0], opts.origin[1], opts.origin[2]],
+      origin: [origin[0], origin[1], origin[2]],
       size: [w, h],
       scale: [s[0], s[1], s[2] ?? 1],
       angles: [a[0], a[1], a[2]],
@@ -25056,12 +25060,15 @@ var ThreeScenePlayer = class {
   //   ③ 统一用 MeshBasicMaterial，只有 cb 分支额外开 `premultipliedAlpha`。
   // WE 的 `ApplyBlending` 语义在**合成这一步**用 CustomBlending 因子复刻（alpha 取背景的 ⇒ Zero/One）；
   // 带非零 angles 的对象由 quad 承载旋转，超过 90° 会翻转绕序 ⇒ 与内容材质一致用 DoubleSide。
-  createCompositeQuadMaterial(texture, colorBlendMode) {
+  createCompositeQuadMaterial(texture, colorBlendMode, opacity = 1) {
     const mat = new MeshBasicMaterial({
       map: texture,
       transparent: true,
       depthWrite: false,
-      side: DoubleSide
+      side: DoubleSide,
+      // 缺省 1 = 中性合成（image/particle 的 alpha 已烘进 RT，再乘一次是二次调制）；仅 util 层
+      // 传入对象 alpha（内容占位/效果输出都不承载它）。
+      opacity: Math.max(0, Math.min(1, opacity))
     });
     const cb = colorBlendModeToThree(colorBlendMode);
     if (cb) {
@@ -25095,7 +25102,9 @@ var ThreeScenePlayer = class {
   // ⚠️ 旋转的分工**不可「统一」**：quadAngles 由调用方按「RT 内容是否已含旋转」决定 —— 背景内容
   // 不旋转（quad 承载对象 angles）；粒子内容 shader 已施加 objAngles（quadAngles 传 [0,0,0]，
   // 否则同一份旋转被施加两次）。
-  attachIsolated(objectId, kind, content, worldW, worldH, size, position, quadAngles, colorBlendMode, renderOrder) {
+  // compositeOpacity（缺省 1）只由 util 层传对象 alpha：其内容占位透明、效果输出自带 alpha，
+  // 对象 alpha 只能在最终合成这一步收口；image/particle 的 alpha 已烘进 RT，不得二次施加。
+  attachIsolated(objectId, kind, content, worldW, worldH, size, position, quadAngles, colorBlendMode, renderOrder, compositeOpacity = 1) {
     const rtW = Math.max(1, Math.round(size.width));
     const rtH = Math.max(1, Math.round(size.height));
     const isFullscreen = kind === "background" && Math.abs(worldW) >= this.sceneWidth * 0.98 && Math.abs(worldH) >= this.sceneHeight * 0.98;
@@ -25111,7 +25120,7 @@ var ThreeScenePlayer = class {
     flipGeometryUvY(compositeGeometry);
     const quad = new Mesh(
       compositeGeometry,
-      this.createCompositeQuadMaterial(rt.texture, colorBlendMode)
+      this.createCompositeQuadMaterial(rt.texture, colorBlendMode, compositeOpacity)
     );
     quad.position.set(position.x, position.y, position.z);
     quad.rotation.set(quadAngles[0], quadAngles[1], quadAngles[2]);
@@ -27523,17 +27532,19 @@ var ObjectEffectStage = class {
     return Number.isFinite(s) && s > 0 ? s : 1;
   }
   /** 世界尺寸 + 源纹理尺寸（场景像素）：resize 时按新预算重算 RT 像素尺寸的唯一来源。
-   *  调用顺序契约：three-renderer 先 setWorldSize 再 setObjectChains（后者不覆盖前者）。 */
-  setWorldSize(objId, worldW, worldH, source = null) {
+   *  调用顺序契约：three-renderer 先 setWorldSize 再 setObjectChains（后者不覆盖前者）。
+   *  `budgeted` = 该对象是否计入 resize 期显存预算（挂载期 isolateItems 的集合 = image；缺省 false）。 */
+  setWorldSize(objId, worldW, worldH, source = null, budgeted = false) {
     if (this.disposed) return;
     const entry = this.entries.get(objId);
     if (entry) {
       entry.worldW = worldW;
       entry.worldH = worldH;
       entry.source = source;
+      entry.budgeted = budgeted;
       return;
     }
-    this.entries.set(objId, { runner: null, chains: [], plan: null, worldW, worldH, source });
+    this.entries.set(objId, { runner: null, chains: [], plan: null, worldW, worldH, source, budgeted });
   }
   /** 挂载某对象的效果链（线性链与具名 RT 图链一视同仁，计划交执行器执行）。调用顺序契约：
    *  player 先在 loadSceneToThree 内建好隔离条目，stage 再挂链（setWorldSize → setObjectChains）；
@@ -27565,7 +27576,7 @@ var ObjectEffectStage = class {
     if (this.disposed) return;
     this.screenScale = screenScale;
     const budgetScale = fitIsolatedBudget(
-      [...this.entries].map(([objId, e]) => ({ objId, worldW: e.worldW, worldH: e.worldH, source: e.source })),
+      [...this.entries].filter(([, e]) => e.budgeted).map(([objId, e]) => ({ objId, worldW: e.worldW, worldH: e.worldH, source: e.source })),
       this.scale()
     );
     for (const [id, entry] of this.entries) {
@@ -27660,7 +27671,8 @@ var ObjectEffectStage = class {
       plan: null,
       worldW: view ? view.rtWidth / this.scale() : 1,
       worldH: view ? view.rtHeight / this.scale() : 1,
-      source: null
+      source: null,
+      budgeted: false
     });
   }
   /** 去重告警（同一 key 只打印一次，防每帧刷屏）。 */
@@ -27706,7 +27718,7 @@ var ObjectEffectStage = class {
   mount(objId, chains, rtW, rtH, plan) {
     let entry = this.entries.get(objId);
     if (!entry) {
-      entry = { runner: null, chains, plan: null, worldW: rtW / this.scale(), worldH: rtH / this.scale(), source: null };
+      entry = { runner: null, chains, plan: null, worldW: rtW / this.scale(), worldH: rtH / this.scale(), source: null, budgeted: false };
       this.entries.set(objId, entry);
     }
     entry.chains = chains;
@@ -31930,6 +31942,7 @@ function createThreeSceneRenderer(opts) {
           utilSizes.set(o.id, { rt: objectRtSize(world.w, world.h, screenScale), worldW: world.w, worldH: world.h });
         }
         const isolate = /* @__PURE__ */ new Map();
+        const budgetedIds = /* @__PURE__ */ new Set();
         for (const obj of desc.objects) {
           if (isStaticallyHidden(obj.visible, userProps)) continue;
           const chains = effectChains.get(obj.id);
@@ -31952,6 +31965,7 @@ function createThreeSceneRenderer(opts) {
               worldW: sized.worldW,
               worldH: sized.worldH
             });
+            budgetedIds.add(obj.id);
           } else if (obj.kind === "particle") {
             const p = particles.get(obj.id);
             if (!p) continue;
@@ -32125,7 +32139,13 @@ function createThreeSceneRenderer(opts) {
             screenScale
           });
           for (const [objId, iso] of isolate) {
-            stage.setWorldSize(objId, iso.worldW, iso.worldH, sourceOf.get(objId) ?? null);
+            stage.setWorldSize(
+              objId,
+              iso.worldW,
+              iso.worldH,
+              sourceOf.get(objId) ?? null,
+              budgetedIds.has(objId)
+            );
           }
           for (const [objId, chains] of effectChains) {
             if (!isolate.has(objId)) continue;

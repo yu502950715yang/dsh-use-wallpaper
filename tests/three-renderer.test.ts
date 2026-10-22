@@ -966,8 +966,8 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     });
     expect(assets.isolate.has(60)).toBe(false);
     // stage 的键 = 对象 id（13），不是图层计数器 id（带效果的对象是第 2 个 image → 旧实现为 1）；
-    // 第 4 参 = 源纹理像素（本用例 fakeTexture 无 image ⇒ 源未知 ⇒ null）。
-    expect(worldSpy.mock.calls).toEqual([[13, 3840, 2160, null]]);
+    // 第 4 参 = 源纹理像素（本用例 fakeTexture 无 image ⇒ 源未知 ⇒ null）；第 5 参 = 进 resize 期预算（image）。
+    expect(worldSpy.mock.calls).toEqual([[13, 3840, 2160, null, true]]);
     expect(chainsSpy.mock.calls.map((c) => c[0])).toEqual([13]);
     expect(chainsSpy.mock.calls[0][1]).toHaveLength(1);
     // 装配完成才注入 player（stage 非 null），供帧序调用 bindOutputs/advance。
@@ -1046,15 +1046,99 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     expect(assets.isolate.get(327)).toEqual({
       objectId: 327, rtWidth: 870, rtHeight: 980, worldW: 870, worldH: 980,
     });
-    // 链按对象 id 挂载（顺序 = objects 顺序），源尺寸显式 null（util 无 pkg 源纹理）。
+    // 链按对象 id 挂载（顺序 = objects 顺序），源尺寸显式 null（util 无 pkg 源纹理）；
+    // 第 5 参 = false（util 不进 resize 期预算）。
     expect(worldSpy.mock.calls).toEqual([
-      [58, 1920, 1080, null],
-      [37, 400, 850, null],
-      [327, 870, 980, null],
+      [58, 1920, 1080, null, false],
+      [37, 400, 850, null, false],
+      [327, 870, 980, null, false],
     ]);
     expect(chainsSpy.mock.calls.map((c) => c[0])).toEqual([58, 37, 327]);
     // util 层不再算「挂在未参与渲染的对象类型上」。
     expect(warn.mock.calls.some((c) => String(c[0]).includes('未参与渲染'))).toBe(false);
+
+    worldSpy.mockRestore();
+    chainsSpy.mockRestore();
+    warn.mockRestore();
+    r.dispose();
+  });
+
+  // v0.8.2 Fix round 1（Minor 10）：util 准入只有「非静态隐藏 + 有非空效果链」——隐藏层不得被隔离
+  // 画回来；无链层保持 v0.8.1 的不渲染（零回归）。
+  it('util 准入：静态隐藏 / 无 effects 不进 isolate，只有带链的层进', async () => {
+    stubAssetFetch(sceneWith([
+      { id: 54, name: 'fullscreen', image: 'models/util/fullscreenlayer.json', effects: [{ file: 'effects/w/effect.json' }] },
+      {
+        id: 60, name: 'hidden', image: 'models/util/composelayer.json', size: '400 850',
+        visible: false, effects: [{ file: 'effects/w/effect.json' }],
+      },
+      { id: 61, name: 'no-effects', image: 'models/util/solidlayer.json', size: '1000 1000', scale: '0.87 -0.98 1' },
+    ]), FX_FILES);
+    defaultLoadWasm.mockResolvedValue(null);
+    const player = {
+      dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage: vi.fn(),
+      setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn(),
+      renderer: {}, isolatedObjects: () => [],
+    };
+    loadSceneToThree.mockReturnValue({ player, sims: [], backgroundIds: [0], particleLayers: [], puppetLayers: [] } as never);
+    const worldSpy = vi.spyOn(ObjectEffectStage.prototype, 'setWorldSize').mockImplementation(() => {});
+    const chainsSpy = vi.spyOn(ObjectEffectStage.prototype, 'setObjectChains').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    expect(await r.render('2851992662', document.createElement('canvas'), null)).toBe(true);
+
+    const assets = loadSceneToThree.mock.calls[0][1];
+    expect([...assets.isolate.keys()]).toEqual([54]);
+    expect(worldSpy.mock.calls.map((c) => c[0])).toEqual([54]);
+    expect(chainsSpy.mock.calls.map((c) => c[0])).toEqual([54]);
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('未参与渲染'))).toBe(false);
+
+    worldSpy.mockRestore();
+    chainsSpy.mockRestore();
+    warn.mockRestore();
+    r.dispose();
+  });
+
+  // v0.8.2 Fix round 1（Minor 10）：util 世界尺寸取**父链折叠后的世界 scale**（3789452668 #327：
+  // 父 80 的 scale 1.14488/1.13179 × 局部 0.87345/0.97913 ⇒ ≈1000×1108，不是局部 873×979）。
+  it('parent util 世界尺寸取世界 scale（3789452668 #327 形态）', async () => {
+    stubAssetFetch(sceneWith([
+      {
+        id: 80, name: 'parent', image: 'models/p.json',
+        origin: '1927.49512 1142.68176 0', scale: '1.14488 1.13179 0.95818', size: '386 221',
+      },
+      {
+        id: 327, name: '音频线', image: 'models/util/solidlayer_depthtest.json', parent: 80,
+        origin: '4.3728 -180.26727 0', scale: '0.87345 -0.97913 0.10436', size: '1000 1000',
+        alpha: 0, color: '0.79 0.79 0.79', effects: [{ file: 'effects/w/effect.json' }],
+      },
+    ]), FX_FILES);
+    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null });
+    defaultLoadWasm.mockResolvedValue(null);
+    const player = {
+      dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage: vi.fn(),
+      setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn(),
+      renderer: {}, isolatedObjects: () => [],
+    };
+    loadSceneToThree.mockReturnValue({ player, sims: [], backgroundIds: [0], particleLayers: [], puppetLayers: [] } as never);
+    const worldSpy = vi.spyOn(ObjectEffectStage.prototype, 'setWorldSize').mockImplementation(() => {});
+    const chainsSpy = vi.spyOn(ObjectEffectStage.prototype, 'setObjectChains').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    expect(await r.render('2851992662', document.createElement('canvas'), null)).toBe(true);
+
+    const iso = (loadSceneToThree.mock.calls[0][1] as {
+      isolate: Map<number, { rtWidth: number; rtHeight: number; worldW: number; worldH: number }>;
+    }).isolate.get(327)!;
+    // 世界 scale = 局部 0.87345/-0.97913 × 父 1.14488/1.13179 ⇒ ≈1.0/1.108 ⇒ world ≈1000×1108。
+    const worldW = 1000 * 0.87345 * 1.14488;
+    const worldH = 1000 * 0.97913 * 1.13179;
+    expect(iso.worldW).toBeCloseTo(worldW, 6);
+    expect(iso.worldH).toBeCloseTo(worldH, 6);
+    // 密度 1 ⇒ RT = 屏占位 ≈ world：不是局部 873×979（父链未折叠时会是那个值）。
+    expect([iso.rtWidth, iso.rtHeight]).toEqual([1000, 1108]);
 
     worldSpy.mockRestore();
     chainsSpy.mockRestore();
@@ -1141,7 +1225,8 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     // 键 = 对象 id 71：粒子图层 id 也是 0（与背景层计数器独立、各自从 0 起），旧实现下
     // 「同壁纸 image + particle 都隔离」会与背景条目的 0 撞键、互相覆盖。
     // 粒子不在 isolateItems 内 ⇒ 源尺寸未知 ⇒ 第 4 参是显式 null（统一下发形状，不靠缺省参数）。
-    expect(worldSpy.mock.calls).toEqual([[71, 200, 200, null]]);
+    // 第 5 参 = false：粒子不进 resize 期预算（挂载期预算集合只有 image）。
+    expect(worldSpy.mock.calls).toEqual([[71, 200, 200, null, false]]);
     expect(chainsSpy.mock.calls.map((c) => c[0])).toEqual([71]);
 
     worldSpy.mockRestore();
@@ -1455,9 +1540,9 @@ describe('对象级效果链：隔离 RT 尺寸按源纹理收口 4096', () => {
     const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
     expect(await r.render('2851992662', document.createElement('canvas'), null)).toBe(true);
 
-    // 世界尺寸（合成 quad 的基准）= 纹理像素 × scale，未逐轴钳 4096。
+    // 世界尺寸（合成 quad 的基准）= 纹理像素 × scale，未逐轴钳 4096；第 5 参 = true（image 进预算）。
     expect(vi.mocked(ObjectEffectStage.prototype.setWorldSize).mock.calls)
-      .toEqual([[13, 8192, 4096, { width: 8192, height: 4096 }]]);
+      .toEqual([[13, 8192, 4096, { width: 8192, height: 4096 }, true]]);
     // RT = 源纹理等比收口 4096（源长边 8192 > cap；屏占位仅 3686×1843 = 8192×4096 × 密度 0.45）：
     // 4096 × 4096/8192 = 2048。5000 是场景宽，不是屏占位长边。
     const iso = isolateOf().get(13)!;
@@ -1479,7 +1564,7 @@ describe('对象级效果链：隔离 RT 尺寸按源纹理收口 4096', () => {
 
     // 第 4 参 = 与挂载期尺寸计算同一份源纹理像素；源未知时是显式 null（缺参 = 3 参形状会让本断言变红）。
     expect(vi.mocked(ObjectEffectStage.prototype.setWorldSize).mock.calls)
-      .toEqual([[13, 5000, 2400, { width: 5000, height: 2400 }], [246, 5000, 2400, null]]);
+      .toEqual([[13, 5000, 2400, { width: 5000, height: 2400 }, true], [246, 5000, 2400, null, true]]);
     r.dispose();
   });
 

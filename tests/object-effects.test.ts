@@ -117,7 +117,7 @@ describe.skipIf(!existsSync(WALLPAPER_DIR))('全库效果链分类（实测数�
 
 // ── 编排器（Task 4）：mock runner 与 host，node 环境不触碰 WebGL ──
 import { ObjectEffectStage, weVRowOrderLoader } from '../src/client/object-effects.js';
-import { isolatedRtSize, ISOLATED_RT_BYTES_PER_PX, ISOLATED_RT_BUDGET_BYTES } from '../src/client/object-range.js';
+import { isolatedRtSize, fitIsolatedBudget, ISOLATED_RT_BYTES_PER_PX, ISOLATED_RT_BUDGET_BYTES } from '../src/client/object-range.js';
 import * as THREE from 'three';
 import { vi } from 'vitest';
 
@@ -668,7 +668,7 @@ describe('ObjectEffectStage', () => {
     expect(last.w * last.h).toBeGreaterThanOrEqual(Math.round(5000 * 0.375) * Math.round(2400 * 0.375));
   });
 
-  it('resize 期按**全部**条目重算预算：两个大源对象共享预算、按同一比例收窄', () => {
+  it('resize 期按**全部 budgeted** 条目重算预算：两个大源对象共享预算、按同一比例收窄', () => {
     const host = createHost([
       { id: 1, rtWidth: 1, rtHeight: 1 },
       { id: 2, rtWidth: 1, rtHeight: 1 },
@@ -677,8 +677,9 @@ describe('ObjectEffectStage', () => {
       wallpaperId: 'w', screenScale: 0.375,
     });
     const source = { width: 5000, height: 2400 };
-    stage.setWorldSize(1, 5000, 2400, source); // 有 runner 的条目
-    stage.setWorldSize(2, 5000, 2400, source); // 无 runner 的条目同样计入预算
+    // budgeted = true（image）：resize 期预算输入集合与挂载期 isolateItems 一致。
+    stage.setWorldSize(1, 5000, 2400, source, true); // 有 runner 的条目
+    stage.setWorldSize(2, 5000, 2400, source, true); // 无 runner 的条目同样计入预算
     stage.onViewportResize(0.375);
     expect(host._resized.map((r) => [r.w, r.h])).toHaveLength(2);
     const [a, b] = host._resized;
@@ -689,6 +690,45 @@ describe('ObjectEffectStage', () => {
     expect(Math.max(a.w, a.h)).toBeLessThan(4096);
     expect(Math.max(a.w, a.h)).toBeGreaterThan(1875);
     expect((a.w * a.h + b.w * b.h) * ISOLATED_RT_BYTES_PER_PX).toBeLessThanOrEqual(ISOLATED_RT_BUDGET_BYTES);
+  });
+
+  // v0.8.2 Fix round 1（Important 2）：util 层不进 resize 期预算。util RT 恒为屏占位，
+  // 若把它计入 fitIsolatedBudget，一次 resize 就会把 image 的 4096 升级幅度挤回屏占位。
+  it('resize 期预算只算 budgeted（image）：util 的屏占位条目不挤压 image 的 RT', () => {
+    const source = { width: 5000, height: 2400 };
+    const density = 0.375;
+    // 挂载期口径：预算输入 = 两个 image ⇒ 3780×1814；util（1440×2250 屏占位）若误计入会进一步压缩。
+    const budget = fitIsolatedBudget([
+      { worldW: 5000, worldH: 2400, source },
+      { worldW: 5000, worldH: 2400, source },
+    ], density);
+    const img = isolatedRtSize(5000, 2400, density, source, { budgetScale: budget });
+    expect([img.width, img.height]).toEqual([3780, 1814]);
+    const withUtil = fitIsolatedBudget([
+      { worldW: 5000, worldH: 2400, source },
+      { worldW: 5000, worldH: 2400, source },
+      { worldW: 3840, worldH: 6000, source: null },
+    ], density);
+    expect(withUtil).toBeLessThan(budget); // 钉「若误计入 util，image 确实会被挤压」
+
+    const host = createHost([
+      { id: 1, rtWidth: img.width, rtHeight: img.height },
+      { id: 2, rtWidth: img.width, rtHeight: img.height },
+      { id: 54, rtWidth: 1440, rtHeight: 2250 }, // util：3840×6000 × 0.375 = 屏占位
+    ]);
+    const stage = new ObjectEffectStage(host as never, {
+      wallpaperId: 'w', screenScale: density,
+    });
+    stage.setWorldSize(1, 5000, 2400, source, true);
+    stage.setWorldSize(2, 5000, 2400, source, true);
+    stage.setWorldSize(54, 3840, 6000, null, false); // util：有世界尺寸、无源纹理、不进预算
+    stage.onViewportResize(density);
+    // image 的 RT 与挂载期一致（被 util 挤压时会重设为更小的尺寸 ⇒ 本断言变红）。
+    expect(host._resized).toEqual([]);
+    expect(host.isolatedObjects().map((o) => [o.id, o.rtWidth, o.rtHeight])).toEqual([
+      [1, 3780, 1814], [2, 3780, 1814], [54, 1440, 2250],
+    ]);
+    stage.dispose();
   });
 
   it('dispose 释放全部 runner', () => {

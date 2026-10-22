@@ -776,6 +776,9 @@ export function createThreeSceneRenderer(opts?: {
           number,
           { objectId: number; rtWidth: number; rtHeight: number; worldW: number; worldH: number }
         >();
+        // resize 期预算输入集合 = 挂载期 isolateItems 的同一个集合（只有 image）。util/particle/text
+        // 的 RT 恒按屏占位，计入预算会在一次 resize 后把 image 的升级幅度挤回去。
+        const budgetedIds = new Set<number>();
         // isolate 准入 = 「有链」：线性链与具名 RT 图链都由 ObjectEffectStage 建 runner 与计划执行。
         for (const obj of desc.objects) {
           // 静态隐藏的对象不隔离：隔离会给它建对象 RT + 合成 quad ⇒ 本应隐藏的层又画回来。
@@ -802,6 +805,7 @@ export function createThreeSceneRenderer(opts?: {
               rtWidth: sized.rt.width, rtHeight: sized.rt.height,
               worldW: sized.worldW, worldH: sized.worldH,
             });
+            budgetedIds.add(obj.id);
           } else if (obj.kind === 'particle') {
             const p = particles.get(obj.id);
             if (!p) continue;
@@ -998,7 +1002,10 @@ export function createThreeSceneRenderer(opts?: {
           // 世界尺寸直接用 isolate 里已算好的值（同一份计算的两个消费者），不另存一份映射；键一律用对象 id。
           for (const [objId, iso] of isolate) {
             // 源尺寸与挂载期同一份数据（sourceOf）；未知（粒子对象/纹理未就绪）显式下发 null（统一形状）。
-            stage.setWorldSize(objId, iso.worldW, iso.worldH, sourceOf.get(objId) ?? null);
+            // 第 5 参 = 是否进 resize 期预算（与挂载期 isolateItems 同集合 = image）。
+            stage.setWorldSize(
+              objId, iso.worldW, iso.worldH, sourceOf.get(objId) ?? null, budgetedIds.has(objId),
+            );
           }
           for (const [objId, chains] of effectChains) {
             // 没有隔离条目的对象不挂链：挂也找不到 view，只会产生误导性的「调用顺序错误」告警且画不出内容。

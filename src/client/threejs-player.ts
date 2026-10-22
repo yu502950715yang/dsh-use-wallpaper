@@ -1510,19 +1510,28 @@ export class ThreeScenePlayer {
   }): number {
     const sceneW = opts.sceneW;
     const sceneH = opts.sceneH;
+    // util 的 project/fullscreen = 全屏层：WE 语义铺满视口，强制居中 + 场景尺寸（忽略对象 origin/scale/size）。
+    // 2597392171 #54 三者全缺省 ⇒ 原实现把合成 quad 放在场景左下四分之一。
+    const utilFull = opts.util === 'project' || opts.util === 'fullscreen';
+    const origin: [number, number, number] = utilFull
+      ? [sceneW / 2, sceneH / 2, 0]
+      : [opts.origin[0], opts.origin[1], opts.origin[2]];
+    const layerScale: [number, number, number] = utilFull
+      ? [1, 1, 1]
+      : [opts.scale[0], opts.scale[1], opts.scale[2] ?? 1];
+    const size = utilFull ? ([sceneW, sceneH] as [number, number]) : opts.size;
     // 背景尺寸 = size × scale（geometry 未缩放、mesh.scale 承载 scale）；size 缺省回退纹理宽高。
     // 精灵表（材质声明 spritesheet）回退**单帧**宽高；有 TEXS 但未声明的仍按整表尺寸（旧语义）。
-    // util 无纹理：project/fullscreen 缺 size 时铺满场景，compose/solid 按 1×1（与 utilWorldSize 同口径）。
+    // util 无纹理：compose/solid 缺 size 时按 1×1（与 utilWorldSize 同口径）。
     const sprite = opts.util
       ? undefined
       : (opts.texture?.userData?.spritesheet === true ? textureSpriteInfo(opts.texture) : undefined);
     const imgW = opts.texture?.image?.width as number | undefined;
     const imgH = opts.texture?.image?.height as number | undefined;
-    const utilFull = opts.util === 'project' || opts.util === 'fullscreen';
     const fallbackW = opts.util ? (utilFull ? sceneW : 1) : (sprite ? (imgW ?? 1) / sprite.cols : (imgW ?? 1));
     const fallbackH = opts.util ? (utilFull ? sceneH : 1) : (sprite ? (imgH ?? 1) / sprite.rows : (imgH ?? 1));
-    const w = opts.size?.[0] ?? fallbackW;
-    const h = opts.size?.[1] ?? fallbackH;
+    const w = size?.[0] ?? fallbackW;
+    const h = size?.[1] ?? fallbackH;
     const geometry = new THREE.PlaneGeometry(w, h);
     const mod = materialModulation(undefined, opts.alpha, opts.brightness);
     // ⚠️ 隔离对象（opts.isolate）走 forIsolation=true：内容材质**不套** cb，混合语义全部交给
@@ -1537,13 +1546,13 @@ export class ThreeScenePlayer {
     const mesh = new THREE.Mesh(geometry, material);
     // renderOrder 唯一化（调用方按 objects 下标传入）；缺省 0 = 背景在粒子之前绘制（背景在下）。
     mesh.renderOrder = opts.renderOrder ?? 0;
-    const s = opts.scale;
+    const s = layerScale;
     mesh.scale.set(s[0], s[1], s[2] ?? 1);
     // 对象角度（弧度）：PlaneGeometry 以几何中心为 pivot，mesh.rotation 即 T·R·S 的 R。
     const a = opts.angles ?? [0, 0, 0];
     mesh.rotation.set(a[0], a[1], a[2]);
     // we_to_three：origin - scene/2（y 不翻）。
-    mesh.position.set(opts.origin[0] - sceneW / 2, opts.origin[1] - sceneH / 2, opts.origin[2]);
+    mesh.position.set(origin[0] - sceneW / 2, origin[1] - sceneH / 2, origin[2]);
 
     // 图层 id（本方法返回值 = backgroundEntries 的键）由本类计数器分配；隔离条目的键是
     // **scene.json 的对象 id**（`opts.isolate.objectId`），两套编号互不相干（见 attachIsolated）。
@@ -1559,21 +1568,23 @@ export class ThreeScenePlayer {
       // 「贴回画面」这一步。键 = scene.json 的对象 id（**不是**下面的图层计数器 id）。
       mesh.position.set(0, 0, 0);
       mesh.rotation.set(0, 0, 0);
+      // util 的 alpha 作用在合成输出：内容占位透明、效果链输出自带 alpha ⇒ 只能在 quad 上收口。
+      const compositeOpacity = opts.util ? mod.a : 1;
       this.attachIsolated(opts.isolate.objectId, 'background', mesh, worldW, worldH, {
         width: opts.isolate.rtWidth,
         height: opts.isolate.rtHeight,
       }, {
-        x: opts.origin[0] - sceneW / 2,
-        y: opts.origin[1] - sceneH / 2,
-        z: opts.origin[2],
-      }, [a[0], a[1], a[2]], opts.colorBlendMode ?? 0, opts.renderOrder);
+        x: origin[0] - sceneW / 2,
+        y: origin[1] - sceneH / 2,
+        z: origin[2],
+      }, [a[0], a[1], a[2]], opts.colorBlendMode ?? 0, opts.renderOrder, compositeOpacity);
     } else {
       this.scene.add(mesh);
     }
 
     this.backgroundEntries.set(id, {
       mesh,
-      origin: [opts.origin[0], opts.origin[1], opts.origin[2]],
+      origin: [origin[0], origin[1], origin[2]],
       size: [w, h],
       scale: [s[0], s[1], s[2] ?? 1],
       angles: [a[0], a[1], a[2]],
@@ -1746,9 +1757,16 @@ export class ThreeScenePlayer {
   //   ③ 统一用 MeshBasicMaterial，只有 cb 分支额外开 `premultipliedAlpha`。
   // WE 的 `ApplyBlending` 语义在**合成这一步**用 CustomBlending 因子复刻（alpha 取背景的 ⇒ Zero/One）；
   // 带非零 angles 的对象由 quad 承载旋转，超过 90° 会翻转绕序 ⇒ 与内容材质一致用 DoubleSide。
-  private createCompositeQuadMaterial(texture: THREE.Texture, colorBlendMode: number): THREE.Material {
+  private createCompositeQuadMaterial(
+    texture: THREE.Texture,
+    colorBlendMode: number,
+    opacity = 1,
+  ): THREE.Material {
     const mat = new THREE.MeshBasicMaterial({
       map: texture, transparent: true, depthWrite: false, side: THREE.DoubleSide,
+      // 缺省 1 = 中性合成（image/particle 的 alpha 已烘进 RT，再乘一次是二次调制）；仅 util 层
+      // 传入对象 alpha（内容占位/效果输出都不承载它）。
+      opacity: Math.max(0, Math.min(1, opacity)),
     });
     const cb = colorBlendModeToThree(colorBlendMode);
     if (cb) {
@@ -1789,6 +1807,8 @@ export class ThreeScenePlayer {
   // ⚠️ 旋转的分工**不可「统一」**：quadAngles 由调用方按「RT 内容是否已含旋转」决定 —— 背景内容
   // 不旋转（quad 承载对象 angles）；粒子内容 shader 已施加 objAngles（quadAngles 传 [0,0,0]，
   // 否则同一份旋转被施加两次）。
+  // compositeOpacity（缺省 1）只由 util 层传对象 alpha：其内容占位透明、效果输出自带 alpha，
+  // 对象 alpha 只能在最终合成这一步收口；image/particle 的 alpha 已烘进 RT，不得二次施加。
   private attachIsolated(
     objectId: number,
     kind: 'background' | 'particle',
@@ -1801,6 +1821,7 @@ export class ThreeScenePlayer {
     colorBlendMode: number,
     // 宿主对象的唯一绘制序（= objects 下标，调用方透传）；缺省按 kind 回退（背景 0 / 粒子 1）。
     renderOrder?: number,
+    compositeOpacity = 1,
   ): void {
     const rtW = Math.max(1, Math.round(size.width));
     const rtH = Math.max(1, Math.round(size.height));
@@ -1839,7 +1860,7 @@ export class ThreeScenePlayer {
     flipGeometryUvY(compositeGeometry);
     const quad = new THREE.Mesh(
       compositeGeometry,
-      this.createCompositeQuadMaterial(rt.texture, colorBlendMode),
+      this.createCompositeQuadMaterial(rt.texture, colorBlendMode, compositeOpacity),
     );
     quad.position.set(position.x, position.y, position.z);
     quad.rotation.set(quadAngles[0], quadAngles[1], quadAngles[2]);

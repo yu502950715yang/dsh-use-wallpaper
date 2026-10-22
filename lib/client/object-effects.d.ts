@@ -71,8 +71,9 @@ export declare class ObjectEffectStage implements ObjectEffectStage {
     /** 当前屏幕密度（设备像素 / 世界单位）；同源下发契约见类头。 */
     private scale;
     /** 世界尺寸 + 源纹理尺寸（场景像素）：resize 时按新预算重算 RT 像素尺寸的唯一来源。
-     *  调用顺序契约：three-renderer 先 setWorldSize 再 setObjectChains（后者不覆盖前者）。 */
-    setWorldSize(objId: number, worldW: number, worldH: number, source?: SourcePixels | null): void;
+     *  调用顺序契约：three-renderer 先 setWorldSize 再 setObjectChains（后者不覆盖前者）。
+     *  `budgeted` = 该对象是否计入 resize 期显存预算（挂载期 isolateItems 的集合 = image；缺省 false）。 */
+    setWorldSize(objId: number, worldW: number, worldH: number, source?: SourcePixels | null, budgeted?: boolean): void;
     /** 挂载某对象的效果链（线性链与具名 RT 图链一视同仁，计划交执行器执行）。调用顺序契约：
      *  player 先在 loadSceneToThree 内建好隔离条目，stage 再挂链（setWorldSize → setObjectChains）；
      *  找不到隔离条目说明契约被破坏 → 明确告警一次，绝不静默丢弃，也绝不猜尺寸。 */

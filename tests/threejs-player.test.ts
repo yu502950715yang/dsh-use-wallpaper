@@ -2611,6 +2611,80 @@ describe('ThreeScenePlayer 对象隔离', () => {
     // 隔离内容中心/旋转归零（位移/旋转交给合成 quad）。
     expect(content.position.toArray()).toEqual([0, 0, 0]);
   });
+
+  // v0.8.2 Fix round 1（Critical 1）：全屏 util 层的 WE 语义 = 铺满视口。2597392171 #54 无
+  // origin/size/scale（缺省 [0,0,0]）⇒ 旧实现把合成 quad 放在场景左下四分之一。
+  it('全屏 util（2597392171 形态）合成 quad 居中并覆盖整场景', () => {
+    const scene = JSON.stringify({
+      general: { orthogonalprojection: { height: 6000, width: 3840 } },
+      objects: [{ id: 54, image: 'models/util/fullscreenlayer.json', effects: [{ file: 'effects/w/effect.json' }] }],
+    });
+    const assets = {
+      renderer: createMockRenderer() as unknown as THREE.WebGLRenderer,
+      isolate: new Map([[54, { objectId: 54, rtWidth: 1920, rtHeight: 3000, worldW: 3840, worldH: 6000 }]]),
+    };
+    const result = loadSceneToThree(scene, assets, document.createElement('canvas'));
+    const entry = result.player.isolatedObjects()[0];
+    const quad = entry.quad;
+    // 世界位置 = 场景中心（we_to_three 的 0,0），不是 (-sceneW/2, -sceneH/2)。
+    expect(quad.position.toArray()).toEqual([0, 0, 0]);
+    // 覆盖整场景：quad 几何与世界尺寸都 = 3840×6000；内容 mesh 与 world 同尺寸（铺满局部相机）。
+    const qgeo = quad.geometry as THREE.PlaneGeometry;
+    expect([qgeo.parameters.width, qgeo.parameters.height]).toEqual([3840, 6000]);
+    expect([entry.worldW, entry.worldH]).toEqual([3840, 6000]);
+    const content = entry.localScene.children[0] as THREE.Mesh;
+    const cgeo = content.geometry as THREE.PlaneGeometry;
+    expect([cgeo.parameters.width, cgeo.parameters.height]).toEqual([3840, 6000]);
+    expect(result.player.displayObject(54)).toBe(quad);
+  });
+
+  // v0.8.2 Fix round 1（Important 3）：util 对象 alpha 必须作用到合成输出。3789452668 #327 alpha=0、
+  // 效果链（audioline）自产 alpha ⇒ 只在内容占位上收口会在静音时画出可见横线。
+  it('util 隔离合成的 quad 应用对象 alpha（alpha=0 不可见；效果输出同样受限）', () => {
+    const { player } = makePlayer(3840, 2160);
+    player.addBackground({
+      objectId: 327, util: 'solid', size: [1000, 1000], scale: [1, 1, 1], origin: [500, 500, 0],
+      color: [202, 202, 202], alpha: 0,
+      sceneW: 3840, sceneH: 2160,
+      isolate: { objectId: 327, rtWidth: 1000, rtHeight: 1000, worldW: 1000, worldH: 1000 },
+    });
+    const quad = player.displayObject(327) as THREE.Mesh;
+    expect((quad.material as THREE.MeshBasicMaterial).opacity).toBe(0);
+    // 效果链输出替换采样纹理时 alpha 仍在（不会随 setObjectOutput 丢失）。
+    player.setObjectOutput(327, new THREE.Texture());
+    expect((quad.material as THREE.MeshBasicMaterial).opacity).toBe(0);
+    // image 隔离路径零回归：合成 quad 保持中性（alpha 已烘进 RT，不得二次施加）。
+    player.addBackground({
+      objectId: 13, size: [100, 100], scale: [1, 1, 1], origin: [10, 10, 0], alpha: 0.5,
+      texture: new THREE.Texture(), sceneW: 3840, sceneH: 2160,
+      isolate: { objectId: 13, rtWidth: 100, rtHeight: 100, worldW: 100, worldH: 100 },
+    });
+    expect((player.displayObject(13) as THREE.Mesh).material).toMatchObject({ opacity: 1 });
+  });
+
+  // v0.8.2 Fix round 1（Minor 10）：util 层按 scene 对象顺序透传 renderOrder（不统一置后）。
+  it('util 层的合成 quad 按 objects 下标 renderOrder，不统一置后', () => {
+    const scene = JSON.stringify({
+      general: { orthogonalprojection: { height: 1080, width: 1920 } },
+      objects: [
+        { id: 13, image: 'models/a.json', origin: '960 540 0', scale: '1 1 1', size: '1920 1080' },
+        {
+          id: 58, image: 'models/util/projectlayer.json', origin: '960 540 0', scale: '1 1 1',
+          size: '1920 1080', effects: [{ file: 'effects/w/effect.json' }],
+        },
+        { id: 30, image: 'models/b.json', origin: '100 100 0', scale: '1 1 1', size: '100 100' },
+      ],
+    });
+    const assets = {
+      renderer: createMockRenderer() as unknown as THREE.WebGLRenderer,
+      isolate: new Map([[58, { objectId: 58, rtWidth: 1920, rtHeight: 1080, worldW: 1920, worldH: 1080 }]]),
+    };
+    const result = loadSceneToThree(scene, assets, document.createElement('canvas'));
+    // 下标 0/1/2：隔离 util 的合成 quad 沿用其宿主对象的绘制序（1），其后还有 image（2）。
+    const orders = [13, 58, 30].map((id) => (result.player.displayObject(id) as THREE.Mesh).renderOrder);
+    expect(orders).toEqual([0, 1, 2]);
+    expect(result.player.displayObject(58)).toBe(result.player.isolatedObjects()[0].quad);
+  });
 });
 
 // 2026-10-13 Task 3：段渲染骨架（按 renderOrder 在消费者前切段 → 段边界拍快照 → 末段合成回默认 fb）。
