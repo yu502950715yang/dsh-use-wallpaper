@@ -90,16 +90,22 @@ export interface SceneParticleObject extends SceneObjectBase {
     effects?: unknown[];
     instanceOverrideJson?: string;
 }
+/** WE util 层四种类型：项目层 / 全屏层 / 合成层 / 纯色层（v0.8.2 F2 按 image 文件名映射）。 */
+export type UtilLayerKind = 'project' | 'fullscreen' | 'compose' | 'solid';
 export interface SceneUtilObject extends SceneObjectBase {
     kind: 'util';
     id: number;
     name: string;
+    layerKind: UtilLayerKind;
     origin: [number, number, number];
     scale: [number, number, number];
     parent?: number;
     angles?: [number, number, number];
     size?: [number, number];
     image: string;
+    color?: [number, number, number];
+    alpha?: number;
+    brightness?: number;
     visible?: VisibleBinding;
     effects?: unknown[];
 }

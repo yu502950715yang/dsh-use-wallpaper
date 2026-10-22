@@ -23344,6 +23344,12 @@ function optColor(s) {
   }
   return [rgb[0], rgb[1], rgb[2]];
 }
+function utilLayerKind(image) {
+  if (image.includes("projectlayer")) return "project";
+  if (image.includes("composelayer")) return "compose";
+  if (image.includes("solidlayer")) return "solid";
+  return "fullscreen";
+}
 function scriptFields(o) {
   const script = typeof o?.script === "string" && o.script ? o.script : void 0;
   const scriptProperties = o?.scriptproperties !== void 0 ? parseScriptProperties(o.scriptproperties) : void 0;
@@ -23445,7 +23451,12 @@ function parseSceneJson(raw) {
           ...base,
           kind: "util",
           image: o.image,
-          // util 不渲染但**承载 SceneScript 控制器**（94001「切换按钮」、221591「双击切歌」）
+          layerKind: utilLayerKind(o.image),
+          // 调制字段与 image 对象同口径（optColor 双语义归一 / optAlpha clamp / brightness 缺省 1）
+          color: optColor(o.color),
+          alpha: optAlpha(o.alpha),
+          brightness: optNum(o.brightness) ?? 1,
+          // util 不渲染纹理但**承载 SceneScript 控制器**（94001「切换按钮」、221591「双击切歌」）
           ...fromVisibleScript
         };
       }

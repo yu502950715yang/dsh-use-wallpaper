@@ -125,11 +125,13 @@ export interface SceneParticleObject extends SceneObjectBase {
   // 回归背景：GTR 3743126786 的烟柱 `{alpha: 0.03, size: 2.09}` 就靠它把粒子压到几乎不可见。
   instanceOverrideJson?: string;
 }
+/** WE util 层四种类型：项目层 / 全屏层 / 合成层 / 纯色层（v0.8.2 F2 按 image 文件名映射）。 */
+export type UtilLayerKind = 'project' | 'fullscreen' | 'compose' | 'solid';
 // WE 内置合成层/全屏层/项目层对象（image 引用 models/util/*.json，pkg 内无此文件）。
-// 语义是效果链容器/控制节点而非纹理：一期不渲染（跳过），effects 字段为二期
-// 效果链（shader 后处理）渲染预留。
+// v0.8.2 起按 layerKind 走内置材质渲染（util-material.ts），effects 为后处理效果链。
 export interface SceneUtilObject extends SceneObjectBase {
   kind: 'util'; id: number; name: string;
+  layerKind: UtilLayerKind;      // 未知 image → 'fullscreen'（失败开放降级）
   origin: [number, number, number]; scale: [number, number, number];
   parent?: number;               // 场景树父对象 id（容器不渲染，但父链要靠它累积）
   // WE 对象欧拉角（弧度，缺省 [0,0,0]）——util/text 当前不参与几何变换，字段保留以与
@@ -137,8 +139,11 @@ export interface SceneUtilObject extends SceneObjectBase {
   angles?: [number, number, number];
   size?: [number, number];       // WE 像素尺寸（与 image 对象一致）
   image: string;                 // 如 "models/util/composelayer.json"
-  visible?: VisibleBinding;      // T4.2：可见性绑定（util 不渲染，字段无害保留）
-  effects?: unknown[];           // 对象效果链定义（effects 数组，二期使用）
+  color?: [number, number, number]; // 0-255（0-1/0-255 双语义经 optColor 归一）
+  alpha?: number;                // 0-1（optAlpha 归一化；缺省按 1.0）
+  brightness?: number;           // 颜色乘法系数，缺省 1
+  visible?: VisibleBinding;      // T4.2：可见性绑定（不可见 util 层跳过）
+  effects?: unknown[];           // 对象效果链定义（effects 数组，v0.8.2 起挂 util 链）
 }
 // WE text 对象（T3.1/T3.3）：scene.json 携带 text 字段（{ script, scriptproperties, value }
 // 对象，如 2937346640 的 VHS Time and Date）。T3.1 静态渲染 text.value（离屏 canvas
