@@ -39,9 +39,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/util.js
+// ../../node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/util.js
 var require_util = __commonJS({
-  "node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/util.js"(exports) {
+  "../../node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/util.js"(exports) {
     exports.hashU32 = function hashU32(a) {
       a = a | 0;
       a = a + 2127912214 + (a << 12) | 0;
@@ -87,9 +87,9 @@ var require_util = __commonJS({
   }
 });
 
-// node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/xxh32.js
+// ../../node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/xxh32.js
 var require_xxh32 = __commonJS({
-  "node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/xxh32.js"(exports) {
+  "../../node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/xxh32.js"(exports) {
     var util = require_util();
     var prime1 = 2654435761;
     var prime2 = 2246822519;
@@ -165,9 +165,9 @@ var require_xxh32 = __commonJS({
   }
 });
 
-// node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/lz4.js
+// ../../node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/lz4.js
 var require_lz4 = __commonJS({
-  "node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/lz4.js"(exports) {
+  "../../node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/lz4.js"(exports) {
     var xxhash = require_xxh32();
     var util = require_util();
     var minMatch = 4;
@@ -512,10 +512,10 @@ var require_lz4 = __commonJS({
   }
 });
 
-// node_modules/.pnpm/@jitl+quickjs-ffi-types@0.32.0/node_modules/@jitl/quickjs-ffi-types/dist/index.mjs
+// ../../node_modules/.pnpm/@jitl+quickjs-ffi-types@0.32.0/node_modules/@jitl/quickjs-ffi-types/dist/index.mjs
 var EvalFlags, IntrinsicsFlags, JSPromiseStateEnum, GetOwnPropertyNamesFlags, IsEqualOp;
 var init_dist = __esm({
-  "node_modules/.pnpm/@jitl+quickjs-ffi-types@0.32.0/node_modules/@jitl/quickjs-ffi-types/dist/index.mjs"() {
+  "../../node_modules/.pnpm/@jitl+quickjs-ffi-types@0.32.0/node_modules/@jitl/quickjs-ffi-types/dist/index.mjs"() {
     EvalFlags = { JS_EVAL_TYPE_GLOBAL: 0, JS_EVAL_TYPE_MODULE: 1, JS_EVAL_TYPE_DIRECT: 2, JS_EVAL_TYPE_INDIRECT: 3, JS_EVAL_TYPE_MASK: 3, JS_EVAL_FLAG_STRICT: 8, JS_EVAL_FLAG_STRIP: 16, JS_EVAL_FLAG_COMPILE_ONLY: 32, JS_EVAL_FLAG_BACKTRACE_BARRIER: 64 };
     IntrinsicsFlags = { BaseObjects: 1, Date: 2, Eval: 4, StringNormalize: 8, RegExp: 16, RegExpCompiler: 32, JSON: 64, Proxy: 128, MapSet: 256, TypedArrays: 512, Promise: 1024, BigInt: 2048, BigFloat: 4096, BigDecimal: 8192, OperatorOverloading: 16384, BignumExt: 32768 };
     JSPromiseStateEnum = { Pending: 0, Fulfilled: 1, Rejected: 2 };
@@ -524,7 +524,7 @@ var init_dist = __esm({
   }
 });
 
-// node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/chunk-V2S4ZYJR.mjs
+// ../../node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/chunk-V2S4ZYJR.mjs
 function debugLog(...args) {
   QTS_DEBUG && console.log("quickjs-emscripten:", ...args);
 }
@@ -611,7 +611,7 @@ function applyModuleEvalRuntimeOptions(runtime, options) {
 }
 var __defProp2, __export2, QTS_DEBUG, errors_exports, QuickJSUnwrapError, QuickJSWrongOwner, QuickJSUseAfterFree, QuickJSNotImplemented, QuickJSAsyncifyError, QuickJSAsyncifySuspended, QuickJSMemoryLeakDetected, QuickJSEmscriptenModuleError, QuickJSUnknownIntrinsic, QuickJSPromisePending, QuickJSEmptyGetOwnPropertyNames, QuickJSHostRefRangeExceeded, QuickJSHostRefInvalid, AwaitYield, UsingDisposable, SymbolDispose, prototypeAsAny, Lifetime, StaticLifetime, WeakLifetime, Scope, AbstractDisposableResult, DisposableSuccess, DisposableFail, DisposableResult, QuickJSDeferredPromise, ModuleMemory, UnstableSymbol, DefaultIntrinsics, QuickJSIterator, INT32_MIN, INT32_MAX, INVALID_HOST_REF_ID, HostRefMap, HostRef, ContextMemory, QuickJSContext, QuickJSRuntime, QuickJSEmscriptenModuleCallbacks, QuickJSModuleCallbacks, QuickJSWASMModule;
 var init_chunk_V2S4ZYJR = __esm({
-  "node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/chunk-V2S4ZYJR.mjs"() {
+  "../../node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/chunk-V2S4ZYJR.mjs"() {
     init_dist();
     init_dist();
     __defProp2 = Object.defineProperty;
@@ -1642,7 +1642,7 @@ Attempted to suspend at:`);
   }
 });
 
-// node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/module-ES6BEMUI.mjs
+// ../../node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/module-ES6BEMUI.mjs
 var module_ES6BEMUI_exports = {};
 __export(module_ES6BEMUI_exports, {
   QuickJSModuleCallbacks: () => QuickJSModuleCallbacks,
@@ -1651,19 +1651,19 @@ __export(module_ES6BEMUI_exports, {
   applyModuleEvalRuntimeOptions: () => applyModuleEvalRuntimeOptions
 });
 var init_module_ES6BEMUI = __esm({
-  "node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/module-ES6BEMUI.mjs"() {
+  "../../node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/module-ES6BEMUI.mjs"() {
     init_chunk_V2S4ZYJR();
   }
 });
 
-// node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/ffi.mjs
+// ../../node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/ffi.mjs
 var ffi_exports = {};
 __export(ffi_exports, {
   QuickJSFFI: () => QuickJSFFI
 });
 var QuickJSFFI;
 var init_ffi = __esm({
-  "node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/ffi.mjs"() {
+  "../../node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/ffi.mjs"() {
     QuickJSFFI = class {
       constructor(module2) {
         this.module = module2;
@@ -1741,7 +1741,7 @@ var init_ffi = __esm({
   }
 });
 
-// node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/emscripten-module.browser.mjs
+// ../../node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/emscripten-module.browser.mjs
 var emscripten_module_browser_exports = {};
 __export(emscripten_module_browser_exports, {
   default: () => emscripten_module_browser_default
@@ -2188,7 +2188,7 @@ async function QuickJSRaw(moduleArg = {}) {
 }
 var import_meta, emscripten_module_browser_default;
 var init_emscripten_module_browser = __esm({
-  "node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/emscripten-module.browser.mjs"() {
+  "../../node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/emscripten-module.browser.mjs"() {
     import_meta = {};
     emscripten_module_browser_default = QuickJSRaw;
   }
@@ -3399,7 +3399,7 @@ function createWallpaperController(layer, opts) {
   };
 }
 
-// node_modules/.pnpm/three@0.170.0/node_modules/three/build/three.module.js
+// ../../node_modules/.pnpm/three@0.170.0/node_modules/three/build/three.module.js
 var REVISION = "170";
 var CullFaceNone = 0;
 var CullFaceBack = 1;
@@ -22999,6 +22999,11 @@ function particleWorldSize(spec, scale) {
 function textWorldSize(size, scale) {
   return { w: Math.abs(size[0] * scale[0]), h: Math.abs(size[1] * scale[1]) };
 }
+function utilWorldSize(kind, size, scale, sceneW, sceneH) {
+  if (kind === "project" || kind === "fullscreen") return { w: Math.abs(sceneW), h: Math.abs(sceneH) };
+  const s = size ?? [1, 1];
+  return { w: Math.abs(s[0] * scale[0]), h: Math.abs(s[1] * scale[1]) };
+}
 function shouldUseObjectPath(obj) {
   return Array.isArray(obj.effects) && obj.effects.length > 0;
 }
@@ -23759,6 +23764,13 @@ function createScriptDriver(canvas, opts, binding, initialText = "") {
 }
 function createClockDriver(canvas, opts, props, initialText) {
   return createTextDriver(canvas, opts, (now) => formatClockText(now, props), initialText);
+}
+
+// src/client/util-material.ts
+function resolveUtilMaterial(layerKind, overrides = {}) {
+  const color = overrides.color ?? [255, 255, 255];
+  const opacity = typeof overrides.alpha === "number" && Number.isFinite(overrides.alpha) ? Math.min(Math.max(overrides.alpha, 0), 1) : 1;
+  return layerKind === "solid" ? { layerKind, kind: "solid", color, opacity } : { layerKind, kind: "passthrough", color, opacity };
 }
 
 // src/client/frame-export.ts
@@ -24871,14 +24883,21 @@ var ThreeScenePlayer = class {
   addBackground(opts) {
     const sceneW = opts.sceneW;
     const sceneH = opts.sceneH;
-    const sprite = opts.texture?.userData?.spritesheet === true ? textureSpriteInfo(opts.texture) : void 0;
+    const sprite = opts.util ? void 0 : opts.texture?.userData?.spritesheet === true ? textureSpriteInfo(opts.texture) : void 0;
     const imgW = opts.texture?.image?.width;
     const imgH = opts.texture?.image?.height;
-    const w = opts.size?.[0] ?? (sprite ? (imgW ?? 1) / sprite.cols : imgW ?? 1);
-    const h = opts.size?.[1] ?? (sprite ? (imgH ?? 1) / sprite.rows : imgH ?? 1);
+    const utilFull = opts.util === "project" || opts.util === "fullscreen";
+    const fallbackW = opts.util ? utilFull ? sceneW : 1 : sprite ? (imgW ?? 1) / sprite.cols : imgW ?? 1;
+    const fallbackH = opts.util ? utilFull ? sceneH : 1 : sprite ? (imgH ?? 1) / sprite.rows : imgH ?? 1;
+    const w = opts.size?.[0] ?? fallbackW;
+    const h = opts.size?.[1] ?? fallbackH;
     const geometry = new PlaneGeometry(w, h);
     const mod = materialModulation(void 0, opts.alpha, opts.brightness);
-    const material = this.createLayerMaterial(opts.texture ?? null, opts.colorBlendMode ?? 0, mod, !!opts.isolate);
+    const material = opts.util ? this.createUtilLayerMaterial(
+      resolveUtilMaterial(opts.util, { color: opts.color, alpha: opts.alpha }),
+      !!opts.isolate,
+      opts.brightness
+    ) : this.createLayerMaterial(opts.texture ?? null, opts.colorBlendMode ?? 0, mod, !!opts.isolate);
     const mesh = new Mesh(geometry, material);
     mesh.renderOrder = opts.renderOrder ?? 0;
     const s = opts.scale;
@@ -25004,6 +25023,31 @@ var ThreeScenePlayer = class {
     basic.color.setRGB(mod.r, mod.g, mod.b);
     basic.opacity = mod.a;
     return basic;
+  }
+  // util 层内容材质（v0.8.2 F2）：solid = 纯色（color×brightness、opacity=alpha）；直通 = 透明占位
+  //（真实内容由效果链/整帧快照覆盖，首帧无内容时不得白屏）。隔离混合约定与 createLayerMaterial 一致。
+  createUtilLayerMaterial(spec, forIsolation, brightness) {
+    if (spec.kind === "solid") {
+      const mod = materialModulation(spec.color, spec.opacity, brightness);
+      const solid = new MeshBasicMaterial({
+        transparent: true,
+        depthWrite: false,
+        blending: forIsolation ? NoBlending : NormalBlending,
+        side: forIsolation ? DoubleSide : FrontSide
+      });
+      solid.color.setRGB(mod.r, mod.g, mod.b);
+      solid.opacity = mod.a;
+      return solid;
+    }
+    return new MeshBasicMaterial({
+      color: 16777215,
+      transparent: true,
+      // 透明占位：内容由 T3 的整帧快照/效果链输出提供。
+      opacity: 0,
+      depthWrite: false,
+      blending: forIsolation ? NoBlending : NormalBlending,
+      side: forIsolation ? DoubleSide : FrontSide
+    });
   }
   // 合成 quad 的材质：只负责「把对象 RT 的像素采样回主场景」。三点关键（都踩过）：
   //   ① 必须独立构造，**不能 clone 内容材质**——粒子内容材质依赖逐实例属性，普通 PlaneGeometry 没有
@@ -25573,6 +25617,26 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
           alignment: obj.alignment
         });
       }
+    } else if (obj.kind === "util") {
+      const isolate = assets.isolate?.get(obj.id);
+      if (!isolate) continue;
+      const t = world(obj);
+      const id = player.addBackground({
+        origin: t.origin,
+        size: obj.size,
+        scale: t.scale,
+        sceneW,
+        sceneH,
+        objectId: obj.id,
+        renderOrder,
+        util: obj.layerKind,
+        color: obj.color,
+        alpha: obj.alpha,
+        brightness: obj.brightness,
+        isolate,
+        parallaxDepth: obj.parallaxDepth
+      });
+      backgroundIds.push(id);
     } else if (obj.kind === "particle" && obj.particle) {
       const p = assets.particles?.get(obj.id);
       if (!p || !assets.createParticleSim) continue;
@@ -29431,7 +29495,7 @@ async function resolveEffectChain(sceneEffect, loadFile) {
   }
 }
 
-// node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/index.mjs
+// ../../node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/index.mjs
 init_chunk_V2S4ZYJR();
 init_dist();
 async function newQuickJSWASMModuleFromVariant(variantOrPromise) {
@@ -29494,7 +29558,7 @@ function newMockExtensions(log) {
   } };
 }
 
-// node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/index.mjs
+// ../../node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/index.mjs
 var variant = { type: "sync", importFFI: () => Promise.resolve().then(() => (init_ffi(), ffi_exports)).then((mod) => mod.QuickJSFFI), importModuleLoader: () => Promise.resolve().then(() => (init_emscripten_module_browser(), emscripten_module_browser_exports)).then((mod) => mod.default) };
 var src_default = variant;
 
@@ -31831,6 +31895,7 @@ function createThreeSceneRenderer(opts) {
         );
         const screenScale = screenScalePx(desc.orthogonal.width, desc.orthogonal.height, vw, vh, dpr);
         const isAdmittedImage = (o) => o.kind === "image" && !isStaticallyHidden(o.visible, userProps) && (effectChains.get(o.id)?.length ?? 0) > 0;
+        const isAdmittedUtil = (o) => o.kind === "util" && !isStaticallyHidden(o.visible, userProps) && (effectChains.get(o.id)?.length ?? 0) > 0;
         const isPuppetRendered = (o) => o.kind === "image" && puppetMeshes.has(o.id);
         const isIsolatedImage = (o) => isAdmittedImage(o) && !isPuppetRendered(o);
         const isolateItems = desc.objects.filter(isIsolatedImage).map((o) => {
@@ -31852,6 +31917,18 @@ function createThreeSceneRenderer(opts) {
           worldH: it.worldH
         }]));
         const sourceOf = new Map(isolateItems.map((it) => [it.objId, it.source]));
+        const utilSizes = /* @__PURE__ */ new Map();
+        for (const o of desc.objects) {
+          if (!isAdmittedUtil(o)) continue;
+          const world = utilWorldSize(
+            o.layerKind,
+            o.size,
+            [o.scale[0], o.scale[1]],
+            desc.orthogonal.width,
+            desc.orthogonal.height
+          );
+          utilSizes.set(o.id, { rt: objectRtSize(world.w, world.h, screenScale), worldW: world.w, worldH: world.h });
+        }
         const isolate = /* @__PURE__ */ new Map();
         for (const obj of desc.objects) {
           if (isStaticallyHidden(obj.visible, userProps)) continue;
@@ -31906,6 +31983,16 @@ function createThreeSceneRenderer(opts) {
               rtHeight: rt.height,
               worldW: world.w,
               worldH: world.h
+            });
+          } else if (obj.kind === "util") {
+            const sized = utilSizes.get(obj.id);
+            if (!sized) continue;
+            isolate.set(obj.id, {
+              objectId: obj.id,
+              rtWidth: sized.rt.width,
+              rtHeight: sized.rt.height,
+              worldW: sized.worldW,
+              worldH: sized.worldH
             });
           }
         }
@@ -32029,7 +32116,7 @@ function createThreeSceneRenderer(opts) {
         if (droppedEffects > 0) {
           warnOnce2(
             `unrendered-effects:${id}`,
-            `${droppedEffects} \u6761\u6548\u679C\u6302\u5728\u672A\u53C2\u4E0E\u6E32\u67D3\u7684\u5BF9\u8C61\u7C7B\u578B\u4E0A\uFF08util/\u97F3\u9891\uFF09\uFF0C\u5DF2\u8DF3\u8FC7`
+            `${droppedEffects} \u6761\u6548\u679C\u6302\u5728\u672A\u53C2\u4E0E\u6E32\u67D3\u7684\u5BF9\u8C61\u7C7B\u578B\u4E0A\uFF08\u7F3A\u7C92\u5B50\u8D44\u6E90/\u97F3\u9891\uFF09\uFF0C\u5DF2\u8DF3\u8FC7`
           );
         }
         if (isolate.size > 0) {

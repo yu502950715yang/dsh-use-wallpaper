@@ -52,7 +52,7 @@ import { createThreeSceneRenderer, particleBlend, collectObjectEffectChains, col
 import { createRenderHealthStore } from '../src/client/render-health.js';
 import type { HealthSnapshot, StorageLike } from '../src/client/render-health.js';
 import { parseSceneJson } from '../src/client/scene-json.js';
-import { screenScalePx, ISOLATED_RT_BUDGET_BYTES, ISOLATED_RT_BYTES_PER_PX } from '../src/client/object-range.js';
+import { screenScalePx, fitIsolatedBudget, isolatedRtSize, ISOLATED_RT_BUDGET_BYTES, ISOLATED_RT_BYTES_PER_PX } from '../src/client/object-range.js';
 import { createGlowStage } from '../src/client/glow-stage.js';
 import { setSettingsCtx } from '../src/client/settings.js';
 import { SceneScriptHost } from '../src/client/scene-script-host.js';
@@ -993,6 +993,75 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     disposeSpy.mockRestore();
   });
 
+  // v0.8.2 F2：util 层（models/util/*）与 image 同构进 isolate 表；世界尺寸按 utilWorldSize：
+  // project/fullscreen = 正交场景尺寸，compose/solid = size × |scale|。RT = 屏占位（不参与预算）。
+  it('util 对象带 effects → 进 isolate 表（与 image 同构），world 用 utilWorldSize', async () => {
+    stubAssetFetch(sceneWith([
+      {
+        id: 58, name: 'Full Composition Layer', image: 'models/util/projectlayer.json',
+        origin: '960 540 0', scale: '1 1 1', size: '1920 1080', alpha: 1, color: '1 1 1',
+        effects: [{ file: 'effects/w/effect.json' }],
+      },
+      {
+        id: 37, name: 'Compose', image: 'models/util/composelayer.json',
+        origin: '200 200 0', scale: '1 1 1', size: '400 850',
+        effects: [{ file: 'effects/w/effect.json' }],
+      },
+      {
+        id: 327, name: 'Spectrum', image: 'models/util/solidlayer.json',
+        origin: '0 0 0', scale: '0.87 -0.98 0.1', size: '1000 1000',
+        alpha: 0, color: '0.79 0.79 0.79',
+        effects: [{ file: 'effects/w/effect.json' }],
+      },
+    ]), FX_FILES);
+    defaultLoadWasm.mockResolvedValue(null);
+    const player = {
+      dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage: vi.fn(),
+      setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn(),
+      renderer: {},
+      isolatedObjects: () => [
+        { id: 58, kind: 'background', rtWidth: 1920, rtHeight: 1080, rtTexture: {} },
+        { id: 37, kind: 'background', rtWidth: 400, rtHeight: 850, rtTexture: {} },
+        { id: 327, kind: 'background', rtWidth: 870, rtHeight: 980, rtTexture: {} },
+      ],
+    };
+    loadSceneToThree.mockReturnValue({
+      player, sims: [], backgroundIds: [0, 1, 2], particleLayers: [], puppetLayers: [],
+    } as never);
+    const worldSpy = vi.spyOn(ObjectEffectStage.prototype, 'setWorldSize').mockImplementation(() => {});
+    const chainsSpy = vi.spyOn(ObjectEffectStage.prototype, 'setObjectChains').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    expect(await r.render('2911105183', document.createElement('canvas'), null)).toBe(true);
+
+    const assets = loadSceneToThree.mock.calls[0][1];
+    // 场景/视口均 1920×1080、dpr=1 ⇒ 密度 1：RT = 世界尺寸。
+    expect(assets.isolate.get(58)).toEqual({
+      objectId: 58, rtWidth: 1920, rtHeight: 1080, worldW: 1920, worldH: 1080,
+    });
+    expect(assets.isolate.get(37)).toEqual({
+      objectId: 37, rtWidth: 400, rtHeight: 850, worldW: 400, worldH: 850,
+    });
+    expect(assets.isolate.get(327)).toEqual({
+      objectId: 327, rtWidth: 870, rtHeight: 980, worldW: 870, worldH: 980,
+    });
+    // 链按对象 id 挂载（顺序 = objects 顺序），源尺寸显式 null（util 无 pkg 源纹理）。
+    expect(worldSpy.mock.calls).toEqual([
+      [58, 1920, 1080, null],
+      [37, 400, 850, null],
+      [327, 870, 980, null],
+    ]);
+    expect(chainsSpy.mock.calls.map((c) => c[0])).toEqual([58, 37, 327]);
+    // util 层不再算「挂在未参与渲染的对象类型上」。
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('未参与渲染'))).toBe(false);
+
+    worldSpy.mockRestore();
+    chainsSpy.mockRestore();
+    warn.mockRestore();
+    r.dispose();
+  });
+
   // 省电与画质档位（2026-09-21）：状态跨 render 保留；装配即应用；改档位要同步屏幕密度给 stage。
   it('setPaused / setQualityScale：无 player 时记状态、装配即暂停；有 player 时即时下发并同步屏幕密度给 stage', async () => {
     stubSettings({ glowEnabled: false });
@@ -1246,10 +1315,10 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     r.dispose();
   });
 
-  // Minor 1：挂在 util（`models/util/*` 合成层/全屏层，loadSceneToThree 不渲染）或音频空粒子对象
-  // 上的 effects 既不会被隔离也不会被挂链，此前完全静默——诊断上看不出「效果被丢了」。改为按壁纸
-  // 汇总一条 warn（每壁纸一条，不按对象刷屏）。
-  it('util 对象上的 effects 无法隔离 → 汇总一条「已跳过」告警（不静默丢弃）', async () => {
+  // v0.8.2 F2 起 util 层走隔离渲染（不再计入本告警）；仍「未参与渲染」的是缺 spec/资源的粒子对象
+  // 与音频空对象。这类对象上的 effects 既不会被隔离也不会被挂链，此前完全静默——按壁纸汇总一条
+  // warn（每壁纸一条，不按对象刷屏）。
+  it('缺粒子资源的对象上的 effects 无法隔离 → 汇总一条「已跳过」告警（不静默丢弃）', async () => {
     stubAssetFetch(sceneWith([
       {
         id: 13, name: 'bg', image: 'models/a.json',
@@ -1257,7 +1326,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
         effects: [{ file: 'effects/w/effect.json' }],
       },
       {
-        id: 37, name: 'composelayer', image: 'models/util/composelayer.json',
+        id: 71, name: 'missing-particle', particle: 'particles/missing.json',
         origin: '0 0 0', scale: '1 1 1',
         effects: [{ file: 'effects/w/effect.json' }, { file: 'effects/w/effect.json' }],
       },
@@ -1270,7 +1339,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
       renderer: {},
       isolatedObjects: () => [{ id: 13, kind: 'background', rtWidth: 1920, rtHeight: 1080, rtTexture: {} }],
     };
-    loadSceneToThree.mockReturnValue({ player, sims: [], backgroundIds: [0, 1], particleLayers: [], puppetLayers: [], } as never);
+    loadSceneToThree.mockReturnValue({ player, sims: [], backgroundIds: [0], particleLayers: [], puppetLayers: [], } as never);
     const worldSpy = vi.spyOn(ObjectEffectStage.prototype, 'setWorldSize').mockImplementation(() => {});
     const chainsSpy = vi.spyOn(ObjectEffectStage.prototype, 'setObjectChains').mockImplementation(() => {});
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -1279,13 +1348,13 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     const ok = await r.render('2132420420', document.createElement('canvas'), null);
     expect(ok).toBe(true);
 
-    // 汇总一条（util 对象上的 2 条效果），而不是每对象/每条链一条。
+    // 汇总一条（缺粒子资源的对象上的 2 条效果），而不是每对象/每条链一条。
     const skipped = warn.mock.calls.filter((c) => String(c[0]).includes('未参与渲染'));
     expect(skipped).toHaveLength(1);
     expect(String(skipped[0][0])).toContain('2 条效果');
     // 能隔离的对象照常挂链，不受汇总告警影响。
     expect(chainsSpy.mock.calls.map((c) => c[0])).toEqual([13]);
-    expect(loadSceneToThree.mock.calls[0][1].isolate.has(37)).toBe(false);
+    expect(loadSceneToThree.mock.calls[0][1].isolate.has(71)).toBe(false);
 
     worldSpy.mockRestore();
     chainsSpy.mockRestore();
@@ -1429,6 +1498,40 @@ describe('对象级效果链：隔离 RT 尺寸按源纹理收口 4096', () => {
     // 只升不降：收窄的是升级幅度，下限仍是屏占位 2250×1080。
     expect(Math.max(a.rtWidth, a.rtHeight)).toBeGreaterThan(OCC_LONG);
     expect(a.rtWidth).toBe(b.rtWidth); // 同一 budgetScale + 同尺寸对象 ⇒ 同一 RT
+    r.dispose();
+  });
+
+  // spec §2.2：util 层不参与 fitIsolatedBudget（不跟 image 抢预算）；RT 恒为屏占位。
+  it('util 层不进隔离预算：image 的 4096 收口只按 image 集合受预算约束', async () => {
+    stubAsset([
+      bgObject(13), bgObject(246),
+      {
+        id: 58, name: 'projectlayer', image: 'models/util/projectlayer.json',
+        origin: '0 0 0', scale: '1 1 1', size: '5000 2400',
+        effects: [{ file: 'effects/w/effect.json' }],
+      },
+    ]);
+    resolveImageAssets.mockResolvedValue({ texture: { image: { ...SRC }, dispose: vi.fn() } as never, puppetPath: null });
+
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    expect(await r.render('2911105183', document.createElement('canvas'), null)).toBe(true);
+
+    const density = screenScalePx(ORTHO.width, ORTHO.height, 1920, 1080, 1);
+    // 期望值按「只有 image 参与预算」的纯函数口径算；util 若被误计入，budgetScale 会更小 ⇒ 这里变红。
+    const budget = fitIsolatedBudget([
+      { worldW: SRC.width, worldH: SRC.height, source: SRC },
+      { worldW: SRC.width, worldH: SRC.height, source: SRC },
+    ], density);
+    const expected = isolatedRtSize(SRC.width, SRC.height, density, SRC, { budgetScale: budget });
+    const img = isolateOf().get(13)!;
+    expect([img.rtWidth, img.rtHeight]).toEqual([expected.width, expected.height]);
+    // util RT = 屏占位（世界 = 正交场景尺寸 5000×2400）。
+    const util = isolateOf().get(58)!;
+    expect(util).toEqual({
+      objectId: 58,
+      rtWidth: Math.round(5000 * density), rtHeight: Math.round(2400 * density),
+      worldW: 5000, worldH: 2400,
+    });
     r.dispose();
   });
 });

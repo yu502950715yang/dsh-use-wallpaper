@@ -1852,6 +1852,32 @@ describe('ThreeScenePlayer loadSceneToThree', () => {
     expect(result.player.camera.bottom).toBeCloseTo(-1555 / 2, 6);
     expect(renderer.setSize).toHaveBeenCalledWith(2400, 1555, false);
   });
+
+  // v0.8.2 F2：util 对象只渲染「带效果链（isolate 条目）」的层 —— 条目由 three-renderer 按
+  // utilWorldSize 算好下发；无条目（无链）保持改动前的「不渲染」，不引入白块。
+  it('util 对象：有 isolate 条目 → addBackground(util)；无条目 → 不渲染', () => {
+    const scene = JSON.stringify({
+      general: { orthogonalprojection: { height: 1080, width: 1920 } },
+      objects: [
+        {
+          id: 58, image: 'models/util/projectlayer.json',
+          origin: '960 540 0', scale: '1 1 1', size: '1920 1080',
+          alpha: 1, color: '1 1 1', effects: [{ file: 'effects/w/effect.json' }],
+        },
+        { id: 37, image: 'models/util/composelayer.json', size: '400 850', origin: '200 200 0', scale: '1 1 1' },
+      ],
+    });
+    const assets = {
+      renderer: createMockRenderer() as unknown as THREE.WebGLRenderer,
+      isolate: new Map([[58, { objectId: 58, rtWidth: 1920, rtHeight: 1080, worldW: 1920, worldH: 1080 }]]),
+    };
+    const result = loadSceneToThree(scene, assets, document.createElement('canvas'));
+    expect(result.backgroundIds).toHaveLength(1);
+    expect(result.player.isolatedObjects().map((o) => o.id)).toEqual([58]);
+    expect(result.player.displayObject(58)).toBe(result.player.isolatedObjects()[0].quad);
+    // 无链 util 层不建图层（与 v0.8.1 行为一致）。
+    expect(result.player.displayObject(37)).toBeUndefined();
+  });
 });
 
 // ===== 对象隔离渲染（对象级效果链的前置能力）=====
@@ -2512,6 +2538,78 @@ describe('ThreeScenePlayer 对象隔离', () => {
     player.resizeObjectRT(13, 4096, 1966);
     expect(entry.rt.texture.minFilter).toBe(THREE.LinearFilter);
     expect(rtDispose).not.toHaveBeenCalled();
+  });
+
+  // v0.8.2 F2：util 层无 pkg 纹理（models/util/*.json 是引擎内置材质）⇒ addBackground 走内置材质；
+  // 有 isolate 条目时与 image 同路径（内容进 localScene + 主场景合成 quad）。
+  it('addBackground(util) 无 pkg 纹理时用内置材质建 mesh 并返回合成 quad', () => {
+    const { player } = makePlayer(3840, 2160);
+    const id = player.addBackground({
+      objectId: 58, util: 'project', size: [3840, 2160], scale: [1, 1, 1], origin: [1920, 1080, 0],
+      sceneW: 3840, sceneH: 2160,
+      isolate: { objectId: 58, rtWidth: 3840, rtHeight: 2160, worldW: 3840, worldH: 2160 },
+    });
+    // 返回值仍是背景图层计数器 id；隔离条目的键 = scene.json 对象 id。
+    expect(typeof id).toBe('number');
+    const iso = player.isolatedObjects();
+    expect(iso).toHaveLength(1);
+    const entry = iso[0];
+    expect(entry.id).toBe(58);
+    expect(player.scene.children).toContain(entry.quad);
+    expect(entry.localScene.children).toHaveLength(1);
+    const content = entry.localScene.children[0] as THREE.Mesh;
+    expect(content).toBeInstanceOf(THREE.Mesh);
+    expect(content.material).toBeInstanceOf(THREE.MeshBasicMaterial);
+    const mat = content.material as THREE.MeshBasicMaterial;
+    expect(mat.map).toBeNull();
+    // passthrough：白色直通占位、透明（内容由效果链/快照覆盖，首帧不得白屏）
+    expect(mat.transparent).toBe(true);
+    expect(mat.opacity).toBe(0);
+    expect(mat.color.getHexString()).toBe('ffffff');
+    expect(mat.side).toBe(THREE.DoubleSide);
+    expect(entry.worldW).toBe(3840);
+    expect(entry.worldH).toBe(2160);
+    expect(entry.localCamera.right - entry.localCamera.left).toBeCloseTo(3840, 5);
+    expect(entry.localCamera.bottom - entry.localCamera.top).toBeCloseTo(2160, 5);
+    // 脚本/帧消费者按对象 id 找到的是合成 quad（不是 RT 内的内容 mesh）。
+    expect(player.displayObject(58)).toBe(entry.quad);
+  });
+
+  it('addBackground(util solid) → 纯色材质（color 0-255 × brightness、opacity = alpha）', () => {
+    const { player } = makePlayer(1920, 1080);
+    player.addBackground({
+      objectId: 327, util: 'solid', size: [1000, 1000], scale: [0.87, -0.98, 0.1],
+      origin: [500, 500, 0], color: [100, 50, 25], alpha: 0.5, brightness: 2,
+      sceneW: 1920, sceneH: 1080,
+    });
+    const mesh = player.displayObject(327) as THREE.Mesh;
+    expect(mesh).toBeInstanceOf(THREE.Mesh);
+    const mat = mesh.material as THREE.MeshBasicMaterial;
+    expect(mat.transparent).toBe(true);
+    expect(mat.opacity).toBeCloseTo(0.5, 6);
+    // color = 0-255/255 × brightness（>1 由 materialModulation clamp）
+    expect(mat.color.r).toBeCloseTo(200 / 255, 6);
+    expect(mat.color.g).toBeCloseTo(100 / 255, 6);
+    expect(mat.color.b).toBeCloseTo(50 / 255, 6);
+    // 纯色层比例保留：scale 烘进 mesh.scale（几何 = scene.json size）。
+    expect(mesh.scale.toArray()).toEqual([0.87, -0.98, 0.1]);
+    expect(player.isolatedObjects()).toHaveLength(0);
+  });
+
+  it('addBackground(util fullscreen) 缺 size → 内容 quad 回退整场景尺寸（2597392171 形态）', () => {
+    const { player } = makePlayer(3840, 6000);
+    player.addBackground({
+      objectId: 54, util: 'fullscreen', scale: [1, 1, 1], origin: [0, 0, 0],
+      sceneW: 3840, sceneH: 6000,
+      isolate: { objectId: 54, rtWidth: 1920, rtHeight: 3000, worldW: 3840, worldH: 6000 },
+    });
+    const entry = player.isolatedObjects()[0];
+    const content = entry.localScene.children[0] as THREE.Mesh;
+    const geo = content.geometry as THREE.PlaneGeometry;
+    expect(geo.parameters.width).toBe(3840);
+    expect(geo.parameters.height).toBe(6000);
+    // 隔离内容中心/旋转归零（位移/旋转交给合成 quad）。
+    expect(content.position.toArray()).toEqual([0, 0, 0]);
   });
 });
 

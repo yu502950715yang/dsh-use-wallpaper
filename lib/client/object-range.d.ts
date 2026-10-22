@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { SceneObject } from '../shared/types.js';
+import type { SceneObject, UtilLayerKind } from '../shared/types.js';
 export declare const CAMERA_DISTANCE = 300;
 export declare const OBJECT_RT_MAX = 4096;
 export declare function materialModulation(color?: [number, number, number], alpha?: number, brightness?: number): {
@@ -26,6 +26,10 @@ export declare function particleWorldSize(spec: {
     h: number;
 };
 export declare function textWorldSize(size: [number, number], scale: [number, number]): {
+    w: number;
+    h: number;
+};
+export declare function utilWorldSize(kind: UtilLayerKind, size: [number, number] | undefined, scale: [number, number], sceneW: number, sceneH: number): {
     w: number;
     h: number;
 };

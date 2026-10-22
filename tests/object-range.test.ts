@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import {
   CAMERA_DISTANCE, OBJECT_RT_MAX, PARTICLE_DEFAULT_DISTANCE,
-  materialModulation, objectCameraRange, particleObjectRange, particleWorldSize, textWorldSize,
+  materialModulation, objectCameraRange, particleObjectRange, particleWorldSize, textWorldSize, utilWorldSize,
   createObjectRenderTarget, shouldUseObjectPath, groupEffectsByObject, PendingChainStore,
   uvWindow, createCompositeGeometry, coverRange, flipGeometryUvY,
   screenScalePx, objectRtSize, isolatedRtLongEdge, isolatedRtSize, sourcePixelsFromTexture,
@@ -110,6 +110,17 @@ describe('textWorldSize', () => {
   it('textWorldSize = 布局尺寸 × 世界缩放绝对值', () => {
     expect(textWorldSize([200, 80], [2, 3])).toEqual({ w: 400, h: 240 });
     expect(textWorldSize([200, 80], [-2, 3])).toEqual({ w: 400, h: 240 });
+  });
+});
+
+describe('utilWorldSize', () => {
+  it('util 世界尺寸：project/fullscreen 覆盖整场景，compose/solid 取 size×scale', () => {
+    expect(utilWorldSize('project', undefined, [1, 1], 3840, 2160)).toEqual({ w: 3840, h: 2160 });
+    expect(utilWorldSize('fullscreen', undefined, [1, 1], 3840, 2160)).toEqual({ w: 3840, h: 2160 });
+    expect(utilWorldSize('compose', [400, 850], [1, 1], 3840, 2160)).toEqual({ w: 400, h: 850 });
+    expect(utilWorldSize('solid', [1000, 1000], [0.87, -0.98], 3840, 2160)).toEqual({ w: 870, h: 980 });
+    // 有限尺寸层缺 size ⇒ 按 1×1 兜底（不吞掉 scale 的镜像/缩放语义）
+    expect(utilWorldSize('compose', undefined, [2, -3], 3840, 2160)).toEqual({ w: 2, h: 3 });
   });
 });
 

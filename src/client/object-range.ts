@@ -2,7 +2,7 @@
 // 一期在 scene-renderer.ts 中实现并已单测；three 主路径同样需要它们，故移到本模块，
 // scene-renderer.ts 改为 import + 重新导出（既有 import 方与单测零改动），实现逐字不变。
 import * as THREE from 'three';
-import type { SceneObject } from '../shared/types.js';
+import type { SceneObject, UtilLayerKind } from '../shared/types.js';
 
 export const CAMERA_DISTANCE = 300; // 相机沿 +z 放置，使 shader 中 300/-mv.z = 1（点尺寸=像素尺寸）
 
@@ -76,6 +76,19 @@ export function textWorldSize(
   scale: [number, number],
 ): { w: number; h: number } {
   return { w: Math.abs(size[0] * scale[0]), h: Math.abs(size[1] * scale[1]) };
+}
+
+// util 层世界尺寸：project/fullscreen 覆盖整个正交视口；compose/solid 按 size×|scale|（缺 size 兜底 1）。
+export function utilWorldSize(
+  kind: UtilLayerKind,
+  size: [number, number] | undefined,
+  scale: [number, number],
+  sceneW: number,
+  sceneH: number,
+): { w: number; h: number } {
+  if (kind === 'project' || kind === 'fullscreen') return { w: Math.abs(sceneW), h: Math.abs(sceneH) };
+  const s = size ?? [1, 1];
+  return { w: Math.abs(s[0] * scale[0]), h: Math.abs(s[1] * scale[1]) };
 }
 
 // 对象级渲染目标：按分辨率创建（浮点取整为整数像素，0/负数钳制 1 —— 保证

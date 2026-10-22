@@ -4,7 +4,7 @@ import type { FrameCapture } from './frame-capture.js';
 import type { ClockDriver } from './text-object.js';
 import type { ParallaxConfig, PointerState } from './parallax.js';
 import type { PuppetInstance } from './puppet.js';
-import type { SceneImageObject } from '../shared/types.js';
+import type { SceneImageObject, UtilLayerKind } from '../shared/types.js';
 export declare const DEFAULT_PARTICLE_CAPACITY = 1024;
 export declare const MAX_PARTICLE_CAPACITY = 2048;
 export declare const PARTICLE_FLOATS_PER_INSTANCE = 16;
@@ -193,6 +193,8 @@ export declare class ThreeScenePlayer {
         texture?: THREE.Texture;
         alpha?: number;
         brightness?: number;
+        util?: UtilLayerKind;
+        color?: [number, number, number];
         sceneW: number;
         sceneH: number;
         objectId?: number;
@@ -221,6 +223,7 @@ export declare class ThreeScenePlayer {
         animationLayers?: SceneImageObject['animationLayers'];
     }): number;
     private createLayerMaterial;
+    private createUtilLayerMaterial;
     private createCompositeQuadMaterial;
     private applyCompositeSampling;
     private attachIsolated;

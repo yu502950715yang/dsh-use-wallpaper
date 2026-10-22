@@ -28,7 +28,9 @@ import type { ParallaxConfig, PointerFollow, PointerState } from './parallax.js'
 // puppet（.mdl 蒙皮网格）：实例由调用方装配，本类只负责挂进场景、逐帧采样动画与释放。
 import type { PuppetInstance } from './puppet.js';
 // 动画层元数据（scene.json 的 `animationlayers`）类型取自 shared 的字段声明，避免两处漂移。
-import type { SceneImageObject } from '../shared/types.js';
+import type { SceneImageObject, UtilLayerKind } from '../shared/types.js';
+// util 层内置材质（v0.8.2 F2）：solid 纯色 / 其余直通，与 pkg 纹理无关。
+import { resolveUtilMaterial, type UtilMaterialSpec } from './util-material.js';
 // 首帧缓存抓帧：GL 像素行序翻转 + PNG 编码（纯函数层，node 可注入 encoder 单测）。
 import { readPixelsToPng, type ReadPixelsGl } from './frame-export.js';
 
@@ -1485,6 +1487,10 @@ export class ThreeScenePlayer {
     texture?: THREE.Texture;
     alpha?: number;
     brightness?: number;
+    // v0.8.2 F2：util 层无 pkg 纹理，按 layerKind 用内置材质（solid 纯色 / 其余直通占位）。
+    util?: UtilLayerKind;
+    // util 纯色层颜色（0-255，scene.json 的 color）；仅 util=solid 使用，image 的 tint 是 F13。
+    color?: [number, number, number];
     sceneW: number;
     sceneH: number;
     // scene.json 的**对象 id**（脚本图层桥的键）：本字段**总是传**（非隔离对象也要能被脚本按
@@ -1506,16 +1512,28 @@ export class ThreeScenePlayer {
     const sceneH = opts.sceneH;
     // 背景尺寸 = size × scale（geometry 未缩放、mesh.scale 承载 scale）；size 缺省回退纹理宽高。
     // 精灵表（材质声明 spritesheet）回退**单帧**宽高；有 TEXS 但未声明的仍按整表尺寸（旧语义）。
-    const sprite = opts.texture?.userData?.spritesheet === true ? textureSpriteInfo(opts.texture) : undefined;
+    // util 无纹理：project/fullscreen 缺 size 时铺满场景，compose/solid 按 1×1（与 utilWorldSize 同口径）。
+    const sprite = opts.util
+      ? undefined
+      : (opts.texture?.userData?.spritesheet === true ? textureSpriteInfo(opts.texture) : undefined);
     const imgW = opts.texture?.image?.width as number | undefined;
     const imgH = opts.texture?.image?.height as number | undefined;
-    const w = opts.size?.[0] ?? (sprite ? (imgW ?? 1) / sprite.cols : (imgW ?? 1));
-    const h = opts.size?.[1] ?? (sprite ? (imgH ?? 1) / sprite.rows : (imgH ?? 1));
+    const utilFull = opts.util === 'project' || opts.util === 'fullscreen';
+    const fallbackW = opts.util ? (utilFull ? sceneW : 1) : (sprite ? (imgW ?? 1) / sprite.cols : (imgW ?? 1));
+    const fallbackH = opts.util ? (utilFull ? sceneH : 1) : (sprite ? (imgH ?? 1) / sprite.rows : (imgH ?? 1));
+    const w = opts.size?.[0] ?? fallbackW;
+    const h = opts.size?.[1] ?? fallbackH;
     const geometry = new THREE.PlaneGeometry(w, h);
     const mod = materialModulation(undefined, opts.alpha, opts.brightness);
     // ⚠️ 隔离对象（opts.isolate）走 forIsolation=true：内容材质**不套** cb，混合语义全部交给
     // 合成 quad（见 createLayerMaterial / createCompositeQuadMaterial 注释）。
-    const material = this.createLayerMaterial(opts.texture ?? null, opts.colorBlendMode ?? 0, mod, !!opts.isolate);
+    const material = opts.util
+      ? this.createUtilLayerMaterial(
+        resolveUtilMaterial(opts.util, { color: opts.color, alpha: opts.alpha }),
+        !!opts.isolate,
+        opts.brightness,
+      )
+      : this.createLayerMaterial(opts.texture ?? null, opts.colorBlendMode ?? 0, mod, !!opts.isolate);
     const mesh = new THREE.Mesh(geometry, material);
     // renderOrder 唯一化（调用方按 objects 下标传入）；缺省 0 = 背景在粒子之前绘制（背景在下）。
     mesh.renderOrder = opts.renderOrder ?? 0;
@@ -1693,6 +1711,32 @@ export class ThreeScenePlayer {
     basic.color.setRGB(mod.r, mod.g, mod.b);
     basic.opacity = mod.a;
     return basic;
+  }
+
+  // util 层内容材质（v0.8.2 F2）：solid = 纯色（color×brightness、opacity=alpha）；直通 = 透明占位
+  //（真实内容由效果链/整帧快照覆盖，首帧无内容时不得白屏）。隔离混合约定与 createLayerMaterial 一致。
+  private createUtilLayerMaterial(spec: UtilMaterialSpec, forIsolation: boolean, brightness?: number): THREE.Material {
+    if (spec.kind === 'solid') {
+      const mod = materialModulation(spec.color, spec.opacity, brightness);
+      const solid = new THREE.MeshBasicMaterial({
+        transparent: true,
+        depthWrite: false,
+        blending: forIsolation ? THREE.NoBlending : THREE.NormalBlending,
+        side: forIsolation ? THREE.DoubleSide : THREE.FrontSide,
+      });
+      solid.color.setRGB(mod.r, mod.g, mod.b);
+      solid.opacity = mod.a;
+      return solid;
+    }
+    return new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      // 透明占位：内容由 T3 的整帧快照/效果链输出提供。
+      opacity: 0,
+      depthWrite: false,
+      blending: forIsolation ? THREE.NoBlending : THREE.NormalBlending,
+      side: forIsolation ? THREE.DoubleSide : THREE.FrontSide,
+    });
   }
 
   // 合成 quad 的材质：只负责「把对象 RT 的像素采样回主场景」。三点关键（都踩过）：
@@ -2373,7 +2417,7 @@ export interface ThreeSceneLoadResult {
   player: ThreeScenePlayer;
   // 已创建的粒子模拟器（按 scene.json objects 顺序）；长度 = 有粒子 spec + createParticleSim 的粒子对象数。
   sims: ParticleSim[];
-  // 背景图层 id（addBackground / addPuppet 返回值，按 objects 顺序）；长度 = image 对象数。
+  // 背景图层 id（addBackground / addPuppet 返回值，按 objects 顺序）；长度 = image 对象数 + 隔离 util 层数。
   backgroundIds: number[];
   // puppet 图层 id（addPuppet 返回值）：上面 backgroundIds 的子集，单独给出供调用方判定「有没有可见对象」。
   puppetLayers: number[];
@@ -2582,6 +2626,28 @@ export function loadSceneToThree(
           alignment: obj.alignment,
         });
       }
+    } else if (obj.kind === 'util') {
+      // util 层（v0.8.2 F2）：只有带效果链（有 isolate 条目）的层接入隔离渲染；无条目保持不渲染，
+      // 不引入白块。层内容 = 内置材质（solid 纯色 / 其余直通占位，T3 用整帧快照填内容）。
+      const isolate = assets.isolate?.get(obj.id);
+      if (!isolate) continue;
+      const t = world(obj);
+      const id = player.addBackground({
+        origin: t.origin,
+        size: obj.size,
+        scale: t.scale,
+        sceneW,
+        sceneH,
+        objectId: obj.id,
+        renderOrder,
+        util: obj.layerKind,
+        color: obj.color,
+        alpha: obj.alpha,
+        brightness: obj.brightness,
+        isolate,
+        parallaxDepth: obj.parallaxDepth,
+      });
+      backgroundIds.push(id);
     } else if (obj.kind === 'particle' && obj.particle) {
       // 粒子对象：仅当调用方提供 spec + 模拟器工厂时装配（缺 spec/工厂 → 跳过该对象，绝不白屏，
       // 与缺失粒子纹理时白图兜底同语义）。
