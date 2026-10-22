@@ -306,16 +306,16 @@ describe('playWallpaperSound（壁纸音频播放，T3.4）', () => {
     expect(win.addEventListener).toHaveBeenCalledTimes(3); // 三事件各一次，不重复注册
   });
 
-  // ── 大音频分流（Crimson 132MB mp3：decodeAudioData 会失败）────────────────────────
-  it('content-length 超阈值 → 取消整块 body，走 <audio> 流式链路，返回 stop 句柄', async () => {
-    const { cancel, arrayBuffer } = stubLargeFetch(LARGE_AUDIO_BYTES + 1);
+  // ── 统一 <audio> 流式（Crimson 132MB mp3：整块解码不可行）────────────────────────
+  it('统一 <audio> 流式：不先 fetch 探测大小，元素创建/挂载/播放/停止', async () => {
     const { el, createElement, body } = stubDocument();
     const { analyser, mediaSource, gain, context } = makeStreamingAnalyzer();
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
     const url = '/wallpapers/scene/9/asset?name=sounds/a.mp3';
     const handle = await playWallpaperSound(url, { context, analyser } as any, { volume: 0.4, loop: false });
     expect(handle).not.toBeNull();
-    expect(arrayBuffer).not.toHaveBeenCalled(); // 不走整块解码
-    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled(); // 流式不再整块 fetch（content-length 不可靠）
     expect(createElement).toHaveBeenCalledWith('audio');
     expect(el.src).toBe(url);
     expect(el.loop).toBe(false);
@@ -335,13 +335,14 @@ describe('playWallpaperSound（壁纸音频播放，T3.4）', () => {
     expect(gain.disconnect).toHaveBeenCalledTimes(1);
   });
 
-  it('content-length 等于阈值 → 仍走 decodeAudioData（只有大于才分流）', async () => {
-    stubLargeFetch(LARGE_AUDIO_BYTES);
+  it('流式不可用（无 createMediaElementSource）→ 回退整块解码播放', async () => {
+    stubFetch();
     const { analyser, source, context } = makeAnalyzer();
-    const handle = await playWallpaperSound('u', { context, analyser } as any);
+    const handle = await playWallpaperSound('u', { context, analyser } as any, { volume: 0.31 });
     expect(handle).not.toBeNull();
-    expect(context.decodeAudioData).toHaveBeenCalledTimes(1);
+    expect(context.decodeAudioData).toHaveBeenCalledTimes(1); // 回退 decode
     expect(source.start).toHaveBeenCalledTimes(1);
+    handle!.stop();
   });
 
   it('大音频 play 成功但 context suspended → 仍注册手势恢复（否则元素在播但音频图静音）', async () => {
@@ -393,7 +394,7 @@ describe('playWallpaperSound（壁纸音频播放，T3.4）', () => {
     }
   });
 
-  it('大音频 el.play() 非 autoplay 错误 → 返回 null + console.warn（含字节数），并清理元素/节点', async () => {
+  it('流式失败且文件过大 → 返回 null + 两条 warn，不回退解码', async () => {
     const declared = LARGE_AUDIO_BYTES + 7;
     stubLargeFetch(declared);
     const { el } = stubDocument(async () => { throw new Error('bad media'); });
@@ -402,10 +403,13 @@ describe('playWallpaperSound（壁纸音频播放，T3.4）', () => {
     try {
       expect(await playWallpaperSound('u', { context, analyser } as any)).toBeNull();
       expect(warn).toHaveBeenCalledWith(
-        expect.stringContaining('[wallpaper-engine] 大音频流式播放失败'),
+        expect.stringContaining('音频流式播放失败，回退整块解码'),
         expect.any(Error),
       );
-      expect(String(warn.mock.calls[0]![0])).toContain(String(declared));
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('音频播放失败（流式与解码均失败）'),
+        expect.any(Error),
+      );
       expect(el.pause).toHaveBeenCalledTimes(1);
       expect(el.removeAttribute).toHaveBeenCalledWith('src');
       expect(el.load).toHaveBeenCalledTimes(1);
@@ -415,14 +419,14 @@ describe('playWallpaperSound（壁纸音频播放，T3.4）', () => {
     }
   });
 
-  it('大音频但无 document（非浏览器）→ 返回 null + warn，不抛错', async () => {
+  it('流式与解码都不可用（非浏览器无 document）→ 返回 null + warn，不抛错', async () => {
     stubLargeFetch();
     const { analyser, context } = makeStreamingAnalyzer();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       expect(await playWallpaperSound('u', { context, analyser } as any)).toBeNull();
       expect(warn).toHaveBeenCalledWith(
-        expect.stringContaining('[wallpaper-engine] 大音频流式播放失败'),
+        expect.stringContaining('音频播放失败（流式与解码均失败）'),
         expect.any(Error),
       );
     } finally {

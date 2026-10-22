@@ -29734,7 +29734,7 @@ function armGesturePlay(el, context) {
   window.addEventListener("touchstart", onGesture);
   return detach;
 }
-async function playLargeSound(url, analyzer, opts) {
+async function playStreamingSound(url, analyzer, opts) {
   if (typeof document === "undefined") throw new Error("no document");
   const el = document.createElement("audio");
   el.src = url;
@@ -29819,10 +29819,10 @@ async function playLargeSound(url, analyzer, opts) {
       await el.play();
     } catch (err) {
       if (err?.name !== "NotAllowedError") throw err;
-      console.warn("[wallpaper-engine] \u5927\u97F3\u9891\u64AD\u653E\u88AB\u6D4F\u89C8\u5668\u62E6\u622A\uFF08\u9700\u8981\u7528\u6237\u624B\u52BF\uFF09\uFF0C\u5DF2\u6CE8\u518C\u624B\u52BF\u91CD\u8BD5");
+      console.warn("[wallpaper-engine] \u58C1\u7EB8\u97F3\u9891\u64AD\u653E\u88AB\u6D4F\u89C8\u5668\u62E6\u622A\uFF08\u9700\u8981\u7528\u6237\u624B\u52BF\uFF09\uFF0C\u5DF2\u6CE8\u518C\u624B\u52BF\u91CD\u8BD5");
       disarm = armGesturePlay(el, context);
     }
-    console.info("[wallpaper-engine] \u5927\u97F3\u9891\u6D41\u5F0F\u64AD\u653E\u5DF2\u542F\u52A8", {
+    console.info("[wallpaper-engine] \u58C1\u7EB8\u97F3\u9891\u6D41\u5F0F\u64AD\u653E\u5DF2\u542F\u52A8", {
       url: url.slice(-60),
       contextState: context.state,
       volume: el.volume,
@@ -29840,60 +29840,58 @@ async function playLargeSound(url, analyzer, opts) {
     throw err;
   }
 }
-async function playWallpaperSound(url, analyzer, opts) {
-  if (!analyzer?.context || !analyzer.analyser) return null;
-  try {
-    const resp = await fetch(url);
-    if (!resp.ok) return null;
-    const declared = Number(resp.headers?.get?.("content-length") ?? NaN);
-    if (Number.isFinite(declared) && declared > LARGE_AUDIO_BYTES) {
+async function playDecodedSound(url, analyzer, opts) {
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`http ${resp.status}`);
+  const declared = Number(resp.headers?.get?.("content-length") ?? NaN);
+  if (Number.isFinite(declared) && declared > LARGE_AUDIO_BYTES) throw new Error("too large to decode");
+  const buf = await resp.arrayBuffer();
+  const audioBuffer = await analyzer.context.decodeAudioData(buf);
+  const source = analyzer.context.createBufferSource();
+  source.buffer = audioBuffer;
+  source.loop = opts?.loop !== false;
+  const gain = analyzer.context.createGain();
+  gain.gain.value = opts?.volume ?? 1;
+  source.connect(gain);
+  gain.connect(analyzer.analyser);
+  if (analyzer.context.state === "suspended") {
+    analyzer.context.resume().catch(() => {
+    });
+    armGestureResume(analyzer.context);
+  }
+  source.start();
+  let stopped = false;
+  return {
+    stop() {
+      if (stopped) return;
+      stopped = true;
       try {
-        await resp.body?.cancel?.();
+        source.stop();
       } catch {
       }
       try {
-        return await playLargeSound(url, analyzer, opts);
-      } catch (err) {
-        console.warn(`[wallpaper-engine] \u5927\u97F3\u9891\u6D41\u5F0F\u64AD\u653E\u5931\u8D25\uFF08${declared} \u5B57\u8282\uFF09`, err);
-        return null;
+        source.disconnect();
+      } catch {
+      }
+      try {
+        gain.disconnect();
+      } catch {
       }
     }
-    const buf = await resp.arrayBuffer();
-    const audioBuffer = await analyzer.context.decodeAudioData(buf);
-    const source = analyzer.context.createBufferSource();
-    source.buffer = audioBuffer;
-    source.loop = opts?.loop !== false;
-    const gain = analyzer.context.createGain();
-    gain.gain.value = opts?.volume ?? 1;
-    source.connect(gain);
-    gain.connect(analyzer.analyser);
-    if (analyzer.context.state === "suspended") {
-      analyzer.context.resume().catch(() => {
-      });
-      armGestureResume(analyzer.context);
+  };
+}
+async function playWallpaperSound(url, analyzer, opts) {
+  if (!analyzer?.context || !analyzer.analyser) return null;
+  try {
+    return await playStreamingSound(url, analyzer, opts);
+  } catch (streamErr) {
+    console.warn("[wallpaper-engine] \u97F3\u9891\u6D41\u5F0F\u64AD\u653E\u5931\u8D25\uFF0C\u56DE\u9000\u6574\u5757\u89E3\u7801", streamErr);
+    try {
+      return await playDecodedSound(url, analyzer, opts);
+    } catch (decodeErr) {
+      console.warn("[wallpaper-engine] \u97F3\u9891\u64AD\u653E\u5931\u8D25\uFF08\u6D41\u5F0F\u4E0E\u89E3\u7801\u5747\u5931\u8D25\uFF09", decodeErr);
+      return null;
     }
-    source.start();
-    let stopped = false;
-    return {
-      stop() {
-        if (stopped) return;
-        stopped = true;
-        try {
-          source.stop();
-        } catch {
-        }
-        try {
-          source.disconnect();
-        } catch {
-        }
-        try {
-          gain.disconnect();
-        } catch {
-        }
-      }
-    };
-  } catch {
-    return null;
   }
 }
 
@@ -33281,6 +33279,7 @@ function createMediaHealthStore(now = () => Date.now()) {
 var SETTINGS_SECTION_ID = "wallpaper-engine";
 var SOFT_RETRY_DELAY_MS = 3e3;
 var TEARDOWN_KEY = "__wpEngineTeardown";
+var bootstrapLogged = false;
 function videoWallpaperId(url) {
   const m = /\/wallpapers\/media\/([^/]+)\/file/.exec(url);
   if (!m) return url;
@@ -33291,6 +33290,10 @@ function videoWallpaperId(url) {
   }
 }
 function bootstrap(ctx) {
+  if (!bootstrapLogged) {
+    bootstrapLogged = true;
+    console.info("[wallpaper-engine] client ready v0.8.1-dev (audio: <audio> streaming)");
+  }
   setSettingsCtx(ctx);
   injectWallpaperStyles();
   let layer = null;

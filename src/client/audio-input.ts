@@ -102,8 +102,9 @@ function armGesturePlay(el: HTMLAudioElement, context: AudioContext): () => void
   return detach;
 }
 
-// 大音频流式链路：<audio> → MediaElementSource → Gain（音量）→ analyser；失败抛给调用方
-async function playLargeSound(
+// 流式链路：<audio> → MediaElementSource → Gain（音量）→ analyser。浏览器原生流式解码，
+// 不依赖 content-length/整块 fetch（132MB 大音频也能播）；autoplay 拦截不视为失败（等手势）。
+async function playStreamingSound(
   url: string,
   analyzer: SoundAnalyzer,
   opts: { volume?: number; loop?: boolean } | undefined,
@@ -154,13 +155,13 @@ async function playLargeSound(
     try {
       await el.play();
     } catch (err) {
-      // 仅 autoplay 拦截走手势重试；格式/网络错误按失败上报（带字节数）
+      // 仅 autoplay 拦截走手势重试；格式/网络错误按失败上报（由调用方回退解码）
       if ((err as { name?: string } | null)?.name !== 'NotAllowedError') throw err;
-      console.warn('[wallpaper-engine] 大音频播放被浏览器拦截（需要用户手势），已注册手势重试');
+      console.warn('[wallpaper-engine] 壁纸音频播放被浏览器拦截（需要用户手势），已注册手势重试');
       disarm = armGesturePlay(el, context);
     }
     // 诊断：Console 过滤 `[wallpaper-engine]` 可见（含 context 状态；`__weAudioDebug` 可看实时值）
-    console.info('[wallpaper-engine] 大音频流式播放已启动', {
+    console.info('[wallpaper-engine] 壁纸音频流式播放已启动', {
       url: url.slice(-60), contextState: context.state, volume: el.volume, loop: el.loop,
     });
     return {
@@ -176,9 +177,47 @@ async function playLargeSound(
   }
 }
 
-// T3.4/v0.8.1 壁纸音频播放：小文件 fetch → decodeAudioData → source → gain → analyser；
-// >32MB 大音频流式（<audio> + Range），返回句柄供 stop；失败 → null（静默，不阻断渲染）。
-// autoplay：suspended 立即 resume() + 一次性手势兜底（见 armGestureResume / armGesturePlay）。
+// 回退链路：小文件整块解码（浏览器 <audio> 不支持的格式等）；>32MB 不做（decode 不可行）
+async function playDecodedSound(
+  url: string,
+  analyzer: SoundAnalyzer,
+  opts: { volume?: number; loop?: boolean } | undefined,
+): Promise<PlaybackHandle> {
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`http ${resp.status}`);
+  const declared = Number(resp.headers?.get?.('content-length') ?? NaN);
+  if (Number.isFinite(declared) && declared > LARGE_AUDIO_BYTES) throw new Error('too large to decode');
+  const buf = await resp.arrayBuffer();
+  const audioBuffer = await analyzer.context.decodeAudioData(buf);
+  const source = analyzer.context.createBufferSource();
+  source.buffer = audioBuffer;
+  source.loop = opts?.loop !== false;
+  // 音量经 GainNode 生效（OWE 在 PCM 上乘 volume，GainNode 等价）：source → gain → analyser
+  const gain = analyzer.context.createGain();
+  gain.gain.value = opts?.volume ?? 1;
+  source.connect(gain);
+  gain.connect(analyzer.analyser);
+  // autoplay 策略：context suspended → 立即尝试恢复；被拦时由用户手势兜底
+  if (analyzer.context.state === 'suspended') {
+    analyzer.context.resume().catch(() => {});
+    armGestureResume(analyzer.context);
+  }
+  source.start();
+  let stopped = false;
+  return {
+    stop() {
+      if (stopped) return;
+      stopped = true;
+      try { source.stop(); } catch { /* 未起播/已停止 */ }
+      try { source.disconnect(); } catch { /* 节点已断 */ }
+      try { gain.disconnect(); } catch { /* 节点已断 */ }
+    },
+  };
+}
+
+// 壁纸音频播放（T3.4/v0.8.1）：统一走 <audio> 流式（浏览器原生流式解码，大小无上限，不再
+// 依赖 content-length/整块 fetch）；流式不可用（格式不支持等）且文件较小 → 回退 decodeAudioData。
+// 失败 → null（不阻断渲染）。autoplay：suspended 立即 resume() + 一次性手势兜底。
 export async function playWallpaperSound(
   url: string,
   analyzer: SoundAnalyzer | null,
@@ -186,47 +225,14 @@ export async function playWallpaperSound(
 ): Promise<PlaybackHandle | null> {
   if (!analyzer?.context || !analyzer.analyser) return null;
   try {
-    const resp = await fetch(url);
-    if (!resp.ok) return null;
-    // 大文件分流：content-length 超阈值 → 取消整块 body，改 <audio> 自行 Range 流式
-    const declared = Number(resp.headers?.get?.('content-length') ?? NaN);
-    if (Number.isFinite(declared) && declared > LARGE_AUDIO_BYTES) {
-      try { await resp.body?.cancel?.(); } catch { /* 取消失败不阻塞 <audio> 自取 */ }
-      try {
-        return await playLargeSound(url, analyzer, opts);
-      } catch (err) {
-        console.warn(`[wallpaper-engine] 大音频流式播放失败（${declared} 字节）`, err);
-        return null;
-      }
+    return await playStreamingSound(url, analyzer, opts);
+  } catch (streamErr) {
+    console.warn('[wallpaper-engine] 音频流式播放失败，回退整块解码', streamErr);
+    try {
+      return await playDecodedSound(url, analyzer, opts);
+    } catch (decodeErr) {
+      console.warn('[wallpaper-engine] 音频播放失败（流式与解码均失败）', decodeErr);
+      return null;
     }
-    const buf = await resp.arrayBuffer();
-    const audioBuffer = await analyzer.context.decodeAudioData(buf);
-    const source = analyzer.context.createBufferSource();
-    source.buffer = audioBuffer;
-    source.loop = opts?.loop !== false;
-    // 音量经 GainNode 生效（OWE 在 PCM 上乘 volume，GainNode 等价）：source → gain → analyser
-    const gain = analyzer.context.createGain();
-    gain.gain.value = opts?.volume ?? 1;
-    source.connect(gain);
-    gain.connect(analyzer.analyser);
-    // autoplay 策略：context suspended → 立即尝试恢复；被拦时由用户手势兜底
-    if (analyzer.context.state === 'suspended') {
-      analyzer.context.resume().catch(() => {});
-      armGestureResume(analyzer.context);
-    }
-    source.start();
-    let stopped = false;
-    return {
-      stop() {
-        if (stopped) return;
-        stopped = true;
-        try { source.stop(); } catch { /* 未起播/已停止 */ }
-        try { source.disconnect(); } catch { /* 节点已断 */ }
-        try { gain.disconnect(); } catch { /* 节点已断 */ }
-      },
-    };
-  } catch {
-    // fetch/解码/无 Web Audio 等任何失败 → 静默返回 null（不抛错，不阻断渲染）
-    return null;
   }
 }
