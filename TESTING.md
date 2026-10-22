@@ -336,6 +336,51 @@ getEventListeners(window).pointermove?.length
 
 ---
 
+### 2.15 手工验收清单：v0.8.2 可见修复包（util 层 / text / image / 指针 uniform / 性能）
+
+> **前置同 §2.13/§2.14**：已 `npm run build` + `npm run build:client`，**重启 harness** 后**强刷** GUI；壁纸库含下列素材。
+> **以下需人在运行中的 DSH Web GUI 里目视 / 操作，agent 无法代跑。**
+> **自动化已覆盖**：`npm run e2e:verify-v082` 对 2911105183（util 全屏后处理覆盖）、2132420420（pulse 相位）、3765967112（text brightness）、3780477933（指针 uniform 的 asis/defaults 两档）做像素判据，退出码 0 = 通过；`e2e:verify-v081`、`e2e:textclock --gpu`、`e2e:colorblend` 保持 PASS。观感、4K 与真机帧率仍需人工确认。
+> **口径**：表中数值来自 e2e/headless 实测（1280×720 或另行注明），**不是真机截图**；V10 的软件光栅化数字不代表真机 GPU。
+
+| # | 用例 | 步骤 | 期望结果 | 失败表现 |
+|---|---|---|---|---|
+| V1 | util 全屏后处理 + text/image 字段（`2911105183`） | 选中壁纸等 2–3 秒，与桌面 WE 并排：看整屏灯光/天窗泛光、`88:88` 时钟文字、左中/右侧广告牌；也可对照 e2e 生成的 `v082-291-util-on/off.png`。 | 整屏柔和 bloom（bokeh 次之）向外溢出，**不是**只在中部矩形；无白块/接缝；`88:88`（obj108/144，alpha 0.93）略透、obj148（alpha 0）不可见；两块广告牌偏冷/偏暗（image color）。e2e：`meanAbs 11.410 / 62.10%`、全屏 bbox。 | 完全无泛光 → projectlayer 未挂链/未渲染；只有中央矩形泛光 → cover 映射或 RT 口径错；白块/接缝 → passthrough 占位或合成 quad；广告牌仍原色 → image color 未消费；时钟太实/消失 → text alpha 口径错。 |
+| V2 | pulse 暖色脉冲（`2132420420`） | 选中后观察车标/车灯/工牌高光随时间的暖色脉冲；反复重选看相位是否变化；与桌面 WE 对照。 | 局部暖色脉冲（tintlow 白、tinthigh 暖黄），相位随时间变化；**不是**整屏均匀橙色。e2e 冻结相位 A/B：`meanAbs 0.826 / 3.23%`，bbox 约 `[368,27]–[930,431]`。 | 无暖色 → pulse 链未跑；整屏均匀染色 → mask 未生效；相位不动 → `g_Time`/starttime 卡住（v0.8.1 已修，回归时看 Console）。 |
+| V3 | 全屏 blur（`2597392171`） | 选中竖构图壁纸（场景 3840×6000），观察整屏模糊；与桌面 WE 并排，检查上下边缘与构图。 | 整屏均匀模糊、构图/方向与清晰版一致；无拉伸/翻转/黑边，平均色基本不变（T3：梯度能量 1.841 vs 2.533，NCC 0.9908，k=1.000）。 | 只有中间一条模糊/上下清晰 → cover 带映射错；画面拉伸/翻转 → UV 或 y 翻转错；黑边/暗角 → 快照内容未覆盖。 |
+| V4 | 音频频谱线（`3789452668`） | 选中（不要开声音），观察是否有横贯屏幕的亮线/彩条。该素材**无 sounds/音频文件**，本机无音频输入 ⇒ 只验「无音频」这一半；有音频观感待有音频源时补。 | 无音频时 audioline 层完全不可见：solid `alpha=0`、效果输出 alpha=0（T3 与无效果档逐像素相同，平均差 0）。 | 无音频仍见亮线/彩条 → 对象 alpha 未落合成 quad 或快照内容漏出；有音频后仍不可见 → 频谱 uniform 未接（`__weAudioDebug` 查）。 |
+| V5 | image color（`2832263418`） | 选中，观察彩虹层（obj250，color `0 0.45882 1`）与广告牌颜色；与桌面 WE 并排。该素材的 chromatic_aberration 链当前可能编译失败，本版只验 color。 | 彩虹层呈蓝/青偏色而非原白；广告牌 tint 与 WE 接近；无整屏偏色。 | 彩虹层仍原色 → image color 未消费；整屏偏色 → tint 错落到合成 quad/全屏层；色相方向相反 → 0-1/0-255 归一化错。 |
+| V6 | image alignment bottomright（`2937346640`） | 选中，观察左下角小方块（obj61 visualizer，alignment=bottomright）；e2e 剥脚本档在 1280×720 下 bbox 约 `[43,665]–[65,687]`；与桌面 WE 并排。 | 小方块相对其 origin 锚在右下角，位置与 WE 一致；位移量很小（e2e 约 ±2.4px）。**注意该对象脚本每帧写 origin/scale，会覆盖静态 alignment** ⇒ 本版可见收益有限，主要确认无半尺寸错位/无回归。 | 整体偏移半个对象尺寸 → alignment 方向/符号错；每帧跳动 → 脚本 origin 与 alignment 叠加顺序错；完全不动 → 脚本路径未带 alignment（已知边界）。 |
+| V7 | text anchor（`1922570576`） | 选中，看 3D Clock 文本位置（obj778，`anchor=center`、`verticalalign=top`）；与桌面 WE 并排。 | Clock 以其 origin 为中心（比旧 top 口径上移；e2e:textclock 实测 rect 从 y≈723 → `[930,692,1261,777]` @1600×900 ±2px）。 | 文本整体上移/下移半个字高 → anchor 未生效或回退错；与 WE 明显偏高/偏低 → anchor 语义可能应是屏幕锚，需回改 `textLayerOffset`（待 A/B 结论）。 |
+| V8 | text alpha A/B（`2911105183` / `2460786246`） | 选中 `2911105183`（`88:88` 文本 alpha 0.93/0.93/0，挂 skew 链）与 `2460786246`（`12:34` alpha 0.82，挂 vhs 链）；与桌面 WE 并排；e2e 可用服务端把 text alpha 强制 1 的 A/B 截图对照隔离+链路径。 | `291` 的时钟略透、obj148 完全不可见；`246` 的 `12:34` 略透；skew/vhs 链不把对象 alpha 洗成 1 或 0（隔离路径 alpha 在内容材质）。e2e A/B（1600×900）：291 `changed=1107px / maxΔ23`、246 `changed=34366px / maxΔ35`；隔离内容 opacity `0.93/0/0.82 → 1`，合成 quad 恒 `1`。 | 文本比 WE 实（alpha 丢失）或比 WE 更淡/消失（a² 或链重写 alpha）→ 记录素材并回看内容材质/链 shader。 |
+| V9 | 指针 uniform（`3780477933`） | 选中，在画面上移动鼠标；与桌面 WE 对比。e2e 已用 defaults 变体（服务端改 `Default Circle Size=0.3` + `opacitymask=util/white`）证明点阵跟随指针；生产素材原样**不能**用 e2e 变体。 | 原样壁纸**无可见变化**（作者常量把效果关成 no-op）；鼠标移动不应出现闪烁/拖影。记录「链路已确认（uniform 读数随指针变）、原样无可见差」。 | 移动鼠标出现异常点阵/闪烁 → uniform 错写到其它对象或 y 方向错；e2e defaults 双簇不跟手 → 注入链路回归。 |
+| V10 | 性能（`2911105183` / `2132420420` / `2597392171`） | 1080p 与 4K 各选中三张壁纸，观察 5–10 秒；用 DevTools Performance 或 `requestAnimationFrame` 计数估帧率；记录 GPU/驱动。目标 1080p ≥30fps。 | 1080p ≥30fps、无明显卡顿；4K 允许下降但应可用；与 v0.8.1 同机对比不显著变差。口径与 headless 参考值见本节末「性能实测口径」。 | 1080p <30fps 或明显掉帧/发热 → 记录素材/分辨率/GPU；优先查 util 段数（291 有 6 段/帧）与 RT 尺寸（259 RT 1920×3000、估算 RT 显存约 222.9 MiB）。 |
+| V11 | parallax 行为变化（`3118949804`） | 本机库**有**该素材；选中观察是否出现整体位移/waterwaves/depthparallax 异常；与 v0.8.1 或桌面 WE 对比。 | 现解析器把 `cameraparallax={user,value:true}` 视为未启用（`enabled=false`）⇒ `g_ParallaxPosition` 注入中性 `[0.5,0.5]`；旧版未写该 uniform 时驱动缺省 `[0,0]`（shader 当 -1 偏移）⇒ 记录为行为变化。公式本身无法真机校准（该壁纸不会 enabled）。 | 出现整体平移/波纹方向异常 → 记录并对比 v0.8.1；若确认由 `[0,0]→[0.5,0.5]` 引起，后续对「未启用视差」恢复旧默认或补齐 `{user,value}` 解析。 |
+
+**性能实测口径（headless，非真机；V10 参考）**：
+
+- 方法：`e2e/harness/harness-object-effects-entry.mjs` 生产入口 + 真实 `scene.pkg`，1920×1080 视口、dpr=1、`glow=off`、`wasm=none`、不冻结时钟；等暖机后 `__fxResetFrameStamps()`，取 10 帧的帧间隔中位数与 `renderer.render` 累计耗时，另用 3s `requestAnimationFrame` 计数佐证。临时脚本：`node e2e/.out/perf-v082.mjs --ids=2911105183,2132420420,2597392171 --frames=10 --warmup=3 [--swiftshader]`（`e2e/.out/` gitignored）。
+- **强制 SwiftShader（软件光栅化）**：291 `404.2 ms/帧 ≈ 2.5 fps`（6 段/帧、RT 估算 162.3 MiB，3s rAF 计数另为 1.8 fps）；213 `222.4 ms ≈ 4.5 fps`（RT 123.0 MiB）；259 `2578.1 ms ≈ 0.4 fps`（RT 222.9 MiB）。软件数字**远低于**真机，只作量级参考。
+- **默认 headless 后端（本机落 ANGLE/D3D11、RTX 3060）**：三张均 `16.6–16.7 ms/帧 ≈ 60 fps`（vsync 封顶，测不出余量），`renderer.render` 中位耗时 291/213/259 = `2.0 / 1.0 / 1.2 ms`。⇒ **1080p ≥30fps 的 DoD 仍以真机 V10 为准**，headless 不能替代。
+
+**勾选记录**（真机验收人填写）：验收人 __________ 日期 __________ GPU/驱动 __________ 分辨率 __________
+
+- [ ] V1：`2911105183` util 全屏 bloom+bokeh / text / image color
+- [ ] V2：`2132420420` pulse 暖色脉冲（相位）
+- [ ] V3：`2597392171` 全屏 blur（竖构图无拉伸/翻转）
+- [ ] V4：`3789452668` 音频频谱线（无音频不可见；有音频观感待补）
+- [ ] V5：`2832263418` image color（彩虹层偏色）
+- [ ] V6：`2937346640` image alignment bottomright（脚本会覆盖 origin）
+- [ ] V7：`1922570576` text anchor（3D Clock 位置，对照 WE）
+- [ ] V8：`2911105183` / `2460786246` text alpha A/B（隔离+效果链）
+- [ ] V9：`3780477933` 指针 uniform（原样无可见差；链路已确认）
+- [ ] V10：性能（三张壁纸 1080p/4K ≥30fps 目标）
+- [ ] V11：`3118949804` parallax 行为变化记录
+
+**已知边界（v0.8.2）**：anchor/limitwidth 语义仍待真机 A/B（`1922570576`/`2937346640`）；`2832263418` 的 chromatic_aberration 链当前可能编译失败（v0.8.2 的 e2e shader 门禁只覆盖四组判据素材）；`3780477933` 原样无可见输出；`3118949804` 的公式无法真机校准；V10 的 headless 数字不代表真机 GPU。
+
+---
+
 ## 3. 卸载方法
 
 ### 3.1 标准卸载（推荐）
