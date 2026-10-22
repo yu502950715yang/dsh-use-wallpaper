@@ -424,6 +424,18 @@ describe('limitwidth / maxwidth（超宽按词换行）', () => {
     expect(long.textHeight).toBe(40);
   });
 
+  it('maxwidth 为 0 / 负数 → 不换行（只有有限正数才启用）', () => {
+    const raw = { textWidth: 300, textHeight: 40, width: 300, height: 40 };
+    expect(measureTextLayout('20 OCTOBER 2026', { pointsize: 10, limitwidth: true, maxwidth: 0 })).toEqual(raw);
+    expect(measureTextLayout('20 OCTOBER 2026', { pointsize: 10, limitwidth: true, maxwidth: -100 })).toEqual(raw);
+  });
+
+  it('带 padding：maxwidth 只约束行宽（字体像素），画布 = 最长行 + 2×padding', () => {
+    const m = measureTextLayout('20 OCTOBER 2026', { pointsize: 10, limitwidth: true, maxwidth: 200, padding: 5 });
+    expect(m.textWidth).toBe(200);                        // 换行仍按 maxwidth，不被 padding 收缩
+    expect(m).toMatchObject({ width: 210, height: 90 });  // 2 行 × 40 行高 + 2×5
+  });
+
   it('drawTextToCanvas 与 measure 同一换行规则（逐行 fillText）', () => {
     const canvas = document.createElement('canvas');
     drawTextToCanvas(canvas, '20 OCTOBER 2026', {
@@ -479,6 +491,31 @@ describe('textAlignments(anchor) / textLayerOffset(anchor)（F12）', () => {
     expect(textLayerOffset(layout, undefined, undefined, undefined, [1, 1, 1], 'topright')).toEqual([-50, -25]);
     expect(textLayerOffset(layout, undefined, undefined, undefined, [2, 2, 1], 'bottomleft')).toEqual([100, 50]);
     expect(textLayerOffset(layout, undefined, undefined, undefined, [1, 1, 1], 'none')).toEqual([0, 0]);
+  });
+
+  // 评审 Important 1：用真实素材的 origin/scale/anchor 证明 anchor 只决定 quad 原点（方向正确）。
+  // 2937346640 obj182：horizontalalign=left + anchor=right；布局宽取示例，方向/倍率与实测宽无关。
+  it('真实对象 2937346640#182：anchor=right 把原点钉在文本框右缘（quad 中心左移 textWidth×scale）', () => {
+    const layout = { width: 1413, height: 196, textWidth: 1413, textHeight: 196 };
+    const scale: [number, number, number] = [0.49463, 0.49463, 1];   // 素材 obj182 的 scale
+    const [byAlign] = textLayerOffset(layout, 'left', 'center', undefined, scale);
+    const [byAnchor] = textLayerOffset(layout, 'left', 'center', undefined, scale, 'right');
+    expect(byAlign).toBeCloseTo(1413 / 2 * 0.49463, 3);      // 无 anchor：origin = 左缘，中心在右
+    expect(byAnchor).toBeCloseTo(-1413 / 2 * 0.49463, 3);    // anchor=right：origin = 右缘，中心在左
+    // origin.x 到 quad 右缘的距离 = 0（anchor 方向正确）；两种锚点下中心位移 = textWidth×scale
+    expect(1859.88074 + byAnchor + 1413 / 2 * 0.49463).toBeCloseTo(1859.88074, 3);
+    expect(byAnchor - byAlign).toBeCloseTo(-1413 * 0.49463, 3);
+  });
+
+  // 评审 Important 1：1922570576 obj778 的 anchor=center 覆盖 verticalalign=top（e2e 精确 rect 的依据）。
+  it('真实对象 1922570576#778：anchor=center 使 verticalalign=top 失效，quad 相对上移半个文本框高', () => {
+    // 素材 obj778：padding 32、纹理 884×228 ⇒ 文本框 820×164、scale 1
+    const layout = { width: 884, height: 228, textWidth: 820, textHeight: 164 };
+    const [, byAlign] = textLayerOffset(layout, 'center', 'top', undefined, [1, 1, 1]);
+    const [ax, byAnchor] = textLayerOffset(layout, 'center', 'top', undefined, [1, 1, 1], 'center');
+    expect(byAlign).toBe(-164 / 2);            // verticalalign=top：origin 是上缘（中心在下）
+    expect([ax, byAnchor]).toEqual([0, 0]);    // anchor=center：origin 即中心
+    expect(byAnchor - byAlign).toBe(164 / 2);  // 上移半高（屏幕 y 减少 ≈31px，见 e2e 基线）
   });
 });
 

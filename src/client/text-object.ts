@@ -20,7 +20,7 @@ const DEFAULT_POINTSIZE = 12;
 // WE text 的限宽布局字段（F12）：limitwidth=true 且 maxwidth 有限正数时按词换行。
 export interface TextLayoutOptions {
   limitwidth?: boolean;
-  maxwidth?: number;                // 限宽（字体像素，与 measureText 推进宽同空间）
+  maxwidth?: number;                // 限宽（字体像素，与 measureText 推进宽同空间；单位待真机确认）
 }
 
 export interface TextTextureOptions extends TextMeasureOptions {
@@ -135,7 +135,7 @@ function wrapWidthOf(opts: TextLayoutOptions): number {
 }
 
 // 按词贪心换行（WE limitwidth 语义）：行宽 ≤ maxWidth；单行本来不超宽时原样保留（不归一化空格）。
-// 单个词超宽时独占一行（不切词；真实库 limitwidth 全为 false，仅夹具路径覆盖，见 AGENT 边界）。
+// 单个词超宽时独占一行（不切词）。
 function wrapLines(lines: string[], maxWidth: number, measure: (s: string) => number): string[] {
   if (maxWidth <= 0) return lines;
   const out: string[] = [];
@@ -156,7 +156,8 @@ function wrapLines(lines: string[], maxWidth: number, measure: (s: string) => nu
   return out;
 }
 
-// brightness 归一：非法（NaN/Infinity/负数）按 1；>4 与 4 视觉等价（白字叠加早已饱和）⇒ 上限防病态数据狂刷绘制。
+// brightness 归一：非法（NaN/Infinity/负数）按 1；上限 4 是防御性 clamp（非 WE 语义，
+// LDR 下白字叠加 >4 已无法区分），避免病态数据狂刷叠加绘制。
 function brightnessOf(v: number | undefined): number {
   if (typeof v !== 'number' || !isFinite(v) || v < 0) return 1;
   return Math.min(4, v);
@@ -228,7 +229,7 @@ const WE_TEXT_ANCHORS: Record<string, TextAlignments> = {
 
 // OME SceneTextObjectParser::align_or_default：horizontalalign/verticalalign 非空时优先；
 // 缺省时从 alignment 里找 left/right（vertical 找 top/bottom），找不到即 center。
-// v0.8.2 F12：anchor（9 值）非 none 时**优先于** alignment 族（真实库 19 处 none 走回退）。
+// v0.8.2 F12：anchor（9 值）非 none 时**优先于** alignment 族；none/未知值走回退。
 export function textAlignments(
   horizontalAlign?: string,
   verticalAlign?: string,

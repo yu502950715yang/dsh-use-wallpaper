@@ -11,7 +11,8 @@
 // 判据（**不依赖坐标投影换算** —— 本脚本第一版算错了一次 canvas y 方向与屏幕 quad 的对应关系，
 // 于是「数字明明在画面上」却被量成 Δ7；现在的口径全部是像素事实 + 生产公开 API）：
 //   [1] 修复前装配（`getTextScriptRuntime` 注入 null）不产生文本层；[2] 生产装配产生（`player.displayObject`）。
-//   [3] 文本 quad 落在右下角。 [4] 文本层画布上真的画出了白色字形（亮像素数 / 包围盒）。
+//   [3] 文本 quad 落在右下角；[3b] 矩形精确匹配 anchor 语义基线（±2px，锚点/布局回归的硬判据）。
+//   [4] 文本层画布上真的画出了白色字形（亮像素数 / 包围盒）。
 //   [5] 字体从引擎目录命中（<WE>/assets/fonts/CursedTimerUlil-Aznm.ttf）。 [6] 字形 alpha 未被压淡。
 //   [7] 屏幕上能读到白字（右下角「隐藏该层时暗、显示时亮」的像素数与亮度 —— 因果绑定的口径，
 //       右下角本来就亮的粒子高光不算）。 [8] 隐藏该层后右下角确实变暗。
@@ -35,8 +36,8 @@
 //       各断言 [9] 判假，并自证「能检出的最小衰减 ≤50%」。
 // 退出码：0 = 全部判据通过；1 = 有判据失败或脚本异常（CI 门禁）。
 //
-// 术语：**对象盒** = `__objectRect(778).canvasCss`（本例 `[930,723,1261,808]`）；**外扩盒** = 判据用的
-// `box`（对象盒每边外扩，本例 `[928,721,1264,811]`，面积 30667 px）。下文的「quad」一律指外扩盒。
+// 术语：**对象盒** = `__objectRect(778).canvasCss`（本例 `[930,692,1261,777]`，判据 [3b] 按 ±2px 精确断言）；
+// **外扩盒** = 判据用的 `box`（对象盒每边外扩，本例 `[928,690,1264,780]`，面积 30667 px）。下文的「quad」一律指外扩盒。
 //
 // 为什么不再是「增量口径」（修复轮 1 → 轮 2）：轮 1 的分子 = 「健康装配 A/B」−「缺失装配 A/B」，
 // 两臂是**两次独立渲染**（水面相位不同）⇒ 跨装配水面基线 ≈13k px 压过了该层自身 ≈3k px 的贡献，
@@ -75,6 +76,9 @@ import { decodePng } from '../lib/png-stats.mjs';
 
 const WALLPAPER_ID = '1922570576'; // 魔兽之门
 const TEXT_OBJECT_ID = 778;        // scene.json 里的 "3D Clock"
+// anchor 语义基线（v0.8.2 F12 评审）：obj778 = anchor center + verticalalign top ⇒ quad 中心 = origin，
+// 故比仅按 verticalalign=top 时上移约 31px。rect 由固定视口/布局唯一决定，判据 [3b] 用 ±2px 精确断言。
+const TEXT_RECT_BASELINE = [930, 692, 1261, 777];
 
 const here = dirname(fileURLToPath(import.meta.url));
 const OUT = join(OUT_DIR, 'text-clock');
@@ -353,6 +357,10 @@ const textRegion = (vw, vh) => [
   Math.round(vw * 0.55), Math.round(vh * 0.6),
   Math.round(vw * 0.95), Math.round(vh * 0.98),
 ];
+
+/** 精确 rect 断言（画布 CSS 像素，每边容差 tol）：obj778 的 quad 几何由 anchor/布局唯一决定。 */
+const rectNear = (r, want, tol) => !!r && Array.isArray(r.canvasCss) && r.canvasCss.length === 4
+  && r.canvasCss.every((v, i) => Math.abs(v - want[i]) <= tol);
 
 try {
   await new Promise((r) => server.listen(PORT, r));
@@ -748,6 +756,10 @@ try {
       !!rect && rect.textureImage !== null],
     ['文本 quad 落在画面右下角（中心 x>0.6 且 y>0.6 归一化）',
       !!rect && (rect.norm[0] + rect.norm[2]) / 2 > 0.6 && (rect.norm[1] + rect.norm[3]) / 2 > 0.6],
+    // 精确几何（评审 Important 1）：只判「右下角区域」抓不住 anchor 语义回归；obj778 带 anchor=center +
+    // verticalalign=top，rect 由固定视口与文本布局唯一决定 ⇒ 对具体对象 rect 断言 ±2px。
+    [`文本 quad 矩形精确匹配 anchor 语义基线（canvasCss ${JSON.stringify(rect?.canvasCss)} ≈ ${JSON.stringify(TEXT_RECT_BASELINE)} ±2px）`,
+      rectNear(rect, TEXT_RECT_BASELINE, 2)],
     [`文本画布上画出了白色字形（亮像素 ${info.normal.textCanvas?.brightPixels ?? 0} 个，区域 ${JSON.stringify(info.normal.textCanvas?.brightBBox)}）`,
       (info.normal.textCanvas?.brightPixels ?? 0) > 500],
     // 字体（2026-10-10）：`fonts/CursedTimerUlil-Aznm.ttf` 只存在于 <WE>/assets/fonts/（scene.pkg 里

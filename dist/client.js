@@ -25813,8 +25813,8 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
         scale: t.scale,
         angles: t.angles,
         texture: layer.texture,
-        // v0.8.2 F12：alpha 与 image 同口径（materialModulation → 内容材质 opacity，直渲/隔离一致）；
-        // brightness 已在 canvas 侧烘进纹理（见 text-object.drawTextToCanvas），此处不重复调制。
+        // v0.8.2 F12：alpha → 内容材质 opacity（同 image；合成 quad 中性避免 a²）；brightness 已烘进纹理。
+        // 边界：效果链若重写 alpha，对象 alpha 会丢失（与 image 同款，见 spec §3）。
         alpha: obj.alpha,
         sceneW,
         sceneH,
