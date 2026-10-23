@@ -22,9 +22,11 @@ Status: implemented
 
 **as-built 订正（2026-10-10）**：设计里 `typecheck`/`test` 两个 job 写的是 ubuntu，实际三个 job 都跑 `windows-latest`（README 只声明 Windows 实测，Linux 行为未验证）；`test` 门禁除"新增失败"外，套件级错误与未处理异常也判红；e2e 实际入 CI 的只有 `e2e:colorblend`（`e2e:card` 要从本机 DSH 的 `app.asar` 提主题 CSS，2026-10-10 首次真实 run 红，已移除）。
 
+**as-built 追加（2026-10-22，v0.8.2）**：新增 `e2e:verify-v082`（`e2e/verify/verify-v082.mjs`）四组像素判据——2911105183 util 全屏后处理（`meanAbs 11.41 / changed 62.1%` + 全屏 bbox + 目标链就绪）、2132420420 pulse（`0.826 / 3.23%`）、3765967112 text brightness（`910px / maxΔ20` + 文字区 bbox）、3780477933 指针 uniform（asis `0%` / defaults `3.88%` + 双簇质心）；`--only` 做白名单校验（未知值/空值直接退出非 0）、shader 编译失败（warn 文案 + `__fxShaderErrors`）整轮判红（fail-loud，换驱动出现良性 info log 时可能 brittle）；阈值与文字区常量按素材/视口硬编码，需重标定。判据维护成本与真机清单已记入 `TESTING.md` §2.15。
+
 ## Affected repositories
 
-- `dsh-use-wallpaper` 分支 `master` commits `65f759c` `3718011`
+- `dsh-use-wallpaper` 分支 `master` commits `65f759c` `3718011` `87f97a1` `0984324`
 
 ## Alternatives considered
 
