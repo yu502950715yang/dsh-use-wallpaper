@@ -3,11 +3,16 @@
 // 提供：壁纸网格切换 / 取消壁纸 / 壁纸目录与引擎目录配置（手动输入 + 自动探测）。
 // 数据与动作经 props 注入（默认走真实 API），便于 jsdom 单测。
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ClientSettings, FitMode, RotationOrder } from './types.js';
-import type { WallpaperInfo, WallpaperKind, ProbeResult, WallpaperUserProperty } from '../shared/types.js';
+import type {
+  WallpaperInfo, WallpaperKind, ProbeResult, WallpaperUserProperty, UserPropertyValue,
+} from '../shared/types.js';
 import { readClientSettings, writeClientSettings } from './settings.js';
-import { fetchWallpaperProperties, readBoolProperty, writeBoolProperty } from './wallpaper-properties.js';
+import {
+  fetchWallpaperProperties, readUserProperty, resetUserProperty, writeUserProperty,
+} from './wallpaper-properties.js';
+import { parseColorTriplet, propertyConditionMet } from './user-bindings.js';
 import { TEXT_OUTLINE_MAX, normalizeHexColor, normalizeMode, normalizeOutlineLevel, outlineLabel } from './text-color.js';
 import { formatHealthLine } from './render-health.js';
 import type { HealthSnapshot } from './render-health.js';
@@ -147,6 +152,78 @@ const MEDIA_FAILURE_TEXT: Record<MediaFailureKind, Record<MediaFallback, string>
   },
 };
 
+// ── 四类型用户属性控件的小工具（纯函数；类型/颜色/精度语义见 spec §6） ──
+type SliderProperty = Extract<WallpaperUserProperty, { type: 'slider' }>;
+const KNOWN_USERPROP_TYPES: ReadonlySet<string> = new Set(['bool', 'slider', 'color', 'combo']);
+
+function isKnownUserProperty(property: WallpaperUserProperty): boolean {
+  return KNOWN_USERPROP_TYPES.has(property.type);
+}
+
+/** 初值：localStorage 覆盖值（按类型校验）优先，否则壁纸默认值。 */
+function initialPropertyValue(property: WallpaperUserProperty, wallpaperId: string): UserPropertyValue {
+  const stored = readUserProperty(property.key, wallpaperId);
+  switch (property.type) {
+    case 'bool':
+      return typeof stored === 'boolean' ? stored : property.value;
+    case 'slider':
+      return typeof stored === 'number' && Number.isFinite(stored)
+        ? Math.min(property.max, Math.max(property.min, stored))
+        : property.value;
+    case 'color':
+      return typeof stored === 'string' && parseColorTriplet(stored) ? stored : property.value;
+    case 'combo':
+      return typeof stored === 'string' && property.options.some((o) => o.value === stored)
+        ? stored
+        : property.value;
+    default:
+      return false; // text/未知类型不渲染，这里只为类型收窄
+  }
+}
+
+function sliderStep(property: SliderProperty): number {
+  return typeof property.step === 'number' && Number.isFinite(property.step) && property.step > 0
+    ? property.step
+    : (property.fraction === false ? 1 : 0.01);
+}
+
+function sliderDecimals(property: SliderProperty): number {
+  if (typeof property.precision === 'number' && Number.isFinite(property.precision)) {
+    return Math.min(10, Math.max(0, Math.floor(property.precision)));
+  }
+  const text = String(sliderStep(property));
+  const exp = /e-(\d+)$/i.exec(text);
+  if (exp) return Math.min(10, Number(exp[1]));
+  const dot = text.indexOf('.');
+  return dot >= 0 ? Math.min(10, text.length - dot - 1) : 0;
+}
+
+/** 显示值：fraction=false 取整；否则按 precision（缺省由 step 推导）补零。 */
+function formatSliderValue(value: number, property: SliderProperty): string {
+  return property.fraction === false ? String(Math.round(value)) : value.toFixed(sliderDecimals(property));
+}
+
+/** WE "r g b"（0-1）→ #rrggbb；非法值回退黑色。 */
+function colorTripletToHex(value: string): string {
+  const rgb = parseColorTriplet(value) ?? [0, 0, 0];
+  return '#' + rgb
+    .map((n) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0'))
+    .join('');
+}
+
+/** #rrggbb → WE "r g b"（0-1，4 位小数足够 8-bit 往返）。 */
+function hexToColorTriplet(hex: string): string {
+  const normalized = normalizeHexColor(hex, '#000000');
+  const full = normalized.length === 4
+    ? `#${normalized[1]}${normalized[1]}${normalized[2]}${normalized[2]}${normalized[3]}${normalized[3]}`
+    : normalized;
+  const component = (index: number) => {
+    const n = parseInt(full.slice(1 + index * 2, 3 + index * 2), 16) / 255;
+    return String(Number(n.toFixed(4)));
+  };
+  return `${component(0)} ${component(1)} ${component(2)}`;
+}
+
 export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): JSX.Element {
   const fetchSettings = props.fetchSettings ?? readClientSettings;
   const writeSettings = props.writeSettings ?? writeClientSettings;
@@ -168,15 +245,25 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
   const [mediaFailure, setMediaFailure] = useState<MediaFailure | null>(mediaHandler?.get() ?? null);
   // 壁纸库筛选状态：收藏/隐藏/最近使用来自 localStorage（挂载时读一次，操作后即时落盘）。
   const [libState, setLibState] = useState<LibraryState>(loadLibraryState);
-  // 壁纸用户属性（v0.8 仅布尔可见性）：只对当前选中的 scene 壁纸拉取一次。
+  // 壁纸用户属性（v0.9 四类型）：只对当前选中的 scene 壁纸拉取一次。
   const [properties, setProperties] = useState<WallpaperUserProperty[]>([]);
-  const [propValues, setPropValues] = useState<Record<string, boolean>>({});
+  const [propValues, setPropValues] = useState<Record<string, UserPropertyValue>>({});
+  // slider 防抖：每键一个定时器 + 待提交值；切壁纸/卸载时清理（避免写回上一张）。
+  const sliderTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const sliderPending = useRef(new Map<string, number>());
   const [filter, setFilter] = useState<LibraryFilter>({
     query: '', types: [], favoritesOnly: false, showHidden: false, sort: 'default',
   });
   const visibleWallpapers = filterLibrary(wallpapers, filter, libState);
   const selectedId = settings?.selectedWallpaperId ?? '';
   const selectedIsScene = !!selectedId && wallpapers.some((w) => w.id === selectedId && w.type === 'scene');
+
+  // 取消全部未提交的 slider 防抖（切壁纸/卸载/属性重拉时调用）。
+  const clearSliderTimers = useCallback(() => {
+    for (const timer of sliderTimers.current.values()) clearTimeout(timer);
+    sliderTimers.current.clear();
+    sliderPending.current.clear();
+  }, []);
 
   // 挂载时先取一次当前值（打开面板即显示状态），再订阅后续推送；卸载时退订。
   useEffect(() => {
@@ -205,7 +292,7 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
     return () => { alive = false; };
   }, [fetchSettings, fetchWallpapers]);
 
-  // 切换壁纸时重新拉取属性；checkbox 初值 = localStorage 覆盖值，否则壁纸默认 value。
+  // 切换壁纸时重新拉取属性；控件初值 = localStorage 覆盖值，否则壁纸默认 value。
   useEffect(() => {
     if (!selectedIsScene) {
       setProperties([]);
@@ -218,16 +305,26 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
         if (!alive) return;
         const items = Array.isArray(list) ? list : [];
         setProperties(items);
-        // 初值按当前壁纸 id 读（per-wallpaper 覆盖值；缺键回退旧全局键）。
-        setPropValues(Object.fromEntries(items.map((p) => [p.key, readBoolProperty(p.key, selectedId) ?? p.value])));
+        const values: Record<string, UserPropertyValue> = {};
+        for (const p of items) {
+          // text/未知类型不进面板；其余仍初始化（condition 可能引用未渲染的属性）。
+          if (isKnownUserProperty(p)) values[p.key] = initialPropertyValue(p, selectedId);
+        }
+        setPropValues(values);
       })
       .catch(() => {
         if (!alive) return;
         setProperties([]);
         setPropValues({});
       });
-    return () => { alive = false; };
-  }, [selectedId, selectedIsScene, fetchProperties]);
+    return () => {
+      alive = false;
+      clearSliderTimers();
+    };
+  }, [selectedId, selectedIsScene, fetchProperties, clearSliderTimers]);
+
+  // 卸载兜底：slider 防抖定时器不得在组件消失后继续提交。
+  useEffect(() => () => clearSliderTimers(), [clearSliderTimers]);
 
   // 选择/取消壁纸：同步回调（controller 立即生效）+ 持久化
   const select = useCallback((id: string) => {
@@ -255,6 +352,52 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
     onRuntimeSettings(patch);
     void writeSettings(patch);
   }, [onRuntimeSettings, writeSettings]);
+
+  // 用户属性提交：写 per-wallpaper 覆盖值后重装配当前壁纸（渲染器装配时读取）。
+  const setPropertyValue = useCallback((key: string, value: UserPropertyValue) => {
+    setPropValues((prev) => ({ ...prev, [key]: value }));
+  }, []);
+
+  const commitProperty = useCallback((key: string, value: UserPropertyValue) => {
+    writeUserProperty(key, value, selectedId);
+    onReselect(selectedId);
+  }, [onReselect, selectedId]);
+
+  // slider 防抖：300ms 内无新拖动才提交一次；pointerup/blur 走 flush 立即提交。
+  const flushSlider = useCallback((key: string) => {
+    const timer = sliderTimers.current.get(key);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      sliderTimers.current.delete(key);
+    }
+    const pending = sliderPending.current.get(key);
+    if (pending === undefined) return;
+    sliderPending.current.delete(key);
+    commitProperty(key, pending);
+  }, [commitProperty]);
+
+  const scheduleSlider = useCallback((key: string, value: number) => {
+    sliderPending.current.set(key, value);
+    const timer = sliderTimers.current.get(key);
+    if (timer !== undefined) clearTimeout(timer);
+    sliderTimers.current.set(key, setTimeout(() => {
+      sliderTimers.current.delete(key);
+      flushSlider(key);
+    }, 300));
+  }, [flushSlider]);
+
+  // 恢复默认：删 per-id 覆盖键（必须带 id）→ 控件回默认值 → 重装配。
+  const resetProperty = useCallback((property: WallpaperUserProperty) => {
+    const timer = sliderTimers.current.get(property.key);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      sliderTimers.current.delete(property.key);
+    }
+    sliderPending.current.delete(property.key);
+    resetUserProperty(property.key, selectedId);
+    setPropertyValue(property.key, property.value);
+    onReselect(selectedId);
+  }, [onReselect, selectedId, setPropertyValue]);
 
   // 保存手动输入的路径（空值 = 清除用户配置，回退默认）
   const saveDirs = useCallback(() => {
@@ -316,6 +459,11 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
   const rotationStatus = rotationPoolSize < 2
     ? '至少保留 2 张可轮播壁纸，或收藏 2 张以上'
     : `每 ${formatRotationInterval(settings?.rotationIntervalMs)} · ${normalizeRotationOrder(settings?.rotationOrder) === 'sequential' ? '顺序' : '随机'} · 可轮播 ${rotationPoolSize} 张`;
+
+  // 只渲染 scene 真正引用（usedBy 非空）的已知类型属性；text 等不渲染。
+  const visibleProperties = properties.filter(
+    (p) => isKnownUserProperty(p) && Array.isArray(p.usedBy) && p.usedBy.length > 0,
+  );
 
   // 两个入口：props 优先（可嵌入/可测），否则走 index.ts 注册的共享 handler；
   // 都没有时不谎报「已重试/已清除」（插件尚未挂载时是这种情况）。
@@ -517,29 +665,143 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
           <p className="wss-empty">没有匹配的壁纸（隐藏 {libState.hidden.size} 张）</p>
         )}
       </section>
-      {/* 壁纸属性（v0.8 布尔可见性）：只对当前 scene 壁纸且确有可切换属性时显示；
-          开关写 localStorage，随后重装配当前壁纸（渲染器装配时读取属性值）。 */}
-      {selectedIsScene && properties.length > 0 && (
+      {/* 壁纸属性（v0.9 四类型）：bool/slider/color/combo；slider 防抖提交，其余即时；
+          提交后写 localStorage 并重装配当前壁纸（渲染器装配时读取属性值）。 */}
+      {selectedIsScene && visibleProperties.length > 0 && (
         <section className="wss-section wss-userprops">
           <h4 className="wss-section-title">壁纸属性</h4>
           <p className="wss-section-desc">切换后生效（会重新装配当前壁纸）。</p>
-          {properties.map((property) => (
-            <label key={property.key} className="wss-row">
-              <input
-                type="checkbox"
-                className="wss-userprop"
-                data-key={property.key}
-                checked={propValues[property.key] ?? property.value}
-                onChange={(e) => {
-                  const checked = e.target.checked;
-                  setPropValues((prev) => ({ ...prev, [property.key]: checked }));
-                  writeBoolProperty(property.key, checked, selectedId);
-                  onReselect(selectedId);
-                }}
-              />
-              {property.label}
-            </label>
-          ))}
+          <div className="wss-userprops-list">
+            {visibleProperties.map((property) => {
+              // condition 依赖其它属性的当前值；不满足时控件禁用并标灰。
+              const enabled = propertyConditionMet(property.condition, propValues);
+              const disabledTitle = enabled ? undefined : '条件不满足，此属性暂不可用';
+              const labelNode = (
+                <span className="wss-userprop-label">
+                  {property.label}
+                  {!enabled && <span className="wss-userprop-hint">（条件不满足）</span>}
+                </span>
+              );
+              const resetNode = (
+                <button
+                  type="button"
+                  className="wss-userprop-reset"
+                  data-key={property.key}
+                  disabled={!enabled}
+                  title={disabledTitle}
+                  onClick={() => resetProperty(property)}
+                >
+                  恢复默认
+                </button>
+              );
+              const current = propValues[property.key] ?? property.value;
+              if (property.type === 'bool') {
+                const checked = typeof current === 'boolean' ? current : property.value;
+                return (
+                  <div key={property.key} className="wss-userprop-item" data-key={property.key} data-disabled={enabled ? undefined : 'true'}>
+                    <label className="wss-row wss-userprop-main">
+                      {labelNode}
+                      <input
+                        type="checkbox"
+                        className="wss-userprop"
+                        data-key={property.key}
+                        checked={checked}
+                        disabled={!enabled}
+                        title={disabledTitle}
+                        onChange={(e) => {
+                          const next = e.target.checked;
+                          setPropertyValue(property.key, next);
+                          commitProperty(property.key, next);
+                        }}
+                      />
+                    </label>
+                    {resetNode}
+                  </div>
+                );
+              }
+              if (property.type === 'slider') {
+                const value = typeof current === 'number' && Number.isFinite(current) ? current : property.value;
+                return (
+                  <div key={property.key} className="wss-userprop-item" data-key={property.key} data-disabled={enabled ? undefined : 'true'}>
+                    <label className="wss-slider wss-userprop-main">
+                      <span className="wss-slider-head">
+                        {labelNode}
+                        <span className="wss-userprop-value">{formatSliderValue(value, property)}</span>
+                      </span>
+                      <input
+                        type="range"
+                        className="wss-userprop"
+                        data-key={property.key}
+                        min={property.min}
+                        max={property.max}
+                        step={sliderStep(property)}
+                        value={value}
+                        disabled={!enabled}
+                        title={disabledTitle}
+                        onChange={(e) => {
+                          const next = Number(e.target.value);
+                          setPropertyValue(property.key, next);
+                          scheduleSlider(property.key, next);
+                        }}
+                        onPointerUp={() => flushSlider(property.key)}
+                        onBlur={() => flushSlider(property.key)}
+                      />
+                    </label>
+                    {resetNode}
+                  </div>
+                );
+              }
+              if (property.type === 'color') {
+                const value = typeof current === 'string' ? current : property.value;
+                return (
+                  <div key={property.key} className="wss-userprop-item" data-key={property.key} data-disabled={enabled ? undefined : 'true'}>
+                    <label className="wss-row wss-userprop-main">
+                      {labelNode}
+                      <input
+                        type="color"
+                        className="wss-userprop"
+                        data-key={property.key}
+                        value={colorTripletToHex(value)}
+                        disabled={!enabled}
+                        title={disabledTitle}
+                        onChange={(e) => {
+                          const next = hexToColorTriplet(e.target.value);
+                          setPropertyValue(property.key, next);
+                          commitProperty(property.key, next);
+                        }}
+                      />
+                    </label>
+                    {resetNode}
+                  </div>
+                );
+              }
+              const value = typeof current === 'string' ? current : property.value;
+              return (
+                <div key={property.key} className="wss-userprop-item" data-key={property.key} data-disabled={enabled ? undefined : 'true'}>
+                  <label className="wss-row wss-userprop-main">
+                    {labelNode}
+                    <select
+                      className="wss-userprop wss-userprop-select"
+                      data-key={property.key}
+                      value={value}
+                      disabled={!enabled}
+                      title={disabledTitle}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        setPropertyValue(property.key, next);
+                        commitProperty(property.key, next);
+                      }}
+                    >
+                      {property.options.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  {resetNode}
+                </div>
+              );
+            })}
+          </div>
         </section>
       )}
       </div>

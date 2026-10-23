@@ -972,8 +972,12 @@ describe('媒体失败提示', () => {
 
 // v0.8 Task 7：壁纸属性面板（仅选中 scene 且属性非空时渲染；布尔开关写 localStorage 后重装配）。
 describe('壁纸属性（用户布尔可见性）', () => {
-  const CLOUDS: WallpaperUserProperty = { key: 'clouds', label: '云层', type: 'bool', value: true, order: 2.5 };
-  const RAIN: WallpaperUserProperty = { key: 'rain', label: '雨', type: 'bool', value: true, order: 1 };
+  const CLOUDS: WallpaperUserProperty = {
+    key: 'clouds', label: '云层', type: 'bool', value: true, order: 2.5, usedBy: ['objects[].visible'],
+  };
+  const RAIN: WallpaperUserProperty = {
+    key: 'rain', label: '雨', type: 'bool', value: true, order: 1, usedBy: ['objects[].visible'],
+  };
 
   it('选中 scene 且属性非空 → 渲染「壁纸属性」section；存储值覆盖壁纸默认 value', async () => {
     localStorage.setItem('we:userprop:clouds', 'false');
@@ -1086,5 +1090,246 @@ describe('壁纸属性（用户布尔可见性）', () => {
     expect(container.querySelector('.wss-userprop[data-key="clouds"]')).toBeNull();
     expect(container.querySelector('.wss-userprop[data-key="rain"]')).not.toBeNull();
     expect(container.textContent).toContain('雨');
+  });
+});
+
+// Task 7：四类型控件（bool/slider/color/combo）+ condition 禁用 + 恢复默认。
+describe('壁纸属性（四类型控件）', () => {
+  const BOOL: WallpaperUserProperty = {
+    key: 'b', label: 'Bool 开关', type: 'bool', value: true, order: 1, usedBy: ['objects[].visible'],
+  };
+  const SLIDER: WallpaperUserProperty = {
+    key: 's', label: 'Slider 滑杆', type: 'slider', value: 0.4, min: 0, max: 1, step: 0.01, order: 2, usedBy: ['x'],
+  };
+  const COLOR: WallpaperUserProperty = {
+    key: 'c', label: 'Color 取色', type: 'color', value: '1 0 0', order: 3, usedBy: ['x'],
+  };
+  const COMBO: WallpaperUserProperty = {
+    key: 'm', label: 'Combo 下拉', type: 'combo', value: '1',
+    options: [{ label: 'A', value: '1' }, { label: 'B', value: '2' }], order: 4, usedBy: ['x'],
+  };
+
+  const setInput = (el: HTMLInputElement, value: string) => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    setter.call(el, value);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  };
+  const setSelect = (el: HTMLSelectElement, value: string) => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!;
+    setter.call(el, value);
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+  const stored = (key: string) => localStorage.getItem(`we:userprop:1:${key}`);
+  const advance = async (ms: number) => {
+    await act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+  };
+
+  it('按类型渲染控件：bool 复选框 / slider 滑杆 / color 取色 / combo 下拉', async () => {
+    mount({ fetchProperties: async () => [BOOL, SLIDER, COLOR, COMBO] });
+    await flush();
+    const box = container.querySelector('input[type="checkbox"][data-key="b"]') as HTMLInputElement | null;
+    const range = container.querySelector('input[type="range"][data-key="s"]') as HTMLInputElement | null;
+    const color = container.querySelector('input[type="color"][data-key="c"]') as HTMLInputElement | null;
+    const combo = container.querySelector('select[data-key="m"]') as HTMLSelectElement | null;
+    expect(box).toBeTruthy();
+    expect(range).toBeTruthy();
+    expect(color).toBeTruthy();
+    expect(combo).toBeTruthy();
+    expect(box!.checked).toBe(true);
+    // min/max/step 来自属性；初值来自壁纸默认值
+    expect([range!.min, range!.max, range!.step, range!.value]).toEqual(['0', '1', '0.01', '0.4']);
+    expect(container.querySelector('.wss-userprop-value')?.textContent).toBe('0.40'); // 无 precision 时按 step 推导
+    expect(color!.value).toBe('#ff0000'); // "1 0 0"(0-1) → #rrggbb
+    expect(combo!.value).toBe('1');
+    expect(combo!.options[0]?.textContent).toBe('A');
+    expect(container.querySelectorAll('.wss-userprop-reset')).toHaveLength(4);
+  });
+
+  it('slider 显示值按 precision/fraction 格式化', async () => {
+    const precise: WallpaperUserProperty = {
+      key: 's', label: 'S', type: 'slider', value: 0.4, min: 0, max: 1, step: 0.01,
+      precision: 3, fraction: true, order: 1, usedBy: ['x'],
+    };
+    mount({ fetchProperties: async () => [precise] });
+    await flush();
+    expect(container.querySelector('.wss-userprop-value')?.textContent).toBe('0.400');
+    await unmount();
+
+    const whole: WallpaperUserProperty = {
+      key: 'w', label: 'W', type: 'slider', value: 2.6, min: 0, max: 10, step: 0.1,
+      fraction: false, order: 1, usedBy: ['x'],
+    };
+    mount({ fetchProperties: async () => [whole] });
+    await flush();
+    expect(container.querySelector('.wss-userprop-value')?.textContent).toBe('3');
+  });
+
+  it('slider 防抖 300ms 提交一次；color/combo 立即提交', async () => {
+    vi.useFakeTimers();
+    try {
+      const reselect = vi.fn();
+      setWallpaperReselectHandler(reselect);
+      mount({ fetchProperties: async () => [SLIDER, COLOR, COMBO] });
+      await advance(0);
+
+      const range = container.querySelector('input[type="range"][data-key="s"]') as HTMLInputElement;
+      await act(async () => { setInput(range, '0.7'); });
+      await advance(299);
+      expect(stored('s')).toBeNull();
+      expect(reselect).not.toHaveBeenCalled();
+      await advance(1);
+      expect(stored('s')).toBe(JSON.stringify(0.7));
+      expect(reselect).toHaveBeenCalledTimes(1);
+      expect(reselect).toHaveBeenLastCalledWith('1');
+
+      // 连续拖动只在静止 300ms 后提交一次（最后一次的值）
+      await act(async () => {
+        setInput(range, '0.2');
+        setInput(range, '0.3');
+      });
+      await advance(300);
+      expect(stored('s')).toBe(JSON.stringify(0.3));
+      expect(reselect).toHaveBeenCalledTimes(2);
+
+      const color = container.querySelector('input[type="color"][data-key="c"]') as HTMLInputElement;
+      await act(async () => { setInput(color, '#00ff00'); });
+      expect(stored('c')).toBe(JSON.stringify('0 1 0'));
+      expect(reselect).toHaveBeenCalledTimes(3);
+
+      const combo = container.querySelector('select[data-key="m"]') as HTMLSelectElement;
+      await act(async () => { setSelect(combo, '2'); });
+      expect(stored('m')).toBe(JSON.stringify('2'));
+      expect(reselect).toHaveBeenCalledTimes(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('slider pointerup 立即提交一次（不等防抖）', async () => {
+    vi.useFakeTimers();
+    try {
+      const reselect = vi.fn();
+      setWallpaperReselectHandler(reselect);
+      mount({ fetchProperties: async () => [SLIDER] });
+      await advance(0);
+      const range = container.querySelector('input[type="range"][data-key="s"]') as HTMLInputElement;
+      await act(async () => {
+        setInput(range, '0.6');
+        range.dispatchEvent(new Event('pointerup', { bubbles: true }));
+      });
+      expect(stored('s')).toBe(JSON.stringify(0.6));
+      expect(reselect).toHaveBeenCalledTimes(1);
+      await advance(400);
+      expect(reselect).toHaveBeenCalledTimes(1); // 定时器已清，不重复提交
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('color 值 "r g b" ↔ #rrggbb 转换；存储值覆盖默认色', async () => {
+    localStorage.setItem('we:userprop:1:c', JSON.stringify('0 0 1'));
+    mount({ fetchProperties: async () => [COLOR] });
+    await flush();
+    const color = container.querySelector('input[type="color"][data-key="c"]') as HTMLInputElement;
+    expect(color.value).toBe('#0000ff');
+    setInput(color, '#336699');
+    await flush();
+    expect(stored('c')).toBe(JSON.stringify('0.2 0.4 0.6'));
+  });
+
+  it('condition 不满足时控件禁用并标灰；条件满足后恢复', async () => {
+    const AUDIO: WallpaperUserProperty = {
+      key: 'audiobar', label: '音效条', type: 'bool', value: false, order: 1, usedBy: ['x'],
+    };
+    const MUSIC: WallpaperUserProperty = {
+      key: 'musiccolor', label: '音乐颜色', type: 'color', value: '1 0 0', order: 2, usedBy: ['x'],
+      condition: 'audiobar.value==true',
+    };
+    mount({ fetchProperties: async () => [AUDIO, MUSIC] });
+    await flush();
+    const color = container.querySelector('input[type="color"][data-key="musiccolor"]') as HTMLInputElement;
+    const item = color.closest('.wss-userprop-item') as HTMLElement;
+    expect(color.disabled).toBe(true);
+    expect(item.getAttribute('data-disabled')).toBe('true');
+    expect(item.textContent).toContain('条件不满足');
+    expect((item.querySelector('.wss-userprop-reset') as HTMLButtonElement).disabled).toBe(true);
+
+    (container.querySelector('input[type="checkbox"][data-key="audiobar"]') as HTMLInputElement).click();
+    await flush();
+    expect(color.disabled).toBe(false);
+    expect(item.getAttribute('data-disabled')).toBeNull();
+    expect(item.textContent).not.toContain('条件不满足');
+  });
+
+  it('只渲染 usedBy 非空的四类型属性；text 不渲染', async () => {
+    const unused: WallpaperUserProperty = {
+      key: 'unused', label: '未引用', type: 'bool', value: true, order: 1, usedBy: [],
+    };
+    const text = {
+      key: 't', label: '文本', type: 'text', value: 'x', order: 2, usedBy: ['x'],
+    } as unknown as WallpaperUserProperty;
+    mount({ fetchProperties: async () => [unused, text, BOOL] });
+    await flush();
+    expect(container.querySelectorAll('.wss-userprop-item')).toHaveLength(1);
+    expect(container.querySelector('[data-key="unused"]')).toBeNull();
+    expect(container.querySelector('[data-key="t"]')).toBeNull();
+
+    await unmount();
+    mount({ fetchProperties: async () => [unused] });
+    await flush();
+    expect(container.querySelector('.wss-userprops')).toBeNull();
+  });
+
+  it('恢复默认：删除 per-id 覆盖值、控件回默认并重装配（reset 带 selectedId）', async () => {
+    const reselect = vi.fn();
+    setWallpaperReselectHandler(reselect);
+    localStorage.setItem('we:userprop:1:b', 'false');
+    mount({ fetchProperties: async () => [BOOL] });
+    await flush();
+    const box = container.querySelector('input[type="checkbox"][data-key="b"]') as HTMLInputElement;
+    expect(box.checked).toBe(false);
+    (container.querySelector('.wss-userprop-reset[data-key="b"]') as HTMLButtonElement).click();
+    await flush();
+    expect(stored('b')).toBeNull();
+    expect(box.checked).toBe(true);
+    expect(reselect).toHaveBeenLastCalledWith('1');
+  });
+
+  it('恢复默认会取消未提交的 slider 防抖（旧值不回写）', async () => {
+    vi.useFakeTimers();
+    try {
+      const reselect = vi.fn();
+      setWallpaperReselectHandler(reselect);
+      mount({ fetchProperties: async () => [SLIDER] });
+      await advance(0);
+      const range = container.querySelector('input[type="range"][data-key="s"]') as HTMLInputElement;
+      await act(async () => { setInput(range, '0.9'); });
+      await act(async () => {
+        (container.querySelector('.wss-userprop-reset[data-key="s"]') as HTMLButtonElement).click();
+      });
+      await advance(400);
+      expect(stored('s')).toBeNull();
+      expect(reselect).toHaveBeenCalledTimes(1); // 只有 reset 那一次
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('卸载时清理 slider 防抖定时器：不再写值/重装配', async () => {
+    vi.useFakeTimers();
+    try {
+      const reselect = vi.fn();
+      setWallpaperReselectHandler(reselect);
+      mount({ fetchProperties: async () => [SLIDER] });
+      await advance(0);
+      const range = container.querySelector('input[type="range"][data-key="s"]') as HTMLInputElement;
+      await act(async () => { setInput(range, '0.8'); });
+      await unmount();
+      await advance(400);
+      expect(stored('s')).toBeNull();
+      expect(reselect).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
