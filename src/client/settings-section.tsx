@@ -248,9 +248,9 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
   // 壁纸用户属性（v0.9 四类型）：只对当前选中的 scene 壁纸拉取一次。
   const [properties, setProperties] = useState<WallpaperUserProperty[]>([]);
   const [propValues, setPropValues] = useState<Record<string, UserPropertyValue>>({});
-  // slider 防抖：每键一个定时器 + 待提交值；切壁纸/卸载时清理（避免写回上一张）。
-  const sliderTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
-  const sliderPending = useRef(new Map<string, number>());
+  // 属性提交防抖（slider/color）：每键一个定时器 + 待提交值；切壁纸/卸载时清理（避免写回上一张）。
+  const commitTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const commitPending = useRef(new Map<string, UserPropertyValue>());
   const [filter, setFilter] = useState<LibraryFilter>({
     query: '', types: [], favoritesOnly: false, showHidden: false, sort: 'default',
   });
@@ -258,11 +258,11 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
   const selectedId = settings?.selectedWallpaperId ?? '';
   const selectedIsScene = !!selectedId && wallpapers.some((w) => w.id === selectedId && w.type === 'scene');
 
-  // 取消全部未提交的 slider 防抖（切壁纸/卸载/属性重拉时调用）。
-  const clearSliderTimers = useCallback(() => {
-    for (const timer of sliderTimers.current.values()) clearTimeout(timer);
-    sliderTimers.current.clear();
-    sliderPending.current.clear();
+  // 取消全部未提交的防抖（切壁纸/卸载/属性重拉时调用）。
+  const clearCommitTimers = useCallback(() => {
+    for (const timer of commitTimers.current.values()) clearTimeout(timer);
+    commitTimers.current.clear();
+    commitPending.current.clear();
   }, []);
 
   // 挂载时先取一次当前值（打开面板即显示状态），再订阅后续推送；卸载时退订。
@@ -319,12 +319,12 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
       });
     return () => {
       alive = false;
-      clearSliderTimers();
+      clearCommitTimers();
     };
-  }, [selectedId, selectedIsScene, fetchProperties, clearSliderTimers]);
+  }, [selectedId, selectedIsScene, fetchProperties, clearCommitTimers]);
 
-  // 卸载兜底：slider 防抖定时器不得在组件消失后继续提交。
-  useEffect(() => () => clearSliderTimers(), [clearSliderTimers]);
+  // 卸载兜底：防抖定时器不得在组件消失后继续提交。
+  useEffect(() => () => clearCommitTimers(), [clearCommitTimers]);
 
   // 选择/取消壁纸：同步回调（controller 立即生效）+ 持久化
   const select = useCallback((id: string) => {
@@ -363,41 +363,40 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
     onReselect(selectedId);
   }, [onReselect, selectedId]);
 
-  // slider 防抖：300ms 内无新拖动才提交一次；pointerup/blur 走 flush 立即提交。
-  const flushSlider = useCallback((key: string) => {
-    const timer = sliderTimers.current.get(key);
+  // 属性防抖：300ms 内无新输入才提交一次；pointerup/blur 走 flush 立即提交（slider/color）。
+  const cancelCommit = useCallback((key: string) => {
+    const timer = commitTimers.current.get(key);
     if (timer !== undefined) {
       clearTimeout(timer);
-      sliderTimers.current.delete(key);
+      commitTimers.current.delete(key);
     }
-    const pending = sliderPending.current.get(key);
-    if (pending === undefined) return;
-    sliderPending.current.delete(key);
-    commitProperty(key, pending);
-  }, [commitProperty]);
+    commitPending.current.delete(key);
+  }, []);
 
-  const scheduleSlider = useCallback((key: string, value: number) => {
-    sliderPending.current.set(key, value);
-    const timer = sliderTimers.current.get(key);
+  const flushCommit = useCallback((key: string) => {
+    const pending = commitPending.current.get(key);
+    cancelCommit(key);
+    if (pending === undefined) return;
+    commitProperty(key, pending);
+  }, [cancelCommit, commitProperty]);
+
+  const scheduleCommit = useCallback((key: string, value: UserPropertyValue) => {
+    commitPending.current.set(key, value);
+    const timer = commitTimers.current.get(key);
     if (timer !== undefined) clearTimeout(timer);
-    sliderTimers.current.set(key, setTimeout(() => {
-      sliderTimers.current.delete(key);
-      flushSlider(key);
+    commitTimers.current.set(key, setTimeout(() => {
+      commitTimers.current.delete(key);
+      flushCommit(key);
     }, 300));
-  }, [flushSlider]);
+  }, [flushCommit]);
 
   // 恢复默认：删 per-id 覆盖键（必须带 id）→ 控件回默认值 → 重装配。
   const resetProperty = useCallback((property: WallpaperUserProperty) => {
-    const timer = sliderTimers.current.get(property.key);
-    if (timer !== undefined) {
-      clearTimeout(timer);
-      sliderTimers.current.delete(property.key);
-    }
-    sliderPending.current.delete(property.key);
+    cancelCommit(property.key); // 取消未提交的防抖，旧值不回写
     resetUserProperty(property.key, selectedId);
     setPropertyValue(property.key, property.value);
     onReselect(selectedId);
-  }, [onReselect, selectedId, setPropertyValue]);
+  }, [cancelCommit, onReselect, selectedId, setPropertyValue]);
 
   // 保存手动输入的路径（空值 = 清除用户配置，回退默认）
   const saveDirs = useCallback(() => {
@@ -665,7 +664,7 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
           <p className="wss-empty">没有匹配的壁纸（隐藏 {libState.hidden.size} 张）</p>
         )}
       </section>
-      {/* 壁纸属性（v0.9 四类型）：bool/slider/color/combo；slider 防抖提交，其余即时；
+      {/* 壁纸属性（v0.9 四类型）：bool/slider/color/combo；slider/color 防抖提交，bool/combo 即时；
           提交后写 localStorage 并重装配当前壁纸（渲染器装配时读取属性值）。 */}
       {selectedIsScene && visibleProperties.length > 0 && (
         <section className="wss-section wss-userprops">
@@ -741,10 +740,10 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
                         onChange={(e) => {
                           const next = Number(e.target.value);
                           setPropertyValue(property.key, next);
-                          scheduleSlider(property.key, next);
+                          scheduleCommit(property.key, next);
                         }}
-                        onPointerUp={() => flushSlider(property.key)}
-                        onBlur={() => flushSlider(property.key)}
+                        onPointerUp={() => flushCommit(property.key)}
+                        onBlur={() => flushCommit(property.key)}
                       />
                     </label>
                     {resetNode}
@@ -767,8 +766,10 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
                         onChange={(e) => {
                           const next = hexToColorTriplet(e.target.value);
                           setPropertyValue(property.key, next);
-                          commitProperty(property.key, next);
+                          scheduleCommit(property.key, next);
                         }}
+                        onPointerUp={() => flushCommit(property.key)}
+                        onBlur={() => flushCommit(property.key)}
                       />
                     </label>
                     {resetNode}

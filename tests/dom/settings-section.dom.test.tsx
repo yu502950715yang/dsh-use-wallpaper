@@ -1164,7 +1164,7 @@ describe('壁纸属性（四类型控件）', () => {
     expect(container.querySelector('.wss-userprop-value')?.textContent).toBe('3');
   });
 
-  it('slider 防抖 300ms 提交一次；color/combo 立即提交', async () => {
+  it('slider/color 防抖 300ms 只提交一次；combo 立即提交', async () => {
     vi.useFakeTimers();
     try {
       const reselect = vi.fn();
@@ -1191,10 +1191,21 @@ describe('壁纸属性（四类型控件）', () => {
       expect(stored('s')).toBe(JSON.stringify(0.3));
       expect(reselect).toHaveBeenCalledTimes(2);
 
+      // color：取色器拖动连续 input，本地即时更新，但只写一次/重装配一次
       const color = container.querySelector('input[type="color"][data-key="c"]') as HTMLInputElement;
-      await act(async () => { setInput(color, '#00ff00'); });
-      expect(stored('c')).toBe(JSON.stringify('0 1 0'));
+      await act(async () => {
+        setInput(color, '#00ff00');
+        setInput(color, '#0000ff');
+        setInput(color, '#336699');
+      });
+      expect(color.value).toBe('#336699'); // 本地显示即时跟随
+      await advance(299);
+      expect(stored('c')).toBeNull();
+      expect(reselect).toHaveBeenCalledTimes(2);
+      await advance(1);
+      expect(stored('c')).toBe(JSON.stringify('0.2 0.4 0.6'));
       expect(reselect).toHaveBeenCalledTimes(3);
+      expect(reselect).toHaveBeenLastCalledWith('1');
 
       const combo = container.querySelector('select[data-key="m"]') as HTMLSelectElement;
       await act(async () => { setSelect(combo, '2'); });
@@ -1205,12 +1216,12 @@ describe('壁纸属性（四类型控件）', () => {
     }
   });
 
-  it('slider pointerup 立即提交一次（不等防抖）', async () => {
+  it('slider/color pointerup 立即提交一次（不等防抖）', async () => {
     vi.useFakeTimers();
     try {
       const reselect = vi.fn();
       setWallpaperReselectHandler(reselect);
-      mount({ fetchProperties: async () => [SLIDER] });
+      mount({ fetchProperties: async () => [SLIDER, COLOR] });
       await advance(0);
       const range = container.querySelector('input[type="range"][data-key="s"]') as HTMLInputElement;
       await act(async () => {
@@ -1221,6 +1232,43 @@ describe('壁纸属性（四类型控件）', () => {
       expect(reselect).toHaveBeenCalledTimes(1);
       await advance(400);
       expect(reselect).toHaveBeenCalledTimes(1); // 定时器已清，不重复提交
+
+      const color = container.querySelector('input[type="color"][data-key="c"]') as HTMLInputElement;
+      await act(async () => {
+        setInput(color, '#336699');
+        color.dispatchEvent(new Event('pointerup', { bubbles: true }));
+      });
+      expect(stored('c')).toBe(JSON.stringify('0.2 0.4 0.6'));
+      expect(reselect).toHaveBeenCalledTimes(2);
+      await advance(400);
+      expect(reselect).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('切壁纸取消未提交的 color 防抖：不写回上一张', async () => {
+    vi.useFakeTimers();
+    try {
+      const reselect = vi.fn();
+      setWallpaperReselectHandler(reselect);
+      mount({
+        fetchProperties: async () => [COLOR],
+        fetchWallpapers: async () => [
+          ...WALLPAPERS,
+          { id: '3', title: 'EVA 2', type: 'scene', hasScene: true, hasPreviewGif: false, previewUrl: '/p3' },
+        ] as any,
+      });
+      await advance(0);
+      const color = container.querySelector('input[type="color"][data-key="c"]') as HTMLInputElement;
+      await act(async () => { setInput(color, '#00ff00'); });
+      await act(async () => {
+        (container.querySelector('.wss-thumb[data-id="3"]') as HTMLElement).click();
+      });
+      await advance(400);
+      expect(localStorage.getItem('we:userprop:1:c')).toBeNull();
+      expect(localStorage.getItem('we:userprop:3:c')).toBeNull();
+      expect(reselect).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }
@@ -1232,7 +1280,11 @@ describe('壁纸属性（四类型控件）', () => {
     await flush();
     const color = container.querySelector('input[type="color"][data-key="c"]') as HTMLInputElement;
     expect(color.value).toBe('#0000ff');
-    setInput(color, '#336699');
+    // pointerup 立即 flush（防抖提交路径）
+    await act(async () => {
+      setInput(color, '#336699');
+      color.dispatchEvent(new Event('pointerup', { bubbles: true }));
+    });
     await flush();
     expect(stored('c')).toBe(JSON.stringify('0.2 0.4 0.6'));
   });
@@ -1295,12 +1347,12 @@ describe('壁纸属性（四类型控件）', () => {
     expect(reselect).toHaveBeenLastCalledWith('1');
   });
 
-  it('恢复默认会取消未提交的 slider 防抖（旧值不回写）', async () => {
+  it('恢复默认会取消未提交的 slider/color 防抖（旧值不回写）', async () => {
     vi.useFakeTimers();
     try {
       const reselect = vi.fn();
       setWallpaperReselectHandler(reselect);
-      mount({ fetchProperties: async () => [SLIDER] });
+      mount({ fetchProperties: async () => [SLIDER, COLOR] });
       await advance(0);
       const range = container.querySelector('input[type="range"][data-key="s"]') as HTMLInputElement;
       await act(async () => { setInput(range, '0.9'); });
@@ -1310,23 +1362,37 @@ describe('壁纸属性（四类型控件）', () => {
       await advance(400);
       expect(stored('s')).toBeNull();
       expect(reselect).toHaveBeenCalledTimes(1); // 只有 reset 那一次
+
+      const color = container.querySelector('input[type="color"][data-key="c"]') as HTMLInputElement;
+      await act(async () => { setInput(color, '#00ff00'); });
+      await act(async () => {
+        (container.querySelector('.wss-userprop-reset[data-key="c"]') as HTMLButtonElement).click();
+      });
+      await advance(400);
+      expect(stored('c')).toBeNull();
+      expect(reselect).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('卸载时清理 slider 防抖定时器：不再写值/重装配', async () => {
+  it('卸载时清理防抖定时器：不再写值/重装配', async () => {
     vi.useFakeTimers();
     try {
       const reselect = vi.fn();
       setWallpaperReselectHandler(reselect);
-      mount({ fetchProperties: async () => [SLIDER] });
+      mount({ fetchProperties: async () => [SLIDER, COLOR] });
       await advance(0);
       const range = container.querySelector('input[type="range"][data-key="s"]') as HTMLInputElement;
-      await act(async () => { setInput(range, '0.8'); });
+      const color = container.querySelector('input[type="color"][data-key="c"]') as HTMLInputElement;
+      await act(async () => {
+        setInput(range, '0.8');
+        setInput(color, '#00ff00');
+      });
       await unmount();
       await advance(400);
       expect(stored('s')).toBeNull();
+      expect(stored('c')).toBeNull();
       expect(reselect).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
