@@ -925,6 +925,32 @@ describe('sceneJsonWithResolvedModulation（resolved 颜色按 0-1 写回）', (
     expect(out.objects[0].color).toBe('10 20 30');
     expect(out.objects[1].color).toBe('1 1 1');
   });
+
+  it('写回字段清单固定为 color/alpha/brightness：origin 走 worldTransforms、visible 走 effectiveVisible、未知字段不动', () => {
+    const raw = JSON.stringify({
+      general: { orthogonalprojection: { width: 100, height: 100 } },
+      objects: [{
+        id: 1, image: 'a',
+        color: { user: 'tint', value: '1 1 1' },
+        alpha: { user: 'vis', value: 1 },
+        brightness: { user: 'bright', value: 1 },
+        origin: { user: 'pos', value: '0 0 0' },
+        visible: { user: 'show', value: true },
+        custom: { user: 'tint', value: '9 9 9' },
+      }],
+    });
+    const resolved = resolveSceneUserBindings(parseSceneJson(raw), {
+      tint: '0.5 0.5 0.5', vis: 0.25, bright: 2, pos: '1 2 3', show: false,
+    });
+    const out = JSON.parse(sceneJsonWithResolvedModulation(raw, resolved)).objects[0];
+    expect(out.color).toBe('0.5 0.5 0.5');
+    expect(out.alpha).toBe(0.25);
+    expect(out.brightness).toBe(2);
+    // 变换与可见性不写回文本：前者由 SceneAssets.worldTransforms、后者由 effectiveVisible 下发
+    expect(out.origin).toEqual({ user: 'pos', value: '0 0 0' });
+    expect(out.visible).toEqual({ user: 'show', value: true });
+    expect(out.custom).toEqual({ user: 'tint', value: '9 9 9' });
+  });
 });
 
 // SceneScript 运行时（2026-09-22）：util 对象不渲染，但承载场景总控脚本——3798688689 的

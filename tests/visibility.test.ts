@@ -163,13 +163,18 @@ describe('computeEffectiveVisibility（对象形态 condition + 父链继承）'
     expect(eff.get(4)).toBe(true);
   });
 
-  it('2911105183 场景：三个独立 Clock 只在 condition 匹配时可见', () => {
+  it('2911105183 场景：三个独立 Clock 只在 condition 匹配时可见（Hide=2 → obj148）', () => {
+    // 作者 value：108=true、144/148=false；condition 命中即显示，与 value 无关（真实 scene.json 取值）
     const clocks = [
       { id: 108, visible: { kind: 'user' as const, key: 'clock', condition: '0', value: true } },
-      { id: 144, visible: { kind: 'user' as const, key: 'clock', condition: '1', value: true } },
-      { id: 148, visible: { kind: 'user' as const, key: 'clock', condition: '2', value: true } },
+      { id: 144, visible: { kind: 'user' as const, key: 'clock', condition: '1', value: false } },
+      { id: 148, visible: { kind: 'user' as const, key: 'clock', condition: '2', value: false } },
     ];
-    const eff = computeEffectiveVisibility(clocks, { clock: '0' });
-    expect([...eff.entries()].filter(([, v]) => v).map(([k]) => k)).toEqual([108]);
+    const visible = (clock: string) =>
+      [...computeEffectiveVisibility(clocks, { clock }).entries()].filter(([, v]) => v).map(([k]) => k);
+    expect(visible('0')).toEqual([108]);
+    expect(visible('1')).toEqual([144]);
+    // Hide=2 命中的 obj148 仍是作者放的 24h 时钟（与桌面 WE 一致），不是「三个全隐藏」
+    expect(visible('2')).toEqual([148]);
   });
 });

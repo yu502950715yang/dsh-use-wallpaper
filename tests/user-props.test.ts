@@ -27,8 +27,8 @@ const scene = {
   ],
 };
 
-describe('collectVisibleBoolProperties（bool × visible.user 交集）', () => {
-  it('只保留 bool × visible.user ∩，按 order 浮点排序，去 HTML 标签', () => {
+describe('collectVisibleBoolProperties（bool × 任意 {user} 引用路径）', () => {
+  it('只保留 bool ∩ 被引用，按 order 浮点排序，去 HTML 标签', () => {
     const out = collectVisibleBoolProperties(project, scene);
     expect(out).toEqual([{
       key: 'clouds', label: '云层', type: 'bool', value: true, order: 2.5, usedBy: ['objects[].visible'],

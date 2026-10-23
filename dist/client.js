@@ -23284,11 +23284,11 @@ function tokenizeCondition(text) {
       i += 2;
       continue;
     }
-    if (ch === "(" || ch === ")" || ch === "&" || ch === "|" || ch === "=" || ch === "!") {
+    if (ch === "(" || ch === ")" || ch === "&" || ch === "|" || ch === "=" || ch === "!" || ch === "<" || ch === ">") {
       throw new Error(`bad condition token: ${ch}`);
     }
     let end = i;
-    while (end < text.length && !/[\s()&|=!]/.test(text[end])) end += 1;
+    while (end < text.length && !/[\s()&|=!<>]/.test(text[end])) end += 1;
     tokens.push({ atom: text.slice(i, end) });
     i = end;
   }

@@ -125,7 +125,7 @@ export function collectUserProperties(project: unknown, scene: unknown): Wallpap
   return out;
 }
 
-/** v0.8 旧接口：仅保留 bool 子集，避免既有调用与测试破坏。 */
+/** v0.8 旧接口（仅测试使用）：只保留 bool 子集，避免既有调用与测试破坏。 */
 export function collectVisibleBoolProperties(project: unknown, scene: unknown): WallpaperUserProperty[] {
   return collectUserProperties(project, scene).filter((p) => p.type === 'bool');
 }

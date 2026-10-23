@@ -73,6 +73,11 @@ describe('propertyConditionMet（属性级 condition）', () => {
     expect(propertyConditionMet('(((', props)).toBe(true);
     expect(propertyConditionMet('audiobar.value==true &&', props)).toBe(true);
   });
+  it('大小于号不在文法内 → 整条失败开放，不把组合表达式翻成 false', () => {
+    // 旧行为：`a.value>2` 被当成字符串字面量（真值），右半边不匹配时整条变 false。
+    expect(propertyConditionMet('a.value>2 && b.value==1', props)).toBe(true);
+    expect(propertyConditionMet('a.value<2 && audiobar.value==false', props)).toBe(true);
+  });
 });
 
 describe('parseColorTriplet', () => {

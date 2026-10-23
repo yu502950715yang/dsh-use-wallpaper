@@ -2714,8 +2714,8 @@ export interface SceneAssets {
   // 由调用方折叠后下发；缺省逐字段回退对象自身局部值（行为不变）。
   // ⚠️ 必须由调用方下发：本函数按 sceneJson 文本重新 parseSceneJson，拿不到调用方对 desc 的覆写。
   worldTransforms?: Map<number, { origin: [number, number, number]; scale: [number, number, number]; angles: [number, number, number] }>;
-  // 装配期有效可见性（对象 id → 是否可见；含用户属性 condition 与父链继承）：由调用方按同一份
-  // userProps 计算后下发。本函数会重新 parse sceneJson 且不知道用户属性，缺省回退旧的空表静态判定。
+  // 装配期有效可见性（对象 id → 是否可见；含用户属性 condition 与父链继承）：调用方按同一份
+  // userProps 算好下发（本函数重 parse sceneJson，不知道用户属性）；player 新增消费的可绑定字段必须同样写回/下发。
   effectiveVisible?: Map<number, boolean>;
   // 渲染像素比档位（<1 降分辨率省显存/提流畅；缺省 1）。调用方算屏幕密度时必须用同一个数。
   qualityScale?: number;

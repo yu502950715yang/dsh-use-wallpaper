@@ -118,7 +118,8 @@ class QuickJSTextRuntime implements TextScriptRuntime {
     const ctx = this.ctx;
     this.resetBudget();
 
-    // 注入 scene.json 的 scriptproperties（{user,value} 包装已在 parseScriptProperties 解包）
+    // 注入 scene.json 的 scriptproperties（{user,value} 已在装配前 resolve 为静态值；
+    // 残留包装由 parseScriptProperties 解包）
     const props = ctx.newObject();
     for (const [key, value] of Object.entries(scriptProperties ?? {})) {
       if (typeof value === 'boolean') ctx.setProp(props, key, value ? ctx.true : ctx.false);
