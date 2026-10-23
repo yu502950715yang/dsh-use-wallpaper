@@ -8,7 +8,7 @@ import { probeSteamPaths, readSteamInstallPathFromRegistry, readLibraryFoldersVd
 import { framesDirOf } from './data-dir.js';
 import { createSceneFrameStore, DEFAULT_MAX_FRAME_BYTES } from './scene-frame-store.js';
 import { extractEmbeddedMp4, probeEmbeddedMp4 } from './scene-media-probe.js';
-import { collectVisibleBoolProperties } from './user-props.js';
+import { collectUserProperties } from './user-props.js';
 import type { WallpaperInfo } from '../shared/types.js';
 
 export interface WallpaperRoutesOptions {
@@ -572,7 +572,7 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
 
     server.register({
       kind: 'exact', path: '/wallpapers/properties',
-      // v0.8 用户属性面板：project.json bool 属性 ∩ scene.json objects[].visible.user。
+      // v0.9 用户属性面板：project.json 四类型属性 ∩ scene.json 中 {user} 引用（带 usedBy）。
       // 每次请求重读、任何文件缺失/坏 JSON 都按「无属性」返回 200（不把素材问题升级成 500）。
       handler: (_req: any, res: any) => {
         const { search } = parseUrl(_req);
@@ -595,7 +595,7 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
           }
         }
         res.setHeader?.('Cache-Control', 'no-store');
-        json(res, 200, { properties: collectVisibleBoolProperties(projectJson, sceneJson) });
+        json(res, 200, { properties: collectUserProperties(projectJson, sceneJson) });
       },
     });
   });

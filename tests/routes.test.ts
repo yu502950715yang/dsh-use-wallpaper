@@ -838,8 +838,8 @@ describe('registerWallpaperRoutes', () => {
     }
   });
 
-  // ── v0.8 Task 7：壁纸用户属性（project.json bool ∩ scene.json visible.user）────────
-  it('GET /wallpapers/properties：返回 bool × visible.user 交集（label 去 HTML）', async () => {
+  // ── v0.9 Task 2：壁纸用户属性（project.json 四类型 ∩ scene.json {user} 引用）──────────
+  it('GET /wallpapers/properties：返回被引用的四类型属性（label 去 HTML、usedBy 标注）', async () => {
     const d = join(dir, 'props1');
     mkdirSync(d, { recursive: true });
     writeFileSync(join(d, 'project.json'), JSON.stringify({
@@ -864,7 +864,16 @@ describe('registerWallpaperRoutes', () => {
     expect(res.statusCode).toBe(200);
     expect(res.headers['Cache-Control']).toBe('no-store');
     expect(JSON.parse(res.body.toString('utf8'))).toEqual({
-      properties: [{ key: 'clouds', label: '云层', type: 'bool', value: true, order: 2.5 }],
+      properties: [
+        {
+          key: 'speed', label: '速度', type: 'slider', value: 1, min: 0, max: 1, order: 1,
+          usedBy: ['objects[].visible'],
+        },
+        {
+          key: 'clouds', label: '云层', type: 'bool', value: true, order: 2.5,
+          usedBy: ['objects[].visible'],
+        },
+      ],
     });
     // 只读：请求后目录里没有新增/改写文件
     expect(readdirSync(d).sort()).toEqual(['project.json', 'scene.pkg']);

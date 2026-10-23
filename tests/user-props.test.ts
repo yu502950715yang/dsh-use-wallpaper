@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { collectVisibleBoolProperties } from '../src/host/user-props.js';
+import { collectUserProperties, collectVisibleBoolProperties } from '../src/host/user-props.js';
 
 // v0.8 Task 7：壁纸用户属性面板的数据源。
 // 只暴露「project.json 的 bool 属性」∩「scene.json objects[].visible.user 的键」；
@@ -30,7 +30,9 @@ const scene = {
 describe('collectVisibleBoolProperties（bool × visible.user 交集）', () => {
   it('只保留 bool × visible.user ∩，按 order 浮点排序，去 HTML 标签', () => {
     const out = collectVisibleBoolProperties(project, scene);
-    expect(out).toEqual([{ key: 'clouds', label: '云层', type: 'bool', value: true, order: 2.5 }]);
+    expect(out).toEqual([{
+      key: 'clouds', label: '云层', type: 'bool', value: true, order: 2.5, usedBy: ['objects[].visible'],
+    }]);
   });
 
   it('label 取 text 去 HTML 标签 / &nbsp;；空文本回退 key', () => {
@@ -101,5 +103,88 @@ describe('collectVisibleBoolProperties（bool × visible.user 交集）', () => 
     expect(collectVisibleBoolProperties(undefined, undefined)).toEqual([]);
     // 只有一个参数坏掉时另一边也无从产出
     expect(collectVisibleBoolProperties({}, scene)).toEqual([]);
+  });
+});
+
+// Task 2：host 聚合四类型属性并标注 scene 引用路径（usedBy）。
+const fourTypeProject = {
+  general: {
+    properties: {
+      bool1: { type: 'bool', value: true, text: 'B', order: 101 },
+      slider1: { type: 'slider', value: 0.4, min: 0, max: 1, step: 0.01, precision: 3, fraction: true, text: 'S', order: 102 },
+      color1: { type: 'color', value: '1 0 0', text: 'C', order: 103 },
+      combo1: { type: 'combo', value: '1', options: [{ label: 'A', value: '1' }, { label: 'B', value: '2' }], text: 'M', order: 104 },
+      unused: { type: 'bool', value: true },
+      schemecolor: { type: 'color', value: '0 0 0', text: 'ui_browse_properties_scheme_color' },
+      group1: { type: 'group', value: '' },
+      hidden: { type: 'bool', value: true, editable: false },
+    },
+  },
+};
+const fourTypeScene = {
+  objects: [
+    { id: 1, image: 'a', visible: { user: 'bool1', value: true } },
+    { id: 2, image: 'b', color: { user: 'color1', value: '0 0 0' } },
+    { id: 3, text: { value: 'x' }, visible: { user: { name: 'combo1', condition: '1' }, value: true } },
+    { id: 4, image: 'c', effects: [{ passes: [{ constantshadervalues: { speed: { user: 'slider1', value: 1 } } }] }] },
+  ],
+};
+
+describe('collectUserProperties（四类型 × scene 引用）', () => {
+  it('只返回被 scene 引用的四类型属性，带默认值与 usedBy', () => {
+    const out = collectUserProperties(fourTypeProject, fourTypeScene);
+    expect(out.map((p) => p.key)).toEqual(['bool1', 'slider1', 'color1', 'combo1']);
+    expect(out.find((p) => p.key === 'slider1')).toMatchObject({
+      type: 'slider', value: 0.4, min: 0, max: 1, step: 0.01, precision: 3, fraction: true,
+    });
+    expect(out.find((p) => p.key === 'combo1')).toMatchObject({
+      type: 'combo', options: [{ label: 'A', value: '1' }, { label: 'B', value: '2' }],
+    });
+    expect(out.find((p) => p.key === 'bool1')!.usedBy).toContain('objects[].visible');
+    expect(out.find((p) => p.key === 'slider1')!.usedBy.length).toBeGreaterThan(0);
+  });
+
+  it('usedBy 路径归一：color / visible / effects.passes.constantshadervalues', () => {
+    const out = collectUserProperties(fourTypeProject, fourTypeScene);
+    expect(out.find((p) => p.key === 'color1')!.usedBy).toEqual(['objects[].color']);
+    expect(out.find((p) => p.key === 'combo1')!.usedBy).toEqual(['objects[].visible']);
+    expect(out.find((p) => p.key === 'slider1')!.usedBy)
+      .toEqual(['objects[].effects[].passes[].constantshadervalues']);
+  });
+
+  it('未引用 / schemecolor / group / editable=false 不返回', () => {
+    const out = collectUserProperties(fourTypeProject, fourTypeScene);
+    for (const k of ['unused', 'schemecolor', 'group1', 'hidden']) expect(out.find((p) => p.key === k)).toBeUndefined();
+  });
+
+  it('editable=false 即使被 scene 引用也不返回', () => {
+    const out = collectUserProperties(
+      { general: { properties: { hidden: { type: 'bool', value: true, editable: false } } } },
+      { objects: [{ visible: { user: 'hidden', value: true } }] },
+    );
+    expect(out).toEqual([]);
+  });
+
+  it('默认值取 project.json 的 value（不是 scene 的 value）', () => {
+    const p2 = { general: { properties: { slider2: { type: 'slider', value: 2, min: 0, max: 4, order: 100 } } } };
+    const s2 = { objects: [{ id: 9, image: 'x', effects: [{ passes: [{ constantshadervalues: { speed: { user: 'slider2', value: 3.13 } } }] }] }] };
+    expect(collectUserProperties(p2, s2)[0]).toMatchObject({ key: 'slider2', value: 2 });
+  });
+
+  it('属性级 condition 透传，general.* 引用同样计入 usedBy', () => {
+    const out = collectUserProperties(
+      { general: { properties: { bloom: { type: 'bool', value: true, condition: 'audiobar.value==true' } } } },
+      { general: { bloom: { user: 'bloom', value: false } } },
+    );
+    expect(out[0]).toMatchObject({
+      key: 'bloom', type: 'bool', value: true, condition: 'audiobar.value==true', usedBy: ['general.bloom'],
+    });
+  });
+
+  it('坏 JSON / 缺字段 → []', () => {
+    expect(collectUserProperties(null, null)).toEqual([]);
+    expect(collectUserProperties({}, {})).toEqual([]);
+    expect(collectUserProperties('x', fourTypeScene)).toEqual([]);
+    expect(collectUserProperties(fourTypeProject, null)).toEqual([]);
   });
 });
