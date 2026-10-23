@@ -69,6 +69,8 @@ export interface Bound<T> { value: T; user?: UserBindingRef }
 
 **父链继承**（新增，WE 语义见 `SceneNode.h:105`、`Scene.cpp:55`）：`effectiveVisible(obj) = own && parentChain.every(...)`，在 `three-renderer` 装配前按 `id → parent` 建映射计算；若自身或祖先为 `script` 绑定则**不静态剔除**（沿用现有规则 `visibility.ts:45-50`），运行时按 value 视为可见。
 
+**全库影响面（2026-10-23 扫描：39 张 scene / 358 对象）**：有 `parent` 的对象 **15 个 / 4 张**（`3765967112`、`3789452668`、`3812518176`、`3814332254`）；parent 缺失 **0**、容器父 **0**、父链含 `script` **0**。修复后可见性**只变化 2 张 / 5 个对象**：`2911105183` 的 144/148（condition 归因）、`3812518176` 的 227（condition）、234/245（父链）——全部是当前叠字 bug 的组成部分；其余 43 张零变化。结论：这是**修可见 bug**，不是新增行为，且两个修复各自覆盖不同壁纸（condition 修独立 Clock 分支、父链修父子结构），缺一不可。
+
 ### 4.3 属性级 condition（最小表达式）
 
 支持 `==` / `!=` 比较与 `&&` / `||` 组合，操作数：`<key>.value` / 字面量（true/false/数字/字符串）。例：`audiobar.value==true`（`2832263418`）。不做括号与 `<`/`>`。表达式失败 ⇒ 视为满足（失败开放，不隐藏属性）。
