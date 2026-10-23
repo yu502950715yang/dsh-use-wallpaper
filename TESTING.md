@@ -423,10 +423,10 @@ getEventListeners(window).pointermove?.length
 | # | 用例 | 步骤 | 期望结果 | 失败表现 |
 |---|---|---|---|---|
 | P1 | `3812518176` clock 三档 | 选中壁纸，面板「Clock」依次选 `1` / `2` / `3 off`（默认 `1`）。 | `1` → 只显示样式 A（对象 192/199/209 的日期+时间）；`2` → 只显示样式 B（227/234/245）；`3 off` → 两组都隐藏、画面无时钟文字。任一档**都只有一套时钟**，无叠字/重影。 | 两套同时出现（文字重影）→ 对象形态 condition 或父链可见性回归；切换无反应 → combo 未提交 / 未重装配。 |
-| P2 | `3812518176` clockcolor | 面板「clock color」用取色器改成明显颜色（红 / 蓝），松手或点别处失焦。 | 当前时钟文字整体变色；松手后约 300ms 提交一次并重装配；连续拖动期间**不**逐事件重装配（画面不反复闪黑）。 | 颜色不变 → color 绑定未 resolve；拖动时反复重建/卡顿 → color 防抖失效。 |
+| P2 | `3812518176` clockcolor | 面板「clock color」用取色器改成明显颜色（红 / 蓝），松手或点别处失焦。 | 当前时钟文字整体变色；`pointerup` / `blur` 立即提交并重装配，停止操作约 300ms 也会自动提交一次（两条路径都只提交一次）；连续拖动期间**不**逐事件重装配（画面不反复闪黑）。 | 颜色不变 → color 绑定未 resolve；拖动时反复重建/卡顿 → color 防抖失效。 |
 | P3 | `3812518176` `_24h` / `leavedspeed` / `ember` | ① 切「24h」开关；② 拖「Leaved Speed」滑块（0–5，默认 1）；③ 切「Ember」开关。 | ① 时钟在 24h（`HH:MM`）与 12h（`AM/PM HH:MM`）之间切换；② 落叶粒子下落速度随滑块变化；③ 余烬粒子出现 / 消失。 | 24h 不变 → `scriptproperties.use24hFormat` 的 `{user}` 未 resolve；落叶速度不变 → `instanceoverride.rate` 未 resolve；余烬不消失 → bool 可见性回归。 |
 | P4 | `2911105183` Clock combo + musiccolor | 选中地铁站，面板「Clock」切 `24h` / `12h` / `Hide`；再把「Music color」改色。 | 三个 `88:88` 时钟只显示 1 个：`24h` → obj108、`12h` → obj144、`Hide` → 三个全隐藏；`Music color` 改色后音频条 / 光带颜色变化。 | 三个时钟同时可见 → 对象形态 condition 回归；`Hide` 后仍有时间 → 同上；颜色不变 → `constantshadervalues` 的 color 绑定未 resolve。 |
-| P5 | `2937346640` slider | 选中锦木千束，面板拖「眼动追踪速度」（0–1，默认 0.4）。 | 眼睛/视线动作速度随滑块变化；松手后才重装配。 | 无变化 → effect `constantshadervalues.speed` 的 slider 未 resolve；拖动即重建 → 防抖失效。 |
+| P5 | `2937346640` slider | 选中锦木千束，面板拖「眼动追踪速度」（0–1，默认 0.4）。 | 眼睛/视线动作速度随滑块变化；`pointerup` / `blur` 立即提交并重装配，停止拖动约 300ms 也会自动提交一次。 | 无变化 → effect `constantshadervalues.speed` 的 slider 未 resolve；拖动即重建 → 防抖失效。 |
 | P6 | `3118949804` slider + parallax | 选中紫眼动漫少女：① 拖「Hair Speed」（0–4）；② 切「Parralax」；③ 拖「Bar Spacing」/「Bar Transparence」。 | ① 头发摆动速度变化，默认应为 **2**（project.json 的 value，不是 scene 的 3.1300001）；② 开关决定画面是否随鼠标视差；③ 频谱条间距 / 透明度变化。 | 速度仍是 3.13 → 默认值取错（应取 project.json）；视差开关无反应 → `general.cameraparallax` 的 `{user}` 未 resolve。 |
 | P7 | `2832263418` color + condition | 选中 EVA 卡农：① 关「音频条开关」；② 重新打开后改「音频律动颜色」。 | ① `audiobar=false` 时音频条对象隐藏，颜色控件**禁用并标灰**（属性级 condition `audiobar.value==true` 不满足）；② 打开后颜色控件可用，改色后音频条呈新颜色。 | 关音频条后颜色控件仍可调 / 重开后颜色无效 → 属性级 condition 或 color 绑定未生效。 |
 

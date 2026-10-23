@@ -2,13 +2,15 @@
 // scene.json 的 visible 字段三种形态：
 //   1. 布尔（visible: true/false）—— 静态开关；
 //   2. { user, value } —— 用户属性绑定（user 为 "name" 或 {name,condition}；
-//      渲染时按注入的用户属性表查：有 condition 时匹配即可见、不匹配即隐藏（与 value 无关），
-//      无 condition 时按用户布尔覆盖；键缺失/值非布尔回退 value）；
+//      渲染时按注入的用户属性表查：键缺失回退 value（有无 condition 一致）；
+//      有 condition 时匹配即可见、不匹配即隐藏（与 value 无关）；
+//      无 condition 时按用户布尔覆盖，值非布尔回退 value）；
 //   3. { script: "…", value } —— 脚本绑定（不执行任意脚本——可见性保持 value，
 //      script 仅作为 T3.3 视觉脚本输入，见 scene-json.ts 的 image 分支）。
-// 本模块为纯逻辑（node 可测）：parseVisible 归一化原始字段，resolveVisibility
-// 注入用户属性求最终可见性。设置查询由调用方注入 getter（renderScene 不硬依赖
-// 设置存储，见 scene-renderer.ts 的 RenderSceneOptions.getUserProperty）。
+// 本模块为纯逻辑（node 可测）：parseVisible 归一化原始字段；isStaticallyHidden /
+// resolveVisibility 按注入的 userProps 表求单个绑定的可见性（后者现仅单测使用）；
+// computeEffectiveVisibility 在装配期一次算出「自身 && 父链」，由 three-renderer
+// 计算并消费（effectiveVisible 表也随 assets 交给 threejs-player 的装配过滤）。
 import type { VisibleBinding, WallpaperUserProperty } from '../shared/types.js';
 import { parseScriptProperties } from './script-patterns.js';
 import { matchCondition, parseUserRef, propertyConditionMet } from './user-bindings.js';
@@ -64,7 +66,8 @@ function resolveUserVisibility(binding: VisibleBinding, userProps: Record<string
 }
 
 // 装载期静态隐藏判定（image / particle 的装载过滤用，2026-09-25）：
-//   plain / user → 装载期即可定论（user 有 condition 时按条件判；无 condition 时键缺失/值非布尔回退 value）；
+//   plain / user → 装载期即可定论（user 键缺失回退 value，有无 condition 一致；
+//   有 condition 时按条件判；无 condition 时值非布尔回退 value）；
 //   **script 恒返回 false** —— 这类对象的可见性是 visible.script 的每帧返回值
 //   （SceneScriptHost → applyLayerState），装载期把它剔掉会让脚本永远无法打开它
 //   （全库 9 个 image/particle 属此类，均带 value=false）。

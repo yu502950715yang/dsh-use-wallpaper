@@ -50,15 +50,16 @@ export type WallpaperUserProperty =
 // WE 对象可见性绑定（T4.2）：scene.json 的 visible 字段三种形态归一化——
 //   true / false           → { kind:'plain', value }（静态开关）
 //   { user, value }        → { kind:'user', key, condition?, value }（user 可为
-//                            "name" 或 {name,condition}；有 condition 时**匹配即可见、不匹配即隐藏**，
-//                            与 value 无关；无 condition 时按用户布尔覆盖，键缺失/值非布尔回退 value）
+//                            "name" 或 {name,condition}；键缺失回退 value（有无 condition 一致）；
+//                            有 condition 时**匹配即可见、不匹配即隐藏**，与 value 无关；
+//                            无 condition 时按用户布尔覆盖，值非布尔回退 value）
 //   { script, value }      → { kind:'script', script, value }（脚本求值超出本期范围，
 //                           可见性保持 value；script/scriptProperties 同时是 T3.3 视觉
 //                           脚本输入——image 对象的 visualizer 识别走同一来源）
 // 缺失/畸形 → undefined（无绑定 = 默认可见）。解析见 src/client/visibility.ts。
 export interface VisibleBinding {
   kind: 'plain' | 'user' | 'script';
-  value: boolean;                       // 缺省可见性（无 condition 的 user 键缺失/非布尔、script 未求值时回退）
+  value: boolean;                       // 缺省可见性（user 键缺失、无 condition 时值非布尔、script 未求值时回退）
   key?: string;                         // kind='user'：用户属性键名（scene.json 的 user）
   condition?: string;                   // kind='user'：绑定侧 condition（对象形态 user.condition）
   script?: string;                      // kind='script'：脚本源码（T3.3 模式识别输入）
