@@ -29,7 +29,8 @@ import type { ClockDriver } from './text-object.js';
 import { getTextScriptRuntime } from './text-script.js';
 import type { TextScriptBinding, TextScriptRuntime } from './text-script.js';
 import { detectScriptPattern, formatClockText } from './script-patterns.js';
-import { resolveVisibility, isStaticallyHidden } from './visibility.js';
+import { computeEffectiveVisibility } from './visibility.js';
+import { parseUserRef } from './user-bindings.js';
 import { createAudioAnalyzer, playWallpaperSound, type AudioAnalyzer, type PlaybackHandle } from './audio-input.js';
 import { SceneScriptHost } from './scene-script-host.js';
 import { applyLayerState } from './layer-state.js';
@@ -142,6 +143,23 @@ function createEmptySim(): ParticleSim {
   };
 }
 
+// 递归收集 scene 内所有被 {user} 引用的属性键（渲染器无 project.json，只能从 scene 反推）。
+// 绑定节点不再下钻（与 host 的 usedBy 扫描口径一致）。
+function collectUserKeys(node: unknown, out: Set<string>): void {
+  if (Array.isArray(node)) {
+    for (const item of node) collectUserKeys(item, out);
+    return;
+  }
+  if (typeof node !== 'object' || node === null) return;
+  const obj = node as Record<string, unknown>;
+  const ref = parseUserRef(obj.user);
+  if (ref) {
+    out.add(ref.name);
+    return;
+  }
+  for (const value of Object.values(obj)) collectUserKeys(value, out);
+}
+
 // 收集并解析「带效果对象」的链：按 scene.json objects 顺序，每对象保留自身 effects（不展平）。
 // 解析失败的链过滤掉并 warn（该对象回退无效果显示，不黑屏）。
 //
@@ -218,8 +236,8 @@ export function collectScriptSources(
 
 // 创建 three.js 播放器场景渲染器（sceneRenderer 接口）。opts 两项可注入（测试），缺省用生产实现。
 //
-// 已知边界：粒子 quad 自旋按 WE `ComputeParticleTangents` 三轴欧拉旋转基向量；可见性走
-// isStaticallyHidden（image/particle，script 绑定不在装载期定论）/ resolveVisibility（text）两套判定，勿混用。
+// 已知边界：粒子 quad 自旋按 WE `ComputeParticleTangents` 三轴欧拉旋转基向量；可见性统一走
+// computeEffectiveVisibility（含对象形态 condition 与父链继承，script 绑定不在装载期定论）。
 // loadSceneToThree 沿用「缺 spec/工厂则跳过该粒子对象」语义，绝不全屏失败。
 export function createThreeSceneRenderer(opts?: {
   loadWasm?: LoadWasm;
@@ -526,9 +544,17 @@ export function createThreeSceneRenderer(opts?: {
         // puppet 实例（对象 id → 网格）：所有权交给 player（addPuppet 后由 player.dispose 释放）。
         const puppetMeshes = new Map<number, PuppetInstance>();
         const particles = new Map<number, LoadedParticleAssets>();
-        // 用户属性表（visible 的 {user,key} 绑定）：三处过滤与 SceneScript 共用，故在对象循环之前建好。
+        // 用户属性表：递归收集 scene 内所有 {user} 键（不止 visible），键缺失不写入（回退作者 value）。
         // 按壁纸 id 读覆盖值 ⇒ 不同壁纸的同名属性键互不串（旧全局键由 getUserPropertyValue 回退）。
+        const userKeys = new Set<string>();
+        collectUserKeys(JSON.parse(sceneJson) as unknown, userKeys);
         const userProps: Record<string, unknown> = {};
+        for (const key of userKeys) {
+          const value = getUserPropertyValue(key, id);
+          if (value !== undefined) userProps[key] = value;
+        }
+        // 有效可见性 = 自身绑定（含 condition）&& 父链继承：装配期一次定论，供下列所有过滤点共用。
+        const effectiveVisible = computeEffectiveVisibility(desc.objects, userProps);
         // 音频可视化（visualizer 脚本）对象：装配后由 player 代建 64 条 bar（脚本 init 的动态层）。
         const visualizerSpecs: Array<{
           origin: [number, number, number];
@@ -537,13 +563,8 @@ export function createThreeSceneRenderer(opts?: {
           renderOrder: number;
         }> = [];
         for (const obj of desc.objects) {
-          if (obj.visible?.kind === 'user' && obj.visible.key) {
-            userProps[obj.visible.key] = getUserPropertyValue(obj.visible.key, id);
-          }
-        }
-        for (const obj of desc.objects) {
-          // 装载期静态隐藏：布尔 / 用户属性绑定在此定论；script 绑定的可见性是每帧返回值，不能在装载期剔掉。
-          if (isStaticallyHidden(obj.visible, userProps)) continue;
+          // 装载期静态隐藏：布尔 / 用户属性（含 condition 与父链）在此定论；script 绑定不在装载期剔掉。
+          if (effectiveVisible.get(obj.id) === false) continue;
           if (obj.kind === 'image') {
             // 图片对象资源（与 scene-renderer 同一套模型→材质→tex 推导）：纹理与 puppet 路径同源于一次
             // model json 拉取。
@@ -620,8 +641,7 @@ export function createThreeSceneRenderer(opts?: {
         // 上面的 image/particle 资源 await（贴图/粒子 spec/材质）可能横跨丢失事件。
         if (abortIfContextLost()) return false;
         // ── text 对象 ────────────────────────────────────────────────────────────────
-        // text 用 resolveVisibility（**含** script 绑定按 value 静态定论）：不过滤会叠出多个默认隐藏的脚本时钟。
-        // ⚠️ 与 image/particle 的 isStaticallyHidden 有意不同（后者放过 script 绑定），text 的历史口径保持原样。
+        // text 与 image/particle 共用 effectiveVisible（含 condition 与父链）：不过滤会叠出本应隐藏的时钟。
         const textLayers = new Map<number, {
           texture: Texture;
           driver?: ClockDriver;
@@ -630,12 +650,12 @@ export function createThreeSceneRenderer(opts?: {
         }>();
         // 只有可见的 text 脚本才实例化 quickjs runtime —— 无脚本壁纸不该付 wasm 实例化成本。
         let scriptRuntime: TextScriptRuntime | null = null;
-        if (desc.objects.some((o) => o.kind === 'text' && o.script && resolveVisibility(o, userProps))) {
+        if (desc.objects.some((o) => o.kind === 'text' && o.script && effectiveVisible.get(o.id) !== false)) {
           scriptRuntime = (await resolveTextScriptRuntime().catch(() => null)) ?? null;
         }
         for (const obj of desc.objects) {
           if (obj.kind !== 'text') continue;
-          if (!resolveVisibility(obj, userProps)) continue;
+          if (effectiveVisible.get(obj.id) === false) continue;
           const props = obj.scriptProperties ?? {};
           const isClock = obj.script ? detectScriptPattern(obj.script) === 'clock' : false;
           // 优先序：脚本 bind 成功 → 脚本驱动；bind 失败且是 clock 形态 → 回退 clock；都不可用 → 跳过。
@@ -716,7 +736,7 @@ export function createThreeSceneRenderer(opts?: {
           return new Uint8Array(await r.arrayBuffer());
         };
         const effectChains = await collectObjectEffectChains(
-          desc, loadFile, (o) => isStaticallyHidden(o.visible, userProps),
+          desc, loadFile, (o) => effectiveVisible.get(o.id) === false,
         );
         // ── SceneScript 运行时（visible.script）──────────────────────────────────────────
         // 收集范围含 util 与纯控制器对象（见 collectScriptSources）；脚本按 objects 顺序装载，靠全局
@@ -750,12 +770,12 @@ export function createThreeSceneRenderer(opts?: {
         // 准入判定抽成局部谓词：下面 isolate 段（只认 image）复用同一份条件，避免两处各写一份后漂移。
         const isAdmittedImage = (o: SceneDescription['objects'][number]): o is SceneImageObject =>
           o.kind === 'image'
-          && !isStaticallyHidden(o.visible, userProps)
+          && effectiveVisible.get(o.id) !== false
           && (effectChains.get(o.id)?.length ?? 0) > 0;
         // util 层（v0.8.2 F2）：有链才隔离；world 按 utilWorldSize（project/fullscreen=场景，其余=size×|scale|）。
         const isAdmittedUtil = (o: SceneDescription['objects'][number]): o is SceneUtilObject =>
           o.kind === 'util'
-          && !isStaticallyHidden(o.visible, userProps)
+          && effectiveVisible.get(o.id) !== false
           && (effectChains.get(o.id)?.length ?? 0) > 0;
         // puppet 对象由直渲网格承载（对象 RT 隔离未覆盖蒙皮网格）⇒ 既不进隔离表，也不占源尺寸与显存预算。
         const isPuppetRendered = (o: SceneDescription['objects'][number]): boolean =>
@@ -806,7 +826,7 @@ export function createThreeSceneRenderer(opts?: {
         // isolate 准入 = 「有链」：线性链与具名 RT 图链都由 ObjectEffectStage 建 runner 与计划执行。
         for (const obj of desc.objects) {
           // 静态隐藏的对象不隔离：隔离会给它建对象 RT + 合成 quad ⇒ 本应隐藏的层又画回来。
-          if (isStaticallyHidden(obj.visible, userProps)) continue;
+          if (effectiveVisible.get(obj.id) === false) continue;
           const chains = effectChains.get(obj.id);
           // 无链 → 早退（effectChains 只在链非空时入表）。
           if (!chains || chains.length === 0) continue;

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { parseVisible, resolveVisibility, isStaticallyHidden } from '../src/client/visibility.js';
+import {
+  parseVisible, resolveVisibility, isStaticallyHidden, computeEffectiveVisibility,
+} from '../src/client/visibility.js';
 
 // T4.2 可见性绑定（user/script）：
 //   parseVisible —— scene.json 的 visible 字段（布尔 / {user,value} / {script,value}）
@@ -16,6 +18,11 @@ describe('parseVisible（visible 字段归一化）', () => {
 
   it('{user,value} → user 绑定（key/value 保留，2937346640 timeand 形态）', () => {
     expect(parseVisible({ user: 'timeand', value: true })).toEqual({ kind: 'user', key: 'timeand', value: true });
+  });
+
+  it('对象形态 user 解析出 condition', () => {
+    expect(parseVisible({ user: { name: 'clock', condition: '1' }, value: true }))
+      .toEqual({ kind: 'user', key: 'clock', condition: '1', value: true });
   });
 
   it('{script,value} → script 绑定（script 保留；scriptproperties 的 {user,value} 解包）', () => {
@@ -118,5 +125,51 @@ describe('isStaticallyHidden（装载期静态隐藏判定）', () => {
 
   it('kind 为未知值（畸形数据）→ 不隐藏（不误杀对象）', () => {
     expect(isStaticallyHidden({ kind: 'unknown-kind' as unknown as 'plain', value: false }, {})).toBe(false);
+  });
+});
+
+// 3812518176「Leon」的文字重影：父对象 visible 为对象形态 user + condition，
+// 子 Date/Clock 无自身绑定 ⇒ 可见性必须沿 parent 链继承（WE SceneNode 语义）。
+describe('computeEffectiveVisibility（对象形态 condition + 父链继承）', () => {
+  const leon = [
+    { id: 192, visible: { kind: 'user' as const, key: 'clock', condition: '1', value: true } },
+    { id: 199, parent: 192 },
+    { id: 209, parent: 192 },
+    { id: 227, visible: { kind: 'user' as const, key: 'clock', condition: '2', value: false } },
+    { id: 234, parent: 227 },
+    { id: 245, parent: 227 },
+  ];
+  const visibleIds = (eff: Map<number, boolean>) =>
+    [...eff.entries()].filter(([, v]) => v).map(([k]) => k).sort((a, b) => a - b);
+
+  it('clock=1：只显示样式 A（192/199/209），父链隐藏样式 B', () => {
+    expect(visibleIds(computeEffectiveVisibility(leon, { clock: '1' }))).toEqual([192, 199, 209]);
+  });
+
+  it('clock=2：只显示样式 B', () => {
+    expect(visibleIds(computeEffectiveVisibility(leon, { clock: '2' }))).toEqual([227, 234, 245]);
+  });
+
+  it('父缺失/环容错；script 绑定不静态剔除', () => {
+    const eff = computeEffectiveVisibility([
+      { id: 1, visible: { kind: 'user' as const, key: 'missing', value: false } },
+      { id: 2, parent: 999 },
+      { id: 3, parent: 3 },
+      { id: 4, visible: { kind: 'script' as const, value: true } },
+    ], {});
+    expect(eff.get(1)).toBe(false);
+    expect(eff.get(2)).toBe(true);
+    expect(eff.get(3)).toBe(true);
+    expect(eff.get(4)).toBe(true);
+  });
+
+  it('2911105183 场景：三个独立 Clock 只在 condition 匹配时可见', () => {
+    const clocks = [
+      { id: 108, visible: { kind: 'user' as const, key: 'clock', condition: '0', value: true } },
+      { id: 144, visible: { kind: 'user' as const, key: 'clock', condition: '1', value: true } },
+      { id: 148, visible: { kind: 'user' as const, key: 'clock', condition: '2', value: true } },
+    ];
+    const eff = computeEffectiveVisibility(clocks, { clock: '0' });
+    expect([...eff.entries()].filter(([, v]) => v).map(([k]) => k)).toEqual([108]);
   });
 });

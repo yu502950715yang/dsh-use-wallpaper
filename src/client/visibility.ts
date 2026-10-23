@@ -1,22 +1,24 @@
 // src/client/visibility.ts —— WE 对象可见性绑定解析（T4.2）
 // scene.json 的 visible 字段三种形态：
 //   1. 布尔（visible: true/false）—— 静态开关；
-//   2. { user: "propName", value } —— 用户属性绑定（WE 用户属性面板可切换的开关，
-//      渲染时按注入的用户属性表查询，键缺失回退 value）；
-//   3. { script: "…", value } —— 脚本绑定（rare；不执行任意脚本——可见性保持 value，
+//   2. { user, value } —— 用户属性绑定（user 为 "name" 或 {name,condition}；
+//      渲染时按注入的用户属性表查询，条件不匹配 → 中性 false，键缺失回退 value）；
+//   3. { script: "…", value } —— 脚本绑定（不执行任意脚本——可见性保持 value，
 //      script 仅作为 T3.3 视觉脚本输入，见 scene-json.ts 的 image 分支）。
 // 本模块为纯逻辑（node 可测）：parseVisible 归一化原始字段，resolveVisibility
 // 注入用户属性求最终可见性。设置查询由调用方注入 getter（renderScene 不硬依赖
 // 设置存储，见 scene-renderer.ts 的 RenderSceneOptions.getUserProperty）。
-import type { VisibleBinding } from '../shared/types.js';
+import type { VisibleBinding, WallpaperUserProperty } from '../shared/types.js';
 import { parseScriptProperties } from './script-patterns.js';
+import { matchCondition, parseUserRef, propertyConditionMet } from './user-bindings.js';
 
 // 归一化 scene.json 的 visible 原始字段（任意 unknown）→ VisibleBinding。
 // 规则：
 //   布尔 → plain（原样保留）；
-//   对象 → 含非空字符串 user → user 绑定（key 保留，value 取布尔或缺省 true）；
-//          否则含非空字符串 script → script 绑定（script/scriptproperties 保留；
-//          scriptproperties 的 {user,value} 包装由 parseScriptProperties 解包）；
+//   对象 → user 可解析（字符串或 {name,condition}）→ user 绑定（key/condition 保留，
+//          value 取布尔或缺省 true）；否则含非空字符串 script → script 绑定
+//          （script/scriptproperties 保留；scriptproperties 的 {user,value} 包装由
+//          parseScriptProperties 解包）；
 //   缺失/畸形（null/数组/数字/字符串/空对象）→ undefined（无绑定 = 默认可见，
 //   不误杀对象）。
 // value 缺省 true：WE 场景中 value 总是携带（true/false），缺失仅见于畸形数据，
@@ -27,8 +29,14 @@ export function parseVisible(raw: unknown): VisibleBinding | undefined {
   const o = raw as { user?: unknown; script?: unknown; scriptproperties?: unknown; value?: unknown };
   const value = typeof o.value === 'boolean' ? o.value : true;
   // user 优先于 script：同对象双键（畸形数据）时用户开关是更直接的控制
-  if (typeof o.user === 'string' && o.user) {
-    return { kind: 'user', key: o.user, value };
+  const user = parseUserRef(o.user);
+  if (user) {
+    return {
+      kind: 'user',
+      key: user.name,
+      ...(user.condition !== undefined ? { condition: user.condition } : {}),
+      value,
+    };
   }
   if (typeof o.script === 'string' && o.script) {
     return {
@@ -40,6 +48,18 @@ export function parseVisible(raw: unknown): VisibleBinding | undefined {
     };
   }
   return undefined;
+}
+
+// 解析 user 绑定的布尔结果（isStaticallyHidden / resolveVisibility 共用）：
+// 键缺失回退作者 value；有 condition 时匹配即可见（0=开、1=关 见 matchCondition），
+// 无 condition 时保持历史口径（仅布尔覆盖，非布尔回退 value）。
+function resolveUserVisibility(binding: VisibleBinding, userProps: Record<string, unknown>): boolean {
+  const key = binding.key;
+  if (!key || !Object.hasOwn(userProps, key) || userProps[key] === undefined) return binding.value;
+  const condition = binding.condition?.trim() || undefined;
+  if (condition) return matchCondition(userProps[key], condition);
+  const p = userProps[key];
+  return typeof p === 'boolean' ? p : binding.value;
 }
 
 // 装载期静态隐藏判定（image / particle 的装载过滤用，2026-09-25）：
@@ -56,10 +76,8 @@ export function isStaticallyHidden(
   switch (binding.kind) {
     case 'plain':
       return !binding.value;
-    case 'user': {
-      const p = userProps[binding.key ?? ''];
-      return typeof p === 'boolean' ? !p : !binding.value;
-    }
+    case 'user':
+      return !resolveUserVisibility(binding, userProps);
     case 'script':
       return false;
     default:
@@ -71,8 +89,7 @@ export function isStaticallyHidden(
 // 求对象最终可见性（纯函数，用户属性由调用方聚成 Record 注入）：
 //   无绑定 → true（默认可见）；
 //   plain → 原样；
-//   user → userProps[key] 为布尔 → 用户值覆盖绑定 value；键缺失/值非布尔 → 回退 value
-//     （WE 语义：用户未切换时按壁纸默认值；返回恒为布尔）；
+//   user → 用户值覆盖绑定 value（condition 不匹配 → false；键缺失 → 回退 value）；
 //   script → 保持 value（脚本求值（含已知模式）超出本期范围，见任务 brief）。
 export function resolveVisibility(
   obj: { visible?: VisibleBinding | undefined },
@@ -83,14 +100,54 @@ export function resolveVisibility(
   switch (v.kind) {
     case 'plain':
       return v.value;
-    case 'user': {
-      const p = userProps[v.key ?? ''];
-      return typeof p === 'boolean' ? p : v.value;
-    }
+    case 'user':
+      return resolveUserVisibility(v, userProps);
     case 'script':
       return v.value;
     default:
       // 畸形 kind（运行时防御，解析器产出恒为上述三值）→ 默认可见，不误杀对象
       return true;
   }
+}
+
+// 属性级 condition 不满足 → 属性不可用，回退作者 value（spec §4.1；渲染器当前无 project.json）。
+function usableUserProps(
+  userProps: Record<string, unknown>,
+  defs: WallpaperUserProperty[] | undefined,
+): Record<string, unknown> {
+  if (!defs || defs.length === 0) return userProps;
+  let out = userProps;
+  for (const def of defs) {
+    if (!def.condition || propertyConditionMet(def.condition, userProps)) continue;
+    if (out === userProps) out = { ...userProps };
+    delete out[def.key];
+  }
+  return out;
+}
+
+// 对象有效可见性（装配期一次定论）：own && 父链继承（WE SceneNode 语义）。
+// 父缺失 → 只按自身；环 → 视为可见防死循环；script 绑定不静态剔除（沿用 isStaticallyHidden）。
+export function computeEffectiveVisibility(
+  objects: Array<{ id: number; parent?: number; visible?: VisibleBinding }>,
+  userProps: Record<string, unknown>,
+  defs?: WallpaperUserProperty[],
+): Map<number, boolean> {
+  const props = usableUserProps(userProps, defs);
+  const byId = new Map(objects.map((o) => [o.id, o]));
+  const cache = new Map<number, boolean>();
+  const visiting = new Set<number>();
+  const visit = (obj: { id: number; parent?: number; visible?: VisibleBinding }): boolean => {
+    const hit = cache.get(obj.id);
+    if (hit !== undefined) return hit;
+    if (visiting.has(obj.id)) return true;
+    visiting.add(obj.id);
+    const self = !isStaticallyHidden(obj.visible, props);
+    const parent = obj.parent === undefined ? undefined : byId.get(obj.parent);
+    const result = self && (parent ? visit(parent) : true);
+    visiting.delete(obj.id);
+    cache.set(obj.id, result);
+    return result;
+  };
+  for (const obj of objects) visit(obj);
+  return cache;
 }
