@@ -529,6 +529,13 @@ export function createThreeSceneRenderer(opts?: {
         // 用户属性表（visible 的 {user,key} 绑定）：三处过滤与 SceneScript 共用，故在对象循环之前建好。
         // 按壁纸 id 读覆盖值 ⇒ 不同壁纸的同名属性键互不串（旧全局键由 getUserPropertyValue 回退）。
         const userProps: Record<string, unknown> = {};
+        // 音频可视化（visualizer 脚本）对象：装配后由 player 代建 64 条 bar（脚本 init 的动态层）。
+        const visualizerSpecs: Array<{
+          origin: [number, number, number];
+          texture?: Texture;
+          props: Record<string, unknown>;
+          renderOrder: number;
+        }> = [];
         for (const obj of desc.objects) {
           if (obj.visible?.kind === 'user' && obj.visible.key) {
             userProps[obj.visible.key] = getUserPropertyValue(obj.visible.key, id);
@@ -542,6 +549,16 @@ export function createThreeSceneRenderer(opts?: {
             // model json 拉取。
             const { texture, puppetPath } = await resolveImageAssets(id, obj);
             if (texture) backgroundTextures.set(obj.id, texture);
+            // SceneScript 音频可视化（Simple Visualizer）：64 条 bar 由脚本 init 动态 createLayer 创建，
+            // three 路径由 player 代建并按音频频谱更新（bar 贴图 = 对象自身 image 的白色 4×4 纹理）。
+            if (obj.script && detectScriptPattern(obj.script) === 'visualizer') {
+              visualizerSpecs.push({
+                origin: obj.origin, texture: texture ?? undefined,
+                props: (obj.scriptProperties ?? {}) as Record<string, unknown>,
+                renderOrder: desc.objects.indexOf(obj),
+              });
+              continue;
+            }
             if (puppetPath) {
               // puppet：.mdl → 蒙皮网格（有骨骼段才是 SkinnedMesh，本机样本是静态族 → 普通 Mesh）。
               // 材质 = three 内建材质 + 普通 alpha（WE 的 colorBlendMode 自定义混合不复刻）。
@@ -870,6 +887,8 @@ export function createThreeSceneRenderer(opts?: {
             // 音频频谱：本帧渲染前刷新一次；runner 读同一缓冲（无音频 → null）。
             currentAudio?.analyzer.update();
             currentStage?.setAudioSpectrum(currentAudio?.analyzer.freqData ?? null);
+            // 音频可视化条（visualizer）：与频谱同步刷新高度（无音频 → null → 归零）。
+            current?.player.updateVisualizerBars?.(currentAudio?.analyzer.freqData ?? null);
             // util 快照槽门控：把 player 最近一次段边界快照同步给编排器（`_rt_FullFrameBuffer` 兜底）。
             currentStage?.setFrameSnapshot(current?.player.currentFrameSnapshot?.() ?? null);
             const host = currentScriptHost;
@@ -908,6 +927,24 @@ export function createThreeSceneRenderer(opts?: {
           height: vh,
         });
         current = result;
+        // 音频可视化条（visualizer）：代建 64 条 bar（无音频时高度 0，不可见）。
+        for (const spec of visualizerSpecs) {
+          const num = (v: unknown, def: number) => (typeof v === 'number' && isFinite(v) ? v : def);
+          result.player.setVisualizerBars({
+            origin: spec.origin,
+            barSize: [
+              (spec.texture?.image?.width as number | undefined) ?? 4,
+              (spec.texture?.image?.height as number | undefined) ?? 4,
+            ],
+            texture: spec.texture,
+            barWidth: num(spec.props.barWidth, 0.83),
+            scaleY: num(spec.props.scaleY, 23.89),
+            originX: num(spec.props.originX, 12.67),
+            sceneW: desc.orthogonal.width,
+            sceneH: desc.orthogonal.height,
+            renderOrder: spec.renderOrder,
+          });
+        }
         // 把帧内快照 capture 注入本播放器（无消费者时 active=false ⇒ 走现状路径，零回归）。
         // renderer 身份变了（换 canvas/上下文）⇒ 旧实例绑的是旧 renderer，释放后按新 renderer 重建。
         const captureRenderer = result.player.renderer;

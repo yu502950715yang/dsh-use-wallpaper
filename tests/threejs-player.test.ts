@@ -82,6 +82,34 @@ function makePlayer(w = 1920, h = 1080, mock = createMockRenderer()) {
 // 取 hex 必须显式指定该色彩空间，否则 getHexString 会按 sRGB 编码回写（17 → 0x49），与真实像素不符。
 const rawHex = (c: THREE.Color): string => c.getHexString(THREE.LinearSRGBColorSpace);
 
+// SceneScript 音频可视化（visualizer）：脚本 init 动态 createLayer 的 64 条 bar 由 player 代建，
+// 每帧按音频频谱更新高度（bottom 对齐，无音频归零）。
+describe('visualizer 音频条', () => {
+  it('setVisualizerBars 建 count 条并按 freqData 更新高度/位置', () => {
+    const { player } = makePlayer(3840, 2160);
+    const ids = player.setVisualizerBars({
+      origin: [113.7435, 83.14454, 0], barSize: [4, 4], barWidth: 0.83,
+      scaleY: 23.89, originX: 12.67, sceneW: 3840, sceneH: 2160, renderOrder: 60, count: 4,
+    });
+    expect(ids).toHaveLength(4);
+    // displayObject 只登记 scene 对象 id（bars 无 objectId）⇒ 用 scene.children 顺序取。
+    const bars = player.scene.children as THREE.Mesh[];
+    expect(bars).toHaveLength(4);
+    // 初始高度 0（无音频不可见）
+    expect(bars[0].scale.y).toBe(0);
+    expect(bars[0].scale.x).toBeCloseTo(0.83, 6);
+    const freq = new Uint8Array(64);
+    freq[0] = 255; freq[1] = 128;
+    player.updateVisualizerBars(freq);
+    expect(bars[0].scale.y).toBeCloseTo(23.89, 3); // 255/255 × scaleY
+    expect(bars[1].scale.y).toBeCloseTo((128 / 255) * 23.89, 3);
+    // bottom 对齐：中心 y = baseY + h/2（baseY = origin.y − sceneH/2）
+    expect(bars[0].position.y).toBeCloseTo(83.14454 - 1080 + (4 * 23.89) / 2, 3);
+    player.updateVisualizerBars(null);
+    expect(bars[0].scale.y).toBe(0);
+  });
+});
+
 describe('ThreeScenePlayer 清屏色（F15）', () => {
   const CLEAR: [number, number, number] = [17, 20, 24];
 

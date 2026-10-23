@@ -24358,6 +24358,8 @@ var ThreeScenePlayer = class {
   utilContents = /* @__PURE__ */ new Map();
   // 最近一次段边界拍下的整帧快照（渲染器每帧同步给 ObjectEffectStage 的快照槽门控）。
   lastFrameSnapshot = null;
+  // SceneScript 音频可视化（visualizer）：脚本 init 动态 createLayer 的 64 条 bar 由 player 代建/逐帧更新。
+  visualizerBars = [];
   objectEffectStage = null;
   // 应用级 Glow 注入点（null = 本壁纸不开 Glow，帧序退化为原路径）。
   glowStage = null;
@@ -24998,6 +25000,45 @@ var ThreeScenePlayer = class {
     const mat = entry.quad.material;
     if (mat instanceof ShaderMaterial) mat.uniforms.map.value = texture;
     else if (mat instanceof MeshBasicMaterial) mat.map = texture;
+  }
+  // 音频可视化条（visualizer 脚本，如 2937346640 Simple Visualizer）：按脚本语义代建 count 条 bar
+  //（宽 = barWidth × 图宽、高 = average × scaleY × 图高，底部对齐），返回背景 id 列表。
+  setVisualizerBars(opts) {
+    const count = opts.count ?? 64;
+    const ids = [];
+    this.visualizerBars = [];
+    for (let i = 0; i < count; i++) {
+      const id = this.addBackground({
+        origin: [opts.origin[0] + i * opts.originX, opts.origin[1], opts.origin[2]],
+        size: [opts.barSize[0], opts.barSize[1]],
+        // 初始高度 0（无音频时不可见）；宽度按脚本 barWidth。
+        scale: [opts.barWidth, 0, 1],
+        texture: opts.texture,
+        sceneW: opts.sceneW,
+        sceneH: opts.sceneH,
+        renderOrder: (opts.renderOrder ?? 0) + i + 1
+      });
+      ids.push(id);
+      this.visualizerBars.push({
+        id,
+        baseY: opts.origin[1] - opts.sceneH / 2,
+        barSizeH: opts.barSize[1],
+        scaleY: opts.scaleY
+      });
+    }
+    return ids;
+  }
+  /** 每帧更新可视化条高度：freqData = 64 bin 频谱（0-255）；null = 无音频 → 全部归零。 */
+  updateVisualizerBars(freqData) {
+    for (let i = 0; i < this.visualizerBars.length; i++) {
+      const bar = this.visualizerBars[i];
+      const entry = this.backgroundEntries.get(bar.id);
+      if (!entry) continue;
+      const bin = freqData && i < freqData.length ? freqData[i] / 255 : 0;
+      const h = bar.barSizeH * Math.max(0, Math.min(1, bin)) * bar.scaleY;
+      entry.mesh.scale.y = h / bar.barSizeH;
+      entry.mesh.position.y = bar.baseY + h / 2;
+    }
   }
   // util 层内容 = 整帧快照（T3）：真实 util 链读 `bind: previous`（层内容），快照必须成为内容（solid 保留纯色）。
   // `opts.cover` = 快照在内容 mesh UV 空间的落点；UV 变换落在内容几何上（快照纹理共享，不能改 repeat/offset）。
@@ -32144,6 +32185,7 @@ function createThreeSceneRenderer(opts) {
         const puppetMeshes = /* @__PURE__ */ new Map();
         const particles = /* @__PURE__ */ new Map();
         const userProps = {};
+        const visualizerSpecs = [];
         for (const obj of desc.objects) {
           if (obj.visible?.kind === "user" && obj.visible.key) {
             userProps[obj.visible.key] = getUserPropertyValue(obj.visible.key, id);
@@ -32154,6 +32196,15 @@ function createThreeSceneRenderer(opts) {
           if (obj.kind === "image") {
             const { texture, puppetPath } = await resolveImageAssets(id, obj);
             if (texture) backgroundTextures.set(obj.id, texture);
+            if (obj.script && detectScriptPattern(obj.script) === "visualizer") {
+              visualizerSpecs.push({
+                origin: obj.origin,
+                texture: texture ?? void 0,
+                props: obj.scriptProperties ?? {},
+                renderOrder: desc.objects.indexOf(obj)
+              });
+              continue;
+            }
             if (puppetPath) {
               try {
                 const bytes = await fetchMdlBytes(id, puppetPath);
@@ -32415,6 +32466,7 @@ function createThreeSceneRenderer(opts) {
           onFrame: (dt) => {
             currentAudio?.analyzer.update();
             currentStage?.setAudioSpectrum(currentAudio?.analyzer.freqData ?? null);
+            current?.player.updateVisualizerBars?.(currentAudio?.analyzer.freqData ?? null);
             currentStage?.setFrameSnapshot(current?.player.currentFrameSnapshot?.() ?? null);
             const host = currentScriptHost;
             const loaded = current;
@@ -32446,6 +32498,23 @@ function createThreeSceneRenderer(opts) {
           height: vh
         });
         current = result;
+        for (const spec of visualizerSpecs) {
+          const num2 = (v, def) => typeof v === "number" && isFinite(v) ? v : def;
+          result.player.setVisualizerBars({
+            origin: spec.origin,
+            barSize: [
+              spec.texture?.image?.width ?? 4,
+              spec.texture?.image?.height ?? 4
+            ],
+            texture: spec.texture,
+            barWidth: num2(spec.props.barWidth, 0.83),
+            scaleY: num2(spec.props.scaleY, 23.89),
+            originX: num2(spec.props.originX, 12.67),
+            sceneW: desc.orthogonal.width,
+            sceneH: desc.orthogonal.height,
+            renderOrder: spec.renderOrder
+          });
+        }
         const captureRenderer = result.player.renderer;
         if (frameCapture && frameCaptureRenderer !== captureRenderer) {
           frameCapture.dispose();

@@ -101,6 +101,7 @@ export declare class ThreeScenePlayer {
     private isolated;
     private readonly utilContents;
     private lastFrameSnapshot;
+    private visualizerBars;
     private objectEffectStage;
     private glowStage;
     private bloomStage;
@@ -193,6 +194,20 @@ export declare class ThreeScenePlayer {
     displayObject(objectId: number): THREE.Object3D | undefined;
     isolatedObjects(): IsolatedObject[];
     setObjectOutput(id: number, texture: THREE.Texture): void;
+    setVisualizerBars(opts: {
+        origin: [number, number, number];
+        barSize: [number, number];
+        texture?: THREE.Texture;
+        barWidth: number;
+        scaleY: number;
+        originX: number;
+        sceneW: number;
+        sceneH: number;
+        renderOrder?: number;
+        count?: number;
+    }): number[];
+    /** 每帧更新可视化条高度：freqData = 64 bin 频谱（0-255）；null = 无音频 → 全部归零。 */
+    updateVisualizerBars(freqData: Uint8Array | null): void;
     setUtilContentTexture(objectId: number, texture: THREE.Texture, opts?: {
         cover?: UtilContentCover;
     }): void;
