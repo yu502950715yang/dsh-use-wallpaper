@@ -1745,7 +1745,11 @@ export class ThreeScenePlayer {
     const geometry = new THREE.PlaneGeometry(w, h);
     // 内容材质调制：image 的 color tint × brightness 与 alpha 一次烘进（隔离路径同样烘进 RT；
     // 合成 quad 保持中性，见 createCompositeQuadMaterial）。
-    const mod = materialModulation(opts.color, opts.alpha, opts.brightness);
+    // colorBlendMode ≠ 0：WE 的追加混合 pass 以**对象内容原色**为 B（桌面实测 2832263418 的 bars 取
+    // Rainboww 彩虹而非对象 color 蓝调）⇒ 不做 color tint，避免内容被对象色污染。
+    const mod = materialModulation(
+      opts.colorBlendMode ? undefined : opts.color, opts.alpha, opts.brightness,
+    );
     // ⚠️ 隔离对象（opts.isolate）走 forIsolation=true：内容材质**不套** cb，混合语义全部交给
     // 合成 quad（见 createLayerMaterial / createCompositeQuadMaterial 注释）。
     const material = opts.util

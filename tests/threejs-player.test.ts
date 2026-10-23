@@ -1788,6 +1788,30 @@ describe('ThreeScenePlayer loadSceneToThree', () => {
     expect((meshes[3].material as THREE.ShaderMaterial).blendEquation).toBe(THREE.MaxEquation);
   });
 
+  it('colorBlendMode ≠ 0：内容材质不做对象 color tint（B = 内容原色）', () => {
+    const canvas = document.createElement('canvas');
+    const scene = JSON.stringify({
+      general: { orthogonalprojection: { height: 1080, width: 1920 } },
+      objects: [
+        { id: 11, image: 'models/a.json', origin: '960 540 0', size: '1920 1080', color: '0 0.45882 1', colorBlendMode: 6 },
+        { id: 12, image: 'models/b.json', origin: '960 540 0', size: '1920 1080', color: '0 0.45882 1' },
+      ],
+    });
+    const tex = () => new THREE.DataTexture(new Uint8Array(4), 2, 2);
+    const result = loadSceneToThree(
+      scene,
+      { renderer: createMockRenderer() as unknown as THREE.WebGLRenderer, backgroundTextures: new Map([[11, tex()], [12, tex()]]) },
+      canvas,
+    );
+    // 11：colorBlendMode=6 → 追加混合 pass 的 B 用内容原色 ⇒ tint 白
+    const tintA = (result.player.displayObject(11) as THREE.Mesh).material as THREE.ShaderMaterial;
+    const tint = tintA.uniforms.tint.value as THREE.Vector3;
+    expect([tint.x, tint.y, tint.z]).toEqual([1, 1, 1]);
+    // 12：无 colorBlendMode → F13 color tint 照常生效（g = 0.45882 = 117/255，未乘 colorBlendMode 修正）
+    const tintB = (result.player.displayObject(12) as THREE.Mesh).material as THREE.MeshBasicMaterial;
+    expect(tintB.color.g).toBeCloseTo(0.45882, 3);
+  });
+
   it('未实现的 colorBlendMode → 回退普通 alpha 混合（不静默画错）', () => {
     const canvas = document.createElement('canvas');
     const scene = JSON.stringify({

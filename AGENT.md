@@ -277,3 +277,4 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
 | git 历史（`AGENT.md` 的上一个版本） | 精简前含 §1–§4 / §6 旧措辞的完整文档 |
 
 归档文件只作查阅：**新的结论、边界与遗留写回本文件的 §5 / §7**，不要往归档文件里追加。
+    - ⑯ **多彩音频条对齐（v0.8.2 修复）**：2832263418 的 `Simple_Audio_Bars` 在桌面 WE 显示内容色（Rainboww 彩虹），实测由两点共同决定：① `colorBlendMode ≠ 0` 的对象**不做 color tint**（追加混合 pass 的 B = 内容原色，`threejs-player.ts` addBackground）；② 该效果 `BLENDMODE=0`（Normal，官方 fallback 输出 BarColor=白）按桌面实测映射为 `min(A,B)`（内容色，`shader/effect-chain.ts`）。影响面：全库仅 4 个 `colorBlendMode≠0` 对象（其中 2 个 color 缺省白）与 1 个 Simple_Audio_Bars 效果；2911105183 的 music bar 同效果。桌面截图证据：bars 左紫→右红 = Rainboww 内容色。

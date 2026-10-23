@@ -25156,7 +25156,11 @@ var ThreeScenePlayer = class {
     const w = size?.[0] ?? fallbackW;
     const h = size?.[1] ?? fallbackH;
     const geometry = new PlaneGeometry(w, h);
-    const mod = materialModulation(opts.color, opts.alpha, opts.brightness);
+    const mod = materialModulation(
+      opts.colorBlendMode ? void 0 : opts.color,
+      opts.alpha,
+      opts.brightness
+    );
     const material = opts.util ? this.createUtilLayerMaterial(
       resolveUtilMaterial(opts.util, { color: opts.color, alpha: opts.alpha }),
       !!opts.isolate,
@@ -29838,6 +29842,9 @@ async function resolveEffectChain(sceneEffect, loadFile) {
       const combos = { ...derived, ...override.combos ?? {} };
       for (const raw of [rawVert, rawFrag]) {
         for (const [k, v] of extractComboDefaults(raw)) if (!(k in combos)) combos[k] = v;
+      }
+      if (shaderName === "workshop/2084198056/effects/Simple_Audio_Bars" && (combos.BLENDMODE ?? 0) === 0) {
+        combos.BLENDMODE = 5;
       }
       const varying = reconcileVaryingDeclarations(rawVert, rawFrag);
       for (const w of varying.warnings) console.warn(`[wallpaper-engine] ${w}`);

@@ -83,4 +83,25 @@ describe('resolveEffectChain', () => {
     const load = async (name: string) => fxFiles.get(name) ?? null;
     expect(await resolveEffectChain({ file: 'effects/composeonly/effect.json' }, load)).toBeNull();
   });
+  it('Simple_Audio_Bars 的 BLENDMODE=0 修正为内容色（桌面实测）', async () => {
+    const fxFiles = new Map<string, Uint8Array>(files);
+    fxFiles.set('effects/workshop/2084198056/Simple_Audio_Bars/effect.json', encoder.encode(JSON.stringify({
+      passes: [{ material: 'materials/workshop/2084198056/effects/Simple_Audio_Bars.json' }],
+    })));
+    fxFiles.set('materials/workshop/2084198056/effects/Simple_Audio_Bars.json', encoder.encode(JSON.stringify({
+      passes: [{ shader: 'workshop/2084198056/effects/Simple_Audio_Bars', blending: 'normal' }],
+    })));
+    fxFiles.set('shaders/workshop/2084198056/effects/Simple_Audio_Bars.vert', encoder.encode('void main() { gl_Position = vec4(a_Position, 1.0); }'));
+    fxFiles.set('shaders/workshop/2084198056/effects/Simple_Audio_Bars.frag', encoder.encode([
+      '// [COMBO] {"material":"ui_editor_properties_blend_mode","combo":"BLENDMODE","type":"imageblending","default":0}',
+      'uniform float u_BarColor;',
+      'void main() { gl_FragColor = vec4(1.0); }',
+    ].join('\n')));
+    const load = async (name: string) => fxFiles.get(name) ?? null;
+    const chain = await resolveEffectChain({
+      file: 'effects/workshop/2084198056/Simple_Audio_Bars/effect.json',
+    }, load);
+    expect(chain).not.toBeNull();
+    expect(chain![0].combos.BLENDMODE).toBe(5);
+  });
 });
