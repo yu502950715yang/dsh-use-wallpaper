@@ -14,6 +14,8 @@ import { coverRange, createCompositeGeometry, screenScalePx } from '../src/clien
 import { createFrameCapture } from '../src/client/frame-capture.js';
 import { createGlowStage } from '../src/client/glow-stage.js';
 import type { PuppetInstance } from '../src/client/puppet.js';
+import { parseSceneJson } from '../src/client/scene-json.js';
+import { computeEffectiveVisibility } from '../src/client/visibility.js';
 
 // 注入的 mock renderer：只测相机/场景/RAF 逻辑，不触碰 WebGL。
 // Task 3 起还承载段渲染契约：autoClear 可读写、清屏参数可读、段边界 copyFramebufferToTexture 可观测。
@@ -1645,6 +1647,65 @@ describe('ThreeScenePlayer loadSceneToThree', () => {
     expect(result.backgroundIds).toHaveLength(1);
     expect(result.player.scene.children).toHaveLength(1);
     expect(result.player.displayObject(115)).toBeUndefined();
+  });
+
+  // Task 3 修复：renderer 装配期算好的 effective 可见性（对象形态 condition + 父链）随 SceneAssets
+  // 下发，绘制链路必须优先用它；空 userProps 的旧判定会把 condition/父链结果覆盖掉。
+  describe('effectiveVisible（condition + 父链）', () => {
+    const tex = () => new THREE.DataTexture(new Uint8Array(4), 2, 2);
+    const leonScene = JSON.stringify({
+      general: { orthogonalprojection: { height: 1080, width: 1920 } },
+      objects: [
+        { id: 192, text: { value: 'A' }, origin: '960 540 0', scale: '1 1 1',
+          visible: { user: { name: 'clock', condition: '1' }, value: true } },
+        { id: 227, text: { value: 'B' }, origin: '960 540 0', scale: '1 1 1',
+          visible: { user: { name: 'clock', condition: '2' }, value: false } },
+      ],
+    });
+    const effectiveAt = (clock: string) =>
+      computeEffectiveVisibility(parseSceneJson(leonScene).objects, { clock });
+
+    it('clock=2：condition 命中的 227 建文本层（旧判定会按作者 value:false 丢弃）', () => {
+      const result = loadSceneToThree(leonScene, {
+        renderer: createMockRenderer() as unknown as THREE.WebGLRenderer,
+        // renderer 在 clock=2 的装载结果：只给 227 建了文本层。
+        textLayers: new Map([[227, { texture: tex(), size: [100, 50] as [number, number] }]]),
+        effectiveVisible: effectiveAt('2'),
+      }, document.createElement('canvas'));
+      expect(result.player.displayObject(227)).toBeDefined();
+      expect(result.backgroundIds).toHaveLength(1);
+    });
+
+    it('clock=1：condition 不命中的 227 不建层（只建 192）', () => {
+      const result = loadSceneToThree(leonScene, {
+        renderer: createMockRenderer() as unknown as THREE.WebGLRenderer,
+        textLayers: new Map([[192, { texture: tex(), size: [100, 50] as [number, number] }]]),
+        effectiveVisible: effectiveAt('1'),
+      }, document.createElement('canvas'));
+      expect(result.player.displayObject(192)).toBeDefined();
+      expect(result.player.displayObject(227)).toBeUndefined();
+      expect(result.backgroundIds).toHaveLength(1);
+    });
+
+    // 对照既有「visible:false 不建无纹理白色 quad」用例：父链继承隐藏同样必须在绘制链路生效。
+    it('父链隐藏的 image 不建无纹理 quad（不产生白色全屏层）', () => {
+      const scene = JSON.stringify({
+        general: { orthogonalprojection: { height: 1080, width: 1920 } },
+        objects: [
+          { id: 20, text: { value: 'P' }, origin: '960 540 0', scale: '1 1 1', size: '400 100',
+            visible: { user: { name: 'clock', condition: '1' }, value: true } },
+          { id: 21, parent: 20, image: 'models/a.json', origin: '960 540 0', scale: '1 1 1', size: '100 100' },
+          { id: 22, parent: 20, image: 'models/b.json', origin: '960 540 0', scale: '1 1 1', size: '100 100' },
+        ],
+      });
+      const result = loadSceneToThree(scene, {
+        renderer: createMockRenderer() as unknown as THREE.WebGLRenderer,
+        // 装载期已按 effective 跳过隐藏父链 ⇒ 纹理表为空（旧链路会给 21/22 建无 map 的白 quad）。
+        effectiveVisible: computeEffectiveVisibility(parseSceneJson(scene).objects, { clock: '2' }),
+      }, document.createElement('canvas'));
+      expect(result.backgroundIds).toHaveLength(0);
+      expect(result.player.scene.children).toHaveLength(0);
+    });
   });
 
   // renderOrder 唯一化：装配循环把 objects 数组下标作为 renderOrder 透传（WE 的绘制序 =

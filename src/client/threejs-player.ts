@@ -2714,6 +2714,9 @@ export interface SceneAssets {
   // 由调用方折叠后下发；缺省逐字段回退对象自身局部值（行为不变）。
   // ⚠️ 必须由调用方下发：本函数按 sceneJson 文本重新 parseSceneJson，拿不到调用方对 desc 的覆写。
   worldTransforms?: Map<number, { origin: [number, number, number]; scale: [number, number, number]; angles: [number, number, number] }>;
+  // 装配期有效可见性（对象 id → 是否可见；含用户属性 condition 与父链继承）：由调用方按同一份
+  // userProps 计算后下发。本函数会重新 parse sceneJson 且不知道用户属性，缺省回退旧的空表静态判定。
+  effectiveVisible?: Map<number, boolean>;
   // 渲染像素比档位（<1 降分辨率省显存/提流畅；缺省 1）。调用方算屏幕密度时必须用同一个数。
   qualityScale?: number;
   // text 对象图层（对象 id → 纹理 + 可选时钟/脚本驱动）：与 image 同路径渲染为背景 quad；调用方负责
@@ -2852,9 +2855,14 @@ export function loadSceneToThree(
 
   // renderOrder = objects 数组下标（每对象唯一）：对齐 WE 的绘制序 `m_objectsByRenderOrder`
   // （lwe CScene.cpp:94-101/262-295）；`continue` 分支不改变数组下标。
+  // 静态隐藏对象（visible:false / 用户属性关 / condition / 父链继承）WE 不渲染：优先用装配期
+  // effective 表；旧调用方无该表时回退空 userProps 的旧判定（纹理已被装载过滤，建 quad 会成白色层）。
+  const effectiveVisible = assets.effectiveVisible;
   for (const [renderOrder, obj] of desc.objects.entries()) {
-    // 静态隐藏对象（visible:false / 用户属性关）WE 不渲染；其纹理已被装载期过滤，建 quad 会成白色全屏层。
-    if (isStaticallyHidden(obj.visible, {})) continue;
+    const hidden = effectiveVisible
+      ? effectiveVisible.get(obj.id) === false
+      : isStaticallyHidden(obj.visible, {});
+    if (hidden) continue;
     if (obj.kind === 'image') {
       const t = world(obj);
       // puppet 对象：几何/骨骼/材质已由调用方按 `.mdl` 建好 ⇒ 不走 addBackground 的 quad 路径

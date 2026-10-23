@@ -2016,6 +2016,49 @@ describe('three-renderer text 对象', () => {
     r.dispose();
   });
 
+  // Task 3 修复：装配期 effective 可见性（对象形态 condition + 父链继承）必须随 SceneAssets 下发，
+  // 否则 player 会拿空 userProps 二次重判，覆盖掉 condition/父链结果。
+  it('对象形态 condition + 父链 → effectiveVisible 下发，textLayers/纹理按同一份结果过滤', async () => {
+    stubAssetFetch(JSON.stringify({
+      general: { orthogonalprojection: { width: 1920, height: 1080 } },
+      objects: [
+        { id: 192, origin: '960 540 0', scale: '1 1 1', size: '400 100', text: { value: 'A' },
+          visible: { user: { name: 'clock', condition: '1' }, value: true } },
+        { id: 199, parent: 192, image: 'models/a.json', origin: '960 540 0', scale: '1 1 1', size: '100 100' },
+        { id: 227, origin: '960 540 0', scale: '1 1 1', size: '400 100', text: { value: 'B' },
+          visible: { user: { name: 'clock', condition: '2' }, value: false } },
+        { id: 234, parent: 227, image: 'models/b.json', origin: '960 540 0', scale: '1 1 1', size: '100 100' },
+      ],
+    }), {});
+    stubTextRender();
+    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null });
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+
+    localStorage.setItem('we:userprop:clock', '"2"');
+    await r.render('3812518176', document.createElement('canvas'), null);
+    let assets = loadSceneToThree.mock.calls[0][1] as {
+      effectiveVisible?: Map<number, boolean>;
+      textLayers: Map<number, unknown>;
+      backgroundTextures: Map<number, unknown>;
+    };
+    // 227 的 condition 命中（作者 value:false 不影响）；192 分支及其子 199 沿父链隐藏。
+    expect(assets.effectiveVisible?.get(192)).toBe(false);
+    expect(assets.effectiveVisible?.get(199)).toBe(false);
+    expect(assets.effectiveVisible?.get(227)).toBe(true);
+    expect(assets.effectiveVisible?.get(234)).toBe(true);
+    expect([...assets.textLayers.keys()]).toEqual([227]);
+    expect([...assets.backgroundTextures.keys()]).toEqual([234]);
+
+    localStorage.setItem('we:userprop:clock', '"1"');
+    await r.render('3812518176', document.createElement('canvas'), null);
+    assets = loadSceneToThree.mock.calls[1][1] as typeof assets;
+    expect([...assets.textLayers.keys()]).toEqual([192]);
+    expect([...assets.backgroundTextures.keys()]).toEqual([199]);
+
+    localStorage.clear();
+    r.dispose();
+  });
+
   // 字体加载（2026-10-10）：`systemfont_<family>` 是 WE 的**宿主系统字体别名**，永远不会在 pkg /
   // 引擎 assets 目录里，且必须按 basename 判 —— scene.json 里存在 `fonts/systemfont_arial` 这种
   // 带目录前缀的写法（OWE SceneTextObjectParser.cpp:290-292 同判据）。此前它被当成字体文件路径 ⇒

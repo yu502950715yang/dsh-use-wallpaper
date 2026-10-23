@@ -900,6 +900,8 @@ export function createThreeSceneRenderer(opts?: {
         // 由 player.resize(vw,vh) 使 cover 相机按窗口宽高比裁剪（窗口比例 ≠ 场景比例时是裁切而非拉伸）。
         const assets: SceneAssets = {
           backgroundTextures, particles, createParticleSim, isolate, textLayers, qualityScale, worldTransforms,
+          // 绘制链路与装配期共用同一份有效可见性（含 condition/父链），player 不再用空 userProps 重判。
+          effectiveVisible,
           puppetMeshes,
           // SceneScript 帧钩子：脚本状态是本帧渲染的权威来源，先 tick → 应用脏写入，
           // 再走原有的粒子/文本更新与 render。host 未就绪（quickjs 加载中/失败）时直接返回。
