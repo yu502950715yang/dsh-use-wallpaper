@@ -30,15 +30,22 @@ export interface WallpaperInfo {
 
 export interface PkgEntry { name: string; offset: number; size: number; }
 
-// v0.8 壁纸用户属性（仅布尔可见性）：project.json 的 bool 属性 ∩ scene.json
-// objects[].visible.user 的键。面板据此渲染开关，值经 localStorage 覆盖后重装配。
-export interface WallpaperUserProperty {
+// 壁纸用户属性（v0.9 四类型）：project.json general.properties ∩ scene 中被 {user} 引用的键。
+// usedBy = scene 引用路径归类；condition = 属性级启用表达式（见 client/user-bindings.ts）。
+export type UserPropertyValue = boolean | number | string;
+export interface UserBindingRef { name: string; condition?: string; }
+interface UserPropertyBase {
   key: string;
   label: string;
-  type: 'bool';
-  value: boolean;
   order: number;
+  usedBy: string[];
+  condition?: string;
 }
+export type WallpaperUserProperty =
+  | (UserPropertyBase & { type: 'bool'; value: boolean })
+  | (UserPropertyBase & { type: 'slider'; value: number; min: number; max: number; step?: number; precision?: number; fraction?: boolean })
+  | (UserPropertyBase & { type: 'color'; value: string })
+  | (UserPropertyBase & { type: 'combo'; value: string; options: Array<{ label: string; value: string }> });
 
 // WE 对象可见性绑定（T4.2）：scene.json 的 visible 字段三种形态归一化——
 //   true / false           → { kind:'plain', value }（静态开关）
