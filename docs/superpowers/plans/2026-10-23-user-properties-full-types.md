@@ -330,7 +330,7 @@ git commit -m "feat(userprops): host 聚合四类型属性并标注引用路径"
 ### Task 3: 可见性（对象形态 + condition + 父链继承）
 
 **Files:**
-- Modify: `src/client/visibility.ts`、`src/client/three-renderer.ts:528-546`（userProps 构建与过滤）
+- Modify: `src/client/visibility.ts`、`src/client/three-renderer.ts:528-546`（userProps 构建与过滤）、`src/shared/types.ts:50-56`（`VisibleBinding` 增加 `condition?: string`）
 - Test: `tests/visibility.test.ts`
 
 **Interfaces:**
