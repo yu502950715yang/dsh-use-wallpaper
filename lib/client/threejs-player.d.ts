@@ -351,6 +351,7 @@ export interface SceneAssets {
         scale: [number, number, number];
         angles: [number, number, number];
     }>;
+    effectiveVisible?: Map<number, boolean>;
     qualityScale?: number;
     textLayers?: Map<number, {
         texture: THREE.Texture;

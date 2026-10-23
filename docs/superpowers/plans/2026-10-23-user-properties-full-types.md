@@ -504,7 +504,9 @@ git commit -m "feat(userprops): 解析保留 {user} 引用并在装配前统一 
 
 ---
 
-### Task 5: 效果 visible 与脚本全量属性注入
+### Task 5: 效果 visible 与脚本全量属性注入（实现已由 Task 3/4 完成，本任务只补接线测试）
+
+> 降级说明：effect visible 的绑定 resolve、`userProps` 全量构建、脚本注入全表都已在 Task 3/4 落地，本任务只补 `tests/three-renderer.test.ts` / `tests/scene-script-host.test.ts` 的接线用例；Step 2 的「Expected: FAIL」不再适用。
 
 **Files:**
 - Modify: `src/client/three-renderer.ts:151-176`、`:983-986`、`src/client/scene-script-host.ts`
@@ -642,7 +644,7 @@ it('按类型渲染控件：bool 复选框 / slider 滑杆 / color 取色 / comb
   ];
   // 断言存在 input[type=checkbox]/[type=range]/[type=color]/select 且 data-key 对应
 });
-it('slider 变更防抖后才触发重装配；color/combo 立即', async () => { /* fake timers + onReselect 断言 */ });
+it('slider/color 变更防抖后才触发重装配；bool/combo 立即', async () => { /* fake timers + onReselect 断言 */ });
 it('condition 不满足时控件禁用', async () => { /* 提供 audiobar=false + 属性 condition */ });
 ```
 
@@ -654,12 +656,14 @@ Expected: FAIL。
 - [ ] **Step 3: 实现**
 
 要点：
-1. 属性 section 渲染按 `type` 分支：bool（现有）、slider（range，value=本地 state，onInput 更新显示、`onPointerUp`/`onBlur` 300ms 防抖提交）、color（`input[type=color]`，`"r g b"`(0-1) ↔ `#rrggbb` 转换；提交前转回 `"r g b"`）、combo（select，options label/value）。
-2. 提交：`writeUserProperty(key, value, selectedId)` → `onReselect(selectedId)`；slider 防抖用 `useRef` 定时器，卸载时清理。
+1. 属性 section 渲染按 `type` 分支：bool（现有）、slider（range，value=本地 state，onChange 更新显示、300ms 防抖 + `onPointerUp`/`onBlur` 提交）、color（`input[type=color]`，`"r g b"`(0-1) ↔ `#rrggbb` 转换；提交前转回 `"r g b"`；**同样防抖 300ms / pointerup / blur 后提交一次**）、combo（select，options label/value，立即提交）。
+2. 提交：`writeUserProperty(key, value, selectedId)` → `onReselect(selectedId)`；slider 与 color 共用 `useRef` 防抖定时器（每键一个 + 待提交值），卸载/切壁纸时清理。
 3. condition：`propertyConditionMet(p.condition, currentValues)` 不满足时 `disabled` + `title` 提示。
 4. 每项右侧「恢复默认」按钮：`resetUserProperty` → `onReselect`。
 5. CSS 类沿用 `wss-row` / `wss-slider`，新增少量样式（`styles.ts` 字符串常量）。
 6. `settings-section.tsx:209-230` 的拉取已用 `WallpaperUserProperty[]`，类型自动收窄；初值 `propValues[key] ?? property.value` 按类型初始化。
+
+> 提交口径（2026-10-23 第 24 轮 ruling）：以 spec §6/§9 为准 —— **color 防抖 300ms / pointerup / blur 后提交一次；bool/combo 立即**。本任务初稿曾写「color 立即提交」，与 spec 冲突，已按 spec 修正（`src/client/settings-section.tsx` 的 `scheduleCommit` / `flushCommit`）。
 
 - [ ] **Step 4: 跑测试确认通过**
 

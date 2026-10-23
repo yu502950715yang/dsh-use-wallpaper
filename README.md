@@ -62,7 +62,7 @@
 | 🔁 | **自动轮播** | 收藏 ≥2 张时只轮播收藏，否则轮播全部非隐藏壁纸；1 / 5 / 10 / 30 分钟、顺序或随机；暂停联动、手动选择重置计时、本轮失败跳过 |
 | 🔎 | **壁纸库管理** | 标题搜索、类型筛选、仅收藏、隐藏 / 恢复、最近使用排序；收藏与隐藏只存本地，不改壁纸文件、不打断当前播放 |
 | 🎛️ | **显示效果面板** | 遮罩不透明度、背景模糊、Ken Burns、画面适配（裁剪铺满 / 完整显示 / 拉伸铺满）都在面板里直接调，改完立即生效 |
-| 🎚️ | **用户属性面板** | 壁纸自带的可切换属性（**目前只支持布尔可见性**；slider / color / combo 留 v0.9）在面板里直接开关，切换后自动重装配生效 |
+| 🎚️ | **用户属性面板** | 壁纸自带的属性（**bool / slider / color / combo** 可调，**只显示当前壁纸真正引用的属性**，不出现假控件）在面板里直接调；切换/调整后自动重装配生效，滑块与取色**防抖提交**（不逐帧重建） |
 | 🛡️ | **失败不砸界面** | scene 渲染失败走**多级降级链**（内嵌 MP4 → 抓帧 → 预览图）；video 解码失败 / 首帧超时回退预览图并提示。**web 壁纸目前没有失败回退**（跨源 iframe 探测不到子帧错误，失败会停在空白）；界面本身始终可用 |
 | ⚙️ | **开箱即用** | 自动探测 Steam 壁纸目录（注册表 + Steam 库配置 + 常见路径），也可手动填写；改设置立刻生效，不用重启 |
 | 🚫 | **不依赖运行时** | 不需要 Wallpaper Engine 在后台运行；所需的引擎内置素材在你本机读取，不随插件分发第三方素材 |
@@ -154,7 +154,7 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 - **轮播**：`rotationEnabled`、`rotationIntervalMs`、`rotationOrder`。
 - **文字可读性**：`textColorMode`、`textColor`、`textOutline`。
 
-`frameCacheEnabled` **没有面板控件**（默认 `true`；要改只能写 profile `config`）。壁纸库的**收藏 / 隐藏 / 最近使用**与布尔用户属性不是设置字段，只存 localStorage（见本节末尾）；**搜索 / 类型 / 排序是面板临时状态**，刷新即恢复默认。
+`frameCacheEnabled` **没有面板控件**（默认 `true`；要改只能写 profile `config`）。壁纸库的**收藏 / 隐藏 / 最近使用**与用户属性不是设置字段，只存 localStorage（见本节末尾）；**搜索 / 类型 / 排序是面板临时状态**，刷新即恢复默认。
 
 | 字段 | 默认 | 说明 |
 |---|---|---|
@@ -195,7 +195,7 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 > 
 > 说明：旧版兼容层是过渡性的。待 DSH 新版本稳定、本插件不再需要支持 ≤0.1.6 时，按 [迁移文档 §9「后续清理清单」](docs/superpowers/plans/2026-09-23-dsh-settings-compat-migration.md) 逐项移除（清单区分了可删的旧版专用代码、可简化的兼容技巧与**必须保留的 0.1.7 适配**）。
 
-> 💡 **设置字段与本地状态**：上表的都是**设置字段**，可写进 profile `cordis.patch.yml` 的 `config`；面板改动除用户属性（切换后重装配当前壁纸才生效）外都**立即生效**。其中 `fitMode` / Ken Burns 只对图片 / 视频壁纸生效（scene 由渲染器自绘；Ken Burns 仅图片）。壁纸库的**收藏 / 隐藏 / 最近使用**（`we:fav` / `we:hidden` / `we:recent`）与**布尔用户属性**（`we:userprop:<wallpaperId>:<key>`）是浏览器侧 UI 状态，**只存 localStorage**，不能写进 profile config，也不跨浏览器 / 端口同步。
+> 💡 **设置字段与本地状态**：上表的都是**设置字段**，可写进 profile `cordis.patch.yml` 的 `config`；面板改动除用户属性（提交后重装配当前壁纸才生效）外都**立即生效**。其中 `fitMode` / Ken Burns 只对图片 / 视频壁纸生效（scene 由渲染器自绘；Ken Burns 仅图片）。壁纸库的**收藏 / 隐藏 / 最近使用**（`we:fav` / `we:hidden` / `we:recent`）与**用户属性**（`we:userprop:<wallpaperId>:<key>`）是浏览器侧 UI 状态，**只存 localStorage**，不能写进 profile config，也不跨浏览器 / 端口同步。
 > 
 > ⚠️ 光晕默认值 `0.65` / `0.35` 是 **2026-09-21 由用户在真机面板上试出来的**（先按「亮部不过曝」把强度从 `1.0` 下调，阈值保持 `0.65` 以保留光晕感；6 张壁纸的参数网格数据见 `AGENT.md` §7.1）。它只保证「亮部不过曝 + 光晕仍可感」，**不是**与桌面 WE 逐像素对齐的结果 —— 你觉得还要更亮/更暗，面板两个滑杆可即时微调。
 
@@ -298,7 +298,7 @@ scene 壁纸是实时算出来的，素材写法又千差万别，所以渲染�
 src/host/     Node 侧（Cordis 插件）：扫描壁纸目录、解包 PKGV0001、HTTP 路由、Steam 路径探测、settings
               ├─ data-dir / scene-frame-store  插件数据目录与抓帧 PNG 存储（原子写 + 限额淘汰）
               ├─ scene-media-probe             从 .tex 头探测内嵌 MP4（video-probe / embedded-video）
-              └─ user-props                    project.json × scene.json 的布尔属性交集
+              └─ user-props                    project.json × scene.json 的四类型用户属性聚合（只返回被引用的键）
 src/client/   浏览器侧（esbuild → dist/client.js），渲染主路径在这里
               ├─ threejs-player.ts    three.js 播放器（背景 Mesh + 粒子 billboard）
               ├─ three-renderer.ts    生产接线（loadSceneToThree + resize/dpr + 材质混合解析）
@@ -308,7 +308,7 @@ src/client/   浏览器侧（esbuild → dist/client.js），渲染主路径在�
               ├─ scene-json / scene-assets / scene-graph / visibility  场景解析与几何
               ├─ scene-fallback / frame-export  scene 降级链（内嵌 MP4 → 抓帧 → 预览）与首帧 PNG 导出
               ├─ rotation / library-view / local-store  轮播调度、库筛选/收藏/隐藏、localStorage 封装
-              ├─ wallpaper-properties / media-health  布尔用户属性面板、视频解码失败提示
+              ├─ wallpaper-properties / media-health  用户属性读写、视频解码失败提示
               ├─ wasm-loader.ts       wasm 引擎加载（只服务 CPU 粒子模拟）
               └─ index / wallpaper-controller / background-layer / settings / styles  引导、控制、背景层、设置
 src/shared/   跨 host/client 类型（WallpaperInfo、SceneDescription、SceneObject 等）

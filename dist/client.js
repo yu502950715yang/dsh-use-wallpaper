@@ -2478,16 +2478,28 @@ body[data-ds-dark-theme] .wss-hero{background:linear-gradient(135deg,rgba(96,165
 .wss-slider input[type=range]::-moz-range-thumb{width:12px;height:12px;border-radius:50%;background:var(--wp-accent);border:2px solid #fff}
 .wss-slider input[type=range]:focus-visible{outline:2px solid var(--wp-accent);outline-offset:2px}
 /* \u4E0B\u62C9 / \u6587\u672C\u8F93\u5165\uFF1A\u7EDF\u4E00 32px \u9AD8\u4E0E\u81EA\u5B9A\u4E49\u7BAD\u5934 */
-.wss-quality,.wss-fit-mode,.wss-type-filter,.wss-sort,.wss-rotation-interval,.wss-rotation-order{appearance:none;-webkit-appearance:none;min-height:32px;border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background-color:var(--dsw-alias-bg-module-platform,rgba(127,127,127,.06));color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;padding:5px 30px 5px 10px;font:inherit;font-size:12px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238892a0' stroke-width='1.5'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;cursor:pointer}
-.wss-fit-mode:focus-visible,.wss-quality:focus-visible,.wss-type-filter:focus-visible,.wss-sort:focus-visible,.wss-rotation-interval:focus-visible,.wss-rotation-order:focus-visible{outline:2px solid var(--wp-accent);outline-offset:1px}
+.wss-quality,.wss-fit-mode,.wss-type-filter,.wss-sort,.wss-rotation-interval,.wss-rotation-order,.wss-userprop-select{appearance:none;-webkit-appearance:none;min-height:32px;border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background-color:var(--dsw-alias-bg-module-platform,rgba(127,127,127,.06));color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;padding:5px 30px 5px 10px;font:inherit;font-size:12px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238892a0' stroke-width='1.5'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;cursor:pointer}
+.wss-fit-mode:focus-visible,.wss-quality:focus-visible,.wss-type-filter:focus-visible,.wss-sort:focus-visible,.wss-rotation-interval:focus-visible,.wss-rotation-order:focus-visible,.wss-userprop-select:focus-visible{outline:2px solid var(--wp-accent);outline-offset:1px}
 .wss-sort{flex:none;max-width:142px}
 /* \u6587\u5B57\u53EF\u8BFB\u6027\uFF1A\u989C\u8272\u9009\u62E9\u590D\u7528 .wss-row\uFF1Bcolor \u8F93\u5165\u6309\u5E73\u53F0\u8865\u6700\u5C0F\u6837\u5F0F */
 .wss-row input[type=color]{width:44px;height:26px;order:2;flex:none;padding:0;border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));border-radius:6px;background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));cursor:pointer}
+/* \u58C1\u7EB8\u5C5E\u6027\u56DB\u7C7B\u578B\u63A7\u4EF6\uFF1A\u63A7\u4EF6\u5728\u5DE6\u3001\u6062\u590D\u9ED8\u8BA4\u5728\u53F3\uFF1Bcondition \u4E0D\u6EE1\u8DB3\u6574\u9879\u6807\u7070 */
+.wss-userprops-list{display:flex;flex-direction:column;gap:8px;margin-top:2px}
+.wss-userprop-item{display:flex;align-items:center;gap:10px;min-width:0}
+.wss-userprop-main{flex:1;min-width:0;margin:0}
+.wss-userprop-label{display:inline-flex;align-items:baseline;gap:4px;min-width:0}
+.wss-userprop-hint{font-size:11px;color:var(--dsw-alias-state-warning-primary,#f5b301)}
+.wss-userprop-value{font-variant-numeric:tabular-nums;font-size:11.5px;font-weight:650;padding:2px 8px;border-radius:999px;background:rgba(127,127,127,.12);color:var(--dsw-alias-label-primary,var(--wp-text))}
+.wss-userprop-select{max-width:180px}
+.wss-userprops .wss-userprop-reset{flex:none;min-height:28px;padding:4px 10px;font-size:11.5px}
+.wss-userprop-item[data-disabled="true"]{opacity:.55}
+.wss-userprop-item[data-disabled="true"] .wss-userprop-reset{cursor:not-allowed}
+.wss-userprops .wss-slider{margin:0}
 /* \u6309\u94AE\uFF1Aprimary / secondary / ghost \u4E09\u6863 */
-.wss-cancel,.wss-save-dirs,.wss-probe,.wss-adopt,.wss-refresh,.wss-live-retry,.wss-live-forget,.wss-media-dismiss{border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background:transparent;color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;min-height:32px;padding:7px 13px;font:inherit;font-size:12px;font-weight:550;cursor:pointer;transition:background-color .15s ease,filter .15s ease,transform .1s ease}
-.wss-cancel:hover,.wss-save-dirs:hover,.wss-probe:hover,.wss-adopt:hover,.wss-refresh:hover,.wss-live-retry:hover,.wss-live-forget:hover,.wss-media-dismiss:hover{background:rgba(127,127,127,.12)}
-.wss-cancel:active,.wss-save-dirs:active,.wss-probe:active,.wss-adopt:active,.wss-refresh:active,.wss-live-retry:active,.wss-live-forget:active,.wss-media-dismiss:active{transform:translateY(1px)}
-.wss-cancel:focus-visible,.wss-save-dirs:focus-visible,.wss-probe:focus-visible,.wss-adopt:focus-visible,.wss-refresh:focus-visible,.wss-live-retry:focus-visible,.wss-live-forget:focus-visible,.wss-media-dismiss:focus-visible{outline:2px solid var(--wp-accent);outline-offset:2px}
+.wss-cancel,.wss-save-dirs,.wss-probe,.wss-adopt,.wss-refresh,.wss-live-retry,.wss-live-forget,.wss-media-dismiss,.wss-userprop-reset{border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background:transparent;color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;min-height:32px;padding:7px 13px;font:inherit;font-size:12px;font-weight:550;cursor:pointer;transition:background-color .15s ease,filter .15s ease,transform .1s ease}
+.wss-cancel:hover,.wss-save-dirs:hover,.wss-probe:hover,.wss-adopt:hover,.wss-refresh:hover,.wss-live-retry:hover,.wss-live-forget:hover,.wss-media-dismiss:hover,.wss-userprop-reset:hover{background:rgba(127,127,127,.12)}
+.wss-cancel:active,.wss-save-dirs:active,.wss-probe:active,.wss-adopt:active,.wss-refresh:active,.wss-live-retry:active,.wss-live-forget:active,.wss-media-dismiss:active,.wss-userprop-reset:active{transform:translateY(1px)}
+.wss-cancel:focus-visible,.wss-save-dirs:focus-visible,.wss-probe:focus-visible,.wss-adopt:focus-visible,.wss-refresh:focus-visible,.wss-live-retry:focus-visible,.wss-live-forget:focus-visible,.wss-media-dismiss:focus-visible,.wss-userprop-reset:focus-visible{outline:2px solid var(--wp-accent);outline-offset:2px}
 .wss-refresh,.wss-save-dirs{background:var(--wp-accent-strong,#2563eb);border-color:transparent;color:#fff;box-shadow:0 2px 8px rgba(37,99,235,.28)}
 .wss-refresh:hover,.wss-save-dirs:hover{background:var(--wp-accent-strong,#2563eb);filter:brightness(1.07)}
 /* \u76EE\u5F55\u5B57\u6BB5\u4E0E\u63A2\u6D4B\u7ED3\u679C */
@@ -2510,7 +2522,7 @@ body[data-ds-dark-theme] .wss-hero{background:linear-gradient(135deg,rgba(96,165
 .wss-live-status{display:flex;flex-direction:column;gap:2px;margin-bottom:10px}
 .wss-live-status .wss-live-current,.wss-live-status .wss-live-memory{margin:0}
 .wss-live-status[data-state="failed"] .wss-live-current,.wss-live-status .wss-live-memory{color:var(--dsw-alias-state-error-primary,var(--wp-accent-strong))}
-@media (prefers-reduced-motion:reduce){.wss-thumb,.wss-cancel,.wss-save-dirs,.wss-probe,.wss-adopt,.wss-refresh,.wss-live-retry,.wss-live-forget,.wss-nav-item,.wss-details-head::after{transition:none}.wss-thumb:hover{transform:none}}
+@media (prefers-reduced-motion:reduce){.wss-thumb,.wss-cancel,.wss-save-dirs,.wss-probe,.wss-adopt,.wss-refresh,.wss-live-retry,.wss-live-forget,.wss-userprop-reset,.wss-nav-item,.wss-details-head::after{transition:none}.wss-thumb:hover{transform:none}}
 
 /* \u2500\u2500 \u6587\u5B57\u989C\u8272\u8DDF\u968F\u58C1\u7EB8\u4EAE\u5EA6\uFF082026-09-03 \u5B9A\u7A3F\uFF09 \u2500\u2500
    \u4E0D\u906E\u80CC\u666F\u3001\u4E0D\u6539\u58C1\u7EB8\u53EF\u89C1\u5EA6\uFF1B\u53EA\u8BA9\u6D88\u606F\u5217\uFF08[class*="flowItem"] \u5185\u4E3B\u8981\u6587\u672C\uFF09\u7684
@@ -23194,6 +23206,283 @@ function effectPointerUniforms(pointer, cfg, parallaxPointer = pointer) {
   };
 }
 
+// src/client/user-bindings.ts
+function parseUserRef(user) {
+  if (typeof user === "string") return user ? { name: user } : void 0;
+  if (user && typeof user === "object") {
+    const o = user;
+    if (typeof o.name === "string" && o.name) {
+      return { name: o.name, condition: typeof o.condition === "string" ? o.condition : void 0 };
+    }
+  }
+  return void 0;
+}
+function isTruthy(value) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return Math.abs(value) > 1e-4;
+  if (typeof value === "string") {
+    const s = value.trim().toLowerCase();
+    return s !== "" && s !== "0" && s !== "false";
+  }
+  return false;
+}
+function matchCondition(value, condition) {
+  const c = String(condition ?? "").trim();
+  if (!c) return isTruthy(value);
+  const n = Number(c);
+  if (!Number.isNaN(n) && Number.isFinite(n)) {
+    if (typeof value === "boolean") {
+      if (Math.abs(n) < 1e-4) return isTruthy(value);
+      if (Math.abs(n - 1) < 1e-4) return !isTruthy(value);
+      return false;
+    }
+    const v = Number(value);
+    return Number.isFinite(v) && Math.abs(v - n) < 1e-4;
+  }
+  if (c === "true" || c === "false") return isTruthy(value) === (c === "true");
+  return typeof value === "string" ? value.trim() === c : String(value).trim() === c;
+}
+function parseColorTriplet(text) {
+  const parts = text.trim().split(/\s+/).map(Number);
+  if (parts.length < 3 || parts.slice(0, 3).some((x) => !Number.isFinite(x))) return void 0;
+  const max = Math.max(parts[0], parts[1], parts[2]);
+  return max <= 1 ? [parts[0] * 255, parts[1] * 255, parts[2] * 255] : [parts[0], parts[1], parts[2]];
+}
+function resolveUserValue(bound, userProps, hint) {
+  const ref = bound.user;
+  if (!ref) return bound.value;
+  if (!Object.hasOwn(userProps, ref.name)) return bound.value;
+  const uv = userProps[ref.name];
+  if (!matchCondition(uv, ref.condition)) {
+    const neutral = hint === "bool" ? false : hint === "number" ? 0 : hint === "color" ? [0, 0, 0] : "0 0 0";
+    return neutral;
+  }
+  if (hint === "bool") return typeof uv === "boolean" ? uv : isTruthy(uv);
+  if (hint === "number") {
+    const n = Number(uv);
+    return Number.isFinite(n) ? n : 0;
+  }
+  if (hint === "color01") {
+    return typeof uv === "string" ? uv.trim() : "0 0 0";
+  }
+  const color = typeof uv === "string" ? parseColorTriplet(uv) : void 0;
+  return color ?? [0, 0, 0];
+}
+var NUMBER_LITERAL = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i;
+function tokenizeCondition(text) {
+  const tokens = [];
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (/\s/.test(ch)) {
+      i += 1;
+      continue;
+    }
+    const two = text.slice(i, i + 2);
+    if (two === "&&" || two === "||" || two === "==" || two === "!=") {
+      tokens.push({ op: two });
+      i += 2;
+      continue;
+    }
+    if (ch === "(" || ch === ")" || ch === "&" || ch === "|" || ch === "=" || ch === "!") {
+      throw new Error(`bad condition token: ${ch}`);
+    }
+    let end = i;
+    while (end < text.length && !/[\s()&|=!]/.test(text[end])) end += 1;
+    tokens.push({ atom: text.slice(i, end) });
+    i = end;
+  }
+  return tokens;
+}
+function parseConditionOperand(atom, userProps) {
+  const ref = /^(.+)\.value$/.exec(atom);
+  if (ref) {
+    const key = ref[1];
+    return Object.hasOwn(userProps, key) ? userProps[key] : void 0;
+  }
+  if (atom === "true") return true;
+  if (atom === "false") return false;
+  if (NUMBER_LITERAL.test(atom)) return Number(atom);
+  return atom;
+}
+function evaluateCondition(text, userProps) {
+  const tokens = tokenizeCondition(text);
+  if (tokens.length === 0) return true;
+  let pos = 0;
+  const eatOp = (op) => {
+    if (tokens[pos]?.op !== op) return false;
+    pos += 1;
+    return true;
+  };
+  const parseComparison = () => {
+    const leftToken = tokens[pos];
+    if (!leftToken?.atom) throw new Error("expected operand");
+    pos += 1;
+    const left = parseConditionOperand(leftToken.atom, userProps);
+    const op = tokens[pos]?.op;
+    if (op === "==" || op === "!=") {
+      pos += 1;
+      const rightToken = tokens[pos];
+      if (!rightToken?.atom) throw new Error("expected operand");
+      pos += 1;
+      const right = parseConditionOperand(rightToken.atom, userProps);
+      const matched = matchCondition(left, typeof right === "string" ? right : String(right));
+      return op === "==" ? matched : !matched;
+    }
+    return isTruthy(left);
+  };
+  const parseAnd = () => {
+    let value = parseComparison();
+    while (eatOp("&&")) {
+      const rhs = parseComparison();
+      value = value && rhs;
+    }
+    return value;
+  };
+  const parseOr = () => {
+    let value = parseAnd();
+    while (eatOp("||")) {
+      const rhs = parseAnd();
+      value = value || rhs;
+    }
+    return value;
+  };
+  const result = parseOr();
+  return pos === tokens.length ? result : true;
+}
+function propertyConditionMet(condition, userProps) {
+  const text = (condition ?? "").trim();
+  if (!text) return true;
+  try {
+    return evaluateCondition(text, userProps);
+  } catch {
+    return true;
+  }
+}
+function deepClone(value) {
+  if (typeof structuredClone === "function") {
+    try {
+      return structuredClone(value);
+    } catch {
+    }
+  }
+  return cloneJsonLike(value);
+}
+function cloneJsonLike(value) {
+  if (Array.isArray(value)) return value.map((item) => cloneJsonLike(item));
+  if (value && typeof value === "object") {
+    const out = {};
+    for (const [key, item] of Object.entries(value)) out[key] = cloneJsonLike(item);
+    return out;
+  }
+  return value;
+}
+function resolveBoundNode(value, user, userProps) {
+  if (typeof value === "boolean") return resolveUserValue({ value, user }, userProps, "bool");
+  if (typeof value === "number") return resolveUserValue({ value, user }, userProps, "number");
+  if (typeof value === "string") {
+    if (/\s/.test(value.trim())) return resolveUserValue({ value, user }, userProps, "color01");
+    return resolveRawString(value, user, userProps);
+  }
+  return value;
+}
+function resolveRawString(value, user, userProps) {
+  if (!Object.hasOwn(userProps, user.name)) return value;
+  const uv = userProps[user.name];
+  if (!matchCondition(uv, user.condition)) return "";
+  return typeof uv === "string" ? uv : String(uv);
+}
+function resolveValueNode(value, user, userProps) {
+  if (typeof value === "boolean") return resolveUserValue({ value, user }, userProps, "bool");
+  if (typeof value === "number") return resolveUserValue({ value, user }, userProps, "number");
+  if (typeof value === "string") return resolveRawString(value, user, userProps);
+  return value;
+}
+function resolveBindingsDeep(node, userProps, mode) {
+  if (Array.isArray(node)) return node.map((item) => resolveBindingsDeep(item, userProps, mode));
+  if (node && typeof node === "object") {
+    const o = node;
+    const user = parseUserRef(o.user);
+    if (user && "value" in o) {
+      return mode === "effects" ? resolveBoundNode(o.value, user, userProps) : resolveValueNode(o.value, user, userProps);
+    }
+    const out = {};
+    for (const [key, value] of Object.entries(o)) out[key] = resolveBindingsDeep(value, userProps, mode);
+    return out;
+  }
+  return node;
+}
+var TRANSFORM_DEFAULT = { origin: 0, scale: 1, angles: 0 };
+function resolveObjectUserRefs(obj, userProps) {
+  const refs = obj.userRefs;
+  if (!refs) return;
+  const rec = obj;
+  if (refs.color) rec.color = resolveUserValue({ value: rec.color, user: refs.color }, userProps, "color");
+  if (refs.alpha) rec.alpha = resolveUserValue({ value: rec.alpha, user: refs.alpha }, userProps, "number");
+  if (refs.brightness) {
+    rec.brightness = resolveUserValue({ value: rec.brightness, user: refs.brightness }, userProps, "number");
+  }
+  for (const key of ["origin", "scale", "angles"]) {
+    const ref = refs[key];
+    if (!ref) continue;
+    const fallback = TRANSFORM_DEFAULT[key];
+    const raw = Array.isArray(rec[key]) ? rec[key] : [];
+    rec[key] = [0, 1, 2].map((i) => {
+      const component = typeof raw[i] === "number" ? raw[i] : fallback;
+      return resolveUserValue({ value: component, user: ref }, userProps, "number");
+    });
+  }
+}
+function resolveSceneUserBindings(desc, userProps) {
+  const out = deepClone(desc);
+  for (const obj of out.objects) {
+    resolveObjectUserRefs(obj, userProps);
+    const rec = obj;
+    if (Array.isArray(rec.effects)) rec.effects = resolveBindingsDeep(rec.effects, userProps, "effects");
+    if (typeof rec.instanceOverrideJson === "string") {
+      try {
+        const parsed = JSON.parse(rec.instanceOverrideJson);
+        rec.instanceOverrideJson = JSON.stringify(resolveBindingsDeep(parsed, userProps, "raw"));
+      } catch {
+      }
+    }
+    for (const key of ["scriptProperties", "objectScriptProperties"]) {
+      const props = rec[key];
+      if (props && typeof props === "object" && !Array.isArray(props)) {
+        rec[key] = resolveBindingsDeep(props, userProps, "raw");
+      }
+    }
+    const visible = rec.visible;
+    if (visible?.scriptProperties) {
+      visible.scriptProperties = resolveBindingsDeep(
+        visible.scriptProperties,
+        userProps,
+        "raw"
+      );
+    }
+  }
+  if (out.bloomUser) {
+    const enabled = resolveUserValue(
+      { value: out.bloom !== void 0, user: out.bloomUser },
+      userProps,
+      "bool"
+    );
+    if (!enabled) out.bloom = void 0;
+    else if (!out.bloom) out.bloom = { strength: 2, threshold: 0.65 };
+  }
+  if (out.parallaxUser) {
+    out.parallax = {
+      ...out.parallax,
+      enabled: resolveUserValue(
+        { value: out.parallax.enabled, user: out.parallaxUser },
+        userProps,
+        "bool"
+      )
+    };
+  }
+  return out;
+}
+
 // src/client/script-patterns.ts
 function detectScriptPattern(src) {
   if (typeof src !== "string") return null;
@@ -23207,7 +23496,13 @@ function detectScriptPattern(src) {
 }
 function unwrapScriptProperty(v) {
   if (typeof v === "object" && v !== null && !Array.isArray(v) && "value" in v) {
-    return v.value;
+    const o = v;
+    const user = parseUserRef(o.user);
+    if (user) {
+      const bound = { value: o.value, user };
+      return bound;
+    }
+    return o.value;
   }
   return v;
 }
@@ -23245,8 +23540,14 @@ function parseVisible(raw) {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return void 0;
   const o = raw;
   const value = typeof o.value === "boolean" ? o.value : true;
-  if (typeof o.user === "string" && o.user) {
-    return { kind: "user", key: o.user, value };
+  const user = parseUserRef(o.user);
+  if (user) {
+    return {
+      kind: "user",
+      key: user.name,
+      ...user.condition !== void 0 ? { condition: user.condition } : {},
+      value
+    };
   }
   if (typeof o.script === "string" && o.script) {
     return {
@@ -23259,36 +23560,56 @@ function parseVisible(raw) {
   }
   return void 0;
 }
+function resolveUserVisibility(binding, userProps) {
+  const key = binding.key;
+  if (!key || !Object.hasOwn(userProps, key) || userProps[key] === void 0) return binding.value;
+  const condition = binding.condition?.trim() || void 0;
+  if (condition) return matchCondition(userProps[key], condition);
+  const p = userProps[key];
+  return typeof p === "boolean" ? p : binding.value;
+}
 function isStaticallyHidden(binding, userProps) {
   if (!binding) return false;
   switch (binding.kind) {
     case "plain":
       return !binding.value;
-    case "user": {
-      const p = userProps[binding.key ?? ""];
-      return typeof p === "boolean" ? !p : !binding.value;
-    }
+    case "user":
+      return !resolveUserVisibility(binding, userProps);
     case "script":
       return false;
     default:
       return false;
   }
 }
-function resolveVisibility(obj, userProps) {
-  const v = obj.visible;
-  if (!v) return true;
-  switch (v.kind) {
-    case "plain":
-      return v.value;
-    case "user": {
-      const p = userProps[v.key ?? ""];
-      return typeof p === "boolean" ? p : v.value;
-    }
-    case "script":
-      return v.value;
-    default:
-      return true;
+function usableUserProps(userProps, defs) {
+  if (!defs || defs.length === 0) return userProps;
+  let out = userProps;
+  for (const def of defs) {
+    if (!def.condition || propertyConditionMet(def.condition, userProps)) continue;
+    if (out === userProps) out = { ...userProps };
+    delete out[def.key];
   }
+  return out;
+}
+function computeEffectiveVisibility(objects, userProps, defs) {
+  const props = usableUserProps(userProps, defs);
+  const byId = new Map(objects.map((o) => [o.id, o]));
+  const cache = /* @__PURE__ */ new Map();
+  const visiting = /* @__PURE__ */ new Set();
+  const visit = (obj) => {
+    const hit = cache.get(obj.id);
+    if (hit !== void 0) return hit;
+    if (visiting.has(obj.id)) return true;
+    visiting.add(obj.id);
+    const self2 = !isStaticallyHidden(obj.visible, props);
+    const parent = obj.parent === void 0 ? void 0 : byId.get(obj.parent);
+    const result = self2 && (parent ? visit(parent) : true);
+    visiting.delete(obj.id);
+    cache.set(obj.id, result);
+    return result;
+  };
+  for (const obj of objects) visit(obj);
+  return cache;
 }
 
 // src/client/scene-json.ts
@@ -23298,6 +23619,33 @@ function transformString(s) {
     return s.value;
   }
   return void 0;
+}
+function parseUserRefField(s) {
+  if (!s || typeof s !== "object" || Array.isArray(s)) return void 0;
+  return parseUserRef(s.user);
+}
+function pickUserRefs(o, fields) {
+  const refs = {};
+  let found = false;
+  for (const field of fields) {
+    const ref = parseUserRefField(o[field]);
+    if (ref) {
+      refs[field] = ref;
+      found = true;
+    }
+  }
+  return found ? refs : void 0;
+}
+function mergeUserRefs(a, b) {
+  if (!a) return b;
+  if (!b) return a;
+  return { ...a, ...b };
+}
+function unwrapFieldValue(s) {
+  if (s && typeof s === "object" && !Array.isArray(s) && "value" in s) {
+    return s.value;
+  }
+  return s;
 }
 function vec3(s) {
   const str = transformString(s);
@@ -23336,7 +23684,7 @@ function optBool(s) {
 function textVisibleFields(o) {
   return {
     alpha: optAlpha(o.alpha),
-    brightness: optNum(o.brightness) ?? 1,
+    brightness: optNum(unwrapFieldValue(o.brightness)) ?? 1,
     anchor: optStr(o.anchor),
     limitwidth: optBool(o.limitwidth),
     maxwidth: optNum(o.maxwidth)
@@ -23372,7 +23720,7 @@ function numOr(s, dflt) {
   return n === void 0 ? dflt : n;
 }
 function optAlpha(s) {
-  const n = optNum(s);
+  const n = optNum(unwrapFieldValue(s));
   if (n === void 0) return void 0;
   const a = n > 1 ? n / 100 : n;
   return Math.max(0, Math.min(1, a));
@@ -23426,6 +23774,9 @@ function normalizeOverrideValue(v) {
   if (Array.isArray(v)) return v.map(normalizeOverrideValue);
   if (v && typeof v === "object") {
     const o = v;
+    if ("value" in o && parseUserRef(o.user)) {
+      return { user: o.user, value: normalizeOverrideValue(o.value) };
+    }
     if ("value" in o && ("user" in o || "script" in o)) return normalizeOverrideValue(o.value);
     const out = {};
     for (const [k, x] of Object.entries(o)) out[k] = normalizeOverrideValue(x);
@@ -23462,7 +23813,7 @@ function parseSceneJson(raw) {
       angles: vec3(o.angles),
       size: size2(o.size),
       // T4.2：可见性绑定归一化（布尔 / {user,value} / {script,value} → VisibleBinding；
-      // 缺失/畸形 → undefined = 默认可见）。渲染器按 resolveVisibility 跳过不可见对象。
+      // 缺失/畸形 → undefined = 默认可见）。渲染器按 computeEffectiveVisibility（自身 condition + 父链）跳过不可见对象。
       visible: parseVisible(o.visible),
       // T4.1：对象对齐锚点（9 种 WE 对齐值）→ image/particle 对象（text 对象走
       // horizontalalign/verticalalign，另行处理；util 对象不渲染，字段无害保留）。
@@ -23475,6 +23826,8 @@ function parseSceneJson(raw) {
       // 对象级 parallaxDepth 与 kind 无关（全库 227 处：particle 106 / image 91 / text 20 / other 10），
       // 故落在 base 让所有分支都带出 —— Task 4 的粒子/文本注入 u_Parallax 全靠它。
       parallaxDepth: optNum2(o.parallaxDepth),
+      // T4.4：origin/scale/angles 的 user 绑定保留（静态值照旧解析，供 resolve 缺失回退）。
+      userRefs: pickUserRefs(o, ["origin", "scale", "angles"]),
       // 转换字段里的对象脚本（angles.script 优先）；无脚本对象不产出这两个键。
       ...objectScriptFields(o)
     };
@@ -23499,7 +23852,8 @@ function parseSceneJson(raw) {
           // 调制字段与 image 对象同口径（optColor 双语义归一 / optAlpha clamp / brightness 缺省 1）
           color: optColor(o.color),
           alpha: optAlpha(o.alpha),
-          brightness: optNum(o.brightness) ?? 1,
+          brightness: optNum(unwrapFieldValue(o.brightness)) ?? 1,
+          userRefs: mergeUserRefs(base.userRefs, pickUserRefs(o, ["color", "alpha", "brightness"])),
           // util 不渲染纹理但**承载 SceneScript 控制器**（94001「切换按钮」、221591「双击切歌」）
           ...fromVisibleScript
         };
@@ -23510,7 +23864,8 @@ function parseSceneJson(raw) {
         image: o.image,
         color: optColor(o.color),
         alpha: optAlpha(o.alpha),
-        brightness: optNum(o.brightness) ?? 1,
+        brightness: optNum(unwrapFieldValue(o.brightness)) ?? 1,
+        userRefs: mergeUserRefs(base.userRefs, pickUserRefs(o, ["color", "alpha", "brightness"])),
         // WE 图像颜色混合模式（→ shader combo BLENDMODE；缺省 0 = Normal）。
         // 非数值/负数/非法 → 0（渲染侧只实现 6/7/31，其余回退普通 alpha 混合）。
         colorBlendMode: Math.max(0, Math.floor(optNum(o.colorBlendMode) ?? 0)),
@@ -23527,6 +23882,7 @@ function parseSceneJson(raw) {
         font: typeof o.font === "string" && o.font ? o.font : void 0,
         pointsize: optNum(o.pointsize),
         color: optColor(o.color),
+        userRefs: mergeUserRefs(base.userRefs, pickUserRefs(o, ["color", "alpha", "brightness"])),
         alignment: typeof o.alignment === "string" && o.alignment ? o.alignment : void 0,
         // 图层尺寸/定位字段（两种 text 形态都要解析；缺省 → 由 alignment 推导）
         horizontalAlign: optStr(o.horizontalalign),
@@ -23545,12 +23901,13 @@ function parseSceneJson(raw) {
         font: typeof o.font === "string" && o.font ? o.font : void 0,
         pointsize: optNum(o.pointsize),
         color: optColor(o.color),
+        userRefs: mergeUserRefs(base.userRefs, pickUserRefs(o, ["color", "alpha", "brightness"])),
         alignment: typeof o.alignment === "string" && o.alignment ? o.alignment : void 0,
         horizontalAlign: optStr(o.horizontalalign),
         verticalAlign: optStr(o.verticalalign),
         padding: optNum(o.padding),
         ...textVisibleFields(o),
-        // T3.3：text.script 识别为 clock 时每帧刷新时间文本（scriptproperties 已解包）
+        // T3.3：text.script 识别为 clock 时每帧刷新时间文本（scriptproperties 的 {user,value} 保留到装配前 resolve）
         ...scriptFields(t)
       };
     }
@@ -23562,7 +23919,14 @@ function parseSceneJson(raw) {
     const max = Math.max(cc[0], cc[1], cc[2]);
     if (max > 0 && max <= 1) cc = [cc[0] * 255, cc[1] * 255, cc[2] * 255];
   }
-  const bloom = gen.bloom === true ? { strength: numOr(gen.bloomstrength, 2), threshold: numOr(gen.bloomthreshold, 0.65) } : void 0;
+  const bloomUser = parseUserRefField(gen.bloom);
+  const bloomStaticOn = gen.bloom === true || typeof gen.bloom === "object" && gen.bloom !== null && gen.bloom.value === true;
+  const bloom = bloomStaticOn ? { strength: numOr(gen.bloomstrength, 2), threshold: numOr(gen.bloomthreshold, 0.65) } : void 0;
+  const parallaxUser = parseUserRefField(gen.cameraparallax);
+  const parallax = readParallaxConfig(gen);
+  if (parallaxUser && typeof gen.cameraparallax === "object" && gen.cameraparallax !== null && gen.cameraparallax.value === true) {
+    parallax.enabled = true;
+  }
   return {
     camera: {
       center: vec3(cam.center),
@@ -23579,11 +23943,40 @@ function parseSceneJson(raw) {
     perspectiveOverrideFov: numOr(gen.perspectiveoverridefov, 0),
     clearColor: cc,
     bloom,
+    ...bloomUser ? { bloomUser } : {},
+    ...parallaxUser ? { parallaxUser } : {},
     // 相机视差总开关与系数（general.cameraparallax*）；缺省全 0 = 与加此功能前观感一致。
-    parallax: readParallaxConfig(gen),
+    parallax,
     objects,
     sounds: collectSounds(root)
   };
+}
+function formatColor01(rgb) {
+  return [0, 1, 2].map((i) => {
+    const c = rgb[i];
+    return String((Number.isFinite(c) ? c : 0) / 255);
+  }).join(" ");
+}
+function sceneJsonWithResolvedModulation(sceneJson, desc) {
+  try {
+    const root = JSON.parse(sceneJson);
+    if (!Array.isArray(root.objects)) return sceneJson;
+    const byId = new Map(desc.objects.map((obj) => [obj.id, obj]));
+    for (const raw of root.objects) {
+      if (!raw || typeof raw !== "object") continue;
+      const rec = raw;
+      const obj = byId.get(Number(rec.id ?? 0));
+      const refs = obj?.userRefs;
+      if (!obj || !refs) continue;
+      const resolved = obj;
+      if (refs.color && Array.isArray(resolved.color)) rec.color = formatColor01(resolved.color);
+      if (refs.alpha && resolved.alpha !== void 0) rec.alpha = resolved.alpha;
+      if (refs.brightness && resolved.brightness !== void 0) rec.brightness = resolved.brightness;
+    }
+    return JSON.stringify(root);
+  } catch {
+    return sceneJson;
+  }
 }
 
 // src/client/rt-render.ts
@@ -25872,8 +26265,10 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
   const particleLayers = [];
   const sims = [];
   const textDrivers = [];
+  const effectiveVisible = assets.effectiveVisible;
   for (const [renderOrder, obj] of desc.objects.entries()) {
-    if (isStaticallyHidden(obj.visible, {})) continue;
+    const hidden = effectiveVisible ? effectiveVisible.get(obj.id) === false : isStaticallyHidden(obj.visible, {});
+    if (hidden) continue;
     if (obj.kind === "image") {
       const t = world(obj);
       const puppet = assets.puppetMeshes?.get(obj.id);
@@ -28647,10 +29042,44 @@ function getUserPropertyValue(key, wallpaperId) {
   const raw = scoped ?? localStorage.getItem(USERPROP_PREFIX + key);
   if (raw === null) return void 0;
   try {
-    return JSON.parse(raw);
+    const value = JSON.parse(raw);
+    return typeof value === "boolean" || typeof value === "number" || typeof value === "string" ? value : void 0;
   } catch {
     return void 0;
   }
+}
+
+// src/client/wallpaper-properties.ts
+async function fetchWallpaperProperties(id) {
+  try {
+    const r = await fetch(`/wallpapers/properties?id=${encodeURIComponent(id)}`);
+    if (!r.ok) return [];
+    const body = await r.json();
+    return Array.isArray(body?.properties) ? body.properties : [];
+  } catch {
+    return [];
+  }
+}
+function readUserProperty(key, wallpaperId) {
+  return getUserPropertyValue(key, wallpaperId);
+}
+function writeUserProperty(key, value, wallpaperId) {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(userPropertyKey(key, wallpaperId), JSON.stringify(value));
+  } catch {
+  }
+}
+function resetUserProperty(key, wallpaperId) {
+  if (!wallpaperId) return;
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.removeItem(userPropertyKey(key, wallpaperId));
+  } catch {
+  }
+}
+function userPropertyKey(key, wallpaperId) {
+  return wallpaperId ? `${USERPROP_PREFIX}${wallpaperId}:${key}` : USERPROP_PREFIX + key;
 }
 
 // src/client/shader/we-headers.ts
@@ -31916,6 +32345,20 @@ function createEmptySim() {
     particle_count: () => 0
   };
 }
+function collectUserKeys(node, out) {
+  if (Array.isArray(node)) {
+    for (const item of node) collectUserKeys(item, out);
+    return;
+  }
+  if (typeof node !== "object" || node === null) return;
+  const obj = node;
+  const ref = parseUserRef(obj.user);
+  if (ref) {
+    out.add(ref.name);
+    return;
+  }
+  for (const value of Object.values(obj)) collectUserKeys(value, out);
+}
 async function collectObjectEffectChains(desc, loadFile, isHidden) {
   const out = /* @__PURE__ */ new Map();
   for (const group of groupEffectsByObject(desc.objects)) {
@@ -32165,7 +32608,20 @@ function createThreeSceneRenderer(opts) {
         }
         const sceneJson = await sceneJsonResp.text();
         if (abortIfContextLost()) return false;
-        const desc = parseSceneJson(sceneJson);
+        const parsedDesc = parseSceneJson(sceneJson);
+        const userKeys = /* @__PURE__ */ new Set();
+        collectUserKeys(JSON.parse(sceneJson), userKeys);
+        const propertyDefs = await fetchWallpaperProperties(id);
+        if (abortIfContextLost()) return false;
+        const defaults = new Map(propertyDefs.map((p) => [p.key, p.value]));
+        const userProps = {};
+        for (const key of userKeys) {
+          const value = getUserPropertyValue(key, id) ?? defaults.get(key);
+          if (value !== void 0) userProps[key] = value;
+        }
+        const unavailable = propertyDefs.filter((def) => def.condition && !propertyConditionMet(def.condition, userProps)).map((def) => def.key);
+        for (const key of unavailable) delete userProps[key];
+        const desc = resolveSceneUserBindings(parsedDesc, userProps);
         const vw = Math.max(1, Math.round(window.innerWidth || desc.orthogonal.width));
         const vh = Math.max(1, Math.round(window.innerHeight || desc.orthogonal.height));
         fg.width = vw;
@@ -32184,15 +32640,10 @@ function createThreeSceneRenderer(opts) {
         currentTextures = backgroundTextures;
         const puppetMeshes = /* @__PURE__ */ new Map();
         const particles = /* @__PURE__ */ new Map();
-        const userProps = {};
+        const effectiveVisible = computeEffectiveVisibility(desc.objects, userProps);
         const visualizerSpecs = [];
         for (const obj of desc.objects) {
-          if (obj.visible?.kind === "user" && obj.visible.key) {
-            userProps[obj.visible.key] = getUserPropertyValue(obj.visible.key, id);
-          }
-        }
-        for (const obj of desc.objects) {
-          if (isStaticallyHidden(obj.visible, userProps)) continue;
+          if (effectiveVisible.get(obj.id) === false) continue;
           if (obj.kind === "image") {
             const { texture, puppetPath } = await resolveImageAssets(id, obj);
             if (texture) backgroundTextures.set(obj.id, texture);
@@ -32259,12 +32710,12 @@ function createThreeSceneRenderer(opts) {
         if (abortIfContextLost()) return false;
         const textLayers = /* @__PURE__ */ new Map();
         let scriptRuntime = null;
-        if (desc.objects.some((o) => o.kind === "text" && o.script && resolveVisibility(o, userProps))) {
+        if (desc.objects.some((o) => o.kind === "text" && o.script && effectiveVisible.get(o.id) !== false)) {
           scriptRuntime = await resolveTextScriptRuntime().catch(() => null) ?? null;
         }
         for (const obj of desc.objects) {
           if (obj.kind !== "text") continue;
-          if (!resolveVisibility(obj, userProps)) continue;
+          if (effectiveVisible.get(obj.id) === false) continue;
           const props = obj.scriptProperties ?? {};
           const isClock = obj.script ? detectScriptPattern(obj.script) === "clock" : false;
           const binding = obj.script && scriptRuntime ? scriptRuntime.bind(obj.script, props, obj.text) : null;
@@ -32329,7 +32780,7 @@ function createThreeSceneRenderer(opts) {
         const effectChains = await collectObjectEffectChains(
           desc,
           loadFile,
-          (o) => isStaticallyHidden(o.visible, userProps)
+          (o) => effectiveVisible.get(o.id) === false
         );
         const scriptSources = collectScriptSources(desc);
         const settings = await readClientSettings();
@@ -32347,8 +32798,8 @@ function createThreeSceneRenderer(opts) {
           qualityScale
         );
         const screenScale = screenScalePx(desc.orthogonal.width, desc.orthogonal.height, vw, vh, dpr);
-        const isAdmittedImage = (o) => o.kind === "image" && !isStaticallyHidden(o.visible, userProps) && (effectChains.get(o.id)?.length ?? 0) > 0;
-        const isAdmittedUtil = (o) => o.kind === "util" && !isStaticallyHidden(o.visible, userProps) && (effectChains.get(o.id)?.length ?? 0) > 0;
+        const isAdmittedImage = (o) => o.kind === "image" && effectiveVisible.get(o.id) !== false && (effectChains.get(o.id)?.length ?? 0) > 0;
+        const isAdmittedUtil = (o) => o.kind === "util" && effectiveVisible.get(o.id) !== false && (effectChains.get(o.id)?.length ?? 0) > 0;
         const isPuppetRendered = (o) => o.kind === "image" && puppetMeshes.has(o.id);
         const isIsolatedImage = (o) => isAdmittedImage(o) && !isPuppetRendered(o);
         const isolateItems = desc.objects.filter(isIsolatedImage).map((o) => {
@@ -32385,7 +32836,7 @@ function createThreeSceneRenderer(opts) {
         const isolate = /* @__PURE__ */ new Map();
         const budgetedIds = /* @__PURE__ */ new Set();
         for (const obj of desc.objects) {
-          if (isStaticallyHidden(obj.visible, userProps)) continue;
+          if (effectiveVisible.get(obj.id) === false) continue;
           const chains = effectChains.get(obj.id);
           if (!chains || chains.length === 0) continue;
           if (obj.kind === "image") {
@@ -32460,6 +32911,8 @@ function createThreeSceneRenderer(opts) {
           textLayers,
           qualityScale,
           worldTransforms,
+          // 绘制链路与装配期共用同一份有效可见性（含 condition/父链），player 不再用空 userProps 重判。
+          effectiveVisible,
           puppetMeshes,
           // SceneScript 帧钩子：脚本状态是本帧渲染的权威来源，先 tick → 应用脏写入，
           // 再走原有的粒子/文本更新与 render。host 未就绪（quickjs 加载中/失败）时直接返回。
@@ -32493,7 +32946,7 @@ function createThreeSceneRenderer(opts) {
           }
           userOnFrame?.(dt);
         };
-        const result = loadSceneToThree(sceneJson, assets, fg, {
+        const result = loadSceneToThree(sceneJsonWithResolvedModulation(sceneJson, desc), assets, fg, {
           width: vw,
           height: vh
         });
@@ -32802,30 +33255,6 @@ async function showSceneFallback(info, deps) {
 // src/client/settings-section.tsx
 var import_react = require("react");
 
-// src/client/wallpaper-properties.ts
-async function fetchWallpaperProperties(id) {
-  try {
-    const r = await fetch(`/wallpapers/properties?id=${encodeURIComponent(id)}`);
-    if (!r.ok) return [];
-    const body = await r.json();
-    return Array.isArray(body?.properties) ? body.properties : [];
-  } catch {
-    return [];
-  }
-}
-function readBoolProperty(key, wallpaperId) {
-  const value = getUserPropertyValue(key, wallpaperId);
-  return typeof value === "boolean" ? value : void 0;
-}
-function writeBoolProperty(key, value, wallpaperId) {
-  if (typeof localStorage === "undefined") return;
-  const storageKey = wallpaperId ? `${USERPROP_PREFIX}${wallpaperId}:${key}` : USERPROP_PREFIX + key;
-  try {
-    localStorage.setItem(storageKey, JSON.stringify(value));
-  } catch {
-  }
-}
-
 // src/client/local-store.ts
 var STORAGE_KEYS = { favorites: "we:fav", hidden: "we:hidden", recent: "we:recent" };
 function storeOf(store) {
@@ -33103,6 +33532,54 @@ var MEDIA_FAILURE_TEXT = {
     none: "\u89C6\u9891\u58C1\u7EB8\u52A0\u8F7D\u8D85\u65F6\uFF1A1.5 \u79D2\u5185\u6CA1\u6709\u51FA\u73B0\u9996\u5E27\uFF0C\u4E14\u6CA1\u6709\u53EF\u7528\u7684\u9884\u89C8\u56FE\uFF1B\u5EFA\u8BAE\u6539\u7528 Chrome \u6216\u68C0\u67E5\u89C6\u9891\u6587\u4EF6\u3002"
   }
 };
+var KNOWN_USERPROP_TYPES = /* @__PURE__ */ new Set(["bool", "slider", "color", "combo"]);
+function isKnownUserProperty(property) {
+  return KNOWN_USERPROP_TYPES.has(property.type);
+}
+function initialPropertyValue(property, wallpaperId) {
+  const stored = readUserProperty(property.key, wallpaperId);
+  switch (property.type) {
+    case "bool":
+      return typeof stored === "boolean" ? stored : property.value;
+    case "slider":
+      return typeof stored === "number" && Number.isFinite(stored) ? Math.min(property.max, Math.max(property.min, stored)) : property.value;
+    case "color":
+      return typeof stored === "string" && parseColorTriplet(stored) ? stored : property.value;
+    case "combo":
+      return typeof stored === "string" && property.options.some((o) => o.value === stored) ? stored : property.value;
+    default:
+      return false;
+  }
+}
+function sliderStep(property) {
+  return typeof property.step === "number" && Number.isFinite(property.step) && property.step > 0 ? property.step : property.fraction === false ? 1 : 0.01;
+}
+function sliderDecimals(property) {
+  if (typeof property.precision === "number" && Number.isFinite(property.precision)) {
+    return Math.min(10, Math.max(0, Math.floor(property.precision)));
+  }
+  const text = String(sliderStep(property));
+  const exp = /e-(\d+)$/i.exec(text);
+  if (exp) return Math.min(10, Number(exp[1]));
+  const dot = text.indexOf(".");
+  return dot >= 0 ? Math.min(10, text.length - dot - 1) : 0;
+}
+function formatSliderValue(value, property) {
+  return property.fraction === false ? String(Math.round(value)) : value.toFixed(sliderDecimals(property));
+}
+function colorTripletToHex(value) {
+  const rgb = parseColorTriplet(value) ?? [0, 0, 0];
+  return "#" + rgb.map((n) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, "0")).join("");
+}
+function hexToColorTriplet(hex) {
+  const normalized = normalizeHexColor(hex, "#000000");
+  const full = normalized.length === 4 ? `#${normalized[1]}${normalized[1]}${normalized[2]}${normalized[2]}${normalized[3]}${normalized[3]}` : normalized;
+  const component = (index) => {
+    const n = parseInt(full.slice(1 + index * 2, 3 + index * 2), 16) / 255;
+    return String(Number(n.toFixed(4)));
+  };
+  return `${component(0)} ${component(1)} ${component(2)}`;
+}
 function WallpaperSettingsSection(props) {
   const fetchSettings = props.fetchSettings ?? readClientSettings;
   const writeSettings = props.writeSettings ?? writeClientSettings;
@@ -33126,6 +33603,8 @@ function WallpaperSettingsSection(props) {
   const [libState, setLibState] = (0, import_react.useState)(loadLibraryState);
   const [properties, setProperties] = (0, import_react.useState)([]);
   const [propValues, setPropValues] = (0, import_react.useState)({});
+  const commitTimers = (0, import_react.useRef)(/* @__PURE__ */ new Map());
+  const commitPending = (0, import_react.useRef)(/* @__PURE__ */ new Map());
   const [filter, setFilter] = (0, import_react.useState)({
     query: "",
     types: [],
@@ -33136,6 +33615,11 @@ function WallpaperSettingsSection(props) {
   const visibleWallpapers = filterLibrary(wallpapers, filter, libState);
   const selectedId = settings?.selectedWallpaperId ?? "";
   const selectedIsScene = !!selectedId && wallpapers.some((w) => w.id === selectedId && w.type === "scene");
+  const clearCommitTimers = (0, import_react.useCallback)(() => {
+    for (const timer of commitTimers.current.values()) clearTimeout(timer);
+    commitTimers.current.clear();
+    commitPending.current.clear();
+  }, []);
   (0, import_react.useEffect)(() => {
     setHealth(props.health ?? healthHandler?.get() ?? null);
     return subscribeWallpaperHealth((s) => setHealth(s));
@@ -33172,7 +33656,11 @@ function WallpaperSettingsSection(props) {
       if (!alive) return;
       const items = Array.isArray(list) ? list : [];
       setProperties(items);
-      setPropValues(Object.fromEntries(items.map((p) => [p.key, readBoolProperty(p.key, selectedId) ?? p.value])));
+      const values = {};
+      for (const p of items) {
+        if (isKnownUserProperty(p)) values[p.key] = initialPropertyValue(p, selectedId);
+      }
+      setPropValues(values);
     }).catch(() => {
       if (!alive) return;
       setProperties([]);
@@ -33180,8 +33668,10 @@ function WallpaperSettingsSection(props) {
     });
     return () => {
       alive = false;
+      clearCommitTimers();
     };
-  }, [selectedId, selectedIsScene, fetchProperties]);
+  }, [selectedId, selectedIsScene, fetchProperties, clearCommitTimers]);
+  (0, import_react.useEffect)(() => () => clearCommitTimers(), [clearCommitTimers]);
   const select = (0, import_react.useCallback)((id) => {
     onSelect(id);
     setSettings((prev) => prev ? { ...prev, selectedWallpaperId: id } : prev);
@@ -33199,6 +33689,42 @@ function WallpaperSettingsSection(props) {
     onRuntimeSettings(patch);
     void writeSettings(patch);
   }, [onRuntimeSettings, writeSettings]);
+  const setPropertyValue = (0, import_react.useCallback)((key, value) => {
+    setPropValues((prev) => ({ ...prev, [key]: value }));
+  }, []);
+  const commitProperty = (0, import_react.useCallback)((key, value) => {
+    writeUserProperty(key, value, selectedId);
+    onReselect(selectedId);
+  }, [onReselect, selectedId]);
+  const cancelCommit = (0, import_react.useCallback)((key) => {
+    const timer = commitTimers.current.get(key);
+    if (timer !== void 0) {
+      clearTimeout(timer);
+      commitTimers.current.delete(key);
+    }
+    commitPending.current.delete(key);
+  }, []);
+  const flushCommit = (0, import_react.useCallback)((key) => {
+    const pending = commitPending.current.get(key);
+    cancelCommit(key);
+    if (pending === void 0) return;
+    commitProperty(key, pending);
+  }, [cancelCommit, commitProperty]);
+  const scheduleCommit = (0, import_react.useCallback)((key, value) => {
+    commitPending.current.set(key, value);
+    const timer = commitTimers.current.get(key);
+    if (timer !== void 0) clearTimeout(timer);
+    commitTimers.current.set(key, setTimeout(() => {
+      commitTimers.current.delete(key);
+      flushCommit(key);
+    }, 300));
+  }, [flushCommit]);
+  const resetProperty = (0, import_react.useCallback)((property) => {
+    cancelCommit(property.key);
+    resetUserProperty(property.key, selectedId);
+    setPropertyValue(property.key, property.value);
+    onReselect(selectedId);
+  }, [cancelCommit, onReselect, selectedId, setPropertyValue]);
   const saveDirs = (0, import_react.useCallback)(() => {
     void writeSettings({ wallpaperDir: wallpaperDir.trim(), weAssetsDir: weAssetsDir.trim() }).then((ok) => setMessage(ok === false ? "\u4FDD\u5B58\u5931\u8D25\uFF1A\u8BBE\u7F6E\u672A\u5199\u5165\uFF08\u8BE6\u89C1\u63A7\u5236\u53F0\uFF09" : "\u8DEF\u5F84\u5DF2\u4FDD\u5B58"));
   }, [wallpaperDir, weAssetsDir, writeSettings]);
@@ -33230,6 +33756,9 @@ function WallpaperSettingsSection(props) {
   };
   const rotationPoolSize = buildRotationPool(wallpapers, libState).length;
   const rotationStatus = rotationPoolSize < 2 ? "\u81F3\u5C11\u4FDD\u7559 2 \u5F20\u53EF\u8F6E\u64AD\u58C1\u7EB8\uFF0C\u6216\u6536\u85CF 2 \u5F20\u4EE5\u4E0A" : `\u6BCF ${formatRotationInterval(settings?.rotationIntervalMs)} \xB7 ${normalizeRotationOrder(settings?.rotationOrder) === "sequential" ? "\u987A\u5E8F" : "\u968F\u673A"} \xB7 \u53EF\u8F6E\u64AD ${rotationPoolSize} \u5F20`;
+  const visibleProperties = properties.filter(
+    (p) => isKnownUserProperty(p) && Array.isArray(p.usedBy) && p.usedBy.length > 0
+  );
   const retryLive = () => {
     if (props.onRetryLive) props.onRetryLive();
     else if (healthHandler) healthHandler.retry();
@@ -33437,27 +33966,138 @@ function WallpaperSettingsSection(props) {
           " \u5F20\uFF09"
         ] })
       ] }),
-      selectedIsScene && properties.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section wss-userprops", children: [
+      selectedIsScene && visibleProperties.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section wss-userprops", children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wss-section-title", children: "\u58C1\u7EB8\u5C5E\u6027" }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc", children: "\u5207\u6362\u540E\u751F\u6548\uFF08\u4F1A\u91CD\u65B0\u88C5\u914D\u5F53\u524D\u58C1\u7EB8\uFF09\u3002" }),
-        properties.map((property) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-            "input",
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "wss-userprops-list", children: visibleProperties.map((property) => {
+          const enabled = propertyConditionMet(property.condition, propValues);
+          const disabledTitle = enabled ? void 0 : "\u6761\u4EF6\u4E0D\u6EE1\u8DB3\uFF0C\u6B64\u5C5E\u6027\u6682\u4E0D\u53EF\u7528";
+          const labelNode = /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-userprop-label", children: [
+            property.label,
+            !enabled && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-userprop-hint", children: "\uFF08\u6761\u4EF6\u4E0D\u6EE1\u8DB3\uFF09" })
+          ] });
+          const resetNode = /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "button",
             {
-              type: "checkbox",
-              className: "wss-userprop",
+              type: "button",
+              className: "wss-userprop-reset",
               "data-key": property.key,
-              checked: propValues[property.key] ?? property.value,
-              onChange: (e) => {
-                const checked = e.target.checked;
-                setPropValues((prev) => ({ ...prev, [property.key]: checked }));
-                writeBoolProperty(property.key, checked, selectedId);
-                onReselect(selectedId);
-              }
+              disabled: !enabled,
+              title: disabledTitle,
+              onClick: () => resetProperty(property),
+              children: "\u6062\u590D\u9ED8\u8BA4"
             }
-          ),
-          property.label
-        ] }, property.key))
+          );
+          const current = propValues[property.key] ?? property.value;
+          if (property.type === "bool") {
+            const checked = typeof current === "boolean" ? current : property.value;
+            return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-userprop-item", "data-key": property.key, "data-disabled": enabled ? void 0 : "true", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row wss-userprop-main", children: [
+                labelNode,
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "input",
+                  {
+                    type: "checkbox",
+                    className: "wss-userprop",
+                    "data-key": property.key,
+                    checked,
+                    disabled: !enabled,
+                    title: disabledTitle,
+                    onChange: (e) => {
+                      const next = e.target.checked;
+                      setPropertyValue(property.key, next);
+                      commitProperty(property.key, next);
+                    }
+                  }
+                )
+              ] }),
+              resetNode
+            ] }, property.key);
+          }
+          if (property.type === "slider") {
+            const value2 = typeof current === "number" && Number.isFinite(current) ? current : property.value;
+            return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-userprop-item", "data-key": property.key, "data-disabled": enabled ? void 0 : "true", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-slider wss-userprop-main", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-slider-head", children: [
+                  labelNode,
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-userprop-value", children: formatSliderValue(value2, property) })
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "input",
+                  {
+                    type: "range",
+                    className: "wss-userprop",
+                    "data-key": property.key,
+                    min: property.min,
+                    max: property.max,
+                    step: sliderStep(property),
+                    value: value2,
+                    disabled: !enabled,
+                    title: disabledTitle,
+                    onChange: (e) => {
+                      const next = Number(e.target.value);
+                      setPropertyValue(property.key, next);
+                      scheduleCommit(property.key, next);
+                    },
+                    onPointerUp: () => flushCommit(property.key),
+                    onBlur: () => flushCommit(property.key)
+                  }
+                )
+              ] }),
+              resetNode
+            ] }, property.key);
+          }
+          if (property.type === "color") {
+            const value2 = typeof current === "string" ? current : property.value;
+            return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-userprop-item", "data-key": property.key, "data-disabled": enabled ? void 0 : "true", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row wss-userprop-main", children: [
+                labelNode,
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "input",
+                  {
+                    type: "color",
+                    className: "wss-userprop",
+                    "data-key": property.key,
+                    value: colorTripletToHex(value2),
+                    disabled: !enabled,
+                    title: disabledTitle,
+                    onChange: (e) => {
+                      const next = hexToColorTriplet(e.target.value);
+                      setPropertyValue(property.key, next);
+                      scheduleCommit(property.key, next);
+                    },
+                    onPointerUp: () => flushCommit(property.key),
+                    onBlur: () => flushCommit(property.key)
+                  }
+                )
+              ] }),
+              resetNode
+            ] }, property.key);
+          }
+          const value = typeof current === "string" ? current : property.value;
+          return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-userprop-item", "data-key": property.key, "data-disabled": enabled ? void 0 : "true", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row wss-userprop-main", children: [
+              labelNode,
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "select",
+                {
+                  className: "wss-userprop wss-userprop-select",
+                  "data-key": property.key,
+                  value,
+                  disabled: !enabled,
+                  title: disabledTitle,
+                  onChange: (e) => {
+                    const next = e.target.value;
+                    setPropertyValue(property.key, next);
+                    commitProperty(property.key, next);
+                  },
+                  children: property.options.map((option) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: option.value, children: option.label }, option.value))
+                }
+              )
+            ] }),
+            resetNode
+          ] }, property.key);
+        }) })
       ] })
     ] }),
     /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-pair", children: [

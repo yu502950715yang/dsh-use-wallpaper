@@ -403,6 +403,47 @@ getEventListeners(window).pointermove?.length
 
 ---
 
+### 2.16 手工验收清单：用户属性面板与绑定（v0.9 全类型）
+
+> **需人工验收**：以下需人在运行中的 DSH Web GUI 里操作（面板切换 / 拖动 + 目视），agent 无法代跑。
+> **前置同 §2.13/§2.14**：已 `npm run build` + `npm run build:client`，**重启 harness** 后**强刷** GUI；壁纸库含下列素材。
+> **自动化已覆盖**：条件语义与属性级表达式（`tests/user-bindings.test.ts`）、对象形态 condition + 父链可见性（`tests/visibility.test.ts`）、host 四类型聚合与 `usedBy`（`tests/user-props.test.ts`）、绑定保留与装配前 resolve（`tests/scene-json.test.ts`）、四类控件与防抖提交（`tests/dom/settings-section.dom.test.tsx`）。**面板观感与真机画面仍需人工验收**。
+> **口径**：属性提交后**整壁纸重装配**（4K 可能闪黑一下，属已知边界）；bool/combo 立即提交，slider/color 防抖 300ms 或 `pointerup`/`blur` 后提交一次。color 的 0-1 值首版按 sRGB 直映射，`clockcolor` 与桌面 WE 的色彩空间一致性需目视对照（`docs/superpowers/specs/2026-10-23-user-properties-full-types-design.md` §9）。
+
+**素材中文名对照**（同 §2.15，另加 Leon）：
+
+| ID | 标题（库内显示） | 中文叫法 |
+|---|---|---|
+| `3812518176` | Leon (Resident Evil; Adjustable) MX | 里昂（生化危机可调版，英文标题） |
+| `2911105183` | Subway Station | 地铁站（英文标题） |
+| `2937346640` | Lycoris Recoil-锦木千束/Nishikigi Chisato | 锦木千束（Lycoris Recoil） |
+| `3118949804` | Anime Girl With Purple Eyes | 紫眼动漫少女（英文标题） |
+| `2832263418` | EVA 卡农 弦乐四重奏 | EVA 卡农弦乐四重奏 |
+
+| # | 用例 | 步骤 | 期望结果 | 失败表现 |
+|---|---|---|---|---|
+| P1 | `3812518176` clock 三档 | 选中壁纸，面板「Clock」依次选 `1` / `2` / `3 off`（默认 `1`）。 | `1` → 只显示样式 A（对象 192/199/209 的日期+时间）；`2` → 只显示样式 B（227/234/245）；`3 off` → 两组都隐藏、画面无时钟文字。任一档**都只有一套时钟**，无叠字/重影。 | 两套同时出现（文字重影）→ 对象形态 condition 或父链可见性回归；切换无反应 → combo 未提交 / 未重装配。 |
+| P2 | `3812518176` clockcolor | 面板「clock color」用取色器改成明显颜色（红 / 蓝），松手或点别处失焦。 | 当前时钟文字整体变色；松手后约 300ms 提交一次并重装配；连续拖动期间**不**逐事件重装配（画面不反复闪黑）。 | 颜色不变 → color 绑定未 resolve；拖动时反复重建/卡顿 → color 防抖失效。 |
+| P3 | `3812518176` `_24h` / `leavedspeed` / `ember` | ① 切「24h」开关；② 拖「Leaved Speed」滑块（0–5，默认 1）；③ 切「Ember」开关。 | ① 时钟在 24h（`HH:MM`）与 12h（`AM/PM HH:MM`）之间切换；② 落叶粒子下落速度随滑块变化；③ 余烬粒子出现 / 消失。 | 24h 不变 → `scriptproperties.use24hFormat` 的 `{user}` 未 resolve；落叶速度不变 → `instanceoverride.rate` 未 resolve；余烬不消失 → bool 可见性回归。 |
+| P4 | `2911105183` Clock combo + musiccolor | 选中地铁站，面板「Clock」切 `24h` / `12h` / `Hide`；再把「Music color」改色。 | 三个 `88:88` 时钟只显示 1 个：`24h` → obj108、`12h` → obj144、`Hide` → 三个全隐藏；`Music color` 改色后音频条 / 光带颜色变化。 | 三个时钟同时可见 → 对象形态 condition 回归；`Hide` 后仍有时间 → 同上；颜色不变 → `constantshadervalues` 的 color 绑定未 resolve。 |
+| P5 | `2937346640` slider | 选中锦木千束，面板拖「眼动追踪速度」（0–1，默认 0.4）。 | 眼睛/视线动作速度随滑块变化；松手后才重装配。 | 无变化 → effect `constantshadervalues.speed` 的 slider 未 resolve；拖动即重建 → 防抖失效。 |
+| P6 | `3118949804` slider + parallax | 选中紫眼动漫少女：① 拖「Hair Speed」（0–4）；② 切「Parralax」；③ 拖「Bar Spacing」/「Bar Transparence」。 | ① 头发摆动速度变化，默认应为 **2**（project.json 的 value，不是 scene 的 3.1300001）；② 开关决定画面是否随鼠标视差；③ 频谱条间距 / 透明度变化。 | 速度仍是 3.13 → 默认值取错（应取 project.json）；视差开关无反应 → `general.cameraparallax` 的 `{user}` 未 resolve。 |
+| P7 | `2832263418` color + condition | 选中 EVA 卡农：① 关「音频条开关」；② 重新打开后改「音频律动颜色」。 | ① `audiobar=false` 时音频条对象隐藏，颜色控件**禁用并标灰**（属性级 condition `audiobar.value==true` 不满足）；② 打开后颜色控件可用，改色后音频条呈新颜色。 | 关音频条后颜色控件仍可调 / 重开后颜色无效 → 属性级 condition 或 color 绑定未生效。 |
+
+**勾选记录**（待人工验收；验收人 / 日期 / GPU 未记录）：
+
+- [ ] P1：`3812518176` clock 三档（1 / 2 / 3 off）
+- [ ] P2：`3812518176` clockcolor（防抖提交）
+- [ ] P3：`3812518176` `_24h` / `leavedspeed` / `ember`
+- [ ] P4：`2911105183` Clock combo + musiccolor
+- [ ] P5：`2937346640` slider（眼动追踪速度）
+- [ ] P6：`3118949804` slider + parallax
+- [ ] P7：`2832263418` color + condition（音频条关闭时禁用）
+
+**已知边界（v0.9）**：`text` 类型本机 0 样本、面板不渲染；`group` 类型不返回（Leon 的 `character`/`weather` 不显示）、面板平铺；属性变更走整壁纸重装配（无就地实时生效）；color 的 0-1 值按 sRGB 直映射，`clockcolor` 与桌面 WE 的色彩空间对照待补；`3812518176` 的 `bloomhdr*` 仍不支持（另一条缺口）；`2937346640` 的 `_24hourformat` 在 project.json 中不存在，面板不出现该项（`{user}` 引用保留作者值）。
+
+---
+
 ## 3. 卸载方法
 
 ### 3.1 标准卸载（推荐）

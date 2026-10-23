@@ -294,7 +294,7 @@ export function parseSceneJson(raw: string): SceneDescription {
       angles: vec3(o.angles),
       size: size2(o.size),
       // T4.2：可见性绑定归一化（布尔 / {user,value} / {script,value} → VisibleBinding；
-      // 缺失/畸形 → undefined = 默认可见）。渲染器按 resolveVisibility 跳过不可见对象。
+      // 缺失/畸形 → undefined = 默认可见）。渲染器按 computeEffectiveVisibility（自身 condition + 父链）跳过不可见对象。
       visible: parseVisible(o.visible),
       // T4.1：对象对齐锚点（9 种 WE 对齐值）→ image/particle 对象（text 对象走
       // horizontalalign/verticalalign，另行处理；util 对象不渲染，字段无害保留）。
@@ -406,7 +406,7 @@ export function parseSceneJson(raw: string): SceneDescription {
         verticalAlign: optStr(o.verticalalign),
         padding: optNum(o.padding),
         ...textVisibleFields(o),
-        // T3.3：text.script 识别为 clock 时每帧刷新时间文本（scriptproperties 已解包）
+        // T3.3：text.script 识别为 clock 时每帧刷新时间文本（scriptproperties 的 {user,value} 保留到装配前 resolve）
         ...scriptFields(t),
       };
     }
