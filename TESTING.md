@@ -430,27 +430,27 @@ getEventListeners(window).pointermove?.length
 | P6 | `3118949804` slider + parallax | 选中紫眼动漫少女：① 拖「Hair Speed」（0–4）；② 切「Parralax」；③ 拖「Bar Spacing」/「Bar Transparence」。 | ① 头发摆动速度变化，默认应为 **2**（project.json 的 value，不是 scene 的 3.1300001）；② 开关决定画面是否随鼠标视差；③ 频谱条间距 / 透明度变化。 | 速度仍是 3.13 → 默认值取错（应取 project.json）；视差开关无反应 → `general.cameraparallax` 的 `{user}` 未 resolve。 |
 | P7 | `2832263418` color + condition | 选中 EVA 卡农：① 关「音频条开关」；② 重新打开后改「音频律动颜色」。 | ① `audiobar=false` 时音频条对象隐藏，颜色控件**禁用并标灰**（属性级 condition `audiobar.value==true` 不满足）；② 打开后颜色控件可用，改色后音频条呈新颜色。 | 关音频条后颜色控件仍可调 / 重开后颜色无效 → 属性级 condition 或 color 绑定未生效。 |
 
-**勾选记录**（待人工验收；验收人 / 日期 / GPU 未记录）：
+**勾选记录**（2026-10-23 用户人眼验收，全部通过；验收人 用户 日期 2026-10-23 GPU/分辨率 未记录）：
 
-- [ ] P1：`3812518176` clock 三档（1 / 2 / 3 off）
-- [ ] P2：`3812518176` clockcolor（防抖提交）
-- [ ] P3：`3812518176` `_24h` / `leavedspeed` / `ember`
-- [ ] P4：`2911105183` Clock combo + musiccolor
-- [ ] P5：`2937346640` slider（眼动追踪速度）
-- [ ] P6：`3118949804` slider + parallax
-- [ ] P7：`2832263418` color + condition（音频条关闭时禁用）
+- [x] P1：`3812518176` clock 三档（1 / 2 / 3 off）
+- [x] P2：`3812518176` clockcolor（防抖提交）
+- [x] P3：`3812518176` `_24h` / `leavedspeed` / `ember`
+- [x] P4：`2911105183` Clock combo + musiccolor
+- [x] P5：`2937346640` slider（眼动追踪速度）
+- [x] P6：`3118949804` slider + parallax
+- [x] P7：`2832263418` color + condition（音频条关闭时禁用）
 
-**已知边界（v0.9）**：`text` 类型本机 0 样本、面板不渲染；`group` 类型不返回（Leon 的 `character`/`weather` 不显示）、面板平铺；属性变更走整壁纸重装配（无就地实时生效）；color 的 0-1 值按 sRGB 直映射，`clockcolor` 与桌面 WE 的色彩空间对照待补；`3812518176` 的 `bloomhdr*` 仍不支持（另一条缺口）；`2937346640` 的 `_24hourformat` 在 project.json 中不存在，面板不出现该项（`{user}` 引用保留作者值）。
+**已知边界（v0.9）**：`text` 类型本机 0 样本、面板不渲染；`group` 类型不返回（Leon 的 `character`/`weather` 不显示）、面板平铺；属性变更走整壁纸重装配（无就地实时生效）；color 的 0-1 值按 sRGB 直映射，`clockcolor` 色彩空间已按 P2 人眼验收通过（2026-10-23，未做逐像素色差量化）；`3812518176` 的 `bloomhdr*` 仍不支持（另一条缺口）；`2937346640` 的 `_24hourformat` 在 project.json 中不存在，面板不出现该项（`{user}` 引用保留作者值）。
 
 **e2e 自动化复跑（2026-10-23 最终修复轮，本机 headless Edge / SwiftShader）**：
 
 - `npm run e2e:verify-v081` → **exit 0**（PASS）：bloom 亮部占比 A/B（Glow off 2.245% vs 0.604%，Δ1.641pp；默认 Glow 3.759% vs 1.183%，Δ2.577pp）、`2980088441` clearcolor 四角 `#111418`（±8）、`3765967112` spritesheet 方差比 0.742（≤0.8）。
 - `npm run e2e:verify-v082` → **exit 0**（四组 PASS）：`2911105183` util 后处理 `meanAbs 11.414 / 62.10%`（全屏 bbox）、`2132420420` pulse `0.826 / 3.23%`、`3765967112` text brightness `910px / maxΔ20`、`3780477933` pointer asis `0.00%` / defaults `3.88%`（双簇质心距 4.3 / 5.8px）。
 
-**待真机对照（默认观感变化，属性默认值生效后）**：
+**默认观感变化对照（2026-10-23 人眼验收通过）**：
 
-- `2911105183` `musiccolor`：`constantshadervalues` 作者值灰 `0.15294 0.15294 0.15294` → project.json 默认蓝 `0.01569 0.31765 0.55294`（0-1 语义），音频条 / 光带默认偏蓝，需与桌面 WE 并排确认色相 / 饱和度。
-- `2980088441` `_24hr`：object 19 的 `use24hFormat` 作者值 `true`（24h），project.json 默认 `false` ⇒ 默认变 12h，时钟小时格式随默认值变化，需与桌面 WE 并排确认默认档一致。
+- `2911105183` `musiccolor`：`constantshadervalues` 作者值灰 `0.15294 0.15294 0.15294` → project.json 默认蓝 `0.01569 0.31765 0.55294`（0-1 语义），音频条 / 光带默认偏蓝；P4 已覆盖颜色变更，默认色相未发现异常（2026-10-23 人眼验收，未并排逐像素对照）。
+- `2980088441` `_24hr`：object 19 的 `use24hFormat` 作者值 `true`（24h），project.json 默认 `false` ⇒ 默认变 12h，时钟小时格式随默认值变化；2026-10-23 人眼验收未发现异常（未与桌面 WE 并排逐项对照）。
 
 ---
 
