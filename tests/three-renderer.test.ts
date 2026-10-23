@@ -2081,12 +2081,12 @@ describe('three-renderer text 对象', () => {
       ],
     }), {});
     stubTextRender();
-    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null });
+    vi.mocked(resolveImageAssets).mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null, spriteSheet: false });
     const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
 
     localStorage.setItem('we:userprop:clock', '"2"');
-    await r.render('3812518176', document.createElement('canvas'), null);
-    let assets = loadSceneToThree.mock.calls[0][1] as {
+    await r.render('3812518176', document.createElement('canvas'), undefined);
+    let assets = vi.mocked(loadSceneToThree).mock.calls[0][1] as {
       effectiveVisible?: Map<number, boolean>;
       textLayers: Map<number, unknown>;
       backgroundTextures: Map<number, unknown>;
@@ -2100,13 +2100,13 @@ describe('three-renderer text 对象', () => {
     expect([...assets.backgroundTextures.keys()]).toEqual([234]);
 
     localStorage.setItem('we:userprop:clock', '"1"');
-    await r.render('3812518176', document.createElement('canvas'), null);
-    assets = loadSceneToThree.mock.calls[1][1] as typeof assets;
+    await r.render('3812518176', document.createElement('canvas'), undefined);
+    assets = vi.mocked(loadSceneToThree).mock.calls[1][1] as typeof assets;
     expect([...assets.textLayers.keys()]).toEqual([192]);
     expect([...assets.backgroundTextures.keys()]).toEqual([199]);
 
     localStorage.clear();
-    r.dispose();
+    r.dispose?.();
   });
 
   // 字体加载（2026-10-10）：`systemfont_<family>` 是 WE 的**宿主系统字体别名**，永远不会在 pkg /
@@ -4003,28 +4003,28 @@ describe('用户属性默认值与属性级 condition 接线', () => {
       if (u.includes('/wallpapers/properties')) return { ok: true, json: async () => properties };
       return { ok: false, text: async () => '' };
     }));
-    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null });
+    vi.mocked(resolveImageAssets).mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null, spriteSheet: false });
     const player = {
       dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(),
       setParallax: vi.fn(), setParallaxPointer: vi.fn(), setObjectEffectStage: vi.fn(),
       isolatedObjects: () => [],
     };
-    loadSceneToThree.mockReturnValue({
+    vi.mocked(loadSceneToThree).mockReturnValue({
       player, sims: [], backgroundIds: [0, 1], particleLayers: [], puppetLayers: [],
     } as never);
 
     const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm, getTextScriptRuntime: async () => null });
-    expect(await r.render('wid-cond', document.createElement('canvas'), null)).toBe(true);
+    expect(await r.render('wid-cond', document.createElement('canvas'), undefined)).toBe(true);
     // 默认值生效：color 用户值 "0 1 0" → 0-255 三元组。
-    expect((resolveImageAssets.mock.calls[0]![1] as any).color).toEqual([0, 255, 0]);
+    expect((vi.mocked(resolveImageAssets).mock.calls[0]![1] as any).color).toEqual([0, 255, 0]);
 
     // localStorage 覆盖 flag=false ⇒ condition 不满足 ⇒ color1 视为不可用 → 作者值。
     localStorage.setItem('we:userprop:wid-cond:flag', 'false');
-    expect(await r.render('wid-cond', document.createElement('canvas'), null)).toBe(true);
-    const after = resolveImageAssets.mock.calls.slice(2).find((c) => (c[1] as any).id === 1)!;
+    expect(await r.render('wid-cond', document.createElement('canvas'), undefined)).toBe(true);
+    const after = vi.mocked(resolveImageAssets).mock.calls.slice(2).find((c) => (c[1] as any).id === 1)!;
     expect((after[1] as any).color).toEqual([255, 255, 255]);
 
     localStorage.removeItem('we:userprop:wid-cond:flag');
-    r.dispose();
+    r.dispose?.();
   });
 });
