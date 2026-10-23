@@ -330,7 +330,7 @@ git commit -m "feat(userprops): host 聚合四类型属性并标注引用路径"
 ### Task 3: 可见性（对象形态 + condition + 父链继承）
 
 **Files:**
-- Modify: `src/client/visibility.ts`、`src/client/three-renderer.ts:528-546`（userProps 构建与过滤）、`src/shared/types.ts:50-56`（`VisibleBinding` 增加 `condition?: string`）
+- Modify: `src/client/visibility.ts`、`src/client/three-renderer.ts:528-546`（userProps 构建与过滤）、`src/shared/types.ts:50-56`（`VisibleBinding` 增加 `condition?: string`）、`src/client/scene-assets.ts`（`SceneAssets` 增加 `effectiveVisible`）、`src/client/threejs-player.ts:2814-2860`（绘制链路改用 effective 可见性，修复轮扩大范围）
 - Test: `tests/visibility.test.ts`
 
 **Interfaces:**
@@ -397,7 +397,7 @@ Expected: FAIL（`computeEffectiveVisibility` 未定义、`condition` 字段缺�
 - [ ] **Step 3: 实现**
 
 1. `parseVisible`：`typeof o.user === 'object'` 时用 `parseUserRef` 取 `{name, condition}` → `{ kind:'user', key: name, condition, value }`；字符串形态保持。
-2. `resolveVisibility` / `isStaticallyHidden`：user 绑定用 `matchCondition(userProps[key], condition)` 判定（bool 属性 condition "0"=开、"1"=关），匹配 → 用作者 `value`，不匹配 → false；`userProps` 键缺失 → 回退作者 `value`。**不要用 `resolveUserValue(...,'bool')`**：其 bool 归一 `isTruthy('0') = false` 会把 combo 分支判反（`2911105183` 夹具会失败）。
+2. `resolveVisibility` / `isStaticallyHidden`：user 绑定用 `matchCondition(userProps[key], condition)` 判定（bool 属性 condition "0"=开、"1"=关）：**匹配 → true**（该分支被选中）；不匹配 → false；`userProps` 键缺失 → 回退作者 `value`；无 `condition` 的字符串绑定 → 旧口径（用户 bool 覆盖，非布尔回退 value）。**不要用 `resolveUserValue(...,'bool')`**（`isTruthy('0') = false` 会把 combo 分支判反），**也不要写成「匹配 → 作者 value」**（Leon 227 的 `value:false` 在 clock=2 时必须可见，`tests/visibility.test.ts` 已钉住）。
 3. 新增 `computeEffectiveVisibility(objects, userProps, defs?)`：
    - own = resolveVisibility；
    - 沿 `parent` 链求值（`Map` 缓存；父缺失 → 只按自身；环 → 视为 true 防死循环）；
@@ -488,7 +488,7 @@ Expected: FAIL。
    - `instanceOverrideJson`：JSON.parse → 递归 resolve → stringify；
    - `scriptProperties`：递归 resolve；
    - `bloomUser`/`parallaxUser` 覆盖 `desc.bloom`/`desc.parallax`。
-3. `three-renderer.ts`：拿到 `desc` 后、任何消费前调用 `resolveSceneUserBindings(desc, userProps)`。
+3. `three-renderer.ts`：拿到 `desc` 后、任何消费前调用 `resolveSceneUserBindings(desc, userProps)`。**`userProps` 来源（spec §4.4）**：`localStorage` override ?? host 默认值 —— 用 `fetchWallpaperProperties(id)`（`/wallpapers/properties`，失败返回 `[]`）构建 `key → project 默认值` 表，再逐个 user 键取 `getUserPropertyValue(key, id) ?? default`；fetch 失败时空表（失败开放）。每次装配 await 一次（已有 async 链路），失败不阻断渲染。
 
 - [ ] **Step 4: 跑测试确认通过**
 
