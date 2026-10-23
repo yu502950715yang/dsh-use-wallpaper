@@ -343,6 +343,22 @@ getEventListeners(window).pointermove?.length
 > **自动化已覆盖**：`npm run e2e:verify-v082` 对 2911105183（util 全屏后处理覆盖）、2132420420（pulse 相位）、3765967112（text brightness）、3780477933（指针 uniform 的 asis/defaults 两档）做像素判据，退出码 0 = 通过；`e2e:verify-v081`、`e2e:textclock --gpu`、`e2e:colorblend` 保持 PASS。观感、4K 与真机帧率仍需人工确认。
 > **口径**：表中数值来自 e2e/headless 实测（1280×720 或另行注明），**不是真机截图**；V10 的软件光栅化数字不代表真机 GPU。
 
+**素材中文名对照**（本机库 `project.json` 的 title；英文标题给中文习惯叫法）：
+
+| ID | 标题（库内显示） | 中文叫法 |
+|---|---|---|
+| `2911105183` | Subway Station | 地铁站（英文标题） |
+| `2132420420` | 守望先锋 - Dva女警 | 守望先锋 Dva女警 |
+| `2597392171` | 克西高达-RX-105 ΞGUNDAM（高达系列126） | 克西高达 RX-105 |
+| `3789452668` | Knight in a red cloak | 红衣骑士（英文标题） |
+| `2832263418` | EVA 卡农 弦乐四重奏 | EVA 卡农弦乐四重奏 |
+| `2937346640` | Lycoris Recoil-锦木千束/Nishikigi Chisato | 锦木千束（Lycoris Recoil） |
+| `1922570576` | 魔兽之门 | 魔兽之门 |
+| `2460786246` | DVA守望先锋 | DVA 守望先锋 |
+| `3780477933` | spider man bnd 2 | 蜘蛛侠 bnd 2（英文标题） |
+| `3765967112` | Crimson Horizon | 绯红地平线（英文标题） |
+| `3118949804` | Anime Girl With Purple Eyes | 紫眼动漫少女（英文标题） |
+
 | # | 用例 | 步骤 | 期望结果 | 失败表现 |
 |---|---|---|---|---|
 | V1 | util 全屏后处理 + text/image 字段（`2911105183`） | 选中壁纸等 2–3 秒，与桌面 WE 并排：看整屏灯光/天窗泛光、`88:88` 时钟文字、左中/右侧广告牌；也可对照 e2e 生成的 `v082-291-util-on/off.png`。 | 整屏柔和 bloom（bokeh 次之）向外溢出，**不是**只在中部矩形；无白块/接缝；`88:88`（obj108/144，alpha 0.93）略透、obj148（alpha 0）不可见；两块广告牌偏冷/偏暗（image color）。e2e：`meanAbs 11.410 / 62.10%`、全屏 bbox。 | 完全无泛光 → projectlayer 未挂链/未渲染；只有中央矩形泛光 → cover 映射或 RT 口径错；白块/接缝 → passthrough 占位或合成 quad；广告牌仍原色 → image color 未消费；时钟太实/消失 → text alpha 口径错。 |
@@ -365,17 +381,17 @@ getEventListeners(window).pointermove?.length
 
 **勾选记录**（真机验收人填写）：验收人 __________ 日期 __________ GPU/驱动 __________ 分辨率 __________
 
-- [ ] V1：`2911105183` util 全屏 bloom+bokeh / text / image color
-- [ ] V2：`2132420420` pulse 暖色脉冲（相位）
-- [ ] V3：`2597392171` 全屏 blur（竖构图无拉伸/翻转）
-- [ ] V4：`3789452668` 音频频谱线（无音频不可见；有音频观感待补）
-- [ ] V5：`2832263418` image color（彩虹层偏色）
-- [ ] V6：`2937346640` image alignment bottomright（脚本会覆盖 origin）
-- [ ] V7：`1922570576` text anchor（3D Clock 位置，对照 WE）
-- [ ] V8：`2911105183` / `2460786246` text alpha A/B（隔离+效果链）
-- [ ] V9：`3780477933` 指针 uniform（原样无可见差；链路已确认）
-- [ ] V10：性能（三张壁纸 1080p/4K ≥30fps 目标）
-- [ ] V11：`3118949804` parallax 行为变化记录
+- [ ] V1：`2911105183` 地铁站 util 全屏 bloom+bokeh / text / image color
+- [ ] V2：`2132420420` 守望先锋 Dva女警 pulse 暖色脉冲（相位）
+- [ ] V3：`2597392171` 克西高达 全屏 blur（竖构图无拉伸/翻转）
+- [ ] V4：`3789452668` 红衣骑士 音频频谱线（无音频不可见；有音频观感待补）
+- [ ] V5：`2832263418` EVA 卡农 image color（彩虹层偏色）
+- [ ] V6：`2937346640` 锦木千束 image alignment bottomright（脚本会覆盖 origin）
+- [ ] V7：`1922570576` 魔兽之门 text anchor（3D Clock 位置，对照 WE）
+- [ ] V8：`2911105183` 地铁站 / `2460786246` DVA 守望先锋 text alpha A/B（隔离+效果链）
+- [ ] V9：`3780477933` 蜘蛛侠 bnd 2 指针 uniform（原样无可见差；链路已确认）
+- [ ] V10：性能（地铁站 / Dva女警 / 克西高达 三张 1080p/4K ≥30fps 目标）
+- [ ] V11：`3118949804` 紫眼动漫少女 parallax 行为变化记录
 
 **已知边界（v0.8.2）**：anchor/limitwidth 语义仍待真机 A/B（`1922570576`/`2937346640`）；`2832263418` 的 chromatic_aberration 链当前可能编译失败（v0.8.2 的 e2e shader 门禁只覆盖四组判据素材）；`3780477933` 原样无可见输出；`3118949804` 的公式无法真机校准；V10 的 headless 数字不代表真机 GPU。**aliasing**：util 壁纸的段渲染整帧走 frameRT、**无 MSAA**（画布 `antialias` 不作用于 RT）——`2911105183` / `2132420420` / `2597392171` 的边缘锯齿需与 v0.8.1 对照（`3789452668` 仅 solid util、不登记快照消费者 ⇒ 不走段渲染）；若观感不可接受，列入真机验收失败项。
 
