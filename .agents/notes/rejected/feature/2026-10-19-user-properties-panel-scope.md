@@ -6,6 +6,8 @@ Status: rejected — 全库净新增仅 7 条 / 4 张，收益不足而成本跨
 
 v0.8 只把 `project.json general.properties` 中 `type=bool`、且被 `scene.json` 的 `visible.user` 引用的属性暴露成开关（见 [v0.8 产品化笔记](../../implemented/architecture/2026-10-19-v08-degradation-rotation-and-properties.md)），slider / color / combo / text 留待 v0.9。本轮核对确认：scene.json 里 `{user}` 绑定共 53 处、12 类路径，而解析层只认字符串 `user`、只消费 `visible`——2911105183 的三个 Clock 分支（对象形态 `user:{name,condition}`）因此全部通过可见性判定、三态叠加；3118949804 的 `general.cameraparallax.user` 被 `=== true` 判成关闭。要不要把「全类型面板 + 全绑定消费」一次补齐，需要重新评估收益。
 
+**2026-10-23 决策翻转**：同日诊断热门壁纸 `3812518176`「Leon (Resident Evil; Adjustable)」时确认，对象形态 `user:{name,condition}` 不被识别与父可见性未继承是**用户可见 bug**（两套时钟样式同时渲染、文字重影），不再是「净新增 7 条」的锦上添花。提案已重启，见[设计文档](../../../../docs/superpowers/specs/2026-10-23-user-properties-full-types-design.md)。
+
 ## Proposal
 
 （冻结提案，未实施）
