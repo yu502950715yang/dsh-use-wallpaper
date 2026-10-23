@@ -33,6 +33,8 @@ import type { PuppetInstance } from './puppet.js';
 import type { SceneImageObject, UtilLayerKind } from '../shared/types.js';
 // util 层内置材质（v0.8.2 F2）：solid 纯色 / 其余直通，与 pkg 纹理无关。
 import { resolveUtilMaterial, type UtilMaterialSpec } from './util-material.js';
+// 静态隐藏判定（visible:false / 用户属性关）：装配期跳过，避免无纹理 quad 渲染成白色全屏层。
+import { isStaticallyHidden } from './visibility.js';
 // 首帧缓存抓帧：GL 像素行序翻转 + PNG 编码（纯函数层，node 可注入 encoder 单测）。
 import { readPixelsToPng, type ReadPixelsGl } from './frame-export.js';
 
@@ -2795,6 +2797,8 @@ export function loadSceneToThree(
   // renderOrder = objects 数组下标（每对象唯一）：对齐 WE 的绘制序 `m_objectsByRenderOrder`
   // （lwe CScene.cpp:94-101/262-295）；`continue` 分支不改变数组下标。
   for (const [renderOrder, obj] of desc.objects.entries()) {
+    // 静态隐藏对象（visible:false / 用户属性关）WE 不渲染；其纹理已被装载期过滤，建 quad 会成白色全屏层。
+    if (isStaticallyHidden(obj.visible, {})) continue;
     if (obj.kind === 'image') {
       const t = world(obj);
       // puppet 对象：几何/骨骼/材质已由调用方按 `.mdl` 建好 ⇒ 不走 addBackground 的 quad 路径

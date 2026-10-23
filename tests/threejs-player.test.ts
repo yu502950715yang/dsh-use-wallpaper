@@ -1600,6 +1600,25 @@ describe('ThreeScenePlayer loadSceneToThree', () => {
     expect(mat.opacity).toBeCloseTo(0.5, 6);
   });
 
+  // 静态隐藏对象（scene.json visible:false）不装配：其纹理被装载过滤跳过，若仍建 quad 会渲染
+  // 成无 map 的白色全屏层（2832263418 的 all_fg_still 覆盖背景）。
+  it('visible:false 的 image 对象不装配（不产生无纹理白色 quad）', () => {
+    const canvas = document.createElement('canvas');
+    const scene = JSON.stringify({
+      general: { orthogonalprojection: { height: 1080, width: 1920 } },
+      objects: [
+        { id: 13, image: 'models/a.json', origin: '960 540 0', scale: '1 1 1', size: '1920 1080', visible: true },
+        { id: 115, image: 'models/b.json', origin: '960 540 0', scale: '1 1 1', size: '1920 1080', visible: false },
+      ],
+    });
+    const result = loadSceneToThree(
+      scene, { renderer: createMockRenderer() as unknown as THREE.WebGLRenderer }, canvas,
+    );
+    expect(result.backgroundIds).toHaveLength(1);
+    expect(result.player.scene.children).toHaveLength(1);
+    expect(result.player.displayObject(115)).toBeUndefined();
+  });
+
   // renderOrder 唯一化：装配循环把 objects 数组下标作为 renderOrder 透传（WE 的绘制序 =
   // m_objectsByRenderOrder，即 scene.json objects 序）。被 `continue` 跳过的对象**不改变**下标。
   it('renderOrder = objects 数组下标（唯一；被跳过的对象不占位）', () => {

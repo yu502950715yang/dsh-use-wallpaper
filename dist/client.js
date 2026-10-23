@@ -25828,6 +25828,7 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
   const sims = [];
   const textDrivers = [];
   for (const [renderOrder, obj] of desc.objects.entries()) {
+    if (isStaticallyHidden(obj.visible, {})) continue;
     if (obj.kind === "image") {
       const t = world(obj);
       const puppet = assets.puppetMeshes?.get(obj.id);
