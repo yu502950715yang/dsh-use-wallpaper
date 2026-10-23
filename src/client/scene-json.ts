@@ -462,3 +462,41 @@ export function parseSceneJson(raw: string): SceneDescription {
     sounds: collectSounds(root),
   };
 }
+
+// resolved color（0-255 三元组）→ "r g b" 0-1 字符串：optColor 对 max≤1 的值 ×255，
+// 写 0-1 才能精确往返；写 0-255 会被再次归一（#010101 → [1,1,1] → 白）。
+function formatColor01(rgb: number[]): string {
+  return [0, 1, 2]
+    .map((i) => {
+      const c = rgb[i];
+      return String((Number.isFinite(c) ? c : 0) / 255);
+    })
+    .join(' ');
+}
+
+/**
+ * 把 resolveSceneUserBindings 后的 color/alpha/brightness 写回原始 scene.json 文本。
+ * loadSceneToThree 会重新 parseSceneJson，颜色必须写 0-1 字符串，避免 optColor 二次 ×255。
+ */
+export function sceneJsonWithResolvedModulation(sceneJson: string, desc: SceneDescription): string {
+  try {
+    const root = JSON.parse(sceneJson) as { objects?: unknown };
+    if (!Array.isArray(root.objects)) return sceneJson;
+    const byId = new Map(desc.objects.map((obj) => [obj.id, obj]));
+    for (const raw of root.objects) {
+      if (!raw || typeof raw !== 'object') continue;
+      const rec = raw as Record<string, unknown>;
+      const obj = byId.get(Number(rec.id ?? 0));
+      const refs = obj?.userRefs;
+      if (!obj || !refs) continue;
+      const resolved = obj as unknown as Record<string, unknown>;
+      if (refs.color && Array.isArray(resolved.color)) rec.color = formatColor01(resolved.color as number[]);
+      // alpha/brightness 是标量（optAlpha/optNum 不再缩放），按数值写回。
+      if (refs.alpha && resolved.alpha !== undefined) rec.alpha = resolved.alpha;
+      if (refs.brightness && resolved.brightness !== undefined) rec.brightness = resolved.brightness;
+    }
+    return JSON.stringify(root);
+  } catch {
+    return sceneJson; // 畸形输入：保持原文（parseSceneJson 已成功过，正常走不到）
+  }
+}

@@ -2,7 +2,7 @@
 // ⚠️ 新增的播放路径（`THREE_USE=1` 启用），**不改动/不删除** wasm-renderer（默认路径不变）；纯 CPU 模拟，无需 WebGPU。
 import type { Material, Texture, WebGLRenderer } from 'three';
 import { loadSceneToThree, resolvePixelRatio, type LoadedParticleAssets, type ParticleSim, type SceneAssets, type ThreeSceneLoadResult } from './threejs-player.js';
-import { parseSceneJson } from './scene-json.js';
+import { parseSceneJson, sceneJsonWithResolvedModulation } from './scene-json.js';
 import { resolveWorldTransforms, type WorldTransform } from './scene-graph.js';
 import { resolveImageAssets, fetchMdlBytes, resolveTexPath, resolveParticleMaterial } from './scene-assets.js';
 // puppet（.mdl）→ three 网格/蒙皮：解析、网格装配与材质都在这里接线（SceneAssets.puppetMeshes）。
@@ -159,33 +159,6 @@ function collectUserKeys(node: unknown, out: Set<string>): void {
     return;
   }
   for (const value of Object.values(obj)) collectUserKeys(value, out);
-}
-
-// loadSceneToThree 会按原始文本重新 parse scene.json（拿不到本层 desc）：把已 resolve 的
-// 对象调制字段写回文本，避免 color/alpha/brightness 的用户值在绘制链路丢失。
-function sceneJsonWithResolvedModulation(sceneJson: string, desc: SceneDescription): string {
-  try {
-    const root = JSON.parse(sceneJson) as { objects?: unknown };
-    if (!Array.isArray(root.objects)) return sceneJson;
-    const byId = new Map(desc.objects.map((obj) => [obj.id, obj]));
-    for (const raw of root.objects) {
-      if (!raw || typeof raw !== 'object') continue;
-      const obj = byId.get(Number((raw as { id?: unknown }).id ?? 0));
-      const refs = obj?.userRefs;
-      if (!obj || !refs) continue;
-      const rec = raw as Record<string, unknown>;
-      const resolved = obj as unknown as Record<string, unknown>;
-      if (refs.color && Array.isArray(resolved.color)) {
-        const [r, g, b] = resolved.color as number[];
-        rec.color = `${r} ${g} ${b}`;
-      }
-      if (refs.alpha && resolved.alpha !== undefined) rec.alpha = resolved.alpha;
-      if (refs.brightness && resolved.brightness !== undefined) rec.brightness = resolved.brightness;
-    }
-    return JSON.stringify(root);
-  } catch {
-    return sceneJson; // 畸形输入：保持原文（parseSceneJson 已成功过，正常走不到）
-  }
 }
 
 // 收集并解析「带效果对象」的链：按 scene.json objects 顺序，每对象保留自身 effects（不展平）。

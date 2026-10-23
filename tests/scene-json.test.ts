@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { parseSceneJson } from '../src/client/scene-json.js';
+import { parseSceneJson, sceneJsonWithResolvedModulation } from '../src/client/scene-json.js';
+import { resolveSceneUserBindings } from '../src/client/user-bindings.js';
 
 const raw = readFileSync(new URL('./fixtures/eva/scene.json', import.meta.url), 'utf8');
 
@@ -861,6 +862,68 @@ describe('parseSceneJson 保留 {user} 引用（T4.4）', () => {
     expect(parsed.rate).toEqual({ user: 'leavedspeed', value: 1 });
     expect(parsed.colorn).toBe('1.000 1.000 1.000');
     expect(parsed.nested).toEqual({ inner: { user: { name: 'u' }, value: 7 } });
+  });
+});
+
+// R1 写回回环：resolved color 是 0-255 三元组，写回原始 JSON 必须是 0-1 字符串，
+// 否则 optColor 的 max≤1 启发会二次 ×255（#010101 近黑 → 白）。
+describe('sceneJsonWithResolvedModulation（resolved 颜色按 0-1 写回）', () => {
+  const writeBack = (authored: string, user: string): { color: number[]; json: any } => {
+    const raw = JSON.stringify({
+      camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+      general: { orthogonalprojection: { width: 100, height: 100 } },
+      objects: [{
+        id: 1, image: 'a', origin: '0 0 0', scale: '1 1 1',
+        color: { user: 'tint', value: authored },
+      }],
+    });
+    const resolved = resolveSceneUserBindings(parseSceneJson(raw), { tint: user });
+    const text = sceneJsonWithResolvedModulation(raw, resolved);
+    return { color: (parseSceneJson(text).objects[0] as any).color, json: JSON.parse(text) };
+  };
+
+  it('#010101 近黑边界：resolved [1,1,1] 写回 0-1 串后重解析仍为 [1,1,1]（不再变白）', () => {
+    const user = '0.00392156862745098 0.00392156862745098 0.00392156862745098'; // 1/255
+    const out = writeBack('255 255 255', user);
+    expect(out.color).toEqual([1, 1, 1]);
+    expect(out.color).not.toEqual([255, 255, 255]);
+  });
+
+  it('纯白 / 纯黑边界往返', () => {
+    expect(writeBack('255 255 255', '1 1 1').color).toEqual([255, 255, 255]);
+    const black = writeBack('255 255 255', '0 0 0');
+    expect(black.color).toEqual([0, 0, 0]);
+    expect(black.json.objects[0].color).toBe('0 0 0');
+  });
+
+  it('写回颜色为 0-1 字符串；alpha/brightness 保持标量', () => {
+    const raw = JSON.stringify({
+      general: { orthogonalprojection: { width: 100, height: 100 } },
+      objects: [{
+        id: 1, image: 'a', origin: '0 0 0', scale: '1 1 1',
+        color: { user: 'tint', value: '1 1 1' },
+        alpha: { user: 'vis', value: 1 }, brightness: { user: 'bright', value: 1 },
+      }],
+    });
+    const resolved = resolveSceneUserBindings(parseSceneJson(raw), { tint: '0.5 0.5 0.5', vis: 0.25, bright: 2 });
+    const obj = JSON.parse(sceneJsonWithResolvedModulation(raw, resolved)).objects[0];
+    expect(obj.color).toBe('0.5 0.5 0.5');
+    expect(obj.alpha).toBe(0.25);
+    expect(obj.brightness).toBe(2);
+  });
+
+  it('无 userRefs 的对象原样保留（仅写回绑定字段）', () => {
+    const raw = JSON.stringify({
+      general: { orthogonalprojection: { width: 100, height: 100 } },
+      objects: [
+        { id: 1, image: 'a', color: '10 20 30' },
+        { id: 2, image: 'b', color: { user: 'tint', value: '1 1 1' } },
+      ],
+    });
+    const resolved = resolveSceneUserBindings(parseSceneJson(raw), { tint: '1 1 1' });
+    const out = JSON.parse(sceneJsonWithResolvedModulation(raw, resolved));
+    expect(out.objects[0].color).toBe('10 20 30');
+    expect(out.objects[1].color).toBe('1 1 1');
   });
 });
 

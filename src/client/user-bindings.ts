@@ -58,25 +58,31 @@ export function parseColorTriplet(text: string): [number, number, number] | unde
 
 /**
  * 解析绑定值：无绑定/属性缺失 → 作者静态值；condition 不匹配 → 中性零值；
- * 匹配 → 用户值按 hint 归一化（bool / number / color 0-255 三元组）。
+ * 匹配 → 用户值按 hint 归一化（bool / number / color 0-255 三元组 / color01 0-1 原串）。
  */
 export function resolveUserValue<T>(
   bound: { value: T; user?: UserBindingRef },
   userProps: Record<string, unknown>,
-  hint: 'bool' | 'number' | 'color',
+  hint: 'bool' | 'number' | 'color' | 'color01',
 ): T {
   const ref = bound.user;
   if (!ref) return bound.value;
   if (!Object.hasOwn(userProps, ref.name)) return bound.value; // 属性缺失 → 作者值
   const uv = userProps[ref.name];
   if (!matchCondition(uv, ref.condition)) {
-    const neutral = hint === 'bool' ? false : hint === 'number' ? 0 : [0, 0, 0];
+    const neutral = hint === 'bool' ? false
+      : hint === 'number' ? 0
+        : hint === 'color' ? [0, 0, 0] : '0 0 0';
     return neutral as unknown as T;
   }
   if (hint === 'bool') return (typeof uv === 'boolean' ? uv : isTruthy(uv)) as unknown as T;
   if (hint === 'number') {
     const n = Number(uv);
     return (Number.isFinite(n) ? n : 0) as unknown as T;
+  }
+  if (hint === 'color01') {
+    // shader 常量颜色是 0-1 语义：保留字符串交给 uniform-binder，不能转 0-255 数组。
+    return (typeof uv === 'string' ? uv.trim() : '0 0 0') as unknown as T;
   }
   const color = typeof uv === 'string' ? parseColorTriplet(uv) : undefined;
   return (color ?? [0, 0, 0]) as unknown as T;
@@ -214,7 +220,7 @@ function cloneJsonLike<T>(value: T): T {
   return value;
 }
 
-// 任意 {user,value} 节点的值：按作者 value 的类型推断 hint（bool/number/color/字符串）。
+// 任意 {user,value} 节点的值：按作者 value 的类型推断 hint（bool/number/color01/字符串）。
 function resolveBoundNode(
   value: unknown,
   user: UserBindingRef,
@@ -223,7 +229,8 @@ function resolveBoundNode(
   if (typeof value === 'boolean') return resolveUserValue({ value, user }, userProps, 'bool');
   if (typeof value === 'number') return resolveUserValue({ value, user }, userProps, 'number');
   if (typeof value === 'string') {
-    if (/\s/.test(value.trim())) return resolveUserValue({ value, user }, userProps, 'color');
+    // effects 内空格分隔串是 shader 颜色（0-1），保留原串由 uniform-binder 解析。
+    if (/\s/.test(value.trim())) return resolveUserValue({ value, user }, userProps, 'color01');
     return resolveRawString(value, user, userProps);
   }
   return value;
@@ -255,7 +262,7 @@ function resolveValueNode(
 }
 
 // 递归 replace 任意 {user,value} 节点（effects / scriptProperties / instanceoverride）。
-// mode='effects'：字符串含空格按 color 转 0-255 三元组（shader uniform）；'raw'：保持字符串。
+// mode='effects'：颜色按 shader 0-1 语义保留字符串；'raw'：所有字符串保持原格式。
 function resolveBindingsDeep(
   node: unknown,
   userProps: Record<string, unknown>,

@@ -3,6 +3,7 @@ import {
   parseUserRef, matchCondition, resolveUserValue, propertyConditionMet, parseColorTriplet,
   resolveSceneUserBindings,
 } from '../src/client/user-bindings.js';
+import { resolveUniformBindings } from '../src/client/shader/uniform-binder.js';
 
 describe('parseUserRef', () => {
   it('字符串与对象形态', () => {
@@ -45,6 +46,13 @@ describe('resolveUserValue', () => {
   });
   it('color 解析为 0-255 三元组', () => {
     expect(resolveUserValue({ value: '1 1 1', user: { name: 'clockcolor' } }, props, 'color')).toEqual([127.5, 0, 0]);
+  });
+  it('color01（shader 常量颜色）保留 0-1 字符串', () => {
+    expect(resolveUserValue({ value: '1 1 1', user: { name: 'clockcolor' } }, props, 'color01')).toBe('0.5 0 0');
+    expect(resolveUserValue({ value: '1 1 1', user: { name: 'missing' } }, props, 'color01')).toBe('1 1 1');
+    expect(resolveUserValue(
+      { value: '1 1 1', user: { name: 'clockcolor', condition: '2' } }, props, 'color01',
+    )).toBe('0 0 0');
   });
 });
 
@@ -137,7 +145,7 @@ describe('resolveSceneUserBindings', () => {
     expect(JSON.parse(o.instanceOverrideJson)).toEqual({ rate: 2, nested: [3] });
   });
 
-  it('scriptProperties/instanceoverride 的颜色字符串保持原格式；effects 才转三元组', () => {
+  it('effects 的 shader 颜色保持 "r g b" 0-1 字符串（交给 uniform-binder）；脚本/wasm 保持原格式', () => {
     const desc = baseDesc([{
       id: 1, kind: 'particle',
       effects: [{ passes: [{ constantshadervalues: { tint: { user: 'tint', value: '1 1 1' } } }] }],
@@ -146,10 +154,32 @@ describe('resolveSceneUserBindings', () => {
     }]);
     const out = resolveSceneUserBindings(desc, { tint: '0.5 0 0' });
     const o = out.objects[0] as any;
-    // effects 的 shader uniform 走 color hint（0-255 三元组）；脚本/wasm 消费的字段保持 WE 字符串。
-    expect(o.effects[0].passes[0].constantshadervalues.tint).toEqual([127.5, 0, 0]);
+    // shader 颜色是 0-1 语义：保留字符串由 uniform-binder 解析（转 0-255 会 255× 过曝）。
+    expect(o.effects[0].passes[0].constantshadervalues.tint).toBe('0.5 0 0');
+    expect(resolveUniformBindings(
+      [{ name: 'g_Tint', type: 'vec3', annotation: { material: 'tint' } }],
+      o.effects[0].passes[0].constantshadervalues,
+    ).get('g_Tint')).toEqual([0.5, 0, 0]);
     expect(o.scriptProperties.tint).toBe('0.5 0 0');
     expect(JSON.parse(o.instanceOverrideJson).colorn).toBe('0.5 0 0');
+  });
+
+  it('effects 颜色 condition 不匹配 → shader 中性黑；属性缺失回退作者串', () => {
+    const desc = baseDesc([{
+      id: 1, kind: 'particle',
+      effects: [{
+        passes: [{
+          constantshadervalues: {
+            off: { user: { name: 'mode', condition: '2' }, value: '1 1 1' },
+            missing: { user: 'absent', value: '1 1 1' },
+          },
+        }],
+      }],
+    }]);
+    const out = resolveSceneUserBindings(desc, { mode: 1 });
+    const cs = (out.objects[0] as any).effects[0].passes[0].constantshadervalues;
+    expect(cs.off).toBe('0 0 0');
+    expect(cs.missing).toBe('1 1 1');
   });
 
   it('scriptProperties：解析形态 {value,user} 与原始 {user,value} 都被 resolve 为标量', () => {
