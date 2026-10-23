@@ -36,4 +36,15 @@ describe('resolveUniformBindings', () => {
     );
     expect(m.get('g_Scale')).toEqual([1, 1]);
   });
+  it('default 支持逗号分隔（WE linked 参数形如 "0.0, 1.0"）', () => {
+    const m = resolveUniformBindings(
+      [
+        { name: 'u_BarBounds', type: 'vec2', annotation: { default: '0.0, 1.0' } },
+        { name: 'u_CircleAngles', type: 'vec2', annotation: { default: '0, 360' } },
+      ],
+      {},
+    );
+    expect(m.get('u_BarBounds')).toEqual([0, 1]);
+    expect(m.get('u_CircleAngles')).toEqual([0, 360]);
+  });
 });

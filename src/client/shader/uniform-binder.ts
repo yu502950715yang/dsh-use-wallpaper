@@ -12,8 +12,9 @@ function parseValue(raw: unknown): number | number[] | null {
   if (typeof raw === 'number') return raw;
   if (typeof raw === 'boolean') return raw ? 1 : 0;
   if (typeof raw === 'string') {
-    const parts = raw.trim().split(/\s+/).map(Number);
-    if (parts.some((n) => !isFinite(n))) return null;
+    // WE 的 linked 参数默认值可能是逗号分隔（如 "0.0, 1.0"），与空格分隔等价。
+    const parts = raw.trim().split(/[\s,]+/).filter(Boolean).map(Number);
+    if (parts.length === 0 || parts.some((n) => !isFinite(n))) return null;
     return parts.length === 1 ? parts[0] : parts;
   }
   if (Array.isArray(raw)) {
