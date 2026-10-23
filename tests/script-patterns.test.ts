@@ -43,10 +43,10 @@ describe('detectScriptPattern（脚本模式启发式识别）', () => {
   });
 });
 
-describe('parseScriptProperties（WE scriptproperties 规范化：{user,value} 解包）', () => {
-  it('普通数值/字符串原样保留；{user,value} 包装解包为内层 value', () => {
+describe('parseScriptProperties（WE scriptproperties 规范化：{user,value} 保留绑定）', () => {
+  it('普通数值/字符串原样保留；{user,value} 包装保留为 {value,user}', () => {
     expect(parseScriptProperties({ a: 1, b: 'x', c: { user: '_u', value: 42 } }))
-      .toEqual({ a: 1, b: 'x', c: 42 });
+      .toEqual({ a: 1, b: 'x', c: { value: 42, user: { name: '_u' } } });
   });
   it('真实 visualizer scriptproperties：barWidth/originX/scaleY/barAlignmentdir 全部直出', () => {
     expect(parseScriptProperties(VISUALIZER_PROPS)).toEqual({
@@ -56,10 +56,10 @@ describe('parseScriptProperties（WE scriptproperties 规范化：{user,value} �
       scaleY: 23.889999,
     });
   });
-  it('真实 clock scriptproperties：use24hFormat 的 {user,value} 包装解包为 value=false', () => {
+  it('真实 clock scriptproperties：use24hFormat 的 user 绑定保留（装配前 resolve 成 value=false）', () => {
     expect(parseScriptProperties(CLOCK_PROPS)).toEqual({
       delimiter: ':',
-      use24hFormat: false,
+      use24hFormat: { value: false, user: { name: '_24hourformat' } },
     });
   });
   it('非对象输入（null/undefined/数组/字符串）→ 空对象（防御，不抛错）', () => {

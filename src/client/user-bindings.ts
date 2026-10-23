@@ -1,6 +1,6 @@
 // 用户属性绑定解析内核（纯逻辑）：scene 的 {user, condition} 引用 + project.json 属性级 condition。
 // 渲染侧只消费解析结果，不依赖 DOM/three。
-import type { UserBindingRef } from '../shared/types.js';
+import type { SceneDescription, SceneObject, UserBindingRef } from '../shared/types.js';
 
 /** 绑定引用归一化：字符串 → {name}；对象取非空 name + 字符串 condition；缺失/畸形 → undefined。 */
 export function parseUserRef(user: unknown): UserBindingRef | undefined {
@@ -188,4 +188,165 @@ export function propertyConditionMet(
   } catch {
     return true;
   }
+}
+
+// ---- 装配前统一 resolve：scene 解析产物（userRefs / effects / instanceoverride / scriptproperties） ----
+
+// 深拷贝（structuredClone 优先；环境不支持/含不可克隆值时回退 JSON 结构递归拷贝）。
+function deepClone<T>(value: T): T {
+  if (typeof structuredClone === 'function') {
+    try {
+      return structuredClone(value);
+    } catch {
+      /* 回退手写拷贝 */
+    }
+  }
+  return cloneJsonLike(value);
+}
+
+function cloneJsonLike<T>(value: T): T {
+  if (Array.isArray(value)) return value.map((item) => cloneJsonLike(item)) as unknown as T;
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value as Record<string, unknown>)) out[key] = cloneJsonLike(item);
+    return out as T;
+  }
+  return value;
+}
+
+// 任意 {user,value} 节点的值：按作者 value 的类型推断 hint（bool/number/color/字符串）。
+function resolveBoundNode(
+  value: unknown,
+  user: UserBindingRef,
+  userProps: Record<string, unknown>,
+): unknown {
+  if (typeof value === 'boolean') return resolveUserValue({ value, user }, userProps, 'bool');
+  if (typeof value === 'number') return resolveUserValue({ value, user }, userProps, 'number');
+  if (typeof value === 'string') {
+    if (/\s/.test(value.trim())) return resolveUserValue({ value, user }, userProps, 'color');
+    return resolveRawString(value, user, userProps);
+  }
+  return value;
+}
+
+// 字符串绑定：键缺失回退作者值，condition 不匹配写中性空串（spec §4.1）；用户值保持字符串。
+function resolveRawString(
+  value: string,
+  user: UserBindingRef,
+  userProps: Record<string, unknown>,
+): string {
+  if (!Object.hasOwn(userProps, user.name)) return value;
+  const uv = userProps[user.name];
+  if (!matchCondition(uv, user.condition)) return '';
+  return typeof uv === 'string' ? uv : String(uv);
+}
+
+// scriptproperties / instanceoverride：保持作者 value 的类型语义（颜色字符串不能被转成三元组，
+// wasm/脚本按 WE 原格式消费），只把绑定换成用户值。
+function resolveValueNode(
+  value: unknown,
+  user: UserBindingRef,
+  userProps: Record<string, unknown>,
+): unknown {
+  if (typeof value === 'boolean') return resolveUserValue({ value, user }, userProps, 'bool');
+  if (typeof value === 'number') return resolveUserValue({ value, user }, userProps, 'number');
+  if (typeof value === 'string') return resolveRawString(value, user, userProps);
+  return value;
+}
+
+// 递归 replace 任意 {user,value} 节点（effects / scriptProperties / instanceoverride）。
+// mode='effects'：字符串含空格按 color 转 0-255 三元组（shader uniform）；'raw'：保持字符串。
+function resolveBindingsDeep(
+  node: unknown,
+  userProps: Record<string, unknown>,
+  mode: 'effects' | 'raw',
+): unknown {
+  if (Array.isArray(node)) return node.map((item) => resolveBindingsDeep(item, userProps, mode));
+  if (node && typeof node === 'object') {
+    const o = node as Record<string, unknown>;
+    const user = parseUserRef(o.user);
+    if (user && 'value' in o) {
+      return mode === 'effects'
+        ? resolveBoundNode(o.value, user, userProps)
+        : resolveValueNode(o.value, user, userProps);
+    }
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(o)) out[key] = resolveBindingsDeep(value, userProps, mode);
+    return out;
+  }
+  return node;
+}
+
+const TRANSFORM_DEFAULT = { origin: 0, scale: 1, angles: 0 } as const;
+
+// 解析对象字段绑定：userRefs 各字段（color/alpha/brightness 标量，origin/scale/angles 逐分量）。
+function resolveObjectUserRefs(obj: SceneObject, userProps: Record<string, unknown>): void {
+  const refs = obj.userRefs;
+  if (!refs) return;
+  const rec = obj as unknown as Record<string, unknown>;
+  if (refs.color) rec.color = resolveUserValue({ value: rec.color, user: refs.color }, userProps, 'color');
+  if (refs.alpha) rec.alpha = resolveUserValue({ value: rec.alpha, user: refs.alpha }, userProps, 'number');
+  if (refs.brightness) {
+    rec.brightness = resolveUserValue({ value: rec.brightness, user: refs.brightness }, userProps, 'number');
+  }
+  for (const key of ['origin', 'scale', 'angles'] as const) {
+    const ref = refs[key];
+    if (!ref) continue;
+    const fallback = TRANSFORM_DEFAULT[key];
+    const raw = Array.isArray(rec[key]) ? (rec[key] as unknown[]) : [];
+    rec[key] = [0, 1, 2].map((i) => {
+      const component = typeof raw[i] === 'number' ? (raw[i] as number) : fallback;
+      return resolveUserValue({ value: component, user: ref }, userProps, 'number');
+    });
+  }
+}
+
+// 装配入口调用一次：返回**新** desc（不就地改），下游只消费静态值。
+export function resolveSceneUserBindings(
+  desc: SceneDescription,
+  userProps: Record<string, unknown>,
+): SceneDescription {
+  const out = deepClone(desc);
+  for (const obj of out.objects) {
+    resolveObjectUserRefs(obj, userProps);
+    const rec = obj as unknown as Record<string, unknown>;
+    if (Array.isArray(rec.effects)) rec.effects = resolveBindingsDeep(rec.effects, userProps, 'effects');
+    if (typeof rec.instanceOverrideJson === 'string') {
+      try {
+        const parsed = JSON.parse(rec.instanceOverrideJson) as unknown;
+        rec.instanceOverrideJson = JSON.stringify(resolveBindingsDeep(parsed, userProps, 'raw'));
+      } catch {
+        /* 畸形 JSON 保持原样（wasm 侧同样会忽略） */
+      }
+    }
+    for (const key of ['scriptProperties', 'objectScriptProperties'] as const) {
+      const props = rec[key];
+      if (props && typeof props === 'object' && !Array.isArray(props)) {
+        rec[key] = resolveBindingsDeep(props, userProps, 'raw');
+      }
+    }
+    const visible = rec.visible as { scriptProperties?: Record<string, unknown> } | undefined;
+    if (visible?.scriptProperties) {
+      visible.scriptProperties = resolveBindingsDeep(
+        visible.scriptProperties, userProps, 'raw',
+      ) as Record<string, unknown>;
+    }
+  }
+  // general.bloom/cameraparallax：用户值覆盖静态开关；bloom 由关闭 → 打开时补缺省参数。
+  if (out.bloomUser) {
+    const enabled = resolveUserValue(
+      { value: out.bloom !== undefined, user: out.bloomUser }, userProps, 'bool',
+    );
+    if (!enabled) out.bloom = undefined;
+    else if (!out.bloom) out.bloom = { strength: 2, threshold: 0.65 };
+  }
+  if (out.parallaxUser) {
+    out.parallax = {
+      ...out.parallax,
+      enabled: resolveUserValue(
+        { value: out.parallax.enabled, user: out.parallaxUser }, userProps, 'bool',
+      ),
+    };
+  }
+  return out;
 }

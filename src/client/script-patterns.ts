@@ -4,6 +4,8 @@
 // 启发式模式识别 + scriptproperties 规范化 + 两种内置模式的纯逻辑（时钟文本生成）。
 // 真实样本：2937346640 的 Simple Visualizer（visible.script，音频条）与
 // VHS Time and Date（text.script，时钟文本），fixture 见 tests/fixtures/2937346640/。
+import type { UserBindingRef } from '../shared/types.js';
+import { parseUserRef } from './user-bindings.js';
 
 // 视觉系脚本条数：脚本 `engine.registerAudioBuffers(64)` → 64 bin 频谱（与
 // audio-input.ts 的 fftSize 128 → 64 bins 一致），渲染 64 条音频条。
@@ -25,17 +27,23 @@ export function detectScriptPattern(src: string): 'visualizer' | 'clock' | null 
   return null;
 }
 
-// 解包单条 scriptproperty：WE 的 { user, value } 包装 → 内层 value；
-// 普通数值/字符串原样；无 value 键的对象保持原样（非 WE 包装，防御）。
+// 规范化单条 scriptproperty：WE 的 { user, value } 包装保留为 { value, user }（T4 装配前再
+// resolve 成标量）；无 user 的 { value } 包装仍解包；其余原样。非 WE 包装缺 value 键时也原样。
 function unwrapScriptProperty(v: unknown): unknown {
   if (typeof v === 'object' && v !== null && !Array.isArray(v) && 'value' in v) {
-    return (v as { value?: unknown }).value;
+    const o = v as { value?: unknown; user?: unknown };
+    const user = parseUserRef(o.user);
+    if (user) {
+      const bound: { value: unknown; user: UserBindingRef } = { value: o.value, user };
+      return bound;
+    }
+    return o.value;
   }
   return v;
 }
 
 // 规范化 WE scriptproperties JSON 对象（scene.json 已携带，直接读对象，不解析脚本源码）：
-// 每条目可能为普通值或 { user, value } 包装，统一解包为内层 value。
+// 每条目可能为普通值或 { user, value } 包装 → 绑定保留 { value, user }，其余解包为内层值。
 // 非对象输入（null/畸形）→ 空对象（渲染侧按缺省兜底，不抛错）。
 export function parseScriptProperties(scriptProperties: unknown): Record<string, unknown> {
   if (typeof scriptProperties !== 'object' || scriptProperties === null || Array.isArray(scriptProperties)) {

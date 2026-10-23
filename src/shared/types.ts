@@ -61,15 +61,27 @@ export interface VisibleBinding {
   key?: string;                         // kind='user'：用户属性键名（scene.json 的 user）
   condition?: string;                   // kind='user'：绑定侧 condition（对象形态 user.condition）
   script?: string;                      // kind='script'：脚本源码（T3.3 模式识别输入）
-  scriptProperties?: Record<string, unknown>; // kind='script'：脚本参数（{user,value} 已解包）
+  scriptProperties?: Record<string, unknown>; // kind='script'：脚本参数（{user} 绑定装配前 resolve 为标量）
 }
 
 // 对象级脚本挂载的转换属性（WE 属性脚本 `update(value)` 的绑定目标）。
 export type ObjectScriptProperty = 'angles' | 'origin' | 'scale' | 'color';
 
+// 对象级字段的 user 绑定引用（T4：解析期只记 ref，装配前 resolveSceneUserBindings 统一替换）。
+export interface ObjectUserRefs {
+  color?: UserBindingRef;
+  alpha?: UserBindingRef;
+  brightness?: UserBindingRef;
+  origin?: UserBindingRef;
+  scale?: UserBindingRef;
+  angles?: UserBindingRef;
+}
+
 // 四种 kind 共有的对象字段（解析器 scene-json.ts 的 `base` 会 spread 进每个分支）：
 // 新增与 kind 无关的对象级字段一律加在这里，避免四处声明漂移。
 export interface SceneObjectBase {
+  /** 对象字段的 user 绑定引用（静态值仍在原字段；装配前由 resolveSceneUserBindings 覆盖）。 */
+  userRefs?: ObjectUserRefs;
   /** WE 对象级视差深度（scene.json `parallaxDepth`，两根轴）；缺省 = OWE 的 {0,0} ⇒ 不参与视差。 */
   parallaxDepth?: [number, number];
   /** 对象级脚本（angles/origin/scale/color 的 `{script, value}` 包装，优先级同字段顺序）； */
@@ -77,7 +89,7 @@ export interface SceneObjectBase {
   objectScript?: string;
   /** 该脚本挂载的属性名（决定 update(value) 的入参/写回目标；visible.script 无此字段）。 */
   objectScriptProperty?: ObjectScriptProperty;
-  objectScriptProperties?: Record<string, unknown>; // 该脚本的 scriptproperties（{user,value} 已解包）
+  objectScriptProperties?: Record<string, unknown>; // 该脚本的 scriptproperties（{user} 绑定装配前 resolve）
 }
 
 export interface SceneImageObject extends SceneObjectBase {
@@ -96,7 +108,7 @@ export interface SceneImageObject extends SceneObjectBase {
   alignment?: string;            // 对象对齐锚点（9 种 WE 对齐值：center/topleft/top/topright/right/bottomright/bottom/bottomleft/left；渲染时 origin 按锚点换算中心，见 alignment.ts）
   effects?: unknown[];           // 对象效果链定义（Ruling 5：全库 122 条效果中 105 条挂在 image 对象上）
   script?: string;               // visible.script（WE 可见性/视觉脚本源码，T3.3 模式识别输入）
-  scriptProperties?: Record<string, unknown>; // visible.scriptproperties（{user,value} 已解包，T3.3）
+  scriptProperties?: Record<string, unknown>; // visible.scriptproperties（{user} 绑定装配前 resolve，T3.3）
   // T4.3：对象调制字段（WE 语义）——color 为 "r g b"（0-255 量级，经 optColor 0-1/0-255
   // 双语义归一化启发，见 scene-json.ts）；alpha 为 0-1（>1 的百分比形态已按
   // NormalizeLayerAlpha 归一化 /100 并 clamp）；brightness 为纹理色乘法系数（缺省 1）。
@@ -182,7 +194,7 @@ export interface SceneTextObject extends SceneObjectBase {
   limitwidth?: boolean;          // 宽度限制开关（true 时按 maxwidth 按词换行）
   maxwidth?: number;             // 限宽（字体像素，与 measureText 同空间；单位待真机确认）
   script?: string;               // text.script（WE 文本脚本源码，T3.3 模式识别输入）
-  scriptProperties?: Record<string, unknown>; // text.scriptproperties（{user,value} 已解包，T3.3）
+  scriptProperties?: Record<string, unknown>; // text.scriptproperties（{user} 绑定装配前 resolve，T3.3）
   effects?: unknown[];           // 对象效果链（与 image/particle 同语义，v0.8.1 起挂链）
 }
 export type SceneObject = SceneImageObject | SceneParticleObject | SceneUtilObject | SceneTextObject;
@@ -215,6 +227,10 @@ export interface SceneDescription {
   clearColor?: [number, number, number];
   /** 壁纸级 bloom（WE general.bloom*，`bloom:true` 才产出；v0.8.1 只支持 threshold/strength）。 */
   bloom?: { strength: number; threshold: number };
+  /** general.bloom 的 user 绑定（解析期保留，装配前由 resolveSceneUserBindings 决定是否产出 bloom）。 */
+  bloomUser?: UserBindingRef;
+  /** general.cameraparallax 的 user 绑定（同上：装配前覆盖 parallax.enabled）。 */
+  parallaxUser?: UserBindingRef;
   /** 相机视差总配置（scene.json `general.cameraparallax*`，缺省全 0）。 */
   parallax: ParallaxConfig;
   objects: SceneObject[];

@@ -3921,3 +3921,60 @@ describe('对象级脚本 → player 纹理动画接线', () => {
     r.dispose?.();
   });
 });
+
+// T4.4：assembled userProps = localStorage override ?? host 默认值；属性级 condition 不满足时
+// 该属性视为不可用（回退作者 value，spec §4.1）。
+describe('用户属性默认值与属性级 condition 接线', () => {
+  it('未覆盖时用 project 默认值；condition 不满足 ⇒ 回退作者值', async () => {
+    const scene = JSON.stringify({
+      camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+      general: { orthogonalprojection: { width: 1920, height: 1080 } },
+      objects: [
+        {
+          id: 1, name: 'bg', image: 'models/a.json', origin: '960 540 0', scale: '1 1 1',
+          color: { user: 'color1', value: '1 1 1' },
+        },
+        // flag 必须被 scene 引用（host 只返回被引用属性）——作为 condition 的依赖键。
+        { id: 2, name: 'ctl', image: 'models/b.json', origin: '0 0 0', scale: '1 1 1', visible: { user: 'flag', value: true } },
+      ],
+    });
+    const properties = {
+      properties: [
+        {
+          key: 'color1', label: 'C', order: 1, usedBy: ['objects[].color'],
+          type: 'color', value: '0 1 0', condition: 'flag.value==true',
+        },
+        { key: 'flag', label: 'F', order: 2, usedBy: ['objects[].visible'], type: 'bool', value: true },
+      ],
+    };
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      const u = String(url);
+      if (u.includes('name=scene.json')) return { ok: true, text: async () => scene };
+      if (u.includes('/wallpapers/properties')) return { ok: true, json: async () => properties };
+      return { ok: false, text: async () => '' };
+    }));
+    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null });
+    const player = {
+      dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(),
+      setParallax: vi.fn(), setParallaxPointer: vi.fn(), setObjectEffectStage: vi.fn(),
+      isolatedObjects: () => [],
+    };
+    loadSceneToThree.mockReturnValue({
+      player, sims: [], backgroundIds: [0, 1], particleLayers: [], puppetLayers: [],
+    } as never);
+
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm, getTextScriptRuntime: async () => null });
+    expect(await r.render('wid-cond', document.createElement('canvas'), null)).toBe(true);
+    // 默认值生效：color 用户值 "0 1 0" → 0-255 三元组。
+    expect((resolveImageAssets.mock.calls[0]![1] as any).color).toEqual([0, 255, 0]);
+
+    // localStorage 覆盖 flag=false ⇒ condition 不满足 ⇒ color1 视为不可用 → 作者值。
+    localStorage.setItem('we:userprop:wid-cond:flag', 'false');
+    expect(await r.render('wid-cond', document.createElement('canvas'), null)).toBe(true);
+    const after = resolveImageAssets.mock.calls.slice(2).find((c) => (c[1] as any).id === 1)!;
+    expect((after[1] as any).color).toEqual([255, 255, 255]);
+
+    localStorage.removeItem('we:userprop:wid-cond:flag');
+    r.dispose();
+  });
+});

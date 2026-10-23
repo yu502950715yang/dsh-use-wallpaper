@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   parseUserRef, matchCondition, resolveUserValue, propertyConditionMet, parseColorTriplet,
+  resolveSceneUserBindings,
 } from '../src/client/user-bindings.js';
 
 describe('parseUserRef', () => {
@@ -72,5 +73,115 @@ describe('parseColorTriplet', () => {
     expect(parseColorTriplet('0.5 0 0')).toEqual([127.5, 0, 0]);
     expect(parseColorTriplet('255 0 0')).toEqual([255, 0, 0]);
     expect(parseColorTriplet('bad')).toBeUndefined();
+  });
+});
+
+// 装配前统一 resolve：scene 解析产物只带 userRefs / {value,user}；此处一次性换成静态值。
+describe('resolveSceneUserBindings', () => {
+  const baseDesc = (objects: unknown[]) => ({
+    camera: { center: [0, 0, 0], eye: [0, 0, 0], up: [0, 1, 0] },
+    orthogonal: { width: 100, height: 100 },
+    parallax: { enabled: false, amount: 0, delay: 0, mouseInfluence: 0 },
+    objects,
+  }) as any;
+
+  it('装配前 resolve：绑定字段被用户值覆盖、静态字段不动、输入不被就地修改', () => {
+    const desc = baseDesc([
+      {
+        id: 1, kind: 'image', color: [255, 255, 255], alpha: 1, brightness: 1,
+        origin: [0, 0, 0], scale: [1, 1, 1], angles: [0, 0, 0],
+        userRefs: {
+          color: { name: 'clockcolor' }, alpha: { name: 'vis' }, brightness: { name: 'bright' },
+          origin: { name: 'move' }, scale: { name: 'zoom' }, angles: { name: 'rot' },
+        },
+      },
+      { id: 2, kind: 'image', color: [255, 255, 255] },
+    ]);
+    const out = resolveSceneUserBindings(desc, {
+      clockcolor: '0.5 0 0', vis: 0.25, bright: 2, move: 10, zoom: 3, rot: 1.5,
+    });
+    const o = out.objects[0] as any;
+    expect(o.color).toEqual([127.5, 0, 0]);
+    expect(o.alpha).toBe(0.25);
+    expect(o.brightness).toBe(2);
+    expect(o.origin).toEqual([10, 10, 10]); // 逐分量 number
+    expect(o.scale).toEqual([3, 3, 3]);
+    expect(o.angles).toEqual([1.5, 1.5, 1.5]);
+    expect((out.objects[1] as any).color).toEqual([255, 255, 255]);
+    expect((desc.objects[0] as any).color).toEqual([255, 255, 255]); // 返回新对象，不就地改
+  });
+
+  it('属性缺失回退作者值；绑定 condition 不匹配写中性零值', () => {
+    const desc = baseDesc([{
+      id: 1, kind: 'image', color: [10, 20, 30], alpha: 0.5,
+      userRefs: {
+        color: { name: 'missing' },
+        alpha: { name: 'vis', condition: '0' },
+      },
+    }]);
+    const out = resolveSceneUserBindings(desc, { vis: 0.5 });
+    expect((out.objects[0] as any).color).toEqual([10, 20, 30]);
+    expect((out.objects[0] as any).alpha).toBe(0); // condition '0' 对数值 ≠ 0 → 不匹配
+  });
+
+  it('effects / instanceoverride 内的 {user,value} 被递归 resolve', () => {
+    const desc = baseDesc([{
+      id: 1, kind: 'particle',
+      effects: [{ visible: { user: 'depthparallax', value: true }, passes: [{ constantshadervalues: { speed: { user: 'speed', value: 1 } } }] }],
+      instanceOverrideJson: '{"rate":{"user":"leavedspeed","value":1},"nested":[{"user":"speed","value":2}]}',
+    }]);
+    const out = resolveSceneUserBindings(desc, { depthparallax: false, leavedspeed: 2, speed: 3 });
+    const o = out.objects[0] as any;
+    expect(o.effects[0].visible).toBe(false);
+    expect(o.effects[0].passes[0].constantshadervalues.speed).toBe(3);
+    expect(JSON.parse(o.instanceOverrideJson)).toEqual({ rate: 2, nested: [3] });
+  });
+
+  it('scriptProperties/instanceoverride 的颜色字符串保持原格式；effects 才转三元组', () => {
+    const desc = baseDesc([{
+      id: 1, kind: 'particle',
+      effects: [{ passes: [{ constantshadervalues: { tint: { user: 'tint', value: '1 1 1' } } }] }],
+      scriptProperties: { tint: { value: '1 1 1', user: { name: 'tint' } } },
+      instanceOverrideJson: '{"colorn":{"user":"tint","value":"1 1 1"}}',
+    }]);
+    const out = resolveSceneUserBindings(desc, { tint: '0.5 0 0' });
+    const o = out.objects[0] as any;
+    // effects 的 shader uniform 走 color hint（0-255 三元组）；脚本/wasm 消费的字段保持 WE 字符串。
+    expect(o.effects[0].passes[0].constantshadervalues.tint).toEqual([127.5, 0, 0]);
+    expect(o.scriptProperties.tint).toBe('0.5 0 0');
+    expect(JSON.parse(o.instanceOverrideJson).colorn).toBe('0.5 0 0');
+  });
+
+  it('scriptProperties：解析形态 {value,user} 与原始 {user,value} 都被 resolve 为标量', () => {
+    const desc = baseDesc([{
+      id: 1, kind: 'text',
+      scriptProperties: {
+        delimiter: ':',
+        use24hFormat: { value: true, user: { name: '_24h' } },
+      },
+      visible: {
+        kind: 'script', script: 'x', value: true,
+        scriptProperties: { flag: { user: 'flag', value: false } },
+      },
+      objectScriptProperties: { dayStart: { value: 0, user: { name: 'day' } } },
+    }]);
+    const out = resolveSceneUserBindings(desc, { _24h: false, flag: true, day: 6 });
+    const o = out.objects[0] as any;
+    expect(o.scriptProperties).toEqual({ delimiter: ':', use24hFormat: false });
+    expect(o.visible.scriptProperties).toEqual({ flag: true });
+    expect(o.objectScriptProperties).toEqual({ dayStart: 6 });
+  });
+
+  it('bloomUser / parallaxUser 覆盖 general 配置', () => {
+    const desc = baseDesc([]);
+    desc.bloom = { strength: 2, threshold: 0.65 };
+    desc.bloomUser = { name: 'bloom' };
+    desc.parallax = { enabled: false, amount: 0.5, delay: 0, mouseInfluence: 0 };
+    desc.parallaxUser = { name: 'par' };
+    const out = resolveSceneUserBindings(desc, { bloom: false, par: true });
+    expect(out.bloom).toBeUndefined();
+    expect(out.parallax.enabled).toBe(true);
+    expect(out.parallax.amount).toBe(0.5);
+    expect(out.bloomUser).toEqual({ name: 'bloom' }); // 配置解绑后参考信息保留
   });
 });

@@ -1,6 +1,7 @@
-import type { ObjectScriptProperty, SceneDescription, SceneImageObject, SceneObject, SceneSoundObject, SceneTextObject, UtilLayerKind } from '../shared/types.js';
+import type { ObjectScriptProperty, ObjectUserRefs, SceneDescription, SceneImageObject, SceneObject, SceneSoundObject, SceneTextObject, UserBindingRef, UtilLayerKind } from '../shared/types.js';
 import { readParallaxConfig } from './parallax.js';
 import { parseScriptProperties } from './script-patterns.js';
+import { parseUserRef } from './user-bindings.js';
 import { parseVisible } from './visibility.js';
 
 // 变换字段（origin/scale/size/angles）的三种写法：
@@ -16,6 +17,43 @@ function transformString(s: unknown): string | undefined {
     return (s as { value: string }).value;
   }
   return undefined;
+}
+
+// 字段上的 user 引用：{ user: "k" } / { user: {name,condition}, value }；无绑定 → undefined。
+function parseUserRefField(s: unknown): UserBindingRef | undefined {
+  if (!s || typeof s !== 'object' || Array.isArray(s)) return undefined;
+  return parseUserRef((s as { user?: unknown }).user);
+}
+
+// 从对象字段挑出命中的 user 绑定（全空 → undefined，不产出空 userRefs）。
+function pickUserRefs(o: Record<string, unknown>, fields: Array<keyof ObjectUserRefs>): ObjectUserRefs | undefined {
+  const refs: ObjectUserRefs = {};
+  let found = false;
+  for (const field of fields) {
+    const ref = parseUserRefField(o[field]);
+    if (ref) {
+      refs[field] = ref;
+      found = true;
+    }
+  }
+  return found ? refs : undefined;
+}
+
+function mergeUserRefs(
+  a: ObjectUserRefs | undefined,
+  b: ObjectUserRefs | undefined,
+): ObjectUserRefs | undefined {
+  if (!a) return b;
+  if (!b) return a;
+  return { ...a, ...b };
+}
+
+// {user|script, value} 包装取内层值（alpha/brightness 等数值字段的静态兜底）。
+function unwrapFieldValue(s: unknown): unknown {
+  if (s && typeof s === 'object' && !Array.isArray(s) && 'value' in s) {
+    return (s as { value?: unknown }).value;
+  }
+  return s;
 }
 
 function vec3(s: unknown): [number, number, number] {
@@ -72,7 +110,7 @@ function textVisibleFields(o: Record<string, unknown>): Pick<
 > {
   return {
     alpha: optAlpha(o.alpha),
-    brightness: optNum(o.brightness) ?? 1,
+    brightness: optNum(unwrapFieldValue(o.brightness)) ?? 1,
     anchor: optStr(o.anchor),
     limitwidth: optBool(o.limitwidth),
     maxwidth: optNum(o.maxwidth),
@@ -120,7 +158,7 @@ function numOr(s: unknown, dflt: number): number {
 // 归一化规则：>1 视为 0-100 百分比 /100（"50" → 0.5，"100" → 1），随后 clamp 0-1
 // （"200" → 2 → clamp 1；防御畸形数据）；缺省/非法 → undefined（渲染器按 1.0 处理）。
 function optAlpha(s: unknown): number | undefined {
-  const n = optNum(s);
+  const n = optNum(unwrapFieldValue(s));
   if (n === undefined) return undefined;
   const a = n > 1 ? n / 100 : n;
   return Math.max(0, Math.min(1, a));
@@ -158,7 +196,7 @@ function utilLayerKind(image: string): UtilLayerKind {
 
 // 脚本字段提取（T3.3）：WE 对象脚本挂在 image 的 visible / text 的 text 对象上，
 // 形如 { script, scriptproperties, value }。scriptproperties 直接读 scene.json 对象
-// （{user,value} 包装由 parseScriptProperties 解包），不解析脚本源码。
+// （{user} 绑定保留为 {value,user}，装配前由 resolveSceneUserBindings 换成标量），不解析脚本源码。
 // T4.2 起 image 对象改从归一化 visible（kind==='script'）派生 script 字段
 // （见 image 分支），本函数仅服务 text 对象（text.script / text.scriptproperties）。
 function scriptFields(o: { script?: unknown; scriptproperties?: unknown } | undefined): {
@@ -207,11 +245,15 @@ function collectSounds(root: any): SceneSoundObject[] | undefined {
   return out.length > 0 ? out : undefined;
 }
 
-// WE 的 {user|script, value} 编辑器包装：wasm 只认标量 → 递归解成内层 value（F21）。
+// WE 的 {user|script, value} 编辑器包装：有效 user 绑定保留 {user,value} 交给 resolve；
+// 其余（F21 的 user:null / script / 无值）仍递归解成内层 value（wasm 只认标量）。
 function normalizeOverrideValue(v: unknown): unknown {
   if (Array.isArray(v)) return v.map(normalizeOverrideValue);
   if (v && typeof v === 'object') {
     const o = v as Record<string, unknown>;
+    if ('value' in o && parseUserRef(o.user)) {
+      return { user: o.user, value: normalizeOverrideValue(o.value) };
+    }
     if ('value' in o && ('user' in o || 'script' in o)) return normalizeOverrideValue(o.value);
     const out: Record<string, unknown> = {};
     for (const [k, x] of Object.entries(o)) out[k] = normalizeOverrideValue(x);
@@ -265,6 +307,8 @@ export function parseSceneJson(raw: string): SceneDescription {
       // 对象级 parallaxDepth 与 kind 无关（全库 227 处：particle 106 / image 91 / text 20 / other 10），
       // 故落在 base 让所有分支都带出 —— Task 4 的粒子/文本注入 u_Parallax 全靠它。
       parallaxDepth: optNum2(o.parallaxDepth),
+      // T4.4：origin/scale/angles 的 user 绑定保留（静态值照旧解析，供 resolve 缺失回退）。
+      userRefs: pickUserRefs(o, ['origin', 'scale', 'angles']),
       // 转换字段里的对象脚本（angles.script 优先）；无脚本对象不产出这两个键。
       ...objectScriptFields(o),
     };
@@ -295,7 +339,8 @@ export function parseSceneJson(raw: string): SceneDescription {
           // 调制字段与 image 对象同口径（optColor 双语义归一 / optAlpha clamp / brightness 缺省 1）
           color: optColor(o.color),
           alpha: optAlpha(o.alpha),
-          brightness: optNum(o.brightness) ?? 1,
+          brightness: optNum(unwrapFieldValue(o.brightness)) ?? 1,
+          userRefs: mergeUserRefs(base.userRefs, pickUserRefs(o, ['color', 'alpha', 'brightness'])),
           // util 不渲染纹理但**承载 SceneScript 控制器**（94001「切换按钮」、221591「双击切歌」）
           ...fromVisibleScript,
         };
@@ -312,7 +357,8 @@ export function parseSceneJson(raw: string): SceneDescription {
         ...base, kind: 'image' as const, image: o.image,
         color: optColor(o.color),
         alpha: optAlpha(o.alpha),
-        brightness: optNum(o.brightness) ?? 1,
+        brightness: optNum(unwrapFieldValue(o.brightness)) ?? 1,
+        userRefs: mergeUserRefs(base.userRefs, pickUserRefs(o, ['color', 'alpha', 'brightness'])),
         // WE 图像颜色混合模式（→ shader combo BLENDMODE；缺省 0 = Normal）。
         // 非数值/负数/非法 → 0（渲染侧只实现 6/7/31，其余回退普通 alpha 混合）。
         colorBlendMode: Math.max(0, Math.floor(optNum(o.colorBlendMode) ?? 0)),
@@ -335,6 +381,7 @@ export function parseSceneJson(raw: string): SceneDescription {
         font: typeof o.font === 'string' && o.font ? o.font : undefined,
         pointsize: optNum(o.pointsize),
         color: optColor(o.color),
+        userRefs: mergeUserRefs(base.userRefs, pickUserRefs(o, ['color', 'alpha', 'brightness'])),
         alignment: typeof o.alignment === 'string' && o.alignment ? o.alignment : undefined,
         // 图层尺寸/定位字段（两种 text 形态都要解析；缺省 → 由 alignment 推导）
         horizontalAlign: optStr(o.horizontalalign),
@@ -353,6 +400,7 @@ export function parseSceneJson(raw: string): SceneDescription {
         font: typeof o.font === 'string' && o.font ? o.font : undefined,
         pointsize: optNum(o.pointsize),
         color: optColor(o.color),
+        userRefs: mergeUserRefs(base.userRefs, pickUserRefs(o, ['color', 'alpha', 'brightness'])),
         alignment: typeof o.alignment === 'string' && o.alignment ? o.alignment : undefined,
         horizontalAlign: optStr(o.horizontalalign),
         verticalAlign: optStr(o.verticalalign),
@@ -375,10 +423,21 @@ export function parseSceneJson(raw: string): SceneDescription {
     const max = Math.max(cc[0], cc[1], cc[2]);
     if (max > 0 && max <= 1) cc = [cc[0] * 255, cc[1] * 255, cc[2] * 255];
   }
-  // 壁纸级 bloom（WE general.bloom*）：仅 bloom===true 才产出；缺省 strength=2 / threshold=0.65。
-  const bloom = gen.bloom === true
+  // 壁纸级 bloom（WE general.bloom*）：静态 true 才产出；缺省 strength=2 / threshold=0.65。
+  // T4.4：{user,value} 形态保留 bloomUser，静态 value 仍作解析期兜底。
+  const bloomUser = parseUserRefField(gen.bloom);
+  const bloomStaticOn = gen.bloom === true
+    || (typeof gen.bloom === 'object' && gen.bloom !== null && (gen.bloom as { value?: unknown }).value === true);
+  const bloom = bloomStaticOn
     ? { strength: numOr(gen.bloomstrength, 2), threshold: numOr(gen.bloomthreshold, 0.65) }
     : undefined;
+  // general.cameraparallax 的 {user,value} 同上：静态 value 先落 enabled，resolve 时按用户值覆盖。
+  const parallaxUser = parseUserRefField(gen.cameraparallax);
+  const parallax = readParallaxConfig(gen);
+  if (parallaxUser && typeof gen.cameraparallax === 'object' && gen.cameraparallax !== null
+    && (gen.cameraparallax as { value?: unknown }).value === true) {
+    parallax.enabled = true;
+  }
   return {
     camera: {
       center: vec3(cam.center),
@@ -395,8 +454,10 @@ export function parseSceneJson(raw: string): SceneDescription {
     perspectiveOverrideFov: numOr(gen.perspectiveoverridefov, 0),
     clearColor: cc,
     bloom,
+    ...(bloomUser ? { bloomUser } : {}),
+    ...(parallaxUser ? { parallaxUser } : {}),
     // 相机视差总开关与系数（general.cameraparallax*）；缺省全 0 = 与加此功能前观感一致。
-    parallax: readParallaxConfig(gen),
+    parallax,
     objects,
     sounds: collectSounds(root),
   };

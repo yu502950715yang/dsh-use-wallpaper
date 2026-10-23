@@ -312,7 +312,7 @@ describe('parseSceneJson text 对象归类（T3.1）', () => {
 // T3.3 脚本字段解析：image 对象从 visible.{script,scriptproperties}、text 对象从
 // text.{script,scriptproperties} 提取（scriptproperties 的 {user,value} 包装解包）。
 describe('parseSceneJson script/scriptproperties 解析（T3.3）', () => {
-  it('image 对象 visible.script → script；visible.scriptproperties 解包 → scriptProperties', () => {
+  it('image 对象 visible.script → script；visible.scriptproperties 的 user 绑定被保留', () => {
     const desc = parseSceneJson(JSON.stringify({
       objects: [{
         id: 61, name: 'Simple Visualizer', image: 'models/workshop/2652493753/bar.json',
@@ -328,7 +328,8 @@ describe('parseSceneJson script/scriptproperties 解析（T3.3）', () => {
     const o = desc.objects[0] as any;
     expect(o.kind).toBe('image');
     expect(o.script).toBe('let audioData = engine.registerAudioBuffers(64);');
-    expect(o.scriptProperties).toEqual({ barWidth: 0.83, originX: 12.67 });
+    // T4.4：带 user 的 scriptproperty 保留 {value,user}（装配前 resolve 成标量）；普通值仍解包。
+    expect(o.scriptProperties).toEqual({ barWidth: 0.83, originX: { value: 12.67, user: { name: '_x' } } });
   });
 
   it('image 对象 alignment 字段 → SceneImageObject.alignment（2937346640 Simple Visualizer id=61 实测：bottomright）', () => {
@@ -357,7 +358,7 @@ describe('parseSceneJson script/scriptproperties 解析（T3.3）', () => {
     expect((desc.objects[2] as any).alignment).toBeUndefined(); // 非字符串 → undefined
   });
 
-  it('text 对象 text.script → script；text.scriptproperties → scriptProperties（use24hFormat 解包）', () => {
+  it('text 对象 text.script → script；text.scriptproperties 的 user 绑定被保留（use24hFormat）', () => {
     const desc = parseSceneJson(JSON.stringify({
       objects: [{
         id: 182, name: 'VHS Time and Date', origin: '1859.88074 811.84882 0.00000', scale: '1 1 1',
@@ -371,7 +372,10 @@ describe('parseSceneJson script/scriptproperties 解析（T3.3）', () => {
     const o = desc.objects[0] as any;
     expect(o.kind).toBe('text');
     expect(o.script).toBe('let time = new Date(); let hours = time.getHours();');
-    expect(o.scriptProperties).toEqual({ delimiter: ':', use24hFormat: false });
+    expect(o.scriptProperties).toEqual({
+      delimiter: ':',
+      use24hFormat: { value: false, user: { name: '_24hourformat' } },
+    });
   });
 
   it('无 script/scriptproperties → 字段 undefined（不误报）', () => {
@@ -618,11 +622,11 @@ describe('parseSceneJson visible 归一化（T4.2）', () => {
     expect(o.visible).toEqual({
       kind: 'script',
       script: 'let audioData = engine.registerAudioBuffers(64);',
-      scriptProperties: { barWidth: 0.83, originX: 12.67 },
+      scriptProperties: { barWidth: 0.83, originX: { value: 12.67, user: { name: '_x' } } },
       value: true,
     });
     expect(o.script).toBe('let audioData = engine.registerAudioBuffers(64);'); // T3.3 字段保留
-    expect(o.scriptProperties).toEqual({ barWidth: 0.83, originX: 12.67 });
+    expect(o.scriptProperties).toEqual({ barWidth: 0.83, originX: { value: 12.67, user: { name: '_x' } } });
   });
 
   it('无 visible 字段 → visible undefined（不误报绑定）', () => {
@@ -696,7 +700,7 @@ describe('parseSceneJson visible 归一化（T4.2）', () => {
     expect(JSON.parse(p.instanceOverrideJson).colorn).toBe('1.000 1.000 1.000');
   });
 
-  it('instanceoverride 的 {script,value} 包装及嵌套/数组内包装递归解包', () => {
+  it('instanceoverride 的 {script,value} 包装及嵌套/数组内包装递归解包（有效 user 保留待 resolve）', () => {
     const desc = parseSceneJson(JSON.stringify({
       objects: [{
         id: 10, particle: 'particles/snow.json',
@@ -709,7 +713,8 @@ describe('parseSceneJson visible 归一化（T4.2）', () => {
     }));
     const parsed = JSON.parse((desc.objects[0] as any).instanceOverrideJson);
     expect(parsed.colorn).toBe('2.000 3.000 4.000');
-    expect(parsed.nested).toEqual({ inner: 7 });
+    // T4.4：带有效 user 的包装不再预解包，交由 resolveSceneUserBindings 注入用户值。
+    expect(parsed.nested).toEqual({ inner: { user: { name: 'u' }, value: 7 } });
     expect(parsed.list).toEqual([1, 2]);
   });
 
@@ -760,6 +765,105 @@ describe('parseSceneJson visible 归一化（T4.2）', () => {
   });
 });
 
+// T4.4 scene 解析保留 {user} 引用：对象字段 / general / scriptproperties / instanceoverride
+// 在解析阶段只记录 ref（userRefs / bloomUser / parallaxUser / {value,user}），装配前由
+// resolveSceneUserBindings 统一替换；静态 value 仍作为兜底保留（旧渲染路径不受影响）。
+describe('parseSceneJson 保留 {user} 引用（T4.4）', () => {
+  it('对象字段的 {user} 绑定被保留为 userRefs（静态兜底仍解析）', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [
+        {
+          id: 1, image: 'a', origin: '0 0 0', scale: '1 1 1',
+          color: { user: 'clockcolor', value: '1 1 1' }, alpha: { user: 'vis', value: 0.5 },
+          brightness: { user: 'bright', value: 2 },
+        },
+        {
+          id: 2, image: 'b', origin: { user: 'move', value: '1 2 3' },
+          scale: { user: 'zoom', value: '2 2 2' }, angles: { user: 'rot', value: '0 0 1' },
+        },
+      ],
+    }));
+    const [o1, o2] = desc.objects as any[];
+    expect(o1.userRefs.color).toEqual({ name: 'clockcolor' });
+    expect(o1.userRefs.alpha).toEqual({ name: 'vis' });
+    expect(o1.userRefs.brightness).toEqual({ name: 'bright' });
+    expect(o1.color).toEqual([255, 255, 255]); // 静态兜底仍保留
+    expect(o1.alpha).toBe(0.5);
+    expect(o1.brightness).toBe(2);
+    expect(o2.userRefs.origin).toEqual({ name: 'move' });
+    expect(o2.userRefs.scale).toEqual({ name: 'zoom' });
+    expect(o2.userRefs.angles).toEqual({ name: 'rot' });
+    expect(o2.origin).toEqual([1, 2, 3]);
+    expect(o2.scale).toEqual([2, 2, 2]);
+  });
+
+  it('对象形态 user 的 condition 被保留；无绑定 → userRefs undefined', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [
+        { id: 1, image: 'a', origin: '0 0 0', scale: '1 1 1', color: { user: { name: 'clock', condition: '1' }, value: '1 1 1' } },
+        { id: 2, image: 'b', origin: '0 0 0', scale: '1 1 1', color: '1 1 1' },
+      ],
+    }));
+    expect((desc.objects[0] as any).userRefs.color).toEqual({ name: 'clock', condition: '1' });
+    expect((desc.objects[1] as any).userRefs).toBeUndefined();
+  });
+
+  it('general.bloom / cameraparallax 的 binding → bloomUser / parallaxUser', () => {
+    const on = parseSceneJson(JSON.stringify({
+      general: {
+        bloom: { user: 'bloom', value: true },
+        cameraparallax: { user: 'par', value: true },
+        cameraparallaxamount: 0.5,
+        orthogonalprojection: { width: 100, height: 100 },
+      },
+      objects: [],
+    }));
+    expect(on.bloomUser).toEqual({ name: 'bloom' });
+    expect(on.parallaxUser).toEqual({ name: 'par' });
+    expect(on.bloom).toEqual({ strength: 2, threshold: 0.65 }); // 静态 value=true 仍产出配置
+    expect(on.parallax).toEqual({ enabled: true, amount: 0.5, delay: 0, mouseInfluence: 0 });
+
+    const off = parseSceneJson(JSON.stringify({
+      general: { bloom: { user: 'bloom', value: false }, orthogonalprojection: { width: 100, height: 100 } },
+      objects: [],
+    }));
+    expect(off.bloomUser).toEqual({ name: 'bloom' });
+    expect(off.bloom).toBeUndefined(); // 静态 false 不产出（等 resolve 决定）
+  });
+
+  it('scriptproperties 保留 {value, user}（普通值仍为标量）', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [{
+        id: 182,
+        text: {
+          script: 'x', value: 'x',
+          scriptproperties: { delimiter: ':', use24hFormat: { user: '_24h', value: false } },
+        },
+      }],
+    }));
+    const props = (desc.objects[0] as any).scriptProperties;
+    expect(props.delimiter).toBe(':');
+    expect(props.use24hFormat).toEqual({ value: false, user: { name: '_24h' } });
+  });
+
+  it('instanceoverride 中带有效 user 的包装被保留（供 resolve），无 user 的仍解包', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [{
+        id: 10, particle: 'particles/p.json',
+        instanceoverride: {
+          rate: { user: 'leavedspeed', value: 1 },
+          colorn: { user: null, value: '1.000 1.000 1.000' },
+          nested: { inner: { user: { name: 'u' }, value: 7 } },
+        },
+      }],
+    }));
+    const parsed = JSON.parse((desc.objects[0] as any).instanceOverrideJson);
+    expect(parsed.rate).toEqual({ user: 'leavedspeed', value: 1 });
+    expect(parsed.colorn).toBe('1.000 1.000 1.000');
+    expect(parsed.nested).toEqual({ inner: { user: { name: 'u' }, value: 7 } });
+  });
+});
+
 // SceneScript 运行时（2026-09-22）：util 对象不渲染，但承载场景总控脚本——3798688689 的
 // 4 个总控全部挂在 models/util/* 上，若 util 分支不派生 script，这些脚本永远不会被执行。
 describe('parseSceneJson - util 对象的 visible.script', () => {
@@ -779,7 +883,7 @@ describe('parseSceneJson - util 对象的 visible.script', () => {
     const o = desc.objects[0] as any;
     expect(o.kind).toBe('util');
     expect(o.script).toContain('export function update');
-    expect(o.scriptProperties).toEqual({ fx_float: true });
+    expect(o.scriptProperties).toEqual({ fx_float: { value: true, user: { name: 'fx_float' } } });
   });
 
   it('无 script 的 util 对象不产生 script 字段', () => {

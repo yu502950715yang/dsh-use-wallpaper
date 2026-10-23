@@ -25,7 +25,7 @@ describe('parseVisible（visible 字段归一化）', () => {
       .toEqual({ kind: 'user', key: 'clock', condition: '1', value: true });
   });
 
-  it('{script,value} → script 绑定（script 保留；scriptproperties 的 {user,value} 解包）', () => {
+  it('{script,value} → script 绑定（script 保留；scriptproperties 的 user 绑定保留）', () => {
     expect(parseVisible({
       script: 'let audioData = engine.registerAudioBuffers(64);',
       scriptproperties: { barWidth: 0.83, originX: { user: '_x', value: 12.67 } },
@@ -33,7 +33,7 @@ describe('parseVisible（visible 字段归一化）', () => {
     })).toEqual({
       kind: 'script',
       script: 'let audioData = engine.registerAudioBuffers(64);',
-      scriptProperties: { barWidth: 0.83, originX: 12.67 },
+      scriptProperties: { barWidth: 0.83, originX: { value: 12.67, user: { name: '_x' } } },
       value: true,
     });
   });

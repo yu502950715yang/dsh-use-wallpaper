@@ -23,6 +23,7 @@ import { createBloomStage } from './bloom-stage.js';
 // 帧内快照：段渲染目标 + 消费者边界快照；按创建它的 renderer 复用，renderer 变化时换绑。
 import { createFrameCapture, type FrameCapture } from './frame-capture.js';
 import { readClientSettings, getUserPropertyValue } from './settings.js';
+import { fetchWallpaperProperties } from './wallpaper-properties.js';
 import { resolveEffectChain, type CompiledEffectPass } from './shader/effect-chain.js';
 import { createTextTexture, measureTextLayout, textLayerOffset, createClockDriver, createScriptDriver } from './text-object.js';
 import type { ClockDriver } from './text-object.js';
@@ -30,7 +31,7 @@ import { getTextScriptRuntime } from './text-script.js';
 import type { TextScriptBinding, TextScriptRuntime } from './text-script.js';
 import { detectScriptPattern, formatClockText } from './script-patterns.js';
 import { computeEffectiveVisibility } from './visibility.js';
-import { parseUserRef } from './user-bindings.js';
+import { parseUserRef, propertyConditionMet, resolveSceneUserBindings } from './user-bindings.js';
 import { createAudioAnalyzer, playWallpaperSound, type AudioAnalyzer, type PlaybackHandle } from './audio-input.js';
 import { SceneScriptHost } from './scene-script-host.js';
 import { applyLayerState } from './layer-state.js';
@@ -158,6 +159,33 @@ function collectUserKeys(node: unknown, out: Set<string>): void {
     return;
   }
   for (const value of Object.values(obj)) collectUserKeys(value, out);
+}
+
+// loadSceneToThree 会按原始文本重新 parse scene.json（拿不到本层 desc）：把已 resolve 的
+// 对象调制字段写回文本，避免 color/alpha/brightness 的用户值在绘制链路丢失。
+function sceneJsonWithResolvedModulation(sceneJson: string, desc: SceneDescription): string {
+  try {
+    const root = JSON.parse(sceneJson) as { objects?: unknown };
+    if (!Array.isArray(root.objects)) return sceneJson;
+    const byId = new Map(desc.objects.map((obj) => [obj.id, obj]));
+    for (const raw of root.objects) {
+      if (!raw || typeof raw !== 'object') continue;
+      const obj = byId.get(Number((raw as { id?: unknown }).id ?? 0));
+      const refs = obj?.userRefs;
+      if (!obj || !refs) continue;
+      const rec = raw as Record<string, unknown>;
+      const resolved = obj as unknown as Record<string, unknown>;
+      if (refs.color && Array.isArray(resolved.color)) {
+        const [r, g, b] = resolved.color as number[];
+        rec.color = `${r} ${g} ${b}`;
+      }
+      if (refs.alpha && resolved.alpha !== undefined) rec.alpha = resolved.alpha;
+      if (refs.brightness && resolved.brightness !== undefined) rec.brightness = resolved.brightness;
+    }
+    return JSON.stringify(root);
+  } catch {
+    return sceneJson; // 畸形输入：保持原文（parseSceneJson 已成功过，正常走不到）
+  }
 }
 
 // 收集并解析「带效果对象」的链：按 scene.json objects 顺序，每对象保留自身 effects（不展平）。
@@ -519,7 +547,27 @@ export function createThreeSceneRenderer(opts?: {
         }
         const sceneJson = await sceneJsonResp.text();
         if (abortIfContextLost()) return false;
-        const desc = parseSceneJson(sceneJson);
+        const parsedDesc = parseSceneJson(sceneJson);
+        // 用户属性表：localStorage override ?? host/project 默认值（spec §4.4）。键来自 scene 内
+        // 所有 {user} 引用（不止 visible）；fetch 失败 → 空表（失败开放，不阻断渲染）。
+        const userKeys = new Set<string>();
+        collectUserKeys(JSON.parse(sceneJson) as unknown, userKeys);
+        const propertyDefs = await fetchWallpaperProperties(id);
+        if (abortIfContextLost()) return false;
+        const defaults = new Map(propertyDefs.map((p) => [p.key, p.value]));
+        const userProps: Record<string, unknown> = {};
+        for (const key of userKeys) {
+          const value = getUserPropertyValue(key, id) ?? defaults.get(key);
+          if (value !== undefined) userProps[key] = value;
+        }
+        // 属性级 condition 不满足 ⇒ 属性不可用：删除键使下游回退作者 value（spec §4.1）。
+        // 先按完整表求值再统一删，避免依赖 propertyDefs 的遍历顺序。
+        const unavailable = propertyDefs
+          .filter((def) => def.condition && !propertyConditionMet(def.condition, userProps))
+          .map((def) => def.key);
+        for (const key of unavailable) delete userProps[key];
+        // 装配前统一 resolve：之后所有消费（worldTransforms/effects/instanceoverride/脚本）都用静态值。
+        const desc = resolveSceneUserBindings(parsedDesc, userProps);
         // 前景 canvas 逻辑尺寸 = 视口（对齐 wasm-renderer 的 vw/vh；cover 相机按此裁剪）。
         const vw = Math.max(1, Math.round(window.innerWidth || desc.orthogonal.width));
         const vh = Math.max(1, Math.round(window.innerHeight || desc.orthogonal.height));
@@ -544,15 +592,6 @@ export function createThreeSceneRenderer(opts?: {
         // puppet 实例（对象 id → 网格）：所有权交给 player（addPuppet 后由 player.dispose 释放）。
         const puppetMeshes = new Map<number, PuppetInstance>();
         const particles = new Map<number, LoadedParticleAssets>();
-        // 用户属性表：递归收集 scene 内所有 {user} 键（不止 visible），键缺失不写入（回退作者 value）。
-        // 按壁纸 id 读覆盖值 ⇒ 不同壁纸的同名属性键互不串（旧全局键由 getUserPropertyValue 回退）。
-        const userKeys = new Set<string>();
-        collectUserKeys(JSON.parse(sceneJson) as unknown, userKeys);
-        const userProps: Record<string, unknown> = {};
-        for (const key of userKeys) {
-          const value = getUserPropertyValue(key, id);
-          if (value !== undefined) userProps[key] = value;
-        }
         // 有效可见性 = 自身绑定（含 condition）&& 父链继承：装配期一次定论，供下列所有过滤点共用。
         const effectiveVisible = computeEffectiveVisibility(desc.objects, userProps);
         // 音频可视化（visualizer 脚本）对象：装配后由 player 代建 64 条 bar（脚本 init 的动态层）。
@@ -944,7 +983,7 @@ export function createThreeSceneRenderer(opts?: {
           }
           userOnFrame?.(dt);
         };
-        const result = loadSceneToThree(sceneJson, assets, fg, {
+        const result = loadSceneToThree(sceneJsonWithResolvedModulation(sceneJson, desc), assets, fg, {
           width: vw,
           height: vh,
         });

@@ -42,7 +42,7 @@ describe('scene-json：对象级脚本入口', () => {
     expect((obj as { angles?: number[] }).angles).toEqual([0, -0, 0]);
   });
 
-  it('优先级 angles > origin > scale > color；包装里的 {user,value} 亦解包', () => {
+  it('优先级 angles > origin > scale > color；包装里的 {user,value} 保留绑定', () => {
     const desc = parseSceneJson(sceneWith([
       {
         id: 1, image: 'models/a.json',
@@ -65,7 +65,7 @@ describe('scene-json：对象级脚本入口', () => {
     expect(desc.objects.map((o) => o.objectScriptProperty)).toEqual([
       'angles', 'origin', 'scale', 'color', undefined,
     ]);
-    expect(desc.objects[3]!.objectScriptProperties).toEqual({ tint: 7 });
+    expect(desc.objects[3]!.objectScriptProperties).toEqual({ tint: { value: 7, user: { name: 'u' } } });
   });
 
   it('无转换字段脚本的普通对象不产出 objectScript（不误装载）', () => {
