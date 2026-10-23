@@ -1,6 +1,6 @@
 // v0.8 壁纸用户属性（v0.9 四类型）：拉取面板数据 + localStorage 读写与恢复默认。
 // 存储键按壁纸隔离（we:userprop:<wallpaperId>:<key>，JSON 标量）；读侧缺键回退旧全局键
-// （迁移兼容），无 id 时保持旧行为。渲染器重装配时按 id 读取。
+// （迁移兼容），无 id 读写沿用旧全局键，reset 无 id 不动作（不删迁移回退）。渲染器按 id 读取。
 import type { UserPropertyValue, WallpaperUserProperty } from '../shared/types.js';
 import { getUserPropertyValue, USERPROP_PREFIX } from './settings.js';
 
@@ -31,8 +31,9 @@ export function writeUserProperty(key: string, value: UserPropertyValue, wallpap
   }
 }
 
-/** 恢复默认：删除当前作用域的覆盖键（带 id 时只删 per-id 键，不动旧全局键）。 */
+/** 恢复默认：只删 per-id 覆盖键；无 id 时不动作（旧全局键是迁移回退，删了会影响所有壁纸）。 */
 export function resetUserProperty(key: string, wallpaperId?: string): void {
+  if (!wallpaperId) return;
   if (typeof localStorage === 'undefined') return;
   try {
     localStorage.removeItem(userPropertyKey(key, wallpaperId));

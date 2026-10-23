@@ -7,7 +7,7 @@ import type { WallpaperUserProperty } from '../src/shared/types.js';
 
 // v0.8 Task 7 client 侧：属性拉取 + 用户四类型值 localStorage 读写。
 // 存储契约：带壁纸 id 时键 we:userprop:<wallpaperId>:<key>（跨壁纸隔离），
-// 读侧缺键回退旧全局键 we:userprop:<key>（迁移兼容）；无 id 保持旧行为。
+// 读侧缺键回退旧全局键 we:userprop:<key>（迁移兼容）；无 id 读写沿用旧全局键，reset 无 id 不动作。
 // 只认 JSON 标量（bool/number/string），键缺失/坏 JSON/其它类型 → undefined，写入无存储环境静默。
 
 const CLOUDS: WallpaperUserProperty = {
@@ -133,7 +133,7 @@ describe('readUserProperty / writeUserProperty / resetUserProperty（四类型�
     expect(readUserProperty('oldkey', 'id1')).toBe(true); // 仍回退旧值
   });
 
-  it('写 JSON 标量到 per-id 键；无 id 读写旧全局键、reset 删该键', () => {
+  it('写 JSON 标量到 per-id 键；无 id 读写旧全局键，且无 id reset 不删该键', () => {
     const storage = memoryStorage();
     vi.stubGlobal('localStorage', storage);
     writeUserProperty('speed', 0.4, 'id1');
@@ -141,9 +141,22 @@ describe('readUserProperty / writeUserProperty / resetUserProperty（四类型�
     writeUserProperty('clouds', false);
     expect(storage.getItem('we:userprop:clouds')).toBe('false');
     expect(readUserProperty('clouds')).toBe(false);
+    // 旧全局键是 per-id 缺键时的迁移回退，无 id reset 不得删除
     resetUserProperty('clouds');
-    expect(storage.getItem('we:userprop:clouds')).toBeNull();
-    expect(readUserProperty('clouds')).toBeUndefined();
+    expect(storage.getItem('we:userprop:clouds')).toBe('false');
+    expect(readUserProperty('clouds')).toBe(false);
+  });
+
+  it('per-id 与旧全局键并存：带 id reset 只删 per-id，读取回退旧全局值', () => {
+    const storage = memoryStorage();
+    vi.stubGlobal('localStorage', storage);
+    storage.setItem('we:userprop:clouds', 'true');
+    writeUserProperty('clouds', false, 'id1');
+    expect(readUserProperty('clouds', 'id1')).toBe(false); // per-id 优先
+    resetUserProperty('clouds', 'id1');
+    expect(storage.getItem('we:userprop:id1:clouds')).toBeNull();
+    expect(storage.getItem('we:userprop:clouds')).toBe('true');
+    expect(readUserProperty('clouds', 'id1')).toBe(true); // 回退旧全局值
   });
 
   it('坏 JSON / null / 对象等非标量 → undefined；readBoolProperty 只认布尔', () => {
@@ -171,7 +184,7 @@ describe('readUserProperty / writeUserProperty / resetUserProperty（四类型�
       removeItem: () => { throw new Error('quota'); },
     });
     expect(() => writeUserProperty('x', 1)).not.toThrow();
-    expect(() => resetUserProperty('x')).not.toThrow();
+    expect(() => resetUserProperty('x', 'id')).not.toThrow(); // 走 removeItem 抛错分支
   });
 });
 
