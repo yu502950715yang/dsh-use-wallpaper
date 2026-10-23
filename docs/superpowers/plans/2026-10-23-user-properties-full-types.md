@@ -397,7 +397,7 @@ Expected: FAIL（`computeEffectiveVisibility` 未定义、`condition` 字段缺�
 - [ ] **Step 3: 实现**
 
 1. `parseVisible`：`typeof o.user === 'object'` 时用 `parseUserRef` 取 `{name, condition}` → `{ kind:'user', key: name, condition, value }`；字符串形态保持。
-2. `resolveVisibility` / `isStaticallyHidden`：user 绑定改用 `resolveUserValue({ value: binding.value, user: { name: key, condition } }, userProps, 'bool')`（条件不匹配 → false），保留「键缺失回退 value」语义（`resolveUserValue` 已处理）。
+2. `resolveVisibility` / `isStaticallyHidden`：user 绑定用 `matchCondition(userProps[key], condition)` 判定（bool 属性 condition "0"=开、"1"=关），匹配 → 用作者 `value`，不匹配 → false；`userProps` 键缺失 → 回退作者 `value`。**不要用 `resolveUserValue(...,'bool')`**：其 bool 归一 `isTruthy('0') = false` 会把 combo 分支判反（`2911105183` 夹具会失败）。
 3. 新增 `computeEffectiveVisibility(objects, userProps, defs?)`：
    - own = resolveVisibility；
    - 沿 `parent` 链求值（`Map` 缓存；父缺失 → 只按自身；环 → 视为 true 防死循环）；
