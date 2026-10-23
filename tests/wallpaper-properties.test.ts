@@ -1,15 +1,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  fetchWallpaperProperties, readBoolProperty, writeBoolProperty,
+  fetchWallpaperProperties, readBoolProperty, readUserProperty, resetUserProperty,
+  writeBoolProperty, writeUserProperty,
 } from '../src/client/wallpaper-properties.js';
 import type { WallpaperUserProperty } from '../src/shared/types.js';
 
-// v0.8 Task 7 client 侧：属性拉取 + 用户布尔值 localStorage 读写。
+// v0.8 Task 7 client 侧：属性拉取 + 用户四类型值 localStorage 读写。
 // 存储契约：带壁纸 id 时键 we:userprop:<wallpaperId>:<key>（跨壁纸隔离），
 // 读侧缺键回退旧全局键 we:userprop:<key>（迁移兼容）；无 id 保持旧行为。
-// 非 boolean（键缺失/坏 JSON/其它类型）→ undefined，写入无存储环境静默。
+// 只认 JSON 标量（bool/number/string），键缺失/坏 JSON/其它类型 → undefined，写入无存储环境静默。
 
-const CLOUDS: WallpaperUserProperty = { key: 'clouds', label: '云层', type: 'bool', value: true, order: 2.5 };
+const CLOUDS: WallpaperUserProperty = {
+  key: 'clouds', label: '云层', type: 'bool', value: true, order: 2.5, usedBy: [],
+};
 
 function memoryStorage() {
   const map = new Map<string, string>();
@@ -92,6 +95,83 @@ describe('readBoolProperty / writeBoolProperty（localStorage 存储）', () => 
     vi.stubGlobal('localStorage', undefined);
     expect(readBoolProperty('clouds')).toBeUndefined();
     expect(() => writeBoolProperty('clouds', true)).not.toThrow();
+  });
+});
+
+describe('readUserProperty / writeUserProperty / resetUserProperty（四类型）', () => {
+  it('四类型值往返（bool/number/string）', () => {
+    vi.stubGlobal('localStorage', memoryStorage());
+    writeUserProperty('a', true, 'id1');
+    writeUserProperty('b', 0.4, 'id1');
+    writeUserProperty('c', '1', 'id1');
+    expect(readUserProperty('a', 'id1')).toBe(true);
+    expect(readUserProperty('b', 'id1')).toBe(0.4);
+    expect(readUserProperty('c', 'id1')).toBe('1');
+  });
+
+  it('per-wallpaper 隔离与恢复默认', () => {
+    const storage = memoryStorage();
+    vi.stubGlobal('localStorage', storage);
+    writeUserProperty('a', false, 'id1');
+    writeUserProperty('a', true, 'id2');
+    expect(readUserProperty('a', 'id1')).toBe(false);
+    resetUserProperty('a', 'id1');
+    expect(readUserProperty('a', 'id1')).toBeUndefined();
+    expect(readUserProperty('a', 'id2')).toBe(true);
+    expect(storage.getItem('we:userprop:id1:a')).toBeNull();
+    expect(storage.getItem('we:userprop:id2:a')).toBe('true');
+    expect(storage.getItem('we:userprop:a')).toBeNull(); // 不写旧全局键
+  });
+
+  it('旧全局键仍可读（迁移兼容）；reset 只删 per-id 键、不动旧全局键', () => {
+    const storage = memoryStorage();
+    vi.stubGlobal('localStorage', storage);
+    storage.setItem('we:userprop:oldkey', 'true');
+    expect(readUserProperty('oldkey', 'id1')).toBe(true);
+    resetUserProperty('oldkey', 'id1');
+    expect(storage.getItem('we:userprop:oldkey')).toBe('true');
+    expect(readUserProperty('oldkey', 'id1')).toBe(true); // 仍回退旧值
+  });
+
+  it('写 JSON 标量到 per-id 键；无 id 读写旧全局键、reset 删该键', () => {
+    const storage = memoryStorage();
+    vi.stubGlobal('localStorage', storage);
+    writeUserProperty('speed', 0.4, 'id1');
+    expect(storage.getItem('we:userprop:id1:speed')).toBe('0.4');
+    writeUserProperty('clouds', false);
+    expect(storage.getItem('we:userprop:clouds')).toBe('false');
+    expect(readUserProperty('clouds')).toBe(false);
+    resetUserProperty('clouds');
+    expect(storage.getItem('we:userprop:clouds')).toBeNull();
+    expect(readUserProperty('clouds')).toBeUndefined();
+  });
+
+  it('坏 JSON / null / 对象等非标量 → undefined；readBoolProperty 只认布尔', () => {
+    const storage = memoryStorage();
+    vi.stubGlobal('localStorage', storage);
+    storage.setItem('we:userprop:bad', '{oops');
+    storage.setItem('we:userprop:id1:null', 'null');
+    storage.setItem('we:userprop:id1:obj', '{"x":1}');
+    expect(readUserProperty('bad', 'id1')).toBeUndefined();
+    expect(readUserProperty('null', 'id1')).toBeUndefined();
+    expect(readUserProperty('obj', 'id1')).toBeUndefined();
+    writeUserProperty('num', 0.4, 'id1');
+    expect(readBoolProperty('num', 'id1')).toBeUndefined();
+  });
+
+  it('无 localStorage / 存储抛错：读 undefined，写与 reset 静默', () => {
+    vi.stubGlobal('localStorage', undefined);
+    expect(readUserProperty('x', 'id')).toBeUndefined();
+    expect(() => writeUserProperty('x', 1, 'id')).not.toThrow();
+    expect(() => resetUserProperty('x', 'id')).not.toThrow();
+
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => { throw new Error('quota'); },
+      removeItem: () => { throw new Error('quota'); },
+    });
+    expect(() => writeUserProperty('x', 1)).not.toThrow();
+    expect(() => resetUserProperty('x')).not.toThrow();
   });
 });
 

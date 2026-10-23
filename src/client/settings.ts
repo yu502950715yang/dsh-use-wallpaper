@@ -1,4 +1,5 @@
 import type { ClientSettings } from './types.js';
+import type { UserPropertyValue } from '../shared/types.js';
 
 // DSH 0.1.2-rc.1 起设置系统改用 Typert 远程方法（ctx.remote.settings）：
 // describe() 读取、update(ns, patch, revision) 深合并写入——取代旧版
@@ -110,14 +111,18 @@ export async function writeClientSettings(patch: Partial<ClientSettings>): Promi
 // 注入（见 scene-renderer.ts），测试可注入 stub 而不依赖存储。
 export const USERPROP_PREFIX = 'we:userprop:';
 
-export function getUserPropertyValue(key: string, wallpaperId?: string): unknown {
+export function getUserPropertyValue(key: string, wallpaperId?: string): UserPropertyValue | undefined {
   if (typeof localStorage === 'undefined') return undefined;
   // 带 id 时 per-wallpaper 键优先；缺失回退旧全局键（升级前的用户覆盖值仍生效）。
   const scoped = wallpaperId ? localStorage.getItem(USERPROP_PREFIX + wallpaperId + ':' + key) : null;
   const raw = scoped ?? localStorage.getItem(USERPROP_PREFIX + key);
   if (raw === null) return undefined;
   try {
-    return JSON.parse(raw);
+    const value: unknown = JSON.parse(raw);
+    // 四类型值只认 JSON 标量；null/对象/数组按坏值处理（下游回退默认值）。
+    return typeof value === 'boolean' || typeof value === 'number' || typeof value === 'string'
+      ? value
+      : undefined;
   } catch {
     return undefined;
   }

@@ -1,7 +1,7 @@
-// v0.8 壁纸用户属性（仅布尔可见性）：拉取面板数据 + localStorage 读写。
-// 存储键按壁纸隔离（we:userprop:<wallpaperId>:<key>，JSON 值）；读侧缺键回退旧全局键
+// v0.8 壁纸用户属性（v0.9 四类型）：拉取面板数据 + localStorage 读写与恢复默认。
+// 存储键按壁纸隔离（we:userprop:<wallpaperId>:<key>，JSON 标量）；读侧缺键回退旧全局键
 // （迁移兼容），无 id 时保持旧行为。渲染器重装配时按 id 读取。
-import type { WallpaperUserProperty } from '../shared/types.js';
+import type { UserPropertyValue, WallpaperUserProperty } from '../shared/types.js';
 import { getUserPropertyValue, USERPROP_PREFIX } from './settings.js';
 
 /** GET /wallpapers/properties?id=…：失败/畸形响应一律空数组（面板不渲染 section）。 */
@@ -16,21 +16,42 @@ export async function fetchWallpaperProperties(id: string): Promise<WallpaperUse
   }
 }
 
-/** 读用户布尔值（传壁纸 id 时优先 per-wallpaper 键）；缺失/坏 JSON/非 boolean → undefined。 */
-export function readBoolProperty(key: string, wallpaperId?: string): boolean | undefined {
-  const value = getUserPropertyValue(key, wallpaperId);
-  return typeof value === 'boolean' ? value : undefined;
+/** 读用户属性（四类型标量）；传壁纸 id 时 per-id 键优先，缺失回退旧全局键。 */
+export function readUserProperty(key: string, wallpaperId?: string): UserPropertyValue | undefined {
+  return getUserPropertyValue(key, wallpaperId);
 }
 
-/** 写用户布尔值（传壁纸 id 时写 per-wallpaper 键）；无 localStorage/禁写时静默。 */
-export function writeBoolProperty(key: string, value: boolean, wallpaperId?: string): void {
+/** 写用户属性（JSON 标量）；无 localStorage/配额满/隐私模式时静默。 */
+export function writeUserProperty(key: string, value: UserPropertyValue, wallpaperId?: string): void {
   if (typeof localStorage === 'undefined') return;
-  const storageKey = wallpaperId
-    ? `${USERPROP_PREFIX}${wallpaperId}:${key}`
-    : USERPROP_PREFIX + key;
   try {
-    localStorage.setItem(storageKey, JSON.stringify(value));
+    localStorage.setItem(userPropertyKey(key, wallpaperId), JSON.stringify(value));
   } catch {
     // 配额满/隐私模式：与 local-store 的 saveJson 同策略，不向面板抛错
   }
+}
+
+/** 恢复默认：删除当前作用域的覆盖键（带 id 时只删 per-id 键，不动旧全局键）。 */
+export function resetUserProperty(key: string, wallpaperId?: string): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.removeItem(userPropertyKey(key, wallpaperId));
+  } catch {
+    // 存储不可用：静默，重装配时读回默认值
+  }
+}
+
+function userPropertyKey(key: string, wallpaperId?: string): string {
+  return wallpaperId ? `${USERPROP_PREFIX}${wallpaperId}:${key}` : USERPROP_PREFIX + key;
+}
+
+/** 兼容旧调用：只认布尔（四类型写入的 number/string 不误当 bool）。 */
+export function readBoolProperty(key: string, wallpaperId?: string): boolean | undefined {
+  const value = readUserProperty(key, wallpaperId);
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+/** 兼容旧调用：转调四类型写入。 */
+export function writeBoolProperty(key: string, value: boolean, wallpaperId?: string): void {
+  writeUserProperty(key, value, wallpaperId);
 }
