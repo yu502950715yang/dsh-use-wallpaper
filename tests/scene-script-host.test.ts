@@ -166,6 +166,28 @@ describe('SceneScriptHost', () => {
     expect(d1.get(32)?.visible).toBe(false);
     host!.dispose();
   });
+
+  // T5：host 必须把**全表**透传给 VM（Task 4 前只有 visible 键，脚本读其余键全是 undefined）。
+  it('engine.userProperties 收到全部被引用属性（不只 visible 键）', async () => {
+    const host = await SceneScriptHost.create({
+      userProperties: { clock: '1', _24h: true, rain: false },
+      scripts: [{
+        objectId: 7,
+        source: `export function init(){
+          var u = engine.userProperties;
+          thisScene.getLayerByID(1).alpha = u.clock === '1' ? 1 : 0;
+          thisScene.getLayerByID(2).alpha = u._24h === true ? 1 : 0;
+          thisScene.getLayerByID(3).alpha = u.rain === false ? 1 : 0;
+          thisScene.getLayerByID(4).alpha = Object.keys(u).sort().join(',') === '_24h,clock,rain' ? 1 : 0;
+        }`,
+      }],
+    });
+    expect(host).not.toBeNull();
+    const d = host!.tick(1 / 60);
+    // 四个键各自可读 + 键集合完整（缺任一键 → 对应 alpha 为 0）。
+    expect([1, 2, 3, 4].map((id) => d.get(id)?.alpha)).toEqual([1, 1, 1, 1]);
+    host!.dispose();
+  });
 });
 
 // 对象级脚本（3765967112 的 angles.script）：thisLayer 的纹理动画回调接到 player，脚本属性

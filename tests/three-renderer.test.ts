@@ -1566,6 +1566,56 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     warn.mockRestore();
     r.dispose?.();
   });
+
+  // T5：effect 级 visible 的 {user} 在装配前被 resolveSceneUserBindings 换成静态 bool，
+  // 用户值 false ⇒ 整条链跳过（不隔离、不建 stage）；用户值 true ⇒ 同一 fixture 照常挂载。
+  it('effect 级 visible 的 {user}：用户 false → 链跳过，true → 照常挂载', async () => {
+    stubAssetFetch(sceneWith([{
+      id: 13, name: 'bg', image: 'models/a.json',
+      origin: '960 540 0', scale: '1 1 1', size: '1920 1080',
+      effects: [{ file: 'effects/w/effect.json', visible: { user: 'depthparallax', value: true } }],
+    }]), FX_FILES);
+    vi.mocked(resolveImageAssets).mockResolvedValue({
+      texture: fakeTexture() as never, puppetPath: null, spriteSheet: false,
+    });
+    vi.mocked(defaultLoadWasm).mockResolvedValue(null); // 本用例无粒子
+    const setObjectEffectStage = vi.fn();
+    const player = {
+      dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage,
+      setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn(),
+      renderer: {},
+      isolatedObjects: () => [{ id: 13, kind: 'background', rtWidth: 1920, rtHeight: 1080, rtTexture: {} }],
+    };
+    vi.mocked(loadSceneToThree).mockReturnValue({
+      player, sims: [], backgroundIds: [0], particleLayers: [], puppetLayers: [],
+    } as never);
+    const worldSpy = vi.spyOn(ObjectEffectStage.prototype, 'setWorldSize').mockImplementation(() => {});
+    const chainsSpy = vi.spyOn(ObjectEffectStage.prototype, 'setObjectChains').mockImplementation(() => {});
+
+    // 用户值 false：resolve 后 effect.visible=false ⇒ effectChains 为空 ⇒ 无隔离、无 stage。
+    localStorage.setItem('we:userprop:fx-effect-visible:depthparallax', 'false');
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    expect(await r.render('fx-effect-visible', document.createElement('canvas'))).toBe(true);
+    const hidden = vi.mocked(loadSceneToThree).mock.calls[0]![1] as {
+      backgroundTextures: Map<number, unknown>; isolate?: Map<number, unknown>;
+    };
+    expect(hidden.backgroundTextures.has(13)).toBe(true); // 对象本身照常装配（只关 effect）
+    expect(hidden.isolate?.has(13) ?? false).toBe(false);
+    expect(setObjectEffectStage).not.toHaveBeenCalled();
+
+    // 对照：key 缺失回退作者 value=true，同一 fixture 的链能挂上（排除 fixture 产不出链）。
+    localStorage.removeItem('we:userprop:fx-effect-visible:depthparallax');
+    expect(await r.render('fx-effect-visible', document.createElement('canvas'))).toBe(true);
+    const shown = vi.mocked(loadSceneToThree).mock.calls[1]![1] as { isolate?: Map<number, unknown> };
+    expect(shown.isolate?.has(13)).toBe(true);
+    expect(setObjectEffectStage).toHaveBeenCalledTimes(1);
+    expect(chainsSpy.mock.calls.map((c) => c[0])).toEqual([13]);
+    expect(chainsSpy.mock.calls[0]![1]).toHaveLength(1);
+
+    worldSpy.mockRestore();
+    chainsSpy.mockRestore();
+    r.dispose?.();
+  });
 });
 
 // Task 5：挂载期隔离对象 RT 的新口径 —— min(源纹理长边, 4096) 等比收口、只升不降（下限仍是屏占位），
