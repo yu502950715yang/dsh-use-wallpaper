@@ -5055,3 +5055,40 @@ describe('image 精灵表帧 UV（F13）', () => {
     player.dispose();
   });
 });
+
+
+describe('pixel-bars visualizer（v0.9 修复 #3118949804：视觉条按对象 scale/angles 布局 + minBarHeight）', () => {
+  it('静音时高度 = minBarHeight；有音频按 scale.y×0.25；角度承载对象旋转', () => {
+    const { player } = makePlayer(3840, 2160);
+    const ids = player.setPixelVisualizerBars({
+      origin: [-4.5, 816, 0],
+      scale: [1800, 500, 1],
+      angles: [0, 0, -1.5707963267948966],
+      barSize: [1, 2],
+      barWidth: 14.0625,
+      minBarHeight: 5,
+      scaleY: 500,
+      barPath: 'models/workshop/3007895627/full-pixel.json',
+      downscaleMode: 'max',
+      sceneW: 3840,
+      sceneH: 2160,
+      count: 4,
+    });
+    expect(ids).toHaveLength(4);
+    const bars = player.scene.children as THREE.Mesh[];
+    expect(bars).toHaveLength(4);
+    // 静音：世界高 = texH(2) × minBarHeight(5) ⇒ 倍率 5
+    expect(bars[0].scale.y).toBeCloseTo(5, 6);
+    // 对象 angles 承载到 mesh（弧度）
+    expect(bars[0].rotation.z).toBeCloseTo(-1.5707963267948966, 6);
+    // 条宽倍率 = 世界条宽（tex 宽 1）
+    expect(bars[0].scale.x).toBeCloseTo(14.0625, 6);
+    const freq = new Uint8Array(64);
+    freq[0] = 255;
+    player.updateVisualizerBars(freq);
+    // max(5, 255/255 × 500 × 0.25) = 125
+    expect(bars[0].scale.y).toBeCloseTo(125, 3);
+    player.updateVisualizerBars(null);
+    expect(bars[0].scale.y).toBeCloseTo(5, 6);
+  });
+});

@@ -102,6 +102,7 @@ export declare class ThreeScenePlayer {
     private readonly utilContents;
     private lastFrameSnapshot;
     private visualizerBars;
+    private pixelBars;
     private objectEffectStage;
     private glowStage;
     private bloomStage;
@@ -205,6 +206,27 @@ export declare class ThreeScenePlayer {
         sceneH: number;
         renderOrder?: number;
         count?: number;
+    }): number[];
+    /**
+     * 自定义 visualizer（pixel-bars 家族，如 3118949804）：按对象 scale/angles 布局 count 条；
+     * 高度倍率默认 minBarHeight（静音仍可见，与脚本 Math.max(minBarHeight, …) 一致）。
+     */
+    setPixelVisualizerBars(opts: {
+        origin: [number, number, number];
+        scale: [number, number, number];
+        angles: [number, number, number];
+        barSize: [number, number];
+        barWidth: number;
+        minBarHeight: number;
+        scaleY: number;
+        barPath: string;
+        downscaleMode: 'max' | 'average';
+        sceneW: number;
+        sceneH: number;
+        renderOrder?: number;
+        count: number;
+        alignment?: string;
+        texture?: THREE.Texture;
     }): number[];
     /** 每帧更新可视化条高度：freqData = 64 bin 频谱（0-255）；null = 无音频 → 全部归零。 */
     updateVisualizerBars(freqData: Uint8Array | null): void;

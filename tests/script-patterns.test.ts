@@ -6,6 +6,8 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
   detectScriptPattern,
+  detectVisualizerFamily,
+  computePixelBarLayout,
   parseScriptProperties,
   formatClockText,
   VISUALIZER_BAR_COUNT,
@@ -109,5 +111,54 @@ describe('formatClockText（时钟文本生成，对齐 VHS Time and Date 脚本
 describe('VISUALIZER_BAR_COUNT（音频缓冲数 = 条数）', () => {
   it('脚本 registerAudioBuffers(64) → 64 条', () => {
     expect(VISUALIZER_BAR_COUNT).toBe(64);
+  });
+});
+
+
+describe('visualizer 家族识别与 pixel-bars 布局（v0.9 修复 #3118949804）', () => {
+  const pixelProps = {
+    visualizerResolution: '64',
+    visualizerBarPath: 'models/workshop/3007895627/full-pixel.json',
+    minBarHeight: 5,
+    downscaleMode: 'max',
+    barSpacing: 0.5,
+  };
+  const simpleProps = { barWidth: 0.83, originX: 12.67, scaleY: 23.89, barAlignmentdir: 'bottom' };
+
+  it('3118949804 家族（visualizerResolution/visualizerBarPath）→ pixel-bars', () => {
+    expect(detectVisualizerFamily('var a = engine.registerAudioBuffers(64); thisScene.createLayer(p);', pixelProps))
+      .toBe('pixel-bars');
+  });
+  it('Simple Visualizer（barWidth/originX/scaleY）→ simple', () => {
+    expect(detectVisualizerFamily('registerAudioBuffers(64); thisScene.createLayer(p);', simpleProps))
+      .toBe('simple');
+  });
+  it('非 visualizer 脚本 → null', () => {
+    expect(detectVisualizerFamily('console.log(1)', pixelProps)).toBeNull();
+    expect(detectVisualizerFamily('registerAudioBuffers(64)', simpleProps)).toBeNull();
+  });
+  it('computePixelBarLayout：条数/世界条宽/minBarHeight/路径', () => {
+    const l = computePixelBarLayout(pixelProps, [1800, 500, 1]);
+    expect(l).toEqual({
+      count: 64,
+      barWidth: 14.0625,
+      minBarHeight: 5,
+      scaleX: 1800,
+      scaleY: 500,
+      barPath: 'models/workshop/3007895627/full-pixel.json',
+      downscaleMode: 'max',
+    });
+  });
+  it('computePixelBarLayout：缺省回退（count 64、barSpacing 缺省 0.8、minBarHeight 2、默认路径）', () => {
+    const l = computePixelBarLayout({}, [1800, 500, 1]);
+    expect(l.count).toBe(64);
+    expect(l.barWidth).toBeCloseTo((1800 / 64) * (1 - 0.8), 6);
+    expect(l.minBarHeight).toBe(2);
+    expect(l.barPath).toBe('models/full-pixel.json');
+    expect(l.downscaleMode).toBe('max');
+  });
+  it('computePixelBarLayout：resolution 越界 clamp 2..64', () => {
+    expect(computePixelBarLayout({ visualizerResolution: '1' }, [1800, 500, 1]).count).toBe(2);
+    expect(computePixelBarLayout({ visualizerResolution: '128' }, [1800, 500, 1]).count).toBe(64);
   });
 });

@@ -23533,6 +23533,34 @@ function formatClockText(date, props) {
   return `${timeLine}
 ${dateLine}`;
 }
+function detectVisualizerFamily(src, props) {
+  if (typeof src !== "string") return null;
+  if (!src.includes("registerAudioBuffers")) return null;
+  if (!src.includes("createLayer") && !src.includes("createLayerAsset")) return null;
+  if ("visualizerResolution" in props || "visualizerBarPath" in props || "minBarHeight" in props) {
+    return "pixel-bars";
+  }
+  return "simple";
+}
+function computePixelBarLayout(props, objectScale) {
+  const rawCount = Number(props.visualizerResolution);
+  const count = Number.isFinite(rawCount) ? Math.min(64, Math.max(2, Math.round(rawCount))) : 64;
+  const rawSpacing = Number(props.barSpacing);
+  const spacing = Number.isFinite(rawSpacing) ? Math.min(1, Math.max(0, rawSpacing)) : 0.8;
+  const rawMin = Number(props.minBarHeight);
+  const minBarHeight = Number.isFinite(rawMin) ? Math.max(0, rawMin) : 2;
+  const scaleX = Math.abs(Number(objectScale[0])) || 1;
+  const scaleY = Math.abs(Number(objectScale[1])) || 1;
+  return {
+    count,
+    barWidth: scaleX / count * (1 - spacing),
+    minBarHeight,
+    scaleX,
+    scaleY,
+    barPath: typeof props.visualizerBarPath === "string" && props.visualizerBarPath ? props.visualizerBarPath : "models/full-pixel.json",
+    downscaleMode: props.downscaleMode === "average" ? "average" : "max"
+  };
+}
 
 // src/client/visibility.ts
 function parseVisible(raw) {
@@ -24753,6 +24781,8 @@ var ThreeScenePlayer = class {
   lastFrameSnapshot = null;
   // SceneScript 音频可视化（visualizer）：脚本 init 动态 createLayer 的 64 条 bar 由 player 代建/逐帧更新。
   visualizerBars = [];
+  // 自定义 visualizer（pixel-bars 家族）：按对象 scale/angles 布局，静音高度 = minBarHeight。
+  pixelBars = [];
   objectEffectStage = null;
   // 应用级 Glow 注入点（null = 本壁纸不开 Glow，帧序退化为原路径）。
   glowStage = null;
@@ -25421,6 +25451,46 @@ var ThreeScenePlayer = class {
     }
     return ids;
   }
+  /**
+   * 自定义 visualizer（pixel-bars 家族，如 3118949804）：按对象 scale/angles 布局 count 条；
+   * 高度倍率默认 minBarHeight（静音仍可见，与脚本 Math.max(minBarHeight, …) 一致）。
+   */
+  setPixelVisualizerBars(opts) {
+    const ids = [];
+    this.pixelBars = [];
+    const sx = opts.scale[0];
+    const [, ay, az] = opts.angles;
+    const halfBarWidth = sx / opts.count / 2;
+    const cosAz = Math.cos(az), sinAz = Math.sin(az);
+    const cosAy = Math.cos(ay), sinAy = Math.sin(ay);
+    for (let i = 0; i < opts.count; i++) {
+      const localX = sx * (i / opts.count) - sx / 2 + halfBarWidth;
+      const rx = localX * cosAy * cosAz;
+      const ry = localX * cosAy * sinAz;
+      const rz = localX * -sinAy;
+      const id = this.addBackground({
+        origin: [opts.origin[0] + rx, opts.origin[1] + ry, opts.origin[2] + rz],
+        size: [opts.barSize[0], opts.barSize[1]],
+        scale: [opts.barWidth, opts.minBarHeight, 1],
+        angles: opts.angles,
+        alignment: opts.alignment,
+        texture: opts.texture,
+        sceneW: opts.sceneW,
+        sceneH: opts.sceneH,
+        renderOrder: (opts.renderOrder ?? 0) + i + 1
+      });
+      ids.push(id);
+      this.pixelBars.push({
+        id,
+        barSizeH: opts.barSize[1],
+        minBarHeight: opts.minBarHeight,
+        objScaleY: opts.scaleY,
+        downscaleMode: opts.downscaleMode,
+        count: opts.count
+      });
+    }
+    return ids;
+  }
   /** 每帧更新可视化条高度：freqData = 64 bin 频谱（0-255）；null = 无音频 → 全部归零。 */
   updateVisualizerBars(freqData) {
     for (let i = 0; i < this.visualizerBars.length; i++) {
@@ -25431,6 +25501,21 @@ var ThreeScenePlayer = class {
       const h = bar.barSizeH * Math.max(0, Math.min(1, bin)) * bar.scaleY;
       entry.mesh.scale.y = h / bar.barSizeH;
       entry.mesh.position.y = bar.baseY + h / 2;
+    }
+    for (let i = 0; i < this.pixelBars.length; i++) {
+      const bar = this.pixelBars[i];
+      const entry = this.backgroundEntries.get(bar.id);
+      if (!entry) continue;
+      const span = 64 / bar.count;
+      const start = Math.floor(i * span);
+      const end = Math.min(64, Math.max(start + 1, Math.floor((i + 1) * span)));
+      let audio = 0;
+      if (freqData) {
+        const vals = [];
+        for (let p = start; p < end; p++) vals.push((freqData[p] ?? 0) / 255);
+        audio = bar.downscaleMode === "average" ? vals.reduce((a, b) => a + b, 0) / vals.length : Math.max(0, ...vals);
+      }
+      entry.mesh.scale.y = Math.max(bar.minBarHeight, audio * bar.objScaleY * 0.25);
     }
   }
   // util 层内容 = 整帧快照（T3）：真实 util 链读 `bind: previous`（层内容），快照必须成为内容（solid 保留纯色）。
@@ -32647,14 +32732,30 @@ function createThreeSceneRenderer(opts) {
           if (obj.kind === "image") {
             const { texture, puppetPath } = await resolveImageAssets(id, obj);
             if (texture) backgroundTextures.set(obj.id, texture);
-            if (obj.script && detectScriptPattern(obj.script) === "visualizer") {
-              visualizerSpecs.push({
-                origin: obj.origin,
-                texture: texture ?? void 0,
-                props: obj.scriptProperties ?? {},
-                renderOrder: desc.objects.indexOf(obj)
-              });
-              continue;
+            if (obj.script) {
+              const props = obj.scriptProperties ?? {};
+              const family = detectVisualizerFamily(obj.script, props);
+              if (family) {
+                const spec = {
+                  family,
+                  origin: obj.origin,
+                  scale: obj.scale,
+                  angles: obj.angles ?? [0, 0, 0],
+                  alignment: obj.alignment,
+                  texture: texture ?? void 0,
+                  props,
+                  renderOrder: desc.objects.indexOf(obj)
+                };
+                if (family === "pixel-bars") {
+                  const layout = computePixelBarLayout(props, obj.scale);
+                  const barAssets = await resolveImageAssets(id, { ...obj, image: layout.barPath });
+                  spec.layout = layout;
+                  spec.barPath = layout.barPath;
+                  spec.barTexture = barAssets.texture ?? void 0;
+                }
+                visualizerSpecs.push(spec);
+                continue;
+              }
             }
             if (puppetPath) {
               try {
@@ -32953,6 +33054,30 @@ function createThreeSceneRenderer(opts) {
         current = result;
         for (const spec of visualizerSpecs) {
           const num2 = (v, def) => typeof v === "number" && isFinite(v) ? v : def;
+          if (spec.family === "pixel-bars" && spec.layout) {
+            const layout = spec.layout;
+            result.player.setPixelVisualizerBars({
+              origin: spec.origin,
+              scale: spec.scale,
+              angles: spec.angles,
+              barSize: [
+                spec.barTexture?.image?.width ?? 1,
+                spec.barTexture?.image?.height ?? 2
+              ],
+              barWidth: layout.barWidth,
+              minBarHeight: layout.minBarHeight,
+              scaleY: layout.scaleY,
+              barPath: layout.barPath,
+              downscaleMode: layout.downscaleMode,
+              texture: spec.barTexture ?? spec.texture,
+              alignment: spec.alignment,
+              sceneW: desc.orthogonal.width,
+              sceneH: desc.orthogonal.height,
+              renderOrder: spec.renderOrder,
+              count: layout.count
+            });
+            continue;
+          }
           result.player.setVisualizerBars({
             origin: spec.origin,
             barSize: [

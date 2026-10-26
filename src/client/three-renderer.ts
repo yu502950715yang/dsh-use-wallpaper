@@ -29,7 +29,7 @@ import { createTextTexture, measureTextLayout, textLayerOffset, createClockDrive
 import type { ClockDriver } from './text-object.js';
 import { getTextScriptRuntime } from './text-script.js';
 import type { TextScriptBinding, TextScriptRuntime } from './text-script.js';
-import { detectScriptPattern, formatClockText } from './script-patterns.js';
+import { detectScriptPattern, detectVisualizerFamily, computePixelBarLayout, formatClockText, type PixelBarLayout } from './script-patterns.js';
 import { computeEffectiveVisibility } from './visibility.js';
 import { parseUserRef, propertyConditionMet, resolveSceneUserBindings } from './user-bindings.js';
 import { createAudioAnalyzer, playWallpaperSound, type AudioAnalyzer, type PlaybackHandle } from './audio-input.js';
@@ -569,10 +569,17 @@ export function createThreeSceneRenderer(opts?: {
         const effectiveVisible = computeEffectiveVisibility(desc.objects, userProps);
         // 音频可视化（visualizer 脚本）对象：装配后由 player 代建 64 条 bar（脚本 init 的动态层）。
         const visualizerSpecs: Array<{
+          family: 'simple' | 'pixel-bars';
           origin: [number, number, number];
+          scale: [number, number, number];
+          angles: [number, number, number];
+          alignment?: string;
           texture?: Texture;
           props: Record<string, unknown>;
           renderOrder: number;
+          layout?: PixelBarLayout;
+          barTexture?: Texture;
+          barPath?: string;
         }> = [];
         for (const obj of desc.objects) {
           // 装载期静态隐藏：布尔 / 用户属性（含 condition 与父链）在此定论；script 绑定不在装载期剔掉。
@@ -584,13 +591,31 @@ export function createThreeSceneRenderer(opts?: {
             if (texture) backgroundTextures.set(obj.id, texture);
             // SceneScript 音频可视化（Simple Visualizer）：64 条 bar 由脚本 init 动态 createLayer 创建，
             // three 路径由 player 代建并按音频频谱更新（bar 贴图 = 对象自身 image 的白色 4×4 纹理）。
-            if (obj.script && detectScriptPattern(obj.script) === 'visualizer') {
-              visualizerSpecs.push({
-                origin: obj.origin, texture: texture ?? undefined,
-                props: (obj.scriptProperties ?? {}) as Record<string, unknown>,
-                renderOrder: desc.objects.indexOf(obj),
-              });
-              continue;
+            // 音频可视化（visualizer 脚本）：v0.9 起区分家族（Simple Visualizer / pixel-bars 自定义家族）。
+            if (obj.script) {
+              const props = (obj.scriptProperties ?? {}) as Record<string, unknown>;
+              const family = detectVisualizerFamily(obj.script, props);
+              if (family) {
+                const spec: (typeof visualizerSpecs)[number] = {
+                  family,
+                  origin: obj.origin,
+                  scale: obj.scale,
+                  angles: obj.angles ?? [0, 0, 0],
+                  alignment: obj.alignment,
+                  texture: texture ?? undefined,
+                  props,
+                  renderOrder: desc.objects.indexOf(obj),
+                };
+                if (family === 'pixel-bars') {
+                  const layout = computePixelBarLayout(props, obj.scale);
+                  const barAssets = await resolveImageAssets(id, { ...obj, image: layout.barPath });
+                  spec.layout = layout;
+                  spec.barPath = layout.barPath;
+                  spec.barTexture = barAssets.texture ?? undefined;
+                }
+                visualizerSpecs.push(spec);
+                continue;
+              }
             }
             if (puppetPath) {
               // puppet：.mdl → 蒙皮网格（有骨骼段才是 SkinnedMesh，本机样本是静态族 → 普通 Mesh）。
@@ -961,9 +986,33 @@ export function createThreeSceneRenderer(opts?: {
           height: vh,
         });
         current = result;
-        // 音频可视化条（visualizer）：代建 64 条 bar（无音频时高度 0，不可见）。
+        // 音频可视化条（visualizer）：按家族代建（pixel-bars 用脚本 props + 对象 scale/angles）。
         for (const spec of visualizerSpecs) {
           const num = (v: unknown, def: number) => (typeof v === 'number' && isFinite(v) ? v : def);
+          if (spec.family === 'pixel-bars' && spec.layout) {
+            const layout = spec.layout;
+            result.player.setPixelVisualizerBars({
+              origin: spec.origin,
+              scale: spec.scale,
+              angles: spec.angles,
+              barSize: [
+                (spec.barTexture?.image?.width as number | undefined) ?? 1,
+                (spec.barTexture?.image?.height as number | undefined) ?? 2,
+              ],
+              barWidth: layout.barWidth,
+              minBarHeight: layout.minBarHeight,
+              scaleY: layout.scaleY,
+              barPath: layout.barPath,
+              downscaleMode: layout.downscaleMode,
+              texture: spec.barTexture ?? spec.texture,
+              alignment: spec.alignment,
+              sceneW: desc.orthogonal.width,
+              sceneH: desc.orthogonal.height,
+              renderOrder: spec.renderOrder,
+              count: layout.count,
+            });
+            continue;
+          }
           result.player.setVisualizerBars({
             origin: spec.origin,
             barSize: [

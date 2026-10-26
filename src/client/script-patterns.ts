@@ -80,3 +80,62 @@ export function formatClockText(date: Date, props: Record<string, unknown>): str
   const dateLine = `${CLOCK_MONTHS[date.getMonth()]} ${date.getDate()} ${date.getFullYear()}`;
   return `${timeLine}\n${dateLine}`;
 }
+
+// ── 自定义 visualizer 家族（v0.9，真实样本 3118949804 / 3007895627）────────────────
+// 与 Simple Visualizer 的区别：条数 / 间距 / 最小高度 / 条纹理路径由脚本 props 提供，
+// 布局用对象自身 scale/angles（脚本 update 里按 thisLayer 计算）。
+export type VisualizerFamily = 'simple' | 'pixel-bars';
+
+export interface PixelBarLayout {
+  count: number;
+  barWidth: number;
+  minBarHeight: number;
+  scaleX: number;
+  scaleY: number;
+  barPath: string;
+  downscaleMode: 'max' | 'average';
+}
+
+// 命中条件：registerAudioBuffers + createLayer（与 detectScriptPattern 同源），
+// 且 props 带自定义家族字段（visualizerResolution / visualizerBarPath / minBarHeight）。
+export function detectVisualizerFamily(
+  src: string,
+  props: Record<string, unknown>,
+): VisualizerFamily | null {
+  if (typeof src !== 'string') return null;
+  if (!src.includes('registerAudioBuffers')) return null;
+  if (!src.includes('createLayer') && !src.includes('createLayerAsset')) return null;
+  if ('visualizerResolution' in props || 'visualizerBarPath' in props || 'minBarHeight' in props) {
+    return 'pixel-bars';
+  }
+  return 'simple';
+}
+
+// pixel-bars 布局（对齐脚本 update/init 的公式与缺省值）：
+//   count = visualizerResolution（clamp 2..64，缺省 64）
+//   barWidth = scale.x / count × (1 − barSpacing)（世界单位；条纹理宽 1 时即世界宽）
+//   minBarHeight = 静音时的世界高度倍率（世界高 = 条纹理高 × 倍率）
+export function computePixelBarLayout(
+  props: Record<string, unknown>,
+  objectScale: [number, number, number],
+): PixelBarLayout {
+  const rawCount = Number(props.visualizerResolution);
+  const count = Number.isFinite(rawCount) ? Math.min(64, Math.max(2, Math.round(rawCount))) : 64;
+  const rawSpacing = Number(props.barSpacing);
+  const spacing = Number.isFinite(rawSpacing) ? Math.min(1, Math.max(0, rawSpacing)) : 0.8;
+  const rawMin = Number(props.minBarHeight);
+  const minBarHeight = Number.isFinite(rawMin) ? Math.max(0, rawMin) : 2;
+  const scaleX = Math.abs(Number(objectScale[0])) || 1;
+  const scaleY = Math.abs(Number(objectScale[1])) || 1;
+  return {
+    count,
+    barWidth: (scaleX / count) * (1 - spacing),
+    minBarHeight,
+    scaleX,
+    scaleY,
+    barPath: typeof props.visualizerBarPath === 'string' && props.visualizerBarPath
+      ? props.visualizerBarPath
+      : 'models/full-pixel.json',
+    downscaleMode: props.downscaleMode === 'average' ? 'average' : 'max',
+  };
+}
