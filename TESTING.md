@@ -430,6 +430,7 @@ getEventListeners(window).pointermove?.length
 | P6 | `3118949804` slider + parallax | 选中紫眼动漫少女：① 拖「Hair Speed」（0–4）；② 切「Parralax」；③ 拖「Bar Spacing」/「Bar Transparence」。 | ① 头发摆动速度变化，默认应为 **2**（project.json 的 value，不是 scene 的 3.1300001）；② 开关决定画面是否随鼠标视差；③ 频谱条间距 / 透明度变化。 | 速度仍是 3.13 → 默认值取错（应取 project.json）；视差开关无反应 → `general.cameraparallax` 的 `{user}` 未 resolve。 |
 | P7 | `2832263418` color + condition | 选中 EVA 卡农：① 关「音频条开关」；② 重新打开后改「音频律动颜色」。 | ① `audiobar=false` 时音频条对象隐藏，颜色控件**禁用并标灰**（属性级 condition `audiobar.value==true` 不满足）；② 打开后颜色控件可用，改色后音频条呈新颜色。 | 关音频条后颜色控件仍可调 / 重开后颜色无效 → 属性级 condition 或 color 绑定未生效。 |
 | P8 | `3118949804` visualizer 条（v0.9 修复） | 选中紫眼动漫少女，观察画面左侧（该壁纸的 64 条音频可视化条）。 | 静音下也能看到左侧一列细条（高度 = 脚本 `minBarHeight`，约 10px，与桌面静音一致）；播放系统音频时不跳动属已知边界（`supportsaudioprocessing` 未接）。 | 左侧完全空白 → pixel-bars 家族布局或 bar 纹理加载回归。 |
+| P9 | `3118949804` 系统音频（v0.9 P1） | 用浏览器（Chrome/Edge）打开同一 GUI 地址（桌面 App 内不可用）；选中壁纸 → 面板「系统音频」→ 启用 → 共享弹窗选「整个屏幕」并勾选「共享音频」；播放音乐。 | 授权后按钮变「停止系统音频」；壁纸 visualizer 条随音乐跳动；点停止或浏览器「停止共享」后回到静音最小高度且按钮复位。 | 按钮不出现（非 `supportsaudioprocessing` 素材）、授权后无反应（未勾选共享音频/音频轨未接）、桌面 App 中误报成功。 |
 
 **勾选记录**（2026-10-23 用户人眼验收，全部通过；验收人 用户 日期 2026-10-23 GPU/分辨率 未记录）：
 
@@ -441,6 +442,7 @@ getEventListeners(window).pointermove?.length
 - [x] P6：`3118949804` slider + parallax
 - [x] P7：`2832263418` color + condition（音频条关闭时禁用）
 - [ ] P8：`3118949804` visualizer 条（静音最小高度）
+- [ ] P9：`3118949804` 系统音频（浏览器模式，需授权）
 
 **已知边界（v0.9）**：`text` 类型本机 0 样本、面板不渲染；`group` 类型不返回（Leon 的 `character`/`weather` 不显示）、面板平铺；属性变更走整壁纸重装配（无就地实时生效）；color 的 0-1 值按 sRGB 直映射，`clockcolor` 色彩空间已按 P2 人眼验收通过（2026-10-23，未做逐像素色差量化）；`3812518176` 的 `bloomhdr*` 仍不支持（另一条缺口）；`2937346640` 的 `_24hourformat` 在 project.json 中不存在，面板不出现该项（`{user}` 引用保留作者值）。
 
