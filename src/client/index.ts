@@ -3,7 +3,7 @@ import { createBackgroundLayer } from './background-layer.js';
 import { createWallpaperController } from './wallpaper-controller.js';
 import { createThreeSceneRenderer } from './three-renderer.js';
 import { ensureSceneFrame, showSceneFallback } from './scene-fallback.js';
-import { WallpaperSettingsSection, setWallpaperSelectHandler, setWallpaperRuntimeHandler, setWallpaperHealthHandler, setWallpaperMediaHandler, setWallpaperReselectHandler, notifyWallpaperHealth, notifyWallpaperMedia } from './settings-section.js';
+import { WallpaperSettingsSection, setWallpaperSelectHandler, setWallpaperRuntimeHandler, setWallpaperHealthHandler, setWallpaperMediaHandler, setWallpaperReselectHandler, setWallpaperSystemAudioHandlers, notifyWallpaperHealth, notifyWallpaperMedia } from './settings-section.js';
 import { readClientSettings, writeClientSettings, getUserPropertyValue, DEFAULTS, setSettingsCtx } from './settings.js';
 import { createRenderHealthStore } from './render-health.js';
 import { createMediaHealthStore } from './media-health.js';
@@ -189,6 +189,7 @@ export function bootstrap(ctx?: any): void {
     setWallpaperHealthHandler(null);
     setWallpaperMediaHandler(null); // 面板媒体失败提示回初始态
     setWallpaperReselectHandler(null); // 面板属性开关不再指向已释放的 controller
+    setWallpaperSystemAudioHandlers(null); // 系统音频 handler 一并撤销
     unsubscribeMedia();
     notifyWallpaperHealth(null); // 收尾后状态行不得再显示已释放渲染器的旧状态（面板可能还开着）
     const root = layer?.root ?? null;
@@ -298,6 +299,11 @@ export function bootstrap(ctx?: any): void {
     setWallpaperMediaHandler({
       get: mediaHealth.get,
       clear: () => { mediaHealth.clear(); },
+    });
+    // 系统音频（v0.9 P1）：面板按钮 → 渲染器捕获系统音频；桌面 App 宿主禁用 ⇒ 渲染器返回失败码（面板提示）。
+    setWallpaperSystemAudioHandlers({
+      start: () => sceneRenderer.startSystemAudio?.() ?? Promise.resolve('unsupported' as const),
+      stop: () => { sceneRenderer.stopSystemAudio?.(); },
     });
     // 切到后台/最小化 → 按设置自动暂停（省电），回到前台恢复。
     onVisibility = () => applyRuntimeSettings(settings);

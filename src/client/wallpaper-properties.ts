@@ -4,15 +4,24 @@
 import type { UserPropertyValue, WallpaperUserProperty } from '../shared/types.js';
 import { getUserPropertyValue, USERPROP_PREFIX } from './settings.js';
 
-/** GET /wallpapers/properties?id=…：失败/畸形响应一律空数组（面板不渲染 section）。 */
-export async function fetchWallpaperProperties(id: string): Promise<WallpaperUserProperty[]> {
+/** 响应形态（v0.9 P1）：properties + project.json 的 supportsaudioprocessing 标记。 */
+export interface WallpaperPropertiesResponse {
+  properties: WallpaperUserProperty[];
+  audioProcessing: boolean;
+}
+
+/** GET /wallpapers/properties?id=…：失败/畸形响应一律空属性 + audioProcessing=false（面板不渲染 section）。 */
+export async function fetchWallpaperProperties(id: string): Promise<WallpaperPropertiesResponse> {
   try {
     const r = await fetch(`/wallpapers/properties?id=${encodeURIComponent(id)}`);
-    if (!r.ok) return [];
-    const body = (await r.json()) as { properties?: unknown } | null;
-    return Array.isArray(body?.properties) ? (body.properties as WallpaperUserProperty[]) : [];
+    if (!r.ok) return { properties: [], audioProcessing: false };
+    const body = (await r.json()) as { properties?: unknown; audioProcessing?: unknown } | null;
+    return {
+      properties: Array.isArray(body?.properties) ? (body.properties as WallpaperUserProperty[]) : [],
+      audioProcessing: body?.audioProcessing === true,
+    };
   } catch {
-    return [];
+    return { properties: [], audioProcessing: false };
   }
 }
 

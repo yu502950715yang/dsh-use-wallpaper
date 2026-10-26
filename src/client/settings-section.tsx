@@ -11,7 +11,9 @@ import type {
 import { readClientSettings, writeClientSettings } from './settings.js';
 import {
   fetchWallpaperProperties, readUserProperty, resetUserProperty, writeUserProperty,
+  type WallpaperPropertiesResponse,
 } from './wallpaper-properties.js';
+import type { SystemAudioFailure } from './system-audio.js';
 import { parseColorTriplet, propertyConditionMet } from './user-bindings.js';
 import { TEXT_OUTLINE_MAX, normalizeHexColor, normalizeMode, normalizeOutlineLevel, outlineLabel } from './text-color.js';
 import { formatHealthLine } from './render-health.js';
@@ -31,7 +33,7 @@ export interface WallpaperSettingsSectionProps {
   /** 自动探测候选路径（默认 GET /wallpapers/probe） */
   fetchProbe?: () => Promise<ProbeResult>;
   /** 拉取当前 scene 壁纸的用户属性（默认 GET /wallpapers/properties） */
-  fetchProperties?: (id: string) => Promise<WallpaperUserProperty[]>;
+  fetchProperties?: (id: string) => Promise<WallpaperPropertiesResponse>;
   /** 切换/取消壁纸（index.ts 注入 controller.select，空 id = 取消） */
   onSelect?: (id: string) => void;
   /** 用户属性切换后重装配当前壁纸（默认走共享 handler 的 controller.select） */
@@ -75,6 +77,34 @@ let sharedOnReselect: ((id: string) => void) | null = null;
 
 export function setWallpaperReselectHandler(handler: ((id: string) => void) | null): void {
   sharedOnReselect = handler;
+}
+
+// 系统音频（v0.9 P1）：浏览器模式经 getDisplayMedia 捕获系统音频驱动频谱；桌面 App 宿主禁用。
+export interface SystemAudioHandlers {
+  start(): Promise<SystemAudioFailure | 'ok'>;
+  stop(): void;
+}
+let sharedSystemAudio: SystemAudioHandlers | null = null;
+
+/** 注册/撤销系统音频处理器（index.ts 注入渲染器实现；null = 撤销）。 */
+export function setWallpaperSystemAudioHandlers(handlers: SystemAudioHandlers | null): void {
+  sharedSystemAudio = handlers;
+}
+
+// 失败原因文案（失败开放：不支持的宿主给明确指引，不假装成功）。
+function systemAudioErrorMessage(failure: SystemAudioFailure): string {
+  switch (failure) {
+    case 'unsupported':
+      return '当前环境不支持捕获系统音频（桌面版 App 禁用了该权限，请用浏览器打开本 GUI 地址再试）';
+    case 'denied':
+      return '未授权：请在弹窗中选择共享并勾选「共享音频」；拒绝后不会自动重试。';
+    case 'no-audio-track':
+      return '没有捕获到音频轨：请重新选择并勾选「共享音频」（只共享画面不会出声）。';
+    case 'no-web-audio':
+      return '当前浏览器缺少 Web Audio 支持，无法分析系统音频。';
+    default:
+      return '捕获系统音频失败（未知原因），已保持静音。';
+  }
 }
 
 /** 面板「实时渲染」卡片要的三件事：读状态、重试当前壁纸、清空全部失败记忆。 */
@@ -247,6 +277,10 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
   const [libState, setLibState] = useState<LibraryState>(loadLibraryState);
   // 壁纸用户属性（v0.9 四类型）：只对当前选中的 scene 壁纸拉取一次。
   const [properties, setProperties] = useState<WallpaperUserProperty[]>([]);
+  // 系统音频（v0.9 P1）：audioProcessing = project.json supportsaudioprocessing；采集状态由共享 handler 驱动。
+  const [audioProcessing, setAudioProcessing] = useState(false);
+  const [systemAudioState, setSystemAudioState] = useState<'idle' | 'starting' | 'active'>('idle');
+  const [systemAudioError, setSystemAudioError] = useState<SystemAudioFailure | null>(null);
   const [propValues, setPropValues] = useState<Record<string, UserPropertyValue>>({});
   // 属性提交防抖（slider/color）：每键一个定时器 + 待提交值；切壁纸/卸载时清理（避免写回上一张）。
   const commitTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
@@ -297,13 +331,17 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
     if (!selectedIsScene) {
       setProperties([]);
       setPropValues({});
+      setAudioProcessing(false);
+      setSystemAudioState('idle');
+      setSystemAudioError(null);
       return;
     }
     let alive = true;
     void fetchProperties(selectedId)
-      .then((list) => {
+      .then((res) => {
         if (!alive) return;
-        const items = Array.isArray(list) ? list : [];
+        const items = Array.isArray(res?.properties) ? res.properties : [];
+        setAudioProcessing(res?.audioProcessing === true);
         setProperties(items);
         const values: Record<string, UserPropertyValue> = {};
         for (const p of items) {
@@ -316,6 +354,7 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
         if (!alive) return;
         setProperties([]);
         setPropValues({});
+        setAudioProcessing(false);
       });
     return () => {
       alive = false;
@@ -325,6 +364,32 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
 
   // 卸载兜底：防抖定时器不得在组件消失后继续提交。
   useEffect(() => () => clearCommitTimers(), [clearCommitTimers]);
+
+  // 系统音频（v0.9 P1）：启动需要用户手势 + 浏览器授权；失败原因回显到面板（不静默）。
+  const startSystemAudio = useCallback(async () => {
+    if (!sharedSystemAudio) {
+      setSystemAudioError('unsupported');
+      return;
+    }
+    setSystemAudioState('starting');
+    setSystemAudioError(null);
+    try {
+      const result = await sharedSystemAudio.start();
+      if (result === 'ok') setSystemAudioState('active');
+      else {
+        setSystemAudioState('idle');
+        setSystemAudioError(result);
+      }
+    } catch {
+      setSystemAudioState('idle');
+      setSystemAudioError('error');
+    }
+  }, []);
+
+  const stopSystemAudio = useCallback(() => {
+    sharedSystemAudio?.stop();
+    setSystemAudioState('idle');
+  }, []);
 
   // 选择/取消壁纸：同步回调（controller 立即生效）+ 持久化
   const select = useCallback((id: string) => {
@@ -803,6 +868,31 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
               );
             })}
           </div>
+        </section>
+      )}
+      {/* 系统音频（v0.9 P1）：仅 supportsaudioprocessing 的 scene 壁纸；浏览器授权后驱动音频可视化。 */}
+      {selectedIsScene && audioProcessing && (
+        <section className="wss-section wss-sysaudio">
+          <h4 className="wss-section-title">系统音频</h4>
+          <p className="wss-section-desc">
+            用系统播放的声音驱动壁纸的音频可视化。点下面按钮后，在浏览器弹窗里选择「整个屏幕」并勾选「共享音频」；
+            共享期间会持续采集系统声音（不上传、不落盘），可随时停止。桌面版 App 受宿主权限限制不可用，
+            请用浏览器打开本 GUI 地址后使用。
+          </p>
+          <div className="wss-row">
+            {systemAudioState === 'active' ? (
+              <button className="wss-sysaudio-stop" onClick={stopSystemAudio}>停止系统音频</button>
+            ) : (
+              <button
+                className="wss-sysaudio-start"
+                disabled={systemAudioState === 'starting'}
+                onClick={() => { void startSystemAudio(); }}
+              >
+                {systemAudioState === 'starting' ? '等待授权…' : '启用系统音频（需授权）'}
+              </button>
+            )}
+          </div>
+          {systemAudioError && <p className="wss-section-desc wss-sysaudio-error">{systemAudioErrorMessage(systemAudioError)}</p>}
         </section>
       )}
       </div>

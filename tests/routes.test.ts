@@ -864,6 +864,7 @@ describe('registerWallpaperRoutes', () => {
     expect(res.statusCode).toBe(200);
     expect(res.headers['Cache-Control']).toBe('no-store');
     expect(JSON.parse(res.body.toString('utf8'))).toEqual({
+      audioProcessing: false,
       properties: [
         {
           key: 'speed', label: '速度', type: 'slider', value: 1, min: 0, max: 1, order: 1,
@@ -903,7 +904,7 @@ describe('registerWallpaperRoutes', () => {
     let res = makeRes();
     await handler({ url: '/wallpapers/properties?id=nope' }, res);
     expect(res.statusCode).toBe(200);
-    expect(bodyOf(res)).toEqual({ properties: [] });
+    expect(bodyOf(res)).toEqual({ audioProcessing: false, properties: [] });
 
     // project.json 坏 JSON
     const bad = join(dir, 'bad');
@@ -912,7 +913,7 @@ describe('registerWallpaperRoutes', () => {
     res = makeRes();
     await handler({ url: '/wallpapers/properties?id=bad' }, res);
     expect(res.statusCode).toBe(200);
-    expect(bodyOf(res)).toEqual({ properties: [] });
+    expect(bodyOf(res)).toEqual({ audioProcessing: false, properties: [] });
 
     // 有 project.json 但没有 scene.pkg
     const nopkg = join(dir, 'nopkg');
@@ -923,7 +924,7 @@ describe('registerWallpaperRoutes', () => {
     res = makeRes();
     await handler({ url: '/wallpapers/properties?id=nopkg' }, res);
     expect(res.statusCode).toBe(200);
-    expect(bodyOf(res)).toEqual({ properties: [] });
+    expect(bodyOf(res)).toEqual({ audioProcessing: false, properties: [] });
 
     // pkg 里没有 scene.json
     const noscene = join(dir, 'noscene');
@@ -933,7 +934,7 @@ describe('registerWallpaperRoutes', () => {
     res = makeRes();
     await handler({ url: '/wallpapers/properties?id=noscene' }, res);
     expect(res.statusCode).toBe(200);
-    expect(bodyOf(res)).toEqual({ properties: [] });
+    expect(bodyOf(res)).toEqual({ audioProcessing: false, properties: [] });
 
     // scene.json 坏 JSON
     const badscene = join(dir, 'badscene');
@@ -943,7 +944,7 @@ describe('registerWallpaperRoutes', () => {
     res = makeRes();
     await handler({ url: '/wallpapers/properties?id=badscene' }, res);
     expect(res.statusCode).toBe(200);
-    expect(bodyOf(res)).toEqual({ properties: [] });
+    expect(bodyOf(res)).toEqual({ audioProcessing: false, properties: [] });
   });
 
   it('GET /wallpapers/properties：每次请求重读 project.json（不缓存可变状态）', async () => {
@@ -966,6 +967,6 @@ describe('registerWallpaperRoutes', () => {
     writeFileSync(join(d, 'project.json'), JSON.stringify({ general: { properties: {} } }));
     const second = makeRes();
     await handler({ url: '/wallpapers/properties?id=props2' }, second);
-    expect(JSON.parse(second.body.toString('utf8'))).toEqual({ properties: [] });
+    expect(JSON.parse(second.body.toString('utf8'))).toEqual({ audioProcessing: false, properties: [] });
   });
 });

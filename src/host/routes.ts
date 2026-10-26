@@ -595,7 +595,13 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
           }
         }
         res.setHeader?.('Cache-Control', 'no-store');
-        json(res, 200, { properties: collectUserProperties(projectJson, sceneJson) });
+        // v0.9 P1：同时下发 project.json 的 supportsaudioprocessing（面板据此提供系统音频入口；
+        // 浏览器模式下 getDisplayMedia 捕获系统音频，桌面 App 宿主禁用 ⇒ 失败开放）。
+        const general = (projectJson as { general?: { supportsaudioprocessing?: unknown } } | null)?.general;
+        json(res, 200, {
+          properties: collectUserProperties(projectJson, sceneJson),
+          audioProcessing: general?.supportsaudioprocessing === true,
+        });
       },
     });
   });

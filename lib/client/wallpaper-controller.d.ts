@@ -2,6 +2,7 @@ import type { WallpaperInfo } from '../shared/types.js';
 import type { BackgroundLayer } from './background-layer.js';
 import type { HealthSnapshot } from './render-health.js';
 import type { MediaFallback } from './media-health.js';
+import type { SystemAudioFailure } from './system-audio.js';
 export interface SceneRendererLike {
     render(id: string, fg: HTMLCanvasElement, bg?: HTMLCanvasElement): Promise<boolean>;
     dispose?(): void;
@@ -13,6 +14,8 @@ export interface SceneRendererLike {
         strength?: number;
     }): void;
     setSoundEnabled?(enabled: boolean): void;
+    startSystemAudio?(): Promise<SystemAudioFailure | 'ok'>;
+    stopSystemAudio?(): void;
     setOnContextLost?(cb: ((id: string) => void) | null): void;
     getLastHealth?(): HealthSnapshot | null;
     setOnHealth?(cb: ((s: HealthSnapshot) => void) | null): void;

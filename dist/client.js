@@ -29138,11 +29138,14 @@ function getUserPropertyValue(key, wallpaperId) {
 async function fetchWallpaperProperties(id) {
   try {
     const r = await fetch(`/wallpapers/properties?id=${encodeURIComponent(id)}`);
-    if (!r.ok) return [];
+    if (!r.ok) return { properties: [], audioProcessing: false };
     const body = await r.json();
-    return Array.isArray(body?.properties) ? body.properties : [];
+    return {
+      properties: Array.isArray(body?.properties) ? body.properties : [],
+      audioProcessing: body?.audioProcessing === true
+    };
   } catch {
-    return [];
+    return { properties: [], audioProcessing: false };
   }
 }
 function readUserProperty(key, wallpaperId) {
@@ -30917,6 +30920,86 @@ async function playWallpaperSound(url, analyzer, opts) {
   }
 }
 
+// src/client/system-audio.ts
+function audioContextCtor() {
+  const g = globalThis;
+  return g.AudioContext ?? g.webkitAudioContext ?? null;
+}
+function stopTracks(stream) {
+  try {
+    for (const t of stream.getTracks()) t.stop();
+  } catch {
+  }
+}
+async function startSystemAudioCapture(onEnded) {
+  if (typeof navigator === "undefined" || !navigator.mediaDevices?.getDisplayMedia) return "unsupported";
+  const Ctor = audioContextCtor();
+  if (!Ctor) return "no-web-audio";
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getDisplayMedia({ audio: true, video: true });
+  } catch (e) {
+    const name = e?.name;
+    if (name === "NotAllowedError" || name === "SecurityError") return "denied";
+    if (name === "NotSupportedError" || name === "TypeError") return "unsupported";
+    return "error";
+  }
+  const audioTrack = stream.getAudioTracks()[0];
+  if (!audioTrack) {
+    stopTracks(stream);
+    return "no-audio-track";
+  }
+  let context;
+  try {
+    context = new Ctor();
+  } catch {
+    stopTracks(stream);
+    return "no-web-audio";
+  }
+  let stopped = false;
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    try {
+      audioTrack.onended = null;
+    } catch {
+    }
+    stopTracks(stream);
+    void context.close().catch(() => {
+    });
+    onEnded?.();
+  };
+  try {
+    const source = context.createMediaStreamSource(stream);
+    const analyser = context.createAnalyser();
+    analyser.fftSize = 128;
+    const silent = context.createGain();
+    silent.gain.value = 0;
+    source.connect(analyser);
+    analyser.connect(silent);
+    silent.connect(context.destination);
+    const freqData = new Uint8Array(analyser.frequencyBinCount);
+    audioTrack.onended = () => stop();
+    void context.resume().catch(() => {
+    });
+    return {
+      context,
+      analyser,
+      freqData,
+      stream,
+      update() {
+        analyser.getByteFrequencyData(freqData);
+      },
+      stop
+    };
+  } catch {
+    stopTracks(stream);
+    void context.close().catch(() => {
+    });
+    return "error";
+  }
+}
+
 // src/client/scene-anim.ts
 var NAME_RE = /"name"\s*:\s*"([^"]{1,200})"/g;
 var FPS_RE = /"fps"\s*:\s*(-?\d+(?:\.\d+)?)/g;
@@ -32504,6 +32587,16 @@ function createThreeSceneRenderer(opts) {
   let scriptClick = null;
   let scriptClickTarget = null;
   let currentAudio = null;
+  let currentSystemAudio = null;
+  let systemAudioStarting = false;
+  const stopSystemAudioCapture = () => {
+    const cap = currentSystemAudio;
+    currentSystemAudio = null;
+    try {
+      cap?.stop();
+    } catch {
+    }
+  };
   let soundEnabledOverride = null;
   let lastAudioSpec = null;
   let contextLostHandler = null;
@@ -32622,6 +32715,7 @@ function createThreeSceneRenderer(opts) {
     currentMeshRegistry?.dispose();
     currentMeshRegistry = null;
     stopAudio();
+    stopSystemAudioCapture();
   };
   const teardownQuietly = () => {
     try {
@@ -32696,8 +32790,9 @@ function createThreeSceneRenderer(opts) {
         const parsedDesc = parseSceneJson(sceneJson);
         const userKeys = /* @__PURE__ */ new Set();
         collectUserKeys(JSON.parse(sceneJson), userKeys);
-        const propertyDefs = await fetchWallpaperProperties(id);
+        const propertiesResponse = await fetchWallpaperProperties(id);
         if (abortIfContextLost()) return false;
+        const propertyDefs = propertiesResponse.properties;
         const defaults = new Map(propertyDefs.map((p) => [p.key, p.value]));
         const userProps = {};
         for (const key of userKeys) {
@@ -33018,9 +33113,10 @@ function createThreeSceneRenderer(opts) {
           // SceneScript 帧钩子：脚本状态是本帧渲染的权威来源，先 tick → 应用脏写入，
           // 再走原有的粒子/文本更新与 render。host 未就绪（quickjs 加载中/失败）时直接返回。
           onFrame: (dt) => {
-            currentAudio?.analyzer.update();
-            currentStage?.setAudioSpectrum(currentAudio?.analyzer.freqData ?? null);
-            current?.player.updateVisualizerBars?.(currentAudio?.analyzer.freqData ?? null);
+            const audioSource = currentSystemAudio ?? currentAudio?.analyzer;
+            audioSource?.update();
+            currentStage?.setAudioSpectrum(audioSource?.freqData ?? null);
+            current?.player.updateVisualizerBars?.(audioSource?.freqData ?? null);
             currentStage?.setFrameSnapshot(current?.player.currentFrameSnapshot?.() ?? null);
             const host = currentScriptHost;
             const loaded = current;
@@ -33277,6 +33373,27 @@ function createThreeSceneRenderer(opts) {
     setGlow(patch) {
       glowOverride = { ...glowOverride ?? {}, ...patch };
       applyGlowRuntime();
+    },
+    // 系统音频（v0.9 P1）：浏览器模式捕获系统/标签页音频驱动频谱；桌面 App 宿主禁用 → 返回失败码。
+    async startSystemAudio() {
+      if (systemAudioStarting) return "error";
+      systemAudioStarting = true;
+      stopSystemAudioCapture();
+      try {
+        let cap = null;
+        const result = await startSystemAudioCapture(() => {
+          if (cap && currentSystemAudio === cap) currentSystemAudio = null;
+        });
+        if (typeof result === "string") return result;
+        cap = result;
+        currentSystemAudio = cap;
+        return "ok";
+      } finally {
+        systemAudioStarting = false;
+      }
+    },
+    stopSystemAudio() {
+      stopSystemAudioCapture();
     },
     // 音效开关（面板即时生效）：关 → 停声并释放 AudioContext；开 → 按上次规格重播。
     setSoundEnabled(value) {
@@ -33602,6 +33719,24 @@ var sharedOnReselect = null;
 function setWallpaperReselectHandler(handler) {
   sharedOnReselect = handler;
 }
+var sharedSystemAudio = null;
+function setWallpaperSystemAudioHandlers(handlers) {
+  sharedSystemAudio = handlers;
+}
+function systemAudioErrorMessage(failure) {
+  switch (failure) {
+    case "unsupported":
+      return "\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u6355\u83B7\u7CFB\u7EDF\u97F3\u9891\uFF08\u684C\u9762\u7248 App \u7981\u7528\u4E86\u8BE5\u6743\u9650\uFF0C\u8BF7\u7528\u6D4F\u89C8\u5668\u6253\u5F00\u672C GUI \u5730\u5740\u518D\u8BD5\uFF09";
+    case "denied":
+      return "\u672A\u6388\u6743\uFF1A\u8BF7\u5728\u5F39\u7A97\u4E2D\u9009\u62E9\u5171\u4EAB\u5E76\u52FE\u9009\u300C\u5171\u4EAB\u97F3\u9891\u300D\uFF1B\u62D2\u7EDD\u540E\u4E0D\u4F1A\u81EA\u52A8\u91CD\u8BD5\u3002";
+    case "no-audio-track":
+      return "\u6CA1\u6709\u6355\u83B7\u5230\u97F3\u9891\u8F68\uFF1A\u8BF7\u91CD\u65B0\u9009\u62E9\u5E76\u52FE\u9009\u300C\u5171\u4EAB\u97F3\u9891\u300D\uFF08\u53EA\u5171\u4EAB\u753B\u9762\u4E0D\u4F1A\u51FA\u58F0\uFF09\u3002";
+    case "no-web-audio":
+      return "\u5F53\u524D\u6D4F\u89C8\u5668\u7F3A\u5C11 Web Audio \u652F\u6301\uFF0C\u65E0\u6CD5\u5206\u6790\u7CFB\u7EDF\u97F3\u9891\u3002";
+    default:
+      return "\u6355\u83B7\u7CFB\u7EDF\u97F3\u9891\u5931\u8D25\uFF08\u672A\u77E5\u539F\u56E0\uFF09\uFF0C\u5DF2\u4FDD\u6301\u9759\u97F3\u3002";
+  }
+}
 var healthHandler = null;
 var healthSubscribers = /* @__PURE__ */ new Set();
 function setWallpaperHealthHandler(handler) {
@@ -33727,6 +33862,9 @@ function WallpaperSettingsSection(props) {
   const [mediaFailure, setMediaFailure] = (0, import_react.useState)(mediaHandler?.get() ?? null);
   const [libState, setLibState] = (0, import_react.useState)(loadLibraryState);
   const [properties, setProperties] = (0, import_react.useState)([]);
+  const [audioProcessing, setAudioProcessing] = (0, import_react.useState)(false);
+  const [systemAudioState, setSystemAudioState] = (0, import_react.useState)("idle");
+  const [systemAudioError, setSystemAudioError] = (0, import_react.useState)(null);
   const [propValues, setPropValues] = (0, import_react.useState)({});
   const commitTimers = (0, import_react.useRef)(/* @__PURE__ */ new Map());
   const commitPending = (0, import_react.useRef)(/* @__PURE__ */ new Map());
@@ -33774,12 +33912,16 @@ function WallpaperSettingsSection(props) {
     if (!selectedIsScene) {
       setProperties([]);
       setPropValues({});
+      setAudioProcessing(false);
+      setSystemAudioState("idle");
+      setSystemAudioError(null);
       return;
     }
     let alive = true;
-    void fetchProperties(selectedId).then((list) => {
+    void fetchProperties(selectedId).then((res) => {
       if (!alive) return;
-      const items = Array.isArray(list) ? list : [];
+      const items = Array.isArray(res?.properties) ? res.properties : [];
+      setAudioProcessing(res?.audioProcessing === true);
       setProperties(items);
       const values = {};
       for (const p of items) {
@@ -33790,6 +33932,7 @@ function WallpaperSettingsSection(props) {
       if (!alive) return;
       setProperties([]);
       setPropValues({});
+      setAudioProcessing(false);
     });
     return () => {
       alive = false;
@@ -33797,6 +33940,29 @@ function WallpaperSettingsSection(props) {
     };
   }, [selectedId, selectedIsScene, fetchProperties, clearCommitTimers]);
   (0, import_react.useEffect)(() => () => clearCommitTimers(), [clearCommitTimers]);
+  const startSystemAudio = (0, import_react.useCallback)(async () => {
+    if (!sharedSystemAudio) {
+      setSystemAudioError("unsupported");
+      return;
+    }
+    setSystemAudioState("starting");
+    setSystemAudioError(null);
+    try {
+      const result = await sharedSystemAudio.start();
+      if (result === "ok") setSystemAudioState("active");
+      else {
+        setSystemAudioState("idle");
+        setSystemAudioError(result);
+      }
+    } catch {
+      setSystemAudioState("idle");
+      setSystemAudioError("error");
+    }
+  }, []);
+  const stopSystemAudio = (0, import_react.useCallback)(() => {
+    sharedSystemAudio?.stop();
+    setSystemAudioState("idle");
+  }, []);
   const select = (0, import_react.useCallback)((id) => {
     onSelect(id);
     setSettings((prev) => prev ? { ...prev, selectedWallpaperId: id } : prev);
@@ -34223,6 +34389,22 @@ function WallpaperSettingsSection(props) {
             resetNode
           ] }, property.key);
         }) })
+      ] }),
+      selectedIsScene && audioProcessing && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section wss-sysaudio", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wss-section-title", children: "\u7CFB\u7EDF\u97F3\u9891" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc", children: "\u7528\u7CFB\u7EDF\u64AD\u653E\u7684\u58F0\u97F3\u9A71\u52A8\u58C1\u7EB8\u7684\u97F3\u9891\u53EF\u89C6\u5316\u3002\u70B9\u4E0B\u9762\u6309\u94AE\u540E\uFF0C\u5728\u6D4F\u89C8\u5668\u5F39\u7A97\u91CC\u9009\u62E9\u300C\u6574\u4E2A\u5C4F\u5E55\u300D\u5E76\u52FE\u9009\u300C\u5171\u4EAB\u97F3\u9891\u300D\uFF1B \u5171\u4EAB\u671F\u95F4\u4F1A\u6301\u7EED\u91C7\u96C6\u7CFB\u7EDF\u58F0\u97F3\uFF08\u4E0D\u4E0A\u4F20\u3001\u4E0D\u843D\u76D8\uFF09\uFF0C\u53EF\u968F\u65F6\u505C\u6B62\u3002\u684C\u9762\u7248 App \u53D7\u5BBF\u4E3B\u6743\u9650\u9650\u5236\u4E0D\u53EF\u7528\uFF0C \u8BF7\u7528\u6D4F\u89C8\u5668\u6253\u5F00\u672C GUI \u5730\u5740\u540E\u4F7F\u7528\u3002" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "wss-row", children: systemAudioState === "active" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "wss-sysaudio-stop", onClick: stopSystemAudio, children: "\u505C\u6B62\u7CFB\u7EDF\u97F3\u9891" }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "button",
+          {
+            className: "wss-sysaudio-start",
+            disabled: systemAudioState === "starting",
+            onClick: () => {
+              void startSystemAudio();
+            },
+            children: systemAudioState === "starting" ? "\u7B49\u5F85\u6388\u6743\u2026" : "\u542F\u7528\u7CFB\u7EDF\u97F3\u9891\uFF08\u9700\u6388\u6743\uFF09"
+          }
+        ) }),
+        systemAudioError && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc wss-sysaudio-error", children: systemAudioErrorMessage(systemAudioError) })
       ] })
     ] }),
     /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-pair", children: [
@@ -34768,6 +34950,7 @@ function bootstrap(ctx) {
     setWallpaperHealthHandler(null);
     setWallpaperMediaHandler(null);
     setWallpaperReselectHandler(null);
+    setWallpaperSystemAudioHandlers(null);
     unsubscribeMedia();
     notifyWallpaperHealth(null);
     const root = layer?.root ?? null;
@@ -34889,6 +35072,12 @@ function bootstrap(ctx) {
       get: mediaHealth.get,
       clear: () => {
         mediaHealth.clear();
+      }
+    });
+    setWallpaperSystemAudioHandlers({
+      start: () => sceneRenderer.startSystemAudio?.() ?? Promise.resolve("unsupported"),
+      stop: () => {
+        sceneRenderer.stopSystemAudio?.();
       }
     });
     onVisibility = () => applyRuntimeSettings(settings);

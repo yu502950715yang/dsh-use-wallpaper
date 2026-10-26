@@ -5,6 +5,7 @@ import { measureLuma, lumaToTextColor } from './luma.js';
 import { type TextColorMode, manualTextColor, normalizeMode, normalizeOutlineLevel } from './text-color.js';
 import type { HealthSnapshot } from './render-health.js';
 import type { MediaFallback } from './media-health.js';
+import type { SystemAudioFailure } from './system-audio.js';
 
 // scene 渲染器的接口形态（three-renderer 的生产实现与测试替身都按此形状提供）。
 export interface SceneRendererLike {
@@ -18,6 +19,9 @@ export interface SceneRendererLike {
   setGlow?(patch: { enabled?: boolean; threshold?: number; strength?: number }): void;
   // 壁纸音效开关（含频谱驱动效果）：关掉即时停声并释放 AudioContext；打开按上次规格重播。
   setSoundEnabled?(enabled: boolean): void;
+  // 系统音频（v0.9 P1）：浏览器模式捕获系统音频驱动频谱；桌面 App 宿主禁用 → 返回失败码（面板提示）。
+  startSystemAudio?(): Promise<SystemAudioFailure | 'ok'>;
+  stopSystemAudio?(): void;
   // 上下文丢失（显存耗尽/驱动重置）回调：渲染器停播后交回壁纸 id，由控制器换回该壁纸 preview。
   setOnContextLost?(cb: ((id: string) => void) | null): void;
   // scene 渲染看护（Task 2）：当前壁纸的健康快照 + 每次打点的订阅（面板/全局入口消费）。

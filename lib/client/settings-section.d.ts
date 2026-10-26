@@ -1,5 +1,7 @@
 import type { ClientSettings } from './types.js';
-import type { WallpaperInfo, ProbeResult, WallpaperUserProperty } from '../shared/types.js';
+import type { WallpaperInfo, ProbeResult } from '../shared/types.js';
+import { type WallpaperPropertiesResponse } from './wallpaper-properties.js';
+import type { SystemAudioFailure } from './system-audio.js';
 import type { HealthSnapshot } from './render-health.js';
 import type { MediaFailure } from './media-health.js';
 export interface WallpaperSettingsSectionProps {
@@ -12,7 +14,7 @@ export interface WallpaperSettingsSectionProps {
     /** 自动探测候选路径（默认 GET /wallpapers/probe） */
     fetchProbe?: () => Promise<ProbeResult>;
     /** 拉取当前 scene 壁纸的用户属性（默认 GET /wallpapers/properties） */
-    fetchProperties?: (id: string) => Promise<WallpaperUserProperty[]>;
+    fetchProperties?: (id: string) => Promise<WallpaperPropertiesResponse>;
     /** 切换/取消壁纸（index.ts 注入 controller.select，空 id = 取消） */
     onSelect?: (id: string) => void;
     /** 用户属性切换后重装配当前壁纸（默认走共享 handler 的 controller.select） */
@@ -29,6 +31,12 @@ export interface WallpaperSettingsSectionProps {
 export declare function setWallpaperSelectHandler(fn: ((id: string) => void) | null): void;
 export declare function setWallpaperRuntimeHandler(fn: ((patch: Partial<ClientSettings>) => void) | null): void;
 export declare function setWallpaperReselectHandler(handler: ((id: string) => void) | null): void;
+export interface SystemAudioHandlers {
+    start(): Promise<SystemAudioFailure | 'ok'>;
+    stop(): void;
+}
+/** 注册/撤销系统音频处理器（index.ts 注入渲染器实现；null = 撤销）。 */
+export declare function setWallpaperSystemAudioHandlers(handlers: SystemAudioHandlers | null): void;
 /** 面板「实时渲染」卡片要的三件事：读状态、重试当前壁纸、清空全部失败记忆。 */
 export interface WallpaperHealthHandler {
     get(): HealthSnapshot | null;

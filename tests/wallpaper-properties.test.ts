@@ -192,26 +192,31 @@ describe('fetchWallpaperProperties（GET /wallpapers/properties）', () => {
   it('请求带编码后的 id，返回 properties 数组', async () => {
     const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ properties: [CLOUDS] }) }));
     vi.stubGlobal('fetch', fetchMock);
-    await expect(fetchWallpaperProperties('a/b')).resolves.toEqual([CLOUDS]);
+    await expect(fetchWallpaperProperties('a/b')).resolves.toEqual({ properties: [CLOUDS], audioProcessing: false });
     expect(fetchMock).toHaveBeenCalledWith('/wallpapers/properties?id=a%2Fb');
   });
 
   it('非 2xx → 空数组（面板据此不渲染 section）', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 500, json: async () => ({}) })));
-    expect(await fetchWallpaperProperties('42')).toEqual([]);
+    expect(await fetchWallpaperProperties('42')).toEqual({ properties: [], audioProcessing: false });
   });
 
   it('properties 缺失/非数组/坏 JSON → 空数组', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({}) })));
-    expect(await fetchWallpaperProperties('42')).toEqual([]);
+    expect(await fetchWallpaperProperties('42')).toEqual({ properties: [], audioProcessing: false });
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ properties: 'nope' }) })));
-    expect(await fetchWallpaperProperties('42')).toEqual([]);
+    expect(await fetchWallpaperProperties('42')).toEqual({ properties: [], audioProcessing: false });
     vi.stubGlobal('fetch', vi.fn(async () => { throw new SyntaxError('bad json'); }));
-    expect(await fetchWallpaperProperties('42')).toEqual([]);
+    expect(await fetchWallpaperProperties('42')).toEqual({ properties: [], audioProcessing: false });
+  });
+
+  it('supportsaudioprocessing=true → audioProcessing 标记（v0.9 P1 面板据此显示系统音频入口）', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ properties: [CLOUDS], audioProcessing: true }) })));
+    expect(await fetchWallpaperProperties('42')).toEqual({ properties: [CLOUDS], audioProcessing: true });
   });
 
   it('网络异常 → 空数组，不向调用方抛错', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('network down'); }));
-    expect(await fetchWallpaperProperties('42')).toEqual([]);
+    expect(await fetchWallpaperProperties('42')).toEqual({ properties: [], audioProcessing: false });
   });
 });

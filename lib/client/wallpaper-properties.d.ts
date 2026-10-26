@@ -1,6 +1,11 @@
 import type { UserPropertyValue, WallpaperUserProperty } from '../shared/types.js';
-/** GET /wallpapers/properties?id=…：失败/畸形响应一律空数组（面板不渲染 section）。 */
-export declare function fetchWallpaperProperties(id: string): Promise<WallpaperUserProperty[]>;
+/** 响应形态（v0.9 P1）：properties + project.json 的 supportsaudioprocessing 标记。 */
+export interface WallpaperPropertiesResponse {
+    properties: WallpaperUserProperty[];
+    audioProcessing: boolean;
+}
+/** GET /wallpapers/properties?id=…：失败/畸形响应一律空属性 + audioProcessing=false（面板不渲染 section）。 */
+export declare function fetchWallpaperProperties(id: string): Promise<WallpaperPropertiesResponse>;
 /** 读用户属性（四类型标量）；传壁纸 id 时 per-id 键优先，缺失回退旧全局键。 */
 export declare function readUserProperty(key: string, wallpaperId?: string): UserPropertyValue | undefined;
 /** 写用户属性（JSON 标量）；无 localStorage/配额满/隐私模式时静默。 */

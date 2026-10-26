@@ -5,6 +5,7 @@ import { act } from 'react';
 import {
   WallpaperSettingsSection, setWallpaperRuntimeHandler, setWallpaperSelectHandler,
   setWallpaperHealthHandler, setWallpaperMediaHandler, setWallpaperReselectHandler,
+  setWallpaperSystemAudioHandlers,
   subscribeWallpaperHealth, notifyWallpaperHealth,
 } from '../../src/client/settings-section.js';
 import type { ClientSettings } from '../../src/client/types.js';
@@ -93,7 +94,7 @@ function mount(props: Partial<React.ComponentProps<typeof WallpaperSettingsSecti
       writeSettings={async () => {}}
       fetchWallpapers={async () => WALLPAPERS as any}
       fetchProbe={async () => PROBE}
-      fetchProperties={async () => []}
+      fetchProperties={async () => ({ properties: [], audioProcessing: false })}
       onSelect={() => {}}
       {...props}
     />
@@ -130,6 +131,7 @@ afterEach(async () => {
   setWallpaperSelectHandler(() => {});
   setWallpaperRuntimeHandler(() => {});
   setWallpaperReselectHandler(null);
+  setWallpaperSystemAudioHandlers(null);
   vi.restoreAllMocks();
 });
 
@@ -981,7 +983,7 @@ describe('壁纸属性（用户布尔可见性）', () => {
 
   it('选中 scene 且属性非空 → 渲染「壁纸属性」section；存储值覆盖壁纸默认 value', async () => {
     localStorage.setItem('we:userprop:clouds', 'false');
-    mount({ fetchProperties: async () => [CLOUDS, RAIN] });
+    mount({ fetchProperties: async () => ({ properties: [CLOUDS, RAIN], audioProcessing: false }) });
     await flush();
     const boxes = [...container.querySelectorAll<HTMLInputElement>('.wss-userprop')];
     expect(boxes).toHaveLength(2);
@@ -997,7 +999,7 @@ describe('壁纸属性（用户布尔可见性）', () => {
   it('切换 checkbox → 写当前壁纸的 per-id 键并触发当前壁纸重装配', async () => {
     const reselect = vi.fn();
     setWallpaperReselectHandler(reselect);
-    mount({ fetchProperties: async () => [CLOUDS] });
+    mount({ fetchProperties: async () => ({ properties: [CLOUDS], audioProcessing: false }) });
     await flush();
     const box = container.querySelector('.wss-userprop[data-key="clouds"]') as HTMLInputElement;
     box.click();
@@ -1011,7 +1013,7 @@ describe('壁纸属性（用户布尔可见性）', () => {
   it('per-wallpaper 隔离：切到另一张同名属性的 scene 读自己的值，不串上一张的开关', async () => {
     // '1' 与 '3' 都是 scene 且都有 clouds（真实场景：EVA 与另一张都有 bool newproperty1）。
     mount({
-      fetchProperties: async () => [CLOUDS],
+      fetchProperties: async () => ({ properties: [CLOUDS], audioProcessing: false }),
       fetchWallpapers: async () => [
         ...WALLPAPERS,
         { id: '3', title: 'EVA 2', type: 'scene', hasScene: true, hasPreviewGif: false, previewUrl: '/p3' },
@@ -1036,7 +1038,7 @@ describe('壁纸属性（用户布尔可见性）', () => {
     const shared = vi.fn();
     const prop = vi.fn();
     setWallpaperReselectHandler(shared);
-    mount({ fetchProperties: async () => [CLOUDS], onReselect: prop });
+    mount({ fetchProperties: async () => ({ properties: [CLOUDS], audioProcessing: false }), onReselect: prop });
     await flush();
     (container.querySelector('.wss-userprop[data-key="clouds"]') as HTMLInputElement).click();
     await flush();
@@ -1046,7 +1048,7 @@ describe('壁纸属性（用户布尔可见性）', () => {
 
   it('非 scene / 空列表 / fetch 抛错 → 不渲染 section，不抛错', async () => {
     // 非 scene：selectedWallpaperId='2' 是 video，不应请求属性
-    const fetchProperties = vi.fn(async () => [CLOUDS]);
+    const fetchProperties = vi.fn(async () => ({ properties: [CLOUDS], audioProcessing: false }));
     mount({
       fetchSettings: async () => ({ ...BASE_SETTINGS, selectedWallpaperId: '2' }),
       fetchProperties,
@@ -1056,7 +1058,7 @@ describe('壁纸属性（用户布尔可见性）', () => {
     expect(fetchProperties).not.toHaveBeenCalled();
     await unmount();
 
-    mount({ fetchProperties: async () => [] });
+    mount({ fetchProperties: async () => ({ properties: [], audioProcessing: false }) });
     await flush();
     expect(container.querySelector('.wss-userprop')).toBeNull();
     await unmount();
@@ -1071,7 +1073,7 @@ describe('壁纸属性（用户布尔可见性）', () => {
     const calls: string[] = [];
     const fetchProperties = vi.fn(async (id: string) => {
       calls.push(id);
-      return id === '1' ? [CLOUDS] : [RAIN];
+      return { properties: id === '1' ? [CLOUDS] : [RAIN], audioProcessing: false };
     });
     mount({
       fetchProperties,
@@ -1125,7 +1127,7 @@ describe('壁纸属性（四类型控件）', () => {
   };
 
   it('按类型渲染控件：bool 复选框 / slider 滑杆 / color 取色 / combo 下拉', async () => {
-    mount({ fetchProperties: async () => [BOOL, SLIDER, COLOR, COMBO] });
+    mount({ fetchProperties: async () => ({ properties: [BOOL, SLIDER, COLOR, COMBO], audioProcessing: false }) });
     await flush();
     const box = container.querySelector('input[type="checkbox"][data-key="b"]') as HTMLInputElement | null;
     const range = container.querySelector('input[type="range"][data-key="s"]') as HTMLInputElement | null;
@@ -1150,7 +1152,7 @@ describe('壁纸属性（四类型控件）', () => {
       key: 's', label: 'S', type: 'slider', value: 0.4, min: 0, max: 1, step: 0.01,
       precision: 3, fraction: true, order: 1, usedBy: ['x'],
     };
-    mount({ fetchProperties: async () => [precise] });
+    mount({ fetchProperties: async () => ({ properties: [precise], audioProcessing: false }) });
     await flush();
     expect(container.querySelector('.wss-userprop-value')?.textContent).toBe('0.400');
     await unmount();
@@ -1159,7 +1161,7 @@ describe('壁纸属性（四类型控件）', () => {
       key: 'w', label: 'W', type: 'slider', value: 2.6, min: 0, max: 10, step: 0.1,
       fraction: false, order: 1, usedBy: ['x'],
     };
-    mount({ fetchProperties: async () => [whole] });
+    mount({ fetchProperties: async () => ({ properties: [whole], audioProcessing: false }) });
     await flush();
     expect(container.querySelector('.wss-userprop-value')?.textContent).toBe('3');
   });
@@ -1169,7 +1171,7 @@ describe('壁纸属性（四类型控件）', () => {
     try {
       const reselect = vi.fn();
       setWallpaperReselectHandler(reselect);
-      mount({ fetchProperties: async () => [SLIDER, COLOR, COMBO] });
+      mount({ fetchProperties: async () => ({ properties: [SLIDER, COLOR, COMBO], audioProcessing: false }) });
       await advance(0);
 
       const range = container.querySelector('input[type="range"][data-key="s"]') as HTMLInputElement;
@@ -1221,7 +1223,7 @@ describe('壁纸属性（四类型控件）', () => {
     try {
       const reselect = vi.fn();
       setWallpaperReselectHandler(reselect);
-      mount({ fetchProperties: async () => [SLIDER, COLOR] });
+      mount({ fetchProperties: async () => ({ properties: [SLIDER, COLOR], audioProcessing: false }) });
       await advance(0);
       const range = container.querySelector('input[type="range"][data-key="s"]') as HTMLInputElement;
       await act(async () => {
@@ -1253,7 +1255,7 @@ describe('壁纸属性（四类型控件）', () => {
       const reselect = vi.fn();
       setWallpaperReselectHandler(reselect);
       mount({
-        fetchProperties: async () => [COLOR],
+        fetchProperties: async () => ({ properties: [COLOR], audioProcessing: false }),
         fetchWallpapers: async () => [
           ...WALLPAPERS,
           { id: '3', title: 'EVA 2', type: 'scene', hasScene: true, hasPreviewGif: false, previewUrl: '/p3' },
@@ -1276,7 +1278,7 @@ describe('壁纸属性（四类型控件）', () => {
 
   it('color 值 "r g b" ↔ #rrggbb 转换；存储值覆盖默认色', async () => {
     localStorage.setItem('we:userprop:1:c', JSON.stringify('0 0 1'));
-    mount({ fetchProperties: async () => [COLOR] });
+    mount({ fetchProperties: async () => ({ properties: [COLOR], audioProcessing: false }) });
     await flush();
     const color = container.querySelector('input[type="color"][data-key="c"]') as HTMLInputElement;
     expect(color.value).toBe('#0000ff');
@@ -1297,7 +1299,7 @@ describe('壁纸属性（四类型控件）', () => {
       key: 'musiccolor', label: '音乐颜色', type: 'color', value: '1 0 0', order: 2, usedBy: ['x'],
       condition: 'audiobar.value==true',
     };
-    mount({ fetchProperties: async () => [AUDIO, MUSIC] });
+    mount({ fetchProperties: async () => ({ properties: [AUDIO, MUSIC], audioProcessing: false }) });
     await flush();
     const color = container.querySelector('input[type="color"][data-key="musiccolor"]') as HTMLInputElement;
     const item = color.closest('.wss-userprop-item') as HTMLElement;
@@ -1320,14 +1322,14 @@ describe('壁纸属性（四类型控件）', () => {
     const text = {
       key: 't', label: '文本', type: 'text', value: 'x', order: 2, usedBy: ['x'],
     } as unknown as WallpaperUserProperty;
-    mount({ fetchProperties: async () => [unused, text, BOOL] });
+    mount({ fetchProperties: async () => ({ properties: [unused, text, BOOL], audioProcessing: false }) });
     await flush();
     expect(container.querySelectorAll('.wss-userprop-item')).toHaveLength(1);
     expect(container.querySelector('[data-key="unused"]')).toBeNull();
     expect(container.querySelector('[data-key="t"]')).toBeNull();
 
     await unmount();
-    mount({ fetchProperties: async () => [unused] });
+    mount({ fetchProperties: async () => ({ properties: [unused], audioProcessing: false }) });
     await flush();
     expect(container.querySelector('.wss-userprops')).toBeNull();
   });
@@ -1336,7 +1338,7 @@ describe('壁纸属性（四类型控件）', () => {
     const reselect = vi.fn();
     setWallpaperReselectHandler(reselect);
     localStorage.setItem('we:userprop:1:b', 'false');
-    mount({ fetchProperties: async () => [BOOL] });
+    mount({ fetchProperties: async () => ({ properties: [BOOL], audioProcessing: false }) });
     await flush();
     const box = container.querySelector('input[type="checkbox"][data-key="b"]') as HTMLInputElement;
     expect(box.checked).toBe(false);
@@ -1352,7 +1354,7 @@ describe('壁纸属性（四类型控件）', () => {
     try {
       const reselect = vi.fn();
       setWallpaperReselectHandler(reselect);
-      mount({ fetchProperties: async () => [SLIDER, COLOR] });
+      mount({ fetchProperties: async () => ({ properties: [SLIDER, COLOR], audioProcessing: false }) });
       await advance(0);
       const range = container.querySelector('input[type="range"][data-key="s"]') as HTMLInputElement;
       await act(async () => { setInput(range, '0.9'); });
@@ -1381,7 +1383,7 @@ describe('壁纸属性（四类型控件）', () => {
     try {
       const reselect = vi.fn();
       setWallpaperReselectHandler(reselect);
-      mount({ fetchProperties: async () => [SLIDER, COLOR] });
+      mount({ fetchProperties: async () => ({ properties: [SLIDER, COLOR], audioProcessing: false }) });
       await advance(0);
       const range = container.querySelector('input[type="range"][data-key="s"]') as HTMLInputElement;
       const color = container.querySelector('input[type="color"][data-key="c"]') as HTMLInputElement;
@@ -1397,5 +1399,41 @@ describe('壁纸属性（四类型控件）', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+
+describe('系统音频入口（v0.9 P1）', () => {
+  const BOOL_PROP: WallpaperUserProperty = {
+    key: 'clouds', label: '云层', type: 'bool', value: true, order: 2.5, usedBy: ['objects[].visible'],
+  };
+  it('audioProcessing=true 时显示启用按钮；失败码回显；成功后切到停止', async () => {
+    const start = vi.fn(async (): Promise<'ok' | 'denied'> => 'denied');
+    const stop = vi.fn();
+    setWallpaperSystemAudioHandlers({ start, stop });
+    mount({ fetchProperties: async () => ({ properties: [BOOL_PROP], audioProcessing: true }) });
+    await flush();
+    const btn = container.querySelector('.wss-sysaudio-start') as HTMLButtonElement | null;
+    expect(btn).not.toBeNull();
+    expect(container.textContent).toContain('系统音频');
+    expect(container.textContent).toContain('桌面版 App');
+    btn!.click();
+    await flush();
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain('未授权');
+    // 成功后按钮切「停止」，点击停止调用 handler
+    start.mockResolvedValueOnce('ok');
+    btn!.click();
+    await flush();
+    const stopBtn = container.querySelector('.wss-sysaudio-stop') as HTMLButtonElement | null;
+    expect(stopBtn).not.toBeNull();
+    stopBtn!.click();
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('audioProcessing=false → 不渲染系统音频 section', async () => {
+    mount({ fetchProperties: async () => ({ properties: [BOOL_PROP], audioProcessing: false }) });
+    await flush();
+    expect(container.querySelector('.wss-sysaudio')).toBeNull();
   });
 });

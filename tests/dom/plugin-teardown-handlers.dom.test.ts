@@ -54,6 +54,7 @@ vi.mock('../../src/client/settings-section.js', () => ({
   setWallpaperHealthHandler: vi.fn(),
   setWallpaperMediaHandler: vi.fn(),
   setWallpaperReselectHandler: vi.fn((fn: any) => { handlers.reselect = fn; }),
+  setWallpaperSystemAudioHandlers: vi.fn(),
   notifyWallpaperHealth: vi.fn(),
   notifyWallpaperMedia: vi.fn(),
 }));
