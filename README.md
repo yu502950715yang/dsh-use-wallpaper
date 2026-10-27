@@ -2,11 +2,23 @@
 
 [![dsh-plugin](https://img.shields.io/badge/GitHub%20topic-dsh--plugin-1f6feb)](https://github.com/topics/dsh-plugin)
 [![DeepSeek Harness](https://img.shields.io/badge/DSH-DeepSeek%20Harness-4b8bbe)](https://github.com/deepseek-ai/deepseek-harness)
+[![npm version](https://img.shields.io/npm/v/@dsh-use/wallpaper-engine)](https://www.npmjs.com/package/@dsh-use/wallpaper-engine)
+[![npm downloads](https://img.shields.io/npm/dm/@dsh-use/wallpaper-engine)](https://www.npmjs.com/package/@dsh-use/wallpaper-engine)
+[![CI](https://github.com/yu502950715yang/dsh-use-wallpaper/actions/workflows/ci.yml/badge.svg)](https://github.com/yu502950715yang/dsh-use-wallpaper/actions/workflows/ci.yml)
+[![stars](https://img.shields.io/github/stars/yu502950715yang/dsh-use-wallpaper)](https://github.com/yu502950715yang/dsh-use-wallpaper/stargazers)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
 **把 Wallpaper Engine 的 scene（场景）壁纸搬进 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的 Web GUI** —— 在浏览器里实时渲染粒子、水波、云卷、布料摆动，让动态壁纸成为你写代码时的背景。
 
 不需要 Wallpaper Engine 在后台运行，不需要 WebGPU，不重新分发任何第三方素材。
+
+```bash
+# 一行安装（dsh web；桌面版 App 请用侧边栏「插件」页，不能用 CLI）
+dsh plugin --profile web add "@dsh-use/wallpaper-engine" && dsh plugin --profile web install
+```
+
+> ⭐ **如果它让你的界面好看了，点个 [Star](https://github.com/yu502950715yang/dsh-use-wallpaper/stargazers) 就是最大的支持。**
+> 发现哪张壁纸渲染不正常，欢迎[提 Issue](https://github.com/yu502950715yang/dsh-use-wallpaper/issues/new) —— 壁纸写法千差万别，你的反馈是项目改进的主要来源。
 
 ---
 
@@ -141,6 +153,16 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 
 - `GET /wallpapers/list` 返回 JSON 壁纸数组。
 - 浏览器 Console 出现 `[three] scene loaded id=… background=N particleLayers=M`（`M ≥ 1` 表示粒子层已建）。
+
+### 4. 用插件市场索引源订阅（可选）
+
+本仓库根目录提供一份 **format-1 插件市场索引**（[`index.json`](./index.json)，已用官方 `@deepseek-ai/dsh-plugin-market-index` 校验）。DSH 0.2.1 起可以把它加成一个索引源，之后在「插件 → 发现」里浏览与安装：
+
+1. **插件 → 发现 → 索引源 → 添加**
+2. 粘贴：`https://cdn.jsdelivr.net/gh/yu502950715yang/dsh-use-wallpaper@master/index.json`
+3. 回到「发现」，搜索 **Wallpaper Engine**
+
+> 也可以直接用上面的 `dsh plugin add` 命令安装，两条路径等价；索引源只是让插件在客户端里「可被逛到」。
 
 ---
 
@@ -393,7 +415,12 @@ dsh plugin --profile web install
 ## 🔗 相关链接
 
 - [GitHub 仓库](https://github.com/yu502950715yang/dsh-use-wallpaper)
+- [插件市场索引源 `index.json`](./index.json)（可粘贴到「插件 → 发现 → 索引源」）
 - [dsh-plugin 主题页](https://github.com/topics/dsh-plugin)
 - [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
 - [开发环境配置（docs/dev-setup.md）](docs/dev-setup.md)
+
+## ⭐ Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=yu502950715yang/dsh-use-wallpaper&type=Date)](https://star-history.com/#yu502950715yang/dsh-use-wallpaper&Date)
 

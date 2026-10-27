@@ -2757,6 +2757,13 @@ body[data-ds-dark-theme][data-we-wallpaper] [data-sidebar-right-panel="fullscree
 body[data-we-wallpaper] :where([data-sidebar-right-panel="fullscreen"][data-sidebar-right-open]){
   z-index:15;
 }
+/* \u5173\u4E8E\u533A\uFF08\u9762\u677F\u6700\u672B\uFF09\uFF1AStar / \u53CD\u9988 / \u6587\u6863\u4E09\u4E2A pill \u94FE\u63A5\u3002 */
+.wss-about-links{display:flex;flex-wrap:wrap;gap:8px;margin-top:2px}
+.wss-about-link{border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background:transparent;color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;min-height:30px;padding:6px 12px;font-size:12px;font-weight:550;text-decoration:none;display:inline-flex;align-items:center;transition:background-color .15s ease,filter .15s ease}
+.wss-about-link:hover{background:rgba(127,127,127,.12)}
+.wss-about-link:focus-visible{outline:2px solid var(--wp-accent);outline-offset:2px}
+.wss-about-link[data-primary=true]{background:var(--wp-accent-strong,#2563eb);border-color:transparent;color:#fff}
+.wss-about-link[data-primary=true]:hover{filter:brightness(1.07)}
 `;
 var WALLPAPER_CSS = CSS;
 function injectWallpaperStyles() {
@@ -34775,6 +34782,15 @@ function WallpaperSettingsSection(props) {
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-live-retry", onClick: retryLive, children: "\u91CD\u8BD5\u5B9E\u65F6\u6E32\u67D3" }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-live-forget", onClick: forgetFailures, children: "\u6E05\u9664\u5931\u8D25\u8BB0\u5FC6" })
           ] })
+        ] })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section wss-about", "aria-label": "\u5173\u4E8E", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wss-section-title", children: "\u5173\u4E8E" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc", children: "MIT \u5F00\u6E90\u3002\u5982\u679C\u5B83\u8BA9\u4F60\u7684\u754C\u9762\u597D\u770B\u4E86\uFF0C\u70B9\u4E2A Star \u5C31\u662F\u6700\u5927\u7684\u652F\u6301\uFF1B\u54EA\u5F20\u58C1\u7EB8\u6E32\u67D3\u4E0D\u6B63\u5E38\uFF0C\u5E26 Workshop ID \u63D0\u4E2A Issue \u5373\u53EF\u3002" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-about-links", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("a", { className: "wss-about-link", "data-primary": "true", href: "https://github.com/yu502950715yang/dsh-use-wallpaper", target: "_blank", rel: "noreferrer", children: "\u2B50 Star \u9879\u76EE" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("a", { className: "wss-about-link", href: "https://github.com/yu502950715yang/dsh-use-wallpaper/issues/new", target: "_blank", rel: "noreferrer", children: "\u53CD\u9988\u95EE\u9898" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("a", { className: "wss-about-link", href: "https://github.com/yu502950715yang/dsh-use-wallpaper#readme", target: "_blank", rel: "noreferrer", children: "\u4F7F\u7528\u6587\u6863" })
         ] })
       ] })
     ] }),

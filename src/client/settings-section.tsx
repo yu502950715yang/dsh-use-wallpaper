@@ -1236,6 +1236,18 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
         </div>
         </div>
       </details>
+      {/* 关于：常驻的 Star / 反馈 / 文档入口。放面板最末，不打扰日常操作。 */}
+      <section className="wss-section wss-about" aria-label="关于">
+        <h4 className="wss-section-title">关于</h4>
+        <p className="wss-section-desc">
+          MIT 开源。如果它让你的界面好看了，点个 Star 就是最大的支持；哪张壁纸渲染不正常，带 Workshop ID 提个 Issue 即可。
+        </p>
+        <div className="wss-about-links">
+          <a className="wss-about-link" data-primary="true" href="https://github.com/yu502950715yang/dsh-use-wallpaper" target="_blank" rel="noreferrer">⭐ Star 项目</a>
+          <a className="wss-about-link" href="https://github.com/yu502950715yang/dsh-use-wallpaper/issues/new" target="_blank" rel="noreferrer">反馈问题</a>
+          <a className="wss-about-link" href="https://github.com/yu502950715yang/dsh-use-wallpaper#readme" target="_blank" rel="noreferrer">使用文档</a>
+        </div>
+      </section>
       </div>
       {message && <p className="wss-message" role="status">{message}</p>}
     </div>

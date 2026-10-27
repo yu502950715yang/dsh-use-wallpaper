@@ -1,0 +1,67 @@
+{
+  "format": 1,
+  "title": {
+    "en": "DSH Wallpaper Engine",
+    "zh": "DSH 壁纸引擎"
+  },
+  "description": {
+    "en": "Wallpaper Engine scene wallpapers rendered live inside the DSH web GUI.",
+    "zh": "把 Wallpaper Engine 的 scene 壁纸实时渲染进 DeepSeek Harness 的 Web GUI。"
+  },
+  "metadata": {
+    "categories": {
+      "appearance": {
+        "title": {
+          "en": "Themes & Appearance",
+          "zh": "主题与外观"
+        }
+      }
+    },
+    "labels": {},
+    "sortKeys": {}
+  },
+  "plugins": [
+    {
+      "name": "@dsh-use/wallpaper-engine",
+      "title": {
+        "en": "Wallpaper Engine",
+        "zh": "壁纸引擎"
+      },
+      "description": {
+        "en": "Render Wallpaper Engine scene wallpapers live in the DSH web GUI with a self-built three.js + Rust/WASM renderer: particles, water, clouds and cloth move for real. No Wallpaper Engine runtime required; falls back through embedded MP4 / cached frame / preview so the UI never goes blank.",
+        "zh": "在 DSH Web GUI 里实时渲染 Wallpaper Engine 的 scene 壁纸：自研 three.js + Rust/WASM 渲染器，粒子、水波、云卷、布料真实运动。不需要 Wallpaper Engine 在后台运行；渲染失败按多级降级链回退，界面永不白屏。"
+      },
+      "author": "yu502950715yang",
+      "homepage": "https://github.com/yu502950715yang/dsh-use-wallpaper",
+      "repository": {
+        "url": "https://github.com/yu502950715yang/dsh-use-wallpaper"
+      },
+      "metadata": {
+        "category": "appearance",
+        "keywords": [
+          "wallpaper-engine",
+          "wallpaper",
+          "scene",
+          "threejs",
+          "webgl",
+          "dsh-plugin"
+        ],
+        "labels": [],
+        "sortKeys": {}
+      },
+      "versions": [
+        {
+          "version": "0.9.0",
+          "publishTimestamp": 1793065020,
+          "source": {
+            "type": "npm",
+            "registry": "https://registry.npmjs.org/"
+          },
+          "engines": {
+            "dsh": ">=0.1.5-rc.3"
+          }
+        }
+      ]
+    }
+  ]
+}
