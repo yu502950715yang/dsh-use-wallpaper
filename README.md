@@ -3,7 +3,7 @@
 [![dsh-plugin](https://img.shields.io/badge/GitHub%20topic-dsh--plugin-1f6feb)](https://github.com/topics/dsh-plugin)
 [![DeepSeek Harness](https://img.shields.io/badge/DSH-DeepSeek%20Harness-4b8bbe)](https://github.com/deepseek-ai/deepseek-harness)
 [![npm version](https://img.shields.io/npm/v/@dsh-use/wallpaper-engine)](https://www.npmjs.com/package/@dsh-use/wallpaper-engine)
-[![npm downloads](https://img.shields.io/npm/dm/@dsh-use/wallpaper-engine)](https://www.npmjs.com/package/@dsh-use/wallpaper-engine)
+[![npm downloads](https://img.shields.io/npm/dt/@dsh-use/wallpaper-engine)](https://www.npmjs.com/package/@dsh-use/wallpaper-engine)
 [![CI](https://github.com/yu502950715yang/dsh-use-wallpaper/actions/workflows/ci.yml/badge.svg)](https://github.com/yu502950715yang/dsh-use-wallpaper/actions/workflows/ci.yml)
 [![stars](https://img.shields.io/github/stars/yu502950715yang/dsh-use-wallpaper)](https://github.com/yu502950715yang/dsh-use-wallpaper/stargazers)
 ![license](https://img.shields.io/badge/license-MIT-green)
