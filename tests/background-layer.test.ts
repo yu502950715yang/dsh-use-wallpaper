@@ -107,3 +107,14 @@ describe('planWebFrameOrigin', () => {
   });
 });
 
+
+
+describe('resolveBackground：preset 壁纸（v0.9）', () => {
+  it('preset 且 hasScene（依赖目录有 scene.pkg）→ scene 计划（渲染键 = preset 自身 id，host 解析依赖资源）', () => {
+    const plan = resolveBackground({ ...base, id: '200', type: 'preset', hasScene: true, presetOf: '100' });
+    expect(plan).toEqual({ kind: 'scene', wallpaperId: '200' });
+  });
+  it('preset 但依赖缺失（hasScene=false）→ preview 图', () => {
+    expect(resolveBackground({ ...base, id: '201', type: 'preset', hasScene: false }).kind).toBe('image');
+  });
+});

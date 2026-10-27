@@ -290,7 +290,7 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
   });
   const visibleWallpapers = filterLibrary(wallpapers, filter, libState);
   const selectedId = settings?.selectedWallpaperId ?? '';
-  const selectedIsScene = !!selectedId && wallpapers.some((w) => w.id === selectedId && w.type === 'scene');
+  const selectedIsScene = !!selectedId && wallpapers.some((w) => w.id === selectedId && (w.type === 'scene' || w.type === 'preset'));
 
   // 取消全部未提交的防抖（切壁纸/卸载/属性重拉时调用）。
   const clearCommitTimers = useCallback(() => {
@@ -643,6 +643,7 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
               <option value="video">视频</option>
               <option value="web">Web</option>
               <option value="image">图片</option>
+              <option value="preset">预设</option>
             </select>
             <label className="wss-tool">
               <input

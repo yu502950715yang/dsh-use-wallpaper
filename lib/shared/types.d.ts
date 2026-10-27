@@ -1,4 +1,4 @@
-export type WallpaperKind = 'scene' | 'video' | 'web' | 'image' | 'unknown';
+export type WallpaperKind = 'scene' | 'video' | 'web' | 'image' | 'preset' | 'unknown';
 export type WallpaperPathKind = 'workshop' | 'assets';
 export interface SteamPathCandidate {
     path: string;
@@ -16,6 +16,8 @@ export interface WallpaperInfo {
     file?: string;
     hasPreviewGif: boolean;
     hasScene: boolean;
+    /** WE 预设壁纸（dependency）的依赖 id：type='preset' 时存在，场景资源与属性都来自该壁纸。 */
+    presetOf?: string;
     previewUrl: string;
 }
 export interface PkgEntry {

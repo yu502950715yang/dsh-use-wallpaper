@@ -66,3 +66,27 @@ describe('scanWallpapers', () => {
     expect(list).toHaveLength(0);
   });
 });
+
+
+describe('preset 壁纸（WE 预设：dependency + preset，无 type/file）', () => {
+  it('kindFromProjectJson：无 type 但有 dependency → preset；空 dependency → unknown', () => {
+    expect(kindFromProjectJson({ dependency: '3118949804' })).toBe('preset');
+    expect(kindFromProjectJson({ dependency: '3118949804', preset: { speed: 2 } })).toBe('preset');
+    expect(kindFromProjectJson({ dependency: '  ' })).toBe('unknown');
+    expect(kindFromProjectJson({ dependency: 123 })).toBe('unknown');
+  });
+
+  it('scanWallpapers：preset 标记 presetOf，hasScene 取依赖目录的 scene.pkg', async () => {
+    addWallpaper('100', { title: 'Base', type: 'scene' }, ['scene.pkg', 'preview.jpg']);
+    addWallpaper('200', { title: 'Preset', dependency: '100', preset: { speed: 2.5 } }, ['preview.jpg']);
+    addWallpaper('300', { title: 'Orphan', dependency: '999' }, ['preview.jpg']);
+    const list = await scanWallpapers(dir);
+    const preset = list.find((w) => w.id === '200')!;
+    expect(preset.type).toBe('preset');
+    expect(preset.presetOf).toBe('100');
+    expect(preset.hasScene).toBe(true);
+    const orphan = list.find((w) => w.id === '300')!;
+    expect(orphan.type).toBe('preset');
+    expect(orphan.hasScene).toBe(false);
+  });
+});

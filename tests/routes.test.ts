@@ -970,3 +970,68 @@ describe('registerWallpaperRoutes', () => {
     expect(JSON.parse(second.body.toString('utf8'))).toEqual({ audioProcessing: false, properties: [] });
   });
 });
+
+
+describe('preset 壁纸（v0.9）', () => {
+  it('scene 资源走依赖目录（asset/scene.json alias），属性默认值被 preset 覆盖', async () => {
+    const dep = join(dir, '100');
+    mkdirSync(dep, { recursive: true });
+    writeFileSync(join(dep, 'project.json'), JSON.stringify({
+      type: 'scene', title: 'Base', preview: 'preview.jpg',
+      general: { properties: { speed: { type: 'slider', value: 1, min: 0, max: 4, step: 0.1, text: 'Speed' } } },
+    }));
+    writeFileSync(join(dep, 'preview.jpg'), 'jpg');
+    writeFileSync(join(dep, 'scene.pkg'), makePkg([{
+      name: 'scene.json',
+      data: Buffer.from(JSON.stringify({
+        objects: [{ id: 1, effects: [{ passes: [{ constantshadervalues: { speed: { user: 'speed', value: 1 } } }] }] }],
+      })),
+    }]));
+    const preset = join(dir, '200');
+    mkdirSync(preset, { recursive: true });
+    writeFileSync(join(preset, 'project.json'), JSON.stringify({
+      dependency: '100', title: 'Preset', preview: 'preview.jpg', preset: { speed: 2.5 },
+    }));
+    writeFileSync(join(preset, 'preview.jpg'), 'jpg');
+
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
+
+    // ① scene.json 资源经 alias 从依赖 pkg 读取
+    const sceneRes = makeRes();
+    await routes.get('prefix /wallpapers/scene')!({ url: '/wallpapers/scene/200/asset?name=scene.json', headers: {} }, sceneRes);
+    expect(sceneRes.statusCode).toBe(200);
+    expect(sceneRes.body.toString('utf8')).toContain('speed');
+    expect(sceneRes.body.toString('utf8')).toContain('"user":"speed"');
+
+    // ② 属性来自依赖 project.json，默认值被 preset 同名键覆盖
+    const propRes = makeRes();
+    await routes.get('exact /wallpapers/properties')!({ url: '/wallpapers/properties?id=200' }, propRes);
+    expect(propRes.statusCode).toBe(200);
+    const body = JSON.parse(propRes.body.toString('utf8'));
+    expect(body.properties.find((p: any) => p.key === 'speed')?.value).toBe(2.5);
+    expect(body.audioProcessing).toBe(false);
+
+    // ③ preset 自身的 preview 仍来自自身目录
+    const previewRes = makeRes();
+    await routes.get('prefix /wallpapers/media')!({ url: '/wallpapers/media/200/preview', headers: {} }, previewRes);
+    expect(previewRes.statusCode).toBe(200);
+    expect(previewRes.body.toString('utf8')).toBe('jpg');
+  });
+
+  it('preset 的 audioProcessing 取依赖 project.json', async () => {
+    const dep = join(dir, '101');
+    mkdirSync(dep, { recursive: true });
+    writeFileSync(join(dep, 'project.json'), JSON.stringify({
+      type: 'scene', general: { supportsaudioprocessing: true, properties: {} },
+    }));
+    writeFileSync(join(dep, 'scene.pkg'), makePkg([{ name: 'scene.json', data: Buffer.from('{"objects":[]}') }]));
+    const preset = join(dir, '201');
+    mkdirSync(preset, { recursive: true });
+    writeFileSync(join(preset, 'project.json'), JSON.stringify({ dependency: '101' }));
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
+    const res = makeRes();
+    await routes.get('exact /wallpapers/properties')!({ url: '/wallpapers/properties?id=201' }, res);
+    const body = JSON.parse(res.body.toString('utf8'));
+    expect(body.audioProcessing).toBe(true);
+  });
+});

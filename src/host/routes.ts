@@ -245,12 +245,53 @@ function readBody(
   });
 }
 
+
 export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions): void {
   ctx.inject(['webServer'], (httpCtx: any) => {
     const server = httpCtx.webServer;
     // 每次请求解析实时目录：state（热更新）优先，兼容旧静态 wallpaperDir 参数
     const dir = () => opts.state?.wallpaperDir ?? opts.wallpaperDir ?? '';
     const assetsDir = () => opts.state?.weAssetsDir ?? opts.weAssetsDir;
+
+  // preset 壁纸（WE 预设：无 type/file，只有 dependency+preset+preview）的 scene 资源与属性都来自依赖目录。
+  function sceneResourceDir(id: string): string {
+    const own = join(dir(), id);
+    if (existsSync(join(own, 'scene.pkg'))) return own;
+    try {
+      const pj = JSON.parse(readFileSync(join(own, 'project.json'), 'utf8')) as { dependency?: unknown };
+      const dep = typeof pj.dependency === 'string' ? pj.dependency.trim() : '';
+      if (dep && isSafeToken(dep)) {
+        const depDir = join(dir(), dep);
+        if (existsSync(join(depDir, 'scene.pkg'))) return depDir;
+      }
+    } catch {
+      // 自身项目不可读 → 用自身目录（调用方按无资源处理）
+    }
+    return own;
+  }
+
+  // preset 属性默认值覆盖：preset 自身 project.json 的 `preset` 对象按属性 key 替换依赖默认值。
+  function applyPresetDefaults(
+    id: string,
+    resDir: string,
+    list: ReturnType<typeof collectUserProperties>,
+  ): ReturnType<typeof collectUserProperties> {
+    if (resDir === join(dir(), id)) return list;
+    try {
+      const own = JSON.parse(readFileSync(join(dir(), id, 'project.json'), 'utf8')) as { preset?: unknown };
+      const preset = own?.preset;
+      if (!preset || typeof preset !== 'object' || Array.isArray(preset)) return list;
+      const values = preset as Record<string, unknown>;
+      return list.map((p) => {
+        const v = values[p.key];
+        if (v === undefined || typeof v !== typeof p.value) return p;
+        return { ...p, value: v } as (typeof list)[number];
+      });
+    } catch {
+      return list;
+    }
+  }
+
     // 抓帧目录 = <dataDir>/frames（Task 1）；未配 dataDir 时写接口 500、读接口按无帧 404
     const frameStore = opts.dataDir ? createSceneFrameStore(framesDirOf(opts.dataDir)) : null;
 
@@ -316,7 +357,7 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
         const action = segs[3];
         if (action === 'video-probe' || action === 'embedded-video') {
           if (!isSafeToken(id)) return json(res, 400, { error: 'bad id' });
-          const pkgPath = join(dir(), id, 'scene.pkg');
+          const pkgPath = join(sceneResourceDir(id), 'scene.pkg');
           if (action === 'video-probe') {
             // 探测失败按无视频处理（降级链继续走抓帧/预览，不向调用方抛错）
             const video = existsSync(pkgPath) && probeEmbeddedMp4(pkgPath);
@@ -341,7 +382,7 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
         if (!name || !/^[\p{L}\p{N}\p{P} ._\/-]+$/u.test(name) || name.includes('..')) {
           return json(res, 400, { error: 'bad name' });
         }
-        const pkgPath = join(dir(), id, 'scene.pkg');
+        const pkgPath = join(sceneResourceDir(id), 'scene.pkg');
         // ① pkg 条目（WE 挂载顺序里壁纸包先于引擎 assets）：只取区间元数据，流式不读整块
         let source: SceneAssetSource | null = null;
         if (existsSync(pkgPath)) {
@@ -531,7 +572,7 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
         // ① 壁纸 scene.pkg。缺 id / pkg 无该条目 → 落回引擎目录（不因 pkg 未命中而报错）。
         const id = search.get('id') ?? '';
         if (id && isSafeToken(id)) {
-          const pkgPath = join(dir(), id, 'scene.pkg');
+          const pkgPath = join(sceneResourceDir(id), 'scene.pkg');
           if (existsSync(pkgPath)) {
             try {
               const entry = getPkgReader(pkgPath).readEntry(`materials/${name}.tex`);
@@ -578,14 +619,16 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
         const { search } = parseUrl(_req);
         const id = search.get('id') ?? '';
         if (!isSafeToken(id)) return json(res, 400, { error: 'bad id' });
+        // preset 壁纸（dependency）的属性与 scene 资源都来自依赖目录；音频标记同源。
+        const resDir = sceneResourceDir(id);
         let projectJson: unknown = null;
         let sceneJson: unknown = null;
         try {
-          projectJson = JSON.parse(readFileSync(join(dir(), id, 'project.json'), 'utf8'));
+          projectJson = JSON.parse(readFileSync(join(resDir, 'project.json'), 'utf8'));
         } catch {
           // project.json 缺失/不可读/坏 JSON → 属性为空
         }
-        const pkgPath = join(dir(), id, 'scene.pkg');
+        const pkgPath = join(resDir, 'scene.pkg');
         if (existsSync(pkgPath)) {
           try {
             const entry = getPkgReader(pkgPath).readEntry('scene.json');
@@ -599,7 +642,7 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
         // 浏览器模式下 getDisplayMedia 捕获系统音频，桌面 App 宿主禁用 ⇒ 失败开放）。
         const general = (projectJson as { general?: { supportsaudioprocessing?: unknown } } | null)?.general;
         json(res, 200, {
-          properties: collectUserProperties(projectJson, sceneJson),
+          properties: applyPresetDefaults(id, resDir, collectUserProperties(projectJson, sceneJson)),
           audioProcessing: general?.supportsaudioprocessing === true,
         });
       },

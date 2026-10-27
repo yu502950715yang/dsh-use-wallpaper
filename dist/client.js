@@ -2839,7 +2839,7 @@ function computePointerPost(ev, box, tag) {
 
 // src/client/background-layer.ts
 function resolveBackground(info) {
-  if ((info.type === "scene" || info.type === "unknown") && info.hasScene) {
+  if ((info.type === "scene" || info.type === "preset" || info.type === "unknown") && info.hasScene) {
     return { kind: "scene", wallpaperId: info.id };
   }
   if (info.type === "video" && info.file) {
@@ -33877,7 +33877,7 @@ function WallpaperSettingsSection(props) {
   });
   const visibleWallpapers = filterLibrary(wallpapers, filter, libState);
   const selectedId = settings?.selectedWallpaperId ?? "";
-  const selectedIsScene = !!selectedId && wallpapers.some((w) => w.id === selectedId && w.type === "scene");
+  const selectedIsScene = !!selectedId && wallpapers.some((w) => w.id === selectedId && (w.type === "scene" || w.type === "preset"));
   const clearCommitTimers = (0, import_react.useCallback)(() => {
     for (const timer of commitTimers.current.values()) clearTimeout(timer);
     commitTimers.current.clear();
@@ -34161,7 +34161,8 @@ function WallpaperSettingsSection(props) {
                   /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "scene", children: "Scene" }),
                   /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "video", children: "\u89C6\u9891" }),
                   /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "web", children: "Web" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "image", children: "\u56FE\u7247" })
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "image", children: "\u56FE\u7247" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "preset", children: "\u9884\u8BBE" })
                 ]
               }
             ),

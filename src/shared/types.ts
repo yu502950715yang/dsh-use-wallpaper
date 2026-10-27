@@ -1,6 +1,6 @@
 // src/shared/types.ts —— 跨任务共享类型（Interfaces 原文）
 
-export type WallpaperKind = 'scene' | 'video' | 'web' | 'image' | 'unknown';
+export type WallpaperKind = 'scene' | 'video' | 'web' | 'image' | 'preset' | 'unknown';
 
 // 路径探测结果（/wallpapers/probe）：Steam 库自动扫描的候选目录。
 // kind='workshop'：壁纸目录（steamapps/workshop/content/431960）；
@@ -24,7 +24,9 @@ export interface WallpaperInfo {
   type: WallpaperKind;
   file?: string;               // project.json 的 file 字段
   hasPreviewGif: boolean;
-  hasScene: boolean;           // 存在 scene.pkg
+  hasScene: boolean;           // 存在 scene.pkg（preset 取依赖目录）
+  /** WE 预设壁纸（dependency）的依赖 id：type='preset' 时存在，场景资源与属性都来自该壁纸。 */
+  presetOf?: string;
   previewUrl: string;          // `/wallpapers/media/${id}/preview`
 }
 
