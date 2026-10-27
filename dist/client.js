@@ -2768,7 +2768,12 @@ body[data-we-wallpaper] :where([data-sidebar-right-panel="fullscreen"][data-side
 var WALLPAPER_CSS = CSS;
 function injectWallpaperStyles() {
   const id = "dsh-wallpaper-engine/styles";
-  if (document.querySelector(`style[data-plugin-css="${id}"]`)) return;
+  const selector = `style[data-plugin-css="${id}"]`;
+  const existing = document.querySelector(selector);
+  if (existing) {
+    if (existing.textContent !== WALLPAPER_CSS) existing.textContent = WALLPAPER_CSS;
+    return;
+  }
   const tag = document.createElement("style");
   tag.dataset.plugin = "dsh-wallpaper-engine";
   tag.dataset.pluginCss = id;

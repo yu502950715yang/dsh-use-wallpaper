@@ -562,7 +562,14 @@ body[data-we-wallpaper] :where([data-sidebar-right-panel="fullscreen"][data-side
 export const WALLPAPER_CSS = CSS;
 export function injectWallpaperStyles(): void {
   const id = 'dsh-wallpaper-engine/styles';
-  if (document.querySelector(`style[data-plugin-css="${id}"]`)) return;
+  const selector = `style[data-plugin-css="${id}"]`;
+  const existing = document.querySelector<HTMLStyleElement>(selector);
+  // 幂等但必须同步内容：HMR / bundle 重执行时组件会重建、<style> 标签却还在。
+  // 旧实现直接 return ⇒ 改了 CSS 也永远注入不进去，表现为「新 DOM 没有新样式」。
+  if (existing) {
+    if (existing.textContent !== WALLPAPER_CSS) existing.textContent = WALLPAPER_CSS;
+    return;
+  }
   const tag = document.createElement('style');
   tag.dataset.plugin = 'dsh-wallpaper-engine';
   tag.dataset.pluginCss = id;
