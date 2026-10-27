@@ -33,3 +33,6 @@ dist/static/ptex-*.tex
 # --- Intent Notes ---
 /.research-mpkg/
 /.research-mpkg-3120/
+
+# --- 推广与竞品调研物料（仅本地保留，不入库）---
+docs/promo/
