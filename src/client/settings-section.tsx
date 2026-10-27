@@ -643,7 +643,7 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
               <option value="video">视频</option>
               <option value="web">Web</option>
               <option value="image">图片</option>
-              <option value="preset">预设</option>
+              <option value="preset">PRESET</option>
             </select>
             <label className="wss-tool">
               <input

@@ -34162,7 +34162,7 @@ function WallpaperSettingsSection(props) {
                   /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "video", children: "\u89C6\u9891" }),
                   /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "web", children: "Web" }),
                   /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "image", children: "\u56FE\u7247" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "preset", children: "\u9884\u8BBE" })
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "preset", children: "PRESET" })
                 ]
               }
             ),
