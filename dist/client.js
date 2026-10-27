@@ -34158,10 +34158,10 @@ function WallpaperSettingsSection(props) {
                 })),
                 children: [
                   /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "all", children: "\u5168\u90E8\u7C7B\u578B" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "scene", children: "Scene" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "video", children: "\u89C6\u9891" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "web", children: "Web" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "image", children: "\u56FE\u7247" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "scene", children: "SCENE" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "video", children: "VIDEO" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "web", children: "WEB" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "image", children: "IMAGE" }),
                   /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "preset", children: "PRESET" })
                 ]
               }

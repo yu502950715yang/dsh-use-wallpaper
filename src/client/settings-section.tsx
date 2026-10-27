@@ -639,10 +639,10 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
               }))}
             >
               <option value="all">全部类型</option>
-              <option value="scene">Scene</option>
-              <option value="video">视频</option>
-              <option value="web">Web</option>
-              <option value="image">图片</option>
+              <option value="scene">SCENE</option>
+              <option value="video">VIDEO</option>
+              <option value="web">WEB</option>
+              <option value="image">IMAGE</option>
               <option value="preset">PRESET</option>
             </select>
             <label className="wss-tool">
