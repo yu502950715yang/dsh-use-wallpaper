@@ -26654,6 +26654,13 @@ function ascii(buf, pos, len) {
   return s;
 }
 var MIN_LEN = 18 + 28 + 9 + 4 + 4;
+function mipRecordOk(buf, at) {
+  if (at + 20 > buf.length) return false;
+  const isLZ4 = readI32(buf, at + 8);
+  const decompressed = readI32(buf, at + 12);
+  const bytesLen = readI32(buf, at + 16);
+  return (isLZ4 === 0 || isLZ4 === 1) && decompressed >= 0 && bytesLen >= 0 && at + 20 + bytesLen <= buf.length;
+}
 function parseTex(buf) {
   if (buf.length < MIN_LEN) return null;
   if (ascii(buf, 0, 9) !== "TEXV0005\0") return null;
@@ -26662,21 +26669,35 @@ function parseTex(buf) {
   const flags = readI32(buf, 22);
   const textureWidth = readI32(buf, 26);
   const textureHeight = readI32(buf, 30);
-  const width = readI32(buf, 34);
-  const height = readI32(buf, 38);
-  const container = ascii(buf, 46, 9);
-  if (container !== "TEXB0002\0" && container !== "TEXB0001\0" && container !== "TEXB0003\0" && container !== "TEXB0004\0") return null;
+  let containerOffset = -1;
+  let container = "";
+  for (let off = 34; off <= 64; off++) {
+    const m = ascii(buf, off, 9);
+    if (m === "TEXB0001\0" || m === "TEXB0002\0" || m === "TEXB0003\0" || m === "TEXB0004\0") {
+      containerOffset = off;
+      container = m;
+      break;
+    }
+  }
+  if (containerOffset < 0) return null;
+  const width = readI32(buf, containerOffset - 12);
+  const height = readI32(buf, containerOffset - 8);
   const v2 = container === "TEXB0002\0";
   const v3plus = container === "TEXB0003\0" || container === "TEXB0004\0";
-  let pos = 46 + 9;
+  let pos = containerOffset + 9;
   const imageCount = readI32(buf, pos);
   if (imageCount <= 0 || imageCount > 64) return null;
   pos += 4;
   let imageFormat;
+  let v4MipExtension = false;
   if (v3plus) {
     imageFormat = readI32(buf, pos);
     pos += 4;
-    if (container === "TEXB0004\0") pos += 4;
+    if (container === "TEXB0004\0") {
+      if (pos + 4 > buf.length) return null;
+      v4MipExtension = readI32(buf, pos) === 1;
+      pos += 4;
+    }
   }
   const mipmaps = [];
   for (let img = 0; img < imageCount; img++) {
@@ -26685,21 +26706,31 @@ function parseTex(buf) {
     if (mipmapCount <= 0 || mipmapCount > 256) return null;
     pos += 4;
     for (let m = 0; m < mipmapCount; m++) {
-      const fieldLen = v2 ? 20 : 12;
-      if (pos + fieldLen > buf.length) return null;
-      const mw = readI32(buf, pos);
-      const mh = readI32(buf, pos + 4);
+      if (v4MipExtension) {
+        if (pos + 8 > buf.length) return null;
+        pos += 8;
+        while (pos < buf.length && buf[pos] !== 0) pos++;
+        pos += 1 + 4;
+        if (pos > buf.length) return null;
+      }
+      let extra = 0;
+      if ((flags & 64) !== 0 && (v2 || v3plus) && !mipRecordOk(buf, pos) && mipRecordOk(buf, pos + 4)) extra = 4;
+      const at = pos + extra;
+      const fieldLen = v2 || v3plus ? 20 : 12;
+      if (at + fieldLen > buf.length) return null;
+      const mw = readI32(buf, at);
+      const mh = readI32(buf, at + 4);
       let isLZ4 = 0;
       let decompressedBytes = 0;
       let bytesLen;
       if (v2 || v3plus) {
-        isLZ4 = readI32(buf, pos + 8);
-        decompressedBytes = readI32(buf, pos + 12);
-        bytesLen = readI32(buf, pos + 16);
+        isLZ4 = readI32(buf, at + 8);
+        decompressedBytes = readI32(buf, at + 12);
+        bytesLen = readI32(buf, at + 16);
       } else {
-        bytesLen = readI32(buf, pos + 8);
+        bytesLen = readI32(buf, at + 8);
       }
-      pos += v2 || v3plus ? 20 : 12;
+      pos = at + fieldLen;
       if (mw <= 0 || mh <= 0 || bytesLen < 0) return null;
       if (pos + bytesLen > buf.length) return null;
       const payload = buf.subarray(pos, pos + bytesLen);
@@ -28312,6 +28343,10 @@ var EffectRunner = class {
         } else {
           writeTarget = pickWriteTarget(lastWrite, this.rtA, this.rtB);
           lastWrite = writeTarget;
+        }
+        const texelSize = material.uniforms["g_TexelSize"];
+        if (texelSize && Array.isArray(texelSize.value) && texelSize.value.length === 2) {
+          texelSize.value = [1 / Math.max(1, writeTarget.width), 1 / Math.max(1, writeTarget.height)];
         }
         renderIntoRenderTarget(this.renderer, writeTarget, this.getScene(key, material), SCREEN_CAMERA);
         readTex = writeTarget.texture;

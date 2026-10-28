@@ -24,6 +24,10 @@ export interface MakeTexOptions {
   unk?: number;
   container?: 'TEXB0001' | 'TEXB0002' | 'TEXB0003' | 'TEXB0004';  // 默认 TEXB0002（V2 带 LZ4 字段）
   imageFormat?: number;       // TEXB0003/0004 的 FreeImage 格式（如 FIF_JPEG=2）
+  /** flags&0x40 导出器变体（WE 自带 LUT）：imageWidth 前与每条 mip 记录前各多一个 u32 */
+  flags40Variant?: boolean;
+  /** TEXB0004 逐 mip 扩展：imageCount 后标志=1，每条 mip 前 8B + null 结尾 JSON + 4B */
+  v4MipExtension?: boolean;
   images: TexMipSpec[][];     // 每元素为一个 image 的 mipmap 数组
   // 精灵表动画段（TEXS000x，紧跟在 mip 数据之后；对齐 open-wallpaper-engine 的 sprite 分支）。
   // 帧在纹理中按**行优先网格**排布（每帧 frameWidth×frameHeight），列数由 textureWidth 推出。
@@ -66,20 +70,31 @@ export function makeTex(opts: MakeTexOptions): Buffer {
   const chunks: Buffer[] = [
     Buffer.from('TEXV0005\0', 'ascii'),
     Buffer.from('TEXI0001\0', 'ascii'),
-    header,
-    Buffer.from(container + '\0', 'ascii'),
   ];
+  // flags&0x40 变体：TEXI 头在 imageWidth 前多一个 = 像素数的 u32（TEXB magic 因此落在 50）
+  if (opts.flags40Variant) {
+    const extra = Buffer.alloc(4);
+    extra.writeUInt32LE(textureWidth * textureHeight, 0);
+    chunks.push(header.subarray(0, 16), extra, header.subarray(16));
+  } else {
+    chunks.push(header);
+  }
+  chunks.push(Buffer.from(container + '\0', 'ascii'));
   const imageCount = Buffer.alloc(4);
   imageCount.writeUInt32LE(opts.images.length, 0);
   chunks.push(imageCount);
 
-  // TEXB0003/0004：imageCount 后紧跟 FreeImage 格式（V4 还有 isVideoMp4 标志）
+  // TEXB0003/0004：imageCount 后紧跟 FreeImage 格式（V4 还有逐 mip 扩展开关）
   // imageFormat=-1（0xFFFFFFFF）表示 mipmap 为原始像素数据，用 writeInt32LE 写入带符号值
   if (container === 'TEXB0003' || container === 'TEXB0004') {
     const fmt = Buffer.alloc(4);
     fmt.writeInt32LE(opts.imageFormat ?? 2, 0); // 默认 FIF_JPEG=2
     chunks.push(fmt);
-    if (container === 'TEXB0004') chunks.push(Buffer.alloc(4)); // isVideoMp4=0
+    if (container === 'TEXB0004') {
+      const ext = Buffer.alloc(4);
+      ext.writeUInt32LE(opts.v4MipExtension ? 1 : 0, 0);
+      chunks.push(ext);
+    }
   }
 
   for (const mips of opts.images) {
@@ -87,6 +102,13 @@ export function makeTex(opts: MakeTexOptions): Buffer {
     mc.writeUInt32LE(mips.length, 0);
     chunks.push(mc);
     for (const m of mips) {
+      // 变体记录前多一个 u32（内容无意义，按 0 写）
+      if (opts.flags40Variant) chunks.push(Buffer.alloc(4));
+      // TEXB0004 扩展块：param1/param2 + null 结尾 condition JSON + param3
+      if (container === 'TEXB0004' && opts.v4MipExtension) {
+        const cond = Buffer.from('{"condition":"tvoff"}\0', 'utf8');
+        chunks.push(Buffer.alloc(8), cond, Buffer.alloc(4));
+      }
       const payload = m.lz4 ? lz4Compress(m.data) : m.data;
       if (container === 'TEXB0001') {
         const meta = Buffer.alloc(12);

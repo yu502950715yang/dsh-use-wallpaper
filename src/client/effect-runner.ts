@@ -879,6 +879,12 @@ export class EffectRunner {
           writeTarget = pickWriteTarget(lastWrite, this.rtA, this.rtB);
           lastWrite = writeTarget;
         }
+        // WE 内置 g_TexelSize = 输出目标像素倒数（模糊/描点类效果据此算采样偏移）；
+        // 不绑会保持 binder 默认 [0,0] ⇒ 偏移恒 0、效果静默失效。口径同 webwallgl 的 pass 投影尺寸。
+        const texelSize = material.uniforms['g_TexelSize'];
+        if (texelSize && Array.isArray(texelSize.value) && texelSize.value.length === 2) {
+          texelSize.value = [1 / Math.max(1, writeTarget.width), 1 / Math.max(1, writeTarget.height)];
+        }
         renderIntoRenderTarget(this.renderer, writeTarget, this.getScene(key, material), SCREEN_CAMERA); // 透明清屏见 rt-render.ts
         readTex = writeTarget.texture;
         last = readTex;

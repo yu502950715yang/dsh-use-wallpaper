@@ -912,6 +912,17 @@ describe('EffectRunner 按计划执行（具名 RT 写读 / previous 序列 / �
     runner.dispose();
   });
 
+  // A3：WE 内置 g_TexelSize 未绑时保持 binder 默认 [0,0] ⇒ blur_gaussian 等效果采样偏移恒 0、效果失效。
+  it('g_TexelSize 绑当前 pass 输出尺寸倒数（不是 binder 默认 [0,0]）', async () => {
+    const { renderer, mats } = createPlanRenderer();
+    const chain = [pass({ uniforms: new Map([['g_TexelSize', [0, 0]]]) })];
+    const runner = new EffectRunner(renderer as never, 32, 16);
+    runner.setPlan(buildEffectPlan([chain], { baseWidth: 32, baseHeight: 16 }), [chain], 'wp', { width: 32, height: 16 });
+    await runner.update(0, new THREE.Texture());
+    expect(mats[0].uniforms.g_TexelSize.value).toEqual([1 / 32, 1 / 16]);
+    runner.dispose();
+  });
+
   it('blur 形态：bind[0] 指向刚写的具名 RT，bind[2]=previous 拿到原始输入（不是上一 pass 输出）', async () => {
     const { renderer, mats } = createPlanRenderer();
     const fb = { _rt_Q1: 4, _rt_Q2: 4 };

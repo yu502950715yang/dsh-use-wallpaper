@@ -896,3 +896,76 @@ describe('fxRes：四分量一律同值（= 各自实际上传尺寸）⇒ 遮�
     expect((tex!.userData as { fxRes: number[] }).fxRes).toEqual([60, 32, 60, 32]);
   });
 });
+
+// 容器布局变体：WE 自带 LUT 的 flags&0x40 变体（引擎 assets/materials/lut/*.tex 28 张真实命中）
+// 与 TEXB0004 逐 mip 扩展。判据对齐 webwallgl pkg/texture.js 的实测口径。
+describe('parseTex 容器布局变体', () => {
+  it('flags&0x40 变体：TEXB magic 在 50、每条 mip 记录前多一个 u32，仍解出正确尺寸/数据', () => {
+    const pixels = new Uint8Array(32 * 16 * 4).fill(0x5a);
+    const buf = makeTex({
+      format: TEX_FORMAT.RGBA8888,
+      flags: 0x40,
+      flags40Variant: true,
+      textureWidth: 32, textureHeight: 16,
+      images: [[{ width: 32, height: 16, data: pixels }]],
+    });
+    expect(buf.subarray(46, 50).toString('ascii')).not.toBe('TEXB');
+    expect(buf.subarray(50, 54).toString('ascii')).toBe('TEXB');
+    const info = parseTex(buf)!;
+    expect(info.mipmaps).toHaveLength(1);
+    expect([info.mipmaps[0].width, info.mipmaps[0].height]).toEqual([32, 16]);
+    expect(info.mipmaps[0].data).toEqual(pixels);
+  });
+
+  it('TEXB0004 扩展位=1：逐 mip 扩展块（8B + null 结尾 JSON + 4B）被跳过，mip 正确', () => {
+    const pixels = new Uint8Array(16 * 8 * 4).fill(0x33);
+    const buf = makeTex({
+      format: TEX_FORMAT.RGBA8888,
+      container: 'TEXB0004',
+      imageFormat: -1, // 原始像素（无 FreeImage 编码）
+      v4MipExtension: true,
+      images: [[{ width: 16, height: 8, data: pixels }]],
+    });
+    const info = parseTex(buf)!;
+    expect(info.mipmaps).toHaveLength(1);
+    expect([info.mipmaps[0].width, info.mipmaps[0].height]).toEqual([16, 8]);
+    expect(info.mipmaps[0].data).toEqual(pixels);
+  });
+
+  it('TEXB0004 扩展位=0（现有素材）：仍按 V3 布局解析（回归）', () => {
+    const pixels = new Uint8Array(16 * 8 * 4).fill(0x44);
+    const buf = makeTex({
+      format: TEX_FORMAT.RGBA8888, container: 'TEXB0004', imageFormat: -1,
+      images: [[{ width: 16, height: 8, data: pixels }]],
+    });
+    const info = parseTex(buf)!;
+    expect(info.mipmaps[0].data).toEqual(pixels);
+  });
+
+  it('flags&0x40 但标准记录布局：载荷判据不跳 4 字节（走标准路径）', () => {
+    const pixels = new Uint8Array(16 * 8 * 4).fill(0x66);
+    const buf = makeTex({
+      format: TEX_FORMAT.RGBA8888, flags: 0x40,
+      textureWidth: 16, textureHeight: 8,
+      images: [[{ width: 16, height: 8, data: pixels }]],
+    });
+    expect(buf.subarray(46, 54).toString('ascii')).toBe('TEXB0002');
+    const info = parseTex(buf)!;
+    expect([info.mipmaps[0].width, info.mipmaps[0].height]).toEqual([16, 8]);
+    expect(info.mipmaps[0].data).toEqual(pixels);
+  });
+
+  it('TEXB0004 扩展位=1 + 多 mip：每条 mip 前的扩展块都被跳过', () => {
+    const m0 = new Uint8Array(32 * 16 * 4).fill(0x11);
+    const m1 = new Uint8Array(16 * 8 * 4).fill(0x22);
+    const buf = makeTex({
+      format: TEX_FORMAT.RGBA8888, container: 'TEXB0004', imageFormat: -1,
+      v4MipExtension: true,
+      images: [[{ width: 32, height: 16, data: m0 }, { width: 16, height: 8, data: m1 }]],
+    });
+    const info = parseTex(buf)!;
+    expect(info.mipmaps.map((m) => [m.width, m.height])).toEqual([[32, 16], [16, 8]]);
+    expect(info.mipmaps[0].data).toEqual(m0);
+    expect(info.mipmaps[1].data).toEqual(m1);
+  });
+});
