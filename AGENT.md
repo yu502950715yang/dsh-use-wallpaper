@@ -2,14 +2,14 @@
 
 本文件供 AI 编程助手快速了解 `dsh-use-wallpaper` 仓库。**改动代码前请通读本文件**，并查阅 `docs/superpowers/specs/` 下对应的设计文档。
 
-**本文只写现状、硬约束与真遗留**（结论直给，§5 每条 ≤3 行）。历史根因、实验数据、一次性扫描结果、已修记录的完整版在 `docs/fixes/`（索引见 §8）—— **新内容不要往本文件里堆数据**；测试项数、全库计数这类会漂的数字一律不在此钉死，以 `npm test` / e2e 的实测输出为准。文中出现的「**全库 N 条 / N 张 / N 个对象**」都是**本机壁纸库的快照**（会随素材增减而漂移），只作量级与影响面参考，**不要据此推断代码行为**。§5.x / §7.x 的**编号多处被代码注释引用，不得重排**（§5.35 是历史空号）。
+**本文只写现状、硬约束与真遗留**（结论直给，§5 每条以 1 段结论为主、细节见 `docs/fixes/`）。历史根因、实验数据、一次性扫描结果、已修记录的完整版在 `docs/fixes/`（索引见 §8）—— **新内容不要往本文件里堆数据**；测试项数、全库计数这类会漂的数字一律不在此钉死，以 `npm test` / e2e 的实测输出为准。文中出现的「**全库 N 条 / N 张 / N 个对象**」都是**本机壁纸库的快照**（会随素材增减而漂移），只作量级与影响面参考，**不要据此推断代码行为**。§5.x / §7.x 的**编号多处被代码注释引用，不得重排**（§5.35 是历史空号）。
 
 三句话版本：单包 DSH 插件；scene 壁纸由 **three.js 播放器**在浏览器实时渲染（粒子模拟复用 wasm CPU 模拟器），失败回退 preview 图；渲染语义以 **Wallpaper Engine（WE）** 为准，参考实现是 `research/open-wallpaper-engine`（C++）与 `research/.lwe`（linux-wallpaperengine），**WE 安装目录下的 shader 与材质是明文的**（`<WE>/assets/shaders`、`<WE>/assets/materials`）—— 遇语义疑问先读它们。
 
 ## 1. 项目概述
 
 - **形态**：单包仓库，仓库根即插件 `@dsh-use/wallpaper-engine`（`package.json` 声明了 `dsh.bundle`，可直接 `dsh plugin add github:...`）。
-- **能力**：扫描 Steam workshop 壁纸目录（默认 `D:/Steam/steamapps/workshop/content/431960`，可自动探测 —— 注册表 + `libraryfolders.vdf` + 常见路径，见 `src/host/steam-paths.ts` —— 或手动配置，settings 热更新），在 DSH Web GUI 里渲染 scene 壁纸 / 播放视频 / 加载 web 页，其余回退 preview 图 + Ken Burns。
+- **能力**：扫描 Steam workshop 壁纸目录（候选根 = `src/host/steam-paths.ts` 的 `DEFAULT_STEAM_ROOTS`：`C:/Program Files (x86)/Steam` / `D:/Steam` / `E:/Steam`，拼出 `steamapps/workshop/content/431960`；可自动探测 —— 注册表 + `libraryfolders.vdf` + 常见路径 —— 或手动配置，settings 热更新），在 DSH Web GUI 里渲染 scene 壁纸 / 播放视频 / 加载 web 页，其余回退 preview 图 + Ken Burns。
 - **入口**：DSH 设置对话框侧边栏「壁纸」菜单（client 经 `settings.section` slot 注册，见 `src/client/settings-section.tsx`）。
 - **技术栈**：TypeScript strict、ESM-only；浏览器侧 three.js（WebGL2）+ Rust（wasm，**仅 CPU 粒子模拟**，已无 wgpu/WebGPU）；宿主侧 Cordis 插件体系。Node 版本无 `engines` 声明，CI 用 Node 22。
 - **自带解包**：host 侧自行解析 **PKGV 容器**（magic `PKGV` 在 offset 4，`src/host/pkg-reader.ts` 只校验这 4 字节，版本字段未使用）与 **TEXV0005 纹理**（`src/client/tex-loader.ts`）；不依赖 WE 运行时。
@@ -28,12 +28,12 @@
 - **puppet 骨骼模型与动画层**（2026-10-13）：`image` → `models/*.json` 的 `puppet` 字段 → `.mdl`（MDLV/MDLS/MDLA）→ `THREE.SkinnedMesh` + `Skeleton`（`puppet.ts`）；蒙皮矩阵交给 three 的 `bind()`（= `World(动画)·World(绑定)⁻¹`），MDLA 关键帧逐帧采样写回骨骼。逐帧推进在 `threejs-player.tickPuppets`：已播时长 `+= dt × rate`，帧号 = `(已播时长 × fps) % frameCount`（循环播）；动画选择走 scene.json 的 `animationlayers`（`scene-json.ts` 解析 → `addPuppet` 入参），**只应用第一条可见层**（`visible !== false`；`blend` 不参与混合），多条可见层告警一次；**字段缺失**退回「播动画表首个」= 改动前的行为（本机实测 34 张真实 `scene.json` 无一带该字段，按空层处理会静默关掉既有动画；**除 `frameCount <= 0`**：旧实现会采样帧 0，现直接不采样）。单个 puppet 采样失败**只丢该图层**：`try { dispose() } finally { delete }` 保证先释放再摘表（`dispose()` 只遍历表内图层 ⇒ 不摘表就再无释放点），dispose 抛错也不穿出帧循环（否则本帧 `render` 被跳过），不升级成整帧渲染失败。⚠️ **本机唯一 `.mdl` 是静态族**（无 MDLS/MDLA ⇒ `bones=0`/`anims=0`）⇒ **蒙皮与动画只有合成夹具覆盖**，真机只能验「静态网格出图」；段布局与动画层缺省口径见 §7.40。
 - **渲染看护**（2026-10-13）：`render()` 的失败细化为结构化原因（`scene-json` / `no-visible-objects` / `context-lost` / `exception` = **硬失败**，`load-error` = **软失败**），经 `render-health.ts` 分级记忆：硬失败按壁纸落 `localStorage`（`we:renderfail:<id>`）、软失败仅会话内并在冷却后自动重试一次；面板「实时渲染」卡片显示状态并提供重试/清除；排查入口 `__wallpaperEngine.health()`。对渲染像素路径**零改动**（`e2e:compare` 零回归）。**本轮实测**（2026-10-14，最终修复轮复跑）：基准 = 分支起点 `7e30a9f`（= master 的 v0.7.0），壁纸 `2683211654`，dpr **1 与 2 都产出了可比截图**，`e2e:compare` 两档全部 `maxAbs=0`、「差≥2」像素 0（前后 PNG 的 SHA256 逐字节相同）。对拍归档在 `.superpowers/sdd/2026-10-13-scene-live-watchdog/t5-shots/{before,after}-dpr{1,2}.png` —— **本地归档、未入 git**（`.superpowers/` 与 `e2e/.out/` 都在 `.gitignore`）；重跑口径见 `TESTING.md` §2.9。⚠️ `e2e/.out/` 会被后续 e2e 运行覆盖（其中 `before-dpr1-out.png` / `before-dpr1-rt.png` 仍是 2026-09-30 另一轮的残留）⇒ 回查基准对拍请用上面的 `t5-shots/` 归档，不要依赖 `e2e/.out/`。
 - **生命周期**：DSH 会在客户端 bundle 重建时**重新执行 bundle 并重挂载插件** —— 挂载必须幂等、必须有收尾（§5.43）。
-- **唯一路径**：three.js 播放器是 scene 的**唯一**渲染路径。`wasm-renderer.ts` / `scene-renderer.ts` / `alignment.ts` / `scene-script.ts` / `shader/glsl-to-naga.ts` 与 Rust 侧 `wasm/src/render/**`、`wasm/shaders/` 已于 2026-09-22 整体删除（连带 `isThreeUse()` / `THREE_USE`）。
+- **唯一路径**：three.js 播放器是 scene 的**唯一**渲染路径。`wasm-renderer.ts` / `scene-renderer.ts` / `scene-script.ts` / `shader/glsl-to-naga.ts` 与 Rust 侧 `wasm/src/render/**`、`wasm/shaders/` 已于 2026-09-22 整体删除（连带 `isThreeUse()` / `THREE_USE`）。⚠️ **`alignment.ts` 是删除后又在 v0.8.2 重建的同名新模块**（`alignOffset`：WE image/text alignment 锚点 → 中心偏移，见 §7.42 ⑪），不在删除清单里。
 
 ### 2.2 host / client / shared 分层
 
-- `src/host/`：Node 侧（Cordis 插件）。`scanner.ts` 扫描目录 → `WallpaperInfo`；`steam-paths.ts` 目录探测（`/wallpapers/probe`）；`pkg-reader.ts` 解包 PKGV；`routes.ts` HTTP 路由（每次请求读实时目录，settings 热更新；对 web 壁纸的 HTML 注入指针 shim，见 §5.48）；`settings.ts` 插件设置（双路径，见 §5.34）；`data-dir.ts` / `scene-frame-store.ts`（数据目录与抓帧 PNG，见 §5.49）、`scene-media-probe.ts`（内嵌 MP4 探测）、`user-props.ts`（四类型用户属性聚合，见 §7.41）。
-- `src/client/`：浏览器侧（esbuild → `dist/client.js`，external react 等 DSH 共享模块）。主路径：`index.ts`（bootstrap + `window.__wallpaperEngine` + 注册设置菜单）、`wallpaper-controller.ts`（选择/竞态/回退链）、`three-renderer.ts` + `threejs-player.ts`（渲染）、`object-effects.ts` + `object-range.ts` + `effect-runner.ts` + `effect-graph.ts`（对象级效果链）、`rt-render.ts`（「渲染进 RT」的唯一入口，透明清屏不变量落在这里）、`tex-loader.ts`（TEXV0005 解码）、`scene-json.ts` / `scene-graph.ts` / `visibility.ts`、`text-object.ts` + `text-script.ts` + `scene-script-vm.ts` + `scene-script-host.ts` + `scene-anim.ts` + `layer-state.ts` + `dynamic-mesh.ts`（text / 脚本 / 动态网格）、`glow-stage.ts`（应用级 Glow）、`bloom-stage.ts`（壁纸级 bloom，薄封装 GlowStage）、`audio-input.ts`（音效音量 / 播放模式）、`scene-fallback.ts` / `frame-export.ts`（降级链与首帧导出）、`rotation.ts` / `library-view.ts` / `local-store.ts`（轮播 / 壁纸库 / 本地存储）、`wallpaper-properties.ts` / `media-health.ts`（用户属性面板读写 / 视频解码失败提示）、`background-layer.ts` / `settings.ts` / `styles.ts` / `settings-section.tsx`。
+- `src/host/`：Node 侧（Cordis 插件）。`scanner.ts` 扫描目录 → `WallpaperInfo`；`steam-paths.ts` 目录探测（`/wallpapers/probe`）；`pkg-reader.ts` 解包 PKGV；`routes.ts` HTTP 路由（每次请求读实时目录，settings 热更新；对 web 壁纸的 HTML 注入指针 shim，见 §5.48）；`list-cache.ts` 壁纸列表缓存（`/wallpapers/list` 的 mtime 缓存与 ETag，见 §5.50）；`settings.ts` 插件设置（双路径，见 §5.34）；`data-dir.ts` / `scene-frame-store.ts`（数据目录与抓帧 PNG，见 §5.49）、`scene-media-probe.ts`（内嵌 MP4 探测）、`user-props.ts`（四类型用户属性聚合，见 §7.41）。
+- `src/client/`：浏览器侧（esbuild → `dist/client.js`，external react 等 DSH 共享模块）。主路径：`index.ts`（bootstrap + `window.__wallpaperEngine` + 注册设置菜单）、`wallpaper-controller.ts`（选择/竞态/回退链）、`three-renderer.ts` + `threejs-player.ts`（渲染）、`object-effects.ts` + `object-range.ts` + `effect-runner.ts` + `effect-graph.ts`（对象级效果链）、`rt-render.ts`（「渲染进 RT」的唯一入口，透明清屏不变量落在这里）、`tex-loader.ts`（TEXV0005 解码）、`scene-json.ts` / `scene-graph.ts` / `visibility.ts`、`text-object.ts` + `text-script.ts` + `scene-script-vm.ts` + `scene-script-host.ts` + `scene-anim.ts` + `layer-state.ts` + `dynamic-mesh.ts`（text / 脚本 / 动态网格）、`glow-stage.ts`（应用级 Glow）、`bloom-stage.ts`（壁纸级 bloom，薄封装 GlowStage）、`audio-input.ts`（音效音量 / 播放模式 / 暂停挂起，见 §5.52）、`system-audio.ts`（系统音频采集）、`scene-fallback.ts` / `frame-export.ts`（降级链与首帧导出）、`rotation.ts` / `library-view.ts` / `local-store.ts`（轮播 / 壁纸库 / 本地存储）、`wallpaper-properties.ts` / `media-health.ts`（用户属性面板读写 / 视频解码失败提示）、`background-layer.ts` / `settings.ts` / `styles.ts` / `settings-section.tsx`。
 - `src/shared/`：跨 host/client 的类型与**两端共用的常量/纯函数**（`types.ts` 的 `WallpaperInfo` / `SceneDescription` / `SceneObject` 等；`pointer-shim.ts` 的 shim 源码与 HTML 注入 —— host 侧要把它内联进响应、client 侧与测试要按同一契约断言，故不能放在任一侧）。
 - `src/client/shader/`：WE shader 方言转译层（`effect-chain.ts` 解析、`shader-preprocessor.ts` 预处理、`uniform-binder.ts`、`we-headers.ts`）。
 
@@ -50,17 +50,21 @@
 ### 3.1 常用命令
 
 ```bash
-npm test                 # vitest run（node + jsdom 双环境；全量约 7s，基线为空）
+npm test                 # vitest run（node + jsdom 双环境；基线为空，耗时以实测为准）
+npm run typecheck:tests  # tests 侧 tsc --noEmit + 类型错误棘轮（scripts/check-known-type-errors.mjs）
 npm run build            # tsc -p tsconfig.json → lib/（strict）
 npm run build:wasm       # cd wasm && wasm-pack build --no-opt --target web --release --features cpu-sim → wasm/pkg/
 npm run build:client     # esbuild → dist/client.js，并把 wasm/pkg/ 复制到 dist/static/
 npm run e2e:colorblend   # 渲染 e2e：colorBlendMode 逐像素判据（零本机素材依赖，可上 CI）
 npm run e2e:card         # 计算样式 e2e：通知卡片与代码块同底（需本机 DSH 的 app.asar，不可上 CI）
 npm run e2e:hidpi        # 渲染 e2e：dpr=1/2 的挂载期 RT 尺寸断言（需本机 WE 壁纸库）
+npm run e2e:isolated-rt  # 渲染 e2e：隔离对象 RT 锐度判据（需本机素材）
 npm run e2e:textclock    # 渲染 e2e：text 时钟层（魔兽之门 1922570576）是否真的画在画面上（需本机素材）
 npm run e2e:verify-v081  # 渲染 e2e：v0.8.1 三项像素判据（bloom / clearcolor / spritesheet；需本机素材）
+npm run e2e:verify-v082  # 渲染 e2e：v0.8.2 四组像素判据（util / pulse / text / pointer；需本机素材）
 npm run e2e:web-pointer  # 渲染 e2e：web 壁纸跟随鼠标（1184182304）真机像素级 A/B（需本机素材）
 npm run e2e:compare      # A/B 截图逐像素对拍（零回归验收）
+npm run verify:local     # 本地综合验证脚本（scripts/verify-local.mjs）
 npx vitest run tests/xxx.test.ts --reporter=basic   # 跑单个文件
 ```
 
@@ -105,44 +109,47 @@ npx vitest run tests/xxx.test.ts --reporter=basic   # 跑单个文件
     lib/ harness/ verify/    像素工具 / esbuild harness 入口 / 验收脚本
     fixtures/                零素材依赖的 fixture（clouds-dxt1.png）
     .out/                    运行产物（gitignore）
-  scripts/                   build-client.mjs / check-known-failures.mjs / known-failures.json / check-known-type-errors.mjs / known-type-errors.json
+  scripts/                   build-client.mjs / check-known-failures.mjs / known-failures.json / check-known-type-errors.mjs / known-type-errors.json / verify-local.mjs
   tsconfig.tests.json        tests 侧类型检查（noEmit + rootDir "."；门禁 1d 用）
   .github/workflows/ci.yml   CI：tsc + 产物新鲜度 / tests 类型棘轮 / vitest 新增失败 / Windows 渲染 e2e
-docs/superpowers/
-  specs/                     设计文档（改动前必读）
-  plans/                     实施计划与修复记录
-docs/fixes/                  历史归档（§5/§7 的明细与已修记录，见 §8）
-research/                    gitignore：截图 / 一次性探针 / 临时 profile（权威 e2e 已移入 e2e/）
-  open-wallpaper-engine/     C++ 参考实现（语义对齐来源）
-  .lwe/                      linux-wallpaperengine 源码（另一参考）
+  .agents/                   决策笔记（notes/）与技能（skills/intent-notes/）：**入库**
+  assets/                    宣传截图（assets/screenshots/）：**入库**
+  docs/
+    superpowers/specs/       设计文档（改动前必读）
+    superpowers/plans/       实施计划与修复记录
+    fixes/                   历史归档（§5/§7 的明细与已修记录，见 §8）
+    videos/                  README 用的演示动图 / 视频（入库）
+  research/                  gitignore：截图 / 一次性探针 / 临时 profile（权威 e2e 已移入 e2e/）
+    open-wallpaper-engine/   C++ 参考实现（语义对齐来源）
+    .lwe/                    linux-wallpaperengine 源码（另一参考）
 ```
 
 ## 5. 硬约束（踩过的坑）
 
-> 编号沿用历史（代码注释按 §5.x 引用，勿重排；§5.35 为空号）。每条只给结论与判据，**实测数据、推导与历史事故全文见 `docs/fixes/conventions-details.md` 的对应小节**。
+> 编号沿用历史（代码注释按 §5.x 引用，勿重排；§5.35 为空号）。每条只给结论与判据，**实测数据、推导与历史事故全文见 `docs/fixes/conventions-details.md` 的对应小节**（该文件覆盖 §5.1–§5.47；§5.48 起的明细在各条自带的决策笔记里）。
 
 1. **wasm 产物必须 `--target web`**：曾用 `--target module`（无默认导出 `__wbg_init`）导致 wasm 静默失败、一路回退。
 2. **`research/`、`wasm/pkg/`、`dist/static/ptex-*.tex` 是 gitignore**；`lib/`、`dist/` 其余部分**必须提交**（见 §3.2）。
-3. **对象 `angles`（弧度）必须应用**，否则局部朝向被当世界朝向。三个应用点：粒子顶点 shader、背景 `mesh.rotation`、util/text（字段解析保留，暂不做几何变换）。
+3. **对象 `angles`（弧度）必须应用**，否则局部朝向被当世界朝向。应用点：粒子顶点 shader、背景 / `text` / `puppet` 的 `mesh.rotation`（`threejs-player.ts:1903-1905`、`:2005`、`:3017`）、场景树累积与 alignment 偏移；**仅 util 层不应用**（字段解析保留）。
 4. **`turbulentvelocityrandom` = `forward` 绕 `normal` 旋转**（不是「沿 normal 偏移」）：方向恒在垂直 normal 的平面内。旧实现写成 `forward*cosθ + normal*sinθ*scale` ⇒ 速度进屏幕上不可见的 z 轴、粒子排成竖线（影响 9 张壁纸）。
-5. **对象级 `instanceoverride`**（scene.json → 粒子）：`alpha/size/lifetime/speed` 是**乘数**，`color/colorn` 是**覆盖**（`UiColorToLinear` = v²，legacy `color` 先 /255），emitter rate **× `count`**；缺省恒等。JS 只解 `{user|script,value}` 编辑器包装，数值语义仍在 Rust。
-6. **图像 `colorBlendMode`（→ shader combo `BLENDMODE`）不是 alpha 混合**，而是**额外追加一遍「读当前帧缓冲」的混合 pass**（WE 材质 `materials/util/effectpassthrough.json` / shader `genericimage3`；模式表在 WE 明文 `assets/shaders/common_blending.h`）。three 侧用**预乘片元** + `CustomBlending` 复刻；**未实现的模式回退普通 alpha 混合**（不静默画错）。全库非零的只有 3 个对象：`3743126786`=7、`2832263418`=6、`2460786246`=31。合成侧的三个约束见 §5.25/§5.26。
-7. **粒子 alpha 属性链**：透明度 = 生命周期衰减 × alpha（`alpharandom` 等经属性链传入），JS ShaderMaterial 与 wasm 粒子层**双路径同语义**；改 alpha 相关逻辑要双路径验证。
+5. **对象级 `instanceoverride`**（scene.json → 粒子）：`alpha/size/lifetime/speed` 是**乘数**，`color/colorn` 是**覆盖**（`UiColorToLinear` = v²，legacy `color` 先 /255），emitter rate **× `count`**，另 `rate` 是**粒子系统时间缩放**（`sdt = dt × rate`，与 `count` 是两个字段，缺省 1）；缺省恒等。JS 只解 `{user|script,value}` 编辑器包装，数值语义仍在 Rust（`wasm/src/particle/mod.rs:168-175`）。
+6. **图像 `colorBlendMode`（→ shader combo `BLENDMODE`）不是 alpha 混合**，而是**额外追加一遍「读当前帧缓冲」的混合 pass**（WE 材质 `materials/util/effectpassthrough.json` / shader `genericimage3`；模式表在 WE 安装目录的明文 `<WE>/assets/shaders/common_blending.h`）。three 侧用**预乘片元** + `CustomBlending` 复刻；**未实现的模式回退普通 alpha 混合**（不静默画错）。全库非零的只有 3 个对象：`3743126786`=7、`2832263418`=6、`2460786246`=31。合成侧的三个约束见 §5.25/§5.26。
+7. **粒子 alpha 属性链**：透明度 = 生命周期衰减 × alpha（`alpharandom` 等经属性链传入），由 **wasm 模拟层算好、three 材质直传** `vParticleAlpha`（wasm 渲染层已删；`particles.ts` 的旧 JS 实现只服务单测）；改 alpha 逻辑要同时核对 wasm 算子与粒子片元。
 8. **场景资源禁止浏览器缓存**：`/wallpapers/scene/<id>/asset` 返回 `Cache-Control: no-store`，改资源无需清缓存。
 9. （**已作废**）wasm 效果链的 GLSL→SPIR-V→WGSL 卡点：整条链路与依赖**已随未接入的 WebGPU 渲染器删除**，主路径效果链走 three 的 GLSL 路径，与本条无关。
 10. （**已作废**）对象级效果链管线的 **wasm 备用路径**（`wasm/src/render/**`）已随 §2.1 的删除一并移除；`OBJECT_RT_MAX = 4096` 这条事实已并入 §5.15/§5.21。现存唯一路径见 §2.1。
-11. **效果链的一切编译/建管线必须在加载时一次性完成**（`resolveEffectChain` / `EffectRunner` 创建 / 探针编译）；`render_frame` / `render_object_effects` / `step` / `bindOutputs` / `advance` **不得**在帧内做编译或建管线（每帧只写 uniform + 建 bind group + 提交 pass）。
+11. **效果链的加载期 / 帧内分工**：`resolveEffectChain` 与 `EffectRunner.setPlan` 在加载期建具名 RT 池并预取纹理；**材质与 1×1 探针编译延迟到首个 `update` 帧的 `getMaterial` 懒建**（每个 pass 只编译一次、失败缓存，`setPlan` / `setChains` 清空）。帧内 `update()` / `bindOutputs()` / `advance()` **不得**新建 RT/材质或重编译（每帧只写 uniform + 提交 pass）。
 12. **音频管线**：`createAudioAnalyzer` 频谱 → EffectRunner 音频 uniform + visualizer 条高；壁纸 `sound` 数组经 `playWallpaperSound` 接入（autoplay 被拦时 context suspended、可视化全零，用户手势后恢复）；无 Web Audio → 全零静音；切壁纸必须 `context.close()`。
 13. **测试沙箱**：vitest / esbuild 依赖 service 子进程（命名管道），受限沙箱下报 `spawn EPERM`；同一条限制也让 **headless Edge 起不来**（mojo 平台通道 `拒绝访问`）⇒ **单测与端到端验收都必须完整权限**（别误判成 flag 或 Edge 装坏了）。
 14. **WE 内置纹理走 host 路由，不随包分发**：粒子/效果材质引用的 `particle/*`、`util/*` 等是 WE 的第三方素材，client 请求 `/wallpapers/particle-texture?name=<相对 assets/materials 的路径>`（可带 `id`），host **先在壁纸 `scene.pkg` 的 `materials/<name>.tex` 找、再回退 `<weAssetsDir>/assets/materials`**（顺序对齐 WE 挂载顺序）。`name` 是原始相对路径，**不能无条件加 `particle/` 前缀**；`util/*` 效果纹理也走同一路由（**不得**把 `util/noise` 与 `util/clouds_256` 映射成同一张程序化噪声）。普通 scene 素材（`fonts/*.ttf` 等）同样「pkg → 引擎 assets」两级查找。
 15. **对象级 RT 的三条不变量**：① **局部正交相机的 left/right/top/bottom 是「世界坐标范围」**，必须覆盖**完整对象世界尺寸**（拿 RT 像素当范围 ⇒ HiDPI 下对象缩小 + 边缘 clamp 拉伸；按 4096 钳制范围 ⇒ 边缘拉伸带，超限对象的正确代价是「分辨率低」而非几何裁剪）；② **RT 像素尺寸 ≥ 屏占位**（**屏占位 = |未钳制世界尺寸| × 屏幕密度**，是**尺寸对**；目标长边 = `max(屏占位长边, min(源纹理长边, 4096))`，**软预算 `budgetScale` 可把它压到两者之间**，见 §7.36①；单一等比收口 4096、**只升不降**；源纹理长边比屏占位长边小的对象保持屏占位，粒子 / 源尺寸未知的对象走 `object-range.objectRtSize` 的屏占位口径，见 `object-range.isolatedRtSize`）—— 密度 = 画布缓冲宽 / cover 视锥宽（`object-range.screenScalePx`），**mount 与 resize 必须同源**，基准必须是**未钳制**的世界尺寸；③ **`isolate` 的键是 `scene.json` 的对象 id**（不是图层计数器），`isolatedObjects()` / `setObjectOutput()` / `resizeObjectRT()` 同一把键。
-16. **效果纹理槽编号 + sampler `combo` 派生**：**`textures[i] → g_Texture(i)`**（不是 `i+1`）；sampler 声明带 `"combo":"X"` 时，该槽被绑定即置 `X = 1`（`scene.json` 的 `pass.combos` 显式值优先，必须在 `preprocessWeShader` **之前**）。两者写错会让**所有效果的纹理槽整体错位**或 mask 分支永不启用（效果全图生效）。
-17. **`g_TextureNResolution` 四分量一律同值 = 各分支实际上传尺寸**（视频 `videoWidth/Height`（0 时回退 mip0 记录）、编码图像解码尺寸、raw 裁剪尺寸、DXT `ceil4` 尺寸；由 `tex-loader.ts` 的 `withSprite` 唯一写入 `tex.userData.fxRes`）；效果 shader 用 `.z/.x` 缩放遮罩 UV ⇒ 该比值**恒为 1**。插件**不按 `.tex` 头做 padding 分配**，故**填头里的分配尺寸**会让 NPOT 纹理的遮罩按 分配/内容 挤向画面左上（真机：湖水波动跑到树上）。⚠️ **真实残留**：`fxRes` **无法表达「内容域偏移」**（WE 的 `(内容宽,内容高,打包宽,打包高)` 语义，见 `mesh-shaders.ts:26-32`）——本实现每分支只报一个 `(w,h)` 对，故 `cropToMap` 对 `flags & 4`（sprite）刻意不裁（`tex-loader.ts:285`）也满足该不变量。细节与实测见 `docs/fixes/conventions-details.md` §5.17。
+16. **效果纹理槽编号 + sampler `combo` 派生**：**`textures[i] → g_Texture(i)`**（不是 `i+1`）；sampler 声明带 `"combo":"X"` 时，**`textures[i]` 非空**即置 `X = 1`（派生只看 textures，`bind` 覆盖不计；`scene.json` 的 `pass.combos` 显式值优先，必须在 `preprocessWeShader` **之前**）。两者写错会让**所有效果的纹理槽整体错位**或 mask 分支永不启用（效果全图生效）。
+17. **`g_TextureNResolution` 四分量一律同值 = 各分支实际上传尺寸**（视频 `videoWidth/Height`（0 时回退 mip0 记录）、编码图像解码尺寸、raw 裁剪尺寸、DXT `ceil4` 尺寸；由 `tex-loader.ts` 的 `withSprite` 唯一写入 `tex.userData.fxRes`）；效果 shader 用 `.z/.x` 缩放遮罩 UV ⇒ 该比值**恒为 1**。插件**不按 `.tex` 头做 padding 分配**，故**填头里的分配尺寸**会让 NPOT 纹理的遮罩按 分配/内容 挤向画面左上（真机：湖水波动跑到树上）。⚠️ **真实残留**：`fxRes` **无法表达「内容域偏移」**（WE 的 `(内容宽,内容高,打包宽,打包高)` 语义，见 `mesh-shaders.ts:26-32`）——本实现每分支只报一个 `(w,h)` 对，故 `cropToMap` 对 `flags & 4`（sprite）刻意不裁（`tex-loader.ts:269-272`）也满足该不变量。细节与实测见 `docs/fixes/conventions-details.md` §5.17。
 18. **R8 / RG88 有两套通道语义，不能混用**（`convertUnormToRgba(data, format, alphaPriority)`）：缺省 `true` = **粒子纹理**语义（形状/覆盖在 R 或 G 通道）；`false` = **效果纹理槽**语义（shader 直接读 `.r`/`.rg` 当遮罩数值）。**待办**：权威来源应是 `.tex` 头的 `TextureFlags_AlphaChannelPriority`（bit19），现由调用方路径推断。
-19. **`.tex` 的 flags 必须被消费**：`ClampUVs = 2`（bit1）→ WE 默认 **REPEAT**、仅带此位才 CLAMP（曾一律 clamp ⇒ `clouds` 整屏偏白且越来越白）；**待办**：`NoInterpolation = 1`（bit0）应 `NearestFilter`、`ClampUVsBorder = 8`（bit3）语义未验证。⚠️ **RT 纹理必须保持 CLAMP**（别在别处一律改成 repeat）。
+19. **`.tex` 的 flags 必须被消费**：`ClampUVs = 2`（bit1）→ WE 默认 **REPEAT**、仅带此位才 CLAMP（曾一律 clamp ⇒ `clouds` 整屏偏白且越来越白）；**待办**：`NoInterpolation = 1`（bit0）应 `NearestFilter`；`ClampUVsBorder = 8`（bit3）在磁盘 `.tex` 上按参考实现视作 REPEAT（`tex-loader.ts:240-248`）。⚠️ **RT 纹理必须保持 CLAMP**（别在别处一律改成 repeat）。
 20. **纹理 v 轴约定**：WE 是 `v=0` = 图像顶部；显示路径翻行序后画面正确但**效果 shader 里的 v 语义与 WE 相反**（带符号方向量整体反向）。修法是**窄修**：只在效果链一侧按 WE 约定加载（`rowOrder` + 注入 topDown 加载器），并用「隔离局部相机 y 镜像 + 合成 quad `flipGeometryUvY`」抵消 —— **不要做全量迁移**（要改 4~8 个显示采样点，漏一处就是整图上下颠倒）。
 21. **对象 RT 的尺寸口径 = 屏占位**（详见 §5.15 ②）：旧口径把「预算」当基准，与屏占位差 0.8% ⇒ 合成那一步的双线性 + 亚纹素漂移让**整层锐度 −52%**（实测 Laplacian 713 → 342）。密度必须与主相机 cover 同源、mount 与 resize 同源。
-22. **渲染进 RenderTarget 缺省必须「透明清屏」（clearAlpha = 0）**：three 的清屏 alpha 由 `WebGLRenderer({alpha})` 决定，主路径 `alpha` 缺省 false ⇒ **每个 RT 都被清成不透明黑**，效果降 alpha 处（opacity/mask）贴回主场景就是整片黑块（`2911105183` 实测黑像素 31.1% → 0.7%）。落点是 `src/client/rt-render.ts` 的唯一入口。**刻意不改 renderer 的 `alpha` 参数**（那是另一种可见行为变更）。**例外（v0.8.1）**：Glow / bloom 的 **baseRT 自渲**（含 `glowFailed` 回退写下游 `outTarget`）必须传 `preserveClearAlpha`、保留 renderer 当前 clear alpha —— 它清的是整屏背景色，强制 0 会被 `premultipliedAlpha` 把 RGB 乘成 0（默认 Glow 下 `general.clearcolor` 丢失）；**对象隔离 RT 仍走缺省透明清屏**（不变量不变）。
+22. **渲染进 RenderTarget 缺省必须「透明清屏」（clearAlpha = 0）**：three 的清屏 alpha 由 `WebGLRenderer({alpha})` 决定，主路径 `alpha` 缺省 false ⇒ **每个 RT 都被清成不透明黑**，效果降 alpha 处（opacity/mask）贴回主场景就是整片黑块（`2911105183` 实测黑像素 31.1% → 0.7%）。落点是 `src/client/rt-render.ts` 的唯一入口。**刻意不改 renderer 的 `alpha` 参数**（那是另一种可见行为变更）。**例外（v0.8.1）**：Glow / bloom 的 **baseRT 自渲**（含 `glowFailed` 回退写下游 `outTarget`）必须传 `preserveClearAlpha`、保留 renderer 当前 clear alpha —— 它清的是整屏背景色，强制 0 会被 `premultipliedAlpha` 把 RGB 乘成 0（默认 Glow 下 `general.clearcolor` 丢失）；**对象隔离 RT 仍走缺省透明清屏**（不变量不变）。另**段渲染的 `frameRT`** 按壁纸清屏色 + alpha 1 直接清屏、不经 `rt-render`（帧捕获需要不透明底，`threejs-player.ts:1398-1404`）。
 23. **WE 视频纹理（`flags` bit5 = Video）**：`.tex` 的 mip0 载荷是完整 mp4，交浏览器原生解码（`tex-loader.videoTextureFromMp4`，必须排在编码图像与原始像素两条分支**之前**）；判定要 `flags & 32` **且** mip0 前 8 字节是 mp4 的第一个 box。约束：**静音自动播放**、**不进 mip 链**（`generateMipmaps=false`）、**生命周期不归 GPU 管**（清理挂在纹理 `dispose` 事件上：pause + 清 `src` + `revokeObjectURL`）。不可播时返回 **1×1 透明纹理** + 可辨识 `console.warn`（不是 null）。
 24. **uniform 注解里的嵌套对象必须完整解析**：非贪婪 `\{[\s\S]*?\}` 遇到内层 `}`（WE 注解普遍带 `"require":{...}`）会截断 ⇒ 注解整体丢失 ⇒ uniform 全零（`3303428996` 整屏黑）。要抓到行尾再用 `takeBalancedJson` 配对花括号。
 25. **效果 pass 的 `blending: "normal"` = 覆盖（`ONE/ZERO`）**，不是 alpha 混合（lwe `CPass.cpp::setupRenderFramebuffer`）：`Normal`/未知 → `NoBlending`，`Additive` → Additive，`Translucent` → Normal。写成 three 的 `NormalBlending` 会让 rgb 每过一个 pass 再乘一次自身 alpha ⇒ 半透明图层逐级趋零（GTR 云消失）。
@@ -163,38 +170,29 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
 41. **贴壁纸文字颜色可手动配置 + 可选描边**（`auto/white/black/custom` + 0–3 档）：手动档**跳过 preview 测光**直接下发；auto 档按**壁纸 id 缓存**最近一次测光结果（设置变更同步复用、`select` 强制重测）。⚠️ `text-shadow` **可继承**，实底区域（气泡 / 卡片 / 行内 code）必须显式 `text-shadow:none` 复位。
 42. **通知卡片与代码块在深色主题下不同底**：DSH 的卡片底 token 在深色取 8% 白半透明 ⇒ 透出壁纸后与代码块不一致。修法：浅/深分支各把 `--dsw-alias-turn-trigger-bg(-hover)` 覆盖为 `var(--dsw-alias-markdown-code-block)`，卡内文字按实底口径复位；⚠️ token 覆盖必须写进**浅/深分支**（具体度），卡内文字复位必须带 `[class*="flowItem"]` 前缀（否则压不过消息列反色规则）。
 43. **插件被重挂载（client-hmr 的 `rebuilt`）后必须只剩一份背景层**：旧 fiber 被 drain 后旧 DOM 不会被自动移除 ⇒ 每次重载叠一份 `.wp-background-layer`，两层 `z-index` 同为 0、DOM 序在后的**最老实例压在最上面**且再也不会收到 select（真机层数 9 ⇒ 「切壁纸怎么点都不换」）。约束：**凡是「插入 DOM / 起循环 / 开上下文」的挂载点都要同时具备幂等与收尾**（`ctx.effect` 收尾 + `mount()` 单例清理 + `window.__wpEngineTeardown` 跨模块实例交接）。
-
 44. **满屏隔离对象关 MSAA（结构性无效）+ RT 纹理的采样参数必须 `dispose()` 才下发**：① 满屏背景隔离对象的 RT 内只有一张盖满的 quad、没有轮廓边 ⇒ `samples=0` 与 `4` **逐像素相同（MAD=0.0000）**，关掉它把省下的显存换成分辨率；非满屏对象（贴片 / 粒子 billboard）保留 `4`（有真实几何边，一个都不能被关）；② **RT 纹理的采样参数只在 `setupRenderTarget`（首次使用或 `dispose()` 之后）下发**，`texture.needsUpdate` 对 RT 纹理**无效** ⇒ 采样判定翻转（mipmap 开 / 关）时必须 `rt.dispose()`，否则新的 `minFilter` 到不了 GL，且 `generateMipmaps=true` 会**每帧白生成 mip**。A/B 实测表与 three 源码行号见 `docs/fixes/conventions-details.md` §5.44。
-
 45. **段渲染与帧内快照的四条不变量（+ 成本量级与门控）**（2026-10-13，`frame-capture.ts` / `composite-quad.ts`；明细与偏差见 `docs/fixes/conventions-details.md` §5.46 与设计文档的执行附录）：
     - **无消费者 ⇒ 帧序与本文档之前逐字节一致**：`render()` 只在 `frameCapture.active` 时改走 `renderSegmented()`，否则不建段目标、不切段、不合成（结构性零回归，靠既有渲染断言网 + 单测钉住）。
     - **每段一次全场景 `render`**：段渲染是「按 `renderOrder` 切段、每段调一次 `renderer.render(scene, camera)`，靠 `visible` 排除其它段」，不是「每对象只光栅化一次」⇒ **成本 O(段数 × 场景)**。实测 `2897292240`（2 个粒子消费者）每帧 **3 次全场景 render + 2 次 `copyFramebufferToTexture` blit + 1 次 composite 合成**（改动前 1 次 render）；实测数字与「半分辨率 `frameRT`」优化项见设计文档附录 A.4 ⑦。
     - **`autoClear` 只在段内 `try/finally` 临时关闭并在 `finally` 恢复**（连带 `clearColor` / `clearAlpha` / `renderTarget`）—— `rt-render.ts` 的调用点依赖它清屏；只有首段之前对整个段目标清屏一次，其余段累积。
     - **每段只让本段对象可见，`finally` 里按原值恢复**（透明混合是累积的，留可见会被再画一遍 ⇒ 重复叠加）；`visible` 原本为 false 的对象不得被段逻辑改成 true。
     - **快照拍在消费者被绘制之前且逐帧覆盖**：快照语义 = 「到这一刻为止已渲染进段目标的内容」（= WE 场景 FBO / `_rt_FullFrameBuffer`）；每个消费者边界恰好 `capture()` 一次（无幂等性），消费者**不得跨帧持有**该纹理引用。resize 会 `dispose` + 重建快照 ⇒ 排队的异步消费方在**执行当刻**读 `ObjectEffectHost.frameSnapshotVersion()` 的实时值、与**捕获当刻**记录的代号比较，不一致即按「无快照」走；`player.resize()` 另通知 `notifyViewportResize()` 作废尚未被 `advance` 消费的那份。判据只认「真的换代」⇒ 只是排到下一帧执行的 runner 不被误伤；`runner.update` 内 `await resolveTextureSlot(...)` 期间仍有极低频窗口（设计文档附录 A.4 ⑥）。
-
 46. **`_rt_FullFrameBuffer` 的语义与当前消费点**：`_rt_FullFrameBuffer` = 「到该对象被绘制那一刻为止，本帧已绘制的内容」= WE 的场景 FBO（lwe `CScene.cpp:351-361` 按 `m_objectsByRenderOrder` 逐个 render、`CParticle.cpp:2069-2079` 在画粒子层**之前** blit）。本轮实现：段边界 `copyFramebufferToTexture` 快照，**当前唯一启用的消费点 = 粒子 `REFRACT`**（顶点切线基 + 片元 `genericparticle.frag:103-116` 位移采样）。⚠️ **效果链消费点本轮门控关闭**（`object-effects.ts` 的 `ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER = false`，按 R6 降级）：对象链的贴屏 quad UV 覆盖**对象窗口**、快照却是**整画布**（v 约定还反向一次）⇒ 该路径从未真机验收、直采会错位，启用前须先解决映射（设计文档附录 A.4 ⑧）；关闭时引用该槽的效果链行为 = 改动前（该槽**留空** + 每槽去重告警）。能力（`resolveBuiltinTexture(path, frameTexture?)` / `planSamplesFrameSnapshot` / `slotBoundByBind` / `onSegmentBoundary` 宿主契约）与单测**保留**。本轮只做这一个名字：其它 `_rt_*`（含 `_rt_imageLayerComposite_*`）分两条路径 —— **直接调 `resolveBuiltinTexture`** 的仍回退 1×1 白纹（只有 `_rt_FullFrameBuffer` 那一条会打一次模块级告警）；**效果链 runner 路径**对一切未声明的 `_rt_*` 一律**槽留空 + 每槽去重告警**（`resolveSlotFallback` 返回 null），不绑白纹（§7.31 / §7.38）。
-
 47. **视差的 `delay` 必须按「每帧重置滞后时钟」实现**（`parallax.ts` 的 `advancePointer`）：OWE 每帧先 `SetPointerInput`（滞后时钟减去已流逝时间）再 `Advance`（加回同一个 `frame.delta`），两者同帧抵消 ⇒ 字面累积只会让 `elapsed` 停在**历史最大帧长**；本播放器 dt 被 clamp 到 **0.1s**，而本机唯一开视差壁纸的 `cameraparallaxdelay` 恰好 **0.1** ⇒ 一次长帧（切走标签页再切回）就把它永久打成「完全跟手」。故取 `min(dt, delay)`：稳态比例与 OWE 相同、无历史残留。**判据** = `tests/parallax.test.ts` 的「滞后时钟封顶到 delay」「delay>0：每帧按 min(dt,delay)/delay 靠近」两条（变异实测会红）。
-
 48. **web 壁纸的「跟随鼠标」靠宿主直传指针，不改 `pointer-events`**（2026-10-15）：背景层的 `pointer-events:none`（`styles.ts:3`，背景不得吃 GUI 的点击）意味着壁纸 iframe **永远收不到** `mousemove`，而 web 壁纸普遍把视差绑在**自己 window 的 `mousemove`** 上（实测样本 `1184182304` 的 `jquery.parallax`）⇒ 这类壁纸在插件里恒为静态。链路：宿主 `pointermove`（capture/passive，仅 web 帧存活期间挂）→ 按 iframe 盒子算 `nx/ny` + 真实 `clientX/Y` → `postMessage({__wpPointer:1,…})` → iframe 内 shim（`/wallpapers/web` 对 `.html` **内联注入**，`src/shared/pointer-shim.ts`）**直接调用**它记录的 mouse handler（不经 DOM 派发 —— `pointer-events:none` 下正是不存在可派发目标）。
     - shim 只保留**最后一个** mouse 类监听（单个 handler 无法重复注册）；真实用法（一个 `window.mousemove`）落在此契约内，单测逐条钉住。
     - 注入必须插在壁纸自带脚本**之前**（`<head>` 后；无 `<head>` 退 `<html>` 后、无锚点即返回 null 原样返回）；⚠️ 内联脚本在 `document.write` 期间会**静默不执行**，故 `__WE_*` 初始化存在时不得走内联路径（本仓无此路径）。
     - 坐标优先用宿主按 iframe 盒子换算的 `px/py`（避开屏幕坐标/`object-fit`/缩放折算链），越界或缺失时回退 `nx/ny × iframe 自身视口`（桌面壳的宿主视口可大于 iframe 视口，此时只有归一化值正确）。
     - 只合成 mouse 事件，不合成 wheel/click/键盘；iframe 重建（resize）后指针监听必须跟着**可见帧**重挂并作废旧 token。
     - 判据：`tests/pointer-shim.test.ts`（真实 `jquery.parallax` 夹具：raw 零位移 / shim 位移跟随 / `removeEventListener` 语义不被 patch 破坏）+ `tests/web-route-shim.test.ts`（真实路由注入、非 HTML 逐字节不变）+ `npm run e2e:web-pointer`（真机像素级 A/B，raw 零位移对 shim 位移 > 20px）。
-
 49. **v0.8 数据目录契约（抓帧缓存，2026-10-19）**：数据根 = `DSH_USE_WALLPAPER_DATA_DIR`（`trim` 后非空）否则 `~/.dsh-use-wallpaper`；抓帧目录 = `<数据根>/frames`（`data-dir.ts` 唯一入口，`routes.ts` 注入）。
     - 帧文件 `<id>.png` **原子写**（同目录 tmp + `rename`），GET 不会读到半截 PNG；id 走 `/^[A-Za-z0-9._-]+$/` 且禁 `..`，防路径穿越。
     - 限额：单张 ≤ **12MB**（超限 413，非 PNG 头 400），目录 ≤ **200 张**，超出按 mtime 淘汰最旧；淘汰/清理失败不影响本次写入。
     - **2xx** 的帧响应与探测响应带 **`Cache-Control: no-store`**（GET/HEAD 命中帧、`video-probe` 200、`embedded-video` 命中 200）；4xx/5xx 走 `json()`，不带该头。帧缓存是派生数据，删掉只会让下次 scene 成功渲染时重抓（`frameCacheEnabled` 控制）。
     - 写入只发生在 scene **首帧成功**后（`onSceneLive` → `ensureSceneFrame`），失败只 `warn`，不影响渲染与降级链。
     - 决策理由与放弃的备选见 [v0.8 降级链、轮播池、属性范围与抓帧落盘](.agents/notes/implemented/architecture/2026-10-19-v08-degradation-rotation-and-properties.md)。
-
 50. **`/wallpapers/list` 按根目录 mtime 缓存 + 内容指纹 ETag（2026-10-28）**：`list-cache.ts` 复用扫描结果（最多 4 个目录 LRU，同 `getPkgReader` 手法），命中不再逐个读 `project.json`；响应 `ETag: W/"<条数>-<sha1 前 12>"` + `Cache-Control: no-cache`，`If-None-Match` 命中回 304，`?refresh=1` 强制重扫（面板「刷新」按钮走它）。ETag 必须含**内容**指纹：refresh 改了内容而 mtime 不变时也要变，否则浏览器旧 `If-None-Match` 会被误判 304 而继续用旧列表。边界：只改子目录内 `project.json` 时根目录 mtime 不变，普通 GET 返回缓存，点「刷新」才更新（见[决策笔记](.agents/notes/implemented/architecture/2026-10-28-wallpaper-list-mtime-cache.md)）。
-
 51. **壁纸库默认排序把收藏项置顶（2026-10-28）**：`filterLibrary` 仅 `sort === 'default'` 时稳定分区（收藏组在前、组内保持入参顺序），`recent` / `title` 是用户显式排序、不因收藏改序；零收藏时与改动前逐项一致。**不加分页/虚拟滚动**：网格是 372px 内滚 + `loading="lazy"`，当前量级下搜索/类型/收藏已足够定位，分页会与筛选、选中项可见性、计数语义冲突（判据见[决策笔记](.agents/notes/implemented/feature/2026-10-28-library-favorites-pinned.md)）。
-
 52. **壁纸音频随「暂停」一起挂起（2026-10-28）**：最小化/切后台（`pauseOnHidden`）与手动「暂停壁纸」都会停 scene 音频——`AudioAnalyzer.setSuspended` 挂起/恢复 AudioContext（解码路径随 context 时钟冻结），流式 `<audio>` 句柄另走 `pause()/resume()` 保留播放位置；装配期已暂停或暂停期间迟到的句柄会被立即挂起（不得在最小化中突然出声）。**边界**：web 壁纸 iframe 内音视频仍不可控（跨源）；系统音频采集（visualizer）不受暂停影响（见[决策笔记](.agents/notes/implemented/bug-fix/2026-10-28-audio-pause-with-wallpaper.md)）。
 
 ## 6. 工作约定
@@ -210,9 +208,7 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
 
 ## 7. 当前遗留（如实状态，勿虚标）
 
-> 编号沿用历史（代码注释按 §7.x 引用，勿重排）。**已修记录的完整版在 `docs/fixes/`**，这里只留「今天仍未达成 / 有明确边界」的条目。
-
-> **编号沿用历史**（多处代码注释与 `docs/superpowers/` 按 §7.x 引用，勿重排）：**空号 = 该条已结案、记录已移入 `docs/fixes/`**（如 §7.2 起的各「已修」条目）。§7.30+ 是本次精简新增的续号。
+> 编号沿用历史（代码注释按 §7.x 引用，勿重排；**空号 = 该条已结案，记录已移入 `docs/fixes/`**，如 §7.2 起的各「已修」条目；§7.30+ 是精简后新增的续号）。这里只留「今天仍未达成 / 有明确边界」的条目，**已修记录与完整过程见 `docs/fixes/`**。
 
 1. **对象级效果链：执行器能力已覆盖；util 自 v0.8.2 起可挂链，无 effects 的 util 层仍不渲染**：`util` 对象有 effects 时进隔离渲染（§7.42 ⑧）；全库 util 8 对象 / 10 条 effects 均可执行，本机 `none` 0（数字口径勘误见 `docs/2026-10-20-library-feature-gap-audit.md` 第七节 #11）。**无 effects 的 util 层整层不渲染**（记边界，§7.42 ⑧）。`text` 对象的 effects 自 v0.8.1 起已挂链（隔离边界见 §7.42 ①）；**粒子对象挂载 effects 全库为 0** ⇒ 粒子隔离分支只有单测覆盖、无真实样本。端到端只逐像素验过少数样本，其余是分类学推断（详见 `docs/fixes/threejs-path-fixes.md`）。
 3. **粒子自旋的轴序偏差**：本项目用 `Rz·Ry·Rx`，WE 的 `ComputeParticleTangents` 是 `Rz·Rx·Ry` ⇒ **仅多轴自旋**（全库 6 个对象）结果可能与桌面不同，**未与桌面逐像素对照**；z-only 时两种顺序逐像素等价。
@@ -224,18 +220,13 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
 31. **`copybackground` 语义未实现**（读背景副本做倒影/涟漪的场景会缺内容）；`colorBlendMode` 只实现 6/7/31，其余模式回退普通 alpha 混合。**订正**：`_rt_FullFrameBuffer` 不再是「不绑白纹 + 只打降级告警」—— 粒子 `REFRACT` 的帧内快照消费已实现（§5.46）；**效果链**消费点本轮门控关闭（`ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER = false`，按 R6 降级），该槽在效果链里仍**留空 + 每槽去重告警**，待对象窗口 UV ↔ 整画布快照的映射验证后再开。
 32. **web 壁纸的 resize 与失败回退**：跨源 iframe 拿不到子帧错误 ⇒ **无失败回退**（渲染失败停在空白而非 preview 图）；resize 靠**重建 iframe** ⇒ 跨屏拖动导致的 **dpr 变化不触发重建**，且重建会让壁纸动画从头开始（跨源探测不到壁纸是否快照了视口，故统一重建）。
 33. **非回环且非桌面壳的访问仍退回 opaque origin 沙箱**：局域网 IP / 隧道访问 GUI 时既无回环名也无 `__DSH_TRANSPORT__` ⇒ 依赖 WebGL 贴图的 web 壁纸空白（纯 DOM/CSS 的不受影响）。未做「另起端口」方案。
-34. **DSH 旧版（≤0.1.6）适配层待删**：0.1.7 起设置系统与右侧栏行为都变了，插件因此并存两套代码与样式。**判据**：README 声明的最低 DSH 版本 ≥ `0.1.7-alpha.1`（目前 README 只声明兼容三版），且本机与 CI 都不再跑旧版验收；清理清单见 `docs/superpowers/plans/2026-09-23-dsh-settings-compat-migration.md` §9。
-35. **壁纸侧的已知缺陷（不修，仅记录）**：`3789244610` 自身的 `city.jpg` 404、空 `<nav>` 让脚本抛 TypeError、文档溢出（见 §5.40 与 `docs/fixes/web-wallpaper-history.md`）；`3778198228` 给 video 写死 `object-fit:cover`（宽于 16:9 时裁掉约 15%）。
-
+34. **DSH 旧版（≤0.1.6）适配层待删**：0.1.7 起设置系统与右侧栏行为都变了，插件因此并存两套代码与样式。**判据**：README 声明的最低 DSH 版本 ≥ `0.1.7-alpha.1`（当前 README 声明兼容三版：`0.1.5-rc.3` / `0.1.6-alpha.2` / `0.1.7-alpha.2`），且本机与 CI 都不再跑旧版验收；清理清单见 `docs/superpowers/plans/2026-09-23-dsh-settings-compat-migration.md` §9。
+35. **壁纸侧的已知缺陷（不修，仅记录）**：`3789244610` 自身的 `city.jpg` 404、空 `<nav>` 让脚本抛 TypeError、文档溢出（记录见 `docs/fixes/web-wallpaper-history.md`）；`3778198228` 给 video 写死 `object-fit:cover`（宽于 16:9 时裁掉约 15%）。
 36. **隔离对象 RT 分辨率的已知边界**：① 显存预算是**软保证** —— 预算小到装不下全部屏占位时无法再降，只能保住「只升不降」；② 预算只覆盖 **image** 隔离对象：挂载期输入只含 image，resize 期同一函数按 `entries` 计入了粒子的屏占位 ⇒ 两期输入集合不同（粒子 RT 恒为屏占位）；③ 视频纹理**未就绪时回退屏占位**，不做「就绪后重设 RT」；④ 精灵表按**源尺寸未知**处理（回退屏占位）；⑤ e2e 锐度判据的样本里粒子 / 精灵表对象**各 0 个**（判据无真实样本）；⑥ 锐度判据余量偏薄（逐块中位数最低约 **1.11**，阈值 1.05）。详见 `docs/superpowers/specs/2026-10-12-isolated-object-rt-resolution-design.md` §5 与「实测（实现后）」，脚本用法见 `TESTING.md`。
-
 37. **`g_TextureNResolution` = 各分支实际上传尺寸（A1 已实现）**：`fxRes` 由 `withSprite` 按分支写「即将上传的宽高」（视频 `videoWidth/Height`、编码图像解码尺寸、raw `cropToMap`/`cropRowsToMap` 尺寸、DXT `ceil4` 尺寸），**四分量同值 ⇒ `.z/.x === 1` 恒成立**。**本项目前数值影响为 0**：把 `.x/.y` / `.z/.w` 当尺寸用的 B/C/D 类用法**逐条都在 `g_Texture0`**，而 slot 0 每帧被绑成 pass 输入 RT、走无 `fxRes` 的回退（RT 自身尺寸 = 其上传尺寸）；唯一 slot≥1 的尺寸用法（`3780477933` 的 `min(.w,.z)`）落在 POT 纹理上、比值本就为 1。⚠️ **唯一代码层第三类**是 DXT 的块对齐（`ceil4`）⇒ `fxRes` 可比重内容宽高多出至多 3 像素（**本机库 0 实例**，只在单测 fixture 出现）。细节与实测见 `docs/fixes/conventions-details.md` §5.17 与 `docs/superpowers/specs/2026-10-12-fxres-actual-upload-size-design.md`。
-
-38. **看护的已知边界**：① 失败记忆落在 **localStorage**（同 origin 多窗口共享，但从另一个 origin 访问 GUI 时不共享，且不同步到其它机器）；② 软失败只记会话内，**重开即忘**；③ 首帧耗时是「宿主 `onFrame` 第一次被调用」，不等于「首帧已上屏」（浏览器合成时机不可观测）；④ 无装配**超时中断**（慢盘上仍会一直等），本计划只观测不打断；⑤ 失败记忆落 localStorage ⇒ **从另一个 origin 打开 GUI 时不共享**（本机同一 GUI 的另一个端口看不到既有失败记忆）。**以下几条本轮已修，记录在此以免回退**：⑥ `show({kind:'image'|'video'|'web'|'none'})` 经公开 API 直切时拿不到壁纸 id ⇒ 上一张 scene 的迟到打点曾**持续**上屏、且「重试实时渲染」会把它选回来 —— **本轮已修**（这四个分支同步解绑选中项并补推一次面板，见 `index.ts` 的 `show()`）；⑦ `snapshot.ok` = 本次会话最近一次装配结果、`snapshot.failure` = 失败记忆，**两者可并存**（硬/软失败都不覆盖装配结论：曾硬失败而现已正常 ⇒ `ok:true` + `failure.hard:true`）⇒ 消费方必须**两件都看**，只看 `ok` 会漏掉失败记忆；⑧ 首帧慢时面板曾把 `assembleMs` 抬高（把「首帧时刻 − 起始」当成装配耗时写回）—— **本轮已修**（装配出口记一次、首帧只回填 `firstFrameMs`）；⑨ 面板在首帧未出（`firstFrameMs < 0`，暂停态下会长期如此）时曾显示「首帧 **-1** ms」—— **本轮已修**（`formatHealthLine` 不渲染该字段，装配耗时照常）。
-
+38. **看护的已知边界**：① 失败记忆落在 **localStorage**（同 origin 多窗口共享；从另一个 origin / 端口打开 GUI 时不共享，也不同步到其它机器）；② 软失败只记会话内，**重开即忘**；③ 首帧耗时是「宿主 `onFrame` 第一次被调用」，不等于「首帧已上屏」（浏览器合成时机不可观测）；④ 无装配**超时中断**（慢盘上仍会一直等），本计划只观测不打断。**以下几条本轮已修，记录在此以免回退**：⑥ `show({kind:'image'|'video'|'web'|'none'})` 经公开 API 直切时拿不到壁纸 id ⇒ 上一张 scene 的迟到打点曾**持续**上屏、且「重试实时渲染」会把它选回来 —— **本轮已修**（这四个分支同步解绑选中项并补推一次面板，见 `index.ts` 的 `show()`）；⑦ `snapshot.ok` = 本次会话最近一次装配结果、`snapshot.failure` = 失败记忆，**两者可并存**（硬/软失败都不覆盖装配结论：曾硬失败而现已正常 ⇒ `ok:true` + `failure.hard:true`）⇒ 消费方必须**两件都看**，只看 `ok` 会漏掉失败记忆；⑧ 首帧慢时面板曾把 `assembleMs` 抬高（把「首帧时刻 − 起始」当成装配耗时写回）—— **本轮已修**（装配出口记一次、首帧只回填 `firstFrameMs`）；⑨ 面板在首帧未出（`firstFrameMs < 0`，暂停态下会长期如此）时曾显示「首帧 **-1** ms」—— **本轮已修**（`formatHealthLine` 不渲染该字段，装配耗时照常）。
 39. **视差的机制局限：开视差时，脚本对同一对象 `origin` 的写入每帧被丢弃** —— 基准位取自**创建期**的 `entry.origin`，`tickParallax` 每帧写 `position = 基准位 + shift`；而 OWE 是 shift 与脚本 model 平移**叠加**。**影响面 = 落点在 `position` 上的那几路**：**背景**（非隔离写对象 mesh、隔离写合成 quad）与**隔离粒子**的合成 quad；**非隔离粒子走顶点 shader 的 `u_Parallax`、不写 `position`** ⇒ 其脚本 `origin` 写入**不受影响**。故影响面不是「34 张里的 1 张」那么小，但也**不是**「该壁纸里所有带 `parallaxDepth` 的对象」。**当前本机无实害**（本机唯一开视差的 `3793620838` 那 pkg 内无 `.js` 脚本）；真遇到「脚本位移 + 视差」同对象的壁纸，须先按叠加语义改 `tickParallax`。验收观察项见 `TESTING.md` §2.10（**2026-10-23 已人眼验收通过，无可见异常**）。
-    - **未实现的视差语义**：① **传播组**（父链锚点 + `disablepropagation`）**未实现** —— 按「每对象自算 `parallaxDepth`」近似，子对象**不继承**父层深度（`research/audit-parallax-mechanism.md` §7.4：扁平层级观感一致，容器/组继承待做）；② **`parallaxDepth` 缺省不参与视差** —— WE 对 composite 容器有 `{1,1}` 缺省，本仓**未实现**该缺省（字段缺失即不写 `position`，见 §2.3）。
-
+    - **未实现的视差语义**：① **传播组**（父链锚点 + `disablepropagation`）**未实现** —— 按「每对象自算 `parallaxDepth`」近似，子对象**不继承**父层深度（本地调研结论：扁平层级观感一致，容器/组继承待做；原始记录未入库）；② **`parallaxDepth` 缺省不参与视差** —— WE 对 composite 容器有 `{1,1}` 缺省，本仓**未实现**该缺省（字段缺失即不写 `position`，见 §2.3）。
 40. **`.mdl` puppet 只有静态族有真实样本，蒙皮/动画半段在本机无素材可验**（T6，2026-10-13，分支 `feat/scene-parallax-puppet`）：全机（本机壁纸库 + 磁盘上全部解包副本）**只有一个 `.mdl`** —— `3303428996` 的 `models/20240220213723_1_puppet.mdl`（magic `MDLV0021`）。它与 T6 brief 的段布局**三处不一致**，故 `parseMdl` 得按「文档化口径 + 实测静态口径」双候选实现（`src/client/mdl-parser.ts`）：
     - **没有 `MDLS`/`MDLA`/`MDLE`/`MDAT` 段**（`indexOf` 全 `-1`）⇒ `bones=0`、`animations=0`、`blendWeights=null`；`MdlPuppet.segments` 实测 = `{mdls:'absent',mdla:'absent'}`（本机唯一可硬断言的段级事实，测试已钉）。本机 puppet 只能按**静态网格**渲染 ⇒ **T7 的蒙皮与 T8 的动画路径在本机无真实样本**，只有 brief 夹具的单测覆盖；测试硬判据相应只到「几何 + 段 absent」为止，骨骼/动画只 log（`tests/mdl-real-library.test.ts`）。
     - **容器头不是 `magic(9) + 材质 cstr@9`**：实测材质串 @21、NUL @52（@9 处按 cstr 读只有 1 B `09`）。头 12 B（9..20）**实测字节为** `09 00 00 00 01 00 00 00 01 00 00 00`，**其 u32 读法为 9/1/1，字段语义未确证** —— 「二进制头 + 2 B 对齐」只是同一串字节的另一种等价读法，不是确证结论。字段区 `fields@53+4k` 实测 = `0,0,0,0,0,0,0,15,88800`（28 B 零 + `u32 15`@81 + `u32 vertexBytes`@85）；顶点数据 @89。**未确认**：`u32 15` 的语义、文件尾 3 B `00 00 00`（@110889..110891）的语义（不猜、不赋义）。
@@ -245,7 +236,6 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
     - brief 的参照实现另有两处**读法分歧**（骨骼头 13 B 还是 9 B；`MDLA0006` 头里 `fps/frameCount` 与轨数之间那个 `u32` 是否计入）—— **两处结论都来自 brief 自己的字段表 / 夹具口径，未在真实素材上确证**（本机样本没有骨骼段与动画段）。解析器对两处都做**双候选 + 自洽校验择一**（轨表要让每轨字节数整除 36 且不越界；骨骼头要让绑定矩阵末行 = `(0,0,0,1)` 且 matSize = 64），择不出来就不解该段。段头十六进制：网格头首 89 B = `4d444c5630303231000900000001000000010000006d6174657269616c732f32303234303232303231333732335f312e6a736f6e00` + 28 B 零 + `0f000000` + `e05a0100`。
     - **动画层口径（T8）**：`scene.json` 的 `animationlayers` 由 `scene-json.ts` 解析（`id`/`animation` 必需，缺任一**整条跳过**，不产出半截层；`rate`/`blend` 缺省 1、`visible` 缺省 false），逐帧**只应用第一条可见层**（`threejs-player.tickPuppets`：帧号 = `(已播秒数 × rate × fps) % frameCount`，`fps` 非法兜回 30），`blend` / `additive` **未参与混合**。⚠️ **缺省 `visible=false`** 的出处是 **lwe** `research/.lwe/src/WallpaperEngine/Data/Parsers/ObjectParser.cpp:284`（`it.user("visible", properties, false)`，但该字段在 lwe 中**从未被消费**）；本仓**照 brief 取 false**，与 WE 渲染侧实测相反 —— `WPPuppetLayer::AnimationLayer` 两棵源码树都是 `bool visible { true }`（`.superpowers/we-layerd-src/third_party/wallpaper-engine-renderer/src/backend/scene/internal/animation/WPPuppet.hpp:114-118`、`research/open-wallpaper-engine/src/Scene/Pkg/Parse/Puppet/Puppet.cppm:251`，`WPImageObject.cpp:220` 的 `GET_JSON_NAME_VALUE_NOWARN` 不改初值）⇒ 真实素材里**省略 `visible` 的层在本仓不会被应用**。本机实测：34 个真实 `scene.json` **0 个**含 `animationlayers`、唯一含 `.mdl` 的样本是静态族 ⇒ 该差异**无真实素材可证伪**，待有素材再对齐；**控制方已裁定保留 `false`**（与计划书夹具 `visible:false` 一致，**勿改回 `true`**）。**字段缺失**时退回「播动画表首个」（= T7 行为，`tests/threejs-player.test.ts` 有断言；**除 `frameCount <= 0`**：旧实现会采样帧 0，现直接不采样）；显式空数组 / 无可见层 / 动画 id 不存在 / `frameCount ≤ 0` ⇒ 不做动画（OWE `PuppetLayer::prepared()` 同义）。
     - **未复刻与其它的边界（T8）**：puppet 材质走 three **内建材质**（`createPuppetMaterial` = 普通 alpha 混合），WE 的 `colorBlendMode ≠ 0` 与自定义 shader 分支**未复刻**（复刻要预乘 `ShaderMaterial`，会失去「内建材质才自动注入蒙皮 shader」这条前提）；**无 puppet 的 e2e 自动化判据** —— 只有真机人工验收（`TESTING.md` §2.11，**2026-10-23 人眼验收通过**）+ 非 puppet 壁纸的零回归对拍。
-
 41. **v0.8 产品化边界（2026-10-19）**（理由与取舍见[决策笔记](.agents/notes/implemented/architecture/2026-10-19-v08-degradation-rotation-and-properties.md)）：**已修（记录在此以免回退）** —— ① 视频壁纸 HEVC/H.265 缺解码时不再停在黑背景：`showVideo` 在 `error` 或 1.5s 首帧超时返回 `unsupported` / `timeout`，controller 回退 preview（无 preview 则空态），面板按 `media-health` 分档提示（失败记忆只在**内存**，重开可重试；**不做** host ffmpeg 转码）；② `overlayOpacity` / `blurEnabled` / `blurRadius` / `kenBurns` / `fitMode` 已在「显示效果」面板有控件，点击即生效。**新边界**：
     - ① **用户属性面板（v0.9 已全类型，记录在此以免回退）**：暴露 `project.json general.properties` 中 `type ∈ {bool,slider,color,combo}`、`editable !== false`、且**被当前 scene 真正引用**（`usedBy` 非空）的属性——`group` / `text` / 未被引用的 `schemecolor` 不返回；默认值取 **project.json 的 `value`**（不是 scene 的 value，两者可能不一致）；写 `we:userprop:<wallpaperId>:<key>`（localStorage，**按壁纸隔离**；读侧缺 per-id 键时回退旧全局键 `we:userprop:<key>`，不再写入）后**重装配**才生效。
         - **绑定语义**：`user:"k"` 与对象形态 `user:{name,condition}` 同等解析；绑定侧 condition **匹配即可见、不匹配即隐藏**（bool 的 `"0"`=开、`"1"`=关，we-layerd 语义；与作者 value 无关），无 condition 时保持历史口径（用户布尔覆盖，键缺失/非布尔回退作者 value）；对象可见性 = 自身 && **父链继承**（`computeEffectiveVisibility`）。
@@ -255,8 +245,7 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
     - ③ **抓帧依赖 `readPixels`**：无 GPU / 上下文丢失 / 部分浏览器可能失败或读回全零；当前只对 context-lost 跳过，**无亮度门禁**（Task 6 评审已知），失败只 `warn`、不写缓存、不影响渲染 —— **已按 `TESTING.md` §2.13 人眼验收通过（2026-10-23）**。
     - ④ 抓帧数据目录契约见 §5.49；`frameCacheEnabled` 只影响是否抓帧，不影响降级链的读取。
     - ⑤ **降级成功不清 live 失败记忆**：`sceneFallback` 显示 video / frame 后不 `healthStore.clear`。软失败仍按 3s 冷却自动重试一次（每会话每壁纸一次）；硬失败不自动重试（重试同一张渲染不出来的壁纸只会重复失败）。面板可能同时显示「降级画面 + 上次失败」，属真实状态，用户可手动重试 / 清除。
-
-42. **v0.8.1 缺口修复的新边界（2026-10-20）**（设计见 `docs/superpowers/specs/2026-10-20-v0.8.1-gap-fixes-design.md`）：
+42. **v0.8.1/v0.8.2 缺口修复的新边界（2026-10-20 起，⑧ 起为 v0.8.2 续补）**（设计见 `docs/superpowers/specs/2026-10-20-v0.8.1-gap-fixes-design.md` 与 `docs/superpowers/specs/2026-10-22-v0.8.2-visible-fixes-design.md`）：
     - ① **text effects 已挂链，但隔离尺寸装配期冻结**：`groupEffectsByObject` 不再跳过 text，隔离 RT / 合成 quad 取装配期实测布局 × |scale|；时钟文本跨分钟变宽时仍按装配期尺寸采样（轻微裁边/拉伸），不自动重建 RT。**源分辨率下限 = 布局 canvas 像素（热修 2026-10-20）**：此前 RT 只按屏占位 ⇒ 小字号 text（如 `3660373677` 的 Date/Clock：布局 917×214 / 489×214，屏占位仅 97×22 / 46×20）在效果链里先被降采样，`blurprecise` 1.3px 相对笔画过强、文字糊成一片；现与 image 同口径（`isolatedRtSize(world, density, source=布局尺寸)`），text 仍不进显存预算。`threejs-player.update_background` 的 origin 位移落在合成 quad（`parallaxNode`）而非 RT 内容 mesh。静态解析隐藏、但可见性脚本会点亮的 text 只收链、无图层，落入「效果挂在未参与渲染对象上」的汇总告警（仅文案不精确）。
     - ② **精灵表帧 UV 与对象级脚本**：材质 `passes[0].combos.spritesheet` + TEXS 帧网格 ⇒ 行优先当前帧 UV（`resizeBackground` 后重写）。**对象级脚本已执行**（`visible.script` 优先，其次 `angles > origin > scale > color`）；`thisLayer.getTextureAnimation` 已接（`pause/play/stop/setFrame/getFrame`）；无脚本的 spritesheet 仍自动 1 fps。**属性脚本 `update(value)` 已按 WE 契约写回**（传入当前值 Vec3、返回 Vec3-like 写回；`angles/origin/scale` 经 `applyLayerState` 生效，其中 angles 的脚本单位是**度**、落 three 时转弧度，`color` **仅记录不应用**）。**生产 GUI 点击不可达**（canvas 在 `pointer-events:none` 的背景层里），按 2026-10-20 产品决策**不做 window 级点击转发** ⇒ 点击循环（如 `3765967112` 的 automatic→day→night）为**已知边界**，canvas 上的 click 监听只服务 e2e/harness；`frametime` 与 image 材质的 `sequencemultiplier` 未解析；材质标记为精灵表但缺 TEXS 时回退整表（失败开放）。
     - ③ **bloom 两级后处理**：`general.bloom === true` ⇒ `bloom-stage.ts` 薄封装 GlowStage（缺省 strength=2 / threshold=0.65），player 按「壁纸 bloom → 应用级 Glow → composite」串联（段渲染同序）；`bloomRT` 为 8-bit RGBA 且带 depthBuffer（`WebGLRenderTarget` 缺省建法，未按需关闭）。**资源代价**：每条 bloom 管线 = 一整套 GlowStage（7 张 HalfFloat RT：base 画布缓冲 + 三级 ping-pong ≈0.66×base 面积）＋ 每帧 10 个全屏 pass（另加主场景自渲 1 次）；bloom + Glow 同开时下游 Glow 读 `bloomRT`、不再自渲，合计约 20 个 pass/帧。**边界**：`general.hdr` 未实现；bloom + Glow 同时开启已有 e2e 像素判据（默认 Glow 下 bloom on/off A/B，`2454403969`）；另两张 bloom 壁纸（`3790775478` / `2937346640`）**已按 `TESTING.md` §2.14 V1 人眼验收通过（2026-10-23）**（e2e 只判 `2454403969`）。
@@ -272,12 +261,15 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
     - ⑬ **e2e 门禁（v0.8.2）**：新增 `npm run e2e:verify-v082`（`e2e/verify/verify-v082.mjs`）四组判据及基准值：2911105183 util `meanAbs 11.410 / 62.10%`（全屏 bbox）、2132420420 pulse `0.826 / 3.23%`、3765967112 text `910px / maxΔ20`、3780477933 pointer asis `0.00%` / defaults `3.88%` / 双簇 `4.3 / 5.8px`；shader 编译失败（warn 文案或 `__fxShaderErrors`）对门禁**判红**（fail-loud，换驱动出现良性 info log 时可能 brittle）；③ 的文字区 `[728,305,841,368]@1600×900` 为硬编码常量需重标定；② 阈值余量最小（meanAbs 1.65× / changed 1.62×），换机需按实测重标定。
     - ⑭ **静态隐藏对象不装配（v0.8.2 修复）**：`loadSceneToThree` 按装配期 `effectiveVisible`（`computeEffectiveVisibility`：自身绑定含 condition + 父链继承）跳过隐藏对象——`visible:false` 的对象（全库仅 2832263418 的 `all_fg_still`）此前仍会建无纹理 quad，渲染成白色全屏层盖住背景（v0.8.1 起存在）。user 绑定 / condition 按装配期用户属性判定：运行中切换用户属性需重载壁纸；script 绑定不在装载期跳过（保持可点亮）。
     - ⑮ **音频频谱竖条（v0.8.2 修复）**：`Simple_Audio_Bars` 等效果以 `linked` 参数默认值 `"0.0, 1.0"`（逗号分隔）提供 `u_BarBounds`，`resolveUniformBindings` 的 parseValue 改为按 `[\s,]+` 分隔（此前返回 `[0,0]` ⇒ bars 高度恒 0、竖条不可见）；音频数据来自 sound 对象播放的 analyser（浏览器自动播放被拦截时需用户手势，注册手势重试）；EVA 卡农（2832263418）竖条已验证渲染（白色 `u_BarColor`，颜色/`copybackground` 语义与桌面 WE 的差异待 v0.8.3 对齐；chromatic_aberration pass 仍编译失败跳过，不影响 bars）。
+    - ⑯ **多彩音频条对齐（v0.8.2 修复）**：2832263418 的 `Simple_Audio_Bars` 在桌面 WE 显示内容色（Rainboww 彩虹），实测由两点共同决定：① `colorBlendMode ≠ 0` 的对象**不做 color tint**（追加混合 pass 的 B = 内容原色，`threejs-player.ts` addBackground）；② 该效果 `BLENDMODE=0`（Normal，官方 fallback 输出 BarColor=白）按桌面实测映射为 `min(A,B)`（内容色，`shader/effect-chain.ts`）。影响面：全库仅 4 个 `colorBlendMode≠0` 对象（其中 2 个 color 缺省白）与 1 个 Simple_Audio_Bars 效果；2911105183 的 music bar 同效果。桌面截图证据：bars 左紫→右红 = Rainboww 内容色。
+    - ⑰ **SceneScript 音频可视化（visualizer，v0.8.2 修复）**：脚本含 `engine.registerAudioBuffers` + `createLayer`（`detectScriptPattern === 'visualizer'`，本机样本 2937346640 的 `Simple Visualizer`）时，three 路径不再依赖脚本 VM：`three-renderer` 收集对象参数后由 `player.setVisualizerBars` 代建 64 条 bar（宽 = barWidth × 图宽、底部对齐 origin.y），`onFrame` 用 analytics 频谱（64 bins）逐帧更新高度（无音频 → 高度 0 不可见）；bar 贴图 = 对象自身 image 的白色 4×4 纹理。其余 visualizer 参数（对齐/角度）按 Simple Visualizer 语义实现，其它 visualizer 脚本若结构不同需单独适配。**v0.9 起**新增 `pixel-bars` 家族（props 含 `visualizerResolution` / `visualizerBarPath` / `minBarHeight`，本机样本 `3118949804` 的 `3007895627` 脚本）：`computePixelBarLayout` 按脚本公式算条数 / 世界条宽 / 最小高度，`player.setPixelVisualizerBars` 按对象 `scale` / `angles` 旋转布局；静音高度 = `minBarHeight`（桌面同款静态条），系统音频驱动仍缺（`supportsaudioprocessing`）。取舍见[决策笔记](.agents/notes/implemented/bug-fix/2026-10-26-pixel-bars-visualizer.md)。**系统音频（v0.9 P1）**：`project.json general.supportsaudioprocessing === true` 的壁纸在面板显示「系统音频」入口——浏览器模式经 `getDisplayMedia({audio:true})` 捕获（独立 AudioContext → analyser → 静音 gain，不重复出声），频谱优先于包内 sound 驱动 visualizer 与效果 uniform；桌面 App 主进程禁用 display media/设备权限 ⇒ 返回失败码并提示用浏览器打开 GUI；不落盘、不上传，停止共享即清理。取舍见[决策笔记](.agents/notes/implemented/feature/2026-10-26-system-audio-capture.md)。
 
 ## 8. 历史归档
 
 | 位置 | 内容 |
 |---|---|
-| `docs/fixes/conventions-details.md` | **§5 全部条目的原文**（含实测数据、推导、历史事故）—— 本文件 §5.x 的指针目标 |
+| `docs/fixes/README.md` | 归档目录说明与各文件索引 |
+| `docs/fixes/conventions-details.md` | **§5.1–§5.47 的明细原文**（含实测数据、推导、历史事故）—— 本文件 §5.x 的指针目标；§5.48+ 的明细见各条自带的决策笔记 |
 | `docs/fixes/threejs-path-fixes.md` | §7 组一的完整记录（three.js 主路径的修复过程、效果链验收表、Glow 标定、显存与性能实测） |
 | `docs/fixes/web-wallpaper-history.md` | web 壁纸的定位过程与已修记录 |
 | `docs/fixes/verification-ci-history.md` | 验证手段、CI 三个坑、测试基线的历史记录 + 精简前的 §3.3 长段 |
@@ -286,5 +278,3 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
 | git 历史（`AGENT.md` 的上一个版本） | 精简前含 §1–§4 / §6 旧措辞的完整文档 |
 
 归档文件只作查阅：**新的结论、边界与遗留写回本文件的 §5 / §7**，不要往归档文件里追加。
-    - ⑯ **多彩音频条对齐（v0.8.2 修复）**：2832263418 的 `Simple_Audio_Bars` 在桌面 WE 显示内容色（Rainboww 彩虹），实测由两点共同决定：① `colorBlendMode ≠ 0` 的对象**不做 color tint**（追加混合 pass 的 B = 内容原色，`threejs-player.ts` addBackground）；② 该效果 `BLENDMODE=0`（Normal，官方 fallback 输出 BarColor=白）按桌面实测映射为 `min(A,B)`（内容色，`shader/effect-chain.ts`）。影响面：全库仅 4 个 `colorBlendMode≠0` 对象（其中 2 个 color 缺省白）与 1 个 Simple_Audio_Bars 效果；2911105183 的 music bar 同效果。桌面截图证据：bars 左紫→右红 = Rainboww 内容色。
-    - ⑰ **SceneScript 音频可视化（visualizer，v0.8.2 修复）**：脚本含 `engine.registerAudioBuffers` + `createLayer`（`detectScriptPattern === 'visualizer'`，本机样本 2937346640 的 `Simple Visualizer`）时，three 路径不再依赖脚本 VM：`three-renderer` 收集对象参数后由 `player.setVisualizerBars` 代建 64 条 bar（宽 = barWidth × 图宽、底部对齐 origin.y），`onFrame` 用 analytics 频谱（64 bins）逐帧更新高度（无音频 → 高度 0 不可见）；bar 贴图 = 对象自身 image 的白色 4×4 纹理。其余 visualizer 参数（对齐/角度）按 Simple Visualizer 语义实现，其它 visualizer 脚本若结构不同需单独适配。**v0.9 起**新增 `pixel-bars` 家族（props 含 `visualizerResolution` / `visualizerBarPath` / `minBarHeight`，本机样本 `3118949804` 的 `3007895627` 脚本）：`computePixelBarLayout` 按脚本公式算条数 / 世界条宽 / 最小高度，`player.setPixelVisualizerBars` 按对象 `scale` / `angles` 旋转布局；静音高度 = `minBarHeight`（桌面同款静态条），系统音频驱动仍缺（`supportsaudioprocessing`）。取舍见[决策笔记](.agents/notes/implemented/bug-fix/2026-10-26-pixel-bars-visualizer.md)。**系统音频（v0.9 P1）**：`project.json general.supportsaudioprocessing === true` 的壁纸在面板显示「系统音频」入口——浏览器模式经 `getDisplayMedia({audio:true})` 捕获（独立 AudioContext → analyser → 静音 gain，不重复出声），频谱优先于包内 sound 驱动 visualizer 与效果 uniform；桌面 App 主进程禁用 display media/设备权限 ⇒ 返回失败码并提示用浏览器打开 GUI；不落盘、不上传，停止共享即清理。取舍见[决策笔记](.agents/notes/implemented/feature/2026-10-26-system-audio-capture.md)。

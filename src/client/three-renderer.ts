@@ -1,5 +1,5 @@
-// three.js 播放器生产入口：实现与 wasm-renderer 同构的 `SceneRendererLike` 供 wallpaper-controller 使用。
-// ⚠️ 新增的播放路径（`THREE_USE=1` 启用），**不改动/不删除** wasm-renderer（默认路径不变）；纯 CPU 模拟，无需 WebGPU。
+// three.js 播放器生产入口：实现 `SceneRendererLike` 供 wallpaper-controller 使用（2026-09-22 起是 scene 的唯一渲染路径）。
+// 粒子模拟复用 wasm 的纯 CPU 模拟器，无需 WebGPU。
 import type { Material, Texture, WebGLRenderer } from 'three';
 import { loadSceneToThree, resolvePixelRatio, type LoadedParticleAssets, type ParticleSim, type SceneAssets, type ThreeSceneLoadResult } from './threejs-player.js';
 import { parseSceneJson, sceneJsonWithResolvedModulation } from './scene-json.js';

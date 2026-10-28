@@ -2,7 +2,7 @@
 // boneInverses，逐帧 = 世界(动画) · 世界(绑定)⁻¹（正合 WE 语义）；材质必须是内建材质才会注入蒙皮 shader。
 import * as THREE from 'three';
 import type { MdlAnimation, MdlPuppet } from './mdl-parser.js';
-// v 约定翻转的唯一实现（WE 的 UV 是 v=0=图像顶部，见 AGENT.md §7.20，不另写一份公式）。
+// v 约定翻转的唯一实现（WE 的 UV 是 v=0=图像顶部，见 AGENT.md §5.20，不另写一份公式）。
 import { flipGeometryUvY } from './object-range.js';
 
 export interface PuppetInstance {

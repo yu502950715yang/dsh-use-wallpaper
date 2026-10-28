@@ -26,7 +26,7 @@ const MAX_DEPTH = 64;
 const LOCAL_ZERO: [number, number, number] = [0, 0, 0];
 const LOCAL_ONE: [number, number, number] = [1, 1, 1];
 
-// WE 场景系旋转序（AGENT.md §5.14：R = Rz·Ry·Rx）。
+// WE 场景系旋转序（AGENT.md §2.3：R = Rz·Ry·Rx）。
 const ANGLE_ORDER = 'ZYX' as const;
 
 const outEuler = /* @__PURE__ */ new THREE.Euler();
