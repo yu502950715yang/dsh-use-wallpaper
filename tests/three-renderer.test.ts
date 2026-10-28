@@ -2556,12 +2556,13 @@ describe('three-renderer 音频链路', () => {
       analyser: { connect: vi.fn() },
       freqData: new Uint8Array(64),
       update: vi.fn(),
+      setSuspended: vi.fn(),
     };
   }
 
   function stubPlayer() {
     const player = {
-      dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn(), setObjectEffectStage: vi.fn(),
+      dispose: vi.fn(), resize: vi.fn(), pause: vi.fn(), resume: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn(), setObjectEffectStage: vi.fn(),
       isolatedObjects: () => [],
     };
     loadSceneToThree.mockReturnValue({ player, sims: [], backgroundIds: [0], particleLayers: [], puppetLayers: [], } as never);
@@ -2702,6 +2703,55 @@ describe('three-renderer 音频链路', () => {
     expect(createAudioAnalyzer).toHaveBeenCalledTimes(2);
     expect(audioMocks.playWallpaperSound).toHaveBeenCalledTimes(4); // 两条 sound 重新播放
     r.dispose();
+  });
+
+  // 省电暂停（最小化/切后台）：画面之外音频也必须停，否则「最小化后还在响」= 没暂停
+  it('setPaused 同步壁纸音频：暂停挂起 context 与各句柄，恢复续播', async () => {
+    const fake = fakeAnalyzer();
+    audioMocks.createAudioAnalyzer.mockReturnValue(fake);
+    const mkHandle = () => ({ stop: vi.fn(), pause: vi.fn(), resume: vi.fn() });
+    const handles = [mkHandle(), mkHandle()];
+    audioMocks.playWallpaperSound
+      .mockResolvedValueOnce(handles[0] as never)
+      .mockResolvedValueOnce(handles[1] as never);
+    stubAssetFetch(sceneWithSound([]), {});
+    stubPlayer();
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    await r.render('3798688689', document.createElement('canvas'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    r.setPaused?.(true);
+    expect(fake.setSuspended).toHaveBeenCalledWith(true);
+    expect(handles[0].pause).toHaveBeenCalledTimes(1);
+    expect(handles[1].pause).toHaveBeenCalledTimes(1);
+
+    r.setPaused?.(false);
+    expect(fake.setSuspended).toHaveBeenLastCalledWith(false);
+    expect(handles[0].resume).toHaveBeenCalledTimes(1);
+    expect(handles[1].resume).toHaveBeenCalledTimes(1);
+    r.dispose?.();
+  });
+
+  it('装配期已暂停 / 暂停中迟到的句柄：创建后立即暂停（不得在最小化中突然出声）', async () => {
+    const fake = fakeAnalyzer();
+    audioMocks.createAudioAnalyzer.mockReturnValue(fake);
+    const late = { stop: vi.fn(), pause: vi.fn(), resume: vi.fn() };
+    const pending: Array<(handle: unknown) => void> = [];
+    audioMocks.playWallpaperSound.mockImplementation(() => new Promise((resolve) => {
+      pending.push(resolve as (handle: unknown) => void);
+    }) as never);
+    stubAssetFetch(sceneWithSound([]), {});
+    stubPlayer();
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    r.setPaused?.(true); // 装配前已暂停：装配完成即挂起
+    await r.render('3798688689', document.createElement('canvas'));
+    expect(fake.setSuspended).toHaveBeenCalledWith(true);
+    expect(pending).toHaveLength(2);
+
+    for (const resolve of pending) resolve(late);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(late.pause).toHaveBeenCalledTimes(2); // 两个迟到句柄各暂停一次
+    r.dispose?.();
   });
 });
 

@@ -8,6 +8,8 @@ export interface AudioAnalyzer {
   analyser: AnalyserNode;
   freqData: Uint8Array; // 频谱缓冲（fftSize 128 → 64 bin），字节 0-255
   update(): void;       // 刷新频谱：analyser.getByteFrequencyData(freqData)
+  /** 省电暂停：挂起/恢复整个音频图（解码路径的 source 随 context 时钟冻结）。 */
+  setSuspended(suspended: boolean): void;
 }
 
 type AudioContextCtor = new () => AudioContext;
@@ -41,6 +43,15 @@ export function createAudioAnalyzer(): AudioAnalyzer | null {
       freqData,
       update() {
         analyser.getByteFrequencyData(freqData);
+      },
+      // 省电暂停：suspend 冻结音频图（含解码路径的 BufferSource），resume 从原位置续播
+      setSuspended(suspended: boolean) {
+        try {
+          const pending = suspended ? context.suspend() : context.resume();
+          void pending.catch(() => {});
+        } catch {
+          // context 已关闭（切壁纸/收尾竞态）：静默
+        }
       },
     };
   } catch {
@@ -76,6 +87,9 @@ function armGestureResume(context: AudioContext): void {
 // 播放句柄：stop 停声并断开音频图（小文件停 AudioBufferSource，大文件停 <audio>）
 export interface PlaybackHandle {
   stop(): void;
+  /** 省电暂停（流式元素）：保留播放位置；解码路径靠 AudioAnalyzer.setSuspended 冻结。 */
+  pause?(): void;
+  resume?(): void;
 }
 
 // 大音频阈值：超过后不整块解码（Crimson 的 132MB 睡眠音乐 decode 需要 GB 级 PCM）
@@ -169,6 +183,15 @@ async function playStreamingSound(
         if (stopped) return;
         stopped = true;
         teardown();
+      },
+      // 省电暂停：<audio> 元素自己暂停（context.suspend 不会停元素时钟），恢复从原位置续播
+      pause() {
+        if (stopped) return;
+        try { el.pause(); } catch { /* 元素已释放 */ }
+      },
+      resume() {
+        if (stopped) return;
+        try { void el.play().catch(() => {}); } catch { /* 元素已释放 */ }
       },
     };
   } catch (err) {

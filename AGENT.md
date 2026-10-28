@@ -195,6 +195,8 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
 
 51. **壁纸库默认排序把收藏项置顶（2026-10-28）**：`filterLibrary` 仅 `sort === 'default'` 时稳定分区（收藏组在前、组内保持入参顺序），`recent` / `title` 是用户显式排序、不因收藏改序；零收藏时与改动前逐项一致。**不加分页/虚拟滚动**：网格是 372px 内滚 + `loading="lazy"`，当前量级下搜索/类型/收藏已足够定位，分页会与筛选、选中项可见性、计数语义冲突（判据见[决策笔记](.agents/notes/implemented/feature/2026-10-28-library-favorites-pinned.md)）。
 
+52. **壁纸音频随「暂停」一起挂起（2026-10-28）**：最小化/切后台（`pauseOnHidden`）与手动「暂停壁纸」都会停 scene 音频——`AudioAnalyzer.setSuspended` 挂起/恢复 AudioContext（解码路径随 context 时钟冻结），流式 `<audio>` 句柄另走 `pause()/resume()` 保留播放位置；装配期已暂停或暂停期间迟到的句柄会被立即挂起（不得在最小化中突然出声）。**边界**：web 壁纸 iframe 内音视频仍不可控（跨源）；系统音频采集（visualizer）不受暂停影响（见[决策笔记](.agents/notes/implemented/bug-fix/2026-10-28-audio-pause-with-wallpaper.md)）。
+
 ## 6. 工作约定
 
 - 回复、注释、文档、**提交信息一律简体中文**；代码、命令、文件名、技术术语保留原文。

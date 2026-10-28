@@ -30726,6 +30726,15 @@ function createAudioAnalyzer() {
       freqData,
       update() {
         analyser.getByteFrequencyData(freqData);
+      },
+      // 省电暂停：suspend 冻结音频图（含解码路径的 BufferSource），resume 从原位置续播
+      setSuspended(suspended) {
+        try {
+          const pending = suspended ? context.suspend() : context.resume();
+          void pending.catch(() => {
+          });
+        } catch {
+        }
       }
     };
   } catch {
@@ -30870,6 +30879,22 @@ async function playStreamingSound(url, analyzer, opts) {
         if (stopped) return;
         stopped = true;
         teardown();
+      },
+      // 省电暂停：<audio> 元素自己暂停（context.suspend 不会停元素时钟），恢复从原位置续播
+      pause() {
+        if (stopped) return;
+        try {
+          el.pause();
+        } catch {
+        }
+      },
+      resume() {
+        if (stopped) return;
+        try {
+          void el.play().catch(() => {
+          });
+        } catch {
+        }
       }
     };
   } catch (err) {
@@ -32639,6 +32664,25 @@ function createThreeSceneRenderer(opts) {
     health.recordOk(id, { assembleMs, firstFrameMs });
     publish(health.snapshot(id));
   };
+  const applyAudioPause = (audio, value) => {
+    if (value) {
+      for (const handle of audio.handles) {
+        try {
+          handle.pause?.();
+        } catch {
+        }
+      }
+      audio.analyzer.setSuspended(true);
+    } else {
+      audio.analyzer.setSuspended(false);
+      for (const handle of audio.handles) {
+        try {
+          handle.resume?.();
+        } catch {
+        }
+      }
+    }
+  };
   const stopAudio = () => {
     const audio = currentAudio;
     currentAudio = null;
@@ -32675,9 +32719,16 @@ function createThreeSceneRenderer(opts) {
           return;
         }
         audio.handles.push(handle);
+        if (paused) {
+          try {
+            handle.pause?.();
+          } catch {
+          }
+        }
       }).catch(() => {
       });
     }
+    if (paused) applyAudioPause(audio, true);
   };
   const onContextLost = (e) => {
     e.preventDefault();
@@ -33366,6 +33417,7 @@ function createThreeSceneRenderer(opts) {
     // 省电：暂停/恢复当前播放器的帧循环（无播放器时只记状态，下次装配时就地应用）。
     setPaused(value) {
       paused = value;
+      if (currentAudio) applyAudioPause(currentAudio, value);
       if (!current) return;
       if (value) current.player.pause();
       else current.player.resume();

@@ -27,6 +27,8 @@ function stubAudioContext() {
   class MockAudioContext {
     destination = {}; // T3.4：createAudioAnalyzer 把 analyser 接到 destination
     analyser = analyser;
+    suspend = vi.fn(async () => {});
+    resume = vi.fn(async () => {});
     createAnalyser() {
       return this.analyser;
     }
@@ -92,6 +94,23 @@ describe('createAudioAnalyzer（音频频谱分析器工厂）', () => {
       }
     });
     expect(createAudioAnalyzer()).toBeNull();
+  });
+
+  // 省电暂停：最小化/切后台时挂起 AudioContext（解码路径的 source 随 context 时钟冻结），恢复后续播
+  it('setSuspended：挂起调 context.suspend，恢复调 context.resume；被拒不抛', async () => {
+    const { MockAudioContext } = stubAudioContext();
+    const a = createAudioAnalyzer()!;
+    const ctx = a.context as unknown as InstanceType<typeof MockAudioContext>;
+
+    a.setSuspended(true);
+    expect(ctx.suspend).toHaveBeenCalledTimes(1);
+    a.setSuspended(false);
+    expect(ctx.resume).toHaveBeenCalledTimes(1);
+
+    // 恢复可能被 autoplay 策略拒绝 → 静默（不抛、不阻断后续调用）
+    (ctx.resume as unknown as { mockRejectedValueOnce: (e: unknown) => void }).mockRejectedValueOnce(new Error('blocked'));
+    expect(() => a.setSuspended(false)).not.toThrow();
+    await Promise.resolve();
   });
 });
 
@@ -333,6 +352,29 @@ describe('playWallpaperSound（壁纸音频播放，T3.4）', () => {
     expect(el.remove).toHaveBeenCalledTimes(1);
     expect(mediaSource.disconnect).toHaveBeenCalledTimes(1);
     expect(gain.disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  // 省电暂停：流式元素本身也要停（context.suspend 不会让 MediaElement 的时钟停下）
+  it('流式句柄 pause/resume：<audio> 暂停与续播；stop 后不再复活', async () => {
+    const { el } = stubDocument();
+    const { analyser, context } = makeStreamingAnalyzer();
+    const handle = await playWallpaperSound('u', { context, analyser } as any);
+    expect(handle).not.toBeNull();
+    expect(handle!.pause).toBeTypeOf('function');
+    expect(handle!.resume).toBeTypeOf('function');
+
+    handle!.pause!();
+    expect(el.pause).toHaveBeenCalledTimes(1);
+    handle!.resume!();
+    expect(el.play).toHaveBeenCalledTimes(2); // 创建期 1 次 + 续播 1 次
+
+    handle!.stop();
+    (el.pause as any).mockClear();
+    (el.play as any).mockClear();
+    handle!.pause!();
+    handle!.resume!();
+    expect(el.pause).not.toHaveBeenCalled(); // 已停止：不得再碰元素
+    expect(el.play).not.toHaveBeenCalled();
   });
 
   it('流式不可用（无 createMediaElementSource）→ 回退整块解码播放', async () => {

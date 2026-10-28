@@ -344,6 +344,21 @@ export function createThreeSceneRenderer(opts?: {
     publish(health.snapshot(id));
   };
 
+  // 省电暂停音频：挂起 context 冻结解码路径，流式元素另需 pause/play（保留播放位置）。
+  const applyAudioPause = (audio: NonNullable<typeof currentAudio>, value: boolean) => {
+    if (value) {
+      for (const handle of audio.handles) {
+        try { handle.pause?.(); } catch { /* 单个失败不阻断其余 */ }
+      }
+      audio.analyzer.setSuspended(true);
+    } else {
+      audio.analyzer.setSuspended(false);
+      for (const handle of audio.handles) {
+        try { handle.resume?.(); } catch { /* 同上 */ }
+      }
+    }
+  };
+
   const stopAudio = () => {
     const audio = currentAudio;
     currentAudio = null;
@@ -380,8 +395,11 @@ export function createThreeSceneRenderer(opts?: {
           return;
         }
         audio.handles.push(handle);
+        // 暂停期间迟到的句柄：立即挂起，避免最小化中突然出声
+        if (paused) { try { handle.pause?.(); } catch { /* 已释放 */ } }
       }).catch(() => {});
     }
+    if (paused) applyAudioPause(audio, true); // 装配期已在暂停态（最小化中换壁纸）：创建即挂起
   };
 
   // 上下文丢失（显存耗尽/驱动重置）→ 停播并交给上层换回该壁纸 preview（比留一块空白背景好）。
@@ -1252,6 +1270,7 @@ export function createThreeSceneRenderer(opts?: {
     // 省电：暂停/恢复当前播放器的帧循环（无播放器时只记状态，下次装配时就地应用）。
     setPaused(value: boolean) {
       paused = value;
+      if (currentAudio) applyAudioPause(currentAudio, value);
       if (!current) return;
       if (value) current.player.pause();
       else current.player.resume();
