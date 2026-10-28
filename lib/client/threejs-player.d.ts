@@ -399,6 +399,7 @@ export declare function textureSpriteInfo(tex?: THREE.Texture): {
     frames: number;
     cols: number;
     rows: number;
+    frametime?: number;
 } | undefined;
 export declare function textureFrameGrid(tex?: THREE.Texture): {
     cols: number;

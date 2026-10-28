@@ -1,9 +1,26 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fetchMdlBytes, particlesFromSpec, resolveImageAssets, resolveParticleMaterial } from '../src/client/scene-assets.js';
+import { fetchMdlBytes, fetchSceneDescription, particlesFromSpec, resolveImageAssets, resolveParticleMaterial } from '../src/client/scene-assets.js';
 import type { SceneImageObject } from '../src/shared/types.js';
 import { readFileSync } from 'node:fs';
 import { makeTex } from './fixtures/make-tex.js';
 import { TEX_FORMAT } from '../src/client/tex-loader.js';
+
+// WE 模板（GIF）的场景入口可能是 gifscene.json：入口名必须随请求下发，不能写死 scene.json。
+describe('fetchSceneDescription（场景入口名）', () => {
+  const MIN_SCENE = '{"camera":{"center":"0 0 0","eye":"0 0 1","up":"0 1 0"},"general":{"orthogonalprojection":{"width":320,"height":200}},"objects":[]}';
+  it('自定义入口名进 URL；缺省仍为 scene.json', async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true, text: async () => MIN_SCENE }));
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      await fetchSceneDescription('3809943023', 'gifscene.json');
+      expect(fetchMock).toHaveBeenLastCalledWith('/wallpapers/scene/3809943023/asset?name=gifscene.json');
+      await fetchSceneDescription('123');
+      expect(fetchMock).toHaveBeenLastCalledWith('/wallpapers/scene/123/asset?name=scene.json');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
 
 describe('particlesFromSpec (v1 subset)', () => {
   it('maps Wallpaper Engine particle json to emitter/init spec', () => {

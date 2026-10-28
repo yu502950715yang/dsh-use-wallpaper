@@ -1,7 +1,7 @@
 import type { SceneDescription, SceneImageObject } from '../shared/types.js';
 import * as THREE from 'three';
 import type { ParticleEmitterSpec, ParticleInitializerSpec } from './particles.js';
-export declare function fetchSceneDescription(id: string): Promise<SceneDescription>;
+export declare function fetchSceneDescription(id: string, entry?: string): Promise<SceneDescription>;
 export declare function particlesFromSpec(root: any): {
     emitter: ParticleEmitterSpec;
     init: ParticleInitializerSpec;

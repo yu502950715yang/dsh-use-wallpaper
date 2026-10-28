@@ -4,9 +4,10 @@ import { outlineShadow } from './text-color.js';
 import { computePointerPost } from './pointer-post.js';
 
 export function resolveBackground(info: WallpaperInfo): BackgroundPlan {
-  // scene / preset（依赖场景）/ unknown（project.json 无 type 但含 scene.pkg）都按场景渲染
+  // scene / preset（依赖场景）/ unknown（project.json 无 type 但含场景包）都按场景渲染。
+  // 入口名来自 list（WE 模板可能是 gifscene.json，缺省 scene.json）。
   if ((info.type === 'scene' || info.type === 'preset' || info.type === 'unknown') && info.hasScene) {
-    return { kind: 'scene', wallpaperId: info.id };
+    return { kind: 'scene', wallpaperId: info.id, sceneEntry: info.sceneEntry ?? 'scene.json' };
   }
   if (info.type === 'video' && info.file) {
     return { kind: 'video', url: `/wallpapers/media/${info.id}/file` };

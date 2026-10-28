@@ -93,8 +93,21 @@ const YEL = USE_COLOR ? '\x1b[33m' : '';
 const RST = USE_COLOR ? '\x1b[0m' : '';
 
 // ── scene.pkg 读取（与 research/verify-object-effects.mjs / scan-effect-multipass.mjs 同实现）──
+// 场景入口名：WE 模板可能用 project.json.file（如 gifscene.json → gifscene.pkg）；缺省 scene.json/scene.pkg。
+function sceneEntry(id) {
+  try {
+    const pj = JSON.parse(readFileSync(join(WALLPAPER_DIR, id, 'project.json'), 'utf8'));
+    const file = typeof pj.file === 'string' ? pj.file.trim() : '';
+    if (file && !file.startsWith('/') && !file.startsWith('\\') && !file.includes('..')) return file;
+  } catch {
+    // 缺 project.json → 缺省入口
+  }
+  return 'scene.json';
+}
 function readPkg(id) {
-  const pkgPath = join(WALLPAPER_DIR, id, 'scene.pkg');
+  const dir = join(WALLPAPER_DIR, id);
+  const custom = join(dir, sceneEntry(id).replace(/\.[^./\\]*$/, '') + '.pkg');
+  const pkgPath = existsSync(custom) ? custom : join(dir, 'scene.pkg');
   if (!existsSync(pkgPath)) return null;
   const buf = readFileSync(pkgPath);
   const entries = [];
@@ -113,7 +126,11 @@ function readPkg(id) {
 }
 const PKGS = new Map();
 const pkgOf = (id) => { if (!PKGS.has(id)) PKGS.set(id, readPkg(id)); return PKGS.get(id); };
-const sceneOf = (id) => JSON.parse(Buffer.from(pkgOf(id).get('scene.json')).toString('utf8'));
+const sceneOf = (id) => {
+  const files = pkgOf(id);
+  const raw = files?.get(sceneEntry(id)) ?? files?.get('scene.json');
+  return JSON.parse(Buffer.from(raw).toString('utf8'));
+};
 
 function particleNames(id) {
   const sc = sceneOf(id);
@@ -173,12 +190,12 @@ const server = createServer((req, res) => {
     const files = pkgOf(id);
     if (!files) return send('no pkg', 'text/plain', 404);
     if (noParticlesActive && particleNames(id).has(name)) return send('suppressed (variant: noparticles)', 'text/plain', 404);
-    if (STRIP_EFFECTS && name === 'scene.json') {
+    if (STRIP_EFFECTS && name === sceneEntry(id)) {
       const sc = sceneOf(id);
       const stripped = { ...sc, objects: (sc.objects ?? []).map((o) => ({ ...o, effects: [] })) };
       return send(JSON.stringify(stripped), 'application/json');
     }
-    if (ONLY_FX && name === 'scene.json') {
+    if (ONLY_FX && name === sceneEntry(id)) {
       const sc = sceneOf(id);
       const filtered = {
         ...sc,
@@ -299,7 +316,7 @@ async function runDpr(dpr, cdpPort) {
     // ★ dpr 支持：把页面的设备像素比钉到 dpr（window.devicePixelRatio = dpr）
     await send('Emulation.setDeviceMetricsOverride', { width: WINDOW.w, height: WINDOW.h, deviceScaleFactor: dpr, mobile: false });
     await send('Page.addScriptToEvaluateOnNewDocument', { source: CLOCK_SHIM });
-    await send('Page.navigate', { url: `http://127.0.0.1:${PORT}/?id=${ID}&vw=${VIEW.w}&vh=${VIEW.h}${NO_PARTICLES ? '&wasm=none' : ''}${VCLOCK ? `&vclock=${VCLOCK}` : ''}${EXP_QS}` });
+    await send('Page.navigate', { url: `http://127.0.0.1:${PORT}/?id=${ID}&vw=${VIEW.w}&vh=${VIEW.h}&entry=${encodeURIComponent(sceneEntry(ID))}${NO_PARTICLES ? '&wasm=none' : ''}${VCLOCK ? `&vclock=${VCLOCK}` : ''}${EXP_QS}` });
     const t0 = Date.now();
     let ready = null;
     while (Date.now() - t0 < 90000) {

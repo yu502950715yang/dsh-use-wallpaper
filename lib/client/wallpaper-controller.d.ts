@@ -4,7 +4,8 @@ import type { HealthSnapshot } from './render-health.js';
 import type { MediaFallback } from './media-health.js';
 import type { SystemAudioFailure } from './system-audio.js';
 export interface SceneRendererLike {
-    render(id: string, fg: HTMLCanvasElement, bg?: HTMLCanvasElement): Promise<boolean>;
+    /** entry = pkg 内场景入口 json 名（WE 模板可能是 gifscene.json；缺省 scene.json）。 */
+    render(id: string, fg: HTMLCanvasElement, bg?: HTMLCanvasElement, sceneEntry?: string): Promise<boolean>;
     dispose?(): void;
     setPaused?(paused: boolean): void;
     setQualityScale?(scale: number): void;

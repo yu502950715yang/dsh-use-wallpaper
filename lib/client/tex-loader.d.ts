@@ -33,6 +33,8 @@ export interface TexSpriteInfo {
     frames: number;
     cols: number;
     rows: number;
+    /** 首帧时长（秒）；<=0 / 缺失 = 未知（调用方保持 1fps 旧语义）。 */
+    frametime?: number;
 }
 export declare function parseTex(buf: Uint8Array): TexInfo | null;
 export declare function parseSpriteSection(buf: Uint8Array, pos: number, mipWidth: number, mipHeight: number): TexSpriteInfo | undefined;

@@ -4952,6 +4952,16 @@ describe('image 精灵表帧 UV（F13）', () => {
     player.dispose();
   });
 
+  it('TEXS frametime 覆盖缺省 1fps（0.5s/帧 = 2fps）', () => {
+    const { player } = makePlayer();
+    const tex = spriteTex(3, 1, 3);
+    tex.userData.sprite = { frames: 3, cols: 1, rows: 3, frametime: 0.5 };
+    player.addBackground({ ...IMG, texture: tex });
+    player.update(0.5); // 半秒 → 第 2 帧（1fps 时此处仍是第 1 帧）
+    expect(player.spritesheetUvForTest(123)).toEqual({ u0: 0, v0: 1 / 3, u1: 1, v1: 2 / 3 });
+    player.dispose();
+  });
+
   it('帧循环：t=2s 第 3 帧、t=3s 回到第 1 帧', () => {
     const { player } = makePlayer();
     player.addBackground({ ...IMG, texture: spriteTex(3, 1, 3) });

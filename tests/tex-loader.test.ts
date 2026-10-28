@@ -204,8 +204,15 @@ describe('parseTex 精灵表（TEXS000x）', () => {
     expect(info.sprite).toBeUndefined();
   });
 
-  it('精灵表段被截断 → sprite undefined 且不抛错', () => {
-    const full = spriteTex(4, { frames: 64, frameWidth: 128, frameHeight: 128 });
+  it('TEXS 首帧 frametime：解析为 sprite.frametime（0/缺失不写入，保持 1fps 旧语义）', () => {
+    const info = parseTex(spriteTex(4, { frames: 64, frameWidth: 128, frameHeight: 128, frametime: 0.06 }))!;
+    expect(info.sprite?.frames).toBe(64);
+    expect(info.sprite?.frametime).toBeCloseTo(0.06, 5);
+    const noTime = parseTex(spriteTex(4, { frames: 64, frameWidth: 128, frameHeight: 128 }))!;
+    expect(noTime.sprite?.frametime).toBeUndefined();
+  });
+
+  it('精灵表段被截断 → sprite undefined 且不抛错', () => {    const full = spriteTex(4, { frames: 64, frameWidth: 128, frameHeight: 128 });
     const head = full.length - 64 * 32 + 8; // 只保留 stamp + frameCount(4) 之后部分帧
     const truncated = new Uint8Array(full.subarray(0, head));
     expect(() => parseTex(truncated)).not.toThrow();
@@ -551,6 +558,15 @@ describe('textureFromTex 分支选择', () => {
     const tex = await textureFromTex(parseTex(buf)!) as THREE.DataTexture;
     expect(tex.magFilter).toBe(THREE.LinearFilter);
     expect(tex.minFilter).toBe(THREE.LinearMipmapLinearFilter);
+    expect(tex.generateMipmaps).toBe(true);
+  });
+
+  it('flags bit0（NoInterpolation）→ Nearest 采样（像素风保持锐利）', async () => {
+    const rgba = new Uint8Array(32 * 16 * 4).fill(0x80);
+    const buf = makeTex({ format: TEX_FORMAT.RGBA8888, flags: 1, images: [[{ width: 32, height: 16, data: rgba }]] });
+    const tex = await textureFromTex(parseTex(buf)!) as THREE.DataTexture;
+    expect(tex.magFilter).toBe(THREE.NearestFilter);
+    expect(tex.minFilter).toBe(THREE.NearestMipmapNearestFilter);
     expect(tex.generateMipmaps).toBe(true);
   });
 

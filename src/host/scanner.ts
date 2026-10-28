@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { WallpaperInfo, WallpaperKind } from '../shared/types.js';
+import { resolveWallpaperSceneSource } from './scene-source.js';
 
 export function kindFromProjectJson(pj: Record<string, unknown>): WallpaperKind {
   // WE 写的 type 大小写不定（实测 "Web"/"Scene"）；不归一化会掉进 unknown，
@@ -36,20 +37,22 @@ export async function scanWallpapers(dir: string): Promise<WallpaperInfo[]> {
     }
     const type = kindFromProjectJson(pj);
     const presetOf = type === 'preset' ? String(pj.dependency).trim() : undefined;
-    // preset 的 scene 资源在依赖目录（自身目录没有 scene.pkg）；依赖 id 校验为纯数字防穿越。
-    const hasScene = existsSync(join(dir, id, 'scene.pkg'))
-      || (!!presetOf && /^[0-9]+$/.test(presetOf) && existsSync(join(dir, presetOf, 'scene.pkg')));
+    // scene 包与入口：自身目录优先，preset 取依赖目录；两者都按 project.json.file 解析
+    // （WE 模板可能是 gifscene.pkg/gifscene.json，见 scene-source.ts）。
+    const scene = resolveWallpaperSceneSource(dir, id, pj);
     const preview = existsSync(join(dir, id, 'preview.gif')) ? 'gif' : existsSync(join(dir, id, 'preview.jpg')) ? 'jpg' : null;
-    out.push({
+    const info: WallpaperInfo = {
       id,
       title: String(pj.title ?? id),
       type,
       presetOf,
       file: typeof pj.file === 'string' ? pj.file : undefined,
       hasPreviewGif: preview === 'gif',
-      hasScene,
+      hasScene: scene.hasPkg,
       previewUrl: preview ? `/wallpapers/media/${id}/preview` : '',
-    });
+    };
+    if (scene.hasPkg) info.sceneEntry = scene.entry;
+    out.push(info);
   }
   return out;
 }

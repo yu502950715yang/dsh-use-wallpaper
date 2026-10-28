@@ -24,7 +24,13 @@ describe('resolveBackground', () => {
   });
   it('unknown with hasScene prefers scene plan (project.json 无 type 但含 scene.pkg)', () => {
     const plan = resolveBackground({ ...base, id: '8', type: 'unknown', hasScene: true });
-    expect(plan).toEqual({ kind: 'scene', wallpaperId: '8' });
+    expect(plan).toEqual({ kind: 'scene', wallpaperId: '8', sceneEntry: 'scene.json' });
+  });
+  it('scene 入口名随 plan 下发（自定义入口 / 缺省 scene.json）', () => {
+    expect(resolveBackground({ ...base, id: 's1', type: 'scene', hasScene: true, sceneEntry: 'gifscene.json' }))
+      .toEqual({ kind: 'scene', wallpaperId: 's1', sceneEntry: 'gifscene.json' });
+    expect(resolveBackground({ ...base, id: 's2', type: 'scene', hasScene: true }))
+      .toEqual({ kind: 'scene', wallpaperId: 's2', sceneEntry: 'scene.json' });
   });
   it('web type uses web plan with iframe url', () => {
     const plan = resolveBackground({ ...base, id: '9', type: 'web' });
@@ -112,7 +118,7 @@ describe('planWebFrameOrigin', () => {
 describe('resolveBackground：preset 壁纸（v0.9）', () => {
   it('preset 且 hasScene（依赖目录有 scene.pkg）→ scene 计划（渲染键 = preset 自身 id，host 解析依赖资源）', () => {
     const plan = resolveBackground({ ...base, id: '200', type: 'preset', hasScene: true, presetOf: '100' });
-    expect(plan).toEqual({ kind: 'scene', wallpaperId: '200' });
+    expect(plan).toEqual({ kind: 'scene', wallpaperId: '200', sceneEntry: 'scene.json' });
   });
   it('preset 但依赖缺失（hasScene=false）→ preview 图', () => {
     expect(resolveBackground({ ...base, id: '201', type: 'preset', hasScene: false }).kind).toBe('image');

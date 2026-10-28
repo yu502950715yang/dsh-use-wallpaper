@@ -427,8 +427,8 @@ describe('createWallpaperController 文字颜色（手动档优先于自动测�
 // scene 降级链（v0.8 Task 6）：渲染成功 → onSceneLive（后台抓帧入口）；
 // 失败/异常 → 可注入 sceneFallback（内嵌视频 → 抓帧 → preview）；降级自身抛错必须落回既有 preview。
 describe('createWallpaperController scene 降级链（Task 6）', () => {
-  const sceneWall = (id: string, previewUrl: string | null = '/p' + id, gif = false) =>
-    ({ id, type: 'scene', hasScene: true, hasPreviewGif: gif, previewUrl, title: 's' }) as any;
+  const sceneWall = (id: string, previewUrl: string | null = '/p' + id, gif = false, sceneEntry?: string) =>
+    ({ id, type: 'scene', hasScene: true, sceneEntry, hasPreviewGif: gif, previewUrl, title: 's' }) as any;
 
   function make(opts: {
     render?: () => Promise<boolean>;
@@ -452,8 +452,16 @@ describe('createWallpaperController scene 降级链（Task 6）', () => {
     return { layer, c, renderer };
   }
 
-  it('渲染成功 → showSceneCanvas 后调用 onSceneLive（带 info），不触发 sceneFallback', async () => {
-    const onSceneLive = vi.fn();
+  // WE 模板（GIF）：scene 入口不是 scene.json，渲染器需要拿到 list 下发的入口名。
+  it('scene 渲染把入口名传给 renderer（自定义 pkg 的 gifscene.json）', async () => {
+    const { c, renderer } = make({ walls: [sceneWall('2', '/p2', false, 'gifscene.json')] });
+    await c.load();
+    await c.select('2');
+    expect(renderer.render).toHaveBeenCalled();
+    expect((renderer.render.mock.calls[0] as unknown[])[3]).toBe('gifscene.json');
+  });
+
+  it('渲染成功 → showSceneCanvas 后调用 onSceneLive（带 info），不触发 sceneFallback', async () => {    const onSceneLive = vi.fn();
     const sceneFallback = vi.fn(async () => {});
     const { layer, c } = make({ onSceneLive, sceneFallback });
     await c.load();

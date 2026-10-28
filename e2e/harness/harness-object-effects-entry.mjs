@@ -64,6 +64,8 @@ const MAG = q.get('mag') ?? '';
 const RT_SAMPLES = q.get('rtsamples') ?? '';
 const RT_DUMP = q.get('rtdump') === '1';
 const id = q.get('id') ?? '';
+// 场景入口名（WE 模板可能是 gifscene.json；缺省 scene.json）——与生产 controller 的传参同形。
+const sceneEntry = q.get('entry') || undefined;
 const VW = Math.max(1, Math.round(Number(q.get('vw') ?? 1280)));
 const VH = Math.max(1, Math.round(Number(q.get('vh') ?? 720)));
 // `wasm=none`：注入「返回 null 的 wasm loader」= 生产入口里 `loadWasm` 的公开注入点
@@ -671,7 +673,7 @@ try {
   const renderer = WASM_NONE
     ? createThreeSceneRenderer({ loadWasm: async () => null })
     : createThreeSceneRenderer();
-  ok = await renderer.render(id, canvas);
+  ok = await renderer.render(id, canvas, undefined, sceneEntry);
   window.__fxRenderer = renderer;
 } catch (e) {
   err = String((e && e.stack) || e);

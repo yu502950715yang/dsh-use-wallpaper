@@ -24,7 +24,9 @@ export interface WallpaperInfo {
   type: WallpaperKind;
   file?: string;               // project.json 的 file 字段
   hasPreviewGif: boolean;
-  hasScene: boolean;           // 存在 scene.pkg（preset 取依赖目录）
+  hasScene: boolean;           // 存在可用的场景包（标准 scene.pkg 或 file 指定的自定义名，preset 取依赖目录）
+  /** 场景包内入口 json 名（WE 模板可能是 gifscene.json 等自定义名；仅 hasScene 时下发）。 */
+  sceneEntry?: string;
   /** WE 预设壁纸（dependency）的依赖 id：type='preset' 时存在，场景资源与属性都来自该壁纸。 */
   presetOf?: string;
   previewUrl: string;          // `/wallpapers/media/${id}/preview`

@@ -206,6 +206,27 @@ describe('createThreeSceneRenderer', () => {
     r.dispose?.();
   });
 
+  // WE 模板（GIF 导入）的 scene 入口不是 scene.json：render 必须用调用方给的入口名请求。
+  it('自定义入口名（gifscene.json）用于 scene 请求', async () => {
+    const SCENE = JSON.stringify({
+      camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+      general: { orthogonalprojection: { width: 320, height: 200 } },
+      objects: [{ id: 1, name: 'bg', image: 'models/background.json', origin: '160 100 0', scale: '1 1 1', size: '320 200' }],
+    });
+    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as any, puppetPath: null });
+    loadSceneToThree.mockReturnValue({
+      player: { dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn() },
+      sims: [], backgroundIds: [0], particleLayers: [], puppetLayers: [],
+    } as never);
+    stubAssetFetch(SCENE, {}, 'gifscene.json');
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    expect(await r.render('3809943023', document.createElement('canvas'), undefined, 'gifscene.json')).toBe(true);
+    const urls = (globalThis.fetch as unknown as { mock: { calls: [string][] } }).mock.calls.map((c) => String(c[0]));
+    expect(urls.some((u) => u.includes('name=gifscene.json'))).toBe(true);
+    expect(urls.some((u) => u.includes('name=scene.json'))).toBe(false);
+    r.dispose?.();
+  });
+
   it('dispose / 切壁纸时释放本次装配的背景纹理（视频纹理的 <video>/Blob URL 不能被 renderer.dispose 兜住）', async () => {
     // 视频纹理把 `<video>` + Blob URL 挂在纹理的 dispose 事件上，GPU 侧释放不会停解码
     // ⇒ 壁纸切换必须显式 texture.dispose()（见 AGENT.md §5.23）。
@@ -767,10 +788,10 @@ const FX_FILES_FRAME_RT: Record<string, string> = {
 
 // fetch 桩：scene.json + 资源名 → 文本。资源同时提供 arrayBuffer 形态（与 three-renderer 的
 // loadFile 实现一致：`new Uint8Array(await r.arrayBuffer())`）。
-function stubAssetFetch(scene: string, files: Record<string, string>): void {
+function stubAssetFetch(scene: string, files: Record<string, string>, entry = 'scene.json'): void {
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
     const name = new URL(String(url), 'http://localhost').searchParams.get('name') ?? '';
-    if (name === 'scene.json') return { ok: true, text: async () => scene };
+    if (name === entry) return { ok: true, text: async () => scene };
     const body = files[name];
     if (body === undefined) return { ok: false, text: async () => '' };
     const bytes = new TextEncoder().encode(body);

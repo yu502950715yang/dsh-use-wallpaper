@@ -197,6 +197,54 @@ describe('registerWallpaperRoutes', () => {
     // 内容变了 ⇒ ETag 必须变，否则浏览器带旧 If-None-Match 会被误判 304
     expect(refreshed.headers['ETag']).not.toBe(firstEtag);
   });
+  // WE 模板（GIF 导入）用 project.file 指定非标准入口：file=gifscene.json ⇒ pkg=gifscene.pkg
+  // （参考实现 we-layerd WeProjectSource.cpp::ResolveProjectSource 的规则）。
+  it('自定义 pkg 名：scene asset 走 gifscene.pkg 的入口条目', async () => {
+    const d = join(dir, '900');
+    mkdirSync(d, { recursive: true });
+    writeFileSync(join(d, 'project.json'), JSON.stringify({ type: 'scene', file: 'gifscene.json' }));
+    const sceneJson = JSON.stringify({ general: { orthogonalprojection: { width: 320, height: 200 } }, objects: [] });
+    writeFileSync(join(d, 'gifscene.pkg'), makePkg([{ name: 'gifscene.json', data: new Uint8Array(Buffer.from(sceneJson)) }]));
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
+
+    const res = makeRes();
+    await routes.get('prefix /wallpapers/scene')!({ url: '/wallpapers/scene/900/asset?name=gifscene.json' }, res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body.toString('utf8')).toBe(sceneJson);
+  });
+
+  it('自定义 pkg 名：/wallpapers/properties 从入口 json 聚合 {user} 属性', async () => {
+    const d = join(dir, '901');
+    mkdirSync(d, { recursive: true });
+    writeFileSync(join(d, 'project.json'), JSON.stringify({
+      type: 'scene',
+      file: 'gifscene.json',
+      general: { properties: { themeX: { type: 'bool', value: true, text: 'X' } } },
+    }));
+    const sceneJson = JSON.stringify({ objects: [{ id: 1, image: 'x.json', visible: { user: 'themeX' } }] });
+    writeFileSync(join(d, 'gifscene.pkg'), makePkg([{ name: 'gifscene.json', data: new Uint8Array(Buffer.from(sceneJson)) }]));
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
+
+    const res = makeRes();
+    await routes.get('exact /wallpapers/properties')!({ url: '/wallpapers/properties?id=901' }, res);
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body.toString('utf8'));
+    expect(body.properties.map((p: { key: string }) => p.key)).toEqual(['themeX']);
+  });
+
+  it('自定义 pkg 名：video-probe 探测 gifscene.pkg（无内嵌视频 → video:false）', async () => {
+    const d = join(dir, '902');
+    mkdirSync(d, { recursive: true });
+    writeFileSync(join(d, 'project.json'), JSON.stringify({ type: 'scene', file: 'gifscene.json' }));
+    writeFileSync(join(d, 'gifscene.pkg'), makePkg([{ name: 'gifscene.json', data: new Uint8Array(Buffer.from('{}')) }]));
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
+
+    const res = makeRes();
+    await routes.get('prefix /wallpapers/scene')!({ url: '/wallpapers/scene/902/video-probe' }, res);
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body.toString('utf8'))).toEqual({ video: false });
+  });
+
   it('serves preview file with content type by extension', async () => {
     mkdirSync(join(dir, '2'), { recursive: true });
     writeFileSync(join(dir, '2', 'project.json'), JSON.stringify({ type: 'scene' }));

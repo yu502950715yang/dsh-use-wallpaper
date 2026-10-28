@@ -70,6 +70,8 @@ export interface TexSpriteInfo {
   frames: number;
   cols: number;
   rows: number;
+  /** 首帧时长（秒）；<=0 / 缺失 = 未知（调用方保持 1fps 旧语义）。 */
+  frametime?: number;
 }
 
 function readI32(buf: Uint8Array, pos: number): number {
@@ -200,7 +202,7 @@ export function parseSpriteSection(
   };
   if (p + 8 + 24 > buf.length) return undefined;
   coord(); // imageId
-  coord(); // frametime
+  const frametime = coord(); // frametime（秒，GIF 模板 40 帧约 0.06）
   coord(); coord(); // x, y（帧左上角像素坐标）
   const ax0 = coord();
   const ax1 = coord();
@@ -213,7 +215,9 @@ export function parseSpriteSection(
   const rows = Math.max(1, Math.round(mipHeight / frameH));
   // 网格装不下全部帧（GIF 等非规则精灵表）→ 不按精灵表处理（对齐 owe 的保守判断）。
   if (cols * rows < frames) return undefined;
-  return { frames, cols, rows };
+  const info: TexSpriteInfo = { frames, cols, rows };
+  if (Number.isFinite(frametime) && frametime > 0) info.frametime = frametime;
+  return info;
 }
 
 // LZ4 block 解压（Wallpaper Engine .tex 内嵌为 LZ4 block，非 frame 格式）
@@ -238,10 +242,12 @@ const FLAG_SPRITE = 1 << 2;
 // Video=32（bit 5）、AlphaChannelPriority=524288（bit 19）。flags 的来源是 **.tex 文件头本身**
 //（`TextureParser.cpp:196` 读入 `header.flags`），与 scene.json / material.json 无关。
 const FLAG_CLAMP_UVS = 1 << 1;
+// flags bit 0 NoInterpolation：WE 用 NEAREST（像素风素材），与默认线性采样相反。
+const FLAG_NO_INTERPOLATION = 1 << 0;
 
 // ⚠️ 已知未实现（wrap 修复**刻意不碰**）：
-//   · bit 0 `NoInterpolation`：WE 用 NEAREST（`CTexture.cpp:185-191`），而 applyLinearSampling 无条件设
-//     Linear/Mipmap ⇒ 带该位的像素风纹理会被线性插值（偏糊）。
+//   · bit 0 `NoInterpolation`：WE 用 NEAREST（`CTexture.cpp:185-191`）—— 已由 applySampling 消费
+//     （带该位的像素风纹理走 Nearest + mip，不再被无条件线性插值）。
 //   · bit 3 `ClampUVsBorder`：WE 对**渲染目标**用 GL_CLAMP_TO_BORDER（`CFBO.cpp:29-31`）；磁盘 .tex 在参考
 //     实现里只有 ClampUVs 分支、该位落到 else 的 REPEAT（`CTexture.cpp:177-183`），three 亦无对应常量 ⇒ 视作 REPEAT。
 //   · bit 19 `AlphaChannelPriority`：R8/RG88 的「alpha 写在 G/R 通道」语义，权威来源是该位，现由
@@ -460,9 +466,15 @@ export async function textureFromTex(info: TexInfo, opts?: TexLoadOptions): Prom
   // 过滤/采样：three.js `DataTexture` 缺省 **NearestFilter**（放大成马赛克方块、缩小无 mip 抗锯齿 ⇒ 观感「糊」）。
   // 这里对非压缩背景/粒子纹理统一设 `magFilter=LinearFilter` + `minFilter=LinearMipmapLinearFilter` +
   // `generateMipmaps=true`：1:1 清晰、放大柔和、缩小抗锯齿（three r170 仅 WebGL2，NPOT 也能生成 mip）。
-  const applyLinearSampling = (tex: THREE.Texture): void => {
-    tex.magFilter = THREE.LinearFilter;
-    tex.minFilter = THREE.LinearMipmapLinearFilter;
+  // 例外：tex flags bit 0（NoInterpolation）= 像素风素材声明点过滤 → Nearest（保持锐利）。
+  const applySampling = (tex: THREE.Texture, info: TexInfo): void => {
+    if ((info.flags & FLAG_NO_INTERPOLATION) !== 0) {
+      tex.magFilter = THREE.NearestFilter;
+      tex.minFilter = THREE.NearestMipmapNearestFilter;
+    } else {
+      tex.magFilter = THREE.LinearFilter;
+      tex.minFilter = THREE.LinearMipmapLinearFilter;
+    }
     tex.generateMipmaps = true;
     tex.needsUpdate = true;
   };
@@ -522,7 +534,7 @@ export async function textureFromTex(info: TexInfo, opts?: TexLoadOptions): Prom
       const tex = new THREE.Texture(bitmap as unknown as HTMLImageElement);
       tex.flipY = false;
       applyWrap(tex, info);
-      applyLinearSampling(tex);
+      applySampling(tex, info);
       // 上传尺寸 = 解码后的 bitmap 尺寸（three 按 bitmap 宽高上传，与 mip0 记录无关）。
       return withSprite(tex, bitmap.width, bitmap.height);
     } catch {
@@ -542,7 +554,7 @@ export async function textureFromTex(info: TexInfo, opts?: TexLoadOptions): Prom
     const rows = topDown ? src : flipRows(src, cropped.width, cropped.height, 4);
     const tex = new THREE.DataTexture(rows, cropped.width, cropped.height, THREE.RGBAFormat);
     applyWrap(tex, info);
-    applyLinearSampling(tex);
+    applySampling(tex, info);
     // 上传尺寸 = cropToMap 的返回（早返回为 mip0 记录，行裁剪为 floor(min(image,mip))）。
     return withSprite(tex, cropped.width, cropped.height);
   }

@@ -506,7 +506,7 @@ export function createThreeSceneRenderer(opts?: {
   // 指针：整个 renderer 生命周期一个 tracker（幂等装/卸），每次 render 把最新值下发给 player。
   const pointer = createPointerTracker();
   return {
-    async render(id, fg, _bg) {
+    async render(id, fg, _bg, sceneEntry = 'scene.json') {
       // 诊断去重集合的生命周期 = 当前壁纸：每次 render 清空，避免跨壁纸累积而漏报新壁纸的告警。
       warnedKeys.clear();
       // 新一次装配（新 canvas）重新开始：复位上一次的上下文丢失标记。
@@ -534,7 +534,7 @@ export function createThreeSceneRenderer(opts?: {
         // 拉取场景描述并解析（与 wasm-renderer 共用 parseSceneJson，对象归类/正交尺寸一致）。
         let sceneJsonResp: Response;
         try {
-          sceneJsonResp = await fetch(`/wallpapers/scene/${id}/asset?name=scene.json`);
+          sceneJsonResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(sceneEntry)}`);
         } catch (e) {
           // 网络/磁盘一时没供上 ⇒ 软失败（不落盘，冷却后自动重试一次）
           fail(id, 'load-error', e instanceof Error ? e.message : String(e));

@@ -36,6 +36,7 @@ export interface MakeTexSpriteSpec {
   frameWidth: number;
   frameHeight: number;
   atlas?: [number, number];   // texs>=3 时的 atlas 尺寸
+  frametime?: number;         // 每帧时长（秒，TEXS 记录的 f32；缺省 0）
 }
 
 function lz4Compress(data: Uint8Array): Uint8Array {
@@ -124,7 +125,7 @@ export function makeTex(opts: MakeTexOptions): Buffer {
     for (let f = 0; f < sp.frames; f++) {
       const rec = Buffer.alloc(8 + 24);
       rec.writeInt32LE(0, 0);                                   // imageId
-      rec.writeFloatLE(0, 4);                                   // frametime
+      rec.writeFloatLE(sp.frametime ?? 0, 4);                   // frametime（秒）
       const coords = [
         (f % cols) * sp.frameWidth, Math.floor(f / cols) * sp.frameHeight,
         sp.frameWidth, 0, 0, sp.frameHeight,

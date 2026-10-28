@@ -68,8 +68,7 @@ describe('scanWallpapers', () => {
 });
 
 
-describe('preset 壁纸（WE 预设：dependency + preset，无 type/file）', () => {
-  it('kindFromProjectJson：无 type 但有 dependency → preset；空 dependency → unknown', () => {
+describe('preset 壁纸（WE 预设：dependency + preset，无 type/file）', () => {  it('kindFromProjectJson：无 type 但有 dependency → preset；空 dependency → unknown', () => {
     expect(kindFromProjectJson({ dependency: '3118949804' })).toBe('preset');
     expect(kindFromProjectJson({ dependency: '3118949804', preset: { speed: 2 } })).toBe('preset');
     expect(kindFromProjectJson({ dependency: '  ' })).toBe('unknown');
@@ -88,5 +87,58 @@ describe('preset 壁纸（WE 预设：dependency + preset，无 type/file）', (
     const orphan = list.find((w) => w.id === '300')!;
     expect(orphan.type).toBe('preset');
     expect(orphan.hasScene).toBe(false);
+  });
+});
+
+// WE 模板（如 GIF 导入）会用 `project.json.file` 指定非标准入口：file="gifscene.json"
+// ⇒ pkg 名 = 扩展名换成 .pkg（参考实现 we-layerd WeProjectSource.cpp::ResolveProjectSource）。
+describe('scene 入口解析（project.file 指定自定义 pkg/入口名）', () => {
+  it('file=gifscene.json + gifscene.pkg → hasScene=true、sceneEntry=gifscene.json', async () => {
+    addWallpaper('400', { title: 'GIF', type: 'scene', file: 'gifscene.json' }, ['gifscene.pkg', 'preview.gif']);
+    const list = await scanWallpapers(dir);
+    const w = list.find((x) => x.id === '400')!;
+    expect(w.hasScene).toBe(true);
+    expect(w.sceneEntry).toBe('gifscene.json');
+  });
+
+  it('标准 scene.pkg → sceneEntry 缺省 scene.json', async () => {
+    addWallpaper('401', { title: 'Std', type: 'scene' }, ['scene.pkg']);
+    const w = (await scanWallpapers(dir)).find((x) => x.id === '401')!;
+    expect(w.hasScene).toBe(true);
+    expect(w.sceneEntry).toBe('scene.json');
+  });
+
+  it('非法 file（../ 或绝对路径）→ 回退标准名，不越界', async () => {
+    addWallpaper('402', { title: 'Bad', type: 'scene', file: '../evil.json' }, ['scene.pkg']);
+    addWallpaper('403', { title: 'Abs', type: 'scene', file: 'C:/evil.json' }, ['scene.pkg']);
+    const list = await scanWallpapers(dir);
+    for (const id of ['402', '403']) {
+      const w = list.find((x) => x.id === id)!;
+      expect(w.hasScene).toBe(true);
+      expect(w.sceneEntry).toBe('scene.json');
+    }
+  });
+
+  it('file 指向的 pkg 不存在 → 回退标准 scene.pkg/scene.json', async () => {
+    addWallpaper('404', { title: 'Missing', type: 'scene', file: 'custom.json' }, ['scene.pkg']);
+    const w = (await scanWallpapers(dir)).find((x) => x.id === '404')!;
+    expect(w.hasScene).toBe(true);
+    expect(w.sceneEntry).toBe('scene.json');
+  });
+
+  it('preset 的入口取依赖壁纸自己的 file', async () => {
+    addWallpaper('100', { title: 'Base', type: 'scene', file: 'gifscene.json' }, ['gifscene.pkg']);
+    addWallpaper('200', { title: 'Preset', dependency: '100' }, ['preview.jpg']);
+    const list = await scanWallpapers(dir);
+    const preset = list.find((x) => x.id === '200')!;
+    expect(preset.hasScene).toBe(true);
+    expect(preset.sceneEntry).toBe('gifscene.json');
+  });
+
+  it('非 scene 壁纸不下发 sceneEntry', async () => {
+    addWallpaper('500', { title: 'Video', type: 'video', file: 'a.mp4' }, ['a.mp4']);
+    const w = (await scanWallpapers(dir)).find((x) => x.id === '500')!;
+    expect(w.hasScene).toBe(false);
+    expect(w.sceneEntry).toBeUndefined();
   });
 });

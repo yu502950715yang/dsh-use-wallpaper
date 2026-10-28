@@ -2852,7 +2852,7 @@ function computePointerPost(ev, box, tag) {
 // src/client/background-layer.ts
 function resolveBackground(info) {
   if ((info.type === "scene" || info.type === "preset" || info.type === "unknown") && info.hasScene) {
-    return { kind: "scene", wallpaperId: info.id };
+    return { kind: "scene", wallpaperId: info.id, sceneEntry: info.sceneEntry ?? "scene.json" };
   }
   if (info.type === "video" && info.file) {
     return { kind: "video", url: `/wallpapers/media/${info.id}/file` };
@@ -3366,10 +3366,10 @@ function createWallpaperController(layer, opts) {
         if (opts.sceneRenderer) {
           const fg = document.createElement("canvas");
           try {
-            let ok = await opts.sceneRenderer.render(plan.wallpaperId, fg);
+            let ok = await opts.sceneRenderer.render(plan.wallpaperId, fg, void 0, plan.sceneEntry);
             if (!ok) {
               const fg2 = document.createElement("canvas");
-              ok = await opts.sceneRenderer.render(plan.wallpaperId, fg2);
+              ok = await opts.sceneRenderer.render(plan.wallpaperId, fg2, void 0, plan.sceneEntry);
               if (ok) {
                 if (gen !== selectGeneration) return;
                 layer.showSceneCanvas(fg2);
@@ -24995,7 +24995,8 @@ var ThreeScenePlayer = class {
       cols: Math.max(1, Math.floor(sprite.cols)),
       rows: Math.max(1, Math.floor(sprite.rows)),
       elapsed: 0,
-      fps: 1,
+      // 帧率 = 首帧 frametime 的倒数（缺省 1fps）；clamp 0.1–240 防畸形素材把动画打飞。
+      fps: sprite.frametime && sprite.frametime > 0 ? Math.min(240, Math.max(0.1, 1 / sprite.frametime)) : 1,
       frame: -1,
       paused: false,
       baseUv: attr ? Float32Array.from(attr.array) : new Float32Array(0),
@@ -26329,8 +26330,9 @@ function textureSpriteInfo(tex) {
   const frames = typeof s.frames === "number" ? Math.floor(s.frames) : 0;
   const cols = typeof s.cols === "number" ? Math.floor(s.cols) : 0;
   const rows = typeof s.rows === "number" ? Math.floor(s.rows) : 0;
+  const frametime = typeof s.frametime === "number" && Number.isFinite(s.frametime) && s.frametime > 0 ? s.frametime : void 0;
   if (frames <= 0 || cols <= 0 || rows <= 0) return void 0;
-  return { frames, cols, rows };
+  return frametime !== void 0 ? { frames, cols, rows, frametime } : { frames, cols, rows };
 }
 function textureFrameGrid(tex) {
   const sprite = textureSpriteInfo(tex);
@@ -26734,7 +26736,7 @@ function parseSpriteSection(buf, pos, mipWidth, mipHeight) {
   };
   if (p + 8 + 24 > buf.length) return void 0;
   coord();
-  coord();
+  const frametime = coord();
   coord();
   coord();
   const ax0 = coord();
@@ -26747,7 +26749,9 @@ function parseSpriteSection(buf, pos, mipWidth, mipHeight) {
   const cols = Math.max(1, Math.round(mipWidth / frameW));
   const rows = Math.max(1, Math.round(mipHeight / frameH));
   if (cols * rows < frames) return void 0;
-  return { frames, cols, rows };
+  const info = { frames, cols, rows };
+  if (Number.isFinite(frametime) && frametime > 0) info.frametime = frametime;
+  return info;
 }
 function lz4Decompress(src, decompressedSize) {
   const out = new Uint8Array(decompressedSize);
@@ -26756,6 +26760,7 @@ function lz4Decompress(src, decompressedSize) {
 }
 var FLAG_SPRITE = 1 << 2;
 var FLAG_CLAMP_UVS = 1 << 1;
+var FLAG_NO_INTERPOLATION = 1 << 0;
 function cropToMap(data, mipWidth, mipHeight, mapWidth, mapHeight, format, flags) {
   const valid = Number.isFinite(mapWidth) && Number.isFinite(mapHeight) && mapWidth > 0 && mapHeight > 0;
   const cw = valid ? Math.min(Math.floor(mapWidth), mipWidth) : mipWidth;
@@ -26888,9 +26893,14 @@ async function textureFromTex(info, opts) {
     tex.userData = ud;
     return tex;
   };
-  const applyLinearSampling = (tex) => {
-    tex.magFilter = LinearFilter;
-    tex.minFilter = LinearMipmapLinearFilter;
+  const applySampling = (tex, info2) => {
+    if ((info2.flags & FLAG_NO_INTERPOLATION) !== 0) {
+      tex.magFilter = NearestFilter;
+      tex.minFilter = NearestMipmapNearestFilter;
+    } else {
+      tex.magFilter = LinearFilter;
+      tex.minFilter = LinearMipmapLinearFilter;
+    }
     tex.generateMipmaps = true;
     tex.needsUpdate = true;
   };
@@ -26924,7 +26934,7 @@ async function textureFromTex(info, opts) {
       const tex = new Texture(bitmap);
       tex.flipY = false;
       applyWrap(tex, info);
-      applyLinearSampling(tex);
+      applySampling(tex, info);
       return withSprite(tex, bitmap.width, bitmap.height);
     } catch {
       return null;
@@ -26936,7 +26946,7 @@ async function textureFromTex(info, opts) {
     const rows = topDown ? src : flipRows(src, cropped.width, cropped.height, 4);
     const tex = new DataTexture(rows, cropped.width, cropped.height, RGBAFormat);
     applyWrap(tex, info);
-    applyLinearSampling(tex);
+    applySampling(tex, info);
     return withSprite(tex, cropped.width, cropped.height);
   }
   const glFormat = FORMAT_TO_GL[info.format];
@@ -32820,7 +32830,7 @@ function createThreeSceneRenderer(opts) {
   });
   const pointer = createPointerTracker();
   return {
-    async render(id, fg, _bg) {
+    async render(id, fg, _bg, sceneEntry = "scene.json") {
       warnedKeys.clear();
       contextLost = false;
       frameCapture?.reset();
@@ -32837,7 +32847,7 @@ function createThreeSceneRenderer(opts) {
         if (abortIfContextLost()) return false;
         let sceneJsonResp;
         try {
-          sceneJsonResp = await fetch(`/wallpapers/scene/${id}/asset?name=scene.json`);
+          sceneJsonResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(sceneEntry)}`);
         } catch (e) {
           fail(id, "load-error", e instanceof Error ? e.message : String(e));
           teardownQuietly();

@@ -67,7 +67,7 @@ type BackgroundEntry = {
 };
 
 // image 精灵表图层：按 TEXS 帧网格逐帧把当前帧子矩形写进 quad 的 uv（材质 combos.spritesheet=1）。
-// 帧率缺省 1fps（TEXS 的 frametime 未解析；WE 的 sequencemultiplier 在 image 材质中不存在）。
+// 帧率 = TEXS 首帧 frametime 的倒数（缺省 1fps；WE 的 sequencemultiplier 在 image 材质中不存在）。
 type SpriteSheetLayer = {
   // 所属背景图层计数器 id（resizeBackground 换几何后按它找回本层重写 UV）。
   backgroundId: number;
@@ -1005,7 +1005,7 @@ export class ThreeScenePlayer {
     backgroundId: number,
     objectId: number,
     mesh: THREE.Mesh,
-    sprite: { frames: number; cols: number; rows: number },
+    sprite: { frames: number; cols: number; rows: number; frametime?: number },
   ): void {
     const attr = (mesh.geometry as THREE.BufferGeometry).attributes?.uv;
     const layer: SpriteSheetLayer = {
@@ -1015,7 +1015,10 @@ export class ThreeScenePlayer {
       cols: Math.max(1, Math.floor(sprite.cols)),
       rows: Math.max(1, Math.floor(sprite.rows)),
       elapsed: 0,
-      fps: 1,
+      // 帧率 = 首帧 frametime 的倒数（缺省 1fps）；clamp 0.1–240 防畸形素材把动画打飞。
+      fps: sprite.frametime && sprite.frametime > 0
+        ? Math.min(240, Math.max(0.1, 1 / sprite.frametime))
+        : 1,
       frame: -1,
       paused: false,
       baseUv: attr ? Float32Array.from(attr.array as ArrayLike<number>) : new Float32Array(0),
@@ -2873,15 +2876,18 @@ export function textureFrameCount(tex?: THREE.Texture): number {
 // 非法/缺失 → undefined（调用方回退「按宽高推帧数 + 横向等分」的旧语义）。
 export function textureSpriteInfo(
   tex?: THREE.Texture,
-): { frames: number; cols: number; rows: number } | undefined {
+): { frames: number; cols: number; rows: number; frametime?: number } | undefined {
   const raw = (tex?.userData as { sprite?: unknown } | undefined)?.sprite;
   if (!raw || typeof raw !== 'object') return undefined;
-  const s = raw as { frames?: unknown; cols?: unknown; rows?: unknown };
+  const s = raw as { frames?: unknown; cols?: unknown; rows?: unknown; frametime?: unknown };
   const frames = typeof s.frames === 'number' ? Math.floor(s.frames) : 0;
   const cols = typeof s.cols === 'number' ? Math.floor(s.cols) : 0;
   const rows = typeof s.rows === 'number' ? Math.floor(s.rows) : 0;
+  const frametime = typeof s.frametime === 'number' && Number.isFinite(s.frametime) && s.frametime > 0
+    ? s.frametime
+    : undefined;
   if (frames <= 0 || cols <= 0 || rows <= 0) return undefined;
-  return { frames, cols, rows };
+  return frametime !== undefined ? { frames, cols, rows, frametime } : { frames, cols, rows };
 }
 
 // 帧网格（列×行）：精灵表 → 真实网格；否则 → { cols: frameCount, rows: 1 }（横向等分，旧行为）。

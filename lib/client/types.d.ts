@@ -8,6 +8,7 @@ export type BackgroundPlan = {
 } | {
     kind: 'scene';
     wallpaperId: string;
+    sceneEntry: string;
 } | {
     kind: 'web';
     url: string;

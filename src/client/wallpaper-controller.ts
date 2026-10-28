@@ -9,7 +9,8 @@ import type { SystemAudioFailure } from './system-audio.js';
 
 // scene 渲染器的接口形态（three-renderer 的生产实现与测试替身都按此形状提供）。
 export interface SceneRendererLike {
-  render(id: string, fg: HTMLCanvasElement, bg?: HTMLCanvasElement): Promise<boolean>;
+  /** entry = pkg 内场景入口 json 名（WE 模板可能是 gifscene.json；缺省 scene.json）。 */
+  render(id: string, fg: HTMLCanvasElement, bg?: HTMLCanvasElement, sceneEntry?: string): Promise<boolean>;
   // 释放渲染器持有的场景资源（壁纸切换/卸载时调用，防泄漏）。
   dispose?(): void;
   // 以下为可选运行期下发；未实现的渲染器忽略即可。
@@ -207,12 +208,12 @@ export function createWallpaperController(
           // **不是**真正渲染的那个，真机排查因此被误导。
           const fg = document.createElement('canvas');
           try {
-            let ok = await opts.sceneRenderer.render(plan.wallpaperId, fg);
+            let ok = await opts.sceneRenderer.render(plan.wallpaperId, fg, undefined, plan.sceneEntry);
             if (!ok) {
               // 失败时 fg 可能已被绑定 WebGPU context ⇒ 重建 canvas 重试一次（组合层对已失败壁纸直接返回
               // false，重试仍失败就落入下方降级链）。
               const fg2 = document.createElement('canvas');
-              ok = await opts.sceneRenderer.render(plan.wallpaperId, fg2);
+              ok = await opts.sceneRenderer.render(plan.wallpaperId, fg2, undefined, plan.sceneEntry);
               if (ok) {
                 if (gen !== selectGeneration) return;
                 layer.showSceneCanvas(fg2);

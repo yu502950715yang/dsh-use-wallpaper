@@ -2,6 +2,7 @@ import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import type { Readable } from 'node:stream';
 import { join, resolve, sep } from 'node:path';
 import { createWallpaperListCache } from './list-cache.js';
+import { resolveWallpaperSceneSource } from './scene-source.js';
 import { injectPointerShim } from '../shared/pointer-shim.js';
 import { PkgReader } from './pkg-reader.js';
 import { probeSteamPaths, readSteamInstallPathFromRegistry, readLibraryFoldersVdf, DEFAULT_STEAM_ROOTS } from './steam-paths.js';
@@ -262,21 +263,10 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
     const dir = () => opts.state?.wallpaperDir ?? opts.wallpaperDir ?? '';
     const assetsDir = () => opts.state?.weAssetsDir ?? opts.weAssetsDir;
 
-  // preset 壁纸（WE 预设：无 type/file，只有 dependency+preset+preview）的 scene 资源与属性都来自依赖目录。
-  function sceneResourceDir(id: string): string {
-    const own = join(dir(), id);
-    if (existsSync(join(own, 'scene.pkg'))) return own;
-    try {
-      const pj = JSON.parse(readFileSync(join(own, 'project.json'), 'utf8')) as { dependency?: unknown };
-      const dep = typeof pj.dependency === 'string' ? pj.dependency.trim() : '';
-      if (dep && isSafeToken(dep)) {
-        const depDir = join(dir(), dep);
-        if (existsSync(join(depDir, 'scene.pkg'))) return depDir;
-      }
-    } catch {
-      // 自身项目不可读 → 用自身目录（调用方按无资源处理）
-    }
-    return own;
+  // scene 资源解析：pkg 名与入口名来自 project.json.file（WE 模板可能是 gifscene.pkg）；preset 取依赖目录。
+  // 规则见 scene-source.ts（对齐 we-layerd WeProjectSource.cpp::ResolveProjectSource）。
+  function sceneSourceOf(id: string) {
+    return resolveWallpaperSceneSource(dir(), id);
   }
 
   // preset 属性默认值覆盖：preset 自身 project.json 的 `preset` 对象按属性 key 替换依赖默认值。
@@ -377,7 +367,7 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
         const action = segs[3];
         if (action === 'video-probe' || action === 'embedded-video') {
           if (!isSafeToken(id)) return json(res, 400, { error: 'bad id' });
-          const pkgPath = join(sceneResourceDir(id), 'scene.pkg');
+          const pkgPath = sceneSourceOf(id).pkgPath;
           if (action === 'video-probe') {
             // 探测失败按无视频处理（降级链继续走抓帧/预览，不向调用方抛错）
             const video = existsSync(pkgPath) && probeEmbeddedMp4(pkgPath);
@@ -402,7 +392,7 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
         if (!name || !/^[\p{L}\p{N}\p{P} ._\/-]+$/u.test(name) || name.includes('..')) {
           return json(res, 400, { error: 'bad name' });
         }
-        const pkgPath = join(sceneResourceDir(id), 'scene.pkg');
+        const pkgPath = sceneSourceOf(id).pkgPath;
         // ① pkg 条目（WE 挂载顺序里壁纸包先于引擎 assets）：只取区间元数据，流式不读整块
         let source: SceneAssetSource | null = null;
         if (existsSync(pkgPath)) {
@@ -592,7 +582,7 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
         // ① 壁纸 scene.pkg。缺 id / pkg 无该条目 → 落回引擎目录（不因 pkg 未命中而报错）。
         const id = search.get('id') ?? '';
         if (id && isSafeToken(id)) {
-          const pkgPath = join(sceneResourceDir(id), 'scene.pkg');
+          const pkgPath = sceneSourceOf(id).pkgPath;
           if (existsSync(pkgPath)) {
             try {
               const entry = getPkgReader(pkgPath).readEntry(`materials/${name}.tex`);
@@ -640,7 +630,8 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
         const id = search.get('id') ?? '';
         if (!isSafeToken(id)) return json(res, 400, { error: 'bad id' });
         // preset 壁纸（dependency）的属性与 scene 资源都来自依赖目录；音频标记同源。
-        const resDir = sceneResourceDir(id);
+        const src = sceneSourceOf(id);
+        const resDir = src.resDir;
         let projectJson: unknown = null;
         let sceneJson: unknown = null;
         try {
@@ -648,10 +639,9 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
         } catch {
           // project.json 缺失/不可读/坏 JSON → 属性为空
         }
-        const pkgPath = join(resDir, 'scene.pkg');
-        if (existsSync(pkgPath)) {
+        if (existsSync(src.pkgPath)) {
           try {
-            const entry = getPkgReader(pkgPath).readEntry('scene.json');
+            const entry = getPkgReader(src.pkgPath).readEntry(src.entry);
             if (entry) sceneJson = JSON.parse(entry.toString('utf8'));
           } catch {
             // pkg 不可读 / 无 scene.json / 坏 JSON → 属性为空

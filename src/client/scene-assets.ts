@@ -10,9 +10,10 @@ function vec3(s: unknown): [number, number, number] {
   return [p[0] ?? 0, p[1] ?? 0, p[2] ?? 0];
 }
 
-export async function fetchSceneDescription(id: string): Promise<SceneDescription> {
-  const resp = await fetch(`/wallpapers/scene/${id}/asset?name=scene.json`);
-  if (!resp.ok) throw new Error('scene.json fetch failed');
+// entry = pkg 内场景入口 json 名（WE 模板可能是 gifscene.json；缺省 scene.json）。
+export async function fetchSceneDescription(id: string, entry = 'scene.json'): Promise<SceneDescription> {
+  const resp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(entry)}`);
+  if (!resp.ok) throw new Error(`${entry} fetch failed`);
   return parseSceneJson(await resp.text());
 }
 
