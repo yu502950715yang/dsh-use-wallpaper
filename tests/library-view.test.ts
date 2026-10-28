@@ -57,6 +57,18 @@ describe('filterLibrary', () => {
     expect(ids(filterLibrary(list, filter({ types: ['video'], query: 'cl' }), state()))).toEqual(['3']);
   });
 
+  it('default 排序下收藏项置顶，组内保持原列表顺序', () => {
+    expect(ids(filterLibrary(list, filter(), state({ favorites: new Set(['3']) })))).toEqual(['3', '1', '2']);
+    // 多个收藏：按入参顺序而非 Set 插入序
+    expect(ids(filterLibrary(list, filter(), state({ favorites: new Set(['3', '1']) })))).toEqual(['1', '3', '2']);
+  });
+
+  it('显式排序（title / recent）不因收藏改序', () => {
+    const fav = state({ favorites: new Set(['1']), recent: { '3': 2, '1': 1 } });
+    expect(ids(filterLibrary(list, filter({ sort: 'title' }), fav))).toEqual(['3', '2', '1']);
+    expect(ids(filterLibrary(list, filter({ sort: 'recent' }), fav))).toEqual(['3', '1', '2']);
+  });
+
   it('default 保持入参顺序；title 按标题；recent 缺省为 0 排后且同分稳定', () => {
     expect(ids(filterLibrary(list, filter(), state()))).toEqual(['1', '2', '3']);
     expect(ids(filterLibrary(list, filter({ sort: 'title' }), state()))).toEqual(['3', '2', '1']);

@@ -33589,6 +33589,9 @@ function filterLibrary(list, f, s) {
   });
   if (f.sort === "recent") out = [...out].sort((a, b) => (s.recent[b.id] ?? 0) - (s.recent[a.id] ?? 0));
   if (f.sort === "title") out = [...out].sort((a, b) => a.title.localeCompare(b.title));
+  if (f.sort === "default") {
+    out = [...out.filter((w) => s.favorites.has(w.id)), ...out.filter((w) => !s.favorites.has(w.id))];
+  }
   return out;
 }
 
@@ -33713,8 +33716,8 @@ function createRotationScheduler(deps) {
 
 // src/client/settings-section.tsx
 var import_jsx_runtime = require("react/jsx-runtime");
-async function defaultFetchWallpapers() {
-  return (await fetch("/wallpapers/list")).json();
+async function defaultFetchWallpapers(opts) {
+  return (await fetch(opts?.refresh ? "/wallpapers/list?refresh=1" : "/wallpapers/list")).json();
 }
 async function defaultFetchProbe() {
   return (await fetch("/wallpapers/probe")).json();
@@ -33982,7 +33985,7 @@ function WallpaperSettingsSection(props) {
   }, [onSelect, writeSettings]);
   const refreshWallpapers = (0, import_react.useCallback)(() => {
     setMessage("");
-    void fetchWallpapers().then((list) => {
+    void fetchWallpapers({ refresh: true }).then((list) => {
       setWallpapers(list);
       setMessage("\u58C1\u7EB8\u5217\u8868\u5DF2\u5237\u65B0");
     }).catch(() => setMessage("\u5237\u65B0\u58C1\u7EB8\u5931\u8D25"));

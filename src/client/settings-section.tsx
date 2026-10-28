@@ -28,8 +28,8 @@ export interface WallpaperSettingsSectionProps {
   fetchSettings?: () => Promise<ClientSettings>;
   /** 持久化设置（默认 RPC settings.update）；返回 false = 未写入（服务端拒绝/无可用命名空间） */
   writeSettings?: (patch: Partial<ClientSettings>) => Promise<boolean | void>;
-  /** 拉取壁纸列表（默认 GET /wallpapers/list） */
-  fetchWallpapers?: () => Promise<WallpaperInfo[]>;
+  /** 拉取壁纸列表（refresh 时带 ?refresh=1 强制重扫） */
+  fetchWallpapers?: (opts?: { refresh?: boolean }) => Promise<WallpaperInfo[]>;
   /** 自动探测候选路径（默认 GET /wallpapers/probe） */
   fetchProbe?: () => Promise<ProbeResult>;
   /** 拉取当前 scene 壁纸的用户属性（默认 GET /wallpapers/properties） */
@@ -48,8 +48,8 @@ export interface WallpaperSettingsSectionProps {
   onClearRenderFailures?: () => void;
 }
 
-async function defaultFetchWallpapers(): Promise<WallpaperInfo[]> {
-  return (await fetch('/wallpapers/list')).json();
+async function defaultFetchWallpapers(opts?: { refresh?: boolean }): Promise<WallpaperInfo[]> {
+  return (await fetch(opts?.refresh ? '/wallpapers/list?refresh=1' : '/wallpapers/list')).json();
 }
 
 async function defaultFetchProbe(): Promise<ProbeResult> {
@@ -403,7 +403,7 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
   // 刷新壁纸列表：重新从壁纸目录拉取最新列表（壁纸目录变更后手动刷新用）
   const refreshWallpapers = useCallback(() => {
     setMessage('');
-    void fetchWallpapers()
+    void fetchWallpapers({ refresh: true })
       .then((list) => {
         setWallpapers(list);
         setMessage('壁纸列表已刷新');

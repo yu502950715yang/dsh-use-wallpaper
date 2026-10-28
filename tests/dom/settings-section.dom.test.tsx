@@ -774,6 +774,20 @@ describe('WallpaperSettingsSection', () => {
     localStorage.clear();
   });
 
+  it('壁纸库：默认排序下收藏置顶，取消收藏恢复原序', async () => {
+    localStorage.clear();
+    mount();
+    await flush();
+    expect([...container.querySelectorAll<HTMLElement>('.wss-thumb')].map((el) => el.dataset.id)).toEqual(['1', '2']);
+    (container.querySelector('.wss-fav[data-id="2"]') as HTMLElement).click();
+    await flush();
+    expect([...container.querySelectorAll<HTMLElement>('.wss-thumb')].map((el) => el.dataset.id)).toEqual(['2', '1']);
+    (container.querySelector('.wss-fav[data-id="2"]') as HTMLElement).click();
+    await flush();
+    expect([...container.querySelectorAll<HTMLElement>('.wss-thumb')].map((el) => el.dataset.id)).toEqual(['1', '2']);
+    localStorage.clear();
+  });
+
   it('壁纸库：全部隐藏且未开启显示 → 空结果文案含隐藏数量', async () => {
     localStorage.clear();
     mount();

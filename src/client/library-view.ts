@@ -79,5 +79,9 @@ export function filterLibrary(list: WallpaperInfo[], f: LibraryFilter, s: Librar
   // 默认排序保持入参顺序；recent 缺省时间戳视为 0（排后），同分由稳定排序保持原序。
   if (f.sort === 'recent') out = [...out].sort((a, b) => (s.recent[b.id] ?? 0) - (s.recent[a.id] ?? 0));
   if (f.sort === 'title') out = [...out].sort((a, b) => a.title.localeCompare(b.title));
+  // 默认排序下收藏置顶：稳定分区（组内保持原序）；显式排序尊重用户选择，不重排。
+  if (f.sort === 'default') {
+    out = [...out.filter((w) => s.favorites.has(w.id)), ...out.filter((w) => !s.favorites.has(w.id))];
+  }
   return out;
 }

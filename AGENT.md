@@ -191,6 +191,10 @@ research/                    gitignore：截图 / 一次性探针 / 临时 profi
     - 写入只发生在 scene **首帧成功**后（`onSceneLive` → `ensureSceneFrame`），失败只 `warn`，不影响渲染与降级链。
     - 决策理由与放弃的备选见 [v0.8 降级链、轮播池、属性范围与抓帧落盘](.agents/notes/implemented/architecture/2026-10-19-v08-degradation-rotation-and-properties.md)。
 
+50. **`/wallpapers/list` 按根目录 mtime 缓存 + 内容指纹 ETag（2026-10-28）**：`list-cache.ts` 复用扫描结果（最多 4 个目录 LRU，同 `getPkgReader` 手法），命中不再逐个读 `project.json`；响应 `ETag: W/"<条数>-<sha1 前 12>"` + `Cache-Control: no-cache`，`If-None-Match` 命中回 304，`?refresh=1` 强制重扫（面板「刷新」按钮走它）。ETag 必须含**内容**指纹：refresh 改了内容而 mtime 不变时也要变，否则浏览器旧 `If-None-Match` 会被误判 304 而继续用旧列表。边界：只改子目录内 `project.json` 时根目录 mtime 不变，普通 GET 返回缓存，点「刷新」才更新（见[决策笔记](.agents/notes/implemented/architecture/2026-10-28-wallpaper-list-mtime-cache.md)）。
+
+51. **壁纸库默认排序把收藏项置顶（2026-10-28）**：`filterLibrary` 仅 `sort === 'default'` 时稳定分区（收藏组在前、组内保持入参顺序），`recent` / `title` 是用户显式排序、不因收藏改序；零收藏时与改动前逐项一致。**不加分页/虚拟滚动**：网格是 372px 内滚 + `loading="lazy"`，当前量级下搜索/类型/收藏已足够定位，分页会与筛选、选中项可见性、计数语义冲突（判据见[决策笔记](.agents/notes/implemented/feature/2026-10-28-library-favorites-pinned.md)）。
+
 ## 6. 工作约定
 
 - 回复、注释、文档、**提交信息一律简体中文**；代码、命令、文件名、技术术语保留原文。

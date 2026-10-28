@@ -1,7 +1,7 @@
 import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import type { Readable } from 'node:stream';
 import { join, resolve, sep } from 'node:path';
-import { scanWallpapers } from './scanner.js';
+import { createWallpaperListCache } from './list-cache.js';
 import { injectPointerShim } from '../shared/pointer-shim.js';
 import { PkgReader } from './pkg-reader.js';
 import { probeSteamPaths, readSteamInstallPathFromRegistry, readLibraryFoldersVdf, DEFAULT_STEAM_ROOTS } from './steam-paths.js';
@@ -107,10 +107,19 @@ export function resolveEngineAsset(weAssetsDir: string, name: string): string | 
   return full;
 }
 
-function json(res: any, code: number, value: unknown) {
+function json(res: any, code: number, value: unknown, headers: Record<string, string> = {}) {
   const body = Buffer.from(JSON.stringify(value), 'utf8');
-  res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': body.length });
+  res.writeHead(code, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Content-Length': body.length,
+    ...headers,
+  });
   res.end(body);
+}
+
+// ETag 弱比较：去掉 W/ 前缀后比较（If-None-Match 兼容强弱两种写法）
+function stripWeakEtag(tag: string): string {
+  return tag.startsWith('W/') ? tag.slice(2) : tag;
 }
 
 // .tex 原始字节响应（pkg 与引擎目录两个来源共用）；动态内容禁缓存，避免切壁纸后读到陈旧纹理
@@ -294,13 +303,24 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
 
     // 抓帧目录 = <dataDir>/frames（Task 1）；未配 dataDir 时写接口 500、读接口按无帧 404
     const frameStore = opts.dataDir ? createSceneFrameStore(framesDirOf(opts.dataDir)) : null;
+    // 壁纸列表缓存：按根目录 mtime 失效，命中不重扫；refresh=1 强制重扫
+    const listCache = createWallpaperListCache();
 
     server.register({
       kind: 'exact', path: '/wallpapers/list',
       handler: async (_req: any, res: any) => {
         // WebRoute 不区分 HTTP 方法（浏览器仅用 GET），此处不校验方法
-        const list = await scanWallpapers(dir());
-        json(res, 200, list);
+        const { search } = parseUrl(_req);
+        const { list, etag } = await listCache.get(dir(), { refresh: search.get('refresh') === '1' });
+        const headers = { ETag: etag, 'Cache-Control': 'no-cache' };
+        // 弱比较：命中即 304，只回 ETag 头、无 body
+        const inm = String(_req.headers?.['if-none-match'] ?? '').trim();
+        if (inm && stripWeakEtag(inm) === stripWeakEtag(etag)) {
+          res.writeHead(304, headers);
+          res.end();
+          return;
+        }
+        json(res, 200, list, headers);
       },
     });
 

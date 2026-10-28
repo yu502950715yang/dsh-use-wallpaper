@@ -127,6 +127,76 @@ describe('registerWallpaperRoutes', () => {
     expect(body).toHaveLength(1);
     expect(body[0].id).toBe('1');
   });
+  it('/wallpapers/list 按根目录 mtime 缓存：子目录内容变了但 mtime 未变仍返回旧列表', async () => {
+    mkdirSync(join(dir, '1'), { recursive: true });
+    writeFileSync(join(dir, '1', 'project.json'), JSON.stringify({ title: '旧标题', type: 'video' }));
+    const fixed = new Date('2026-01-02T03:04:05.000Z');
+    utimesSync(dir, fixed, fixed);
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
+    const handler = routes.get('exact /wallpapers/list')!;
+
+    const first = makeRes();
+    await handler({ url: '/wallpapers/list', headers: {} }, first);
+    expect(first.statusCode).toBe(200);
+    expect(first.headers['Cache-Control']).toBe('no-cache');
+    expect(first.headers['ETag']).toMatch(/^W\/"/);
+    expect(JSON.parse(first.body.toString('utf8'))[0].title).toBe('旧标题');
+
+    // 只改子目录内容 + 还原根目录 mtime → 指纹未变，不应重扫
+    writeFileSync(join(dir, '1', 'project.json'), JSON.stringify({ title: '新标题', type: 'video' }));
+    utimesSync(dir, fixed, fixed);
+    const second = makeRes();
+    await handler({ url: '/wallpapers/list', headers: {} }, second);
+    expect(JSON.parse(second.body.toString('utf8'))[0].title).toBe('旧标题');
+  });
+  it('/wallpapers/list：If-None-Match 命中（弱比较）→ 304 + ETag、无 body', async () => {
+    mkdirSync(join(dir, '1'), { recursive: true });
+    writeFileSync(join(dir, '1', 'project.json'), JSON.stringify({ title: 'T', type: 'video' }));
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
+    const handler = routes.get('exact /wallpapers/list')!;
+
+    const first = makeRes();
+    await handler({ url: '/wallpapers/list', headers: {} }, first);
+    const etag = first.headers['ETag'];
+    expect(etag).toMatch(/^W\/"/);
+
+    // 弱/强两种写法都应命中（比较前去掉 W/ 前缀）
+    for (const tag of [etag, etag.replace(/^W\//, '')]) {
+      const res = makeRes();
+      await handler({ url: '/wallpapers/list', headers: { 'if-none-match': tag } }, res);
+      expect(res.statusCode).toBe(304);
+      expect(res.headers['ETag']).toBe(etag);
+      expect(res.ended).toBe(true);
+      expect(res.body).toBeUndefined();
+    }
+  });
+  it('/wallpapers/list?refresh=1：mtime 未变也强制重扫', async () => {
+    mkdirSync(join(dir, '1'), { recursive: true });
+    writeFileSync(join(dir, '1', 'project.json'), JSON.stringify({ title: '旧标题', type: 'video' }));
+    const fixed = new Date('2026-01-02T03:04:05.000Z');
+    utimesSync(dir, fixed, fixed);
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
+    const handler = routes.get('exact /wallpapers/list')!;
+
+    const first = makeRes();
+    await handler({ url: '/wallpapers/list', headers: {} }, first);
+    expect(JSON.parse(first.body.toString('utf8'))[0].title).toBe('旧标题');
+    const firstEtag = first.headers['ETag'];
+
+    writeFileSync(join(dir, '1', 'project.json'), JSON.stringify({ title: '新标题', type: 'video' }));
+    utimesSync(dir, fixed, fixed); // mtime 不变：普通 GET 仍走缓存
+    const cached = makeRes();
+    await handler({ url: '/wallpapers/list', headers: {} }, cached);
+    expect(JSON.parse(cached.body.toString('utf8'))[0].title).toBe('旧标题');
+
+    const refreshed = makeRes();
+    await handler({ url: '/wallpapers/list?refresh=1', headers: {} }, refreshed);
+    expect(refreshed.statusCode).toBe(200);
+    expect(refreshed.headers['Cache-Control']).toBe('no-cache');
+    expect(JSON.parse(refreshed.body.toString('utf8'))[0].title).toBe('新标题');
+    // 内容变了 ⇒ ETag 必须变，否则浏览器带旧 If-None-Match 会被误判 304
+    expect(refreshed.headers['ETag']).not.toBe(firstEtag);
+  });
   it('serves preview file with content type by extension', async () => {
     mkdirSync(join(dir, '2'), { recursive: true });
     writeFileSync(join(dir, '2', 'project.json'), JSON.stringify({ type: 'scene' }));
