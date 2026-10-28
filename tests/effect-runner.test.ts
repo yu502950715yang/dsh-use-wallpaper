@@ -923,6 +923,34 @@ describe('EffectRunner 按计划执行（具名 RT 写读 / previous 序列 / �
     runner.dispose();
   });
 
+  // WE 效果链内置投影矩阵（无 material 注解）：不预建时 three 不上传、GL 默认全 0，
+  // depthparallax.vert 的 CAST3X3(0) 会让 normalize(0) 得 NaN，整层输出 NaN。
+  // dsh 的全屏 quad 顶点就是画布 NDC，单位阵与桌面 1:1 层一致（webwallgl 同口径）。
+  it('无注解的效果投影矩阵 uniform 预建单位阵（depthparallax 依赖）', async () => {
+    const { renderer, mats } = createPlanRenderer();
+    const vertSrc = 'uniform mat4 g_EffectTextureProjectionMatrix;\nuniform mat4 g_EffectTextureProjectionMatrixInverse;\nvoid main() { gl_Position = vec4(0.0); }';
+    const chain = [pass({ vertSrc, fragSrc: 'void main() { gl_FragColor = vec4(1.0); }' })];
+    const runner = new EffectRunner(renderer as never, 8, 8);
+    runner.setPlan(buildEffectPlan([chain], { baseWidth: 8, baseHeight: 8 }), [chain], 'wp', { width: 8, height: 8 });
+    await runner.update(0, new THREE.Texture());
+    const m = mats[0];
+    const ident = new THREE.Matrix4().elements;
+    expect((m.uniforms.g_EffectTextureProjectionMatrix?.value as THREE.Matrix4 | undefined)?.elements).toEqual(ident);
+    expect((m.uniforms.g_EffectTextureProjectionMatrixInverse?.value as THREE.Matrix4 | undefined)?.elements).toEqual(ident);
+    runner.dispose();
+  });
+
+  it('未声明效果投影矩阵的 pass 不凭空创建 uniform', async () => {
+    const { renderer, mats } = createPlanRenderer();
+    const chain = [pass({ fragSrc: 'void main() { gl_FragColor = vec4(1.0); }' })];
+    const runner = new EffectRunner(renderer as never, 8, 8);
+    runner.setPlan(buildEffectPlan([chain], { baseWidth: 8, baseHeight: 8 }), [chain], 'wp', { width: 8, height: 8 });
+    await runner.update(0, new THREE.Texture());
+    expect(mats[0].uniforms.g_EffectTextureProjectionMatrix).toBeUndefined();
+    expect(mats[0].uniforms.g_EffectTextureProjectionMatrixInverse).toBeUndefined();
+    runner.dispose();
+  });
+
   it('blur 形态：bind[0] 指向刚写的具名 RT，bind[2]=previous 拿到原始输入（不是上一 pass 输出）', async () => {
     const { renderer, mats } = createPlanRenderer();
     const fb = { _rt_Q1: 4, _rt_Q2: 4 };

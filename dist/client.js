@@ -28119,6 +28119,13 @@ var EffectRunner = class {
       if (uniforms["g_ModelViewProjectionMatrix"]) {
         uniforms["g_ModelViewProjectionMatrix"].value = new Matrix4();
       }
+      const effectMatrixNames = /* @__PURE__ */ new Set();
+      for (const m of (pass.vertSrc + "\n" + pass.fragSrc).matchAll(/uniform\s+mat4\s+(g_EffectTextureProjectionMatrix(?:Inverse)?)\s*;/g)) {
+        effectMatrixNames.add(m[1]);
+      }
+      for (const name of effectMatrixNames) {
+        if (!uniforms[name]) uniforms[name] = { value: new Matrix4() };
+      }
       material = new ShaderMaterial({
         vertexShader: pass.vertSrc,
         fragmentShader: pass.fragSrc,
