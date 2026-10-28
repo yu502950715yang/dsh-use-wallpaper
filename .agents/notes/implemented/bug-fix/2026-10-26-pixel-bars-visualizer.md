@@ -27,7 +27,7 @@ Status: implemented
 ## Consequences
 
 - 静音下左侧条纹可见（与桌面结构一致）；播放时不跳动——`supportsaudioprocessing` 仍是独立缺口。
-- 只适配该家族字段；其它自定义 visualizer 脚本仍按 simple 缺省参数代建。
+- 只适配该家族字段；其它自定义 visualizer 脚本仍按 simple 缺省参数代建（simple 家族的代建口径见 [visualizer-bars 笔记](../architecture/2026-10-23-visualizer-bars.md)）。
 - 订正：`2937346640` 并非无包内音频——pkg 内有 `sounds/yutaka hirasaka - acro.flac`（此前审计只搜 mp3/ogg/wav 漏了 flac）。
 
 ## Affected repositories

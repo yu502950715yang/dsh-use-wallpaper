@@ -14,7 +14,7 @@ v0.8.1 之后仍有四类用户可见缺口：util 层（project/fullscreen/comp
 - **快照作为内容输入**：真实 util 链读 `bind: previous`，段边界把整帧快照写进该层内容并重渲其 RT；`_rt_FullFrameBuffer` 槽门控保留但对象链继续关闭；无 effects 的 util/solid 层不渲染（零回归）；绘制顺序按 scene 对象顺序穿插；resize 预算只让 budgeted(image) 参与。
 - **text 字段**：alpha 落内容材质（与 image 同口径；合成 quad 中性，避免 a²），brightness 在 canvas 侧 LDR 近似，anchor 只决定 quad 原点（9 值、none 回退），limitwidth/maxwidth 按字体像素换行。
 - **image color/alignment**：color 乘内容材质（`colorBlendMode≠0` 时的修正见 [音频条颜色对齐](../bug-fix/2026-10-23-audio-bars-desktop-parity.md)），alignment 同时决定直渲 mesh 与隔离合成 quad 的位置。
-- **F18**：`g_PointerPosition` 归一化 [0,1]、y 向下；`g_ParallaxPosition` 按 0.5 中性/y 向上实现（唯一消费者 3118949804 在现解析器下 `enabled=false`，公式无法真机校准）。
+- **F18**：`g_PointerPosition` 归一化 [0,1]、y 向下；`g_ParallaxPosition` 按 0.5 中性/y 向上实现（`cameraparallax={user,value}` 形态现已被解析、`3118949804` 默认 `enabled=true` ⇒ 该样本可用于量化校准；目前只做过人眼验收，未标定）。
 - **门禁**：新增 `e2e:verify-v082` 四组判据（见 [e2e 笔记](../testing/2026-09-22-e2e-verification-in-repo.md)）；真机验收清单 `TESTING.md` §2.15（V1–V11）。
 
 ## Affected repositories

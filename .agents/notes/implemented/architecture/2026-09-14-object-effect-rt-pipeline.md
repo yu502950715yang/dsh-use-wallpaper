@@ -15,7 +15,7 @@ WE 的对象级 `effects` 是对**该对象**做的后处理链：可能多 pass
 - **隔离**：带 `effects` 的对象不走直渲，而是「内容 → 对象 RT → 效果链 → 合成 quad → 屏幕」。局部正交相机的 left/right/top/bottom 是**完整世界尺寸**（不得按 4096 钳制，否则大对象出现边缘拉伸带；也不得拿 RT 像素当范围，否则 HiDPI 下对象缩小 + 边缘 clamp 拉伸）。隔离的键是 `scene.json` 的**对象 id**（不是图层计数器）：`isolatedObjects()` / `setObjectOutput()` / `resizeObjectRT()` 共用同一把键。
 - **RT 尺寸**：`RT 像素 ≥ 屏占位`，屏占位 = |未钳制世界尺寸| × 屏幕密度（密度必须与主相机 cover 同源，挂载期与 resize 期调同一套语义）；单一等比收口 4096，**只升不降**。
 - **具名 RT 图**：加载期由 `buildEffectPlan` 编译成**静态计划**、`EffectRunner.setPlan` 建具名 RT 池；帧内只查表绑槽 + 提交 pass。语义照 lwe：`bind.index` 就是 `g_Texture<index>` 且 **`bind` 优先于 `textures`**；`previous` = 进入 target 序列**之前**的输入（不是上一 pass 输出）；具名 RT = 对象 RT ÷ `fbos.scale`；**池作用域 = 单条链**。
-- **一切编译/建管线只在加载期完成**（预建 uniform + 1×1 探针），帧内不得编译或建管线 —— 每帧只写 uniform、建 bind group、提交 pass。
+- **加载期建 RT 池 / 预取纹理；材质与 1×1 探针延迟到首个 `update` 帧懒建**（每个 pass 只编译一次、失败缓存），帧内 `update()` / `bindOutputs()` / `advance()` 不得新建 RT/材质或重编译 —— 每帧只写 uniform、提交 pass（`AGENT.md` §5.11）。
 - **降级必须显式，绝不静默画错**：写具名 RT 的 pass 编译失败 ⇒ **整条计划放弃**（回退对象 RT 原图）；引用链内不存在的 `_rt_*` 保持默认、不绑白纹 + 按槽去重告警；单链具名 RT > 16 张 ⇒ 该链不挂；effect 级 `visible === false` 整条不挂链（那是作者正常内容，不打降级告警）。
 - **混合语义落在合成 quad 上**：`colorBlendMode ∈ {6,7,31}` 的语义是 `mix(A, Blend(A,B), opacity)`，而这三个模式的颜色因子都不看 alpha ⇒ 必须把图层 alpha **预乘进 rgb**（否则全强度盖住画面，GTR「云挡住人物」），内容侧改回普通 alpha 写入。合成 quad 还必须**透明清屏**（`rt-render.ts` 是唯一入口）。
 
@@ -41,6 +41,6 @@ WE 的对象级 `effects` 是对**该对象**做的后处理链：可能多 pass
 
 **收益：** 对象效果真的生效且与 WE 同空间、同尺度；隔离路径的键与尺寸口径统一到一把尺子（这条口径后来也支撑了隔离 RT 分辨率特性，见 [隔离对象 RT 尺寸锚在屏占位、上限取源纹理](../bug-fix/2026-10-12-isolated-rt-source-texture-sizing.md)）；降级路径全部显式可查（告警 / 整链放弃），不会静默画出错画面。
 
-**代价：** ① 隔离路径要为每个对象额外付一张 RT 与 ping-pong（显存是这条路径的主要成本）；② **不是所有对象都能挂链** —— `text` 对象的 effects 在收链阶段就被跳过（连 warn 都没有），`util` / 无媒体字段的对象拿不到隔离条目（`AGENT.md` §7.1）；③ 具名 RT 池作用域是**单条链**，跨链共享不被支持；④ `_rt_*` 里只实现了 `_rt_FullFrameBuffer` 一条语义（且效果链消费点仍门控关闭，见 [段渲染 + 帧内快照实现 `_rt_FullFrameBuffer`](2026-10-13-frame-snapshot-segmented-render.md)）；⑤ 单链具名 RT 超 16 张、写具名 RT 的 pass 编译失败等情形一律**不挂链**，行为是"效果不生效"而非"近似生效"。
+**代价：** ① 隔离路径要为每个对象额外付一张 RT 与 ping-pong（显存是这条路径的主要成本）；② **不是所有对象都能挂链** —— `text` 对象的 effects 在收链阶段就被跳过（连 warn 都没有），`util` / 无媒体字段的对象拿不到隔离条目（`AGENT.md` §7.1）；③ 具名 RT 池作用域是**单条链**，跨链共享不被支持；④ `_rt_*` 里只实现了 `_rt_FullFrameBuffer` 一条语义（对象链的效果链消费点仍门控关闭；util 内容层自 v0.8.2 起可绑定该槽，见 `AGENT.md` §7.42 ⑨）；⑤ 单链具名 RT 超 16 张、写具名 RT 的 pass 编译失败等情形一律**不挂链**，行为是"效果不生效"而非"近似生效"。
 
 设计与逐条语义见 [对象级效果链设计](../../../../docs/superpowers/specs/2026-09-14-three-object-effects-pipeline-design.md) 与 [RT 图执行器设计](../../../../docs/superpowers/specs/2026-09-15-three-rt-graph-executor-design.md)。

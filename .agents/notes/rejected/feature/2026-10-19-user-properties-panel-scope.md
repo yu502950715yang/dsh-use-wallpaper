@@ -1,6 +1,6 @@
 # Agent Note: 用户属性面板全类型范围
 
-Status: rejected — 全库净新增仅 7 条 / 4 张，收益不足而成本跨 host、渲染与面板三层，暂缓
+Status: rejected — 原判收益不足（净新增 7 条/4 张）而暂缓；2026-10-23 因 Leon 可见 bug 翻转，已由用户属性全类型实现取代
 
 ## Problem
 

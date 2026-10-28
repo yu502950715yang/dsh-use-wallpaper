@@ -15,9 +15,9 @@ WE 的效果与粒子能**读「到这一刻为止本帧已经画了什么」**�
 - **`renderOrder` 唯一化**：每个可渲染对象按其 `scene.json` objects 下标分配**全局唯一** `renderOrder`，取代原先 `image=0` / `particle=1` 的硬编码二分 —— three 的提交顺序由此等于 WE 的对象序（全库 34/34 与 `objects` 数组序一致）。
 - **段骨架**：段数 = 消费者数 + 1；仅首段之前对帧目标清屏一次，其余段在 `try/finally` 里临时关 `autoClear` 累积；末段把帧目标全屏合成回默认 framebuffer（Glow 开启时改为交给 `glowStage.apply`）。帧目标用**画布缓冲尺寸**、UnsignedByte，与默认 fb 同色彩域（不标 sRGB）。
 - **快照**：`frame-capture.ts` 用 `THREE.FramebufferTexture` + `renderer.copyFramebufferToTexture()`，在消费者**被绘制之前**拍一张「到这一刻为止已画进帧目标的内容」。`capture()` 逐个消费者调用、逐帧覆盖；快照语义 = WE 的场景 FBO。
-- **惰性即零回归**：无消费者（无 REFRACT 粒子、无引用该槽的效果链）时**完全走原路径** —— 不建帧目标、不切段、不合成，调用序列与改动前逐字节一致（单测钉住）。
+- **惰性即零回归**：无消费者（无 REFRACT 粒子、无引用该槽的 util 内容层）时**完全走原路径** —— 不建帧目标、不切段、不合成，调用序列与改动前逐字节一致（单测钉住）。
 - **粒子 REFRACT**：判据只认 WE 权威 combo `passes[0].combos.REFRACT === 1`（全库只有 `2897292240` 的一支材质命中），槽 1 当法线遮罩，片元照 `genericparticle.frag` 逐行采样快照做位移。槽 1 缺失或加载失败时**该层不可见**，绝不回退成白方块。
-- **效果链消费点门控关闭**：`object-effects.ts` 的 `ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER = false`。原因是该路径从未真机验收，且结构上明确反向 —— 对象链的贴屏 quad UV 覆盖**对象窗口**，快照却是**整画布**（v 约定还反向一次），直采会错位。能力（`resolveBuiltinTexture(path, frameTexture?)`、`planSamplesFrameSnapshot`、`onSegmentBoundary` 宿主契约）与单测全部保留，等 UV 口径验证后再开。
+- **对象链消费点门控关闭**：`object-effects.ts` 的 `ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER = false`（v0.8.2 起 util 内容层经 `allowFrameSnapshot` 可绑定该槽，对象链仍关闭）。原因是该路径从未真机验收，且结构上明确反向 —— 对象链的贴屏 quad UV 覆盖**对象窗口**，快照却是**整画布**（v 约定还反向一次），直采会错位。能力（`resolveBuiltinTexture(path, frameTexture?)`、`planSamplesFrameSnapshot`、`onSegmentBoundary` 宿主契约）与单测全部保留，等 UV 口径验证后再开。
 
 **成本量级必须说清**：段渲染是「**每段一次全场景 `render`**，靠 `visible` 排除其它段」⇒ **O(段数 × 场景)**，**不是**「每对象只光栅化一次」。实测 `2897292240` 每帧 3 次全场景 render + 2 次 blit + 1 次 composite（改动前 1 次）。
 
@@ -41,6 +41,6 @@ WE 的效果与粒子能**读「到这一刻为止本帧已经画了什么」**�
 
 **收益：** `2897292240` 的雨层白块/白竖条消失、出现水滴/雨痕（真机目视确认，GLSL 真机编译通过）；渲染色序从此与 WE 对象序一致，顺带修正了原先 `image=0/particle=1` 二分造成的层序偏差；无消费者路径结构性零回归（单测钉住调用序列）。
 
-**代价：** ① 段渲染成本随消费者数**线性增长且每段遍历整个场景**（`visible` 只省光栅化，不省遍历与提交），"半分辨率帧目标"这个优化项因此**不能凭感觉做**，得先有真机帧时数据（本轮无数据）；② `renderOrder` 唯一化让 9 个「粒子在前、image 在后」的 pkg 叠加次序变化 —— 这是**对齐 WE 的可见变更，验收时不得当回归**；③ 效果链消费点仍关闭，`2597392171` 维持改动前行为；④ **零回归当前只有单测证据**：本轮**没有执行**真机逐像素对拍（判据已订正为「同一张壁纸注入/不注入 `frameCapture` 两配置对拍」，因为原来选的 `3793620838` 本身就在次序会变的那 9 个 pkg 里，原理上不可能通过）；⑤ 快照只有一张，多消费者会同帧别名到同一张（本库只有 1 个消费者）；`resize` 与异步 `update` 的竞争只是**收窄**、未清零。
+**代价：** ① 段渲染成本随消费者数**线性增长且每段遍历整个场景**（`visible` 只省光栅化，不省遍历与提交），"半分辨率帧目标"这个优化项因此**不能凭感觉做**，得先有真机帧时数据（本轮无数据）；② `renderOrder` 唯一化让 9 个「粒子在前、image 在后」的 pkg 叠加次序变化 —— 这是**对齐 WE 的可见变更，验收时不得当回归**；③ 效果链消费点仍关闭，`2597392171` 维持改动前行为；④ **零回归当前只有单测证据**：本轮**没有执行**真机逐像素对拍（判据已订正为「同一张壁纸注入/不注入 `frameCapture` 两配置对拍」，因为原来选的 `3793620838` 本身就在次序会变的那 9 个 pkg 里，原理上不可能通过）；⑤ 快照只有一张，多消费者会同帧别名到同一张（本轮只有 1 个消费者；v0.8.2 起 util 内容层也会注册消费者，单帧可多个，`2911105183` 最多 5 个 ⇒ 6 段/帧）；`resize` 与异步 `update` 的竞争只是**收窄**、未清零。
 
 设计的 Ruling 清单、逐项偏差与未做项见 [帧内快照与粒子 REFRACT 设计](../../../../docs/superpowers/specs/2026-10-13-frame-capture-refract-design.md)；它建立在 [three.js 是 scene 的唯一渲染路径](2026-09-08-threejs-single-render-path.md) 这条前提上。

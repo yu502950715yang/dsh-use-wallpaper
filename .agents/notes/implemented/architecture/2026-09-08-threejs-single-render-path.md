@@ -14,10 +14,10 @@ scene 走 **three.js 播放器**，且它是**唯一**渲染路径：把 WE 场�
 
 - **复用**解析与模拟：`scene-json.ts`（scene.json）、`scene-assets.ts`（纹理/粒子材质解析）、`tex-loader.ts`（TEXV0005 解码）、`coords.rs` 的 `we_to_three`、wasm 的 `CpuParticleSim`（纯 CPU 粒子模拟，`threejs-player.ts` 只把 `sim.vertices()` 的每粒子 16 浮点画成 billboard）。
 - **新写**渲染层：`three-renderer.ts` + `threejs-player.ts`（正交 cover 相机 + 背景 mesh + 粒子 billboard + `setAnimationLoop`）。
-- **备用路径整支删除**（2026-09-22，`3eea1c9`）：`wasm-renderer.ts` / `scene-renderer.ts` / `alignment.ts` / `scene-script.ts` / `shader/glsl-to-naga.ts` 与 Rust 侧 `wasm/src/render/**`、`wasm/shaders/` 全部移除（连带 `isThreeUse()` / `THREE_USE`），Rust `render` feature 改名 `cpu-sim` 并瘦成只留 `dep:js-sys`。
+- **备用路径整支删除**（2026-09-22，`3eea1c9`）：`wasm-renderer.ts` / `scene-renderer.ts` / `scene-script.ts` / `shader/glsl-to-naga.ts` 与 Rust 侧 `wasm/src/render/**`、`wasm/shaders/` 全部移除（连带 `isThreeUse()` / `THREE_USE`），Rust `render` feature 改名 `cpu-sim` 并瘦成只留 `dep:js-sys`。⚠️ `alignment.ts` **不在这条删除清单里**：v0.8.2 重建了同名新模块（`alignOffset`，image/text alignment 偏移，见 `AGENT.md` §7.42 ⑪）。
 - 渲染失败不再"换备用渲染器"，而是**回退 preview 图 + Ken Burns**（`wallpaper-controller.ts` 用新 canvas 重试一次后落 preview）。
 
-WE 语义疑问的权威来源随之固定为：**WE 安装目录下的明文 shader/材质**（`<WE>/assets/shaders`、`<WE>/assets/materials`）与 `research/open-wallpaper-engine`（C++）、`research/.lwe`（linux-wallpaperengine）。
+WE 语义疑问的权威来源随之固定为：**WE 安装目录下的明文 shader/材质**（`<WE>/assets/shaders`、`<WE>/assets/materials`）与参考实现（`open-wallpaper-engine` C++ / `linux-wallpaperengine`，源码曾放 `research/` 本地目录、**未入库、本机可能已清理**）。
 
 ## Affected repositories
 

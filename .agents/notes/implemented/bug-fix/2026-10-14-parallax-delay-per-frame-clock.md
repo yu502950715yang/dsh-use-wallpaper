@@ -4,7 +4,7 @@ Status: implemented
 
 ## Problem
 
-WE 的鼠标视差（`general.cameraparallax*` + 对象 `parallaxDepth`）在本仓库长期完全没有实现 —— 本机 34 张 scene 壁纸里有 1 张开了总开关、16 个样本带 `parallaxDepth`，在 DSH 里全都静止。
+WE 的鼠标视差（`general.cameraparallax*` + 对象 `parallaxDepth`）在本仓库长期完全没有实现 —— 本机 39 个 scene.json 里有 3 张 enabled（其中只有 `3793620838` 有非零 amount）、多个样本带 `parallaxDepth`，在 DSH 里全都静止。
 
 实现它有两个容易写错的点，两个都不是"照抄参考实现"能避开的：
 
@@ -37,8 +37,8 @@ WE 的鼠标视差（`general.cameraparallax*` + 对象 `parallaxDepth`）在本
 
 ## Consequences
 
-**收益：** 视差在本机唯一开总开关的壁纸 `3793620838` 上生效，且鼠标停下后有平滑收尾；33 张未开视差的壁纸**完全不动**（零回归）；纯数学层可在 node 里钉住数值语义，反直觉的那条（时钟封顶）有会变红的判据守着。
+**收益：** 视差在本机唯一有非零 amount 的壁纸 `3793620838` 上生效，且鼠标停下后有平滑收尾；其余 38 个 scene.json **完全不动**（零回归；另两张 enabled 的 amount 缺省 0）；纯数学层可在 node 里钉住数值语义，反直觉的那条（时钟封顶）有会变红的判据守着。
 
-**代价：** ① **传播组未实现** —— 父链锚点与 `disablepropagation` 未复刻，按"每对象自算 `parallaxDepth`"近似 ⇒ 子对象**不继承**父层深度（扁平层级观感一致，容器/组继承待做）；② `parallaxDepth` 缺省时**不参与**视差，而 WE 对 composite 容器有 `{1,1}` 缺省 —— 本仓未实现，故缺该字段的容器在 WE 里会动、在这里不动；③ **开视差时脚本对同一对象 `origin` 的写入每帧被丢弃**（基准位取自创建期，`tickParallax` 每帧写 `position = 基准位 + shift`，而 OWE 是 shift 与脚本 model 平移叠加）；影响面是落点在 `position` 上的那几路（背景、隔离对象的合成 quad），非隔离粒子走 `u_Parallax` 不受影响；当前本机无实害（唯一开视差的壁纸 pkg 内无 `.js` 脚本），真遇到"脚本位移 + 视差"同对象的壁纸须先按叠加语义改 `tickParallax`。
+**代价：** ① **传播组未实现** —— 父链锚点与 `disablepropagation` 未复刻，按"每对象自算 `parallaxDepth`"近似 ⇒ 子对象**不继承**父层深度（扁平层级观感一致，容器/组继承待做）；② `parallaxDepth` 缺省时**不参与**视差，而 WE 对 composite 容器有 `{1,1}` 缺省 —— 本仓未实现，故缺该字段的容器在 WE 里会动、在这里不动；③ **开视差时脚本对同一对象 `origin` 的写入每帧被丢弃**（基准位取自创建期，`tickParallax` 每帧写 `position = 基准位 + shift`，而 OWE 是 shift 与脚本 model 平移叠加）；影响面是落点在 `position` 上的那几路（背景、隔离对象的合成 quad），非隔离粒子走 `u_Parallax` 不受影响；当前本机无实害（3 张 enabled 壁纸的 pkg 内均无 `.js` 脚本；另两张 amount 缺省 0），真遇到"脚本位移 + 视差"同对象的壁纸须先按叠加语义改 `tickParallax`。
 
 机制推导与实测样本见 [scene 视差与 puppet 实施计划](../../../../docs/superpowers/plans/2026-10-13-scene-parallax-puppet.md)；上述边界也是 `AGENT.md` §5.47 / §7.39 的表述。

@@ -14,7 +14,7 @@ Status: implemented
 - `player.setVisualizerBars` 用 `addBackground` 创建 64 条（宽 = barWidth × 图宽、底部对齐 origin.y、贴图 = 对象自身白色 4×4 纹理、初始高度 0）；
 - `onFrame` 用音频分析器的 64 bin 频谱逐帧更新每条高度（无音频 → 高度 0、不可见，与桌面一致）。
 
-相关渲染口径见 [v0.8.2 可见修复包](2026-10-22-v082-visible-fixes-rendering.md)。
+相关渲染口径见 [v0.8.2 可见修复包](2026-10-22-v082-visible-fixes-rendering.md)。v0.9 已扩展到自定义家族（`pixel-bars`），见 [自定义 visualizer 家族适配](../bug-fix/2026-10-26-pixel-bars-visualizer.md)。
 
 ## Affected repositories
 
