@@ -16,11 +16,13 @@ import { loadTexTexture } from './tex-loader.js';
 import type { CompiledEffectPass } from './shader/effect-chain.js';
 import { buildEffectPlan, type EffectPlan } from './effect-graph.js';
 
-// 效果链的 `_rt_FullFrameBuffer` 消费者**本轮不启用**（见 AGENT.md §5.46）：对象链的贴屏 quad UV
-// 只覆盖**对象窗口**，而快照是**整画布**（v 约定还反向一次）⇒ 直采会错位，且该路径从未真机验收；
-// 启用前必须先解决「对象窗口 UV ↔ 整画布快照」的映射与 v 约定。
-// 关闭时行为 = 改动前：该槽留空 + 每槽去重告警；帧序不因效果链改变（能力保留在执行器与纯函数里）。
-export const ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER = false;
+// 效果链的 `_rt_FullFrameBuffer` 消费者：**已启用**（2026-10-28）。启用前提已补齐：
+//   ① 「对象窗口 UV ↔ 整画布快照」的映射 = `object-range.effectScreenMatrix`（pass NDC → 画布 NDC，
+//      按对象 RT 的 v=0=图像顶部与主相机 cover 推导），由 player 经 host 下发到 runner；
+//   ② 快照纹理的 v 约定与 three framebuffer 一致（v=0=屏幕底部，frag 的 `*0.5+0.5` 正好对上）；
+//   ③ 段边界快照由 `registerFrameConsumer` 驱动，消费者只拿到**自己段绘制之前**的整帧内容。
+// 放行仍要求链**显式引用**快照槽（referencesFrameSnapshot）：未引用的链不登记、不受影响。
+export const ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER = true;
 
 // 效果纹理槽加载器（**必须与对象 RT 的 v 约定同一套**）：对象 RT 由
 // `threejs-player.attachIsolated` 的 **y 镜像局部相机**渲染 ⇒ RT 的 v=0 = 图像**顶部**（= WE 约定：
@@ -124,6 +126,9 @@ export interface ObjectEffectHost {
   /** 把该对象登记为段边界消费者（player 的既有公开方法）：登记后 frameCapture 才会 active
    *  ⇒ 段渲染与其段边界快照才会发生（不登记 ⇒ 本对象的链永远拿不到快照）。 */
   registerFrameConsumer(objectId: number): void;
+  /** 对象效果链的 `g_EffectModelViewProjectionMatrix`（pass NDC → 画布 NDC）；
+   *  实现见 `object-range.effectScreenMatrix`。未实现 ⇒ runner 保持单位阵（全屏对象近似）。 */
+  effectScreenMatrix?(objectId: number): THREE.Matrix4 | null;
 }
 
 // 单个隔离对象的链状态。
@@ -243,7 +248,8 @@ export class ObjectEffectStage implements ObjectEffectStage {
     if (ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER && referencesFrameSnapshot(chains, plan)) {
       this.host.registerFrameConsumer(objId);
     }
-    const frameSnapshotBound = this.allowFrameSnapshot?.(objId) === true
+    // 放行 = util 内容层（显式 allow）或对象链（门控常量已开）；两者都还要求链**显式引用**快照槽。
+    const frameSnapshotBound = (ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER || this.allowFrameSnapshot?.(objId) === true)
       && referencesFrameSnapshot(chains, plan);
     this.mount(objId, chains, view.rtWidth, view.rtHeight, plan, frameSnapshotBound);
   }
@@ -349,6 +355,8 @@ export class ObjectEffectStage implements ObjectEffectStage {
       if (!runner) continue;
       runner.setAudioSpectrumSource(this.audioSpectrum); // 每帧注入同一引用（无音频时 null）
       if (this.globalUniforms) runner.setGlobalUniforms(this.globalUniforms); // 指针/视差同上
+      // 每对象不同的画布投影矩阵（对象可能被脚本/视差移动）⇒ 每帧取一次；host 不支持 ⇒ null（单位阵）。
+      runner.setEffectScreenMatrix?.(this.host.effectScreenMatrix?.(view.id) ?? null);
       // 本帧段边界拍下的快照（若有）随本次 update 交给链；无则 null（不引用快照的链逐字不变）。
       const item = this.boundarySnapshots.get(view.id) ?? null;
       // 快照可能在**入队之后**被 resize/dispose 作废：把捕获当刻的代号带进闭包，执行当刻读实时值
@@ -382,7 +390,8 @@ export class ObjectEffectStage implements ObjectEffectStage {
     item: { texture: THREE.Texture; version: number } | null,
   ): THREE.Texture | null {
     const boundary = item !== null && !this.snapshotStale(item.version) ? item.texture : null;
-    if (!this.allowFrameSnapshot) return boundary;
+    // 无任何放行机制（宿主未实现门控）→ 旧语义：边界快照照旧交给链。
+    if (!this.allowFrameSnapshot && !ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER) return boundary;
     if (entry?.frameSnapshotBound !== true) return null;
     return boundary ?? this.frameSnapshot;
   }
@@ -416,15 +425,17 @@ export class ObjectEffectStage implements ObjectEffectStage {
   debugInjectRunner(id: number, runner: EffectRunner): void {
     const view = this.host.isolatedObjects().find((o) => o.id === id);
     // 反向从实测 RT 像素推世界尺寸：仅在测试/诊断（entries 里没有 setWorldSize 记录）时使用。
+    // 既有条目的世界尺寸/预算标记/快照放行标记**保留**（测试先 setObjectChains 再换 runner 时不能丢）。
+    const prev = this.entries.get(id);
     this.entries.set(id, {
       runner,
       chains: [],
       plan: null,
-      worldW: view ? view.rtWidth / this.scale() : 1,
-      worldH: view ? view.rtHeight / this.scale() : 1,
-      source: null,
-      budgeted: false,
-      frameSnapshotBound: false,
+      worldW: prev?.worldW ?? (view ? view.rtWidth / this.scale() : 1),
+      worldH: prev?.worldH ?? (view ? view.rtHeight / this.scale() : 1),
+      source: prev?.source ?? null,
+      budgeted: prev?.budgeted ?? false,
+      frameSnapshotBound: prev?.frameSnapshotBound ?? false,
     });
   }
 

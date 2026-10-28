@@ -131,6 +131,7 @@ export declare class ThreeScenePlayer {
     private nowMs;
     setSceneSize(width: number, height: number): void;
     screenScalePx(): number;
+    effectScreenMatrix(objectId: number): THREE.Matrix4 | null;
     private applyCover;
     update(dt: number): void;
     private tickPuppets;

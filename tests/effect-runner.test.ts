@@ -951,6 +951,24 @@ describe('EffectRunner 按计划执行（具名 RT 写读 / previous 序列 / �
     runner.dispose();
   });
 
+  // 对象效果链的 g_EffectModelViewProjectionMatrix（godrays 的 v_ScreenCoord 采样 `_rt_FullFrameBuffer` 用）：
+  // 无 material 注解 ⇒ 预建单位阵；注入对象窗口矩阵后每 pass 写入该值。
+  it('g_EffectModelViewProjectionMatrix：预建单位阵，注入后每 pass 写入', async () => {
+    const { renderer, mats } = createPlanRenderer();
+    const vertSrc = 'uniform mat4 g_EffectModelViewProjectionMatrix;\nvoid main() { gl_Position = vec4(0.0); }';
+    const chain = [pass({ vertSrc, fragSrc: 'void main() { gl_FragColor = vec4(1.0); }' })];
+    const runner = new EffectRunner(renderer as never, 8, 8);
+    runner.setPlan(buildEffectPlan([chain], { baseWidth: 8, baseHeight: 8 }), [chain], 'wp', { width: 8, height: 8 });
+    await runner.update(0, new THREE.Texture());
+    const uniform = mats[0].uniforms.g_EffectModelViewProjectionMatrix;
+    expect((uniform.value as THREE.Matrix4).elements).toEqual(new THREE.Matrix4().elements);
+    const injected = new THREE.Matrix4().makeTranslation(0.5, -0.25, 0);
+    runner.setEffectScreenMatrix(injected);
+    await runner.update(1, new THREE.Texture());
+    expect(uniform.value).toBe(injected);
+    runner.dispose();
+  });
+
   it('blur 形态：bind[0] 指向刚写的具名 RT，bind[2]=previous 拿到原始输入（不是上一 pass 输出）', async () => {
     const { renderer, mats } = createPlanRenderer();
     const fb = { _rt_Q1: 4, _rt_Q2: 4 };

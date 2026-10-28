@@ -9,7 +9,7 @@ import {
   createObjectRenderTarget, shouldUseObjectPath, groupEffectsByObject, PendingChainStore,
   uvWindow, createCompositeGeometry, coverRange, flipGeometryUvY,
   screenScalePx, objectRtSize, isolatedRtLongEdge, isolatedRtSize, sourcePixelsFromTexture,
-  fitIsolatedBudget, ISOLATED_RT_BUDGET_BYTES, ISOLATED_RT_BYTES_PER_PX,
+  fitIsolatedBudget, ISOLATED_RT_BUDGET_BYTES, ISOLATED_RT_BYTES_PER_PX, effectScreenMatrix,
 } from '../src/client/object-range.js';
 
 describe('object-range 常量', () => {
@@ -373,6 +373,56 @@ describe('fitIsolatedBudget（预算越界只压缩升级幅度）', () => {
     // 非法密度不产生 NaN/0 比例（密度由 isolatedRtSize 兜底为 1）
     const nanDensity = fitIsolatedBudget(items, NaN, 60_000_000, 28);
     expect(Number.isFinite(nanDensity) && nanDensity > 0).toBe(true);
+  });
+});
+
+// 对象效果链的 `g_EffectModelViewProjectionMatrix`：把 pass 全屏 quad 的 NDC 顶点映射到**画布 NDC**
+// （godrays_combine 的 v_ScreenCoord 用它采样 `_rt_FullFrameBuffer`）。约定：对象 RT 的 v=0=图像顶部
+// （局部相机 y 镜像，见 attachIsolated）⇒ a_Position.y=+1 对应对象图像底部。
+describe('effectScreenMatrix（对象窗口 → 画布 NDC）', () => {
+  const scene = { sceneW: 1920, sceneH: 1080, viewW: 1920, viewH: 1080, dpr: 1 };
+  const map = (m: THREE.Matrix4, x: number, y: number) => new THREE.Vector4(x, y, 0, 1).applyMatrix4(m);
+
+  it('全屏对象（无旋转）：pass NDC 角点 = 画布 NDC 角点', () => {
+    const m = effectScreenMatrix({ worldW: 1920, worldH: 1080, position: { x: 0, y: 0 }, angles: [0, 0, 0], ...scene });
+    const tl = map(m, -1, -1); // pass 左上 = 对象图像顶部
+    expect(tl.x).toBeCloseTo(-1);
+    expect(tl.y).toBeCloseTo(1);
+    const br = map(m, 1, 1);
+    expect(br.x).toBeCloseTo(1);
+    expect(br.y).toBeCloseTo(-1);
+  });
+
+  it('半尺寸居中对象：四角落到画布中间一半', () => {
+    const m = effectScreenMatrix({ worldW: 960, worldH: 540, position: { x: 0, y: 0 }, angles: [0, 0, 0], ...scene });
+    expect(map(m, -1, -1).x).toBeCloseTo(-0.5);
+    expect(map(m, -1, -1).y).toBeCloseTo(0.5);
+    expect(map(m, 1, 1).x).toBeCloseTo(0.5);
+    expect(map(m, 1, 1).y).toBeCloseTo(-0.5);
+  });
+
+  it('偏移对象：中心映射到对应画布 NDC', () => {
+    const m = effectScreenMatrix({ worldW: 480, worldH: 270, position: { x: 480, y: 270 }, angles: [0, 0, 0], ...scene });
+    const c = map(m, 0, 0);
+    expect(c.x).toBeCloseTo(0.5);
+    expect(c.y).toBeCloseTo(0.5);
+  });
+
+  it('cover 裁切（视口更宽）：纵向按 cover 高度映射，对象上下超出视锥', () => {
+    const m = effectScreenMatrix({
+      worldW: 1920, worldH: 1080, position: { x: 0, y: 0 }, angles: [0, 0, 0],
+      sceneW: 1920, sceneH: 1080, viewW: 2560, viewH: 1080, dpr: 1,
+    });
+    expect(map(m, -1, -1).x).toBeCloseTo(-1);
+    expect(map(m, -1, -1).y).toBeCloseTo(1080 / 810); // cover.h = 1920 / (2560/1080) = 810
+  });
+
+  it('非有限输入不产出 NaN（world/position 退化为 0，尺寸下限 1）', () => {
+    const m = effectScreenMatrix({
+      worldW: NaN, worldH: NaN, position: { x: NaN, y: NaN }, angles: [0, 0, 0],
+      sceneW: NaN, sceneH: NaN, viewW: 0, viewH: 0, dpr: 1,
+    });
+    expect(m.elements.every(Number.isFinite)).toBe(true);
   });
 });
 

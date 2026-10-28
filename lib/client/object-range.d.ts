@@ -59,6 +59,20 @@ export declare function coverRange(width: number, height: number, viewAspect: nu
     w: number;
     h: number;
 };
+export declare function effectScreenMatrix(input: {
+    worldW: number;
+    worldH: number;
+    position: {
+        x: number;
+        y: number;
+    };
+    angles: [number, number, number];
+    sceneW: number;
+    sceneH: number;
+    viewW: number;
+    viewH: number;
+    dpr: number;
+}): THREE.Matrix4;
 export declare function screenScalePx(sceneW: number, sceneH: number, viewW: number, viewH: number, dpr: number): number;
 export declare function objectRtSize(worldW: number, worldH: number, screenScale: number, cap?: number): {
     width: number;

@@ -4,7 +4,7 @@ import { EffectRunner } from './effect-runner.js';
 import type { EffectGlobalUniforms, EffectTexLoader } from './effect-runner.js';
 import type { CompiledEffectPass } from './shader/effect-chain.js';
 import { type EffectPlan } from './effect-graph.js';
-export declare const ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER = false;
+export declare const ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER = true;
 export declare function weVRowOrderLoader(load?: EffectTexLoader): EffectTexLoader;
 export interface ObjectEffectStage {
     /** 主场景渲染之前：把每个隔离对象的合成 quad 绑到效果输出（或回退对象 RT 原图）。 */
@@ -48,6 +48,9 @@ export interface ObjectEffectHost {
     /** 把该对象登记为段边界消费者（player 的既有公开方法）：登记后 frameCapture 才会 active
      *  ⇒ 段渲染与其段边界快照才会发生（不登记 ⇒ 本对象的链永远拿不到快照）。 */
     registerFrameConsumer(objectId: number): void;
+    /** 对象效果链的 `g_EffectModelViewProjectionMatrix`（pass NDC → 画布 NDC）；
+     *  实现见 `object-range.effectScreenMatrix`。未实现 ⇒ runner 保持单位阵（全屏对象近似）。 */
+    effectScreenMatrix?(objectId: number): THREE.Matrix4 | null;
 }
 export declare class ObjectEffectStage implements ObjectEffectStage {
     private readonly host;

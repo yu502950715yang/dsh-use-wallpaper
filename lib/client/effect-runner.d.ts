@@ -78,6 +78,7 @@ export declare class EffectRunner {
     private audioSpectrum;
     private readonly load;
     private globalUniforms;
+    private effectScreenMatrix;
     constructor(renderer: THREE.WebGLRenderer, width: number, height: number, opts?: {
         load?: EffectTexLoader;
     });
@@ -99,6 +100,9 @@ export declare class EffectRunner {
     setAudioSpectrumSource(source: Uint8Array | null): void;
     /** 每帧注入全局 uniform（指针/视差）：未提供的字段保持上一次的值；shader 未声明则跳过。 */
     setGlobalUniforms(uniforms: EffectGlobalUniforms): void;
+    /** 对象效果链的 `g_EffectModelViewProjectionMatrix`（pass NDC → 画布 NDC）：每对象不同，与全局 uniform
+     *  分开注入。null = 保持 getMaterial 预建的单位阵（全屏对象近似）。 */
+    setEffectScreenMatrix(matrix: THREE.Matrix4 | null): void;
     private ensureTargets;
     private disposeMaterials;
     /** 纹理槽缓存清理：**只释放本实例加载的纹理**，跳过模块级共享纹理（`BUILTIN_CACHE` /

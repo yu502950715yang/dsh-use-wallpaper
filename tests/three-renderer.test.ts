@@ -1383,7 +1383,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
   // 照常注入 capture、照常挂链（能力保留在执行器与纯函数里），但**不得**登记段边界消费者：
   // 不登记 ⇒ frameCapture 不 active ⇒ 段渲染不开启 ⇒ 2597392171 的链行为 = 改动前（该槽留空 +
   // 每槽去重告警）。登记行为与判定口径的单测：tests/object-effects.test.ts。
-  it('链引用 _rt_FullFrameBuffer：门控关闭 ⇒ 不登记段边界消费者（capture 仍照常注入）', async () => {
+  it('链引用 _rt_FullFrameBuffer：门控开启 ⇒ 登记段边界消费者（capture 仍照常注入）', async () => {
     stubAssetFetch(sceneWith([
       {
         id: 13, name: 'godrays', image: 'models/a.json',
@@ -1420,9 +1420,9 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
 
     const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
     expect(await r.render('2597392171', document.createElement('canvas'), null)).toBe(true);
-    // capture 接线不变（无消费者时 active=false ⇒ 帧序与改动前一致），但两个对象都**不**登记。
+    // capture 照常注入；门控已开 ⇒ 引用快照的对象（13）登记为段边界消费者；60 是普通链不登记。
     expect(setFrameCapture).toHaveBeenCalledTimes(1);
-    expect(registerFrameConsumer).not.toHaveBeenCalled();
+    expect(registerFrameConsumer.mock.calls.map((c) => c[0])).toEqual([13]);
     expect(warn.mock.calls.filter((c) => String(c[0]).includes('尚无隔离条目'))).toHaveLength(0);
     warn.mockRestore();
     r.dispose();
@@ -1475,10 +1475,10 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     r.dispose();
   });
 
-  // v0.8.2 T3：util 层内容输入 = 整帧快照 ⇒ 每个 **passthrough** util 层（project/fullscreen/
-  // compose）都登记为帧消费者（段边界才有快照可写成内容）；solid 保留纯色内容、不登记。
-  // `_rt_FullFrameBuffer` 槽门控只对「util + 链显式引用」开放：对象链（image）保持关闭。
-  it('util 内容输入：passthrough util 登记帧消费者；solid 与对象链不登记，槽门控只放行 util', async () => {
+  // v0.8.2 T3 + 2026-10-28：util 层内容输入 = 整帧快照 ⇒ 每个 **passthrough** util 层（project/
+  // fullscreen/compose）都登记为帧消费者（段边界才有快照可写成内容）；solid 保留纯色内容、不登记。
+  // `_rt_FullFrameBuffer` 槽门控：门控已开 ⇒ 引用快照的对象链（image）同样登记并放行。
+  it('util 内容输入：passthrough util 与引用快照的 image 登记帧消费者；solid 不登记', async () => {
     const framePass = { passes: [{ textures: [null, '_rt_FullFrameBuffer'] }] };
     stubAssetFetch(sceneWith([
       {
@@ -1527,17 +1527,19 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
     expect(await r.render('2911105183', document.createElement('canvas'))).toBe(true);
 
-    // 只有 passthrough util（58 project / 37 compose）登记；solid 327 与 image 13 不登记。
-    expect(registerFrameConsumer.mock.calls.map((c) => c[0])).toEqual([58, 37]);
+    // util 内容层（58 project / 37 compose）由渲染器登记；引用快照的链（13 image / 58 util / 327 solid）
+    // 由 stage 登记 ⇒ 58 会登记两次，player 侧用 Set（幂等）。solid 的**内容**不需快照，但它的链引用了。
+    expect([...new Set(registerFrameConsumer.mock.calls.map((c) => c[0]))].sort((a, b) => a - b))
+      .toEqual([13, 37, 58, 327]);
     // capture 必须先注入、再登记消费者（否则 checkFrameConsumers 命不中 → 不 active）。
     expect(setFrameCapture.mock.invocationCallOrder[0])
       .toBeLessThan(registerFrameConsumer.mock.invocationCallOrder[0]);
-    // 槽门控：util 58 的链显式引用 → 绑定；37 未引用 → 不绑定；solid/image 一律不绑定。
+    // 槽门控：13、58、327 的链显式引用 → 绑定；37 未引用 → 不绑定。
     const stage = setObjectEffectStage.mock.calls[0][0] as ObjectEffectStage;
     expect(stage.frameSnapshotBound(58)).toBe(true);
     expect(stage.frameSnapshotBound(37)).toBe(false);
-    expect(stage.frameSnapshotBound(327)).toBe(false);
-    expect(stage.frameSnapshotBound(13)).toBe(false);
+    expect(stage.frameSnapshotBound(327)).toBe(true);
+    expect(stage.frameSnapshotBound(13)).toBe(true);
     expect(warn.mock.calls.filter((c) => String(c[0]).includes('尚无隔离条目'))).toHaveLength(0);
 
     warn.mockRestore();

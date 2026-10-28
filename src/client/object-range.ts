@@ -201,6 +201,39 @@ export function coverRange(width: number, height: number, viewAspect: number) {
   return { w: height * viewAspect, h: height };
 }
 
+// 对象效果链的 `g_EffectModelViewProjectionMatrix`：pass 全屏 quad 的 NDC 顶点 → 画布 NDC。
+// 推导：pass quad 覆盖对象 RT；RT 的 v=0=图像顶部（局部相机 y 镜像，见 threejs-player.attachIsolated）
+// ⇒ a_Position.y=+1 对应对象图像底部（世界 -h/2）。故 M = 主相机投影 · T(quad 位置) · R(angles) · S(w/2, -h/2)；
+// 主相机按 coverRange 中心原点 ⇒ 投影 = S(2/cover.w, 2/cover.h)。godrays 的 frag 再把结果 *0.5+0.5 当 UV。
+// position = 场景中心化后的世界坐标（= origin − scene/2，同合成 quad 的 position）；dpr 不影响 NDC。
+export function effectScreenMatrix(input: {
+  worldW: number;
+  worldH: number;
+  position: { x: number; y: number };
+  angles: [number, number, number];
+  sceneW: number;
+  sceneH: number;
+  viewW: number;
+  viewH: number;
+  dpr: number;
+}): THREE.Matrix4 {
+  const finite = (v: number, fallback = 0): number => (Number.isFinite(v) ? v : fallback);
+  const worldW = Math.abs(finite(input.worldW));
+  const worldH = Math.abs(finite(input.worldH));
+  const sceneW = Math.max(1, finite(input.sceneW, 1));
+  const sceneH = Math.max(1, finite(input.sceneH, 1));
+  const viewW = Math.max(1, finite(input.viewW, 1));
+  const viewH = Math.max(1, finite(input.viewH, 1));
+  const cover = coverRange(sceneW, sceneH, viewW / viewH);
+  return new THREE.Matrix4()
+    .makeScale(2 / cover.w, 2 / cover.h, 1)
+    .multiply(new THREE.Matrix4().makeTranslation(finite(input.position.x), finite(input.position.y), 0))
+    .multiply(new THREE.Matrix4().makeRotationFromEuler(
+      new THREE.Euler(finite(input.angles[0]), finite(input.angles[1]), finite(input.angles[2]), 'XYZ'),
+    ))
+    .multiply(new THREE.Matrix4().makeScale(worldW / 2, -worldH / 2, 1));
+}
+
 // 「屏幕密度」= 每个世界单位占多少**设备像素**（画布缓冲像素，不是 CSS 像素）= 对象 RT 尺寸口径的唯一基准。
 // 主相机按 coverRange 把场景宽 `coverW` 个世界单位铺满画布缓冲宽 `floor(viewW × dpr)` 个像素，cover 的两轴
 // 比例**天然相同**（coverRange 构造使然），故一个标量就完整描述「世界 → 屏幕」的线性映射。

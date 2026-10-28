@@ -23074,6 +23074,19 @@ function coverRange(width, height, viewAspect) {
   }
   return { w: height * viewAspect, h: height };
 }
+function effectScreenMatrix(input) {
+  const finite = (v, fallback = 0) => Number.isFinite(v) ? v : fallback;
+  const worldW = Math.abs(finite(input.worldW));
+  const worldH = Math.abs(finite(input.worldH));
+  const sceneW = Math.max(1, finite(input.sceneW, 1));
+  const sceneH = Math.max(1, finite(input.sceneH, 1));
+  const viewW = Math.max(1, finite(input.viewW, 1));
+  const viewH = Math.max(1, finite(input.viewH, 1));
+  const cover = coverRange(sceneW, sceneH, viewW / viewH);
+  return new Matrix4().makeScale(2 / cover.w, 2 / cover.h, 1).multiply(new Matrix4().makeTranslation(finite(input.position.x), finite(input.position.y), 0)).multiply(new Matrix4().makeRotationFromEuler(
+    new Euler(finite(input.angles[0]), finite(input.angles[1]), finite(input.angles[2]), "XYZ")
+  )).multiply(new Matrix4().makeScale(worldW / 2, -worldH / 2, 1));
+}
 function screenScalePx(sceneW, sceneH, viewW, viewH, dpr) {
   const sw = Number.isFinite(sceneW) && sceneW > 0 ? sceneW : 1;
   const sh = Number.isFinite(sceneH) && sceneH > 0 ? sceneH : 1;
@@ -24931,6 +24944,25 @@ var ThreeScenePlayer = class {
       this.viewHeight,
       this.pixelRatio
     );
+  }
+  // 对象效果链的 `g_EffectModelViewProjectionMatrix`（pass NDC → 画布 NDC，见 object-range.effectScreenMatrix）：
+  // 对象效果链的 `_rt_FullFrameBuffer` 消费点用它把对象窗口坐标换算成整帧快照的屏幕 UV。
+  // 无隔离条目（端口未挂链/已释放）→ null（runner 保持单位阵）。
+  effectScreenMatrix(objectId) {
+    const iso = this.isolated.get(objectId);
+    if (!iso) return null;
+    const q = iso.quad;
+    return effectScreenMatrix({
+      worldW: iso.worldW,
+      worldH: iso.worldH,
+      position: { x: q.position.x, y: q.position.y },
+      angles: [q.rotation.x, q.rotation.y, q.rotation.z],
+      sceneW: this.sceneWidth,
+      sceneH: this.sceneHeight,
+      viewW: this.viewWidth,
+      viewH: this.viewHeight,
+      dpr: this.pixelRatio
+    });
   }
   // 按 cover 语义把相机视锥设为场景尺寸的 cover 视图（中心原点，z 范围 -1000..1000 不变）。
   applyCover() {
@@ -27975,6 +28007,8 @@ var EffectRunner = class {
   load;
   // 全局 uniform（指针/视差）：未注入 = 空对象（既有 uniform 默认值不变，零回归）。
   globalUniforms = {};
+  // 对象效果链的画布投影矩阵（每对象不同，见 object-range.effectScreenMatrix）；null = 用预建的单位阵。
+  effectScreenMatrix = null;
   // `opts.load`：纹理槽加载器（缺省 `loadTexTexture`）。**调用方用它携带纹理 v 约定**：效果 shader 把
   //   `v_TexCoord.y` 当**图像空间**坐标（flowmap 的带符号位移、clouds 的旋转/滚动、foliagesway 的摆动方向…），
   //   而纹理由对象 RT 提供 —— 二者的 v 约定必须**同一套**，否则条带位置对而方向/斜度反。
@@ -28056,6 +28090,11 @@ var EffectRunner = class {
   setGlobalUniforms(uniforms) {
     this.globalUniforms = { ...this.globalUniforms, ...uniforms };
   }
+  /** 对象效果链的 `g_EffectModelViewProjectionMatrix`（pass NDC → 画布 NDC）：每对象不同，与全局 uniform
+   *  分开注入。null = 保持 getMaterial 预建的单位阵（全屏对象近似）。 */
+  setEffectScreenMatrix(matrix) {
+    this.effectScreenMatrix = matrix;
+  }
   // RT 尺寸对齐：仅当目标尺寸与当前不一致才重建 ping-pong RT（避免 recreate churn）；
   // 重建后同步 this.width/this.height（getMaterial 预建 g_TextureNResolution 默认值跟随对象 RT 尺寸）。
   ensureTargets(w, h) {
@@ -28120,7 +28159,7 @@ var EffectRunner = class {
         uniforms["g_ModelViewProjectionMatrix"].value = new Matrix4();
       }
       const effectMatrixNames = /* @__PURE__ */ new Set();
-      for (const m of (pass.vertSrc + "\n" + pass.fragSrc).matchAll(/uniform\s+mat4\s+(g_EffectTextureProjectionMatrix(?:Inverse)?)\s*;/g)) {
+      for (const m of (pass.vertSrc + "\n" + pass.fragSrc).matchAll(/uniform\s+mat4\s+(g_EffectTextureProjectionMatrix(?:Inverse)?|g_EffectModelViewProjectionMatrix)\s*;/g)) {
         effectMatrixNames.add(m[1]);
       }
       for (const name of effectMatrixNames) {
@@ -28196,6 +28235,8 @@ var EffectRunner = class {
       if (dim !== 2 && dim !== 4) continue;
       uniform.value = dim === 4 ? [value[0], value[1], 0, 0] : [value[0], value[1]];
     }
+    const screenMvp = material.uniforms["g_EffectModelViewProjectionMatrix"];
+    if (screenMvp && this.effectScreenMatrix) screenMvp.value = this.effectScreenMatrix;
   }
   // 释放某 key 对应场景中全屏 quad 的 geometry 并移除场景缓存（编译失败/异常路径共用）
   disposeSceneQuads(key) {
@@ -28383,6 +28424,7 @@ var EffectRunner = class {
     this.clearTextures();
     this.audioSpectrum = null;
     this.globalUniforms = {};
+    this.effectScreenMatrix = null;
   }
 };
 var SCREEN_CAMERA = new OrthographicCamera(-1, 1, 1, -1, -1e3, 1e3);
@@ -28405,7 +28447,7 @@ function blendModeToThree(mode) {
 }
 
 // src/client/object-effects.ts
-var ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER = false;
+var ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER = true;
 function weVRowOrderLoader(load = loadTexTexture) {
   return (url, opts) => load(url, { ...opts, rowOrder: "topDown" });
 }
@@ -28486,7 +28528,7 @@ var ObjectEffectStage = class {
     if (ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER && referencesFrameSnapshot(chains, plan)) {
       this.host.registerFrameConsumer(objId);
     }
-    const frameSnapshotBound = this.allowFrameSnapshot?.(objId) === true && referencesFrameSnapshot(chains, plan);
+    const frameSnapshotBound = (ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER || this.allowFrameSnapshot?.(objId) === true) && referencesFrameSnapshot(chains, plan);
     this.mount(objId, chains, view.rtWidth, view.rtHeight, plan, frameSnapshotBound);
   }
   /** 视口变化：按新的**屏幕密度**重算每个对象的 RT 像素尺寸，并用同一份链重挂（runner 内部 RT 跟随）。
@@ -28567,6 +28609,7 @@ var ObjectEffectStage = class {
       if (!runner) continue;
       runner.setAudioSpectrumSource(this.audioSpectrum);
       if (this.globalUniforms) runner.setGlobalUniforms(this.globalUniforms);
+      runner.setEffectScreenMatrix?.(this.host.effectScreenMatrix?.(view.id) ?? null);
       const item = this.boundarySnapshots.get(view.id) ?? null;
       const entry = this.entries.get(view.id);
       this.enqueue(() => runner.update(time, view.rtTexture, this.frameTextureFor(entry, item)));
@@ -28587,7 +28630,7 @@ var ObjectEffectStage = class {
    *  有门控：未放行/未引用 ⇒ null，放行 ⇒ 边界快照优先、全局快照（最后段边界）兜底。 */
   frameTextureFor(entry, item) {
     const boundary = item !== null && !this.snapshotStale(item.version) ? item.texture : null;
-    if (!this.allowFrameSnapshot) return boundary;
+    if (!this.allowFrameSnapshot && !ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER) return boundary;
     if (entry?.frameSnapshotBound !== true) return null;
     return boundary ?? this.frameSnapshot;
   }
@@ -28616,15 +28659,16 @@ var ObjectEffectStage = class {
   }
   debugInjectRunner(id, runner) {
     const view = this.host.isolatedObjects().find((o) => o.id === id);
+    const prev = this.entries.get(id);
     this.entries.set(id, {
       runner,
       chains: [],
       plan: null,
-      worldW: view ? view.rtWidth / this.scale() : 1,
-      worldH: view ? view.rtHeight / this.scale() : 1,
-      source: null,
-      budgeted: false,
-      frameSnapshotBound: false
+      worldW: prev?.worldW ?? (view ? view.rtWidth / this.scale() : 1),
+      worldH: prev?.worldH ?? (view ? view.rtHeight / this.scale() : 1),
+      source: prev?.source ?? null,
+      budgeted: prev?.budgeted ?? false,
+      frameSnapshotBound: prev?.frameSnapshotBound ?? false
     });
   }
   /** 去重告警（同一 key 只打印一次，防每帧刷屏）。 */

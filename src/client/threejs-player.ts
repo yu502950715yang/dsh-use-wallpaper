@@ -7,7 +7,7 @@
 //   - 正交相机 y 轴不翻转（WE 左下原点 y 向上与 three 正交相机一致，见 scene-renderer 文件头）。
 import * as THREE from 'three';
 // 几何/尺寸纯函数唯一实现在 object-range.ts（coverRange 在其处，scene-renderer 只做转手）。
-import { coverRange, CAMERA_DISTANCE, materialModulation, createCompositeGeometry, flipGeometryUvY, screenScalePx } from './object-range.js';
+import { coverRange, CAMERA_DISTANCE, materialModulation, createCompositeGeometry, flipGeometryUvY, screenScalePx, effectScreenMatrix } from './object-range.js';
 // 对象 alignment：origin 是锚点，中心按锚点偏移（F13；与 text anchor 同口径）。
 import { alignOffset } from './alignment.js';
 import { parseSceneJson } from './scene-json.js';
@@ -935,6 +935,26 @@ export class ThreeScenePlayer {
     return screenScalePx(
       this.sceneWidth, this.sceneHeight, this.viewWidth, this.viewHeight, this.pixelRatio,
     );
+  }
+
+  // 对象效果链的 `g_EffectModelViewProjectionMatrix`（pass NDC → 画布 NDC，见 object-range.effectScreenMatrix）：
+  // 对象效果链的 `_rt_FullFrameBuffer` 消费点用它把对象窗口坐标换算成整帧快照的屏幕 UV。
+  // 无隔离条目（端口未挂链/已释放）→ null（runner 保持单位阵）。
+  effectScreenMatrix(objectId: number): THREE.Matrix4 | null {
+    const iso = this.isolated.get(objectId);
+    if (!iso) return null;
+    const q = iso.quad;
+    return effectScreenMatrix({
+      worldW: iso.worldW,
+      worldH: iso.worldH,
+      position: { x: q.position.x, y: q.position.y },
+      angles: [q.rotation.x, q.rotation.y, q.rotation.z],
+      sceneW: this.sceneWidth,
+      sceneH: this.sceneHeight,
+      viewW: this.viewWidth,
+      viewH: this.viewHeight,
+      dpr: this.pixelRatio,
+    });
   }
 
   // 按 cover 语义把相机视锥设为场景尺寸的 cover 视图（中心原点，z 范围 -1000..1000 不变）。

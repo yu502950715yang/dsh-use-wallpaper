@@ -4086,8 +4086,8 @@ describe('最终审查 C2：真实装配链路的帧快照消费者门控（端�
     };
   }
 
-  it('门控关闭：真 player + 真 ObjectEffectStage 挂「引用快照」的链 ⇒ 不登记消费者（active=false、帧序同改动前）', () => {
-    expect(ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER).toBe(false);
+  it('门控开启：真 player + 真 ObjectEffectStage 挂「引用快照」的链 ⇒ 登记消费者、段渲染拍快照、槽绑快照', () => {
+    expect(ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER).toBe(true);
     const canvas = document.createElement('canvas');
     const mock = createMockRenderer();
     const scene = JSON.stringify({
@@ -4108,20 +4108,15 @@ describe('最终审查 C2：真实装配链路的帧快照消费者门控（端�
     // 与 three-renderer 同一顺序契约：先 setWorldSize，再 setObjectChains
     stage.setWorldSize(13, 1920, 1080, null);
     stage.setObjectChains(13, [[frameSlotPass()]]);
-    expect(cap.active).toBe(false); // 门控关闭 ⇒ 链不登记消费者（唯一登记入口就是 setObjectChains）
+    // 门控开启 ⇒ 引用快照的链登记消费者（唯一登记入口是 setObjectChains）⇒ 段渲染激活。
+    expect(cap.active).toBe(true);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     player.render();
-    // 主场景直渲一次、不拍快照、不合成 —— 与改动前逐字节一致（隔离内容那次渲进对象 RT，不算主场景）
-    expect(mock._renders.filter((r) => r.scene === player.scene).map((r) => r.target)).toEqual([null]);
-    expect(mock._copies).toHaveLength(0);
-    // 链行为 = 改动前：该槽**留空** + 每槽去重告警（不是「回退 1×1 白纹」那条路径）。
-    const slotWarns = warn.mock.calls.map((c) => String(c[0])).filter((m) => m.includes('跳过绑定（槽留空）'));
-    expect(slotWarns).toHaveLength(1);
-    expect(slotWarns[0]).toContain('_rt_FullFrameBuffer');
-    expect(warn.mock.calls.some((c) => String(c[0]).includes('帧内快照不可用'))).toBe(false);
+    // 段渲染：消费者段边界**恰好拍一次**快照；该槽绑快照（不再留空告警）。
+    expect(mock._copies).toHaveLength(1);
+    expect(warn.mock.calls.map((c) => String(c[0])).filter((m) => m.includes('跳过绑定（槽留空）'))).toHaveLength(0);
     player.render();
-    // 去重：第二帧不再刷同一条告警（改动前口径）
-    expect(warn.mock.calls.map((c) => String(c[0])).filter((m) => m.includes('跳过绑定（槽留空）'))).toHaveLength(1);
+    expect(mock._copies).toHaveLength(2); // 每帧一次
     warn.mockRestore();
     player.dispose();
   });

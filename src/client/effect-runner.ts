@@ -417,6 +417,8 @@ export class EffectRunner {
   private readonly load: EffectTexLoader;
   // 全局 uniform（指针/视差）：未注入 = 空对象（既有 uniform 默认值不变，零回归）。
   private globalUniforms: EffectGlobalUniforms = {};
+  // 对象效果链的画布投影矩阵（每对象不同，见 object-range.effectScreenMatrix）；null = 用预建的单位阵。
+  private effectScreenMatrix: THREE.Matrix4 | null = null;
 
   // `opts.load`：纹理槽加载器（缺省 `loadTexTexture`）。**调用方用它携带纹理 v 约定**：效果 shader 把
   //   `v_TexCoord.y` 当**图像空间**坐标（flowmap 的带符号位移、clouds 的旋转/滚动、foliagesway 的摆动方向…），
@@ -525,6 +527,12 @@ export class EffectRunner {
     this.globalUniforms = { ...this.globalUniforms, ...uniforms };
   }
 
+  /** 对象效果链的 `g_EffectModelViewProjectionMatrix`（pass NDC → 画布 NDC）：每对象不同，与全局 uniform
+   *  分开注入。null = 保持 getMaterial 预建的单位阵（全屏对象近似）。 */
+  setEffectScreenMatrix(matrix: THREE.Matrix4 | null): void {
+    this.effectScreenMatrix = matrix;
+  }
+
   // RT 尺寸对齐：仅当目标尺寸与当前不一致才重建 ping-pong RT（避免 recreate churn）；
   // 重建后同步 this.width/this.height（getMaterial 预建 g_TextureNResolution 默认值跟随对象 RT 尺寸）。
   private ensureTargets(w: number, h: number): void {
@@ -608,7 +616,7 @@ export class EffectRunner {
       // dsh 的全屏 quad 顶点就是画布 NDC/纹理坐标，取单位阵与桌面 1:1 层一致（webwallgl 同口径）。
       // 不预建时 depthparallax.vert 的 CAST3X3(0) 使 normalize(0) 得 NaN，整层输出 NaN。
       const effectMatrixNames = new Set<string>();
-      for (const m of (pass.vertSrc + '\n' + pass.fragSrc).matchAll(/uniform\s+mat4\s+(g_EffectTextureProjectionMatrix(?:Inverse)?)\s*;/g)) {
+      for (const m of (pass.vertSrc + '\n' + pass.fragSrc).matchAll(/uniform\s+mat4\s+(g_EffectTextureProjectionMatrix(?:Inverse)?|g_EffectModelViewProjectionMatrix)\s*;/g)) {
         effectMatrixNames.add(m[1]);
       }
       for (const name of effectMatrixNames) {
@@ -696,6 +704,10 @@ export class EffectRunner {
       if (dim !== 2 && dim !== 4) continue;
       uniform.value = dim === 4 ? [value[0], value[1], 0, 0] : [value[0], value[1]];
     }
+    // 对象效果链的画布投影矩阵（godrays 的 v_ScreenCoord 用它采样 `_rt_FullFrameBuffer`）：
+    // 未注入时保持 getMaterial 预建的单位阵（全屏对象近似）。
+    const screenMvp = material.uniforms['g_EffectModelViewProjectionMatrix'];
+    if (screenMvp && this.effectScreenMatrix) screenMvp.value = this.effectScreenMatrix;
   }
 
   // 释放某 key 对应场景中全屏 quad 的 geometry 并移除场景缓存（编译失败/异常路径共用）
@@ -925,6 +937,7 @@ export class EffectRunner {
     this.clearTextures();
     this.audioSpectrum = null;
     this.globalUniforms = {};
+    this.effectScreenMatrix = null;
   }
 }
 
