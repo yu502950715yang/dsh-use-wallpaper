@@ -30,6 +30,7 @@
     "e2e:compare": "node e2e/verify/compare-shots.mjs",
     "e2e:verify-v081": "node e2e/verify/verify-v081-gaps.mjs",
     "e2e:verify-v082": "node e2e/verify/verify-v082.mjs",
+    "verify:arch": "node scripts/verify-arch.mjs",
     "verify:local": "node scripts/verify-local.mjs"
   },
   "peerDependencies": {

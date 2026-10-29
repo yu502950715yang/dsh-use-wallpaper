@@ -46,6 +46,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: 架构边界（host/client/shared 分层 + 环境 + 产物反向依赖）
+        run: node scripts/verify-arch.mjs
       - name: tsc（strict）
         run: pnpm exec tsc -p tsconfig.json --noEmit
       - name: lib/ 产物必须与 src 同步（重跑 tsc 后零差异）

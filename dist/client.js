@@ -23231,7 +23231,7 @@ function effectPointerUniforms(pointer, cfg, parallaxPointer = pointer) {
   };
 }
 
-// src/client/user-bindings.ts
+// src/shared/user-refs.ts
 function parseUserRef(user) {
   if (typeof user === "string") return user ? { name: user } : void 0;
   if (user && typeof user === "object") {
@@ -23242,6 +23242,8 @@ function parseUserRef(user) {
   }
   return void 0;
 }
+
+// src/client/user-bindings.ts
 function isTruthy(value) {
   if (typeof value === "boolean") return value;
   if (typeof value === "number") return Math.abs(value) > 1e-4;

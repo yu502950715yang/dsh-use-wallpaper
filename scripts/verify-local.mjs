@@ -21,6 +21,12 @@ function gate(name, fn) {
   rows.push({ name, ok, detail: typeof detail === 'object' && detail ? detail.detail : '' });
 }
 
+// ⓪ 架构边界（零容忍；规则自带红测样本，见 scripts/verify-arch.mjs 头注）
+gate('门禁 0：架构边界（verify-arch）', () => {
+  const r = sh('node', ['scripts/verify-arch.mjs'], { quiet: true });
+  return { ok: r.status === 0, detail: `exit ${r.status}` };
+});
+
 // ① tsc strict
 gate('门禁 1a：tsc --noEmit', () => {
   const r = sh('pnpm', ['exec', 'tsc', '-p', 'tsconfig.json', '--noEmit']);

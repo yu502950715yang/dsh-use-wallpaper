@@ -90,7 +90,9 @@ npx vitest run tests/xxx.test.ts --reporter=basic   # 跑单个文件
 - **全库解析回归**：`tests/verify-real-library.test.ts`（全库 scene.pkg 的 scene.json / image 纹理 / particle 规格 / 效果链解析零失败）。**依赖本机壁纸库**，无库时 `skipIf` 跳过并告警 —— CI 上等于不跑。
 - **端到端渲染（推荐）**：`e2e/`（自起 http server + headless Edge（自己 `spawn` + 手写裸 CDP，**不依赖 playwright**）+ esbuild 打包 harness，**用生产 `lib/`** 渲染真实素材并逐像素判定，**不依赖 DSH token**）。机器相关项一律走 `e2e/config.mjs`；判据失败**置非零退出码**（是 CI 门禁，不是日志）。
 - **零回归对拍**：`npm run e2e:hidpi -- --tag=baseline`（改动前）→ 改动 → `npm run e2e:hidpi -- --tag=after` → `npm run e2e:compare`（默认读 `baseline-dprN.png` vs `after-dprN.png`；自定义 tag 时用 `--tag-a` / `--tag-b` 指定）。判据：最大差 ≤ 1 且「差≥2」像素为 0。
+- **架构边界守卫**：`npm run verify:arch`（`scripts/verify-arch.mjs`）——扫描 `src/**` 强制分层与环境边界（host 不得依赖 client、client 不得依赖 host、shared 必须纯、client/shared 禁 `node:*`、host 禁 three/react、src 禁依赖 lib/dist/tests/e2e/research）；**规则自身带合成红测样本**（自检不过同样 exit 1），已接进 CI typecheck 与 `verify:local` 的第一道门禁。
 - **CI**：`.github/workflows/ci.yml`（tsc + `lib/`/`dist/client.js` 产物新鲜度守卫 / tests 侧类型检查棘轮 / vitest 新增失败 / Windows 渲染 e2e）。已知失败基线在 `scripts/known-failures.json`，类型错误基线在 `scripts/known-type-errors.json`。CI 的三个历史坑（动作运行时 Node24、runner 的 Edge、`pnpm-workspace.yaml` 需 `packages` 字段）与排查过程见 `docs/fixes/verification-ci-history.md`。
+- **本地综合验收**：`npm run verify:local`（复刻 CI 门禁 + 工作树卫生）。⚠️ 其中「产物新鲜度」两步会**还原入库副本**：改了 `src/` 后请先 `npm run build && npm run build:client` 再提交；同一轮里先跑 `verify:local` 会把刚构建好的 `dist/` 还原成入库版本（提交会漏产物）。
 - **测试环境**：vitest / esbuild / headless Edge 都依赖 service 子进程，**受限沙箱下会失败**（见 §5.13）。
 
 ## 4. 目录

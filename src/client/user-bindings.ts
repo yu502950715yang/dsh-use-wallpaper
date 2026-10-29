@@ -1,18 +1,10 @@
 // 用户属性绑定解析内核（纯逻辑）：scene 的 {user, condition} 引用 + project.json 属性级 condition。
 // 渲染侧只消费解析结果，不依赖 DOM/three。
 import type { SceneDescription, SceneObject, UserBindingRef } from '../shared/types.js';
-
-/** 绑定引用归一化：字符串 → {name}；对象取非空 name + 字符串 condition；缺失/畸形 → undefined。 */
-export function parseUserRef(user: unknown): UserBindingRef | undefined {
-  if (typeof user === 'string') return user ? { name: user } : undefined;
-  if (user && typeof user === 'object') {
-    const o = user as { name?: unknown; condition?: unknown };
-    if (typeof o.name === 'string' && o.name) {
-      return { name: o.name, condition: typeof o.condition === 'string' ? o.condition : undefined };
-    }
-  }
-  return undefined;
-}
+// parseUserRef 是 host/client 共用纯函数（host 的 user-props 也解析同一份引用）⇒ 定义在 shared，
+// 这里 re-export 保持既有 import 面（client 各模块与测试仍从本模块取）。
+import { parseUserRef } from '../shared/user-refs.js';
+export { parseUserRef } from '../shared/user-refs.js';
 
 /** 真值：布尔原样；数值非零（容差 1e-4）；字符串非空且非 "0"/"false"。 */
 export function isTruthy(value: unknown): boolean {

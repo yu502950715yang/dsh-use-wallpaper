@@ -1,6 +1,6 @@
 // host 侧用户属性聚合：project.json 的 general.properties ∩ scene.json 中被 {user} 引用的键。
 import type { WallpaperUserProperty } from '../shared/types.js';
-import { parseUserRef } from '../client/user-bindings.js';
+import { parseUserRef } from '../shared/user-refs.js';
 
 const ORDER = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 const stripHtml = (s: string) => s.replace(/<[^>]*>/g, '').replace(/&nbsp;/gi, ' ').trim();

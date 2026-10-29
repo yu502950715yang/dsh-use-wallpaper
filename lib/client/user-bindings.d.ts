@@ -1,6 +1,5 @@
 import type { SceneDescription, UserBindingRef } from '../shared/types.js';
-/** 绑定引用归一化：字符串 → {name}；对象取非空 name + 字符串 condition；缺失/畸形 → undefined。 */
-export declare function parseUserRef(user: unknown): UserBindingRef | undefined;
+export { parseUserRef } from '../shared/user-refs.js';
 /** 真值：布尔原样；数值非零（容差 1e-4）；字符串非空且非 "0"/"false"。 */
 export declare function isTruthy(value: unknown): boolean;
 /**
