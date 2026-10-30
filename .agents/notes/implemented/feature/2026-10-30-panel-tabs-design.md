@@ -34,3 +34,7 @@ Status: implemented
 ## Affected repositories
 
 - `dsh-use-wallpaper`（master）：`src/client/settings-shell.tsx`（新）、`boot-settings-section.tsx`（重设计）、`styles.ts`（token/tab/覆盖/wbs 重写）、`index.ts`（单 section 注册）、测试 `settings-shell.dom.test.tsx`（新）/ `boot-settings-section.dom.test.tsx` / `bootstrap.dom.test.ts` / `styles.test.ts`，`lib/`+`dist/` 产物，AGENT.md §1/§2.2 与 README 配置项说明。
+
+## Errata
+
+- **素材区改版（2026-10-30，用户反馈「看不清当前选的是哪个 + 不想手填路径」）**：原设计是「16:9 小预览 + 下拉选择」，选中项不突出、本地视频要求手填绝对路径。现改为「当前素材大卡片（缩略图 + 标题 + 类型标注 + 更换按钮）+ 可搜索的壁纸网格（选中项 accent 边框、点击即选）」；本地文件在桌面端用**系统文件选择器**：DOM `<input type=file>` 选中后用桌面壳 preload 暴露的 `__DSH_HOST_PATHS__.pathFor(file)`（Electron `webUtils.getPathForFile`）换出绝对路径，选完自动校验；`dsh web`/旧版桌面没有该 API 时回退手填输入框。行为契约不变（仍只写 `bootAnimation*` 字段），新增 `pickLocalFile?` prop 便于单测注入。

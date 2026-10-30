@@ -294,7 +294,7 @@ npx vitest run tests/xxx.test.ts --reporter=basic   # 跑单个文件
       9. **watcher 启动失败退避 = 固定 5s**（`media-session.ts` 的 `START_RETRY_MS`），与设计 §4.1 的「1s 起指数、上限 8s」不一致，**以代码 5s 为准**（决策笔记 errata）；进程异常退出无指数退避（下一次请求直接重启），60s 内 3 次失败降级 60s 不变。
       10. **e2e 可复跑性**：媒体 e2e 与其它 headless e2e 必须**串行**、彼此留 1–2s（连续紧跑后 Edge/调试端口可能未完全释放 ⇒ 环境性失败；单跑通过）；`--regression` 的 `[R2]`「对象数 > 0」/`[R3]`「截图字节 > 0」是**结构性弱断言**，画面正确性靠人工复看截图；`[R1]` 不含 CDP `Log.entryAdded` 的 error（只诊断打印）。
 
-45. **开机动画的边界（2026-10-30）**：桌面壳自身的启动闪屏无法替换 —— 插件只能在页面加载后尽早覆盖，两者可能各闪一次；固定静音（`muted + playsInline`，不提供声音开关）；平铺走背景图 repeat（只实现图片），视频的平铺在面板禁用；每次冷启动/新窗口只播一次（`sessionStorage`，刷新/HMR 不重播，面板「试播」不受限）；素材 8s 未就绪即静默跳过，不阻塞主界面；DSH 前端启动页（`[data-dsh-boot]`，HARNESS / "Loading plugins…"）存在期间动画**持续接管**（视频循环、图片保持，`MutationObserver` 观察其移除），该页消失（主界面挂载）后淡出，30s 硬上限兜底 —— 插件无法早于自身 bundle 加载覆盖启动页首帧。设计见 `docs/superpowers/specs/2026-10-30-boot-animation-design.md`。
+45. **开机动画的边界（2026-10-30）**：桌面壳自身的启动闪屏无法替换 —— 插件只能在页面加载后尽早覆盖，两者可能各闪一次；固定静音（`muted + playsInline`，不提供声音开关）；平铺走背景图 repeat（只实现图片），视频的平铺在面板禁用；每次冷启动/新窗口只播一次（`sessionStorage`，刷新/HMR 不重播，面板「试播」不受限）；素材 8s 未就绪即静默跳过，不阻塞主界面；DSH 前端启动页（`[data-dsh-boot]`，HARNESS / "Loading plugins…"）存在期间动画**持续接管**（视频循环、图片保持，`MutationObserver` 观察其移除），该页消失（主界面挂载）后淡出，30s 硬上限兜底 —— 插件无法早于自身 bundle 加载覆盖启动页首帧；本地视频在桌面端走系统文件选择器（DOM `<input type=file>` + 桌面壳 `__DSH_HOST_PATHS__.pathFor` → 绝对路径，选完自动校验），web 端无该 API 时回退手填路径。设计见 `docs/superpowers/specs/2026-10-30-boot-animation-design.md`。
 
 ## 8. 历史归档
 

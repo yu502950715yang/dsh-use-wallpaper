@@ -2851,14 +2851,37 @@ body[data-ds-dark-theme] .wss-details{background:var(--we-surface);border-color:
 .wbs-source[data-active="true"]{background:var(--we-surface);box-shadow:0 1px 3px rgba(15,17,22,.12)}
 .wbs-source[data-active="true"] .wbs-source-label{color:var(--dsw-alias-label-primary,var(--wp-text))}
 .wbs-source input:focus-visible + .wbs-source-label{outline:var(--we-ring);outline-offset:3px;border-radius:4px}
-/* WE \u7D20\u6750\u9009\u62E9\uFF1A\u9884\u89C8 + \u4E0B\u62C9 */
-.wbs-picker{display:flex;gap:var(--we-sp-3);align-items:flex-start}
-.wbs-picker[data-active="false"]{opacity:.55}
-.wbs-picker-preview{position:relative;flex:0 0 132px;width:132px;aspect-ratio:16/9;border-radius:var(--we-r-sm);overflow:hidden;background:var(--we-surface-2);display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--dsw-alias-label-tertiary,var(--wp-text))}
-.wbs-picker-preview img{width:100%;height:100%;object-fit:cover;display:block}
-.wbs-picker-body{display:flex;flex-direction:column;gap:6px;flex:1;min-width:0}
-.wbs-wallpaper{appearance:none;-webkit-appearance:none;min-height:34px;width:100%;border:1px solid var(--we-border);background-color:var(--we-surface-2);color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:var(--we-r-sm);padding:6px 32px 6px 10px;font:inherit;font-size:12.5px;cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238892a0' stroke-width='1.5'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center}
-.wbs-wallpaper:focus-visible{outline:var(--we-ring);outline-offset:1px}
+/* \u7D20\u6750\u533A\uFF082026-10-30 \u6539\u7248\uFF09\uFF1A\u5F53\u524D\u7D20\u6750\u5927\u5361\u7247 + \u53EF\u89C6\u5316\u58C1\u7EB8\u7F51\u683C\uFF0C\u8BA9\u7528\u6237\u4E00\u773C\u770B\u6E05\u9009\u4E2D\u9879 */
+.wbs-current{display:flex;align-items:center;gap:var(--we-sp-3);padding:10px;border:1px solid var(--we-border);border-radius:var(--we-r-md);background:var(--we-surface-2)}
+.wbs-current[data-empty="true"]{border-style:dashed}
+.wbs-current-thumb{position:relative;flex:0 0 132px;width:132px;aspect-ratio:16/9;border-radius:var(--we-r-sm);overflow:hidden;background:var(--we-surface);display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--dsw-alias-label-tertiary,var(--wp-text))}
+.wbs-current-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.wbs-current-thumb-file{font-size:18px;color:var(--wp-accent)}
+.wbs-current-info{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+.wbs-current-label{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--dsw-alias-label-tertiary,var(--wp-text))}
+.wbs-current-title{font-size:14px;font-weight:650;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--dsw-alias-label-primary,var(--wp-text))}
+.wbs-current-meta{font-size:11.5px;line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--dsw-alias-label-tertiary,var(--wp-text))}
+.wbs-choose{flex:none;height:32px;padding:0 12px;border-radius:var(--we-r-sm);border:1px solid var(--we-border);background:transparent;color:var(--dsw-alias-label-primary,var(--wp-text));font:inherit;font-size:12px;font-weight:600;cursor:pointer;transition:background-color .15s ease}
+.wbs-choose:hover{background:rgba(127,127,127,.12)}
+.wbs-choose:focus-visible{outline:var(--we-ring);outline-offset:2px}
+.wbs-picker{display:flex;flex-direction:column;gap:8px}
+.wbs-wallpaper-search{height:32px;padding:0 10px;border-radius:var(--we-r-sm);border:1px solid var(--we-border);background-color:var(--we-surface-2);color:var(--dsw-alias-label-primary,var(--wp-text));font:inherit;font-size:12px}
+.wbs-wallpaper-search:focus-visible{outline:var(--we-ring);outline-offset:1px}
+.wbs-wallpaper-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;max-height:232px;overflow-y:auto;padding:2px;scrollbar-width:thin;scrollbar-color:rgba(127,127,127,.45) transparent}
+.wbs-wallpaper-grid::-webkit-scrollbar{width:8px}
+.wbs-wallpaper-grid::-webkit-scrollbar-thumb{background:rgba(127,127,127,.38);border-radius:4px}
+.wbs-wallpaper-card{display:flex;flex-direction:column;gap:4px;padding:4px;border:1px solid transparent;border-radius:var(--we-r-sm);background:transparent;color:var(--dsw-alias-label-primary,var(--wp-text));font:inherit;text-align:left;min-width:0;cursor:pointer;transition:background-color .15s ease,border-color .15s ease}
+.wbs-wallpaper-card:hover{background:rgba(127,127,127,.10)}
+.wbs-wallpaper-card[data-selected="true"]{border-color:var(--wp-accent);background:color-mix(in srgb,var(--wp-accent) 8%,transparent)}
+.wbs-wallpaper-card:focus-visible{outline:var(--we-ring);outline-offset:1px}
+.wbs-wallpaper-thumb{position:relative;display:block;aspect-ratio:16/9;border-radius:6px;overflow:hidden;background:var(--we-surface-2)}
+.wbs-wallpaper-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.wbs-wallpaper-kind{position:absolute;left:6px;bottom:6px;font-size:9.5px;line-height:1;padding:3px 5px;border-radius:4px;background:rgba(0,0,0,.62);color:#fff}
+.wbs-wallpaper-title{font-size:11.5px;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wbs-wallpaper-empty{grid-column:1/-1;text-align:center;padding:10px 0}
+.wbs-probe-inline{align-self:flex-start;height:30px;padding:0 10px;border:1px solid var(--we-border);border-radius:var(--we-r-sm);background:transparent;color:var(--dsw-alias-label-secondary,var(--wp-text));font:inherit;font-size:11.5px;cursor:pointer}
+.wbs-probe-inline:hover{background:rgba(127,127,127,.12)}
+.wbs-probe-inline:focus-visible{outline:var(--we-ring);outline-offset:2px}
 /* \u672C\u5730\u89C6\u9891\u8DEF\u5F84 */
 .wbs-local{display:flex;flex-direction:column;gap:6px}
 .wbs-local[data-active="false"]{opacity:.55}
@@ -2906,7 +2929,7 @@ body[data-ds-dark-theme] .wss-details{background:var(--we-surface);border-color:
 .wbs-message[data-tone="ok"]{color:var(--we-ok)}
 .wbs-message[data-tone="warn"]{color:var(--we-warn)}
 .wbs-message[data-tone="danger"]{color:var(--we-danger)}
-@container (max-width:520px){.wbs-picker{flex-direction:column}.wbs-picker-preview{width:100%;flex:none;aspect-ratio:21/9}.wbs-fit-grid{grid-template-columns:minmax(0,1fr)}.wbs-hero{flex-direction:column;align-items:stretch}.wbs-switch{align-self:flex-start}}
+@container (max-width:520px){.wbs-current{flex-direction:column;align-items:stretch}.wbs-current-thumb{width:100%;flex:none;aspect-ratio:21/9}.wbs-wallpaper-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.wbs-fit-grid{grid-template-columns:minmax(0,1fr)}.wbs-hero{flex-direction:column;align-items:stretch}.wbs-switch{align-self:flex-start}}
 @media (prefers-reduced-motion:reduce){.we-tab,.wbs-source,.wbs-fit-card,.wbs-row button,.wbs-preview,.wbs-switch-track,.wbs-switch-track::before{transition:none}}
 `;
 var WALLPAPER_CSS = CSS;
@@ -5193,6 +5216,37 @@ function bootApi() {
 async function defaultPlayPreview() {
   return await bootApi()?.play?.({ force: true }) ?? "disabled";
 }
+async function defaultPickLocalFile() {
+  if (typeof document === "undefined" || typeof window === "undefined") return null;
+  const hostPaths = window.__DSH_HOST_PATHS__;
+  if (!hostPaths || typeof hostPaths.pathFor !== "function") return null;
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "video/*,.mp4,.webm,.mov,.m4v,.ogv";
+    input.style.display = "none";
+    document.body.appendChild(input);
+    let settled = false;
+    const done = (path) => {
+      if (settled) return;
+      settled = true;
+      input.remove();
+      resolve(path);
+    };
+    input.addEventListener("change", () => {
+      const file = input.files?.[0] ?? null;
+      let path = null;
+      try {
+        path = file ? hostPaths.pathFor(file) : null;
+      } catch {
+        path = null;
+      }
+      done(path && path.trim() ? path : null);
+    }, { once: true });
+    input.addEventListener("cancel", () => done(null), { once: true });
+    input.click();
+  });
+}
 var FITS = [
   { value: "tile", label: "\u5E73\u94FA" },
   { value: "contain", label: "\u5C45\u4E2D" },
@@ -5222,6 +5276,9 @@ function probeText(probe) {
   if (probe.ok) return `\u6587\u4EF6\u5B58\u5728 \xB7 ${formatSize(probe.size)} \xB7 ${probe.playable ? "\u53EF\u64AD\u653E" : "\u6269\u5C55\u540D\u4E0D\u652F\u6301"}`;
   return probe.error === "not found" ? "\u6587\u4EF6\u4E0D\u5B58\u5728\u6216\u4E0D\u662F\u666E\u901A\u6587\u4EF6" : "\u8DEF\u5F84\u65E0\u6548\u6216\u6269\u5C55\u540D\u4E0D\u652F\u6301";
 }
+function fileNameOf(path) {
+  return path.split(/[\\/]/).pop() || path;
+}
 function BootSettingsSection(props) {
   const fetchSettings = props.fetchSettings ?? readClientSettings;
   const save = props.writeSettings ?? writeClientSettings;
@@ -5236,6 +5293,8 @@ function BootSettingsSection(props) {
   const [messageTone, setMessageTone] = (0, import_react2.useState)("neutral");
   const [last, setLast] = (0, import_react2.useState)(null);
   const [previewing, setPreviewing] = (0, import_react2.useState)(false);
+  const [pickerOpen, setPickerOpen] = (0, import_react2.useState)(false);
+  const [query, setQuery] = (0, import_react2.useState)("");
   (0, import_react2.useEffect)(() => {
     let alive = true;
     void (async () => {
@@ -5254,6 +5313,16 @@ function BootSettingsSection(props) {
     };
   }, []);
   if (!settings) return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "wbs-root wbs-loading", children: "\u52A0\u8F7D\u4E2D\u2026" });
+  const source = settings.bootAnimationSource === "local" ? "local" : "we";
+  const isVideoAsset = source === "local" || settings.bootAnimationWallpaperKind === "video";
+  const picked = wallpapers.find((w) => w.id === settings.bootAnimationWallpaperId) ?? null;
+  const localFile = settings.bootAnimationLocalPath;
+  const nativePick = props.pickLocalFile === null ? false : props.pickLocalFile !== void 0 ? true : typeof window !== "undefined" && typeof window.__DSH_HOST_PATHS__?.pathFor === "function";
+  const pick = nativePick ? props.pickLocalFile ?? defaultPickLocalFile : null;
+  const filtered = wallpapers.filter((w) => {
+    const q = query.trim().toLowerCase();
+    return q === "" || w.title.toLowerCase().includes(q);
+  });
   const patch = async (p) => {
     setSettings((prev) => prev ? { ...prev, ...p } : prev);
     try {
@@ -5263,15 +5332,32 @@ function BootSettingsSection(props) {
       setMessage("\u4FDD\u5B58\u5931\u8D25\uFF1A\u8BBE\u7F6E\u670D\u52A1\u4E0D\u53EF\u7528");
     }
   };
-  const source = settings.bootAnimationSource === "local" ? "local" : "we";
-  const isVideoAsset = source === "local" || settings.bootAnimationWallpaperKind === "video";
-  const picked = wallpapers.find((w) => w.id === settings.bootAnimationWallpaperId) ?? null;
-  const runProbe = async () => {
+  const runProbe = async (pathOverride) => {
     try {
-      setProbe(await probePath(settings.bootAnimationLocalPath));
+      setProbe(await probePath(pathOverride ?? localFile));
     } catch {
       setProbe({ ok: false, error: "bad path" });
     }
+  };
+  const chooseLocalFile = async () => {
+    if (pick === null) return;
+    let path = null;
+    try {
+      path = await pick();
+    } catch {
+      path = null;
+    }
+    const trimmed = (path ?? "").trim();
+    if (!trimmed) return;
+    await patch({ bootAnimationLocalPath: trimmed });
+    await runProbe(trimmed);
+  };
+  const chooseWallpaper = (w) => {
+    void patch({
+      bootAnimationWallpaperId: w.id,
+      bootAnimationWallpaperKind: w.type === "image" ? "image" : "video"
+    });
+    setPickerOpen(false);
   };
   const runPreview = async () => {
     setPreviewing(true);
@@ -5343,41 +5429,67 @@ function BootSettingsSection(props) {
             }
           ),
           /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wbs-source-label", children: "\u672C\u5730\u89C6\u9891\u6587\u4EF6" }),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wbs-source-hint", children: "\u7EDD\u5BF9\u8DEF\u5F84" })
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wbs-source-hint", children: nativePick ? "\u7CFB\u7EDF\u9009\u62E9\u5668" : "\u624B\u586B\u7EDD\u5BF9\u8DEF\u5F84" })
         ] })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wbs-picker", "data-active": source === "we", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "wbs-picker-preview", "data-empty": !picked?.previewUrl, children: picked?.previewUrl ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("img", { src: picked.previewUrl, alt: "" }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: source === "we" ? "\u672A\u9009\u62E9" : "\u2014" }) }),
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wbs-picker-body", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
-            "select",
+      source === "we" ? /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wbs-we", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wbs-current", "data-empty": !picked, "data-kind": picked ? picked.type === "image" ? "image" : "video" : "none", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "wbs-current-thumb", children: picked?.previewUrl ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("img", { src: picked.previewUrl, alt: "" }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: "\u65E0\u9884\u89C8" }) }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wbs-current-info", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wbs-current-label", children: "\u5F53\u524D\u7D20\u6750" }),
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wbs-current-title", children: picked?.title ?? (settings.bootAnimationWallpaperId ? "\u5DF2\u9009\u58C1\u7EB8\uFF08\u4E0D\u5728\u5F53\u524D\u5217\u8868\uFF09" : "\u672A\u9009\u62E9\u7D20\u6750") }),
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wbs-current-meta", children: picked ? (picked.type === "image" ? "\u56FE\u7247\u58C1\u7EB8" : "\u89C6\u9891\u58C1\u7EB8") + (picked.hasPreviewGif ? " \xB7 \u52A8\u56FE\u9884\u89C8" : "") : "\u4ECE WE \u5E93\u9009\u4E00\u5F20\u89C6\u9891 / \u56FE\u7247\u58C1\u7EB8" })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", className: "wbs-choose", onClick: () => setPickerOpen((v) => !v), children: pickerOpen ? "\u6536\u8D77" : picked ? "\u66F4\u6362" : "\u9009\u62E9\u58C1\u7EB8" })
+        ] }),
+        pickerOpen && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wbs-picker", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+            "input",
             {
-              className: "wbs-wallpaper",
-              "aria-label": "\u5F00\u673A\u52A8\u753B\u7D20\u6750",
-              value: settings.bootAnimationWallpaperId,
-              onChange: (e) => {
-                const id = e.target.value;
-                const item = wallpapers.find((w) => w.id === id);
-                void patch({
-                  bootAnimationWallpaperId: id,
-                  bootAnimationWallpaperKind: item ? item.type === "image" ? "image" : "video" : ""
-                });
-              },
-              children: [
-                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "", children: "\uFF08\u672A\u9009\u62E9\uFF09" }),
-                wallpapers.map((w) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("option", { value: w.id, children: [
-                  w.title,
-                  " \xB7 ",
-                  w.type === "image" ? "\u56FE\u7247" : "\u89C6\u9891"
-                ] }, w.id))
-              ]
+              type: "search",
+              className: "wbs-wallpaper-search",
+              "aria-label": "\u641C\u7D22\u58C1\u7EB8",
+              placeholder: "\u641C\u7D22\u58C1\u7EB8\u6807\u9898\u2026",
+              value: query,
+              onChange: (e) => setQuery(e.target.value)
             }
           ),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wbs-wallpaper-grid", role: "listbox", "aria-label": "\u53EF\u9009\u58C1\u7EB8\uFF08\u89C6\u9891 / \u56FE\u7247\uFF09", children: [
+            filtered.map((w) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+              "button",
+              {
+                type: "button",
+                role: "option",
+                "aria-selected": w.id === settings.bootAnimationWallpaperId,
+                className: "wbs-wallpaper-card",
+                "data-id": w.id,
+                "data-selected": w.id === settings.bootAnimationWallpaperId,
+                onClick: () => chooseWallpaper(w),
+                children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { className: "wbs-wallpaper-thumb", children: [
+                    w.previewUrl ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("img", { src: w.previewUrl, alt: "", loading: "lazy" }) : null,
+                    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wbs-wallpaper-kind", children: w.type === "image" ? "\u56FE\u7247" : "\u89C6\u9891" })
+                  ] }),
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wbs-wallpaper-title", title: w.title, children: w.title })
+                ]
+              },
+              w.id
+            )),
+            filtered.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "wbs-desc wbs-wallpaper-empty", children: "\u6CA1\u6709\u5339\u914D\u7684\u58C1\u7EB8\u3002" })
+          ] }),
           wallpapers.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "wbs-desc", children: "\u58C1\u7EB8\u5217\u8868\u4E3A\u7A7A\uFF1A\u8BF7\u5148\u5728\u300C\u65E5\u5E38\u58C1\u7EB8\u300D\u9875\u914D\u7F6E\u76EE\u5F55\u6216\u70B9\u5237\u65B0\u3002" })
         ] })
-      ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wbs-local", "data-active": source === "local", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wbs-row wbs-local-row", children: [
+      ] }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wbs-local", "data-active": "true", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wbs-current", "data-empty": !localFile, children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "wbs-current-thumb wbs-current-thumb-file", "aria-hidden": "true", children: "\u25B6" }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wbs-current-info", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wbs-current-label", children: "\u5F53\u524D\u7D20\u6750" }),
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wbs-current-title", children: localFile ? fileNameOf(localFile) : "\u672A\u9009\u62E9\u89C6\u9891\u6587\u4EF6" }),
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wbs-current-meta", title: localFile || void 0, children: localFile || "\u652F\u6301 mp4 / webm / mov / m4v / ogv" })
+          ] }),
+          nativePick && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", className: "wbs-choose wbs-pick-file", onClick: () => void chooseLocalFile(), children: "\u9009\u62E9\u6587\u4EF6\u2026" })
+        ] }),
+        !nativePick && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wbs-row wbs-local-row", children: [
           /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
             "input",
             {
@@ -5385,13 +5497,14 @@ function BootSettingsSection(props) {
               className: "wbs-local-path",
               "aria-label": "\u672C\u5730\u89C6\u9891\u8DEF\u5F84",
               placeholder: "E:\\\\clips\\\\boot.mp4",
-              value: settings.bootAnimationLocalPath,
+              value: localFile,
               onChange: (e) => setSettings((prev) => prev ? { ...prev, bootAnimationLocalPath: e.target.value } : prev),
               onBlur: (e) => void patch({ bootAnimationLocalPath: e.target.value })
             }
           ),
           /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", className: "wbs-probe", onClick: () => void runProbe(), children: "\u6821\u9A8C" })
         ] }),
+        nativePick && localFile && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", className: "wbs-probe wbs-probe-inline", onClick: () => void runProbe(), children: "\u91CD\u65B0\u6821\u9A8C" }),
         probe && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "wbs-probe-result", "data-tone": probe.ok ? "ok" : "danger", children: probeText(probe) })
       ] })
     ] }),
