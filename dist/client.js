@@ -2396,10 +2396,13 @@ body[data-ds-dark-theme][data-we-wallpaper] [data-question-key] section{
 .wss-section-head .wss-section-title{margin:0}
 .wss-section-desc{margin:0 0 10px;font-size:12px;line-height:1.65;color:var(--dsw-alias-label-tertiary,var(--wp-text))}
 .wss-count{font-size:11.5px;padding:2px 8px;border-radius:999px;background:rgba(127,127,127,.12);color:var(--dsw-alias-label-tertiary,var(--wp-text))}
-/* Hero\uFF1A\u5F53\u524D\u58C1\u7EB8\u5927\u9884\u89C8 + \u6807\u9898/\u7C7B\u578B/\u72B6\u6001 + \u4E3B\u64CD\u4F5C\uFF08\u5F69\u8272\uFF1A\u84DD\u7D2B\u5F84\u5411\u6E10\u53D8 + accent \u63CF\u8FB9\uFF0C\u4E0E\u5F00\u673A\u52A8\u753B hero \u540C\u98CE\u683C\uFF09 */
-.wss-hero{display:flex;align-items:center;gap:16px;padding:14px;border-radius:16px;border:1px solid color-mix(in srgb,var(--wp-accent) 32%,var(--dsw-alias-border-l2,var(--wp-panel-border)));background:radial-gradient(120% 150% at 0% 0%,rgba(79,140,255,.26),transparent 58%),radial-gradient(120% 150% at 100% 100%,rgba(147,51,234,.20),transparent 62%),linear-gradient(135deg,rgba(79,140,255,.16),rgba(147,51,234,.10) 55%,transparent 85%),var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));box-shadow:0 10px 26px rgba(15,17,22,.06),0 0 0 1px rgba(79,140,255,.10)}
-body[data-ds-dark-theme] .wss-hero{border-color:rgba(96,165,250,.34);background:radial-gradient(120% 150% at 0% 0%,rgba(96,165,250,.32),transparent 58%),radial-gradient(120% 150% at 100% 100%,rgba(168,85,247,.26),transparent 62%),linear-gradient(135deg,rgba(96,165,250,.20),rgba(168,85,247,.12) 55%,transparent 85%),var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));box-shadow:0 12px 32px rgba(0,0,0,.35),0 0 0 1px rgba(96,165,250,.12)}
-.wss-hero-media{position:relative;flex:0 0 180px;width:180px;aspect-ratio:16/9;border-radius:12px;overflow:hidden;background:rgba(127,127,127,.14);box-shadow:0 6px 18px rgba(15,17,22,.18),0 0 0 1px color-mix(in srgb,var(--wp-accent) 40%,transparent)}
+/* Hero\uFF1A\u5F53\u524D\u58C1\u7EB8\u5927\u9884\u89C8 + \u6807\u9898/\u7C7B\u578B/\u72B6\u6001 + \u4E3B\u64CD\u4F5C\uFF08\u5F69\u8272\uFF1A\u84DD\u7D2B\u5149\u6591 + accent \u63CF\u8FB9\uFF0C\u4E0E\u5F00\u673A\u52A8\u753B hero \u540C\u98CE\u683C\uFF09 */
+.wss-hero{position:relative;display:flex;align-items:center;gap:16px;padding:14px;border-radius:16px;border:1px solid rgba(79,140,255,.46);background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));box-shadow:0 10px 26px rgba(15,17,22,.08),0 0 0 1px rgba(79,140,255,.10)}
+.wss-hero::before{content:"";position:absolute;inset:0;border-radius:inherit;background:radial-gradient(90% 140% at 6% 0%,rgba(79,140,255,.46),transparent 62%),radial-gradient(80% 140% at 100% 100%,rgba(147,51,234,.34),transparent 64%);pointer-events:none}
+.wss-hero>*{position:relative;z-index:1}
+body[data-ds-dark-theme] .wss-hero{border-color:rgba(96,165,250,.52);background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));box-shadow:0 12px 32px rgba(0,0,0,.35),0 0 0 1px rgba(96,165,250,.14)}
+body[data-ds-dark-theme] .wss-hero::before{background:radial-gradient(90% 140% at 6% 0%,rgba(96,165,250,.55),transparent 62%),radial-gradient(80% 140% at 100% 100%,rgba(168,85,247,.42),transparent 64%)}
+.wss-hero-media{position:relative;flex:0 0 180px;width:180px;aspect-ratio:16/9;border-radius:12px;overflow:hidden;background:rgba(127,127,127,.14);box-shadow:0 6px 18px rgba(15,17,22,.18),0 0 0 1px rgba(79,140,255,.40)}
 .wss-hero-media img{width:100%;height:100%;object-fit:cover;display:block}
 .wss-hero-media[data-empty="true"]{display:flex;align-items:center;justify-content:center}
 .wss-hero-empty{font-size:12px;color:var(--dsw-alias-label-tertiary,var(--wp-text))}
@@ -2805,7 +2808,6 @@ body[data-we-wallpaper] :where([data-sidebar-right-panel="fullscreen"][data-side
    \u65E7\u89C4\u5219\u4FDD\u6301\u4E0D\u52A8\uFF0C\u4F9B tests/styles.test.ts \u7684\u6587\u672C\u65AD\u8A00\u7EE7\u7EED\u6210\u7ACB\u3002 \u2500\u2500 */
 .wss-root{gap:var(--we-sp-3)}
 .wss-section{border-color:var(--we-border);background:var(--we-surface);border-radius:var(--we-r-card);padding:var(--we-sp-4);box-shadow:var(--we-shadow-card)}
-.wss-hero{border-radius:var(--we-r-hero);box-shadow:var(--we-shadow-hero)}
 .wss-details{border-color:var(--we-border);border-radius:var(--we-r-card);background:var(--we-surface)}
 .wss-nav{border-color:var(--we-border);border-radius:var(--we-r-md);background:var(--we-surface-2)}
 .wss-about-link{border-radius:var(--we-r-sm)}
