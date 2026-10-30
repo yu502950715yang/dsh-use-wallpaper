@@ -2728,6 +2728,25 @@ describe('three-renderer 音频链路', () => {
     r.dispose();
   });
 
+  // 切到视频/图片壁纸时 controller 会 dispose 本渲染器；之后面板改设置/切前后台都会再调
+  // setSoundEnabled ⇒ 不得按「上一次装配的音频规格」把已卸载场景的音频重新播出来。
+  it('切到非 scene 壁纸（dispose）后再打开音效：不重播上一张场景的音频', async () => {
+    audioMocks.createAudioAnalyzer.mockReturnValue(fakeAnalyzer());
+    stubAssetFetch(sceneWithSound([]), {});
+    stubPlayer();
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    await r.render('3798688689', document.createElement('canvas'), undefined);
+    expect(audioMocks.playWallpaperSound).toHaveBeenCalledTimes(2);
+
+    r.dispose?.(); // 控制器切到视频/图片/网页壁纸
+    audioMocks.playWallpaperSound.mockClear();
+    audioMocks.createAudioAnalyzer.mockClear();
+    r.setSoundEnabled?.(false);
+    r.setSoundEnabled?.(true);
+    expect(audioMocks.playWallpaperSound).not.toHaveBeenCalled();
+    expect(audioMocks.createAudioAnalyzer).not.toHaveBeenCalled();
+  });
+
   // 省电暂停（最小化/切后台）：画面之外音频也必须停，否则「最小化后还在响」= 没暂停
   it('setPaused 同步壁纸音频：暂停挂起 context 与各句柄，恢复续播', async () => {
     const fake = fakeAnalyzer();

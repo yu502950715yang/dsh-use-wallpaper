@@ -498,6 +498,8 @@ export function createThreeSceneRenderer(opts?: {
     currentMeshRegistry = null;
     // 壁纸音效随本次装配一起释放（AudioContext 不 close 会一路累积到浏览器上限）。
     stopAudio();
+    // 音频规格属于本次装配：切到视频/图片/网页壁纸后不能让 setSoundEnabled 按旧规格重播。
+    lastAudioSpec = null;
     // 系统音频捕获属于本渲染器实例：卸载/换渲染器时一并停止（用户可重新授权）。
     stopSystemAudioCapture();
   };
@@ -1528,6 +1530,8 @@ export function createThreeSceneRenderer(opts?: {
     setSoundEnabled(value: boolean) {
       soundEnabledOverride = value;
       if (!value) { stopAudio(); return; }
+      // 没有装配中的场景（视频/图片/网页壁纸或已 dispose）时不得重播上一次场景的音频。
+      if (!current) return;
       if (!currentAudio && lastAudioSpec) startAudio(lastAudioSpec.id, lastAudioSpec.sounds, true);
     },
     // 抓帧（v0.8 首帧缓存）：读取下一帧渲染结果；未装配/不支持 → null（调用方只跳过）。

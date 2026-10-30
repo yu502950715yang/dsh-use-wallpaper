@@ -34197,6 +34197,7 @@ function createThreeSceneRenderer(opts) {
     currentMeshRegistry?.dispose();
     currentMeshRegistry = null;
     stopAudio();
+    lastAudioSpec = null;
     stopSystemAudioCapture();
   };
   const teardownQuietly = () => {
@@ -35037,6 +35038,7 @@ function createThreeSceneRenderer(opts) {
         stopAudio();
         return;
       }
+      if (!current) return;
       if (!currentAudio && lastAudioSpec) startAudio(lastAudioSpec.id, lastAudioSpec.sounds, true);
     },
     // 抓帧（v0.8 首帧缓存）：读取下一帧渲染结果；未装配/不支持 → null（调用方只跳过）。
