@@ -198,13 +198,16 @@ describe('resolveSceneUserBindings', () => {
         kind: 'script', script: 'x', value: true,
         scriptProperties: { flag: { user: 'flag', value: false } },
       },
-      objectScriptProperties: { dayStart: { value: 0, user: { name: 'day' } } },
+      objectScripts: [{
+        property: 'origin', script: 'x',
+        scriptProperties: { dayStart: { value: 0, user: { name: 'day' } } },
+      }],
     }]);
     const out = resolveSceneUserBindings(desc, { _24h: false, flag: true, day: 6 });
     const o = out.objects[0] as any;
     expect(o.scriptProperties).toEqual({ delimiter: ':', use24hFormat: false });
     expect(o.visible.scriptProperties).toEqual({ flag: true });
-    expect(o.objectScriptProperties).toEqual({ dayStart: 6 });
+    expect(o.objectScripts?.[0]?.scriptProperties).toEqual({ dayStart: 6 });
   });
 
   it('bloomUser / parallaxUser 覆盖 general 配置', () => {

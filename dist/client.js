@@ -23473,10 +23473,14 @@ function resolveSceneUserBindings(desc, userProps) {
       } catch {
       }
     }
-    for (const key of ["scriptProperties", "objectScriptProperties"]) {
-      const props = rec[key];
+    if (rec.scriptProperties && typeof rec.scriptProperties === "object" && !Array.isArray(rec.scriptProperties)) {
+      rec.scriptProperties = resolveBindingsDeep(rec.scriptProperties, userProps, "raw");
+    }
+    const entries = Array.isArray(rec.objectScripts) ? rec.objectScripts : [];
+    for (const entry of entries) {
+      const props = entry?.scriptProperties;
       if (props && typeof props === "object" && !Array.isArray(props)) {
-        rec[key] = resolveBindingsDeep(props, userProps, "raw");
+        entry.scriptProperties = resolveBindingsDeep(props, userProps, "raw");
       }
     }
     const visible = rec.visible;
@@ -23802,16 +23806,17 @@ function scriptFields(o) {
   const scriptProperties = o?.scriptproperties !== void 0 ? parseScriptProperties(o.scriptproperties) : void 0;
   return { script, scriptProperties };
 }
-function objectScriptFields(o) {
-  for (const field of ["angles", "origin", "scale", "color"]) {
-    const v = o[field];
+var OBJECT_SCRIPT_PROPS = ["angles", "origin", "scale", "color"];
+function objectScriptsField(o) {
+  const out = [];
+  for (const property of OBJECT_SCRIPT_PROPS) {
+    const v = o[property];
     if (!v || typeof v !== "object" || Array.isArray(v)) continue;
     const f = scriptFields(v);
-    if (f.script) {
-      return { objectScript: f.script, objectScriptProperty: field, objectScriptProperties: f.scriptProperties };
-    }
+    if (!f.script) continue;
+    out.push({ property, script: f.script, ...f.scriptProperties ? { scriptProperties: f.scriptProperties } : {} });
   }
-  return {};
+  return out.length > 0 ? { objectScripts: out } : {};
 }
 function collectSounds(root) {
   const out = [];
@@ -23883,8 +23888,8 @@ function parseSceneJson(raw) {
       parallaxDepth: optNum2(o.parallaxDepth),
       // T4.4：origin/scale/angles 的 user 绑定保留（静态值照旧解析，供 resolve 缺失回退）。
       userRefs: pickUserRefs(o, ["origin", "scale", "angles"]),
-      // 转换字段里的对象脚本（angles.script 优先）；无脚本对象不产出这两个键。
-      ...objectScriptFields(o)
+      // 转换字段里的对象属性脚本（angles/origin/scale/color 各一个）；无脚本的属性不产出条目。
+      ...objectScriptsField(o)
     };
     const fromVisibleScript = base.visible?.kind === "script" ? { script: base.visible.script, scriptProperties: base.visible.scriptProperties } : {};
     if (typeof o.particle === "string" && o.particle) {
@@ -32684,18 +32689,21 @@ async function collectObjectEffectChains(desc, loadFile, isHidden) {
 function collectScriptSources(desc) {
   const out = [];
   for (const obj of desc.objects) {
-    const visibleScript = obj.visible?.kind === "script" ? obj.script : void 0;
-    const fromVisible = typeof visibleScript === "string" && visibleScript.length > 0;
-    const source = fromVisible ? visibleScript : obj.objectScript;
-    if (typeof source !== "string" || source.length === 0) continue;
-    const scriptProperties = fromVisible ? obj.visible?.scriptProperties : obj.objectScriptProperties;
-    const property = fromVisible ? void 0 : obj.objectScriptProperty;
-    out.push({
-      objectId: obj.id,
-      source,
-      ...scriptProperties ? { scriptProperties } : {},
-      ...property ? { property } : {}
-    });
+    if (obj.visible?.kind === "script" && typeof obj.visible.script === "string" && obj.visible.script) {
+      out.push({
+        objectId: obj.id,
+        source: obj.visible.script,
+        ...obj.visible.scriptProperties ? { scriptProperties: obj.visible.scriptProperties } : {}
+      });
+    }
+    for (const e of obj.objectScripts ?? []) {
+      out.push({
+        objectId: obj.id,
+        source: e.script,
+        property: e.property,
+        ...e.scriptProperties ? { scriptProperties: e.scriptProperties } : {}
+      });
+    }
   }
   return out;
 }

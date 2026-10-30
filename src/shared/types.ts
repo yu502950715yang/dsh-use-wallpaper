@@ -73,6 +73,13 @@ export interface VisibleBinding {
 // 对象级脚本挂载的转换属性（WE 属性脚本 `update(value)` 的绑定目标）。
 export type ObjectScriptProperty = 'angles' | 'origin' | 'scale' | 'color';
 
+// 单个对象属性脚本：四属性可各挂一个（scriptproperties 各自独立）。
+export interface ObjectScriptEntry {
+  property: ObjectScriptProperty;
+  script: string;
+  scriptProperties?: Record<string, unknown>;
+}
+
 // 对象级字段的 user 绑定引用（T4：解析期只记 ref，装配前 resolveSceneUserBindings 统一替换）。
 export interface ObjectUserRefs {
   color?: UserBindingRef;
@@ -90,12 +97,8 @@ export interface SceneObjectBase {
   userRefs?: ObjectUserRefs;
   /** WE 对象级视差深度（scene.json `parallaxDepth`，两根轴）；缺省 = OWE 的 {0,0} ⇒ 不参与视差。 */
   parallaxDepth?: [number, number];
-  /** 对象级脚本（angles/origin/scale/color 的 `{script, value}` 包装，优先级同字段顺序）； */
-  /** visible.script 之外的脚本入口，如 3765967112 的日夜切换图标（angles.script）。 */
-  objectScript?: string;
-  /** 该脚本挂载的属性名（决定 update(value) 的入参/写回目标；visible.script 无此字段）。 */
-  objectScriptProperty?: ObjectScriptProperty;
-  objectScriptProperties?: Record<string, unknown>; // 该脚本的 scriptproperties（{user} 绑定装配前 resolve）
+  /** 对象级属性脚本（angles/origin/scale/color 可各有一个）；visible.script 走 VisibleBinding。 */
+  objectScripts?: ObjectScriptEntry[];
 }
 
 export interface SceneImageObject extends SceneObjectBase {

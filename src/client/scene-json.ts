@@ -1,4 +1,4 @@
-import type { ObjectScriptProperty, ObjectUserRefs, SceneDescription, SceneImageObject, SceneObject, SceneSoundObject, SceneTextObject, UserBindingRef, UtilLayerKind } from '../shared/types.js';
+import type { ObjectScriptEntry, ObjectUserRefs, SceneDescription, SceneImageObject, SceneObject, SceneSoundObject, SceneTextObject, UserBindingRef, UtilLayerKind } from '../shared/types.js';
 import { readParallaxConfig } from './parallax.js';
 import { parseScriptProperties } from './script-patterns.js';
 import { parseUserRef } from './user-bindings.js';
@@ -210,22 +210,19 @@ function scriptFields(o: { script?: unknown; scriptproperties?: unknown } | unde
   return { script, scriptProperties };
 }
 
-// 对象级脚本入口（2026-10-20）：WE 把对象脚本挂在 angles 上（3765967112 日夜图标），
-// 其次 origin/scale/color；visible.script 仍走可见性通道（收集侧优先它）。
-function objectScriptFields(o: Record<string, unknown>): {
-  objectScript?: string;
-  objectScriptProperty?: ObjectScriptProperty;
-  objectScriptProperties?: Record<string, unknown>;
-} {
-  for (const field of ['angles', 'origin', 'scale', 'color'] as const) {
-    const v = o[field];
+const OBJECT_SCRIPT_PROPS = ['angles', 'origin', 'scale', 'color'] as const;
+
+// 对象属性脚本：四个转换属性可各挂一个脚本（各自 scriptproperties 独立）。
+function objectScriptsField(o: Record<string, unknown>): { objectScripts?: ObjectScriptEntry[] } {
+  const out: ObjectScriptEntry[] = [];
+  for (const property of OBJECT_SCRIPT_PROPS) {
+    const v = o[property];
     if (!v || typeof v !== 'object' || Array.isArray(v)) continue;
     const f = scriptFields(v as { script?: unknown; scriptproperties?: unknown });
-    if (f.script) {
-      return { objectScript: f.script, objectScriptProperty: field, objectScriptProperties: f.scriptProperties };
-    }
+    if (!f.script) continue;
+    out.push({ property, script: f.script, ...(f.scriptProperties ? { scriptProperties: f.scriptProperties } : {}) });
   }
-  return {};
+  return out.length > 0 ? { objectScripts: out } : {};
 }
 
 // sound 对象收集（T3.4/v0.8.1）：WE 音频节点携带 sound 文件数组；每对象产出结构化
@@ -309,8 +306,8 @@ export function parseSceneJson(raw: string): SceneDescription {
       parallaxDepth: optNum2(o.parallaxDepth),
       // T4.4：origin/scale/angles 的 user 绑定保留（静态值照旧解析，供 resolve 缺失回退）。
       userRefs: pickUserRefs(o, ['origin', 'scale', 'angles']),
-      // 转换字段里的对象脚本（angles.script 优先）；无脚本对象不产出这两个键。
-      ...objectScriptFields(o),
+      // 转换字段里的对象属性脚本（angles/origin/scale/color 各一个）；无脚本的属性不产出条目。
+      ...objectScriptsField(o),
     };
     // visible.script 的派生**与 kind 无关**（2026-09-22）：3798688689 的 3 个 SceneScript 总控
     // （92000 粒子 / 93000 拖尾 / 94000 场景控制器，后者 348 KB）**没有** image/particle/text

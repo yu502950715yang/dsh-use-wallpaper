@@ -2411,33 +2411,19 @@ describe('collectScriptSources', () => {
     expect(collectScriptSources(desc)).toEqual([]);
   });
 
-  // 对象级脚本入口（2026-10-20）：3765967112 的 angles.script 是唯一脚本来源（无 visible.script）。
-  it('转换字段的 objectScript 被收集（含 scriptProperties）；visible.script 优先', () => {
-    const desc = parseSceneJson(JSON.stringify({
-      objects: [
-        {
-          id: 123, name: 'Day/Night', image: 'models/x.json',
-          angles: {
-            script: 'export function init(){ thisLayer.getTextureAnimation().pause(); }',
-            scriptproperties: { dayStart: 0, nightStart: 12 },
-            value: '0 0 0',
-          },
-        },
-        {
-          id: 5, name: 'both', image: 'models/y.json',
-          visible: { script: 'export function update(){return true;}', value: true },
-          angles: { script: 'export function init(){}', value: '0 0 0' },
-        },
-      ],
-    }));
-    const srcs = collectScriptSources(desc);
-    expect(srcs.map((s) => s.objectId)).toEqual([123, 5]);
-    expect(srcs[0]!.source).toContain('getTextureAnimation');
-    expect(srcs[0]!.scriptProperties).toEqual({ dayStart: 0, nightStart: 12 });
-    expect(srcs[0]!.property).toBe('angles'); // 属性脚本：update(value) 收/回 Vec3
-    expect(srcs[1]!.source).toContain('return true');
-    expect(srcs[1]!.scriptProperties).toBeUndefined();
-    expect(srcs[1]!.property).toBeUndefined(); // visible.script 不带属性（布尔语义）
+  it('collectScriptSources：visible 走 VisibleBinding；text.script 不混入；属性脚本全部收集', () => {
+    const desc = parseSceneJson(JSON.stringify({ objects: [
+      { id: 1, image: 'models/x.json', visible: { script: 'VISIBLE_SRC', value: true } },
+      { id: 2, image: 'models/x.json', angles: { script: 'ANGLES_SRC' }, origin: { script: 'ORIGIN_SRC' } },
+      { id: 3, text: { value: 'hi', script: 'TEXT_SRC' }, visible: { script: 'VISIBLE_TEXT', value: true } },
+    ] }));
+    const out = collectScriptSources(desc);
+    expect(out.map((s) => [s.objectId, s.property, s.source])).toEqual([
+      [1, undefined, 'VISIBLE_SRC'],
+      [2, 'angles', 'ANGLES_SRC'],
+      [2, 'origin', 'ORIGIN_SRC'],
+      [3, undefined, 'VISIBLE_TEXT'],
+    ]);
   });
 });
 

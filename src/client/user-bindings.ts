@@ -318,10 +318,17 @@ export function resolveSceneUserBindings(
         /* 畸形 JSON 保持原样（wasm 侧同样会忽略） */
       }
     }
-    for (const key of ['scriptProperties', 'objectScriptProperties'] as const) {
-      const props = rec[key];
+    if (rec.scriptProperties && typeof rec.scriptProperties === 'object' && !Array.isArray(rec.scriptProperties)) {
+      rec.scriptProperties = resolveBindingsDeep(rec.scriptProperties, userProps, 'raw');
+    }
+    // 每个属性脚本的 scriptproperties 各自独立 resolve。
+    const entries = Array.isArray(rec.objectScripts)
+      ? rec.objectScripts as Array<{ scriptProperties?: unknown }>
+      : [];
+    for (const entry of entries) {
+      const props = entry?.scriptProperties;
       if (props && typeof props === 'object' && !Array.isArray(props)) {
-        rec[key] = resolveBindingsDeep(props, userProps, 'raw');
+        entry.scriptProperties = resolveBindingsDeep(props, userProps, 'raw');
       }
     }
     const visible = rec.visible as { scriptProperties?: Record<string, unknown> } | undefined;
