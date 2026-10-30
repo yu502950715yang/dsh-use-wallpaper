@@ -39,9 +39,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/util.js
+// ../../node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/util.js
 var require_util = __commonJS({
-  "node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/util.js"(exports) {
+  "../../node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/util.js"(exports) {
     exports.hashU32 = function hashU32(a) {
       a = a | 0;
       a = a + 2127912214 + (a << 12) | 0;
@@ -87,9 +87,9 @@ var require_util = __commonJS({
   }
 });
 
-// node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/xxh32.js
+// ../../node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/xxh32.js
 var require_xxh32 = __commonJS({
-  "node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/xxh32.js"(exports) {
+  "../../node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/xxh32.js"(exports) {
     var util = require_util();
     var prime1 = 2654435761;
     var prime2 = 2246822519;
@@ -165,9 +165,9 @@ var require_xxh32 = __commonJS({
   }
 });
 
-// node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/lz4.js
+// ../../node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/lz4.js
 var require_lz4 = __commonJS({
-  "node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/lz4.js"(exports) {
+  "../../node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/lz4.js"(exports) {
     var xxhash = require_xxh32();
     var util = require_util();
     var minMatch = 4;
@@ -512,10 +512,10 @@ var require_lz4 = __commonJS({
   }
 });
 
-// node_modules/.pnpm/@jitl+quickjs-ffi-types@0.32.0/node_modules/@jitl/quickjs-ffi-types/dist/index.mjs
+// ../../node_modules/.pnpm/@jitl+quickjs-ffi-types@0.32.0/node_modules/@jitl/quickjs-ffi-types/dist/index.mjs
 var EvalFlags, IntrinsicsFlags, JSPromiseStateEnum, GetOwnPropertyNamesFlags, IsEqualOp;
 var init_dist = __esm({
-  "node_modules/.pnpm/@jitl+quickjs-ffi-types@0.32.0/node_modules/@jitl/quickjs-ffi-types/dist/index.mjs"() {
+  "../../node_modules/.pnpm/@jitl+quickjs-ffi-types@0.32.0/node_modules/@jitl/quickjs-ffi-types/dist/index.mjs"() {
     EvalFlags = { JS_EVAL_TYPE_GLOBAL: 0, JS_EVAL_TYPE_MODULE: 1, JS_EVAL_TYPE_DIRECT: 2, JS_EVAL_TYPE_INDIRECT: 3, JS_EVAL_TYPE_MASK: 3, JS_EVAL_FLAG_STRICT: 8, JS_EVAL_FLAG_STRIP: 16, JS_EVAL_FLAG_COMPILE_ONLY: 32, JS_EVAL_FLAG_BACKTRACE_BARRIER: 64 };
     IntrinsicsFlags = { BaseObjects: 1, Date: 2, Eval: 4, StringNormalize: 8, RegExp: 16, RegExpCompiler: 32, JSON: 64, Proxy: 128, MapSet: 256, TypedArrays: 512, Promise: 1024, BigInt: 2048, BigFloat: 4096, BigDecimal: 8192, OperatorOverloading: 16384, BignumExt: 32768 };
     JSPromiseStateEnum = { Pending: 0, Fulfilled: 1, Rejected: 2 };
@@ -524,7 +524,7 @@ var init_dist = __esm({
   }
 });
 
-// node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/chunk-V2S4ZYJR.mjs
+// ../../node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/chunk-V2S4ZYJR.mjs
 function debugLog(...args) {
   QTS_DEBUG && console.log("quickjs-emscripten:", ...args);
 }
@@ -611,7 +611,7 @@ function applyModuleEvalRuntimeOptions(runtime, options) {
 }
 var __defProp2, __export2, QTS_DEBUG, errors_exports, QuickJSUnwrapError, QuickJSWrongOwner, QuickJSUseAfterFree, QuickJSNotImplemented, QuickJSAsyncifyError, QuickJSAsyncifySuspended, QuickJSMemoryLeakDetected, QuickJSEmscriptenModuleError, QuickJSUnknownIntrinsic, QuickJSPromisePending, QuickJSEmptyGetOwnPropertyNames, QuickJSHostRefRangeExceeded, QuickJSHostRefInvalid, AwaitYield, UsingDisposable, SymbolDispose, prototypeAsAny, Lifetime, StaticLifetime, WeakLifetime, Scope, AbstractDisposableResult, DisposableSuccess, DisposableFail, DisposableResult, QuickJSDeferredPromise, ModuleMemory, UnstableSymbol, DefaultIntrinsics, QuickJSIterator, INT32_MIN, INT32_MAX, INVALID_HOST_REF_ID, HostRefMap, HostRef, ContextMemory, QuickJSContext, QuickJSRuntime, QuickJSEmscriptenModuleCallbacks, QuickJSModuleCallbacks, QuickJSWASMModule;
 var init_chunk_V2S4ZYJR = __esm({
-  "node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/chunk-V2S4ZYJR.mjs"() {
+  "../../node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/chunk-V2S4ZYJR.mjs"() {
     init_dist();
     init_dist();
     __defProp2 = Object.defineProperty;
@@ -1642,7 +1642,7 @@ Attempted to suspend at:`);
   }
 });
 
-// node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/module-ES6BEMUI.mjs
+// ../../node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/module-ES6BEMUI.mjs
 var module_ES6BEMUI_exports = {};
 __export(module_ES6BEMUI_exports, {
   QuickJSModuleCallbacks: () => QuickJSModuleCallbacks,
@@ -1651,19 +1651,19 @@ __export(module_ES6BEMUI_exports, {
   applyModuleEvalRuntimeOptions: () => applyModuleEvalRuntimeOptions
 });
 var init_module_ES6BEMUI = __esm({
-  "node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/module-ES6BEMUI.mjs"() {
+  "../../node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/module-ES6BEMUI.mjs"() {
     init_chunk_V2S4ZYJR();
   }
 });
 
-// node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/ffi.mjs
+// ../../node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/ffi.mjs
 var ffi_exports = {};
 __export(ffi_exports, {
   QuickJSFFI: () => QuickJSFFI
 });
 var QuickJSFFI;
 var init_ffi = __esm({
-  "node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/ffi.mjs"() {
+  "../../node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/ffi.mjs"() {
     QuickJSFFI = class {
       constructor(module2) {
         this.module = module2;
@@ -1741,7 +1741,7 @@ var init_ffi = __esm({
   }
 });
 
-// node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/emscripten-module.browser.mjs
+// ../../node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/emscripten-module.browser.mjs
 var emscripten_module_browser_exports = {};
 __export(emscripten_module_browser_exports, {
   default: () => emscripten_module_browser_default
@@ -2188,7 +2188,7 @@ async function QuickJSRaw(moduleArg = {}) {
 }
 var import_meta, emscripten_module_browser_default;
 var init_emscripten_module_browser = __esm({
-  "node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/emscripten-module.browser.mjs"() {
+  "../../node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/emscripten-module.browser.mjs"() {
     import_meta = {};
     emscripten_module_browser_default = QuickJSRaw;
   }
@@ -2764,6 +2764,19 @@ body[data-we-wallpaper] :where([data-sidebar-right-panel="fullscreen"][data-side
 .wss-about-link:focus-visible{outline:2px solid var(--wp-accent);outline-offset:2px}
 .wss-about-link[data-primary=true]{background:var(--wp-accent-strong,#2563eb);border-color:transparent;color:#fff}
 .wss-about-link[data-primary=true]:hover{filter:brightness(1.07)}
+/* \u2500\u2500 \u5F00\u673A\u52A8\u753B\uFF08\u72EC\u7ACB\u5168\u5C4F\u5C42 + \u72EC\u7ACB\u8BBE\u7F6E\u9762\u677F wbs-*\uFF09 \u2500\u2500 */
+.wp-boot-layer{position:fixed;inset:0;z-index:2147483000;background:#000;overflow:hidden;pointer-events:auto}
+.wbs-root{display:flex;flex-direction:column;gap:14px;padding:4px 2px}
+.wbs-section{display:flex;flex-direction:column;gap:8px;padding:12px;border:1px solid var(--wp-panel-border);border-radius:10px;background:var(--wp-panel-bg)}
+.wbs-title{margin:0;font-size:14px;color:var(--wp-text)}
+.wbs-desc{margin:0;font-size:12px;line-height:1.5;opacity:.75}
+.wbs-row{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--wp-text)}
+.wbs-row input[type=text]{flex:1;min-width:160px;padding:6px 8px;border-radius:6px;border:1px solid var(--wp-panel-border);background:transparent;color:var(--wp-text)}
+.wbs-row select{padding:6px 8px;border-radius:6px;border:1px solid var(--wp-panel-border);background:transparent;color:var(--wp-text)}
+.wbs-row button{padding:5px 10px;border-radius:6px;border:1px solid var(--wp-panel-border);background:transparent;color:var(--wp-text);cursor:pointer}
+.wbs-row button:disabled,.wbs-row input:disabled{opacity:.45;cursor:not-allowed}
+.wbs-probe-result,.wbs-last,.wbs-message{font-size:12px;margin:0;color:var(--wp-text)}
+.wbs-message{opacity:.85}
 `;
 var WALLPAPER_CSS = CSS;
 function injectWallpaperStyles() {
@@ -2779,6 +2792,597 @@ function injectWallpaperStyles() {
   tag.dataset.pluginCss = id;
   tag.textContent = WALLPAPER_CSS;
   document.head.appendChild(tag);
+}
+
+// src/client/boot-overlay.ts
+var LAYER_CLASS = "wp-boot-layer";
+var TILE_CLASS = "wp-boot-tile";
+var Z_INDEX = 2147483e3;
+function createBootOverlay(opts = {}) {
+  const doc = opts.doc ?? document;
+  const readyTimeoutMs = opts.readyTimeoutMs ?? 8e3;
+  const fadeMs = opts.fadeMs ?? 300;
+  const imageDurationMs = opts.imageDurationMs ?? 4e3;
+  let disposed = false;
+  let active = null;
+  const timers = /* @__PURE__ */ new Set();
+  const later = (fn, ms) => {
+    const t = setTimeout(() => {
+      timers.delete(t);
+      fn();
+    }, ms);
+    timers.add(t);
+    return t;
+  };
+  const cancel = (t) => {
+    if (t === null) return;
+    timers.delete(t);
+    clearTimeout(t);
+  };
+  const clearTimers = () => {
+    for (const t of timers) clearTimeout(t);
+    timers.clear();
+  };
+  function stopVideo(video) {
+    if (video === null) return;
+    try {
+      video.pause();
+    } catch {
+    }
+    video.removeAttribute("src");
+  }
+  function finish(result) {
+    const entry = active;
+    if (entry === null || entry.result !== null) return;
+    entry.result = result;
+    clearTimers();
+    entry.readyTimer = null;
+    detachSkip();
+    stopVideo(entry.video);
+    entry.el.style.opacity = "0";
+    later(() => {
+      if (active !== entry) return;
+      active = null;
+      entry.el.remove();
+      entry.resolve(result);
+    }, fadeMs);
+  }
+  function teardown(result) {
+    const entry = active;
+    if (entry === null) return;
+    active = null;
+    clearTimers();
+    detachSkip();
+    stopVideo(entry.video);
+    entry.el.remove();
+    entry.resolve(result);
+  }
+  const onSkip = (ev) => {
+    ev.preventDefault();
+    finish("skipped");
+  };
+  function attachSkip() {
+    window.addEventListener("pointerdown", onSkip, true);
+    window.addEventListener("keydown", onSkip, true);
+  }
+  function detachSkip() {
+    window.removeEventListener("pointerdown", onSkip, true);
+    window.removeEventListener("keydown", onSkip, true);
+  }
+  function applyFit(el, fit) {
+    if (fit === "tile") return;
+    el.style.objectFit = fit === "stretch" ? "fill" : fit;
+  }
+  return {
+    play(asset, fit, maxDurationMs = 0) {
+      if (disposed) return Promise.resolve("failed");
+      teardown("skipped");
+      const el = doc.createElement("div");
+      el.className = LAYER_CLASS;
+      el.style.cssText = `position:fixed;inset:0;z-index:${Z_INDEX};background:#000;overflow:hidden;opacity:1;transition:opacity ${fadeMs}ms linear`;
+      doc.documentElement.appendChild(el);
+      let resolve = () => {
+      };
+      const promise = new Promise((res) => {
+        resolve = res;
+      });
+      const entry = { el, video: null, resolve, result: null, readyTimer: null };
+      active = entry;
+      attachSkip();
+      entry.readyTimer = later(() => finish("timeout"), readyTimeoutMs);
+      const started = () => {
+        if (active !== entry || entry.result !== null) return;
+        cancel(entry.readyTimer);
+        entry.readyTimer = null;
+        const duration = asset.kind === "image" ? maxDurationMs > 0 ? Math.min(imageDurationMs, maxDurationMs) : imageDurationMs : maxDurationMs;
+        if (asset.kind === "image") {
+          later(() => finish("ended"), Math.max(0, duration));
+        } else if (duration > 0) {
+          later(() => finish("ended"), duration);
+        }
+      };
+      try {
+        if (asset.kind === "video") {
+          const video = doc.createElement("video");
+          video.autoplay = true;
+          video.muted = true;
+          video.playsInline = true;
+          video.preload = "auto";
+          video.style.cssText = "width:100%;height:100%;border:0;display:block";
+          applyFit(video, fit);
+          video.addEventListener("loadeddata", started, { once: true });
+          video.addEventListener("ended", () => finish("ended"), { once: true });
+          video.addEventListener("error", () => finish("failed"), { once: true });
+          el.appendChild(video);
+          entry.video = video;
+          video.src = asset.url;
+          try {
+            void video.play().catch(() => {
+            });
+          } catch {
+          }
+        } else if (fit === "tile") {
+          const tile = doc.createElement("div");
+          tile.className = TILE_CLASS;
+          tile.style.cssText = `position:absolute;inset:0;background-image:url("${asset.url.replace(/"/g, "%22")}");background-repeat:repeat;background-position:center`;
+          el.appendChild(tile);
+          started();
+        } else {
+          const img = doc.createElement("img");
+          img.style.cssText = "width:100%;height:100%;display:block";
+          applyFit(img, fit);
+          img.addEventListener("error", () => finish("failed"), { once: true });
+          el.appendChild(img);
+          img.src = asset.url;
+          started();
+        }
+      } catch {
+        finish("failed");
+      }
+      return promise;
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      teardown("skipped");
+    }
+  };
+}
+
+// src/client/boot-player.ts
+var BOOT_PLAYED_KEY = "we:boot-played";
+var FIT_MODES = /* @__PURE__ */ new Set(["tile", "contain", "stretch", "cover"]);
+function normalizeBootFit(value) {
+  return FIT_MODES.has(value) ? value : "cover";
+}
+function bootAssetFromSettings(s) {
+  if (s.bootAnimationSource === "local") {
+    const p = s.bootAnimationLocalPath.trim();
+    return p ? { kind: "video", url: "/wallpapers/boot/local-video?path=" + encodeURIComponent(p) } : null;
+  }
+  const id = s.bootAnimationWallpaperId.trim();
+  const kind = s.bootAnimationWallpaperKind;
+  if (!id || kind !== "video" && kind !== "image") return null;
+  return kind === "video" ? { kind: "video", url: `/wallpapers/media/${encodeURIComponent(id)}/file` } : { kind: "image", url: `/wallpapers/media/${encodeURIComponent(id)}/preview` };
+}
+function shouldPlayBoot(s, storage) {
+  if (!s.bootAnimationEnabled) return false;
+  try {
+    return storage.getItem(BOOT_PLAYED_KEY) !== "1";
+  } catch {
+    return true;
+  }
+}
+function sessionStorageSafe() {
+  try {
+    if (typeof sessionStorage !== "undefined") return sessionStorage;
+  } catch {
+  }
+  return { getItem: () => null, setItem: () => {
+  } };
+}
+function createBootPlayer(opts) {
+  const overlay = opts.overlay ?? createBootOverlay();
+  const storage = opts.storage ?? sessionStorageSafe();
+  let disposed = false;
+  let last = null;
+  let running = null;
+  const record = (result, asset) => {
+    last = { result, at: Date.now(), asset };
+    return result;
+  };
+  async function run(force) {
+    if (disposed) return "failed";
+    let settings;
+    try {
+      settings = await opts.readSettings();
+    } catch {
+      return record("failed", null);
+    }
+    if (disposed) return "failed";
+    if (!force) {
+      if (!settings.bootAnimationEnabled) return record("disabled", null);
+      if (!shouldPlayBoot(settings, storage)) return record("already-played", null);
+    }
+    const asset = bootAssetFromSettings(settings);
+    if (!asset) return record("no-asset", null);
+    if (!force) {
+      try {
+        storage.setItem(BOOT_PLAYED_KEY, "1");
+      } catch {
+      }
+    }
+    let result;
+    try {
+      result = await overlay.play(asset, normalizeBootFit(settings.bootAnimationFitMode), settings.bootAnimationMaxDurationMs);
+    } catch {
+      result = "failed";
+    }
+    return record(result, asset);
+  }
+  return {
+    start() {
+      running ??= run(false).finally(() => {
+        running = null;
+      });
+      return running;
+    },
+    play(opts2) {
+      return run(opts2?.force ?? true);
+    },
+    getLast() {
+      return last;
+    },
+    dispose() {
+      disposed = true;
+      overlay.dispose();
+    }
+  };
+}
+
+// src/client/boot-settings-section.tsx
+var import_react = require("react");
+
+// src/client/settings.ts
+var NS_CANDIDATES = ["dsh-wallpaper-engine", "wallpaper-engine"];
+var DEFAULTS = {
+  selectedWallpaperId: "",
+  wallpaperDir: "",
+  weAssetsDir: "",
+  overlayOpacity: 0.35,
+  blurEnabled: false,
+  blurRadius: 12,
+  kenBurns: true,
+  // 光晕默认值 = 2026-09-21 用户在真机面板上定档（低阈值保留光晕、低强度压住过曝；
+  // 旧 A 档 0.65/1.0 在亮部多的壁纸上过曝，见 AGENT.md §7.1）。
+  glowEnabled: true,
+  glowThreshold: 0.65,
+  glowStrength: 0.35,
+  paused: false,
+  pauseOnHidden: true,
+  qualityScale: 1,
+  // 壁纸音效（sound 对象 + 频谱驱动效果）：默认开启，与桌面 WE 一致；面板可关。
+  soundEnabled: true,
+  // 媒体集成（Windows SMTC 只读，默认开启；数据仅内存、不落盘、不上传）。
+  mediaIntegrationEnabled: true,
+  // 文字可读性（2026-10-01）：默认 auto + 无描边 = 与加此功能前的老用户观感一致（零回归）。
+  textColorMode: "auto",
+  textColor: "#ffffff",
+  textOutline: 0,
+  // v0.8 显示/轮播：默认 cover / 关闭轮播 / 5 分钟 / 顺序 / 开帧缓存。
+  fitMode: "cover",
+  rotationEnabled: false,
+  rotationIntervalMs: 3e5,
+  rotationOrder: "sequential",
+  frameCacheEnabled: true,
+  bootAnimationEnabled: false,
+  bootAnimationSource: "we",
+  bootAnimationWallpaperId: "",
+  bootAnimationWallpaperKind: "",
+  bootAnimationLocalPath: "",
+  bootAnimationFitMode: "cover",
+  bootAnimationMaxDurationMs: 6e3
+};
+var settingsCtx = null;
+var lastGood = null;
+var activeNs = null;
+function setSettingsCtx(ctx) {
+  settingsCtx = ctx;
+  lastGood = null;
+  activeNs = null;
+}
+function settingsRemote() {
+  return settingsCtx?.remote?.settings ?? null;
+}
+async function readClientSettings() {
+  const remote = settingsRemote();
+  if (remote) {
+    try {
+      const resp = await remote.describe();
+      const value = resp?.ok ? resp.value : void 0;
+      if (typeof value === "object" && value !== null) {
+        const namespaces = value.namespaces;
+        for (const ns of NS_CANDIDATES) {
+          const nsValue = namespaces?.find((n) => n.ns === ns)?.value;
+          if (typeof nsValue === "object" && nsValue !== null) {
+            activeNs = ns;
+            lastGood = { ...lastGood ?? DEFAULTS, ...nsValue };
+            return { ...lastGood };
+          }
+        }
+      }
+    } catch {
+    }
+  }
+  return { ...lastGood ?? DEFAULTS };
+}
+async function writeClientSettings(patch) {
+  const remote = settingsRemote();
+  if (!remote) return false;
+  const order = activeNs ? [activeNs, ...NS_CANDIDATES.filter((n) => n !== activeNs)] : [...NS_CANDIDATES];
+  let lastError;
+  for (const ns of order) {
+    try {
+      const resp = await remote.update(ns, patch, void 0);
+      if (resp && resp.ok === false) {
+        lastError = resp.error;
+        continue;
+      }
+      return true;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  console.warn(`[wallpaper-engine] \u8BBE\u7F6E\u5199\u5165\u5931\u8D25\uFF08\u5DF2\u5C1D\u8BD5 ${order.join(" / ")}\uFF09\uFF1A`, lastError);
+  return false;
+}
+var USERPROP_PREFIX = "we:userprop:";
+function getUserPropertyValue(key, wallpaperId) {
+  if (typeof localStorage === "undefined") return void 0;
+  const scoped = wallpaperId ? localStorage.getItem(USERPROP_PREFIX + wallpaperId + ":" + key) : null;
+  const raw = scoped ?? localStorage.getItem(USERPROP_PREFIX + key);
+  if (raw === null) return void 0;
+  try {
+    const value = JSON.parse(raw);
+    return typeof value === "boolean" || typeof value === "number" || typeof value === "string" ? value : void 0;
+  } catch {
+    return void 0;
+  }
+}
+
+// src/client/boot-settings-section.tsx
+var import_jsx_runtime = require("react/jsx-runtime");
+async function defaultFetchWallpapers() {
+  return (await fetch("/wallpapers/list")).json();
+}
+async function defaultProbePath(path) {
+  const r = await fetch("/wallpapers/boot/probe?path=" + encodeURIComponent(path));
+  return r.json();
+}
+function bootApi() {
+  return globalThis.__wallpaperEngineBoot;
+}
+async function defaultPlayPreview() {
+  return await bootApi()?.play?.({ force: true }) ?? "disabled";
+}
+var FITS = [
+  { value: "tile", label: "\u5E73\u94FA" },
+  { value: "contain", label: "\u5C45\u4E2D" },
+  { value: "stretch", label: "\u6324\u538B" },
+  { value: "cover", label: "\u88C1\u5207\u586B\u6EE1" }
+];
+var RESULT_TEXT = {
+  ended: "\u64AD\u653E\u5B8C\u6210",
+  skipped: "\u5DF2\u8DF3\u8FC7",
+  timeout: "\u7D20\u6750\u8D85\u65F6\uFF08\u5DF2\u8DF3\u8FC7\uFF09",
+  failed: "\u64AD\u653E\u5931\u8D25\uFF08\u5DF2\u8DF3\u8FC7\uFF09",
+  "already-played": "\u672C\u6B21\u4F1A\u8BDD\u5DF2\u64AD\u8FC7",
+  disabled: "\u672A\u542F\u7528",
+  "no-asset": "\u672A\u9009\u62E9\u7D20\u6750"
+};
+function formatSize(n) {
+  if (typeof n !== "number") return "-";
+  return n >= 1024 * 1024 ? (n / 1024 / 1024).toFixed(1) + " MB" : Math.round(n / 1024) + " KB";
+}
+function probeText(probe) {
+  if (probe.ok) return `\u6587\u4EF6\u5B58\u5728 \xB7 ${formatSize(probe.size)} \xB7 ${probe.playable ? "\u53EF\u64AD\u653E" : "\u6269\u5C55\u540D\u4E0D\u652F\u6301"}`;
+  return probe.error === "not found" ? "\u6587\u4EF6\u4E0D\u5B58\u5728\u6216\u4E0D\u662F\u666E\u901A\u6587\u4EF6" : "\u8DEF\u5F84\u65E0\u6548\u6216\u6269\u5C55\u540D\u4E0D\u652F\u6301";
+}
+function BootSettingsSection(props) {
+  const fetchSettings = props.fetchSettings ?? readClientSettings;
+  const save = props.writeSettings ?? writeClientSettings;
+  const fetchWallpapers = props.fetchWallpapers ?? defaultFetchWallpapers;
+  const probePath = props.probePath ?? defaultProbePath;
+  const playPreview = props.playPreview ?? defaultPlayPreview;
+  const getLast = props.getLast ?? (() => bootApi()?.getLast?.() ?? null);
+  const [settings, setSettings] = (0, import_react.useState)(null);
+  const [wallpapers, setWallpapers] = (0, import_react.useState)([]);
+  const [probe, setProbe] = (0, import_react.useState)(null);
+  const [message, setMessage] = (0, import_react.useState)("");
+  const [last, setLast] = (0, import_react.useState)(null);
+  const [previewing, setPreviewing] = (0, import_react.useState)(false);
+  (0, import_react.useEffect)(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const [s, list] = await Promise.all([fetchSettings(), fetchWallpapers().catch(() => [])]);
+        if (!alive) return;
+        setSettings(s);
+        setWallpapers(list.filter((w) => w.type === "video" || w.type === "image"));
+        setLast(getLast());
+      } catch {
+        if (alive) setMessage("\u8BFB\u53D6\u8BBE\u7F6E\u5931\u8D25\uFF0C\u8BF7\u91CD\u65B0\u6253\u5F00\u8BBE\u7F6E\u9762\u677F");
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+  if (!settings) return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "wbs-root wbs-loading", children: "\u52A0\u8F7D\u4E2D\u2026" });
+  const patch = async (p) => {
+    setSettings((prev) => prev ? { ...prev, ...p } : prev);
+    try {
+      const ok = await save(p);
+      if (ok === false) setMessage("\u4FDD\u5B58\u5931\u8D25\uFF1A\u8BBE\u7F6E\u670D\u52A1\u4E0D\u53EF\u7528");
+    } catch {
+      setMessage("\u4FDD\u5B58\u5931\u8D25\uFF1A\u8BBE\u7F6E\u670D\u52A1\u4E0D\u53EF\u7528");
+    }
+  };
+  const source = settings.bootAnimationSource === "local" ? "local" : "we";
+  const isVideoAsset = source === "local" || settings.bootAnimationWallpaperKind === "video";
+  const runProbe = async () => {
+    try {
+      setProbe(await probePath(settings.bootAnimationLocalPath));
+    } catch {
+      setProbe({ ok: false, error: "bad path" });
+    }
+  };
+  const runPreview = async () => {
+    setPreviewing(true);
+    setMessage("\u64AD\u653E\u4E2D\u2026");
+    let result = "failed";
+    try {
+      result = await playPreview();
+    } catch {
+      result = "failed";
+    }
+    setPreviewing(false);
+    setMessage("\u7ED3\u679C\uFF1A" + (RESULT_TEXT[result] ?? "\u5931\u8D25") + "\uFF08" + result + "\uFF09");
+  };
+  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wbs-root", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wbs-section", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wbs-title", children: "\u5F00\u673A\u52A8\u753B \xB7 \u4E0E\u65E5\u5E38\u58C1\u7EB8\u4E92\u4E0D\u5F71\u54CD" }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wbs-desc", children: "\u6253\u5F00 DSH \u65F6\u5168\u5C4F\u64AD\u4E00\u6BB5\u7247\u5934\uFF0C\u64AD\u5B8C\u6DE1\u51FA\u8FDB\u5165\u754C\u9762\uFF1B\u56FA\u5B9A\u9759\u97F3\uFF0C\u6BCF\u6B21\u542F\u52A8/\u65B0\u7A97\u53E3\u53EA\u64AD\u4E00\u6B21\uFF08\u5237\u65B0\u4E0D\u91CD\u64AD\uFF09\u3002" }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wbs-row", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "input",
+          {
+            type: "checkbox",
+            className: "wbs-enable",
+            checked: settings.bootAnimationEnabled,
+            onChange: (e) => void patch({ bootAnimationEnabled: e.target.checked })
+          }
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u542F\u7528\u5F00\u673A\u52A8\u753B" })
+      ] }),
+      last && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { className: "wbs-last", children: [
+        "\u4E0A\u6B21\u64AD\u653E\uFF1A",
+        RESULT_TEXT[last.result] ?? last.result
+      ] })
+    ] }),
+    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wbs-section", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wbs-title", children: "\u7D20\u6750" }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wbs-row", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "input",
+          {
+            type: "radio",
+            name: "wbs-source",
+            className: "wbs-source-we",
+            checked: source === "we",
+            onChange: () => void patch({ bootAnimationSource: "we" })
+          }
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u4ECE Wallpaper Engine \u5E93\u9009\u62E9\uFF08\u4EC5\u89C6\u9891 / \u56FE\u7247\u7C7B\uFF09" })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+        "select",
+        {
+          className: "wbs-wallpaper",
+          "aria-label": "\u5F00\u673A\u52A8\u753B\u7D20\u6750",
+          value: settings.bootAnimationWallpaperId,
+          onChange: (e) => {
+            const id = e.target.value;
+            const picked = wallpapers.find((w) => w.id === id);
+            void patch({
+              bootAnimationWallpaperId: id,
+              bootAnimationWallpaperKind: picked ? picked.type === "image" ? "image" : "video" : ""
+            });
+          },
+          children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "", children: "\uFF08\u672A\u9009\u62E9\uFF09" }),
+            wallpapers.map((w) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("option", { value: w.id, children: [
+              w.title,
+              " \xB7 ",
+              w.type === "image" ? "\u56FE\u7247" : "\u89C6\u9891"
+            ] }, w.id))
+          ]
+        }
+      ),
+      wallpapers.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wbs-desc", children: "\u58C1\u7EB8\u5217\u8868\u4E3A\u7A7A\uFF1A\u8BF7\u5148\u5728\u300CWallpaper \u58C1\u7EB8\u300D\u9875\u914D\u7F6E\u76EE\u5F55\u6216\u70B9\u5237\u65B0\u3002" }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wbs-row", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "input",
+          {
+            type: "radio",
+            name: "wbs-source",
+            className: "wbs-source-local",
+            checked: source === "local",
+            onChange: () => void patch({ bootAnimationSource: "local" })
+          }
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u672C\u5730\u89C6\u9891\u6587\u4EF6\uFF08\u7EDD\u5BF9\u8DEF\u5F84\uFF09" })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wbs-row", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "input",
+          {
+            type: "text",
+            className: "wbs-local-path",
+            "aria-label": "\u672C\u5730\u89C6\u9891\u8DEF\u5F84",
+            placeholder: "E:\\\\clips\\\\boot.mp4",
+            value: settings.bootAnimationLocalPath,
+            onChange: (e) => setSettings((prev) => prev ? { ...prev, bootAnimationLocalPath: e.target.value } : prev),
+            onBlur: (e) => void patch({ bootAnimationLocalPath: e.target.value })
+          }
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wbs-probe", onClick: () => void runProbe(), children: "\u6821\u9A8C" })
+      ] }),
+      probe && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wbs-probe-result", children: probeText(probe) })
+    ] }),
+    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wbs-section", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wbs-title", children: "\u5C55\u793A\u65B9\u5F0F" }),
+      FITS.map((f) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wbs-row", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "input",
+          {
+            type: "radio",
+            name: "wbs-fit",
+            className: "wbs-fit-" + f.value,
+            checked: settings.bootAnimationFitMode === f.value,
+            disabled: f.value === "tile" && isVideoAsset,
+            onChange: () => void patch({ bootAnimationFitMode: f.value })
+          }
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
+          f.label,
+          f.value === "tile" && isVideoAsset ? "\uFF08\u89C6\u9891\u4E0D\u652F\u6301\u5E73\u94FA\uFF09" : ""
+        ] })
+      ] }, f.value))
+    ] }),
+    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wbs-section", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wbs-title", children: "\u6700\u957F\u64AD\u653E" }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wbs-row", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "input",
+          {
+            type: "range",
+            className: "wbs-max-duration",
+            "aria-label": "\u6700\u957F\u64AD\u653E\u65F6\u95F4\uFF08\u79D2\uFF09",
+            min: 0,
+            max: 30,
+            step: 1,
+            value: Math.round(settings.bootAnimationMaxDurationMs / 1e3),
+            onChange: (e) => void patch({ bootAnimationMaxDurationMs: Number(e.target.value) * 1e3 })
+          }
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wbs-duration-value", children: settings.bootAnimationMaxDurationMs === 0 ? "\u64AD\u5B8C / \u4E0D\u9650" : Math.round(settings.bootAnimationMaxDurationMs / 1e3) + " \u79D2" })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wbs-desc", children: "0 = \u89C6\u9891\u64AD\u5B8C\u4E3A\u6B62\uFF1B\u56FE\u7247\u56FA\u5B9A\u7EA6 4 \u79D2\u3002\u7D20\u6750 8 \u79D2\u672A\u5C31\u7EEA\u4F1A\u81EA\u52A8\u8DF3\u8FC7\u3002" })
+    ] }),
+    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "wbs-row", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wbs-preview", disabled: previewing, onClick: () => void runPreview(), children: previewing ? "\u64AD\u653E\u4E2D\u2026" : "\u8BD5\u64AD" }) }),
+    message && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wbs-message", children: message })
+  ] });
 }
 
 // src/client/text-color.ts
@@ -3423,7 +4027,7 @@ function createWallpaperController(layer, opts) {
   };
 }
 
-// node_modules/.pnpm/three@0.170.0/node_modules/three/build/three.module.js
+// ../../node_modules/.pnpm/three@0.170.0/node_modules/three/build/three.module.js
 var REVISION = "170";
 var CullFaceNone = 0;
 var CullFaceBack = 1;
@@ -29755,106 +30359,6 @@ function createFrameCapture(renderer, deps = {}) {
   };
 }
 
-// src/client/settings.ts
-var NS_CANDIDATES = ["dsh-wallpaper-engine", "wallpaper-engine"];
-var DEFAULTS = {
-  selectedWallpaperId: "",
-  wallpaperDir: "",
-  weAssetsDir: "",
-  overlayOpacity: 0.35,
-  blurEnabled: false,
-  blurRadius: 12,
-  kenBurns: true,
-  // 光晕默认值 = 2026-09-21 用户在真机面板上定档（低阈值保留光晕、低强度压住过曝；
-  // 旧 A 档 0.65/1.0 在亮部多的壁纸上过曝，见 AGENT.md §7.1）。
-  glowEnabled: true,
-  glowThreshold: 0.65,
-  glowStrength: 0.35,
-  paused: false,
-  pauseOnHidden: true,
-  qualityScale: 1,
-  // 壁纸音效（sound 对象 + 频谱驱动效果）：默认开启，与桌面 WE 一致；面板可关。
-  soundEnabled: true,
-  // 媒体集成（Windows SMTC 只读，默认开启；数据仅内存、不落盘、不上传）。
-  mediaIntegrationEnabled: true,
-  // 文字可读性（2026-10-01）：默认 auto + 无描边 = 与加此功能前的老用户观感一致（零回归）。
-  textColorMode: "auto",
-  textColor: "#ffffff",
-  textOutline: 0,
-  // v0.8 显示/轮播：默认 cover / 关闭轮播 / 5 分钟 / 顺序 / 开帧缓存。
-  fitMode: "cover",
-  rotationEnabled: false,
-  rotationIntervalMs: 3e5,
-  rotationOrder: "sequential",
-  frameCacheEnabled: true
-};
-var settingsCtx = null;
-var lastGood = null;
-var activeNs = null;
-function setSettingsCtx(ctx) {
-  settingsCtx = ctx;
-  lastGood = null;
-  activeNs = null;
-}
-function settingsRemote() {
-  return settingsCtx?.remote?.settings ?? null;
-}
-async function readClientSettings() {
-  const remote = settingsRemote();
-  if (remote) {
-    try {
-      const resp = await remote.describe();
-      const value = resp?.ok ? resp.value : void 0;
-      if (typeof value === "object" && value !== null) {
-        const namespaces = value.namespaces;
-        for (const ns of NS_CANDIDATES) {
-          const nsValue = namespaces?.find((n) => n.ns === ns)?.value;
-          if (typeof nsValue === "object" && nsValue !== null) {
-            activeNs = ns;
-            lastGood = { ...lastGood ?? DEFAULTS, ...nsValue };
-            return { ...lastGood };
-          }
-        }
-      }
-    } catch {
-    }
-  }
-  return { ...lastGood ?? DEFAULTS };
-}
-async function writeClientSettings(patch) {
-  const remote = settingsRemote();
-  if (!remote) return false;
-  const order = activeNs ? [activeNs, ...NS_CANDIDATES.filter((n) => n !== activeNs)] : [...NS_CANDIDATES];
-  let lastError;
-  for (const ns of order) {
-    try {
-      const resp = await remote.update(ns, patch, void 0);
-      if (resp && resp.ok === false) {
-        lastError = resp.error;
-        continue;
-      }
-      return true;
-    } catch (error) {
-      lastError = error;
-    }
-  }
-  console.warn(`[wallpaper-engine] \u8BBE\u7F6E\u5199\u5165\u5931\u8D25\uFF08\u5DF2\u5C1D\u8BD5 ${order.join(" / ")}\uFF09\uFF1A`, lastError);
-  return false;
-}
-var USERPROP_PREFIX = "we:userprop:";
-function getUserPropertyValue(key, wallpaperId) {
-  if (typeof localStorage === "undefined") return void 0;
-  const scoped = wallpaperId ? localStorage.getItem(USERPROP_PREFIX + wallpaperId + ":" + key) : null;
-  const raw = scoped ?? localStorage.getItem(USERPROP_PREFIX + key);
-  if (raw === null) return void 0;
-  try {
-    const value = JSON.parse(raw);
-    return typeof value === "boolean" || typeof value === "number" || typeof value === "string" ? value : void 0;
-  } catch {
-    return void 0;
-  }
-}
-
 // src/client/wallpaper-properties.ts
 async function fetchWallpaperProperties(id) {
   try {
@@ -31166,7 +31670,7 @@ async function resolveEffectChain(sceneEffect, loadFile) {
   }
 }
 
-// node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/index.mjs
+// ../../node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/index.mjs
 init_chunk_V2S4ZYJR();
 init_dist();
 async function newQuickJSWASMModuleFromVariant(variantOrPromise) {
@@ -31229,7 +31733,7 @@ function newMockExtensions(log) {
   } };
 }
 
-// node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/index.mjs
+// ../../node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/index.mjs
 var variant = { type: "sync", importFFI: () => Promise.resolve().then(() => (init_ffi(), ffi_exports)).then((mod) => mod.QuickJSFFI), importModuleLoader: () => Promise.resolve().then(() => (init_emscripten_module_browser(), emscripten_module_browser_exports)).then((mod) => mod.default) };
 var src_default = variant;
 
@@ -35137,7 +35641,7 @@ async function showSceneFallback(info, deps) {
 }
 
 // src/client/settings-section.tsx
-var import_react = require("react");
+var import_react2 = require("react");
 
 // src/client/local-store.ts
 var STORAGE_KEYS = { favorites: "we:fav", hidden: "we:hidden", recent: "we:recent" };
@@ -35345,8 +35849,8 @@ function createRotationScheduler(deps) {
 }
 
 // src/client/settings-section.tsx
-var import_jsx_runtime = require("react/jsx-runtime");
-async function defaultFetchWallpapers(opts) {
+var import_jsx_runtime2 = require("react/jsx-runtime");
+async function defaultFetchWallpapers2(opts) {
   return (await fetch(opts?.refresh ? "/wallpapers/list?refresh=1" : "/wallpapers/list")).json();
 }
 async function defaultFetchProbe() {
@@ -35505,7 +36009,7 @@ function hexToColorTriplet(hex) {
 function WallpaperSettingsSection(props) {
   const fetchSettings = props.fetchSettings ?? readClientSettings;
   const writeSettings = props.writeSettings ?? writeClientSettings;
-  const fetchWallpapers = props.fetchWallpapers ?? defaultFetchWallpapers;
+  const fetchWallpapers = props.fetchWallpapers ?? defaultFetchWallpapers2;
   const fetchProbe = props.fetchProbe ?? defaultFetchProbe;
   const fetchProperties = props.fetchProperties ?? fetchWallpaperProperties;
   const onSelect = props.onSelect ?? sharedOnSelect ?? (() => {
@@ -35514,26 +36018,26 @@ function WallpaperSettingsSection(props) {
   });
   const onRuntimeSettings = props.onRuntimeSettings ?? sharedOnRuntimeSettings ?? (() => {
   });
-  const [settings, setSettings] = (0, import_react.useState)(null);
-  const [wallpapers, setWallpapers] = (0, import_react.useState)([]);
-  const [probe, setProbe] = (0, import_react.useState)(null);
-  const [wallpaperDir, setWallpaperDir] = (0, import_react.useState)("");
-  const [weAssetsDir, setWeAssetsDir] = (0, import_react.useState)("");
-  const [message, setMessage] = (0, import_react.useState)("");
-  const [health, setHealth] = (0, import_react.useState)(props.health ?? null);
-  const [mediaFailure, setMediaFailure] = (0, import_react.useState)(mediaHandler?.get() ?? null);
-  const [mediaStatus, setMediaStatus] = (0, import_react.useState)(
+  const [settings, setSettings] = (0, import_react2.useState)(null);
+  const [wallpapers, setWallpapers] = (0, import_react2.useState)([]);
+  const [probe, setProbe] = (0, import_react2.useState)(null);
+  const [wallpaperDir, setWallpaperDir] = (0, import_react2.useState)("");
+  const [weAssetsDir, setWeAssetsDir] = (0, import_react2.useState)("");
+  const [message, setMessage] = (0, import_react2.useState)("");
+  const [health, setHealth] = (0, import_react2.useState)(props.health ?? null);
+  const [mediaFailure, setMediaFailure] = (0, import_react2.useState)(mediaHandler?.get() ?? null);
+  const [mediaStatus, setMediaStatus] = (0, import_react2.useState)(
     () => mediaIntegrationHandler?.get() ?? null
   );
-  const [libState, setLibState] = (0, import_react.useState)(loadLibraryState);
-  const [properties, setProperties] = (0, import_react.useState)([]);
-  const [audioProcessing, setAudioProcessing] = (0, import_react.useState)(false);
-  const [systemAudioState, setSystemAudioState] = (0, import_react.useState)("idle");
-  const [systemAudioError, setSystemAudioError] = (0, import_react.useState)(null);
-  const [propValues, setPropValues] = (0, import_react.useState)({});
-  const commitTimers = (0, import_react.useRef)(/* @__PURE__ */ new Map());
-  const commitPending = (0, import_react.useRef)(/* @__PURE__ */ new Map());
-  const [filter, setFilter] = (0, import_react.useState)({
+  const [libState, setLibState] = (0, import_react2.useState)(loadLibraryState);
+  const [properties, setProperties] = (0, import_react2.useState)([]);
+  const [audioProcessing, setAudioProcessing] = (0, import_react2.useState)(false);
+  const [systemAudioState, setSystemAudioState] = (0, import_react2.useState)("idle");
+  const [systemAudioError, setSystemAudioError] = (0, import_react2.useState)(null);
+  const [propValues, setPropValues] = (0, import_react2.useState)({});
+  const commitTimers = (0, import_react2.useRef)(/* @__PURE__ */ new Map());
+  const commitPending = (0, import_react2.useRef)(/* @__PURE__ */ new Map());
+  const [filter, setFilter] = (0, import_react2.useState)({
     query: "",
     types: [],
     favoritesOnly: false,
@@ -35544,26 +36048,26 @@ function WallpaperSettingsSection(props) {
   const selectedId = settings?.selectedWallpaperId ?? "";
   const selectedIsScene = !!selectedId && wallpapers.some((w) => w.id === selectedId && (w.type === "scene" || w.type === "preset"));
   const mediaEnabled = settings?.mediaIntegrationEnabled ?? false;
-  const clearCommitTimers = (0, import_react.useCallback)(() => {
+  const clearCommitTimers = (0, import_react2.useCallback)(() => {
     for (const timer of commitTimers.current.values()) clearTimeout(timer);
     commitTimers.current.clear();
     commitPending.current.clear();
   }, []);
-  (0, import_react.useEffect)(() => {
+  (0, import_react2.useEffect)(() => {
     setHealth(props.health ?? healthHandler?.get() ?? null);
     return subscribeWallpaperHealth((s) => setHealth(s));
   }, [props.health]);
-  (0, import_react.useEffect)(() => {
+  (0, import_react2.useEffect)(() => {
     setMediaFailure(mediaHandler?.get() ?? null);
     return subscribeWallpaperMedia((f) => setMediaFailure(f));
   }, []);
-  (0, import_react.useEffect)(() => {
+  (0, import_react2.useEffect)(() => {
     const read = () => setMediaStatus(mediaIntegrationHandler?.get() ?? null);
     read();
     const timer = setInterval(read, 1e3);
     return () => clearInterval(timer);
   }, []);
-  (0, import_react.useEffect)(() => {
+  (0, import_react2.useEffect)(() => {
     let alive = true;
     void (async () => {
       const [s, list] = await Promise.all([
@@ -35580,7 +36084,7 @@ function WallpaperSettingsSection(props) {
       alive = false;
     };
   }, [fetchSettings, fetchWallpapers]);
-  (0, import_react.useEffect)(() => {
+  (0, import_react2.useEffect)(() => {
     if (!selectedIsScene) {
       setProperties([]);
       setPropValues({});
@@ -35611,8 +36115,8 @@ function WallpaperSettingsSection(props) {
       clearCommitTimers();
     };
   }, [selectedId, selectedIsScene, fetchProperties, clearCommitTimers]);
-  (0, import_react.useEffect)(() => () => clearCommitTimers(), [clearCommitTimers]);
-  const startSystemAudio = (0, import_react.useCallback)(async () => {
+  (0, import_react2.useEffect)(() => () => clearCommitTimers(), [clearCommitTimers]);
+  const startSystemAudio = (0, import_react2.useCallback)(async () => {
     if (!sharedSystemAudio) {
       setSystemAudioError("unsupported");
       return;
@@ -35631,35 +36135,35 @@ function WallpaperSettingsSection(props) {
       setSystemAudioError("error");
     }
   }, []);
-  const stopSystemAudio = (0, import_react.useCallback)(() => {
+  const stopSystemAudio = (0, import_react2.useCallback)(() => {
     sharedSystemAudio?.stop();
     setSystemAudioState("idle");
   }, []);
-  const select = (0, import_react.useCallback)((id) => {
+  const select = (0, import_react2.useCallback)((id) => {
     onSelect(id);
     setSettings((prev) => prev ? { ...prev, selectedWallpaperId: id } : prev);
     void writeSettings({ selectedWallpaperId: id }).then((ok) => setMessage(ok === false ? "\u4FDD\u5B58\u5931\u8D25\uFF1A\u9009\u62E9\u672A\u6301\u4E45\u5316\uFF08\u8BE6\u89C1\u63A7\u5236\u53F0\uFF09" : id ? "\u58C1\u7EB8\u5DF2\u5207\u6362" : "\u5DF2\u53D6\u6D88\u58C1\u7EB8"));
   }, [onSelect, writeSettings]);
-  const refreshWallpapers = (0, import_react.useCallback)(() => {
+  const refreshWallpapers = (0, import_react2.useCallback)(() => {
     setMessage("");
     void fetchWallpapers({ refresh: true }).then((list) => {
       setWallpapers(list);
       setMessage("\u58C1\u7EB8\u5217\u8868\u5DF2\u5237\u65B0");
     }).catch(() => setMessage("\u5237\u65B0\u58C1\u7EB8\u5931\u8D25"));
   }, [fetchWallpapers]);
-  const applyRuntime = (0, import_react.useCallback)((patch) => {
+  const applyRuntime = (0, import_react2.useCallback)((patch) => {
     setSettings((prev) => prev ? { ...prev, ...patch } : prev);
     onRuntimeSettings(patch);
     void writeSettings(patch);
   }, [onRuntimeSettings, writeSettings]);
-  const setPropertyValue = (0, import_react.useCallback)((key, value) => {
+  const setPropertyValue = (0, import_react2.useCallback)((key, value) => {
     setPropValues((prev) => ({ ...prev, [key]: value }));
   }, []);
-  const commitProperty = (0, import_react.useCallback)((key, value) => {
+  const commitProperty = (0, import_react2.useCallback)((key, value) => {
     writeUserProperty(key, value, selectedId);
     onReselect(selectedId);
   }, [onReselect, selectedId]);
-  const cancelCommit = (0, import_react.useCallback)((key) => {
+  const cancelCommit = (0, import_react2.useCallback)((key) => {
     const timer = commitTimers.current.get(key);
     if (timer !== void 0) {
       clearTimeout(timer);
@@ -35667,13 +36171,13 @@ function WallpaperSettingsSection(props) {
     }
     commitPending.current.delete(key);
   }, []);
-  const flushCommit = (0, import_react.useCallback)((key) => {
+  const flushCommit = (0, import_react2.useCallback)((key) => {
     const pending = commitPending.current.get(key);
     cancelCommit(key);
     if (pending === void 0) return;
     commitProperty(key, pending);
   }, [cancelCommit, commitProperty]);
-  const scheduleCommit = (0, import_react.useCallback)((key, value) => {
+  const scheduleCommit = (0, import_react2.useCallback)((key, value) => {
     commitPending.current.set(key, value);
     const timer = commitTimers.current.get(key);
     if (timer !== void 0) clearTimeout(timer);
@@ -35682,20 +36186,20 @@ function WallpaperSettingsSection(props) {
       flushCommit(key);
     }, 300));
   }, [flushCommit]);
-  const resetProperty = (0, import_react.useCallback)((property) => {
+  const resetProperty = (0, import_react2.useCallback)((property) => {
     cancelCommit(property.key);
     resetUserProperty(property.key, selectedId);
     setPropertyValue(property.key, property.value);
     onReselect(selectedId);
   }, [cancelCommit, onReselect, selectedId, setPropertyValue]);
-  const saveDirs = (0, import_react.useCallback)(() => {
+  const saveDirs = (0, import_react2.useCallback)(() => {
     void writeSettings({ wallpaperDir: wallpaperDir.trim(), weAssetsDir: weAssetsDir.trim() }).then((ok) => setMessage(ok === false ? "\u4FDD\u5B58\u5931\u8D25\uFF1A\u8BBE\u7F6E\u672A\u5199\u5165\uFF08\u8BE6\u89C1\u63A7\u5236\u53F0\uFF09" : "\u8DEF\u5F84\u5DF2\u4FDD\u5B58"));
   }, [wallpaperDir, weAssetsDir, writeSettings]);
-  const runProbe = (0, import_react.useCallback)(() => {
+  const runProbe = (0, import_react2.useCallback)(() => {
     setMessage("");
     void fetchProbe().then(setProbe).catch(() => setMessage("\u81EA\u52A8\u63A2\u6D4B\u5931\u8D25"));
   }, [fetchProbe]);
-  const adopt = (0, import_react.useCallback)((path, key) => {
+  const adopt = (0, import_react2.useCallback)((path, key) => {
     void writeSettings({ [key]: path }).then((ok) => {
       if (ok === false) {
         setMessage("\u4FDD\u5B58\u5931\u8D25\uFF1A\u8BBE\u7F6E\u672A\u5199\u5165\uFF08\u8BE6\u89C1\u63A7\u5236\u53F0\uFF09");
@@ -35738,56 +36242,56 @@ function WallpaperSettingsSection(props) {
     mediaHandler?.clear();
     setMediaFailure(null);
   };
-  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-root", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section wss-hero", "aria-label": "\u5F53\u524D\u58C1\u7EB8", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "wss-hero-media", "data-empty": !currentWallpaper?.previewUrl, children: currentWallpaper?.previewUrl ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("img", { src: currentWallpaper.previewUrl, alt: currentTitle }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-hero-empty", children: "\u8FD8\u6CA1\u6709\u9009\u62E9\u58C1\u7EB8" }) }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-hero-info", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-current", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-current-info", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-current-label", children: "\u5F53\u524D\u58C1\u7EB8" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-current-name", title: currentTitle, children: currentTitle })
+  return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-root", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { className: "wss-section wss-hero", "aria-label": "\u5F53\u524D\u58C1\u7EB8", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "wss-hero-media", "data-empty": !currentWallpaper?.previewUrl, children: currentWallpaper?.previewUrl ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("img", { src: currentWallpaper.previewUrl, alt: currentTitle }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-hero-empty", children: "\u8FD8\u6CA1\u6709\u9009\u62E9\u58C1\u7EB8" }) }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-hero-info", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-current", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-current-info", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-current-label", children: "\u5F53\u524D\u58C1\u7EB8" }),
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-current-name", title: currentTitle, children: currentTitle })
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-current-actions", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-refresh", onClick: refreshWallpapers, children: "\u5237\u65B0" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-cancel", onClick: () => select(""), children: "\u53D6\u6D88\u58C1\u7EB8" })
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-current-actions", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", className: "wss-refresh", onClick: refreshWallpapers, children: "\u5237\u65B0" }),
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", className: "wss-cancel", onClick: () => select(""), children: "\u53D6\u6D88\u58C1\u7EB8" })
           ] })
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-hero-meta", children: [
-          currentWallpaper && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-type-badge", children: currentWallpaper.type.toUpperCase() }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-hero-status", "data-tone": heroStatus.tone, children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("i", { "aria-hidden": "true" }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-hero-meta", children: [
+          currentWallpaper && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-type-badge", children: currentWallpaper.type.toUpperCase() }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { className: "wss-hero-status", "data-tone": heroStatus.tone, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("i", { "aria-hidden": "true" }),
             heroStatus.text
           ] }),
-          currentWallpaper?.hasScene && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-chip", children: "scene.pkg" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-chip", children: [
+          currentWallpaper?.hasScene && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-chip", children: "scene.pkg" }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { className: "wss-chip", children: [
             wallpapers.length,
             " \u5F20\u53EF\u7528"
           ] })
         ] })
       ] })
     ] }),
-    mediaFailure && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-alert wss-media-failure", "data-kind": mediaFailure.kind, role: "status", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: MEDIA_FAILURE_TEXT[mediaFailure.kind][mediaFailure.fallback] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-media-dismiss", onClick: dismissMediaFailure, children: "\u77E5\u9053\u4E86" })
+    mediaFailure && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { className: "wss-alert wss-media-failure", "data-kind": mediaFailure.kind, role: "status", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { children: MEDIA_FAILURE_TEXT[mediaFailure.kind][mediaFailure.fallback] }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", className: "wss-media-dismiss", onClick: dismissMediaFailure, children: "\u77E5\u9053\u4E86" })
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("nav", { className: "wss-nav", "aria-label": "\u58C1\u7EB8\u8BBE\u7F6E\u5FEB\u901F\u5B9A\u4F4D", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("nav", { className: "wss-nav", "aria-label": "\u58C1\u7EB8\u8BBE\u7F6E\u5FEB\u901F\u5B9A\u4F4D", children: [
       ["wss-anchor-library", "\u58C1\u7EB8\u5E93"],
       ["wss-anchor-appearance", "\u5916\u89C2"],
       ["wss-anchor-playback", "\u64AD\u653E"],
       ["wss-anchor-advanced", "\u9AD8\u7EA7"]
-    ].map(([id, label]) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-nav-item", onClick: () => jumpTo(id), children: label }, id)) }),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-group", id: "wss-anchor-library", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("header", { className: "wss-section-head", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wss-section-title", children: "\u58C1\u7EB8\u5E93" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-count", children: [
+    ].map(([id, label]) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", className: "wss-nav-item", onClick: () => jumpTo(id), children: label }, id)) }),
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-group", id: "wss-anchor-library", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { className: "wss-section", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("header", { className: "wss-section-head", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("h4", { className: "wss-section-title", children: "\u58C1\u7EB8\u5E93" }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { className: "wss-count", children: [
             wallpapers.length,
             " \u5F20"
           ] })
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-library-tools", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-search-row", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-library-tools", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-search-row", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
               "input",
               {
                 type: "search",
@@ -35798,7 +36302,7 @@ function WallpaperSettingsSection(props) {
                 onChange: (e) => setFilter((f) => ({ ...f, query: e.target.value }))
               }
             ),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
               "select",
               {
                 className: "wss-sort",
@@ -35810,15 +36314,15 @@ function WallpaperSettingsSection(props) {
                   if (sort === "recent") setLibState((prev) => ({ ...prev, recent: loadLibraryState().recent }));
                 },
                 children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "default", children: "\u9ED8\u8BA4\u6392\u5E8F" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "recent", children: "\u6700\u8FD1\u4F7F\u7528" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "title", children: "\u6807\u9898\u6392\u5E8F" })
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "default", children: "\u9ED8\u8BA4\u6392\u5E8F" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "recent", children: "\u6700\u8FD1\u4F7F\u7528" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "title", children: "\u6807\u9898\u6392\u5E8F" })
                 ]
               }
             )
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-filter-row", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-filter-row", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
               "select",
               {
                 className: "wss-type-filter",
@@ -35829,17 +36333,17 @@ function WallpaperSettingsSection(props) {
                   types: e.target.value === "all" ? [] : [e.target.value]
                 })),
                 children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "all", children: "\u5168\u90E8\u7C7B\u578B" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "scene", children: "SCENE" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "video", children: "VIDEO" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "web", children: "WEB" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "image", children: "IMAGE" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "preset", children: "PRESET" })
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "all", children: "\u5168\u90E8\u7C7B\u578B" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "scene", children: "SCENE" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "video", children: "VIDEO" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "web", children: "WEB" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "image", children: "IMAGE" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "preset", children: "PRESET" })
                 ]
               }
             ),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-tool", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-tool", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                 "input",
                 {
                   type: "checkbox",
@@ -35850,8 +36354,8 @@ function WallpaperSettingsSection(props) {
               ),
               "\u4EC5\u6536\u85CF"
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-tool", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-tool", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                 "input",
                 {
                   type: "checkbox",
@@ -35864,12 +36368,12 @@ function WallpaperSettingsSection(props) {
             ] })
           ] })
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "wss-grid", children: visibleWallpapers.map((w) => {
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "wss-grid", children: visibleWallpapers.map((w) => {
           const selected = settings?.selectedWallpaperId === w.id;
           const favorite = libState.favorites.has(w.id);
           const hidden = libState.hidden.has(w.id);
-          return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-thumb-wrap", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+          return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-thumb-wrap", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
               "button",
               {
                 type: "button",
@@ -35879,17 +36383,17 @@ function WallpaperSettingsSection(props) {
                 "aria-pressed": selected,
                 onClick: () => select(w.id),
                 children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-thumb-media", children: [
-                    w.previewUrl ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("img", { src: w.previewUrl, alt: w.title, loading: "lazy" }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-no-preview", children: "\u65E0\u9884\u89C8" }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-badge", children: w.type.toUpperCase() }),
-                    selected && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-check", "aria-hidden": "true", children: "\u2713" })
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { className: "wss-thumb-media", children: [
+                    w.previewUrl ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("img", { src: w.previewUrl, alt: w.title, loading: "lazy" }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-no-preview", children: "\u65E0\u9884\u89C8" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-badge", children: w.type.toUpperCase() }),
+                    selected && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-check", "aria-hidden": "true", children: "\u2713" })
                   ] }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-thumb-title", children: w.title })
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-thumb-title", children: w.title })
                 ]
               }
             ),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-thumb-actions", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { className: "wss-thumb-actions", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                 "button",
                 {
                   type: "button",
@@ -35905,7 +36409,7 @@ function WallpaperSettingsSection(props) {
                   children: favorite ? "\u2605" : "\u2606"
                 }
               ),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                 "button",
                 {
                   type: "button",
@@ -35923,24 +36427,24 @@ function WallpaperSettingsSection(props) {
             ] })
           ] }, w.id);
         }) }),
-        wallpapers.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-empty", children: "\u8FD8\u6CA1\u6709\u58C1\u7EB8\u3002\u8BF7\u5728\u4E0B\u65B9\u8BBE\u7F6E\u58C1\u7EB8\u76EE\u5F55\uFF0C\u6216\u70B9\u300C\u81EA\u52A8\u63A2\u6D4B\u300D\u3002" }),
-        wallpapers.length > 0 && visibleWallpapers.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { className: "wss-empty", children: [
+        wallpapers.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "wss-empty", children: "\u8FD8\u6CA1\u6709\u58C1\u7EB8\u3002\u8BF7\u5728\u4E0B\u65B9\u8BBE\u7F6E\u58C1\u7EB8\u76EE\u5F55\uFF0C\u6216\u70B9\u300C\u81EA\u52A8\u63A2\u6D4B\u300D\u3002" }),
+        wallpapers.length > 0 && visibleWallpapers.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("p", { className: "wss-empty", children: [
           "\u6CA1\u6709\u5339\u914D\u7684\u58C1\u7EB8\uFF08\u9690\u85CF ",
           libState.hidden.size,
           " \u5F20\uFF09"
         ] })
       ] }),
-      selectedIsScene && visibleProperties.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section wss-userprops", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wss-section-title", children: "\u58C1\u7EB8\u5C5E\u6027" }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc", children: "\u5207\u6362\u540E\u751F\u6548\uFF08\u4F1A\u91CD\u65B0\u88C5\u914D\u5F53\u524D\u58C1\u7EB8\uFF09\u3002" }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "wss-userprops-list", children: visibleProperties.map((property) => {
+      selectedIsScene && visibleProperties.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { className: "wss-section wss-userprops", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("h4", { className: "wss-section-title", children: "\u58C1\u7EB8\u5C5E\u6027" }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "wss-section-desc", children: "\u5207\u6362\u540E\u751F\u6548\uFF08\u4F1A\u91CD\u65B0\u88C5\u914D\u5F53\u524D\u58C1\u7EB8\uFF09\u3002" }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "wss-userprops-list", children: visibleProperties.map((property) => {
           const enabled = propertyConditionMet(property.condition, propValues);
           const disabledTitle = enabled ? void 0 : "\u6761\u4EF6\u4E0D\u6EE1\u8DB3\uFF0C\u6B64\u5C5E\u6027\u6682\u4E0D\u53EF\u7528";
-          const labelNode = /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-userprop-label", children: [
+          const labelNode = /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { className: "wss-userprop-label", children: [
             property.label,
-            !enabled && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-userprop-hint", children: "\uFF08\u6761\u4EF6\u4E0D\u6EE1\u8DB3\uFF09" })
+            !enabled && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-userprop-hint", children: "\uFF08\u6761\u4EF6\u4E0D\u6EE1\u8DB3\uFF09" })
           ] });
-          const resetNode = /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          const resetNode = /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
             "button",
             {
               type: "button",
@@ -35955,10 +36459,10 @@ function WallpaperSettingsSection(props) {
           const current = propValues[property.key] ?? property.value;
           if (property.type === "bool") {
             const checked = typeof current === "boolean" ? current : property.value;
-            return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-userprop-item", "data-key": property.key, "data-disabled": enabled ? void 0 : "true", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row wss-userprop-main", children: [
+            return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-userprop-item", "data-key": property.key, "data-disabled": enabled ? void 0 : "true", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-row wss-userprop-main", children: [
                 labelNode,
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                   "input",
                   {
                     type: "checkbox",
@@ -35980,13 +36484,13 @@ function WallpaperSettingsSection(props) {
           }
           if (property.type === "slider") {
             const value2 = typeof current === "number" && Number.isFinite(current) ? current : property.value;
-            return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-userprop-item", "data-key": property.key, "data-disabled": enabled ? void 0 : "true", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-slider wss-userprop-main", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-slider-head", children: [
+            return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-userprop-item", "data-key": property.key, "data-disabled": enabled ? void 0 : "true", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-slider wss-userprop-main", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { className: "wss-slider-head", children: [
                   labelNode,
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-userprop-value", children: formatSliderValue(value2, property) })
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-userprop-value", children: formatSliderValue(value2, property) })
                 ] }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                   "input",
                   {
                     type: "range",
@@ -36013,10 +36517,10 @@ function WallpaperSettingsSection(props) {
           }
           if (property.type === "color") {
             const value2 = typeof current === "string" ? current : property.value;
-            return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-userprop-item", "data-key": property.key, "data-disabled": enabled ? void 0 : "true", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row wss-userprop-main", children: [
+            return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-userprop-item", "data-key": property.key, "data-disabled": enabled ? void 0 : "true", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-row wss-userprop-main", children: [
                 labelNode,
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                   "input",
                   {
                     type: "color",
@@ -36039,10 +36543,10 @@ function WallpaperSettingsSection(props) {
             ] }, property.key);
           }
           const value = typeof current === "string" ? current : property.value;
-          return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-userprop-item", "data-key": property.key, "data-disabled": enabled ? void 0 : "true", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row wss-userprop-main", children: [
+          return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-userprop-item", "data-key": property.key, "data-disabled": enabled ? void 0 : "true", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-row wss-userprop-main", children: [
               labelNode,
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                 "select",
                 {
                   className: "wss-userprop wss-userprop-select",
@@ -36055,7 +36559,7 @@ function WallpaperSettingsSection(props) {
                     setPropertyValue(property.key, next);
                     commitProperty(property.key, next);
                   },
-                  children: property.options.map((option) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: option.value, children: option.label }, option.value))
+                  children: property.options.map((option) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: option.value, children: option.label }, option.value))
                 }
               )
             ] }),
@@ -36063,10 +36567,10 @@ function WallpaperSettingsSection(props) {
           ] }, property.key);
         }) })
       ] }),
-      selectedIsScene && audioProcessing && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section wss-sysaudio", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wss-section-title", children: "\u7CFB\u7EDF\u97F3\u9891" }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc", children: "\u7528\u7CFB\u7EDF\u64AD\u653E\u7684\u58F0\u97F3\u9A71\u52A8\u58C1\u7EB8\u7684\u97F3\u9891\u53EF\u89C6\u5316\u3002\u70B9\u4E0B\u9762\u6309\u94AE\u540E\uFF0C\u5728\u6D4F\u89C8\u5668\u5F39\u7A97\u91CC\u9009\u62E9\u300C\u6574\u4E2A\u5C4F\u5E55\u300D\u5E76\u52FE\u9009\u300C\u5171\u4EAB\u97F3\u9891\u300D\uFF1B \u5171\u4EAB\u671F\u95F4\u4F1A\u6301\u7EED\u91C7\u96C6\u7CFB\u7EDF\u58F0\u97F3\uFF08\u4E0D\u4E0A\u4F20\u3001\u4E0D\u843D\u76D8\uFF09\uFF0C\u53EF\u968F\u65F6\u505C\u6B62\u3002\u684C\u9762\u7248 App \u53D7\u5BBF\u4E3B\u6743\u9650\u9650\u5236\u4E0D\u53EF\u7528\uFF0C \u8BF7\u7528\u6D4F\u89C8\u5668\u6253\u5F00\u672C GUI \u5730\u5740\u540E\u4F7F\u7528\u3002" }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "wss-row", children: systemAudioState === "active" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "wss-sysaudio-stop", onClick: stopSystemAudio, children: "\u505C\u6B62\u7CFB\u7EDF\u97F3\u9891" }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      selectedIsScene && audioProcessing && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { className: "wss-section wss-sysaudio", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("h4", { className: "wss-section-title", children: "\u7CFB\u7EDF\u97F3\u9891" }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "wss-section-desc", children: "\u7528\u7CFB\u7EDF\u64AD\u653E\u7684\u58F0\u97F3\u9A71\u52A8\u58C1\u7EB8\u7684\u97F3\u9891\u53EF\u89C6\u5316\u3002\u70B9\u4E0B\u9762\u6309\u94AE\u540E\uFF0C\u5728\u6D4F\u89C8\u5668\u5F39\u7A97\u91CC\u9009\u62E9\u300C\u6574\u4E2A\u5C4F\u5E55\u300D\u5E76\u52FE\u9009\u300C\u5171\u4EAB\u97F3\u9891\u300D\uFF1B \u5171\u4EAB\u671F\u95F4\u4F1A\u6301\u7EED\u91C7\u96C6\u7CFB\u7EDF\u58F0\u97F3\uFF08\u4E0D\u4E0A\u4F20\u3001\u4E0D\u843D\u76D8\uFF09\uFF0C\u53EF\u968F\u65F6\u505C\u6B62\u3002\u684C\u9762\u7248 App \u53D7\u5BBF\u4E3B\u6743\u9650\u9650\u5236\u4E0D\u53EF\u7528\uFF0C \u8BF7\u7528\u6D4F\u89C8\u5668\u6253\u5F00\u672C GUI \u5730\u5740\u540E\u4F7F\u7528\u3002" }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "wss-row", children: systemAudioState === "active" ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { className: "wss-sysaudio-stop", onClick: stopSystemAudio, children: "\u505C\u6B62\u7CFB\u7EDF\u97F3\u9891" }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
           "button",
           {
             className: "wss-sysaudio-start",
@@ -36077,19 +36581,19 @@ function WallpaperSettingsSection(props) {
             children: systemAudioState === "starting" ? "\u7B49\u5F85\u6388\u6743\u2026" : "\u542F\u7528\u7CFB\u7EDF\u97F3\u9891\uFF08\u9700\u6388\u6743\uFF09"
           }
         ) }),
-        systemAudioError && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc wss-sysaudio-error", children: systemAudioErrorMessage(systemAudioError) })
+        systemAudioError && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "wss-section-desc wss-sysaudio-error", children: systemAudioErrorMessage(systemAudioError) })
       ] })
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-pair", children: [
-      settings && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section", id: "wss-anchor-appearance", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wss-section-title", children: "\u663E\u793A\u6548\u679C" }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-effects", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-slider", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-slider-head", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u906E\u7F69\u4E0D\u900F\u660E\u5EA6" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-effect-value", children: settings.overlayOpacity.toFixed(2) })
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-pair", children: [
+      settings && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { className: "wss-section", id: "wss-anchor-appearance", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("h4", { className: "wss-section-title", children: "\u663E\u793A\u6548\u679C" }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-effects", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-slider", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { className: "wss-slider-head", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: "\u906E\u7F69\u4E0D\u900F\u660E\u5EA6" }),
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-effect-value", children: settings.overlayOpacity.toFixed(2) })
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
               "input",
               {
                 type: "range",
@@ -36102,8 +36606,8 @@ function WallpaperSettingsSection(props) {
               }
             )
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-row", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
               "input",
               {
                 type: "checkbox",
@@ -36114,15 +36618,15 @@ function WallpaperSettingsSection(props) {
             ),
             "\u80CC\u666F\u6A21\u7CCA"
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-slider", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-slider-head", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u6A21\u7CCA\u534A\u5F84" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-effect-value", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-slider", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { className: "wss-slider-head", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: "\u6A21\u7CCA\u534A\u5F84" }),
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { className: "wss-effect-value", children: [
                 settings.blurRadius,
                 " px"
               ] })
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
               "input",
               {
                 type: "range",
@@ -36135,8 +36639,8 @@ function WallpaperSettingsSection(props) {
               }
             )
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-row", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
               "input",
               {
                 type: "checkbox",
@@ -36147,26 +36651,26 @@ function WallpaperSettingsSection(props) {
             ),
             "Ken Burns \u7F13\u6162\u7F29\u653E"
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u753B\u9762\u9002\u914D" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-row", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: "\u753B\u9762\u9002\u914D" }),
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
               "select",
               {
                 className: "wss-fit-mode",
                 value: settings.fitMode,
                 onChange: (e) => applyRuntime({ fitMode: e.target.value }),
                 children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "cover", children: "\u88C1\u526A\u94FA\u6EE1" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "contain", children: "\u5B8C\u6574\u663E\u793A\uFF08\u53EF\u80FD\u7559\u8FB9\uFF09" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "stretch", children: "\u62C9\u4F38\u94FA\u6EE1" })
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "cover", children: "\u88C1\u526A\u94FA\u6EE1" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "contain", children: "\u5B8C\u6574\u663E\u793A\uFF08\u53EF\u80FD\u7559\u8FB9\uFF09" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "stretch", children: "\u62C9\u4F38\u94FA\u6EE1" })
                 ]
               }
             )
           ] })
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-glow", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-glow", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-glow-row", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
               "input",
               {
                 type: "checkbox",
@@ -36176,12 +36680,12 @@ function WallpaperSettingsSection(props) {
             ),
             "\u5149\u6655\uFF08\u7ACB\u5373\u751F\u6548\uFF09"
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-slider", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-slider-head", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u9608\u503C" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-value", children: settings.glowThreshold.toFixed(2) })
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-slider", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { className: "wss-slider-head", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: "\u9608\u503C" }),
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-value", children: settings.glowThreshold.toFixed(2) })
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
               "input",
               {
                 type: "range",
@@ -36194,12 +36698,12 @@ function WallpaperSettingsSection(props) {
               }
             )
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-slider", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-slider-head", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u5F3A\u5EA6" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-value", children: settings.glowStrength.toFixed(2) })
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-slider", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { className: "wss-slider-head", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: "\u5F3A\u5EA6" }),
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-value", children: settings.glowStrength.toFixed(2) })
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
               "input",
               {
                 type: "range",
@@ -36213,9 +36717,9 @@ function WallpaperSettingsSection(props) {
             )
           ] })
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-media-block", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-media-block", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-glow-row", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
               "input",
               {
                 type: "checkbox",
@@ -36226,7 +36730,7 @@ function WallpaperSettingsSection(props) {
             ),
             "\u5A92\u4F53\u96C6\u6210\uFF08\u663E\u793A\u672C\u673A\u64AD\u653E\u7684\u6B4C\u66F2\u5C01\u9762/\u6B4C\u540D\uFF09"
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
             "p",
             {
               className: "wss-section-desc wss-media-status",
@@ -36236,11 +36740,11 @@ function WallpaperSettingsSection(props) {
           )
         ] })
       ] }),
-      settings && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section", id: "wss-anchor-playback", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wss-section-title", children: "\u8F6E\u64AD" }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-rotation", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+      settings && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { className: "wss-section", id: "wss-anchor-playback", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("h4", { className: "wss-section-title", children: "\u8F6E\u64AD" }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-rotation", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-glow-row", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
               "input",
               {
                 type: "checkbox",
@@ -36251,50 +36755,50 @@ function WallpaperSettingsSection(props) {
             ),
             "\u81EA\u52A8\u8F6E\u64AD"
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u5207\u6362\u95F4\u9694" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-row", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: "\u5207\u6362\u95F4\u9694" }),
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
               "select",
               {
                 className: "wss-rotation-interval",
                 value: String(settings.rotationIntervalMs),
                 onChange: (e) => applyRuntime({ rotationIntervalMs: Number(e.target.value) }),
                 children: [
-                  !ROTATION_INTERVAL_OPTIONS.some((o) => o.ms === settings.rotationIntervalMs) && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: String(settings.rotationIntervalMs), children: formatRotationInterval(settings.rotationIntervalMs) }),
-                  ROTATION_INTERVAL_OPTIONS.map((o) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: String(o.ms), children: o.label }, o.ms))
+                  !ROTATION_INTERVAL_OPTIONS.some((o) => o.ms === settings.rotationIntervalMs) && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: String(settings.rotationIntervalMs), children: formatRotationInterval(settings.rotationIntervalMs) }),
+                  ROTATION_INTERVAL_OPTIONS.map((o) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: String(o.ms), children: o.label }, o.ms))
                 ]
               }
             )
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u5207\u6362\u987A\u5E8F" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-row", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: "\u5207\u6362\u987A\u5E8F" }),
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
               "select",
               {
                 className: "wss-rotation-order",
                 value: normalizeRotationOrder(settings.rotationOrder),
                 onChange: (e) => applyRuntime({ rotationOrder: e.target.value }),
                 children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "sequential", children: "\u987A\u5E8F" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "random", children: "\u968F\u673A" })
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "sequential", children: "\u987A\u5E8F" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "random", children: "\u968F\u673A" })
                 ]
               }
             )
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc wss-rotation-status", "data-state": rotationPoolSize < 2 ? "empty" : "ready", children: rotationStatus })
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "wss-section-desc wss-rotation-status", "data-state": rotationPoolSize < 2 ? "empty" : "ready", children: rotationStatus })
         ] })
       ] })
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-advanced", id: "wss-anchor-advanced", children: [
-      settings && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("details", { className: "wss-details", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("summary", { className: "wss-details-head", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-details-title", children: "\u6027\u80FD\u4E0E\u7701\u7535" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-details-hint", children: "\u6682\u505C \xB7 \u753B\u8D28 \xB7 \u97F3\u6548" })
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-advanced", id: "wss-anchor-advanced", children: [
+      settings && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("details", { className: "wss-details", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("summary", { className: "wss-details-head", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-details-title", children: "\u6027\u80FD\u4E0E\u7701\u7535" }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-details-hint", children: "\u6682\u505C \xB7 \u753B\u8D28 \xB7 \u97F3\u6548" })
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-details-body", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-power", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-details-body", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-power", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-glow-row", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                 "input",
                 {
                   type: "checkbox",
@@ -36304,8 +36808,8 @@ function WallpaperSettingsSection(props) {
               ),
               "\u6682\u505C\u58C1\u7EB8\uFF08\u7701\u7535\uFF09"
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-glow-row", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                 "input",
                 {
                   type: "checkbox",
@@ -36315,25 +36819,25 @@ function WallpaperSettingsSection(props) {
               ),
               "\u5207\u5230\u540E\u53F0\u65F6\u81EA\u52A8\u6682\u505C"
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u753B\u8D28\u6863\u4F4D" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-row", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: "\u753B\u8D28\u6863\u4F4D" }),
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
                 "select",
                 {
                   className: "wss-quality",
                   value: String(settings.qualityScale),
                   onChange: (e) => applyRuntime({ qualityScale: Number(e.target.value) }),
                   children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "1", children: "\u539F\u751F\uFF081\xD7\uFF09" }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "0.75", children: "\u7701\u663E\u5B58\uFF080.75\xD7\uFF09" }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "0.5", children: "\u6700\u7701\uFF080.5\xD7\uFF09" })
+                    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "1", children: "\u539F\u751F\uFF081\xD7\uFF09" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "0.75", children: "\u7701\u663E\u5B58\uFF080.75\xD7\uFF09" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "0.5", children: "\u6700\u7701\uFF080.5\xD7\uFF09" })
                   ]
                 }
               )
             ] })
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "wss-sound-row", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "wss-sound-row", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-glow-row", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
               "input",
               {
                 type: "checkbox",
@@ -36346,34 +36850,34 @@ function WallpaperSettingsSection(props) {
           ] }) })
         ] })
       ] }),
-      settings && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("details", { className: "wss-details", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("summary", { className: "wss-details-head", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-details-title", children: "\u6587\u5B57\u53EF\u8BFB\u6027" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-details-hint", children: "\u989C\u8272 \xB7 \u63CF\u8FB9" })
+      settings && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("details", { className: "wss-details", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("summary", { className: "wss-details-head", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-details-title", children: "\u6587\u5B57\u53EF\u8BFB\u6027" }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-details-hint", children: "\u989C\u8272 \xB7 \u63CF\u8FB9" })
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-details-body", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc", children: "\u8D34\u58C1\u7EB8\u7684\u6587\u5B57\uFF08\u6D88\u606F\u6B63\u6587\u3001\u6807\u9898\u3001\u94FE\u63A5\u3001\u804A\u5929\u680F\uFF09\u770B\u4E0D\u6E05\u65F6\uFF0C\u53EF\u56FA\u5B9A\u6587\u5B57\u989C\u8272\uFF1B\u80CC\u666F\u82B1\u54E8\u65F6\u5F00\u4E00\u70B9\u63CF\u8FB9\u6700\u6709\u6548\u3002" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-textcolor", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u6587\u5B57\u989C\u8272" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-details-body", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "wss-section-desc", children: "\u8D34\u58C1\u7EB8\u7684\u6587\u5B57\uFF08\u6D88\u606F\u6B63\u6587\u3001\u6807\u9898\u3001\u94FE\u63A5\u3001\u804A\u5929\u680F\uFF09\u770B\u4E0D\u6E05\u65F6\uFF0C\u53EF\u56FA\u5B9A\u6587\u5B57\u989C\u8272\uFF1B\u80CC\u666F\u82B1\u54E8\u65F6\u5F00\u4E00\u70B9\u63CF\u8FB9\u6700\u6709\u6548\u3002" }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-textcolor", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-row", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: "\u6587\u5B57\u989C\u8272" }),
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
                 "select",
                 {
                   className: "wss-textcolor-mode",
                   value: normalizeMode(settings.textColorMode),
                   onChange: (e) => applyRuntime({ textColorMode: e.target.value }),
                   children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "auto", children: "\u81EA\u52A8\uFF08\u8DDF\u968F\u58C1\u7EB8\u4EAE\u5EA6\uFF09" }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "white", children: "\u767D\u8272" }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "black", children: "\u9ED1\u8272" }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "custom", children: "\u81EA\u5B9A\u4E49\u2026" })
+                    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "auto", children: "\u81EA\u52A8\uFF08\u8DDF\u968F\u58C1\u7EB8\u4EAE\u5EA6\uFF09" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "white", children: "\u767D\u8272" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "black", children: "\u9ED1\u8272" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "custom", children: "\u81EA\u5B9A\u4E49\u2026" })
                   ]
                 }
               )
             ] }),
-            normalizeMode(settings.textColorMode) === "custom" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u81EA\u5B9A\u4E49\u989C\u8272" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            normalizeMode(settings.textColorMode) === "custom" && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-row", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: "\u81EA\u5B9A\u4E49\u989C\u8272" }),
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                 "input",
                 {
                   type: "color",
@@ -36383,12 +36887,12 @@ function WallpaperSettingsSection(props) {
                 }
               )
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-slider", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-slider-head", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u6587\u5B57\u63CF\u8FB9" }),
-                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-value", children: outlineLabel(settings.textOutline) })
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-slider", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { className: "wss-slider-head", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: "\u6587\u5B57\u63CF\u8FB9" }),
+                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-value", children: outlineLabel(settings.textOutline) })
               ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
                 "input",
                 {
                   type: "range",
@@ -36404,16 +36908,16 @@ function WallpaperSettingsSection(props) {
           ] })
         ] })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("details", { className: "wss-details", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("summary", { className: "wss-details-head", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-details-title", children: "\u58C1\u7EB8\u76EE\u5F55" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-details-hint", children: wallpaperDir && weAssetsDir ? "\u5DF2\u914D\u7F6E" : "\u672A\u914D\u7F6E" })
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("details", { className: "wss-details", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("summary", { className: "wss-details-head", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-details-title", children: "\u58C1\u7EB8\u76EE\u5F55" }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-details-hint", children: wallpaperDir && weAssetsDir ? "\u5DF2\u914D\u7F6E" : "\u672A\u914D\u7F6E" })
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-details-body", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc", children: "\u586B Wallpaper Engine \u7684\u4E24\u4E2A\u76EE\u5F55\uFF1B\u7559\u7A7A = \u672A\u914D\u7F6E\u3002\u4E5F\u53EF\u4EE5\u76F4\u63A5\u70B9\u300C\u81EA\u52A8\u63A2\u6D4B\u300D\u91C7\u7528\u63A2\u6D4B\u7ED3\u679C\u3002" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-field", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-field-label", children: "\u58C1\u7EB8\u76EE\u5F55\uFF08workshop\uFF09" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-details-body", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "wss-section-desc", children: "\u586B Wallpaper Engine \u7684\u4E24\u4E2A\u76EE\u5F55\uFF1B\u7559\u7A7A = \u672A\u914D\u7F6E\u3002\u4E5F\u53EF\u4EE5\u76F4\u63A5\u70B9\u300C\u81EA\u52A8\u63A2\u6D4B\u300D\u91C7\u7528\u63A2\u6D4B\u7ED3\u679C\u3002" }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-field", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-field-label", children: "\u58C1\u7EB8\u76EE\u5F55\uFF08workshop\uFF09" }),
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
               "input",
               {
                 className: "wss-dir-workshop",
@@ -36423,9 +36927,9 @@ function WallpaperSettingsSection(props) {
               }
             )
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-field", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-field-label", children: "\u5F15\u64CE\u76EE\u5F55\uFF08particle \u7EB9\u7406\uFF09" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-field", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-field-label", children: "\u5F15\u64CE\u76EE\u5F55\uFF08particle \u7EB9\u7406\uFF09" }),
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
               "input",
               {
                 className: "wss-dir-assets",
@@ -36435,53 +36939,53 @@ function WallpaperSettingsSection(props) {
               }
             )
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-dir-actions", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-save-dirs", onClick: saveDirs, children: "\u4FDD\u5B58\u8DEF\u5F84" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-probe", onClick: runProbe, children: "\u81EA\u52A8\u63A2\u6D4B" })
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-dir-actions", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", className: "wss-save-dirs", onClick: saveDirs, children: "\u4FDD\u5B58\u8DEF\u5F84" }),
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", className: "wss-probe", onClick: runProbe, children: "\u81EA\u52A8\u63A2\u6D4B" })
           ] }),
-          probe && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-probe-result", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h5", { className: "wss-subtitle", children: "\u63A2\u6D4B\u5230\u7684\u58C1\u7EB8\u76EE\u5F55" }),
-            probe.workshop.map((c) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-candidate", "data-kind": "workshop", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-candidate-path", title: c.path, children: c.path }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: c.exists ? "wss-exists" : "wss-missing", children: c.exists ? "\u5B58\u5728" : "\u4E0D\u5B58\u5728" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-adopt", "data-path": c.path, onClick: () => adopt(c.path, "wallpaperDir"), children: "\u91C7\u7528" })
+          probe && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-probe-result", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("h5", { className: "wss-subtitle", children: "\u63A2\u6D4B\u5230\u7684\u58C1\u7EB8\u76EE\u5F55" }),
+            probe.workshop.map((c) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-candidate", "data-kind": "workshop", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-candidate-path", title: c.path, children: c.path }),
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: c.exists ? "wss-exists" : "wss-missing", children: c.exists ? "\u5B58\u5728" : "\u4E0D\u5B58\u5728" }),
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", className: "wss-adopt", "data-path": c.path, onClick: () => adopt(c.path, "wallpaperDir"), children: "\u91C7\u7528" })
             ] }, c.path)),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h5", { className: "wss-subtitle", children: "\u63A2\u6D4B\u5230\u7684\u5F15\u64CE\u76EE\u5F55" }),
-            probe.assets.map((c) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-candidate", "data-kind": "assets", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-candidate-path", title: c.path, children: c.path }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: c.exists ? "wss-exists" : "wss-missing", children: c.exists ? "\u5B58\u5728" : "\u4E0D\u5B58\u5728" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-adopt", "data-path": c.path, onClick: () => adopt(c.path, "weAssetsDir"), children: "\u91C7\u7528" })
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("h5", { className: "wss-subtitle", children: "\u63A2\u6D4B\u5230\u7684\u5F15\u64CE\u76EE\u5F55" }),
+            probe.assets.map((c) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-candidate", "data-kind": "assets", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-candidate-path", title: c.path, children: c.path }),
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: c.exists ? "wss-exists" : "wss-missing", children: c.exists ? "\u5B58\u5728" : "\u4E0D\u5B58\u5728" }),
+              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", className: "wss-adopt", "data-path": c.path, onClick: () => adopt(c.path, "weAssetsDir"), children: "\u91C7\u7528" })
             ] }, c.path))
           ] })
         ] })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("details", { className: "wss-details", "data-tone": liveState, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("summary", { className: "wss-details-head", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-details-title", children: "\u5B9E\u65F6\u6E32\u67D3" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-details-hint", "data-tone": liveState, children: liveState === "ok" ? "\u6B63\u5E38" : liveState === "failed" ? "\u9700\u8981\u5904\u7406" : "\u5F85\u673A" })
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("details", { className: "wss-details", "data-tone": liveState, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("summary", { className: "wss-details-head", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-details-title", children: "\u5B9E\u65F6\u6E32\u67D3" }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-details-hint", "data-tone": liveState, children: liveState === "ok" ? "\u6B63\u5E38" : liveState === "failed" ? "\u9700\u8981\u5904\u7406" : "\u5F85\u673A" })
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-details-body", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-live-status", "data-state": liveState, children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc wss-live-current", children: liveCurrent }),
-            liveMemory && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc wss-live-memory", children: liveMemory })
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-details-body", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-live-status", "data-state": liveState, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "wss-section-desc wss-live-current", children: liveCurrent }),
+            liveMemory && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "wss-section-desc wss-live-memory", children: liveMemory })
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-row", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-live-retry", onClick: retryLive, children: "\u91CD\u8BD5\u5B9E\u65F6\u6E32\u67D3" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-live-forget", onClick: forgetFailures, children: "\u6E05\u9664\u5931\u8D25\u8BB0\u5FC6" })
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-row", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", className: "wss-live-retry", onClick: retryLive, children: "\u91CD\u8BD5\u5B9E\u65F6\u6E32\u67D3" }),
+            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", className: "wss-live-forget", onClick: forgetFailures, children: "\u6E05\u9664\u5931\u8D25\u8BB0\u5FC6" })
           ] })
         ] })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section wss-about", "aria-label": "\u5173\u4E8E", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wss-section-title", children: "\u5173\u4E8E" }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc", children: "MIT \u5F00\u6E90\u3002\u5982\u679C\u5B83\u8BA9\u4F60\u7684\u754C\u9762\u597D\u770B\u4E86\uFF0C\u70B9\u4E2A Star \u5C31\u662F\u6700\u5927\u7684\u652F\u6301\uFF1B\u54EA\u5F20\u58C1\u7EB8\u6E32\u67D3\u4E0D\u6B63\u5E38\uFF0C\u5E26 Workshop ID \u63D0\u4E2A Issue \u5373\u53EF\u3002" }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-about-links", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("a", { className: "wss-about-link", "data-primary": "true", href: "https://github.com/yu502950715yang/dsh-use-wallpaper", target: "_blank", rel: "noreferrer", children: "\u2B50 Star \u9879\u76EE" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("a", { className: "wss-about-link", href: "https://github.com/yu502950715yang/dsh-use-wallpaper/issues/new", target: "_blank", rel: "noreferrer", children: "\u53CD\u9988\u95EE\u9898" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("a", { className: "wss-about-link", href: "https://github.com/yu502950715yang/dsh-use-wallpaper#readme", target: "_blank", rel: "noreferrer", children: "\u4F7F\u7528\u6587\u6863" })
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { className: "wss-section wss-about", "aria-label": "\u5173\u4E8E", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("h4", { className: "wss-section-title", children: "\u5173\u4E8E" }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "wss-section-desc", children: "MIT \u5F00\u6E90\u3002\u5982\u679C\u5B83\u8BA9\u4F60\u7684\u754C\u9762\u597D\u770B\u4E86\uFF0C\u70B9\u4E2A Star \u5C31\u662F\u6700\u5927\u7684\u652F\u6301\uFF1B\u54EA\u5F20\u58C1\u7EB8\u6E32\u67D3\u4E0D\u6B63\u5E38\uFF0C\u5E26 Workshop ID \u63D0\u4E2A Issue \u5373\u53EF\u3002" }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-about-links", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("a", { className: "wss-about-link", "data-primary": "true", href: "https://github.com/yu502950715yang/dsh-use-wallpaper", target: "_blank", rel: "noreferrer", children: "\u2B50 Star \u9879\u76EE" }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("a", { className: "wss-about-link", href: "https://github.com/yu502950715yang/dsh-use-wallpaper/issues/new", target: "_blank", rel: "noreferrer", children: "\u53CD\u9988\u95EE\u9898" }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("a", { className: "wss-about-link", href: "https://github.com/yu502950715yang/dsh-use-wallpaper#readme", target: "_blank", rel: "noreferrer", children: "\u4F7F\u7528\u6587\u6863" })
         ] })
       ] })
     ] }),
-    message && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-message", role: "status", children: message })
+    message && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "wss-message", role: "status", children: message })
   ] });
 }
 
@@ -36539,6 +37043,13 @@ function bootstrap(ctx) {
   }
   setSettingsCtx(ctx);
   injectWallpaperStyles();
+  const bootPlayer = createBootPlayer({ readSettings: readClientSettings });
+  const bootApi2 = {
+    play: (opts) => bootPlayer.play(opts),
+    getLast: () => bootPlayer.getLast()
+  };
+  window.__wallpaperEngineBoot = bootApi2;
+  void bootPlayer.start();
   let layer = null;
   let controller = null;
   let settings = { ...DEFAULTS };
@@ -36667,6 +37178,8 @@ function bootstrap(ctx) {
     layer = null;
     controller = null;
     root?.remove();
+    bootPlayer.dispose();
+    if (window.__wallpaperEngineBoot === bootApi2) delete window.__wallpaperEngineBoot;
     if (onVisibility) {
       document.removeEventListener("visibilitychange", onVisibility);
       onVisibility = null;
@@ -36681,6 +37194,7 @@ function bootstrap(ctx) {
       } catch {
       }
     }
+    for (const el of Array.from(document.querySelectorAll(".wp-boot-layer"))) el.remove();
     const hasGl = typeof WebGL2RenderingContext !== "undefined";
     for (const el of Array.from(document.querySelectorAll(".wp-background-layer"))) {
       if (hasGl) {
@@ -36869,12 +37383,21 @@ function bootstrap(ctx) {
     }
   };
   if (ctx?.slots?.inject && ctx?.slots?.register) {
-    ctx.slots.inject("settings.section", () => ctx.slots.register({
-      name: "settings.section",
-      id: SETTINGS_SECTION_ID,
-      order: 20,
-      label: () => "Wallpaper \u58C1\u7EB8"
-    }, WallpaperSettingsSection));
+    ctx.slots.inject("settings.section", () => {
+      const wallpaperSection = ctx.slots.register({
+        name: "settings.section",
+        id: SETTINGS_SECTION_ID,
+        order: 20,
+        label: () => "Wallpaper \u58C1\u7EB8"
+      }, WallpaperSettingsSection);
+      const bootSection = ctx.slots.register({
+        name: "settings.section",
+        id: "wallpaper-engine-boot",
+        order: 21,
+        label: () => "\u5F00\u673A\u52A8\u753B"
+      }, BootSettingsSection);
+      return [wallpaperSection, bootSection];
+    });
   }
   if (typeof ctx?.effect === "function") ctx.effect(() => teardown, "wallpaper-engine: teardown");
   else if (typeof ctx?.on === "function") ctx.on("dispose", teardown);

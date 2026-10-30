@@ -102,8 +102,8 @@ export function createBootOverlay(opts?: {
 行为：
 - 创建 `.wp-boot-layer`（`position:fixed; inset:0; z-index:2147483000; background:#000; overflow:hidden`），`document.documentElement.appendChild`。
 - **视频**：`<video autoplay muted playsInline preload="auto">`；`loadeddata` 起算；`ended` → `'ended'`；`maxDuration>0` 到点 → 结束；`error` → `'failed'`；`readyTimeoutMs` 内未就绪 → `'timeout'`。
-- **图片**：`<img>`（contain/cover/stretch 用 `object-fit`）+ `tile` 用 `<div>` 的 `background-repeat:repeat`（object-fit 不支持平铺；GIF preview 同样适用）；`load` 起算，`imageDurationMs` 或 maxDuration 到点结束；`error` → `'failed'`。
-- **跳过**：`pointerdown` / `keydown`（含 Esc）在 window 上 capture+passive，一次性；跳过后立刻摘监听。
+- **图片**：`<img>`（contain/cover/stretch 用 `object-fit`）+ `tile` 用 `<div>` 的 `background-repeat:repeat`（object-fit 不支持平铺；GIF preview 同样适用）；创建后立即计时（不等待 `load`；`error` 仅判失败），`imageDurationMs` 或 maxDuration 到点结束。
+- **跳过**：`pointerdown` / `keydown`（含 Esc）在 window 上 capture（不 passive，`onSkip` 会 `preventDefault`），一次性；跳过后立刻摘监听。
 - **结束收尾**：停视频/清 src → 300ms opacity 过渡 → 移除 DOM；`dispose()` 幂等（重复调用/播放中被调都安全）。dispose 不产生 unhandled rejection。
 - 一次 overlay 实例只播一次；重复 `play()` → 内部重建层（供面板预览）。
 

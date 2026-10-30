@@ -9,7 +9,7 @@
 ## 1. 项目概述
 
 - **形态**：单包仓库，仓库根即插件 `@dsh-use/wallpaper-engine`（`package.json` 声明了 `dsh.bundle`，可直接 `dsh plugin add github:...`）。
-- **能力**：扫描 Steam workshop 壁纸目录（候选根 = `src/host/steam-paths.ts` 的 `DEFAULT_STEAM_ROOTS`：`C:/Program Files (x86)/Steam` / `D:/Steam` / `E:/Steam`，拼出 `steamapps/workshop/content/431960`；可自动探测 —— 注册表 + `libraryfolders.vdf` + 常见路径 —— 或手动配置，settings 热更新），在 DSH Web GUI 里渲染 scene 壁纸 / 播放视频 / 加载 web 页，其余回退 preview 图 + Ken Burns。
+- **能力**：扫描 Steam workshop 壁纸目录（候选根 = `src/host/steam-paths.ts` 的 `DEFAULT_STEAM_ROOTS`：`C:/Program Files (x86)/Steam` / `D:/Steam` / `E:/Steam`，拼出 `steamapps/workshop/content/431960`；可自动探测 —— 注册表 + `libraryfolders.vdf` + 常见路径 —— 或手动配置，settings 热更新），在 DSH Web GUI 里渲染 scene 壁纸 / 播放视频 / 加载 web 页，其余回退 preview 图 + Ken Burns。开机动画：独立设置项，素材为 WE 库 video/image 壁纸或本地视频绝对路径（host 仅回环来源流式），四种展示方式，每次冷启动播一次、固定静音、8s 超时静默跳过。
 - **入口**：DSH 设置对话框侧边栏「壁纸」菜单（client 经 `settings.section` slot 注册，见 `src/client/settings-section.tsx`）。
 - **技术栈**：TypeScript strict、ESM-only；浏览器侧 three.js（WebGL2）+ Rust（wasm，**仅 CPU 粒子模拟**，已无 wgpu/WebGPU）；宿主侧 Cordis 插件体系。Node 版本无 `engines` 声明，CI 用 Node 22。
 - **自带解包**：host 侧自行解析 **PKGV 容器**（magic `PKGV` 在 offset 4，`src/host/pkg-reader.ts` 只校验这 4 字节，版本字段未使用）与 **TEXV0005 纹理**（`src/client/tex-loader.ts`）；不依赖 WE 运行时。
@@ -32,8 +32,8 @@
 
 ### 2.2 host / client / shared 分层
 
-- `src/host/`：Node 侧（Cordis 插件）。`scanner.ts` 扫描目录 → `WallpaperInfo`；`scene-source.ts` 场景包/入口解析（`project.json.file` → pkg 名，见 §5.53）；`steam-paths.ts` 目录探测（`/wallpapers/probe`）；`pkg-reader.ts` 解包 PKGV；`routes.ts` HTTP 路由（每次请求读实时目录，settings 热更新；对 web 壁纸的 HTML 注入指针 shim，见 §5.48）；`list-cache.ts` 壁纸列表缓存（`/wallpapers/list` 的 mtime 缓存与 ETag，见 §5.50）；`settings.ts` 插件设置（双路径，见 §5.34）；`data-dir.ts` / `scene-frame-store.ts`（数据目录与抓帧 PNG，见 §5.49）、`scene-media-probe.ts`（内嵌 MP4 探测）、`user-props.ts`（四类型用户属性聚合，见 §7.41）。
-- `src/client/`：浏览器侧（esbuild → `dist/client.js`，external react 等 DSH 共享模块）。主路径：`index.ts`（bootstrap + `window.__wallpaperEngine` + 注册设置菜单）、`wallpaper-controller.ts`（选择/竞态/回退链）、`three-renderer.ts` + `threejs-player.ts`（渲染）、`object-effects.ts` + `object-range.ts` + `effect-runner.ts` + `effect-graph.ts`（对象级效果链）、`rt-render.ts`（「渲染进 RT」的唯一入口，透明清屏不变量落在这里）、`tex-loader.ts`（TEXV0005 解码）、`scene-assets.ts`（场景资源/入口请求）、`scene-json.ts` / `scene-graph.ts` / `visibility.ts`、`text-object.ts` + `text-script.ts` + `scene-script-vm.ts` + `scene-script-host.ts` + `scene-anim.ts` + `layer-state.ts` + `dynamic-mesh.ts`（text / 脚本 / 动态网格）、`glow-stage.ts`（应用级 Glow）、`bloom-stage.ts`（壁纸级 bloom，薄封装 GlowStage）、`audio-input.ts`（音效音量 / 播放模式 / 暂停挂起，见 §5.52）、`system-audio.ts`（系统音频采集）、`scene-fallback.ts` / `frame-export.ts`（降级链与首帧导出）、`rotation.ts` / `library-view.ts` / `local-store.ts`（轮播 / 壁纸库 / 本地存储）、`wallpaper-properties.ts` / `media-health.ts`（用户属性面板读写 / 视频解码失败提示）、`background-layer.ts` / `settings.ts` / `styles.ts` / `settings-section.tsx`。
+- `src/host/`：Node 侧（Cordis 插件）。`scanner.ts` 扫描目录 → `WallpaperInfo`；`scene-source.ts` 场景包/入口解析（`project.json.file` → pkg 名，见 §5.53）；`steam-paths.ts` 目录探测（`/wallpapers/probe`）；`pkg-reader.ts` 解包 PKGV；`routes.ts` HTTP 路由（每次请求读实时目录，settings 热更新；对 web 壁纸的 HTML 注入指针 shim，见 §5.48；开机动画的本地视频流与校验路由，仅回环来源，见 §5.55）；`list-cache.ts` 壁纸列表缓存（`/wallpapers/list` 的 mtime 缓存与 ETag，见 §5.50）；`settings.ts` 插件设置（双路径，见 §5.34）；`data-dir.ts` / `scene-frame-store.ts`（数据目录与抓帧 PNG，见 §5.49）、`scene-media-probe.ts`（内嵌 MP4 探测）、`user-props.ts`（四类型用户属性聚合，见 §7.41）。
+- `src/client/`：浏览器侧（esbuild → `dist/client.js`，external react 等 DSH 共享模块）。主路径：`index.ts`（bootstrap + `window.__wallpaperEngine` + 注册设置菜单）、`wallpaper-controller.ts`（选择/竞态/回退链）、`three-renderer.ts` + `threejs-player.ts`（渲染）、`object-effects.ts` + `object-range.ts` + `effect-runner.ts` + `effect-graph.ts`（对象级效果链）、`rt-render.ts`（「渲染进 RT」的唯一入口，透明清屏不变量落在这里）、`tex-loader.ts`（TEXV0005 解码）、`scene-assets.ts`（场景资源/入口请求）、`scene-json.ts` / `scene-graph.ts` / `visibility.ts`、`text-object.ts` + `text-script.ts` + `scene-script-vm.ts` + `scene-script-host.ts` + `scene-anim.ts` + `layer-state.ts` + `dynamic-mesh.ts`（text / 脚本 / 动态网格）、`glow-stage.ts`（应用级 Glow）、`bloom-stage.ts`（壁纸级 bloom，薄封装 GlowStage）、`audio-input.ts`（音效音量 / 播放模式 / 暂停挂起，见 §5.52）、`system-audio.ts`（系统音频采集）、`scene-fallback.ts` / `frame-export.ts`（降级链与首帧导出）、`rotation.ts` / `library-view.ts` / `local-store.ts`（轮播 / 壁纸库 / 本地存储）、`wallpaper-properties.ts` / `media-health.ts`（用户属性面板读写 / 视频解码失败提示）、`background-layer.ts` / `settings.ts` / `styles.ts` / `settings-section.tsx` / `boot-overlay.ts` / `boot-player.ts` / `boot-settings-section.tsx`（开机动画：全屏层 / 编排 / 独立面板）。
 - `src/shared/`：跨 host/client 的类型与**两端共用的常量/纯函数**（`types.ts` 的 `WallpaperInfo` / `SceneDescription` / `SceneObject` 等；`pointer-shim.ts` 的 shim 源码与 HTML 注入 —— host 侧要把它内联进响应、client 侧与测试要按同一契约断言，故不能放在任一侧）。
 - `src/client/shader/`：WE shader 方言转译层（`effect-chain.ts` 解析、`shader-preprocessor.ts` 预处理、`uniform-binder.ts`、`we-headers.ts`）。
 
@@ -208,6 +208,8 @@ npx vitest run tests/xxx.test.ts --reporter=basic   # 跑单个文件
     - **e2e / 验收**：`npm run e2e:media`（媒体层白框/文本/封面方向/主色/时间线淡入/停止隐藏，需本机素材；末尾输出 FPS 探针）；`node e2e/verify/verify-media-layer.mjs --regression`（5 张回归对照，含 `2980088441` 的 text 静态色回归 `[R6]` 与 `2597392171` Fog 复跑）；`npm run e2e:media-perf`（Node 性能证据：10 条动画 `advance+sampleAndWrite+syncWorld` 均值 <50µs/帧，本机两次实测 13.0 / 14.6µs）。真机验收见 `TESTING.md` §2.17（M1–M8 当前未验）。
     - **已知边界**：仅 Windows（其它平台恒无会话）；只读不控（无上一首/seek），**不派发 `mediaTimelineChanged`**（快照保留 position/duration）；色板为主色启发式（非 WE 原始取色算法）、贝塞尔曲线为样本校准近似；时间线不做 `general.*` / effect / material 属性；粒子对象只应用 origin 平移（父级 scale/angles 带动不支持）；隔离对象（对象级效果链）的合成 quad 不参与时间线世界变换；`color` 时间线已接线但本机**无真实样本**；text 层的动态/时间线 `color` 不应用（静态色烘进画布，见 §7.44）。
 
+55. **开机动画独立于壁纸层，本地视频路由仅回环来源（2026-10-30）**：`.wp-boot-layer` 是独立全屏层（z-index 高于 `#root`），**不改** `body[data-we-wallpaper]`、背景层 fit/暂停/轮播/健康状态；只做「video/image 素材的全屏层」，scene/web 不做实时渲染。本地视频路由 `GET /wallpapers/boot/local-video` **必须仅回环来源**（含 `::ffff:` 映射地址），扩展名白名单 + 绝对路径校验 —— dsh web 可绑 `0.0.0.0`，否则等于任意文件读取口子；校验路由同理。每次冷启动/新窗口只播一次（`sessionStorage` 标记），失败/超时/无素材一律静默交接，不阻塞主界面。
+
 ## 6. 工作约定
 
 - 回复、注释、文档、**提交信息一律简体中文**；代码、命令、文件名、技术术语保留原文。
@@ -291,6 +293,8 @@ npx vitest run tests/xxx.test.ts --reporter=basic   # 跑单个文件
       8. **只有 text 媒体脚本的场景不建轮询**：`sceneNeedsMedia` 会为 text 脚本返回 true，但接线条件是 `currentScriptHost || $mediaThumbnail 对象`；scene 无脚本且无时间线（空 host 不建）时两者皆无 ⇒ 不轮询，text 的 `mediaPropertiesChanged` 也不会派发。
       9. **watcher 启动失败退避 = 固定 5s**（`media-session.ts` 的 `START_RETRY_MS`），与设计 §4.1 的「1s 起指数、上限 8s」不一致，**以代码 5s 为准**（决策笔记 errata）；进程异常退出无指数退避（下一次请求直接重启），60s 内 3 次失败降级 60s 不变。
       10. **e2e 可复跑性**：媒体 e2e 与其它 headless e2e 必须**串行**、彼此留 1–2s（连续紧跑后 Edge/调试端口可能未完全释放 ⇒ 环境性失败；单跑通过）；`--regression` 的 `[R2]`「对象数 > 0」/`[R3]`「截图字节 > 0」是**结构性弱断言**，画面正确性靠人工复看截图；`[R1]` 不含 CDP `Log.entryAdded` 的 error（只诊断打印）。
+
+45. **开机动画的边界（2026-10-30）**：桌面壳自身的启动闪屏无法替换 —— 插件只能在页面加载后尽早覆盖，两者可能各闪一次；固定静音（`muted + playsInline`，不提供声音开关）；平铺仅图片（视频的「平铺」在面板禁用，`object-fit` 无平铺语义）；每次冷启动/新窗口只播一次（`sessionStorage`，刷新/HMR 不重播，面板「试播」不受限）；素材 8s 未就绪即静默跳过，不阻塞主界面。设计见 `docs/superpowers/specs/2026-10-30-boot-animation-design.md`。
 
 ## 8. 历史归档
 

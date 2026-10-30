@@ -24,6 +24,13 @@ export declare const WallpaperSettingsSchema: z<Schemastery.ObjectS<NoInfer<{
     rotationIntervalMs: z<number, number, "defined">;
     rotationOrder: z<string, string, "defined">;
     frameCacheEnabled: z<boolean, boolean, "defined">;
+    bootAnimationEnabled: z<boolean, boolean, "defined">;
+    bootAnimationSource: z<string, string, "defined">;
+    bootAnimationWallpaperId: z<string, string, "defined">;
+    bootAnimationWallpaperKind: z<string, string, "defined">;
+    bootAnimationLocalPath: z<string, string, "defined">;
+    bootAnimationFitMode: z<string, string, "defined">;
+    bootAnimationMaxDurationMs: z<number, number, "defined">;
 }>>, Schemastery.ObjectT<NoInfer<{
     selectedWallpaperId: z<string, string, "defined">;
     wallpaperDir: z<string, string, "defined">;
@@ -48,6 +55,13 @@ export declare const WallpaperSettingsSchema: z<Schemastery.ObjectS<NoInfer<{
     rotationIntervalMs: z<number, number, "defined">;
     rotationOrder: z<string, string, "defined">;
     frameCacheEnabled: z<boolean, boolean, "defined">;
+    bootAnimationEnabled: z<boolean, boolean, "defined">;
+    bootAnimationSource: z<string, string, "defined">;
+    bootAnimationWallpaperId: z<string, string, "defined">;
+    bootAnimationWallpaperKind: z<string, string, "defined">;
+    bootAnimationLocalPath: z<string, string, "defined">;
+    bootAnimationFitMode: z<string, string, "defined">;
+    bootAnimationMaxDurationMs: z<number, number, "defined">;
 }>>, "plain">;
 export declare const Config: z<NoInfer<Schemastery.ObjectS<NoInfer<{
     selectedWallpaperId: z<string, string, "defined">;
@@ -73,6 +87,13 @@ export declare const Config: z<NoInfer<Schemastery.ObjectS<NoInfer<{
     rotationIntervalMs: z<number, number, "defined">;
     rotationOrder: z<string, string, "defined">;
     frameCacheEnabled: z<boolean, boolean, "defined">;
+    bootAnimationEnabled: z<boolean, boolean, "defined">;
+    bootAnimationSource: z<string, string, "defined">;
+    bootAnimationWallpaperId: z<string, string, "defined">;
+    bootAnimationWallpaperKind: z<string, string, "defined">;
+    bootAnimationLocalPath: z<string, string, "defined">;
+    bootAnimationFitMode: z<string, string, "defined">;
+    bootAnimationMaxDurationMs: z<number, number, "defined">;
 }>>>, NoInfer<Schemastery.ObjectT<NoInfer<{
     selectedWallpaperId: z<string, string, "defined">;
     wallpaperDir: z<string, string, "defined">;
@@ -97,4 +118,11 @@ export declare const Config: z<NoInfer<Schemastery.ObjectS<NoInfer<{
     rotationIntervalMs: z<number, number, "defined">;
     rotationOrder: z<string, string, "defined">;
     frameCacheEnabled: z<boolean, boolean, "defined">;
+    bootAnimationEnabled: z<boolean, boolean, "defined">;
+    bootAnimationSource: z<string, string, "defined">;
+    bootAnimationWallpaperId: z<string, string, "defined">;
+    bootAnimationWallpaperKind: z<string, string, "defined">;
+    bootAnimationLocalPath: z<string, string, "defined">;
+    bootAnimationFitMode: z<string, string, "defined">;
+    bootAnimationMaxDurationMs: z<number, number, "defined">;
 }>>>, "volatile">;

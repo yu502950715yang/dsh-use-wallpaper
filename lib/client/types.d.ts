@@ -55,4 +55,11 @@ export interface ClientSettings {
     rotationIntervalMs: number;
     rotationOrder: RotationOrder;
     frameCacheEnabled: boolean;
+    bootAnimationEnabled: boolean;
+    bootAnimationSource: string;
+    bootAnimationWallpaperId: string;
+    bootAnimationWallpaperKind: string;
+    bootAnimationLocalPath: string;
+    bootAnimationFitMode: string;
+    bootAnimationMaxDurationMs: number;
 }
