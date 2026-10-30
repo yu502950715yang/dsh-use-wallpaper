@@ -16,7 +16,7 @@ export interface MediaInputOptions {
 export interface MediaInput {
     /** 启动轮询（已启动则 no-op）；立即拉一次，之后按 1s/退避间隔。 */
     start(): void;
-    /** 停止轮询并清定时器；`failures` 保留（重新 start 仍按退避档起步，避免抖动时打爆 host）。 */
+    /** 停止轮询并清定时器；`failures` 保留（重新 start 仍按退避档起步），`prev` 清空（重开按首帧重放）。 */
     stop(): void;
     /** 暂停期间不发请求；恢复时立即拉一次。幂等。 */
     setPaused(paused: boolean): void;

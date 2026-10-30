@@ -158,6 +158,55 @@ describe('createMediaInput', () => {
     expect(seenPrev[1]?.title).toBe('A');
   });
 
+  // I1 回归：关闭媒体集成会 stop()，再开启必须按「首帧」重放完整快照（prev=null），
+  // 否则曲目没变时 diff 为空 ⇒ 目标壁纸只监听 playback 的媒体层永久隐藏。
+  it('stop 清 prev：重新 start 后同一快照按首帧重放（prev=null）；暂停/恢复不重放', async () => {
+    const timers = makeTimerHarness();
+    const seen: Array<MediaSessionSnapshot | null> = [];
+    const payload = snap({ available: true, playback: 'playing', title: 'T' });
+    const input = createMediaInput({
+      fetchImpl: async () => ({ ok: true, json: async () => payload }),
+      setIntervalImpl: timers.setIntervalImpl,
+      clearIntervalImpl: timers.clearIntervalImpl,
+      onSnapshot: (_next, prev) => seen.push(prev),
+    });
+    input.start();
+    await flush();
+    expect(seen).toEqual([null]);
+    input.stop();
+    input.start();
+    await flush();
+    expect(seen).toEqual([null, null]); // 首帧语义：同一快照也要重放
+    // 暂停语义不变：prev 只在 stop 时清，暂停/恢复收到变化才回调。
+    input.setPaused(true);
+    input.setPaused(false);
+    await flush();
+    expect(seen).toEqual([null, null]);
+    input.dispose();
+  });
+
+  it('stop 后飞行中的旧响应被丢弃，不污染 prev（重开首帧仍能重放）', async () => {
+    const timers = makeTimerHarness();
+    const pending: Array<(value: FetchResult) => void> = [];
+    const got: MediaSessionSnapshot[] = [];
+    const payload = snap({ available: true, playback: 'playing', title: 'T' });
+    const input = createMediaInput({
+      fetchImpl: () => new Promise<FetchResult>((resolve) => { pending.push(resolve); }),
+      setIntervalImpl: timers.setIntervalImpl,
+      clearIntervalImpl: timers.clearIntervalImpl,
+      onSnapshot: (next) => got.push(next),
+    });
+    input.start();
+    input.stop();
+    pending[0]({ ok: true, json: async () => payload }); // 停机后才到的旧响应
+    await flush();
+    input.start();
+    pending[1]({ ok: true, json: async () => payload });
+    await flush();
+    expect(got).toHaveLength(1);
+    input.dispose();
+  });
+
   it('setPaused(true) 停定时器；false 立即拉一次并恢复 1s', async () => {
     const timers = makeTimerHarness();
     let calls = 0;
@@ -361,6 +410,13 @@ describe('applyMediaSnapshot（快照 → 事件派发）', () => {
     const log: string[] = [];
     applyMediaSnapshot(playing, emptyMediaSnapshot('no-session', 2), makeSink(log));
     expect(log).toEqual(['playback:stopped']);
+  });
+
+  // Minor（review round 1）：contentType 进了 diff 键，事件侧也必须重派 properties。
+  it('contentType 变化也重派 properties（音乐↔视频切换）', () => {
+    const log: string[] = [];
+    applyMediaSnapshot(playing, { ...playing, contentType: 'video' }, makeSink(log));
+    expect(log).toEqual(['props:T']);
   });
 });
 

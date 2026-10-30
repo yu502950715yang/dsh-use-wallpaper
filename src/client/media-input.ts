@@ -33,7 +33,7 @@ export interface MediaInputOptions {
 export interface MediaInput {
   /** 启动轮询（已启动则 no-op）；立即拉一次，之后按 1s/退避间隔。 */
   start(): void;
-  /** 停止轮询并清定时器；`failures` 保留（重新 start 仍按退避档起步，避免抖动时打爆 host）。 */
+  /** 停止轮询并清定时器；`failures` 保留（重新 start 仍按退避档起步），`prev` 清空（重开按首帧重放）。 */
   stop(): void;
   /** 暂停期间不发请求；恢复时立即拉一次。幂等。 */
   setPaused(paused: boolean): void;
@@ -74,6 +74,8 @@ export function createMediaInput(opts: MediaInputOptions): MediaInput {
   let failures = 0;
   let inflight = false;
   let prev: MediaSessionSnapshot | null = null;
+  // stop() 递增：丢弃停机后才到的旧响应，避免它写回 prev 让「关→开」首帧不再重放。
+  let stopSeq = 0;
 
   const targetIntervalMs = (): number => (failures >= FAILURES_BEFORE_BACKOFF ? backoffMs : intervalMs);
 
@@ -96,12 +98,13 @@ export function createMediaInput(opts: MediaInputOptions): MediaInput {
 
   const poll = async (): Promise<void> => {
     if (disposed || paused || inflight) return;
+    const seq = stopSeq;
     inflight = true;
     try {
       const resp = await fetchImpl(mediaUrl(pageTitle()));
       if (!resp.ok) throw new Error('now-playing http ' + (resp.status ?? 'unknown'));
       const next = await resp.json();
-      if (disposed || paused) return;
+      if (disposed || paused || seq !== stopSeq) return;
       failures = 0;
       if (diffSnapshot(prev, next).length > 0) {
         const old = prev;
@@ -115,7 +118,7 @@ export function createMediaInput(opts: MediaInputOptions): MediaInput {
       }
       armTimer(intervalMs);
     } catch (error) {
-      if (disposed) return;
+      if (disposed || seq !== stopSeq) return;
       failures += 1;
       try {
         opts.onError?.(error);
@@ -138,6 +141,9 @@ export function createMediaInput(opts: MediaInputOptions): MediaInput {
     stop() {
       running = false;
       stopTimer();
+      // 清 prev：重新 start 后首个快照必须按「首帧」重放（关→开时曲目没变也要重派事件）。
+      prev = null;
+      stopSeq += 1;
     },
     setPaused(value) {
       if (disposed || value === paused) return;
@@ -200,7 +206,11 @@ export function applyMediaSnapshot(
     return;
   }
   if (changed.includes('playback')) sink.playback(next.playback);
-  if (changed.includes('title') || changed.includes('artist') || changed.includes('album')) {
+  // contentType 也在 diff 键里（音乐↔视频切换的脚本分支），事件侧必须一并重派。
+  if (
+    changed.includes('title') || changed.includes('artist') || changed.includes('album')
+    || changed.includes('contentType')
+  ) {
     sink.properties({ title: next.title, artist: next.artist, album: next.album, contentType: next.contentType });
   }
   if (changed.includes('thumbnailRev') || changed.includes('hasThumbnail')) {

@@ -181,12 +181,16 @@ export function update(v) { return "import { x } from 'y'"; }`,
     const b = rt!.bind(`
       var mediaData = '';
       export function update(v){ return mediaData; }
-      export function mediaPropertiesChanged(e){ mediaData = e.title + ' / ' + e.artist; }`,
+      export function mediaPropertiesChanged(e){
+        mediaData = e.title + ' / ' + e.artist + ' / ' + e.albumTitle + ' / ' + e.albumArtist
+          + ' / ' + e.subTitle + ' / ' + e.genres;
+      }`,
       {}, '');
     expect(b).not.toBeNull();
     expect(b!.update()).toBe('');
-    rt!.dispatchMediaProperties({ title: '歌', artist: '手', album: '', contentType: 'music' });
-    expect(b!.update()).toBe('歌 / 手');
+    rt!.dispatchMediaProperties({ title: '歌', artist: '手', album: '专', contentType: 'music' });
+    // WE 长尾字段：albumTitle=album、albumArtist=artist、subTitle/genres 空串（不是 undefined）。
+    expect(b!.update()).toBe('歌 / 手 / 专 / 手 /  / ');
     b!.dispose();
   });
 
@@ -207,12 +211,19 @@ export function update(v) { return "import { x } from 'y'"; }`,
     a!.dispose();
   });
 
-  it('mediaPropertiesChanged 抛错只丢弃该事件，不影响 update', async () => {
+  it('mediaPropertiesChanged 抛错只丢弃该事件，不影响 update（每次 binding 只 warn 一次）', async () => {
     const rt = await getTextScriptRuntime();
     const b = rt!.bind(`
       export function update(v){ return 'ok'; }
       export function mediaPropertiesChanged(e){ throw new Error('boom'); }`, {}, '');
-    expect(() => rt!.dispatchMediaProperties({ title: 'T', artist: '', album: '', contentType: '' })).not.toThrow();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      expect(() => rt!.dispatchMediaProperties({ title: 'T', artist: '', album: '', contentType: '' })).not.toThrow();
+      expect(() => rt!.dispatchMediaProperties({ title: 'T2', artist: '', album: '', contentType: '' })).not.toThrow();
+      expect(warn.mock.calls.filter((c) => String(c[0]).includes('mediaPropertiesChanged'))).toHaveLength(1);
+    } finally {
+      warn.mockRestore();
+    }
     expect(b!.update()).toBe('ok');
     b!.dispose();
   });

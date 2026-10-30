@@ -1,8 +1,5 @@
-// 媒体集成端到端 harness 入口（白框修复验收）：渲染真实场景壁纸，暴露对象矩形/材质/可见性。
-//
-// ⚠️ 只 import `lib/client/*`（`npm run build` 的生产产物），不 import `src/`：
-// 由 e2e/verify/verify-media-layer.mjs 用 esbuild 打包成自包含 bundle，headless Edge 打开。
-// 走生产的 `createThreeSceneRenderer().render(id, canvas)` 入口（与线上逐字相同）。
+// 媒体集成 e2e harness：真实渲染场景壁纸，暴露媒体层可见性/像素/画布尺寸探针（只读）。
+// 只 import `lib/client/*`（生产产物）；参考 harness-text-clock-entry.mjs 的 player 捕获方式。
 import * as THREE from 'three';
 import { createThreeSceneRenderer } from '../../lib/client/three-renderer.js';
 import { ThreeScenePlayer } from '../../lib/client/threejs-player.js';
@@ -37,13 +34,6 @@ canvas.width = VW;
 canvas.height = VH;
 canvas.style.cssText = `display:block;width:${VW}px;height:${VH}px`;
 document.body.appendChild(canvas);
-
-const renderer = createThreeSceneRenderer();
-let ok = false, err = null;
-try {
-  ok = await renderer.render(id, canvas);
-  window.__renderer = renderer;
-} catch (e) { err = String((e && e.stack) || e); }
 
 /** 某个 scene 对象 id 在**画布 CSS 像素**里的矩形（世界 quad 四角投影）；未登记 → null。 */
 window.__objectRect = (objectId) => {
@@ -130,6 +120,22 @@ window.__hideObject = (objectId, hidden) => {
   return { objectId, prevVisible: prev, visible: o.visible };
 };
 
+/** 媒体层只读探针：可见性/不透明度 + 白块对象矩形（verify 的即时判据用）。 */
+window.__mediaSnapshotNow = (ids = [35, 40, 45]) => {
+  const p = window.__player;
+  return {
+    visible: ids.map((oid) => {
+      const o = p && p.displayObject(oid);
+      return o ? o.visible : null;
+    }),
+    opacity: ids.map((oid) => {
+      const o = p && p.displayObject(oid);
+      return o && o.material ? (o.material.opacity ?? null) : null;
+    }),
+    rect40: window.__objectRect(40),
+  };
+};
+
 /** 媒体层诊断：可见性/父链/是否仍在场景/纹理尺寸（判据失败时定位用）。 */
 window.__probeMedia = (ids = [35, 38, 39, 40, 45]) => {
   const p = window.__player;
@@ -149,8 +155,74 @@ window.__probeMedia = (ids = [35, 38, 39, 40, 45]) => {
   });
 };
 
+/** PNG 字节 → 画布区域内三通道 ≥250 的像素数（解码失败 → null）。 */
+async function whitePixelsOf(png, box) {
+  if (!png || png.length === 0) return null;
+  const bmp = await createImageBitmap(new Blob([png], { type: 'image/png' }));
+  const c = document.createElement('canvas');
+  c.width = bmp.width;
+  c.height = bmp.height;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return null;
+  ctx.drawImage(bmp, 0, 0);
+  const [x0, y0, x1, y1] = box;
+  const sx = Math.max(0, Math.min(bmp.width - 1, x0));
+  const sy = Math.max(0, Math.min(bmp.height - 1, y0));
+  const ex = Math.max(0, Math.min(bmp.width - 1, x1));
+  const ey = Math.max(0, Math.min(bmp.height - 1, y1));
+  if (ex < sx || ey < sy) return 0;
+  const { data } = ctx.getImageData(sx, sy, ex - sx + 1, ey - sy + 1);
+  let n = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i] >= 250 && data[i + 1] >= 250 && data[i + 2] >= 250) n += 1;
+  }
+  return n;
+}
+
+// 首条 now-playing 请求延迟 600ms：确保「render resolve 后立即采样」早于任何轮询响应，
+// 从而证明媒体层是装配期同步派发隐藏的，不是轮询回来才隐藏。只影响本 harness。
+const rawFetch = window.fetch.bind(window);
+let firstPollDelayed = false;
+window.fetch = async (...args) => {
+  const url = typeof args[0] === 'string' ? args[0] : String(args[0]?.url ?? '');
+  if (!firstPollDelayed && url.includes('/wallpapers/now-playing?') && !url.includes('/thumbnail')) {
+    firstPollDelayed = true;
+    await new Promise((r) => setTimeout(r, 600));
+  }
+  return rawFetch(...args);
+};
+
+const renderer = createThreeSceneRenderer();
+let ok = false, err = null;
+try {
+  ok = await renderer.render(id, canvas);
+  window.__renderer = renderer;
+} catch (e) { err = String((e && e.stack) || e); }
+
+// render resolve 的同一微任务内先读可见性（同步），再抓一帧数白像素（下一帧，仍远早于轮询）。
+const resolvedAt = performance.now();
+const immediate = window.__mediaSnapshotNow();
+let whitePixels = null;
+let frameCaptured = false;
+try {
+  const png = await renderer.captureFrame();
+  frameCaptured = !!png;
+  if (png) whitePixels = await whitePixelsOf(png, immediate.rect40?.canvasCss ?? [1160, 280, 1260, 370]);
+} catch (e) {
+  window.__logs.push({ level: 'warn', text: '[harness] captureFrame 失败: ' + String(e) });
+}
+window.__mediaAtRenderResolve = {
+  at: resolvedAt,
+  visible: immediate.visible,
+  opacity: immediate.opacity,
+  rect: immediate.rect40 ? immediate.rect40.canvasCss : null,
+  whitePixels,
+  frameCaptured,
+  firstPollDelayedMs: firstPollDelayed ? 600 : 0,
+};
+
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-await wait(1200); // 让帧循环跑几帧（媒体初始派发已在装配期落地）
+await wait(1200); // 让帧循环与轮询跑起来（媒体初始派发已在装配期落地）
 
 console.log('[harness] ' + JSON.stringify({
   id, ok, err,
@@ -158,5 +230,6 @@ console.log('[harness] ' + JSON.stringify({
   canvasBuffer: [canvas.width, canvas.height],
   playerCaught: !!window.__player,
   mediaWhiteBoxRect: window.__objectRect(40),
+  mediaAtRenderResolve: window.__mediaAtRenderResolve,
 }));
 window.__ready = true;

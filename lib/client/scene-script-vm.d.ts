@@ -131,6 +131,8 @@ export declare class SceneScriptVm {
     updateAll(): ScriptUpdateResult[];
     /** 派发一次媒体事件到各脚本的同名 handler；返回实际调用成功的数量。 */
     dispatchMedia(dispatch: MediaDispatch): number;
+    /** 无时间线时回滚媒体回调写入的 alpha≈0（动画不跑会永久透明）；有 timeline 时留给动画淡回 1。 */
+    private restoreMediaAlpha;
     /** 构造本次媒体事件对象（颜色按 Vec3 形态 {x,y,z}；每次派发新建，调用方负责 dispose）。 */
     private buildMediaEvent;
     /** thisObject.getAnimation 的播放器解析：时间线 getByProperty → getByName → AnimRegistry。 */

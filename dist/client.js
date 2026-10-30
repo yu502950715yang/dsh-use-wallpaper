@@ -30695,6 +30695,7 @@ var QuickJSTextRuntimeBinding = class {
   last;
   disposed = false;
   warned = false;
+  mediaWarned = false;
   update() {
     if (this.disposed) return null;
     const ctx = this.ctx;
@@ -30738,6 +30739,11 @@ var QuickJSTextRuntimeBinding = class {
       const out = ctx.callFunction(this.mediaFn, ctx.undefined, ev);
       ev.dispose();
       if (out.error) {
+        if (!this.mediaWarned) {
+          this.mediaWarned = true;
+          const info = ctx.dump(out.error);
+          console.warn("[text-script] mediaPropertiesChanged \u629B\u9519\uFF0C\u5DF2\u4E22\u5F03\u8BE5\u4E8B\u4EF6\uFF1A", info?.message ?? String(info));
+        }
         out.error.dispose();
         return;
       }
@@ -31422,6 +31428,7 @@ function applyLayerState(dirty, lookup) {
 // src/client/scene-script-vm.ts
 var SCENE_SCRIPT_STORAGE_PREFIX = "we:scenescript:";
 var STEP_BUDGET2 = 5e7;
+var HIDDEN_ALPHA = 2e-3;
 var PRELUDE2 = `
 var __mods = [];
 
@@ -32145,7 +32152,7 @@ return {
     for (const m of this.modules) {
       const fn = dispatch.event === "mediaPlaybackChanged" ? m.media.playback : dispatch.event === "mediaStatusChanged" ? m.media.status : dispatch.event === "mediaPropertiesChanged" ? m.media.properties : m.media.thumbnail;
       if (!m.active || !fn) continue;
-      if (!this.timeline && m.property !== null) continue;
+      const alphaBefore = !this.timeline && m.property !== null && m.objectId !== null ? this.state.read(m.objectId).alpha : void 0;
       this.currentKey = m.layerKey;
       this.currentProperty = m.property ?? "";
       this.budget = this.stepBudget;
@@ -32166,9 +32173,18 @@ return {
         this.warn(`SceneScript \u5A92\u4F53\u4E8B\u4EF6\u8C03\u7528\u5931\u8D25\uFF08${m.label}\uFF09\uFF1A${e instanceof Error ? e.message : String(e)}`);
       } finally {
         ev.dispose();
+        if (!this.timeline && m.property !== null && m.objectId !== null) {
+          this.restoreMediaAlpha(m.objectId, alphaBefore);
+        }
       }
     }
     return called;
+  }
+  /** 无时间线时回滚媒体回调写入的 alpha≈0（动画不跑会永久透明）；有 timeline 时留给动画淡回 1。 */
+  restoreMediaAlpha(objectId, before) {
+    const after = this.state.read(objectId).alpha;
+    if (after === void 0 || after > HIDDEN_ALPHA || after === before) return;
+    this.state.write(objectId, { alpha: before });
   }
   /** 构造本次媒体事件对象（颜色按 Vec3 形态 {x,y,z}；每次派发新建，调用方负责 dispose）。 */
   buildMediaEvent(d) {
@@ -32475,6 +32491,7 @@ function createMediaInput(opts) {
   let failures = 0;
   let inflight = false;
   let prev = null;
+  let stopSeq = 0;
   const targetIntervalMs = () => failures >= FAILURES_BEFORE_BACKOFF ? backoffMs : intervalMs;
   const stopTimer = () => {
     if (timer === null) return;
@@ -32492,12 +32509,13 @@ function createMediaInput(opts) {
   };
   const poll = async () => {
     if (disposed || paused || inflight) return;
+    const seq = stopSeq;
     inflight = true;
     try {
       const resp = await fetchImpl(mediaUrl(pageTitle()));
       if (!resp.ok) throw new Error("now-playing http " + (resp.status ?? "unknown"));
       const next = await resp.json();
-      if (disposed || paused) return;
+      if (disposed || paused || seq !== stopSeq) return;
       failures = 0;
       if (diffSnapshot(prev, next).length > 0) {
         const old = prev;
@@ -32509,7 +32527,7 @@ function createMediaInput(opts) {
       }
       armTimer(intervalMs);
     } catch (error) {
-      if (disposed) return;
+      if (disposed || seq !== stopSeq) return;
       failures += 1;
       try {
         opts.onError?.(error);
@@ -32530,6 +32548,8 @@ function createMediaInput(opts) {
     stop() {
       running = false;
       stopTimer();
+      prev = null;
+      stopSeq += 1;
     },
     setPaused(value) {
       if (disposed || value === paused) return;
@@ -32571,7 +32591,7 @@ function applyMediaSnapshot(prev, next, sink) {
     return;
   }
   if (changed.includes("playback")) sink.playback(next.playback);
-  if (changed.includes("title") || changed.includes("artist") || changed.includes("album")) {
+  if (changed.includes("title") || changed.includes("artist") || changed.includes("album") || changed.includes("contentType")) {
     sink.properties({ title: next.title, artist: next.artist, album: next.album, contentType: next.contentType });
   }
   if (changed.includes("thumbnailRev") || changed.includes("hasThumbnail")) {
@@ -32592,6 +32612,100 @@ function sceneNeedsMedia(desc) {
     }
   }
   return false;
+}
+
+// src/client/media-orchestration.ts
+function createMediaOrchestration(opts) {
+  const { host, bindings } = opts;
+  let started = false;
+  let disposed = false;
+  let paused = false;
+  let input = null;
+  const report = (error) => {
+    try {
+      opts.onError?.(error);
+    } catch {
+    }
+  };
+  const safely = (fn) => {
+    try {
+      fn();
+    } catch (error) {
+      report(error);
+    }
+  };
+  const neutralThumbnail = (payload) => ({
+    hasThumbnail: payload.hasThumbnail,
+    primaryColor: payload.palette.primary,
+    secondaryColor: payload.palette.secondary,
+    tertiaryColor: payload.palette.tertiary,
+    textColor: payload.palette.text,
+    highContrastColor: payload.palette.highContrast
+  });
+  const sink = {
+    status: (enabled) => safely(() => host.mediaStatus(enabled)),
+    playback: (state) => safely(() => host.mediaPlayback(state)),
+    properties: (props) => {
+      safely(() => host.mediaProperties(props));
+      for (const binding of bindings) safely(() => binding.dispatchMediaProperties(props));
+    },
+    thumbnail: (payload) => safely(() => host.mediaThumbnail(
+      opts.onThumbnail ? opts.onThumbnail(payload) : neutralThumbnail(payload)
+    ))
+  };
+  const applyDirty = () => safely(() => opts.applyDirty(host.drainDirty(), opts.lookup));
+  const ensureInput = () => {
+    if (input) return input;
+    const created = opts.createInput({
+      ...opts.inputOptions,
+      onSnapshot: (next, prev) => {
+        if (disposed) return;
+        applyMediaSnapshot(prev, next, sink);
+      },
+      onError: report
+    });
+    input = created;
+    return created;
+  };
+  return {
+    start() {
+      if (started || disposed) return;
+      started = true;
+      const enabled = opts.getEnabled();
+      sink.status(enabled);
+      sink.playback("stopped");
+      applyDirty();
+      if (!enabled) return;
+      const active = ensureInput();
+      if (!paused) active.start();
+    },
+    setEnabled(enabled) {
+      if (disposed) return;
+      sink.status(enabled);
+      if (!enabled) {
+        sink.playback("stopped");
+        input?.stop();
+        applyDirty();
+        return;
+      }
+      const active = ensureInput();
+      if (!paused) active.start();
+    },
+    setPaused(value) {
+      if (disposed || value === paused) return;
+      paused = value;
+      if (!input) return;
+      input.setPaused(value);
+      if (!value && opts.getEnabled()) input.start();
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      const active = input;
+      input = null;
+      active?.dispose();
+    }
+  };
 }
 
 // src/client/dynamic-mesh.ts
@@ -33179,7 +33293,6 @@ function createThreeSceneRenderer(opts) {
   let currentScriptHost = null;
   let currentMedia = null;
   let mediaIntegrationEnabled = true;
-  let mediaLookup = null;
   let currentMeshRegistry = null;
   let scriptClick = null;
   let scriptClickTarget = null;
@@ -33335,7 +33448,6 @@ function createThreeSceneRenderer(opts) {
     scriptClick = null;
     currentMedia?.dispose();
     currentMedia = null;
-    mediaLookup = null;
     currentScriptHost?.dispose();
     currentScriptHost = null;
     currentMeshRegistry?.dispose();
@@ -33892,43 +34004,23 @@ function createThreeSceneRenderer(opts) {
         }
         if (abortIfContextLost()) return false;
         if (sceneNeedsMedia(desc) && currentScriptHost) {
-          const host = currentScriptHost;
-          const bindings = currentScriptBindings;
-          const lookup = (objectId) => {
-            const obj = result.player.displayObject(objectId);
-            return obj ? { object: obj, sceneW: desc.orthogonal.width, sceneH: desc.orthogonal.height } : void 0;
-          };
-          mediaLookup = lookup;
-          const sink = {
-            playback: (s) => host.mediaPlayback(s),
-            status: (enabled) => host.mediaStatus(enabled),
-            properties: (p) => {
-              host.mediaProperties(p);
-              for (const b of bindings) b.dispatchMediaProperties(p);
+          const orchestration = createMediaOrchestration({
+            host: currentScriptHost,
+            bindings: currentScriptBindings,
+            createInput: createMediaInput,
+            applyDirty: (dirty, lookup) => {
+              applyLayerState(dirty, lookup);
             },
-            thumbnail: (t) => host.mediaThumbnail({
-              hasThumbnail: t.hasThumbnail,
-              primaryColor: t.palette.primary,
-              secondaryColor: t.palette.secondary,
-              tertiaryColor: t.palette.tertiary,
-              textColor: t.palette.text,
-              highContrastColor: t.palette.highContrast
-            })
-          };
-          host.mediaStatus(mediaIntegrationEnabled);
-          host.mediaPlayback("stopped");
-          applyLayerState(host.drainDirty(), lookup);
-          const input = createMediaInput({
-            pageTitle: () => typeof document !== "undefined" ? document.title : "",
-            onSnapshot: (next, prev) => {
-              if (currentMedia === input && !contextLost) applyMediaSnapshot(prev, next, sink);
+            lookup: (objectId) => {
+              const obj = result.player.displayObject(objectId);
+              return obj ? { object: obj, sceneW: desc.orthogonal.width, sceneH: desc.orthogonal.height } : void 0;
             },
-            onError: () => {
-            }
+            getEnabled: () => mediaIntegrationEnabled,
+            inputOptions: { pageTitle: () => typeof document !== "undefined" ? document.title : "" }
           });
-          currentMedia = input;
-          input.setPaused(paused || !mediaIntegrationEnabled);
-          if (mediaIntegrationEnabled && !paused) input.start();
+          currentMedia = orchestration;
+          orchestration.setPaused(paused);
+          orchestration.start();
         }
         let stage = null;
         let droppedEffects = 0;
@@ -34019,32 +34111,17 @@ function createThreeSceneRenderer(opts) {
     // 省电：暂停/恢复当前播放器的帧循环（无播放器时只记状态，下次装配时就地应用）。
     setPaused(value) {
       paused = value;
-      if (value) currentMedia?.setPaused(true);
-      else if (mediaIntegrationEnabled) {
-        currentMedia?.setPaused(false);
-        currentMedia?.start();
-      }
+      currentMedia?.setPaused(value);
       if (currentAudio) applyAudioPause(currentAudio, value);
       if (!current) return;
       if (value) current.player.pause();
       else current.player.resume();
     },
     // 媒体集成开关（面板即时生效）：关闭 → 停轮询 + 派发 stopped + 应用脏写入（媒体层立即隐藏）；
-    // 打开 → 恢复轮询（暂停态保持暂停，由 setPaused 决定）。
+    // 打开 → 重开轮询（stop 已清 prev ⇒ 首个快照按首帧重放，暂停态由 setPaused 决定）。
     setMediaIntegration(enabled) {
       mediaIntegrationEnabled = enabled;
-      const host = currentScriptHost;
-      if (!host) return;
-      host.mediaStatus(enabled);
-      if (!enabled) {
-        host.mediaPlayback("stopped");
-        currentMedia?.stop();
-        const lookup = mediaLookup;
-        if (lookup) applyLayerState(host.drainDirty(), lookup);
-      } else {
-        currentMedia?.setPaused(paused);
-        if (!paused) currentMedia?.start();
-      }
+      currentMedia?.setEnabled(enabled);
     },
     // 画质档位：改渲染像素比后重推画布缓冲，并把新屏幕密度同步给效果链编排器（对象 RT 随其重设）。
     setQualityScale(scale) {

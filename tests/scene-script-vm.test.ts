@@ -627,17 +627,23 @@ describe('SceneScriptVm 媒体事件', () => {
     vm!.dispose();
   });
 
-  // Task 7 边界：属性脚本的 media 回调通常先 `alpha = 0` 再播放淡入时间线动画；时间线运行时
-  // （Task 10）接入前跳过这类回调，否则动画不跑、媒体层被永久留在 alpha 0（3797976859 歌名/歌手）。
-  it('无时间线源时属性脚本的媒体回调跳过；接入时间线后恢复派发', async () => {
+  // Task 7 边界（review round 1 收窄）：属性脚本的 media 回调常先 `alpha = 0` 再播淡入动画（真实素材的
+  // fade 脚本挂在 alpha/origin/scale 多个属性上）。无时间线时动画不跑 ⇒ 只回滚这次 alpha≈0 写入；
+  // color 等其它属性照常生效（Task 8 主色边框依赖它）。Task 10 传入 timeline 后自然解除。
+  it('无时间线：alpha=0 的媒体回调被回滚，color 回调照常执行；接入时间线后保留 alpha=0', async () => {
     const { state, anims, userProps } = setup();
     const plain = await SceneScriptVm.create({ userProperties: userProps, state, anims });
     plain!.load(`export function mediaPropertiesChanged(e){ thisLayer.alpha = 0; }`, 'obj 2 origin', 2, {}, 'origin');
     expect(plain!.dispatchMedia({
       event: 'mediaPropertiesChanged',
       properties: { title: 'T', artist: '', album: '', contentType: 'music' },
-    })).toBe(0);
-    expect(state.read(2).alpha).toBeUndefined();
+    })).toBe(1); // 不再整类跳过属性脚本
+    expect(state.read(2).alpha).toBeUndefined(); // 无时间线淡入 ⇒ alpha=0 被回滚（默认 1）
+    plain!.load(`export function mediaThumbnailChanged(e){
+      thisLayer.color = new Vec3(e.primaryColor.x, e.primaryColor.y, e.primaryColor.z);
+    }`, 'obj 3 color', 3, {}, 'color');
+    expect(plain!.dispatchMedia({ event: 'mediaThumbnailChanged', thumbnail: THUMB })).toBe(1);
+    expect(state.read(3).color).toEqual([1, 0, 0]);
     plain!.dispose();
 
     const withTimeline = await SceneScriptVm.create({
@@ -649,7 +655,7 @@ describe('SceneScriptVm 媒体事件', () => {
       event: 'mediaPropertiesChanged',
       properties: { title: 'T', artist: '', album: '', contentType: 'music' },
     })).toBe(1);
-    expect(state.read(2).alpha).toBe(0);
+    expect(state.read(2).alpha).toBe(0); // 有时间线时保留（由动画淡回 1）
     withTimeline!.dispose();
   });
 

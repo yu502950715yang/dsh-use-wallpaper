@@ -102,6 +102,7 @@ class QuickJSTextRuntimeBinding implements TextScriptBinding {
   private last: string;
   private disposed = false;
   private warned = false;
+  private mediaWarned = false;
 
   constructor(
     private readonly owner: QuickJSTextRuntime,
@@ -158,7 +159,16 @@ class QuickJSTextRuntimeBinding implements TextScriptBinding {
       put('genres', '');
       const out = ctx.callFunction(this.mediaFn, ctx.undefined, ev);
       ev.dispose();
-      if (out.error) { out.error.dispose(); return; } // 事件失败只丢该事件，不打断每帧 update
+      if (out.error) {
+        // 事件失败只丢该事件，不打断每帧 update；每个 binding 只告警一次（同类异常不刷屏）。
+        if (!this.mediaWarned) {
+          this.mediaWarned = true;
+          const info = ctx.dump(out.error) as { message?: string } | undefined;
+          console.warn('[text-script] mediaPropertiesChanged 抛错，已丢弃该事件：', info?.message ?? String(info));
+        }
+        out.error.dispose();
+        return;
+      }
       out.value.dispose();
     } catch {
       // 宿主侧异常（句柄/预算）同样只丢该事件

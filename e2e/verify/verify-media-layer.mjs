@@ -1,18 +1,5 @@
-// 媒体集成端到端验证（白框修复的**可见验收点**）：
-// 用生产 `lib/` 渲染真实 scene 壁纸，自起 http server **mock** host 的 now-playing 两条路由
-// （不 spawn PowerShell，只用假标题），用 headless Edge + CDP 按阶段切媒体状态并断言像素/对象事实。
-//
-// 判据（全部动态定位，不依赖固定像素坐标）：
-//   [1] stopped（无会话）：白色占位层（对象 40）的**动态 bbox** 内三通道 ≥250 的像素数 = 0，
-//       且 displayObject(35/40/45).visible === false —— 装配期初始派发把媒体层在首帧前隐藏。
-//   [2] 封面（本任务不实现，Task 8）：`const checkCover = false`；打开时断言封面区域洋红像素 > 200。
-//   [3] playing（mock 快照带 title/artist）：对象 38/39 的文本画布 mapSize[0] > 4（歌名/歌手已画进
-//       非空画布）且对象可见。
-//   [4] 回到 stopped：媒体层（35/40/45）再次隐藏。
-// 退出码：0 = 全部判据通过；1 = 任一判据失败或异常（CI 门禁）。
-// ⚠️ 依赖本机 workshop 素材（默认 3797976859，可用 --id 换）；缺素材直接报错退出。
-// 用法：node e2e/verify/verify-media-layer.mjs [--id=<workshopId>] [--workshop=<dir>] [--assets=<dir>]
-//        [--port=9834] [--cdp-port=9247] [--gpu]
+// 媒体集成 e2e：生产 lib/ 渲染真实场景壁纸，自起 server mock now-playing 两条路由 + headless Edge/CDP。
+// 判据：装配即隐藏（白像素 0）/ 播放显示文本且画布宽度随标题变化 / 停止再隐藏；退出码 0/1。
 import { createServer } from 'node:http';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, readdirSync } from 'node:fs';
 import { spawn } from 'node:child_process';
@@ -24,9 +11,7 @@ import { decodePng } from '../lib/png-stats.mjs';
 import { encodePng } from '../lib/png-encode.mjs';
 
 const WALLPAPER_ID = '3797976859'; // 带媒体层（歌名/歌手/封面框）的场景壁纸
-const WHITE_BOX_OBJECT = 40;       // 白色占位层（Album Cover Frame）
 const MEDIA_LAYER_IDS = [35, 40, 45];
-const FALLBACK_WHITE_BOX = [1160, 280, 1260, 370]; // 对象 40 未登记时的保守回退区域
 const COVER_REGION = [1160, 285, 1245, 360];       // [2] 封面区域（checkCover 关闭时不用）
 // 封面判据留给 Task 8（封面纹理/主色）；本任务只验白框与文本层。
 const checkCover = false;
@@ -191,19 +176,6 @@ async function shot(tag) {
   return buf;
 }
 
-/** 白色像素数（三通道都 ≥ 250；bbox 含端点）。 */
-function countWhite(img, box) {
-  const [x0, y0, x1, y1] = box;
-  let n = 0;
-  for (let y = Math.max(0, y0); y <= Math.min(img.height - 1, y1); y++) {
-    for (let x = Math.max(0, x0); x <= Math.min(img.width - 1, x1); x++) {
-      const o = (y * img.width + x) * img.channels;
-      if (img.data[o] >= 250 && img.data[o + 1] >= 250 && img.data[o + 2] >= 250) n++;
-    }
-  }
-  return n;
-}
-
 /** 洋红像素数（封面占位纹理；[2] 用）。 */
 function countMagenta(img, box) {
   const [x0, y0, x1, y1] = box;
@@ -217,7 +189,6 @@ function countMagenta(img, box) {
   return n;
 }
 
-const rectOf = async (objectId) => JSON.parse(await evalJs(`JSON.stringify(window.__objectRect(${objectId}))`) ?? 'null');
 const materialOf = async (objectId) => JSON.parse(await evalJs(`JSON.stringify(window.__objectMaterialInfo(${objectId}))`) ?? 'null');
 /** 显示对象的可见性（未登记 → null；对象级 visible 是 applyLayerState 的落点）。 */
 const visibleOf = async (ids) => JSON.parse(await evalJs(
@@ -283,18 +254,22 @@ try {
     const harnessLine = logs.find((l) => l.startsWith('[harness]')) ?? '(未捕获 [harness] 日志)';
     console.log('  ' + harnessLine);
 
-    // ── [1] stopped：白色占位层 bbox 内零白像素 + 媒体层隐藏 ───────────────────────
-    const rect40 = await rectOf(WHITE_BOX_OBJECT);
-    const box = rect40 && Array.isArray(rect40.canvasCss) ? rect40.canvasCss : FALLBACK_WHITE_BOX;
-    const whiteStopped = countWhite(decodePng(await shot('stopped')), box);
+    // ── [1] 装配期（render resolve 即时）：媒体层隐藏 + 白块区域零白像素 ─────────────
+    const immediate = JSON.parse(await evalJs('JSON.stringify(window.__mediaAtRenderResolve)') ?? 'null');
+    const immediateHidden = !!immediate && Array.isArray(immediate.visible)
+      && immediate.visible.every((v) => v === false);
+    judge('[1] render resolve 即媒体层隐藏且白像素 = 0', immediateHidden && immediate.whitePixels === 0,
+      `resolve=${immediate ? Math.round(immediate.at) : 'null'}ms visible=${JSON.stringify(immediate?.visible ?? null)} ` +
+      `white=${immediate?.whitePixels ?? 'null'} frame=${immediate?.frameCaptured} ` +
+      `pollDelay=${immediate?.firstPollDelayedMs ?? '?'}ms bbox=${JSON.stringify(immediate?.rect ?? null)}`);
+
+    // ── [1b] stopped 稳态：媒体层（35/40/45）仍全部隐藏 ───────────────────────────
     const mediaVisibleStopped = await visibleOf(MEDIA_LAYER_IDS);
     const allHidden = mediaVisibleStopped.every((v) => v === false);
-    judge('[1] stopped 白块区域白像素数 = 0', whiteStopped === 0,
-      `bbox=${JSON.stringify(box)}（${rect40 ? 'dynamic' : 'fallback'}）white=${whiteStopped} ` +
-      `visible(35/40/45)=${JSON.stringify(mediaVisibleStopped)}`);
     judge('[1b] stopped 媒体层（35/40/45）全部隐藏', allHidden,
       `visible=${JSON.stringify(mediaVisibleStopped)}`);
     await probeMedia('stopped');
+    await shot('stopped');
 
     // ── [2] 封面（Task 8；本任务关闭）─────────────────────────────────────────────
     if (checkCover) {
@@ -304,23 +279,27 @@ try {
       console.log('  ⏭️  [2] 封面判据未启用（Task 8 才实现封面纹理/主色）');
     }
 
-    // ── [3] playing：文本层拿到 title/artist → 画布非空且对象可见 ─────────────────
+    // ── [3] playing：文本层拿到 title/artist；两个不同长度标题验证画布随内容变化 ──────
     mediaStage = {
-      available: true, playback: 'playing', title: 'E2E-TITLE', artist: 'E2E-ARTIST',
+      available: true, playback: 'playing', title: 'E2E-T1', artist: 'E2E-ARTIST',
       album: 'E2E-ALBUM', contentType: 'music', thumbnailRev: 1,
     };
     artBytes = ART_PNG;
     await sleep(2500); // 1s 轮询 + 文本重绘/quad 尺寸同步
-    const titleMat = await materialOf(38);
+    const titleMat1 = await materialOf(38);
+    const titleW1 = titleMat1?.mapSize?.[0] ?? null;
+    mediaStage = { ...mediaStage, title: 'E2E-LONGER-TITLE-2' }; // 同阶段换标题：画布宽度必须跟着变
+    await sleep(2000);
+    const titleMat2 = await materialOf(38);
     const artistMat = await materialOf(39);
     const textVis = await visibleOf([38, 39]);
-    const titleW = titleMat?.mapSize?.[0] ?? null;
+    const titleW2 = titleMat2?.mapSize?.[0] ?? null;
     const artistW = artistMat?.mapSize?.[0] ?? null;
-    const titleOk = typeof titleW === 'number' && titleW > 4;
-    const artistOk = typeof artistW === 'number' && artistW > 4;
-    judge('[3] playing 歌名文本画布非空（mapSize[0] > 4）', titleOk,
-      `obj38.mapSize=${JSON.stringify(titleMat?.mapSize ?? null)} visible=${JSON.stringify(textVis[0])}`);
-    judge('[3b] playing 歌手文本画布非空（mapSize[0] > 4）', artistOk,
+    const titleGrew = typeof titleW1 === 'number' && typeof titleW2 === 'number'
+      && titleW1 > 4 && titleW2 > titleW1;
+    judge('[3] playing 歌名画布宽度随标题变化（防静态占位假绿）', titleGrew,
+      `obj38.mapSize[0] ${JSON.stringify(titleW1)} → ${JSON.stringify(titleW2)}（E2E-T1 → E2E-LONGER-TITLE-2）`);
+    judge('[3b] playing 歌手文本画布非空（mapSize[0] > 4）', typeof artistW === 'number' && artistW > 4,
       `obj39.mapSize=${JSON.stringify(artistMat?.mapSize ?? null)} visible=${JSON.stringify(textVis[1])}`);
     judge('[3c] playing 歌名/歌手对象可见', textVis.every((v) => v === true), `visible=${JSON.stringify(textVis)}`);
     await probeMedia('playing');
