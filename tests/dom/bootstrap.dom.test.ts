@@ -43,10 +43,14 @@ function mockSlotsCtx() {
   const sections: Array<{ opts: any; Component: unknown }> = [];
   const ctx = {
     slots: {
-      inject: (name: string, fn: () => any) => {
-        if (name === 'settings.section') sections.push(fn());
+      // 回调内可注册多个 section：register 立即登记并返回注销函数（与真实 SlotRegistry 同款）。
+      inject: (name: string, fn: () => unknown) => {
+        if (name === 'settings.section') fn();
       },
-      register: (opts: any, Component: unknown) => ({ opts, Component }),
+      register: (opts: any, Component: unknown) => {
+        sections.push({ opts, Component });
+        return () => {};
+      },
     },
   };
   return { ctx, sections };
@@ -67,6 +71,7 @@ beforeEach(() => { document.body.innerHTML = ''; });
 afterEach(() => {
   vi.unstubAllGlobals();
   delete (window as any).__wallpaperEngine;
+  delete (window as any).__wallpaperEngineBoot;
 });
 
 describe('client bootstrap 集成', () => {
@@ -102,16 +107,20 @@ describe('client bootstrap 集成', () => {
     await new Promise((r) => setTimeout(r, 20));
     expect(listCalls()).toBe(1);
   });
-  it('S1: bootstrap 注册设置菜单 settings.section（壁纸），不再注入 FAB', async () => {
+  it('S1: bootstrap 注册设置菜单 settings.section（壁纸 + 开机动画），不再注入 FAB', async () => {
     stubFetch(
       [{ id: '1', title: 'A', type: 'image', hasScene: false, hasPreviewGif: false, previewUrl: '/p1' }],
     );
     const { ctx, sections } = mockSlotsCtx();
     await boot(ctx);
-    expect(sections.length).toBe(1);
+    expect(sections.length).toBe(2);
     expect(sections[0]!.opts.id).toBe('wallpaper-engine');
     expect(sections[0]!.opts.label()).toBe('Wallpaper 壁纸');
     expect(sections[0]!.Component).toBeTruthy(); // WallpaperSettingsSection
+    expect(sections[1]!.opts.id).toBe('wallpaper-engine-boot');
+    expect(sections[1]!.opts.order).toBe(21);
+    expect(sections[1]!.opts.label()).toBe('开机动画');
+    expect(sections[1]!.Component).toBeTruthy(); // BootSettingsSection
     // 不再注入浮动按钮
     expect(document.querySelector('.wp-fab')).toBeNull();
   });

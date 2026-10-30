@@ -44,7 +44,9 @@ async function applyFresh(settingsValue: Record<string, unknown> = {}): Promise<
 afterEach(() => {
   disposers = [];
   document.body.innerHTML = '';
+  document.documentElement.querySelectorAll('.wp-boot-layer').forEach((el) => el.remove());
   delete (window as any).__wallpaperEngine;
+  delete (window as any).__wallpaperEngineBoot;
   delete (window as any).__wpEngineTeardown;
 });
 
@@ -95,5 +97,27 @@ describe('插件重挂载与收尾（HMR rebuilt）', () => {
     api.mount();
 
     expect(layers()).toHaveLength(0);
+  });
+
+  it('teardown 摘掉开机动画层与 boot API；mount 清理无主 boot 层', async () => {
+    const stale = document.createElement('div');
+    stale.className = 'wp-boot-layer';
+    document.documentElement.appendChild(stale);
+
+    const api = await applyFresh({
+      bootAnimationSource: 'we', bootAnimationWallpaperId: 'w1', bootAnimationWallpaperKind: 'image',
+    });
+    expect(document.querySelectorAll('.wp-boot-layer')).toHaveLength(0); // mount 兜底清掉无主残留
+    expect(typeof (window as any).__wallpaperEngineBoot?.play).toBe('function');
+
+    // force 试播：先在当前实例上真的起一层，teardown 必须把它收掉（只收本实例的层）。
+    const playing = (window as any).__wallpaperEngineBoot.play({ force: true }) as Promise<string>;
+    await vi.waitFor(() => expect(document.querySelectorAll('.wp-boot-layer')).toHaveLength(1));
+
+    for (const dispose of disposers) dispose();
+    expect((window as any).__wallpaperEngineBoot).toBeUndefined();
+    expect(document.querySelectorAll('.wp-boot-layer')).toHaveLength(0);
+    await expect(playing).resolves.toBe('skipped'); // 在途 play 由 overlay.dispose 立即解出
+    void api;
   });
 });
