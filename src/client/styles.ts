@@ -558,6 +558,19 @@ body[data-we-wallpaper] :where([data-sidebar-right-panel="fullscreen"][data-side
 .wss-about-link:focus-visible{outline:2px solid var(--wp-accent);outline-offset:2px}
 .wss-about-link[data-primary=true]{background:var(--wp-accent-strong,#2563eb);border-color:transparent;color:#fff}
 .wss-about-link[data-primary=true]:hover{filter:brightness(1.07)}
+/* ── 开机动画（独立全屏层 + 独立设置面板 wbs-*） ── */
+.wp-boot-layer{position:fixed;inset:0;z-index:2147483000;background:#000;overflow:hidden;pointer-events:auto}
+.wbs-root{display:flex;flex-direction:column;gap:14px;padding:4px 2px}
+.wbs-section{display:flex;flex-direction:column;gap:8px;padding:12px;border:1px solid var(--wp-panel-border);border-radius:10px;background:var(--wp-panel-bg)}
+.wbs-title{margin:0;font-size:14px;color:var(--wp-text)}
+.wbs-desc{margin:0;font-size:12px;line-height:1.5;opacity:.75}
+.wbs-row{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--wp-text)}
+.wbs-row input[type=text]{flex:1;min-width:160px;padding:6px 8px;border-radius:6px;border:1px solid var(--wp-panel-border);background:transparent;color:var(--wp-text)}
+.wbs-row select{padding:6px 8px;border-radius:6px;border:1px solid var(--wp-panel-border);background:transparent;color:var(--wp-text)}
+.wbs-row button{padding:5px 10px;border-radius:6px;border:1px solid var(--wp-panel-border);background:transparent;color:var(--wp-text);cursor:pointer}
+.wbs-row button:disabled,.wbs-row input:disabled{opacity:.45;cursor:not-allowed}
+.wbs-probe-result,.wbs-last,.wbs-message{font-size:12px;margin:0;color:var(--wp-text)}
+.wbs-message{opacity:.85}
 `;
 export const WALLPAPER_CSS = CSS;
 export function injectWallpaperStyles(): void {
