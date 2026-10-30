@@ -5,6 +5,8 @@ import { Writable } from 'node:stream';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { registerWallpaperRoutes, getPkgReader } from '../src/host/routes.js';
+import type { MediaSessionService } from '../src/host/media-session.js';
+import { emptyMediaSnapshot } from '../src/shared/media.js';
 import { makePkg } from './fixtures/make-pkg.js';
 import { makeTex } from './fixtures/make-tex.js';
 
@@ -110,6 +112,8 @@ describe('registerWallpaperRoutes', () => {
       { kind: 'prefix', path: '/wallpapers/web' },
       { kind: 'exact', path: '/wallpapers/particle-texture' },
       { kind: 'exact', path: '/wallpapers/probe' },
+      { kind: 'exact', path: '/wallpapers/now-playing' },
+      { kind: 'exact', path: '/wallpapers/now-playing/thumbnail' },
       { kind: 'exact', path: '/wallpapers/properties' },
     ]);
   });
@@ -1151,5 +1155,143 @@ describe('preset 壁纸（v0.9）', () => {
     await routes.get('exact /wallpapers/properties')!({ url: '/wallpapers/properties?id=201' }, res);
     const body = JSON.parse(res.body.toString('utf8'));
     expect(body.audioProcessing).toBe(true);
+  });
+});
+
+// ── Task 3：媒体集成只读路由 ──────────────────────────────────────────────────
+// 测试一律注入 fake service：缺省实现会在 enabled 的首次请求里真起 PowerShell。
+function makeFakeMediaSession(overrides: Partial<MediaSessionService> = {}): {
+  service: MediaSessionService;
+  calls: Array<{ pageTitle: string; enabled: boolean }>;
+} {
+  const calls: Array<{ pageTitle: string; enabled: boolean }> = [];
+  const service: MediaSessionService = {
+    request(o) {
+      calls.push(o);
+      return o.enabled
+        ? {
+          available: true, reason: 'ok', appId: 'spotify.exe', title: 'T', artist: 'A', album: '',
+          contentType: 'music', playback: 'playing', hasThumbnail: true, thumbnailRev: 7,
+          positionMs: 1, durationMs: 2, at: 3,
+        }
+        : emptyMediaSnapshot('disabled', 1);
+    },
+    thumbnail: (rev) => (rev === 7 ? { bytes: Buffer.from('PNG'), contentType: 'image/png' } : null),
+    dispose: () => {},
+    stats: () => ({ starts: 1, badLines: 0, restarts: 0, degraded: false }),
+    ...overrides,
+  };
+  return { service, calls };
+}
+
+describe('媒体集成只读路由（Task 3）', () => {
+  it('now-playing：透传快照与页面标题；thumbnail 命中 200（no-store）/ 未命中 404', async () => {
+    const { service, calls } = makeFakeMediaSession();
+    registerWallpaperRoutes(makeCtx(), {
+      wallpaperDir: dir,
+      mediaSession: service,
+      mediaIntegrationEnabled: () => true,
+    });
+
+    const snap = makeRes();
+    await routes.get('exact /wallpapers/now-playing')!({
+      url: '/wallpapers/now-playing?title=' + encodeURIComponent('D — DeepSeek Harness'),
+    }, snap);
+    expect(snap.statusCode).toBe(200);
+    expect(JSON.parse(snap.body.toString('utf8'))).toMatchObject({
+      available: true, playback: 'playing', title: 'T',
+    });
+    expect(calls[0]).toEqual({ pageTitle: 'D — DeepSeek Harness', enabled: true });
+
+    const art = makeRes();
+    await routes.get('exact /wallpapers/now-playing/thumbnail')!(
+      { url: '/wallpapers/now-playing/thumbnail?rev=7' }, art);
+    expect(art.statusCode).toBe(200);
+    expect(art.headers['Content-Type']).toBe('image/png');
+    expect(art.headers['Content-Length']).toBe(3);
+    expect(art.headers['Cache-Control']).toBe('no-store');
+    expect(art.body).toEqual(Buffer.from('PNG'));
+
+    const miss = makeRes();
+    await routes.get('exact /wallpapers/now-playing/thumbnail')!(
+      { url: '/wallpapers/now-playing/thumbnail?rev=8' }, miss);
+    expect(miss.statusCode).toBe(404);
+    expect(JSON.parse(miss.body.toString('utf8'))).toEqual({ error: 'no thumbnail' });
+  });
+
+  it('now-playing：媒体集成开关每次请求实时读取，关闭时透传 enabled:false', async () => {
+    const { service, calls } = makeFakeMediaSession();
+    let enabled = false;
+    registerWallpaperRoutes(makeCtx(), {
+      wallpaperDir: dir,
+      mediaSession: service,
+      mediaIntegrationEnabled: () => enabled,
+    });
+    const handler = routes.get('exact /wallpapers/now-playing')!;
+
+    const off = makeRes();
+    await handler({ url: '/wallpapers/now-playing' }, off);
+    expect(off.statusCode).toBe(200);
+    expect(JSON.parse(off.body.toString('utf8'))).toEqual(emptyMediaSnapshot('disabled', 1));
+
+    // 设置热更新（不改路由参数）⇒ 下一次请求立即按新值透传
+    enabled = true;
+    const on = makeRes();
+    await handler({ url: '/wallpapers/now-playing?title=T' }, on);
+    expect(calls.map((c) => c.enabled)).toEqual([false, true]);
+    expect(calls[1]).toEqual({ pageTitle: 'T', enabled: true });
+  });
+
+  it('now-playing/thumbnail：rev 缺失/非正整数 → 400', async () => {
+    const { service } = makeFakeMediaSession();
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir, mediaSession: service });
+    const handler = routes.get('exact /wallpapers/now-playing/thumbnail')!;
+    for (const url of [
+      '/wallpapers/now-playing/thumbnail',
+      '/wallpapers/now-playing/thumbnail?rev=0',
+      '/wallpapers/now-playing/thumbnail?rev=-1',
+      '/wallpapers/now-playing/thumbnail?rev=abc',
+      '/wallpapers/now-playing/thumbnail?rev=1.5',
+      '/wallpapers/now-playing/thumbnail?rev=',
+    ]) {
+      const res = makeRes();
+      await handler({ url }, res);
+      expect(res.statusCode, url).toBe(400);
+      expect(JSON.parse(res.body.toString('utf8'))).toEqual({ error: 'bad rev' });
+    }
+  });
+
+  it('媒体 watcher 随 httpCtx 释放：effect / on(dispose) 两种 Cordis API 都调用 dispose', () => {
+    const { service } = makeFakeMediaSession();
+    let disposed = 0;
+    const counted = { ...service, dispose: () => { disposed += 1; } };
+    const webServer = { register: () => () => {} };
+
+    // 新 API：effect(body) 立即执行，body 返回的 disposer 在释放时调用
+    const effectDisposers: Array<() => void> = [];
+    const ctxNew = {
+      inject: (_svc: string[], fn: (c: any) => void) => fn({
+        webServer,
+        effect: (body: () => any) => { effectDisposers.push(body() as () => void); return () => {}; },
+      }),
+    };
+    registerWallpaperRoutes(ctxNew as any, { wallpaperDir: dir, mediaSession: counted });
+    expect(disposed).toBe(0);
+    expect(effectDisposers).toHaveLength(1);
+    effectDisposers[0]!();
+    expect(disposed).toBe(1);
+
+    // 旧 API：无 effect 时退化为 on('dispose')
+    const onHandlers: Array<() => void> = [];
+    const ctxOld = {
+      inject: (_svc: string[], fn: (c: any) => void) => fn({
+        webServer,
+        on: (event: string, cb: () => void) => { if (event === 'dispose') onHandlers.push(cb); },
+      }),
+    };
+    registerWallpaperRoutes(ctxOld as any, { wallpaperDir: dir, mediaSession: counted });
+    expect(onHandlers).toHaveLength(1);
+    onHandlers[0]!();
+    expect(disposed).toBe(2);
   });
 });

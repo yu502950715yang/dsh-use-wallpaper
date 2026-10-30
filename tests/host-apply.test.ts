@@ -106,7 +106,7 @@ afterEach(() => {
 });
 
 describe('apply (host entry)', () => {
-  it('注册 settings 命名空间并挂载 9 条壁纸路由（含 /wallpapers/properties）', () => {
+  it('注册 settings 命名空间并挂载 11 条壁纸路由（含 /wallpapers/properties 与 now-playing）', () => {
     apply(makeCtx().ctx);
     expect(registered).toEqual([
       { kind: 'exact', path: '/wallpapers/list' },
@@ -117,16 +117,18 @@ describe('apply (host entry)', () => {
       { kind: 'prefix', path: '/wallpapers/web' },
       { kind: 'exact', path: '/wallpapers/particle-texture' },
       { kind: 'exact', path: '/wallpapers/probe' },
+      { kind: 'exact', path: '/wallpapers/now-playing' },
+      { kind: 'exact', path: '/wallpapers/now-playing/thumbnail' },
       { kind: 'exact', path: '/wallpapers/properties' },
     ]);
   });
   it('数据目录无法创建时不阻断加载：路由仍挂载，抓帧写接口降级 500', async () => {
-    // env 指向一个普通文件 ⇒ mkdirSync 抛错；插件仍须完整加载（路由 9 条），抓帧退化为 500。
+    // env 指向一个普通文件 ⇒ mkdirSync 抛错；插件仍须完整加载（路由 11 条），抓帧退化为 500。
     const blocker = join(dirA, 'not-a-dir');
     writeFileSync(blocker, 'x');
     process.env.DSH_USE_WALLPAPER_DATA_DIR = blocker;
     expect(() => apply(makeCtx().ctx)).not.toThrow();
-    expect(registered).toHaveLength(9);
+    expect(registered).toHaveLength(11);
     const frameRoute = handlers.get('prefix /wallpapers/frame')!;
     const req: any = { method: 'POST', url: '/wallpapers/frame/f1', headers: { 'content-type': 'image/png' } };
     const res = makeRes();
@@ -193,7 +195,7 @@ describe('apply 双路径（0.1.7 新模型）', () => {
     expect(configure).toHaveBeenCalledWith({ auto: false }, ctx.fiber);
     expect(registerCalls).toHaveLength(0);
     // 路由仍全部挂载
-    expect(registered).toHaveLength(9);
+    expect(registered).toHaveLength(11);
   });
 
   it('新版：路由读 loader config，且 config 是活引用（apply 之后改值即生效）', async () => {
@@ -248,6 +250,6 @@ describe('apply 双路径（0.1.7 新模型）', () => {
   it('两种形状都不匹配时（未来再改）不抛错，仅降级', () => {
     const { ctx } = makeCtx(undefined, 'none');
     expect(() => apply(ctx)).not.toThrow();
-    expect(registered).toHaveLength(9);
+    expect(registered).toHaveLength(11);
   });
 });

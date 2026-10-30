@@ -1,7 +1,8 @@
 import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import type { Readable } from 'node:stream';
-import { join, resolve, sep } from 'node:path';
+import { basename, join, resolve, sep } from 'node:path';
 import { createWallpaperListCache } from './list-cache.js';
+import { createMediaSessionService, type MediaSessionService } from './media-session.js';
 import { resolveWallpaperSceneSource } from './scene-source.js';
 import { injectPointerShim } from '../shared/pointer-shim.js';
 import { PkgReader } from './pkg-reader.js';
@@ -24,6 +25,10 @@ export interface WallpaperRoutesOptions {
   dataDir?: string;
   /** 场景素材流式阈值（测试可调小；缺省 STREAM_ASSET_BYTES） */
   streamAssetBytes?: number;
+  /** 媒体集成开关（设置热更新；缺省视为 true）。 */
+  mediaIntegrationEnabled?: () => boolean;
+  /** 测试注入；缺省在路由闭包里懒创建。 */
+  mediaSession?: MediaSessionService;
 }
 
 // 场景素材流式阈值：≥8MB 或音视频改用 createReadStream，避免 132MB 音频整块驻留
@@ -295,6 +300,16 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
     const frameStore = opts.dataDir ? createSceneFrameStore(framesDirOf(opts.dataDir)) : null;
     // 壁纸列表缓存：按根目录 mtime 失效，命中不重扫；refresh=1 强制重扫
     const listCache = createWallpaperListCache();
+
+    // 媒体会话：watcher 进程懒启动；ownAppId 用于剔除宿主自身会话（否则会把 DSH 页面当播放中）
+    const mediaSession = opts.mediaSession ?? createMediaSessionService({
+      ownAppId: basename(process.execPath),
+      log: (msg) => console.warn(`[wallpaper-engine] ${msg}`),
+    });
+    const disposeMedia = () => mediaSession.dispose();
+    // webServer 销毁时释放 watcher（Cordis 新旧两种清理 API 都兼容，同 client/index.ts）
+    if (typeof httpCtx?.effect === 'function') httpCtx.effect(() => disposeMedia, 'wallpaper-engine: media session');
+    else if (typeof httpCtx?.on === 'function') httpCtx.on('dispose', disposeMedia);
 
     server.register({
       kind: 'exact', path: '/wallpapers/list',
@@ -618,6 +633,34 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
           extraRoots: [...DEFAULT_STEAM_ROOTS],
         });
         json(res, 200, result);
+      },
+    });
+
+    server.register({
+      kind: 'exact', path: '/wallpapers/now-playing',
+      // 只读内存快照；title 仅用于剔除宿主页面自身的会话，不落盘、不记日志
+      handler: (_req: any, res: any) => {
+        const { search } = parseUrl(_req);
+        const enabled = opts.mediaIntegrationEnabled?.() ?? true;
+        json(res, 200, mediaSession.request({ pageTitle: search.get('title') ?? '', enabled }));
+      },
+    });
+
+    server.register({
+      kind: 'exact', path: '/wallpapers/now-playing/thumbnail',
+      // rev 来自快照的 thumbnailRev；过期/被淘汰 → 404，客户端保留占位
+      handler: (_req: any, res: any) => {
+        const { search } = parseUrl(_req);
+        const rev = Number(search.get('rev') ?? '0');
+        if (!Number.isSafeInteger(rev) || rev <= 0) return json(res, 400, { error: 'bad rev' });
+        const art = mediaSession.thumbnail(rev);
+        if (!art) return json(res, 404, { error: 'no thumbnail' });
+        res.writeHead(200, {
+          'Content-Type': art.contentType || 'image/png',
+          'Content-Length': art.bytes.length,
+          'Cache-Control': 'no-store',
+        });
+        res.end(art.bytes);
       },
     });
 

@@ -18,12 +18,14 @@ export const name = 'dsh-wallpaper-engine';
 export interface WallpaperEngineConfig {
   wallpaperDir?: string;
   weAssetsDir?: string;
+  mediaIntegrationEnabled?: boolean;
 }
 
 // 可变运行状态：路由每次请求读取实时值（见 routes.ts 的 dir()/assetsDir()）。
 export interface WallpaperRuntimeState {
   wallpaperDir: string;
   weAssetsDir: string;
+  mediaIntegrationEnabled: boolean;
 }
 
 // Cordis 函数插件：config 作为第二参数传入（loader 注入）。
@@ -39,9 +41,15 @@ function configValue(config: unknown): WallpaperEngineConfig {
 export function apply(ctx: any, config?: WallpaperEngineConfig): void {
   let userWallpaperDir = '';
   let userWeAssetsDir = '';
+  let userMediaIntegration: boolean | undefined;
   const state: WallpaperRuntimeState = {
     get wallpaperDir() { return userWallpaperDir || configValue(config).wallpaperDir || ''; },
     get weAssetsDir() { return userWeAssetsDir || configValue(config).weAssetsDir || ''; },
+    // 设置热更新优先；未设置时读 loader config 实时值，缺省开
+    get mediaIntegrationEnabled() {
+      const v = userMediaIntegration ?? configValue(config).mediaIntegrationEnabled;
+      return typeof v === 'boolean' ? v : true;
+    },
   };
   ctx.inject(['settings'], (settingsCtx: any) => {
     const settings = settingsCtx?.settings;
@@ -52,6 +60,7 @@ export function apply(ctx: any, config?: WallpaperEngineConfig): void {
         const applySettings = (value: any) => {
           userWallpaperDir = value?.wallpaperDir || '';
           userWeAssetsDir = value?.weAssetsDir || '';
+          if (typeof value?.mediaIntegrationEnabled === 'boolean') userMediaIntegration = value.mediaIntegrationEnabled;
         };
         applySettings(scope.get());
         scope.watch?.(applySettings);
@@ -66,8 +75,8 @@ export function apply(ctx: any, config?: WallpaperEngineConfig): void {
   });
   // 挂载壁纸 REST 路由（/wallpapers/list、/wallpapers/media、/wallpapers/scene、
   // /wallpapers/frame、/wallpapers/static、/wallpapers/web、/wallpapers/particle-texture、
-  // /wallpapers/probe、/wallpapers/properties）；dataDir 用于抓帧 PNG 缓存
-  // （可经 DSH_USE_WALLPAPER_DATA_DIR 迁移）。
+  // /wallpapers/probe、/wallpapers/now-playing(+/thumbnail)、/wallpapers/properties）；
+  // dataDir 用于抓帧 PNG 缓存（可经 DSH_USE_WALLPAPER_DATA_DIR 迁移）。
   // 数据目录不可写（权限/路径是文件）时不得阻断插件加载：抓帧退化为写 500 / 读 404。
   let dataDir: string | undefined;
   try {
@@ -79,6 +88,7 @@ export function apply(ctx: any, config?: WallpaperEngineConfig): void {
     state,
     staticDir: DEFAULT_STATIC_DIR,
     dataDir,
+    mediaIntegrationEnabled: () => state.mediaIntegrationEnabled,
   });
 }
 

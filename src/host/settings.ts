@@ -24,6 +24,8 @@ export const WallpaperSettingsSchema = z.object({
   qualityScale: z.number().min(0.5).max(1).default(1),
   // 壁纸音效（sound 对象播放 + 频谱驱动效果）：默认开启，与桌面 WE 一致。
   soundEnabled: z.boolean().default(true),
+  // 媒体集成（Windows SMTC 只读；数据仅内存、不落盘、不记日志）。
+  mediaIntegrationEnabled: z.boolean().default(true),
   // 文字可读性（2026-10-01）：
   // · textColorMode 用宽松 string —— 模式白名单在 client（normalizeMode：未知值按 auto），
   //   避免旧版面板写入未知值即被 schema 拒绝；

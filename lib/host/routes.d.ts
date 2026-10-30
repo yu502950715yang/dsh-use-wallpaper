@@ -1,3 +1,4 @@
+import { type MediaSessionService } from './media-session.js';
 import { PkgReader } from './pkg-reader.js';
 export interface WallpaperRoutesOptions {
     /** 兼容旧调用：静态 wallpaperDir（无 state 时使用） */
@@ -14,6 +15,10 @@ export interface WallpaperRoutesOptions {
     dataDir?: string;
     /** 场景素材流式阈值（测试可调小；缺省 STREAM_ASSET_BYTES） */
     streamAssetBytes?: number;
+    /** 媒体集成开关（设置热更新；缺省视为 true）。 */
+    mediaIntegrationEnabled?: () => boolean;
+    /** 测试注入；缺省在路由闭包里懒创建。 */
+    mediaSession?: MediaSessionService;
 }
 export declare const STREAM_ASSET_BYTES: number;
 export declare function getPkgReader(pkgPath: string): PkgReader;
