@@ -177,7 +177,7 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 - **性能与省电**：`paused`、`pauseOnHidden`、`qualityScale`、`soundEnabled`。
 - **轮播**：`rotationEnabled`、`rotationIntervalMs`、`rotationOrder`。
 - **文字可读性**：`textColorMode`、`textColor`、`textOutline`。
-- **开机动画**（独立菜单，与壁纸设置互不影响）：`bootAnimationEnabled`、`bootAnimationSource`、`bootAnimationWallpaperId` / `bootAnimationWallpaperKind`、`bootAnimationLocalPath`、`bootAnimationFitMode`、`bootAnimationMaxDurationMs`。
+- **开机动画**（设置页顶部 tab「日常壁纸 / 开机动画」切换，与壁纸设置互不影响）：`bootAnimationEnabled`、`bootAnimationSource`、`bootAnimationWallpaperId` / `bootAnimationWallpaperKind`、`bootAnimationLocalPath`、`bootAnimationFitMode`、`bootAnimationMaxDurationMs`。
 
 `frameCacheEnabled` **没有面板控件**（默认 `true`；要改只能写 profile `config`）。壁纸库的**收藏 / 隐藏 / 最近使用**与用户属性不是设置字段，只存 localStorage（见本节末尾）；**搜索 / 类型 / 排序是面板临时状态**，刷新即恢复默认。
 
@@ -201,7 +201,7 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 | `rotationIntervalMs` | `300000` | 轮播间隔（1–30 分钟；面板档位为 1 / 5 / 10 / 30 分钟） |
 | `rotationOrder` | `sequential` | 轮播顺序：`sequential` 顺序 / `random` 随机 |
 | `frameCacheEnabled` | `true` | scene 首帧抓帧缓存（写入数据目录 `frames/`，供降级链使用）；面板无控件 |
-| `bootAnimationEnabled` | `false` | 开机动画总开关（设置 →「开机动画」独立菜单，默认关闭） |
+| `bootAnimationEnabled` | `false` | 开机动画总开关（设置 →「Wallpaper 壁纸」→「开机动画」tab，默认关闭；默认不记忆 tab） |
 | `bootAnimationSource` | `we` | 素材来源：`we` = WE 库壁纸 / `local` = 本地视频文件 |
 | `bootAnimationWallpaperId` | 空 | WE 素材的壁纸 id（面板选择时与 kind 一起写入） |
 | `bootAnimationWallpaperKind` | 空 | 素材类型：`video` / `image`（启动时免拉列表判断） |

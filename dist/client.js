@@ -39,9 +39,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// ../../node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/util.js
+// node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/util.js
 var require_util = __commonJS({
-  "../../node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/util.js"(exports) {
+  "node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/util.js"(exports) {
     exports.hashU32 = function hashU32(a) {
       a = a | 0;
       a = a + 2127912214 + (a << 12) | 0;
@@ -87,9 +87,9 @@ var require_util = __commonJS({
   }
 });
 
-// ../../node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/xxh32.js
+// node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/xxh32.js
 var require_xxh32 = __commonJS({
-  "../../node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/xxh32.js"(exports) {
+  "node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/xxh32.js"(exports) {
     var util = require_util();
     var prime1 = 2654435761;
     var prime2 = 2246822519;
@@ -165,9 +165,9 @@ var require_xxh32 = __commonJS({
   }
 });
 
-// ../../node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/lz4.js
+// node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/lz4.js
 var require_lz4 = __commonJS({
-  "../../node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/lz4.js"(exports) {
+  "node_modules/.pnpm/lz4js@0.2.0/node_modules/lz4js/lz4.js"(exports) {
     var xxhash = require_xxh32();
     var util = require_util();
     var minMatch = 4;
@@ -512,10 +512,10 @@ var require_lz4 = __commonJS({
   }
 });
 
-// ../../node_modules/.pnpm/@jitl+quickjs-ffi-types@0.32.0/node_modules/@jitl/quickjs-ffi-types/dist/index.mjs
+// node_modules/.pnpm/@jitl+quickjs-ffi-types@0.32.0/node_modules/@jitl/quickjs-ffi-types/dist/index.mjs
 var EvalFlags, IntrinsicsFlags, JSPromiseStateEnum, GetOwnPropertyNamesFlags, IsEqualOp;
 var init_dist = __esm({
-  "../../node_modules/.pnpm/@jitl+quickjs-ffi-types@0.32.0/node_modules/@jitl/quickjs-ffi-types/dist/index.mjs"() {
+  "node_modules/.pnpm/@jitl+quickjs-ffi-types@0.32.0/node_modules/@jitl/quickjs-ffi-types/dist/index.mjs"() {
     EvalFlags = { JS_EVAL_TYPE_GLOBAL: 0, JS_EVAL_TYPE_MODULE: 1, JS_EVAL_TYPE_DIRECT: 2, JS_EVAL_TYPE_INDIRECT: 3, JS_EVAL_TYPE_MASK: 3, JS_EVAL_FLAG_STRICT: 8, JS_EVAL_FLAG_STRIP: 16, JS_EVAL_FLAG_COMPILE_ONLY: 32, JS_EVAL_FLAG_BACKTRACE_BARRIER: 64 };
     IntrinsicsFlags = { BaseObjects: 1, Date: 2, Eval: 4, StringNormalize: 8, RegExp: 16, RegExpCompiler: 32, JSON: 64, Proxy: 128, MapSet: 256, TypedArrays: 512, Promise: 1024, BigInt: 2048, BigFloat: 4096, BigDecimal: 8192, OperatorOverloading: 16384, BignumExt: 32768 };
     JSPromiseStateEnum = { Pending: 0, Fulfilled: 1, Rejected: 2 };
@@ -524,7 +524,7 @@ var init_dist = __esm({
   }
 });
 
-// ../../node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/chunk-V2S4ZYJR.mjs
+// node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/chunk-V2S4ZYJR.mjs
 function debugLog(...args) {
   QTS_DEBUG && console.log("quickjs-emscripten:", ...args);
 }
@@ -611,7 +611,7 @@ function applyModuleEvalRuntimeOptions(runtime, options) {
 }
 var __defProp2, __export2, QTS_DEBUG, errors_exports, QuickJSUnwrapError, QuickJSWrongOwner, QuickJSUseAfterFree, QuickJSNotImplemented, QuickJSAsyncifyError, QuickJSAsyncifySuspended, QuickJSMemoryLeakDetected, QuickJSEmscriptenModuleError, QuickJSUnknownIntrinsic, QuickJSPromisePending, QuickJSEmptyGetOwnPropertyNames, QuickJSHostRefRangeExceeded, QuickJSHostRefInvalid, AwaitYield, UsingDisposable, SymbolDispose, prototypeAsAny, Lifetime, StaticLifetime, WeakLifetime, Scope, AbstractDisposableResult, DisposableSuccess, DisposableFail, DisposableResult, QuickJSDeferredPromise, ModuleMemory, UnstableSymbol, DefaultIntrinsics, QuickJSIterator, INT32_MIN, INT32_MAX, INVALID_HOST_REF_ID, HostRefMap, HostRef, ContextMemory, QuickJSContext, QuickJSRuntime, QuickJSEmscriptenModuleCallbacks, QuickJSModuleCallbacks, QuickJSWASMModule;
 var init_chunk_V2S4ZYJR = __esm({
-  "../../node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/chunk-V2S4ZYJR.mjs"() {
+  "node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/chunk-V2S4ZYJR.mjs"() {
     init_dist();
     init_dist();
     __defProp2 = Object.defineProperty;
@@ -1642,7 +1642,7 @@ Attempted to suspend at:`);
   }
 });
 
-// ../../node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/module-ES6BEMUI.mjs
+// node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/module-ES6BEMUI.mjs
 var module_ES6BEMUI_exports = {};
 __export(module_ES6BEMUI_exports, {
   QuickJSModuleCallbacks: () => QuickJSModuleCallbacks,
@@ -1651,19 +1651,19 @@ __export(module_ES6BEMUI_exports, {
   applyModuleEvalRuntimeOptions: () => applyModuleEvalRuntimeOptions
 });
 var init_module_ES6BEMUI = __esm({
-  "../../node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/module-ES6BEMUI.mjs"() {
+  "node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/module-ES6BEMUI.mjs"() {
     init_chunk_V2S4ZYJR();
   }
 });
 
-// ../../node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/ffi.mjs
+// node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/ffi.mjs
 var ffi_exports = {};
 __export(ffi_exports, {
   QuickJSFFI: () => QuickJSFFI
 });
 var QuickJSFFI;
 var init_ffi = __esm({
-  "../../node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/ffi.mjs"() {
+  "node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/ffi.mjs"() {
     QuickJSFFI = class {
       constructor(module2) {
         this.module = module2;
@@ -1741,7 +1741,7 @@ var init_ffi = __esm({
   }
 });
 
-// ../../node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/emscripten-module.browser.mjs
+// node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/emscripten-module.browser.mjs
 var emscripten_module_browser_exports = {};
 __export(emscripten_module_browser_exports, {
   default: () => emscripten_module_browser_default
@@ -2188,7 +2188,7 @@ async function QuickJSRaw(moduleArg = {}) {
 }
 var import_meta, emscripten_module_browser_default;
 var init_emscripten_module_browser = __esm({
-  "../../node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/emscripten-module.browser.mjs"() {
+  "node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/emscripten-module.browser.mjs"() {
     import_meta = {};
     emscripten_module_browser_default = QuickJSRaw;
   }
@@ -2205,6 +2205,34 @@ module.exports = __toCommonJS(client_exports);
 
 // src/client/styles.ts
 var CSS = `
+/* \u2500\u2500 \u9762\u677F\u8BBE\u8BA1\u7CFB\u7EDF token\uFF082026-10-30\uFF09\uFF1A\u6D3E\u751F\u81EA DSH \u4E3B\u9898 token\uFF0C\u4E24\u4E2A\u8BBE\u7F6E\u9762\u677F\u5171\u7528 \u2500\u2500
+   \u58C1\u7EB8\u9762\u677F\u7684\u65E7\u89C4\u5219\u4FDD\u6301\u4E0D\u52A8\uFF08tests/styles.test.ts \u6309\u65E7\u6587\u672C\u65AD\u8A00\u5951\u7EA6\uFF09\uFF0C\u7EDF\u4E00\u89C2\u611F\u7531\u6587\u4EF6\u672B\u5C3E
+   \u300C\u8BBE\u8BA1\u7CFB\u7EDF\u8986\u76D6\u300D\u6BB5\u843D\u5730\uFF1B\u65B0\u7EC4\u4EF6\uFF08tab \u680F / \u5F00\u673A\u52A8\u753B\u9762\u677F\uFF09\u76F4\u63A5\u6D88\u8D39\u8FD9\u4E9B\u53D8\u91CF\u3002 */
+:root{
+  --we-sp-1:4px;--we-sp-2:8px;--we-sp-3:12px;--we-sp-4:16px;--we-sp-5:24px;
+  --we-r-sm:8px;--we-r-md:10px;--we-r-card:14px;--we-r-hero:16px;
+  --we-surface:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));
+  --we-surface-2:var(--dsw-alias-bg-module-platform,rgba(127,127,127,.06));
+  --we-border:var(--dsw-alias-border-l2,var(--wp-panel-border));
+  --we-border-strong:var(--dsw-alias-border-l1,var(--wp-panel-border));
+  --we-shadow-card:0 1px 2px rgba(15,17,22,.04),0 8px 24px rgba(15,17,22,.05);
+  --we-shadow-hero:0 10px 26px rgba(15,17,22,.08);
+  --we-shadow-pop:0 8px 28px rgba(15,17,22,.18);
+  --we-ring:2px solid var(--wp-accent);
+  --we-ok:var(--dsw-alias-state-success-primary,#177a3b);
+  --we-warn:var(--dsw-alias-state-warning-primary,#b45309);
+  --we-danger:var(--dsw-alias-state-error-primary,#b42318);
+}
+body[data-ds-dark-theme]{
+  --we-surface:var(--dsw-alias-bg-layer-3,rgba(28,30,36,.92));
+  --we-surface-2:var(--dsw-alias-bg-module-platform,rgba(127,127,127,.14));
+  --we-border:var(--dsw-alias-border-l2,rgba(255,255,255,.14));
+  --we-border-strong:var(--dsw-alias-border-l1,rgba(255,255,255,.2));
+  --we-shadow-card:0 1px 2px rgba(0,0,0,.35),0 10px 28px rgba(0,0,0,.28);
+  --we-shadow-hero:0 12px 32px rgba(0,0,0,.42);
+  --we-shadow-pop:0 10px 32px rgba(0,0,0,.5);
+  --we-ok:#4ade80;--we-warn:#fbbf24;--we-danger:#f87171;
+}
 /* \u2500\u2500 \u58C1\u7EB8\u5C42\u57FA\u7840\uFF08\u4E0E\u4E3B\u9898\u65E0\u5173\uFF09 \u2500\u2500 */
 .wp-background-layer{position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none}
 .wp-bg-fill{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
@@ -2764,19 +2792,122 @@ body[data-we-wallpaper] :where([data-sidebar-right-panel="fullscreen"][data-side
 .wss-about-link:focus-visible{outline:2px solid var(--wp-accent);outline-offset:2px}
 .wss-about-link[data-primary=true]{background:var(--wp-accent-strong,#2563eb);border-color:transparent;color:#fff}
 .wss-about-link[data-primary=true]:hover{filter:brightness(1.07)}
-/* \u2500\u2500 \u5F00\u673A\u52A8\u753B\uFF08\u72EC\u7ACB\u5168\u5C4F\u5C42 + \u72EC\u7ACB\u8BBE\u7F6E\u9762\u677F wbs-*\uFF09 \u2500\u2500 */
+/* \u2500\u2500 \u8BBE\u7F6E\u9875 tab \u5BB9\u5668\uFF08Wallpaper \u58C1\u7EB8\uFF1A\u65E5\u5E38\u58C1\u7EB8 / \u5F00\u673A\u52A8\u753B\uFF09 \u2500\u2500 */
+.we-shell{display:flex;flex-direction:column;gap:var(--we-sp-3);padding:var(--we-sp-2) 2px 6px}
+.we-tabs{display:flex;gap:4px;padding:4px;border:1px solid var(--we-border);border-radius:var(--we-r-md);background:var(--we-surface-2)}
+.we-tab{flex:1 1 0;min-width:0;height:34px;border:0;border-radius:var(--we-r-sm);background:transparent;color:var(--dsw-alias-label-secondary,var(--wp-text));font:inherit;font-size:12.5px;font-weight:600;cursor:pointer;transition:background-color .15s ease,color .15s ease,box-shadow .15s ease}
+.we-tab:hover{background:rgba(127,127,127,.12);color:var(--dsw-alias-label-primary,var(--wp-text))}
+.we-tab[aria-selected="true"]{background:var(--wp-accent);color:#fff;box-shadow:var(--we-shadow-card)}
+.we-tab:focus-visible{outline:var(--we-ring);outline-offset:2px}
+.we-tabpanel{display:flex;flex-direction:column;gap:var(--we-sp-3)}
+
+/* \u2500\u2500 \u8BBE\u8BA1\u7CFB\u7EDF\u8986\u76D6\uFF082026-10-30\uFF09\uFF1A\u7EDF\u4E00\u58C1\u7EB8\u9762\u677F\u89C2\u611F\u3002\u53EA\u6539\u5916\u89C2\u503C\uFF0C\u4E0D\u6539\u9009\u62E9\u5668/\u5E03\u5C40\u5951\u7EA6\uFF1B
+   \u65E7\u89C4\u5219\u4FDD\u6301\u4E0D\u52A8\uFF0C\u4F9B tests/styles.test.ts \u7684\u6587\u672C\u65AD\u8A00\u7EE7\u7EED\u6210\u7ACB\u3002 \u2500\u2500 */
+.wss-root{gap:var(--we-sp-3)}
+.wss-section{border-color:var(--we-border);background:var(--we-surface);border-radius:var(--we-r-card);padding:var(--we-sp-4);box-shadow:var(--we-shadow-card)}
+.wss-hero{border-radius:var(--we-r-hero);box-shadow:var(--we-shadow-hero)}
+.wss-details{border-color:var(--we-border);border-radius:var(--we-r-card);background:var(--we-surface)}
+.wss-nav{border-color:var(--we-border);border-radius:var(--we-r-md);background:var(--we-surface-2)}
+.wss-about-link{border-radius:var(--we-r-sm)}
+.wss-nav-item:focus-visible,.wss-thumb:focus-visible,.wss-search:focus-visible,.wss-details-head:focus-visible,.wss-about-link:focus-visible{outline:var(--we-ring);outline-offset:2px}
+body[data-ds-dark-theme] .wss-section,
+body[data-ds-dark-theme] .wss-details{background:var(--we-surface);border-color:var(--we-border)}
+
+/* \u2500\u2500 \u5F00\u673A\u52A8\u753B\uFF08\u72EC\u7ACB\u5168\u5C4F\u5C42 + \u8BBE\u7F6E\u9875 tab \u5185\u5BB9 wbs-*\uFF0C2026-10-30 \u8BBE\u8BA1\u7CFB\u7EDF\uFF09 \u2500\u2500 */
 .wp-boot-layer{position:fixed;inset:0;z-index:2147483000;background:#000;overflow:hidden;pointer-events:auto}
-.wbs-root{display:flex;flex-direction:column;gap:14px;padding:4px 2px}
-.wbs-section{display:flex;flex-direction:column;gap:8px;padding:12px;border:1px solid var(--wp-panel-border);border-radius:10px;background:var(--wp-panel-bg)}
-.wbs-title{margin:0;font-size:14px;color:var(--wp-text)}
-.wbs-desc{margin:0;font-size:12px;line-height:1.5;opacity:.75}
-.wbs-row{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--wp-text)}
-.wbs-row input[type=text]{flex:1;min-width:160px;padding:6px 8px;border-radius:6px;border:1px solid var(--wp-panel-border);background:transparent;color:var(--wp-text)}
-.wbs-row select{padding:6px 8px;border-radius:6px;border:1px solid var(--wp-panel-border);background:transparent;color:var(--wp-text)}
-.wbs-row button{padding:5px 10px;border-radius:6px;border:1px solid var(--wp-panel-border);background:transparent;color:var(--wp-text);cursor:pointer}
-.wbs-row button:disabled,.wbs-row input:disabled{opacity:.45;cursor:not-allowed}
-.wbs-probe-result,.wbs-last,.wbs-message{font-size:12px;margin:0;color:var(--wp-text)}
-.wbs-message{opacity:.85}
+.wbs-root{display:flex;flex-direction:column;gap:var(--we-sp-3);padding:var(--we-sp-2) 2px 6px;color:var(--dsw-alias-label-primary,var(--wp-text));font-size:13px;line-height:1.55;container-type:inline-size}
+.wbs-loading{color:var(--dsw-alias-label-tertiary,var(--wp-text));padding:var(--we-sp-4)}
+/* \u72B6\u6001 hero\uFF1A\u6807\u9898/\u8BF4\u660E/\u4E0A\u6B21\u64AD\u653E + \u542F\u7528\u5F00\u5173 */
+.wbs-hero{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--we-sp-4);padding:var(--we-sp-4);border:1px solid var(--we-border);border-radius:var(--we-r-hero);background:linear-gradient(135deg,rgba(79,140,255,.10),rgba(147,51,234,.06) 60%,transparent),var(--we-surface);box-shadow:var(--we-shadow-hero)}
+.wbs-hero-body{display:flex;flex-direction:column;gap:var(--we-sp-1);min-width:0}
+.wbs-hero-title{margin:0;font-size:15px;font-weight:650;letter-spacing:.01em}
+.wbs-hero-desc{margin:0;font-size:12px;line-height:1.6;color:var(--dsw-alias-label-tertiary,var(--wp-text));max-width:46ch}
+.wbs-last{display:inline-flex;align-items:center;gap:6px;margin:2px 0 0;font-size:11.5px;padding:3px 9px;border-radius:999px;background:rgba(127,127,127,.12);color:var(--dsw-alias-label-secondary,var(--wp-text));align-self:flex-start}
+.wbs-last::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.8}
+.wbs-last[data-tone="ok"]{background:rgba(22,163,74,.13);color:var(--we-ok)}
+.wbs-last[data-tone="warn"]{background:rgba(245,158,11,.14);color:var(--we-warn)}
+.wbs-last[data-tone="danger"]{background:rgba(220,38,38,.13);color:var(--we-danger)}
+/* \u5F00\u5173\uFF08\u4E0E\u58C1\u7EB8\u9762\u677F\u540C\u6B3E\u80F6\u56CA\uFF09 */
+.wbs-switch{display:inline-flex;align-items:center;gap:8px;flex:none;cursor:pointer;font-size:12.5px;font-weight:600;color:var(--dsw-alias-label-secondary,var(--wp-text));user-select:none}
+.wbs-switch input{position:absolute;opacity:0;width:1px;height:1px}
+.wbs-switch-track{position:relative;width:38px;height:22px;border-radius:999px;background:rgba(100,105,120,.4);box-shadow:inset 0 0 0 1px rgba(0,0,0,.10);transition:background-color .15s ease}
+.wbs-switch-track::before{content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.28);transition:transform .15s ease}
+.wbs-switch input:checked + .wbs-switch-track{background:var(--wp-accent)}
+.wbs-switch input:checked + .wbs-switch-track::before{transform:translateX(16px)}
+.wbs-switch input:focus-visible + .wbs-switch-track{outline:var(--we-ring);outline-offset:2px}
+/* \u5206\u533A\u5361\u7247 */
+.wbs-card{display:flex;flex-direction:column;gap:var(--we-sp-3);padding:var(--we-sp-4);border:1px solid var(--we-border);border-radius:var(--we-r-card);background:var(--we-surface);box-shadow:var(--we-shadow-card)}
+.wbs-card-head{display:flex;align-items:center;justify-content:space-between;gap:var(--we-sp-2)}
+.wbs-title{margin:0;font-size:14px;font-weight:650;display:flex;align-items:center;gap:8px}
+.wbs-title::before{content:"";width:3px;height:14px;border-radius:2px;background:var(--wp-accent);flex:none}
+.wbs-hint{font-size:11.5px;color:var(--dsw-alias-label-tertiary,var(--wp-text))}
+.wbs-desc{margin:0;font-size:12px;line-height:1.6;color:var(--dsw-alias-label-tertiary,var(--wp-text))}
+/* \u7D20\u6750\u6765\u6E90\uFF1A\u5206\u6BB5\u63A7\u4EF6 */
+.wbs-source-group{display:flex;gap:6px;padding:4px;border:1px solid var(--we-border);border-radius:var(--we-r-md);background:var(--we-surface-2)}
+.wbs-source{position:relative;flex:1 1 0;min-width:0;display:flex;flex-direction:column;gap:2px;padding:8px 10px;border-radius:var(--we-r-sm);cursor:pointer;transition:background-color .15s ease,box-shadow .15s ease}
+.wbs-source input{position:absolute;opacity:0;width:1px;height:1px}
+.wbs-source-label{font-size:12.5px;font-weight:600;color:var(--dsw-alias-label-secondary,var(--wp-text));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wbs-source-hint{font-size:11px;color:var(--dsw-alias-label-tertiary,var(--wp-text))}
+.wbs-source[data-active="true"]{background:var(--we-surface);box-shadow:0 1px 3px rgba(15,17,22,.12)}
+.wbs-source[data-active="true"] .wbs-source-label{color:var(--dsw-alias-label-primary,var(--wp-text))}
+.wbs-source input:focus-visible + .wbs-source-label{outline:var(--we-ring);outline-offset:3px;border-radius:4px}
+/* WE \u7D20\u6750\u9009\u62E9\uFF1A\u9884\u89C8 + \u4E0B\u62C9 */
+.wbs-picker{display:flex;gap:var(--we-sp-3);align-items:flex-start}
+.wbs-picker[data-active="false"]{opacity:.55}
+.wbs-picker-preview{position:relative;flex:0 0 132px;width:132px;aspect-ratio:16/9;border-radius:var(--we-r-sm);overflow:hidden;background:var(--we-surface-2);display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--dsw-alias-label-tertiary,var(--wp-text))}
+.wbs-picker-preview img{width:100%;height:100%;object-fit:cover;display:block}
+.wbs-picker-body{display:flex;flex-direction:column;gap:6px;flex:1;min-width:0}
+.wbs-wallpaper{appearance:none;-webkit-appearance:none;min-height:34px;width:100%;border:1px solid var(--we-border);background-color:var(--we-surface-2);color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:var(--we-r-sm);padding:6px 32px 6px 10px;font:inherit;font-size:12.5px;cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238892a0' stroke-width='1.5'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center}
+.wbs-wallpaper:focus-visible{outline:var(--we-ring);outline-offset:1px}
+/* \u672C\u5730\u89C6\u9891\u8DEF\u5F84 */
+.wbs-local{display:flex;flex-direction:column;gap:6px}
+.wbs-local[data-active="false"]{opacity:.55}
+.wbs-row{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--dsw-alias-label-secondary,var(--wp-text))}
+.wbs-local-row{width:100%}
+.wbs-row input[type=text]{flex:1;min-width:160px;height:34px;padding:0 10px;border-radius:var(--we-r-sm);border:1px solid var(--we-border);background-color:var(--we-surface-2);color:var(--dsw-alias-label-primary,var(--wp-text));font:inherit;font-size:12.5px}
+.wbs-row input[type=text]:focus-visible{outline:var(--we-ring);outline-offset:1px}
+.wbs-row button{height:34px;padding:0 12px;border-radius:var(--we-r-sm);border:1px solid var(--we-border);background:transparent;color:var(--dsw-alias-label-primary,var(--wp-text));font:inherit;font-size:12.5px;font-weight:600;cursor:pointer;transition:background-color .15s ease}
+.wbs-row button:hover{background:rgba(127,127,127,.12)}
+.wbs-row button:focus-visible{outline:var(--we-ring);outline-offset:2px}
+.wbs-probe-result{margin:0;font-size:11.5px;line-height:1.5}
+.wbs-probe-result[data-tone="ok"]{color:var(--we-ok)}
+.wbs-probe-result[data-tone="danger"]{color:var(--we-danger)}
+/* \u5C55\u793A\u65B9\u5F0F 2\xD72 \u5361\u7247\uFF08\u793A\u610F\u7EBF\u6846\uFF09 */
+.wbs-fit-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--we-sp-2)}
+.wbs-fit-card{position:relative;display:flex;flex-direction:column;gap:6px;padding:10px;border:1px solid var(--we-border);border-radius:var(--we-r-md);background:var(--we-surface-2);cursor:pointer;transition:border-color .15s ease,background-color .15s ease}
+.wbs-fit-card input{position:absolute;opacity:0;width:1px;height:1px}
+.wbs-fit-card[data-active="true"]{border-color:var(--wp-accent);background:color-mix(in srgb,var(--wp-accent) 8%,var(--we-surface))}
+.wbs-fit-card[data-disabled="true"]{opacity:.45;cursor:not-allowed}
+.wbs-fit-art{display:block;height:44px;border-radius:6px;border:1px dashed var(--we-border);position:relative;overflow:hidden;background:var(--we-surface)}
+.wbs-fit-art::after{content:"";position:absolute;background:var(--wp-accent);opacity:.55}
+.wbs-fit-art[data-fit="cover"]::after{inset:-14%}
+.wbs-fit-art[data-fit="contain"]::after{inset:22% 30%}
+.wbs-fit-art[data-fit="stretch"]::after{inset:12% 4%}
+.wbs-fit-art[data-fit="tile"]::after{inset:10%;background-image:linear-gradient(90deg,var(--wp-accent) 50%,transparent 50%);background-size:10px 10px;opacity:.35}
+.wbs-fit-label{font-size:12.5px;font-weight:600;color:var(--dsw-alias-label-primary,var(--wp-text))}
+.wbs-fit-hint{font-size:11px;color:var(--dsw-alias-label-tertiary,var(--wp-text))}
+.wbs-fit-card input:focus-visible + .wbs-fit-art{outline:var(--we-ring);outline-offset:2px}
+/* \u6700\u957F\u64AD\u653E */
+.wbs-value{font-variant-numeric:tabular-nums;font-size:11.5px;font-weight:650;padding:2px 8px;border-radius:999px;background:rgba(127,127,127,.12);color:var(--dsw-alias-label-primary,var(--wp-text))}
+.wbs-slider{display:flex;flex-direction:column;gap:8px}
+.wbs-slider input[type=range]{width:100%;height:20px;margin:0;background:transparent;appearance:none;-webkit-appearance:none;cursor:pointer}
+.wbs-slider input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:rgba(127,127,127,.25)}
+.wbs-slider input[type=range]::-webkit-slider-thumb{appearance:none;-webkit-appearance:none;width:14px;height:14px;margin-top:-5px;border-radius:50%;background:var(--wp-accent);border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.28)}
+.wbs-slider input[type=range]::-moz-range-track{height:4px;border-radius:2px;background:rgba(127,127,127,.25)}
+.wbs-slider input[type=range]::-moz-range-thumb{width:12px;height:12px;border-radius:50%;background:var(--wp-accent);border:2px solid #fff}
+.wbs-slider input[type=range]:focus-visible{outline:var(--we-ring);outline-offset:2px}
+/* \u8BD5\u64AD */
+.wbs-actions{display:flex;align-items:center;gap:var(--we-sp-3);flex-wrap:wrap}
+.wbs-preview{min-height:36px;padding:0 18px;border:0;border-radius:var(--we-r-sm);background:var(--wp-accent-strong,#2563eb);color:#fff;font:inherit;font-size:13px;font-weight:650;cursor:pointer;box-shadow:var(--we-shadow-card);transition:filter .15s ease}
+.wbs-preview:hover{filter:brightness(1.07)}
+.wbs-preview:disabled{opacity:.6;cursor:progress}
+.wbs-preview:focus-visible{outline:var(--we-ring);outline-offset:2px}
+.wbs-message{margin:0;font-size:12px;color:var(--dsw-alias-label-secondary,var(--wp-text))}
+.wbs-message[data-tone="ok"]{color:var(--we-ok)}
+.wbs-message[data-tone="warn"]{color:var(--we-warn)}
+.wbs-message[data-tone="danger"]{color:var(--we-danger)}
+@container (max-width:520px){.wbs-picker{flex-direction:column}.wbs-picker-preview{width:100%;flex:none;aspect-ratio:21/9}.wbs-fit-grid{grid-template-columns:minmax(0,1fr)}.wbs-hero{flex-direction:column;align-items:stretch}.wbs-switch{align-self:flex-start}}
+@media (prefers-reduced-motion:reduce){.we-tab,.wbs-source,.wbs-fit-card,.wbs-row button,.wbs-preview,.wbs-switch-track,.wbs-switch-track::before{transition:none}}
 `;
 var WALLPAPER_CSS = CSS;
 function injectWallpaperStyles() {
@@ -3047,7 +3178,10 @@ function createBootPlayer(opts) {
   };
 }
 
-// src/client/boot-settings-section.tsx
+// src/client/settings-shell.tsx
+var import_react3 = require("react");
+
+// src/client/settings-section.tsx
 var import_react = require("react");
 
 // src/client/settings.ts
@@ -3157,239 +3291,323 @@ function getUserPropertyValue(key, wallpaperId) {
   }
 }
 
-// src/client/boot-settings-section.tsx
-var import_jsx_runtime = require("react/jsx-runtime");
-async function defaultFetchWallpapers() {
-  return (await fetch("/wallpapers/list")).json();
-}
-async function defaultProbePath(path) {
-  const r = await fetch("/wallpapers/boot/probe?path=" + encodeURIComponent(path));
-  return r.json();
-}
-function bootApi() {
-  return globalThis.__wallpaperEngineBoot;
-}
-async function defaultPlayPreview() {
-  return await bootApi()?.play?.({ force: true }) ?? "disabled";
-}
-var FITS = [
-  { value: "tile", label: "\u5E73\u94FA" },
-  { value: "contain", label: "\u5C45\u4E2D" },
-  { value: "stretch", label: "\u6324\u538B" },
-  { value: "cover", label: "\u88C1\u5207\u586B\u6EE1" }
-];
-var RESULT_TEXT = {
-  ended: "\u64AD\u653E\u5B8C\u6210",
-  skipped: "\u5DF2\u8DF3\u8FC7",
-  timeout: "\u7D20\u6750\u8D85\u65F6\uFF08\u5DF2\u8DF3\u8FC7\uFF09",
-  failed: "\u64AD\u653E\u5931\u8D25\uFF08\u5DF2\u8DF3\u8FC7\uFF09",
-  "already-played": "\u672C\u6B21\u4F1A\u8BDD\u5DF2\u64AD\u8FC7",
-  disabled: "\u672A\u542F\u7528",
-  "no-asset": "\u672A\u9009\u62E9\u7D20\u6750"
-};
-function formatSize(n) {
-  if (typeof n !== "number") return "-";
-  return n >= 1024 * 1024 ? (n / 1024 / 1024).toFixed(1) + " MB" : Math.round(n / 1024) + " KB";
-}
-function probeText(probe) {
-  if (probe.ok) return `\u6587\u4EF6\u5B58\u5728 \xB7 ${formatSize(probe.size)} \xB7 ${probe.playable ? "\u53EF\u64AD\u653E" : "\u6269\u5C55\u540D\u4E0D\u652F\u6301"}`;
-  return probe.error === "not found" ? "\u6587\u4EF6\u4E0D\u5B58\u5728\u6216\u4E0D\u662F\u666E\u901A\u6587\u4EF6" : "\u8DEF\u5F84\u65E0\u6548\u6216\u6269\u5C55\u540D\u4E0D\u652F\u6301";
-}
-function BootSettingsSection(props) {
-  const fetchSettings = props.fetchSettings ?? readClientSettings;
-  const save = props.writeSettings ?? writeClientSettings;
-  const fetchWallpapers = props.fetchWallpapers ?? defaultFetchWallpapers;
-  const probePath = props.probePath ?? defaultProbePath;
-  const playPreview = props.playPreview ?? defaultPlayPreview;
-  const getLast = props.getLast ?? (() => bootApi()?.getLast?.() ?? null);
-  const [settings, setSettings] = (0, import_react.useState)(null);
-  const [wallpapers, setWallpapers] = (0, import_react.useState)([]);
-  const [probe, setProbe] = (0, import_react.useState)(null);
-  const [message, setMessage] = (0, import_react.useState)("");
-  const [last, setLast] = (0, import_react.useState)(null);
-  const [previewing, setPreviewing] = (0, import_react.useState)(false);
-  (0, import_react.useEffect)(() => {
-    let alive = true;
-    void (async () => {
-      try {
-        const [s, list] = await Promise.all([fetchSettings(), fetchWallpapers().catch(() => [])]);
-        if (!alive) return;
-        setSettings(s);
-        setWallpapers(list.filter((w) => w.type === "video" || w.type === "image"));
-        setLast(getLast());
-      } catch {
-        if (alive) setMessage("\u8BFB\u53D6\u8BBE\u7F6E\u5931\u8D25\uFF0C\u8BF7\u91CD\u65B0\u6253\u5F00\u8BBE\u7F6E\u9762\u677F");
-      }
-    })();
-    return () => {
-      alive = false;
+// src/client/wallpaper-properties.ts
+async function fetchWallpaperProperties(id) {
+  try {
+    const r = await fetch(`/wallpapers/properties?id=${encodeURIComponent(id)}`);
+    if (!r.ok) return { properties: [], audioProcessing: false };
+    const body = await r.json();
+    return {
+      properties: Array.isArray(body?.properties) ? body.properties : [],
+      audioProcessing: body?.audioProcessing === true
     };
-  }, []);
-  if (!settings) return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "wbs-root wbs-loading", children: "\u52A0\u8F7D\u4E2D\u2026" });
-  const patch = async (p) => {
-    setSettings((prev) => prev ? { ...prev, ...p } : prev);
-    try {
-      const ok = await save(p);
-      if (ok === false) setMessage("\u4FDD\u5B58\u5931\u8D25\uFF1A\u8BBE\u7F6E\u670D\u52A1\u4E0D\u53EF\u7528");
-    } catch {
-      setMessage("\u4FDD\u5B58\u5931\u8D25\uFF1A\u8BBE\u7F6E\u670D\u52A1\u4E0D\u53EF\u7528");
+  } catch {
+    return { properties: [], audioProcessing: false };
+  }
+}
+function readUserProperty(key, wallpaperId) {
+  return getUserPropertyValue(key, wallpaperId);
+}
+function writeUserProperty(key, value, wallpaperId) {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(userPropertyKey(key, wallpaperId), JSON.stringify(value));
+  } catch {
+  }
+}
+function resetUserProperty(key, wallpaperId) {
+  if (!wallpaperId) return;
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.removeItem(userPropertyKey(key, wallpaperId));
+  } catch {
+  }
+}
+function userPropertyKey(key, wallpaperId) {
+  return wallpaperId ? `${USERPROP_PREFIX}${wallpaperId}:${key}` : USERPROP_PREFIX + key;
+}
+
+// src/shared/user-refs.ts
+function parseUserRef(user) {
+  if (typeof user === "string") return user ? { name: user } : void 0;
+  if (user && typeof user === "object") {
+    const o = user;
+    if (typeof o.name === "string" && o.name) {
+      return { name: o.name, condition: typeof o.condition === "string" ? o.condition : void 0 };
     }
-  };
-  const source = settings.bootAnimationSource === "local" ? "local" : "we";
-  const isVideoAsset = source === "local" || settings.bootAnimationWallpaperKind === "video";
-  const runProbe = async () => {
-    try {
-      setProbe(await probePath(settings.bootAnimationLocalPath));
-    } catch {
-      setProbe({ ok: false, error: "bad path" });
+  }
+  return void 0;
+}
+
+// src/client/user-bindings.ts
+function isTruthy(value) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return Math.abs(value) > 1e-4;
+  if (typeof value === "string") {
+    const s = value.trim().toLowerCase();
+    return s !== "" && s !== "0" && s !== "false";
+  }
+  return false;
+}
+function matchCondition(value, condition) {
+  const c = String(condition ?? "").trim();
+  if (!c) return isTruthy(value);
+  const n = Number(c);
+  if (!Number.isNaN(n) && Number.isFinite(n)) {
+    if (typeof value === "boolean") {
+      if (Math.abs(n) < 1e-4) return isTruthy(value);
+      if (Math.abs(n - 1) < 1e-4) return !isTruthy(value);
+      return false;
     }
-  };
-  const runPreview = async () => {
-    setPreviewing(true);
-    setMessage("\u64AD\u653E\u4E2D\u2026");
-    let result = "failed";
-    try {
-      result = await playPreview();
-    } catch {
-      result = "failed";
+    const v = Number(value);
+    return Number.isFinite(v) && Math.abs(v - n) < 1e-4;
+  }
+  if (c === "true" || c === "false") return isTruthy(value) === (c === "true");
+  return typeof value === "string" ? value.trim() === c : String(value).trim() === c;
+}
+function parseColorTriplet(text) {
+  const parts = text.trim().split(/\s+/).map(Number);
+  if (parts.length < 3 || parts.slice(0, 3).some((x) => !Number.isFinite(x))) return void 0;
+  const max = Math.max(parts[0], parts[1], parts[2]);
+  return max <= 1 ? [parts[0] * 255, parts[1] * 255, parts[2] * 255] : [parts[0], parts[1], parts[2]];
+}
+function resolveUserValue(bound, userProps, hint) {
+  const ref = bound.user;
+  if (!ref) return bound.value;
+  if (!Object.hasOwn(userProps, ref.name)) return bound.value;
+  const uv = userProps[ref.name];
+  if (!matchCondition(uv, ref.condition)) {
+    const neutral = hint === "bool" ? false : hint === "number" ? 0 : hint === "color" ? [0, 0, 0] : "0 0 0";
+    return neutral;
+  }
+  if (hint === "bool") return typeof uv === "boolean" ? uv : isTruthy(uv);
+  if (hint === "number") {
+    const n = Number(uv);
+    return Number.isFinite(n) ? n : 0;
+  }
+  if (hint === "color01") {
+    return typeof uv === "string" ? uv.trim() : "0 0 0";
+  }
+  const color = typeof uv === "string" ? parseColorTriplet(uv) : void 0;
+  return color ?? [0, 0, 0];
+}
+var NUMBER_LITERAL = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i;
+function tokenizeCondition(text) {
+  const tokens = [];
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (/\s/.test(ch)) {
+      i += 1;
+      continue;
     }
-    setPreviewing(false);
-    setMessage("\u7ED3\u679C\uFF1A" + (RESULT_TEXT[result] ?? "\u5931\u8D25") + "\uFF08" + result + "\uFF09");
+    const two = text.slice(i, i + 2);
+    if (two === "&&" || two === "||" || two === "==" || two === "!=") {
+      tokens.push({ op: two });
+      i += 2;
+      continue;
+    }
+    if (ch === "(" || ch === ")" || ch === "&" || ch === "|" || ch === "=" || ch === "!" || ch === "<" || ch === ">") {
+      throw new Error(`bad condition token: ${ch}`);
+    }
+    let end = i;
+    while (end < text.length && !/[\s()&|=!<>]/.test(text[end])) end += 1;
+    tokens.push({ atom: text.slice(i, end) });
+    i = end;
+  }
+  return tokens;
+}
+function parseConditionOperand(atom, userProps) {
+  const ref = /^(.+)\.value$/.exec(atom);
+  if (ref) {
+    const key = ref[1];
+    return Object.hasOwn(userProps, key) ? userProps[key] : void 0;
+  }
+  if (atom === "true") return true;
+  if (atom === "false") return false;
+  if (NUMBER_LITERAL.test(atom)) return Number(atom);
+  return atom;
+}
+function evaluateCondition(text, userProps) {
+  const tokens = tokenizeCondition(text);
+  if (tokens.length === 0) return true;
+  let pos = 0;
+  const eatOp = (op) => {
+    if (tokens[pos]?.op !== op) return false;
+    pos += 1;
+    return true;
   };
-  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wbs-root", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wbs-section", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wbs-title", children: "\u5F00\u673A\u52A8\u753B \xB7 \u4E0E\u65E5\u5E38\u58C1\u7EB8\u4E92\u4E0D\u5F71\u54CD" }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wbs-desc", children: "\u6253\u5F00 DSH \u65F6\u5168\u5C4F\u64AD\u4E00\u6BB5\u7247\u5934\uFF0C\u64AD\u5B8C\u6DE1\u51FA\u8FDB\u5165\u754C\u9762\uFF1B\u56FA\u5B9A\u9759\u97F3\uFF0C\u6BCF\u6B21\u542F\u52A8/\u65B0\u7A97\u53E3\u53EA\u64AD\u4E00\u6B21\uFF08\u5237\u65B0\u4E0D\u91CD\u64AD\uFF09\u3002" }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wbs-row", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-          "input",
-          {
-            type: "checkbox",
-            className: "wbs-enable",
-            checked: settings.bootAnimationEnabled,
-            onChange: (e) => void patch({ bootAnimationEnabled: e.target.checked })
-          }
-        ),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u542F\u7528\u5F00\u673A\u52A8\u753B" })
-      ] }),
-      last && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { className: "wbs-last", children: [
-        "\u4E0A\u6B21\u64AD\u653E\uFF1A",
-        RESULT_TEXT[last.result] ?? last.result
-      ] })
-    ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wbs-section", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wbs-title", children: "\u7D20\u6750" }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wbs-row", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-          "input",
-          {
-            type: "radio",
-            name: "wbs-source",
-            className: "wbs-source-we",
-            checked: source === "we",
-            onChange: () => void patch({ bootAnimationSource: "we" })
-          }
-        ),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u4ECE Wallpaper Engine \u5E93\u9009\u62E9\uFF08\u4EC5\u89C6\u9891 / \u56FE\u7247\u7C7B\uFF09" })
-      ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
-        "select",
-        {
-          className: "wbs-wallpaper",
-          "aria-label": "\u5F00\u673A\u52A8\u753B\u7D20\u6750",
-          value: settings.bootAnimationWallpaperId,
-          onChange: (e) => {
-            const id = e.target.value;
-            const picked = wallpapers.find((w) => w.id === id);
-            void patch({
-              bootAnimationWallpaperId: id,
-              bootAnimationWallpaperKind: picked ? picked.type === "image" ? "image" : "video" : ""
-            });
-          },
-          children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "", children: "\uFF08\u672A\u9009\u62E9\uFF09" }),
-            wallpapers.map((w) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("option", { value: w.id, children: [
-              w.title,
-              " \xB7 ",
-              w.type === "image" ? "\u56FE\u7247" : "\u89C6\u9891"
-            ] }, w.id))
-          ]
-        }
-      ),
-      wallpapers.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wbs-desc", children: "\u58C1\u7EB8\u5217\u8868\u4E3A\u7A7A\uFF1A\u8BF7\u5148\u5728\u300CWallpaper \u58C1\u7EB8\u300D\u9875\u914D\u7F6E\u76EE\u5F55\u6216\u70B9\u5237\u65B0\u3002" }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wbs-row", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-          "input",
-          {
-            type: "radio",
-            name: "wbs-source",
-            className: "wbs-source-local",
-            checked: source === "local",
-            onChange: () => void patch({ bootAnimationSource: "local" })
-          }
-        ),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u672C\u5730\u89C6\u9891\u6587\u4EF6\uFF08\u7EDD\u5BF9\u8DEF\u5F84\uFF09" })
-      ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wbs-row", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-          "input",
-          {
-            type: "text",
-            className: "wbs-local-path",
-            "aria-label": "\u672C\u5730\u89C6\u9891\u8DEF\u5F84",
-            placeholder: "E:\\\\clips\\\\boot.mp4",
-            value: settings.bootAnimationLocalPath,
-            onChange: (e) => setSettings((prev) => prev ? { ...prev, bootAnimationLocalPath: e.target.value } : prev),
-            onBlur: (e) => void patch({ bootAnimationLocalPath: e.target.value })
-          }
-        ),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wbs-probe", onClick: () => void runProbe(), children: "\u6821\u9A8C" })
-      ] }),
-      probe && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wbs-probe-result", children: probeText(probe) })
-    ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wbs-section", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wbs-title", children: "\u5C55\u793A\u65B9\u5F0F" }),
-      FITS.map((f) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wbs-row", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-          "input",
-          {
-            type: "radio",
-            name: "wbs-fit",
-            className: "wbs-fit-" + f.value,
-            checked: settings.bootAnimationFitMode === f.value,
-            disabled: f.value === "tile" && isVideoAsset,
-            onChange: () => void patch({ bootAnimationFitMode: f.value })
-          }
-        ),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { children: [
-          f.label,
-          f.value === "tile" && isVideoAsset ? "\uFF08\u89C6\u9891\u4E0D\u652F\u6301\u5E73\u94FA\uFF09" : ""
-        ] })
-      ] }, f.value))
-    ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wbs-section", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wbs-title", children: "\u6700\u957F\u64AD\u653E" }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wbs-row", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-          "input",
-          {
-            type: "range",
-            className: "wbs-max-duration",
-            "aria-label": "\u6700\u957F\u64AD\u653E\u65F6\u95F4\uFF08\u79D2\uFF09",
-            min: 0,
-            max: 30,
-            step: 1,
-            value: Math.round(settings.bootAnimationMaxDurationMs / 1e3),
-            onChange: (e) => void patch({ bootAnimationMaxDurationMs: Number(e.target.value) * 1e3 })
-          }
-        ),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wbs-duration-value", children: settings.bootAnimationMaxDurationMs === 0 ? "\u64AD\u5B8C / \u4E0D\u9650" : Math.round(settings.bootAnimationMaxDurationMs / 1e3) + " \u79D2" })
-      ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wbs-desc", children: "0 = \u89C6\u9891\u64AD\u5B8C\u4E3A\u6B62\uFF1B\u56FE\u7247\u56FA\u5B9A\u7EA6 4 \u79D2\u3002\u7D20\u6750 8 \u79D2\u672A\u5C31\u7EEA\u4F1A\u81EA\u52A8\u8DF3\u8FC7\u3002" })
-    ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "wbs-row", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wbs-preview", disabled: previewing, onClick: () => void runPreview(), children: previewing ? "\u64AD\u653E\u4E2D\u2026" : "\u8BD5\u64AD" }) }),
-    message && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wbs-message", children: message })
-  ] });
+  const parseComparison = () => {
+    const leftToken = tokens[pos];
+    if (!leftToken?.atom) throw new Error("expected operand");
+    pos += 1;
+    const left = parseConditionOperand(leftToken.atom, userProps);
+    const op = tokens[pos]?.op;
+    if (op === "==" || op === "!=") {
+      pos += 1;
+      const rightToken = tokens[pos];
+      if (!rightToken?.atom) throw new Error("expected operand");
+      pos += 1;
+      const right = parseConditionOperand(rightToken.atom, userProps);
+      const matched = matchCondition(left, typeof right === "string" ? right : String(right));
+      return op === "==" ? matched : !matched;
+    }
+    return isTruthy(left);
+  };
+  const parseAnd = () => {
+    let value = parseComparison();
+    while (eatOp("&&")) {
+      const rhs = parseComparison();
+      value = value && rhs;
+    }
+    return value;
+  };
+  const parseOr = () => {
+    let value = parseAnd();
+    while (eatOp("||")) {
+      const rhs = parseAnd();
+      value = value || rhs;
+    }
+    return value;
+  };
+  const result = parseOr();
+  return pos === tokens.length ? result : true;
+}
+function propertyConditionMet(condition, userProps) {
+  const text = (condition ?? "").trim();
+  if (!text) return true;
+  try {
+    return evaluateCondition(text, userProps);
+  } catch {
+    return true;
+  }
+}
+function deepClone(value) {
+  if (typeof structuredClone === "function") {
+    try {
+      return structuredClone(value);
+    } catch {
+    }
+  }
+  return cloneJsonLike(value);
+}
+function cloneJsonLike(value) {
+  if (Array.isArray(value)) return value.map((item) => cloneJsonLike(item));
+  if (value && typeof value === "object") {
+    const out = {};
+    for (const [key, item] of Object.entries(value)) out[key] = cloneJsonLike(item);
+    return out;
+  }
+  return value;
+}
+function resolveBoundNode(value, user, userProps) {
+  if (typeof value === "boolean") return resolveUserValue({ value, user }, userProps, "bool");
+  if (typeof value === "number") return resolveUserValue({ value, user }, userProps, "number");
+  if (typeof value === "string") {
+    if (/\s/.test(value.trim())) return resolveUserValue({ value, user }, userProps, "color01");
+    return resolveRawString(value, user, userProps);
+  }
+  return value;
+}
+function resolveRawString(value, user, userProps) {
+  if (!Object.hasOwn(userProps, user.name)) return value;
+  const uv = userProps[user.name];
+  if (!matchCondition(uv, user.condition)) return "";
+  return typeof uv === "string" ? uv : String(uv);
+}
+function resolveValueNode(value, user, userProps) {
+  if (typeof value === "boolean") return resolveUserValue({ value, user }, userProps, "bool");
+  if (typeof value === "number") return resolveUserValue({ value, user }, userProps, "number");
+  if (typeof value === "string") return resolveRawString(value, user, userProps);
+  return value;
+}
+function resolveBindingsDeep(node, userProps, mode) {
+  if (Array.isArray(node)) return node.map((item) => resolveBindingsDeep(item, userProps, mode));
+  if (node && typeof node === "object") {
+    const o = node;
+    const user = parseUserRef(o.user);
+    if (user && "value" in o) {
+      return mode === "effects" ? resolveBoundNode(o.value, user, userProps) : resolveValueNode(o.value, user, userProps);
+    }
+    const out = {};
+    for (const [key, value] of Object.entries(o)) out[key] = resolveBindingsDeep(value, userProps, mode);
+    return out;
+  }
+  return node;
+}
+var TRANSFORM_DEFAULT = { origin: 0, scale: 1, angles: 0 };
+function resolveObjectUserRefs(obj, userProps) {
+  const refs = obj.userRefs;
+  if (!refs) return;
+  const rec = obj;
+  if (refs.color) rec.color = resolveUserValue({ value: rec.color, user: refs.color }, userProps, "color");
+  if (refs.alpha) rec.alpha = resolveUserValue({ value: rec.alpha, user: refs.alpha }, userProps, "number");
+  if (refs.brightness) {
+    rec.brightness = resolveUserValue({ value: rec.brightness, user: refs.brightness }, userProps, "number");
+  }
+  for (const key of ["origin", "scale", "angles"]) {
+    const ref = refs[key];
+    if (!ref) continue;
+    const fallback = TRANSFORM_DEFAULT[key];
+    const raw = Array.isArray(rec[key]) ? rec[key] : [];
+    rec[key] = [0, 1, 2].map((i) => {
+      const component = typeof raw[i] === "number" ? raw[i] : fallback;
+      return resolveUserValue({ value: component, user: ref }, userProps, "number");
+    });
+  }
+}
+function resolveSceneUserBindings(desc, userProps) {
+  const out = deepClone(desc);
+  for (const obj of out.objects) {
+    resolveObjectUserRefs(obj, userProps);
+    const rec = obj;
+    if (Array.isArray(rec.effects)) rec.effects = resolveBindingsDeep(rec.effects, userProps, "effects");
+    if (typeof rec.instanceOverrideJson === "string") {
+      try {
+        const parsed = JSON.parse(rec.instanceOverrideJson);
+        rec.instanceOverrideJson = JSON.stringify(resolveBindingsDeep(parsed, userProps, "raw"));
+      } catch {
+      }
+    }
+    if (rec.scriptProperties && typeof rec.scriptProperties === "object" && !Array.isArray(rec.scriptProperties)) {
+      rec.scriptProperties = resolveBindingsDeep(rec.scriptProperties, userProps, "raw");
+    }
+    const entries = Array.isArray(rec.objectScripts) ? rec.objectScripts : [];
+    for (const entry of entries) {
+      const props = entry?.scriptProperties;
+      if (props && typeof props === "object" && !Array.isArray(props)) {
+        entry.scriptProperties = resolveBindingsDeep(props, userProps, "raw");
+      }
+    }
+    const visible = rec.visible;
+    if (visible?.scriptProperties) {
+      visible.scriptProperties = resolveBindingsDeep(
+        visible.scriptProperties,
+        userProps,
+        "raw"
+      );
+    }
+  }
+  if (out.bloomUser) {
+    const enabled = resolveUserValue(
+      { value: out.bloom !== void 0, user: out.bloomUser },
+      userProps,
+      "bool"
+    );
+    if (!enabled) out.bloom = void 0;
+    else if (!out.bloom) out.bloom = { strength: 2, threshold: 0.65 };
+  }
+  if (out.parallaxUser) {
+    out.parallax = {
+      ...out.parallax,
+      enabled: resolveUserValue(
+        { value: out.parallax.enabled, user: out.parallaxUser },
+        userProps,
+        "bool"
+      )
+    };
+  }
+  return out;
 }
 
 // src/client/text-color.ts
@@ -3442,6 +3660,1821 @@ function outlineShadow(color, level) {
 function outlineLabel(level) {
   const lv = normalizeOutlineLevel(level);
   return lv === 0 ? "\u5173" : lv === 1 ? "\u8F7B" : lv === 2 ? "\u4E2D" : "\u5F3A";
+}
+
+// src/client/render-health.ts
+var HARD_KINDS = ["scene-json", "no-visible-objects", "context-lost", "exception"];
+function isHardFailure(kind) {
+  return HARD_KINDS.includes(kind);
+}
+var HEALTH_KEY_PREFIX = "we:renderfail:";
+var SCHEMA_VERSION = 1;
+var DEFAULT_SOFT_COOLDOWN_MS = 3e3;
+function defaultStorage() {
+  try {
+    return typeof localStorage === "undefined" ? null : localStorage;
+  } catch {
+    return null;
+  }
+}
+function createRenderHealthStore(opts = {}) {
+  const storage = opts.storage === void 0 ? defaultStorage() : opts.storage;
+  const now = opts.now ?? (() => Date.now());
+  const cooldown = opts.softCooldownMs ?? DEFAULT_SOFT_COOLDOWN_MS;
+  const hard = /* @__PURE__ */ new Map();
+  const soft = /* @__PURE__ */ new Map();
+  const retried = /* @__PURE__ */ new Set();
+  const session = /* @__PURE__ */ new Map();
+  const keyOf2 = (id) => HEALTH_KEY_PREFIX + id;
+  const readStored = (id) => {
+    if (!storage || !id) return null;
+    let raw = null;
+    try {
+      raw = storage.getItem(keyOf2(id));
+    } catch {
+      return null;
+    }
+    if (!raw) return null;
+    try {
+      const v = JSON.parse(raw);
+      if (v?.v !== SCHEMA_VERSION || typeof v.kind !== "string") return null;
+      const kind = v.kind;
+      if (!isHardFailure(kind)) return null;
+      return { kind, hard: true, at: Number(v.at) || 0, detail: String(v.detail ?? "") };
+    } catch {
+      return null;
+    }
+  };
+  const writeHard = (id, kind, detail) => {
+    const entry = { kind, hard: true, at: now(), detail: String(detail).slice(0, 200) };
+    hard.set(id, entry);
+    if (!storage) return;
+    try {
+      storage.setItem(keyOf2(id), JSON.stringify({
+        v: SCHEMA_VERSION,
+        kind: entry.kind,
+        detail: entry.detail,
+        at: entry.at
+      }));
+    } catch {
+    }
+  };
+  const currentHard = (id) => readStored(id) ?? hard.get(id) ?? null;
+  return {
+    recordHard(id, kind, detail) {
+      if (!id) return;
+      writeHard(id, kind, detail);
+    },
+    recordSoft(id, kind, detail) {
+      if (!id) return;
+      soft.set(id, { kind, detail: String(detail), at: now() });
+    },
+    recordOk(id, timing) {
+      if (!id) return;
+      soft.delete(id);
+      session.set(id, { ok: true, timing });
+    },
+    clear(id) {
+      hard.delete(id);
+      soft.delete(id);
+      retried.delete(id);
+      session.delete(id);
+      if (storage && id) {
+        try {
+          storage.removeItem(keyOf2(id));
+        } catch {
+        }
+      }
+    },
+    clearAll() {
+      hard.clear();
+      soft.clear();
+      retried.clear();
+      if (!storage) return;
+      const keys = [];
+      try {
+        for (let i = 0; i < storage.length; i++) {
+          const k = storage.key(i);
+          if (k && k.startsWith(HEALTH_KEY_PREFIX)) keys.push(k);
+        }
+      } catch {
+      }
+      for (const k of keys) {
+        try {
+          storage.removeItem(k);
+        } catch {
+        }
+      }
+    },
+    snapshot(id) {
+      const s = session.get(id);
+      const timing = s?.timing ?? null;
+      const hardHit = currentHard(id);
+      const softHit = soft.get(id);
+      const failure = hardHit ?? (softHit ? { kind: softHit.kind, hard: false, at: softHit.at, detail: softHit.detail } : null);
+      return { wallpaperId: id, ok: s?.ok ?? null, failure, timing };
+    },
+    shouldAutoRetry(id) {
+      if (!id || retried.has(id)) return false;
+      if (currentHard(id)) return false;
+      const hit = soft.get(id);
+      if (!hit) return false;
+      return now() - hit.at >= cooldown;
+    },
+    markAutoRetried(id) {
+      if (id) retried.add(id);
+    }
+  };
+}
+function formatHealthLine(snap, t) {
+  const timing = snap.timing ? formatTiming(snap.timing, t) : "";
+  if (snap.failure) {
+    const reason = FAILURE_TEXT[snap.failure.kind] ?? t("\u6E32\u67D3\u5931\u8D25");
+    return t("\u4E0A\u6B21\u5931\u8D25\uFF1A{reason}").replace("{reason}", reason) + (snap.failure.hard ? t("\uFF08\u5DF2\u8BB0\u5FC6\uFF09") : t("\uFF08\u672C\u6B21\u4F1A\u8BDD\u5185\u8BB0\u5FC6\uFF09")) + (timing ? " \xB7 " + timing : "");
+  }
+  if (snap.ok === true) return t("\u5B9E\u65F6\u6E32\u67D3\u6B63\u5E38") + (timing ? " \xB7 " + timing : "");
+  return t("\u5C1A\u672A\u6E32\u67D3\uFF08\u9009\u62E9\u4E00\u5F20 scene \u58C1\u7EB8\u540E\u8FD9\u91CC\u663E\u793A\u72B6\u6001\uFF09");
+}
+function formatTiming(timing, t) {
+  const assemble = t("\u88C5\u914D {assemble} ms").replace("{assemble}", String(Math.round(timing.assembleMs)));
+  if (timing.firstFrameMs < 0) return assemble;
+  return assemble + " \xB7 " + t("\u9996\u5E27 {first} ms").replace("{first}", String(Math.round(timing.firstFrameMs)));
+}
+var FAILURE_TEXT = {
+  "scene-json": "\u62FF\u4E0D\u5230 scene.json",
+  "no-visible-objects": "\u6CA1\u6709\u53EF\u663E\u793A\u7684\u5BF9\u8C61",
+  "context-lost": "WebGL \u4E0A\u4E0B\u6587\u4E22\u5931",
+  "exception": "\u88C5\u914D\u5F02\u5E38",
+  "load-error": "\u8D44\u6E90\u52A0\u8F7D\u4E2D\u65AD"
+};
+
+// src/client/local-store.ts
+var STORAGE_KEYS = { favorites: "we:fav", hidden: "we:hidden", recent: "we:recent" };
+function storeOf(store) {
+  if (store) return store;
+  return typeof localStorage !== "undefined" ? localStorage : null;
+}
+function loadJson(key, fallback, store) {
+  const s = storeOf(store);
+  if (!s) return fallback;
+  try {
+    const raw = s.getItem(key);
+    return raw === null ? fallback : JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+}
+function saveJson(key, value, store) {
+  const s = storeOf(store);
+  if (!s) return false;
+  try {
+    s.setItem(key, JSON.stringify(value));
+    return true;
+  } catch {
+    return false;
+  }
+}
+function loadStringSet(key, store) {
+  const value = loadJson(key, [], store);
+  const ids = Array.isArray(value) ? value.filter((id) => typeof id === "string") : [];
+  return new Set(ids);
+}
+function saveStringSet(key, ids, store) {
+  saveJson(key, [...new Set(ids)], store);
+}
+
+// src/client/library-view.ts
+var RECENT_LIMIT = 200;
+function loadRecent() {
+  const value = loadJson(STORAGE_KEYS.recent, {});
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value;
+}
+function loadLibraryState() {
+  return {
+    favorites: loadStringSet(STORAGE_KEYS.favorites),
+    hidden: loadStringSet(STORAGE_KEYS.hidden),
+    recent: loadRecent()
+  };
+}
+function toggleFavorite(id, s = loadLibraryState()) {
+  const favorites = new Set(s.favorites);
+  if (favorites.has(id)) favorites.delete(id);
+  else favorites.add(id);
+  saveStringSet(STORAGE_KEYS.favorites, favorites);
+  return { ...s, favorites };
+}
+function toggleHidden(id, s = loadLibraryState()) {
+  const hidden = new Set(s.hidden);
+  if (hidden.has(id)) hidden.delete(id);
+  else hidden.add(id);
+  saveStringSet(STORAGE_KEYS.hidden, hidden);
+  return { ...s, hidden };
+}
+function markRecent(id, now = Date.now()) {
+  if (!id) return;
+  const recent = loadRecent();
+  recent[id] = now;
+  const kept = Object.entries(recent).sort(([, a], [, b]) => b - a).slice(0, RECENT_LIMIT);
+  saveJson(STORAGE_KEYS.recent, Object.fromEntries(kept));
+}
+function filterLibrary(list, f, s) {
+  const q = f.query.trim().toLowerCase();
+  let out = list.filter((w) => {
+    if (!f.showHidden && s.hidden.has(w.id)) return false;
+    if (f.favoritesOnly && !s.favorites.has(w.id)) return false;
+    if (f.types.length > 0 && !f.types.includes(w.type)) return false;
+    return q === "" || w.title.toLowerCase().includes(q);
+  });
+  if (f.sort === "recent") out = [...out].sort((a, b) => (s.recent[b.id] ?? 0) - (s.recent[a.id] ?? 0));
+  if (f.sort === "title") out = [...out].sort((a, b) => a.title.localeCompare(b.title));
+  if (f.sort === "default") {
+    out = [...out.filter((w) => s.favorites.has(w.id)), ...out.filter((w) => !s.favorites.has(w.id))];
+  }
+  return out;
+}
+
+// src/client/rotation.ts
+var ROTATION_INTERVAL_OPTIONS = [
+  { ms: 6e4, label: "1 \u5206\u949F" },
+  { ms: 3e5, label: "5 \u5206\u949F" },
+  { ms: 6e5, label: "10 \u5206\u949F" },
+  { ms: 18e5, label: "30 \u5206\u949F" }
+];
+function normalizeRotationOrder(raw) {
+  return raw === "random" ? "random" : "sequential";
+}
+function formatRotationInterval(ms) {
+  const value = typeof ms === "number" && Number.isFinite(ms) && ms > 0 ? ms : 3e5;
+  return `${Math.max(1, Math.round(value / 6e4))} \u5206\u949F`;
+}
+function buildRotationPool(list, state) {
+  const favorites = list.filter((w) => state.favorites.has(w.id));
+  if (favorites.length >= 2) return favorites;
+  return list.filter((w) => w.type !== "unknown" && !state.hidden.has(w.id));
+}
+function pickNext(pool, currentId, order, rand = Math.random) {
+  if (pool.length < 2) return null;
+  if (order === "random") {
+    const candidates = pool.filter((w) => w.id !== currentId);
+    if (candidates.length === 0) return null;
+    const index = Math.min(candidates.length - 1, Math.max(0, Math.floor(rand() * candidates.length)));
+    return candidates[index] ?? null;
+  }
+  const current = pool.findIndex((w) => w.id === currentId);
+  return pool[(current + 1) % pool.length] ?? null;
+}
+var timerHost = typeof window !== "undefined" ? window : globalThis;
+function createRotationScheduler(deps) {
+  const setTimer = deps.setTimeoutFn ?? ((fn, ms) => timerHost.setTimeout(fn, ms));
+  const clearTimer = deps.clearTimeoutFn ?? ((handle) => timerHost.clearTimeout(handle));
+  const now = deps.now ?? (() => Date.now());
+  const cfg = {
+    intervalMs: deps.intervalMs,
+    order: deps.order ?? "sequential"
+  };
+  const failed = /* @__PURE__ */ new Set();
+  let started = false;
+  let paused = false;
+  let timer = null;
+  let dueAt = null;
+  const clear = () => {
+    if (timer !== null) clearTimer(timer);
+    timer = null;
+    dueAt = null;
+  };
+  const schedule = () => {
+    clear();
+    if (!started || paused) return;
+    dueAt = now() + cfg.intervalMs;
+    timer = setTimer(() => {
+      void tick();
+    }, cfg.intervalMs);
+  };
+  const choose = () => {
+    const pool = deps.getPool();
+    let next = pickNext(pool, deps.getCurrentId(), cfg.order);
+    for (let i = 0; next && failed.has(next.id) && i < pool.length; i += 1) {
+      next = pickNext(pool, next.id, cfg.order);
+    }
+    return next && !failed.has(next.id) ? next : null;
+  };
+  const tick = async () => {
+    timer = null;
+    dueAt = null;
+    if (!started) return;
+    if (paused || deps.isPaused()) {
+      schedule();
+      return;
+    }
+    try {
+      const next = choose();
+      if (next) await deps.select(next.id);
+    } catch {
+    }
+    schedule();
+  };
+  return {
+    start() {
+      if (started) return;
+      started = true;
+      schedule();
+    },
+    stop() {
+      started = false;
+      clear();
+    },
+    setConfig(next) {
+      const intervalChanged = next.intervalMs !== void 0 && next.intervalMs !== cfg.intervalMs;
+      if (next.intervalMs !== void 0) cfg.intervalMs = next.intervalMs;
+      if (next.order !== void 0) cfg.order = next.order;
+      if (intervalChanged) schedule();
+    },
+    notifyManualSelect() {
+      failed.clear();
+      schedule();
+    },
+    markFailed(id) {
+      if (id) failed.add(id);
+    },
+    setPaused(next) {
+      if (next === paused) return;
+      paused = next;
+      if (paused) clear();
+      else schedule();
+    },
+    status() {
+      return {
+        enabled: started && !paused && !deps.isPaused(),
+        poolSize: deps.getPool().filter((w) => !failed.has(w.id)).length,
+        nextInMs: timer === null || dueAt === null ? null : Math.max(0, dueAt - now())
+      };
+    }
+  };
+}
+
+// src/client/settings-section.tsx
+var import_jsx_runtime = require("react/jsx-runtime");
+async function defaultFetchWallpapers(opts) {
+  return (await fetch(opts?.refresh ? "/wallpapers/list?refresh=1" : "/wallpapers/list")).json();
+}
+async function defaultFetchProbe() {
+  return (await fetch("/wallpapers/probe")).json();
+}
+var sharedOnSelect = null;
+function setWallpaperSelectHandler(fn) {
+  sharedOnSelect = fn;
+}
+var sharedOnRuntimeSettings = null;
+function setWallpaperRuntimeHandler(fn) {
+  sharedOnRuntimeSettings = fn;
+}
+var sharedOnReselect = null;
+function setWallpaperReselectHandler(handler) {
+  sharedOnReselect = handler;
+}
+var sharedSystemAudio = null;
+function setWallpaperSystemAudioHandlers(handlers) {
+  sharedSystemAudio = handlers;
+}
+function systemAudioErrorMessage(failure) {
+  switch (failure) {
+    case "unsupported":
+      return "\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u6355\u83B7\u7CFB\u7EDF\u97F3\u9891\uFF08\u684C\u9762\u7248 App \u7981\u7528\u4E86\u8BE5\u6743\u9650\uFF0C\u8BF7\u7528\u6D4F\u89C8\u5668\u6253\u5F00\u672C GUI \u5730\u5740\u518D\u8BD5\uFF09";
+    case "denied":
+      return "\u672A\u6388\u6743\uFF1A\u8BF7\u5728\u5F39\u7A97\u4E2D\u9009\u62E9\u5171\u4EAB\u5E76\u52FE\u9009\u300C\u5171\u4EAB\u97F3\u9891\u300D\uFF1B\u62D2\u7EDD\u540E\u4E0D\u4F1A\u81EA\u52A8\u91CD\u8BD5\u3002";
+    case "no-audio-track":
+      return "\u6CA1\u6709\u6355\u83B7\u5230\u97F3\u9891\u8F68\uFF1A\u8BF7\u91CD\u65B0\u9009\u62E9\u5E76\u52FE\u9009\u300C\u5171\u4EAB\u97F3\u9891\u300D\uFF08\u53EA\u5171\u4EAB\u753B\u9762\u4E0D\u4F1A\u51FA\u58F0\uFF09\u3002";
+    case "no-web-audio":
+      return "\u5F53\u524D\u6D4F\u89C8\u5668\u7F3A\u5C11 Web Audio \u652F\u6301\uFF0C\u65E0\u6CD5\u5206\u6790\u7CFB\u7EDF\u97F3\u9891\u3002";
+    default:
+      return "\u6355\u83B7\u7CFB\u7EDF\u97F3\u9891\u5931\u8D25\uFF08\u672A\u77E5\u539F\u56E0\uFF09\uFF0C\u5DF2\u4FDD\u6301\u9759\u97F3\u3002";
+  }
+}
+var healthHandler = null;
+var healthSubscribers = /* @__PURE__ */ new Set();
+function setWallpaperHealthHandler(handler) {
+  healthHandler = handler;
+}
+function subscribeWallpaperHealth(cb) {
+  healthSubscribers.add(cb);
+  return () => {
+    healthSubscribers.delete(cb);
+  };
+}
+function notifyWallpaperHealth(snap) {
+  for (const cb of Array.from(healthSubscribers)) {
+    try {
+      cb(snap);
+    } catch {
+    }
+  }
+}
+var mediaHandler = null;
+var mediaSubscribers = /* @__PURE__ */ new Set();
+function setWallpaperMediaHandler(handler) {
+  mediaHandler = handler;
+  pushMedia(handler?.get() ?? null);
+}
+function subscribeWallpaperMedia(cb) {
+  mediaSubscribers.add(cb);
+  return () => {
+    mediaSubscribers.delete(cb);
+  };
+}
+function notifyWallpaperMedia(failure) {
+  if (!mediaHandler) return;
+  pushMedia(failure);
+}
+function pushMedia(failure) {
+  for (const cb of Array.from(mediaSubscribers)) {
+    try {
+      cb(failure);
+    } catch {
+    }
+  }
+}
+var mediaIntegrationHandler = null;
+function setWallpaperMediaIntegrationHandler(handler) {
+  mediaIntegrationHandler = handler;
+}
+function mediaIntegrationHint(enabled, status) {
+  if (!enabled) return "\u5A92\u4F53\u96C6\u6210\u5DF2\u5173\u95ED\uFF1A\u4E0D\u8BFB\u53D6\u7CFB\u7EDF\u5A92\u4F53\u4F1A\u8BDD\uFF0C\u4E5F\u4E0D\u542F\u52A8\u5A92\u4F53\u8FDB\u7A0B\u3002";
+  switch (status?.reason) {
+    case "unsupported-platform":
+      return "\u5F53\u524D\u7CFB\u7EDF\u4E0D\u652F\u6301\u7CFB\u7EDF\u5A92\u4F53\u4F1A\u8BDD\uFF08\u4EC5 Windows\uFF09\uFF1A\u5A92\u4F53\u56FE\u5C42\u4FDD\u6301\u9690\u85CF\uFF0C\u58C1\u7EB8\u7167\u5E38\u6E32\u67D3\u3002";
+    case "no-powershell":
+      return "\u672A\u627E\u5230\u53EF\u7528\u7684 PowerShell\uFF1A\u8BFB\u4E0D\u5230\u7CFB\u7EDF\u5A92\u4F53\u4F1A\u8BDD\uFF0C\u5A92\u4F53\u56FE\u5C42\u4FDD\u6301\u9690\u85CF\uFF0C\u58C1\u7EB8\u7167\u5E38\u6E32\u67D3\u3002";
+    case "watcher-failed":
+      return "\u5A92\u4F53\u4F1A\u8BDD\u8BFB\u53D6\u5931\u8D25\uFF08\u5DF2\u964D\u7EA7\uFF09\uFF1A\u5A92\u4F53\u56FE\u5C42\u4FDD\u6301\u9690\u85CF\uFF0C\u58C1\u7EB8\u7167\u5E38\u6E32\u67D3\u3002";
+    default:
+      return "\u672C\u673A\u8BFB\u53D6\u7CFB\u7EDF\u5A92\u4F53\u4F1A\u8BDD\uFF08\u4EC5 Windows\uFF09\uFF1B\u66F2\u540D/\u5C01\u9762\u4EC5\u5185\u5B58\u3001\u4E0D\u843D\u76D8\u3001\u4E0D\u4E0A\u4F20\u3002";
+  }
+}
+var weT = (s) => s;
+var EMPTY_HEALTH = { wallpaperId: "", ok: null, failure: null, timing: null };
+var MEDIA_FAILURE_TEXT = {
+  unsupported: {
+    preview: "\u8BE5\u89C6\u9891\u58C1\u7EB8\u89E3\u7801\u5931\u8D25\uFF08\u53EF\u80FD\u662F HEVC/H.265\uFF09\uFF0C\u5DF2\u56DE\u9000\u5230\u9884\u89C8\u56FE\uFF1B\u5EFA\u8BAE\u6539\u7528 Chrome \u6216\u8F6C\u6362\u7F16\u7801\u3002",
+    none: "\u8BE5\u89C6\u9891\u58C1\u7EB8\u89E3\u7801\u5931\u8D25\uFF08\u53EF\u80FD\u662F HEVC/H.265\uFF09\uFF0C\u4E14\u6CA1\u6709\u53EF\u7528\u7684\u9884\u89C8\u56FE\uFF1B\u5EFA\u8BAE\u6539\u7528 Chrome \u6216\u8F6C\u6362\u7F16\u7801\u3002"
+  },
+  timeout: {
+    preview: "\u89C6\u9891\u58C1\u7EB8\u52A0\u8F7D\u8D85\u65F6\uFF1A1.5 \u79D2\u5185\u6CA1\u6709\u51FA\u73B0\u9996\u5E27\uFF0C\u5DF2\u56DE\u9000\u5230\u9884\u89C8\u56FE\uFF1B\u5EFA\u8BAE\u6539\u7528 Chrome \u6216\u68C0\u67E5\u89C6\u9891\u6587\u4EF6\u3002",
+    none: "\u89C6\u9891\u58C1\u7EB8\u52A0\u8F7D\u8D85\u65F6\uFF1A1.5 \u79D2\u5185\u6CA1\u6709\u51FA\u73B0\u9996\u5E27\uFF0C\u4E14\u6CA1\u6709\u53EF\u7528\u7684\u9884\u89C8\u56FE\uFF1B\u5EFA\u8BAE\u6539\u7528 Chrome \u6216\u68C0\u67E5\u89C6\u9891\u6587\u4EF6\u3002"
+  }
+};
+var KNOWN_USERPROP_TYPES = /* @__PURE__ */ new Set(["bool", "slider", "color", "combo"]);
+function isKnownUserProperty(property) {
+  return KNOWN_USERPROP_TYPES.has(property.type);
+}
+function initialPropertyValue(property, wallpaperId) {
+  const stored = readUserProperty(property.key, wallpaperId);
+  switch (property.type) {
+    case "bool":
+      return typeof stored === "boolean" ? stored : property.value;
+    case "slider":
+      return typeof stored === "number" && Number.isFinite(stored) ? Math.min(property.max, Math.max(property.min, stored)) : property.value;
+    case "color":
+      return typeof stored === "string" && parseColorTriplet(stored) ? stored : property.value;
+    case "combo":
+      return typeof stored === "string" && property.options.some((o) => o.value === stored) ? stored : property.value;
+    default:
+      return false;
+  }
+}
+function sliderStep(property) {
+  return typeof property.step === "number" && Number.isFinite(property.step) && property.step > 0 ? property.step : property.fraction === false ? 1 : 0.01;
+}
+function sliderDecimals(property) {
+  if (typeof property.precision === "number" && Number.isFinite(property.precision)) {
+    return Math.min(10, Math.max(0, Math.floor(property.precision)));
+  }
+  const text = String(sliderStep(property));
+  const exp = /e-(\d+)$/i.exec(text);
+  if (exp) return Math.min(10, Number(exp[1]));
+  const dot = text.indexOf(".");
+  return dot >= 0 ? Math.min(10, text.length - dot - 1) : 0;
+}
+function formatSliderValue(value, property) {
+  return property.fraction === false ? String(Math.round(value)) : value.toFixed(sliderDecimals(property));
+}
+function colorTripletToHex(value) {
+  const rgb = parseColorTriplet(value) ?? [0, 0, 0];
+  return "#" + rgb.map((n) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, "0")).join("");
+}
+function hexToColorTriplet(hex) {
+  const normalized = normalizeHexColor(hex, "#000000");
+  const full = normalized.length === 4 ? `#${normalized[1]}${normalized[1]}${normalized[2]}${normalized[2]}${normalized[3]}${normalized[3]}` : normalized;
+  const component = (index) => {
+    const n = parseInt(full.slice(1 + index * 2, 3 + index * 2), 16) / 255;
+    return String(Number(n.toFixed(4)));
+  };
+  return `${component(0)} ${component(1)} ${component(2)}`;
+}
+function WallpaperSettingsSection(props) {
+  const fetchSettings = props.fetchSettings ?? readClientSettings;
+  const writeSettings = props.writeSettings ?? writeClientSettings;
+  const fetchWallpapers = props.fetchWallpapers ?? defaultFetchWallpapers;
+  const fetchProbe = props.fetchProbe ?? defaultFetchProbe;
+  const fetchProperties = props.fetchProperties ?? fetchWallpaperProperties;
+  const onSelect = props.onSelect ?? sharedOnSelect ?? (() => {
+  });
+  const onReselect = props.onReselect ?? sharedOnReselect ?? (() => {
+  });
+  const onRuntimeSettings = props.onRuntimeSettings ?? sharedOnRuntimeSettings ?? (() => {
+  });
+  const [settings, setSettings] = (0, import_react.useState)(null);
+  const [wallpapers, setWallpapers] = (0, import_react.useState)([]);
+  const [probe, setProbe] = (0, import_react.useState)(null);
+  const [wallpaperDir, setWallpaperDir] = (0, import_react.useState)("");
+  const [weAssetsDir, setWeAssetsDir] = (0, import_react.useState)("");
+  const [message, setMessage] = (0, import_react.useState)("");
+  const [health, setHealth] = (0, import_react.useState)(props.health ?? null);
+  const [mediaFailure, setMediaFailure] = (0, import_react.useState)(mediaHandler?.get() ?? null);
+  const [mediaStatus, setMediaStatus] = (0, import_react.useState)(
+    () => mediaIntegrationHandler?.get() ?? null
+  );
+  const [libState, setLibState] = (0, import_react.useState)(loadLibraryState);
+  const [properties, setProperties] = (0, import_react.useState)([]);
+  const [audioProcessing, setAudioProcessing] = (0, import_react.useState)(false);
+  const [systemAudioState, setSystemAudioState] = (0, import_react.useState)("idle");
+  const [systemAudioError, setSystemAudioError] = (0, import_react.useState)(null);
+  const [propValues, setPropValues] = (0, import_react.useState)({});
+  const commitTimers = (0, import_react.useRef)(/* @__PURE__ */ new Map());
+  const commitPending = (0, import_react.useRef)(/* @__PURE__ */ new Map());
+  const [filter, setFilter] = (0, import_react.useState)({
+    query: "",
+    types: [],
+    favoritesOnly: false,
+    showHidden: false,
+    sort: "default"
+  });
+  const visibleWallpapers = filterLibrary(wallpapers, filter, libState);
+  const selectedId = settings?.selectedWallpaperId ?? "";
+  const selectedIsScene = !!selectedId && wallpapers.some((w) => w.id === selectedId && (w.type === "scene" || w.type === "preset"));
+  const mediaEnabled = settings?.mediaIntegrationEnabled ?? false;
+  const clearCommitTimers = (0, import_react.useCallback)(() => {
+    for (const timer of commitTimers.current.values()) clearTimeout(timer);
+    commitTimers.current.clear();
+    commitPending.current.clear();
+  }, []);
+  (0, import_react.useEffect)(() => {
+    setHealth(props.health ?? healthHandler?.get() ?? null);
+    return subscribeWallpaperHealth((s) => setHealth(s));
+  }, [props.health]);
+  (0, import_react.useEffect)(() => {
+    setMediaFailure(mediaHandler?.get() ?? null);
+    return subscribeWallpaperMedia((f) => setMediaFailure(f));
+  }, []);
+  (0, import_react.useEffect)(() => {
+    const read = () => setMediaStatus(mediaIntegrationHandler?.get() ?? null);
+    read();
+    const timer = setInterval(read, 1e3);
+    return () => clearInterval(timer);
+  }, []);
+  (0, import_react.useEffect)(() => {
+    let alive = true;
+    void (async () => {
+      const [s, list] = await Promise.all([
+        fetchSettings(),
+        fetchWallpapers().catch(() => [])
+      ]);
+      if (!alive) return;
+      setSettings(s);
+      setWallpapers(list);
+      setWallpaperDir(s.wallpaperDir || "");
+      setWeAssetsDir(s.weAssetsDir || "");
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [fetchSettings, fetchWallpapers]);
+  (0, import_react.useEffect)(() => {
+    if (!selectedIsScene) {
+      setProperties([]);
+      setPropValues({});
+      setAudioProcessing(false);
+      setSystemAudioState("idle");
+      setSystemAudioError(null);
+      return;
+    }
+    let alive = true;
+    void fetchProperties(selectedId).then((res) => {
+      if (!alive) return;
+      const items = Array.isArray(res?.properties) ? res.properties : [];
+      setAudioProcessing(res?.audioProcessing === true);
+      setProperties(items);
+      const values = {};
+      for (const p of items) {
+        if (isKnownUserProperty(p)) values[p.key] = initialPropertyValue(p, selectedId);
+      }
+      setPropValues(values);
+    }).catch(() => {
+      if (!alive) return;
+      setProperties([]);
+      setPropValues({});
+      setAudioProcessing(false);
+    });
+    return () => {
+      alive = false;
+      clearCommitTimers();
+    };
+  }, [selectedId, selectedIsScene, fetchProperties, clearCommitTimers]);
+  (0, import_react.useEffect)(() => () => clearCommitTimers(), [clearCommitTimers]);
+  const startSystemAudio = (0, import_react.useCallback)(async () => {
+    if (!sharedSystemAudio) {
+      setSystemAudioError("unsupported");
+      return;
+    }
+    setSystemAudioState("starting");
+    setSystemAudioError(null);
+    try {
+      const result = await sharedSystemAudio.start();
+      if (result === "ok") setSystemAudioState("active");
+      else {
+        setSystemAudioState("idle");
+        setSystemAudioError(result);
+      }
+    } catch {
+      setSystemAudioState("idle");
+      setSystemAudioError("error");
+    }
+  }, []);
+  const stopSystemAudio = (0, import_react.useCallback)(() => {
+    sharedSystemAudio?.stop();
+    setSystemAudioState("idle");
+  }, []);
+  const select = (0, import_react.useCallback)((id) => {
+    onSelect(id);
+    setSettings((prev) => prev ? { ...prev, selectedWallpaperId: id } : prev);
+    void writeSettings({ selectedWallpaperId: id }).then((ok) => setMessage(ok === false ? "\u4FDD\u5B58\u5931\u8D25\uFF1A\u9009\u62E9\u672A\u6301\u4E45\u5316\uFF08\u8BE6\u89C1\u63A7\u5236\u53F0\uFF09" : id ? "\u58C1\u7EB8\u5DF2\u5207\u6362" : "\u5DF2\u53D6\u6D88\u58C1\u7EB8"));
+  }, [onSelect, writeSettings]);
+  const refreshWallpapers = (0, import_react.useCallback)(() => {
+    setMessage("");
+    void fetchWallpapers({ refresh: true }).then((list) => {
+      setWallpapers(list);
+      setMessage("\u58C1\u7EB8\u5217\u8868\u5DF2\u5237\u65B0");
+    }).catch(() => setMessage("\u5237\u65B0\u58C1\u7EB8\u5931\u8D25"));
+  }, [fetchWallpapers]);
+  const applyRuntime = (0, import_react.useCallback)((patch) => {
+    setSettings((prev) => prev ? { ...prev, ...patch } : prev);
+    onRuntimeSettings(patch);
+    void writeSettings(patch);
+  }, [onRuntimeSettings, writeSettings]);
+  const setPropertyValue = (0, import_react.useCallback)((key, value) => {
+    setPropValues((prev) => ({ ...prev, [key]: value }));
+  }, []);
+  const commitProperty = (0, import_react.useCallback)((key, value) => {
+    writeUserProperty(key, value, selectedId);
+    onReselect(selectedId);
+  }, [onReselect, selectedId]);
+  const cancelCommit = (0, import_react.useCallback)((key) => {
+    const timer = commitTimers.current.get(key);
+    if (timer !== void 0) {
+      clearTimeout(timer);
+      commitTimers.current.delete(key);
+    }
+    commitPending.current.delete(key);
+  }, []);
+  const flushCommit = (0, import_react.useCallback)((key) => {
+    const pending = commitPending.current.get(key);
+    cancelCommit(key);
+    if (pending === void 0) return;
+    commitProperty(key, pending);
+  }, [cancelCommit, commitProperty]);
+  const scheduleCommit = (0, import_react.useCallback)((key, value) => {
+    commitPending.current.set(key, value);
+    const timer = commitTimers.current.get(key);
+    if (timer !== void 0) clearTimeout(timer);
+    commitTimers.current.set(key, setTimeout(() => {
+      commitTimers.current.delete(key);
+      flushCommit(key);
+    }, 300));
+  }, [flushCommit]);
+  const resetProperty = (0, import_react.useCallback)((property) => {
+    cancelCommit(property.key);
+    resetUserProperty(property.key, selectedId);
+    setPropertyValue(property.key, property.value);
+    onReselect(selectedId);
+  }, [cancelCommit, onReselect, selectedId, setPropertyValue]);
+  const saveDirs = (0, import_react.useCallback)(() => {
+    void writeSettings({ wallpaperDir: wallpaperDir.trim(), weAssetsDir: weAssetsDir.trim() }).then((ok) => setMessage(ok === false ? "\u4FDD\u5B58\u5931\u8D25\uFF1A\u8BBE\u7F6E\u672A\u5199\u5165\uFF08\u8BE6\u89C1\u63A7\u5236\u53F0\uFF09" : "\u8DEF\u5F84\u5DF2\u4FDD\u5B58"));
+  }, [wallpaperDir, weAssetsDir, writeSettings]);
+  const runProbe = (0, import_react.useCallback)(() => {
+    setMessage("");
+    void fetchProbe().then(setProbe).catch(() => setMessage("\u81EA\u52A8\u63A2\u6D4B\u5931\u8D25"));
+  }, [fetchProbe]);
+  const adopt = (0, import_react.useCallback)((path, key) => {
+    void writeSettings({ [key]: path }).then((ok) => {
+      if (ok === false) {
+        setMessage("\u4FDD\u5B58\u5931\u8D25\uFF1A\u8BBE\u7F6E\u672A\u5199\u5165\uFF08\u8BE6\u89C1\u63A7\u5236\u53F0\uFF09");
+        return;
+      }
+      if (key === "wallpaperDir") setWallpaperDir(path);
+      else setWeAssetsDir(path);
+      setMessage("\u5DF2\u91C7\u7528\u63A2\u6D4B\u8DEF\u5F84");
+    });
+  }, [writeSettings]);
+  const currentTitle = settings ? wallpapers.find((w) => w.id === settings.selectedWallpaperId)?.title ?? "\u65E0\uFF08\u9ED8\u8BA4\u80CC\u666F\uFF09" : "";
+  const live = health ?? EMPTY_HEALTH;
+  const liveCurrent = live.ok === true ? formatHealthLine({ ...live, failure: null }, weT) : formatHealthLine(live, weT);
+  const liveMemory = live.ok === true && live.failure ? formatHealthLine({ ...live, ok: null, timing: null }, weT) : "";
+  const liveState = live.ok === true ? "ok" : live.failure ? "failed" : "idle";
+  const currentWallpaper = settings ? wallpapers.find((w) => w.id === settings.selectedWallpaperId) : void 0;
+  const heroStatus = !settings?.selectedWallpaperId ? { tone: "idle", text: "\u672A\u9009\u62E9\u58C1\u7EB8" } : liveState === "ok" ? { tone: "ok", text: "\u5B9E\u65F6\u6E32\u67D3\u4E2D" } : liveState === "failed" ? { tone: "danger", text: "\u5B9E\u65F6\u6E32\u67D3\u5931\u8D25" } : { tone: "idle", text: "\u5F85\u6E32\u67D3" };
+  const jumpTo = (id) => {
+    const el = document.getElementById(id);
+    if (el && typeof el.scrollIntoView === "function") el.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  const rotationPoolSize = buildRotationPool(wallpapers, libState).length;
+  const rotationStatus = rotationPoolSize < 2 ? "\u81F3\u5C11\u4FDD\u7559 2 \u5F20\u53EF\u8F6E\u64AD\u58C1\u7EB8\uFF0C\u6216\u6536\u85CF 2 \u5F20\u4EE5\u4E0A" : `\u6BCF ${formatRotationInterval(settings?.rotationIntervalMs)} \xB7 ${normalizeRotationOrder(settings?.rotationOrder) === "sequential" ? "\u987A\u5E8F" : "\u968F\u673A"} \xB7 \u53EF\u8F6E\u64AD ${rotationPoolSize} \u5F20`;
+  const visibleProperties = properties.filter(
+    (p) => isKnownUserProperty(p) && Array.isArray(p.usedBy) && p.usedBy.length > 0
+  );
+  const retryLive = () => {
+    if (props.onRetryLive) props.onRetryLive();
+    else if (healthHandler) healthHandler.retry();
+    else return;
+    setMessage("\u5DF2\u91CD\u8BD5\u5B9E\u65F6\u6E32\u67D3");
+  };
+  const forgetFailures = () => {
+    if (props.onClearRenderFailures) props.onClearRenderFailures();
+    else if (healthHandler) healthHandler.clearFailures();
+    else return;
+    setMessage("\u5DF2\u6E05\u9664\u5931\u8D25\u8BB0\u5FC6");
+  };
+  const dismissMediaFailure = () => {
+    mediaHandler?.clear();
+    setMediaFailure(null);
+  };
+  return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-root", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section wss-hero", "aria-label": "\u5F53\u524D\u58C1\u7EB8", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "wss-hero-media", "data-empty": !currentWallpaper?.previewUrl, children: currentWallpaper?.previewUrl ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("img", { src: currentWallpaper.previewUrl, alt: currentTitle }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-hero-empty", children: "\u8FD8\u6CA1\u6709\u9009\u62E9\u58C1\u7EB8" }) }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-hero-info", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-current", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-current-info", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-current-label", children: "\u5F53\u524D\u58C1\u7EB8" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-current-name", title: currentTitle, children: currentTitle })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-current-actions", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-refresh", onClick: refreshWallpapers, children: "\u5237\u65B0" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-cancel", onClick: () => select(""), children: "\u53D6\u6D88\u58C1\u7EB8" })
+          ] })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-hero-meta", children: [
+          currentWallpaper && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-type-badge", children: currentWallpaper.type.toUpperCase() }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-hero-status", "data-tone": heroStatus.tone, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("i", { "aria-hidden": "true" }),
+            heroStatus.text
+          ] }),
+          currentWallpaper?.hasScene && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-chip", children: "scene.pkg" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-chip", children: [
+            wallpapers.length,
+            " \u5F20\u53EF\u7528"
+          ] })
+        ] })
+      ] })
+    ] }),
+    mediaFailure && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-alert wss-media-failure", "data-kind": mediaFailure.kind, role: "status", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { children: MEDIA_FAILURE_TEXT[mediaFailure.kind][mediaFailure.fallback] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-media-dismiss", onClick: dismissMediaFailure, children: "\u77E5\u9053\u4E86" })
+    ] }),
+    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("nav", { className: "wss-nav", "aria-label": "\u58C1\u7EB8\u8BBE\u7F6E\u5FEB\u901F\u5B9A\u4F4D", children: [
+      ["wss-anchor-library", "\u58C1\u7EB8\u5E93"],
+      ["wss-anchor-appearance", "\u5916\u89C2"],
+      ["wss-anchor-playback", "\u64AD\u653E"],
+      ["wss-anchor-advanced", "\u9AD8\u7EA7"]
+    ].map(([id, label]) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-nav-item", onClick: () => jumpTo(id), children: label }, id)) }),
+    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-group", id: "wss-anchor-library", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("header", { className: "wss-section-head", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wss-section-title", children: "\u58C1\u7EB8\u5E93" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-count", children: [
+            wallpapers.length,
+            " \u5F20"
+          ] })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-library-tools", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-search-row", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "input",
+              {
+                type: "search",
+                className: "wss-search",
+                placeholder: "\u641C\u7D22\u58C1\u7EB8\u6807\u9898",
+                "aria-label": "\u641C\u7D22\u58C1\u7EB8\u6807\u9898",
+                value: filter.query,
+                onChange: (e) => setFilter((f) => ({ ...f, query: e.target.value }))
+              }
+            ),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+              "select",
+              {
+                className: "wss-sort",
+                "aria-label": "\u6392\u5E8F\u65B9\u5F0F",
+                value: filter.sort,
+                onChange: (e) => {
+                  const sort = e.target.value;
+                  setFilter((f) => ({ ...f, sort }));
+                  if (sort === "recent") setLibState((prev) => ({ ...prev, recent: loadLibraryState().recent }));
+                },
+                children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "default", children: "\u9ED8\u8BA4\u6392\u5E8F" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "recent", children: "\u6700\u8FD1\u4F7F\u7528" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "title", children: "\u6807\u9898\u6392\u5E8F" })
+                ]
+              }
+            )
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-filter-row", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+              "select",
+              {
+                className: "wss-type-filter",
+                "aria-label": "\u6309\u7C7B\u578B\u7B5B\u9009",
+                value: filter.types[0] ?? "all",
+                onChange: (e) => setFilter((f) => ({
+                  ...f,
+                  types: e.target.value === "all" ? [] : [e.target.value]
+                })),
+                children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "all", children: "\u5168\u90E8\u7C7B\u578B" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "scene", children: "SCENE" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "video", children: "VIDEO" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "web", children: "WEB" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "image", children: "IMAGE" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "preset", children: "PRESET" })
+                ]
+              }
+            ),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-tool", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "input",
+                {
+                  type: "checkbox",
+                  className: "wss-fav-only",
+                  checked: filter.favoritesOnly,
+                  onChange: (e) => setFilter((f) => ({ ...f, favoritesOnly: e.target.checked }))
+                }
+              ),
+              "\u4EC5\u6536\u85CF"
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-tool", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "input",
+                {
+                  type: "checkbox",
+                  className: "wss-show-hidden",
+                  checked: filter.showHidden,
+                  onChange: (e) => setFilter((f) => ({ ...f, showHidden: e.target.checked }))
+                }
+              ),
+              "\u663E\u793A\u5DF2\u9690\u85CF"
+            ] })
+          ] })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "wss-grid", children: visibleWallpapers.map((w) => {
+          const selected = settings?.selectedWallpaperId === w.id;
+          const favorite = libState.favorites.has(w.id);
+          const hidden = libState.hidden.has(w.id);
+          return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-thumb-wrap", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+              "button",
+              {
+                type: "button",
+                className: "wss-thumb" + (selected ? " wss-selected" : ""),
+                "data-id": w.id,
+                title: w.title,
+                "aria-pressed": selected,
+                onClick: () => select(w.id),
+                children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-thumb-media", children: [
+                    w.previewUrl ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("img", { src: w.previewUrl, alt: w.title, loading: "lazy" }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-no-preview", children: "\u65E0\u9884\u89C8" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-badge", children: w.type.toUpperCase() }),
+                    selected && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-check", "aria-hidden": "true", children: "\u2713" })
+                  ] }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-thumb-title", children: w.title })
+                ]
+              }
+            ),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-thumb-actions", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "button",
+                {
+                  type: "button",
+                  className: "wss-fav" + (favorite ? " wss-fav-on" : ""),
+                  "data-id": w.id,
+                  title: favorite ? "\u53D6\u6D88\u6536\u85CF" : "\u6536\u85CF",
+                  "aria-label": favorite ? "\u53D6\u6D88\u6536\u85CF" : "\u6536\u85CF",
+                  "aria-pressed": favorite,
+                  onClick: (e) => {
+                    e.stopPropagation();
+                    setLibState((prev) => toggleFavorite(w.id, prev));
+                  },
+                  children: favorite ? "\u2605" : "\u2606"
+                }
+              ),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "button",
+                {
+                  type: "button",
+                  className: "wss-hide" + (hidden ? " wss-hide-on" : ""),
+                  "data-id": w.id,
+                  title: hidden ? "\u53D6\u6D88\u9690\u85CF" : "\u9690\u85CF\u8FD9\u5F20\u58C1\u7EB8",
+                  "aria-label": hidden ? "\u53D6\u6D88\u9690\u85CF" : "\u9690\u85CF\u8FD9\u5F20\u58C1\u7EB8",
+                  onClick: (e) => {
+                    e.stopPropagation();
+                    setLibState((prev) => toggleHidden(w.id, prev));
+                  },
+                  children: hidden ? "\u21BA" : "\u2715"
+                }
+              )
+            ] })
+          ] }, w.id);
+        }) }),
+        wallpapers.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-empty", children: "\u8FD8\u6CA1\u6709\u58C1\u7EB8\u3002\u8BF7\u5728\u4E0B\u65B9\u8BBE\u7F6E\u58C1\u7EB8\u76EE\u5F55\uFF0C\u6216\u70B9\u300C\u81EA\u52A8\u63A2\u6D4B\u300D\u3002" }),
+        wallpapers.length > 0 && visibleWallpapers.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { className: "wss-empty", children: [
+          "\u6CA1\u6709\u5339\u914D\u7684\u58C1\u7EB8\uFF08\u9690\u85CF ",
+          libState.hidden.size,
+          " \u5F20\uFF09"
+        ] })
+      ] }),
+      selectedIsScene && visibleProperties.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section wss-userprops", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wss-section-title", children: "\u58C1\u7EB8\u5C5E\u6027" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc", children: "\u5207\u6362\u540E\u751F\u6548\uFF08\u4F1A\u91CD\u65B0\u88C5\u914D\u5F53\u524D\u58C1\u7EB8\uFF09\u3002" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "wss-userprops-list", children: visibleProperties.map((property) => {
+          const enabled = propertyConditionMet(property.condition, propValues);
+          const disabledTitle = enabled ? void 0 : "\u6761\u4EF6\u4E0D\u6EE1\u8DB3\uFF0C\u6B64\u5C5E\u6027\u6682\u4E0D\u53EF\u7528";
+          const labelNode = /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-userprop-label", children: [
+            property.label,
+            !enabled && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-userprop-hint", children: "\uFF08\u6761\u4EF6\u4E0D\u6EE1\u8DB3\uFF09" })
+          ] });
+          const resetNode = /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "button",
+            {
+              type: "button",
+              className: "wss-userprop-reset",
+              "data-key": property.key,
+              disabled: !enabled,
+              title: disabledTitle,
+              onClick: () => resetProperty(property),
+              children: "\u6062\u590D\u9ED8\u8BA4"
+            }
+          );
+          const current = propValues[property.key] ?? property.value;
+          if (property.type === "bool") {
+            const checked = typeof current === "boolean" ? current : property.value;
+            return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-userprop-item", "data-key": property.key, "data-disabled": enabled ? void 0 : "true", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row wss-userprop-main", children: [
+                labelNode,
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "input",
+                  {
+                    type: "checkbox",
+                    className: "wss-userprop",
+                    "data-key": property.key,
+                    checked,
+                    disabled: !enabled,
+                    title: disabledTitle,
+                    onChange: (e) => {
+                      const next = e.target.checked;
+                      setPropertyValue(property.key, next);
+                      commitProperty(property.key, next);
+                    }
+                  }
+                )
+              ] }),
+              resetNode
+            ] }, property.key);
+          }
+          if (property.type === "slider") {
+            const value2 = typeof current === "number" && Number.isFinite(current) ? current : property.value;
+            return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-userprop-item", "data-key": property.key, "data-disabled": enabled ? void 0 : "true", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-slider wss-userprop-main", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-slider-head", children: [
+                  labelNode,
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-userprop-value", children: formatSliderValue(value2, property) })
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "input",
+                  {
+                    type: "range",
+                    className: "wss-userprop",
+                    "data-key": property.key,
+                    min: property.min,
+                    max: property.max,
+                    step: sliderStep(property),
+                    value: value2,
+                    disabled: !enabled,
+                    title: disabledTitle,
+                    onChange: (e) => {
+                      const next = Number(e.target.value);
+                      setPropertyValue(property.key, next);
+                      scheduleCommit(property.key, next);
+                    },
+                    onPointerUp: () => flushCommit(property.key),
+                    onBlur: () => flushCommit(property.key)
+                  }
+                )
+              ] }),
+              resetNode
+            ] }, property.key);
+          }
+          if (property.type === "color") {
+            const value2 = typeof current === "string" ? current : property.value;
+            return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-userprop-item", "data-key": property.key, "data-disabled": enabled ? void 0 : "true", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row wss-userprop-main", children: [
+                labelNode,
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                  "input",
+                  {
+                    type: "color",
+                    className: "wss-userprop",
+                    "data-key": property.key,
+                    value: colorTripletToHex(value2),
+                    disabled: !enabled,
+                    title: disabledTitle,
+                    onChange: (e) => {
+                      const next = hexToColorTriplet(e.target.value);
+                      setPropertyValue(property.key, next);
+                      scheduleCommit(property.key, next);
+                    },
+                    onPointerUp: () => flushCommit(property.key),
+                    onBlur: () => flushCommit(property.key)
+                  }
+                )
+              ] }),
+              resetNode
+            ] }, property.key);
+          }
+          const value = typeof current === "string" ? current : property.value;
+          return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-userprop-item", "data-key": property.key, "data-disabled": enabled ? void 0 : "true", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row wss-userprop-main", children: [
+              labelNode,
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "select",
+                {
+                  className: "wss-userprop wss-userprop-select",
+                  "data-key": property.key,
+                  value,
+                  disabled: !enabled,
+                  title: disabledTitle,
+                  onChange: (e) => {
+                    const next = e.target.value;
+                    setPropertyValue(property.key, next);
+                    commitProperty(property.key, next);
+                  },
+                  children: property.options.map((option) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: option.value, children: option.label }, option.value))
+                }
+              )
+            ] }),
+            resetNode
+          ] }, property.key);
+        }) })
+      ] }),
+      selectedIsScene && audioProcessing && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section wss-sysaudio", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wss-section-title", children: "\u7CFB\u7EDF\u97F3\u9891" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc", children: "\u7528\u7CFB\u7EDF\u64AD\u653E\u7684\u58F0\u97F3\u9A71\u52A8\u58C1\u7EB8\u7684\u97F3\u9891\u53EF\u89C6\u5316\u3002\u70B9\u4E0B\u9762\u6309\u94AE\u540E\uFF0C\u5728\u6D4F\u89C8\u5668\u5F39\u7A97\u91CC\u9009\u62E9\u300C\u6574\u4E2A\u5C4F\u5E55\u300D\u5E76\u52FE\u9009\u300C\u5171\u4EAB\u97F3\u9891\u300D\uFF1B \u5171\u4EAB\u671F\u95F4\u4F1A\u6301\u7EED\u91C7\u96C6\u7CFB\u7EDF\u58F0\u97F3\uFF08\u4E0D\u4E0A\u4F20\u3001\u4E0D\u843D\u76D8\uFF09\uFF0C\u53EF\u968F\u65F6\u505C\u6B62\u3002\u684C\u9762\u7248 App \u53D7\u5BBF\u4E3B\u6743\u9650\u9650\u5236\u4E0D\u53EF\u7528\uFF0C \u8BF7\u7528\u6D4F\u89C8\u5668\u6253\u5F00\u672C GUI \u5730\u5740\u540E\u4F7F\u7528\u3002" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "wss-row", children: systemAudioState === "active" ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "wss-sysaudio-stop", onClick: stopSystemAudio, children: "\u505C\u6B62\u7CFB\u7EDF\u97F3\u9891" }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "button",
+          {
+            className: "wss-sysaudio-start",
+            disabled: systemAudioState === "starting",
+            onClick: () => {
+              void startSystemAudio();
+            },
+            children: systemAudioState === "starting" ? "\u7B49\u5F85\u6388\u6743\u2026" : "\u542F\u7528\u7CFB\u7EDF\u97F3\u9891\uFF08\u9700\u6388\u6743\uFF09"
+          }
+        ) }),
+        systemAudioError && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc wss-sysaudio-error", children: systemAudioErrorMessage(systemAudioError) })
+      ] })
+    ] }),
+    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-pair", children: [
+      settings && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section", id: "wss-anchor-appearance", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wss-section-title", children: "\u663E\u793A\u6548\u679C" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-effects", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-slider", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-slider-head", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u906E\u7F69\u4E0D\u900F\u660E\u5EA6" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-effect-value", children: settings.overlayOpacity.toFixed(2) })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "input",
+              {
+                type: "range",
+                className: "wss-overlay-opacity",
+                min: 0,
+                max: 1,
+                step: 0.01,
+                value: settings.overlayOpacity,
+                onChange: (e) => applyRuntime({ overlayOpacity: Number(e.target.value) })
+              }
+            )
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "input",
+              {
+                type: "checkbox",
+                className: "wss-blur-enabled",
+                checked: settings.blurEnabled,
+                onChange: (e) => applyRuntime({ blurEnabled: e.target.checked })
+              }
+            ),
+            "\u80CC\u666F\u6A21\u7CCA"
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-slider", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-slider-head", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u6A21\u7CCA\u534A\u5F84" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-effect-value", children: [
+                settings.blurRadius,
+                " px"
+              ] })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "input",
+              {
+                type: "range",
+                className: "wss-blur-radius",
+                min: 0,
+                max: 64,
+                step: 1,
+                value: settings.blurRadius,
+                onChange: (e) => applyRuntime({ blurRadius: Number(e.target.value) })
+              }
+            )
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "input",
+              {
+                type: "checkbox",
+                className: "wss-kenburns",
+                checked: settings.kenBurns,
+                onChange: (e) => applyRuntime({ kenBurns: e.target.checked })
+              }
+            ),
+            "Ken Burns \u7F13\u6162\u7F29\u653E"
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u753B\u9762\u9002\u914D" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+              "select",
+              {
+                className: "wss-fit-mode",
+                value: settings.fitMode,
+                onChange: (e) => applyRuntime({ fitMode: e.target.value }),
+                children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "cover", children: "\u88C1\u526A\u94FA\u6EE1" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "contain", children: "\u5B8C\u6574\u663E\u793A\uFF08\u53EF\u80FD\u7559\u8FB9\uFF09" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "stretch", children: "\u62C9\u4F38\u94FA\u6EE1" })
+                ]
+              }
+            )
+          ] })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-glow", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "input",
+              {
+                type: "checkbox",
+                checked: settings.glowEnabled,
+                onChange: (e) => applyRuntime({ glowEnabled: e.target.checked })
+              }
+            ),
+            "\u5149\u6655\uFF08\u7ACB\u5373\u751F\u6548\uFF09"
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-slider", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-slider-head", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u9608\u503C" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-value", children: settings.glowThreshold.toFixed(2) })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "input",
+              {
+                type: "range",
+                className: "wss-glow-threshold",
+                min: 0,
+                max: 0.99,
+                step: 0.01,
+                value: settings.glowThreshold,
+                onChange: (e) => applyRuntime({ glowThreshold: Number(e.target.value) })
+              }
+            )
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-slider", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-slider-head", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u5F3A\u5EA6" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-value", children: settings.glowStrength.toFixed(2) })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "input",
+              {
+                type: "range",
+                className: "wss-glow-strength",
+                min: 0,
+                max: 4,
+                step: 0.05,
+                value: settings.glowStrength,
+                onChange: (e) => applyRuntime({ glowStrength: Number(e.target.value) })
+              }
+            )
+          ] })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-media-block", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "input",
+              {
+                type: "checkbox",
+                className: "wss-media-integration",
+                checked: settings.mediaIntegrationEnabled,
+                onChange: (e) => applyRuntime({ mediaIntegrationEnabled: e.target.checked })
+              }
+            ),
+            "\u5A92\u4F53\u96C6\u6210\uFF08\u663E\u793A\u672C\u673A\u64AD\u653E\u7684\u6B4C\u66F2\u5C01\u9762/\u6B4C\u540D\uFF09"
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "p",
+            {
+              className: "wss-section-desc wss-media-status",
+              "data-state": !mediaEnabled ? "disabled" : mediaStatus?.reason ?? "no-session",
+              children: mediaIntegrationHint(mediaEnabled, mediaStatus)
+            }
+          )
+        ] })
+      ] }),
+      settings && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section", id: "wss-anchor-playback", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wss-section-title", children: "\u8F6E\u64AD" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-rotation", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "input",
+              {
+                type: "checkbox",
+                className: "wss-rotation-enabled",
+                checked: settings.rotationEnabled,
+                onChange: (e) => applyRuntime({ rotationEnabled: e.target.checked })
+              }
+            ),
+            "\u81EA\u52A8\u8F6E\u64AD"
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u5207\u6362\u95F4\u9694" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+              "select",
+              {
+                className: "wss-rotation-interval",
+                value: String(settings.rotationIntervalMs),
+                onChange: (e) => applyRuntime({ rotationIntervalMs: Number(e.target.value) }),
+                children: [
+                  !ROTATION_INTERVAL_OPTIONS.some((o) => o.ms === settings.rotationIntervalMs) && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: String(settings.rotationIntervalMs), children: formatRotationInterval(settings.rotationIntervalMs) }),
+                  ROTATION_INTERVAL_OPTIONS.map((o) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: String(o.ms), children: o.label }, o.ms))
+                ]
+              }
+            )
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u5207\u6362\u987A\u5E8F" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+              "select",
+              {
+                className: "wss-rotation-order",
+                value: normalizeRotationOrder(settings.rotationOrder),
+                onChange: (e) => applyRuntime({ rotationOrder: e.target.value }),
+                children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "sequential", children: "\u987A\u5E8F" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "random", children: "\u968F\u673A" })
+                ]
+              }
+            )
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc wss-rotation-status", "data-state": rotationPoolSize < 2 ? "empty" : "ready", children: rotationStatus })
+        ] })
+      ] })
+    ] }),
+    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-advanced", id: "wss-anchor-advanced", children: [
+      settings && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("details", { className: "wss-details", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("summary", { className: "wss-details-head", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-details-title", children: "\u6027\u80FD\u4E0E\u7701\u7535" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-details-hint", children: "\u6682\u505C \xB7 \u753B\u8D28 \xB7 \u97F3\u6548" })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-details-body", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-power", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "input",
+                {
+                  type: "checkbox",
+                  checked: settings.paused,
+                  onChange: (e) => applyRuntime({ paused: e.target.checked })
+                }
+              ),
+              "\u6682\u505C\u58C1\u7EB8\uFF08\u7701\u7535\uFF09"
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "input",
+                {
+                  type: "checkbox",
+                  checked: settings.pauseOnHidden,
+                  onChange: (e) => applyRuntime({ pauseOnHidden: e.target.checked })
+                }
+              ),
+              "\u5207\u5230\u540E\u53F0\u65F6\u81EA\u52A8\u6682\u505C"
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u753B\u8D28\u6863\u4F4D" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                "select",
+                {
+                  className: "wss-quality",
+                  value: String(settings.qualityScale),
+                  onChange: (e) => applyRuntime({ qualityScale: Number(e.target.value) }),
+                  children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "1", children: "\u539F\u751F\uFF081\xD7\uFF09" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "0.75", children: "\u7701\u663E\u5B58\uFF080.75\xD7\uFF09" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "0.5", children: "\u6700\u7701\uFF080.5\xD7\uFF09" })
+                  ]
+                }
+              )
+            ] })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "wss-sound-row", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "input",
+              {
+                type: "checkbox",
+                className: "wss-sound",
+                checked: settings.soundEnabled,
+                onChange: (e) => applyRuntime({ soundEnabled: e.target.checked })
+              }
+            ),
+            "\u58C1\u7EB8\u97F3\u6548"
+          ] }) })
+        ] })
+      ] }),
+      settings && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("details", { className: "wss-details", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("summary", { className: "wss-details-head", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-details-title", children: "\u6587\u5B57\u53EF\u8BFB\u6027" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-details-hint", children: "\u989C\u8272 \xB7 \u63CF\u8FB9" })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-details-body", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc", children: "\u8D34\u58C1\u7EB8\u7684\u6587\u5B57\uFF08\u6D88\u606F\u6B63\u6587\u3001\u6807\u9898\u3001\u94FE\u63A5\u3001\u804A\u5929\u680F\uFF09\u770B\u4E0D\u6E05\u65F6\uFF0C\u53EF\u56FA\u5B9A\u6587\u5B57\u989C\u8272\uFF1B\u80CC\u666F\u82B1\u54E8\u65F6\u5F00\u4E00\u70B9\u63CF\u8FB9\u6700\u6709\u6548\u3002" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-textcolor", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u6587\u5B57\u989C\u8272" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                "select",
+                {
+                  className: "wss-textcolor-mode",
+                  value: normalizeMode(settings.textColorMode),
+                  onChange: (e) => applyRuntime({ textColorMode: e.target.value }),
+                  children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "auto", children: "\u81EA\u52A8\uFF08\u8DDF\u968F\u58C1\u7EB8\u4EAE\u5EA6\uFF09" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "white", children: "\u767D\u8272" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "black", children: "\u9ED1\u8272" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "custom", children: "\u81EA\u5B9A\u4E49\u2026" })
+                  ]
+                }
+              )
+            ] }),
+            normalizeMode(settings.textColorMode) === "custom" && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u81EA\u5B9A\u4E49\u989C\u8272" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "input",
+                {
+                  type: "color",
+                  className: "wss-textcolor-custom",
+                  value: normalizeHexColor(settings.textColor),
+                  onChange: (e) => applyRuntime({ textColor: e.target.value })
+                }
+              )
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-slider", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-slider-head", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u6587\u5B57\u63CF\u8FB9" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-value", children: outlineLabel(settings.textOutline) })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "input",
+                {
+                  type: "range",
+                  className: "wss-textcolor-outline",
+                  min: 0,
+                  max: TEXT_OUTLINE_MAX,
+                  step: 1,
+                  value: normalizeOutlineLevel(settings.textOutline),
+                  onChange: (e) => applyRuntime({ textOutline: Number(e.target.value) })
+                }
+              )
+            ] })
+          ] })
+        ] })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("details", { className: "wss-details", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("summary", { className: "wss-details-head", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-details-title", children: "\u58C1\u7EB8\u76EE\u5F55" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-details-hint", children: wallpaperDir && weAssetsDir ? "\u5DF2\u914D\u7F6E" : "\u672A\u914D\u7F6E" })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-details-body", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc", children: "\u586B Wallpaper Engine \u7684\u4E24\u4E2A\u76EE\u5F55\uFF1B\u7559\u7A7A = \u672A\u914D\u7F6E\u3002\u4E5F\u53EF\u4EE5\u76F4\u63A5\u70B9\u300C\u81EA\u52A8\u63A2\u6D4B\u300D\u91C7\u7528\u63A2\u6D4B\u7ED3\u679C\u3002" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-field", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-field-label", children: "\u58C1\u7EB8\u76EE\u5F55\uFF08workshop\uFF09" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "input",
+              {
+                className: "wss-dir-workshop",
+                value: wallpaperDir,
+                placeholder: "\u4F8B\u5982 D:/Steam/steamapps/workshop/content/431960",
+                onChange: (e) => setWallpaperDir(e.target.value)
+              }
+            )
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-field", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-field-label", children: "\u5F15\u64CE\u76EE\u5F55\uFF08particle \u7EB9\u7406\uFF09" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "input",
+              {
+                className: "wss-dir-assets",
+                value: weAssetsDir,
+                placeholder: "\u4F8B\u5982 D:/Steam/steamapps/common/wallpaper_engine",
+                onChange: (e) => setWeAssetsDir(e.target.value)
+              }
+            )
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-dir-actions", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-save-dirs", onClick: saveDirs, children: "\u4FDD\u5B58\u8DEF\u5F84" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-probe", onClick: runProbe, children: "\u81EA\u52A8\u63A2\u6D4B" })
+          ] }),
+          probe && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-probe-result", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h5", { className: "wss-subtitle", children: "\u63A2\u6D4B\u5230\u7684\u58C1\u7EB8\u76EE\u5F55" }),
+            probe.workshop.map((c) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-candidate", "data-kind": "workshop", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-candidate-path", title: c.path, children: c.path }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: c.exists ? "wss-exists" : "wss-missing", children: c.exists ? "\u5B58\u5728" : "\u4E0D\u5B58\u5728" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-adopt", "data-path": c.path, onClick: () => adopt(c.path, "wallpaperDir"), children: "\u91C7\u7528" })
+            ] }, c.path)),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h5", { className: "wss-subtitle", children: "\u63A2\u6D4B\u5230\u7684\u5F15\u64CE\u76EE\u5F55" }),
+            probe.assets.map((c) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-candidate", "data-kind": "assets", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-candidate-path", title: c.path, children: c.path }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: c.exists ? "wss-exists" : "wss-missing", children: c.exists ? "\u5B58\u5728" : "\u4E0D\u5B58\u5728" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-adopt", "data-path": c.path, onClick: () => adopt(c.path, "weAssetsDir"), children: "\u91C7\u7528" })
+            ] }, c.path))
+          ] })
+        ] })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("details", { className: "wss-details", "data-tone": liveState, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("summary", { className: "wss-details-head", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-details-title", children: "\u5B9E\u65F6\u6E32\u67D3" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-details-hint", "data-tone": liveState, children: liveState === "ok" ? "\u6B63\u5E38" : liveState === "failed" ? "\u9700\u8981\u5904\u7406" : "\u5F85\u673A" })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-details-body", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-live-status", "data-state": liveState, children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc wss-live-current", children: liveCurrent }),
+            liveMemory && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc wss-live-memory", children: liveMemory })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-row", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-live-retry", onClick: retryLive, children: "\u91CD\u8BD5\u5B9E\u65F6\u6E32\u67D3" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-live-forget", onClick: forgetFailures, children: "\u6E05\u9664\u5931\u8D25\u8BB0\u5FC6" })
+          ] })
+        ] })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section wss-about", "aria-label": "\u5173\u4E8E", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wss-section-title", children: "\u5173\u4E8E" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc", children: "MIT \u5F00\u6E90\u3002\u5982\u679C\u5B83\u8BA9\u4F60\u7684\u754C\u9762\u597D\u770B\u4E86\uFF0C\u70B9\u4E2A Star \u5C31\u662F\u6700\u5927\u7684\u652F\u6301\uFF1B\u54EA\u5F20\u58C1\u7EB8\u6E32\u67D3\u4E0D\u6B63\u5E38\uFF0C\u5E26 Workshop ID \u63D0\u4E2A Issue \u5373\u53EF\u3002" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-about-links", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("a", { className: "wss-about-link", "data-primary": "true", href: "https://github.com/yu502950715yang/dsh-use-wallpaper", target: "_blank", rel: "noreferrer", children: "\u2B50 Star \u9879\u76EE" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("a", { className: "wss-about-link", href: "https://github.com/yu502950715yang/dsh-use-wallpaper/issues/new", target: "_blank", rel: "noreferrer", children: "\u53CD\u9988\u95EE\u9898" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("a", { className: "wss-about-link", href: "https://github.com/yu502950715yang/dsh-use-wallpaper#readme", target: "_blank", rel: "noreferrer", children: "\u4F7F\u7528\u6587\u6863" })
+        ] })
+      ] })
+    ] }),
+    message && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-message", role: "status", children: message })
+  ] });
+}
+
+// src/client/boot-settings-section.tsx
+var import_react2 = require("react");
+var import_jsx_runtime2 = require("react/jsx-runtime");
+async function defaultFetchWallpapers2() {
+  return (await fetch("/wallpapers/list")).json();
+}
+async function defaultProbePath(path) {
+  const r = await fetch("/wallpapers/boot/probe?path=" + encodeURIComponent(path));
+  return r.json();
+}
+function bootApi() {
+  return globalThis.__wallpaperEngineBoot;
+}
+async function defaultPlayPreview() {
+  return await bootApi()?.play?.({ force: true }) ?? "disabled";
+}
+var FITS = [
+  { value: "tile", label: "\u5E73\u94FA" },
+  { value: "contain", label: "\u5C45\u4E2D" },
+  { value: "stretch", label: "\u6324\u538B" },
+  { value: "cover", label: "\u88C1\u5207\u586B\u6EE1" }
+];
+var RESULT_TEXT = {
+  ended: "\u64AD\u653E\u5B8C\u6210",
+  skipped: "\u5DF2\u8DF3\u8FC7",
+  timeout: "\u7D20\u6750\u8D85\u65F6\uFF08\u5DF2\u8DF3\u8FC7\uFF09",
+  failed: "\u64AD\u653E\u5931\u8D25\uFF08\u5DF2\u8DF3\u8FC7\uFF09",
+  "already-played": "\u672C\u6B21\u4F1A\u8BDD\u5DF2\u64AD\u8FC7",
+  disabled: "\u672A\u542F\u7528",
+  "no-asset": "\u672A\u9009\u62E9\u7D20\u6750"
+};
+function toneOf(result) {
+  if (result === "ended" || result === "skipped") return "ok";
+  if (result === "timeout" || result === "failed") return "danger";
+  if (result === "already-played") return "warn";
+  return "neutral";
+}
+function formatSize(n) {
+  if (typeof n !== "number") return "-";
+  return n >= 1024 * 1024 ? (n / 1024 / 1024).toFixed(1) + " MB" : Math.round(n / 1024) + " KB";
+}
+function probeText(probe) {
+  if (probe.ok) return `\u6587\u4EF6\u5B58\u5728 \xB7 ${formatSize(probe.size)} \xB7 ${probe.playable ? "\u53EF\u64AD\u653E" : "\u6269\u5C55\u540D\u4E0D\u652F\u6301"}`;
+  return probe.error === "not found" ? "\u6587\u4EF6\u4E0D\u5B58\u5728\u6216\u4E0D\u662F\u666E\u901A\u6587\u4EF6" : "\u8DEF\u5F84\u65E0\u6548\u6216\u6269\u5C55\u540D\u4E0D\u652F\u6301";
+}
+function BootSettingsSection(props) {
+  const fetchSettings = props.fetchSettings ?? readClientSettings;
+  const save = props.writeSettings ?? writeClientSettings;
+  const fetchWallpapers = props.fetchWallpapers ?? defaultFetchWallpapers2;
+  const probePath = props.probePath ?? defaultProbePath;
+  const playPreview = props.playPreview ?? defaultPlayPreview;
+  const getLast = props.getLast ?? (() => bootApi()?.getLast?.() ?? null);
+  const [settings, setSettings] = (0, import_react2.useState)(null);
+  const [wallpapers, setWallpapers] = (0, import_react2.useState)([]);
+  const [probe, setProbe] = (0, import_react2.useState)(null);
+  const [message, setMessage] = (0, import_react2.useState)("");
+  const [messageTone, setMessageTone] = (0, import_react2.useState)("neutral");
+  const [last, setLast] = (0, import_react2.useState)(null);
+  const [previewing, setPreviewing] = (0, import_react2.useState)(false);
+  (0, import_react2.useEffect)(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const [s, list] = await Promise.all([fetchSettings(), fetchWallpapers().catch(() => [])]);
+        if (!alive) return;
+        setSettings(s);
+        setWallpapers(list.filter((w) => w.type === "video" || w.type === "image"));
+        setLast(getLast());
+      } catch {
+        if (alive) setMessage("\u8BFB\u53D6\u8BBE\u7F6E\u5931\u8D25\uFF0C\u8BF7\u91CD\u65B0\u6253\u5F00\u8BBE\u7F6E\u9762\u677F");
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+  if (!settings) return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "wbs-root wbs-loading", children: "\u52A0\u8F7D\u4E2D\u2026" });
+  const patch = async (p) => {
+    setSettings((prev) => prev ? { ...prev, ...p } : prev);
+    try {
+      const ok = await save(p);
+      if (ok === false) setMessage("\u4FDD\u5B58\u5931\u8D25\uFF1A\u8BBE\u7F6E\u670D\u52A1\u4E0D\u53EF\u7528");
+    } catch {
+      setMessage("\u4FDD\u5B58\u5931\u8D25\uFF1A\u8BBE\u7F6E\u670D\u52A1\u4E0D\u53EF\u7528");
+    }
+  };
+  const source = settings.bootAnimationSource === "local" ? "local" : "we";
+  const isVideoAsset = source === "local" || settings.bootAnimationWallpaperKind === "video";
+  const picked = wallpapers.find((w) => w.id === settings.bootAnimationWallpaperId) ?? null;
+  const runProbe = async () => {
+    try {
+      setProbe(await probePath(settings.bootAnimationLocalPath));
+    } catch {
+      setProbe({ ok: false, error: "bad path" });
+    }
+  };
+  const runPreview = async () => {
+    setPreviewing(true);
+    setMessage("\u64AD\u653E\u4E2D\u2026");
+    setMessageTone("neutral");
+    let result = "failed";
+    try {
+      result = await playPreview();
+    } catch {
+      result = "failed";
+    }
+    setPreviewing(false);
+    setMessage("\u7ED3\u679C\uFF1A" + (RESULT_TEXT[result] ?? "\u5931\u8D25") + "\uFF08" + result + "\uFF09");
+    setMessageTone(toneOf(result));
+  };
+  return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wbs-root", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { className: "wbs-hero", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wbs-hero-body", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("h4", { className: "wbs-hero-title", children: "\u5F00\u673A\u52A8\u753B" }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "wbs-hero-desc", children: "\u6253\u5F00 DSH \u65F6\u5168\u5C4F\u64AD\u4E00\u6BB5\u7247\u5934\uFF0C\u64AD\u5B8C\u6DE1\u51FA\u8FDB\u5165\u754C\u9762\uFF1B\u56FA\u5B9A\u9759\u97F3\uFF0C\u6BCF\u6B21\u542F\u52A8/\u65B0\u7A97\u53E3\u53EA\u64AD\u4E00\u6B21\uFF08\u5237\u65B0\u4E0D\u91CD\u64AD\uFF09\u3002" }),
+        last && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("p", { className: "wbs-last", "data-tone": toneOf(last.result), children: [
+          "\u4E0A\u6B21\u64AD\u653E\uFF1A",
+          RESULT_TEXT[last.result] ?? last.result
+        ] })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wbs-switch", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+          "input",
+          {
+            type: "checkbox",
+            className: "wbs-enable",
+            checked: settings.bootAnimationEnabled,
+            onChange: (e) => void patch({ bootAnimationEnabled: e.target.checked })
+          }
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wbs-switch-track", "aria-hidden": "true" }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wbs-switch-label", children: "\u542F\u7528" })
+      ] })
+    ] }),
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { className: "wbs-card", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("header", { className: "wbs-card-head", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("h4", { className: "wbs-title", children: "\u7D20\u6750" }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wbs-hint", children: "\u89C6\u9891 / \u56FE\u7247" })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wbs-source-group", role: "radiogroup", "aria-label": "\u7D20\u6750\u6765\u6E90", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wbs-source", "data-active": source === "we", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+            "input",
+            {
+              type: "radio",
+              name: "wbs-source",
+              className: "wbs-source-we",
+              checked: source === "we",
+              onChange: () => void patch({ bootAnimationSource: "we" })
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wbs-source-label", children: "Wallpaper Engine \u5E93" }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wbs-source-hint", children: "\u4EC5\u89C6\u9891 / \u56FE\u7247\u7C7B" })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wbs-source", "data-active": source === "local", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+            "input",
+            {
+              type: "radio",
+              name: "wbs-source",
+              className: "wbs-source-local",
+              checked: source === "local",
+              onChange: () => void patch({ bootAnimationSource: "local" })
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wbs-source-label", children: "\u672C\u5730\u89C6\u9891\u6587\u4EF6" }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wbs-source-hint", children: "\u7EDD\u5BF9\u8DEF\u5F84" })
+        ] })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wbs-picker", "data-active": source === "we", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "wbs-picker-preview", "data-empty": !picked?.previewUrl, children: picked?.previewUrl ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("img", { src: picked.previewUrl, alt: "" }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: source === "we" ? "\u672A\u9009\u62E9" : "\u2014" }) }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wbs-picker-body", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+            "select",
+            {
+              className: "wbs-wallpaper",
+              "aria-label": "\u5F00\u673A\u52A8\u753B\u7D20\u6750",
+              value: settings.bootAnimationWallpaperId,
+              onChange: (e) => {
+                const id = e.target.value;
+                const item = wallpapers.find((w) => w.id === id);
+                void patch({
+                  bootAnimationWallpaperId: id,
+                  bootAnimationWallpaperKind: item ? item.type === "image" ? "image" : "video" : ""
+                });
+              },
+              children: [
+                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "", children: "\uFF08\u672A\u9009\u62E9\uFF09" }),
+                wallpapers.map((w) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("option", { value: w.id, children: [
+                  w.title,
+                  " \xB7 ",
+                  w.type === "image" ? "\u56FE\u7247" : "\u89C6\u9891"
+                ] }, w.id))
+              ]
+            }
+          ),
+          wallpapers.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "wbs-desc", children: "\u58C1\u7EB8\u5217\u8868\u4E3A\u7A7A\uFF1A\u8BF7\u5148\u5728\u300C\u65E5\u5E38\u58C1\u7EB8\u300D\u9875\u914D\u7F6E\u76EE\u5F55\u6216\u70B9\u5237\u65B0\u3002" })
+        ] })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wbs-local", "data-active": source === "local", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wbs-row wbs-local-row", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+            "input",
+            {
+              type: "text",
+              className: "wbs-local-path",
+              "aria-label": "\u672C\u5730\u89C6\u9891\u8DEF\u5F84",
+              placeholder: "E:\\\\clips\\\\boot.mp4",
+              value: settings.bootAnimationLocalPath,
+              onChange: (e) => setSettings((prev) => prev ? { ...prev, bootAnimationLocalPath: e.target.value } : prev),
+              onBlur: (e) => void patch({ bootAnimationLocalPath: e.target.value })
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", className: "wbs-probe", onClick: () => void runProbe(), children: "\u6821\u9A8C" })
+        ] }),
+        probe && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "wbs-probe-result", "data-tone": probe.ok ? "ok" : "danger", children: probeText(probe) })
+      ] })
+    ] }),
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { className: "wbs-card", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("header", { className: "wbs-card-head", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("h4", { className: "wbs-title", children: "\u5C55\u793A\u65B9\u5F0F" }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wbs-hint", children: "\u753B\u9762\u5982\u4F55\u9002\u914D\u5168\u5C4F" })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "wbs-fit-grid", role: "radiogroup", "aria-label": "\u5C55\u793A\u65B9\u5F0F", children: FITS.map((f) => {
+        const disabled = f.value === "tile" && isVideoAsset;
+        return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wbs-fit-card", "data-fit": f.value, "data-disabled": disabled, "data-active": settings.bootAnimationFitMode === f.value, children: [
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+            "input",
+            {
+              type: "radio",
+              name: "wbs-fit",
+              className: "wbs-fit-" + f.value,
+              checked: settings.bootAnimationFitMode === f.value,
+              disabled,
+              onChange: () => void patch({ bootAnimationFitMode: f.value })
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wbs-fit-art", "data-fit": f.value, "aria-hidden": "true" }),
+          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wbs-fit-label", children: f.label }),
+          disabled && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wbs-fit-hint", children: "\u89C6\u9891\u4E0D\u652F\u6301" })
+        ] }, f.value);
+      }) })
+    ] }),
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { className: "wbs-card", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("header", { className: "wbs-card-head", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("h4", { className: "wbs-title", children: "\u6700\u957F\u64AD\u653E" }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wbs-value", children: settings.bootAnimationMaxDurationMs === 0 ? "\u64AD\u5B8C / \u4E0D\u9650" : Math.round(settings.bootAnimationMaxDurationMs / 1e3) + " \u79D2" })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wbs-slider", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+          "input",
+          {
+            type: "range",
+            className: "wbs-max-duration",
+            "aria-label": "\u6700\u957F\u64AD\u653E\u65F6\u95F4\uFF08\u79D2\uFF09",
+            min: 0,
+            max: 30,
+            step: 1,
+            value: Math.round(settings.bootAnimationMaxDurationMs / 1e3),
+            onChange: (e) => void patch({ bootAnimationMaxDurationMs: Number(e.target.value) * 1e3 })
+          }
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "wbs-desc", children: "0 = \u89C6\u9891\u64AD\u5B8C\u4E3A\u6B62\uFF1B\u56FE\u7247\u56FA\u5B9A\u7EA6 4 \u79D2\u3002\u7D20\u6750 8 \u79D2\u672A\u5C31\u7EEA\u4F1A\u81EA\u52A8\u8DF3\u8FC7\u3002" })
+      ] })
+    ] }),
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wbs-actions", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", className: "wbs-preview", disabled: previewing, onClick: () => void runPreview(), children: previewing ? "\u64AD\u653E\u4E2D\u2026" : "\u8BD5\u64AD" }),
+      message && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "wbs-message", "data-tone": messageTone, children: message })
+    ] })
+  ] });
+}
+
+// src/client/settings-shell.tsx
+var import_jsx_runtime3 = require("react/jsx-runtime");
+var TABS = [
+  { id: "wallpaper", label: "\u65E5\u5E38\u58C1\u7EB8" },
+  { id: "boot", label: "\u5F00\u673A\u52A8\u753B" }
+];
+function WallpaperSettingsShell(props = {}) {
+  const [tab, setTab] = (0, import_react3.useState)("wallpaper");
+  const baseId = (0, import_react3.useId)();
+  const renderWallpaper = props.renderWallpaper ?? (() => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(WallpaperSettingsSection, {}));
+  const renderBoot = props.renderBoot ?? (() => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(BootSettingsSection, {}));
+  const move = (dir) => {
+    const index = TABS.findIndex((t) => t.id === tab);
+    const next = TABS[(index + dir + TABS.length) % TABS.length];
+    setTab(next.id);
+    requestAnimationFrame(() => document.getElementById(baseId + "-tab-" + next.id)?.focus?.());
+  };
+  return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { className: "we-shell", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { className: "we-tabs", role: "tablist", "aria-label": "\u58C1\u7EB8\u8BBE\u7F6E", children: TABS.map((t) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+      "button",
+      {
+        id: baseId + "-tab-" + t.id,
+        type: "button",
+        role: "tab",
+        className: "we-tab" + (tab === t.id ? " we-tab-active" : ""),
+        "aria-selected": tab === t.id,
+        "aria-controls": baseId + "-panel-" + t.id,
+        tabIndex: tab === t.id ? 0 : -1,
+        onClick: () => setTab(t.id),
+        onKeyDown: (e) => {
+          if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+          e.preventDefault();
+          move(e.key === "ArrowRight" ? 1 : -1);
+        },
+        children: t.label
+      },
+      t.id
+    )) }),
+    /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+      "div",
+      {
+        className: "we-tabpanel",
+        role: "tabpanel",
+        id: baseId + "-panel-" + tab,
+        "aria-labelledby": baseId + "-tab-" + tab,
+        children: tab === "boot" ? renderBoot() : renderWallpaper()
+      }
+    )
+  ] });
 }
 
 // src/client/pointer-post.ts
@@ -4034,7 +6067,7 @@ function createWallpaperController(layer, opts) {
   };
 }
 
-// ../../node_modules/.pnpm/three@0.170.0/node_modules/three/build/three.module.js
+// node_modules/.pnpm/three@0.170.0/node_modules/three/build/three.module.js
 var REVISION = "170";
 var CullFaceNone = 0;
 var CullFaceBack = 1;
@@ -23842,289 +25875,6 @@ function effectPointerUniforms(pointer, cfg, parallaxPointer = pointer) {
   };
 }
 
-// src/shared/user-refs.ts
-function parseUserRef(user) {
-  if (typeof user === "string") return user ? { name: user } : void 0;
-  if (user && typeof user === "object") {
-    const o = user;
-    if (typeof o.name === "string" && o.name) {
-      return { name: o.name, condition: typeof o.condition === "string" ? o.condition : void 0 };
-    }
-  }
-  return void 0;
-}
-
-// src/client/user-bindings.ts
-function isTruthy(value) {
-  if (typeof value === "boolean") return value;
-  if (typeof value === "number") return Math.abs(value) > 1e-4;
-  if (typeof value === "string") {
-    const s = value.trim().toLowerCase();
-    return s !== "" && s !== "0" && s !== "false";
-  }
-  return false;
-}
-function matchCondition(value, condition) {
-  const c = String(condition ?? "").trim();
-  if (!c) return isTruthy(value);
-  const n = Number(c);
-  if (!Number.isNaN(n) && Number.isFinite(n)) {
-    if (typeof value === "boolean") {
-      if (Math.abs(n) < 1e-4) return isTruthy(value);
-      if (Math.abs(n - 1) < 1e-4) return !isTruthy(value);
-      return false;
-    }
-    const v = Number(value);
-    return Number.isFinite(v) && Math.abs(v - n) < 1e-4;
-  }
-  if (c === "true" || c === "false") return isTruthy(value) === (c === "true");
-  return typeof value === "string" ? value.trim() === c : String(value).trim() === c;
-}
-function parseColorTriplet(text) {
-  const parts = text.trim().split(/\s+/).map(Number);
-  if (parts.length < 3 || parts.slice(0, 3).some((x) => !Number.isFinite(x))) return void 0;
-  const max = Math.max(parts[0], parts[1], parts[2]);
-  return max <= 1 ? [parts[0] * 255, parts[1] * 255, parts[2] * 255] : [parts[0], parts[1], parts[2]];
-}
-function resolveUserValue(bound, userProps, hint) {
-  const ref = bound.user;
-  if (!ref) return bound.value;
-  if (!Object.hasOwn(userProps, ref.name)) return bound.value;
-  const uv = userProps[ref.name];
-  if (!matchCondition(uv, ref.condition)) {
-    const neutral = hint === "bool" ? false : hint === "number" ? 0 : hint === "color" ? [0, 0, 0] : "0 0 0";
-    return neutral;
-  }
-  if (hint === "bool") return typeof uv === "boolean" ? uv : isTruthy(uv);
-  if (hint === "number") {
-    const n = Number(uv);
-    return Number.isFinite(n) ? n : 0;
-  }
-  if (hint === "color01") {
-    return typeof uv === "string" ? uv.trim() : "0 0 0";
-  }
-  const color = typeof uv === "string" ? parseColorTriplet(uv) : void 0;
-  return color ?? [0, 0, 0];
-}
-var NUMBER_LITERAL = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i;
-function tokenizeCondition(text) {
-  const tokens = [];
-  let i = 0;
-  while (i < text.length) {
-    const ch = text[i];
-    if (/\s/.test(ch)) {
-      i += 1;
-      continue;
-    }
-    const two = text.slice(i, i + 2);
-    if (two === "&&" || two === "||" || two === "==" || two === "!=") {
-      tokens.push({ op: two });
-      i += 2;
-      continue;
-    }
-    if (ch === "(" || ch === ")" || ch === "&" || ch === "|" || ch === "=" || ch === "!" || ch === "<" || ch === ">") {
-      throw new Error(`bad condition token: ${ch}`);
-    }
-    let end = i;
-    while (end < text.length && !/[\s()&|=!<>]/.test(text[end])) end += 1;
-    tokens.push({ atom: text.slice(i, end) });
-    i = end;
-  }
-  return tokens;
-}
-function parseConditionOperand(atom, userProps) {
-  const ref = /^(.+)\.value$/.exec(atom);
-  if (ref) {
-    const key = ref[1];
-    return Object.hasOwn(userProps, key) ? userProps[key] : void 0;
-  }
-  if (atom === "true") return true;
-  if (atom === "false") return false;
-  if (NUMBER_LITERAL.test(atom)) return Number(atom);
-  return atom;
-}
-function evaluateCondition(text, userProps) {
-  const tokens = tokenizeCondition(text);
-  if (tokens.length === 0) return true;
-  let pos = 0;
-  const eatOp = (op) => {
-    if (tokens[pos]?.op !== op) return false;
-    pos += 1;
-    return true;
-  };
-  const parseComparison = () => {
-    const leftToken = tokens[pos];
-    if (!leftToken?.atom) throw new Error("expected operand");
-    pos += 1;
-    const left = parseConditionOperand(leftToken.atom, userProps);
-    const op = tokens[pos]?.op;
-    if (op === "==" || op === "!=") {
-      pos += 1;
-      const rightToken = tokens[pos];
-      if (!rightToken?.atom) throw new Error("expected operand");
-      pos += 1;
-      const right = parseConditionOperand(rightToken.atom, userProps);
-      const matched = matchCondition(left, typeof right === "string" ? right : String(right));
-      return op === "==" ? matched : !matched;
-    }
-    return isTruthy(left);
-  };
-  const parseAnd = () => {
-    let value = parseComparison();
-    while (eatOp("&&")) {
-      const rhs = parseComparison();
-      value = value && rhs;
-    }
-    return value;
-  };
-  const parseOr = () => {
-    let value = parseAnd();
-    while (eatOp("||")) {
-      const rhs = parseAnd();
-      value = value || rhs;
-    }
-    return value;
-  };
-  const result = parseOr();
-  return pos === tokens.length ? result : true;
-}
-function propertyConditionMet(condition, userProps) {
-  const text = (condition ?? "").trim();
-  if (!text) return true;
-  try {
-    return evaluateCondition(text, userProps);
-  } catch {
-    return true;
-  }
-}
-function deepClone(value) {
-  if (typeof structuredClone === "function") {
-    try {
-      return structuredClone(value);
-    } catch {
-    }
-  }
-  return cloneJsonLike(value);
-}
-function cloneJsonLike(value) {
-  if (Array.isArray(value)) return value.map((item) => cloneJsonLike(item));
-  if (value && typeof value === "object") {
-    const out = {};
-    for (const [key, item] of Object.entries(value)) out[key] = cloneJsonLike(item);
-    return out;
-  }
-  return value;
-}
-function resolveBoundNode(value, user, userProps) {
-  if (typeof value === "boolean") return resolveUserValue({ value, user }, userProps, "bool");
-  if (typeof value === "number") return resolveUserValue({ value, user }, userProps, "number");
-  if (typeof value === "string") {
-    if (/\s/.test(value.trim())) return resolveUserValue({ value, user }, userProps, "color01");
-    return resolveRawString(value, user, userProps);
-  }
-  return value;
-}
-function resolveRawString(value, user, userProps) {
-  if (!Object.hasOwn(userProps, user.name)) return value;
-  const uv = userProps[user.name];
-  if (!matchCondition(uv, user.condition)) return "";
-  return typeof uv === "string" ? uv : String(uv);
-}
-function resolveValueNode(value, user, userProps) {
-  if (typeof value === "boolean") return resolveUserValue({ value, user }, userProps, "bool");
-  if (typeof value === "number") return resolveUserValue({ value, user }, userProps, "number");
-  if (typeof value === "string") return resolveRawString(value, user, userProps);
-  return value;
-}
-function resolveBindingsDeep(node, userProps, mode) {
-  if (Array.isArray(node)) return node.map((item) => resolveBindingsDeep(item, userProps, mode));
-  if (node && typeof node === "object") {
-    const o = node;
-    const user = parseUserRef(o.user);
-    if (user && "value" in o) {
-      return mode === "effects" ? resolveBoundNode(o.value, user, userProps) : resolveValueNode(o.value, user, userProps);
-    }
-    const out = {};
-    for (const [key, value] of Object.entries(o)) out[key] = resolveBindingsDeep(value, userProps, mode);
-    return out;
-  }
-  return node;
-}
-var TRANSFORM_DEFAULT = { origin: 0, scale: 1, angles: 0 };
-function resolveObjectUserRefs(obj, userProps) {
-  const refs = obj.userRefs;
-  if (!refs) return;
-  const rec = obj;
-  if (refs.color) rec.color = resolveUserValue({ value: rec.color, user: refs.color }, userProps, "color");
-  if (refs.alpha) rec.alpha = resolveUserValue({ value: rec.alpha, user: refs.alpha }, userProps, "number");
-  if (refs.brightness) {
-    rec.brightness = resolveUserValue({ value: rec.brightness, user: refs.brightness }, userProps, "number");
-  }
-  for (const key of ["origin", "scale", "angles"]) {
-    const ref = refs[key];
-    if (!ref) continue;
-    const fallback = TRANSFORM_DEFAULT[key];
-    const raw = Array.isArray(rec[key]) ? rec[key] : [];
-    rec[key] = [0, 1, 2].map((i) => {
-      const component = typeof raw[i] === "number" ? raw[i] : fallback;
-      return resolveUserValue({ value: component, user: ref }, userProps, "number");
-    });
-  }
-}
-function resolveSceneUserBindings(desc, userProps) {
-  const out = deepClone(desc);
-  for (const obj of out.objects) {
-    resolveObjectUserRefs(obj, userProps);
-    const rec = obj;
-    if (Array.isArray(rec.effects)) rec.effects = resolveBindingsDeep(rec.effects, userProps, "effects");
-    if (typeof rec.instanceOverrideJson === "string") {
-      try {
-        const parsed = JSON.parse(rec.instanceOverrideJson);
-        rec.instanceOverrideJson = JSON.stringify(resolveBindingsDeep(parsed, userProps, "raw"));
-      } catch {
-      }
-    }
-    if (rec.scriptProperties && typeof rec.scriptProperties === "object" && !Array.isArray(rec.scriptProperties)) {
-      rec.scriptProperties = resolveBindingsDeep(rec.scriptProperties, userProps, "raw");
-    }
-    const entries = Array.isArray(rec.objectScripts) ? rec.objectScripts : [];
-    for (const entry of entries) {
-      const props = entry?.scriptProperties;
-      if (props && typeof props === "object" && !Array.isArray(props)) {
-        entry.scriptProperties = resolveBindingsDeep(props, userProps, "raw");
-      }
-    }
-    const visible = rec.visible;
-    if (visible?.scriptProperties) {
-      visible.scriptProperties = resolveBindingsDeep(
-        visible.scriptProperties,
-        userProps,
-        "raw"
-      );
-    }
-  }
-  if (out.bloomUser) {
-    const enabled = resolveUserValue(
-      { value: out.bloom !== void 0, user: out.bloomUser },
-      userProps,
-      "bool"
-    );
-    if (!enabled) out.bloom = void 0;
-    else if (!out.bloom) out.bloom = { strength: 2, threshold: 0.65 };
-  }
-  if (out.parallaxUser) {
-    out.parallax = {
-      ...out.parallax,
-      enabled: resolveUserValue(
-        { value: out.parallax.enabled, user: out.parallaxUser },
-        userProps,
-        "bool"
-      )
-    };
-  }
-  return out;
-}
-
 // src/client/script-patterns.ts
 function detectScriptPattern(src) {
   if (typeof src !== "string") return null;
@@ -30366,42 +32116,6 @@ function createFrameCapture(renderer, deps = {}) {
   };
 }
 
-// src/client/wallpaper-properties.ts
-async function fetchWallpaperProperties(id) {
-  try {
-    const r = await fetch(`/wallpapers/properties?id=${encodeURIComponent(id)}`);
-    if (!r.ok) return { properties: [], audioProcessing: false };
-    const body = await r.json();
-    return {
-      properties: Array.isArray(body?.properties) ? body.properties : [],
-      audioProcessing: body?.audioProcessing === true
-    };
-  } catch {
-    return { properties: [], audioProcessing: false };
-  }
-}
-function readUserProperty(key, wallpaperId) {
-  return getUserPropertyValue(key, wallpaperId);
-}
-function writeUserProperty(key, value, wallpaperId) {
-  if (typeof localStorage === "undefined") return;
-  try {
-    localStorage.setItem(userPropertyKey(key, wallpaperId), JSON.stringify(value));
-  } catch {
-  }
-}
-function resetUserProperty(key, wallpaperId) {
-  if (!wallpaperId) return;
-  if (typeof localStorage === "undefined") return;
-  try {
-    localStorage.removeItem(userPropertyKey(key, wallpaperId));
-  } catch {
-  }
-}
-function userPropertyKey(key, wallpaperId) {
-  return wallpaperId ? `${USERPROP_PREFIX}${wallpaperId}:${key}` : USERPROP_PREFIX + key;
-}
-
 // src/client/shader/we-headers.ts
 var COMMON_H = `
 #ifndef WE_COMMON_H
@@ -31677,7 +33391,7 @@ async function resolveEffectChain(sceneEffect, loadFile) {
   }
 }
 
-// ../../node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/index.mjs
+// node_modules/.pnpm/quickjs-emscripten-core@0.32.0/node_modules/quickjs-emscripten-core/dist/index.mjs
 init_chunk_V2S4ZYJR();
 init_dist();
 async function newQuickJSWASMModuleFromVariant(variantOrPromise) {
@@ -31740,7 +33454,7 @@ function newMockExtensions(log) {
   } };
 }
 
-// ../../node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/index.mjs
+// node_modules/.pnpm/@jitl+quickjs-wasmfile-release-sync@0.32.0/node_modules/@jitl/quickjs-wasmfile-release-sync/dist/index.mjs
 var variant = { type: "sync", importFFI: () => Promise.resolve().then(() => (init_ffi(), ffi_exports)).then((mod) => mod.QuickJSFFI), importModuleLoader: () => Promise.resolve().then(() => (init_emscripten_module_browser(), emscripten_module_browser_exports)).then((mod) => mod.default) };
 var src_default = variant;
 
@@ -34216,152 +35930,6 @@ function sharedWhiteTexture() {
   return whiteTex;
 }
 
-// src/client/render-health.ts
-var HARD_KINDS = ["scene-json", "no-visible-objects", "context-lost", "exception"];
-function isHardFailure(kind) {
-  return HARD_KINDS.includes(kind);
-}
-var HEALTH_KEY_PREFIX = "we:renderfail:";
-var SCHEMA_VERSION = 1;
-var DEFAULT_SOFT_COOLDOWN_MS = 3e3;
-function defaultStorage() {
-  try {
-    return typeof localStorage === "undefined" ? null : localStorage;
-  } catch {
-    return null;
-  }
-}
-function createRenderHealthStore(opts = {}) {
-  const storage = opts.storage === void 0 ? defaultStorage() : opts.storage;
-  const now = opts.now ?? (() => Date.now());
-  const cooldown = opts.softCooldownMs ?? DEFAULT_SOFT_COOLDOWN_MS;
-  const hard = /* @__PURE__ */ new Map();
-  const soft = /* @__PURE__ */ new Map();
-  const retried = /* @__PURE__ */ new Set();
-  const session = /* @__PURE__ */ new Map();
-  const keyOf2 = (id) => HEALTH_KEY_PREFIX + id;
-  const readStored = (id) => {
-    if (!storage || !id) return null;
-    let raw = null;
-    try {
-      raw = storage.getItem(keyOf2(id));
-    } catch {
-      return null;
-    }
-    if (!raw) return null;
-    try {
-      const v = JSON.parse(raw);
-      if (v?.v !== SCHEMA_VERSION || typeof v.kind !== "string") return null;
-      const kind = v.kind;
-      if (!isHardFailure(kind)) return null;
-      return { kind, hard: true, at: Number(v.at) || 0, detail: String(v.detail ?? "") };
-    } catch {
-      return null;
-    }
-  };
-  const writeHard = (id, kind, detail) => {
-    const entry = { kind, hard: true, at: now(), detail: String(detail).slice(0, 200) };
-    hard.set(id, entry);
-    if (!storage) return;
-    try {
-      storage.setItem(keyOf2(id), JSON.stringify({
-        v: SCHEMA_VERSION,
-        kind: entry.kind,
-        detail: entry.detail,
-        at: entry.at
-      }));
-    } catch {
-    }
-  };
-  const currentHard = (id) => readStored(id) ?? hard.get(id) ?? null;
-  return {
-    recordHard(id, kind, detail) {
-      if (!id) return;
-      writeHard(id, kind, detail);
-    },
-    recordSoft(id, kind, detail) {
-      if (!id) return;
-      soft.set(id, { kind, detail: String(detail), at: now() });
-    },
-    recordOk(id, timing) {
-      if (!id) return;
-      soft.delete(id);
-      session.set(id, { ok: true, timing });
-    },
-    clear(id) {
-      hard.delete(id);
-      soft.delete(id);
-      retried.delete(id);
-      session.delete(id);
-      if (storage && id) {
-        try {
-          storage.removeItem(keyOf2(id));
-        } catch {
-        }
-      }
-    },
-    clearAll() {
-      hard.clear();
-      soft.clear();
-      retried.clear();
-      if (!storage) return;
-      const keys = [];
-      try {
-        for (let i = 0; i < storage.length; i++) {
-          const k = storage.key(i);
-          if (k && k.startsWith(HEALTH_KEY_PREFIX)) keys.push(k);
-        }
-      } catch {
-      }
-      for (const k of keys) {
-        try {
-          storage.removeItem(k);
-        } catch {
-        }
-      }
-    },
-    snapshot(id) {
-      const s = session.get(id);
-      const timing = s?.timing ?? null;
-      const hardHit = currentHard(id);
-      const softHit = soft.get(id);
-      const failure = hardHit ?? (softHit ? { kind: softHit.kind, hard: false, at: softHit.at, detail: softHit.detail } : null);
-      return { wallpaperId: id, ok: s?.ok ?? null, failure, timing };
-    },
-    shouldAutoRetry(id) {
-      if (!id || retried.has(id)) return false;
-      if (currentHard(id)) return false;
-      const hit = soft.get(id);
-      if (!hit) return false;
-      return now() - hit.at >= cooldown;
-    },
-    markAutoRetried(id) {
-      if (id) retried.add(id);
-    }
-  };
-}
-function formatHealthLine(snap, t) {
-  const timing = snap.timing ? formatTiming(snap.timing, t) : "";
-  if (snap.failure) {
-    const reason = FAILURE_TEXT[snap.failure.kind] ?? t("\u6E32\u67D3\u5931\u8D25");
-    return t("\u4E0A\u6B21\u5931\u8D25\uFF1A{reason}").replace("{reason}", reason) + (snap.failure.hard ? t("\uFF08\u5DF2\u8BB0\u5FC6\uFF09") : t("\uFF08\u672C\u6B21\u4F1A\u8BDD\u5185\u8BB0\u5FC6\uFF09")) + (timing ? " \xB7 " + timing : "");
-  }
-  if (snap.ok === true) return t("\u5B9E\u65F6\u6E32\u67D3\u6B63\u5E38") + (timing ? " \xB7 " + timing : "");
-  return t("\u5C1A\u672A\u6E32\u67D3\uFF08\u9009\u62E9\u4E00\u5F20 scene \u58C1\u7EB8\u540E\u8FD9\u91CC\u663E\u793A\u72B6\u6001\uFF09");
-}
-function formatTiming(timing, t) {
-  const assemble = t("\u88C5\u914D {assemble} ms").replace("{assemble}", String(Math.round(timing.assembleMs)));
-  if (timing.firstFrameMs < 0) return assemble;
-  return assemble + " \xB7 " + t("\u9996\u5E27 {first} ms").replace("{first}", String(Math.round(timing.firstFrameMs)));
-}
-var FAILURE_TEXT = {
-  "scene-json": "\u62FF\u4E0D\u5230 scene.json",
-  "no-visible-objects": "\u6CA1\u6709\u53EF\u663E\u793A\u7684\u5BF9\u8C61",
-  "context-lost": "WebGL \u4E0A\u4E0B\u6587\u4E22\u5931",
-  "exception": "\u88C5\u914D\u5F02\u5E38",
-  "load-error": "\u8D44\u6E90\u52A0\u8F7D\u4E2D\u65AD"
-};
-
 // src/client/pointer-input.ts
 function createPointerTracker(opts = {}) {
   const host = opts.target ?? (typeof window !== "undefined" ? window : null);
@@ -35647,1355 +37215,6 @@ async function showSceneFallback(info, deps) {
   return "none";
 }
 
-// src/client/settings-section.tsx
-var import_react2 = require("react");
-
-// src/client/local-store.ts
-var STORAGE_KEYS = { favorites: "we:fav", hidden: "we:hidden", recent: "we:recent" };
-function storeOf(store) {
-  if (store) return store;
-  return typeof localStorage !== "undefined" ? localStorage : null;
-}
-function loadJson(key, fallback, store) {
-  const s = storeOf(store);
-  if (!s) return fallback;
-  try {
-    const raw = s.getItem(key);
-    return raw === null ? fallback : JSON.parse(raw);
-  } catch {
-    return fallback;
-  }
-}
-function saveJson(key, value, store) {
-  const s = storeOf(store);
-  if (!s) return false;
-  try {
-    s.setItem(key, JSON.stringify(value));
-    return true;
-  } catch {
-    return false;
-  }
-}
-function loadStringSet(key, store) {
-  const value = loadJson(key, [], store);
-  const ids = Array.isArray(value) ? value.filter((id) => typeof id === "string") : [];
-  return new Set(ids);
-}
-function saveStringSet(key, ids, store) {
-  saveJson(key, [...new Set(ids)], store);
-}
-
-// src/client/library-view.ts
-var RECENT_LIMIT = 200;
-function loadRecent() {
-  const value = loadJson(STORAGE_KEYS.recent, {});
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  return value;
-}
-function loadLibraryState() {
-  return {
-    favorites: loadStringSet(STORAGE_KEYS.favorites),
-    hidden: loadStringSet(STORAGE_KEYS.hidden),
-    recent: loadRecent()
-  };
-}
-function toggleFavorite(id, s = loadLibraryState()) {
-  const favorites = new Set(s.favorites);
-  if (favorites.has(id)) favorites.delete(id);
-  else favorites.add(id);
-  saveStringSet(STORAGE_KEYS.favorites, favorites);
-  return { ...s, favorites };
-}
-function toggleHidden(id, s = loadLibraryState()) {
-  const hidden = new Set(s.hidden);
-  if (hidden.has(id)) hidden.delete(id);
-  else hidden.add(id);
-  saveStringSet(STORAGE_KEYS.hidden, hidden);
-  return { ...s, hidden };
-}
-function markRecent(id, now = Date.now()) {
-  if (!id) return;
-  const recent = loadRecent();
-  recent[id] = now;
-  const kept = Object.entries(recent).sort(([, a], [, b]) => b - a).slice(0, RECENT_LIMIT);
-  saveJson(STORAGE_KEYS.recent, Object.fromEntries(kept));
-}
-function filterLibrary(list, f, s) {
-  const q = f.query.trim().toLowerCase();
-  let out = list.filter((w) => {
-    if (!f.showHidden && s.hidden.has(w.id)) return false;
-    if (f.favoritesOnly && !s.favorites.has(w.id)) return false;
-    if (f.types.length > 0 && !f.types.includes(w.type)) return false;
-    return q === "" || w.title.toLowerCase().includes(q);
-  });
-  if (f.sort === "recent") out = [...out].sort((a, b) => (s.recent[b.id] ?? 0) - (s.recent[a.id] ?? 0));
-  if (f.sort === "title") out = [...out].sort((a, b) => a.title.localeCompare(b.title));
-  if (f.sort === "default") {
-    out = [...out.filter((w) => s.favorites.has(w.id)), ...out.filter((w) => !s.favorites.has(w.id))];
-  }
-  return out;
-}
-
-// src/client/rotation.ts
-var ROTATION_INTERVAL_OPTIONS = [
-  { ms: 6e4, label: "1 \u5206\u949F" },
-  { ms: 3e5, label: "5 \u5206\u949F" },
-  { ms: 6e5, label: "10 \u5206\u949F" },
-  { ms: 18e5, label: "30 \u5206\u949F" }
-];
-function normalizeRotationOrder(raw) {
-  return raw === "random" ? "random" : "sequential";
-}
-function formatRotationInterval(ms) {
-  const value = typeof ms === "number" && Number.isFinite(ms) && ms > 0 ? ms : 3e5;
-  return `${Math.max(1, Math.round(value / 6e4))} \u5206\u949F`;
-}
-function buildRotationPool(list, state) {
-  const favorites = list.filter((w) => state.favorites.has(w.id));
-  if (favorites.length >= 2) return favorites;
-  return list.filter((w) => w.type !== "unknown" && !state.hidden.has(w.id));
-}
-function pickNext(pool, currentId, order, rand = Math.random) {
-  if (pool.length < 2) return null;
-  if (order === "random") {
-    const candidates = pool.filter((w) => w.id !== currentId);
-    if (candidates.length === 0) return null;
-    const index = Math.min(candidates.length - 1, Math.max(0, Math.floor(rand() * candidates.length)));
-    return candidates[index] ?? null;
-  }
-  const current = pool.findIndex((w) => w.id === currentId);
-  return pool[(current + 1) % pool.length] ?? null;
-}
-var timerHost = typeof window !== "undefined" ? window : globalThis;
-function createRotationScheduler(deps) {
-  const setTimer = deps.setTimeoutFn ?? ((fn, ms) => timerHost.setTimeout(fn, ms));
-  const clearTimer = deps.clearTimeoutFn ?? ((handle) => timerHost.clearTimeout(handle));
-  const now = deps.now ?? (() => Date.now());
-  const cfg = {
-    intervalMs: deps.intervalMs,
-    order: deps.order ?? "sequential"
-  };
-  const failed = /* @__PURE__ */ new Set();
-  let started = false;
-  let paused = false;
-  let timer = null;
-  let dueAt = null;
-  const clear = () => {
-    if (timer !== null) clearTimer(timer);
-    timer = null;
-    dueAt = null;
-  };
-  const schedule = () => {
-    clear();
-    if (!started || paused) return;
-    dueAt = now() + cfg.intervalMs;
-    timer = setTimer(() => {
-      void tick();
-    }, cfg.intervalMs);
-  };
-  const choose = () => {
-    const pool = deps.getPool();
-    let next = pickNext(pool, deps.getCurrentId(), cfg.order);
-    for (let i = 0; next && failed.has(next.id) && i < pool.length; i += 1) {
-      next = pickNext(pool, next.id, cfg.order);
-    }
-    return next && !failed.has(next.id) ? next : null;
-  };
-  const tick = async () => {
-    timer = null;
-    dueAt = null;
-    if (!started) return;
-    if (paused || deps.isPaused()) {
-      schedule();
-      return;
-    }
-    try {
-      const next = choose();
-      if (next) await deps.select(next.id);
-    } catch {
-    }
-    schedule();
-  };
-  return {
-    start() {
-      if (started) return;
-      started = true;
-      schedule();
-    },
-    stop() {
-      started = false;
-      clear();
-    },
-    setConfig(next) {
-      const intervalChanged = next.intervalMs !== void 0 && next.intervalMs !== cfg.intervalMs;
-      if (next.intervalMs !== void 0) cfg.intervalMs = next.intervalMs;
-      if (next.order !== void 0) cfg.order = next.order;
-      if (intervalChanged) schedule();
-    },
-    notifyManualSelect() {
-      failed.clear();
-      schedule();
-    },
-    markFailed(id) {
-      if (id) failed.add(id);
-    },
-    setPaused(next) {
-      if (next === paused) return;
-      paused = next;
-      if (paused) clear();
-      else schedule();
-    },
-    status() {
-      return {
-        enabled: started && !paused && !deps.isPaused(),
-        poolSize: deps.getPool().filter((w) => !failed.has(w.id)).length,
-        nextInMs: timer === null || dueAt === null ? null : Math.max(0, dueAt - now())
-      };
-    }
-  };
-}
-
-// src/client/settings-section.tsx
-var import_jsx_runtime2 = require("react/jsx-runtime");
-async function defaultFetchWallpapers2(opts) {
-  return (await fetch(opts?.refresh ? "/wallpapers/list?refresh=1" : "/wallpapers/list")).json();
-}
-async function defaultFetchProbe() {
-  return (await fetch("/wallpapers/probe")).json();
-}
-var sharedOnSelect = null;
-function setWallpaperSelectHandler(fn) {
-  sharedOnSelect = fn;
-}
-var sharedOnRuntimeSettings = null;
-function setWallpaperRuntimeHandler(fn) {
-  sharedOnRuntimeSettings = fn;
-}
-var sharedOnReselect = null;
-function setWallpaperReselectHandler(handler) {
-  sharedOnReselect = handler;
-}
-var sharedSystemAudio = null;
-function setWallpaperSystemAudioHandlers(handlers) {
-  sharedSystemAudio = handlers;
-}
-function systemAudioErrorMessage(failure) {
-  switch (failure) {
-    case "unsupported":
-      return "\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u6355\u83B7\u7CFB\u7EDF\u97F3\u9891\uFF08\u684C\u9762\u7248 App \u7981\u7528\u4E86\u8BE5\u6743\u9650\uFF0C\u8BF7\u7528\u6D4F\u89C8\u5668\u6253\u5F00\u672C GUI \u5730\u5740\u518D\u8BD5\uFF09";
-    case "denied":
-      return "\u672A\u6388\u6743\uFF1A\u8BF7\u5728\u5F39\u7A97\u4E2D\u9009\u62E9\u5171\u4EAB\u5E76\u52FE\u9009\u300C\u5171\u4EAB\u97F3\u9891\u300D\uFF1B\u62D2\u7EDD\u540E\u4E0D\u4F1A\u81EA\u52A8\u91CD\u8BD5\u3002";
-    case "no-audio-track":
-      return "\u6CA1\u6709\u6355\u83B7\u5230\u97F3\u9891\u8F68\uFF1A\u8BF7\u91CD\u65B0\u9009\u62E9\u5E76\u52FE\u9009\u300C\u5171\u4EAB\u97F3\u9891\u300D\uFF08\u53EA\u5171\u4EAB\u753B\u9762\u4E0D\u4F1A\u51FA\u58F0\uFF09\u3002";
-    case "no-web-audio":
-      return "\u5F53\u524D\u6D4F\u89C8\u5668\u7F3A\u5C11 Web Audio \u652F\u6301\uFF0C\u65E0\u6CD5\u5206\u6790\u7CFB\u7EDF\u97F3\u9891\u3002";
-    default:
-      return "\u6355\u83B7\u7CFB\u7EDF\u97F3\u9891\u5931\u8D25\uFF08\u672A\u77E5\u539F\u56E0\uFF09\uFF0C\u5DF2\u4FDD\u6301\u9759\u97F3\u3002";
-  }
-}
-var healthHandler = null;
-var healthSubscribers = /* @__PURE__ */ new Set();
-function setWallpaperHealthHandler(handler) {
-  healthHandler = handler;
-}
-function subscribeWallpaperHealth(cb) {
-  healthSubscribers.add(cb);
-  return () => {
-    healthSubscribers.delete(cb);
-  };
-}
-function notifyWallpaperHealth(snap) {
-  for (const cb of Array.from(healthSubscribers)) {
-    try {
-      cb(snap);
-    } catch {
-    }
-  }
-}
-var mediaHandler = null;
-var mediaSubscribers = /* @__PURE__ */ new Set();
-function setWallpaperMediaHandler(handler) {
-  mediaHandler = handler;
-  pushMedia(handler?.get() ?? null);
-}
-function subscribeWallpaperMedia(cb) {
-  mediaSubscribers.add(cb);
-  return () => {
-    mediaSubscribers.delete(cb);
-  };
-}
-function notifyWallpaperMedia(failure) {
-  if (!mediaHandler) return;
-  pushMedia(failure);
-}
-function pushMedia(failure) {
-  for (const cb of Array.from(mediaSubscribers)) {
-    try {
-      cb(failure);
-    } catch {
-    }
-  }
-}
-var mediaIntegrationHandler = null;
-function setWallpaperMediaIntegrationHandler(handler) {
-  mediaIntegrationHandler = handler;
-}
-function mediaIntegrationHint(enabled, status) {
-  if (!enabled) return "\u5A92\u4F53\u96C6\u6210\u5DF2\u5173\u95ED\uFF1A\u4E0D\u8BFB\u53D6\u7CFB\u7EDF\u5A92\u4F53\u4F1A\u8BDD\uFF0C\u4E5F\u4E0D\u542F\u52A8\u5A92\u4F53\u8FDB\u7A0B\u3002";
-  switch (status?.reason) {
-    case "unsupported-platform":
-      return "\u5F53\u524D\u7CFB\u7EDF\u4E0D\u652F\u6301\u7CFB\u7EDF\u5A92\u4F53\u4F1A\u8BDD\uFF08\u4EC5 Windows\uFF09\uFF1A\u5A92\u4F53\u56FE\u5C42\u4FDD\u6301\u9690\u85CF\uFF0C\u58C1\u7EB8\u7167\u5E38\u6E32\u67D3\u3002";
-    case "no-powershell":
-      return "\u672A\u627E\u5230\u53EF\u7528\u7684 PowerShell\uFF1A\u8BFB\u4E0D\u5230\u7CFB\u7EDF\u5A92\u4F53\u4F1A\u8BDD\uFF0C\u5A92\u4F53\u56FE\u5C42\u4FDD\u6301\u9690\u85CF\uFF0C\u58C1\u7EB8\u7167\u5E38\u6E32\u67D3\u3002";
-    case "watcher-failed":
-      return "\u5A92\u4F53\u4F1A\u8BDD\u8BFB\u53D6\u5931\u8D25\uFF08\u5DF2\u964D\u7EA7\uFF09\uFF1A\u5A92\u4F53\u56FE\u5C42\u4FDD\u6301\u9690\u85CF\uFF0C\u58C1\u7EB8\u7167\u5E38\u6E32\u67D3\u3002";
-    default:
-      return "\u672C\u673A\u8BFB\u53D6\u7CFB\u7EDF\u5A92\u4F53\u4F1A\u8BDD\uFF08\u4EC5 Windows\uFF09\uFF1B\u66F2\u540D/\u5C01\u9762\u4EC5\u5185\u5B58\u3001\u4E0D\u843D\u76D8\u3001\u4E0D\u4E0A\u4F20\u3002";
-  }
-}
-var weT = (s) => s;
-var EMPTY_HEALTH = { wallpaperId: "", ok: null, failure: null, timing: null };
-var MEDIA_FAILURE_TEXT = {
-  unsupported: {
-    preview: "\u8BE5\u89C6\u9891\u58C1\u7EB8\u89E3\u7801\u5931\u8D25\uFF08\u53EF\u80FD\u662F HEVC/H.265\uFF09\uFF0C\u5DF2\u56DE\u9000\u5230\u9884\u89C8\u56FE\uFF1B\u5EFA\u8BAE\u6539\u7528 Chrome \u6216\u8F6C\u6362\u7F16\u7801\u3002",
-    none: "\u8BE5\u89C6\u9891\u58C1\u7EB8\u89E3\u7801\u5931\u8D25\uFF08\u53EF\u80FD\u662F HEVC/H.265\uFF09\uFF0C\u4E14\u6CA1\u6709\u53EF\u7528\u7684\u9884\u89C8\u56FE\uFF1B\u5EFA\u8BAE\u6539\u7528 Chrome \u6216\u8F6C\u6362\u7F16\u7801\u3002"
-  },
-  timeout: {
-    preview: "\u89C6\u9891\u58C1\u7EB8\u52A0\u8F7D\u8D85\u65F6\uFF1A1.5 \u79D2\u5185\u6CA1\u6709\u51FA\u73B0\u9996\u5E27\uFF0C\u5DF2\u56DE\u9000\u5230\u9884\u89C8\u56FE\uFF1B\u5EFA\u8BAE\u6539\u7528 Chrome \u6216\u68C0\u67E5\u89C6\u9891\u6587\u4EF6\u3002",
-    none: "\u89C6\u9891\u58C1\u7EB8\u52A0\u8F7D\u8D85\u65F6\uFF1A1.5 \u79D2\u5185\u6CA1\u6709\u51FA\u73B0\u9996\u5E27\uFF0C\u4E14\u6CA1\u6709\u53EF\u7528\u7684\u9884\u89C8\u56FE\uFF1B\u5EFA\u8BAE\u6539\u7528 Chrome \u6216\u68C0\u67E5\u89C6\u9891\u6587\u4EF6\u3002"
-  }
-};
-var KNOWN_USERPROP_TYPES = /* @__PURE__ */ new Set(["bool", "slider", "color", "combo"]);
-function isKnownUserProperty(property) {
-  return KNOWN_USERPROP_TYPES.has(property.type);
-}
-function initialPropertyValue(property, wallpaperId) {
-  const stored = readUserProperty(property.key, wallpaperId);
-  switch (property.type) {
-    case "bool":
-      return typeof stored === "boolean" ? stored : property.value;
-    case "slider":
-      return typeof stored === "number" && Number.isFinite(stored) ? Math.min(property.max, Math.max(property.min, stored)) : property.value;
-    case "color":
-      return typeof stored === "string" && parseColorTriplet(stored) ? stored : property.value;
-    case "combo":
-      return typeof stored === "string" && property.options.some((o) => o.value === stored) ? stored : property.value;
-    default:
-      return false;
-  }
-}
-function sliderStep(property) {
-  return typeof property.step === "number" && Number.isFinite(property.step) && property.step > 0 ? property.step : property.fraction === false ? 1 : 0.01;
-}
-function sliderDecimals(property) {
-  if (typeof property.precision === "number" && Number.isFinite(property.precision)) {
-    return Math.min(10, Math.max(0, Math.floor(property.precision)));
-  }
-  const text = String(sliderStep(property));
-  const exp = /e-(\d+)$/i.exec(text);
-  if (exp) return Math.min(10, Number(exp[1]));
-  const dot = text.indexOf(".");
-  return dot >= 0 ? Math.min(10, text.length - dot - 1) : 0;
-}
-function formatSliderValue(value, property) {
-  return property.fraction === false ? String(Math.round(value)) : value.toFixed(sliderDecimals(property));
-}
-function colorTripletToHex(value) {
-  const rgb = parseColorTriplet(value) ?? [0, 0, 0];
-  return "#" + rgb.map((n) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, "0")).join("");
-}
-function hexToColorTriplet(hex) {
-  const normalized = normalizeHexColor(hex, "#000000");
-  const full = normalized.length === 4 ? `#${normalized[1]}${normalized[1]}${normalized[2]}${normalized[2]}${normalized[3]}${normalized[3]}` : normalized;
-  const component = (index) => {
-    const n = parseInt(full.slice(1 + index * 2, 3 + index * 2), 16) / 255;
-    return String(Number(n.toFixed(4)));
-  };
-  return `${component(0)} ${component(1)} ${component(2)}`;
-}
-function WallpaperSettingsSection(props) {
-  const fetchSettings = props.fetchSettings ?? readClientSettings;
-  const writeSettings = props.writeSettings ?? writeClientSettings;
-  const fetchWallpapers = props.fetchWallpapers ?? defaultFetchWallpapers2;
-  const fetchProbe = props.fetchProbe ?? defaultFetchProbe;
-  const fetchProperties = props.fetchProperties ?? fetchWallpaperProperties;
-  const onSelect = props.onSelect ?? sharedOnSelect ?? (() => {
-  });
-  const onReselect = props.onReselect ?? sharedOnReselect ?? (() => {
-  });
-  const onRuntimeSettings = props.onRuntimeSettings ?? sharedOnRuntimeSettings ?? (() => {
-  });
-  const [settings, setSettings] = (0, import_react2.useState)(null);
-  const [wallpapers, setWallpapers] = (0, import_react2.useState)([]);
-  const [probe, setProbe] = (0, import_react2.useState)(null);
-  const [wallpaperDir, setWallpaperDir] = (0, import_react2.useState)("");
-  const [weAssetsDir, setWeAssetsDir] = (0, import_react2.useState)("");
-  const [message, setMessage] = (0, import_react2.useState)("");
-  const [health, setHealth] = (0, import_react2.useState)(props.health ?? null);
-  const [mediaFailure, setMediaFailure] = (0, import_react2.useState)(mediaHandler?.get() ?? null);
-  const [mediaStatus, setMediaStatus] = (0, import_react2.useState)(
-    () => mediaIntegrationHandler?.get() ?? null
-  );
-  const [libState, setLibState] = (0, import_react2.useState)(loadLibraryState);
-  const [properties, setProperties] = (0, import_react2.useState)([]);
-  const [audioProcessing, setAudioProcessing] = (0, import_react2.useState)(false);
-  const [systemAudioState, setSystemAudioState] = (0, import_react2.useState)("idle");
-  const [systemAudioError, setSystemAudioError] = (0, import_react2.useState)(null);
-  const [propValues, setPropValues] = (0, import_react2.useState)({});
-  const commitTimers = (0, import_react2.useRef)(/* @__PURE__ */ new Map());
-  const commitPending = (0, import_react2.useRef)(/* @__PURE__ */ new Map());
-  const [filter, setFilter] = (0, import_react2.useState)({
-    query: "",
-    types: [],
-    favoritesOnly: false,
-    showHidden: false,
-    sort: "default"
-  });
-  const visibleWallpapers = filterLibrary(wallpapers, filter, libState);
-  const selectedId = settings?.selectedWallpaperId ?? "";
-  const selectedIsScene = !!selectedId && wallpapers.some((w) => w.id === selectedId && (w.type === "scene" || w.type === "preset"));
-  const mediaEnabled = settings?.mediaIntegrationEnabled ?? false;
-  const clearCommitTimers = (0, import_react2.useCallback)(() => {
-    for (const timer of commitTimers.current.values()) clearTimeout(timer);
-    commitTimers.current.clear();
-    commitPending.current.clear();
-  }, []);
-  (0, import_react2.useEffect)(() => {
-    setHealth(props.health ?? healthHandler?.get() ?? null);
-    return subscribeWallpaperHealth((s) => setHealth(s));
-  }, [props.health]);
-  (0, import_react2.useEffect)(() => {
-    setMediaFailure(mediaHandler?.get() ?? null);
-    return subscribeWallpaperMedia((f) => setMediaFailure(f));
-  }, []);
-  (0, import_react2.useEffect)(() => {
-    const read = () => setMediaStatus(mediaIntegrationHandler?.get() ?? null);
-    read();
-    const timer = setInterval(read, 1e3);
-    return () => clearInterval(timer);
-  }, []);
-  (0, import_react2.useEffect)(() => {
-    let alive = true;
-    void (async () => {
-      const [s, list] = await Promise.all([
-        fetchSettings(),
-        fetchWallpapers().catch(() => [])
-      ]);
-      if (!alive) return;
-      setSettings(s);
-      setWallpapers(list);
-      setWallpaperDir(s.wallpaperDir || "");
-      setWeAssetsDir(s.weAssetsDir || "");
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [fetchSettings, fetchWallpapers]);
-  (0, import_react2.useEffect)(() => {
-    if (!selectedIsScene) {
-      setProperties([]);
-      setPropValues({});
-      setAudioProcessing(false);
-      setSystemAudioState("idle");
-      setSystemAudioError(null);
-      return;
-    }
-    let alive = true;
-    void fetchProperties(selectedId).then((res) => {
-      if (!alive) return;
-      const items = Array.isArray(res?.properties) ? res.properties : [];
-      setAudioProcessing(res?.audioProcessing === true);
-      setProperties(items);
-      const values = {};
-      for (const p of items) {
-        if (isKnownUserProperty(p)) values[p.key] = initialPropertyValue(p, selectedId);
-      }
-      setPropValues(values);
-    }).catch(() => {
-      if (!alive) return;
-      setProperties([]);
-      setPropValues({});
-      setAudioProcessing(false);
-    });
-    return () => {
-      alive = false;
-      clearCommitTimers();
-    };
-  }, [selectedId, selectedIsScene, fetchProperties, clearCommitTimers]);
-  (0, import_react2.useEffect)(() => () => clearCommitTimers(), [clearCommitTimers]);
-  const startSystemAudio = (0, import_react2.useCallback)(async () => {
-    if (!sharedSystemAudio) {
-      setSystemAudioError("unsupported");
-      return;
-    }
-    setSystemAudioState("starting");
-    setSystemAudioError(null);
-    try {
-      const result = await sharedSystemAudio.start();
-      if (result === "ok") setSystemAudioState("active");
-      else {
-        setSystemAudioState("idle");
-        setSystemAudioError(result);
-      }
-    } catch {
-      setSystemAudioState("idle");
-      setSystemAudioError("error");
-    }
-  }, []);
-  const stopSystemAudio = (0, import_react2.useCallback)(() => {
-    sharedSystemAudio?.stop();
-    setSystemAudioState("idle");
-  }, []);
-  const select = (0, import_react2.useCallback)((id) => {
-    onSelect(id);
-    setSettings((prev) => prev ? { ...prev, selectedWallpaperId: id } : prev);
-    void writeSettings({ selectedWallpaperId: id }).then((ok) => setMessage(ok === false ? "\u4FDD\u5B58\u5931\u8D25\uFF1A\u9009\u62E9\u672A\u6301\u4E45\u5316\uFF08\u8BE6\u89C1\u63A7\u5236\u53F0\uFF09" : id ? "\u58C1\u7EB8\u5DF2\u5207\u6362" : "\u5DF2\u53D6\u6D88\u58C1\u7EB8"));
-  }, [onSelect, writeSettings]);
-  const refreshWallpapers = (0, import_react2.useCallback)(() => {
-    setMessage("");
-    void fetchWallpapers({ refresh: true }).then((list) => {
-      setWallpapers(list);
-      setMessage("\u58C1\u7EB8\u5217\u8868\u5DF2\u5237\u65B0");
-    }).catch(() => setMessage("\u5237\u65B0\u58C1\u7EB8\u5931\u8D25"));
-  }, [fetchWallpapers]);
-  const applyRuntime = (0, import_react2.useCallback)((patch) => {
-    setSettings((prev) => prev ? { ...prev, ...patch } : prev);
-    onRuntimeSettings(patch);
-    void writeSettings(patch);
-  }, [onRuntimeSettings, writeSettings]);
-  const setPropertyValue = (0, import_react2.useCallback)((key, value) => {
-    setPropValues((prev) => ({ ...prev, [key]: value }));
-  }, []);
-  const commitProperty = (0, import_react2.useCallback)((key, value) => {
-    writeUserProperty(key, value, selectedId);
-    onReselect(selectedId);
-  }, [onReselect, selectedId]);
-  const cancelCommit = (0, import_react2.useCallback)((key) => {
-    const timer = commitTimers.current.get(key);
-    if (timer !== void 0) {
-      clearTimeout(timer);
-      commitTimers.current.delete(key);
-    }
-    commitPending.current.delete(key);
-  }, []);
-  const flushCommit = (0, import_react2.useCallback)((key) => {
-    const pending = commitPending.current.get(key);
-    cancelCommit(key);
-    if (pending === void 0) return;
-    commitProperty(key, pending);
-  }, [cancelCommit, commitProperty]);
-  const scheduleCommit = (0, import_react2.useCallback)((key, value) => {
-    commitPending.current.set(key, value);
-    const timer = commitTimers.current.get(key);
-    if (timer !== void 0) clearTimeout(timer);
-    commitTimers.current.set(key, setTimeout(() => {
-      commitTimers.current.delete(key);
-      flushCommit(key);
-    }, 300));
-  }, [flushCommit]);
-  const resetProperty = (0, import_react2.useCallback)((property) => {
-    cancelCommit(property.key);
-    resetUserProperty(property.key, selectedId);
-    setPropertyValue(property.key, property.value);
-    onReselect(selectedId);
-  }, [cancelCommit, onReselect, selectedId, setPropertyValue]);
-  const saveDirs = (0, import_react2.useCallback)(() => {
-    void writeSettings({ wallpaperDir: wallpaperDir.trim(), weAssetsDir: weAssetsDir.trim() }).then((ok) => setMessage(ok === false ? "\u4FDD\u5B58\u5931\u8D25\uFF1A\u8BBE\u7F6E\u672A\u5199\u5165\uFF08\u8BE6\u89C1\u63A7\u5236\u53F0\uFF09" : "\u8DEF\u5F84\u5DF2\u4FDD\u5B58"));
-  }, [wallpaperDir, weAssetsDir, writeSettings]);
-  const runProbe = (0, import_react2.useCallback)(() => {
-    setMessage("");
-    void fetchProbe().then(setProbe).catch(() => setMessage("\u81EA\u52A8\u63A2\u6D4B\u5931\u8D25"));
-  }, [fetchProbe]);
-  const adopt = (0, import_react2.useCallback)((path, key) => {
-    void writeSettings({ [key]: path }).then((ok) => {
-      if (ok === false) {
-        setMessage("\u4FDD\u5B58\u5931\u8D25\uFF1A\u8BBE\u7F6E\u672A\u5199\u5165\uFF08\u8BE6\u89C1\u63A7\u5236\u53F0\uFF09");
-        return;
-      }
-      if (key === "wallpaperDir") setWallpaperDir(path);
-      else setWeAssetsDir(path);
-      setMessage("\u5DF2\u91C7\u7528\u63A2\u6D4B\u8DEF\u5F84");
-    });
-  }, [writeSettings]);
-  const currentTitle = settings ? wallpapers.find((w) => w.id === settings.selectedWallpaperId)?.title ?? "\u65E0\uFF08\u9ED8\u8BA4\u80CC\u666F\uFF09" : "";
-  const live = health ?? EMPTY_HEALTH;
-  const liveCurrent = live.ok === true ? formatHealthLine({ ...live, failure: null }, weT) : formatHealthLine(live, weT);
-  const liveMemory = live.ok === true && live.failure ? formatHealthLine({ ...live, ok: null, timing: null }, weT) : "";
-  const liveState = live.ok === true ? "ok" : live.failure ? "failed" : "idle";
-  const currentWallpaper = settings ? wallpapers.find((w) => w.id === settings.selectedWallpaperId) : void 0;
-  const heroStatus = !settings?.selectedWallpaperId ? { tone: "idle", text: "\u672A\u9009\u62E9\u58C1\u7EB8" } : liveState === "ok" ? { tone: "ok", text: "\u5B9E\u65F6\u6E32\u67D3\u4E2D" } : liveState === "failed" ? { tone: "danger", text: "\u5B9E\u65F6\u6E32\u67D3\u5931\u8D25" } : { tone: "idle", text: "\u5F85\u6E32\u67D3" };
-  const jumpTo = (id) => {
-    const el = document.getElementById(id);
-    if (el && typeof el.scrollIntoView === "function") el.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
-  const rotationPoolSize = buildRotationPool(wallpapers, libState).length;
-  const rotationStatus = rotationPoolSize < 2 ? "\u81F3\u5C11\u4FDD\u7559 2 \u5F20\u53EF\u8F6E\u64AD\u58C1\u7EB8\uFF0C\u6216\u6536\u85CF 2 \u5F20\u4EE5\u4E0A" : `\u6BCF ${formatRotationInterval(settings?.rotationIntervalMs)} \xB7 ${normalizeRotationOrder(settings?.rotationOrder) === "sequential" ? "\u987A\u5E8F" : "\u968F\u673A"} \xB7 \u53EF\u8F6E\u64AD ${rotationPoolSize} \u5F20`;
-  const visibleProperties = properties.filter(
-    (p) => isKnownUserProperty(p) && Array.isArray(p.usedBy) && p.usedBy.length > 0
-  );
-  const retryLive = () => {
-    if (props.onRetryLive) props.onRetryLive();
-    else if (healthHandler) healthHandler.retry();
-    else return;
-    setMessage("\u5DF2\u91CD\u8BD5\u5B9E\u65F6\u6E32\u67D3");
-  };
-  const forgetFailures = () => {
-    if (props.onClearRenderFailures) props.onClearRenderFailures();
-    else if (healthHandler) healthHandler.clearFailures();
-    else return;
-    setMessage("\u5DF2\u6E05\u9664\u5931\u8D25\u8BB0\u5FC6");
-  };
-  const dismissMediaFailure = () => {
-    mediaHandler?.clear();
-    setMediaFailure(null);
-  };
-  return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-root", children: [
-    /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { className: "wss-section wss-hero", "aria-label": "\u5F53\u524D\u58C1\u7EB8", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "wss-hero-media", "data-empty": !currentWallpaper?.previewUrl, children: currentWallpaper?.previewUrl ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("img", { src: currentWallpaper.previewUrl, alt: currentTitle }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-hero-empty", children: "\u8FD8\u6CA1\u6709\u9009\u62E9\u58C1\u7EB8" }) }),
-      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-hero-info", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-current", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-current-info", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-current-label", children: "\u5F53\u524D\u58C1\u7EB8" }),
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-current-name", title: currentTitle, children: currentTitle })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-current-actions", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", className: "wss-refresh", onClick: refreshWallpapers, children: "\u5237\u65B0" }),
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", className: "wss-cancel", onClick: () => select(""), children: "\u53D6\u6D88\u58C1\u7EB8" })
-          ] })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-hero-meta", children: [
-          currentWallpaper && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-type-badge", children: currentWallpaper.type.toUpperCase() }),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { className: "wss-hero-status", "data-tone": heroStatus.tone, children: [
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("i", { "aria-hidden": "true" }),
-            heroStatus.text
-          ] }),
-          currentWallpaper?.hasScene && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-chip", children: "scene.pkg" }),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { className: "wss-chip", children: [
-            wallpapers.length,
-            " \u5F20\u53EF\u7528"
-          ] })
-        ] })
-      ] })
-    ] }),
-    mediaFailure && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { className: "wss-alert wss-media-failure", "data-kind": mediaFailure.kind, role: "status", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { children: MEDIA_FAILURE_TEXT[mediaFailure.kind][mediaFailure.fallback] }),
-      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", className: "wss-media-dismiss", onClick: dismissMediaFailure, children: "\u77E5\u9053\u4E86" })
-    ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("nav", { className: "wss-nav", "aria-label": "\u58C1\u7EB8\u8BBE\u7F6E\u5FEB\u901F\u5B9A\u4F4D", children: [
-      ["wss-anchor-library", "\u58C1\u7EB8\u5E93"],
-      ["wss-anchor-appearance", "\u5916\u89C2"],
-      ["wss-anchor-playback", "\u64AD\u653E"],
-      ["wss-anchor-advanced", "\u9AD8\u7EA7"]
-    ].map(([id, label]) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", className: "wss-nav-item", onClick: () => jumpTo(id), children: label }, id)) }),
-    /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-group", id: "wss-anchor-library", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { className: "wss-section", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("header", { className: "wss-section-head", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("h4", { className: "wss-section-title", children: "\u58C1\u7EB8\u5E93" }),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { className: "wss-count", children: [
-            wallpapers.length,
-            " \u5F20"
-          ] })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-library-tools", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-search-row", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-              "input",
-              {
-                type: "search",
-                className: "wss-search",
-                placeholder: "\u641C\u7D22\u58C1\u7EB8\u6807\u9898",
-                "aria-label": "\u641C\u7D22\u58C1\u7EB8\u6807\u9898",
-                value: filter.query,
-                onChange: (e) => setFilter((f) => ({ ...f, query: e.target.value }))
-              }
-            ),
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
-              "select",
-              {
-                className: "wss-sort",
-                "aria-label": "\u6392\u5E8F\u65B9\u5F0F",
-                value: filter.sort,
-                onChange: (e) => {
-                  const sort = e.target.value;
-                  setFilter((f) => ({ ...f, sort }));
-                  if (sort === "recent") setLibState((prev) => ({ ...prev, recent: loadLibraryState().recent }));
-                },
-                children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "default", children: "\u9ED8\u8BA4\u6392\u5E8F" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "recent", children: "\u6700\u8FD1\u4F7F\u7528" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "title", children: "\u6807\u9898\u6392\u5E8F" })
-                ]
-              }
-            )
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-filter-row", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
-              "select",
-              {
-                className: "wss-type-filter",
-                "aria-label": "\u6309\u7C7B\u578B\u7B5B\u9009",
-                value: filter.types[0] ?? "all",
-                onChange: (e) => setFilter((f) => ({
-                  ...f,
-                  types: e.target.value === "all" ? [] : [e.target.value]
-                })),
-                children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "all", children: "\u5168\u90E8\u7C7B\u578B" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "scene", children: "SCENE" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "video", children: "VIDEO" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "web", children: "WEB" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "image", children: "IMAGE" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "preset", children: "PRESET" })
-                ]
-              }
-            ),
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-tool", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-                "input",
-                {
-                  type: "checkbox",
-                  className: "wss-fav-only",
-                  checked: filter.favoritesOnly,
-                  onChange: (e) => setFilter((f) => ({ ...f, favoritesOnly: e.target.checked }))
-                }
-              ),
-              "\u4EC5\u6536\u85CF"
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-tool", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-                "input",
-                {
-                  type: "checkbox",
-                  className: "wss-show-hidden",
-                  checked: filter.showHidden,
-                  onChange: (e) => setFilter((f) => ({ ...f, showHidden: e.target.checked }))
-                }
-              ),
-              "\u663E\u793A\u5DF2\u9690\u85CF"
-            ] })
-          ] })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "wss-grid", children: visibleWallpapers.map((w) => {
-          const selected = settings?.selectedWallpaperId === w.id;
-          const favorite = libState.favorites.has(w.id);
-          const hidden = libState.hidden.has(w.id);
-          return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-thumb-wrap", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
-              "button",
-              {
-                type: "button",
-                className: "wss-thumb" + (selected ? " wss-selected" : ""),
-                "data-id": w.id,
-                title: w.title,
-                "aria-pressed": selected,
-                onClick: () => select(w.id),
-                children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { className: "wss-thumb-media", children: [
-                    w.previewUrl ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("img", { src: w.previewUrl, alt: w.title, loading: "lazy" }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-no-preview", children: "\u65E0\u9884\u89C8" }),
-                    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-badge", children: w.type.toUpperCase() }),
-                    selected && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-check", "aria-hidden": "true", children: "\u2713" })
-                  ] }),
-                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-thumb-title", children: w.title })
-                ]
-              }
-            ),
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { className: "wss-thumb-actions", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-                "button",
-                {
-                  type: "button",
-                  className: "wss-fav" + (favorite ? " wss-fav-on" : ""),
-                  "data-id": w.id,
-                  title: favorite ? "\u53D6\u6D88\u6536\u85CF" : "\u6536\u85CF",
-                  "aria-label": favorite ? "\u53D6\u6D88\u6536\u85CF" : "\u6536\u85CF",
-                  "aria-pressed": favorite,
-                  onClick: (e) => {
-                    e.stopPropagation();
-                    setLibState((prev) => toggleFavorite(w.id, prev));
-                  },
-                  children: favorite ? "\u2605" : "\u2606"
-                }
-              ),
-              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-                "button",
-                {
-                  type: "button",
-                  className: "wss-hide" + (hidden ? " wss-hide-on" : ""),
-                  "data-id": w.id,
-                  title: hidden ? "\u53D6\u6D88\u9690\u85CF" : "\u9690\u85CF\u8FD9\u5F20\u58C1\u7EB8",
-                  "aria-label": hidden ? "\u53D6\u6D88\u9690\u85CF" : "\u9690\u85CF\u8FD9\u5F20\u58C1\u7EB8",
-                  onClick: (e) => {
-                    e.stopPropagation();
-                    setLibState((prev) => toggleHidden(w.id, prev));
-                  },
-                  children: hidden ? "\u21BA" : "\u2715"
-                }
-              )
-            ] })
-          ] }, w.id);
-        }) }),
-        wallpapers.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "wss-empty", children: "\u8FD8\u6CA1\u6709\u58C1\u7EB8\u3002\u8BF7\u5728\u4E0B\u65B9\u8BBE\u7F6E\u58C1\u7EB8\u76EE\u5F55\uFF0C\u6216\u70B9\u300C\u81EA\u52A8\u63A2\u6D4B\u300D\u3002" }),
-        wallpapers.length > 0 && visibleWallpapers.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("p", { className: "wss-empty", children: [
-          "\u6CA1\u6709\u5339\u914D\u7684\u58C1\u7EB8\uFF08\u9690\u85CF ",
-          libState.hidden.size,
-          " \u5F20\uFF09"
-        ] })
-      ] }),
-      selectedIsScene && visibleProperties.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { className: "wss-section wss-userprops", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("h4", { className: "wss-section-title", children: "\u58C1\u7EB8\u5C5E\u6027" }),
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "wss-section-desc", children: "\u5207\u6362\u540E\u751F\u6548\uFF08\u4F1A\u91CD\u65B0\u88C5\u914D\u5F53\u524D\u58C1\u7EB8\uFF09\u3002" }),
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "wss-userprops-list", children: visibleProperties.map((property) => {
-          const enabled = propertyConditionMet(property.condition, propValues);
-          const disabledTitle = enabled ? void 0 : "\u6761\u4EF6\u4E0D\u6EE1\u8DB3\uFF0C\u6B64\u5C5E\u6027\u6682\u4E0D\u53EF\u7528";
-          const labelNode = /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { className: "wss-userprop-label", children: [
-            property.label,
-            !enabled && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-userprop-hint", children: "\uFF08\u6761\u4EF6\u4E0D\u6EE1\u8DB3\uFF09" })
-          ] });
-          const resetNode = /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-            "button",
-            {
-              type: "button",
-              className: "wss-userprop-reset",
-              "data-key": property.key,
-              disabled: !enabled,
-              title: disabledTitle,
-              onClick: () => resetProperty(property),
-              children: "\u6062\u590D\u9ED8\u8BA4"
-            }
-          );
-          const current = propValues[property.key] ?? property.value;
-          if (property.type === "bool") {
-            const checked = typeof current === "boolean" ? current : property.value;
-            return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-userprop-item", "data-key": property.key, "data-disabled": enabled ? void 0 : "true", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-row wss-userprop-main", children: [
-                labelNode,
-                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-                  "input",
-                  {
-                    type: "checkbox",
-                    className: "wss-userprop",
-                    "data-key": property.key,
-                    checked,
-                    disabled: !enabled,
-                    title: disabledTitle,
-                    onChange: (e) => {
-                      const next = e.target.checked;
-                      setPropertyValue(property.key, next);
-                      commitProperty(property.key, next);
-                    }
-                  }
-                )
-              ] }),
-              resetNode
-            ] }, property.key);
-          }
-          if (property.type === "slider") {
-            const value2 = typeof current === "number" && Number.isFinite(current) ? current : property.value;
-            return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-userprop-item", "data-key": property.key, "data-disabled": enabled ? void 0 : "true", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-slider wss-userprop-main", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { className: "wss-slider-head", children: [
-                  labelNode,
-                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-userprop-value", children: formatSliderValue(value2, property) })
-                ] }),
-                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-                  "input",
-                  {
-                    type: "range",
-                    className: "wss-userprop",
-                    "data-key": property.key,
-                    min: property.min,
-                    max: property.max,
-                    step: sliderStep(property),
-                    value: value2,
-                    disabled: !enabled,
-                    title: disabledTitle,
-                    onChange: (e) => {
-                      const next = Number(e.target.value);
-                      setPropertyValue(property.key, next);
-                      scheduleCommit(property.key, next);
-                    },
-                    onPointerUp: () => flushCommit(property.key),
-                    onBlur: () => flushCommit(property.key)
-                  }
-                )
-              ] }),
-              resetNode
-            ] }, property.key);
-          }
-          if (property.type === "color") {
-            const value2 = typeof current === "string" ? current : property.value;
-            return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-userprop-item", "data-key": property.key, "data-disabled": enabled ? void 0 : "true", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-row wss-userprop-main", children: [
-                labelNode,
-                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-                  "input",
-                  {
-                    type: "color",
-                    className: "wss-userprop",
-                    "data-key": property.key,
-                    value: colorTripletToHex(value2),
-                    disabled: !enabled,
-                    title: disabledTitle,
-                    onChange: (e) => {
-                      const next = hexToColorTriplet(e.target.value);
-                      setPropertyValue(property.key, next);
-                      scheduleCommit(property.key, next);
-                    },
-                    onPointerUp: () => flushCommit(property.key),
-                    onBlur: () => flushCommit(property.key)
-                  }
-                )
-              ] }),
-              resetNode
-            ] }, property.key);
-          }
-          const value = typeof current === "string" ? current : property.value;
-          return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-userprop-item", "data-key": property.key, "data-disabled": enabled ? void 0 : "true", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-row wss-userprop-main", children: [
-              labelNode,
-              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-                "select",
-                {
-                  className: "wss-userprop wss-userprop-select",
-                  "data-key": property.key,
-                  value,
-                  disabled: !enabled,
-                  title: disabledTitle,
-                  onChange: (e) => {
-                    const next = e.target.value;
-                    setPropertyValue(property.key, next);
-                    commitProperty(property.key, next);
-                  },
-                  children: property.options.map((option) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: option.value, children: option.label }, option.value))
-                }
-              )
-            ] }),
-            resetNode
-          ] }, property.key);
-        }) })
-      ] }),
-      selectedIsScene && audioProcessing && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { className: "wss-section wss-sysaudio", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("h4", { className: "wss-section-title", children: "\u7CFB\u7EDF\u97F3\u9891" }),
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "wss-section-desc", children: "\u7528\u7CFB\u7EDF\u64AD\u653E\u7684\u58F0\u97F3\u9A71\u52A8\u58C1\u7EB8\u7684\u97F3\u9891\u53EF\u89C6\u5316\u3002\u70B9\u4E0B\u9762\u6309\u94AE\u540E\uFF0C\u5728\u6D4F\u89C8\u5668\u5F39\u7A97\u91CC\u9009\u62E9\u300C\u6574\u4E2A\u5C4F\u5E55\u300D\u5E76\u52FE\u9009\u300C\u5171\u4EAB\u97F3\u9891\u300D\uFF1B \u5171\u4EAB\u671F\u95F4\u4F1A\u6301\u7EED\u91C7\u96C6\u7CFB\u7EDF\u58F0\u97F3\uFF08\u4E0D\u4E0A\u4F20\u3001\u4E0D\u843D\u76D8\uFF09\uFF0C\u53EF\u968F\u65F6\u505C\u6B62\u3002\u684C\u9762\u7248 App \u53D7\u5BBF\u4E3B\u6743\u9650\u9650\u5236\u4E0D\u53EF\u7528\uFF0C \u8BF7\u7528\u6D4F\u89C8\u5668\u6253\u5F00\u672C GUI \u5730\u5740\u540E\u4F7F\u7528\u3002" }),
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "wss-row", children: systemAudioState === "active" ? /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { className: "wss-sysaudio-stop", onClick: stopSystemAudio, children: "\u505C\u6B62\u7CFB\u7EDF\u97F3\u9891" }) : /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-          "button",
-          {
-            className: "wss-sysaudio-start",
-            disabled: systemAudioState === "starting",
-            onClick: () => {
-              void startSystemAudio();
-            },
-            children: systemAudioState === "starting" ? "\u7B49\u5F85\u6388\u6743\u2026" : "\u542F\u7528\u7CFB\u7EDF\u97F3\u9891\uFF08\u9700\u6388\u6743\uFF09"
-          }
-        ) }),
-        systemAudioError && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "wss-section-desc wss-sysaudio-error", children: systemAudioErrorMessage(systemAudioError) })
-      ] })
-    ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-pair", children: [
-      settings && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { className: "wss-section", id: "wss-anchor-appearance", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("h4", { className: "wss-section-title", children: "\u663E\u793A\u6548\u679C" }),
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-effects", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-slider", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { className: "wss-slider-head", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: "\u906E\u7F69\u4E0D\u900F\u660E\u5EA6" }),
-              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-effect-value", children: settings.overlayOpacity.toFixed(2) })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-              "input",
-              {
-                type: "range",
-                className: "wss-overlay-opacity",
-                min: 0,
-                max: 1,
-                step: 0.01,
-                value: settings.overlayOpacity,
-                onChange: (e) => applyRuntime({ overlayOpacity: Number(e.target.value) })
-              }
-            )
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-row", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-              "input",
-              {
-                type: "checkbox",
-                className: "wss-blur-enabled",
-                checked: settings.blurEnabled,
-                onChange: (e) => applyRuntime({ blurEnabled: e.target.checked })
-              }
-            ),
-            "\u80CC\u666F\u6A21\u7CCA"
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-slider", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { className: "wss-slider-head", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: "\u6A21\u7CCA\u534A\u5F84" }),
-              /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { className: "wss-effect-value", children: [
-                settings.blurRadius,
-                " px"
-              ] })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-              "input",
-              {
-                type: "range",
-                className: "wss-blur-radius",
-                min: 0,
-                max: 64,
-                step: 1,
-                value: settings.blurRadius,
-                onChange: (e) => applyRuntime({ blurRadius: Number(e.target.value) })
-              }
-            )
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-row", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-              "input",
-              {
-                type: "checkbox",
-                className: "wss-kenburns",
-                checked: settings.kenBurns,
-                onChange: (e) => applyRuntime({ kenBurns: e.target.checked })
-              }
-            ),
-            "Ken Burns \u7F13\u6162\u7F29\u653E"
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-row", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: "\u753B\u9762\u9002\u914D" }),
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
-              "select",
-              {
-                className: "wss-fit-mode",
-                value: settings.fitMode,
-                onChange: (e) => applyRuntime({ fitMode: e.target.value }),
-                children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "cover", children: "\u88C1\u526A\u94FA\u6EE1" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "contain", children: "\u5B8C\u6574\u663E\u793A\uFF08\u53EF\u80FD\u7559\u8FB9\uFF09" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "stretch", children: "\u62C9\u4F38\u94FA\u6EE1" })
-                ]
-              }
-            )
-          ] })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-glow", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-glow-row", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-              "input",
-              {
-                type: "checkbox",
-                checked: settings.glowEnabled,
-                onChange: (e) => applyRuntime({ glowEnabled: e.target.checked })
-              }
-            ),
-            "\u5149\u6655\uFF08\u7ACB\u5373\u751F\u6548\uFF09"
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-slider", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { className: "wss-slider-head", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: "\u9608\u503C" }),
-              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-value", children: settings.glowThreshold.toFixed(2) })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-              "input",
-              {
-                type: "range",
-                className: "wss-glow-threshold",
-                min: 0,
-                max: 0.99,
-                step: 0.01,
-                value: settings.glowThreshold,
-                onChange: (e) => applyRuntime({ glowThreshold: Number(e.target.value) })
-              }
-            )
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-slider", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { className: "wss-slider-head", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: "\u5F3A\u5EA6" }),
-              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-value", children: settings.glowStrength.toFixed(2) })
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-              "input",
-              {
-                type: "range",
-                className: "wss-glow-strength",
-                min: 0,
-                max: 4,
-                step: 0.05,
-                value: settings.glowStrength,
-                onChange: (e) => applyRuntime({ glowStrength: Number(e.target.value) })
-              }
-            )
-          ] })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-media-block", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-glow-row", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-              "input",
-              {
-                type: "checkbox",
-                className: "wss-media-integration",
-                checked: settings.mediaIntegrationEnabled,
-                onChange: (e) => applyRuntime({ mediaIntegrationEnabled: e.target.checked })
-              }
-            ),
-            "\u5A92\u4F53\u96C6\u6210\uFF08\u663E\u793A\u672C\u673A\u64AD\u653E\u7684\u6B4C\u66F2\u5C01\u9762/\u6B4C\u540D\uFF09"
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-            "p",
-            {
-              className: "wss-section-desc wss-media-status",
-              "data-state": !mediaEnabled ? "disabled" : mediaStatus?.reason ?? "no-session",
-              children: mediaIntegrationHint(mediaEnabled, mediaStatus)
-            }
-          )
-        ] })
-      ] }),
-      settings && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { className: "wss-section", id: "wss-anchor-playback", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("h4", { className: "wss-section-title", children: "\u8F6E\u64AD" }),
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-rotation", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-glow-row", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-              "input",
-              {
-                type: "checkbox",
-                className: "wss-rotation-enabled",
-                checked: settings.rotationEnabled,
-                onChange: (e) => applyRuntime({ rotationEnabled: e.target.checked })
-              }
-            ),
-            "\u81EA\u52A8\u8F6E\u64AD"
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-row", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: "\u5207\u6362\u95F4\u9694" }),
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
-              "select",
-              {
-                className: "wss-rotation-interval",
-                value: String(settings.rotationIntervalMs),
-                onChange: (e) => applyRuntime({ rotationIntervalMs: Number(e.target.value) }),
-                children: [
-                  !ROTATION_INTERVAL_OPTIONS.some((o) => o.ms === settings.rotationIntervalMs) && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: String(settings.rotationIntervalMs), children: formatRotationInterval(settings.rotationIntervalMs) }),
-                  ROTATION_INTERVAL_OPTIONS.map((o) => /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: String(o.ms), children: o.label }, o.ms))
-                ]
-              }
-            )
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-row", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: "\u5207\u6362\u987A\u5E8F" }),
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
-              "select",
-              {
-                className: "wss-rotation-order",
-                value: normalizeRotationOrder(settings.rotationOrder),
-                onChange: (e) => applyRuntime({ rotationOrder: e.target.value }),
-                children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "sequential", children: "\u987A\u5E8F" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "random", children: "\u968F\u673A" })
-                ]
-              }
-            )
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "wss-section-desc wss-rotation-status", "data-state": rotationPoolSize < 2 ? "empty" : "ready", children: rotationStatus })
-        ] })
-      ] })
-    ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-advanced", id: "wss-anchor-advanced", children: [
-      settings && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("details", { className: "wss-details", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("summary", { className: "wss-details-head", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-details-title", children: "\u6027\u80FD\u4E0E\u7701\u7535" }),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-details-hint", children: "\u6682\u505C \xB7 \u753B\u8D28 \xB7 \u97F3\u6548" })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-details-body", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-power", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-glow-row", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-                "input",
-                {
-                  type: "checkbox",
-                  checked: settings.paused,
-                  onChange: (e) => applyRuntime({ paused: e.target.checked })
-                }
-              ),
-              "\u6682\u505C\u58C1\u7EB8\uFF08\u7701\u7535\uFF09"
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-glow-row", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-                "input",
-                {
-                  type: "checkbox",
-                  checked: settings.pauseOnHidden,
-                  onChange: (e) => applyRuntime({ pauseOnHidden: e.target.checked })
-                }
-              ),
-              "\u5207\u5230\u540E\u53F0\u65F6\u81EA\u52A8\u6682\u505C"
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-row", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: "\u753B\u8D28\u6863\u4F4D" }),
-              /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
-                "select",
-                {
-                  className: "wss-quality",
-                  value: String(settings.qualityScale),
-                  onChange: (e) => applyRuntime({ qualityScale: Number(e.target.value) }),
-                  children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "1", children: "\u539F\u751F\uFF081\xD7\uFF09" }),
-                    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "0.75", children: "\u7701\u663E\u5B58\uFF080.75\xD7\uFF09" }),
-                    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "0.5", children: "\u6700\u7701\uFF080.5\xD7\uFF09" })
-                  ]
-                }
-              )
-            ] })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("div", { className: "wss-sound-row", children: /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-glow-row", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-              "input",
-              {
-                type: "checkbox",
-                className: "wss-sound",
-                checked: settings.soundEnabled,
-                onChange: (e) => applyRuntime({ soundEnabled: e.target.checked })
-              }
-            ),
-            "\u58C1\u7EB8\u97F3\u6548"
-          ] }) })
-        ] })
-      ] }),
-      settings && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("details", { className: "wss-details", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("summary", { className: "wss-details-head", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-details-title", children: "\u6587\u5B57\u53EF\u8BFB\u6027" }),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-details-hint", children: "\u989C\u8272 \xB7 \u63CF\u8FB9" })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-details-body", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "wss-section-desc", children: "\u8D34\u58C1\u7EB8\u7684\u6587\u5B57\uFF08\u6D88\u606F\u6B63\u6587\u3001\u6807\u9898\u3001\u94FE\u63A5\u3001\u804A\u5929\u680F\uFF09\u770B\u4E0D\u6E05\u65F6\uFF0C\u53EF\u56FA\u5B9A\u6587\u5B57\u989C\u8272\uFF1B\u80CC\u666F\u82B1\u54E8\u65F6\u5F00\u4E00\u70B9\u63CF\u8FB9\u6700\u6709\u6548\u3002" }),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-textcolor", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-row", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: "\u6587\u5B57\u989C\u8272" }),
-              /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
-                "select",
-                {
-                  className: "wss-textcolor-mode",
-                  value: normalizeMode(settings.textColorMode),
-                  onChange: (e) => applyRuntime({ textColorMode: e.target.value }),
-                  children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "auto", children: "\u81EA\u52A8\uFF08\u8DDF\u968F\u58C1\u7EB8\u4EAE\u5EA6\uFF09" }),
-                    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "white", children: "\u767D\u8272" }),
-                    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "black", children: "\u9ED1\u8272" }),
-                    /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("option", { value: "custom", children: "\u81EA\u5B9A\u4E49\u2026" })
-                  ]
-                }
-              )
-            ] }),
-            normalizeMode(settings.textColorMode) === "custom" && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-row", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: "\u81EA\u5B9A\u4E49\u989C\u8272" }),
-              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-                "input",
-                {
-                  type: "color",
-                  className: "wss-textcolor-custom",
-                  value: normalizeHexColor(settings.textColor),
-                  onChange: (e) => applyRuntime({ textColor: e.target.value })
-                }
-              )
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-slider", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("span", { className: "wss-slider-head", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { children: "\u6587\u5B57\u63CF\u8FB9" }),
-                /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-value", children: outlineLabel(settings.textOutline) })
-              ] }),
-              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-                "input",
-                {
-                  type: "range",
-                  className: "wss-textcolor-outline",
-                  min: 0,
-                  max: TEXT_OUTLINE_MAX,
-                  step: 1,
-                  value: normalizeOutlineLevel(settings.textOutline),
-                  onChange: (e) => applyRuntime({ textOutline: Number(e.target.value) })
-                }
-              )
-            ] })
-          ] })
-        ] })
-      ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("details", { className: "wss-details", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("summary", { className: "wss-details-head", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-details-title", children: "\u58C1\u7EB8\u76EE\u5F55" }),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-details-hint", children: wallpaperDir && weAssetsDir ? "\u5DF2\u914D\u7F6E" : "\u672A\u914D\u7F6E" })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-details-body", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "wss-section-desc", children: "\u586B Wallpaper Engine \u7684\u4E24\u4E2A\u76EE\u5F55\uFF1B\u7559\u7A7A = \u672A\u914D\u7F6E\u3002\u4E5F\u53EF\u4EE5\u76F4\u63A5\u70B9\u300C\u81EA\u52A8\u63A2\u6D4B\u300D\u91C7\u7528\u63A2\u6D4B\u7ED3\u679C\u3002" }),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-field", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-field-label", children: "\u58C1\u7EB8\u76EE\u5F55\uFF08workshop\uFF09" }),
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-              "input",
-              {
-                className: "wss-dir-workshop",
-                value: wallpaperDir,
-                placeholder: "\u4F8B\u5982 D:/Steam/steamapps/workshop/content/431960",
-                onChange: (e) => setWallpaperDir(e.target.value)
-              }
-            )
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wss-field", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-field-label", children: "\u5F15\u64CE\u76EE\u5F55\uFF08particle \u7EB9\u7406\uFF09" }),
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-              "input",
-              {
-                className: "wss-dir-assets",
-                value: weAssetsDir,
-                placeholder: "\u4F8B\u5982 D:/Steam/steamapps/common/wallpaper_engine",
-                onChange: (e) => setWeAssetsDir(e.target.value)
-              }
-            )
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-dir-actions", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", className: "wss-save-dirs", onClick: saveDirs, children: "\u4FDD\u5B58\u8DEF\u5F84" }),
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", className: "wss-probe", onClick: runProbe, children: "\u81EA\u52A8\u63A2\u6D4B" })
-          ] }),
-          probe && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-probe-result", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("h5", { className: "wss-subtitle", children: "\u63A2\u6D4B\u5230\u7684\u58C1\u7EB8\u76EE\u5F55" }),
-            probe.workshop.map((c) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-candidate", "data-kind": "workshop", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-candidate-path", title: c.path, children: c.path }),
-              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: c.exists ? "wss-exists" : "wss-missing", children: c.exists ? "\u5B58\u5728" : "\u4E0D\u5B58\u5728" }),
-              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", className: "wss-adopt", "data-path": c.path, onClick: () => adopt(c.path, "wallpaperDir"), children: "\u91C7\u7528" })
-            ] }, c.path)),
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("h5", { className: "wss-subtitle", children: "\u63A2\u6D4B\u5230\u7684\u5F15\u64CE\u76EE\u5F55" }),
-            probe.assets.map((c) => /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-candidate", "data-kind": "assets", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-candidate-path", title: c.path, children: c.path }),
-              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: c.exists ? "wss-exists" : "wss-missing", children: c.exists ? "\u5B58\u5728" : "\u4E0D\u5B58\u5728" }),
-              /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", className: "wss-adopt", "data-path": c.path, onClick: () => adopt(c.path, "weAssetsDir"), children: "\u91C7\u7528" })
-            ] }, c.path))
-          ] })
-        ] })
-      ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("details", { className: "wss-details", "data-tone": liveState, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("summary", { className: "wss-details-head", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-details-title", children: "\u5B9E\u65F6\u6E32\u67D3" }),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wss-details-hint", "data-tone": liveState, children: liveState === "ok" ? "\u6B63\u5E38" : liveState === "failed" ? "\u9700\u8981\u5904\u7406" : "\u5F85\u673A" })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-details-body", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-live-status", "data-state": liveState, children: [
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "wss-section-desc wss-live-current", children: liveCurrent }),
-            liveMemory && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "wss-section-desc wss-live-memory", children: liveMemory })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-row", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", className: "wss-live-retry", onClick: retryLive, children: "\u91CD\u8BD5\u5B9E\u65F6\u6E32\u67D3" }),
-            /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", className: "wss-live-forget", onClick: forgetFailures, children: "\u6E05\u9664\u5931\u8D25\u8BB0\u5FC6" })
-          ] })
-        ] })
-      ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { className: "wss-section wss-about", "aria-label": "\u5173\u4E8E", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("h4", { className: "wss-section-title", children: "\u5173\u4E8E" }),
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "wss-section-desc", children: "MIT \u5F00\u6E90\u3002\u5982\u679C\u5B83\u8BA9\u4F60\u7684\u754C\u9762\u597D\u770B\u4E86\uFF0C\u70B9\u4E2A Star \u5C31\u662F\u6700\u5927\u7684\u652F\u6301\uFF1B\u54EA\u5F20\u58C1\u7EB8\u6E32\u67D3\u4E0D\u6B63\u5E38\uFF0C\u5E26 Workshop ID \u63D0\u4E2A Issue \u5373\u53EF\u3002" }),
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wss-about-links", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("a", { className: "wss-about-link", "data-primary": "true", href: "https://github.com/yu502950715yang/dsh-use-wallpaper", target: "_blank", rel: "noreferrer", children: "\u2B50 Star \u9879\u76EE" }),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("a", { className: "wss-about-link", href: "https://github.com/yu502950715yang/dsh-use-wallpaper/issues/new", target: "_blank", rel: "noreferrer", children: "\u53CD\u9988\u95EE\u9898" }),
-          /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("a", { className: "wss-about-link", href: "https://github.com/yu502950715yang/dsh-use-wallpaper#readme", target: "_blank", rel: "noreferrer", children: "\u4F7F\u7528\u6587\u6863" })
-        ] })
-      ] })
-    ] }),
-    message && /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "wss-message", role: "status", children: message })
-  ] });
-}
-
 // src/client/media-health.ts
 function createMediaHealthStore(now = () => Date.now()) {
   let current = null;
@@ -37390,21 +37609,12 @@ function bootstrap(ctx) {
     }
   };
   if (ctx?.slots?.inject && ctx?.slots?.register) {
-    ctx.slots.inject("settings.section", () => {
-      const wallpaperSection = ctx.slots.register({
-        name: "settings.section",
-        id: SETTINGS_SECTION_ID,
-        order: 20,
-        label: () => "Wallpaper \u58C1\u7EB8"
-      }, WallpaperSettingsSection);
-      const bootSection = ctx.slots.register({
-        name: "settings.section",
-        id: "wallpaper-engine-boot",
-        order: 21,
-        label: () => "\u5F00\u673A\u52A8\u753B"
-      }, BootSettingsSection);
-      return [wallpaperSection, bootSection];
-    });
+    ctx.slots.inject("settings.section", () => ctx.slots.register({
+      name: "settings.section",
+      id: SETTINGS_SECTION_ID,
+      order: 20,
+      label: () => "Wallpaper \u58C1\u7EB8"
+    }, WallpaperSettingsShell));
   }
   if (typeof ctx?.effect === "function") ctx.effect(() => teardown, "wallpaper-engine: teardown");
   else if (typeof ctx?.on === "function") ctx.on("dispose", teardown);

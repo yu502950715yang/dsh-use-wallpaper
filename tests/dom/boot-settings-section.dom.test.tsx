@@ -135,4 +135,27 @@ describe('BootSettingsSection', () => {
       delete (window as any).__wallpaperEngineBoot;
     }
   });
+
+  // 面板设计系统（2026-10-30）：状态 hero / 来源分段 / 展示方式 2×2 卡片 / 状态条 tone。
+  it('设计系统结构：hero、来源分段、2×2 展示方式卡片与状态条 tone', async () => {
+    await act(async () => {
+      render({ getLast: () => ({ result: 'ended', at: Date.now() }) });
+    });
+    expect(document.querySelector('.wbs-hero')).not.toBeNull();
+    expect(document.querySelector('.wbs-switch')).not.toBeNull();
+    expect(document.querySelector('.wbs-last')!.getAttribute('data-tone')).toBe('ok');
+    expect(document.querySelectorAll('.wbs-source-group .wbs-source')).toHaveLength(2);
+    const cards = Array.from(document.querySelectorAll('.wbs-fit-card'));
+    expect(cards).toHaveLength(4);
+    expect(cards.map((c) => c.getAttribute('data-fit'))).toEqual(['tile', 'contain', 'stretch', 'cover']);
+    // WE 素材选中项预览：默认未选时占位
+    expect(document.querySelector('.wbs-picker-preview')).not.toBeNull();
+  });
+
+  it('失败态状态条使用语义 tone（上次播放 failed → danger）', async () => {
+    await act(async () => {
+      render({ getLast: () => ({ result: 'failed', at: Date.now() }) });
+    });
+    expect(document.querySelector('.wbs-last')!.getAttribute('data-tone')).toBe('danger');
+  });
 });

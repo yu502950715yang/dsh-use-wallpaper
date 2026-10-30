@@ -124,21 +124,19 @@ describe('client bootstrap 集成', () => {
     await new Promise((r) => setTimeout(r, 20));
     expect(listCalls()).toBe(1);
   });
-  it('S1: bootstrap 注册设置菜单 settings.section（壁纸 + 开机动画），不再注入 FAB', async () => {
+  it('S1: bootstrap 只注册一个设置菜单 settings.section（tab 容器 shell），不再注入 FAB', async () => {
     stubFetch(
       [{ id: '1', title: 'A', type: 'image', hasScene: false, hasPreviewGif: false, previewUrl: '/p1' }],
     );
     const { ctx, sections, disposers } = mockSlotsCtx();
     slotDisposers = disposers;
     await boot(ctx);
-    expect(sections.length).toBe(2);
+    expect(sections.length).toBe(1);
     expect(sections[0]!.opts.id).toBe('wallpaper-engine');
+    expect(sections[0]!.opts.order).toBe(20);
     expect(sections[0]!.opts.label()).toBe('Wallpaper 壁纸');
-    expect(sections[0]!.Component).toBeTruthy(); // WallpaperSettingsSection
-    expect(sections[1]!.opts.id).toBe('wallpaper-engine-boot');
-    expect(sections[1]!.opts.order).toBe(21);
-    expect(sections[1]!.opts.label()).toBe('开机动画');
-    expect(sections[1]!.Component).toBeTruthy(); // BootSettingsSection
+    // 单 section 的组件是 tab 容器（两个面板在容器内切换，不再有第二个菜单项）
+    expect((sections[0]!.Component as { name?: string }).name).toBe('WallpaperSettingsShell');
     // 不再注入浮动按钮
     expect(document.querySelector('.wp-fab')).toBeNull();
   });

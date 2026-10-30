@@ -334,4 +334,34 @@ describe('styles 主题适配', () => {
     expect(WALLPAPER_CSS).toMatch(/\[data-turn-trigger\]\s*>\s*button[^{]*\{[^}]*color:var\(--dsw-alias-label-tertiary/);
     expect(WALLPAPER_CSS).toMatch(/\[data-turn-trigger\]\s*\[class\*="explanation"\]\s*\{[^}]*color:var\(--dsw-alias-label-secondary/);
   });
+
+  // 面板设计系统（2026-10-30）：统一 token + 设置页 tab 栏 + 开机动画面板重设计。
+  it('面板设计系统 token 落地（间距/圆角/表面/阴影/焦点，深浅两套）', () => {
+    for (const token of [
+      '--we-sp-1', '--we-sp-2', '--we-sp-3', '--we-sp-4', '--we-sp-5',
+      '--we-r-sm', '--we-r-md', '--we-r-card', '--we-r-hero',
+      '--we-surface', '--we-surface-2', '--we-border', '--we-border-strong',
+      '--we-shadow-card', '--we-shadow-hero', '--we-ring',
+    ]) {
+      expect(WALLPAPER_CSS, token).toContain(token);
+    }
+    // 深色主题必须覆盖表面/边框（否则深色下是白底）
+    expect(WALLPAPER_CSS).toMatch(/body\[data-ds-dark-theme\]\s*\{[^}]*--we-surface/);
+  });
+  it('设置页 tab 栏与统一覆盖规则落地（胶囊 tab、选中态、focus 环、reduced-motion）', () => {
+    expect(WALLPAPER_CSS).toMatch(/\.we-tabs\s*\{[^}]*display:flex/);
+    expect(WALLPAPER_CSS).toMatch(/\.we-tab\[aria-selected="true"\]\s*\{[^}]*background:var\(--wp-accent/);
+    expect(WALLPAPER_CSS).toMatch(/\.we-tab:focus-visible\s*\{[^}]*outline/);
+    // token 覆盖段（不改旧规则文本，仅在其后统一观感）
+    expect(WALLPAPER_CSS).toContain('设计系统覆盖');
+    expect(WALLPAPER_CSS).toMatch(/\.wss-section\s*\{[^}]*border-radius:var\(--we-r-card/);
+    expect(WALLPAPER_CSS).toMatch(/prefers-reduced-motion[^{]*\{[^}]*\.we-tab/);
+  });
+  it('开机动画面板重设计结构样式落地（hero/分段/2×2 卡片/状态条 tone）', () => {
+    expect(WALLPAPER_CSS).toContain('.wbs-hero');
+    expect(WALLPAPER_CSS).toMatch(/\.wbs-source-group\s*\{[^}]*display:flex/);
+    expect(WALLPAPER_CSS).toMatch(/\.wbs-fit-grid\s*\{[^}]*grid-template-columns:repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
+    expect(WALLPAPER_CSS).toMatch(/\.wbs-fit-card\[data-disabled="true"\]/);
+    expect(WALLPAPER_CSS).toMatch(/\.wbs-last\[data-tone="danger"\]/);
+  });
 });

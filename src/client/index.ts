@@ -1,11 +1,11 @@
 import { injectWallpaperStyles } from './styles.js';
 import { createBootPlayer } from './boot-player.js';
-import { BootSettingsSection } from './boot-settings-section.js';
+import { WallpaperSettingsShell } from './settings-shell.js';
 import { createBackgroundLayer } from './background-layer.js';
 import { createWallpaperController } from './wallpaper-controller.js';
 import { createThreeSceneRenderer } from './three-renderer.js';
 import { ensureSceneFrame, showSceneFallback } from './scene-fallback.js';
-import { WallpaperSettingsSection, setWallpaperSelectHandler, setWallpaperRuntimeHandler, setWallpaperHealthHandler, setWallpaperMediaHandler, setWallpaperMediaIntegrationHandler, setWallpaperReselectHandler, setWallpaperSystemAudioHandlers, notifyWallpaperHealth, notifyWallpaperMedia } from './settings-section.js';
+import { setWallpaperSelectHandler, setWallpaperRuntimeHandler, setWallpaperHealthHandler, setWallpaperMediaHandler, setWallpaperMediaIntegrationHandler, setWallpaperReselectHandler, setWallpaperSystemAudioHandlers, notifyWallpaperHealth, notifyWallpaperMedia } from './settings-section.js';
 import { readClientSettings, writeClientSettings, getUserPropertyValue, DEFAULTS, setSettingsCtx } from './settings.js';
 import { createRenderHealthStore } from './render-health.js';
 import { createMediaHealthStore } from './media-health.js';
@@ -422,26 +422,16 @@ export function bootstrap(ctx?: any): void {
       if (plan.kind !== 'scene') notifyWallpaperHealth(panelHealth());
     },
   };
-  // 注册 DSH 设置对话框侧边栏两个菜单（settings.section slot）：
-  // 壁纸（order 20）与开机动画（order 21）各自独立，设置项互不影响。
+  // 注册 DSH 设置对话框侧边栏菜单（settings.section slot）：「Wallpaper 壁纸」单页，
+  // 页内用 tab 切换「日常壁纸 / 开机动画」，两套设置各管各的（互不影响）。
   // ctx.slots 由 dsh-client-runtime 的 SlotRegistry 提供（client 插件共享根上下文）。
   if (ctx?.slots?.inject && ctx?.slots?.register) {
-    ctx.slots.inject('settings.section', () => {
-      const wallpaperSection = ctx.slots.register({
-        name: 'settings.section',
-        id: SETTINGS_SECTION_ID,
-        order: 20,
-        label: () => 'Wallpaper 壁纸',
-      }, WallpaperSettingsSection);
-      const bootSection = ctx.slots.register({
-        name: 'settings.section',
-        id: 'wallpaper-engine-boot',
-        order: 21,
-        label: () => '开机动画',
-      }, BootSettingsSection);
-      // 回调返回注销函数数组：安装失败整体回滚，HMR drain 时逆序摘除两页。
-      return [wallpaperSection, bootSection];
-    });
+    ctx.slots.inject('settings.section', () => ctx.slots.register({
+      name: 'settings.section',
+      id: SETTINGS_SECTION_ID,
+      order: 20,
+      label: () => 'Wallpaper 壁纸',
+    }, WallpaperSettingsShell));
   }
   // ctx 释放（DSH client-hmr 的 rebuilt 重载会 drain 旧 fiber，再以全新状态重挂载插件）：
   // 必须在这里收尾 —— 否则旧背景层留在 body 里，与 z-index 同为 0 的新层按 DOM 序压在上面

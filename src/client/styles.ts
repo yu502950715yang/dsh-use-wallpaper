@@ -1,4 +1,32 @@
 const CSS = `
+/* ── 面板设计系统 token（2026-10-30）：派生自 DSH 主题 token，两个设置面板共用 ──
+   壁纸面板的旧规则保持不动（tests/styles.test.ts 按旧文本断言契约），统一观感由文件末尾
+   「设计系统覆盖」段落地；新组件（tab 栏 / 开机动画面板）直接消费这些变量。 */
+:root{
+  --we-sp-1:4px;--we-sp-2:8px;--we-sp-3:12px;--we-sp-4:16px;--we-sp-5:24px;
+  --we-r-sm:8px;--we-r-md:10px;--we-r-card:14px;--we-r-hero:16px;
+  --we-surface:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));
+  --we-surface-2:var(--dsw-alias-bg-module-platform,rgba(127,127,127,.06));
+  --we-border:var(--dsw-alias-border-l2,var(--wp-panel-border));
+  --we-border-strong:var(--dsw-alias-border-l1,var(--wp-panel-border));
+  --we-shadow-card:0 1px 2px rgba(15,17,22,.04),0 8px 24px rgba(15,17,22,.05);
+  --we-shadow-hero:0 10px 26px rgba(15,17,22,.08);
+  --we-shadow-pop:0 8px 28px rgba(15,17,22,.18);
+  --we-ring:2px solid var(--wp-accent);
+  --we-ok:var(--dsw-alias-state-success-primary,#177a3b);
+  --we-warn:var(--dsw-alias-state-warning-primary,#b45309);
+  --we-danger:var(--dsw-alias-state-error-primary,#b42318);
+}
+body[data-ds-dark-theme]{
+  --we-surface:var(--dsw-alias-bg-layer-3,rgba(28,30,36,.92));
+  --we-surface-2:var(--dsw-alias-bg-module-platform,rgba(127,127,127,.14));
+  --we-border:var(--dsw-alias-border-l2,rgba(255,255,255,.14));
+  --we-border-strong:var(--dsw-alias-border-l1,rgba(255,255,255,.2));
+  --we-shadow-card:0 1px 2px rgba(0,0,0,.35),0 10px 28px rgba(0,0,0,.28);
+  --we-shadow-hero:0 12px 32px rgba(0,0,0,.42);
+  --we-shadow-pop:0 10px 32px rgba(0,0,0,.5);
+  --we-ok:#4ade80;--we-warn:#fbbf24;--we-danger:#f87171;
+}
 /* ── 壁纸层基础（与主题无关） ── */
 .wp-background-layer{position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none}
 .wp-bg-fill{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
@@ -558,19 +586,122 @@ body[data-we-wallpaper] :where([data-sidebar-right-panel="fullscreen"][data-side
 .wss-about-link:focus-visible{outline:2px solid var(--wp-accent);outline-offset:2px}
 .wss-about-link[data-primary=true]{background:var(--wp-accent-strong,#2563eb);border-color:transparent;color:#fff}
 .wss-about-link[data-primary=true]:hover{filter:brightness(1.07)}
-/* ── 开机动画（独立全屏层 + 独立设置面板 wbs-*） ── */
+/* ── 设置页 tab 容器（Wallpaper 壁纸：日常壁纸 / 开机动画） ── */
+.we-shell{display:flex;flex-direction:column;gap:var(--we-sp-3);padding:var(--we-sp-2) 2px 6px}
+.we-tabs{display:flex;gap:4px;padding:4px;border:1px solid var(--we-border);border-radius:var(--we-r-md);background:var(--we-surface-2)}
+.we-tab{flex:1 1 0;min-width:0;height:34px;border:0;border-radius:var(--we-r-sm);background:transparent;color:var(--dsw-alias-label-secondary,var(--wp-text));font:inherit;font-size:12.5px;font-weight:600;cursor:pointer;transition:background-color .15s ease,color .15s ease,box-shadow .15s ease}
+.we-tab:hover{background:rgba(127,127,127,.12);color:var(--dsw-alias-label-primary,var(--wp-text))}
+.we-tab[aria-selected="true"]{background:var(--wp-accent);color:#fff;box-shadow:var(--we-shadow-card)}
+.we-tab:focus-visible{outline:var(--we-ring);outline-offset:2px}
+.we-tabpanel{display:flex;flex-direction:column;gap:var(--we-sp-3)}
+
+/* ── 设计系统覆盖（2026-10-30）：统一壁纸面板观感。只改外观值，不改选择器/布局契约；
+   旧规则保持不动，供 tests/styles.test.ts 的文本断言继续成立。 ── */
+.wss-root{gap:var(--we-sp-3)}
+.wss-section{border-color:var(--we-border);background:var(--we-surface);border-radius:var(--we-r-card);padding:var(--we-sp-4);box-shadow:var(--we-shadow-card)}
+.wss-hero{border-radius:var(--we-r-hero);box-shadow:var(--we-shadow-hero)}
+.wss-details{border-color:var(--we-border);border-radius:var(--we-r-card);background:var(--we-surface)}
+.wss-nav{border-color:var(--we-border);border-radius:var(--we-r-md);background:var(--we-surface-2)}
+.wss-about-link{border-radius:var(--we-r-sm)}
+.wss-nav-item:focus-visible,.wss-thumb:focus-visible,.wss-search:focus-visible,.wss-details-head:focus-visible,.wss-about-link:focus-visible{outline:var(--we-ring);outline-offset:2px}
+body[data-ds-dark-theme] .wss-section,
+body[data-ds-dark-theme] .wss-details{background:var(--we-surface);border-color:var(--we-border)}
+
+/* ── 开机动画（独立全屏层 + 设置页 tab 内容 wbs-*，2026-10-30 设计系统） ── */
 .wp-boot-layer{position:fixed;inset:0;z-index:2147483000;background:#000;overflow:hidden;pointer-events:auto}
-.wbs-root{display:flex;flex-direction:column;gap:14px;padding:4px 2px}
-.wbs-section{display:flex;flex-direction:column;gap:8px;padding:12px;border:1px solid var(--wp-panel-border);border-radius:10px;background:var(--wp-panel-bg)}
-.wbs-title{margin:0;font-size:14px;color:var(--wp-text)}
-.wbs-desc{margin:0;font-size:12px;line-height:1.5;opacity:.75}
-.wbs-row{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--wp-text)}
-.wbs-row input[type=text]{flex:1;min-width:160px;padding:6px 8px;border-radius:6px;border:1px solid var(--wp-panel-border);background:transparent;color:var(--wp-text)}
-.wbs-row select{padding:6px 8px;border-radius:6px;border:1px solid var(--wp-panel-border);background:transparent;color:var(--wp-text)}
-.wbs-row button{padding:5px 10px;border-radius:6px;border:1px solid var(--wp-panel-border);background:transparent;color:var(--wp-text);cursor:pointer}
-.wbs-row button:disabled,.wbs-row input:disabled{opacity:.45;cursor:not-allowed}
-.wbs-probe-result,.wbs-last,.wbs-message{font-size:12px;margin:0;color:var(--wp-text)}
-.wbs-message{opacity:.85}
+.wbs-root{display:flex;flex-direction:column;gap:var(--we-sp-3);padding:var(--we-sp-2) 2px 6px;color:var(--dsw-alias-label-primary,var(--wp-text));font-size:13px;line-height:1.55;container-type:inline-size}
+.wbs-loading{color:var(--dsw-alias-label-tertiary,var(--wp-text));padding:var(--we-sp-4)}
+/* 状态 hero：标题/说明/上次播放 + 启用开关 */
+.wbs-hero{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--we-sp-4);padding:var(--we-sp-4);border:1px solid var(--we-border);border-radius:var(--we-r-hero);background:linear-gradient(135deg,rgba(79,140,255,.10),rgba(147,51,234,.06) 60%,transparent),var(--we-surface);box-shadow:var(--we-shadow-hero)}
+.wbs-hero-body{display:flex;flex-direction:column;gap:var(--we-sp-1);min-width:0}
+.wbs-hero-title{margin:0;font-size:15px;font-weight:650;letter-spacing:.01em}
+.wbs-hero-desc{margin:0;font-size:12px;line-height:1.6;color:var(--dsw-alias-label-tertiary,var(--wp-text));max-width:46ch}
+.wbs-last{display:inline-flex;align-items:center;gap:6px;margin:2px 0 0;font-size:11.5px;padding:3px 9px;border-radius:999px;background:rgba(127,127,127,.12);color:var(--dsw-alias-label-secondary,var(--wp-text));align-self:flex-start}
+.wbs-last::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.8}
+.wbs-last[data-tone="ok"]{background:rgba(22,163,74,.13);color:var(--we-ok)}
+.wbs-last[data-tone="warn"]{background:rgba(245,158,11,.14);color:var(--we-warn)}
+.wbs-last[data-tone="danger"]{background:rgba(220,38,38,.13);color:var(--we-danger)}
+/* 开关（与壁纸面板同款胶囊） */
+.wbs-switch{display:inline-flex;align-items:center;gap:8px;flex:none;cursor:pointer;font-size:12.5px;font-weight:600;color:var(--dsw-alias-label-secondary,var(--wp-text));user-select:none}
+.wbs-switch input{position:absolute;opacity:0;width:1px;height:1px}
+.wbs-switch-track{position:relative;width:38px;height:22px;border-radius:999px;background:rgba(100,105,120,.4);box-shadow:inset 0 0 0 1px rgba(0,0,0,.10);transition:background-color .15s ease}
+.wbs-switch-track::before{content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.28);transition:transform .15s ease}
+.wbs-switch input:checked + .wbs-switch-track{background:var(--wp-accent)}
+.wbs-switch input:checked + .wbs-switch-track::before{transform:translateX(16px)}
+.wbs-switch input:focus-visible + .wbs-switch-track{outline:var(--we-ring);outline-offset:2px}
+/* 分区卡片 */
+.wbs-card{display:flex;flex-direction:column;gap:var(--we-sp-3);padding:var(--we-sp-4);border:1px solid var(--we-border);border-radius:var(--we-r-card);background:var(--we-surface);box-shadow:var(--we-shadow-card)}
+.wbs-card-head{display:flex;align-items:center;justify-content:space-between;gap:var(--we-sp-2)}
+.wbs-title{margin:0;font-size:14px;font-weight:650;display:flex;align-items:center;gap:8px}
+.wbs-title::before{content:"";width:3px;height:14px;border-radius:2px;background:var(--wp-accent);flex:none}
+.wbs-hint{font-size:11.5px;color:var(--dsw-alias-label-tertiary,var(--wp-text))}
+.wbs-desc{margin:0;font-size:12px;line-height:1.6;color:var(--dsw-alias-label-tertiary,var(--wp-text))}
+/* 素材来源：分段控件 */
+.wbs-source-group{display:flex;gap:6px;padding:4px;border:1px solid var(--we-border);border-radius:var(--we-r-md);background:var(--we-surface-2)}
+.wbs-source{position:relative;flex:1 1 0;min-width:0;display:flex;flex-direction:column;gap:2px;padding:8px 10px;border-radius:var(--we-r-sm);cursor:pointer;transition:background-color .15s ease,box-shadow .15s ease}
+.wbs-source input{position:absolute;opacity:0;width:1px;height:1px}
+.wbs-source-label{font-size:12.5px;font-weight:600;color:var(--dsw-alias-label-secondary,var(--wp-text));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wbs-source-hint{font-size:11px;color:var(--dsw-alias-label-tertiary,var(--wp-text))}
+.wbs-source[data-active="true"]{background:var(--we-surface);box-shadow:0 1px 3px rgba(15,17,22,.12)}
+.wbs-source[data-active="true"] .wbs-source-label{color:var(--dsw-alias-label-primary,var(--wp-text))}
+.wbs-source input:focus-visible + .wbs-source-label{outline:var(--we-ring);outline-offset:3px;border-radius:4px}
+/* WE 素材选择：预览 + 下拉 */
+.wbs-picker{display:flex;gap:var(--we-sp-3);align-items:flex-start}
+.wbs-picker[data-active="false"]{opacity:.55}
+.wbs-picker-preview{position:relative;flex:0 0 132px;width:132px;aspect-ratio:16/9;border-radius:var(--we-r-sm);overflow:hidden;background:var(--we-surface-2);display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--dsw-alias-label-tertiary,var(--wp-text))}
+.wbs-picker-preview img{width:100%;height:100%;object-fit:cover;display:block}
+.wbs-picker-body{display:flex;flex-direction:column;gap:6px;flex:1;min-width:0}
+.wbs-wallpaper{appearance:none;-webkit-appearance:none;min-height:34px;width:100%;border:1px solid var(--we-border);background-color:var(--we-surface-2);color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:var(--we-r-sm);padding:6px 32px 6px 10px;font:inherit;font-size:12.5px;cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238892a0' stroke-width='1.5'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center}
+.wbs-wallpaper:focus-visible{outline:var(--we-ring);outline-offset:1px}
+/* 本地视频路径 */
+.wbs-local{display:flex;flex-direction:column;gap:6px}
+.wbs-local[data-active="false"]{opacity:.55}
+.wbs-row{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--dsw-alias-label-secondary,var(--wp-text))}
+.wbs-local-row{width:100%}
+.wbs-row input[type=text]{flex:1;min-width:160px;height:34px;padding:0 10px;border-radius:var(--we-r-sm);border:1px solid var(--we-border);background-color:var(--we-surface-2);color:var(--dsw-alias-label-primary,var(--wp-text));font:inherit;font-size:12.5px}
+.wbs-row input[type=text]:focus-visible{outline:var(--we-ring);outline-offset:1px}
+.wbs-row button{height:34px;padding:0 12px;border-radius:var(--we-r-sm);border:1px solid var(--we-border);background:transparent;color:var(--dsw-alias-label-primary,var(--wp-text));font:inherit;font-size:12.5px;font-weight:600;cursor:pointer;transition:background-color .15s ease}
+.wbs-row button:hover{background:rgba(127,127,127,.12)}
+.wbs-row button:focus-visible{outline:var(--we-ring);outline-offset:2px}
+.wbs-probe-result{margin:0;font-size:11.5px;line-height:1.5}
+.wbs-probe-result[data-tone="ok"]{color:var(--we-ok)}
+.wbs-probe-result[data-tone="danger"]{color:var(--we-danger)}
+/* 展示方式 2×2 卡片（示意线框） */
+.wbs-fit-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--we-sp-2)}
+.wbs-fit-card{position:relative;display:flex;flex-direction:column;gap:6px;padding:10px;border:1px solid var(--we-border);border-radius:var(--we-r-md);background:var(--we-surface-2);cursor:pointer;transition:border-color .15s ease,background-color .15s ease}
+.wbs-fit-card input{position:absolute;opacity:0;width:1px;height:1px}
+.wbs-fit-card[data-active="true"]{border-color:var(--wp-accent);background:color-mix(in srgb,var(--wp-accent) 8%,var(--we-surface))}
+.wbs-fit-card[data-disabled="true"]{opacity:.45;cursor:not-allowed}
+.wbs-fit-art{display:block;height:44px;border-radius:6px;border:1px dashed var(--we-border);position:relative;overflow:hidden;background:var(--we-surface)}
+.wbs-fit-art::after{content:"";position:absolute;background:var(--wp-accent);opacity:.55}
+.wbs-fit-art[data-fit="cover"]::after{inset:-14%}
+.wbs-fit-art[data-fit="contain"]::after{inset:22% 30%}
+.wbs-fit-art[data-fit="stretch"]::after{inset:12% 4%}
+.wbs-fit-art[data-fit="tile"]::after{inset:10%;background-image:linear-gradient(90deg,var(--wp-accent) 50%,transparent 50%);background-size:10px 10px;opacity:.35}
+.wbs-fit-label{font-size:12.5px;font-weight:600;color:var(--dsw-alias-label-primary,var(--wp-text))}
+.wbs-fit-hint{font-size:11px;color:var(--dsw-alias-label-tertiary,var(--wp-text))}
+.wbs-fit-card input:focus-visible + .wbs-fit-art{outline:var(--we-ring);outline-offset:2px}
+/* 最长播放 */
+.wbs-value{font-variant-numeric:tabular-nums;font-size:11.5px;font-weight:650;padding:2px 8px;border-radius:999px;background:rgba(127,127,127,.12);color:var(--dsw-alias-label-primary,var(--wp-text))}
+.wbs-slider{display:flex;flex-direction:column;gap:8px}
+.wbs-slider input[type=range]{width:100%;height:20px;margin:0;background:transparent;appearance:none;-webkit-appearance:none;cursor:pointer}
+.wbs-slider input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:rgba(127,127,127,.25)}
+.wbs-slider input[type=range]::-webkit-slider-thumb{appearance:none;-webkit-appearance:none;width:14px;height:14px;margin-top:-5px;border-radius:50%;background:var(--wp-accent);border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.28)}
+.wbs-slider input[type=range]::-moz-range-track{height:4px;border-radius:2px;background:rgba(127,127,127,.25)}
+.wbs-slider input[type=range]::-moz-range-thumb{width:12px;height:12px;border-radius:50%;background:var(--wp-accent);border:2px solid #fff}
+.wbs-slider input[type=range]:focus-visible{outline:var(--we-ring);outline-offset:2px}
+/* 试播 */
+.wbs-actions{display:flex;align-items:center;gap:var(--we-sp-3);flex-wrap:wrap}
+.wbs-preview{min-height:36px;padding:0 18px;border:0;border-radius:var(--we-r-sm);background:var(--wp-accent-strong,#2563eb);color:#fff;font:inherit;font-size:13px;font-weight:650;cursor:pointer;box-shadow:var(--we-shadow-card);transition:filter .15s ease}
+.wbs-preview:hover{filter:brightness(1.07)}
+.wbs-preview:disabled{opacity:.6;cursor:progress}
+.wbs-preview:focus-visible{outline:var(--we-ring);outline-offset:2px}
+.wbs-message{margin:0;font-size:12px;color:var(--dsw-alias-label-secondary,var(--wp-text))}
+.wbs-message[data-tone="ok"]{color:var(--we-ok)}
+.wbs-message[data-tone="warn"]{color:var(--we-warn)}
+.wbs-message[data-tone="danger"]{color:var(--we-danger)}
+@container (max-width:520px){.wbs-picker{flex-direction:column}.wbs-picker-preview{width:100%;flex:none;aspect-ratio:21/9}.wbs-fit-grid{grid-template-columns:minmax(0,1fr)}.wbs-hero{flex-direction:column;align-items:stretch}.wbs-switch{align-self:flex-start}}
+@media (prefers-reduced-motion:reduce){.we-tab,.wbs-source,.wbs-fit-card,.wbs-row button,.wbs-preview,.wbs-switch-track,.wbs-switch-track::before{transition:none}}
 `;
 export const WALLPAPER_CSS = CSS;
 export function injectWallpaperStyles(): void {
