@@ -120,7 +120,7 @@ class FakeWatcher extends EventEmitter {
   killed = 0;
   kill() { this.killed += 1; }
   emitExit() { this.emit('exit', null); }
-  emitStartError(err: unknown = new Error('spawn ENOENT')) { this.emit('error', err); }
+  emitError(err: unknown = new Error('spawn ENOENT')) { this.emit('error', err); }
 }
 
 function setupService() {
@@ -251,7 +251,7 @@ describe('createMediaSessionService', () => {
   it('spawn 异步 error ⇒ 下一 request no-powershell（退避窗口内不重复 spawn）；首帧后清错误', () => {
     const { svc, procs, advance, feedAt, tick } = setupService();
     expect(svc.request({ pageTitle: 'x', enabled: true })).toMatchObject({ reason: 'no-session' });
-    expect(() => procs[0]!.emitStartError()).not.toThrow();
+    expect(() => procs[0]!.emitError()).not.toThrow();
     expect(svc.request({ pageTitle: 'x', enabled: true })).toMatchObject({ available: false, reason: 'no-powershell' });
     expect(procs).toHaveLength(1);
     // 退避窗口外允许重试。
@@ -270,13 +270,13 @@ describe('createMediaSessionService', () => {
   it('60s 内连续 3 次 spawn error ⇒ watcher-failed 降级；窗口过后重试', () => {
     const { svc, procs, advance } = setupService();
     svc.request({ pageTitle: 'x', enabled: true });
-    procs[0]!.emitStartError();
+    procs[0]!.emitError();
     advance(6_000);
     expect(svc.request({ pageTitle: 'x', enabled: true })).toMatchObject({ reason: 'no-session' });
-    procs[1]!.emitStartError();
+    procs[1]!.emitError();
     advance(6_000);
     expect(svc.request({ pageTitle: 'x', enabled: true })).toMatchObject({ reason: 'no-session' });
-    procs[2]!.emitStartError();
+    procs[2]!.emitError();
     expect(svc.stats().degraded).toBe(true);
     expect(svc.request({ pageTitle: 'x', enabled: true })).toMatchObject({ available: false, reason: 'watcher-failed' });
     expect(procs).toHaveLength(3);
