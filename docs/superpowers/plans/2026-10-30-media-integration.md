@@ -21,6 +21,8 @@
 - 除 spec 的 errata 外不改既有对外行为：无 media 脚本 / 无 `$mediaThumbnail` 的壁纸不得创建轮询、不得派发媒体事件、不得新增每帧开销。
 - spec errata（本计划执行口径）：① 媒体路由改用 `/wallpapers/now-playing` 与 `/wallpapers/now-playing/thumbnail`（既有 `/wallpapers/media` 是 prefix 路由，避免前缀歧义）；② `scene.json` 多脚本从 `objectScripts: Array<{property, script, scriptProperties?}>` 表达（替换原 `objectScript/objectScriptProperty/objectScriptProperties` 三字段）；③ visible 脚本统一从 `obj.visible.script` 取（修掉 text 对象 text.script 覆盖 visible.script 的既有缺陷）；④ 时间线动画不更新 isolated 对象的合成 quad（本机样本无此形态，记入已知边界）。
 - 执行环境需本机壁纸库（`D:/Steam/steamapps/workshop/content/431960`）与 WE 安装目录（`D:/Steam/steamapps/common/wallpaper_engine`）；e2e 只在本机跑（沿用现有 e2e 不入 CI 的口径）。
+- **errata（R7）**：`WATCH_SCRIPT` 的 PowerShell 泛型名必须写成 `` "IAsyncOperation``1" ``（**双反引号**）；单反引号在 PS 双引号串里是转义符，会被吞成 `IAsyncOperation1` ⇒ `$asTask` 为 null、脚本启动即 `Cannot index into a null array.`。Task 1 已按此修正并加静态断言。
+- **errata（R8）**：本仓 `lib/**` 是 npm 包分发产物且纳入 git ⇒ 每个改 `src/` 的 Task 需 `npm run build` 并把本任务相关的 `lib/**` 变更随提交；`dist/client.js` 只在 client 变化时 `npm run build:client` 并提交。
 
 ---
 
@@ -276,7 +278,7 @@ export const WATCH_SCRIPT = [
   '$ErrorActionPreference = "Stop"',
   '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
   'Add-Type -AssemblyName System.Runtime.WindowsRuntime | Out-Null',
-  '$asTask = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq "AsTask" -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq "IAsyncOperation`1" })[0]',
+  '$asTask = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq "AsTask" -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq "IAsyncOperation``1" })[0]',
   'function Await($op, $type) { $m = $asTask.MakeGenericMethod($type); $t = $m.Invoke($null, @($op)); $t.Wait(-1) | Out-Null; $t.Result }',
   '$mgrType = [Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager, Windows.Media.Control, ContentType = WindowsRuntime]',
   '$mgr = Await ($mgrType::RequestAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager])',
