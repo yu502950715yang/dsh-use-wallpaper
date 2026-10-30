@@ -26,4 +26,19 @@ describe('对象属性脚本（objectScripts）', () => {
     expect((d.objects[0] as any).objectScripts).toBeUndefined();
     expect((d.objects[1] as any).objectScripts?.map((e: any) => e.property)).toEqual(['scale']);
   });
+
+  it('alpha 脚本也收集（真实素材 3797976859 的淡入脚本挂在 alpha 上）', () => {
+    const d = parseSceneJson(s([{
+      id: 9, image: 'models/x.json',
+      alpha: {
+        script: "export function mediaThumbnailChanged(e){ thisObject.getAnimation().play(); }",
+        value: 1,
+        animation: { c0: [{ frame: 0, value: 0 }, { frame: 1, value: 1 }], options: { fps: 60, length: 60, startpaused: true } },
+      },
+    }]));
+    const o = d.objects[0] as any;
+    expect(o.objectScripts?.map((e: any) => e.property)).toEqual(['alpha']);
+    expect(o.objectScripts[0].script).toContain('mediaThumbnailChanged');
+    expect(o.animations.alpha).toMatchObject({ property: 'alpha', startPaused: true });
+  });
 });

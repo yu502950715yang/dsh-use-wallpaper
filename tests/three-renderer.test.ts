@@ -2429,6 +2429,16 @@ describe('collectScriptSources', () => {
       [3, undefined, 'VISIBLE_TEXT'],
     ]);
   });
+
+  it('alpha 脚本：有 alpha 时间线才装载（媒体事件播放淡入）；无动画的 alpha 脚本不执行', () => {
+    const desc = parseSceneJson(JSON.stringify({ objects: [
+      { id: 1, image: 'models/x.json', alpha: { script: 'FADE_SRC', value: 1,
+        animation: { c0: [{ frame: 0, value: 0 }, { frame: 1, value: 1 }], options: { startpaused: true } } } },
+      { id: 2, image: 'models/x.json', alpha: { script: 'PULSE_SRC', value: 0.7 } },
+    ] }));
+    const out = collectScriptSources(desc);
+    expect(out.map((s) => [s.objectId, s.property, s.source])).toEqual([[1, 'alpha', 'FADE_SRC']]);
+  });
 });
 
 // image / particle 的 visible 过滤（2026-09-25）：此前**只对 text** 应用，全库实测 134 个

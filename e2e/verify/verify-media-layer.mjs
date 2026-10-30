@@ -1,5 +1,5 @@
 // 媒体集成 e2e：生产 lib/ 渲染真实场景壁纸，自起 server mock now-playing 两条路由 + headless Edge/CDP。
-// 判据：装配即隐藏（白像素 0）/ 播放显示文本且画布宽度随标题变化 / 封面纹理与主色 / 停止再隐藏；退出码 0/1。
+// 判据：装配即隐藏（白像素 0）/ 播放显示文本且画布宽度随标题变化 / 封面纹理与主色 / 时间线淡入·滑入 / 停止再隐藏；退出码 0/1。
 import { createServer } from 'node:http';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, readdirSync } from 'node:fs';
 import { spawn } from 'node:child_process';
@@ -302,7 +302,55 @@ try {
       album: 'E2E-ALBUM', contentType: 'music',
     };
     setArt(ART_ASYM);
-    await sleep(2500); // 1s 轮询 + 文本重绘/quad 尺寸同步
+    // [5a] 淡入前置：对象 45 的 alpha 时间线是 startpaused 第 0 帧 = 0，封面事件前必须≈0。
+    // 轮询间隔 1s，这里紧接着切状态，先同步采样一次早期值（不等 1s 轮询把动画跑完）。
+    const opacityOf = async (objectId) => (await materialOf(objectId))?.opacity ?? null;
+    const earlyOpacity45 = await opacityOf(45);
+    const earlyOpacity35 = await opacityOf(35);
+    const earlyPos38 = (await materialOf(38))?.position ?? null;
+    // 浏览器侧 16ms 采样窗口：覆盖「播放事件 → 滑入/淡入 → 停稳」全过程（CDP 往返太稀疏）。
+    await evalJs(`(() => {
+      window.__animSamples = { opacity45: [], opacity35: [], pos38: [] };
+      window.__animSampler = setInterval(() => {
+        const m45 = window.__objectMaterialInfo(45);
+        const m35 = window.__objectMaterialInfo(35);
+        const m38 = window.__objectMaterialInfo(38);
+        window.__animSamples.opacity45.push(m45 ? m45.opacity : null);
+        window.__animSamples.opacity35.push(m35 ? m35.opacity : null);
+        window.__animSamples.pos38.push(m38 ? m38.position : null);
+      }, 16);
+      return true;
+    })()`);
+    await sleep(2500); // 1s 轮询 + 文本重绘/quad 尺寸同步 + 动画采样窗口
+    const animSamples = JSON.parse(await evalJs(
+      '(() => { clearInterval(window.__animSampler); return JSON.stringify(window.__animSamples); })()',
+    ) ?? 'null');
+    const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
+    const op45 = (animSamples?.opacity45 ?? []).filter(isNum);
+    const op35 = (animSamples?.opacity35 ?? []).filter(isNum);
+    const pos38 = (animSamples?.pos38 ?? []).filter((p) => Array.isArray(p) && p.length === 3 && p.every(isNum));
+    const min45 = op45.length ? Math.min(...op45) : null;
+    const final45 = op45.length ? op45[op45.length - 1] : null;
+    const min35 = op35.length ? Math.min(...op35) : null;
+    const final35 = op35.length ? op35[op35.length - 1] : null;
+    const basePos38 = earlyPos38 ?? pos38[0] ?? null;
+    const maxDelta38 = basePos38 && pos38.length
+      ? Math.max(...pos38.map((p) => Math.hypot(p[0] - basePos38[0], p[1] - basePos38[1])))
+      : null;
+    const lastPos = pos38[pos38.length - 1] ?? null;
+    const prevPos = pos38[pos38.length - 2] ?? null;
+    const stableDelta38 = lastPos && prevPos ? Math.hypot(lastPos[0] - prevPos[0], lastPos[1] - prevPos[1]) : null;
+    judge('[5a] 淡入：obj45 早期 opacity < 0.6，封面事件后 → > 0.9',
+      (earlyOpacity45 ?? 1) < 0.6 && min45 !== null && min45 < 0.6 && final45 !== null && final45 > 0.9,
+      `early=${JSON.stringify(earlyOpacity45)} min=${JSON.stringify(min45)} final=${JSON.stringify(final45)}` +
+      ` samples=${op45.length} early35=${JSON.stringify(earlyOpacity35)}`);
+    judge('[5b] 滑入：obj38 position 位移 > 2（world），且最终稳定（相邻采样差 < 0.5）',
+      maxDelta38 !== null && maxDelta38 > 2 && stableDelta38 !== null && stableDelta38 < 0.5,
+      `maxΔ=${maxDelta38 === null ? 'null' : maxDelta38.toFixed(3)} stableΔ=${stableDelta38 === null ? 'null' : stableDelta38.toFixed(3)}` +
+      ` base=${JSON.stringify(basePos38)} last=${JSON.stringify(lastPos)} samples=${pos38.length}`);
+    judge('[5c] 媒体区淡入：obj35 opacity 从 ≈0 升到 ≈0.5',
+      min35 !== null && min35 < 0.1 && final35 !== null && final35 > 0.4 && final35 < 0.6,
+      `min=${JSON.stringify(min35)} final=${JSON.stringify(final35)} samples=${op35.length}`);
     const titleMat1 = await materialOf(38);
     const titleW1 = titleMat1?.mapSize?.[0] ?? null;
     mediaStage = { ...mediaStage, title: 'E2E-LONGER-TITLE-2' }; // 同阶段换标题：画布宽度必须跟着变

@@ -23002,13 +23002,13 @@ var CAMERA_DISTANCE = 300;
 var OBJECT_RT_MAX = 4096;
 function materialModulation(color, alpha, brightness) {
   const b = brightness ?? 1;
-  const clamp01 = (v) => Math.max(0, Math.min(1, v));
+  const clamp012 = (v) => Math.max(0, Math.min(1, v));
   const c = color ?? [255, 255, 255];
   return {
-    r: clamp01(c[0] / 255 * b),
-    g: clamp01(c[1] / 255 * b),
-    b: clamp01(c[2] / 255 * b),
-    a: clamp01(alpha ?? 1)
+    r: clamp012(c[0] / 255 * b),
+    g: clamp012(c[1] / 255 * b),
+    b: clamp012(c[2] / 255 * b),
+    a: clamp012(alpha ?? 1)
   };
 }
 var PARTICLE_DEFAULT_DISTANCE = 64;
@@ -23593,6 +23593,63 @@ function computePixelBarLayout(props, objectScale) {
   };
 }
 
+// src/client/scene-graph.ts
+var MAX_DEPTH = 64;
+var LOCAL_ZERO = [0, 0, 0];
+var LOCAL_ONE = [1, 1, 1];
+var ANGLE_ORDER = "ZYX";
+var outEuler = /* @__PURE__ */ new Euler();
+var worldRotation = /* @__PURE__ */ new Matrix4();
+function rotationMatrix(angles) {
+  return new Matrix4().makeRotationFromEuler(
+    new Euler(angles[0], angles[1], angles[2], ANGLE_ORDER)
+  );
+}
+function resolveWorldTransforms(nodes) {
+  const byId = /* @__PURE__ */ new Map();
+  for (const n of nodes) byId.set(n.id, n);
+  const out = /* @__PURE__ */ new Map();
+  const visiting = /* @__PURE__ */ new Set();
+  const local = (n) => ({
+    origin: [...n.origin ?? LOCAL_ZERO],
+    scale: [...n.scale ?? LOCAL_ONE],
+    angles: [...n.angles ?? LOCAL_ZERO]
+  });
+  const resolve = (n, depth) => {
+    const cached = out.get(n.id);
+    if (cached) return cached;
+    const self2 = local(n);
+    const parent = n.parent !== void 0 ? byId.get(n.parent) : void 0;
+    if (!parent || depth >= MAX_DEPTH || visiting.has(n.id)) {
+      out.set(n.id, self2);
+      return self2;
+    }
+    visiting.add(n.id);
+    const pw = resolve(parent, depth + 1);
+    visiting.delete(n.id);
+    const offset = new Vector3(
+      self2.origin[0] * pw.scale[0],
+      self2.origin[1] * pw.scale[1],
+      self2.origin[2] * pw.scale[2]
+    ).applyMatrix4(rotationMatrix(pw.angles));
+    let angles = [0, 0, 0];
+    if (!pw.angles.every((a) => a === 0) || !self2.angles.every((a) => a === 0)) {
+      worldRotation.multiplyMatrices(rotationMatrix(pw.angles), rotationMatrix(self2.angles));
+      outEuler.setFromRotationMatrix(worldRotation, ANGLE_ORDER);
+      angles = [outEuler.x, outEuler.y, outEuler.z];
+    }
+    const world = {
+      origin: [pw.origin[0] + offset.x, pw.origin[1] + offset.y, pw.origin[2] + offset.z],
+      scale: [pw.scale[0] * self2.scale[0], pw.scale[1] * self2.scale[1], pw.scale[2] * self2.scale[2]],
+      angles
+    };
+    out.set(n.id, world);
+    return world;
+  };
+  for (const n of nodes) resolve(n, 0);
+  return out;
+}
+
 // src/client/scene-timeline.ts
 var HANDLE_KEYS = ["c0", "c1", "c2"];
 var PROPERTY_CHANNELS = { alpha: 1, origin: 3, scale: 3, angles: 3, color: 3 };
@@ -23675,6 +23732,362 @@ function parseTimelineAnimation(property, raw) {
     parentKey: parentKey || null,
     childrenKeys: children
   };
+}
+function bezier(p0, p1, p2, p3, t) {
+  const u = 1 - t;
+  return u * u * u * p0 + 3 * u * u * t * p1 + 3 * u * t * t * p2 + t * t * t * p3;
+}
+function handleCoord(handle, axis) {
+  const v = handle?.[axis];
+  return typeof v === "number" && Number.isFinite(v) ? v : 0;
+}
+function sampleTimelineChannel(channel, frame) {
+  if (channel.length === 0) return 0;
+  if (channel.length === 1) return channel[0].value;
+  if (!Number.isFinite(frame)) frame = 0;
+  const first = channel[0];
+  if (frame <= first.frame) return first.value;
+  const last = channel[channel.length - 1];
+  if (frame >= last.frame) return last.value;
+  let i = 0;
+  while (i + 1 < channel.length && channel[i + 1].frame <= frame) i += 1;
+  const a = channel[i];
+  if (frame === a.frame) return a.value;
+  const b = channel[i + 1];
+  const span = b.frame - a.frame;
+  if (span <= 0) return b.value;
+  const tFrame = (frame - a.frame) / span;
+  const frontOn = a.front?.enabled === true;
+  const backOn = b.back?.enabled === true;
+  if (!frontOn && !backOn) return a.value + (b.value - a.value) * tFrame;
+  const valueSpan = b.value - a.value;
+  const c1x = a.frame + (frontOn ? handleCoord(a.front, "x") : 0) * span;
+  const c1y = a.value + (frontOn ? handleCoord(a.front, "y") : 0) * valueSpan;
+  const c2x = b.frame + (backOn ? handleCoord(b.back, "x") : 0) * span;
+  const c2y = b.value + (backOn ? handleCoord(b.back, "y") : 0) * valueSpan;
+  let lo = 0;
+  let hi = 1;
+  for (let n = 0; n < 24; n++) {
+    const mid = (lo + hi) / 2;
+    if (bezier(a.frame, c1x, c2x, b.frame, mid) < frame) lo = mid;
+    else hi = mid;
+  }
+  return bezier(a.value, c1y, c2y, b.value, (lo + hi) / 2);
+}
+function sampleTimeline(anim, frame) {
+  return anim.channels.map((channel) => sampleTimelineChannel(channel, frame));
+}
+var VEC3_ZERO = [0, 0, 0];
+var VEC3_ONE = [1, 1, 1];
+var DEG2RAD2 = Math.PI / 180;
+function isVec3(v) {
+  return Array.isArray(v) && v.length >= 3 && Number.isFinite(v[0]) && Number.isFinite(v[1]) && Number.isFinite(v[2]);
+}
+function clamp01(v) {
+  return Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 1;
+}
+var stateKey = (objectId, property) => `${objectId}|${property}`;
+function localNodeOf(obj, localTransforms, readLocal) {
+  const base = localTransforms.get(obj.id);
+  const state = readLocal(obj.id);
+  return {
+    id: obj.id,
+    parent: obj.parent,
+    origin: isVec3(state.origin) ? [...state.origin] : base ? [...base.origin] : [...VEC3_ZERO],
+    scale: isVec3(state.scale) ? [...state.scale] : base ? [...base.scale] : [...VEC3_ONE],
+    angles: isVec3(state.angles) ? [state.angles[0] * DEG2RAD2, state.angles[1] * DEG2RAD2, state.angles[2] * DEG2RAD2] : base ? [...base.angles] : [...VEC3_ZERO]
+  };
+}
+function resolveParentLinks(anims) {
+  const parentOf = /* @__PURE__ */ new Map();
+  for (const [prop, anim] of anims) {
+    const explicit = anim.parentKey;
+    parentOf.set(prop, explicit && explicit !== prop && anims.has(explicit) ? explicit : null);
+  }
+  for (const [prop] of anims) {
+    if (parentOf.get(prop)) continue;
+    for (const [other, candidate] of anims) {
+      if (other !== prop && candidate.childrenKeys.includes(prop)) {
+        parentOf.set(prop, other);
+        break;
+      }
+    }
+  }
+  for (const prop of anims.keys()) {
+    const seen = /* @__PURE__ */ new Set();
+    let cur = prop;
+    while (cur) {
+      if (seen.has(cur)) {
+        parentOf.set(prop, null);
+        break;
+      }
+      seen.add(cur);
+      cur = parentOf.get(cur) ?? null;
+    }
+  }
+  return parentOf;
+}
+function createTimelineRuntime(opts) {
+  const animsOf = /* @__PURE__ */ new Map();
+  for (const obj of opts.desc.objects) {
+    if (!obj.animations) continue;
+    const map = /* @__PURE__ */ new Map();
+    for (const [prop, anim] of Object.entries(obj.animations)) {
+      if (anim) map.set(prop, anim);
+    }
+    if (map.size > 0) animsOf.set(obj.id, map);
+  }
+  const ordered = [];
+  const entriesByKey = /* @__PURE__ */ new Map();
+  const byName = /* @__PURE__ */ new Map();
+  const playbacks = /* @__PURE__ */ new Map();
+  for (const [objectId, anims] of animsOf) {
+    const parentOf = resolveParentLinks(anims);
+    const depthOf = (prop) => {
+      let depth = 0;
+      let cur = parentOf.get(prop) ?? null;
+      const guard = /* @__PURE__ */ new Set();
+      while (cur && depth <= anims.size) {
+        if (guard.has(cur)) break;
+        guard.add(cur);
+        depth += 1;
+        cur = parentOf.get(cur) ?? null;
+      }
+      return depth;
+    };
+    for (const [property, anim] of anims) {
+      const key = stateKey(objectId, property);
+      const entry = {
+        objectId,
+        property,
+        anim,
+        state: { phase: 0, frame: 0, playing: false, rate: 1, finished: false },
+        key,
+        parent: parentOf.get(property) ?? null,
+        depth: depthOf(property)
+      };
+      ordered.push(entry);
+      entriesByKey.set(key, entry);
+      if (anim.name) byName.set(`${objectId}|${anim.name}`, entry);
+    }
+  }
+  ordered.sort((a, b) => a.depth - b.depth);
+  const animatedIds = [...animsOf.keys()];
+  const children = /* @__PURE__ */ new Map();
+  for (const node of opts.desc.objects) {
+    if (node.parent === void 0) continue;
+    const list = children.get(node.parent) ?? [];
+    list.push(node.id);
+    children.set(node.parent, list);
+  }
+  const affected = /* @__PURE__ */ new Set();
+  const addSubtree = (id) => {
+    if (affected.has(id)) return;
+    affected.add(id);
+    for (const child of children.get(id) ?? []) addSubtree(child);
+  };
+  for (const id of animatedIds) addSubtree(id);
+  let disposed = false;
+  const playbackOf = (entry) => {
+    const cached = playbacks.get(entry.key);
+    if (cached) return cached;
+    const { anim, state } = entry;
+    const playback = {
+      play() {
+        if (disposed) return;
+        if (state.finished) {
+          state.phase = 0;
+          state.frame = 0;
+        }
+        state.playing = true;
+        state.finished = false;
+      },
+      pause() {
+        state.playing = false;
+      },
+      stop() {
+        state.playing = false;
+        state.phase = 0;
+        state.frame = 0;
+        state.finished = false;
+      },
+      isPlaying: () => state.playing && !state.finished,
+      setFrame(v) {
+        if (!Number.isFinite(v)) return;
+        const last = anim.frameCount > 0 ? anim.frameCount : 0;
+        state.frame = Math.max(0, Math.min(last, v));
+        state.phase = state.frame;
+        state.finished = false;
+      },
+      getFrame: () => state.frame,
+      get fps() {
+        return anim.fps;
+      },
+      get frameCount() {
+        return anim.frameCount;
+      },
+      get duration() {
+        return anim.duration;
+      },
+      get name() {
+        return anim.name;
+      },
+      get rate() {
+        return state.rate;
+      },
+      set rate(v) {
+        state.rate = typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 1;
+      }
+    };
+    playbacks.set(entry.key, playback);
+    return playback;
+  };
+  const source = {
+    getByProperty(objectId, property, name) {
+      const anim = animsOf.get(objectId)?.get(property);
+      if (!anim || name && anim.name !== name) return null;
+      const entry = entriesByKey.get(stateKey(objectId, property));
+      return entry ? playbackOf(entry) : null;
+    },
+    getByName(objectId, name) {
+      const entry = byName.get(`${objectId}|${name}`);
+      return entry ? playbackOf(entry) : null;
+    }
+  };
+  const sampleWrites = () => {
+    const out = /* @__PURE__ */ new Map();
+    for (const [objectId, anims] of animsOf) {
+      const base = opts.localTransforms.get(objectId);
+      const patch = {};
+      let has = false;
+      for (const [property, anim] of anims) {
+        const entry = entriesByKey.get(stateKey(objectId, property));
+        if (!entry) continue;
+        const frame = Number.isFinite(entry.state.frame) ? entry.state.frame : 0;
+        const values = sampleTimeline(anim, frame);
+        if (property === "alpha") {
+          patch.alpha = clamp01(values[0] ?? 0);
+          has = true;
+        } else if (property === "color") {
+          const max = Math.max(...values);
+          const to255 = max <= 1 ? 255 : 1;
+          patch.color = [
+            Math.max(0, Math.min(255, (values[0] ?? 0) * to255)),
+            Math.max(0, Math.min(255, (values[1] ?? 0) * to255)),
+            Math.max(0, Math.min(255, (values[2] ?? 0) * to255))
+          ];
+          has = true;
+        } else {
+          const baseV = base?.[property] ?? (property === "scale" ? VEC3_ONE : VEC3_ZERO);
+          const v = [baseV[0], baseV[1], baseV[2]];
+          for (let i = 0; i < 3; i++) {
+            const channel = anim.channels[i];
+            if (!channel || channel.length === 0) continue;
+            const sampled = sampleTimelineChannel(channel, frame);
+            v[i] = anim.relative ? baseV[i] + sampled : sampled;
+            if (!Number.isFinite(v[i])) v[i] = baseV[i];
+          }
+          if (property === "angles") {
+            patch.angles = [v[0] / DEG2RAD2, v[1] / DEG2RAD2, v[2] / DEG2RAD2];
+          } else if (property === "origin") {
+            patch.origin = v;
+          } else {
+            patch.scale = v;
+          }
+          has = true;
+        }
+      }
+      if (has) out.set(objectId, patch);
+    }
+    return out;
+  };
+  const syncWorld = () => {
+    if (disposed || affected.size === 0) return;
+    const nodes = opts.desc.objects.map((obj) => localNodeOf(obj, opts.localTransforms, opts.readLocal));
+    const world = resolveWorldTransforms(nodes);
+    for (const id of affected) {
+      const wt = world.get(id);
+      if (wt) opts.applyWorld(id, wt);
+    }
+  };
+  const runtime = {
+    ...source,
+    advance(dt) {
+      if (disposed) return;
+      if (!Number.isFinite(dt) || dt <= 0) return;
+      const step = Math.min(Math.max(dt, 1e-4), 0.25);
+      for (const entry of ordered) {
+        const state = entry.state;
+        if (!state.playing || state.finished) continue;
+        const anim = entry.anim;
+        if (!(anim.frameCount > 0)) {
+          state.frame = 0;
+          state.phase = 0;
+          state.finished = true;
+          state.playing = false;
+          continue;
+        }
+        let frame;
+        if (entry.parent) {
+          const parentEntry = entriesByKey.get(stateKey(entry.objectId, entry.parent));
+          if (!parentEntry || !(parentEntry.anim.frameCount > 0) || !Number.isFinite(parentEntry.state.frame)) continue;
+          frame = parentEntry.state.frame / parentEntry.anim.frameCount * anim.frameCount;
+        } else {
+          if (!(anim.fps > 0)) {
+            state.finished = true;
+            state.playing = false;
+            continue;
+          }
+          const delta = step * anim.fps * state.rate;
+          if (!Number.isFinite(delta)) continue;
+          state.phase = Number.isFinite(state.phase) ? state.phase + delta : 0;
+          frame = state.phase;
+        }
+        if (anim.mode === "loop") {
+          frame %= anim.frameCount;
+          if (frame < 0) frame += anim.frameCount;
+        } else if (anim.mode === "mirror") {
+          const period = anim.frameCount * 2;
+          let cycle = frame % period;
+          if (cycle < 0) cycle += period;
+          frame = cycle <= anim.frameCount ? cycle : period - cycle;
+        } else if (frame >= anim.frameCount) {
+          frame = anim.frameCount;
+          state.finished = true;
+          state.playing = false;
+        }
+        if (!Number.isFinite(frame)) frame = 0;
+        state.frame = frame;
+      }
+    },
+    sampleAndWrite() {
+      if (disposed) return;
+      opts.applyLocal(sampleWrites());
+    },
+    applyInitial() {
+      if (disposed) return;
+      for (const entry of ordered) {
+        entry.state.phase = 0;
+        entry.state.frame = 0;
+        entry.state.playing = !entry.anim.startPaused;
+        entry.state.rate = 1;
+        entry.state.finished = false;
+      }
+      runtime.sampleAndWrite();
+      syncWorld();
+    },
+    syncWorld,
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      ordered.length = 0;
+      entriesByKey.clear();
+      animsOf.clear();
+      byName.clear();
+      playbacks.clear();
+    }
+  };
+  return runtime;
 }
 
 // src/client/visibility.ts
@@ -23909,7 +24322,7 @@ function scriptFields(o) {
   const scriptProperties = o?.scriptproperties !== void 0 ? parseScriptProperties(o.scriptproperties) : void 0;
   return { script, scriptProperties };
 }
-var OBJECT_SCRIPT_PROPS = ["angles", "origin", "scale", "color"];
+var OBJECT_SCRIPT_PROPS = ["angles", "origin", "scale", "color", "alpha"];
 function objectScriptsField(o) {
   const out = [];
   for (const property of OBJECT_SCRIPT_PROPS) {
@@ -24871,6 +25284,9 @@ function alignmentWorldOffset(size, scale, angles, alignment) {
   const v = new Vector3(off.x * scale[0], off.y * scale[1], 0).applyEuler(new Euler(angles[0], angles[1], angles[2]));
   return [v.x, v.y];
 }
+function vec3Close(a, b) {
+  return Math.abs(a[0] - b[0]) < 1e-6 && Math.abs(a[1] - b[1]) < 1e-6 && Math.abs(a[2] - b[2]) < 1e-6;
+}
 var ThreeScenePlayer = class {
   renderer;
   scene;
@@ -24910,6 +25326,11 @@ var ThreeScenePlayer = class {
   // 背景图层条目（按 addBackground 返回的 id 索引，供 update_background 引用）。
   backgroundEntries = /* @__PURE__ */ new Map();
   nextBackgroundId = 0;
+  // 时间线世界变换：scene 对象 id → 图层 id（backgroundEntries 的键）。只含可直渲的背景/puppet；
+  // 粒子单独映射（只支持 origin 平移增量：粒子内容由 shader 定位，mesh 不能写绝对中心）。
+  objectToBackground = /* @__PURE__ */ new Map();
+  objectToParticle = /* @__PURE__ */ new Map();
+  warnedTransformUnsupported = /* @__PURE__ */ new Set();
   // 精灵表图层（键 = scene.json 对象 id；仅 image 材质带 combos.spritesheet 且纹理有 TEXS 元数据时登记）。
   spritesheetLayers = /* @__PURE__ */ new Map();
   // puppet 图层（键 = 同一把图层计数器 id）：instance 用于逐帧采样动画，dispose 时释放骨骼/资源。
@@ -25133,6 +25554,9 @@ var ThreeScenePlayer = class {
           const entry = this.backgroundEntries.get(id);
           if (entry) {
             this.backgroundEntries.delete(id);
+            for (const [objectId, bgId] of this.objectToBackground) {
+              if (bgId === id) this.objectToBackground.delete(objectId);
+            }
             for (const [objectId, obj] of this.displayObjects) {
               if (obj === entry.mesh) this.displayObjects.delete(objectId);
             }
@@ -25580,6 +26004,64 @@ var ThreeScenePlayer = class {
   displayObject(objectId) {
     return this.displayObjects.get(objectId);
   }
+  /**
+   * 时间线动画：按 scene 对象 id 写入**世界变换**。
+   * 支持非隔离背景/puppet（mesh TRS）与非隔离粒子的 origin 平移增量（粒子内容由 shader 定位，
+   * 写绝对中心会双重平移）；隔离对象（对象级效果链的合成 quad）暂不支持 → false + 告警一次。
+   */
+  updateBackgroundTransform(objectId, wt) {
+    if (![wt.origin, wt.scale, wt.angles].every((v) => Array.isArray(v) && v.length >= 3 && v.every((n) => typeof n === "number" && Number.isFinite(n)))) return false;
+    if (this.isolated.has(objectId)) {
+      this.warnUnsupportedTransform(
+        objectId,
+        `\u9694\u79BB\u5BF9\u8C61 ${objectId}\uFF08\u5BF9\u8C61\u7EA7\u6548\u679C\u94FE\uFF09\u7684\u4E16\u754C\u53D8\u6362\u6682\u4E0D\u652F\u6301\u65F6\u95F4\u7EBF\u52A8\u753B\uFF0C\u5DF2\u5FFD\u7565`
+      );
+      return false;
+    }
+    const particle = this.objectToParticle.get(objectId);
+    if (particle) {
+      const dx = wt.origin[0] - particle.baseWorldOrigin[0];
+      const dy = wt.origin[1] - particle.baseWorldOrigin[1];
+      const dz = wt.origin[2] - particle.baseWorldOrigin[2];
+      particle.mesh.position.set(dx, dy, dz);
+      particle.mesh.scale.set(1, 1, 1);
+      particle.mesh.rotation.set(0, 0, 0);
+      if (!vec3Close(wt.scale, particle.baseWorldScale) || !vec3Close(wt.angles, particle.baseWorldAngles)) {
+        this.warnUnsupportedTransform(objectId, `\u7C92\u5B50\u5BF9\u8C61 ${objectId} \u7684 scale/angles \u65F6\u95F4\u7EBF\u52A8\u753B\u6682\u4E0D\u652F\u6301\uFF08\u53EA\u5E94\u7528 origin\uFF09`);
+      }
+      particle.parallaxCenter = [
+        wt.origin[0] - this.sceneWidth / 2,
+        wt.origin[1] - this.sceneHeight / 2
+      ];
+      return true;
+    }
+    const backgroundId = this.objectToBackground.get(objectId);
+    if (backgroundId === void 0) return false;
+    const entry = this.backgroundEntries.get(backgroundId);
+    if (!entry) return false;
+    const ox = wt.origin[0] + entry.renderOffset[0];
+    const oy = wt.origin[1] + entry.renderOffset[1];
+    const oz = wt.origin[2] + entry.renderOffset[2];
+    entry.origin = [ox, oy, oz];
+    entry.scale = [wt.scale[0], wt.scale[1], wt.scale[2]];
+    entry.angles = [wt.angles[0], wt.angles[1], wt.angles[2]];
+    const align = alignmentWorldOffset(entry.size, entry.scale, entry.angles, entry.alignment);
+    entry.align = [align[0], align[1]];
+    entry.mesh.scale.set(entry.scale[0], entry.scale[1], entry.scale[2]);
+    entry.mesh.rotation.set(entry.angles[0], entry.angles[1], entry.angles[2]);
+    entry.mesh.position.set(
+      ox - entry.sceneW / 2 + align[0],
+      oy - entry.sceneH / 2 + align[1],
+      oz
+    );
+    entry.parallaxApplied = false;
+    return true;
+  }
+  warnUnsupportedTransform(objectId, message) {
+    if (this.warnedTransformUnsupported.has(objectId)) return;
+    this.warnedTransformUnsupported.add(objectId);
+    console.warn(`[three] ${message}`);
+  }
   // 隔离对象条目（只读视图，供编排器拿 RT 纹理与尺寸）。
   isolatedObjects() {
     return [...this.isolated.values()];
@@ -25835,6 +26317,12 @@ var ThreeScenePlayer = class {
     const sceneH = opts.sceneH;
     const utilFull = opts.util === "project" || opts.util === "fullscreen";
     const origin = utilFull ? [sceneW / 2, sceneH / 2, 0] : [opts.origin[0], opts.origin[1], opts.origin[2]];
+    const anchorOrigin = opts.transformOrigin ?? origin;
+    const renderOffset = utilFull ? [0, 0, 0] : [
+      origin[0] - anchorOrigin[0],
+      origin[1] - anchorOrigin[1],
+      origin[2] - anchorOrigin[2]
+    ];
     const layerScale = utilFull ? [1, 1, 1] : [opts.scale[0], opts.scale[1], opts.scale[2] ?? 1];
     const size = utilFull ? [sceneW, sceneH] : opts.size;
     const sprite = opts.util ? void 0 : opts.texture?.userData?.spritesheet === true ? textureSpriteInfo(opts.texture) : void 0;
@@ -25902,11 +26390,13 @@ var ThreeScenePlayer = class {
       brightness: opts.brightness ?? 1,
       sceneW,
       sceneH,
+      renderOffset,
       // 隔离时位移的载体是合成 quad（内容只进对象 RT）；attachIsolated 在本方法之前登记 quad。
       parallaxNode: opts.isolate ? this.isolated.get(opts.isolate.objectId)?.quad ?? mesh : mesh,
       parallaxDepth: opts.parallaxDepth
     });
     if (opts.objectId !== void 0) {
+      this.objectToBackground.set(opts.objectId, id);
       const shown = opts.isolate ? this.isolated.get(opts.isolate.objectId)?.quad : mesh;
       if (shown) this.displayObjects.set(opts.objectId, shown);
     }
@@ -25942,6 +26432,7 @@ var ThreeScenePlayer = class {
       brightness: opts.brightness ?? 1,
       sceneW: opts.sceneW,
       sceneH: opts.sceneH,
+      renderOffset: [0, 0, 0],
       parallaxNode: mesh,
       parallaxDepth: opts.parallaxDepth
     });
@@ -25951,6 +26442,7 @@ var ThreeScenePlayer = class {
       elapsed: 0
     });
     this.displayObjects.set(opts.objectId, mesh);
+    this.objectToBackground.set(opts.objectId, id);
     return id;
   }
   // 图层材质（**内容**材质）：colorBlendMode 已实现（6/7/31）→ 预乘 ShaderMaterial +
@@ -26292,7 +26784,16 @@ var ThreeScenePlayer = class {
       refract: refractEnabled,
       loggedRefract: false,
       parallaxDepth: opts.parallaxDepth,
-      parallaxCenter: [(opts.objectCenter ?? [0, 0, 0])[0], (opts.objectCenter ?? [0, 0, 0])[1]]
+      parallaxCenter: [(opts.objectCenter ?? [0, 0, 0])[0], (opts.objectCenter ?? [0, 0, 0])[1]],
+      // 时间线 origin 动画的平移基准：opts.objectCenter 是 we_to_three 后的中心，加回 scene/2
+      // 得到 scene 坐标的对象 world origin；scale/angles 只用于判断「是否只有 origin 变化」。
+      baseWorldOrigin: [
+        (opts.objectCenter ?? [0, 0, 0])[0] + this.sceneWidth / 2,
+        (opts.objectCenter ?? [0, 0, 0])[1] + this.sceneHeight / 2,
+        (opts.objectCenter ?? [0, 0, 0])[2]
+      ],
+      baseWorldScale: [...opts.objectScale ?? [1, 1, 1]],
+      baseWorldAngles: [...opts.objectAngles ?? [0, 0, 0]]
     };
     this.particleLayers.set(id, layer);
     this.writeParticleData(layer, initial, count);
@@ -26316,6 +26817,7 @@ var ThreeScenePlayer = class {
     if (opts.objectId !== void 0) {
       const shown = opts.isolate ? this.isolated.get(opts.isolate.objectId)?.quad : mesh;
       if (shown) this.displayObjects.set(opts.objectId, shown);
+      if (!opts.isolate) this.objectToParticle.set(opts.objectId, layer);
     }
     if (refractEnabled && opts.objectId !== void 0) {
       this.refractLayers.set(opts.objectId, layer);
@@ -26444,6 +26946,9 @@ var ThreeScenePlayer = class {
     this.utilContents.clear();
     this.lastFrameSnapshot = null;
     this.displayObjects.clear();
+    this.objectToBackground.clear();
+    this.objectToParticle.clear();
+    this.warnedTransformUnsupported.clear();
     this.objectEffectStage = null;
     this.glowStage?.dispose();
     this.glowStage = null;
@@ -26585,6 +27090,8 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
       const t = world(obj);
       const id = player.addBackground({
         origin: [t.origin[0] + off[0], t.origin[1] + off[1], t.origin[2]],
+        // 时间线世界变换按对象锚点下发：把未含 anchorOffset 的 t.origin 也带上，写回时补偏移。
+        transformOrigin: [t.origin[0], t.origin[1], t.origin[2]],
         size: layer.size,
         scale: t.scale,
         angles: t.angles,
@@ -26706,63 +27213,6 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
     }
   });
   return { player, sims, backgroundIds, particleLayers, puppetLayers };
-}
-
-// src/client/scene-graph.ts
-var MAX_DEPTH = 64;
-var LOCAL_ZERO = [0, 0, 0];
-var LOCAL_ONE = [1, 1, 1];
-var ANGLE_ORDER = "ZYX";
-var outEuler = /* @__PURE__ */ new Euler();
-var worldRotation = /* @__PURE__ */ new Matrix4();
-function rotationMatrix(angles) {
-  return new Matrix4().makeRotationFromEuler(
-    new Euler(angles[0], angles[1], angles[2], ANGLE_ORDER)
-  );
-}
-function resolveWorldTransforms(nodes) {
-  const byId = /* @__PURE__ */ new Map();
-  for (const n of nodes) byId.set(n.id, n);
-  const out = /* @__PURE__ */ new Map();
-  const visiting = /* @__PURE__ */ new Set();
-  const local = (n) => ({
-    origin: [...n.origin ?? LOCAL_ZERO],
-    scale: [...n.scale ?? LOCAL_ONE],
-    angles: [...n.angles ?? LOCAL_ZERO]
-  });
-  const resolve = (n, depth) => {
-    const cached = out.get(n.id);
-    if (cached) return cached;
-    const self2 = local(n);
-    const parent = n.parent !== void 0 ? byId.get(n.parent) : void 0;
-    if (!parent || depth >= MAX_DEPTH || visiting.has(n.id)) {
-      out.set(n.id, self2);
-      return self2;
-    }
-    visiting.add(n.id);
-    const pw = resolve(parent, depth + 1);
-    visiting.delete(n.id);
-    const offset = new Vector3(
-      self2.origin[0] * pw.scale[0],
-      self2.origin[1] * pw.scale[1],
-      self2.origin[2] * pw.scale[2]
-    ).applyMatrix4(rotationMatrix(pw.angles));
-    let angles = [0, 0, 0];
-    if (!pw.angles.every((a) => a === 0) || !self2.angles.every((a) => a === 0)) {
-      worldRotation.multiplyMatrices(rotationMatrix(pw.angles), rotationMatrix(self2.angles));
-      outEuler.setFromRotationMatrix(worldRotation, ANGLE_ORDER);
-      angles = [outEuler.x, outEuler.y, outEuler.z];
-    }
-    const world = {
-      origin: [pw.origin[0] + offset.x, pw.origin[1] + offset.y, pw.origin[2] + offset.z],
-      scale: [pw.scale[0] * self2.scale[0], pw.scale[1] * self2.scale[1], pw.scale[2] * self2.scale[2]],
-      angles
-    };
-    out.set(n.id, world);
-    return world;
-  };
-  for (const n of nodes) resolve(n, 0);
-  return out;
 }
 
 // src/client/tex-loader.ts
@@ -31518,7 +31968,7 @@ function createLayerStateTable() {
   };
 }
 var ALPHA_EPSILON = 2e-3;
-var DEG2RAD2 = Math.PI / 180;
+var DEG2RAD3 = Math.PI / 180;
 function writeOpacity(object, alpha) {
   const mat = object.material;
   const list = Array.isArray(mat) ? mat : mat ? [mat] : [];
@@ -31531,15 +31981,15 @@ function writeOpacity(object, alpha) {
 }
 function scriptColor01(c) {
   const scale = Math.max(c[0], c[1], c[2]) > 1 ? 1 / 255 : 1;
-  const clamp01 = (v) => Math.max(0, Math.min(1, Number.isFinite(v) ? v * scale : 0));
-  return [clamp01(c[0]), clamp01(c[1]), clamp01(c[2])];
+  const clamp012 = (v) => Math.max(0, Math.min(1, Number.isFinite(v) ? v * scale : 0));
+  return [clamp012(c[0]), clamp012(c[1]), clamp012(c[2])];
 }
 function writeColor(object, rgb) {
   const mat = object.material;
   const list = Array.isArray(mat) ? mat : mat ? [mat] : [];
   const rawBrightness = object.userData?.weBrightness;
   const brightness = typeof rawBrightness === "number" && Number.isFinite(rawBrightness) ? rawBrightness : 1;
-  const clamp01 = (v) => Math.max(0, Math.min(1, v * brightness));
+  const clamp012 = (v) => Math.max(0, Math.min(1, v * brightness));
   for (const m of list) {
     const anyMat = m;
     const tint = anyMat.uniforms?.["tint"]?.value;
@@ -31548,7 +31998,7 @@ function writeColor(object, rgb) {
       continue;
     }
     if (anyMat.color && typeof anyMat.color.setRGB === "function") {
-      anyMat.color.setRGB(clamp01(rgb[0]), clamp01(rgb[1]), clamp01(rgb[2]));
+      anyMat.color.setRGB(clamp012(rgb[0]), clamp012(rgb[1]), clamp012(rgb[2]));
     }
   }
 }
@@ -31560,7 +32010,7 @@ function applyLayerState(dirty, lookup) {
     const obj = target.object;
     if (w.origin) obj.position.set(w.origin[0] - target.sceneW / 2, w.origin[1] - target.sceneH / 2, w.origin[2]);
     if (w.scale) obj.scale.set(w.scale[0], w.scale[1], w.scale[2]);
-    if (w.angles) obj.rotation.set(w.angles[0] * DEG2RAD2, w.angles[1] * DEG2RAD2, w.angles[2] * DEG2RAD2);
+    if (w.angles) obj.rotation.set(w.angles[0] * DEG2RAD3, w.angles[1] * DEG2RAD3, w.angles[2] * DEG2RAD3);
     if (w.color) writeColor(obj, scriptColor01(w.color));
     const alpha = w.alpha;
     if (alpha !== void 0) {
@@ -32262,7 +32712,7 @@ return {
     const ctx = this.ctx;
     const cur = this.state.read(objectId)[property];
     const dflt = property === "scale" || property === "color" ? [1, 1, 1] : [0, 0, 0];
-    const arr = cur ?? dflt;
+    const arr = Array.isArray(cur) ? cur : dflt;
     const obj = ctx.newObject();
     for (const [i, axis] of ["x", "y", "z"].entries()) {
       const n = ctx.newNumber(arr[i] ?? dflt[i]);
@@ -32399,8 +32849,9 @@ return {
     const m = /^id:(\d+)$/.exec(layerKey);
     const objectId = m ? Number(m[1]) : -1;
     const tl = objectId >= 0 ? this.timeline : null;
-    const pb = (tl && property ? tl.getByProperty(objectId, property, name) : null) ?? (tl && name ? tl.getByName(objectId, name) : null) ?? this.anims.get(layerKey, name || property);
-    this.propAnimCache.set(key, pb);
+    const fromTimeline = (tl && property ? tl.getByProperty(objectId, property, name) : null) ?? (tl && name ? tl.getByName(objectId, name) : null);
+    const pb = fromTimeline ?? this.anims.get(layerKey, name || property);
+    if (fromTimeline) this.propAnimCache.set(key, pb);
     return pb;
   }
   /** 按装载顺序派发点击（cursorClick）。 */
@@ -33371,12 +33822,12 @@ function createPointerTracker(opts = {}) {
   }));
   let current = { ...POINTER_CENTER };
   let installed = false;
-  const clamp01 = (v) => v < 0 ? 0 : v > 1 ? 1 : v;
+  const clamp012 = (v) => v < 0 ? 0 : v > 1 ? 1 : v;
   const onMove = (ev) => {
     const e = ev;
     const { width, height } = viewport();
     if (!(width > 0) || !(height > 0)) return;
-    current = { x: clamp01(Number(e.clientX) / width), y: clamp01(Number(e.clientY) / height) };
+    current = { x: clamp012(Number(e.clientX) / width), y: clamp012(Number(e.clientY) / height) };
   };
   return {
     install() {
@@ -33503,6 +33954,7 @@ function collectScriptSources(desc) {
     }
     for (const e of obj.objectScripts ?? []) {
       if (typeof e?.script !== "string" || !e.script) continue;
+      if (e.property === "alpha" && !obj.animations?.alpha) continue;
       out.push({
         objectId: obj.id,
         source: e.script,
@@ -33534,6 +33986,7 @@ function createThreeSceneRenderer(opts) {
   let currentMediaReplacedTextures = [];
   let currentScriptBindings = [];
   let currentScriptHost = null;
+  let currentTimeline = null;
   let currentMedia = null;
   let mediaIntegrationEnabled = true;
   let currentMeshRegistry = null;
@@ -33697,6 +34150,8 @@ function createThreeSceneRenderer(opts) {
     scriptClick = null;
     currentMedia?.dispose();
     currentMedia = null;
+    currentTimeline?.dispose();
+    currentTimeline = null;
     currentScriptHost?.dispose();
     currentScriptHost = null;
     currentMeshRegistry?.dispose();
@@ -33793,6 +34248,11 @@ function createThreeSceneRenderer(opts) {
         const vh = Math.max(1, Math.round(window.innerHeight || desc.orthogonal.height));
         fg.width = vw;
         fg.height = vh;
+        const localTransforms = new Map(desc.objects.map((o) => [o.id, {
+          origin: [...o.origin],
+          scale: [...o.scale],
+          angles: [...o.angles ?? [0, 0, 0]]
+        }]));
         const worldTransforms = resolveWorldTransforms(desc.objects);
         lastWorldTransforms = worldTransforms;
         for (const obj of desc.objects) {
@@ -34120,12 +34580,11 @@ function createThreeSceneRenderer(opts) {
             const host = currentScriptHost;
             const loaded = current;
             if (!host || !loaded) return;
+            currentTimeline?.advance(dt);
+            currentTimeline?.sampleAndWrite();
             const dirty = host.tick(dt);
-            if (dirty.size === 0) return;
-            applyLayerState(dirty, (objectId) => {
-              const obj = loaded.player.displayObject(objectId);
-              return obj ? { object: obj, sceneW: desc.orthogonal.width, sceneH: desc.orthogonal.height } : void 0;
-            });
+            if (dirty.size > 0) applyLayerState(dirty, layerLookup);
+            currentTimeline?.syncWorld();
           }
         };
         const userOnFrame = assets.onFrame;
@@ -34147,6 +34606,21 @@ function createThreeSceneRenderer(opts) {
           height: vh
         });
         current = result;
+        const layerLookup = (objectId) => {
+          const obj = result.player.displayObject(objectId);
+          return obj ? { object: obj, sceneW: desc.orthogonal.width, sceneH: desc.orthogonal.height } : void 0;
+        };
+        const timelineRuntime = desc.objects.some((o) => o.animations) ? createTimelineRuntime({
+          desc,
+          localTransforms,
+          worldTransforms,
+          applyLocal: (writes) => currentScriptHost?.applyExternal(writes),
+          readLocal: (objectId) => currentScriptHost?.read(objectId) ?? {},
+          applyWorld: (objectId, wt) => {
+            result.player.updateBackgroundTransform(objectId, wt);
+          }
+        }) : null;
+        currentTimeline = timelineRuntime;
         for (const spec of visualizerSpecs) {
           const num2 = (v, def) => typeof v === "number" && isFinite(v) ? v : def;
           if (spec.family === "pixel-bars" && spec.layout) {
@@ -34227,7 +34701,9 @@ function createThreeSceneRenderer(opts) {
               isPlaying: (objId) => result.player.isSpriteSheetPlaying(objId),
               setFrame: (objId, frame) => result.player.setSpriteSheetFrame(objId, frame),
               getFrame: (objId) => result.player.getSpriteSheetFrame(objId)
-            }
+            },
+            // thisObject.getAnimation / thisLayer.getAnimation(name) 先查时间线播放器。
+            timeline: timelineRuntime ?? void 0
           });
           for (const p of materialPaths) {
             if (materialTable.has(p)) continue;
@@ -34263,7 +34739,14 @@ function createThreeSceneRenderer(opts) {
             );
           }
         }
+        if (!currentScriptHost && timelineRuntime) {
+          currentScriptHost = await SceneScriptHost.create({ scripts: [], userProperties: userProps });
+        }
         if (abortIfContextLost()) return false;
+        if (timelineRuntime) {
+          timelineRuntime.applyInitial();
+          applyLayerState(currentScriptHost?.drainDirty() ?? /* @__PURE__ */ new Map(), layerLookup);
+        }
         if (sceneNeedsMedia(desc) && (currentScriptHost || mediaThumbnailObjects.size > 0)) {
           const scriptHost = currentScriptHost;
           let mediaSession = null;

@@ -93,6 +93,9 @@ export declare class ThreeScenePlayer {
     private parallaxFollow;
     private backgroundEntries;
     private nextBackgroundId;
+    private readonly objectToBackground;
+    private readonly objectToParticle;
+    private readonly warnedTransformUnsupported;
     private readonly spritesheetLayers;
     private puppetLayers;
     private particleLayers;
@@ -194,6 +197,17 @@ export declare class ThreeScenePlayer {
     setBloomStage(stage: GlowStage | null): void;
     /** 按 scene.json 对象 id 取最终显示的 three 对象（脚本图层桥用）。未登记 → undefined。 */
     displayObject(objectId: number): THREE.Object3D | undefined;
+    /**
+     * 时间线动画：按 scene 对象 id 写入**世界变换**。
+     * 支持非隔离背景/puppet（mesh TRS）与非隔离粒子的 origin 平移增量（粒子内容由 shader 定位，
+     * 写绝对中心会双重平移）；隔离对象（对象级效果链的合成 quad）暂不支持 → false + 告警一次。
+     */
+    updateBackgroundTransform(objectId: number, wt: {
+        origin: [number, number, number];
+        scale: [number, number, number];
+        angles: [number, number, number];
+    }): boolean;
+    private warnUnsupportedTransform;
     isolatedObjects(): IsolatedObject[];
     setObjectOutput(id: number, texture: THREE.Texture): void;
     setVisualizerBars(opts: {
@@ -264,6 +278,7 @@ export declare class ThreeScenePlayer {
         sceneW: number;
         sceneH: number;
         objectId?: number;
+        transformOrigin?: [number, number, number];
         renderOrder?: number;
         isolate?: {
             objectId: number;

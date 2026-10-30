@@ -832,7 +832,9 @@ return {
     const ctx = this.ctx;
     const cur = this.state.read(objectId)[property];
     const dflt: [number, number, number] = property === 'scale' || property === 'color' ? [1, 1, 1] : [0, 0, 0];
-    const arr = cur ?? dflt;
+    // alpha 的写入是标量（`LayerWrite.alpha`）：真实素材只把它当媒体事件脚本用、不实现 update；
+    // 若真有 update，按 Vec3 传入会拿到默认值，不猜测标量/向量语义（见报告边界）。
+    const arr: [number, number, number] = Array.isArray(cur) ? cur : dflt;
     const obj = ctx.newObject();
     for (const [i, axis] of (['x', 'y', 'z'] as const).entries()) {
       const n = ctx.newNumber(arr[i] ?? dflt[i]);
@@ -882,7 +884,7 @@ return {
       // 属性脚本的 media 回调常先写 alpha=0 再播放淡入动画（真实素材同一段 fade 脚本挂在
       // alpha/origin/scale 多个属性上）。无时间线时动画不会跑 ⇒ 只回滚这次 alpha≈0 写入，
       // 其余属性（color/scale/origin）照常生效 —— 不能整类跳过（Task 8 主色边框依赖 color 回调）。
-      // Task 10 传入 timeline 后回滚自然解除；届时必须补「淡入」e2e 判据。
+      // Task 10 起 renderer 给含动画的场景传入 timeline ⇒ 回滚自动解除（淡入交给时间线播放）。
       const alphaBefore = !this.timeline && m.property !== null && m.objectId !== null
         ? this.state.read(m.objectId).alpha
         : undefined;
@@ -987,10 +989,12 @@ return {
     const m = /^id:(\d+)$/.exec(layerKey);
     const objectId = m ? Number(m[1]) : -1;
     const tl = objectId >= 0 ? this.timeline : null;
-    const pb = (tl && property ? tl.getByProperty(objectId, property as TimelineProperty, name) : null)
-      ?? (tl && name ? tl.getByName(objectId, name) : null)
-      ?? this.anims.get(layerKey, name || property);
-    this.propAnimCache.set(key, pb);
+    const fromTimeline = (tl && property ? tl.getByProperty(objectId, property as TimelineProperty, name) : null)
+      ?? (tl && name ? tl.getByName(objectId, name) : null);
+    const pb = fromTimeline ?? this.anims.get(layerKey, name || property);
+    // 只缓存时间线命中：AnimRegistry 播放器自身已是持久实例；缓存 fallback 会在时间线之后
+    // 可用时把调用点永久钉死在旧播放器上（Task 6 review minor）。
+    if (fromTimeline) this.propAnimCache.set(key, pb);
     return pb;
   }
 

@@ -5097,3 +5097,128 @@ describe('pixel-bars visualizer（v0.9 修复 #3118949804：视觉条按对象 s
     expect(bars[0].scale.y).toBeCloseTo(5, 6);
   });
 });
+
+// Task 10：时间线动画的世界变换写入（updateBackgroundTransform）。
+// 背景/puppet 走 mesh TRS；粒子只支持 origin（mesh 平移增量），隔离对象暂不支持。
+describe('ThreeScenePlayer updateBackgroundTransform（时间线世界变换）', () => {
+  const wtOf = (
+    origin: [number, number, number],
+    scale: [number, number, number] = [1, 1, 1],
+    angles: [number, number, number] = [0, 0, 0],
+  ) => ({ origin, scale, angles });
+
+  it('非隔离背景：写 position/scale/rotation，alignment 随新 scale/angles 重算', () => {
+    const { player } = makePlayer(1000, 600);
+    const id = player.addBackground({
+      origin: [500, 300, 0], size: [100, 50], scale: [1, 1, 1],
+      alignment: 'bottomright', sceneW: 1000, sceneH: 600, objectId: 7,
+    });
+    expect(player.updateBackgroundTransform(7, wtOf([400, 200, 0], [2, 3, 1], [0, 0, Math.PI / 2]))).toBe(true);
+    const mesh = player.backgroundMeshForTest(id);
+    // align = Rz(90°)·(-50×2, +25×3) = (-100,75) 旋转 ⇒ (-75,-100)
+    expect(mesh.position.x).toBeCloseTo(400 - 500 - 75, 6);
+    expect(mesh.position.y).toBeCloseTo(200 - 300 - 100, 6);
+    expect(mesh.scale.toArray()).toEqual([2, 3, 1]);
+    expect(mesh.rotation.z).toBeCloseTo(Math.PI / 2, 6);
+  });
+
+  it('文本对象：世界锚点 + 锚点偏移（transformOrigin 回推）都不是 0 时位置仍正确', () => {
+    const { player } = makePlayer(1000, 600);
+    const id = player.addBackground({
+      origin: [612, 300, 0], transformOrigin: [500, 300, 0], objectId: 8,
+      size: [100, 50], scale: [1, 1, 1], sceneW: 1000, sceneH: 600,
+    });
+    expect(player.updateBackgroundTransform(8, wtOf([400, 200, 0]))).toBe(true);
+    const mesh = player.backgroundMeshForTest(id);
+    expect(mesh.position.x).toBeCloseTo(400 - 500 + 112, 6); // 偏移来自 transformOrigin = [500,300]
+    expect(mesh.position.y).toBeCloseTo(200 - 300, 6);
+  });
+
+  it('parallaxApplied 复位：更新后的位置是视差新基准，且关视差时不再回写旧基准', () => {
+    const { player } = makePlayer(1920, 1080);
+    const id = player.addBackground({
+      origin: [960, 540, 0], size: [100, 50], scale: [1, 1, 1],
+      parallaxDepth: [1, 1], sceneW: 1920, sceneH: 1080, objectId: 11,
+    });
+    const mesh = player.backgroundMeshForTest(id);
+    player.setParallax({ enabled: true, amount: 1, delay: 0, mouseInfluence: 1 });
+    player.setParallaxPointer({ x: 1, y: 0.5 });
+    player.tickParallaxForTest(0.016);
+    expect(mesh.position.x).toBeLessThan(-100); // 已在视差位移态
+    expect(player.updateBackgroundTransform(11, wtOf([900, 500, 0]))).toBe(true);
+    expect(mesh.position.x).toBeCloseTo(900 - 960, 6); // 世界变换写入新基准位
+    // 模拟脚本在此之后再写一次位置：关视差时 tickParallax 不得把旧基准回写（parallaxApplied 已复位）。
+    mesh.position.x += 5;
+    player.setParallax({ enabled: false, amount: 0, delay: 0, mouseInfluence: 0 });
+    player.tickParallaxForTest(0.016);
+    expect(mesh.position.x).toBeCloseTo(900 - 960 + 5, 6);
+  });
+
+  it('puppet 对象：addPuppet 维护 objectId → 图层映射，更新 mesh TRS', () => {
+    const { player } = makePlayer(1000, 600);
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+    player.addPuppet({
+      objectId: 42,
+      puppet: {
+        mesh, animations: [], applyFrame: () => { /* noop */ }, dispose: () => { /* noop */ },
+      } as unknown as PuppetInstance,
+      origin: [500, 300, 0], scale: [1, 1, 1], angles: [0, 0, 0], sceneW: 1000, sceneH: 600,
+    });
+    expect(player.updateBackgroundTransform(42, wtOf([400, 200, 0], [2, 2, 1]))).toBe(true);
+    expect(mesh.position.x).toBeCloseTo(400 - 500, 6);
+    expect(mesh.position.y).toBeCloseTo(200 - 300, 6);
+    expect(mesh.scale.toArray()).toEqual([2, 2, 1]);
+  });
+
+  it('隔离对象：返回 false、warn 一次、合成 quad 不动', () => {
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => { /* 静默 */ });
+    try {
+      const { player } = makePlayer(1000, 600);
+      player.addBackground({
+        origin: [500, 300, 0], size: [100, 50], scale: [1, 1, 1], objectId: 13,
+        isolate: { objectId: 13, rtWidth: 100, rtHeight: 50, worldW: 100, worldH: 50 },
+        sceneW: 1000, sceneH: 600,
+      });
+      const quad = player.displayObject(13)!;
+      const before = quad.position.clone();
+      expect(player.updateBackgroundTransform(13, wtOf([100, 100, 0]))).toBe(false);
+      expect(player.updateBackgroundTransform(13, wtOf([200, 200, 0]))).toBe(false);
+      expect(quad.position.toArray()).toEqual(before.toArray());
+      const warned = spy.mock.calls.filter((c) => String(c[0]).includes('隔离')).length;
+      expect(warned).toBe(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('未知对象 / 非有限变换 → false（不写 NaN）', () => {
+    const { player } = makePlayer(1000, 600);
+    expect(player.updateBackgroundTransform(999, wtOf([1, 2, 3]))).toBe(false);
+    const id = player.addBackground({
+      origin: [500, 300, 0], size: [10, 10], scale: [1, 1, 1], objectId: 1, sceneW: 1000, sceneH: 600,
+    });
+    const mesh = player.backgroundMeshForTest(id);
+    const before = mesh.position.clone();
+    expect(player.updateBackgroundTransform(1, wtOf([Number.NaN, 2, 3]))).toBe(false);
+    expect(mesh.position.toArray()).toEqual(before.toArray());
+  });
+
+  it('粒子对象：只写世界平移增量（不写 objCenter/scale，避免双重变换）；清掉 applyLayerState 的误写', () => {
+    const { player } = makePlayer(3840, 6000);
+    player.addParticle(() => new Float32Array(0), {
+      frameCount: 1, blend: 'alpha', objectId: 251,
+      objectCenter: [1505 - 1920, 5257 - 3000, 0],
+      objectScale: [4.16432, 2.54537, 1],
+      objectAngles: [0, 0, -0.30874],
+    });
+    const mesh = player.scene.children[0] as THREE.Mesh;
+    // applyLayerState 的通用路径会写 origin - scene/2（粒子内容已含对象中心 ⇒ 这是双重平移）。
+    mesh.position.set(1505 - 1920, 5257 - 3000, 0);
+    expect(player.updateBackgroundTransform(251, wtOf([1505, 4578, 0], [4.16432, 2.54537, 1], [0, 0, -0.30874]))).toBe(true);
+    expect(mesh.position.toArray()).toEqual([0, -679, 0]); // 世界 origin 增量 = (0, 4578−5257, 0)
+    const uni = (mesh.material as THREE.ShaderMaterial).uniforms;
+    // objCenter 保持装配期值（顶点 shader 用它反解局部坐标；改它会变成非平移变换）。
+    expect(uni.objCenter.value.toArray()).toEqual([1505 - 1920, 5257 - 3000, 0]);
+    expect(uni.objScale.value.x).toBeCloseTo(4.16432, 6);
+  });
+});

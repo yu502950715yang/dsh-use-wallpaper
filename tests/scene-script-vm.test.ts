@@ -629,7 +629,8 @@ describe('SceneScriptVm 媒体事件', () => {
 
   // Task 7 边界（review round 1 收窄）：属性脚本的 media 回调常先 `alpha = 0` 再播淡入动画（真实素材的
   // fade 脚本挂在 alpha/origin/scale 多个属性上）。无时间线时动画不跑 ⇒ 只回滚这次 alpha≈0 写入；
-  // color 等其它属性照常生效（Task 8 主色边框依赖它）。Task 10 传入 timeline 后自然解除。
+  // color 等其它属性照常生效（Task 8 主色边框依赖它）。Task 10 起有动画的壁纸由 renderer 传入 timeline
+  // ⇒ 回滚自动解除（淡入交给时间线），无动画的媒体壁纸仍需回滚。
   it('无时间线：alpha=0 的媒体回调被回滚，color 回调照常执行；接入时间线后保留 alpha=0', async () => {
     const { state, anims, userProps } = setup();
     const plain = await SceneScriptVm.create({ userProperties: userProps, state, anims });
@@ -657,6 +658,27 @@ describe('SceneScriptVm 媒体事件', () => {
     })).toBe(1);
     expect(state.read(2).alpha).toBe(0); // 有时间线时保留（由动画淡回 1）
     withTimeline!.dispose();
+  });
+
+  it('alpha 属性脚本：媒体淡入的 alpha=0 + getAnimation().play() 都生效（不回滚）', async () => {
+    const { state, anims, userProps } = setup();
+    let played = 0;
+    const vm = await SceneScriptVm.create({
+      userProperties: userProps, state, anims,
+      timeline: {
+        getByProperty: (id, prop) => (id === 45 && prop === 'alpha' ? {
+          play() { played += 1; }, pause() { /* noop */ }, stop() { /* noop */ },
+          isPlaying: () => true, setFrame() { /* noop */ }, getFrame: () => 0,
+        } : null),
+        getByName: () => null,
+      },
+    });
+    vm!.load(`export function mediaThumbnailChanged(e){ thisLayer.alpha = 0; thisObject.getAnimation().play(); }`,
+      'obj 45 alpha', 45, undefined, 'alpha');
+    expect(vm!.dispatchMedia({ event: 'mediaThumbnailChanged', thumbnail: THUMB })).toBe(1);
+    expect(played).toBe(1);
+    expect(state.read(45).alpha).toBe(0); // 有 timeline ⇒ 不回滚（Task 10 的淡入依赖它）
+    vm!.dispose();
   });
 
   it('media handler 抛错：停用该脚本并 warn，不计入成功数（与 callOne 同语义）', async () => {
@@ -716,6 +738,28 @@ describe('SceneScriptVm 媒体事件', () => {
     expect(propertyCalls).toEqual([]);
     expect(named).toEqual(['7:Title', 'play']);
     expect(vm!.activeCount).toBe(1);
+    vm!.dispose();
+  });
+
+  it('thisObject.getAnimation：时间线未命中不永久缓存（播放器下次先重查时间线）', async () => {
+    const { state, anims, userProps } = setup();
+    let source: {
+      play(): void; pause(): void; stop(): void; isPlaying(): boolean; setFrame(): void; getFrame(): number;
+    } | null = null;
+    const vm = await SceneScriptVm.create({
+      userProperties: userProps, state, anims,
+      timeline: { getByProperty: () => source, getByName: () => null },
+    });
+    vm!.load(`export function update(){ thisScene.getLayerByID(1).alpha = thisObject.getAnimation().getFrame(); }`,
+      'obj 1', 1, undefined, 'origin');
+    vm!.updateAll(); // 时间线未命中 → 回退 AnimRegistry（frame 0，不缓存）
+    expect(state.read(1).alpha).toBe(0);
+    source = {
+      play() { /* noop */ }, pause() { /* noop */ }, stop() { /* noop */ },
+      isPlaying: () => false, setFrame() { /* noop */ }, getFrame: () => 7,
+    };
+    vm!.updateAll(); // 同一调用点重新解析 ⇒ 命中时间线
+    expect(state.read(1).alpha).toBe(7);
     vm!.dispose();
   });
 

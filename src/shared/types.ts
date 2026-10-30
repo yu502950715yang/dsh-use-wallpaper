@@ -70,10 +70,12 @@ export interface VisibleBinding {
   scriptProperties?: Record<string, unknown>; // 脚本参数（{user} 绑定装配前 resolve 为标量）
 }
 
-// 对象级脚本挂载的转换属性（WE 属性脚本 `update(value)` 的绑定目标）。
-export type ObjectScriptProperty = 'angles' | 'origin' | 'scale' | 'color';
+// 对象级脚本挂载的属性（WE 属性脚本 `update(value)` 的绑定目标）。
+// alpha 也接受属性脚本：真实素材 3797976859 的媒体淡入脚本挂在 alpha 上（只实现媒体事件，
+// 用 `thisObject.getAnimation()` 播放该属性的时间线动画）。
+export type ObjectScriptProperty = 'angles' | 'origin' | 'scale' | 'color' | 'alpha';
 
-// 时间线可动画的属性（比对象级脚本多 alpha；Task 9/10 的时间线运行时用）。
+// 时间线可动画的属性（Task 9/10 的运行时常量与 ObjectScriptProperty 同名集）。
 export type TimelineProperty = 'alpha' | 'origin' | 'scale' | 'angles' | 'color';
 
 // 时间线属性动画（scene.json 属性字段的 `animation` 块，解析/求值见 client/scene-timeline.ts）。

@@ -236,9 +236,11 @@ function scriptFields(o: { script?: unknown; scriptproperties?: unknown } | unde
   return { script, scriptProperties };
 }
 
-const OBJECT_SCRIPT_PROPS = ['angles', 'origin', 'scale', 'color'] as const;
+const OBJECT_SCRIPT_PROPS = ['angles', 'origin', 'scale', 'color', 'alpha'] as const;
 
-// 对象属性脚本：四个转换属性可各挂一个脚本（各自 scriptproperties 独立）。
+// 对象属性脚本：五个属性可各挂一个脚本（各自 scriptproperties 独立）。
+// alpha 的脚本不带 update（只做媒体事件 + 播放该属性时间线）；仍按属性脚本装载，才能拿到
+// `thisObject.getAnimation()` 的属性绑定语义（真实素材 3797976859 的淡入）。
 function objectScriptsField(o: Record<string, unknown>): { objectScripts?: ObjectScriptEntry[] } {
   const out: ObjectScriptEntry[] = [];
   for (const property of OBJECT_SCRIPT_PROPS) {

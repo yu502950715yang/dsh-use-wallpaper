@@ -58,6 +58,9 @@ type BackgroundEntry = {
   // 该背景创建时用的场景固有尺寸（we_to_three 中心化基准 = origin - scene/2）。
   sceneW: number;
   sceneH: number;
+  // 渲染 origin 与「对象锚点」的差（text 的 origin 含 anchorOffset；image/util 为 0）。
+  // 时间线世界变换按对象锚点下发，写回时补上它才是 quad 中心的真实位置。
+  renderOffset: [number, number, number];
   // 视差：node = 实际承载世界位置的 three 对象（非隔离 = mesh，隔离 = 合成 quad）；
   // depth 来自 scene.json 的 parallaxDepth（缺省 undefined = 不参与视差）。
   parallaxNode: THREE.Object3D;
@@ -132,6 +135,11 @@ type ParticleLayer = {
   parallaxIsolated?: boolean;
   // 本类**当前**是否在该层上留着位移（true ⇒ 关视差时写回一次；见 tickParallax）。
   parallaxApplied?: boolean;
+  // 时间线 origin 动画的平移基准（scene 坐标）；粒子内容经 shader 的 objCenter 定位，
+  // mesh.position 只能承载「相对装配期世界 origin 的平移增量」，不能直接写绝对中心。
+  baseWorldOrigin: [number, number, number];
+  baseWorldScale: [number, number, number];
+  baseWorldAngles: [number, number, number];
 };
 
 // 粒子实例缓冲的**缺省容量**：每个 instanced attribute 的 count 必须 ≥ 模拟器最终产出的粒子数
@@ -671,6 +679,11 @@ function alignmentWorldOffset(
   return [v.x, v.y];
 }
 
+// 两个三元组近似相等（时间线世界变换只应用 origin 时用于判断 scale/angles 是否变化）。
+function vec3Close(a: readonly number[], b: readonly number[]): boolean {
+  return Math.abs(a[0]! - b[0]!) < 1e-6 && Math.abs(a[1]! - b[1]!) < 1e-6 && Math.abs(a[2]! - b[2]!) < 1e-6;
+}
+
 export class ThreeScenePlayer {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene: THREE.Scene;
@@ -714,6 +727,11 @@ export class ThreeScenePlayer {
   // 背景图层条目（按 addBackground 返回的 id 索引，供 update_background 引用）。
   private backgroundEntries = new Map<number, BackgroundEntry>();
   private nextBackgroundId = 0;
+  // 时间线世界变换：scene 对象 id → 图层 id（backgroundEntries 的键）。只含可直渲的背景/puppet；
+  // 粒子单独映射（只支持 origin 平移增量：粒子内容由 shader 定位，mesh 不能写绝对中心）。
+  private readonly objectToBackground = new Map<number, number>();
+  private readonly objectToParticle = new Map<number, ParticleLayer>();
+  private readonly warnedTransformUnsupported = new Set<number>();
   // 精灵表图层（键 = scene.json 对象 id；仅 image 材质带 combos.spritesheet 且纹理有 TEXS 元数据时登记）。
   private readonly spritesheetLayers = new Map<number, SpriteSheetLayer>();
 
@@ -1010,6 +1028,9 @@ export class ThreeScenePlayer {
           const entry = this.backgroundEntries.get(id);
           if (entry) {
             this.backgroundEntries.delete(id);
+            for (const [objectId, bgId] of this.objectToBackground) {
+              if (bgId === id) this.objectToBackground.delete(objectId);
+            }
             for (const [objectId, obj] of this.displayObjects) {
               if (obj === entry.mesh) this.displayObjects.delete(objectId);
             }
@@ -1532,6 +1553,74 @@ export class ThreeScenePlayer {
     return this.displayObjects.get(objectId);
   }
 
+  /**
+   * 时间线动画：按 scene 对象 id 写入**世界变换**。
+   * 支持非隔离背景/puppet（mesh TRS）与非隔离粒子的 origin 平移增量（粒子内容由 shader 定位，
+   * 写绝对中心会双重平移）；隔离对象（对象级效果链的合成 quad）暂不支持 → false + 告警一次。
+   */
+  updateBackgroundTransform(objectId: number, wt: {
+    origin: [number, number, number];
+    scale: [number, number, number];
+    angles: [number, number, number];
+  }): boolean {
+    // 防御畸形/非有限值：一条 NaN 会把 three 矩阵污染成整层消失。
+    if (![wt.origin, wt.scale, wt.angles].every((v) => Array.isArray(v)
+      && v.length >= 3 && v.every((n) => typeof n === 'number' && Number.isFinite(n)))) return false;
+    if (this.isolated.has(objectId)) {
+      this.warnUnsupportedTransform(objectId,
+        `隔离对象 ${objectId}（对象级效果链）的世界变换暂不支持时间线动画，已忽略`);
+      return false;
+    }
+    const particle = this.objectToParticle.get(objectId);
+    if (particle) {
+      // 粒子内容由 shader 的 objCenter/objScale/objAngles 定位（顶点已在 worldPos 里），mesh 只能
+      // 承载「相对装配期世界 origin 的平移增量」——applyLayerState 的绝对坐标写会被本方法覆盖掉。
+      const dx = wt.origin[0] - particle.baseWorldOrigin[0];
+      const dy = wt.origin[1] - particle.baseWorldOrigin[1];
+      const dz = wt.origin[2] - particle.baseWorldOrigin[2];
+      particle.mesh.position.set(dx, dy, dz);
+      particle.mesh.scale.set(1, 1, 1);
+      particle.mesh.rotation.set(0, 0, 0);
+      if (!vec3Close(wt.scale, particle.baseWorldScale) || !vec3Close(wt.angles, particle.baseWorldAngles)) {
+        this.warnUnsupportedTransform(objectId, `粒子对象 ${objectId} 的 scale/angles 时间线动画暂不支持（只应用 origin）`);
+      }
+      // 视差的屏幕位置基准跟随世界位移（它只影响 shift 计算，不参与平移本身）。
+      particle.parallaxCenter = [
+        wt.origin[0] - this.sceneWidth / 2,
+        wt.origin[1] - this.sceneHeight / 2,
+      ];
+      return true;
+    }
+    const backgroundId = this.objectToBackground.get(objectId);
+    if (backgroundId === undefined) return false;
+    const entry = this.backgroundEntries.get(backgroundId);
+    if (!entry) return false;
+    // renderOffset：text 的 origin 含 anchorOffset（渲染中心 ≠ 对象锚点），补回才是 quad 中心。
+    const ox = wt.origin[0] + entry.renderOffset[0];
+    const oy = wt.origin[1] + entry.renderOffset[1];
+    const oz = wt.origin[2] + entry.renderOffset[2];
+    entry.origin = [ox, oy, oz];
+    entry.scale = [wt.scale[0], wt.scale[1], wt.scale[2]];
+    entry.angles = [wt.angles[0], wt.angles[1], wt.angles[2]];
+    const align = alignmentWorldOffset(entry.size, entry.scale, entry.angles, entry.alignment);
+    entry.align = [align[0], align[1]];
+    entry.mesh.scale.set(entry.scale[0], entry.scale[1], entry.scale[2]);
+    entry.mesh.rotation.set(entry.angles[0], entry.angles[1], entry.angles[2]);
+    entry.mesh.position.set(
+      ox - entry.sceneW / 2 + align[0],
+      oy - entry.sceneH / 2 + align[1],
+      oz,
+    );
+    entry.parallaxApplied = false; // 让 tickParallax 下一帧按新基准重写
+    return true;
+  }
+
+  private warnUnsupportedTransform(objectId: number, message: string): void {
+    if (this.warnedTransformUnsupported.has(objectId)) return;
+    this.warnedTransformUnsupported.add(objectId);
+    console.warn(`[three] ${message}`);
+  }
+
   // 隔离对象条目（只读视图，供编排器拿 RT 纹理与尺寸）。
   isolatedObjects(): IsolatedObject[] {
     return [...this.isolated.values()];
@@ -1864,6 +1953,9 @@ export class ThreeScenePlayer {
     // scene.json 的**对象 id**（脚本图层桥的键）：本字段**总是传**（非隔离对象也要能被脚本按
     // 对象 id 找到），与只在隔离时传的 isolate.objectId 区分。
     objectId?: number;
+    // 时间线世界变换的锚点 origin（缺省 = origin）。text 的 origin 已含 anchorOffset，这里传
+    // 未偏移的对象原点是给 updateBackgroundTransform 回推偏移用；image/util 不传。
+    transformOrigin?: [number, number, number];
     // 唯一绘制序（= scene.json objects 数组下标，对齐 WE `m_objectsByRenderOrder`：lwe CScene.cpp:94-101）。
     // 缺省 0（背景在粒子之前绘制）。
     renderOrder?: number;
@@ -1884,6 +1976,11 @@ export class ThreeScenePlayer {
     const origin: [number, number, number] = utilFull
       ? [sceneW / 2, sceneH / 2, 0]
       : [opts.origin[0], opts.origin[1], opts.origin[2]];
+    // 时间线世界变换以对象锚点为基准：text 的 origin 含 anchorOffset，回推成渲染偏移保存。
+    const anchorOrigin = opts.transformOrigin ?? origin;
+    const renderOffset: [number, number, number] = utilFull ? [0, 0, 0] : [
+      origin[0] - anchorOrigin[0], origin[1] - anchorOrigin[1], origin[2] - anchorOrigin[2],
+    ];
     const layerScale: [number, number, number] = utilFull
       ? [1, 1, 1]
       : [opts.scale[0], opts.scale[1], opts.scale[2] ?? 1];
@@ -1981,12 +2078,14 @@ export class ThreeScenePlayer {
       brightness: opts.brightness ?? 1,
       sceneW,
       sceneH,
+      renderOffset,
       // 隔离时位移的载体是合成 quad（内容只进对象 RT）；attachIsolated 在本方法之前登记 quad。
       parallaxNode: opts.isolate ? (this.isolated.get(opts.isolate.objectId)?.quad ?? mesh) : mesh,
       parallaxDepth: opts.parallaxDepth,
     });
     // scene 对象 id → 显示对象（隔离时是合成 quad —— 内容 mesh 只渲染进对象 RT，不进主场景）。
     if (opts.objectId !== undefined) {
+      this.objectToBackground.set(opts.objectId, id);
       const shown = opts.isolate ? this.isolated.get(opts.isolate.objectId)?.quad : mesh;
       if (shown) this.displayObjects.set(opts.objectId, shown);
     }
@@ -2045,6 +2144,7 @@ export class ThreeScenePlayer {
       brightness: opts.brightness ?? 1,
       sceneW: opts.sceneW,
       sceneH: opts.sceneH,
+      renderOffset: [0, 0, 0],
       parallaxNode: mesh,
       parallaxDepth: opts.parallaxDepth,
     });
@@ -2058,6 +2158,7 @@ export class ThreeScenePlayer {
     });
     // scene 对象 id → 显示对象（脚本 layer.visible/alpha 的落点，与 addBackground 同语义）。
     this.displayObjects.set(opts.objectId, mesh);
+    this.objectToBackground.set(opts.objectId, id);
     return id;
   }
 
@@ -2552,6 +2653,15 @@ export class ThreeScenePlayer {
       loggedRefract: false,
       parallaxDepth: opts.parallaxDepth,
       parallaxCenter: [(opts.objectCenter ?? [0, 0, 0])[0], (opts.objectCenter ?? [0, 0, 0])[1]],
+      // 时间线 origin 动画的平移基准：opts.objectCenter 是 we_to_three 后的中心，加回 scene/2
+      // 得到 scene 坐标的对象 world origin；scale/angles 只用于判断「是否只有 origin 变化」。
+      baseWorldOrigin: [
+        (opts.objectCenter ?? [0, 0, 0])[0] + this.sceneWidth / 2,
+        (opts.objectCenter ?? [0, 0, 0])[1] + this.sceneHeight / 2,
+        (opts.objectCenter ?? [0, 0, 0])[2],
+      ],
+      baseWorldScale: [...(opts.objectScale ?? [1, 1, 1])] as [number, number, number],
+      baseWorldAngles: [...(opts.objectAngles ?? [0, 0, 0])] as [number, number, number],
     };
     this.particleLayers.set(id, layer);
     // 立即写入首帧数据，保持 geometry 与 getter 一致（后续由 updateParticles 逐帧刷新）。
@@ -2573,6 +2683,8 @@ export class ThreeScenePlayer {
     if (opts.objectId !== undefined) {
       const shown = opts.isolate ? this.isolated.get(opts.isolate.objectId)?.quad : mesh;
       if (shown) this.displayObjects.set(opts.objectId, shown);
+      // 时间线世界变换只支持非隔离粒子（隔离粒子的合成 quad 归 isolated 边界）。
+      if (!opts.isolate) this.objectToParticle.set(opts.objectId, layer);
     }
     // 折射层必须在自己被绘制**之前**拿到本帧快照 ⇒ 它本身就是段边界消费者（displayObjects 已登记，
     // 由 checkFrameConsumers 激活；setFrameCapture 晚于本调用时，激活发生在它那次评估里）。
@@ -2727,6 +2839,9 @@ export class ThreeScenePlayer {
     this.lastFrameSnapshot = null;
     // 显示对象映射只持有引用，随上面各表的 dispose 一并失效。
     this.displayObjects.clear();
+    this.objectToBackground.clear();
+    this.objectToParticle.clear();
+    this.warnedTransformUnsupported.clear();
     this.objectEffectStage = null;
     // 应用级 Glow 的 RT/shader 归 stage 所有，须在 renderer.dispose() 前释放。
     this.glowStage?.dispose();
@@ -3040,6 +3155,8 @@ export function loadSceneToThree(
       const t = world(obj);
       const id = player.addBackground({
         origin: [t.origin[0] + off[0], t.origin[1] + off[1], t.origin[2]],
+        // 时间线世界变换按对象锚点下发：把未含 anchorOffset 的 t.origin 也带上，写回时补偏移。
+        transformOrigin: [t.origin[0], t.origin[1], t.origin[2]],
         size: layer.size,
         scale: t.scale,
         angles: t.angles,
