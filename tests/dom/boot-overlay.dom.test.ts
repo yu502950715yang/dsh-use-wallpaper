@@ -119,4 +119,45 @@ describe('createBootOverlay', () => {
     await expect(overlay.play({ kind: 'image', url: '/p.png' }, 'cover', 0)).resolves.toBe('failed');
     expect(layer()).toBeNull();
   });
+
+  // DSH 启动页（前端 app 的 boot 页：[data-dsh-boot]，显示 "Loading plugins…"）：
+  // 它在插件加载阶段就在 DOM 里，插件 apply 时动画要接管它 —— 持续播放到它消失。
+  it('DSH 启动页存在：视频循环播放，启动页消失后结束（不被 maxDuration 截断）', async () => {
+    document.body.innerHTML = '<div id="root"><div data-dsh-boot></div></div>';
+    const overlay = createBootOverlay({ readyTimeoutMs: 1000, fadeMs: 10, bootHoldMaxMs: 30000 });
+    const p = overlay.play({ kind: 'video', url: '/v.mp4' }, 'cover', 100);
+    const video = layer()!.querySelector('video')!;
+    expect(video.loop).toBe(true); // 视频循环，直到启动页消失
+    video.dispatchEvent(new Event('loadeddata'));
+    await vi.advanceTimersByTimeAsync(200); // 超过 maxDuration 也不结束
+    expect(layer()).not.toBeNull();
+    document.querySelector('[data-dsh-boot]')!.remove();
+    await vi.advanceTimersByTimeAsync(0); // MutationObserver 回调（microtask）
+    await vi.advanceTimersByTimeAsync(10); // 淡出
+    await expect(p).resolves.toBe('ended');
+    expect(layer()).toBeNull();
+  });
+
+  it('DSH 启动页迟迟不消失：bootHoldMaxMs 硬上限结束', async () => {
+    document.body.innerHTML = '<div data-dsh-boot></div>';
+    const overlay = createBootOverlay({ fadeMs: 10, bootHoldMaxMs: 1000 });
+    const p = overlay.play({ kind: 'image', url: '/p.png' }, 'cover', 0);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(layer()).not.toBeNull();
+    await vi.advanceTimersByTimeAsync(500);
+    await vi.advanceTimersByTimeAsync(10);
+    await expect(p).resolves.toBe('ended');
+  });
+
+  it('图片素材在启动页存在时保持（超过 imageDurationMs 也不结束）', async () => {
+    document.body.innerHTML = '<div data-dsh-boot></div>';
+    const overlay = createBootOverlay({ imageDurationMs: 100, fadeMs: 10 });
+    const p = overlay.play({ kind: 'image', url: '/p.png' }, 'cover', 0);
+    await vi.advanceTimersByTimeAsync(200);
+    expect(layer()).not.toBeNull();
+    document.querySelector('[data-dsh-boot]')!.remove();
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(10);
+    await expect(p).resolves.toBe('ended');
+  });
 });

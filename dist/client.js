@@ -2929,11 +2929,13 @@ function injectWallpaperStyles() {
 var LAYER_CLASS = "wp-boot-layer";
 var TILE_CLASS = "wp-boot-tile";
 var Z_INDEX = 2147483e3;
+var DSH_BOOT_SELECTOR = "[data-dsh-boot]";
 function createBootOverlay(opts = {}) {
   const doc = opts.doc ?? document;
   const readyTimeoutMs = opts.readyTimeoutMs ?? 8e3;
   const fadeMs = opts.fadeMs ?? 300;
   const imageDurationMs = opts.imageDurationMs ?? 4e3;
+  const bootHoldMaxMs = opts.bootHoldMaxMs ?? 3e4;
   let disposed = false;
   let active = null;
   const timers = /* @__PURE__ */ new Set();
@@ -2968,6 +2970,8 @@ function createBootOverlay(opts = {}) {
     entry.result = result;
     clearTimers();
     entry.readyTimer = null;
+    entry.bootObserver?.disconnect();
+    entry.bootObserver = null;
     detachSkip();
     stopVideo(entry.video);
     entry.el.style.opacity = "0";
@@ -2983,6 +2987,8 @@ function createBootOverlay(opts = {}) {
     if (entry === null) return;
     active = null;
     clearTimers();
+    entry.bootObserver?.disconnect();
+    entry.bootObserver = null;
     detachSkip();
     stopVideo(entry.video);
     entry.el.remove();
@@ -3017,14 +3023,27 @@ function createBootOverlay(opts = {}) {
       const promise = new Promise((res) => {
         resolve = res;
       });
-      const entry = { el, video: null, resolve, result: null, readyTimer: null };
+      const holdForBoot = doc.querySelector(DSH_BOOT_SELECTOR) !== null;
+      const entry = { el, video: null, resolve, result: null, readyTimer: null, bootObserver: null };
       active = entry;
       attachSkip();
       entry.readyTimer = later(() => finish("timeout"), readyTimeoutMs);
+      if (holdForBoot) {
+        const root = doc.body ?? doc.documentElement;
+        entry.bootObserver = new MutationObserver(() => {
+          if (doc.querySelector(DSH_BOOT_SELECTOR) !== null) return;
+          entry.bootObserver?.disconnect();
+          entry.bootObserver = null;
+          finish("ended");
+        });
+        entry.bootObserver.observe(root, { childList: true, subtree: true });
+        later(() => finish("ended"), bootHoldMaxMs);
+      }
       const started = () => {
         if (active !== entry || entry.result !== null) return;
         cancel(entry.readyTimer);
         entry.readyTimer = null;
+        if (holdForBoot) return;
         const duration = asset.kind === "image" ? maxDurationMs > 0 ? Math.min(imageDurationMs, maxDurationMs) : imageDurationMs : maxDurationMs;
         if (asset.kind === "image") {
           later(() => finish("ended"), Math.max(0, duration));
@@ -3039,10 +3058,14 @@ function createBootOverlay(opts = {}) {
           video.muted = true;
           video.playsInline = true;
           video.preload = "auto";
+          video.loop = holdForBoot;
           video.style.cssText = "width:100%;height:100%;border:0;display:block";
           applyFit(video, fit);
           video.addEventListener("loadeddata", started, { once: true });
-          video.addEventListener("ended", () => finish("ended"), { once: true });
+          video.addEventListener("ended", () => {
+            if (holdForBoot) return;
+            finish("ended");
+          }, { once: true });
           video.addEventListener("error", () => finish("failed"), { once: true });
           el.appendChild(video);
           entry.video = video;

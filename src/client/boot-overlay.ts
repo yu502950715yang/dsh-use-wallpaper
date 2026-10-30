@@ -14,12 +14,17 @@ export interface BootOverlayOptions {
   readyTimeoutMs?: number;
   fadeMs?: number;
   imageDurationMs?: number;
+  /** DSH 启动页（[data-dsh-boot]）存在时的硬上限；默认 30s（极慢机器兜底，避免无限黑屏）。 */
+  bootHoldMaxMs?: number;
   doc?: Document;
 }
 
 const LAYER_CLASS = 'wp-boot-layer';
 const TILE_CLASS = 'wp-boot-tile';
 const Z_INDEX = 2147483000;
+// DSH 前端在插件加载阶段渲染的启动页（HARNESS / "Loading plugins…"）：插件 apply 时它还在 DOM 里。
+// 动画要接管它 —— 存在期间持续播放（视频循环 / 图片保持），它消失（主界面挂载）后再淡出。
+const DSH_BOOT_SELECTOR = '[data-dsh-boot]';
 
 type TimerHandle = ReturnType<typeof setTimeout>;
 
@@ -30,6 +35,8 @@ interface ActivePlay {
   /** 非 null = 结果已定、正在淡出。 */
   result: BootResult | null;
   readyTimer: TimerHandle | null;
+  /** 等待 DSH 启动页消失的观察器（仅 hold 模式）；收尾时必须 disconnect。 */
+  bootObserver: MutationObserver | null;
 }
 
 export function createBootOverlay(opts: BootOverlayOptions = {}): BootOverlay {
@@ -37,6 +44,7 @@ export function createBootOverlay(opts: BootOverlayOptions = {}): BootOverlay {
   const readyTimeoutMs = opts.readyTimeoutMs ?? 8000;
   const fadeMs = opts.fadeMs ?? 300;
   const imageDurationMs = opts.imageDurationMs ?? 4000;
+  const bootHoldMaxMs = opts.bootHoldMaxMs ?? 30000;
 
   let disposed = false;
   let active: ActivePlay | null = null;
@@ -77,6 +85,8 @@ export function createBootOverlay(opts: BootOverlayOptions = {}): BootOverlay {
     entry.result = result;
     clearTimers();
     entry.readyTimer = null;
+    entry.bootObserver?.disconnect();
+    entry.bootObserver = null;
     detachSkip();
     stopVideo(entry.video);
     entry.el.style.opacity = '0';
@@ -94,6 +104,8 @@ export function createBootOverlay(opts: BootOverlayOptions = {}): BootOverlay {
     if (entry === null) return;
     active = null;
     clearTimers();
+    entry.bootObserver?.disconnect();
+    entry.bootObserver = null;
     detachSkip();
     stopVideo(entry.video);
     entry.el.remove();
@@ -134,16 +146,32 @@ export function createBootOverlay(opts: BootOverlayOptions = {}): BootOverlay {
       const promise = new Promise<BootResult>((res) => {
         resolve = res;
       });
-      const entry: ActivePlay = { el, video: null, resolve, result: null, readyTimer: null };
+      // DSH 启动页存在 ⇒ hold 模式：持续播放到它消失（视频循环、图片保持），最长 bootHoldMaxMs。
+      const holdForBoot = doc.querySelector(DSH_BOOT_SELECTOR) !== null;
+      const entry: ActivePlay = { el, video: null, resolve, result: null, readyTimer: null, bootObserver: null };
       active = entry;
       attachSkip();
       entry.readyTimer = later(() => finish('timeout'), readyTimeoutMs);
+      if (holdForBoot) {
+        // 主界面挂载时 React 会替换 #root 内容 ⇒ 观察 body 子树即可捕获启动页移除。
+        const root = doc.body ?? doc.documentElement;
+        entry.bootObserver = new MutationObserver(() => {
+          if (doc.querySelector(DSH_BOOT_SELECTOR) !== null) return;
+          entry.bootObserver?.disconnect();
+          entry.bootObserver = null;
+          finish('ended');
+        });
+        entry.bootObserver.observe(root, { childList: true, subtree: true });
+        later(() => finish('ended'), bootHoldMaxMs); // 极慢机器兜底，避免无限黑屏
+      }
 
       // 首帧就绪（或图片创建完成）后开始计时；视频 maxDurationMs=0 时等 ended。
+      // hold 模式不按素材时长结束——由启动页消失或硬上限决定。
       const started = (): void => {
         if (active !== entry || entry.result !== null) return;
         cancel(entry.readyTimer);
         entry.readyTimer = null;
+        if (holdForBoot) return;
         const duration =
           asset.kind === 'image'
             ? maxDurationMs > 0
@@ -164,10 +192,14 @@ export function createBootOverlay(opts: BootOverlayOptions = {}): BootOverlay {
           video.muted = true;
           video.playsInline = true;
           video.preload = 'auto';
+          video.loop = holdForBoot; // 启动页存在期间循环，播到主界面就绪
           video.style.cssText = 'width:100%;height:100%;border:0;display:block';
           applyFit(video, fit);
           video.addEventListener('loadeddata', started, { once: true });
-          video.addEventListener('ended', () => finish('ended'), { once: true });
+          video.addEventListener('ended', () => {
+            if (holdForBoot) return; // loop 模式下正常不会 ended；被浏览器打断时也不结束
+            finish('ended');
+          }, { once: true });
           video.addEventListener('error', () => finish('failed'), { once: true });
           el.appendChild(video);
           entry.video = video;

@@ -497,9 +497,9 @@ getEventListeners(window).pointermove?.length
 
 ### 2.18 手工验收清单：开机动画（视频/图片素材 + 四种展示方式，2026-10-30）
 
-> **真机验收待执行（当前仅自动化门禁）**：以下 B1–B8 需由人在运行中的 DSH 里手动勾选，**agent 未代验、未伪造勾选**。
+> **真机验收待执行（当前仅自动化门禁）**：以下 B1–B9 需由人在运行中的 DSH 里手动勾选，**agent 未代验、未伪造勾选**。
 > **前置**：已 `npm run build` + `npm run build:client`，重启 harness 后**强刷** GUI；壁纸库含至少一张 `video` 与一张 `image` 壁纸；另备一个本地 `.mp4`（浏览器可解码的编码，如 H.264）。
-> **自动化已覆盖**：`tests/boot-asset.test.ts`（host 路径解析与两条 boot 路由：回环来源 + `Host` 头、UNC/网络路径（含 `/\`、`\/` 混合分隔符）400、Range 206、外网 403；HEAD 不在本文件，通用 `sendSceneAsset` 的 HEAD 由 `tests/routes.test.ts` 的 `/wallpapers/scene/.../asset` 用例覆盖）、`tests/dom/boot-overlay.dom.test.ts`（fit 映射：视频/图片 `cover`、图片 `tile` 有断言，`contain` 仅传参、`stretch` 无用例 —— stretch/contain 断言为后续项；视频 `ended`/图片计时/超时/跳过/失败、淡出后移除、dispose 幂等）、`tests/boot-player.test.ts`（素材解析、只播一次、`force` 试播）、`tests/dom/boot-settings-section.dom.test.tsx`（面板默认值、只列 video/image、视频时平铺禁用、写入字段、校验结果）、`tests/dom/plugin-lifecycle.dom.test.ts`（启用配置下 bootstrap 自动起层、mount 清理不误删、收尾移除）、`tests/dom/bootstrap.dom.test.ts`（两个 `settings.section` 都在 `inject` 回调内注册）。**真机视觉与交互仍需人工验收。**
+> **自动化已覆盖**：`tests/boot-asset.test.ts`（host 路径解析与两条 boot 路由：回环来源 + `Host` 头、UNC/网络路径（含 `/\`、`\/` 混合分隔符）400、Range 206、外网 403；HEAD 不在本文件，通用 `sendSceneAsset` 的 HEAD 由 `tests/routes.test.ts` 的 `/wallpapers/scene/.../asset` 用例覆盖）、`tests/dom/boot-overlay.dom.test.ts`（fit 映射：视频/图片 `cover`、图片 `tile` 有断言，`contain` 仅传参、`stretch` 无用例 —— stretch/contain 断言为后续项；视频 `ended`/图片计时/超时/跳过/失败、淡出后移除、dispose 幂等；**DSH 启动页接管：`[data-dsh-boot]` 存在时视频 loop / 图片保持且不被素材时长截断、启动页移除后结束、30s 硬上限**）、`tests/boot-player.test.ts`（素材解析、只播一次、`force` 试播）、`tests/dom/boot-settings-section.dom.test.tsx`（面板默认值、只列 video/image、视频时平铺禁用、写入字段、校验结果）、`tests/dom/settings-shell.dom.test.tsx`（单 section 内 tab 切换、默认「日常壁纸」、键盘切换、条件渲染）、`tests/dom/plugin-lifecycle.dom.test.ts`（启用配置下 bootstrap 自动起层、mount 清理不误删、收尾移除）、`tests/dom/bootstrap.dom.test.ts`（单个 `settings.section`（tab 容器）在 `inject` 回调内注册）。**真机视觉与交互仍需人工验收。**
 
 | # | 用例 | 步骤 | 期望结果 | 失败表现 |
 |---|---|---|---|---|
@@ -511,6 +511,7 @@ getEventListeners(window).pointermove?.length
 | B6 | 日常壁纸零变化 | 关闭开机动画后再开；以及开机动画播放期间观察背景层。 | 日常壁纸（选中/轮播/暂停/健康状态/文字颜色）行为与加此功能前一致；开机层不写 `body[data-we-wallpaper]`、不影响省电与画质。 | 背景层被暂停/轮播被改 → 隔离契约回归。 |
 | B7 | Host / UNC 安全用例 | 本机 `curl`（或 PowerShell `Invoke-WebRequest`）请求 `/wallpapers/boot/local-video` 与 `/wallpapers/boot/probe`：① 带 `Host: evil.example`；② 不带 `Host`；③ `path` 填 `\\host\share\x.mp4` 或 `//host/share/x.mp4`；④ 正常回环请求。 | ①② → **403**；③ → **400**；④ 合法路径 → 200（probe 返回元数据）。 | 非回环 Host 仍 200 / UNC 仍尝试打开 → 安全闸门回归（自动化已覆盖，真机仅复核）。 |
 | B8 | 失败静默 / 跳过 / 收尾 | 用坏文件或不存在的路径启用开机动画；播放中点击 / 按任意键 / Esc；最后 HMR 重载或禁用插件。 | 失败/8 秒未就绪**静默跳过**，主界面正常可用；点击/按键/Esc 立即淡出；重载或禁用后 DOM 里无 `.wp-boot-layer` 残留。 | 黑屏卡住 / 无法跳过 / 残留层 → overlay 失败路径或 teardown。 |
+| B9 | DSH 启动加载页接管 | 启用开机动画（视频素材更适合观察），完全退出 DSH 再重开；观察 HARNESS / "Loading plugins…" 页面出现后的表现。 | 插件开始运行后动画**盖住启动加载页并持续播放**（视频循环），主界面就绪后 300ms 淡出；不会在加载期间露出 Loading 页尾巴（最长 30s 兜底）。 | 启动页重新露出 / 动画播完黑屏 / 卡在动画 → hold 模式（`[data-dsh-boot]` 观察器）或 overlay 结束条件。 |
 
 **勾选记录（真机验收待执行：以下 B1–B8 需人工勾选，当前未验）**：
 
@@ -522,6 +523,7 @@ getEventListeners(window).pointermove?.length
 - [ ] B6：日常壁纸零变化
 - [ ] B7：Host / UNC 安全用例（自动化已覆盖，真机复核）
 - [ ] B8：失败静默 / 跳过 / 无残留层
+- [ ] B9：DSH 启动加载页（Loading plugins…）被动画接管，主界面就绪后淡出
 
 ---
 
