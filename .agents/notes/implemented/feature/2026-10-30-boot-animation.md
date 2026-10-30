@@ -16,6 +16,7 @@ Status: implemented
 - **面板独立 section（`wbs-*`）**：与「Wallpaper 壁纸」并列（order 20 / 21），新类名避免动到现有 `wss-*` 契约；「视频不支持平铺」在面板禁用，而不是运行时纠正。
 - **自动化门禁口径**：host 纯函数与路由、overlay / player / panel 单测，加上 bootstrap 级生命周期用例（真实 `ctx.effect` 收尾、启用配置下自动起层且 mount 清理不误删、`settings.section` 只能在 `inject` 回调内注册）；真机验收见 `TESTING.md` §2.18（当前未执行）。
 - **放弃项**：scene 实时渲染（用户明确排除）、声音开关（自动播放策略）、多素材轮播 / 开机音频 / 按星期分时段（后续增强，未实现）。平铺只实现图片（背景图 `repeat`），视频的平铺在面板禁用。
+- **跟随 DSH 启动加载页（2026-10-30 二次增强）**：DSH 前端在插件加载阶段就把启动页（`[data-dsh-boot]`，HARNESS + "Loading plugins…"）渲染进 `#root`，插件 apply 时它还在 DOM 里；固定时长（默认 6s）会出现「动画播完 → Loading 页重新露出 → 主界面」的倒序观感。现 overlay 检测该标记：存在时进入 hold 模式 —— 视频 `loop` 循环、图片保持，**不按素材时长结束**；`MutationObserver` 观察启动页移除（主界面挂载时 React 替换 `#root` 内容）→ 淡出交接；30s 硬上限（`bootHoldMaxMs`）兜底，跳过键始终有效。无启动页（普通 web 环境）维持原时长语义。**边界**：插件无法早于自身 bundle 加载覆盖启动页首帧，动画只能从「本插件 apply」起接管。
 
 ## Errata
 
