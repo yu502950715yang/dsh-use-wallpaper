@@ -3004,7 +3004,14 @@ function createBootPlayer(opts) {
       if (!settings.bootAnimationEnabled) return record("disabled", null);
       if (!shouldPlayBoot(settings, storage)) return record("already-played", null);
     }
-    const asset = bootAssetFromSettings(settings);
+    let asset;
+    let fit;
+    try {
+      asset = bootAssetFromSettings(settings);
+      fit = normalizeBootFit(settings.bootAnimationFitMode);
+    } catch {
+      return record("failed", null);
+    }
     if (!asset) return record("no-asset", null);
     if (!force) {
       try {
@@ -3014,7 +3021,7 @@ function createBootPlayer(opts) {
     }
     let result;
     try {
-      result = await overlay.play(asset, normalizeBootFit(settings.bootAnimationFitMode), settings.bootAnimationMaxDurationMs);
+      result = await overlay.play(asset, fit, settings.bootAnimationMaxDurationMs);
     } catch {
       result = "failed";
     }
@@ -37049,7 +37056,6 @@ function bootstrap(ctx) {
     getLast: () => bootPlayer.getLast()
   };
   window.__wallpaperEngineBoot = bootApi2;
-  void bootPlayer.start();
   let layer = null;
   let controller = null;
   let settings = { ...DEFAULTS };
@@ -37219,6 +37225,7 @@ function bootstrap(ctx) {
   const mount = () => {
     if (disposed || layer) return;
     dropStaleLayers();
+    void bootPlayer.start();
     const root = document.createElement("div");
     document.body.prepend(root);
     layer = createBackgroundLayer(root);

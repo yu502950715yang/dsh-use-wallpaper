@@ -239,14 +239,35 @@ export function isLoopbackRemote(remoteAddress: string | undefined | null): bool
   return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
 }
 
+// Host 头也必须是回环主机：DNS rebinding 页面连接同样是本地套接字，只查来源地址挡不住。
+// 支持 `127.0.0.1:port` / `localhost:port` / `[::1]:port` / `[::1]`；缺失或其它主机 → false。
+export function isLoopbackHostHeader(host: unknown): boolean {
+  const raw = String(host ?? '').trim().toLowerCase();
+  if (!raw) return false;
+  if (raw === '::1') return true;
+  if (raw.startsWith('[')) {
+    const end = raw.indexOf(']');
+    return end > 1 && raw.slice(1, end) === '::1';
+  }
+  const hostname = raw.includes(':') ? raw.slice(0, raw.lastIndexOf(':')) : raw;
+  return hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '::1';
+}
+
+// 两条 boot 路由的统一闸门：来源地址与 Host 头都必须是回环。
+export function isLoopbackRequest(req: any): boolean {
+  return isLoopbackRemote(req?.socket?.remoteAddress) && isLoopbackHostHeader(req?.headers?.host);
+}
+
 const BOOT_VIDEO_EXTS: ReadonlySet<string> = new Set(['.mp4', '.webm', '.mov', '.m4v', '.ogv']);
 
-// 返回绝对路径 + 文件大小；path 来自设置面板手填，必须拦下相对路径/非视频扩展名。
+// 返回绝对路径 + 文件大小；path 来自设置面板手填，必须拦下 UNC/网络路径、相对路径与非视频扩展名。
 export function resolveBootVideoPath(
   raw: string | null | undefined,
 ): { ok: true; file: string; size: number } | { ok: false; code: 400 | 404 } {
   const p = String(raw ?? '').trim();
-  if (!p || !isAbsolute(p) || p.includes('\0')) return { ok: false, code: 400 };
+  // UNC（`\\host\share`，含 `\\?\` 长路径前缀）与 `//host/share` 会让宿主发起 SMB/NTLM 连接。
+  if (!p || p.startsWith('\\\\') || p.startsWith('//') || p.includes('\0')) return { ok: false, code: 400 };
+  if (!isAbsolute(p)) return { ok: false, code: 400 };
   const ext = '.' + (p.split('.').pop() ?? '').toLowerCase();
   if (!BOOT_VIDEO_EXTS.has(ext)) return { ok: false, code: 400 };
   try {
@@ -407,7 +428,7 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
     server.register({
       kind: 'exact', path: '/wallpapers/boot/local-video',
       handler: (req: any, res: any) => {
-        if (!isLoopbackRemote(req.socket?.remoteAddress)) return json(res, 403, { error: 'loopback only' });
+        if (!isLoopbackRequest(req)) return json(res, 403, { error: 'loopback only' });
         const { search } = parseUrl(req);
         const parsed = resolveBootVideoPath(search.get('path'));
         if (!parsed.ok) return json(res, parsed.code, { error: parsed.code === 404 ? 'not found' : 'bad path' });
@@ -423,7 +444,7 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
     server.register({
       kind: 'exact', path: '/wallpapers/boot/probe',
       handler: (req: any, res: any) => {
-        if (!isLoopbackRemote(req.socket?.remoteAddress)) return json(res, 403, { error: 'loopback only' });
+        if (!isLoopbackRequest(req)) return json(res, 403, { error: 'loopback only' });
         const { search } = parseUrl(req);
         // 与 local-video 共用同一套校验，保证 NUL/相对路径/目录/不存在 的 400/404 完全一致
         const parsed = resolveBootVideoPath(search.get('path'));

@@ -99,6 +99,27 @@ describe('插件重挂载与收尾（HMR rebuilt）', () => {
     expect(layers()).toHaveLength(0);
   });
 
+  it('启用开机动画：bootstrap 自动起层（mount 清理不误删），收尾时移除', async () => {
+    // 残留层 + 启用配置：mount 的 dropStaleLayers 先清残留，start() 随后才建新层。
+    const stale = document.createElement('div');
+    stale.className = 'wp-boot-layer';
+    document.documentElement.appendChild(stale);
+
+    await applyFresh({
+      bootAnimationEnabled: true, bootAnimationSource: 'we',
+      bootAnimationWallpaperId: '9', bootAnimationWallpaperKind: 'image',
+    });
+    // overlay 由 bootPlayer.start() 异步创建（读设置 + 会话标记）。
+    await vi.waitFor(() => expect(document.querySelectorAll('.wp-boot-layer')).toHaveLength(1));
+    // mount 已完成（收尾已登记）：新层没被清理逻辑误删，也不是那条残留。
+    expect(typeof (window as any).__wpEngineTeardown).toBe('function');
+    expect(document.querySelectorAll('.wp-boot-layer')).toHaveLength(1);
+
+    // teardown dispose overlay ⇒ 层立即移除，图片 4s 计时一并清掉（不残留定时器）。
+    for (const dispose of disposers) dispose();
+    expect(document.querySelectorAll('.wp-boot-layer')).toHaveLength(0);
+  });
+
   it('teardown 摘掉开机动画层与 boot API；mount 清理无主 boot 层', async () => {
     const stale = document.createElement('div');
     stale.className = 'wp-boot-layer';

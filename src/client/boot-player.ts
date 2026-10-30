@@ -71,14 +71,22 @@ export function createBootPlayer(opts: {
       if (!settings.bootAnimationEnabled) return record('disabled', null);
       if (!shouldPlayBoot(settings, storage)) return record('already-played', null);
     }
-    const asset = bootAssetFromSettings(settings);
+    // 设置字段可能来自旧版本/手工写入的非 string：归一化失败按失败静默（不向调用方抛）。
+    let asset: BootAsset | null;
+    let fit: BootFitMode;
+    try {
+      asset = bootAssetFromSettings(settings);
+      fit = normalizeBootFit(settings.bootAnimationFitMode);
+    } catch {
+      return record('failed', null);
+    }
     if (!asset) return record('no-asset', null);
     if (!force) {
       try { storage.setItem(BOOT_PLAYED_KEY, '1'); } catch { /* 写不进就按播放处理，避免反复触发 */ }
     }
     let result: BootResult;
     try {
-      result = await overlay.play(asset, normalizeBootFit(settings.bootAnimationFitMode), settings.bootAnimationMaxDurationMs);
+      result = await overlay.play(asset, fit, settings.bootAnimationMaxDurationMs);
     } catch {
       result = 'failed';
     }

@@ -39,21 +39,36 @@ function stubFetch(list: unknown[]) {
   return fetchMock;
 }
 
+// 模拟真实 SlotRegistry：register 只能发生在 inject 回调执行期间，且回调返回的注销函数
+// （数组或单个函数）由调用方负责清理 —— 防止把「register 时机」与「未清理」的回归放过去。
+let slotDisposers: Array<() => void> = [];
+
 function mockSlotsCtx() {
   const sections: Array<{ opts: any; Component: unknown }> = [];
+  const disposers: Array<() => void> = [];
+  let injecting = false;
+  const collect = (out: unknown) => {
+    if (typeof out === 'function') disposers.push(out as () => void);
+    else if (Array.isArray(out)) {
+      for (const d of out) if (typeof d === 'function') disposers.push(d as () => void);
+    }
+  };
   const ctx = {
     slots: {
       // 回调内可注册多个 section：register 立即登记并返回注销函数（与真实 SlotRegistry 同款）。
       inject: (name: string, fn: () => unknown) => {
-        if (name === 'settings.section') fn();
+        if (name !== 'settings.section') return;
+        injecting = true;
+        try { collect(fn()); } finally { injecting = false; }
       },
       register: (opts: any, Component: unknown) => {
+        if (!injecting) throw new Error('register outside inject');
         sections.push({ opts, Component });
         return () => {};
       },
     },
   };
-  return { ctx, sections };
+  return { ctx, sections, disposers };
 }
 
 async function boot(ctx?: unknown): Promise<any> {
@@ -69,6 +84,8 @@ const EMPTY_SETTINGS = { selectedWallpaperId: '', wallpaperDir: '', weAssetsDir:
 
 beforeEach(() => { document.body.innerHTML = ''; });
 afterEach(() => {
+  for (const dispose of slotDisposers) dispose();
+  slotDisposers = [];
   vi.unstubAllGlobals();
   delete (window as any).__wallpaperEngine;
   delete (window as any).__wallpaperEngineBoot;
@@ -111,7 +128,8 @@ describe('client bootstrap 集成', () => {
     stubFetch(
       [{ id: '1', title: 'A', type: 'image', hasScene: false, hasPreviewGif: false, previewUrl: '/p1' }],
     );
-    const { ctx, sections } = mockSlotsCtx();
+    const { ctx, sections, disposers } = mockSlotsCtx();
+    slotDisposers = disposers;
     await boot(ctx);
     expect(sections.length).toBe(2);
     expect(sections[0]!.opts.id).toBe('wallpaper-engine');

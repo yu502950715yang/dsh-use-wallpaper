@@ -54,7 +54,6 @@ export function bootstrap(ctx?: any): void {
     getLast: () => bootPlayer.getLast(),
   };
   (window as any).__wallpaperEngineBoot = bootApi;
-  void bootPlayer.start();
   let layer: ReturnType<typeof createBackgroundLayer> | null = null;
   let controller: ReturnType<typeof createWallpaperController> | null = null;
   let settings: ClientSettings = { ...DEFAULTS };
@@ -243,6 +242,8 @@ export function bootstrap(ctx?: any): void {
   const mount = () => {
     if (disposed || layer) return;
     dropStaleLayers();
+    // 开机动画：先清完残留层再起播，避免刚创建的层被清理逻辑误删（readyState 竞态）。
+    void bootPlayer.start();
     const root = document.createElement('div');
     // prepend 到 body 最前（在 #root 之前），配合 z-index:0 的壁纸层与 #root z-index:1 的层级方案
     // （参考 dsh-liang-skin 的做法），避免 z-index:-1 被 body/frame 不透明背景遮挡。

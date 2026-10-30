@@ -27,6 +27,8 @@ export declare function isSafeAssetName(name: string): boolean;
  *  与本文件其它路由同一手法）。越界 / 不存在 / 不是文件 → null（调用方按未命中继续）。 */
 export declare function resolveEngineAsset(weAssetsDir: string, name: string): string | null;
 export declare function isLoopbackRemote(remoteAddress: string | undefined | null): boolean;
+export declare function isLoopbackHostHeader(host: unknown): boolean;
+export declare function isLoopbackRequest(req: any): boolean;
 export declare function resolveBootVideoPath(raw: string | null | undefined): {
     ok: true;
     file: string;

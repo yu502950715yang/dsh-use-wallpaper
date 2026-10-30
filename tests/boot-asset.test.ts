@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { Writable } from 'node:stream';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { registerWallpaperRoutes, isLoopbackRemote, resolveBootVideoPath } from '../src/host/routes.js';
+import { registerWallpaperRoutes, isLoopbackHostHeader, isLoopbackRemote, isLoopbackRequest, resolveBootVideoPath } from '../src/host/routes.js';
 
 let dir: string;
 let routes: Map<string, (req: any, res: any) => void>;
@@ -15,8 +15,12 @@ function makeCtx() {
   return { inject: (_s: string[], fn: (c: any) => void) => fn({ webServer }) } as any;
 }
 
-function makeReq(url: string, remoteAddress = '127.0.0.1') {
-  return { url, method: 'GET', headers: {} as Record<string, string>, socket: { remoteAddress } };
+function makeReq(url: string, remoteAddress = '127.0.0.1', headers: Record<string, string> = {}) {
+  return {
+    url, method: 'GET',
+    headers: { host: '127.0.0.1:58769', ...headers } as Record<string, string>,
+    socket: { remoteAddress },
+  };
 }
 
 function makeStreamRes() {
@@ -45,12 +49,39 @@ describe('isLoopbackRemote', () => {
   });
 });
 
+describe('isLoopbackHostHeader', () => {
+  it('接受回环 Host（含端口与方括号 IPv6）', () => {
+    for (const h of ['127.0.0.1:58769', '127.0.0.1', 'localhost:5173', 'LOCALHOST', '[::1]:5173', '[::1]', '::1']) {
+      expect(isLoopbackHostHeader(h)).toBe(true);
+    }
+  });
+  it('拒绝外部主机、伪装前缀与缺失', () => {
+    for (const h of ['evil.example', 'evil.example:443', '127.0.0.1.evil.example', '192.168.1.5:80', '[::2]:5173', '', '   ', undefined, null]) {
+      expect(isLoopbackHostHeader(h)).toBe(false);
+    }
+  });
+});
+
+describe('isLoopbackRequest', () => {
+  it('来源地址与 Host 头都必须是回环', () => {
+    expect(isLoopbackRequest(makeReq('/x'))).toBe(true);
+    expect(isLoopbackRequest(makeReq('/x', '10.0.0.1'))).toBe(false);
+    expect(isLoopbackRequest(makeReq('/x', '127.0.0.1', { host: 'evil.example' }))).toBe(false);
+    expect(isLoopbackRequest({ ...makeReq('/x'), headers: {} })).toBe(false);
+  });
+});
+
 describe('resolveBootVideoPath', () => {
   it('拒绝相对路径与非白名单扩展名', () => {
     expect(resolveBootVideoPath('boot.mp4')).toEqual({ ok: false, code: 400 });
     expect(resolveBootVideoPath('')).toEqual({ ok: false, code: 400 });
     expect(resolveBootVideoPath(null)).toEqual({ ok: false, code: 400 });
     expect(resolveBootVideoPath(join(dir, 'a.exe'))).toEqual({ ok: false, code: 400 });
+  });
+  it('拒绝 UNC / 网络路径（含 \\\\?\\ 前缀）', () => {
+    for (const p of ['\\\\host\\share\\x.mp4', '//host/share/x.mp4', '\\\\?\\C:\\clips\\x.mp4']) {
+      expect(resolveBootVideoPath(p)).toEqual({ ok: false, code: 400 });
+    }
   });
   it('不存在的文件 404；合法 mp4 返回 size', () => {
     expect(resolveBootVideoPath(join(dir, 'missing.mp4'))).toEqual({ ok: false, code: 404 });
@@ -74,6 +105,23 @@ describe('GET /wallpapers/boot/local-video', () => {
     await res.done;
     expect(res.statusCode).toBe(403);
   });
+  it('Host 头非回环或缺失 403（DNS rebinding 兜底）', async () => {
+    const url = '/wallpapers/boot/local-video?path=' + encodeURIComponent(join(dir, 'x.mp4'));
+    for (const req of [makeReq(url, '127.0.0.1', { host: 'evil.example' }), { ...makeReq(url), headers: {} }]) {
+      const res = makeStreamRes();
+      handler('/wallpapers/boot/local-video')(req, res);
+      await res.done;
+      expect(res.statusCode).toBe(403);
+    }
+  });
+  it('UNC / 网络路径 400', async () => {
+    for (const p of ['\\\\host\\share\\x.mp4', '//host/share/x.mp4']) {
+      const res = makeStreamRes();
+      handler('/wallpapers/boot/local-video')(makeReq('/wallpapers/boot/local-video?path=' + encodeURIComponent(p)), res);
+      await res.done;
+      expect(res.statusCode).toBe(400);
+    }
+  });
   it('合法 mp4 整块返回 200；Range 返回 206', async () => {
     const p = join(dir, 'clip.mp4');
     writeFileSync(p, Buffer.from('0123456789'));
@@ -87,7 +135,7 @@ describe('GET /wallpapers/boot/local-video', () => {
     expect(res.body.toString()).toBe('0123456789');
 
     const res2 = makeStreamRes();
-    const req2 = { ...makeReq(url), headers: { range: 'bytes=2-4' } };
+    const req2 = makeReq(url, '127.0.0.1', { range: 'bytes=2-4' });
     handler('/wallpapers/boot/local-video')(req2, res2);
     await res2.done;
     expect(res2.statusCode).toBe(206);
@@ -144,6 +192,22 @@ describe('GET /wallpapers/boot/probe', () => {
     handler('/wallpapers/boot/probe')(makeReq('/wallpapers/boot/probe?path=x', '8.8.8.8'), res2);
     await res2.done;
     expect(res2.statusCode).toBe(403);
+  });
+  it('Host 头非回环或缺失 403；UNC 路径 400', async () => {
+    for (const req of [
+      makeReq('/wallpapers/boot/probe?path=x', '127.0.0.1', { host: 'evil.example' }),
+      { ...makeReq('/wallpapers/boot/probe?path=x'), headers: {} },
+    ]) {
+      const res = makeStreamRes();
+      handler('/wallpapers/boot/probe')(req, res);
+      await res.done;
+      expect(res.statusCode).toBe(403);
+    }
+    const res = makeStreamRes();
+    handler('/wallpapers/boot/probe')(makeReq('/wallpapers/boot/probe?path=' + encodeURIComponent('//host/share/x.mp4')), res);
+    await res.done;
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body.toString())).toMatchObject({ ok: false, exists: false, playable: false });
   });
   it('NUL/相对路径 400、不存在/目录 404，错误体 ok:false', async () => {
     const nul = makeStreamRes();
