@@ -1,4 +1,4 @@
-import type { MediaPlaybackState, MediaReason } from '../shared/media.js';
+import { type MediaPlaybackState, type MediaReason, type MediaSessionSnapshot } from '../shared/media.js';
 export interface RawMediaSession {
     appId: string;
     status: string;
@@ -29,3 +29,42 @@ export declare function selectSession(frame: WatcherFrame, opts: SessionSelectio
     reason: MediaReason;
 };
 export declare const WATCH_SCRIPT: string;
+export interface MediaWatcherProcess {
+    stdout: {
+        on(event: 'data', cb: (chunk: Buffer) => void): void;
+    } | null;
+    stderr?: {
+        on(event: 'data', cb: (chunk: Buffer) => void): void;
+    } | null;
+    kill(): void;
+    on(event: 'exit', cb: (code?: number | null) => void): void;
+}
+export interface MediaSessionServiceOptions {
+    platform?: NodeJS.Platform;
+    spawnImpl?: (cmd: string, args: string[]) => MediaWatcherProcess;
+    now?: () => number;
+    ownAppId?: string;
+    log?: (msg: string) => void;
+    idleMs?: number;
+    idleCheckMs?: number;
+    setIntervalImpl?: (fn: () => void, ms: number) => unknown;
+    clearIntervalImpl?: (h: unknown) => void;
+}
+export interface MediaSessionService {
+    request(opts: {
+        pageTitle: string;
+        enabled: boolean;
+    }): MediaSessionSnapshot;
+    thumbnail(rev: number): {
+        bytes: Buffer;
+        contentType: string;
+    } | null;
+    dispose(): void;
+    stats(): {
+        starts: number;
+        badLines: number;
+        restarts: number;
+        degraded: boolean;
+    };
+}
+export declare function createMediaSessionService(opts?: MediaSessionServiceOptions): MediaSessionService;
