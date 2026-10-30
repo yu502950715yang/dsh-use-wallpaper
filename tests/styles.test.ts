@@ -364,4 +364,14 @@ describe('styles 主题适配', () => {
     expect(WALLPAPER_CSS).toMatch(/\.wbs-fit-card\[data-disabled="true"\]/);
     expect(WALLPAPER_CSS).toMatch(/\.wbs-last\[data-tone="danger"\]/);
   });
+  it('选中态可辨：来源与展示方式都带 accent 描边 + ✓ 角标', () => {
+    // 来源分段：选中项 accent 描边 + ✓ 角标
+    expect(WALLPAPER_CSS).toMatch(/\.wbs-source\[data-active="true"\]\{[^}]*border-color:var\(--wp-accent/);
+    expect(WALLPAPER_CSS).toMatch(/\.wbs-source\[data-active="true"\]::after\{content:"✓"/);
+    // 展示方式卡片：同一套选中视觉（accent 描边 + 浅 accent 底 + ✓ + 标题加粗）
+    expect(WALLPAPER_CSS).toMatch(/\.wbs-fit-card\[data-active="true"\]\{[^}]*border-color:var\(--wp-accent/);
+    expect(WALLPAPER_CSS).toMatch(/\.wbs-fit-card\[data-active="true"\]\{[^}]*color-mix\(in srgb,var\(--wp-accent\) 16%/);
+    expect(WALLPAPER_CSS).toMatch(/\.wbs-fit-card\[data-active="true"\]::after\{content:"✓"/);
+    expect(WALLPAPER_CSS).toMatch(/\.wbs-fit-card\[data-active="true"\] \.wbs-fit-label\{[^}]*font-weight:700/);
+  });
 });

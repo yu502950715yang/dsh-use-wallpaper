@@ -693,11 +693,14 @@ body[data-ds-dark-theme] .wss-details{background:var(--we-surface);border-color:
 .wbs-probe-result{margin:0;font-size:11.5px;line-height:1.5}
 .wbs-probe-result[data-tone="ok"]{color:var(--we-ok)}
 .wbs-probe-result[data-tone="danger"]{color:var(--we-danger)}
-/* 展示方式 2×2 卡片（示意线框） */
+/* 展示方式 2×2 卡片（示意线框）；选中态与素材来源同一套信号：accent 描边 + 浅 accent 底 + ✓ 角标 + 加粗 */
 .wbs-fit-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--we-sp-2)}
-.wbs-fit-card{position:relative;display:flex;flex-direction:column;gap:6px;padding:10px;border:1px solid var(--we-border);border-radius:var(--we-r-md);background:var(--we-surface-2);cursor:pointer;transition:border-color .15s ease,background-color .15s ease}
+.wbs-fit-card{position:relative;display:flex;flex-direction:column;gap:6px;padding:10px;border:1px solid transparent;border-radius:var(--we-r-md);background:var(--we-surface-2);cursor:pointer;transition:border-color .15s ease,background-color .15s ease,box-shadow .15s ease}
 .wbs-fit-card input{position:absolute;opacity:0;width:1px;height:1px}
-.wbs-fit-card[data-active="true"]{border-color:var(--wp-accent);background:color-mix(in srgb,var(--wp-accent) 8%,var(--we-surface))}
+.wbs-fit-card:hover{background:rgba(127,127,127,.10)}
+.wbs-fit-card[data-active="true"]{border-color:var(--wp-accent);background:color-mix(in srgb,var(--wp-accent) 16%,var(--we-surface));box-shadow:0 1px 3px rgba(15,17,22,.14)}
+.wbs-fit-card[data-active="true"] .wbs-fit-label{color:var(--dsw-alias-label-primary,var(--wp-text));font-weight:700}
+.wbs-fit-card[data-active="true"]::after{content:"✓";position:absolute;top:6px;right:6px;z-index:1;width:17px;height:17px;border-radius:50%;background:var(--wp-accent);color:#fff;font-size:11px;font-weight:700;line-height:17px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.25)}
 .wbs-fit-card[data-disabled="true"]{opacity:.45;cursor:not-allowed}
 .wbs-fit-art{display:block;height:44px;border-radius:6px;border:1px dashed var(--we-border);position:relative;overflow:hidden;background:var(--we-surface)}
 .wbs-fit-art::after{content:"";position:absolute;background:var(--wp-accent);opacity:.55}

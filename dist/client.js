@@ -2899,11 +2899,14 @@ body[data-ds-dark-theme] .wss-details{background:var(--we-surface);border-color:
 .wbs-probe-result{margin:0;font-size:11.5px;line-height:1.5}
 .wbs-probe-result[data-tone="ok"]{color:var(--we-ok)}
 .wbs-probe-result[data-tone="danger"]{color:var(--we-danger)}
-/* \u5C55\u793A\u65B9\u5F0F 2\xD72 \u5361\u7247\uFF08\u793A\u610F\u7EBF\u6846\uFF09 */
+/* \u5C55\u793A\u65B9\u5F0F 2\xD72 \u5361\u7247\uFF08\u793A\u610F\u7EBF\u6846\uFF09\uFF1B\u9009\u4E2D\u6001\u4E0E\u7D20\u6750\u6765\u6E90\u540C\u4E00\u5957\u4FE1\u53F7\uFF1Aaccent \u63CF\u8FB9 + \u6D45 accent \u5E95 + \u2713 \u89D2\u6807 + \u52A0\u7C97 */
 .wbs-fit-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--we-sp-2)}
-.wbs-fit-card{position:relative;display:flex;flex-direction:column;gap:6px;padding:10px;border:1px solid var(--we-border);border-radius:var(--we-r-md);background:var(--we-surface-2);cursor:pointer;transition:border-color .15s ease,background-color .15s ease}
+.wbs-fit-card{position:relative;display:flex;flex-direction:column;gap:6px;padding:10px;border:1px solid transparent;border-radius:var(--we-r-md);background:var(--we-surface-2);cursor:pointer;transition:border-color .15s ease,background-color .15s ease,box-shadow .15s ease}
 .wbs-fit-card input{position:absolute;opacity:0;width:1px;height:1px}
-.wbs-fit-card[data-active="true"]{border-color:var(--wp-accent);background:color-mix(in srgb,var(--wp-accent) 8%,var(--we-surface))}
+.wbs-fit-card:hover{background:rgba(127,127,127,.10)}
+.wbs-fit-card[data-active="true"]{border-color:var(--wp-accent);background:color-mix(in srgb,var(--wp-accent) 16%,var(--we-surface));box-shadow:0 1px 3px rgba(15,17,22,.14)}
+.wbs-fit-card[data-active="true"] .wbs-fit-label{color:var(--dsw-alias-label-primary,var(--wp-text));font-weight:700}
+.wbs-fit-card[data-active="true"]::after{content:"\u2713";position:absolute;top:6px;right:6px;z-index:1;width:17px;height:17px;border-radius:50%;background:var(--wp-accent);color:#fff;font-size:11px;font-weight:700;line-height:17px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.25)}
 .wbs-fit-card[data-disabled="true"]{opacity:.45;cursor:not-allowed}
 .wbs-fit-art{display:block;height:44px;border-radius:6px;border:1px dashed var(--we-border);position:relative;overflow:hidden;background:var(--we-surface)}
 .wbs-fit-art::after{content:"";position:absolute;background:var(--wp-accent);opacity:.55}
