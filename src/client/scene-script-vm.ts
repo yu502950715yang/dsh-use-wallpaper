@@ -15,8 +15,10 @@ import { newQuickJSWASMModuleFromVariant, newVariant, RELEASE_SYNC } from 'quick
 import type { QuickJSContext, QuickJSRuntime, QuickJSHandle, QuickJSWASMModule } from 'quickjs-emscripten';
 import type { LayerStateTable, LayerWrite } from './layer-state.js';
 import type { AnimPlayback, AnimRegistry } from './scene-anim.js';
+import type { TimelineAnimationSource } from './scene-timeline.js';
 import type { DynamicMeshRegistry } from './dynamic-mesh.js';
-import type { ObjectScriptProperty } from '../shared/types.js';
+import type { MediaPropertiesPayload } from '../shared/media.js';
+import type { ObjectScriptProperty, TimelineProperty } from '../shared/types.js';
 
 export interface TextureAnimationHost {
   pause(objectId: number): void;
@@ -35,6 +37,39 @@ export interface SceneScriptStorage {
 
 /** 场景脚本 localStorage 的键前缀（与插件其他 we:* 键隔离）。 */
 export const SCENE_SCRIPT_STORAGE_PREFIX = 'we:scenescript:';
+
+/** 媒体事件名（与 WE SceneScript 的四个全局 handler 同名）。 */
+export type MediaDispatchEvent =
+  | 'mediaPlaybackChanged'
+  | 'mediaStatusChanged'
+  | 'mediaPropertiesChanged'
+  | 'mediaThumbnailChanged';
+
+/** mediaThumbnailChanged 的封面色（5 个 0-1 RGB 三元组）。 */
+export interface MediaThumbnailPayload {
+  hasThumbnail: boolean;
+  primaryColor: [number, number, number];
+  secondaryColor: [number, number, number];
+  tertiaryColor: [number, number, number];
+  textColor: [number, number, number];
+  highContrastColor: [number, number, number];
+}
+
+/** 一次媒体派发（字段按 event 取用）。playback 用 MediaPlaybackEvent 常量：0/1/2。 */
+export interface MediaDispatch {
+  event: MediaDispatchEvent;
+  playback?: number;
+  enabled?: boolean;
+  properties?: MediaPropertiesPayload;
+  thumbnail?: MediaThumbnailPayload;
+}
+
+/** 一次脚本调用的返回值与归属（host 据此只对无 property 的布尔写 visible）。 */
+export interface ScriptUpdateResult {
+  objectId: number | null;
+  property: ObjectScriptProperty | null;
+  value: unknown;
+}
 
 export interface SceneScriptVmOptions {
   userProperties: Record<string, unknown>;
@@ -55,6 +90,8 @@ export interface SceneScriptVmOptions {
   storage?: SceneScriptStorage;
   /** 壁纸 id：脚本 localStorage 按壁纸隔离（`we:scenescript:<wallpaperId>:<key>`）；缺省不加段。 */
   wallpaperId?: string;
+  /** 时间线动画源（thisObject.getAnimation 优先查它；缺省回退 AnimRegistry）。 */
+  timeline?: TimelineAnimationSource;
 }
 
 // 单脚本一次调用的指令预算：正常脚本远低于此；死循环在此被中断。
@@ -148,6 +185,48 @@ function __mkAnim(key, name) {
   };
   return __animCache[k];
 }
+
+// 媒体事件类常量（WE 官方数值：STOPPED=0 / PLAYING=1 / PAUSED=2）。
+var MediaPlaybackEvent = { PLAYBACK_STOPPED: 0, PLAYBACK_PLAYING: 1, PLAYBACK_PAUSED: 2 };
+
+// 属性/命名时间线动画播放器：与 __mkAnim 不同，走时间线源（宿主解析，缺省回退 AnimRegistry）。
+var __propAnimCache = {};
+function __mkPropAnim(key, property, name) {
+  var k = key + '|' + property + '|' + name;
+  if (__propAnimCache[k]) return __propAnimCache[k];
+  __propAnimCache[k] = {
+    play: function () { __host.propAnimPlay(key, property, name); },
+    pause: function () { __host.propAnimPause(key, property, name); },
+    stop: function () { __host.propAnimStop(key, property, name); },
+    isPlaying: function () { return __host.propAnimIsPlaying(key, property, name); },
+    setFrame: function (f) { __host.propAnimSetFrame(key, property, name, f); },
+    getFrame: function () { return __host.propAnimGetFrame(key, property, name); },
+    get rank() { return 0; },
+    get rate() { return __host.propAnimRate(key, property, name); },
+    set rate(v) { __host.propAnimSetRate(key, property, name, v); }
+  };
+  return __propAnimCache[k];
+}
+// thisObject：当前脚本所属对象（属性脚本带当前属性；visible/text 脚本 property 为空串）。
+var __thisObjectCache = {};
+function __mkThisObject(key, property) {
+  var ck = key + '|' + property;
+  if (__thisObjectCache[ck]) return __thisObjectCache[ck];
+  var layer = __mkLayer(key);
+  __thisObjectCache[ck] = new Proxy(layer, {
+    get: function (t, prop) {
+      if (prop === 'getAnimation') {
+        return function (name) { return __mkPropAnim(key, property, name ? String(name) : ''); };
+      }
+      return t[prop];
+    }
+  });
+  return __thisObjectCache[ck];
+}
+Object.defineProperty(globalThis, 'thisObject', {
+  get: function () { return __mkThisObject(__host.currentLayerKey(), __host.currentProperty()); },
+  configurable: true
+});
 
 var __texAnimCache = {};
 function __mkTextureAnimation(key) {
@@ -303,6 +382,13 @@ interface LoadedModule {
   property: ObjectScriptProperty | null;
   /** 本模块所属 scene 对象 id（属性写回用；无 objectId 时 null）。 */
   objectId: number | null;
+  /** 四个媒体事件 handler（脚本未导出时 null）。 */
+  media: {
+    playback: QuickJSHandle | null;
+    status: QuickJSHandle | null;
+    properties: QuickJSHandle | null;
+    thumbnail: QuickJSHandle | null;
+  };
 }
 
 export class SceneScriptVm {
@@ -311,8 +397,11 @@ export class SceneScriptVm {
   private readonly handles: QuickJSHandle[] = [];
   private readonly modules: LoadedModule[] = [];
   private readonly animCache = new Map<string, AnimPlayback>();
+  private readonly propAnimCache = new Map<string, AnimPlayback>();
   private readonly state: LayerStateTable;
   private readonly anims: AnimRegistry;
+  /** 时间线动画源（thisObject.getAnimation 优先查它；null = 只走 AnimRegistry）。 */
+  private readonly timeline: TimelineAnimationSource | null;
   private readonly onWarn: (msg: string) => void;
   /** 动态网格注册表（createModelData/createLayer/applyData 的真实落点）；缺省 = stub 行为。 */
   private readonly mesh: DynamicMeshRegistry | null;
@@ -328,6 +417,8 @@ export class SceneScriptVm {
   private readonly wallpaperId: string;
   /** 当前正在执行的脚本所属图层 key（`id:<对象 id>`；thisLayer 的解析依据）。 */
   private currentKey = '';
+  /** 当前脚本挂载的属性（thisObject.getAnimation 的绑定属性；生命周期脚本为空串）。 */
+  private currentProperty = '';
   private dt = 1 / 60;
   /** 单次脚本调用的指令预算（缺省 STEP_BUDGET；callOne 每次调用前重置）。 */
   private readonly stepBudget: number;
@@ -338,6 +429,7 @@ export class SceneScriptVm {
     this.runtime = runtime;
     this.state = opts.state;
     this.anims = opts.anims;
+    this.timeline = opts.timeline ?? null;
     this.onWarn = opts.onWarn ?? ((): void => { /* 生产静默 */ });
     this.mesh = opts.dynamicMesh ?? null;
     this.onAsset = opts.onAsset ?? null;
@@ -457,11 +549,26 @@ export class SceneScriptVm {
     define('animIsPlaying', (k, n) => (this.anim(ctx.getString(k), ctx.getString(n)).isPlaying() ? ctx.true : ctx.false));
     define('animSetFrame', (k, n, v) => { this.anim(ctx.getString(k), ctx.getString(n)).setFrame(ctx.getNumber(v)); });
     define('animGetFrame', (k, n) => ctx.newNumber(this.anim(ctx.getString(k), ctx.getString(n)).getFrame()));
+    // thisObject.getAnimation(name) 的宿主桥：时间线源优先，未命中回退 AnimRegistry（结果缓存）。
+    const propPlayback = (k: QuickJSHandle, p: QuickJSHandle, n: QuickJSHandle): AnimPlayback =>
+      this.propAnim(ctx.getString(k), ctx.getString(p), ctx.getString(n));
+    define('propAnimPlay', (k, p, n) => { propPlayback(k, p, n).play(); });
+    define('propAnimPause', (k, p, n) => { propPlayback(k, p, n).pause(); });
+    define('propAnimStop', (k, p, n) => { propPlayback(k, p, n).stop(); });
+    define('propAnimIsPlaying', (k, p, n) => (propPlayback(k, p, n).isPlaying() ? ctx.true : ctx.false));
+    define('propAnimSetFrame', (k, p, n, f) => { propPlayback(k, p, n).setFrame(ctx.getNumber(f)); });
+    define('propAnimGetFrame', (k, p, n) => ctx.newNumber(propPlayback(k, p, n).getFrame()));
+    define('propAnimRate', (k, p, n) => ctx.newNumber(propPlayback(k, p, n).rate ?? 1));
+    define('propAnimSetRate', (k, p, n, r) => {
+      if (ctx.typeof(r) !== 'number') return;
+      propPlayback(k, p, n).rate = ctx.getNumber(r);
+    });
     define('frametime', () => ctx.newNumber(this.dt));
     define('log', () => { /* 生产静默；需要时在这里转发到宿主 console */ });
 
     // ── 对象级脚本原语（2026-10-20）：thisLayer / engine.timeOfDay / localStorage ──
     define('currentLayerKey', () => ctx.newString(this.currentKey));
+    define('currentProperty', () => ctx.newString(this.currentProperty));
     define('texAnimPause', (k) => { this.texAnim?.pause(this.keyOf(k)); });
     define('texAnimPlay', (k) => { this.texAnim?.play(this.keyOf(k)); });
     define('texAnimStop', (k) => { this.texAnim?.stop(this.keyOf(k)); });
@@ -605,10 +712,15 @@ return {
   init: (typeof init === 'function') ? init : null,
   update: (typeof update === 'function') ? update : null,
   applyUserProperties: (typeof applyUserProperties === 'function') ? applyUserProperties : null,
-  cursorClick: (typeof cursorClick === 'function') ? cursorClick : null
+  cursorClick: (typeof cursorClick === 'function') ? cursorClick : null,
+  mediaPlaybackChanged: (typeof mediaPlaybackChanged === 'function') ? mediaPlaybackChanged : null,
+  mediaStatusChanged: (typeof mediaStatusChanged === 'function') ? mediaStatusChanged : null,
+  mediaPropertiesChanged: (typeof mediaPropertiesChanged === 'function') ? mediaPropertiesChanged : null,
+  mediaThumbnailChanged: (typeof mediaThumbnailChanged === 'function') ? mediaThumbnailChanged : null
 };
 })());`;
     this.currentKey = objectId === undefined ? '' : `id:${objectId}`;
+    this.currentProperty = property ?? '';
     // scene.json 的 scriptproperties → 全局 __weScriptProps（createScriptProperties().finish() 合并）。
     // 每个模块 eval 前设置、eval 后清除：属性值属于各自脚本，不能泄漏给下一个模块。
     const propsH = ctx.newObject();
@@ -654,6 +766,12 @@ return {
       update: grab('update'),
       apply: grab('applyUserProperties'),
       click: grab('cursorClick'),
+      media: {
+        playback: grab('mediaPlaybackChanged'),
+        status: grab('mediaStatusChanged'),
+        properties: grab('mediaPropertiesChanged'),
+        thumbnail: grab('mediaThumbnailChanged'),
+      },
       active: true,
       label: tag,
       layerKey: objectId === undefined ? '' : `id:${objectId}`,
@@ -662,6 +780,9 @@ return {
     };
     this.handles.push(inst);
     for (const h of [m.init, m.update, m.apply, m.click]) if (h) this.handles.push(h);
+    for (const h of [m.media.playback, m.media.status, m.media.properties, m.media.thumbnail]) {
+      if (h) this.handles.push(h);
+    }
     this.modules.push(m);
     return true;
   }
@@ -669,6 +790,7 @@ return {
   private callOne(m: LoadedModule, fn: QuickJSHandle | null, mode: 'value' | 'props'): unknown {
     if (!m.active || !fn) return undefined;
     this.currentKey = m.layerKey; // thisLayer 解析依据：每次调用前指向当前脚本所属对象
+    this.currentProperty = m.property ?? '';
     this.budget = this.stepBudget; // 每个脚本每次调用一份新预算（见 create 的 handler 注释）
     const ctx = this.ctx;
     const isPropertyValue = mode === 'value' && m.property !== null;
@@ -732,16 +854,125 @@ return {
   }
 
   /**
-   * 按装载顺序调 update（每帧），返回各自的返回值。
+   * 按装载顺序调 update（每帧）；每个 module 一条，带 objectId/property 供 host 分类处理。
    *
-   * ⚠️ 返回值是 `visible.script` 的**信号源** —— WE 语义里它就是「该对象本帧是否可见」。
-   * 一期调用后把返回值丢弃了，于是 10 个歌曲字标全部显示（真机：两行歌名重影）。
-   * 属性脚本（angles/origin/scale/color）的返回值已写回属性，这里一律返回 undefined（不混用）。
+   * ⚠️ 无 property 的脚本返回值是 `visible.script` 的**信号源** —— WE 语义里它就是「该对象本帧
+   * 是否可见」。属性脚本（angles/origin/scale/color）的返回值已写回属性，这里一律 undefined（不混用）。
    */
-  updateAll(): unknown[] {
-    const out: unknown[] = [];
-    for (const m of this.modules) out.push(this.callOne(m, m.update, 'value'));
+  updateAll(): ScriptUpdateResult[] {
+    const out: ScriptUpdateResult[] = [];
+    for (const m of this.modules) {
+      out.push({ objectId: m.objectId, property: m.property, value: this.callOne(m, m.update, 'value') });
+    }
     return out;
+  }
+
+  /** 派发一次媒体事件到各脚本的同名 handler；返回实际调用成功的数量。 */
+  dispatchMedia(dispatch: MediaDispatch): number {
+    const ctx = this.ctx;
+    let called = 0;
+    for (const m of this.modules) {
+      const fn = dispatch.event === 'mediaPlaybackChanged' ? m.media.playback
+        : dispatch.event === 'mediaStatusChanged' ? m.media.status
+          : dispatch.event === 'mediaPropertiesChanged' ? m.media.properties
+            : m.media.thumbnail;
+      if (!m.active || !fn) continue;
+      this.currentKey = m.layerKey;
+      this.currentProperty = m.property ?? '';
+      this.budget = this.stepBudget;
+      const ev = this.buildMediaEvent(dispatch);
+      try {
+        const res = ctx.callFunction(fn, m.instance, ev);
+        if (res.error) {
+          const msg = this.errorText(res.error);
+          res.error.dispose();
+          m.active = false;
+          this.warn(`SceneScript 抛错，已停用该脚本（${m.label}）：${msg}`);
+          continue;
+        }
+        res.value.dispose();
+        called += 1;
+      } catch (e) {
+        // 宿主侧异常（如句柄已失）同样只停用该脚本，绝不抛进帧循环。
+        m.active = false;
+        this.warn(`SceneScript 媒体事件调用失败（${m.label}）：${e instanceof Error ? e.message : String(e)}`);
+      } finally {
+        ev.dispose();
+      }
+    }
+    return called;
+  }
+
+  /** 构造本次媒体事件对象（颜色按 Vec3 形态 {x,y,z}；每次派发新建，调用方负责 dispose）。 */
+  private buildMediaEvent(d: MediaDispatch): QuickJSHandle {
+    const ctx = this.ctx;
+    const obj = ctx.newObject();
+    const str = (k: string, v: string): void => {
+      const h = ctx.newString(v);
+      ctx.setProp(obj, k, h);
+      h.dispose();
+    };
+    const num = (k: string, v: number): void => {
+      const h = ctx.newNumber(v);
+      ctx.setProp(obj, k, h);
+      h.dispose();
+    };
+    const bool = (k: string, v: boolean): void => ctx.setProp(obj, k, v ? ctx.true : ctx.false);
+    const vec = (k: string, v: [number, number, number]): void => {
+      const o = ctx.newObject();
+      for (const [axis, n] of [['x', v[0]], ['y', v[1]], ['z', v[2]]] as const) {
+        const h = ctx.newNumber(n);
+        ctx.setProp(o, axis, h);
+        h.dispose();
+      }
+      ctx.setProp(obj, k, o);
+      o.dispose();
+    };
+    if (d.event === 'mediaPlaybackChanged') num('state', d.playback ?? 0);
+    else if (d.event === 'mediaStatusChanged') bool('enabled', !!d.enabled);
+    else if (d.event === 'mediaPropertiesChanged') {
+      const p = d.properties ?? { title: '', artist: '', album: '', contentType: '' };
+      str('title', p.title);
+      str('artist', p.artist);
+      str('album', p.album);
+      str('contentType', p.contentType);
+      // WE 脚本兼容字段（长尾脚本可能读这些）。
+      str('albumTitle', p.album);
+      str('subTitle', '');
+      str('albumArtist', p.artist);
+      str('genres', '');
+    } else {
+      const t = d.thumbnail ?? {
+        hasThumbnail: false,
+        primaryColor: [0, 0, 0] as [number, number, number],
+        secondaryColor: [0, 0, 0] as [number, number, number],
+        tertiaryColor: [0, 0, 0] as [number, number, number],
+        textColor: [0, 0, 0] as [number, number, number],
+        highContrastColor: [0, 0, 0] as [number, number, number],
+      };
+      bool('hasThumbnail', t.hasThumbnail);
+      vec('primaryColor', t.primaryColor);
+      vec('secondaryColor', t.secondaryColor);
+      vec('tertiaryColor', t.tertiaryColor);
+      vec('textColor', t.textColor);
+      vec('highContrastColor', t.highContrastColor);
+    }
+    return obj;
+  }
+
+  /** thisObject.getAnimation 的播放器解析：时间线 getByProperty → getByName → AnimRegistry。 */
+  private propAnim(layerKey: string, property: string, name: string): AnimPlayback {
+    const key = `${layerKey}|${property}|${name}`;
+    const hit = this.propAnimCache.get(key);
+    if (hit) return hit;
+    const m = /^id:(\d+)$/.exec(layerKey);
+    const objectId = m ? Number(m[1]) : -1;
+    const tl = objectId >= 0 ? this.timeline : null;
+    const pb = (tl && property ? tl.getByProperty(objectId, property as TimelineProperty, name) : null)
+      ?? (tl && name ? tl.getByName(objectId, name) : null)
+      ?? this.anims.get(layerKey, name || property);
+    this.propAnimCache.set(key, pb);
+    return pb;
   }
 
   /** 按装载顺序派发点击（cursorClick）。 */
@@ -765,6 +996,7 @@ return {
     this.handles.length = 0;
     this.modules.length = 0;
     this.animCache.clear();
+    this.propAnimCache.clear();
     try { this.ctx.dispose(); } catch { /* noop */ }
     try { this.runtime.dispose(); } catch { /* gc 断言可忽略 */ }
   }

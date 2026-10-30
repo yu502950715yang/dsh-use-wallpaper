@@ -14,6 +14,14 @@ export interface MediaPalette {
   primary: MediaRgb; secondary: MediaRgb; tertiary: MediaRgb; text: MediaRgb; highContrast: MediaRgb;
 }
 
+/** SceneScript 媒体事件 / 文本脚本共用的曲目元数据。 */
+export interface MediaPropertiesPayload {
+  title: string;
+  artist: string;
+  album: string;
+  contentType: string;
+}
+
 /** 中性快照：所有失败/无会话路径共用（available=false ⇒ 客户端派发 stopped）。 */
 export function emptyMediaSnapshot(reason: MediaReason, at = 0): MediaSessionSnapshot {
   return {

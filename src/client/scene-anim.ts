@@ -112,6 +112,12 @@ export interface AnimPlayback {
   isPlaying(): boolean;
   setFrame(v: number): void;
   getFrame(): number;
+  // 可选元数据（时间线播放器填；AnimRegistry 不填）。rate 可写 = 播放速率。
+  fps?: number;
+  frameCount?: number;
+  duration?: number;
+  name?: string;
+  rate?: number;
 }
 
 interface AnimState {

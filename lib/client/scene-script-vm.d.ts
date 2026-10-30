@@ -1,6 +1,8 @@
 import type { LayerStateTable } from './layer-state.js';
 import type { AnimRegistry } from './scene-anim.js';
+import type { TimelineAnimationSource } from './scene-timeline.js';
 import type { DynamicMeshRegistry } from './dynamic-mesh.js';
+import type { MediaPropertiesPayload } from '../shared/media.js';
 import type { ObjectScriptProperty } from '../shared/types.js';
 export interface TextureAnimationHost {
     pause(objectId: number): void;
@@ -17,6 +19,31 @@ export interface SceneScriptStorage {
 }
 /** 场景脚本 localStorage 的键前缀（与插件其他 we:* 键隔离）。 */
 export declare const SCENE_SCRIPT_STORAGE_PREFIX = "we:scenescript:";
+/** 媒体事件名（与 WE SceneScript 的四个全局 handler 同名）。 */
+export type MediaDispatchEvent = 'mediaPlaybackChanged' | 'mediaStatusChanged' | 'mediaPropertiesChanged' | 'mediaThumbnailChanged';
+/** mediaThumbnailChanged 的封面色（5 个 0-1 RGB 三元组）。 */
+export interface MediaThumbnailPayload {
+    hasThumbnail: boolean;
+    primaryColor: [number, number, number];
+    secondaryColor: [number, number, number];
+    tertiaryColor: [number, number, number];
+    textColor: [number, number, number];
+    highContrastColor: [number, number, number];
+}
+/** 一次媒体派发（字段按 event 取用）。playback 用 MediaPlaybackEvent 常量：0/1/2。 */
+export interface MediaDispatch {
+    event: MediaDispatchEvent;
+    playback?: number;
+    enabled?: boolean;
+    properties?: MediaPropertiesPayload;
+    thumbnail?: MediaThumbnailPayload;
+}
+/** 一次脚本调用的返回值与归属（host 据此只对无 property 的布尔写 visible）。 */
+export interface ScriptUpdateResult {
+    objectId: number | null;
+    property: ObjectScriptProperty | null;
+    value: unknown;
+}
 export interface SceneScriptVmOptions {
     userProperties: Record<string, unknown>;
     state: LayerStateTable;
@@ -36,6 +63,8 @@ export interface SceneScriptVmOptions {
     storage?: SceneScriptStorage;
     /** 壁纸 id：脚本 localStorage 按壁纸隔离（`we:scenescript:<wallpaperId>:<key>`）；缺省不加段。 */
     wallpaperId?: string;
+    /** 时间线动画源（thisObject.getAnimation 优先查它；缺省回退 AnimRegistry）。 */
+    timeline?: TimelineAnimationSource;
 }
 export declare class SceneScriptVm {
     private readonly ctx;
@@ -43,8 +72,11 @@ export declare class SceneScriptVm {
     private readonly handles;
     private readonly modules;
     private readonly animCache;
+    private readonly propAnimCache;
     private readonly state;
     private readonly anims;
+    /** 时间线动画源（thisObject.getAnimation 优先查它；null = 只走 AnimRegistry）。 */
+    private readonly timeline;
     private readonly onWarn;
     /** 动态网格注册表（createModelData/createLayer/applyData 的真实落点）；缺省 = stub 行为。 */
     private readonly mesh;
@@ -60,6 +92,8 @@ export declare class SceneScriptVm {
     private readonly wallpaperId;
     /** 当前正在执行的脚本所属图层 key（`id:<对象 id>`；thisLayer 的解析依据）。 */
     private currentKey;
+    /** 当前脚本挂载的属性（thisObject.getAnimation 的绑定属性；生命周期脚本为空串）。 */
+    private currentProperty;
     private dt;
     /** 单次脚本调用的指令预算（缺省 STEP_BUDGET；callOne 每次调用前重置）。 */
     private readonly stepBudget;
@@ -89,13 +123,18 @@ export declare class SceneScriptVm {
     /** 按装载顺序调 applyUserProperties（一次）与 init。 */
     initAll(): void;
     /**
-     * 按装载顺序调 update（每帧），返回各自的返回值。
+     * 按装载顺序调 update（每帧）；每个 module 一条，带 objectId/property 供 host 分类处理。
      *
-     * ⚠️ 返回值是 `visible.script` 的**信号源** —— WE 语义里它就是「该对象本帧是否可见」。
-     * 一期调用后把返回值丢弃了，于是 10 个歌曲字标全部显示（真机：两行歌名重影）。
-     * 属性脚本（angles/origin/scale/color）的返回值已写回属性，这里一律返回 undefined（不混用）。
+     * ⚠️ 无 property 的脚本返回值是 `visible.script` 的**信号源** —— WE 语义里它就是「该对象本帧
+     * 是否可见」。属性脚本（angles/origin/scale/color）的返回值已写回属性，这里一律 undefined（不混用）。
      */
-    updateAll(): unknown[];
+    updateAll(): ScriptUpdateResult[];
+    /** 派发一次媒体事件到各脚本的同名 handler；返回实际调用成功的数量。 */
+    dispatchMedia(dispatch: MediaDispatch): number;
+    /** 构造本次媒体事件对象（颜色按 Vec3 形态 {x,y,z}；每次派发新建，调用方负责 dispose）。 */
+    private buildMediaEvent;
+    /** thisObject.getAnimation 的播放器解析：时间线 getByProperty → getByName → AnimRegistry。 */
+    private propAnim;
     /** 按装载顺序派发点击（cursorClick）。 */
     clickAll(): void;
     get loadedCount(): number;

@@ -7,6 +7,11 @@ export interface AnimPlayback {
     isPlaying(): boolean;
     setFrame(v: number): void;
     getFrame(): number;
+    fps?: number;
+    frameCount?: number;
+    duration?: number;
+    name?: string;
+    rate?: number;
 }
 export declare class AnimRegistry {
     private readonly byKey;

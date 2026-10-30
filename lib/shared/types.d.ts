@@ -70,6 +70,7 @@ export interface VisibleBinding {
     scriptProperties?: Record<string, unknown>;
 }
 export type ObjectScriptProperty = 'angles' | 'origin' | 'scale' | 'color';
+export type TimelineProperty = 'alpha' | 'origin' | 'scale' | 'angles' | 'color';
 export interface ObjectScriptEntry {
     property: ObjectScriptProperty;
     script: string;

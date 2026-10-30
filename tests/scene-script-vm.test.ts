@@ -259,15 +259,23 @@ describe('SceneScriptVm', () => {
 
   // visible.script 的信号源（2026-09-22）：`update(value)` 的**返回值**就是「该对象是否可见」。
   // 一期调用后把返回值丢掉了 ⇒ 10 个歌曲字标全部显示、歌名重影。
-  it('updateAll 按装载顺序返回各脚本 update() 的返回值', async () => {
+  it('updateAll 按装载顺序返回各脚本的 {objectId, property, value}', async () => {
     const { state, anims, userProps } = setup();
     const vm = await SceneScriptVm.create({ userProperties: userProps, state, anims });
     vm!.load(`export function update(value){ return true; }`);
     vm!.load(`export function update(value){ return false; }`);
     vm!.load(`export function update(value){ return 42; }`);
     vm!.load(`export function init(){ thisScene.getLayerByID(1).alpha = 1; }`); // 无 update
+    vm!.load(`export function update(v){ v.z = 1; return v; }`, 'obj 5', 5, undefined, 'angles');
     vm!.initAll();
-    expect(vm!.updateAll()).toEqual([true, false, 42, undefined]);
+    expect(vm!.updateAll()).toEqual([
+      { objectId: null, property: null, value: true },
+      { objectId: null, property: null, value: false },
+      { objectId: null, property: null, value: 42 },
+      { objectId: null, property: null, value: undefined },
+      { objectId: 5, property: 'angles', value: undefined },
+    ]);
+    expect(state.read(5).angles).toEqual([0, 0, 1]);
     vm!.dispose();
   });
 });
@@ -532,7 +540,7 @@ describe('SceneScriptVm 对象级脚本 API', () => {
     const out = vm!.updateAll();
     expect(warns).toEqual([]);
     expect(vm!.activeCount).toBe(1);
-    expect(typeof out[0]).toBe('string');
+    expect(typeof out[0]!.value).toBe('string');
     vm!.dispose();
   });
 
@@ -553,6 +561,154 @@ describe('SceneScriptVm 对象级脚本 API', () => {
     expect(warns).toEqual([]);
     expect(vm!.activeCount).toBe(1);
     expect(tex.calls).toEqual(['pause:303']);
+    vm!.dispose();
+  });
+});
+
+// ── 媒体事件（媒体集成 T6）：四个 handler + MediaPlaybackEvent 常量 + thisObject.getAnimation ──
+describe('SceneScriptVm 媒体事件', () => {
+  const THUMB = {
+    hasThumbnail: true,
+    primaryColor: [1, 0, 0] as [number, number, number],
+    secondaryColor: [0, 1, 0] as [number, number, number],
+    tertiaryColor: [0, 0, 1] as [number, number, number],
+    textColor: [1, 1, 1] as [number, number, number],
+    highContrastColor: [0, 0, 0] as [number, number, number],
+  };
+
+  it('mediaPlaybackChanged：MediaPlaybackEvent 常量可用，事件 state 进脚本，thisLayer 写状态表', async () => {
+    const { state, anims, userProps } = setup();
+    const vm = await SceneScriptVm.create({ userProperties: userProps, state, anims });
+    vm!.load(`export function mediaPlaybackChanged(event){
+      if (event.state == MediaPlaybackEvent.PLAYBACK_STOPPED) thisLayer.visible = false;
+      else thisLayer.visible = true;
+    }`, 'obj 1', 1);
+    expect(vm!.dispatchMedia({ event: 'mediaPlaybackChanged', playback: 0 })).toBe(1);
+    expect(state.read(1).visible).toBe(false);
+    vm!.dispatchMedia({ event: 'mediaPlaybackChanged', playback: 1 });
+    expect(state.read(1).visible).toBe(true);
+    vm!.dispatchMedia({ event: 'mediaPlaybackChanged', playback: 2 });
+    expect(state.read(1).visible).toBe(true); // PAUSED=2 也是可见
+    vm!.dispose();
+  });
+
+  it('mediaPropertiesChanged / mediaThumbnailChanged：字段与 Vec3 颜色进脚本', async () => {
+    const { state, anims, userProps } = setup();
+    const vm = await SceneScriptVm.create({ userProperties: userProps, state, anims });
+    vm!.load(`
+      export function mediaPropertiesChanged(event){
+        var L = thisScene.getLayerByID(5);
+        L.alpha = (event.title == 'T' && event.artist == 'A' && event.album == '' && event.contentType == 'music') ? 0.5 : 0;
+      }
+      export function mediaThumbnailChanged(event){
+        var L = thisScene.getLayerByID(5);
+        if (event.hasThumbnail) L.color = new Vec3(event.primaryColor.x, event.primaryColor.y, event.primaryColor.z);
+      }`);
+    expect(vm!.dispatchMedia({
+      event: 'mediaPropertiesChanged',
+      properties: { title: 'T', artist: 'A', album: '', contentType: 'music' },
+    })).toBe(1);
+    expect(state.read(5).alpha).toBeCloseTo(0.5);
+    expect(vm!.dispatchMedia({ event: 'mediaThumbnailChanged', thumbnail: THUMB })).toBe(1);
+    expect(state.read(5).color).toEqual([1, 0, 0]);
+    vm!.dispose();
+  });
+
+  it('dispatchMedia 只调对应 handler：返回实际调用成功的数量', async () => {
+    const { state, anims, userProps } = setup();
+    const vm = await SceneScriptVm.create({ userProperties: userProps, state, anims });
+    vm!.load(`export function mediaStatusChanged(e){ thisScene.getLayerByID(1).alpha = e.enabled ? 1 : 0; }`, 'obj 1', 1);
+    vm!.load(`export function mediaPlaybackChanged(e){ thisScene.getLayerByID(2).alpha = e.state; }`, 'obj 2', 2);
+    expect(vm!.dispatchMedia({ event: 'mediaStatusChanged', enabled: false })).toBe(1);
+    expect(state.read(1).alpha).toBe(0);
+    expect(vm!.dispatchMedia({ event: 'mediaPlaybackChanged', playback: 2 })).toBe(1);
+    expect(state.read(2).alpha).toBe(2);
+    expect(vm!.dispatchMedia({ event: 'mediaPropertiesChanged', properties: { title: '', artist: '', album: '', contentType: '' } })).toBe(0);
+    vm!.dispose();
+  });
+
+  it('media handler 抛错：停用该脚本并 warn，不计入成功数（与 callOne 同语义）', async () => {
+    const { state, anims, userProps, warns } = setup();
+    const vm = await SceneScriptVm.create({ userProperties: userProps, state, anims, onWarn: (m) => warns.push(m) });
+    vm!.load(`export function mediaStatusChanged(e){ throw new Error('media boom'); }`, 'obj 9', 9);
+    expect(vm!.dispatchMedia({ event: 'mediaStatusChanged', enabled: true })).toBe(0);
+    expect(vm!.activeCount).toBe(0);
+    expect(warns.some((w) => w.includes('media boom'))).toBe(true);
+    expect(vm!.dispatchMedia({ event: 'mediaStatusChanged', enabled: true })).toBe(0); // 停用后不再调用
+    vm!.dispose();
+  });
+
+  it('thisObject.getAnimation()：属性脚本经时间线源取播放器并 play（不抛错）', async () => {
+    const { state, anims, userProps } = setup();
+    const played: string[] = [];
+    const vm = await SceneScriptVm.create({
+      userProperties: userProps, state, anims,
+      timeline: {
+        getByProperty: (id, prop, name) => {
+          played.push(`${id}:${prop}:${name}`);
+          return {
+            play: () => { played.push('play'); }, pause() { /* noop */ }, stop() { /* noop */ },
+            isPlaying: () => false, setFrame() { /* noop */ }, getFrame: () => 0,
+          };
+        },
+        getByName: () => null,
+      },
+    });
+    vm!.load(`export function mediaThumbnailChanged(event){ thisObject.getAnimation().play(); }`,
+      'obj 123', 123, undefined, 'angles');
+    expect(vm!.dispatchMedia({ event: 'mediaThumbnailChanged', thumbnail: THUMB })).toBe(1);
+    expect(played).toEqual(['123:angles:', 'play']);
+    expect(vm!.activeCount).toBe(1);
+    vm!.dispose();
+  });
+
+  it('thisObject.getAnimation(名)：无属性绑定时按 name 走 getByName', async () => {
+    const { state, anims, userProps } = setup();
+    const named: string[] = [];
+    const propertyCalls: string[] = [];
+    const vm = await SceneScriptVm.create({
+      userProperties: userProps, state, anims,
+      timeline: {
+        getByProperty: (id, prop) => { propertyCalls.push(`${id}:${prop}`); return null; },
+        getByName: (id, name) => {
+          named.push(`${id}:${name}`);
+          return {
+            play: () => { named.push('play'); }, pause() { /* noop */ }, stop() { /* noop */ },
+            isPlaying: () => false, setFrame() { /* noop */ }, getFrame: () => 0,
+          };
+        },
+      },
+    });
+    vm!.load(`export function mediaStatusChanged(event){ thisObject.getAnimation('Title').play(); }`, 'obj 7', 7);
+    expect(vm!.dispatchMedia({ event: 'mediaStatusChanged', enabled: true })).toBe(1);
+    expect(propertyCalls).toEqual([]);
+    expect(named).toEqual(['7:Title', 'play']);
+    expect(vm!.activeCount).toBe(1);
+    vm!.dispose();
+  });
+
+  it('无时间线源时 thisObject.getAnimation 走 AnimRegistry 播放器（play/setFrame/getFrame 可用）', async () => {
+    const { state, anims, userProps, warns } = setup();
+    const vm = await SceneScriptVm.create({ userProperties: userProps, state, anims, onWarn: (m) => warns.push(m) });
+    vm!.load(`export function mediaStatusChanged(event){
+      var a = thisObject.getAnimation('fallback');
+      a.play();
+      thisObject.alpha = 0.25;
+      thisScene.getLayerByID(10).alpha = thisObject.alpha;
+      thisScene.getLayerByID(11).alpha = (thisObject === thisObject && a === thisObject.getAnimation('fallback')) ? 1 : 0;
+      thisScene.getLayerByID(7).alpha = a.isPlaying() ? 1 : 0;
+      a.setFrame(3);
+      thisScene.getLayerByID(8).alpha = a.getFrame();
+      thisScene.getLayerByID(9).alpha = a.rate;
+    }`, 'obj 7', 7);
+    expect(vm!.dispatchMedia({ event: 'mediaStatusChanged', enabled: true })).toBe(1);
+    expect(state.read(7).alpha).toBe(1);
+    expect(state.read(8).alpha).toBe(3);
+    expect(state.read(9).alpha).toBe(1); // 缺省 rate = 1
+    expect(state.read(10).alpha).toBe(0.25); // thisObject 透传图层字段
+    expect(state.read(11).alpha).toBe(1); // 播放器/thisObject 缓存稳定
+    expect(warns).toEqual([]);
+    expect(vm!.activeCount).toBe(1);
     vm!.dispose();
   });
 });

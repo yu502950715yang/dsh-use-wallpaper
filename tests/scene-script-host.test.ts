@@ -237,3 +237,97 @@ describe('SceneScriptHost 对象级脚本', () => {
     host!.dispose();
   });
 });
+
+// ── 媒体集成 T6：多脚本可见性映射、媒体事件转发、外部写读 ──
+describe('SceneScriptHost 媒体与多脚本', () => {
+  it('多脚本：visible 脚本返回布尔写 visible；同对象属性脚本写角度且不参与 visible', async () => {
+    const host = await SceneScriptHost.create({
+      userProperties: {},
+      scripts: [
+        { objectId: 1, source: 'export function update(v){ return false; }' },
+        { objectId: 1, source: 'export function update(v){ return new Vec3(30, 0, 0); }', property: 'angles' },
+      ],
+    });
+    const dirty = host!.tick(1 / 60);
+    expect(dirty.get(1)?.visible).toBe(false);   // 只由无 property 的脚本决定
+    expect(dirty.get(1)?.angles).toEqual([30, 0, 0]); // 属性脚本的 Vec3 写回
+    host!.dispose();
+  });
+
+  it('media 事件转发到对应 handler；read/drainDirty 可观测', async () => {
+    const host = await SceneScriptHost.create({
+      userProperties: {},
+      scripts: [
+        { objectId: 2, source: 'export function mediaStatusChanged(e){ thisLayer.alpha = e.enabled ? 1 : 0; }' },
+      ],
+    });
+    host!.mediaStatus(false);
+    expect(host!.read(2).alpha).toBe(0);
+    const dirty = host!.drainDirty();
+    expect(dirty.get(2)?.alpha).toBe(0);
+    expect(host!.drainDirty().size).toBe(0); // 已取走
+    host!.dispose();
+  });
+
+  it('mediaPlayback 映射 0/1/2；mediaProperties/mediaThumbnail 透传字段', async () => {
+    const host = await SceneScriptHost.create({
+      userProperties: {},
+      scripts: [{
+        objectId: 3,
+        source: `export function mediaPlaybackChanged(e){ thisScene.getLayerByID(1).alpha = e.state; }
+          export function mediaPropertiesChanged(e){ thisScene.getLayerByID(2).alpha = e.title == 'T' ? 1 : 0; }
+          export function mediaThumbnailChanged(e){ thisScene.getLayerByID(3).alpha = e.primaryColor.x; }`,
+      }],
+    });
+    host!.mediaPlayback('stopped');
+    expect(host!.read(1).alpha).toBe(0);
+    host!.mediaPlayback('playing');
+    expect(host!.read(1).alpha).toBe(1);
+    host!.mediaPlayback('paused');
+    expect(host!.read(1).alpha).toBe(2);
+    host!.mediaProperties({ title: 'T', artist: '', album: '', contentType: 'music' });
+    expect(host!.read(2).alpha).toBe(1);
+    host!.mediaThumbnail({
+      hasThumbnail: false,
+      primaryColor: [0.25, 0, 0], secondaryColor: [0, 0, 0], tertiaryColor: [0, 0, 0],
+      textColor: [0, 0, 0], highContrastColor: [0, 0, 0],
+    });
+    expect(host!.read(3).alpha).toBeCloseTo(0.25);
+    host!.dispose();
+  });
+
+  it('timeline 源透传给 VM：属性脚本的 thisObject.getAnimation 走时间线', async () => {
+    const played: string[] = [];
+    const host = await SceneScriptHost.create({
+      userProperties: {},
+      timeline: {
+        getByProperty: (id, prop) => {
+          played.push(`${id}:${prop}`);
+          return {
+            play: () => { played.push('play'); }, pause() { /* noop */ }, stop() { /* noop */ },
+            isPlaying: () => false, setFrame() { /* noop */ }, getFrame: () => 0,
+          };
+        },
+        getByName: () => null,
+      },
+      scripts: [{
+        objectId: 6,
+        property: 'angles',
+        source: 'export function mediaStatusChanged(e){ thisObject.getAnimation().play(); }',
+      }],
+    });
+    host!.mediaStatus(true);
+    expect(played).toEqual(['6:angles', 'play']);
+    host!.dispose();
+  });
+
+  it('applyExternal 写状态表：read 可读、drainDirty 取走脏项', async () => {
+    const host = await SceneScriptHost.create({ userProperties: {}, scripts: [] });
+    host!.applyExternal(new Map([[4, { alpha: 0.4 }]]));
+    expect(host!.read(4).alpha).toBe(0.4);
+    const dirty = host!.drainDirty();
+    expect(dirty.get(4)?.alpha).toBe(0.4);
+    expect(host!.drainDirty().size).toBe(0);
+    host!.dispose();
+  });
+});

@@ -6,8 +6,10 @@
 import { AnimRegistry, extractAnimFps } from './scene-anim.js';
 import { createLayerStateTable, type LayerStateTable, type LayerWrite } from './layer-state.js';
 import { SceneScriptVm } from './scene-script-vm.js';
-import type { TextureAnimationHost } from './scene-script-vm.js';
+import type { MediaThumbnailPayload, TextureAnimationHost } from './scene-script-vm.js';
+import type { TimelineAnimationSource } from './scene-timeline.js';
 import type { DynamicMeshRegistry } from './dynamic-mesh.js';
+import type { MediaPropertiesPayload } from '../shared/media.js';
 import type { ObjectScriptProperty } from '../shared/types.js';
 
 export interface SceneScriptHostOptions {
@@ -32,20 +34,19 @@ export interface SceneScriptHostOptions {
   timeOfDay?: () => number;
   /** 壁纸 id：脚本 localStorage 按壁纸隔离（`we:scenescript:<wallpaperId>:<key>`）。 */
   wallpaperId?: string;
+  /** 时间线动画源（thisObject.getAnimation 优先查它；Task 10 由 renderer 传入）。 */
+  timeline?: TimelineAnimationSource;
 }
 
 export class SceneScriptHost {
   private readonly anims: AnimRegistry;
   private readonly state: LayerStateTable;
   private readonly vm: SceneScriptVm | null;
-  /** 各脚本对应的 scene 对象 id（与装载顺序一一对应）——把 update() 的返回值写回该对象的可见性。 */
-  private readonly objectIds: number[];
 
-  private constructor(anims: AnimRegistry, state: LayerStateTable, vm: SceneScriptVm | null, objectIds: number[]) {
+  private constructor(anims: AnimRegistry, state: LayerStateTable, vm: SceneScriptVm | null) {
     this.anims = anims;
     this.state = state;
     this.vm = vm;
-    this.objectIds = objectIds;
   }
 
   /** 创建并装载。无脚本时返回一个"空 host"（tick 恒返回空表 = 画面等于现状）。
@@ -61,7 +62,7 @@ export class SceneScriptHost {
     }
     const anims = new AnimRegistry(fpsTable);
     const state = createLayerStateTable();
-    if (scripts.length === 0) return new SceneScriptHost(anims, state, null, []);
+    if (scripts.length === 0) return new SceneScriptHost(anims, state, null);
 
     const vm = await SceneScriptVm.create({
       userProperties: opts.userProperties ?? {},
@@ -73,13 +74,14 @@ export class SceneScriptHost {
       textureAnimation: opts.textureAnimation,
       timeOfDay: opts.timeOfDay,
       wallpaperId: opts.wallpaperId,
+      timeline: opts.timeline,
     });
     if (!vm) return null;
     for (const s of scripts) {
       vm.load(s.source, `obj ${s.objectId}`, s.objectId, s.scriptProperties, s.property);
     }
     vm.initAll();
-    return new SceneScriptHost(anims, state, vm, scripts.map((s) => s.objectId));
+    return new SceneScriptHost(anims, state, vm);
   }
 
   /** 已装载的脚本数（eval 失败的不计）。 */
@@ -93,17 +95,16 @@ export class SceneScriptHost {
   }
 
   /** 每帧调用：先推进动画播放器（脚本 advanceFrame 的时间源），再跑各脚本 update。
-   *  返回本帧的脏写入（调用方应用后即丢弃）。 */
+   *  返回本帧的脏写入（调用方应用后即丢弃）。
+   *  只有「无 property 的对象脚本 + 布尔返回值」才是 visible 信号（属性脚本不参与）。 */
   tick(dt: number): Map<number, LayerWrite> {
     if (!this.vm) return new Map();
     this.vm.setFrametime(dt);
     this.anims.tick(dt);
-    const results = this.vm.updateAll();
-    // `visible.script` 的 update() 返回值 = 该对象本帧是否可见（WE 语义）。只对布尔生效：
-    // 返回值缺失/畸形时保持现状，不误杀图层（脚本抛错时该脚本返回 undefined）。
-    for (let i = 0; i < results.length && i < this.objectIds.length; i++) {
-      const v = results[i];
-      if (typeof v === 'boolean') this.state.write(this.objectIds[i]!, { visible: v });
+    for (const r of this.vm.updateAll()) {
+      if (r.property === null && r.objectId !== null && typeof r.value === 'boolean') {
+        this.state.write(r.objectId, { visible: r.value });
+      }
     }
     return this.state.takeDirty();
   }
@@ -111,6 +112,44 @@ export class SceneScriptHost {
   /** 派发一次点击（3798688689 的「切换按钮」靠它触发 shared.we2dSwitchScene）。 */
   click(): void {
     this.vm?.clickAll();
+  }
+
+  /** 媒体播放状态变化（0 stopped / 1 playing / 2 paused）。 */
+  mediaPlayback(state: 'stopped' | 'playing' | 'paused'): void {
+    this.vm?.dispatchMedia({
+      event: 'mediaPlaybackChanged',
+      playback: state === 'playing' ? 1 : state === 'paused' ? 2 : 0,
+    });
+  }
+
+  /** 媒体集成开关（脚本据此隐藏/显示媒体层）。 */
+  mediaStatus(enabled: boolean): void {
+    this.vm?.dispatchMedia({ event: 'mediaStatusChanged', enabled });
+  }
+
+  /** 曲目元数据变化。 */
+  mediaProperties(props: MediaPropertiesPayload): void {
+    this.vm?.dispatchMedia({ event: 'mediaPropertiesChanged', properties: props });
+  }
+
+  /** 封面/配色变化。 */
+  mediaThumbnail(thumb: MediaThumbnailPayload): void {
+    this.vm?.dispatchMedia({ event: 'mediaThumbnailChanged', thumbnail: thumb });
+  }
+
+  /** 外部（媒体/文本通道）向状态表写入；脚本下一帧读到。 */
+  applyExternal(writes: Map<number, LayerWrite>): void {
+    for (const [id, patch] of writes) this.state.write(id, patch);
+  }
+
+  /** 读对象当前状态（副本）。 */
+  read(objectId: number): LayerWrite {
+    return this.state.read(objectId);
+  }
+
+  /** 取走并清空累计的脏写入。 */
+  drainDirty(): Map<number, LayerWrite> {
+    return this.state.takeDirty();
   }
 
   dispose(): void {

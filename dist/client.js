@@ -31433,6 +31433,48 @@ function __mkAnim(key, name) {
   return __animCache[k];
 }
 
+// \u5A92\u4F53\u4E8B\u4EF6\u7C7B\u5E38\u91CF\uFF08WE \u5B98\u65B9\u6570\u503C\uFF1ASTOPPED=0 / PLAYING=1 / PAUSED=2\uFF09\u3002
+var MediaPlaybackEvent = { PLAYBACK_STOPPED: 0, PLAYBACK_PLAYING: 1, PLAYBACK_PAUSED: 2 };
+
+// \u5C5E\u6027/\u547D\u540D\u65F6\u95F4\u7EBF\u52A8\u753B\u64AD\u653E\u5668\uFF1A\u4E0E __mkAnim \u4E0D\u540C\uFF0C\u8D70\u65F6\u95F4\u7EBF\u6E90\uFF08\u5BBF\u4E3B\u89E3\u6790\uFF0C\u7F3A\u7701\u56DE\u9000 AnimRegistry\uFF09\u3002
+var __propAnimCache = {};
+function __mkPropAnim(key, property, name) {
+  var k = key + '|' + property + '|' + name;
+  if (__propAnimCache[k]) return __propAnimCache[k];
+  __propAnimCache[k] = {
+    play: function () { __host.propAnimPlay(key, property, name); },
+    pause: function () { __host.propAnimPause(key, property, name); },
+    stop: function () { __host.propAnimStop(key, property, name); },
+    isPlaying: function () { return __host.propAnimIsPlaying(key, property, name); },
+    setFrame: function (f) { __host.propAnimSetFrame(key, property, name, f); },
+    getFrame: function () { return __host.propAnimGetFrame(key, property, name); },
+    get rank() { return 0; },
+    get rate() { return __host.propAnimRate(key, property, name); },
+    set rate(v) { __host.propAnimSetRate(key, property, name, v); }
+  };
+  return __propAnimCache[k];
+}
+// thisObject\uFF1A\u5F53\u524D\u811A\u672C\u6240\u5C5E\u5BF9\u8C61\uFF08\u5C5E\u6027\u811A\u672C\u5E26\u5F53\u524D\u5C5E\u6027\uFF1Bvisible/text \u811A\u672C property \u4E3A\u7A7A\u4E32\uFF09\u3002
+var __thisObjectCache = {};
+function __mkThisObject(key, property) {
+  var ck = key + '|' + property;
+  if (__thisObjectCache[ck]) return __thisObjectCache[ck];
+  var layer = __mkLayer(key);
+  __thisObjectCache[ck] = new Proxy(layer, {
+    get: function (t, prop) {
+      if (prop === 'getAnimation') {
+        return function (name) { return __mkPropAnim(key, property, name ? String(name) : ''); };
+      }
+      return t[prop];
+    }
+  });
+  return __thisObjectCache[ck];
+}
+Object.defineProperty(globalThis, 'thisObject', {
+  get: function () { return __mkThisObject(__host.currentLayerKey(), __host.currentProperty()); },
+  configurable: true
+});
+
 var __texAnimCache = {};
 function __mkTextureAnimation(key) {
   if (__texAnimCache[key]) return __texAnimCache[key];
@@ -31578,8 +31620,11 @@ var SceneScriptVm = class _SceneScriptVm {
   handles = [];
   modules = [];
   animCache = /* @__PURE__ */ new Map();
+  propAnimCache = /* @__PURE__ */ new Map();
   state;
   anims;
+  /** 时间线动画源（thisObject.getAnimation 优先查它；null = 只走 AnimRegistry）。 */
+  timeline;
   onWarn;
   /** 动态网格注册表（createModelData/createLayer/applyData 的真实落点）；缺省 = stub 行为。 */
   mesh;
@@ -31595,6 +31640,8 @@ var SceneScriptVm = class _SceneScriptVm {
   wallpaperId;
   /** 当前正在执行的脚本所属图层 key（`id:<对象 id>`；thisLayer 的解析依据）。 */
   currentKey = "";
+  /** 当前脚本挂载的属性（thisObject.getAnimation 的绑定属性；生命周期脚本为空串）。 */
+  currentProperty = "";
   dt = 1 / 60;
   /** 单次脚本调用的指令预算（缺省 STEP_BUDGET；callOne 每次调用前重置）。 */
   stepBudget;
@@ -31604,6 +31651,7 @@ var SceneScriptVm = class _SceneScriptVm {
     this.runtime = runtime;
     this.state = opts.state;
     this.anims = opts.anims;
+    this.timeline = opts.timeline ?? null;
     this.onWarn = opts.onWarn ?? (() => {
     });
     this.mesh = opts.dynamicMesh ?? null;
@@ -31713,10 +31761,31 @@ var SceneScriptVm = class _SceneScriptVm {
       this.anim(ctx.getString(k), ctx.getString(n)).setFrame(ctx.getNumber(v));
     });
     define("animGetFrame", (k, n) => ctx.newNumber(this.anim(ctx.getString(k), ctx.getString(n)).getFrame()));
+    const propPlayback = (k, p, n) => this.propAnim(ctx.getString(k), ctx.getString(p), ctx.getString(n));
+    define("propAnimPlay", (k, p, n) => {
+      propPlayback(k, p, n).play();
+    });
+    define("propAnimPause", (k, p, n) => {
+      propPlayback(k, p, n).pause();
+    });
+    define("propAnimStop", (k, p, n) => {
+      propPlayback(k, p, n).stop();
+    });
+    define("propAnimIsPlaying", (k, p, n) => propPlayback(k, p, n).isPlaying() ? ctx.true : ctx.false);
+    define("propAnimSetFrame", (k, p, n, f) => {
+      propPlayback(k, p, n).setFrame(ctx.getNumber(f));
+    });
+    define("propAnimGetFrame", (k, p, n) => ctx.newNumber(propPlayback(k, p, n).getFrame()));
+    define("propAnimRate", (k, p, n) => ctx.newNumber(propPlayback(k, p, n).rate ?? 1));
+    define("propAnimSetRate", (k, p, n, r) => {
+      if (ctx.typeof(r) !== "number") return;
+      propPlayback(k, p, n).rate = ctx.getNumber(r);
+    });
     define("frametime", () => ctx.newNumber(this.dt));
     define("log", () => {
     });
     define("currentLayerKey", () => ctx.newString(this.currentKey));
+    define("currentProperty", () => ctx.newString(this.currentProperty));
     define("texAnimPause", (k) => {
       this.texAnim?.pause(this.keyOf(k));
     });
@@ -31850,10 +31919,15 @@ return {
   init: (typeof init === 'function') ? init : null,
   update: (typeof update === 'function') ? update : null,
   applyUserProperties: (typeof applyUserProperties === 'function') ? applyUserProperties : null,
-  cursorClick: (typeof cursorClick === 'function') ? cursorClick : null
+  cursorClick: (typeof cursorClick === 'function') ? cursorClick : null,
+  mediaPlaybackChanged: (typeof mediaPlaybackChanged === 'function') ? mediaPlaybackChanged : null,
+  mediaStatusChanged: (typeof mediaStatusChanged === 'function') ? mediaStatusChanged : null,
+  mediaPropertiesChanged: (typeof mediaPropertiesChanged === 'function') ? mediaPropertiesChanged : null,
+  mediaThumbnailChanged: (typeof mediaThumbnailChanged === 'function') ? mediaThumbnailChanged : null
 };
 })());`;
     this.currentKey = objectId === void 0 ? "" : `id:${objectId}`;
+    this.currentProperty = property ?? "";
     const propsH = ctx.newObject();
     for (const [key, value] of Object.entries(scriptProperties ?? {})) {
       if (typeof value === "boolean") ctx.setProp(propsH, key, value ? ctx.true : ctx.false);
@@ -31895,6 +31969,12 @@ return {
       update: grab("update"),
       apply: grab("applyUserProperties"),
       click: grab("cursorClick"),
+      media: {
+        playback: grab("mediaPlaybackChanged"),
+        status: grab("mediaStatusChanged"),
+        properties: grab("mediaPropertiesChanged"),
+        thumbnail: grab("mediaThumbnailChanged")
+      },
       active: true,
       label: tag,
       layerKey: objectId === void 0 ? "" : `id:${objectId}`,
@@ -31903,12 +31983,16 @@ return {
     };
     this.handles.push(inst);
     for (const h of [m.init, m.update, m.apply, m.click]) if (h) this.handles.push(h);
+    for (const h of [m.media.playback, m.media.status, m.media.properties, m.media.thumbnail]) {
+      if (h) this.handles.push(h);
+    }
     this.modules.push(m);
     return true;
   }
   callOne(m, fn, mode) {
     if (!m.active || !fn) return void 0;
     this.currentKey = m.layerKey;
+    this.currentProperty = m.property ?? "";
     this.budget = this.stepBudget;
     const ctx = this.ctx;
     const isPropertyValue = mode === "value" && m.property !== null;
@@ -31966,16 +32050,115 @@ return {
     }
   }
   /**
-   * 按装载顺序调 update（每帧），返回各自的返回值。
+   * 按装载顺序调 update（每帧）；每个 module 一条，带 objectId/property 供 host 分类处理。
    *
-   * ⚠️ 返回值是 `visible.script` 的**信号源** —— WE 语义里它就是「该对象本帧是否可见」。
-   * 一期调用后把返回值丢弃了，于是 10 个歌曲字标全部显示（真机：两行歌名重影）。
-   * 属性脚本（angles/origin/scale/color）的返回值已写回属性，这里一律返回 undefined（不混用）。
+   * ⚠️ 无 property 的脚本返回值是 `visible.script` 的**信号源** —— WE 语义里它就是「该对象本帧
+   * 是否可见」。属性脚本（angles/origin/scale/color）的返回值已写回属性，这里一律 undefined（不混用）。
    */
   updateAll() {
     const out = [];
-    for (const m of this.modules) out.push(this.callOne(m, m.update, "value"));
+    for (const m of this.modules) {
+      out.push({ objectId: m.objectId, property: m.property, value: this.callOne(m, m.update, "value") });
+    }
     return out;
+  }
+  /** 派发一次媒体事件到各脚本的同名 handler；返回实际调用成功的数量。 */
+  dispatchMedia(dispatch) {
+    const ctx = this.ctx;
+    let called = 0;
+    for (const m of this.modules) {
+      const fn = dispatch.event === "mediaPlaybackChanged" ? m.media.playback : dispatch.event === "mediaStatusChanged" ? m.media.status : dispatch.event === "mediaPropertiesChanged" ? m.media.properties : m.media.thumbnail;
+      if (!m.active || !fn) continue;
+      this.currentKey = m.layerKey;
+      this.currentProperty = m.property ?? "";
+      this.budget = this.stepBudget;
+      const ev = this.buildMediaEvent(dispatch);
+      try {
+        const res = ctx.callFunction(fn, m.instance, ev);
+        if (res.error) {
+          const msg = this.errorText(res.error);
+          res.error.dispose();
+          m.active = false;
+          this.warn(`SceneScript \u629B\u9519\uFF0C\u5DF2\u505C\u7528\u8BE5\u811A\u672C\uFF08${m.label}\uFF09\uFF1A${msg}`);
+          continue;
+        }
+        res.value.dispose();
+        called += 1;
+      } catch (e) {
+        m.active = false;
+        this.warn(`SceneScript \u5A92\u4F53\u4E8B\u4EF6\u8C03\u7528\u5931\u8D25\uFF08${m.label}\uFF09\uFF1A${e instanceof Error ? e.message : String(e)}`);
+      } finally {
+        ev.dispose();
+      }
+    }
+    return called;
+  }
+  /** 构造本次媒体事件对象（颜色按 Vec3 形态 {x,y,z}；每次派发新建，调用方负责 dispose）。 */
+  buildMediaEvent(d) {
+    const ctx = this.ctx;
+    const obj = ctx.newObject();
+    const str = (k, v) => {
+      const h = ctx.newString(v);
+      ctx.setProp(obj, k, h);
+      h.dispose();
+    };
+    const num2 = (k, v) => {
+      const h = ctx.newNumber(v);
+      ctx.setProp(obj, k, h);
+      h.dispose();
+    };
+    const bool = (k, v) => ctx.setProp(obj, k, v ? ctx.true : ctx.false);
+    const vec = (k, v) => {
+      const o = ctx.newObject();
+      for (const [axis, n] of [["x", v[0]], ["y", v[1]], ["z", v[2]]]) {
+        const h = ctx.newNumber(n);
+        ctx.setProp(o, axis, h);
+        h.dispose();
+      }
+      ctx.setProp(obj, k, o);
+      o.dispose();
+    };
+    if (d.event === "mediaPlaybackChanged") num2("state", d.playback ?? 0);
+    else if (d.event === "mediaStatusChanged") bool("enabled", !!d.enabled);
+    else if (d.event === "mediaPropertiesChanged") {
+      const p = d.properties ?? { title: "", artist: "", album: "", contentType: "" };
+      str("title", p.title);
+      str("artist", p.artist);
+      str("album", p.album);
+      str("contentType", p.contentType);
+      str("albumTitle", p.album);
+      str("subTitle", "");
+      str("albumArtist", p.artist);
+      str("genres", "");
+    } else {
+      const t = d.thumbnail ?? {
+        hasThumbnail: false,
+        primaryColor: [0, 0, 0],
+        secondaryColor: [0, 0, 0],
+        tertiaryColor: [0, 0, 0],
+        textColor: [0, 0, 0],
+        highContrastColor: [0, 0, 0]
+      };
+      bool("hasThumbnail", t.hasThumbnail);
+      vec("primaryColor", t.primaryColor);
+      vec("secondaryColor", t.secondaryColor);
+      vec("tertiaryColor", t.tertiaryColor);
+      vec("textColor", t.textColor);
+      vec("highContrastColor", t.highContrastColor);
+    }
+    return obj;
+  }
+  /** thisObject.getAnimation 的播放器解析：时间线 getByProperty → getByName → AnimRegistry。 */
+  propAnim(layerKey, property, name) {
+    const key = `${layerKey}|${property}|${name}`;
+    const hit = this.propAnimCache.get(key);
+    if (hit) return hit;
+    const m = /^id:(\d+)$/.exec(layerKey);
+    const objectId = m ? Number(m[1]) : -1;
+    const tl = objectId >= 0 ? this.timeline : null;
+    const pb = (tl && property ? tl.getByProperty(objectId, property, name) : null) ?? (tl && name ? tl.getByName(objectId, name) : null) ?? this.anims.get(layerKey, name || property);
+    this.propAnimCache.set(key, pb);
+    return pb;
   }
   /** 按装载顺序派发点击（cursorClick）。 */
   clickAll() {
@@ -31998,6 +32181,7 @@ return {
     this.handles.length = 0;
     this.modules.length = 0;
     this.animCache.clear();
+    this.propAnimCache.clear();
     try {
       this.ctx.dispose();
     } catch {
@@ -32075,13 +32259,10 @@ var SceneScriptHost = class _SceneScriptHost {
   anims;
   state;
   vm;
-  /** 各脚本对应的 scene 对象 id（与装载顺序一一对应）——把 update() 的返回值写回该对象的可见性。 */
-  objectIds;
-  constructor(anims, state, vm, objectIds) {
+  constructor(anims, state, vm) {
     this.anims = anims;
     this.state = state;
     this.vm = vm;
-    this.objectIds = objectIds;
   }
   /** 创建并装载。无脚本时返回一个"空 host"（tick 恒返回空表 = 画面等于现状）。
    *  quickjs 初始化失败返回 null（调用方同样退回现状）。 */
@@ -32095,7 +32276,7 @@ var SceneScriptHost = class _SceneScriptHost {
     }
     const anims = new AnimRegistry(fpsTable);
     const state = createLayerStateTable();
-    if (scripts.length === 0) return new _SceneScriptHost(anims, state, null, []);
+    if (scripts.length === 0) return new _SceneScriptHost(anims, state, null);
     const vm = await SceneScriptVm.create({
       userProperties: opts.userProperties ?? {},
       state,
@@ -32105,14 +32286,15 @@ var SceneScriptHost = class _SceneScriptHost {
       onAsset: opts.onAsset,
       textureAnimation: opts.textureAnimation,
       timeOfDay: opts.timeOfDay,
-      wallpaperId: opts.wallpaperId
+      wallpaperId: opts.wallpaperId,
+      timeline: opts.timeline
     });
     if (!vm) return null;
     for (const s of scripts) {
       vm.load(s.source, `obj ${s.objectId}`, s.objectId, s.scriptProperties, s.property);
     }
     vm.initAll();
-    return new _SceneScriptHost(anims, state, vm, scripts.map((s) => s.objectId));
+    return new _SceneScriptHost(anims, state, vm);
   }
   /** 已装载的脚本数（eval 失败的不计）。 */
   get scriptCount() {
@@ -32123,21 +32305,53 @@ var SceneScriptHost = class _SceneScriptHost {
     return this.vm?.activeCount ?? 0;
   }
   /** 每帧调用：先推进动画播放器（脚本 advanceFrame 的时间源），再跑各脚本 update。
-   *  返回本帧的脏写入（调用方应用后即丢弃）。 */
+   *  返回本帧的脏写入（调用方应用后即丢弃）。
+   *  只有「无 property 的对象脚本 + 布尔返回值」才是 visible 信号（属性脚本不参与）。 */
   tick(dt) {
     if (!this.vm) return /* @__PURE__ */ new Map();
     this.vm.setFrametime(dt);
     this.anims.tick(dt);
-    const results = this.vm.updateAll();
-    for (let i = 0; i < results.length && i < this.objectIds.length; i++) {
-      const v = results[i];
-      if (typeof v === "boolean") this.state.write(this.objectIds[i], { visible: v });
+    for (const r of this.vm.updateAll()) {
+      if (r.property === null && r.objectId !== null && typeof r.value === "boolean") {
+        this.state.write(r.objectId, { visible: r.value });
+      }
     }
     return this.state.takeDirty();
   }
   /** 派发一次点击（3798688689 的「切换按钮」靠它触发 shared.we2dSwitchScene）。 */
   click() {
     this.vm?.clickAll();
+  }
+  /** 媒体播放状态变化（0 stopped / 1 playing / 2 paused）。 */
+  mediaPlayback(state) {
+    this.vm?.dispatchMedia({
+      event: "mediaPlaybackChanged",
+      playback: state === "playing" ? 1 : state === "paused" ? 2 : 0
+    });
+  }
+  /** 媒体集成开关（脚本据此隐藏/显示媒体层）。 */
+  mediaStatus(enabled) {
+    this.vm?.dispatchMedia({ event: "mediaStatusChanged", enabled });
+  }
+  /** 曲目元数据变化。 */
+  mediaProperties(props) {
+    this.vm?.dispatchMedia({ event: "mediaPropertiesChanged", properties: props });
+  }
+  /** 封面/配色变化。 */
+  mediaThumbnail(thumb) {
+    this.vm?.dispatchMedia({ event: "mediaThumbnailChanged", thumbnail: thumb });
+  }
+  /** 外部（媒体/文本通道）向状态表写入；脚本下一帧读到。 */
+  applyExternal(writes) {
+    for (const [id, patch] of writes) this.state.write(id, patch);
+  }
+  /** 读对象当前状态（副本）。 */
+  read(objectId) {
+    return this.state.read(objectId);
+  }
+  /** 取走并清空累计的脏写入。 */
+  drainDirty() {
+    return this.state.takeDirty();
   }
   dispose() {
     this.vm?.dispose();

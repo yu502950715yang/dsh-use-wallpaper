@@ -73,6 +73,9 @@ export interface VisibleBinding {
 // 对象级脚本挂载的转换属性（WE 属性脚本 `update(value)` 的绑定目标）。
 export type ObjectScriptProperty = 'angles' | 'origin' | 'scale' | 'color';
 
+// 时间线可动画的属性（比对象级脚本多 alpha；Task 9/10 的时间线运行时用）。
+export type TimelineProperty = 'alpha' | 'origin' | 'scale' | 'angles' | 'color';
+
 // 单个对象属性脚本：四属性可各挂一个（scriptproperties 各自独立）。
 export interface ObjectScriptEntry {
   property: ObjectScriptProperty;
