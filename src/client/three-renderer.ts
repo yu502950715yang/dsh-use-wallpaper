@@ -231,9 +231,8 @@ export function collectScriptSources(
     for (const e of obj.objectScripts ?? []) {
       // 空/非字符串 source 直接跳过（防御残缺 scene.json；空 source 会白建 VM 模块）。
       if (typeof e?.script !== 'string' || !e.script) continue;
-      // alpha 属性脚本只在它绑定了 alpha 时间线动画时装载：当前属性脚本 update 是 Vec3 契约
-      //（alpha 的标量 update 未实现，见 scene-timeline 运行时报告），本任务只需要它的媒体事件
-      // 播放该动画（真实素材 3797976859 的淡入）。无动画的 alpha 脚本（光标/节拍脉冲）保持不执行。
+      // alpha 属性脚本只在绑定 alpha 时间线动画时装载：VM 不调 alpha 模块的 init/update（见 callOne），
+      // 只用媒体事件播动画；无动画的 alpha 脚本（光标/节拍脉冲）保持不装载。
       if (e.property === 'alpha' && !obj.animations?.alpha) continue;
       out.push({
         objectId: obj.id, source: e.script, property: e.property,
@@ -1234,6 +1233,9 @@ export function createThreeSceneRenderer(opts?: {
         if (timelineRuntime) {
           timelineRuntime.applyInitial();
           applyLayerState(currentScriptHost?.drainDirty() ?? new Map(), layerLookup);
+          // 顺序契约：applyLayerState 把脚本口径的**本地** origin/scale 直接写进 three 对象，
+          // 会覆盖 applyInitial 刚算好的世界值 ⇒ 首帧前必须再 syncWorld 一次。
+          timelineRuntime.syncWorld();
         }
         // ── 媒体集成：初始事件（无会话 = stopped，立即隐藏媒体层，避免白框闪烁）────────────
         // 装配期同步派发 status + playback(stopped)，并在首帧前应用脏写入：媒体层不会先画一帧

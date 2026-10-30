@@ -380,7 +380,8 @@ interface LoadedModule {
   label: string;
   /** 本模块所属对象的图层 key（`id:<id>`；无 objectId 时为空串）。 */
   layerKey: string;
-  /** 该脚本挂载的转换属性（angles 等）；null = 生命周期/visible.script 脚本。 */
+  /** 本模块所属的转换属性（angles 等）；null = 生命周期/visible.script 脚本。
+   *  `alpha` 是标量属性：不参与 Vec3 属性脚本的 init/update 契约，只派发媒体回调（见 callOne）。 */
   property: ObjectScriptProperty | null;
   /** 本模块所属 scene 对象 id（属性写回用；无 objectId 时 null）。 */
   objectId: number | null;
@@ -697,7 +698,9 @@ export class SceneScriptVm {
   /** 装载一个模块脚本。返回 false = eval 失败（该脚本被跳过，其余继续）。
    *  `label` 用于日志（应带 scene 对象 id —— 脚本首行都是 `'use strict';`，不带 id 无法定位）。
    *  `objectId` 供 thisLayer 解析；`scriptProperties` 是 scene.json 的覆盖值（注入给 createScriptProperties）；
-   *  `property` 非空 = WE 属性脚本（angles/origin/scale/color）：update(value) 收/回 Vec3。 */
+   *  `property` 非空 = WE 属性脚本（angles/origin/scale/color）：update(value) 收/回 Vec3。
+   *  `property === 'alpha'` 是标量属性：不调 init/update（Vec3 契约会把数组写进 LayerWrite.alpha），
+   *  alpha 由时间线/静态值驱动，媒体事件 handler 照常派发。 */
   load(
     source: string,
     label?: string,
@@ -791,6 +794,9 @@ return {
 
   private callOne(m: LoadedModule, fn: QuickJSHandle | null, mode: 'value' | 'props'): unknown {
     if (!m.active || !fn) return undefined;
+    // alpha 是标量属性：属性脚本的 Vec3 init/update 契约不适用（返回 Vec3 会写进 LayerWrite.alpha
+    // ⇒ Math.min(1, array) = NaN）。不调用 init/update，alpha 由时间线/静态值驱动。
+    if (m.property === 'alpha' && mode === 'value') return undefined;
     this.currentKey = m.layerKey; // thisLayer 解析依据：每次调用前指向当前脚本所属对象
     this.currentProperty = m.property ?? '';
     this.budget = this.stepBudget; // 每个脚本每次调用一份新预算（见 create 的 handler 注释）
@@ -827,13 +833,11 @@ return {
     return value;
   }
 
-  /** 当前属性值的 quickjs Vec3 句柄（属性脚本入参；缺省值与 readVec 同口径）。 */
+  /** 当前属性值的 quickjs Vec3 句柄（属性脚本入参；缺省值与 readVec 同口径）。alpha 不走此路径（见 callOne）。 */
   private vecHandle(property: ObjectScriptProperty, objectId: number): QuickJSHandle {
     const ctx = this.ctx;
     const cur = this.state.read(objectId)[property];
     const dflt: [number, number, number] = property === 'scale' || property === 'color' ? [1, 1, 1] : [0, 0, 0];
-    // alpha 的写入是标量（`LayerWrite.alpha`）：真实素材只把它当媒体事件脚本用、不实现 update；
-    // 若真有 update，按 Vec3 传入会拿到默认值，不猜测标量/向量语义（见报告边界）。
     const arr: [number, number, number] = Array.isArray(cur) ? cur : dflt;
     const obj = ctx.newObject();
     for (const [i, axis] of (['x', 'y', 'z'] as const).entries()) {

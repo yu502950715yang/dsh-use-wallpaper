@@ -409,6 +409,31 @@ describe('loadSceneToThree text 动态 resize', () => {
     expect(mesh.position.x - (200 / 2) * 0.5).toBeCloseTo(leftEdge0, 10);
   });
 
+  // C1（review round 1）：文本变化时算出的锚点偏移必须写回背景条目。否则下一帧 syncWorld
+  // （38/39 在 35 动画子树内，每帧执行）用装配期偏移（初始文本为空 = 0）覆盖位置 ⇒ 永久半宽错位。
+  it('文本变化后刷新条目锚点偏移：syncWorld 的世界变换写入用新偏移，resize 不重置它', () => {
+    const { assets, state, renderer } = makeAssets();
+    const result = loadSceneToThree(scene, assets, document.createElement('canvas'));
+    const mesh = result.player.scene.children[0] as THREE.Mesh;
+    const id = result.backgroundIds[0];
+    state.layout = LARGE;
+    state.changed = true;
+    renderer._getLoop()!(); // 文本变化：按新 layout 写位置 + 刷新条目偏移
+    expect(mesh.position.x).toBeCloseTo(1000 + 360 / 2 * 0.5 - 960, 10);
+    // 模拟帧循环里的 syncWorld（世界锚点 + 偏移）：不得退回装配期 SMALL 的偏移（80 而非 130）。
+    const wt = {
+      origin: [1000, 500, 0] as [number, number, number],
+      scale: SCALE as [number, number, number],
+      angles: [0, 0, 0] as [number, number, number],
+    };
+    expect(result.player.updateBackgroundTransform(7, wt)).toBe(true);
+    expect(mesh.position.x).toBeCloseTo(1000 + 360 / 2 * 0.5 - 960, 10);
+    // resize（文本尺寸变化）只换几何，不重置已存的锚点偏移。
+    result.player.resizeBackground(id, [500, 140]);
+    expect(result.player.updateBackgroundTransform(7, wt)).toBe(true);
+    expect(mesh.position.x).toBeCloseTo(1000 + 360 / 2 * 0.5 - 960, 10);
+  });
+
   it('resizeBackground：未知 id / 尺寸未变 → no-op；新尺寸 → 换几何并释放旧几何', () => {
     const { player } = makePlayer();
     const tex = new THREE.DataTexture(new Uint8Array(4), 2, 2);
@@ -5132,6 +5157,24 @@ describe('ThreeScenePlayer updateBackgroundTransform（时间线世界变换）'
     const mesh = player.backgroundMeshForTest(id);
     expect(mesh.position.x).toBeCloseTo(400 - 500 + 112, 6); // 偏移来自 transformOrigin = [500,300]
     expect(mesh.position.y).toBeCloseTo(200 - 300, 6);
+  });
+
+  // C1：文本标题变化后锚点偏移要能刷新（text driver 用新 layout 算出的半宽写回条目）。
+  it('setBackgroundAnchorOffset：刷新锚点偏移供后续世界变换使用；未知 id / 非有限值 → false 且不改现值', () => {
+    const { player } = makePlayer(1000, 600);
+    const id = player.addBackground({
+      origin: [500, 300, 0], transformOrigin: [500, 300, 0], objectId: 8,
+      size: [100, 50], scale: [1, 1, 1], sceneW: 1000, sceneH: 600,
+    });
+    const mesh = player.backgroundMeshForTest(id);
+    expect(player.setBackgroundAnchorOffset(id, [120, 40])).toBe(true);
+    expect(player.updateBackgroundTransform(8, wtOf([400, 200, 0]))).toBe(true);
+    expect(mesh.position.x).toBeCloseTo(400 - 500 + 120, 6);
+    expect(mesh.position.y).toBeCloseTo(200 - 300 + 40, 6);
+    expect(player.setBackgroundAnchorOffset(999, [1, 1])).toBe(false);
+    expect(player.setBackgroundAnchorOffset(id, [Number.NaN, 1])).toBe(false);
+    expect(player.updateBackgroundTransform(8, wtOf([400, 200, 0]))).toBe(true);
+    expect(mesh.position.x).toBeCloseTo(400 - 500 + 120, 6); // 非有限值未覆盖已存偏移
   });
 
   it('parallaxApplied 复位：更新后的位置是视差新基准，且关视差时不再回写旧基准', () => {

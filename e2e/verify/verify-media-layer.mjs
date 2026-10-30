@@ -1,5 +1,6 @@
 // 媒体集成 e2e：生产 lib/ 渲染真实场景壁纸，自起 server mock now-playing 两条路由 + headless Edge/CDP。
-// 判据：装配即隐藏（白像素 0）/ 播放显示文本且画布宽度随标题变化 / 封面纹理与主色 / 时间线淡入·滑入 / 停止再隐藏；退出码 0/1。
+// 判据：装配即隐藏（白像素 0）/ 播放显示文本且画布宽度随标题变化 / 封面纹理与主色 / 时间线淡入·世界变换
+// / 文本锚点偏移随标题刷新 / 停止再隐藏；退出码 0/1。
 import { createServer } from 'node:http';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, readdirSync } from 'node:fs';
 import { spawn } from 'node:child_process';
@@ -307,7 +308,9 @@ try {
     const opacityOf = async (objectId) => (await materialOf(objectId))?.opacity ?? null;
     const earlyOpacity45 = await opacityOf(45);
     const earlyOpacity35 = await opacityOf(35);
+    // stopped 锚点位置（文本为空 ⇒ 装配期锚点偏移 = 0，位置 = 对象锚点）：[5d] 用它判「偏移已生效」。
     const earlyPos38 = (await materialOf(38))?.position ?? null;
+    const earlyPos39 = (await materialOf(39))?.position ?? null;
     // 浏览器侧 16ms 采样窗口：覆盖「播放事件 → 滑入/淡入 → 停稳」全过程（CDP 往返太稀疏）。
     await evalJs(`(() => {
       window.__animSamples = { opacity45: [], opacity35: [], pos38: [] };
@@ -344,7 +347,9 @@ try {
       (earlyOpacity45 ?? 1) < 0.6 && min45 !== null && min45 < 0.6 && final45 !== null && final45 > 0.9,
       `early=${JSON.stringify(earlyOpacity45)} min=${JSON.stringify(min45)} final=${JSON.stringify(final45)}` +
       ` samples=${op45.length} early35=${JSON.stringify(earlyOpacity35)}`);
-    judge('[5b] 滑入：obj38 position 位移 > 2（world），且最终稳定（相邻采样差 < 0.5）',
+    // [5b] 时间线确实在跑（弱判据）：位移主要来自父对象 35 的 scale 时间线重播带动子树；
+    // 「滑入」正确性（文本锚点偏移）由 [5d] 承担，本判据只证明时间线/世界变换没有被冻结。
+    judge('[5b] 时间线在跑：obj38 position 位移 > 2（主要来自父级 scale 重播），且最终稳定（相邻采样差 < 0.5）',
       maxDelta38 !== null && maxDelta38 > 2 && stableDelta38 !== null && stableDelta38 < 0.5,
       `maxΔ=${maxDelta38 === null ? 'null' : maxDelta38.toFixed(3)} stableΔ=${stableDelta38 === null ? 'null' : stableDelta38.toFixed(3)}` +
       ` base=${JSON.stringify(basePos38)} last=${JSON.stringify(lastPos)} samples=${pos38.length}`);
@@ -353,6 +358,9 @@ try {
       `min=${JSON.stringify(min35)} final=${JSON.stringify(final35)} samples=${op35.length}`);
     const titleMat1 = await materialOf(38);
     const titleW1 = titleMat1?.mapSize?.[0] ?? null;
+    // [5d] 基线：E2E-T1 稳定后的文本 quad 几何宽 + 位置（换更长标题前的锚点偏移样本）。
+    const rect38Before = await rectOf(38);
+    const artistPosBefore = (await materialOf(39))?.position ?? null;
     mediaStage = { ...mediaStage, title: 'E2E-LONGER-TITLE-2' }; // 同阶段换标题：画布宽度必须跟着变
     await sleep(2000);
     const titleMat2 = await materialOf(38);
@@ -367,6 +375,56 @@ try {
     judge('[3b] playing 歌手文本画布非空（mapSize[0] > 4）', typeof artistW === 'number' && artistW > 4,
       `obj39.mapSize=${JSON.stringify(artistMat?.mapSize ?? null)} visible=${JSON.stringify(textVis[1])}`);
     judge('[3c] playing 歌名/歌手对象可见', textVis.every((v) => v === true), `visible=${JSON.stringify(textVis)}`);
+
+    // ── [5d] 文本锚点偏移刷新（C1 回归判据）────────────────────────────────────────
+    // horizontalalign=left ⇒ origin 是文本左缘，quad 中心 = 锚点 + 文本宽/2。标题变长后 position.x
+    // 必须跟着多走「半世界宽度差」——renderOffset 若冻结在装配期（空文本 = 0），每帧 syncWorld 会把
+    // 位置覆盖回锚点，position 不随标题变化。
+    // 注意：__objectRect().worldSize 是几何（本地）尺寸，未乘 mesh.scale；世界半宽差 = Δ几何宽 × scaleX / 2。
+    await sleep(200);
+    const rect38After = await rectOf(38);
+    const titlePosLate = (await materialOf(38))?.position ?? null;
+    const rect38Late = await rectOf(38);
+    const artistPosAfter = (await materialOf(39))?.position ?? null;
+    const sx38 = titleMat2?.scale?.[0] ?? null;
+    const worldW1 = rect38Before?.worldSize?.[0] ?? null;
+    const worldW2 = rect38After?.worldSize?.[0] ?? null;
+    const posX1 = titleMat1?.position?.[0] ?? null;
+    const posX2 = titleMat2?.position?.[0] ?? null;
+    const posY2 = titleMat2?.position?.[1] ?? null;
+    const posX3 = titlePosLate?.[0] ?? null;
+    const posY3 = titlePosLate?.[1] ?? null;
+    const halfWorldWidthDelta = worldW1 !== null && worldW2 !== null && sx38 !== null
+      ? ((worldW2 - worldW1) * sx38) / 2 : null;
+    // left 锚点 ⇒ 更长标题使中心右移（ΔposX > 0）；扩展名固定的容差 ±20%。
+    const dPosX = posX1 !== null && posX2 !== null ? posX2 - posX1 : null;
+    const relErr = dPosX !== null && halfWorldWidthDelta !== null && halfWorldWidthDelta !== 0
+      ? Math.abs(dPosX - halfWorldWidthDelta) / Math.abs(halfWorldWidthDelta) : null;
+    const offsetApplied38 = posX1 !== null && earlyPos38 ? posX1 - earlyPos38[0] > 2 : false;
+    const posStable = posX2 !== null && posX3 !== null
+      ? Math.hypot(posX3 - posX2, (posY3 ?? 0) - (posY2 ?? 0)) < 0.5 : false;
+    const worldWStable = worldW2 !== null && rect38Late?.worldSize?.[0] === worldW2;
+    // obj39 Artist 同族：标题变化不影响 artist 文本；但播放后位置必须含锚点偏移且稳定。
+    const artistOffsetApplied39 = earlyPos39 && artistPosBefore
+      ? artistPosBefore[0] - earlyPos39[0] > 2 : false;
+    const artistStable39 = artistPosBefore && artistPosAfter
+      ? Math.hypot(artistPosAfter[0] - artistPosBefore[0], artistPosAfter[1] - artistPosBefore[1]) < 0.5
+      : false;
+    judge('[5d] 文本锚点偏移随标题刷新（left 锚点：ΔpositionX ≈ 半世界宽度差 ±20%，且稳定）',
+      worldW1 !== null && worldW2 !== null && worldW2 > worldW1 && sx38 !== null
+        && halfWorldWidthDelta !== null && halfWorldWidthDelta > 0
+        && dPosX !== null && dPosX > 0 && relErr !== null && relErr <= 0.2
+        && offsetApplied38 && posStable && worldWStable
+        && artistOffsetApplied39 && artistStable39,
+      `obj38 worldSize(local) ${JSON.stringify(worldW1)}→${JSON.stringify(worldW2)} Δ=${worldW1 !== null && worldW2 !== null ? (worldW2 - worldW1).toFixed(3) : 'null'}` +
+      ` scaleX=${sx38 === null ? 'null' : sx38.toFixed(5)} ⇒ 期望Δpos=${halfWorldWidthDelta === null ? 'null' : halfWorldWidthDelta.toFixed(3)};` +
+      ` posX ${posX1 === null ? 'null' : posX1.toFixed(3)}→${posX2 === null ? 'null' : posX2.toFixed(3)}` +
+      ` Δ=${dPosX === null ? 'null' : dPosX.toFixed(3)} 相对误差=${relErr === null ? 'null' : (relErr * 100).toFixed(1) + '%'};` +
+      ` anchorX(stopped)=${earlyPos38 ? earlyPos38[0].toFixed(3) : 'null'} offsetApplied=${offsetApplied38};` +
+      ` stable=${posStable} Δ=${posX3 !== null && posX2 !== null ? Math.hypot(posX3 - posX2, (posY3 ?? 0) - (posY2 ?? 0)).toFixed(3) : 'null'}` +
+      ` worldWStable=${worldWStable};` +
+      ` obj39 posX stopped=${earlyPos39 ? earlyPos39[0].toFixed(3) : 'null'}→playing=${artistPosBefore ? artistPosBefore[0].toFixed(3) : 'null'}` +
+      ` offsetApplied=${artistOffsetApplied39} stable=${artistStable39}`);
     await probeMedia('playing');
     await shot('playing');
 

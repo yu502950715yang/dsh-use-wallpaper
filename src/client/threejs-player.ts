@@ -60,6 +60,7 @@ type BackgroundEntry = {
   sceneH: number;
   // 渲染 origin 与「对象锚点」的差（text 的 origin 含 anchorOffset；image/util 为 0）。
   // 时间线世界变换按对象锚点下发，写回时补上它才是 quad 中心的真实位置。
+  // text 的文本变化会改变锚点偏移 ⇒ 由 setBackgroundAnchorOffset 刷新，不能只存装配期值。
   renderOffset: [number, number, number];
   // 视差：node = 实际承载世界位置的 three 对象（非隔离 = mesh，隔离 = 合成 quad）；
   // depth 来自 scene.json 的 parallaxDepth（缺省 undefined = 不参与视差）。
@@ -1612,6 +1613,19 @@ export class ThreeScenePlayer {
       oz,
     );
     entry.parallaxApplied = false; // 让 tickParallax 下一帧按新基准重写
+    return true;
+  }
+
+  /**
+   * 刷新背景图层的锚点偏移（renderOffset = 渲染中心 − 对象锚点）。文本标题/字号变化后
+   * 由 text driver 按新 layout 调用；只记偏移，位置由随后的 update_background / syncWorld 写入。
+   */
+  setBackgroundAnchorOffset(backgroundId: number, offset: [number, number]): boolean {
+    const entry = this.backgroundEntries.get(backgroundId);
+    if (!entry) return false;
+    if (!Array.isArray(offset) || offset.length < 2
+      || !offset.every((n) => typeof n === 'number' && Number.isFinite(n))) return false;
+    entry.renderOffset = [offset[0], offset[1], entry.renderOffset[2]];
     return true;
   }
 
@@ -3293,6 +3307,9 @@ export function loadSceneToThree(
       const layout = t.driver.layout;
       const off = textLayerOffset(layout, t.horizontalAlign, t.verticalAlign, t.alignment, t.scale, t.anchor);
       const o = t.origin;
+      // 锚点偏移随文本宽度变化：先写回条目，否则下一帧 syncWorld 用装配期偏移（空文本 = 0）
+      // 覆盖位置，换标题持续半宽错位。
+      player.setBackgroundAnchorOffset(t.backgroundId, off);
       player.update_background(t.backgroundId, [o[0] + off[0], o[1] + off[1], o[2]]);
       player.resizeBackground(t.backgroundId, [layout.width, layout.height]);
     }

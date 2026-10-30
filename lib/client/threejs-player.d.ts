@@ -207,6 +207,11 @@ export declare class ThreeScenePlayer {
         scale: [number, number, number];
         angles: [number, number, number];
     }): boolean;
+    /**
+     * 刷新背景图层的锚点偏移（renderOffset = 渲染中心 − 对象锚点）。文本标题/字号变化后
+     * 由 text driver 按新 layout 调用；只记偏移，位置由随后的 update_background / syncWorld 写入。
+     */
+    setBackgroundAnchorOffset(backgroundId: number, offset: [number, number]): boolean;
     private warnUnsupportedTransform;
     isolatedObjects(): IsolatedObject[];
     setObjectOutput(id: number, texture: THREE.Texture): void;

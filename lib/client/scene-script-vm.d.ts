@@ -113,10 +113,12 @@ export declare class SceneScriptVm {
     /** 装载一个模块脚本。返回 false = eval 失败（该脚本被跳过，其余继续）。
      *  `label` 用于日志（应带 scene 对象 id —— 脚本首行都是 `'use strict';`，不带 id 无法定位）。
      *  `objectId` 供 thisLayer 解析；`scriptProperties` 是 scene.json 的覆盖值（注入给 createScriptProperties）；
-     *  `property` 非空 = WE 属性脚本（angles/origin/scale/color）：update(value) 收/回 Vec3。 */
+     *  `property` 非空 = WE 属性脚本（angles/origin/scale/color）：update(value) 收/回 Vec3。
+     *  `property === 'alpha'` 是标量属性：不调 init/update（Vec3 契约会把数组写进 LayerWrite.alpha），
+     *  alpha 由时间线/静态值驱动，媒体事件 handler 照常派发。 */
     load(source: string, label?: string, objectId?: number, scriptProperties?: Record<string, unknown>, property?: ObjectScriptProperty): boolean;
     private callOne;
-    /** 当前属性值的 quickjs Vec3 句柄（属性脚本入参；缺省值与 readVec 同口径）。 */
+    /** 当前属性值的 quickjs Vec3 句柄（属性脚本入参；缺省值与 readVec 同口径）。alpha 不走此路径（见 callOne）。 */
     private vecHandle;
     /** 每帧时间（供 engine.frametime）。必须在 updateAll 之前设置。 */
     setFrametime(dt: number): void;

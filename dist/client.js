@@ -26057,6 +26057,17 @@ var ThreeScenePlayer = class {
     entry.parallaxApplied = false;
     return true;
   }
+  /**
+   * 刷新背景图层的锚点偏移（renderOffset = 渲染中心 − 对象锚点）。文本标题/字号变化后
+   * 由 text driver 按新 layout 调用；只记偏移，位置由随后的 update_background / syncWorld 写入。
+   */
+  setBackgroundAnchorOffset(backgroundId, offset) {
+    const entry = this.backgroundEntries.get(backgroundId);
+    if (!entry) return false;
+    if (!Array.isArray(offset) || offset.length < 2 || !offset.every((n) => typeof n === "number" && Number.isFinite(n))) return false;
+    entry.renderOffset = [offset[0], offset[1], entry.renderOffset[2]];
+    return true;
+  }
   warnUnsupportedTransform(objectId, message) {
     if (this.warnedTransformUnsupported.has(objectId)) return;
     this.warnedTransformUnsupported.add(objectId);
@@ -27208,6 +27219,7 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
       const layout = t.driver.layout;
       const off = textLayerOffset(layout, t.horizontalAlign, t.verticalAlign, t.alignment, t.scale, t.anchor);
       const o = t.origin;
+      player.setBackgroundAnchorOffset(t.backgroundId, off);
       player.update_background(t.backgroundId, [o[0] + off[0], o[1] + off[1], o[2]]);
       player.resizeBackground(t.backgroundId, [layout.width, layout.height]);
     }
@@ -32591,7 +32603,9 @@ var SceneScriptVm = class _SceneScriptVm {
   /** 装载一个模块脚本。返回 false = eval 失败（该脚本被跳过，其余继续）。
    *  `label` 用于日志（应带 scene 对象 id —— 脚本首行都是 `'use strict';`，不带 id 无法定位）。
    *  `objectId` 供 thisLayer 解析；`scriptProperties` 是 scene.json 的覆盖值（注入给 createScriptProperties）；
-   *  `property` 非空 = WE 属性脚本（angles/origin/scale/color）：update(value) 收/回 Vec3。 */
+   *  `property` 非空 = WE 属性脚本（angles/origin/scale/color）：update(value) 收/回 Vec3。
+   *  `property === 'alpha'` 是标量属性：不调 init/update（Vec3 契约会把数组写进 LayerWrite.alpha），
+   *  alpha 由时间线/静态值驱动，媒体事件 handler 照常派发。 */
   load(source, label, objectId, scriptProperties, property) {
     const ctx = this.ctx;
     const sanitized = String(source ?? "").replace(/\bexport\s+/g, "");
@@ -32674,6 +32688,7 @@ return {
   }
   callOne(m, fn, mode) {
     if (!m.active || !fn) return void 0;
+    if (m.property === "alpha" && mode === "value") return void 0;
     this.currentKey = m.layerKey;
     this.currentProperty = m.property ?? "";
     this.budget = this.stepBudget;
@@ -32707,7 +32722,7 @@ return {
     }
     return value;
   }
-  /** 当前属性值的 quickjs Vec3 句柄（属性脚本入参；缺省值与 readVec 同口径）。 */
+  /** 当前属性值的 quickjs Vec3 句柄（属性脚本入参；缺省值与 readVec 同口径）。alpha 不走此路径（见 callOne）。 */
   vecHandle(property, objectId) {
     const ctx = this.ctx;
     const cur = this.state.read(objectId)[property];
@@ -34746,6 +34761,7 @@ function createThreeSceneRenderer(opts) {
         if (timelineRuntime) {
           timelineRuntime.applyInitial();
           applyLayerState(currentScriptHost?.drainDirty() ?? /* @__PURE__ */ new Map(), layerLookup);
+          timelineRuntime.syncWorld();
         }
         if (sceneNeedsMedia(desc) && (currentScriptHost || mediaThumbnailObjects.size > 0)) {
           const scriptHost = currentScriptHost;

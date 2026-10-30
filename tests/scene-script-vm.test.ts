@@ -681,6 +681,26 @@ describe('SceneScriptVm 媒体事件', () => {
     vm!.dispose();
   });
 
+  // I1（review round 1）：alpha 是标量属性，Vec3 init/update 契约不适用 —— 若照常调用，脚本返回
+  // Vec3 会被写进 `LayerWrite.alpha`（Math.min(1, array) = NaN）。守卫后 init/update 不执行
+  //（alpha 由时间线/静态值驱动），媒体回调照常派发。
+  it('alpha 属性脚本：不调 init/update（无脏写入、状态不被污染），媒体回调照常派发', async () => {
+    const { state, anims, userProps } = setup();
+    const vm = await SceneScriptVm.create({ userProperties: userProps, state, anims });
+    vm!.load(`
+      export function init(value){ thisLayer.alpha = 0; return value; }
+      export function update(value){ thisLayer.alpha = 0; return value; }
+      export function mediaThumbnailChanged(event){ thisLayer.alpha = event.hasThumbnail ? 0.5 : 0.25; }`,
+    'obj 45 alpha', 45, undefined, 'alpha');
+    vm!.initAll();
+    vm!.updateAll();
+    expect(state.takeDirty().size).toBe(0);
+    expect(state.read(45).alpha).toBeUndefined();
+    expect(vm!.dispatchMedia({ event: 'mediaThumbnailChanged', thumbnail: THUMB })).toBe(1);
+    expect(state.read(45).alpha).toBe(0.5); // 标量写入，不是 Vec3 数组
+    vm!.dispose();
+  });
+
   it('media handler 抛错：停用该脚本并 warn，不计入成功数（与 callOne 同语义）', async () => {
     const { state, anims, userProps, warns } = setup();
     const vm = await SceneScriptVm.create({ userProperties: userProps, state, anims, onWarn: (m) => warns.push(m) });
