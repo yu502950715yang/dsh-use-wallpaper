@@ -460,6 +460,39 @@ getEventListeners(window).pointermove?.length
 
 ---
 
+### 2.17 手工验收清单：媒体集成（Windows SMTC + 时间线属性动画，2026-10-30）
+
+> **需人工验收**：以下需人在运行中的 DSH 桌面 App 里操作（播放器播放/暂停/切歌 + 目视），agent 无法代跑。
+> **前置**：已 `npm run build` + `npm run build:client`，重启 harness 后**强刷** GUI；选中 `3797976859`（小作 2(有声)）；本机装有会把会话注册到系统 SMTC 的播放器（Spotify / 网易云 / Groove 等），并**在播放器中实际播放音乐**。
+> **自动化已覆盖**：事件 diff / 轮询启停（`tests/media-input.test.ts`）、会话选择 / 行解析 / 空闲退出与退避（`tests/media-session.test.ts`）、VM 事件与 `thisObject.getAnimation`（`tests/scene-script-vm.test.ts`）、时间线解析与求值（`tests/scene-timeline.test.ts`）、封面方向与共享纹理（`tests/media-texture.test.ts`）、端到端 `npm run e2e:media`（13 条：白框 / 文本 / 封面方向 / 主色 / 淡入滑入 / 停止隐藏）与 `node e2e/verify/verify-media-layer.mjs --regression`（4 张回归 + `2597392171` Fog loop 复跑）。**真机观感、SMTC 会话选择与隐私仍需人工验收**。
+> **隐私口径**：验收记录**不得包含真实曲目信息**（不截图歌名、不把 title/artist 贴进 issue）；日志与数据目录检查只记录「有无」。
+
+| # | 用例 | 步骤 | 期望结果 | 失败表现 |
+|---|---|---|---|---|
+| M1 | 无媒体会话：白框消失 | 选中 `3797976859`，先停止播放器（或退出）后再选中壁纸。 | 封面框 / 歌名 / 歌手全部隐藏，媒体区**无白色方块**；其余场景画面正常。 | 仍见白框 → 装配期 `playback(STOPPED)` 未派发 / 媒体层未被脚本隐藏。 |
+| M2 | 播放：封面/文本/主色/动画 | 桌面 App 中播放音乐。 | ≤2s 内：封面出现且**方向正确**（人像/文字不上下颠倒）、歌名与歌手正确、封面边框主色跟随封面、媒体区**淡入 + 滑入**后停稳。 | 封面倒置 → flipY 约定回归；主色不变 → `mediaThumbnailChanged`/调色板链路；无淡入滑入 → 时间线未播。 |
+| M3 | 暂停 / 恢复 | 播放器暂停 → 观察；再恢复播放。 | 暂停时媒体层**保持显示**（暂停事件 = PAUSED ≠ STOPPED，脚本仍可见），封面/文本不消失；恢复后状态照常。 | 暂停即隐藏 → 事件状态映射错（2 被当 0）。 |
+| M4 | 切歌：全部更新且不残留 | 播放器中切到下一首（不同封面/歌名/歌手）。 | 封面、歌名、歌手、边框主色在 ≤2s 内整体更新；**旧封面不残留/不闪回**。 | 文本更新但封面不变 → `thumbnailRev` 未变 / 缓存键错；先闪旧图 → 切歌未先清纹理。 |
+| M5 | 停止：媒体层再隐藏 | 播放器停止播放（或关闭播放器）。 | ≤2s 内媒体层全部隐藏，无白框、无残留文本，场景继续渲染。 | 文本/封面残留 → `PLAYBACK_STOPPED` 未派发或脚本未收到。 |
+| M6 | 面板开关：关闭 / 重开 | 播放中打开设置 →「Wallpaper 壁纸」→「显示效果」→ 关闭「媒体集成（显示本机播放的歌曲封面/歌名）」；再打开。 | 关闭 ⇒ 媒体层**立即**隐藏、后续不再有 `now-playing` 请求；重开 ⇒ ≤2s 内媒体层恢复（曲目未变也要重新出现）。 | 关闭后仍轮询/仍显示 → 运行期开关链路；重开不恢复 → `stop()` 清 `prev` 后首帧未重放。 |
+| M7 | 隐私与 watcher 残留 | 停止播放并关闭壁纸（或切到非媒体壁纸）后等待 **>20s**。 | 浏览器 Console / DSH 日志中**没有** title/artist/album；数据目录 `~/.dsh-use-wallpaper`（或 `DSH_USE_WALLPAPER_DATA_DIR`）**无新增文件**；空闲 20s 后无本插件 watcher 残留：`Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" \| Where-Object CommandLine -like '*GlobalSystemMediaTransportControls*'` 无输出。 | 日志出现曲目名 → 隐私回归；目录新增文件 → 封面落盘；20s 后仍有该 powershell 进程 → 空闲退出未生效。 |
+| M8 | 其它平台 / 失败路径（可选） | 浏览器 GUI 中播放音乐（桌面 App 之外），或临时让 PowerShell 不可用。 | 浏览器 GUI 下可能命中 Chromium 自会话过滤边界（误选/漏选均记边界，不判红）；无 PowerShell / 失败时媒体层隐藏、面板给原因、渲染不受影响。 | 面板无提示 / 渲染被阻塞 → 降级链回归。 |
+
+**勾选记录**（待验收）：
+
+- [ ] M1：无媒体会话白框消失
+- [ ] M2：播放（封面方向 / 歌名歌手 / 主色 / 淡入滑入）
+- [ ] M3：暂停保持显示、恢复
+- [ ] M4：切歌更新且旧封面不残留
+- [ ] M5：停止后媒体层隐藏
+- [ ] M6：面板开关关闭 / 重开
+- [ ] M7：隐私（日志无曲目）+ 数据目录无新增 + 20s 无 watcher 残留
+- [ ] M8：浏览器 GUI / 失败路径（可选）
+
+**e2e 复跑（2026-10-30，本机 headless Edge / SwiftShader）**：`npm run e2e:media` exit 0（13/13 判据）；`node e2e/verify/verify-media-layer.mjs --regression` exit 0（4 张 17/17 判据，含 `2597392171` Fog 0/800/1600ms 位移）。
+
+---
+
 ## 3. 卸载方法
 
 ### 3.1 标准卸载（推荐）

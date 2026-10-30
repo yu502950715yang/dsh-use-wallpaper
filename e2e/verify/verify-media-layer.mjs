@@ -1,6 +1,8 @@
 // 媒体集成 e2e：生产 lib/ 渲染真实场景壁纸，自起 server mock now-playing 两条路由 + headless Edge/CDP。
 // 判据：装配即隐藏（白像素 0）/ 播放显示文本且画布宽度随标题变化 / 封面纹理与主色 / 时间线淡入·世界变换
 // / 文本锚点偏移随标题刷新 / 停止再隐藏；退出码 0/1。
+// `--regression`：另一条独立路径，依次渲染 4 张既有壁纸做回归对照（无媒体脚本 ⇒ 不得发起轮询），
+// 并复跑 2597392171 的 Fog loop 动画断言；默认（无参数）行为不变。
 import { createServer } from 'node:http';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, readdirSync } from 'node:fs';
 import { spawn } from 'node:child_process';
@@ -14,20 +16,31 @@ import { encodePng } from '../lib/png-encode.mjs';
 const WALLPAPER_ID = '3797976859'; // 带媒体层（歌名/歌手/封面框）的场景壁纸
 const MEDIA_LAYER_IDS = [35, 40, 45];
 const COVER_REGION = [1160, 285, 1245, 360]; // [2a] 封面区域（objectRect(45) 不可得时的兜底）
+// 回归对照素材：三张受「每对象多脚本 / 时间线」影响的既有壁纸 + 带 solid util 的 Leon 场景。
+// 这些壁纸都没有媒体脚本、也没有 $mediaThumbnail ⇒ 不得发起任何 now-playing 请求。
+const REGRESSION_IDS = ['2832263418', '3793620838', '2597392171', '3789452668'];
+const FOG_OBJECT_ID = 251; // 2597392171 的「Fog 1」：origin loop 时间线（fps=1.36 / length=34）
+const FOG_SAMPLE_MS = [0, 800, 1600];
 
 const here = dirname(fileURLToPath(import.meta.url));
 const OUT = join(OUT_DIR, 'media-layer');
+// 回归截图按任务口径落在 e2e/.out/media/（与默认媒体判据的 media-layer/ 分开）。
+const OUT_REGRESSION = join(OUT_DIR, 'media');
 mkdirSync(OUT, { recursive: true });
+mkdirSync(OUT_REGRESSION, { recursive: true });
 const PORT = httpPort(9834);
 const CDP_PORT = cdpPort(9247);
 const USE_GPU = flagOf('gpu');
+const REGRESSION = flagOf('regression');
 const ID = argOf('id', WALLPAPER_ID);
 const WS = argOf('workshop', WE_WORKSHOP);
 const WE = argOf('assets', WE_ASSETS);
-const PKG = requireFile(
-  join(WS, ID, 'scene.pkg'),
-  `本机缺少壁纸 ${ID}（用 --workshop=<dir> 指定 Steam workshop/content/431960 目录）`,
-);
+const PKG = REGRESSION
+  ? null
+  : requireFile(
+    join(WS, ID, 'scene.pkg'),
+    `本机缺少壁纸 ${ID}（用 --workshop=<dir> 指定 Steam workshop/content/431960 目录）`,
+  );
 
 // quickjs 沙箱 wasm：优先 dist/static/quickjs.wasm（build:client 的产物，页面加载的就是它），
 // 缺省回退 node_modules（pnpm 下真实路径在 .pnpm/<pkg>@<ver>/node_modules/...）。
@@ -99,7 +112,20 @@ const mediaSnapshot = () => ({
 });
 
 const { PkgReader } = await import('../../lib/host/pkg-reader.js');
-const reader = new PkgReader(PKG);
+// 每个壁纸 id 一个 PkgReader（回归模式要连续渲染多张；默认模式只有一张）。
+const readers = new Map();
+function readerOf(id) {
+  const cached = readers.get(id);
+  if (cached) return cached;
+  const pkg = join(WS, id, 'scene.pkg');
+  if (!existsSync(pkg)) return null;
+  const created = new PkgReader(pkg);
+  readers.set(id, created);
+  return created;
+}
+if (PKG) readerOf(ID);
+// 服务端收到的 now-playing 请求数（回归模式判「不该启动媒体轮询」；默认模式不参与判定）。
+let mediaRequests = 0;
 const MIME = {
   '.js': 'text/javascript', '.mjs': 'text/javascript', '.json': 'application/json',
   '.wasm': 'application/wasm', '.png': 'image/png', '.ttf': 'font/ttf', '.otf': 'font/otf',
@@ -124,8 +150,10 @@ const server = createServer((req, res) => {
     if (p === '/' || p === '/index.html') return send(HTML, 'text/html; charset=utf-8');
     if (p === '/harness.js') return send(bundle, 'text/javascript; charset=utf-8');
     // ── mock 媒体路由（不 spawn PowerShell；标题全为假数据）──────────────────────────
-    if (p === '/wallpapers/now-playing') return json(mediaSnapshot());
+    // 回归素材都没有媒体脚本：仍然计数，任何 now-playing 请求都说明「零开销」承诺被打破。
+    if (p === '/wallpapers/now-playing') { mediaRequests += 1; return json(mediaSnapshot()); }
     if (p === '/wallpapers/now-playing/thumbnail') {
+      mediaRequests += 1;
       if (!artBytes) { res.writeHead(404); return res.end('nf'); }
       return send(artBytes, 'image/png');
     }
@@ -136,10 +164,12 @@ const server = createServer((req, res) => {
       if (existsSync(local)) return send(readFileSync(local), MIME[extname(file)] ?? 'application/octet-stream');
       console.log('   [404 static]', file); res.writeHead(404); return res.end('nf');
     }
-    if (p.startsWith('/wallpapers/scene/')) {
+    const sceneMatch = /^\/wallpapers\/scene\/([^/]+)\/asset$/.exec(p);
+    if (sceneMatch) {
       const name = url.searchParams.get('name') ?? '';
       // 复刻 host 的两级查找：scene.pkg 优先，其次 WE 引擎 assets 目录。
-      const entry = reader.readEntry(name);
+      const reader = readerOf(decodeURIComponent(sceneMatch[1]));
+      const entry = reader ? reader.readEntry(name) : null;
       if (entry) return send(entry, MIME[extname(name)] ?? 'application/octet-stream');
       const engineBase = resolve(join(WE, 'assets'));
       const engine = name ? resolve(engineBase, name) : engineBase;
@@ -152,7 +182,10 @@ const server = createServer((req, res) => {
     }
     if (p === '/wallpapers/particle-texture') {
       const name = url.searchParams.get('name') ?? '';
-      const inPkg = reader.readEntry(`materials/${name}.tex`);
+      const ptexId = url.searchParams.get('id') ?? '';
+      // 默认模式保持旧行为（无 id 时用默认壁纸的 pkg）；回归模式按 id 取各自的 pkg。
+      const reader = ptexId ? readerOf(ptexId) : (PKG ? readerOf(ID) : null);
+      const inPkg = reader ? reader.readEntry(`materials/${name}.tex`) : null;
       if (inPkg) return send(inPkg, 'application/octet-stream');
       const file = resolve(join(WE, 'assets', 'materials'), name + '.tex');
       if (existsSync(file) && statSync(file).isFile()) return send(readFileSync(file), 'application/octet-stream');
@@ -231,12 +264,171 @@ const judge = (name, pass, detail) => {
   console.log(`  ${pass ? '✅' : '❌'} ${name}  ${detail}`);
 };
 const VW = 1600, VH = 900;
+
+// ── 回归模式（--regression）────────────────────────────────────────────────────
+// 判据口径（与默认媒体判据完全独立）：
+// 1) `__ready === true`，`__logs` 无 error 级；已知良性噪音只豁免 favicon 一类页面级 404，
+//    warning（如 2832263418 的 chromatic_aberration shader 编译失败）属既有已知项 ⇒ 不判红但打印；
+// 2) `__listObjects().length > 0`（装配出对象）；
+// 3) 截图写 `e2e/.out/media/regression-<id>.png`；
+// 4) 这些壁纸没有媒体脚本/封面绑定 ⇒ 不得发起 now-playing 请求（零轮询承诺）；
+// 5) `2597392171` 的 Fog（obj 251）origin loop：0/800/1600ms 三点均有限、相邻位移 > 1、落在场景×2 内。
+const BENIGN_LOG_PATTERNS = [
+  /favicon\.ico/i, // 本地 harness 页没有 favicon，Chromium 自动请求 404
+];
+const isBenignLog = (text) => BENIGN_LOG_PATTERNS.some((re) => re.test(text));
+
+/** 从 `__logs`（harness 的 console 镜像）分出致命 error 与允许的 warning。 */
+function classifyPageLogs(entries) {
+  const errors = [];
+  const warnings = [];
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    const level = String(entry?.level ?? '');
+    const text = String(entry?.text ?? '');
+    if (level === 'warn') { warnings.push(text); continue; }
+    if (level === 'error' && !isBenignLog(text)) errors.push(text);
+  }
+  return { errors, warnings };
+}
+
+async function waitNavigated(id) {
+  const deadline = Date.now() + TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    try {
+      const search = String(await evalJs('location.search'));
+      if (search.includes(`id=${id}`)) return true;
+    } catch { /* CDP 正在导航 */ }
+    await sleep(100);
+  }
+  return false;
+}
+
+function pngBytesToFile(name, buf) {
+  const file = join(OUT_REGRESSION, name);
+  writeFileSync(file, buf);
+  return { file, bytes: buf.length };
+}
+
+async function runRegression() {
+  console.log(`regression mode: ${REGRESSION_IDS.join(' / ')}（截图 → ${OUT_REGRESSION}）`);
+  for (const id of REGRESSION_IDS) {
+    // 缺素材直接 fatal（e2e 依赖本机库；静默跳过会变成假绿）。
+    requireFile(join(WS, id, 'scene.pkg'), `本机缺少回归素材 ${id}`);
+    logs = [];
+    const mediaBefore = mediaRequests;
+    await send2('Page.navigate', { url: `http://127.0.0.1:${PORT}/?id=${id}&vw=${VW}&vh=${VH}` });
+    const navigated = await waitNavigated(id);
+    const ready = navigated && await waitReady();
+    await sleep(600); // harness 自己等 1200ms；这里只让帧循环/时间线稳定
+    let info = null;
+    try {
+      info = JSON.parse(await evalJs(`JSON.stringify({
+        ready: window.__ready === true,
+        logs: window.__logs ?? [],
+        harness: (window.__logs ?? []).filter((l) => String(l.text ?? '').startsWith('[harness]')).map((l) => l.text),
+        objectCount: typeof window.__listObjects === 'function' ? (window.__listObjects() ?? []).length : null,
+        // 场景正交尺寸：player 的 sceneWidth/sceneHeight（harness 已暴露 __player；Fog 包围盒上限用）。
+        // 取不到时回退「已登记对象里最大的几何世界尺寸」——背景层通常就等于场景尺寸。
+        sceneSize: (() => {
+          const p = window.__player;
+          if (p && Number.isFinite(p.sceneWidth) && Number.isFinite(p.sceneHeight)) {
+            return { width: p.sceneWidth, height: p.sceneHeight };
+          }
+          let best = null;
+          for (const o of (typeof window.__listObjects === 'function' ? (window.__listObjects() ?? []) : [])) {
+            const w = o?.worldSize?.[0], h = o?.worldSize?.[1];
+            if (Number.isFinite(w) && Number.isFinite(h) && (!best || w * h > best.width * best.height)) {
+              best = { width: w, height: h };
+            }
+          }
+          return best;
+        })(),
+      })`) ?? 'null');
+    } catch (e) {
+      info = { error: String(e && e.message ? e.message : e) };
+    }
+    const harnessLine = info?.harness?.[0] ?? '(未捕获 [harness] 日志)';
+    console.log(`  [${id}] ${harnessLine}`);
+    const { errors, warnings } = classifyPageLogs(info?.logs);
+    for (const w of warnings.slice(0, 6)) console.log(`   [warn] ${w.slice(0, 200)}`);
+    const cdpExceptions = logs.filter((l) => l.startsWith('[exception]') && !isBenignLog(l));
+    // 判据 1：就绪 + 无 error/exception（warning 不判红，但计数入 detail）。
+    judge(`[R1] ${id} 就绪且日志无 error/exception`,
+      ready && info?.ready === true && errors.length === 0 && cdpExceptions.length === 0,
+      `ready=${JSON.stringify(info?.ready)} nav=${navigated} errors=${errors.length} cdpException=${cdpExceptions.length}` +
+      ` warnings=${warnings.length}${errors.length ? ' firstError=' + JSON.stringify(errors[0].slice(0, 220)) : ''}` +
+      `${cdpExceptions.length ? ' firstCdp=' + JSON.stringify(cdpExceptions[0].slice(0, 220)) : ''}` +
+      `${info?.error ? ' evalError=' + info.error : ''}`);
+    // 判据 2：对象齐全。
+    const objectCount = info?.objectCount ?? null;
+    judge(`[R2] ${id} 对象齐全（__listObjects > 0）`, typeof objectCount === 'number' && objectCount > 0,
+      `objects=${JSON.stringify(objectCount)} sceneSize=${JSON.stringify(info?.sceneSize ?? null)}`);
+    // 判据 3：截图落盘（默认媒体判据的媒体层截图不受影响）。
+    let shotInfo = null;
+    try {
+      const r = await send2('Page.captureScreenshot', { format: 'png' });
+      shotInfo = pngBytesToFile(`regression-${id}.png`, Buffer.from(r.data, 'base64'));
+    } catch (e) {
+      console.log(`  [${id}] 截图失败: ${String(e && e.message ? e.message : e)}`);
+    }
+    judge(`[R3] ${id} 截图已落盘`, !!shotInfo && shotInfo.bytes > 0,
+      shotInfo ? `${shotInfo.file} ${shotInfo.bytes}B` : 'captureScreenshot 失败');
+    // 判据 4：无媒体轮询（这些壁纸不声明媒体脚本/封面绑定）。
+    const mediaDelta = mediaRequests - mediaBefore;
+    judge(`[R4] ${id} 未发起媒体轮询`, mediaDelta === 0,
+      `now-playing 请求数=${mediaDelta}（累计 ${mediaRequests}）`);
+
+    // 判据 5：2597392171 的 Fog origin loop 可复跑断言（Fog 现在会动，属预期）。
+    if (id === '2597392171') {
+      const sceneSize = info?.sceneSize ?? null;
+      let fog = null;
+      try {
+        await evalJs(`(() => {
+          window.__fogSamples = [];
+          const t0 = performance.now();
+          for (const at of ${JSON.stringify(FOG_SAMPLE_MS)}) {
+            setTimeout(() => {
+              const m = window.__objectMaterialInfo(${FOG_OBJECT_ID});
+              window.__fogSamples.push({ at, t: performance.now() - t0, pos: m ? m.position : null });
+            }, at);
+          }
+          return true;
+        })()`);
+        await sleep(FOG_SAMPLE_MS[FOG_SAMPLE_MS.length - 1] + 400);
+        fog = JSON.parse(await evalJs('JSON.stringify(window.__fogSamples ?? null)') ?? 'null');
+      } catch (e) {
+        console.log(`  [${id}] Fog 采样失败: ${String(e && e.message ? e.message : e)}`);
+      }
+      const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
+      const points = Array.isArray(fog)
+        ? fog.map((s) => (Array.isArray(s?.pos) && s.pos.length === 3 && s.pos.every(isNum) ? s.pos : null))
+        : [];
+      const allFinite = points.length === FOG_SAMPLE_MS.length && points.every((p) => p !== null);
+      const steps = [];
+      for (let i = 1; i < points.length; i += 1) {
+        if (!points[i - 1] || !points[i]) { steps.push(null); continue; }
+        steps.push(Math.hypot(points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1]));
+      }
+      const runs = steps.length > 0 && steps.every((s) => s !== null && s > 1);
+      const w = sceneSize?.width ?? null, h = sceneSize?.height ?? null;
+      const inBounds = allFinite && isNum(w) && isNum(h)
+        && points.every((p) => Math.abs(p[0]) < w * 2 && Math.abs(p[1]) < h * 2);
+      judge('[R5] 2597392171 Fog loop 时间线在跑（0/800/1600ms）',
+        allFinite && runs && inBounds,
+        `samples=${points.length}/${FOG_SAMPLE_MS.length} finite=${allFinite}` +
+        ` positions=${JSON.stringify(points)} steps=${JSON.stringify(steps.map((s) => (s === null ? null : Number(s.toFixed(2)))))}` +
+        ` scene=${JSON.stringify(sceneSize)} bounds(2×)=${JSON.stringify([w === null ? null : w * 2, h === null ? null : h * 2])}`);
+    }
+  }
+}
+
 try {
   await new Promise((r) => server.listen(PORT, r));
-  console.log(`harness server: http://127.0.0.1:${PORT}/  （壁纸 ${ID}）`);
+  console.log(`harness server: http://127.0.0.1:${PORT}/  （${REGRESSION ? '回归模式 ' + REGRESSION_IDS.length + ' 张' : '壁纸 ' + ID}）`);
 
   edge = spawn(resolveEdgePath(), [
-    '--headless=new', `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${join(OUT, '.edge-media-layer')}`,
+    '--headless=new', `--remote-debugging-port=${CDP_PORT}`,
+    `--user-data-dir=${REGRESSION ? join(OUT_REGRESSION, '.edge-regression') : join(OUT, '.edge-media-layer')}`,
     '--no-first-run', '--no-default-browser-check', '--mute-audio', `--window-size=${VW},${VH}`,
     ...(USE_GPU ? ['--use-angle=d3d11', '--ignore-gpu-blocklist'] : ['--enable-unsafe-swiftshader']),
     '--disable-gpu-sandbox', 'about:blank',
@@ -269,6 +461,9 @@ try {
   // 固定视口：headless 新建窗口的 innerHeight 会被任务栏/窗口夹小，画布与截图就不是 1600×900。
   await send2('Emulation.setDeviceMetricsOverride', { width: VW, height: VH, deviceScaleFactor: 1, mobile: false });
 
+  if (REGRESSION) {
+    await runRegression();
+  } else {
   await send2('Page.navigate', { url: `http://127.0.0.1:${PORT}/?id=${ID}&vw=${VW}&vh=${VH}` });
   const ready = await waitReady();
   if (!ready) {
@@ -467,7 +662,8 @@ try {
       `visible=${JSON.stringify(mediaVisibleStopped2)}`);
     await probeMedia('stopped-again');
     await shot('stopped-again');
-  }
+  } // 默认媒体判据（if (!ready) … else 的收尾）
+  } // if (REGRESSION) … else 的收尾
 } catch (e) {
   console.log('[fatal]', e && e.stack ? e.stack : String(e));
   process.exitCode = 1;

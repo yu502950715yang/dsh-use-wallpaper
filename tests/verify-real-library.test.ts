@@ -13,6 +13,12 @@ import { resolveEffectChain } from '../src/client/shader/effect-chain.js';
 
 const WALLPAPER_DIR = 'D:/Steam/steamapps/workshop/content/431960';
 const hasLibrary = existsSync(WALLPAPER_DIR);
+// WE 引擎内置素材目录（与 e2e/config.mjs 的 WE_ASSETS 同源）：仅作「引擎确实提供该材质」的
+// 本机佐证；目录不在已知位置时该条断言跳过，不影响「materials/util/* = 引擎内置」的分类判据。
+const WE_ENGINE_ASSETS = join(
+  process.env.WE_ASSETS ?? 'D:/Steam/steamapps/common/wallpaper_engine',
+  'assets',
+);
 
 interface Entry { name: string; off: number; size: number }
 
@@ -38,7 +44,21 @@ function unpack(buf: Uint8Array): { entries: Entry[]; dataStart: number; files: 
 }
 
 // 模拟 scene-renderer.resolveImageTexture 的 JSON 推导链路（内存版，使用修正后的 tex 路径规则）
-function resolveImageTexPath(objImage: string, files: Map<string, Uint8Array>): { texPath: string | null; reason: string } {
+//
+// 特例：WE 把**引擎 assets 目录也挂载在 VFS 根上**（host `/wallpapers/scene/<id>/asset` 的
+// 「pkg → <WE>/assets」两级查找），因此 `materials/util/*` 这类引擎内置材质**不在 scene.pkg 内**
+// 是正常形态（3797976859 的封面模型就指向 `materials/util/solidlayer_instance.json`）。
+// 判据：只有已知引擎内置前缀的缺失材质视作「引擎提供」、不计入 evidence；其它缺失仍按链路断报错。
+const ENGINE_MATERIAL_PREFIXES = ['materials/util/'];
+
+function isEngineProvidedMaterial(matRef: string): boolean {
+  return ENGINE_MATERIAL_PREFIXES.some((prefix) => matRef.startsWith(prefix));
+}
+
+function resolveImageTexPath(
+  objImage: string,
+  files: Map<string, Uint8Array>,
+): { texPath: string | null; reason: string; engineProvided?: boolean } {
   const modelRaw = files.get(objImage);
   if (!modelRaw) return { texPath: null, reason: `model 不存在: ${objImage}` };
   let model: any;
@@ -47,7 +67,10 @@ function resolveImageTexPath(objImage: string, files: Map<string, Uint8Array>): 
   const matRef = model?.material;
   if (typeof matRef !== 'string' || !matRef) return { texPath: null, reason: `model 无 material 字段: ${objImage}` };
   const matRaw = files.get(matRef);
-  if (!matRaw) return { texPath: null, reason: `material 不存在: ${matRef}` };
+  if (!matRaw) {
+    if (isEngineProvidedMaterial(matRef)) return { texPath: null, reason: '', engineProvided: true };
+    return { texPath: null, reason: `material 不存在: ${matRef}` };
+  }
   let mat: any;
   try { mat = JSON.parse(Buffer.from(matRaw).toString('utf8')); }
   catch { return { texPath: null, reason: `material 非 JSON: ${matRef}` }; }
@@ -76,6 +99,8 @@ describe.skipIf(!hasLibrary)('全库 scene.pkg 回归验证', () => {
     const evidence: string[] = [];
     let okScene = 0, failScene = 0, okImg = 0, failImg = 0, okParticle = 0, failParticle = 0;
     let okEffect = 0, failEffect = 0;
+    // 引擎内置材质（`materials/util/*`）不在 pkg 内：只计数，不计入 evidence（见 resolveImageTexPath 注释）。
+    let engineMaterial = 0;
     const texFormats = new Map<number, number>();
     const texContainers = new Map<string, number>();
     const texImageFormats = new Map<number, number>();
@@ -124,8 +149,11 @@ describe.skipIf(!hasLibrary)('全库 scene.pkg 回归验证', () => {
               failImg++;
             }
           } else {
-            evidence.push(`[${id}] ${magic} image "${obj.name}" (${obj.image}) 链路断: ${r.reason}`);
-            failImg++;
+            if (r.engineProvided) engineMaterial++;
+            else {
+              evidence.push(`[${id}] ${magic} image "${obj.name}" (${obj.image}) 链路断: ${r.reason}`);
+              failImg++;
+            }
           }
         } else if (obj.kind === 'particle' && obj.particle) {
           const pRaw = files.get(obj.particle);
@@ -155,6 +183,7 @@ describe.skipIf(!hasLibrary)('全库 scene.pkg 回归验证', () => {
     console.log(`\n=== 汇总 ===`);
     console.log(`scene.json 解析: 成功 ${okScene} / 失败 ${failScene}`);
     console.log(`image 对象: 成功 ${okImg} / 失败 ${failImg}`);
+    console.log(`image 材质: 引擎内置（materials/util/*，pkg 内无文件、运行时由 <WE>/assets 提供） ${engineMaterial}`);
     console.log(`particle 对象: 成功 ${okParticle} / 失败 ${failParticle}`);
     console.log(`效果链（所有对象）: 成功 ${okEffect} / 失败 ${failEffect}`);
     console.log(`tex 格式分布: ${JSON.stringify(Object.fromEntries([...texFormats.entries()].map(([k, v]) => [k, v])))}`);
@@ -173,6 +202,31 @@ describe.skipIf(!hasLibrary)('全库 scene.pkg 回归验证', () => {
     // 三方 A/B 已证与代码无关，见 AGENT.md §7.11）。**精确计数与语义**由确定性层
     // `tests/synthetic-library.test.ts`（合成 fixture，不依赖本机素材）负责。
     expect(okEffect).toBeGreaterThan(0);
+  });
+});
+
+// 引擎内置材质的分类（确定性，不依赖本机壁纸库）：缺失 ≠ 链路断的唯一豁免是已知引擎前缀。
+describe('引擎内置材质判定', () => {
+  const filesWithMaterial = (material: string) => new Map<string, Uint8Array>([
+    ['models/x.json', Buffer.from(JSON.stringify({ material }))],
+  ]);
+
+  it('materials/util/* 缺失 ⇒ 视作引擎提供、不计入 evidence', () => {
+    const r = resolveImageTexPath('models/x.json', filesWithMaterial('materials/util/solidlayer_instance.json'));
+    expect(r.engineProvided).toBe(true);
+    expect(r.texPath).toBeNull();
+    expect(r.reason).toBe('');
+  });
+
+  it('其它路径的缺失材质仍按「material 不存在」报链路断（不弱化证据）', () => {
+    const r = resolveImageTexPath('models/x.json', filesWithMaterial('materials/workshop/9999/missing.json'));
+    expect(r.engineProvided).toBeFalsy();
+    expect(r.reason).toContain('material 不存在');
+  });
+
+  it('本机 WE 引擎目录存在时，solidlayer_instance.json 确实由引擎提供', () => {
+    if (!existsSync(WE_ENGINE_ASSETS)) return; // 引擎不在已知位置 ⇒ 无法佐证，跳过该断言
+    expect(existsSync(join(WE_ENGINE_ASSETS, 'materials/util/solidlayer_instance.json'))).toBe(true);
   });
 });
 
