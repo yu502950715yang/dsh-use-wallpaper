@@ -188,6 +188,9 @@ export interface TimelineRuntimeOptions {
 export interface TimelineRuntime extends TimelineAnimationSource {
   advance(dt: number): void;
   sampleAndWrite(): void;
+  /** 装配期**脚本 init 之前**调用：只重置播放状态（frame/playing/rate/finished），不写值。 */
+  primeInitial(): void;
+  /** **脚本 init 之后**调用：写当前帧值并同步世界变换；不重置状态（init 里的 play/setFrame 必须保留）。 */
   applyInitial(): void;
   syncWorld(): void;
   dispose(): void;
@@ -509,7 +512,7 @@ export function createTimelineRuntime(opts: TimelineRuntimeOptions): TimelineRun
       if (disposed) return;
       opts.applyLocal(sampleWrites());
     },
-    applyInitial() {
+    primeInitial() {
       if (disposed) return;
       for (const entry of ordered) {
         entry.state.phase = 0;
@@ -518,6 +521,10 @@ export function createTimelineRuntime(opts: TimelineRuntimeOptions): TimelineRun
         entry.state.rate = 1;
         entry.state.finished = false;
       }
+    },
+    applyInitial() {
+      if (disposed) return;
+      // 不重置状态：脚本 init 里可能已 play/setFrame（I3）。
       runtime.sampleAndWrite();
       syncWorld();
     },

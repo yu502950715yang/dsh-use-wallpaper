@@ -49,3 +49,53 @@ Status: implemented
 ## Affected repositories
 
 - `dsh-use-wallpaper` 分支 `master` commits `6246f70` `361a3e0` `fe9243c` `ff5995e` `8462c26` `b97c9d7` `c80b8d3` `3c95962` `7071d51` `7ffd6f7` `78194da` `1a60219` `a920187` `6a7e7ff` `d06bc49` `0954b16` `2f4d2d7`
+
+## Final Fix Wave（final review 后修复轮）
+
+> 触发：最终全分支 review 判 Merge-ready: NO（2 阻断 + 6 Important）。以下逐条落修法、测试/证据与剩余风险；不认领并发会话文件。
+
+### B1 面板未显示媒体集成原因/隐私说明（DoD §14.4 / spec §4.5）
+
+- **修法**：`shared/media.ts` 新增 `MediaIntegrationStatus { available; reason; enabled }`（纯类型、无曲目字段）；`media-orchestration` 在快照/开关变化时记录并暴露 `getStatus()`；`SceneRendererLike` 新增可选 `getMediaStatus?()`（renderer teardown 保留最近值、dispose 清空、不泄漏 title/artist）；设置面板把媒体开关从「性能与省电」移到 spec 要求的**「显示效果」组**，开关下方新增 `.wss-media-status` 说明行（启用 = 隐私说明；reason ∈ unsupported-platform/no-powershell/watcher-failed = 对应中文原因；关闭 = 已关闭），读取时机 = 挂载 + 1s 轮询。
+- **证据**：`tests/media-orchestration.test.ts` 新增 getStatus 状态迁移与「只有三键」隐私断言；`tests/three-renderer.test.ts` 新增「无媒体场景 null / $mediaThumbnail 场景 no-session / 关闭 disabled / dispose null」；`tests/dom/settings-section.dom.test.tsx` 新增 3 例（开关在显示效果组 + 默认说明；文案随 reason 四态变化；关闭变已关闭 + data-state）；`index.ts` 注入共享 handler 并在 teardown 撤销。
+
+### B2 applyLayerState 动态 color 破坏 text 静态色（回归）
+
+- **修法**：`threejs-player.addBackground` 新增 `disableDynamicColor`，text 分支传 `true`，把 `userData.dynamicColorDisabled` 打到内容材质（隔离时也打到合成 quad 材质）；`applyLayerState.writeColor` 对带标记材质跳过 `color`，origin/scale/angles/alpha/visible 照常。
+- **证据**：`tests/layer-state.test.ts` 两例（tint 与 MeshBasicMaterial 均不被写入、其余字段照常）；`tests/threejs-player.test.ts` 断言 text 直渲与隔离 quad 材质都带标记；`verify-media-layer --regression` 新增 `2980088441` 与 `[R6]`：obj54 材质 color≈`[1,1,1]`、可见、文本区红像素 539（脚本 color 若生效会压暗到 ≈116,0,0）；截图 `e2e/.out/media/regression-2980088441.png` 供人工复看。
+
+### I1 迟到封面被 watcher 输出门丢弃
+
+- **修法**：watcher 脚本新增 `$artDirty`：成功取到新封面时置 `$true`，输出条件加 `-or $artDirty`，输出后清 `$false`（`$lastArt` 语义不变，仍只在成功取到时更新）。
+- **证据**：`tests/media-session.test.ts` 静态断言初始化/置位/输出条件/清除顺序。
+
+### I2 stdout 跨块 UTF-8 解码
+
+- **修法**：`media-session.ts` 用 `node:string_decoder` 的 `StringDecoder('utf8')` 累积解码；stop/start-error/exit/超长清空时重置 decoder。
+- **证据**：`tests/media-session.test.ts` 把含中文假标题的 JSON 行按字节切在「测」的三字节中间分两块喂入，断言 title/artist/album 完整且 `badLines=0`（旧实现得 U+FFFD）。
+
+### I3 applyInitial 重置脚本 init 的 play/setFrame
+
+- **修法**：`TimelineRuntime` 拆出 `primeInitial()`（只重置 frame/playing/rate/finished）与 `applyInitial()`（只写值 + syncWorld，不再重置）；renderer 在 `SceneScriptHost.create` **之前** primeInitial、之后 applyInitial。
+- **证据**：`tests/scene-timeline.test.ts` 新增集成用例：脚本 `init()` 里 `thisObject.getAnimation().play()/setFrame(7)`（origin 属性）→ applyInitial 后仍 isPlaying、frame=7、写入第 7 帧值；既有 15 处时间线用例同步改为 primeInitial + applyInitial。
+
+### I4 既有 e2e 回归 + 性能量化证据
+
+- 新增 `e2e/verify/verify-media-perf.mjs`（Node，不依赖浏览器/素材）：用生产 `lib/client/scene-timeline.js` + 内联 10 条动画，测 `advance+sampleAndWrite+syncWorld` N=2000 均值，断言 <50µs；`package.json` 新增 `e2e:media-perf`。
+- `harness-media-entry.mjs` 增加 `__fpsProbe(ms)` / `__glRendererInfo()`（参考 text-clock harness）；媒体 e2e 末尾输出 FPS/GPU（诊断、不参与判据）。
+- **实测（本机一次）**：时间线 13.0 / 14.6µs/帧（两次，10 条动画、N=2000、warmup=200，max 282–320µs 为 GC 尖峰）；媒体壁纸 FPS 60.3（真 GPU：NVIDIA RTX 3060 D3D11，headless 1600×900）。
+- **串行 e2e**：`e2e:media` 13/13 PASS exit 0；`--regression` 5 张 22/22 PASS exit 0；`verify-colorblend` PASS；`verify-v081-gaps` exit 0；`verify-v082` PASS；`verify-text-clock-layer --no-teeth` exit 0；`verify-web-pointer-parallax` 7/7 PASS。既有红/不可运行（与本次无关）：`verify-hidpi-object-rt` 挂载期 RT 尺寸断言（v0.8.0 基线即 FAIL，TESTING §2.16 记录）；`verify-isolated-rt-sharpness` 的 `2132420420` 多隔离 obj37 与 `2911105183` 锐度阈值（素材/基线状态，本次未触 isolate/RT 代码）；`verify-turn-trigger-card` 因本机 DSH asar 缺 `CodeBlock.module.css` 无法运行（环境缺失）。
+
+### I5 真机 M1–M8
+
+- TESTING §2.17 顶部与勾选清单明确标注「以下 M1–M8 需真机手动勾选，当前未验」，全部保持未勾选；M8 判据改为断言面板状态行原因文案。
+
+### I6 `obj.script` 派生契约不一致
+
+- 不改代码；AGENT §7.44 新增边界 6：`obj.script` 仅对 `visible.kind==='script'` 派生（visualizer 识别用）与 `collectScriptSources` 支持 user+script 的契约不一致，后续统一。
+
+### 剩余风险
+
+- 真机 M1–M8（SMTC 会话选择、封面方向/主色观感、隐私与 watcher 残留、失败路径面板原因）仍需人工验收；B2 的「WE 是否对 text 应用 layer color」也待真机对照。
+- 面板状态行 1s 轮询是简化实现（无推送通道）；状态在切到非媒体壁纸后保留最近值，可能显示旧的失败 reason，属可接受的提示口径。
+- `verify-isolated-rt-sharpness` 的既有失败与本次修复无关，但未在本次建立独立基线证明（只核对了未触相关代码路径）。

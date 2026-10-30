@@ -4101,3 +4101,66 @@ describe('用户属性默认值与属性级 condition 接线', () => {
     r.dispose?.();
   });
 });
+
+// B1：面板状态行读 renderer.getMediaStatus（只含 available/reason/enabled，无曲目字段）。
+describe('getMediaStatus（媒体集成状态）', () => {
+  const MEDIA_SCENE = JSON.stringify({
+    camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+    general: { orthogonalprojection: { width: 100, height: 100 } },
+    objects: [{
+      id: 1, name: 'cover', image: 'models/cover.json', origin: '50 50 0', scale: '1 1 1', size: '50 50',
+      instance: { usertextures: [{ name: '$mediaThumbnail' }] },
+    }],
+  });
+
+  function stubMediaRender() {
+    stubAssetFetch(MEDIA_SCENE, {});
+    vi.mocked(resolveImageAssets).mockResolvedValue({
+      texture: fakeTexture() as never, puppetPath: null, spriteSheet: false, mediaThumbnail: true,
+    });
+    const player = {
+      dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(),
+      setParallax: vi.fn(), setParallaxPointer: vi.fn(), setObjectEffectStage: vi.fn(),
+      isolatedObjects: () => [], displayObject: () => null, updateBackgroundTransform: vi.fn(),
+    };
+    vi.mocked(loadSceneToThree).mockReturnValue({
+      player, sims: [], backgroundIds: [0], particleLayers: [], puppetLayers: [],
+    } as never);
+    return player;
+  }
+
+  it('无媒体场景返回 null；$mediaThumbnail 场景装配后 no-session（enabled 跟随开关）；dispose 后 null', async () => {
+    stubMediaRender();
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    expect(r.getMediaStatus?.()).toBeNull();
+    expect(await r.render('wid-media', document.createElement('canvas'), undefined)).toBe(true);
+    expect(r.getMediaStatus?.()).toEqual({ available: false, reason: 'no-session', enabled: true });
+    // 状态对象只有三个键（隐私：不带 title/artist/album/封面）。
+    expect(Object.keys(r.getMediaStatus?.() ?? {}).sort()).toEqual(['available', 'enabled', 'reason']);
+    // 运行期开关：关闭后原因变为 disabled；无会话不泄漏其它字段。
+    r.setMediaIntegration?.(false);
+    expect(r.getMediaStatus?.()).toMatchObject({ available: false, reason: 'disabled', enabled: false });
+    r.dispose?.();
+    expect(r.getMediaStatus?.()).toBeNull();
+  });
+
+  it('无媒体脚本/封面绑定的普通场景：不建轮询，状态为 null', async () => {
+    stubAssetFetch(JSON.stringify({
+      general: { orthogonalprojection: { width: 100, height: 100 } },
+      objects: [{ id: 1, image: 'models/plain.json', origin: '50 50 0', scale: '1 1 1', size: '50 50' }],
+    }), {});
+    vi.mocked(resolveImageAssets).mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null, spriteSheet: false, mediaThumbnail: false });
+    vi.mocked(loadSceneToThree).mockReturnValue({
+      player: {
+        dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(),
+        setParallax: vi.fn(), setParallaxPointer: vi.fn(), setObjectEffectStage: vi.fn(),
+        isolatedObjects: () => [], displayObject: () => null,
+      },
+      sims: [], backgroundIds: [0], particleLayers: [], puppetLayers: [],
+    } as never);
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    expect(await r.render('wid-plain', document.createElement('canvas'), undefined)).toBe(true);
+    expect(r.getMediaStatus?.()).toBeNull();
+    r.dispose?.();
+  });
+});

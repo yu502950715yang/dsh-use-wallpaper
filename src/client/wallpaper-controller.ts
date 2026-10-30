@@ -5,6 +5,7 @@ import { measureLuma, lumaToTextColor } from './luma.js';
 import { type TextColorMode, manualTextColor, normalizeMode, normalizeOutlineLevel } from './text-color.js';
 import type { HealthSnapshot } from './render-health.js';
 import type { MediaFallback } from './media-health.js';
+import type { MediaIntegrationStatus } from '../shared/media.js';
 import type { SystemAudioFailure } from './system-audio.js';
 
 // scene 渲染器的接口形态（three-renderer 的生产实现与测试替身都按此形状提供）。
@@ -22,6 +23,8 @@ export interface SceneRendererLike {
   setSoundEnabled?(enabled: boolean): void;
   // 媒体集成开关（面板即时生效；关闭后媒体图层隐藏且停轮询）。
   setMediaIntegration?(enabled: boolean): void;
+  // 媒体集成状态（面板状态行）：只含 available/reason/enabled，不含曲目/封面。
+  getMediaStatus?(): MediaIntegrationStatus | null;
   // 系统音频（v0.9 P1）：浏览器模式捕获系统音频驱动频谱；桌面 App 宿主禁用 → 返回失败码（面板提示）。
   startSystemAudio?(): Promise<SystemAudioFailure | 'ok'>;
   stopSystemAudio?(): void;

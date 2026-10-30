@@ -1981,6 +1981,8 @@ export class ThreeScenePlayer {
     isolate?: { objectId: number; rtWidth: number; rtHeight: number; worldW: number; worldH: number };
     // 对象级视差深度（scene.json 的 parallaxDepth，两根轴）；缺省 undefined = 不参与视差。
     parallaxDepth?: [number, number];
+    // 动态 color 禁用（text 图层）：静态色已烘进纹理，脚本/时间线 color 不再乘材质（AGENT §7.44）。
+    disableDynamicColor?: boolean;
   }): number {
     const sceneW = opts.sceneW;
     const sceneH = opts.sceneH;
@@ -2029,6 +2031,8 @@ export class ThreeScenePlayer {
       )
       : this.createLayerMaterial(opts.texture ?? null, opts.colorBlendMode ?? 0, mod, !!opts.isolate);
     const mesh = new THREE.Mesh(geometry, material);
+    // text 图层的静态色已烘进 canvas；打标让 applyLayerState 跳过脚本/时间线 color（否则文字被二次乘暗）。
+    if (opts.disableDynamicColor) material.userData.dynamicColorDisabled = true;
     // 脚本 color 覆盖对象 color 时，applyLayerState 需要重新乘上对象 brightness（装配期已烘进材质）。
     mesh.userData.weBrightness = opts.brightness ?? 1;
     // renderOrder 唯一化（调用方按 objects 下标传入）；缺省 0 = 背景在粒子之前绘制（背景在下）。
@@ -2071,6 +2075,12 @@ export class ThreeScenePlayer {
         y: origin[1] - sceneH / 2 + align[1],
         z: origin[2],
       }, [a[0], a[1], a[2]], opts.colorBlendMode ?? 0, opts.renderOrder, compositeOpacity);
+      // 隔离时 displayObject 返回合成 quad：标记也要落到它的材质上，否则脚本 color 仍会乘到合成输出。
+      if (opts.disableDynamicColor) {
+        const quadMat = this.isolated.get(opts.isolate.objectId)?.quad?.material;
+        const mats = Array.isArray(quadMat) ? quadMat : quadMat ? [quadMat] : [];
+        for (const m of mats) m.userData.dynamicColorDisabled = true;
+      }
       // util 层内容输入（T3）：段边界把整帧快照写成内容。solid 的内容是纯色 ⇒ 不建条目。
       if (opts.util && opts.util !== 'solid') {
         this.registerUtilContent(opts.isolate.objectId, mesh, origin[0] - sceneW / 2, origin[1] - sceneH / 2);
@@ -3188,6 +3198,8 @@ export function loadSceneToThree(
         isolate: assets.isolate?.get(obj.id),
         // 视差深度同 image 分支：直接透传对象级字段（text 也有 parallaxDepth）。
         parallaxDepth: obj.parallaxDepth,
+        // text 的静态色已烘进 canvas：脚本/时间线 color 不应用（AGENT §7.44）。
+        disableDynamicColor: true,
       });
       backgroundIds.push(id);
       if (layer.driver) {

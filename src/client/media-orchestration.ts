@@ -1,6 +1,8 @@
 // 媒体编排：装配期初始派发（首帧前隐藏媒体层）、轮询快照 → 脚本事件、运行期开关/暂停/释放。
 // 纯逻辑 + 注入（host/bindings/输入工厂/脏写入应用），不依赖 three/Node，renderer 只做接线。
-import type { MediaPlaybackState, MediaPropertiesPayload } from '../shared/media.js';
+import type {
+  MediaIntegrationStatus, MediaPlaybackState, MediaPropertiesPayload,
+} from '../shared/media.js';
 import { applyMediaSnapshot } from './media-input.js';
 import type { MediaDispatchSink, MediaInput, MediaInputOptions, MediaThumbnailEventPayload } from './media-input.js';
 import type { DisplayTarget, LayerWrite } from './layer-state.js';
@@ -50,6 +52,8 @@ export interface MediaOrchestration {
   setPaused(paused: boolean): void;
   /** 释放输入（幂等）；之后的迟到响应全部忽略。 */
   dispose(): void;
+  /** 面板只读状态（available/reason/enabled；不含曲目/封面）。 */
+  getStatus(): MediaIntegrationStatus;
 }
 
 export function createMediaOrchestration(opts: MediaOrchestrationOptions): MediaOrchestration {
@@ -58,6 +62,12 @@ export function createMediaOrchestration(opts: MediaOrchestrationOptions): Media
   let disposed = false;
   let paused = false;
   let input: MediaInput | null = null;
+  // 面板状态：只记 reason/available/enabled；绝不缓存 title/artist（隐私）。
+  let status: MediaIntegrationStatus = {
+    available: false,
+    reason: opts.getEnabled() ? 'no-session' : 'disabled',
+    enabled: opts.getEnabled(),
+  };
 
   const report = (error: unknown): void => {
     try { opts.onError?.(error); } catch { /* 错误消费者异常不阻断媒体链路 */ }
@@ -97,6 +107,8 @@ export function createMediaOrchestration(opts: MediaOrchestrationOptions): Media
       ...opts.inputOptions,
       onSnapshot: (next, prev) => {
         if (disposed) return; // dispose 后迟到响应不得落到已释放的 host/脚本
+        // 快照先记状态（reason 只用于面板提示，不含曲目字段）。
+        status = { ...status, available: next.available, reason: next.reason };
         applyMediaSnapshot(prev, next, sink);
       },
       onError: report,
@@ -110,6 +122,7 @@ export function createMediaOrchestration(opts: MediaOrchestrationOptions): Media
       if (started || disposed) return;
       started = true;
       const enabled = opts.getEnabled();
+      status = { available: false, reason: enabled ? 'no-session' : 'disabled', enabled };
       sink.status(enabled);
       sink.playback('stopped');
       applyDirty(); // 必须在首帧前同步落地（否则媒体层先画一帧白色占位）
@@ -119,6 +132,7 @@ export function createMediaOrchestration(opts: MediaOrchestrationOptions): Media
     },
     setEnabled(enabled) {
       if (disposed) return;
+      status = { available: false, reason: enabled ? 'no-session' : 'disabled', enabled };
       sink.status(enabled);
       if (!enabled) {
         sink.playback('stopped');
@@ -143,6 +157,9 @@ export function createMediaOrchestration(opts: MediaOrchestrationOptions): Media
       const active = input;
       input = null;
       active?.dispose();
+    },
+    getStatus() {
+      return { ...status };
     },
   };
 }

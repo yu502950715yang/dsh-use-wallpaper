@@ -3,6 +3,7 @@ import type { WallpaperInfo, ProbeResult } from '../shared/types.js';
 import { type WallpaperPropertiesResponse } from './wallpaper-properties.js';
 import type { SystemAudioFailure } from './system-audio.js';
 import type { HealthSnapshot } from './render-health.js';
+import type { MediaIntegrationStatus } from '../shared/media.js';
 import type { MediaFailure } from './media-health.js';
 export interface WallpaperSettingsSectionProps {
     /** 读取当前设置（默认 RPC settings.describe） */
@@ -62,4 +63,12 @@ export declare function setWallpaperMediaHandler(handler: WallpaperMediaHandler 
 export declare function subscribeWallpaperMedia(cb: (failure: MediaFailure | null) => void): () => void;
 /** 由 index.ts 的媒体失败事件调用；handler 未注册时不推（面板已回初始态，迟到的失败不得复活提示）。 */
 export declare function notifyWallpaperMedia(failure: MediaFailure | null): void;
+/** 媒体集成状态（面板状态行）：由 index.ts 注入 renderer.getMediaStatus（只读、不含曲目）。 */
+export interface WallpaperMediaIntegrationHandler {
+    get(): MediaIntegrationStatus | null;
+}
+/** 注册/撤销共享 handler（传 null = 面板回退到「读不到状态」的说明行）。 */
+export declare function setWallpaperMediaIntegrationHandler(handler: WallpaperMediaIntegrationHandler | null): void;
+/** 面板状态行文案：启用时给隐私说明；失败 reason 给明确原因（不显示曲目信息）。 */
+export declare function mediaIntegrationHint(enabled: boolean, status: MediaIntegrationStatus | null): string;
 export declare function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): JSX.Element;

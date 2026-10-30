@@ -17,9 +17,10 @@ const WALLPAPER_ID = '3797976859'; // 带媒体层（歌名/歌手/封面框）�
 const MEDIA_LAYER_IDS = [35, 40, 45];
 const COVER_REGION = [1160, 285, 1245, 360]; // [2a] 封面区域（objectRect(45) 不可得时的兜底）
 // 回归对照素材：三张受「每对象多脚本 / 时间线」影响的既有壁纸 + 带 solid util 的「红衣骑士」
-// （Knight in a red cloak；Leon 是另一张 3812518176，勿混）。
+// （Knight in a red cloak；Leon 是另一张 3812518176，勿混）+ 2980088441（text 层静态色被脚本
+// color 二次乘暗的回归锚点）。
 // 这些壁纸都没有媒体脚本、也没有 $mediaThumbnail ⇒ 不得发起任何 now-playing 请求。
-const REGRESSION_IDS = ['2832263418', '3793620838', '2597392171', '3789452668'];
+const REGRESSION_IDS = ['2832263418', '3793620838', '2597392171', '3789452668', '2980088441'];
 const FOG_OBJECT_ID = 251; // 2597392171 的「Fog 1」：origin loop 时间线（fps=1.36 / length=34）
 const FOG_SAMPLE_MS = [0, 800, 1600]; // rAF 对齐：目标时刻后的首个帧回调里读位置（慢帧不重样）
 
@@ -376,9 +377,11 @@ async function runRegression() {
       `objects=${JSON.stringify(objectCount)} sceneSize=${JSON.stringify(info?.sceneSize ?? null)}`);
     // 判据 3：截图落盘（默认媒体判据的媒体层截图不受影响）。
     let shotInfo = null;
+    let shotBuf = null;
     try {
       const r = await send2('Page.captureScreenshot', { format: 'png' });
-      shotInfo = pngBytesToFile(`regression-${id}.png`, Buffer.from(r.data, 'base64'));
+      shotBuf = Buffer.from(r.data, 'base64');
+      shotInfo = pngBytesToFile(`regression-${id}.png`, shotBuf);
     } catch (e) {
       console.log(`  [${id}] 截图失败: ${String(e && e.message ? e.message : e)}`);
     }
@@ -388,6 +391,26 @@ async function runRegression() {
     const mediaDelta = mediaRequests - mediaBefore;
     judge(`[R4] ${id} 未发起媒体轮询`, mediaDelta === 0,
       `now-playing 请求数=${mediaDelta}（累计 ${mediaRequests}）`);
+
+    // 判据 6（2980088441）：text 层材质 color 不得被脚本/时间线动态 color 改写（B2 回归）。
+    // 主判据 = 材质 color ≈ [1,1,1]（text 静态色烘进 canvas）；截图文字区红像素只作辅助（解码失败不判红）。
+    if (id === '2980088441') {
+      const mat = JSON.parse(await evalJs('JSON.stringify(window.__objectMaterialInfo(54))') ?? 'null');
+      const color = mat?.color;
+      const white = Array.isArray(color) && color.length === 3
+        && color.every((v) => typeof v === 'number' && Math.abs(v - 1) <= 0.01);
+      const rect = await rectOf(54);
+      let redPixels = null;
+      if (shotBuf && rect?.canvasCss) {
+        try {
+          redPixels = countPixels(decodePng(shotBuf), rect.canvasCss, (r, g, b) => r > 100 && g < 80 && b < 80);
+        } catch { redPixels = null; }
+      }
+      judge('[R6] 2980088441 text 层材质 color 未被脚本动态 color 改写（≈[1,1,1]）',
+        white && mat?.visible === true && (redPixels === null || redPixels > 10),
+        `obj54 color=${JSON.stringify(color)} visible=${JSON.stringify(mat?.visible)}` +
+        ` 文本区红像素=${JSON.stringify(redPixels)} rect=${JSON.stringify(rect?.canvasCss ?? null)}`);
+    }
 
     // 判据 5：2597392171 的 Fog origin loop 可复跑断言（Fog 现在会动，属预期）。
     if (id === '2597392171') {
@@ -687,6 +710,15 @@ try {
       `visible=${JSON.stringify(mediaVisibleStopped2)}`);
     await probeMedia('stopped-again');
     await shot('stopped-again');
+
+    // ── [perf] 媒体壁纸 FPS（诊断输出，不参与判据：SwiftShader 数字不代表真机）────────
+    try {
+      const fps = await evalJs('window.__fpsProbe(3000)');
+      const gl = await evalJs('JSON.stringify(window.__glRendererInfo())');
+      console.log(`  [perf] 媒体壁纸 FPS=${JSON.stringify(fps)} gl=${gl}`);
+    } catch (e) {
+      console.log('  [perf] FPS 探针失败:', String(e && e.message ? e.message : e));
+    }
   } // 默认媒体判据（if (!ready) … else 的收尾）
   } // if (REGRESSION) … else 的收尾
 } catch (e) {

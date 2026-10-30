@@ -232,6 +232,32 @@ window.__mediaAtRenderResolve = {
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 await wait(1200); // 让帧循环与轮询跑起来（媒体初始派发已在装配期落地）
 
+// [perf] 帧率探针：统计 ms 毫秒内真实 rAF 回调次数（壁纸帧循环就是 rAF 驱动的）
+window.__fpsProbe = (ms = 3000) => new Promise((resolve) => {
+  let frames = 0;
+  const t0 = performance.now();
+  const tick = () => {
+    frames++;
+    const dt = performance.now() - t0;
+    if (dt >= ms) resolve({ fps: Math.round((frames / dt) * 1000 * 10) / 10, frames, ms: Math.round(dt) });
+    else requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+});
+
+// [perf] 只读：真实 GPU 渲染器字符串（SwiftShader/软件光栅化的数字无意义，用它自证）。
+window.__glRendererInfo = () => {
+  try {
+    const gl = window.__player?.renderer?.getContext?.();
+    const ext = gl?.getExtension?.('WEBGL_debug_renderer_info');
+    return {
+      renderer: (ext && gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) || 'unknown',
+      vendor: (ext && gl.getParameter(ext.UNMASKED_VENDOR_WEBGL)) || 'unknown',
+      version: gl ? gl.getParameter(gl.VERSION) : 'unknown',
+    };
+  } catch { return { renderer: 'unknown', vendor: 'unknown', version: 'unknown' }; }
+};
+
 console.log('[harness] ' + JSON.stringify({
   id, ok, err,
   viewport: [VW, VH],

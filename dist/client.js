@@ -24064,7 +24064,7 @@ function createTimelineRuntime(opts) {
       if (disposed) return;
       opts.applyLocal(sampleWrites());
     },
-    applyInitial() {
+    primeInitial() {
       if (disposed) return;
       for (const entry of ordered) {
         entry.state.phase = 0;
@@ -24073,6 +24073,9 @@ function createTimelineRuntime(opts) {
         entry.state.rate = 1;
         entry.state.finished = false;
       }
+    },
+    applyInitial() {
+      if (disposed) return;
       runtime.sampleAndWrite();
       syncWorld();
     },
@@ -26355,6 +26358,7 @@ var ThreeScenePlayer = class {
       opts.brightness
     ) : this.createLayerMaterial(opts.texture ?? null, opts.colorBlendMode ?? 0, mod, !!opts.isolate);
     const mesh = new Mesh(geometry, material);
+    if (opts.disableDynamicColor) material.userData.dynamicColorDisabled = true;
     mesh.userData.weBrightness = opts.brightness ?? 1;
     mesh.renderOrder = opts.renderOrder ?? 0;
     const s = layerScale;
@@ -26382,6 +26386,11 @@ var ThreeScenePlayer = class {
         y: origin[1] - sceneH / 2 + align[1],
         z: origin[2]
       }, [a[0], a[1], a[2]], opts.colorBlendMode ?? 0, opts.renderOrder, compositeOpacity);
+      if (opts.disableDynamicColor) {
+        const quadMat = this.isolated.get(opts.isolate.objectId)?.quad?.material;
+        const mats = Array.isArray(quadMat) ? quadMat : quadMat ? [quadMat] : [];
+        for (const m of mats) m.userData.dynamicColorDisabled = true;
+      }
       if (opts.util && opts.util !== "solid") {
         this.registerUtilContent(opts.isolate.objectId, mesh, origin[0] - sceneW / 2, origin[1] - sceneH / 2);
       }
@@ -27119,7 +27128,9 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
         // 缺省不隔离。隔离条目的键 = obj.id，与 ObjectEffectStage 的键空间一致。
         isolate: assets.isolate?.get(obj.id),
         // 视差深度同 image 分支：直接透传对象级字段（text 也有 parallaxDepth）。
-        parallaxDepth: obj.parallaxDepth
+        parallaxDepth: obj.parallaxDepth,
+        // text 的静态色已烘进 canvas：脚本/时间线 color 不应用（AGENT §7.44）。
+        disableDynamicColor: true
       });
       backgroundIds.push(id);
       if (layer.driver) {
@@ -32004,6 +32015,7 @@ function writeColor(object, rgb) {
   const clamp012 = (v) => Math.max(0, Math.min(1, v * brightness));
   for (const m of list) {
     const anyMat = m;
+    if (anyMat.userData?.dynamicColorDisabled === true) continue;
     const tint = anyMat.uniforms?.["tint"]?.value;
     if (tint && typeof tint.set === "function") {
       tint.set(rgb[0], rgb[1], rgb[2]);
@@ -33238,6 +33250,11 @@ function createMediaOrchestration(opts) {
   let disposed = false;
   let paused = false;
   let input = null;
+  let status = {
+    available: false,
+    reason: opts.getEnabled() ? "no-session" : "disabled",
+    enabled: opts.getEnabled()
+  };
   const report = (error) => {
     try {
       opts.onError?.(error);
@@ -33278,6 +33295,7 @@ function createMediaOrchestration(opts) {
       ...opts.inputOptions,
       onSnapshot: (next, prev) => {
         if (disposed) return;
+        status = { ...status, available: next.available, reason: next.reason };
         applyMediaSnapshot(prev, next, sink);
       },
       onError: report
@@ -33290,6 +33308,7 @@ function createMediaOrchestration(opts) {
       if (started || disposed) return;
       started = true;
       const enabled = opts.getEnabled();
+      status = { available: false, reason: enabled ? "no-session" : "disabled", enabled };
       sink.status(enabled);
       sink.playback("stopped");
       applyDirty();
@@ -33299,6 +33318,7 @@ function createMediaOrchestration(opts) {
     },
     setEnabled(enabled) {
       if (disposed) return;
+      status = { available: false, reason: enabled ? "no-session" : "disabled", enabled };
       sink.status(enabled);
       if (!enabled) {
         sink.playback("stopped");
@@ -33322,6 +33342,9 @@ function createMediaOrchestration(opts) {
       const active = input;
       input = null;
       active?.dispose();
+    },
+    getStatus() {
+      return { ...status };
     }
   };
 }
@@ -34004,6 +34027,7 @@ function createThreeSceneRenderer(opts) {
   let currentTimeline = null;
   let currentMedia = null;
   let mediaIntegrationEnabled = true;
+  let lastMediaStatus = null;
   let currentMeshRegistry = null;
   let scriptClick = null;
   let scriptClickTarget = null;
@@ -34163,6 +34187,7 @@ function createThreeSceneRenderer(opts) {
     if (scriptClickTarget && scriptClick) scriptClickTarget.removeEventListener("click", scriptClick);
     scriptClickTarget = null;
     scriptClick = null;
+    if (currentMedia) lastMediaStatus = currentMedia.getStatus();
     currentMedia?.dispose();
     currentMedia = null;
     currentTimeline?.dispose();
@@ -34636,6 +34661,7 @@ function createThreeSceneRenderer(opts) {
           }
         }) : null;
         currentTimeline = timelineRuntime;
+        timelineRuntime?.primeInitial();
         for (const spec of visualizerSpecs) {
           const num2 = (v, def) => typeof v === "number" && isFinite(v) ? v : def;
           if (spec.family === "pixel-bars" && spec.layout) {
@@ -34958,6 +34984,14 @@ function createThreeSceneRenderer(opts) {
     setMediaIntegration(enabled) {
       mediaIntegrationEnabled = enabled;
       currentMedia?.setEnabled(enabled);
+      if (lastMediaStatus) {
+        lastMediaStatus = {
+          ...lastMediaStatus,
+          enabled,
+          available: enabled ? lastMediaStatus.available : false,
+          reason: enabled ? "no-session" : "disabled"
+        };
+      }
     },
     // 画质档位：改渲染像素比后重推画布缓冲，并把新屏幕密度同步给效果链编排器（对象 RT 随其重设）。
     setQualityScale(scale) {
@@ -35013,6 +35047,7 @@ function createThreeSceneRenderer(opts) {
     // `frameCapture` 绑定创建它的 renderer（换 renderer 时已在 render 内换绑），随本 renderer 一并释放。
     dispose() {
       teardown();
+      lastMediaStatus = null;
       frameCapture?.dispose();
       frameCapture = null;
       frameCaptureRenderer = null;
@@ -35020,6 +35055,10 @@ function createThreeSceneRenderer(opts) {
     // 看护读接口：设置面板与 `window.__wallpaperEngine.health()` 用它取当前壁纸状态。
     getLastHealth() {
       return currentHealthId ? health.snapshot(currentHealthId) : null;
+    },
+    // 媒体集成状态（面板状态行）：只给 available/reason/enabled，绝不带曲目信息。
+    getMediaStatus() {
+      return currentMedia?.getStatus() ?? lastMediaStatus;
     },
     setOnHealth(cb) {
       healthHandler2 = cb;
@@ -35384,6 +35423,23 @@ function pushMedia(failure) {
     }
   }
 }
+var mediaIntegrationHandler = null;
+function setWallpaperMediaIntegrationHandler(handler) {
+  mediaIntegrationHandler = handler;
+}
+function mediaIntegrationHint(enabled, status) {
+  if (!enabled) return "\u5A92\u4F53\u96C6\u6210\u5DF2\u5173\u95ED\uFF1A\u4E0D\u8BFB\u53D6\u7CFB\u7EDF\u5A92\u4F53\u4F1A\u8BDD\uFF0C\u4E5F\u4E0D\u542F\u52A8\u5A92\u4F53\u8FDB\u7A0B\u3002";
+  switch (status?.reason) {
+    case "unsupported-platform":
+      return "\u5F53\u524D\u7CFB\u7EDF\u4E0D\u652F\u6301\u7CFB\u7EDF\u5A92\u4F53\u4F1A\u8BDD\uFF08\u4EC5 Windows\uFF09\uFF1A\u5A92\u4F53\u56FE\u5C42\u4FDD\u6301\u9690\u85CF\uFF0C\u58C1\u7EB8\u7167\u5E38\u6E32\u67D3\u3002";
+    case "no-powershell":
+      return "\u672A\u627E\u5230\u53EF\u7528\u7684 PowerShell\uFF1A\u8BFB\u4E0D\u5230\u7CFB\u7EDF\u5A92\u4F53\u4F1A\u8BDD\uFF0C\u5A92\u4F53\u56FE\u5C42\u4FDD\u6301\u9690\u85CF\uFF0C\u58C1\u7EB8\u7167\u5E38\u6E32\u67D3\u3002";
+    case "watcher-failed":
+      return "\u5A92\u4F53\u4F1A\u8BDD\u8BFB\u53D6\u5931\u8D25\uFF08\u5DF2\u964D\u7EA7\uFF09\uFF1A\u5A92\u4F53\u56FE\u5C42\u4FDD\u6301\u9690\u85CF\uFF0C\u58C1\u7EB8\u7167\u5E38\u6E32\u67D3\u3002";
+    default:
+      return "\u672C\u673A\u8BFB\u53D6\u7CFB\u7EDF\u5A92\u4F53\u4F1A\u8BDD\uFF08\u4EC5 Windows\uFF09\uFF1B\u66F2\u540D/\u5C01\u9762\u4EC5\u5185\u5B58\u3001\u4E0D\u843D\u76D8\u3001\u4E0D\u4E0A\u4F20\u3002";
+  }
+}
 var weT = (s) => s;
 var EMPTY_HEALTH = { wallpaperId: "", ok: null, failure: null, timing: null };
 var MEDIA_FAILURE_TEXT = {
@@ -35464,6 +35520,9 @@ function WallpaperSettingsSection(props) {
   const [message, setMessage] = (0, import_react.useState)("");
   const [health, setHealth] = (0, import_react.useState)(props.health ?? null);
   const [mediaFailure, setMediaFailure] = (0, import_react.useState)(mediaHandler?.get() ?? null);
+  const [mediaStatus, setMediaStatus] = (0, import_react.useState)(
+    () => mediaIntegrationHandler?.get() ?? null
+  );
   const [libState, setLibState] = (0, import_react.useState)(loadLibraryState);
   const [properties, setProperties] = (0, import_react.useState)([]);
   const [audioProcessing, setAudioProcessing] = (0, import_react.useState)(false);
@@ -35482,6 +35541,7 @@ function WallpaperSettingsSection(props) {
   const visibleWallpapers = filterLibrary(wallpapers, filter, libState);
   const selectedId = settings?.selectedWallpaperId ?? "";
   const selectedIsScene = !!selectedId && wallpapers.some((w) => w.id === selectedId && (w.type === "scene" || w.type === "preset"));
+  const mediaEnabled = settings?.mediaIntegrationEnabled ?? false;
   const clearCommitTimers = (0, import_react.useCallback)(() => {
     for (const timer of commitTimers.current.values()) clearTimeout(timer);
     commitTimers.current.clear();
@@ -35494,6 +35554,12 @@ function WallpaperSettingsSection(props) {
   (0, import_react.useEffect)(() => {
     setMediaFailure(mediaHandler?.get() ?? null);
     return subscribeWallpaperMedia((f) => setMediaFailure(f));
+  }, []);
+  (0, import_react.useEffect)(() => {
+    const read = () => setMediaStatus(mediaIntegrationHandler?.get() ?? null);
+    read();
+    const timer = setInterval(read, 1e3);
+    return () => clearInterval(timer);
   }, []);
   (0, import_react.useEffect)(() => {
     let alive = true;
@@ -36144,6 +36210,28 @@ function WallpaperSettingsSection(props) {
               }
             )
           ] })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-media-block", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "input",
+              {
+                type: "checkbox",
+                className: "wss-media-integration",
+                checked: settings.mediaIntegrationEnabled,
+                onChange: (e) => applyRuntime({ mediaIntegrationEnabled: e.target.checked })
+              }
+            ),
+            "\u5A92\u4F53\u96C6\u6210\uFF08\u663E\u793A\u672C\u673A\u64AD\u653E\u7684\u6B4C\u66F2\u5C01\u9762/\u6B4C\u540D\uFF09"
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "p",
+            {
+              className: "wss-section-desc wss-media-status",
+              "data-state": !mediaEnabled ? "disabled" : mediaStatus?.reason ?? "no-session",
+              children: mediaIntegrationHint(mediaEnabled, mediaStatus)
+            }
+          )
         ] })
       ] }),
       settings && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section", id: "wss-anchor-playback", children: [
@@ -36242,32 +36330,18 @@ function WallpaperSettingsSection(props) {
               )
             ] })
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-sound-row", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                "input",
-                {
-                  type: "checkbox",
-                  className: "wss-sound",
-                  checked: settings.soundEnabled,
-                  onChange: (e) => applyRuntime({ soundEnabled: e.target.checked })
-                }
-              ),
-              "\u58C1\u7EB8\u97F3\u6548"
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                "input",
-                {
-                  type: "checkbox",
-                  className: "wss-media-integration",
-                  checked: settings.mediaIntegrationEnabled,
-                  onChange: (e) => applyRuntime({ mediaIntegrationEnabled: e.target.checked })
-                }
-              ),
-              "\u5A92\u4F53\u96C6\u6210\uFF08\u663E\u793A\u672C\u673A\u64AD\u653E\u7684\u6B4C\u66F2\u5C01\u9762/\u6B4C\u540D\uFF09"
-            ] })
-          ] })
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "wss-sound-row", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "input",
+              {
+                type: "checkbox",
+                className: "wss-sound",
+                checked: settings.soundEnabled,
+                onChange: (e) => applyRuntime({ soundEnabled: e.target.checked })
+              }
+            ),
+            "\u58C1\u7EB8\u97F3\u6548"
+          ] }) })
         ] })
       ] }),
       settings && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("details", { className: "wss-details", children: [
@@ -36578,6 +36652,7 @@ function bootstrap(ctx) {
     setWallpaperRuntimeHandler(null);
     setWallpaperHealthHandler(null);
     setWallpaperMediaHandler(null);
+    setWallpaperMediaIntegrationHandler(null);
     setWallpaperReselectHandler(null);
     setWallpaperSystemAudioHandlers(null);
     unsubscribeMedia();
@@ -36702,6 +36777,9 @@ function bootstrap(ctx) {
       clear: () => {
         mediaHealth.clear();
       }
+    });
+    setWallpaperMediaIntegrationHandler({
+      get: () => sceneRenderer.getMediaStatus?.() ?? null
     });
     setWallpaperSystemAudioHandlers({
       start: () => sceneRenderer.startSystemAudio?.() ?? Promise.resolve("unsupported"),

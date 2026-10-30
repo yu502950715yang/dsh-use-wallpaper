@@ -1,4 +1,4 @@
-import type { MediaPlaybackState, MediaPropertiesPayload } from '../shared/media.js';
+import type { MediaIntegrationStatus, MediaPlaybackState, MediaPropertiesPayload } from '../shared/media.js';
 import type { MediaInput, MediaInputOptions, MediaThumbnailEventPayload } from './media-input.js';
 import type { DisplayTarget, LayerWrite } from './layer-state.js';
 import type { MediaThumbnailPayload } from './scene-script-vm.js';
@@ -42,5 +42,7 @@ export interface MediaOrchestration {
     setPaused(paused: boolean): void;
     /** 释放输入（幂等）；之后的迟到响应全部忽略。 */
     dispose(): void;
+    /** 面板只读状态（available/reason/enabled；不含曲目/封面）。 */
+    getStatus(): MediaIntegrationStatus;
 }
 export declare function createMediaOrchestration(opts: MediaOrchestrationOptions): MediaOrchestration;

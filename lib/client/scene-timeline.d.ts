@@ -28,6 +28,9 @@ export interface TimelineRuntimeOptions {
 export interface TimelineRuntime extends TimelineAnimationSource {
     advance(dt: number): void;
     sampleAndWrite(): void;
+    /** 装配期**脚本 init 之前**调用：只重置播放状态（frame/playing/rate/finished），不写值。 */
+    primeInitial(): void;
+    /** **脚本 init 之后**调用：写当前帧值并同步世界变换；不重置状态（init 里的 play/setFrame 必须保留）。 */
     applyInitial(): void;
     syncWorld(): void;
     dispose(): void;

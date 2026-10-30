@@ -227,6 +227,22 @@ describe('loadSceneToThree text 对象', () => {
     expect(result.backgroundIds).toHaveLength(1);
   });
 
+  // B2：text 静态色烘进 canvas，材质打标禁止脚本/时间线 color（applyLayerState 会跳过）。
+  it('text 背景材质带 dynamicColorDisabled 标记（直渲 + 隔离的合成 quad）', () => {
+    const tex = new THREE.DataTexture(new Uint8Array(4), 2, 2);
+    const direct = loadSceneToThree(scene, makeTextAssets({ texture: tex }), document.createElement('canvas'));
+    const mesh = direct.player.scene.children[0] as THREE.Mesh;
+    expect((mesh.material as THREE.Material).userData.dynamicColorDisabled).toBe(true);
+
+    const assets = {
+      ...makeTextAssets({ texture: tex, size: [600, 200] }),
+      isolate: new Map([[7, { objectId: 7, rtWidth: 300, rtHeight: 100, worldW: 600, worldH: 200 }]]),
+    };
+    const isolated = loadSceneToThree(scene, assets, document.createElement('canvas'));
+    const iso = isolated.player.isolatedObjects()[0];
+    expect((iso.quad.material as THREE.Material).userData.dynamicColorDisabled).toBe(true);
+  });
+
   // 文本图层尺寸 = 装配期实测的 canvas（= 文本 + 2×padding），世界尺寸 = canvas × scale；
   // 位置 = origin + 锚点偏移（halign/valign 决定 origin 落在文本框哪条边）。
   it('textLayers 的 size/anchorOffset → quad 几何尺寸与位置', () => {

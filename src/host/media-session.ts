@@ -1,6 +1,7 @@
 // host 媒体会话：Windows SMTC（GlobalSystemMediaTransportControlsSessionManager）。
 // 进程常驻、懒启动、空闲退出；title/artist 仅内存，不落盘不写日志。
 import { spawn } from 'node:child_process';
+import { StringDecoder } from 'node:string_decoder';
 import { emptyMediaSnapshot, type MediaPlaybackState, type MediaReason, type MediaSessionSnapshot } from '../shared/media.js';
 
 export interface RawMediaSession {
@@ -92,6 +93,7 @@ export const WATCH_SCRIPT = [
   '$last = ""',
   '$initialized = $false',
   '$lastArt = @{}',
+  '$artDirty = $false',
   'while ($true) {',
   '  $list = @()',
   '  $sigParts = @()',
@@ -123,6 +125,7 @@ export const WATCH_SCRIPT = [
   '            $artB64 = [Convert]::ToBase64String($buf)',
   '            $artType = [string]$st.ContentType',
   '            $lastArt[$appId] = $artSig',
+  '            $artDirty = $true',
   '          }',
   '        }',
   '      } catch { $artB64 = "" }',
@@ -130,9 +133,10 @@ export const WATCH_SCRIPT = [
   '    $list += [ordered]@{ appId = $appId; status = $status; title = $title; artist = $artist; album = $album; contentType = $contentType; positionMs = [double]$tl.Position.TotalMilliseconds; durationMs = [double]$tl.EndTime.TotalMilliseconds; artB64 = $artB64; artType = $artType }',
   '  }',
   '  $signature = $sigParts -join "||"',
-  '  if (-not $initialized -or $signature -ne $last) {',
+  '  if (-not $initialized -or $signature -ne $last -or $artDirty) {',
   '    $last = $signature',
   '    $initialized = $true',
+  '    $artDirty = $false',
   '    [Console]::Out.WriteLine((ConvertTo-Json -Compress -InputObject ([ordered]@{ v = 1; at = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds(); sessions = $list })))',
   '    [Console]::Out.Flush()',
   '  }',
@@ -197,6 +201,8 @@ export function createMediaSessionService(opts: MediaSessionServiceOptions = {})
 
   let proc: MediaWatcherProcess | null = null;
   let buffer = '';
+  // stdout 是字节流：多字节字符可能跨 chunk，必须用 StringDecoder 累积解码（逐 chunk toString 会出 U+FFFD）。
+  let decoder = new StringDecoder('utf8');
   let frame: WatcherFrame | null = null;
   let lastRequestAt = 0;
   // 全局单调、stop 不重置：客户端以 rev 为缓存键，回退会显示错封面。
@@ -226,6 +232,7 @@ export function createMediaSessionService(opts: MediaSessionServiceOptions = {})
     if (proc) { try { proc.kill(); } catch { /* 已退出 */ } }
     proc = null;
     buffer = '';
+    decoder = new StringDecoder('utf8');
     frame = null;
     artBySession.clear();
     lastChangedAt.clear();
@@ -262,6 +269,7 @@ export function createMediaSessionService(opts: MediaSessionServiceOptions = {})
     if (proc !== p) return;
     proc = null;
     buffer = '';
+    decoder = new StringDecoder('utf8');
     const at = now();
     recentStartFailures = [...recentStartFailures.filter((t) => at - t < FAILURE_WINDOW_MS), at];
     lastStartError = 'no-powershell';
@@ -293,7 +301,7 @@ export function createMediaSessionService(opts: MediaSessionServiceOptions = {})
     proc = p;
     stdout.on('data', (chunk: Buffer) => {
       if (proc !== p) return; // stop/dispose 后已缓冲的行不得回填
-      buffer += chunk.toString('utf8');
+      buffer += decoder.write(chunk);
       for (;;) {
         const idx = buffer.indexOf('\n');
         if (idx < 0) break;
@@ -301,13 +309,14 @@ export function createMediaSessionService(opts: MediaSessionServiceOptions = {})
         buffer = buffer.slice(idx + 1);
         if (line.trim()) onLine(line);
       }
-      if (buffer.length > 1024 * 1024) buffer = '';
+      if (buffer.length > 1024 * 1024) { buffer = ''; decoder = new StringDecoder('utf8'); }
     });
     p.on('error', () => { onStartError(p); });
     p.on('exit', () => {
       if (proc !== p) return;
       proc = null;
       buffer = ''; // 半行不污染重启后的首行
+      decoder = new StringDecoder('utf8');
       recentStartFailures = [...recentStartFailures, now()];
       if (recentStartFailures.length >= 3) {
         degradedUntil = now() + DEGRADE_MS;

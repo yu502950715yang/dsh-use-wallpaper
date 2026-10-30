@@ -4,12 +4,13 @@ import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react';
 import {
   WallpaperSettingsSection, setWallpaperRuntimeHandler, setWallpaperSelectHandler,
-  setWallpaperHealthHandler, setWallpaperMediaHandler, setWallpaperReselectHandler,
-  setWallpaperSystemAudioHandlers,
+  setWallpaperHealthHandler, setWallpaperMediaHandler, setWallpaperMediaIntegrationHandler,
+  setWallpaperReselectHandler, setWallpaperSystemAudioHandlers,
   subscribeWallpaperHealth, notifyWallpaperHealth,
 } from '../../src/client/settings-section.js';
 import type { ClientSettings } from '../../src/client/types.js';
 import type { HealthSnapshot } from '../../src/client/render-health.js';
+import type { MediaIntegrationStatus } from '../../src/shared/media.js';
 import type { ProbeResult, WallpaperUserProperty } from '../../src/shared/types.js';
 
 // 壁纸设置面板（设置对话框 "壁纸" section）：
@@ -128,6 +129,7 @@ afterEach(async () => {
   // 模块级共享 handler 随用例重置：否则上一个用例注册的那份会被下一个用例读到（顺序依赖）。
   setWallpaperHealthHandler(null);
   setWallpaperMediaHandler(null);
+  setWallpaperMediaIntegrationHandler(null);
   setWallpaperSelectHandler(() => {});
   setWallpaperRuntimeHandler(() => {});
   setWallpaperReselectHandler(null);
@@ -1413,6 +1415,62 @@ describe('壁纸属性（四类型控件）', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+
+describe('媒体集成状态行（B1）', () => {
+  const statusEl = () => container.querySelector('.wss-media-status') as HTMLElement | null;
+
+  it('开关在「显示效果」组；未注册 handler 时显示隐私说明（不显示曲目）', async () => {
+    mount();
+    await flush();
+    const appearance = container.querySelector('#wss-anchor-appearance') as HTMLElement | null;
+    expect(appearance).toBeTruthy();
+    const box = appearance!.querySelector('.wss-media-integration') as HTMLInputElement | null;
+    expect(box).toBeTruthy();
+    expect(box!.checked).toBe(true);
+    // 原「性能与省电」卡片不再承载媒体开关（spec §4.5 / TESTING M6 的入口路径）。
+    expect(container.querySelector('.wss-sound-row .wss-media-integration')).toBeNull();
+    const text = statusEl()!.textContent ?? '';
+    expect(text).toContain('仅 Windows');
+    expect(text).toContain('不落盘、不上传');
+  });
+
+  it('状态行文案随 getMediaStatus.reason 变化（unsupported-platform / no-powershell / watcher-failed / ok）', async () => {
+    let status: MediaIntegrationStatus = { available: false, reason: 'unsupported-platform', enabled: true };
+    setWallpaperMediaIntegrationHandler({ get: () => status });
+    mount();
+    await flush();
+    expect(statusEl()!.textContent).toContain('不支持系统媒体会话');
+    expect(statusEl()!.dataset.state).toBe('unsupported-platform');
+    await act(async () => {
+      status = { ...status, reason: 'no-powershell' };
+      await new Promise((r) => setTimeout(r, 1100)); // 状态读取 = 1s 轮询
+    });
+    expect(statusEl()!.textContent).toContain('PowerShell');
+    await act(async () => {
+      status = { ...status, reason: 'watcher-failed' };
+      await new Promise((r) => setTimeout(r, 1100));
+    });
+    expect(statusEl()!.textContent).toContain('读取失败');
+    await act(async () => {
+      status = { available: true, reason: 'ok', enabled: true };
+      await new Promise((r) => setTimeout(r, 1100));
+    });
+    expect(statusEl()!.textContent).toContain('不落盘、不上传');
+    expect(statusEl()!.dataset.state).toBe('ok');
+  });
+
+  it('关闭开关 → 状态行变「已关闭」且 data-state=disabled', async () => {
+    setWallpaperMediaIntegrationHandler({ get: () => ({ available: false, reason: 'no-session', enabled: true }) });
+    mount();
+    await flush();
+    const box = container.querySelector('.wss-media-integration') as HTMLInputElement;
+    await act(async () => { box.click(); });
+    expect(box.checked).toBe(false);
+    expect(statusEl()!.textContent).toContain('已关闭');
+    expect(statusEl()!.dataset.state).toBe('disabled');
   });
 });
 

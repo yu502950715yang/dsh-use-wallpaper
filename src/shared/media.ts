@@ -10,6 +10,13 @@ export interface MediaSessionSnapshot {
   positionMs: number | null; durationMs: number | null; at: number;
 }
 
+/** 面板只读的媒体集成状态：不含 title/artist/album/封面等隐私字段。 */
+export interface MediaIntegrationStatus {
+  available: boolean;
+  reason: MediaReason;
+  enabled: boolean;
+}
+
 export interface MediaPalette {
   primary: MediaRgb; secondary: MediaRgb; tertiary: MediaRgb; text: MediaRgb; highContrast: MediaRgb;
 }

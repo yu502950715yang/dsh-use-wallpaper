@@ -91,6 +91,33 @@ describe('createMediaOrchestration', () => {
     expect(s.log).toEqual(['status:true', 'playback:playing', 'props:T', 'binding:T', 'thumb:true']);
   });
 
+  // B1：面板状态行只读 available/reason/enabled（无曲目/封面字段）。
+  it('getStatus：初始 no-session → 快照更新 available/reason → 关闭 disabled → 重开 no-session', () => {
+    const s = setup(true);
+    expect(s.orch.getStatus()).toEqual({ available: false, reason: 'no-session', enabled: true });
+    s.orch.start();
+    expect(s.orch.getStatus()).toEqual({ available: false, reason: 'no-session', enabled: true });
+    s.fire(playing, null);
+    expect(s.orch.getStatus()).toEqual({ available: true, reason: 'ok', enabled: true });
+    s.fire(emptyMediaSnapshot('no-session', 2), playing);
+    expect(s.orch.getStatus()).toEqual({ available: false, reason: 'no-session', enabled: true });
+    s.orch.setEnabled(false);
+    expect(s.orch.getStatus()).toEqual({ available: false, reason: 'disabled', enabled: false });
+    s.orch.setEnabled(true);
+    expect(s.orch.getStatus()).toEqual({ available: false, reason: 'no-session', enabled: true });
+    // 隐私：状态对象不得含曲目/封面字段。
+    expect(Object.keys(s.orch.getStatus()).sort()).toEqual(['available', 'enabled', 'reason']);
+  });
+
+  it('getStatus：disabled 初始态 + 失败 reason 原样透出', () => {
+    const off = setup(false);
+    expect(off.orch.getStatus()).toEqual({ available: false, reason: 'disabled', enabled: false });
+    const s = setup(true);
+    s.orch.start();
+    s.fire(emptyMediaSnapshot('unsupported-platform', 3), emptyMediaSnapshot('no-session', 2));
+    expect(s.orch.getStatus()).toMatchObject({ available: false, reason: 'unsupported-platform', enabled: true });
+  });
+
   it('切歌：只重派 properties（不再派 status/playback/thumbnail）', () => {
     const s = setup(true);
     s.orch.start();

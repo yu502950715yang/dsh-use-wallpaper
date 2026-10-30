@@ -462,9 +462,9 @@ getEventListeners(window).pointermove?.length
 
 ### 2.17 手工验收清单：媒体集成（Windows SMTC + 时间线属性动画，2026-10-30）
 
-> **需人工验收**：以下需人在运行中的 DSH 桌面 App 里操作（播放器播放/暂停/切歌 + 目视），agent 无法代跑。
+> **需人工验收（当前未验）**：**以下 M1–M8 需真机手动勾选，当前未验** —— 必须由人在运行中的 DSH 桌面 App 里操作（播放器播放/暂停/切歌 + 目视），agent 无法代跑。
 > **前置**：已 `npm run build` + `npm run build:client`，重启 harness 后**强刷** GUI；选中 `3797976859`（小作 2(有声)）；本机装有会把会话注册到系统 SMTC 的播放器（Spotify / 网易云 / Groove 等），并**在播放器中实际播放音乐**。
-> **自动化已覆盖**：事件 diff / 轮询启停（`tests/media-input.test.ts`）、会话选择 / 行解析 / 空闲退出与退避（`tests/media-session.test.ts`）、VM 事件与 `thisObject.getAnimation`（`tests/scene-script-vm.test.ts`）、时间线解析与求值（`tests/scene-timeline.test.ts`）、封面方向与共享纹理（`tests/media-texture.test.ts`）、端到端 `npm run e2e:media`（13 条：白框 / 文本 / 封面方向 / 主色 / 淡入滑入 / 停止隐藏）与 `node e2e/verify/verify-media-layer.mjs --regression`（4 张回归 + `2597392171` Fog loop 复跑）。**真机观感、SMTC 会话选择与隐私仍需人工验收**。
+> **自动化已覆盖**：事件 diff / 轮询启停（`tests/media-input.test.ts`）、会话选择 / 行解析 / 空闲退出与退避（`tests/media-session.test.ts`，含 stdout 跨 UTF-8 分块与 watcher 封面迟到强制输出）、VM 事件与 `thisObject.getAnimation`（`tests/scene-script-vm.test.ts`）、时间线解析与求值 + 脚本 init 的 play/setFrame 不被 `applyInitial` 覆盖（`tests/scene-timeline.test.ts`）、面板状态行文案随 getMediaStatus.reason 变化（`tests/dom/settings-section.dom.test.tsx`）、text 层材质不被脚本动态 color 改写（`tests/layer-state.test.ts` / `tests/threejs-player.test.ts`）、封面方向与共享纹理（`tests/media-texture.test.ts`）、端到端 `npm run e2e:media`（13 条：白框 / 文本 / 封面方向 / 主色 / 淡入滑入 / 停止隐藏）与 `node e2e/verify/verify-media-layer.mjs --regression`（5 张回归，含 `2980088441` 文本静态色回归 + `2597392171` Fog loop 复跑）。**真机观感、SMTC 会话选择与隐私仍需人工验收**。
 > **隐私口径**：验收记录**不得包含真实曲目信息**（不截图歌名、不把 title/artist 贴进 issue）；日志与数据目录检查只记录「有无」。
 
 | # | 用例 | 步骤 | 期望结果 | 失败表现 |
@@ -476,9 +476,9 @@ getEventListeners(window).pointermove?.length
 | M5 | 停止：媒体层再隐藏 | 播放器停止播放（或关闭播放器）。 | ≤2s 内媒体层全部隐藏，无白框、无残留文本，场景继续渲染。 | 文本/封面残留 → `PLAYBACK_STOPPED` 未派发或脚本未收到。 |
 | M6 | 面板开关：关闭 / 重开 | 播放中打开设置 →「Wallpaper 壁纸」→「显示效果」→ 关闭「媒体集成（显示本机播放的歌曲封面/歌名）」；再打开。 | 关闭 ⇒ 媒体层**立即**隐藏、后续不再有 `now-playing` 请求；重开 ⇒ ≤2s 内媒体层恢复（曲目未变也要重新出现）。 | 关闭后仍轮询/仍显示 → 运行期开关链路；重开不恢复 → `stop()` 清 `prev` 后首帧未重放。 |
 | M7 | 隐私与 watcher 残留 | 停止播放并关闭壁纸（或切到非媒体壁纸）后等待 **>25s**（空闲阈值 20s + 5s 检查周期，最坏 25s 才退出）。 | 浏览器 Console / DSH 日志中**没有** title/artist/album；数据目录 `~/.dsh-use-wallpaper`（或 `DSH_USE_WALLPAPER_DATA_DIR`）内**除 `frames/` 抓帧缓存外无新增文件**：媒体数据（封面/曲目/快照）不得落盘；选中 `3797976859` 时首帧成功会写 `frames/3797976859.png`，属抓帧缓存而非媒体数据（要严格「零新增」可临时关掉 `frameCacheEnabled` 再测）；`Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" \| Where-Object CommandLine -like '*GlobalSystemMediaTransportControls*'` 无输出。 | 日志出现曲目名 → 隐私回归；目录出现 `frames/` 之外的新文件 → 媒体数据落盘；25s 后仍有该 powershell 进程 → 空闲退出未生效。 |
-| M8 | 其它平台 / 失败路径（可选） | 浏览器 GUI 中播放音乐（桌面 App 之外），或临时让 PowerShell 不可用。 | 浏览器 GUI 下可能命中 Chromium 自会话过滤边界（误选/漏选均记边界，不判红）；无 PowerShell / 失败时媒体层隐藏、面板给原因、渲染不受影响。 | 面板无提示 / 渲染被阻塞 → 降级链回归。 |
+| M8 | 其它平台 / 失败路径（可选） | 浏览器 GUI 中播放音乐（桌面 App 之外），或临时让 PowerShell 不可用（改 PATH / 策略模拟）。打开设置 →「Wallpaper 壁纸」→「显示效果」（媒体集成开关下方状态行）。 | 浏览器 GUI 下可能命中 Chromium 自会话过滤边界（误选/漏选均记边界，不判红）；无 PowerShell / watcher 失败时：媒体层隐藏、状态行显示对应原因（「未找到可用的 PowerShell…」/「媒体会话读取失败（已降级）…」）、不显示曲目；非 Windows 显示「当前系统不支持系统媒体会话（仅 Windows）…」；渲染不受影响。 | 面板无提示 / 仍显示隐私默认文案（说明 reason 未上抛）→ `getMediaStatus`/面板状态行链路回归；渲染被阻塞 → 降级链回归。 |
 
-**勾选记录**（待验收）：
+**勾选记录（当前未验：以下 M1–M8 需真机手动勾选，agent 未代验、未伪造勾选）**：
 
 - [ ] M1：无媒体会话白框消失
 - [ ] M2：播放（封面方向 / 歌名歌手 / 主色 / 淡入滑入）
@@ -489,7 +489,7 @@ getEventListeners(window).pointermove?.length
 - [ ] M7：隐私（日志无曲目）+ 数据目录无媒体落盘（`frames/` 抓帧缓存除外）+ >25s 无 watcher 残留
 - [ ] M8：浏览器 GUI / 失败路径（可选）
 
-**e2e 复跑（2026-10-30，本机 headless Edge / SwiftShader）**：`npm run e2e:media` exit 0（13/13 判据）；`node e2e/verify/verify-media-layer.mjs --regression` exit 0（4 张 17/17 判据，含 `2597392171` Fog 0/800/1600ms 位移，rAF 对齐采样）。
+**e2e 复跑（2026-10-30 final fix wave，本机 headless Edge / 真 GPU）**：`npm run e2e:media` exit 0（13/13 判据；FPS 探针 60.3，GPU=NVIDIA RTX 3060 D3D11）；`node e2e/verify/verify-media-layer.mjs --regression` exit 0（5 张 22/22 判据，含 `2980088441` 的 `[R6]`：text 层材质 color≈[1,1,1]、文本区红像素 539）；`npm run e2e:media-perf` exit 0（10 条动画 `advance+sampleAndWrite+syncWorld` 本机两次实测 13.024 / 14.579µs/帧，N=2000，预算 <50µs）；`verify-colorblend` / `verify-v081-gaps` / `verify-v082` / `verify-text-clock-layer --no-teeth` / `verify-web-pointer-parallax` 均 exit 0。**未通过/未运行（非本次回归）**：`verify-hidpi-object-rt` 挂载期 RT 尺寸断言为 v0.8.0 基线即有的已知红（见本文 §2.16）；`verify-isolated-rt-sharpness` 的 `2132420420`「多隔离 obj37」与 `2911105183` 锐度未达阈为既有素材/基线状态（本次未触 isolate/RT 代码）；`verify-turn-trigger-card` 因本机 DSH asar 缺 `dsh-client-ui-primitives/lib/markdown/CodeBlock.module.css` 无法运行（环境缺失，与插件无关）。
 
 **可复跑性口径**：媒体 e2e 与其它 headless e2e（如 `verify-colorblend`）必须**串行**执行、彼此留 1–2s 间隔 —— 连续紧跑 `e2e:media` 后立刻跑 `verify-colorblend` 可能因 Edge/调试端口尚未完全释放而环境性失败（单跑通过，属环境问题而非判据回归）。回归判据 `[R2]`「`__listObjects() > 0`」与 `[R3]`「截图字节 > 0」是**结构性弱断言**（防静默空跑），画面正确性需人工复看 `e2e/.out/media/regression-<id>.png`；`[R1]` 不含 CDP `Log.entryAdded` 的 error（含 favicon/资源 404、导航期 `net::ERR_ABORTED` 等噪音，纳入易随环境假红，现只诊断打印），页面级 error 由 `__logs` 与 CDP exception 覆盖。
 

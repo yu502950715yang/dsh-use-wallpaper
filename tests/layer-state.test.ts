@@ -136,6 +136,26 @@ describe('LayerWrite.color（Task 8：脚本 color 落地）', () => {
     expect(() => applyLayerState(new Map([[1, { color: [1, 0, 1] }]]), targetOf(obj))).not.toThrow();
   });
 
+  // text 图层把静态色烘进 canvas：再乘脚本 color 会把文字压暗（2980088441 回归）。
+  // 标记打在图层的每个材质上，applyLayerState 只跳过 color，其余写入照常。
+  it('dynamicColorDisabled 材质：脚本 color 不写入，origin/alpha 照常', () => {
+    const tinted = tintMesh();
+    tinted.material.userData.dynamicColorDisabled = true;
+    const target = { object: tinted as THREE.Object3D, sceneW: 2560, sceneH: 1440 };
+    applyLayerState(new Map([[40, { color: [0.6, 0, 0], origin: [10, 20, 0], alpha: 0.5 }]]), () => target);
+    expect((tinted.material as THREE.ShaderMaterial).uniforms['tint']!.value.toArray()).toEqual([1, 1, 1]);
+    expect(tinted.position.x).toBeCloseTo(10 - 1280);
+    expect(tinted.visible).toBe(true);
+  });
+
+  it('dynamicColorDisabled MeshBasicMaterial：material.color 保持静态值', () => {
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+    (mesh.material as THREE.MeshBasicMaterial).userData.dynamicColorDisabled = true;
+    applyLayerState(new Map([[54, { color: [0.6, 0, 0] }]]), targetOf(mesh));
+    const c = (mesh.material as THREE.MeshBasicMaterial).color;
+    expect([c.r, c.g, c.b]).toEqual([1, 1, 1]);
+  });
+
   it('仅写 color 也产生脏项（否则主色永远进不了材质）', () => {
     const t = createLayerStateTable();
     t.write(40, { color: [1, 0, 1] });

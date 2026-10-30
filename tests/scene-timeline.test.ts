@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { SceneDescription, TimelineAnimation, TimelineKeyframe, TimelineKeyframeHandle } from '../src/shared/types.js';
 import type { LayerWrite } from '../src/client/layer-state.js';
 import { parseSceneJson } from '../src/client/scene-json.js';
+import { SceneScriptHost } from '../src/client/scene-script-host.js';
 import {
   createTimelineRuntime, parseTimelineAnimation, sampleTimeline, sampleTimelineChannel,
   type TimelineRuntime,
@@ -329,7 +330,7 @@ describe('createTimelineRuntime', () => {
   it('非 startpaused 自动播放；startpaused 停在 frame 0，play 后推进', () => {
     const auto = runtimeOf(JSON.stringify({ objects: [{ id: 1, image: 'm.json',
       alpha: { value: 0.3, animation: { c0: [{ frame: 0, value: 0 }, { frame: 20, value: 1 }], options: { fps: 20, length: 20 } } } }] }));
-    auto.rt.applyInitial();
+    auto.rt.primeInitial(); auto.rt.applyInitial();
     expect(lastWrite(auto.writes, 1)?.alpha).toBeCloseTo(0, 6);
     auto.rt.advance(0.25); auto.rt.sampleAndWrite(); // 5 帧
     expect(lastWrite(auto.writes, 1)?.alpha).toBeCloseTo(0.25, 2);
@@ -337,7 +338,7 @@ describe('createTimelineRuntime', () => {
 
     const paused = runtimeOf(JSON.stringify({ objects: [{ id: 2, image: 'm.json',
       alpha: { value: 0.9, animation: { c0: [{ frame: 0, value: 0.2 }, { frame: 20, value: 1 }], options: { fps: 20, length: 20, startpaused: true } } } }] }));
-    paused.rt.applyInitial();
+    paused.rt.primeInitial(); paused.rt.applyInitial();
     expect(lastWrite(paused.writes, 2)?.alpha).toBeCloseTo(0.2, 6);
     paused.rt.advance(1); paused.rt.sampleAndWrite(); // dt 钳 0.25s，但未 play 不推进
     expect(lastWrite(paused.writes, 2)?.alpha).toBeCloseTo(0.2, 6);
@@ -366,7 +367,7 @@ describe('createTimelineRuntime', () => {
           options: { fps: 20, length: 20, parent: { key: 'origin' } },
         },
       } }] }));
-    rt.applyInitial();
+    rt.primeInitial(); rt.applyInitial();
     rt.advance(0.25); rt.sampleAndWrite(); // 父/子都到第 5 帧
     const patch = lastWrite(writes, 3)!;
     expect(patch.origin![0]).toBeCloseTo(102.5, 3);
@@ -398,7 +399,7 @@ describe('createTimelineRuntime', () => {
           options: { fps: 10, length: 10, parent: { key: 'origin' } },
         },
       } }] }));
-    rt.applyInitial();
+    rt.primeInitial(); rt.applyInitial();
     rt.advance(0.25); // 父 2.5 帧 → 子 2.5×(10/20)=1.25 帧
     rt.sampleAndWrite();
     expect(playbackOf(rt, 1, 'alpha').getFrame()).toBeCloseTo(1.25, 6);
@@ -407,7 +408,7 @@ describe('createTimelineRuntime', () => {
   it('single 到末帧停住；play 从 0 重播（媒体事件重复触发依赖它）', () => {
     const { rt } = runtimeOf(JSON.stringify({ objects: [{ id: 4, image: 'm.json',
       alpha: { animation: { c0: [{ frame: 0, value: 0 }, { frame: 10, value: 1 }], options: { fps: 10, length: 10 } } } }] }));
-    rt.applyInitial();
+    rt.primeInitial(); rt.applyInitial();
     const pb = playbackOf(rt, 4, 'alpha');
     for (let i = 0; i < 4; i++) rt.advance(0.25);
     expect(pb.getFrame()).toBeCloseTo(10, 6);
@@ -423,7 +424,7 @@ describe('createTimelineRuntime', () => {
   it('loop 回绕；mirror 往返（相位保留，不在同一半区反复反射）', () => {
     const loop = runtimeOf(JSON.stringify({ objects: [{ id: 5, image: 'm.json',
       alpha: { animation: { c0: [{ frame: 0, value: 0 }, { frame: 10, value: 1 }], options: { fps: 10, length: 10, mode: 'loop' } } } }] }));
-    loop.rt.applyInitial();
+    loop.rt.primeInitial(); loop.rt.applyInitial();
     const lp = playbackOf(loop.rt, 5, 'alpha');
     for (let i = 0; i < 4; i++) loop.rt.advance(0.25); // 10 帧 → 回绕 0
     expect(lp.getFrame()).toBeCloseTo(0, 6);
@@ -433,7 +434,7 @@ describe('createTimelineRuntime', () => {
 
     const mirror = runtimeOf(JSON.stringify({ objects: [{ id: 6, image: 'm.json',
       alpha: { animation: { c0: [{ frame: 0, value: 0 }, { frame: 10, value: 1 }], options: { fps: 10, length: 10, mode: 'mirror' } } } }] }));
-    mirror.rt.applyInitial();
+    mirror.rt.primeInitial(); mirror.rt.applyInitial();
     const mp = playbackOf(mirror.rt, 6, 'alpha');
     const frames: number[] = [];
     for (let i = 0; i < 4; i++) { mirror.rt.advance(0.25); frames.push(mp.getFrame()); }
@@ -463,7 +464,7 @@ describe('createTimelineRuntime', () => {
       { id: 2, image: 'm.json', parent: 1, origin: '10 20 0' },
       { id: 3, image: 'm.json', origin: '5 5 0' },
     ] }));
-    rt.applyInitial();
+    rt.primeInitial(); rt.applyInitial();
     worldWrites.length = 0;
     rt.syncWorld();
     expect(worldWrites.map(([id]) => id).sort()).toEqual([1, 2]);
@@ -486,7 +487,7 @@ describe('createTimelineRuntime', () => {
           options: { fps: 10, length: 10 },
         },
       } }] }));
-    nonRel.rt.applyInitial();
+    nonRel.rt.primeInitial(); nonRel.rt.applyInitial();
     nonRel.rt.advance(0.25); nonRel.rt.sampleAndWrite(); // 2.5 帧 → c0=2.5
     expect(lastWrite(nonRel.writes, 7)?.origin).toEqual([2.5, 200, 300]);
 
@@ -499,7 +500,7 @@ describe('createTimelineRuntime', () => {
           relative: true,
         },
       } }] }));
-    rel.rt.applyInitial();
+    rel.rt.primeInitial(); rel.rt.applyInitial();
     rel.rt.advance(0.25); rel.rt.sampleAndWrite();
     expect(lastWrite(rel.writes, 8)?.origin).toEqual([102.5, 200, 300]);
   });
@@ -516,7 +517,7 @@ describe('createTimelineRuntime', () => {
           relative: true,
         },
       } }] }));
-    rt.applyInitial();
+    rt.primeInitial(); rt.applyInitial();
     rt.advance(0.25); rt.sampleAndWrite(); // 2.5 帧 → z = 0.5 + 0.125 = 0.625 rad
     const patch = lastWrite(writes, 9)!;
     expect(patch.angles![2]).toBeCloseTo((0.625 * 180) / Math.PI, 3);
@@ -530,7 +531,7 @@ describe('createTimelineRuntime', () => {
       id: 1, ...IMAGE,
       animations: { alpha: animLiteral({ parentKey: 'alpha', channels: [[{ frame: 0, value: 0 }, { frame: 10, value: 1 }]] }) },
     }]));
-    self.rt.applyInitial();
+    self.rt.primeInitial(); self.rt.applyInitial();
     self.rt.advance(0.25);
     self.rt.sampleAndWrite();
     expect(self.rt.getByProperty(1, 'alpha', '')!.getFrame()).toBeCloseTo(2.5, 6);
@@ -546,7 +547,7 @@ describe('createTimelineRuntime', () => {
         }),
       },
     }]));
-    mutual.rt.applyInitial();
+    mutual.rt.primeInitial(); mutual.rt.applyInitial();
     mutual.rt.advance(0.25);
     mutual.rt.sampleAndWrite();
     expect(mutual.rt.getByProperty(2, 'origin', '')!.getFrame()).toBeCloseTo(2.5, 6);
@@ -563,7 +564,7 @@ describe('createTimelineRuntime', () => {
         }),
       },
     }]));
-    bad.rt.applyInitial();
+    bad.rt.primeInitial(); bad.rt.applyInitial();
     bad.rt.advance(0.25);
     const bp = bad.rt.getByProperty(1, 'alpha', '')!;
     bp.setFrame(Number.NaN);
@@ -575,7 +576,7 @@ describe('createTimelineRuntime', () => {
 
     const good = runtimeOf(JSON.stringify({ objects: [{ id: 2, image: 'm.json',
       alpha: { animation: { c0: [{ frame: 0, value: 0 }, { frame: 10, value: 1 }], options: { fps: 10, length: 10 } } } }] }));
-    good.rt.applyInitial();
+    good.rt.primeInitial(); good.rt.applyInitial();
     const gp = good.rt.getByProperty(2, 'alpha', '')!;
     good.rt.advance(Number.NaN);
     good.rt.advance(Number.POSITIVE_INFINITY);
@@ -587,7 +588,7 @@ describe('createTimelineRuntime', () => {
   it('dispose 幂等；dispose 后不再推进/写状态', () => {
     const { rt, writes, worldWrites } = runtimeOf(JSON.stringify({ objects: [{ id: 1, image: 'm.json',
       alpha: { animation: { c0: [{ frame: 0, value: 0 }, { frame: 10, value: 1 }], options: { fps: 10, length: 10 } } } }] }));
-    rt.applyInitial();
+    rt.primeInitial(); rt.applyInitial();
     const writeCount = writes.length;
     const worldCount = worldWrites.length;
     rt.dispose();
@@ -597,5 +598,48 @@ describe('createTimelineRuntime', () => {
     rt.syncWorld();
     expect(writes.length).toBe(writeCount);
     expect(worldWrites.length).toBe(worldCount);
+  });
+
+  // I3：renderer 顺序 = primeInitial → host.create（init 可 play/setFrame）→ applyInitial（只写值）。
+  // 旧实现 applyInitial 会把 init 里的 play/setFrame 重置回第 0 帧停住。
+  it('脚本 init 的 play/setFrame 不被 applyInitial 覆盖', async () => {
+    const desc = parseSceneJson(JSON.stringify({ objects: [{
+      id: 1, image: 'm.json',
+      // 用 origin（Vec3 属性）：alpha 属性的 init 被标量契约跳过（VM 里 alpha 只派发媒体回调）。
+      origin: { value: '0 0 0', animation: {
+        c0: [{ frame: 0, value: 0 }, { frame: 10, value: 10 }],
+        c1: [{ frame: 0, value: 0 }, { frame: 10, value: 10 }],
+        c2: [{ frame: 0, value: 0 }, { frame: 10, value: 0 }],
+        options: { fps: 10, length: 10, startpaused: true, name: 'Move' },
+      } },
+    }] }));
+    const writes: Array<Map<number, LayerWrite>> = [];
+    let host: SceneScriptHost | null = null;
+    const rt = createTimelineRuntime({
+      desc,
+      localTransforms: new Map(),
+      worldTransforms: new Map(),
+      applyLocal: (w) => { writes.push(w); host?.applyExternal(w); },
+      readLocal: (id) => host?.read(id) ?? {},
+      applyWorld: () => {},
+    });
+    rt.primeInitial();
+    host = await SceneScriptHost.create({
+      userProperties: {},
+      timeline: rt,
+      scripts: [{
+        objectId: 1,
+        property: 'origin',
+        source: 'export function init(){ thisObject.getAnimation().play(); thisObject.getAnimation().setFrame(7); }',
+      }],
+    });
+    expect(host?.activeCount).toBe(1);
+    rt.applyInitial();
+    const pb = playbackOf(rt, 1, 'origin');
+    expect(pb.isPlaying()).toBe(true);
+    expect(pb.getFrame()).toBe(7);
+    expect(writes[writes.length - 1]?.get(1)?.origin).toEqual([7, 7, 0]);
+    host?.dispose();
+    rt.dispose();
   });
 });

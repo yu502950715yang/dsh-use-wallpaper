@@ -13,6 +13,7 @@ import { defaultLoadWasm } from './wasm-loader.js';
 import type { LoadWasm, WasmSceneModule } from './wasm-loader.js';
 import type { SceneRendererLike } from './wallpaper-controller.js';
 import type { ObjectScriptProperty, SceneDescription, SceneImageObject, SceneSoundObject, SceneUtilObject } from '../shared/types.js';
+import type { MediaIntegrationStatus } from '../shared/media.js';
 import {
   fitIsolatedBudget, groupEffectsByObject, isolatedRtSize, objectRtSize, particleWorldSize,
   screenScalePx, sourcePixelsFromTexture, textWorldSize, utilWorldSize,
@@ -298,6 +299,8 @@ export function createThreeSceneRenderer(opts?: {
   // 编排（初始派发/轮询事件/开关/暂停）在 media-orchestration.ts（纯逻辑、可单测），这里只接线。
   let currentMedia: MediaOrchestration | null = null;
   let mediaIntegrationEnabled = true;
+  // 面板状态行读的「最近一次媒体状态」（不含曲目/封面）：装配中实时读编排，切走后保留最近值。
+  let lastMediaStatus: MediaIntegrationStatus | null = null;
   // 本次装配的动态网格注册表（脚本 createModelData/createLayer 建的运行时 mesh），teardown 释放。
   let currentMeshRegistry: DynamicMeshRegistry | null = null;
   // canvas 上的点击监听（脚本的 cursorClick，触发脚本内的切换特效）。
@@ -483,6 +486,7 @@ export function createThreeSceneRenderer(opts?: {
     scriptClickTarget = null;
     scriptClick = null;
     // 媒体轮询先停（它持有本次 host/sink 的引用），再释放脚本宿主。
+    if (currentMedia) lastMediaStatus = currentMedia.getStatus();
     currentMedia?.dispose();
     currentMedia = null;
     // 时间线运行时纯数据；先于脚本宿释放（其 applyLocal/readLocal 引用 host，但 dispose 不再触达）。
@@ -1090,6 +1094,8 @@ export function createThreeSceneRenderer(opts?: {
           })
           : null;
         currentTimeline = timelineRuntime;
+        // 播放状态必须在脚本 init 之前初始化：init 里的 play/setFrame 不得被后续 applyInitial 写值重置（I3）。
+        timelineRuntime?.primeInitial();
         // 音频可视化条（visualizer）：按家族代建（pixel-bars 用脚本 props + 对象 scale/angles）。
         for (const spec of visualizerSpecs) {
           const num = (v: unknown, def: number) => (typeof v === 'number' && isFinite(v) ? v : def);
@@ -1229,7 +1235,7 @@ export function createThreeSceneRenderer(opts?: {
         // SceneScript 宿主的创建/材质解析也是 await：丢失则连宿主带 player 一起作废。
         if (abortIfContextLost()) return false;
         // 时间线初始值：装配完成时求值一次（startPaused 取第 0 帧；其余从第 0 帧开始自动播放），
-        // 在媒体初始派发前落地，首帧即正确。
+        // 在媒体初始派发前落地，首帧即正确。状态已在脚本 init 前 primeInitial，这里只写值（I3）。
         if (timelineRuntime) {
           timelineRuntime.applyInitial();
           applyLayerState(currentScriptHost?.drainDirty() ?? new Map(), layerLookup);
@@ -1471,6 +1477,15 @@ export function createThreeSceneRenderer(opts?: {
     setMediaIntegration(enabled: boolean) {
       mediaIntegrationEnabled = enabled;
       currentMedia?.setEnabled(enabled);
+      // 无媒体场景 / 已切走：同步最近状态的开关位，面板状态行不得显示旧的「已启用」原因。
+      if (lastMediaStatus) {
+        lastMediaStatus = {
+          ...lastMediaStatus,
+          enabled,
+          available: enabled ? lastMediaStatus.available : false,
+          reason: enabled ? 'no-session' : 'disabled',
+        };
+      }
     },
     // 画质档位：改渲染像素比后重推画布缓冲，并把新屏幕密度同步给效果链编排器（对象 RT 随其重设）。
     setQualityScale(scale: number) {
@@ -1523,6 +1538,7 @@ export function createThreeSceneRenderer(opts?: {
     // `frameCapture` 绑定创建它的 renderer（换 renderer 时已在 render 内换绑），随本 renderer 一并释放。
     dispose() {
       teardown();
+      lastMediaStatus = null;
       frameCapture?.dispose();
       frameCapture = null;
       frameCaptureRenderer = null;
@@ -1530,6 +1546,10 @@ export function createThreeSceneRenderer(opts?: {
     // 看护读接口：设置面板与 `window.__wallpaperEngine.health()` 用它取当前壁纸状态。
     getLastHealth(): HealthSnapshot | null {
       return currentHealthId ? health.snapshot(currentHealthId) : null;
+    },
+    // 媒体集成状态（面板状态行）：只给 available/reason/enabled，绝不带曲目信息。
+    getMediaStatus(): MediaIntegrationStatus | null {
+      return currentMedia?.getStatus() ?? lastMediaStatus;
     },
     setOnHealth(cb: ((s: HealthSnapshot) => void) | null): void {
       healthHandler = cb;

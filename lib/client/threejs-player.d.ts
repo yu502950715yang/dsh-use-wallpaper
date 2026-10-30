@@ -293,6 +293,7 @@ export declare class ThreeScenePlayer {
             worldH: number;
         };
         parallaxDepth?: [number, number];
+        disableDynamicColor?: boolean;
     }): number;
     addPuppet(opts: {
         objectId: number;

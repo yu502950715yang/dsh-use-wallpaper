@@ -2,6 +2,7 @@ import type { WallpaperInfo } from '../shared/types.js';
 import type { BackgroundLayer } from './background-layer.js';
 import type { HealthSnapshot } from './render-health.js';
 import type { MediaFallback } from './media-health.js';
+import type { MediaIntegrationStatus } from '../shared/media.js';
 import type { SystemAudioFailure } from './system-audio.js';
 export interface SceneRendererLike {
     /** entry = pkg 内场景入口 json 名（WE 模板可能是 gifscene.json；缺省 scene.json）。 */
@@ -16,6 +17,7 @@ export interface SceneRendererLike {
     }): void;
     setSoundEnabled?(enabled: boolean): void;
     setMediaIntegration?(enabled: boolean): void;
+    getMediaStatus?(): MediaIntegrationStatus | null;
     startSystemAudio?(): Promise<SystemAudioFailure | 'ok'>;
     stopSystemAudio?(): void;
     setOnContextLost?(cb: ((id: string) => void) | null): void;

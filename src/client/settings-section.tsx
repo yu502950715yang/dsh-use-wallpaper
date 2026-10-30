@@ -18,6 +18,7 @@ import { parseColorTriplet, propertyConditionMet } from './user-bindings.js';
 import { TEXT_OUTLINE_MAX, normalizeHexColor, normalizeMode, normalizeOutlineLevel, outlineLabel } from './text-color.js';
 import { formatHealthLine } from './render-health.js';
 import type { HealthSnapshot } from './render-health.js';
+import type { MediaIntegrationStatus } from '../shared/media.js';
 import type { MediaFailure, MediaFailureKind, MediaFallback } from './media-health.js';
 import { filterLibrary, loadLibraryState, toggleFavorite, toggleHidden } from './library-view.js';
 import type { LibraryFilter, LibraryState } from './library-view.js';
@@ -166,6 +167,32 @@ function pushMedia(failure: MediaFailure | null): void {
   }
 }
 
+/** 媒体集成状态（面板状态行）：由 index.ts 注入 renderer.getMediaStatus（只读、不含曲目）。 */
+export interface WallpaperMediaIntegrationHandler {
+  get(): MediaIntegrationStatus | null;
+}
+let mediaIntegrationHandler: WallpaperMediaIntegrationHandler | null = null;
+
+/** 注册/撤销共享 handler（传 null = 面板回退到「读不到状态」的说明行）。 */
+export function setWallpaperMediaIntegrationHandler(handler: WallpaperMediaIntegrationHandler | null): void {
+  mediaIntegrationHandler = handler;
+}
+
+/** 面板状态行文案：启用时给隐私说明；失败 reason 给明确原因（不显示曲目信息）。 */
+export function mediaIntegrationHint(enabled: boolean, status: MediaIntegrationStatus | null): string {
+  if (!enabled) return '媒体集成已关闭：不读取系统媒体会话，也不启动媒体进程。';
+  switch (status?.reason) {
+    case 'unsupported-platform':
+      return '当前系统不支持系统媒体会话（仅 Windows）：媒体图层保持隐藏，壁纸照常渲染。';
+    case 'no-powershell':
+      return '未找到可用的 PowerShell：读不到系统媒体会话，媒体图层保持隐藏，壁纸照常渲染。';
+    case 'watcher-failed':
+      return '媒体会话读取失败（已降级）：媒体图层保持隐藏，壁纸照常渲染。';
+    default:
+      return '本机读取系统媒体会话（仅 Windows）；曲名/封面仅内存、不落盘、不上传。';
+  }
+}
+
 // 本文件文案是中文硬编码（无 i18n 层）：formatHealthLine 要求传入翻译函数，这里透传。
 const weT = (s: string): string => s;
 // 还没选壁纸 / 还没推送过：状态行按「尚未渲染」呈现，不给 formatHealthLine 造一个假壁纸 id。
@@ -273,6 +300,10 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
   const [health, setHealth] = useState<HealthSnapshot | null>(props.health ?? null);
   // 媒体失败（视频解码）：handler 由 index.ts 注册，提示条在其卡片下方显示。
   const [mediaFailure, setMediaFailure] = useState<MediaFailure | null>(mediaHandler?.get() ?? null);
+  // 媒体集成状态（面板状态行）：无推送通道，挂载时读一次 + 面板打开期间 1s 轮询（任务允许的最简口径）。
+  const [mediaStatus, setMediaStatus] = useState<MediaIntegrationStatus | null>(
+    () => mediaIntegrationHandler?.get() ?? null,
+  );
   // 壁纸库筛选状态：收藏/隐藏/最近使用来自 localStorage（挂载时读一次，操作后即时落盘）。
   const [libState, setLibState] = useState<LibraryState>(loadLibraryState);
   // 壁纸用户属性（v0.9 四类型）：只对当前选中的 scene 壁纸拉取一次。
@@ -291,6 +322,8 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
   const visibleWallpapers = filterLibrary(wallpapers, filter, libState);
   const selectedId = settings?.selectedWallpaperId ?? '';
   const selectedIsScene = !!selectedId && wallpapers.some((w) => w.id === selectedId && (w.type === 'scene' || w.type === 'preset'));
+  // 开关以面板持久化值为准（renderer 状态可能晚 1s 轮询才回来）；状态行的 reason 用渲染器实时值。
+  const mediaEnabled = settings?.mediaIntegrationEnabled ?? false;
 
   // 取消全部未提交的防抖（切壁纸/卸载/属性重拉时调用）。
   const clearCommitTimers = useCallback(() => {
@@ -308,6 +341,13 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
   useEffect(() => {
     setMediaFailure(mediaHandler?.get() ?? null);
     return subscribeWallpaperMedia((f) => setMediaFailure(f));
+  }, []);
+
+  useEffect(() => {
+    const read = () => setMediaStatus(mediaIntegrationHandler?.get() ?? null);
+    read();
+    const timer = setInterval(read, 1000);
+    return () => clearInterval(timer);
   }, []);
 
   useEffect(() => {
@@ -1005,6 +1045,25 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
               />
             </label>
           </div>
+          {/* 媒体集成（spec §4.5：显示效果组）：开关 + 状态/隐私说明。状态行在未选壁纸时也可读；
+              失败 reason（非 Windows / 无 PowerShell / watcher 失败）换成对应提示，不显示曲目信息。 */}
+          <div className="wss-media-block">
+            <label className="wss-glow-row">
+              <input
+                type="checkbox"
+                className="wss-media-integration"
+                checked={settings.mediaIntegrationEnabled}
+                onChange={(e) => applyRuntime({ mediaIntegrationEnabled: e.target.checked })}
+              />
+              媒体集成（显示本机播放的歌曲封面/歌名）
+            </label>
+            <p
+              className="wss-section-desc wss-media-status"
+              data-state={!mediaEnabled ? 'disabled' : (mediaStatus?.reason ?? 'no-session')}
+            >
+              {mediaIntegrationHint(mediaEnabled, mediaStatus)}
+            </p>
+          </div>
         </section>
       )}
       {/* 自动轮播（v0.8）：开启后按间隔自动切换；收藏 ≥2 张时只轮播收藏，池不足 2 张时明示原因。 */}
@@ -1106,16 +1165,6 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
                 onChange={(e) => applyRuntime({ soundEnabled: e.target.checked })}
               />
               壁纸音效
-            </label>
-            {/* 媒体集成：Windows SMTC 只读；数据仅内存、不落盘、不上传 */}
-            <label className="wss-glow-row">
-              <input
-                type="checkbox"
-                className="wss-media-integration"
-                checked={settings.mediaIntegrationEnabled}
-                onChange={(e) => applyRuntime({ mediaIntegrationEnabled: e.target.checked })}
-              />
-              媒体集成（显示本机播放的歌曲封面/歌名）
             </label>
           </div>
           </div>

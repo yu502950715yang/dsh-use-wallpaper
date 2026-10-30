@@ -93,7 +93,8 @@ function scriptColor01(c: [number, number, number]): [number, number, number] {
 }
 
 /** 把脚本 color 写到材质：ShaderMaterial 的 tint uniform 优先（colorBlendMode 6/7/31 的预乘材质），
- *  否则写到 MeshBasicMaterial.color（脚本 color 覆盖对象 color，再乘装配期记录的 brightness）。 */
+ *  否则写到 MeshBasicMaterial.color（脚本 color 覆盖对象 color，再乘装配期记录的 brightness）。
+ *  `userData.dynamicColorDisabled` 的材质跳过（text 静态色已烘进画布，再乘会压暗，见 AGENT §7.44）。 */
 function writeColor(object: THREE.Object3D, rgb: [number, number, number]): void {
   const mat = (object as { material?: unknown }).material;
   const list = Array.isArray(mat) ? mat : mat ? [mat] : [];
@@ -104,7 +105,9 @@ function writeColor(object: THREE.Object3D, rgb: [number, number, number]): void
     const anyMat = m as {
       color?: { setRGB(r: number, g: number, b: number): void };
       uniforms?: Record<string, { value?: unknown }>;
+      userData?: { dynamicColorDisabled?: unknown };
     };
+    if (anyMat.userData?.dynamicColorDisabled === true) continue;
     // tint 路径：脚本 color 直接覆盖 tint（brightness 已在装配期乘进 tint 初值，本任务不保留）。
     const tint = anyMat.uniforms?.['tint']?.value as { set?: (r: number, g: number, b: number) => void } | undefined;
     if (tint && typeof tint.set === 'function') {

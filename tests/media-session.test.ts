@@ -99,6 +99,16 @@ it('WATCH_SCRIPT 是常量 PowerShell：输出 UTF8 JSON 行、枚举 SMTC 会�
   // 零会话时不得每 700ms 重复输出空帧：首帧必发（$initialized），之后仅签名变化才发。
   expect(WATCH_SCRIPT).toContain('$initialized = $false');
   expect(WATCH_SCRIPT).toContain('-not $initialized -or $signature -ne $last');
+  // I1：封面晚于元数据一个采样周期到达时必须强制输出一行，否则要等下一次签名变化。
+  expect(WATCH_SCRIPT).toContain('$artDirty = $false');
+  expect(WATCH_SCRIPT).toContain('$artDirty = $true');
+  expect(WATCH_SCRIPT).toContain('-or $artDirty');
+  const watchOutputAt = WATCH_SCRIPT.indexOf('if (-not $initialized -or $signature -ne $last -or $artDirty)');
+  expect(watchOutputAt).toBeGreaterThan(-1);
+  expect(WATCH_SCRIPT.indexOf('$artDirty = $false', watchOutputAt)).toBeGreaterThan(watchOutputAt);
+  expect(WATCH_SCRIPT.indexOf('$lastArt[$appId] = $artSig')).toBeLessThan(
+    WATCH_SCRIPT.indexOf('$artDirty = $true'),
+  );
   // 输出签名必须含 status：暂停/恢复必须触发输出行。
   expect(WATCH_SCRIPT).toContain('$album|$contentType|$status');
   // 封面签名不含 status：暂停/恢复不重发同一封面（否则 rev 无谓 +1）。
@@ -178,6 +188,27 @@ describe('createMediaSessionService', () => {
     procs[0]!.emitExit();
     svc.request({ pageTitle: 'x', enabled: true });
     expect(procs).toHaveLength(2);
+  });
+
+  // I2：stdout 是字节流，多字节字符可能跨 chunk；逐 chunk toString('utf8') 会出 U+FFFD。
+  it('stdout 分块切在多字节 UTF-8 字符中间 ⇒ 仍解析出正确 title/artist/album', () => {
+    const { svc, procs } = setupService();
+    svc.request({ pageTitle: 'x', enabled: true });
+    const fakeTitle = '测试曲名·歌手（假数据）';
+    const fakeArtist = '测试歌手（假数据）';
+    const fakeAlbum = '测试专辑（假数据）';
+    const line = Buffer.from(JSON.stringify({
+      v: 1, at: 1,
+      sessions: [{ appId: 'a', status: 'Playing', title: fakeTitle, artist: fakeArtist, album: fakeAlbum, contentType: 'music' }],
+    }) + '\n', 'utf8');
+    const titleStart = line.indexOf(Buffer.from('测', 'utf8'));
+    expect(titleStart).toBeGreaterThan(-1);
+    const cut = titleStart + 1; // 切在「测」的三字节 UTF-8 中间
+    procs[0]!.stdout.write(line.subarray(0, cut));
+    procs[0]!.stdout.write(line.subarray(cut));
+    const snap = svc.request({ pageTitle: 'x', enabled: true });
+    expect(snap).toMatchObject({ available: true, title: fakeTitle, artist: fakeArtist, album: fakeAlbum });
+    expect(svc.stats().badLines).toBe(0);
   });
 
   it('封面按会话缓存：同一会话后续不带 art 的状态变化行 ⇒ hasThumbnail 仍 true、rev 不变', () => {
