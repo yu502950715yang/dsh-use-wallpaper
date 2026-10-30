@@ -186,7 +186,7 @@ describe('createThreeSceneRenderer', () => {
   it('bloom stage 为 null（非法视口）→ 告警带壁纸 id，装配继续', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     bloomMocks.createBloomStage.mockReturnValue(null);
-    vi.mocked(resolveImageAssets).mockResolvedValue({ texture: fakeTexture() as any, puppetPath: null, spriteSheet: false });
+    vi.mocked(resolveImageAssets).mockResolvedValue({ texture: fakeTexture() as any, puppetPath: null, spriteSheet: false, mediaThumbnail: false });
     const player = {
       dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setBloomStage: vi.fn(),
       setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn(),
@@ -1142,7 +1142,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
         alpha: 0, color: '0.79 0.79 0.79', effects: [{ file: 'effects/w/effect.json' }],
       },
     ]), FX_FILES);
-    vi.mocked(resolveImageAssets).mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null, spriteSheet: false });
+    vi.mocked(resolveImageAssets).mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null, spriteSheet: false, mediaThumbnail: false });
     vi.mocked(defaultLoadWasm).mockResolvedValue(null);
     const player = {
       dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage: vi.fn(),
@@ -1503,7 +1503,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
         effects: [{ file: 'effects/frame/effect.json', ...framePass }],
       },
     ]), FX_FILES_FRAME_RT);
-    vi.mocked(resolveImageAssets).mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null, spriteSheet: false });
+    vi.mocked(resolveImageAssets).mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null, spriteSheet: false, mediaThumbnail: false });
     vi.mocked(defaultLoadWasm).mockResolvedValue(null);
     const registerFrameConsumer = vi.fn();
     const setFrameCapture = vi.fn();
@@ -1556,7 +1556,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
         effects: [{ file: 'effects/w/effect.json' }],
       },
     ]), FX_FILES);
-    vi.mocked(resolveImageAssets).mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null, spriteSheet: false });
+    vi.mocked(resolveImageAssets).mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null, spriteSheet: false, mediaThumbnail: false });
     vi.mocked(defaultLoadWasm).mockResolvedValue(null);
     const setObjectEffectStage = vi.fn();
     const snap = fakeTexture() as unknown as THREE.Texture;
@@ -1599,7 +1599,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
       effects: [{ file: 'effects/w/effect.json', visible: { user: 'depthparallax', value: true } }],
     }]), FX_FILES);
     vi.mocked(resolveImageAssets).mockResolvedValue({
-      texture: fakeTexture() as never, puppetPath: null, spriteSheet: false,
+      texture: fakeTexture() as never, puppetPath: null, spriteSheet: false, mediaThumbnail: false,
     });
     vi.mocked(defaultLoadWasm).mockResolvedValue(null); // 本用例无粒子
     const setObjectEffectStage = vi.fn();
@@ -1790,7 +1790,7 @@ describe('对象级效果链：隔离 RT 尺寸按源纹理收口 4096', () => {
         effects: [{ file: 'effects/w/effect.json' }],
       },
     ]);
-    vi.mocked(resolveImageAssets).mockResolvedValue({ texture: { image: { ...SRC }, dispose: vi.fn() } as never, puppetPath: null, spriteSheet: false });
+    vi.mocked(resolveImageAssets).mockResolvedValue({ texture: { image: { ...SRC }, dispose: vi.fn() } as never, puppetPath: null, spriteSheet: false, mediaThumbnail: false });
 
     const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
     expect(await r.render('2911105183', document.createElement('canvas'))).toBe(true);
@@ -2104,7 +2104,7 @@ describe('three-renderer text 对象', () => {
       ],
     }), {});
     stubTextRender();
-    vi.mocked(resolveImageAssets).mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null, spriteSheet: false });
+    vi.mocked(resolveImageAssets).mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null, spriteSheet: false, mediaThumbnail: false });
     const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
 
     localStorage.setItem('we:userprop:clock', '"2"');
@@ -3472,7 +3472,7 @@ describe('createThreeSceneRenderer 视差接线', () => {
         effects: [{ file: 'effects/w/effect.json' }],
       }],
     }), FX_FILES);
-    vi.mocked(resolveImageAssets).mockResolvedValue({ texture: fakeTexture() as any, puppetPath: null, spriteSheet: false });
+    vi.mocked(resolveImageAssets).mockResolvedValue({ texture: fakeTexture() as any, puppetPath: null, spriteSheet: false, mediaThumbnail: false });
     vi.mocked(defaultLoadWasm).mockResolvedValue(null);
     const follow: { x: number; y: number } = { x: 0.5, y: 0.5 };
     const player = {
@@ -3518,7 +3518,7 @@ describe('createThreeSceneRenderer 视差接线', () => {
         effects: [{ file: 'effects/w/effect.json' }],
       }],
     }), FX_FILES);
-    vi.mocked(resolveImageAssets).mockResolvedValue({ texture: fakeTexture() as any, puppetPath: null, spriteSheet: false });
+    vi.mocked(resolveImageAssets).mockResolvedValue({ texture: fakeTexture() as any, puppetPath: null, spriteSheet: false, mediaThumbnail: false });
     vi.mocked(defaultLoadWasm).mockResolvedValue(null);
     const player = {
       dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage: vi.fn(),
@@ -4066,7 +4066,7 @@ describe('用户属性默认值与属性级 condition 接线', () => {
       if (u.includes('/wallpapers/properties')) return { ok: true, json: async () => properties };
       return { ok: false, text: async () => '' };
     }));
-    vi.mocked(resolveImageAssets).mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null, spriteSheet: false });
+    vi.mocked(resolveImageAssets).mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null, spriteSheet: false, mediaThumbnail: false });
     const player = {
       dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(),
       setParallax: vi.fn(), setParallaxPointer: vi.fn(), setObjectEffectStage: vi.fn(),

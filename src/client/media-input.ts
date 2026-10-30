@@ -1,6 +1,7 @@
 // client 媒体轮询总线：1s 拉 now-playing 快照，仅快照变化时回调；连续失败退避 10s。
 // 纯函数 diff/mediaUrl/applyMediaSnapshot/sceneNeedsMedia 独立可测；定时器与 fetch 可注入（测试不碰真实网络/时钟）。
 import type { MediaPalette, MediaPropertiesPayload, MediaSessionSnapshot } from '../shared/media.js';
+import { MEDIA_THUMBNAIL_TEXTURE } from '../shared/media.js';
 import type { SceneDescription } from '../shared/types.js';
 
 const DEFAULT_INTERVAL_MS = 1000;
@@ -170,7 +171,8 @@ export function createMediaInput(opts: MediaInputOptions): MediaInput {
   };
 }
 
-/** 媒体层事件（Task 8 才有真实封面主色；本任务固定中性调色板，hasThumbnail/rev 仅供脚本判断）。 */
+/** 媒体层封面事件：`rev` 仅表示「封面变化」（可回退）；真实调色板由 renderer 拉字节/取色后派发，
+ *  此处固定中性调色板的路径只用于无封面/未注入 onThumbnail 的消费方。 */
 export interface MediaThumbnailEventPayload {
   hasThumbnail: boolean;
   rev: number;
@@ -220,7 +222,7 @@ export function applyMediaSnapshot(
 
 const MEDIA_SCRIPT_RE = /mediaPlaybackChanged|mediaStatusChanged|mediaPropertiesChanged|mediaThumbnailChanged|MediaPlaybackEvent/;
 
-/** 场景是否声明了媒体事件脚本（visible/属性/text 三处）；没有则零轮询、零开销。 */
+/** 场景是否需要媒体轮询：声明了媒体事件脚本，或 image 实例绑定了 `$mediaThumbnail` 封面纹理。 */
 export function sceneNeedsMedia(desc: SceneDescription): boolean {
   for (const obj of desc.objects) {
     if (typeof obj.visible?.script === 'string' && obj.visible.script && MEDIA_SCRIPT_RE.test(obj.visible.script)) {
@@ -230,6 +232,14 @@ export function sceneNeedsMedia(desc: SceneDescription): boolean {
       if (typeof e?.script === 'string' && e.script && MEDIA_SCRIPT_RE.test(e.script)) return true;
     }
     if (obj.kind === 'text' && typeof obj.script === 'string' && obj.script && MEDIA_SCRIPT_RE.test(obj.script)) {
+      return true;
+    }
+    // 只靠封面纹理、没有媒体脚本的壁纸也要轮询（否则封面永远不更新）。
+    if (
+      obj.kind === 'image'
+      && Array.isArray(obj.instance?.usertextures)
+      && obj.instance.usertextures.some((u) => u?.name === MEDIA_THUMBNAIL_TEXTURE)
+    ) {
       return true;
     }
   }

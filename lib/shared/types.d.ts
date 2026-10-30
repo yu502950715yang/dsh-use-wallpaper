@@ -119,6 +119,14 @@ export interface SceneImageObject extends SceneObjectBase {
         blend: number;
         visible: boolean;
     }>;
+    /** WE image 实例声明（scene.json `instance`）：实例纹理槽 + 系统用户纹理（`$mediaThumbnail` = 封面）。 */
+    instance?: {
+        textures?: string[];
+        usertextures?: Array<{
+            name: string;
+            type: string;
+        }>;
+    };
 }
 export interface SceneParticleObject extends SceneObjectBase {
     kind: 'particle';

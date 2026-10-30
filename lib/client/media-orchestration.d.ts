@@ -26,8 +26,8 @@ export interface MediaOrchestrationOptions {
     lookup: MediaObjectLookup;
     /** 媒体集成开关当前值（面板下发后由 renderer 维护）；调用 setEnabled 前必须先更新它。 */
     getEnabled: () => boolean;
-    /** 封面事件改写（Task 8 主色/纹理）；缺省派发中性调色板。 */
-    onThumbnail?: (payload: MediaThumbnailEventPayload) => MediaThumbnailPayload;
+    /** 封面事件改写（Task 8 主色/纹理）；返回 null = 由调用方异步处理并自行派发（编排不再派发中性色）。 */
+    onThumbnail?: (payload: MediaThumbnailEventPayload) => MediaThumbnailPayload | null;
     /** 单个消费者异常（host/binding/脏写入）不阻断其余派发。 */
     onError?: (error: unknown) => void;
     /** 透传输入的 pageTitle/intervalMs 等；onSnapshot/onError 由编排接管。 */

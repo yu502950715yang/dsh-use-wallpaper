@@ -23,6 +23,8 @@ export interface MediaPalette {
     text: MediaRgb;
     highContrast: MediaRgb;
 }
+/** WE image 实例的系统用户纹理名：取当前播放封面（scene.json instance.usertextures）。 */
+export declare const MEDIA_THUMBNAIL_TEXTURE = "$mediaThumbnail";
 /** SceneScript 媒体事件 / 文本脚本共用的曲目元数据。 */
 export interface MediaPropertiesPayload {
     title: string;

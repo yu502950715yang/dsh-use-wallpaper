@@ -139,6 +139,31 @@ function parseAnimationLayers(raw: unknown): SceneImageObject['animationLayers']
   return out;
 }
 
+// WE image 实例声明（scene.json `instance`）：`textures` = 实例纹理槽，`usertextures` = 系统纹理
+// （`$mediaThumbnail` = 当前播放封面）。畸形条目逐项丢弃；两侧都无有效值 ⇒ undefined。
+function parseInstance(raw: unknown): SceneImageObject['instance'] | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const o = raw as { textures?: unknown; usertextures?: unknown };
+  const textures = Array.isArray(o.textures)
+    ? o.textures.filter((t): t is string => typeof t === 'string' && !!t)
+    : undefined;
+  const usertextures = Array.isArray(o.usertextures)
+    ? o.usertextures
+      .map((u) => (u && typeof u === 'object'
+        ? {
+          name: String((u as { name?: unknown }).name ?? ''),
+          type: String((u as { type?: unknown }).type ?? ''),
+        }
+        : null))
+      .filter((u): u is { name: string; type: string } => !!u && !!u.name)
+    : undefined;
+  if ((!textures || textures.length === 0) && (!usertextures || usertextures.length === 0)) return undefined;
+  return {
+    ...(textures && textures.length > 0 ? { textures } : {}),
+    ...(usertextures && usertextures.length > 0 ? { usertextures } : {}),
+  };
+}
+
 // WE 对象级 parallaxDepth：两根轴的空格分隔字符串（与 origin/size 同形）；缺省/畸形 → undefined。
 function optNum2(s: unknown): [number, number] | undefined {
   if (typeof s !== 'string' || !s.trim()) return undefined;
@@ -361,6 +386,8 @@ export function parseSceneJson(raw: string): SceneDescription {
         colorBlendMode: Math.max(0, Math.floor(optNum(o.colorBlendMode) ?? 0)),
         // T8：WE 动画层（puppet 的 MDLA 动画选择元数据）；undefined = 无该字段。
         animationLayers: parseAnimationLayers(o.animationlayers),
+        // Task 8：实例纹理槽 / $mediaThumbnail（封面）声明。
+        instance: parseInstance(o.instance),
         ...fromVisibleScript,
       };
     }

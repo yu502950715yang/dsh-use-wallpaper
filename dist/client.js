@@ -23773,6 +23773,20 @@ function parseAnimationLayers(raw) {
   }
   return out;
 }
+function parseInstance(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return void 0;
+  const o = raw;
+  const textures = Array.isArray(o.textures) ? o.textures.filter((t) => typeof t === "string" && !!t) : void 0;
+  const usertextures = Array.isArray(o.usertextures) ? o.usertextures.map((u) => u && typeof u === "object" ? {
+    name: String(u.name ?? ""),
+    type: String(u.type ?? "")
+  } : null).filter((u) => !!u && !!u.name) : void 0;
+  if ((!textures || textures.length === 0) && (!usertextures || usertextures.length === 0)) return void 0;
+  return {
+    ...textures && textures.length > 0 ? { textures } : {},
+    ...usertextures && usertextures.length > 0 ? { usertextures } : {}
+  };
+}
 function optNum2(s) {
   if (typeof s !== "string" || !s.trim()) return void 0;
   const p = s.trim().split(/\s+/).map(Number);
@@ -23936,6 +23950,8 @@ function parseSceneJson(raw) {
         colorBlendMode: Math.max(0, Math.floor(optNum(o.colorBlendMode) ?? 0)),
         // T8：WE 动画层（puppet 的 MDLA 动画选择元数据）；undefined = 无该字段。
         animationLayers: parseAnimationLayers(o.animationlayers),
+        // Task 8：实例纹理槽 / $mediaThumbnail（封面）声明。
+        instance: parseInstance(o.instance),
         ...fromVisibleScript
       };
     }
@@ -25743,6 +25759,7 @@ var ThreeScenePlayer = class {
       opts.brightness
     ) : this.createLayerMaterial(opts.texture ?? null, opts.colorBlendMode ?? 0, mod, !!opts.isolate);
     const mesh = new Mesh(geometry, material);
+    mesh.userData.weBrightness = opts.brightness ?? 1;
     mesh.renderOrder = opts.renderOrder ?? 0;
     const s = layerScale;
     mesh.scale.set(s[0], s[1], s[2] ?? 1);
@@ -26651,6 +26668,9 @@ function resolveWorldTransforms(nodes) {
   return out;
 }
 
+// src/shared/media.ts
+var MEDIA_THUMBNAIL_TEXTURE = "$mediaThumbnail";
+
 // src/client/tex-loader.ts
 var import_lz4js = __toESM(require_lz4(), 1);
 
@@ -27122,27 +27142,33 @@ function resolveTexPath(matRef, texName) {
 }
 async function resolveImageAssets(id, obj) {
   let puppetPath = null;
+  const mediaThumbnail = hasMediaThumbnailTexture(obj);
   try {
     const modelResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(obj.image)}`);
-    if (!modelResp.ok) return { texture: null, puppetPath: null, spriteSheet: false };
+    if (!modelResp.ok) return { texture: null, puppetPath: null, spriteSheet: false, mediaThumbnail };
     const model = await modelResp.json();
     puppetPath = typeof model?.puppet === "string" && model.puppet ? String(model.puppet) : null;
     const matRef = model?.material;
-    if (typeof matRef !== "string" || !matRef) return { texture: null, puppetPath, spriteSheet: false };
+    if (typeof matRef !== "string" || !matRef) return { texture: null, puppetPath, spriteSheet: false, mediaThumbnail };
     const matResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(matRef)}`);
-    if (!matResp.ok) return { texture: null, puppetPath, spriteSheet: false };
+    if (!matResp.ok) return { texture: null, puppetPath, spriteSheet: false, mediaThumbnail };
     const mat = await matResp.json();
     const combos = mat?.passes?.[0]?.combos;
     const spriteSheet = combos?.spritesheet === 1 || combos?.SPRITESHEET === 1;
     const texName = mat?.passes?.[0]?.textures?.[0];
-    if (typeof texName !== "string" || !texName) return { texture: null, puppetPath, spriteSheet };
-    const url = `/wallpapers/scene/${id}/asset?name=${encodeURIComponent(resolveTexPath(matRef, texName))}`;
+    if (typeof texName !== "string" || !texName) return { texture: null, puppetPath, spriteSheet, mediaThumbnail };
+    const instanceTex = obj.instance?.textures?.[0];
+    const texName2 = instanceTex && instanceTex.includes("/") ? instanceTex : texName;
+    const url = `/wallpapers/scene/${id}/asset?name=${encodeURIComponent(resolveTexPath(matRef, texName2))}`;
     const texture = await loadTexTexture(url);
     if (texture && spriteSheet) texture.userData.spritesheet = true;
-    return { texture, puppetPath, spriteSheet };
+    return { texture, puppetPath, spriteSheet, mediaThumbnail };
   } catch {
-    return { texture: null, puppetPath, spriteSheet: false };
+    return { texture: null, puppetPath, spriteSheet: false, mediaThumbnail };
   }
+}
+function hasMediaThumbnailTexture(obj) {
+  return Array.isArray(obj.instance?.usertextures) && obj.instance.usertextures.some((u) => u?.name === MEDIA_THUMBNAIL_TEXTURE);
 }
 async function fetchMdlBytes(id, path) {
   try {
@@ -31366,7 +31392,7 @@ function vecEq(a, b) {
   return a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
 }
 function patchEq(a, b) {
-  return vecEq(a.origin, b.origin) && vecEq(a.angles, b.angles) && vecEq(a.scale, b.scale) && a.alpha === b.alpha && a.visible === b.visible;
+  return vecEq(a.origin, b.origin) && vecEq(a.angles, b.angles) && vecEq(a.scale, b.scale) && vecEq(a.color, b.color) && a.alpha === b.alpha && a.visible === b.visible;
 }
 function createLayerStateTable() {
   const state = /* @__PURE__ */ new Map();
@@ -31403,6 +31429,29 @@ function writeOpacity(object, alpha) {
     if (u && typeof u.value === "number") u.value = alpha;
   }
 }
+function scriptColor01(c) {
+  const scale = Math.max(c[0], c[1], c[2]) > 1 ? 1 / 255 : 1;
+  const clamp01 = (v) => Math.max(0, Math.min(1, Number.isFinite(v) ? v * scale : 0));
+  return [clamp01(c[0]), clamp01(c[1]), clamp01(c[2])];
+}
+function writeColor(object, rgb) {
+  const mat = object.material;
+  const list = Array.isArray(mat) ? mat : mat ? [mat] : [];
+  const rawBrightness = object.userData?.weBrightness;
+  const brightness = typeof rawBrightness === "number" && Number.isFinite(rawBrightness) ? rawBrightness : 1;
+  const clamp01 = (v) => Math.max(0, Math.min(1, v * brightness));
+  for (const m of list) {
+    const anyMat = m;
+    const tint = anyMat.uniforms?.["tint"]?.value;
+    if (tint && typeof tint.set === "function") {
+      tint.set(rgb[0], rgb[1], rgb[2]);
+      continue;
+    }
+    if (anyMat.color && typeof anyMat.color.setRGB === "function") {
+      anyMat.color.setRGB(clamp01(rgb[0]), clamp01(rgb[1]), clamp01(rgb[2]));
+    }
+  }
+}
 function applyLayerState(dirty, lookup) {
   let applied = 0;
   for (const [objectId, w] of dirty) {
@@ -31412,6 +31461,7 @@ function applyLayerState(dirty, lookup) {
     if (w.origin) obj.position.set(w.origin[0] - target.sceneW / 2, w.origin[1] - target.sceneH / 2, w.origin[2]);
     if (w.scale) obj.scale.set(w.scale[0], w.scale[1], w.scale[2]);
     if (w.angles) obj.rotation.set(w.angles[0] * DEG2RAD2, w.angles[1] * DEG2RAD2, w.angles[2] * DEG2RAD2);
+    if (w.color) writeColor(obj, scriptColor01(w.color));
     const alpha = w.alpha;
     if (alpha !== void 0) {
       const a = Math.max(0, Math.min(1, alpha));
@@ -32610,6 +32660,9 @@ function sceneNeedsMedia(desc) {
     if (obj.kind === "text" && typeof obj.script === "string" && obj.script && MEDIA_SCRIPT_RE.test(obj.script)) {
       return true;
     }
+    if (obj.kind === "image" && Array.isArray(obj.instance?.usertextures) && obj.instance.usertextures.some((u) => u?.name === MEDIA_THUMBNAIL_TEXTURE)) {
+      return true;
+    }
   }
   return false;
 }
@@ -32649,9 +32702,10 @@ function createMediaOrchestration(opts) {
       safely(() => host.mediaProperties(props));
       for (const binding of bindings) safely(() => binding.dispatchMediaProperties(props));
     },
-    thumbnail: (payload) => safely(() => host.mediaThumbnail(
-      opts.onThumbnail ? opts.onThumbnail(payload) : neutralThumbnail(payload)
-    ))
+    thumbnail: (payload) => safely(() => {
+      const mapped = opts.onThumbnail ? opts.onThumbnail(payload) : neutralThumbnail(payload);
+      if (mapped) host.mediaThumbnail(mapped);
+    })
   };
   const applyDirty = () => safely(() => opts.applyDirty(host.drainDirty(), opts.lookup));
   const ensureInput = () => {
@@ -32704,6 +32758,94 @@ function createMediaOrchestration(opts) {
       const active = input;
       input = null;
       active?.dispose();
+    }
+  };
+}
+
+// src/client/media-palette.ts
+var SAMPLE = 32;
+var NEUTRAL = {
+  primary: [0, 0, 0],
+  secondary: [0, 0, 0],
+  tertiary: [0, 0, 0],
+  text: [1, 1, 1],
+  highContrast: [1, 1, 1]
+};
+var luminance = (c) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+function paletteFromPixels(width, height, rgba) {
+  const buckets = /* @__PURE__ */ new Map();
+  let total = 0;
+  const count = Math.min(width * height, rgba.length >> 2);
+  for (let i = 0; i < count; i += 1) {
+    const a = rgba[i * 4 + 3];
+    if (a < 32) continue;
+    const r = rgba[i * 4];
+    const g = rgba[i * 4 + 1];
+    const b = rgba[i * 4 + 2];
+    const key = r >> 4 << 8 | g >> 4 << 4 | b >> 4;
+    const box = buckets.get(key) ?? { n: 0, r: 0, g: 0, b: 0 };
+    box.n += 1;
+    box.r += r;
+    box.g += g;
+    box.b += b;
+    buckets.set(key, box);
+    total += 1;
+  }
+  if (total === 0) return NEUTRAL;
+  const colors = [...buckets.values()].map((box) => ({
+    n: box.n,
+    rgb: [box.r / box.n / 255, box.g / box.n / 255, box.b / box.n / 255]
+  })).sort((a, b) => b.n - a.n).map((c) => c.rgb);
+  const primary = colors[0];
+  const secondary = colors[1] ?? colors[0];
+  const tertiary = colors[2] ?? secondary;
+  const contrast = (c) => Math.abs(luminance(c) - luminance(primary));
+  const candidates = [secondary, tertiary, [0, 0, 0], [1, 1, 1]];
+  const text = candidates.reduce(
+    (best, c) => contrast(c) > contrast(best) ? c : best,
+    [1, 1, 1]
+  );
+  const highContrast = luminance(primary) > 0.5 ? [0, 0, 0] : [1, 1, 1];
+  return { primary, secondary, tertiary, text, highContrast };
+}
+async function paletteFromImage(source) {
+  const w = source.width;
+  const h = source.height;
+  if (!w || !h || typeof document === "undefined") return NEUTRAL;
+  const canvas = document.createElement("canvas");
+  canvas.width = SAMPLE;
+  canvas.height = SAMPLE;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return NEUTRAL;
+  ctx.drawImage(source, 0, 0, SAMPLE, SAMPLE);
+  return paletteFromPixels(SAMPLE, SAMPLE, ctx.getImageData(0, 0, SAMPLE, SAMPLE).data);
+}
+
+// src/client/media-texture.ts
+function createMediaThumbnailTextureSource() {
+  const white = typeof ImageData === "undefined" ? null : new ImageData(new Uint8ClampedArray([255, 255, 255, 255]), 1, 1);
+  const texture = white ? new Texture(white) : new Texture();
+  texture.colorSpace = SRGBColorSpace;
+  texture.minFilter = LinearFilter;
+  texture.generateMipmaps = false;
+  texture.needsUpdate = white !== null;
+  let has = false;
+  let current = null;
+  return {
+    texture,
+    hasImage: () => has,
+    setImage(image) {
+      if (current && current !== image) current.close();
+      current = image;
+      texture.dispose();
+      texture.image = image ?? white;
+      texture.needsUpdate = true;
+      has = image !== null;
+    },
+    dispose() {
+      current?.close();
+      current = null;
+      texture.dispose();
     }
   };
 }
@@ -33289,6 +33431,8 @@ function createThreeSceneRenderer(opts) {
   let qualityScale = 1;
   let onWindowResize = null;
   let currentTextures = null;
+  let currentMediaThumbnailSource = null;
+  let currentMediaReplacedTextures = [];
   let currentScriptBindings = [];
   let currentScriptHost = null;
   let currentMedia = null;
@@ -33439,8 +33583,14 @@ function createThreeSceneRenderer(opts) {
     current?.player.dispose();
     for (const sim of current?.sims ?? []) sim.free?.();
     current = null;
-    for (const tex of currentTextures?.values() ?? []) tex.dispose();
+    for (const tex of currentTextures?.values() ?? []) {
+      if (tex !== currentMediaThumbnailSource?.texture) tex.dispose();
+    }
     currentTextures = null;
+    for (const tex of currentMediaReplacedTextures) tex.dispose();
+    currentMediaReplacedTextures = [];
+    currentMediaThumbnailSource?.dispose();
+    currentMediaThumbnailSource = null;
     for (const b of currentScriptBindings) b.dispose();
     currentScriptBindings = [];
     if (scriptClickTarget && scriptClick) scriptClickTarget.removeEventListener("click", scriptClick);
@@ -33556,6 +33706,10 @@ function createThreeSceneRenderer(opts) {
         }
         const backgroundTextures = /* @__PURE__ */ new Map();
         currentTextures = backgroundTextures;
+        let mediaThumbnailSource = null;
+        const mediaThumbnailObjects = /* @__PURE__ */ new Set();
+        const mediaReplacedTextures = [];
+        currentMediaReplacedTextures = mediaReplacedTextures;
         const puppetMeshes = /* @__PURE__ */ new Map();
         const particles = /* @__PURE__ */ new Map();
         const effectiveVisible = computeEffectiveVisibility(desc.objects, userProps);
@@ -33563,8 +33717,16 @@ function createThreeSceneRenderer(opts) {
         for (const obj of desc.objects) {
           if (effectiveVisible.get(obj.id) === false) continue;
           if (obj.kind === "image") {
-            const { texture, puppetPath } = await resolveImageAssets(id, obj);
-            if (texture) backgroundTextures.set(obj.id, texture);
+            const { texture, puppetPath, mediaThumbnail } = await resolveImageAssets(id, obj);
+            if (mediaThumbnail) {
+              mediaThumbnailSource ??= createMediaThumbnailTextureSource();
+              currentMediaThumbnailSource = mediaThumbnailSource;
+              backgroundTextures.set(obj.id, mediaThumbnailSource.texture);
+              mediaThumbnailObjects.add(obj.id);
+              if (texture) mediaReplacedTextures.push(texture);
+            } else if (texture) {
+              backgroundTextures.set(obj.id, texture);
+            }
             if (obj.script) {
               const props = obj.scriptProperties ?? {};
               const family = detectVisualizerFamily(obj.script, props);
@@ -34003,21 +34165,90 @@ function createThreeSceneRenderer(opts) {
           }
         }
         if (abortIfContextLost()) return false;
-        if (sceneNeedsMedia(desc) && currentScriptHost) {
+        if (sceneNeedsMedia(desc) && (currentScriptHost || mediaThumbnailObjects.size > 0)) {
+          const scriptHost = currentScriptHost;
+          let mediaSession = null;
+          let thumbnailSeq = 0;
+          const lookup = (objectId) => {
+            const obj = result.player.displayObject(objectId);
+            return obj ? { object: obj, sceneW: desc.orthogonal.width, sceneH: desc.orthogonal.height } : void 0;
+          };
+          const neutral = () => ({
+            hasThumbnail: false,
+            primaryColor: NEUTRAL_MEDIA_PALETTE.primary,
+            secondaryColor: NEUTRAL_MEDIA_PALETTE.secondary,
+            tertiaryColor: NEUTRAL_MEDIA_PALETTE.tertiary,
+            textColor: NEUTRAL_MEDIA_PALETTE.text,
+            highContrastColor: NEUTRAL_MEDIA_PALETTE.highContrast
+          });
+          const dispatchThumbnail = (payload) => {
+            try {
+              scriptHost?.mediaThumbnail(payload);
+            } catch {
+            }
+          };
+          const stale = (seq) => seq !== thumbnailSeq || currentMedia !== mediaSession;
+          const loadThumbnail = async (rev) => {
+            const seq = ++thumbnailSeq;
+            try {
+              if (typeof createImageBitmap !== "function") throw new Error("createImageBitmap unavailable");
+              const resp = await fetch(`/wallpapers/now-playing/thumbnail?rev=${encodeURIComponent(String(rev))}`);
+              if (!resp.ok) throw new Error("thumbnail http " + resp.status);
+              const bitmap = await createImageBitmap(await resp.blob());
+              if (stale(seq)) {
+                bitmap.close();
+                return;
+              }
+              const palette = await paletteFromImage(bitmap);
+              if (stale(seq)) {
+                bitmap.close();
+                return;
+              }
+              mediaThumbnailSource?.setImage(bitmap);
+              dispatchThumbnail({
+                hasThumbnail: true,
+                primaryColor: palette.primary,
+                secondaryColor: palette.secondary,
+                tertiaryColor: palette.tertiary,
+                textColor: palette.text,
+                highContrastColor: palette.highContrast
+              });
+            } catch {
+              if (stale(seq)) return;
+              mediaThumbnailSource?.setImage(null);
+              dispatchThumbnail(neutral());
+            }
+          };
+          const host = {
+            mediaStatus: (enabled) => scriptHost?.mediaStatus(enabled),
+            mediaPlayback: (state) => scriptHost?.mediaPlayback(state),
+            mediaProperties: (properties) => scriptHost?.mediaProperties(properties),
+            mediaThumbnail: (thumb) => scriptHost?.mediaThumbnail(thumb),
+            applyExternal: (writes) => scriptHost?.applyExternal(writes),
+            drainDirty: () => scriptHost?.drainDirty() ?? /* @__PURE__ */ new Map()
+          };
           const orchestration = createMediaOrchestration({
-            host: currentScriptHost,
+            host,
             bindings: currentScriptBindings,
             createInput: createMediaInput,
-            applyDirty: (dirty, lookup) => {
-              applyLayerState(dirty, lookup);
+            applyDirty: (dirty, lookupFn) => {
+              applyLayerState(dirty, lookupFn);
             },
-            lookup: (objectId) => {
-              const obj = result.player.displayObject(objectId);
-              return obj ? { object: obj, sceneW: desc.orthogonal.width, sceneH: desc.orthogonal.height } : void 0;
-            },
+            lookup,
             getEnabled: () => mediaIntegrationEnabled,
+            onThumbnail: (payload) => {
+              if (!payload.hasThumbnail) {
+                thumbnailSeq += 1;
+                mediaThumbnailSource?.setImage(null);
+                dispatchThumbnail(neutral());
+                return null;
+              }
+              void loadThumbnail(payload.rev);
+              return null;
+            },
             inputOptions: { pageTitle: () => typeof document !== "undefined" ? document.title : "" }
           });
+          mediaSession = orchestration;
           currentMedia = orchestration;
           orchestration.setPaused(paused);
           orchestration.start();

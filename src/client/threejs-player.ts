@@ -1918,6 +1918,8 @@ export class ThreeScenePlayer {
       )
       : this.createLayerMaterial(opts.texture ?? null, opts.colorBlendMode ?? 0, mod, !!opts.isolate);
     const mesh = new THREE.Mesh(geometry, material);
+    // 脚本 color 覆盖对象 color 时，applyLayerState 需要重新乘上对象 brightness（装配期已烘进材质）。
+    mesh.userData.weBrightness = opts.brightness ?? 1;
     // renderOrder 唯一化（调用方按 objects 下标传入）；缺省 0 = 背景在粒子之前绘制（背景在下）。
     mesh.renderOrder = opts.renderOrder ?? 0;
     const s = layerScale;

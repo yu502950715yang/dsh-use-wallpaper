@@ -89,6 +89,14 @@ window.__objectMaterialInfo = (objectId) => {
   };
 };
 
+/** 某对象材质 tint（colorBlendMode 6/7/31 的预乘 ShaderMaterial uniform）；无该 uniform → null。 */
+window.__materialTint = (objectId) => {
+  const p = window.__player;
+  const o = p && p.displayObject(objectId);
+  const t = o && o.material && o.material.uniforms && o.material.uniforms.tint && o.material.uniforms.tint.value;
+  return t ? [t.x, t.y, t.z] : null;
+};
+
 /** 列出所有已登记显示对象 id 与基础信息（诊断）。 */
 window.__listObjects = () => {
   const p = window.__player;

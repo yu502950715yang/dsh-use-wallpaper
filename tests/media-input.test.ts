@@ -456,4 +456,23 @@ describe('sceneNeedsMedia', () => {
     }));
     expect(sceneNeedsMedia(d)).toBe(false);
   });
+
+  // Task 8：只靠实例纹理（无脚本）的壁纸同样需要媒体轮询。
+  it('image.instance.usertextures 含 $mediaThumbnail ⇒ true（无脚本也可）；其它 usertextures 不误判', () => {
+    const withCover = parseSceneJson(JSON.stringify({
+      objects: [{
+        id: 45, image: 'models/x.json',
+        instance: { usertextures: [{ name: '$mediaThumbnail', type: 'system' }] },
+      }],
+    }));
+    expect(sceneNeedsMedia(withCover)).toBe(true);
+
+    const other = parseSceneJson(JSON.stringify({
+      objects: [{
+        id: 1, image: 'models/x.json',
+        instance: { textures: ['util/white'], usertextures: [{ name: '$clock', type: 'system' }] },
+      }],
+    }));
+    expect(sceneNeedsMedia(other)).toBe(false);
+  });
 });

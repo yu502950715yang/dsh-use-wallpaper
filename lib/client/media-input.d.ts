@@ -29,7 +29,8 @@ export declare function mediaUrl(pageTitle: string): string;
 /** 返回变化的键；首次（prev=null）视为全变化。一律按 !== 判，thumbnailRev 回退也算变化。 */
 export declare function diffSnapshot(prev: MediaSessionSnapshot | null, next: MediaSessionSnapshot): string[];
 export declare function createMediaInput(opts: MediaInputOptions): MediaInput;
-/** 媒体层事件（Task 8 才有真实封面主色；本任务固定中性调色板，hasThumbnail/rev 仅供脚本判断）。 */
+/** 媒体层封面事件：`rev` 仅表示「封面变化」（可回退）；真实调色板由 renderer 拉字节/取色后派发，
+ *  此处固定中性调色板的路径只用于无封面/未注入 onThumbnail 的消费方。 */
 export interface MediaThumbnailEventPayload {
     hasThumbnail: boolean;
     rev: number;
@@ -47,5 +48,5 @@ export interface MediaDispatchSink {
 /** 快照 diff → 事件顺序：status（仅首次）→ playback → properties → thumbnail。
  *  停止/不可用只派 playback('stopped')：媒体层已被脚本隐藏，再派空属性只会白重绘文本层。 */
 export declare function applyMediaSnapshot(prev: MediaSessionSnapshot | null, next: MediaSessionSnapshot, sink: MediaDispatchSink): void;
-/** 场景是否声明了媒体事件脚本（visible/属性/text 三处）；没有则零轮询、零开销。 */
+/** 场景是否需要媒体轮询：声明了媒体事件脚本，或 image 实例绑定了 `$mediaThumbnail` 封面纹理。 */
 export declare function sceneNeedsMedia(desc: SceneDescription): boolean;

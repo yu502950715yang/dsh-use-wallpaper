@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { createMediaOrchestration } from '../src/client/media-orchestration.js';
 import type { MediaObjectLookup, MediaOrchestrationHost } from '../src/client/media-orchestration.js';
 import { createMediaInput } from '../src/client/media-input.js';
-import type { MediaInput, MediaInputOptions } from '../src/client/media-input.js';
+import type { MediaInput, MediaInputOptions, MediaThumbnailEventPayload } from '../src/client/media-input.js';
+import type { MediaThumbnailPayload } from '../src/client/scene-script-vm.js';
 import { emptyMediaSnapshot, type MediaSessionSnapshot } from '../src/shared/media.js';
 
 const snap = (patch: Partial<MediaSessionSnapshot>): MediaSessionSnapshot => ({
@@ -14,7 +15,10 @@ const playing = snap({
 });
 
 /** 纯 fake：host/bindings/输入工厂全注入，不碰 three、网络、定时器。 */
-function setup(initialEnabled = true) {
+function setup(
+  initialEnabled = true,
+  onThumbnail?: (payload: MediaThumbnailEventPayload) => MediaThumbnailPayload | null,
+) {
   const log: string[] = [];
   const inputCalls: string[] = [];
   let enabled = initialEnabled;
@@ -49,6 +53,7 @@ function setup(initialEnabled = true) {
     applyDirty: (writes, target) => log.push(`dirty:${[...writes.keys()].join(',')}:${target === lookup}`),
     lookup,
     getEnabled: () => enabled,
+    ...(onThumbnail ? { onThumbnail } : {}),
   });
   return {
     orch,
@@ -93,6 +98,15 @@ describe('createMediaOrchestration', () => {
     s.log.length = 0;
     s.fire({ ...playing, title: 'T2' }, playing);
     expect(s.log).toEqual(['props:T2', 'binding:T2']);
+  });
+
+  // Task 8：封面要异步拉字节/解码/取色，renderer 返回 null 自行派发最终事件 ⇒ 编排不得先派中性色。
+  it('onThumbnail 返回 null ⇒ 编排不派发 thumbnail（renderer 异步自行派发）', () => {
+    const s = setup(true, () => null);
+    s.orch.start();
+    s.log.length = 0;
+    s.fire(playing, null);
+    expect(s.log).toEqual(['status:true', 'playback:playing', 'props:T', 'binding:T']);
   });
 
   it('setEnabled(false)→status(false)+stopped+input.stop；再 true→status(true)+input.start，首帧重放完整快照', () => {

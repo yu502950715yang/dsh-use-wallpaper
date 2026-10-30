@@ -6,9 +6,8 @@ export interface LayerWrite {
     scale?: [number, number, number];
     alpha?: number;
     visible?: boolean;
-    /** `layer.color` 的写入（92000 的粒子着色、94000 的按钮亮度渐变）。
-     *  一期**只记录不应用**：隔离对象的颜色语义在对象 RT → 合成 quad 路径下与直接设材质色不等价，
-     *  贸然应用会引入新的错误视觉；等有对照样本再定。 */
+    /** `layer.color` 的写入（92000 的粒子着色、94000 的按钮亮度渐变、媒体边框主色）。
+     *  脚本 Vec3：max 分量 ≤ 1 视为 0-1（WE MediaThumbnailEvent 颜色），否则按 0-255；落点见 writeColor。 */
     color?: [number, number, number];
 }
 export interface LayerStateTable {

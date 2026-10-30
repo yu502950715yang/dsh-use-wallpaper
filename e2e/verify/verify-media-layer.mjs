@@ -1,5 +1,5 @@
 // 媒体集成 e2e：生产 lib/ 渲染真实场景壁纸，自起 server mock now-playing 两条路由 + headless Edge/CDP。
-// 判据：装配即隐藏（白像素 0）/ 播放显示文本且画布宽度随标题变化 / 停止再隐藏；退出码 0/1。
+// 判据：装配即隐藏（白像素 0）/ 播放显示文本且画布宽度随标题变化 / 封面纹理与主色 / 停止再隐藏；退出码 0/1。
 import { createServer } from 'node:http';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, readdirSync } from 'node:fs';
 import { spawn } from 'node:child_process';
@@ -12,9 +12,7 @@ import { encodePng } from '../lib/png-encode.mjs';
 
 const WALLPAPER_ID = '3797976859'; // 带媒体层（歌名/歌手/封面框）的场景壁纸
 const MEDIA_LAYER_IDS = [35, 40, 45];
-const COVER_REGION = [1160, 285, 1245, 360];       // [2] 封面区域（checkCover 关闭时不用）
-// 封面判据留给 Task 8（封面纹理/主色）；本任务只验白框与文本层。
-const checkCover = false;
+const COVER_REGION = [1160, 285, 1245, 360]; // [2a] 封面区域（objectRect(45) 不可得时的兜底）
 
 const here = dirname(fileURLToPath(import.meta.url));
 const OUT = join(OUT_DIR, 'media-layer');
@@ -52,15 +50,19 @@ const QUICKJS_WASM = resolveQuickjsWasm();
 // ── mock 媒体状态（隐私：只用假标题，绝不使用真实曲目；不落盘、不写日志）──────────────
 let mediaStage = {
   available: false, playback: 'stopped', title: '', artist: '', album: '',
-  contentType: 'music', thumbnailRev: 0,
+  contentType: 'music',
 };
-let artBytes = null; // 有封面时 thumbnail 路由返回它；本任务只验 hasThumbnail 字段
-const ART_PNG = encodePng((() => {
-  const w = 32, h = 32;
+let artBytes = null; // 有封面时 thumbnail 路由返回它
+let artRev = 0;      // 每次换封面 +1（快照 diff 靠 thumbnailRev 变化）
+/** 生成纯色 PNG（封面 mock；隐私：只用生成图，不用真实封面）。 */
+function solidPng(r, g, b, w = 32, h = 32) {
   const data = Buffer.alloc(w * h * 3);
-  for (let i = 0; i < w * h; i += 1) { data[i * 3] = 255; data[i * 3 + 1] = 0; data[i * 3 + 2] = 255; }
-  return { width: w, height: h, channels: 3, data };
-})());
+  for (let i = 0; i < w * h; i += 1) { data[i * 3] = r; data[i * 3 + 1] = g; data[i * 3 + 2] = b; }
+  return encodePng({ width: w, height: h, channels: 3, data });
+}
+const ART_MAGENTA = solidPng(255, 0, 255);
+const ART_GREEN = solidPng(0, 255, 0);
+const setArt = (png) => { artBytes = png; artRev += 1; };
 
 const mediaSnapshot = () => ({
   available: mediaStage.available,
@@ -72,7 +74,7 @@ const mediaSnapshot = () => ({
   contentType: mediaStage.contentType,
   playback: mediaStage.playback,
   hasThumbnail: !!artBytes,
-  thumbnailRev: artBytes ? 1 : 0,
+  thumbnailRev: artBytes ? artRev : 0,
   positionMs: 1,
   durationMs: 2,
   at: 1,
@@ -190,6 +192,8 @@ function countMagenta(img, box) {
 }
 
 const materialOf = async (objectId) => JSON.parse(await evalJs(`JSON.stringify(window.__objectMaterialInfo(${objectId}))`) ?? 'null');
+const rectOf = async (objectId) => JSON.parse(await evalJs(`JSON.stringify(window.__objectRect(${objectId}))`) ?? 'null');
+const tintOf = async (objectId) => JSON.parse(await evalJs(`JSON.stringify(window.__materialTint(${objectId}))`) ?? 'null');
 /** 显示对象的可见性（未登记 → null；对象级 visible 是 applyLayerState 的落点）。 */
 const visibleOf = async (ids) => JSON.parse(await evalJs(
   `JSON.stringify(${JSON.stringify(ids)}.map((oid) => { const o = window.__player && window.__player.displayObject(oid); return o ? o.visible : null; }))`,
@@ -271,20 +275,12 @@ try {
     await probeMedia('stopped');
     await shot('stopped');
 
-    // ── [2] 封面（Task 8；本任务关闭）─────────────────────────────────────────────
-    if (checkCover) {
-      const magenta = countMagenta(decodePng(await shot('cover')), COVER_REGION);
-      judge('[2] 封面洋红像素 > 200', magenta > 200, `magenta=${magenta} region=${JSON.stringify(COVER_REGION)}`);
-    } else {
-      console.log('  ⏭️  [2] 封面判据未启用（Task 8 才实现封面纹理/主色）');
-    }
-
     // ── [3] playing：文本层拿到 title/artist；两个不同长度标题验证画布随内容变化 ──────
     mediaStage = {
       available: true, playback: 'playing', title: 'E2E-T1', artist: 'E2E-ARTIST',
-      album: 'E2E-ALBUM', contentType: 'music', thumbnailRev: 1,
+      album: 'E2E-ALBUM', contentType: 'music',
     };
-    artBytes = ART_PNG;
+    setArt(ART_MAGENTA);
     await sleep(2500); // 1s 轮询 + 文本重绘/quad 尺寸同步
     const titleMat1 = await materialOf(38);
     const titleW1 = titleMat1?.mapSize?.[0] ?? null;
@@ -305,10 +301,26 @@ try {
     await probeMedia('playing');
     await shot('playing');
 
+    // ── [2] 封面（Task 8）：洋红封面像素 + 主色链路（边框 tint 跟随封面主色）──────────
+    const rect45 = await rectOf(45);
+    const coverBox = rect45?.canvasCss ?? COVER_REGION;
+    const magenta = countMagenta(decodePng(await shot('cover')), coverBox);
+    const tintMagenta = await tintOf(40);
+    // 切绿色封面（rev 变化）⇒ 重新拉取/取色 ⇒ tint 必须跟着变，证明不是一次性静态色。
+    setArt(ART_GREEN);
+    await sleep(2500);
+    const tintGreen = await tintOf(40);
+    const near = (a, b, tol = 0.1) => Array.isArray(a) && a.length === 3
+      && a.every((v, i) => Math.abs(v - b[i]) <= tol);
+    judge('[2a] 封面洋红像素 > 200', magenta > 200,
+      `magenta=${magenta} bbox=${JSON.stringify(coverBox)}`);
+    judge('[2b] 主色链路：边框 tint 随封面主色（洋红→绿）', near(tintMagenta, [1, 0, 1]) && near(tintGreen, [0, 1, 0]),
+      `tint ${JSON.stringify(tintMagenta)} → ${JSON.stringify(tintGreen)}`);
+
     // ── [4] 回到 stopped：媒体层再次隐藏 ─────────────────────────────────────────
     mediaStage = {
       available: true, playback: 'stopped', title: '', artist: '', album: '',
-      contentType: 'music', thumbnailRev: 0,
+      contentType: 'music',
     };
     artBytes = null;
     await sleep(2200);

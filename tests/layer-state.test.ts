@@ -93,3 +93,54 @@ describe('applyLayerState', () => {
     expect(n).toBe(0);
   });
 });
+
+describe('LayerWrite.color（Task 8：脚本 color 落地）', () => {
+  const tintMesh = () => new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.ShaderMaterial({
+    uniforms: {
+      tint: { value: new THREE.Vector3(1, 1, 1) },
+      map: { value: null },
+      opacity: { value: 1 },
+    },
+    vertexShader: '',
+    fragmentShader: '',
+  }));
+  const targetOf = (mesh: THREE.Object3D) => () => ({ object: mesh, sceneW: 0, sceneH: 0 });
+
+  it('ShaderMaterial.uniforms.tint：0-1 语义直接写入', () => {
+    const mesh = tintMesh();
+    applyLayerState(new Map([[40, { color: [1, 0, 1] }]]), targetOf(mesh));
+    expect((mesh.material as THREE.ShaderMaterial).uniforms['tint']!.value.toArray()).toEqual([1, 0, 1]);
+  });
+
+  it('0-255 语义（max > 1）按 /255 归一化', () => {
+    const mesh = tintMesh();
+    applyLayerState(new Map([[40, { color: [255, 128, 0] }]]), targetOf(mesh));
+    const v = (mesh.material as THREE.ShaderMaterial).uniforms['tint']!.value as THREE.Vector3;
+    expect(v.x).toBeCloseTo(1);
+    expect(v.y).toBeCloseTo(128 / 255, 3);
+    expect(v.z).toBeCloseTo(0);
+  });
+
+  it('MeshBasicMaterial：写到 material.color（乘对象 brightness 记录）', () => {
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial());
+    mesh.userData.weBrightness = 0.5;
+    applyLayerState(new Map([[1, { color: [1, 0.5, 0] }]]), targetOf(mesh));
+    const c = (mesh.material as THREE.MeshBasicMaterial).color;
+    expect(c.r).toBeCloseTo(0.5);
+    expect(c.g).toBeCloseTo(0.25);
+    expect(c.b).toBeCloseTo(0);
+  });
+
+  it('无 material 的对象不崩（只计数）', () => {
+    const obj = new THREE.Object3D();
+    expect(() => applyLayerState(new Map([[1, { color: [1, 0, 1] }]]), targetOf(obj))).not.toThrow();
+  });
+
+  it('仅写 color 也产生脏项（否则主色永远进不了材质）', () => {
+    const t = createLayerStateTable();
+    t.write(40, { color: [1, 0, 1] });
+    expect(t.takeDirty().get(40)).toEqual({ color: [1, 0, 1] });
+    t.write(40, { color: [1, 0, 1] });
+    expect(t.takeDirty().size).toBe(0); // 同值重复写不置脏
+  });
+});

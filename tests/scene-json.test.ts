@@ -1011,3 +1011,28 @@ describe('parseSceneJson - util 对象的 visible.script', () => {
     expect(o.script).toContain('export function update');
   });
 });
+
+// Task 8：WE image 对象的 `instance`（实例纹理槽 + `$mediaThumbnail` 系统纹理声明）。
+describe('parseSceneJson image 对象 instance（Task 8）', () => {
+  it('instance：textures 与 usertextures 被解析；畸形字段忽略', () => {
+    const d = parseSceneJson(JSON.stringify({ objects: [{
+      id: 45, image: 'models/x.json',
+      instance: { id: 46, textures: ['util/white'], usertextures: [{ name: '$mediaThumbnail', type: 'system' }] },
+    }] }));
+    const o = d.objects[0] as any;
+    expect(o.instance).toEqual({ textures: ['util/white'], usertextures: [{ name: '$mediaThumbnail', type: 'system' }] });
+    const bad = parseSceneJson(JSON.stringify({ objects: [{ id: 1, image: 'm.json', instance: 'nope' }] }));
+    expect((bad.objects[0] as any).instance).toBeUndefined();
+  });
+
+  it('instance 只有 id / 非法条目 / 空数组 ⇒ undefined（不产出半截实例）', () => {
+    const parse = (instance: unknown) => (parseSceneJson(JSON.stringify({
+      objects: [{ id: 1, image: 'm.json', instance }],
+    })).objects[0] as any).instance;
+    expect(parse({ id: 7 })).toBeUndefined();
+    expect(parse({ textures: [42, '', 'a/b'] })).toEqual({ textures: ['a/b'] });
+    expect(parse({ usertextures: [{ name: 7, type: 'system' }] })).toEqual({ usertextures: [{ name: '7', type: 'system' }] });
+    expect(parse({ usertextures: [{ type: 'system' }] })).toBeUndefined();
+    expect(parse([{ textures: ['x'] }])).toBeUndefined();
+  });
+});

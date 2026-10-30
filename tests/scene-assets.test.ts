@@ -253,6 +253,7 @@ describe('resolveImageAssets / fetchMdlBytes', () => {
         texture: null,
         puppetPath: 'models/20240220213723_1_puppet.mdl',
         spriteSheet: false,
+        mediaThumbnail: false,
       });
       expect(calls).toEqual([MODEL_URL]);
     } finally { vi.unstubAllGlobals(); }
@@ -262,18 +263,18 @@ describe('resolveImageAssets / fetchMdlBytes', () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ material: 'materials/m.json' }) })));
     try {
       // 材质拉取同 URL 的 mock 会拿到 {material} ⇒ 无 passes[0].textures[0] ⇒ texture null
-      expect(await resolveImageAssets('1', obj)).toEqual({ texture: null, puppetPath: null, spriteSheet: false });
+      expect(await resolveImageAssets('1', obj)).toEqual({ texture: null, puppetPath: null, spriteSheet: false, mediaThumbnail: false });
     } finally { vi.unstubAllGlobals(); }
   });
 
   it('model json 拿不到 / 网络异常 ⇒ 两条链都 null（调用方走白图兜底，不阻断）', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, json: async () => ({}) })));
     try {
-      expect(await resolveImageAssets('1', obj)).toEqual({ texture: null, puppetPath: null, spriteSheet: false });
+      expect(await resolveImageAssets('1', obj)).toEqual({ texture: null, puppetPath: null, spriteSheet: false, mediaThumbnail: false });
     } finally { vi.unstubAllGlobals(); }
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('net'); }));
     try {
-      expect(await resolveImageAssets('1', obj)).toEqual({ texture: null, puppetPath: null, spriteSheet: false });
+      expect(await resolveImageAssets('1', obj)).toEqual({ texture: null, puppetPath: null, spriteSheet: false, mediaThumbnail: false });
     } finally { vi.unstubAllGlobals(); }
   });
 
@@ -287,7 +288,7 @@ describe('resolveImageAssets / fetchMdlBytes', () => {
       return { ok: true, json: async () => { throw new Error('bad material json'); } };
     }));
     try {
-      expect(await resolveImageAssets('1', obj)).toEqual({ texture: null, puppetPath: 'models/p.mdl', spriteSheet: false });
+      expect(await resolveImageAssets('1', obj)).toEqual({ texture: null, puppetPath: 'models/p.mdl', spriteSheet: false, mediaThumbnail: false });
     } finally { vi.unstubAllGlobals(); }
   });
 
@@ -397,8 +398,67 @@ describe('resolveImageAssets / 精灵表标记（F13）', () => {
     )));
     try {
       expect(await resolveImageAssets('1', obj)).toEqual({
-        texture: null, puppetPath: null, spriteSheet: false,
+        texture: null, puppetPath: null, spriteSheet: false, mediaThumbnail: false,
       });
+    } finally { vi.unstubAllGlobals(); }
+  });
+});
+
+// Task 8：instance.usertextures 的 `$mediaThumbnail` = 封面纹理对象；instance.textures 覆盖材质纹理槽。
+describe('resolveImageAssets / instance 封面纹理（Task 8）', () => {
+  const obj = { image: 'models/cover.json' } as SceneImageObject;
+  const TEX = makeTex({ format: TEX_FORMAT.RGBA8888, images: [[{ width: 4, height: 4, data: new Uint8Array(4 * 4 * 4) }]] });
+  const texBuffer = () => TEX.buffer.slice(TEX.byteOffset, TEX.byteOffset + TEX.byteLength);
+
+  /** fetch 路由：models → model json；.tex → TEX 字节；其余 json → 材质（槽 util/white）。 */
+  function stubFetch(calls: string[]): void {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      const u = String(url);
+      calls.push(u);
+      if (u.includes('asset?name=models')) {
+        return { ok: true, json: async () => ({ material: 'materials/util/solidlayer_instance.json' }) };
+      }
+      if (u.includes('.tex')) return { ok: true, arrayBuffer: async () => texBuffer() };
+      return { ok: true, json: async () => ({ passes: [{ textures: ['util/white'] }] }) };
+    }));
+  }
+
+  it('usertextures 含 $mediaThumbnail ⇒ mediaThumbnail=true；普通对象 false，纹理仍按材质解析', async () => {
+    const calls: string[] = [];
+    stubFetch(calls);
+    try {
+      const plain = await resolveImageAssets('1', obj);
+      expect(plain.mediaThumbnail).toBe(false);
+      expect(plain.texture).not.toBeNull();
+      expect(calls[calls.length - 1])
+        .toBe('/wallpapers/scene/1/asset?name=' + encodeURIComponent('materials/util/white.tex'));
+      const media = await resolveImageAssets('1', {
+        ...obj,
+        instance: { textures: ['util/white'], usertextures: [{ name: '$mediaThumbnail', type: 'system' }] },
+      } as SceneImageObject);
+      expect(media.mediaThumbnail).toBe(true);
+      expect(media.texture).not.toBeNull();
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it('instance.textures 覆盖材质纹理槽（相对 materials/）', async () => {
+    const calls: string[] = [];
+    stubFetch(calls);
+    try {
+      await resolveImageAssets('1', { ...obj, instance: { textures: ['custom/cover'] } } as SceneImageObject);
+      expect(calls[calls.length - 1])
+        .toBe('/wallpapers/scene/1/asset?name=' + encodeURIComponent('materials/custom/cover.tex'));
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it('model 拉取失败但声明了 $mediaThumbnail ⇒ 仍标记（封面不依赖材质解析成功）', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, json: async () => ({}) })));
+    try {
+      const r = await resolveImageAssets('1', {
+        ...obj,
+        instance: { usertextures: [{ name: '$mediaThumbnail', type: 'system' }] },
+      } as SceneImageObject);
+      expect(r).toEqual({ texture: null, puppetPath: null, spriteSheet: false, mediaThumbnail: true });
     } finally { vi.unstubAllGlobals(); }
   });
 });
