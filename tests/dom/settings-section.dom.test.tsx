@@ -60,6 +60,10 @@ const BASE_SETTINGS: ClientSettings = {
   textColorMode: 'auto', textColor: '#ffffff', textOutline: 0,
   fitMode: 'cover', rotationEnabled: false, rotationIntervalMs: 300000,
   rotationOrder: 'sequential', frameCacheEnabled: true,
+  bootAnimationEnabled: false, bootAnimationSource: 'we',
+  bootAnimationWallpaperId: '', bootAnimationWallpaperKind: '',
+  bootAnimationLocalPath: '', bootAnimationFitMode: 'cover',
+  bootAnimationMaxDurationMs: 6000,
 };
 
 const WALLPAPERS = [

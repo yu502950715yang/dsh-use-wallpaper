@@ -52,6 +52,21 @@ describe('wallpaper settings schema', () => {
       rotationOrder: 'random', frameCacheEnabled: false,
     });
   });
+  it('开机动画字段有缺省值且边界受钳', () => {
+    const v = WallpaperSettingsSchema({});
+    expect(v).toMatchObject({
+      bootAnimationEnabled: false,
+      bootAnimationSource: 'we',
+      bootAnimationWallpaperId: '',
+      bootAnimationWallpaperKind: '',
+      bootAnimationLocalPath: '',
+      bootAnimationFitMode: 'cover',
+      bootAnimationMaxDurationMs: 6000,
+    });
+    expect(() => WallpaperSettingsSchema({ bootAnimationMaxDurationMs: -1 })).toThrow();
+    expect(() => WallpaperSettingsSchema({ bootAnimationMaxDurationMs: 30001 })).toThrow();
+    expect(WallpaperSettingsSchema({ bootAnimationSource: 'whatever' }).bootAnimationSource).toBe('whatever');
+  });
   it('rejects opacity outside [0,1]', () => {
     expect(() => WallpaperSettingsSchema({ overlayOpacity: 2 })).toThrow();
   });

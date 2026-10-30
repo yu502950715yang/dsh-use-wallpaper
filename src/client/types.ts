@@ -49,4 +49,12 @@ export interface ClientSettings {
   rotationIntervalMs: number;
   rotationOrder: RotationOrder;
   frameCacheEnabled: boolean;
+  // 开机动画（独立于壁纸）：默认关闭；source: 'we'|'local'；fitMode: 'tile'|'contain'|'stretch'|'cover'
+  bootAnimationEnabled: boolean;
+  bootAnimationSource: string;
+  bootAnimationWallpaperId: string;
+  bootAnimationWallpaperKind: string;
+  bootAnimationLocalPath: string;
+  bootAnimationFitMode: string;
+  bootAnimationMaxDurationMs: number;
 }
