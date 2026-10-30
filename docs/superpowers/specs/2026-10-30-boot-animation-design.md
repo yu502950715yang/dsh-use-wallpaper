@@ -70,9 +70,10 @@ client（浏览器）
 
 ## 5. host：本地视频路由（`src/host/routes.ts` 内新增）
 
-**回环判定**：`isLoopbackRemote(remoteAddress)` —— 接受 `127.0.0.1`、`::1`、`::ffff:127.0.0.1`；其余一律 403（dsh web 若绑 0.0.0.0，远程访问者不得借此读宿主任意文件）。
+**回环判定（双闸门）**：`isLoopbackRemote(remoteAddress)` 接受 `127.0.0.1`、`::1`、`::ffff:127.0.0.1`；同时 `isLoopbackHostHeader(host)` 要求 `Host` 头的 hostname ∈ {`127.0.0.1`, `localhost`, `::1`}（可带端口与 IPv6 方括号）；两条路由统一走 `isLoopbackRequest(req)`，任一不满足一律 403（dsh web 若绑 0.0.0.0，远程访问者不得借此读宿主任意文件；DNS rebinding 页面的连接同样来自本地套接字，故 `Host` 头也必须查）。网络路径（UNC / 混合分隔符）另由 `resolveBootVideoPath` 拒绝，见下。
 
 **`resolveBootVideoPath(raw)` 纯函数**（可单测）：
+- 拒绝 UNC / 网络路径：trim 后前两个字符均为 `/` 或 `\`（任意组合，覆盖 `\\`、`//`、`/\`、`\/`、`\\?\` 等变体）→ `{ code: 400 }`（否则宿主会向远程共享发起 SMB/NTLM 认证）
 - 必须 `path.isAbsolute` 且非空；否则 `{ code: 400 }`
 - 不允许含 NUL；扩展名小写后 ∈ `{.mp4,.webm,.mov,.m4v,.ogv}`；否则 `{ code: 400 }`
 - `statSync` 不存在/不是文件 → `{ code: 404 }`
@@ -125,11 +126,11 @@ export function createBootPlayer(opts: {
 
 - `shouldPlayBoot`：`enabled && storage.getItem('we:boot-played') !== '1'`；真正播放前写 `'1'`（防止并发重复）。
 - 组装：local → 本地视频 URL；we + kind=video → `/wallpapers/media/<id>/file`；we + kind=image → `/wallpapers/media/<id>/preview`；缺字段 → null（`no-asset`，静默）。
-- `start()` 在 `bootstrap()` 中 `void` 调用（**不 await、不阻塞 mount**）；失败只记录，不抛。
+- `start()` 在 `mount()` 内、`dropStaleLayers()` 之后 `void` 调用（**不 await、不阻塞 mount**）；失败只记录，不抛。
 - `dispose()` 供 teardown 调用（移除 overlay、清监听）；播放中的 `start()` 结果迟到时不得复活层（disposed 守卫）。
 - 诊断：bootstrap 暴露 `window.__wallpaperEngineBoot = { play, getLast }`，面板试播与排查用。
 
-**index.ts**：bootstrap 里创建 bootPlayer → `void start()`；注册第二个 `settings.section`（`id: 'wallpaper-engine-boot'`, `order: 21`, `label: '开机动画'`）；teardown 中 `bootPlayer.dispose()`。
+**index.ts**：bootstrap 里创建 bootPlayer，`mount()` 内 `dropStaleLayers()` 之后 `void start()`；注册第二个 `settings.section`（`id: 'wallpaper-engine-boot'`, `order: 21`, `label: '开机动画'`）；teardown 中 `bootPlayer.dispose()`。
 
 ## 8. client：设置面板（`src/client/boot-settings-section.tsx`，独立 section）
 

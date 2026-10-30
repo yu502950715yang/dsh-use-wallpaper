@@ -499,7 +499,7 @@ getEventListeners(window).pointermove?.length
 
 > **真机验收待执行（当前仅自动化门禁）**：以下 B1–B8 需由人在运行中的 DSH 里手动勾选，**agent 未代验、未伪造勾选**。
 > **前置**：已 `npm run build` + `npm run build:client`，重启 harness 后**强刷** GUI；壁纸库含至少一张 `video` 与一张 `image` 壁纸；另备一个本地 `.mp4`（浏览器可解码的编码，如 H.264）。
-> **自动化已覆盖**：`tests/boot-asset.test.ts`（host 路径解析与两条路由：回环来源 + `Host` 头、UNC/网络路径 400、Range 206、HEAD、外网 403）、`tests/dom/boot-overlay.dom.test.ts`（四种 fit 映射、视频 `ended`/图片计时/超时/跳过/失败、淡出后移除、dispose 幂等）、`tests/boot-player.test.ts`（素材解析、只播一次、`force` 试播）、`tests/dom/boot-settings-section.dom.test.tsx`（面板默认值、只列 video/image、视频时平铺禁用、写入字段、校验结果）、`tests/dom/plugin-lifecycle.dom.test.ts`（启用配置下 bootstrap 自动起层、mount 清理不误删、收尾移除）、`tests/dom/bootstrap.dom.test.ts`（两个 `settings.section` 都在 `inject` 回调内注册）。**真机视觉与交互仍需人工验收。**
+> **自动化已覆盖**：`tests/boot-asset.test.ts`（host 路径解析与两条 boot 路由：回环来源 + `Host` 头、UNC/网络路径（含 `/\`、`\/` 混合分隔符）400、Range 206、外网 403；HEAD 不在本文件，通用 `sendSceneAsset` 的 HEAD 由 `tests/routes.test.ts` 的 `/wallpapers/scene/.../asset` 用例覆盖）、`tests/dom/boot-overlay.dom.test.ts`（fit 映射：视频/图片 `cover`、图片 `tile` 有断言，`contain` 仅传参、`stretch` 无用例 —— stretch/contain 断言为后续项；视频 `ended`/图片计时/超时/跳过/失败、淡出后移除、dispose 幂等）、`tests/boot-player.test.ts`（素材解析、只播一次、`force` 试播）、`tests/dom/boot-settings-section.dom.test.tsx`（面板默认值、只列 video/image、视频时平铺禁用、写入字段、校验结果）、`tests/dom/plugin-lifecycle.dom.test.ts`（启用配置下 bootstrap 自动起层、mount 清理不误删、收尾移除）、`tests/dom/bootstrap.dom.test.ts`（两个 `settings.section` 都在 `inject` 回调内注册）。**真机视觉与交互仍需人工验收。**
 
 | # | 用例 | 步骤 | 期望结果 | 失败表现 |
 |---|---|---|---|---|

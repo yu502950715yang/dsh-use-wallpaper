@@ -19,7 +19,7 @@ Status: implemented
 
 ## Errata
 
-- **`start()` 位置（final fix wave）**：初版在 bootstrap 顶部 `void start()`，早于 `mount()` 的 `dropStaleLayers()`；`readyState` 已 complete 时两者交错，可能出现「新建层被残留清理误删」。现移入 `mount()`、`dropStaleLayers()` 之后，语义等价（仍尽早、不 await），顺序确定。
+- **`start()` 位置（final fix wave）**：初版在 bootstrap 顶部 `void start()`，早于 `mount()` 的 `dropStaleLayers()`；真正的竞态窗口是 `readyState === 'loading'`（mount 延后到 DOMContentLoaded，起播先建层、清理随后误删），`complete` 时 mount 同步先跑、顺序恰好安全。现移入 `mount()`、`dropStaleLayers()` 之后，语义等价（仍尽早、不 await），顺序确定。
 - **设置字段防御（final fix wave）**：`bootAssetFromSettings`（`.trim()`）与 `normalizeBootFit` 的调用纳入 try/catch —— 旧版本 / 手工写入的非 string 字段不再把异常漏出 `start()`（`void` 调用下就是 unhandled rejection），按 `failed` 静默。
 - **spec 4 处口径修正（final fix wave）**：删除非法回环地址 `::ffff:::1`（回环集合 = 3 个地址）；`play(asset, fit)` → `play(asset, fit, maxDurationMs?)`；`window.__wallpaperEngineBoot` 删除不存在的 `result` 字段；面板「上次播放」改为只显示结果（时间 / 素材为后续增强）。
 

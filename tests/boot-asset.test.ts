@@ -5,6 +5,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { registerWallpaperRoutes, isLoopbackHostHeader, isLoopbackRemote, isLoopbackRequest, resolveBootVideoPath } from '../src/host/routes.js';
 
+// UNC / 网络路径的各种写法：`/\`、`\/` 混合分隔符同样被 Windows 判为 UNC，会发起 SMB/NTLM。
+const UNC_PATHS = [
+  String.raw`\\host\share\x.mp4`,
+  String.raw`//host/share/x.mp4`,
+  String.raw`/\host\share\x.mp4`,
+  String.raw`\/host/share/x.mp4`,
+  String.raw`\\?\C:\clips\x.mp4`,
+] as const;
+
 let dir: string;
 let routes: Map<string, (req: any, res: any) => void>;
 
@@ -78,10 +87,8 @@ describe('resolveBootVideoPath', () => {
     expect(resolveBootVideoPath(null)).toEqual({ ok: false, code: 400 });
     expect(resolveBootVideoPath(join(dir, 'a.exe'))).toEqual({ ok: false, code: 400 });
   });
-  it('拒绝 UNC / 网络路径（含 \\\\?\\ 前缀）', () => {
-    for (const p of ['\\\\host\\share\\x.mp4', '//host/share/x.mp4', '\\\\?\\C:\\clips\\x.mp4']) {
-      expect(resolveBootVideoPath(p)).toEqual({ ok: false, code: 400 });
-    }
+  it('拒绝 UNC / 网络路径（含 `\\\\?\\` 前缀与混合分隔符）', () => {
+    for (const p of UNC_PATHS) expect(resolveBootVideoPath(p), p).toEqual({ ok: false, code: 400 });
   });
   it('不存在的文件 404；合法 mp4 返回 size', () => {
     expect(resolveBootVideoPath(join(dir, 'missing.mp4'))).toEqual({ ok: false, code: 404 });
@@ -114,12 +121,12 @@ describe('GET /wallpapers/boot/local-video', () => {
       expect(res.statusCode).toBe(403);
     }
   });
-  it('UNC / 网络路径 400', async () => {
-    for (const p of ['\\\\host\\share\\x.mp4', '//host/share/x.mp4']) {
+  it('UNC / 网络路径 400（含混合分隔符）', async () => {
+    for (const p of UNC_PATHS) {
       const res = makeStreamRes();
       handler('/wallpapers/boot/local-video')(makeReq('/wallpapers/boot/local-video?path=' + encodeURIComponent(p)), res);
       await res.done;
-      expect(res.statusCode).toBe(400);
+      expect(res.statusCode, p).toBe(400);
     }
   });
   it('合法 mp4 整块返回 200；Range 返回 206', async () => {
@@ -203,11 +210,13 @@ describe('GET /wallpapers/boot/probe', () => {
       await res.done;
       expect(res.statusCode).toBe(403);
     }
-    const res = makeStreamRes();
-    handler('/wallpapers/boot/probe')(makeReq('/wallpapers/boot/probe?path=' + encodeURIComponent('//host/share/x.mp4')), res);
-    await res.done;
-    expect(res.statusCode).toBe(400);
-    expect(JSON.parse(res.body.toString())).toMatchObject({ ok: false, exists: false, playable: false });
+    for (const p of UNC_PATHS) {
+      const res = makeStreamRes();
+      handler('/wallpapers/boot/probe')(makeReq('/wallpapers/boot/probe?path=' + encodeURIComponent(p)), res);
+      await res.done;
+      expect(res.statusCode, p).toBe(400);
+      expect(JSON.parse(res.body.toString())).toMatchObject({ ok: false, exists: false, playable: false });
+    }
   });
   it('NUL/相对路径 400、不存在/目录 404，错误体 ok:false', async () => {
     const nul = makeStreamRes();

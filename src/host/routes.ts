@@ -265,8 +265,10 @@ export function resolveBootVideoPath(
   raw: string | null | undefined,
 ): { ok: true; file: string; size: number } | { ok: false; code: 400 | 404 } {
   const p = String(raw ?? '').trim();
-  // UNC（`\\host\share`，含 `\\?\` 长路径前缀）与 `//host/share` 会让宿主发起 SMB/NTLM 连接。
-  if (!p || p.startsWith('\\\\') || p.startsWith('//') || p.includes('\0')) return { ok: false, code: 400 };
+  // UNC（`\\host\share`，含 `\\?\` 长路径前缀）会让宿主发起 SMB/NTLM 连接。
+  // 前两个字符都是分隔符即拒绝，覆盖 `\\`、`//` 及 `/\`、`\/` 混合变体（Windows 同样按 UNC 解析）。
+  const twoSeps = p.length >= 2 && (p[0] === '/' || p[0] === '\\') && (p[1] === '/' || p[1] === '\\');
+  if (!p || twoSeps || p.includes('\0')) return { ok: false, code: 400 };
   if (!isAbsolute(p)) return { ok: false, code: 400 };
   const ext = '.' + (p.split('.').pop() ?? '').toLowerCase();
   if (!BOOT_VIDEO_EXTS.has(ext)) return { ok: false, code: 400 };
