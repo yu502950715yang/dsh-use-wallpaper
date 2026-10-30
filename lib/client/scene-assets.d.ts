@@ -17,8 +17,6 @@ export declare function resolveImageAssets(id: string, obj: SceneImageObject): P
     spriteSheet: boolean;
     mediaThumbnail: boolean;
 }>;
-/** 对象是否绑定 WE 系统封面纹理（scene.json `instance.usertextures` 含 `$mediaThumbnail`）。 */
-export declare function hasMediaThumbnailTexture(obj: SceneImageObject): boolean;
 export declare function fetchMdlBytes(id: string, path: string): Promise<Uint8Array | null>;
 export interface ParticleMaterialRef {
     texUrl: string | null;

@@ -15,6 +15,9 @@ export function createMediaThumbnailTextureSource(): MediaThumbnailTextureSource
     ? null
     : new ImageData(new Uint8ClampedArray([255, 255, 255, 255]), 1, 1);
   const texture = white ? new THREE.Texture(white) : new THREE.Texture();
+  // ImageBitmap 上传时 UNPACK_FLIP_Y_WEBGL 无效（同 tex-loader）：方向在解码时用
+  // imageOrientation:'flipY' 定死，纹理必须 flipY=false，否则再翻一次。
+  texture.flipY = false;
   texture.colorSpace = THREE.SRGBColorSpace;
   // 封面尺寸任意（非 2 次幂）：关掉 mipmap，避免 WebGL 对 NPOT 纹理的采样限制。
   texture.minFilter = THREE.LinearFilter;
@@ -26,7 +29,7 @@ export function createMediaThumbnailTextureSource(): MediaThumbnailTextureSource
     texture,
     hasImage: () => has,
     setImage(image: ImageBitmap | null): void {
-      // 旧 bitmap 已被替换（GPU 数据已上传），主动 close 释放 CPU 侧内存。
+      // 归属：setImage 后 bitmap 归本源所有（调用方不再 close），替换/dispose 时由本源关闭。
       if (current && current !== image) current.close();
       current = image;
       // three r170（WebGL2）首次上传用不可变 texStorage2D：换图后尺寸变化必须 dispose 重传，
@@ -37,6 +40,7 @@ export function createMediaThumbnailTextureSource(): MediaThumbnailTextureSource
       has = image !== null;
     },
     dispose(): void {
+      // 幂等：current 置 null 后重复 dispose 不会重复 close。
       current?.close();
       current = null;
       texture.dispose();

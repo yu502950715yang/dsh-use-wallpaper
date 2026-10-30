@@ -1,8 +1,8 @@
 import type { SceneDescription, SceneImageObject } from '../shared/types.js';
-import { MEDIA_THUMBNAIL_TEXTURE } from '../shared/media.js';
 import * as THREE from 'three';
 import { parseSceneJson } from './scene-json.js';
 import { loadTexTexture } from './tex-loader.js';
+import { hasMediaThumbnail } from './scene-instance.js';
 import type { ParticleEmitterSpec, ParticleInitializerSpec } from './particles.js';
 
 function vec3(s: unknown): [number, number, number] {
@@ -75,7 +75,7 @@ export async function resolveImageAssets(
 ): Promise<{ texture: THREE.Texture | null; puppetPath: string | null; spriteSheet: boolean; mediaThumbnail: boolean }> {
   let puppetPath: string | null = null;
   // 只依赖 scene.json 声明 ⇒ 提前定论：材质解析失败也不该丢掉封面绑定。
-  const mediaThumbnail = hasMediaThumbnailTexture(obj);
+  const mediaThumbnail = hasMediaThumbnail(obj.instance);
   try {
     const modelResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(obj.image)}`);
     if (!modelResp.ok) return { texture: null, puppetPath: null, spriteSheet: false, mediaThumbnail };
@@ -103,11 +103,6 @@ export async function resolveImageAssets(
   }
 }
 
-/** 对象是否绑定 WE 系统封面纹理（scene.json `instance.usertextures` 含 `$mediaThumbnail`）。 */
-export function hasMediaThumbnailTexture(obj: SceneImageObject): boolean {
-  return Array.isArray(obj.instance?.usertextures)
-    && obj.instance!.usertextures!.some((u) => u?.name === MEDIA_THUMBNAIL_TEXTURE);
-}
 
 // `.mdl` 原始字节（走既有 scene asset 路由，pkg 内条目）；失败返回 null（调用方退化为普通贴图）。
 export async function fetchMdlBytes(id: string, path: string): Promise<Uint8Array | null> {

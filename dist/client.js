@@ -26668,9 +26668,6 @@ function resolveWorldTransforms(nodes) {
   return out;
 }
 
-// src/shared/media.ts
-var MEDIA_THUMBNAIL_TEXTURE = "$mediaThumbnail";
-
 // src/client/tex-loader.ts
 var import_lz4js = __toESM(require_lz4(), 1);
 
@@ -27136,13 +27133,22 @@ async function loadTexTexture(url, opts) {
   return textureFromTex(info, opts);
 }
 
+// src/shared/media.ts
+var MEDIA_THUMBNAIL_TEXTURE = "$mediaThumbnail";
+
+// src/client/scene-instance.ts
+function hasMediaThumbnail(instance) {
+  const textures = instance?.usertextures;
+  return Array.isArray(textures) && textures.some((u) => u?.name === MEDIA_THUMBNAIL_TEXTURE);
+}
+
 // src/client/scene-assets.ts
 function resolveTexPath(matRef, texName) {
   return texName.includes("/") ? "materials/" + texName + ".tex" : matRef.slice(0, matRef.lastIndexOf("/") + 1) + texName + ".tex";
 }
 async function resolveImageAssets(id, obj) {
   let puppetPath = null;
-  const mediaThumbnail = hasMediaThumbnailTexture(obj);
+  const mediaThumbnail = hasMediaThumbnail(obj.instance);
   try {
     const modelResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(obj.image)}`);
     if (!modelResp.ok) return { texture: null, puppetPath: null, spriteSheet: false, mediaThumbnail };
@@ -27166,9 +27172,6 @@ async function resolveImageAssets(id, obj) {
   } catch {
     return { texture: null, puppetPath, spriteSheet: false, mediaThumbnail };
   }
-}
-function hasMediaThumbnailTexture(obj) {
-  return Array.isArray(obj.instance?.usertextures) && obj.instance.usertextures.some((u) => u?.name === MEDIA_THUMBNAIL_TEXTURE);
 }
 async function fetchMdlBytes(id, path) {
   try {
@@ -32660,9 +32663,7 @@ function sceneNeedsMedia(desc) {
     if (obj.kind === "text" && typeof obj.script === "string" && obj.script && MEDIA_SCRIPT_RE.test(obj.script)) {
       return true;
     }
-    if (obj.kind === "image" && Array.isArray(obj.instance?.usertextures) && obj.instance.usertextures.some((u) => u?.name === MEDIA_THUMBNAIL_TEXTURE)) {
-      return true;
-    }
+    if (obj.kind === "image" && hasMediaThumbnail(obj.instance)) return true;
   }
   return false;
 }
@@ -32825,6 +32826,7 @@ async function paletteFromImage(source) {
 function createMediaThumbnailTextureSource() {
   const white = typeof ImageData === "undefined" ? null : new ImageData(new Uint8ClampedArray([255, 255, 255, 255]), 1, 1);
   const texture = white ? new Texture(white) : new Texture();
+  texture.flipY = false;
   texture.colorSpace = SRGBColorSpace;
   texture.minFilter = LinearFilter;
   texture.generateMipmaps = false;
@@ -34190,21 +34192,27 @@ function createThreeSceneRenderer(opts) {
           const stale = (seq) => seq !== thumbnailSeq || currentMedia !== mediaSession;
           const loadThumbnail = async (rev) => {
             const seq = ++thumbnailSeq;
+            let bitmap;
             try {
               if (typeof createImageBitmap !== "function") throw new Error("createImageBitmap unavailable");
               const resp = await fetch(`/wallpapers/now-playing/thumbnail?rev=${encodeURIComponent(String(rev))}`);
               if (!resp.ok) throw new Error("thumbnail http " + resp.status);
-              const bitmap = await createImageBitmap(await resp.blob());
-              if (stale(seq)) {
-                bitmap.close();
-                return;
-              }
+              bitmap = await createImageBitmap(await resp.blob(), { imageOrientation: "flipY" });
+            } catch {
+              if (stale(seq)) return;
+              mediaThumbnailSource?.setImage(null);
+              dispatchThumbnail(neutral());
+              return;
+            }
+            if (stale(seq)) {
+              bitmap.close();
+              return;
+            }
+            const source = mediaThumbnailSource;
+            if (source) source.setImage(bitmap);
+            try {
               const palette = await paletteFromImage(bitmap);
-              if (stale(seq)) {
-                bitmap.close();
-                return;
-              }
-              mediaThumbnailSource?.setImage(bitmap);
+              if (stale(seq)) return;
               dispatchThumbnail({
                 hasThumbnail: true,
                 primaryColor: palette.primary,
@@ -34215,8 +34223,9 @@ function createThreeSceneRenderer(opts) {
               });
             } catch {
               if (stale(seq)) return;
-              mediaThumbnailSource?.setImage(null);
-              dispatchThumbnail(neutral());
+              dispatchThumbnail({ ...neutral(), hasThumbnail: true });
+            } finally {
+              if (!source) bitmap.close();
             }
           };
           const host = {

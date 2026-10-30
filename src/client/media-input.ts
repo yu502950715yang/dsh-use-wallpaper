@@ -1,8 +1,8 @@
 // client 媒体轮询总线：1s 拉 now-playing 快照，仅快照变化时回调；连续失败退避 10s。
 // 纯函数 diff/mediaUrl/applyMediaSnapshot/sceneNeedsMedia 独立可测；定时器与 fetch 可注入（测试不碰真实网络/时钟）。
 import type { MediaPalette, MediaPropertiesPayload, MediaSessionSnapshot } from '../shared/media.js';
-import { MEDIA_THUMBNAIL_TEXTURE } from '../shared/media.js';
 import type { SceneDescription } from '../shared/types.js';
+import { hasMediaThumbnail } from './scene-instance.js';
 
 const DEFAULT_INTERVAL_MS = 1000;
 const DEFAULT_BACKOFF_MS = 10_000;
@@ -235,13 +235,7 @@ export function sceneNeedsMedia(desc: SceneDescription): boolean {
       return true;
     }
     // 只靠封面纹理、没有媒体脚本的壁纸也要轮询（否则封面永远不更新）。
-    if (
-      obj.kind === 'image'
-      && Array.isArray(obj.instance?.usertextures)
-      && obj.instance.usertextures.some((u) => u?.name === MEDIA_THUMBNAIL_TEXTURE)
-    ) {
-      return true;
-    }
+    if (obj.kind === 'image' && hasMediaThumbnail(obj.instance)) return true;
   }
   return false;
 }

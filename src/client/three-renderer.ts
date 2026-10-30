@@ -1213,15 +1213,28 @@ export function createThreeSceneRenderer(opts?: {
           const stale = (seq: number): boolean => seq !== thumbnailSeq || currentMedia !== mediaSession;
           const loadThumbnail = async (rev: number): Promise<void> => {
             const seq = ++thumbnailSeq;
+            let bitmap: ImageBitmap;
             try {
               if (typeof createImageBitmap !== 'function') throw new Error('createImageBitmap unavailable');
               const resp = await fetch(`/wallpapers/now-playing/thumbnail?rev=${encodeURIComponent(String(rev))}`);
               if (!resp.ok) throw new Error('thumbnail http ' + resp.status);
-              const bitmap = await createImageBitmap(await resp.blob());
-              if (stale(seq)) { bitmap.close(); return; }
+              // 方向：ImageBitmap 上传忽略 texture.flipY（见 tex-loader.ts），必须在解码时翻转。
+              bitmap = await createImageBitmap(await resp.blob(), { imageOrientation: 'flipY' });
+            } catch {
+              // 拉取/解码失败：中性色 + 空纹理。**不计入媒体轮询的 failures**（那套退避只归快照轮询）。
+              if (stale(seq)) return;
+              mediaThumbnailSource?.setImage(null);
+              dispatchThumbnail(neutral());
+              return;
+            }
+            // 非采纳分支（序号过期）：解码出的 bitmap 必须主动释放。
+            if (stale(seq)) { bitmap.close(); return; }
+            // 无封面对象（只有脚本的场景）也照常取色派发，只是 bitmap 不进任何纹理源。
+            const source = mediaThumbnailSource;
+            if (source) source.setImage(bitmap); // 所有权转移：替换/dispose 由纹理源关闭
+            try {
               const palette = await paletteFromImage(bitmap);
-              if (stale(seq)) { bitmap.close(); return; }
-              mediaThumbnailSource?.setImage(bitmap);
+              if (stale(seq)) return;
               dispatchThumbnail({
                 hasThumbnail: true,
                 primaryColor: palette.primary,
@@ -1231,10 +1244,12 @@ export function createThreeSceneRenderer(opts?: {
                 highContrastColor: palette.highContrast,
               });
             } catch {
-              // 拉取/解码失败：中性色 + 空纹理。**不计入媒体轮询的 failures**（那套退避只归快照轮询）。
+              // 取色失败不丢可用封面：保留 bitmap，只派中性调色板（失败开放）。
               if (stale(seq)) return;
-              mediaThumbnailSource?.setImage(null);
-              dispatchThumbnail(neutral());
+              dispatchThumbnail({ ...neutral(), hasThumbnail: true });
+            } finally {
+              // 未被纹理源收养的 bitmap：取色后释放（采纳分支由源在替换/dispose 时关闭）。
+              if (!source) bitmap.close();
             }
           };
           const host: MediaOrchestrationHost = {

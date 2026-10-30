@@ -60,7 +60,24 @@ function solidPng(r, g, b, w = 32, h = 32) {
   for (let i = 0; i < w * h; i += 1) { data[i * 3] = r; data[i * 3 + 1] = g; data[i * 3 + 2] = b; }
   return encodePng({ width: w, height: h, channels: 3, data });
 }
-const ART_MAGENTA = solidPng(255, 0, 255);
+// [2c] 方向判据封面：上≈3/4 洋红、下≈1/4 绿（32×32 RGBA，程序生成）。
+// 绿色从第 23 行起（严格 24 行时上下半高切分恰好各半、无法判「占主导」；23/9 仍≈3/4:1/4）。
+const ART_MAGENTA_ROWS = 23;
+function asymmetricPng(w = 32, h = 32) {
+  const data = Buffer.alloc(w * h * 4);
+  for (let y = 0; y < h; y += 1) {
+    for (let x = 0; x < w; x += 1) {
+      const o = (y * w + x) * 4;
+      const magenta = y < ART_MAGENTA_ROWS;
+      data[o] = magenta ? 255 : 0;
+      data[o + 1] = magenta ? 0 : 255;
+      data[o + 2] = magenta ? 255 : 0;
+      data[o + 3] = 255;
+    }
+  }
+  return encodePng({ width: w, height: h, channels: 4, data });
+}
+const ART_ASYM = asymmetricPng();
 const ART_GREEN = solidPng(0, 255, 0);
 const setArt = (png) => { artBytes = png; artRev += 1; };
 
@@ -178,18 +195,22 @@ async function shot(tag) {
   return buf;
 }
 
-/** 洋红像素数（封面占位纹理；[2] 用）。 */
-function countMagenta(img, box) {
+/** bbox=[x0,y0,x1,y1]（含端点）内满足颜色判定的像素数（封面判据 [2a]/[2c] 用）。 */
+function countPixels(img, box, test) {
   const [x0, y0, x1, y1] = box;
   let n = 0;
   for (let y = Math.max(0, y0); y <= Math.min(img.height - 1, y1); y++) {
     for (let x = Math.max(0, x0); x <= Math.min(img.width - 1, x1); x++) {
       const o = (y * img.width + x) * img.channels;
-      if (img.data[o] > 200 && img.data[o + 1] < 80 && img.data[o + 2] > 200) n++;
+      if (test(img.data[o], img.data[o + 1], img.data[o + 2])) n++;
     }
   }
   return n;
 }
+const isMagenta = (r, g, b) => r > 200 && g < 80 && b > 200;
+const isGreen = (r, g, b) => g > 200 && r < 80 && b < 80;
+const countMagenta = (img, box) => countPixels(img, box, isMagenta);
+const countGreen = (img, box) => countPixels(img, box, isGreen);
 
 const materialOf = async (objectId) => JSON.parse(await evalJs(`JSON.stringify(window.__objectMaterialInfo(${objectId}))`) ?? 'null');
 const rectOf = async (objectId) => JSON.parse(await evalJs(`JSON.stringify(window.__objectRect(${objectId}))`) ?? 'null');
@@ -280,7 +301,7 @@ try {
       available: true, playback: 'playing', title: 'E2E-T1', artist: 'E2E-ARTIST',
       album: 'E2E-ALBUM', contentType: 'music',
     };
-    setArt(ART_MAGENTA);
+    setArt(ART_ASYM);
     await sleep(2500); // 1s 轮询 + 文本重绘/quad 尺寸同步
     const titleMat1 = await materialOf(38);
     const titleW1 = titleMat1?.mapSize?.[0] ?? null;
@@ -301,10 +322,18 @@ try {
     await probeMedia('playing');
     await shot('playing');
 
-    // ── [2] 封面（Task 8）：洋红封面像素 + 主色链路（边框 tint 跟随封面主色）──────────
+    // ── [2] 封面（Task 8）：封面像素 + 方向 + 主色链路（边框 tint 跟随封面主色）──────────
     const rect45 = await rectOf(45);
     const coverBox = rect45?.canvasCss ?? COVER_REGION;
-    const magenta = countMagenta(decodePng(await shot('cover')), coverBox);
+    const coverImg = decodePng(await shot('cover'));
+    const magenta = countMagenta(coverImg, coverBox);
+    // [2c] 方向：bbox 高度对半切分。正立 = 上半洋红主导、下半绿主导（颠倒则相反）。
+    const [cx0, cy0, cx1, cy1] = coverBox;
+    const midY = Math.floor((cy0 + cy1) / 2);
+    const upperMagenta = countMagenta(coverImg, [cx0, cy0, cx1, midY]);
+    const upperGreen = countGreen(coverImg, [cx0, cy0, cx1, midY]);
+    const lowerMagenta = countMagenta(coverImg, [cx0, midY + 1, cx1, cy1]);
+    const lowerGreen = countGreen(coverImg, [cx0, midY + 1, cx1, cy1]);
     const tintMagenta = await tintOf(40);
     // 切绿色封面（rev 变化）⇒ 重新拉取/取色 ⇒ tint 必须跟着变，证明不是一次性静态色。
     setArt(ART_GREEN);
@@ -316,6 +345,9 @@ try {
       `magenta=${magenta} bbox=${JSON.stringify(coverBox)}`);
     judge('[2b] 主色链路：边框 tint 随封面主色（洋红→绿）', near(tintMagenta, [1, 0, 1]) && near(tintGreen, [0, 1, 0]),
       `tint ${JSON.stringify(tintMagenta)} → ${JSON.stringify(tintGreen)}`);
+    judge('[2c] 封面方向：上半洋红主导、下半绿主导', upperMagenta > upperGreen * 4
+      && lowerGreen > lowerMagenta * 1.15 && upperMagenta > 200 && lowerGreen > 100,
+      `upper magenta=${upperMagenta} green=${upperGreen}; lower magenta=${lowerMagenta} green=${lowerGreen}（bbox 高度对半切分）`);
 
     // ── [4] 回到 stopped：媒体层再次隐藏 ─────────────────────────────────────────
     mediaStage = {
