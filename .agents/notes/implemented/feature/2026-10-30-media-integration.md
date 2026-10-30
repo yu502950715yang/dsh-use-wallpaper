@@ -62,7 +62,7 @@ Status: implemented
 ### B2 applyLayerState 动态 color 破坏 text 静态色（回归）
 
 - **修法**：`threejs-player.addBackground` 新增 `disableDynamicColor`，text 分支传 `true`，把 `userData.dynamicColorDisabled` 打到内容材质（隔离时也打到合成 quad 材质）；`applyLayerState.writeColor` 对带标记材质跳过 `color`，origin/scale/angles/alpha/visible 照常。
-- **证据**：`tests/layer-state.test.ts` 两例（tint 与 MeshBasicMaterial 均不被写入、其余字段照常）；`tests/threejs-player.test.ts` 断言 text 直渲与隔离 quad 材质都带标记；`verify-media-layer --regression` 新增 `2980088441` 与 `[R6]`：obj54 材质 color≈`[1,1,1]`、可见、文本区红像素 539（脚本 color 若生效会压暗到 ≈116,0,0）；截图 `e2e/.out/media/regression-2980088441.png` 供人工复看。
+- **证据**：`tests/layer-state.test.ts` 两例（tint 与 MeshBasicMaterial 均不被写入、其余字段照常）；`tests/threejs-player.test.ts` 断言 text 直渲与隔离 quad 材质都带标记；`verify-media-layer --regression` 新增 `2980088441` 与 `[R6]`：**主判据** obj54 材质 color≈`[1,1,1]`、可见；**辅助**文本区红色像素 539 仅作存在性/防空白（阈值区分不了 194 与被压暗的 ≈116，无鉴别力）；截图 `e2e/.out/media/regression-2980088441.png` 供人工复看。
 
 ### I1 迟到封面被 watcher 输出门丢弃
 
@@ -84,7 +84,7 @@ Status: implemented
 - 新增 `e2e/verify/verify-media-perf.mjs`（Node，不依赖浏览器/素材）：用生产 `lib/client/scene-timeline.js` + 内联 10 条动画，测 `advance+sampleAndWrite+syncWorld` N=2000 均值，断言 <50µs；`package.json` 新增 `e2e:media-perf`。
 - `harness-media-entry.mjs` 增加 `__fpsProbe(ms)` / `__glRendererInfo()`（参考 text-clock harness）；媒体 e2e 末尾输出 FPS/GPU（诊断、不参与判据）。
 - **实测（本机一次）**：时间线 13.0 / 14.6µs/帧（两次，10 条动画、N=2000、warmup=200，max 282–320µs 为 GC 尖峰）；媒体壁纸 FPS 60.3（真 GPU：NVIDIA RTX 3060 D3D11，headless 1600×900）。
-- **串行 e2e**：`e2e:media` 13/13 PASS exit 0；`--regression` 5 张 22/22 PASS exit 0；`verify-colorblend` PASS；`verify-v081-gaps` exit 0；`verify-v082` PASS；`verify-text-clock-layer --no-teeth` exit 0；`verify-web-pointer-parallax` 7/7 PASS。既有红/不可运行（与本次无关）：`verify-hidpi-object-rt` 挂载期 RT 尺寸断言（v0.8.0 基线即 FAIL，TESTING §2.16 记录）；`verify-isolated-rt-sharpness` 的 `2132420420` 多隔离 obj37 与 `2911105183` 锐度阈值（素材/基线状态，本次未触 isolate/RT 代码）；`verify-turn-trigger-card` 因本机 DSH asar 缺 `CodeBlock.module.css` 无法运行（环境缺失）。
+- **串行 e2e**：`e2e:media` 13/13 PASS exit 0；`--regression` 5 张 22/22 PASS exit 0；`verify-colorblend` PASS；`verify-v081-gaps` exit 0；`verify-v082` PASS；`verify-text-clock-layer --no-teeth` exit 0；`verify-web-pointer-parallax` 7/7 PASS。未通过/不可运行：`verify-hidpi-object-rt` 挂载期 RT 尺寸断言（v0.8.0 基线即 FAIL，TESTING §2.9 记录）；`verify-isolated-rt-sharpness` 3/8 未过（`2132420420` / `3765967112`「多隔离」集合差异、`2911105183` 锐度阈值且该张亦报多隔离）—— **本轮未建立「改动前同样失败」的基线**，按「待 Task 11 后续 / 人工复核」记录，不归因为既有素材缺陷（未改隔离选择 / RT 尺寸 / 效果链逻辑；仅在隔离合成 quad 材质上打 `dynamicColorDisabled` 标记）；`verify-turn-trigger-card` 因本机 DSH asar 缺 `CodeBlock.module.css` 无法运行（环境缺失）。
 
 ### I5 真机 M1–M8
 
@@ -98,4 +98,11 @@ Status: implemented
 
 - 真机 M1–M8（SMTC 会话选择、封面方向/主色观感、隐私与 watcher 残留、失败路径面板原因）仍需人工验收；B2 的「WE 是否对 text 应用 layer color」也待真机对照。
 - 面板状态行 1s 轮询是简化实现（无推送通道）；状态在切到非媒体壁纸后保留最近值，可能显示旧的失败 reason，属可接受的提示口径。
-- `verify-isolated-rt-sharpness` 的既有失败与本次修复无关，但未在本次建立独立基线证明（只核对了未触相关代码路径）。
+- `verify-isolated-rt-sharpness` 3/8 未过：本轮只核对了未改隔离选择 / RT 尺寸 / 效果链逻辑（`dynamicColorDisabled` 标记不参与对象集合判定），未建立「改动前同样失败」的独立基线 ⇒ 待 Task 11 后续 / 人工复核。
+
+### 文档/注释精度补正（2026-10-30 收尾）
+
+- `TESTING.md:492`：hidpi 基线红引用 §2.16 → §2.9；isolated-rt 3/8 归因改为 2 张「多隔离」集合差异（`2132420420` / `3765967112`）+ 1 张锐度阈值（`2911105183`，该张亦报多隔离），并注明本轮未建立「改动前同样失败」的基线、待 Task 11 后续 / 人工复核；「未触 isolate/RT 代码」改为「未改隔离选择 / RT 尺寸 / 效果链逻辑，仅在隔离合成 quad 材质打 `dynamicColorDisabled` 标记」；`[R6]` 的 539 红像素改标为辅助存在性（无鉴别力）。
+- `AGENT.md:284-293`：§7.44 子编号 `5,6,5,6,7,8` 重排为连续 `1–10`；条目内容与既有 `§7.44` 引用未变。
+- `e2e/verify/verify-media-layer.mjs:395-413`：`[R6]` 注释与 judge 标签区分主判据（obj54 材质 color≈`[1,1,1]`）与辅助（文本区红色像素存在性，阈值无鉴别力）；判据数值未改。
+- 本笔记 `65` / `87` / `101` 行同步上述口径；本次只改文档/注释，提交 `docs(media): 验收归因与编号精度补正`，提交后 `git status --short` 为空。

@@ -393,7 +393,8 @@ async function runRegression() {
       `now-playing 请求数=${mediaDelta}（累计 ${mediaRequests}）`);
 
     // 判据 6（2980088441）：text 层材质 color 不得被脚本/时间线动态 color 改写（B2 回归）。
-    // 主判据 = 材质 color ≈ [1,1,1]（text 静态色烘进 canvas）；截图文字区红像素只作辅助（解码失败不判红）。
+    // 主判据 = 材质 color ≈ [1,1,1]（text 静态色烘进 canvas，有鉴别力）。
+    // 辅助 = 文本区红色像素存在性（r>100&&g<80&&b<80；区分不了 194 与被压暗的 ≈116，无鉴别力，解码失败不判红）。
     if (id === '2980088441') {
       const mat = JSON.parse(await evalJs('JSON.stringify(window.__objectMaterialInfo(54))') ?? 'null');
       const color = mat?.color;
@@ -406,10 +407,10 @@ async function runRegression() {
           redPixels = countPixels(decodePng(shotBuf), rect.canvasCss, (r, g, b) => r > 100 && g < 80 && b < 80);
         } catch { redPixels = null; }
       }
-      judge('[R6] 2980088441 text 层材质 color 未被脚本动态 color 改写（≈[1,1,1]）',
+      judge('[R6] 2980088441 text 层材质 color 未被脚本动态 color 改写（主判据 ≈[1,1,1]）',
         white && mat?.visible === true && (redPixels === null || redPixels > 10),
         `obj54 color=${JSON.stringify(color)} visible=${JSON.stringify(mat?.visible)}` +
-        ` 文本区红像素=${JSON.stringify(redPixels)} rect=${JSON.stringify(rect?.canvasCss ?? null)}`);
+        ` 辅助文本区红色像素存在性（无鉴别力）=${JSON.stringify(redPixels)} rect=${JSON.stringify(rect?.canvasCss ?? null)}`);
     }
 
     // 判据 5：2597392171 的 Fog origin loop 可复跑断言（Fog 现在会动，属预期）。

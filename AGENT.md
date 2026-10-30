@@ -287,10 +287,10 @@ npx vitest run tests/xxx.test.ts --reporter=basic   # 跑单个文件
       4. `TimelineRuntimeOptions.worldTransforms` 是**死参数**（`syncWorld` 全量重算，保留以对齐跨任务接口）；`options.wraploop` 解析进 `wrapLoop` 后**未消费**。
       5. **动态 `color` 仅对 image 生效（与 text 的边界）**：image（含 `colorBlendMode` 6/7/31 的 tint uniform）照常接受脚本/时间线 color；**text 层的静态色已烘进 canvas**，脚本/时间线 color **不应用**（`threejs-player` 的 text 分支给材质打 `userData.dynamicColorDisabled`，`applyLayerState` 跳过 color、其余 origin/scale/angles/alpha 照常）。判据来自 `2980088441` obj54：脚本 color 若乘到材质会让 `(194,39,39)` 文字压成 ≈`(116,0,0)`；回归 `[R6]` 断言材质 color≈`[1,1,1]`。**与 WE 的 text 行为对照待真机**（WE 是否对 text 应用 layer color 尚未逐位验证）。
       6. **`scene-json` 的 `obj.script` 派生契约不一致（后续统一）**：`obj.script` 只对 `visible.kind === 'script'` 派生（视觉化识别用），而 `collectScriptSources` 支持 `visible.user` + `visible.script` 两种来源 ⇒ 同一 scene 对象在「识别」与「装载」两条路径上对 `script` 的可见性不同；当前未发现因此漏装载的素材，本期**不改代码**，后续统一为单一来源。
-      5. VM 的「timeline 存在 ⇒ alpha=0 不回滚」是 **scene 级**判定（场景内任一动画即解除），不按 objectId 是否真有 alpha 时间线区分。
-      6. **只有 text 媒体脚本的场景不建轮询**：`sceneNeedsMedia` 会为 text 脚本返回 true，但接线条件是 `currentScriptHost || $mediaThumbnail 对象`；scene 无脚本且无时间线（空 host 不建）时两者皆无 ⇒ 不轮询，text 的 `mediaPropertiesChanged` 也不会派发。
-      7. **watcher 启动失败退避 = 固定 5s**（`media-session.ts` 的 `START_RETRY_MS`），与设计 §4.1 的「1s 起指数、上限 8s」不一致，**以代码 5s 为准**（决策笔记 errata）；进程异常退出无指数退避（下一次请求直接重启），60s 内 3 次失败降级 60s 不变。
-      8. **e2e 可复跑性**：媒体 e2e 与其它 headless e2e 必须**串行**、彼此留 1–2s（连续紧跑后 Edge/调试端口可能未完全释放 ⇒ 环境性失败；单跑通过）；`--regression` 的 `[R2]`「对象数 > 0」/`[R3]`「截图字节 > 0」是**结构性弱断言**，画面正确性靠人工复看截图；`[R1]` 不含 CDP `Log.entryAdded` 的 error（只诊断打印）。
+      7. VM 的「timeline 存在 ⇒ alpha=0 不回滚」是 **scene 级**判定（场景内任一动画即解除），不按 objectId 是否真有 alpha 时间线区分。
+      8. **只有 text 媒体脚本的场景不建轮询**：`sceneNeedsMedia` 会为 text 脚本返回 true，但接线条件是 `currentScriptHost || $mediaThumbnail 对象`；scene 无脚本且无时间线（空 host 不建）时两者皆无 ⇒ 不轮询，text 的 `mediaPropertiesChanged` 也不会派发。
+      9. **watcher 启动失败退避 = 固定 5s**（`media-session.ts` 的 `START_RETRY_MS`），与设计 §4.1 的「1s 起指数、上限 8s」不一致，**以代码 5s 为准**（决策笔记 errata）；进程异常退出无指数退避（下一次请求直接重启），60s 内 3 次失败降级 60s 不变。
+      10. **e2e 可复跑性**：媒体 e2e 与其它 headless e2e 必须**串行**、彼此留 1–2s（连续紧跑后 Edge/调试端口可能未完全释放 ⇒ 环境性失败；单跑通过）；`--regression` 的 `[R2]`「对象数 > 0」/`[R3]`「截图字节 > 0」是**结构性弱断言**，画面正确性靠人工复看截图；`[R1]` 不含 CDP `Log.entryAdded` 的 error（只诊断打印）。
 
 ## 8. 历史归档
 
