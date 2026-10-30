@@ -1,6 +1,6 @@
 import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import type { Readable } from 'node:stream';
-import { basename, join, resolve, sep } from 'node:path';
+import { basename, isAbsolute, join, resolve, sep } from 'node:path';
 import { createWallpaperListCache } from './list-cache.js';
 import { createMediaSessionService, type MediaSessionService } from './media-session.js';
 import { resolveWallpaperSceneSource } from './scene-source.js';
@@ -227,6 +227,33 @@ function parseUrl(req: any): { segs: string[]; search: URLSearchParams } {
   return { segs: u.pathname.split('/').filter(Boolean), search: u.searchParams };
 }
 
+// ── 开机动画本地视频 ────────────────────────────────────────────────────────────────
+// 本地视频素材由宿主代读（浏览器无法直接打开任意路径），只允许本机回环来源：
+// dsh web 可绑 0.0.0.0，不设此闸就等于给远程访问者一个任意文件读取口子。
+export function isLoopbackRemote(remoteAddress: string | undefined | null): boolean {
+  const addr = String(remoteAddress ?? '').trim().toLowerCase();
+  return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
+}
+
+const BOOT_VIDEO_EXTS: ReadonlySet<string> = new Set(['.mp4', '.webm', '.mov', '.m4v', '.ogv']);
+
+// 返回绝对路径 + 文件大小；path 来自设置面板手填，必须拦下相对路径/非视频扩展名。
+export function resolveBootVideoPath(
+  raw: string | null | undefined,
+): { ok: true; file: string; size: number } | { ok: false; code: 400 | 404 } {
+  const p = String(raw ?? '').trim();
+  if (!p || !isAbsolute(p) || p.includes('\0')) return { ok: false, code: 400 };
+  const ext = '.' + (p.split('.').pop() ?? '').toLowerCase();
+  if (!BOOT_VIDEO_EXTS.has(ext)) return { ok: false, code: 400 };
+  try {
+    const st = statSync(p);
+    if (!st.isFile()) return { ok: false, code: 404 };
+    return { ok: true, file: p, size: st.size };
+  } catch {
+    return { ok: false, code: 404 };
+  }
+}
+
 // 读取 POST body：超限立即停止累积、丢弃剩余流并返回 too-large（调用方回 413）。
 function readBody(
   req: any,
@@ -368,6 +395,43 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
           }
         } else {
           json(res, 404, { error: 'no such action' });
+        }
+      },
+    });
+
+    // 开机动画：本地视频流式（仅回环）。sendSceneAsset 复用 Range/HEAD/206/416 语义。
+    server.register({
+      kind: 'exact', path: '/wallpapers/boot/local-video',
+      handler: (req: any, res: any) => {
+        if (!isLoopbackRemote(req.socket?.remoteAddress)) return json(res, 403, { error: 'loopback only' });
+        const { search } = parseUrl(req);
+        const parsed = resolveBootVideoPath(search.get('path'));
+        if (!parsed.ok) return json(res, parsed.code, { error: parsed.code === 404 ? 'not found' : 'bad path' });
+        sendSceneAsset(req, res, parsed.file, {
+          size: parsed.size,
+          readAll: () => readFileSync(parsed.file),
+          openRange: (start, end) => createReadStream(parsed.file, { start, end }),
+        }, 0);
+      },
+    });
+
+    // 开机动画：本地路径校验（设置面板「校验」按钮；不读内容、不探测编码）
+    server.register({
+      kind: 'exact', path: '/wallpapers/boot/probe',
+      handler: (req: any, res: any) => {
+        if (!isLoopbackRemote(req.socket?.remoteAddress)) return json(res, 403, { error: 'loopback only' });
+        const { search } = parseUrl(req);
+        const raw = search.get('path') ?? '';
+        const ext = '.' + (raw.split('.').pop() ?? '').toLowerCase();
+        if (!raw || !isAbsolute(raw)) return json(res, 400, { error: 'bad path' });
+        if (!BOOT_VIDEO_EXTS.has(ext)) {
+          return json(res, 400, { ok: false, exists: false, isFile: false, size: 0, playable: false, error: 'unsupported extension' });
+        }
+        try {
+          const st = statSync(raw);
+          return json(res, 200, { ok: true, exists: true, isFile: st.isFile(), size: st.size, playable: st.isFile(), ext });
+        } catch {
+          return json(res, 404, { ok: false, exists: false, isFile: false, size: 0, playable: false, error: 'not found' });
         }
       },
     });

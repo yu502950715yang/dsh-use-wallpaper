@@ -106,6 +106,8 @@ describe('registerWallpaperRoutes', () => {
     expect(captured).toEqual([
       { kind: 'exact', path: '/wallpapers/list' },
       { kind: 'prefix', path: '/wallpapers/media' },
+      { kind: 'exact', path: '/wallpapers/boot/local-video' },
+      { kind: 'exact', path: '/wallpapers/boot/probe' },
       { kind: 'prefix', path: '/wallpapers/scene' },
       { kind: 'prefix', path: '/wallpapers/frame' },
       { kind: 'prefix', path: '/wallpapers/static' },
