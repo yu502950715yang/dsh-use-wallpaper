@@ -66,8 +66,8 @@ export interface VisibleBinding {
   value: boolean;                       // 缺省可见性（user 键缺失、无 condition 时值非布尔、script 未求值时回退）
   key?: string;                         // kind='user'：用户属性键名（scene.json 的 user）
   condition?: string;                   // kind='user'：绑定侧 condition（对象形态 user.condition）
-  script?: string;                      // kind='script'：脚本源码（T3.3 模式识别输入）
-  scriptProperties?: Record<string, unknown>; // kind='script'：脚本参数（{user} 绑定装配前 resolve 为标量）
+  script?: string;                      // 可见性脚本源码（kind='script'；user 绑定也可同时携带，见 parseVisible）
+  scriptProperties?: Record<string, unknown>; // 脚本参数（{user} 绑定装配前 resolve 为标量）
 }
 
 // 对象级脚本挂载的转换属性（WE 属性脚本 `update(value)` 的绑定目标）。

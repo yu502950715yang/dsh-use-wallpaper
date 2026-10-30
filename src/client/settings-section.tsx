@@ -1107,6 +1107,16 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
               />
               壁纸音效
             </label>
+            {/* 媒体集成：Windows SMTC 只读；数据仅内存、不落盘、不上传 */}
+            <label className="wss-glow-row">
+              <input
+                type="checkbox"
+                className="wss-media-integration"
+                checked={settings.mediaIntegrationEnabled}
+                onChange={(e) => applyRuntime({ mediaIntegrationEnabled: e.target.checked })}
+              />
+              媒体集成（显示本机播放的歌曲封面/歌名）
+            </label>
           </div>
           </div>
         </details>

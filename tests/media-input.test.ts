@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createMediaInput, diffSnapshot, mediaUrl } from '../src/client/media-input.js';
+import { applyMediaSnapshot, createMediaInput, diffSnapshot, mediaUrl, sceneNeedsMedia } from '../src/client/media-input.js';
+import { parseSceneJson } from '../src/client/scene-json.js';
 import { emptyMediaSnapshot, type MediaSessionSnapshot } from '../src/shared/media.js';
 
 const snap = (patch: Partial<MediaSessionSnapshot>): MediaSessionSnapshot => ({ ...emptyMediaSnapshot('ok', 1), ...patch });
@@ -59,6 +60,11 @@ describe('diffSnapshot', () => {
     const prev = snap({ available: true, title: 'A', thumbnailRev: 5 });
     expect(diffSnapshot(prev, snap({ available: true, title: 'A', thumbnailRev: 4 }))).toEqual(['thumbnailRev']);
   });
+
+  it('contentType 参与 diff（视频/音乐切换要重派属性）', () => {
+    const prev = snap({ available: true, title: 'T', contentType: 'music' });
+    expect(diffSnapshot(prev, snap({ available: true, title: 'T', contentType: 'video' }))).toEqual(['contentType']);
+  });
 });
 
 describe('createMediaInput', () => {
@@ -75,6 +81,7 @@ describe('createMediaInput', () => {
       onSnapshot: (_n, _p) => got.push(_n),
     });
     input.start();
+    await flush(); // 先消化 start 的立即轮询，避免 pollNow 被 inflight 守卫吃掉
     await input.pollNow();
     expect(urls[0]).toBe('/wallpapers/now-playing?title=' + encodeURIComponent('D — DeepSeek Harness'));
     expect(got).toHaveLength(1);
@@ -247,5 +254,150 @@ describe('createMediaInput', () => {
       onError: () => { throw new Error('boom'); },
     });
     await expect(input.pollNow()).resolves.toBeUndefined();
+  });
+
+  // Task 4 carry-over：定时器路径此前没有直接用例（只测了手动 pollNow）。
+  it('定时器 fire 触发一次轮询', async () => {
+    const timers = makeTimerHarness();
+    let calls = 0;
+    const input = createMediaInput({
+      fetchImpl: async () => {
+        calls += 1;
+        return { ok: true, json: async () => snap({ available: true, title: 'T' }) };
+      },
+      setIntervalImpl: timers.setIntervalImpl,
+      clearIntervalImpl: timers.clearIntervalImpl,
+      onSnapshot: () => {},
+    });
+    input.start();
+    await flush();
+    expect(calls).toBe(1);
+    timers.active()!.fn();
+    await flush();
+    expect(calls).toBe(2);
+    input.dispose();
+  });
+
+  it('stop/dispose 后定时器 fire 不再请求', async () => {
+    const timers = makeTimerHarness();
+    let calls = 0;
+    const input = createMediaInput({
+      fetchImpl: async () => {
+        calls += 1;
+        return { ok: true, json: async () => snap({ available: true, title: 'T' }) };
+      },
+      setIntervalImpl: timers.setIntervalImpl,
+      clearIntervalImpl: timers.clearIntervalImpl,
+      onSnapshot: () => {},
+    });
+    input.start();
+    await flush();
+    const first = timers.active()!;
+    input.stop();
+    first.fn();
+    await flush();
+    expect(calls).toBe(1);
+    input.start();
+    await flush();
+    expect(calls).toBe(2);
+    const second = timers.active()!;
+    input.dispose();
+    second.fn();
+    await flush();
+    expect(calls).toBe(2);
+  });
+
+  // 回调异常不是网络失败：不得累加 failures（否则 3 次回调异常就把轮询打进 10s 退避）。
+  it('onSnapshot 抛错不计入 failures、不触发退避、不调用 onError', async () => {
+    const timers = makeTimerHarness();
+    const errors: unknown[] = [];
+    let calls = 0;
+    const input = createMediaInput({
+      fetchImpl: async () => {
+        calls += 1;
+        return { ok: true, json: async () => snap({ available: true, title: 'T' + calls }) };
+      },
+      setIntervalImpl: timers.setIntervalImpl,
+      clearIntervalImpl: timers.clearIntervalImpl,
+      onSnapshot: () => { throw new Error('render boom'); },
+      onError: (e) => errors.push(e),
+    });
+    input.start();
+    await flush();
+    for (let i = 0; i < 4; i += 1) await input.pollNow();
+    expect(calls).toBe(5);
+    expect(errors).toEqual([]);
+    expect(timers.active()?.ms).toBe(1_000);
+    input.dispose();
+  });
+});
+
+describe('applyMediaSnapshot（快照 → 事件派发）', () => {
+  const makeSink = (log: string[]) => ({
+    playback: (s: string) => log.push('playback:' + s),
+    status: (e: boolean) => log.push('status:' + e),
+    properties: (p: { title: string }) => log.push('props:' + p.title),
+    thumbnail: (t: { hasThumbnail: boolean }) => log.push('thumb:' + t.hasThumbnail),
+  });
+  const playing = {
+    ...emptyMediaSnapshot('ok', 1),
+    available: true, playback: 'playing' as const,
+    title: 'T', artist: 'A', hasThumbnail: true, thumbnailRev: 1,
+  };
+
+  it('首次/切歌/停止的事件顺序与去重', () => {
+    const log: string[] = [];
+    const sink = makeSink(log);
+    applyMediaSnapshot(null, playing, sink);
+    expect(log).toEqual(['status:true', 'playback:playing', 'props:T', 'thumb:true']);
+    log.length = 0;
+    applyMediaSnapshot(playing, { ...playing, positionMs: 5 }, sink);
+    expect(log).toEqual([]);
+    applyMediaSnapshot(playing, { ...playing, playback: 'stopped', title: '' }, sink);
+    expect(log).toEqual(['playback:stopped']);
+  });
+
+  it('不可用快照只派发 stopped（不向已隐藏的媒体层派发空属性/封面）', () => {
+    const log: string[] = [];
+    applyMediaSnapshot(playing, emptyMediaSnapshot('no-session', 2), makeSink(log));
+    expect(log).toEqual(['playback:stopped']);
+  });
+});
+
+describe('sceneNeedsMedia', () => {
+  it('只有声明 media* 脚本时为 true', () => {
+    const plain = parseSceneJson(JSON.stringify({ objects: [{ id: 1, image: 'models/x.json' }] }));
+    expect(sceneNeedsMedia(plain)).toBe(false);
+
+    const visible = parseSceneJson(JSON.stringify({
+      objects: [{
+        id: 1, image: 'models/x.json',
+        visible: { script: 'export function mediaPlaybackChanged(e){ thisLayer.visible=false; }', value: true },
+      }],
+    }));
+    expect(sceneNeedsMedia(visible)).toBe(true);
+
+    const text = parseSceneJson(JSON.stringify({
+      objects: [{ id: 2, text: { value: 'x', script: 'export function mediaPropertiesChanged(e){}' } }],
+    }));
+    expect(sceneNeedsMedia(text)).toBe(true);
+
+    // 属性脚本（angles/origin/scale/color）也要能被识别
+    const attr = parseSceneJson(JSON.stringify({
+      objects: [{ id: 3, image: 'models/x.json', angles: { script: 'export function mediaStatusChanged(e){}' } }],
+    }));
+    expect(sceneNeedsMedia(attr)).toBe(true);
+  });
+
+  it('普通 update/时钟脚本不误判', () => {
+    const d = parseSceneJson(JSON.stringify({
+      objects: [{
+        id: 1, image: 'models/x.json',
+        visible: { script: 'export function update(){ return true; }', value: true },
+      }, {
+        id: 2, text: { value: '', script: 'export function update(v){ return v; }' },
+      }],
+    }));
+    expect(sceneNeedsMedia(d)).toBe(false);
   });
 });

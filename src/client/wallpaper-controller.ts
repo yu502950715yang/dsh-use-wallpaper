@@ -20,6 +20,8 @@ export interface SceneRendererLike {
   setGlow?(patch: { enabled?: boolean; threshold?: number; strength?: number }): void;
   // 壁纸音效开关（含频谱驱动效果）：关掉即时停声并释放 AudioContext；打开按上次规格重播。
   setSoundEnabled?(enabled: boolean): void;
+  // 媒体集成开关（面板即时生效；关闭后媒体图层隐藏且停轮询）。
+  setMediaIntegration?(enabled: boolean): void;
   // 系统音频（v0.9 P1）：浏览器模式捕获系统音频驱动频谱；桌面 App 宿主禁用 → 返回失败码（面板提示）。
   startSystemAudio?(): Promise<SystemAudioFailure | 'ok'>;
   stopSystemAudio?(): void;

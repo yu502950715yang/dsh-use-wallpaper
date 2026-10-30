@@ -1,17 +1,22 @@
 // src/client/text-script.ts —— WE text 脚本（text.script 的 update）的 quickjs 沙箱运行时。
-// 只执行 update(value)；沙箱内拿不到 DOM/window/fetch，且有步数上限防死循环。
+// 只执行 update(value) 与媒体事件 handler；沙箱内拿不到 DOM/window/fetch，且有步数上限防死循环。
 import { newQuickJSWASMModuleFromVariant, newVariant, RELEASE_SYNC } from 'quickjs-emscripten';
 import type { QuickJSContext, QuickJSRuntime, QuickJSHandle, QuickJSWASMModule } from 'quickjs-emscripten';
+import type { MediaPropertiesPayload } from '../shared/media.js';
 
 export interface TextScriptBinding {
   /** 调脚本 update(value) 取新文本；抛错/超时 → null（调用方保持上一帧）。 */
   update(): string | null;
+  /** 派发 mediaPropertiesChanged（无该 handler 的脚本忽略）；异常只丢该事件。 */
+  dispatchMediaProperties(props: MediaPropertiesPayload): void;
   dispose(): void;
 }
 
 export interface TextScriptRuntime {
   /** 绑定一个 text 脚本；eval 失败/无 update → null（调用方回退）。 */
   bind(script: string, scriptProperties: Record<string, unknown>, initialValue: string): TextScriptBinding | null;
+  /** 向所有活动 binding 广播媒体属性事件。 */
+  dispatchMediaProperties(props: MediaPropertiesPayload): void;
   dispose(): void;
 }
 
@@ -90,13 +95,102 @@ function rewriteWeModuleImports(script: string): string {
   return out;
 }
 
+// 单个文本脚本的 binding：update() 每帧取文本；dispatchMediaProperties 走独立事件通道。
+// 事件里除了 title/artist/album/contentType，WE 还有 albumTitle/subTitle/albumArtist/genres：
+// 全部给字符串（空串兜底），脚本读到也不会是 undefined。
+class QuickJSTextRuntimeBinding implements TextScriptBinding {
+  private last: string;
+  private disposed = false;
+  private warned = false;
+
+  constructor(
+    private readonly owner: QuickJSTextRuntime,
+    private readonly ctx: QuickJSContext,
+    private readonly updateFn: QuickJSHandle,
+    private readonly mediaFn: QuickJSHandle | null,
+    private readonly mod: QuickJSHandle,
+    private readonly props: QuickJSHandle,
+    initialValue: string,
+  ) {
+    this.last = initialValue ?? '';
+  }
+
+  update(): string | null {
+    if (this.disposed) return null;
+    const ctx = this.ctx;
+    this.owner.resetBudget();
+    const arg = ctx.newString(this.last);
+    const out = ctx.callFunction(this.updateFn, ctx.undefined, arg);
+    arg.dispose();
+    if (out.error) {
+      if (!this.warned) {
+        this.warned = true; // 每帧调用，只报一次（脚本可能每帧都抛）
+        const info = ctx.dump(out.error) as { message?: string } | undefined;
+        console.warn('[text-script] update 抛错/超时，保持上一帧文本：', info?.message ?? String(info));
+      }
+      out.error.dispose();
+      return null; // 单脚本抛错/被中断 → 只停该脚本
+    }
+    const v = ctx.dump(out.value);
+    out.value.dispose();
+    this.last = typeof v === 'string' ? v : String(v ?? '');
+    return this.last;
+  }
+
+  dispatchMediaProperties(props: MediaPropertiesPayload): void {
+    if (this.disposed || !this.mediaFn) return;
+    const ctx = this.ctx;
+    this.owner.resetBudget();
+    try {
+      const ev = ctx.newObject();
+      const put = (key: string, value: string): void => {
+        const h = ctx.newString(value ?? '');
+        ctx.setProp(ev, key, h);
+        h.dispose();
+      };
+      put('title', props.title);
+      put('artist', props.artist);
+      put('album', props.album);
+      put('contentType', props.contentType);
+      put('albumTitle', props.album);
+      put('subTitle', '');
+      put('albumArtist', props.artist);
+      put('genres', '');
+      const out = ctx.callFunction(this.mediaFn, ctx.undefined, ev);
+      ev.dispose();
+      if (out.error) { out.error.dispose(); return; } // 事件失败只丢该事件，不打断每帧 update
+      out.value.dispose();
+    } catch {
+      // 宿主侧异常（句柄/预算）同样只丢该事件
+    }
+  }
+
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.owner.forget(this);
+    const ctx = this.ctx;
+    ctx.setProp(ctx.global, '__weScriptProps', ctx.undefined);
+    this.mediaFn?.dispose();
+    this.updateFn.dispose();
+    this.mod.dispose();
+    this.props.dispose();
+  }
+}
+
 class QuickJSTextRuntime implements TextScriptRuntime {
   private budget = 0;
+  private readonly active = new Set<QuickJSTextRuntimeBinding>();
 
   constructor(private readonly ctx: QuickJSContext, private readonly runtime: QuickJSRuntime) {}
 
-  private resetBudget(): void {
+  /** 单次调用（eval/update/媒体事件）前重置预算。 */
+  resetBudget(): void {
     this.budget = STEP_BUDGET;
+  }
+
+  forget(binding: QuickJSTextRuntimeBinding): void {
+    this.active.delete(binding);
   }
 
   /** interrupt handler 每执行一批指令调一次：递减预算。 */
@@ -132,7 +226,10 @@ class QuickJSTextRuntime implements TextScriptRuntime {
     const sanitized = rewriteWeModuleImports(script.replace(/\bexport\s+/g, ''));
     const r = ctx.evalCode(
       `(function(){ ${PRELUDE} ${sanitized}
-        return (typeof update === 'function') ? { update: update } : null;
+        return (typeof update === 'function') ? {
+          update: update,
+          mediaPropertiesChanged: (typeof mediaPropertiesChanged === 'function') ? mediaPropertiesChanged : null,
+        } : null;
       })()`,
     );
     if (r.error) {
@@ -157,40 +254,21 @@ class QuickJSTextRuntime implements TextScriptRuntime {
       props.dispose();
       return null;
     }
+    let mediaFn: QuickJSHandle | null = ctx.getProp(mod, 'mediaPropertiesChanged');
+    if (ctx.typeof(mediaFn) !== 'function') {
+      mediaFn.dispose();
+      mediaFn = null;
+    }
 
-    let last = initialValue ?? '';
-    let disposed = false;
-    let warned = false;
-    return {
-      update: (): string | null => {
-        if (disposed) return null;
-        this.resetBudget();
-        const arg = ctx.newString(last);
-        const out = ctx.callFunction(updateFn, ctx.undefined, arg);
-        arg.dispose();
-        if (out.error) {
-          if (!warned) {
-            warned = true; // 每帧调用，只报一次（脚本可能每帧都抛）
-            const info = ctx.dump(out.error) as { message?: string } | undefined;
-            console.warn('[text-script] update 抛错/超时，保持上一帧文本：', info?.message ?? String(info));
-          }
-          out.error.dispose();
-          return null; // 单脚本抛错/被中断 → 只停该脚本
-        }
-        const v = ctx.dump(out.value);
-        out.value.dispose();
-        last = typeof v === 'string' ? v : String(v ?? '');
-        return last;
-      },
-      dispose: (): void => {
-        if (disposed) return;
-        disposed = true;
-        ctx.setProp(ctx.global, '__weScriptProps', ctx.undefined);
-        updateFn.dispose();
-        mod.dispose();
-        props.dispose();
-      },
-    };
+    const binding = new QuickJSTextRuntimeBinding(
+      this, ctx, updateFn, mediaFn, mod, props, initialValue ?? '',
+    );
+    this.active.add(binding);
+    return binding;
+  }
+
+  dispatchMediaProperties(props: MediaPropertiesPayload): void {
+    for (const b of [...this.active]) b.dispatchMediaProperties(props);
   }
 
   dispose(): void {

@@ -135,6 +135,8 @@ export function bootstrap(ctx?: any): void {
     sceneRenderer.setGlow?.({ enabled: s.glowEnabled, threshold: s.glowThreshold, strength: s.glowStrength });
     // 壁纸音效开关：关掉即时停声并释放 AudioContext（打开按上次规格重播）。
     sceneRenderer.setSoundEnabled?.(s.soundEnabled);
+    // 媒体集成开关：关闭即停轮询并隐藏媒体层（SMTC 只读；数据仅内存、不落盘、不上传）。
+    sceneRenderer.setMediaIntegration?.(s.mediaIntegrationEnabled);
     layer?.setPaused(shouldPause);
     // 贴壁纸文字颜色/描边：面板改动即时生效（手动档换色 / auto 档重测 preview），不必重选壁纸。
     controller?.applyTextStyle();

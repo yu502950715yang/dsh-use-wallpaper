@@ -23601,10 +23601,15 @@ function parseVisible(raw) {
   const value = typeof o.value === "boolean" ? o.value : true;
   const user = parseUserRef(o.user);
   if (user) {
+    const script = typeof o.script === "string" && o.script ? o.script : void 0;
     return {
       kind: "user",
       key: user.name,
       ...user.condition !== void 0 ? { condition: user.condition } : {},
+      ...script ? {
+        script,
+        scriptProperties: o.scriptproperties !== void 0 ? parseScriptProperties(o.scriptproperties) : void 0
+      } : {},
       value
     };
   }
@@ -29171,6 +29176,8 @@ var DEFAULTS = {
   qualityScale: 1,
   // 壁纸音效（sound 对象 + 频谱驱动效果）：默认开启，与桌面 WE 一致；面板可关。
   soundEnabled: true,
+  // 媒体集成（Windows SMTC 只读，默认开启；数据仅内存、不落盘、不上传）。
+  mediaIntegrationEnabled: true,
   // 文字可读性（2026-10-01）：默认 auto + 无描边 = 与加此功能前的老用户观感一致（零回归）。
   textColorMode: "auto",
   textColor: "#ffffff",
@@ -30675,14 +30682,94 @@ function rewriteWeModuleImports(script) {
   );
   return out;
 }
+var QuickJSTextRuntimeBinding = class {
+  constructor(owner, ctx, updateFn, mediaFn, mod, props, initialValue) {
+    this.owner = owner;
+    this.ctx = ctx;
+    this.updateFn = updateFn;
+    this.mediaFn = mediaFn;
+    this.mod = mod;
+    this.props = props;
+    this.last = initialValue ?? "";
+  }
+  last;
+  disposed = false;
+  warned = false;
+  update() {
+    if (this.disposed) return null;
+    const ctx = this.ctx;
+    this.owner.resetBudget();
+    const arg = ctx.newString(this.last);
+    const out = ctx.callFunction(this.updateFn, ctx.undefined, arg);
+    arg.dispose();
+    if (out.error) {
+      if (!this.warned) {
+        this.warned = true;
+        const info = ctx.dump(out.error);
+        console.warn("[text-script] update \u629B\u9519/\u8D85\u65F6\uFF0C\u4FDD\u6301\u4E0A\u4E00\u5E27\u6587\u672C\uFF1A", info?.message ?? String(info));
+      }
+      out.error.dispose();
+      return null;
+    }
+    const v = ctx.dump(out.value);
+    out.value.dispose();
+    this.last = typeof v === "string" ? v : String(v ?? "");
+    return this.last;
+  }
+  dispatchMediaProperties(props) {
+    if (this.disposed || !this.mediaFn) return;
+    const ctx = this.ctx;
+    this.owner.resetBudget();
+    try {
+      const ev = ctx.newObject();
+      const put = (key, value) => {
+        const h = ctx.newString(value ?? "");
+        ctx.setProp(ev, key, h);
+        h.dispose();
+      };
+      put("title", props.title);
+      put("artist", props.artist);
+      put("album", props.album);
+      put("contentType", props.contentType);
+      put("albumTitle", props.album);
+      put("subTitle", "");
+      put("albumArtist", props.artist);
+      put("genres", "");
+      const out = ctx.callFunction(this.mediaFn, ctx.undefined, ev);
+      ev.dispose();
+      if (out.error) {
+        out.error.dispose();
+        return;
+      }
+      out.value.dispose();
+    } catch {
+    }
+  }
+  dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.owner.forget(this);
+    const ctx = this.ctx;
+    ctx.setProp(ctx.global, "__weScriptProps", ctx.undefined);
+    this.mediaFn?.dispose();
+    this.updateFn.dispose();
+    this.mod.dispose();
+    this.props.dispose();
+  }
+};
 var QuickJSTextRuntime = class {
   constructor(ctx, runtime) {
     this.ctx = ctx;
     this.runtime = runtime;
   }
   budget = 0;
+  active = /* @__PURE__ */ new Set();
+  /** 单次调用（eval/update/媒体事件）前重置预算。 */
   resetBudget() {
     this.budget = STEP_BUDGET;
+  }
+  forget(binding) {
+    this.active.delete(binding);
   }
   /** interrupt handler 每执行一批指令调一次：递减预算。 */
   step() {
@@ -30706,7 +30793,10 @@ var QuickJSTextRuntime = class {
     const sanitized = rewriteWeModuleImports(script.replace(/\bexport\s+/g, ""));
     const r = ctx.evalCode(
       `(function(){ ${PRELUDE} ${sanitized}
-        return (typeof update === 'function') ? { update: update } : null;
+        return (typeof update === 'function') ? {
+          update: update,
+          mediaPropertiesChanged: (typeof mediaPropertiesChanged === 'function') ? mediaPropertiesChanged : null,
+        } : null;
       })()`
     );
     if (r.error) {
@@ -30729,39 +30819,25 @@ var QuickJSTextRuntime = class {
       props.dispose();
       return null;
     }
-    let last = initialValue ?? "";
-    let disposed = false;
-    let warned = false;
-    return {
-      update: () => {
-        if (disposed) return null;
-        this.resetBudget();
-        const arg = ctx.newString(last);
-        const out = ctx.callFunction(updateFn, ctx.undefined, arg);
-        arg.dispose();
-        if (out.error) {
-          if (!warned) {
-            warned = true;
-            const info = ctx.dump(out.error);
-            console.warn("[text-script] update \u629B\u9519/\u8D85\u65F6\uFF0C\u4FDD\u6301\u4E0A\u4E00\u5E27\u6587\u672C\uFF1A", info?.message ?? String(info));
-          }
-          out.error.dispose();
-          return null;
-        }
-        const v = ctx.dump(out.value);
-        out.value.dispose();
-        last = typeof v === "string" ? v : String(v ?? "");
-        return last;
-      },
-      dispose: () => {
-        if (disposed) return;
-        disposed = true;
-        ctx.setProp(ctx.global, "__weScriptProps", ctx.undefined);
-        updateFn.dispose();
-        mod.dispose();
-        props.dispose();
-      }
-    };
+    let mediaFn = ctx.getProp(mod, "mediaPropertiesChanged");
+    if (ctx.typeof(mediaFn) !== "function") {
+      mediaFn.dispose();
+      mediaFn = null;
+    }
+    const binding = new QuickJSTextRuntimeBinding(
+      this,
+      ctx,
+      updateFn,
+      mediaFn,
+      mod,
+      props,
+      initialValue ?? ""
+    );
+    this.active.add(binding);
+    return binding;
+  }
+  dispatchMediaProperties(props) {
+    for (const b of [...this.active]) b.dispatchMediaProperties(props);
   }
   dispose() {
     try {
@@ -32069,6 +32145,7 @@ return {
     for (const m of this.modules) {
       const fn = dispatch.event === "mediaPlaybackChanged" ? m.media.playback : dispatch.event === "mediaStatusChanged" ? m.media.status : dispatch.event === "mediaPropertiesChanged" ? m.media.properties : m.media.thumbnail;
       if (!m.active || !fn) continue;
+      if (!this.timeline && m.property !== null) continue;
       this.currentKey = m.layerKey;
       this.currentProperty = m.property ?? "";
       this.budget = this.stepBudget;
@@ -32357,6 +32434,165 @@ var SceneScriptHost = class _SceneScriptHost {
     this.vm?.dispose();
   }
 };
+
+// src/client/media-input.ts
+var DEFAULT_INTERVAL_MS = 1e3;
+var DEFAULT_BACKOFF_MS = 1e4;
+var FAILURES_BEFORE_BACKOFF = 3;
+var DIFF_KEYS = [
+  "available",
+  "reason",
+  "appId",
+  "contentType",
+  "playback",
+  "title",
+  "artist",
+  "album",
+  "hasThumbnail",
+  "thumbnailRev"
+];
+function mediaUrl(pageTitle) {
+  return "/wallpapers/now-playing?title=" + encodeURIComponent(pageTitle);
+}
+function diffSnapshot(prev, next) {
+  if (!prev) return [...DIFF_KEYS];
+  return DIFF_KEYS.filter((key) => prev[key] !== next[key]);
+}
+function createMediaInput(opts) {
+  const intervalMs = opts.intervalMs ?? DEFAULT_INTERVAL_MS;
+  const backoffMs = opts.backoffMs ?? DEFAULT_BACKOFF_MS;
+  const fetchImpl = opts.fetchImpl ?? ((url) => fetch(url));
+  const pageTitle = opts.pageTitle ?? (() => typeof document === "undefined" ? "" : document.title);
+  const setIntervalImpl = opts.setIntervalImpl ?? ((fn, ms) => setInterval(fn, ms));
+  const clearIntervalImpl = opts.clearIntervalImpl ?? ((handle) => {
+    clearInterval(handle);
+  });
+  let running = false;
+  let paused = false;
+  let disposed = false;
+  let timer = null;
+  let currentIntervalMs = intervalMs;
+  let failures = 0;
+  let inflight = false;
+  let prev = null;
+  const targetIntervalMs = () => failures >= FAILURES_BEFORE_BACKOFF ? backoffMs : intervalMs;
+  const stopTimer = () => {
+    if (timer === null) return;
+    clearIntervalImpl(timer);
+    timer = null;
+  };
+  const armTimer = (ms) => {
+    if (disposed || !running || paused) return;
+    if (timer !== null && currentIntervalMs === ms) return;
+    stopTimer();
+    currentIntervalMs = ms;
+    timer = setIntervalImpl(() => {
+      if (running && !paused && !disposed) void poll();
+    }, ms);
+  };
+  const poll = async () => {
+    if (disposed || paused || inflight) return;
+    inflight = true;
+    try {
+      const resp = await fetchImpl(mediaUrl(pageTitle()));
+      if (!resp.ok) throw new Error("now-playing http " + (resp.status ?? "unknown"));
+      const next = await resp.json();
+      if (disposed || paused) return;
+      failures = 0;
+      if (diffSnapshot(prev, next).length > 0) {
+        const old = prev;
+        prev = next;
+        try {
+          opts.onSnapshot(next, old);
+        } catch {
+        }
+      }
+      armTimer(intervalMs);
+    } catch (error) {
+      if (disposed) return;
+      failures += 1;
+      try {
+        opts.onError?.(error);
+      } catch {
+      }
+      if (failures >= FAILURES_BEFORE_BACKOFF) armTimer(backoffMs);
+    } finally {
+      inflight = false;
+    }
+  };
+  return {
+    start() {
+      if (disposed || running) return;
+      running = true;
+      armTimer(targetIntervalMs());
+      void poll();
+    },
+    stop() {
+      running = false;
+      stopTimer();
+    },
+    setPaused(value) {
+      if (disposed || value === paused) return;
+      paused = value;
+      if (value) {
+        stopTimer();
+      } else if (running) {
+        armTimer(targetIntervalMs());
+        void poll();
+      }
+    },
+    async pollNow() {
+      await poll();
+    },
+    isRunning() {
+      return running && !paused && !disposed;
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      running = false;
+      stopTimer();
+    }
+  };
+}
+var NEUTRAL_MEDIA_PALETTE = {
+  primary: [0, 0, 0],
+  secondary: [0, 0, 0],
+  tertiary: [0, 0, 0],
+  text: [1, 1, 1],
+  highContrast: [1, 1, 1]
+};
+function applyMediaSnapshot(prev, next, sink) {
+  const changed = diffSnapshot(prev, next);
+  if (changed.length === 0) return;
+  if (prev === null) sink.status(true);
+  if (!next.available || changed.includes("playback") && next.playback === "stopped") {
+    sink.playback("stopped");
+    return;
+  }
+  if (changed.includes("playback")) sink.playback(next.playback);
+  if (changed.includes("title") || changed.includes("artist") || changed.includes("album")) {
+    sink.properties({ title: next.title, artist: next.artist, album: next.album, contentType: next.contentType });
+  }
+  if (changed.includes("thumbnailRev") || changed.includes("hasThumbnail")) {
+    sink.thumbnail({ hasThumbnail: next.hasThumbnail, rev: next.thumbnailRev, palette: NEUTRAL_MEDIA_PALETTE });
+  }
+}
+var MEDIA_SCRIPT_RE = /mediaPlaybackChanged|mediaStatusChanged|mediaPropertiesChanged|mediaThumbnailChanged|MediaPlaybackEvent/;
+function sceneNeedsMedia(desc) {
+  for (const obj of desc.objects) {
+    if (typeof obj.visible?.script === "string" && obj.visible.script && MEDIA_SCRIPT_RE.test(obj.visible.script)) {
+      return true;
+    }
+    for (const e of obj.objectScripts ?? []) {
+      if (typeof e?.script === "string" && e.script && MEDIA_SCRIPT_RE.test(e.script)) return true;
+    }
+    if (obj.kind === "text" && typeof obj.script === "string" && obj.script && MEDIA_SCRIPT_RE.test(obj.script)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 // src/client/dynamic-mesh.ts
 function resolveVertexLayout(vertexFormat) {
@@ -32903,7 +33139,7 @@ async function collectObjectEffectChains(desc, loadFile, isHidden) {
 function collectScriptSources(desc) {
   const out = [];
   for (const obj of desc.objects) {
-    if (obj.visible?.kind === "script" && typeof obj.visible.script === "string" && obj.visible.script) {
+    if (typeof obj.visible?.script === "string" && obj.visible.script) {
       out.push({
         objectId: obj.id,
         source: obj.visible.script,
@@ -32911,6 +33147,7 @@ function collectScriptSources(desc) {
       });
     }
     for (const e of obj.objectScripts ?? []) {
+      if (typeof e?.script !== "string" || !e.script) continue;
       out.push({
         objectId: obj.id,
         source: e.script,
@@ -32940,6 +33177,9 @@ function createThreeSceneRenderer(opts) {
   let currentTextures = null;
   let currentScriptBindings = [];
   let currentScriptHost = null;
+  let currentMedia = null;
+  let mediaIntegrationEnabled = true;
+  let mediaLookup = null;
   let currentMeshRegistry = null;
   let scriptClick = null;
   let scriptClickTarget = null;
@@ -33093,6 +33333,9 @@ function createThreeSceneRenderer(opts) {
     if (scriptClickTarget && scriptClick) scriptClickTarget.removeEventListener("click", scriptClick);
     scriptClickTarget = null;
     scriptClick = null;
+    currentMedia?.dispose();
+    currentMedia = null;
+    mediaLookup = null;
     currentScriptHost?.dispose();
     currentScriptHost = null;
     currentMeshRegistry?.dispose();
@@ -33648,6 +33891,45 @@ function createThreeSceneRenderer(opts) {
           }
         }
         if (abortIfContextLost()) return false;
+        if (sceneNeedsMedia(desc) && currentScriptHost) {
+          const host = currentScriptHost;
+          const bindings = currentScriptBindings;
+          const lookup = (objectId) => {
+            const obj = result.player.displayObject(objectId);
+            return obj ? { object: obj, sceneW: desc.orthogonal.width, sceneH: desc.orthogonal.height } : void 0;
+          };
+          mediaLookup = lookup;
+          const sink = {
+            playback: (s) => host.mediaPlayback(s),
+            status: (enabled) => host.mediaStatus(enabled),
+            properties: (p) => {
+              host.mediaProperties(p);
+              for (const b of bindings) b.dispatchMediaProperties(p);
+            },
+            thumbnail: (t) => host.mediaThumbnail({
+              hasThumbnail: t.hasThumbnail,
+              primaryColor: t.palette.primary,
+              secondaryColor: t.palette.secondary,
+              tertiaryColor: t.palette.tertiary,
+              textColor: t.palette.text,
+              highContrastColor: t.palette.highContrast
+            })
+          };
+          host.mediaStatus(mediaIntegrationEnabled);
+          host.mediaPlayback("stopped");
+          applyLayerState(host.drainDirty(), lookup);
+          const input = createMediaInput({
+            pageTitle: () => typeof document !== "undefined" ? document.title : "",
+            onSnapshot: (next, prev) => {
+              if (currentMedia === input && !contextLost) applyMediaSnapshot(prev, next, sink);
+            },
+            onError: () => {
+            }
+          });
+          currentMedia = input;
+          input.setPaused(paused || !mediaIntegrationEnabled);
+          if (mediaIntegrationEnabled && !paused) input.start();
+        }
         let stage = null;
         let droppedEffects = 0;
         for (const [objId, chains] of effectChains) {
@@ -33737,10 +34019,32 @@ function createThreeSceneRenderer(opts) {
     // 省电：暂停/恢复当前播放器的帧循环（无播放器时只记状态，下次装配时就地应用）。
     setPaused(value) {
       paused = value;
+      if (value) currentMedia?.setPaused(true);
+      else if (mediaIntegrationEnabled) {
+        currentMedia?.setPaused(false);
+        currentMedia?.start();
+      }
       if (currentAudio) applyAudioPause(currentAudio, value);
       if (!current) return;
       if (value) current.player.pause();
       else current.player.resume();
+    },
+    // 媒体集成开关（面板即时生效）：关闭 → 停轮询 + 派发 stopped + 应用脏写入（媒体层立即隐藏）；
+    // 打开 → 恢复轮询（暂停态保持暂停，由 setPaused 决定）。
+    setMediaIntegration(enabled) {
+      mediaIntegrationEnabled = enabled;
+      const host = currentScriptHost;
+      if (!host) return;
+      host.mediaStatus(enabled);
+      if (!enabled) {
+        host.mediaPlayback("stopped");
+        currentMedia?.stop();
+        const lookup = mediaLookup;
+        if (lookup) applyLayerState(host.drainDirty(), lookup);
+      } else {
+        currentMedia?.setPaused(paused);
+        if (!paused) currentMedia?.start();
+      }
     },
     // 画质档位：改渲染像素比后重推画布缓冲，并把新屏幕密度同步给效果链编排器（对象 RT 随其重设）。
     setQualityScale(scale) {
@@ -35025,18 +35329,32 @@ function WallpaperSettingsSection(props) {
               )
             ] })
           ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "wss-sound-row", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-              "input",
-              {
-                type: "checkbox",
-                className: "wss-sound",
-                checked: settings.soundEnabled,
-                onChange: (e) => applyRuntime({ soundEnabled: e.target.checked })
-              }
-            ),
-            "\u58C1\u7EB8\u97F3\u6548"
-          ] }) })
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-sound-row", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "input",
+                {
+                  type: "checkbox",
+                  className: "wss-sound",
+                  checked: settings.soundEnabled,
+                  onChange: (e) => applyRuntime({ soundEnabled: e.target.checked })
+                }
+              ),
+              "\u58C1\u7EB8\u97F3\u6548"
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "input",
+                {
+                  type: "checkbox",
+                  className: "wss-media-integration",
+                  checked: settings.mediaIntegrationEnabled,
+                  onChange: (e) => applyRuntime({ mediaIntegrationEnabled: e.target.checked })
+                }
+              ),
+              "\u5A92\u4F53\u96C6\u6210\uFF08\u663E\u793A\u672C\u673A\u64AD\u653E\u7684\u6B4C\u66F2\u5C01\u9762/\u6B4C\u540D\uFF09"
+            ] })
+          ] })
         ] })
       ] }),
       settings && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("details", { className: "wss-details", children: [
@@ -35302,6 +35620,7 @@ function bootstrap(ctx) {
     sceneRenderer.setQualityScale?.(s.qualityScale);
     sceneRenderer.setGlow?.({ enabled: s.glowEnabled, threshold: s.glowThreshold, strength: s.glowStrength });
     sceneRenderer.setSoundEnabled?.(s.soundEnabled);
+    sceneRenderer.setMediaIntegration?.(s.mediaIntegrationEnabled);
     layer?.setPaused(shouldPause);
     controller?.applyTextStyle();
     rotation.setConfig({ intervalMs: s.rotationIntervalMs, order: normalizeRotationOrder(s.rotationOrder) });

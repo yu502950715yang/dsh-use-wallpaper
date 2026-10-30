@@ -877,6 +877,9 @@ return {
           : dispatch.event === 'mediaPropertiesChanged' ? m.media.properties
             : m.media.thumbnail;
       if (!m.active || !fn) continue;
+      // 属性脚本的 media 回调通常先写 alpha=0 再播放淡入时间线动画；时间线运行时（Task 10）
+      // 接入前跳过，否则动画不跑、媒体层被永久留在 alpha 0。
+      if (!this.timeline && m.property !== null) continue;
       this.currentKey = m.layerKey;
       this.currentProperty = m.property ?? '';
       this.budget = this.stepBudget;

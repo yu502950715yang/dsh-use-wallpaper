@@ -9,6 +9,7 @@ const FULL_DEFAULTS = {
   overlayOpacity: 0.35, blurEnabled: false, blurRadius: 12, kenBurns: true,
   glowEnabled: true, glowThreshold: 0.65, glowStrength: 0.35,
   paused: false, pauseOnHidden: true, qualityScale: 1, soundEnabled: true,
+  mediaIntegrationEnabled: true,
   textColorMode: 'auto', textColor: '#ffffff', textOutline: 0,
   fitMode: 'cover', rotationEnabled: false, rotationIntervalMs: 300000,
   rotationOrder: 'sequential', frameCacheEnabled: true,
@@ -47,7 +48,7 @@ describe('readClientSettings (ctx.remote.settings.describe)', () => {
     stubRemote({ describe });
     const s = await readClientSettings();
     // 命名空间未给的字段由 DEFAULTS 补齐（含 Glow 三字段）
-    expect(s).toEqual({ selectedWallpaperId: '42', wallpaperDir: 'D:/Steam/w', weAssetsDir: 'D:/WE', overlayOpacity: 0.5, blurEnabled: true, blurRadius: 20, kenBurns: false, glowEnabled: true, glowThreshold: 0.65, glowStrength: 0.35, paused: false, pauseOnHidden: true, qualityScale: 1, soundEnabled: true, textColorMode: 'auto', textColor: '#ffffff', textOutline: 0, fitMode: 'cover', rotationEnabled: false, rotationIntervalMs: 300000, rotationOrder: 'sequential', frameCacheEnabled: true });
+    expect(s).toEqual({ selectedWallpaperId: '42', wallpaperDir: 'D:/Steam/w', weAssetsDir: 'D:/WE', overlayOpacity: 0.5, blurEnabled: true, blurRadius: 20, kenBurns: false, glowEnabled: true, glowThreshold: 0.65, glowStrength: 0.35, paused: false, pauseOnHidden: true, qualityScale: 1, soundEnabled: true, mediaIntegrationEnabled: true, textColorMode: 'auto', textColor: '#ffffff', textOutline: 0, fitMode: 'cover', rotationEnabled: false, rotationIntervalMs: 300000, rotationOrder: 'sequential', frameCacheEnabled: true });
     expect(describe).toHaveBeenCalledTimes(1);
   });
   it('命名空间缺失 → 回退默认值', async () => {
@@ -172,6 +173,10 @@ describe('DEFAULTS（客户端缺省值）', () => {
     expect(DEFAULTS.rotationIntervalMs).toBe(300000);
     expect(DEFAULTS.rotationOrder).toBe('sequential');
     expect(DEFAULTS.frameCacheEnabled).toBe(true);
+  });
+  // 媒体集成（Task 7）：默认开 = 与 host schema 默认一致；关闭后渲染器停轮询并隐藏媒体层。
+  it('DEFAULTS 含媒体集成开关（默认开启）', () => {
+    expect(DEFAULTS.mediaIntegrationEnabled).toBe(true);
   });
 });
 

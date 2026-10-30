@@ -15,6 +15,7 @@ export interface SceneRendererLike {
         strength?: number;
     }): void;
     setSoundEnabled?(enabled: boolean): void;
+    setMediaIntegration?(enabled: boolean): void;
     startSystemAudio?(): Promise<SystemAudioFailure | 'ok'>;
     stopSystemAudio?(): void;
     setOnContextLost?(cb: ((id: string) => void) | null): void;

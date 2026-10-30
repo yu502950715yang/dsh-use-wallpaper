@@ -44,8 +44,10 @@ describe('parseVisible（visible 字段归一化）', () => {
     expect(parseVisible({ script: 'x()' })?.value).toBe(true);
   });
 
-  it('同对象同时含 user 与 script（畸形数据）→ user 优先（用户开关优先于脚本）', () => {
-    expect(parseVisible({ user: 'a', script: 'x()', value: false })).toEqual({ kind: 'user', key: 'a', value: false });
+  // WE 真实数据（3797976859 的媒体层）就是三个键并存：装载期按用户开关，visible 脚本走运行期通道。
+  it('同对象同时含 user 与 script → user 绑定优先，但 script 保留给运行期', () => {
+    expect(parseVisible({ user: 'a', script: 'x()', value: false }))
+      .toEqual({ kind: 'user', key: 'a', script: 'x()', value: false });
   });
 
   it('缺失/畸形输入（undefined/null/数组/数字/字符串/空对象）→ undefined（无绑定 = 默认可见）', () => {

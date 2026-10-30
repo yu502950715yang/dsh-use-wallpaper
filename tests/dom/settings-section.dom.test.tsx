@@ -55,7 +55,7 @@ const BASE_SETTINGS: ClientSettings = {
   selectedWallpaperId: '1', wallpaperDir: '', weAssetsDir: '',
   overlayOpacity: 0.35, blurEnabled: false, blurRadius: 12, kenBurns: true,
   glowEnabled: true, glowThreshold: 0.65, glowStrength: 0.35,
-  paused: false, pauseOnHidden: true, qualityScale: 1, soundEnabled: true,
+  paused: false, pauseOnHidden: true, qualityScale: 1, soundEnabled: true, mediaIntegrationEnabled: true,
   textColorMode: 'auto', textColor: '#ffffff', textOutline: 0,
   fitMode: 'cover', rotationEnabled: false, rotationIntervalMs: 300000,
   rotationOrder: 'sequential', frameCacheEnabled: true,

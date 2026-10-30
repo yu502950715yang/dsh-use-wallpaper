@@ -305,7 +305,7 @@ describe('createScriptDriver（text.script：脚本给出新文本，变化才�
 
   it('脚本文本变化才重绘并返回 true', () => {
     let text = 'a';
-    const binding = { update: () => text, dispose: () => {} };
+    const binding = { update: () => text, dispose: () => {}, dispatchMediaProperties: () => {} };
     const canvas = document.createElement('canvas');
     const driver = createScriptDriver(canvas, { width: 10, height: 10 }, binding);
     expect(driver.update(new Date())).toBe(true); // 与初始 '' 不同 → 重绘
@@ -317,14 +317,14 @@ describe('createScriptDriver（text.script：脚本给出新文本，变化才�
   });
 
   it('脚本返回 null（抛错/超时）时不动纹理', () => {
-    const binding = { update: (): string | null => null, dispose: () => {} };
+    const binding = { update: (): string | null => null, dispose: () => {}, dispatchMediaProperties: () => {} };
     const driver = createScriptDriver(document.createElement('canvas'), { width: 10, height: 10 }, binding);
     expect(driver.update(new Date())).toBe(false);
     expect(ctx.fillText).not.toHaveBeenCalled();
   });
 
   it('装配期已画过脚本初值 → 传入 initialText 后首帧同值不重绘', () => {
-    const binding = { update: () => 'SCRIPTED', dispose: () => {} };
+    const binding = { update: () => 'SCRIPTED', dispose: () => {}, dispatchMediaProperties: () => {} };
     const canvas = document.createElement('canvas');
     const driver = createScriptDriver(canvas, { width: 10, height: 10 }, binding, 'SCRIPTED');
     expect(driver.update(new Date())).toBe(false);
@@ -348,7 +348,7 @@ describe('文本变化 → 画布/布局按新文本重算（动态 resize）', 
 
   it('文本变长：layout 与画布宽按新文本变大，行锚点用新画布宽', () => {
     let text = '09';                       // 2 字符 → 160 + 16 = 176
-    const binding = { update: () => text, dispose: () => {} };
+    const binding = { update: () => text, dispose: () => {}, dispatchMediaProperties: () => {} };
     const canvas = document.createElement('canvas');
     const driver = createScriptDriver(canvas, OPTS, binding, text);
     expect(driver.layout).toMatchObject({ textWidth: 160, width: 176 });
@@ -363,7 +363,7 @@ describe('文本变化 → 画布/布局按新文本重算（动态 resize）', 
 
   it('文本变短：画布随之缩小', () => {
     let text = '"10"';
-    const binding = { update: () => text, dispose: () => {} };
+    const binding = { update: () => text, dispose: () => {}, dispatchMediaProperties: () => {} };
     const canvas = document.createElement('canvas');
     const driver = createScriptDriver(canvas, OPTS, binding, text);
     expect(driver.layout.width).toBe(336);
@@ -445,7 +445,7 @@ describe('limitwidth / maxwidth（超宽按词换行）', () => {
   });
 
   it('驱动器重绘沿用 limitwidth（文本变化后仍换行）', () => {
-    const binding = { update: () => '20 OCTOBER 2026', dispose: () => {} };
+    const binding = { update: () => '20 OCTOBER 2026', dispose: () => {}, dispatchMediaProperties: () => {} };
     const canvas = document.createElement('canvas');
     const driver = createScriptDriver(canvas, {
       width: 10, height: 10, pointsize: 10, limitwidth: true, maxwidth: 200,

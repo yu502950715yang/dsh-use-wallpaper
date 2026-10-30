@@ -2211,7 +2211,7 @@ describe('three-renderer text 对象', () => {
     stubTextRender();
     const r = createThreeSceneRenderer({
       loadWasm: defaultLoadWasm,
-      getTextScriptRuntime: async () => ({ bind: () => null, dispose: vi.fn() }),
+      getTextScriptRuntime: async () => ({ bind: () => null, dispose: vi.fn(), dispatchMediaProperties: vi.fn() }),
     });
     await r.render('2851992662', document.createElement('canvas'), null);
 
@@ -2224,12 +2224,12 @@ describe('three-renderer text 对象', () => {
   // Task 4：三个优先序 + 泄漏口径（spec §3.2/§3.3）。
   it('脚本 bind 成功 → 脚本驱动优先（clock 形态也走脚本），初始文本来自脚本首帧', async () => {
     const update = vi.fn(() => 'SCRIPTED');
-    const bind = vi.fn(() => ({ update, dispose: vi.fn() }));
+    const bind = vi.fn(() => ({ update, dispose: vi.fn(), dispatchMediaProperties: vi.fn() }));
     stubAssetFetch(sceneWithText({ text: { value: '12:34', script: CLOCK_SCRIPT } }), {});
     stubTextRender();
     const r = createThreeSceneRenderer({
       loadWasm: defaultLoadWasm,
-      getTextScriptRuntime: async () => ({ bind, dispose: vi.fn() }),
+      getTextScriptRuntime: async () => ({ bind, dispose: vi.fn(), dispatchMediaProperties: vi.fn() }),
     });
     await r.render('2851992662', document.createElement('canvas'), null);
 
@@ -2247,7 +2247,7 @@ describe('three-renderer text 对象', () => {
     stubTextRender();
     const r = createThreeSceneRenderer({
       loadWasm: defaultLoadWasm,
-      getTextScriptRuntime: async () => ({ bind: () => null, dispose: vi.fn() }),
+      getTextScriptRuntime: async () => ({ bind: () => null, dispose: vi.fn(), dispatchMediaProperties: vi.fn() }),
     });
     await r.render('2851992662', document.createElement('canvas'), null);
 
@@ -2275,7 +2275,11 @@ describe('three-renderer text 对象', () => {
     stubTextRender();
     const r = createThreeSceneRenderer({
       loadWasm: defaultLoadWasm,
-      getTextScriptRuntime: async () => ({ bind: () => ({ update: () => 'x', dispose: disposeBinding }), dispose: vi.fn() }),
+      getTextScriptRuntime: async () => ({
+        bind: () => ({ update: () => 'x', dispose: disposeBinding, dispatchMediaProperties: vi.fn() }),
+        dispose: vi.fn(),
+        dispatchMediaProperties: vi.fn(),
+      }),
     });
     await r.render('2851992662', document.createElement('canvas'), null);
     r.dispose();

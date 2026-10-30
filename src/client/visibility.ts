@@ -31,13 +31,22 @@ export function parseVisible(raw: unknown): VisibleBinding | undefined {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined;
   const o = raw as { user?: unknown; script?: unknown; scriptproperties?: unknown; value?: unknown };
   const value = typeof o.value === 'boolean' ? o.value : true;
-  // user 优先于 script：同对象双键（畸形数据）时用户开关是更直接的控制
+  // user 优先于 script：同对象双键时用户开关是装载期的可见性依据；但 script 不能丢 ——
+  // WE 真实数据（如 3797976859 的媒体层）就是 {script, user, value} 三键并存，visible 脚本
+  // 负责运行期显隐（mediaPlaybackChanged），丢了它媒体层会一直可见/一直隐藏。
   const user = parseUserRef(o.user);
   if (user) {
+    const script = typeof o.script === 'string' && o.script ? o.script : undefined;
     return {
       kind: 'user',
       key: user.name,
       ...(user.condition !== undefined ? { condition: user.condition } : {}),
+      ...(script
+        ? {
+            script,
+            scriptProperties: o.scriptproperties !== undefined ? parseScriptProperties(o.scriptproperties) : undefined,
+          }
+        : {}),
       value,
     };
   }

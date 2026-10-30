@@ -41,6 +41,8 @@ export interface ClientSettings {
     qualityScale: number;
     /** 壁纸音效（sound 对象播放）并驱动音频频谱效果；缺省 true（对齐桌面 WE）。 */
     soundEnabled: boolean;
+    /** 媒体集成（Windows SMTC 只读）：歌名/歌手文本层与播放状态；关闭后停轮询并隐藏媒体层。 */
+    mediaIntegrationEnabled: boolean;
     /** 贴壁纸文字颜色模式：auto（跟随壁纸亮度，默认）/ white / black / custom。
      *  宽松 string —— 远端值可能来自别的版本，由 text-color.normalizeMode 归一为 auto。 */
     textColorMode: string;

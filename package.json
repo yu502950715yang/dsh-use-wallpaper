@@ -25,6 +25,7 @@
     "e2e:card": "node e2e/verify/verify-turn-trigger-card.mjs",
     "e2e:hidpi": "node e2e/verify/verify-hidpi-object-rt.mjs",
     "e2e:isolated-rt": "node e2e/verify/verify-isolated-rt-sharpness.mjs",
+    "e2e:media": "node e2e/verify/verify-media-layer.mjs",
     "e2e:textclock": "node e2e/verify/verify-text-clock-layer.mjs --gpu",
     "e2e:web-pointer": "node e2e/verify/verify-web-pointer-parallax.mjs",
     "e2e:compare": "node e2e/verify/compare-shots.mjs",

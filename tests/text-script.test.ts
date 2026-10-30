@@ -175,6 +175,48 @@ export function update(v) { return "import { x } from 'y'"; }`,
     b!.dispose();
   });
 
+  // 媒体集成（Task 7）：mediaPropertiesChanged 是独立事件通道，update 每帧只读脚本内部变量。
+  it('mediaPropertiesChanged 事件更新内部变量；update() 下一帧产出新文本', async () => {
+    const rt = await getTextScriptRuntime();
+    const b = rt!.bind(`
+      var mediaData = '';
+      export function update(v){ return mediaData; }
+      export function mediaPropertiesChanged(e){ mediaData = e.title + ' / ' + e.artist; }`,
+      {}, '');
+    expect(b).not.toBeNull();
+    expect(b!.update()).toBe('');
+    rt!.dispatchMediaProperties({ title: '歌', artist: '手', album: '', contentType: 'music' });
+    expect(b!.update()).toBe('歌 / 手');
+    b!.dispose();
+  });
+
+  it('runtime 广播媒体事件到所有活动 binding；dispose 后退订', async () => {
+    const rt = await getTextScriptRuntime();
+    const make = (tag: string) => rt!.bind(
+      `var data = '';
+       export function update(v){ return '${tag}' + data; }
+       export function mediaPropertiesChanged(e){ data = e.title; }`, {}, '');
+    const a = make('A');
+    const b = make('B');
+    rt!.dispatchMediaProperties({ title: 'X', artist: '', album: '', contentType: '' });
+    expect(a!.update()).toBe('AX');
+    expect(b!.update()).toBe('BX');
+    b!.dispose();
+    rt!.dispatchMediaProperties({ title: 'Y', artist: '', album: '', contentType: '' });
+    expect(a!.update()).toBe('AY');
+    a!.dispose();
+  });
+
+  it('mediaPropertiesChanged 抛错只丢弃该事件，不影响 update', async () => {
+    const rt = await getTextScriptRuntime();
+    const b = rt!.bind(`
+      export function update(v){ return 'ok'; }
+      export function mediaPropertiesChanged(e){ throw new Error('boom'); }`, {}, '');
+    expect(() => rt!.dispatchMediaProperties({ title: 'T', artist: '', album: '', contentType: '' })).not.toThrow();
+    expect(b!.update()).toBe('ok');
+    b!.dispose();
+  });
+
   // 回归靶子：真实素材（tests/fixtures/1922570576/text-object-778.json，scene.pkg 原文逐字复制）。
   // 这条脚本在修复前 bind 返回 null ⇒ 生产装配整层跳过 ⇒ 用户看不到右下角的时间数字。
   it('真实素材：魔兽之门 #778「3D Clock」脚本 bind 成功并输出 HH:MM:SS', async () => {

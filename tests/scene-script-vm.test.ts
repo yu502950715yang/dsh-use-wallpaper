@@ -627,6 +627,32 @@ describe('SceneScriptVm 媒体事件', () => {
     vm!.dispose();
   });
 
+  // Task 7 边界：属性脚本的 media 回调通常先 `alpha = 0` 再播放淡入时间线动画；时间线运行时
+  // （Task 10）接入前跳过这类回调，否则动画不跑、媒体层被永久留在 alpha 0（3797976859 歌名/歌手）。
+  it('无时间线源时属性脚本的媒体回调跳过；接入时间线后恢复派发', async () => {
+    const { state, anims, userProps } = setup();
+    const plain = await SceneScriptVm.create({ userProperties: userProps, state, anims });
+    plain!.load(`export function mediaPropertiesChanged(e){ thisLayer.alpha = 0; }`, 'obj 2 origin', 2, {}, 'origin');
+    expect(plain!.dispatchMedia({
+      event: 'mediaPropertiesChanged',
+      properties: { title: 'T', artist: '', album: '', contentType: 'music' },
+    })).toBe(0);
+    expect(state.read(2).alpha).toBeUndefined();
+    plain!.dispose();
+
+    const withTimeline = await SceneScriptVm.create({
+      userProperties: userProps, state, anims,
+      timeline: { getByProperty: () => null, getByName: () => null },
+    });
+    withTimeline!.load(`export function mediaPropertiesChanged(e){ thisLayer.alpha = 0; }`, 'obj 2 origin', 2, {}, 'origin');
+    expect(withTimeline!.dispatchMedia({
+      event: 'mediaPropertiesChanged',
+      properties: { title: 'T', artist: '', album: '', contentType: 'music' },
+    })).toBe(1);
+    expect(state.read(2).alpha).toBe(0);
+    withTimeline!.dispose();
+  });
+
   it('media handler 抛错：停用该脚本并 warn，不计入成功数（与 callOne 同语义）', async () => {
     const { state, anims, userProps, warns } = setup();
     const vm = await SceneScriptVm.create({ userProperties: userProps, state, anims, onWarn: (m) => warns.push(m) });
