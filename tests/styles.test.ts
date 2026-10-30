@@ -374,4 +374,19 @@ describe('styles 主题适配', () => {
     expect(WALLPAPER_CSS).toMatch(/\.wbs-fit-card\[data-active="true"\]::after\{content:"✓"/);
     expect(WALLPAPER_CSS).toMatch(/\.wbs-fit-card\[data-active="true"\] \.wbs-fit-label\{[^}]*font-weight:700/);
   });
+  // 用户反馈（2026-10-30）：日常壁纸的「当前壁纸」hero 太素，要像开机动画 hero 一样彩色。
+  it('当前壁纸 hero 与开机动画一样彩色（蓝紫渐变 + accent 描边 + 彩色 chip/label）', () => {
+    const lightHero = /\.wss-hero\{([^}]*)\}/.exec(WALLPAPER_CSS)?.[1] ?? '';
+    expect(lightHero).toMatch(/radial-gradient/);
+    expect(lightHero).toMatch(/rgba\(79,\s*140,\s*255/); // 蓝
+    expect(lightHero).toMatch(/rgba\(147,\s*51,\s*234/); // 紫
+    expect(lightHero).toMatch(/border:1px solid color-mix\(in srgb,var\(--wp-accent\)/);
+    const darkHero = /body\[data-ds-dark-theme\]\s*\.wss-hero\{([^}]*)\}/.exec(WALLPAPER_CSS)?.[1] ?? '';
+    expect(darkHero).toMatch(/radial-gradient/);
+    expect(darkHero).toMatch(/rgba\(96,\s*165,\s*250/);
+    expect(darkHero).toMatch(/rgba\(168,\s*85,\s*247/);
+    // 彩色点缀：当前壁纸 label 与计数 chip 用 accent 色
+    expect(WALLPAPER_CSS).toMatch(/\.wss-current-label\{[^}]*var\(--wp-accent\)/);
+    expect(WALLPAPER_CSS).toMatch(/\.wss-chip\{[^}]*var\(--wp-accent\)/);
+  });
 });
