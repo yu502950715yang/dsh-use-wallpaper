@@ -70,7 +70,7 @@ client（浏览器）
 
 ## 5. host：本地视频路由（`src/host/routes.ts` 内新增）
 
-**回环判定**：`isLoopbackRemote(remoteAddress)` —— 接受 `127.0.0.1`、`::1`、`::ffff:127.0.0.1`、`::ffff:::1`；其余一律 403（dsh web 若绑 0.0.0.0，远程访问者不得借此读宿主任意文件）。
+**回环判定**：`isLoopbackRemote(remoteAddress)` —— 接受 `127.0.0.1`、`::1`、`::ffff:127.0.0.1`；其余一律 403（dsh web 若绑 0.0.0.0，远程访问者不得借此读宿主任意文件）。
 
 **`resolveBootVideoPath(raw)` 纯函数**（可单测）：
 - 必须 `path.isAbsolute` 且非空；否则 `{ code: 400 }`
@@ -90,7 +90,7 @@ client（浏览器）
 export type BootFitMode = 'tile' | 'contain' | 'stretch' | 'cover';
 export type BootAsset = { kind: 'video'; url: string } | { kind: 'image'; url: string };
 export type BootResult = 'ended' | 'skipped' | 'timeout' | 'failed' | 'already-played' | 'disabled' | 'no-asset';
-export interface BootOverlay { play(asset: BootAsset, fit: BootFitMode): Promise<BootResult>; dispose(): void; }
+export interface BootOverlay { play(asset: BootAsset, fit: BootFitMode, maxDurationMs?: number): Promise<BootResult>; dispose(): void; }
 export function createBootOverlay(opts?: {
   readyTimeoutMs?: number;  // 默认 8000
   fadeMs?: number;          // 默认 300
@@ -127,7 +127,7 @@ export function createBootPlayer(opts: {
 - 组装：local → 本地视频 URL；we + kind=video → `/wallpapers/media/<id>/file`；we + kind=image → `/wallpapers/media/<id>/preview`；缺字段 → null（`no-asset`，静默）。
 - `start()` 在 `bootstrap()` 中 `void` 调用（**不 await、不阻塞 mount**）；失败只记录，不抛。
 - `dispose()` 供 teardown 调用（移除 overlay、清监听）；播放中的 `start()` 结果迟到时不得复活层（disposed 守卫）。
-- 诊断：bootstrap 暴露 `window.__wallpaperEngineBoot = { play, getLast, result }`，面板试播与排查用。
+- 诊断：bootstrap 暴露 `window.__wallpaperEngineBoot = { play, getLast }`，面板试播与排查用。
 
 **index.ts**：bootstrap 里创建 bootPlayer → `void start()`；注册第二个 `settings.section`（`id: 'wallpaper-engine-boot'`, `order: 21`, `label: '开机动画'`）；teardown 中 `bootPlayer.dispose()`。
 
@@ -135,7 +135,7 @@ export function createBootPlayer(opts: {
 
 类名前缀统一 `wbs-*`（与现有被测试锁定的 `wss-*` 契约类解耦）。
 
-- **卡片 1 · 启用**：开关（默认关）+「上次播放」状态行（结果/时间/素材，来自 `getLast()`）。
+- **卡片 1 · 启用**：开关（默认关）+「上次播放」状态行（只显示结果，来自 `getLast()`；时间/素材为后续增强）。
 - **卡片 2 · 素材**
   - 单选：`WE 库壁纸` / `本地视频文件`
   - WE：`<select>` 只列 `/wallpapers/list` 中 `type ∈ {video, image}` 的项（显示「标题 · 视频/图片」）；选中即写 id+kind；「试播」按钮；列表为空时提示先去壁纸页配置目录/刷新。

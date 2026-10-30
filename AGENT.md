@@ -208,7 +208,7 @@ npx vitest run tests/xxx.test.ts --reporter=basic   # 跑单个文件
     - **e2e / 验收**：`npm run e2e:media`（媒体层白框/文本/封面方向/主色/时间线淡入/停止隐藏，需本机素材；末尾输出 FPS 探针）；`node e2e/verify/verify-media-layer.mjs --regression`（5 张回归对照，含 `2980088441` 的 text 静态色回归 `[R6]` 与 `2597392171` Fog 复跑）；`npm run e2e:media-perf`（Node 性能证据：10 条动画 `advance+sampleAndWrite+syncWorld` 均值 <50µs/帧，本机两次实测 13.0 / 14.6µs）。真机验收见 `TESTING.md` §2.17（M1–M8 当前未验）。
     - **已知边界**：仅 Windows（其它平台恒无会话）；只读不控（无上一首/seek），**不派发 `mediaTimelineChanged`**（快照保留 position/duration）；色板为主色启发式（非 WE 原始取色算法）、贝塞尔曲线为样本校准近似；时间线不做 `general.*` / effect / material 属性；粒子对象只应用 origin 平移（父级 scale/angles 带动不支持）；隔离对象（对象级效果链）的合成 quad 不参与时间线世界变换；`color` 时间线已接线但本机**无真实样本**；text 层的动态/时间线 `color` 不应用（静态色烘进画布，见 §7.44）。
 
-55. **开机动画独立于壁纸层，本地视频路由仅回环来源（2026-10-30）**：`.wp-boot-layer` 是独立全屏层（z-index 高于 `#root`），**不改** `body[data-we-wallpaper]`、背景层 fit/暂停/轮播/健康状态；只做「video/image 素材的全屏层」，scene/web 不做实时渲染。本地视频路由 `GET /wallpapers/boot/local-video` **必须仅回环来源**（含 `::ffff:` 映射地址），扩展名白名单 + 绝对路径校验 —— dsh web 可绑 `0.0.0.0`，否则等于任意文件读取口子；校验路由同理。每次冷启动/新窗口只播一次（`sessionStorage` 标记），失败/超时/无素材一律静默交接，不阻塞主界面。
+55. **开机动画独立于壁纸层，本地视频路由仅回环来源（2026-10-30）**：`.wp-boot-layer` 是独立全屏层（z-index 高于 `#root`），**不改** `body[data-we-wallpaper]`、背景层 fit/暂停/轮播/健康状态；只做「video/image 素材的全屏层」，scene/web 不做实时渲染。本地视频路由 `GET /wallpapers/boot/local-video` **必须仅回环来源**：来源地址与 `Host` 头都必须是回环主机（`127.0.0.1` / `localhost` / `::1`，防 DNS rebinding），并拒绝 UNC/网络路径、扩展名白名单 + 绝对路径校验 —— dsh web 可绑 `0.0.0.0`，否则等于任意文件读取口子；校验路由同理。播一次与失败静默见 §7.45。
 
 ## 6. 工作约定
 
@@ -294,7 +294,7 @@ npx vitest run tests/xxx.test.ts --reporter=basic   # 跑单个文件
       9. **watcher 启动失败退避 = 固定 5s**（`media-session.ts` 的 `START_RETRY_MS`），与设计 §4.1 的「1s 起指数、上限 8s」不一致，**以代码 5s 为准**（决策笔记 errata）；进程异常退出无指数退避（下一次请求直接重启），60s 内 3 次失败降级 60s 不变。
       10. **e2e 可复跑性**：媒体 e2e 与其它 headless e2e 必须**串行**、彼此留 1–2s（连续紧跑后 Edge/调试端口可能未完全释放 ⇒ 环境性失败；单跑通过）；`--regression` 的 `[R2]`「对象数 > 0」/`[R3]`「截图字节 > 0」是**结构性弱断言**，画面正确性靠人工复看截图；`[R1]` 不含 CDP `Log.entryAdded` 的 error（只诊断打印）。
 
-45. **开机动画的边界（2026-10-30）**：桌面壳自身的启动闪屏无法替换 —— 插件只能在页面加载后尽早覆盖，两者可能各闪一次；固定静音（`muted + playsInline`，不提供声音开关）；平铺仅图片（视频的「平铺」在面板禁用，`object-fit` 无平铺语义）；每次冷启动/新窗口只播一次（`sessionStorage`，刷新/HMR 不重播，面板「试播」不受限）；素材 8s 未就绪即静默跳过，不阻塞主界面。设计见 `docs/superpowers/specs/2026-10-30-boot-animation-design.md`。
+45. **开机动画的边界（2026-10-30）**：桌面壳自身的启动闪屏无法替换 —— 插件只能在页面加载后尽早覆盖，两者可能各闪一次；固定静音（`muted + playsInline`，不提供声音开关）；平铺走背景图 repeat（只实现图片），视频的平铺在面板禁用；每次冷启动/新窗口只播一次（`sessionStorage`，刷新/HMR 不重播，面板「试播」不受限）；素材 8s 未就绪即静默跳过，不阻塞主界面。设计见 `docs/superpowers/specs/2026-10-30-boot-animation-design.md`。
 
 ## 8. 历史归档
 

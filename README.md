@@ -76,6 +76,7 @@ dsh plugin --profile web add "@dsh-use/wallpaper-engine" && dsh plugin --profile
 | 🎛️ | **显示效果面板** | 遮罩不透明度、背景模糊、Ken Burns、画面适配（裁剪铺满 / 完整显示 / 拉伸铺满）都在面板里直接调，改完立即生效 |
 | 🎚️ | **用户属性面板** | 壁纸自带的属性（**bool / slider / color / combo** 可调，**只显示当前壁纸真正引用的属性**，不出现假控件）在面板里直接调；切换/调整后自动重装配生效，滑块与取色**防抖提交**（不逐帧重建） |
 | 🎵 | **系统媒体集成** | 在 Windows 上读取系统媒体会话（SMTC），让壁纸的专辑封面 / 歌名 / 歌手 / 主色与播放状态实时联动；仅内存、不落盘，面板可关 |
+| 🎥 | **开机动画** | 打开 DSH / 新窗口时全屏播一段片头：素材可用 WE 库的视频 / 图片壁纸或本地视频文件，四种展示方式，播完或到上限淡出；固定静音、每次会话只播一次，8 秒未就绪静默跳过 |
 | 🛡️ | **失败不砸界面** | scene 渲染失败走**多级降级链**（内嵌 MP4 → 抓帧 → 预览图）；video 解码失败 / 首帧超时回退预览图并提示。**web 壁纸目前没有失败回退**（跨源 iframe 探测不到子帧错误，失败会停在空白）；界面本身始终可用 |
 | ⚙️ | **开箱即用** | 自动探测 Steam 壁纸目录（注册表 + Steam 库配置 + 常见路径），也可手动填写；改设置立刻生效，不用重启 |
 | 🚫 | **不依赖运行时** | 不需要 Wallpaper Engine 在后台运行；所需的引擎内置素材在你本机读取，不随插件分发第三方素材 |
@@ -176,6 +177,7 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 - **性能与省电**：`paused`、`pauseOnHidden`、`qualityScale`、`soundEnabled`。
 - **轮播**：`rotationEnabled`、`rotationIntervalMs`、`rotationOrder`。
 - **文字可读性**：`textColorMode`、`textColor`、`textOutline`。
+- **开机动画**（独立菜单，与壁纸设置互不影响）：`bootAnimationEnabled`、`bootAnimationSource`、`bootAnimationWallpaperId` / `bootAnimationWallpaperKind`、`bootAnimationLocalPath`、`bootAnimationFitMode`、`bootAnimationMaxDurationMs`。
 
 `frameCacheEnabled` **没有面板控件**（默认 `true`；要改只能写 profile `config`）。壁纸库的**收藏 / 隐藏 / 最近使用**与用户属性不是设置字段，只存 localStorage（见本节末尾）；**搜索 / 类型 / 排序是面板临时状态**，刷新即恢复默认。
 
@@ -199,6 +201,13 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 | `rotationIntervalMs` | `300000` | 轮播间隔（1–30 分钟；面板档位为 1 / 5 / 10 / 30 分钟） |
 | `rotationOrder` | `sequential` | 轮播顺序：`sequential` 顺序 / `random` 随机 |
 | `frameCacheEnabled` | `true` | scene 首帧抓帧缓存（写入数据目录 `frames/`，供降级链使用）；面板无控件 |
+| `bootAnimationEnabled` | `false` | 开机动画总开关（设置 →「开机动画」独立菜单，默认关闭） |
+| `bootAnimationSource` | `we` | 素材来源：`we` = WE 库壁纸 / `local` = 本地视频文件 |
+| `bootAnimationWallpaperId` | 空 | WE 素材的壁纸 id（面板选择时与 kind 一起写入） |
+| `bootAnimationWallpaperKind` | 空 | 素材类型：`video` / `image`（启动时免拉列表判断） |
+| `bootAnimationLocalPath` | 空 | 本地视频的绝对路径（host 仅回环来源流式读取，拒绝 UNC / 网络路径） |
+| `bootAnimationFitMode` | `cover` | 展示方式：`tile` 平铺（仅图片）/ `contain` 居中 / `stretch` 挤压 / `cover` 裁切填满 |
+| `bootAnimationMaxDurationMs` | `6000` | 最长播放（0–30000 ms；0 = 视频播完为止，图片固定约 4 秒） |
 
 优先级：用户设置 > profile `cordis.patch.yml` 的 `config` > 缺省。
 
