@@ -2843,13 +2843,17 @@ body[data-ds-dark-theme] .wss-details{background:var(--we-surface);border-color:
 .wbs-hint{font-size:11.5px;color:var(--dsw-alias-label-tertiary,var(--wp-text))}
 .wbs-desc{margin:0;font-size:12px;line-height:1.6;color:var(--dsw-alias-label-tertiary,var(--wp-text))}
 /* \u7D20\u6750\u6765\u6E90\uFF1A\u5206\u6BB5\u63A7\u4EF6 */
-.wbs-source-group{display:flex;gap:6px;padding:4px;border:1px solid var(--we-border);border-radius:var(--we-r-md);background:var(--we-surface-2)}
-.wbs-source{position:relative;flex:1 1 0;min-width:0;display:flex;flex-direction:column;gap:2px;padding:8px 10px;border-radius:var(--we-r-sm);cursor:pointer;transition:background-color .15s ease,box-shadow .15s ease}
+.wbs-source-group{display:flex;gap:8px;padding:6px;border:1px solid var(--we-border);border-radius:var(--we-r-md);background:var(--we-surface-2)}
+/* \u6765\u6E90\u9009\u9879\uFF1A\u9009\u4E2D\u6001\u5FC5\u987B\u4E00\u773C\u53EF\u8FA8\uFF08accent \u63CF\u8FB9 + \u6D45 accent \u5E95 + \u53F3\u4E0A\u89D2 \u2713 + \u4E3B\u6587\u5B57\u8272\u52A0\u7C97\uFF09 */
+.wbs-source{position:relative;flex:1 1 0;min-width:0;display:flex;flex-direction:column;gap:3px;padding:10px 12px;border:1px solid transparent;border-radius:var(--we-r-sm);cursor:pointer;transition:background-color .15s ease,border-color .15s ease,box-shadow .15s ease}
 .wbs-source input{position:absolute;opacity:0;width:1px;height:1px}
-.wbs-source-label{font-size:12.5px;font-weight:600;color:var(--dsw-alias-label-secondary,var(--wp-text));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.wbs-source-hint{font-size:11px;color:var(--dsw-alias-label-tertiary,var(--wp-text))}
-.wbs-source[data-active="true"]{background:var(--we-surface);box-shadow:0 1px 3px rgba(15,17,22,.12)}
-.wbs-source[data-active="true"] .wbs-source-label{color:var(--dsw-alias-label-primary,var(--wp-text))}
+.wbs-source-label{font-size:13px;font-weight:600;color:var(--dsw-alias-label-secondary,var(--wp-text));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:22px}
+.wbs-source-hint{font-size:11.5px;color:var(--dsw-alias-label-tertiary,var(--wp-text))}
+.wbs-source:hover{background:rgba(127,127,127,.10)}
+.wbs-source[data-active="true"]{background:color-mix(in srgb,var(--wp-accent) 16%,var(--we-surface));border-color:var(--wp-accent);box-shadow:0 1px 3px rgba(15,17,22,.14)}
+.wbs-source[data-active="true"] .wbs-source-label{color:var(--dsw-alias-label-primary,var(--wp-text));font-weight:700}
+.wbs-source[data-active="true"] .wbs-source-hint{color:var(--dsw-alias-label-secondary,var(--wp-text))}
+.wbs-source[data-active="true"]::after{content:"\u2713";position:absolute;top:8px;right:9px;width:17px;height:17px;border-radius:50%;background:var(--wp-accent);color:#fff;font-size:11px;font-weight:700;line-height:17px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.25)}
 .wbs-source input:focus-visible + .wbs-source-label{outline:var(--we-ring);outline-offset:3px;border-radius:4px}
 /* \u7D20\u6750\u533A\uFF082026-10-30 \u6539\u7248\uFF09\uFF1A\u5F53\u524D\u7D20\u6750\u5927\u5361\u7247 + \u53EF\u89C6\u5316\u58C1\u7EB8\u7F51\u683C\uFF0C\u8BA9\u7528\u6237\u4E00\u773C\u770B\u6E05\u9009\u4E2D\u9879 */
 .wbs-current{display:flex;align-items:center;gap:var(--we-sp-3);padding:10px;border:1px solid var(--we-border);border-radius:var(--we-r-md);background:var(--we-surface-2)}
