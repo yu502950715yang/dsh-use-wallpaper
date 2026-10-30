@@ -76,6 +76,34 @@ export type ObjectScriptProperty = 'angles' | 'origin' | 'scale' | 'color';
 // 时间线可动画的属性（比对象级脚本多 alpha；Task 9/10 的时间线运行时用）。
 export type TimelineProperty = 'alpha' | 'origin' | 'scale' | 'angles' | 'color';
 
+// 时间线属性动画（scene.json 属性字段的 `animation` 块，解析/求值见 client/scene-timeline.ts）。
+// 关键帧的两个贝塞尔手柄：front = 指向下一帧的出向手柄，back = 来自上一帧的入向手柄。
+export interface TimelineKeyframeHandle {
+  x: number;   // 归一化到段长（±1 = 段长，相对量）
+  y: number;   // 归一化到值差（相对量）
+  enabled: boolean;
+}
+export interface TimelineKeyframe {
+  frame: number;
+  value: number;
+  front?: TimelineKeyframeHandle;
+  back?: TimelineKeyframeHandle;
+}
+export interface TimelineAnimation {
+  property: TimelineProperty;
+  channels: TimelineKeyframe[][];   // alpha: [c0]；origin/scale/angles/color: [c0,c1,c2]
+  fps: number;                      // 缺省 60
+  frameCount: number;               // options.length 缺省 60
+  duration: number;                 // frameCount / fps（秒）
+  mode: 'single' | 'loop' | 'mirror';
+  startPaused: boolean;
+  relative: boolean;                // 采样结果叠加静态 value（animation 根的 relative，不在 options）
+  wrapLoop: boolean;
+  name: string;                     // '' = 无自定义名
+  parentKey: TimelineProperty | null; // 父动画联动（options.parent.key）
+  childrenKeys: TimelineProperty[];   // 子动画键（options.children[].key）
+}
+
 // 单个对象属性脚本：四属性可各挂一个（scriptproperties 各自独立）。
 export interface ObjectScriptEntry {
   property: ObjectScriptProperty;
@@ -102,6 +130,8 @@ export interface SceneObjectBase {
   parallaxDepth?: [number, number];
   /** 对象级属性脚本（angles/origin/scale/color 可各有一个）；visible.script 走 VisibleBinding。 */
   objectScripts?: ObjectScriptEntry[];
+  /** 属性时间线动画（alpha/origin/scale/angles/color 可各一条）；见 client/scene-timeline.ts。 */
+  animations?: Partial<Record<TimelineProperty, TimelineAnimation>>;
 }
 
 export interface SceneImageObject extends SceneObjectBase {

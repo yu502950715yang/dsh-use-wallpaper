@@ -71,6 +71,31 @@ export interface VisibleBinding {
 }
 export type ObjectScriptProperty = 'angles' | 'origin' | 'scale' | 'color';
 export type TimelineProperty = 'alpha' | 'origin' | 'scale' | 'angles' | 'color';
+export interface TimelineKeyframeHandle {
+    x: number;
+    y: number;
+    enabled: boolean;
+}
+export interface TimelineKeyframe {
+    frame: number;
+    value: number;
+    front?: TimelineKeyframeHandle;
+    back?: TimelineKeyframeHandle;
+}
+export interface TimelineAnimation {
+    property: TimelineProperty;
+    channels: TimelineKeyframe[][];
+    fps: number;
+    frameCount: number;
+    duration: number;
+    mode: 'single' | 'loop' | 'mirror';
+    startPaused: boolean;
+    relative: boolean;
+    wrapLoop: boolean;
+    name: string;
+    parentKey: TimelineProperty | null;
+    childrenKeys: TimelineProperty[];
+}
 export interface ObjectScriptEntry {
     property: ObjectScriptProperty;
     script: string;
@@ -91,6 +116,8 @@ export interface SceneObjectBase {
     parallaxDepth?: [number, number];
     /** 对象级属性脚本（angles/origin/scale/color 可各有一个）；visible.script 走 VisibleBinding。 */
     objectScripts?: ObjectScriptEntry[];
+    /** 属性时间线动画（alpha/origin/scale/angles/color 可各一条）；见 client/scene-timeline.ts。 */
+    animations?: Partial<Record<TimelineProperty, TimelineAnimation>>;
 }
 export interface SceneImageObject extends SceneObjectBase {
     kind: 'image';

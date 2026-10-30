@@ -23593,6 +23593,90 @@ function computePixelBarLayout(props, objectScale) {
   };
 }
 
+// src/client/scene-timeline.ts
+var HANDLE_KEYS = ["c0", "c1", "c2"];
+var PROPERTY_CHANNELS = { alpha: 1, origin: 3, scale: 3, angles: 3, color: 3 };
+function asNumber(raw) {
+  if (typeof raw === "number") return Number.isFinite(raw) ? raw : null;
+  if (typeof raw === "string" && raw.trim() !== "") {
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+function asRecord(raw) {
+  return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : null;
+}
+function parseHandle(raw) {
+  const o = asRecord(raw);
+  if (!o) return void 0;
+  const x = asNumber(o.x);
+  const y = asNumber(o.y);
+  if (x === null || y === null) return void 0;
+  return { x, y, enabled: o.enabled === true };
+}
+function parseKeyframes(raw) {
+  if (!Array.isArray(raw)) return null;
+  const out = [];
+  for (const item of raw) {
+    const o = asRecord(item);
+    if (!o) return null;
+    const frame = asNumber(o.frame);
+    const value = asNumber(o.value);
+    if (frame === null || value === null) return null;
+    const keyframe = { frame, value };
+    const front = parseHandle(o.front);
+    if (front) keyframe.front = front;
+    const back = parseHandle(o.back);
+    if (back) keyframe.back = back;
+    out.push(keyframe);
+  }
+  if (out.length === 0) return null;
+  out.sort((a, b) => a.frame - b.frame);
+  return out;
+}
+function keyOf(raw) {
+  const o = asRecord(raw);
+  return typeof o?.key === "string" ? o.key : "";
+}
+function parseTimelineAnimation(property, raw) {
+  const o = asRecord(raw);
+  if (!o) return null;
+  const channels = [];
+  for (let i = 0; i < PROPERTY_CHANNELS[property]; i++) {
+    const parsed = parseKeyframes(o[HANDLE_KEYS[i]]);
+    if (!parsed) {
+      if (i === 0) return null;
+      channels.push([]);
+      continue;
+    }
+    channels.push(parsed);
+  }
+  const options = asRecord(o.options) ?? {};
+  const fpsRaw = asNumber(options.fps);
+  const fps = fpsRaw !== null && fpsRaw > 0 ? fpsRaw : 60;
+  const lengthRaw = asNumber(options.length);
+  const frameCount = lengthRaw !== null && lengthRaw > 0 ? Math.floor(lengthRaw) : 60;
+  const modeRaw = options.mode;
+  const mode = modeRaw === "loop" || modeRaw === "mirror" ? modeRaw : "single";
+  const parentKey = keyOf(options.parent);
+  const children = Array.isArray(options.children) ? options.children.map(keyOf).filter(Boolean) : [];
+  return {
+    property,
+    channels,
+    fps,
+    frameCount,
+    duration: frameCount / fps,
+    mode,
+    startPaused: options.startpaused === true,
+    relative: o.relative === true,
+    wrapLoop: options.wraploop === true,
+    name: typeof options.name === "string" ? options.name : "",
+    parentKey: parentKey || null,
+    childrenKeys: children
+  };
+}
+
 // src/client/visibility.ts
 function parseVisible(raw) {
   if (typeof raw === "boolean") return { kind: "plain", value: raw };
@@ -23837,6 +23921,17 @@ function objectScriptsField(o) {
   }
   return out.length > 0 ? { objectScripts: out } : {};
 }
+var ANIMATABLE = ["alpha", "origin", "scale", "angles", "color"];
+function animationFields(o) {
+  const out = {};
+  for (const property of ANIMATABLE) {
+    const field = o[property];
+    if (!field || typeof field !== "object" || Array.isArray(field)) continue;
+    const parsed = parseTimelineAnimation(property, field.animation);
+    if (parsed) out[property] = parsed;
+  }
+  return Object.keys(out).length > 0 ? { animations: out } : {};
+}
 function collectSounds(root) {
   const out = [];
   for (const o of Array.isArray(root.objects) ? root.objects : []) {
@@ -23908,7 +24003,9 @@ function parseSceneJson(raw) {
       // T4.4：origin/scale/angles 的 user 绑定保留（静态值照旧解析，供 resolve 缺失回退）。
       userRefs: pickUserRefs(o, ["origin", "scale", "angles"]),
       // 转换字段里的对象属性脚本（angles/origin/scale/color 各一个）；无脚本的属性不产出条目。
-      ...objectScriptsField(o)
+      ...objectScriptsField(o),
+      // 属性时间线动画（alpha/origin/scale/angles/color 的 animation 块）；无动画 ⇒ 不产出字段。
+      ...animationFields(o)
     };
     const fromVisibleScript = base.visible?.kind === "script" ? { script: base.visible.script, scriptProperties: base.visible.scriptProperties } : {};
     if (typeof o.particle === "string" && o.particle) {
@@ -27760,10 +27857,10 @@ function buildEffectPlan(chains, opts) {
       droppedChains.push(chainIndex);
       return;
     }
-    const keyOf = /* @__PURE__ */ new Map();
+    const keyOf2 = /* @__PURE__ */ new Map();
     for (const name of names) {
       const key = namedRtKey(chainIndex, name);
-      keyOf.set(name, key);
+      keyOf2.set(name, key);
       const size = namedRtSize(baseW, baseH, namedRtScale(chain[0]?.fboScale, name));
       namedTargets.push({ key, name, width: size.width, height: size.height });
     }
@@ -27776,19 +27873,19 @@ function buildEffectPlan(chains, opts) {
           bindings.push({ slot: b.index, source: { type: "previous" } });
           continue;
         }
-        const key = name ? keyOf.get(name) : void 0;
+        const key = name ? keyOf2.get(name) : void 0;
         if (key) {
           bindings.push({ slot: b.index, source: { type: "named", key } });
           continue;
         }
         unresolvedBinds.push(name);
       }
-      const writesNamed = p.target !== void 0 && p.target !== null && p.target !== "" && keyOf.has(p.target);
+      const writesNamed = p.target !== void 0 && p.target !== null && p.target !== "" && keyOf2.has(p.target);
       const planned = {
         chainIndex,
         passIndex,
         bindings,
-        write: writesNamed ? { type: "named", key: keyOf.get(p.target) } : { type: "pingpong" },
+        write: writesNamed ? { type: "named", key: keyOf2.get(p.target) } : { type: "pingpong" },
         blendMode: p.blendMode
       };
       if (p.target) planned.target = p.target;
@@ -33142,12 +33239,12 @@ function createRenderHealthStore(opts = {}) {
   const soft = /* @__PURE__ */ new Map();
   const retried = /* @__PURE__ */ new Set();
   const session = /* @__PURE__ */ new Map();
-  const keyOf = (id) => HEALTH_KEY_PREFIX + id;
+  const keyOf2 = (id) => HEALTH_KEY_PREFIX + id;
   const readStored = (id) => {
     if (!storage || !id) return null;
     let raw = null;
     try {
-      raw = storage.getItem(keyOf(id));
+      raw = storage.getItem(keyOf2(id));
     } catch {
       return null;
     }
@@ -33167,7 +33264,7 @@ function createRenderHealthStore(opts = {}) {
     hard.set(id, entry);
     if (!storage) return;
     try {
-      storage.setItem(keyOf(id), JSON.stringify({
+      storage.setItem(keyOf2(id), JSON.stringify({
         v: SCHEMA_VERSION,
         kind: entry.kind,
         detail: entry.detail,
@@ -33198,7 +33295,7 @@ function createRenderHealthStore(opts = {}) {
       session.delete(id);
       if (storage && id) {
         try {
-          storage.removeItem(keyOf(id));
+          storage.removeItem(keyOf2(id));
         } catch {
         }
       }

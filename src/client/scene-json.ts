@@ -1,6 +1,7 @@
-import type { ObjectScriptEntry, ObjectUserRefs, SceneDescription, SceneImageObject, SceneObject, SceneSoundObject, SceneTextObject, UserBindingRef, UtilLayerKind } from '../shared/types.js';
+import type { ObjectScriptEntry, ObjectUserRefs, SceneDescription, SceneImageObject, SceneObject, SceneSoundObject, SceneTextObject, TimelineAnimation, TimelineProperty, UserBindingRef, UtilLayerKind } from '../shared/types.js';
 import { readParallaxConfig } from './parallax.js';
 import { parseScriptProperties } from './script-patterns.js';
+import { parseTimelineAnimation } from './scene-timeline.js';
 import { parseUserRef } from './user-bindings.js';
 import { parseVisible } from './visibility.js';
 
@@ -250,6 +251,21 @@ function objectScriptsField(o: Record<string, unknown>): { objectScripts?: Objec
   return out.length > 0 ? { objectScripts: out } : {};
 }
 
+const ANIMATABLE = ['alpha', 'origin', 'scale', 'angles', 'color'] as const;
+
+// 属性时间线动画（scene.json 属性字段的 `animation` 块）：静态 value / script 字段各走原路径，这里只加动画数据。
+// 无有效 c0 的属性不产出（回退静态值），因此不影响无动画壁纸。
+function animationFields(o: Record<string, unknown>): { animations?: Partial<Record<TimelineProperty, TimelineAnimation>> } {
+  const out: Partial<Record<TimelineProperty, TimelineAnimation>> = {};
+  for (const property of ANIMATABLE) {
+    const field = o[property];
+    if (!field || typeof field !== 'object' || Array.isArray(field)) continue;
+    const parsed = parseTimelineAnimation(property, (field as { animation?: unknown }).animation);
+    if (parsed) out[property] = parsed;
+  }
+  return Object.keys(out).length > 0 ? { animations: out } : {};
+}
+
 // sound 对象收集（T3.4/v0.8.1）：WE 音频节点携带 sound 文件数组；每对象产出结构化
 // SceneSoundObject（volume 缺省 1 并 clamp 0-1，playbackmode 缺省 loop，对齐 OWE SoundParser）。
 function collectSounds(root: any): SceneSoundObject[] | undefined {
@@ -333,6 +349,8 @@ export function parseSceneJson(raw: string): SceneDescription {
       userRefs: pickUserRefs(o, ['origin', 'scale', 'angles']),
       // 转换字段里的对象属性脚本（angles/origin/scale/color 各一个）；无脚本的属性不产出条目。
       ...objectScriptsField(o),
+      // 属性时间线动画（alpha/origin/scale/angles/color 的 animation 块）；无动画 ⇒ 不产出字段。
+      ...animationFields(o),
     };
     // visible.script 的派生**与 kind 无关**（2026-09-22）：3798688689 的 3 个 SceneScript 总控
     // （92000 粒子 / 93000 拖尾 / 94000 场景控制器，后者 348 KB）**没有** image/particle/text
