@@ -198,7 +198,7 @@ npx vitest run tests/xxx.test.ts --reporter=basic   # 跑单个文件
 
 53. **scene 包/入口跟随 `project.json.file`（2026-10-28）**：不能写死 `scene.pkg`/`scene.json`——WE 模板（GIF 导入等）用 `file` 指定入口（`gifscene.json` ⇒ `gifscene.pkg`，规则对齐 we-layerd `WeProjectSource.cpp::ResolveProjectSource`）。`scene-source.ts` 统一解析（自身优先、preset 取依赖目录；file 非法或包不存在回退标准名），`WallpaperInfo.sceneEntry` 下发入口名，client 经 `SceneRendererLike.render` 第 4 参透传。**同批修复**：spritesheet 的 `TEXS` 首帧 `frametime` 已解析为帧率（缺省仍 1fps）；`.tex` flags bit0 `NoInterpolation` 已消费为 Nearest 采样（像素风保持锐利，见[决策笔记](.agents/notes/implemented/bug-fix/2026-10-28-scene-entry-custom-pkg.md)）。
 
-54. **媒体集成（Windows SMTC，2026-10-30）**：`project.json` 无媒体开关——是否启用由**场景脚本**决定：任一声明脚本源（visible / 属性脚本 / text）含 `mediaPlaybackChanged|mediaStatusChanged|mediaPropertiesChanged|mediaThumbnailChanged|MediaPlaybackEvent`，或 image 对象 `instance.usertextures` 含 `$mediaThumbnail`，才创建 1s 轮询；其余壁纸**不建轮询、不发请求、零每帧开销**。
+54. **媒体集成（Windows SMTC，2026-10-30）**：`project.json` 无媒体开关——是否启用由**场景脚本**决定：任一声明脚本源（visible / 属性脚本 / text）含 `mediaPlaybackChanged|mediaStatusChanged|mediaPropertiesChanged|mediaThumbnailChanged|MediaPlaybackEvent`，或 image 对象 `instance.usertextures` 含 `$mediaThumbnail`，才算 `sceneNeedsMedia`；**轮询还需要事件落点**：`currentScriptHost`（有 scene 脚本，或时间线运行时建的空 host）或 `$mediaThumbnail` 对象 —— 故**只有 text 媒体脚本、无 scene 脚本且无时间线的场景不建轮询**（事件无处派发，见 §7.44）。其余壁纸**不建轮询、不发请求、零每帧开销**。
     - **数据流**：host `media-session.ts` 懒启动常驻 PowerShell watcher（每 700ms 采样 WinRT SMTC，只在会话签名变化时输出一行 JSON；封面随行携带、单张 ≤512KB）→ 内存快照 → `GET /wallpapers/now-playing?title=<页面标题>`（快照）与 `GET /wallpapers/now-playing/thumbnail?rev=N`（封面字节）→ client `media-input.ts` 1s 轮询 + diff → `media-orchestration.ts` 编排 → `SceneScriptHost/VM` 派发四类事件（`MediaPlaybackEvent` 常量 **0/1/2** = stopped/playing/paused）+ text-script `mediaPropertiesChanged`；封面事件另更新 `$mediaThumbnail` 共享纹理与主色。
     - **生命周期与隐私**：watcher 懒启动、单实例、空闲 20s 退出（5s 检查一次），异常退出由下一次轮询重新拉起（启动失败 5s 退避；60s 内 3 次失败 ⇒ 降级 60s），插件 dispose 时 kill；title/artist/album 与封面字节**只在内存**，不落盘、不记日志（日志只允许状态/原因计数）。面板开关 `mediaIntegrationEnabled`（默认开）：关闭 ⇒ 不 spawn、停轮询、立即派发 stopped 隐藏媒体层；重新打开 ⇒ 立即恢复。
     - **会话选择**：剔除自身 appId（`path.basename(process.execPath)`）与 `title === 页面标题` 的会话（Chromium 为壁纸音效 `<audio>` 注册的自会话），再按 playing > paused → artist 非空 → 最近变化排序；非 win32 / 无 PowerShell / watcher 失败都返回 `available:false` + reason 并隐藏媒体层（不阻塞渲染）。⚠️ 页面标题过滤是**启发式**：浏览器 GUI 里壁纸音效会话的标题若不等于页面标题，仍可能被误选（可关开关）。
@@ -279,6 +279,15 @@ npx vitest run tests/xxx.test.ts --reporter=basic   # 跑单个文件
 43. **`.tex` 容器布局变体与效果内置矩阵/TexelSize（2026-10-28 已修，记录在此以免回退）**：① TEXB 容器不再固定 @46 —— 按 magic 扫 34–64 定位（`flags & 0x40` 的 WE 自带 LUT 在 `imageWidth` 前多一个 u32，magic 落 50；该 flag 下每条 mip 记录前也多一个 u32，用载荷自洽判据择一）；② TEXB0004 的 imageCount 后第二个 u32 是**逐 mip 扩展开关**（不是 isVideoMp4；=1 时每条 mip 前跳过 8B + null 结尾 JSON + 4B）。修复前引擎 `assets/materials/lut/*.tex` 全解析失败（`bad-container@46`），修复后壁纸库 + 引擎 assets 的 .tex 全通过（判据：`research/verify-a/check-all-tex.mjs` 修复前后对比 fail 数；本机素材计数是会漂的快照，不写入本文件）。③ 效果链每 pass 绑 `g_TexelSize = 1/输出 RT 尺寸`（无 material 注解；不绑时 `blur_gaussian` / `dot_matrix` 等 shader 采样偏移恒 0、效果静默失效）。④ 无 material 注解的 `g_EffectTextureProjectionMatrix(Inverse)` 按 shader 声明预建**单位阵**（depthparallax 用；不预建时 three 不上传该 uniform ⇒ GL 默认全 0 ⇒ `CAST3X3(0)` 的 `normalize(0)` 得 NaN、整层输出 NaN；dsh 全屏 quad 顶点即画布 NDC，单位阵与桌面 1:1 层一致，口径同 webwallgl）。**未做边界**：`TEXV0004` 旧容器（本机 0 命中）、多 image `.tex`（本机 imageCount 全 1）、`g_Screen`（shader 声明但未使用）、godrays COPYBG 的 `g_EffectModelViewProjectionMatrix`（属 copybackground 缺口 §7.31）。
 
 44. **媒体集成（Windows SMTC）的边界（2026-10-30）**：仅 win32 有数据源（其它平台 `unsupported-platform`、媒体层隐藏）；只读不控（无上一首/下一首/seek），不派发 `mediaTimelineChanged`（快照保留 position/duration 供后续）；色板为主色启发式、贝塞尔曲线为样本校准近似（均非 WE 逐位语义）；自会话过滤靠 appId + 页面标题启发式（浏览器 GUI 的壁纸音效会话标题不同时可能误选，可关开关）；封面与快照只在内存、不落盘，日志不含曲目信息；时间线只覆盖 layer 属性，`general.*` / effect / material、粒子父级 scale/angles、隔离对象世界变换与 `color` 真实样本均未覆盖（见 §5.54、§7.16）；真机验收见 `TESTING.md` §2.17。
+    - **已知边界（review round 1 补记）**：
+      1. **text 动画边界（用户可见）**：父级 `scale` 时间线播放期间，text 左锚点的 `renderOffset` 仍按**装配期静态 `scale`** 计算（`threejs-player.ts` 的 `textDrivers[].scale`）⇒ 文本中心短暂漂移，父级 scale 静息回装配值后归位（`d06bc49` 起）；装配期空文本时 `renderOffset=0`，`0954b16` 起文本变化会按新布局刷新（已修），但「静态 scale」假设保留。
+      2. **alpha 属性脚本守卫的连带跳过**：`value` 模式下 alpha 属性脚本按契约跳过 `init/update`（标量属性不走 Vec3 契约），其 `cursorClick` 一并被跳过；当前无该形态素材。
+      3. `scene-timeline.ts` 的 `clamp01` 对**非有限值返回 1**（防御式；当前调用路径不可达）。
+      4. `TimelineRuntimeOptions.worldTransforms` 是**死参数**（`syncWorld` 全量重算，保留以对齐跨任务接口）；`options.wraploop` 解析进 `wrapLoop` 后**未消费**。
+      5. VM 的「timeline 存在 ⇒ alpha=0 不回滚」是 **scene 级**判定（场景内任一动画即解除），不按 objectId 是否真有 alpha 时间线区分。
+      6. **只有 text 媒体脚本的场景不建轮询**：`sceneNeedsMedia` 会为 text 脚本返回 true，但接线条件是 `currentScriptHost || $mediaThumbnail 对象`；scene 无脚本且无时间线（空 host 不建）时两者皆无 ⇒ 不轮询，text 的 `mediaPropertiesChanged` 也不会派发。
+      7. **watcher 启动失败退避 = 固定 5s**（`media-session.ts` 的 `START_RETRY_MS`），与设计 §4.1 的「1s 起指数、上限 8s」不一致，**以代码 5s 为准**（决策笔记 errata）；进程异常退出无指数退避（下一次请求直接重启），60s 内 3 次失败降级 60s 不变。
+      8. **e2e 可复跑性**：媒体 e2e 与其它 headless e2e 必须**串行**、彼此留 1–2s（连续紧跑后 Edge/调试端口可能未完全释放 ⇒ 环境性失败；单跑通过）；`--regression` 的 `[R2]`「对象数 > 0」/`[R3]`「截图字节 > 0」是**结构性弱断言**，画面正确性靠人工复看截图；`[R1]` 不含 CDP `Log.entryAdded` 的 error（只诊断打印）。
 
 ## 8. 历史归档
 
@@ -291,7 +300,7 @@ npx vitest run tests/xxx.test.ts --reporter=basic   # 跑单个文件
 | `docs/fixes/verification-ci-history.md` | 验证手段、CI 三个坑、测试基线的历史记录 + 精简前的 §3.3 长段 |
 | `docs/superpowers/specs/`、`docs/superpowers/plans/` | 各轮设计文档与实施计划（**改动前必读**） |
 | `.agents/notes/{lifecycle}/{class}/` | **决策笔记**：只记「为什么」与「放弃了什么」；契约与现状仍以本文件 §5/§7 为准，两者互链 |
-| `.agents/notes/implemented/feature/2026-10-30-media-integration.md` | 媒体集成（SMTC / SceneScript media 事件 / 时间线属性动画）的取舍、errata（R7 双反引号、R8 lib/dist 随提交）与基线红处置 |
+| `.agents/notes/implemented/feature/2026-10-30-media-integration.md` | 媒体集成（SMTC / SceneScript media 事件 / 时间线属性动画）的取舍、errata（R7 双反引号、R8 lib/dist 随提交、watcher 启动失败 5s 退避）与基线红处置 |
 | git 历史（`git show 0734406:AGENT.md`） | 精简前含 §1–§4 / §6 旧措辞的完整文档 |
 
 归档文件只作查阅：**新的结论、边界与遗留写回本文件的 §5 / §7**，不要往归档文件里追加。

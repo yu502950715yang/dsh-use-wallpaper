@@ -18,7 +18,11 @@ Status: implemented
 - **R7：PowerShell 泛型名必须双反引号**（`"IAsyncOperation``1"`）：单反引号在 PS 双引号串里是转义符，会被吞成 `IAsyncOperation1` ⇒ `$asTask` 为 null、watcher 启动即 `Cannot index into a null array.`（Task 1 实测）。
 - **R8：`lib/**` 与 `dist/**` 随提交**：本仓 `lib/` 是 npm 分发产物且纳入版本控制，改 `src/` 的每个 Task 都要 `npm run build` 并把对应 `lib/**` 变更随提交；`dist/client.js` 只在 client 变化时重建并提交。
 - **Task 7 的 alpha 回滚在 Task 10 解除**：属性脚本的 media 回调常先写 `alpha=0` 再播放淡入；Task 7 尚无时间线，写入会永久透明 ⇒ 无 timeline 时只回滚这次 alpha≈0 写入（其余属性照常）。Task 10 起含动画场景会传入 timeline ⇒ 回滚自动解除（淡入交给时间线）。
-- **基线红处置**：`tests/verify-real-library.test.ts` 曾对 `3797976859` 报 `materials/util/solidlayer_instance.json` 不存在——该材质由 WE 引擎目录在运行时提供（host 路由 pkg → `<WE>/assets` 两级查找），不是 pkg 链断。测试改为「已知引擎前缀（`materials/util/`）的缺失材质视作引擎提供、不计入 evidence」，其它缺失仍判红，并加确定性单测断言。
+- **基线红处置**：`tests/verify-real-library.test.ts` 曾对 `3797976859` 报 `materials/util/solidlayer_instance.json` 不存在——该材质由 WE 引擎目录在运行时提供（host 路由 pkg → `<WE>/assets` 两级查找），不是 pkg 链断。测试改为「已知引擎前缀（`materials/util/`）的缺失材质**与纹理**视作引擎提供、不计入 evidence」，其它缺失仍判红，并加确定性单测断言。
+
+## Errata
+
+- **watcher 启动失败退避 = 固定 5s（2026-10-30，review round 1）**：设计 §4.1 写「watcher 异常退出 → 1s 起指数退避、上限 8s」，代码未按原文落地——`media-session.ts` 的 `START_RETRY_MS = 5000` 是**固定 5s** 的启动失败重试窗口；进程 exit 不指数退避（下一次请求直接重启），60s 内 3 次失败降级 60s 不变。**以代码 5s 为准。**
 
 ## Alternatives considered
 
@@ -38,8 +42,10 @@ Status: implemented
 
 **收益：** 目标壁纸白框消失、播放时封面/歌名/歌手/主色/淡入滑入联动；时间线让 3 张既有壁纸中的淡入与 Fog loop 真正播放；无媒体脚本的壁纸零请求；媒体数据只在内存。
 
-**代价：** 仅 Windows 有数据源；只读不控、不派发 `mediaTimelineChanged`；色板与贝塞尔都是近似；页面标题过滤可能误选（可关开关）；watcher 活跃时多一个 PowerShell 进程（约 30–60MB）；`color` 时间线已接线但本机无真实样本；隔离对象与 `general.*` 时间线仍缺。基线红处置放宽的是「已知引擎前缀」，其它证据不变。
+**代价：** 仅 Windows 有数据源；只读不控、不派发 `mediaTimelineChanged`；色板与贝塞尔都是近似；页面标题过滤可能误选（可关开关）；watcher 活跃时多一个 PowerShell 进程（约 30–60MB）；`color` 时间线已接线但本机无真实样本；隔离对象与 `general.*` 时间线仍缺。基线红处置放宽的是「已知引擎前缀」（材质与纹理同口径），其它证据不变。
+
+**已知边界（review round 1 补记，判据见 `AGENT.md` §7.44）：** text 动画在父级 `scale` 时间线播放期间按装配期静态 scale 算左锚点 ⇒ 文本中心短暂漂移（静息归位；`0954b16` 已让文本变化刷新偏移，但「静态 scale」假设保留）；alpha 属性脚本的 `init/update` 守卫会连带跳过其 `cursorClick`（当前无该形态素材）；`clamp01` 对非有限值返回 1（不可达）；`TimelineRuntimeOptions.worldTransforms` 为死参数、`options.wraploop` 未消费；「timeline 存在时 alpha 不回滚」是 scene 级判定；只有 text 媒体脚本、无 scene 脚本/时间线的场景不会创建媒体轮询（事件无处派发）；媒体 e2e 与其它 headless e2e 必须串行并留 1–2s 间隔（紧跑有环境性失败），回归 `[R2]`/`[R3]` 是结构性弱断言、`[R1]` 不含 CDP `Log.entryAdded` 的 error。
 
 ## Affected repositories
 
-- `dsh-use-wallpaper` 分支 `master` commits `fe9243c` `7ffd6f7` `1a60219` `6a7e7ff` `d06bc49` `0954b16`
+- `dsh-use-wallpaper` 分支 `master` commits `6246f70` `361a3e0` `fe9243c` `ff5995e` `8462c26` `b97c9d7` `c80b8d3` `3c95962` `7071d51` `7ffd6f7` `78194da` `1a60219` `a920187` `6a7e7ff` `d06bc49` `0954b16` `2f4d2d7`

@@ -475,7 +475,7 @@ getEventListeners(window).pointermove?.length
 | M4 | 切歌：全部更新且不残留 | 播放器中切到下一首（不同封面/歌名/歌手）。 | 封面、歌名、歌手、边框主色在 ≤2s 内整体更新；**旧封面不残留/不闪回**。 | 文本更新但封面不变 → `thumbnailRev` 未变 / 缓存键错；先闪旧图 → 切歌未先清纹理。 |
 | M5 | 停止：媒体层再隐藏 | 播放器停止播放（或关闭播放器）。 | ≤2s 内媒体层全部隐藏，无白框、无残留文本，场景继续渲染。 | 文本/封面残留 → `PLAYBACK_STOPPED` 未派发或脚本未收到。 |
 | M6 | 面板开关：关闭 / 重开 | 播放中打开设置 →「Wallpaper 壁纸」→「显示效果」→ 关闭「媒体集成（显示本机播放的歌曲封面/歌名）」；再打开。 | 关闭 ⇒ 媒体层**立即**隐藏、后续不再有 `now-playing` 请求；重开 ⇒ ≤2s 内媒体层恢复（曲目未变也要重新出现）。 | 关闭后仍轮询/仍显示 → 运行期开关链路；重开不恢复 → `stop()` 清 `prev` 后首帧未重放。 |
-| M7 | 隐私与 watcher 残留 | 停止播放并关闭壁纸（或切到非媒体壁纸）后等待 **>20s**。 | 浏览器 Console / DSH 日志中**没有** title/artist/album；数据目录 `~/.dsh-use-wallpaper`（或 `DSH_USE_WALLPAPER_DATA_DIR`）**无新增文件**；空闲 20s 后无本插件 watcher 残留：`Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" \| Where-Object CommandLine -like '*GlobalSystemMediaTransportControls*'` 无输出。 | 日志出现曲目名 → 隐私回归；目录新增文件 → 封面落盘；20s 后仍有该 powershell 进程 → 空闲退出未生效。 |
+| M7 | 隐私与 watcher 残留 | 停止播放并关闭壁纸（或切到非媒体壁纸）后等待 **>25s**（空闲阈值 20s + 5s 检查周期，最坏 25s 才退出）。 | 浏览器 Console / DSH 日志中**没有** title/artist/album；数据目录 `~/.dsh-use-wallpaper`（或 `DSH_USE_WALLPAPER_DATA_DIR`）内**除 `frames/` 抓帧缓存外无新增文件**：媒体数据（封面/曲目/快照）不得落盘；选中 `3797976859` 时首帧成功会写 `frames/3797976859.png`，属抓帧缓存而非媒体数据（要严格「零新增」可临时关掉 `frameCacheEnabled` 再测）；`Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" \| Where-Object CommandLine -like '*GlobalSystemMediaTransportControls*'` 无输出。 | 日志出现曲目名 → 隐私回归；目录出现 `frames/` 之外的新文件 → 媒体数据落盘；25s 后仍有该 powershell 进程 → 空闲退出未生效。 |
 | M8 | 其它平台 / 失败路径（可选） | 浏览器 GUI 中播放音乐（桌面 App 之外），或临时让 PowerShell 不可用。 | 浏览器 GUI 下可能命中 Chromium 自会话过滤边界（误选/漏选均记边界，不判红）；无 PowerShell / 失败时媒体层隐藏、面板给原因、渲染不受影响。 | 面板无提示 / 渲染被阻塞 → 降级链回归。 |
 
 **勾选记录**（待验收）：
@@ -486,10 +486,12 @@ getEventListeners(window).pointermove?.length
 - [ ] M4：切歌更新且旧封面不残留
 - [ ] M5：停止后媒体层隐藏
 - [ ] M6：面板开关关闭 / 重开
-- [ ] M7：隐私（日志无曲目）+ 数据目录无新增 + 20s 无 watcher 残留
+- [ ] M7：隐私（日志无曲目）+ 数据目录无媒体落盘（`frames/` 抓帧缓存除外）+ >25s 无 watcher 残留
 - [ ] M8：浏览器 GUI / 失败路径（可选）
 
-**e2e 复跑（2026-10-30，本机 headless Edge / SwiftShader）**：`npm run e2e:media` exit 0（13/13 判据）；`node e2e/verify/verify-media-layer.mjs --regression` exit 0（4 张 17/17 判据，含 `2597392171` Fog 0/800/1600ms 位移）。
+**e2e 复跑（2026-10-30，本机 headless Edge / SwiftShader）**：`npm run e2e:media` exit 0（13/13 判据）；`node e2e/verify/verify-media-layer.mjs --regression` exit 0（4 张 17/17 判据，含 `2597392171` Fog 0/800/1600ms 位移，rAF 对齐采样）。
+
+**可复跑性口径**：媒体 e2e 与其它 headless e2e（如 `verify-colorblend`）必须**串行**执行、彼此留 1–2s 间隔 —— 连续紧跑 `e2e:media` 后立刻跑 `verify-colorblend` 可能因 Edge/调试端口尚未完全释放而环境性失败（单跑通过，属环境问题而非判据回归）。回归判据 `[R2]`「`__listObjects() > 0`」与 `[R3]`「截图字节 > 0」是**结构性弱断言**（防静默空跑），画面正确性需人工复看 `e2e/.out/media/regression-<id>.png`；`[R1]` 不含 CDP `Log.entryAdded` 的 error（含 favicon/资源 404、导航期 `net::ERR_ABORTED` 等噪音，纳入易随环境假红，现只诊断打印），页面级 error 由 `__logs` 与 CDP exception 覆盖。
 
 ---
 

@@ -16,11 +16,12 @@ import { encodePng } from '../lib/png-encode.mjs';
 const WALLPAPER_ID = '3797976859'; // 带媒体层（歌名/歌手/封面框）的场景壁纸
 const MEDIA_LAYER_IDS = [35, 40, 45];
 const COVER_REGION = [1160, 285, 1245, 360]; // [2a] 封面区域（objectRect(45) 不可得时的兜底）
-// 回归对照素材：三张受「每对象多脚本 / 时间线」影响的既有壁纸 + 带 solid util 的 Leon 场景。
+// 回归对照素材：三张受「每对象多脚本 / 时间线」影响的既有壁纸 + 带 solid util 的「红衣骑士」
+// （Knight in a red cloak；Leon 是另一张 3812518176，勿混）。
 // 这些壁纸都没有媒体脚本、也没有 $mediaThumbnail ⇒ 不得发起任何 now-playing 请求。
 const REGRESSION_IDS = ['2832263418', '3793620838', '2597392171', '3789452668'];
 const FOG_OBJECT_ID = 251; // 2597392171 的「Fog 1」：origin loop 时间线（fps=1.36 / length=34）
-const FOG_SAMPLE_MS = [0, 800, 1600];
+const FOG_SAMPLE_MS = [0, 800, 1600]; // rAF 对齐：目标时刻后的首个帧回调里读位置（慢帧不重样）
 
 const here = dirname(fileURLToPath(import.meta.url));
 const OUT = join(OUT_DIR, 'media-layer');
@@ -267,14 +268,20 @@ const VW = 1600, VH = 900;
 
 // ── 回归模式（--regression）────────────────────────────────────────────────────
 // 判据口径（与默认媒体判据完全独立）：
-// 1) `__ready === true`，`__logs` 无 error 级；已知良性噪音只豁免 favicon 一类页面级 404，
-//    warning（如 2832263418 的 chromatic_aberration shader 编译失败）属既有已知项 ⇒ 不判红但打印；
+// 1) `__ready === true`，`__logs` 无 error 级、CDP 无 exception；warning（如 2832263418 的
+//    chromatic_aberration shader 编译失败）属既有已知项 ⇒ 不判红但打印；
+//    ⚠️ 边界：CDP `Log.entryAdded` 的 error **不纳入 R1**（见 BENIGN_LOG_PATTERNS 处说明）。
 // 2) `__listObjects().length > 0`（装配出对象）；
 // 3) 截图写 `e2e/.out/media/regression-<id>.png`；
 // 4) 这些壁纸没有媒体脚本/封面绑定 ⇒ 不得发起 now-playing 请求（零轮询承诺）；
-// 5) `2597392171` 的 Fog（obj 251）origin loop：0/800/1600ms 三点均有限、相邻位移 > 1、落在场景×2 内。
+// 5) `2597392171` 的 Fog（obj 251）origin loop：0/800/1600ms 三点均有限、相邻位移 > 1、落在场景×2 内
+//    （采样 rAF 对齐：目标时刻后的首帧才读位置，慢帧下不会把两次采样落在同一帧）。
+// 已知良性噪音：本地 harness 页没有 favicon，Chromium 自动请求 404（只出现在 CDP 浏览器日志里）。
+// ⚠️ **R1 边界**：CDP `Log.entryAdded` 的 error 只打印、不判红 —— 其中混有 favicon/资源 404 与导航期的
+// `net::ERR_ABORTED`，逐条豁免易随环境假红；页面级 error 已由 `__logs` + CDP `Runtime.exceptionThrown` 覆盖
+// （`TESTING.md` §2.17 有记录）。favicon 在 exception/`__logs` 侧也豁免，避免浏览器差异。
 const BENIGN_LOG_PATTERNS = [
-  /favicon\.ico/i, // 本地 harness 页没有 favicon，Chromium 自动请求 404
+  /favicon\.ico/i,
 ];
 const isBenignLog = (text) => BENIGN_LOG_PATTERNS.some((re) => re.test(text));
 
@@ -352,11 +359,15 @@ async function runRegression() {
     const { errors, warnings } = classifyPageLogs(info?.logs);
     for (const w of warnings.slice(0, 6)) console.log(`   [warn] ${w.slice(0, 200)}`);
     const cdpExceptions = logs.filter((l) => l.startsWith('[exception]') && !isBenignLog(l));
+    // CDP 浏览器日志的 error：只做诊断输出，不参与 R1 判定（边界见 BENIGN_LOG_PATTERNS 注释）。
+    const cdpLogErrors = logs.filter((l) => l.startsWith('[error]') && !isBenignLog(l));
+    for (const l of cdpLogErrors.slice(0, 6)) console.log(`   [cdp-error] ${l.slice(0, 200)}`);
     // 判据 1：就绪 + 无 error/exception（warning 不判红，但计数入 detail）。
     judge(`[R1] ${id} 就绪且日志无 error/exception`,
       ready && info?.ready === true && errors.length === 0 && cdpExceptions.length === 0,
       `ready=${JSON.stringify(info?.ready)} nav=${navigated} errors=${errors.length} cdpException=${cdpExceptions.length}` +
-      ` warnings=${warnings.length}${errors.length ? ' firstError=' + JSON.stringify(errors[0].slice(0, 220)) : ''}` +
+      ` cdpLogError=${cdpLogErrors.length} warnings=${warnings.length}` +
+      `${errors.length ? ' firstError=' + JSON.stringify(errors[0].slice(0, 220)) : ''}` +
       `${cdpExceptions.length ? ' firstCdp=' + JSON.stringify(cdpExceptions[0].slice(0, 220)) : ''}` +
       `${info?.error ? ' evalError=' + info.error : ''}`);
     // 判据 2：对象齐全。
@@ -383,18 +394,32 @@ async function runRegression() {
       const sceneSize = info?.sceneSize ?? null;
       let fog = null;
       try {
+        // rAF 对齐：目标时刻后的第一帧才读位置（软栅/慢渲染时 setTimeout 相邻采样可能落在同一帧，
+        // 位置未推进 ⇒ steps>1 假红；帧回调里读到的才是该帧已求值后的世界位置）。
         await evalJs(`(() => {
           window.__fogSamples = [];
+          const targets = ${JSON.stringify(FOG_SAMPLE_MS)};
           const t0 = performance.now();
-          for (const at of ${JSON.stringify(FOG_SAMPLE_MS)}) {
-            setTimeout(() => {
+          let next = 0;
+          const step = () => {
+            const now = performance.now() - t0;
+            while (next < targets.length && now >= targets[next]) {
               const m = window.__objectMaterialInfo(${FOG_OBJECT_ID});
-              window.__fogSamples.push({ at, t: performance.now() - t0, pos: m ? m.position : null });
-            }, at);
-          }
+              window.__fogSamples.push({ at: targets[next], t: now, pos: m ? m.position : null });
+              next += 1;
+            }
+            if (next < targets.length) requestAnimationFrame(step);
+          };
+          requestAnimationFrame(step);
           return true;
         })()`);
-        await sleep(FOG_SAMPLE_MS[FOG_SAMPLE_MS.length - 1] + 400);
+        // 等目标点全部采完（慢帧下比固定 sleep 稳）；超时按已采点判红并打印样本数（可诊断）。
+        const sampleDeadline = Date.now() + 20_000;
+        while (Date.now() < sampleDeadline) {
+          const got = Number(await evalJs('(window.__fogSamples ?? []).length')) || 0;
+          if (got >= FOG_SAMPLE_MS.length) break;
+          await sleep(100);
+        }
         fog = JSON.parse(await evalJs('JSON.stringify(window.__fogSamples ?? null)') ?? 'null');
       } catch (e) {
         console.log(`  [${id}] Fog 采样失败: ${String(e && e.message ? e.message : e)}`);
