@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { createMediaSessionService, parseWatcherLine, selectSession, playbackOfStatus, WATCH_SCRIPT } from '../src/host/media-session.js';
 import type { RawMediaSession } from '../src/host/media-session.js';
@@ -97,47 +98,55 @@ it('WATCH_SCRIPT 是常量 PowerShell：输出 UTF8 JSON 行、枚举 SMTC 会�
   expect(WATCH_SCRIPT).toContain('IAsyncOperation``1');
   // 零会话时不得每 700ms 重复输出空帧：首帧必发（$initialized），之后仅签名变化才发。
   expect(WATCH_SCRIPT).toContain('$initialized = $false');
-  // 签名必须含 album / contentType，切专辑/类型也要触发重发。
+  expect(WATCH_SCRIPT).toContain('-not $initialized -or $signature -ne $last');
+  // 输出签名必须含 status：暂停/恢复必须触发输出行。
   expect(WATCH_SCRIPT).toContain('$album|$contentType|$status');
-  // 只有成功取到封面字节才记 $lastArt（失败允许下一轮重试）。
-  expect(WATCH_SCRIPT.indexOf('$lastArt[$appId] = $sig')).toBeGreaterThan(
-    WATCH_SCRIPT.indexOf('$artType = [string]$st.ContentType'),
+  // 封面签名不含 status：暂停/恢复不重发同一封面（否则 rev 无谓 +1）。
+  expect(WATCH_SCRIPT).toContain('$artSig = "$appId|$title|$artist|$album|$contentType"');
+  expect(WATCH_SCRIPT).not.toContain('$lastArt[$appId] = $sig');
+  expect(WATCH_SCRIPT).toContain('if ($lastArt[$appId] -ne $artSig)');
+  expect(WATCH_SCRIPT.indexOf('$artSig = ')).toBeLessThan(
+    WATCH_SCRIPT.indexOf('if ($lastArt[$appId] -ne $artSig)'),
   );
+  // 只有成功取到封面字节才记 $lastArt（失败允许下一轮重试），且必须早于 catch。
+  const artSigAt = WATCH_SCRIPT.indexOf('$lastArt[$appId] = $artSig');
+  expect(artSigAt).toBeGreaterThan(WATCH_SCRIPT.indexOf('$artType = [string]$st.ContentType'));
+  expect(artSigAt).toBeLessThan(WATCH_SCRIPT.indexOf('} catch'));
 });
 
-/** 假 PowerShell 进程：stdout 是 PassThrough，kill 记录调用，exit 用回调手动触发。 */
-function fakeProc() {
-  const stdout = new PassThrough();
-  const exitCbs: Array<() => void> = [];
-  return {
-    stdout,
-    killed: 0,
-    exitCbs,
-    kill() { this.killed += 1; },
-    on(_e: 'exit', cb: () => void) { exitCbs.push(cb); },
-  };
+/** 假 PowerShell 进程：stdout 是 PassThrough，kill 记录调用，exit/error 用 EventEmitter 手动触发。 */
+class FakeWatcher extends EventEmitter {
+  readonly stdout = new PassThrough();
+  killed = 0;
+  kill() { this.killed += 1; }
+  emitExit() { this.emit('exit', null); }
+  emitStartError(err: unknown = new Error('spawn ENOENT')) { this.emit('error', err); }
 }
 
 function setupService() {
-  const procs: ReturnType<typeof fakeProc>[] = [];
+  const procs: FakeWatcher[] = [];
   const timers: Array<() => void> = [];
+  const cleared: unknown[] = [];
   let now = 0;
   const svc = createMediaSessionService({
     platform: 'win32',
     ownAppId: 'DeepSeek Harness.exe',
-    spawnImpl: () => { const p = fakeProc(); procs.push(p); return p as any; },
+    spawnImpl: () => { const p = new FakeWatcher(); procs.push(p); return p as any; },
     now: () => now,
     idleMs: 20_000,
     idleCheckMs: 5_000,
     setIntervalImpl: (fn: () => void) => { timers.push(fn); return timers.length - 1; },
-    clearIntervalImpl: () => { /* noop：测试直接调 check */ },
+    clearIntervalImpl: (h: unknown) => { cleared.push(h); },
     log: () => {},
   });
   return {
     svc,
     procs,
     timers,
+    cleared,
+    advance: (ms: number) => { now += ms; },
     tick: (ms: number) => { now += ms; timers.forEach((f) => f()); },
+    feedAt: (i: number, line: object) => procs[i]!.stdout.write(JSON.stringify(line) + '\n'),
     feed: (line: object) => procs[0]!.stdout.write(JSON.stringify(line) + '\n'),
   };
 }
@@ -166,7 +175,7 @@ describe('createMediaSessionService', () => {
     expect(svc.thumbnail(999)).toBeNull();
     procs[0]!.stdout.write('garbage\n');
     expect(svc.stats().badLines).toBe(1);
-    procs[0]!.exitCbs.forEach((cb) => cb());
+    procs[0]!.emitExit();
     svc.request({ pageTitle: 'x', enabled: true });
     expect(procs).toHaveLength(2);
   });
@@ -184,6 +193,96 @@ describe('createMediaSessionService', () => {
     const second = svc.request({ pageTitle: 'x', enabled: true });
     expect(second).toMatchObject({ available: true, reason: 'ok', playback: 'paused', hasThumbnail: true, thumbnailRev: rev });
     expect(svc.thumbnail(rev)?.bytes.toString('utf8')).toBe('ABC');
+  });
+
+  it('封面单一数据源：其它会话反复换封面不得让选中会话的 thumbnail 失配', () => {
+    const { svc, feed } = setupService();
+    svc.request({ pageTitle: 'x', enabled: true });
+    feed({ v: 1, at: 1, sessions: [
+      { appId: 's', status: 'Playing', title: 'S', artist: 'A', artB64: b64('S1'), artType: 'image/png' },
+      { appId: 't', status: 'Stopped', title: 'T', artist: 'B', artB64: b64('T0'), artType: 'image/png' },
+    ] });
+    const first = svc.request({ pageTitle: 'x', enabled: true });
+    expect(first).toMatchObject({ available: true, hasThumbnail: true });
+    const sRev = first.thumbnailRev;
+    expect(svc.thumbnail(sRev)?.bytes.toString('utf8')).toBe('S1');
+    // 另一（非选中）会话的签名反复变化并重发封面：旧实现的 rev→art 全局 LRU 会把 sRev 挤掉。
+    for (let i = 0; i < 9; i += 1) {
+      feed({ v: 1, at: 2 + i, sessions: [
+        { appId: 's', status: 'Playing', title: 'S', artist: 'A' },
+        { appId: 't', status: i % 2 === 0 ? 'Closed' : 'Stopped', title: 'T', artist: 'B', artB64: b64(`T${i}`), artType: 'image/png' },
+      ] });
+    }
+    const after = svc.request({ pageTitle: 'x', enabled: true });
+    expect(after).toMatchObject({ available: true, reason: 'ok', hasThumbnail: true, thumbnailRev: sRev });
+    expect(svc.thumbnail(sRev)?.bytes.toString('utf8')).toBe('S1');
+  });
+
+  it('rev 全局单调：idle stop 后新封面 rev > 旧 rev，旧 rev 不可读', () => {
+    const { svc, procs, tick, feedAt } = setupService();
+    svc.request({ pageTitle: 'x', enabled: true });
+    feedAt(0, { v: 1, at: 1, sessions: [{ appId: 'a', status: 'Playing', title: 'T', artist: 'A', artB64: b64('OLD'), artType: 'image/png' }] });
+    const oldRev = svc.request({ pageTitle: 'x', enabled: true }).thumbnailRev;
+    expect(oldRev).toBeGreaterThan(0);
+    tick(20_001);
+    expect(procs[0]!.killed).toBe(1);
+    expect(svc.thumbnail(oldRev)).toBeNull();
+    svc.request({ pageTitle: 'x', enabled: true });
+    expect(procs).toHaveLength(2);
+    feedAt(1, { v: 1, at: 2, sessions: [{ appId: 'a', status: 'Playing', title: 'T', artist: 'A', artB64: b64('NEW'), artType: 'image/png' }] });
+    const next = svc.request({ pageTitle: 'x', enabled: true });
+    expect(next.thumbnailRev).toBeGreaterThan(oldRev);
+    expect(svc.thumbnail(next.thumbnailRev)?.bytes.toString('utf8')).toBe('NEW');
+    expect(svc.thumbnail(oldRev)).toBeNull();
+  });
+
+  it('dispose 幂等：kill/clearInterval 各一次，后续 request 返回 disabled 不 spawn', () => {
+    const { svc, procs, cleared } = setupService();
+    svc.request({ pageTitle: 'x', enabled: true });
+    expect(procs).toHaveLength(1);
+    svc.dispose();
+    svc.dispose();
+    expect(procs[0]!.killed).toBe(1);
+    expect(cleared).toHaveLength(1);
+    expect(svc.request({ pageTitle: 'x', enabled: true })).toMatchObject({ available: false, reason: 'disabled' });
+    expect(procs).toHaveLength(1);
+  });
+
+  it('spawn 异步 error ⇒ 下一 request no-powershell（退避窗口内不重复 spawn）；首帧后清错误', () => {
+    const { svc, procs, advance, feedAt, tick } = setupService();
+    expect(svc.request({ pageTitle: 'x', enabled: true })).toMatchObject({ reason: 'no-session' });
+    expect(() => procs[0]!.emitStartError()).not.toThrow();
+    expect(svc.request({ pageTitle: 'x', enabled: true })).toMatchObject({ available: false, reason: 'no-powershell' });
+    expect(procs).toHaveLength(1);
+    // 退避窗口外允许重试。
+    advance(5_001);
+    expect(svc.request({ pageTitle: 'x', enabled: true })).toMatchObject({ reason: 'no-session' });
+    expect(procs).toHaveLength(2);
+    // 收到首帧 ⇒ 清 lastStartError（否则 idle stop 后会误报 no-powershell）。
+    feedAt(1, { v: 1, at: 2, sessions: [{ appId: 'a', status: 'Playing', title: 'T', artist: 'A' }] });
+    expect(svc.request({ pageTitle: 'x', enabled: true })).toMatchObject({ reason: 'ok' });
+    tick(20_001);
+    expect(procs[1]!.killed).toBe(1);
+    expect(svc.request({ pageTitle: 'x', enabled: true })).toMatchObject({ reason: 'no-session' });
+    expect(procs).toHaveLength(3);
+  });
+
+  it('60s 内连续 3 次 spawn error ⇒ watcher-failed 降级；窗口过后重试', () => {
+    const { svc, procs, advance } = setupService();
+    svc.request({ pageTitle: 'x', enabled: true });
+    procs[0]!.emitStartError();
+    advance(6_000);
+    expect(svc.request({ pageTitle: 'x', enabled: true })).toMatchObject({ reason: 'no-session' });
+    procs[1]!.emitStartError();
+    advance(6_000);
+    expect(svc.request({ pageTitle: 'x', enabled: true })).toMatchObject({ reason: 'no-session' });
+    procs[2]!.emitStartError();
+    expect(svc.stats().degraded).toBe(true);
+    expect(svc.request({ pageTitle: 'x', enabled: true })).toMatchObject({ available: false, reason: 'watcher-failed' });
+    expect(procs).toHaveLength(3);
+    advance(60_001);
+    expect(svc.request({ pageTitle: 'x', enabled: true })).toMatchObject({ reason: 'no-session' });
+    expect(procs).toHaveLength(4);
   });
 
   it('空闲 20s 无请求 ⇒ kill；disabled / 非 win32 / 无 PowerShell ⇒ 不启动并返回对应 reason', () => {

@@ -38,6 +38,7 @@ export interface MediaWatcherProcess {
     } | null;
     kill(): void;
     on(event: 'exit', cb: (code?: number | null) => void): void;
+    on(event: 'error', cb: (err?: unknown) => void): void;
 }
 export interface MediaSessionServiceOptions {
     platform?: NodeJS.Platform;

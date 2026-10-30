@@ -80,7 +80,7 @@ export function selectSession(frame: WatcherFrame, opts: SessionSelectionOptions
 }
 
 // 常驻 watcher 的 PowerShell 脚本（常量，不拼接运行期数据）。
-// 每 700ms 全量采样；只在会话签名变化时输出一行 JSON（封面仅签名变化时携带）。
+// 每 700ms 全量采样；只在会话签名变化时输出一行 JSON（封面仅在元数据变化时携带）。
 export const WATCH_SCRIPT = [
   '$ErrorActionPreference = "Stop"',
   '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
@@ -106,10 +106,11 @@ export const WATCH_SCRIPT = [
   '    $contentType = [string]$p.ContentType',
   '    $status = [string]$pi.PlaybackStatus',
   '    $sig = "$appId|$title|$artist|$album|$contentType|$status"',
+  '    $artSig = "$appId|$title|$artist|$album|$contentType"',
   '    $sigParts += $sig',
   '    $artB64 = ""',
   '    $artType = ""',
-  '    if ($lastArt[$appId] -ne $sig) {',
+  '    if ($lastArt[$appId] -ne $artSig) {',
   '      try {',
   '        if ($null -ne $p.Thumbnail) {',
   '          $st = Await ($p.Thumbnail.OpenReadAsync()) ([Windows.Storage.Streams.IRandomAccessStreamWithContentType])',
@@ -121,7 +122,7 @@ export const WATCH_SCRIPT = [
   '            $rd.ReadBytes($buf)',
   '            $artB64 = [Convert]::ToBase64String($buf)',
   '            $artType = [string]$st.ContentType',
-  '            $lastArt[$appId] = $sig',
+  '            $lastArt[$appId] = $artSig',
   '          }',
   '        }',
   '      } catch { $artB64 = "" }',
@@ -146,6 +147,8 @@ export interface MediaWatcherProcess {
   stderr?: { on(event: 'data', cb: (chunk: Buffer) => void): void } | null;
   kill(): void;
   on(event: 'exit', cb: (code?: number | null) => void): void;
+  // Node 对 ENOENT/EACCES 抛异步 error 事件；不监听会 uncaught。
+  on(event: 'error', cb: (err?: unknown) => void): void;
 }
 export interface MediaSessionServiceOptions {
   platform?: NodeJS.Platform;
@@ -169,6 +172,10 @@ const DEFAULT_IDLE_MS = 20_000;
 const DEFAULT_IDLE_CHECK_MS = 5_000;
 const MAX_ART_BYTES = 512 * 1024;
 const ART_CACHE_MAX = 8;
+// spawn 异步失败后短退避：窗口内不重复 spawn，窗口外允许重试。
+const START_RETRY_MS = 5_000;
+const FAILURE_WINDOW_MS = 60_000;
+const DEGRADE_MS = 60_000;
 
 interface ArtEntry { bytes: Buffer; contentType: string; rev: number }
 
@@ -192,8 +199,9 @@ export function createMediaSessionService(opts: MediaSessionServiceOptions = {})
   let buffer = '';
   let frame: WatcherFrame | null = null;
   let lastRequestAt = 0;
+  // 全局单调、stop 不重置：客户端以 rev 为缓存键，回退会显示错封面。
   let rev = 0;
-  const arts = new Map<number, ArtEntry>();
+  // 单一数据源：sessionKey → art（含 rev）。thumbnail 直接在此按 rev 查找。
   const artBySession = new Map<string, ArtEntry>();
   const lastChangedAt = new Map<string, number>();
   const sessionSig = new Map<string, string>();
@@ -203,6 +211,8 @@ export function createMediaSessionService(opts: MediaSessionServiceOptions = {})
   let badLines = 0;
   let degradedUntil = 0;
   let recentStartFailures: number[] = [];
+  let lastStartError: MediaReason | null = null;
+  let retryStartAt = 0;
   let disposed = false;
 
   const evictOldest = <K, V>(m: Map<K, V>) => {
@@ -217,11 +227,11 @@ export function createMediaSessionService(opts: MediaSessionServiceOptions = {})
     proc = null;
     buffer = '';
     frame = null;
-    arts.clear();
     artBySession.clear();
-    rev = 0;
     lastChangedAt.clear();
     sessionSig.clear();
+    lastStartError = null;
+    retryStartAt = 0;
     if (idleTimer !== null) { clearIntervalImpl(idleTimer); idleTimer = null; }
     if (hadProc) log(`media watcher stopped (${reason})`);
   };
@@ -238,22 +248,35 @@ export function createMediaSessionService(opts: MediaSessionServiceOptions = {})
       }
       if (s.art) {
         rev += 1;
-        const entry: ArtEntry = { bytes: s.art.bytes.slice(0, MAX_ART_BYTES), contentType: s.art.contentType, rev };
-        arts.set(rev, entry);
-        evictOldest(arts);
         const key = sessionKeyOf(s);
         artBySession.delete(key); // 重新插入以维持淘汰顺序（最近收到 art 的会话在后）
-        artBySession.set(key, entry);
+        artBySession.set(key, { bytes: s.art.bytes.slice(0, MAX_ART_BYTES), contentType: s.art.contentType, rev });
         evictOldest(artBySession);
       }
     }
     frame = next;
+    lastStartError = null;
+  };
+
+  const onStartError = (p: MediaWatcherProcess) => {
+    if (proc !== p) return;
+    proc = null;
+    buffer = '';
+    const at = now();
+    recentStartFailures = [...recentStartFailures.filter((t) => at - t < FAILURE_WINDOW_MS), at];
+    lastStartError = 'no-powershell';
+    retryStartAt = at + START_RETRY_MS;
+    if (recentStartFailures.length >= 3) {
+      degradedUntil = at + DEGRADE_MS;
+      log('media watcher degraded (start failures)');
+    }
+    log('media watcher start failed (no-powershell)');
   };
 
   const start = (): MediaReason | null => {
     if (proc) return null;
     const at = now();
-    recentStartFailures = recentStartFailures.filter((t) => at - t < 60_000);
+    recentStartFailures = recentStartFailures.filter((t) => at - t < FAILURE_WINDOW_MS);
     if (degradedUntil > at) return 'watcher-failed';
     let p: MediaWatcherProcess;
     try {
@@ -269,6 +292,7 @@ export function createMediaSessionService(opts: MediaSessionServiceOptions = {})
     starts += 1;
     proc = p;
     stdout.on('data', (chunk: Buffer) => {
+      if (proc !== p) return; // stop/dispose 后已缓冲的行不得回填
       buffer += chunk.toString('utf8');
       for (;;) {
         const idx = buffer.indexOf('\n');
@@ -279,35 +303,48 @@ export function createMediaSessionService(opts: MediaSessionServiceOptions = {})
       }
       if (buffer.length > 1024 * 1024) buffer = '';
     });
+    p.on('error', () => { onStartError(p); });
     p.on('exit', () => {
       if (proc !== p) return;
       proc = null;
+      buffer = ''; // 半行不污染重启后的首行
       recentStartFailures = [...recentStartFailures, now()];
       if (recentStartFailures.length >= 3) {
-        degradedUntil = now() + 60_000;
+        degradedUntil = now() + DEGRADE_MS;
         log('media watcher degraded (restart rate)');
       }
       if (!disposed && now() - lastRequestAt < idleMs) restarts += 1;
       log('media watcher exited');
     });
-    idleTimer ??= setIntervalImpl(() => {
-      if (proc && now() - lastRequestAt > idleMs) stop('idle');
-    }, idleCheckMs);
+    if (idleTimer === null) {
+      const timer = setIntervalImpl(() => {
+        if (proc && now() - lastRequestAt > idleMs) stop('idle');
+      }, idleCheckMs);
+      idleTimer = timer;
+      const maybe = timer as { unref?: () => void } | null;
+      if (maybe && typeof maybe.unref === 'function') maybe.unref();
+    }
     log('media watcher started');
     return null;
   };
 
   return {
     request({ pageTitle, enabled }) {
-      lastRequestAt = now();
+      const at = now();
+      if (disposed) return emptyMediaSnapshot('disabled', at);
+      lastRequestAt = at;
       if (!enabled) {
         stop('disabled');
-        return emptyMediaSnapshot('disabled', lastRequestAt);
+        return emptyMediaSnapshot('disabled', at);
       }
-      if (platform !== 'win32') return emptyMediaSnapshot('unsupported-platform', lastRequestAt);
+      if (platform !== 'win32') return emptyMediaSnapshot('unsupported-platform', at);
+      // 无帧且刚 spawn 失败：退避窗口内直接返回，窗口外仍允许重试。
+      if (!proc && !frame && lastStartError === 'no-powershell' && at < retryStartAt) {
+        return emptyMediaSnapshot(degradedUntil > at ? 'watcher-failed' : 'no-powershell', at);
+      }
       const failure = start();
-      if (failure) return emptyMediaSnapshot(failure, lastRequestAt);
-      if (!frame) return emptyMediaSnapshot('no-session', lastRequestAt);
+      if (failure) return emptyMediaSnapshot(failure, at);
+      if (!frame) return emptyMediaSnapshot('no-session', at);
       const { session, reason } = selectSession(frame, { ownAppId, pageTitle, lastChangedAt });
       if (!session) return emptyMediaSnapshot(reason, frame.at);
       const art = artBySession.get(sessionKeyOf(session));
@@ -328,8 +365,10 @@ export function createMediaSessionService(opts: MediaSessionServiceOptions = {})
       };
     },
     thumbnail(r) {
-      const hit = arts.get(r);
-      return hit ? { bytes: hit.bytes, contentType: hit.contentType } : null;
+      for (const entry of artBySession.values()) {
+        if (entry.rev === r) return { bytes: entry.bytes, contentType: entry.contentType };
+      }
+      return null;
     },
     dispose() {
       disposed = true;
