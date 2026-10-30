@@ -67,6 +67,10 @@ const MIME: Record<string, string> = {
   '.ico': 'image/x-icon',
   '.mp4': 'video/mp4',
   '.webm': 'video/webm',
+  // 开机动画白名单的其余视频扩展名（浏览器对 MIME 严格，不能回 octet-stream）
+  '.mov': 'video/quicktime',
+  '.m4v': 'video/x-m4v',
+  '.ogv': 'video/ogg',
   '.mp3': 'audio/mpeg',
   '.wav': 'audio/wav',
   '.ogg': 'audio/ogg',
@@ -421,18 +425,16 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
       handler: (req: any, res: any) => {
         if (!isLoopbackRemote(req.socket?.remoteAddress)) return json(res, 403, { error: 'loopback only' });
         const { search } = parseUrl(req);
-        const raw = search.get('path') ?? '';
-        const ext = '.' + (raw.split('.').pop() ?? '').toLowerCase();
-        if (!raw || !isAbsolute(raw)) return json(res, 400, { error: 'bad path' });
-        if (!BOOT_VIDEO_EXTS.has(ext)) {
-          return json(res, 400, { ok: false, exists: false, isFile: false, size: 0, playable: false, error: 'unsupported extension' });
+        // 与 local-video 共用同一套校验，保证 NUL/相对路径/目录/不存在 的 400/404 完全一致
+        const parsed = resolveBootVideoPath(search.get('path'));
+        if (!parsed.ok) {
+          return json(res, parsed.code, {
+            ok: false, exists: false, isFile: false, size: 0, playable: false,
+            error: parsed.code === 404 ? 'not found' : 'bad path',
+          });
         }
-        try {
-          const st = statSync(raw);
-          return json(res, 200, { ok: true, exists: true, isFile: st.isFile(), size: st.size, playable: st.isFile(), ext });
-        } catch {
-          return json(res, 404, { ok: false, exists: false, isFile: false, size: 0, playable: false, error: 'not found' });
-        }
+        const ext = '.' + (parsed.file.split('.').pop() ?? '').toLowerCase();
+        return json(res, 200, { ok: true, exists: true, isFile: true, size: parsed.size, playable: true, ext });
       },
     });
 

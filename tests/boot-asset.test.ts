@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { Writable } from 'node:stream';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -58,6 +58,11 @@ describe('resolveBootVideoPath', () => {
     writeFileSync(p, 'abcdef');
     expect(resolveBootVideoPath(p)).toEqual({ ok: true, file: p, size: 6 });
   });
+  it('NUL 路径 400；以 .mp4 结尾的目录 404', () => {
+    expect(resolveBootVideoPath(join(dir, 'nul\0.mp4'))).toEqual({ ok: false, code: 400 });
+    mkdirSync(join(dir, 'folder.mp4'));
+    expect(resolveBootVideoPath(join(dir, 'folder.mp4'))).toEqual({ ok: false, code: 404 });
+  });
 });
 
 const handler = (path: string) => routes.get(path)!;
@@ -99,6 +104,30 @@ describe('GET /wallpapers/boot/local-video', () => {
     await r2.done;
     expect(r2.statusCode).toBe(404);
   });
+  it('NUL 路径 400；以 .mp4 结尾的目录 404', async () => {
+    const r1 = makeStreamRes();
+    handler('/wallpapers/boot/local-video')(makeReq('/wallpapers/boot/local-video?path=' + encodeURIComponent(join(dir, 'nul\0.mp4'))), r1);
+    await r1.done;
+    expect(r1.statusCode).toBe(400);
+
+    mkdirSync(join(dir, 'folder.mp4'));
+    const r2 = makeStreamRes();
+    handler('/wallpapers/boot/local-video')(makeReq('/wallpapers/boot/local-video?path=' + encodeURIComponent(join(dir, 'folder.mp4'))), r2);
+    await r2.done;
+    expect(r2.statusCode).toBe(404);
+  });
+  it('mov/m4v/ogv 下发对应视频 MIME', async () => {
+    const cases = [['.mov', 'video/quicktime'], ['.m4v', 'video/x-m4v'], ['.ogv', 'video/ogg']] as const;
+    for (const [ext, mime] of cases) {
+      const p = join(dir, 'clip' + ext);
+      writeFileSync(p, 'x');
+      const res = makeStreamRes();
+      handler('/wallpapers/boot/local-video')(makeReq('/wallpapers/boot/local-video?path=' + encodeURIComponent(p)), res);
+      await res.done;
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['Content-Type']).toBe(mime);
+    }
+  });
 });
 
 describe('GET /wallpapers/boot/probe', () => {
@@ -115,5 +144,39 @@ describe('GET /wallpapers/boot/probe', () => {
     handler('/wallpapers/boot/probe')(makeReq('/wallpapers/boot/probe?path=x', '8.8.8.8'), res2);
     await res2.done;
     expect(res2.statusCode).toBe(403);
+  });
+  it('NUL/相对路径 400、不存在/目录 404，错误体 ok:false', async () => {
+    const nul = makeStreamRes();
+    handler('/wallpapers/boot/probe')(makeReq('/wallpapers/boot/probe?path=' + encodeURIComponent(join(dir, 'nul\0.mp4'))), nul);
+    await nul.done;
+    expect(nul.statusCode).toBe(400);
+    expect(JSON.parse(nul.body.toString())).toMatchObject({ ok: false, exists: false, size: 0, playable: false });
+
+    const rel = makeStreamRes();
+    handler('/wallpapers/boot/probe')(makeReq('/wallpapers/boot/probe?path=a.mp4'), rel);
+    await rel.done;
+    expect(rel.statusCode).toBe(400);
+
+    const missing = makeStreamRes();
+    handler('/wallpapers/boot/probe')(makeReq('/wallpapers/boot/probe?path=' + encodeURIComponent(join(dir, 'no.mp4'))), missing);
+    await missing.done;
+    expect(missing.statusCode).toBe(404);
+    expect(JSON.parse(missing.body.toString())).toMatchObject({ ok: false, exists: false, isFile: false });
+
+    mkdirSync(join(dir, 'folder.mp4'));
+    const dirRes = makeStreamRes();
+    handler('/wallpapers/boot/probe')(makeReq('/wallpapers/boot/probe?path=' + encodeURIComponent(join(dir, 'folder.mp4'))), dirRes);
+    await dirRes.done;
+    expect(dirRes.statusCode).toBe(404);
+    expect(JSON.parse(dirRes.body.toString())).toMatchObject({ ok: false, exists: false, isFile: false });
+  });
+  it('尾随空格与 local-video 一样 trim 后校验', async () => {
+    const p = join(dir, 'trim.mp4');
+    writeFileSync(p, 'abc');
+    const res = makeStreamRes();
+    handler('/wallpapers/boot/probe')(makeReq('/wallpapers/boot/probe?path=' + encodeURIComponent(p + '  ')), res);
+    await res.done;
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body.toString())).toMatchObject({ ok: true, exists: true, isFile: true, size: 3, playable: true });
   });
 });
