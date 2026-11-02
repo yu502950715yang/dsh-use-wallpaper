@@ -294,6 +294,10 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
   const [settings, setSettings] = useState<ClientSettings | null>(null);
   const [wallpapers, setWallpapers] = useState<WallpaperInfo[]>([]);
   const [probe, setProbe] = useState<ProbeResult | null>(null);
+  const [probing, setProbing] = useState(false);
+  // 素材目录卡展开状态：未配置时默认展开（首屏可见），用户手动切换后以用户为准。
+  const [dirsOpen, setDirsOpen] = useState(false);
+  const dirsInitialized = useRef(false);
   const [wallpaperDir, setWallpaperDir] = useState('');
   const [weAssetsDir, setWeAssetsDir] = useState('');
   const [message, setMessage] = useState('');
@@ -320,6 +324,7 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
     query: '', types: [], favoritesOnly: false, showHidden: false, sort: 'default',
   });
   const visibleWallpapers = filterLibrary(wallpapers, filter, libState);
+  const dirsConfigured = !!(settings?.wallpaperDir || settings?.weAssetsDir);
   const selectedId = settings?.selectedWallpaperId ?? '';
   const selectedIsScene = !!selectedId && wallpapers.some((w) => w.id === selectedId && (w.type === 'scene' || w.type === 'preset'));
   // 开关以面板持久化值为准（renderer 状态可能晚 1s 轮询才回来）；状态行的 reason 用渲染器实时值。
@@ -365,6 +370,14 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
     })();
     return () => { alive = false; };
   }, [fetchSettings, fetchWallpapers]);
+
+  // 目录卡展开只在设置首次加载后决定一次：未配置展开、已配置折叠。
+  // 之后不因其它设置变化重置用户手动切换的展开状态。
+  useEffect(() => {
+    if (!settings || dirsInitialized.current) return;
+    dirsInitialized.current = true;
+    setDirsOpen(!(settings.wallpaperDir || settings.weAssetsDir));
+  }, [settings]);
 
   // 切换壁纸时重新拉取属性；控件初值 = localStorage 覆盖值，否则壁纸默认 value。
   useEffect(() => {
@@ -511,20 +524,39 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
 
   const runProbe = useCallback(() => {
     setMessage('');
+    setProbing(true);
     void fetchProbe()
       .then(setProbe)
-      .catch(() => setMessage('自动探测失败'));
+      .catch(() => setMessage('自动探测失败'))
+      .finally(() => setProbing(false));
   }, [fetchProbe]);
 
   const adopt = useCallback((path: string, key: 'wallpaperDir' | 'weAssetsDir') => {
     void writeSettings({ [key]: path } as Partial<ClientSettings>)
       .then((ok) => {
         if (ok === false) { setMessage('保存失败：设置未写入（详见控制台）'); return; }
-        if (key === 'wallpaperDir') setWallpaperDir(path);
-        else setWeAssetsDir(path);
-        setMessage('已采用探测路径');
+        // 同步 settings 状态：hint（已配置/未配置）与「第一次使用」引导说明立即跟上。
+        // 只改输入框会让卡片停留在「未配置」（真机反馈：输入框已有值、hint 仍是未配置）。
+        setSettings((prev) => (prev ? { ...prev, [key]: path } : prev));
+        if (key === 'wallpaperDir') {
+          setWallpaperDir(path);
+          setMessage('已采用壁纸目录，正在扫描…');
+          // 采用壁纸目录后自动刷新列表：新用户不必再自己找「刷新」按钮；
+          // 扫描结果为空时给明确原因，而不是静默 0 张。
+          void fetchWallpapers({ refresh: true })
+            .then((list) => {
+              setWallpapers(list);
+              setMessage(list.length === 0
+                ? '路径已保存，但没扫描到壁纸：确认它指向 steamapps/workshop/content/431960'
+                : `路径已保存，找到 ${list.length} 张壁纸`);
+            })
+            .catch(() => setMessage('路径已保存，但刷新壁纸列表失败'));
+        } else {
+          setWeAssetsDir(path);
+          setMessage('已采用引擎目录');
+        }
       });
-  }, [writeSettings]);
+  }, [writeSettings, fetchWallpapers]);
 
   const currentTitle = settings
     ? (wallpapers.find((w) => w.id === settings.selectedWallpaperId)?.title ?? '无（默认背景）')
@@ -623,10 +655,11 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
           <button type="button" className="wss-media-dismiss" onClick={dismissMediaFailure}>知道了</button>
         </section>
       )}
-      {/* 快捷导航：四组锚点，点击滚动定位 */}
+      {/* 快捷导航：五组锚点，点击滚动定位（素材目录排在壁纸库后：首次配置就在首屏） */}
       <nav className="wss-nav" aria-label="壁纸设置快速定位">
         {[
           ['wss-anchor-library', '壁纸库'],
+          ['wss-anchor-dirs', '素材目录'],
           ['wss-anchor-appearance', '外观'],
           ['wss-anchor-playback', '播放'],
           ['wss-anchor-advanced', '高级'],
@@ -642,6 +675,8 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
           <h4 className="wss-section-title">壁纸库</h4>
           <span className="wss-count">{wallpapers.length} 张</span>
         </header>
+        {/* 壁纸库为空时工具栏（搜索/筛选）没有可操作对象，直接隐藏，把首屏留给素材目录卡 */}
+        {wallpapers.length > 0 && (
         <div className="wss-library-tools">
           <div className="wss-search-row">
             <input
@@ -705,6 +740,7 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
             </label>
           </div>
         </div>
+        )}
         <div className="wss-grid">
           {visibleWallpapers.map((w) => {
             const selected = settings?.selectedWallpaperId === w.id;
@@ -763,12 +799,94 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
             );
           })}
         </div>
-        {wallpapers.length === 0 && (
-          <p className="wss-empty">还没有壁纸。请在下方设置壁纸目录，或点「自动探测」。</p>
+        {wallpapers.length === 0 && dirsConfigured && (
+          <p className="wss-empty">目录里没有找到壁纸：确认路径正确后点「刷新」。</p>
         )}
         {wallpapers.length > 0 && visibleWallpapers.length === 0 && (
           <p className="wss-empty">没有匹配的壁纸（隐藏 {libState.hidden.size} 张）</p>
         )}
+        {/* 素材目录：从「高级」提到壁纸库内（首次安装最需要的就是它）。
+            未配置时默认展开；输入框 / 保存 / 自动探测 / 候选列表的 wss-* 契约保持不变。 */}
+        <details
+          className="wss-details wss-dirs"
+          id="wss-anchor-dirs"
+          open={dirsOpen}
+          onToggle={(e) => setDirsOpen((e.currentTarget as HTMLDetailsElement).open)}
+        >
+          <summary className="wss-details-head">
+            <span className="wss-details-title">素材目录</span>
+            <span className="wss-details-hint">{dirsConfigured ? '已配置' : '未配置'}</span>
+          </summary>
+          <div className="wss-details-body">
+          {/* 首次安装（空库 + 未配置）时这张卡就是引导卡：说明 + 探测/手填一站式。
+              不再另起一张「首次配置」卡——同一件事拆成两个部分会让探测结果与输入框重复。 */}
+          {!dirsConfigured && (
+            <p className="wss-dirs-lead">
+              第一次使用：插件不会自己找到 Steam 里的壁纸。先指定 Wallpaper Engine 的素材目录
+              （workshop，AppID 431960）——点「自动探测」，或按下面「怎么找」手动填写。
+            </p>
+          )}
+          <p className="wss-section-desc">填 Wallpaper Engine 的两个目录；留空 = 未配置；也可以直接点「自动探测」采用探测结果。</p>
+          <label className="wss-field">
+            <span className="wss-field-label">壁纸目录（workshop）</span>
+            <input
+              className="wss-dir-workshop"
+              value={wallpaperDir}
+              placeholder="例如 D:/Steam/steamapps/workshop/content/431960"
+              onChange={(e) => setWallpaperDir(e.target.value)}
+            />
+            <span className="wss-field-hint">steamapps/workshop/content/431960（431960 = Wallpaper Engine 的 AppID）</span>
+          </label>
+          <label className="wss-field">
+            <span className="wss-field-label">引擎目录（particle 纹理）</span>
+            <input
+              className="wss-dir-assets"
+              value={weAssetsDir}
+              placeholder="例如 D:/Steam/steamapps/common/wallpaper_engine"
+              onChange={(e) => setWeAssetsDir(e.target.value)}
+            />
+            <span className="wss-field-hint">steamapps/common/wallpaper_engine（读 WE 内置纹理；可先留空）</span>
+          </label>
+          <div className="wss-dir-actions">
+            <button type="button" className="wss-save-dirs" onClick={saveDirs}>保存路径</button>
+            <button type="button" className="wss-probe" onClick={runProbe} disabled={probing}>{probing ? '探测中…' : '自动探测'}</button>
+          </div>
+          {probe && (
+            <div className="wss-probe-result">
+              <h5 className="wss-subtitle">探测到的壁纸目录</h5>
+              {probe.workshop.map((c) => (
+                <div key={c.path} className="wss-candidate" data-kind="workshop">
+                  <span className="wss-candidate-path" title={c.path}>{c.path}</span>
+                  <span className={c.exists ? 'wss-exists' : 'wss-missing'}>{c.exists ? '存在' : '不存在'}</span>
+                  <button type="button" className="wss-adopt" data-path={c.path} onClick={() => adopt(c.path, 'wallpaperDir')}>采用</button>
+                </div>
+              ))}
+              <h5 className="wss-subtitle">探测到的引擎目录</h5>
+              {probe.assets.map((c) => (
+                <div key={c.path} className="wss-candidate" data-kind="assets">
+                  <span className="wss-candidate-path" title={c.path}>{c.path}</span>
+                  <span className={c.exists ? 'wss-exists' : 'wss-missing'}>{c.exists ? '存在' : '不存在'}</span>
+                  <button type="button" className="wss-adopt" data-path={c.path} onClick={() => adopt(c.path, 'weAssetsDir')}>采用</button>
+                </div>
+              ))}
+            </div>
+          )}
+          <details className="wss-setup-help">
+            <summary className="wss-setup-help-head">怎么找这两个目录？</summary>
+            <ul className="wss-setup-help-list">
+              <li>
+                壁纸目录：Steam 库 → 右键 Wallpaper Engine →「管理」→「浏览本地文件」；
+                workshop 路径形如 <code>steamapps/workshop/content/431960</code>。
+              </li>
+              <li>
+                引擎目录：Wallpaper Engine 安装目录（例如{' '}
+                <code>D:/Steam/steamapps/common/wallpaper_engine</code>），用来读粒子 / 效果纹理；
+                只填壁纸目录也能先选壁纸。
+              </li>
+            </ul>
+          </details>
+          </div>
+        </details>
       </section>
       {/* 壁纸属性（v0.9 四类型）：bool/slider/color/combo；slider/color 防抖提交，bool/combo 即时；
           提交后写 localStorage 并重装配当前壁纸（渲染器装配时读取属性值）。 */}
@@ -1226,57 +1344,6 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
           </div>
         </details>
       )}
-      <details className="wss-details">
-        <summary className="wss-details-head">
-          <span className="wss-details-title">壁纸目录</span>
-          <span className="wss-details-hint">{wallpaperDir && weAssetsDir ? '已配置' : '未配置'}</span>
-        </summary>
-        <div className="wss-details-body">
-        <p className="wss-section-desc">填 Wallpaper Engine 的两个目录；留空 = 未配置。也可以直接点「自动探测」采用探测结果。</p>
-        <label className="wss-field">
-          <span className="wss-field-label">壁纸目录（workshop）</span>
-          <input
-            className="wss-dir-workshop"
-            value={wallpaperDir}
-            placeholder="例如 D:/Steam/steamapps/workshop/content/431960"
-            onChange={(e) => setWallpaperDir(e.target.value)}
-          />
-        </label>
-        <label className="wss-field">
-          <span className="wss-field-label">引擎目录（particle 纹理）</span>
-          <input
-            className="wss-dir-assets"
-            value={weAssetsDir}
-            placeholder="例如 D:/Steam/steamapps/common/wallpaper_engine"
-            onChange={(e) => setWeAssetsDir(e.target.value)}
-          />
-        </label>
-        <div className="wss-dir-actions">
-          <button type="button" className="wss-save-dirs" onClick={saveDirs}>保存路径</button>
-          <button type="button" className="wss-probe" onClick={runProbe}>自动探测</button>
-        </div>
-        {probe && (
-          <div className="wss-probe-result">
-            <h5 className="wss-subtitle">探测到的壁纸目录</h5>
-            {probe.workshop.map((c) => (
-              <div key={c.path} className="wss-candidate" data-kind="workshop">
-                <span className="wss-candidate-path" title={c.path}>{c.path}</span>
-                <span className={c.exists ? 'wss-exists' : 'wss-missing'}>{c.exists ? '存在' : '不存在'}</span>
-                <button type="button" className="wss-adopt" data-path={c.path} onClick={() => adopt(c.path, 'wallpaperDir')}>采用</button>
-              </div>
-            ))}
-            <h5 className="wss-subtitle">探测到的引擎目录</h5>
-            {probe.assets.map((c) => (
-              <div key={c.path} className="wss-candidate" data-kind="assets">
-                <span className="wss-candidate-path" title={c.path}>{c.path}</span>
-                <span className={c.exists ? 'wss-exists' : 'wss-missing'}>{c.exists ? '存在' : '不存在'}</span>
-                <button type="button" className="wss-adopt" data-path={c.path} onClick={() => adopt(c.path, 'weAssetsDir')}>采用</button>
-              </div>
-            ))}
-          </div>
-        )}
-        </div>
-      </details>
       {/* 实时渲染：状态行 + 重试/清除入口。—— 放在面板最末：它不是日常操作，
           只在「scene 壁纸渲染不出来」时才是用户唯一的自救入口。 */}
       <details className="wss-details" data-tone={liveState}>

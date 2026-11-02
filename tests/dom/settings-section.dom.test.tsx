@@ -155,7 +155,7 @@ describe('WallpaperSettingsSection', () => {
     expect(status!.getAttribute('data-tone')).toBe('idle');
   });
 
-  it('v0.9 新布局：快捷导航 4 个锚点，点击滚动到对应分组', async () => {
+  it('v0.9 新布局：快捷导航 5 个锚点，点击滚动到对应分组', async () => {
     const scrollSpy = vi.fn();
     const original = Element.prototype.scrollIntoView;
     Element.prototype.scrollIntoView = scrollSpy;
@@ -163,9 +163,10 @@ describe('WallpaperSettingsSection', () => {
       mount();
       await flush();
       const items = [...container.querySelectorAll<HTMLElement>('.wss-nav-item')];
-      expect(items.map((el) => el.textContent)).toEqual(['壁纸库', '外观', '播放', '高级']);
+      expect(items.map((el) => el.textContent)).toEqual(['壁纸库', '素材目录', '外观', '播放', '高级']);
+      expect(container.querySelector('#wss-anchor-dirs')).toBeTruthy();
       expect(container.querySelector('#wss-anchor-advanced')).toBeTruthy();
-      items[3]!.click();
+      items[1]!.click();
       await flush();
       expect(scrollSpy).toHaveBeenCalledTimes(1);
     } finally {
@@ -173,12 +174,67 @@ describe('WallpaperSettingsSection', () => {
     }
   });
 
-  it('v0.9 新布局：高级设置默认折叠为 details', async () => {
+  it('v0.9 新布局：目录卡未配置时默认展开，其余高级项默认折叠', async () => {
     mount();
     await flush();
-    const details = [...container.querySelectorAll<HTMLDetailsElement>('details.wss-details')];
-    expect(details.length).toBeGreaterThanOrEqual(4);
-    expect(details.every((d) => d.open === false)).toBe(true);
+    const dirs = container.querySelector('details.wss-dirs') as HTMLDetailsElement | null;
+    expect(dirs).toBeTruthy();
+    expect(dirs!.open).toBe(true);
+    const advanced = [...container.querySelectorAll<HTMLDetailsElement>('details.wss-details:not(.wss-dirs)')];
+    expect(advanced.length).toBeGreaterThanOrEqual(3);
+    expect(advanced.every((d) => d.open === false)).toBe(true);
+  });
+
+  it('素材目录卡：空库且未配置时展开并显示首次引导说明（独立引导卡已并入）', async () => {
+    mount({ fetchWallpapers: async () => [] });
+    await flush();
+    const dirs = container.querySelector('details.wss-dirs') as HTMLDetailsElement | null;
+    expect(dirs).toBeTruthy();
+    expect(dirs!.open).toBe(true);
+    const lead = dirs!.querySelector('.wss-dirs-lead');
+    expect(lead).toBeTruthy();
+    expect(lead!.textContent).toContain('自动探测');
+    expect(lead!.textContent).toContain('431960');
+    // 合并后不再有独立引导卡；引导说明替代空态
+    expect(container.querySelector('.wss-setup')).toBeNull();
+    expect(container.querySelector('.wss-empty')).toBeNull();
+  });
+
+  it('素材目录卡：自动探测 → 采用 → 写设置、刷新列表并同步「已配置」状态', async () => {
+    const writeSettings = vi.fn(async () => {});
+    const fetchWallpapers = vi.fn(async (_opts?: { refresh?: boolean }) => [] as any[]);
+    mount({ writeSettings, fetchWallpapers });
+    await flush();
+    const dirs = container.querySelector('details.wss-dirs') as HTMLDetailsElement;
+    (dirs.querySelector('.wss-probe') as HTMLButtonElement).click();
+    await flush();
+    // 目录卡展示全部候选：PROBE workshop 2 个（1 存在 + 1 不存在）+ assets 1 个
+    const candidates = [...dirs.querySelectorAll('.wss-candidate')];
+    expect(candidates.length).toBe(3);
+    expect(candidates[0]!.querySelector('.wss-exists')).toBeTruthy();
+    (candidates[0]!.querySelector('.wss-adopt') as HTMLButtonElement).click();
+    await flush();
+    expect(writeSettings).toHaveBeenCalledWith({ wallpaperDir: PROBE.workshop[0]!.path });
+    // 采用后自动刷新列表（用户不用再找「刷新」按钮）
+    expect(fetchWallpapers).toHaveBeenCalledTimes(2);
+    expect(fetchWallpapers.mock.calls[1]![0]).toEqual({ refresh: true });
+    // 状态同步：hint 立即变「已配置」、引导说明消失（此前只更新输入框，hint 一直停在「未配置」）
+    expect(dirs.querySelector('.wss-details-hint')?.textContent).toBe('已配置');
+    expect(dirs.querySelector('.wss-dirs-lead')).toBeNull();
+    // 刷新后仍空列表：明确告诉用户没扫描到壁纸，而不是静默 0 张
+    expect(container.querySelector('.wss-message')?.textContent).toContain('没扫描到壁纸');
+  });
+
+  it('素材目录卡：空库但已配置时折叠、无引导说明，提示目录里没有壁纸', async () => {
+    mount({
+      fetchSettings: async () => ({ ...BASE_SETTINGS, wallpaperDir: 'D:/Steam/steamapps/workshop/content/431960' }),
+      fetchWallpapers: async () => [],
+    });
+    await flush();
+    const dirs = container.querySelector('details.wss-dirs') as HTMLDetailsElement;
+    expect(dirs.open).toBe(false);
+    expect(dirs.querySelector('.wss-dirs-lead')).toBeNull();
+    expect(container.querySelector('.wss-empty')?.textContent).toContain('没有找到壁纸');
   });
 
   it('渲染壁纸网格并标记当前选中项', async () => {

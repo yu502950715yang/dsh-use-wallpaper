@@ -280,6 +280,25 @@ body[data-ds-dark-theme] .wss-hero::before{background:radial-gradient(90% 140% a
 .wss-thumb-title{font-size:12px;line-height:1.35;padding:2px 3px 3px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:550}
 .wss-thumb.wss-selected .wss-thumb-media{box-shadow:0 0 0 2px var(--wp-accent),0 6px 16px rgba(15,17,22,.16)}
 .wss-empty{margin:10px 0 0;padding:18px 14px;text-align:center;font-size:12.5px;line-height:1.7;color:var(--dsw-alias-label-tertiary,var(--wp-text));border:1px dashed var(--dsw-alias-border-l2,var(--wp-panel-border));border-radius:10px}
+/* 素材目录卡（壁纸库内）：未配置时就是首次引导卡（说明 + 探测/手填 + 帮助一站式） */
+.wss-dirs-lead{margin:0;padding:10px 12px;border-radius:9px;border:1px solid color-mix(in srgb,var(--wp-accent) 34%,var(--dsw-alias-border-l2,var(--wp-panel-border)));background:color-mix(in srgb,var(--wp-accent) 8%,transparent);font-size:12px;line-height:1.65;color:var(--dsw-alias-label-secondary,var(--wp-text))}
+.wss-setup-help{border-top:1px dashed var(--dsw-alias-border-l2,var(--wp-panel-border));padding-top:10px}
+.wss-setup-help-head{cursor:pointer;font-size:12px;font-weight:550;color:var(--dsw-alias-label-secondary,var(--wp-text))}
+.wss-setup-help-head:focus-visible{outline:2px solid var(--wp-accent);outline-offset:2px}
+.wss-setup-help-list{margin:8px 0 0;padding-left:18px;display:flex;flex-direction:column;gap:6px;font-size:12px;line-height:1.65;color:var(--dsw-alias-label-tertiary,var(--wp-text))}
+.wss-setup-help-list code{font-family:ui-monospace,Consolas,monospace;font-size:11.5px;padding:1px 5px;border-radius:4px;background:rgba(127,127,127,.14)}
+/* 素材目录卡（壁纸库内）：未配置默认展开；锚点滚动留出 sticky 导航高度 */
+.wss-dirs{margin-top:12px;scroll-margin-top:64px}
+.wss-field-hint{font-size:11px;line-height:1.5;color:var(--dsw-alias-label-tertiary,var(--wp-text))}
+/* 首次安装提示条（注册进 DSH shell.overlay）：右下角、可关闭、自行接指针事件 */
+.wst-root{position:fixed;right:20px;bottom:20px;z-index:70;display:flex;align-items:center;gap:14px;max-width:min(460px,calc(100vw - 40px));padding:13px 16px;border-radius:14px;border:1px solid color-mix(in srgb,var(--wp-accent) 40%,var(--dsw-alias-border-l2,var(--wp-panel-border)));background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));box-shadow:0 12px 32px rgba(15,17,22,.22);color:var(--dsw-alias-label-primary,var(--wp-text));font-size:12.5px;line-height:1.6;pointer-events:auto}
+.wst-body{display:flex;flex-direction:column;gap:3px;min-width:0}
+.wst-title{margin:0;font-size:13px;font-weight:650}
+.wst-desc{margin:0;color:var(--dsw-alias-label-secondary,var(--wp-text))}
+.wst-dismiss{flex:none;border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background:transparent;color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;min-height:30px;padding:6px 12px;font:inherit;font-size:12px;font-weight:550;cursor:pointer;transition:background-color .15s ease}
+.wst-dismiss:hover{background:rgba(127,127,127,.12)}
+.wst-dismiss:focus-visible{outline:2px solid var(--wp-accent);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){.wst-dismiss{transition:none}}
 /* 控件行：标签左、控件右；复选框统一渲染成开关 */
 .wss-row,.wss-glow-row{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:34px;margin:0;font-size:12.5px;color:var(--dsw-alias-label-secondary,var(--wp-text))}
 .wss-row input[type=checkbox],.wss-glow-row input[type=checkbox]{appearance:none;-webkit-appearance:none;order:2;margin:0;flex:none;width:36px;height:20px;border-radius:999px;background:rgba(100,105,120,.4);position:relative;cursor:pointer;transition:background-color .15s ease;box-shadow:inset 0 0 0 1px rgba(0,0,0,.10)}

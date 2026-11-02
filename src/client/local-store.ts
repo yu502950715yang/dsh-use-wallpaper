@@ -5,8 +5,8 @@ export interface StorageLike {
   removeItem(key: string): void;
 }
 
-/** 插件全部 localStorage 键（收藏 / 隐藏 / 最近使用）。 */
-export const STORAGE_KEYS = { favorites: 'we:fav', hidden: 'we:hidden', recent: 'we:recent' } as const;
+/** 插件全部 localStorage 键（收藏 / 隐藏 / 最近使用 / 首次配置提示）。 */
+export const STORAGE_KEYS = { favorites: 'we:fav', hidden: 'we:hidden', recent: 'we:recent', setupTip: 'we:setup-tip' } as const;
 
 function storeOf(store?: StorageLike): StorageLike | null {
   if (store) return store;

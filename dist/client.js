@@ -2486,6 +2486,25 @@ body[data-ds-dark-theme] .wss-hero::before{background:radial-gradient(90% 140% a
 .wss-thumb-title{font-size:12px;line-height:1.35;padding:2px 3px 3px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:550}
 .wss-thumb.wss-selected .wss-thumb-media{box-shadow:0 0 0 2px var(--wp-accent),0 6px 16px rgba(15,17,22,.16)}
 .wss-empty{margin:10px 0 0;padding:18px 14px;text-align:center;font-size:12.5px;line-height:1.7;color:var(--dsw-alias-label-tertiary,var(--wp-text));border:1px dashed var(--dsw-alias-border-l2,var(--wp-panel-border));border-radius:10px}
+/* \u7D20\u6750\u76EE\u5F55\u5361\uFF08\u58C1\u7EB8\u5E93\u5185\uFF09\uFF1A\u672A\u914D\u7F6E\u65F6\u5C31\u662F\u9996\u6B21\u5F15\u5BFC\u5361\uFF08\u8BF4\u660E + \u63A2\u6D4B/\u624B\u586B + \u5E2E\u52A9\u4E00\u7AD9\u5F0F\uFF09 */
+.wss-dirs-lead{margin:0;padding:10px 12px;border-radius:9px;border:1px solid color-mix(in srgb,var(--wp-accent) 34%,var(--dsw-alias-border-l2,var(--wp-panel-border)));background:color-mix(in srgb,var(--wp-accent) 8%,transparent);font-size:12px;line-height:1.65;color:var(--dsw-alias-label-secondary,var(--wp-text))}
+.wss-setup-help{border-top:1px dashed var(--dsw-alias-border-l2,var(--wp-panel-border));padding-top:10px}
+.wss-setup-help-head{cursor:pointer;font-size:12px;font-weight:550;color:var(--dsw-alias-label-secondary,var(--wp-text))}
+.wss-setup-help-head:focus-visible{outline:2px solid var(--wp-accent);outline-offset:2px}
+.wss-setup-help-list{margin:8px 0 0;padding-left:18px;display:flex;flex-direction:column;gap:6px;font-size:12px;line-height:1.65;color:var(--dsw-alias-label-tertiary,var(--wp-text))}
+.wss-setup-help-list code{font-family:ui-monospace,Consolas,monospace;font-size:11.5px;padding:1px 5px;border-radius:4px;background:rgba(127,127,127,.14)}
+/* \u7D20\u6750\u76EE\u5F55\u5361\uFF08\u58C1\u7EB8\u5E93\u5185\uFF09\uFF1A\u672A\u914D\u7F6E\u9ED8\u8BA4\u5C55\u5F00\uFF1B\u951A\u70B9\u6EDA\u52A8\u7559\u51FA sticky \u5BFC\u822A\u9AD8\u5EA6 */
+.wss-dirs{margin-top:12px;scroll-margin-top:64px}
+.wss-field-hint{font-size:11px;line-height:1.5;color:var(--dsw-alias-label-tertiary,var(--wp-text))}
+/* \u9996\u6B21\u5B89\u88C5\u63D0\u793A\u6761\uFF08\u6CE8\u518C\u8FDB DSH shell.overlay\uFF09\uFF1A\u53F3\u4E0B\u89D2\u3001\u53EF\u5173\u95ED\u3001\u81EA\u884C\u63A5\u6307\u9488\u4E8B\u4EF6 */
+.wst-root{position:fixed;right:20px;bottom:20px;z-index:70;display:flex;align-items:center;gap:14px;max-width:min(460px,calc(100vw - 40px));padding:13px 16px;border-radius:14px;border:1px solid color-mix(in srgb,var(--wp-accent) 40%,var(--dsw-alias-border-l2,var(--wp-panel-border)));background:var(--dsw-alias-bg-layer-3,var(--wp-panel-bg));box-shadow:0 12px 32px rgba(15,17,22,.22);color:var(--dsw-alias-label-primary,var(--wp-text));font-size:12.5px;line-height:1.6;pointer-events:auto}
+.wst-body{display:flex;flex-direction:column;gap:3px;min-width:0}
+.wst-title{margin:0;font-size:13px;font-weight:650}
+.wst-desc{margin:0;color:var(--dsw-alias-label-secondary,var(--wp-text))}
+.wst-dismiss{flex:none;border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background:transparent;color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;min-height:30px;padding:6px 12px;font:inherit;font-size:12px;font-weight:550;cursor:pointer;transition:background-color .15s ease}
+.wst-dismiss:hover{background:rgba(127,127,127,.12)}
+.wst-dismiss:focus-visible{outline:2px solid var(--wp-accent);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){.wst-dismiss{transition:none}}
 /* \u63A7\u4EF6\u884C\uFF1A\u6807\u7B7E\u5DE6\u3001\u63A7\u4EF6\u53F3\uFF1B\u590D\u9009\u6846\u7EDF\u4E00\u6E32\u67D3\u6210\u5F00\u5173 */
 .wss-row,.wss-glow-row{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:34px;margin:0;font-size:12.5px;color:var(--dsw-alias-label-secondary,var(--wp-text))}
 .wss-row input[type=checkbox],.wss-glow-row input[type=checkbox]{appearance:none;-webkit-appearance:none;order:2;margin:0;flex:none;width:36px;height:20px;border-radius:999px;background:rgba(100,105,120,.4);position:relative;cursor:pointer;transition:background-color .15s ease;box-shadow:inset 0 0 0 1px rgba(0,0,0,.10)}
@@ -3864,7 +3883,7 @@ var FAILURE_TEXT = {
 };
 
 // src/client/local-store.ts
-var STORAGE_KEYS = { favorites: "we:fav", hidden: "we:hidden", recent: "we:recent" };
+var STORAGE_KEYS = { favorites: "we:fav", hidden: "we:hidden", recent: "we:recent", setupTip: "we:setup-tip" };
 function storeOf(store) {
   if (store) return store;
   return typeof localStorage !== "undefined" ? localStorage : null;
@@ -4241,6 +4260,9 @@ function WallpaperSettingsSection(props) {
   const [settings, setSettings] = (0, import_react.useState)(null);
   const [wallpapers, setWallpapers] = (0, import_react.useState)([]);
   const [probe, setProbe] = (0, import_react.useState)(null);
+  const [probing, setProbing] = (0, import_react.useState)(false);
+  const [dirsOpen, setDirsOpen] = (0, import_react.useState)(false);
+  const dirsInitialized = (0, import_react.useRef)(false);
   const [wallpaperDir, setWallpaperDir] = (0, import_react.useState)("");
   const [weAssetsDir, setWeAssetsDir] = (0, import_react.useState)("");
   const [message, setMessage] = (0, import_react.useState)("");
@@ -4265,6 +4287,7 @@ function WallpaperSettingsSection(props) {
     sort: "default"
   });
   const visibleWallpapers = filterLibrary(wallpapers, filter, libState);
+  const dirsConfigured = !!(settings?.wallpaperDir || settings?.weAssetsDir);
   const selectedId = settings?.selectedWallpaperId ?? "";
   const selectedIsScene = !!selectedId && wallpapers.some((w) => w.id === selectedId && (w.type === "scene" || w.type === "preset"));
   const mediaEnabled = settings?.mediaIntegrationEnabled ?? false;
@@ -4304,6 +4327,11 @@ function WallpaperSettingsSection(props) {
       alive = false;
     };
   }, [fetchSettings, fetchWallpapers]);
+  (0, import_react.useEffect)(() => {
+    if (!settings || dirsInitialized.current) return;
+    dirsInitialized.current = true;
+    setDirsOpen(!(settings.wallpaperDir || settings.weAssetsDir));
+  }, [settings]);
   (0, import_react.useEffect)(() => {
     if (!selectedIsScene) {
       setProperties([]);
@@ -4417,7 +4445,8 @@ function WallpaperSettingsSection(props) {
   }, [wallpaperDir, weAssetsDir, writeSettings]);
   const runProbe = (0, import_react.useCallback)(() => {
     setMessage("");
-    void fetchProbe().then(setProbe).catch(() => setMessage("\u81EA\u52A8\u63A2\u6D4B\u5931\u8D25"));
+    setProbing(true);
+    void fetchProbe().then(setProbe).catch(() => setMessage("\u81EA\u52A8\u63A2\u6D4B\u5931\u8D25")).finally(() => setProbing(false));
   }, [fetchProbe]);
   const adopt = (0, import_react.useCallback)((path, key) => {
     void writeSettings({ [key]: path }).then((ok) => {
@@ -4425,11 +4454,20 @@ function WallpaperSettingsSection(props) {
         setMessage("\u4FDD\u5B58\u5931\u8D25\uFF1A\u8BBE\u7F6E\u672A\u5199\u5165\uFF08\u8BE6\u89C1\u63A7\u5236\u53F0\uFF09");
         return;
       }
-      if (key === "wallpaperDir") setWallpaperDir(path);
-      else setWeAssetsDir(path);
-      setMessage("\u5DF2\u91C7\u7528\u63A2\u6D4B\u8DEF\u5F84");
+      setSettings((prev) => prev ? { ...prev, [key]: path } : prev);
+      if (key === "wallpaperDir") {
+        setWallpaperDir(path);
+        setMessage("\u5DF2\u91C7\u7528\u58C1\u7EB8\u76EE\u5F55\uFF0C\u6B63\u5728\u626B\u63CF\u2026");
+        void fetchWallpapers({ refresh: true }).then((list) => {
+          setWallpapers(list);
+          setMessage(list.length === 0 ? "\u8DEF\u5F84\u5DF2\u4FDD\u5B58\uFF0C\u4F46\u6CA1\u626B\u63CF\u5230\u58C1\u7EB8\uFF1A\u786E\u8BA4\u5B83\u6307\u5411 steamapps/workshop/content/431960" : `\u8DEF\u5F84\u5DF2\u4FDD\u5B58\uFF0C\u627E\u5230 ${list.length} \u5F20\u58C1\u7EB8`);
+        }).catch(() => setMessage("\u8DEF\u5F84\u5DF2\u4FDD\u5B58\uFF0C\u4F46\u5237\u65B0\u58C1\u7EB8\u5217\u8868\u5931\u8D25"));
+      } else {
+        setWeAssetsDir(path);
+        setMessage("\u5DF2\u91C7\u7528\u5F15\u64CE\u76EE\u5F55");
+      }
     });
-  }, [writeSettings]);
+  }, [writeSettings, fetchWallpapers]);
   const currentTitle = settings ? wallpapers.find((w) => w.id === settings.selectedWallpaperId)?.title ?? "\u65E0\uFF08\u9ED8\u8BA4\u80CC\u666F\uFF09" : "";
   const live = health ?? EMPTY_HEALTH;
   const liveCurrent = live.ok === true ? formatHealthLine({ ...live, failure: null }, weT) : formatHealthLine(live, weT);
@@ -4496,6 +4534,7 @@ function WallpaperSettingsSection(props) {
     ] }),
     /* @__PURE__ */ (0, import_jsx_runtime.jsx)("nav", { className: "wss-nav", "aria-label": "\u58C1\u7EB8\u8BBE\u7F6E\u5FEB\u901F\u5B9A\u4F4D", children: [
       ["wss-anchor-library", "\u58C1\u7EB8\u5E93"],
+      ["wss-anchor-dirs", "\u7D20\u6750\u76EE\u5F55"],
       ["wss-anchor-appearance", "\u5916\u89C2"],
       ["wss-anchor-playback", "\u64AD\u653E"],
       ["wss-anchor-advanced", "\u9AD8\u7EA7"]
@@ -4509,7 +4548,7 @@ function WallpaperSettingsSection(props) {
             " \u5F20"
           ] })
         ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-library-tools", children: [
+        wallpapers.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-library-tools", children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-search-row", children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
               "input",
@@ -4647,12 +4686,91 @@ function WallpaperSettingsSection(props) {
             ] })
           ] }, w.id);
         }) }),
-        wallpapers.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-empty", children: "\u8FD8\u6CA1\u6709\u58C1\u7EB8\u3002\u8BF7\u5728\u4E0B\u65B9\u8BBE\u7F6E\u58C1\u7EB8\u76EE\u5F55\uFF0C\u6216\u70B9\u300C\u81EA\u52A8\u63A2\u6D4B\u300D\u3002" }),
+        wallpapers.length === 0 && dirsConfigured && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-empty", children: "\u76EE\u5F55\u91CC\u6CA1\u6709\u627E\u5230\u58C1\u7EB8\uFF1A\u786E\u8BA4\u8DEF\u5F84\u6B63\u786E\u540E\u70B9\u300C\u5237\u65B0\u300D\u3002" }),
         wallpapers.length > 0 && visibleWallpapers.length === 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { className: "wss-empty", children: [
           "\u6CA1\u6709\u5339\u914D\u7684\u58C1\u7EB8\uFF08\u9690\u85CF ",
           libState.hidden.size,
           " \u5F20\uFF09"
-        ] })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+          "details",
+          {
+            className: "wss-details wss-dirs",
+            id: "wss-anchor-dirs",
+            open: dirsOpen,
+            onToggle: (e) => setDirsOpen(e.currentTarget.open),
+            children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("summary", { className: "wss-details-head", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-details-title", children: "\u7D20\u6750\u76EE\u5F55" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-details-hint", children: dirsConfigured ? "\u5DF2\u914D\u7F6E" : "\u672A\u914D\u7F6E" })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-details-body", children: [
+                !dirsConfigured && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-dirs-lead", children: "\u7B2C\u4E00\u6B21\u4F7F\u7528\uFF1A\u63D2\u4EF6\u4E0D\u4F1A\u81EA\u5DF1\u627E\u5230 Steam \u91CC\u7684\u58C1\u7EB8\u3002\u5148\u6307\u5B9A Wallpaper Engine \u7684\u7D20\u6750\u76EE\u5F55 \uFF08workshop\uFF0CAppID 431960\uFF09\u2014\u2014\u70B9\u300C\u81EA\u52A8\u63A2\u6D4B\u300D\uFF0C\u6216\u6309\u4E0B\u9762\u300C\u600E\u4E48\u627E\u300D\u624B\u52A8\u586B\u5199\u3002" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc", children: "\u586B Wallpaper Engine \u7684\u4E24\u4E2A\u76EE\u5F55\uFF1B\u7559\u7A7A = \u672A\u914D\u7F6E\uFF1B\u4E5F\u53EF\u4EE5\u76F4\u63A5\u70B9\u300C\u81EA\u52A8\u63A2\u6D4B\u300D\u91C7\u7528\u63A2\u6D4B\u7ED3\u679C\u3002" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-field", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-field-label", children: "\u58C1\u7EB8\u76EE\u5F55\uFF08workshop\uFF09" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                    "input",
+                    {
+                      className: "wss-dir-workshop",
+                      value: wallpaperDir,
+                      placeholder: "\u4F8B\u5982 D:/Steam/steamapps/workshop/content/431960",
+                      onChange: (e) => setWallpaperDir(e.target.value)
+                    }
+                  ),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-field-hint", children: "steamapps/workshop/content/431960\uFF08431960 = Wallpaper Engine \u7684 AppID\uFF09" })
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-field", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-field-label", children: "\u5F15\u64CE\u76EE\u5F55\uFF08particle \u7EB9\u7406\uFF09" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                    "input",
+                    {
+                      className: "wss-dir-assets",
+                      value: weAssetsDir,
+                      placeholder: "\u4F8B\u5982 D:/Steam/steamapps/common/wallpaper_engine",
+                      onChange: (e) => setWeAssetsDir(e.target.value)
+                    }
+                  ),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-field-hint", children: "steamapps/common/wallpaper_engine\uFF08\u8BFB WE \u5185\u7F6E\u7EB9\u7406\uFF1B\u53EF\u5148\u7559\u7A7A\uFF09" })
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-dir-actions", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-save-dirs", onClick: saveDirs, children: "\u4FDD\u5B58\u8DEF\u5F84" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-probe", onClick: runProbe, disabled: probing, children: probing ? "\u63A2\u6D4B\u4E2D\u2026" : "\u81EA\u52A8\u63A2\u6D4B" })
+                ] }),
+                probe && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-probe-result", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h5", { className: "wss-subtitle", children: "\u63A2\u6D4B\u5230\u7684\u58C1\u7EB8\u76EE\u5F55" }),
+                  probe.workshop.map((c) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-candidate", "data-kind": "workshop", children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-candidate-path", title: c.path, children: c.path }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: c.exists ? "wss-exists" : "wss-missing", children: c.exists ? "\u5B58\u5728" : "\u4E0D\u5B58\u5728" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-adopt", "data-path": c.path, onClick: () => adopt(c.path, "wallpaperDir"), children: "\u91C7\u7528" })
+                  ] }, c.path)),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h5", { className: "wss-subtitle", children: "\u63A2\u6D4B\u5230\u7684\u5F15\u64CE\u76EE\u5F55" }),
+                  probe.assets.map((c) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-candidate", "data-kind": "assets", children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-candidate-path", title: c.path, children: c.path }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: c.exists ? "wss-exists" : "wss-missing", children: c.exists ? "\u5B58\u5728" : "\u4E0D\u5B58\u5728" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-adopt", "data-path": c.path, onClick: () => adopt(c.path, "weAssetsDir"), children: "\u91C7\u7528" })
+                  ] }, c.path))
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("details", { className: "wss-setup-help", children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("summary", { className: "wss-setup-help-head", children: "\u600E\u4E48\u627E\u8FD9\u4E24\u4E2A\u76EE\u5F55\uFF1F" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("ul", { className: "wss-setup-help-list", children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", { children: [
+                      "\u58C1\u7EB8\u76EE\u5F55\uFF1ASteam \u5E93 \u2192 \u53F3\u952E Wallpaper Engine \u2192\u300C\u7BA1\u7406\u300D\u2192\u300C\u6D4F\u89C8\u672C\u5730\u6587\u4EF6\u300D\uFF1B workshop \u8DEF\u5F84\u5F62\u5982 ",
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("code", { children: "steamapps/workshop/content/431960" }),
+                      "\u3002"
+                    ] }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("li", { children: [
+                      "\u5F15\u64CE\u76EE\u5F55\uFF1AWallpaper Engine \u5B89\u88C5\u76EE\u5F55\uFF08\u4F8B\u5982",
+                      " ",
+                      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("code", { children: "D:/Steam/steamapps/common/wallpaper_engine" }),
+                      "\uFF09\uFF0C\u7528\u6765\u8BFB\u7C92\u5B50 / \u6548\u679C\u7EB9\u7406\uFF1B \u53EA\u586B\u58C1\u7EB8\u76EE\u5F55\u4E5F\u80FD\u5148\u9009\u58C1\u7EB8\u3002"
+                    ] })
+                  ] })
+                ] })
+              ] })
+            ]
+          }
+        )
       ] }),
       selectedIsScene && visibleProperties.length > 0 && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section wss-userprops", children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wss-section-title", children: "\u58C1\u7EB8\u5C5E\u6027" }),
@@ -5128,57 +5246,6 @@ function WallpaperSettingsSection(props) {
           ] })
         ] })
       ] }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("details", { className: "wss-details", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("summary", { className: "wss-details-head", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-details-title", children: "\u58C1\u7EB8\u76EE\u5F55" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-details-hint", children: wallpaperDir && weAssetsDir ? "\u5DF2\u914D\u7F6E" : "\u672A\u914D\u7F6E" })
-        ] }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-details-body", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc", children: "\u586B Wallpaper Engine \u7684\u4E24\u4E2A\u76EE\u5F55\uFF1B\u7559\u7A7A = \u672A\u914D\u7F6E\u3002\u4E5F\u53EF\u4EE5\u76F4\u63A5\u70B9\u300C\u81EA\u52A8\u63A2\u6D4B\u300D\u91C7\u7528\u63A2\u6D4B\u7ED3\u679C\u3002" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-field", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-field-label", children: "\u58C1\u7EB8\u76EE\u5F55\uFF08workshop\uFF09" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-              "input",
-              {
-                className: "wss-dir-workshop",
-                value: wallpaperDir,
-                placeholder: "\u4F8B\u5982 D:/Steam/steamapps/workshop/content/431960",
-                onChange: (e) => setWallpaperDir(e.target.value)
-              }
-            )
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-field", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-field-label", children: "\u5F15\u64CE\u76EE\u5F55\uFF08particle \u7EB9\u7406\uFF09" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-              "input",
-              {
-                className: "wss-dir-assets",
-                value: weAssetsDir,
-                placeholder: "\u4F8B\u5982 D:/Steam/steamapps/common/wallpaper_engine",
-                onChange: (e) => setWeAssetsDir(e.target.value)
-              }
-            )
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-dir-actions", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-save-dirs", onClick: saveDirs, children: "\u4FDD\u5B58\u8DEF\u5F84" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-probe", onClick: runProbe, children: "\u81EA\u52A8\u63A2\u6D4B" })
-          ] }),
-          probe && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-probe-result", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h5", { className: "wss-subtitle", children: "\u63A2\u6D4B\u5230\u7684\u58C1\u7EB8\u76EE\u5F55" }),
-            probe.workshop.map((c) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-candidate", "data-kind": "workshop", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-candidate-path", title: c.path, children: c.path }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: c.exists ? "wss-exists" : "wss-missing", children: c.exists ? "\u5B58\u5728" : "\u4E0D\u5B58\u5728" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-adopt", "data-path": c.path, onClick: () => adopt(c.path, "wallpaperDir"), children: "\u91C7\u7528" })
-            ] }, c.path)),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h5", { className: "wss-subtitle", children: "\u63A2\u6D4B\u5230\u7684\u5F15\u64CE\u76EE\u5F55" }),
-            probe.assets.map((c) => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-candidate", "data-kind": "assets", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-candidate-path", title: c.path, children: c.path }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: c.exists ? "wss-exists" : "wss-missing", children: c.exists ? "\u5B58\u5728" : "\u4E0D\u5B58\u5728" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-adopt", "data-path": c.path, onClick: () => adopt(c.path, "weAssetsDir"), children: "\u91C7\u7528" })
-            ] }, c.path))
-          ] })
-        ] })
-      ] }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("details", { className: "wss-details", "data-tone": liveState, children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("summary", { className: "wss-details-head", children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-details-title", children: "\u5B9E\u65F6\u6E32\u67D3" }),
@@ -5620,6 +5687,78 @@ function WallpaperSettingsShell(props = {}) {
       }
     )
   ] });
+}
+
+// src/client/setup-tip.tsx
+var import_react4 = require("react");
+var import_react_dom = require("react-dom");
+var import_jsx_runtime4 = require("react/jsx-runtime");
+var SETUP_TIP_ID = "wallpaper-engine-setup-tip";
+function registerSetupTipSlots(ctx) {
+  if (!ctx?.slots?.inject || !ctx?.slots?.register) return false;
+  ctx.slots.inject("shell.overlay", () => ctx.slots.register({
+    name: "shell.overlay",
+    id: SETUP_TIP_ID,
+    order: 30
+  }, SetupTip));
+  return true;
+}
+function storeOf2(storage) {
+  if (storage) return storage;
+  return typeof localStorage !== "undefined" ? localStorage : null;
+}
+function SetupTip(props = {}) {
+  const fetchSettings = props.fetchSettings ?? readClientSettings;
+  const autoHideMs = props.autoHideMs ?? 15e3;
+  const [visible, setVisible] = (0, import_react4.useState)(false);
+  const [settled, setSettled] = (0, import_react4.useState)(false);
+  (0, import_react4.useEffect)(() => {
+    let alive = true;
+    void (async () => {
+      const store = storeOf2(props.storage);
+      if (store?.getItem(STORAGE_KEYS.setupTip)) {
+        if (alive) setSettled(true);
+        return;
+      }
+      let configured = false;
+      try {
+        const s = await fetchSettings();
+        configured = !!(s.wallpaperDir || s.weAssetsDir);
+      } catch {
+        if (alive) setSettled(true);
+        return;
+      }
+      if (!alive) return;
+      if (!configured) {
+        store?.setItem(STORAGE_KEYS.setupTip, "1");
+        setVisible(true);
+      }
+      setSettled(true);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [fetchSettings, props.storage]);
+  (0, import_react4.useEffect)(() => {
+    if (!visible || !autoHideMs) return;
+    const timer = setTimeout(() => setVisible(false), autoHideMs);
+    return () => clearTimeout(timer);
+  }, [visible, autoHideMs]);
+  if (!settled || !visible || typeof document === "undefined") return null;
+  return (0, import_react_dom.createPortal)(
+    /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { className: "wst-root", role: "status", "aria-live": "polite", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { className: "wst-body", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { className: "wst-title", children: "\u58C1\u7EB8\u5F15\u64CE\u8FD8\u5DEE\u4E00\u6B65" }),
+        /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("p", { className: "wst-desc", children: [
+          "\u6253\u5F00 ",
+          /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("b", { children: "\u8BBE\u7F6E \u2192 Wallpaper \u58C1\u7EB8" }),
+          "\uFF0C\u70B9\u300C\u81EA\u52A8\u63A2\u6D4B\u300D\u627E\u5230 Wallpaper Engine \u7684\u7D20\u6750\u76EE\u5F55\uFF0C\u5C31\u80FD\u9009\u58C1\u7EB8\u4E86\u3002"
+        ] })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("button", { type: "button", className: "wst-dismiss", onClick: () => setVisible(false), children: "\u77E5\u9053\u4E86" })
+    ] }),
+    document.body
+  );
 }
 
 // src/client/pointer-post.ts
@@ -37761,6 +37900,7 @@ function bootstrap(ctx) {
       label: () => "Wallpaper \u58C1\u7EB8"
     }, WallpaperSettingsShell));
   }
+  registerSetupTipSlots(ctx);
   if (typeof ctx?.effect === "function") ctx.effect(() => teardown, "wallpaper-engine: teardown");
   else if (typeof ctx?.on === "function") ctx.on("dispose", teardown);
 }

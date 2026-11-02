@@ -3,11 +3,12 @@ export interface StorageLike {
     setItem(key: string, value: string): void;
     removeItem(key: string): void;
 }
-/** 插件全部 localStorage 键（收藏 / 隐藏 / 最近使用）。 */
+/** 插件全部 localStorage 键（收藏 / 隐藏 / 最近使用 / 首次配置提示）。 */
 export declare const STORAGE_KEYS: {
     readonly favorites: "we:fav";
     readonly hidden: "we:hidden";
     readonly recent: "we:recent";
+    readonly setupTip: "we:setup-tip";
 };
 export declare function loadJson<T>(key: string, fallback: T, store?: StorageLike): T;
 /** 写入成功返回 true（配额满 / 隐私模式禁写返回 false，不抛）。 */
