@@ -60,6 +60,28 @@
           "engines": {
             "dsh": ">=0.1.5-rc.3"
           }
+        },
+        {
+          "version": "0.10.0",
+          "publishTimestamp": 1793350735,
+          "source": {
+            "type": "npm",
+            "registry": "https://registry.npmjs.org/"
+          },
+          "engines": {
+            "dsh": ">=0.1.5-rc.3"
+          }
+        },
+        {
+          "version": "0.11.0",
+          "publishTimestamp": 1793581576,
+          "source": {
+            "type": "npm",
+            "registry": "https://registry.npmjs.org/"
+          },
+          "engines": {
+            "dsh": ">=0.1.5-rc.3"
+          }
         }
       ]
     }
