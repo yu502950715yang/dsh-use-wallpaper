@@ -82,6 +82,7 @@ npx vitest run tests/xxx.test.ts --reporter=basic   # 跑单个文件
 - **兜底**：HMR 未生效（SSE 断开 / 页面未打开 / 落成实体副本）时，把 `lib/`、`dist/` 复制进 profile 并重启 + 强刷。
 - **设置位置**：DSH 0.1.7-alpha.1 起是 profile `cordis.patch.yml` 里条目 `dsh-wallpaper-engine` 的 `config`；≤0.1.6 是 `$DSH_HOME/settings.yaml`。**手工预置请写前者**（两版都读，见 §5.34）。
 - `lib/` 与 `dist/` **纳入版本控制**（`.gitignore` 不含它们）；发布包 `files` = `lib` + `dist` + `cordis.patch.yml` ⇒ **提交与发布前两个产物都要是新的**。
+- **发布**：版本号 / 构建 / tag / npm / GitHub Release / 插件市场索引的步骤与发布说明格式，统一见 [`.github/RELEASE_NOTES_TEMPLATE.md`](.github/RELEASE_NOTES_TEMPLATE.md)（发布说明按模板写，别再自创格式）。
 
 ### 3.3 验证手段
 
