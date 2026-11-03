@@ -91,6 +91,16 @@ function makeBodyReq(url: string, opts: { method?: string; headers?: Record<stri
 const MP4 = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypisom'), Buffer.alloc(16)]);
 const FRAME_PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(16)]);
 
+// 视频壁纸 fixture：project.json 指向 a.mp4，供 /wallpapers/media/<id>/file 测试
+function makeVideoWallpaper(id: string): Buffer {
+  const d = join(dir, id);
+  mkdirSync(d, { recursive: true });
+  writeFileSync(join(d, 'project.json'), JSON.stringify({ type: 'video', file: 'a.mp4' }));
+  writeFileSync(join(d, 'a.mp4'), MP4);
+  return MP4;
+}
+
+
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'wp-route-'));
   staticDir = join(dir, 'static');
@@ -262,6 +272,102 @@ describe('registerWallpaperRoutes', () => {
     expect(res.headers['Content-Type']).toContain('image/gif');
     expect(res.body.toString('utf8')).toBe('GIF89a');
   });
+
+  // ── /wallpapers/media/<id>/file：视频出口复用 sendSceneAsset（Range/206/416/HEAD/流式）──
+  it('media file：无 Range 的 GET → 200 + Accept-Ranges + Content-Length（视频流式）', async () => {
+    const v = makeVideoWallpaper('v1');
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
+    const res = makeStreamRes();
+    await routes.get('prefix /wallpapers/media')!(
+      makeBodyReq('/wallpapers/media/v1/file', { headers: {} }), res);
+    await res.done;
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['Content-Type']).toBe('video/mp4');
+    expect(res.headers['Accept-Ranges']).toBe('bytes');
+    expect(res.headers['Content-Length']).toBe(v.length);
+    expect(res.headers['Content-Range']).toBeUndefined();
+    expect(res.piped).toBe(true);
+    expect(res.body.equals(v)).toBe(true);
+  });
+
+  it('media file：bytes=0-3 → 206 + Content-Range + 4 字节 body', async () => {
+    const v = makeVideoWallpaper('v2');
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
+    const res = makeStreamRes();
+    await routes.get('prefix /wallpapers/media')!(
+      makeBodyReq('/wallpapers/media/v2/file', { headers: { range: 'bytes=0-3' } }), res);
+    await res.done;
+    expect(res.statusCode).toBe(206);
+    expect(res.headers['Content-Range']).toBe(`bytes 0-3/${v.length}`);
+    expect(res.headers['Content-Length']).toBe(4);
+    expect(res.body.equals(v.subarray(0, 4))).toBe(true);
+  });
+
+  it('media file：bytes=2- → 206 + Content-Range 到文件末尾', async () => {
+    const v = makeVideoWallpaper('v3');
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
+    const res = makeStreamRes();
+    await routes.get('prefix /wallpapers/media')!(
+      makeBodyReq('/wallpapers/media/v3/file', { headers: { range: 'bytes=2-' } }), res);
+    await res.done;
+    expect(res.statusCode).toBe(206);
+    expect(res.headers['Content-Range']).toBe(`bytes 2-${v.length - 1}/${v.length}`);
+    expect(res.headers['Content-Length']).toBe(v.length - 2);
+    expect(res.body.equals(v.subarray(2))).toBe(true);
+  });
+
+  it('media file：HEAD → 200 + Accept-Ranges、无 body', async () => {
+    const v = makeVideoWallpaper('v4');
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
+    const res = makeStreamRes();
+    await routes.get('prefix /wallpapers/media')!(
+      makeBodyReq('/wallpapers/media/v4/file', { method: 'HEAD' }), res);
+    await res.done;
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['Accept-Ranges']).toBe('bytes');
+    expect(res.headers['Content-Length']).toBe(v.length);
+    expect(res.piped).toBe(false);
+    expect(res.body.length).toBe(0);
+  });
+
+  it('media file：越界 Range → 416 + Content-Range: bytes */size', async () => {
+    const v = makeVideoWallpaper('v5');
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
+    const res = makeRes();
+    await routes.get('prefix /wallpapers/media')!(
+      makeBodyReq('/wallpapers/media/v5/file', { headers: { range: 'bytes=999999-' } }), res);
+    expect(res.statusCode).toBe(416);
+    expect(res.headers['Content-Range']).toBe(`bytes */${v.length}`);
+    expect(res.headers['Content-Length']).toBe(0);
+    expect(res.ended).toBe(true);
+  });
+
+  it('media file：非法 file 名 400 / 缺文件 404 / 缺 project.json 404（语义不变）', async () => {
+    const bad = join(dir, 'v6');
+    mkdirSync(bad, { recursive: true });
+    writeFileSync(join(bad, 'project.json'), JSON.stringify({ type: 'video', file: '../escape.mp4' }));
+    const noFile = join(dir, 'v7');
+    mkdirSync(noFile, { recursive: true });
+    writeFileSync(join(noFile, 'project.json'), JSON.stringify({ type: 'video', file: 'gone.mp4' }));
+    registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
+    const handler = routes.get('prefix /wallpapers/media')!;
+
+    const r1 = makeRes();
+    await handler({ url: '/wallpapers/media/v6/file', headers: {} }, r1);
+    expect(r1.statusCode).toBe(400);
+    expect(JSON.parse(r1.body.toString('utf8'))).toEqual({ error: 'bad file' });
+
+    const r2 = makeRes();
+    await handler({ url: '/wallpapers/media/v7/file', headers: {} }, r2);
+    expect(r2.statusCode).toBe(404);
+    expect(JSON.parse(r2.body.toString('utf8'))).toEqual({ error: 'no file' });
+
+    const r3 = makeRes();
+    await handler({ url: '/wallpapers/media/v8/file', headers: {} }, r3);
+    expect(r3.statusCode).toBe(404);
+    expect(JSON.parse(r3.body.toString('utf8'))).toEqual({ error: 'not found' });
+  });
+
   it('rejects path traversal in id and asset name', async () => {
     registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
     // id='..'：WHATWG URL dot-segment 规范化将 '..' 段折叠，pathname 段数不足 → 400

@@ -211,6 +211,8 @@ npx vitest run tests/xxx.test.ts --reporter=basic   # 跑单个文件
 
 55. **开机动画独立于壁纸层，本地视频路由仅回环来源（2026-10-30）**：`.wp-boot-layer` 是独立全屏层（z-index 高于 `#root`），**不改** `body[data-we-wallpaper]`、背景层 fit/暂停/轮播/健康状态；只做「video/image 素材的全屏层」，scene/web 不做实时渲染。本地视频路由 `GET /wallpapers/boot/local-video` **必须仅回环来源**：来源地址与 `Host` 头都必须是回环主机（`127.0.0.1` / `localhost` / `::1`，防 DNS rebinding），并拒绝 UNC/网络路径、扩展名白名单 + 绝对路径校验 —— dsh web 可绑 `0.0.0.0`，否则等于任意文件读取口子；校验路由同理。播一次与失败静默见 §7.45。
 
+56. **视频壁纸可观测性：路由 Range + 健康采样（2026-11-03）**：`GET /wallpapers/media/<id>/file` 改为复用 `sendSceneAsset`（`routes.ts`），与场景素材同口径支持 `Range`/`206`/`416`/`HEAD`、`.mp4 → video/mp4` 走流式；`preview` 仍 200 全量。客户端 `video-health.ts` 只读采样 `<video>`：`getVideoPlaybackQuality()` 算实测 fps / 近 1s 丢帧 / 累计丢帧，`currentTime` 100ms 采样判循环回绕（上一拍在 `duration×0.75` 之后、本拍回到 `×0.25` 之前，默认保留最近 5 次）并记两次采样墙钟差为循环停顿；8 类媒体事件记 `lastEvent`，状态优先级 `lost > paused > stalled(5s 窗口) > ok`。`background-layer.getVideoHealth()` 随 `<video>` attach/detach；`window.__wallpaperEngine.videoHealth()` 与设置面板「实时渲染」卡片的状态行（1s 轮询、非视频壁纸不显示）读同一份快照。**边界**：attach 时先打一拍基线（fps 只算增量，起播位置不会被误判为回绕）；`getVideoPlaybackQuality` 缺失/抛错按 0 处理不抛；循环停顿分辨率 = tick 间隔（100ms），不是精确帧时间。
+
 ## 6. 工作约定
 
 - 回复、注释、文档、**提交信息一律简体中文**；代码、命令、文件名、技术术语保留原文。

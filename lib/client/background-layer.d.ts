@@ -1,5 +1,6 @@
 import type { WallpaperInfo } from '../shared/types.js';
 import type { BackgroundPlan, FitMode } from './types.js';
+import { type VideoHealthSnapshot } from './video-health.js';
 export declare function resolveBackground(info: WallpaperInfo): BackgroundPlan;
 export declare function applyKenBurns(el: HTMLElement, enabled: boolean): void;
 export interface WebFrameLocation {
@@ -52,5 +53,7 @@ export interface BackgroundLayer {
     setChatOutline(color: string, level: number): void;
     /** 省电：暂停/恢复视频壁纸播放（scene 由渲染器负责；web 壁纸在 iframe 里无法受控）。 */
     setPaused(paused: boolean): void;
+    /** 视频壁纸健康快照（FPS/丢帧/循环停顿）；当前不是视频壁纸时返回 null。 */
+    getVideoHealth(): VideoHealthSnapshot | null;
 }
 export declare function createBackgroundLayer(root: HTMLElement): BackgroundLayer;

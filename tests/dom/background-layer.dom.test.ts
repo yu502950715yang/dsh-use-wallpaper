@@ -554,8 +554,22 @@ describe('createBackgroundLayer (DOM)', () => {
     const p = layer.showVideo('/ok.mp4');
     layer.root.querySelector('video')!.dispatchEvent(new Event('loadeddata'));
     await expect(p).resolves.toBe('ok');
+    // 视频健康采样是常驻 interval（不是悬挂的 1.5s 超时）：showNone 会 detach 后再数。
+    layer.showNone();
     expect(vi.getTimerCount()).toBe(0);
     vi.useRealTimers();
+  });
+
+  // 视频健康采样入口：随 <video> 生命周期 attach/detach，非视频壁纸时为 null。
+  it('getVideoHealth 在视频壁纸期间非 null、切走/清空后回 null', async () => {
+    const layer = createBackgroundLayer(document.createElement('div'));
+    expect(layer.getVideoHealth()).toBeNull();
+    const p = layer.showVideo('/ok.mp4');
+    layer.root.querySelector('video')!.dispatchEvent(new Event('loadeddata'));
+    await expect(p).resolves.toBe('ok');
+    expect(layer.getVideoHealth()).not.toBeNull();
+    layer.showImage('/a.jpg', false);
+    expect(layer.getVideoHealth()).toBeNull();
   });
 });
 

@@ -385,9 +385,9 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
 
     server.register({
       kind: 'prefix', path: '/wallpapers/media',
-      // 匹配 /wallpapers/media/<id>/preview 与 /wallpapers/media/<id>/file
-      handler: (_req: any, res: any) => {
-        const { segs } = parseUrl(_req);
+      // 匹配 /wallpapers/media/<id>/preview 与 /wallpapers/media/<id>/file（file 支持 Range/HEAD）
+      handler: (req: any, res: any) => {
+        const { segs } = parseUrl(req);
         if (segs.length < 4) return json(res, 400, { error: 'bad path' });
         const id = segs[2];
         const action = segs[3];
@@ -413,10 +413,13 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
             }
             const p = join(dir(), id, file);
             if (!existsSync(p)) return json(res, 404, { error: 'no file' });
-            const body = readFileSync(p);
-            const ext = '.' + file.split('.').pop()?.toLowerCase();
-            res.writeHead(200, { 'Content-Type': MIME[ext] ?? 'application/octet-stream', 'Content-Length': body.length });
-            res.end(body);
+            // 视频出口复用场景素材管线：<video> 拖动进度条依赖 Range/206/HEAD
+            const size = statSync(p).size;
+            sendSceneAsset(req, res, file, {
+              size,
+              readAll: () => readFileSync(p),
+              openRange: (start, end) => createReadStream(p, { start, end }),
+            }, opts.streamAssetBytes ?? STREAM_ASSET_BYTES);
           } catch {
             json(res, 404, { error: 'not found' });
           }

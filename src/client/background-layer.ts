@@ -2,6 +2,7 @@ import type { WallpaperInfo } from '../shared/types.js';
 import type { BackgroundPlan, FitMode } from './types.js';
 import { outlineShadow } from './text-color.js';
 import { computePointerPost } from './pointer-post.js';
+import { createVideoHealthMonitor, type VideoHealthSnapshot } from './video-health.js';
 
 export function resolveBackground(info: WallpaperInfo): BackgroundPlan {
   // scene / preset（依赖场景）/ unknown（project.json 无 type 但含场景包）都按场景渲染。
@@ -125,6 +126,8 @@ export interface BackgroundLayer {
   setChatOutline(color: string, level: number): void;
   /** 省电：暂停/恢复视频壁纸播放（scene 由渲染器负责；web 壁纸在 iframe 里无法受控）。 */
   setPaused(paused: boolean): void;
+  /** 视频壁纸健康快照（FPS/丢帧/循环停顿）；当前不是视频壁纸时返回 null。 */
+  getVideoHealth(): VideoHealthSnapshot | null;
 }
 
 export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
@@ -175,6 +178,8 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
   // 省电状态与当前视频元素（setPaused 对后者 pause/play）。
   let paused = false;
   let currentVideo: HTMLVideoElement | null = null;
+  // 视频健康采样：随 <video> 生命周期 attach/detach（面板与 __wallpaperEngine 排查用）。
+  const videoHealth = createVideoHealthMonitor();
   // 当前显示的图片与适配模式：供运行期切换（不重建元素）。
   let currentImage: HTMLImageElement | null = null;
   // 当前图片是否允许 Ken Burns（GIF 预览为 false）：面板只能关，不能重新打开。
@@ -210,6 +215,7 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
 
   function clear() {
     frameToken += 1;
+    videoHealth.detach();
     fill.replaceChildren();
     currentImage = null;
     currentImageKenBurnsAllowed = false;
@@ -354,6 +360,7 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
       });
       video.src = url;
       fill.appendChild(video);
+      videoHealth.attach(video);
       if (paused) video.pause(); // 暂停态下换壁纸：新视频同样不播
       markActive();
       return result;
@@ -441,6 +448,9 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
       if (!currentVideo) return;
       if (value) currentVideo.pause();
       else void currentVideo.play().catch(() => {});
+    },
+    getVideoHealth() {
+      return videoHealth.snapshot();
     },
   };
 }

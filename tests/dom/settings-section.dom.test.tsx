@@ -36,6 +36,7 @@ vi.mock('../../src/client/background-layer.js', () => ({
     setOverlayOpacity() {}, setBlur() {}, setPaused() {},
     setKenBurns() {}, setFitMode() {},
     showNone() {}, showImage() {}, showVideo: (url: string) => e2eVideo.showVideo(url), showWeb() {},
+    getVideoHealth: () => null,
   }),
 }));
 vi.mock('../../src/client/wallpaper-controller.js', () => ({

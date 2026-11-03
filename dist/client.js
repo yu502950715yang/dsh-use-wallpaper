@@ -4172,6 +4172,21 @@ var mediaIntegrationHandler = null;
 function setWallpaperMediaIntegrationHandler(handler) {
   mediaIntegrationHandler = handler;
 }
+var videoHealthHandler = null;
+function setWallpaperVideoHealthHandler(handler) {
+  videoHealthHandler = handler;
+}
+function formatVideoHealthLine(h) {
+  const res = h.videoWidth > 0 && h.videoHeight > 0 ? `${h.videoWidth}\xD7${h.videoHeight}` : "\u5206\u8FA8\u7387\u672A\u77E5";
+  const parts = [`${res} \xB7 \u5B9E\u6D4B ${h.fps.toFixed(1)}fps`];
+  if (h.droppedRecent > 0) parts.push(`\u8FD1 1s \u4E22\u5E27 ${h.droppedRecent}`);
+  const lastStall = h.loopStallsMs[h.loopStallsMs.length - 1];
+  if (lastStall !== void 0) parts.push(`\u6700\u8FD1\u5FAA\u73AF\u505C\u987F ${Math.round(lastStall)}ms`);
+  if (h.state === "paused") parts.push("\u5DF2\u6682\u505C");
+  else if (h.state === "lost") parts.push("\u89E3\u7801\u5931\u8D25");
+  else if (h.state === "stalled") parts.push("\u7F13\u51B2\u4E2D");
+  return parts.join(" \xB7 ");
+}
 function mediaIntegrationHint(enabled, status) {
   if (!enabled) return "\u5A92\u4F53\u96C6\u6210\u5DF2\u5173\u95ED\uFF1A\u4E0D\u8BFB\u53D6\u7CFB\u7EDF\u5A92\u4F53\u4F1A\u8BDD\uFF0C\u4E5F\u4E0D\u542F\u52A8\u5A92\u4F53\u8FDB\u7A0B\u3002";
   switch (status?.reason) {
@@ -4271,6 +4286,7 @@ function WallpaperSettingsSection(props) {
   const [mediaStatus, setMediaStatus] = (0, import_react.useState)(
     () => mediaIntegrationHandler?.get() ?? null
   );
+  const [videoHealth, setVideoHealth] = (0, import_react.useState)(null);
   const [libState, setLibState] = (0, import_react.useState)(loadLibraryState);
   const [properties, setProperties] = (0, import_react.useState)([]);
   const [audioProcessing, setAudioProcessing] = (0, import_react.useState)(false);
@@ -4306,6 +4322,12 @@ function WallpaperSettingsSection(props) {
   }, []);
   (0, import_react.useEffect)(() => {
     const read = () => setMediaStatus(mediaIntegrationHandler?.get() ?? null);
+    read();
+    const timer = setInterval(read, 1e3);
+    return () => clearInterval(timer);
+  }, []);
+  (0, import_react.useEffect)(() => {
+    const read = () => setVideoHealth(videoHealthHandler?.get() ?? null);
     read();
     const timer = setInterval(read, 1e3);
     return () => clearInterval(timer);
@@ -5256,6 +5278,10 @@ function WallpaperSettingsSection(props) {
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc wss-live-current", children: liveCurrent }),
             liveMemory && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc wss-live-memory", children: liveMemory })
           ] }),
+          videoHealth && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { className: "wss-section-desc wss-video-health", "data-state": videoHealth.state, children: [
+            "\u89C6\u9891\u58C1\u7EB8\uFF1A",
+            formatVideoHealthLine(videoHealth)
+          ] }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-row", children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-live-retry", onClick: retryLive, children: "\u91CD\u8BD5\u5B9E\u65F6\u6E32\u67D3" }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-live-forget", onClick: forgetFailures, children: "\u6E05\u9664\u5931\u8D25\u8BB0\u5FC6" })
@@ -5777,6 +5803,214 @@ function computePointerPost(ev, box, tag) {
   };
 }
 
+// src/client/video-health.ts
+var DEFAULT_SAMPLE_INTERVAL_MS = 1e3;
+var DEFAULT_TICK_INTERVAL_MS = 100;
+var DEFAULT_MAX_LOOP_STALLS = 5;
+var LOOP_TAIL_RATIO = 0.75;
+var LOOP_HEAD_RATIO = 0.25;
+var STALL_WINDOW_MS = 5e3;
+var WATCHED_EVENTS = [
+  "waiting",
+  "stalled",
+  "seeking",
+  "seeked",
+  "playing",
+  "pause",
+  "ended",
+  "error"
+];
+function readNumber(value) {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+function readFrameCounters(video) {
+  try {
+    if (typeof video.getVideoPlaybackQuality !== "function") return null;
+    const quality = video.getVideoPlaybackQuality();
+    if (!quality) return null;
+    return {
+      totalFrames: readNumber(quality.totalVideoFrames),
+      droppedFrames: readNumber(quality.droppedVideoFrames)
+    };
+  } catch {
+    return null;
+  }
+}
+function createVideoHealthMonitor(opts) {
+  const now = opts?.now ?? (() => Date.now());
+  const sampleIntervalMs = opts?.sampleIntervalMs ?? DEFAULT_SAMPLE_INTERVAL_MS;
+  const tickIntervalMs = opts?.tickIntervalMs ?? DEFAULT_TICK_INTERVAL_MS;
+  const maxLoopStalls = opts?.maxLoopStalls !== void 0 && Number.isFinite(opts.maxLoopStalls) ? Math.max(0, Math.trunc(opts.maxLoopStalls)) : DEFAULT_MAX_LOOP_STALLS;
+  const timers = opts?.timers ?? {
+    setInterval: (fn, ms) => globalThis.setInterval(fn, ms),
+    clearInterval: (id) => {
+      globalThis.clearInterval(id);
+    }
+  };
+  let video = null;
+  let disposed = false;
+  let sampleTimer = null;
+  let tickTimer = null;
+  const listeners = [];
+  let lastEvent = null;
+  let lastEventAt = null;
+  let lastStallEventAt = null;
+  let loopStallsMs = [];
+  let lastTime = null;
+  let lastTickAt = null;
+  let fps = 0;
+  let droppedFrames = 0;
+  let droppedRecent = 0;
+  let totalFrames = 0;
+  let prevCounters = null;
+  let prevSampleAt = null;
+  function reset() {
+    lastEvent = null;
+    lastEventAt = null;
+    lastStallEventAt = null;
+    loopStallsMs = [];
+    lastTime = null;
+    lastTickAt = null;
+    fps = 0;
+    droppedFrames = 0;
+    droppedRecent = 0;
+    totalFrames = 0;
+    prevCounters = null;
+    prevSampleAt = null;
+  }
+  function stopTimers() {
+    if (tickTimer !== null) {
+      timers.clearInterval(tickTimer);
+      tickTimer = null;
+    }
+    if (sampleTimer !== null) {
+      timers.clearInterval(sampleTimer);
+      sampleTimer = null;
+    }
+  }
+  function pushLoopStall(stallMs) {
+    if (maxLoopStalls <= 0) return;
+    loopStallsMs.push(Math.max(0, stallMs));
+    if (loopStallsMs.length > maxLoopStalls) loopStallsMs.splice(0, loopStallsMs.length - maxLoopStalls);
+  }
+  function tick() {
+    const el = video;
+    if (!el) return;
+    const at = now();
+    const currentTime = readNumber(el.currentTime);
+    const duration = readNumber(el.duration);
+    const paused = el.paused === true;
+    if (paused || duration <= 0) {
+      lastTime = currentTime;
+      lastTickAt = null;
+      return;
+    }
+    if (lastTime !== null && lastTickAt !== null && lastTime > duration * LOOP_TAIL_RATIO && currentTime < duration * LOOP_HEAD_RATIO && currentTime < lastTime) {
+      pushLoopStall(at - lastTickAt);
+    }
+    lastTime = currentTime;
+    lastTickAt = at;
+  }
+  function sample() {
+    const el = video;
+    if (!el) return;
+    const at = now();
+    const counters = readFrameCounters(el);
+    if (!counters) {
+      fps = 0;
+      droppedRecent = 0;
+      prevCounters = null;
+      prevSampleAt = null;
+      return;
+    }
+    if (prevCounters !== null && prevSampleAt !== null) {
+      const elapsedMs = at - prevSampleAt;
+      const addedFrames = counters.totalFrames - prevCounters.totalFrames;
+      const addedDropped = counters.droppedFrames - prevCounters.droppedFrames;
+      fps = elapsedMs > 0 && addedFrames > 0 ? addedFrames * 1e3 / elapsedMs : 0;
+      droppedRecent = addedDropped > 0 ? addedDropped : 0;
+    } else {
+      fps = 0;
+      droppedRecent = 0;
+    }
+    prevCounters = counters;
+    prevSampleAt = at;
+    droppedFrames = counters.droppedFrames;
+    totalFrames = counters.totalFrames;
+  }
+  function stateOf(paused) {
+    if (lastEvent === "error") return "lost";
+    if (paused) return "paused";
+    if (lastStallEventAt !== null && now() - lastStallEventAt < STALL_WINDOW_MS) return "stalled";
+    return "ok";
+  }
+  function detach() {
+    stopTimers();
+    const el = video;
+    video = null;
+    if (el) {
+      for (const { type, handler } of listeners) {
+        try {
+          el.removeEventListener(type, handler);
+        } catch {
+        }
+      }
+    }
+    listeners.length = 0;
+    reset();
+  }
+  function attach(el) {
+    if (disposed) return;
+    if (video) detach();
+    video = el;
+    reset();
+    for (const type of WATCHED_EVENTS) {
+      const handler = () => {
+        lastEvent = type;
+        lastEventAt = now();
+        if (type === "waiting" || type === "stalled") lastStallEventAt = lastEventAt;
+      };
+      try {
+        if (typeof el.addEventListener === "function") {
+          el.addEventListener(type, handler);
+          listeners.push({ type, handler });
+        }
+      } catch {
+      }
+    }
+    tick();
+    sample();
+    tickTimer = timers.setInterval(tick, tickIntervalMs);
+    sampleTimer = timers.setInterval(sample, sampleIntervalMs);
+  }
+  function dispose() {
+    detach();
+    disposed = true;
+  }
+  function snapshot() {
+    const el = video;
+    if (!el) return null;
+    const paused = el.paused === true;
+    return {
+      fps,
+      droppedFrames,
+      droppedRecent,
+      totalFrames,
+      currentTime: readNumber(el.currentTime),
+      duration: readNumber(el.duration),
+      paused,
+      videoWidth: readNumber(el.videoWidth),
+      videoHeight: readNumber(el.videoHeight),
+      loopStallsMs: [...loopStallsMs],
+      lastEvent,
+      lastEventAgoMs: lastEventAt === null ? null : Math.max(0, now() - lastEventAt),
+      state: stateOf(paused),
+      updatedAt: now()
+    };
+  }
+  return { attach, detach, snapshot, dispose };
+}
+
 // src/client/background-layer.ts
 function resolveBackground(info) {
   if ((info.type === "scene" || info.type === "preset" || info.type === "unknown") && info.hasScene) {
@@ -5862,6 +6096,7 @@ function createBackgroundLayer(root) {
   }
   let paused = false;
   let currentVideo = null;
+  const videoHealth = createVideoHealthMonitor();
   let currentImage = null;
   let currentImageKenBurnsAllowed = false;
   let kenBurnsEnabled = true;
@@ -5894,6 +6129,7 @@ function createBackgroundLayer(root) {
   }
   function clear() {
     frameToken += 1;
+    videoHealth.detach();
     fill.replaceChildren();
     currentImage = null;
     currentImageKenBurnsAllowed = false;
@@ -6010,6 +6246,7 @@ function createBackgroundLayer(root) {
       });
       video.src = url;
       fill.appendChild(video);
+      videoHealth.attach(video);
       if (paused) video.pause();
       markActive();
       return result;
@@ -6100,6 +6337,9 @@ function createBackgroundLayer(root) {
       if (value) currentVideo.pause();
       else void currentVideo.play().catch(() => {
       });
+    },
+    getVideoHealth() {
+      return videoHealth.snapshot();
     }
   };
 }
@@ -37675,6 +37915,7 @@ function bootstrap(ctx) {
     setWallpaperHealthHandler(null);
     setWallpaperMediaHandler(null);
     setWallpaperMediaIntegrationHandler(null);
+    setWallpaperVideoHealthHandler(null);
     setWallpaperReselectHandler(null);
     setWallpaperSystemAudioHandlers(null);
     unsubscribeMedia();
@@ -37807,6 +38048,9 @@ function bootstrap(ctx) {
     setWallpaperMediaIntegrationHandler({
       get: () => sceneRenderer.getMediaStatus?.() ?? null
     });
+    setWallpaperVideoHealthHandler({
+      get: () => layer?.getVideoHealth() ?? null
+    });
     setWallpaperSystemAudioHandlers({
       start: () => sceneRenderer.startSystemAudio?.() ?? Promise.resolve("unsupported"),
       stop: () => {
@@ -37850,6 +38094,8 @@ function bootstrap(ctx) {
     // 看护入口（面板与排查用）：读状态 / 重试当前壁纸 / 清空全部失败记忆。
     // health() 与面板读接口同一守卫：当前壁纸不是 scene（video/none/还没选）时返回 null。
     health: () => panelHealth(),
+    // 视频壁纸排查入口：读当前视频的解码 FPS/丢帧/循环点停顿（非视频壁纸返回 null）。
+    videoHealth: () => layer?.getVideoHealth() ?? null,
     retryLive,
     clearRenderFailures,
     show(plan, opts) {

@@ -25,6 +25,7 @@ vi.mock('../../src/client/background-layer.js', () => ({
     root: document.createElement('div'),
     setOverlayOpacity() {}, setBlur() {}, setPaused() {}, setKenBurns() {}, setFitMode() {},
     showNone() {}, showImage() {}, showVideo: async () => 'ok', showWeb() {},
+    getVideoHealth: () => null,
   }),
 }));
 vi.mock('../../src/client/wallpaper-controller.js', () => ({
@@ -54,6 +55,7 @@ vi.mock('../../src/client/settings-section.js', () => ({
   setWallpaperHealthHandler: vi.fn(),
   setWallpaperMediaHandler: vi.fn(),
   setWallpaperMediaIntegrationHandler: vi.fn(),
+  setWallpaperVideoHealthHandler: vi.fn(),
   setWallpaperReselectHandler: vi.fn((fn: any) => { handlers.reselect = fn; }),
   setWallpaperSystemAudioHandlers: vi.fn(),
   notifyWallpaperHealth: vi.fn(),

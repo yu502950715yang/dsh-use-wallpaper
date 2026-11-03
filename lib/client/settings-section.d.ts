@@ -5,6 +5,7 @@ import type { SystemAudioFailure } from './system-audio.js';
 import type { HealthSnapshot } from './render-health.js';
 import type { MediaIntegrationStatus } from '../shared/media.js';
 import type { MediaFailure } from './media-health.js';
+import type { VideoHealthSnapshot } from './video-health.js';
 export interface WallpaperSettingsSectionProps {
     /** 读取当前设置（默认 RPC settings.describe） */
     fetchSettings?: () => Promise<ClientSettings>;
@@ -69,6 +70,14 @@ export interface WallpaperMediaIntegrationHandler {
 }
 /** 注册/撤销共享 handler（传 null = 面板回退到「读不到状态」的说明行）。 */
 export declare function setWallpaperMediaIntegrationHandler(handler: WallpaperMediaIntegrationHandler | null): void;
+/** 视频壁纸健康状态行：index.ts 注入 layer.getVideoHealth（只读快照；非视频壁纸返回 null）。 */
+export interface WallpaperVideoHealthHandler {
+    get(): VideoHealthSnapshot | null;
+}
+/** 注册/撤销共享 handler（传 null = 面板隐藏视频状态行）。 */
+export declare function setWallpaperVideoHealthHandler(handler: WallpaperVideoHealthHandler | null): void;
+/** 状态行文案：分辨率 · 实测帧率 · 近 1s 丢帧 · 最近循环停顿 · 状态。 */
+export declare function formatVideoHealthLine(h: VideoHealthSnapshot): string;
 /** 面板状态行文案：启用时给隐私说明；失败 reason 给明确原因（不显示曲目信息）。 */
 export declare function mediaIntegrationHint(enabled: boolean, status: MediaIntegrationStatus | null): string;
 export declare function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): JSX.Element;

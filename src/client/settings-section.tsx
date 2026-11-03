@@ -20,6 +20,7 @@ import { formatHealthLine } from './render-health.js';
 import type { HealthSnapshot } from './render-health.js';
 import type { MediaIntegrationStatus } from '../shared/media.js';
 import type { MediaFailure, MediaFailureKind, MediaFallback } from './media-health.js';
+import type { VideoHealthSnapshot } from './video-health.js';
 import { filterLibrary, loadLibraryState, toggleFavorite, toggleHidden } from './library-view.js';
 import type { LibraryFilter, LibraryState } from './library-view.js';
 import { ROTATION_INTERVAL_OPTIONS, buildRotationPool, formatRotationInterval, normalizeRotationOrder } from './rotation.js';
@@ -178,6 +179,30 @@ export function setWallpaperMediaIntegrationHandler(handler: WallpaperMediaInteg
   mediaIntegrationHandler = handler;
 }
 
+/** 视频壁纸健康状态行：index.ts 注入 layer.getVideoHealth（只读快照；非视频壁纸返回 null）。 */
+export interface WallpaperVideoHealthHandler {
+  get(): VideoHealthSnapshot | null;
+}
+let videoHealthHandler: WallpaperVideoHealthHandler | null = null;
+
+/** 注册/撤销共享 handler（传 null = 面板隐藏视频状态行）。 */
+export function setWallpaperVideoHealthHandler(handler: WallpaperVideoHealthHandler | null): void {
+  videoHealthHandler = handler;
+}
+
+/** 状态行文案：分辨率 · 实测帧率 · 近 1s 丢帧 · 最近循环停顿 · 状态。 */
+export function formatVideoHealthLine(h: VideoHealthSnapshot): string {
+  const res = h.videoWidth > 0 && h.videoHeight > 0 ? `${h.videoWidth}×${h.videoHeight}` : '分辨率未知';
+  const parts = [`${res} · 实测 ${h.fps.toFixed(1)}fps`];
+  if (h.droppedRecent > 0) parts.push(`近 1s 丢帧 ${h.droppedRecent}`);
+  const lastStall = h.loopStallsMs[h.loopStallsMs.length - 1];
+  if (lastStall !== undefined) parts.push(`最近循环停顿 ${Math.round(lastStall)}ms`);
+  if (h.state === 'paused') parts.push('已暂停');
+  else if (h.state === 'lost') parts.push('解码失败');
+  else if (h.state === 'stalled') parts.push('缓冲中');
+  return parts.join(' · ');
+}
+
 /** 面板状态行文案：启用时给隐私说明；失败 reason 给明确原因（不显示曲目信息）。 */
 export function mediaIntegrationHint(enabled: boolean, status: MediaIntegrationStatus | null): string {
   if (!enabled) return '媒体集成已关闭：不读取系统媒体会话，也不启动媒体进程。';
@@ -308,6 +333,8 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
   const [mediaStatus, setMediaStatus] = useState<MediaIntegrationStatus | null>(
     () => mediaIntegrationHandler?.get() ?? null,
   );
+  // 视频壁纸播放状态（FPS/丢帧/循环停顿）：同样挂载时读一次 + 1s 轮询。
+  const [videoHealth, setVideoHealth] = useState<VideoHealthSnapshot | null>(null);
   // 壁纸库筛选状态：收藏/隐藏/最近使用来自 localStorage（挂载时读一次，操作后即时落盘）。
   const [libState, setLibState] = useState<LibraryState>(loadLibraryState);
   // 壁纸用户属性（v0.9 四类型）：只对当前选中的 scene 壁纸拉取一次。
@@ -350,6 +377,13 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
 
   useEffect(() => {
     const read = () => setMediaStatus(mediaIntegrationHandler?.get() ?? null);
+    read();
+    const timer = setInterval(read, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const read = () => setVideoHealth(videoHealthHandler?.get() ?? null);
     read();
     const timer = setInterval(read, 1000);
     return () => clearInterval(timer);
@@ -1356,6 +1390,11 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
           <p className="wss-section-desc wss-live-current">{liveCurrent}</p>
           {liveMemory && <p className="wss-section-desc wss-live-memory">{liveMemory}</p>}
         </div>
+        {videoHealth && (
+          <p className="wss-section-desc wss-video-health" data-state={videoHealth.state}>
+            视频壁纸：{formatVideoHealthLine(videoHealth)}
+          </p>
+        )}
         <div className="wss-row">
           <button type="button" className="wss-live-retry" onClick={retryLive}>重试实时渲染</button>
           <button type="button" className="wss-live-forget" onClick={forgetFailures}>清除失败记忆</button>
