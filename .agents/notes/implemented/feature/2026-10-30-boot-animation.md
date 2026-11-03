@@ -44,4 +44,4 @@ Status: implemented
 
 ## Affected repositories
 
-- `dsh-use-wallpaper` 分支 `feat/boot-animation` commits `51bac74` `62d8bf8` `dd891b7` `0046d55` `66d595a` `3c99e97`（最终修复轮代码/测试与产物）+ 本笔记所在的文档提交
+- `dsh-use-wallpaper` 分支 `master` commits `51bac74` `62d8bf8` `dd891b7` `0046d55` `66d595a` `3c99e97`

@@ -25,7 +25,7 @@ Status: implemented
 
 ## Affected repositories
 
-- `dsh-use-wallpaper` 分支 `master`（本次改动未提交；产物 `lib/`、`dist/` 需随源码一起构建入库）
+- `dsh-use-wallpaper` 分支 `master` commits `a24b6dc`
 
 ## Alternatives considered
 
