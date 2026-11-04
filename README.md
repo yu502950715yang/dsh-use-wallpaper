@@ -62,7 +62,7 @@ dsh plugin --profile web add "@dsh-use/wallpaper-engine" && dsh plugin --profile
 | 🎨 | **Scene 动态壁纸** | 在浏览器里实时算出来，不是静态图贴上去：背景图层与粒子系统各司其职，背景的缩放、透明度、亮度按原作者的设定还原 |
 | 🌊 | **粒子效果基本完整** | 雪、雨、花瓣、火星、雾、气泡等都按壁纸里的原始参数运动：重力、风向、湍流、寿命、颜色与大小渐变；**沿速度方向拉伸的拖尾**（雨丝、风痕、余烬，即 WE 的 `spritetrail`）也已实现；**起播相位（`starttime`）按原设定预推进**，对象级实例覆盖（`instanceoverride`，含编辑器的 `{user|script,value}` 包装）同样生效 —— 加色雪层不再变黑；**子粒子（子发射器）与绳索类拖尾（`ropetrail`）尚未支持**，见「使用前请了解」 |
 | 🖼️ | **各种纹理都能解** | 主流压缩格式（DXT1/3/5、RGBA、R8、RG88）与多帧精灵动画（火把、雾、光晕）都能正确解出原图，不糊、不露黑边；**标记为精灵表的 image 只显示当前帧**：有作者脚本的按脚本帧（可 `pause` / `setFrame`），无脚本的按约 1 帧/秒自动循环，不再把整张帧表压进一个图标 |
-| 🎞️ | **视频 / 网页 / 图片壁纸** | 视频循环播放（编码不支持时自动回退预览并提示；**视频壁纸暂不播放音频**）；网页壁纸在沙箱里加载；图片壁纸用预览图 + 缓慢缩放动效 |
+| 🎞️ | **视频 / 网页 / 图片壁纸** | 视频循环播放（编码不支持时自动回退预览并提示；**视频壁纸自带音轨跟随「声音」开关播放**，无音轨素材会提示）；网页壁纸在沙箱里加载，**页内 `<audio>/<video>` 声音同样跟随「声音」开关与音量**（Web Audio 自建声源控制不到）；图片壁纸用预览图 + 缓慢缩放动效 |
 | 🪜 | **多级降级链** | scene 渲染失败时依次尝试 **内嵌 MP4 → 抓帧 PNG → 作者预览图 → 空态**；每级失败只跳过，不白屏、不黑屏卡死 |
 | 🎬 | **视频编码兜底** | HEVC / H.265 等浏览器解不了的编码会**回退到预览图**，并在面板提示原因与自救建议，不再停在黑背景 |
 | 🧩 | **常见特效会动** | 水波、涟漪、水流、云飘、植物摆动、抖动、脉冲、淡入淡出，以及模糊、泛光、光轴、局部对比度这类需要多趟渲染的特效（少数特效仍然看不到，见下节） |
@@ -76,7 +76,7 @@ dsh plugin --profile web add "@dsh-use/wallpaper-engine" && dsh plugin --profile
 | 🎛️ | **显示效果面板** | 遮罩不透明度、背景模糊、Ken Burns、画面适配（裁剪铺满 / 完整显示 / 拉伸铺满）都在面板里直接调，改完立即生效 |
 | 🎚️ | **用户属性面板** | 壁纸自带的属性（**bool / slider / color / combo** 可调，**只显示当前壁纸真正引用的属性**，不出现假控件）在面板里直接调；切换/调整后自动重装配生效，滑块与取色**防抖提交**（不逐帧重建） |
 | 🎵 | **系统媒体集成** | 在 Windows 上读取系统媒体会话（SMTC），让壁纸的专辑封面 / 歌名 / 歌手 / 主色与播放状态实时联动；仅内存、不落盘，面板可关 |
-| 🎥 | **开机动画** | 打开 DSH / 新窗口时全屏播一段片头：素材可用 WE 库的视频 / 图片壁纸或本地视频文件（桌面端可直接用**系统文件选择器**选视频），四种展示方式，播完或到上限淡出；固定静音、每次会话只播一次，8 秒未就绪静默跳过；DSH 启动加载页（Loading plugins…）显示期间持续接管（视频循环 / 图片保持），主界面就绪后淡出 |
+| 🎥 | **开机动画** | 打开 DSH / 新窗口时全屏播一段片头：素材可用 WE 库的视频 / 图片壁纸或本地视频文件（桌面端可直接用**系统文件选择器**选视频），四种展示方式，播完或到上限淡出；**声音默认开启（面板可关，桌面版直接出声、浏览器首次交互后出声）**，**片头播放期间壁纸声音自动静音、播完按设置恢复**，每次会话只播一次，8 秒未就绪静默跳过；DSH 启动加载页（Loading plugins…）显示期间持续接管（视频循环 / 图片保持），主界面就绪后淡出 |
 | 🛡️ | **失败不砸界面** | scene 渲染失败走**多级降级链**（内嵌 MP4 → 抓帧 → 预览图）；video 解码失败 / 首帧超时回退预览图并提示。**web 壁纸目前没有失败回退**（跨源 iframe 探测不到子帧错误，失败会停在空白）；界面本身始终可用 |
 | ⚙️ | **开箱即用** | 自动探测 Steam 壁纸目录（注册表 + Steam 库配置 + 常见路径），也可手动填写；改设置立刻生效，不用重启 |
 | 🚫 | **不依赖运行时** | 不需要 Wallpaper Engine 在后台运行；所需的引擎内置素材在你本机读取，不随插件分发第三方素材 |
@@ -174,10 +174,11 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 
 - **当前壁纸 / 壁纸目录**：`selectedWallpaperId`（缩略图点选）、`wallpaperDir` / `weAssetsDir`（手填 +「自动探测」）。
 - **显示效果**：`overlayOpacity`、`blurEnabled` / `blurRadius`、`kenBurns`、`fitMode`、`glowEnabled` / `glowThreshold` / `glowStrength`。
-- **性能与省电**：`paused`、`pauseOnHidden`、`qualityScale`、`soundEnabled`。
+- **声音**：`soundEnabled` + `soundVolume`（壁纸音效：scene 音效对象 + 视频壁纸自带音轨，共用音量）。
+- **性能与省电**：`paused`、`pauseOnHidden`、`qualityScale`。
 - **轮播**：`rotationEnabled`、`rotationIntervalMs`、`rotationOrder`。
 - **文字可读性**：`textColorMode`、`textColor`、`textOutline`。
-- **开机动画**（设置页顶部 tab「日常壁纸 / 开机动画」切换，与壁纸设置互不影响）：`bootAnimationEnabled`、`bootAnimationSource`、`bootAnimationWallpaperId` / `bootAnimationWallpaperKind`、`bootAnimationLocalPath`、`bootAnimationFitMode`、`bootAnimationMaxDurationMs`。
+- **开机动画**（设置页顶部 tab「日常壁纸 / 开机动画」切换，与壁纸设置互不影响）：`bootAnimationEnabled`、`bootAnimationSource`、`bootAnimationWallpaperId` / `bootAnimationWallpaperKind`、`bootAnimationLocalPath`、`bootAnimationFitMode`、`bootAnimationMaxDurationMs`、`bootAnimationSoundEnabled`、`bootAnimationVolume`。
 
 `frameCacheEnabled` **没有面板控件**（默认 `true`；要改只能写 profile `config`）。壁纸库的**收藏 / 隐藏 / 最近使用**与用户属性不是设置字段，只存 localStorage（见本节末尾）；**搜索 / 类型 / 排序是面板临时状态**，刷新即恢复默认。
 
@@ -196,7 +197,8 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 | `paused` | `false` | 暂停壁纸渲染（省电；视频壁纸同时停播） |
 | `pauseOnHidden` | `true` | 页面切到后台/最小化时自动暂停，回到前台恢复 |
 | `qualityScale` | `1` | 画质档位：渲染像素比倍率（0.5–1，越小越省显存） |
-| `soundEnabled` | `true` | 壁纸音效（sound 对象播放 + 驱动频谱类效果）；面板有开关，改完立即生效 |
+| `soundEnabled` | `true` | 壁纸声音总开关：scene 壁纸的音效对象 + 视频壁纸自带音轨；面板「声音」卡有开关，改完立即生效 |
+| `soundVolume` | `1` | 壁纸声音音量 0–1：scene 音效对象与视频壁纸共用；面板「声音」卡滑杆，拖动即时生效 |
 | `rotationEnabled` | `false` | 自动轮播开关 |
 | `rotationIntervalMs` | `300000` | 轮播间隔（1–30 分钟；面板档位为 1 / 5 / 10 / 30 分钟） |
 | `rotationOrder` | `sequential` | 轮播顺序：`sequential` 顺序 / `random` 随机 |
@@ -208,6 +210,8 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 | `bootAnimationLocalPath` | 空 | 本地视频的绝对路径（桌面端点「选择文件…」用系统选择器自动填入；web 端手填。host 仅回环来源流式读取，拒绝 UNC / 网络路径） |
 | `bootAnimationFitMode` | `cover` | 展示方式：`tile` 平铺（仅图片）/ `contain` 居中 / `stretch` 挤压 / `cover` 裁切填满 |
 | `bootAnimationMaxDurationMs` | `6000` | 最长播放（0–30000 ms；0 = 视频播完为止，图片固定约 4 秒） |
+| `bootAnimationSoundEnabled` | `true` | 开机动画声音（桌面版直接出声；浏览器冷启动没有用户手势时自动播放策略会先静音） |
+| `bootAnimationVolume` | `1` | 开机动画音量 0–1（开机动画 tab「声音」卡滑杆） |
 
 优先级：用户设置 > profile `cordis.patch.yml` 的 `config` > 缺省。
 
@@ -257,7 +261,7 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 - **时间 / 日期类文字会实时走字，作者挂在文字上的模糊 / VHS / 水波效果也会执行**；隔离渲染的文本尺寸在装配时固定，**跨分钟变宽时可能轻微裁边或拉伸**。壁纸自带的脚本跑不通时，退回内置时钟或跳过该层，**不会**把作者的占位文字画到屏幕上。
 - **闪烁类粒子（火花、雨滴溅开等）已按桌面端表现对齐**：桌面上不显示的，这里也不画。
 - **模糊、泛光、光轴、局部对比度会在本地实时执行**，挂在这些效果上的对象越简单越容易看出效果；极少数（如光轴）目前只确认到已执行，画面观感待确认。
-- **壁纸音效默认播放**（设置 → 壁纸可关），音量与单次/循环模式按原设定生效；多文件音效每对象只播一首（OWE 的多文件轮播 / 播完重随机未实现）。随声音变化的效果也会跟着动；**包内音效驱动的频谱竖条已支持**（`Simple_Audio_Bars` 等效果；v0.8.2 起 `Simple Visualizer` 也会代建 64 条；v0.9 起其它 visualizer 家族按脚本参数代建、静音也有最小高度）。**系统音频（`supportsaudioprocessing`）已支持浏览器模式**：用浏览器打开 GUI → 面板「系统音频」→ 授权共享系统音频即可驱动视觉条；**桌面版 App 因宿主权限策略不可用**（面板会提示改用浏览器）。
+- **壁纸声音默认播放、音量可调**（设置 → 壁纸 →「声音」卡）：scene 壁纸的音效对象、视频壁纸自带音轨、web 壁纸页内的 `<audio>/<video>` 都跟随开关与音量滑杆（音量默认 100%，拖动即时生效，共用同一音量；单次/循环模式仍按原设定生效）。**web 壁纸声音通过 host 注入的 shim 控制**（页面在播放时会自己改 `muted` 的也能兜住；帧刚加载的 <1 秒可能短暂有声）：网页用 Web Audio API 自建的声源、以及禁止内联脚本的 CSP 页面控制不到（保持网页原样）。**桌面版直接出声；浏览器 GUI 受自动播放策略限制，冷启动时视频壁纸会先静音，点过页面后才出声**。多文件音效每对象只播一首（OWE 的多文件轮播 / 播完重随机未实现）。随声音变化的效果也会跟着动；**包内音效驱动的频谱竖条已支持**（`Simple_Audio_Bars` 等效果；v0.8.2 起 `Simple Visualizer` 也会代建 64 条；v0.9 起其它 visualizer 家族按脚本参数代建、静音也有最小高度）。**系统音频（`supportsaudioprocessing`）已支持浏览器模式**：用浏览器打开 GUI → 面板「系统音频」→ 授权共享系统音频即可驱动视觉条；**桌面版 App 因宿主权限策略不可用**（面板会提示改用浏览器）。
 - **应用级光晕默认开启**（设置 → 壁纸 → 「光晕」，阈值 / 强度可调、改完立即生效）：这是"桌面更亮"的主要来源。**嫌亮就调低强度或调高阈值；觉得偏暗就把强度调到 1~1.5。** 仅对 scene 壁纸生效。
 - **壁纸级 bloom 也会按作者设定生效**（`general.bloom*`，阈值 / 强度原样）：与上面的「光晕」互相独立，同时开启时顺序固定为「壁纸 bloom → 应用级光晕」；`hdr` 未实现。
 - **精灵表图标由作者脚本控制帧**：调用 `pause`/`setFrame` 的壁纸（如 `3765967112` 的日/夜图标）静止在脚本帧；无脚本的仍约 1 帧/秒自动循环。生产 GUI 里背景层不吃点击（`pointer-events:none`），按产品决策不做点击转发 ⇒ **点击切帧为已知边界**（e2e/harness 内可触发）。

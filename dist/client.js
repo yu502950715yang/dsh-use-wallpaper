@@ -2444,11 +2444,11 @@ body[data-ds-dark-theme] .wss-hero::before{background:radial-gradient(90% 140% a
 .wss-details-head:hover{background:rgba(127,127,127,.06)}
 .wss-details[open] .wss-details-head{border-bottom:1px dashed var(--dsw-alias-border-l2,var(--wp-panel-border))}
 .wss-details-head::-webkit-details-marker{display:none}
-.wss-details-head::after{content:"";width:7px;height:7px;margin-left:auto;border-right:1.6px solid var(--dsw-alias-label-tertiary,var(--wp-text));border-bottom:1.6px solid var(--dsw-alias-label-tertiary,var(--wp-text));transform:rotate(45deg);transition:transform .15s ease}
+.wss-details-head::after{content:"";width:7px;height:7px;margin-left:0;border-right:1.6px solid var(--dsw-alias-label-tertiary,var(--wp-text));border-bottom:1.6px solid var(--dsw-alias-label-tertiary,var(--wp-text));transform:rotate(45deg);transition:transform .15s ease}
 .wss-details[open] .wss-details-head::after{transform:rotate(-135deg)}
 .wss-details-head:focus-visible{outline:2px solid var(--wp-accent);outline-offset:-2px}
 .wss-details-title{font-size:13.5px;font-weight:650}
-.wss-details-hint{font-size:11.5px;color:var(--dsw-alias-label-tertiary,var(--wp-text));margin-left:auto;padding-right:10px}
+.wss-details-hint{font-size:11.5px;color:var(--dsw-alias-label-tertiary,var(--wp-text));margin-left:auto;padding-right:0}
 .wss-details-hint[data-tone="failed"]{color:var(--dsw-alias-state-error-primary,#b42318)}
 .wss-details-body{padding:0 16px 14px;display:flex;flex-direction:column;gap:10px}
 /* \u58C1\u7EB8\u5E93\u5DE5\u5177\u680F\uFF1A\u641C\u7D22 + \u6392\u5E8F\u4E00\u884C\uFF0C\u7C7B\u578B/\u8FC7\u6EE4\u4E00\u884C */
@@ -2981,12 +2981,28 @@ var LAYER_CLASS = "wp-boot-layer";
 var TILE_CLASS = "wp-boot-tile";
 var Z_INDEX = 2147483e3;
 var DSH_BOOT_SELECTOR = "[data-dsh-boot]";
+function isDesktopShellProtocol() {
+  try {
+    return typeof location !== "undefined" && location.protocol === "dsh-app:";
+  } catch {
+    return false;
+  }
+}
+function hasUserActivation() {
+  try {
+    const ua = navigator.userActivation;
+    return ua?.hasBeenActive === true;
+  } catch {
+    return false;
+  }
+}
 function createBootOverlay(opts = {}) {
   const doc = opts.doc ?? document;
   const readyTimeoutMs = opts.readyTimeoutMs ?? 8e3;
   const fadeMs = opts.fadeMs ?? 300;
   const imageDurationMs = opts.imageDurationMs ?? 4e3;
   const bootHoldMaxMs = opts.bootHoldMaxMs ?? 3e4;
+  const desktopShell = opts.desktopShell ?? isDesktopShellProtocol();
   let disposed = false;
   let active = null;
   const timers = /* @__PURE__ */ new Set();
@@ -3062,7 +3078,7 @@ function createBootOverlay(opts = {}) {
     el.style.objectFit = fit === "stretch" ? "fill" : fit;
   }
   return {
-    play(asset, fit, maxDurationMs = 0) {
+    play(asset, fit, maxDurationMs = 0, playOpts) {
       if (disposed) return Promise.resolve("failed");
       teardown("skipped");
       const el = doc.createElement("div");
@@ -3106,8 +3122,10 @@ function createBootOverlay(opts = {}) {
         if (asset.kind === "video") {
           const video = doc.createElement("video");
           video.autoplay = true;
-          video.muted = true;
+          video.muted = !(playOpts?.soundEnabled !== false && (desktopShell || hasUserActivation()));
           video.playsInline = true;
+          const volume = playOpts?.volume;
+          video.volume = typeof volume === "number" && Number.isFinite(volume) ? Math.min(1, Math.max(0, volume)) : 1;
           video.preload = "auto";
           video.loop = holdForBoot;
           video.style.cssText = "width:100%;height:100%;border:0;display:block";
@@ -3224,11 +3242,25 @@ function createBootPlayer(opts) {
       } catch {
       }
     }
+    const setActive = (active) => {
+      if (typeof opts.onActiveChange !== "function") return;
+      try {
+        opts.onActiveChange(active);
+      } catch {
+      }
+    };
+    setActive(true);
     let result;
     try {
-      result = await overlay.play(asset, fit, settings.bootAnimationMaxDurationMs);
+      result = await overlay.play(asset, fit, settings.bootAnimationMaxDurationMs, {
+        // 开机动画声音默认开；浏览器冷启动无手势时 overlay 内保持静音（自动播放策略）。
+        soundEnabled: settings.bootAnimationSoundEnabled !== false,
+        volume: settings.bootAnimationVolume ?? 1
+      });
     } catch {
       result = "failed";
+    } finally {
+      setActive(false);
     }
     return record(result, asset);
   }
@@ -3278,6 +3310,8 @@ var DEFAULTS = {
   qualityScale: 1,
   // 壁纸音效（sound 对象 + 频谱驱动效果）：默认开启，与桌面 WE 一致；面板可关。
   soundEnabled: true,
+  // 壁纸声音音量（scene sound 对象 + 视频壁纸共用）：默认 1，不改变既有听感。
+  soundVolume: 1,
   // 媒体集成（Windows SMTC 只读，默认开启；数据仅内存、不落盘、不上传）。
   mediaIntegrationEnabled: true,
   // 文字可读性（2026-10-01）：默认 auto + 无描边 = 与加此功能前的老用户观感一致（零回归）。
@@ -3296,7 +3330,11 @@ var DEFAULTS = {
   bootAnimationWallpaperKind: "",
   bootAnimationLocalPath: "",
   bootAnimationFitMode: "cover",
-  bootAnimationMaxDurationMs: 6e3
+  bootAnimationMaxDurationMs: 6e3,
+  // 开机动画声音（2026-11-04）：默认开；桌面壳直接出声，浏览器无手势时保持静音。
+  bootAnimationSoundEnabled: true,
+  // 开机动画音量：默认 1。
+  bootAnimationVolume: 1
 };
 var settingsCtx = null;
 var lastGood = null;
@@ -5152,50 +5190,11 @@ function WallpaperSettingsSection(props) {
     /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-advanced", id: "wss-anchor-advanced", children: [
       settings && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("details", { className: "wss-details", children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("summary", { className: "wss-details-head", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-details-title", children: "\u6027\u80FD\u4E0E\u7701\u7535" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-details-hint", children: "\u6682\u505C \xB7 \u753B\u8D28 \xB7 \u97F3\u6548" })
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-details-title", children: "\u58F0\u97F3" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-details-hint", children: "\u97F3\u6548 \xB7 \u89C6\u9891" })
         ] }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-details-body", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-power", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                "input",
-                {
-                  type: "checkbox",
-                  checked: settings.paused,
-                  onChange: (e) => applyRuntime({ paused: e.target.checked })
-                }
-              ),
-              "\u6682\u505C\u58C1\u7EB8\uFF08\u7701\u7535\uFF09"
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-                "input",
-                {
-                  type: "checkbox",
-                  checked: settings.pauseOnHidden,
-                  onChange: (e) => applyRuntime({ pauseOnHidden: e.target.checked })
-                }
-              ),
-              "\u5207\u5230\u540E\u53F0\u65F6\u81EA\u52A8\u6682\u505C"
-            ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u753B\u8D28\u6863\u4F4D" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
-                "select",
-                {
-                  className: "wss-quality",
-                  value: String(settings.qualityScale),
-                  onChange: (e) => applyRuntime({ qualityScale: Number(e.target.value) }),
-                  children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "1", children: "\u539F\u751F\uFF081\xD7\uFF09" }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "0.75", children: "\u7701\u663E\u5B58\uFF080.75\xD7\uFF09" }),
-                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "0.5", children: "\u6700\u7701\uFF080.5\xD7\uFF09" })
-                  ]
-                }
-              )
-            ] })
-          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc", children: "\u58C1\u7EB8\u97F3\u6548\u5305\u542B scene \u58C1\u7EB8\u7684\u97F3\u6548\u5BF9\u8C61\u3001\u89C6\u9891\u58C1\u7EB8\u97F3\u8F68\u4E0E web \u58C1\u7EB8\u9875\u5185\u5A92\u4F53\uFF1B\u5173\u6389\u5373\u9759\u97F3\uFF08\u753B\u9762\u7167\u5E38\u64AD\u653E\uFF09\u3002" }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "wss-sound-row", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
               "input",
@@ -5207,8 +5206,76 @@ function WallpaperSettingsSection(props) {
               }
             ),
             "\u58C1\u7EB8\u97F3\u6548"
-          ] }) })
+          ] }) }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-slider", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-slider-head", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u97F3\u91CF" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-effect-value", children: [
+                Math.round((settings.soundVolume ?? 1) * 100),
+                "%"
+              ] })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "input",
+              {
+                type: "range",
+                className: "wss-sound-volume",
+                min: 0,
+                max: 1,
+                step: 0.05,
+                value: settings.soundVolume ?? 1,
+                onChange: (e) => applyRuntime({ soundVolume: Number(e.target.value) })
+              }
+            )
+          ] }),
+          currentWallpaper?.type === "video" && currentWallpaper.hasAudio === false && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc wss-sound-hint", children: "\u5F53\u524D\u89C6\u9891\u58C1\u7EB8\u6CA1\u6709\u97F3\u8F68\uFF0C\u5F00\u542F\u58F0\u97F3\u4E5F\u4E0D\u4F1A\u51FA\u58F0\u3002" })
         ] })
+      ] }),
+      settings && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("details", { className: "wss-details", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("summary", { className: "wss-details-head", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-details-title", children: "\u6027\u80FD\u4E0E\u7701\u7535" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-details-hint", children: "\u6682\u505C \xB7 \u753B\u8D28" })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "wss-details-body", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-power", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "input",
+              {
+                type: "checkbox",
+                checked: settings.paused,
+                onChange: (e) => applyRuntime({ paused: e.target.checked })
+              }
+            ),
+            "\u6682\u505C\u58C1\u7EB8\uFF08\u7701\u7535\uFF09"
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-glow-row", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "input",
+              {
+                type: "checkbox",
+                checked: settings.pauseOnHidden,
+                onChange: (e) => applyRuntime({ pauseOnHidden: e.target.checked })
+              }
+            ),
+            "\u5207\u5230\u540E\u53F0\u65F6\u81EA\u52A8\u6682\u505C"
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u753B\u8D28\u6863\u4F4D" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+              "select",
+              {
+                className: "wss-quality",
+                value: String(settings.qualityScale),
+                onChange: (e) => applyRuntime({ qualityScale: Number(e.target.value) }),
+                children: [
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "1", children: "\u539F\u751F\uFF081\xD7\uFF09" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "0.75", children: "\u7701\u663E\u5B58\uFF080.75\xD7\uFF09" }),
+                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "0.5", children: "\u6700\u7701\uFF080.5\xD7\uFF09" })
+                ]
+              }
+            )
+          ] })
+        ] }) })
       ] }),
       settings && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("details", { className: "wss-details", children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("summary", { className: "wss-details-head", children: [
@@ -5479,7 +5546,7 @@ function BootSettingsSection(props) {
     /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { className: "wbs-hero", children: [
       /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wbs-hero-body", children: [
         /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("h4", { className: "wbs-hero-title", children: "\u5F00\u673A\u52A8\u753B" }),
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "wbs-hero-desc", children: "\u6253\u5F00 DSH \u65F6\u5168\u5C4F\u64AD\u4E00\u6BB5\u7247\u5934\uFF0C\u64AD\u5B8C\u6DE1\u51FA\u8FDB\u5165\u754C\u9762\uFF1B\u56FA\u5B9A\u9759\u97F3\uFF0C\u6BCF\u6B21\u542F\u52A8/\u65B0\u7A97\u53E3\u53EA\u64AD\u4E00\u6B21\uFF08\u5237\u65B0\u4E0D\u91CD\u64AD\uFF09\u3002" }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "wbs-hero-desc", children: "\u6253\u5F00 DSH \u65F6\u5168\u5C4F\u64AD\u4E00\u6BB5\u7247\u5934\uFF0C\u64AD\u5B8C\u6DE1\u51FA\u8FDB\u5165\u754C\u9762\uFF1B\u9ED8\u8BA4\u9759\u97F3\u53EF\u5728\u4E0B\u65B9\u5F00\u542F\u58F0\u97F3\uFF0C\u6BCF\u6B21\u542F\u52A8/\u65B0\u7A97\u53E3\u53EA\u64AD\u4E00\u6B21\uFF08\u5237\u65B0\u4E0D\u91CD\u64AD\uFF09\u3002" }),
         last && /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("p", { className: "wbs-last", "data-tone": toneOf(last.result), children: [
           "\u4E0A\u6B21\u64AD\u653E\uFF1A",
           RESULT_TEXT[last.result] ?? last.result
@@ -5656,6 +5723,46 @@ function BootSettingsSection(props) {
         ),
         /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "wbs-desc", children: "0 = \u89C6\u9891\u64AD\u5B8C\u4E3A\u6B62\uFF1B\u56FE\u7247\u56FA\u5B9A\u7EA6 4 \u79D2\u3002\u7D20\u6750 8 \u79D2\u672A\u5C31\u7EEA\u4F1A\u81EA\u52A8\u8DF3\u8FC7\u3002" })
       ] })
+    ] }),
+    /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("section", { className: "wbs-card", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("header", { className: "wbs-card-head", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("h4", { className: "wbs-title", children: "\u58F0\u97F3" }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wbs-hint", children: "\u9ED8\u8BA4\u5F00\u542F" })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wbs-switch", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+          "input",
+          {
+            type: "checkbox",
+            className: "wbs-boot-sound",
+            checked: settings.bootAnimationSoundEnabled !== false,
+            onChange: (e) => void patch({ bootAnimationSoundEnabled: e.target.checked })
+          }
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wbs-switch-track", "aria-hidden": "true" }),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("span", { className: "wbs-switch-label", children: "\u64AD\u653E\u58F0\u97F3" })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("label", { className: "wbs-slider", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+          "input",
+          {
+            type: "range",
+            className: "wbs-boot-volume",
+            "aria-label": "\u5F00\u673A\u52A8\u753B\u97F3\u91CF\uFF08\u767E\u5206\u6BD4\uFF09",
+            min: 0,
+            max: 1,
+            step: 0.05,
+            value: settings.bootAnimationVolume ?? 1,
+            onChange: (e) => void patch({ bootAnimationVolume: Number(e.target.value) })
+          }
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("p", { className: "wbs-desc", children: [
+          "\u97F3\u91CF ",
+          Math.round((settings.bootAnimationVolume ?? 1) * 100),
+          "%"
+        ] })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("p", { className: "wbs-desc", children: "\u684C\u9762\u7248\u76F4\u63A5\u51FA\u58F0\uFF1B\u6D4F\u89C8\u5668\u91CC\u9875\u9762\u521A\u6253\u5F00\u65F6\u8FD8\u6CA1\u6709\u7528\u6237\u4EA4\u4E92\uFF0C\u81EA\u52A8\u64AD\u653E\u7B56\u7565\u4F1A\u5148\u9759\u97F3\u3002" })
     ] }),
     /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)("div", { className: "wbs-actions", children: [
       /* @__PURE__ */ (0, import_jsx_runtime2.jsx)("button", { type: "button", className: "wbs-preview", disabled: previewing, onClick: () => void runPreview(), children: previewing ? "\u64AD\u653E\u4E2D\u2026" : "\u8BD5\u64AD" }),
@@ -6011,13 +6118,122 @@ function createVideoHealthMonitor(opts) {
   return { attach, detach, snapshot, dispose };
 }
 
+// src/shared/pointer-shim.ts
+var POINTER_MESSAGE_TAG = "__wpPointer";
+var POINTER_SHIM_SOURCE = `(function(){
+  var w=window;
+  if(w.__wpPointerShimInstalled) return;
+  w.__wpPointerShimInstalled=true;
+  var Ctor=w.EventTarget||w.Node;
+  if(!Ctor||!Ctor.prototype) return;
+  var proto=Ctor.prototype;
+  var origAdd=proto.addEventListener;
+  var origRemove=proto.removeEventListener;
+  var slots=0, tgt=null, type='', handler=null, opts=null, entry=null;
+  var isMouse=function(t){ return typeof t==='string'&&t.indexOf('mouse')===0; };
+  proto.addEventListener=function(t,fn,o){
+    // \u5355\u4E2A handler \u4E0D\u80FD\u91CD\u590D\u88C5\uFF0C\u6545\u8BB0\u5F55=\u66FF\u6362\uFF1B\u540C handler \u91CD\u6302\u5F53\u4F5C\u5DF2\u88C5\uFF08entry \u4FDD\u6301\u6709\u6548\uFF09\u3002
+    if(isMouse(t)&&fn!=null){
+      slots+=1;
+      var same=(handler===fn&&tgt===this&&type===t);
+      tgt=this; type=t; handler=fn; opts=o;
+      if(!same) entry=null;
+    }
+    return origAdd.apply(this,arguments);
+  };
+  proto.removeEventListener=function(t,fn,o){
+    if(isMouse(t)&&fn!=null&&tgt===this&&type===t&&handler===fn){ tgt=null; handler=null; entry=null; }
+    return origRemove.apply(this,arguments);
+  };
+  var detailFn=function(e){ return handler.handleEvent(e); };
+  var pick=function(){
+    if(entry) return entry;
+    if(handler==null) return null;
+    if(typeof handler==='function') entry=handler;
+    else if(typeof handler.handleEvent==='function') entry=detailFn;
+    else if(handler.length>0&&typeof handler[0]==='function') entry=handler[0];
+    return entry;
+  };
+  var fire=function(t,x,y){
+    var fn=pick();
+    if(!fn||tgt==null) return;
+    var E=w.MouseEvent;
+    if(!E) return;
+    var e=new E(t,{bubbles:false,cancelable:true,view:w,clientX:x,clientY:y,screenX:x,screenY:y});
+    try{
+      if(fn===detailFn) detailFn(e); else fn.call(tgt,e);
+      w.__wpPointerHits=(w.__wpPointerHits||0)+1;
+    }catch(err){}
+  };
+  w.addEventListener('message',function(ev){
+    var d=ev&&ev.data;
+    if(!d||d.${POINTER_MESSAGE_TAG}!==1) return;
+    var sx=w.innerWidth||0, sy=w.innerHeight||0;
+    if(!(sx>0)||!(sy>0)) return;
+    var x=Number(d.px), y=Number(d.py);
+    if(!(x>=0&&x<=sx)) x=Number(d.nx)*sx;
+    if(!(y>=0&&y<=sy)) y=Number(d.ny)*sy;
+    if(!isFinite(x)||!isFinite(y)) return;
+    fire('mousemove',x,y);
+  });
+})();`;
+
+// src/shared/web-audio-shim.ts
+var WEB_SOUND_MESSAGE_TAG = "__wpSound";
+var WEB_SOUND_SHIM_SOURCE = `(function(){
+  var w=window;
+  if(w.__wpSoundShimInstalled) return;
+  w.__wpSoundShimInstalled=true;
+  var state=null;
+  var clamp=function(v){ return (typeof v==='number'&&isFinite(v)) ? Math.min(1,Math.max(0,v)) : 1; };
+  var apply=function(el){
+    if(!state||!el) return;
+    if(el.tagName!=='AUDIO'&&el.tagName!=='VIDEO') return;
+    try{
+      el.muted=!state.enabled;
+      if(state.enabled) el.volume=state.volume;
+    }catch(err){}
+  };
+  var applyAll=function(root){
+    var host=root||w.document;
+    if(!host.querySelectorAll) return;
+    var nodes=host.querySelectorAll('audio,video');
+    for(var i=0;i<nodes.length;i++) apply(nodes[i]);
+  };
+  w.addEventListener('message',function(ev){
+    var d=ev&&ev.data;
+    if(!d||d.${WEB_SOUND_MESSAGE_TAG}!==1) return;
+    state={enabled:!!d.enabled,volume:clamp(Number(d.volume))};
+    applyAll();
+  });
+  // \u7F51\u9875\u64AD\u653E\u5668\u5E38\u52A8\u6001\u5EFA\u5A92\u4F53\u5143\u7D20\uFF1A\u63D2\u5165 DOM \u65F6\u5E94\u7528\u5F53\u524D\u72B6\u6001\u3002
+  var MO=w.MutationObserver;
+  if(MO){
+    new MO(function(muts){
+      if(!state) return;
+      for(var i=0;i<muts.length;i++){
+        var added=muts[i].addedNodes||[];
+        for(var j=0;j<added.length;j++){
+          var n=added[j];
+          if(!n||n.nodeType!==1) continue;
+          apply(n);
+          applyAll(n);
+        }
+      }
+    }).observe(w.document.documentElement,{childList:true,subtree:true});
+  }
+  // \u9875\u9762\u811A\u672C\u53EF\u80FD\u5728\u6536\u5230\u8BBE\u7F6E\u540E\u81EA\u5DF1\u628A muted \u5199\u56DE\uFF08\u5982 3778198228 \u7684 updateAudio\uFF09\uFF1A
+  // \u518D\u6B21\u5F00\u59CB\u64AD\u653E\u65F6\u91CD\u65B0\u5E94\u7528\u5BBF\u4E3B\u72B6\u6001\uFF08\u6355\u83B7\u9636\u6BB5\u80FD\u62FF\u5230\u4E0D\u5192\u6CE1\u7684 play \u4E8B\u4EF6\uFF09\u3002
+  w.document.addEventListener('play',function(ev){ apply(ev.target); },true);
+})();`;
+
 // src/client/background-layer.ts
 function resolveBackground(info) {
   if ((info.type === "scene" || info.type === "preset" || info.type === "unknown") && info.hasScene) {
     return { kind: "scene", wallpaperId: info.id, sceneEntry: info.sceneEntry ?? "scene.json" };
   }
   if (info.type === "video" && info.file) {
-    return { kind: "video", url: `/wallpapers/media/${info.id}/file` };
+    return { kind: "video", url: `/wallpapers/media/${info.id}/file`, hasAudio: info.hasAudio };
   }
   if (info.type === "web") {
     return { kind: "web", url: `/wallpapers/web/${info.id}/index.html` };
@@ -6057,8 +6273,36 @@ function webFrameSpec(wallpaperPath, loc, altOrigin) {
 var WEB_RESIZE_RELOAD_DELAY_MS = 300;
 var WEB_RESIZE_RELOAD_TIMEOUT_MS = 8e3;
 var VIDEO_LOAD_TIMEOUT_MS = 1500;
-function createBackgroundLayer(root) {
+function clampVolume(value) {
+  return Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 1;
+}
+function isDesktopShellProtocol2() {
+  try {
+    return typeof location !== "undefined" && location.protocol === "dsh-app:";
+  } catch {
+    return false;
+  }
+}
+function hasUserActivation2() {
+  try {
+    const ua = navigator.userActivation;
+    return ua?.hasBeenActive === true;
+  } catch {
+    return false;
+  }
+}
+function playVideo(video) {
+  try {
+    void video.play()?.catch?.(() => {
+    });
+  } catch {
+  }
+}
+function createBackgroundLayer(root, opts = {}) {
   root.classList.add("wp-background-layer");
+  let soundEnabled = opts.soundEnabled ?? true;
+  let volume = clampVolume(opts.volume ?? 1);
+  const desktopShell = opts.desktopShell ?? isDesktopShellProtocol2();
   const fill = document.createElement("div");
   fill.className = "wp-bg-fill";
   root.appendChild(fill);
@@ -6096,6 +6340,8 @@ function createBackgroundLayer(root) {
   }
   let paused = false;
   let currentVideo = null;
+  let currentVideoHasAudio;
+  let gestureUnlock = null;
   const videoHealth = createVideoHealthMonitor();
   let currentImage = null;
   let currentImageKenBurnsAllowed = false;
@@ -6112,10 +6358,14 @@ function createBackgroundLayer(root) {
   let webResizeTimer = null;
   let pendingWebFrame = null;
   let resizeListening = false;
+  const WEB_SOUND_RETRY_INTERVAL_MS = 250;
+  const WEB_SOUND_RETRY_MAX = 20;
+  let soundRetryTimer = null;
   function stopWebResizeReload() {
     webUrl = null;
     liveWebFrame = null;
     detachPointerPost();
+    stopSoundRetry();
     if (webResizeTimer !== null) {
       clearTimeout(webResizeTimer);
       webResizeTimer = null;
@@ -6130,11 +6380,45 @@ function createBackgroundLayer(root) {
   function clear() {
     frameToken += 1;
     videoHealth.detach();
+    detachGestureUnlock();
     fill.replaceChildren();
     currentImage = null;
     currentImageKenBurnsAllowed = false;
     currentVideo = null;
+    currentVideoHasAudio = void 0;
     stopWebResizeReload();
+  }
+  function detachGestureUnlock() {
+    if (!gestureUnlock) return;
+    window.removeEventListener("pointerdown", gestureUnlock, true);
+    window.removeEventListener("keydown", gestureUnlock, true);
+    gestureUnlock = null;
+  }
+  function armGestureUnlock() {
+    if (gestureUnlock) return;
+    gestureUnlock = () => {
+      detachGestureUnlock();
+      const video = currentVideo;
+      if (!video || !soundEnabled || currentVideoHasAudio === false) return;
+      video.muted = false;
+      playVideo(video);
+    };
+    window.addEventListener("pointerdown", gestureUnlock, true);
+    window.addEventListener("keydown", gestureUnlock, true);
+  }
+  function applyVideoSound(video) {
+    if (!soundEnabled || currentVideoHasAudio === false) {
+      video.muted = true;
+      detachGestureUnlock();
+      return;
+    }
+    if (desktopShell || hasUserActivation2()) {
+      video.muted = false;
+      detachGestureUnlock();
+      return;
+    }
+    video.muted = true;
+    armGestureUnlock();
   }
   function probeAlternateOrigin(alt, wallpaperPath) {
     if (typeof fetch !== "function") return Promise.resolve(null);
@@ -6155,10 +6439,45 @@ function createBackgroundLayer(root) {
     frame.getBoundingClientRect();
     frame.src = url;
   }
+  function postSoundToFrame(frame) {
+    const win = frame?.contentWindow;
+    if (!win) return;
+    try {
+      win.postMessage({ [WEB_SOUND_MESSAGE_TAG]: 1, enabled: soundEnabled, volume }, "*");
+    } catch {
+    }
+  }
+  function syncWebSound() {
+    if (webUrl && liveWebFrame) postSoundToFrame(liveWebFrame);
+  }
+  function stopSoundRetry() {
+    if (soundRetryTimer !== null) {
+      clearInterval(soundRetryTimer);
+      soundRetryTimer = null;
+    }
+  }
+  function retrySoundPost(frame) {
+    stopSoundRetry();
+    let attempts = 0;
+    soundRetryTimer = setInterval(() => {
+      attempts += 1;
+      if (attempts > WEB_SOUND_RETRY_MAX || frame !== liveWebFrame && frame !== pendingWebFrame) {
+        stopSoundRetry();
+        return;
+      }
+      postSoundToFrame(frame);
+    }, WEB_SOUND_RETRY_INTERVAL_MS);
+  }
   function attachWebFrame(spec) {
-    liveWebFrame = makeWebFrame(spec);
-    appendWebFrame(liveWebFrame, spec.url);
-    attachPointerPost(liveWebFrame);
+    const frame = makeWebFrame(spec);
+    liveWebFrame = frame;
+    frame.addEventListener("load", () => {
+      if (liveWebFrame === frame) postSoundToFrame(frame);
+    }, { once: true });
+    appendWebFrame(frame, spec.url);
+    attachPointerPost(frame);
+    postSoundToFrame(frame);
+    retrySoundPost(frame);
   }
   function currentViewport() {
     return [Math.max(1, Math.round(window.innerWidth || 0)), Math.max(1, Math.round(window.innerHeight || 0))];
@@ -6194,6 +6513,8 @@ function createBackgroundLayer(root) {
         liveWebFrame = frame;
         frame.style.visibility = "";
         attachPointerPost(frame);
+        postSoundToFrame(frame);
+        retrySoundPost(frame);
       } else {
         frame.remove();
       }
@@ -6222,15 +6543,17 @@ function createBackgroundLayer(root) {
       currentImage = img;
       markActive();
     },
-    showVideo(url) {
+    showVideo(url, videoOpts) {
       clear();
       const video = document.createElement("video");
       video.autoplay = true;
       video.loop = true;
       video.muted = true;
       video.playsInline = true;
+      video.volume = volume;
       applyFit(video);
       currentVideo = video;
+      currentVideoHasAudio = videoOpts?.silent === true ? false : videoOpts?.hasAudio;
       const result = new Promise((resolve) => {
         let settled = false;
         let timer = null;
@@ -6247,6 +6570,7 @@ function createBackgroundLayer(root) {
       video.src = url;
       fill.appendChild(video);
       videoHealth.attach(video);
+      if (!videoOpts?.silent) applyVideoSound(video);
       if (paused) video.pause();
       markActive();
       return result;
@@ -6335,8 +6659,25 @@ function createBackgroundLayer(root) {
       paused = value;
       if (!currentVideo) return;
       if (value) currentVideo.pause();
-      else void currentVideo.play().catch(() => {
-      });
+      else playVideo(currentVideo);
+    },
+    // 声音总开关（scene 音效在渲染器侧；这里管视频壁纸）：关立即静音、开按宿主策略恢复。
+    setSoundEnabled(enabled) {
+      soundEnabled = enabled;
+      syncWebSound();
+      if (!currentVideo) return;
+      if (!enabled) {
+        currentVideo.muted = true;
+        detachGestureUnlock();
+        return;
+      }
+      applyVideoSound(currentVideo);
+    },
+    // 视频壁纸音量：运行期即时生效（0-1，非法值回退 1）。
+    setVolume(value) {
+      volume = clampVolume(value);
+      if (currentVideo) currentVideo.volume = volume;
+      syncWebSound();
     },
     getVideoHealth() {
       return videoHealth.snapshot();
@@ -6514,7 +6855,7 @@ function createWallpaperController(layer, opts) {
     const plan = resolveBackground(info);
     switch (plan.kind) {
       case "video": {
-        const result = await layer.showVideo(plan.url);
+        const result = await layer.showVideo(plan.url, { hasAudio: plan.hasAudio });
         if (gen !== selectGeneration) return;
         if (result !== "ok") {
           const fallback = info.previewUrl ? "preview" : "none";
@@ -34251,7 +34592,10 @@ function createAudioAnalyzer() {
     const context = new Ctor();
     const analyser = context.createAnalyser();
     analyser.fftSize = 128;
-    analyser.connect(context.destination);
+    const masterGain = context.createGain();
+    masterGain.gain.value = 1;
+    analyser.connect(masterGain);
+    masterGain.connect(context.destination);
     const freqData = new Uint8Array(analyser.frequencyBinCount);
     return {
       context,
@@ -34266,6 +34610,14 @@ function createAudioAnalyzer() {
           const pending = suspended ? context.suspend() : context.resume();
           void pending.catch(() => {
           });
+        } catch {
+        }
+      },
+      // 主音量：非有限值忽略（保持当前值）；context 关闭后写 AudioParam 会抛 → 静默
+      setVolume(volume) {
+        if (!Number.isFinite(volume)) return;
+        try {
+          masterGain.gain.value = Math.min(1, Math.max(0, volume));
         } catch {
         }
       }
@@ -36646,6 +36998,8 @@ function createThreeSceneRenderer(opts) {
     }
   };
   let soundEnabledOverride = null;
+  let soundVolumeOverride = null;
+  let soundVolumeFromSettings = null;
   let lastAudioSpec = null;
   let contextLostHandler = null;
   let contextLostId = null;
@@ -36708,10 +37062,11 @@ function createThreeSceneRenderer(opts) {
     void audio.analyzer.context.close().catch(() => {
     });
   };
-  const startAudio = (id, sounds, enabled) => {
+  const startAudio = (id, sounds, enabled, volume) => {
     if (!enabled || sounds.length === 0) return;
     const analyzer = createAudioAnalyzer();
     if (!analyzer) return;
+    analyzer.setVolume(volume);
     const audio = { analyzer, id, sounds, handles: [] };
     currentAudio = audio;
     for (const s of sounds) {
@@ -37086,7 +37441,13 @@ function createThreeSceneRenderer(opts) {
         if (abortIfContextLost()) return false;
         qualityScale = settings.qualityScale ?? 1;
         lastAudioSpec = desc.sounds && desc.sounds.length > 0 ? { id, sounds: desc.sounds } : null;
-        startAudio(id, desc.sounds ?? [], soundEnabledOverride ?? settings.soundEnabled !== false);
+        soundVolumeFromSettings = settings.soundVolume ?? 1;
+        startAudio(
+          id,
+          desc.sounds ?? [],
+          soundEnabledOverride ?? settings.soundEnabled !== false,
+          soundVolumeOverride ?? soundVolumeFromSettings
+        );
         glowFromSettings = {
           enabled: settings.glowEnabled,
           threshold: settings.glowThreshold,
@@ -37642,7 +38003,19 @@ function createThreeSceneRenderer(opts) {
         return;
       }
       if (!current) return;
-      if (!currentAudio && lastAudioSpec) startAudio(lastAudioSpec.id, lastAudioSpec.sounds, true);
+      if (!currentAudio && lastAudioSpec) {
+        startAudio(
+          lastAudioSpec.id,
+          lastAudioSpec.sounds,
+          true,
+          soundVolumeOverride ?? soundVolumeFromSettings ?? 1
+        );
+      }
+    },
+    // 主音量（面板即时生效）：已装配 → 立即改 masterGain；未装配 → 只记 override，下次装配应用。
+    setSoundVolume(value) {
+      soundVolumeOverride = value;
+      currentAudio?.analyzer.setVolume(value);
     },
     // 抓帧（v0.8 首帧缓存）：读取下一帧渲染结果；未装配/不支持 → null（调用方只跳过）。
     async captureFrame() {
@@ -37721,7 +38094,7 @@ async function showSceneFallback(info, deps) {
   const videoUrl = await probeEmbeddedVideo(info.id, deps.fetch);
   if (videoUrl) {
     try {
-      if (await deps.layer.showVideo(videoUrl) === "ok") return "video";
+      if (await deps.layer.showVideo(videoUrl, { silent: true }) === "ok") return "video";
     } catch {
     }
   }
@@ -37793,7 +38166,20 @@ function bootstrap(ctx) {
   }
   setSettingsCtx(ctx);
   injectWallpaperStyles();
-  const bootPlayer = createBootPlayer({ readSettings: readClientSettings });
+  let bootActive = false;
+  function applyBootSoundState() {
+    if (disposed) return;
+    const enabled = bootActive ? false : settings.soundEnabled;
+    sceneRenderer.setSoundEnabled?.(enabled);
+    layer?.setSoundEnabled(enabled);
+  }
+  const bootPlayer = createBootPlayer({
+    readSettings: readClientSettings,
+    onActiveChange: (active) => {
+      bootActive = active;
+      applyBootSoundState();
+    }
+  });
   const bootApi2 = {
     play: (opts) => bootPlayer.play(opts),
     getLast: () => bootPlayer.getLast()
@@ -37859,6 +38245,8 @@ function bootstrap(ctx) {
     layer.setBlur(s.blurEnabled, s.blurRadius);
     layer.setKenBurns(s.kenBurns);
     layer.setFitMode(s.fitMode);
+    layer.setSoundEnabled(bootActive ? false : s.soundEnabled);
+    layer.setVolume(s.soundVolume);
   };
   const applyRuntimeSettings = (s) => {
     if (disposed) return;
@@ -37868,7 +38256,10 @@ function bootstrap(ctx) {
     sceneRenderer.setPaused?.(shouldPause);
     sceneRenderer.setQualityScale?.(s.qualityScale);
     sceneRenderer.setGlow?.({ enabled: s.glowEnabled, threshold: s.glowThreshold, strength: s.glowStrength });
-    sceneRenderer.setSoundEnabled?.(s.soundEnabled);
+    sceneRenderer.setSoundEnabled?.(bootActive ? false : s.soundEnabled);
+    layer?.setSoundEnabled(bootActive ? false : s.soundEnabled);
+    sceneRenderer.setSoundVolume?.(s.soundVolume);
+    layer?.setVolume(s.soundVolume);
     sceneRenderer.setMediaIntegration?.(s.mediaIntegrationEnabled);
     layer?.setPaused(shouldPause);
     controller?.applyTextStyle();
@@ -37972,7 +38363,10 @@ function bootstrap(ctx) {
     void bootPlayer.start();
     const root = document.createElement("div");
     document.body.prepend(root);
-    layer = createBackgroundLayer(root);
+    layer = createBackgroundLayer(root, {
+      soundEnabled: bootActive ? false : settings.soundEnabled,
+      volume: settings.soundVolume
+    });
     controller = createWallpaperController(layer, {
       fetchList: async () => (await fetch("/wallpapers/list")).json(),
       // three.js 播放器是**唯一** scene 路径；渲染失败/零可见对象 → controller 回退 preview 图。
@@ -38007,7 +38401,7 @@ function bootstrap(ctx) {
         await showSceneFallback(info, {
           fetch: window.fetch.bind(window),
           layer: {
-            showVideo: (url) => current() ? layer.showVideo(url) : Promise.resolve("unsupported"),
+            showVideo: (url, o) => current() ? layer.showVideo(url, o) : Promise.resolve("unsupported"),
             showImage: (url, kenBurns) => {
               if (current()) layer.showImage(url, kenBurns);
             },
@@ -38112,7 +38506,7 @@ function bootstrap(ctx) {
           break;
         case "video":
           settings = { ...settings, selectedWallpaperId: "" };
-          void layer.showVideo(plan.url).then((result) => {
+          void layer.showVideo(plan.url, { hasAudio: plan.hasAudio }).then((result) => {
             if (result === "ok" || disposed || token !== backgroundToken) return;
             mediaHealth.set(videoWallpaperId(plan.url), result, "none");
           });

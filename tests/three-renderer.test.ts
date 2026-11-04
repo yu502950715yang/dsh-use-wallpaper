@@ -2580,6 +2580,7 @@ describe('three-renderer 音频链路', () => {
       freqData: new Uint8Array(64),
       update: vi.fn(),
       setSuspended: vi.fn(),
+      setVolume: vi.fn(),
     };
   }
 
@@ -2745,6 +2746,92 @@ describe('three-renderer 音频链路', () => {
     r.setSoundEnabled?.(true);
     expect(audioMocks.playWallpaperSound).not.toHaveBeenCalled();
     expect(audioMocks.createAudioAnalyzer).not.toHaveBeenCalled();
+  });
+
+  // ── 主音量（设置 soundVolume / 运行期 setSoundVolume）────────────────────────────
+  it('装配期主音量：settings.soundVolume → analyzer.setVolume（缺省 1）', async () => {
+    const fake = fakeAnalyzer();
+    audioMocks.createAudioAnalyzer.mockReturnValue(fake);
+    stubSettings({ soundVolume: 0.35 });
+    stubAssetFetch(sceneWithSound([]), {});
+    stubPlayer();
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    await r.render('3798688689', document.createElement('canvas'));
+    expect(fake.setVolume).toHaveBeenCalledWith(0.35);
+    r.dispose?.();
+  });
+
+  it('装配期主音量：未设置（旧设置/默认）→ 按 1 应用，不改变既有听感', async () => {
+    const fake = fakeAnalyzer();
+    audioMocks.createAudioAnalyzer.mockReturnValue(fake);
+    stubSettings({});
+    stubAssetFetch(sceneWithSound([]), {});
+    stubPlayer();
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    await r.render('3798688689', document.createElement('canvas'));
+    expect(fake.setVolume).toHaveBeenCalledWith(1);
+    r.dispose?.();
+  });
+
+  it('setSoundVolume：已装配 → 立即对当前分析器生效', async () => {
+    const fake = fakeAnalyzer();
+    audioMocks.createAudioAnalyzer.mockReturnValue(fake);
+    stubAssetFetch(sceneWithSound([]), {});
+    stubPlayer();
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    await r.render('3798688689', document.createElement('canvas'));
+    r.setSoundVolume(0.2);
+    expect(fake.setVolume).toHaveBeenLastCalledWith(0.2);
+    r.dispose?.();
+  });
+
+  it('setSoundVolume：无音频装配 → 只记录不抛，下次装配按 override 生效', async () => {
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    expect(() => r.setSoundVolume(0.5)).not.toThrow(); // 未装配：只记状态
+    const fake = fakeAnalyzer();
+    audioMocks.createAudioAnalyzer.mockReturnValue(fake);
+    stubSettings({ soundVolume: 1 });
+    stubAssetFetch(sceneWithSound([]), {});
+    stubPlayer();
+    await r.render('3798688689', document.createElement('canvas'));
+    expect(fake.setVolume).toHaveBeenCalledWith(0.5); // override 优先于设置值
+    r.dispose?.();
+  });
+
+  it('setSoundVolume override 跨装配沿用；运行期关→开音效按当前音量重播', async () => {
+    const fake1 = fakeAnalyzer();
+    audioMocks.createAudioAnalyzer.mockReturnValue(fake1);
+    stubSettings({ soundVolume: 0.8 });
+    stubAssetFetch(sceneWithSound([]), {});
+    stubPlayer();
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    await r.render('3798688689', document.createElement('canvas'));
+    expect(fake1.setVolume).toHaveBeenCalledWith(0.8);
+
+    r.setSoundVolume(0.25);
+    expect(fake1.setVolume).toHaveBeenLastCalledWith(0.25);
+    r.setSoundEnabled?.(false);
+    const fake2 = fakeAnalyzer();
+    audioMocks.createAudioAnalyzer.mockReturnValue(fake2);
+    r.setSoundEnabled?.(true);
+    expect(fake2.setVolume).toHaveBeenCalledWith(0.25);
+    r.dispose?.();
+  });
+
+  it('运行期重新打开音效：无 override 时沿用装配期设置音量（不跳回 1）', async () => {
+    const fake1 = fakeAnalyzer();
+    audioMocks.createAudioAnalyzer.mockReturnValue(fake1);
+    stubSettings({ soundVolume: 0.4 });
+    stubAssetFetch(sceneWithSound([]), {});
+    stubPlayer();
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    await r.render('3798688689', document.createElement('canvas'));
+    r.setSoundEnabled?.(false);
+    const fake2 = fakeAnalyzer();
+    audioMocks.createAudioAnalyzer.mockReturnValue(fake2);
+    r.setSoundEnabled?.(true);
+    expect(fake2.setVolume).toHaveBeenCalledWith(0.4);
+    r.dispose?.();
   });
 
   // 省电暂停（最小化/切后台）：画面之外音频也必须停，否则「最小化后还在响」= 没暂停

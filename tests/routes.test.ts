@@ -608,6 +608,9 @@ describe('registerWallpaperRoutes', () => {
     expect(r1.statusCode).toBe(200);
     expect(r1.headers['Content-Type']).toContain('text/html');
     expect(r1.body.toString('utf8')).toContain('css/a.css');
+    // HTML 注入：指针直传 shim（§5.48）+ 声音 shim（web 壁纸跟随「声音」卡开关/音量）。
+    expect(r1.body.toString('utf8')).toContain('__wpPointer');
+    expect(r1.body.toString('utf8')).toContain('__wpSound');
 
     const r2 = makeRes();
     await handler({ url: '/wallpapers/web/w1/css/a.css' }, r2);

@@ -244,6 +244,12 @@ export function collectScriptSources(
   return out;
 }
 
+// three-renderer 对外方法集合：SceneRendererLike + 本渲染器额外的运行期控制。
+export type ThreeSceneRenderer = SceneRendererLike & {
+  /** 壁纸音效主音量（0-1）：已装配即时生效；未装配只记录，下次装配应用。 */
+  setSoundVolume(value: number): void;
+};
+
 // 创建 three.js 播放器场景渲染器（sceneRenderer 接口）。opts 两项可注入（测试），缺省用生产实现。
 //
 // 已知边界：粒子 quad 自旋按 WE `ComputeParticleTangents` 三轴欧拉旋转基向量；可见性统一走
@@ -254,7 +260,7 @@ export function createThreeSceneRenderer(opts?: {
   getTextScriptRuntime?: () => Promise<TextScriptRuntime | null>;
   // 看护存储：不传则自建一个（localStorage 可用时落盘）。注入点存在是为了单测不碰真实存储。
   healthStore?: RenderHealthStore;
-}): SceneRendererLike {
+}): ThreeSceneRenderer {
   const loadWasm = opts?.loadWasm ?? defaultLoadWasm;
   const resolveTextScriptRuntime = opts?.getTextScriptRuntime ?? getTextScriptRuntime;
   // 模块加载缓存：同一 renderer 内多次 render 只加载/初始化一次 wasm（对齐 wasm-renderer）。
@@ -324,6 +330,10 @@ export function createThreeSceneRenderer(opts?: {
   };
   // 运行期音效开关（面板 soundEnabled）：null = 未下发 ⇒ 用装配期读到的设置值。
   let soundEnabledOverride: boolean | null = null;
+  // 运行期主音量（面板 soundVolume）：null = 未下发 ⇒ 用装配期读到的设置值（0-1 由 analyzer clamp）。
+  let soundVolumeOverride: number | null = null;
+  // 最近一次装配读到的设置音量：运行期关→开音效时沿用，不跳回 1。
+  let soundVolumeFromSettings: number | null = null;
   // 最近一次装配的音频规格：运行期重新打开时按它重播（不必重选壁纸）。
   let lastAudioSpec: { id: string; sounds: SceneSoundObject[] } | null = null;
   // 上下文丢失回调（由控制器注册：只有它知道当前壁纸的 preview 地址）。
@@ -391,10 +401,12 @@ export function createThreeSceneRenderer(opts?: {
     void audio.analyzer.context.close().catch(() => {});
   };
 
-  const startAudio = (id: string, sounds: SceneSoundObject[], enabled: boolean) => {
+  const startAudio = (id: string, sounds: SceneSoundObject[], enabled: boolean, volume: number) => {
     if (!enabled || sounds.length === 0) return;
     const analyzer = createAudioAnalyzer();
     if (!analyzer) return; // 无 Web Audio → 静音回退（不阻断渲染）
+    // 主音量在起播前应用：迟到的 sound 也从正确音量开始
+    analyzer.setVolume(volume);
     const audio = { analyzer, id, sounds, handles: [] as PlaybackHandle[] };
     currentAudio = audio;
     // 失败的 sound（404/解码失败）在 playWallpaperSound 内部静默降级，不影响其余与画面。
@@ -875,7 +887,13 @@ export function createThreeSceneRenderer(opts?: {
         qualityScale = settings.qualityScale ?? 1;
         // 壁纸音效：sound 对象默认播放（对齐桌面 WE，可用面板关掉）。关掉时**不创建** AudioContext。
         lastAudioSpec = desc.sounds && desc.sounds.length > 0 ? { id, sounds: desc.sounds } : null;
-        startAudio(id, desc.sounds ?? [], soundEnabledOverride ?? (settings.soundEnabled !== false));
+        soundVolumeFromSettings = settings.soundVolume ?? 1;
+        startAudio(
+          id,
+          desc.sounds ?? [],
+          soundEnabledOverride ?? (settings.soundEnabled !== false),
+          soundVolumeOverride ?? soundVolumeFromSettings,
+        );
         // Glow 三值来自持久设置；运行期下发过则以后者为准（effectiveGlow 里合并）。
         glowFromSettings = {
           enabled: settings.glowEnabled,
@@ -1532,7 +1550,20 @@ export function createThreeSceneRenderer(opts?: {
       if (!value) { stopAudio(); return; }
       // 没有装配中的场景（视频/图片/网页壁纸或已 dispose）时不得重播上一次场景的音频。
       if (!current) return;
-      if (!currentAudio && lastAudioSpec) startAudio(lastAudioSpec.id, lastAudioSpec.sounds, true);
+      if (!currentAudio && lastAudioSpec) {
+        // 沿用当前音量：运行期 override 优先，否则用装配期设置值（不跳回 1）
+        startAudio(
+          lastAudioSpec.id,
+          lastAudioSpec.sounds,
+          true,
+          soundVolumeOverride ?? soundVolumeFromSettings ?? 1,
+        );
+      }
+    },
+    // 主音量（面板即时生效）：已装配 → 立即改 masterGain；未装配 → 只记 override，下次装配应用。
+    setSoundVolume(value: number) {
+      soundVolumeOverride = value;
+      currentAudio?.analyzer.setVolume(value);
     },
     // 抓帧（v0.8 首帧缓存）：读取下一帧渲染结果；未装配/不支持 → null（调用方只跳过）。
     async captureFrame(): Promise<Uint8Array | null> {

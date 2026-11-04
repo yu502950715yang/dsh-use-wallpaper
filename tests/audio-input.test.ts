@@ -9,7 +9,7 @@ import { createAudioAnalyzer, LARGE_AUDIO_BYTES, playWallpaperSound } from '../s
 
 // Mock AnalyserNode：getByteFrequencyData 把模拟频谱（i*5 mod 256）写入调用方数组。
 // 语义对齐真实 Web Audio：frequencyBinCount = fftSize / 2（此处固定 64，对应 fftSize 128）。
-// connect 自 T3.4 起被 createAudioAnalyzer 调用（analyser → destination 音频图汇点）。
+// connect 自 T3.4 起被 createAudioAnalyzer 调用（analyser → masterGain 音频图汇点）。
 function makeMockAnalyser() {
   return {
     fftSize: 0,
@@ -21,20 +21,45 @@ function makeMockAnalyser() {
   };
 }
 
-// 在 globalThis 注入 AudioContext mock，返回 mock analyser 与构造类（供实例断言）
+// 在 globalThis 注入 AudioContext mock，返回 mock analyser / masterGain 与构造类（供实例断言）。
+// masterGain.gain 为访问器：context.close() 后再写抛 InvalidStateError（验证 setVolume 静默兜底）。
 function stubAudioContext() {
   const analyser = makeMockAnalyser();
+  let gainValue = 1;
+  let closed = false;
+  const masterGain = {
+    gain: {
+      get value(): number {
+        return gainValue;
+      },
+      set value(v: number) {
+        if (closed) throw new DOMException('closed', 'InvalidStateError');
+        gainValue = v;
+      },
+    },
+    connect: vi.fn(),
+    disconnect: vi.fn(),
+  };
   class MockAudioContext {
-    destination = {}; // T3.4：createAudioAnalyzer 把 analyser 接到 destination
+    destination = {}; // T3.4：createAudioAnalyzer 把 masterGain 接到 destination
+    state = 'running';
     analyser = analyser;
+    masterGain = masterGain;
     suspend = vi.fn(async () => {});
     resume = vi.fn(async () => {});
+    close = vi.fn(async () => {
+      closed = true;
+      this.state = 'closed';
+    });
     createAnalyser() {
       return this.analyser;
     }
+    createGain() {
+      return this.masterGain;
+    }
   }
   vi.stubGlobal('AudioContext', MockAudioContext);
-  return { analyser, MockAudioContext };
+  return { analyser, masterGain, MockAudioContext };
 }
 
 afterEach(() => {
@@ -47,8 +72,8 @@ describe('createAudioAnalyzer（音频频谱分析器工厂）', () => {
     expect(createAudioAnalyzer()).toBeNull();
   });
 
-  it('AudioContext 可用 → 创建分析器：analyser fftSize=128、freqData 64 bin、接 destination', () => {
-    const { analyser, MockAudioContext } = stubAudioContext();
+  it('AudioContext 可用 → 创建分析器：analyser fftSize=128、freqData 64 bin、analyser→masterGain→destination', () => {
+    const { analyser, masterGain, MockAudioContext } = stubAudioContext();
     const a = createAudioAnalyzer();
     expect(a).not.toBeNull();
     expect(a!.context).toBeInstanceOf(MockAudioContext);
@@ -56,8 +81,10 @@ describe('createAudioAnalyzer（音频频谱分析器工厂）', () => {
     expect(analyser.fftSize).toBe(128); // fftSize 128 → frequencyBinCount 64
     expect(a!.freqData).toBeInstanceOf(Uint8Array);
     expect(a!.freqData.length).toBe(64);
-    // T3.4：音频图汇点（analyser → destination）在创建期一次性接好，播放只需把源接 analyser
-    expect(analyser.connect).toHaveBeenCalledWith(a!.context.destination);
+    // 音频图汇点（analyser → masterGain → destination）创建期一次性接好：主音量不污染频谱
+    expect(analyser.connect).toHaveBeenCalledWith(masterGain);
+    expect(masterGain.connect).toHaveBeenCalledWith(a!.context.destination);
+    expect(masterGain.gain.value).toBe(1); // 主音量初值 1（不改变既有听感）
   });
 
   it('update() 刷新频谱：getByteFrequencyData(freqData) 填充 64 bin 字节数据', () => {
@@ -70,13 +97,18 @@ describe('createAudioAnalyzer（音频频谱分析器工厂）', () => {
     for (let i = 0; i < 64; i++) expect(a.freqData[i]).toBe((i * 5) % 256);
   });
 
-  it('webkitAudioContext 回退：仅 webkit 前缀存在也能创建', () => {
+  it('webkitAudioContext 回退：仅 webkit 前缀存在也能创建（含 masterGain 接线）', () => {
     const analyser = makeMockAnalyser();
+    const masterGain = { gain: { value: 1 }, connect: vi.fn(), disconnect: vi.fn() };
     class MockWebkitAudioContext {
       destination = {};
       analyser = analyser;
+      masterGain = masterGain;
       createAnalyser() {
         return this.analyser;
+      }
+      createGain() {
+        return this.masterGain;
       }
     }
     vi.stubGlobal('webkitAudioContext', MockWebkitAudioContext);
@@ -84,7 +116,8 @@ describe('createAudioAnalyzer（音频频谱分析器工厂）', () => {
     expect(a).not.toBeNull();
     expect(a!.analyser).toBe(analyser);
     expect(a!.freqData.length).toBe(64);
-    expect(analyser.connect).toHaveBeenCalledWith(a!.context.destination);
+    expect(analyser.connect).toHaveBeenCalledWith(masterGain);
+    expect(masterGain.connect).toHaveBeenCalledWith(a!.context.destination);
   });
 
   it('AudioContext 构造抛异常 → 返回 null（音频失败静默，不拖垮渲染）', () => {
@@ -111,6 +144,38 @@ describe('createAudioAnalyzer（音频频谱分析器工厂）', () => {
     (ctx.resume as unknown as { mockRejectedValueOnce: (e: unknown) => void }).mockRejectedValueOnce(new Error('blocked'));
     expect(() => a.setSuspended(false)).not.toThrow();
     await Promise.resolve();
+  });
+
+  // ── 主音量（masterGain）：频谱读 pre-master 信号，音量不影响频谱条 ──────────────
+  it('setVolume：写入 masterGain.gain.value（即时生效，可重复调）', () => {
+    const { masterGain } = stubAudioContext();
+    const a = createAudioAnalyzer()!;
+    a.setVolume(0.4);
+    expect(masterGain.gain.value).toBeCloseTo(0.4, 5);
+    a.setVolume(0.75);
+    expect(masterGain.gain.value).toBeCloseTo(0.75, 5);
+  });
+
+  it('setVolume：越界 clamp 到 0-1（1.5 → 1、-0.2 → 0），边界值原样', () => {
+    const { masterGain } = stubAudioContext();
+    const a = createAudioAnalyzer()!;
+    a.setVolume(1.5);
+    expect(masterGain.gain.value).toBe(1);
+    a.setVolume(-0.2);
+    expect(masterGain.gain.value).toBe(0);
+    a.setVolume(1);
+    expect(masterGain.gain.value).toBe(1);
+    a.setVolume(0);
+    expect(masterGain.gain.value).toBe(0);
+  });
+
+  // context 关闭（切壁纸/收尾竞态）后仍可能被面板回调 setVolume：不得抛
+  it('setVolume：context 关闭后调用不抛（静默），不污染无效音频图', async () => {
+    const { masterGain } = stubAudioContext();
+    const a = createAudioAnalyzer()!;
+    await a.context.close();
+    expect(() => a.setVolume(0.4)).not.toThrow();
+    expect(masterGain.gain.value).toBe(1); // 关闭后写入被拒 → 保持原值
   });
 });
 

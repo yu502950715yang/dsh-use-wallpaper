@@ -1,8 +1,9 @@
 // src/client/audio-input.ts
 // 音频输入管线（Task 3.2）：AudioContext + AnalyserNode 频谱缓冲 → EffectRunner 音频 uniform。
 // 壁纸音频播放（Task 3.4）：playWallpaperSound 把 sound 源接入分析器——音频图汇点
-// （analyser → destination）在创建期一次性接好；无音频源时 getByteFrequencyData
+// （analyser → masterGain → destination）在创建期一次性接好；无音频源时 getByteFrequencyData
 // 返回全零 → EffectRunner 保持静音（与现状一致，不回归）。
+// 主音量（2026-11-04）：masterGain 位于 analyser 之后 ⇒ 面板调音量不改变频谱条数据。
 export interface AudioAnalyzer {
   context: AudioContext;
   analyser: AnalyserNode;
@@ -10,6 +11,8 @@ export interface AudioAnalyzer {
   update(): void;       // 刷新频谱：analyser.getByteFrequencyData(freqData)
   /** 省电暂停：挂起/恢复整个音频图（解码路径的 source 随 context 时钟冻结）。 */
   setSuspended(suspended: boolean): void;
+  /** 主音量（0-1，越界 clamp）；只改 masterGain，不影响频谱。 */
+  setVolume(volume: number): void;
 }
 
 type AudioContextCtor = new () => AudioContext;
@@ -24,9 +27,10 @@ function resolveAudioContextCtor(): AudioContextCtor | null {
 }
 
 // 创建频谱分析器；无 Web Audio（旧浏览器/非浏览器环境）→ null（静音回退，不阻断渲染）。
-// T3.4：创建期把 analyser 接到 context.destination（音频图汇点，仅一次）——壁纸音频
-// 播放（playWallpaperSound）只需把 AudioBufferSourceNode 插到 analyser 输入即可成链
-// （source → analyser → destination），避免多 sound 各自重复连接 destination。
+// T3.4：创建期把音频图汇点接好（仅一次）——壁纸音频播放（playWallpaperSound）只需把
+// AudioBufferSourceNode 插到 analyser 输入即可成链（source → analyser → masterGain → destination），
+// 避免多 sound 各自重复连接 destination。masterGain 在 analyser 之后：频谱读 pre-master 信号，
+// 输出音量由它控制（初始 1，不改变既有听感）。
 export function createAudioAnalyzer(): AudioAnalyzer | null {
   const Ctor = resolveAudioContextCtor();
   if (!Ctor) return null;
@@ -35,7 +39,10 @@ export function createAudioAnalyzer(): AudioAnalyzer | null {
     const analyser = context.createAnalyser();
     // fftSize 128 → frequencyBinCount = 64 bins（对齐 WE 音频 uniform 最大 RESOLUTION=64）
     analyser.fftSize = 128;
-    analyser.connect(context.destination);
+    const masterGain = context.createGain();
+    masterGain.gain.value = 1;
+    analyser.connect(masterGain);
+    masterGain.connect(context.destination);
     const freqData = new Uint8Array(analyser.frequencyBinCount);
     return {
       context,
@@ -51,6 +58,15 @@ export function createAudioAnalyzer(): AudioAnalyzer | null {
           void pending.catch(() => {});
         } catch {
           // context 已关闭（切壁纸/收尾竞态）：静默
+        }
+      },
+      // 主音量：非有限值忽略（保持当前值）；context 关闭后写 AudioParam 会抛 → 静默
+      setVolume(volume: number) {
+        if (!Number.isFinite(volume)) return;
+        try {
+          masterGain.gain.value = Math.min(1, Math.max(0, volume));
+        } catch {
+          // context 已关闭：静默
         }
       },
     };

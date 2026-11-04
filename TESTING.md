@@ -504,7 +504,7 @@ getEventListeners(window).pointermove?.length
 | # | 用例 | 步骤 | 期望结果 | 失败表现 |
 |---|---|---|---|---|
 | B1 | WE 图片壁纸素材 | 设置 →「开机动画」→ 启用；素材选一张 WE 图片壁纸；重开 App / 新窗口。 | 页面加载后全屏显示该图（默认裁切填满），约 4 秒淡出进入界面；面板「上次播放」显示结果。 | 不显示 / 一直黑屏 / 4 秒后不淡出 → overlay 图片分支或计时。 |
-| B2 | WE 视频壁纸素材 | 素材改选 WE 视频壁纸；重开 / 新窗口。 | 视频**静音**播放，播完或到「最长播放」上限后淡出；「平铺」radio 置灰提示「视频不支持平铺」。 | 有声音 / 不结束 / 平铺可选 → 播放策略或面板联动回归。 |
+| B2 | WE 视频壁纸素材 | 素材改选 WE 视频壁纸；重开 / 新窗口；再关掉「声音」卡的开机动画声音开关重试一次。 | 视频播放；桌面版**有声**（默认开启，面板「声音」卡可关）、浏览器首次交互后出声；播完或到「最长播放」上限后淡出；「平铺」radio 置灰提示「视频不支持平铺」。 | 桌面版无声 → 宿主 autoplayPolicy 或 `soundEnabled` 未下发；不结束 / 平铺可选 → 播放策略或面板联动回归。 |
 | B3 | 本地 mp4 素材 | 素材切「本地视频文件」，填绝对路径 → 点「校验」→ 重开 / 新窗口 / 点「试播」。 | 校验显示「文件存在 · 大小 · 可播放」；开机与试播都能播放；路径非法/不存在时面板给中文原因且不阻塞界面。 | 校验无结果 / 播放 403/404 → host 路由或面板探测链路。 |
 | B4 | 四种展示方式 | 用图片素材依次选 平铺 / 居中 / 挤压 / 裁切填满，各「试播」。 | 平铺 = 原尺寸重复铺满；居中 = 完整显示可能留黑边；挤压 = 拉伸填满（比例变形）；裁切填满 = 裁切铺满。 | 平铺被拉伸 / 居中变裁切 → fit 映射（`tile` 走背景 repeat，其余 `object-fit`）。 |
 | B5 | 只播一次与试播 | 播放完后刷新页面；再开新窗口；最后点面板「试播」。 | 刷新**不重播**（`sessionStorage` 标记）；新窗口/新会话播一次；「试播」不受开关与标记限制，可反复预览。 | 刷新重播 / 试播无效 → `shouldPlayBoot` 或 boot API 链路。 |
@@ -516,7 +516,7 @@ getEventListeners(window).pointermove?.length
 **勾选记录（真机验收待执行：以下 B1–B8 需人工勾选，当前未验）**：
 
 - [ ] B1：WE 图片壁纸素材
-- [ ] B2：WE 视频壁纸素材（静音、平铺禁用）
+- [ ] B2：WE 视频壁纸素材（声音默认开启、可关；平铺禁用）
 - [ ] B3：本地 mp4（校验 + 播放）
 - [ ] B4：四种展示方式
 - [ ] B5：刷新不重播 / 新会话播一次 / 试播可重看
@@ -524,6 +524,32 @@ getEventListeners(window).pointermove?.length
 - [ ] B7：Host / UNC 安全用例（自动化已覆盖，真机复核）
 - [ ] B8：失败静默 / 跳过 / 无残留层
 - [ ] B9：DSH 启动加载页（Loading plugins…）被动画接管，主界面就绪后淡出
+
+---
+
+### 2.19 手工验收清单：视频壁纸声音 + 壁纸声音开关（2026-11-04）
+
+> **真机验收待执行（当前仅自动化门禁）**：以下 C1–C6 需由人在运行中的 DSH 里手动勾选，**agent 未代验、未伪造勾选**。
+> **前置**：已 `npm run build` + `npm run build:client` 并**重启 App**（桌面版 host 启动时快照客户端 bundle，只刷新页面拿不到新代码）；壁纸库含 `3422242110`（沉鱼落燕，有音轨）与 `3815771488`（黑白-剑少女，无音轨）。
+> **自动化已覆盖**：`tests/dom/background-layer.dom.test.ts`（桌面壳直接不静音 / 浏览器先静音 + 首次 pointerdown 解锁 / `soundEnabled=false` 与 `hasAudio=false` 保持静音 / `setSoundEnabled` 运行期切换 / 清空后监听摘除 / 音量默认 1 与 `setVolume` clamp / web 帧 `__wpSound` 下发 + 帧创建后重发）、`tests/web-audio-shim.test.ts`（注入工具 + shim 运行时：开关/音量/clamp/动态媒体/畸形消息/页面写回 muted 后 play 钩子兜底）、`tests/dom/boot-overlay.dom.test.ts`（开机动画声音三种策略 + volume 应用）、`tests/boot-player.test.ts`（`onActiveChange` 只在真正播放区间触发 true/false，未启用/已播过不触发）、`tests/dom/boot-mutes-wallpaper.dom.test.ts`（开机动画 active 期间壁纸声音下发 false、结束恢复用户设置）、`tests/dom/settings-section.dom.test.tsx`（「声音」卡独立 + 无音轨提示 + 音量滑杆下发/持久化）、`tests/dom/boot-settings-section.dom.test.tsx`（开机动画声音开关与音量滑杆）、`tests/audio-input.test.ts`（masterGain 接线 + `setVolume` clamp / context 关闭后静默）、`tests/three-renderer.test.ts`（`setSoundVolume` 装配即时生效 / 无装配只记录 / 重开沿用）、`tests/mp4-audio-probe.test.ts`（mp4 音轨探测 true/false/null + scanner 集成）、`tests/routes.test.ts`（web HTML 注入 `__wpPointer` + `__wpSound`）、`tests/dom/wallpaper-controller.dom.test.ts`（`hasAudio` 透传）。
+
+| # | 用例 | 步骤 | 期望结果 | 失败表现 |
+|---|---|---|---|---|
+| C1 | 桌面版视频壁纸出声 + 音量 | 选 `3422242110`（沉鱼落燕）→ 确认「声音」卡「壁纸音效」开启；拖动「声音」卡音量滑杆到 40% / 100%。 | 视频播放**有声音**（与 Wallpaper Engine 桌面版同款音轨）；关掉「壁纸音效」立即静音、画面继续；重新打开恢复；音量滑杆拖动**即时**改变响度（scene 音效对象同步生效）。 | 无声 → 检查宿主 `autoplayPolicy`、`soundEnabled` 是否下发（DevTools：`document.querySelector('video').muted` 应为 `false`）；音量无效 → `soundVolume` 未下发或 masterGain 未接线。 |
+| C2 | 无音轨素材提示 | 选 `3815771488`（黑白-剑少女）。 | 面板「声音」卡提示「当前视频壁纸没有音轨，开启声音也不会出声」；该素材本来即无声。 | 无声且无提示 → host `hasAudio` 未下发或扫描未跑（`/wallpapers/list` 看该 id 的 `hasAudio`）。 |
+| C3 | 浏览器模式自动播放策略 | 用 Chrome 打开 `dsh web` GUI（非桌面 App），选 `3422242110` → 冷启动后不点页面 → 再点一下页面任意处。 | 冷启动阶段视频先静音播放；点过页面后出声（自动播放策略需要用户手势）。 | 一直无声 → Console 检查 `navigator.userActivation.hasBeenActive` 与解锁监听。 |
+| C4 | 开机动画声音 + 音量 | 「开机动画」tab 确认声音开关默认开、音量滑杆默认 100%；选 `3422242110` 作素材，完全退出 DSH 再启动。 | 桌面版开机动画**有声**；关掉开关后重启静音；音量调到 40% 后重启明显更轻。浏览器里冷启动通常静音（自动播放策略）。 | 桌面版无声 → 检查 `bootAnimationSoundEnabled` / `bootAnimationVolume` 是否写入 profile config、宿主 autoplayPolicy。 |
+| C5 | web 壁纸声音 | 选一张 `type: web` 且页面内有音视频的壁纸（优先 `3778198228` WoW 登录界面：页面脚本自己会改 `muted`；另可试 `1184182304`）；开/关「壁纸音效」、拖动音量滑杆。 | 页内 `<audio>/<video>` 跟随开关静音/恢复、音量滑杆即时改变响度；动态创建的媒体元素、以及**页面自己把 muted 写回 false / 重新播放**时都被兜住。 | 无变化 → host 未注入 `__wpSound`（curl `/wallpapers/web/<id>/index.html` 看 HTML）或宿主 `postMessage` 未发；页面初始化后短暂有声（<1s 属重发窗口）、持续有声 → `play` 钩子/重发未生效；网页用 Web Audio 自建声源属已知不可控。 |
+| C6 | 开机动画期间壁纸静音 | 启用开机动画并选一张有声音的视频壁纸（如 `3422242110`），完全退出 DSH 再启动，留意片头播放期间的声音。 | 片头期间**只听到开机动画自己的声音**（若开启），壁纸声音被临时抑制；片头结束后壁纸声音按「声音」卡设置恢复。 | 片头期间壁纸声音仍在响 → `bootActive`/`effective` 未接到声音下发；结束后没恢复 → `onActiveChange(false)` 未被调用。 |
+
+**勾选记录（真机验收待执行，当前未验）**：
+
+- [ ] C1：桌面版视频壁纸出声 / 开关即时静音
+- [ ] C2：无音轨素材提示
+- [ ] C3：浏览器冷启动静音、交互后出声
+- [ ] C4：开机动画声音默认开 / 可关
+- [ ] C5：web 壁纸页内媒体声音跟随开关与音量
+- [ ] C6：开机动画期间壁纸静音、片头结束后恢复
 
 ---
 

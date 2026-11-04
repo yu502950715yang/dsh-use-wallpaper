@@ -184,4 +184,27 @@ describe('BootSettingsSection', () => {
     });
     expect($('.wbs-last')!.getAttribute('data-tone')).toBe('danger');
   });
+
+  // 开机动画声音（2026-11-04）：默认开启，面板可关；关闭即持久化。
+  it('声音开关：默认开启 → 关闭时持久化 bootAnimationSoundEnabled=false', async () => {
+    await act(async () => { render(); });
+    const box = $<HTMLInputElement>('.wbs-boot-sound');
+    expect(box).toBeTruthy();
+    expect(box!.checked).toBe(true);
+    await act(async () => { box!.click(); });
+    expect(writeSettings).toHaveBeenCalledWith({ bootAnimationSoundEnabled: false });
+  });
+
+  it('音量滑杆：默认 100%，调整后持久化 bootAnimationVolume', async () => {
+    await act(async () => { render(); });
+    const slider = $<HTMLInputElement>('.wbs-boot-volume');
+    expect(slider).toBeTruthy();
+    expect(slider!.value).toBe('1');
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    await act(async () => {
+      setter.call(slider!, '0.4');
+      slider!.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(writeSettings).toHaveBeenCalledWith({ bootAnimationVolume: 0.4 });
+  });
 });

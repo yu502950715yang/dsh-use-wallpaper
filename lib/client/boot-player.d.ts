@@ -21,4 +21,6 @@ export declare function createBootPlayer(opts: {
     readSettings: () => Promise<ClientSettings>;
     overlay?: BootOverlay;
     storage?: Pick<Storage, 'getItem' | 'setItem'>;
+    /** 真正播放区间回调（true = 开始播放、false = 结束）：供上层抑制壁纸声音等。 */
+    onActiveChange?: (active: boolean) => void;
 }): BootPlayer;

@@ -193,7 +193,8 @@ export function createWallpaperController(
     const plan = resolveBackground(info);
     switch (plan.kind) {
       case 'video': {
-        const result = await layer.showVideo(plan.url);
+        // hasAudio=false（素材无音轨）交给背景层：不尝试解锁声音。
+        const result = await layer.showVideo(plan.url, { hasAudio: plan.hasAudio });
         if (gen !== selectGeneration) return; // 期间已切换：旧视频的失败结果不得覆盖新壁纸
         if (result !== 'ok') {
           const fallback: MediaFallback = info.previewUrl ? 'preview' : 'none';

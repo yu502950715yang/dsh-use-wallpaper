@@ -50,6 +50,8 @@ export function createBootPlayer(opts: {
   readSettings: () => Promise<ClientSettings>;
   overlay?: BootOverlay;
   storage?: Pick<Storage, 'getItem' | 'setItem'>;
+  /** 真正播放区间回调（true = 开始播放、false = 结束）：供上层抑制壁纸声音等。 */
+  onActiveChange?: (active: boolean) => void;
 }): BootPlayer {
   const overlay = opts.overlay ?? createBootOverlay();
   const storage = opts.storage ?? sessionStorageSafe();
@@ -84,11 +86,23 @@ export function createBootPlayer(opts: {
     if (!force) {
       try { storage.setItem(BOOT_PLAYED_KEY, '1'); } catch { /* 写不进就按播放处理，避免反复触发 */ }
     }
+    // 真正播放区间：上层据此临时抑制壁纸声音（回调异常不得打断播放）。
+    const setActive = (active: boolean): void => {
+      if (typeof opts.onActiveChange !== 'function') return;
+      try { opts.onActiveChange(active); } catch { /* 回调异常忽略 */ }
+    };
+    setActive(true);
     let result: BootResult;
     try {
-      result = await overlay.play(asset, fit, settings.bootAnimationMaxDurationMs);
+      result = await overlay.play(asset, fit, settings.bootAnimationMaxDurationMs, {
+        // 开机动画声音默认开；浏览器冷启动无手势时 overlay 内保持静音（自动播放策略）。
+        soundEnabled: settings.bootAnimationSoundEnabled !== false,
+        volume: settings.bootAnimationVolume ?? 1,
+      });
     } catch {
       result = 'failed';
+    } finally {
+      setActive(false);
     }
     return record(result, asset);
   }

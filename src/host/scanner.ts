@@ -1,7 +1,13 @@
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { WallpaperInfo, WallpaperKind } from '../shared/types.js';
+import { probeMp4HasAudio } from './mp4-audio-probe.js';
 import { resolveWallpaperSceneSource } from './scene-source.js';
+
+// project.json 的 file 只应是壁纸目录内的文件名（与 /wallpapers/media 路由同口径），越界不探测。
+function isSafeFileName(file: string): boolean {
+  return !file.includes('..') && !file.includes('/') && !file.includes('\\');
+}
 
 export function kindFromProjectJson(pj: Record<string, unknown>): WallpaperKind {
   // WE 写的 type 大小写不定（实测 "Web"/"Scene"）；不归一化会掉进 unknown，
@@ -52,6 +58,11 @@ export async function scanWallpapers(dir: string): Promise<WallpaperInfo[]> {
       previewUrl: preview ? `/wallpapers/media/${id}/preview` : '',
     };
     if (scene.hasPkg) info.sceneEntry = scene.entry;
+    // 视频音轨探测：非 null 才写（undefined = 未知，客户端按旧行为处理）。
+    if (type === 'video' && info.file && isSafeFileName(info.file)) {
+      const hasAudio = probeMp4HasAudio(join(dir, id, info.file));
+      if (hasAudio !== null) info.hasAudio = hasAudio;
+    }
     out.push(info);
   }
   return out;

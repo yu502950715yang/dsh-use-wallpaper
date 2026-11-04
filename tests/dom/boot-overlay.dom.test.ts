@@ -160,4 +160,30 @@ describe('createBootOverlay', () => {
     await vi.advanceTimersByTimeAsync(10);
     await expect(p).resolves.toBe('ended');
   });
+
+  // 开机动画声音（2026-11-04）：默认开；桌面壳直接出声，浏览器在无用户激活时只能静音起播
+  // （页面冷启动没有手势，非静音自动播放会被拦）。
+  it('声音：桌面壳 + 开启 → 视频不静音', () => {
+    const overlay = createBootOverlay({ desktopShell: true, fadeMs: 10 });
+    void overlay.play({ kind: 'video', url: '/v.mp4' }, 'cover', 100, { soundEnabled: true });
+    expect(layer()!.querySelector('video')!.muted).toBe(false);
+  });
+
+  it('声音：浏览器（无用户激活）即使开启也静音', () => {
+    const overlay = createBootOverlay({ desktopShell: false, fadeMs: 10 });
+    void overlay.play({ kind: 'video', url: '/v.mp4' }, 'cover', 100, { soundEnabled: true });
+    expect(layer()!.querySelector('video')!.muted).toBe(true);
+  });
+
+  it('声音：soundEnabled=false 时桌面壳也静音', () => {
+    const overlay = createBootOverlay({ desktopShell: true, fadeMs: 10 });
+    void overlay.play({ kind: 'video', url: '/v.mp4' }, 'cover', 100, { soundEnabled: false });
+    expect(layer()!.querySelector('video')!.muted).toBe(true);
+  });
+
+  it('音量：传入 volume 应用到视频，缺省 1', () => {
+    const overlay = createBootOverlay({ desktopShell: true, fadeMs: 10 });
+    void overlay.play({ kind: 'video', url: '/v.mp4' }, 'cover', 100, { soundEnabled: true, volume: 0.4 });
+    expect(layer()!.querySelector('video')!.volume).toBe(0.4);
+  });
 });

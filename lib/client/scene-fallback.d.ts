@@ -2,7 +2,9 @@ import type { WallpaperInfo } from '../shared/types.js';
 export type SceneFallbackResult = 'video' | 'frame' | 'preview' | 'none';
 type FetchLike = typeof fetch;
 export interface SceneFallbackLayer {
-    showVideo(url: string): Promise<'ok' | 'unsupported' | 'timeout'>;
+    showVideo(url: string, opts?: {
+        silent?: boolean;
+    }): Promise<'ok' | 'unsupported' | 'timeout'>;
     showImage(url: string, kenBurns: boolean): void;
     showNone(): void;
 }

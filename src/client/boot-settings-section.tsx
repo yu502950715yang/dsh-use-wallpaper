@@ -227,7 +227,7 @@ export function BootSettingsSection(props: BootSettingsSectionProps): JSX.Elemen
       <section className="wbs-hero">
         <div className="wbs-hero-body">
           <h4 className="wbs-hero-title">开机动画</h4>
-          <p className="wbs-hero-desc">打开 DSH 时全屏播一段片头，播完淡出进入界面；固定静音，每次启动/新窗口只播一次（刷新不重播）。</p>
+          <p className="wbs-hero-desc">打开 DSH 时全屏播一段片头，播完淡出进入界面；默认静音可在下方开启声音，每次启动/新窗口只播一次（刷新不重播）。</p>
           {last && (
             <p className="wbs-last" data-tone={toneOf(last.result)}>
               上次播放：{RESULT_TEXT[last.result] ?? last.result}
@@ -374,6 +374,27 @@ export function BootSettingsSection(props: BootSettingsSectionProps): JSX.Elemen
             onChange={(e) => void patch({ bootAnimationMaxDurationMs: Number(e.target.value) * 1000 })} />
           <p className="wbs-desc">0 = 视频播完为止；图片固定约 4 秒。素材 8 秒未就绪会自动跳过。</p>
         </label>
+      </section>
+
+      {/* 开机动画声音（2026-11-04）：默认开；桌面壳直接出声，浏览器冷启动无手势时只能静音起播。 */}
+      <section className="wbs-card">
+        <header className="wbs-card-head">
+          <h4 className="wbs-title">声音</h4>
+          <span className="wbs-hint">默认开启</span>
+        </header>
+        <label className="wbs-switch">
+          <input type="checkbox" className="wbs-boot-sound" checked={settings.bootAnimationSoundEnabled !== false}
+            onChange={(e) => void patch({ bootAnimationSoundEnabled: e.target.checked })} />
+          <span className="wbs-switch-track" aria-hidden="true" />
+          <span className="wbs-switch-label">播放声音</span>
+        </label>
+        <label className="wbs-slider">
+          <input type="range" className="wbs-boot-volume" aria-label="开机动画音量（百分比）" min={0} max={1} step={0.05}
+            value={settings.bootAnimationVolume ?? 1}
+            onChange={(e) => void patch({ bootAnimationVolume: Number(e.target.value) })} />
+          <p className="wbs-desc">音量 {Math.round((settings.bootAnimationVolume ?? 1) * 100)}%</p>
+        </label>
+        <p className="wbs-desc">桌面版直接出声；浏览器里页面刚打开时还没有用户交互，自动播放策略会先静音。</p>
       </section>
 
       <div className="wbs-actions">

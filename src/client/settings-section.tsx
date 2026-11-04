@@ -1269,12 +1269,54 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
       )}
       </div>
       <div className="wss-advanced" id="wss-anchor-advanced">
+      {/* 声音（2026-11-04）：壁纸音效从「性能与省电」移出独立成卡；视频壁纸音轨复用同一开关，
+          无音轨素材给提示（hasAudio 由 host 扫描 mp4 探测）。开机动画声音在「开机动画」页单独设置。 */}
+      {settings && (
+        <details className="wss-details">
+          <summary className="wss-details-head">
+            <span className="wss-details-title">声音</span>
+            <span className="wss-details-hint">音效 · 视频</span>
+          </summary>
+          <div className="wss-details-body">
+          <p className="wss-section-desc">壁纸音效包含 scene 壁纸的音效对象、视频壁纸音轨与 web 壁纸页内媒体；关掉即静音（画面照常播放）。</p>
+          <div className="wss-sound-row">
+            <label className="wss-glow-row">
+              <input
+                type="checkbox"
+                className="wss-sound"
+                checked={settings.soundEnabled}
+                onChange={(e) => applyRuntime({ soundEnabled: e.target.checked })}
+              />
+              壁纸音效
+            </label>
+          </div>
+          <label className="wss-slider">
+            <span className="wss-slider-head">
+              <span>音量</span>
+              <span className="wss-effect-value">{Math.round((settings.soundVolume ?? 1) * 100)}%</span>
+            </span>
+            <input
+              type="range"
+              className="wss-sound-volume"
+              min={0}
+              max={1}
+              step={0.05}
+              value={settings.soundVolume ?? 1}
+              onChange={(e) => applyRuntime({ soundVolume: Number(e.target.value) })}
+            />
+          </label>
+          {currentWallpaper?.type === 'video' && currentWallpaper.hasAudio === false && (
+            <p className="wss-section-desc wss-sound-hint">当前视频壁纸没有音轨，开启声音也不会出声。</p>
+          )}
+          </div>
+        </details>
+      )}
       {/* 性能与省电：同一张卡片；wss-power 仍只含两个复选框（画质档位是 select） */}
       {settings && (
         <details className="wss-details">
           <summary className="wss-details-head">
             <span className="wss-details-title">性能与省电</span>
-            <span className="wss-details-hint">暂停 · 画质 · 音效</span>
+            <span className="wss-details-hint">暂停 · 画质</span>
           </summary>
           <div className="wss-details-body">
           <div className="wss-power">
@@ -1305,18 +1347,6 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
                 <option value="0.75">省显存（0.75×）</option>
                 <option value="0.5">最省（0.5×）</option>
               </select>
-            </label>
-          </div>
-          {/* 壁纸音效：默认开启（对齐桌面 WE）；关掉即停声，频谱类效果随之静止 */}
-          <div className="wss-sound-row">
-            <label className="wss-glow-row">
-              <input
-                type="checkbox"
-                className="wss-sound"
-                checked={settings.soundEnabled}
-                onChange={(e) => applyRuntime({ soundEnabled: e.target.checked })}
-              />
-              壁纸音效
             </label>
           </div>
           </div>

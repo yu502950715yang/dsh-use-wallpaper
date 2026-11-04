@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createBackgroundLayer,
   WEB_RESIZE_RELOAD_DELAY_MS,
@@ -570,6 +570,127 @@ describe('createBackgroundLayer (DOM)', () => {
     expect(layer.getVideoHealth()).not.toBeNull();
     layer.showImage('/a.jpg', false);
     expect(layer.getVideoHealth()).toBeNull();
+  });
+
+  // 视频壁纸声音（2026-11-04）：<video> 是否静音由 soundEnabled + 宿主/自动播放策略决定。
+  // 桌面壳（dsh-app://）Electron 默认允许有声自动播放 ⇒ 直接出声；浏览器无手势先静音、首次手势解锁。
+  describe('视频壁纸声音（soundEnabled / 自动播放策略）', () => {
+    let playSpy: ReturnType<typeof vi.spyOn>;
+    beforeEach(() => {
+      playSpy = vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(() => Promise.resolve());
+    });
+    afterEach(() => { playSpy.mockRestore(); });
+
+    const root = () => { document.body.innerHTML = ''; const el = document.createElement('div'); document.body.appendChild(el); return el; };
+    const videoOf = (layer: ReturnType<typeof createBackgroundLayer>) => layer.root.querySelector('video') as HTMLVideoElement;
+
+    it('桌面壳直接不静音；浏览器无手势先静音', () => {
+      const desktop = createBackgroundLayer(root(), { desktopShell: true });
+      desktop.showVideo('/v.mp4');
+      expect(videoOf(desktop).muted).toBe(false);
+      const browser = createBackgroundLayer(root(), { desktopShell: false });
+      browser.showVideo('/v.mp4');
+      expect(videoOf(browser).muted).toBe(true);
+    });
+
+    it('soundEnabled=false 时即使桌面壳也静音', () => {
+      const layer = createBackgroundLayer(root(), { desktopShell: true, soundEnabled: false });
+      layer.showVideo('/v.mp4');
+      expect(videoOf(layer).muted).toBe(true);
+    });
+
+    it('hasAudio=false（探测到素材无音轨）不解除静音', () => {
+      const layer = createBackgroundLayer(root(), { desktopShell: true });
+      layer.showVideo('/v.mp4', { hasAudio: false });
+      expect(videoOf(layer).muted).toBe(true);
+    });
+
+    it('silent=true（scene 降级内嵌视频）保持静音', () => {
+      const layer = createBackgroundLayer(root(), { desktopShell: true });
+      layer.showVideo('/fallback.mp4', { silent: true });
+      expect(videoOf(layer).muted).toBe(true);
+    });
+
+    it('浏览器无手势：首次 pointerdown 解锁声音并续播', () => {
+      const layer = createBackgroundLayer(root(), { desktopShell: false });
+      layer.showVideo('/v.mp4');
+      const video = videoOf(layer);
+      expect(video.muted).toBe(true);
+      window.dispatchEvent(new Event('pointerdown'));
+      expect(video.muted).toBe(false);
+      expect(playSpy).toHaveBeenCalled();
+    });
+
+    it('setSoundEnabled 运行期切换：关立即静音、开恢复（桌面壳）', () => {
+      const layer = createBackgroundLayer(root(), { desktopShell: true });
+      layer.showVideo('/v.mp4');
+      layer.setSoundEnabled(false);
+      expect(videoOf(layer).muted).toBe(true);
+      layer.setSoundEnabled(true);
+      expect(videoOf(layer).muted).toBe(false);
+    });
+
+    it('切走/清空后不再响应手势（监听已摘除）', () => {
+      const layer = createBackgroundLayer(root(), { desktopShell: false });
+      layer.showVideo('/v.mp4');
+      const video = videoOf(layer);
+      layer.showNone();
+      window.dispatchEvent(new Event('pointerdown'));
+      expect(video.muted).toBe(true);
+    });
+
+    it('音量：默认 1，setVolume 运行期改视频音量并 clamp 0-1', () => {
+      const layer = createBackgroundLayer(root(), { desktopShell: true });
+      layer.showVideo('/v.mp4');
+      const video = videoOf(layer);
+      expect(video.volume).toBe(1);
+      layer.setVolume(0.4);
+      expect(video.volume).toBe(0.4);
+      layer.setVolume(2);
+      expect(video.volume).toBe(1);
+      layer.setVolume(-1);
+      expect(video.volume).toBe(0);
+    });
+
+    it('创建时可注入初始音量：showVideo 直接应用', () => {
+      const layer = createBackgroundLayer(root(), { desktopShell: true, volume: 0.5 });
+      layer.showVideo('/v.mp4');
+      expect(videoOf(layer).volume).toBe(0.5);
+    });
+  });
+
+  // web 壁纸声音（2026-11-04）：宿主无法访问跨源 iframe 的 DOM ⇒ 通过 postMessage 让 host 注入的
+  // shim 控制页内 <audio>/<video> 的 muted/volume（协议见 shared/web-audio-shim.ts）。
+  describe('web 壁纸声音下发（__wpSound）', () => {
+    it('showWeb 后下发当前开关/音量；shim 晚到会重发；运行期变更再下发', () => {
+      vi.useFakeTimers();
+      document.body.innerHTML = '';
+      const root = document.createElement('div');
+      document.body.appendChild(root);
+      const post = vi.fn();
+      const fakeWin = { postMessage: post, addEventListener() {}, removeEventListener() {} } as any;
+      const getter = vi.spyOn(HTMLIFrameElement.prototype, 'contentWindow', 'get').mockReturnValue(fakeWin);
+      const g = globalThis as { __DSH_TRANSPORT__?: unknown };
+      g.__DSH_TRANSPORT__ = { streamBaseUrl: 'http://127.0.0.1:19387' };
+      try {
+        const layer = createBackgroundLayer(root, { soundEnabled: true, volume: 1, desktopShell: true });
+        layer.showWeb('/wallpapers/web/9/index.html');
+        // attach 时的首条消息可能早于 iframe 内 shim 安装而丢失 ⇒ 后续定时重发兜底。
+        expect(post).toHaveBeenCalledTimes(1);
+        vi.advanceTimersByTime(600);
+        expect(post.mock.calls.length).toBeGreaterThanOrEqual(3);
+        expect(post).toHaveBeenLastCalledWith({ __wpSound: 1, enabled: true, volume: 1 }, '*');
+        layer.setSoundEnabled(false);
+        expect(post).toHaveBeenLastCalledWith({ __wpSound: 1, enabled: false, volume: 1 }, '*');
+        layer.setVolume(0.4);
+        expect(post).toHaveBeenLastCalledWith({ __wpSound: 1, enabled: false, volume: 0.4 }, '*');
+        layer.showNone();
+      } finally {
+        getter.mockRestore();
+        delete g.__DSH_TRANSPORT__;
+        vi.useRealTimers();
+      }
+    });
   });
 });
 

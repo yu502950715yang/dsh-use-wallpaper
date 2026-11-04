@@ -14,8 +14,12 @@ export declare function collectScriptSources(desc: SceneDescription): Array<{
     scriptProperties?: Record<string, unknown>;
     property?: ObjectScriptProperty;
 }>;
+export type ThreeSceneRenderer = SceneRendererLike & {
+    /** 壁纸音效主音量（0-1）：已装配即时生效；未装配只记录，下次装配应用。 */
+    setSoundVolume(value: number): void;
+};
 export declare function createThreeSceneRenderer(opts?: {
     loadWasm?: LoadWasm;
     getTextScriptRuntime?: () => Promise<TextScriptRuntime | null>;
     healthStore?: RenderHealthStore;
-}): SceneRendererLike;
+}): ThreeSceneRenderer;

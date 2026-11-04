@@ -15,6 +15,7 @@ export declare const WallpaperSettingsSchema: z<Schemastery.ObjectS<NoInfer<{
     pauseOnHidden: z<boolean, boolean, "defined">;
     qualityScale: z<number, number, "defined">;
     soundEnabled: z<boolean, boolean, "defined">;
+    soundVolume: z<number, number, "defined">;
     mediaIntegrationEnabled: z<boolean, boolean, "defined">;
     textColorMode: z<string, string, "defined">;
     textColor: z<string, string, "defined">;
@@ -31,6 +32,8 @@ export declare const WallpaperSettingsSchema: z<Schemastery.ObjectS<NoInfer<{
     bootAnimationLocalPath: z<string, string, "defined">;
     bootAnimationFitMode: z<string, string, "defined">;
     bootAnimationMaxDurationMs: z<number, number, "defined">;
+    bootAnimationSoundEnabled: z<boolean, boolean, "defined">;
+    bootAnimationVolume: z<number, number, "defined">;
 }>>, Schemastery.ObjectT<NoInfer<{
     selectedWallpaperId: z<string, string, "defined">;
     wallpaperDir: z<string, string, "defined">;
@@ -46,6 +49,7 @@ export declare const WallpaperSettingsSchema: z<Schemastery.ObjectS<NoInfer<{
     pauseOnHidden: z<boolean, boolean, "defined">;
     qualityScale: z<number, number, "defined">;
     soundEnabled: z<boolean, boolean, "defined">;
+    soundVolume: z<number, number, "defined">;
     mediaIntegrationEnabled: z<boolean, boolean, "defined">;
     textColorMode: z<string, string, "defined">;
     textColor: z<string, string, "defined">;
@@ -62,6 +66,8 @@ export declare const WallpaperSettingsSchema: z<Schemastery.ObjectS<NoInfer<{
     bootAnimationLocalPath: z<string, string, "defined">;
     bootAnimationFitMode: z<string, string, "defined">;
     bootAnimationMaxDurationMs: z<number, number, "defined">;
+    bootAnimationSoundEnabled: z<boolean, boolean, "defined">;
+    bootAnimationVolume: z<number, number, "defined">;
 }>>, "plain">;
 export declare const Config: z<NoInfer<Schemastery.ObjectS<NoInfer<{
     selectedWallpaperId: z<string, string, "defined">;
@@ -78,6 +84,7 @@ export declare const Config: z<NoInfer<Schemastery.ObjectS<NoInfer<{
     pauseOnHidden: z<boolean, boolean, "defined">;
     qualityScale: z<number, number, "defined">;
     soundEnabled: z<boolean, boolean, "defined">;
+    soundVolume: z<number, number, "defined">;
     mediaIntegrationEnabled: z<boolean, boolean, "defined">;
     textColorMode: z<string, string, "defined">;
     textColor: z<string, string, "defined">;
@@ -94,6 +101,8 @@ export declare const Config: z<NoInfer<Schemastery.ObjectS<NoInfer<{
     bootAnimationLocalPath: z<string, string, "defined">;
     bootAnimationFitMode: z<string, string, "defined">;
     bootAnimationMaxDurationMs: z<number, number, "defined">;
+    bootAnimationSoundEnabled: z<boolean, boolean, "defined">;
+    bootAnimationVolume: z<number, number, "defined">;
 }>>>, NoInfer<Schemastery.ObjectT<NoInfer<{
     selectedWallpaperId: z<string, string, "defined">;
     wallpaperDir: z<string, string, "defined">;
@@ -109,6 +118,7 @@ export declare const Config: z<NoInfer<Schemastery.ObjectS<NoInfer<{
     pauseOnHidden: z<boolean, boolean, "defined">;
     qualityScale: z<number, number, "defined">;
     soundEnabled: z<boolean, boolean, "defined">;
+    soundVolume: z<number, number, "defined">;
     mediaIntegrationEnabled: z<boolean, boolean, "defined">;
     textColorMode: z<string, string, "defined">;
     textColor: z<string, string, "defined">;
@@ -125,4 +135,6 @@ export declare const Config: z<NoInfer<Schemastery.ObjectS<NoInfer<{
     bootAnimationLocalPath: z<string, string, "defined">;
     bootAnimationFitMode: z<string, string, "defined">;
     bootAnimationMaxDurationMs: z<number, number, "defined">;
+    bootAnimationSoundEnabled: z<boolean, boolean, "defined">;
+    bootAnimationVolume: z<number, number, "defined">;
 }>>>, "volatile">;

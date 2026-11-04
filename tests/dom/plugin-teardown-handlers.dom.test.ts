@@ -23,7 +23,7 @@ const handlers = vi.hoisted(() => ({
 vi.mock('../../src/client/background-layer.js', () => ({
   createBackgroundLayer: () => ({
     root: document.createElement('div'),
-    setOverlayOpacity() {}, setBlur() {}, setPaused() {}, setKenBurns() {}, setFitMode() {},
+    setOverlayOpacity() {}, setBlur() {}, setPaused() {}, setSoundEnabled() {}, setVolume() {}, setKenBurns() {}, setFitMode() {},
     showNone() {}, showImage() {}, showVideo: async () => 'ok', showWeb() {},
     getVideoHealth: () => null,
   }),
@@ -44,7 +44,7 @@ vi.mock('../../src/client/rotation.js', () => ({
 vi.mock('../../src/client/three-renderer.js', () => ({
   createThreeSceneRenderer: () => ({
     getLastHealth: () => null, setOnHealth() {}, setPaused() {}, setQualityScale() {},
-    setGlow() {}, setSoundEnabled() {}, dispose() {},
+    setGlow() {}, setSoundEnabled() {}, setSoundVolume() {}, dispose() {},
   }),
 }));
 vi.mock('../../src/client/styles.js', () => ({ injectWallpaperStyles: vi.fn() }));

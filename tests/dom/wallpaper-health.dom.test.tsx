@@ -5,7 +5,7 @@ const selectMock = vi.fn(async () => {});
 // 捕获 controller 的入参：I3 要直接驱动 index.ts 接线的 sceneFallback（降级成功路径）。
 const controllerOpts = vi.hoisted(() => ({ value: null as any }));
 vi.mock('../../src/client/background-layer.js', () => ({
-  createBackgroundLayer: () => ({ root: document.createElement('div'), setOverlayOpacity() {}, setBlur() {}, setPaused() {}, setKenBurns() {}, setFitMode() {}, showNone() {}, showImage() {}, showVideo: async () => 'ok', showWeb() {}, getVideoHealth: () => null }),
+  createBackgroundLayer: () => ({ root: document.createElement('div'), setOverlayOpacity() {}, setBlur() {}, setPaused() {}, setSoundEnabled() {}, setVolume() {}, setKenBurns() {}, setFitMode() {}, showNone() {}, showImage() {}, showVideo: async () => 'ok', showWeb() {}, getVideoHealth: () => null }),
 }));
 vi.mock('../../src/client/wallpaper-controller.js', () => ({
   createWallpaperController: (_layer: any, opts: any) => {

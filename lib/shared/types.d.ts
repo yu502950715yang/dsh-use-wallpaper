@@ -15,6 +15,8 @@ export interface WallpaperInfo {
     type: WallpaperKind;
     file?: string;
     hasPreviewGif: boolean;
+    /** 视频壁纸是否有音轨（仅 type='video' 探测；undefined = 未知/无法判断）。 */
+    hasAudio?: boolean;
     hasScene: boolean;
     /** 场景包内入口 json 名（WE 模板可能是 gifscene.json 等自定义名；仅 hasScene 时下发）。 */
     sceneEntry?: string;

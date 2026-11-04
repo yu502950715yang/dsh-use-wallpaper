@@ -3,6 +3,7 @@ import type { BackgroundPlan, FitMode } from './types.js';
 import { outlineShadow } from './text-color.js';
 import { computePointerPost } from './pointer-post.js';
 import { createVideoHealthMonitor, type VideoHealthSnapshot } from './video-health.js';
+import { WEB_SOUND_MESSAGE_TAG } from '../shared/web-audio-shim.js';
 
 export function resolveBackground(info: WallpaperInfo): BackgroundPlan {
   // scene / preset（依赖场景）/ unknown（project.json 无 type 但含场景包）都按场景渲染。
@@ -11,7 +12,8 @@ export function resolveBackground(info: WallpaperInfo): BackgroundPlan {
     return { kind: 'scene', wallpaperId: info.id, sceneEntry: info.sceneEntry ?? 'scene.json' };
   }
   if (info.type === 'video' && info.file) {
-    return { kind: 'video', url: `/wallpapers/media/${info.id}/file` };
+    // hasAudio 由 host 扫描时探测（false = 素材无音轨，面板提示且不解锁声音）。
+    return { kind: 'video', url: `/wallpapers/media/${info.id}/file`, hasAudio: info.hasAudio };
   }
   // web 壁纸：iframe 加载网页（index.html 及相对资源经 /wallpapers/web 静态服务）
   if (info.type === 'web') {
@@ -107,11 +109,29 @@ export const VIDEO_LOAD_TIMEOUT_MS = 1500;
 
 export type VideoLoadResult = 'ok' | 'unsupported' | 'timeout';
 
+/** 视频壁纸的播放选项（声音策略）。 */
+export interface VideoPlayOptions {
+  /** false = 素材已探测为无音轨（不解锁声音）；undefined = 未知，按可能有音轨处理。 */
+  hasAudio?: boolean;
+  /** true = 强制静音：scene 降级链的内嵌视频不播放声音（WE 视频纹理无声，保持既有行为）。 */
+  silent?: boolean;
+}
+
+/** 背景层创建选项（测试可注入；缺省按真实宿主判断）。 */
+export interface BackgroundLayerOptions {
+  /** 壁纸声音总开关（scene 音效 + 视频壁纸音轨），缺省 true。 */
+  soundEnabled?: boolean;
+  /** 视频壁纸音量 0-1，缺省 1。 */
+  volume?: number;
+  /** 桌面壳（dsh-app://）：Electron 默认允许有声自动播放；缺省按 location.protocol 判断。 */
+  desktopShell?: boolean;
+}
+
 export interface BackgroundLayer {
   root: HTMLElement;
   showImage(url: string, kenBurns: boolean): void;
   /** 加载视频并等首帧：error → unsupported，1.5s 无 loadeddata → timeout。 */
-  showVideo(url: string): Promise<VideoLoadResult>;
+  showVideo(url: string, opts?: VideoPlayOptions): Promise<VideoLoadResult>;
   showWeb(url: string): void;
   showSceneCanvas(canvas: HTMLCanvasElement, blurCanvas?: HTMLCanvasElement): void;
   showNone(): void;
@@ -126,12 +146,42 @@ export interface BackgroundLayer {
   setChatOutline(color: string, level: number): void;
   /** 省电：暂停/恢复视频壁纸播放（scene 由渲染器负责；web 壁纸在 iframe 里无法受控）。 */
   setPaused(paused: boolean): void;
+  /** 壁纸声音总开关：关 → 视频壁纸立即静音（画面继续）；开 → 有音轨则按宿主策略恢复。 */
+  setSoundEnabled(enabled: boolean): void;
+  /** 视频壁纸音量 0-1（运行期即时生效）。 */
+  setVolume(volume: number): void;
   /** 视频壁纸健康快照（FPS/丢帧/循环停顿）；当前不是视频壁纸时返回 null。 */
   getVideoHealth(): VideoHealthSnapshot | null;
 }
 
-export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
+/** 音量归一：非法/缺失回退 1，越界 clamp 0-1。 */
+function clampVolume(value: number): number {
+  return Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 1;
+}
+
+/** 桌面壳页面（dsh-app://）由 Electron 承载：默认 autoplayPolicy=no-user-gesture-required。 */
+function isDesktopShellProtocol(): boolean {
+  try { return typeof location !== 'undefined' && location.protocol === 'dsh-app:'; } catch { return false; }
+}
+
+/** 页面是否已有用户激活（浏览器自动播放策略：有手势后非静音播放才被允许）。 */
+function hasUserActivation(): boolean {
+  try {
+    const ua = (navigator as unknown as { userActivation?: { hasBeenActive?: boolean } }).userActivation;
+    return ua?.hasBeenActive === true;
+  } catch { return false; }
+}
+
+/** play() 的失败/未实现（jsdom）都吞掉：声音是增强项，不得影响画面。 */
+function playVideo(video: HTMLVideoElement): void {
+  try { void video.play()?.catch?.(() => {}); } catch { /* 环境不支持 */ }
+}
+
+export function createBackgroundLayer(root: HTMLElement, opts: BackgroundLayerOptions = {}): BackgroundLayer {
   root.classList.add('wp-background-layer');
+  let soundEnabled = opts.soundEnabled ?? true;
+  let volume = clampVolume(opts.volume ?? 1);
+  const desktopShell = opts.desktopShell ?? isDesktopShellProtocol();
   const fill = document.createElement('div');
   fill.className = 'wp-bg-fill';
   root.appendChild(fill);
@@ -178,6 +228,9 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
   // 省电状态与当前视频元素（setPaused 对后者 pause/play）。
   let paused = false;
   let currentVideo: HTMLVideoElement | null = null;
+  // 视频声音：当前素材是否有音轨（false = 已知无音轨）+ 浏览器手势解锁监听（null = 无）。
+  let currentVideoHasAudio: boolean | undefined;
+  let gestureUnlock: (() => void) | null = null;
   // 视频健康采样：随 <video> 生命周期 attach/detach（面板与 __wallpaperEngine 排查用）。
   const videoHealth = createVideoHealthMonitor();
   // 当前显示的图片与适配模式：供运行期切换（不重建元素）。
@@ -201,12 +254,18 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
   let webResizeTimer: ReturnType<typeof setTimeout> | null = null;
   let pendingWebFrame: HTMLIFrameElement | null = null;
   let resizeListening = false;
+  // iframe 内 shim 的安装时机不可控（首条消息可能在它装好前发出而丢失）：
+  // 帧创建后短期内定时重发，覆盖 shim 就绪窗口；之后靠 load/设置变更补发。
+  const WEB_SOUND_RETRY_INTERVAL_MS = 250;
+  const WEB_SOUND_RETRY_MAX = 20; // ≈5s
+  let soundRetryTimer: ReturnType<typeof setInterval> | null = null;
 
   // 停掉 web 自适应（切到非 web 背景、清空背景、或换下一张 web 时调用）
   function stopWebResizeReload(): void {
     webUrl = null;
     liveWebFrame = null;
     detachPointerPost();
+    stopSoundRetry();
     if (webResizeTimer !== null) { clearTimeout(webResizeTimer); webResizeTimer = null; }
     pendingWebFrame?.remove();
     pendingWebFrame = null;
@@ -216,11 +275,50 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
   function clear() {
     frameToken += 1;
     videoHealth.detach();
+    detachGestureUnlock();
     fill.replaceChildren();
     currentImage = null;
     currentImageKenBurnsAllowed = false;
     currentVideo = null;
+    currentVideoHasAudio = undefined;
     stopWebResizeReload();
+  }
+
+  function detachGestureUnlock(): void {
+    if (!gestureUnlock) return;
+    window.removeEventListener('pointerdown', gestureUnlock, true);
+    window.removeEventListener('keydown', gestureUnlock, true);
+    gestureUnlock = null;
+  }
+
+  function armGestureUnlock(): void {
+    if (gestureUnlock) return;
+    gestureUnlock = () => {
+      detachGestureUnlock();
+      const video = currentVideo;
+      if (!video || !soundEnabled || currentVideoHasAudio === false) return;
+      video.muted = false; // 手势回调内改 muted：自动播放策略允许非静音播放
+      playVideo(video);
+    };
+    window.addEventListener('pointerdown', gestureUnlock, true);
+    window.addEventListener('keydown', gestureUnlock, true);
+  }
+
+  // 声音策略：关 / 无音轨 ⇒ 静音；桌面壳或页面已激活 ⇒ 直接出声；
+  // 浏览器无手势 ⇒ 先静音起播保画面，首次 pointerdown/keydown 解锁。
+  function applyVideoSound(video: HTMLVideoElement): void {
+    if (!soundEnabled || currentVideoHasAudio === false) {
+      video.muted = true;
+      detachGestureUnlock();
+      return;
+    }
+    if (desktopShell || hasUserActivation()) {
+      video.muted = false;
+      detachGestureUnlock();
+      return;
+    }
+    video.muted = true;
+    armGestureUnlock();
   }
 
   // 探活：另一主机名上同一路径能取到即视为可达。no-cors 读不到响应体（跨源），
@@ -256,10 +354,48 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
     frame.src = url;
   }
 
+  // web 壁纸声音：宿主拿不到跨源 iframe 的 DOM ⇒ 把开关/音量 postMessage 给 host 注入的 shim。
+  function postSoundToFrame(frame: HTMLIFrameElement | null): void {
+    const win = frame?.contentWindow;
+    if (!win) return;
+    try {
+      win.postMessage({ [WEB_SOUND_MESSAGE_TAG]: 1, enabled: soundEnabled, volume }, '*');
+    } catch {
+      // 帧已卸载/被限制：忽略（web 壁纸声音保持网页原状）
+    }
+  }
+
+  function syncWebSound(): void {
+    if (webUrl && liveWebFrame) postSoundToFrame(liveWebFrame);
+  }
+
+  function stopSoundRetry(): void {
+    if (soundRetryTimer !== null) { clearInterval(soundRetryTimer); soundRetryTimer = null; }
+  }
+
+  // 帧刚创建时 shim 还没执行：定时重发同一条设置，直到 shim 就绪或达到次数上限。
+  function retrySoundPost(frame: HTMLIFrameElement): void {
+    stopSoundRetry();
+    let attempts = 0;
+    soundRetryTimer = setInterval(() => {
+      attempts += 1;
+      if (attempts > WEB_SOUND_RETRY_MAX || (frame !== liveWebFrame && frame !== pendingWebFrame)) {
+        stopSoundRetry();
+        return;
+      }
+      postSoundToFrame(frame);
+    }, WEB_SOUND_RETRY_INTERVAL_MS);
+  }
+
   function attachWebFrame(spec: WebFrameSpec): void {
-    liveWebFrame = makeWebFrame(spec);
-    appendWebFrame(liveWebFrame, spec.url);
-    attachPointerPost(liveWebFrame);
+    const frame = makeWebFrame(spec);
+    liveWebFrame = frame;
+    // shim 可能晚于首条消息执行 ⇒ load 后再补发一次（首条早到会被丢）。
+    frame.addEventListener('load', () => { if (liveWebFrame === frame) postSoundToFrame(frame); }, { once: true });
+    appendWebFrame(frame, spec.url);
+    attachPointerPost(frame);
+    postSoundToFrame(frame);
+    retrySoundPost(frame);
   }
 
   function currentViewport(): [number, number] {
@@ -301,6 +437,8 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
         liveWebFrame = frame;
         frame.style.visibility = '';
         attachPointerPost(frame); // 指针直传跟着**可见**帧走（预载帧在 hidden 期间不该收坐标）
+        postSoundToFrame(frame);  // 重建后的新帧同样需要声音设置；shim 可能还没装 ⇒ 重发兜底
+        retrySoundPost(frame);
       } else {
         frame.remove();
       }
@@ -333,15 +471,17 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
       currentImage = img;
       markActive();
     },
-    showVideo(url) {
+    showVideo(url, videoOpts) {
       clear();
       const video = document.createElement('video');
       video.autoplay = true;
       video.loop = true;
       video.muted = true;
       video.playsInline = true;
+      video.volume = volume;
       applyFit(video);
       currentVideo = video;
+      currentVideoHasAudio = videoOpts?.silent === true ? false : videoOpts?.hasAudio;
       // 先注册监听与超时再赋 src：缓存命中时事件可能紧跟 src 同步到达，晚注册会漏掉。
       // clear() 换掉旧视频时不等旧 Promise：超时会兜底收尾，避免永久悬挂。
       const result = new Promise<VideoLoadResult>((resolve) => {
@@ -361,6 +501,7 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
       video.src = url;
       fill.appendChild(video);
       videoHealth.attach(video);
+      if (!videoOpts?.silent) applyVideoSound(video);
       if (paused) video.pause(); // 暂停态下换壁纸：新视频同样不播
       markActive();
       return result;
@@ -447,7 +588,25 @@ export function createBackgroundLayer(root: HTMLElement): BackgroundLayer {
       paused = value;
       if (!currentVideo) return;
       if (value) currentVideo.pause();
-      else void currentVideo.play().catch(() => {});
+      else playVideo(currentVideo);
+    },
+    // 声音总开关（scene 音效在渲染器侧；这里管视频壁纸）：关立即静音、开按宿主策略恢复。
+    setSoundEnabled(enabled) {
+      soundEnabled = enabled;
+      syncWebSound(); // web 壁纸：无条件下发（没有 currentVideo 也要同步）
+      if (!currentVideo) return;
+      if (!enabled) {
+        currentVideo.muted = true;
+        detachGestureUnlock();
+        return;
+      }
+      applyVideoSound(currentVideo);
+    },
+    // 视频壁纸音量：运行期即时生效（0-1，非法值回退 1）。
+    setVolume(value) {
+      volume = clampVolume(value);
+      if (currentVideo) currentVideo.volume = volume;
+      syncWebSound(); // web 壁纸：音量同样即时下发
     },
     getVideoHealth() {
       return videoHealth.snapshot();

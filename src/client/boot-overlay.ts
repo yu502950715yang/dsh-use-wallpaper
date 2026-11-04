@@ -5,8 +5,15 @@ export type BootFitMode = 'tile' | 'contain' | 'stretch' | 'cover';
 export type BootAsset = { kind: 'video'; url: string } | { kind: 'image'; url: string };
 export type BootResult = 'ended' | 'skipped' | 'timeout' | 'failed' | 'already-played' | 'disabled' | 'no-asset';
 
+export interface BootPlayOptions {
+  /** 是否播放声音（缺省 true）；浏览器无用户激活时仍先静音（自动播放策略）。 */
+  soundEnabled?: boolean;
+  /** 音量 0-1，缺省 1。 */
+  volume?: number;
+}
+
 export interface BootOverlay {
-  play(asset: BootAsset, fit: BootFitMode, maxDurationMs?: number): Promise<BootResult>;
+  play(asset: BootAsset, fit: BootFitMode, maxDurationMs?: number, opts?: BootPlayOptions): Promise<BootResult>;
   dispose(): void;
 }
 
@@ -16,6 +23,8 @@ export interface BootOverlayOptions {
   imageDurationMs?: number;
   /** DSH 启动页（[data-dsh-boot]）存在时的硬上限；默认 30s（极慢机器兜底，避免无限黑屏）。 */
   bootHoldMaxMs?: number;
+  /** 桌面壳（dsh-app://）：Electron 默认允许有声自动播放；缺省按 location.protocol 判断。 */
+  desktopShell?: boolean;
   doc?: Document;
 }
 
@@ -39,12 +48,26 @@ interface ActivePlay {
   bootObserver: MutationObserver | null;
 }
 
+/** 桌面壳页面（dsh-app://）由 Electron 承载：默认 autoplayPolicy=no-user-gesture-required。 */
+function isDesktopShellProtocol(): boolean {
+  try { return typeof location !== 'undefined' && location.protocol === 'dsh-app:'; } catch { return false; }
+}
+
+/** 页面是否已有用户激活（浏览器自动播放策略：有手势后非静音播放才被允许）。 */
+function hasUserActivation(): boolean {
+  try {
+    const ua = (navigator as unknown as { userActivation?: { hasBeenActive?: boolean } }).userActivation;
+    return ua?.hasBeenActive === true;
+  } catch { return false; }
+}
+
 export function createBootOverlay(opts: BootOverlayOptions = {}): BootOverlay {
   const doc = opts.doc ?? document;
   const readyTimeoutMs = opts.readyTimeoutMs ?? 8000;
   const fadeMs = opts.fadeMs ?? 300;
   const imageDurationMs = opts.imageDurationMs ?? 4000;
   const bootHoldMaxMs = opts.bootHoldMaxMs ?? 30000;
+  const desktopShell = opts.desktopShell ?? isDesktopShellProtocol();
 
   let disposed = false;
   let active: ActivePlay | null = null;
@@ -131,7 +154,7 @@ export function createBootOverlay(opts: BootOverlayOptions = {}): BootOverlay {
   }
 
   return {
-    play(asset, fit, maxDurationMs = 0) {
+    play(asset, fit, maxDurationMs = 0, playOpts) {
       if (disposed) return Promise.resolve('failed');
       teardown('skipped'); // 面板重复试播：先收掉上一次，旧 promise 不悬挂
 
@@ -189,8 +212,11 @@ export function createBootOverlay(opts: BootOverlayOptions = {}): BootOverlay {
         if (asset.kind === 'video') {
           const video = doc.createElement('video');
           video.autoplay = true;
-          video.muted = true;
+          // 声音：默认开；桌面壳直接出声，浏览器无用户激活时自动播放策略只允许静音起播。
+          video.muted = !(playOpts?.soundEnabled !== false && (desktopShell || hasUserActivation()));
           video.playsInline = true;
+          const volume = playOpts?.volume;
+          video.volume = typeof volume === 'number' && Number.isFinite(volume) ? Math.min(1, Math.max(0, volume)) : 1;
           video.preload = 'auto';
           video.loop = holdForBoot; // 启动页存在期间循环，播到主界面就绪
           video.style.cssText = 'width:100%;height:100%;border:0;display:block';

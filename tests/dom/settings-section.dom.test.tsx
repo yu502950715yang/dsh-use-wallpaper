@@ -33,7 +33,7 @@ const e2eHealth = vi.hoisted(() => ({
 vi.mock('../../src/client/background-layer.js', () => ({
   createBackgroundLayer: () => ({
     root: document.createElement('div'),
-    setOverlayOpacity() {}, setBlur() {}, setPaused() {},
+    setOverlayOpacity() {}, setBlur() {}, setPaused() {}, setSoundEnabled() {}, setVolume() {},
     setKenBurns() {}, setFitMode() {},
     showNone() {}, showImage() {}, showVideo: (url: string) => e2eVideo.showVideo(url), showWeb() {},
     getVideoHealth: () => null,
@@ -47,7 +47,7 @@ vi.mock('../../src/client/three-renderer.js', () => ({
   createThreeSceneRenderer: () => ({
     getLastHealth: () => e2eHealth.last,
     setOnHealth: (fn: ((s: HealthSnapshot) => void) | null) => { e2eHealth.onHealth = fn; },
-    setPaused() {}, setQualityScale() {}, setGlow() {}, setSoundEnabled() {}, dispose() {},
+    setPaused() {}, setQualityScale() {}, setGlow() {}, setSoundEnabled() {}, setSoundVolume() {}, dispose() {},
   }),
 }));
 
@@ -57,14 +57,14 @@ const BASE_SETTINGS: ClientSettings = {
   selectedWallpaperId: '1', wallpaperDir: '', weAssetsDir: '',
   overlayOpacity: 0.35, blurEnabled: false, blurRadius: 12, kenBurns: true,
   glowEnabled: true, glowThreshold: 0.65, glowStrength: 0.35,
-  paused: false, pauseOnHidden: true, qualityScale: 1, soundEnabled: true, mediaIntegrationEnabled: true,
+  paused: false, pauseOnHidden: true, qualityScale: 1, soundEnabled: true, soundVolume: 1, mediaIntegrationEnabled: true,
   textColorMode: 'auto', textColor: '#ffffff', textOutline: 0,
   fitMode: 'cover', rotationEnabled: false, rotationIntervalMs: 300000,
   rotationOrder: 'sequential', frameCacheEnabled: true,
   bootAnimationEnabled: false, bootAnimationSource: 'we',
   bootAnimationWallpaperId: '', bootAnimationWallpaperKind: '',
   bootAnimationLocalPath: '', bootAnimationFitMode: 'cover',
-  bootAnimationMaxDurationMs: 6000,
+  bootAnimationMaxDurationMs: 6000, bootAnimationSoundEnabled: true, bootAnimationVolume: 1,
 };
 
 const WALLPAPERS = [
@@ -454,6 +454,59 @@ describe('WallpaperSettingsSection', () => {
     await flush();
     expect(onRuntimeSettings).toHaveBeenCalledWith({ soundEnabled: false });
     expect(writeSettings).toHaveBeenCalledWith({ soundEnabled: false });
+  });
+
+  // 声音设置（2026-11-04）：壁纸音效从「性能与省电」移到独立「声音」卡；
+  // 视频壁纸声音复用同一开关，无音轨素材在卡内给出提示。
+  it('声音卡：壁纸音效在独立「声音」卡，不再挂在性能与省电下', async () => {
+    const onRuntimeSettings = vi.fn();
+    mount({ onRuntimeSettings });
+    await flush();
+    const sound = container.querySelector('.wss-sound') as HTMLInputElement;
+    expect(sound).toBeTruthy();
+    const card = sound.closest('details') as HTMLDetailsElement;
+    expect(card).toBeTruthy();
+    expect(card.querySelector('.wss-details-title')?.textContent).toBe('声音');
+    const power = [...container.querySelectorAll<HTMLDetailsElement>('details.wss-details')]
+      .find((d) => d.querySelector('.wss-power'));
+    expect(power).toBeTruthy();
+    expect(power!.querySelector('.wss-sound')).toBeNull();
+    sound.click();
+    await flush();
+    expect(onRuntimeSettings).toHaveBeenCalledWith({ soundEnabled: false });
+  });
+
+  it('声音卡：当前视频壁纸无音轨时提示；scene 壁纸不提示', async () => {
+    const list = [
+      { id: '1', title: 'EVA', type: 'scene', hasScene: true, hasPreviewGif: false, previewUrl: '/p1' },
+      { id: 'v1', title: 'Silent Clip', type: 'video', file: 'a.mp4', hasScene: false, hasPreviewGif: false, previewUrl: '/pv', hasAudio: false },
+    ];
+    mount({ fetchSettings: async () => ({ ...BASE_SETTINGS, selectedWallpaperId: 'v1' }), fetchWallpapers: async () => list as any });
+    await flush();
+    expect(container.textContent).toContain('没有音轨');
+    await unmount();
+    mount({ fetchSettings: async () => ({ ...BASE_SETTINGS, selectedWallpaperId: '1' }), fetchWallpapers: async () => list as any });
+    await flush();
+    expect(container.textContent).not.toContain('没有音轨');
+  });
+
+  // 音量（2026-11-04）：声音卡内滑杆，默认 100%，拖动即时下发 + 持久化。
+  it('声音卡：音量滑杆默认 100%，调整后下发 + 持久化 soundVolume', async () => {
+    const onRuntimeSettings = vi.fn();
+    const writeSettings = vi.fn(async () => {});
+    mount({ onRuntimeSettings, writeSettings });
+    await flush();
+    const slider = container.querySelector('.wss-sound-volume') as HTMLInputElement;
+    expect(slider).toBeTruthy();
+    expect(slider.value).toBe('1');
+    expect(slider.closest('label')!.querySelector('.wss-effect-value')!.textContent).toBe('100%');
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    setter.call(slider, '0.4');
+    slider.dispatchEvent(new Event('change', { bubbles: true }));
+    await flush();
+    expect(onRuntimeSettings).toHaveBeenCalledWith({ soundVolume: 0.4 });
+    expect(writeSettings).toHaveBeenCalledWith({ soundVolume: 0.4 });
+    expect(slider.closest('label')!.querySelector('.wss-effect-value')!.textContent).toBe('40%');
   });
 
   // 视觉重构（2026-09-25）：选中态与滑杆值有了自己的 DOM 钩子（行为契约不变）。

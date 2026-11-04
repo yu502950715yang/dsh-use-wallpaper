@@ -8,7 +8,7 @@ const FULL_DEFAULTS = {
   selectedWallpaperId: '', wallpaperDir: '', weAssetsDir: '',
   overlayOpacity: 0.35, blurEnabled: false, blurRadius: 12, kenBurns: true,
   glowEnabled: true, glowThreshold: 0.65, glowStrength: 0.35,
-  paused: false, pauseOnHidden: true, qualityScale: 1, soundEnabled: true,
+  paused: false, pauseOnHidden: true, qualityScale: 1, soundEnabled: true, soundVolume: 1,
   mediaIntegrationEnabled: true,
   textColorMode: 'auto', textColor: '#ffffff', textOutline: 0,
   fitMode: 'cover', rotationEnabled: false, rotationIntervalMs: 300000,
@@ -16,7 +16,7 @@ const FULL_DEFAULTS = {
   bootAnimationEnabled: false, bootAnimationSource: 'we',
   bootAnimationWallpaperId: '', bootAnimationWallpaperKind: '',
   bootAnimationLocalPath: '', bootAnimationFitMode: 'cover',
-  bootAnimationMaxDurationMs: 6000,
+  bootAnimationMaxDurationMs: 6000, bootAnimationSoundEnabled: true, bootAnimationVolume: 1,
 };
 
 afterEach(() => { vi.unstubAllGlobals(); setSettingsCtx(null); });
@@ -52,7 +52,7 @@ describe('readClientSettings (ctx.remote.settings.describe)', () => {
     stubRemote({ describe });
     const s = await readClientSettings();
     // 命名空间未给的字段由 DEFAULTS 补齐（含 Glow 三字段）
-    expect(s).toEqual({ selectedWallpaperId: '42', wallpaperDir: 'D:/Steam/w', weAssetsDir: 'D:/WE', overlayOpacity: 0.5, blurEnabled: true, blurRadius: 20, kenBurns: false, glowEnabled: true, glowThreshold: 0.65, glowStrength: 0.35, paused: false, pauseOnHidden: true, qualityScale: 1, soundEnabled: true, mediaIntegrationEnabled: true, textColorMode: 'auto', textColor: '#ffffff', textOutline: 0, fitMode: 'cover', rotationEnabled: false, rotationIntervalMs: 300000, rotationOrder: 'sequential', frameCacheEnabled: true, bootAnimationEnabled: false, bootAnimationSource: 'we', bootAnimationWallpaperId: '', bootAnimationWallpaperKind: '', bootAnimationLocalPath: '', bootAnimationFitMode: 'cover', bootAnimationMaxDurationMs: 6000 });
+    expect(s).toEqual({ selectedWallpaperId: '42', wallpaperDir: 'D:/Steam/w', weAssetsDir: 'D:/WE', overlayOpacity: 0.5, blurEnabled: true, blurRadius: 20, kenBurns: false, glowEnabled: true, glowThreshold: 0.65, glowStrength: 0.35, paused: false, pauseOnHidden: true, qualityScale: 1, soundEnabled: true, soundVolume: 1, mediaIntegrationEnabled: true, textColorMode: 'auto', textColor: '#ffffff', textOutline: 0, fitMode: 'cover', rotationEnabled: false, rotationIntervalMs: 300000, rotationOrder: 'sequential', frameCacheEnabled: true, bootAnimationEnabled: false, bootAnimationSource: 'we', bootAnimationWallpaperId: '', bootAnimationWallpaperKind: '', bootAnimationLocalPath: '', bootAnimationFitMode: 'cover', bootAnimationMaxDurationMs: 6000, bootAnimationSoundEnabled: true, bootAnimationVolume: 1 });
     expect(describe).toHaveBeenCalledTimes(1);
   });
   it('命名空间缺失 → 回退默认值', async () => {
@@ -181,6 +181,15 @@ describe('DEFAULTS（客户端缺省值）', () => {
   // 媒体集成（Task 7）：默认开 = 与 host schema 默认一致；关闭后渲染器停轮询并隐藏媒体层。
   it('DEFAULTS 含媒体集成开关（默认开启）', () => {
     expect(DEFAULTS.mediaIntegrationEnabled).toBe(true);
+  });
+  // 声音（2026-11-04）：壁纸音效默认开（视频壁纸复用同一开关）；开机动画声音默认开。
+  it('DEFAULTS 声音字段：壁纸音效与开机动画声音默认开启', () => {
+    expect(DEFAULTS.soundEnabled).toBe(true);
+    expect(DEFAULTS.bootAnimationSoundEnabled).toBe(true);
+  });
+  it('DEFAULTS 音量字段：壁纸与开机动画音量默认 1（100%）', () => {
+    expect(DEFAULTS.soundVolume).toBe(1);
+    expect(DEFAULTS.bootAnimationVolume).toBe(1);
   });
 });
 

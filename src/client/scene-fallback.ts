@@ -7,7 +7,8 @@ export type SceneFallbackResult = 'video' | 'frame' | 'preview' | 'none';
 type FetchLike = typeof fetch;
 
 export interface SceneFallbackLayer {
-  showVideo(url: string): Promise<'ok' | 'unsupported' | 'timeout'>;
+  // silent：降级链的内嵌视频固定静音（WE 视频纹理本就无声，不随壁纸声音开关出声）。
+  showVideo(url: string, opts?: { silent?: boolean }): Promise<'ok' | 'unsupported' | 'timeout'>;
   showImage(url: string, kenBurns: boolean): void;
   showNone(): void;
 }
@@ -84,7 +85,7 @@ export async function showSceneFallback(info: WallpaperInfo, deps: SceneFallback
   const videoUrl = await probeEmbeddedVideo(info.id, deps.fetch);
   if (videoUrl) {
     try {
-      if ((await deps.layer.showVideo(videoUrl)) === 'ok') return 'video';
+      if ((await deps.layer.showVideo(videoUrl, { silent: true })) === 'ok') return 'video';
     } catch {
       // 视频解码/播放异常 → 继续下一条降级
     }

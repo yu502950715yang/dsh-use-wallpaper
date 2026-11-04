@@ -1,6 +1,6 @@
 export type BackgroundPlan =
   | { kind: 'image'; url: string; kenBurns: boolean }
-  | { kind: 'video'; url: string }
+  | { kind: 'video'; url: string; hasAudio?: boolean }
   | { kind: 'scene'; wallpaperId: string; sceneEntry: string }
   | { kind: 'web'; url: string }
   | { kind: 'none' };
@@ -32,8 +32,10 @@ export interface ClientSettings {
   pauseOnHidden: boolean;
   /** 画质档位：渲染像素比倍率（1 = 原生 dpr；0.5 = 半分辨率省显存/提流畅）。 */
   qualityScale: number;
-  /** 壁纸音效（sound 对象播放）并驱动音频频谱效果；缺省 true（对齐桌面 WE）。 */
+  /** 壁纸音效（sound 对象播放 + 视频壁纸音轨）并驱动音频频谱效果；缺省 true（对齐桌面 WE）。 */
   soundEnabled: boolean;
+  /** 壁纸声音音量 0-1（scene sound 对象与视频壁纸共用）；缺省 1。 */
+  soundVolume: number;
   /** 媒体集成（Windows SMTC 只读）：歌名/歌手文本层与播放状态；关闭后停轮询并隐藏媒体层。 */
   mediaIntegrationEnabled: boolean;
   /** 贴壁纸文字颜色模式：auto（跟随壁纸亮度，默认）/ white / black / custom。
@@ -57,4 +59,8 @@ export interface ClientSettings {
   bootAnimationLocalPath: string;
   bootAnimationFitMode: string;
   bootAnimationMaxDurationMs: number;
+  /** 开机动画声音（默认开）；桌面壳直接出声，浏览器无手势时保持静音。 */
+  bootAnimationSoundEnabled: boolean;
+  /** 开机动画音量 0-1；缺省 1。 */
+  bootAnimationVolume: number;
 }

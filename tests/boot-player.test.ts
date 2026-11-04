@@ -85,4 +85,42 @@ describe('createBootPlayer', () => {
     expect(overlay.dispose).toHaveBeenCalledTimes(1);
     await expect(player.play({ force: true })).resolves.toBe('failed');
   });
+
+  // 开机动画期间壁纸声音必须被临时抑制（2026-11-04 用户报：动画在播、壁纸声音也在放）。
+  // onActiveChange 只覆盖「真的调了 overlay.play」的区间：true 在 play 之前、false 在其返回之后。
+  it('onActiveChange：真正播放前触发 true、结束后 false（未启用/已播过不触发）', async () => {
+    const events: Array<boolean | 'play-started'> = [];
+    const overlay = {
+      play: vi.fn(async () => {
+        events.push('play-started');
+        return 'ended' as const;
+      }),
+      dispose: vi.fn(),
+    };
+    const player = createBootPlayer({
+      readSettings: async () => S({ bootAnimationEnabled: true, bootAnimationSource: 'local', bootAnimationLocalPath: '/a.mp4' }),
+      overlay,
+      storage: memStorage(),
+      onActiveChange: (active) => events.push(active),
+    });
+    await player.start();
+    expect(events).toEqual([true, 'play-started', false]);
+
+    // 未启用 / 已播过：不产生新事件（不能让壁纸声音被无谓地静音）
+    const off = createBootPlayer({
+      readSettings: async () => S(),
+      overlay,
+      onActiveChange: (active) => events.push(active),
+    });
+    await off.start();
+    expect(events).toEqual([true, 'play-started', false]);
+    const played = createBootPlayer({
+      readSettings: async () => S({ bootAnimationEnabled: true, bootAnimationSource: 'local', bootAnimationLocalPath: '/a.mp4' }),
+      overlay,
+      storage: memStorage({ [BOOT_PLAYED_KEY]: '1' }),
+      onActiveChange: (active) => events.push(active),
+    });
+    await played.start();
+    expect(events).toEqual([true, 'play-started', false]);
+  });
 });

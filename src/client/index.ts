@@ -48,7 +48,21 @@ export function bootstrap(ctx?: any): void {
   setSettingsCtx(ctx);
   injectWallpaperStyles();
   // 开机动画：独立于壁纸层（不参与 mount/controller），页面加载后尽早覆盖。
-  const bootPlayer = createBootPlayer({ readSettings: readClientSettings });
+  // 播放期间临时抑制壁纸声音（用户报「动画在播、壁纸声音也在放」）；结束后按用户设置恢复。
+  let bootActive = false;
+  function applyBootSoundState(): void {
+    if (disposed) return;
+    const enabled = bootActive ? false : settings.soundEnabled;
+    sceneRenderer.setSoundEnabled?.(enabled);
+    layer?.setSoundEnabled(enabled);
+  }
+  const bootPlayer = createBootPlayer({
+    readSettings: readClientSettings,
+    onActiveChange: (active) => {
+      bootActive = active;
+      applyBootSoundState();
+    },
+  });
   // 本实例的 boot API：收尾按归属删除，HMR 下新实例可能已先挂上，不能误删。
   const bootApi = {
     play: (opts?: { force?: boolean }) => bootPlayer.play(opts),
@@ -133,6 +147,9 @@ export function bootstrap(ctx?: any): void {
     layer.setBlur(s.blurEnabled, s.blurRadius);
     layer.setKenBurns(s.kenBurns);
     layer.setFitMode(s.fitMode);
+    // 声音总开关同样下发背景层：视频壁纸的音轨不归渲染器管（开机动画期间强制静音）。
+    layer.setSoundEnabled(bootActive ? false : s.soundEnabled);
+    layer.setVolume(s.soundVolume);
   };
   // 省电与画质档位：每次按「设置 + 当前可见性」重算（不做增量维护，避免状态漂移）。
   const applyRuntimeSettings = (s: ClientSettings) => {
@@ -144,8 +161,13 @@ export function bootstrap(ctx?: any): void {
     sceneRenderer.setQualityScale?.(s.qualityScale);
     // 应用级 Glow：开关/阈值/强度一并即时下发（已装配则就地改 uniform，无需重选壁纸）
     sceneRenderer.setGlow?.({ enabled: s.glowEnabled, threshold: s.glowThreshold, strength: s.glowStrength });
-    // 壁纸音效开关：关掉即时停声并释放 AudioContext（打开按上次规格重播）。
-    sceneRenderer.setSoundEnabled?.(s.soundEnabled);
+    // 壁纸音效开关：关掉即时停声并释放 AudioContext（打开按上次规格重播）；开机动画期间强制静音。
+    sceneRenderer.setSoundEnabled?.(bootActive ? false : s.soundEnabled);
+    // 视频壁纸的声音也走同一开关（背景层直接改 <video>.muted，不必重选壁纸）。
+    layer?.setSoundEnabled(bootActive ? false : s.soundEnabled);
+    // 壁纸音量：scene 音效走渲染器 masterGain，视频壁纸走 <video>.volume。
+    sceneRenderer.setSoundVolume?.(s.soundVolume);
+    layer?.setVolume(s.soundVolume);
     // 媒体集成开关：关闭即停轮询并隐藏媒体层（SMTC 只读；数据仅内存、不落盘、不上传）。
     sceneRenderer.setMediaIntegration?.(s.mediaIntegrationEnabled);
     layer?.setPaused(shouldPause);
@@ -250,7 +272,10 @@ export function bootstrap(ctx?: any): void {
     // prepend 到 body 最前（在 #root 之前），配合 z-index:0 的壁纸层与 #root z-index:1 的层级方案
     // （参考 dsh-liang-skin 的做法），避免 z-index:-1 被 body/frame 不透明背景遮挡。
     document.body.prepend(root);
-    layer = createBackgroundLayer(root);
+    layer = createBackgroundLayer(root, {
+      soundEnabled: bootActive ? false : settings.soundEnabled,
+      volume: settings.soundVolume,
+    });
     controller = createWallpaperController(layer, {
       fetchList: async () => (await fetch('/wallpapers/list')).json(),
       // three.js 播放器是**唯一** scene 路径；渲染失败/零可见对象 → controller 回退 preview 图。
@@ -288,7 +313,7 @@ export function bootstrap(ctx?: any): void {
         await showSceneFallback(info, {
           fetch: window.fetch.bind(window),
           layer: {
-            showVideo: (url) => (current() ? layer!.showVideo(url) : Promise.resolve('unsupported' as const)),
+            showVideo: (url, o) => (current() ? layer!.showVideo(url, o) : Promise.resolve('unsupported' as const)),
             showImage: (url, kenBurns) => { if (current()) layer!.showImage(url, kenBurns); },
             showNone: () => { if (current()) layer!.showNone(); },
           },
@@ -400,7 +425,7 @@ export function bootstrap(ctx?: any): void {
           settings = { ...settings, selectedWallpaperId: '' };
           // show() 的 video plan 没有 preview 字段：失败只记录（fallback='none'）供面板提示，不假回退图片
           // （controller 路径才有壁纸信息，由它回退 preview）。
-          void layer.showVideo(plan.url).then((result) => {
+          void layer.showVideo(plan.url, { hasAudio: plan.hasAudio }).then((result) => {
             if (result === 'ok' || disposed || token !== backgroundToken) return;
             mediaHealth.set(videoWallpaperId(plan.url), result, 'none');
           });

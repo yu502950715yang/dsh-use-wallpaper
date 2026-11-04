@@ -34,11 +34,27 @@ export declare const WEB_RESIZE_RELOAD_DELAY_MS = 300;
 export declare const WEB_RESIZE_RELOAD_TIMEOUT_MS = 8000;
 export declare const VIDEO_LOAD_TIMEOUT_MS = 1500;
 export type VideoLoadResult = 'ok' | 'unsupported' | 'timeout';
+/** 视频壁纸的播放选项（声音策略）。 */
+export interface VideoPlayOptions {
+    /** false = 素材已探测为无音轨（不解锁声音）；undefined = 未知，按可能有音轨处理。 */
+    hasAudio?: boolean;
+    /** true = 强制静音：scene 降级链的内嵌视频不播放声音（WE 视频纹理无声，保持既有行为）。 */
+    silent?: boolean;
+}
+/** 背景层创建选项（测试可注入；缺省按真实宿主判断）。 */
+export interface BackgroundLayerOptions {
+    /** 壁纸声音总开关（scene 音效 + 视频壁纸音轨），缺省 true。 */
+    soundEnabled?: boolean;
+    /** 视频壁纸音量 0-1，缺省 1。 */
+    volume?: number;
+    /** 桌面壳（dsh-app://）：Electron 默认允许有声自动播放；缺省按 location.protocol 判断。 */
+    desktopShell?: boolean;
+}
 export interface BackgroundLayer {
     root: HTMLElement;
     showImage(url: string, kenBurns: boolean): void;
     /** 加载视频并等首帧：error → unsupported，1.5s 无 loadeddata → timeout。 */
-    showVideo(url: string): Promise<VideoLoadResult>;
+    showVideo(url: string, opts?: VideoPlayOptions): Promise<VideoLoadResult>;
     showWeb(url: string): void;
     showSceneCanvas(canvas: HTMLCanvasElement, blurCanvas?: HTMLCanvasElement): void;
     showNone(): void;
@@ -53,7 +69,11 @@ export interface BackgroundLayer {
     setChatOutline(color: string, level: number): void;
     /** 省电：暂停/恢复视频壁纸播放（scene 由渲染器负责；web 壁纸在 iframe 里无法受控）。 */
     setPaused(paused: boolean): void;
+    /** 壁纸声音总开关：关 → 视频壁纸立即静音（画面继续）；开 → 有音轨则按宿主策略恢复。 */
+    setSoundEnabled(enabled: boolean): void;
+    /** 视频壁纸音量 0-1（运行期即时生效）。 */
+    setVolume(volume: number): void;
     /** 视频壁纸健康快照（FPS/丢帧/循环停顿）；当前不是视频壁纸时返回 null。 */
     getVideoHealth(): VideoHealthSnapshot | null;
 }
-export declare function createBackgroundLayer(root: HTMLElement): BackgroundLayer;
+export declare function createBackgroundLayer(root: HTMLElement, opts?: BackgroundLayerOptions): BackgroundLayer;

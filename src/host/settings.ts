@@ -24,6 +24,8 @@ export const WallpaperSettingsSchema = z.object({
   qualityScale: z.number().min(0.5).max(1).default(1),
   // 壁纸音效（sound 对象播放 + 频谱驱动效果）：默认开启，与桌面 WE 一致。
   soundEnabled: z.boolean().default(true),
+  // 壁纸声音音量（scene sound 对象与视频壁纸共用）：默认 1。
+  soundVolume: z.number().min(0).max(1).default(1),
   // 媒体集成（Windows SMTC 只读；数据仅内存、不落盘、不记日志）。
   mediaIntegrationEnabled: z.boolean().default(true),
   // 文字可读性（2026-10-01）：
@@ -51,6 +53,10 @@ export const WallpaperSettingsSchema = z.object({
   bootAnimationLocalPath: z.string().default(''),
   bootAnimationFitMode: z.string().default('cover'),
   bootAnimationMaxDurationMs: z.number().min(0).max(30000).default(6000),
+  // 开机动画声音（2026-11-04）：默认开；桌面壳直接出声，浏览器无手势时只能静音起播。
+  bootAnimationSoundEnabled: z.boolean().default(true),
+  // 开机动画音量：默认 1。
+  bootAnimationVolume: z.number().min(0).max(1).default(1),
 });
 
 // 0.1.7 表单只投影 volatile 字段；旧版 register 要普通 schema（volatile 在旧版取不到值）。

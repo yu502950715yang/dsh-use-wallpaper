@@ -130,7 +130,7 @@ describe('showSceneFallback', () => {
       : url.includes('embedded-video') ? new Response(null, { status: 200 })
         : new Response(null, { status: 404 })));
     await expect(showSceneFallback(info, { fetch: f1 as any, layer })).resolves.toBe('video');
-    expect(layer.showVideo).toHaveBeenCalledWith('/wallpapers/scene/42/embedded-video');
+    expect(layer.showVideo).toHaveBeenCalledWith('/wallpapers/scene/42/embedded-video', { silent: true });
 
     layer.showVideo.mockResolvedValueOnce('unsupported');
     const f2 = vi.fn(async (url: string) => (url.includes('video-probe')

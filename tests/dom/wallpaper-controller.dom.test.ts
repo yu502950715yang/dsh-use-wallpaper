@@ -7,7 +7,7 @@ function fakeLayer() {
   return {
     calls,
     showImage: (u: string, kenBurns: boolean) => calls.push({ name: 'image', args: [u, kenBurns] }),
-    showVideo: async (u: string) => { calls.push({ name: 'video', args: [u] }); return 'ok' as const; },
+    showVideo: async (u: string, opts?: unknown) => { calls.push({ name: 'video', args: [u, opts] }); return 'ok' as const; },
     showSceneCanvas: (c: HTMLCanvasElement) => calls.push({ name: 'scene', args: [c] }),
     showNone: () => calls.push({ name: 'none', args: [] }),
     setOverlayOpacity: () => {},
@@ -121,5 +121,18 @@ describe('createWallpaperController scene 分支（DOM）', () => {
     expect(q.height).not.toBe(150);
     expect(q.classList.contains('wp-scene-canvas')).toBe(true);
     expect(document.querySelector('.wp-scene-blur')).toBeNull();
+  });
+
+  // 视频壁纸声音（2026-11-04）：列表探测到的 hasAudio 透传给背景层（false = 素材无音轨，不解锁声音）。
+  it('video 壁纸：hasAudio 从列表透传给 layer.showVideo', async () => {
+    const layer = fakeLayer();
+    const c = createWallpaperController(layer, {
+      fetchList: async () => ([
+        { id: '3', type: 'video', file: 'a.mp4', hasScene: false, hasPreviewGif: false, previewUrl: '/p3', title: 'v', hasAudio: false },
+      ] as any),
+    });
+    await c.load();
+    await c.select('3');
+    expect(layer.calls.at(-1)).toEqual({ name: 'video', args: ['/wallpapers/media/3/file', { hasAudio: false }] });
   });
 });

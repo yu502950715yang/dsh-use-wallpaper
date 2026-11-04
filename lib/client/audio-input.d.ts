@@ -5,6 +5,8 @@ export interface AudioAnalyzer {
     update(): void;
     /** 省电暂停：挂起/恢复整个音频图（解码路径的 source 随 context 时钟冻结）。 */
     setSuspended(suspended: boolean): void;
+    /** 主音量（0-1，越界 clamp）；只改 masterGain，不影响频谱。 */
+    setVolume(volume: number): void;
 }
 export declare function createAudioAnalyzer(): AudioAnalyzer | null;
 export interface PlaybackHandle {
