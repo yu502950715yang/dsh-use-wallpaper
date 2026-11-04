@@ -38162,7 +38162,7 @@ function videoWallpaperId(url) {
 function bootstrap(ctx) {
   if (!bootstrapLogged) {
     bootstrapLogged = true;
-    console.info("[wallpaper-engine] client ready v0.8.1-dev (audio: <audio> streaming)");
+    console.info("[wallpaper-engine] client ready v0.13.0 (audio: <audio> streaming)");
   }
   setSettingsCtx(ctx);
   injectWallpaperStyles();
