@@ -63,7 +63,7 @@ var require_util = __commonJS({
       x |= b[n++] << 56;
       return x;
     };
-    exports.readU32 = function readU32(b, n) {
+    exports.readU32 = function readU322(b, n) {
       var x = 0;
       x |= b[n++] << 0;
       x |= b[n++] << 8;
@@ -31026,6 +31026,10 @@ var MIN_VERTEX_COUNT = 3;
 var MAX_VERTEX_COUNT = 2e5;
 var KEYFRAME_BYTES = 36;
 var SUPPORTED_MDLV = ["MDLV0013", "MDLV0016", "MDLV0017", "MDLV0019", "MDLV0021", "MDLV0023"];
+var SECTION_HEADER_BYTES = 13;
+var MAX_BONES = 4096;
+var MAX_ANIMATIONS = 4096;
+var MAX_TRACKS = 4096;
 var VERTEX_LAYOUTS = {
   48: { posZ: false, uv: 40, skin: false },
   // 实测静态变体：pos.xy@0 + 8 个 float + uv@40
@@ -31037,12 +31041,21 @@ function ascii2(buf, at, len) {
   for (let i = 0; i < len; i++) s += String.fromCharCode(buf[at + i] ?? 0);
   return s;
 }
+var utf8Decoder = new TextDecoder("utf-8");
+function decodeCStringBytes(buf, at, end) {
+  return utf8Decoder.decode(buf.subarray(at, end));
+}
 function cstr(buf, at, limit = buf.length) {
   let e = at;
   while (e < limit && e < buf.length && buf[e] !== 0) e++;
-  let s = "";
-  for (let i = at; i < e; i++) s += String.fromCharCode(buf[i]);
-  return [s, Math.min(e + 1, limit)];
+  return [decodeCStringBytes(buf, at, e), Math.min(e + 1, limit)];
+}
+function sectionCString(buf, at, limit) {
+  if (at >= limit) return null;
+  let e = at;
+  while (e < limit && buf[e] !== 0) e++;
+  if (e >= limit) return null;
+  return [decodeCStringBytes(buf, at, e), e + 1];
 }
 function indexOfAscii(buf, marker) {
   outer: for (let i = 0; i + marker.length <= buf.length; i++) {
@@ -31050,6 +31063,50 @@ function indexOfAscii(buf, marker) {
     return i;
   }
   return -1;
+}
+function isUpperAscii(c) {
+  return c >= 65 && c <= 90;
+}
+function readSectionAt(buf, at) {
+  if (at < 0 || at + SECTION_HEADER_BYTES > buf.length) return null;
+  if (buf[at] !== 77 || buf[at + 1] !== 68) return null;
+  if (!isUpperAscii(buf[at + 2]) || !isUpperAscii(buf[at + 3])) return null;
+  let version = 0;
+  for (let i = at + 4; i < at + 8; i++) {
+    const d = buf[i] - 48;
+    if (d < 0 || d > 9) return null;
+    version = version * 10 + d;
+  }
+  if (buf[at + 8] !== 0 || version <= 0) return null;
+  const end = buf[at + 9] | buf[at + 10] << 8 | buf[at + 11] << 16 | buf[at + 12] << 24;
+  const payload = at + SECTION_HEADER_BYTES;
+  if (end <= payload || end > buf.length) return null;
+  return { type: ascii2(buf, at, 4), version, payload, end };
+}
+function findSection(buf, type, from = 0) {
+  for (let at = from; at + SECTION_HEADER_BYTES <= buf.length; at++) {
+    if (buf[at] !== 77 || buf[at + 1] !== 68) continue;
+    const section = readSectionAt(buf, at);
+    if (section && section.type === type) return section;
+  }
+  return null;
+}
+function sectionState(buf, type, section, ok) {
+  if (ok) return "ok";
+  if (section) return "failed";
+  return indexOfAscii(buf, type) < 0 ? "absent" : "failed";
+}
+function readU16(buf, at) {
+  return buf[at] | buf[at + 1] << 8;
+}
+function readU32(buf, at) {
+  return (buf[at] | buf[at + 1] << 8 | buf[at + 2] << 16 | buf[at + 3] << 24) >>> 0;
+}
+function readI322(buf, at) {
+  return buf[at] | buf[at + 1] << 8 | buf[at + 2] << 16 | buf[at + 3] << 24;
+}
+function readF322(dv, at) {
+  return dv.getFloat32(at, true);
 }
 var MISS = { kind: "miss" };
 function strideCandidates(vertexBytes, maxIndex) {
@@ -31197,150 +31254,155 @@ function parseMesh(buf, dv, meshLimit) {
   }
   return hard.length > 0 ? { error: hard[0].error, info: hard[0].info } : { error: "mesh-parse-failed" };
 }
-function saneBind(dv, off) {
-  for (let i = 0; i < 16; i++) {
-    const v = dv.getFloat32(off + i * 4, true);
-    if (!Number.isFinite(v) || Math.abs(v) > 1e6) return false;
-  }
-  return dv.getFloat32(off + 12, true) === 0 && dv.getFloat32(off + 28, true) === 0 && dv.getFloat32(off + 44, true) === 0 && dv.getFloat32(off + 60, true) === 1;
-}
 function parseBones(buf, dv) {
-  const at = indexOfAscii(buf, "MDLS");
-  if (at < 0) return { bones: [], status: "absent", idToIndex: null };
-  if (at + 17 > buf.length) return { bones: [], status: "failed", idToIndex: null };
-  const next = indexOfAscii(buf, "MDLA");
-  let p = at + 13;
-  const boneCount = dv.getUint32(p, true);
+  const section = findSection(buf, "MDLS");
+  if (!section) return { bones: [], status: sectionState(buf, "MDLS", null, false) };
+  let p = section.payload;
+  if (p + 4 > section.end) return { bones: [], status: "failed" };
+  const boneCount = readU16(buf, p);
   p += 4;
-  const raw = [];
-  for (let b = 0; b < boneCount && raw.length < 512; b++) {
-    let ok = false;
-    for (const head of [13, 10]) {
-      if (p + head + 64 > buf.length) continue;
-      if (next >= 0 && p + head + 64 > next) continue;
-      if (!saneBind(dv, p + head)) continue;
-      if (dv.getUint32(p + head - 4, true) !== 64) continue;
-      const bind = new Float32Array(16);
-      for (let i = 0; i < 16; i++) bind[i] = dv.getFloat32(p + head + i * 4, true);
-      raw.push({ fileId: head === 13 ? dv.getUint32(p + 1, true) : b, parent: dv.getInt32(p + head - 8, true), bind });
-      p += head + 64;
-      [, p] = cstr(buf, p, buf.length);
-      ok = true;
-      break;
-    }
-    if (!ok) break;
-  }
-  const identity = raw.every((r, i) => r.fileId === i);
-  const order = raw.map((_, i) => i);
-  if (!identity) order.sort((x, y) => raw[x].fileId - raw[y].fileId || x - y);
-  const idToIndex = identity ? null : new Map(order.map((b, i) => [raw[b].fileId, i]));
-  const bones = order.map((b, i) => {
-    const parent = idToIndex ? idToIndex.get(raw[b].parent) : raw[b].parent;
-    return { index: i, parent: parent !== void 0 && parent >= 0 && parent < raw.length ? parent : -1, bind: raw[b].bind };
-  });
-  return { bones, status: bones.length === boneCount ? "ok" : "failed", idToIndex };
-}
-function locateTracks(dv, p, bufLen) {
-  let best = null;
-  for (const delta of [0, -4]) {
-    const t = p + delta;
-    if (t < 0 || t + 4 > bufLen) continue;
-    const count = dv.getUint32(t, true);
-    if (count < 1 || count > 256) continue;
-    const at = t + 4 + 35;
-    let ok = true;
-    let q = at;
-    for (let k = 0; k < count; k++) {
-      if (q + 8 > bufLen) {
-        ok = false;
-        break;
-      }
-      const bytes = dv.getUint32(q + 4, true);
-      if (bytes === 0 || bytes % KEYFRAME_BYTES !== 0 || q + 8 + bytes > bufLen) {
-        ok = false;
-        break;
-      }
-      q += 8 + bytes;
-    }
-    if (ok && (!best || bufLen - q < bufLen - best.end)) best = { trackCount: count, trackAt: at, end: q };
-  }
-  return best ? { trackCount: best.trackCount, trackAt: best.trackAt } : null;
-}
-function parseAnimations(buf, dv, boneCount, idToIndex) {
-  const at = indexOfAscii(buf, "MDLA");
-  if (at < 0) return { animations: [], status: "absent" };
-  if (at + 17 > buf.length) return { animations: [], status: "failed" };
-  let p = at + 13;
-  const animCount = dv.getUint32(p, true);
-  p += 4;
-  const out = [];
-  for (let a = 0; a < animCount && out.length < 64; a++) {
-    if (p + 8 > buf.length) break;
-    const id = dv.getUint32(p, true);
+  if (boneCount === 0 || boneCount > MAX_BONES) return { bones: [], status: "failed" };
+  const bones = [];
+  for (let i = 0; i < boneCount; i++) {
+    const name = sectionCString(buf, p, section.end);
+    if (!name) return { bones: [], status: "failed" };
+    p = name[1];
+    if (p + 12 > section.end) return { bones: [], status: "failed" };
+    p += 4;
+    const rawParent = readU32(buf, p);
+    const transformBytes = readU32(buf, p + 4);
     p += 8;
-    let name;
-    [name, p] = cstr(buf, p);
-    let mode;
-    [mode, p] = cstr(buf, p);
-    if (p + 20 + 35 > buf.length) break;
-    const fpsRaw = dv.getFloat32(p, true);
-    const frameCount = dv.getUint32(p + 4, true);
-    const located = locateTracks(dv, p + 12, buf.length);
-    if (!located) break;
-    let q = located.trackAt;
+    if (transformBytes !== 64 || p + 64 > section.end) return { bones: [], status: "failed" };
+    const bind = new Float32Array(16);
+    for (let k = 0; k < 16; k++) {
+      bind[k] = readF322(dv, p + k * 4);
+      if (!Number.isFinite(bind[k])) return { bones: [], status: "failed" };
+    }
+    p += 64;
+    const simulation = sectionCString(buf, p, section.end);
+    if (!simulation) return { bones: [], status: "failed" };
+    p = simulation[1];
+    const parent = rawParent !== 4294967295 && rawParent < bones.length ? rawParent : -1;
+    bones.push({ index: i, parent, bind });
+  }
+  return { bones, status: bones.length === boneCount ? "ok" : "failed" };
+}
+function isNonZeroTriple(v) {
+  return Math.abs(v[0]) > 1e-6 || Math.abs(v[1]) > 1e-6 || Math.abs(v[2]) > 1e-6;
+}
+function isDefaultScale(v) {
+  return Math.abs(v[0] - 1) <= 1e-6 && Math.abs(v[1] - 1) <= 1e-6 && Math.abs(v[2] - 1) <= 1e-6;
+}
+function trackAuthored(keys) {
+  for (const k of keys) {
+    if (isNonZeroTriple(k.pos) || isNonZeroTriple(k.angle) || !isDefaultScale(k.scale)) return true;
+  }
+  return false;
+}
+function parseAnimations(buf, dv) {
+  const section = findSection(buf, "MDLA");
+  if (!section) return { animations: [], status: sectionState(buf, "MDLA", null, false) };
+  let p = section.payload;
+  if (p + 4 > section.end) return { animations: [], status: "failed" };
+  const animCount = readU32(buf, p);
+  p += 4;
+  if (animCount === 0 || animCount > MAX_ANIMATIONS) return { animations: [], status: "failed" };
+  const out = [];
+  for (let a = 0; a < animCount; a++) {
+    let id = 0;
+    let guard = 0;
+    do {
+      if (p + 4 > section.end) return { animations: [], status: "failed" };
+      id = readI322(buf, p);
+      p += 4;
+      if (++guard > 64) return { animations: [], status: "failed" };
+    } while (id === 0);
+    if (id < 0) return { animations: [], status: "failed" };
+    if (p + 4 > section.end) return { animations: [], status: "failed" };
+    p += 4;
+    const name = sectionCString(buf, p, section.end);
+    if (!name) return { animations: [], status: "failed" };
+    p = name[1];
+    if (!name[0] && p < section.end) {
+      const fallback = sectionCString(buf, p, section.end);
+      if (!fallback) return { animations: [], status: "failed" };
+      p = fallback[1];
+    }
+    const mode = sectionCString(buf, p, section.end);
+    if (!mode) return { animations: [], status: "failed" };
+    p = mode[1];
+    if (p + 16 > section.end) return { animations: [], status: "failed" };
+    const fpsRaw = readF322(dv, p);
+    const frameCount = readI322(buf, p + 4);
+    const trackCount = readU32(buf, p + 12);
+    p += 16;
+    if (trackCount > MAX_TRACKS) return { animations: [], status: "failed" };
     const tracks = [];
-    let ok = true;
-    for (let t = 0; t < located.trackCount; t++) {
-      if (q + 8 > buf.length) {
-        ok = false;
-        break;
-      }
-      const rawBoneId = dv.getUint32(q, true);
-      const trackBytes = dv.getUint32(q + 4, true);
-      q += 8;
-      const boneId = idToIndex ? idToIndex.get(rawBoneId) ?? -1 : rawBoneId;
-      if (trackBytes === 0 || trackBytes % KEYFRAME_BYTES !== 0 || q + trackBytes > buf.length) {
-        ok = false;
-        break;
-      }
-      if (boneCount > 0 && (boneId < 0 || boneId >= boneCount)) {
-        ok = false;
-        break;
+    for (let t = 0; t < trackCount; t++) {
+      if (p + 8 > section.end) return { animations: [], status: "failed" };
+      p += 4;
+      const trackBytes = readU32(buf, p);
+      p += 4;
+      if (trackBytes === 0 || trackBytes % KEYFRAME_BYTES !== 0 || p + trackBytes > section.end) {
+        return { animations: [], status: "failed" };
       }
       const keyCount = trackBytes / KEYFRAME_BYTES;
-      const keys = [];
+      const keys = new Array(keyCount);
       for (let k = 0; k < keyCount; k++) {
-        const o = q + k * KEYFRAME_BYTES;
-        keys.push({
-          pos: [dv.getFloat32(o, true), dv.getFloat32(o + 4, true), dv.getFloat32(o + 8, true)],
-          rot: [dv.getFloat32(o + 12, true), dv.getFloat32(o + 16, true), dv.getFloat32(o + 20, true), dv.getFloat32(o + 24, true)],
-          scale: [dv.getFloat32(o + 28, true), dv.getFloat32(o + 32, true)]
-        });
+        const o = p + k * KEYFRAME_BYTES;
+        const key = {
+          pos: [readF322(dv, o), readF322(dv, o + 4), readF322(dv, o + 8)],
+          // 欧拉角（弧度）：WE 组合顺序 Rz·Ry·Rx，渲染侧换算四元数（AGENT.md §7.40）
+          angle: [readF322(dv, o + 12), readF322(dv, o + 16), readF322(dv, o + 20)],
+          scale: [readF322(dv, o + 24), readF322(dv, o + 28), readF322(dv, o + 32)]
+        };
+        if (!Number.isFinite(key.pos[0]) || !Number.isFinite(key.angle[0]) || !Number.isFinite(key.scale[0])) {
+          return { animations: [], status: "failed" };
+        }
+        keys[k] = key;
       }
-      q += trackBytes;
-      tracks.push({ boneId, keys });
+      p += trackBytes;
+      tracks.push({ boneId: t, authored: trackAuthored(keys), keys });
     }
-    if (!ok) break;
+    if (section.version >= 3) {
+      const trailerBytes = 35;
+      if (p + trailerBytes > section.end) return { animations: [], status: "failed" };
+      p += trailerBytes;
+    } else {
+      if (p + 4 > section.end) return { animations: [], status: "failed" };
+      const metadataCount = readU32(buf, p);
+      p += 4;
+      if (metadataCount > 65536) return { animations: [], status: "failed" };
+      for (let m = 0; m < metadataCount; m++) {
+        if (p + 4 > section.end) return { animations: [], status: "failed" };
+        p += 4;
+        const meta = sectionCString(buf, p, section.end);
+        if (!meta) return { animations: [], status: "failed" };
+        p = meta[1];
+      }
+    }
     const fps = Number.isFinite(fpsRaw) && fpsRaw > 0 && fpsRaw <= 240 ? fpsRaw : 30;
-    if (frameCount > 0 && tracks.length > 0) out.push({ id, name, mode, fps, frameCount, tracks });
-    p = q;
+    out.push({ id, name: name[0], mode: mode[0], fps, frameCount, tracks });
   }
   return { animations: out, status: out.length === animCount ? "ok" : "failed" };
 }
-function remapBlendIndices(mesh, idToIndex) {
+function validateBlendIndices(mesh, boneCount) {
   const src = mesh.blendIndices;
   const weights = mesh.blendWeights;
-  if (!idToIndex || !src) return;
+  if (!src) return;
+  if (boneCount === 0) {
+    mesh.blendIndices = null;
+    mesh.blendWeights = null;
+    return;
+  }
   for (let i = 0; i < src.length; i++) {
     if (weights && weights[i] === 0) continue;
-    const mapped = idToIndex.get(src[i]);
-    if (mapped === void 0) {
-      console.warn(`[mdl] \u9876\u70B9\u8499\u76AE\u69FD\u5F15\u7528\u4E86\u9AA8\u8868\u91CC\u6CA1\u6709\u7684\u9AA8\u9ABC\u6587\u4EF6 id=${src[i]} \u21D2 \u6574\u4EFD\u8499\u76AE\u9000\u5316\u4E3A\u9759\u6001\u7F51\u683C`);
+    if (src[i] >= boneCount) {
+      console.warn(`[mdl] \u9876\u70B9\u8499\u76AE\u69FD\u5F15\u7528\u4E86\u9AA8\u8868\u91CC\u6CA1\u6709\u7684\u9AA8\u9ABC\u4E0B\u6807=${src[i]} \u21D2 \u6574\u4EFD\u8499\u76AE\u9000\u5316\u4E3A\u9759\u6001\u7F51\u683C`);
       mesh.blendIndices = null;
       mesh.blendWeights = null;
       return;
     }
-    src[i] = mapped;
   }
 }
 function parseMdl(buf) {
@@ -31353,7 +31415,7 @@ function parseMdl(buf) {
   try {
     const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
     let meshLimit = buf.length;
-    for (const marker of ["MDLS", "MDLA"]) {
+    for (const marker of ["MDLS", "MDLA", "MDAT", "MDLE", "MDMP"]) {
       const at = indexOfAscii(buf, marker);
       if (at >= 0 && at < meshLimit) meshLimit = at;
     }
@@ -31362,8 +31424,8 @@ function parseMdl(buf) {
       return located.info ? { ok: false, error: located.error, strideInfo: located.info } : { ok: false, error: located.error };
     }
     const boneTable = parseBones(buf, dv);
-    remapBlendIndices(located.mesh, boneTable.idToIndex);
-    const anim = parseAnimations(buf, dv, boneTable.bones.length, boneTable.idToIndex);
+    validateBlendIndices(located.mesh, boneTable.bones.length);
+    const anim = parseAnimations(buf, dv);
     return {
       ok: true,
       puppet: {
@@ -31371,8 +31433,7 @@ function parseMdl(buf) {
         mesh: located.mesh,
         bones: boneTable.bones,
         animations: anim.animations,
-        segments: { mdls: boneTable.status, mdla: anim.status },
-        boneIdMapping: boneTable.idToIndex ? "remapped" : "identity"
+        segments: { mdls: boneTable.status, mdla: anim.status }
       }
     };
   } catch {
@@ -31383,6 +31444,18 @@ function parseMdl(buf) {
 // src/client/puppet.ts
 var _qa = new Quaternion();
 var _qb = new Quaternion();
+var _qx = new Quaternion();
+var _qy = new Quaternion();
+var _qz = new Quaternion();
+var _axisX = new Vector3(1, 0, 0);
+var _axisY = new Vector3(0, 1, 0);
+var _axisZ = new Vector3(0, 0, 1);
+function keyframeQuaternion(out, angle) {
+  _qx.setFromAxisAngle(_axisX, angle[0]);
+  _qy.setFromAxisAngle(_axisY, angle[1]);
+  _qz.setFromAxisAngle(_axisZ, angle[2]);
+  return out.copy(_qz).multiply(_qy).multiply(_qx);
+}
 function decomposeBind(bone, bind) {
   new Matrix4().fromArray(bind).decompose(bone.position, bone.quaternion, bone.scale);
 }
@@ -31434,7 +31507,7 @@ function createPuppetMesh(puppet, material) {
       const t = last === 0 ? 0 : Math.min(Math.max(0, frame - f), 1);
       for (const track of anim.tracks) {
         const bone = bones[track.boneId];
-        if (!bone || track.keys.length === 0) continue;
+        if (!bone || track.keys.length === 0 || !track.authored) continue;
         const a = track.keys[Math.min(f, track.keys.length - 1)];
         const b = track.keys[Math.min(next, track.keys.length - 1)];
         bone.position.set(
@@ -31442,13 +31515,13 @@ function createPuppetMesh(puppet, material) {
           a.pos[1] + (b.pos[1] - a.pos[1]) * t,
           a.pos[2] + (b.pos[2] - a.pos[2]) * t
         );
-        _qa.set(a.rot[0], a.rot[1], a.rot[2], a.rot[3]);
-        _qb.set(b.rot[0], b.rot[1], b.rot[2], b.rot[3]);
+        keyframeQuaternion(_qa, a.angle);
+        keyframeQuaternion(_qb, b.angle);
         bone.quaternion.copy(_qa).slerp(_qb, t);
         bone.scale.set(
           a.scale[0] + (b.scale[0] - a.scale[0]) * t,
           a.scale[1] + (b.scale[1] - a.scale[1]) * t,
-          1
+          a.scale[2] + (b.scale[2] - a.scale[2]) * t
         );
       }
     },

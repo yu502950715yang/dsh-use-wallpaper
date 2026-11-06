@@ -14,9 +14,10 @@ const idle: MdlAnimation = {
   id: 7, name: 'idle', mode: 'loop', fps: 30, frameCount: 2,
   tracks: [{
     boneId: 1,
+    authored: true,
     keys: [
-      { pos: [5, 0, 0], rot: [0, 0, 0, 1], scale: [1, 1] },
-      { pos: [9, 0, 0], rot: [0, 0, 0, 1], scale: [1, 1] },
+      { pos: [5, 0, 0], angle: [0, 0, 0], scale: [1, 1, 1] },
+      { pos: [9, 0, 0], angle: [0, 0, 0], scale: [1, 1, 1] },
     ],
   }],
 };
@@ -40,7 +41,6 @@ function makePuppet(over: Partial<MdlPuppet> = {}): MdlPuppet {
     ],
     animations: [idle],
     segments: { mdls: 'ok', mdla: 'ok' },
-    boneIdMapping: 'identity',
     ...over,
   };
 }
@@ -120,6 +120,65 @@ describe('puppet → three 网格/蒙皮', () => {
     expect(boneMatrixX(p.skeleton!, 0)).toBeCloseTo(0, 5);   // 绑定姿态 ⇒ 恒等
   });
 
+  // 真实素材（3828798871 / 3812518176）的 MDLA 关键帧存的是欧拉角，不是四元数；
+  // WE 的组合顺序是 Rz·Ry·Rx（= three 的 Euler order 'ZYX'，AGENT.md §7.40）。
+  it('欧拉角关键帧 → 骨骼四元数按 Rz·Ry·Rx 组合（单轴 z=90° 可手算校验）', () => {
+    const turn: MdlAnimation = {
+      id: 3, name: 'turn', mode: 'loop', fps: 30, frameCount: 1,
+      tracks: [{
+        boneId: 1, authored: true,
+        keys: [{ pos: [5, 0, 0], angle: [0, 0, Math.PI / 2], scale: [1, 1, 1] }],
+      }],
+    };
+    const p = createPuppetMesh(makePuppet({ animations: [turn] }), material());
+    p.applyFrame(turn, 0);
+    expect(p.bones[1].quaternion.x).toBeCloseTo(0, 6);
+    expect(p.bones[1].quaternion.y).toBeCloseTo(0, 6);
+    expect(p.bones[1].quaternion.z).toBeCloseTo(Math.SQRT1_2, 6);
+    expect(p.bones[1].quaternion.w).toBeCloseTo(Math.SQRT1_2, 6);
+    // 组合顺序：三轴都有值时与 three 的 Euler 'ZYX' 等价
+    const mixed: MdlAnimation = {
+      id: 4, name: 'mixed', mode: 'loop', fps: 30, frameCount: 1,
+      tracks: [{
+        boneId: 1, authored: true,
+        keys: [{ pos: [5, 0, 0], angle: [0.3, -0.2, 0.5], scale: [1, 1, 1] }],
+      }],
+    };
+    const p2 = createPuppetMesh(makePuppet({ animations: [mixed] }), material());
+    p2.applyFrame(mixed, 0);
+    const expected = new THREE.Quaternion().setFromEuler(new THREE.Euler(0.3, -0.2, 0.5, 'ZYX'));
+    expect(p2.bones[1].quaternion.angleTo(expected)).toBeCloseTo(0, 6);
+  });
+
+  it('scale 三分量写回骨骼（真实素材是 f32×3，不是 2D 的 xy）', () => {
+    const squash: MdlAnimation = {
+      id: 3, name: 'squash', mode: 'loop', fps: 30, frameCount: 1,
+      tracks: [{
+        boneId: 1, authored: true,
+        keys: [{ pos: [5, 0, 0], angle: [0, 0, 0], scale: [1.5, 0.5, 2] }],
+      }],
+    };
+    const p = createPuppetMesh(makePuppet({ animations: [squash] }), material());
+    p.applyFrame(squash, 0);
+    expect([p.bones[1].scale.x, p.bones[1].scale.y, p.bones[1].scale.z]).toEqual([1.5, 0.5, 2]);
+  });
+
+  it('authored=false 的轨（全零/单位值）不覆盖绑定姿态（WE 语义）', () => {
+    const flat: MdlAnimation = {
+      id: 3, name: 'flat', mode: 'loop', fps: 30, frameCount: 2,
+      tracks: [{
+        boneId: 1, authored: false,
+        keys: [
+          { pos: [0, 0, 0], angle: [0, 0, 0], scale: [1, 1, 1] },
+          { pos: [0, 0, 0], angle: [0, 0, 0], scale: [1, 1, 1] },
+        ],
+      }],
+    };
+    const p = createPuppetMesh(makePuppet({ animations: [flat] }), material());
+    p.applyFrame(flat, 1);
+    expect(p.bones[1].position.x).toBeCloseTo(5, 5); // 保持 bind 平移，不被清成 0
+  });
+
   it('applyFrame 越界帧号被夹到合法区间（不产生 NaN 骨骼，且落在首/末帧）', () => {
     const p = createPuppetMesh(makePuppet(), material());
     p.applyFrame(p.animations[0], 99);
@@ -142,10 +201,11 @@ describe('puppet → three 网格/蒙皮', () => {
       id: 3, name: 'walk', mode: 'loop', fps: 10, frameCount: 3,
       tracks: [{
         boneId: 1,
+        authored: true,
         keys: [
-          { pos: [5, 0, 0], rot: [0, 0, 0, 1], scale: [1, 1] },
-          { pos: [9, 0, 0], rot: [0, 0, 0, 1], scale: [1, 1] },
-          { pos: [13, 0, 0], rot: [0, 0, 0, 1], scale: [1, 1] },
+          { pos: [5, 0, 0], angle: [0, 0, 0], scale: [1, 1, 1] },
+          { pos: [9, 0, 0], angle: [0, 0, 0], scale: [1, 1, 1] },
+          { pos: [13, 0, 0], angle: [0, 0, 0], scale: [1, 1, 1] },
         ],
       }],
     };
@@ -169,7 +229,10 @@ describe('puppet → three 网格/蒙皮', () => {
     const p = createPuppetMesh(makePuppet(), material());
     p.applyFrame({
       id: 1, name: 'x', mode: 'loop', fps: 30, frameCount: 1,
-      tracks: [{ boneId: 99, keys: [{ pos: [1, 0, 0], rot: [0, 0, 0, 1], scale: [1, 1] }] }, { boneId: 0, keys: [] }],
+      tracks: [
+        { boneId: 99, authored: true, keys: [{ pos: [1, 0, 0], angle: [0, 0, 0], scale: [1, 1, 1] }] },
+        { boneId: 0, authored: true, keys: [] },
+      ],
     }, 0);
     expect(p.bones[0].position.x).toBeCloseTo(0, 5);
     expect(p.bones[1].position.x).toBeCloseTo(5, 5);

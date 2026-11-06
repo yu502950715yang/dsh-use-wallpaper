@@ -21,7 +21,7 @@ Status: implemented
 
 ## Affected repositories
 
-- `dsh-use-wallpaper` 工作区（未提交）：`background-layer` / `audio-input` / `three-renderer` / `settings-section` / `boot-overlay` / `boot-player` / `boot-settings-section` / `settings` / `styles` / `host/routes` / `host/scanner` / `host/settings` / `shared/web-audio-shim` + `host/mp4-audio-probe`。
+- `dsh-use-wallpaper` 分支 `master` commits `8ccab4e`
 
 ## Alternatives considered
 

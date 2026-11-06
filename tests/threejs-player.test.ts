@@ -14,6 +14,7 @@ import { coverRange, createCompositeGeometry, screenScalePx } from '../src/clien
 import { createFrameCapture } from '../src/client/frame-capture.js';
 import { createGlowStage } from '../src/client/glow-stage.js';
 import type { PuppetInstance } from '../src/client/puppet.js';
+import type { MdlAnimation } from '../src/client/mdl-parser.js';
 import { parseSceneJson } from '../src/client/scene-json.js';
 import { computeEffectiveVisibility } from '../src/client/visibility.js';
 
@@ -4512,8 +4513,8 @@ describe('puppet 图层（addPuppet / image 分支 / 逐帧动画）', () => {
 
   const anim = {
     id: 7, name: 'idle', mode: 'loop', fps: 10, frameCount: 3,
-    tracks: [{ boneId: 0, keys: [{ pos: [0, 0, 0] as [number, number, number], rot: [0, 0, 0, 1] as [number, number, number, number], scale: [1, 1] as [number, number] }] }],
-  };
+    tracks: [{ boneId: 0, authored: true, keys: [{ pos: [0, 0, 0] as [number, number, number], angle: [0, 0, 0] as [number, number, number], scale: [1, 1, 1] as [number, number, number] }] }],
+  } satisfies MdlAnimation;
 
   it('addPuppet：we_to_three 定位 + scale/angles/renderOrder + 脚本桥登记（与 addBackground 同一编号空间）', () => {
     const { player } = makePlayer(1920, 1080);

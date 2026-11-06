@@ -35,19 +35,22 @@ export interface MdlMesh {
     strideInfo?: MdlStrideInfo;
 }
 export interface MdlBone {
-    /** bones 数组下标（文件 id 非 0..n-1 时已重排，见 MdlPuppet.boneIdMapping） */
+    /** bones 数组下标（= 文件里的记录顺序；顶点蒙皮槽/动画轨都用这个下标） */
     index: number;
     parent: number;
     bind: Float32Array;
 }
+/** MDLA 关键帧：位置 / 欧拉角（弧度，WE 组合顺序 Rz·Ry·Rx）/ 缩放。 */
 export interface MdlKeyframe {
     pos: [number, number, number];
-    rot: [number, number, number, number];
-    scale: [number, number];
+    angle: [number, number, number];
+    scale: [number, number, number];
 }
 export interface MdlTrack {
-    /** bones 数组下标（= MdlBone.index；文件里的 id 已映射到下标） */
+    /** 骨骼下标 = 轨在动画里的顺序（轨头的 i32 在真实素材里恒 0，不是骨 id） */
     boneId: number;
+    /** 该轨是否有作者姿态：全零/单位值的轨按 WE 语义「保持绑定姿态」，不覆盖骨骼 */
+    authored: boolean;
     keys: MdlKeyframe[];
 }
 export interface MdlAnimation {
@@ -55,6 +58,7 @@ export interface MdlAnimation {
     name: string;
     mode: string;
     fps: number;
+    /** 动画长度（帧数）；关键帧数组可能多 1 帧（循环末帧 = 首帧），采样按本字段回绕 */
     frameCount: number;
     tracks: MdlTrack[];
 }
@@ -65,8 +69,6 @@ export interface MdlSegmentsInfo {
     mdls: MdlSegmentState;
     mdla: MdlSegmentState;
 }
-/** 骨骼 id 口径：'identity' = 文件 id 就是下标；'remapped' = 已按文件 id 升序重排。 */
-export type MdlBoneIdMapping = 'identity' | 'remapped';
 export interface MdlPuppet {
     version: string;
     mesh: MdlMesh;
@@ -74,8 +76,6 @@ export interface MdlPuppet {
     animations: MdlAnimation[];
     /** 段级诊断（可选：接口加法）；T8 据此区分「无动画」与「动画解析失败」 */
     segments?: MdlSegmentsInfo;
-    /** 骨骼 id 口径（可选：接口加法）；'remapped' 表示父索引与轨 boneId 已同步映射到下标 */
-    boneIdMapping?: MdlBoneIdMapping;
 }
 export type MdlParseResult = {
     ok: true;

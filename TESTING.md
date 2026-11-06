@@ -235,21 +235,23 @@ getEventListeners(window).pointermove?.length
 
 ---
 
-### 2.11 手工验收清单：puppet 静态网格与动画边界（2026-10-13 Task 8，逐条勾）
+### 2.11 手工验收清单：puppet 静态网格与骨骼动画（2026-10-13 建；2026-11-06 补真实动画样本，逐条勾）
 
 > **需人在运行中的 DSH Web GUI 里操作（选壁纸 + DevTools Console），agent 无法代跑。**
 >
 > 前置：已 `npm run build` + `npm run build:client`，并**重启 harness**（host 侧改动不热重载）后**强刷** GUI。
-> ⚠️ **先读这条**：本机唯一 `.mdl` 样本（`3303428996` 死亡搁浅-玛玛）是**静态族**（无 `MDLS`/`MDLA`/`MDLE` 段，`bones=0`/`anims=0`）⇒ **动画在本机无法验收**（没有任何带 MDLA 的真实素材，实测 34 个真实 `scene.json` 也**没有一个**含 `animationlayers`）。本机能验收的只有「静态 puppet 网格出图」与「非 puppet 壁纸零回归」；蒙皮与动画只有 `tests/puppet.test.ts` / `tests/threejs-player.test.ts` 的合成夹具覆盖（边界见 `AGENT.md` §7.40）。
+> ⚠️ **先读这条**：本机真实 puppet 样本有两类 —— ① 静态族 `3303428996`（无 `MDLS`/`MDLA`/`MDLE` 段，`bones=0`/`anims=0`，只能验「静态网格出图」）；② 带骨骼动画的 `3828798871`「影之刃零1」（两个人物各 `MDLV0023` + `MDLS0004` 5 骨 + `MDLA0006` 动画 **80 / 104**（60fps / 360 帧 / 5 轨）+ `MDLE0002`；`scene.json` 的 `animationlayers` 显式引用 80/104）—— 2026-11-06 起动画在本机**可真机验收**（此前「本机无 MDLA 素材」的结论已作废）。`3812518176` 的 `leon_puppet.mdl` 是第二份蒙皮样本（13 骨 / 4 动画）。边界见 `AGENT.md` §7.40。
 
 | # | 步骤 | 期望结果 | 失败表现 |
 |---|---|---|---|
 | P1 | 选 `3303428996`，看画面里的角色 | 角色呈**静态网格**形状（轮廓/几何面片，`stride=48 / 1850 顶点 / 10998 索引`），与「只画一张 flat quad」可区分 | 只有一张矩形贴图（退化成背景 quad）/ 角色完全不出现 |
 | P2 | 同一次选择看 Console | **不出现** `puppet 解析失败`；出现 `[three] scene loaded id=3303428996 background=N particleLayers=M puppetLayers=1`（`background` 计数把 puppet 图层算进去） | 出现 `puppet 解析失败` ⇒ 记下实际 MDL 段头十六进制，据此决定补段布局还是如实标注未支持（§7.40） |
 | P3 | 其它 scene 壁纸（本机 34 张里除 `3303428996` 全是非 puppet） | **逐像素零回归**：按 §2.9 跑 before/after 对拍，判据 `maxAbs ≤ 1` 且「差 ≥ 2」像素 = 0 | 对拍红 ⇒ 帧序/装配被动过（本轮以 `0a84cbb` 为基准实测：dpr1/dpr2 两档 `maxAbs=1`、差 ≥ 2 像素 0、`compare-shots` exit 0） |
-| P4 | 动画观察（**本机不可验收**） | 无 MDLA 素材 ⇒ **不要期待**部件随动画动起来（期待落空 ≠ 实现有错）；动画路径只由合成夹具判据覆盖（`animationlayers` 只应用第一条可见层、`(已播秒数 × rate × fps) % frameCount` 回绕落在 `[0, frameCount)`） | 拿「本机 puppet 会动」当判据 = 无依据；真拿到带 MDLA 的素材后再补真机观察项 |
+| P4 | 选 `3828798871`「影之刃零1」，连续观察两个人物 5s | 两个人物**持续有骨骼动画**（呼吸 / 摆动等，不是静止图）；其余背景（云、水波、粒子）照常动 | 人物完全静止 ⇒ MDLA 解析或蒙皮又退化（Console 应有 `puppet`/`mdl` 告警，用 P6 的 Node 判据复核） |
+| P5 | 同一次选择看 Console | **不出现** `puppet 解析失败`、`退化为静态网格`；出现 `[three] scene loaded id=3828798871 background=N particleLayers=M puppetLayers=2` | 出现任一条 ⇒ 段布局 / 骨下标口径回归（§7.40） |
+| P6 | 自动化证据（不需要 GUI） | Node 侧：`parseMdl(renwu 1/2)` → `segments={mdls:'ok',mdla:'ok'}`、5 骨、动画 80/104 / 360 帧 / 60fps / 5 轨、`skinned=true`；`createPuppetMesh` → `SkinnedMesh`；`applyFrame(0)` vs `applyFrame(180)` 的 `skeleton.boneMatrices` 有可观测差异（2026-11-06 实测：renwu1 最大差 ≈ **343**、renwu2 ≈ **256**，且动画 0→120 帧即已有运动） | 帧间骨骼矩阵零差异 ⇒ 动画没写回骨骼；`animations=[]` ⇒ MDLA 解析失败（`tests/mdl-real-library.test.ts` 与 `tests/puppet.test.ts` 会先红） |
 
-**验收记录**：2026-10-23 用户人眼验收通过（P1/P2 静态网格与 Console、P3 零回归对拍）；P4 本机无 MDLA 素材，动画路径未验收。
+**验收记录**：2026-10-23 用户人眼验收通过（P1/P2 静态网格与 Console、P3 零回归对拍）；2026-11-06 修复 MDLA/蒙皮后，P6 的自动化判据随 `tests/mdl-real-library.test.ts`（真实素材硬断言）+ `tests/puppet.test.ts`（欧拉角/authored 语义）+ 全量 vitest 通过；P4/P5 真机人眼验收**待补**（2026-11-06 已请用户在本机 GUI 复核「影之刃零1」两个人物动画）。
 
 ---
 

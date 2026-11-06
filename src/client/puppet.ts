@@ -19,6 +19,20 @@ export interface PuppetInstance {
 // 采样用的临时四元数（逐轨道逐帧新建会成为每帧 GC 压力）。
 const _qa = new THREE.Quaternion();
 const _qb = new THREE.Quaternion();
+const _qx = new THREE.Quaternion();
+const _qy = new THREE.Quaternion();
+const _qz = new THREE.Quaternion();
+const _axisX = new THREE.Vector3(1, 0, 0);
+const _axisY = new THREE.Vector3(0, 1, 0);
+const _axisZ = new THREE.Vector3(0, 0, 1);
+
+/** MDLA 关键帧的欧拉角（弧度）→ 四元数：WE 的组合顺序是 Rz·Ry·Rx（= three 的 Euler order 'ZYX'）。 */
+export function keyframeQuaternion(out: THREE.Quaternion, angle: readonly [number, number, number]): THREE.Quaternion {
+  _qx.setFromAxisAngle(_axisX, angle[0]);
+  _qy.setFromAxisAngle(_axisY, angle[1]);
+  _qz.setFromAxisAngle(_axisZ, angle[2]);
+  return out.copy(_qz).multiply(_qy).multiply(_qx);
+}
 
 /** MDLS 绑定矩阵（列主序局部矩阵）→ 骨骼本地变换；bind() 的 boneInverses 据此计算。 */
 function decomposeBind(bone: THREE.Bone, bind: Float32Array): void {
@@ -85,8 +99,8 @@ export function createPuppetMesh(puppet: MdlPuppet, material: THREE.Material): P
       const t = last === 0 ? 0 : Math.min(Math.max(0, frame - f), 1);
       for (const track of anim.tracks) {
         const bone = bones[track.boneId];
-        // 越界 boneId / 空轨：跳过（本骨骼保持绑定姿态或上一帧值，绝不清零）。
-        if (!bone || track.keys.length === 0) continue;
+        // 越界 boneId / 空轨 / 无作者姿态的轨：跳过（本骨骼保持绑定姿态或上一帧值，绝不清零）。
+        if (!bone || track.keys.length === 0 || !track.authored) continue;
         const a = track.keys[Math.min(f, track.keys.length - 1)];
         const b = track.keys[Math.min(next, track.keys.length - 1)];
         bone.position.set(
@@ -94,14 +108,13 @@ export function createPuppetMesh(puppet: MdlPuppet, material: THREE.Material): P
           a.pos[1] + (b.pos[1] - a.pos[1]) * t,
           a.pos[2] + (b.pos[2] - a.pos[2]) * t,
         );
-        _qa.set(a.rot[0], a.rot[1], a.rot[2], a.rot[3]);
-        _qb.set(b.rot[0], b.rot[1], b.rot[2], b.rot[3]);
+        keyframeQuaternion(_qa, a.angle);
+        keyframeQuaternion(_qb, b.angle);
         bone.quaternion.copy(_qa).slerp(_qb, t);
-        // MDLA 关键帧只存 scale.xy（z 恒 1，同 WE 的 2D 骨骼）。
         bone.scale.set(
           a.scale[0] + (b.scale[0] - a.scale[0]) * t,
           a.scale[1] + (b.scale[1] - a.scale[1]) * t,
-          1,
+          a.scale[2] + (b.scale[2] - a.scale[2]) * t,
         );
       }
     },

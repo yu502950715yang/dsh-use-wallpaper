@@ -1,84 +1,137 @@
 import { describe, expect, it, vi } from 'vitest';
 import { MDL_VERTEX_STRIDE, parseMdl } from '../src/client/mdl-parser.js';
 
-// ── 夹具：在测试里构造最小合法 MDLV0021 + MDLS0004 + MDLA0006 ──────────────────
-// 布局按上游 mdl-parse.js 的文档化段结构（本文件即「解析器 ↔ 夹具」的同一份口径）。
-function buildMdlFixture(opts: {
-  /** 文件 id（骨 0 / 骨 1）；非升序即触发重排路径 */
-  boneIds?: [number, number];
-  boneParents?: [number, number];
-  boneTx?: [number, number];
-  /** 每顶点绑的**文件 id**（默认 = 顶点序号，与原夹具逐字一致） */
+// ── 夹具：按真实素材实测布局构造最小合法 MDL ──────────────────────────────────
+// 段布局（AGENT.md §7.40，3828798871 / 3812518176 两份真实样本 + we-layerd 参考实现）：
+//   MDLS0004：9B stamp + u32 段尾 + u16 骨数 + u16 填充；每骨 = name cstr / i32（临时值，非骨 id）/
+//             u32 父索引 / u32 绑矩阵字节数(64) / f32[16] 列主序 / 仿真 JSON cstr。
+//   MDLA0006：9B stamp + u32 段尾 + u32 动画数；每动画 = id（跳过 0 填充）/ i32 / name / mode /
+//             f32 fps / i32 长度 / i32 / u32 轨数；每轨 = i32（恒 0）/ u32 字节数 / 36B 关键帧；
+//             轨后 mdla≥3 读 1B 分隔。
+// 几何沿用旧式单网格：材质串 @21 + 32B 填充 + u32 顶点字节数 + 顶点 + u32 索引字节数 + 索引。
+const FIXTURE_MATERIAL = 'materials/m.json';
+/** 夹具顶点块起点（magic 9 + 材质串含 NUL + 32B 填充 + u32 顶点字节数），勿硬编码。 */
+const FIXTURE_VERTICES_OFFSET = 9 + FIXTURE_MATERIAL.length + 1 + 32 + 4;
+
+interface FixtureKey {
+  pos: [number, number, number];
+  angle: [number, number, number];
+  scale: [number, number, number];
+}
+
+interface FixtureOptions {
+  /** 骨记录（parent 为文件顺序下标；-1 = 根；tx = 绑矩阵平移 x） */
+  bones?: Array<{ parent: number; tx: number }>;
+  /** 每顶点第 0 槽的骨下标（默认 [0, 1, 1]） */
   vertexBoneIds?: [number, number, number];
-  /** 逐顶点的 4 个槽位 id（缺省 = 4 槽同 vertexBoneIds；权重恒为 slot0=1、其余 0） */
-  vertexSlots?: Array<[number, number, number, number]>;
-  /** 轨的**文件 id** */
-  trackBoneId?: number;
-} = {}): Uint8Array {
-  const boneIds = opts.boneIds ?? [0, 1];
-  const boneParents = opts.boneParents ?? [-1, 0];
-  const boneTx = opts.boneTx ?? [0, 5];
-  const vertexBoneIds = opts.vertexBoneIds ?? [0, 1, 2];
-  const trackBoneId = opts.trackBoneId ?? 1;
-  const slotsOf = (i: number): [number, number, number, number] =>
-    opts.vertexSlots?.[i] ?? [vertexBoneIds[i], vertexBoneIds[i], vertexBoneIds[i], vertexBoneIds[i]];
-  const vertices = new DataView(new ArrayBuffer(MDL_VERTEX_STRIDE * 3));
-  for (let i = 0; i < 3; i++) {
-    const o = i * MDL_VERTEX_STRIDE;
-    vertices.setFloat32(o, i, true); vertices.setFloat32(o + 4, i * 2, true); vertices.setFloat32(o + 8, 0, true);
-    const slots = slotsOf(i);
-    for (let k = 0; k < 4; k++) vertices.setUint32(o + 40 + k * 4, slots[k], true); // boneIdx：各顶点绑文件 id
-    vertices.setFloat32(o + 56, 1, true);                                            // weights[0] = 1
-    vertices.setFloat32(o + 72, i / 2, true); vertices.setFloat32(o + 76, 0.5, true); // uv
-  }
-  const indices = new Uint16Array([0, 1, 2]);
+  /** 每个动画的关键帧（默认 2 帧：位移 5→9、绕 z 转 0→90°） */
+  keys?: FixtureKey[];
+  /** 动画 id 列表（默认 [7]，每项各生成一个同形动画） */
+  animationIds?: number[];
+  /** 每个动画 id 前补的 0 字段数（真实导出器会补位；默认 0） */
+  padBeforeId?: number;
+  /** 轨字节数覆盖（畸形用） */
+  trackBytes?: number;
+  /** 骨记录的绑矩阵字节数覆盖（畸形用） */
+  transformBytes?: number;
+}
+
+const DEFAULT_KEYS: FixtureKey[] = [
+  { pos: [5, 0, 0], angle: [0, 0, 0], scale: [1, 1, 1] },
+  { pos: [9, 0, 0], angle: [0, 0, Math.PI / 2], scale: [1, 1, 1] },
+];
+
+function buildMdlFixture(opts: FixtureOptions = {}): Uint8Array {
+  const bones = opts.bones ?? [{ parent: -1, tx: 0 }, { parent: 0, tx: 5 }];
+  const vertexBoneIds = opts.vertexBoneIds ?? [0, 1, 1];
+  const keys = opts.keys ?? DEFAULT_KEYS;
+  const animationIds = opts.animationIds ?? [7];
+  const trackBytes = opts.trackBytes ?? 36 * keys.length;
 
   const parts: number[] = [];
   const push = (bytes: number[]) => parts.push(...bytes);
   const pushStr = (s: string) => { for (const ch of s) parts.push(ch.charCodeAt(0)); parts.push(0); };
+  const pushU16 = (v: number) => parts.push(v & 255, (v >>> 8) & 255);
   const pushU32 = (v: number) => parts.push(v & 255, (v >>> 8) & 255, (v >>> 16) & 255, (v >>> 24) & 255);
   const pushI32 = (v: number) => pushU32(v >>> 0);
   const pushF32 = (v: number) => { const b = new Uint8Array(4); new DataView(b.buffer).setFloat32(0, v, true); push([...b]); };
+  /** 段头：先占位 u32 段尾，返回 patch 函数（段尾 = 段 payload 结束的绝对偏移）。 */
+  const pushSectionHeader = (stamp: string): (() => void) => {
+    pushStr(stamp);
+    const endOffsetSlot = parts.length;
+    pushU32(0);
+    return () => {
+      const end = parts.length;
+      parts[endOffsetSlot] = end & 255;
+      parts[endOffsetSlot + 1] = (end >>> 8) & 255;
+      parts[endOffsetSlot + 2] = (end >>> 16) & 255;
+      parts[endOffsetSlot + 3] = (end >>> 24) & 255;
+    };
+  };
 
-  pushStr('MDLV0021');                       // 0..8（8 字符 + 本应有 NUL，此处 9 字节由 pushStr 给出）
-  // 头部：材质路径（零结尾）+ 32 字节偏移后的顶点字节数（MDLV0021 族）
-  pushStr('materials/m.json');
+  // ── 几何（旧式单网格；顶点 stride 80：pos/boneIdx@40/weights@56/uv@72）──
+  const vertices = new DataView(new ArrayBuffer(MDL_VERTEX_STRIDE * 3));
+  for (let i = 0; i < 3; i++) {
+    const o = i * MDL_VERTEX_STRIDE;
+    vertices.setFloat32(o, i, true);
+    vertices.setFloat32(o + 4, i * 2, true);
+    vertices.setFloat32(o + 8, 0, true);
+    vertices.setUint32(o + 40, vertexBoneIds[i], true); // 第 0 槽绑骨下标；其余槽 id=0 且权重 0
+    vertices.setFloat32(o + 56, 1, true);              // 权重和 = 1
+    vertices.setFloat32(o + 72, i / 2, true);
+    vertices.setFloat32(o + 76, 0.5, true);
+  }
+  const indices = new Uint16Array([0, 1, 2]);
+
+  pushStr('MDLV0023');
+  pushStr(FIXTURE_MATERIAL);
   for (let i = 0; i < 32; i++) parts.push(0);
   pushU32(MDL_VERTEX_STRIDE * 3);
   push([...new Uint8Array(vertices.buffer)]);
   pushU32(indices.byteLength);
   push([...new Uint8Array(indices.buffer)]);
 
-  // MDLS0004：magic(9) + u32 段尾 + u32 骨数；每骨 = 头（flag/id/parent/matSize）+ f32[16] + cstr json
-  pushStr('MDLS0004');
-  pushU32(0); pushU32(2);
-  const bone = (id: number, parent: number, tx: number) => {
-    push([0]); pushU32(id); pushI32(parent); pushU32(64);
-    const m = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, tx, 0, 0, 1]; // 列主序，平移在 [12..14]
+  // ── MDLS0004 ──
+  const patchMdls = pushSectionHeader('MDLS0004');
+  pushU16(bones.length);
+  pushU16(0); // 填充
+  for (const bone of bones) {
+    push([0]); // 空名 cstr（真实素材骨骼名均为空）
+    pushI32(1); // 临时值（真实素材恒 1，不是骨 id）
+    pushI32(bone.parent);
+    pushU32(opts.transformBytes ?? 64);
+    const m = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, bone.tx, 0, 0, 1]; // 列主序，平移在 [12..14]
     for (const v of m) pushF32(v);
     pushStr('{}');
-  };
-  bone(boneIds[0], boneParents[0], boneTx[0]); bone(boneIds[1], boneParents[1], boneTx[1]);
-
-  // MDLA0006：magic(9) + u32 段尾 + u32 动画数
-  pushStr('MDLA0006');
-  pushU32(0); pushU32(1);
-  pushU32(7); pushU32(0);                    // id=7 / unk
-  pushStr('idle'); pushStr('loop');          // 名称 / 模式
-  pushF32(30);                               // fps
-  pushU32(2); pushU32(0); pushU32(1);        // frameCount / unk / trackCount
-  for (let i = 0; i < 35; i++) parts.push(0); // 固定 35B 填充
-  pushU32(trackBoneId); pushU32(36 * 2);     // track：boneId（文件 id） / trackBytes
-  for (const tx of [5, 9]) {                 // 两帧：pos + 四元数 xyzw + scale xy
-    pushF32(tx); pushF32(0); pushF32(0);
-    pushF32(0); pushF32(0); pushF32(0); pushF32(1);
-    pushF32(1); pushF32(1);
   }
+  patchMdls();
+
+  // ── MDLA0006 ──
+  const patchMdla = pushSectionHeader('MDLA0006');
+  pushU32(animationIds.length);
+  for (const id of animationIds) {
+    for (let i = 0; i < (opts.padBeforeId ?? 0); i++) pushU32(0);
+    pushU32(id);
+    pushU32(0);              // 未知字段
+    pushStr('idle');
+    pushStr('loop');
+    pushF32(30);             // fps
+    pushU32(keys.length);    // 动画长度（帧数）
+    pushU32(0);              // 未知字段
+    pushU32(1);              // 轨数
+    pushI32(0);              // 轨头 i32（真实素材恒 0，不是骨 id）
+    pushU32(trackBytes);
+    for (const key of keys) {
+      pushF32(key.pos[0]); pushF32(key.pos[1]); pushF32(key.pos[2]);
+      pushF32(key.angle[0]); pushF32(key.angle[1]); pushF32(key.angle[2]);
+      pushF32(key.scale[0]); pushF32(key.scale[1]); pushF32(key.scale[2]);
+    }
+    push([0]); // MDLA ≥ 3 的轨后 35B 全零尾块（实测 6/6 动画；多动画必须整块跳过）
+    for (let i = 1; i < 35; i++) push([0]);
+  }
+  patchMdla();
   return new Uint8Array(parts);
 }
-
-/** brief 夹具里顶点块起点（magic 9 + 材质串含 NUL + 32B 填充 + u32 顶点字节数），勿硬编码。 */
-const BRIEF_VERTICES_OFFSET = 9 + 'materials/m.json'.length + 1 + 32 + 4;
 
 /** 段标记在夹具里的偏移（头部长度会随字段调整，勿硬编码）。 */
 function markerAt(buf: Uint8Array, marker: string): number {
@@ -97,33 +150,65 @@ describe('mdl-parser', () => {
     const { mesh } = r.puppet;
     expect(mesh.vertexCount).toBe(3);
     expect([...mesh.indices]).toEqual([0, 1, 2]);
-    expect([...mesh.positions.slice(0, 3)]).toEqual([0, 0, 0]);
-    expect([...mesh.positions.slice(3, 6)]).toEqual([1, 2, 0]);
+    expect([...mesh.positions.slice(0, 6)]).toEqual([0, 0, 0, 1, 2, 0]);
     expect([...mesh.uvs.slice(0, 2)]).toEqual([0, 0.5]);
-    expect([...mesh.blendIndices!.slice(0, 4)]).toEqual([0, 0, 0, 0]);
+    // 蒙皮槽 = 骨表下标：第 0 槽原样带出（不做文件 id 重映射）
+    expect([...mesh.blendIndices!.filter((_, i) => i % 4 === 0)]).toEqual([0, 1, 1]);
     expect(mesh.blendWeights![0]).toBe(1);
-    expect(mesh.materialPath).toBe('materials/m.json');
+    expect(mesh.materialPath).toBe(FIXTURE_MATERIAL);
   });
 
-  it('解析 MDLS 骨骼（父索引 + 列主序绑定矩阵平移）', () => {
+  it('解析 MDLS0004 骨骼：骨数 u16 + 父索引 + 列主序绑矩阵平移（下标 = 文件记录顺序）', () => {
     const r = parseMdl(buildMdlFixture());
     if (!r.ok) throw new Error(r.error);
     expect(r.puppet.bones).toHaveLength(2);
+    expect(r.puppet.bones.map((b) => b.index)).toEqual([0, 1]);
     expect(r.puppet.bones[0].parent).toBe(-1);
     expect(r.puppet.bones[1].parent).toBe(0);
     expect(r.puppet.bones[1].bind[12]).toBe(5); // 列主序平移 x
   });
 
-  it('解析 MDLA 动画（id/名称/模式/fps/帧数/轨与 36B 关键帧）', () => {
+  it('解析 MDLA0006 动画：id/名称/模式/fps/长度/轨数 + 36B 关键帧（pos/欧拉角/scale 三分量）', () => {
     const r = parseMdl(buildMdlFixture());
     if (!r.ok) throw new Error(r.error);
     expect(r.puppet.animations).toHaveLength(1);
     const a = r.puppet.animations[0];
     expect([a.id, a.name, a.mode, a.fps, a.frameCount]).toEqual([7, 'idle', 'loop', 30, 2]);
     expect(a.tracks).toHaveLength(1);
-    expect(a.tracks[0].boneId).toBe(1);
-    expect(a.tracks[0].keys.map((k) => k.pos[0])).toEqual([5, 9]);
-    expect(a.tracks[0].keys[1].rot).toEqual([0, 0, 0, 1]);
+    const track = a.tracks[0];
+    expect(track.authored).toBe(true);
+    expect(track.keys.map((k) => k.pos[0])).toEqual([5, 9]);
+    // 欧拉角按作者值带出（弧度）；scale 三分量
+    expect(track.keys[1].angle[2]).toBeCloseTo(Math.PI / 2, 6);
+    expect(track.keys[0].scale).toEqual([1, 1, 1]);
+  });
+
+  it('轨的 boneId = 轨序（轨头 i32 恒 0，不是骨 id；顶点蒙皮也按下标绑）', () => {
+    const r = parseMdl(buildMdlFixture());
+    if (!r.ok) throw new Error(r.error);
+    expect(r.puppet.animations[0].tracks[0].boneId).toBe(0);
+    expect(r.puppet.mesh.blendIndices![4]).toBe(1); // 顶点 1 第 0 槽 → bones[1]
+  });
+
+  it('多动画 + 每动画轨后 35B 尾块：后续动画不错位（真实 leon 样本 4 动画的形态）', () => {
+    const r = parseMdl(buildMdlFixture({ animationIds: [7, 9, 11] }));
+    if (!r.ok) throw new Error(r.error);
+    expect(r.puppet.animations.map((a) => a.id)).toEqual([7, 9, 11]);
+    expect(r.puppet.animations.every((a) => a.tracks.length === 1)).toBe(true);
+    expect(r.puppet.segments).toEqual({ mdls: 'ok', mdla: 'ok' });
+  });
+
+  it('动画 id 前的 0 填充字段被跳过（导出器补位）', () => {
+    const r = parseMdl(buildMdlFixture({ animationIds: [7], padBeforeId: 2 }));
+    if (!r.ok) throw new Error(r.error);
+    expect(r.puppet.animations.map((a) => a.id)).toEqual([7]);
+  });
+
+  it('父索引乱序（指向后面的骨）⇒ 按根处理，不建出成环的骨骼树', () => {
+    const r = parseMdl(buildMdlFixture({ bones: [{ parent: 1, tx: 0 }, { parent: -1, tx: 5 }] }));
+    if (!r.ok) throw new Error(r.error);
+    expect(r.puppet.bones[0].parent).toBe(-1);
+    expect(r.puppet.bones[1].parent).toBe(-1);
   });
 
   it('畸形输入返回结构化错误，绝不抛（含空 buffer / 坏 magic / 截断）', () => {
@@ -199,6 +284,7 @@ describe('mdl-parser · 静态族（无段标记 + stride 候选集择一）', (
     expect(mesh.materialPath).toBe('materials/static.json');
     expect(r.puppet.bones).toEqual([]);
     expect(r.puppet.animations).toEqual([]);
+    expect(r.puppet.segments).toEqual({ mdls: 'absent', mdla: 'absent' });
   });
 
   it('静态族 stride 判定：候选集 + 紧覆盖选出 48，诊断字段记下候选列表与各候选浪费率', () => {
@@ -272,7 +358,7 @@ describe('mdl-parser · 静态族（无段标记 + stride 候选集择一）', (
   });
 });
 
-// ── 蒙皮族细节 + 失败路径诊断（接口加法；真实素材无 MDLS/MDLA，全部靠夹具口径） ─────────
+// ── 蒙皮族细节 + 段级诊断（真实素材口径，见 AGENT.md §7.40） ─────────────────────────
 describe('mdl-parser · 蒙皮族细节与段级诊断', () => {
   it('packed 族锚点命中：strideInfo 记为 packed-80，材质串取文档化 @9', () => {
     const r = parseMdl(buildMdlFixture());
@@ -281,12 +367,12 @@ describe('mdl-parser · 蒙皮族细节与段级诊断', () => {
     expect(r.puppet.mesh.strideInfo).toBeDefined();
     expect(r.puppet.mesh.strideInfo!.stride).toBe(MDL_VERTEX_STRIDE);
     expect(r.puppet.mesh.strideInfo!.reason).toBe('packed-80');
-    expect(r.puppet.mesh.materialPath).toBe('materials/m.json');
+    expect(r.puppet.mesh.materialPath).toBe(FIXTURE_MATERIAL);
   });
 
   it('权重和 ≠ 1 ⇒ blendIndices/blendWeights 置 null（几何仍解出，不把垃圾权重交给蒙皮）', () => {
     const buf = buildMdlFixture();
-    new DataView(buf.buffer).setFloat32(BRIEF_VERTICES_OFFSET + 56, 0.5, true); // weights[0] 1 → 0.5（和 0.5）
+    new DataView(buf.buffer).setFloat32(FIXTURE_VERTICES_OFFSET + 56, 0.5, true); // weights[0] 1 → 0.5（和 0.5）
     const r = parseMdl(buf);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
@@ -298,134 +384,95 @@ describe('mdl-parser · 蒙皮族细节与段级诊断', () => {
   it('扫描命中时材质串取以 .json 结尾的宽口径，不退化成 @21 的后缀（如 m.json）', () => {
     // 在材质串 NUL 之后补 8 B 零：文档化锚点（+32/+36 填充）读到 0 落空，只能靠扫描命中
     const base = buildMdlFixture();
-    const at = 9 + 'materials/m.json'.length + 1;
+    const at = 9 + FIXTURE_MATERIAL.length + 1;
     const buf = new Uint8Array(base.length + 8);
     buf.set(base.subarray(0, at));
     buf.set(base.subarray(at), at + 8);
     const r = parseMdl(buf);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.puppet.mesh.materialPath).toBe('materials/m.json');
+    expect(r.puppet.mesh.materialPath).toBe(FIXTURE_MATERIAL);
     expect(r.puppet.mesh.strideInfo!.stride).toBe(MDL_VERTEX_STRIDE);
   });
 
-  it('无 MDLS/MDLA 标记 ⇒ segments 全 absent（T8 据此区分「无动画」与「动画解析失败」）', () => {
-    const r = parseMdl(buildStaticFixture());
-    expect(r.ok).toBe(true);
-    if (!r.ok) return;
-    expect(r.puppet.segments).toEqual({ mdls: 'absent', mdla: 'absent' });
-  });
-
-  it('两段都在且解析完整 ⇒ segments 全 ok，骨 id 就是下标（identity）', () => {
+  it('两段都在且解析完整 ⇒ segments 全 ok', () => {
     const r = parseMdl(buildMdlFixture());
     if (!r.ok) throw new Error(r.error);
     expect(r.puppet.segments).toEqual({ mdls: 'ok', mdla: 'ok' });
-    expect(r.puppet.boneIdMapping).toBe('identity');
   });
 
-  it('MDLS 在但骨表解析失败 ⇒ mdls=failed、bones=[]，mdla 仍 ok', () => {
-    const buf = buildMdlFixture();
-    // 骨 0 的 matSize 64 → 60：两个头部候选都不自洽 ⇒ 骨表拒收（不是「没有段」）
-    new DataView(buf.buffer).setUint32(markerAt(buf, 'MDLS') + 17 + 9, 60, true);
+  it('MDLS 在但骨记录不完整（绑矩阵字节数 ≠ 64）⇒ mdls=failed、bones=[]，mdla 仍 ok', () => {
+    const buf = buildMdlFixture({ transformBytes: 60 });
     const r = parseMdl(buf);
     if (!r.ok) throw new Error(r.error);
     expect(r.puppet.bones).toEqual([]);
     expect(r.puppet.segments).toEqual({ mdls: 'failed', mdla: 'ok' });
   });
 
-  it('MDLA 在但轨表不自洽 ⇒ mdla=failed、animations=[]（不被静默当成「无动画」）', () => {
-    const buf = buildMdlFixture();
-    new DataView(buf.buffer).setUint32(buf.length - 2 * 36 - 8, 70, true); // 轨字节数 72 → 70（非 36 倍数）
-    const r = parseMdl(buf);
+  it('MDLA 在但轨字节数非 36 倍数 ⇒ mdla=failed、animations=[]（不被静默当成「无动画」）', () => {
+    const r = parseMdl(buildMdlFixture({ trackBytes: 70 }));
     if (!r.ok) throw new Error(r.error);
     expect(r.puppet.animations).toEqual([]);
     expect(r.puppet.segments).toEqual({ mdls: 'ok', mdla: 'failed' });
   });
 
-  it('骨骼文件 id 非 0..n-1 ⇒ 按 id 升序重排，父索引与轨 boneId 同步映射（不静默错绑）', () => {
-    const buf = buildMdlFixture();
-    const dv = new DataView(buf.buffer);
-    const mdls = markerAt(buf, 'MDLS');
-    const bone1 = mdls + 17 + 13 + 64 + 3; // 骨 0 记录 = 13B 头 + 64B 矩阵 + '{}' + NUL
-    dv.setUint32(mdls + 17 + 1, 5, true);        // 骨 0：文件 id 0 → 5
-    dv.setUint32(bone1 + 1, 9, true);            // 骨 1：文件 id 1 → 9
-    dv.setInt32(bone1 + 5, 5, true);             // 骨 1 的 parent 0 → 5（= 骨 0 的文件 id）
-    dv.setUint32(buf.length - 2 * 36 - 8, 9, true); // 轨 boneId 1 → 9（= 骨 1 的文件 id）
-    const r = parseMdl(buf);
+  it('全零/绑定姿态轨 ⇒ authored=false（WE 语义：保持绑定姿态，不当成动画姿态）', () => {
+    const r = parseMdl(buildMdlFixture({
+      keys: [
+        { pos: [0, 0, 0], angle: [0, 0, 0], scale: [1, 1, 1] },
+        { pos: [0, 0, 0], angle: [0, 0, 0], scale: [1, 1, 1] },
+      ],
+    }));
     if (!r.ok) throw new Error(r.error);
-    expect(r.puppet.boneIdMapping).toBe('remapped');
-    expect(r.puppet.bones.map((b) => b.index)).toEqual([0, 1]);
-    expect(r.puppet.bones[1].parent).toBe(0);                  // 文件 id 5 → 下标 0
-    expect(r.puppet.animations[0].tracks[0].boneId).toBe(1);    // 文件 id 9 → 下标 1 ⇒ bones[boneId] 对得上
+    expect(r.puppet.animations[0].tracks[0].authored).toBe(false);
   });
 });
 
-// ── 承重项：骨骼按文件 id 重排时，顶点 blendIndices 必须同步重映射（否则 T7 的 skinIndex 错绑） ──
-describe('mdl-parser · 重排路径下 blendIndices 与 bones[] 同口径', () => {
-  // 文件里的骨顺序 = [id 9, id 5]（降序）⇒ 解析后按 id 升序重排：[id 5, id 9]
-  const REORDERED = {
-    boneIds: [9, 5] as [number, number],
-    boneParents: [5, -1] as [number, number],   // 骨 id 9 的父 = 文件 id 5
-    boneTx: [9, 5] as [number, number],         // bind 平移 = 文件 id（判别用）
-    vertexBoneIds: [9, 5, 5] as [number, number, number],
-    trackBoneId: 9,                            // 轨指向文件 id 9
-  };
-
-  it('重排后 blendIndices 映射到新的下标（不是文件 id），且与 bones[] 指向同一根骨', () => {
-    const r = parseMdl(buildMdlFixture(REORDERED));
+describe('mdl-parser · 蒙皮槽与骨下标同口径', () => {
+  it('blendIndices 原样带出（不做文件 id 重映射；骨下标 = 文件记录顺序）', () => {
+    const r = parseMdl(buildMdlFixture({ vertexBoneIds: [0, 1, 1] }));
     if (!r.ok) throw new Error(r.error);
-    expect(r.puppet.boneIdMapping).toBe('remapped');
-    // 重排结果：下标 0 = 文件 id 5、下标 1 = 文件 id 9（bind 平移记的就是文件 id）
-    expect(r.puppet.bones.map((b) => b.bind[12])).toEqual([5, 9]);
-    expect(r.puppet.bones[1].parent).toBe(0);
-    // 顶点 0 绑文件 id 9 ⇒ 新下标 1；顶点 1/2 绑文件 id 5 ⇒ 新下标 0
-    expect([...r.puppet.mesh.blendIndices!.filter((_, i) => i % 4 === 0)]).toEqual([1, 0, 0]);
-    // 判别性：逐顶点用 skinIndex 查 bones[]，取到的骨必须正是该顶点绑的那根
+    expect([...r.puppet.mesh.blendIndices!.filter((_, i) => i % 4 === 0)]).toEqual([0, 1, 1]);
+    // 判别性：逐顶点用 skinIndex 查 bones[]，取到的骨正是顶点绑的那根（bind 平移 0/5）
     const idx = r.puppet.mesh.blendIndices!;
-    expect([0, 1, 2].map((v) => r.puppet.bones[idx[v * 4]].bind[12])).toEqual([9, 5, 5]);
-    // 轨 boneId 与顶点蒙皮同口径：轨指向文件 id 9 ⇒ 下标 1（与顶点 0 同一根骨）
-    expect(r.puppet.animations[0].tracks[0].boneId).toBe(idx[0]);
+    expect([0, 1, 2].map((v) => r.puppet.bones[idx[v * 4]].bind[12])).toEqual([0, 5, 5]);
   });
 
-  it('顶点引用了骨表里没有的文件 id ⇒ 整份蒙皮不可信，退化为静态网格（几何仍解出）', () => {
-    const r = parseMdl(buildMdlFixture({ ...REORDERED, vertexBoneIds: [9, 5, 7] })); // 7 不在骨表
+  it('有权重槽引用越界骨下标 ⇒ 整份蒙皮退化静态网格并告警**一次**', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = parseMdl(buildMdlFixture({ vertexBoneIds: [0, 5, 1] })); // 5 不是合法骨下标
     if (!r.ok) throw new Error(r.error);
     expect(r.puppet.mesh.blendIndices).toBeNull();
     expect(r.puppet.mesh.blendWeights).toBeNull();
-    expect(r.puppet.mesh.vertexCount).toBe(3);
-    expect(r.puppet.bones.map((b) => b.bind[12])).toEqual([5, 9]);
+    const degraded = warn.mock.calls.filter((c) => String(c[0]).includes('退化为静态网格'));
+    expect(degraded).toHaveLength(1);
+    expect(String(degraded[0][0])).toContain('5');
+    warn.mockRestore();
   });
 
-  // 真机 .mdl 的未用槽（权重 0）常是 0/垃圾值：只按「有权重的槽」判未知 id，否则整份蒙皮被静默丢弃。
-  it('零权重槽是骨表里没有的垃圾 id ⇒ 蒙皮仍成立（只判有权重的槽），不告警', () => {
+  it('零权重槽是骨表里没有的垃圾下标 ⇒ 蒙皮仍成立（只判有权重的槽），不告警', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const r = parseMdl(buildMdlFixture({
-      ...REORDERED,
-      vertexSlots: [[9, 0, 0, 0], [5, 12345, 0, 0], [5, 0, 12345, 0]],
-    }));
+    const buf = buildMdlFixture({ vertexBoneIds: [0, 1, 1] });
+    // 顶点 1 的其它 3 个槽：id=12345、权重 0（不参与蒙皮）
+    const dv = new DataView(buf.buffer);
+    for (let k = 1; k < 4; k++) dv.setUint32(FIXTURE_VERTICES_OFFSET + MDL_VERTEX_STRIDE + 40 + k * 4, 12345, true);
+    const r = parseMdl(buf);
     if (!r.ok) throw new Error(r.error);
     expect(r.puppet.mesh.blendIndices).not.toBeNull();
-    // 有权重的槽（slot 0）照旧重映射：文件 id 9 → 下标 1、5 → 下标 0
-    expect([...r.puppet.mesh.blendIndices!.filter((_, i) => i % 4 === 0)]).toEqual([1, 0, 0]);
     expect(warn.mock.calls.some((c) => String(c[0]).includes('退化为静态网格'))).toBe(false);
     warn.mockRestore();
   });
 
-  it('有权重的槽映射不到 ⇒ 退化静态网格并告警**一次**（告警里点出是哪个文件 id）', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const r = parseMdl(buildMdlFixture({ ...REORDERED, vertexSlots: [[9, 0, 0, 0], [5, 0, 0, 0], [7, 7, 7, 7]] }));
-    if (!r.ok) throw new Error(r.error);
+  it('无 MDLS 但顶点带蒙皮槽 ⇒ 无法蒙皮，退化为静态网格（几何仍解出）', () => {
+    const full = buildMdlFixture();
+    const mdlsAt = markerAt(full, 'MDLS');
+    // 把 MDLS 段头改成非法（段尾越界）⇒ 按「无骨表」处理；同时把它的标记文本抹掉避免 failed 诊断
+    const buf = new Uint8Array(full.subarray(0, mdlsAt));
+    const r = parseMdl(buf);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.puppet.bones).toEqual([]);
     expect(r.puppet.mesh.blendIndices).toBeNull();
-    const degraded = warn.mock.calls.filter((c) => String(c[0]).includes('退化为静态网格'));
-    expect(degraded).toHaveLength(1);
-    expect(String(degraded[0][0])).toContain('7');
-    warn.mockRestore();
-  });
-
-  it('回归护栏：文件 id 就是下标（identity）时不碰 blendIndices（原样带出）', () => {
-    const r = parseMdl(buildMdlFixture());
-    if (!r.ok) throw new Error(r.error);
-    expect(r.puppet.boneIdMapping).toBe('identity');
-    expect([...r.puppet.mesh.blendIndices!.filter((_, i) => i % 4 === 0)]).toEqual([0, 1, 2]);
+    expect(r.puppet.segments!.mdls).toBe('absent');
   });
 });
