@@ -52,7 +52,7 @@ Status: implemented
 
 - **35B 尾块内部结构未确证**（本地 4 个 `.mdl`、6/6 动画全零）：当前只按长度跳过。若遇到非零变体可能错位；届时应按段尾/下一动画 id 自洽校验而不是硬猜。
 - **MDLS>1 扩展块、MDLE（世界绑定矩阵）不消费**：真实样本不需要；MDLV0021 的 world-anchored 语义（参考实现里的 `world_anchored_bones`）未实现。
-- **puppet 的既有边界不变**：不参与对象级效果链/隔离 RT、多动画层的 `blend`/`additive` 不混合（只应用第一条可见层）、`colorBlendMode ≠ 0` 与自定义 shader 不回放、color/alignment 未接。
+- **puppet 的既有边界**：多动画层的 `blend`/`additive` 不混合（只应用第一条可见层）、`colorBlendMode ≠ 0` 与自定义 shader 不回放、color/alignment 未接。（对象级效果链已在同日另一篇笔记里接上：`2026-11-06-puppet-object-effects.md`。）
 - **绑定姿势取 `animations[0]` 的 frame0**：本机两个 puppet 及 leon 的 `animations[0]` 都恰好是场景引用的动画；若某个模型 `animations[0]` 不是起播动画，绑定姿势可能不对（WE 是否按「模型主动画」还是「场景引用动画」取 frame0 尚未有反例可证）。真遇到时把场景引用动画的 id 传进 `createPuppetMesh` 即可。
 - **真机人眼验收待用户确认**（`TESTING.md` §2.11 P4/P5）：自动化已证明「隐藏背景后人物像素会动」，且黑武者姿态与 WE 独立窗口同相位对拍一致；但生产 GUI 里的观感需用户亲自看一眼。
 - **既有、本次未修**：`node scripts/check-known-type-errors.mjs` 会给出两条「已修复可从基线移除」的提示（`synthetic-library` / `verify-real-library` 的 TS2339），基线文件没同步清理，属历史漂移；不影响门禁结论（无新增错误）。
