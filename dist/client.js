@@ -31483,6 +31483,17 @@ function createPuppetMesh(puppet, material) {
     if (def.parent >= 0 && def.parent < bones.length && def.parent !== i) bones[def.parent].add(bones[i]);
     else roots.push(bones[i]);
   });
+  const bindAnim = animations.length > 0 ? animations[0] : null;
+  if (bindAnim) {
+    for (const track of bindAnim.tracks) {
+      const bone = bones[track.boneId];
+      if (!bone || !track.authored || track.keys.length === 0) continue;
+      const k = track.keys[0];
+      bone.position.set(k.pos[0], k.pos[1], k.pos[2]);
+      keyframeQuaternion(bone.quaternion, k.angle);
+      bone.scale.set(k.scale[0], k.scale[1], k.scale[2]);
+    }
+  }
   let mesh;
   let skeleton = null;
   if (skinned && bones.length > 0) {
@@ -31501,15 +31512,24 @@ function createPuppetMesh(puppet, material) {
     skeleton,
     animations,
     applyFrame(anim, frame) {
-      const last = Math.max(0, anim.frameCount - 1);
-      const f = Math.min(Math.max(0, Math.floor(frame)), last);
-      const next = Math.min(f + 1, last);
-      const t = last === 0 ? 0 : Math.min(Math.max(0, frame - f), 1);
       for (const track of anim.tracks) {
         const bone = bones[track.boneId];
         if (!bone || track.keys.length === 0 || !track.authored) continue;
-        const a = track.keys[Math.min(f, track.keys.length - 1)];
-        const b = track.keys[Math.min(next, track.keys.length - 1)];
+        const n = track.keys.length;
+        const span = Math.max(1, n - 1);
+        let pos;
+        if (anim.mode === "loop") pos = (frame % span + span) % span;
+        else if (anim.mode === "mirror") {
+          const period = span * 2;
+          let w = (frame % period + period) % period;
+          if (w > span) w = period - w;
+          pos = w;
+        } else pos = Math.min(Math.max(frame, 0), span);
+        const f = Math.min(Math.floor(pos), n - 1);
+        const next = Math.min(f + 1, n - 1);
+        const t = Math.min(Math.max(pos - f, 0), 1);
+        const a = track.keys[f];
+        const b = track.keys[next];
         bone.position.set(
           a.pos[0] + (b.pos[0] - a.pos[0]) * t,
           a.pos[1] + (b.pos[1] - a.pos[1]) * t,

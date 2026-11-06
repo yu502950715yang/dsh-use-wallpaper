@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { parseMdl } from '../src/client/mdl-parser.js';
+import { createPuppetMaterial, createPuppetMesh } from '../src/client/puppet.js';
 
 // 真实 puppet 样本（本机库；CI 上无素材 ⇒ 跳过）：
 // ① 静态族：死亡搁浅-玛玛（pkg 内 models/20240220213723_1_puppet.mdl，无 MDLS/MDLA）。
@@ -85,6 +86,20 @@ describe.skipIf(!existsSync(SAMPLES.renwu))('真实 puppet 样本 · 影之刃�
     expect(k0.pos[1]).toBeCloseTo(puppet.bones[0].bind[13], 2);
     // 有作者姿态的轨必须被识别出来（否则渲染侧按 WE 语义会保持绑定姿态 = 仍不动）
     expect(anim.tracks.filter((t) => t.authored).length).toBeGreaterThan(0);
+    // 绑定姿势 = 主动画 frame 0 ⇒ t=0 的蒙皮矩阵必须是单位阵（真实素材回归：这条能抓住
+    // 「拿 MDLS 链当 bind」的错误实现，后者的 t=0 蒙皮矩阵带固定旋转/位移，人物看着就歪）。
+    const inst = createPuppetMesh(puppet, createPuppetMaterial(null));
+    expect(inst.skeleton).not.toBeNull(); // 有蒙皮数据 ⇒ SkinnedMesh + Skeleton
+    inst.applyFrame(anim, 0);
+    inst.mesh.updateMatrixWorld(true);
+    inst.skeleton!.update();
+    const identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+    for (let b = 0; b < puppet.bones.length; b++) {
+      for (let k = 0; k < 16; k++) {
+        expect(inst.skeleton!.boneMatrices[b * 16 + k]).toBeCloseTo(identity[k], 3);
+      }
+    }
+    inst.dispose();
     console.log(`[mdl] renwu1: bones=${puppet.bones.length} anims=${puppet.animations.map((a) => `${a.id}/${a.frameCount}f/${a.fps}fps/${a.tracks.length}tracks`).join(',')} verts=${puppet.mesh.vertexCount} skinned=${puppet.mesh.blendIndices !== null}`);
   });
 

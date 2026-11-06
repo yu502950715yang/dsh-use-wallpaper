@@ -18,6 +18,7 @@ const idle: MdlAnimation = {
     keys: [
       { pos: [5, 0, 0], angle: [0, 0, 0], scale: [1, 1, 1] },
       { pos: [9, 0, 0], angle: [0, 0, 0], scale: [1, 1, 1] },
+      { pos: [5, 0, 0], angle: [0, 0, 0], scale: [1, 1, 1] }, // 循环末帧 = 首帧（真实素材口径）
     ],
   }],
 };
@@ -105,6 +106,24 @@ describe('puppet → three 网格/蒙皮', () => {
     expect(boneMatrixX(p.skeleton!, 1)).toBeCloseTo(4, 5);   // 世界(帧 1)=T(9) ⇒ 9 − 5
   });
 
+  it('绑定姿势 = 主动画 frame 0（不是 MDLS 绑定矩阵）：frame0 蒙皮矩阵恒等', () => {
+    // 骨 1 的 MDLS 绑定平移是 5，但动画 frame0 是 9 ⇒ 绑定世界矩阵应取 9
+    const anim: MdlAnimation = {
+      id: 7, name: 'idle', mode: 'loop', fps: 30, frameCount: 1,
+      tracks: [{
+        boneId: 1, authored: true,
+        keys: [{ pos: [9, 0, 0], angle: [0, 0, 0], scale: [1, 1, 1] }],
+      }],
+    };
+    const p = createPuppetMesh(makePuppet({ animations: [anim] }), material());
+    expect(p.bones[1].position.x).toBeCloseTo(9, 5);            // 骨骼初值来自 frame0
+    expect(p.skeleton!.boneInverses[1].elements[12]).toBeCloseTo(-9, 5);
+    p.applyFrame(anim, 0);
+    p.mesh.updateMatrixWorld(true);
+    p.skeleton!.update();
+    expect(boneMatrixX(p.skeleton!, 1)).toBeCloseTo(0, 5);      // World(frame0)·invBind ≡ I
+  });
+
   it('没有轨道的骨骼保持绑定姿态（帧间不得被清成 0）', () => {
     // 骨 0 绑定平移 3 且无轨道：帧间被清成 0 会被这条抓住
     const p = createPuppetMesh(makePuppet({
@@ -118,6 +137,32 @@ describe('puppet → three 网格/蒙皮', () => {
     p.mesh.updateMatrixWorld(true);
     p.skeleton!.update();
     expect(boneMatrixX(p.skeleton!, 0)).toBeCloseTo(0, 5);   // 绑定姿态 ⇒ 恒等
+  });
+
+  it('无轨骨骼 / 非作者姿态轨仍用 MDLS 绑定矩阵兜底（不被 frame0 覆盖）', () => {
+    const anim: MdlAnimation = {
+      id: 7, name: 'idle', mode: 'loop', fps: 30, frameCount: 1,
+      tracks: [
+        // 骨 1 有作者姿态：frame0 平移 9 ⇒ 绑定取 9
+        { boneId: 1, authored: true, keys: [{ pos: [9, 0, 0], angle: [0, 0, 0], scale: [1, 1, 1] }] },
+        // 骨 0 的轨全零 ⇒ authored=false，绑定仍取 MDLS 的 T(3)
+        { boneId: 0, authored: false, keys: [{ pos: [0, 0, 0], angle: [0, 0, 0], scale: [1, 1, 1] }] },
+      ],
+    };
+    const p = createPuppetMesh(makePuppet({
+      bones: [
+        { index: 0, parent: -1, bind: bindAt(3) },
+        { index: 1, parent: 0, bind: bindAt(5) },
+      ],
+      animations: [anim],
+    }), material());
+    expect(p.bones[0].position.x).toBeCloseTo(3, 5);
+    expect(p.bones[1].position.x).toBeCloseTo(9, 5);
+    p.applyFrame(anim, 0);
+    p.mesh.updateMatrixWorld(true);
+    p.skeleton!.update();
+    expect(boneMatrixX(p.skeleton!, 0)).toBeCloseTo(0, 5);
+    expect(boneMatrixX(p.skeleton!, 1)).toBeCloseTo(0, 5);
   });
 
   // 真实素材（3828798871 / 3812518176）的 MDLA 关键帧存的是欧拉角，不是四元数；
@@ -179,14 +224,28 @@ describe('puppet → three 网格/蒙皮', () => {
     expect(p.bones[1].position.x).toBeCloseTo(5, 5); // 保持 bind 平移，不被清成 0
   });
 
-  it('applyFrame 越界帧号被夹到合法区间（不产生 NaN 骨骼，且落在首/末帧）', () => {
-    const p = createPuppetMesh(makePuppet(), material());
-    p.applyFrame(p.animations[0], 99);
+  it('循环动画的越界帧号按区间数回绕（不产生 NaN / 不冻结在末帧）', () => {
+    const single: MdlAnimation = {
+      id: 8, name: 'once', mode: 'single', fps: 30, frameCount: 2,
+      tracks: [{
+        boneId: 1, authored: true,
+        keys: [
+          { pos: [5, 0, 0], angle: [0, 0, 0], scale: [1, 1, 1] },
+          { pos: [9, 0, 0], angle: [0, 0, 0], scale: [1, 1, 1] },
+        ],
+      }],
+    };
+    const p = createPuppetMesh(makePuppet({ animations: [single] }), material());
+    // loop 动画的帧号由调用方按 frameCount 取模；这里直接传越界值验证内部回绕不炸
+    const loopAnim: MdlAnimation = { ...single, id: 9, mode: 'loop' };
+    p.applyFrame(loopAnim, 99);
     expect(Number.isFinite(p.bones[1].position.x)).toBe(true);
-    expect(p.bones[1].position.x).toBeCloseTo(9, 5);
-    p.applyFrame(p.animations[0], -1);
-    expect(Number.isFinite(p.bones[1].position.x)).toBe(true);
+    expect(p.bones[1].position.x).toBeCloseTo(5, 5); // 99 % 区间数(1) = 0 ⇒ 首帧
+    p.applyFrame(loopAnim, -1);
     expect(p.bones[1].position.x).toBeCloseTo(5, 5);
+    // single 模式 clamp 到末帧
+    p.applyFrame(single, 99);
+    expect(p.bones[1].position.x).toBeCloseTo(9, 5);
   });
 
   it('applyFrame 帧号可取小数（帧内插值）', () => {
@@ -196,6 +255,7 @@ describe('puppet → three 网格/蒙皮', () => {
   });
 
   // T8：钉住回绕结果恒落在 [0, frameCount) 且取到对应关键帧（越界夹取会掩盖公式错误）。
+  // 真实素材的关键帧数 = frameCount + 1（末帧 = 首帧），loop 按区间数（= frameCount）回绕。
   it('(elapsed×fps)%frameCount 回绕恒落在 [0, frameCount) 且取到对应关键帧', () => {
     const walk: MdlAnimation = {
       id: 3, name: 'walk', mode: 'loop', fps: 10, frameCount: 3,
@@ -206,6 +266,7 @@ describe('puppet → three 网格/蒙皮', () => {
           { pos: [5, 0, 0], angle: [0, 0, 0], scale: [1, 1, 1] },
           { pos: [9, 0, 0], angle: [0, 0, 0], scale: [1, 1, 1] },
           { pos: [13, 0, 0], angle: [0, 0, 0], scale: [1, 1, 1] },
+          { pos: [5, 0, 0], angle: [0, 0, 0], scale: [1, 1, 1] }, // 循环末帧 = 首帧
         ],
       }],
     };
@@ -217,7 +278,7 @@ describe('puppet → three 网格/蒙皮', () => {
     }
     p.applyFrame(walk, frameAt(0));     // 帧 0
     expect(p.bones[1].position.x).toBeCloseTo(5, 5);
-    p.applyFrame(walk, frameAt(0.2));   // 帧 2（末帧）
+    p.applyFrame(walk, frameAt(0.2));   // 帧 2
     expect(p.bones[1].position.x).toBeCloseTo(13, 5);
     p.applyFrame(walk, frameAt(0.3));   // 3 帧 % 3 = 0 ⇒ 回绕回首帧
     expect(p.bones[1].position.x).toBeCloseTo(5, 5);
