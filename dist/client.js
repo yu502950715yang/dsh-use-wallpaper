@@ -29312,6 +29312,14 @@ var ThreeScenePlayer = class {
   setObjectOutput(id, texture) {
     const entry = this.isolated.get(id);
     if (!entry) return;
+    if (entry.puppet) {
+      const mat2 = entry.puppet.mesh.material;
+      if (mat2.map !== texture) {
+        mat2.map = texture;
+        mat2.needsUpdate = true;
+      }
+    }
+    if (!entry.quadAttached) return;
     const mat = entry.quad.material;
     if (mat instanceof ShaderMaterial) mat.uniforms.map.value = texture;
     else if (mat instanceof MeshBasicMaterial) mat.map = texture;
@@ -29665,6 +29673,33 @@ var ThreeScenePlayer = class {
     mesh.rotation.set(opts.angles[0], opts.angles[1], opts.angles[2]);
     mesh.position.set(opts.origin[0] - opts.sceneW / 2, opts.origin[1] - opts.sceneH / 2, opts.origin[2]);
     this.scene.add(mesh);
+    if (opts.isolate) {
+      const iso = opts.isolate;
+      const w = Math.max(1, Math.abs(iso.worldW));
+      const h = Math.max(1, Math.abs(iso.worldH));
+      const contentGeometry = new PlaneGeometry(w, h);
+      flipGeometryUvY(contentGeometry);
+      const content = new Mesh(
+        contentGeometry,
+        new MeshBasicMaterial({ map: opts.texture ?? null, transparent: true, side: DoubleSide })
+      );
+      this.attachIsolated(
+        iso.objectId,
+        "puppet",
+        content,
+        w,
+        h,
+        { width: iso.rtWidth, height: iso.rtHeight },
+        { x: mesh.position.x, y: mesh.position.y, z: mesh.position.z },
+        [mesh.rotation.x, mesh.rotation.y, mesh.rotation.z],
+        0,
+        opts.renderOrder,
+        1,
+        // 合成 quad 不挂主场景（输出直接当网格贴图）；puppet 实例交给 setObjectOutput 写 map。
+        false,
+        opts.puppet
+      );
+    }
     const id = this.nextBackgroundId++;
     this.backgroundEntries.set(id, {
       mesh,
@@ -29810,7 +29845,7 @@ var ThreeScenePlayer = class {
   // 否则同一份旋转被施加两次）。
   // compositeOpacity（缺省 1）只由 util 层传对象 alpha：其内容占位透明、效果输出自带 alpha，
   // 对象 alpha 只能在最终合成这一步收口；image/particle 的 alpha 已烘进 RT，不得二次施加。
-  attachIsolated(objectId, kind, content, worldW, worldH, size, position, quadAngles, colorBlendMode, renderOrder, compositeOpacity = 1) {
+  attachIsolated(objectId, kind, content, worldW, worldH, size, position, quadAngles, colorBlendMode, renderOrder, compositeOpacity = 1, attachQuad = true, puppet) {
     const rtW = Math.max(1, Math.round(size.width));
     const rtH = Math.max(1, Math.round(size.height));
     const isFullscreen = kind === "background" && Math.abs(worldW) >= this.sceneWidth * 0.98 && Math.abs(worldH) >= this.sceneHeight * 0.98;
@@ -29831,7 +29866,7 @@ var ThreeScenePlayer = class {
     quad.position.set(position.x, position.y, position.z);
     quad.rotation.set(quadAngles[0], quadAngles[1], quadAngles[2]);
     quad.renderOrder = renderOrder ?? (kind === "particle" ? 1 : 0);
-    this.scene.add(quad);
+    if (attachQuad) this.scene.add(quad);
     this.isolated.set(objectId, {
       id: objectId,
       kind,
@@ -29842,6 +29877,8 @@ var ThreeScenePlayer = class {
       localScene,
       localCamera,
       quad,
+      quadAttached: attachQuad,
+      puppet,
       worldW,
       worldH
     });
@@ -30295,7 +30332,10 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
           brightness: obj.brightness,
           parallaxDepth: obj.parallaxDepth,
           // 动画层（T8）：逐帧选层由 player 负责，装配期只透传解析结果（undefined = 字段缺失）。
-          animationLayers: obj.animationLayers
+          animationLayers: obj.animationLayers,
+          // 对象级效果链（we 的 puppet 效果在贴图空间跑，输出当贴图）：贴图 + 隔离尺寸透传。
+          texture: assets.backgroundTextures?.get(obj.id) ?? null,
+          isolate: assets.isolate?.get(obj.id)
         });
         backgroundIds.push(id2);
         puppetLayers.push(id2);
@@ -37554,7 +37594,7 @@ function createThreeSceneRenderer(opts) {
         const isAdmittedImage = (o) => o.kind === "image" && effectiveVisible.get(o.id) !== false && (effectChains.get(o.id)?.length ?? 0) > 0;
         const isAdmittedUtil = (o) => o.kind === "util" && effectiveVisible.get(o.id) !== false && (effectChains.get(o.id)?.length ?? 0) > 0;
         const isPuppetRendered = (o) => o.kind === "image" && puppetMeshes.has(o.id);
-        const isIsolatedImage = (o) => isAdmittedImage(o) && !isPuppetRendered(o);
+        const isIsolatedImage = (o) => isAdmittedImage(o);
         const isolateItems = desc.objects.filter(isIsolatedImage).map((o) => {
           const tex = backgroundTextures.get(o.id);
           const s = o.scale;
@@ -37593,13 +37633,6 @@ function createThreeSceneRenderer(opts) {
           const chains = effectChains.get(obj.id);
           if (!chains || chains.length === 0) continue;
           if (obj.kind === "image") {
-            if (isPuppetRendered(obj)) {
-              warnOnce2(
-                `puppet-isolate:${id}:${obj.id}`,
-                `puppet \u5BF9\u8C61\u4E0D\u652F\u6301\u5BF9\u8C61\u7EA7\u6548\u679C\u94FE\uFF0C\u5DF2\u6309\u76F4\u6E32\u5904\u7406\uFF08id=${obj.id}\uFF09`
-              );
-              continue;
-            }
             if (!isAdmittedImage(obj)) continue;
             const sized = isolatedSizes.get(obj.id);
             if (!sized) continue;
@@ -37608,7 +37641,8 @@ function createThreeSceneRenderer(opts) {
               rtWidth: sized.rt.width,
               rtHeight: sized.rt.height,
               worldW: sized.worldW,
-              worldH: sized.worldH
+              worldH: sized.worldH,
+              ...isPuppetRendered(obj) ? { puppet: true } : {}
             });
             budgetedIds.add(obj.id);
           } else if (obj.kind === "particle") {
@@ -37946,7 +37980,6 @@ function createThreeSceneRenderer(opts) {
         let droppedEffects = 0;
         for (const [objId, chains] of effectChains) {
           if (isolate.has(objId)) continue;
-          if (puppetMeshes.has(objId)) continue;
           droppedEffects += chains.length;
         }
         if (droppedEffects > 0) {

@@ -920,12 +920,13 @@ export function createThreeSceneRenderer(opts?: {
           o.kind === 'util'
           && effectiveVisible.get(o.id) !== false
           && (effectChains.get(o.id)?.length ?? 0) > 0;
-        // puppet 对象由直渲网格承载（对象 RT 隔离未覆盖蒙皮网格）⇒ 既不进隔离表，也不占源尺寸与显存预算。
+        // puppet 对象也参与隔离：WE 的 puppet 效果链在**贴图空间**合成（内容 = 对象贴图平面），
+        // 输出直接当网格贴图；人物网格仍在主场景按骨骼动画绘制（player 的 puppet 隔离条目无合成 quad）。
         const isPuppetRendered = (o: SceneDescription['objects'][number]): boolean =>
           o.kind === 'image' && puppetMeshes.has(o.id);
         // 带类型谓词，filter 后仍收窄成 SceneImageObject（下面要读 size）。
         const isIsolatedImage = (o: SceneDescription['objects'][number]): o is SceneImageObject =>
-          isAdmittedImage(o) && !isPuppetRendered(o);
+          isAdmittedImage(o);
         const isolateItems = desc.objects
           .filter(isIsolatedImage)
           .map((o) => {
@@ -961,7 +962,7 @@ export function createThreeSceneRenderer(opts?: {
         // 与 ObjectEffectStage 用同一把键 ⇒ 三者同键空间，没有「对象 id → 图层计数器 id」翻译层，也就不会撞键。
         const isolate = new Map<
           number,
-          { objectId: number; rtWidth: number; rtHeight: number; worldW: number; worldH: number }
+          { objectId: number; rtWidth: number; rtHeight: number; worldW: number; worldH: number; puppet?: boolean }
         >();
         // resize 期预算输入集合 = 挂载期 isolateItems 的同一个集合（只有 image）。util/particle/text
         // 的 RT 恒按屏占位，计入预算会在一次 resize 后把 image 的升级幅度挤回去。
@@ -974,13 +975,8 @@ export function createThreeSceneRenderer(opts?: {
           // 无链 → 早退（effectChains 只在链非空时入表）。
           if (!chains || chains.length === 0) continue;
           if (obj.kind === 'image') {
-            // puppet 对象走直渲网格：隔离/效果链不支持，且不得留幽灵条目挤占其它对象的 RT 预算 ⇒ fail-loud。
-            if (isPuppetRendered(obj)) {
-              warnOnce(`puppet-isolate:${id}:${obj.id}`,
-                `puppet 对象不支持对象级效果链，已按直渲处理（id=${obj.id}）`);
-              continue;
-            }
-            // 准入条件与上面的 isAdmittedImage 同一份（该谓词已含 effectChains 非空）。
+            // puppet 也走隔离：效果链在贴图空间合成（见 isPuppetRendered 注释），标记给 player 建
+            // 「无合成 quad 的 puppet 隔离条目」。
             if (!isAdmittedImage(obj)) continue;
             // 尺寸取自上面的 isolateItems 段（同条件、同口径）；此处只做键空间转换。
             const sized = isolatedSizes.get(obj.id);
@@ -991,6 +987,7 @@ export function createThreeSceneRenderer(opts?: {
               objectId: obj.id,
               rtWidth: sized.rt.width, rtHeight: sized.rt.height,
               worldW: sized.worldW, worldH: sized.worldH,
+              ...(isPuppetRendered(obj) ? { puppet: true } : {}),
             });
             budgetedIds.add(obj.id);
           } else if (obj.kind === 'particle') {
@@ -1375,8 +1372,6 @@ export function createThreeSceneRenderer(opts?: {
         for (const [objId, chains] of effectChains) {
           // 没有隔离条目 = 对象不参与渲染（缺粒子资源），并入本条汇总告警。
           if (isolate.has(objId)) continue;
-          // puppet 对象**参与渲染**（只是不套效果链），已由上面那条专属告警说明 ⇒ 不并入「未参与渲染」汇总。
-          if (puppetMeshes.has(objId)) continue;
           droppedEffects += chains.length;
         }
         if (droppedEffects > 0) {

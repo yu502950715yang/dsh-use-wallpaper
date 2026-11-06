@@ -604,14 +604,21 @@ void main() {
 export interface IsolatedObject {
   /** 键 = scene.json 的**对象 id**（不是本类图层的计数器 id，见 attachIsolated 注释）。 */
   id: number;
-  kind: 'background' | 'particle';
+  // puppet = 内容只在贴图空间跑效果链、输出直接当网格贴图（WE 语义）：没有主场景合成 quad，
+  // 网格本身仍在主场景按骨骼动画绘制（见 addPuppet 的 isolate 注释）。
+  kind: 'background' | 'particle' | 'puppet';
   rt: THREE.WebGLRenderTarget;
   rtWidth: number;
   rtHeight: number;
   rtTexture: THREE.Texture;
   localScene: THREE.Scene;
   localCamera: THREE.OrthographicCamera;
+  /** 合成 quad（puppet 条目也建，但**不加入主场景**：只承载世界位置/旋转给 effectScreenMatrix 与释放）。 */
   quad: THREE.Mesh;
+  /** 合成 quad 是否真的挂在主场景（puppet = false）。 */
+  quadAttached: boolean;
+  /** puppet 条目：效果链输出要写回它的材质 map（见 setObjectOutput）。 */
+  puppet?: PuppetInstance;
   /** 合成 quad 的世界尺寸（= |对象 size/dist × scale|，未钳制幅值），resize 重建几何时用。 */
   worldW: number;
   worldH: number;
@@ -1646,6 +1653,18 @@ export class ThreeScenePlayer {
   setObjectOutput(id: number, texture: THREE.Texture): void {
     const entry = this.isolated.get(id);
     if (!entry) return;
+    // puppet：效果链输出是**贴图空间**的结果（WE 语义，webwallgl drawPuppetDirect 的 overrideTex
+    // 同口径）⇒ 直接换网格材质采样源，而不是贴合成 quad。输出纹理与合成 quad 的采样口径一致
+    //（puppet 几何 UV 与合成 quad 一样已按 GL 约定翻过，链输出沿用对象 RT 的 WE 约定）⇒ 不需要
+    // 再叠一层 uvTransform（叠了就是双翻，图集会散架）。
+    if (entry.puppet) {
+      const mat = entry.puppet.mesh.material as THREE.MeshBasicMaterial;
+      if (mat.map !== texture) {
+        mat.map = texture;
+        mat.needsUpdate = true;
+      }
+    }
+    if (!entry.quadAttached) return;
     const mat = entry.quad.material;
     if (mat instanceof THREE.ShaderMaterial) mat.uniforms.map.value = texture;
     else if (mat instanceof THREE.MeshBasicMaterial) mat.map = texture;
@@ -2140,6 +2159,10 @@ export class ThreeScenePlayer {
     parallaxDepth?: [number, number];
     // scene.json 的 `animationlayers`（T8）：undefined = 字段缺失（逐帧退回「播动画表首个」）。
     animationLayers?: SceneImageObject['animationLayers'];
+    // 对象贴图（= 建 puppet 材质时的 map）：效果链在**贴图空间**跑，隔离内容就是这张贴图的平面。
+    texture?: THREE.Texture | null;
+    // 对象隔离（对象级效果链）：字段与 addBackground 的 isolate 相同（见其注释）。
+    isolate?: { objectId: number; rtWidth: number; rtHeight: number; worldW: number; worldH: number };
   }): number {
     const { mesh } = opts.puppet;
     mesh.renderOrder = opts.renderOrder ?? 0;
@@ -2154,6 +2177,29 @@ export class ThreeScenePlayer {
     // we_to_three：origin - scene/2（y 不翻，见 AGENT.md §2.3）。
     mesh.position.set(opts.origin[0] - opts.sceneW / 2, opts.origin[1] - opts.sceneH / 2, opts.origin[2]);
     this.scene.add(mesh);
+    // 对象级效果链（WE 语义：链路在**贴图空间**合成，输出当 puppet 贴图；webwallgl drawPuppetDirect
+    // 的 overrideTex 同口径）。内容 = 对象贴图的平面，尺寸取对象世界尺寸（aspect 与贴图一致）；
+    // RT 由 y 镜像局部相机渲染 ⇒ 与图片对象同一套 v 约定，输出纹理经 setObjectOutput 写回网格材质。
+    if (opts.isolate) {
+      const iso = opts.isolate;
+      const w = Math.max(1, Math.abs(iso.worldW));
+      const h = Math.max(1, Math.abs(iso.worldH));
+      const contentGeometry = new THREE.PlaneGeometry(w, h);
+      flipGeometryUvY(contentGeometry);
+      const content = new THREE.Mesh(
+        contentGeometry,
+        new THREE.MeshBasicMaterial({ map: opts.texture ?? null, transparent: true, side: THREE.DoubleSide }),
+      );
+      this.attachIsolated(
+        iso.objectId, 'puppet', content, w, h,
+        { width: iso.rtWidth, height: iso.rtHeight },
+        { x: mesh.position.x, y: mesh.position.y, z: mesh.position.z },
+        [mesh.rotation.x, mesh.rotation.y, mesh.rotation.z],
+        0, opts.renderOrder, 1,
+        // 合成 quad 不挂主场景（输出直接当网格贴图）；puppet 实例交给 setObjectOutput 写 map。
+        false, opts.puppet,
+      );
+    }
     const id = this.nextBackgroundId++;
     // 复用背景条目：视差逐帧写位、player.dispose 释放几何/材质、脚本层桥都走同一条路径。
     // （同一条目会被两条释放路径各 dispose 一次 —— three 的 dispose 幂等。）
@@ -2326,7 +2372,7 @@ export class ThreeScenePlayer {
   // 对象 alpha 只能在最终合成这一步收口；image/particle 的 alpha 已烘进 RT，不得二次施加。
   private attachIsolated(
     objectId: number,
-    kind: 'background' | 'particle',
+    kind: 'background' | 'particle' | 'puppet',
     content: THREE.Object3D,
     worldW: number,
     worldH: number,
@@ -2337,6 +2383,9 @@ export class ThreeScenePlayer {
     // 宿主对象的唯一绘制序（= objects 下标，调用方透传）；缺省按 kind 回退（背景 0 / 粒子 1）。
     renderOrder?: number,
     compositeOpacity = 1,
+    // puppet：合成 quad 不挂主场景（输出直接当网格贴图），只保留世界位置供 effectScreenMatrix。
+    attachQuad = true,
+    puppet?: PuppetInstance,
   ): void {
     const rtW = Math.max(1, Math.round(size.width));
     const rtH = Math.max(1, Math.round(size.height));
@@ -2381,11 +2430,13 @@ export class ThreeScenePlayer {
     quad.rotation.set(quadAngles[0], quadAngles[1], quadAngles[2]);
     // 合成 quad 的绘制序跟随宿主对象；缺省沿原语义（背景 0 / 粒子 1）。
     quad.renderOrder = renderOrder ?? (kind === 'particle' ? 1 : 0);
-    this.scene.add(quad);
+    // puppet 条目：quad 只当「世界位置/旋转的载体」给 effectScreenMatrix，**不进主场景**（否则整张贴图
+    // 会平铺在人物外面）；人物的绘制仍由主场景里的 SkinnedMesh 承担。
+    if (attachQuad) this.scene.add(quad);
     // 键 = scene.json 的对象 id（调用方传入），不是本类自己的图层计数器 id——见本方法头注释。
     this.isolated.set(objectId, {
       id: objectId, kind, rt, rtWidth: rtW, rtHeight: rtH, rtTexture: rt.texture,
-      localScene, localCamera, quad, worldW, worldH,
+      localScene, localCamera, quad, quadAttached: attachQuad, puppet, worldW, worldH,
     });
   }
 
@@ -3134,6 +3185,9 @@ export function loadSceneToThree(
           parallaxDepth: obj.parallaxDepth,
           // 动画层（T8）：逐帧选层由 player 负责，装配期只透传解析结果（undefined = 字段缺失）。
           animationLayers: obj.animationLayers,
+          // 对象级效果链（we 的 puppet 效果在贴图空间跑，输出当贴图）：贴图 + 隔离尺寸透传。
+          texture: assets.backgroundTextures?.get(obj.id) ?? null,
+          isolate: assets.isolate?.get(obj.id),
         });
         backgroundIds.push(id);
         puppetLayers.push(id);

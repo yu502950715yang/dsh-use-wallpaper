@@ -1158,7 +1158,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
     expect(await r.render('2851992662', document.createElement('canvas'))).toBe(true);
 
     const iso = (vi.mocked(loadSceneToThree).mock.calls[0][1] as {
-      isolate: Map<number, { rtWidth: number; rtHeight: number; worldW: number; worldH: number }>;
+      isolate: Map<number, { rtWidth: number; rtHeight: number; worldW: number; worldH: number; puppet?: boolean }>;
     }).isolate.get(327)!;
     // 世界 scale = 局部 0.87345/-0.97913 × 父 1.14488/1.13179 ⇒ ≈1.0/1.108 ⇒ world ≈1000×1108。
     const worldW = 1000 * 0.87345 * 1.14488;
@@ -1686,7 +1686,7 @@ describe('对象级效果链：隔离 RT 尺寸按源纹理收口 4096', () => {
   }
   function isolateOf(): Map<number, { rtWidth: number; rtHeight: number; worldW: number; worldH: number }> {
     return (loadSceneToThree.mock.calls[0][1] as {
-      isolate: Map<number, { rtWidth: number; rtHeight: number; worldW: number; worldH: number }>;
+      isolate: Map<number, { rtWidth: number; rtHeight: number; worldW: number; worldH: number; puppet?: boolean }>;
     }).isolate;
   }
 
@@ -3745,7 +3745,7 @@ describe('createThreeSceneRenderer · puppet 接线', () => {
   function assetsOfLastLoad(): {
     puppetMeshes: Map<number, PuppetInstance>;
     backgroundTextures: Map<number, unknown>;
-    isolate: Map<number, { rtWidth: number; rtHeight: number; worldW: number; worldH: number }>;
+    isolate: Map<number, { rtWidth: number; rtHeight: number; worldW: number; worldH: number; puppet?: boolean }>;
   } {
     return loadSceneToThree.mock.calls.at(-1)![1] as never;
   }
@@ -3868,7 +3868,7 @@ describe('createThreeSceneRenderer · puppet 接线', () => {
     return { setObjectEffectStage };
   }
 
-  it('带效果链的 puppet 对象：不进 isolate 表、不挂链、不建 stage，并 fail-loud 一条专属告警', async () => {
+  it('带效果链的 puppet 对象：进 isolate 表（puppet 标记）、挂链、建 stage，不再走专属告警', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     resolveImageAssets.mockResolvedValue({ texture: fakeTexture(), puppetPath: 'models/p_puppet.mdl' } as never);
     defaultLoadWasm.mockResolvedValue(null);
@@ -3880,18 +3880,21 @@ describe('createThreeSceneRenderer · puppet 接线', () => {
     const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
     expect(await r.render('wid-puppet-fx', document.createElement('canvas'), null)).toBe(true);
 
-    expect(assetsOfLastLoad().isolate.has(16)).toBe(false);
-    expect(worldSpy).not.toHaveBeenCalled();
-    expect(chainsSpy).not.toHaveBeenCalled();
-    expect(setObjectEffectStage).not.toHaveBeenCalled();
-    expect(warn.mock.calls.some((c) => String(c[0]).includes('puppet 对象不支持对象级效果链，已按直渲处理（id=16）'))).toBe(true);
-    // 不得再并入「效果挂在未参与渲染的对象类型上」那条汇总告警（puppet 是**参与渲染**的）。
+    // puppet 的效果链在贴图空间跑（内容 = 贴图平面），因此同样要进 isolate 表并挂链。
+    const isoEntry = assetsOfLastLoad().isolate.get(16);
+    expect(isoEntry).toBeDefined();
+    expect(isoEntry!.puppet).toBe(true);
+    expect(worldSpy).toHaveBeenCalledWith(16, expect.any(Number), expect.any(Number), null, true);
+    expect(chainsSpy).toHaveBeenCalledWith(16, expect.any(Array));
+    expect(setObjectEffectStage).toHaveBeenCalledTimes(1);
+    // 旧行为（直渲 + 专属告警）不再存在；也不得并入「效果挂在未参与渲染的对象类型上」汇总告警。
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('puppet 对象不支持对象级效果链'))).toBe(false);
     expect(warn.mock.calls.some((c) => String(c[0]).includes('效果挂在未参与渲染的对象类型上'))).toBe(false);
     r.dispose();
     warn.mockRestore();
   });
 
-  it('puppet 对象不占 isolate 预算：另一隔离对象仍拿到完整的 4096 收口', async () => {
+  it('puppet 与 image 同进 isolate 预算：两者按同一套 isolatedRtSize 收口', async () => {
     resolveImageAssets.mockImplementation(async (_id, o) => ({
       texture: { image: { ...FX_SCENE_ORTHO }, dispose: vi.fn() } as never,
       puppetPath: o.id === 16 ? 'models/p_puppet.mdl' : null,
@@ -3904,10 +3907,16 @@ describe('createThreeSceneRenderer · puppet 接线', () => {
     expect(await r.render('wid-puppet-budget', document.createElement('canvas'), null)).toBe(true);
 
     const isolate = assetsOfLastLoad().isolate;
-    expect(isolate.has(16)).toBe(false);
-    // 预算只剩 17 一个对象（225 MB ≤ 384 MB）⇒ 长边恰为 4096；两者都进预算时会被等比收窄。
-    expect(isolate.get(17)!.rtWidth).toBe(4096);
-    expect(isolate.get(17)!.rtHeight).toBe(1966);
+    expect(isolate.has(16)).toBe(true);
+    expect(isolate.get(16)!.puppet).toBe(true);
+    expect(isolate.has(17)).toBe(true);
+    // 同一份 world size / 源纹理 ⇒ 两者拿到同一套 RT 尺寸（预算同口径按比例收口，不超过 4096 硬上限）。
+    const p = isolate.get(16)!;
+    const i = isolate.get(17)!;
+    expect(p.rtWidth).toBe(i.rtWidth);
+    expect(p.rtHeight).toBe(i.rtHeight);
+    expect(p.rtWidth).toBeGreaterThan(0);
+    expect(Math.max(p.rtWidth, p.rtHeight)).toBeLessThanOrEqual(4096);
     r.dispose();
   });
 });

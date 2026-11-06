@@ -4859,6 +4859,72 @@ describe('puppet 图层（addPuppet / image 分支 / 逐帧动画）', () => {
     player.dispose();
     expect(stub.disposed).toBe(1);
   });
+
+  // 对象级效果链（puppet 效果在**贴图空间**跑，输出当网格贴图）：隔离条目 kind='puppet'，
+  // 没有挂进主场景的合成 quad；输出纹理经 setObjectOutput 写回 puppet 材质 map（并翻 v）。
+  it('addPuppet + isolate：建 puppet 隔离条目（RT/内容=贴图平面/隐藏 quad），不进主场景 compositing quad', () => {
+    const { player } = makePlayer(1920, 1080);
+    const stub = makePuppetStub([anim]);
+    const tex = new THREE.DataTexture(new Uint8Array(4), 2, 2);
+    const sceneChildrenBefore = player.scene.children.length;
+    const id = player.addPuppet({
+      objectId: 16, puppet: stub, origin: [1000, 600, 0], scale: [2, 2, 1], angles: [0, 0, 0],
+      sceneW: 1920, sceneH: 1080, texture: tex,
+      isolate: { objectId: 16, rtWidth: 400, rtHeight: 200, worldW: 800, worldH: 400 },
+    });
+    expect(id).toBe(0);
+    // 主场景只多了 puppet 网格本身；合成 quad 不挂主场景
+    expect(player.scene.children).toHaveLength(sceneChildrenBefore + 1);
+    expect(player.scene.children).toContain(stub.mesh);
+    const iso = player.isolatedObjects();
+    expect(iso).toHaveLength(1);
+    expect(iso[0].id).toBe(16);
+    expect(iso[0].kind).toBe('puppet');
+    expect(iso[0].quadAttached).toBe(false);
+    expect(iso[0].puppet).toBe(stub);
+    // 内容 = 贴图平面（效果链的输入）
+    const content = iso[0].localScene.children[0] as THREE.Mesh;
+    expect((content.material as THREE.MeshBasicMaterial).map).toBe(tex);
+    // 脚本桥仍指向 puppet 网格（不是隐藏 quad）
+    expect(player.displayObject(16)).toBe(stub.mesh);
+  });
+
+  it('setObjectOutput(puppet)：效果输出写回网格材质 map（不再叠 uvTransform —— 链输出与合成 quad 同采样口径）', () => {
+    const { player } = makePlayer(1920, 1080);
+    const stub = makePuppetStub([anim]);
+    const tex = new THREE.DataTexture(new Uint8Array(4), 2, 2);
+    player.addPuppet({
+      objectId: 16, puppet: stub, origin: [1000, 600, 0], scale: [2, 2, 1], angles: [0, 0, 0],
+      sceneW: 1920, sceneH: 1080, texture: tex,
+      isolate: { objectId: 16, rtWidth: 400, rtHeight: 200, worldW: 800, worldH: 400 },
+    });
+    const out = new THREE.Texture();
+    player.setObjectOutput(16, out);
+    const mat = stub.mesh.material as THREE.MeshBasicMaterial;
+    expect(mat.map).toBe(out);
+    expect(out.repeat.toArray()).toEqual([1, 1]);
+    expect(out.offset.toArray()).toEqual([0, 0]);
+    // 幂等：同一个纹理重复下发不重复改材质
+    player.setObjectOutput(16, out);
+    expect(mat.map).toBe(out);
+  });
+
+  it('dispose 释放 puppet 隔离条目（RT + 内容几何/材质 + 隐藏 quad）', () => {
+    const { player } = makePlayer(1920, 1080);
+    const stub = makePuppetStub([anim]);
+    player.addPuppet({
+      objectId: 16, puppet: stub, origin: [1000, 600, 0], scale: [2, 2, 1], angles: [0, 0, 0],
+      sceneW: 1920, sceneH: 1080, texture: new THREE.DataTexture(new Uint8Array(4), 2, 2),
+      isolate: { objectId: 16, rtWidth: 400, rtHeight: 200, worldW: 800, worldH: 400 },
+    });
+    const iso = player.isolatedObjects()[0];
+    let rtDisposed = 0;
+    iso.rt.addEventListener('dispose', () => { rtDisposed++; });
+    player.dispose();
+    expect(rtDisposed).toBe(1);
+    expect(stub.disposed).toBe(1);
+    expect(player.isolatedObjects()).toHaveLength(0);
+  });
 });
 
 // scene 抓帧（v0.8 Task 6）：captureNextFrame 必须在 render() 同一 JS 任务内读默认 framebuffer；
