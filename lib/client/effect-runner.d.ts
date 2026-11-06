@@ -26,6 +26,10 @@ export declare function resolveBuiltinTexture(path: string | null | undefined, f
 export declare function resolveEmptySlotTexture(mode: string | null | undefined): THREE.Texture | null;
 export declare function effectSlotCount(pass: CompiledEffectPass): number;
 export declare function resolveSlotFallback(pass: CompiledEffectPass, index: number): THREE.Texture | null;
+/** scene.json 的 textures 没给该槽、且 mode 常量兜底也覆盖不了时，取 sampler `default` 注解里的
+ *  **引擎默认资产**路径（真实素材：shimmer 的 g_Texture3 默认 gradient/gradient_ferro_fluid）。
+ *  mode 常量优先（既有空槽语义不变）；无 default / 非路径型默认值 → null。 */
+export declare function slotDefaultPath(pass: CompiledEffectPass, index: number): string | null;
 export type EffectTexLoader = (url: string, opts?: TexLoadOptions) => Promise<THREE.Texture | null>;
 export interface EffectGlobalUniforms {
     pointerPosition?: [number, number];

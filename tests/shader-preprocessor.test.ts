@@ -459,3 +459,56 @@ describe('F7 同名跨 #if 分支类型不一致 → 整名跳过', () => {
     expect(out).toContain('float(sampleCount) - 1');
   });
 });
+
+// HLSL 隐式向量截断：`vec3 x = texSample2D(...)`（vec4 返回）在 GLSL 是维度错误。
+// 真实素材 3828798871 的 shimmer.frag 即此（`vec3 shimmerColor = texSample2D(g_Texture3, …)`）。
+describe('HLSL 隐式向量截断 → GLSL 显式 swizzle', () => {
+  const source = [
+    '#include "common.h"',
+    'void main() {',
+    '\tvec3 shimmerColor = texSample2D(g_Texture3, v_TexCoord.xy);',
+    '\tgl_FragColor = vec4(shimmerColor, 1.0);',
+    '}',
+  ].join('\n');
+
+  it('vec3 ← texSample2D（vec4）⇒ 初始化器整体补 .rgb', () => {
+    const out = preprocessWeShader(source, {});
+    expect(out).toContain('vec3 shimmerColor = (texSample2D(g_Texture3, v_TexCoord.xy)).rgb;');
+  });
+
+  it('vec2 ← texSample2D ⇒ 补 .rg；表达式带其它算子也整段括号化', () => {
+    const out = preprocessWeShader([
+      'void main() {',
+      '\tvec2 a = texSample2D(g_Texture0, uv) * 2.0;',
+      '\tvec2 b = texSample2D(g_Texture1, uv);',
+      '}',
+    ].join('\n'), {});
+    expect(out).toContain('vec2 a = (texSample2D(g_Texture0, uv) * 2.0).rg;');
+    expect(out).toContain('vec2 b = (texSample2D(g_Texture1, uv)).rg;');
+  });
+
+  it('已显式 swizzle / 同宽 / 更宽 / 重载混维度的函数都不动', () => {
+    const out = preprocessWeShader([
+      'void main() {',
+      '\tvec3 a = texSample2D(g_Texture0, uv).rgb;',   // 已显式
+      '\tvec4 b = texSample2D(g_Texture0, uv);',       // 同宽
+      '\tvec3 c = frac(v_TexCoord.xyz);',              // frac 有 vec2/3/4 重载 ⇒ 不猜
+      '\tvec3 d = rotateVec2(v_TexCoord, r).xyx;',     // 返回 vec2，且已 swizzle
+      '}',
+    ].join('\n'), {});
+    expect(out).toContain('vec3 a = texSample2D(g_Texture0, uv).rgb;');
+    expect(out).toContain('vec4 b = texSample2D(g_Texture0, uv);');
+    expect(out).toContain('vec3 c = frac(v_TexCoord.xyz);');
+    expect(out).toContain('vec3 d = rotateVec2(v_TexCoord, r).xyx;');
+  });
+
+  it('多行初始化器 / 前置括号同样整段括号化', () => {
+    const out = preprocessWeShader([
+      'void main() {',
+      '\tvec3 c = (texSample2D(g_Texture0,',
+      '\t\tv_TexCoord.xy));',
+      '}',
+    ].join('\n'), {});
+    expect(out).toContain('vec3 c = ((texSample2D(g_Texture0,\n\t\tv_TexCoord.xy))).rgb;');
+  });
+});

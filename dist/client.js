@@ -31862,6 +31862,13 @@ function resolveSlotFallback(pass, index) {
   if (pass.textureSlots[index]) return null;
   return resolveEmptySlotTexture(pass.samplerModes?.[`g_Texture${index}`]);
 }
+function slotDefaultPath(pass, index) {
+  if (index <= 0) return null;
+  if (pass.textureSlots?.[index]) return null;
+  if (resolveEmptySlotTexture(pass.samplerModes?.[`g_Texture${index}`])) return null;
+  const def = pass.samplerDefaults?.[`g_Texture${index}`];
+  return typeof def === "string" && def.includes("/") ? def : null;
+}
 async function loadEffectTextureSlot(path, id, cache, load = loadTexTexture, warn = (message) => console.warn(message)) {
   if (!path) return null;
   const key = `${id}:${path}`;
@@ -32007,7 +32014,9 @@ var EffectRunner = class {
     this.disposeMaterials();
     this.clearTextures();
     for (const pass of chains.flat()) {
-      for (const path of pass.textureSlots) {
+      const slots = effectSlotCount(pass);
+      for (let j = 0; j < slots; j++) {
+        const path = pass.textureSlots[j] ?? slotDefaultPath(pass, j);
         if (path && !isFrameSnapshotPath(path)) void this.resolveTextureSlot(path);
       }
     }
@@ -32047,7 +32056,9 @@ var EffectRunner = class {
     this.disposeMaterials();
     this.clearTextures();
     for (const pass of chains.flat()) {
-      for (const path of pass.textureSlots) {
+      const slots = effectSlotCount(pass);
+      for (let j = 0; j < slots; j++) {
+        const path = pass.textureSlots[j] ?? slotDefaultPath(pass, j);
         if (path && !isFrameSnapshotPath(path)) void this.resolveTextureSlot(path);
       }
     }
@@ -32275,7 +32286,7 @@ var EffectRunner = class {
         const p = this.chains[pp.chainIndex][pp.passIndex];
         const slots = effectSlotCount(p);
         for (let j = 0; j < slots; j++) {
-          const path = p.textureSlots[j];
+          const path = p.textureSlots[j] ?? slotDefaultPath(p, j);
           const key = `${pp.chainIndex}:${pp.passIndex}:${j}`;
           const boundByBind = slotBoundByBind(pp.bindings, j);
           if (path && !boundByBind) {
@@ -34250,6 +34261,78 @@ function applyGlsl3StrictnessFixes(src) {
   out = ctx.restore(out);
   return relaxGlsl3Strictness(out);
 }
+var UNIFORM_RETURN_DIM = (() => {
+  const dims = /* @__PURE__ */ new Map();
+  for (const header of Object.values(WE_HEADERS)) {
+    for (const m of header.matchAll(/^[ \t]*(?:in\s+)?vec([234])\s+(\w+)\s*\(/gm)) {
+      const name = m[2];
+      const set = dims.get(name) ?? /* @__PURE__ */ new Set();
+      set.add(Number(m[1]));
+      dims.set(name, set);
+    }
+  }
+  for (const n of ["texture2D", "textureLod", "textureGrad"]) dims.set(n, /* @__PURE__ */ new Set([4]));
+  const out = /* @__PURE__ */ new Map();
+  for (const [name, set] of dims) if (set.size === 1) out.set(name, [...set][0]);
+  return out;
+})();
+var VEC_SWIZZLE = { 2: ".rg", 3: ".rgb" };
+function fixHlslImplicitVectorTruncation(src) {
+  const DECL = /\bvec([23])\s+(\w+)\s*=\s*/g;
+  let out = "";
+  let last = 0;
+  let m;
+  while (m = DECL.exec(src)) {
+    const declEnd = m.index + m[0].length;
+    const declDim = Number(m[1]);
+    let j = declEnd;
+    while (j < src.length && /\s/.test(src[j])) j += 1;
+    let leadingParen = false;
+    if (src[j] === "(") {
+      leadingParen = true;
+      j += 1;
+      while (j < src.length && /\s/.test(src[j])) j += 1;
+    }
+    const ident = /^([A-Za-z_]\w*)\s*\(/.exec(src.slice(j));
+    if (!ident) continue;
+    const retDim = UNIFORM_RETURN_DIM.get(ident[1]);
+    if (!retDim || retDim <= declDim) continue;
+    let depth = 0;
+    let close = -1;
+    for (let k = j + ident[0].length - 1; k < src.length; k += 1) {
+      if (src[k] === "(") depth += 1;
+      else if (src[k] === ")" && --depth === 0) {
+        close = k;
+        break;
+      }
+    }
+    if (close < 0) continue;
+    let p = close + 1;
+    while (p < src.length && /\s/.test(src[p])) p += 1;
+    while (leadingParen && src[p] === ")") {
+      p += 1;
+      while (p < src.length && /\s/.test(src[p])) p += 1;
+    }
+    if (src[p] === ".") continue;
+    let depth2 = 0;
+    let end = -1;
+    for (p = declEnd; p < src.length; p += 1) {
+      const c = src[p];
+      if (c === "(") depth2 += 1;
+      else if (c === ")") depth2 -= 1;
+      else if (depth2 === 0 && c === ";") {
+        end = p;
+        break;
+      } else if (depth2 === 0 && (c === "{" || c === "}")) break;
+    }
+    if (end < 0) continue;
+    const expr = src.slice(declEnd, end).trim();
+    out += `${src.slice(last, m.index)}vec${declDim} ${m[2]} = (${expr})${VEC_SWIZZLE[declDim]};`;
+    last = end + 1;
+    DECL.lastIndex = end + 1;
+  }
+  return out + src.slice(last);
+}
 function undefHeaderMacroRedefinitions(src) {
   return src.replace(
     /^([ \t]*)#define[ \t]+([A-Za-z_][A-Za-z0-9_]*)([^\n]*)$/gm,
@@ -34267,7 +34350,7 @@ function preprocessWeShader(source, combos) {
     samplerDecls.push(m.trim());
     return "";
   });
-  let out = src;
+  let out = fixHlslImplicitVectorTruncation(src);
   const hadExplicitCommon = out.includes('#include "common.h"');
   let prev;
   do {
@@ -34354,10 +34437,15 @@ async function resolveEffectChain(sceneEffect, loadFile) {
       const fragSrc = preprocessWeShader(varying.frag, combos);
       const samplerModes = {};
       const samplerNames = [];
+      const samplerDefaults = {};
       for (const ann of extractUniformAnnotations(rawVert).concat(extractUniformAnnotations(rawFrag))) {
         if (ann.type.startsWith("sampler") && !samplerNames.includes(ann.name)) samplerNames.push(ann.name);
         const mode = ann.annotation?.mode;
         if (typeof mode === "string" && mode) samplerModes[ann.name] = mode;
+        const def = ann.annotation?.default;
+        if (ann.type.startsWith("sampler") && typeof def === "string" && def.includes("/")) {
+          samplerDefaults[ann.name] = def;
+        }
       }
       const uniforms = resolveUniformBindings(
         extractUniformAnnotations(fragSrc).concat(extractUniformAnnotations(vertSrc)),
@@ -34374,6 +34462,7 @@ async function resolveEffectChain(sceneEffect, loadFile) {
         textureSlots: textures,
         samplerModes,
         samplerNames,
+        samplerDefaults,
         blendMode: mat.passes?.[0]?.blending ?? "normal",
         // RT 图信息：effect.json passes[i].target（写到的具名 RT）/bind（采样来源）；
         // scene.json pass 可覆写 target（如 scene 指定目标 RT）。缺省 target=null（最终输出）。

@@ -9,6 +9,7 @@ export interface CompiledEffectPass {
     textureSlots: (string | null)[];
     samplerModes: Record<string, string>;
     samplerNames: string[];
+    samplerDefaults?: Record<string, string>;
     blendMode: string;
     target: string | null;
     bind: {

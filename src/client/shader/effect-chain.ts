@@ -22,6 +22,10 @@ export interface CompiledEffectPass {
   // 预建是 three 上传该槽的唯一机会：uniformsList 只在换 program 时重算，而 getMaterial 的
   // 1×1 探针渲染会先把它冻住，之后 bindSlot 现场补建的槽永不上传（sampler 停在默认 unit 0）。
   samplerNames: string[];
+  // sampler 的 `default` 注解里的**路径型默认资产**（如 shimmer 的 `gradient/gradient_ferro_fluid`）：
+  // scene.json 的 textures 数组没给该槽时，执行器加载它兜底（见 effect-runner 的 slotDefaultPath）。
+  // 只收带 `/` 的字符串默认值；颜色/向量默认值（"1 1 1"）不在此列。
+  samplerDefaults?: Record<string, string>;
   blendMode: string;                     // material json 的 blending（normal/add/...）
   // ── RT 图信息（wasm RT 图执行器）──
   // effect.json passes[i].target：本 pass 写到的具名 RT（如 "_rt_QuarterCompoBuffer1"）。
@@ -126,10 +130,17 @@ export async function resolveEffectChain(
       // 合并顺序：vert → frag，同名（同一槽在两侧都声明）时 mode 以 frag 为准、名字去重。
       const samplerModes: Record<string, string> = {};
       const samplerNames: string[] = [];
+      // sampler 的 `default` 注解（如 shimmer 的 `gradient/gradient_ferro_fluid`）：scene.json 未给该槽
+      // 纹理时的**引擎默认资产**。只认带 `/` 的路径型默认值（"1 1 1" 这类颜色默认不适用）。
+      const samplerDefaults: Record<string, string> = {};
       for (const ann of extractUniformAnnotations(rawVert).concat(extractUniformAnnotations(rawFrag))) {
         if (ann.type.startsWith('sampler') && !samplerNames.includes(ann.name)) samplerNames.push(ann.name);
         const mode = ann.annotation?.mode;
         if (typeof mode === 'string' && mode) samplerModes[ann.name] = mode;
+        const def = ann.annotation?.default;
+        if (ann.type.startsWith('sampler') && typeof def === 'string' && def.includes('/')) {
+          samplerDefaults[ann.name] = def;
+        }
       }
       const uniforms = resolveUniformBindings(
         extractUniformAnnotations(fragSrc).concat(extractUniformAnnotations(vertSrc)),
@@ -146,6 +157,7 @@ export async function resolveEffectChain(
         textureSlots: textures,
         samplerModes,
         samplerNames,
+        samplerDefaults,
         blendMode: mat.passes?.[0]?.blending ?? 'normal',
         // RT 图信息：effect.json passes[i].target（写到的具名 RT）/bind（采样来源）；
         // scene.json pass 可覆写 target（如 scene 指定目标 RT）。缺省 target=null（最终输出）。

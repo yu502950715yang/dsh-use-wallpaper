@@ -84,6 +84,16 @@ describe('combo 派生：sampler 注释带 combo 且该纹理槽被绑定 → �
     }, loadCombo);
     expect(chain![0].combos.MASK).toBe(0);
   });
+
+  // sampler 的 `default` 注解 = scene.json 没给该槽时的引擎默认资产（shimmer 的 gradient 渐变图即此；
+  // 不采集 ⇒ 该槽永远空 ⇒ shimmer 静默无效）。只收带 `/` 的路径型默认值（颜色默认值不参与）。
+  it('samplerDefaults：采集路径型 default 注解（util/noflow），忽略颜色默认值', async () => {
+    const chain = await resolveEffectChain({
+      file: 'effects/combo/effect.json',
+      passes: [{ textures: [null, null, 'masks/m.tex'] }],
+    }, loadCombo);
+    expect(chain![0].samplerDefaults).toMatchObject({ g_Texture3: 'util/noflow' });
+  });
 });
 
 // ── samplerModes（空槽语义的唯一依据：sampler 注释里的 mode 标注）────────────────

@@ -15,6 +15,7 @@ import {
   resolveEmptySlotTexture,
   effectSlotCount,
   resolveSlotFallback,
+  slotDefaultPath,
 } from '../src/client/effect-runner.js';
 import type { CompiledEffectPass } from '../src/client/shader/effect-chain.js';
 import { loadTexTexture } from '../src/client/tex-loader.js';
@@ -339,6 +340,60 @@ describe('effectSlotCount / resolveSlotFallback（槽数补齐与逐槽兜底选
     expect(resolveSlotFallback(p, 3)).toBe(resolveEmptySlotTexture('flowmask'));
     expect(resolveSlotFallback(p, 4)).toBeNull();
     expect(resolveSlotFallback(p, 5)).toBeNull(); // 连声明都没有的槽
+  });
+
+  // shimmer 的 g_Texture3（gradient 渐变图，无 mode 注解）在 scene.json 里是 null：WE 用 shader 注解的
+  // `default` 资产兜底；不加载它 ⇒ shimmerColor 恒 0 ⇒ mix 权重 0、整条 shimmer 静默无效。
+  it('slotDefaultPath：无 mode 常量的空槽才用 shader default 注解（mode 优先，g_Texture0 不用）', () => {
+    const p = pass({
+      textureSlots: [null, null, null, null],
+      samplerModes: { g_Texture2: 'opacitymask' },
+      samplerDefaults: {
+        g_Texture3: 'gradient/gradient_ferro_fluid',
+        g_Texture2: 'util/black',      // 有 mode 常量 ⇒ 不接管
+        g_Texture1: '1 1 1',           // 颜色默认值不是路径型 ⇒ 忽略
+        g_Texture0: 'gradient/x',      // 链输入槽恒不用 default
+      },
+    });
+    expect(slotDefaultPath(p, 3)).toBe('gradient/gradient_ferro_fluid');
+    expect(slotDefaultPath(p, 2)).toBeNull();
+    expect(slotDefaultPath(p, 1)).toBeNull();
+    expect(slotDefaultPath(p, 0)).toBeNull();
+    // 已提供真纹理的槽不用 default
+    expect(slotDefaultPath(pass({ textureSlots: [null, null, null, 'masks/m'], samplerDefaults: { g_Texture3: 'gradient/x' } }), 3)).toBeNull();
+    // 缺字段（早于 default 注解的 pass）→ null，不抛异常
+    expect(slotDefaultPath(pass({ textureSlots: [null] }), 3)).toBeNull();
+  });
+});
+
+describe('EffectRunner 纹理槽 default 注解（引擎默认资产：shimmer 的 gradient）', () => {
+  it('空槽 + shader default → 预加载并从资源路由装载后绑到 g_Texture3', async () => {
+    const { renderer, mats } = createBindRenderer();
+    const seen: string[] = [];
+    const loaded = new THREE.Texture();
+    const load = vi.fn(async (url: string) => {
+      seen.push(url);
+      return loaded;
+    });
+    const runner = new EffectRunner(renderer as never, 16, 16, { load });
+    const shimmer: CompiledEffectPass = {
+      vertSrc: 'void main(){ gl_Position = vec4(position, 1.0); }',
+      fragSrc: 'uniform sampler2D g_Texture0; void main(){ gl_FragColor = vec4(1.0); }',
+      rawVert: '', rawFrag: '', combos: {}, uniforms: new Map(),
+      textureSlots: [null, null, null, null],
+      samplerModes: {},
+      samplerNames: ['g_Texture0', 'g_Texture1', 'g_Texture2', 'g_Texture3'],
+      samplerDefaults: { g_Texture3: 'gradient/gradient_ferro_fluid' },
+      blendMode: 'normal', target: null, bind: [], fboScale: {},
+    };
+    const input = new THREE.Texture();
+    runner.setChains([[shimmer]], '3828798871', { width: 16, height: 16 });
+    await runner.update(0, input);
+    // 预加载请求路径 = 引擎默认资产（pkg 内优先 → 引擎 assets 兜底）
+    expect(seen.some((u) => u.includes('gradient'))).toBe(true);
+    const mat = mats[mats.length - 1];
+    expect(mat.uniforms['g_Texture3'].value).toBe(loaded);
+    runner.dispose();
   });
 });
 

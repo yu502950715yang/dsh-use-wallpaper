@@ -26,4 +26,6 @@ export declare function protectIntContexts(src: string): {
  *  F6 的 int 上下文跨度必须横跨 normalize 与 floatify（见 protectIntContexts），
  *  relax 在还原之后跑，保留它对保留字/const 的改写。 */
 export declare function applyGlsl3StrictnessFixes(src: string): string;
+/** 给「宽向量函数调用开头的初始化器」补 swizzle（HLSL 隐式截断 → GLSL 显式收窄）。 */
+export declare function fixHlslImplicitVectorTruncation(src: string): string;
 export declare function preprocessWeShader(source: string, combos: Record<string, number>): string;
