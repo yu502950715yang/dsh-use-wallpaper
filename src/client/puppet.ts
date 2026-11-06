@@ -72,22 +72,12 @@ export function createPuppetMesh(puppet: MdlPuppet, material: THREE.Material): P
     else roots.push(bones[i]);
   });
 
-  // 蒙皮绑定姿势 = **主动画（animations[0]）第 0 帧**，不是 MDLS 局部矩阵链。
-  // 顶点是按动画起播姿势烘焙的：用 MDLS 当 bind 时，frame0 蒙皮矩阵 ≠ 单位，人物整体带着一个
-  // 固定错位（假人实测：黑武者帽檐/刀鞘偏 20°+），播放起来就像「运动方向不对」。真实素材
-  // 3828798871 与 WE 独立窗口逐帧对拍确认见 AGENT.md §7.40；MDLS 只兜底无动画 / 无作者姿态轨。
-  const bindAnim = animations.length > 0 ? animations[0] : null;
-  if (bindAnim) {
-    for (const track of bindAnim.tracks) {
-      const bone = bones[track.boneId];
-      if (!bone || !track.authored || track.keys.length === 0) continue;
-      const k = track.keys[0];
-      bone.position.set(k.pos[0], k.pos[1], k.pos[2]);
-      keyframeQuaternion(bone.quaternion, k.angle);
-      bone.scale.set(k.scale[0], k.scale[1], k.scale[2]);
-    }
-  }
-
+  // 蒙皮绑定姿势 = **MDLS 局部矩阵链**（`boneDefs[].bind` 按父链累乘），与参考引擎
+  // `WPPuppet::prepared()` 同源：`local_bind` ← MDLS 骨矩阵、`bind_parent` 累乘、`inv_bind = inverse`。
+  // ⚠️ 不要改成「主动画 frame0」：动画帧是对绝对局部变换的采样（参考引擎 `genFrame` 以帧 0 为
+  // 混合基准，但蒙皮矩阵 = `world(anim) · inv_bind`），frame0 只影响播放起点姿势，不是烘焙基准。
+  // 本机 `3812518176` 等多数样本 frame0 == MDLS 链，只有少数模型（含本张黑武者骨 3）不同 —— 恰是
+  // 「人物一动就整体歪/波在错误部位」的来源；webwallgl 与参考引擎都取 MDLS，见 AGENT.md §7.40。
   let mesh: THREE.Mesh | THREE.SkinnedMesh;
   let skeleton: THREE.Skeleton | null = null;
   if (skinned && bones.length > 0) {

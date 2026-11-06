@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import * as THREE from 'three';
 import { parseMdl } from '../src/client/mdl-parser.js';
 import { createPuppetMaterial, createPuppetMesh } from '../src/client/puppet.js';
 
@@ -86,19 +87,31 @@ describe.skipIf(!existsSync(SAMPLES.renwu))('真实 puppet 样本 · 影之刃�
     expect(k0.pos[1]).toBeCloseTo(puppet.bones[0].bind[13], 2);
     // 有作者姿态的轨必须被识别出来（否则渲染侧按 WE 语义会保持绑定姿态 = 仍不动）
     expect(anim.tracks.filter((t) => t.authored).length).toBeGreaterThan(0);
-    // 绑定姿势 = 主动画 frame 0 ⇒ t=0 的蒙皮矩阵必须是单位阵（真实素材回归：这条能抓住
-    // 「拿 MDLS 链当 bind」的错误实现，后者的 t=0 蒙皮矩阵带固定旋转/位移，人物看着就歪）。
+    // 绑定姿势 = **MDLS 局部矩阵链**（参考引擎 WPPuppet::prepared 的 local_bind/bind_parent 同源，
+    // 不是主动画 frame0）。真实素材回归：逐骨比较 skeleton.boneInverses 与「父链累乘 MDLS bind」的逆。
     const inst = createPuppetMesh(puppet, createPuppetMaterial(null));
     expect(inst.skeleton).not.toBeNull(); // 有蒙皮数据 ⇒ SkinnedMesh + Skeleton
+    const bindWorld: THREE.Matrix4[] = [];
+    for (const b of puppet.bones) {
+      const local = new THREE.Matrix4().fromArray(b.bind);
+      const world = b.parent >= 0 && b.parent < bindWorld.length
+        ? bindWorld[b.parent].clone().multiply(local)
+        : local;
+      bindWorld.push(world);
+    }
+    for (let b = 0; b < puppet.bones.length; b++) {
+      const expected = bindWorld[b].clone().invert();
+      for (let k = 0; k < 16; k++) {
+        expect(inst.skeleton!.boneInverses[b].elements[k]).toBeCloseTo(expected.elements[k], 3);
+      }
+    }
+    // frame0 蒙皮矩阵 = world(帧 0)·invBind：本样本骨 3 的 frame0 欧拉角与 MDLS 不同 ⇒ 非恒等
     inst.applyFrame(anim, 0);
     inst.mesh.updateMatrixWorld(true);
     inst.skeleton!.update();
     const identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
-    for (let b = 0; b < puppet.bones.length; b++) {
-      for (let k = 0; k < 16; k++) {
-        expect(inst.skeleton!.boneMatrices[b * 16 + k]).toBeCloseTo(identity[k], 3);
-      }
-    }
+    const bone3 = Array.from(inst.skeleton!.boneMatrices.slice(3 * 16, 4 * 16));
+    expect(bone3.some((v, i) => Math.abs(v - identity[i]!) > 1e-2)).toBe(true);
     inst.dispose();
     console.log(`[mdl] renwu1: bones=${puppet.bones.length} anims=${puppet.animations.map((a) => `${a.id}/${a.frameCount}f/${a.fps}fps/${a.tracks.length}tracks`).join(',')} verts=${puppet.mesh.vertexCount} skinned=${puppet.mesh.blendIndices !== null}`);
   });

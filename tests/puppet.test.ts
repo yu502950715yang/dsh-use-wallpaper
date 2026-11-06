@@ -106,8 +106,8 @@ describe('puppet → three 网格/蒙皮', () => {
     expect(boneMatrixX(p.skeleton!, 1)).toBeCloseTo(4, 5);   // 世界(帧 1)=T(9) ⇒ 9 − 5
   });
 
-  it('绑定姿势 = 主动画 frame 0（不是 MDLS 绑定矩阵）：frame0 蒙皮矩阵恒等', () => {
-    // 骨 1 的 MDLS 绑定平移是 5，但动画 frame0 是 9 ⇒ 绑定世界矩阵应取 9
+  it('绑定姿势 = MDLS 局部矩阵链（参考引擎 local_bind/bind_parent 同源）：frame0 数据只影响播放姿势', () => {
+    // 骨 1 的 MDLS 绑定平移是 5，动画 frame0 是 9 ⇒ 绑定世界矩阵仍取 5（不是 9）
     const anim: MdlAnimation = {
       id: 7, name: 'idle', mode: 'loop', fps: 30, frameCount: 1,
       tracks: [{
@@ -116,12 +116,12 @@ describe('puppet → three 网格/蒙皮', () => {
       }],
     };
     const p = createPuppetMesh(makePuppet({ animations: [anim] }), material());
-    expect(p.bones[1].position.x).toBeCloseTo(9, 5);            // 骨骼初值来自 frame0
-    expect(p.skeleton!.boneInverses[1].elements[12]).toBeCloseTo(-9, 5);
+    expect(p.bones[1].position.x).toBeCloseTo(5, 5);            // 骨骼初值 = MDLS bind
+    expect(p.skeleton!.boneInverses[1].elements[12]).toBeCloseTo(-5, 5);
     p.applyFrame(anim, 0);
     p.mesh.updateMatrixWorld(true);
     p.skeleton!.update();
-    expect(boneMatrixX(p.skeleton!, 1)).toBeCloseTo(0, 5);      // World(frame0)·invBind ≡ I
+    expect(boneMatrixX(p.skeleton!, 1)).toBeCloseTo(4, 5);      // World(frame0)=T(9) ⇒ 9 − 5
   });
 
   it('没有轨道的骨骼保持绑定姿态（帧间不得被清成 0）', () => {
@@ -139,13 +139,13 @@ describe('puppet → three 网格/蒙皮', () => {
     expect(boneMatrixX(p.skeleton!, 0)).toBeCloseTo(0, 5);   // 绑定姿态 ⇒ 恒等
   });
 
-  it('无轨骨骼 / 非作者姿态轨仍用 MDLS 绑定矩阵兜底（不被 frame0 覆盖）', () => {
+  it('有作者姿态轨与无作者姿态轨都不覆盖绑定姿势（bind 恒定 = MDLS 链）', () => {
     const anim: MdlAnimation = {
       id: 7, name: 'idle', mode: 'loop', fps: 30, frameCount: 1,
       tracks: [
-        // 骨 1 有作者姿态：frame0 平移 9 ⇒ 绑定取 9
+        // 骨 1 有作者姿态：播放时采绝对局部值（frame0 平移 9）
         { boneId: 1, authored: true, keys: [{ pos: [9, 0, 0], angle: [0, 0, 0], scale: [1, 1, 1] }] },
-        // 骨 0 的轨全零 ⇒ authored=false，绑定仍取 MDLS 的 T(3)
+        // 骨 0 的轨全零 ⇒ authored=false，播放时跳过（保持 bind T(3)）
         { boneId: 0, authored: false, keys: [{ pos: [0, 0, 0], angle: [0, 0, 0], scale: [1, 1, 1] }] },
       ],
     };
@@ -156,13 +156,14 @@ describe('puppet → three 网格/蒙皮', () => {
       ],
       animations: [anim],
     }), material());
-    expect(p.bones[0].position.x).toBeCloseTo(3, 5);
-    expect(p.bones[1].position.x).toBeCloseTo(9, 5);
+    // bind 只来自 MDLS：bone0 T(3)、bone1 世界 = T(3)·T(5)（frame0 的 9 不能改写它）
+    expect(p.skeleton!.boneInverses[0].elements[12]).toBeCloseTo(-3, 5);
+    expect(p.skeleton!.boneInverses[1].elements[12]).toBeCloseTo(-8, 5);
     p.applyFrame(anim, 0);
     p.mesh.updateMatrixWorld(true);
     p.skeleton!.update();
-    expect(boneMatrixX(p.skeleton!, 0)).toBeCloseTo(0, 5);
-    expect(boneMatrixX(p.skeleton!, 1)).toBeCloseTo(0, 5);
+    expect(boneMatrixX(p.skeleton!, 0)).toBeCloseTo(0, 5);   // 无轨 ⇒ bind
+    expect(boneMatrixX(p.skeleton!, 1)).toBeCloseTo(4, 5);   // 世界 T(9) − bind T(5)
   });
 
   // 真实素材（3828798871 / 3812518176）的 MDLA 关键帧存的是欧拉角，不是四元数；

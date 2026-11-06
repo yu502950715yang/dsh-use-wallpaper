@@ -31523,17 +31523,6 @@ function createPuppetMesh(puppet, material) {
     if (def.parent >= 0 && def.parent < bones.length && def.parent !== i) bones[def.parent].add(bones[i]);
     else roots.push(bones[i]);
   });
-  const bindAnim = animations.length > 0 ? animations[0] : null;
-  if (bindAnim) {
-    for (const track of bindAnim.tracks) {
-      const bone = bones[track.boneId];
-      if (!bone || !track.authored || track.keys.length === 0) continue;
-      const k = track.keys[0];
-      bone.position.set(k.pos[0], k.pos[1], k.pos[2]);
-      keyframeQuaternion(bone.quaternion, k.angle);
-      bone.scale.set(k.scale[0], k.scale[1], k.scale[2]);
-    }
-  }
   let mesh;
   let skeleton = null;
   if (skinned && bones.length > 0) {
