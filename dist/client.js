@@ -29314,6 +29314,11 @@ var ThreeScenePlayer = class {
     if (!entry) return;
     if (entry.puppet) {
       const mat2 = entry.puppet.mesh.material;
+      if (texture.repeat.y !== -1) {
+        texture.repeat.set(1, -1);
+        texture.offset.set(0, 1);
+        texture.matrixAutoUpdate = true;
+      }
       if (mat2.map !== texture) {
         mat2.map = texture;
         mat2.needsUpdate = true;
@@ -29678,7 +29683,6 @@ var ThreeScenePlayer = class {
       const w = Math.max(1, Math.abs(iso.worldW));
       const h = Math.max(1, Math.abs(iso.worldH));
       const contentGeometry = new PlaneGeometry(w, h);
-      flipGeometryUvY(contentGeometry);
       const content = new Mesh(
         contentGeometry,
         new MeshBasicMaterial({ map: opts.texture ?? null, transparent: true, side: DoubleSide })

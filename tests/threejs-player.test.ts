@@ -4885,11 +4885,16 @@ describe('puppet 图层（addPuppet / image 分支 / 逐帧动画）', () => {
     // 内容 = 贴图平面（效果链的输入）
     const content = iso[0].localScene.children[0] as THREE.Mesh;
     expect((content.material as THREE.MeshBasicMaterial).map).toBe(tex);
+    // ⚠️ 内容 uv 不得翻（翻一次 = 内容 RT 变显示约定，与 topDown 加载的 mask 在 v 方向错位，
+    // 波动落到错误部位甚至整体失效）；y 镜像局部相机 + 标准 THREE uv 才是 WE 约定。
+    const ref = new THREE.PlaneGeometry(800, 400);
+    expect(Array.from((content.geometry as THREE.BufferGeometry).getAttribute('uv').array))
+      .toEqual(Array.from(ref.getAttribute('uv').array));
     // 脚本桥仍指向 puppet 网格（不是隐藏 quad）
     expect(player.displayObject(16)).toBe(stub.mesh);
   });
 
-  it('setObjectOutput(puppet)：效果输出写回网格材质 map（不再叠 uvTransform —— 链输出与合成 quad 同采样口径）', () => {
+  it('setObjectOutput(puppet)：效果输出写回网格材质 map，并在采样处补一次垂直翻转（输出 = WE v 约定）', () => {
     const { player } = makePlayer(1920, 1080);
     const stub = makePuppetStub([anim]);
     const tex = new THREE.DataTexture(new Uint8Array(4), 2, 2);
@@ -4902,8 +4907,9 @@ describe('puppet 图层（addPuppet / image 分支 / 逐帧动画）', () => {
     player.setObjectOutput(16, out);
     const mat = stub.mesh.material as THREE.MeshBasicMaterial;
     expect(mat.map).toBe(out);
-    expect(out.repeat.toArray()).toEqual([1, 1]);
-    expect(out.offset.toArray()).toEqual([0, 0]);
+    // 效果链内容 RT 走 WE v 约定（v=0=图像顶部）；puppet 网格 uv 是显示约定 ⇒ 采样处翻 v
+    expect(out.repeat.toArray()).toEqual([1, -1]);
+    expect(out.offset.toArray()).toEqual([0, 1]);
     // 幂等：同一个纹理重复下发不重复改材质
     player.setObjectOutput(16, out);
     expect(mat.map).toBe(out);
