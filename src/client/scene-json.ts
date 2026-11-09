@@ -398,6 +398,9 @@ export function parseSceneJson(raw: string): SceneDescription {
       return {
         ...base, kind: 'image' as const, image: o.image,
         color: optColor(o.color),
+        // color 是否用户属性/脚本绑定（{user,value}）：渲染侧 cb≠0 时据此决定是否烘 tint。
+        colorUserBound: typeof o.color === 'object' && o.color !== null
+          && typeof (o.color as { value?: unknown }).value === 'string',
         alpha: optAlpha(o.alpha),
         brightness: optNum(unwrapFieldValue(o.brightness)) ?? 1,
         userRefs: mergeUserRefs(base.userRefs, pickUserRefs(o, ['color', 'alpha', 'brightness'])),

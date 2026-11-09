@@ -137,6 +137,7 @@ export interface SceneImageObject extends SceneObjectBase {
     script?: string;
     scriptProperties?: Record<string, unknown>;
     color?: [number, number, number];
+    colorUserBound?: boolean;
     alpha?: number;
     brightness?: number;
     colorBlendMode?: number;

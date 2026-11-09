@@ -750,19 +750,23 @@ describe('parseSceneJson visible 归一化（T4.2）', () => {
   // 回归背景（GTR 3743126786）：Clouds Back 的纹理是 78% 黑底 + 白云，`colorBlendMode: 7`
   // （Screen）本应让黑色不改变背景 —— 未实现时黑底被普通 alpha 混合直接盖上 = 左上角一块黑。
   // ---------------------------------------------------------------------------
-  it('解析 image 对象的 colorBlendMode（数值；缺省/非法 → 0）', () => {
+  it('解析 image 对象的 colorBlendMode（数值；缺省/非法 → 0）+ colorUserBound', () => {
     const desc = parseSceneJson(JSON.stringify({
       objects: [
-        { id: 246, image: 'models/clouds.json', colorBlendMode: 7 },
+        { id: 246, image: 'models/clouds.json', colorBlendMode: 7, color: '0.365 0.141 0.141' },
         { id: 17, image: 'models/bg.json' },
         { id: 18, image: 'models/x.json', colorBlendMode: 0 },
         { id: 19, image: 'models/y.json', colorBlendMode: 'abc' },
+        { id: 20, image: 'models/z.json', colorBlendMode: 6, color: { user: 'p', value: '0 0.46 1' } },
       ],
     }));
     expect((desc.objects[0] as any).colorBlendMode).toBe(7);
     expect((desc.objects[1] as any).colorBlendMode).toBe(0);
     expect((desc.objects[2] as any).colorBlendMode).toBe(0);
     expect((desc.objects[3] as any).colorBlendMode).toBe(0);
+    // color 是否 {user,value} 绑定：静态色 false、绑定色 true（渲染侧 cb≠0 的 tint 规则依赖它）
+    expect((desc.objects[0] as any).colorUserBound).toBe(false);
+    expect((desc.objects[4] as any).colorUserBound).toBe(true);
   });
 });
 

@@ -161,6 +161,9 @@ export interface SceneImageObject extends SceneObjectBase {
   // 渲染调制 = 纹理 × color×brightness（0-1）、透明度 × alpha。text 对象 color 走既有
   // T3.1 路径（CanvasTexture 绘制时混色），不经本字段。
   color?: [number, number, number];
+  // color 是否来自 `{user|script,value}` 绑定：WE 运行期由脚本/用户属性驱动该颜色，而本实现只拿到
+  // 静态默认值 ⇒ colorBlendMode ≠ 0 时保留内容原色（不烘 tint），见 scene-json.ts / AGENT §7.40。
+  colorUserBound?: boolean;
   alpha?: number;
   brightness?: number;
   // WE 图像颜色混合模式（scene.json 的 `colorBlendMode` → shader combo `BLENDMODE`）。

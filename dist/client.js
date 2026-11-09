@@ -27681,6 +27681,8 @@ function parseSceneJson(raw) {
         kind: "image",
         image: o.image,
         color: optColor(o.color),
+        // color 是否用户属性/脚本绑定（{user,value}）：渲染侧 cb≠0 时据此决定是否烘 tint。
+        colorUserBound: typeof o.color === "object" && o.color !== null && typeof o.color.value === "string",
         alpha: optAlpha(o.alpha),
         brightness: optNum(unwrapFieldValue(o.brightness)) ?? 1,
         userRefs: mergeUserRefs(base.userRefs, pickUserRefs(o, ["color", "alpha", "brightness"])),
@@ -29587,7 +29589,7 @@ var ThreeScenePlayer = class {
     const h = size?.[1] ?? fallbackH;
     const geometry = new PlaneGeometry(w, h);
     const mod = materialModulation(
-      opts.colorBlendMode ? void 0 : opts.color,
+      opts.colorBlendMode && opts.colorUserBound ? void 0 : opts.color,
       opts.alpha,
       opts.brightness
     );
@@ -30353,6 +30355,8 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
         angles: t.angles,
         // v0.8.2 F13：color tint（0-255）+ alignment（9 值锚点）。
         color: obj.color,
+        // color 是否 {user,value} 绑定（cb≠0 时据此决定是否烘 tint，见 addBackground）。
+        colorUserBound: obj.colorUserBound,
         alignment: obj.alignment,
         // WE 图像颜色混合模式（非 0 且已实现时改用预乘 + CustomBlending，见 addBackground）。
         colorBlendMode: obj.colorBlendMode,

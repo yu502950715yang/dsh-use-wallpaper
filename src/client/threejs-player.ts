@@ -1985,6 +1985,9 @@ export class ThreeScenePlayer {
     util?: UtilLayerKind;
     // 对象颜色（0-255）：image tint 乘进内容材质（F13）；util=solid 作纯色。
     color?: [number, number, number];
+    // color 来自 `{user|script,value}` 绑定（WE 运行期动态驱动；我们只有静态默认值）：
+    // colorBlendMode ≠ 0 时跳过 tint，保留内容原色（见 addBackground 的调制注释）。
+    colorUserBound?: boolean;
     // 对象 alignment（WE 9 值）：origin 是锚点，内容 mesh / 合成 quad 中心按锚点偏移（F13）。
     alignment?: string;
     sceneW: number;
@@ -2041,10 +2044,14 @@ export class ThreeScenePlayer {
     const geometry = new THREE.PlaneGeometry(w, h);
     // 内容材质调制：image 的 color tint × brightness 与 alpha 一次烘进（隔离路径同样烘进 RT；
     // 合成 quad 保持中性，见 createCompositeQuadMaterial）。
-    // colorBlendMode ≠ 0：WE 的追加混合 pass 以**对象内容原色**为 B（桌面实测 2832263418 的 bars 取
-    // Rainboww 彩虹而非对象 color 蓝调）⇒ 不做 color tint，避免内容被对象色污染。
+    // 参考引擎 WPSceneParser：image 内容材质的 g_Color4/g_Color/g_Alpha/g_Brightness 恒取作者值，
+    // 追加混合 pass 的 B = **已带 tint 的内容** ⇒ cb≠0 也要烘 tint（否则云/前景雾比桌面亮）。
+    // 例外：`{user,value}` 绑定的 color 在 WE 由脚本/属性动态驱动，我们只有静态默认值 ⇒ 保留旧行为
+    //（不 tint，内容原色），见 2832263418 音频条（AGENT §7.40 ⑯）。
     const mod = materialModulation(
-      opts.colorBlendMode ? undefined : opts.color, opts.alpha, opts.brightness,
+      opts.colorBlendMode && opts.colorUserBound ? undefined : opts.color,
+      opts.alpha,
+      opts.brightness,
     );
     // ⚠️ 隔离对象（opts.isolate）走 forIsolation=true：内容材质**不套** cb，混合语义全部交给
     // 合成 quad（见 createLayerMaterial / createCompositeQuadMaterial 注释）。
@@ -3211,6 +3218,8 @@ export function loadSceneToThree(
         angles: t.angles,
         // v0.8.2 F13：color tint（0-255）+ alignment（9 值锚点）。
         color: obj.color,
+        // color 是否 {user,value} 绑定（cb≠0 时据此决定是否烘 tint，见 addBackground）。
+        colorUserBound: obj.colorUserBound,
         alignment: obj.alignment,
         // WE 图像颜色混合模式（非 0 且已实现时改用预乘 + CustomBlending，见 addBackground）。
         colorBlendMode: obj.colorBlendMode,
