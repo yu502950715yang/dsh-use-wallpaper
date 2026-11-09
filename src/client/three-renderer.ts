@@ -937,11 +937,20 @@ export function createThreeSceneRenderer(opts?: {
             return {
               objId: o.id, worldW: Math.abs(w), worldH: Math.abs(h),
               source: sourcePixelsFromTexture(tex),
+              // puppet 的效果链输出是**贴图**（人物按纹理采样），RT 用源分辨率才不糊：
+              // 预算只压缩它的升级幅度会先把人物贴图降采样（用户反馈「人物没桌面清晰」）。
+              puppet: isPuppetRendered(o),
             };
           });
-        const budgetScale = fitIsolatedBudget(isolateItems, screenScale);
+        const budgetScale = fitIsolatedBudget(
+          // puppet 不参与隔离预算：它的链输出是**贴图**（人物按纹理采样），预算压缩会先把人物
+          // 贴图降采样 ⇒ 人物比桌面糊（Laplacian 5.60 vs WE 7.16，提到源分辨率后 6.84）。
+          // 数量少（单场景 1~3 个）且体积上限 = 源纹理，单独承担；resize 期同口径（见 budgetedIds）。
+          isolateItems.filter((it) => !it.puppet),
+          screenScale,
+        );
         const isolatedSizes = new Map(isolateItems.map((it) => [it.objId, {
-          rt: isolatedRtSize(it.worldW, it.worldH, screenScale, it.source, { budgetScale }),
+          rt: isolatedRtSize(it.worldW, it.worldH, screenScale, it.source, it.puppet ? {} : { budgetScale }),
           worldW: it.worldW, worldH: it.worldH,
         }]));
         // 源纹理尺寸表（键 = 对象 id）：与挂载期的尺寸计算**同一份数据**，resize 期同源复用（不重算）。
@@ -989,7 +998,8 @@ export function createThreeSceneRenderer(opts?: {
               worldW: sized.worldW, worldH: sized.worldH,
               ...(isPuppetRendered(obj) ? { puppet: true } : {}),
             });
-            budgetedIds.add(obj.id);
+            // puppet RT 不参与预算（resize 期同口径，见 ObjectEffectStage.onViewportResize）。
+            if (!isPuppetRendered(obj)) budgetedIds.add(obj.id);
           } else if (obj.kind === 'particle') {
             const p = particles.get(obj.id);
             if (!p) continue;

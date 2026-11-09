@@ -3884,7 +3884,8 @@ describe('createThreeSceneRenderer · puppet 接线', () => {
     const isoEntry = assetsOfLastLoad().isolate.get(16);
     expect(isoEntry).toBeDefined();
     expect(isoEntry!.puppet).toBe(true);
-    expect(worldSpy).toHaveBeenCalledWith(16, expect.any(Number), expect.any(Number), null, true);
+    // 第 5 参 budgeted=false：puppet RT 不参与隔离预算（按源纹理分辨率，否则人物贴图被预算降采样 ⇒ 比桌面糊）
+    expect(worldSpy).toHaveBeenCalledWith(16, expect.any(Number), expect.any(Number), null, false);
     expect(chainsSpy).toHaveBeenCalledWith(16, expect.any(Array));
     expect(setObjectEffectStage).toHaveBeenCalledTimes(1);
     // 旧行为（直渲 + 专属告警）不再存在；也不得并入「效果挂在未参与渲染的对象类型上」汇总告警。
@@ -3894,7 +3895,7 @@ describe('createThreeSceneRenderer · puppet 接线', () => {
     warn.mockRestore();
   });
 
-  it('puppet 与 image 同进 isolate 预算：两者按同一套 isolatedRtSize 收口', async () => {
+  it('puppet 不参与 isolate 预算：按源分辨率收口；image 仍按预算收口', async () => {
     resolveImageAssets.mockImplementation(async (_id, o) => ({
       texture: { image: { ...FX_SCENE_ORTHO }, dispose: vi.fn() } as never,
       puppetPath: o.id === 16 ? 'models/p_puppet.mdl' : null,
@@ -3910,11 +3911,12 @@ describe('createThreeSceneRenderer · puppet 接线', () => {
     expect(isolate.has(16)).toBe(true);
     expect(isolate.get(16)!.puppet).toBe(true);
     expect(isolate.has(17)).toBe(true);
-    // 同一份 world size / 源纹理 ⇒ 两者拿到同一套 RT 尺寸（预算同口径按比例收口，不超过 4096 硬上限）。
+    // 同一份 world size / 源纹理 ⇒ puppet 直接取源分辨率（不受 budgetScale 收窄），image 走预算口径。
+    // 本夹具像素量远低于预算 ⇒ budgetScale=1，两者相等；但 puppet 至少不应小于 image。
     const p = isolate.get(16)!;
     const i = isolate.get(17)!;
-    expect(p.rtWidth).toBe(i.rtWidth);
-    expect(p.rtHeight).toBe(i.rtHeight);
+    expect(p.rtWidth).toBeGreaterThanOrEqual(i.rtWidth);
+    expect(p.rtHeight).toBeGreaterThanOrEqual(i.rtHeight);
     expect(p.rtWidth).toBeGreaterThan(0);
     expect(Math.max(p.rtWidth, p.rtHeight)).toBeLessThanOrEqual(4096);
     r.dispose();
