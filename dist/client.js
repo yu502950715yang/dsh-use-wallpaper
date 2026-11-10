@@ -3344,7 +3344,12 @@ var DEFAULTS = {
   // 开机动画声音（2026-11-04）：默认开；桌面壳直接出声，浏览器无手势时保持静音。
   bootAnimationSoundEnabled: true,
   // 开机动画音量：默认 1。
-  bootAnimationVolume: 1
+  bootAnimationVolume: 1,
+  // 纹理解压预算（1.0 S3；与 tex-loader.DEFAULT_TEX_BUDGET 保持一致，profile config 可调）
+  texMaxMipBytes: 512 * 1024 * 1024,
+  texMaxTextureBytes: 1024 * 1024 * 1024,
+  texMaxMipCount: 4096,
+  texMaxDimension: 16384
 };
 var settingsCtx = null;
 var lastGood = null;
@@ -30692,6 +30697,45 @@ function ascii(buf, pos, len) {
   return s;
 }
 var MIN_LEN = 18 + 28 + 9 + 4 + 4;
+var DEFAULT_TEX_BUDGET = Object.freeze({
+  maxMipBytes: 512 * 1024 * 1024,
+  maxTextureBytes: 1024 * 1024 * 1024,
+  maxMipCount: 4096,
+  maxDimension: 16384
+});
+var texBudget = { ...DEFAULT_TEX_BUDGET };
+function setTexBudget(patch) {
+  if (!patch) {
+    texBudget = { ...DEFAULT_TEX_BUDGET };
+    return;
+  }
+  const pick = (v, fallback) => typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.floor(v) : fallback;
+  texBudget = {
+    maxMipBytes: pick(patch.maxMipBytes, DEFAULT_TEX_BUDGET.maxMipBytes),
+    maxTextureBytes: pick(patch.maxTextureBytes, DEFAULT_TEX_BUDGET.maxTextureBytes),
+    maxMipCount: pick(patch.maxMipCount, DEFAULT_TEX_BUDGET.maxMipCount),
+    maxDimension: pick(patch.maxDimension, DEFAULT_TEX_BUDGET.maxDimension)
+  };
+}
+function expectedDecompressedBytes(format, width, height) {
+  const b4 = (n) => Math.max(1, Math.ceil(n / 4));
+  switch (format) {
+    case TEX_FORMAT.RGBA8888:
+      return width * height * 4;
+    case TEX_FORMAT.DXT5:
+      return b4(width) * b4(height) * 16;
+    case TEX_FORMAT.DXT3:
+      return b4(width) * b4(height) * 16;
+    case TEX_FORMAT.DXT1:
+      return b4(width) * b4(height) * 8;
+    case TEX_FORMAT.RG88:
+      return width * height * 2;
+    case TEX_FORMAT.R8:
+      return width * height;
+    default:
+      return 0;
+  }
+}
 function mipRecordOk(buf, at) {
   if (at + 20 > buf.length) return false;
   const isLZ4 = readI32(buf, at + 8);
@@ -30738,6 +30782,8 @@ function parseTex(buf) {
     }
   }
   const mipmaps = [];
+  let totalMips = 0;
+  let totalDecompressed = 0;
   for (let img = 0; img < imageCount; img++) {
     if (pos + 4 > buf.length) return null;
     const mipmapCount = readI32(buf, pos);
@@ -30770,13 +30816,26 @@ function parseTex(buf) {
       }
       pos = at + fieldLen;
       if (mw <= 0 || mh <= 0 || bytesLen < 0) return null;
+      if (mw > texBudget.maxDimension || mh > texBudget.maxDimension) return null;
       if (pos + bytesLen > buf.length) return null;
       const payload = buf.subarray(pos, pos + bytesLen);
       pos += bytesLen;
+      totalMips += 1;
+      if (totalMips > texBudget.maxMipCount) return null;
       if (isLZ4) {
-        if (decompressedBytes <= 0 || decompressedBytes > 1 << 30) return null;
-        mipmaps.push({ width: mw, height: mh, data: lz4Decompress(payload, decompressedBytes) });
+        const expected = expectedDecompressedBytes(format, mw, mh);
+        if (expected <= 0) return null;
+        if (expected > texBudget.maxMipBytes) return null;
+        if (decompressedBytes !== expected) return null;
+        if (bytesLen === 0) return null;
+        totalDecompressed += expected;
+        if (totalDecompressed > texBudget.maxTextureBytes) return null;
+        const data = lz4Decompress(payload, expected);
+        if (data.length !== expected) return null;
+        mipmaps.push({ width: mw, height: mh, data });
       } else {
+        totalDecompressed += bytesLen;
+        if (totalDecompressed > texBudget.maxTextureBytes) return null;
         mipmaps.push({ width: mw, height: mh, data: new Uint8Array(payload) });
       }
     }
@@ -38809,6 +38868,12 @@ function bootstrap(ctx) {
     document.addEventListener("visibilitychange", onVisibility);
     void readClientSettings().then((s) => {
       if (disposed) return;
+      setTexBudget({
+        maxMipBytes: s.texMaxMipBytes,
+        maxTextureBytes: s.texMaxTextureBytes,
+        maxMipCount: s.texMaxMipCount,
+        maxDimension: s.texMaxDimension
+      });
       settings = { ...s, selectedWallpaperId: settings.selectedWallpaperId || s.selectedWallpaperId };
       applySettingsToLayer(s);
       applyRuntimeSettings(s);

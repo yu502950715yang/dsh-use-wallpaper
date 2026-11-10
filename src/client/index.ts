@@ -6,6 +6,7 @@ import { registerSetupTipSlots } from './setup-tip.js';
 import { createBackgroundLayer } from './background-layer.js';
 import { createWallpaperController } from './wallpaper-controller.js';
 import { createThreeSceneRenderer } from './three-renderer.js';
+import { setTexBudget } from './tex-loader.js';
 import { ensureSceneFrame, showSceneFallback } from './scene-fallback.js';
 import { setWallpaperSelectHandler, setWallpaperRuntimeHandler, setWallpaperHealthHandler, setWallpaperMediaHandler, setWallpaperMediaIntegrationHandler, setWallpaperVideoHealthHandler, setWallpaperReselectHandler, setWallpaperSystemAudioHandlers, notifyWallpaperHealth, notifyWallpaperMedia } from './settings-section.js';
 import { readClientSettings, writeClientSettings, getUserPropertyValue, DEFAULTS, setSettingsCtx } from './settings.js';
@@ -367,6 +368,13 @@ export function bootstrap(ctx?: any): void {
     // 读回已保存设置并应用到 layer（opacity/blur/kenBurns/fitMode）与运行期项（暂停/画质档位）
     void readClientSettings().then((s) => {
       if (disposed) return; // 期间已收尾（HMR drain）→ 不再复活
+      // S3：纹理解压预算以 profile config 为准（后期可调）；缺省/非法值由 tex-loader 回退默认。
+      setTexBudget({
+        maxMipBytes: s.texMaxMipBytes,
+        maxTextureBytes: s.texMaxTextureBytes,
+        maxMipCount: s.texMaxMipCount,
+        maxDimension: s.texMaxDimension,
+      });
       // 启动窗口内用户可能已经选过壁纸 ⇒ 异步读回的持久值不得把它冲掉（否则 retryLive/自动重试定位不到）
       settings = { ...s, selectedWallpaperId: settings.selectedWallpaperId || s.selectedWallpaperId };
       applySettingsToLayer(s);

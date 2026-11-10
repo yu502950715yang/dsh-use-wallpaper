@@ -65,6 +65,8 @@ const BASE_SETTINGS: ClientSettings = {
   bootAnimationWallpaperId: '', bootAnimationWallpaperKind: '',
   bootAnimationLocalPath: '', bootAnimationFitMode: 'cover',
   bootAnimationMaxDurationMs: 6000, bootAnimationSoundEnabled: true, bootAnimationVolume: 1,
+  texMaxMipBytes: 512 * 1024 * 1024, texMaxTextureBytes: 1024 * 1024 * 1024,
+  texMaxMipCount: 4096, texMaxDimension: 16384,
 };
 
 const WALLPAPERS = [

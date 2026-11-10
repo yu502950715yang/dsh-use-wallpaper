@@ -11,6 +11,10 @@ export interface TexMipSpec {
   height: number;
   data: Uint8Array;   // 原始数据（未压缩）
   lz4?: boolean;      // 是否 LZ4 压缩存储（默认 false）
+  /** 覆盖「声明的解压字节数」（默认 data.length）；用于构造声明与实际不符/超大的恶意样本（S3）。 */
+  declaredBytes?: number;
+  /** 覆盖实际写入的压缩载荷（默认由 data 压缩/原样）；用于构造空载荷炸弹（S3）。 */
+  payload?: Uint8Array;
 }
 
 export interface MakeTexOptions {
@@ -109,7 +113,7 @@ export function makeTex(opts: MakeTexOptions): Buffer {
         const cond = Buffer.from('{"condition":"tvoff"}\0', 'utf8');
         chunks.push(Buffer.alloc(8), cond, Buffer.alloc(4));
       }
-      const payload = m.lz4 ? lz4Compress(m.data) : m.data;
+      const payload = m.payload ?? (m.lz4 ? lz4Compress(m.data) : m.data);
       if (container === 'TEXB0001') {
         const meta = Buffer.alloc(12);
         meta.writeUInt32LE(m.width, 0);
@@ -122,7 +126,7 @@ export function makeTex(opts: MakeTexOptions): Buffer {
         meta.writeUInt32LE(m.width, 0);
         meta.writeUInt32LE(m.height, 4);
         meta.writeUInt32LE(m.lz4 ? 1 : 0, 8);
-        meta.writeUInt32LE(m.data.length, 12);   // decompressedBytesCount
+        meta.writeUInt32LE(m.declaredBytes ?? m.data.length, 12);   // decompressedBytesCount
         meta.writeUInt32LE(payload.length, 16);  // bytesLen
         chunks.push(meta, Buffer.from(payload));
       }

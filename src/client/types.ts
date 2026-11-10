@@ -63,4 +63,10 @@ export interface ClientSettings {
   bootAnimationSoundEnabled: boolean;
   /** 开机动画音量 0-1；缺省 1。 */
   bootAnimationVolume: number;
+  // 纹理解压预算（1.0 S3 加固）：profile config 可调，index.ts 启动时注入 tex-loader；
+  // 语义与默认值见 tex-loader.DEFAULT_TEX_BUDGET。
+  texMaxMipBytes: number;
+  texMaxTextureBytes: number;
+  texMaxMipCount: number;
+  texMaxDimension: number;
 }

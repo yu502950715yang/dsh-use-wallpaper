@@ -212,6 +212,14 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 | `bootAnimationMaxDurationMs` | `6000` | 最长播放（0–30000 ms；0 = 视频播完为止，图片固定约 4 秒） |
 | `bootAnimationSoundEnabled` | `true` | 开机动画声音（桌面版直接出声；浏览器冷启动没有用户手势时自动播放策略会先静音） |
 | `bootAnimationVolume` | `1` | 开机动画音量 0–1（开机动画 tab「声音」卡滑杆） |
+| `texMaxMipBytes` | `536870912`（512 MiB） | **纹理解压预算**：单条 mip 解压上限（安全加固，正常素材用不到） |
+| `texMaxTextureBytes` | `1073741824`（1 GiB） | 单个 `.tex` 全部 mip 解压总和上限 |
+| `texMaxMipCount` | `4096` | 单个 `.tex` 的 mip 条数上限 |
+| `texMaxDimension` | `16384` | 单条 mip 宽/高上限（WebGL2 最大纹理尺寸） |
+
+> **纹理解压预算（`texMax*`）一般不需要改**：它是 1.0 的安全加固——`.tex` 里「解压后多大」是第三方素材自己写的，此前按它直接分配内存，恶意/损坏素材可让页面内存爆掉。现在分配大小按「格式 + 宽高」推导，声明不一致、空载荷或超预算的纹理会被拒绝（该纹理缺失，走正常降级链）。
+>
+> 只有当**某张合法壁纸的超大纹理**被误拒（表现为该纹理缺失/白图/该壁纸回退预览）时，才需要按需调大对应上限，改完刷新页面生效。建议按需只调大被触发的那个字段（例如 8K RGBA 素材只需确认 `texMaxMipBytes ≥ 268435456`）。
 
 优先级：用户设置 > profile `cordis.patch.yml` 的 `config` > 缺省。
 

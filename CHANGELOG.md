@@ -48,6 +48,7 @@
   - 开机动画的 `/wallpapers/boot/local-video` 与 `/wallpapers/boot/probe` **不再接受任意 `?path=`**，只读设置里配置的那一个路径（`bootAnimationLocalPath`）。此前 web 壁纸 iframe 与插件路由同源，可借它把用户磁盘上**任意本地视频**读成字节并外传。
   - `/wallpapers/web/*` 拒绝「已知 GUI 页面 Host」的请求：阻断壁纸 iframe 自我导航回 GUI origin、取回「GUI origin + 壁纸 HTML」组合后访问 `parent.document` / `localStorage` 的逃逸路径。
   - `.html` / `.svg` / `.js` / `.xml` 等危险后缀在 scene / media 资产下载时强制 `application/octet-stream` + `Content-Disposition: attachment`；所有 `/wallpapers/*` 响应带 `X-Content-Type-Options: nosniff`；系统媒体封面 MIME 只放行 `image/*`。
+  - **`.tex` 解压炸弹**：mip 的「解压字节数 / 宽高」是第三方素材声明的，此前按其直接分配内存（`64 image × 256 mip` 各声明 1GB + 空载荷即可让渲染进程 OOM）。现在分配大小按「格式 + 宽高」推导，声明不一致 / 空载荷 / 解压长度不符 / 超预算一律拒绝（该纹理缺失、走降级链）；4 个阈值可通过 profile config 的 `texMax*` 字段调整（默认 512MiB / 1GiB / 4096 / 16384，正常素材用不到）。
 
 ### 移除（Removed）
 

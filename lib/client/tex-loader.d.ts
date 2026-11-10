@@ -36,6 +36,18 @@ export interface TexSpriteInfo {
     /** 首帧时长（秒）；<=0 / 缺失 = 未知（调用方保持 1fps 旧语义）。 */
     frametime?: number;
 }
+export interface TexBudget {
+    maxMipBytes: number;
+    maxTextureBytes: number;
+    maxMipCount: number;
+    maxDimension: number;
+}
+export declare const DEFAULT_TEX_BUDGET: Readonly<TexBudget>;
+/** 设置解压预算（index.ts bootstrap 从 profile config 注入；缺省/非法值回退默认）。 */
+export declare function setTexBudget(patch?: Partial<TexBudget> | null): void;
+export declare function getTexBudget(): Readonly<TexBudget>;
+/** 按 format + 尺寸推导解压后字节数（0 = 未知格式，调用方应拒绝 LZ4 分配）。 */
+export declare function expectedDecompressedBytes(format: number, width: number, height: number): number;
 export declare function parseTex(buf: Uint8Array): TexInfo | null;
 export declare function parseSpriteSection(buf: Uint8Array, pos: number, mipWidth: number, mipHeight: number): TexSpriteInfo | undefined;
 export declare function cropToMap(data: Uint8Array<ArrayBuffer>, mipWidth: number, mipHeight: number, mapWidth: number, mapHeight: number, format: number, flags: number): {

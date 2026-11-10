@@ -38,6 +38,11 @@ export const DEFAULTS: ClientSettings = {
   bootAnimationSoundEnabled: true,
   // 开机动画音量：默认 1。
   bootAnimationVolume: 1,
+  // 纹理解压预算（1.0 S3；与 tex-loader.DEFAULT_TEX_BUDGET 保持一致，profile config 可调）
+  texMaxMipBytes: 512 * 1024 * 1024,
+  texMaxTextureBytes: 1024 * 1024 * 1024,
+  texMaxMipCount: 4096,
+  texMaxDimension: 16384,
 };
 
 /** client cordis ctx（经 setSettingsCtx 注入，供 remote.settings 访问）。 */

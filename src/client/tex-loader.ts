@@ -90,6 +90,67 @@ function ascii(buf: Uint8Array, pos: number, len: number): string {
 
 const MIN_LEN = 18 + 28 + 9 + 4 + 4; // magic + header + container + imageCount + mipmapCount
 
+// ── 纹理解压预算（1.0 S3 加固，2026-11-10）──────────────────────────────────
+// .tex 的 mip 记录里「解压字节数 / 宽高」都是**第三方素材自己声明的**。此前按声明的解压字节数
+// 直接 new Uint8Array，恶意/损坏素材（如 64 image × 256 mip 各声明 1GB + 空载荷）可让渲染进程 OOM。
+// 现在的口径：**分配大小按 format + 宽高推导**（正常素材 100% 一致，本机实测 295/295），
+// 声明值只用于一致性校验；再多层预算兜底。
+//
+// 4 个阈值都**可通过 profile config 调整**（后期排查/适配超大素材不用改代码）：
+//   texMaxMipBytes       单条 mip 解压上限（默认 512 MiB；8K RGBA 单 mip = 256 MiB）
+//   texMaxTextureBytes   单纹理全部 mip 解压总和（默认 1 GiB；8K RGBA 的 LOD 链 ≈ 341 MiB）
+//   texMaxMipCount       单文件 mip 总数（默认 4096；正常 ≈ 13/纹理，64 image 最多 832）
+//   texMaxDimension      单 mip 宽/高上限（默认 16384；WebGL2 最大纹理尺寸，超过无法渲染）
+// 配置写入 profile `cordis.patch.yml` 的 `dsh-wallpaper-engine.config`；client 启动时读回，
+// 读不到/非法值一律回退这里的默认值（安全兜底，不阻断渲染）。
+export interface TexBudget {
+  maxMipBytes: number;
+  maxTextureBytes: number;
+  maxMipCount: number;
+  maxDimension: number;
+}
+
+export const DEFAULT_TEX_BUDGET: Readonly<TexBudget> = Object.freeze({
+  maxMipBytes: 512 * 1024 * 1024,
+  maxTextureBytes: 1024 * 1024 * 1024,
+  maxMipCount: 4096,
+  maxDimension: 16384,
+});
+
+let texBudget: TexBudget = { ...DEFAULT_TEX_BUDGET };
+
+/** 设置解压预算（index.ts bootstrap 从 profile config 注入；缺省/非法值回退默认）。 */
+export function setTexBudget(patch?: Partial<TexBudget> | null): void {
+  if (!patch) { texBudget = { ...DEFAULT_TEX_BUDGET }; return; }
+  const pick = (v: unknown, fallback: number): number =>
+    typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.floor(v) : fallback;
+  texBudget = {
+    maxMipBytes: pick(patch.maxMipBytes, DEFAULT_TEX_BUDGET.maxMipBytes),
+    maxTextureBytes: pick(patch.maxTextureBytes, DEFAULT_TEX_BUDGET.maxTextureBytes),
+    maxMipCount: pick(patch.maxMipCount, DEFAULT_TEX_BUDGET.maxMipCount),
+    maxDimension: pick(patch.maxDimension, DEFAULT_TEX_BUDGET.maxDimension),
+  };
+}
+
+export function getTexBudget(): Readonly<TexBudget> {
+  return texBudget;
+}
+
+/** 按 format + 尺寸推导解压后字节数（0 = 未知格式，调用方应拒绝 LZ4 分配）。 */
+export function expectedDecompressedBytes(format: number, width: number, height: number): number {
+  const b4 = (n: number): number => Math.max(1, Math.ceil(n / 4));
+  switch (format) {
+    case TEX_FORMAT.RGBA8888: return width * height * 4;
+    case TEX_FORMAT.DXT5: return b4(width) * b4(height) * 16;
+    case TEX_FORMAT.DXT3: return b4(width) * b4(height) * 16;
+    case TEX_FORMAT.DXT1: return b4(width) * b4(height) * 8;
+    case TEX_FORMAT.RG88: return width * height * 2;
+    case TEX_FORMAT.R8: return width * height;
+    default: return 0;
+  }
+}
+
+
 // flags&0x40 变体（WE 自带颜色分级 LUT）在每条 mip 记录前多一个 u32：用载荷自洽判据择一，
 // 避免标准布局被误跳（同源导出器也可能出现标准布局）。
 function mipRecordOk(buf: Uint8Array, at: number): boolean {
@@ -149,6 +210,9 @@ export function parseTex(buf: Uint8Array): TexInfo | null {
   }
 
   const mipmaps: TexMipmap[] = [];
+  // S3 预算（跨 image 累计）：mip 总数 + 解压字节总量，见 DEFAULT_TEX_BUDGET 注释
+  let totalMips = 0;
+  let totalDecompressed = 0;
   for (let img = 0; img < imageCount; img++) {
     if (pos + 4 > buf.length) return null;
     const mipmapCount = readI32(buf, pos);
@@ -184,13 +248,30 @@ export function parseTex(buf: Uint8Array): TexInfo | null {
       }
       pos = at + fieldLen;
       if (mw <= 0 || mh <= 0 || bytesLen < 0) return null;
+      // S3：宽高来自素材声明，先受尺寸上限约束（下面的 expected 由它推导，不能直接信）
+      if (mw > texBudget.maxDimension || mh > texBudget.maxDimension) return null;
       if (pos + bytesLen > buf.length) return null;
       const payload = buf.subarray(pos, pos + bytesLen);
       pos += bytesLen;
+      totalMips += 1;
+      if (totalMips > texBudget.maxMipCount) return null;
       if (isLZ4) {
-        if (decompressedBytes <= 0 || decompressedBytes > 1 << 30) return null;
-        mipmaps.push({ width: mw, height: mh, data: lz4Decompress(payload, decompressedBytes) });
+        // 分配大小按 format + 宽高推导（正常素材 100% 与声明一致，本机实测 295/295）；
+        // 声明与推导不符 ⇒ 视为异常素材拒绝，绝不按声明值分配。
+        const expected = expectedDecompressedBytes(format, mw, mh);
+        if (expected <= 0) return null;
+        if (expected > texBudget.maxMipBytes) return null;
+        if (decompressedBytes !== expected) return null;
+        if (bytesLen === 0) return null; // 空载荷不可能解压出数据（S3 炸弹形态）
+        totalDecompressed += expected;
+        if (totalDecompressed > texBudget.maxTextureBytes) return null;
+        const data = lz4Decompress(payload, expected);
+        if (data.length !== expected) return null; // 数据不足/损坏 ⇒ 整纹理拒绝（走降级链）
+        mipmaps.push({ width: mw, height: mh, data });
       } else {
+        // 非 LZ4：载荷由 bytesLen 约束；同样计入总预算
+        totalDecompressed += bytesLen;
+        if (totalDecompressed > texBudget.maxTextureBytes) return null;
         // 拷贝为纯 Uint8Array：与 LZ4 分支输出类型一致，且不 alias 输入 buffer
         mipmaps.push({ width: mw, height: mh, data: new Uint8Array(payload) });
       }

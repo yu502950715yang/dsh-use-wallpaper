@@ -33,6 +33,10 @@ export declare const WallpaperSettingsSchema: z<Schemastery.ObjectS<NoInfer<{
     bootAnimationMaxDurationMs: z<number, number, "defined">;
     bootAnimationSoundEnabled: z<boolean, boolean, "defined">;
     bootAnimationVolume: z<number, number, "defined">;
+    texMaxMipBytes: z<number, number, "defined">;
+    texMaxTextureBytes: z<number, number, "defined">;
+    texMaxMipCount: z<number, number, "defined">;
+    texMaxDimension: z<number, number, "defined">;
 }>>, Schemastery.ObjectT<NoInfer<{
     selectedWallpaperId: z<string, string, "defined">;
     wallpaperDir: z<string, string, "defined">;
@@ -67,6 +71,10 @@ export declare const WallpaperSettingsSchema: z<Schemastery.ObjectS<NoInfer<{
     bootAnimationMaxDurationMs: z<number, number, "defined">;
     bootAnimationSoundEnabled: z<boolean, boolean, "defined">;
     bootAnimationVolume: z<number, number, "defined">;
+    texMaxMipBytes: z<number, number, "defined">;
+    texMaxTextureBytes: z<number, number, "defined">;
+    texMaxMipCount: z<number, number, "defined">;
+    texMaxDimension: z<number, number, "defined">;
 }>>, "plain">;
 export declare const Config: z<NoInfer<Schemastery.ObjectS<NoInfer<{
     selectedWallpaperId: z<string, string, "defined">;
@@ -102,6 +110,10 @@ export declare const Config: z<NoInfer<Schemastery.ObjectS<NoInfer<{
     bootAnimationMaxDurationMs: z<number, number, "defined">;
     bootAnimationSoundEnabled: z<boolean, boolean, "defined">;
     bootAnimationVolume: z<number, number, "defined">;
+    texMaxMipBytes: z<number, number, "defined">;
+    texMaxTextureBytes: z<number, number, "defined">;
+    texMaxMipCount: z<number, number, "defined">;
+    texMaxDimension: z<number, number, "defined">;
 }>>>, NoInfer<Schemastery.ObjectT<NoInfer<{
     selectedWallpaperId: z<string, string, "defined">;
     wallpaperDir: z<string, string, "defined">;
@@ -136,4 +148,8 @@ export declare const Config: z<NoInfer<Schemastery.ObjectS<NoInfer<{
     bootAnimationMaxDurationMs: z<number, number, "defined">;
     bootAnimationSoundEnabled: z<boolean, boolean, "defined">;
     bootAnimationVolume: z<number, number, "defined">;
+    texMaxMipBytes: z<number, number, "defined">;
+    texMaxTextureBytes: z<number, number, "defined">;
+    texMaxMipCount: z<number, number, "defined">;
+    texMaxDimension: z<number, number, "defined">;
 }>>>, "volatile">;

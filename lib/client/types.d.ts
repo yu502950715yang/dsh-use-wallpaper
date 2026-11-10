@@ -69,4 +69,8 @@ export interface ClientSettings {
     bootAnimationSoundEnabled: boolean;
     /** 开机动画音量 0-1；缺省 1。 */
     bootAnimationVolume: number;
+    texMaxMipBytes: number;
+    texMaxTextureBytes: number;
+    texMaxMipCount: number;
+    texMaxDimension: number;
 }

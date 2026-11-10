@@ -221,6 +221,8 @@ npx vitest run tests/xxx.test.ts --reporter=basic   # 跑单个文件
 
 60. **web 壁纸沙箱的两条安全边界（2026-11-10，1.0 加固，勿回退）**：① **boot 本地视频只读配置**——`/wallpapers/boot/local-video|probe` 的唯一允许路径是 profile config 的 `bootAnimationLocalPath`，query 的 `path` 只能复述同一值（不一致/未配置 ⇒ 403）；web 壁纸 iframe 与插件路由**同源**（承载在另一回环主机名上），所以「回环来源」校验挡不住它，不能再用 `?path=` 当通用文件读取。② **`/wallpapers/web` 承载 Host 绑定**——任何非 `/web` 路由被请求时把 Host 记入 `guiHosts`（上限 8，FIFO），`/web` 收到这些 Host ⇒ 403（否则 iframe 自我导航回 GUI origin 取回「壁纸 HTML + GUI origin」组合即可拿 `parent.document`）。危险后缀（`.html/.svg/.js/.xml`）在 scene/media 资产一律 `octet-stream` + attachment，全路由 `nosniff`，封面 MIME 只放行 `image/*`。判据：`tests/security-sandbox.test.ts` + `tests/boot-asset.test.ts`。
 
+61. **纹理解压预算（1.0 S3，2026-11-10，勿回退）**：`parseTex` 的 LZ4 分配大小按 `format + 宽高` 推导（`expectedDecompressedBytes`），**绝不按 mip 记录里声明的 `decompressedBytes` 分配**——后者是第三方素材可控的（曾可 `64 image × 256 mip` 各声明 1GB + 空载荷 ⇒ 渲染进程 OOM）。声明 ≠ 推导 ⇒ 拒绝；空载荷 ⇒ 拒绝；解压长度 ≠ 推导值 ⇒ 拒绝；另受 4 个**可配置**预算约束：`texMaxMipBytes` / `texMaxTextureBytes` / `texMaxMipCount` / `texMaxDimension`（profile config 字段，client 启动时经 `setTexBudget` 注入，默认值见 `DEFAULT_TEX_BUDGET`；正常素材 100% 与推导值一致，本机 295/295 LZ4 mip 实测）。**不得为了兼容异常素材而改回「按声明分配」**。判据：`tests/tex-loader-security.test.ts`（含 mutation 验证过的拒绝路径）。
+
 ## 6. 工作约定
 
 - 回复、注释、文档、**提交信息一律简体中文**；代码、命令、文件名、技术术语保留原文。
