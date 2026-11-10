@@ -11,7 +11,7 @@
 - **形态**：单包仓库，仓库根即插件 `@dsh-use/wallpaper-engine`（`package.json` 声明了 `dsh.bundle`，可直接 `dsh plugin add github:...`）。
 - **能力**：扫描 Steam workshop 壁纸目录（候选根 = `src/host/steam-paths.ts` 的 `DEFAULT_STEAM_ROOTS`：`C:/Program Files (x86)/Steam` / `D:/Steam` / `E:/Steam`，拼出 `steamapps/workshop/content/431960`；可自动探测 —— 注册表 + `libraryfolders.vdf` + 常见路径 —— 或手动配置，settings 热更新），在 DSH Web GUI 里渲染 scene 壁纸 / 播放视频 / 加载 web 页，其余回退 preview 图 + Ken Burns。开机动画：设置页内 tab（日常壁纸 / 开机动画），素材为 WE 库 video/image 壁纸或本地视频绝对路径（host 仅回环来源流式），四种展示方式，每次冷启动播一次、声音默认开启（面板可关）、8s 超时静默跳过。
 - **入口**：DSH 设置对话框侧边栏「壁纸」菜单（client 经 `settings.section` slot 注册，见 `src/client/settings-section.tsx`）。
-- **技术栈**：TypeScript strict、ESM-only；浏览器侧 three.js（WebGL2）+ Rust（wasm，**仅 CPU 粒子模拟**，已无 wgpu/WebGPU）；宿主侧 Cordis 插件体系。Node 版本无 `engines` 声明，CI 用 Node 22。
+- **技术栈**：TypeScript strict、ESM-only；浏览器侧 three.js（WebGL2）+ Rust（wasm，**仅 CPU 粒子模拟**，已无 wgpu/WebGPU）；宿主侧 Cordis 插件体系。`engines.node = ">=20"`（CI 用 Node 22）、`engines.dsh = ">=0.2.0-rc.1 <0.3.0"`（1.0 起，见 §7.34）。
 - **自带解包**：host 侧自行解析 **PKGV 容器**（magic `PKGV` 在 offset 4，`src/host/pkg-reader.ts` 只校验这 4 字节，版本字段未使用）与 **TEXV0005 纹理**（`src/client/tex-loader.ts`）；不依赖 WE 运行时。
 
 ## 2. 架构
