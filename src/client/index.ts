@@ -7,6 +7,7 @@ import { createBackgroundLayer } from './background-layer.js';
 import { createWallpaperController } from './wallpaper-controller.js';
 import { createThreeSceneRenderer } from './three-renderer.js';
 import { setTexBudget } from './tex-loader.js';
+import { createAudioStartGuard } from './audio-start-guard.js';
 import { PanelBus } from './panel-bus.js';
 import { setPanelBus } from './settings-section.js';
 import { ensureSceneFrame, showSceneFallback } from './scene-fallback.js';
@@ -363,10 +364,12 @@ export function bootstrap(ctx?: any): void {
       get: () => layer?.getVideoHealth() ?? null,
     });
     // 系统音频（v0.9 P1）：面板按钮 → 渲染器捕获系统音频；桌面 App 宿主禁用 ⇒ 渲染器返回失败码（面板提示）。
-    setWallpaperSystemAudioHandlers({
+    // 授权等待期守卫（P1）：等待期点停止 → 完成后立即停采集并返回 cancelled，不残留采集。
+    const systemAudioGuard = createAudioStartGuard({
       start: () => sceneRenderer.startSystemAudio?.() ?? Promise.resolve('unsupported' as const),
       stop: () => { sceneRenderer.stopSystemAudio?.(); },
     });
+    setWallpaperSystemAudioHandlers(systemAudioGuard);
     // 切到后台/最小化 → 按设置自动暂停（省电），回到前台恢复。
     onVisibility = () => applyRuntimeSettings(settings);
     document.addEventListener('visibilitychange', onVisibility);

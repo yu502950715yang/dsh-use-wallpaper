@@ -88,6 +88,8 @@ function systemAudioErrorMessage(failure: SystemAudioFailure): string {
       return '当前环境不支持捕获系统音频（桌面版 App 禁用了该权限，请用浏览器打开本 GUI 地址再试）';
     case 'denied':
       return '未授权：请在弹窗中选择共享并勾选「共享音频」；拒绝后不会自动重试。';
+    case 'cancelled':
+      return '已停止：授权等待期间点击了停止（未开始采集）';
     case 'no-audio-track':
       return '没有捕获到音频轨：请重新选择并勾选「共享音频」（只共享画面不会出声）。';
     case 'no-web-audio':

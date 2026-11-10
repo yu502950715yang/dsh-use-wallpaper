@@ -4356,6 +4356,8 @@ function systemAudioErrorMessage(failure) {
       return "\u5F53\u524D\u73AF\u5883\u4E0D\u652F\u6301\u6355\u83B7\u7CFB\u7EDF\u97F3\u9891\uFF08\u684C\u9762\u7248 App \u7981\u7528\u4E86\u8BE5\u6743\u9650\uFF0C\u8BF7\u7528\u6D4F\u89C8\u5668\u6253\u5F00\u672C GUI \u5730\u5740\u518D\u8BD5\uFF09";
     case "denied":
       return "\u672A\u6388\u6743\uFF1A\u8BF7\u5728\u5F39\u7A97\u4E2D\u9009\u62E9\u5171\u4EAB\u5E76\u52FE\u9009\u300C\u5171\u4EAB\u97F3\u9891\u300D\uFF1B\u62D2\u7EDD\u540E\u4E0D\u4F1A\u81EA\u52A8\u91CD\u8BD5\u3002";
+    case "cancelled":
+      return "\u5DF2\u505C\u6B62\uFF1A\u6388\u6743\u7B49\u5F85\u671F\u95F4\u70B9\u51FB\u4E86\u505C\u6B62\uFF08\u672A\u5F00\u59CB\u91C7\u96C6\uFF09";
     case "no-audio-track":
       return "\u6CA1\u6709\u6355\u83B7\u5230\u97F3\u9891\u8F68\uFF1A\u8BF7\u91CD\u65B0\u9009\u62E9\u5E76\u52FE\u9009\u300C\u5171\u4EAB\u97F3\u9891\u300D\uFF08\u53EA\u5171\u4EAB\u753B\u9762\u4E0D\u4F1A\u51FA\u58F0\uFF09\u3002";
     case "no-web-audio":
@@ -38895,6 +38897,26 @@ function createThreeSceneRenderer(opts) {
   };
 }
 
+// src/client/audio-start-guard.ts
+function createAudioStartGuard(ops) {
+  let generation = 0;
+  return {
+    async start() {
+      const gen = ++generation;
+      const result = await ops.start();
+      if (gen !== generation) {
+        ops.stop();
+        return "cancelled";
+      }
+      return result;
+    },
+    stop() {
+      generation += 1;
+      ops.stop();
+    }
+  };
+}
+
 // src/client/scene-fallback.ts
 var sceneVideoUrl = (id) => sceneActionUrl(id, "embedded-video");
 async function probeEmbeddedVideo(id, fetchImpl) {
@@ -39297,12 +39319,13 @@ function bootstrap(ctx) {
     setWallpaperVideoHealthHandler({
       get: () => layer?.getVideoHealth() ?? null
     });
-    setWallpaperSystemAudioHandlers({
+    const systemAudioGuard = createAudioStartGuard({
       start: () => sceneRenderer.startSystemAudio?.() ?? Promise.resolve("unsupported"),
       stop: () => {
         sceneRenderer.stopSystemAudio?.();
       }
     });
+    setWallpaperSystemAudioHandlers(systemAudioGuard);
     onVisibility = () => applyRuntimeSettings(settings);
     document.addEventListener("visibilitychange", onVisibility);
     void readClientSettings().then((s) => {

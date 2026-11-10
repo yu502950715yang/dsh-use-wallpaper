@@ -2,7 +2,7 @@
 // 系统音频采集（v0.9 P1）：浏览器 getDisplayMedia 捕获系统/标签页音频 → 独立 AnalyserNode。
 // 桌面版 App（Electron）主进程禁用了 display media 与设备权限（setPermissionCheckHandler(false)、
 // setDisplayMediaRequestHandler 回调空 sources）⇒ 失败开放，由面板提示改用浏览器打开 GUI。
-export type SystemAudioFailure = 'unsupported' | 'denied' | 'no-audio-track' | 'no-web-audio' | 'error';
+export type SystemAudioFailure = 'unsupported' | 'denied' | 'no-audio-track' | 'no-web-audio' | 'error' | 'cancelled';
 
 export interface SystemAudioCapture {
   context: AudioContext;
