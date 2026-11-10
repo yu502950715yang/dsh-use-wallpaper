@@ -6953,7 +6953,14 @@ function createWallpaperController(layer, opts) {
     } catch {
     }
   }
-  async function select(id) {
+  let selectChain = Promise.resolve();
+  function select(id) {
+    if (id === "") return doSelect("");
+    const task = selectChain.then(() => doSelect(id), () => doSelect(id));
+    selectChain = task.then(() => void 0, () => void 0);
+    return task;
+  }
+  async function doSelect(id) {
     const gen = ++selectGeneration;
     opts.sceneRenderer?.dispose?.();
     if (id === "") {
@@ -37548,6 +37555,8 @@ function createThreeSceneRenderer(opts) {
       if (tex !== currentMediaThumbnailSource?.texture) tex.dispose();
     }
     currentTextures = null;
+    for (const tex of currentExtraTextures) tex.dispose?.();
+    currentExtraTextures = [];
     for (const tex of currentMediaReplacedTextures) tex.dispose();
     currentMediaReplacedTextures = [];
     currentMediaThumbnailSource?.dispose();
@@ -37576,11 +37585,13 @@ function createThreeSceneRenderer(opts) {
     } catch {
     }
   };
-  const abortIfContextLost = () => {
-    if (!contextLost) return false;
-    teardownQuietly();
+  let renderGen = 0;
+  const abortIfStale = (gen) => {
+    if (gen === renderGen && !contextLost) return false;
+    if (contextLost) teardownQuietly();
     return true;
   };
+  let currentExtraTextures = [];
   const effectiveGlow = () => ({
     enabled: glowOverride?.enabled ?? glowFromSettings?.enabled ?? true,
     threshold: glowOverride?.threshold ?? glowFromSettings?.threshold,
@@ -37611,6 +37622,7 @@ function createThreeSceneRenderer(opts) {
   const pointer = createPointerTracker();
   return {
     async render(id, fg, _bg, sceneEntry = "scene.json") {
+      const gen = ++renderGen;
       warnedKeys.clear();
       contextLost = false;
       frameCapture?.reset();
@@ -37624,7 +37636,7 @@ function createThreeSceneRenderer(opts) {
         fg.addEventListener("webglcontextlost", onContextLost, { once: true });
         modulePromise ??= loadWasm();
         const mod = await modulePromise;
-        if (abortIfContextLost()) return false;
+        if (abortIfStale(gen)) return false;
         let sceneJsonResp;
         try {
           sceneJsonResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(sceneEntry)}`);
@@ -37639,12 +37651,12 @@ function createThreeSceneRenderer(opts) {
           return false;
         }
         const sceneJson = await sceneJsonResp.text();
-        if (abortIfContextLost()) return false;
+        if (abortIfStale(gen)) return false;
         const parsedDesc = parseSceneJson(sceneJson);
         const userKeys = /* @__PURE__ */ new Set();
         collectUserKeys(JSON.parse(sceneJson), userKeys);
         const propertiesResponse = await fetchWallpaperProperties(id);
-        if (abortIfContextLost()) return false;
+        if (abortIfStale(gen)) return false;
         const propertyDefs = propertiesResponse.properties;
         const defaults = new Map(propertyDefs.map((p) => [p.key, p.value]));
         const userProps = {};
@@ -37748,6 +37760,7 @@ function createThreeSceneRenderer(opts) {
             const specText = await specResp.text();
             const mat = await resolveParticleMaterial(id, specText);
             const tex = mat?.texUrl ? await loadTexTexture(mat.texUrl) ?? void 0 : void 0;
+            if (tex) currentExtraTextures.push(tex);
             let refract;
             if (mat?.refract) {
               const normalTex = mat.normalTexUrl ? await loadTexTexture(mat.normalTexUrl) ?? void 0 : void 0;
@@ -37758,6 +37771,7 @@ function createThreeSceneRenderer(opts) {
                 );
                 continue;
               }
+              currentExtraTextures.push(normalTex);
               refract = { normalTex, amount: mat.refractAmount };
             }
             particles.set(obj.id, {
@@ -37773,7 +37787,7 @@ function createThreeSceneRenderer(opts) {
             });
           }
         }
-        if (abortIfContextLost()) return false;
+        if (abortIfStale(gen)) return false;
         const textLayers = /* @__PURE__ */ new Map();
         let scriptRuntime = null;
         if (desc.objects.some((o) => o.kind === "text" && o.script && effectiveVisible.get(o.id) !== false)) {
@@ -37811,6 +37825,7 @@ function createThreeSceneRenderer(opts) {
           if (binding) {
             currentScriptBindings.push(binding);
             const scriptTexture = createTextTexture(initial, opts2);
+            currentExtraTextures.push(scriptTexture);
             textLayers.set(obj.id, {
               texture: scriptTexture,
               driver: createScriptDriver(scriptTexture.image, opts2, binding, initial),
@@ -37820,6 +37835,7 @@ function createThreeSceneRenderer(opts) {
             continue;
           }
           const texture = createTextTexture(initial, opts2);
+          currentExtraTextures.push(texture);
           textLayers.set(obj.id, {
             texture,
             // 时钟：每帧判文本是否变化（同分钟不重绘），变了由 player 置 needsUpdate 上传。
@@ -37828,7 +37844,7 @@ function createThreeSceneRenderer(opts) {
             anchorOffset
           });
         }
-        if (abortIfContextLost()) return false;
+        if (abortIfStale(gen)) return false;
         const cpSim = mod?.CpuParticleSim;
         const createParticleSim = cpSim ? (json, origin, sceneW, sceneH, overrideJson) => {
           try {
@@ -37850,7 +37866,7 @@ function createThreeSceneRenderer(opts) {
         );
         const scriptSources = collectScriptSources(desc);
         const settings = await readClientSettings();
-        if (abortIfContextLost()) return false;
+        if (abortIfStale(gen)) return false;
         qualityScale = settings.qualityScale ?? 1;
         lastAudioSpec = desc.sounds && desc.sounds.length > 0 ? { id, sounds: desc.sounds } : null;
         soundVolumeFromSettings = settings.soundVolume ?? 1;
@@ -37977,7 +37993,7 @@ function createThreeSceneRenderer(opts) {
             });
           }
         }
-        if (abortIfContextLost()) return false;
+        if (abortIfStale(gen)) return false;
         const assets = {
           backgroundTextures,
           particles,
@@ -38025,6 +38041,19 @@ function createThreeSceneRenderer(opts) {
           width: vw,
           height: vh
         });
+        if (abortIfStale(gen)) {
+          try {
+            result.player.dispose();
+          } catch {
+          }
+          for (const sim of result.sims ?? []) {
+            try {
+              sim.free?.();
+            } catch {
+            }
+          }
+          return false;
+        }
         current = result;
         const layerLookup = (objectId) => {
           const obj = result.player.displayObject(objectId);
@@ -38144,6 +38173,7 @@ function createThreeSceneRenderer(opts) {
                 const texPath = resolveTexPath(p, spec.texturePath);
                 tex = await loadTexTexture(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(texPath)}`);
                 if (!tex) warnOnce2(`mesh-tex:${id}:${texPath}`, `\u52A8\u6001\u7F51\u683C\u7EB9\u7406\u52A0\u8F7D\u5931\u8D25\uFF1A${texPath}\uFF08\u767D\u56FE\u515C\u5E95\uFF09`);
+                else currentExtraTextures.push(tex);
               }
               const mat = createMeshMaterial(spec, tex);
               materialTable.set(p, mat);
@@ -38163,7 +38193,7 @@ function createThreeSceneRenderer(opts) {
         if (!currentScriptHost && timelineRuntime) {
           currentScriptHost = await SceneScriptHost.create({ scripts: [], userProperties: userProps });
         }
-        if (abortIfContextLost()) return false;
+        if (abortIfStale(gen)) return false;
         if (timelineRuntime) {
           timelineRuntime.applyInitial();
           applyLayerState(currentScriptHost?.drainDirty() ?? /* @__PURE__ */ new Map(), layerLookup);
@@ -38329,7 +38359,7 @@ function createThreeSceneRenderer(opts) {
           currentStage?.onViewportResize(current.player.screenScalePx());
         };
         window.addEventListener("resize", onWindowResize);
-        if (abortIfContextLost()) return false;
+        if (abortIfStale(gen)) return false;
         console.log(
           `[three] scene loaded id=${id} background=${result.backgroundIds.length} particleLayers=${result.particleLayers.length} puppetLayers=${result.puppetLayers.length}`
         );
@@ -38438,6 +38468,7 @@ function createThreeSceneRenderer(opts) {
     // 释放当前 three 播放器 + wasm 模拟器（切壁纸/卸载时防泄漏）。
     // `frameCapture` 绑定创建它的 renderer（换 renderer 时已在 render 内换绑），随本 renderer 一并释放。
     dispose() {
+      renderGen += 1;
       teardown();
       lastMediaStatus = null;
       frameCapture?.dispose();

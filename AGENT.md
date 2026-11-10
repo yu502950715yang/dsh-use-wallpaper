@@ -225,6 +225,8 @@ npx vitest run tests/xxx.test.ts --reporter=basic   # 跑单个文件
 
 62. **Rust 粒子侧的不可信输入加固（1.0 P0，2026-11-10，勿回退）**：① **解析不得 panic**——`parse_particle_spec` 对非法/超深 JSON 退回全默认 spec（旧接口），生产路径用 `try_parse_particle_spec`（`CpuParticleSim::new` 把 Err 转成 JS 异常，JS 侧 catch 后跳过该粒子层、背景仍渲染）；② **`maxcount` 硬上限 `MAX_PARTICLES = 16384`**——`mod.rs` 解析层 clamp（素材声明 1e9 也不放大），`prewarm` 的 steady 由 maxcount 封顶；JS 侧 `MAX_PARTICLE_HARD_CAP` 同口径纵深；③ **角度归一化用 `rem_euclid`（O(1)）**——旧 `while (rot > π) rot -= 2π` 对 `inf`/`1e30` 会不可中断死循环（wasm 循环里 JS 打不断 ⇒ 整页卡死）；`update(dt)` 忽略非有限/非正 dt；`scalar`/`vec3` 对非有限数值（inf/1e39/NaN）回退默认。判据：`wasm/tests/particle_hardening_test.rs`（7 项）。
 
+63. **渲染生命周期两条约束（1.0 P0，2026-11-10，勿回退）**：① **select 串行化**——`wallpaper-controller.select` 排队执行（`''` 清空例外、同步摘层），同一时刻只有一次装配；并发 render 会共用 `three-renderer` 闭包状态，「后完成者覆盖 current、先完成者 player 无人释放」。renderer 侧另有代际守卫 `abortIfStale(gen)` 兜底：被取代的 render 在 await 点作废、不覆盖 current、**不清理共享状态**（资源由新一次的 teardown 收口）。② **纹理所有权**——粒子槽 0/槽 1、文字画布、动态网格纹理由装配期创建，`player.dispose` 故意不释放 texture ⇒ 必须登记进 `currentExtraTextures`，由 teardown 统一 dispose；`currentTextures`（背景）+ `currentExtraTextures`（装配附加）= 本轮全部 VRAM 所有权。判据：`tests/three-renderer.test.ts`（P0-3/P0-4 用例）、`tests/wallpaper-controller.test.ts`（串行化用例）。
+
 ## 6. 工作约定
 
 - 回复、注释、文档、**提交信息一律简体中文**；代码、命令、文件名、技术术语保留原文。

@@ -485,6 +485,10 @@ export function createThreeSceneRenderer(opts?: {
       if (tex !== currentMediaThumbnailSource?.texture) tex.dispose();
     }
     currentTextures = null;
+    // 1.0 P0-4：装配期创建的粒子/折射/文字画布等纹理（player.dispose 故意不释放 texture）。
+    // dispose 用可选调用：测试夹具可能只给假纹理，收尾不得因单个纹理抛错而中断。
+    for (const tex of currentExtraTextures) tex.dispose?.();
+    currentExtraTextures = [];
     // 被封面替代的材质纹理（已不参与渲染）与共享封面源一并释放。
     for (const tex of currentMediaReplacedTextures) tex.dispose();
     currentMediaReplacedTextures = [];
@@ -519,14 +523,20 @@ export function createThreeSceneRenderer(opts?: {
   const teardownQuietly = () => {
     try { teardown(); } catch { /* 收尾失败不掩盖失败原因 */ }
   };
-  // 上下文已在本次 render 进行中丢失 ⇒ 作废本次装配：清理丢失后新建的残余对象，收尾与失败路径一致。
-  const abortIfContextLost = () => {
-    if (!contextLost) return false;
-    // 记录点在 onContextLost（唯一一次事件）——本函数只负责中止装配。
-    // 收尾失败不得掩盖 context-lost 结论（裸 teardown 抛错会被外层 catch 改写成 exception）。
-    teardownQuietly();
+  // 1.0 P0-3：render 代际——并发 render（兜底，正常调用方已由 controller 串行化）时，
+  // 后发起者递增；先发起者在 await 点/装配出口发现代际过期 ⇒ 作废本次装配并释放自己的 player。
+  let renderGen = 0;
+  // 上下文丢失或本 render 已被更新的一次取代 ⇒ 作废本次装配。
+  // 被取代时**不清理共享状态**（并发下可能正被新一次装配使用，其资源由新一次的 teardown 收口）；
+  // 上下文丢失仍按原逻辑收尾。正常调用方已由 controller 串行化，此守卫只兜底漏网并发。
+  const abortIfStale = (gen: number) => {
+    if (gen === renderGen && !contextLost) return false;
+    if (contextLost) teardownQuietly();
     return true;
   };
+  // 本轮装配创建的纹理（粒子槽 0/槽 1、文字画布等）：player.dispose 故意不释放 texture，
+  // 之前切壁纸会泄漏 VRAM（1.0 P0-4）。统一在 teardown 释放。
+  let currentExtraTextures: Texture[] = [];
   // 当前生效的 Glow 三值：运行期下发 > 装配时读到的设置（缺省交给 glow-stage 归一）。
   const effectiveGlow = () => ({
     enabled: glowOverride?.enabled ?? glowFromSettings?.enabled ?? true,
@@ -556,6 +566,8 @@ export function createThreeSceneRenderer(opts?: {
   const pointer = createPointerTracker();
   return {
     async render(id, fg, _bg, sceneEntry = 'scene.json') {
+      // 1.0 P0-3：本次装配的代际（见 abortIfStale）；dispose 会递增以作废在途装配。
+      const gen = ++renderGen;
       // 诊断去重集合的生命周期 = 当前壁纸：每次 render 清空，避免跨壁纸累积而漏报新壁纸的告警。
       warnedKeys.clear();
       // 新一次装配（新 canvas）重新开始：复位上一次的上下文丢失标记。
@@ -579,7 +591,7 @@ export function createThreeSceneRenderer(opts?: {
         // `CpuParticleSim` 是纯 CPU（无需 WebGPU）；模块初始化失败 → 仍可渲染背景，仅跳过粒子。
         modulePromise ??= loadWasm();
         const mod = await modulePromise;
-        if (abortIfContextLost()) return false;
+        if (abortIfStale(gen)) return false;
         // 拉取场景描述并解析（与 wasm-renderer 共用 parseSceneJson，对象归类/正交尺寸一致）。
         let sceneJsonResp: Response;
         try {
@@ -597,14 +609,14 @@ export function createThreeSceneRenderer(opts?: {
           return false;
         }
         const sceneJson = await sceneJsonResp.text();
-        if (abortIfContextLost()) return false;
+        if (abortIfStale(gen)) return false;
         const parsedDesc = parseSceneJson(sceneJson);
         // 用户属性表：localStorage override ?? host/project 默认值（spec §4.4）。键来自 scene 内
         // 所有 {user} 引用（不止 visible）；fetch 失败 → 空表（失败开放，不阻断渲染）。
         const userKeys = new Set<string>();
         collectUserKeys(JSON.parse(sceneJson) as unknown, userKeys);
         const propertiesResponse = await fetchWallpaperProperties(id);
-        if (abortIfContextLost()) return false;
+        if (abortIfStale(gen)) return false;
         const propertyDefs = propertiesResponse.properties;
         const defaults = new Map(propertyDefs.map((p) => [p.key, p.value]));
         const userProps: Record<string, unknown> = {};
@@ -748,6 +760,7 @@ export function createThreeSceneRenderer(opts?: {
             // 无纹理/解析失败 → 白图兜底；材质不可得 → blending null → 名启发式兜底。
             const mat = await resolveParticleMaterial(id, specText);
             const tex = mat?.texUrl ? (await loadTexTexture(mat.texUrl)) ?? undefined : undefined;
+            if (tex) currentExtraTextures.push(tex); // P0-4：随本次装配释放
             // 折射层（材质 REFRACT=1）另需槽 1 的法线/遮罩纹理：缺失或加载失败 ⇒ **不装配该层**
             //（WE NORMALMAP=0 语义：位移恒 0、输出≡背景）。绝不回退白方块：槽 0 在这类材质里是 RGBA 全 255 的占位图。
             let refract: { normalTex: Texture; amount: number } | undefined;
@@ -760,6 +773,7 @@ export function createThreeSceneRenderer(opts?: {
                   `折射层槽 1 法线纹理缺失/加载失败，跳过该层（不画白方块）：object=${obj.id} ${mat.normalTexUrl ?? '(无槽1)'}`);
                 continue;
               }
+              currentExtraTextures.push(normalTex); // P0-4
               refract = { normalTex, amount: mat.refractAmount };
             }
             particles.set(obj.id, {
@@ -776,7 +790,7 @@ export function createThreeSceneRenderer(opts?: {
           }
         }
         // 上面的 image/particle 资源 await（贴图/粒子 spec/材质）可能横跨丢失事件。
-        if (abortIfContextLost()) return false;
+        if (abortIfStale(gen)) return false;
         // ── text 对象 ────────────────────────────────────────────────────────────────
         // text 与 image/particle 共用 effectiveVisible（含 condition 与父链）：不过滤会叠出本应隐藏的时钟。
         const textLayers = new Map<number, {
@@ -824,6 +838,7 @@ export function createThreeSceneRenderer(opts?: {
             // 初值取脚本首帧输出（传给 driver 避免首帧以相同文本重绘一次）。
             currentScriptBindings.push(binding);
             const scriptTexture = createTextTexture(initial, opts);
+            currentExtraTextures.push(scriptTexture); // P0-4：文字画布纹理随装配释放
             textLayers.set(obj.id, {
               texture: scriptTexture,
               driver: createScriptDriver(scriptTexture.image as HTMLCanvasElement, opts, binding, initial),
@@ -833,6 +848,7 @@ export function createThreeSceneRenderer(opts?: {
             continue;
           }
           const texture = createTextTexture(initial, opts);
+        currentExtraTextures.push(texture); // P0-4：文字画布纹理随装配释放
           textLayers.set(obj.id, {
             texture,
             // 时钟：每帧判文本是否变化（同分钟不重绘），变了由 player 置 needsUpdate 上传。
@@ -842,7 +858,7 @@ export function createThreeSceneRenderer(opts?: {
           });
         }
         // 上面的 text 资源 await（字体加载）同样可能横跨丢失事件（此后会推入脚本 binding）。
-        if (abortIfContextLost()) return false;
+        if (abortIfStale(gen)) return false;
         // `createParticleSim`：wasm CpuParticleSim 构造器（测试可注入 loadWasm 得到假模块）；模块无
         // CpuParticleSim → undefined → loadSceneToThree 自动跳过粒子对象（只渲染背景）。
         const cpSim = (mod as ThreeWasmModule | null)?.CpuParticleSim;
@@ -883,7 +899,7 @@ export function createThreeSceneRenderer(opts?: {
         // 同一个渲染像素比（口径不一致会让整层模糊，见 AGENT.md §5.15/§5.21）。
         const settings = await readClientSettings();
         // 设置读取之后要建渲染状态（画质档位/音频/glow），丢失则不再往下走。
-        if (abortIfContextLost()) return false;
+        if (abortIfStale(gen)) return false;
         qualityScale = settings.qualityScale ?? 1;
         // 壁纸音效：sound 对象默认播放（对齐桌面 WE，可用面板关掉）。关掉时**不创建** AudioContext。
         lastAudioSpec = desc.sounds && desc.sounds.length > 0 ? { id, sounds: desc.sounds } : null;
@@ -1045,7 +1061,7 @@ export function createThreeSceneRenderer(opts?: {
         }
 
         // 装配前的最后一道闸：丢失则绝不安装 player（装上就是无人回收的僵尸帧循环 + GL 资源）。
-        if (abortIfContextLost()) return false;
+        if (abortIfStale(gen)) return false;
         // 装配并启动播放。viewport 显式传真实窗口尺寸：ThreeScenePlayer 不再把 canvas 重置回场景尺寸，
         // 由 player.resize(vw,vh) 使 cover 相机按窗口宽高比裁剪（窗口比例 ≠ 场景比例时是裁切而非拉伸）。
         const assets: SceneAssets = {
@@ -1101,6 +1117,12 @@ export function createThreeSceneRenderer(opts?: {
           width: vw,
           height: vh,
         });
+        // 1.0 P0-3：装配被取代（或上下文丢失）⇒ 释放刚创建的 player/sim，不覆盖 current。
+        if (abortIfStale(gen)) {
+          try { result.player.dispose(); } catch { /* 释放失败不掩盖作废 */ }
+          for (const sim of result.sims ?? []) { try { sim.free?.(); } catch { /* ignore */ } }
+          return false;
+        }
         current = result;
         // 脚本/时间线写入的落点查找（对象 id → 最终显示对象）。
         const layerLookup = (objectId: number) => {
@@ -1234,6 +1256,7 @@ export function createThreeSceneRenderer(opts?: {
                 const texPath = resolveTexPath(p, spec.texturePath);
                 tex = await loadTexTexture(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(texPath)}`);
                 if (!tex) warnOnce(`mesh-tex:${id}:${texPath}`, `动态网格纹理加载失败：${texPath}（白图兜底）`);
+                else currentExtraTextures.push(tex); // P0-4：动态网格纹理随装配释放
               }
               const mat = createMeshMaterial(spec, tex);
               materialTable.set(p, mat);
@@ -1260,7 +1283,7 @@ export function createThreeSceneRenderer(opts?: {
         }
 
         // SceneScript 宿主的创建/材质解析也是 await：丢失则连宿主带 player 一起作废。
-        if (abortIfContextLost()) return false;
+        if (abortIfStale(gen)) return false;
         // 时间线初始值：装配完成时求值一次（startPaused 取第 0 帧；其余从第 0 帧开始自动播放），
         // 在媒体初始派发前落地，首帧即正确。状态已在脚本 init 前 primeInitial，这里只写值（I3）。
         if (timelineRuntime) {
@@ -1460,7 +1483,7 @@ export function createThreeSceneRenderer(opts?: {
         };
         window.addEventListener('resize', onWindowResize);
         // 返回 true 之前的最后一道兜底：不得把「已丢失」的装配报告成成功（否则护栏被掀翻）。
-        if (abortIfContextLost()) return false;
+        if (abortIfStale(gen)) return false;
         // 观测：确认走的是 three 路径（浏览器回归探测用）。
         console.log(
           `[three] scene loaded id=${id} background=${result.backgroundIds.length} particleLayers=${result.particleLayers.length} puppetLayers=${result.puppetLayers.length}`,
@@ -1577,6 +1600,7 @@ export function createThreeSceneRenderer(opts?: {
     // 释放当前 three 播放器 + wasm 模拟器（切壁纸/卸载时防泄漏）。
     // `frameCapture` 绑定创建它的 renderer（换 renderer 时已在 render 内换绑），随本 renderer 一并释放。
     dispose() {
+      renderGen += 1; // 作废在途装配（其出口检查 gen 后自行释放，见 abortIfStale）
       teardown();
       lastMediaStatus = null;
       frameCapture?.dispose();

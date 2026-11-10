@@ -69,6 +69,30 @@ describe('createWallpaperController', () => {
     await c.select('');
     expect(layer.calls.at(-1)).toBe('none');
   });
+  // 1.0 P0-3：连点/轮播+手动并发时，两次 render 会共用渲染器装配状态（后完成者覆盖 current、
+  // 先完成者装配的 player 无人释放）。select 串行化后同一时刻只有一次 render 在执行。
+  it('P0-3：连点同一 scene 壁纸 → select 串行化（第二次等第一次 render 完成）', async () => {
+    const layer = fakeLayer();
+    const started: string[] = [];
+    let releaseA!: (v: boolean) => void;
+    const gateA = new Promise<boolean>((res) => { releaseA = res; });
+    const render = vi.fn(async (id: string) => {
+      started.push(id);
+      return started.length === 1 ? gateA : true;
+    });
+    const sceneRenderer = { render, dispose: vi.fn(), getLastHealth: () => null } as any;
+    const c = createWallpaperController(layer, { fetchList: async () => list as any, sceneRenderer });
+    await c.load();
+    const a = c.select('2');
+    await vi.waitFor(() => expect(started).toEqual(['2']));
+    const b = c.select('2');
+    await new Promise((r) => setTimeout(r, 10));
+    expect(started).toEqual(['2']); // 第一次 render 未完成 ⇒ 第二次必须还在排队（不并发装配）
+    releaseA(true);
+    await a;
+    await b;
+    expect(started).toEqual(['2', '2']);
+  });
   it('select empty id 在列表未加载时也能取消（不依赖 fetchList）', async () => {
     const layer = fakeLayer();
     let fetched = false;
@@ -152,20 +176,23 @@ describe('createWallpaperController 视频编码兜底', () => {
     expect(onMediaFailure).not.toHaveBeenCalled();
   });
 
-  it('等待解码期间切换壁纸 → 旧失败结果不覆盖新壁纸、不上报', async () => {
+  it('1.0 P0-3：等待解码期间切换壁纸 → 第二次排队，旧结果按当时选择处理、最终显示第二次', async () => {
     const layer = fakeLayer();
     let release!: (r: 'unsupported') => void;
     layer.showVideo = vi.fn(() => new Promise<'unsupported'>((res) => { release = res; }));
     const onMediaFailure = vi.fn();
     const c = createWallpaperController(layer, { fetchList: async () => list as any, onMediaFailure });
     await c.load();
-    const pending = c.select('1'); // 视频结果挂起
-    await c.select('3');           // 期间切到另一张壁纸
+    const pending = c.select('1'); // 视频结果挂起（第一次 select 未完成）
+    await vi.waitFor(() => expect(layer.showVideo).toHaveBeenCalledTimes(1));
+    const next = c.select('3');    // 串行化：排队等第一次完成（不再并发装配）
     release('unsupported');
     await pending;
+    await next;
+    // 顺序执行：旧失败落在它自己的选择上，随后第二次选择覆盖 → 最终显示 p3。
     expect(layer.calls.at(-1)).toBe('image:/p3');
     expect(layer.imageArgs.at(-1)).toEqual(['/p3', false]);
-    expect(onMediaFailure).not.toHaveBeenCalled();
+    expect(onMediaFailure).toHaveBeenCalledTimes(1);
   });
 });
 

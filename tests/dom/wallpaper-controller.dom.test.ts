@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createWallpaperController } from '../../src/client/wallpaper-controller.js';
 import { createBackgroundLayer } from '../../src/client/background-layer.js';
 
@@ -53,7 +53,7 @@ describe('createWallpaperController scene 分支（DOM）', () => {
     await expect(c.select('2')).resolves.toBeUndefined();
     expect(layer.calls.at(-1)).toEqual({ name: 'image', args: ['/p2', true] });
   });
-  it('I3: 旧的 scene 渲染完成不覆盖更新的选择（竞态防护）', async () => {
+  it('I3: 串行化下旧 scene 排队结束才轮到新选择，最终显示新选择（1.0 P0-3 契约）', async () => {
     const layer = fakeLayer();
     let resolveRender: ((v: boolean) => void) | null = null;
     const c = createWallpaperController(layer, {
@@ -66,11 +66,13 @@ describe('createWallpaperController scene 分支（DOM）', () => {
       },
     });
     await c.load();
-    const pendingScene = c.select('2'); // scene 渲染挂起
-    await c.select('1');               // 新选择 video（同步应用）
-    resolveRender!(true);              // 旧 scene 渲染此时才完成
+    const pendingScene = c.select('2'); // scene 渲染挂起（第一次 select 执行中）
+    await vi.waitFor(() => expect(resolveRender).not.toBeNull());
+    const pendingVideo = c.select('1');  // 串行化：排队等 scene 完成
+    resolveRender!(true);                // 旧 scene 渲染此时才完成
     await pendingScene;
-    expect(layer.calls.at(-1)?.name).toBe('video'); // 旧渲染被丢弃
+    await pendingVideo;
+    expect(layer.calls.at(-1)?.name).toBe('video'); // 后一次选择最终生效，旧渲染不覆盖
   });
   it('I3/I6: 列表未加载时 select 自动 load 后再应用', async () => {
     const layer = fakeLayer();

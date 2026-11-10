@@ -251,6 +251,36 @@ describe('createThreeSceneRenderer', () => {
     expect(texB.dispose).toHaveBeenCalledTimes(1);
   });
 
+  // 1.0 P0-4：粒子槽 0/槽 1 纹理由装配期创建，player.dispose 不释放 texture → 之前切壁纸会泄漏 VRAM。
+  it('P0-4：粒子纹理随切壁纸/dispose 释放（不再泄漏 VRAM）', async () => {
+    vi.mocked(resolveImageAssets).mockResolvedValue({ texture: fakeTexture() as any, puppetPath: null });
+    vi.mocked(resolveParticleMaterial).mockResolvedValue({ texUrl: '/wallpapers/particle-texture?name=particle%2Fdot', blending: 'alpha' } as never);
+    const texP = fakeTexture();
+    vi.mocked(loadTexTexture).mockResolvedValue(texP as never);
+    const sim = makeMockSim();
+    vi.mocked(defaultLoadWasm).mockResolvedValue({ CpuParticleSim: { new: vi.fn(() => sim) } } as never);
+    const player = {
+      dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(),
+      setParallax: vi.fn(), setParallaxPointer: vi.fn(),
+    };
+    vi.mocked(loadSceneToThree).mockReturnValue({
+      player, sims: [sim], backgroundIds: [0], particleLayers: [{ id: 1, sim }], puppetLayers: [],
+    } as never);
+
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    expect(await r.render('2851992662', document.createElement('canvas'))).toBe(true);
+    expect(texP.dispose).not.toHaveBeenCalled(); // 装配中：仍在使用
+
+    // 切另一张壁纸 → 上一次装配的粒子纹理必须释放
+    const texP2 = fakeTexture();
+    vi.mocked(loadTexTexture).mockResolvedValue(texP2 as never);
+    expect(await r.render('2851992662', document.createElement('canvas'))).toBe(true);
+    expect(texP.dispose).toHaveBeenCalledTimes(1);
+
+    r.dispose();
+    expect(texP2.dispose).toHaveBeenCalledTimes(1);
+  });
+
   it('render：混合模式取材质 json 的 passes[0].blending（DK 44 层根因回归）——材质名不带 "additive" 也是 additive', async () => {
     resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as any, puppetPath: null });
     // DK WOTLK 的真实形态：spec.material 路径名不含 lightshaft/glow/additive，但材质 json 是 additive。
@@ -953,7 +983,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
         effects: [{ file: 'effects/w/effect.json' }],
       },
     ]), FX_FILES);
-    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null });
+    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null } as never);
     defaultLoadWasm.mockResolvedValue(null); // 无粒子模块（本用例无粒子对象）
     const setObjectEffectStage = vi.fn();
     const player = {
@@ -1182,7 +1212,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
       origin: '960 540 0', scale: '1 1 1', size: '1920 1080',
       effects: [{ file: 'effects/w/effect.json' }],
     }), FX_FILES);
-    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null });
+    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null } as never);
     defaultLoadWasm.mockResolvedValue(null);
     const player = {
       dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage: vi.fn(),
@@ -1265,7 +1295,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
 
   it('无效果对象：不建 stage、不下发 isolate、帧序与今天一致（零回归）', async () => {
     stubAssetFetch(SCENE, {});
-    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null });
+    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null } as never);
     defaultLoadWasm.mockResolvedValue({ CpuParticleSim: { new: vi.fn(() => makeMockSim()) } } as never);
     const setObjectEffectStage = vi.fn();
     const player = {
@@ -1308,7 +1338,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
         effects: [{ file: 'effects/w/effect.json' }],
       },
     ]), FX_FILES);
-    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null });
+    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null } as never);
     defaultLoadWasm.mockResolvedValue(null);
     const player = {
       dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage: vi.fn(),
@@ -1352,7 +1382,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
         effects: [{ file: 'effects/rtg/effect.json' }],
       },
     ]), FX_FILES_RT_GRAPH);
-    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null });
+    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null } as never);
     defaultLoadWasm.mockResolvedValue(null);
     const player = {
       dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage: vi.fn(),
@@ -1399,7 +1429,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
         effects: [{ file: 'effects/w/effect.json' }],
       },
     ]), FX_FILES_FRAME_RT);
-    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null });
+    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null } as never);
     defaultLoadWasm.mockResolvedValue(null);
     const registerFrameConsumer = vi.fn();
     const setFrameCapture = vi.fn();
@@ -1444,7 +1474,7 @@ describe('对象级效果链接线（isolate 尺寸 + ObjectEffectStage 装配�
         effects: [{ file: 'effects/w/effect.json' }, { file: 'effects/w/effect.json' }],
       },
     ]), FX_FILES);
-    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null });
+    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null } as never);
     defaultLoadWasm.mockResolvedValue(null);
     const player = {
       dispose: vi.fn(), resize: vi.fn(), setObjectEffectStage: vi.fn(),
@@ -1710,7 +1740,7 @@ describe('对象级效果链：隔离 RT 尺寸按源纹理收口 4096', () => {
 
   it('无源尺寸（纹理未就绪）的隔离对象：回退屏占位 —— 只升不降', async () => {
     stubAsset([bgObject(246)]);
-    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null }); // 无 image ⇒ source = null
+    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null } as never); // 无 image ⇒ source = null
 
     const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
     expect(await r.render('2851992662', document.createElement('canvas'), null)).toBe(true);
@@ -2310,7 +2340,7 @@ describe('three-renderer 场景树层级（parent → 世界变换）', () => {
       ],
     });
     stubAssetFetch(scene, {});
-    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null });
+    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null } as never);
     loadSceneToThree.mockReturnValue({ player: scriptPlayer(), sims: [], backgroundIds: [0, 1], particleLayers: [], puppetLayers: [], } as never);
 
     const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm, getTextScriptRuntime: async () => null });
@@ -2338,7 +2368,7 @@ describe('three-renderer 场景树层级（parent → 世界变换）', () => {
       objects: [{ id: 9, name: 'flat', image: 'models/layers/l_9.json', origin: '100 200 0', scale: '2 3 1', size: '10 10' }],
     });
     stubAssetFetch(scene, {});
-    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null });
+    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null } as never);
     loadSceneToThree.mockReturnValue({ player: scriptPlayer(), sims: [], backgroundIds: [0], particleLayers: [], puppetLayers: [], } as never);
 
     const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm, getTextScriptRuntime: async () => null });
@@ -3117,7 +3147,7 @@ describe('scene 渲染看护：失败分类与打点', () => {
   it('装配成功 → 记 ok 与装配耗时，并在首帧回调处补 firstFrameMs', async () => {
     const store = createRenderHealthStore({ storage: null });
     let onFrame: ((dt: number) => void) | null = null;
-    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null });
+    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null } as never);
     defaultLoadWasm.mockResolvedValue(null);
     loadSceneToThree.mockImplementation((_json: unknown, assets: { onFrame?: (dt: number) => void }) => {
       onFrame = assets.onFrame ?? null; // 宿主注入的每帧钩子：首帧计时挂在这里
@@ -3142,7 +3172,7 @@ describe('scene 渲染看护：失败分类与打点', () => {
   it('首帧明显晚于装配 ⇒ assembleMs 不被首帧时刻抬高（首帧回填只补 firstFrameMs）', async () => {
     const store = createRenderHealthStore({ storage: null });
     let onFrame: ((dt: number) => void) | null = null;
-    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null });
+    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null } as never);
     defaultLoadWasm.mockResolvedValue(null);
     loadSceneToThree.mockImplementation((_json: unknown, assets: { onFrame?: (dt: number) => void }) => {
       onFrame = assets.onFrame ?? null;
@@ -3180,7 +3210,7 @@ describe('scene 渲染看护：失败分类与打点', () => {
 
   it('装配成功、帧循环已跑起来后丢上下文 → 硬失败 context-lost（事件路径，唯一记录点）', async () => {
     const store = createRenderHealthStore({ storage: null });
-    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null });
+    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null } as never);
     defaultLoadWasm.mockResolvedValue(null);
     stubAssetFetch(SCENE_ONE_IMAGE, {});
     loadSceneToThree.mockReturnValue(okPlayer() as never);
@@ -3254,7 +3284,7 @@ describe('scene 渲染看护：失败分类与打点', () => {
 
   it('getLastHealth / setOnHealth：读当前壁纸快照、订阅可撤销、订阅者异常不影响渲染', async () => {
     const store = createRenderHealthStore({ storage: null });
-    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null });
+    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null } as never);
     defaultLoadWasm.mockResolvedValue(null);
     loadSceneToThree.mockReturnValue(okPlayer() as never);
     const r = createThreeSceneRenderer({ healthStore: store });
@@ -3290,7 +3320,7 @@ describe('scene 渲染看护：失败分类与打点', () => {
   // 故「上一次 render 的结论」绝不能落到当前壁纸键上。
   it('A 的 render 未决期间 B 开始 render：A 的失败必须落在 A 的键上，B 的快照不受影响', async () => {
     const store = createRenderHealthStore({ storage: null });
-    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null });
+    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null } as never);
     defaultLoadWasm.mockResolvedValue(null);
     loadSceneToThree.mockReturnValue(okPlayer() as never);
     // A 的 scene.json 响应悬挂（慢盘/慢网），B 走正常路径 ⇒ 两次 render 重叠。
@@ -3324,9 +3354,40 @@ describe('scene 渲染看护：失败分类与打点', () => {
     r.dispose();
   });
 
-  it('A 的 render 未决期间 B 以硬失败告终：A 随后装配成功仍须记在 A 上', async () => {
+  // 1.0 P0-3：A 装配期间 B 已开始（并发 render 兜底守卫）⇒ A 在出口作废：
+  // 不覆盖 current（B 的装配），并释放自己已创建的 player/sim（否则 RAF/GL 无人回收）。
+  it('P0-3：A 装配期间 B 顶上来 ⇒ A 作废、不覆盖 B（并发兜底守卫）', async () => {
     const store = createRenderHealthStore({ storage: null });
-    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null });
+    vi.mocked(resolveImageAssets).mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null } as never);
+    vi.mocked(defaultLoadWasm).mockResolvedValue(null);
+    const playerB = {
+      dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(),
+      setParallax: vi.fn(), setParallaxPointer: vi.fn(),
+    };
+    vi.mocked(loadSceneToThree).mockReturnValue({ player: playerB, sims: [], backgroundIds: [1], particleLayers: [], puppetLayers: [] } as never);
+    let releaseA!: () => void;
+    const gateA = new Promise<void>((res) => { releaseA = res; });
+    let aAtFetch!: () => void;
+    const aFetching = new Promise<void>((res) => { aAtFetch = res; });
+    vi.stubGlobal('fetch', vi.fn(async (url: unknown) => {
+      if (String(url).includes('/scene/A/')) { aAtFetch(); await gateA; }
+      return { ok: true, status: 200, text: async () => SCENE_ONE_IMAGE };
+    }));
+    const r = createThreeSceneRenderer({ healthStore: store });
+
+    const pendingA = r.render('A', document.createElement('canvas'));
+    await aFetching;
+    expect(await r.render('B', document.createElement('canvas'))).toBe(true);
+    releaseA();
+    await expect(pendingA).resolves.toBe(false); // A 在 fetch 后发现自己被取代 ⇒ 作废
+    expect(playerB.dispose).not.toHaveBeenCalled(); // B 仍在使用
+    r.dispose();
+    expect(playerB.dispose).toHaveBeenCalled();
+  });
+
+  it('A 的 render 未决期间 B 以硬失败告终：A 被取代作废，成功不记到 A、不污染 B', async () => {
+    const store = createRenderHealthStore({ storage: null });
+    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null } as never);
     defaultLoadWasm.mockResolvedValue(null);
     loadSceneToThree.mockReturnValue(okPlayer() as never);
     let releaseA!: () => void;
@@ -3348,12 +3409,10 @@ describe('scene 渲染看护：失败分类与打点', () => {
     expect(await r.render('B', document.createElement('canvas'), null)).toBe(false);
     expect(store.snapshot('B').failure?.kind).toBe('scene-json');
     releaseA();
-    await expect(pendingA).resolves.toBe(true);
-
-    // 成功同样按本次 render 的 id 记：A 的装配耗时不得写进 B（B 的硬失败结论也不得被抹掉）。
-    expect(store.snapshot('A').ok).toBe(true);
-    expect(store.snapshot('A').timing?.assembleMs).toBeGreaterThanOrEqual(0);
-    expect(store.snapshot('B').failure?.kind).toBe('scene-json');
+    // 1.0 P0-3：A 已被 B 取代 ⇒ 作废（不再装配上屏），成功不得记在 A 上。
+    await expect(pendingA).resolves.toBe(false);
+    expect(store.snapshot('A').ok).not.toBe(true);
+    expect(store.snapshot('B').failure?.kind).toBe('scene-json'); // B 的硬失败结论不被抹掉
     r.dispose();
   });
 
@@ -3361,7 +3420,7 @@ describe('scene 渲染看护：失败分类与打点', () => {
   // 共享的 renderStartedAt/firstFrameAt 会把被取代那次的起点算进本次装配/首帧耗时。
   it('重叠 render：A 的装配/首帧耗时取自 A 自己的起点，不串到 B 的起点上', async () => {
     const store = createRenderHealthStore({ storage: null });
-    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null });
+    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null } as never);
     defaultLoadWasm.mockResolvedValue(null);
     const frames = new Map<HTMLCanvasElement, (dt: number) => void>();
     loadSceneToThree.mockImplementation((
@@ -3393,10 +3452,12 @@ describe('scene 渲染看护：失败分类与打点', () => {
       expect(await r.render('B', document.createElement('canvas'), null)).toBe(true); // B 的起点 = 100
       clock = 200;
       releaseA();
-      await expect(pendingA).resolves.toBe(true); // A 在 200 时刻装配完成
+      // 1.0 P0-3：A 已被 B 取代 ⇒ 作废；A 的起点不得串进 B 的耗时。
+      await expect(pendingA).resolves.toBe(false);
       clock = 300;
-      frames.get(canvasA)?.(0.016); // A 的首帧在 300 时刻到来
-      expect(store.snapshot('A').timing).toEqual({ assembleMs: 200, firstFrameMs: 300 });
+      frames.get(canvasA)?.(0.016); // 作废的 A 不得再记首帧
+      expect(store.snapshot('A').ok).not.toBe(true);
+      expect(store.snapshot('B').timing?.assembleMs).toBe(0); // B：100 起、100 出（A 的 0 未串入）
       r.dispose();
     } finally {
       if (hadOwnNow) Object.defineProperty(performance, 'now', { configurable: true, writable: true, value: origNow });
@@ -3439,7 +3500,7 @@ describe('scene 渲染看护：失败分类与打点', () => {
         { id: 2, name: 'ctl', visible: { script: 'export function update(){}', value: true } },
       ],
     });
-    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null });
+    resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as never, puppetPath: null } as never);
     defaultLoadWasm.mockResolvedValue(null);
     stubAssetFetch(scene, {});
     // 收尾抛错：player.dispose 恒抛 —— onContextLost 那次被它自己的 try 吞掉，abortIfContextLost 那一次
