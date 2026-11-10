@@ -36,6 +36,8 @@ export interface SceneScriptHostOptions {
   wallpaperId?: string;
   /** 时间线动画源（thisObject.getAnimation 优先查它；Task 10 由 renderer 传入）。 */
   timeline?: TimelineAnimationSource;
+  /** scene.json 的 layer 名 → 对象 id（thisScene.getLayer(name) 的解析依据）。 */
+  layerNames?: Record<string, number>;
 }
 
 export class SceneScriptHost {
@@ -75,6 +77,7 @@ export class SceneScriptHost {
       timeOfDay: opts.timeOfDay,
       wallpaperId: opts.wallpaperId,
       timeline: opts.timeline,
+      layerNames: opts.layerNames,
     });
     if (!vm) return null;
     for (const s of scripts) {

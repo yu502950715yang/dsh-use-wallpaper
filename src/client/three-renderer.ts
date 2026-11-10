@@ -1263,6 +1263,10 @@ export function createThreeSceneRenderer(opts?: {
             },
             // thisObject.getAnimation / thisLayer.getAnimation(name) 先查时间线播放器。
             timeline: timelineRuntime ?? undefined,
+            // thisScene.getLayer(名字) 的解析依据（未命中的名字必须能返回 null，见 scene-script-vm）。P1
+            layerNames: Object.fromEntries(
+              desc.objects.filter((o) => o.name.trim()).map((o) => [o.name, o.id]),
+            ),
           });
           // 解析材质资产：material json → three 材质；纹理 `source/xxx` → materials/source/xxx.tex
           for (const p of materialPaths) {

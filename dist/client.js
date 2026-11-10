@@ -36191,7 +36191,13 @@ function __mkRuntimeLayer(id) {
 
 var thisScene = __wrap({
   getLayerByID: function (id) { return __mkLayer('id:' + id); },
-  getLayer: function (n) { return __mkLayer('name:' + n); },
+  // \u6309\u540D\u67E5\u8BE2\u672A\u547D\u4E2D\u5FC5\u987B\u8FD4\u56DE null\uFF1A\u811A\u672C\u5E38\u7528 while (thisScene.getLayer(prefix + i)) \u679A\u4E3E\u5B50\u5C42\uFF0C
+  // \u6052\u8FD4\u56DE\u771F\u503C\u4EE3\u7406\u4F1A\u8BA9\u679A\u4E3E\u6C38\u4E0D\u7ED3\u675F\u3001\u5185\u5B58\u65E0\u9650\u589E\u957F\uFF083819697503\uFF0Cwebwallgl #19 \u540C\u7C7B\u7F3A\u9677\uFF09\u3002P1
+  getLayer: function (n) {
+    if (typeof n === 'number') return __mkLayer('id:' + n); // \u6570\u5B57\u4E0B\u6807\uFF1A\u4FDD\u6301\u65E2\u6709\u54D1\u4EE3\u7406\uFF08\u517C\u5BB9\uFF09
+    var name = String(n);
+    return __host.hasLayerName(name) ? __mkLayer('name:' + name) : null;
+  },
   // \u52A8\u6001\u7F51\u683C\uFF082026-09-22\uFF09\uFF1A\u771F\u5B9E\u7684 createModelData / createLayer \u6865\u3002\u811A\u672C\u53EA\u900F\u4F20\u53E5\u67C4 \u2014\u2014
   // \u6A21\u578B\u53E5\u67C4\u5E26 __modelId\u3001\u56FE\u5C42\u53E5\u67C4\u5E26 __layerId\uFF1B\u9876\u70B9\u6BCF\u5E27\u7ECF __host.applyMeshData \u4E0A\u4F20\u3002
   createModelData: function (o) {
@@ -36282,6 +36288,8 @@ var SceneScriptVm = class _SceneScriptVm {
   dt = 1 / 60;
   /** 单次脚本调用的指令预算（缺省 STEP_BUDGET；callOne 每次调用前重置）。 */
   stepBudget;
+  /** layer 名 → 对象 id（名字查询的解析依据；决定 getLayer(name) 是否命中）。 */
+  layerNames;
   budget;
   constructor(ctx, runtime, opts) {
     this.ctx = ctx;
@@ -36299,6 +36307,7 @@ var SceneScriptVm = class _SceneScriptVm {
     this.wallpaperId = typeof opts.wallpaperId === "string" ? opts.wallpaperId : "";
     this.stepBudget = Number.isFinite(opts.stepBudget) && opts.stepBudget > 0 ? opts.stepBudget : STEP_BUDGET2;
     this.budget = this.stepBudget;
+    this.layerNames = new Map(Object.entries(opts.layerNames ?? {}));
   }
   /** 初始化 quickjs 并装好 prelude。失败返回 null（调用方退回"无脚本"路径，画面等于现状）。 */
   static async create(opts) {
@@ -36378,6 +36387,7 @@ var SceneScriptVm = class _SceneScriptVm {
     define("writeBool", (k, _p, v) => {
       this.write(this.keyOf(k), { visible: ctx.dump(v) === true });
     });
+    define("hasLayerName", (nameH) => this.layerNames.has(ctx.getString(nameH)) ? ctx.true : ctx.false);
     define("writeVec", (k, p, x, y, z) => {
       const prop = ctx.getString(p);
       const arr = [ctx.getNumber(x), ctx.getNumber(y), ctx.getNumber(z)];
@@ -36521,8 +36531,10 @@ var SceneScriptVm = class _SceneScriptVm {
   /** prelude 的 key（`id:<scene对象id>` / `name:<名>` / `new:<名>`）→ scene 对象 id；非 id 形式返回 -1。 */
   keyOf(h) {
     const k = this.ctx.getString(h);
-    const m = /^id:(\d+)$/.exec(k);
-    return m ? Number(m[1]) : -1;
+    const byId = /^id:(\d+)$/.exec(k);
+    if (byId) return Number(byId[1]);
+    const byName = /^name:(.+)$/.exec(k);
+    return byName ? this.layerNames.get(byName[1]) ?? -1 : -1;
   }
   write(objectId, patch) {
     if (objectId < 0) return;
@@ -36938,7 +36950,8 @@ var SceneScriptHost = class _SceneScriptHost {
       textureAnimation: opts.textureAnimation,
       timeOfDay: opts.timeOfDay,
       wallpaperId: opts.wallpaperId,
-      timeline: opts.timeline
+      timeline: opts.timeline,
+      layerNames: opts.layerNames
     });
     if (!vm) return null;
     for (const s of scripts) {
@@ -38582,7 +38595,11 @@ function createThreeSceneRenderer(opts) {
               getFrame: (objId) => result.player.getSpriteSheetFrame(objId)
             },
             // thisObject.getAnimation / thisLayer.getAnimation(name) 先查时间线播放器。
-            timeline: timelineRuntime ?? void 0
+            timeline: timelineRuntime ?? void 0,
+            // thisScene.getLayer(名字) 的解析依据（未命中的名字必须能返回 null，见 scene-script-vm）。P1
+            layerNames: Object.fromEntries(
+              desc.objects.filter((o) => o.name.trim()).map((o) => [o.name, o.id])
+            )
           });
           for (const p of materialPaths) {
             if (materialTable.has(p)) continue;

@@ -28,6 +28,8 @@ export interface SceneScriptHostOptions {
     wallpaperId?: string;
     /** 时间线动画源（thisObject.getAnimation 优先查它；Task 10 由 renderer 传入）。 */
     timeline?: TimelineAnimationSource;
+    /** scene.json 的 layer 名 → 对象 id（thisScene.getLayer(name) 的解析依据）。 */
+    layerNames?: Record<string, number>;
 }
 export declare class SceneScriptHost {
     private readonly anims;

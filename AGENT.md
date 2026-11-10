@@ -231,6 +231,8 @@ npx vitest run tests/xxx.test.ts --reporter=basic   # 跑单个文件
 
 65. **设置面板总线（1.0 P0-10，2026-11-10）**：`settings-section.tsx` 不再有 8 个模块级可变槽位；共享处理器与健康/媒体订阅收口到 `panel-bus.ts` 的 `PanelBus` 实例（`index.ts` 创建并 `setPanelBus` 注入，测试可注入隔离实例）。`setWallpaper*Handler` / `subscribe*` / `notify*` 保留为薄委托（公开导出面不变）。新增处理器一律加 `PanelHandlers` 槽位，**不得再引入模块级 `let` 槽位**。
 
+66. **`thisScene.getLayer(name)` 按名未命中必须返回 `null`（2026-11-10，`3819697503`）**：脚本常用 `while (thisScene.getLayer(prefix + i))` 枚举子层，恒返回真值代理会让枚举永不结束、数组无限增长 → renderer 内存崩溃（webwallgl #19 同类缺陷）。数字下标保持既有哑代理（不破坏索引兼容）；名字→对象 id 映射来自 scene.json objects 的 `name`（VM option `layerNames`，renderer 装配时传入）。名字命中时 `child.origin/visible` 等写入映射到真实对象 id（旧实现 `name:` 键一律 -1、写入被丢弃）。
+
 ## 6. 工作约定
 
 - 回复、注释、文档、**提交信息一律简体中文**；代码、命令、文件名、技术术语保留原文。

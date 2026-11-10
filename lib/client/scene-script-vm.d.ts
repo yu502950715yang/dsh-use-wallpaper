@@ -46,6 +46,8 @@ export interface ScriptUpdateResult {
 }
 export interface SceneScriptVmOptions {
     userProperties: Record<string, unknown>;
+    /** scene.json 的 layer 名 → 对象 id（thisScene.getLayer(name) 解析；缺省 = 按名一律未命中）。 */
+    layerNames?: Record<string, number>;
     state: LayerStateTable;
     anims: AnimRegistry;
     onWarn?: (msg: string) => void;
@@ -97,6 +99,8 @@ export declare class SceneScriptVm {
     private dt;
     /** 单次脚本调用的指令预算（缺省 STEP_BUDGET；callOne 每次调用前重置）。 */
     private readonly stepBudget;
+    /** layer 名 → 对象 id（名字查询的解析依据；决定 getLayer(name) 是否命中）。 */
+    private readonly layerNames;
     private budget;
     private constructor();
     /** 初始化 quickjs 并装好 prelude。失败返回 null（调用方退回"无脚本"路径，画面等于现状）。 */

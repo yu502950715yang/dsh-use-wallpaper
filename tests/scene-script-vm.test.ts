@@ -96,6 +96,62 @@ describe('SceneScriptVm', () => {
     vm!.dispose();
   });
 
+  // 回归 3819697503（【4K动态】星海间的奇迹）：脚本用 `while (thisScene.getLayer(prefix + i))` 枚举
+  // 子层，在首个不存在的名字处结束。旧实现 getLayer 恒返回真值代理 ⇒ 枚举永不结束、points 无限增长、
+  // renderer 内存崩溃（与 webwallgl #19 同一 API 面缺陷）。修复 = 按名未命中返回 null，且命中时
+  // 名字写入映射到 scene 对象 id（旧实现 'name:' 键一律 -1、写入被丢弃）。
+  describe('thisScene.getLayer（名字查询）', () => {
+    it('名字未命中返回 null（while 枚举能终止）', async () => {
+      const { state, anims, userProps } = setup();
+      const vm = await SceneScriptVm.create({
+        userProperties: userProps, state, anims,
+        layerNames: { EX_HRT_1: 11, EX_HRT_2: 12 },
+      });
+      vm!.load(`export function init(){
+        var i = 1, n = 0;
+        while (i < 1000) {
+          var child = thisScene.getLayer('EX_HRT_' + i);
+          if (!child) break;
+          n++;
+          i++;
+        }
+        thisScene.getLayerByID(3).alpha = n;
+      }`);
+      vm!.initAll();
+      expect(state.read(3).alpha).toBe(2);
+      vm!.dispose();
+    });
+
+    it('名字命中返回代理，origin/visible 写入落到真实对象 id', async () => {
+      const { state, anims, userProps } = setup();
+      const vm = await SceneScriptVm.create({
+        userProperties: userProps, state, anims,
+        layerNames: { EX_HRT_1: 7 },
+      });
+      vm!.load(`export function init(){
+        var child = thisScene.getLayer('EX_HRT_1');
+        child.origin = { x: 10, y: 20, z: 0 };
+        child.visible = false;
+      }`);
+      vm!.initAll();
+      expect(state.read(7).origin).toEqual([10, 20, 0]);
+      expect(state.read(7).visible).toBe(false);
+      vm!.dispose();
+    });
+
+    it('数字下标仍返回哑代理（与既有索引行为兼容，不返回 null）', async () => {
+      const { state, anims, userProps } = setup();
+      const vm = await SceneScriptVm.create({ userProperties: userProps, state, anims });
+      vm!.load(`export function init(){
+        var a = thisScene.getLayer(9999);
+        thisScene.getLayerByID(3).alpha = a ? 1 : 0;
+      }`);
+      vm!.initAll();
+      expect(state.read(3).alpha).toBe(1);
+      vm!.dispose();
+    });
+  });
+
   it('createLayer / createModelData / getEffect / registerAsset 是安全 stub（不抛错）', async () => {
     const { state, anims, userProps, warns } = setup();
     const vm = await SceneScriptVm.create({ userProperties: userProps, state, anims, onWarn: (m) => warns.push(m) });
@@ -172,15 +228,17 @@ describe('SceneScriptVm', () => {
     vm!.dispose();
   });
 
-  // ⚠️ 真实 GUI 回归（2026-09-22）：221591「双击切歌」的 init 调 thisScene.getLayer(name).stop()
+  // 真实 GUI 回归（2026-09-22）：221591「双击切歌」的 init 对图层调未实现方法
   // —— 未实现的 WE API 必须走兜底 Proxy，否则单个缺失方法就 TypeError 并停用整个脚本。
+  // 注：getLayer(名字) 未命中现在返回 null（官方语义，修复 3819697503 枚举死循环），
+  // 所以这里用**命中**的 getLayerByID 句柄验证兜底；未判空的对 null 调用会按脚本异常停用。
   it('未实现的 WE API（layer.stop 等）走兜底不抛错', async () => {
     const { state, anims, userProps, warns } = setup();
     const vm = await SceneScriptVm.create({ userProperties: userProps, state, anims, onWarn: (m) => warns.push(m) });
     vm!.load(`export function init(){
-      thisScene.getLayer('某首歌').stop();
-      thisScene.getLayer('某首歌').play();
-      thisScene.getLayer('某首歌').setSomethingUnknown(1, 2);
+      thisScene.getLayerByID(12).stop();
+      thisScene.getLayerByID(12).play();
+      thisScene.getLayerByID(12).setSomethingUnknown(1, 2);
       thisScene.someUnknownApi().then();
       thisScene.getLayerByID(12).alpha = 1;
     }`);
