@@ -186,6 +186,19 @@ function checkMetadata() {
   }
   const idxEngine = entry.engines?.dsh;
   if (idxEngine !== engine) {
+    // 1.0 之前的索引条目没有 engines 语义要求（历史条目记录的是该版本发布时的声明）：
+    // 当前工作树的 version 仍是上一次发布版本时，条目差异属正常 ⇒ WARN。
+    // bump 到 1.0.x 后（新条目由发布流程补写），两者必须逐字一致 ⇒ 严格判红。
+    const major = Number(String(pkg.version).split('.')[0]);
+    if (major < 1) {
+      return {
+        ok: true,
+        warn: true,
+        detail:
+          `index.json v${pkg.version} 的 engines.dsh="${idxEngine}" ≠ package.json "${engine}"——` +
+          '1.0 之前的索引条目没有 engines 语义要求；bump 到 1.0.0 后补的新条目必须与包清单逐字一致（发布后复跑本命令）',
+      };
+    }
     throw new Error(`index.json v${pkg.version} 的 engines.dsh="${idxEngine}" ≠ package.json "${engine}" ⇒ 两处同步`);
   }
   return { ok: true, detail: `engines.dsh="${engine}"（package.json 与 index.json v${pkg.version} 一致）` };
