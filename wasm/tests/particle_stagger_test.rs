@@ -228,5 +228,6 @@ fn prewarm_noop_when_no_emission() {
     let spec = parse_particle_spec(json);
     let mut sim = emitter_spec_to_particle(&spec, [0.0; 3], 3840.0, 2160.0);
     sim.prewarm();
-    assert_eq!(sim.particles.len(), 0, "maxcount=0 → prewarm 不产粒子");
+    // 契约变更（2026-11-10 P1）：maxcount 为 0 与缺失同样按 rate×平均寿命估算容量 ⇒ 不再「永不发射」。
+    assert!(!sim.particles.is_empty(), "maxcount=0 → 按估算产粒子（不再永不发射）");
 }

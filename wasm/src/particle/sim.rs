@@ -1213,9 +1213,8 @@ impl SceneParticleSim {
             vel[2] * self.override_spec.speed,
         ];
 
-        // frame：randomframe，0..spritesheetFrames-1（rosepetals 4 帧；否则所有花瓣固定采样同帧）。
-        // rand() ∈ [0,1) → *4 ∈ [0,4) → floor ∈ {0,1,2,3}。
-        let frame = (rand() * DEFAULT_FRAME_COUNT as f32).floor();
+        // frame：randomframe 用**实际**精灵表帧数（旧实现硬编码 DEFAULT_FRAME_COUNT=4，非 4 帧表随机帧错位）P1
+        let frame = (rand() * self.spritesheet_frames.max(1) as f32).floor();
 
         self.particles.push(SimParticle {
             pos,

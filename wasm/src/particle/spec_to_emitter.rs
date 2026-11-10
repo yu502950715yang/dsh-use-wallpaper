@@ -18,7 +18,7 @@
 //! `is_sphere` = emitter name=="sphererandom" 的结果。两者均
 //! 由 `parse_particle_spec` 从 emitter JSON 读取，缺省 origin=[0,0,0]、is_sphere=false。
 
-use super::{sim::ParticleOperator, OperatorKind, ParticleEmitterSpec, ParticleInitSpec, ParticleSpec, SceneParticleSim};
+use super::{sim::ParticleOperator, OperatorKind, ParticleEmitterSpec, ParticleInitSpec, ParticleSpec, SceneParticleSim, MAX_PARTICLES};
 use serde_json::Value;
 
 /// 把 `spec` 映射为 CPU 粒子模拟器。
@@ -67,7 +67,15 @@ pub fn emitter_spec_to_particle(
             // 球壳散射标记（已由 parse_particle_spec 读取 em["name"]=="sphererandom"）。
             is_sphere: spec.emitter.is_sphere,
         },
-        spec.maxcount,
+        // WE 允许缺省 maxcount：为 0 时按 rate × 平均寿命估算容量（旧实现传 0 ⇒ 永不发射）P1
+        if spec.maxcount > 0 {
+            spec.maxcount
+        } else {
+            let mean_life = 0.5 * (spec.init.lifetime_min + spec.init.lifetime_max);
+            let est = (spec.emitter.rate * mean_life).ceil();
+            let n = if est.is_finite() && est >= 1.0 { est as u32 } else { 1 };
+            n.min(MAX_PARTICLES)
+        },
         obj_origin,
         scene_w,
         scene_h,
@@ -432,13 +440,15 @@ mod tests {
     }
 
     #[test]
-    fn default_maxcount_zero_when_absent() {
-        // 无 maxcount（旧格式）→ spec.maxcount = 0；emitter_spec_to_particle 原样带入（不 clamp）。
+    fn default_maxcount_estimated_when_absent() {
+        // 无 maxcount（旧格式）→ spec.maxcount = 0；装配期按 rate × 平均寿命估算容量
+        //（1.0 发布前 P1：旧实现原样带入 0 ⇒ 永不发射）。
         let json = r#"{"emitter":[{"rate":10,"directions":"0 1 0","distancemin":0,"distancemax":256}]}"#;
         let spec = parse_particle_spec(json);
         let sim = emitter_spec_to_particle(&spec, [0.0, 0.0, 0.0], 3840.0, 2160.0);
         assert_eq!(spec.maxcount, 0);
-        assert_eq!(sim.maxcount, 0, "maxcount 缺省 0 应原样带入");
+        // rate=10 × 平均寿命(缺省 1.0) = 10
+        assert_eq!(sim.maxcount, 10, "缺省 maxcount 按 rate×平均寿命估算");
     }
 
     #[test]
