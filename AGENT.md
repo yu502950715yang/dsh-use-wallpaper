@@ -228,6 +228,8 @@ npx vitest run tests/xxx.test.ts --reporter=basic   # 跑单个文件
 
 63. **渲染生命周期两条约束（1.0 P0，2026-11-10，勿回退）**：① **select 串行化**——`wallpaper-controller.select` 排队执行（`''` 清空例外、同步摘层），同一时刻只有一次装配；并发 render 会共用 `three-renderer` 闭包状态，「后完成者覆盖 current、先完成者 player 无人释放」。renderer 侧另有代际守卫 `abortIfStale(gen)` 兜底：被取代的 render 在 await 点作废、不覆盖 current、**不清理共享状态**（资源由新一次的 teardown 收口）。② **纹理所有权**——粒子槽 0/槽 1、文字画布、动态网格纹理由装配期创建，`player.dispose` 故意不释放 texture ⇒ 必须登记进 `currentExtraTextures`，由 teardown 统一 dispose；`currentTextures`（背景）+ `currentExtraTextures`（装配附加）= 本轮全部 VRAM 所有权。判据：`tests/three-renderer.test.ts`（P0-3/P0-4 用例）、`tests/wallpaper-controller.test.ts`（串行化用例）。
 
+64. **ThreeScenePlayer 的拆分进度（1.0 P0-9，2026-11-10）**：2280 行 God class 按「facade + 协作 runtime」拆分，公开 API 与行为不变（`tests/threejs-player.test.ts` 5433 行零修改是全绿护栏）。已完成阶段 1：`sprite-sheet-runtime.ts`（精灵表）、`parallax-runtime.ts`（视差）；阶段 2：`util-content-runtime` + `layer-factory`（含依赖 `addBackground` 的 visualizer）；阶段 3：`frame-capture-runtime`（抓帧/段渲染，最后做）。设计见 `docs/superpowers/specs/2026-11-10-threejs-player-god-class-split-design.md`。约束：新增子系统一律「facade 转发 + runtime 只依赖最小宿主接口」，**不得反过来让 runtime import player**（否则循环依赖）。
+
 ## 6. 工作约定
 
 - 回复、注释、文档、**提交信息一律简体中文**；代码、命令、文件名、技术术语保留原文。

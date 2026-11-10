@@ -95,15 +95,13 @@ export declare class ThreeScenePlayer {
     private loopFn;
     private pendingCapture;
     private lastTime;
-    private parallaxCfg;
-    private parallaxTarget;
-    private parallaxFollow;
+    private readonly parallax;
     private backgroundEntries;
     private nextBackgroundId;
     private readonly objectToBackground;
     private readonly objectToParticle;
     private readonly warnedTransformUnsupported;
-    private readonly spritesheetLayers;
+    private readonly spriteSheets;
     private puppetLayers;
     private particleLayers;
     private nextParticleLayerId;
@@ -146,14 +144,11 @@ export declare class ThreeScenePlayer {
     update(dt: number): void;
     private tickPuppets;
     private registerSpriteSheet;
-    private applySpriteSheetFrame;
     private updateSpriteSheets;
     pauseSpriteSheet(objectId: number): void;
     playSpriteSheet(objectId: number): void;
-    /** 停播并回到第 0 帧（对齐 AnimPlayback.stop 的语义）。 */
     stopSpriteSheet(objectId: number): void;
     isSpriteSheetPlaying(objectId: number): boolean;
-    /** 立即写 UV（越界钳到 [0, frames-1]）；同时把 elapsed 对齐到该帧，play 后从这里继续。 */
     setSpriteSheetFrame(objectId: number, frame: number): void;
     getSpriteSheetFrame(objectId: number): number;
     /** 测试用：取精灵表图层当前帧的 UV 子矩形（仅测试/诊断观测，不参与渲染）。 */
@@ -165,7 +160,7 @@ export declare class ThreeScenePlayer {
     } | null;
     /** 相机视差配置（null = 未启用/已拆除 ⇒ 逐帧零成本早退；enabled=false 时下一帧把对象写回基准位置）。 */
     setParallax(cfg: ParallaxConfig | null): void;
-    /** 宿主指针监听的最新归一化位置（[0,1]）；插值在本类的 tickParallax 内按 dt 推进。 */
+    /** 宿主指针监听的最新归一化位置（[0,1]）；插值在 ParallaxRuntime 内按 dt 推进。 */
     setParallaxPointer(p: PointerState): void;
     /** 视差跟随的当前指针（插值后，[0,1] y 向下）：效果 shader 全局 uniform 的来源。 */
     parallaxPointer(): PointerState;

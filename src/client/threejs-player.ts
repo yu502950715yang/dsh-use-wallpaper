@@ -25,8 +25,9 @@ import type { CompositeQuad } from './composite-quad.js';
 import { textLayerOffset } from './text-object.js';
 import type { ClockDriver, TextLayout } from './text-object.js';
 // 视差（Task 1 的纯数学层）：配置 + 指针 + 延迟插值 + 逐对象位移公式；唯一应用点 = 本文件的 tickParallax。
-import { POINTER_CENTER, advancePointer, parallaxShift } from './parallax.js';
-import type { ParallaxConfig, PointerFollow, PointerState } from './parallax.js';
+import { ParallaxRuntime } from './parallax-runtime.js';
+import { SpriteSheetRuntime } from './sprite-sheet-runtime.js';
+import type { ParallaxConfig, PointerState } from './parallax.js';
 // puppet（.mdl 蒙皮网格）：实例由调用方装配，本类只负责挂进场景、逐帧采样动画与释放。
 import type { PuppetInstance } from './puppet.js';
 // 动画层元数据（scene.json 的 `animationlayers`）类型取自 shared 的字段声明，避免两处漂移。
@@ -70,24 +71,7 @@ type BackgroundEntry = {
   parallaxApplied?: boolean;
 };
 
-// image 精灵表图层：按 TEXS 帧网格逐帧把当前帧子矩形写进 quad 的 uv（材质 combos.spritesheet=1）。
-// 帧率 = TEXS 首帧 frametime 的倒数（缺省 1fps；WE 的 sequencemultiplier 在 image 材质中不存在）。
-type SpriteSheetLayer = {
-  // 所属背景图层计数器 id（resizeBackground 换几何后按它找回本层重写 UV）。
-  backgroundId: number;
-  mesh: THREE.Mesh;
-  frames: number;
-  cols: number;
-  rows: number;
-  elapsed: number;       // 已播秒数（dt 累加，不跟墙钟）
-  fps: number;
-  frame: number;         // 当前帧号（-1 = 尚未写入）
-  // 脚本 pause 后不再自动推进（play 恢复）；无脚本控制时保持 v0.8.1 的自动播放。
-  paused: boolean;
-  // 原始（整图 [0,1]²）UV：每次按 base 重算子矩形——在已写过的 UV 上再映射会逐帧累积漂移。
-  baseUv: Float32Array;
-  uv: { u0: number; v0: number; u1: number; v1: number };
-};
+// 精灵表图层类型已迁入 sprite-sheet-runtime.ts（审查 P0-9 阶段 1）。
 
 // 粒子图层条目：记录 three.js billboard quad 的 GPU 资源与配套模拟取顶点 getter。
 // 每粒子一个**实例**（InstancedBufferGeometry 的 instanced attribute），顶点 shader 由
@@ -740,10 +724,8 @@ export class ThreeScenePlayer {
 
   private lastTime = 0;
 
-  // 视差状态：配置 + 宿主指针目标 + 跟随值（延迟插值状态）。cfg 为 null 时 tickParallax 立即返回。
-  private parallaxCfg: ParallaxConfig | null = null;
-  private parallaxTarget: PointerState = { ...POINTER_CENTER };
-  private parallaxFollow: PointerFollow = { value: { ...POINTER_CENTER }, elapsed: 0 };
+  // 视差状态（配置/指针/插值）已迁入 parallax-runtime.ts（审查 P0-9 阶段 1）。
+  private readonly parallax = new ParallaxRuntime();
 
   // 背景图层条目（按 addBackground 返回的 id 索引，供 update_background 引用）。
   private backgroundEntries = new Map<number, BackgroundEntry>();
@@ -754,7 +736,7 @@ export class ThreeScenePlayer {
   private readonly objectToParticle = new Map<number, ParticleLayer>();
   private readonly warnedTransformUnsupported = new Set<number>();
   // 精灵表图层（键 = scene.json 对象 id；仅 image 材质带 combos.spritesheet 且纹理有 TEXS 元数据时登记）。
-  private readonly spritesheetLayers = new Map<number, SpriteSheetLayer>();
+  private readonly spriteSheets = new SpriteSheetRuntime();
 
   // puppet 图层（键 = 同一把图层计数器 id）：instance 用于逐帧采样动画，dispose 时释放骨骼/资源。
   // layers = 已过滤 `visible !== false` 的动画层（null = scene.json **没有** animationlayers 字段）；
@@ -1063,128 +1045,44 @@ export class ThreeScenePlayer {
   }
 
   // 登记精灵表图层：记下帧网格/原始 UV 并立刻写第 0 帧（首帧 render 前 update 尚未跑过）。
+  // 精灵表动画实现已迁入 sprite-sheet-runtime.ts（审查 P0-9 阶段 1）。
   private registerSpriteSheet(
     backgroundId: number,
     objectId: number,
     mesh: THREE.Mesh,
     sprite: { frames: number; cols: number; rows: number; frametime?: number },
   ): void {
-    const attr = (mesh.geometry as THREE.BufferGeometry).attributes?.uv;
-    const layer: SpriteSheetLayer = {
-      backgroundId,
-      mesh,
-      frames: Math.max(1, Math.floor(sprite.frames)),
-      cols: Math.max(1, Math.floor(sprite.cols)),
-      rows: Math.max(1, Math.floor(sprite.rows)),
-      elapsed: 0,
-      // 帧率 = 首帧 frametime 的倒数（缺省 1fps）；clamp 0.1–240 防畸形素材把动画打飞。
-      fps: sprite.frametime && sprite.frametime > 0
-        ? Math.min(240, Math.max(0.1, 1 / sprite.frametime))
-        : 1,
-      frame: -1,
-      paused: false,
-      baseUv: attr ? Float32Array.from(attr.array as ArrayLike<number>) : new Float32Array(0),
-      uv: { u0: 0, v0: 0, u1: 1, v1: 1 },
-    };
-    this.spritesheetLayers.set(objectId, layer);
-    this.applySpriteSheetFrame(layer, 0);
+    this.spriteSheets.register(backgroundId, objectId, mesh, sprite);
   }
 
-  // 写当前帧子矩形：frame 按**行优先**（col = frame % cols，row = floor(frame / cols)）。
-  // v 方向：tex-loader 显示约定 v=0=图像底部，而 TEXS 的 row 0 = 表顶行 ⇒ 第 0 行落在高 v 段
-  //（与粒子 shader 的 (rows-1-row) 同源）；帧内 v 继续沿用 quad 原始 0/1 取向，不额外翻转。
-  private applySpriteSheetFrame(layer: SpriteSheetLayer, frame: number): void {
-    const { cols, rows } = layer;
-    const col = ((frame % cols) + cols) % cols;
-    const row = Math.floor(frame / cols) % rows;
-    const u0 = col / cols;
-    const u1 = (col + 1) / cols;
-    const v0 = (rows - 1 - row) / rows;
-    const v1 = (rows - row) / rows;
-    const attr = (layer.mesh.geometry as THREE.BufferGeometry).attributes?.uv;
-    if (attr) {
-      const arr = attr.array as Float32Array;
-      const base = layer.baseUv;
-      for (let i = 0; i < arr.length && i < base.length; i += 2) {
-        arr[i] = u0 + base[i] * (u1 - u0);
-        arr[i + 1] = v0 + base[i + 1] * (v1 - v0);
-      }
-      attr.needsUpdate = true;
-    }
-    layer.frame = frame;
-    layer.uv = { u0, v0, u1, v1 };
-  }
-
-  // 逐帧推进精灵表动画：dt 累加（不跟墙钟，暂停/回退不跳帧），帧号 = floor(elapsed × fps) % frames。
   private updateSpriteSheets(dt: number): void {
-    if (this.spritesheetLayers.size === 0) return;
-    const step = Number.isFinite(dt) && dt > 0 ? dt : 0;
-    for (const layer of this.spritesheetLayers.values()) {
-      if (layer.paused) continue; // 脚本 pause 后停住；play 恢复
-      layer.elapsed += step;
-      const frame = Math.floor(layer.elapsed * layer.fps) % layer.frames;
-      if (frame !== layer.frame) this.applySpriteSheetFrame(layer, frame);
-    }
+    this.spriteSheets.update(dt);
   }
 
-  // ── 脚本的纹理动画控制（thisLayer.getTextureAnimation → 这里）；未登记 id 一律安全 no-op ──
-  pauseSpriteSheet(objectId: number): void {
-    const layer = this.spritesheetLayers.get(objectId);
-    if (layer) layer.paused = true;
-  }
-
-  playSpriteSheet(objectId: number): void {
-    const layer = this.spritesheetLayers.get(objectId);
-    if (layer) layer.paused = false;
-  }
-
-  /** 停播并回到第 0 帧（对齐 AnimPlayback.stop 的语义）。 */
-  stopSpriteSheet(objectId: number): void {
-    const layer = this.spritesheetLayers.get(objectId);
-    if (!layer) return;
-    layer.paused = true;
-    layer.elapsed = 0;
-    this.applySpriteSheetFrame(layer, 0);
-  }
-
-  isSpriteSheetPlaying(objectId: number): boolean {
-    return this.spritesheetLayers.get(objectId)?.paused === false;
-  }
-
-  /** 立即写 UV（越界钳到 [0, frames-1]）；同时把 elapsed 对齐到该帧，play 后从这里继续。 */
-  setSpriteSheetFrame(objectId: number, frame: number): void {
-    const layer = this.spritesheetLayers.get(objectId);
-    if (!layer) return;
-    const f = Number.isFinite(frame)
-      ? Math.min(layer.frames - 1, Math.max(0, Math.trunc(frame)))
-      : 0;
-    layer.elapsed = layer.fps > 0 ? f / layer.fps : 0;
-    this.applySpriteSheetFrame(layer, f);
-  }
-
-  getSpriteSheetFrame(objectId: number): number {
-    return this.spritesheetLayers.get(objectId)?.frame ?? -1;
-  }
-
+  pauseSpriteSheet(objectId: number): void { this.spriteSheets.pause(objectId); }
+  playSpriteSheet(objectId: number): void { this.spriteSheets.play(objectId); }
+  stopSpriteSheet(objectId: number): void { this.spriteSheets.stop(objectId); }
+  isSpriteSheetPlaying(objectId: number): boolean { return this.spriteSheets.isPlaying(objectId); }
+  setSpriteSheetFrame(objectId: number, frame: number): void { this.spriteSheets.setFrame(objectId, frame); }
+  getSpriteSheetFrame(objectId: number): number { return this.spriteSheets.getFrame(objectId); }
   /** 测试用：取精灵表图层当前帧的 UV 子矩形（仅测试/诊断观测，不参与渲染）。 */
   spritesheetUvForTest(objectId: number): { u0: number; v0: number; u1: number; v1: number } | null {
-    const layer = this.spritesheetLayers.get(objectId);
-    return layer ? { ...layer.uv } : null;
+    return this.spriteSheets.uvForTest(objectId);
   }
 
   /** 相机视差配置（null = 未启用/已拆除 ⇒ 逐帧零成本早退；enabled=false 时下一帧把对象写回基准位置）。 */
   setParallax(cfg: ParallaxConfig | null): void {
-    this.parallaxCfg = cfg;
+    this.parallax.setConfig(cfg);
   }
 
-  /** 宿主指针监听的最新归一化位置（[0,1]）；插值在本类的 tickParallax 内按 dt 推进。 */
+  /** 宿主指针监听的最新归一化位置（[0,1]）；插值在 ParallaxRuntime 内按 dt 推进。 */
   setParallaxPointer(p: PointerState): void {
-    this.parallaxTarget = p;
+    this.parallax.setPointer(p);
   }
 
   /** 视差跟随的当前指针（插值后，[0,1] y 向下）：效果 shader 全局 uniform 的来源。 */
   parallaxPointer(): PointerState {
-    return this.parallaxFollow.value;
+    return this.parallax.pointer();
   }
 
   /** 测试用：取某背景条目的 three 对象（隔离对象返回合成 quad）。 */
@@ -1197,79 +1095,14 @@ export class ThreeScenePlayer {
     this.tickParallax(dt);
   }
 
-  // 逐帧：推进指针插值，并按 parallaxDepth 把**对象平移**写进各自的落点（非隔离 = mesh、
-  // 隔离 = 合成 quad、粒子 = 顶点 shader 的 u_Parallax）。相机不动 —— 视差只是 model 平移。
-  // ⚠️ 「不参与视差」（关视差 / depth 缺失 / depth 两根轴全 0）只写回**一次**基准位：每帧无条件写
-  // position 会盖掉脚本对同一对象的 origin 写入（layer-state.applyLayerState 直接写 three 对象）
-  // ⇒ 动态网格静止；而全库 34 张里只有 1 张开视差，其 pkg 内仍有 3 个对象的 depth 真值为全 0。
+  // 逐帧视差推进（实现与语义注释见 parallax-runtime.ts 的 tick）。
   private tickParallax(dt: number): void {
-    const cfg = this.parallaxCfg;
-    if (!cfg) return;
-    this.parallaxFollow = advancePointer(this.parallaxFollow, this.parallaxTarget, cfg, dt);
-    for (const entry of this.backgroundEntries.values()) {
-      // 基准位 = 锚点 origin（we_to_three）+ alignment 偏移；视差 node 仍取**锚点原点**（alignment
-      // 是局部几何偏移，不参与视差的 node 坐标，否则 shift 会随锚点额外平移）。
-      const bx = entry.origin[0] - entry.sceneW / 2;
-      const by = entry.origin[1] - entry.sceneH / 2;
-      const x = bx + entry.align[0];
-      const y = by + entry.align[1];
-      const z = entry.origin[2];
-      // depth 全 0（scene.json 里有真值 "0.00000 0.00000"）与缺省同义 = 不参与视差：shift 恒 0，
-      // 但**写**这个动作本身会覆盖脚本位移，故必须归到「不写」分支。
-      const d = entry.parallaxDepth;
-      const depth = d && (d[0] !== 0 || d[1] !== 0) ? d : null;
-      if (!cfg.enabled || !depth) {
-        if (entry.parallaxApplied) {
-          entry.parallaxNode.position.set(x, y, z);
-          entry.parallaxApplied = false;
-        }
-        continue;
-      }
-      const [sx, sy] = parallaxShift({
-        pointer: this.parallaxFollow.value,
-        // OWE 的 ortho 是**场景**正交尺寸（general.orthogonalprojection），不是窗口尺寸。
-        orthoW: this.sceneWidth,
-        orthoH: this.sceneHeight,
-        nodeX: bx, nodeY: by,
-        // three 坐标下主相机位于场景中心（we_to_three 已把中心移到原点）。
-        camX: 0, camY: 0,
-        depth,
-        cfg,
-      });
-      entry.parallaxNode.position.set(x + sx, y + sy, z);
-      entry.parallaxApplied = true;
-    }
-    // 粒子层：非隔离层把位移注入顶点 shader（= 对象局部的世界平移）；隔离层写合成 quad（在对象
-    // RT 内平移会被 RT 边界裁掉）。
-    for (const layer of this.particleLayers.values()) {
-      const [cx, cy] = layer.parallaxCenter;
-      const u = (layer.material.uniforms as Record<string, { value: THREE.Vector2 }>).u_Parallax;
-      // 隔离层的位移落点只有 quad：quad 意外缺失时跳过本层，**不得**退化写 u_Parallax（那正是会
-      // 被 RT 边界裁掉的落点）。
-      if (layer.parallaxIsolated && !layer.parallaxQuad) continue;
-      const d = layer.parallaxDepth;
-      const depth = d && (d[0] !== 0 || d[1] !== 0) ? d : null;
-      if (!cfg.enabled || !depth) {
-        if (layer.parallaxApplied) {
-          if (layer.parallaxQuad) layer.parallaxQuad.position.set(cx, cy, layer.parallaxQuad.position.z);
-          else u?.value.set(0, 0);
-          layer.parallaxApplied = false;
-        }
-        continue;
-      }
-      const [sx, sy] = parallaxShift({
-        pointer: this.parallaxFollow.value,
-        orthoW: this.sceneWidth,
-        orthoH: this.sceneHeight,
-        nodeX: cx, nodeY: cy,
-        camX: 0, camY: 0,
-        depth,
-        cfg,
-      });
-      if (layer.parallaxQuad) layer.parallaxQuad.position.set(cx + sx, cy + sy, layer.parallaxQuad.position.z);
-      else u?.value.set(sx, sy);
-      layer.parallaxApplied = true;
-    }
+    this.parallax.tick(dt, {
+      sceneWidth: this.sceneWidth,
+      sceneHeight: this.sceneHeight,
+      backgrounds: this.backgroundEntries.values(),
+      particles: this.particleLayers.values(),
+    });
   }
 
   // 启动帧循环（renderer.setAnimationLoop 内部 RAF）。每帧：外部回调 fn(dt) → update(dt) →
@@ -2545,12 +2378,7 @@ export class ThreeScenePlayer {
     entry.mesh.geometry = new THREE.PlaneGeometry(w, h);
     old.dispose();
     // 精灵表图层：新几何的 UV 是整图 [0,1]² ⇒ 以它为新的 base 并立即重写当前帧子矩形。
-    for (const layer of this.spritesheetLayers.values()) {
-      if (layer.backgroundId !== id) continue;
-      const attr = (layer.mesh.geometry as THREE.BufferGeometry).attributes?.uv;
-      layer.baseUv = attr ? Float32Array.from(attr.array as ArrayLike<number>) : new Float32Array(0);
-      this.applySpriteSheetFrame(layer, Math.max(0, layer.frame));
-    }
+    this.spriteSheets.rebaseForBackground(id);
     const map = (entry.mesh.material as { map?: THREE.Texture | null }).map;
     if (map && (map as THREE.CanvasTexture).isCanvasTexture) map.dispose();
   }
@@ -2916,7 +2744,7 @@ export class ThreeScenePlayer {
     }
     this.backgroundEntries.clear();
     // 精灵表图层只持有 mesh 引用，随背景释放一并失效。
-    this.spritesheetLayers.clear();
+    this.spriteSheets.clear();
     // puppet：骨骼纹理与实例资源由 PuppetInstance 释放（几何/材质与上面的条目共用，dispose 幂等）。
     for (const layer of this.puppetLayers.values()) layer.instance.dispose();
     this.puppetLayers.clear();
