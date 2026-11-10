@@ -1,0 +1,37 @@
+# v1.0.0：首个正式版——契约冻结
+
+这是本插件的第一个 `1.0.0`。它不追求「功能最多」，而是把对外契约固定下来：从 1.0 起，设置字段、本地数据、DSH 兼容范围与安装方式都有明确承诺，破坏性变更只会在 major 版本发生。
+
+v0.9–v0.13 期间新增的媒体集成、开机动画、系统音频、视频壁纸声音与 puppet 骨骼动画已在各自版本发布；本版集中补可观测性与发布工程。
+
+## ✨ 新增功能
+
+### 出问题能自助排查
+
+- 设置 →「Wallpaper 壁纸」→「关于」显示插件版本，并新增 **「复制诊断信息」**：一键复制版本、WebGL2 支持、Wallpaper Engine 目录是否配置、当前壁纸与渲染健康快照，可直接粘贴进 Issue（**不含**本地路径、曲目名与封面）。
+- 「实时渲染」卡片新增**环境自检**：浏览器不支持 WebGL2、未配置 WE 引擎目录、当前是网页壁纸（跨源无失败回退）时，给出中文提示与自救建议。
+
+## ⚠️ 破坏性变更（0.x → 1.0）
+
+- **DSH 最低版本抬升到 `0.2.0-rc.1`**（`engines.dsh = ">=0.2.0-rc.1 <0.3.0"`，此前无任何版本约束）。DSH 0.1.x 不再支持；仍使用旧版 DSH 的请停留在 `0.13.1`。
+- **删除 DSH ≤0.1.6 的旧设置适配层**：设置只认 profile `cordis.patch.yml` 中 `dsh-wallpaper-engine` 条目的 `config`；`$DSH_HOME/settings.yaml` 旧路径与旧短名命名空间已移除。
+- **声明平台为 `win32`**：macOS / Linux 从未实测，DSH 在其它平台会跳过本插件并报告原因（自行安装时自动探测、媒体集成、系统音频不可用）。
+- 设置字段、localStorage 键与数据目录结构**无重命名、无删除**，从 0.13.1 升级不需要手工迁移。
+
+## 🐛 修复与加固
+
+- **粒子自旋轴序对齐 WE**：自旋改用 WE `common_particles.h` 的 `Rz·Rx·Ry`（此前用对象角度的 `Rz·Ry·Rx`，多轴自旋壁纸朝向与桌面不一致）；对象角度路径不变。
+- 构建链加固：`build:client` 在 pnpm 布局下找不到 quickjs 沙箱 wasm 的缺陷已修复（此前会构建中止）。
+- 发布工程：新增 tag 触发的 release workflow（门禁 + OIDC provenance 发布）、发布前单命令检查与 wasm 产物溯源；`cargo test` 从不可编译恢复为全绿。
+
+## ⚠️ 兼容性 / 已知限制
+
+- 运行时要求：Windows 10/11 + DSH `0.2.x` + Chrome/Edge（WebGL2）；HEVC 视频是否可播取决于浏览器/系统解码扩展。
+- 渲染边界见 README「使用前请了解」（子粒子、ropetrail、鼠标互动粒子、puppet 部分语义、`copybackground` 等）；本版不新增渲染能力。
+
+## 升级步骤
+
+- **npm / GitHub（`dsh web`）**：`dsh plugin --profile web add "@dsh-use/wallpaper-engine@1.0.0"` → `dsh plugin --profile web install` → 重启 `dsh web`。
+- **桌面版 App**：侧边栏「插件」页更新后**完全退出 App 再启动**（客户端 bundle 是启动时快照，刷新页面拿不到新代码）。
+- **从 0.x 升级**：若仍在 DSH 0.1.x，请先升级 DSH 再安装 1.0.0；设置与本地数据无需迁移。
+- **回滚**：`npm dist-tag add @dsh-use/wallpaper-engine@0.13.1 latest`（保留 1.0.0 可追溯）。
