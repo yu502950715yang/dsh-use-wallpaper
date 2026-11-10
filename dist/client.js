@@ -2814,6 +2814,13 @@ body[data-we-wallpaper] :where([data-sidebar-right-panel="fullscreen"][data-side
 .wss-about-link:focus-visible{outline:2px solid var(--wp-accent);outline-offset:2px}
 .wss-about-link[data-primary=true]{background:var(--wp-accent-strong,#2563eb);border-color:transparent;color:#fff}
 .wss-about-link[data-primary=true]:hover{filter:brightness(1.07)}
+/* \u53EF\u89C2\u6D4B\u6027\uFF081.0\uFF09\uFF1A\u5173\u4E8E\u533A\u7684\u7248\u672C\u884C + \u590D\u5236\u8BCA\u65AD\u6309\u94AE\uFF1B\u5B9E\u65F6\u6E32\u67D3\u5361\u7684\u73AF\u5883\u81EA\u68C0\u884C\u3002 */
+.wss-about-version{margin:0 0 8px;font-variant-numeric:tabular-nums}
+.wss-diagnostics-copy{border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background:transparent;color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;min-height:30px;padding:6px 12px;font:inherit;font-size:12px;font-weight:550;cursor:pointer;transition:background-color .15s ease}
+.wss-diagnostics-copy:hover{background:rgba(127,127,127,.12)}
+.wss-diagnostics-copy:focus-visible{outline:2px solid var(--wp-accent);outline-offset:2px}
+.wss-env-issue{margin:0 0 6px;padding-left:10px;border-left:2px solid var(--dsw-alias-state-warning-primary,var(--wp-accent))}
+.wss-env-issue[data-tone="info"]{border-left-color:var(--dsw-alias-border-l2,var(--wp-panel-border))}
 /* \u2500\u2500 \u8BBE\u7F6E\u9875 tab \u5BB9\u5668\uFF08Wallpaper \u58C1\u7EB8\uFF1A\u65E5\u5E38\u58C1\u7EB8 / \u5F00\u673A\u52A8\u753B\uFF09 \u2500\u2500 */
 .we-shell{display:flex;flex-direction:column;gap:var(--we-sp-3);padding:var(--we-sp-2) 2px 6px}
 .we-tabs{display:flex;gap:4px;padding:4px;border:1px solid var(--we-border);border-radius:var(--we-r-md);background:var(--we-surface-2)}
@@ -2975,6 +2982,9 @@ function injectWallpaperStyles() {
   tag.textContent = WALLPAPER_CSS;
   document.head.appendChild(tag);
 }
+
+// src/client/version.ts
+var PLUGIN_VERSION = true ? "0.13.1" : "0.0.0-dev";
 
 // src/client/boot-overlay.ts
 var LAYER_CLASS = "wp-boot-layer";
@@ -3291,7 +3301,7 @@ var import_react3 = require("react");
 var import_react = require("react");
 
 // src/client/settings.ts
-var NS_CANDIDATES = ["dsh-wallpaper-engine", "wallpaper-engine"];
+var NS = "dsh-wallpaper-engine";
 var DEFAULTS = {
   selectedWallpaperId: "",
   wallpaperDir: "",
@@ -3338,11 +3348,9 @@ var DEFAULTS = {
 };
 var settingsCtx = null;
 var lastGood = null;
-var activeNs = null;
 function setSettingsCtx(ctx) {
   settingsCtx = ctx;
   lastGood = null;
-  activeNs = null;
 }
 function settingsRemote() {
   return settingsCtx?.remote?.settings ?? null;
@@ -3355,13 +3363,10 @@ async function readClientSettings() {
       const value = resp?.ok ? resp.value : void 0;
       if (typeof value === "object" && value !== null) {
         const namespaces = value.namespaces;
-        for (const ns of NS_CANDIDATES) {
-          const nsValue = namespaces?.find((n) => n.ns === ns)?.value;
-          if (typeof nsValue === "object" && nsValue !== null) {
-            activeNs = ns;
-            lastGood = { ...lastGood ?? DEFAULTS, ...nsValue };
-            return { ...lastGood };
-          }
+        const nsValue = namespaces?.find((n) => n.ns === NS)?.value;
+        if (typeof nsValue === "object" && nsValue !== null) {
+          lastGood = { ...lastGood ?? DEFAULTS, ...nsValue };
+          return { ...lastGood };
         }
       }
     } catch {
@@ -3372,22 +3377,17 @@ async function readClientSettings() {
 async function writeClientSettings(patch) {
   const remote = settingsRemote();
   if (!remote) return false;
-  const order = activeNs ? [activeNs, ...NS_CANDIDATES.filter((n) => n !== activeNs)] : [...NS_CANDIDATES];
-  let lastError;
-  for (const ns of order) {
-    try {
-      const resp = await remote.update(ns, patch, void 0);
-      if (resp && resp.ok === false) {
-        lastError = resp.error;
-        continue;
-      }
-      return true;
-    } catch (error) {
-      lastError = error;
+  try {
+    const resp = await remote.update(NS, patch, void 0);
+    if (resp && resp.ok === false) {
+      console.warn(`[wallpaper-engine] \u8BBE\u7F6E\u5199\u5165\u5931\u8D25\uFF08ns=${NS}\uFF09\uFF1A`, resp.error);
+      return false;
     }
+    return true;
+  } catch (error) {
+    console.warn(`[wallpaper-engine] \u8BBE\u7F6E\u5199\u5165\u5931\u8D25\uFF08ns=${NS}\uFF09\uFF1A`, error);
+    return false;
   }
-  console.warn(`[wallpaper-engine] \u8BBE\u7F6E\u5199\u5165\u5931\u8D25\uFF08\u5DF2\u5C1D\u8BD5 ${order.join(" / ")}\uFF09\uFF1A`, lastError);
-  return false;
 }
 var USERPROP_PREFIX = "we:userprop:";
 function getUserPropertyValue(key, wallpaperId) {
@@ -4125,6 +4125,87 @@ function createRotationScheduler(deps) {
   };
 }
 
+// src/client/diagnostics.ts
+function buildDiagnosticsText(input) {
+  return JSON.stringify({
+    plugin: {
+      version: input.pluginVersion,
+      webgl2: input.hasWebGL2,
+      mediaIntegrationEnabled: input.mediaIntegrationEnabled ?? null
+    },
+    host: { userAgent: input.ua },
+    wallpaper: input.wallpaper ? { id: input.wallpaper.id, kind: input.wallpaper.kind, title: input.wallpaper.title } : null,
+    config: {
+      wallpaperDirConfigured: input.wallpaperDirConfigured,
+      weAssetsDirConfigured: input.weAssetsDirConfigured
+    },
+    health: input.health,
+    videoHealth: input.videoHealth,
+    copiedAt: (/* @__PURE__ */ new Date()).toISOString()
+  }, null, 2);
+}
+async function copyText(text) {
+  try {
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+  }
+  if (typeof document === "undefined") return false;
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.top = "-1000px";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = typeof document.execCommand === "function" ? document.execCommand("copy") : false;
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+// src/client/env-check.ts
+function checkEnvironment(input) {
+  const issues = [];
+  if (input.hasWebGL2 === false) {
+    issues.push({
+      key: "webgl2",
+      tone: "warn",
+      text: "\u5F53\u524D\u6D4F\u89C8\u5668\u4E0D\u652F\u6301 WebGL2\uFF1Ascene \u58C1\u7EB8\u4F1A\u56DE\u9000\u9884\u89C8\u56FE\uFF0C\u5EFA\u8BAE\u6539\u7528 Chrome / Edge\u3002"
+    });
+  }
+  if (!input.weAssetsDir) {
+    issues.push({
+      key: "we-assets",
+      tone: "warn",
+      text: "\u672A\u914D\u7F6E Wallpaper Engine \u5B89\u88C5\u76EE\u5F55\uFF1A\u7C92\u5B50\u4E0E\u7279\u6548\u7EB9\u7406\u5C06\u9000\u5316\u4E3A\u7EAF\u8272\u70B9\uFF0C\u8BF7\u5728\u4E0B\u65B9\u76EE\u5F55\u8BBE\u7F6E\u91CC\u586B\u5199\u6216\u70B9\u300C\u81EA\u52A8\u63A2\u6D4B\u300D\u3002"
+    });
+  }
+  if (input.currentKind === "web") {
+    issues.push({
+      key: "web-fallback",
+      tone: "info",
+      text: "\u7F51\u9875\u58C1\u7EB8\u5931\u8D25\u65F6\u65E0\u6CD5\u81EA\u52A8\u56DE\u9000\uFF08\u8DE8\u6E90\u9650\u5236\uFF09\uFF0C\u753B\u9762\u53EF\u80FD\u505C\u5728\u7A7A\u767D\uFF1B\u53EF\u5148\u5207\u6362\u5176\u5B83\u58C1\u7EB8\u3002"
+    });
+  }
+  return issues;
+}
+function detectWebGL2() {
+  if (typeof document === "undefined") return null;
+  try {
+    const canvas = document.createElement("canvas");
+    return !!canvas.getContext("webgl2");
+  } catch {
+    return false;
+  }
+}
+
 // src/client/settings-section.tsx
 var import_jsx_runtime = require("react/jsx-runtime");
 async function defaultFetchWallpapers(opts) {
@@ -4539,6 +4620,34 @@ function WallpaperSettingsSection(props) {
     const el = document.getElementById(id);
     if (el && typeof el.scrollIntoView === "function") el.scrollIntoView({ behavior: "smooth", block: "start" });
   };
+  const webgl2 = (0, import_react.useMemo)(() => detectWebGL2(), []);
+  const envIssues = (0, import_react.useMemo)(() => {
+    if (!settings) return [];
+    return checkEnvironment({
+      hasWebGL2: webgl2,
+      weAssetsDir: settings.weAssetsDir,
+      currentKind: currentWallpaper?.type ?? null
+    });
+  }, [settings, webgl2, currentWallpaper?.type]);
+  const copyDiagnostics = (0, import_react.useCallback)(async () => {
+    if (!settings) {
+      setMessage("\u8BBE\u7F6E\u5C1A\u672A\u52A0\u8F7D\uFF0C\u7A0D\u540E\u518D\u8BD5");
+      return;
+    }
+    const text = buildDiagnosticsText({
+      pluginVersion: PLUGIN_VERSION,
+      ua: typeof navigator !== "undefined" ? navigator.userAgent : "unknown",
+      hasWebGL2: webgl2,
+      health,
+      videoHealth: videoHealth ?? null,
+      wallpaper: currentWallpaper ? { id: currentWallpaper.id, kind: currentWallpaper.type, title: currentWallpaper.title } : null,
+      wallpaperDirConfigured: !!settings.wallpaperDir,
+      weAssetsDirConfigured: !!settings.weAssetsDir,
+      mediaIntegrationEnabled: settings.mediaIntegrationEnabled
+    });
+    const ok = await copyText(text);
+    setMessage(ok ? "\u8BCA\u65AD\u4FE1\u606F\u5DF2\u590D\u5236\uFF0C\u53EF\u76F4\u63A5\u7C98\u8D34\u5230 Issue" : "\u590D\u5236\u5931\u8D25\uFF1A\u8BF7\u624B\u52A8\u8BB0\u5F55\u9762\u677F\u72B6\u6001\u540E\u53CD\u9988");
+  }, [settings, webgl2, health, videoHealth, currentWallpaper]);
   const rotationPoolSize = buildRotationPool(wallpapers, libState).length;
   const rotationStatus = rotationPoolSize < 2 ? "\u81F3\u5C11\u4FDD\u7559 2 \u5F20\u53EF\u8F6E\u64AD\u58C1\u7EB8\uFF0C\u6216\u6536\u85CF 2 \u5F20\u4EE5\u4E0A" : `\u6BCF ${formatRotationInterval(settings?.rotationIntervalMs)} \xB7 ${normalizeRotationOrder(settings?.rotationOrder) === "sequential" ? "\u987A\u5E8F" : "\u968F\u673A"} \xB7 \u53EF\u8F6E\u64AD ${rotationPoolSize} \u5F20`;
   const visibleProperties = properties.filter(
@@ -5345,6 +5454,16 @@ function WallpaperSettingsSection(props) {
             /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc wss-live-current", children: liveCurrent }),
             liveMemory && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc wss-live-memory", children: liveMemory })
           ] }),
+          envIssues.map((issue) => /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+            "p",
+            {
+              className: "wss-section-desc wss-env-issue",
+              "data-tone": issue.tone,
+              "data-issue": issue.key,
+              children: issue.text
+            },
+            issue.key
+          )),
           videoHealth && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { className: "wss-section-desc wss-video-health", "data-state": videoHealth.state, children: [
             "\u89C6\u9891\u58C1\u7EB8\uFF1A",
             formatVideoHealthLine(videoHealth)
@@ -5358,6 +5477,11 @@ function WallpaperSettingsSection(props) {
       /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section wss-about", "aria-label": "\u5173\u4E8E", children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wss-section-title", children: "\u5173\u4E8E" }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc", children: "MIT \u5F00\u6E90\u3002\u5982\u679C\u5B83\u8BA9\u4F60\u7684\u754C\u9762\u597D\u770B\u4E86\uFF0C\u70B9\u4E2A Star \u5C31\u662F\u6700\u5927\u7684\u652F\u6301\uFF1B\u54EA\u5F20\u58C1\u7EB8\u6E32\u67D3\u4E0D\u6B63\u5E38\uFF0C\u5E26 Workshop ID \u63D0\u4E2A Issue \u5373\u53EF\u3002" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("p", { className: "wss-section-desc wss-about-version", children: [
+          "\u7248\u672C v",
+          PLUGIN_VERSION
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "wss-row", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { type: "button", className: "wss-diagnostics-copy", onClick: () => void copyDiagnostics(), children: "\u590D\u5236\u8BCA\u65AD\u4FE1\u606F" }) }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-about-links", children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("a", { className: "wss-about-link", "data-primary": "true", href: "https://github.com/yu502950715yang/dsh-use-wallpaper", target: "_blank", rel: "noreferrer", children: "\u2B50 Star \u9879\u76EE" }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)("a", { className: "wss-about-link", href: "https://github.com/yu502950715yang/dsh-use-wallpaper/issues/new", target: "_blank", rel: "noreferrer", children: "\u53CD\u9988\u95EE\u9898" }),
@@ -28329,13 +28453,23 @@ varying vec2 vCornerUv;
 varying vec2 vParticleUv;
 varying vec3 vParticleColor;
 varying float vParticleAlpha;
-// \u5BF9\u8C61\u65CB\u8F6C R = Rz\xB7Ry\xB7Rx\uFF08\u5B98\u65B9 order\uFF1AOWE ParticleRuntime.cpp:25-28 ControlpointRotation\uFF09\u3002
+// \u5BF9\u8C61\u89D2\u5EA6\u65CB\u8F6C R = Rz\xB7Ry\xB7Rx\uFF08OWE ParticleRuntime.cpp:25-28 ControlpointRotation\uFF1B\u5BF9\u8C61\u8DEF\u5F84\u6CBF\u7528\uFF0C\u52FF\u6539\uFF09\u3002
 // \u6BCF\u4E2A\u5206\u91CF\u90FD\u662F\u53F3\u624B\u7CFB\u7ED5\u8F74\u7684\u4E3B\u52A8\u65CB\u8F6C\uFF0C\u4E0E Eigen AngleAxisd(theta, axis) \u4E00\u81F4\u3002
 vec3 weObjectRotate(vec3 v, vec3 a) {
   float cx = cos(a.x), sx = sin(a.x);
   v = vec3(v.x, v.y * cx - v.z * sx, v.y * sx + v.z * cx);
   float cy = cos(a.y), sy = sin(a.y);
   v = vec3(v.x * cy + v.z * sy, v.y, -v.x * sy + v.z * cy);
+  float cz = cos(a.z), sz = sin(a.z);
+  return vec3(v.x * cz - v.y * sz, v.x * sz + v.y * cz, v.z);
+}
+// \u7C92\u5B50\u81EA\u65CB R = Rz\xB7Rx\xB7Ry\uFF08WE common_particles.h:26-35 ComputeParticleTangents\uFF0C\u4E0E\u5BF9\u8C61\u89D2\u5EA6\u987A\u5E8F\u4E0D\u540C\uFF09\u3002
+// \u540C\u5217\u5411\u91CF\u53F3\u4E58\u7EA6\u5B9A\uFF1B\u4EC5\u7528\u4E8E\u81EA\u65CB\uFF0Cz-only \u65F6\u4E0E weObjectRotate \u9010\u50CF\u7D20\u7B49\u4EF7\u3002
+vec3 weParticleSpinRotate(vec3 v, vec3 a) {
+  float cy = cos(a.y), sy = sin(a.y);
+  v = vec3(v.x * cy + v.z * sy, v.y, -v.x * sy + v.z * cy);
+  float cx = cos(a.x), sx = sin(a.x);
+  v = vec3(v.x, v.y * cx - v.z * sx, v.y * sx + v.z * cx);
   float cz = cos(a.z), sz = sin(a.z);
   return vec3(v.x * cz - v.y * sz, v.x * sz + v.y * cz, v.z);
 }
@@ -28352,8 +28486,8 @@ void main() {
   // \u671D\u5411\u7528 \u2014\u2014 GTR 3743126786 \u7684\u70DF\u67F1 angles.z = -1.20063 \u672C\u5E94\u628A\u5C40\u90E8 +Y\uFF08\u6E4D\u6D41\u7684 forward\uFF09\u8F6C\u5230
   // \u4E16\u754C (0.932, 0.362)\uFF08\u300C\u4ECE\u6392\u6C14\u7BA1\u5411\u53F3\u4FA7\u98D8\u300D\uFF09\uFF0C\u6F0F\u6389\u65CB\u8F6C\u540E\u70DF\u5C31\u76F4\u7740\u5F80\u4E0A\u8D70\u3002
   vec3 worldPos = objCenter + weObjectRotate(objScale * (emitterOrigin + local), objAngles);
-  // \u7C92\u5B50 quad \u7684\u5C3A\u5BF8\u540C\u6837\u4E58\u5BF9\u8C61 scale\uFF08\u975E\u5747\u5300\uFF1Babs \u53BB\u6389\u955C\u50CF\u7684\u7B26\u53F7\uFF09\u5E76\u968F\u5BF9\u8C61\u89D2\u5EA6\u4E00\u8D77\u8F6C\uFF1B\u81EA\u65CB\u5148\u4E8E\u5BF9\u8C61
-  // \u65CB\u8F6C\uFF08WE ComputeParticleTangents\uFF0Ccommon_particles.h\uFF1BR = Rz\xB7Ry\xB7Rx \u4E0E\u5BF9\u8C61\u89D2\u5EA6\u540C\u4E00\u7EA6\u5B9A\uFF09\u3002
+  // \u7C92\u5B50 quad \u5C3A\u5BF8\u4E58\u5BF9\u8C61 scale\uFF08\u975E\u5747\u5300\uFF1Babs \u53BB\u6389\u955C\u50CF\u7B26\u53F7\uFF09\u5E76\u968F\u5BF9\u8C61\u89D2\u5EA6\u8F6C\uFF1B\u81EA\u65CB\u7528 WE \u8F74\u5E8F Rz\xB7Rx\xB7Ry\uFF0C
+  // \u5BF9\u8C61\u89D2\u5EA6\u4ECD\u7528 Rz\xB7Ry\xB7Rx\uFF08\u4E24\u5E8F z-only \u7B49\u4EF7\uFF09\u2014\u2014 \u89C1 weParticleSpinRotate\u3002
   if (trailEnabled > 0.5 && length(particleVelocity) > 1e-6) {
     // spritetrail\uFF1A\u590D\u523B WE ComputeParticleTrailTangents / ComputeParticlePosition\uFF08common_particles.h:42-59\uFF09\u2014\u2014
     //   right = normalize(cross(eyeDirection, velocity))
@@ -28378,7 +28512,7 @@ void main() {
   } else {
     // sprite\uFF08\u65E2\u6709\u8DEF\u5F84\uFF0C\u9010\u5B57\u4E0D\u53D8\uFF09\uFF1A\u4E09\u8F74\u6B27\u62C9\u65CB\u8F6C quad \u89D2\u70B9\uFF1B|v|=0 \u7684 spritetrail \u4E5F\u9000\u5230\u8FD9\u91CC
     // \uFF08WE \u7684 normalize(0) \u4F1A\u4EA7\u51FA NaN\u3001\u7C92\u5B50\u6D88\u5931\uFF0C\u672C\u63D2\u4EF6\u9009\u62E9\u753B\u51FA size \u65B9\u5757\u800C\u4E0D\u662F\u4E22\u7C92\u5B50\uFF09\u3002
-    vec3 spun = weObjectRotate(vec3(position.xy, 0.0), particleRot);
+    vec3 spun = weParticleSpinRotate(vec3(position.xy, 0.0), particleRot);
     vec3 corner = weObjectRotate(abs(objScale) * (spun * particleSize * 0.5), objAngles);
     worldPos += corner;
   }
@@ -28397,12 +28531,11 @@ void main() {
   // \uFF08\u5BF9\u9F50 wasm billboard \u7684 clip.z=0 \u8BED\u4E49\uFF0C\u89C1 particle_billboard.wgsl\uFF09\u3002
   gl_Position.z = 0.0;
 #ifdef REFRACT
-  // \u6298\u5C04\u5207\u7EBF\u57FA\uFF08\u5C4F\u5E55\u7A7A\u95F4\u4F4D\u79FB\u65B9\u5411\uFF09\uFF1A\u4E0E\u4E0A\u9762 quad \u89D2\u70B9\u5C55\u5F00**\u540C\u4E00\u65CB\u8F6C\u7EA6\u5B9A\u4E0E\u540C\u4E00\u6B21\u5E8F**
-  // \uFF08\u5148\u7C92\u5B50\u81EA\u65CB\u3001\u518D\u5BF9\u8C61\u89D2\u5EA6\uFF09\uFF0C\u5BF9\u9F50 WE ComputeParticleTangents\uFF08common_particles.h:26-39
-  // \u5148\u7B97\u7C92\u5B50\u5207\u7EBF\u3001\u518D\u7531\u5BF9\u8C61 orientation \u53D8\u6362\uFF1Bgenericparticle.vert:85,117 \u540C\u5E8F\uFF09\u3002
+  // \u6298\u5C04\u5207\u7EBF\u57FA\uFF08\u5C4F\u5E55\u7A7A\u95F4\u4F4D\u79FB\u65B9\u5411\uFF09\uFF1A\u4E0E\u4E0A\u9762 quad \u89D2\u70B9\u5C55\u5F00\u540C\u4E00\u7EA6\u5B9A/\u540C\u4E00\u6B21\u5E8F\uFF08\u5148\u7C92\u5B50\u81EA\u65CB\u3014WE \u8F74\u5E8F\u3015\u3001
+  // \u518D\u5BF9\u8C61\u89D2\u5EA6\uFF09\uFF0C\u5BF9\u9F50 WE ComputeParticleTangents\uFF08common_particles.h:26-39\uFF1Bgenericparticle.vert:85,117 \u540C\u5E8F\uFF09\u3002
   // vScreenCoord \u5FC5\u987B\u5728 gl_Position \u4E4B\u540E\u53D6\u3002
-  vec3 rRight = normalize(weObjectRotate(weObjectRotate(vec3(1.0, 0.0, 0.0), particleRot), objAngles));
-  vec3 rUp = normalize(weObjectRotate(weObjectRotate(vec3(0.0, 1.0, 0.0), particleRot), objAngles));
+  vec3 rRight = normalize(weObjectRotate(weParticleSpinRotate(vec3(1.0, 0.0, 0.0), particleRot), objAngles));
+  vec3 rUp = normalize(weObjectRotate(weParticleSpinRotate(vec3(0.0, 1.0, 0.0), particleRot), objAngles));
   vScreenCoord = gl_Position.xyw;
   vScreenTangents = refractAmount * vec4(rRight.x, rUp.x, rRight.y, rUp.y);
 #endif
@@ -38087,8 +38220,8 @@ function createThreeSceneRenderer(opts) {
           stage = new ObjectEffectStage(result.player, {
             wallpaperId: id,
             screenScale,
-            // util 专用快照槽门控：只有 util 内容层允许把整帧快照绑到 `_rt_FullFrameBuffer`；
-            // 对象链门控（ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER）保持关闭。无 util 内容层 ⇒ 不下发。
+            // 快照槽放行：util 内容层经 `allowFrameSnapshot` 显式放行；对象链门控已开启（object-effects.ts
+            // 的 ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER = true，引用快照即登记段边界消费者）。无 util 内容层 ⇒ 不下发。
             allowFrameSnapshot: utilContentIds.size > 0 ? (objId) => utilContentIds.has(objId) : void 0
           });
           for (const [objId, iso] of isolate) {
@@ -38383,7 +38516,7 @@ function videoWallpaperId(url) {
 function bootstrap(ctx) {
   if (!bootstrapLogged) {
     bootstrapLogged = true;
-    console.info("[wallpaper-engine] client ready v0.13.0 (audio: <audio> streaming)");
+    console.info(`[wallpaper-engine] client ready v${PLUGIN_VERSION} (audio: <audio> streaming)`);
   }
   setSettingsCtx(ctx);
   injectWallpaperStyles();

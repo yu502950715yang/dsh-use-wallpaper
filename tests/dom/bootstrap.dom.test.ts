@@ -21,7 +21,7 @@ function settingsCtx(settingsValue: unknown) {
       settings: {
         describe: async () => ({
           ok: true,
-          value: { writable: true, hasDocument: true, namespaces: [{ ns: 'wallpaper-engine', value: settingsValue }] },
+          value: { writable: true, hasDocument: true, namespaces: [{ ns: 'dsh-wallpaper-engine', value: settingsValue }] },
         }),
         update: async () => ({}),
       },

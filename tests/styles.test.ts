@@ -388,4 +388,13 @@ describe('styles 主题适配', () => {
     expect(WALLPAPER_CSS).toMatch(/\.wss-current-label\{[^}]*var\(--wp-accent\)/);
     expect(WALLPAPER_CSS).toMatch(/\.wss-chip\{[^}]*var\(--wp-accent\)/);
   });
+
+  // 可观测性（1.0）：关于区版本行 / 复制诊断按钮 / 环境自检行。
+  it('可观测性控件有对应样式（版本 / 诊断复制 / 环境提示）', () => {
+    expect(WALLPAPER_CSS).toMatch(/\.wss-about-version\{[^}]*tabular-nums/);
+    expect(WALLPAPER_CSS).toMatch(/\.wss-diagnostics-copy\{[^}]*border:1px solid var\(--dsw-alias-border-l2/);
+    expect(WALLPAPER_CSS).toMatch(/\.wss-diagnostics-copy:focus-visible\{[^}]*outline:2px solid var\(--wp-accent\)/);
+    expect(WALLPAPER_CSS).toMatch(/\.wss-env-issue\{[^}]*border-left:2px solid/);
+    expect(WALLPAPER_CSS).toMatch(/\.wss-env-issue\[data-tone="info"\]\{[^}]*border-left-color/);
+  });
 });

@@ -1623,3 +1623,69 @@ describe('系统音频入口（v0.9 P1）', () => {
     expect(container.querySelector('.wss-sysaudio')).toBeNull();
   });
 });
+
+// 可观测性（1.0 P0）：关于区版本 + 一键复制诊断 + 实时渲染卡的环境自检提示。
+describe('可观测性：版本 / 诊断复制 / 环境自检', () => {
+  afterEach(() => {
+    // 逐个用例清掉 clipboard 桩，避免污染后续用例。
+    try { delete (navigator as any).clipboard; } catch { /* 不可删则忽略 */ }
+  });
+
+  it('关于区显示插件版本与「复制诊断信息」按钮', async () => {
+    mount();
+    await flush();
+    expect(container.querySelector('.wss-about-version')?.textContent).toContain('v');
+    expect(container.querySelector('.wss-diagnostics-copy')).not.toBeNull();
+  });
+
+  it('未配置引擎目录 → 实时渲染卡出现 we-assets 环境提示', async () => {
+    mount();
+    await flush();
+    const issue = container.querySelector('.wss-env-issue[data-issue="we-assets"]');
+    expect(issue).not.toBeNull();
+    expect(issue?.textContent).toContain('Wallpaper Engine 安装目录');
+  });
+
+  it('配置了引擎目录 → 不出现 we-assets 提示', async () => {
+    mount({ fetchSettings: async () => ({ ...BASE_SETTINGS, weAssetsDir: 'D:/WE' }) });
+    await flush();
+    expect(container.querySelector('.wss-env-issue[data-issue="we-assets"]')).toBeNull();
+  });
+
+  it('选中的是 web 壁纸 → 出现 web-fallback 静态说明（info）', async () => {
+    mount({
+      fetchSettings: async () => ({ ...BASE_SETTINGS, selectedWallpaperId: '3', weAssetsDir: 'D:/WE' }),
+      fetchWallpapers: async () => ([
+        ...WALLPAPERS,
+        { id: '3', title: 'Web', type: 'web', hasScene: false, hasPreviewGif: false, previewUrl: '/p3' },
+      ]) as any,
+    });
+    await flush();
+    expect(container.querySelector('.wss-env-issue[data-issue="web-fallback"]')?.textContent).toContain('网页壁纸');
+  });
+
+  it('复制诊断：写入剪贴板成功 → 提示已复制，且不泄露真实路径', async () => {
+    const writeText = vi.fn(async (_text: string) => {});
+    (navigator as any).clipboard = { writeText };
+    mount({ fetchSettings: async () => ({ ...BASE_SETTINGS, wallpaperDir: 'D:/secret/wall', weAssetsDir: 'D:/secret/we' }) });
+    await flush();
+    await act(async () => { (container.querySelector('.wss-diagnostics-copy') as HTMLButtonElement).click(); });
+    await flush();
+    expect(writeText).toHaveBeenCalledTimes(1);
+    const text = String(writeText.mock.calls[0]![0]);
+    expect(text).toContain('"version"');
+    expect(text).toContain('"webgl2"');
+    expect(text).toContain('"wallpaperDirConfigured": true');
+    expect(text).not.toContain('D:/secret'); // 隐私：只输出布尔，不输出真实路径
+    expect(container.querySelector('.wss-message')?.textContent).toContain('已复制');
+  });
+
+  it('复制失败（clipboard 抛错且无降级通道）→ 提示失败，不谎报成功', async () => {
+    (navigator as any).clipboard = { writeText: vi.fn(async () => { throw new Error('denied'); }) };
+    mount();
+    await flush();
+    await act(async () => { (container.querySelector('.wss-diagnostics-copy') as HTMLButtonElement).click(); });
+    await flush();
+    expect(container.querySelector('.wss-message')?.textContent).toContain('复制失败');
+  });
+});

@@ -31,7 +31,7 @@ async function applyFresh(settingsValue: Record<string, unknown> = {}): Promise<
     },
     remote: {
       settings: {
-        describe: async () => ({ ok: true, value: { namespaces: [{ ns: 'wallpaper-engine', value: settingsValue }] } }),
+        describe: async () => ({ ok: true, value: { namespaces: [{ ns: 'dsh-wallpaper-engine', value: settingsValue }] } }),
         update: async () => ({}),
       },
     },

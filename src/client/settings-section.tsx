@@ -3,7 +3,7 @@
 // 提供：壁纸网格切换 / 取消壁纸 / 壁纸目录与引擎目录配置（手动输入 + 自动探测）。
 // 数据与动作经 props 注入（默认走真实 API），便于 jsdom 单测。
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ClientSettings, FitMode, RotationOrder } from './types.js';
 import type {
   WallpaperInfo, WallpaperKind, ProbeResult, WallpaperUserProperty, UserPropertyValue,
@@ -24,6 +24,9 @@ import type { VideoHealthSnapshot } from './video-health.js';
 import { filterLibrary, loadLibraryState, toggleFavorite, toggleHidden } from './library-view.js';
 import type { LibraryFilter, LibraryState } from './library-view.js';
 import { ROTATION_INTERVAL_OPTIONS, buildRotationPool, formatRotationInterval, normalizeRotationOrder } from './rotation.js';
+import { PLUGIN_VERSION } from './version.js';
+import { buildDiagnosticsText, copyText } from './diagnostics.js';
+import { checkEnvironment, detectWebGL2 } from './env-check.js';
 
 export interface WallpaperSettingsSectionProps {
   /** 读取当前设置（默认 RPC settings.describe） */
@@ -623,6 +626,38 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
     const el = document.getElementById(id);
     if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
+
+  // 环境自检（1.0 可观测性）：WebGL2 / WE 引擎目录 / web 壁纸跨源回退 —— 只提示，不修复。
+  // WebGL2 探测是浏览器能力、整个会话不变 ⇒ 只算一次。
+  const webgl2 = useMemo(() => detectWebGL2(), []);
+  const envIssues = useMemo(() => {
+    if (!settings) return [];
+    return checkEnvironment({
+      hasWebGL2: webgl2,
+      weAssetsDir: settings.weAssetsDir,
+      currentKind: currentWallpaper?.type ?? null,
+    });
+  }, [settings, webgl2, currentWallpaper?.type]);
+
+  // 诊断信息复制：只含「是否已配置」布尔，不含真实路径/曲目/封面（隐私边界见 diagnostics.ts）。
+  const copyDiagnostics = useCallback(async () => {
+    if (!settings) { setMessage('设置尚未加载，稍后再试'); return; }
+    const text = buildDiagnosticsText({
+      pluginVersion: PLUGIN_VERSION,
+      ua: typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown',
+      hasWebGL2: webgl2,
+      health,
+      videoHealth: videoHealth ?? null,
+      wallpaper: currentWallpaper
+        ? { id: currentWallpaper.id, kind: currentWallpaper.type, title: currentWallpaper.title }
+        : null,
+      wallpaperDirConfigured: !!settings.wallpaperDir,
+      weAssetsDirConfigured: !!settings.weAssetsDir,
+      mediaIntegrationEnabled: settings.mediaIntegrationEnabled,
+    });
+    const ok = await copyText(text);
+    setMessage(ok ? '诊断信息已复制，可直接粘贴到 Issue' : '复制失败：请手动记录面板状态后反馈');
+  }, [settings, webgl2, health, videoHealth, currentWallpaper]);
 
   // 轮播状态行：可轮播池按当前列表 + 收藏/隐藏实时算（池 <2 张时明确提示原因，不静默）。
   const rotationPoolSize = buildRotationPool(wallpapers, libState).length;
@@ -1420,6 +1455,16 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
           <p className="wss-section-desc wss-live-current">{liveCurrent}</p>
           {liveMemory && <p className="wss-section-desc wss-live-memory">{liveMemory}</p>}
         </div>
+        {envIssues.map((issue) => (
+          <p
+            key={issue.key}
+            className="wss-section-desc wss-env-issue"
+            data-tone={issue.tone}
+            data-issue={issue.key}
+          >
+            {issue.text}
+          </p>
+        ))}
         {videoHealth && (
           <p className="wss-section-desc wss-video-health" data-state={videoHealth.state}>
             视频壁纸：{formatVideoHealthLine(videoHealth)}
@@ -1437,6 +1482,10 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
         <p className="wss-section-desc">
           MIT 开源。如果它让你的界面好看了，点个 Star 就是最大的支持；哪张壁纸渲染不正常，带 Workshop ID 提个 Issue 即可。
         </p>
+        <p className="wss-section-desc wss-about-version">版本 v{PLUGIN_VERSION}</p>
+        <div className="wss-row">
+          <button type="button" className="wss-diagnostics-copy" onClick={() => void copyDiagnostics()}>复制诊断信息</button>
+        </div>
         <div className="wss-about-links">
           <a className="wss-about-link" data-primary="true" href="https://github.com/yu502950715yang/dsh-use-wallpaper" target="_blank" rel="noreferrer">⭐ Star 项目</a>
           <a className="wss-about-link" href="https://github.com/yu502950715yang/dsh-use-wallpaper/issues/new" target="_blank" rel="noreferrer">反馈问题</a>

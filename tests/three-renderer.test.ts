@@ -102,7 +102,7 @@ function stubSettings(patch: Partial<ClientSettings>): void {
     remote: {
       settings: {
         describe: async () => ({
-          ok: true, value: { namespaces: [{ ns: 'wallpaper-engine', value: patch }] },
+          ok: true, value: { namespaces: [{ ns: 'dsh-wallpaper-engine', value: patch }] },
         }),
       },
     },

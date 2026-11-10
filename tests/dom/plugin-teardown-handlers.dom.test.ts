@@ -74,7 +74,7 @@ function settingsCtx(value: Record<string, unknown>) {
   return {
     remote: {
       settings: {
-        describe: async () => ({ ok: true, value: { namespaces: [{ ns: 'wallpaper-engine', value }] } }),
+        describe: async () => ({ ok: true, value: { namespaces: [{ ns: 'dsh-wallpaper-engine', value }] } }),
         update: async () => ({}),
       },
     },

@@ -1,5 +1,4 @@
 import z from '@deepseek-ai/schemastery';
-export declare const WALLPAPER_NS = "wallpaper-engine";
 export declare const WallpaperSettingsSchema: z<Schemastery.ObjectS<NoInfer<{
     selectedWallpaperId: z<string, string, "defined">;
     wallpaperDir: z<string, string, "defined">;

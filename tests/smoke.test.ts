@@ -14,13 +14,18 @@ describe('host entry', () => {
   it('exports an apply function', () => {
     expect(typeof host.apply).toBe('function');
   });
-  it('apply registers the settings namespace when settings is injected', () => {
-    const registered: string[] = [];
-    // register 返回 scope（get/watch）—— apply 用它做初始应用与热更新
+  it('apply 声明设置面板策略（1.0 起只走 0.1.7 SettingsForms，不再调 settings.register）', () => {
+    const registeredNs: string[] = [];
+    const configureCalls: unknown[] = [];
+    // 旧路径的 register 仍在 fake 上：apply 也不得调用它（≤0.1.6 适配层已删，AGENT.md §7.34）
     const fakeSettings = {
       register: (ns: string) => {
-        registered.push(ns);
+        registeredNs.push(ns);
         return { get: () => ({}), watch: () => () => {} };
+      },
+      configure: (presentation: unknown, owner: unknown) => {
+        configureCalls.push({ presentation, owner });
+        return () => {};
       },
     };
     // apply 现同时挂载壁纸路由（inject webServer），fake 按服务名提供对应服务
@@ -31,8 +36,11 @@ describe('host entry', () => {
         if (svc.includes('webServer')) services.webServer = { register: () => () => {} };
         return fn(services);
       },
+      fiber: { marker: 'plugin-fiber' },
     };
     host.apply(ctx);
-    expect(registered).toContain('wallpaper-engine');
+    expect(configureCalls).toHaveLength(1);
+    expect(configureCalls[0]).toEqual({ presentation: { auto: false }, owner: { marker: 'plugin-fiber' } });
+    expect(registeredNs).toEqual([]);
   });
 });

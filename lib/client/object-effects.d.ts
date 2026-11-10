@@ -21,8 +21,8 @@ export interface ObjectEffectStage {
     notifyViewportResize(): void;
 }
 /** 该对象是否引用整帧快照（任一链的任一 pass 真的会采样它）⇒ 它**本应**是段边界消费者。
- *  ⚠️ 本轮该结论**不接线**（门控 `ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER = false`）：只保留判定能力
- *  与单测，供 UV 口径验证后开启。
+ *  ⚠️ 该结论**已接线**（门控 `ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER = true`，2026-10-28）：
+ *  引用快照的链自动登记为段边界消费者。
  *  判定走**执行计划**（`plan.passes` + `pp.bindings`）—— 与 `EffectRunner.update` 的槽绑定同源；
  *  不得改读原始 `pass.bind`：未解析名字的 bind 会被计划丢弃，那种形态下 update 实际绑的是
  *  `textureSlots[j]`（两套口径会对同一 pass 给出相反结论）。 */

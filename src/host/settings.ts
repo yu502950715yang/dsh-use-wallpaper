@@ -1,7 +1,7 @@
 import z from '@deepseek-ai/schemastery';
 
-export const WALLPAPER_NS = 'wallpaper-engine';
-
+// 1.0 起只支持 DSH ≥0.1.7 的设置路径：命名空间 = profile 条目 id `dsh-wallpaper-engine`
+// （旧版短名 `wallpaper-engine` 与 settings.register 路径已随 1.0 移除，见 AGENT.md §7.34）。
 export const WallpaperSettingsSchema = z.object({
   selectedWallpaperId: z.string().default(''),
   // 壁纸目录（workshop/content/431960）与引擎目录（common/wallpaper_engine）。
@@ -59,5 +59,5 @@ export const WallpaperSettingsSchema = z.object({
   bootAnimationVolume: z.number().min(0).max(1).default(1),
 });
 
-// 0.1.7 表单只投影 volatile 字段；旧版 register 要普通 schema（volatile 在旧版取不到值）。
+// 0.1.7 表单只投影 volatile 字段；volatile 标在 Config 上（schema 本体保持纯定义，供单测校验）。
 export const Config = WallpaperSettingsSchema.volatile();

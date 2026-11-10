@@ -65,8 +65,8 @@ export interface ObjectEffectStage {
 //   - `fbos` 只对具名 RT 有意义：链内没有 target 时它没有消费者，不构成降级理由。
 // 具名 RT 图链（blur / godrays / bloom 等）由 effect-graph 的 RT 图计划执行；本判定只作分类/回归口径用。
 /** 该对象是否引用整帧快照（任一链的任一 pass 真的会采样它）⇒ 它**本应**是段边界消费者。
- *  ⚠️ 本轮该结论**不接线**（门控 `ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER = false`）：只保留判定能力
- *  与单测，供 UV 口径验证后开启。
+ *  ⚠️ 该结论**已接线**（门控 `ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER = true`，2026-10-28）：
+ *  引用快照的链自动登记为段边界消费者。
  *  判定走**执行计划**（`plan.passes` + `pp.bindings`）—— 与 `EffectRunner.update` 的槽绑定同源；
  *  不得改读原始 `pass.bind`：未解析名字的 bind 会被计划丢弃，那种形态下 update 实际绑的是
  *  `textureSlots[j]`（两套口径会对同一 pass 给出相反结论）。 */
@@ -241,8 +241,8 @@ export class ObjectEffectStage implements ObjectEffectStage {
       this.warnOnce(`no-isolated:${objId}`, `对象 ${objId} 尚无隔离条目，效果链未挂载（调用顺序错误）`);
       return;
     }
-    // 引用整帧快照的链本应登记段边界消费者；对象链门控**本轮仍关闭**（ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER），
-    // util 内容层由渲染器登记消费者，并经 `allowFrameSnapshot` 显式放行快照槽（见 advance 的 gating）。
+    // 引用整帧快照的链登记段边界消费者：对象链门控已开启（ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER = true，
+    // 2026-10-28）；util 内容层另由渲染器登记，并经 `allowFrameSnapshot` 显式放行快照槽（见 advance 的 gating）。
     // 判定与执行共用**同一份计划**（`pp.bindings` 为唯一来源，见 referencesFrameSnapshot）。
     const plan = buildEffectPlan(chains, { baseWidth: view.rtWidth, baseHeight: view.rtHeight });
     if (ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER && referencesFrameSnapshot(chains, plan)) {

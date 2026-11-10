@@ -3810,7 +3810,7 @@ describe('ThreeScenePlayer 粒子 REFRACT', () => {
     expect(mat.fragmentShader).toContain('off.y = -off.y');
     expect(mat.fragmentShader).toContain('off *= mask * vParticleAlpha');
     expect(mat.vertexShader).toContain('gl_Position.xyw');
-    expect(mat.vertexShader).toContain('weObjectRotate(vec3(1.0, 0.0, 0.0)');
+    expect(mat.vertexShader).toContain('weParticleSpinRotate(vec3(1.0, 0.0, 0.0)');
     expect(mat.vertexShader).toContain('vScreenTangents = refractAmount * vec4(rRight.x, rUp.x, rRight.y, rUp.y)');
     // 结构护栏（无 GPU 时唯一能挡住 GLSL 文本级错误的断言）：条件块一开一合、花括号配对。
     for (const src of [mat.vertexShader, mat.fragmentShader]) {
@@ -3959,6 +3959,73 @@ describe('ThreeScenePlayer 粒子 REFRACT', () => {
     result.player.render();
     expect(mock._renders[0].target).toBe(cap.target); // 首段 target === capture.target
     result.player.dispose();
+  });
+});
+
+// A9（2026-11-10）：粒子自旋轴序对齐 WE。WE `common_particles.h:26-35` 的 ComputeParticleTangents 是
+// `mul(mul(Rz,Rx),Ry)`（对象角度路径 Rz·Ry·Rx 不动）；仅多轴自旋有差、z-only 两序逐像素等价。
+describe('ThreeScenePlayer 粒子自旋轴序（A9）', () => {
+  type Axis = 'x' | 'y' | 'z';
+  type Mat3 = number[][];
+  const AXIS_INDEX: Record<Axis, number> = { x: 0, y: 1, z: 2 };
+  // 3×3 旋转矩阵（行主序、列向量右乘），与 shader 的「v = R·v」同一约定。
+  const rotMat = (axis: Axis, angle: number): Mat3 => {
+    const c = Math.cos(angle), s = Math.sin(angle);
+    if (axis === 'x') return [[1, 0, 0], [0, c, -s], [0, s, c]];
+    if (axis === 'y') return [[c, 0, s], [0, 1, 0], [-s, 0, c]];
+    return [[c, -s, 0], [s, c, 0], [0, 0, 1]];
+  };
+  const matMul = (a: Mat3, b: Mat3): Mat3 =>
+    a.map((row) => b[0].map((_, j) => row.reduce((sum, v, k) => sum + v * b[k][j], 0)));
+  // 按「施加顺序」组装：先 R1 再 R2 ⇒ 终矩阵 R2·R1（列向量约定）。
+  const composeByApplyOrder = (order: Axis[], angle: [number, number, number]): Mat3 =>
+    order.reduce<Mat3>(
+      (acc, axis) => matMul(rotMat(axis, angle[AXIS_INDEX[axis]]), acc),
+      [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+    );
+  const expectMatClose = (actual: Mat3, expected: Mat3): void => {
+    actual.forEach((row, i) => row.forEach((v, j) => expect(v).toBeCloseTo(expected[i][j], 10)));
+  };
+  /** 从顶点 shader 抽取某旋转函数体的轴施加顺序（`sin(a.<axis>)` 出现顺序）。 */
+  const axisOrderOf = (src: string, fn: string): Axis[] => {
+    const body = src.match(new RegExp(`vec3 ${fn}\\(vec3 v, vec3 a\\) \\{([\\s\\S]*?)\\n\\}`));
+    if (!body) throw new Error(`顶点 shader 里没有 ${fn} 函数`);
+    return [...body[1].matchAll(/sin\(a\.([xyz])\)/g)].map((m) => m[1] as Axis);
+  };
+  const spinShader = (): string => {
+    const { player } = makePlayer();
+    player.addParticle(() => new Float32Array(16), { frameCount: 1, blend: 'alpha', objectId: 22, renderOrder: 1 });
+    const src = ((player.displayObject(22) as THREE.Mesh).material as THREE.ShaderMaterial).vertexShader;
+    player.dispose();
+    return src;
+  };
+
+  it('shader 契约：自旋走 weParticleSpinRotate（WE 轴序），对象角度路径仍走 weObjectRotate', () => {
+    const src = spinShader();
+    expect(src).toContain('vec3 weParticleSpinRotate(vec3 v, vec3 a)');
+    // 两个自旋调用点（sprite 角点 + REFRACT 切线基）——后者自旋在内、对象角度在外。
+    expect(src).toContain('vec3 spun = weParticleSpinRotate(vec3(position.xy, 0.0), particleRot)');
+    expect(src).toContain('weObjectRotate(weParticleSpinRotate(vec3(1.0, 0.0, 0.0), particleRot), objAngles)');
+    expect(src).toContain('weObjectRotate(weParticleSpinRotate(vec3(0.0, 1.0, 0.0), particleRot), objAngles)');
+    // 对象角度零回归：局部坐标、拖尾偏移、角点缩放仍由 weObjectRotate 施加。
+    expect(src).toContain('weObjectRotate(objScale * (emitterOrigin + local), objAngles)');
+    expect(src).toContain('weObjectRotate(abs(objScale) * offset, objAngles)');
+    expect(src).toContain('weObjectRotate(abs(objScale) * (spun * particleSize * 0.5), objAngles)');
+    // 轴序：WE 函数体 = 先 Ry、再 Rx、最后 Rz（列向量 ⇒ 矩阵 Rz·Rx·Ry）；对象函数仍是 x→y→z。
+    expect(axisOrderOf(src, 'weParticleSpinRotate')).toEqual(['y', 'x', 'z']);
+    expect(axisOrderOf(src, 'weObjectRotate')).toEqual(['x', 'y', 'z']);
+  });
+
+  it('轴序判据：多轴时 Rz·Rx·Ry 与 Rz·Ry·Rx 数值不同；z-only 两序逐像素等价', () => {
+    const a: [number, number, number] = [0.3, 0.5, 0.7];
+    const we = composeByApplyOrder(['y', 'x', 'z'], a);
+    const legacy = composeByApplyOrder(['x', 'y', 'z'], a);
+    expectMatClose(we, matMul(rotMat('z', a[2]), matMul(rotMat('x', a[0]), rotMat('y', a[1]))));
+    expectMatClose(legacy, matMul(rotMat('z', a[2]), matMul(rotMat('y', a[1]), rotMat('x', a[0]))));
+    const maxDiff = Math.max(...we.flatMap((row, i) => row.map((v, j) => Math.abs(v - legacy[i][j]))));
+    expect(maxDiff).toBeGreaterThan(0.1); // 多轴时两序不同（判据的「不同」侧）
+    const zOnly: [number, number, number] = [0, 0, 0.7];
+    expectMatClose(composeByApplyOrder(['y', 'x', 'z'], zOnly), composeByApplyOrder(['x', 'y', 'z'], zOnly));
   });
 });
 

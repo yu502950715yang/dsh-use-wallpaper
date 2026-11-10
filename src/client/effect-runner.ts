@@ -53,8 +53,8 @@ function mulberry32(seed: number) {
 const BUILTIN_CACHE = new Map<string, THREE.Texture>();
 
 // WE 的 `_rt_FullFrameBuffer` = 场景 FBO 本身（「到那一刻为止已绘制的内容」，lwe CScene.cpp:351-361）。
-// 本库唯一真实消费者是 `柯西` 的 godrays_combine（textures[2]，COPYBG=1），该消费路径当前**门控关闭**
-//（object-effects.ts 的 ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER）；本文件的 frameTexture 能力保留。
+// 本库唯一在该槽显式引用它的消费点是 `柯西` 的 godrays_combine（textures[2]，COPYBG=1）；对象链消费
+// 路径**已开启**（object-effects.ts 的 ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER = true，2026-10-28）。
 export const FRAME_SNAPSHOT_RT = '_rt_FullFrameBuffer';
 
 /** 该槽路径是否指向整帧快照（只认这一个名字；`_rt_FullCompoBuffer1_23_40` 这类派生名一律 false）。 */

@@ -5,10 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { apply } from '../src/host/index.js';
 
-// C1 集成测试：apply(ctx) 除注册 settings 外，必须经 registerWallpaperRoutes
-// 挂载壁纸路由，且 wallpaperDir 解析顺序：settings.wallpaperDir（用户设置）>
-// config.wallpaperDir（cordis.patch.yml）> 缺省。settings 变更经 scope.watch
-// 热更新路由使用的目录（无需重启）。
+// C1 集成测试：apply(ctx) 除声明设置面板外，必须经 registerWallpaperRoutes
+// 挂载壁纸路由；wallpaperDir 解析来源 = loader config（cordis.patch.yml 的
+// `dsh-wallpaper-engine` 条目），且 0.1.7 的 config 是 volatile 活引用，
+// 路由每次请求读实时值（不得在 apply 里快照）。
+// 1.0 起只支持 ≥0.1.7 路径：≤0.1.6 的 settings.register / scope.watch 已移除（AGENT.md §7.34）。
 
 let dirA: string;
 let dirB: string;
@@ -18,17 +19,14 @@ let handlers: Map<string, (req: any, res: any) => void>;
 
 interface CtxHandle {
   ctx: any;
-  scope: any;
-  /** 旧路径 `settings.register(ns, schema, options)` 的调用记录 */
-  registerCalls: Array<{ ns: any; schema: any; options: any }>;
-  /** 新路径 `settings.configure(presentation, owner)` 的 spy */
+  /** `settings.configure(presentation, owner)` 的 spy */
   configure: any;
 }
 
-/** 三种 settings 服务形状：legacy = ≤0.1.6（register），modern = ≥0.1.7（SettingsForms），none = 形状都不匹配。 */
-type SettingsMode = 'legacy' | 'modern' | 'none';
+/** 两种 settings 服务形状：modern = ≥0.1.7（SettingsForms），none = 形状都不匹配。 */
+type SettingsMode = 'modern' | 'none';
 
-function makeCtx(config?: Record<string, unknown>, mode: SettingsMode = 'legacy'): CtxHandle {
+function makeCtx(config?: Record<string, unknown>, mode: SettingsMode = 'modern'): CtxHandle {
   const webServer = {
     register: (route: any) => {
       registered.push({ kind: route.kind, path: route.path });
@@ -36,32 +34,14 @@ function makeCtx(config?: Record<string, unknown>, mode: SettingsMode = 'legacy'
       return () => {};
     },
   };
-  // 模拟 settings 注册：resolved 初始为空对象，watch 收集回调
-  let resolved: Record<string, unknown> = {};
-  const watchCbs: Array<(next: Record<string, unknown>) => void> = [];
-  const scope = {
-    get: () => resolved,
-    watch: (cb: (next: Record<string, unknown>) => void) => { watchCbs.push(cb); return () => {}; },
-    update: async (patch: Record<string, unknown>) => { resolved = { ...resolved, ...patch }; },
-    _watchCbs: watchCbs,
-    _setResolved(v: Record<string, unknown>) { resolved = v; },
-  };
-  const registerCalls: CtxHandle['registerCalls'] = [];
   const configure = vi.fn(() => () => {});
-  const settings = mode === 'legacy'
-    ? {
-      register: (ns: any, schema: any, options: any) => {
-        registerCalls.push({ ns, schema, options });
-        return scope;
-      },
-    }
-    : mode === 'modern' ? { configure } : {};
+  const settings = mode === 'modern' ? { configure } : {};
   const ctx = {
     config: config ?? {},
     fiber: { marker: 'plugin-fiber' },
     inject: (_svc: string[], fn: (c: any) => void) => fn({ settings, webServer }),
   } as any;
-  return { ctx, scope, registerCalls, configure };
+  return { ctx, configure };
 }
 
 function makeRes() {
@@ -81,8 +61,7 @@ function seedWallpaper(dir: string, id: string) {
   writeFileSync(join(dir, id, 'project.json'), JSON.stringify({ title: 'W' + id, type: 'image' }));
 }
 
-async function listIds(dirCtx: { scope: any }, dir: string) {
-  // 触发 watch（模拟 settings 发布）：resolved 更新后调用全部 watch 回调
+async function listIds(): Promise<string[]> {
   const res = makeRes();
   await handlers.get('exact /wallpapers/list')!({ url: '/wallpapers/list' }, res);
   const body = JSON.parse(res.body.toString('utf8'));
@@ -106,8 +85,10 @@ afterEach(() => {
 });
 
 describe('apply (host entry)', () => {
-  it('注册 settings 命名空间并挂载 13 条壁纸路由（含 /wallpapers/properties 与 now-playing）', () => {
-    apply(makeCtx().ctx);
+  it('声明设置面板策略并挂载 13 条壁纸路由（含 /wallpapers/properties 与 now-playing）', () => {
+    const { ctx, configure } = makeCtx();
+    apply(ctx);
+    expect(configure).toHaveBeenCalledWith({ auto: false }, ctx.fiber);
     expect(registered).toEqual([
       { kind: 'exact', path: '/wallpapers/list' },
       { kind: 'prefix', path: '/wallpapers/media' },
@@ -153,58 +134,32 @@ describe('apply (host entry)', () => {
     expect(res.statusCode).toBe(201);
     expect(existsSync(join(dirA, 'data', 'frames', 'f1.png'))).toBe(true);
   });
-  it('路由扫描使用 config.wallpaperDir（settings 未配置时）', async () => {
+  it('路由扫描使用 config.wallpaperDir', async () => {
     seedWallpaper(dirA, '9');
     apply(makeCtx().ctx, { wallpaperDir: dirA });
     const res = makeRes();
     await handlers.get('exact /wallpapers/list')!({ url: '/wallpapers/list' }, res);
     expect(res.statusCode).toBe(200);
-    const body = JSON.parse(res.body.toString('utf8'));
-    expect(body.map((w: any) => w.id)).toEqual(['9']);
-  });
-  it('settings.wallpaperDir 优先于 config.wallpaperDir', async () => {
-    seedWallpaper(dirA, 'a1');
-    seedWallpaper(dirB, 'b1');
-    const { ctx, scope } = makeCtx();
-    scope._setResolved({ wallpaperDir: dirB });
-    apply(ctx, { wallpaperDir: dirA });
-    const ids = await listIds({ scope }, dirB);
-    expect(ids).toEqual(['b1']);
-  });
-  it('settings 热更新：scope.watch 触发后 list 路由读取新目录', async () => {
-    seedWallpaper(dirA, 'a1');
-    seedWallpaper(dirB, 'b1');
-    const { ctx, scope } = makeCtx();
-    apply(ctx, { wallpaperDir: dirA });
-    // 初始：config 目录
-    let ids = await listIds({ scope }, dirA);
-    expect(ids).toEqual(['a1']);
-    // 模拟设置面板保存新路径 → watch 回调执行 → 路由立即读取新目录
-    scope._setResolved({ wallpaperDir: dirB });
-    for (const cb of scope._watchCbs) cb(scope.get());
-    ids = await listIds({ scope }, dirB);
-    expect(ids).toEqual(['b1']);
+    expect(JSON.parse(res.body.toString('utf8')).map((w: any) => w.id)).toEqual(['9']);
   });
 });
 
 // DSH 0.1.7-alpha.1 起 settings 服务换成 SettingsForms：没有 register，条目 Config 由
-// loader 解析，profile 条目 id 即命名空间。host 必须两版都能跑（特性探测），且新版下
-// config 是 volatile 活引用 —— 路由每次请求读实时值，不得在 apply 里快照。
-describe('apply 双路径（0.1.7 新模型）', () => {
-  it('settings 无 register 时不抛错、调用 configure({auto:false}, 插件 fiber)', () => {
-    const { ctx, configure, registerCalls } = makeCtx(undefined, 'modern');
+// loader 解析，profile 条目 id 即命名空间。1.0 起只走这一条路径（AGENT.md §7.34）。
+describe('apply 设置路径（0.1.7 SettingsForms，1.0 单路径）', () => {
+  it('settings 存在时调用 configure({auto:false}, 插件 fiber)', () => {
+    const { ctx, configure } = makeCtx();
     expect(() => apply(ctx)).not.toThrow();
     expect(configure).toHaveBeenCalledWith({ auto: false }, ctx.fiber);
-    expect(registerCalls).toHaveLength(0);
     // 路由仍全部挂载
     expect(registered).toHaveLength(13);
   });
 
-  it('新版：路由读 loader config，且 config 是活引用（apply 之后改值即生效）', async () => {
+  it('路由读 loader config，且 config 是活引用（apply 之后改值即生效）', async () => {
     seedWallpaper(dirA, 'a1');
     seedWallpaper(dirB, 'b1');
     const config: Record<string, unknown> = { wallpaperDir: dirA };
-    const { ctx } = makeCtx(undefined, 'modern');
+    const { ctx } = makeCtx();
     apply(ctx, config);
     const res1 = makeRes();
     await handlers.get('exact /wallpapers/list')!({ url: '/wallpapers/list' }, res1);
@@ -216,14 +171,14 @@ describe('apply 双路径（0.1.7 新模型）', () => {
     expect(JSON.parse(res2.body.toString('utf8')).map((w: any) => w.id)).toEqual(['b1']);
   });
 
-  it('新版：config 是 volatile 活引用（带 get()）时按当前值解析', async () => {
+  it('config 是 volatile 活引用（带 get()）时按当前值解析', async () => {
     // 0.1.7 loader 交给插件的 config 是 schemastery 的 Volatile（对象级 volatile），
     // 读值必须走 .get()；直接 config.wallpaperDir 得到 undefined（真机 list 为空的原因）。
     seedWallpaper(dirA, 'a1');
     seedWallpaper(dirB, 'b1');
     let current: Record<string, unknown> = { wallpaperDir: dirA };
     const volatileConfig = { get: () => current };
-    const { ctx } = makeCtx(undefined, 'modern');
+    const { ctx } = makeCtx();
     apply(ctx, volatileConfig as any);
     const res1 = makeRes();
     await handlers.get('exact /wallpapers/list')!({ url: '/wallpapers/list' }, res1);
@@ -234,23 +189,18 @@ describe('apply 双路径（0.1.7 新模型）', () => {
     expect(JSON.parse(res2.body.toString('utf8')).map((w: any) => w.id)).toEqual(['b1']);
   });
 
-  it('旧版：register 传 base=config（旧版面板与自动恢复靠它读到 config）', () => {
-    const config = { wallpaperDir: dirA, weAssetsDir: 'D:/WE' };
-    const { ctx, registerCalls } = makeCtx();
-    apply(ctx, config);
-    expect(registerCalls).toHaveLength(1);
-    expect(registerCalls[0].ns).toBe('wallpaper-engine');
-    expect(registerCalls[0].options).toEqual({ base: config });
-  });
-
-  it('旧版路径不得使用 volatile schema（旧解析取不到普通值）', () => {
-    const { ctx, registerCalls } = makeCtx();
-    apply(ctx);
-    expect((registerCalls[0].schema as any).meta?.volatile).toBeFalsy();
-  });
-
-  it('两种形状都不匹配时（未来再改）不抛错，仅降级', () => {
+  it('settings 形状不匹配时（无 configure）不抛错，仅降级', () => {
     const { ctx } = makeCtx(undefined, 'none');
+    expect(() => apply(ctx)).not.toThrow();
+    expect(registered).toHaveLength(13);
+  });
+
+  it('settings.configure 抛错时不阻断插件主体（路由仍挂载）', () => {
+    const { ctx } = makeCtx();
+    ctx.inject = (_svc: string[], fn: (c: any) => void) => fn({
+      settings: { configure: () => { throw new Error('boom'); } },
+      webServer: { register: (route: any) => { registered.push({ kind: route.kind, path: route.path }); handlers.set(route.kind + ' ' + route.path, route.handler); return () => {}; } },
+    });
     expect(() => apply(ctx)).not.toThrow();
     expect(registered).toHaveLength(13);
   });

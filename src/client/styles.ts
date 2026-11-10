@@ -608,6 +608,13 @@ body[data-we-wallpaper] :where([data-sidebar-right-panel="fullscreen"][data-side
 .wss-about-link:focus-visible{outline:2px solid var(--wp-accent);outline-offset:2px}
 .wss-about-link[data-primary=true]{background:var(--wp-accent-strong,#2563eb);border-color:transparent;color:#fff}
 .wss-about-link[data-primary=true]:hover{filter:brightness(1.07)}
+/* 可观测性（1.0）：关于区的版本行 + 复制诊断按钮；实时渲染卡的环境自检行。 */
+.wss-about-version{margin:0 0 8px;font-variant-numeric:tabular-nums}
+.wss-diagnostics-copy{border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background:transparent;color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;min-height:30px;padding:6px 12px;font:inherit;font-size:12px;font-weight:550;cursor:pointer;transition:background-color .15s ease}
+.wss-diagnostics-copy:hover{background:rgba(127,127,127,.12)}
+.wss-diagnostics-copy:focus-visible{outline:2px solid var(--wp-accent);outline-offset:2px}
+.wss-env-issue{margin:0 0 6px;padding-left:10px;border-left:2px solid var(--dsw-alias-state-warning-primary,var(--wp-accent))}
+.wss-env-issue[data-tone="info"]{border-left-color:var(--dsw-alias-border-l2,var(--wp-panel-border))}
 /* ── 设置页 tab 容器（Wallpaper 壁纸：日常壁纸 / 开机动画） ── */
 .we-shell{display:flex;flex-direction:column;gap:var(--we-sp-3);padding:var(--we-sp-2) 2px 6px}
 .we-tabs{display:flex;gap:4px;padding:4px;border:1px solid var(--we-border);border-radius:var(--we-r-md);background:var(--we-surface-2)}

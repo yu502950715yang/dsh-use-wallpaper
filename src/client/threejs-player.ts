@@ -391,13 +391,23 @@ varying vec2 vCornerUv;
 varying vec2 vParticleUv;
 varying vec3 vParticleColor;
 varying float vParticleAlpha;
-// 对象旋转 R = Rz·Ry·Rx（官方 order：OWE ParticleRuntime.cpp:25-28 ControlpointRotation）。
+// 对象角度旋转 R = Rz·Ry·Rx（OWE ParticleRuntime.cpp:25-28 ControlpointRotation；对象路径沿用，勿改）。
 // 每个分量都是右手系绕轴的主动旋转，与 Eigen AngleAxisd(theta, axis) 一致。
 vec3 weObjectRotate(vec3 v, vec3 a) {
   float cx = cos(a.x), sx = sin(a.x);
   v = vec3(v.x, v.y * cx - v.z * sx, v.y * sx + v.z * cx);
   float cy = cos(a.y), sy = sin(a.y);
   v = vec3(v.x * cy + v.z * sy, v.y, -v.x * sy + v.z * cy);
+  float cz = cos(a.z), sz = sin(a.z);
+  return vec3(v.x * cz - v.y * sz, v.x * sz + v.y * cz, v.z);
+}
+// 粒子自旋 R = Rz·Rx·Ry（WE common_particles.h:26-35 ComputeParticleTangents，与对象角度顺序不同）。
+// 同列向量右乘约定；仅用于自旋，z-only 时与 weObjectRotate 逐像素等价。
+vec3 weParticleSpinRotate(vec3 v, vec3 a) {
+  float cy = cos(a.y), sy = sin(a.y);
+  v = vec3(v.x * cy + v.z * sy, v.y, -v.x * sy + v.z * cy);
+  float cx = cos(a.x), sx = sin(a.x);
+  v = vec3(v.x, v.y * cx - v.z * sx, v.y * sx + v.z * cx);
   float cz = cos(a.z), sz = sin(a.z);
   return vec3(v.x * cz - v.y * sz, v.x * sz + v.y * cz, v.z);
 }
@@ -414,8 +424,8 @@ void main() {
   // 朝向用 —— GTR 3743126786 的烟柱 angles.z = -1.20063 本应把局部 +Y（湍流的 forward）转到
   // 世界 (0.932, 0.362)（「从排气管向右侧飘」），漏掉旋转后烟就直着往上走。
   vec3 worldPos = objCenter + weObjectRotate(objScale * (emitterOrigin + local), objAngles);
-  // 粒子 quad 的尺寸同样乘对象 scale（非均匀；abs 去掉镜像的符号）并随对象角度一起转；自旋先于对象
-  // 旋转（WE ComputeParticleTangents，common_particles.h；R = Rz·Ry·Rx 与对象角度同一约定）。
+  // 粒子 quad 尺寸乘对象 scale（非均匀；abs 去掉镜像符号）并随对象角度转；自旋用 WE 轴序 Rz·Rx·Ry，
+  // 对象角度仍用 Rz·Ry·Rx（两序 z-only 等价）—— 见 weParticleSpinRotate。
   if (trailEnabled > 0.5 && length(particleVelocity) > 1e-6) {
     // spritetrail：复刻 WE ComputeParticleTrailTangents / ComputeParticlePosition（common_particles.h:42-59）——
     //   right = normalize(cross(eyeDirection, velocity))
@@ -440,7 +450,7 @@ void main() {
   } else {
     // sprite（既有路径，逐字不变）：三轴欧拉旋转 quad 角点；|v|=0 的 spritetrail 也退到这里
     // （WE 的 normalize(0) 会产出 NaN、粒子消失，本插件选择画出 size 方块而不是丢粒子）。
-    vec3 spun = weObjectRotate(vec3(position.xy, 0.0), particleRot);
+    vec3 spun = weParticleSpinRotate(vec3(position.xy, 0.0), particleRot);
     vec3 corner = weObjectRotate(abs(objScale) * (spun * particleSize * 0.5), objAngles);
     worldPos += corner;
   }
@@ -459,12 +469,11 @@ void main() {
   // （对齐 wasm billboard 的 clip.z=0 语义，见 particle_billboard.wgsl）。
   gl_Position.z = 0.0;
 #ifdef REFRACT
-  // 折射切线基（屏幕空间位移方向）：与上面 quad 角点展开**同一旋转约定与同一次序**
-  // （先粒子自旋、再对象角度），对齐 WE ComputeParticleTangents（common_particles.h:26-39
-  // 先算粒子切线、再由对象 orientation 变换；genericparticle.vert:85,117 同序）。
+  // 折射切线基（屏幕空间位移方向）：与上面 quad 角点展开同一约定/同一次序（先粒子自旋〔WE 轴序〕、
+  // 再对象角度），对齐 WE ComputeParticleTangents（common_particles.h:26-39；genericparticle.vert:85,117 同序）。
   // vScreenCoord 必须在 gl_Position 之后取。
-  vec3 rRight = normalize(weObjectRotate(weObjectRotate(vec3(1.0, 0.0, 0.0), particleRot), objAngles));
-  vec3 rUp = normalize(weObjectRotate(weObjectRotate(vec3(0.0, 1.0, 0.0), particleRot), objAngles));
+  vec3 rRight = normalize(weObjectRotate(weParticleSpinRotate(vec3(1.0, 0.0, 0.0), particleRot), objAngles));
+  vec3 rUp = normalize(weObjectRotate(weParticleSpinRotate(vec3(0.0, 1.0, 0.0), particleRot), objAngles));
   vScreenCoord = gl_Position.xyw;
   vScreenTangents = refractAmount * vec4(rRight.x, rUp.x, rRight.y, rUp.y);
 #endif
