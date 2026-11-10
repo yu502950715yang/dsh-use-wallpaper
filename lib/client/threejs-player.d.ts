@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { GlowStage } from './glow-stage.js';
 import type { FrameCapture } from './frame-capture.js';
 import type { ClockDriver } from './text-object.js';
+import type { UtilContentCover } from './util-content-runtime.js';
 import type { ParallaxConfig, PointerState } from './parallax.js';
 import type { PuppetInstance } from './puppet.js';
 import type { SceneImageObject, UtilLayerKind } from '../shared/types.js';
@@ -69,12 +70,7 @@ export interface ObjectEffectStage {
     /** 画布缓冲/视口变化：作废尚未被 advance 消费的在途快照（resize 会重建快照纹理）。 */
     notifyViewportResize?(): void;
 }
-export interface UtilContentCover {
-    sx: number;
-    sy: number;
-    sw: number;
-    sh: number;
-}
+export type { UtilContentCover } from './util-content-runtime.js';
 export declare function resolvePixelRatio(devicePixelRatio: number, qualityScale: number): number;
 export declare class ThreeScenePlayer {
     readonly renderer: THREE.WebGLRenderer;
@@ -263,7 +259,6 @@ export declare class ThreeScenePlayer {
     currentFrameSnapshot(): THREE.Texture | null;
     private registerUtilContent;
     private utilContentCoverFor;
-    private applyUtilContentCover;
     private renderUtilContent;
     captureFullFrame(): THREE.Texture | null;
     frameSnapshotVersion(): number;

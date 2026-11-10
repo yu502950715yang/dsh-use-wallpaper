@@ -27,6 +27,8 @@ import type { ClockDriver, TextLayout } from './text-object.js';
 // 视差（Task 1 的纯数学层）：配置 + 指针 + 延迟插值 + 逐对象位移公式；唯一应用点 = 本文件的 tickParallax。
 import { ParallaxRuntime } from './parallax-runtime.js';
 import { SpriteSheetRuntime } from './sprite-sheet-runtime.js';
+import { UtilContentRuntime } from './util-content-runtime.js';
+import type { UtilContentCover } from './util-content-runtime.js';
 import type { ParallaxConfig, PointerState } from './parallax.js';
 // puppet（.mdl 蒙皮网格）：实例由调用方装配，本类只负责挂进场景、逐帧采样动画与释放。
 import type { PuppetInstance } from './puppet.js';
@@ -635,32 +637,8 @@ export interface ObjectEffectStage {
   notifyViewportResize?(): void;
 }
 
-// util 层内容输入（整帧快照）在内容 mesh UV 空间的覆盖矩形：快照贴到哪块 UV（可越界/含镜像负值）。
-export interface UtilContentCover {
-  sx: number;
-  sy: number;
-  sw: number;
-  sh: number;
-}
-
-const FULL_UV_COVER: UtilContentCover = { sx: 0, sy: 0, sw: 1, sh: 1 };
-
-function sameCover(a: UtilContentCover, b: UtilContentCover): boolean {
-  return a.sx === b.sx && a.sy === b.sy && a.sw === b.sw && a.sh === b.sh;
-}
-
-// util 层内容输入条目：段边界把整帧快照写成内容 → 效果链从「本帧画面」开始处理。
-interface UtilContentEntry {
-  mesh: THREE.Mesh;
-  /** 内容几何基准 UV（未变换）：覆盖矩形变化时据此重写 UV，避免逐次累积。 */
-  baseUv: Float32Array;
-  /** 快照在内容 mesh UV 空间的覆盖矩形（= 当前生效值）。 */
-  cover: UtilContentCover;
-  texture: THREE.Texture | null;
-  /** 内容世界矩形中心（场景坐标系，原点 = 场景中心；与合成 quad 同位置）。 */
-  centerX: number;
-  centerY: number;
-}
+// util 内容输入类型已迁入 util-content-runtime.ts（审查 P0-9 阶段 2）。
+export type { UtilContentCover } from './util-content-runtime.js';
 
 // 渲染像素比 = 设备像素比 × 画质档位。画布缓冲与对象 RT 的屏幕密度都按它算，
 // three-renderer 挂载期算屏幕密度必须调**同一个函数**（口径不一致会让整层模糊，见 AGENT.md §5.15）。
@@ -760,7 +738,7 @@ export class ThreeScenePlayer {
   // 对象隔离条目（对象级效果链；空 Map = 本壁纸无带效果对象，帧序退化为原路径）。
   private isolated = new Map<number, IsolatedObject>();
   // util 层内容输入（整帧快照）：键 = scene.json 对象 id；solid 层无条目（保留纯色内容）。
-  private readonly utilContents = new Map<number, UtilContentEntry>();
+  private readonly utilContents = new UtilContentRuntime();
   // 最近一次段边界拍下的整帧快照（渲染器每帧同步给 ObjectEffectStage 的快照槽门控）。
   private lastFrameSnapshot: THREE.Texture | null = null;
   // SceneScript 音频可视化（visualizer）：脚本 init 动态 createLayer 的 64 条 bar 由 player 代建/逐帧更新。
@@ -1653,30 +1631,17 @@ export class ThreeScenePlayer {
     texture: THREE.Texture,
     opts: { cover?: UtilContentCover } = {},
   ): void {
-    const entry = this.utilContents.get(objectId);
-    if (!entry) return;
-    const material = entry.mesh.material as THREE.MeshBasicMaterial;
-    let changed = false;
-    if (material.map !== texture) {
-      material.map = texture;
-      material.opacity = 1; // 透明占位 → 快照内容
-      material.needsUpdate = true; // 无 map → 有 map：需重编 program（每次装配仅一次）
-      entry.texture = texture;
-      changed = true;
-    }
-    const cover = opts.cover ?? FULL_UV_COVER;
-    if (changed || !sameCover(entry.cover, cover)) this.applyUtilContentCover(entry, cover);
+    this.utilContents.setTexture(objectId, texture, opts);
   }
 
   /** 测试/诊断：util 内容当前纹理；solid / 非 util → null。 */
   utilContentTextureForTest(objectId: number): THREE.Texture | null {
-    return this.utilContents.get(objectId)?.texture ?? null;
+    return this.utilContents.textureForTest(objectId);
   }
 
   /** 测试/诊断：util 内容当前的快照覆盖矩形（内容 mesh UV 空间）。 */
   utilContentUvForTest(objectId: number): UtilContentCover | null {
-    const cover = this.utilContents.get(objectId)?.cover;
-    return cover ? { ...cover } : null;
+    return this.utilContents.uvForTest(objectId);
   }
 
   /** 最近一次段边界快照（渲染器每帧同步给 ObjectEffectStage 的 `_rt_FullFrameBuffer` 槽门控）。 */
@@ -1685,61 +1650,18 @@ export class ThreeScenePlayer {
   }
 
   // 登记 util 内容条目（内容 mesh 与快照内容区域的世界锚点）；solid 不登记（纯色内容不被替换）。
-  private registerUtilContent(
-    objectId: number,
-    mesh: THREE.Mesh,
-    centerX: number,
-    centerY: number,
-  ): void {
-    const uv = mesh.geometry.attributes?.uv;
-    if (!uv) return;
-    this.utilContents.set(objectId, {
-      mesh,
-      baseUv: Float32Array.from(uv.array as ArrayLike<number>),
-      cover: FULL_UV_COVER,
-      texture: null,
-      centerX,
-      centerY,
-    });
+  private registerUtilContent(objectId: number, mesh: THREE.Mesh, centerX: number, centerY: number): void {
+    this.utilContents.register(objectId, mesh, centerX, centerY);
   }
 
-  // 快照覆盖矩形 = 主相机 cover 视锥（世界，中心 = 场景中心，与 applyCover 同源）在内容 mesh
-  // UV 空间的反解：u_tex = (u - sx)/sw。世界尺寸取**当前** mesh.scale × 几何（含镜像负值）。
+  // 快照覆盖矩形（算法与注释见 util-content-runtime.ts 的 coverFor）。
   private utilContentCoverFor(objectId: number): UtilContentCover | null {
-    const entry = this.utilContents.get(objectId);
-    if (!entry) return null;
-    const geometry = entry.mesh.geometry as THREE.PlaneGeometry;
-    const gw = geometry.parameters?.width ?? 0;
-    const gh = geometry.parameters?.height ?? 0;
-    const worldW = entry.mesh.scale.x * gw;
-    const worldH = entry.mesh.scale.y * gh;
-    if (!(Math.abs(worldW) > 1e-6) || !(Math.abs(worldH) > 1e-6)) return null;
-    const cover = coverRange(this.sceneWidth, this.sceneHeight, this.viewWidth / this.viewHeight);
-    const left = entry.centerX - worldW / 2;
-    const bottom = entry.centerY - worldH / 2;
-    return {
-      sx: (-cover.w / 2 - left) / worldW,
-      sy: (-cover.h / 2 - bottom) / worldH,
-      sw: cover.w / worldW,
-      sh: cover.h / worldH,
-    };
-  }
-
-  // 按覆盖矩形重写内容几何 UV（uv' = (uv - sx)/sw）：v=0 = 画面底 ⇒ 快照 v 约定不额外翻转。
-  private applyUtilContentCover(entry: UtilContentEntry, cover: UtilContentCover): void {
-    entry.cover = cover;
-    const uv = entry.mesh.geometry.attributes?.uv;
-    if (!uv) return;
-    const arr = uv.array as Float32Array;
-    const rx = 1 / cover.sw;
-    const ry = 1 / cover.sh;
-    const ox = -cover.sx / cover.sw;
-    const oy = -cover.sy / cover.sh;
-    for (let i = 0; i < arr.length && i < entry.baseUv.length; i += 2) {
-      arr[i] = entry.baseUv[i] * rx + ox;
-      arr[i + 1] = entry.baseUv[i + 1] * ry + oy;
-    }
-    uv.needsUpdate = true;
+    return this.utilContents.coverFor(objectId, {
+      sceneWidth: this.sceneWidth,
+      sceneHeight: this.sceneHeight,
+      viewWidth: this.viewWidth,
+      viewHeight: this.viewHeight,
+    });
   }
 
   // 段边界把快照内容立即重渲进该 util 层 RT（帧首那次用的是上一帧快照/透明占位）。
