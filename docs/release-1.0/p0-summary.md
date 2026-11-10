@@ -27,7 +27,8 @@
 | 类型债收紧 | `known-type-errors` 35 → 33 键（移除已修复的 2 键），495 条不变 |
 | wasm 产物溯源 | `dist/static/WASM_BUILD.json`（源码基线 commit、工具链、三件 sha256）+ `check-release` 校验 |
 | 门禁 | vitest **107 文件 / 2196 项全过**；typecheck / arch / e2e colorblend / verify:local **9/9 PASS** |
-| 性能量化 / 真机验收 | **未做**（需真机，见 §4） |
+| 性能量化 | 未做（需真机测量；不影响发布，建议随首发补） |
+| **真机验收（29 项）** | **2026-11-10 作者确认全部通过** —— `TESTING.md` 勾选记录已回填 P4/P5/P7 + P8–P10 + M1–M8 + B1–B9 + C1–C6 |
 
 ### C. 渲染收口 —— 完成
 
@@ -82,9 +83,9 @@ PASS  卫生：工作树无未提交的已跟踪改动           干净
 
 子粒子 children（14 张）、ropetrail（5 张）、link_mouse 鼠标互动（7 张）、vortex/worldspace/mapsequence、boids/remapvalue、web 壁纸失败回退、i18n、HDR（写进 README 披露）、copybackground 全量实现、MSAA。理由见 [README.md](./README.md) §4。
 
-## 4. 仍需作者完成（不可由 agent 代做）
+## 4. 剩余事项
 
-1. **29 项真机人工验收**（`TESTING.md` 的 P4/P5/P7 + P8–P10 + M1–M8 + B1–B9 + C1–C6）——在运行中的 DSH 里操作并勾选。
+1. ~~**29 项真机人工验收**~~ —— **2026-11-10 作者确认全部真机验收通过**（`TESTING.md` 勾选记录已回填 P4/P5/P7 + P8–P10 + M1–M8 + B1–B9 + C1–C6）。
 2. **性能/显存量化**：1080p 默认 Glow 下最重场景（2911105183 / 1429403119 / 2597392171）FPS 与 `3828798871`（2 个 4K puppet ≈200MB）显存峰值，写进 TESTING/发布说明。
 3. **DSH 0.2.x 真机矩阵**：在 0.2.0-rc.1（本机）与 0.2.2-rc.1 上验证安装 / 设置页读写 / 选中壁纸刷新恢复 / 媒体集成 / 开机动画。
 4. **npm Trusted Publisher 配置**：npmjs 上 repo `yu502950715yang/dsh-use-wallpaper` + workflow `release.yml` + environment `npm`（否则 release workflow 的 publish job 会 401）。

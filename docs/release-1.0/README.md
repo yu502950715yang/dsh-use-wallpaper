@@ -2,6 +2,8 @@
 
 > **本文档已于 2026-11-10 重新分析**，基准从 v0.13.0（HEAD `0056109`）更新为 **v0.13.1（HEAD `6069b26`）**。
 > 支撑材料：三份 v0.13.0 基线审计（[rendering-gaps.md](./rendering-gaps.md) / [release-engineering.md](./release-engineering.md) / [product-platform-gaps.md](./product-platform-gaps.md)）+ 两份 v0.13.1 增量复测（[rendering-gaps-delta.md](./rendering-gaps-delta.md) / [release-engineering-delta.md](./release-engineering-delta.md)）。
+>
+> **进展更新（2026-11-10 晚）**：本文档列出的 P0 已**全部落地**（执行记录见 [p0-summary.md](./p0-summary.md)，5 个 commit、`verify:local` 9/9 PASS）；**29 项真机验收经作者确认通过**。1.0.0 现在只差「发布动作」（bump / tag / CI / Release / npm publish / 补索引 / 安装冒烟）。
 
 ---
 
@@ -44,7 +46,7 @@
 - **发布工程 0 项解决**：`engines.dsh` / `engines.node` / `packageManager` / `dsh.bundle.platforms` / `types` 仍全缺；双 lockfile 仍并存；`tag` 仍不触发 CI；无 release workflow；`master` 保护仍 404；cargo 仍 exit 101（同一根因）；`npm ci` 仍 exit 1。
 - **契约 0 项解决**：README 兼容矩阵仍停在 0.1.7-alpha.2（2026-09-23），无升级章节、无支持矩阵、无数据契约；旧 DSH 适配层原样；无 CHANGELOG/CONTRIBUTING/SECURITY/THIRD-PARTY/ISSUE_TEMPLATE/icon；面板仍无版本展示与诊断复制。
 - **渲染 P0 4 项一项没动**：A9 自旋轴序（9 张）、A18 copybackground 定性（22 张）、文档口径同步（过时点从 3 处增到 7 处）、A21 性能量化。
-- **真机验收**：26 项仍未做，且 TESTING §2.11 因 puppet 增强**新增 3 项待补**（P4/P5/P7）⇒ 现在共 **29 项**。
+- **真机验收**：26 项仍未做，且 TESTING §2.11 因 puppet 增强**新增 3 项待补**（P4/P5/P7）⇒ 现在共 **29 项**。→ **2026-11-10 作者已全部验收通过**（TESTING.md 勾选记录已回填）。
 
 ---
 
@@ -101,7 +103,7 @@ CHANGELOG/CONTRIBUTING/SECURITY/THIRD-PARTY/ISSUE_TEMPLATE/icon；面板版本�
 
 ## 5. 路线（与上轮一致）
 
-**`1.0.0-rc.1`（`npm publish --tag next` + GitHub Pre-release）→ 3 天冷却 + 基于 0.13.1 的全量真机验收 → `1.0.0` 正式版**。
+**`1.0.0` 直接发布**（P0 已全部落地、真机验收已通过）。发布动作按 `.github/RELEASE_NOTES_TEMPLATE.md` 的 11 步 checklist：bump → 更新 CHANGELOG → tag → 等 release workflow 绿 → GitHub Release → npm publish → 补 index 条目 → 安装冒烟。可选：补性能/显存量化数字（不影响发布）。
 
 - 第 1 周：A–E 的代码与工程项（约 8 人日）→ 发 rc.1
 - 第 2 周：rc 验证（DSH 0.2.0-rc.1 + 0.2.2-rc.1、29 项验收清单、`3828798871` 人眼验收）→ 修问题 → 发 `1.0.0` + Release + 索引 + 安装冒烟

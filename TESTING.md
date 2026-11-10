@@ -255,7 +255,7 @@ getEventListeners(window).pointermove?.length
 | P9 | 背景云/雾的 object color tint（自动化证据） | `3828798871` e2e 同相位帧 vs WE 真机帧：前景雾带亮度与 `(r−g)` 接近 WE；node 侧 `loadSceneToThree` 断言 cb≠0 + 静态 color → 内容 tint=作者色、cb≠0 + `{user}` color → tint 白 | 云/雾比桌面亮白（tint 被跳过）⇒ addBackground 的 `colorUserBound` 分支回归；`{user}` 绑定色被错误 tint ⇒ 2832263418 音频条颜色回归 |
 | P10 | puppet 效果链清晰度（自动化证据） | `3828798871` e2e 同相位帧 vs WE 真机帧：人物区（黑武者/红人物）Laplacian 与 WE 同量级（阈值 <10% 差）；隔离 RT 日志里 puppet content/chain = 源纹理分辨率（≤4096） | 人物比桌面糊（Laplacian 明显偏低）⇒ puppet RT 被隔离预算降采样（§7.36 ②）或内容 MSAA 回归；`{user}`/颜色/效果线仍正常 |
 
-**验收记录**：2026-10-23 用户人眼验收通过（P1/P2 静态网格与 Console、P3 零回归对拍）；2026-11-06 修复 MDLA/蒙皮后，P6 的自动化判据随 `tests/mdl-real-library.test.ts`（真实素材硬断言 + boneInverses=MDLS 父链逆）+ `tests/puppet.test.ts`（欧拉角/loop 采样/bind 只取 MDLS）+ 全量 vitest 通过；**绑定姿势口径最终以参考引擎源码（WPPuppet::prepared 的 local_bind/bind_parent）与示例项目 webwallgl computeSkinMatrices 逐骨对拍 Δ=0 为准**；2026-11-06 回退了「bind=主动画 frame0」的误判（该误判让全部骨姿势系统性偏移、披风/波动出现在错误部位）；同日再补 **puppet 对象级效果链**（P7）：同一套 WE 真机基准下披风区 `meanAbsDiff` 3.33 → 9.64（WE 真机 8.25）、changed 19.0%，判据强证据（A/B 运动能量比 14.2 ≥ 3）。P4/P5/P7 真机人眼验收**待补**（2026-11-06 已请用户在本机 GUI 复核「影之刃零1」两个人物动画与披风）；同日修 **shimmer 两条编译缺口**（HLSL 隐式截断 + sampler default 渐变图，P8）：e2e 零编译失败、gradient 资产被请求，披风运动能量保持 9.645（无回归）；shimmer 自身最终画面贡献 <8bit（强制输入验证管线正确，真实素材下量化吃掉）；2026-11-09 修 **puppet 效果链 v 约定错位**（内容 quad 多翻一次 ⇒ mask 在 v 方向镜像：黑武者波动落到未授权部位、红人物 mask 全 0 效果静默失效；P7 判据补「两个人物都有波动、落在 mask 授权部位」）：修复后 puppet 链输出对红/黑人物均非恒等，关链 A/B 的屏幕贡献红人物 6~9%、黑武者 8~17% 像素变化；直接渲染（无链）逐像素零差异；`3812518176`（leon，13 骨/4 动画层）同时 e2e 复查无编译失败（多动画层只应用第一条仍为已知 v1 边界）；2026-11-09 修 **背景云/雾 object color tint**（P9）：cb≠0 的静态作者色此前被跳过 ⇒ 云/雾比桌面亮白；改按参考引擎语义烘 tint（{user,value} 绑定色保持不 tint，见 AGENT §7.40 ⑯）。e2e 同相位对比：前景雾带亮度 55.3→45.4（WE 48.8）、(r−g) 17.0→21.5（WE 21.7），左下雾 24.9→20.5（WE 20.3）；直接渲染/人物路径零变化。；2026-11-09 修 **puppet 效果链清晰度**（P10）：puppet 的链 RT 此前被隔离预算压到 2704×1521（源 3840×2160）⇒ 人物比桌面糊；改为不参与预算、按源分辨率（内容 RT 关 MSAA 省显存）后，黑武者区 Laplacian **5.60 → 7.32**（WE 真机同相位 **7.16**）、gradX 2.43 → 2.76（WE 2.62），直接贴图基准 8.72；e2e 同相位帧与 `3812518176`（leon）复查无异常。
+**验收记录**：2026-10-23 用户人眼验收通过（P1/P2 静态网格与 Console、P3 零回归对拍）；2026-11-06 修复 MDLA/蒙皮后，P6 的自动化判据随 `tests/mdl-real-library.test.ts`（真实素材硬断言 + boneInverses=MDLS 父链逆）+ `tests/puppet.test.ts`（欧拉角/loop 采样/bind 只取 MDLS）+ 全量 vitest 通过；**绑定姿势口径最终以参考引擎源码（WPPuppet::prepared 的 local_bind/bind_parent）与示例项目 webwallgl computeSkinMatrices 逐骨对拍 Δ=0 为准**；2026-11-06 回退了「bind=主动画 frame0」的误判（该误判让全部骨姿势系统性偏移、披风/波动出现在错误部位）；同日再补 **puppet 对象级效果链**（P7）：同一套 WE 真机基准下披风区 `meanAbsDiff` 3.33 → 9.64（WE 真机 8.25）、changed 19.0%，判据强证据（A/B 运动能量比 14.2 ≥ 3）。P4/P5/P7 真机人眼验收 **2026-11-10 作者确认真机通过**（本机 GUI 复核「影之刃零1」两个人物动画与披风）；同日修 **shimmer 两条编译缺口**（HLSL 隐式截断 + sampler default 渐变图，P8）：e2e 零编译失败、gradient 资产被请求，披风运动能量保持 9.645（无回归）；shimmer 自身最终画面贡献 <8bit（强制输入验证管线正确，真实素材下量化吃掉）；2026-11-09 修 **puppet 效果链 v 约定错位**（内容 quad 多翻一次 ⇒ mask 在 v 方向镜像：黑武者波动落到未授权部位、红人物 mask 全 0 效果静默失效；P7 判据补「两个人物都有波动、落在 mask 授权部位」）：修复后 puppet 链输出对红/黑人物均非恒等，关链 A/B 的屏幕贡献红人物 6~9%、黑武者 8~17% 像素变化；直接渲染（无链）逐像素零差异；`3812518176`（leon，13 骨/4 动画层）同时 e2e 复查无编译失败（多动画层只应用第一条仍为已知 v1 边界）；2026-11-09 修 **背景云/雾 object color tint**（P9）：cb≠0 的静态作者色此前被跳过 ⇒ 云/雾比桌面亮白；改按参考引擎语义烘 tint（{user,value} 绑定色保持不 tint，见 AGENT §7.40 ⑯）。e2e 同相位对比：前景雾带亮度 55.3→45.4（WE 48.8）、(r−g) 17.0→21.5（WE 21.7），左下雾 24.9→20.5（WE 20.3）；直接渲染/人物路径零变化。；2026-11-09 修 **puppet 效果链清晰度**（P10）：puppet 的链 RT 此前被隔离预算压到 2704×1521（源 3840×2160）⇒ 人物比桌面糊；改为不参与预算、按源分辨率（内容 RT 关 MSAA 省显存）后，黑武者区 Laplacian **5.60 → 7.32**（WE 真机同相位 **7.16**）、gradX 2.43 → 2.76（WE 2.62），直接贴图基准 8.72；e2e 同相位帧与 `3812518176`（leon）复查无异常。
 
 ---
 
@@ -439,7 +439,7 @@ getEventListeners(window).pointermove?.length
 | P9 | `3118949804` 系统音频（v0.9 P1） | 用浏览器（Chrome/Edge）打开同一 GUI 地址（桌面 App 内不可用）；选中壁纸 → 面板「系统音频」→ 启用 → 共享弹窗选「整个屏幕」并勾选「共享音频」；播放音乐。 | 授权后按钮变「停止系统音频」；壁纸 visualizer 条随音乐跳动；点停止或浏览器「停止共享」后回到静音最小高度且按钮复位。 | 按钮不出现（非 `supportsaudioprocessing` 素材）、授权后无反应（未勾选共享音频/音频轨未接）、桌面 App 中误报成功。 |
 | P10 | `3163840671` 预设壁纸（v0.9） | 选中「Anime Girl Purple Clean Wallpeaper」（预设版），对比主壁纸 3118949804。 | 类型徽标显示 PRESET；画面按依赖主壁纸渲染，且参数采用预设值（speed=2.5、blinkingeyes=false 等）；壁纸属性面板显示依赖的属性。 | 徽标仍 UNKNOWN / 选中后只剩预览图（资源 alias 失败）/ 属性值不是预设值。 |
 
-**勾选记录**（2026-10-23 用户人眼验收，全部通过；验收人 用户 日期 2026-10-23 GPU/分辨率 未记录）：
+**勾选记录**（2026-10-23 用户人眼验收，全部通过；2026-11-10 作者补验 P8–P10 通过；验收人 用户 日期 2026-10-23 / 2026-11-10 GPU/分辨率 未记录）：
 
 - [x] P1：`3812518176` clock 三档（1 / 2 / 3 off）
 - [x] P2：`3812518176` clockcolor（防抖提交）
@@ -448,9 +448,9 @@ getEventListeners(window).pointermove?.length
 - [x] P5：`2937346640` slider（眼动追踪速度）
 - [x] P6：`3118949804` slider + parallax
 - [x] P7：`2832263418` color + condition（音频条关闭时禁用）
-- [ ] P8：`3118949804` visualizer 条（静音最小高度）
-- [ ] P9：`3118949804` 系统音频（浏览器模式，需授权）
-- [ ] P10：`3163840671` 预设壁纸（按依赖渲染 + 预设参数）
+- [x] P8：`3118949804` visualizer 条（静音最小高度）
+- [x] P9：`3118949804` 系统音频（浏览器模式，需授权）
+- [x] P10：`3163840671` 预设壁纸（按依赖渲染 + 预设参数）
 
 **已知边界（v0.9）**：`text` 类型本机 0 样本、面板不渲染；`group` 类型不返回（Leon 的 `character`/`weather` 不显示）、面板平铺；属性变更走整壁纸重装配（无就地实时生效）；color 的 0-1 值按 sRGB 直映射，`clockcolor` 色彩空间已按 P2 人眼验收通过（2026-10-23，未做逐像素色差量化）；`3812518176` 的 `bloomhdr*` 仍不支持（另一条缺口）；`2937346640` 的 `_24hourformat` 在 project.json 中不存在，面板不出现该项（`{user}` 引用保留作者值）。
 
@@ -468,7 +468,7 @@ getEventListeners(window).pointermove?.length
 
 ### 2.17 手工验收清单：媒体集成（Windows SMTC + 时间线属性动画，2026-10-30）
 
-> **需人工验收（当前未验）**：**以下 M1–M8 需真机手动勾选，当前未验** —— 必须由人在运行中的 DSH 桌面 App 里操作（播放器播放/暂停/切歌 + 目视），agent 无法代跑。
+> **真机验收（2026-11-10 作者已逐项确认通过）**：以下 M1–M8 需真机手动勾选 —— 必须由人在运行中的 DSH 桌面 App 里操作（播放器播放/暂停/切歌 + 目视），agent 无法代跑。
 > **前置**：已 `npm run build` + `npm run build:client`，重启 harness 后**强刷** GUI；选中 `3797976859`（小作 2(有声)）；本机装有会把会话注册到系统 SMTC 的播放器（Spotify / 网易云 / Groove 等），并**在播放器中实际播放音乐**。
 > **自动化已覆盖**：事件 diff / 轮询启停（`tests/media-input.test.ts`）、会话选择 / 行解析 / 空闲退出与退避（`tests/media-session.test.ts`，含 stdout 跨 UTF-8 分块与 watcher 封面迟到强制输出）、VM 事件与 `thisObject.getAnimation`（`tests/scene-script-vm.test.ts`）、时间线解析与求值 + 脚本 init 的 play/setFrame 不被 `applyInitial` 覆盖（`tests/scene-timeline.test.ts`）、面板状态行文案随 getMediaStatus.reason 变化（`tests/dom/settings-section.dom.test.tsx`）、text 层材质不被脚本动态 color 改写（`tests/layer-state.test.ts` / `tests/threejs-player.test.ts`）、封面方向与共享纹理（`tests/media-texture.test.ts`）、端到端 `npm run e2e:media`（13 条：白框 / 文本 / 封面方向 / 主色 / 淡入滑入 / 停止隐藏）与 `node e2e/verify/verify-media-layer.mjs --regression`（5 张回归，含 `2980088441` 文本静态色回归 + `2597392171` Fog loop 复跑）。**真机观感、SMTC 会话选择与隐私仍需人工验收**。
 > **隐私口径**：验收记录**不得包含真实曲目信息**（不截图歌名、不把 title/artist 贴进 issue）；日志与数据目录检查只记录「有无」。
@@ -484,16 +484,16 @@ getEventListeners(window).pointermove?.length
 | M7 | 隐私与 watcher 残留 | 停止播放并关闭壁纸（或切到非媒体壁纸）后等待 **>25s**（空闲阈值 20s + 5s 检查周期，最坏 25s 才退出）。 | 浏览器 Console / DSH 日志中**没有** title/artist/album；数据目录 `~/.dsh-use-wallpaper`（或 `DSH_USE_WALLPAPER_DATA_DIR`）内**除 `frames/` 抓帧缓存外无新增文件**：媒体数据（封面/曲目/快照）不得落盘；选中 `3797976859` 时首帧成功会写 `frames/3797976859.png`，属抓帧缓存而非媒体数据（要严格「零新增」可临时关掉 `frameCacheEnabled` 再测）；`Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" \| Where-Object CommandLine -like '*GlobalSystemMediaTransportControls*'` 无输出。 | 日志出现曲目名 → 隐私回归；目录出现 `frames/` 之外的新文件 → 媒体数据落盘；25s 后仍有该 powershell 进程 → 空闲退出未生效。 |
 | M8 | 其它平台 / 失败路径（可选） | 浏览器 GUI 中播放音乐（桌面 App 之外），或临时让 PowerShell 不可用（改 PATH / 策略模拟）。打开设置 →「Wallpaper 壁纸」→「显示效果」（媒体集成开关下方状态行）。 | 浏览器 GUI 下可能命中 Chromium 自会话过滤边界（误选/漏选均记边界，不判红）；无 PowerShell / watcher 失败时：媒体层隐藏、状态行显示对应原因（「未找到可用的 PowerShell…」/「媒体会话读取失败（已降级）…」）、不显示曲目；非 Windows 显示「当前系统不支持系统媒体会话（仅 Windows）…」；渲染不受影响。 | 面板无提示 / 仍显示隐私默认文案（说明 reason 未上抛）→ `getMediaStatus`/面板状态行链路回归；渲染被阻塞 → 降级链回归。 |
 
-**勾选记录（当前未验：以下 M1–M8 需真机手动勾选，agent 未代验、未伪造勾选）**：
+**勾选记录（2026-11-10 作者真机验收通过）**：
 
-- [ ] M1：无媒体会话白框消失
-- [ ] M2：播放（封面方向 / 歌名歌手 / 主色 / 淡入滑入）
-- [ ] M3：暂停保持显示、恢复
-- [ ] M4：切歌更新且旧封面不残留
-- [ ] M5：停止后媒体层隐藏
-- [ ] M6：面板开关关闭 / 重开
-- [ ] M7：隐私（日志无曲目）+ 数据目录无媒体落盘（`frames/` 抓帧缓存除外）+ >25s 无 watcher 残留
-- [ ] M8：浏览器 GUI / 失败路径（可选）
+- [x] M1：无媒体会话白框消失
+- [x] M2：播放（封面方向 / 歌名歌手 / 主色 / 淡入滑入）
+- [x] M3：暂停保持显示、恢复
+- [x] M4：切歌更新且旧封面不残留
+- [x] M5：停止后媒体层隐藏
+- [x] M6：面板开关关闭 / 重开
+- [x] M7：隐私（日志无曲目）+ 数据目录无媒体落盘（`frames/` 抓帧缓存除外）+ >25s 无 watcher 残留
+- [x] M8：浏览器 GUI / 失败路径（可选）
 
 **e2e 复跑（2026-10-30 final fix wave，本机 headless Edge / 真 GPU）**：`npm run e2e:media` exit 0（13/13 判据；FPS 探针 60.3，GPU=NVIDIA RTX 3060 D3D11）；`node e2e/verify/verify-media-layer.mjs --regression` exit 0（5 张 22/22 判据，含 `2980088441` 的 `[R6]`：text 层材质 color≈[1,1,1]（主判据）；辅助「文本区红色像素存在性」539（阈值无鉴别力，仅防空白））；`npm run e2e:media-perf` exit 0（10 条动画 `advance+sampleAndWrite+syncWorld` 本机两次实测 13.024 / 14.579µs/帧，N=2000，预算 <50µs）；`verify-colorblend` / `verify-v081-gaps` / `verify-v082` / `verify-text-clock-layer --no-teeth` / `verify-web-pointer-parallax` 均 exit 0。**未通过/未运行**：`verify-hidpi-object-rt` 挂载期 RT 尺寸断言为 v0.8.0 基线即有的已知红（见本文 §2.9）；`verify-isolated-rt-sharpness` 3/8 未过（`2132420420` / `3765967112` 为「多隔离」集合差异，`2911105183` 为锐度阈值未达、该张亦报多隔离）；**本轮未独立建立「改动前同样失败」的基线**，按「待 Task 11 后续 / 人工复核」记录，不归因为既有素材缺陷（未改隔离选择 / RT 尺寸 / 效果链逻辑；仅在隔离合成 quad 材质上打 `dynamicColorDisabled` 标记）；`verify-turn-trigger-card` 因本机 DSH asar 缺 `dsh-client-ui-primitives/lib/markdown/CodeBlock.module.css` 无法运行（环境缺失，与插件无关）。
 
@@ -503,7 +503,7 @@ getEventListeners(window).pointermove?.length
 
 ### 2.18 手工验收清单：开机动画（视频/图片素材 + 四种展示方式，2026-10-30）
 
-> **真机验收待执行（当前仅自动化门禁）**：以下 B1–B9 需由人在运行中的 DSH 里手动勾选，**agent 未代验、未伪造勾选**。
+> **真机验收（2026-11-10 作者已逐项确认通过）**：以下 B1–B9 需由人在运行中的 DSH 里手动勾选。
 > **前置**：已 `npm run build` + `npm run build:client`，重启 harness 后**强刷** GUI；壁纸库含至少一张 `video` 与一张 `image` 壁纸；另备一个本地 `.mp4`（浏览器可解码的编码，如 H.264）。
 > **自动化已覆盖**：`tests/boot-asset.test.ts`（host 路径解析与两条 boot 路由：回环来源 + `Host` 头、UNC/网络路径（含 `/\`、`\/` 混合分隔符）400、Range 206、外网 403；HEAD 不在本文件，通用 `sendSceneAsset` 的 HEAD 由 `tests/routes.test.ts` 的 `/wallpapers/scene/.../asset` 用例覆盖）、`tests/dom/boot-overlay.dom.test.ts`（fit 映射：视频/图片 `cover`、图片 `tile` 有断言，`contain` 仅传参、`stretch` 无用例 —— stretch/contain 断言为后续项；视频 `ended`/图片计时/超时/跳过/失败、淡出后移除、dispose 幂等；**DSH 启动页接管：`[data-dsh-boot]` 存在时视频 loop / 图片保持且不被素材时长截断、启动页移除后结束、30s 硬上限**）、`tests/boot-player.test.ts`（素材解析、只播一次、`force` 试播）、`tests/dom/boot-settings-section.dom.test.tsx`（面板默认值、只列 video/image、视频时平铺禁用、写入字段、校验结果）、`tests/dom/settings-shell.dom.test.tsx`（单 section 内 tab 切换、默认「日常壁纸」、键盘切换、条件渲染）、`tests/dom/plugin-lifecycle.dom.test.ts`（启用配置下 bootstrap 自动起层、mount 清理不误删、收尾移除）、`tests/dom/bootstrap.dom.test.ts`（单个 `settings.section`（tab 容器）在 `inject` 回调内注册）。**真机视觉与交互仍需人工验收。**
 
@@ -519,23 +519,23 @@ getEventListeners(window).pointermove?.length
 | B8 | 失败静默 / 跳过 / 收尾 | 用坏文件或不存在的路径启用开机动画；播放中点击 / 按任意键 / Esc；最后 HMR 重载或禁用插件。 | 失败/8 秒未就绪**静默跳过**，主界面正常可用；点击/按键/Esc 立即淡出；重载或禁用后 DOM 里无 `.wp-boot-layer` 残留。 | 黑屏卡住 / 无法跳过 / 残留层 → overlay 失败路径或 teardown。 |
 | B9 | DSH 启动加载页接管 | 启用开机动画（视频素材更适合观察），完全退出 DSH 再重开；观察 HARNESS / "Loading plugins…" 页面出现后的表现。 | 插件开始运行后动画**盖住启动加载页并持续播放**（视频循环），主界面就绪后 300ms 淡出；不会在加载期间露出 Loading 页尾巴（最长 30s 兜底）。 | 启动页重新露出 / 动画播完黑屏 / 卡在动画 → hold 模式（`[data-dsh-boot]` 观察器）或 overlay 结束条件。 |
 
-**勾选记录（真机验收待执行：以下 B1–B8 需人工勾选，当前未验）**：
+**勾选记录（2026-11-10 作者真机验收通过）**：
 
-- [ ] B1：WE 图片壁纸素材
-- [ ] B2：WE 视频壁纸素材（声音默认开启、可关；平铺禁用）
-- [ ] B3：本地 mp4（校验 + 播放）
-- [ ] B4：四种展示方式
-- [ ] B5：刷新不重播 / 新会话播一次 / 试播可重看
-- [ ] B6：日常壁纸零变化
-- [ ] B7：Host / UNC 安全用例（自动化已覆盖，真机复核）
-- [ ] B8：失败静默 / 跳过 / 无残留层
-- [ ] B9：DSH 启动加载页（Loading plugins…）被动画接管，主界面就绪后淡出
+- [x] B1：WE 图片壁纸素材
+- [x] B2：WE 视频壁纸素材（声音默认开启、可关；平铺禁用）
+- [x] B3：本地 mp4（校验 + 播放）
+- [x] B4：四种展示方式
+- [x] B5：刷新不重播 / 新会话播一次 / 试播可重看
+- [x] B6：日常壁纸零变化
+- [x] B7：Host / UNC 安全用例（自动化已覆盖，真机复核）
+- [x] B8：失败静默 / 跳过 / 无残留层
+- [x] B9：DSH 启动加载页（Loading plugins…）被动画接管，主界面就绪后淡出
 
 ---
 
 ### 2.19 手工验收清单：视频壁纸声音 + 壁纸声音开关（2026-11-04）
 
-> **真机验收待执行（当前仅自动化门禁）**：以下 C1–C6 需由人在运行中的 DSH 里手动勾选，**agent 未代验、未伪造勾选**。
+> **真机验收（2026-11-10 作者已逐项确认通过）**：以下 C1–C6 需由人在运行中的 DSH 里手动勾选。
 > **前置**：已 `npm run build` + `npm run build:client` 并**重启 App**（桌面版 host 启动时快照客户端 bundle，只刷新页面拿不到新代码）；壁纸库含 `3422242110`（沉鱼落燕，有音轨）与 `3815771488`（黑白-剑少女，无音轨）。
 > **自动化已覆盖**：`tests/dom/background-layer.dom.test.ts`（桌面壳直接不静音 / 浏览器先静音 + 首次 pointerdown 解锁 / `soundEnabled=false` 与 `hasAudio=false` 保持静音 / `setSoundEnabled` 运行期切换 / 清空后监听摘除 / 音量默认 1 与 `setVolume` clamp / web 帧 `__wpSound` 下发 + 帧创建后重发）、`tests/web-audio-shim.test.ts`（注入工具 + shim 运行时：开关/音量/clamp/动态媒体/畸形消息/页面写回 muted 后 play 钩子兜底）、`tests/dom/boot-overlay.dom.test.ts`（开机动画声音三种策略 + volume 应用）、`tests/boot-player.test.ts`（`onActiveChange` 只在真正播放区间触发 true/false，未启用/已播过不触发）、`tests/dom/boot-mutes-wallpaper.dom.test.ts`（开机动画 active 期间壁纸声音下发 false、结束恢复用户设置）、`tests/dom/settings-section.dom.test.tsx`（「声音」卡独立 + 无音轨提示 + 音量滑杆下发/持久化）、`tests/dom/boot-settings-section.dom.test.tsx`（开机动画声音开关与音量滑杆）、`tests/audio-input.test.ts`（masterGain 接线 + `setVolume` clamp / context 关闭后静默）、`tests/three-renderer.test.ts`（`setSoundVolume` 装配即时生效 / 无装配只记录 / 重开沿用）、`tests/mp4-audio-probe.test.ts`（mp4 音轨探测 true/false/null + scanner 集成）、`tests/routes.test.ts`（web HTML 注入 `__wpPointer` + `__wpSound`）、`tests/dom/wallpaper-controller.dom.test.ts`（`hasAudio` 透传）。
 
@@ -548,14 +548,14 @@ getEventListeners(window).pointermove?.length
 | C5 | web 壁纸声音 | 选一张 `type: web` 且页面内有音视频的壁纸（优先 `3778198228` WoW 登录界面：页面脚本自己会改 `muted`；另可试 `1184182304`）；开/关「壁纸音效」、拖动音量滑杆。 | 页内 `<audio>/<video>` 跟随开关静音/恢复、音量滑杆即时改变响度；动态创建的媒体元素、以及**页面自己把 muted 写回 false / 重新播放**时都被兜住。 | 无变化 → host 未注入 `__wpSound`（curl `/wallpapers/web/<id>/index.html` 看 HTML）或宿主 `postMessage` 未发；页面初始化后短暂有声（<1s 属重发窗口）、持续有声 → `play` 钩子/重发未生效；网页用 Web Audio 自建声源属已知不可控。 |
 | C6 | 开机动画期间壁纸静音 | 启用开机动画并选一张有声音的视频壁纸（如 `3422242110`），完全退出 DSH 再启动，留意片头播放期间的声音。 | 片头期间**只听到开机动画自己的声音**（若开启），壁纸声音被临时抑制；片头结束后壁纸声音按「声音」卡设置恢复。 | 片头期间壁纸声音仍在响 → `bootActive`/`effective` 未接到声音下发；结束后没恢复 → `onActiveChange(false)` 未被调用。 |
 
-**勾选记录（真机验收待执行，当前未验）**：
+**勾选记录（2026-11-10 作者真机验收通过）**：
 
-- [ ] C1：桌面版视频壁纸出声 / 开关即时静音
-- [ ] C2：无音轨素材提示
-- [ ] C3：浏览器冷启动静音、交互后出声
-- [ ] C4：开机动画声音默认开 / 可关
-- [ ] C5：web 壁纸页内媒体声音跟随开关与音量
-- [ ] C6：开机动画期间壁纸静音、片头结束后恢复
+- [x] C1：桌面版视频壁纸出声 / 开关即时静音
+- [x] C2：无音轨素材提示
+- [x] C3：浏览器冷启动静音、交互后出声
+- [x] C4：开机动画声音默认开 / 可关
+- [x] C5：web 壁纸页内媒体声音跟随开关与音量
+- [x] C6：开机动画期间壁纸静音、片头结束后恢复
 
 ---
 
