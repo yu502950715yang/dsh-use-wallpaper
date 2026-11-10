@@ -6,9 +6,9 @@
 - 单次发布的用户文案（GitHub Release）按 [`.github/RELEASE_NOTES_TEMPLATE.md`](./.github/RELEASE_NOTES_TEMPLATE.md) 写；本文件面向长期回溯，按「破坏性变更 / 新增 / 变更 / 修复 / 移除」归类。
 - 兼容性、已知限制与素材边界的**现状**以 README「使用前请了解」与 [`AGENT.md`](./AGENT.md) §7 为准，本文件不重复维护。
 
-## [Unreleased] — 目标版本 1.0.0（未发布）
+## [1.0.0] - 2026-11-10
 
-> **发布收口工作稿（2026-11-10，基准 v0.13.1）**：1.0.0 尚未打 tag。打 tag 前请按 `git log v0.13.1..HEAD` 复核一遍，并把标题改为 `## [1.0.0] - YYYY-MM-DD`、更新文末链接。
+> **1.0.0 已发布（2026-11-10，基线 v0.13.1）**。
 >
 > 1.0.0 本身**不新增渲染能力**，重点是契约声明、可观测性与发布工程；v0.9.0 以来的用户可见能力见下方各版本条目与「v0.9.0 → 1.0.0 能力汇总」。
 
@@ -41,6 +41,8 @@
 - `cargo test` 从 exit 101 恢复：`wasm/tests/particle_stagger_test.rs` 的 `include_str!` 夹具从 gitignore 的 `research/` 移入 `wasm/tests/fixtures/` 入库；`override_rate_keeps_duty_cycle` 的期望值订正。
 - 粒子自旋轴序改为 WE 的 `Rz·Rx·Ry`（此前 `Rz·Ry·Rx`）：只影响多于一个轴的旋转，单轴（z-only）逐像素等价；对象 `angles` 路径不受影响。
 - 类型错误棘轮收紧已修复的 2 个键（`synthetic-library.test.ts|TS2339`、`verify-real-library.test.ts|TS2339`）；新增类型错误仍判红。
+- 发布前 P1（client）：web 壁纸 resize 重建不再累积 `pointermove` 监听（抽 `PointerPostBridge` 可单测）；`localStorage.getItem` 抛错（隐私模式/禁用存储）兜底（面板不崩）；图片对象纹理缺失白图兜底时 warn 一次（含壁纸/对象 id，可排查）。
+- 发布前 P1（Rust）：粒子 `randomframe` 帧号改用**实际**精灵表帧数（旧实现硬编码 4，非 4 帧表随机帧错位）；`maxcount` 缺失/为 0 时按 `rate × 平均寿命` 估算容量（旧实现永不发射）。
 
 ### 安全（Security）
 
@@ -51,6 +53,7 @@
   - **`.tex` 解压炸弹**：mip 的「解压字节数 / 宽高」是第三方素材声明的，此前按其直接分配内存（`64 image × 256 mip` 各声明 1GB + 空载荷即可让渲染进程 OOM）。现在分配大小按「格式 + 宽高」推导，声明不一致 / 空载荷 / 解压长度不符 / 超预算一律拒绝（该纹理缺失、走降级链）；4 个阈值可通过 profile config 的 `texMax*` 字段调整（默认 512MiB / 1GiB / 4096 / 16384，正常素材用不到）。
   - **粒子素材的解析与分配加固**（Rust/wasm）：非法粒子 JSON 不再 panic（转 JS 异常、跳过该粒子层而不是整页崩）；`maxcount` 加硬上限 16384（防构造期按素材声明无界分配导致 OOM）；角度归一化改用 `rem_euclid`（旧的 `while` 对 inf/超大值会不可中断死循环、卡死整页）；非有限数值与非有限 `dt` 一律过滤。
   - **渲染层并发与显存泄漏**：快速连点壁纸时多次 `select`/`render` 并发，后完成者覆盖当前播放器、先完成者装配的 player 无人释放（RAF 永续 + WebGL 资源泄漏）。现在 `select` 串行化（同一时刻只装配一次），renderer 侧另有代际守卫兜底；粒子/折射/文字画布/动态网格纹理由装配期统一登记并在 teardown 释放（此前切壁纸泄漏 VRAM）。
+- **质量门禁加固**（1.0，2026-11-10）：测试规模下限守卫（`scripts/check-test-floor.mjs`——用例数/文件数不得低于下限、跳过超限或报告为空判红）；三个基线文件（known-failures / known-type-errors / test-floor）不得随 PR 静默改动（CI `gate-baseline`，合法更新打 label `gate-baseline-update`）；`verify:local` 先删旧 vitest 报告，防 vitest 崩溃时读到上一轮全绿结果。
 
 ### 移除（Removed）
 
@@ -172,7 +175,7 @@
 - 「恢复默认」不再误删旧全局键；颜色提交防抖。
 - 类型筛选选项统一为 SCENE / VIDEO / WEB / IMAGE / PRESET。
 
-[Unreleased]: https://github.com/yu502950715yang/dsh-use-wallpaper/compare/v0.13.1...HEAD
+[1.0.0]: https://github.com/yu502950715yang/dsh-use-wallpaper/compare/v0.13.1...v1.0.0
 [0.13.1]: https://github.com/yu502950715yang/dsh-use-wallpaper/releases/tag/v0.13.1
 [0.13.0]: https://github.com/yu502950715yang/dsh-use-wallpaper/releases/tag/v0.13.0
 [0.12.0]: https://github.com/yu502950715yang/dsh-use-wallpaper/releases/tag/v0.12.0

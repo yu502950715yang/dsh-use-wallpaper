@@ -182,3 +182,14 @@ jobs:
             e2e/.out/*/*.png
             e2e/.out/*.png
           if-no-files-found: ignore
+
+  # Rust 侧回归（1.0 发布前补：解析加固/粒子模拟的单测此前只在本地跑）。
+  rust:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: cargo test（wasm 粒子/解析）
+        working-directory: wasm
+        run: cargo test

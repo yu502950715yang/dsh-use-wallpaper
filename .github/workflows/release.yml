@@ -116,6 +116,10 @@ jobs:
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
+      # Trusted Publisher（OIDC provenance）要求 npm >= 11.5.1；runner 的 Node 22 自带 npm 10.x，
+      # 不升级会在首次 publish 时 401。
+      - name: 升级 npm（可信发布要求 >= 11.5.1）
+        run: npm install -g npm@11
       - name: 校验 tag 与 package.json 版本一致
         shell: bash
         run: |
