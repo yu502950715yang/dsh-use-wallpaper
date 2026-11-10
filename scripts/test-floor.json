@@ -1,0 +1,6 @@
+{
+  "_comment": "测试规模下限（scripts/check-test-floor.mjs 使用）。新增测试后可调大；调小/删除需在 PR 里显式说明（CI 会拦基线文件改动）。",
+  "minTests": 2227,
+  "minTestFiles": 110,
+  "maxPendingTests": 20
+}

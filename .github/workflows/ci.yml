@@ -71,6 +71,28 @@ jobs:
         # tsconfig.tests.json 把 tests/** 纳入 noEmit 检查，基线口径 = (文件, TS 错误码) 计数（AGENT.md §7.11）。
         run: node scripts/check-known-type-errors.mjs
 
+  # 审查 P0-2：类型棘轮 / 已知失败 / 测试下限的基线文件不得随 PR 静默放宽
+  #（同一 PR 先引入回归再跑 --update 与代码一起提交是原缺口）。
+  # 合法更新（新增测试后调大 test-floor 等）在 PR 上打 label `gate-baseline-update` 放行。
+  gate-baseline:
+    if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'gate-baseline-update')
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: 门禁基线文件不得在本 PR 内改动
+        shell: pwsh
+        run: |
+          git fetch origin ${{ github.base_ref }} --depth=1
+          $changed = git diff --name-only "origin/${{ github.base_ref }}" -- scripts/known-type-errors.json scripts/known-failures.json scripts/test-floor.json
+          if ($changed) {
+            Write-Host "基线文件被修改："
+            Write-Host $changed
+            throw "门禁基线不得随 PR 修改；确需放宽请在 PR 打 label 'gate-baseline-update' 并说明理由（见 AGENT.md §7.11）。"
+          }
+
   test:
     runs-on: windows-latest
     timeout-minutes: 15
@@ -89,6 +111,9 @@ jobs:
         continue-on-error: true
       - name: 只对新增失败判红（套件级错误/未处理异常一律判红）
         run: node scripts/check-known-failures.mjs .vitest-report.json
+      # 审查 P0-1：门禁只判「红」时，删测试/写错 include/删断言都能让用例静默消失仍全绿。
+      - name: 测试规模下限（防测试静默消失）
+        run: node scripts/check-test-floor.mjs .vitest-report.json
       - name: 上传测试报告（失败时排查用）
         if: failure()
         uses: actions/upload-artifact@v6

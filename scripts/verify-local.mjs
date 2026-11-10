@@ -62,12 +62,15 @@ gate('门禁 1d：tests 类型检查基线', () => {
   return { ok: r.status === 0, detail: `exit ${r.status}` };
 });
 
-// ⑤ vitest + 已知失败基线（新增失败/套件级错误才判红）
+// ⑤ vitest + 已知失败基线（新增失败/套件级错误才判红）+ 测试规模下限（防测试静默消失，审查 P0-1/P0-3）
 gate('门禁 2：vitest + 已知失败基线', () => {
+  // 先删上一轮报告：vitest 崩溃/被中断时不会写新报告，残留旧报告会让门禁误判（审查 P0-3）。
+  if (existsSync('.vitest-report.json')) rmSync('.vitest-report.json');
   const r = sh('pnpm', ['exec', 'vitest', 'run', '--reporter=default', '--reporter=json', '--outputFile=.vitest-report.json']);
   const k = sh('node', ['scripts/check-known-failures.mjs', '.vitest-report.json']);
+  const f = sh('node', ['scripts/check-test-floor.mjs', '.vitest-report.json']);
   if (existsSync('.vitest-report.json')) rmSync('.vitest-report.json');
-  return { ok: k.status === 0, detail: `vitest exit ${r.status} / 基线检查 exit ${k.status}` };
+  return { ok: k.status === 0 && f.status === 0, detail: `vitest exit ${r.status} / 基线 ${k.status} / 下限 ${f.status}` };
 });
 
 // ⑤ e2e colorblend（真实 headless Edge 逐像素判据）

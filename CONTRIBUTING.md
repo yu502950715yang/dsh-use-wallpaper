@@ -53,6 +53,14 @@ pnpm run build:client  # node scripts/build-client.mjs → dist/client.js + 复�
 - 渲染 / 坐标 / 粒子 / 材质语义的改动：先写失败测试（`tests/`），再改代码，最后按需跑 e2e 并记录结论；**不能只靠肉眼「看起来对了」**。
 - 测试沙箱：vitest / esbuild / headless Edge 都依赖 service 子进程，受限沙箱下会报 `spawn EPERM` —— 用完整权限运行（见 `AGENT.md` §5.13）。
 
+### 门禁基线变更（known-failures / known-type-errors / test-floor）
+
+门禁只对「增量」判红，基线文件是这份增量账本。正常改动**不应**碰它们；需要更新时（新增测试后调大 `test-floor`、修复既有失败后基线变短等）：
+
+1. 在 PR 上打 label `gate-baseline-update`（CI `gate-baseline` job 对该 label 放行）；
+2. PR 描述写清「基线为什么变」与变化前后的数字；
+3. 基线改动单独成 commit，便于 review。
+
 ## 4. 提交规范
 
 格式（与 `AGENT.md` §6 一致）：

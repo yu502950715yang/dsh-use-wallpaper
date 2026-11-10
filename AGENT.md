@@ -86,14 +86,15 @@ npx vitest run tests/xxx.test.ts --reporter=basic   # 跑单个文件
 
 ### 3.3 验证手段
 
-- **单测**：`tests/**/*.test.{ts,tsx}` 默认 node，`tests/dom/**` 走 jsdom（`vitest.config.ts`）；`scripts/known-failures.json` 是空的**新增失败**基线（CI 只对新增失败判红，见 §7.11）。
+- **单测**：`tests/**/*.test.{ts,tsx}` 默认 node，`tests/dom/**` 走 jsdom（`vitest.config.ts`）；`scripts/known-failures.json` 是空的**新增失败**基线（CI 只对新增失败判红，见 §7.11）。另有测试规模下限守卫 scripts/check-test-floor.mjs（下限存 scripts/test-floor.json）：用例数/文件数不得低于下限、跳过/待办不得超上限、报告不得为空——防「删测试/删断言/写错 include」后门禁静默全绿。
 - **测试侧类型检查**：`npm run typecheck:tests`（= `scripts/check-known-type-errors.mjs`，跑 `tsconfig.tests.json`）把 `tests/**` 纳入 `tsc --noEmit` —— vitest 走 esbuild 不做类型检查，测试用字面量构造的接口改坏了本不会红。基线 `scripts/known-type-errors.json` 是 `(文件, TS 错误码)` 计数的**棘轮**（只增不放过），更新用 `--update`。⚠️ 两处已知盲区（别把它当全覆盖）：① `vi.fn()` / `Mock<any>` 造的桩**不受接口约束**（`mockReturnValue` 的实参不参与检查）⇒ 这类测试桩改坏接口不会红；② 同文件同码「计数守恒的位置互换」会漏判（指纹不含行号，也不含消息）。
 - **全库解析回归**：`tests/verify-real-library.test.ts`（全库 scene.pkg 的 scene.json / image 纹理 / particle 规格 / 效果链解析零失败）。**依赖本机壁纸库**，无库时 `skipIf` 跳过并告警 —— CI 上等于不跑。
 - **端到端渲染（推荐）**：`e2e/`（自起 http server + headless Edge（自己 `spawn` + 手写裸 CDP，**不依赖 playwright**）+ esbuild 打包 harness，**用生产 `lib/`** 渲染真实素材并逐像素判定，**不依赖 DSH token**）。机器相关项一律走 `e2e/config.mjs`；判据失败**置非零退出码**（是 CI 门禁，不是日志）。
 - **零回归对拍**：`npm run e2e:hidpi -- --tag=baseline`（改动前）→ 改动 → `npm run e2e:hidpi -- --tag=after` → `npm run e2e:compare`（默认读 `baseline-dprN.png` vs `after-dprN.png`；自定义 tag 时用 `--tag-a` / `--tag-b` 指定）。判据：最大差 ≤ 1 且「差≥2」像素为 0。
 - **架构边界守卫**：`npm run verify:arch`（`scripts/verify-arch.mjs`）——扫描 `src/**` 强制分层与环境边界（host 不得依赖 client、client 不得依赖 host、shared 必须纯、client/shared 禁 `node:*`、host 禁 three/react、src 禁依赖 lib/dist/tests/e2e/research）；**规则自身带合成红测样本**（自检不过同样 exit 1），已接进 CI typecheck 与 `verify:local` 的第一道门禁。
 - **CI**：`.github/workflows/ci.yml`（tsc + `lib/`/`dist/client.js` 产物新鲜度守卫 / tests 侧类型检查棘轮 / vitest 新增失败 / Windows 渲染 e2e）。已知失败基线在 `scripts/known-failures.json`，类型错误基线在 `scripts/known-type-errors.json`。CI 的三个历史坑（动作运行时 Node24、runner 的 Edge、`pnpm-workspace.yaml` 需 `packages` 字段）与排查过程见 `docs/fixes/verification-ci-history.md`。
-- **本地综合验收**：`npm run verify:local`（复刻 CI 门禁 + 工作树卫生）。⚠️ 其中「产物新鲜度」两步会**还原入库副本**：改了 `src/` 后请先 `npm run build && npm run build:client` 再提交；同一轮里先跑 `verify:local` 会把刚构建好的 `dist/` 还原成入库版本（提交会漏产物）。
+- **本地综合验收**：`npm run verify:local`（复刻 CI 门禁 + 工作树卫生）。vitest 门禁会**先删旧报告**再跑（防 vitest 崩溃/被中断时读到上一轮全绿结果）。⚠️ 其中「产物新鲜度」两步会**还原入库副本**：改了 `src/` 后请先 `npm run build && npm run build:client` 再提交；同一轮里先跑 `verify:local` 会把刚构建好的 `dist/` 还原成入库版本（提交会漏产物）。
+- **门禁基线文件**：`scripts/known-failures.json` / `known-type-errors.json` / `test-floor.json` 是「增量账本」，**不得随 PR 静默改动**（CI `gate-baseline` job 拦）；合法更新（新增测试后调大下限、修复后基线变短）在 PR 打 label `gate-baseline-update` 并说明理由。
 - **测试环境**：vitest / esbuild / headless Edge 都依赖 service 子进程，**受限沙箱下会失败**（见 §5.13）。
 
 ## 4. 目录
