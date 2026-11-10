@@ -28749,109 +28749,7 @@ function applyCompositeSampling(rt, worldW, worldH, screenScale) {
   if (flipped) rt.dispose();
 }
 
-// src/client/layer-factory.ts
-function attachIsolated(deps, args) {
-  const {
-    objectId,
-    kind,
-    content,
-    worldW,
-    worldH,
-    size,
-    position,
-    quadAngles,
-    colorBlendMode,
-    renderOrder,
-    compositeOpacity = 1,
-    attachQuad = true,
-    puppet
-  } = args;
-  const rtW = Math.max(1, Math.round(size.width));
-  const rtH = Math.max(1, Math.round(size.height));
-  const isFlatContent = kind === "background" && Math.abs(worldW) >= deps.sceneWidth * 0.98 && Math.abs(worldH) >= deps.sceneHeight * 0.98 || kind === "puppet";
-  const rt = new WebGLRenderTarget(rtW, rtH, { samples: isFlatContent ? 0 : 4 });
-  applyCompositeSampling(rt, worldW, worldH, deps.screenScale);
-  const camW = Math.max(1, Math.abs(worldW));
-  const camH = Math.max(1, Math.abs(worldH));
-  const localCamera = new OrthographicCamera(-camW / 2, camW / 2, -camH / 2, camH / 2, -1e3, 1e3);
-  localCamera.position.z = CAMERA_DISTANCE;
-  const localScene = new Scene();
-  localScene.add(content);
-  const compositeGeometry = createCompositeGeometry(worldW, worldH, camW, camH);
-  flipGeometryUvY(compositeGeometry);
-  const quad = new Mesh(
-    compositeGeometry,
-    createCompositeQuadMaterial(rt.texture, colorBlendMode, compositeOpacity)
-  );
-  quad.position.set(position.x, position.y, position.z);
-  quad.rotation.set(quadAngles[0], quadAngles[1], quadAngles[2]);
-  quad.renderOrder = renderOrder ?? (kind === "particle" ? 1 : 0);
-  if (attachQuad) deps.scene.add(quad);
-  deps.isolated.set(objectId, {
-    id: objectId,
-    kind,
-    rt,
-    rtWidth: rtW,
-    rtHeight: rtH,
-    rtTexture: rt.texture,
-    localScene,
-    localCamera,
-    quad,
-    quadAttached: attachQuad,
-    puppet,
-    worldW,
-    worldH
-  });
-}
-
-// src/client/util-material.ts
-function resolveUtilMaterial(layerKind, overrides = {}) {
-  const color = overrides.color ?? [255, 255, 255];
-  const opacity = typeof overrides.alpha === "number" && Number.isFinite(overrides.alpha) ? Math.min(Math.max(overrides.alpha, 0), 1) : 1;
-  return layerKind === "solid" ? { layerKind, kind: "solid", color, opacity } : { layerKind, kind: "passthrough", color, opacity };
-}
-
-// src/client/frame-export.ts
-function flipRgbaRows(rgba, width, height) {
-  const rowBytes = Math.max(0, Math.floor(width)) * 4;
-  const rows = Math.max(0, Math.floor(height));
-  const out = new Uint8Array(rowBytes * rows);
-  for (let y = 0; y < rows; y++) {
-    out.set(rgba.subarray(y * rowBytes, (y + 1) * rowBytes), (rows - 1 - y) * rowBytes);
-  }
-  return out;
-}
-async function encodeRgbaToPng(rgba, width, height, encode) {
-  try {
-    if (encode) return await encode(rgba, width, height);
-    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
-    const w = Math.floor(width);
-    const h = Math.floor(height);
-    if (typeof OffscreenCanvas !== "function") return null;
-    const canvas = new OffscreenCanvas(w, h);
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return null;
-    ctx.putImageData(new ImageData(new Uint8ClampedArray(rgba), w, h), 0, 0);
-    const blob = await canvas.convertToBlob({ type: "image/png" });
-    return new Uint8Array(await blob.arrayBuffer());
-  } catch {
-    return null;
-  }
-}
-async function readPixelsToPng(gl, width, height, encode) {
-  try {
-    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
-    const w = Math.floor(width);
-    const h = Math.floor(height);
-    const buf = new Uint8Array(w * h * 4);
-    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, buf);
-    return await encodeRgbaToPng(flipRgbaRows(buf, w, h), w, h, encode);
-  } catch {
-    return null;
-  }
-}
-
-// src/client/threejs-player.ts
+// src/client/particle-assets.ts
 var DEFAULT_PARTICLE_CAPACITY = 1024;
 var MAX_PARTICLE_CAPACITY = 2048;
 var MAX_PARTICLE_HARD_CAP = 16384;
@@ -29180,6 +29078,147 @@ void main() {
   gl_FragColor = vec4(rgb, a);
 }
 `;
+function frameCountFromDims(width, height) {
+  const w = Math.max(1, width);
+  const h = Math.max(1, height);
+  return Math.max(1, Math.floor(w / h));
+}
+function textureFrameCount(tex) {
+  const sprite = textureSpriteInfo(tex);
+  if (sprite) return Math.max(1, Math.floor(sprite.frames));
+  if (!tex) return 1;
+  const img = tex.image;
+  if (img && typeof img.width === "number" && typeof img.height === "number" && img.width > 0 && img.height > 0) {
+    return frameCountFromDims(img.width, img.height);
+  }
+  if (Array.isArray(tex.image)) {
+    const first = tex.image[0];
+    if (first && typeof first.width === "number" && typeof first.height === "number" && first.width > 0 && first.height > 0) {
+      return frameCountFromDims(first.width, first.height);
+    }
+  }
+  return 1;
+}
+function textureSpriteInfo(tex) {
+  const raw = tex?.userData?.sprite;
+  if (!raw || typeof raw !== "object") return void 0;
+  const s = raw;
+  const frames = typeof s.frames === "number" ? Math.floor(s.frames) : 0;
+  const cols = typeof s.cols === "number" ? Math.floor(s.cols) : 0;
+  const rows = typeof s.rows === "number" ? Math.floor(s.rows) : 0;
+  const frametime = typeof s.frametime === "number" && Number.isFinite(s.frametime) && s.frametime > 0 ? s.frametime : void 0;
+  if (frames <= 0 || cols <= 0 || rows <= 0) return void 0;
+  return frametime !== void 0 ? { frames, cols, rows, frametime } : { frames, cols, rows };
+}
+function textureFrameGrid(tex) {
+  const sprite = textureSpriteInfo(tex);
+  if (sprite) return { cols: sprite.cols, rows: sprite.rows };
+  return { cols: textureFrameCount(tex), rows: 1 };
+}
+
+// src/client/layer-factory.ts
+function attachIsolated(deps, args) {
+  const {
+    objectId,
+    kind,
+    content,
+    worldW,
+    worldH,
+    size,
+    position,
+    quadAngles,
+    colorBlendMode,
+    renderOrder,
+    compositeOpacity = 1,
+    attachQuad = true,
+    puppet
+  } = args;
+  const rtW = Math.max(1, Math.round(size.width));
+  const rtH = Math.max(1, Math.round(size.height));
+  const isFlatContent = kind === "background" && Math.abs(worldW) >= deps.sceneWidth * 0.98 && Math.abs(worldH) >= deps.sceneHeight * 0.98 || kind === "puppet";
+  const rt = new WebGLRenderTarget(rtW, rtH, { samples: isFlatContent ? 0 : 4 });
+  applyCompositeSampling(rt, worldW, worldH, deps.screenScale);
+  const camW = Math.max(1, Math.abs(worldW));
+  const camH = Math.max(1, Math.abs(worldH));
+  const localCamera = new OrthographicCamera(-camW / 2, camW / 2, -camH / 2, camH / 2, -1e3, 1e3);
+  localCamera.position.z = CAMERA_DISTANCE;
+  const localScene = new Scene();
+  localScene.add(content);
+  const compositeGeometry = createCompositeGeometry(worldW, worldH, camW, camH);
+  flipGeometryUvY(compositeGeometry);
+  const quad = new Mesh(
+    compositeGeometry,
+    createCompositeQuadMaterial(rt.texture, colorBlendMode, compositeOpacity)
+  );
+  quad.position.set(position.x, position.y, position.z);
+  quad.rotation.set(quadAngles[0], quadAngles[1], quadAngles[2]);
+  quad.renderOrder = renderOrder ?? (kind === "particle" ? 1 : 0);
+  if (attachQuad) deps.scene.add(quad);
+  deps.isolated.set(objectId, {
+    id: objectId,
+    kind,
+    rt,
+    rtWidth: rtW,
+    rtHeight: rtH,
+    rtTexture: rt.texture,
+    localScene,
+    localCamera,
+    quad,
+    quadAttached: attachQuad,
+    puppet,
+    worldW,
+    worldH
+  });
+}
+
+// src/client/util-material.ts
+function resolveUtilMaterial(layerKind, overrides = {}) {
+  const color = overrides.color ?? [255, 255, 255];
+  const opacity = typeof overrides.alpha === "number" && Number.isFinite(overrides.alpha) ? Math.min(Math.max(overrides.alpha, 0), 1) : 1;
+  return layerKind === "solid" ? { layerKind, kind: "solid", color, opacity } : { layerKind, kind: "passthrough", color, opacity };
+}
+
+// src/client/frame-export.ts
+function flipRgbaRows(rgba, width, height) {
+  const rowBytes = Math.max(0, Math.floor(width)) * 4;
+  const rows = Math.max(0, Math.floor(height));
+  const out = new Uint8Array(rowBytes * rows);
+  for (let y = 0; y < rows; y++) {
+    out.set(rgba.subarray(y * rowBytes, (y + 1) * rowBytes), (rows - 1 - y) * rowBytes);
+  }
+  return out;
+}
+async function encodeRgbaToPng(rgba, width, height, encode) {
+  try {
+    if (encode) return await encode(rgba, width, height);
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
+    const w = Math.floor(width);
+    const h = Math.floor(height);
+    if (typeof OffscreenCanvas !== "function") return null;
+    const canvas = new OffscreenCanvas(w, h);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.putImageData(new ImageData(new Uint8ClampedArray(rgba), w, h), 0, 0);
+    const blob = await canvas.convertToBlob({ type: "image/png" });
+    return new Uint8Array(await blob.arrayBuffer());
+  } catch {
+    return null;
+  }
+}
+async function readPixelsToPng(gl, width, height, encode) {
+  try {
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
+    const w = Math.floor(width);
+    const h = Math.floor(height);
+    const buf = new Uint8Array(w * h * 4);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+    return await encodeRgbaToPng(flipRgbaRows(buf, w, h), w, h, encode);
+  } catch {
+    return null;
+  }
+}
+
+// src/client/threejs-player.ts
 function resolvePixelRatio(devicePixelRatio, qualityScale) {
   const dpr = Number.isFinite(devicePixelRatio) && devicePixelRatio > 0 ? devicePixelRatio : 1;
   const scale = Number.isFinite(qualityScale) && qualityScale > 0 ? qualityScale : 1;
@@ -30559,43 +30598,6 @@ var ThreeScenePlayer = class {
     this.renderer.dispose();
   }
 };
-function frameCountFromDims(width, height) {
-  const w = Math.max(1, width);
-  const h = Math.max(1, height);
-  return Math.max(1, Math.floor(w / h));
-}
-function textureFrameCount(tex) {
-  const sprite = textureSpriteInfo(tex);
-  if (sprite) return Math.max(1, Math.floor(sprite.frames));
-  if (!tex) return 1;
-  const img = tex.image;
-  if (img && typeof img.width === "number" && typeof img.height === "number" && img.width > 0 && img.height > 0) {
-    return frameCountFromDims(img.width, img.height);
-  }
-  if (Array.isArray(tex.image)) {
-    const first = tex.image[0];
-    if (first && typeof first.width === "number" && typeof first.height === "number" && first.width > 0 && first.height > 0) {
-      return frameCountFromDims(first.width, first.height);
-    }
-  }
-  return 1;
-}
-function textureSpriteInfo(tex) {
-  const raw = tex?.userData?.sprite;
-  if (!raw || typeof raw !== "object") return void 0;
-  const s = raw;
-  const frames = typeof s.frames === "number" ? Math.floor(s.frames) : 0;
-  const cols = typeof s.cols === "number" ? Math.floor(s.cols) : 0;
-  const rows = typeof s.rows === "number" ? Math.floor(s.rows) : 0;
-  const frametime = typeof s.frametime === "number" && Number.isFinite(s.frametime) && s.frametime > 0 ? s.frametime : void 0;
-  if (frames <= 0 || cols <= 0 || rows <= 0) return void 0;
-  return frametime !== void 0 ? { frames, cols, rows, frametime } : { frames, cols, rows };
-}
-function textureFrameGrid(tex) {
-  const sprite = textureSpriteInfo(tex);
-  if (sprite) return { cols: sprite.cols, rows: sprite.rows };
-  return { cols: textureFrameCount(tex), rows: 1 };
-}
 function loadSceneToThree(sceneJson, assets, canvas, viewport) {
   const desc = parseSceneJson(sceneJson);
   const sceneW = desc.orthogonal.width;

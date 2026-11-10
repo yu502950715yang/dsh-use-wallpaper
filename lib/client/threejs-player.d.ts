@@ -7,34 +7,7 @@ import type { UtilContentCover } from './util-content-runtime.js';
 import type { ParallaxConfig, PointerState } from './parallax.js';
 import type { PuppetInstance } from './puppet.js';
 import type { SceneImageObject, UtilLayerKind } from '../shared/types.js';
-export declare const DEFAULT_PARTICLE_CAPACITY = 1024;
-export declare const MAX_PARTICLE_CAPACITY = 2048;
-/** 纵深兜底：与 wasm 侧 `MAX_PARTICLES` 同口径，防旧 wasm 产物/异常实现把实例缓冲放大。 */
-export declare const MAX_PARTICLE_HARD_CAP = 16384;
-export declare const PARTICLE_FLOATS_PER_INSTANCE = 16;
-export declare function specMaxcount(specJson: string): number;
-export interface ParticleRendererSpec {
-    kind: 'sprite' | 'spritetrail';
-    length: number;
-    maxLength: number;
-    minLength: number;
-}
-export declare function specRenderer(specJson: string): ParticleRendererSpec;
-export declare function textureTexelRatio(tex?: THREE.Texture): number;
-export declare function specPerspective(specJson: string): boolean;
-export declare function specSparseEventSource(specJson: string): boolean;
-export declare function particlePerspectiveCamera(opts: {
-    fov: number;
-    perspectiveOverrideFov: number;
-    sceneH: number;
-}): {
-    fov: number;
-    distance: number;
-};
-export declare function specEmitterOrigin(specJson: string): [number, number, number];
-export declare const BLACKMYTH_OBJ_SCALE: [number, number, number];
-export declare function simEmitterOffset(emitterOrigin: [number, number, number]): [number, number, number];
-export declare function particleCapacity(declaredMax: number, aliveAtCreate: number): number;
+export * from './particle-assets.js';
 export { colorBlendModeToThree } from './layer-material-factory.js';
 export type { IsolatedObject } from './layer-factory.js';
 export interface ObjectEffectStage {
@@ -393,18 +366,6 @@ export interface ThreeSceneLoadResult {
         sim: ParticleSim;
     }>;
 }
-export declare function frameCountFromDims(width: number, height: number): number;
-export declare function textureFrameCount(tex?: THREE.Texture): number;
-export declare function textureSpriteInfo(tex?: THREE.Texture): {
-    frames: number;
-    cols: number;
-    rows: number;
-    frametime?: number;
-} | undefined;
-export declare function textureFrameGrid(tex?: THREE.Texture): {
-    cols: number;
-    rows: number;
-};
 export declare function loadSceneToThree(sceneJson: string, assets: SceneAssets, canvas: HTMLCanvasElement, viewport?: {
     width: number;
     height: number;
