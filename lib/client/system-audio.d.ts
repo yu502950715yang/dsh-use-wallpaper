@@ -1,4 +1,4 @@
-export type SystemAudioFailure = 'unsupported' | 'denied' | 'no-audio-track' | 'no-web-audio' | 'error';
+export type SystemAudioFailure = 'unsupported' | 'denied' | 'no-audio-track' | 'no-web-audio' | 'error' | 'cancelled';
 export interface SystemAudioCapture {
     context: AudioContext;
     analyser: AnalyserNode;

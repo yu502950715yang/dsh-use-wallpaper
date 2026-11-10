@@ -38059,6 +38059,11 @@ function createThreeSceneRenderer(opts) {
         const sceneJson = await sceneJsonResp.text();
         if (abortIfStale(gen)) return false;
         const parsedDesc = parseSceneJson(sceneJson);
+        if (!(Number.isFinite(parsedDesc.orthogonal.width) && parsedDesc.orthogonal.width > 0 && Number.isFinite(parsedDesc.orthogonal.height) && parsedDesc.orthogonal.height > 0)) {
+          fail(id, "scene-json", "invalid orthogonal size");
+          teardownQuietly();
+          return false;
+        }
         const userKeys = /* @__PURE__ */ new Set();
         collectUserKeys(JSON.parse(sceneJson), userKeys);
         const propertiesResponse = await fetchWallpaperProperties(id);

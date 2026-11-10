@@ -612,6 +612,13 @@ export function createThreeSceneRenderer(opts?: {
         const sceneJson = await sceneJsonResp.text();
         if (abortIfStale(gen)) return false;
         const parsedDesc = parseSceneJson(sceneJson);
+        // 畸形 scene.json：正交尺寸非有限/非正 ⇒ 相机范围无效、必然黑屏。显式硬失败走降级链（P1）。
+        if (!(Number.isFinite(parsedDesc.orthogonal.width) && parsedDesc.orthogonal.width > 0
+          && Number.isFinite(parsedDesc.orthogonal.height) && parsedDesc.orthogonal.height > 0)) {
+          fail(id, 'scene-json', 'invalid orthogonal size');
+          teardownQuietly();
+          return false;
+        }
         // 用户属性表：localStorage override ?? host/project 默认值（spec §4.4）。键来自 scene 内
         // 所有 {user} 引用（不止 visible）；fetch 失败 → 空表（失败开放，不阻断渲染）。
         const userKeys = new Set<string>();

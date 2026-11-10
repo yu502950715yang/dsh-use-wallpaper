@@ -158,6 +158,23 @@ describe('createThreeSceneRenderer', () => {
     r.dispose?.();
   });
 
+  // P1：畸形 scene.json（正交尺寸 0/NaN）会让相机范围无效、画面纯黑，但旧实现 render() 仍返回
+  // true、健康快照正常 ⇒ 用户看不出是素材坏了。修复 = 装配期显式硬失败（走降级链）。
+  it('P1：scene.json 正交尺寸为 0 → 硬失败 scene-json（不静默黑屏）', async () => {
+    const store = createRenderHealthStore({ storage: null });
+    vi.mocked(resolveImageAssets).mockResolvedValue({ texture: null, puppetPath: null } as never);
+    vi.mocked(loadSceneToThree).mockReturnValue({} as never); // 不应走到装配
+    stubAssetFetch(JSON.stringify({
+      general: { orthogonalprojection: { width: 0, height: 0 } },
+      objects: [],
+    }), {});
+    const r = createThreeSceneRenderer({ healthStore: store });
+    expect(await r.render('wid-bad-ortho', document.createElement('canvas'))).toBe(false);
+    expect(store.snapshot('wid-bad-ortho').failure?.kind).toBe('scene-json');
+    expect(store.snapshot('wid-bad-ortho').failure?.hard).toBe(true);
+    r.dispose?.();
+  });
+
   it('render：解析 scene.json → 为 image 对象组装背景纹理、particle 对象组装 spec/tex/blend', async () => {
     resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as any, puppetPath: null });
     // 材质 json 不可得（null）→ 回退材质名启发式：spec 材质名含 "lightshaft" → additive。
