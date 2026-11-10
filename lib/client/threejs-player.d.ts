@@ -105,8 +105,7 @@ export declare class ThreeScenePlayer {
     private isolated;
     private readonly utilContents;
     private lastFrameSnapshot;
-    private visualizerBars;
-    private pixelBars;
+    private readonly visualizers;
     private objectEffectStage;
     private glowStage;
     private bloomStage;

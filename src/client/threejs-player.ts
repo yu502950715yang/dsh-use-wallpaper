@@ -28,6 +28,7 @@ import type { ClockDriver, TextLayout } from './text-object.js';
 import { ParallaxRuntime } from './parallax-runtime.js';
 import { SpriteSheetRuntime } from './sprite-sheet-runtime.js';
 import { UtilContentRuntime } from './util-content-runtime.js';
+import { VisualizerRuntime } from './visualizer-runtime.js';
 import type { UtilContentCover } from './util-content-runtime.js';
 import type { ParallaxConfig, PointerState } from './parallax.js';
 // puppet（.mdl 蒙皮网格）：实例由调用方装配，本类只负责挂进场景、逐帧采样动画与释放。
@@ -741,17 +742,8 @@ export class ThreeScenePlayer {
   private readonly utilContents = new UtilContentRuntime();
   // 最近一次段边界拍下的整帧快照（渲染器每帧同步给 ObjectEffectStage 的快照槽门控）。
   private lastFrameSnapshot: THREE.Texture | null = null;
-  // SceneScript 音频可视化（visualizer）：脚本 init 动态 createLayer 的 64 条 bar 由 player 代建/逐帧更新。
-  private visualizerBars: Array<{ id: number; baseY: number; barSizeH: number; scaleY: number }> = [];
-  // 自定义 visualizer（pixel-bars 家族）：按对象 scale/angles 布局，静音高度 = minBarHeight。
-  private pixelBars: Array<{
-    id: number;
-    barSizeH: number;
-    minBarHeight: number;
-    objScaleY: number;
-    downscaleMode: 'max' | 'average';
-    count: number;
-  }> = [];
+  // 可视化条运行时（SceneScript 64 条 + pixel-bars 家族）：已迁入 visualizer-runtime.ts（阶段 2）。
+  private readonly visualizers: VisualizerRuntime;
   private objectEffectStage: ObjectEffectStage | null = null;
   // 应用级 Glow 注入点（null = 本壁纸不开 Glow，帧序退化为原路径）。
   private glowStage: GlowStage | null = null;
@@ -823,6 +815,10 @@ export class ThreeScenePlayer {
     if (typeof withSetPixelRatio.setPixelRatio === 'function') {
       withSetPixelRatio.setPixelRatio(this.pixelRatio);
     }
+    this.visualizers = new VisualizerRuntime({
+      addBackground: (o) => this.addBackground(o),
+      entryMesh: (id) => this.backgroundEntries.get(id)?.mesh,
+    });
     this.applyCover();
   }
 
@@ -1514,26 +1510,7 @@ export class ThreeScenePlayer {
     renderOrder?: number;
     count?: number;
   }): number[] {
-    const count = opts.count ?? 64;
-    const ids: number[] = [];
-    this.visualizerBars = [];
-    for (let i = 0; i < count; i++) {
-      const id = this.addBackground({
-        origin: [opts.origin[0] + i * opts.originX, opts.origin[1], opts.origin[2]],
-        size: [opts.barSize[0], opts.barSize[1]],
-        // 初始高度 0（无音频时不可见）；宽度按脚本 barWidth。
-        scale: [opts.barWidth, 0, 1],
-        texture: opts.texture,
-        sceneW: opts.sceneW,
-        sceneH: opts.sceneH,
-        renderOrder: (opts.renderOrder ?? 0) + i + 1,
-      });
-      ids.push(id);
-      this.visualizerBars.push({
-        id, baseY: opts.origin[1] - opts.sceneH / 2, barSizeH: opts.barSize[1], scaleY: opts.scaleY,
-      });
-    }
-    return ids;
+    return this.visualizers.setBars(opts);
   }
 
   /**
@@ -1557,71 +1534,12 @@ export class ThreeScenePlayer {
     alignment?: string;
     texture?: THREE.Texture;
   }): number[] {
-    const ids: number[] = [];
-    this.pixelBars = [];
-    const sx = opts.scale[0];
-    const [, ay, az] = opts.angles;
-    const halfBarWidth = sx / opts.count / 2;
-    const cosAz = Math.cos(az), sinAz = Math.sin(az);
-    const cosAy = Math.cos(ay), sinAy = Math.sin(ay);
-    for (let i = 0; i < opts.count; i++) {
-      // 脚本布局：x = scale.x × (i/count) − scale.x/2 + halfBarWidth，再按对象 angles 旋转到世界。
-      const localX = sx * (i / opts.count) - sx / 2 + halfBarWidth;
-      const rx = localX * cosAy * cosAz;
-      const ry = localX * cosAy * sinAz;
-      const rz = localX * -sinAy;
-      const id = this.addBackground({
-        origin: [opts.origin[0] + rx, opts.origin[1] + ry, opts.origin[2] + rz],
-        size: [opts.barSize[0], opts.barSize[1]],
-        scale: [opts.barWidth, opts.minBarHeight, 1],
-        angles: opts.angles,
-        alignment: opts.alignment,
-        texture: opts.texture,
-        sceneW: opts.sceneW,
-        sceneH: opts.sceneH,
-        renderOrder: (opts.renderOrder ?? 0) + i + 1,
-      });
-      ids.push(id);
-      this.pixelBars.push({
-        id,
-        barSizeH: opts.barSize[1],
-        minBarHeight: opts.minBarHeight,
-        objScaleY: opts.scaleY,
-        downscaleMode: opts.downscaleMode,
-        count: opts.count,
-      });
-    }
-    return ids;
+    return this.visualizers.setPixelBars(opts);
   }
 
   /** 每帧更新可视化条高度：freqData = 64 bin 频谱（0-255）；null = 无音频 → 全部归零。 */
   updateVisualizerBars(freqData: Uint8Array | null): void {
-    for (let i = 0; i < this.visualizerBars.length; i++) {
-      const bar = this.visualizerBars[i];
-      const entry = this.backgroundEntries.get(bar.id);
-      if (!entry) continue;
-      const bin = freqData && i < freqData.length ? freqData[i] / 255 : 0;
-      const h = bar.barSizeH * Math.max(0, Math.min(1, bin)) * bar.scaleY;
-      entry.mesh.scale.y = h / bar.barSizeH;
-      // bottom 对齐：条底部固定在 origin.y（脚本 barAlignmentdir='bottom'）。
-      entry.mesh.position.y = bar.baseY + h / 2;
-    }
-    // pixel-bars：脚本公式 max(minBarHeight, audio × 对象 scale.y × 0.25)；无音频回到 minBarHeight。
-    for (let i = 0; i < this.pixelBars.length; i++) {
-      const bar = this.pixelBars[i];
-      const entry = this.backgroundEntries.get(bar.id);
-      if (!entry) continue;
-      const span = 64 / bar.count;
-      const start = Math.floor(i * span);
-      const end = Math.min(64, Math.max(start + 1, Math.floor((i + 1) * span)));
-      let audio = 0;
-      if (freqData) {
-        const vals: number[] = [];
-        for (let p = start; p < end; p++) vals.push((freqData[p] ?? 0) / 255);
-        audio = bar.downscaleMode === 'average' ? vals.reduce((a, b) => a + b, 0) / vals.length : Math.max(0, ...vals);
-      }
-      entry.mesh.scale.y = Math.max(bar.minBarHeight, audio * bar.objScaleY * 0.25);
-    }
+    this.visualizers.update(freqData);
   }
 
   // util 层内容 = 整帧快照（T3）：真实 util 链读 `bind: previous`（层内容），快照必须成为内容（solid 保留纯色）。
