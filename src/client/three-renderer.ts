@@ -52,6 +52,7 @@ import type { HardFailureKind, HealthSnapshot, RenderHealthStore, SoftFailureKin
 // 指针输入（相机视差的宿主侧）：归一化 [0,1] + 幂等装/卸。
 import { createPointerTracker } from './pointer-input.js';
 import { effectPointerUniforms } from './parallax.js';
+import { nowPlayingThumbnailUrl, sceneAssetUrl } from '../shared/routes.js';
 
 // wasm `CpuParticleSim` 的构造器形态（wasm-bindgen 静态 `new`；`ParticleSim` 接口见 threejs-player.ts）。
 type CpuParticleSimLike = {
@@ -101,7 +102,7 @@ async function loadWallpaperFont(wallpaperId: string, font: string | undefined):
   if (!pending) {
     pending = (async () => {
       try {
-        const r = await fetch(`/wallpapers/scene/${wallpaperId}/asset?name=${encodeURIComponent(font)}`);
+        const r = await fetch(sceneAssetUrl(wallpaperId, font));
         if (!r.ok) return null;
         const family = `we-font-${++fontSeq}`;
         const face = new FontFace(family, await r.arrayBuffer());
@@ -416,7 +417,7 @@ export function createThreeSceneRenderer(opts?: {
         ? s.files[0]
         : s.files[Math.floor(Math.random() * s.files.length)];
       void playWallpaperSound(
-        `/wallpapers/scene/${id}/asset?name=${encodeURIComponent(file)}`,
+        sceneAssetUrl(id, file),
         analyzer,
         { volume: s.volume, loop: s.playbackmode !== 'single' },
       ).then((handle) => {
@@ -595,7 +596,7 @@ export function createThreeSceneRenderer(opts?: {
         // 拉取场景描述并解析（与 wasm-renderer 共用 parseSceneJson，对象归类/正交尺寸一致）。
         let sceneJsonResp: Response;
         try {
-          sceneJsonResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(sceneEntry)}`);
+          sceneJsonResp = await fetch(sceneAssetUrl(id, sceneEntry));
         } catch (e) {
           // 网络/磁盘一时没供上 ⇒ 软失败（不落盘，冷却后自动重试一次）
           fail(id, 'load-error', e instanceof Error ? e.message : String(e));
@@ -753,7 +754,7 @@ export function createThreeSceneRenderer(opts?: {
             }
           } else if (obj.kind === 'particle' && obj.particle) {
             // 粒子 spec json（raw，供 CpuParticleSim::new 解析）。
-            const specResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(obj.particle)}`);
+            const specResp = await fetch(sceneAssetUrl(id, obj.particle));
             if (!specResp.ok) continue;
             const specText = await specResp.text();
             // 材质 json → 静态纹理 URL（ptex-*.tex）+ 混合模式（`passes[0].blending`）。
@@ -884,7 +885,7 @@ export function createThreeSceneRenderer(opts?: {
         // backgroundTextures/particles：图片尺寸兜底、粒子 spec 的 distanceMax），且在 loadSceneToThree 之前。
         // ⚠️ 全部在**加载期**完成（resolveEffectChain 的多次 loadFile、EffectRunner 创建与探针编译）。
         const loadFile = async (name: string): Promise<Uint8Array | null> => {
-          const r = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(name)}`);
+          const r = await fetch(sceneAssetUrl(id, name));
           if (!r.ok) return null;
           return new Uint8Array(await r.arrayBuffer());
         };
@@ -1254,7 +1255,7 @@ export function createThreeSceneRenderer(opts?: {
                 // 纹理走与 resolveImageAssets **同源**的路径推导 + 路由 URL（用 Blob URL 会绕开
                 // loadTexTexture 依赖的 `/wallpapers/...` 路由与 .tex 解码链路）。
                 const texPath = resolveTexPath(p, spec.texturePath);
-                tex = await loadTexTexture(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(texPath)}`);
+                tex = await loadTexTexture(sceneAssetUrl(id, texPath));
                 if (!tex) warnOnce(`mesh-tex:${id}:${texPath}`, `动态网格纹理加载失败：${texPath}（白图兜底）`);
                 else currentExtraTextures.push(tex); // P0-4：动态网格纹理随装配释放
               }
@@ -1325,7 +1326,7 @@ export function createThreeSceneRenderer(opts?: {
             let bitmap: ImageBitmap;
             try {
               if (typeof createImageBitmap !== 'function') throw new Error('createImageBitmap unavailable');
-              const resp = await fetch(`/wallpapers/now-playing/thumbnail?rev=${encodeURIComponent(String(rev))}`);
+              const resp = await fetch(nowPlayingThumbnailUrl(rev));
               if (!resp.ok) throw new Error('thumbnail http ' + resp.status);
               // 方向：ImageBitmap 上传忽略 texture.flipY（见 tex-loader.ts），必须在解码时翻转。
               bitmap = await createImageBitmap(await resp.blob(), { imageOrientation: 'flipY' });

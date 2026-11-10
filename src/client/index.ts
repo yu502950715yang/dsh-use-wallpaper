@@ -16,6 +16,7 @@ import { markRecent, loadLibraryState } from './library-view.js';
 import { buildRotationPool, createRotationScheduler, normalizeRotationOrder } from './rotation.js';
 import type { BackgroundPlan, ClientSettings } from './types.js';
 import type { HealthSnapshot } from './render-health.js';
+import { wallpaperListUrl } from '../shared/routes.js';
 
 declare global {
   interface Window { __ModuleLoader__?: any; __DSH_BOOT__?: any; }
@@ -279,7 +280,7 @@ export function bootstrap(ctx?: any): void {
       volume: settings.soundVolume,
     });
     controller = createWallpaperController(layer, {
-      fetchList: async () => (await fetch('/wallpapers/list')).json(),
+      fetchList: async () => (await fetch(wallpaperListUrl())).json(),
       // three.js 播放器是**唯一** scene 路径；渲染失败/零可见对象 → controller 回退 preview 图。
       sceneRenderer,
       // 贴壁纸文字颜色/描边：实时读取设置（手动档直接固定色、跳过 preview 测量；auto 档沿用亮度测量）。

@@ -4,6 +4,7 @@ import { outlineShadow } from './text-color.js';
 import { computePointerPost } from './pointer-post.js';
 import { createVideoHealthMonitor, type VideoHealthSnapshot } from './video-health.js';
 import { WEB_SOUND_MESSAGE_TAG } from '../shared/web-audio-shim.js';
+import { mediaFileUrl, webWallpaperUrl } from '../shared/routes.js';
 
 export function resolveBackground(info: WallpaperInfo): BackgroundPlan {
   // scene / preset（依赖场景）/ unknown（project.json 无 type 但含场景包）都按场景渲染。
@@ -13,11 +14,11 @@ export function resolveBackground(info: WallpaperInfo): BackgroundPlan {
   }
   if (info.type === 'video' && info.file) {
     // hasAudio 由 host 扫描时探测（false = 素材无音轨，面板提示且不解锁声音）。
-    return { kind: 'video', url: `/wallpapers/media/${info.id}/file`, hasAudio: info.hasAudio };
+    return { kind: 'video', url: mediaFileUrl(info.id), hasAudio: info.hasAudio };
   }
   // web 壁纸：iframe 加载网页（index.html 及相对资源经 /wallpapers/web 静态服务）
   if (info.type === 'web') {
-    return { kind: 'web', url: `/wallpapers/web/${info.id}/index.html` };
+    return { kind: 'web', url: webWallpaperUrl(info.id) };
   }
   if (info.previewUrl) {
     return { kind: 'image', url: info.previewUrl, kenBurns: !info.hasPreviewGif };

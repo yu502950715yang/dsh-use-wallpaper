@@ -3,6 +3,7 @@
 import { createBootOverlay } from './boot-overlay.js';
 import type { BootAsset, BootFitMode, BootOverlay, BootResult } from './boot-overlay.js';
 import type { ClientSettings } from './types.js';
+import { bootLocalVideoUrl, mediaFileUrl, mediaPreviewUrl } from '../shared/routes.js';
 
 export const BOOT_PLAYED_KEY = 'we:boot-played';
 
@@ -15,14 +16,14 @@ export function normalizeBootFit(value: string): BootFitMode {
 export function bootAssetFromSettings(s: ClientSettings): BootAsset | null {
   if (s.bootAnimationSource === 'local') {
     const p = s.bootAnimationLocalPath.trim();
-    return p ? { kind: 'video', url: '/wallpapers/boot/local-video?path=' + encodeURIComponent(p) } : null;
+    return p ? { kind: 'video', url: bootLocalVideoUrl(p) } : null;
   }
   const id = s.bootAnimationWallpaperId.trim();
   const kind = s.bootAnimationWallpaperKind;
   if (!id || (kind !== 'video' && kind !== 'image')) return null;
   return kind === 'video'
-    ? { kind: 'video', url: `/wallpapers/media/${encodeURIComponent(id)}/file` }
-    : { kind: 'image', url: `/wallpapers/media/${encodeURIComponent(id)}/preview` };
+    ? { kind: 'video', url: mediaFileUrl(id) }
+    : { kind: 'image', url: mediaPreviewUrl(id) };
 }
 
 export function shouldPlayBoot(s: ClientSettings, storage: Pick<Storage, 'getItem'>): boolean {

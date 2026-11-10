@@ -27,6 +27,7 @@ import { ROTATION_INTERVAL_OPTIONS, buildRotationPool, formatRotationInterval, n
 import { PLUGIN_VERSION } from './version.js';
 import { buildDiagnosticsText, copyText } from './diagnostics.js';
 import { checkEnvironment, detectWebGL2 } from './env-check.js';
+import { WALLPAPER_ROUTES, wallpaperListUrl } from '../shared/routes.js';
 
 export interface WallpaperSettingsSectionProps {
   /** 读取当前设置（默认 RPC settings.describe） */
@@ -54,11 +55,11 @@ export interface WallpaperSettingsSectionProps {
 }
 
 async function defaultFetchWallpapers(opts?: { refresh?: boolean }): Promise<WallpaperInfo[]> {
-  return (await fetch(opts?.refresh ? '/wallpapers/list?refresh=1' : '/wallpapers/list')).json();
+  return (await fetch(wallpaperListUrl(opts?.refresh))).json();
 }
 
 async function defaultFetchProbe(): Promise<ProbeResult> {
-  return (await fetch('/wallpapers/probe')).json();
+  return (await fetch(WALLPAPER_ROUTES.probe)).json();
 }
 
 // 模块级共享选择处理器：index.ts bootstrap 时注册（委托 controller.select），

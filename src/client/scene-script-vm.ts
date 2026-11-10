@@ -19,6 +19,7 @@ import type { TimelineAnimationSource } from './scene-timeline.js';
 import type { DynamicMeshRegistry } from './dynamic-mesh.js';
 import type { MediaPropertiesPayload } from '../shared/media.js';
 import type { ObjectScriptProperty, TimelineProperty } from '../shared/types.js';
+import { staticUrl } from '../shared/routes.js';
 
 export interface TextureAnimationHost {
   pause(objectId: number): void;
@@ -453,7 +454,7 @@ export class SceneScriptVm {
       // ⚠️ 浏览器必须显式给出 wasm 位置：库默认按 JS 自身 URL 推导，打包进 client.js 后会 404
       // （表现为 console 一串 "wasm streaming compile failed" 而脚本静默不执行 —— 只有 e2e 能发现）。
       // 与 text-script.ts 同源：host 把 quickjs.wasm 放在 /wallpapers/static/。
-      const wasmLocation = typeof window !== 'undefined' ? '/wallpapers/static/quickjs.wasm' : undefined;
+      const wasmLocation = typeof window !== 'undefined' ? staticUrl('quickjs') : undefined;
       const mod: QuickJSWASMModule = await newQuickJSWASMModuleFromVariant(
         newVariant(RELEASE_SYNC, wasmLocation ? { wasmLocation } : {}),
       );

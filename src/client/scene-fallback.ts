@@ -1,6 +1,7 @@
 // scene 渲染不可用时的降级链（v0.8 Task 6）：内嵌视频 → 首帧缓存图 → 作者预览图 → 空。
 // 所有探测/抓帧失败只 warn 或返回 null，绝不向 controller 抛错（任何路径都不能白屏）。
 import type { WallpaperInfo } from '../shared/types.js';
+import { frameUrl, sceneActionUrl } from '../shared/routes.js';
 
 export type SceneFallbackResult = 'video' | 'frame' | 'preview' | 'none';
 
@@ -27,14 +28,13 @@ export interface EnsureSceneFrameDeps {
   renderer: FrameCacheRenderer;
 }
 
-const sceneVideoUrl = (id: string) => `/wallpapers/scene/${encodeURIComponent(id)}/embedded-video`;
-const frameUrl = (id: string) => `/wallpapers/frame/${encodeURIComponent(id)}`;
+const sceneVideoUrl = (id: string) => sceneActionUrl(id, 'embedded-video');
 
 /** 探测壁纸包内是否带内嵌 MP4：true → 返回播放 URL；无视频/请求失败 → null。 */
 export async function probeEmbeddedVideo(id: string, fetchImpl?: FetchLike): Promise<string | null> {
   try {
     const doFetch = fetchImpl ?? globalThis.fetch;
-    const res = await doFetch(`/wallpapers/scene/${encodeURIComponent(id)}/video-probe`);
+    const res = await doFetch(sceneActionUrl(id, 'video-probe'));
     if (!res.ok) return null;
     const data = (await res.json()) as { video?: unknown } | null;
     return data?.video === true ? sceneVideoUrl(id) : null;

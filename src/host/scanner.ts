@@ -1,3 +1,4 @@
+import { mediaPreviewUrl } from '../shared/routes.js';
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { WallpaperInfo, WallpaperKind } from '../shared/types.js';
@@ -55,7 +56,7 @@ export async function scanWallpapers(dir: string): Promise<WallpaperInfo[]> {
       file: typeof pj.file === 'string' ? pj.file : undefined,
       hasPreviewGif: preview === 'gif',
       hasScene: scene.hasPkg,
-      previewUrl: preview ? `/wallpapers/media/${id}/preview` : '',
+      previewUrl: preview ? mediaPreviewUrl(id) : '',
     };
     if (scene.hasPkg) info.sceneEntry = scene.entry;
     // 视频音轨探测：非 null 才写（undefined = 未知，客户端按旧行为处理）。

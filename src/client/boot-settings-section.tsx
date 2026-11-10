@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import type { ClientSettings } from './types.js';
 import type { WallpaperInfo } from '../shared/types.js';
 import { readClientSettings, writeClientSettings } from './settings.js';
+import { bootProbeUrl, wallpaperListUrl } from '../shared/routes.js';
 
 // 桌面壳（dsh-app://）preload 注入：把 <input type=file> 的 File 换成绝对路径（Electron webUtils）。
 declare global {
@@ -26,11 +27,11 @@ export interface BootSettingsSectionProps {
 }
 
 async function defaultFetchWallpapers(): Promise<WallpaperInfo[]> {
-  return (await fetch('/wallpapers/list')).json();
+  return (await fetch(wallpaperListUrl())).json();
 }
 
 async function defaultProbePath(path: string): Promise<ProbeInfo> {
-  const r = await fetch('/wallpapers/boot/probe?path=' + encodeURIComponent(path));
+  const r = await fetch(bootProbeUrl(path));
   return r.json();
 }
 

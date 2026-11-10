@@ -1,4 +1,5 @@
 // wasm 引擎加载胶水：只负责加载 wasm-pack --target web 产物并暴露模块类型。
+import { WALLPAPER_ROUTES } from '../shared/routes.js';
 // 主路径只用它的 `CpuParticleSim`（纯 CPU 粒子模拟，不需要 WebGPU）；旧的 WebGPU 渲染器已移除。
 // wasm-pack --target web 产物（wasm/pkg/we_scene_wasm.js）：默认导出是实例化函数 __wbg_init。
 export interface WasmSceneModule {
@@ -9,7 +10,7 @@ export type LoadWasm = () => Promise<WasmSceneModule | null>;
 
 // 静态资源前缀与文件名（与 src/host/routes.ts 的 /wallpapers/static 路由对应；
 // scripts/build-client.mjs 从 wasm/pkg/ 复制这两个文件到 dist/static/）
-const STATIC_BASE = '/wallpapers/static';
+const STATIC_BASE = WALLPAPER_ROUTES.static;
 const WASM_GLUE_FILE = 'we_scene_wasm.js';
 const WASM_BIN_FILE = 'we_scene_wasm_bg.wasm';
 

@@ -1,3 +1,4 @@
+import { WALLPAPER_ROUTES } from '../shared/routes.js';
 // v0.8 壁纸用户属性（v0.9 四类型）：拉取面板数据 + localStorage 读写与恢复默认。
 // 存储键按壁纸隔离（we:userprop:<wallpaperId>:<key>，JSON 标量）；读侧缺键回退旧全局键
 // （迁移兼容），无 id 读写沿用旧全局键，reset 无 id 不动作（不删迁移回退）。渲染器按 id 读取。
@@ -13,7 +14,7 @@ export interface WallpaperPropertiesResponse {
 /** GET /wallpapers/properties?id=…：失败/畸形响应一律空属性 + audioProcessing=false（面板不渲染 section）。 */
 export async function fetchWallpaperProperties(id: string): Promise<WallpaperPropertiesResponse> {
   try {
-    const r = await fetch(`/wallpapers/properties?id=${encodeURIComponent(id)}`);
+    const r = await fetch(`${WALLPAPER_ROUTES.properties}?id=${encodeURIComponent(id)}`);
     if (!r.ok) return { properties: [], audioProcessing: false };
     const body = (await r.json()) as { properties?: unknown; audioProcessing?: unknown } | null;
     return {

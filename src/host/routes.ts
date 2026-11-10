@@ -12,6 +12,7 @@ import { createSceneFrameStore, DEFAULT_MAX_FRAME_BYTES } from './scene-frame-st
 import { extractEmbeddedMp4, probeEmbeddedMp4 } from './scene-media-probe.js';
 import { collectUserProperties } from './user-props.js';
 import type { WallpaperInfo } from '../shared/types.js';
+import { WALLPAPER_ROUTES } from '../shared/routes.js';
 
 export interface WallpaperRoutesOptions {
   /** 兼容旧调用：静态 wallpaperDir（无 state 时使用） */
@@ -350,7 +351,7 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
     // 统一包装 register：非 /web 路由在入口记录 GUI Host；/web 自身不记录（否则会把自己判成 GUI）。
     const server = {
       register: (route: { kind: string; path: string; handler: (req: any, res: any) => unknown }) => {
-        if (route.path === '/wallpapers/web') return rawServer.register(route);
+        if (route.path === WALLPAPER_ROUTES.web) return rawServer.register(route);
         const inner = route.handler;
         return rawServer.register({
           ...route,
@@ -416,7 +417,7 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
     else if (typeof httpCtx?.on === 'function') httpCtx.on('dispose', disposeMedia);
 
     server.register({
-      kind: 'exact', path: '/wallpapers/list',
+      kind: 'exact', path: WALLPAPER_ROUTES.list,
       handler: async (_req: any, res: any) => {
         // WebRoute 不区分 HTTP 方法（浏览器仅用 GET），此处不校验方法
         const { search } = parseUrl(_req);
@@ -434,7 +435,7 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
     });
 
     server.register({
-      kind: 'prefix', path: '/wallpapers/media',
+      kind: 'prefix', path: WALLPAPER_ROUTES.media,
       // 匹配 /wallpapers/media/<id>/preview 与 /wallpapers/media/<id>/file（file 支持 Range/HEAD）
       handler: (req: any, res: any) => {
         const { segs } = parseUrl(req);
@@ -481,7 +482,7 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
 
     // 开机动画：本地视频流式（仅回环）。sendSceneAsset 复用 Range/HEAD/206/416 语义。
     server.register({
-      kind: 'exact', path: '/wallpapers/boot/local-video',
+      kind: 'exact', path: WALLPAPER_ROUTES.bootLocalVideo,
       handler: (req: any, res: any) => {
         if (!isLoopbackRequest(req)) return json(res, 403, { error: 'loopback only' });
         const { search } = parseUrl(req);
@@ -497,7 +498,7 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
 
     // 开机动画：本地路径校验（设置面板「校验」按钮；不读内容、不探测编码）
     server.register({
-      kind: 'exact', path: '/wallpapers/boot/probe',
+      kind: 'exact', path: WALLPAPER_ROUTES.bootProbe,
       handler: (req: any, res: any) => {
         if (!isLoopbackRequest(req)) return json(res, 403, { error: 'loopback only' });
         const { search } = parseUrl(req);
@@ -515,7 +516,7 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
     });
 
     server.register({
-      kind: 'prefix', path: '/wallpapers/scene',
+      kind: 'prefix', path: WALLPAPER_ROUTES.scene,
       // 匹配 /wallpapers/scene/<id>/{asset|video-probe|embedded-video}；asset 支持 Range/HEAD/流式
       handler: (_req: any, res: any) => {
         const { segs, search } = parseUrl(_req);
@@ -593,7 +594,7 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
     });
 
     server.register({
-      kind: 'prefix', path: '/wallpapers/frame',
+      kind: 'prefix', path: WALLPAPER_ROUTES.frame,
       // 匹配 /wallpapers/frame/<id>：GET/HEAD 取帧、POST 存帧（仅 image/png）、DELETE 删帧
       handler: async (_req: any, res: any) => {
         const { segs } = parseUrl(_req);
@@ -641,7 +642,7 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
     });
 
     server.register({
-      kind: 'prefix', path: '/wallpapers/static',
+      kind: 'prefix', path: WALLPAPER_ROUTES.static,
       // 匹配 /wallpapers/static/<file>：服务插件构建产物（wasm 引擎 glue + .wasm 等，
       // scripts/build-client.mjs 输出到 dist/static/）。
       handler: (_req: any, res: any) => {
@@ -678,7 +679,7 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
     });
 
     server.register({
-      kind: 'prefix', path: '/wallpapers/web',
+      kind: 'prefix', path: WALLPAPER_ROUTES.web,
       // 匹配 /wallpapers/web/<id>/<path...>：web 壁纸静态文件服务（index.html 及其 css/js/img 等）
       handler: (_req: any, res: any) => {
         const { segs } = parseUrl(_req);
@@ -728,7 +729,7 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
     });
 
     server.register({
-      kind: 'exact', path: '/wallpapers/particle-texture',
+      kind: 'exact', path: WALLPAPER_ROUTES.particleTexture,
       // 2026-08-21（wasm 粒子纹理，方案 A）：粒子材质 textures 如 "particle/fog/fog1" 是
       // 引擎内置资源 → WE 引擎从 assets/materials/particle/fog/fog1.tex 读取。本路由从 WE 安装
       // 目录（weAssetsDir）提供该纹理原始字节（TEXV0005，client 侧现有解码管线消费）。
@@ -771,7 +772,7 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
     });
 
     server.register({
-      kind: 'exact', path: '/wallpapers/probe',
+      kind: 'exact', path: WALLPAPER_ROUTES.probe,
       // 2026-08-21（路径可配置化）：自动探测 Steam 安装路径（注册表）+ 全部库
       // （libraryfolders.vdf）+ 常见根，生成壁纸目录与引擎目录候选（带存在性标记）。
       // 设置面板展示候选，用户点选后写入 settings.wallpaperDir/weAssetsDir（热更新）。
@@ -786,7 +787,7 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
     });
 
     server.register({
-      kind: 'exact', path: '/wallpapers/now-playing',
+      kind: 'exact', path: WALLPAPER_ROUTES.nowPlaying,
       // 只读内存快照；title 仅用于剔除宿主页面自身的会话，不落盘、不记日志
       handler: (_req: any, res: any) => {
         const { search } = parseUrl(_req);
@@ -796,7 +797,7 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
     });
 
     server.register({
-      kind: 'exact', path: '/wallpapers/now-playing/thumbnail',
+      kind: 'exact', path: WALLPAPER_ROUTES.nowPlayingThumbnail,
       // rev 来自快照的 thumbnailRev；过期/被淘汰 → 404，客户端保留占位
       handler: (_req: any, res: any) => {
         const { search } = parseUrl(_req);
@@ -818,7 +819,7 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
     });
 
     server.register({
-      kind: 'exact', path: '/wallpapers/properties',
+      kind: 'exact', path: WALLPAPER_ROUTES.properties,
       // v0.9 用户属性面板：project.json 四类型属性 ∩ scene.json 中 {user} 引用（带 usedBy）。
       // 每次请求重读、任何文件缺失/坏 JSON 都按「无属性」返回 200（不把素材问题升级成 500）。
       handler: (_req: any, res: any) => {

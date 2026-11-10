@@ -3,6 +3,7 @@
 import { newQuickJSWASMModuleFromVariant, newVariant, RELEASE_SYNC } from 'quickjs-emscripten';
 import type { QuickJSContext, QuickJSRuntime, QuickJSHandle, QuickJSWASMModule } from 'quickjs-emscripten';
 import type { MediaPropertiesPayload } from '../shared/media.js';
+import { staticUrl } from '../shared/routes.js';
 
 export interface TextScriptBinding {
   /** 调脚本 update(value) 取新文本；抛错/超时 → null（调用方保持上一帧）。 */
@@ -293,7 +294,7 @@ let runtimePromise: Promise<TextScriptRuntime | null> | null = null;
 // 浏览器：wasm 由 host 的 /wallpapers/static/ 提供（build:client 复制到 dist/static/quickjs.wasm）；
 // Node 测试环境无 window → 交给库默认定位（fs 读取）。
 function createQuickJSModule(): Promise<QuickJSWASMModule> {
-  const wasmLocation = typeof window !== 'undefined' ? '/wallpapers/static/quickjs.wasm' : undefined;
+  const wasmLocation = typeof window !== 'undefined' ? staticUrl('quickjs') : undefined;
   return newQuickJSWASMModuleFromVariant(newVariant(RELEASE_SYNC, wasmLocation ? { wasmLocation } : {}));
 }
 

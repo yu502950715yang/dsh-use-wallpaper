@@ -3,6 +3,7 @@
 import type { MediaPalette, MediaPropertiesPayload, MediaSessionSnapshot } from '../shared/media.js';
 import type { SceneDescription } from '../shared/types.js';
 import { hasMediaThumbnail } from './scene-instance.js';
+import { nowPlayingUrl } from '../shared/routes.js';
 
 const DEFAULT_INTERVAL_MS = 1000;
 const DEFAULT_BACKOFF_MS = 10_000;
@@ -45,7 +46,7 @@ export interface MediaInput {
 }
 
 export function mediaUrl(pageTitle: string): string {
-  return '/wallpapers/now-playing?title=' + encodeURIComponent(pageTitle);
+  return nowPlayingUrl(pageTitle);
 }
 
 /** 返回变化的键；首次（prev=null）视为全变化。一律按 !== 判，thumbnailRev 回退也算变化。 */

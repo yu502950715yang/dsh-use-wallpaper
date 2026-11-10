@@ -4,6 +4,7 @@ import { parseSceneJson } from './scene-json.js';
 import { loadTexTexture } from './tex-loader.js';
 import { hasMediaThumbnail } from './scene-instance.js';
 import type { ParticleEmitterSpec, ParticleInitializerSpec } from './particles.js';
+import { particleTextureUrl as particleTextureRouteUrl, sceneAssetUrl } from '../shared/routes.js';
 
 function vec3(s: unknown): [number, number, number] {
   if (typeof s !== 'string') return [0, 0, 0];
@@ -13,7 +14,7 @@ function vec3(s: unknown): [number, number, number] {
 
 // entry = pkg 内场景入口 json 名（WE 模板可能是 gifscene.json；缺省 scene.json）。
 export async function fetchSceneDescription(id: string, entry = 'scene.json'): Promise<SceneDescription> {
-  const resp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(entry)}`);
+  const resp = await fetch(sceneAssetUrl(id, entry));
   if (!resp.ok) throw new Error(`${entry} fetch failed`);
   return parseSceneJson(await resp.text());
 }
@@ -52,7 +53,7 @@ export function particlesFromSpec(root: any): { emitter: ParticleEmitterSpec; in
 }
 
 export async function fetchParticleSpec(id: string, assetName: string): Promise<{ emitter: ParticleEmitterSpec; init: ParticleInitializerSpec } | null> {
-  const resp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(assetName)}`);
+  const resp = await fetch(sceneAssetUrl(id, assetName));
   if (!resp.ok) return null;
   return particlesFromSpec(JSON.parse(await resp.text()));
 }
@@ -77,13 +78,13 @@ export async function resolveImageAssets(
   // 只依赖 scene.json 声明 ⇒ 提前定论：材质解析失败也不该丢掉封面绑定。
   const mediaThumbnail = hasMediaThumbnail(obj.instance);
   try {
-    const modelResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(obj.image)}`);
+    const modelResp = await fetch(sceneAssetUrl(id, obj.image));
     if (!modelResp.ok) return { texture: null, puppetPath: null, spriteSheet: false, mediaThumbnail };
     const model = await modelResp.json();
     puppetPath = typeof model?.puppet === 'string' && model.puppet ? String(model.puppet) : null;
     const matRef: unknown = model?.material;
     if (typeof matRef !== 'string' || !matRef) return { texture: null, puppetPath, spriteSheet: false, mediaThumbnail };
-    const matResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(matRef)}`);
+    const matResp = await fetch(sceneAssetUrl(id, matRef));
     if (!matResp.ok) return { texture: null, puppetPath, spriteSheet: false, mediaThumbnail };
     const mat = await matResp.json();
     const combos = mat?.passes?.[0]?.combos;
@@ -93,7 +94,7 @@ export async function resolveImageAssets(
     // instance.textures 覆盖材质纹理槽（名字相对 materials/ 的带 '/' 形式；与材质原槽相同 ⇒ 无操作）。
     const instanceTex = obj.instance?.textures?.[0];
     const texName2 = instanceTex && instanceTex.includes('/') ? instanceTex : texName;
-    const url = `/wallpapers/scene/${id}/asset?name=${encodeURIComponent(resolveTexPath(matRef, texName2))}`;
+    const url = sceneAssetUrl(id, resolveTexPath(matRef, texName2));
     const texture = await loadTexTexture(url);
     // 标记落在纹理上：player 只拿到 texture（不重走材质），据此决定是否按帧切 UV。
     if (texture && spriteSheet) texture.userData.spritesheet = true;
@@ -107,7 +108,7 @@ export async function resolveImageAssets(
 // `.mdl` 原始字节（走既有 scene asset 路由，pkg 内条目）；失败返回 null（调用方退化为普通贴图）。
 export async function fetchMdlBytes(id: string, path: string): Promise<Uint8Array | null> {
   try {
-    const resp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(path)}`);
+    const resp = await fetch(sceneAssetUrl(id, path));
     if (!resp.ok) return null;
     return new Uint8Array(await resp.arrayBuffer());
   } catch {
@@ -141,7 +142,7 @@ function particleTextureUrl(id: string, texName: string): string {
   const short = texName.startsWith('particle/') ? texName.slice('particle/'.length) : texName;
   const aliased = PARTICLE_TEX_ALIASES[short];
   const name = aliased ? `particle/${aliased}` : texName;
-  return `/wallpapers/particle-texture?id=${encodeURIComponent(id)}&name=${encodeURIComponent(name)}`;
+  return particleTextureRouteUrl({ id, name });
 }
 
 // 解析粒子 spec 引用的材质 json（spec.material → passes[0]），一次拿到纹理 URL 与混合模式（同源于一份 json）。
@@ -155,7 +156,7 @@ export async function resolveParticleMaterial(
     const spec: unknown = JSON.parse(specText);
     const matRef: unknown = (spec as { material?: unknown })?.material;
     if (typeof matRef !== 'string' || !matRef) return null;
-    const matResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(matRef)}`);
+    const matResp = await fetch(sceneAssetUrl(id, matRef));
     if (!matResp.ok) return null;
     const mat: unknown = await matResp.json();
     const pass0 = (mat as {

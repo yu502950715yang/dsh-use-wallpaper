@@ -8,6 +8,7 @@ import { isAudioUniform } from './shader/uniform-binder.js';
 // 根因见 rt-render.ts 与 AGENT.md §5.22。
 import { renderIntoRenderTarget } from './rt-render.js';
 import { NAMED_RT_LIMIT, type EffectPlan, type PlannedPass, type RtWrite } from './effect-graph.js';
+import { particleTextureUrl, sceneAssetUrl } from '../shared/routes.js';
 
 // 纹理槽路径推导：补 materials/ 前缀 + .tex 后缀；内置 util/ 与运行时 _rt_ 引用原样透传（走回退分支，不 fetch）。
 // 前缀先判：'materials/x'（带前缀无后缀）只补后缀，避免双重前缀。
@@ -36,7 +37,7 @@ export function builtinTextureUrl(path: string | null | undefined): string | nul
   if (!path) return null;
   const p = path.replace(/\.tex$/, '');
   if (!p.startsWith('util/')) return null;
-  return `/wallpapers/particle-texture?name=${encodeURIComponent(p)}`;
+  return particleTextureUrl({ name: p });
 }
 
 // mulberry32（与 particles.ts 同种子算法），确定性噪声
@@ -309,7 +310,7 @@ export async function loadEffectTextureSlot(
   }
   const resolved = resolveTextureSlotPath(path);
   if (!resolved) return null;
-  const tex = await tryLoad(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(resolved)}`);
+  const tex = await tryLoad(sceneAssetUrl(id, resolved));
   if (!tex) warn(`[wallpaper-engine] 纹理槽加载失败，跳过: ${path} → ${resolved}`);
   cache.set(key, tex);
   return tex;

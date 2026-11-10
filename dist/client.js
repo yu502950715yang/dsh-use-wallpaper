@@ -3182,6 +3182,76 @@ function createBootOverlay(opts = {}) {
   };
 }
 
+// src/shared/routes.ts
+var WALLPAPER_PREFIX = "/wallpapers";
+var WALLPAPER_ROUTES = {
+  list: `${WALLPAPER_PREFIX}/list`,
+  /** prefix */
+  media: `${WALLPAPER_PREFIX}/media`,
+  /** prefix */
+  scene: `${WALLPAPER_PREFIX}/scene`,
+  /** prefix */
+  frame: `${WALLPAPER_PREFIX}/frame`,
+  /** prefix（wasm/quickjs 静态产物；也是 client 的 STATIC_BASE） */
+  static: `${WALLPAPER_PREFIX}/static`,
+  /** prefix */
+  web: `${WALLPAPER_PREFIX}/web`,
+  particleTexture: `${WALLPAPER_PREFIX}/particle-texture`,
+  probe: `${WALLPAPER_PREFIX}/probe`,
+  nowPlaying: `${WALLPAPER_PREFIX}/now-playing`,
+  nowPlayingThumbnail: `${WALLPAPER_PREFIX}/now-playing/thumbnail`,
+  properties: `${WALLPAPER_PREFIX}/properties`,
+  bootLocalVideo: `${WALLPAPER_PREFIX}/boot/local-video`,
+  bootProbe: `${WALLPAPER_PREFIX}/boot/probe`
+};
+var WALLPAPER_ROUTE_PATHS = Object.values(WALLPAPER_ROUTES);
+var enc = encodeURIComponent;
+function wallpaperListUrl(refresh = false) {
+  return refresh ? `${WALLPAPER_ROUTES.list}?refresh=1` : WALLPAPER_ROUTES.list;
+}
+function bootLocalVideoUrl(path) {
+  return `${WALLPAPER_ROUTES.bootLocalVideo}?path=${enc(path)}`;
+}
+function bootProbeUrl(path) {
+  return `${WALLPAPER_ROUTES.bootProbe}?path=${enc(path)}`;
+}
+function sceneAssetUrl(id, name) {
+  return `${WALLPAPER_ROUTES.scene}/${enc(id)}/asset?name=${enc(name)}`;
+}
+function sceneActionUrl(id, action) {
+  return `${WALLPAPER_ROUTES.scene}/${enc(id)}/${action}`;
+}
+function mediaFileUrl(id) {
+  return `${WALLPAPER_ROUTES.media}/${enc(id)}/file`;
+}
+function mediaPreviewUrl(id) {
+  return `${WALLPAPER_ROUTES.media}/${enc(id)}/preview`;
+}
+function webWallpaperUrl(id, file = "index.html") {
+  return `${WALLPAPER_ROUTES.web}/${enc(id)}/${file}`;
+}
+function frameUrl(id) {
+  return `${WALLPAPER_ROUTES.frame}/${enc(id)}`;
+}
+function particleTextureUrl(opts) {
+  const idPart = opts.id !== void 0 ? `id=${enc(opts.id)}&` : "";
+  return `${WALLPAPER_ROUTES.particleTexture}?${idPart}name=${enc(opts.name)}`;
+}
+function nowPlayingUrl(pageTitle) {
+  return `${WALLPAPER_ROUTES.nowPlaying}?title=${enc(pageTitle)}`;
+}
+function nowPlayingThumbnailUrl(rev) {
+  return `${WALLPAPER_ROUTES.nowPlayingThumbnail}?rev=${enc(String(rev))}`;
+}
+var STATIC_FILES = {
+  wasmModule: "we_scene_wasm.js",
+  wasmBinary: "we_scene_wasm_bg.wasm",
+  quickjs: "quickjs.wasm"
+};
+function staticUrl(file) {
+  return `${WALLPAPER_ROUTES.static}/${STATIC_FILES[file]}`;
+}
+
 // src/client/boot-player.ts
 var BOOT_PLAYED_KEY = "we:boot-played";
 var FIT_MODES = /* @__PURE__ */ new Set(["tile", "contain", "stretch", "cover"]);
@@ -3191,12 +3261,12 @@ function normalizeBootFit(value) {
 function bootAssetFromSettings(s) {
   if (s.bootAnimationSource === "local") {
     const p = s.bootAnimationLocalPath.trim();
-    return p ? { kind: "video", url: "/wallpapers/boot/local-video?path=" + encodeURIComponent(p) } : null;
+    return p ? { kind: "video", url: bootLocalVideoUrl(p) } : null;
   }
   const id = s.bootAnimationWallpaperId.trim();
   const kind = s.bootAnimationWallpaperKind;
   if (!id || kind !== "video" && kind !== "image") return null;
-  return kind === "video" ? { kind: "video", url: `/wallpapers/media/${encodeURIComponent(id)}/file` } : { kind: "image", url: `/wallpapers/media/${encodeURIComponent(id)}/preview` };
+  return kind === "video" ? { kind: "video", url: mediaFileUrl(id) } : { kind: "image", url: mediaPreviewUrl(id) };
 }
 function shouldPlayBoot(s, storage) {
   if (!s.bootAnimationEnabled) return false;
@@ -3411,7 +3481,7 @@ function getUserPropertyValue(key, wallpaperId) {
 // src/client/wallpaper-properties.ts
 async function fetchWallpaperProperties(id) {
   try {
-    const r = await fetch(`/wallpapers/properties?id=${encodeURIComponent(id)}`);
+    const r = await fetch(`${WALLPAPER_ROUTES.properties}?id=${encodeURIComponent(id)}`);
     if (!r.ok) return { properties: [], audioProcessing: false };
     const body = await r.json();
     return {
@@ -4214,10 +4284,10 @@ function detectWebGL2() {
 // src/client/settings-section.tsx
 var import_jsx_runtime = require("react/jsx-runtime");
 async function defaultFetchWallpapers(opts) {
-  return (await fetch(opts?.refresh ? "/wallpapers/list?refresh=1" : "/wallpapers/list")).json();
+  return (await fetch(wallpaperListUrl(opts?.refresh))).json();
 }
 async function defaultFetchProbe() {
-  return (await fetch("/wallpapers/probe")).json();
+  return (await fetch(WALLPAPER_ROUTES.probe)).json();
 }
 var sharedOnSelect = null;
 function setWallpaperSelectHandler(fn) {
@@ -5502,10 +5572,10 @@ function WallpaperSettingsSection(props) {
 var import_react2 = require("react");
 var import_jsx_runtime2 = require("react/jsx-runtime");
 async function defaultFetchWallpapers2() {
-  return (await fetch("/wallpapers/list")).json();
+  return (await fetch(wallpaperListUrl())).json();
 }
 async function defaultProbePath(path) {
-  const r = await fetch("/wallpapers/boot/probe?path=" + encodeURIComponent(path));
+  const r = await fetch(bootProbeUrl(path));
   return r.json();
 }
 function bootApi() {
@@ -6362,10 +6432,10 @@ function resolveBackground(info) {
     return { kind: "scene", wallpaperId: info.id, sceneEntry: info.sceneEntry ?? "scene.json" };
   }
   if (info.type === "video" && info.file) {
-    return { kind: "video", url: `/wallpapers/media/${info.id}/file`, hasAudio: info.hasAudio };
+    return { kind: "video", url: mediaFileUrl(info.id), hasAudio: info.hasAudio };
   }
   if (info.type === "web") {
-    return { kind: "web", url: `/wallpapers/web/${info.id}/index.html` };
+    return { kind: "web", url: webWallpaperUrl(info.id) };
   }
   if (info.previewUrl) {
     return { kind: "image", url: info.previewUrl, kenBurns: !info.hasPreviewGif };
@@ -31481,13 +31551,13 @@ async function resolveImageAssets(id, obj) {
   let puppetPath = null;
   const mediaThumbnail = hasMediaThumbnail(obj.instance);
   try {
-    const modelResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(obj.image)}`);
+    const modelResp = await fetch(sceneAssetUrl(id, obj.image));
     if (!modelResp.ok) return { texture: null, puppetPath: null, spriteSheet: false, mediaThumbnail };
     const model = await modelResp.json();
     puppetPath = typeof model?.puppet === "string" && model.puppet ? String(model.puppet) : null;
     const matRef = model?.material;
     if (typeof matRef !== "string" || !matRef) return { texture: null, puppetPath, spriteSheet: false, mediaThumbnail };
-    const matResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(matRef)}`);
+    const matResp = await fetch(sceneAssetUrl(id, matRef));
     if (!matResp.ok) return { texture: null, puppetPath, spriteSheet: false, mediaThumbnail };
     const mat = await matResp.json();
     const combos = mat?.passes?.[0]?.combos;
@@ -31496,7 +31566,7 @@ async function resolveImageAssets(id, obj) {
     if (typeof texName !== "string" || !texName) return { texture: null, puppetPath, spriteSheet, mediaThumbnail };
     const instanceTex = obj.instance?.textures?.[0];
     const texName2 = instanceTex && instanceTex.includes("/") ? instanceTex : texName;
-    const url = `/wallpapers/scene/${id}/asset?name=${encodeURIComponent(resolveTexPath(matRef, texName2))}`;
+    const url = sceneAssetUrl(id, resolveTexPath(matRef, texName2));
     const texture = await loadTexTexture(url);
     if (texture && spriteSheet) texture.userData.spritesheet = true;
     return { texture, puppetPath, spriteSheet, mediaThumbnail };
@@ -31506,7 +31576,7 @@ async function resolveImageAssets(id, obj) {
 }
 async function fetchMdlBytes(id, path) {
   try {
-    const resp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(path)}`);
+    const resp = await fetch(sceneAssetUrl(id, path));
     if (!resp.ok) return null;
     return new Uint8Array(await resp.arrayBuffer());
   } catch {
@@ -31516,18 +31586,18 @@ async function fetchMdlBytes(id, path) {
 var PARTICLE_TEX_ALIASES = {
   "presets/lightshaft": "light/light_shafts_0"
 };
-function particleTextureUrl(id, texName) {
+function particleTextureUrl2(id, texName) {
   const short = texName.startsWith("particle/") ? texName.slice("particle/".length) : texName;
   const aliased = PARTICLE_TEX_ALIASES[short];
   const name = aliased ? `particle/${aliased}` : texName;
-  return `/wallpapers/particle-texture?id=${encodeURIComponent(id)}&name=${encodeURIComponent(name)}`;
+  return particleTextureUrl({ id, name });
 }
 async function resolveParticleMaterial(id, specText) {
   try {
     const spec = JSON.parse(specText);
     const matRef = spec?.material;
     if (typeof matRef !== "string" || !matRef) return null;
-    const matResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(matRef)}`);
+    const matResp = await fetch(sceneAssetUrl(id, matRef));
     if (!matResp.ok) return null;
     const mat = await matResp.json();
     const pass0 = mat?.passes?.[0];
@@ -31537,12 +31607,12 @@ async function resolveParticleMaterial(id, specText) {
     const refractAmount = typeof rawAmount === "number" && Number.isFinite(rawAmount) ? rawAmount : 0.05;
     const texName = pass0?.textures?.[0];
     const normalName = pass0?.textures?.[1];
-    const normalTexUrl = typeof normalName === "string" && normalName ? particleTextureUrl(id, normalName) : null;
+    const normalTexUrl = typeof normalName === "string" && normalName ? particleTextureUrl2(id, normalName) : null;
     if (typeof texName !== "string" || !texName) {
       return { texUrl: null, blending, refract, normalTexUrl, refractAmount };
     }
     return {
-      texUrl: particleTextureUrl(id, texName),
+      texUrl: particleTextureUrl2(id, texName),
       blending,
       refract,
       normalTexUrl,
@@ -32078,7 +32148,7 @@ function createPuppetMesh(puppet, material) {
 }
 
 // src/client/wasm-loader.ts
-var STATIC_BASE = "/wallpapers/static";
+var STATIC_BASE = WALLPAPER_ROUTES.static;
 var WASM_GLUE_FILE = "we_scene_wasm.js";
 var WASM_BIN_FILE = "we_scene_wasm_bg.wasm";
 async function defaultLoadWasm() {
@@ -32230,7 +32300,7 @@ function builtinTextureUrl(path) {
   if (!path) return null;
   const p = path.replace(/\.tex$/, "");
   if (!p.startsWith("util/")) return null;
-  return `/wallpapers/particle-texture?name=${encodeURIComponent(p)}`;
+  return particleTextureUrl({ name: p });
 }
 function mulberry32(seed) {
   let a = seed >>> 0;
@@ -32388,7 +32458,7 @@ async function loadEffectTextureSlot(path, id, cache, load = loadTexTexture, war
   }
   const resolved = resolveTextureSlotPath(path);
   if (!resolved) return null;
-  const tex = await tryLoad(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(resolved)}`);
+  const tex = await tryLoad(sceneAssetUrl(id, resolved));
   if (!tex) warn(`[wallpaper-engine] \u7EB9\u7406\u69FD\u52A0\u8F7D\u5931\u8D25\uFF0C\u8DF3\u8FC7: ${path} \u2192 ${resolved}`);
   cache.set(key, tex);
   return tex;
@@ -35253,7 +35323,7 @@ var QuickJSTextRuntime = class {
 };
 var runtimePromise = null;
 function createQuickJSModule() {
-  const wasmLocation = typeof window !== "undefined" ? "/wallpapers/static/quickjs.wasm" : void 0;
+  const wasmLocation = typeof window !== "undefined" ? staticUrl("quickjs") : void 0;
   return newQuickJSWASMModuleFromVariant(newVariant(src_default, wasmLocation ? { wasmLocation } : {}));
 }
 async function createRuntime() {
@@ -36181,7 +36251,7 @@ var SceneScriptVm = class _SceneScriptVm {
   static async create(opts) {
     let runtime = null;
     try {
-      const wasmLocation = typeof window !== "undefined" ? "/wallpapers/static/quickjs.wasm" : void 0;
+      const wasmLocation = typeof window !== "undefined" ? staticUrl("quickjs") : void 0;
       const mod = await newQuickJSWASMModuleFromVariant(
         newVariant(src_default, wasmLocation ? { wasmLocation } : {})
       );
@@ -36903,7 +36973,7 @@ var DIFF_KEYS = [
   "thumbnailRev"
 ];
 function mediaUrl(pageTitle) {
-  return "/wallpapers/now-playing?title=" + encodeURIComponent(pageTitle);
+  return nowPlayingUrl(pageTitle);
 }
 function diffSnapshot(prev, next) {
   if (!prev) return [...DIFF_KEYS];
@@ -37570,7 +37640,7 @@ async function loadWallpaperFont(wallpaperId, font) {
   if (!pending) {
     pending = (async () => {
       try {
-        const r = await fetch(`/wallpapers/scene/${wallpaperId}/asset?name=${encodeURIComponent(font)}`);
+        const r = await fetch(sceneAssetUrl(wallpaperId, font));
         if (!r.ok) return null;
         const family = `we-font-${++fontSeq}`;
         const face = new FontFace(family, await r.arrayBuffer());
@@ -37778,7 +37848,7 @@ function createThreeSceneRenderer(opts) {
     for (const s of sounds) {
       const file = s.playbackmode === "loop" ? s.files[0] : s.files[Math.floor(Math.random() * s.files.length)];
       void playWallpaperSound(
-        `/wallpapers/scene/${id}/asset?name=${encodeURIComponent(file)}`,
+        sceneAssetUrl(id, file),
         analyzer,
         { volume: s.volume, loop: s.playbackmode !== "single" }
       ).then((handle) => {
@@ -37926,7 +37996,7 @@ function createThreeSceneRenderer(opts) {
         if (abortIfStale(gen)) return false;
         let sceneJsonResp;
         try {
-          sceneJsonResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(sceneEntry)}`);
+          sceneJsonResp = await fetch(sceneAssetUrl(id, sceneEntry));
         } catch (e) {
           fail(id, "load-error", e instanceof Error ? e.message : String(e));
           teardownQuietly();
@@ -38042,7 +38112,7 @@ function createThreeSceneRenderer(opts) {
               }
             }
           } else if (obj.kind === "particle" && obj.particle) {
-            const specResp = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(obj.particle)}`);
+            const specResp = await fetch(sceneAssetUrl(id, obj.particle));
             if (!specResp.ok) continue;
             const specText = await specResp.text();
             const mat = await resolveParticleMaterial(id, specText);
@@ -38142,7 +38212,7 @@ function createThreeSceneRenderer(opts) {
           }
         } : void 0;
         const loadFile = async (name) => {
-          const r = await fetch(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(name)}`);
+          const r = await fetch(sceneAssetUrl(id, name));
           if (!r.ok) return null;
           return new Uint8Array(await r.arrayBuffer());
         };
@@ -38458,7 +38528,7 @@ function createThreeSceneRenderer(opts) {
               let tex = null;
               if (spec.texturePath) {
                 const texPath = resolveTexPath(p, spec.texturePath);
-                tex = await loadTexTexture(`/wallpapers/scene/${id}/asset?name=${encodeURIComponent(texPath)}`);
+                tex = await loadTexTexture(sceneAssetUrl(id, texPath));
                 if (!tex) warnOnce2(`mesh-tex:${id}:${texPath}`, `\u52A8\u6001\u7F51\u683C\u7EB9\u7406\u52A0\u8F7D\u5931\u8D25\uFF1A${texPath}\uFF08\u767D\u56FE\u515C\u5E95\uFF09`);
                 else currentExtraTextures.push(tex);
               }
@@ -38514,7 +38584,7 @@ function createThreeSceneRenderer(opts) {
             let bitmap;
             try {
               if (typeof createImageBitmap !== "function") throw new Error("createImageBitmap unavailable");
-              const resp = await fetch(`/wallpapers/now-playing/thumbnail?rev=${encodeURIComponent(String(rev))}`);
+              const resp = await fetch(nowPlayingThumbnailUrl(rev));
               if (!resp.ok) throw new Error("thumbnail http " + resp.status);
               bitmap = await createImageBitmap(await resp.blob(), { imageOrientation: "flipY" });
             } catch {
@@ -38777,12 +38847,11 @@ function createThreeSceneRenderer(opts) {
 }
 
 // src/client/scene-fallback.ts
-var sceneVideoUrl = (id) => `/wallpapers/scene/${encodeURIComponent(id)}/embedded-video`;
-var frameUrl = (id) => `/wallpapers/frame/${encodeURIComponent(id)}`;
+var sceneVideoUrl = (id) => sceneActionUrl(id, "embedded-video");
 async function probeEmbeddedVideo(id, fetchImpl) {
   try {
     const doFetch = fetchImpl ?? globalThis.fetch;
-    const res = await doFetch(`/wallpapers/scene/${encodeURIComponent(id)}/video-probe`);
+    const res = await doFetch(sceneActionUrl(id, "video-probe"));
     if (!res.ok) return null;
     const data = await res.json();
     return data?.video === true ? sceneVideoUrl(id) : null;
@@ -39100,7 +39169,7 @@ function bootstrap(ctx) {
       volume: settings.soundVolume
     });
     controller = createWallpaperController(layer, {
-      fetchList: async () => (await fetch("/wallpapers/list")).json(),
+      fetchList: async () => (await fetch(wallpaperListUrl())).json(),
       // three.js 播放器是**唯一** scene 路径；渲染失败/零可见对象 → controller 回退 preview 图。
       sceneRenderer,
       // 贴壁纸文字颜色/描边：实时读取设置（手动档直接固定色、跳过 preview 测量；auto 档沿用亮度测量）。
