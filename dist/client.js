@@ -28278,6 +28278,7 @@ async function readPixelsToPng(gl, width, height, encode) {
 // src/client/threejs-player.ts
 var DEFAULT_PARTICLE_CAPACITY = 1024;
 var MAX_PARTICLE_CAPACITY = 2048;
+var MAX_PARTICLE_HARD_CAP = 16384;
 var PARTICLE_FLOATS_PER_INSTANCE = 16;
 function specMaxcount(specJson) {
   try {
@@ -28390,7 +28391,7 @@ function simEmitterOffset(emitterOrigin) {
 function particleCapacity(declaredMax, aliveAtCreate) {
   const declared = Number.isFinite(declaredMax) && declaredMax > 0 ? Math.floor(declaredMax) : 0;
   const cap = Math.min(declared > 0 ? declared : DEFAULT_PARTICLE_CAPACITY, MAX_PARTICLE_CAPACITY);
-  return Math.max(1, cap, Math.max(0, Math.floor(aliveAtCreate)));
+  return Math.min(MAX_PARTICLE_HARD_CAP, Math.max(1, cap, Math.max(0, Math.floor(aliveAtCreate))));
 }
 var PARTICLE_QUAD_CORNERS = new Float32Array([
   -1,

@@ -7,6 +7,8 @@ import type { PuppetInstance } from './puppet.js';
 import type { SceneImageObject, UtilLayerKind } from '../shared/types.js';
 export declare const DEFAULT_PARTICLE_CAPACITY = 1024;
 export declare const MAX_PARTICLE_CAPACITY = 2048;
+/** 纵深兜底：与 wasm 侧 `MAX_PARTICLES` 同口径，防旧 wasm 产物/异常实现把实例缓冲放大。 */
+export declare const MAX_PARTICLE_HARD_CAP = 16384;
 export declare const PARTICLE_FLOATS_PER_INSTANCE = 16;
 export declare function specMaxcount(specJson: string): number;
 export interface ParticleRendererSpec {
