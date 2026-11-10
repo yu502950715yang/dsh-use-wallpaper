@@ -635,3 +635,23 @@ Test-Path "C:\Users\0009\.dsh\profiles\web\node_modules\@dsh-use\wallpaper-engin
 
 - 卸载只影响 profile 配置与 node_modules 链接，**不会删除**本地仓库 `E:\code\dsh-use-wallpaper`。
 - 想重新装：按 README「安装与集成」重新加依赖 + bundles + cordis.patch.yml，再 `pnpm add "@dsh-use/wallpaper-engine@file:E:/code/dsh-use-wallpaper/packages/dsh-wallpaper-engine"` 强制重链即可。
+
+## 4. 1.0 P0 修复真机验收（2026-11-10）
+
+> 背景：2026-11-10 全项目审查发现 14 个 P0（3 安全 + 3 Rust 解析 + 2 渲染 + 3 测试门禁 + 3 结构），已全部修复并本地构建。作者在 DSH 桌面 App（desktop profile，插件软链 `E:\code\dsh-use-wallpaper`）实测。
+
+**测试范围与结论**：
+
+| 覆盖点 | 样本（中文名 / workshop id） | 结果 |
+|---|---|---|
+| web 壁纸沙箱（S2 Host 绑定/MIME） | EVA初号机暴走-5 `1184182304`、终末地·佩丽卡 `3804412656` | ✅ 正常加载 |
+| 大纹理（S3 解压预算） | 爱丽丝 一帘山雨 `3800645169`（53MB `.tex`）、Evangelion Eva's `1280029027` | ✅ 纹理完整 |
+| 粒子加固（Rust：精灵表/maxcount/角度） | DK WOTLK `2859263090`（44 粒子）、Crimson Horizon `3765967112`、GTR `3743126786` | ✅ 粒子形态与旋转正常 |
+| 隔离渲染/VRAM 释放（渲染 P0） | Subway Station `2911105183`、Leon `1812518176`、影之刃零1 `3828798871` | ✅ 快速切换无残留 |
+| 视觉化条/面板总线（P0-10） | Anime Girl With Purple Eyes `3118949804`、EVA 卡农 弦乐四重奏 `2832263418` | ✅ |
+| video 壁纸/媒体状态行 | 黑白-剑少女 `3815771488` | ✅ |
+| 开机动画（S1 只读配置路径） | 设置内选本机视频试播 | ✅ |
+
+**勾选记录（2026-11-10 作者真机验收通过）**：51 个壁纸全量切换 + 上述重点样本均无异常；未发现白块/黑块/卡死/控制台报错。
+
+**说明**：自动化判据见 `tests/`（2230 项）、`npm run verify:local`（9 门禁）与 `e2e:colorblend`；本记录只覆盖「人眼可见」的部分。
