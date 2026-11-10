@@ -230,6 +230,8 @@ npx vitest run tests/xxx.test.ts --reporter=basic   # 跑单个文件
 
 64. **ThreeScenePlayer 的拆分进度（1.0 P0-9，2026-11-10）**：2280 行 God class 按「facade + 协作 runtime」拆分，公开 API 与行为不变（`tests/threejs-player.test.ts` 5433 行零修改是全绿护栏）。已完成阶段 1：`sprite-sheet-runtime.ts`（精灵表）、`parallax-runtime.ts`（视差）；阶段 2a/2b：`util-content-runtime.ts`、`visualizer-runtime.ts`；阶段 2c-1：`layer-material-factory.ts`；阶段 2c-2 前置：`layer-factory.ts`（IsolatedObject + attachIsolated）、`particle-assets.ts`；阶段 2c-2b：`particle-layer-factory.ts`；阶段 2c-3a：`background-layer-factory.ts`；阶段 2c-3b：`background-assembly.ts`（addBackground/addPuppet 装配 + 装配 host）；阶段 3 切片：`frame-capture-runtime.ts`（单帧抓取 readPixels 路径）—— 类本体已达 **1694 行**；帧内快照状态（FrameCapture 状态机）与段渲染（renderSegmented）作为「渲染管线」职责保留在 player。设计见 `docs/superpowers/specs/2026-11-10-threejs-player-god-class-split-design.md`。约束：新增子系统一律「facade 转发 + runtime 只依赖最小宿主接口」，**不得反过来让 runtime import player**（否则循环依赖）。
 
+65. **设置面板总线（1.0 P0-10，2026-11-10）**：`settings-section.tsx` 不再有 8 个模块级可变槽位；共享处理器与健康/媒体订阅收口到 `panel-bus.ts` 的 `PanelBus` 实例（`index.ts` 创建并 `setPanelBus` 注入，测试可注入隔离实例）。`setWallpaper*Handler` / `subscribe*` / `notify*` 保留为薄委托（公开导出面不变）。新增处理器一律加 `PanelHandlers` 槽位，**不得再引入模块级 `let` 槽位**。
+
 ## 6. 工作约定
 
 - 回复、注释、文档、**提交信息一律简体中文**；代码、命令、文件名、技术术语保留原文。
