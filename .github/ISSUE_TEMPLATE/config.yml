@@ -1,0 +1,13 @@
+# Issue 模板配置
+# blank_issues_enabled：本模板只覆盖 bug；功能建议 / 使用讨论允许空白 issue。
+blank_issues_enabled: true
+contact_links:
+  - name: 先读「使用前请了解」与已记录的素材边界
+    url: https://github.com/yu502950715yang/dsh-use-wallpaper/blob/master/README.md
+    about: 子粒子、ropetrail、link_mouse、多动画层、HDR 等是已记录的限制；多数「某张壁纸不对」在提 issue 前可以先自行判断
+  - name: 安装 / 升级 / 配置问题
+    url: https://github.com/yu502950715yang/dsh-use-wallpaper/blob/master/README.md
+    about: 先看 README 的「快速开始」「升级」「卸载」章节；桌面版与 dsh web 的安装方式不同
+  - name: 安全问题（请走私密渠道，不要开公开 issue）
+    url: https://github.com/yu502950715yang/dsh-use-wallpaper/security/advisories/new
+    about: 漏洞报告与安全边界说明见 SECURITY.md；修复发布前请勿公开 PoC

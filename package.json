@@ -5,8 +5,15 @@
   "description": "为 DSH（DeepSeek Harness）Web GUI 提供 Wallpaper Engine 壁纸背景：Scene 壁纸由 Three.js（WebGL2）+ Rust/WASM 粒子模拟在浏览器实时渲染，视频壁纸直接播放、Web 壁纸加载，其余回退 preview 图 + Ken Burns。",
   "type": "module",
   "main": "lib/host/index.js",
+  "types": "./lib/host/index.d.ts",
+  "icon": "icon.svg",
+  "engines": {
+    "node": ">=20",
+    "dsh": ">=0.2.0-rc.1 <0.3.0"
+  },
   "exports": {
     ".": {
+      "types": "./lib/host/index.d.ts",
       "default": "./lib/host/index.js"
     },
     "./client": {
@@ -33,7 +40,9 @@
     "e2e:verify-v081": "node e2e/verify/verify-v081-gaps.mjs",
     "e2e:verify-v082": "node e2e/verify/verify-v082.mjs",
     "verify:arch": "node scripts/verify-arch.mjs",
-    "verify:local": "node scripts/verify-local.mjs"
+    "verify:local": "node scripts/verify-local.mjs",
+    "check:release": "node scripts/check-release.mjs",
+    "gen:wasm-manifest": "node scripts/gen-wasm-manifest.mjs"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1"
@@ -68,8 +77,12 @@
       "immediately": true
     },
     "bundle": {
-      "patch": "./cordis.patch.yml"
-    }
+      "patch": "./cordis.patch.yml",
+      "platforms": [
+        "win32"
+      ]
+    },
+    "icon": "icon.svg"
   },
   "repository": {
     "type": "git",
@@ -92,6 +105,11 @@
   "files": [
     "lib",
     "dist",
-    "cordis.patch.yml"
+    "cordis.patch.yml",
+    "icon.svg",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "THIRD-PARTY-NOTICES.md"
   ]
 }

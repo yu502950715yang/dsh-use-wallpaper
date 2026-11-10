@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="DSH 壁纸引擎">
+  <title>DSH 壁纸引擎</title>
+  <defs>
+    <linearGradient id="wpIconSky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2b3f6e"/>
+      <stop offset="0.55" stop-color="#16233f"/>
+      <stop offset="1" stop-color="#0b1220"/>
+    </linearGradient>
+    <linearGradient id="wpIconSun" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffd88a"/>
+      <stop offset="1" stop-color="#ff9d5c"/>
+    </linearGradient>
+    <linearGradient id="wpIconFar" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4b7fb0"/>
+      <stop offset="1" stop-color="#2c5378"/>
+    </linearGradient>
+    <linearGradient id="wpIconNear" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1d3550"/>
+      <stop offset="1" stop-color="#0d1826"/>
+    </linearGradient>
+    <clipPath id="wpIconClip">
+      <rect width="64" height="64" rx="14" ry="14"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#wpIconClip)">
+    <rect width="64" height="64" fill="url(#wpIconSky)"/>
+    <circle cx="45" cy="21" r="7.5" fill="url(#wpIconSun)"/>
+    <circle cx="13.5" cy="15.5" r="1.6" fill="#ffffff" opacity="0.85"/>
+    <circle cx="21" cy="27" r="1.1" fill="#ffffff" opacity="0.55"/>
+    <circle cx="33.5" cy="11.5" r="1.2" fill="#ffffff" opacity="0.7"/>
+    <path d="M-2 47 L13 30 L24 43 L34 33 L47 47 Z" fill="url(#wpIconFar)"/>
+    <path d="M-2 56 L10 44 L19 50 L30 37 L43 52 L52 44 L66 56 L66 66 L-2 66 Z" fill="url(#wpIconNear)"/>
+  </g>
+  <rect x="0.75" y="0.75" width="62.5" height="62.5" rx="13.25" fill="none" stroke="#ffffff" stroke-opacity="0.14" stroke-width="1.5"/>
+</svg>

@@ -215,10 +215,13 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 
 优先级：用户设置 > profile `cordis.patch.yml` 的 `config` > 缺省。
 
-> **DSH 版本兼容（2026-09-23）**：0.1.7-alpha.1 起 DSH 换了设置系统（命名空间 = profile **条目 id**，表单只认插件 `Config` 的 volatile 字段，改动写进 profile `cordis.patch.yml`）。本插件已做双路径适配，**同时支持 0.1.5-rc.3 / 0.1.6-alpha.2 与 0.1.7-alpha.2**（三版均真机验证：列表、面板读写、选中壁纸刷新后自动恢复）。
-> 
-> 想手工预置配置（两版通吃），写 profile `cordis.patch.yml`：
-> 
+> **DSH 版本兼容（1.0 起）**：本插件 1.0 要求 DSH **`>=0.2.0-rc.1 <0.3.0`**（声明在 `package.json` 的 `engines.dsh`；DSH 0.2.1 起会优先按该字段做安装/加载兼容检查）。设置命名空间 = profile **条目 id** `dsh-wallpaper-engine`，改动写进 profile `cordis.patch.yml`。
+>
+> - **1.0 移除了对 DSH ≤0.1.6 的旧设置路径**（`~/.dsh/settings.yaml`）。仍使用 0.1.x 的用户需先升级 DSH 再安装本插件；继续用旧版 DSH 的请停留在 **0.13.1**。
+> - 0.1.7-alpha.1 ~ 0.1.x 的设置机制与 0.2.x 相同，但 1.0 只在 **0.2.0-rc.1 / 0.2.2-rc.1** 上做过真机验证；`engines.dsh` 按实测下限 + 当前 minor 上界声明。
+>
+> 想手工预置配置，写 profile `cordis.patch.yml`：
+>
 > ```yaml
 > - id: dsh-wallpaper-engine
 >   config:
@@ -226,10 +229,8 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 >     weAssetsDir: D:/Steam/steamapps/common/wallpaper_engine
 >     selectedWallpaperId: "3789244610"
 > ```
-> 
-> 旧版（≤0.1.6）的 `~/.dsh/settings.yaml` 若被 0.1.7 启动过一次，会被改名为 `settings.yaml.imported`，其中的壁纸段不会再被读取 —— 把值抄进上面的 `config` 即可。
-> 
-> 说明：旧版兼容层是过渡性的。待 DSH 新版本稳定、本插件不再需要支持 ≤0.1.6 时，按 [迁移文档 §9「后续清理清单」](docs/superpowers/plans/2026-09-23-dsh-settings-compat-migration.md) 逐项移除（清单区分了可删的旧版专用代码、可简化的兼容技巧与**必须保留的 0.1.7 适配**）。
+>
+> 升级、跨版本行为变更与废弃策略见 [CHANGELOG.md](./CHANGELOG.md) 与 [CONTRIBUTING.md](./CONTRIBUTING.md)。
 
 > 💡 **设置字段与本地状态**：上表的都是**设置字段**，可写进 profile `cordis.patch.yml` 的 `config`；面板改动除用户属性（提交后重装配当前壁纸才生效）外都**立即生效**。其中 `fitMode` / Ken Burns 只对图片 / 视频壁纸生效（scene 由渲染器自绘；Ken Burns 仅图片）。壁纸库的**收藏 / 隐藏 / 最近使用**（`we:fav` / `we:hidden` / `we:recent`）与**用户属性**（`we:userprop:<wallpaperId>:<key>`）是浏览器侧 UI 状态，**只存 localStorage**，不能写进 profile config，也不跨浏览器 / 端口同步。
 > 
@@ -254,28 +255,43 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 
 > **如果你的壁纸出现异常，请务必拉到本节末尾** —— 那里写了反馈方式。壁纸写法千差万别，你的反馈是项目改进的主要来源。
 
+### 支持矩阵
+
+| 维度 | 支持情况 | 说明 |
+|---|---|---|
+| **操作系统** | **Windows 10/11**（完整支持，唯一实测平台） | macOS / Linux **未测试**。1.0 起在 `package.json` 声明 `dsh.bundle.platforms = ["win32"]`，DSH 会在其它平台跳过本插件并报告原因；自行安装时自动探测、媒体集成、系统音频不可用 |
+| **DSH 宿主** | **0.2.x**（`>=0.2.0-rc.1 <0.3.0`） | 0.2.0-rc.1 / 0.2.2-rc.1 真机验证；DSH ≤0.1.6 自 1.0 起不再支持（见 [CHANGELOG](./CHANGELOG.md)） |
+| **宿主形态** | `dsh web`（npm CLI）/ DSH 桌面 App | 桌面版只能用侧边栏「插件」页安装，CLI 不适用桌面 profile |
+| **浏览器** | Chrome / Edge（WebGL2） | 推荐 Chrome（更接近 WE 观感）；HEVC 视频能否播放取决于浏览器/系统解码扩展 |
+| **Wallpaper Engine** | 本机安装（读内置粒子/特效素材） | **不需要 WE 在后台运行**；没装或路径未配时粒子退化为纯色圆点，画面仍在 |
+| **网络环境** | 回环地址（`127.0.0.1` / `localhost`） | 局域网 IP / 隧道访问 GUI 时，web 壁纸中依赖 WebGL 贴图的会空白（opaque origin 沙箱限制） |
+| **显示器** | 单窗口任意分辨率 / 高 DPI | 多显示器**每屏独立壁纸不支持**（插件是单页背景层，受 DSH 宿主能力限制） |
+
 **画面表现**
 
 - **少数壁纸可能出现黑块或整体偏暗**：带复杂遮罩或特殊混合方式的壁纸会这样，**不是你没配好**。
 - **粒子的旋转、拖尾（雨丝 / 风痕）、近大远小都已支持**，但**能不能看出来取决于壁纸本身** —— 只有规格里给了对应参数的粒子才会动。绳索类拖尾（`ropetrail`）尚未支持，会退化成普通贴图；**子粒子（子发射器，如火焰火星、雷电二次放电）尚未支持**。**起播相位（`starttime`）按原作者设定预推进，最多 15 秒**；对象级实例覆盖（`instanceoverride`）也按原设定生效。
+- **鼠标互动粒子尚未支持**：粒子控制点 `link_mouse` / `worldspace`（跟随光标 / 世界坐标吸引点）、`vortex` 旋涡算子、`mapsequencearoundcontrolpoint` 以及 `boids` / `remapvalue` 算子会退化 —— 粒子不跟手、漩涡不旋转、鸟群不聚散。
+- **骨骼模型（puppet）已能播真实动画**：`scene.json` 的 `animationlayers` 引用的 `.mdl` 动画（MDLS 骨骼 + MDLA 关键帧）会驱动骨骼，角色身上的对象级效果（披风 / 衣摆的水波、涟漪等）也能执行。**边界**：MDLE（世界绑定矩阵）不消费、MDLS 多扩展块不解析、多条可见动画层只应用第一条（`blend` / `additive` 不混合）、puppet 材质的 `colorBlendMode ≠ 0` 与自定义 shader 不复刻、puppet 的 color / alignment 未接。
 - **时间 / 日期类文字会实时走字，作者挂在文字上的模糊 / VHS / 水波效果也会执行**；隔离渲染的文本尺寸在装配时固定，**跨分钟变宽时可能轻微裁边或拉伸**。壁纸自带的脚本跑不通时，退回内置时钟或跳过该层，**不会**把作者的占位文字画到屏幕上。
 - **闪烁类粒子（火花、雨滴溅开等）已按桌面端表现对齐**：桌面上不显示的，这里也不画。
 - **模糊、泛光、光轴、局部对比度会在本地实时执行**，挂在这些效果上的对象越简单越容易看出效果；极少数（如光轴）目前只确认到已执行，画面观感待确认。
+- **依赖「背景副本」的效果未实现**：`copybackground` 字段不解析——把背景当作效果输入的壁纸，相关层效果可能与桌面不同（例：`2937346640` 的光轴合成、`2911105183` 的广告牌折射）；`2597392171` 的光轴背景合成已生效。
 - **壁纸声音默认播放、音量可调**（设置 → 壁纸 →「声音」卡）：scene 壁纸的音效对象、视频壁纸自带音轨、web 壁纸页内的 `<audio>/<video>` 都跟随开关与音量滑杆（音量默认 100%，拖动即时生效，共用同一音量；单次/循环模式仍按原设定生效）。**web 壁纸声音通过 host 注入的 shim 控制**（页面在播放时会自己改 `muted` 的也能兜住；帧刚加载的 <1 秒可能短暂有声）：网页用 Web Audio API 自建的声源、以及禁止内联脚本的 CSP 页面控制不到（保持网页原样）。**桌面版直接出声；浏览器 GUI 受自动播放策略限制，冷启动时视频壁纸会先静音，点过页面后才出声**。多文件音效每对象只播一首（OWE 的多文件轮播 / 播完重随机未实现）。随声音变化的效果也会跟着动；**包内音效驱动的频谱竖条已支持**（`Simple_Audio_Bars` 等效果；v0.8.2 起 `Simple Visualizer` 也会代建 64 条；v0.9 起其它 visualizer 家族按脚本参数代建、静音也有最小高度）。**系统音频（`supportsaudioprocessing`）已支持浏览器模式**：用浏览器打开 GUI → 面板「系统音频」→ 授权共享系统音频即可驱动视觉条；**桌面版 App 因宿主权限策略不可用**（面板会提示改用浏览器）。
 - **应用级光晕默认开启**（设置 → 壁纸 → 「光晕」，阈值 / 强度可调、改完立即生效）：这是"桌面更亮"的主要来源。**嫌亮就调低强度或调高阈值；觉得偏暗就把强度调到 1~1.5。** 仅对 scene 壁纸生效。
 - **壁纸级 bloom 也会按作者设定生效**（`general.bloom*`，阈值 / 强度原样）：与上面的「光晕」互相独立，同时开启时顺序固定为「壁纸 bloom → 应用级光晕」；`hdr` 未实现。
-- **精灵表图标由作者脚本控制帧**：调用 `pause`/`setFrame` 的壁纸（如 `3765967112` 的日/夜图标）静止在脚本帧；无脚本的仍约 1 帧/秒自动循环。生产 GUI 里背景层不吃点击（`pointer-events:none`），按产品决策不做点击转发 ⇒ **点击切帧为已知边界**（e2e/harness 内可触发）。
+- **精灵表图标由作者脚本控制帧**：调用 `pause`/`setFrame` 的壁纸（如 `3765967112` 的日/夜图标）静止在脚本帧；无脚本的仍约 1 帧/秒自动循环。生产 GUI 里背景层不吃点击（`pointer-events:none`），按产品决策不做点击转发 ⇒ **点击切帧为已知边界**（e2e/harness 内可触发）。**壁纸内点击/悬停交互均不可用**：脚本的 `getLayer(name)` 写入、`getEffect().visible` 与 `cursorEnter/Leave/Down/Up` 回调尚未实现，依赖交互的壁纸会保持初始状态。
 - **纯文本 / 透明场景会铺作者设定的底色**（`general.clearcolor`，WE 多为 0-1 色值）；`clearenabled` 开关未消费。
 - **输入框用半透明玻璃底**（不模糊），避免桌面端在输出回复时出现滚动条抖动。
 - **视频壁纸能不能播，取决于浏览器的解码能力**：视频壁纸直接交给浏览器的 `<video>` 解码 —— HEVC / H.265 需要系统装有对应的解码扩展。**缺解码扩展时不再停在黑背景**：解码失败或 1.5 秒内没有首帧，会自动回退到预览图，并在设置 →「Wallpaper 壁纸」面板里提示原因（没有预览图则回退空态并同样提示）。想真正播放 HEVC，请换 Chrome 等能解该编码的浏览器，或把视频转成 H.264。
 - **scene 渲染失败时按多级降级链回退**：见下方「降级链（scene 渲染失败时）」小节。
 - **抓帧缓存放在本机数据目录**：scene 首帧渲染成功后会抓一张 PNG 存到 `~/.dsh-use-wallpaper/frames/`；设环境变量 `DSH_USE_WALLPAPER_DATA_DIR` 可整体搬走。单张 ≤ 12MB、最多 200 张（按修改时间淘汰最旧），随时可删 —— 删掉只会让下次渲染成功时重新抓，不影响画面。
-- **Workshop 里的「预设壁纸」（preset）也能用**：这类项只有预览图和 `dependency`（依赖的主壁纸）+ 你保存的参数，自己不含场景；选中后会按依赖壁纸渲染，并套用预设里的参数值（例：`3163840671` = 3118949804 的预设版，标签显示 PRESET）。
+- **Workshop 里的「预设壁纸」（preset）也能用**：这类项只有预览图和 `dependency`（依赖的主壁纸）+ 你保存的参数，自己不含场景；选中后会按依赖壁纸渲染，并套用预设里的参数值（列表标签显示 PRESET）。
 - **越大的壁纸越吃显存**：4K 分辨率下单张壁纸可能占用数百 MB 显存。追求省电/流畅可以用小分辨率或选择简单的壁纸。
 
 **环境要求**
 
-- **仅 Windows 实测**，macOS 未测试。
+- **平台与宿主兼容见上方「支持矩阵」**。
 - **多个 Steam 库都能探测到**：自动探测读 `steamapps/libraryfolders.vdf`（新版 Steam 的实际位置）与 `config/` 副本；此前只读安装根，装在第二个库里的壁纸会探测不到。
 - **需要本机装有 Wallpaper Engine**：插件要从中读取内置的粒子与特效素材。没装或路径没配对时，粒子会退化为纯色圆点（画面仍在，不会白屏）。
 - **浏览器需支持 WebGL2**（Chrome / Edge 均可）；**为了更接近 Wallpaper Engine 的效果，推荐使用 Chrome**。不支持 WebGL2 时自动退回预览图。
@@ -404,6 +420,44 @@ pnpm run e2e:compare    # A/B 截图逐像素对拍（零回归验收）
 
 ---
 
+## 🔐 数据与隐私
+
+本插件**不联网、无遥测、不上传任何数据**。落盘只有两处：
+
+| 数据 | 位置 | 内容与清理 |
+|---|---|---|
+| 首帧抓帧缓存 | `~/.dsh-use-wallpaper/frames/<壁纸id>.png`（设 `DSH_USE_WALLPAPER_DATA_DIR` 可改根目录） | scene 首帧成功后的截图，供降级链回退；单张 ≤12MB、最多 200 张（按修改时间淘汰最旧）；随时可删，删了下次渲染成功会重新抓 |
+| 浏览器本地状态 | localStorage：`we:fav` / `we:hidden` / `we:recent` / `we:userprop:<壁纸id>:<key>` / `we:renderfail:<壁纸id>` / `we:setup-tip` | 收藏 / 隐藏 / 最近使用 / 用户属性 / 渲染失败记忆；随站点数据清除 |
+
+设置本身写在 profile `cordis.patch.yml` 的 `dsh-wallpaper-engine` 条目 `config` 里（见「配置项」）。
+
+**只在内存、不落盘**：媒体集成（Windows SMTC）读到的歌曲标题/歌手/封面、系统音频频谱、壁纸音效解码数据、视频健康采样。
+**权限提示**：系统音频可视化需要浏览器 `getDisplayMedia` 授权（可随时停止共享、不落盘不上传）；媒体集成可在面板关闭；开机动画的本地视频只经回环路由读取。
+
+---
+
+## ⬆️ 升级
+
+升级方式与安装方式一一对应（见「快速开始」）：
+
+| 安装方式 | 升级方式 |
+|---|---|
+| npm（稳定版） | `dsh plugin --profile web add "@dsh-use/wallpaper-engine@latest"` → `dsh plugin --profile web install` → 重启 `dsh web` |
+| GitHub（最新） | `dsh plugin --profile web add github:yu502950715yang/dsh-use-wallpaper` → `dsh plugin --profile web install` |
+| 桌面版 App | 侧边栏 **插件** 页 → 该插件 → 更新（npm 版）/ 重新添加本地路径 |
+| 插件市场索引源 | 「插件 → 发现」里更新 |
+
+**重启语义（重要）**：
+
+- `dsh web`：host 侧改动**必须重启命令**；client 侧改动刷新页面即可（`dsh-client-hmr` 自动重载）。
+- **桌面版 App**：host 启动时把客户端 bundle 拍成内存快照 ⇒ 升级后必须**完全退出 App 再启动**（托盘退出），只刷新页面拿不到新客户端代码。
+
+**跨版本兼容承诺（1.x）**：设置字段、localStorage 键、数据目录**只增不改**；重命名/删除走 major 版本并在 [CHANGELOG](./CHANGELOG.md) 给出迁移步骤。升级不需要手工迁移配置。
+
+**从 0.x 升级到 1.0**：见 [CHANGELOG.md](./CHANGELOG.md) 的「破坏性变更」段——1.0 要求 DSH ≥ 0.2.0-rc.1、移除了 ≤0.1.6 的旧设置路径、新增 `engines.dsh` / 平台声明；设置字段无重命名或删除。
+
+---
+
 ## 🧹 卸载
 
 ```bash
@@ -414,13 +468,25 @@ dsh plugin --profile web install
 
 > 桌面版在侧边栏 **插件** 页卸载（会二次确认）；`dsh plugin` 同样不适用于桌面版 profile（见「1. 安装插件」）。
 
+卸载后如需**彻底清理残留**（不清理也不影响使用，残留只有抓帧缓存与几个 localStorage 键）：
+
+```powershell
+# 1) 抓帧缓存与插件数据目录（Windows）
+Remove-Item -Recurse -Force "$env:USERPROFILE\.dsh-use-wallpaper"
+# 2) 浏览器 localStorage 键：在 GUI 开发者工具 Console 里执行
+#    Object.keys(localStorage).filter(k => k.startsWith('we:'))
+#    .forEach(k => localStorage.removeItem(k))
+# 3) profile 配置残留：从 cordis.patch.yml 删掉 dsh-wallpaper-engine 条目
+```
+
 ---
 
 ## 📄 许可与致谢
 
-- 代码：**MIT**。
+- 代码：**MIT**（见 [LICENSE](./LICENSE)）；第三方依赖清单与壁纸素材边界见 [THIRD-PARTY-NOTICES.md](./THIRD-PARTY-NOTICES.md)。
 - 壁纸、纹理等素材版权归原作者 / Wallpaper Engine 所有；本插件只在其上渲染，**不重新分发第三方素材**（WE 内置纹理在运行时从你本机安装目录读取）。
 - 格式与行为语义对齐自 [linux-wallpaperengine](https://github.com/Almamu/linux-wallpaperengine) 及开源 Wallpaper Engine 逆向实现。
+- 版本变更见 [CHANGELOG.md](./CHANGELOG.md)；参与贡献见 [CONTRIBUTING.md](./CONTRIBUTING.md)；安全问题报告见 [SECURITY.md](./SECURITY.md)。
 - 感谢[Linux.do](https://linux.do)社区对本项目的推广。
 - README 中的效果视频由本插件的生产渲染代码在本机实测录制，仅用于展示。
 
@@ -429,6 +495,10 @@ dsh plugin --profile web install
 ## 🔗 相关链接
 
 - [GitHub 仓库](https://github.com/yu502950715yang/dsh-use-wallpaper)
+- [版本变更 CHANGELOG](./CHANGELOG.md)
+- [贡献指南 CONTRIBUTING](./CONTRIBUTING.md)
+- [安全策略 SECURITY](./SECURITY.md)
+- [第三方依赖与素材边界 THIRD-PARTY-NOTICES](./THIRD-PARTY-NOTICES.md)
 - [插件市场索引源 `index.json`](./index.json)（可粘贴到「插件 → 发现 → 索引源」）
 - [dsh-plugin 主题页](https://github.com/topics/dsh-plugin)
 - [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)

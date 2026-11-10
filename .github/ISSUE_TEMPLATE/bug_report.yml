@@ -1,0 +1,139 @@
+name: Bug 报告（壁纸渲染 / 插件异常）
+description: 壁纸画面不对、声音异常、开机动画或设置面板出问题时使用
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 提交前先确认
+
+        - 先读 README 的[「使用前请了解」](https://github.com/yu502950715yang/dsh-use-wallpaper/blob/master/README.md)与「降级链」：多数「某张壁纸不对」属于**已记录的素材边界**（子粒子、ropetrail、`link_mouse`、多动画层、HDR 等），不是 bug。
+        - 已安装的壁纸库越冷门、效果越复杂，越可能命中已知边界。**把出问题的壁纸设为唯一变量**（其它设置保持默认）能大幅加快定位。
+        - 插件**不会修改**你的壁纸文件；如果怀疑壁纸本身有缺陷，请同时联系壁纸作者。
+
+        ## 一键诊断（推荐）
+
+        **设置 → Wallpaper 壁纸 → 拉到最底部「关于」→「复制诊断信息」**，把复制到的内容粘到下方「诊断信息」框。
+        该能力 1.0 起提供；如果你的面板没有这个按钮，请手动填写下面标注 * 的字段。
+        诊断信息**不包含**你的本地路径、媒体曲目与封面，可以放心粘贴。
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: 诊断信息（推荐，1.0 起可用）
+      description: 「复制诊断信息」的完整结果；若没有该按钮可留空
+      render: text
+    validations:
+      required: false
+
+  - type: input
+    id: plugin-version
+    attributes:
+      label: 插件版本 *
+      description: 设置 → Wallpaper 壁纸 →「关于」；或 profile 的 `package.json`（`~/.dsh/profiles/web/package.json`）
+      placeholder: 例如 1.0.0 / 0.13.1
+    validations:
+      required: true
+
+  - type: input
+    id: dsh-version
+    attributes:
+      label: DSH 版本 *
+      description: "`dsh --version`；桌面版在「设置 → 关于」查看"
+      placeholder: 例如 0.2.0-rc.1
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: 操作系统 / 浏览器 *
+      description: Windows 版本、浏览器与版本；桌面版请注明「桌面版 App」
+      placeholder: 例如 Windows 11 23H2 + Chrome 131；或 Windows 10 + DSH 桌面版
+    validations:
+      required: true
+
+  - type: input
+    id: wallpaper
+    attributes:
+      label: 壁纸名称与 Workshop ID *
+      description: 例如「Crimson Horizon，ID 3765967112」；与具体壁纸无关时填「不适用」
+      placeholder: 壁纸标题，ID（steamapps/workshop/content/431960/<ID>/）
+    validations:
+      required: true
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: 问题类型 *
+      options:
+        - 画面整体黑屏 / 空白 / 不显示
+        - 画面局部黑块、错位、上下颠倒、偏色 / 过亮过暗
+        - 某个效果不动（粒子 / 水波 / 云 / 布料 / 文字 / 音频条）
+        - 视频壁纸无法播放或没有声音
+        - web 壁纸空白 / 鼠标跟随或声音无效
+        - 开机动画（不显示 / 声音 / 时序）
+        - 设置面板 / 壁纸库 / 用户属性异常
+        - 性能 / 显存 / 卡顿
+        - 其它
+    validations:
+      required: true
+
+  - type: textarea
+    id: symptom
+    attributes:
+      label: 现象 *（期望 vs 实际）
+      description: 哪里不对、从什么时候开始、是否稳定复现；方便的话附桌面版 Wallpaper Engine 的同画面截图对比（能立刻区分「我们的缺陷」和「原作者设定」）
+      placeholder: |
+        期望：……
+        实际：……
+        桌面版 WE 表现：……
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤 *
+      description: 从启动到出问题的操作顺序；注明壁纸是否唯一变量、是否改过设置 / 用户属性
+      placeholder: |
+        1. 打开 dsh web / 桌面版
+        2. 设置 → Wallpaper 壁纸 → 选择 …
+        3. 等待 … 秒
+        4. 现象出现
+    validations:
+      required: true
+
+  - type: textarea
+    id: console
+    attributes:
+      label: Console 日志
+      description: 开发者工具（F12）→ Console，搜 `[three]` / `[wallpaper-engine]` / `[warn]`，贴相关行（含报错全文与首行堆栈即可）
+      render: text
+      placeholder: |
+        [three] ……
+        [wallpaper-engine] ……
+    validations:
+      required: false
+
+  - type: upload
+    id: media
+    attributes:
+      label: 截图 / 录屏（可选）
+      description: 直接拖入图片或录屏更利于定位动态问题；注意打码聊天内容与个人路径
+    validations:
+      required: false
+      accept: ".png,.jpg,.jpeg,.gif,.webp,.mp4,.mov,.webm"
+
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: 确认
+      options:
+        - label: 我已读过 README「使用前请了解」，并确认这不是已记录的素材边界
+          required: true
+        - label: 我已搜索过现有 issue，没有找到相同问题
+          required: true
+        - label: 我理解插件不会修改壁纸文件；壁纸自身缺陷需要反馈给作者
+          required: true
