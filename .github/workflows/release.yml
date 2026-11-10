@@ -131,4 +131,12 @@ jobs:
           fi
           echo "将发布 $PKG"
       - name: npm publish（--provenance --tag latest）
-        run: npm publish --provenance --tag latest
+        shell: bash
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          # 幂等：该版本已发布（例如本地 token 发布先于 CI）时跳过，避免 tag 触发 release 红
+          if npm view "@dsh-use/wallpaper-engine@${VERSION}" version >/dev/null 2>&1; then
+            echo "npm 上已存在 ${VERSION}，跳过发布"
+            exit 0
+          fi
+          npm publish --provenance --tag latest
