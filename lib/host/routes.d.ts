@@ -10,6 +10,7 @@ export interface WallpaperRoutesOptions {
     state?: {
         wallpaperDir: string;
         weAssetsDir: string;
+        bootAnimationLocalPath?: string;
     };
     /** 插件数据目录（抓帧 PNG 落 <dataDir>/frames）；缺省时抓帧写接口 500。 */
     dataDir?: string;

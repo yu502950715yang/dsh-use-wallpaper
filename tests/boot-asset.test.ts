@@ -16,6 +16,9 @@ const UNC_PATHS = [
 
 let dir: string;
 let routes: Map<string, (req: any, res: any) => void>;
+// 1.0 S1 加固后：boot 两条路由只读配置的 bootAnimationLocalPath（query 仅供复述同一值）。
+// 用例通过改 state 值来「给用户配置一条路径」，再断言校验/下发行为。
+let state: { wallpaperDir: string; weAssetsDir: string; bootAnimationLocalPath: string };
 
 function makeCtx() {
   const webServer = {
@@ -47,7 +50,8 @@ function makeStreamRes() {
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'wp-boot-'));
   routes = new Map();
-  registerWallpaperRoutes(makeCtx(), { wallpaperDir: dir });
+  state = { wallpaperDir: dir, weAssetsDir: '', bootAnimationLocalPath: '' };
+  registerWallpaperRoutes(makeCtx(), { state });
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -123,6 +127,7 @@ describe('GET /wallpapers/boot/local-video', () => {
   });
   it('UNC / 网络路径 400（含混合分隔符）', async () => {
     for (const p of UNC_PATHS) {
+      state.bootAnimationLocalPath = p;
       const res = makeStreamRes();
       handler('/wallpapers/boot/local-video')(makeReq('/wallpapers/boot/local-video?path=' + encodeURIComponent(p)), res);
       await res.done;
@@ -132,6 +137,7 @@ describe('GET /wallpapers/boot/local-video', () => {
   it('合法 mp4 整块返回 200；Range 返回 206', async () => {
     const p = join(dir, 'clip.mp4');
     writeFileSync(p, Buffer.from('0123456789'));
+    state.bootAnimationLocalPath = p;
     const url = '/wallpapers/boot/local-video?path=' + encodeURIComponent(p);
 
     const res = makeStreamRes();
@@ -150,22 +156,26 @@ describe('GET /wallpapers/boot/local-video', () => {
     expect(res2.body.toString()).toBe('234');
   });
   it('相对路径 400、不存在 404', async () => {
+    state.bootAnimationLocalPath = 'a.mp4';
     const r1 = makeStreamRes();
     handler('/wallpapers/boot/local-video')(makeReq('/wallpapers/boot/local-video?path=a.mp4'), r1);
     await r1.done;
     expect(r1.statusCode).toBe(400);
+    state.bootAnimationLocalPath = join(dir, 'no.mp4');
     const r2 = makeStreamRes();
     handler('/wallpapers/boot/local-video')(makeReq('/wallpapers/boot/local-video?path=' + encodeURIComponent(join(dir, 'no.mp4'))), r2);
     await r2.done;
     expect(r2.statusCode).toBe(404);
   });
   it('NUL 路径 400；以 .mp4 结尾的目录 404', async () => {
+    state.bootAnimationLocalPath = join(dir, 'nul\0.mp4');
     const r1 = makeStreamRes();
     handler('/wallpapers/boot/local-video')(makeReq('/wallpapers/boot/local-video?path=' + encodeURIComponent(join(dir, 'nul\0.mp4'))), r1);
     await r1.done;
     expect(r1.statusCode).toBe(400);
 
     mkdirSync(join(dir, 'folder.mp4'));
+    state.bootAnimationLocalPath = join(dir, 'folder.mp4');
     const r2 = makeStreamRes();
     handler('/wallpapers/boot/local-video')(makeReq('/wallpapers/boot/local-video?path=' + encodeURIComponent(join(dir, 'folder.mp4'))), r2);
     await r2.done;
@@ -176,6 +186,7 @@ describe('GET /wallpapers/boot/local-video', () => {
     for (const [ext, mime] of cases) {
       const p = join(dir, 'clip' + ext);
       writeFileSync(p, 'x');
+      state.bootAnimationLocalPath = p;
       const res = makeStreamRes();
       handler('/wallpapers/boot/local-video')(makeReq('/wallpapers/boot/local-video?path=' + encodeURIComponent(p)), res);
       await res.done;
@@ -189,6 +200,7 @@ describe('GET /wallpapers/boot/probe', () => {
   it('存在返回元数据、非回环 403', async () => {
     const p = join(dir, 'probe.mp4');
     writeFileSync(p, '12345');
+    state.bootAnimationLocalPath = p;
     const res = makeStreamRes();
     handler('/wallpapers/boot/probe')(makeReq('/wallpapers/boot/probe?path=' + encodeURIComponent(p)), res);
     await res.done;
@@ -211,6 +223,7 @@ describe('GET /wallpapers/boot/probe', () => {
       expect(res.statusCode).toBe(403);
     }
     for (const p of UNC_PATHS) {
+      state.bootAnimationLocalPath = p;
       const res = makeStreamRes();
       handler('/wallpapers/boot/probe')(makeReq('/wallpapers/boot/probe?path=' + encodeURIComponent(p)), res);
       await res.done;
@@ -219,17 +232,20 @@ describe('GET /wallpapers/boot/probe', () => {
     }
   });
   it('NUL/相对路径 400、不存在/目录 404，错误体 ok:false', async () => {
+    state.bootAnimationLocalPath = join(dir, 'nul\0.mp4');
     const nul = makeStreamRes();
     handler('/wallpapers/boot/probe')(makeReq('/wallpapers/boot/probe?path=' + encodeURIComponent(join(dir, 'nul\0.mp4'))), nul);
     await nul.done;
     expect(nul.statusCode).toBe(400);
     expect(JSON.parse(nul.body.toString())).toMatchObject({ ok: false, exists: false, size: 0, playable: false });
 
+    state.bootAnimationLocalPath = 'a.mp4';
     const rel = makeStreamRes();
     handler('/wallpapers/boot/probe')(makeReq('/wallpapers/boot/probe?path=a.mp4'), rel);
     await rel.done;
     expect(rel.statusCode).toBe(400);
 
+    state.bootAnimationLocalPath = join(dir, 'no.mp4');
     const missing = makeStreamRes();
     handler('/wallpapers/boot/probe')(makeReq('/wallpapers/boot/probe?path=' + encodeURIComponent(join(dir, 'no.mp4'))), missing);
     await missing.done;
@@ -237,6 +253,7 @@ describe('GET /wallpapers/boot/probe', () => {
     expect(JSON.parse(missing.body.toString())).toMatchObject({ ok: false, exists: false, isFile: false });
 
     mkdirSync(join(dir, 'folder.mp4'));
+    state.bootAnimationLocalPath = join(dir, 'folder.mp4');
     const dirRes = makeStreamRes();
     handler('/wallpapers/boot/probe')(makeReq('/wallpapers/boot/probe?path=' + encodeURIComponent(join(dir, 'folder.mp4'))), dirRes);
     await dirRes.done;
@@ -246,6 +263,7 @@ describe('GET /wallpapers/boot/probe', () => {
   it('尾随空格与 local-video 一样 trim 后校验', async () => {
     const p = join(dir, 'trim.mp4');
     writeFileSync(p, 'abc');
+    state.bootAnimationLocalPath = p;
     const res = makeStreamRes();
     handler('/wallpapers/boot/probe')(makeReq('/wallpapers/boot/probe?path=' + encodeURIComponent(p + '  ')), res);
     await res.done;

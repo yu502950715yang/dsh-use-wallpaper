@@ -42,6 +42,13 @@
 - 粒子自旋轴序改为 WE 的 `Rz·Rx·Ry`（此前 `Rz·Ry·Rx`）：只影响多于一个轴的旋转，单轴（z-only）逐像素等价；对象 `angles` 路径不受影响。
 - 类型错误棘轮收紧已修复的 2 个键（`synthetic-library.test.ts|TS2339`、`verify-real-library.test.ts|TS2339`）；新增类型错误仍判红。
 
+### 安全（Security）
+
+- **web 壁纸沙箱加固**（2026-11-10，全项目安全审查发现）：
+  - 开机动画的 `/wallpapers/boot/local-video` 与 `/wallpapers/boot/probe` **不再接受任意 `?path=`**，只读设置里配置的那一个路径（`bootAnimationLocalPath`）。此前 web 壁纸 iframe 与插件路由同源，可借它把用户磁盘上**任意本地视频**读成字节并外传。
+  - `/wallpapers/web/*` 拒绝「已知 GUI 页面 Host」的请求：阻断壁纸 iframe 自我导航回 GUI origin、取回「GUI origin + 壁纸 HTML」组合后访问 `parent.document` / `localStorage` 的逃逸路径。
+  - `.html` / `.svg` / `.js` / `.xml` 等危险后缀在 scene / media 资产下载时强制 `application/octet-stream` + `Content-Disposition: attachment`；所有 `/wallpapers/*` 响应带 `X-Content-Type-Options: nosniff`；系统媒体封面 MIME 只放行 `image/*`。
+
 ### 移除（Removed）
 
 - DSH ≤0.1.6 旧设置路径相关代码与测试：`src/client/settings.ts` 的旧命名空间候选回退阶梯、`src/host/index.ts` 的旧 `settings.register` 分支、只为旧路径保留的非 volatile schema，以及 `tests/host-apply.test.ts` / `tests/client-settings.test.ts` 的 legacy 用例。

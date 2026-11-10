@@ -20,7 +20,7 @@ export interface WallpaperRoutesOptions {
   /** 兼容旧调用：静态 weAssetsDir（无 state 时使用） */
   weAssetsDir?: string;
   /** 可变运行状态：每次请求读取实时值（host/index.ts 维护，settings 热更新） */
-  state?: { wallpaperDir: string; weAssetsDir: string };
+  state?: { wallpaperDir: string; weAssetsDir: string; bootAnimationLocalPath?: string };
   /** 插件数据目录（抓帧 PNG 落 <dataDir>/frames）；缺省时抓帧写接口 500。 */
   dataDir?: string;
   /** 场景素材流式阈值（测试可调小；缺省 STREAM_ASSET_BYTES） */
@@ -122,6 +122,7 @@ function json(res: any, code: number, value: unknown, headers: Record<string, st
   res.writeHead(code, {
     'Content-Type': 'application/json; charset=utf-8',
     'Content-Length': body.length,
+    'X-Content-Type-Options': 'nosniff',
     ...headers,
   });
   res.end(body);
@@ -138,12 +139,22 @@ function sendTexture(res: any, body: Buffer): void {
     'Content-Type': 'application/octet-stream',
     'Content-Length': body.length,
     'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
   });
   res.end(body);
 }
 
+// 可由浏览器执行/解析的后缀：一律按二进制下载（防「用户素材 → GUI origin 执行」的同源 XSS）。
+// 正常 scene 资源（.tex/.ttf/.json/图片/音视频）不在此列。
+const DANGEROUS_EXTS = new Set(['.html', '.htm', '.xhtml', '.svg', '.js', '.mjs', '.cjs', '.xml']);
+
+function extOf(name: string): string {
+  return '.' + (name.split('.').pop() ?? '').toLowerCase();
+}
+
 function mimeOfAsset(name: string): string {
-  const ext = '.' + (name.split('.').pop() ?? '').toLowerCase();
+  const ext = extOf(name);
+  if (DANGEROUS_EXTS.has(ext)) return 'application/octet-stream';
   return MIME[ext] ?? 'application/octet-stream';
 }
 
@@ -176,6 +187,7 @@ function parseRangeHeader(value: unknown, size: number): { start: number; end: n
 // 场景素材统一出口：支持 Range/HEAD；大素材或音视频流式，小素材保持整块 Buffer
 function sendSceneAsset(req: any, res: any, name: string, source: SceneAssetSource, streamThreshold: number): void {
   const mime = mimeOfAsset(name);
+  const dangerous = DANGEROUS_EXTS.has(extOf(name));
   const size = source.size;
   const range = parseRangeHeader(req.headers?.range, size);
   if (range === 'invalid') {
@@ -185,6 +197,7 @@ function sendSceneAsset(req: any, res: any, name: string, source: SceneAssetSour
       'Accept-Ranges': 'bytes',
       'Content-Length': 0,
       'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
     });
     res.end();
     return;
@@ -196,7 +209,9 @@ function sendSceneAsset(req: any, res: any, name: string, source: SceneAssetSour
     'Content-Length': size === 0 ? 0 : end - start + 1,
     'Accept-Ranges': 'bytes',
     'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
   };
+  if (dangerous) headers['Content-Disposition'] = 'attachment';
   if (range) headers['Content-Range'] = `bytes ${start}-${end}/${size}`;
   const isHead = String(req.method ?? 'GET').toUpperCase() === 'HEAD';
   const stream = size >= streamThreshold || mime.startsWith('audio/') || mime.startsWith('video/');
@@ -317,7 +332,42 @@ function readBody(
 
 export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions): void {
   ctx.inject(['webServer'], (httpCtx: any) => {
-    const server = httpCtx.webServer;
+    const rawServer = httpCtx.webServer;
+    // S2 加固（2026-11-10）：记录「GUI 页面的 Host」——任何非 /web 路由被请求时记下（上限 8，FIFO）。
+    // /wallpapers/web 若收到这些 Host 的请求，说明壁纸 iframe 自我导航回 GUI origin 想拿壁纸文档
+    // （此时新文档 origin = GUI origin 且 sandbox 的 allow-same-origin 仍在 ⇒ 可访问 parent.document）⇒ 403。
+    // 壁纸 iframe 的承载 Host 是「另一回环主机名」（background-layer.planWebFrameOrigin），必然 != GUI Host。
+    const guiHosts = new Set<string>();
+    const rememberGuiHost = (req: any): void => {
+      const host = String(req?.headers?.host ?? '').trim().toLowerCase();
+      if (!host || guiHosts.has(host)) return;
+      guiHosts.add(host);
+      if (guiHosts.size > 8) {
+        const oldest = guiHosts.values().next().value;
+        if (oldest) guiHosts.delete(oldest);
+      }
+    };
+    // 统一包装 register：非 /web 路由在入口记录 GUI Host；/web 自身不记录（否则会把自己判成 GUI）。
+    const server = {
+      register: (route: { kind: string; path: string; handler: (req: any, res: any) => unknown }) => {
+        if (route.path === '/wallpapers/web') return rawServer.register(route);
+        const inner = route.handler;
+        return rawServer.register({
+          ...route,
+          handler: (req: any, res: any) => { rememberGuiHost(req); return inner(req, res); },
+        });
+      },
+    };
+    // S1 加固（2026-11-10）：boot 本地视频的唯一允许路径 = profile config 的 bootAnimationLocalPath。
+    // query 的 path 仅供 client 复述同一值（不一致或未配置 ⇒ 403，一个字节都不读）。
+    // 未配置时不得读任何文件 —— 此前 ?path= 接受任意绝对路径，同源 web 壁纸 iframe 可读任意本地视频。
+    const resolveConfiguredBootPath = (search: URLSearchParams) => {
+      const configured = (opts.state?.bootAnimationLocalPath ?? '').trim();
+      if (!configured) return { ok: false as const, code: 403 };
+      const requested = (search.get('path') ?? '').trim();
+      if (requested !== '' && requested !== configured) return { ok: false as const, code: 403 };
+      return resolveBootVideoPath(configured);
+    };
     // 每次请求解析实时目录：state（热更新）优先，兼容旧静态 wallpaperDir 参数
     const dir = () => opts.state?.wallpaperDir ?? opts.wallpaperDir ?? '';
     const assetsDir = () => opts.state?.weAssetsDir ?? opts.weAssetsDir;
@@ -435,7 +485,7 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
       handler: (req: any, res: any) => {
         if (!isLoopbackRequest(req)) return json(res, 403, { error: 'loopback only' });
         const { search } = parseUrl(req);
-        const parsed = resolveBootVideoPath(search.get('path'));
+        const parsed = resolveConfiguredBootPath(search);
         if (!parsed.ok) return json(res, parsed.code, { error: parsed.code === 404 ? 'not found' : 'bad path' });
         sendSceneAsset(req, res, parsed.file, {
           size: parsed.size,
@@ -452,7 +502,7 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
         if (!isLoopbackRequest(req)) return json(res, 403, { error: 'loopback only' });
         const { search } = parseUrl(req);
         // 与 local-video 共用同一套校验，保证 NUL/相对路径/目录/不存在 的 400/404 完全一致
-        const parsed = resolveBootVideoPath(search.get('path'));
+        const parsed = resolveConfiguredBootPath(search);
         if (!parsed.ok) {
           return json(res, parsed.code, {
             ok: false, exists: false, isFile: false, size: 0, playable: false,
@@ -632,6 +682,11 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
       // 匹配 /wallpapers/web/<id>/<path...>：web 壁纸静态文件服务（index.html 及其 css/js/img 等）
       handler: (_req: any, res: any) => {
         const { segs } = parseUrl(_req);
+        // S2：拒绝「从已知 GUI host 发起的壁纸文档请求」——壁纸 iframe 自我导航回 GUI origin 后，
+        // 同一路径会返回壁纸自己的 HTML，此时 origin = GUI origin 且 sandbox 的 allow-same-origin
+        // 仍在 ⇒ 可访问 parent.document。承载 Host 是另一回环主机名，必然不在此集合（2026-11-10）。
+        const reqHost = String(_req?.headers?.host ?? '').trim().toLowerCase();
+        if (reqHost && guiHosts.has(reqHost)) return json(res, 403, { error: 'gui origin not allowed' });
         if (segs.length < 3) return json(res, 400, { error: 'bad path' });
         const id = segs[2];
         if (!isSafeToken(id)) return json(res, 400, { error: 'bad id' });
@@ -663,6 +718,7 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
             'Content-Type': MIME[ext] ?? 'application/octet-stream',
             'Content-Length': out.length,
             'Cache-Control': 'no-store',
+            'X-Content-Type-Options': 'nosniff',
           });
           res.end(out);
         } catch {
@@ -748,10 +804,14 @@ export function registerWallpaperRoutes(ctx: any, opts: WallpaperRoutesOptions):
         if (!Number.isSafeInteger(rev) || rev <= 0) return json(res, 400, { error: 'bad rev' });
         const art = mediaSession.thumbnail(rev);
         if (!art) return json(res, 404, { error: 'no thumbnail' });
+        // 封面 MIME 白名单：只放行 image/*，其余回落 image/png（防应用上报 text/html 造成同源 XSS，2026-11-10）
+        const rawType = String(art.contentType ?? '').split(/[;\r\n]/)[0].trim().toLowerCase();
+        const safeType = /^image\/[a-z0-9.+-]+$/.test(rawType) ? rawType : 'image/png';
         res.writeHead(200, {
-          'Content-Type': art.contentType || 'image/png',
+          'Content-Type': safeType,
           'Content-Length': art.bytes.length,
           'Cache-Control': 'no-store',
+          'X-Content-Type-Options': 'nosniff',
         });
         res.end(art.bytes);
       },

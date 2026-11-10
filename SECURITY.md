@@ -43,7 +43,7 @@ host 侧注册的所有 `/wallpapers/*` 路由都是**只读本地文件 / 元�
 
 | 路由 | 读取范围 | 防护 |
 |---|---|---|
-| `/wallpapers/boot/local-video`、`/wallpapers/boot/probe` | 用户指定的**单个本地视频文件** | **仅回环来源**：`remoteAddress` 与 `Host` 头都必须是 `127.0.0.1` / `localhost` / `::1`（防 DNS rebinding）；拒绝 UNC / 网络路径（含 `\\`、`//` 与混合分隔符，防 SMB/NTLM 凭据泄露）；要求绝对路径 + 扩展名白名单（`.mp4`/`.webm`/`.mov`/`.m4v`/`.ogv`）；Range/HEAD 流式 |
+| `/wallpapers/boot/local-video`、`/wallpapers/boot/probe` | **只读设置里配置的单个本地视频路径**（profile config 的 `bootAnimationLocalPath`）；query 的 `path` 只能复述同一值，未配置或不一致一律 403 | **仅回环来源**：`remoteAddress` 与 `Host` 头都必须是 `127.0.0.1` / `localhost` / `::1`（防 DNS rebinding）；拒绝 UNC / 网络路径（含 `\\`、`//` 与混合分隔符，防 SMB/NTLM 凭据泄露）；要求绝对路径 + 扩展名白名单（`.mp4`/`.webm`/`.mov`/`.m4v`/`.ogv`）；Range/HEAD 流式 |
 | `/wallpapers/scene/<id>/…` | 该壁纸目录内 `scene.pkg` 的条目 | id 白名单；资源名白名单且拒绝 `..`；`no-store` |
 | `/wallpapers/media/<id>/…`、`/wallpapers/web/<id>/…` | 该壁纸目录内的 preview / 视频 / 网页静态文件 | id 白名单；逐段拒绝 `..`/绝对路径；结果必须落在壁纸目录内；HTML 只注入本插件的指针/声音 shim |
 | `/wallpapers/particle-texture` | 壁纸 `scene.pkg` 或 `<WE>/assets/materials` 的纹理 | 路径白名单 + 根目录前缀校验；只能是 `.tex` |
@@ -51,7 +51,8 @@ host 侧注册的所有 `/wallpapers/*` 路由都是**只读本地文件 / 元�
 | `/wallpapers/frame/<id>` | 插件数据目录内的 `<id>.png` | id 正则（禁 `..`）；POST 仅 `image/png` 且单张 ≤12MB；原子写 |
 | `/wallpapers/list`、`/wallpapers/probe`、`/wallpapers/properties`、`/wallpapers/now-playing*` | 元数据（壁纸列表、自动探测到的 Steam 路径、属性 schema、系统媒体快照） | 只读；不写文件、不执行壁纸内容 |
 
-- **不提供任意文件读取**：没有任何路由接受「绝对路径 + 任意扩展名」并直接回文件；开机动画路由是最接近的一条，已被严格限制到单个视频文件 + 回环来源。
+- **不提供任意文件读取**：没有任何路由接受「绝对路径 + 任意扩展名」并直接回文件。开机动画两条路由 1.0 起**只读 profile config 里配置的那一个路径**（`bootAnimationLocalPath`），query 的 `path` 只能复述该值——2026-11-10 加固：此前 `?path=` 允许任意绝对路径，而同源 web 壁纸 iframe 可以调用它把任意本地视频读成字节。
+- **危险后缀一律二进制下载**：`.html` / `.svg` / `.js` / `.xml` 等可由浏览器执行/解析的后缀，在 scene / media 资产下载时强制 `application/octet-stream` + `Content-Disposition: attachment`；所有 `/wallpapers/*` 响应带 `X-Content-Type-Options: nosniff`（防「用户素材 → GUI origin 执行」的同源 XSS）。
 - 写操作只有抓帧 `POST /wallpapers/frame/<id>`，且只写插件自己的数据目录。
 
 ### 4.2 壁纸脚本沙箱
@@ -69,6 +70,7 @@ web 壁纸是第三方网页，加载在 **与宿主 GUI 不同源**的 iframe �
 
 - 承载 origin 优先级（`background-layer.ts`）：① 桌面壳公布的宿主 HTTP origin（`__DSH_TRANSPORT__.streamBaseUrl`）；② 回环页换**另一个回环主机名**（`127.0.0.1` ↔ `localhost`）并探活；③ 其余（局域网 IP / 隧道）退回 **opaque origin**（`sandbox="allow-scripts"`，无 `allow-same-origin`）。
 - iframe 与宿主页跨源，因此**拿不到宿主 GUI 的 DOM、localStorage、设置与插件 API 对象**；宿主与 iframe 的交互只有 `postMessage` 的指针坐标与声音开关/音量（只发给可见帧）。
+- **承载 Host 绑定（2026-11-10）**：`/wallpapers/web/*` 若收到「已知 GUI 页面的 Host」（任一非 `/web` 插件路由被请求时记录），一律 403。否则壁纸 iframe 可以 `location.href` 导航回 GUI origin 的同一路径，拿回「GUI origin + 壁纸自己的 HTML」的组合，借 sandbox 的 `allow-same-origin` 访问 `parent.document`。承载 Host 是另一回环主机名，与 GUI Host 天然不同。
 - 插件向 web 壁纸 HTML 注入的 shim（鼠标跟随、声音控制）是本插件的受控代码，只合成 mouse 事件、设置页内 `<audio>/<video>` 的 `muted/volume`；CSP 禁内联脚本的页面注入会被拦，插件保持网页原样。
 
 ### 4.4 不联网、无遥测、落盘边界
@@ -102,7 +104,7 @@ web 壁纸是第三方网页，加载在 **与宿主 GUI 不同源**的 iframe �
 
 ### 5.2 第三方 web 壁纸本身就是不可信网页
 
-插件不限制 web 壁纸页面自身的脚本与网络请求（那是网页的固有行为），也无法在跨源 iframe 里审计它。它拿不到宿主 GUI 数据，但可能访问与它同源的本地服务路径。**只安装来源可信的 web 壁纸**；不需要 web 壁纸时直接选别的类型。
+插件不限制 web 壁纸页面自身的脚本与网络请求（那是网页的固有行为），也无法在跨源 iframe 里审计它。**1.0 起**：它拿不到宿主 GUI 的 DOM / localStorage、不能借 boot 路由读任意本地视频、不能借 `/wallpapers/web` 导航回 GUI origin 取回自身 HTML；但它仍然同源，可以调用 `/wallpapers/list`、`/wallpapers/properties`、`/wallpapers/frame` 等只读元数据 / 抓帧路由（见 §5.1）。**只安装来源可信的 web 壁纸**；不需要 web 壁纸时直接选别的类型。
 
 ### 5.3 媒体集成会向壁纸暴露系统媒体信息
 

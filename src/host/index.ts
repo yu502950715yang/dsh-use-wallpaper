@@ -19,6 +19,8 @@ export interface WallpaperEngineConfig {
   wallpaperDir?: string;
   weAssetsDir?: string;
   mediaIntegrationEnabled?: boolean;
+  /** 开机动画本地视频路径（boot 两条路由的唯一允许读取路径，1.0 S1 加固）。 */
+  bootAnimationLocalPath?: string;
 }
 
 // 可变运行状态：路由每次请求读取实时值（见 routes.ts 的 dir()/assetsDir()）。
@@ -26,6 +28,8 @@ export interface WallpaperRuntimeState {
   wallpaperDir: string;
   weAssetsDir: string;
   mediaIntegrationEnabled: boolean;
+  /** 开机动画本地视频路径：boot 两条路由的**唯一**允许读取路径（1.0 S1 加固，见 routes.ts）。 */
+  bootAnimationLocalPath: string;
 }
 
 // Cordis 函数插件：config 作为第二参数传入（loader 注入）。
@@ -47,6 +51,8 @@ export function apply(ctx: any, config?: WallpaperEngineConfig): void {
       const v = configValue(config).mediaIntegrationEnabled;
       return typeof v === 'boolean' ? v : true;
     },
+    // boot 本地视频只读这一条配置路径（1.0 S1：此前 ?path= 接受任意绝对路径，同源 web 壁纸可读任意本地视频）。
+    get bootAnimationLocalPath() { return configValue(config).bootAnimationLocalPath || ''; },
   };
   ctx.inject(['settings'], (settingsCtx: any) => {
     const settings = settingsCtx?.settings;

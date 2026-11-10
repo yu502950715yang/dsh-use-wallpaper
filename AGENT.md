@@ -219,6 +219,8 @@ npx vitest run tests/xxx.test.ts --reporter=basic   # 跑单个文件
 
 59. **sampler 的 `default` 注解 = 缺槽时的引擎默认资产（2026-11-06）**：`uniform sampler2D g_TextureN; // {"default":"gradient/gradient_ferro_fluid"}` 表示 scene.json 的 textures 数组没给该槽时用**引擎默认资产**；旧实现只按 `mode` 注解绑空槽常量（gradient 无 mode ⇒ 槽永远空 ⇒ 采样得 0 ⇒ shimmer 静默无效）。`effect-chain` 采集 `samplerDefaults`（只收带 `/` 的路径型默认值），`effect-runner.slotDefaultPath` 在「`textures[j]` 为空且 mode 常量兜底不适用」时加载该资产（pkg 优先 → WE 安装目录 assets 兜底，走 host 既有 `util/*`/`materials/*` 路由）；**mode 常量仍优先**（既有空槽语义与 29 处同类槽的既有行为不变）。本机库命中 29 处（clouds/pulse/vhs/filmgrain 等的 util/clouds_256、util/noise 默认）。
 
+60. **web 壁纸沙箱的两条安全边界（2026-11-10，1.0 加固，勿回退）**：① **boot 本地视频只读配置**——`/wallpapers/boot/local-video|probe` 的唯一允许路径是 profile config 的 `bootAnimationLocalPath`，query 的 `path` 只能复述同一值（不一致/未配置 ⇒ 403）；web 壁纸 iframe 与插件路由**同源**（承载在另一回环主机名上），所以「回环来源」校验挡不住它，不能再用 `?path=` 当通用文件读取。② **`/wallpapers/web` 承载 Host 绑定**——任何非 `/web` 路由被请求时把 Host 记入 `guiHosts`（上限 8，FIFO），`/web` 收到这些 Host ⇒ 403（否则 iframe 自我导航回 GUI origin 取回「壁纸 HTML + GUI origin」组合即可拿 `parent.document`）。危险后缀（`.html/.svg/.js/.xml`）在 scene/media 资产一律 `octet-stream` + attachment，全路由 `nosniff`，封面 MIME 只放行 `image/*`。判据：`tests/security-sandbox.test.ts` + `tests/boot-asset.test.ts`。
+
 ## 6. 工作约定
 
 - 回复、注释、文档、**提交信息一律简体中文**；代码、命令、文件名、技术术语保留原文。
