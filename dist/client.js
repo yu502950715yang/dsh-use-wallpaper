@@ -28749,6 +28749,61 @@ function applyCompositeSampling(rt, worldW, worldH, screenScale) {
   if (flipped) rt.dispose();
 }
 
+// src/client/layer-factory.ts
+function attachIsolated(deps, args) {
+  const {
+    objectId,
+    kind,
+    content,
+    worldW,
+    worldH,
+    size,
+    position,
+    quadAngles,
+    colorBlendMode,
+    renderOrder,
+    compositeOpacity = 1,
+    attachQuad = true,
+    puppet
+  } = args;
+  const rtW = Math.max(1, Math.round(size.width));
+  const rtH = Math.max(1, Math.round(size.height));
+  const isFlatContent = kind === "background" && Math.abs(worldW) >= deps.sceneWidth * 0.98 && Math.abs(worldH) >= deps.sceneHeight * 0.98 || kind === "puppet";
+  const rt = new WebGLRenderTarget(rtW, rtH, { samples: isFlatContent ? 0 : 4 });
+  applyCompositeSampling(rt, worldW, worldH, deps.screenScale);
+  const camW = Math.max(1, Math.abs(worldW));
+  const camH = Math.max(1, Math.abs(worldH));
+  const localCamera = new OrthographicCamera(-camW / 2, camW / 2, -camH / 2, camH / 2, -1e3, 1e3);
+  localCamera.position.z = CAMERA_DISTANCE;
+  const localScene = new Scene();
+  localScene.add(content);
+  const compositeGeometry = createCompositeGeometry(worldW, worldH, camW, camH);
+  flipGeometryUvY(compositeGeometry);
+  const quad = new Mesh(
+    compositeGeometry,
+    createCompositeQuadMaterial(rt.texture, colorBlendMode, compositeOpacity)
+  );
+  quad.position.set(position.x, position.y, position.z);
+  quad.rotation.set(quadAngles[0], quadAngles[1], quadAngles[2]);
+  quad.renderOrder = renderOrder ?? (kind === "particle" ? 1 : 0);
+  if (attachQuad) deps.scene.add(quad);
+  deps.isolated.set(objectId, {
+    id: objectId,
+    kind,
+    rt,
+    rtWidth: rtW,
+    rtHeight: rtH,
+    rtTexture: rt.texture,
+    localScene,
+    localCamera,
+    quad,
+    quadAttached: attachQuad,
+    puppet,
+    worldW,
+    worldH
+  });
+}
+
 // src/client/util-material.ts
 function resolveUtilMaterial(layerKind, overrides = {}) {
   const color = overrides.color ?? [255, 255, 255];
@@ -30119,42 +30174,30 @@ var ThreeScenePlayer = class {
   // compositeOpacity（缺省 1）只由 util 层传对象 alpha：其内容占位透明、效果输出自带 alpha，
   // 对象 alpha 只能在最终合成这一步收口；image/particle 的 alpha 已烘进 RT，不得二次施加。
   attachIsolated(objectId, kind, content, worldW, worldH, size, position, quadAngles, colorBlendMode, renderOrder, compositeOpacity = 1, attachQuad = true, puppet) {
-    const rtW = Math.max(1, Math.round(size.width));
-    const rtH = Math.max(1, Math.round(size.height));
-    const isFlatContent = kind === "background" && Math.abs(worldW) >= this.sceneWidth * 0.98 && Math.abs(worldH) >= this.sceneHeight * 0.98 || kind === "puppet";
-    const rt = new WebGLRenderTarget(rtW, rtH, { samples: isFlatContent ? 0 : 4 });
-    applyCompositeSampling(rt, worldW, worldH, this.screenScalePx());
-    const camW = Math.max(1, Math.abs(worldW));
-    const camH = Math.max(1, Math.abs(worldH));
-    const localCamera = new OrthographicCamera(-camW / 2, camW / 2, -camH / 2, camH / 2, -1e3, 1e3);
-    localCamera.position.z = CAMERA_DISTANCE;
-    const localScene = new Scene();
-    localScene.add(content);
-    const compositeGeometry = createCompositeGeometry(worldW, worldH, camW, camH);
-    flipGeometryUvY(compositeGeometry);
-    const quad = new Mesh(
-      compositeGeometry,
-      createCompositeQuadMaterial(rt.texture, colorBlendMode, compositeOpacity)
+    attachIsolated(
+      {
+        sceneWidth: this.sceneWidth,
+        sceneHeight: this.sceneHeight,
+        screenScale: this.screenScalePx(),
+        scene: this.scene,
+        isolated: this.isolated
+      },
+      {
+        objectId,
+        kind,
+        content,
+        worldW,
+        worldH,
+        size,
+        position,
+        quadAngles,
+        colorBlendMode,
+        renderOrder,
+        compositeOpacity,
+        attachQuad,
+        puppet
+      }
     );
-    quad.position.set(position.x, position.y, position.z);
-    quad.rotation.set(quadAngles[0], quadAngles[1], quadAngles[2]);
-    quad.renderOrder = renderOrder ?? (kind === "particle" ? 1 : 0);
-    if (attachQuad) this.scene.add(quad);
-    this.isolated.set(objectId, {
-      id: objectId,
-      kind,
-      rt,
-      rtWidth: rtW,
-      rtHeight: rtH,
-      rtTexture: rt.texture,
-      localScene,
-      localCamera,
-      quad,
-      quadAttached: attachQuad,
-      puppet,
-      worldW,
-      worldH
-    });
   }
   // 更新背景图层状态，对齐既有 update_image 语义——undefined = 保持现状；与当前状态相等的字段跳过；
   // 未知 id → no-op。origin 是 WE 场景坐标，中心化后写承载位置的 node（隔离 = 合成 quad，内容 mesh 在 RT 内恒 0）。

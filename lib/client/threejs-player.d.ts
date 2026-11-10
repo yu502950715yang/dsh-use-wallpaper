@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { GlowStage } from './glow-stage.js';
 import type { FrameCapture } from './frame-capture.js';
 import type { ClockDriver } from './text-object.js';
+import type { IsolatedObject } from './layer-factory.js';
 import type { UtilContentCover } from './util-content-runtime.js';
 import type { ParallaxConfig, PointerState } from './parallax.js';
 import type { PuppetInstance } from './puppet.js';
@@ -35,26 +36,7 @@ export declare const BLACKMYTH_OBJ_SCALE: [number, number, number];
 export declare function simEmitterOffset(emitterOrigin: [number, number, number]): [number, number, number];
 export declare function particleCapacity(declaredMax: number, aliveAtCreate: number): number;
 export { colorBlendModeToThree } from './layer-material-factory.js';
-export interface IsolatedObject {
-    /** 键 = scene.json 的**对象 id**（不是本类图层的计数器 id，见 attachIsolated 注释）。 */
-    id: number;
-    kind: 'background' | 'particle' | 'puppet';
-    rt: THREE.WebGLRenderTarget;
-    rtWidth: number;
-    rtHeight: number;
-    rtTexture: THREE.Texture;
-    localScene: THREE.Scene;
-    localCamera: THREE.OrthographicCamera;
-    /** 合成 quad（puppet 条目也建，但**不加入主场景**：只承载世界位置/旋转给 effectScreenMatrix 与释放）。 */
-    quad: THREE.Mesh;
-    /** 合成 quad 是否真的挂在主场景（puppet = false）。 */
-    quadAttached: boolean;
-    /** puppet 条目：效果链输出要写回它的材质 map（见 setObjectOutput）。 */
-    puppet?: PuppetInstance;
-    /** 合成 quad 的世界尺寸（= |对象 size/dist × scale|，未钳制幅值），resize 重建几何时用。 */
-    worldW: number;
-    worldH: number;
-}
+export type { IsolatedObject } from './layer-factory.js';
 export interface ObjectEffectStage {
     bindOutputs(): void;
     advance(time: number): void;
