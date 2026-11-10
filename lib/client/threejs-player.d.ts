@@ -34,12 +34,7 @@ export declare function specEmitterOrigin(specJson: string): [number, number, nu
 export declare const BLACKMYTH_OBJ_SCALE: [number, number, number];
 export declare function simEmitterOffset(emitterOrigin: [number, number, number]): [number, number, number];
 export declare function particleCapacity(declaredMax: number, aliveAtCreate: number): number;
-/** WE `colorBlendMode` → three `CustomBlending` 设置；未实现的模式返回 null。 */
-export declare function colorBlendModeToThree(mode: number): {
-    blendEquation: THREE.BlendingEquation;
-    blendSrc: THREE.BlendingSrcFactor | THREE.BlendingDstFactor;
-    blendDst: THREE.BlendingDstFactor;
-} | null;
+export { colorBlendModeToThree } from './layer-material-factory.js';
 export interface IsolatedObject {
     /** 键 = scene.json 的**对象 id**（不是本类图层的计数器 id，见 attachIsolated 注释）。 */
     id: number;
@@ -314,10 +309,6 @@ export declare class ThreeScenePlayer {
             worldH: number;
         };
     }): number;
-    private createLayerMaterial;
-    private createUtilLayerMaterial;
-    private createCompositeQuadMaterial;
-    private applyCompositeSampling;
     private attachIsolated;
     update_background(id: number, origin?: [number, number, number], scale?: [number, number, number], alpha?: number, brightness?: number): void;
     resizeBackground(id: number, size: [number, number]): void;

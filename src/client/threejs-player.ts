@@ -29,6 +29,7 @@ import { ParallaxRuntime } from './parallax-runtime.js';
 import { SpriteSheetRuntime } from './sprite-sheet-runtime.js';
 import { UtilContentRuntime } from './util-content-runtime.js';
 import { VisualizerRuntime } from './visualizer-runtime.js';
+import { createWhiteTexture, createLayerMaterial, createUtilLayerMaterial, createCompositeQuadMaterial, applyCompositeSampling } from './layer-material-factory.js';
 import type { UtilContentCover } from './util-content-runtime.js';
 import type { ParallaxConfig, PointerState } from './parallax.js';
 // puppet（.mdl 蒙皮网格）：实例由调用方装配，本类只负责挂进场景、逐帧采样动画与释放。
@@ -535,65 +536,8 @@ void main() {
 }
 `;
 
-// 无纹理（opts.tex 缺省）时的 1×1 白色兜底（同 scene-renderer.createWhiteDataTexture 语义）：
-// 纯色粒子不依赖纹理内容，颜色/透明度由 vParticleColor/vParticleAlpha 给定。
-function createWhiteTexture(): THREE.DataTexture {
-  const tex = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
-  tex.needsUpdate = true;
-  return tex;
-}
-
-// ── WE 图像颜色混合模式（`colorBlendMode` → shader combo `BLENDMODE`）────────────────────────
-//
-// image 对象带 `colorBlendMode != 0` 时 WE 会**额外追加一遍混合 pass**（材质
-// `materials/util/effectpassthrough.json`，shader = `genericimage3`；lwe `CImage.cpp:751-767`），片元逻辑：
-//   rgb = ApplyBlending(BLENDMODE, screen.rgb, gl_FragColor.rgb, gl_FragColor.a);  a = screen.a
-// `ApplyBlending`（`shaders/common_blending.h`）= `mix(A, F(A,B), op)`，A=背景、B=对象颜色、op=对象
-// alpha ⇒ three 侧用 `CustomBlending` + **预乘片元**（rgb × alpha）复刻，使
-// `result = src·srcFactor + dst·dstFactor` 与 `mix(A, F(A,B), op)` 等价。已实现的三个模式
-// （= 全库仅有的三个非零值）：7 Screen（src=op·B, srcFactor=ONE_MINUS_DST_COLOR, dst=ONE —— B=0
-// 时结果 = A ⇒ **黑底完全不改变背景**）、31 A+B·op（src=op·B, ONE/ONE）、6 Lighten（equation=MAX）。
-// 其余模式（1..5/8..30/32）未实现 → 返回 null，调用方回退普通 alpha 混合（不静默画错）。
-/** WE `colorBlendMode` → three `CustomBlending` 设置；未实现的模式返回 null。 */
-export function colorBlendModeToThree(mode: number): {
-  blendEquation: THREE.BlendingEquation;
-  blendSrc: THREE.BlendingSrcFactor | THREE.BlendingDstFactor;
-  blendDst: THREE.BlendingDstFactor;
-} | null {
-  switch (mode) {
-    case 7: // Screen
-      return { blendEquation: THREE.AddEquation, blendSrc: THREE.OneMinusDstColorFactor, blendDst: THREE.OneFactor };
-    case 31: // A + B×opacity（加算）
-      return { blendEquation: THREE.AddEquation, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor };
-    case 6: // Lighten（op≈1 时 = max(A,B)）
-      return { blendEquation: THREE.MaxEquation, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor };
-    default:
-      return null;
-  }
-}
-
-// 带 colorBlendMode 的背景片元 shader：与 MeshBasicMaterial 的贴图路径语义一致
-// （纹理 × tint，alpha = texel.a × opacity），但**预乘输出** —— WE 公式里需要 `op·B`
-// （op = 对象 alpha），不预乘就拿不到这个乘数（`ONE_MINUS_DST_COLOR` 等因子只看 dst）。
-const COLOR_BLEND_FRAGMENT_SHADER = `
-uniform sampler2D map;
-uniform vec3 tint;
-uniform float opacity;
-varying vec2 vUv;
-void main() {
-  vec4 c = texture2D(map, vUv);
-  float a = c.a * opacity;
-  gl_FragColor = vec4(c.rgb * tint * a, a);
-}
-`;
-
-const COLOR_BLEND_VERTEX_SHADER = `
-varying vec2 vUv;
-void main() {
-  vUv = uv;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-}
-`;
+// 材质/混合/shader 工厂已迁入 layer-material-factory.ts（审查 P0-9 阶段 2c）。
+export { colorBlendModeToThree } from './layer-material-factory.js';
 
 // 对象隔离条目（对象级效果链）：带 effects 的对象不直接画进主场景，而是
 //   ① 内容进 localScene（对象中心 = 局部原点），渲染到 rt；
@@ -863,7 +807,7 @@ export class ThreeScenePlayer {
     // ③ 合成采样标志随**视口**重估（视口变化是密度变化的唯一入口）：编排器在「RT 像素尺寸未变」
     //    时会跳过 resizeObjectRT，而源纹理收口 4096 时新老尺寸可能恰好相同（判定反转却无重估 ⇒ 走样）。
     for (const entry of this.isolated.values()) {
-      this.applyCompositeSampling(entry.rt, entry.worldW, entry.worldH);
+      applyCompositeSampling(entry.rt, entry.worldW, entry.worldH, this.screenScalePx());
     }
   }
 
@@ -1631,7 +1575,7 @@ export class ThreeScenePlayer {
     }
     // ⚠️ 采样标志必须随**视口**重估，不能只在尺寸变化时算：resize 只改变屏占位，而 RT 像素尺寸
     // 可能不变（源纹理收口 4096 顶着上限）⇒ 本调用放在尺寸早退分支**之外**。
-    this.applyCompositeSampling(entry.rt, entry.worldW, entry.worldH);
+    applyCompositeSampling(entry.rt, entry.worldW, entry.worldH, this.screenScalePx());
   }
 
   // 渲染所有隔离对象的内容到各自 RT（player 拥有 scene/camera，故渲染留在 player）。
@@ -1742,12 +1686,12 @@ export class ThreeScenePlayer {
     // ⚠️ 隔离对象（opts.isolate）走 forIsolation=true：内容材质**不套** cb，混合语义全部交给
     // 合成 quad（见 createLayerMaterial / createCompositeQuadMaterial 注释）。
     const material = opts.util
-      ? this.createUtilLayerMaterial(
+      ? createUtilLayerMaterial(
         resolveUtilMaterial(opts.util, { color: opts.color, alpha: opts.alpha }),
         !!opts.isolate,
         opts.brightness,
       )
-      : this.createLayerMaterial(opts.texture ?? null, opts.colorBlendMode ?? 0, mod, !!opts.isolate);
+      : createLayerMaterial(opts.texture ?? null, opts.colorBlendMode ?? 0, mod, !!opts.isolate);
     const mesh = new THREE.Mesh(geometry, material);
     // text 图层的静态色已烘进 canvas；打标让 applyLayerState 跳过脚本/时间线 color（否则文字被二次乘暗）。
     if (opts.disableDynamicColor) material.userData.dynamicColorDisabled = true;
@@ -1936,129 +1880,6 @@ export class ThreeScenePlayer {
   // 图层材质（**内容**材质）：colorBlendMode 已实现（6/7/31）→ 预乘 ShaderMaterial +
   // CustomBlending（复刻 WE 的 ApplyBlending）；否则 MeshBasicMaterial（普通 alpha 混合）。
   // 隔离对象的合成 quad **不**用它，而用 createCompositeQuadMaterial（见该方法注释）。
-  private createLayerMaterial(
-    texture: THREE.Texture | null,
-    colorBlendMode: number,
-    mod: { r: number; g: number; b: number; a: number },
-    forIsolation = false,
-  ): THREE.Material {
-    // 隔离路径（forIsolation=true）：内容只把「自己的颜色与 alpha」写进**新清空的 RT**，WE 的
-    // colorBlendMode 混合语义由**合成 quad** 承担（见 createCompositeQuadMaterial）⇒ 这里
-    // **不套用** cb 的 CustomBlending，否则：① alpha 因子 Zero/One 在 RT 里没有背景可保持 ⇒
-    // RT alpha 恒 0 ⇒ 预乘片元被乘成 0 ⇒ 对象整体不可见；② 预乘写进 RT 后 quad 再预乘 ⇒ rgb × a²。
-    const cb = forIsolation ? null : colorBlendModeToThree(colorBlendMode);
-    if (cb) {
-      return new THREE.ShaderMaterial({
-        uniforms: {
-          map: { value: texture ?? createWhiteTexture() },
-          tint: { value: new THREE.Vector3(mod.r, mod.g, mod.b) },
-          opacity: { value: mod.a },
-        },
-        vertexShader: COLOR_BLEND_VERTEX_SHADER,
-        fragmentShader: COLOR_BLEND_FRAGMENT_SHADER,
-        transparent: true,
-        // 背景是透明图层，不写深度（避免干扰其他透明对象）。粒子 depthTest=false 不受影响。
-        depthWrite: false,
-        side: THREE.DoubleSide,
-        blending: THREE.CustomBlending,
-        blendEquation: cb.blendEquation,
-        blendSrc: cb.blendSrc,
-        blendDst: cb.blendDst,
-        // WE：`gl_FragColor.a = screen.a` —— 结果 alpha 取**背景**的（自己的 alpha 只当混合权重）。
-        blendSrcAlpha: THREE.ZeroFactor,
-        blendDstAlpha: THREE.OneFactor,
-      });
-    }
-    const basic = new THREE.MeshBasicMaterial({
-      map: texture ?? null,
-      transparent: true,
-      depthWrite: false,
-      // 隔离路径：WE 在对象有多个 pass 时把**首个 pass 强制成 BlendingMode_Normal（ONE/ZERO 覆盖）**
-      // （lwe CImage.cpp：`(*first)->setBlendingMode(BlendingMode_Normal)`）⇒ 覆盖写，RT.rgb 保持
-      // 非预乘、透明度只走 alpha（AGENT.md §5.25）。
-      blending: forIsolation ? THREE.NoBlending : THREE.NormalBlending,
-      // 隔离内容渲染进**y 镜像的局部相机**（对象 RT 取 WE 的 v 约定，见 attachIsolated）⇒ 屏幕空间
-      // 绕序被翻转，正面朝外的 quad 会被背面剔除（对象整体消失）⇒ 隔离路径必须双面。
-      side: forIsolation ? THREE.DoubleSide : THREE.FrontSide,
-    });
-    basic.color.setRGB(mod.r, mod.g, mod.b);
-    basic.opacity = mod.a;
-    return basic;
-  }
-
-  // util 层内容材质（v0.8.2 F2）：solid = 纯色（color×brightness、opacity=alpha）；直通 = 透明占位
-  //（真实内容由效果链/整帧快照覆盖，首帧无内容时不得白屏）。隔离混合约定与 createLayerMaterial 一致。
-  private createUtilLayerMaterial(spec: UtilMaterialSpec, forIsolation: boolean, brightness?: number): THREE.Material {
-    if (spec.kind === 'solid') {
-      const mod = materialModulation(spec.color, spec.opacity, brightness);
-      const solid = new THREE.MeshBasicMaterial({
-        transparent: true,
-        depthWrite: false,
-        blending: forIsolation ? THREE.NoBlending : THREE.NormalBlending,
-        side: forIsolation ? THREE.DoubleSide : THREE.FrontSide,
-      });
-      solid.color.setRGB(mod.r, mod.g, mod.b);
-      solid.opacity = mod.a;
-      return solid;
-    }
-    return new THREE.MeshBasicMaterial({
-      color: 0xffffff,
-      transparent: true,
-      // 透明占位：内容由 T3 的整帧快照/效果链输出提供。
-      opacity: 0,
-      depthWrite: false,
-      blending: forIsolation ? THREE.NoBlending : THREE.NormalBlending,
-      side: forIsolation ? THREE.DoubleSide : THREE.FrontSide,
-    });
-  }
-
-  // 合成 quad 的材质：只负责「把对象 RT 的像素采样回主场景」。三点关键（都踩过）：
-  //   ① 必须独立构造，**不能 clone 内容材质**——粒子内容材质依赖逐实例属性，普通 PlaneGeometry 没有
-  //      这些属性会让 alpha 恒为 0（粒子完全不可见）；
-  //   ② **不再二次施加** alpha/brightness/color 调制（内容材质已把调制烘进 RT，再乘一次 alpha 变 a²）；
-  //   ③ 统一用 MeshBasicMaterial，只有 cb 分支额外开 `premultipliedAlpha`。
-  // WE 的 `ApplyBlending` 语义在**合成这一步**用 CustomBlending 因子复刻（alpha 取背景的 ⇒ Zero/One）；
-  // 带非零 angles 的对象由 quad 承载旋转，超过 90° 会翻转绕序 ⇒ 与内容材质一致用 DoubleSide。
-  private createCompositeQuadMaterial(
-    texture: THREE.Texture,
-    colorBlendMode: number,
-    opacity = 1,
-  ): THREE.Material {
-    const mat = new THREE.MeshBasicMaterial({
-      map: texture, transparent: true, depthWrite: false, side: THREE.DoubleSide,
-      // 缺省 1 = 中性合成（image/particle 的 alpha 已烘进 RT，再乘一次是二次调制）；仅 util 层
-      // 传入对象 alpha（内容占位/效果输出都不承载它）。
-      opacity: Math.max(0, Math.min(1, opacity)),
-    });
-    const cb = colorBlendModeToThree(colorBlendMode);
-    if (cb) {
-      mat.blending = THREE.CustomBlending;
-      mat.blendEquation = cb.blendEquation;
-      mat.blendSrc = cb.blendSrc;
-      mat.blendDst = cb.blendDst;
-      mat.blendSrcAlpha = THREE.ZeroFactor;
-      mat.blendDstAlpha = THREE.OneFactor;
-      // cb 的颜色因子不看 alpha，而 WE 语义是 `mix(A, blend(A,B), opacity)` ⇒ 图层 alpha
-      // （opacity × mask）必须由片元预乘进 rgb，否则云层全强度盖住人物、mask 也失效（AGENT.md §5.26）。
-      mat.premultipliedAlpha = true;
-    }
-    return mat;
-  }
-
-  // 合成采样决策：RT 大于屏占位（源纹理收口 4096 的结果）⇒ 合成 quad 那一步是**缩小采样**，
-  // 必须开 mipmap 防走样。调用点 ① attachIsolated ② resizeObjectRT ③ resize（同式子、同一份 this 状态）。
-  private applyCompositeSampling(rt: THREE.WebGLRenderTarget, worldW: number, worldH: number): void {
-    const minifying = Math.max(rt.width, rt.height)
-      > Math.max(Math.abs(worldW), Math.abs(worldH)) * this.screenScalePx() + 0.5;
-    const nextMin = minifying ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter;
-    const flipped = rt.texture.minFilter !== nextMin;
-    rt.texture.generateMipmaps = minifying;
-    rt.texture.minFilter = nextMin;
-    // 判定翻转才 dispose 重建 RT：RT 纹理的采样参数只在 setupRenderTarget 下发（needsUpdate 无效，
-    // 见 AGENT.md §5.44）⇒ 不 dispose 则 minFilter 到不了 GL；未翻转时 dispose 等于每帧重建。
-    if (flipped) rt.dispose();
-  }
-
   // 建立对象隔离条目：RT + 局部正交相机 + localScene + 主场景合成 quad；合成 quad 用
   // createCompositeGeometry（世界尺寸含缩放、UV 按钳制窗口映射），position 承载对象世界位置。
   //
@@ -2099,7 +1920,7 @@ export class ThreeScenePlayer {
       || kind === 'puppet';
     const rt = new THREE.WebGLRenderTarget(rtW, rtH, { samples: isFlatContent ? 0 : 4 });
     // 合成采样标志（缩小采样必须开 mipmap）——与 resizeObjectRT 共用同一处判定。
-    this.applyCompositeSampling(rt, worldW, worldH);
+    applyCompositeSampling(rt, worldW, worldH, this.screenScalePx());
     // ⚠️ 局部正交相机的 left/right/top/bottom 是**世界坐标范围**，必须覆盖**完整对象世界尺寸**；
     // RT 像素尺寸只决定分辨率（object-range.isolatedRtSize：≥ 屏占位、源纹理收口 4096）。两个坑：
     //   ① 拿 RT 像素当相机范围 → dpr>1 时相机多覆盖 dpr 倍 ⇒ 内容只占 RT 的 1/dpr、四周空白，
@@ -2128,7 +1949,7 @@ export class ThreeScenePlayer {
     flipGeometryUvY(compositeGeometry);
     const quad = new THREE.Mesh(
       compositeGeometry,
-      this.createCompositeQuadMaterial(rt.texture, colorBlendMode, compositeOpacity),
+      createCompositeQuadMaterial(rt.texture, colorBlendMode, compositeOpacity),
     );
     quad.position.set(position.x, position.y, position.z);
     quad.rotation.set(quadAngles[0], quadAngles[1], quadAngles[2]);

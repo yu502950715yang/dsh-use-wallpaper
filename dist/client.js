@@ -28619,6 +28619,136 @@ var VisualizerRuntime = class {
   }
 };
 
+// src/client/layer-material-factory.ts
+function createWhiteTexture() {
+  const tex = new DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+  tex.needsUpdate = true;
+  return tex;
+}
+function colorBlendModeToThree(mode) {
+  switch (mode) {
+    case 7:
+      return { blendEquation: AddEquation, blendSrc: OneMinusDstColorFactor, blendDst: OneFactor };
+    case 31:
+      return { blendEquation: AddEquation, blendSrc: OneFactor, blendDst: OneFactor };
+    case 6:
+      return { blendEquation: MaxEquation, blendSrc: OneFactor, blendDst: OneFactor };
+    default:
+      return null;
+  }
+}
+var COLOR_BLEND_FRAGMENT_SHADER = `
+uniform sampler2D map;
+uniform vec3 tint;
+uniform float opacity;
+varying vec2 vUv;
+void main() {
+  vec4 c = texture2D(map, vUv);
+  float a = c.a * opacity;
+  gl_FragColor = vec4(c.rgb * tint * a, a);
+}
+`;
+var COLOR_BLEND_VERTEX_SHADER = `
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`;
+function createLayerMaterial(texture, colorBlendMode, mod, forIsolation = false) {
+  const cb = forIsolation ? null : colorBlendModeToThree(colorBlendMode);
+  if (cb) {
+    return new ShaderMaterial({
+      uniforms: {
+        map: { value: texture ?? createWhiteTexture() },
+        tint: { value: new Vector3(mod.r, mod.g, mod.b) },
+        opacity: { value: mod.a }
+      },
+      vertexShader: COLOR_BLEND_VERTEX_SHADER,
+      fragmentShader: COLOR_BLEND_FRAGMENT_SHADER,
+      transparent: true,
+      // 背景是透明图层，不写深度（避免干扰其他透明对象）。粒子 depthTest=false 不受影响。
+      depthWrite: false,
+      side: DoubleSide,
+      blending: CustomBlending,
+      blendEquation: cb.blendEquation,
+      blendSrc: cb.blendSrc,
+      blendDst: cb.blendDst,
+      // WE：`gl_FragColor.a = screen.a` —— 结果 alpha 取**背景**的（自己的 alpha 只当混合权重）。
+      blendSrcAlpha: ZeroFactor,
+      blendDstAlpha: OneFactor
+    });
+  }
+  const basic = new MeshBasicMaterial({
+    map: texture ?? null,
+    transparent: true,
+    depthWrite: false,
+    // 隔离路径：WE 在对象有多个 pass 时把**首个 pass 强制成 BlendingMode_Normal（ONE/ZERO 覆盖）**
+    // （lwe CImage.cpp：`(*first)->setBlendingMode(BlendingMode_Normal)`）⇒ 覆盖写，RT.rgb 保持
+    // 非预乘、透明度只走 alpha（AGENT.md §5.25）。
+    blending: forIsolation ? NoBlending : NormalBlending,
+    // 隔离内容渲染进**y 镜像的局部相机**（对象 RT 取 WE 的 v 约定，见 attachIsolated）⇒ 屏幕空间
+    // 绕序被翻转，正面朝外的 quad 会被背面剔除（对象整体消失）⇒ 隔离路径必须双面。
+    side: forIsolation ? DoubleSide : FrontSide
+  });
+  basic.color.setRGB(mod.r, mod.g, mod.b);
+  basic.opacity = mod.a;
+  return basic;
+}
+function createUtilLayerMaterial(spec, forIsolation, brightness) {
+  if (spec.kind === "solid") {
+    const mod = materialModulation(spec.color, spec.opacity, brightness);
+    const solid = new MeshBasicMaterial({
+      transparent: true,
+      depthWrite: false,
+      blending: forIsolation ? NoBlending : NormalBlending,
+      side: forIsolation ? DoubleSide : FrontSide
+    });
+    solid.color.setRGB(mod.r, mod.g, mod.b);
+    solid.opacity = mod.a;
+    return solid;
+  }
+  return new MeshBasicMaterial({
+    color: 16777215,
+    transparent: true,
+    // 透明占位：内容由 T3 的整帧快照/效果链输出提供。
+    opacity: 0,
+    depthWrite: false,
+    blending: forIsolation ? NoBlending : NormalBlending,
+    side: forIsolation ? DoubleSide : FrontSide
+  });
+}
+function createCompositeQuadMaterial(texture, colorBlendMode, opacity = 1) {
+  const mat = new MeshBasicMaterial({
+    map: texture,
+    transparent: true,
+    depthWrite: false,
+    side: DoubleSide,
+    // 缺省 1 = 中性合成（image/particle 的 alpha 已烘进 RT，再乘一次是二次调制）；仅 util 层
+    // 传入对象 alpha（内容占位/效果输出都不承载它）。
+    opacity: Math.max(0, Math.min(1, opacity))
+  });
+  const cb = colorBlendModeToThree(colorBlendMode);
+  if (cb) {
+    mat.blending = CustomBlending;
+    mat.blendEquation = cb.blendEquation;
+    mat.blendSrc = cb.blendSrc;
+    mat.blendDst = cb.blendDst;
+    mat.blendSrcAlpha = ZeroFactor;
+    mat.blendDstAlpha = OneFactor;
+    mat.premultipliedAlpha = true;
+  }
+  return mat;
+}
+function applyCompositeSampling(rt, worldW, worldH, screenScale) {
+  const minifying = Math.max(rt.width, rt.height) > Math.max(Math.abs(worldW), Math.abs(worldH)) * screenScale + 0.5;
+  const nextMin = minifying ? LinearMipmapLinearFilter : LinearFilter;
+  const flipped = rt.texture.minFilter !== nextMin;
+  rt.texture.generateMipmaps = minifying;
+  rt.texture.minFilter = nextMin;
+  if (flipped) rt.dispose();
+}
+
 // src/client/util-material.ts
 function resolveUtilMaterial(layerKind, overrides = {}) {
   const color = overrides.color ?? [255, 255, 255];
@@ -28995,41 +29125,6 @@ void main() {
   gl_FragColor = vec4(rgb, a);
 }
 `;
-function createWhiteTexture() {
-  const tex = new DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
-  tex.needsUpdate = true;
-  return tex;
-}
-function colorBlendModeToThree(mode) {
-  switch (mode) {
-    case 7:
-      return { blendEquation: AddEquation, blendSrc: OneMinusDstColorFactor, blendDst: OneFactor };
-    case 31:
-      return { blendEquation: AddEquation, blendSrc: OneFactor, blendDst: OneFactor };
-    case 6:
-      return { blendEquation: MaxEquation, blendSrc: OneFactor, blendDst: OneFactor };
-    default:
-      return null;
-  }
-}
-var COLOR_BLEND_FRAGMENT_SHADER = `
-uniform sampler2D map;
-uniform vec3 tint;
-uniform float opacity;
-varying vec2 vUv;
-void main() {
-  vec4 c = texture2D(map, vUv);
-  float a = c.a * opacity;
-  gl_FragColor = vec4(c.rgb * tint * a, a);
-}
-`;
-var COLOR_BLEND_VERTEX_SHADER = `
-varying vec2 vUv;
-void main() {
-  vUv = uv;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-}
-`;
 function resolvePixelRatio(devicePixelRatio, qualityScale) {
   const dpr = Number.isFinite(devicePixelRatio) && devicePixelRatio > 0 ? devicePixelRatio : 1;
   const scale = Number.isFinite(qualityScale) && qualityScale > 0 ? qualityScale : 1;
@@ -29185,7 +29280,7 @@ var ThreeScenePlayer = class {
     this.objectEffectStage?.notifyViewportResize?.();
     this.compositeQuad?.resize(buf.width, buf.height);
     for (const entry of this.isolated.values()) {
-      this.applyCompositeSampling(entry.rt, entry.worldW, entry.worldH);
+      applyCompositeSampling(entry.rt, entry.worldW, entry.worldH, this.screenScalePx());
     }
   }
   // bloom 的中间结果 RT：按画布缓冲尺寸惰性创建并同步（与 Glow 各级 RT 同源）。
@@ -29824,7 +29919,7 @@ var ThreeScenePlayer = class {
       entry.rtWidth = w;
       entry.rtHeight = h;
     }
-    this.applyCompositeSampling(entry.rt, entry.worldW, entry.worldH);
+    applyCompositeSampling(entry.rt, entry.worldW, entry.worldH, this.screenScalePx());
   }
   // 渲染所有隔离对象的内容到各自 RT（player 拥有 scene/camera，故渲染留在 player）。
   // ⚠️ 必须走 renderIntoRenderTarget（透明清屏），直接 setRenderTarget + render 会画出黑块。
@@ -29869,11 +29964,11 @@ var ThreeScenePlayer = class {
       opts.alpha,
       opts.brightness
     );
-    const material = opts.util ? this.createUtilLayerMaterial(
+    const material = opts.util ? createUtilLayerMaterial(
       resolveUtilMaterial(opts.util, { color: opts.color, alpha: opts.alpha }),
       !!opts.isolate,
       opts.brightness
-    ) : this.createLayerMaterial(opts.texture ?? null, opts.colorBlendMode ?? 0, mod, !!opts.isolate);
+    ) : createLayerMaterial(opts.texture ?? null, opts.colorBlendMode ?? 0, mod, !!opts.isolate);
     const mesh = new Mesh(geometry, material);
     if (opts.disableDynamicColor) material.userData.dynamicColorDisabled = true;
     mesh.userData.weBrightness = opts.brightness ?? 1;
@@ -30011,110 +30106,6 @@ var ThreeScenePlayer = class {
   // 图层材质（**内容**材质）：colorBlendMode 已实现（6/7/31）→ 预乘 ShaderMaterial +
   // CustomBlending（复刻 WE 的 ApplyBlending）；否则 MeshBasicMaterial（普通 alpha 混合）。
   // 隔离对象的合成 quad **不**用它，而用 createCompositeQuadMaterial（见该方法注释）。
-  createLayerMaterial(texture, colorBlendMode, mod, forIsolation = false) {
-    const cb = forIsolation ? null : colorBlendModeToThree(colorBlendMode);
-    if (cb) {
-      return new ShaderMaterial({
-        uniforms: {
-          map: { value: texture ?? createWhiteTexture() },
-          tint: { value: new Vector3(mod.r, mod.g, mod.b) },
-          opacity: { value: mod.a }
-        },
-        vertexShader: COLOR_BLEND_VERTEX_SHADER,
-        fragmentShader: COLOR_BLEND_FRAGMENT_SHADER,
-        transparent: true,
-        // 背景是透明图层，不写深度（避免干扰其他透明对象）。粒子 depthTest=false 不受影响。
-        depthWrite: false,
-        side: DoubleSide,
-        blending: CustomBlending,
-        blendEquation: cb.blendEquation,
-        blendSrc: cb.blendSrc,
-        blendDst: cb.blendDst,
-        // WE：`gl_FragColor.a = screen.a` —— 结果 alpha 取**背景**的（自己的 alpha 只当混合权重）。
-        blendSrcAlpha: ZeroFactor,
-        blendDstAlpha: OneFactor
-      });
-    }
-    const basic = new MeshBasicMaterial({
-      map: texture ?? null,
-      transparent: true,
-      depthWrite: false,
-      // 隔离路径：WE 在对象有多个 pass 时把**首个 pass 强制成 BlendingMode_Normal（ONE/ZERO 覆盖）**
-      // （lwe CImage.cpp：`(*first)->setBlendingMode(BlendingMode_Normal)`）⇒ 覆盖写，RT.rgb 保持
-      // 非预乘、透明度只走 alpha（AGENT.md §5.25）。
-      blending: forIsolation ? NoBlending : NormalBlending,
-      // 隔离内容渲染进**y 镜像的局部相机**（对象 RT 取 WE 的 v 约定，见 attachIsolated）⇒ 屏幕空间
-      // 绕序被翻转，正面朝外的 quad 会被背面剔除（对象整体消失）⇒ 隔离路径必须双面。
-      side: forIsolation ? DoubleSide : FrontSide
-    });
-    basic.color.setRGB(mod.r, mod.g, mod.b);
-    basic.opacity = mod.a;
-    return basic;
-  }
-  // util 层内容材质（v0.8.2 F2）：solid = 纯色（color×brightness、opacity=alpha）；直通 = 透明占位
-  //（真实内容由效果链/整帧快照覆盖，首帧无内容时不得白屏）。隔离混合约定与 createLayerMaterial 一致。
-  createUtilLayerMaterial(spec, forIsolation, brightness) {
-    if (spec.kind === "solid") {
-      const mod = materialModulation(spec.color, spec.opacity, brightness);
-      const solid = new MeshBasicMaterial({
-        transparent: true,
-        depthWrite: false,
-        blending: forIsolation ? NoBlending : NormalBlending,
-        side: forIsolation ? DoubleSide : FrontSide
-      });
-      solid.color.setRGB(mod.r, mod.g, mod.b);
-      solid.opacity = mod.a;
-      return solid;
-    }
-    return new MeshBasicMaterial({
-      color: 16777215,
-      transparent: true,
-      // 透明占位：内容由 T3 的整帧快照/效果链输出提供。
-      opacity: 0,
-      depthWrite: false,
-      blending: forIsolation ? NoBlending : NormalBlending,
-      side: forIsolation ? DoubleSide : FrontSide
-    });
-  }
-  // 合成 quad 的材质：只负责「把对象 RT 的像素采样回主场景」。三点关键（都踩过）：
-  //   ① 必须独立构造，**不能 clone 内容材质**——粒子内容材质依赖逐实例属性，普通 PlaneGeometry 没有
-  //      这些属性会让 alpha 恒为 0（粒子完全不可见）；
-  //   ② **不再二次施加** alpha/brightness/color 调制（内容材质已把调制烘进 RT，再乘一次 alpha 变 a²）；
-  //   ③ 统一用 MeshBasicMaterial，只有 cb 分支额外开 `premultipliedAlpha`。
-  // WE 的 `ApplyBlending` 语义在**合成这一步**用 CustomBlending 因子复刻（alpha 取背景的 ⇒ Zero/One）；
-  // 带非零 angles 的对象由 quad 承载旋转，超过 90° 会翻转绕序 ⇒ 与内容材质一致用 DoubleSide。
-  createCompositeQuadMaterial(texture, colorBlendMode, opacity = 1) {
-    const mat = new MeshBasicMaterial({
-      map: texture,
-      transparent: true,
-      depthWrite: false,
-      side: DoubleSide,
-      // 缺省 1 = 中性合成（image/particle 的 alpha 已烘进 RT，再乘一次是二次调制）；仅 util 层
-      // 传入对象 alpha（内容占位/效果输出都不承载它）。
-      opacity: Math.max(0, Math.min(1, opacity))
-    });
-    const cb = colorBlendModeToThree(colorBlendMode);
-    if (cb) {
-      mat.blending = CustomBlending;
-      mat.blendEquation = cb.blendEquation;
-      mat.blendSrc = cb.blendSrc;
-      mat.blendDst = cb.blendDst;
-      mat.blendSrcAlpha = ZeroFactor;
-      mat.blendDstAlpha = OneFactor;
-      mat.premultipliedAlpha = true;
-    }
-    return mat;
-  }
-  // 合成采样决策：RT 大于屏占位（源纹理收口 4096 的结果）⇒ 合成 quad 那一步是**缩小采样**，
-  // 必须开 mipmap 防走样。调用点 ① attachIsolated ② resizeObjectRT ③ resize（同式子、同一份 this 状态）。
-  applyCompositeSampling(rt, worldW, worldH) {
-    const minifying = Math.max(rt.width, rt.height) > Math.max(Math.abs(worldW), Math.abs(worldH)) * this.screenScalePx() + 0.5;
-    const nextMin = minifying ? LinearMipmapLinearFilter : LinearFilter;
-    const flipped = rt.texture.minFilter !== nextMin;
-    rt.texture.generateMipmaps = minifying;
-    rt.texture.minFilter = nextMin;
-    if (flipped) rt.dispose();
-  }
   // 建立对象隔离条目：RT + 局部正交相机 + localScene + 主场景合成 quad；合成 quad 用
   // createCompositeGeometry（世界尺寸含缩放、UV 按钳制窗口映射），position 承载对象世界位置。
   //
@@ -30132,7 +30123,7 @@ var ThreeScenePlayer = class {
     const rtH = Math.max(1, Math.round(size.height));
     const isFlatContent = kind === "background" && Math.abs(worldW) >= this.sceneWidth * 0.98 && Math.abs(worldH) >= this.sceneHeight * 0.98 || kind === "puppet";
     const rt = new WebGLRenderTarget(rtW, rtH, { samples: isFlatContent ? 0 : 4 });
-    this.applyCompositeSampling(rt, worldW, worldH);
+    applyCompositeSampling(rt, worldW, worldH, this.screenScalePx());
     const camW = Math.max(1, Math.abs(worldW));
     const camH = Math.max(1, Math.abs(worldH));
     const localCamera = new OrthographicCamera(-camW / 2, camW / 2, -camH / 2, camH / 2, -1e3, 1e3);
@@ -30143,7 +30134,7 @@ var ThreeScenePlayer = class {
     flipGeometryUvY(compositeGeometry);
     const quad = new Mesh(
       compositeGeometry,
-      this.createCompositeQuadMaterial(rt.texture, colorBlendMode, compositeOpacity)
+      createCompositeQuadMaterial(rt.texture, colorBlendMode, compositeOpacity)
     );
     quad.position.set(position.x, position.y, position.z);
     quad.rotation.set(quadAngles[0], quadAngles[1], quadAngles[2]);
