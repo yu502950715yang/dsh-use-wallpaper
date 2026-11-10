@@ -29171,6 +29171,240 @@ function attachIsolated(deps, args) {
   });
 }
 
+// src/client/particle-layer-factory.ts
+function addParticle(host, simVerticesGetter, opts) {
+  const frameCount = Math.max(1, Math.floor(opts.frameCount));
+  const frameCols = Number.isFinite(opts.frameCols) && opts.frameCols > 0 ? Math.max(1, Math.floor(opts.frameCols)) : frameCount;
+  const frameRows = Number.isFinite(opts.frameRows) && opts.frameRows > 0 ? Math.max(1, Math.floor(opts.frameRows)) : 1;
+  const hasTex = !!opts.tex;
+  const softness = opts.softness ?? (hasTex ? 0.15 : 1);
+  const refractEnabled = !!opts.refract && !opts.isolate;
+  const refractAmount = Number.isFinite(opts.refract?.amount) ? opts.refract.amount : 0.05;
+  const geometry = new InstancedBufferGeometry();
+  geometry.setAttribute("position", new BufferAttribute(PARTICLE_QUAD_CORNERS, 3));
+  geometry.setIndex(new BufferAttribute(new Uint16Array(PARTICLE_QUAD_INDEX), 1));
+  geometry.instanceCount = 0;
+  const initial = simVerticesGetter();
+  const count = Math.floor(initial.length / PARTICLE_FLOATS_PER_INSTANCE);
+  const capacity = particleCapacity(opts.maxInstances ?? 0, count);
+  const positions = new InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
+  const sizes = new InstancedBufferAttribute(new Float32Array(capacity), 1);
+  const uvs = new InstancedBufferAttribute(new Float32Array(capacity * 2), 2);
+  const colors = new InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
+  const alphas = new InstancedBufferAttribute(new Float32Array(capacity), 1);
+  const rots = new InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
+  const velocities = new InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
+  geometry.setAttribute("particlePosition", positions);
+  geometry.setAttribute("particleSize", sizes);
+  geometry.setAttribute("particleUv", uvs);
+  geometry.setAttribute("particleColor", colors);
+  geometry.setAttribute("particleAlpha", alphas);
+  geometry.setAttribute("particleRot", rots);
+  geometry.setAttribute("particleVelocity", velocities);
+  const material = new ShaderMaterial({
+    uniforms: {
+      map: { value: opts.tex ?? createWhiteTexture() },
+      frameCount: { value: frameCount },
+      frameCols: { value: frameCols },
+      frameRows: { value: frameRows },
+      softness: { value: softness },
+      maskMode: { value: hasTex ? 1 : 0 },
+      // 折射 uniform 只给折射层（非折射层连 uniform 都不建：零开销、零分歧）。refractBg 缺省
+      // 1×1 白 = 不做位移（快照由段渲染在消费者绘制前写入）。
+      ...refractEnabled ? {
+        refractNormal: { value: opts.refract.normalTex },
+        refractBg: { value: createWhiteTexture() },
+        refractAmount: { value: refractAmount }
+      } : {},
+      // 对象变换（缺省恒等 → 顶点 shader 退化为旧的 worldPos = particlePosition + corner*size/2）。
+      objCenter: { value: new Vector3(...opts.objectCenter ?? [0, 0, 0]) },
+      objScale: { value: new Vector3(...opts.objectScale ?? [1, 1, 1]) },
+      objAngles: { value: new Vector3(...opts.objectAngles ?? [0, 0, 0]) },
+      emitterOrigin: { value: new Vector3(...opts.emitterOrigin ?? [0, 0, 0]) },
+      bmOffset: { value: new Vector3(...simEmitterOffset(opts.emitterOrigin ?? [0, 0, 0])) },
+      // spritetrail（缺省关闭 → 顶点 shader 走原旋转分支，既有壁纸逐像素不变）。
+      trailEnabled: { value: opts.trail ? 1 : 0 },
+      trailParams: {
+        value: new Vector3(
+          opts.trail?.length ?? 1,
+          opts.trail?.maxLength ?? 1,
+          opts.trail?.minLength ?? 0
+        )
+      },
+      texelRatio: { value: textureTexelRatio(opts.tex) },
+      // 粒子透视相机（缺省关闭 → 走主正交投影，既有壁纸逐像素不变）。
+      perspEnabled: { value: opts.perspective ? 1 : 0 },
+      persp: { value: particlePerspMatrix(opts.perspective) },
+      perspEye: { value: new Vector3(0, 0, opts.perspective?.distance ?? 0) },
+      // 对象级视差的世界平移（逐帧由 tickParallax 写；0 = 与加视差前逐像素相同）。
+      u_Parallax: { value: new Vector2(0, 0) }
+    },
+    vertexShader: PARTICLE_VERTEX_SHADER,
+    fragmentShader: PARTICLE_FRAGMENT_SHADER,
+    // three 的 define 进 program cache key：非折射层的 program 与改动前完全同源（仅在折射时
+    // 给 defines 键 —— 显式 undefined 会被 Material 构造器告警刷屏）。
+    ...refractEnabled ? { defines: { REFRACT: 1 } } : {},
+    transparent: true,
+    depthWrite: false,
+    depthTest: false,
+    side: DoubleSide,
+    blending: opts.blend === "additive" ? AdditiveBlending : NormalBlending
+  });
+  const mesh = new Mesh(geometry, material);
+  mesh.frustumCulled = false;
+  geometry.boundingSphere = new Sphere(new Vector3(0, 0, 0), Number.POSITIVE_INFINITY);
+  mesh.renderOrder = opts.renderOrder ?? 1;
+  if (opts.isolate) {
+    const c = opts.objectCenter ?? [0, 0, 0];
+    mesh.position.set(-c[0], -c[1], -c[2]);
+  } else {
+    host.scene.add(mesh);
+  }
+  const id = host.nextLayerId();
+  const layer = {
+    id,
+    getter: simVerticesGetter,
+    frameCount,
+    geometry,
+    material,
+    mesh,
+    positions,
+    sizes,
+    uvs,
+    colors,
+    alphas,
+    rots,
+    velocities,
+    capacity,
+    loggedFirstFrame: false,
+    loggedCount: 0,
+    refract: refractEnabled,
+    loggedRefract: false,
+    parallaxDepth: opts.parallaxDepth,
+    parallaxCenter: [(opts.objectCenter ?? [0, 0, 0])[0], (opts.objectCenter ?? [0, 0, 0])[1]],
+    // 时间线 origin 动画的平移基准：opts.objectCenter 是 we_to_three 后的中心，加回 scene/2
+    // 得到 scene 坐标的对象 world origin；scale/angles 只用于判断「是否只有 origin 变化」。
+    baseWorldOrigin: [
+      (opts.objectCenter ?? [0, 0, 0])[0] + host.sceneWidth / 2,
+      (opts.objectCenter ?? [0, 0, 0])[1] + host.sceneHeight / 2,
+      (opts.objectCenter ?? [0, 0, 0])[2]
+    ],
+    baseWorldScale: [...opts.objectScale ?? [1, 1, 1]],
+    baseWorldAngles: [...opts.objectAngles ?? [0, 0, 0]]
+  };
+  host.addLayer(layer);
+  writeParticleData(layer, initial, count);
+  if (opts.isolate) {
+    const center = opts.objectCenter ?? [0, 0, 0];
+    host.attachIsolated(
+      opts.isolate.objectId,
+      "particle",
+      mesh,
+      opts.isolate.worldW,
+      opts.isolate.worldH,
+      { width: opts.isolate.rtWidth, height: opts.isolate.rtHeight },
+      { x: center[0], y: center[1], z: center[2] },
+      [0, 0, 0],
+      0,
+      opts.renderOrder
+    );
+    layer.parallaxIsolated = true;
+    layer.parallaxQuad = host.isolatedQuad(opts.isolate.objectId);
+  }
+  if (opts.objectId !== void 0) {
+    const shown = opts.isolate ? host.isolatedQuad(opts.isolate.objectId) : mesh;
+    if (shown) host.setDisplayObject(opts.objectId, shown);
+    if (!opts.isolate) host.setObjectToParticle(opts.objectId, layer);
+  }
+  if (refractEnabled && opts.objectId !== void 0) {
+    host.setRefractLayer(opts.objectId, layer);
+    host.registerFrameConsumer(opts.objectId);
+  }
+  return id;
+}
+function updateParticles(host, dt) {
+  for (const layer of host.layers()) {
+    const data = layer.getter();
+    const count = Math.floor(data.length / PARTICLE_FLOATS_PER_INSTANCE);
+    if (count > 0 && !layer.loggedFirstFrame) {
+      layer.loggedFirstFrame = true;
+      layer.loggedCount = count;
+      console.log(
+        `[three] \u7C92\u5B50\u5DF2\u4EA7\u51FA layer=${layer.id} count=${count} dt=${dt.toFixed(4)}s capacity=${layer.capacity}\uFF08\u9996\u5E27\u975E\u96F6\uFF1B\u6A21\u62DF\u6BCF\u5E27\u7D2F\u79EF\u53D1\u5C04\uFF0C\u6EE1 capacity \u65F6\u518D\u6253\u5370\u4E00\u6761\uFF09`
+      );
+    } else if (layer.loggedCount < layer.capacity && count >= layer.capacity) {
+      layer.loggedCount = count;
+      console.log(`[three] \u7C92\u5B50\u5DF2\u8FBE maxcount layer=${layer.id} count=${count} dt=${dt.toFixed(4)}s`);
+    }
+    writeParticleData(layer, data, count);
+  }
+}
+function writeParticleData(layer, data, count) {
+  const ensure = (attr, itemSize, need, name) => {
+    const arr = attr.array;
+    if (arr.length >= need) return attr;
+    const grown = new Float32Array(Math.max(need, Math.max(arr.length * 2, 1)));
+    grown.set(arr);
+    const next = new InstancedBufferAttribute(grown, itemSize);
+    layer.geometry.setAttribute(name, next);
+    return next;
+  };
+  layer.positions = ensure(layer.positions, 3, count * 3, "particlePosition");
+  layer.sizes = ensure(layer.sizes, 1, count, "particleSize");
+  layer.uvs = ensure(layer.uvs, 2, count * 2, "particleUv");
+  layer.colors = ensure(layer.colors, 3, count * 3, "particleColor");
+  layer.alphas = ensure(layer.alphas, 1, count, "particleAlpha");
+  layer.rots = ensure(layer.rots, 3, count * 3, "particleRot");
+  layer.velocities = ensure(layer.velocities, 3, count * 3, "particleVelocity");
+  const minCapacity = Math.min(
+    Math.floor(layer.positions.array.length / 3),
+    layer.sizes.array.length,
+    Math.floor(layer.uvs.array.length / 2),
+    Math.floor(layer.colors.array.length / 3),
+    layer.alphas.array.length,
+    Math.floor(layer.rots.array.length / 3),
+    Math.floor(layer.velocities.array.length / 3)
+  );
+  if (minCapacity > layer.capacity) {
+    layer.capacity = minCapacity;
+    layer.geometry._maxInstanceCount = minCapacity;
+  }
+  const pos = layer.positions.array;
+  const size = layer.sizes.array;
+  const uv = layer.uvs.array;
+  const color = layer.colors.array;
+  const alpha = layer.alphas.array;
+  const rot = layer.rots.array;
+  const vel = layer.velocities.array;
+  for (let i = 0; i < count; i++) {
+    const b = i * PARTICLE_FLOATS_PER_INSTANCE;
+    pos[i * 3] = data[b];
+    pos[i * 3 + 1] = data[b + 1];
+    pos[i * 3 + 2] = data[b + 2];
+    size[i] = data[b + 3];
+    uv[i * 2] = data[b + 4];
+    uv[i * 2 + 1] = data[b + 5];
+    color[i * 3] = data[b + 6];
+    color[i * 3 + 1] = data[b + 7];
+    color[i * 3 + 2] = data[b + 8];
+    alpha[i] = data[b + 9];
+    rot[i * 3] = data[b + 10];
+    rot[i * 3 + 1] = data[b + 11];
+    rot[i * 3 + 2] = data[b + 12];
+    vel[i * 3] = data[b + 13];
+    vel[i * 3 + 1] = data[b + 14];
+    vel[i * 3 + 2] = data[b + 15];
+  }
+  layer.positions.needsUpdate = true;
+  layer.sizes.needsUpdate = true;
+  layer.uvs.needsUpdate = true;
+  layer.colors.needsUpdate = true;
+  layer.alphas.needsUpdate = true;
+  layer.rots.needsUpdate = true;
+  layer.velocities.needsUpdate = true;
+  layer.geometry.instanceCount = count;
+}
+
 // src/client/util-material.ts
 function resolveUtilMaterial(layerKind, overrides = {}) {
   const color = overrides.color ?? [255, 255, 255];
@@ -29296,6 +29530,7 @@ var ThreeScenePlayer = class {
   lastFrameSnapshot = null;
   // 可视化条运行时（SceneScript 64 条 + pixel-bars 家族）：已迁入 visualizer-runtime.ts（阶段 2）。
   visualizers;
+  particleHost;
   objectEffectStage = null;
   // 应用级 Glow 注入点（null = 本壁纸不开 Glow，帧序退化为原路径）。
   glowStage = null;
@@ -29345,6 +29580,35 @@ var ThreeScenePlayer = class {
       addBackground: (o) => this.addBackground(o),
       entryMesh: (id) => this.backgroundEntries.get(id)?.mesh
     });
+    const self2 = this;
+    this.particleHost = {
+      scene: this.scene,
+      get sceneWidth() {
+        return self2.sceneWidth;
+      },
+      get sceneHeight() {
+        return self2.sceneHeight;
+      },
+      nextLayerId: () => self2.nextParticleLayerId++,
+      addLayer: (layer) => {
+        self2.particleLayers.set(layer.id, layer);
+      },
+      attachIsolated: (objectId, kind, content, worldW, worldH, size, position, quadAngles, colorBlendMode, renderOrder) => self2.attachIsolated(objectId, kind, content, worldW, worldH, size, position, quadAngles, colorBlendMode, renderOrder),
+      isolatedQuad: (objectId) => self2.isolated.get(objectId)?.quad,
+      setDisplayObject: (objectId, shown) => {
+        self2.displayObjects.set(objectId, shown);
+      },
+      setObjectToParticle: (objectId, layer) => {
+        self2.objectToParticle.set(objectId, layer);
+      },
+      setRefractLayer: (objectId, layer) => {
+        self2.refractLayers.set(objectId, layer);
+      },
+      registerFrameConsumer: (objectId) => {
+        self2.registerFrameConsumer(objectId);
+      },
+      layers: () => self2.particleLayers.values()
+    };
     this.applyCover();
   }
   // 视口尺寸变更（浏览器 resize / controller 设置 canvas 逻辑尺寸）：只改视口，重新按
@@ -30309,241 +30573,12 @@ var ThreeScenePlayer = class {
   // 渲染用 three.js `ShaderMaterial` billboard quad（每粒子一个实例）；模拟逻辑仍由
   // `SceneParticleSim` 承担（不重写模拟，只换渲染引擎）。返回分配的图层 id。
   addParticle(simVerticesGetter, opts) {
-    const frameCount = Math.max(1, Math.floor(opts.frameCount));
-    const frameCols = Number.isFinite(opts.frameCols) && opts.frameCols > 0 ? Math.max(1, Math.floor(opts.frameCols)) : frameCount;
-    const frameRows = Number.isFinite(opts.frameRows) && opts.frameRows > 0 ? Math.max(1, Math.floor(opts.frameRows)) : 1;
-    const hasTex = !!opts.tex;
-    const softness = opts.softness ?? (hasTex ? 0.15 : 1);
-    const refractEnabled = !!opts.refract && !opts.isolate;
-    const refractAmount = Number.isFinite(opts.refract?.amount) ? opts.refract.amount : 0.05;
-    const geometry = new InstancedBufferGeometry();
-    geometry.setAttribute("position", new BufferAttribute(PARTICLE_QUAD_CORNERS, 3));
-    geometry.setIndex(new BufferAttribute(new Uint16Array(PARTICLE_QUAD_INDEX), 1));
-    geometry.instanceCount = 0;
-    const initial = simVerticesGetter();
-    const count = Math.floor(initial.length / PARTICLE_FLOATS_PER_INSTANCE);
-    const capacity = particleCapacity(opts.maxInstances ?? 0, count);
-    const positions = new InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
-    const sizes = new InstancedBufferAttribute(new Float32Array(capacity), 1);
-    const uvs = new InstancedBufferAttribute(new Float32Array(capacity * 2), 2);
-    const colors = new InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
-    const alphas = new InstancedBufferAttribute(new Float32Array(capacity), 1);
-    const rots = new InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
-    const velocities = new InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
-    geometry.setAttribute("particlePosition", positions);
-    geometry.setAttribute("particleSize", sizes);
-    geometry.setAttribute("particleUv", uvs);
-    geometry.setAttribute("particleColor", colors);
-    geometry.setAttribute("particleAlpha", alphas);
-    geometry.setAttribute("particleRot", rots);
-    geometry.setAttribute("particleVelocity", velocities);
-    const material = new ShaderMaterial({
-      uniforms: {
-        map: { value: opts.tex ?? createWhiteTexture() },
-        frameCount: { value: frameCount },
-        frameCols: { value: frameCols },
-        frameRows: { value: frameRows },
-        softness: { value: softness },
-        maskMode: { value: hasTex ? 1 : 0 },
-        // 折射 uniform 只给折射层（非折射层连 uniform 都不建：零开销、零分歧）。refractBg 缺省
-        // 1×1 白 = 不做位移（快照由段渲染在消费者绘制前写入）。
-        ...refractEnabled ? {
-          refractNormal: { value: opts.refract.normalTex },
-          refractBg: { value: createWhiteTexture() },
-          refractAmount: { value: refractAmount }
-        } : {},
-        // 对象变换（缺省恒等 → 顶点 shader 退化为旧的 worldPos = particlePosition + corner*size/2）。
-        objCenter: { value: new Vector3(...opts.objectCenter ?? [0, 0, 0]) },
-        objScale: { value: new Vector3(...opts.objectScale ?? [1, 1, 1]) },
-        objAngles: { value: new Vector3(...opts.objectAngles ?? [0, 0, 0]) },
-        emitterOrigin: { value: new Vector3(...opts.emitterOrigin ?? [0, 0, 0]) },
-        bmOffset: { value: new Vector3(...simEmitterOffset(opts.emitterOrigin ?? [0, 0, 0])) },
-        // spritetrail（缺省关闭 → 顶点 shader 走原旋转分支，既有壁纸逐像素不变）。
-        trailEnabled: { value: opts.trail ? 1 : 0 },
-        trailParams: {
-          value: new Vector3(
-            opts.trail?.length ?? 1,
-            opts.trail?.maxLength ?? 1,
-            opts.trail?.minLength ?? 0
-          )
-        },
-        texelRatio: { value: textureTexelRatio(opts.tex) },
-        // 粒子透视相机（缺省关闭 → 走主正交投影，既有壁纸逐像素不变）。
-        perspEnabled: { value: opts.perspective ? 1 : 0 },
-        persp: { value: particlePerspMatrix(opts.perspective) },
-        perspEye: { value: new Vector3(0, 0, opts.perspective?.distance ?? 0) },
-        // 对象级视差的世界平移（逐帧由 tickParallax 写；0 = 与加视差前逐像素相同）。
-        u_Parallax: { value: new Vector2(0, 0) }
-      },
-      vertexShader: PARTICLE_VERTEX_SHADER,
-      fragmentShader: PARTICLE_FRAGMENT_SHADER,
-      // three 的 define 进 program cache key：非折射层的 program 与改动前完全同源（仅在折射时
-      // 给 defines 键 —— 显式 undefined 会被 Material 构造器告警刷屏）。
-      ...refractEnabled ? { defines: { REFRACT: 1 } } : {},
-      transparent: true,
-      depthWrite: false,
-      depthTest: false,
-      side: DoubleSide,
-      blending: opts.blend === "additive" ? AdditiveBlending : NormalBlending
-    });
-    const mesh = new Mesh(geometry, material);
-    mesh.frustumCulled = false;
-    geometry.boundingSphere = new Sphere(new Vector3(0, 0, 0), Number.POSITIVE_INFINITY);
-    mesh.renderOrder = opts.renderOrder ?? 1;
-    if (opts.isolate) {
-      const c = opts.objectCenter ?? [0, 0, 0];
-      mesh.position.set(-c[0], -c[1], -c[2]);
-    } else {
-      this.scene.add(mesh);
-    }
-    const id = this.nextParticleLayerId++;
-    const layer = {
-      id,
-      getter: simVerticesGetter,
-      frameCount,
-      geometry,
-      material,
-      mesh,
-      positions,
-      sizes,
-      uvs,
-      colors,
-      alphas,
-      rots,
-      velocities,
-      capacity,
-      loggedFirstFrame: false,
-      loggedCount: 0,
-      refract: refractEnabled,
-      loggedRefract: false,
-      parallaxDepth: opts.parallaxDepth,
-      parallaxCenter: [(opts.objectCenter ?? [0, 0, 0])[0], (opts.objectCenter ?? [0, 0, 0])[1]],
-      // 时间线 origin 动画的平移基准：opts.objectCenter 是 we_to_three 后的中心，加回 scene/2
-      // 得到 scene 坐标的对象 world origin；scale/angles 只用于判断「是否只有 origin 变化」。
-      baseWorldOrigin: [
-        (opts.objectCenter ?? [0, 0, 0])[0] + this.sceneWidth / 2,
-        (opts.objectCenter ?? [0, 0, 0])[1] + this.sceneHeight / 2,
-        (opts.objectCenter ?? [0, 0, 0])[2]
-      ],
-      baseWorldScale: [...opts.objectScale ?? [1, 1, 1]],
-      baseWorldAngles: [...opts.objectAngles ?? [0, 0, 0]]
-    };
-    this.particleLayers.set(id, layer);
-    this.writeParticleData(layer, initial, count);
-    if (opts.isolate) {
-      const center = opts.objectCenter ?? [0, 0, 0];
-      this.attachIsolated(
-        opts.isolate.objectId,
-        "particle",
-        mesh,
-        opts.isolate.worldW,
-        opts.isolate.worldH,
-        { width: opts.isolate.rtWidth, height: opts.isolate.rtHeight },
-        { x: center[0], y: center[1], z: center[2] },
-        [0, 0, 0],
-        0,
-        opts.renderOrder
-      );
-      layer.parallaxIsolated = true;
-      layer.parallaxQuad = this.isolated.get(opts.isolate.objectId)?.quad;
-    }
-    if (opts.objectId !== void 0) {
-      const shown = opts.isolate ? this.isolated.get(opts.isolate.objectId)?.quad : mesh;
-      if (shown) this.displayObjects.set(opts.objectId, shown);
-      if (!opts.isolate) this.objectToParticle.set(opts.objectId, layer);
-    }
-    if (refractEnabled && opts.objectId !== void 0) {
-      this.refractLayers.set(opts.objectId, layer);
-      this.registerFrameConsumer(opts.objectId);
-    }
-    return id;
+    return addParticle(this.particleHost, simVerticesGetter, opts);
   }
   // 每帧刷新所有粒子图层：调用各自的 `simVerticesGetter()` 取当前顶点并写回 BufferAttribute。
   // `dt` 用于诊断日志（证明帧循环真的在跑、dt 是真实帧间隔且 >0）。
   updateParticles(dt) {
-    for (const layer of this.particleLayers.values()) {
-      const data = layer.getter();
-      const count = Math.floor(data.length / PARTICLE_FLOATS_PER_INSTANCE);
-      if (count > 0 && !layer.loggedFirstFrame) {
-        layer.loggedFirstFrame = true;
-        layer.loggedCount = count;
-        console.log(
-          `[three] \u7C92\u5B50\u5DF2\u4EA7\u51FA layer=${layer.id} count=${count} dt=${dt.toFixed(4)}s capacity=${layer.capacity}\uFF08\u9996\u5E27\u975E\u96F6\uFF1B\u6A21\u62DF\u6BCF\u5E27\u7D2F\u79EF\u53D1\u5C04\uFF0C\u6EE1 capacity \u65F6\u518D\u6253\u5370\u4E00\u6761\uFF09`
-        );
-      } else if (layer.loggedCount < layer.capacity && count >= layer.capacity) {
-        layer.loggedCount = count;
-        console.log(`[three] \u7C92\u5B50\u5DF2\u8FBE maxcount layer=${layer.id} count=${count} dt=${dt.toFixed(4)}s`);
-      }
-      this.writeParticleData(layer, data, count);
-    }
-  }
-  // 把 per-particle 摊平顶点（每粒子 16 浮点）拆到 7 个 instanced 属性并标记需重传。
-  // 容量不足时按需扩容（正常不会发生：容量 = sim 的 maxcount）——扩容后**必须**同步
-  // `geometry._maxInstanceCount`（three 的首帧锁存值，见 addParticle 注释），否则 draw 仍按旧容量截断。
-  writeParticleData(layer, data, count) {
-    const ensure = (attr, itemSize, need, name) => {
-      const arr = attr.array;
-      if (arr.length >= need) return attr;
-      const grown = new Float32Array(Math.max(need, Math.max(arr.length * 2, 1)));
-      grown.set(arr);
-      const next = new InstancedBufferAttribute(grown, itemSize);
-      layer.geometry.setAttribute(name, next);
-      return next;
-    };
-    layer.positions = ensure(layer.positions, 3, count * 3, "particlePosition");
-    layer.sizes = ensure(layer.sizes, 1, count, "particleSize");
-    layer.uvs = ensure(layer.uvs, 2, count * 2, "particleUv");
-    layer.colors = ensure(layer.colors, 3, count * 3, "particleColor");
-    layer.alphas = ensure(layer.alphas, 1, count, "particleAlpha");
-    layer.rots = ensure(layer.rots, 3, count * 3, "particleRot");
-    layer.velocities = ensure(layer.velocities, 3, count * 3, "particleVelocity");
-    const minCapacity = Math.min(
-      Math.floor(layer.positions.array.length / 3),
-      layer.sizes.array.length,
-      Math.floor(layer.uvs.array.length / 2),
-      Math.floor(layer.colors.array.length / 3),
-      layer.alphas.array.length,
-      Math.floor(layer.rots.array.length / 3),
-      Math.floor(layer.velocities.array.length / 3)
-    );
-    if (minCapacity > layer.capacity) {
-      layer.capacity = minCapacity;
-      layer.geometry._maxInstanceCount = minCapacity;
-    }
-    const pos = layer.positions.array;
-    const size = layer.sizes.array;
-    const uv = layer.uvs.array;
-    const color = layer.colors.array;
-    const alpha = layer.alphas.array;
-    const rot = layer.rots.array;
-    const vel = layer.velocities.array;
-    for (let i = 0; i < count; i++) {
-      const b = i * PARTICLE_FLOATS_PER_INSTANCE;
-      pos[i * 3] = data[b];
-      pos[i * 3 + 1] = data[b + 1];
-      pos[i * 3 + 2] = data[b + 2];
-      size[i] = data[b + 3];
-      uv[i * 2] = data[b + 4];
-      uv[i * 2 + 1] = data[b + 5];
-      color[i * 3] = data[b + 6];
-      color[i * 3 + 1] = data[b + 7];
-      color[i * 3 + 2] = data[b + 8];
-      alpha[i] = data[b + 9];
-      rot[i * 3] = data[b + 10];
-      rot[i * 3 + 1] = data[b + 11];
-      rot[i * 3 + 2] = data[b + 12];
-      vel[i * 3] = data[b + 13];
-      vel[i * 3 + 1] = data[b + 14];
-      vel[i * 3 + 2] = data[b + 15];
-    }
-    layer.positions.needsUpdate = true;
-    layer.sizes.needsUpdate = true;
-    layer.uvs.needsUpdate = true;
-    layer.colors.needsUpdate = true;
-    layer.alphas.needsUpdate = true;
-    layer.rots.needsUpdate = true;
-    layer.velocities.needsUpdate = true;
-    layer.geometry.instanceCount = count;
+    updateParticles(this.particleHost, dt);
   }
   // 停止循环并释放 renderer 资源。
   dispose() {

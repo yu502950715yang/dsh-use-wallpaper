@@ -56,6 +56,7 @@ export declare class ThreeScenePlayer {
     private readonly utilContents;
     private lastFrameSnapshot;
     private readonly visualizers;
+    private readonly particleHost;
     private objectEffectStage;
     private glowStage;
     private bloomStage;
@@ -305,7 +306,6 @@ export declare class ThreeScenePlayer {
         parallaxDepth?: [number, number];
     }): number;
     updateParticles(dt: number): void;
-    private writeParticleData;
     dispose(): void;
 }
 export interface ParticleSim {
