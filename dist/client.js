@@ -2984,7 +2984,7 @@ function injectWallpaperStyles() {
 }
 
 // src/client/version.ts
-var PLUGIN_VERSION = true ? "0.13.1" : "0.0.0-dev";
+var PLUGIN_VERSION = true ? "1.0.0" : "0.0.0-dev";
 
 // src/client/boot-overlay.ts
 var LAYER_CLASS = "wp-boot-layer";
