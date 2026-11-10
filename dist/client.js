@@ -29754,6 +29754,53 @@ async function readPixelsToPng(gl, width, height, encode) {
   }
 }
 
+// src/client/frame-capture-runtime.ts
+var FrameCaptureRuntime = class {
+  constructor(renderer) {
+    this.renderer = renderer;
+  }
+  pending = null;
+  /**
+   * 请求下一帧的 PNG（null = 不支持/失败）。必须与 render() 在同一任务内读像素，
+   * 故这里只登记请求、由 render() 末尾调用 flush()。
+   */
+  nextFrame() {
+    if (this.pending) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      this.pending = resolve;
+    });
+  }
+  // render() 末尾调用：读像素/编码的失败只 warn 并 resolve(null)，绝不把异常抛进帧循环。
+  flush() {
+    const resolve = this.pending;
+    if (!resolve) return;
+    this.pending = null;
+    try {
+      const gl = this.renderer.getContext();
+      if (typeof gl.isContextLost === "function" && gl.isContextLost()) {
+        console.warn("[three] scene \u6293\u5E27\u5931\u8D25\uFF08WebGL \u4E0A\u4E0B\u6587\u5DF2\u4E22\u5931\uFF09\uFF0C\u5DF2\u8DF3\u8FC7\u9996\u5E27\u7F13\u5B58");
+        resolve(null);
+        return;
+      }
+      const dom = this.renderer.domElement;
+      const width = Math.floor(gl.drawingBufferWidth || dom?.width || 0);
+      const height = Math.floor(gl.drawingBufferHeight || dom?.height || 0);
+      void readPixelsToPng(gl, width, height).then((png) => {
+        if (!png) console.warn("[three] scene \u6293\u5E27\u5931\u8D25\uFF08\u8BFB\u50CF\u7D20/\u7F16\u7801\u4E0D\u53EF\u7528\uFF09\uFF0C\u5DF2\u8DF3\u8FC7\u9996\u5E27\u7F13\u5B58");
+        resolve(png);
+      });
+    } catch (e) {
+      console.warn("[three] scene \u6293\u5E27\u5931\u8D25\uFF08\u5DF2\u8DF3\u8FC7\u9996\u5E27\u7F13\u5B58\uFF09:", e instanceof Error ? e.message : String(e));
+      resolve(null);
+    }
+  }
+  /** 释放：未决请求作废（否则 Promise 永不 settle）。 */
+  dispose() {
+    this.pending?.(null);
+    this.pending = null;
+  }
+};
+
 // src/client/threejs-player.ts
 function resolvePixelRatio(devicePixelRatio, qualityScale) {
   const dpr = Number.isFinite(devicePixelRatio) && devicePixelRatio > 0 ? devicePixelRatio : 1;
@@ -29790,8 +29837,8 @@ var ThreeScenePlayer = class {
   // 已安装的帧回调（resume 时用它重新排程）。
   loopFn = null;
   // 未决抓帧请求（null = 无）：同一时刻只允许一个；render() 末尾在同一 JS 任务内读像素后 resolve。
-  pendingCapture = null;
   lastTime = 0;
+  frameCaptureRuntime;
   // 视差状态（配置/指针/插值）已迁入 parallax-runtime.ts（审查 P0-9 阶段 1）。
   parallax = new ParallaxRuntime();
   // 背景图层条目（按 addBackground 返回的 id 索引，供 update_background 引用）。
@@ -29943,6 +29990,7 @@ var ThreeScenePlayer = class {
         self2.puppetLayers.set(id, layer);
       }
     };
+    this.frameCaptureRuntime = new FrameCaptureRuntime(this.renderer);
     this.applyCover();
   }
   // 视口尺寸变更（浏览器 resize / controller 设置 canvas 逻辑尺寸）：只改视口，重新按
@@ -30229,42 +30277,12 @@ var ThreeScenePlayer = class {
       }
     } else if (this.glowStage) this.glowStage.apply(this.renderer, this.scene, this.camera);
     else this.renderer.render(this.scene, this.camera);
-    this.flushCapture();
+    this.frameCaptureRuntime.flush();
     this.objectEffectStage?.advance(this.elapsedSeconds());
   }
-  /**
-   * 请求抓取**下一帧**渲染结果（PNG 字节；首帧缓存用）。已有未决请求时返回 null（一帧只抓一张）。
-   * 必须在 render() 同一任务内读像素，故这里只登记请求、由 render() 末尾同步读取。
-   */
+  /** 把当前帧抓成 PNG（读像素实现见 frame-capture-runtime.ts；null = 不支持/失败）。 */
   captureNextFrame() {
-    if (this.pendingCapture) return Promise.resolve(null);
-    return new Promise((resolve) => {
-      this.pendingCapture = resolve;
-    });
-  }
-  // render() 末尾调用：读像素/编码的失败只 warn 并 resolve(null)，绝不把异常抛进帧循环。
-  flushCapture() {
-    const resolve = this.pendingCapture;
-    if (!resolve) return;
-    this.pendingCapture = null;
-    try {
-      const gl = this.renderer.getContext();
-      if (typeof gl.isContextLost === "function" && gl.isContextLost()) {
-        console.warn("[three] scene \u6293\u5E27\u5931\u8D25\uFF08WebGL \u4E0A\u4E0B\u6587\u5DF2\u4E22\u5931\uFF09\uFF0C\u5DF2\u8DF3\u8FC7\u9996\u5E27\u7F13\u5B58");
-        resolve(null);
-        return;
-      }
-      const dom = this.renderer.domElement;
-      const width = Math.floor(gl.drawingBufferWidth || dom?.width || 0);
-      const height = Math.floor(gl.drawingBufferHeight || dom?.height || 0);
-      void readPixelsToPng(gl, width, height).then((png) => {
-        if (!png) console.warn("[three] scene \u6293\u5E27\u5931\u8D25\uFF08\u8BFB\u50CF\u7D20/\u7F16\u7801\u4E0D\u53EF\u7528\uFF09\uFF0C\u5DF2\u8DF3\u8FC7\u9996\u5E27\u7F13\u5B58");
-        resolve(png);
-      });
-    } catch (e) {
-      console.warn("[three] scene \u6293\u5E27\u5931\u8D25\uFF08\u5DF2\u8DF3\u8FC7\u9996\u5E27\u7F13\u5B58\uFF09:", e instanceof Error ? e.message : String(e));
-      resolve(null);
-    }
+    return this.frameCaptureRuntime.nextFrame();
   }
   /** 注入帧内快照（null = 关闭）。契约见 frame-capture.ts；active=false 时帧序不变。 */
   setFrameCapture(capture) {
@@ -30656,8 +30674,7 @@ var ThreeScenePlayer = class {
   }
   // 停止循环并释放 renderer 资源。
   dispose() {
-    this.pendingCapture?.(null);
-    this.pendingCapture = null;
+    this.frameCaptureRuntime.dispose();
     this.renderer.setAnimationLoop(null);
     for (const entry of this.backgroundEntries.values()) {
       entry.mesh.geometry.dispose();
