@@ -29544,6 +29544,176 @@ function resolveUtilMaterial(layerKind, overrides = {}) {
   return layerKind === "solid" ? { layerKind, kind: "solid", color, opacity } : { layerKind, kind: "passthrough", color, opacity };
 }
 
+// src/client/background-assembly.ts
+function addBackground(host, opts) {
+  const sceneW = opts.sceneW;
+  const sceneH = opts.sceneH;
+  const utilFull = opts.util === "project" || opts.util === "fullscreen";
+  const origin = utilFull ? [sceneW / 2, sceneH / 2, 0] : [opts.origin[0], opts.origin[1], opts.origin[2]];
+  const anchorOrigin = opts.transformOrigin ?? origin;
+  const renderOffset = utilFull ? [0, 0, 0] : [
+    origin[0] - anchorOrigin[0],
+    origin[1] - anchorOrigin[1],
+    origin[2] - anchorOrigin[2]
+  ];
+  const layerScale = utilFull ? [1, 1, 1] : [opts.scale[0], opts.scale[1], opts.scale[2]];
+  const size = utilFull ? [sceneW, sceneH] : opts.size;
+  const sprite = opts.util ? void 0 : opts.texture?.userData?.spritesheet === true ? textureSpriteInfo(opts.texture) : void 0;
+  const imgW = opts.texture?.image?.width;
+  const imgH = opts.texture?.image?.height;
+  const fallbackW = opts.util ? utilFull ? sceneW : 1 : sprite ? (imgW ?? 1) / sprite.cols : imgW ?? 1;
+  const fallbackH = opts.util ? utilFull ? sceneH : 1 : sprite ? (imgH ?? 1) / sprite.rows : imgH ?? 1;
+  const w = size?.[0] ?? fallbackW;
+  const h = size?.[1] ?? fallbackH;
+  const geometry = new PlaneGeometry(w, h);
+  const mod = materialModulation(
+    opts.colorBlendMode && opts.colorUserBound ? void 0 : opts.color,
+    opts.alpha,
+    opts.brightness
+  );
+  const material = opts.util ? createUtilLayerMaterial(
+    resolveUtilMaterial(opts.util, { color: opts.color, alpha: opts.alpha }),
+    !!opts.isolate,
+    opts.brightness
+  ) : createLayerMaterial(opts.texture ?? null, opts.colorBlendMode ?? 0, mod, !!opts.isolate);
+  const mesh = new Mesh(geometry, material);
+  if (opts.disableDynamicColor) material.userData.dynamicColorDisabled = true;
+  mesh.userData.weBrightness = opts.brightness ?? 1;
+  mesh.renderOrder = opts.renderOrder ?? 0;
+  const s = layerScale;
+  mesh.scale.set(s[0], s[1], s[2]);
+  const a = opts.angles ?? [0, 0, 0];
+  mesh.rotation.set(a[0], a[1], a[2]);
+  const align = alignmentWorldOffset([w, h], s, a, opts.alignment);
+  mesh.position.set(
+    origin[0] - sceneW / 2 + align[0],
+    origin[1] - sceneH / 2 + align[1],
+    origin[2]
+  );
+  const id = host.nextBackgroundId();
+  const worldW = opts.isolate?.worldW ?? Math.abs(w * s[0]);
+  const worldH = opts.isolate?.worldH ?? Math.abs(h * s[1]);
+  if (opts.isolate) {
+    mesh.position.set(0, 0, 0);
+    mesh.rotation.set(0, 0, 0);
+    const compositeOpacity = opts.util ? mod.a : 1;
+    host.attachIsolated(
+      opts.isolate.objectId,
+      "background",
+      mesh,
+      worldW,
+      worldH,
+      { width: opts.isolate.rtWidth, height: opts.isolate.rtHeight },
+      { x: origin[0] - sceneW / 2 + align[0], y: origin[1] - sceneH / 2 + align[1], z: origin[2] },
+      [a[0], a[1], a[2]],
+      opts.colorBlendMode ?? 0,
+      opts.renderOrder,
+      compositeOpacity
+    );
+    if (opts.disableDynamicColor) {
+      const quadMat = host.isolatedQuad(opts.isolate.objectId)?.material;
+      const mats = Array.isArray(quadMat) ? quadMat : quadMat ? [quadMat] : [];
+      for (const m of mats) m.userData.dynamicColorDisabled = true;
+    }
+    if (opts.util && opts.util !== "solid") {
+      host.registerUtilContent(opts.isolate.objectId, mesh, origin[0] - sceneW / 2, origin[1] - sceneH / 2);
+    }
+  } else {
+    host.scene.add(mesh);
+  }
+  host.addEntry(id, {
+    mesh,
+    origin: [origin[0], origin[1], origin[2]],
+    size: [w, h],
+    scale: [s[0], s[1], s[2]],
+    angles: [a[0], a[1], a[2]],
+    align,
+    alignment: opts.alignment,
+    color: opts.color,
+    alpha: mod.a,
+    brightness: opts.brightness ?? 1,
+    sceneW,
+    sceneH,
+    renderOffset,
+    // 隔离时位移的载体是合成 quad（内容只进对象 RT）；attachIsolated 在本方法之前登记 quad。
+    parallaxNode: opts.isolate ? host.isolatedQuad(opts.isolate.objectId) ?? mesh : mesh,
+    parallaxDepth: opts.parallaxDepth
+  });
+  if (opts.objectId !== void 0) {
+    host.setObjectToBackground(opts.objectId, id);
+    const shown = opts.isolate ? host.isolatedQuad(opts.isolate.objectId) : mesh;
+    if (shown) host.setDisplayObject(opts.objectId, shown);
+  }
+  if (opts.objectId !== void 0 && sprite && opts.texture?.userData?.spritesheet === true) {
+    host.registerSpriteSheet(id, opts.objectId, mesh, sprite);
+  }
+  return id;
+}
+function addPuppet(host, opts) {
+  const { mesh } = opts.puppet;
+  mesh.renderOrder = opts.renderOrder ?? 0;
+  const mod = materialModulation(void 0, opts.alpha, opts.brightness);
+  const mat = mesh.material;
+  mat.color.setRGB(mod.r, mod.g, mod.b);
+  mat.opacity = mod.a;
+  const s = opts.scale;
+  mesh.scale.set(s[0], s[1], s[2]);
+  mesh.rotation.set(opts.angles[0], opts.angles[1], opts.angles[2]);
+  mesh.position.set(opts.origin[0] - opts.sceneW / 2, opts.origin[1] - opts.sceneH / 2, opts.origin[2]);
+  host.scene.add(mesh);
+  if (opts.isolate) {
+    const iso = opts.isolate;
+    const w = Math.max(1, Math.abs(iso.worldW));
+    const h = Math.max(1, Math.abs(iso.worldH));
+    const contentGeometry = new PlaneGeometry(w, h);
+    const content = new Mesh(
+      contentGeometry,
+      new MeshBasicMaterial({ map: opts.texture ?? null, transparent: true, side: DoubleSide })
+    );
+    host.attachIsolated(
+      iso.objectId,
+      "puppet",
+      content,
+      w,
+      h,
+      { width: iso.rtWidth, height: iso.rtHeight },
+      { x: mesh.position.x, y: mesh.position.y, z: mesh.position.z },
+      [mesh.rotation.x, mesh.rotation.y, mesh.rotation.z],
+      0,
+      opts.renderOrder,
+      1,
+      // 合成 quad 不挂主场景（输出直接当网格贴图）；puppet 实例交给 setObjectOutput 写 map。
+      false,
+      opts.puppet
+    );
+  }
+  const id = host.nextBackgroundId();
+  host.addEntry(id, {
+    mesh,
+    origin: [opts.origin[0], opts.origin[1], opts.origin[2]],
+    size: [0, 0],
+    scale: [s[0], s[1], s[2]],
+    angles: [opts.angles[0], opts.angles[1], opts.angles[2]],
+    align: [0, 0],
+    // puppet 网格无 alignment 样本（F13 只覆盖 image quad；真实库 puppet 均为 center/缺省）
+    alpha: mod.a,
+    brightness: opts.brightness ?? 1,
+    sceneW: opts.sceneW,
+    sceneH: opts.sceneH,
+    renderOffset: [0, 0, 0],
+    parallaxNode: mesh,
+    parallaxDepth: opts.parallaxDepth
+  });
+  host.setPuppetLayer(id, {
+    instance: opts.puppet,
+    layers: opts.animationLayers === void 0 ? null : opts.animationLayers.filter((l) => l.visible !== false),
+    elapsed: 0
+  });
+  host.setDisplayObject(opts.objectId, mesh);
+  host.setObjectToBackground(opts.objectId, id);
+  return id;
+}
+
 // src/client/frame-export.ts
 function flipRgbaRows(rgba, width, height) {
   const rowBytes = Math.max(0, Math.floor(width)) * 4;
@@ -29655,6 +29825,7 @@ var ThreeScenePlayer = class {
   visualizers;
   particleHost;
   backgroundHost;
+  backgroundAssemblyHost;
   objectEffectStage = null;
   // 应用级 Glow 注入点（null = 本壁纸不开 Glow，帧序退化为原路径）。
   glowStage = null;
@@ -29747,6 +29918,30 @@ var ThreeScenePlayer = class {
       hasPuppetLayer: (id) => self2.puppetLayers.has(id),
       rebaseSpriteSheet: (id) => self2.spriteSheets.rebaseForBackground(id),
       warnedUnsupportedTransform: self2.warnedTransformUnsupported
+    };
+    this.backgroundAssemblyHost = {
+      scene: this.scene,
+      nextBackgroundId: () => self2.nextBackgroundId++,
+      addEntry: (id, entry) => {
+        self2.backgroundEntries.set(id, entry);
+      },
+      attachIsolated: (objectId, kind, content, worldW, worldH, size, position, quadAngles, colorBlendMode, renderOrder, compositeOpacity, attachQuad, puppet) => self2.attachIsolated(objectId, kind, content, worldW, worldH, size, position, quadAngles, colorBlendMode, renderOrder, compositeOpacity, attachQuad, puppet),
+      isolatedQuad: (objectId) => self2.isolated.get(objectId)?.quad,
+      setDisplayObject: (objectId, shown) => {
+        self2.displayObjects.set(objectId, shown);
+      },
+      setObjectToBackground: (objectId, id) => {
+        self2.objectToBackground.set(objectId, id);
+      },
+      registerSpriteSheet: (backgroundId, objectId, mesh, sprite) => {
+        self2.registerSpriteSheet(backgroundId, objectId, mesh, sprite);
+      },
+      registerUtilContent: (objectId, mesh, cx, cy) => {
+        self2.registerUtilContent(objectId, mesh, cx, cy);
+      },
+      setPuppetLayer: (id, layer) => {
+        self2.puppetLayers.set(id, layer);
+      }
     };
     this.applyCover();
   }
@@ -30385,169 +30580,12 @@ var ThreeScenePlayer = class {
   // alpha/brightness 走 materialModulation（复用 scene-renderer 语义，见 AGENT.md §2.3）。
   // sceneW/sceneH 为场景固有尺寸（we_to_three 基准）；返回背景 id，供 update_background 引用。
   addBackground(opts) {
-    const sceneW = opts.sceneW;
-    const sceneH = opts.sceneH;
-    const utilFull = opts.util === "project" || opts.util === "fullscreen";
-    const origin = utilFull ? [sceneW / 2, sceneH / 2, 0] : [opts.origin[0], opts.origin[1], opts.origin[2]];
-    const anchorOrigin = opts.transformOrigin ?? origin;
-    const renderOffset = utilFull ? [0, 0, 0] : [
-      origin[0] - anchorOrigin[0],
-      origin[1] - anchorOrigin[1],
-      origin[2] - anchorOrigin[2]
-    ];
-    const layerScale = utilFull ? [1, 1, 1] : [opts.scale[0], opts.scale[1], opts.scale[2] ?? 1];
-    const size = utilFull ? [sceneW, sceneH] : opts.size;
-    const sprite = opts.util ? void 0 : opts.texture?.userData?.spritesheet === true ? textureSpriteInfo(opts.texture) : void 0;
-    const imgW = opts.texture?.image?.width;
-    const imgH = opts.texture?.image?.height;
-    const fallbackW = opts.util ? utilFull ? sceneW : 1 : sprite ? (imgW ?? 1) / sprite.cols : imgW ?? 1;
-    const fallbackH = opts.util ? utilFull ? sceneH : 1 : sprite ? (imgH ?? 1) / sprite.rows : imgH ?? 1;
-    const w = size?.[0] ?? fallbackW;
-    const h = size?.[1] ?? fallbackH;
-    const geometry = new PlaneGeometry(w, h);
-    const mod = materialModulation(
-      opts.colorBlendMode && opts.colorUserBound ? void 0 : opts.color,
-      opts.alpha,
-      opts.brightness
-    );
-    const material = opts.util ? createUtilLayerMaterial(
-      resolveUtilMaterial(opts.util, { color: opts.color, alpha: opts.alpha }),
-      !!opts.isolate,
-      opts.brightness
-    ) : createLayerMaterial(opts.texture ?? null, opts.colorBlendMode ?? 0, mod, !!opts.isolate);
-    const mesh = new Mesh(geometry, material);
-    if (opts.disableDynamicColor) material.userData.dynamicColorDisabled = true;
-    mesh.userData.weBrightness = opts.brightness ?? 1;
-    mesh.renderOrder = opts.renderOrder ?? 0;
-    const s = layerScale;
-    mesh.scale.set(s[0], s[1], s[2] ?? 1);
-    const a = opts.angles ?? [0, 0, 0];
-    mesh.rotation.set(a[0], a[1], a[2]);
-    const align = alignmentWorldOffset([w, h], s, a, opts.alignment);
-    mesh.position.set(
-      origin[0] - sceneW / 2 + align[0],
-      origin[1] - sceneH / 2 + align[1],
-      origin[2]
-    );
-    const id = this.nextBackgroundId++;
-    const worldW = opts.isolate?.worldW ?? Math.abs(w * s[0]);
-    const worldH = opts.isolate?.worldH ?? Math.abs(h * s[1]);
-    if (opts.isolate) {
-      mesh.position.set(0, 0, 0);
-      mesh.rotation.set(0, 0, 0);
-      const compositeOpacity = opts.util ? mod.a : 1;
-      this.attachIsolated(opts.isolate.objectId, "background", mesh, worldW, worldH, {
-        width: opts.isolate.rtWidth,
-        height: opts.isolate.rtHeight
-      }, {
-        x: origin[0] - sceneW / 2 + align[0],
-        y: origin[1] - sceneH / 2 + align[1],
-        z: origin[2]
-      }, [a[0], a[1], a[2]], opts.colorBlendMode ?? 0, opts.renderOrder, compositeOpacity);
-      if (opts.disableDynamicColor) {
-        const quadMat = this.isolated.get(opts.isolate.objectId)?.quad?.material;
-        const mats = Array.isArray(quadMat) ? quadMat : quadMat ? [quadMat] : [];
-        for (const m of mats) m.userData.dynamicColorDisabled = true;
-      }
-      if (opts.util && opts.util !== "solid") {
-        this.registerUtilContent(opts.isolate.objectId, mesh, origin[0] - sceneW / 2, origin[1] - sceneH / 2);
-      }
-    } else {
-      this.scene.add(mesh);
-    }
-    this.backgroundEntries.set(id, {
-      mesh,
-      origin: [origin[0], origin[1], origin[2]],
-      size: [w, h],
-      scale: [s[0], s[1], s[2] ?? 1],
-      angles: [a[0], a[1], a[2]],
-      align,
-      alignment: opts.alignment,
-      color: opts.color,
-      alpha: mod.a,
-      brightness: opts.brightness ?? 1,
-      sceneW,
-      sceneH,
-      renderOffset,
-      // 隔离时位移的载体是合成 quad（内容只进对象 RT）；attachIsolated 在本方法之前登记 quad。
-      parallaxNode: opts.isolate ? this.isolated.get(opts.isolate.objectId)?.quad ?? mesh : mesh,
-      parallaxDepth: opts.parallaxDepth
-    });
-    if (opts.objectId !== void 0) {
-      this.objectToBackground.set(opts.objectId, id);
-      const shown = opts.isolate ? this.isolated.get(opts.isolate.objectId)?.quad : mesh;
-      if (shown) this.displayObjects.set(opts.objectId, shown);
-    }
-    if (opts.objectId !== void 0 && sprite && opts.texture?.userData?.spritesheet === true) {
-      this.registerSpriteSheet(id, opts.objectId, mesh, sprite);
-    }
-    return id;
+    return addBackground(this.backgroundAssemblyHost, opts);
   }
   // puppet 图层：SkinnedMesh（带骨骼）或静态网格 + 视差登记。返回图层 id（与 addBackground 同一编号空间）。
   // 几何/材质所有权在 PuppetInstance（dispose 时释放）；此处只把 mesh 挂进场景并登记视差/脚本桥。
   addPuppet(opts) {
-    const { mesh } = opts.puppet;
-    mesh.renderOrder = opts.renderOrder ?? 0;
-    const mod = materialModulation(void 0, opts.alpha, opts.brightness);
-    const mat = mesh.material;
-    mat.color.setRGB(mod.r, mod.g, mod.b);
-    mat.opacity = mod.a;
-    const s = opts.scale;
-    mesh.scale.set(s[0], s[1], s[2] ?? 1);
-    mesh.rotation.set(opts.angles[0], opts.angles[1], opts.angles[2]);
-    mesh.position.set(opts.origin[0] - opts.sceneW / 2, opts.origin[1] - opts.sceneH / 2, opts.origin[2]);
-    this.scene.add(mesh);
-    if (opts.isolate) {
-      const iso = opts.isolate;
-      const w = Math.max(1, Math.abs(iso.worldW));
-      const h = Math.max(1, Math.abs(iso.worldH));
-      const contentGeometry = new PlaneGeometry(w, h);
-      const content = new Mesh(
-        contentGeometry,
-        new MeshBasicMaterial({ map: opts.texture ?? null, transparent: true, side: DoubleSide })
-      );
-      this.attachIsolated(
-        iso.objectId,
-        "puppet",
-        content,
-        w,
-        h,
-        { width: iso.rtWidth, height: iso.rtHeight },
-        { x: mesh.position.x, y: mesh.position.y, z: mesh.position.z },
-        [mesh.rotation.x, mesh.rotation.y, mesh.rotation.z],
-        0,
-        opts.renderOrder,
-        1,
-        // 合成 quad 不挂主场景（输出直接当网格贴图）；puppet 实例交给 setObjectOutput 写 map。
-        false,
-        opts.puppet
-      );
-    }
-    const id = this.nextBackgroundId++;
-    this.backgroundEntries.set(id, {
-      mesh,
-      origin: [opts.origin[0], opts.origin[1], opts.origin[2]],
-      size: [0, 0],
-      scale: [s[0], s[1], s[2] ?? 1],
-      angles: [opts.angles[0], opts.angles[1], opts.angles[2]],
-      align: [0, 0],
-      // puppet 网格无 alignment 样本（F13 只覆盖 image quad；真实库 puppet 均为 center/缺省）
-      alpha: mod.a,
-      brightness: opts.brightness ?? 1,
-      sceneW: opts.sceneW,
-      sceneH: opts.sceneH,
-      renderOffset: [0, 0, 0],
-      parallaxNode: mesh,
-      parallaxDepth: opts.parallaxDepth
-    });
-    this.puppetLayers.set(id, {
-      instance: opts.puppet,
-      layers: opts.animationLayers === void 0 ? null : opts.animationLayers.filter((l) => l.visible !== false),
-      elapsed: 0
-    });
-    this.displayObjects.set(opts.objectId, mesh);
-    this.objectToBackground.set(opts.objectId, id);
-    return id;
+    return addPuppet(this.backgroundAssemblyHost, opts);
   }
   // 图层材质（**内容**材质）：colorBlendMode 已实现（6/7/31）→ 预乘 ShaderMaterial +
   // CustomBlending（复刻 WE 的 ApplyBlending）；否则 MeshBasicMaterial（普通 alpha 混合）。

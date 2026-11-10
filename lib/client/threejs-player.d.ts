@@ -58,6 +58,7 @@ export declare class ThreeScenePlayer {
     private readonly visualizers;
     private readonly particleHost;
     private readonly backgroundHost;
+    private readonly backgroundAssemblyHost;
     private objectEffectStage;
     private glowStage;
     private bloomStage;
