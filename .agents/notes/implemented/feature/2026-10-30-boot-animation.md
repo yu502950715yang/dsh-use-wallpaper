@@ -4,7 +4,7 @@ Status: implemented
 
 ## Problem
 
-插件名为 Wallpaper Engine，却只有「会话背景」这一块能力；用户想要的是打开 DSH 时的一段片头。日常壁纸与开机片头的诉求彼此独立（素材、时长、开关都不同），若复用背景层状态，任何一侧的改动都会互相污染（轮播 / 暂停 / 健康状态 / 文字颜色）。设计见 [2026-10-30-boot-animation-design.md](../../../../docs/superpowers/specs/2026-10-30-boot-animation-design.md)，实施计划见 [2026-10-30-boot-animation.md](../../../../docs/superpowers/plans/2026-10-30-boot-animation.md)，现状契约见 `AGENT.md` §5.55 / §7.45。
+插件名为 Wallpaper Engine，却只有「会话背景」这一块能力；用户想要的是打开 DSH 时的一段片头。日常壁纸与开机片头的诉求彼此独立（素材、时长、开关都不同），若复用背景层状态，任何一侧的改动都会互相污染（轮播 / 暂停 / 健康状态 / 文字颜色）。设计见 [2026-10-30-boot-animation-design.md](../../../../docs/superpowers/specs/2026-10-30-boot-animation-design.md)，实施计划见 2026-10-30-boot-animation.md（历史实施计划已清理），现状契约见 `AGENT.md` §5.55 / §7.45。
 
 ## Decision
 

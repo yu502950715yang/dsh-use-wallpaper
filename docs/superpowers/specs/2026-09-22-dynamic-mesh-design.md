@@ -92,9 +92,9 @@ DynamicMeshRegistry（新增 dynamic-mesh.ts）
 
 | 文件 | 改动 |
 |---|---|
-| [scene-script-vm.ts](src/client/scene-script-vm.ts) | prelude 的 `createModelData`/`createLayer`/`engine.registerAsset` 从 stub 换成真实桥（新增宿主原语 `createModel`/`createLayer`/`registerAsset`/`applyMeshData`） |
-| [threejs-player.ts](src/client/threejs-player.ts) | 运行时网格加入 `player.scene` 的入口（`renderOrder` 在背景之上、粒子同层）与 `dispose` 清理 |
-| [three-renderer.ts](src/client/three-renderer.ts) | 装载期把材质资产交给 registry 解析（需要 pkg 读取：复用既有 `loadFile` 通道） |
+| [scene-script-vm.ts](../../../src/client/scene-script-vm.ts) | prelude 的 `createModelData`/`createLayer`/`engine.registerAsset` 从 stub 换成真实桥（新增宿主原语 `createModel`/`createLayer`/`registerAsset`/`applyMeshData`） |
+| [threejs-player.ts](../../../src/client/threejs-player.ts) | 运行时网格加入 `player.scene` 的入口（`renderOrder` 在背景之上、粒子同层）与 `dispose` 清理 |
+| [three-renderer.ts](../../../src/client/three-renderer.ts) | 装载期把材质资产交给 registry 解析（需要 pkg 读取：复用既有 `loadFile` 通道） |
 
 ## 5. 接口契约
 

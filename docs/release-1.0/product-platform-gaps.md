@@ -27,7 +27,7 @@
 | README.md 全文（440 行） | 用户可见承诺：安装、配置、限制、降级链、卸载、许可 |
 | AGENT.md §1/§4/§5/§7（318 行，重点 §7.32/33/34/35/38/44/45） | 已知边界的权威来源 |
 | TESTING.md（631 行，重点 §2.17/2.18/2.19、§3 卸载） | 真机验收现状与文档漂移 |
-| docs/superpowers/plans/2026-10-19-v0.8-productization.md | 产品化目标；**无 1.0 规划**（全文无 1.0 相关条目） |
+| （历史产品化计划，已清理） | 产品化目标；**无 1.0 规划**（全文无 1.0 相关条目） |
 | docs/promo/2026-10-27-promotion-plan.md、competitive-2026-10-19/we-product.md | 推广/竞品视角的「还差什么」 |
 | docs/technical-notes.md、docs/dev-setup.md | 贡献者文档现状与漂移 |
 | .agents/notes/implemented/feature/**、architecture/**、rejected/** | 功能取舍与「为什么」 |
@@ -56,7 +56,7 @@
 - **旧版适配层（AGENT.md §7.34，L243）建议作为 1.0.0 的 breaking change 一并删除**：
   - 它的删除判据原文就是「README 声明的最低 DSH 版本 ≥ `0.1.7-alpha.1`」；1.0 若把最低版本抬到实测下限（建议 ≥0.2.0），判据自然满足；
   - 不删的代价是双路径长期维护 + 样式双份 + 无 CI 覆盖旧版（CI 只跑当前 Windows 版），属于「永远不验却永远背着」；
-  - 工作量估计 **1.5–2 人日**（src/client/settings.ts:13 的 ns 候选、settings.ts:4-12 注释、styles.ts 的旧版侧栏规则、对应测试与文档；清单在 docs/superpowers/plans/2026-09-23-dsh-settings-compat-migration.md §9）。
+  - 工作量估计 **1.5–2 人日**（src/client/settings.ts:13 的 ns 候选、settings.ts:4-12 注释、styles.ts 的旧版侧栏规则、对应测试与文档；清单在 （历史计划已清理；结论并入 AGENT §5.34））。
   - 若作者不愿在 1.0 删：则 1.0 release notes 必须写「继续支持 DSH ≤0.1.6」并把该声明变成可复核项（当前无法复核）。
 
 ### Q2. 安装与升级闭环：npm / GitHub / 桌面插件页 / 市场索引 / 配置迁移
@@ -123,7 +123,7 @@
 
 ### Q7. 「1.0.0 定义」调研
 
-→ 见 §C（三方案对比 + 推荐 + DoD）。核心判断：**项目内部从未定义过 1.0**——发布模板明确写「0.x 阶段……不引入 major」（.github/RELEASE_NOTES_TEMPLATE.md:69-72），v0.8 产品化计划通篇无 1.0 条目（docs/superpowers/plans/2026-10-19-v0.8-productization.md），promo 文档也只到「冲 321★」。所以 1.0 的定义必须由本次决策**新立**，不能从历史文档里找现成答案。
+→ 见 §C（三方案对比 + 推荐 + DoD）。核心判断：**项目内部从未定义过 1.0**——发布模板明确写「0.x 阶段……不引入 major」（.github/RELEASE_NOTES_TEMPLATE.md:69-72），v0.8 产品化计划通篇无 1.0 条目（（历史产品化计划，已清理）），promo 文档也只到「冲 321★」。所以 1.0 的定义必须由本次决策**新立**，不能从历史文档里找现成答案。
 
 ---
 
@@ -140,7 +140,7 @@
 | A5 | **卸载残留**：README 只写命令与插件页；未提 `~/.dsh-use-wallpaper/frames`、localStorage 键、settings 命名空间；TESTING 的清理清单过时 | 所有卸载用户（磁盘/隐私残留，且不知道要清） | 手动猜路径 | **阻塞（文档级）** | README.md:407-415；TESTING.md:617-626、:567、:606 |
 | A6 | **无诊断信息 / 无版本展示**：面板不能复制诊断；关于区无版本；issue 模板内联且不含版本/健康快照 | 出问题的用户（估计 5–15% 的 scene 用户会遇到至少一次降级；依据：README 称渲染失败「是正常可能出现的情况」，§7.38 的看护体系本身即为失败而建） | 手动翻 console | **阻塞（低成本）** | settings-section.tsx:1413-1445；render-health.ts:179-185；README.md:307-321；index.ts:391-409 |
 | A7 | **无 WebGL2 / WE 缺失 / web 失败的提示** | 新用户与低端机用户；web 壁纸用户 | 换浏览器/装 WE/换壁纸 | **部分阻塞（至少提示）** | render-health.ts:6、:179-185；index.ts:253；README.md:280-281；AGENT.md:241-242 |
-| A8 | **web 壁纸无失败回退 + 局域网/隧道访问空白**（已声明） | 本机 43 张快照中 web 仅 4 张（≈9%）；web 壁纸用户与远程访问用户 | 换壁纸；用回环地址/桌面壳访问 | 不阻塞（已声明；但应标「实验性」并进 README 限制） | AGENT.md:241-242；README.md:80、:246、:281；docs/2026-10-20-library-feature-gap-audit.md:4、:154 |
+| A8 | **web 壁纸无失败回退 + 局域网/隧道访问空白**（已声明） | 本机 43 张快照中 web 仅 4 张（≈9%）；web 壁纸用户与远程访问用户 | 换壁纸；用回环地址/桌面壳访问 | 不阻塞（已声明；但应标「实验性」并进 README 限制） | AGENT.md:241-242；README.md:80、:246、:281；docs/fixes/library-feature-gap-audit-2026-10-20.md:4、:154 |
 | A9 | **子粒子 / ropetrail 未支持（已声明）** | 本机 43 张中「子粒子」命中 12 张（≈28%），另有 ropetrail 少量（依据：2026-10-20 全库审计；v0.8.1–v0.13 未新增该能力） | 换壁纸；提 issue 记录 | 不阻塞 | README.md:63、:260；AGENT.md:233；audit:12、:85 |
 | A10 | **开机动画 / 媒体集成 / 视频声音未真机验收** | 使用这几项的用户（开机动画默认关闭；媒体/系统音频依赖特定壁纸与 Windows） | 关闭功能 | **阻塞（1.0 宣称的功能必须有验收记录；否则标「实验性」）** | TESTING.md:465、:481、:516、:545；AGENT.md:289-302 |
 | A11 | **i18n 缺失**：面板/提示全中文硬编码 | 非中文用户（DSH 生态有英文用户；README 无英文版） | 无（只能机翻） | 不阻塞（1.0.1/1.x 可做；但 README 至少说明「界面仅中文」） | settings-section.tsx:221-222；render-health.ts:178-185 |
@@ -316,7 +316,7 @@
 | npm tarball | unpackedSize 7,923,877 B；fileCount 191 | registry.npmjs.org |
 | npm 周下载（2026-10-29~11-04） | 1,760（含镜像/爬虫，绝对值偏高） | api.npmjs.org |
 | GitHub | 9★ / 0 fork / 0 open issue / Discussions 开 / 无 Pages / size 45,377KB / 11 topics | api.github.com/repos/yu502950715yang/dsh-use-wallpaper |
-| 本机壁纸库画像（2026-10-20 审计快照） | 43 张：37 scene + 4 web + 2 video；「缺功能」30 张（scene 25 / web 3 / video 2），高 5 / 中 23 / 低 2 | docs/2026-10-20-library-feature-gap-audit.md:4、:85 |
+| 本机壁纸库画像（2026-10-20 审计快照） | 43 张：37 scene + 4 web + 2 video；「缺功能」30 张（scene 25 / web 3 / video 2），高 5 / 中 23 / 低 2 | docs/fixes/library-feature-gap-audit-2026-10-20.md:4、:85 |
 
 > 注：壁纸库是本机快照、会漂移（AGENT.md:5 明确不要据此外推）；此处只作「影响面量级」依据，2026-10-20 之后 v0.8.1–v0.13 已修复多项，剩余以 AGENT.md §7 为准。
 

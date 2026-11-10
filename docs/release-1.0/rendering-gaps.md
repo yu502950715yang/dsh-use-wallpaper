@@ -2,7 +2,7 @@
 
 > 审计日期：2026-11-06 ｜ 插件版本：`@dsh-use/wallpaper-engine` **v0.13.0**（代码基准 HEAD `0056109`）
 > 对照基准：**Wallpaper Engine 桌面版 v2.8.42**（本机安装目录 `D:/Steam/steamapps/common/wallpaper_engine`，其 `assets/shaders` 为明文，可直接核对语义）
-> 素材口径：`D:/Steam/steamapps/workshop/content/431960` 当前 **50 个条目 = 43 个 scene 条目（42 个独立 `scene.pkg` + 1 个 preset `3163840671` 共享依赖 `3118949804`）+ 4 web + 3 video**。**注意**：`docs/2026-10-20-library-feature-gap-audit.md` 的口径是 43 张（37 scene + 4 web + 2 video），此后库增至 50，本文数字按当前库重扫，不能直接与旧报告对比。
+> 素材口径：`D:/Steam/steamapps/workshop/content/431960` 当前 **50 个条目 = 43 个 scene 条目（42 个独立 `scene.pkg` + 1 个 preset `3163840671` 共享依赖 `3118949804`）+ 4 web + 3 video**。**注意**：`docs/fixes/library-feature-gap-audit-2026-10-20.md` 的口径是 43 张（37 scene + 4 web + 2 video），此后库增至 50，本文数字按当前库重扫，不能直接与旧报告对比。
 > 方法：逐条以**当前代码**为准（不采信「已修」记录本身）；素材侧用只读脚本解包 42 个 `scene.pkg`，统计 `scene.json` / 粒子 spec / effect 链 / 脚本内联源码的字段命中；语义疑问直接读 WE 明文 shader 核对。未运行 vitest/e2e/build（由另一 teammate 负责）。
 
 ## TL;DR
@@ -107,7 +107,7 @@
 
 ---
 
-## C. 与 `docs/2026-10-20-library-feature-gap-audit.md` 的 F1–F21 差异对照（以 v0.13.0 代码为准）
+## C. 与 `docs/fixes/library-feature-gap-audit-2026-10-20.md` 的 F1–F21 差异对照（以 v0.13.0 代码为准）
 
 > 旧审计是 v0.8.0（代码基准 `73fe6ab`、库 43 张）快照；下表逐项核对当前代码，**不可直接引用旧结论排期**。
 

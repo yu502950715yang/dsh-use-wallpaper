@@ -5,7 +5,7 @@
 - 项目根：`E:\code\dsh-use-wallpaper`
 - 关联：
   - `AGENT.md` §7.1 第 6 条（text 对象已渲染、但脚本只覆盖 clock 一类；未识别写法已改为跳过）
-  - `docs/superpowers/plans/2026-08-21-fix-all-rendering-issues.md` 的 P3 风险条（原裁定：**不做通用脚本引擎**，用内置模式识别）—— 本文**有意推翻**该裁定，理由与边界见 §8
+  - （历史计划，已清理） 的 P3 风险条（原裁定：**不做通用脚本引擎**，用内置模式识别）—— 本文**有意推翻**该裁定，理由与边界见 §8
   - `src/client/scene-script.ts`（quickjs 绑定层先例，含 handle 生命周期的坑）
   - `src/client/text-object.ts`（`drawTextToCanvas` / `createClockDriver`，本设计复用它）
   - `docs/technical-notes.md` §1.1（three 主路径）
@@ -158,7 +158,7 @@ scene.json（text.script / text.scriptproperties，已由 scene-json 解析）
 
 ## 8. 对既有裁定的改变（如实记录）
 
-`docs/superpowers/plans/2026-08-21-fix-all-rendering-issues.md` 的 P3 风险条写着"**不做通用 JS 引擎**（安全与工作量），内置模式识别覆盖全库已知脚本"；`AGENT.md` §7.1 第 6 条也把它列为"后续候选，未做"。
+（历史计划，已清理） 的 P3 风险条写着"**不做通用 JS 引擎**（安全与工作量），内置模式识别覆盖全库已知脚本"；`AGENT.md` §7.1 第 6 条也把它列为"后续候选，未做"。
 
 本轮**有意推翻**它，理由：① 模式识别追不上作者写法（CodeTime 的 7 层拼装、VHS 的 3000 字符脚本各不相同），留下的是"整张壁纸回退 preview"；② 沙箱方案的成本已实测可控（0.48 MB、模块级单例）；③ 安全边界明确（wasm 沙箱 + 步数上限，不碰宿主上下文）。
 

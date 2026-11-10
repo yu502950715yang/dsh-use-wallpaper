@@ -2,7 +2,7 @@
 
 - 日期：2026-10-13
 - 分支：`feat/frame-capture-refract`（自 `master` = `951bd7d`）
-- 状态：设计已定，待用户审阅 → 转 `docs/superpowers/plans/2026-10-13-frame-capture-refract.md`
+- 状态：设计已定，待用户审阅 → 转实施计划（历史计划已清理）
 - 立案由：壁纸 `2897292240`（THE ART OF DEATH STRANDING）的雨层 #25/#36 在 DSH 里被画成不透明白方块/白竖条，
   WE 里是「玻璃水滴/雨痕」。旧审计（`refract-particles-audit.md`）误判「该层在 WE 里不可见」并建议**跳过**；
   重新调研推翻该结论（实机 A/B 证据见 §1）。

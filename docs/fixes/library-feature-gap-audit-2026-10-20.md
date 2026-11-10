@@ -2,8 +2,8 @@
 
 > 审计日期：2026-10-20 ｜ 插件版本：`@dsh-use/wallpaper-engine` v0.8.0（代码基准 `73fe6ab`）
 > 壁纸库：`D:/Steam/steamapps/workshop/content/431960`（43 张：37 scene + 4 web + 2 video，全部只读）
-> 判定基准：[`capabilities.md`](../research/audit-2026-10-20/capabilities.md)（160 项能力支持度，逐项带源码 `path:line`）
-> **独立复核**：本报告已按对抗性复核 [`verification.md`](../research/audit-2026-10-20/verification.md) 修订（22 项抽查：通过 13 / 有误 7 / 部分有误 1 / 存疑 1）。复核**否决 2 条误报**（2011060960、2132420420 的 `_rt_` mask 槽判断）、**补入 1 条漏报**（2859263090 的 `instanceoverride.colorn`），并对若干结论降级/标注「待真机验证」——详见第七节修订记录。
+> 判定基准：capabilities.md（原始报告已清理）（160 项能力支持度，逐项带源码 `path:line`）
+> **独立复核**：本报告已按对抗性复核 verification.md（原始报告已清理） 修订（22 项抽查：通过 13 / 有误 7 / 部分有误 1 / 存疑 1）。复核**否决 2 条误报**（2011060960、2132420420 的 `_rt_` mask 槽判断）、**补入 1 条漏报**（2859263090 的 `instanceoverride.colorn`），并对若干结论降级/标注「待真机验证」——详见第七节修订记录。
 
 ## TL;DR
 
@@ -23,10 +23,10 @@
 5. **交叉复核**：`crosscheck.json` 把能力缺口映射到全库素材；独立复核员用逐 pass 扫描 + 抽查把关键结论重新验证一遍（结果见 `verification.md`）。**标「待验」的结论需要真机截图/听感确认**。
 
 逐张详情：
-- scene A 组（18 张）→ [`gaps-scene-A.md`](../research/audit-2026-10-20/gaps-scene-A.md)
-- scene B 组（19 张）→ [`gaps-scene-B.md`](../research/audit-2026-10-20/gaps-scene-B.md)
-- web / video（6 张）→ [`gaps-media.md`](../research/audit-2026-10-20/gaps-media.md)
-- 复核订正 → [`verification.md`](../research/audit-2026-10-20/verification.md)
+- scene A 组（18 张）→ gaps-scene-A.md（原始报告已清理）
+- scene B 组（19 张）→ gaps-scene-B.md（原始报告已清理）
+- web / video（6 张）→ gaps-media.md（原始报告已清理）
+- 复核订正 → verification.md（原始报告已清理）
 
 > 说明：上述研究文件保留审计当时原文；**结论以本报告的「已订正版本」为准**（复核否决/降级的条目已在第七节列明）。
 
@@ -176,7 +176,7 @@
 
 ## 七、修订记录（独立复核后）
 
-复核见 [`verification.md`](../research/audit-2026-10-20/verification.md)：22 项抽查 = 通过 13 / 有误 7 / 部分有误 1 / 存疑 1。本报告对应的修订：
+复核见 verification.md（原始报告已清理）：22 项抽查 = 通过 13 / 有误 7 / 部分有误 1 / 存疑 1。本报告对应的修订：
 
 | # | 原结论 | 复核结果 | 本报告处理 |
 |---|---|---|---|

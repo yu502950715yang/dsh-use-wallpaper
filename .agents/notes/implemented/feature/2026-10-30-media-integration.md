@@ -4,7 +4,7 @@ Status: implemented
 
 ## Problem
 
-壁纸 `3797976859`（小作 2(有声)）在插件里常驻一个白色方块：它的 5 个媒体图层（封面框 / 封面 / 歌名 / 歌手 / 媒体区）的隐藏逻辑只挂在 `mediaPlaybackChanged(PLAYBACK_STOPPED)` 上，而本插件从未派发任何媒体事件；`$mediaThumbnail` 实例纹理也未实现，封面回退成 `util/white` 纯白。同时 `{animation}` 时间线轨道从未解析，媒体层的淡入/滑入与 Fog 的 loop 漂移都不会播放。设计见 [2026-10-30-media-integration-design.md](../../../../docs/superpowers/specs/2026-10-30-media-integration-design.md)，实施计划见 [2026-10-30-media-integration.md](../../../../docs/superpowers/plans/2026-10-30-media-integration.md)，现状契约见 `AGENT.md` §5.54。
+壁纸 `3797976859`（小作 2(有声)）在插件里常驻一个白色方块：它的 5 个媒体图层（封面框 / 封面 / 歌名 / 歌手 / 媒体区）的隐藏逻辑只挂在 `mediaPlaybackChanged(PLAYBACK_STOPPED)` 上，而本插件从未派发任何媒体事件；`$mediaThumbnail` 实例纹理也未实现，封面回退成 `util/white` 纯白。同时 `{animation}` 时间线轨道从未解析，媒体层的淡入/滑入与 Fog 的 loop 漂移都不会播放。设计见 [2026-10-30-media-integration-design.md](../../../../docs/superpowers/specs/2026-10-30-media-integration-design.md)，实施计划见 2026-10-30-media-integration.md（历史实施计划已清理），现状契约见 `AGENT.md` §5.54。
 
 ## Decision
 

@@ -5,7 +5,7 @@ import {
 } from '../src/client/tex-loader.js';
 
 // S3 加固回归（2026-11-10）：纹理解压预算与「按 format+尺寸推导分配」。
-// 设计见 docs/audit-2026-11-10/host.md / summary.md；阈值可通过 profile config 调整，
+// 设计见 docs/fixes/audit-2026-11-10-summary.md / summary.md；阈值可通过 profile config 调整，
 // client 启动时由 index.ts 注入（setTexBudget）；这里直接测注入后的行为。
 //
 // 攻击形态：mip 记录声明巨大 decompressedBytes（或巨大宽高）→ 修复前直接 new Uint8Array(声明值)，

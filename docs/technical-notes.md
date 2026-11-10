@@ -83,7 +83,7 @@
 - **`colorBlendMode ∈ {6,7,31}` 的对象已进入隔离路径、其效果生效**（2026-09-14 `6bb3d71`）：修法是把 WE 的混合语义从「内容材质」搬到「合成 quad」——隔离内容材质只做普通 alpha 写入，`createCompositeQuadMaterial` 统一用 `MeshBasicMaterial`（采样非预乘对象 RT）并按 `colorBlendMode` 设 `CustomBlending`。
 - **`refraction` 在 GLSL3 下编译失败**（引擎源码自身的 `float(format) == FORMAT_RG88` 缺陷）：效果不生效。**已修的是「失败被缓存」**——此前每帧重试 ⇒ 重建材质 + 探针渲染 + 2 条 warning（实测该页 146×2 条刷屏）；现在按 pass key 缓存失败，同一 key 只试一次。
 - **text 对象的 effects 已挂链（v0.8.1）**：`groupEffectsByObject` 不再跳过 text，隔离 RT / 合成 quad 尺寸在装配期冻结 ⇒ 时钟文本变宽时轻微裁边/拉伸（`AGENT.md` §7.42 ①）。实测样本 `3765967112` 的 4 条 `blurprecise` 挂在 text 对象上。
-- **`util` 对象上的 effects 已挂链（v0.8.2）**（全库 **8 对象 / 10 条**；本机 `none` 类型对象挂 effects = **0**，勘误见 `docs/2026-10-20-library-feature-gap-audit.md` 第七节 #11）：有 effects 的 util 层进隔离渲染（`util-material.ts` + `setUtilContentTexture`，`AGENT.md` §7.42 ⑧⑨）；**无 effects 的 util 层整层不渲染**（记边界）。
+- **`util` 对象上的 effects 已挂链（v0.8.2）**（全库 **8 对象 / 10 条**；本机 `none` 类型对象挂 effects = **0**，勘误见 `docs/fixes/library-feature-gap-audit-2026-10-20.md` 第七节 #11）：有 effects 的 util 层进隔离渲染（`util-material.ts` + `setUtilContentTexture`，`AGENT.md` §7.42 ⑧⑨）；**无 effects 的 util 层整层不渲染**（记边界）。
 - **粒子对象的效果链只有单测覆盖**：全库实测 particle 挂载 effects = 0，管线里的粒子隔离分支**无真实样本可验**。
 - ~~**链全为具名 RT 图链的对象不再隔离**（P2 前置优化）~~：**已作废（2026-09-15，P2）** —— `rtGraphOnly` 分支与其告警已删除，isolate 准入回到「至少有一条**可见**链」；原先不隔离的对象重新进入隔离路径，换来效果生效。
 

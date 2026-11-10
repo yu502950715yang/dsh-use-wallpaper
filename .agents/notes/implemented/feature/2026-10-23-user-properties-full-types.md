@@ -17,7 +17,7 @@ v0.8 的属性面板只暴露 `bool`、只消费 `visible.user` 的字符串形�
 
 父链继承的影响面（2026-10-23 全库扫描快照：39 张 scene / 358 对象）：有 `parent` 的对象 15 个 / 4 张，parent 缺失 0、容器父 0、父链含 script 0；修复后可见性只变化 **2 张 / 5 个对象**——`2911105183` 的 144/148（condition 归因），`3812518176` 的 227（condition）与 234/245（父链）；其余 43 张零变化。condition 修独立 Clock 分支、父链修父子结构，两个修复覆盖不同壁纸，缺一不可。
 
-相关：[设计文档](../../../../docs/superpowers/specs/2026-10-23-user-properties-full-types-design.md)、[实施计划](../../../../docs/superpowers/plans/2026-10-23-user-properties-full-types.md)、[被翻转的暂缓提案](../../rejected/feature/2026-10-19-user-properties-panel-scope.md)、[v0.8 属性范围](../../implemented/architecture/2026-10-19-v08-degradation-rotation-and-properties.md)；契约见 `AGENT.md` §7.41 ①，真机清单见 `TESTING.md` §2.16。
+相关：[设计文档](../../../../docs/superpowers/specs/2026-10-23-user-properties-full-types-design.md)、实施计划（历史实施计划已清理）、[被翻转的暂缓提案](../../rejected/feature/2026-10-19-user-properties-panel-scope.md)、[v0.8 属性范围](../../implemented/architecture/2026-10-19-v08-degradation-rotation-and-properties.md)；契约见 `AGENT.md` §7.41 ①，真机清单见 `TESTING.md` §2.16。
 
 ## Affected repositories
 

@@ -2,7 +2,7 @@
 
 > 审查方法：`code-review-skill` 分级（🔴 P0 阻塞 / 🟡 P1 应修 / 🟢 P2 建议）+ `dispatching-parallel-agents` 按领域并行。
 > 基准 HEAD `d5ff886`（1.0 P0 收口后）。**6 个领域报告 + Lead 高层自审**，逐条给 `path:line` 证据；Lead 已对全部 P0 做代码级交叉验证。
-> 各领域全文：`host.md`（待补）· [client-runtime.md](./client-runtime.md) · [rendering-correctness.md](./rendering-correctness.md) · [rust-wasm.md](./rust-wasm.md) · [testing-gates.md](./testing-gates.md) · [architecture.md](./architecture.md)（待补）· [overview.md](./overview.md)（Lead 高层/自审）
+> 各领域明细报告已清理（只保留本总表）；原 8 篇见 git 历史 `docs/audit-2026-11-10/`。各领域全文：`host.md`（待补）· client-runtime.md · rendering-correctness.md · rust-wasm.md · testing-gates.md · architecture.md（待补）· overview.md（Lead 高层/自审）
 
 ## 0. 结论摘要
 
@@ -114,10 +114,10 @@
 
 | 文件 | 领域 | 规模 |
 |---|---|---|
-| [overview.md](./overview.md) | Lead 高层 + 1.0 自审 | P1×1、P2×5、✅×5 |
-| `host.md` | 主机侧正确性与安全 | [host.md](./host.md)：**P0×3（安全）、P1×5、P2×18**（同源 iframe 读本地视频 / sandbox 逃逸 / LZ4 炸弹；逐路由来源校验矩阵 + 文档一致性核查） |
-| [client-runtime.md](./client-runtime.md) | 客户端运行时 | P0×1、P1×3、P2×17 |
-| [rendering-correctness.md](./rendering-correctness.md) | 渲染正确性 | P0×2、P1×5、P2×10、静默吞错 12 |
-| [rust-wasm.md](./rust-wasm.md) | Rust / wasm | P0×3、P1×3、P2×11 |
-| [testing-gates.md](./testing-gates.md) | 测试质量与门禁 | P0×3、P1×10、P2×8 |
-| `architecture.md` | 架构可维护性 | [architecture.md](./architecture.md)：**P0×3、P1×9、P2×10**（God class / 面板隐式总线 / 跨端路由契约；含文档漂移抽查） |
+| overview.md | Lead 高层 + 1.0 自审 | P1×1、P2×5、✅×5 |
+| `host.md` | 主机侧正确性与安全 | host.md：**P0×3（安全）、P1×5、P2×18**（同源 iframe 读本地视频 / sandbox 逃逸 / LZ4 炸弹；逐路由来源校验矩阵 + 文档一致性核查） |
+| client-runtime.md | 客户端运行时 | P0×1、P1×3、P2×17 |
+| rendering-correctness.md | 渲染正确性 | P0×2、P1×5、P2×10、静默吞错 12 |
+| rust-wasm.md | Rust / wasm | P0×3、P1×3、P2×11 |
+| testing-gates.md | 测试质量与门禁 | P0×3、P1×10、P2×8 |
+| `architecture.md` | 架构可维护性 | architecture.md：**P0×3、P1×9、P2×10**（God class / 面板隐式总线 / 跨端路由契约；含文档漂移抽查） |

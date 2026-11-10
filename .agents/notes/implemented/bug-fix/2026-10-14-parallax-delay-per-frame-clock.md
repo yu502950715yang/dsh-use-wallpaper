@@ -41,4 +41,4 @@ WE 的鼠标视差（`general.cameraparallax*` + 对象 `parallaxDepth`）在本
 
 **代价：** ① **传播组未实现** —— 父链锚点与 `disablepropagation` 未复刻，按"每对象自算 `parallaxDepth`"近似 ⇒ 子对象**不继承**父层深度（扁平层级观感一致，容器/组继承待做）；② `parallaxDepth` 缺省时**不参与**视差，而 WE 对 composite 容器有 `{1,1}` 缺省 —— 本仓未实现，故缺该字段的容器在 WE 里会动、在这里不动；③ **开视差时脚本对同一对象 `origin` 的写入每帧被丢弃**（基准位取自创建期，`tickParallax` 每帧写 `position = 基准位 + shift`，而 OWE 是 shift 与脚本 model 平移叠加）；影响面是落点在 `position` 上的那几路（背景、隔离对象的合成 quad），非隔离粒子走 `u_Parallax` 不受影响；当前本机无实害（3 张 enabled 壁纸的 pkg 内均无 `.js` 脚本；另两张 amount 缺省 0），真遇到"脚本位移 + 视差"同对象的壁纸须先按叠加语义改 `tickParallax`。
 
-机制推导与实测样本见 [scene 视差与 puppet 实施计划](../../../../docs/superpowers/plans/2026-10-13-scene-parallax-puppet.md)；上述边界也是 `AGENT.md` §5.47 / §7.39 的表述。
+机制推导与实测样本见 scene 视差与 puppet 实施计划（历史实施计划已清理）；上述边界也是 `AGENT.md` §5.47 / §7.39 的表述。

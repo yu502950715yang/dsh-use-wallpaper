@@ -1,6 +1,6 @@
 # ThreeScenePlayer God class 拆分设计（阶段式重构）
 
-> 日期：2026-11-10 ｜ 来源：`docs/audit-2026-11-10/client-runtime.md` P0-9 ｜ 状态：已批准方案 A（class + 注入宿主引用，3 阶段）
+> 日期：2026-11-10 ｜ 来源：`docs/fixes/audit-2026-11-10-summary.md` P0-9 ｜ 状态：已批准方案 A（class + 注入宿主引用，3 阶段）
 
 ## 1. 目标与不变量
 

@@ -46,7 +46,7 @@
 | `AGENT.md:238`（§7.3） | 「粒子自旋的轴序偏差（本项目用 Rz·Ry·Rx…）」→ 改为**已对齐 WE 的记录**（自旋 `Rz·Rx·Ry`、对象角度 `Rz·Ry·Rx`、z-only 等价、判据测试位置、仍欠真机逐像素） |
 | `AGENT.md:244`（§7.31） | `copybackground` 结论段按 §3 定性重写（原「唯一真消费点」表述被修正） |
 
-**剩余漂移（超出 task-6 写域，需 Lead / 其它任务同步）**：`TESTING.md:126` 仍写「`_rt_FullFrameBuffer` 消费者按 R6 降级、门控关闭（`ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER = false`）⇒ 该槽仍留空 + 每槽去重告警」，与现状矛盾。历史文档（`docs/fixes/**`、`docs/superpowers/plans/**`）里的「门控关闭」是当时记录，保留原样；`docs/2026-10-20-library-feature-gap-audit.md` 的 F6 结论已被 §7.31 新定性取代（历史审计，未改）。
+**剩余漂移（超出 task-6 写域，需 Lead / 其它任务同步）**：`TESTING.md:126` 仍写「`_rt_FullFrameBuffer` 消费者按 R6 降级、门控关闭（`ENABLE_CHAIN_FRAME_SNAPSHOT_CONSUMER = false`）⇒ 该槽仍留空 + 每槽去重告警」，与现状矛盾。历史文档（`docs/fixes/**`、`docs/superpowers/plans/**`）里的「门控关闭」是当时记录，保留原样；`docs/fixes/library-feature-gap-audit-2026-10-20.md` 的 F6 结论已被 §7.31 新定性取代（历史审计，未改）。
 
 ## 3. A18 copybackground 定性（只读分析，**未实现**）
 

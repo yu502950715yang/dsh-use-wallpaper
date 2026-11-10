@@ -12,6 +12,8 @@
 | [`threejs-path-fixes.md`](threejs-path-fixes.md) | AGENT.md §7 组一（原第 331–574 行） | three.js 主路径的修复过程与遗留：对象效果链验收表、Glow 网格标定与显存/性能实测、text/脚本/动态网格/自旋等各条记录，以及「备用 wasm/JS 路径已删除」节 |
 | [`web-wallpaper-history.md`](web-wallpaper-history.md) | AGENT.md §7 组二（原第 576–582 行） | web 壁纸的定位过程与已修记录（opaque origin、resize 自适应、首帧空白） |
 | [`verification-ci-history.md`](verification-ci-history.md) | AGENT.md §7 组三 + §3.3（原第 584–599 行与第 93 行） | 验证手段、CI 三个坑的排查过程、测试基线的历史记录、e2e harness 的漏检分析 |
+| [`library-feature-gap-audit-2026-10-20.md`](library-feature-gap-audit-2026-10-20.md) | `docs/2026-10-20-library-feature-gap-audit.md`（2026-11-10 迁入） | v0.8 库功能缺口审计（本机 43 张快照、F1–F21、缺功能分类） |
+| [`audit-2026-11-10-summary.md`](audit-2026-11-10-summary.md) | `docs/audit-2026-11-10/summary.md`（2026-11-10 迁入） | 全项目审查汇总：14 P0 总表（已全部修复 + 真机验收通过；明细报告已清理） |
 
 ## 编号约定
 

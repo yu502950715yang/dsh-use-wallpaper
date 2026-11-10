@@ -64,7 +64,7 @@
    # <img src="icon.svg" width="30" height="30" align="absmiddle" alt=""> @dsh-use/wallpaper-engine
    ```
 
-   注意：**不要**把 `![](icon.svg)` 直接塞进 shields 徽章行（SVG 会按 64px 原始尺寸渲染，破坏徽章行高）。
+   注意：**不要**把 `![](../../icon.svg)` 直接塞进 shields 徽章行（SVG 会按 64px 原始尺寸渲染，破坏徽章行高）。
 2. **`index.json`**：bump 到 1.0.0 时新增条目的 `engines.dsh` 必须与 `package.json` **逐字一致**（`>=0.2.0-rc.1 <0.3.0`），历史 0.x 条目保持原声明 —— `scripts/check-release.mjs` ④ 会做严格比较（当前主工作树因 index 旧条目与 package 新 engines 不一致，该项按预期判红）。
 3. **`package.json`**：`files` 已包含 4 个文档 + `icon.svg`，**无需再改**；bump 版本后 `icon`/`dsh.icon` 自动生效。`scripts.check:release` / `gen:wasm-manifest` 已就位。
 4. **README 无需补的**：4 个文件的链接已在「许可与致谢」「相关链接」；升级/兼容/安全/贡献入口均已指向。若想再加一处，可在「构建与开发」末尾加一行 `参与贡献见 CONTRIBUTING.md（提交规范 / 门禁 / PR 流程）`，非必须。

@@ -144,7 +144,7 @@
 
 **实测现状**
 - README `:218-232`：声称同时支持 `0.1.5-rc.3` / `0.1.6-alpha.2` / `0.1.7-alpha.2`（三版均「真机验证」，日期 2026-09-23），并写「旧版兼容层是过渡性的，待 DSH 新版本稳定后按迁移文档 §9 清理」。
-- AGENT.md §7.34 给出触发条件：README 声明最低 DSH 版本 ≥ `0.1.7-alpha.1` 即可删旧适配层；清理清单在 `docs/superpowers/plans/2026-09-23-dsh-settings-compat-migration.md` §9（A 可删 / B 可简化 / C **必须保留的 0.1.7 适配**）。
+- AGENT.md §7.34 给出触发条件：README 声明最低 DSH 版本 ≥ `0.1.7-alpha.1` 即可删旧适配层；清理清单在 （历史计划已清理；结论并入 AGENT §5.34）（A 可删 / B 可简化 / C **必须保留的 0.1.7 适配**）。
 - 旧适配层代码仍在：
   - `src/client/settings.ts`：`NS_CANDIDATES = ['dsh-wallpaper-engine', 'wallpaper-engine']`（0.1.7 条目 id + ≤0.1.6 短名回退）；
   - `src/host/index.ts`：`settings.register(...)` 旧分支（`typeof settings?.register === 'function'`）；

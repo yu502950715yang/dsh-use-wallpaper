@@ -17,8 +17,8 @@
 
 根因**不是**帧循环或效果链，而是：**这张壁纸的全部动画逻辑写在 17 个 WE SceneScript 里**（4 个控制器 + 10 个歌曲字标 + 2 个时钟 + 1 个切歌按钮），而本引擎
 
-- 从不执行 `visible.script`（[visibility.ts:64-65](src/client/visibility.ts#L64-L65) 对 script 绑定直接返回 `value`；[three-renderer.ts:350-352](src/client/three-renderer.ts#L350-L352) 只对 text 调 `resolveVisibility`）；
-- 且 4 个控制器**全部挂在 `models/util/*` 上**，而 util 对象不参与渲染（[scene-renderer.ts:715](src/client/scene-renderer.ts#L715)），因此即使实现了 `visible.script`，也只对"参与渲染的对象"生效的话依旧不会跑到它们。
+- 从不执行 `visible.script`（[visibility.ts:64-65](../../../src/client/visibility.ts#L64-L65) 对 script 绑定直接返回 `value`；[three-renderer.ts:350-352](../../../src/client/three-renderer.ts#L350-L352) 只对 text 调 `resolveVisibility`）；
+- 且 4 个控制器**全部挂在 `models/util/*` 上**，而 util 对象不参与渲染（`scene-renderer.ts:715`（文件已删除）），因此即使实现了 `visible.script`，也只对"参与渲染的对象"生效的话依旧不会跑到它们。
 
 本文实现一个**通用的 SceneScript 运行时**：执行模块风格脚本（`export function init/update/applyUserProperties/cursorClick`），把脚本对"图层"的写入变成**纯数据状态表**，由渲染侧应用器落到 three 对象上。
 
@@ -114,9 +114,9 @@ three-renderer.render(id, fg)
 
 | 文件 | 改动 |
 |---|---|
-| [three-renderer.ts](src/client/three-renderer.ts) | 收集脚本（**含 util / 非渲染对象**）；建 `objectId → three 对象` 映射；装配 `SceneScriptHost`；帧钩子；dispose 时释放 |
-| [threejs-player.ts](src/client/threejs-player.ts) | 新增**按 scene 对象 id** 取背景/隔离条目 three 对象的只读访问器（现有 `backgroundEntries`/`particleLayers` 按**图层计数器 id** 索引，`isolate`/`ObjectEffectStage` 按 **scene 对象 id** 索引 —— 不能重蹈 [three-renderer.ts:517-522](src/client/three-renderer.ts#L517-L522) 记录过的那层脆弱翻译） |
-| [scene-json.ts](src/client/scene-json.ts) | `util` 分支也产出 `script`/`scriptProperties`（现在只对 image 的 `visible.kind==='script'` 派生） |
+| [three-renderer.ts](../../../src/client/three-renderer.ts) | 收集脚本（**含 util / 非渲染对象**）；建 `objectId → three 对象` 映射；装配 `SceneScriptHost`；帧钩子；dispose 时释放 |
+| [threejs-player.ts](../../../src/client/threejs-player.ts) | 新增**按 scene 对象 id** 取背景/隔离条目 three 对象的只读访问器（现有 `backgroundEntries`/`particleLayers` 按**图层计数器 id** 索引，`isolate`/`ObjectEffectStage` 按 **scene 对象 id** 索引 —— 不能重蹈 [three-renderer.ts:517-522](../../../src/client/three-renderer.ts#L517-L522) 记录过的那层脆弱翻译） |
+| [scene-json.ts](../../../src/client/scene-json.ts) | `util` 分支也产出 `script`/`scriptProperties`（现在只对 image 的 `visible.kind==='script'` 派生） |
 
 ## 5. 宿主 API 契约
 
@@ -169,7 +169,7 @@ animRegistry.tick(dt)          // 先推进播放器（advanceFrame 的时间源
 - `eval` 失败 → 该脚本不装载；
 - `init` / `update` / `cursorClick` 抛错 → 该脚本停用，`console.warn` 一次（不刷屏），**其余脚本继续**；
 - 全部脚本不可用 → 状态表为空 → 画面等于现状（即"脚本没接上"）；
-- 运行期脚本抛错**不得**中断 player 帧循环（沿用 [threejs-player.ts:601-622](src/client/threejs-player.ts#L601-L622) 的整帧 try/catch 语义）。
+- 运行期脚本抛错**不得**中断 player 帧循环（沿用 [threejs-player.ts:601-622](../../../src/client/threejs-player.ts#L601-L622) 的整帧 try/catch 语义）。
 
 ## 7. 测试与验收
 
@@ -197,5 +197,5 @@ animRegistry.tick(dt)          // 先推进播放器（advanceFrame 的时间源
 ## 9. 与既有设计的关系
 
 - **不扩展 `src/client/scene-script.ts`**：它服务的是「每个对象一个 `class extends IThisPropertyObject` 实例 + 每帧读回 `this.image.alpha`」的旧 wasm 路径语义，与本壁纸的「单一全局控制器 + 模块导出函数 + `thisScene` API」形态不同；混在一起会让两类语义互相污染。它保持现状（wasm 路径继续用）。
-- **与本设计并存**：[text-script.ts](src/client/text-script.ts) 的 text 脚本运行时保持不动；本期只把它**没覆盖**的 `visible.script` 与 util 对象纳入新运行时。两者共享同一个 quickjs 依赖，但不共享 ctx（text 路径是模块级单例，语义不同）。
+- **与本设计并存**：[text-script.ts](../../../src/client/text-script.ts) 的 text 脚本运行时保持不动；本期只把它**没覆盖**的 `visible.script` 与 util 对象纳入新运行时。两者共享同一个 quickjs 依赖，但不共享 ctx（text 路径是模块级单例，语义不同）。
 - **不推翻任何既有裁定**：本文只补一个从未实现的 WE 语义（`visible.script` 执行）。
