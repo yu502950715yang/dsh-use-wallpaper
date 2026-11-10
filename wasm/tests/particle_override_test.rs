@@ -143,22 +143,34 @@ fn override_rate_multiplies_emitter_rate() {
 /// ⇒ **占空比（同时存活数）不变**，只是闪得更快更短。
 /// 只乘发射率不缩寿命会让「同时亮着的粒子数」随 rate 线性变多 —— 用户实测 Spider Man 4K
 /// 的闪电火花「比桌面版多、频率快了不少」（该壁纸 rate 覆盖 2.4~4.2）。
+///
+/// 2026-11-10 订正（测试期望错，实现无误）：原参数 lifetime=0.1s、真实 dt=0.05s 只有 1~2 帧的
+/// 采样分辨率 —— rate=1 的稳态恒为单帧发射量 50（`> 50` 断言本就不可能过），rate=4 时有效步长
+/// sdt=0.2s 已超寿命 ⇒ 粒子当帧即超龄（0 个），「两者相等」在离散采样下不可达。实现（sim.rs
+/// 的 sdt = dt×override.rate，同时用于发射累积与寿命衰减/算子）符合 OWE 语义，故放大参数到
+/// 寿命 ≫ 步长，并在连续极限（占空比 ≈ rate×lifetime）下断言**近似相等**。
 #[test]
 fn override_rate_keeps_duty_cycle() {
     fn duty(rate_override: f32) -> usize {
         let mut init = determinate_init();
-        init.lifetime_min = 0.1;
-        init.lifetime_max = 0.1;
-        let mut sim = sim_with(init, ParticleOverride { rate: rate_override, ..Default::default() }, 1000.0, 600);
-        for _ in 0..20 {
-            sim.update(0.05); // 跑到稳态
+        init.lifetime_min = 1.0;
+        init.lifetime_max = 1.0;
+        // 发射率 1000/s、maxcount 4000：连续极限稳态 ≈ 1000 个，离池上限足够远。
+        let mut sim = sim_with(init, ParticleOverride { rate: rate_override, ..Default::default() }, 1000.0, 4000);
+        // 400 帧 × 0.01s：rate=1 走 4 effect-s、rate=4 走 16 effect-s，均远超寿命 1s。
+        for _ in 0..400 {
+            sim.update(0.01);
         }
         sim.particles.len()
     }
     let base = duty(1.0);
     let fast = duty(4.0);
-    assert!(base > 50, "基准稳态应有粒子，got {base}");
-    assert_eq!(base, fast, "rate 只缩放系统时间 ⇒ 稳态存活数（占空比）不变");
+    // 离散偏差来自「出生当帧即扣一帧寿命」：稳态 ≈ rate×lifetime − rate×dt = 990 / 960。
+    assert!(base > 900, "基准稳态应接近理论占空比（≈990），got {base}");
+    assert!(
+        (base as f32 - fast as f32).abs() <= 0.1 * base as f32,
+        "rate 只缩放系统时间 ⇒ 稳态存活数（占空比）近似不变：base={base} fast={fast}"
+    );
 }
 
 /// 颜色覆盖：`colorn`（已归一 0-1）走 v²；legacy `color`（0-255）先 /255 再 v²。

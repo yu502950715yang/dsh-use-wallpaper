@@ -17,7 +17,6 @@
     "tests/setup/no-unhandled.ts|TS2835": 1,
     "tests/setup/unhandled-guard.ts|TS2322": 1,
     "tests/steam-paths.test.ts|TS2353": 1,
-    "tests/synthetic-library.test.ts|TS2339": 3,
     "tests/tex-loader.test.ts|TS18048": 10,
     "tests/three-renderer.test.ts|TS2322": 1,
     "tests/three-renderer.test.ts|TS2339": 216,
@@ -34,7 +33,6 @@
     "tests/threejs-player.test.ts|TS2739": 1,
     "tests/threejs-player.test.ts|TS2769": 1,
     "tests/unhandled-guard.test.ts|TS2835": 1,
-    "tests/verify-real-library.test.ts|TS2339": 2,
     "tests/wallpaper-controller.test.ts|TS2322": 1
   }
 }

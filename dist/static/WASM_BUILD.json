@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-11-10T01:15:12.298Z",
+  "buildCommand": "cd wasm && wasm-pack build --no-opt --target web --release --features cpu-sim",
+  "toolchain": {
+    "rustc": "1.96.0",
+    "cargo": "1.96.0",
+    "wasmPack": "0.15.0"
+  },
+  "source": {
+    "wasmSrcCommit": "1b7a306930176c087a0f9cdd48e68ec94d3218c6",
+    "wasmSrcDirty": false
+  },
+  "quickjs": {
+    "version": "0.32.0",
+    "source": "@jitl/quickjs-wasmfile-release-sync/dist/emscripten-module.wasm",
+    "sha256": "105c3bed22d457e43e3d1c3c1c6959fda62a8fe06f0fc8a985303c3a2be72232"
+  },
+  "artifacts": {
+    "dist/static/we_scene_wasm.js": {
+      "sha256": "15aa990168e7b79fafa0174f18debabb016ccc01d6df00864d8324fece2a32e6",
+      "size": 11281
+    },
+    "dist/static/we_scene_wasm_bg.wasm": {
+      "sha256": "b6f8a7c36a2b0c31e762d0143358fa436d624e0a4bbfe63fdb6521b9b24f08c5",
+      "size": 171799
+    },
+    "dist/static/quickjs.wasm": {
+      "sha256": "105c3bed22d457e43e3d1c3c1c6959fda62a8fe06f0fc8a985303c3a2be72232",
+      "size": 503134
+    }
+  }
+}

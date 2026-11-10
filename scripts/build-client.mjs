@@ -1,9 +1,14 @@
 import { build } from 'esbuild';
-import { copyFileSync, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveQuickjsWasmPath } from './lib/quickjs-wasm-path.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
+
+// 版本号单一来源 = package.json；注入 src/client/version.ts 的 __PLUGIN_VERSION__，
+// 面板「关于」区与诊断信息都用它（避免再出现手写版本号漂移）。
+const PLUGIN_VERSION = JSON.parse(readFileSync('package.json', 'utf8')).version;
 
 // 单包化后 dist 可能未预先存在（全新克隆），先确保目录，否则 writeFileSync('dist/client.js') 报 ENOENT
 mkdirSync('dist', { recursive: true });
@@ -43,6 +48,7 @@ const result = await build({
   target: 'es2022',
   outfile: 'dist/client.js',
   external: EXTERNAL,
+  define: { __PLUGIN_VERSION__: JSON.stringify(PLUGIN_VERSION) },
   write: false,
   sourcemap: true,
 });
@@ -81,9 +87,13 @@ console.log('wasm assets copied to dist/static/ (we_scene_wasm.js, we_scene_wasm
 // text 脚本沙箱（quickjs）：wasm 复制到 dist/static/，运行时用 RELEASE_SYNC 变体 +
 // wasmLocation = '/wallpapers/static/quickjs.wasm'。缺失即中止构建
 // （否则线上会静默退化成「脚本不执行」，用户看到的是空文本层）。
-const QUICKJS_WASM_SRC = join(here, '..', 'node_modules', '@jitl', 'quickjs-wasmfile-release-sync', 'dist', 'emscripten-module.wasm');
-if (!existsSync(QUICKJS_WASM_SRC)) {
-  throw new Error(`[build:client] 未找到 ${QUICKJS_WASM_SRC}，text 脚本沙箱不可用 —— 构建中止`);
+// 路径经 resolveQuickjsWasmPath 解析：pnpm 布局下 @jitl/* 不在顶层 node_modules，硬编码会 ENOENT。
+const QUICKJS_WASM_SRC = resolveQuickjsWasmPath(join(here, '..'));
+if (!QUICKJS_WASM_SRC) {
+  throw new Error(
+    '[build:client] 未找到 @jitl/quickjs-wasmfile-release-sync 的 emscripten-module.wasm，' +
+      'text 脚本沙箱不可用 —— 检查 node_modules（pnpm install）后重试',
+  );
 }
 copyFileSync(QUICKJS_WASM_SRC, join(outStatic, 'quickjs.wasm'));
 console.log(`quickjs.wasm copied to dist/static/ (${(statSync(QUICKJS_WASM_SRC).size / 1024).toFixed(0)} KB)`);

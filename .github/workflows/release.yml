@@ -1,0 +1,130 @@
+name: Release
+
+# tag v* → 全量门禁 → npm publish --provenance（OIDC 可信发布，无长期 NPM_TOKEN）。
+# 门禁 = ci.yml 三门禁（arch / tsc+产物新鲜度 / vitest / e2e）+ scripts/check-release.mjs
+# （产物新鲜度、wasm 溯源、npm pack 内容、engines 一致性）。任何一步红 ⇒ 不发布。
+# 发布流程见 .github/RELEASE_NOTES_TEMPLATE.md「发布流程 checklist」；设计见
+# docs/release-1.0/release-engineering.md §B.6/B.9。
+#
+# 动作主版本与 ci.yml 同钉法（必须跑在 Node 24 运行时上，否则 setup-node 等动作直接失败，
+# 原因见 ci.yml 头注）：checkout@v5 / setup-node@v5 / pnpm/action-setup@v5。
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch: # 手动演练：只跑门禁；publish 仅在 tag ref 上执行
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false # 发布不可被并发取消
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: 全量门禁
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # check-release 的 wasm 溯源要读 wasm/src 的提交历史
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 9
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 门禁 0：架构边界（host/client/shared 分层 + 环境 + 产物反向依赖）
+        run: node scripts/verify-arch.mjs
+
+      - name: 门禁 1a：tsc（strict）
+        run: pnpm exec tsc -p tsconfig.json --noEmit
+
+      # tag 必须构建自干净工作树：重跑构建后产物与提交内容逐字节一致
+      - name: 门禁 1b：lib/ 产物必须与 src 同步（重跑 tsc 后零差异）
+        shell: bash
+        run: |
+          pnpm exec tsc -p tsconfig.json
+          git add -A -- lib/
+          git diff --cached --exit-code -- lib/
+
+      - name: 门禁 1c：dist/client.js 必须与 src 同步（先删入库副本再构建）
+        shell: bash
+        run: |
+          rm -f dist/client.js dist/client.js.map
+          node scripts/build-client.mjs || true  # 缺 wasm/pkg 时复制阶段 exit 1，但 client.js 已写出
+          git diff --exit-code -- dist/client.js
+
+      - name: 门禁 1d：tests 侧类型检查基线（只对新增类型错误判红）
+        run: node scripts/check-known-type-errors.mjs
+
+      # 发布不吞已知失败基线：pnpm test 必须真绿（CI test job 允许基线集合内的失败，tag 不行）
+      - name: 门禁 2：vitest 全量
+        run: pnpm test
+
+      # 与 ci.yml e2e job 同口径：windows-latest 已预装 Edge，setup-edge 只作候选来源
+      - name: 安装 Edge（镜像已装时会直接命中，不下载）
+        id: edge
+        uses: browser-actions/setup-edge@v1
+        continue-on-error: true
+      - name: 解析 Edge 路径并导出 EDGE_PATH
+        env:
+          EDGE_FROM_ACTION: ${{ steps.edge.outputs.edge-path }}
+        shell: pwsh
+        run: |
+          $probe = @(
+            $env:EDGE_FROM_ACTION,
+            "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe",
+            "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe",
+            (Get-Command msedge.exe -ErrorAction SilentlyContinue).Source
+          )
+          $edge = $probe | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+          if (-not $edge) { throw "找不到 Edge：e2e 无法运行" }
+          "EDGE_PATH=$edge" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
+      - name: 门禁 3：e2e colorblend（真实 headless Edge 逐像素判据）
+        run: node e2e/verify/verify-colorblend.mjs
+        env:
+          E2E_TIMEOUT_MS: '90000'
+
+      - name: 门禁 4：发布前检查（产物 / wasm 溯源 / npm pack / engines）
+        run: node scripts/check-release.mjs
+
+  publish:
+    name: 发布到 npm（OIDC provenance）
+    needs: gate
+    # 手动演练（branch 上的 workflow_dispatch）不发布；只有 tag push 才发布
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    timeout-minutes: 15
+    # npm Trusted Publisher 绑定 environment；需要人工审批时在仓库 Settings > Environments 配置
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write # npm OIDC 可信发布 + --provenance 的必需权限
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - name: 校验 tag 与 package.json 版本一致
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "tag v$TAG 与 package.json version $PKG 不一致，拒绝发布" >&2
+            exit 1
+          fi
+          echo "将发布 $PKG"
+      - name: npm publish（--provenance --tag latest）
+        run: npm publish --provenance --tag latest

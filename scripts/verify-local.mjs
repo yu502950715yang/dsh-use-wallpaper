@@ -76,6 +76,14 @@ gate('门禁 3：e2e colorblend', () => {
   return { ok: r.status === 0, detail: `exit ${r.status}` };
 });
 
+// ⑤.1 发布前检查（1.0）：产物新鲜度复核 + wasm 溯源 + npm pack 断言 + engines 一致性。
+// 与 1b/1c 有重叠是有意的——发布动作要求一条命令同时覆盖「构建产物」与「发布字节」。
+gate('门禁 4：发布前检查（check-release）', () => {
+  const r = sh('node', ['scripts/check-release.mjs'], { quiet: true });
+  if (r.status !== 0) process.stdout.write((r.stdout ?? '') + (r.stderr ?? ''));
+  return { ok: r.status === 0, detail: `exit ${r.status}` };
+});
+
 // ⑥ 仓库卫生：不得有未提交的**已跟踪**改动（未跟踪文件只提示）
 gate('卫生：工作树无未提交的已跟踪改动', () => {
   const s = git(['status', '--porcelain']);

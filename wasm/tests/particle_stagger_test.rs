@@ -15,8 +15,10 @@
 use we_scene_wasm::particle::{emitter_spec_to_particle, parse_particle_spec, SceneParticleSim};
 
 /// 真实黑神话 Sakura 粒子规格（scene 2851992662，`particles/presets/leaves5.json`）。
+/// 夹具入库：`research/` 被 gitignore，从本机 WE 库的 scene.pkg 提取后放 fixtures/
+/// （`node research/_extract-leaves5.mjs` 可复现），否则干净克隆编不过该 test target。
 const BLACK_MYTH_SPEC: &str =
-    include_str!("../../research/2851992662-particles-presets-leaves5.json");
+    include_str!("fixtures/2851992662-particles-presets-leaves5.json");
 
 /// 受控规格：无散射（distancemax=0）、固定速度（-40 px/s）、无湍流、仅 movement 算子 →
 /// 位置可精确解析（`pos.y = 发射点 y + vel.y × age`），用于断言相位前滚正确。
