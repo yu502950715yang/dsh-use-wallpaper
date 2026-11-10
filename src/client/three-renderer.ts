@@ -701,6 +701,9 @@ export function createThreeSceneRenderer(opts?: {
               if (texture) mediaReplacedTextures.push(texture);
             } else if (texture) {
               backgroundTextures.set(obj.id, texture);
+            } else if (!puppetPath) {
+              // 纹理缺失：后续 addBackground 用白图兜底（用户看到白块）→ 留一条诊断，否则无从排查（P1）
+              warnOnce(`image-tex:${id}:${obj.id}`, `图片对象纹理缺失，渲染成白图兜底：object=${obj.id} image=${obj.image}`);
             }
             // SceneScript 音频可视化（Simple Visualizer）：64 条 bar 由脚本 init 动态 createLayer 创建，
             // three 路径由 player 代建并按音频频谱更新（bar 贴图 = 对象自身 image 的白色 4×4 纹理）。

@@ -116,9 +116,15 @@ export const USERPROP_PREFIX = 'we:userprop:';
 
 export function getUserPropertyValue(key: string, wallpaperId?: string): UserPropertyValue | undefined {
   if (typeof localStorage === 'undefined') return undefined;
-  // 带 id 时 per-wallpaper 键优先；缺失回退旧全局键（升级前的用户覆盖值仍生效）。
-  const scoped = wallpaperId ? localStorage.getItem(USERPROP_PREFIX + wallpaperId + ':' + key) : null;
-  const raw = scoped ?? localStorage.getItem(USERPROP_PREFIX + key);
+  // 隐私模式/禁用存储时 getItem 可能抛 SecurityError ⇒ 兜底 undefined（面板不崩，绑定回退作者值）P1
+  let raw: string | null;
+  try {
+    // 带 id 时 per-wallpaper 键优先；缺失回退旧全局键（升级前的用户覆盖值仍生效）。
+    const scoped = wallpaperId ? localStorage.getItem(USERPROP_PREFIX + wallpaperId + ':' + key) : null;
+    raw = scoped ?? localStorage.getItem(USERPROP_PREFIX + key);
+  } catch {
+    return undefined;
+  }
   if (raw === null) return undefined;
   try {
     const value: unknown = JSON.parse(raw);

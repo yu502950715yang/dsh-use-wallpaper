@@ -221,6 +221,11 @@ describe('getUserPropertyValue（WE 用户属性 localStorage 存储）', () => 
     expect(getUserPropertyValue('x')).toBeUndefined();
   });
 
+  it('getItem 抛错（隐私模式/禁用存储）→ undefined（不崩）', () => {
+    vi.stubGlobal('localStorage', { getItem: () => { throw new Error('SecurityError'); } } as any);
+    expect(getUserPropertyValue('x')).toBeUndefined();
+  });
+
   it('损坏 JSON → undefined（不抛错，防御）', () => {
     const ls = storage();
     ls.getItem.mockReturnValue('{oops');

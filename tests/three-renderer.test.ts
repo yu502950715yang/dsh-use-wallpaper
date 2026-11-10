@@ -136,6 +136,28 @@ beforeEach(() => {
 });
 
 describe('createThreeSceneRenderer', () => {
+  // P1：image 对象纹理缺失（model json 里 image 路径失效/加载失败）→ 渲染白图兜底且**零日志**
+  // 会让用户看到白块却无法排查；修复 = 装配期 warn 一次（键含壁纸 id 与对象 id）。
+  it('P1：image 对象纹理缺失 → 白图兜底并 warn 一次（可排查）', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.mocked(resolveImageAssets).mockResolvedValue({ texture: null, puppetPath: null } as never);
+    vi.mocked(defaultLoadWasm).mockResolvedValue(null);
+    vi.mocked(loadSceneToThree).mockReturnValue({
+      player: { dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(), setParallax: vi.fn(), setParallaxPointer: vi.fn() },
+      sims: [], backgroundIds: [1], particleLayers: [], puppetLayers: [],
+    } as never);
+    stubAssetFetch(JSON.stringify({
+      general: { orthogonalprojection: { width: 1920, height: 1080 } },
+      objects: [{ id: 1, name: 'bg', image: 'models/bg.json', origin: '960.00000 540.00000 0.00000', size: '1920.00000 1080.00000' }],
+    }), {});
+    const r = createThreeSceneRenderer();
+    await r.render('wid-no-texture', document.createElement('canvas'));
+    const hits = warn.mock.calls.filter((c) => String(c[0]).includes('纹理缺失'));
+    expect(hits).toHaveLength(1);
+    warn.mockRestore?.();
+    r.dispose?.();
+  });
+
   it('render：解析 scene.json → 为 image 对象组装背景纹理、particle 对象组装 spec/tex/blend', async () => {
     resolveImageAssets.mockResolvedValue({ texture: fakeTexture() as any, puppetPath: null });
     // 材质 json 不可得（null）→ 回退材质名启发式：spec 材质名含 "lightshaft" → additive。

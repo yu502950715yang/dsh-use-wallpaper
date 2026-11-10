@@ -3467,8 +3467,13 @@ async function writeClientSettings(patch) {
 var USERPROP_PREFIX = "we:userprop:";
 function getUserPropertyValue(key, wallpaperId) {
   if (typeof localStorage === "undefined") return void 0;
-  const scoped = wallpaperId ? localStorage.getItem(USERPROP_PREFIX + wallpaperId + ":" + key) : null;
-  const raw = scoped ?? localStorage.getItem(USERPROP_PREFIX + key);
+  let raw;
+  try {
+    const scoped = wallpaperId ? localStorage.getItem(USERPROP_PREFIX + wallpaperId + ":" + key) : null;
+    raw = scoped ?? localStorage.getItem(USERPROP_PREFIX + key);
+  } catch {
+    return void 0;
+  }
   if (raw === null) return void 0;
   try {
     const value = JSON.parse(raw);
@@ -6140,6 +6145,42 @@ function computePointerPost(ev, box, tag) {
   };
 }
 
+// src/client/pointer-post-bridge.ts
+var PointerPostBridge = class {
+  token = 0;
+  fn = null;
+  target = null;
+  /** 挂到可见帧；重复 attach（resize 重建）前先摘旧监听。 */
+  attach(frame) {
+    if (this.fn) {
+      window.removeEventListener("pointermove", this.fn, true);
+      this.fn = null;
+    }
+    this.token += 1;
+    const token = this.token;
+    this.target = frame.contentWindow;
+    const onMove = (ev) => {
+      const fwin = frame.contentWindow;
+      if (token !== this.token || !fwin || fwin !== this.target || !frame.isConnected) return;
+      const payload = computePointerPost(ev, frame.getBoundingClientRect(), 1);
+      if (!payload) return;
+      try {
+        fwin.postMessage(payload, "*");
+      } catch {
+      }
+    };
+    this.fn = onMove;
+    window.addEventListener("pointermove", onMove, { capture: true, passive: true });
+  }
+  /** 卸载：摘监听并作废在途 token（幂等）。 */
+  detach() {
+    this.token += 1;
+    if (this.fn) window.removeEventListener("pointermove", this.fn, true);
+    this.fn = null;
+    this.target = null;
+  }
+};
+
 // src/client/video-health.ts
 var DEFAULT_SAMPLE_INTERVAL_MS = 1e3;
 var DEFAULT_TICK_INTERVAL_MS = 100;
@@ -6542,32 +6583,7 @@ function createBackgroundLayer(root, opts = {}) {
   let frameToken = 0;
   let altOriginProbe = null;
   let altOrigin = null;
-  let pointerPostToken = 0;
-  let pointerPostFn = null;
-  let pointerTarget = null;
-  function detachPointerPost() {
-    pointerPostToken += 1;
-    if (pointerPostFn) window.removeEventListener("pointermove", pointerPostFn, true);
-    pointerPostFn = null;
-    pointerTarget = null;
-  }
-  function attachPointerPost(frame) {
-    pointerPostToken += 1;
-    const token = pointerPostToken;
-    pointerTarget = frame.contentWindow;
-    const onMove = (ev) => {
-      const fwin = frame.contentWindow;
-      if (token !== pointerPostToken || !fwin || fwin !== pointerTarget || !frame.isConnected) return;
-      const payload = computePointerPost(ev, frame.getBoundingClientRect(), 1);
-      if (!payload) return;
-      try {
-        fwin.postMessage(payload, "*");
-      } catch {
-      }
-    };
-    pointerPostFn = onMove;
-    window.addEventListener("pointermove", onMove, { capture: true, passive: true });
-  }
+  const pointerPost = new PointerPostBridge();
   let paused = false;
   let currentVideo = null;
   let currentVideoHasAudio;
@@ -6594,7 +6610,7 @@ function createBackgroundLayer(root, opts = {}) {
   function stopWebResizeReload() {
     webUrl = null;
     liveWebFrame = null;
-    detachPointerPost();
+    pointerPost.detach();
     stopSoundRetry();
     if (webResizeTimer !== null) {
       clearTimeout(webResizeTimer);
@@ -6705,7 +6721,7 @@ function createBackgroundLayer(root, opts = {}) {
       if (liveWebFrame === frame) postSoundToFrame(frame);
     }, { once: true });
     appendWebFrame(frame, spec.url);
-    attachPointerPost(frame);
+    pointerPost.attach(frame);
     postSoundToFrame(frame);
     retrySoundPost(frame);
   }
@@ -6742,7 +6758,7 @@ function createBackgroundLayer(root, opts = {}) {
         fill.replaceChildren(frame);
         liveWebFrame = frame;
         frame.style.visibility = "";
-        attachPointerPost(frame);
+        pointerPost.attach(frame);
         postSoundToFrame(frame);
         retrySoundPost(frame);
       } else {
@@ -38096,6 +38112,8 @@ function createThreeSceneRenderer(opts) {
               if (texture) mediaReplacedTextures.push(texture);
             } else if (texture) {
               backgroundTextures.set(obj.id, texture);
+            } else if (!puppetPath) {
+              warnOnce2(`image-tex:${id}:${obj.id}`, `\u56FE\u7247\u5BF9\u8C61\u7EB9\u7406\u7F3A\u5931\uFF0C\u6E32\u67D3\u6210\u767D\u56FE\u515C\u5E95\uFF1Aobject=${obj.id} image=${obj.image}`);
             }
             if (obj.script) {
               const props = obj.scriptProperties ?? {};
