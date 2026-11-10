@@ -6,9 +6,9 @@
 
 ## 0. 结论摘要
 
-**共 11 个 P0（8 个运行时/门禁 + 3 个结构性，全部经 Lead 代码级复核或证据抽查成立）**，另有 P1 约 40 条、P2 约 50 条。
+**共 14 个 P0（3 个安全 + 8 个运行时/门禁 + 3 个结构性，全部经 Lead 代码级复核或证据抽查成立）**，另有 P1 约 45 条、P2 约 70 条。
 
-一句话：**功能与发布流程已经成熟，但「代码健壮性」有三个系统性问题——① 第三方素材可触发 wasm 层面的 DoS（死循环/OOM/panic）；② 渲染器的生命周期在竞态与纹理所有权上不闭环（连点壁纸即错乱、轮播即泄漏 VRAM）；③ 质量门禁只判「红」不判「消失」，删测试/放宽基线可以全绿通过。** 另有 3 条结构性 P0（God class、面板隐式总线、跨端路由契约无门禁），属长期维护风险，不阻塞发布。
+一句话：**功能与发布流程已经成熟，但有三个层面的系统性问题——① 安全：web 壁纸沙箱可被绕过（读任意本地视频 / 逃逸到 GUI origin）、`.tex` LZ4 炸弹可让渲染进程 OOM；② 健壮性：第三方素材可触发 wasm 层 DoS（死循环/OOM/panic），渲染器在竞态与纹理所有权上不闭环；③ 质量门禁只判「红」不判「消失」，删测试/放宽基线可以全绿通过。** 另有 3 条结构性 P0（God class、面板隐式总线、跨端路由契约无门禁），属长期维护风险，不阻塞发布。
 
 对 1.0 发布的判定：
 - **建议 1.0 前修**：Rust 3 个 P0 的**解析层加固**（非有限值 clamp + `rem_euclid` + `Result` 化，改动小、风险低）+ 渲染 P0-1/P0-2（竞态守卫 + 纹理释放）。不修则「第三方素材锁死页面」「连点壁纸卡住」「轮播久后 context-lost」三类真实用户故障仍可能发生。
@@ -17,6 +17,17 @@
 > ⚠️ 全部结论来自**只读静态审查**，未构造恶意素材或复现运行时故障；P0 的触发条件均已给出可构造路径，建议修复时先用单测钉住。
 
 ## 1. P0 清单（按「用户可感知 × 触发概率」排序）
+
+### 1.0 安全 P0（最高优先级，`host.md` P0-1/2/3）
+
+| # | 问题 | 证据 | 触发条件 | 影响 | 1.0 |
+|---|---|---|---|---|---|
+| S1 | **不可信 web 壁纸可读取任意本地视频文件** | `background-layer.ts:46-51/96`（iframe 用另一回环主机名承载 + `allow-same-origin`）；`routes.ts:237-258` 的 `isLoopbackRequest` 只判「是否回环」，**不区分 GUI 与同源 iframe** | 任意 web 壁纸脚本 `fetch('/wallpapers/boot/local-video?path=' + encodeURIComponent('C:\\任意\\a.mp4'))`：iframe 的 `remoteAddress=127.0.0.1`、`Host=localhost:<port>`，两道闸门全过 | 恶意 web 壁纸把用户磁盘**任意目录的任意视频**读成字节并外传；`/boot/probe` 还提供路径存在性/大小 oracle。直接推翻 `SECURITY.md:54`「不提供任意文件读取」 | **必须** |
+| S2 | **web 壁纸 iframe 可自我导航回 GUI origin，取得 `parent.document` / `localStorage`** | `background-layer.ts:92-97`（`sandbox='allow-scripts allow-same-origin'`）、`routes.ts:630-671`（同一服务双回环主机名） | 壁纸脚本 `location.href='http://127.0.0.1:<port>/wallpapers/web/<id>/index.html'`（GUI 在 localhost 时反向）→ 新文档 origin 变成 GUI origin，sandbox 的 `allow-same-origin` 仍在 | 恶意 web 壁纸从「跨源不可信页」升级为「与 GUI 同源的脚本」：可读聊天 DOM/设置/localStorage、代用户调宿主 API 并外传。**待浏览器实测确认**（若被 CSP `frame-src` 拦住则降 P1） | **必须** |
+| S3 | **恶意 `.tex` 的 LZ4 解压炸弹 → 渲染进程 OOM** | `tex-loader.ts:151-198`（imageCount ≤64、mipmapCount ≤256）、`:190-192`（`decompressedBytes ≤ 1<<30` **每条独立**）、`:263-266`（空载荷仍保留 1GB buffer）；`lz4js` 对空 `src` 返回 0 不抛错 | 恶意 `scene.pkg` 放一个约 328KB 的 `TEXB0002`：64 image × 256 mip，每条声明 1GB 输出、`bytesLen=0` | 第三方不可信素材可让 GUI 渲染进程 OOM/崩溃（前几条就触发） | **必须** |
+
+
+### 1.1 运行时 / 门禁 P0（P0-1…P0-8）
 
 | # | 领域 | 问题 | 证据 | 触发条件 | 影响 | 1.0 |
 |---|---|---|---|---|---|---|
@@ -48,6 +59,8 @@
 
 **测试质量**：① 全库唯一真实 WebGL 证据 = 1 个 e2e 脚本 / 1 个 fixture / 1 个 blend mode（2,196 项单测全在 mock/jsdom 下）；② puppet 防回退锚点（`boneInverses=MDLS 链`）在 CI 与 release 整块 `skipIf`；③ e2e 无「已知失败棘轮」⇒ hidpi/isolated-rt 长期红、事实上不构成门禁；④ `41d2fe1` 把 puppet RT 断言从 `toBe` 弱化为 `toBeGreaterThanOrEqual`，夹具里 `budgetScale=1` ⇒ **回退该修复仍绿**；⑤ 开机动画零 e2e，只有 jsdom；⑥ 门禁脚本自身 1/5 有测试（`check-release` 刚被改松过且无测试）。
 
+**主机侧**：① **未配置 `wallpaperDir` 时 `/wallpapers/web` 以进程 cwd 为根**（`join('','.git')` 前缀校验仍通过）⇒ 可读 `.git/config`、`Desktop/` 等；② `/media/<id>/preview` 无 `isFile`/try ⇒ 目录条目触发 `EISDIR`；③ **`PkgReader` 全局缓存 32 个整包**（100–150MB/包 ⇒ RSS 可达 3–5GB），无字节预算/删除失效；④ `project.json`/`scene.json` 无大小上限、宿主同步整块 `readFileSync` ⇒ 恶意 1GB 文件 OOM；⑤ 无来源校验 + 昂贵同步路由（`/probe` 同步 `reg`、`/list?refresh=1` 全量扫描、`/now-playing` 懒启动 PowerShell）可被**任意网页 CSRF 触发**（无需读响应）。
+
 **架构**：① `three-renderer.ts` 1598 行、直接依赖 39 个模块（全仓耦合中心）；② `index.ts` 的 `bootstrap` 437 行闭包手写 20+ 个捕获变量生命周期；③ host 唯一 import 环 `routes ↔ scene-media-probe`，`routes.ts` 36 处 `any`（占全仓 51%）；④ 设置契约三份副本（`ClientSettings`/`DEFAULTS`/`WallpaperSettingsSchema`），漏改 schema 静默丢设置；⑤ `sim.rs` 1905 行（含 602 行内联测试）；⑥ `scene-script-vm` 268 行字符串 prelude 承担脚本 ABI；⑦ 横切小件各自实现（warn-once×3、白纹理×3、PRNG×2、日志前缀×4、dispose×38）；⑧ `verify-arch` 不查环、不查跨端契约、只扫 `src/`。
 
 ## 3. P2 摘要（完整见各领域报告）
@@ -65,25 +78,31 @@
 - Glow RT 尺寸、y 镜像 + `flipGeometryUvY`、UV 窗口恒等、`readPixels` 同步读取 —— 渲染审查逐项核对**不是缺陷**。
 - 安全校验（路径穿越/UNC/Host 头/NUL）的现有单测覆盖较强（5 种 UNC 变体、DNS-rebinding Host、`%2e%2e%2f`、`C:/` 绝对路径）—— 主机侧领域报告待补，但测试覆盖矩阵已确认这部分有直接用例。
 
-## 4.5 主机侧安全抽查（Lead 补位，host 领域详细报告仍在生成）
+## 4.5 主机侧安全（Lead 抽查 + host 详细报告）
 
-抽查 `src/host/routes.ts` / `pkg-reader.ts` / `media-session.ts` 的核心安全面，**未发现新的 P0**：
+> ⚠️ **更正**：Lead 先前抽查（路径穿越 / UNC / 回环 / PKGV 边界 / 子进程注入）得出的「未发现新增 P0」**只覆盖了字面量校验面**，漏掉了「同源 iframe / 跨站 `<video>` / 沙箱逃逸」三个面。host 详细报告发现 **3 个安全 P0（S1–S3）**，已升为全项目最高优先级（见 §1.0）。
 
-| 面 | 结论 | 证据 |
-|---|---|---|
-| 路径穿越 | 三层防护齐全：id 走 `isSafeToken`（`^[A-Za-z0-9._-]+$` 且无 `..`）；VFS 相对路径走 `isSafeAssetName`（拒 `..`/`\`/前导 `/`）；URL 先经 WHATWG 规范化折叠 dot-segment | `routes.ts:94-106, 228-229` |
-| UNC / 网络路径 | boot 本地视频显式拦截 `\\host\share`、`//`、`/\`、`\/` 混合变体与 `\\?\` 长路径前缀，再判 `isAbsolute` + 扩展名白名单 | `routes.ts:264-272` |
-| 回环限制 | `isLoopbackRequest` = 远端地址回环 **且** Host 头回环（双条件，防 DNS rebinding） | `routes.ts:237-258` |
-| PKGV 解析边界 | magic/长度/截断/负 offset/条目数上限（10000）/全局越界均显式 `throw`，`subarray` 有全局越界兜底 | `pkg-reader.ts:8-39, 86-93` |
-| 子进程注入 | PowerShell watcher 用固定常量脚本 + 固定 args 数组，**不拼接运行期数据** | `media-session.ts:83, 291` |
-| Range 边界 | `Number.isSafeInteger` + `start >= size` / `end < start` 均判 invalid | `routes.ts:158-172` |
+**已核对无问题的正面项**（host 报告「已检查无问题」清单摘要）：
 
-**待 host 详细报告确认的残余面**：`sendSceneAsset` 的流式阈值与 `Content-Length` 一致性、ETag/304 的缓存键、`list-cache` 并发竞态、frame PNG 写入的原子性与限额淘汰竞态。
+| 面 | 结论 |
+|---|---|
+| PKGV 解析边界 | nameLen 上下界、entryEnd 截断、负 offset、条目数上限、全局越界二次校验，全部显式 throw |
+| TEXV 宿主探测 / MP4 moov 审计 | `entry.length` 预检 + box 边界校验，无 OOB/无限循环 |
+| `..`/绝对路径/UNC（字面量） | `isSafeToken`/`isSafeAssetName`/`resolve` 前缀/scene-source/boot 白名单齐全 |
+| URL 规范化 | `new URL` 折叠 dot-segment；`%2e2e%2f`、`%2F`、NUL、超长路径均被拒 |
+| Range 单区间 | 各种边界（含负值/超 MAX_SAFE_INTEGER）有明确结果，416 带 `Content-Range` |
+| 固定响应长度/错误体 | `Content-Length` 按实际 Buffer；错误响应不泄露路径/堆栈 |
+| 子进程 / JSON 行协议 | PowerShell 脚本与 args 全常量；畸形行只计数不污染状态 |
+| 媒体隐私 | 日志不含 title/artist/album；唯一路径泄露在 `index.ts:70` 数据目录错误日志（host P2-10） |
+| XSS/反射 | 无 `innerHTML`；错误体不反射输入；shim 注入只拼接常量并转义 `</script` |
+
+**仍待确认**：Cordis `webServer` 是否包裹同步 handler 异常（决定 host P1-2 是「500」还是「未捕获异常」）；S2 是否被浏览器 CSP `frame-src` 拦住。
 
 ## 5. 修复路线建议
 
 | 批次 | 内容 | 成本 | 理由 |
 |---|---|---|---|
+| **1.0 前（安全，最高优先）** | S1 web 壁纸读任意本地视频（boot 路由加 GUI 专属凭据或独立 origin）、S2 sandbox 逃逸（壁纸内容独立端口/origin）、S3 LZ4 炸弹（按 `mw*mh*format` 精确校验 + 单纹理总预算 + host entry 上限） | M | 三条都是「第三方素材 → 用户本机」的攻击面；`SECURITY.md` 的承诺与实现不符。S3 与运行时 P0-2（maxcount）同属「素材声明值不可信」，可一批做 |
 | **1.0 前（建议）** | Rust 解析层加固：`rem_euclid` 替换 while、`MAX_PARTICLES` 双重 clamp、`parse_particle_spec → Result` + 非有限值校验（P0-1/2/5） | S–M | 改动集中在 `particle/mod.rs` 与 `sim.rs` 的入口，不动渲染语义；可先用单测钉住非法素材 |
 | **1.0 前（建议）** | 渲染：`render()` 加代际守卫（`renderGeneration` + 装配出口检查）、teardown 收编全部纹理所有权（P0-3/4） | M | 连点壁纸与轮播是日常操作，这两条直接决定用户是否遇到卡死/泄漏 |
 | **1.0.1** | 测试门禁：测试数下限断言、`--update` 的 CI diff 守卫、`verify:local` 先删旧报告（P0-6/7/8） | S | 开发流程风险，改门禁脚本本身不碰产品代码 |
@@ -96,7 +115,7 @@
 | 文件 | 领域 | 规模 |
 |---|---|---|
 | [overview.md](./overview.md) | Lead 高层 + 1.0 自审 | P1×1、P2×5、✅×5 |
-| `host.md` | 主机侧正确性与安全 | 详细报告生成中；Lead 抽查结论见 §4.5（无新增 P0） |
+| `host.md` | 主机侧正确性与安全 | [host.md](./host.md)：**P0×3（安全）、P1×5、P2×18**（同源 iframe 读本地视频 / sandbox 逃逸 / LZ4 炸弹；逐路由来源校验矩阵 + 文档一致性核查） |
 | [client-runtime.md](./client-runtime.md) | 客户端运行时 | P0×1、P1×3、P2×17 |
 | [rendering-correctness.md](./rendering-correctness.md) | 渲染正确性 | P0×2、P1×5、P2×10、静默吞错 12 |
 | [rust-wasm.md](./rust-wasm.md) | Rust / wasm | P0×3、P1×3、P2×11 |
