@@ -62,40 +62,24 @@ async function defaultFetchProbe(): Promise<ProbeResult> {
   return (await fetch(WALLPAPER_ROUTES.probe)).json();
 }
 
-// 模块级共享选择处理器：index.ts bootstrap 时注册（委托 controller.select），
-// 使 slot 渲染的组件（无法直接传 props）也能切换/取消壁纸。props.onSelect 优先。
-let sharedOnSelect: ((id: string) => void) | null = null;
+// 面板总线（P0-10）：8 个共享处理器槽位与健康/媒体订阅收口到可注入的 PanelBus 实例
+// （index.ts 创建注入；测试可注入隔离实例）。组件经下列薄委托访问，不再有散落模块级变量。
+import { PanelBus } from './panel-bus.js';
+import type {
+  SystemAudioHandlers, WallpaperHealthHandler, WallpaperMediaHandler,
+  WallpaperMediaIntegrationHandler, WallpaperVideoHealthHandler,
+} from './panel-bus.js';
+export type {
+  SystemAudioHandlers, WallpaperHealthHandler, WallpaperMediaHandler,
+  WallpaperMediaIntegrationHandler, WallpaperVideoHealthHandler,
+} from './panel-bus.js';
 
-export function setWallpaperSelectHandler(fn: ((id: string) => void) | null): void {
-  sharedOnSelect = fn;
-}
+let currentBus: PanelBus | null = null;
 
-// 运行期设置（省电/画质档位）的共享处理器：同样由 index.ts 注册（槽位组件无法直接传 props）。
-let sharedOnRuntimeSettings: ((patch: Partial<ClientSettings>) => void) | null = null;
-
-export function setWallpaperRuntimeHandler(fn: ((patch: Partial<ClientSettings>) => void) | null): void {
-  sharedOnRuntimeSettings = fn;
-}
-
-// 用户属性切换后的重装配处理器：属性值存在 localStorage，渲染器只在装配时读取，
-// 故切换后需重新 select 当前壁纸（不弹提示、不写设置）。传 null = 撤销（teardown）。
-let sharedOnReselect: ((id: string) => void) | null = null;
-
-export function setWallpaperReselectHandler(handler: ((id: string) => void) | null): void {
-  sharedOnReselect = handler;
-}
-
-// 系统音频（v0.9 P1）：浏览器模式经 getDisplayMedia 捕获系统音频驱动频谱；桌面 App 宿主禁用。
-export interface SystemAudioHandlers {
-  start(): Promise<SystemAudioFailure | 'ok'>;
-  stop(): void;
-}
-let sharedSystemAudio: SystemAudioHandlers | null = null;
-
-/** 注册/撤销系统音频处理器（index.ts 注入渲染器实现；null = 撤销）。 */
-export function setWallpaperSystemAudioHandlers(handlers: SystemAudioHandlers | null): void {
-  sharedSystemAudio = handlers;
-}
+/** 注入面板总线（null = 卸载；下次访问自动建临时实例，保证组件不崩）。 */
+export function setPanelBus(bus: PanelBus | null): void { currentBus = bus; }
+/** 当前总线（未注入时懒建临时实例——仅测试/异常路径会遇到）。 */
+export function getPanelBus(): PanelBus { currentBus ??= new PanelBus(); return currentBus; }
 
 // 失败原因文案（失败开放：不支持的宿主给明确指引，不假装成功）。
 function systemAudioErrorMessage(failure: SystemAudioFailure): string {
@@ -113,86 +97,18 @@ function systemAudioErrorMessage(failure: SystemAudioFailure): string {
   }
 }
 
-/** 面板「实时渲染」卡片要的三件事：读状态、重试当前壁纸、清空全部失败记忆。 */
-export interface WallpaperHealthHandler {
-  get(): HealthSnapshot | null;
-  retry(): void;
-  clearFailures(): void;
-}
-let healthHandler: WallpaperHealthHandler | null = null;
-const healthSubscribers = new Set<(s: HealthSnapshot | null) => void>();
-
-/** 注册/撤销共享 handler（传 null = 撤销：面板回退到「读不到状态」的初始态）。 */
-export function setWallpaperHealthHandler(handler: WallpaperHealthHandler | null): void {
-  healthHandler = handler;
-}
-
-/** 订阅健康变化（组件挂载时订阅、卸载时退订；index.ts 调 notifyWallpaperHealth 推送）。 */
-export function subscribeWallpaperHealth(cb: (s: HealthSnapshot | null) => void): () => void {
-  healthSubscribers.add(cb);
-  return () => { healthSubscribers.delete(cb); };
-}
-
-/** 由 index.ts 的健康事件调用；也用于组件挂载时补一次当前值。 */
-export function notifyWallpaperHealth(snap: HealthSnapshot | null): void {
-  for (const cb of Array.from(healthSubscribers)) {
-    try { cb(snap); } catch { /* 单个订阅者异常不影响其它订阅者 */ }
-  }
-}
-
-/** 面板「媒体失败提示」要的两件事：读当前失败 / 清除。 */
-export interface WallpaperMediaHandler {
-  get(): MediaFailure | null;
-  clear(): void;
-}
-let mediaHandler: WallpaperMediaHandler | null = null;
-const mediaSubscribers = new Set<(failure: MediaFailure | null) => void>();
-
-/** 注册/撤销共享 handler（传 null = 面板回到「无失败」初始态，并清掉已显示的提示）。 */
-export function setWallpaperMediaHandler(handler: WallpaperMediaHandler | null): void {
-  mediaHandler = handler;
-  pushMedia(handler?.get() ?? null);
-}
-
-/** 订阅媒体失败变化（组件挂载时订阅、卸载时退订）。 */
-export function subscribeWallpaperMedia(cb: (failure: MediaFailure | null) => void): () => void {
-  mediaSubscribers.add(cb);
-  return () => { mediaSubscribers.delete(cb); };
-}
-
-/** 由 index.ts 的媒体失败事件调用；handler 未注册时不推（面板已回初始态，迟到的失败不得复活提示）。 */
-export function notifyWallpaperMedia(failure: MediaFailure | null): void {
-  if (!mediaHandler) return;
-  pushMedia(failure);
-}
-
-function pushMedia(failure: MediaFailure | null): void {
-  for (const cb of Array.from(mediaSubscribers)) {
-    try { cb(failure); } catch { /* 单个订阅者异常不影响其它订阅者 */ }
-  }
-}
-
-/** 媒体集成状态（面板状态行）：由 index.ts 注入 renderer.getMediaStatus（只读、不含曲目）。 */
-export interface WallpaperMediaIntegrationHandler {
-  get(): MediaIntegrationStatus | null;
-}
-let mediaIntegrationHandler: WallpaperMediaIntegrationHandler | null = null;
-
-/** 注册/撤销共享 handler（传 null = 面板回退到「读不到状态」的说明行）。 */
-export function setWallpaperMediaIntegrationHandler(handler: WallpaperMediaIntegrationHandler | null): void {
-  mediaIntegrationHandler = handler;
-}
-
-/** 视频壁纸健康状态行：index.ts 注入 layer.getVideoHealth（只读快照；非视频壁纸返回 null）。 */
-export interface WallpaperVideoHealthHandler {
-  get(): VideoHealthSnapshot | null;
-}
-let videoHealthHandler: WallpaperVideoHealthHandler | null = null;
-
-/** 注册/撤销共享 handler（传 null = 面板隐藏视频状态行）。 */
-export function setWallpaperVideoHealthHandler(handler: WallpaperVideoHealthHandler | null): void {
-  videoHealthHandler = handler;
-}
+export function setWallpaperSelectHandler(fn: ((id: string) => void) | null): void { getPanelBus().setHandlers({ onSelect: fn }); }
+export function setWallpaperRuntimeHandler(fn: ((patch: Partial<ClientSettings>) => void) | null): void { getPanelBus().setHandlers({ onRuntimeSettings: fn }); }
+export function setWallpaperReselectHandler(handler: ((id: string) => void) | null): void { getPanelBus().setHandlers({ onReselect: handler }); }
+export function setWallpaperSystemAudioHandlers(handlers: SystemAudioHandlers | null): void { getPanelBus().setHandlers({ systemAudio: handlers }); }
+export function setWallpaperHealthHandler(handler: WallpaperHealthHandler | null): void { getPanelBus().setHandlers({ health: handler }); }
+export function subscribeWallpaperHealth(cb: (s: HealthSnapshot | null) => void): () => void { return getPanelBus().subscribeHealth(cb); }
+export function notifyWallpaperHealth(snap: HealthSnapshot | null): void { getPanelBus().notifyHealth(snap); }
+export function setWallpaperMediaHandler(handler: WallpaperMediaHandler | null): void { getPanelBus().setHandlers({ media: handler }); }
+export function subscribeWallpaperMedia(cb: (failure: MediaFailure | null) => void): () => void { return getPanelBus().subscribeMedia(cb); }
+export function notifyWallpaperMedia(failure: MediaFailure | null): void { getPanelBus().notifyMedia(failure); }
+export function setWallpaperMediaIntegrationHandler(handler: WallpaperMediaIntegrationHandler | null): void { getPanelBus().setHandlers({ mediaIntegration: handler }); }
+export function setWallpaperVideoHealthHandler(handler: WallpaperVideoHealthHandler | null): void { getPanelBus().setHandlers({ videoHealth: handler }); }
 
 /** 状态行文案：分辨率 · 实测帧率 · 近 1s 丢帧 · 最近循环停顿 · 状态。 */
 export function formatVideoHealthLine(h: VideoHealthSnapshot): string {
@@ -316,9 +232,9 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
   const fetchWallpapers = props.fetchWallpapers ?? defaultFetchWallpapers;
   const fetchProbe = props.fetchProbe ?? defaultFetchProbe;
   const fetchProperties = props.fetchProperties ?? fetchWallpaperProperties;
-  const onSelect = props.onSelect ?? sharedOnSelect ?? (() => {});
-  const onReselect = props.onReselect ?? sharedOnReselect ?? (() => {});
-  const onRuntimeSettings = props.onRuntimeSettings ?? sharedOnRuntimeSettings ?? (() => {});
+  const onSelect = props.onSelect ?? getPanelBus().get().onSelect ?? (() => {});
+  const onReselect = props.onReselect ?? getPanelBus().get().onReselect ?? (() => {});
+  const onRuntimeSettings = props.onRuntimeSettings ?? getPanelBus().get().onRuntimeSettings ?? (() => {});
 
   const [settings, setSettings] = useState<ClientSettings | null>(null);
   const [wallpapers, setWallpapers] = useState<WallpaperInfo[]>([]);
@@ -332,10 +248,10 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
   const [message, setMessage] = useState('');
   const [health, setHealth] = useState<HealthSnapshot | null>(props.health ?? null);
   // 媒体失败（视频解码）：handler 由 index.ts 注册，提示条在其卡片下方显示。
-  const [mediaFailure, setMediaFailure] = useState<MediaFailure | null>(mediaHandler?.get() ?? null);
+  const [mediaFailure, setMediaFailure] = useState<MediaFailure | null>(getPanelBus().get().media?.get() ?? null);
   // 媒体集成状态（面板状态行）：无推送通道，挂载时读一次 + 面板打开期间 1s 轮询（任务允许的最简口径）。
   const [mediaStatus, setMediaStatus] = useState<MediaIntegrationStatus | null>(
-    () => mediaIntegrationHandler?.get() ?? null,
+    () => getPanelBus().get().mediaIntegration?.get() ?? null,
   );
   // 视频壁纸播放状态（FPS/丢帧/循环停顿）：同样挂载时读一次 + 1s 轮询。
   const [videoHealth, setVideoHealth] = useState<VideoHealthSnapshot | null>(null);
@@ -370,24 +286,24 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
 
   // 挂载时先取一次当前值（打开面板即显示状态），再订阅后续推送；卸载时退订。
   useEffect(() => {
-    setHealth(props.health ?? healthHandler?.get() ?? null);
+    setHealth(props.health ?? getPanelBus().get().health?.get() ?? null);
     return subscribeWallpaperHealth((s) => setHealth(s));
   }, [props.health]);
 
   useEffect(() => {
-    setMediaFailure(mediaHandler?.get() ?? null);
+    setMediaFailure(getPanelBus().get().media?.get() ?? null);
     return subscribeWallpaperMedia((f) => setMediaFailure(f));
   }, []);
 
   useEffect(() => {
-    const read = () => setMediaStatus(mediaIntegrationHandler?.get() ?? null);
+    const read = () => setMediaStatus(getPanelBus().get().mediaIntegration?.get() ?? null);
     read();
     const timer = setInterval(read, 1000);
     return () => clearInterval(timer);
   }, []);
 
   useEffect(() => {
-    const read = () => setVideoHealth(videoHealthHandler?.get() ?? null);
+    const read = () => setVideoHealth(getPanelBus().get().videoHealth?.get() ?? null);
     read();
     const timer = setInterval(read, 1000);
     return () => clearInterval(timer);
@@ -458,14 +374,14 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
 
   // 系统音频（v0.9 P1）：启动需要用户手势 + 浏览器授权；失败原因回显到面板（不静默）。
   const startSystemAudio = useCallback(async () => {
-    if (!sharedSystemAudio) {
+    if (!getPanelBus().get().systemAudio) {
       setSystemAudioError('unsupported');
       return;
     }
     setSystemAudioState('starting');
     setSystemAudioError(null);
     try {
-      const result = await sharedSystemAudio.start();
+      const result = await getPanelBus().get().systemAudio!.start();
       if (result === 'ok') setSystemAudioState('active');
       else {
         setSystemAudioState('idle');
@@ -478,7 +394,7 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
   }, []);
 
   const stopSystemAudio = useCallback(() => {
-    sharedSystemAudio?.stop();
+    getPanelBus().get().systemAudio?.stop();
     setSystemAudioState('idle');
   }, []);
 
@@ -675,18 +591,24 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
   // 都没有时不谎报「已重试/已清除」（插件尚未挂载时是这种情况）。
   const retryLive = () => {
     if (props.onRetryLive) props.onRetryLive();
-    else if (healthHandler) healthHandler.retry();
-    else return;
+    else {
+      const health = getPanelBus().get().health;
+      if (!health) return;
+      health.retry();
+    }
     setMessage('已重试实时渲染');
   };
   const forgetFailures = () => {
     if (props.onClearRenderFailures) props.onClearRenderFailures();
-    else if (healthHandler) healthHandler.clearFailures();
-    else return;
+    else {
+      const health = getPanelBus().get().health;
+      if (!health) return;
+      health.clearFailures();
+    }
     setMessage('已清除失败记忆');
   };
   const dismissMediaFailure = () => {
-    mediaHandler?.clear();
+    getPanelBus().get().media?.clear();
     setMediaFailure(null); // 立即隐藏；真实 handler 也会经订阅推送 null
   };
 

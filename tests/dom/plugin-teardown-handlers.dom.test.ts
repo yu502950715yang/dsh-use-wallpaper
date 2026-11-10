@@ -49,6 +49,7 @@ vi.mock('../../src/client/three-renderer.js', () => ({
 }));
 vi.mock('../../src/client/styles.js', () => ({ injectWallpaperStyles: vi.fn() }));
 vi.mock('../../src/client/settings-section.js', () => ({
+  setPanelBus: vi.fn(),
   WallpaperSettingsSection: () => null,
   setWallpaperSelectHandler: vi.fn((fn: any) => { handlers.select = fn; }),
   setWallpaperRuntimeHandler: vi.fn((fn: any) => { handlers.runtime = fn; }),

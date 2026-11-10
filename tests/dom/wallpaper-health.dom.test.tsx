@@ -22,7 +22,8 @@ vi.mock('../../src/client/scene-fallback.js', () => sceneFallbackMock);
 // settings-section 是 .tsx（依赖 React）：本测试只验 index.ts 的接线，把它整体替身掉
 vi.mock('../../src/client/settings-section.js', () => ({
   WallpaperSettingsSection: () => null,
-  setWallpaperSelectHandler: vi.fn(),
+  setPanelBus: vi.fn(),
+    setWallpaperSelectHandler: vi.fn(),
   setWallpaperRuntimeHandler: vi.fn(),
   setWallpaperHealthHandler: vi.fn(),
   setWallpaperMediaHandler: vi.fn(),

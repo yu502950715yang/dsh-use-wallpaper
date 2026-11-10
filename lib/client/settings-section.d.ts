@@ -1,7 +1,6 @@
 import type { ClientSettings } from './types.js';
 import type { WallpaperInfo, ProbeResult } from '../shared/types.js';
 import { type WallpaperPropertiesResponse } from './wallpaper-properties.js';
-import type { SystemAudioFailure } from './system-audio.js';
 import type { HealthSnapshot } from './render-health.js';
 import type { MediaIntegrationStatus } from '../shared/media.js';
 import type { MediaFailure } from './media-health.js';
@@ -32,49 +31,24 @@ export interface WallpaperSettingsSectionProps {
     /** 清空失败记忆（默认走共享 handler 的 clearFailures） */
     onClearRenderFailures?: () => void;
 }
+import { PanelBus } from './panel-bus.js';
+import type { SystemAudioHandlers, WallpaperHealthHandler, WallpaperMediaHandler, WallpaperMediaIntegrationHandler, WallpaperVideoHealthHandler } from './panel-bus.js';
+export type { SystemAudioHandlers, WallpaperHealthHandler, WallpaperMediaHandler, WallpaperMediaIntegrationHandler, WallpaperVideoHealthHandler, } from './panel-bus.js';
+/** 注入面板总线（null = 卸载；下次访问自动建临时实例，保证组件不崩）。 */
+export declare function setPanelBus(bus: PanelBus | null): void;
+/** 当前总线（未注入时懒建临时实例——仅测试/异常路径会遇到）。 */
+export declare function getPanelBus(): PanelBus;
 export declare function setWallpaperSelectHandler(fn: ((id: string) => void) | null): void;
 export declare function setWallpaperRuntimeHandler(fn: ((patch: Partial<ClientSettings>) => void) | null): void;
 export declare function setWallpaperReselectHandler(handler: ((id: string) => void) | null): void;
-export interface SystemAudioHandlers {
-    start(): Promise<SystemAudioFailure | 'ok'>;
-    stop(): void;
-}
-/** 注册/撤销系统音频处理器（index.ts 注入渲染器实现；null = 撤销）。 */
 export declare function setWallpaperSystemAudioHandlers(handlers: SystemAudioHandlers | null): void;
-/** 面板「实时渲染」卡片要的三件事：读状态、重试当前壁纸、清空全部失败记忆。 */
-export interface WallpaperHealthHandler {
-    get(): HealthSnapshot | null;
-    retry(): void;
-    clearFailures(): void;
-}
-/** 注册/撤销共享 handler（传 null = 撤销：面板回退到「读不到状态」的初始态）。 */
 export declare function setWallpaperHealthHandler(handler: WallpaperHealthHandler | null): void;
-/** 订阅健康变化（组件挂载时订阅、卸载时退订；index.ts 调 notifyWallpaperHealth 推送）。 */
 export declare function subscribeWallpaperHealth(cb: (s: HealthSnapshot | null) => void): () => void;
-/** 由 index.ts 的健康事件调用；也用于组件挂载时补一次当前值。 */
 export declare function notifyWallpaperHealth(snap: HealthSnapshot | null): void;
-/** 面板「媒体失败提示」要的两件事：读当前失败 / 清除。 */
-export interface WallpaperMediaHandler {
-    get(): MediaFailure | null;
-    clear(): void;
-}
-/** 注册/撤销共享 handler（传 null = 面板回到「无失败」初始态，并清掉已显示的提示）。 */
 export declare function setWallpaperMediaHandler(handler: WallpaperMediaHandler | null): void;
-/** 订阅媒体失败变化（组件挂载时订阅、卸载时退订）。 */
 export declare function subscribeWallpaperMedia(cb: (failure: MediaFailure | null) => void): () => void;
-/** 由 index.ts 的媒体失败事件调用；handler 未注册时不推（面板已回初始态，迟到的失败不得复活提示）。 */
 export declare function notifyWallpaperMedia(failure: MediaFailure | null): void;
-/** 媒体集成状态（面板状态行）：由 index.ts 注入 renderer.getMediaStatus（只读、不含曲目）。 */
-export interface WallpaperMediaIntegrationHandler {
-    get(): MediaIntegrationStatus | null;
-}
-/** 注册/撤销共享 handler（传 null = 面板回退到「读不到状态」的说明行）。 */
 export declare function setWallpaperMediaIntegrationHandler(handler: WallpaperMediaIntegrationHandler | null): void;
-/** 视频壁纸健康状态行：index.ts 注入 layer.getVideoHealth（只读快照；非视频壁纸返回 null）。 */
-export interface WallpaperVideoHealthHandler {
-    get(): VideoHealthSnapshot | null;
-}
-/** 注册/撤销共享 handler（传 null = 面板隐藏视频状态行）。 */
 export declare function setWallpaperVideoHealthHandler(handler: WallpaperVideoHealthHandler | null): void;
 /** 状态行文案：分辨率 · 实测帧率 · 近 1s 丢帧 · 最近循环停顿 · 状态。 */
 export declare function formatVideoHealthLine(h: VideoHealthSnapshot): string;

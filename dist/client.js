@@ -4281,6 +4281,54 @@ function detectWebGL2() {
   }
 }
 
+// src/client/panel-bus.ts
+var PanelBus = class {
+  handlers = {};
+  healthSubs = /* @__PURE__ */ new Set();
+  mediaSubs = /* @__PURE__ */ new Set();
+  /** 注册/覆盖处理器槽位（undefined 槽位保持现状；显式 null = 撤销该槽位）。 */
+  setHandlers(patch) {
+    Object.assign(this.handlers, patch);
+    if ("media" in patch) this.pushMedia(patch.media?.get() ?? null);
+  }
+  get() {
+    return this.handlers;
+  }
+  subscribeHealth(cb) {
+    this.healthSubs.add(cb);
+    return () => {
+      this.healthSubs.delete(cb);
+    };
+  }
+  notifyHealth(snap) {
+    for (const cb of Array.from(this.healthSubs)) {
+      try {
+        cb(snap);
+      } catch {
+      }
+    }
+  }
+  subscribeMedia(cb) {
+    this.mediaSubs.add(cb);
+    return () => {
+      this.mediaSubs.delete(cb);
+    };
+  }
+  /** handler 未注册时不推（面板已回初始态，迟到的失败不得复活提示）。 */
+  notifyMedia(failure) {
+    if (!this.handlers.media) return;
+    this.pushMedia(failure);
+  }
+  pushMedia(failure) {
+    for (const cb of Array.from(this.mediaSubs)) {
+      try {
+        cb(failure);
+      } catch {
+      }
+    }
+  }
+};
+
 // src/client/settings-section.tsx
 var import_jsx_runtime = require("react/jsx-runtime");
 async function defaultFetchWallpapers(opts) {
@@ -4289,21 +4337,13 @@ async function defaultFetchWallpapers(opts) {
 async function defaultFetchProbe() {
   return (await fetch(WALLPAPER_ROUTES.probe)).json();
 }
-var sharedOnSelect = null;
-function setWallpaperSelectHandler(fn) {
-  sharedOnSelect = fn;
+var currentBus = null;
+function setPanelBus(bus) {
+  currentBus = bus;
 }
-var sharedOnRuntimeSettings = null;
-function setWallpaperRuntimeHandler(fn) {
-  sharedOnRuntimeSettings = fn;
-}
-var sharedOnReselect = null;
-function setWallpaperReselectHandler(handler) {
-  sharedOnReselect = handler;
-}
-var sharedSystemAudio = null;
-function setWallpaperSystemAudioHandlers(handlers) {
-  sharedSystemAudio = handlers;
+function getPanelBus() {
+  currentBus ??= new PanelBus();
+  return currentBus;
 }
 function systemAudioErrorMessage(failure) {
   switch (failure) {
@@ -4319,56 +4359,41 @@ function systemAudioErrorMessage(failure) {
       return "\u6355\u83B7\u7CFB\u7EDF\u97F3\u9891\u5931\u8D25\uFF08\u672A\u77E5\u539F\u56E0\uFF09\uFF0C\u5DF2\u4FDD\u6301\u9759\u97F3\u3002";
   }
 }
-var healthHandler = null;
-var healthSubscribers = /* @__PURE__ */ new Set();
+function setWallpaperSelectHandler(fn) {
+  getPanelBus().setHandlers({ onSelect: fn });
+}
+function setWallpaperRuntimeHandler(fn) {
+  getPanelBus().setHandlers({ onRuntimeSettings: fn });
+}
+function setWallpaperReselectHandler(handler) {
+  getPanelBus().setHandlers({ onReselect: handler });
+}
+function setWallpaperSystemAudioHandlers(handlers) {
+  getPanelBus().setHandlers({ systemAudio: handlers });
+}
 function setWallpaperHealthHandler(handler) {
-  healthHandler = handler;
+  getPanelBus().setHandlers({ health: handler });
 }
 function subscribeWallpaperHealth(cb) {
-  healthSubscribers.add(cb);
-  return () => {
-    healthSubscribers.delete(cb);
-  };
+  return getPanelBus().subscribeHealth(cb);
 }
 function notifyWallpaperHealth(snap) {
-  for (const cb of Array.from(healthSubscribers)) {
-    try {
-      cb(snap);
-    } catch {
-    }
-  }
+  getPanelBus().notifyHealth(snap);
 }
-var mediaHandler = null;
-var mediaSubscribers = /* @__PURE__ */ new Set();
 function setWallpaperMediaHandler(handler) {
-  mediaHandler = handler;
-  pushMedia(handler?.get() ?? null);
+  getPanelBus().setHandlers({ media: handler });
 }
 function subscribeWallpaperMedia(cb) {
-  mediaSubscribers.add(cb);
-  return () => {
-    mediaSubscribers.delete(cb);
-  };
+  return getPanelBus().subscribeMedia(cb);
 }
 function notifyWallpaperMedia(failure) {
-  if (!mediaHandler) return;
-  pushMedia(failure);
+  getPanelBus().notifyMedia(failure);
 }
-function pushMedia(failure) {
-  for (const cb of Array.from(mediaSubscribers)) {
-    try {
-      cb(failure);
-    } catch {
-    }
-  }
-}
-var mediaIntegrationHandler = null;
 function setWallpaperMediaIntegrationHandler(handler) {
-  mediaIntegrationHandler = handler;
+  getPanelBus().setHandlers({ mediaIntegration: handler });
 }
-var videoHealthHandler = null;
 function setWallpaperVideoHealthHandler(handler) {
-  videoHealthHandler = handler;
+  getPanelBus().setHandlers({ videoHealth: handler });
 }
 function formatVideoHealthLine(h) {
   const res = h.videoWidth > 0 && h.videoHeight > 0 ? `${h.videoWidth}\xD7${h.videoHeight}` : "\u5206\u8FA8\u7387\u672A\u77E5";
@@ -4460,11 +4485,11 @@ function WallpaperSettingsSection(props) {
   const fetchWallpapers = props.fetchWallpapers ?? defaultFetchWallpapers;
   const fetchProbe = props.fetchProbe ?? defaultFetchProbe;
   const fetchProperties = props.fetchProperties ?? fetchWallpaperProperties;
-  const onSelect = props.onSelect ?? sharedOnSelect ?? (() => {
+  const onSelect = props.onSelect ?? getPanelBus().get().onSelect ?? (() => {
   });
-  const onReselect = props.onReselect ?? sharedOnReselect ?? (() => {
+  const onReselect = props.onReselect ?? getPanelBus().get().onReselect ?? (() => {
   });
-  const onRuntimeSettings = props.onRuntimeSettings ?? sharedOnRuntimeSettings ?? (() => {
+  const onRuntimeSettings = props.onRuntimeSettings ?? getPanelBus().get().onRuntimeSettings ?? (() => {
   });
   const [settings, setSettings] = (0, import_react.useState)(null);
   const [wallpapers, setWallpapers] = (0, import_react.useState)([]);
@@ -4476,9 +4501,9 @@ function WallpaperSettingsSection(props) {
   const [weAssetsDir, setWeAssetsDir] = (0, import_react.useState)("");
   const [message, setMessage] = (0, import_react.useState)("");
   const [health, setHealth] = (0, import_react.useState)(props.health ?? null);
-  const [mediaFailure, setMediaFailure] = (0, import_react.useState)(mediaHandler?.get() ?? null);
+  const [mediaFailure, setMediaFailure] = (0, import_react.useState)(getPanelBus().get().media?.get() ?? null);
   const [mediaStatus, setMediaStatus] = (0, import_react.useState)(
-    () => mediaIntegrationHandler?.get() ?? null
+    () => getPanelBus().get().mediaIntegration?.get() ?? null
   );
   const [videoHealth, setVideoHealth] = (0, import_react.useState)(null);
   const [libState, setLibState] = (0, import_react.useState)(loadLibraryState);
@@ -4507,21 +4532,21 @@ function WallpaperSettingsSection(props) {
     commitPending.current.clear();
   }, []);
   (0, import_react.useEffect)(() => {
-    setHealth(props.health ?? healthHandler?.get() ?? null);
+    setHealth(props.health ?? getPanelBus().get().health?.get() ?? null);
     return subscribeWallpaperHealth((s) => setHealth(s));
   }, [props.health]);
   (0, import_react.useEffect)(() => {
-    setMediaFailure(mediaHandler?.get() ?? null);
+    setMediaFailure(getPanelBus().get().media?.get() ?? null);
     return subscribeWallpaperMedia((f) => setMediaFailure(f));
   }, []);
   (0, import_react.useEffect)(() => {
-    const read = () => setMediaStatus(mediaIntegrationHandler?.get() ?? null);
+    const read = () => setMediaStatus(getPanelBus().get().mediaIntegration?.get() ?? null);
     read();
     const timer = setInterval(read, 1e3);
     return () => clearInterval(timer);
   }, []);
   (0, import_react.useEffect)(() => {
-    const read = () => setVideoHealth(videoHealthHandler?.get() ?? null);
+    const read = () => setVideoHealth(getPanelBus().get().videoHealth?.get() ?? null);
     read();
     const timer = setInterval(read, 1e3);
     return () => clearInterval(timer);
@@ -4581,14 +4606,14 @@ function WallpaperSettingsSection(props) {
   }, [selectedId, selectedIsScene, fetchProperties, clearCommitTimers]);
   (0, import_react.useEffect)(() => () => clearCommitTimers(), [clearCommitTimers]);
   const startSystemAudio = (0, import_react.useCallback)(async () => {
-    if (!sharedSystemAudio) {
+    if (!getPanelBus().get().systemAudio) {
       setSystemAudioError("unsupported");
       return;
     }
     setSystemAudioState("starting");
     setSystemAudioError(null);
     try {
-      const result = await sharedSystemAudio.start();
+      const result = await getPanelBus().get().systemAudio.start();
       if (result === "ok") setSystemAudioState("active");
       else {
         setSystemAudioState("idle");
@@ -4600,7 +4625,7 @@ function WallpaperSettingsSection(props) {
     }
   }, []);
   const stopSystemAudio = (0, import_react.useCallback)(() => {
-    sharedSystemAudio?.stop();
+    getPanelBus().get().systemAudio?.stop();
     setSystemAudioState("idle");
   }, []);
   const select = (0, import_react.useCallback)((id) => {
@@ -4730,18 +4755,24 @@ function WallpaperSettingsSection(props) {
   );
   const retryLive = () => {
     if (props.onRetryLive) props.onRetryLive();
-    else if (healthHandler) healthHandler.retry();
-    else return;
+    else {
+      const health2 = getPanelBus().get().health;
+      if (!health2) return;
+      health2.retry();
+    }
     setMessage("\u5DF2\u91CD\u8BD5\u5B9E\u65F6\u6E32\u67D3");
   };
   const forgetFailures = () => {
     if (props.onClearRenderFailures) props.onClearRenderFailures();
-    else if (healthHandler) healthHandler.clearFailures();
-    else return;
+    else {
+      const health2 = getPanelBus().get().health;
+      if (!health2) return;
+      health2.clearFailures();
+    }
     setMessage("\u5DF2\u6E05\u9664\u5931\u8D25\u8BB0\u5FC6");
   };
   const dismissMediaFailure = () => {
-    mediaHandler?.clear();
+    getPanelBus().get().media?.clear();
     setMediaFailure(null);
   };
   return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-root", children: [
@@ -37783,11 +37814,11 @@ function createThreeSceneRenderer(opts) {
   let contextLost = false;
   const health = opts?.healthStore ?? createRenderHealthStore();
   let currentHealthId = "";
-  let healthHandler2 = null;
+  let healthHandler = null;
   const publish = (snap) => {
-    if (!healthHandler2) return;
+    if (!healthHandler) return;
     try {
-      healthHandler2(snap);
+      healthHandler(snap);
     } catch (e) {
       if (!subscriberWarned) {
         subscriberWarned = true;
@@ -38841,7 +38872,7 @@ function createThreeSceneRenderer(opts) {
       return currentMedia?.getStatus() ?? lastMediaStatus;
     },
     setOnHealth(cb) {
-      healthHandler2 = cb;
+      healthHandler = cb;
     }
   };
 }
@@ -39102,6 +39133,7 @@ function bootstrap(ctx) {
     for (const t of autoRetryTimers.values()) clearTimeout(t);
     autoRetryTimers.clear();
     sceneRenderer.setOnHealth?.(null);
+    setPanelBus(null);
     setWallpaperSelectHandler(null);
     setWallpaperRuntimeHandler(null);
     setWallpaperHealthHandler(null);
@@ -39213,6 +39245,7 @@ function bootstrap(ctx) {
         });
       }
     });
+    setPanelBus(new PanelBus());
     setWallpaperSelectHandler((id) => {
       void selectWallpaper(id);
     });
