@@ -57,6 +57,7 @@ export declare class ThreeScenePlayer {
     private lastFrameSnapshot;
     private readonly visualizers;
     private readonly particleHost;
+    private readonly backgroundHost;
     private objectEffectStage;
     private glowStage;
     private bloomStage;
@@ -150,17 +151,19 @@ export declare class ThreeScenePlayer {
      * 支持非隔离背景/puppet（mesh TRS）与非隔离粒子的 origin 平移增量（粒子内容由 shader 定位，
      * 写绝对中心会双重平移）；隔离对象（对象级效果链的合成 quad）暂不支持 → false + 告警一次。
      */
+    /**
+     * 时间线动画：按 scene 对象 id 写入**世界变换**（实现与语义见 background-layer-factory.ts）。
+     */
     updateBackgroundTransform(objectId: number, wt: {
         origin: [number, number, number];
         scale: [number, number, number];
         angles: [number, number, number];
     }): boolean;
     /**
-     * 刷新背景图层的锚点偏移（renderOffset = 渲染中心 − 对象锚点）。文本标题/字号变化后
-     * 由 text driver 按新 layout 调用；只记偏移，位置由随后的 update_background / syncWorld 写入。
-     */
+   * 刷新背景图层的锚点偏移（renderOffset = 渲染中心 − 对象锚点）。文本标题/字号变化后
+   * 由 text driver 按新 layout 调用；只记偏移，位置由随后的 update_background / syncWorld 写入。
+   */
     setBackgroundAnchorOffset(backgroundId: number, offset: [number, number]): boolean;
-    private warnUnsupportedTransform;
     isolatedObjects(): IsolatedObject[];
     setObjectOutput(id: number, texture: THREE.Texture): void;
     setVisualizerBars(opts: {

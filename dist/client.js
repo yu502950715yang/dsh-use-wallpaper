@@ -26811,18 +26811,6 @@ function fitIsolatedBudget(items, density, budgetBytes = ISOLATED_RT_BUDGET_BYTE
   return lo;
 }
 
-// src/client/alignment.ts
-function alignOffset(worldW, worldH, alignment) {
-  const a = typeof alignment === "string" ? alignment.toLowerCase() : "";
-  const half = (v) => Number.isFinite(v) ? Math.abs(v) / 2 : 0;
-  const w = half(worldW);
-  const h = half(worldH);
-  return {
-    x: a.includes("left") ? w : a.includes("right") ? -w : 0,
-    y: a.includes("top") ? -h : a.includes("bottom") ? h : 0
-  };
-}
-
 // src/client/parallax.ts
 var DEFAULT_PARALLAX = { enabled: false, amount: 0, delay: 0, mouseInfluence: 0 };
 function num(v, fallback) {
@@ -29405,6 +29393,150 @@ function writeParticleData(layer, data, count) {
   layer.geometry.instanceCount = count;
 }
 
+// src/client/alignment.ts
+function alignOffset(worldW, worldH, alignment) {
+  const a = typeof alignment === "string" ? alignment.toLowerCase() : "";
+  const half = (v) => Number.isFinite(v) ? Math.abs(v) / 2 : 0;
+  const w = half(worldW);
+  const h = half(worldH);
+  return {
+    x: a.includes("left") ? w : a.includes("right") ? -w : 0,
+    y: a.includes("top") ? -h : a.includes("bottom") ? h : 0
+  };
+}
+
+// src/client/background-layer-factory.ts
+function alignmentWorldOffset(size, scale, angles, alignment) {
+  const off = alignOffset(size[0], size[1], alignment);
+  if (off.x === 0 && off.y === 0) return [0, 0];
+  const v = new Vector3(off.x * scale[0], off.y * scale[1], 0).applyEuler(new Euler(angles[0], angles[1], angles[2]));
+  return [v.x, v.y];
+}
+function vec3Close(a, b) {
+  return Math.abs(a[0] - b[0]) < 1e-6 && Math.abs(a[1] - b[1]) < 1e-6 && Math.abs(a[2] - b[2]) < 1e-6;
+}
+function warnUnsupportedTransform(host, objectId, message) {
+  if (host.warnedUnsupportedTransform.has(objectId)) return;
+  host.warnedUnsupportedTransform.add(objectId);
+  console.warn(`[three] ${message}`);
+}
+function updateBackgroundTransform(host, objectId, wt) {
+  if (![wt.origin, wt.scale, wt.angles].every((v) => Array.isArray(v) && v.length >= 3 && v.every((n) => typeof n === "number" && Number.isFinite(n)))) return false;
+  if (host.isIsolated(objectId)) {
+    warnUnsupportedTransform(
+      host,
+      objectId,
+      `\u9694\u79BB\u5BF9\u8C61 ${objectId}\uFF08\u5BF9\u8C61\u7EA7\u6548\u679C\u94FE\uFF09\u7684\u4E16\u754C\u53D8\u6362\u6682\u4E0D\u652F\u6301\u65F6\u95F4\u7EBF\u52A8\u753B\uFF0C\u5DF2\u5FFD\u7565`
+    );
+    return false;
+  }
+  const particle = host.particleOf(objectId);
+  if (particle) {
+    const dx = wt.origin[0] - particle.baseWorldOrigin[0];
+    const dy = wt.origin[1] - particle.baseWorldOrigin[1];
+    const dz = wt.origin[2] - particle.baseWorldOrigin[2];
+    particle.mesh.position.set(dx, dy, dz);
+    particle.mesh.scale.set(1, 1, 1);
+    particle.mesh.rotation.set(0, 0, 0);
+    if (!vec3Close(wt.scale, particle.baseWorldScale) || !vec3Close(wt.angles, particle.baseWorldAngles)) {
+      warnUnsupportedTransform(host, objectId, `\u7C92\u5B50\u5BF9\u8C61 ${objectId} \u7684 scale/angles \u65F6\u95F4\u7EBF\u52A8\u753B\u6682\u4E0D\u652F\u6301\uFF08\u53EA\u5E94\u7528 origin\uFF09`);
+    }
+    particle.parallaxCenter = [
+      wt.origin[0] - host.sceneWidth / 2,
+      wt.origin[1] - host.sceneHeight / 2
+    ];
+    return true;
+  }
+  const backgroundId = host.backgroundIdOf(objectId);
+  if (backgroundId === void 0) return false;
+  const entry = host.entryById(backgroundId);
+  if (!entry) return false;
+  const ox = wt.origin[0] + entry.renderOffset[0];
+  const oy = wt.origin[1] + entry.renderOffset[1];
+  const oz = wt.origin[2] + entry.renderOffset[2];
+  entry.origin = [ox, oy, oz];
+  entry.scale = [wt.scale[0], wt.scale[1], wt.scale[2]];
+  entry.angles = [wt.angles[0], wt.angles[1], wt.angles[2]];
+  const align = alignmentWorldOffset(entry.size, entry.scale, entry.angles, entry.alignment);
+  entry.align = [align[0], align[1]];
+  entry.mesh.scale.set(entry.scale[0], entry.scale[1], entry.scale[2]);
+  entry.mesh.rotation.set(entry.angles[0], entry.angles[1], entry.angles[2]);
+  entry.mesh.position.set(
+    ox - entry.sceneW / 2 + align[0],
+    oy - entry.sceneH / 2 + align[1],
+    oz
+  );
+  entry.parallaxApplied = false;
+  return true;
+}
+function setBackgroundAnchorOffset(host, backgroundId, offset) {
+  const entry = host.entryById(backgroundId);
+  if (!entry) return false;
+  if (!Array.isArray(offset) || offset.length < 2 || !offset.every((n) => typeof n === "number" && Number.isFinite(n))) return false;
+  entry.renderOffset = [offset[0], offset[1], entry.renderOffset[2]];
+  return true;
+}
+function updateBackground(host, id, origin, scale, alpha, brightness) {
+  const entry = host.entryById(id);
+  if (!entry) return;
+  if (origin) {
+    const [ox, oy, oz] = origin;
+    if (ox !== entry.origin[0] || oy !== entry.origin[1] || oz !== entry.origin[2]) {
+      entry.origin = [ox, oy, oz];
+      entry.parallaxNode.position.set(
+        ox - entry.sceneW / 2 + entry.align[0],
+        oy - entry.sceneH / 2 + entry.align[1],
+        oz
+      );
+    }
+  }
+  if (scale) {
+    const [sx, sy, sz] = scale;
+    if (sx !== entry.scale[0] || sy !== entry.scale[1] || sz !== entry.scale[2]) {
+      entry.scale = [sx, sy, sz];
+      entry.mesh.scale.set(sx, sy, sz);
+      const align = alignmentWorldOffset(entry.size, entry.scale, entry.angles, entry.alignment);
+      if (align[0] !== entry.align[0] || align[1] !== entry.align[1]) {
+        entry.parallaxNode.position.x += align[0] - entry.align[0];
+        entry.parallaxNode.position.y += align[1] - entry.align[1];
+        entry.align = align;
+      }
+    }
+  }
+  if (alpha !== void 0) {
+    const a = Math.max(0, Math.min(1, alpha));
+    if (a !== entry.alpha) {
+      entry.alpha = a;
+      const mat = entry.mesh.material;
+      if (mat instanceof ShaderMaterial) mat.uniforms.opacity.value = a;
+      else mat.opacity = a;
+    }
+  }
+  if (brightness !== void 0) {
+    if (brightness !== entry.brightness) {
+      entry.brightness = brightness;
+      const mod = materialModulation(entry.color, entry.alpha, brightness);
+      const mat = entry.mesh.material;
+      if (mat instanceof ShaderMaterial) mat.uniforms.tint.value.set(mod.r, mod.g, mod.b);
+      else mat.color.setRGB(mod.r, mod.g, mod.b);
+    }
+  }
+}
+function resizeBackground(host, id, size) {
+  const entry = host.entryById(id);
+  if (!entry) return;
+  if (host.hasPuppetLayer(id)) return;
+  const [w, h] = size;
+  if (w === entry.size[0] && h === entry.size[1]) return;
+  entry.size = [w, h];
+  const old = entry.mesh.geometry;
+  entry.mesh.geometry = new PlaneGeometry(w, h);
+  old.dispose();
+  host.rebaseSpriteSheet(id);
+  const map = entry.mesh.material.map;
+  if (map && map.isCanvasTexture) map.dispose();
+}
+
 // src/client/util-material.ts
 function resolveUtilMaterial(layerKind, overrides = {}) {
   const color = overrides.color ?? [255, 255, 255];
@@ -29457,15 +29589,6 @@ function resolvePixelRatio(devicePixelRatio, qualityScale) {
   const dpr = Number.isFinite(devicePixelRatio) && devicePixelRatio > 0 ? devicePixelRatio : 1;
   const scale = Number.isFinite(qualityScale) && qualityScale > 0 ? qualityScale : 1;
   return dpr * scale;
-}
-function alignmentWorldOffset(size, scale, angles, alignment) {
-  const off = alignOffset(size[0], size[1], alignment);
-  if (off.x === 0 && off.y === 0) return [0, 0];
-  const v = new Vector3(off.x * scale[0], off.y * scale[1], 0).applyEuler(new Euler(angles[0], angles[1], angles[2]));
-  return [v.x, v.y];
-}
-function vec3Close(a, b) {
-  return Math.abs(a[0] - b[0]) < 1e-6 && Math.abs(a[1] - b[1]) < 1e-6 && Math.abs(a[2] - b[2]) < 1e-6;
 }
 var ThreeScenePlayer = class {
   renderer;
@@ -29531,6 +29654,7 @@ var ThreeScenePlayer = class {
   // 可视化条运行时（SceneScript 64 条 + pixel-bars 家族）：已迁入 visualizer-runtime.ts（阶段 2）。
   visualizers;
   particleHost;
+  backgroundHost;
   objectEffectStage = null;
   // 应用级 Glow 注入点（null = 本壁纸不开 Glow，帧序退化为原路径）。
   glowStage = null;
@@ -29608,6 +29732,21 @@ var ThreeScenePlayer = class {
         self2.registerFrameConsumer(objectId);
       },
       layers: () => self2.particleLayers.values()
+    };
+    this.backgroundHost = {
+      get sceneWidth() {
+        return self2.sceneWidth;
+      },
+      get sceneHeight() {
+        return self2.sceneHeight;
+      },
+      entryById: (id) => self2.backgroundEntries.get(id),
+      backgroundIdOf: (objectId) => self2.objectToBackground.get(objectId),
+      particleOf: (objectId) => self2.objectToParticle.get(objectId),
+      isIsolated: (objectId) => self2.isolated.has(objectId),
+      hasPuppetLayer: (id) => self2.puppetLayers.has(id),
+      rebaseSpriteSheet: (id) => self2.spriteSheets.rebaseForBackground(id),
+      warnedUnsupportedTransform: self2.warnedTransformUnsupported
     };
     this.applyCover();
   }
@@ -30097,69 +30236,18 @@ var ThreeScenePlayer = class {
    * 支持非隔离背景/puppet（mesh TRS）与非隔离粒子的 origin 平移增量（粒子内容由 shader 定位，
    * 写绝对中心会双重平移）；隔离对象（对象级效果链的合成 quad）暂不支持 → false + 告警一次。
    */
+  /**
+   * 时间线动画：按 scene 对象 id 写入**世界变换**（实现与语义见 background-layer-factory.ts）。
+   */
   updateBackgroundTransform(objectId, wt) {
-    if (![wt.origin, wt.scale, wt.angles].every((v) => Array.isArray(v) && v.length >= 3 && v.every((n) => typeof n === "number" && Number.isFinite(n)))) return false;
-    if (this.isolated.has(objectId)) {
-      this.warnUnsupportedTransform(
-        objectId,
-        `\u9694\u79BB\u5BF9\u8C61 ${objectId}\uFF08\u5BF9\u8C61\u7EA7\u6548\u679C\u94FE\uFF09\u7684\u4E16\u754C\u53D8\u6362\u6682\u4E0D\u652F\u6301\u65F6\u95F4\u7EBF\u52A8\u753B\uFF0C\u5DF2\u5FFD\u7565`
-      );
-      return false;
-    }
-    const particle = this.objectToParticle.get(objectId);
-    if (particle) {
-      const dx = wt.origin[0] - particle.baseWorldOrigin[0];
-      const dy = wt.origin[1] - particle.baseWorldOrigin[1];
-      const dz = wt.origin[2] - particle.baseWorldOrigin[2];
-      particle.mesh.position.set(dx, dy, dz);
-      particle.mesh.scale.set(1, 1, 1);
-      particle.mesh.rotation.set(0, 0, 0);
-      if (!vec3Close(wt.scale, particle.baseWorldScale) || !vec3Close(wt.angles, particle.baseWorldAngles)) {
-        this.warnUnsupportedTransform(objectId, `\u7C92\u5B50\u5BF9\u8C61 ${objectId} \u7684 scale/angles \u65F6\u95F4\u7EBF\u52A8\u753B\u6682\u4E0D\u652F\u6301\uFF08\u53EA\u5E94\u7528 origin\uFF09`);
-      }
-      particle.parallaxCenter = [
-        wt.origin[0] - this.sceneWidth / 2,
-        wt.origin[1] - this.sceneHeight / 2
-      ];
-      return true;
-    }
-    const backgroundId = this.objectToBackground.get(objectId);
-    if (backgroundId === void 0) return false;
-    const entry = this.backgroundEntries.get(backgroundId);
-    if (!entry) return false;
-    const ox = wt.origin[0] + entry.renderOffset[0];
-    const oy = wt.origin[1] + entry.renderOffset[1];
-    const oz = wt.origin[2] + entry.renderOffset[2];
-    entry.origin = [ox, oy, oz];
-    entry.scale = [wt.scale[0], wt.scale[1], wt.scale[2]];
-    entry.angles = [wt.angles[0], wt.angles[1], wt.angles[2]];
-    const align = alignmentWorldOffset(entry.size, entry.scale, entry.angles, entry.alignment);
-    entry.align = [align[0], align[1]];
-    entry.mesh.scale.set(entry.scale[0], entry.scale[1], entry.scale[2]);
-    entry.mesh.rotation.set(entry.angles[0], entry.angles[1], entry.angles[2]);
-    entry.mesh.position.set(
-      ox - entry.sceneW / 2 + align[0],
-      oy - entry.sceneH / 2 + align[1],
-      oz
-    );
-    entry.parallaxApplied = false;
-    return true;
+    return updateBackgroundTransform(this.backgroundHost, objectId, wt);
   }
   /**
-   * 刷新背景图层的锚点偏移（renderOffset = 渲染中心 − 对象锚点）。文本标题/字号变化后
-   * 由 text driver 按新 layout 调用；只记偏移，位置由随后的 update_background / syncWorld 写入。
-   */
+  * 刷新背景图层的锚点偏移（renderOffset = 渲染中心 − 对象锚点）。文本标题/字号变化后
+  * 由 text driver 按新 layout 调用；只记偏移，位置由随后的 update_background / syncWorld 写入。
+  */
   setBackgroundAnchorOffset(backgroundId, offset) {
-    const entry = this.backgroundEntries.get(backgroundId);
-    if (!entry) return false;
-    if (!Array.isArray(offset) || offset.length < 2 || !offset.every((n) => typeof n === "number" && Number.isFinite(n))) return false;
-    entry.renderOffset = [offset[0], offset[1], entry.renderOffset[2]];
-    return true;
-  }
-  warnUnsupportedTransform(objectId, message) {
-    if (this.warnedTransformUnsupported.has(objectId)) return;
-    this.warnedTransformUnsupported.add(objectId);
-    console.warn(`[three] ${message}`);
+    return setBackgroundAnchorOffset(this.backgroundHost, backgroundId, offset);
   }
   // 隔离对象条目（只读视图，供编排器拿 RT 纹理与尺寸）。
   isolatedObjects() {
@@ -30504,69 +30592,17 @@ var ThreeScenePlayer = class {
   }
   // 更新背景图层状态，对齐既有 update_image 语义——undefined = 保持现状；与当前状态相等的字段跳过；
   // 未知 id → no-op。origin 是 WE 场景坐标，中心化后写承载位置的 node（隔离 = 合成 quad，内容 mesh 在 RT 内恒 0）。
+  // 更新背景图层状态（实现与语义见 background-layer-factory.ts 的 updateBackground）。
   update_background(id, origin, scale, alpha, brightness) {
-    const entry = this.backgroundEntries.get(id);
-    if (!entry) return;
-    if (origin) {
-      const [ox, oy, oz] = origin;
-      if (ox !== entry.origin[0] || oy !== entry.origin[1] || oz !== entry.origin[2]) {
-        entry.origin = [ox, oy, oz];
-        entry.parallaxNode.position.set(
-          ox - entry.sceneW / 2 + entry.align[0],
-          oy - entry.sceneH / 2 + entry.align[1],
-          oz
-        );
-      }
-    }
-    if (scale) {
-      const [sx, sy, sz] = scale;
-      if (sx !== entry.scale[0] || sy !== entry.scale[1] || sz !== entry.scale[2]) {
-        entry.scale = [sx, sy, sz];
-        entry.mesh.scale.set(sx, sy, sz);
-        const align = alignmentWorldOffset(entry.size, entry.scale, entry.angles, entry.alignment);
-        if (align[0] !== entry.align[0] || align[1] !== entry.align[1]) {
-          entry.parallaxNode.position.x += align[0] - entry.align[0];
-          entry.parallaxNode.position.y += align[1] - entry.align[1];
-          entry.align = align;
-        }
-      }
-    }
-    if (alpha !== void 0) {
-      const a = Math.max(0, Math.min(1, alpha));
-      if (a !== entry.alpha) {
-        entry.alpha = a;
-        const mat = entry.mesh.material;
-        if (mat instanceof ShaderMaterial) mat.uniforms.opacity.value = a;
-        else mat.opacity = a;
-      }
-    }
-    if (brightness !== void 0) {
-      if (brightness !== entry.brightness) {
-        entry.brightness = brightness;
-        const mod = materialModulation(entry.color, entry.alpha, brightness);
-        const mat = entry.mesh.material;
-        if (mat instanceof ShaderMaterial) mat.uniforms.tint.value.set(mod.r, mod.g, mod.b);
-        else mat.color.setRGB(mod.r, mod.g, mod.b);
-      }
-    }
+    updateBackground(this.backgroundHost, id, origin, scale, alpha, brightness);
   }
   // 文本图层 resize：按新画布尺寸重建 quad 几何（PlaneGeometry 尺寸不可变），scale 不变 ⇒
   // 世界尺寸 = 新尺寸 × scale。未知 id / 尺寸未变 → no-op。
   // ⚠️ 画布纹理必须 dispose：three r170 在 WebGL2 用**不可变** texStorage2D，画布尺寸变了以后
   // texSubImage2D 越界、上传被 GL 静默丢弃 ⇒ 屏幕上仍是旧画布被拉伸；dispose 后才按新尺寸分配存储。
+  // 文本图层 resize（实现与语义见 background-layer-factory.ts 的 resizeBackground）。
   resizeBackground(id, size) {
-    const entry = this.backgroundEntries.get(id);
-    if (!entry) return;
-    if (this.puppetLayers.has(id)) return;
-    const [w, h] = size;
-    if (w === entry.size[0] && h === entry.size[1]) return;
-    entry.size = [w, h];
-    const old = entry.mesh.geometry;
-    entry.mesh.geometry = new PlaneGeometry(w, h);
-    old.dispose();
-    this.spriteSheets.rebaseForBackground(id);
-    const map = entry.mesh.material.map;
-    if (map && map.isCanvasTexture) map.dispose();
+    resizeBackground(this.backgroundHost, id, size);
   }
   // 粒子图层。`simVerticesGetter` 每帧返回模拟器当前顶点（摊平 Float32Array，每粒子
   // `[pos3, size, uv2, color3, alpha, rot3, vel3]` 16 浮点，来自 wasm `SceneParticleSim::build_instance_vertices`）；
