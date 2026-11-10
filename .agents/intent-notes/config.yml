@@ -6,5 +6,4 @@ repos:
 # 均不进 repos：笔记锚点只会指向本仓库。
 sources:
   - docs/superpowers/specs
-  - docs/superpowers/plans
   - docs/superpowers/sdd
