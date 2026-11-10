@@ -105,15 +105,19 @@ CHANGELOG/CONTRIBUTING/SECURITY/THIRD-PARTY/ISSUE_TEMPLATE/icon；面板版本�
 
 **`1.0.0` 直接发布**（P0 已全部落地、真机验收已通过）。发布动作按 `.github/RELEASE_NOTES_TEMPLATE.md` 的 11 步 checklist：bump → 更新 CHANGELOG → tag → 等 release workflow 绿 → GitHub Release → npm publish → 补 index 条目 → 安装冒烟。可选：补性能/显存量化数字（不影响发布）。
 
-**2026-11-10 发布前准备已就位**（本次已完成）：
+**2026-11-10 发布执行记录**：
 
 - [x] `package.json` bump 到 `1.0.0`；CHANGELOG 定稿为 `[1.0.0] - 2026-11-10`（含本轮安全/稳定性/门禁全部条目）
 - [x] 发布说明定稿：`release-notes-1.0.0-draft.md`（含「安全审查修复」章节）
-- [x] `index.json` 已预置 1.0.0 条目（`publishTimestamp: 0` **待 npm 发布后回填**）
+- [x] `index.json` 已预置 1.0.0 条目（`publishTimestamp` **待 npm CDN 传播后回填**）
 - [x] `release.yml` 的 publish job 已加 `npm install -g npm@11`（Trusted Publisher 要求 ≥ 11.5.1，否则首次 publish 401）
 - [x] `ci.yml` 已加 `rust` job（`cargo test`；Rust 回归此前只在本地跑）
+- [x] **npm publish 已执行**（2026-11-10，本地 token）：`@dsh-use/wallpaper-engine@1.0.0`，`+ ...` exit 0；tarball 2.1 MB / 233 files
+- [x] **GitHub Release 已创建**：<https://github.com/yu502950715yang/dsh-use-wallpaper/releases/tag/v1.0.0>；`master` 与 tag `v1.0.0` 已推送
+- [x] `release.yml` publish 改为**幂等**（版本已存在则跳过，避免 tag 触发 release 红）
 - [ ] **仓库设置（需人工在 GitHub 操作）**：① `master` required checks 勾选 `gate-baseline` / `test` / `e2e` / `rust`；② `v*` tag 保护（仅维护者）；③ npm Trusted Publisher 绑定仓库 + workflow 文件名（`release.yml`）；④ 仓库 Settings → Environments 建 `npm`（需要审批时配置 reviewer）
 - [ ] 发布后：回填 `index.json` 的 `publishTimestamp`（npm 的 `time["1.0.0"]` 转 unix 秒）；安装冒烟（全新 profile `dsh plugin add @dsh-use/wallpaper-engine@1.0.0`）
+- [ ] 安全：本次发布使用的 npm token 已出现在会话中，**发布会后请在 npm 网站 revoke 并轮换**
 
 可选：补性能/显存量化数字（不影响发布）。
 
