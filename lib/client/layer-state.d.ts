@@ -22,6 +22,8 @@ export interface DisplayTarget {
     object: THREE.Object3D;
     sceneW: number;
     sceneH: number;
+    /** 位置写入的统一入口（player.updateBackgroundTransform）：返回 true = 已处理，不再直接写 position。 */
+    updateTransform?: (origin: [number, number, number]) => boolean;
 }
 /** 把脏写入应用到 three 对象。返回实际应用的对象数（lookup 未命中的跳过 —— util / 未渲染对象只记账）。
  *

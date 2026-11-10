@@ -65,6 +65,8 @@ export interface DisplayTarget {
   object: THREE.Object3D;
   sceneW: number;
   sceneH: number;
+  /** 位置写入的统一入口（player.updateBackgroundTransform）：返回 true = 已处理，不再直接写 position。 */
+  updateTransform?: (origin: [number, number, number]) => boolean;
 }
 
 /** alpha 折算下限：低于它视为不可见（spec §6.1 的 alpha≈0 折算）。 */
@@ -134,7 +136,13 @@ export function applyLayerState(
     if (!target) continue;
     const obj = target.object;
     // we_to_three：origin - scene/2（y 不翻，见 AGENT.md §2.3）。
-    if (w.origin) obj.position.set(w.origin[0] - target.sceneW / 2, w.origin[1] - target.sceneH / 2, w.origin[2]);
+    // 优先交给 player（updateBackgroundTransform）：粒子只写 origin 增量、text 补 renderOffset、
+    // 隔离写合成 quad；直接写绝对 position 会让粒子被 shader 再平移一次（P1 双重平移）。
+    if (w.origin) {
+      if (!target.updateTransform?.(w.origin)) {
+        obj.position.set(w.origin[0] - target.sceneW / 2, w.origin[1] - target.sceneH / 2, w.origin[2]);
+      }
+    }
     if (w.scale) obj.scale.set(w.scale[0], w.scale[1], w.scale[2]);
     if (w.angles) obj.rotation.set(w.angles[0] * DEG2RAD, w.angles[1] * DEG2RAD, w.angles[2] * DEG2RAD);
     if (w.color) writeColor(obj, scriptColor01(w.color));

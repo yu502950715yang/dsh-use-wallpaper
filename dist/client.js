@@ -35958,7 +35958,11 @@ function applyLayerState(dirty, lookup) {
     const target = lookup(objectId);
     if (!target) continue;
     const obj = target.object;
-    if (w.origin) obj.position.set(w.origin[0] - target.sceneW / 2, w.origin[1] - target.sceneH / 2, w.origin[2]);
+    if (w.origin) {
+      if (!target.updateTransform?.(w.origin)) {
+        obj.position.set(w.origin[0] - target.sceneW / 2, w.origin[1] - target.sceneH / 2, w.origin[2]);
+      }
+    }
     if (w.scale) obj.scale.set(w.scale[0], w.scale[1], w.scale[2]);
     if (w.angles) obj.rotation.set(w.angles[0] * DEG2RAD3, w.angles[1] * DEG2RAD3, w.angles[2] * DEG2RAD3);
     if (w.color) writeColor(obj, scriptColor01(w.color));
@@ -38470,7 +38474,19 @@ function createThreeSceneRenderer(opts) {
         current = result;
         const layerLookup = (objectId) => {
           const obj = result.player.displayObject(objectId);
-          return obj ? { object: obj, sceneW: desc.orthogonal.width, sceneH: desc.orthogonal.height } : void 0;
+          if (!obj) return void 0;
+          const DEG = Math.PI / 180;
+          return {
+            object: obj,
+            sceneW: desc.orthogonal.width,
+            sceneH: desc.orthogonal.height,
+            // 位置写入统一走 player：粒子 origin 增量 / text 补 renderOffset / 隔离合成 quad（P1）。
+            updateTransform: (origin) => result.player.updateBackgroundTransform?.(objectId, {
+              origin,
+              scale: [obj.scale.x, obj.scale.y, obj.scale.z],
+              angles: [obj.rotation.x / DEG, obj.rotation.y / DEG, obj.rotation.z / DEG]
+            }) ?? false
+          };
         };
         const timelineRuntime = desc.objects.some((o) => o.animations) ? createTimelineRuntime({
           desc,

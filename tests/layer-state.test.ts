@@ -49,6 +49,29 @@ describe('applyLayerState', () => {
     return { target: { object: mesh as THREE.Object3D, sceneW: 2560, sceneH: 1440 }, mesh };
   };
 
+  // P1：位置写入统一走 player（updateBackgroundTransform）——粒子只写 origin 增量、text 补
+  // renderOffset；直接写绝对 position 会让粒子被 shader 再平移一次（双重平移）。
+  it('P1：有 updateTransform 时位置交给它（粒子/文本统一入口），不再直接写 position', () => {
+    const mesh = new THREE.Mesh();
+    const calls: Array<[number, number, number]> = [];
+    const target = {
+      object: mesh, sceneW: 0, sceneH: 0,
+      updateTransform: (origin: [number, number, number]) => { calls.push(origin); return true; },
+    };
+    applyLayerState(new Map([[1, { origin: [100, 200, 0] as [number, number, number] }]]), () => target);
+    expect(calls).toEqual([[100, 200, 0]]);
+    expect(mesh.position.x).toBe(0);
+    expect(mesh.position.y).toBe(0);
+  });
+
+  it('P1：updateTransform 返回 false 时回退直接写 position（无 player 的显示对象）', () => {
+    const mesh = new THREE.Mesh();
+    const target = { object: mesh, sceneW: 100, sceneH: 50, updateTransform: () => false };
+    applyLayerState(new Map([[1, { origin: [100, 200, 0] as [number, number, number] }]]), () => target);
+    expect(mesh.position.x).toBe(50); // 100 - 100/2
+    expect(mesh.position.y).toBe(175); // 200 - 50/2
+  });
+
   it('origin 走 we_to_three（减 scene/2，y 不翻）', () => {
     const { target, mesh } = mk(1);
     const n = applyLayerState(new Map([[1, { origin: [100, 200, 0] }]]), () => target);
