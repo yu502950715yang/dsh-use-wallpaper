@@ -223,6 +223,8 @@ npx vitest run tests/xxx.test.ts --reporter=basic   # 跑单个文件
 
 61. **纹理解压预算（1.0 S3，2026-11-10，勿回退）**：`parseTex` 的 LZ4 分配大小按 `format + 宽高` 推导（`expectedDecompressedBytes`），**绝不按 mip 记录里声明的 `decompressedBytes` 分配**——后者是第三方素材可控的（曾可 `64 image × 256 mip` 各声明 1GB + 空载荷 ⇒ 渲染进程 OOM）。声明 ≠ 推导 ⇒ 拒绝；空载荷 ⇒ 拒绝；解压长度 ≠ 推导值 ⇒ 拒绝；另受 4 个**可配置**预算约束：`texMaxMipBytes` / `texMaxTextureBytes` / `texMaxMipCount` / `texMaxDimension`（profile config 字段，client 启动时经 `setTexBudget` 注入，默认值见 `DEFAULT_TEX_BUDGET`；正常素材 100% 与推导值一致，本机 295/295 LZ4 mip 实测）。**不得为了兼容异常素材而改回「按声明分配」**。判据：`tests/tex-loader-security.test.ts`（含 mutation 验证过的拒绝路径）。
 
+62. **Rust 粒子侧的不可信输入加固（1.0 P0，2026-11-10，勿回退）**：① **解析不得 panic**——`parse_particle_spec` 对非法/超深 JSON 退回全默认 spec（旧接口），生产路径用 `try_parse_particle_spec`（`CpuParticleSim::new` 把 Err 转成 JS 异常，JS 侧 catch 后跳过该粒子层、背景仍渲染）；② **`maxcount` 硬上限 `MAX_PARTICLES = 16384`**——`mod.rs` 解析层 clamp（素材声明 1e9 也不放大），`prewarm` 的 steady 由 maxcount 封顶；JS 侧 `MAX_PARTICLE_HARD_CAP` 同口径纵深；③ **角度归一化用 `rem_euclid`（O(1)）**——旧 `while (rot > π) rot -= 2π` 对 `inf`/`1e30` 会不可中断死循环（wasm 循环里 JS 打不断 ⇒ 整页卡死）；`update(dt)` 忽略非有限/非正 dt；`scalar`/`vec3` 对非有限数值（inf/1e39/NaN）回退默认。判据：`wasm/tests/particle_hardening_test.rs`（7 项）。
+
 ## 6. 工作约定
 
 - 回复、注释、文档、**提交信息一律简体中文**；代码、命令、文件名、技术术语保留原文。

@@ -312,18 +312,29 @@ fn default_turbulent() -> TurbulentInit {
 pub const LWE_DEFAULT_DIRECTIONS: [f32; 3] = [1.0, 1.0, 0.0];
 
 fn scalar(v: &Value, default: f32) -> f32 {
-    match v {
+    let out = match v {
         Value::Number(n) => n.as_f64().unwrap_or(default as f64) as f32,
         Value::String(s) => s.trim().split_whitespace().next()
             .and_then(|t| t.parse::<f32>().ok())
             .unwrap_or(default),
         Value::Null => default,
         _ => default,
-    }
+    };
+    // 非有限值（"inf"/"1e39"/NaN）一律回退默认：素材字段不可信，NaN/Inf 会污染模拟与角度归一化。
+    if out.is_finite() { out } else { default }
+}
+
+/// 逐分量过滤非有限值（NaN/Inf → 0）——见 `scalar` 的注释。
+fn finite3(v: [f32; 3]) -> [f32; 3] {
+    [
+        if v[0].is_finite() { v[0] } else { 0.0 },
+        if v[1].is_finite() { v[1] } else { 0.0 },
+        if v[2].is_finite() { v[2] } else { 0.0 },
+    ]
 }
 
 fn vec3(v: &Value) -> [f32; 3] {
-    match v {
+    finite3(match v {
         Value::String(s) => {
             let mut it = s.trim().split_whitespace().map(|t| t.parse::<f32>().unwrap_or(0.0));
             [it.next().unwrap_or(0.0), it.next().unwrap_or(0.0), it.next().unwrap_or(0.0)]
@@ -342,7 +353,7 @@ fn vec3(v: &Value) -> [f32; 3] {
             [x, x, x]
         }
         _ => [0.0; 3],
-    }
+    })
 }
 
 /// `vec3` + 「**字段缺失**时用 lwe 缺省值」（字段存在则照原样解析，含显式 "0 0 0"）。
@@ -386,8 +397,24 @@ fn obj_name(o: &Value) -> &str {
     o.get("name").and_then(|v| v.as_str()).unwrap_or("")
 }
 
+/// 粒子数量硬上限（1.0 P0-2，2026-11-10）：`maxcount` 由第三方素材声明，无上限时
+/// `SceneParticleSim::prewarm` 会按声明值无界分配（如 1e9 → 构造期 OOM）。
+/// 本机最大素材 maxcount=10000；16384 留余量，且该量级在 CPU 模拟下已是重负载。
+pub const MAX_PARTICLES: u32 = 16384;
+
+/// 解析失败返回 `Err`（wasm 层转成 JS 异常，JS 侧 catch 后跳过该粒子层）。
+pub fn try_parse_particle_spec(json: &str) -> Result<ParticleSpec, String> {
+    let raw: Value = serde_json::from_str(json).map_err(|e| format!("粒子 json 解析失败: {e}"))?;
+    Ok(parse_from_value(raw))
+}
+
+/// 旧接口（测试/内部沿用）：非法 JSON 退回全默认 spec，**不 panic**。
 pub fn parse_particle_spec(json: &str) -> ParticleSpec {
-    let raw: Value = serde_json::from_str(json).expect("粒子 json 必须可解析");
+    try_parse_particle_spec(json).unwrap_or_else(|_| parse_from_value(Value::Null))
+}
+
+/// 把已解析的 JSON 值映射为 `ParticleSpec`（所有数值经 `scalar`/`vec3` 做非有限过滤）。
+fn parse_from_value(raw: Value) -> ParticleSpec {
     let em = raw.get("emitter")
         .and_then(|e| e.as_array())
         .and_then(|a| a.first())
@@ -447,7 +474,10 @@ pub fn parse_particle_spec(json: &str) -> ParticleSpec {
         }).unwrap_or(Renderer::Sprite);
 
     // WE maxcount：粒子系统最大数量（数字）。缺省/非正 → 0（未指定，estimate 回退）。
-    let maxcount = scalar(&raw.get("maxcount").cloned().unwrap_or(Value::Null), 0.0).max(0.0) as u32;
+    // 硬上限见 MAX_PARTICLES（防构造期无界分配）。
+    let maxcount = scalar(&raw.get("maxcount").cloned().unwrap_or(Value::Null), 0.0)
+        .max(0.0)
+        .min(MAX_PARTICLES as f32) as u32;
 
     // controlpoint[]：固定铺 8 槽（官方 0..7），按各条目的 `id` 落位（缺 id 用数组下标）。
     let mut controlpoints = vec![ControlPointSpec::default(); 8];

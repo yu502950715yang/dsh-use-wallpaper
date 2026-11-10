@@ -49,6 +49,7 @@
   - `/wallpapers/web/*` 拒绝「已知 GUI 页面 Host」的请求：阻断壁纸 iframe 自我导航回 GUI origin、取回「GUI origin + 壁纸 HTML」组合后访问 `parent.document` / `localStorage` 的逃逸路径。
   - `.html` / `.svg` / `.js` / `.xml` 等危险后缀在 scene / media 资产下载时强制 `application/octet-stream` + `Content-Disposition: attachment`；所有 `/wallpapers/*` 响应带 `X-Content-Type-Options: nosniff`；系统媒体封面 MIME 只放行 `image/*`。
   - **`.tex` 解压炸弹**：mip 的「解压字节数 / 宽高」是第三方素材声明的，此前按其直接分配内存（`64 image × 256 mip` 各声明 1GB + 空载荷即可让渲染进程 OOM）。现在分配大小按「格式 + 宽高」推导，声明不一致 / 空载荷 / 解压长度不符 / 超预算一律拒绝（该纹理缺失、走降级链）；4 个阈值可通过 profile config 的 `texMax*` 字段调整（默认 512MiB / 1GiB / 4096 / 16384，正常素材用不到）。
+  - **粒子素材的解析与分配加固**（Rust/wasm）：非法粒子 JSON 不再 panic（转 JS 异常、跳过该粒子层而不是整页崩）；`maxcount` 加硬上限 16384（防构造期按素材声明无界分配导致 OOM）；角度归一化改用 `rem_euclid`（旧的 `while` 对 inf/超大值会不可中断死循环、卡死整页）；非有限数值与非有限 `dt` 一律过滤。
 
 ### 移除（Removed）
 

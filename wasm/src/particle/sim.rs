@@ -441,12 +441,19 @@ impl ParticleOperator {
                     p.rot[k] += p.angular_vel[k] * dt;
                     p.angular_vel[k] += force[k] * dt;
                     p.angular_vel[k] *= (1.0 - drag * dt).max(0.0);
-                    while p.rot[k] > pi {
-                        p.rot[k] -= two_pi;
+                    // 非有限值归零：素材可声明 inf/超大 angularvelocity/force，或 drag 大负值使角速度
+                    // 指数增长溢出（1.0 P0-3）。
+                    if !p.angular_vel[k].is_finite() {
+                        p.angular_vel[k] = 0.0;
                     }
-                    while p.rot[k] < -pi {
-                        p.rot[k] += two_pi;
-                    }
+                    // 归一化到 [-π, π]：**必须**用 rem_euclid（O(1)）。旧实现是
+                    // `while (rot > π) { rot -= 2π }`——rot=inf/1e30 时循环次数天文数字，且 wasm
+                    // 循环内无法被 JS 打断 ⇒ 整页卡死（1.0 P0-3）。
+                    p.rot[k] = if p.rot[k].is_finite() {
+                        (p.rot[k] + pi).rem_euclid(two_pi) - pi
+                    } else {
+                        0.0
+                    };
                 }
             }
             ParticleOperator::ControlPointAttract { center, scale, threshold, .. } => {
@@ -771,6 +778,11 @@ impl SceneParticleSim {
 
     /// 每帧推进：累计发射 → 积分运动/寿命 → 回收死亡粒子。
     pub fn update(&mut self, dt: f32) {
+        // 非有限/非正 dt 直接忽略：NaN/Inf 会污染 emission_timer、time 与粒子状态（且 update 由
+        // 外部时钟驱动，不可信）。1.0 P0-3 加固的一部分。
+        if !dt.is_finite() || dt <= 0.0 {
+            return;
+        }
         // 发射（照 linux createBoxEmitter / createSphereEmitter 的**精确累积**语义）：
         //   emissionTimer += dt*rate; toEmit = (u32)emissionTimer; emissionTimer -= toEmit;
         // 然后发射 `min(toEmit, maxcount - alive)`。lwe 即使池满（count>=particles.size()）也

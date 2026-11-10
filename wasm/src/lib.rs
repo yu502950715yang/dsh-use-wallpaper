@@ -45,7 +45,10 @@ impl CpuParticleSim {
         scene_h: f32,
         override_json: &str,
     ) -> Result<CpuParticleSim, JsValue> {
-        let spec = particle::parse_particle_spec(json);
+        // 1.0 P0-1：不可信素材的非法 JSON 不得 panic（wasm trap），统一转成 JS 异常；
+        // JS 侧 catch 后跳过该粒子层（背景仍渲染），不拖垮整页。
+        let spec = particle::try_parse_particle_spec(json)
+            .map_err(|e| JsValue::from_str(&e))?;
         let mut sim = particle::emitter_spec_to_particle(&spec, arr3(&origin), scene_w, scene_h);
         // scene.json 的 instanceoverride（缺字段/非法 → None → 保持 identity）。
         if let Some(ov) = particle::parse_particle_override(override_json) {

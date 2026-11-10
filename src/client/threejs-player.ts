@@ -144,10 +144,13 @@ type ParticleLayer = {
 };
 
 // 粒子实例缓冲的**缺省容量**：每个 instanced attribute 的 count 必须 ≥ 模拟器最终产出的粒子数
-// （sim 的 `maxcount`，WE spec 的 maxcount 字段）；上限与 wasm 粒子池 clamp [16, 2048]
-// （render/particle_pass.rs）对齐，防异常 spec 爆内存。
+// （sim 的 `maxcount`，WE spec 的 maxcount 字段）。wasm 侧已把 maxcount clamp 到
+// `MAX_PARTICLES = 16384`（particle/mod.rs，1.0 P0-2 加固），这里的 MAX 只是渲染侧**建议**上限；
+// `aliveAtCreate` 高于它时按实际数量分配（但那已被 wasm 侧硬上限约束，不会无界放大）。
 export const DEFAULT_PARTICLE_CAPACITY = 1024;
 export const MAX_PARTICLE_CAPACITY = 2048;
+/** 纵深兜底：与 wasm 侧 `MAX_PARTICLES` 同口径，防旧 wasm 产物/异常实现把实例缓冲放大。 */
+export const MAX_PARTICLE_HARD_CAP = 16384;
 
 // 每粒子摊平顶点浮点数 = Rust `SceneParticleSim::build_instance_vertices` 的布局长度
 // （`[pos3, size, uv2, color3, alpha, rot3, vel3]`）。⚠️ 与 wasm 侧是**同一份契约**：
@@ -322,7 +325,8 @@ export function simEmitterOffset(emitterOrigin: [number, number, number]): [numb
 export function particleCapacity(declaredMax: number, aliveAtCreate: number): number {
   const declared = Number.isFinite(declaredMax) && declaredMax > 0 ? Math.floor(declaredMax) : 0;
   const cap = Math.min(declared > 0 ? declared : DEFAULT_PARTICLE_CAPACITY, MAX_PARTICLE_CAPACITY);
-  return Math.max(1, cap, Math.max(0, Math.floor(aliveAtCreate)));
+  // 容量不得小于建层当帧已有粒子数；再叠一层与 wasm 一致的硬上限（1.0 P0-2 纵深）。
+  return Math.min(MAX_PARTICLE_HARD_CAP, Math.max(1, cap, Math.max(0, Math.floor(aliveAtCreate))));
 }
 
 // 4 角点单位四边形（[-1,1]²，z=0）：作为 InstancedBufferGeometry 的基础顶点 position（角点），

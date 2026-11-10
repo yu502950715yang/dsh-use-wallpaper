@@ -64,6 +64,7 @@ scene 壁纸自带的脚本（SceneScript / 文本脚本）在 [QuickJS](https:/
 - 脚本**不能**访问宿主 DOM、网络、文件系统或 Node API；能请求的资源只有当前场景包内的纹理（`particle-texture`/`scene-asset` 路由，pkg 未命中时回退 WE 引擎 assets 目录）。
 - 解析器只把壁纸素材当数据：`.tex` / `.pkg` / `.mdl` / `scene.json` 的畸形输入不允许越界读或执行（有单测覆盖）。
 - **纹理解压预算（2026-11-10）**：`.tex` 的 mip「解压字节数 / 宽高」由第三方素材声明。此前按声明值直接分配内存 ⇒ 恶意素材可用 `64 image × 256 mip` 各声明 1GB + 空载荷让渲染进程 OOM。现在分配大小按 `format + 宽高` 推导、声明不一致/空载荷/解压长度不符一律拒绝，并受 4 个可配置预算约束（`texMaxMipBytes` / `texMaxTextureBytes` / `texMaxMipCount` / `texMaxDimension`，见 README 配置项）；超预算的纹理按缺失处理、走降级链，不影响页面其余部分。
+- **粒子素材（Rust/wasm）加固（2026-11-10）**：粒子 JSON 同属第三方素材——解析失败转 JS 异常（不 panic、跳过该粒子层）、`maxcount` 硬上限 16384（防构造期无界分配）、角度归一化 O(1)（防死循环卡死页面）、非有限数值与 `dt` 一律过滤。见 `AGENT.md` §5.62。
 
 ### 4.3 web 壁纸 iframe
 
