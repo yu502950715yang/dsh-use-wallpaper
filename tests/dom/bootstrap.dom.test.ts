@@ -101,7 +101,7 @@ describe('client bootstrap 集成', () => {
       const img = document.querySelector('.wp-background-layer .wp-bg-fill img') as HTMLImageElement | null;
       expect(img?.src).toContain('/p1');
     });
-  });
+  }, 20_000); // 首次 boot 含整包动态 import：全量并行时偶发吃满 vitest 默认 5s（既有 flake，与 plugin-lifecycle 同类）
   it('I1: 未保存选中壁纸时挂载不触发 select', async () => {
     const fetchMock = stubFetch(
       [{ id: '1', title: 'A', type: 'image', hasScene: false, hasPreviewGif: false, previewUrl: '/p1' }],
@@ -159,5 +159,5 @@ describe('client bootstrap 集成', () => {
       const img = document.querySelector('.wp-background-layer .wp-bg-fill img') as HTMLImageElement | null;
       expect(img?.src).toContain('/p1');
     });
-  });
+  }, 20_000); // 首次 boot 含整包动态 import：全量并行时偶发吃满 vitest 默认 5s（既有 flake，与 plugin-lifecycle 同类）
 });
