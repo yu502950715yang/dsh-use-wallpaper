@@ -85,6 +85,9 @@ export interface AddBackgroundOptions {
   isolate?: { objectId: number; rtWidth: number; rtHeight: number; worldW: number; worldH: number };
   // 对象级视差深度（scene.json 的 parallaxDepth，两根轴）；缺省 undefined = 不参与视差。
   parallaxDepth?: [number, number];
+  // 视差节点原点（WE 场景坐标）：父链锚点继承时 = 锚点对象世界 origin（子层与父层同一位移）；
+  // 缺省 = 自身 origin。语义见 client/parallax-contract.ts。
+  parallaxNodeOrigin?: [number, number, number];
   // 动态 color 禁用（text 图层）：静态色已烘进纹理，脚本/时间线 color 不再乘材质（AGENT §7.44）。
   disableDynamicColor?: boolean;
 }
@@ -105,6 +108,8 @@ export interface AddPuppetOptions {
   brightness?: number;
   // 对象级视差深度（同 addBackground）；缺省 undefined = 不参与视差。
   parallaxDepth?: [number, number];
+  // 视差节点原点（同 addBackground）：父链锚点继承时 = 锚点对象世界 origin。
+  parallaxNodeOrigin?: [number, number, number];
   // scene.json 的 `animationlayers`（T8）：undefined = 字段缺失（逐帧退回「播动画表首个」）。
   animationLayers?: SceneImageObject['animationLayers'];
   // 对象贴图（= 建 puppet 材质时的 map）：效果链在**贴图空间**跑，隔离内容就是这张贴图的平面。
@@ -239,6 +244,7 @@ export function addBackground(host: BackgroundAssemblyHost, opts: AddBackgroundO
     // 隔离时位移的载体是合成 quad（内容只进对象 RT）；attachIsolated 在本方法之前登记 quad。
     parallaxNode: opts.isolate ? (host.isolatedQuad(opts.isolate.objectId) ?? mesh) : mesh,
     parallaxDepth: opts.parallaxDepth,
+    parallaxNodeOrigin: opts.parallaxNodeOrigin,
   });
   // scene 对象 id → 显示对象（隔离时是合成 quad —— 内容 mesh 只渲染进对象 RT，不进主场景）。
   if (opts.objectId !== undefined) {
@@ -311,6 +317,7 @@ export function addPuppet(host: BackgroundAssemblyHost, opts: AddPuppetOptions):
     renderOffset: [0, 0, 0],
     parallaxNode: mesh,
     parallaxDepth: opts.parallaxDepth,
+    parallaxNodeOrigin: opts.parallaxNodeOrigin,
   });
   // 动画层：字段缺失记 null（逐帧区分「无元数据」与「显式无可见层」），存在则先按 visible 过滤。
   host.setPuppetLayer(id, {

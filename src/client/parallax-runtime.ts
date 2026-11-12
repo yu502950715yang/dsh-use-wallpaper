@@ -12,12 +12,16 @@ export interface ParallaxBackgroundLike {
   align: [number, number];
   parallaxNode: THREE.Object3D;
   parallaxDepth?: [number, number];
+  /** 父链锚点继承时的视差节点原点（WE 场景坐标）；缺省 = 自身 origin。 */
+  parallaxNodeOrigin?: [number, number, number];
   parallaxApplied?: boolean;
 }
 
 /** 粒子层中视差用到的字段（结构兼容 player 内的 ParticleLayer）。 */
 export interface ParallaxParticleLike {
   parallaxCenter: [number, number];
+  /** 父链锚点继承时的视差节点（three 世界坐标）；缺省 = parallaxCenter。 */
+  parallaxNode?: [number, number];
   parallaxIsolated?: boolean;
   parallaxQuad?: THREE.Object3D;
   parallaxDepth?: [number, number];
@@ -59,13 +63,17 @@ export class ParallaxRuntime {
     if (!cfg) return;
     this.follow = advancePointer(this.follow, this.target, cfg, dt);
     for (const entry of deps.backgrounds) {
-      // 基准位 = 锚点 origin（we_to_three）+ alignment 偏移；视差 node 仍取**锚点原点**（alignment
-      // 是局部几何偏移，不参与视差的 node 坐标，否则 shift 会随锚点额外平移）。
+      // 基座位 = 锚点 origin（we_to_three）+ alignment 偏移；视差 node 取**锚点对象**（父链传播时
+      // = 父层/祖先的世界 origin，见 parallax-contract.ts），否则就是自身 origin。
+      // alignment 是局部几何偏移，不参与视差的 node 坐标，否则 shift 会随锚点额外平移。
       const bx = entry.origin[0] - entry.sceneW / 2;
       const by = entry.origin[1] - entry.sceneH / 2;
       const x = bx + entry.align[0];
       const y = by + entry.align[1];
       const z = entry.origin[2];
+      const nodeOrigin = entry.parallaxNodeOrigin ?? entry.origin;
+      const nodeX = nodeOrigin[0] - entry.sceneW / 2;
+      const nodeY = nodeOrigin[1] - entry.sceneH / 2;
       // depth 全 0（scene.json 里有真值 "0.00000 0.00000"）与缺省同义 = 不参与视差：shift 恒 0，
       // 但**写**这个动作本身会覆盖脚本位移，故必须归到「不写」分支。
       const d = entry.parallaxDepth;
@@ -82,7 +90,8 @@ export class ParallaxRuntime {
         // OWE 的 ortho 是**场景**正交尺寸（general.orthogonalprojection），不是窗口尺寸。
         orthoW: deps.sceneWidth,
         orthoH: deps.sceneHeight,
-        nodeX: bx, nodeY: by,
+        nodeX,
+        nodeY,
         // three 坐标下主相机位于场景中心（we_to_three 已把中心移到原点）。
         camX: 0, camY: 0,
         depth,
@@ -95,6 +104,8 @@ export class ParallaxRuntime {
     // RT 内平移会被 RT 边界裁掉）。
     for (const layer of deps.particles) {
       const [cx, cy] = layer.parallaxCenter;
+      // 视差 node = 锚点对象（父链传播时 = 父层世界中心；缺省 = 自身中心）。
+      const [nx, ny] = layer.parallaxNode ?? layer.parallaxCenter;
       const u = (layer.material.uniforms as Record<string, { value: THREE.Vector2 }>).u_Parallax;
       // 隔离层的位移落点只有 quad：quad 意外缺失时跳过本层，**不得**退化写 u_Parallax（那正是会
       // 被 RT 边界裁掉的落点）。
@@ -113,7 +124,7 @@ export class ParallaxRuntime {
         pointer: this.follow.value,
         orthoW: deps.sceneWidth,
         orthoH: deps.sceneHeight,
-        nodeX: cx, nodeY: cy,
+        nodeX: nx, nodeY: ny,
         camX: 0, camY: 0,
         depth,
         cfg,

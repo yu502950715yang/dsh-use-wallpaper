@@ -16,6 +16,7 @@ export type BackgroundEntry = {
     renderOffset: [number, number, number];
     parallaxNode: THREE.Object3D;
     parallaxDepth?: [number, number];
+    parallaxNodeOrigin?: [number, number, number];
     parallaxApplied?: boolean;
 };
 export interface BackgroundLayerHost {

@@ -49,6 +49,9 @@ export type ParticleLayer = {
   // 平移会被 RT 边界裁掉）。parallaxCenter = objCenter 的 x/y（three 世界坐标）。
   parallaxDepth?: [number, number];
   parallaxCenter: [number, number];
+  // 视差节点（three 世界坐标）：父链锚点继承时 = 锚点对象世界的 x/y（位移与父层一致）；
+  // 缺省 = parallaxCenter（自身，旧行为）。见 client/parallax-contract.ts。
+  parallaxNode?: [number, number];
   parallaxQuad?: THREE.Object3D;
   // opts.isolate 有值（= 本层渲染进对象 RT）即真：quad 意外缺失时 tickParallax 靠它跳过本层，
   // 不退化写 u_Parallax（RT 内平移会被 RT 边界裁掉）。
@@ -101,6 +104,9 @@ export interface AddParticleOptions {
   isolate?: { objectId: number; rtWidth: number; rtHeight: number; worldW: number; worldH: number };
   // 对象级视差深度（scene.json 的 parallaxDepth，两根轴）；缺省 undefined = 不参与视差。
   parallaxDepth?: [number, number];
+  // 视差节点中心（three 世界坐标，语义同 objectCenter）：父链锚点继承时 = 锚点对象世界 x/y；
+  // 缺省 = objectCenter 的 x/y（自身，旧行为）。
+  parallaxNodeCenter?: [number, number];
 }
 
 export interface ParticleLayerHost {
@@ -293,6 +299,7 @@ export function addParticle(
       loggedRefract: false,
       parallaxDepth: opts.parallaxDepth,
       parallaxCenter: [(opts.objectCenter ?? [0, 0, 0])[0], (opts.objectCenter ?? [0, 0, 0])[1]],
+      parallaxNode: opts.parallaxNodeCenter,
       // 时间线 origin 动画的平移基准：opts.objectCenter 是 we_to_three 后的中心，加回 scene/2
       // 得到 scene 坐标的对象 world origin；scale/angles 只用于判断「是否只有 origin 变化」。
       baseWorldOrigin: [

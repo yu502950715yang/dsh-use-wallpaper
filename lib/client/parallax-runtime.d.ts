@@ -8,11 +8,15 @@ export interface ParallaxBackgroundLike {
     align: [number, number];
     parallaxNode: THREE.Object3D;
     parallaxDepth?: [number, number];
+    /** 父链锚点继承时的视差节点原点（WE 场景坐标）；缺省 = 自身 origin。 */
+    parallaxNodeOrigin?: [number, number, number];
     parallaxApplied?: boolean;
 }
 /** 粒子层中视差用到的字段（结构兼容 player 内的 ParticleLayer）。 */
 export interface ParallaxParticleLike {
     parallaxCenter: [number, number];
+    /** 父链锚点继承时的视差节点（three 世界坐标）；缺省 = parallaxCenter。 */
+    parallaxNode?: [number, number];
     parallaxIsolated?: boolean;
     parallaxQuad?: THREE.Object3D;
     parallaxDepth?: [number, number];

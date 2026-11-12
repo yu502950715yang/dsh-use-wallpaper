@@ -248,6 +248,7 @@ export declare class ThreeScenePlayer {
             worldH: number;
         };
         parallaxDepth?: [number, number];
+        parallaxNodeOrigin?: [number, number, number];
         disableDynamicColor?: boolean;
     }): number;
     addPuppet(opts: {
@@ -262,6 +263,7 @@ export declare class ThreeScenePlayer {
         alpha?: number;
         brightness?: number;
         parallaxDepth?: [number, number];
+        parallaxNodeOrigin?: [number, number, number];
         animationLayers?: SceneImageObject['animationLayers'];
         texture?: THREE.Texture | null;
         isolate?: {
@@ -311,6 +313,7 @@ export declare class ThreeScenePlayer {
             worldH: number;
         };
         parallaxDepth?: [number, number];
+        parallaxNodeCenter?: [number, number];
     }): number;
     updateParticles(dt: number): void;
     dispose(): void;

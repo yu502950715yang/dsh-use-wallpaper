@@ -42,6 +42,7 @@ import {
   alignmentWorldOffset, updateBackgroundTransform, setBackgroundAnchorOffset, updateBackground, resizeBackground,
 } from './background-layer-factory.js';
 import { addBackground, addPuppet } from './background-assembly.js';
+import { resolveParallaxContracts } from './parallax-contract.js';
 import type { BackgroundAssemblyHost } from './background-assembly.js';
 import { FrameCaptureRuntime } from './frame-capture-runtime.js';
 import type { IsolatedObject } from './layer-factory.js';
@@ -1112,6 +1113,8 @@ export class ThreeScenePlayer {
     isolate?: { objectId: number; rtWidth: number; rtHeight: number; worldW: number; worldH: number };
     // 对象级视差深度（scene.json 的 parallaxDepth，两根轴）；缺省 undefined = 不参与视差。
     parallaxDepth?: [number, number];
+    // 视差节点原点（WE 场景坐标）：父链锚点继承时 = 锚点对象世界 origin（与父层同位移）；缺省 = 自身 origin。
+    parallaxNodeOrigin?: [number, number, number];
     // 动态 color 禁用（text 图层）：静态色已烘进纹理，脚本/时间线 color 不再乘材质（AGENT §7.44）。
     disableDynamicColor?: boolean;
   }): number {
@@ -1136,6 +1139,8 @@ export class ThreeScenePlayer {
     brightness?: number;
     // 对象级视差深度（同 addBackground）；缺省 undefined = 不参与视差。
     parallaxDepth?: [number, number];
+    // 视差节点原点（同 addBackground）：父链锚点继承时 = 锚点对象世界 origin。
+    parallaxNodeOrigin?: [number, number, number];
     // scene.json 的 `animationlayers`（T8）：undefined = 字段缺失（逐帧退回「播动画表首个」）。
     animationLayers?: SceneImageObject['animationLayers'];
     // 对象贴图（= 建 puppet 材质时的 map）：效果链在**贴图空间**跑，隔离内容就是这张贴图的平面。
@@ -1258,6 +1263,8 @@ export class ThreeScenePlayer {
       isolate?: { objectId: number; rtWidth: number; rtHeight: number; worldW: number; worldH: number };
       // 对象级视差深度（scene.json 的 parallaxDepth，两根轴）；缺省 undefined = 不参与视差。
       parallaxDepth?: [number, number];
+      // 视差节点中心（three 世界坐标，同 objectCenter）：父链锚点继承时 = 锚点对象世界 x/y。
+      parallaxNodeCenter?: [number, number];
     },
   ): number {
     return addParticle(this.particleHost, simVerticesGetter, opts);
@@ -1460,6 +1467,22 @@ export function loadSceneToThree(
       ? { origin: w.origin, scale: w.scale, angles: w.angles }
       : { origin: o.origin, scale: o.scale, angles: o.angles ?? [0, 0, 0] as [number, number, number] };
   };
+  // 视差传播契约（WE 语义，见 parallax-contract.ts）：子层没有自己的视差深度时继承父链锚点的
+  // 视差位移（同一 shift），父层 disablepropagation: true 阻断继承。node 原点取锚点对象的**世界** origin。
+  const objectsById = new Map(desc.objects.map((o) => [o.id, o]));
+  const parallaxContracts = resolveParallaxContracts(desc.objects, (id) => {
+    const o = objectsById.get(id);
+    return o ? world(o).origin : undefined;
+  });
+  /** 背景/puppet 条目的视差字段：锚点≠自身时显式下发锚点原点；无有效深度 ⇒ undefined（不参与）。 */
+  const parallaxFieldsOf = (id: number): {
+    parallaxDepth?: [number, number];
+    parallaxNodeOrigin?: [number, number, number];
+  } => {
+    const c = parallaxContracts.get(id);
+    if (!c) return {};
+    return c.anchorId === id ? { parallaxDepth: c.depth ?? undefined } : { parallaxDepth: c.depth ?? undefined, parallaxNodeOrigin: c.node };
+  };
   // 构造器传场景尺寸（视口缺省与场景同尺寸），再用**真实视口** resize：viewport 由调用方显式传入
   // （vw/vh = window.innerWidth/Height）；缺省回退场景尺寸（cover == 场景尺寸，无裁剪）。
   // 清屏色随装配一次传入（desc.clearColor 已由 scene-json 从 general.clearcolor 解析）。
@@ -1516,7 +1539,7 @@ export function loadSceneToThree(
           // 对象级调制（alpha/brightness）：与背景 quad 同一份 scene.json 字段，同一套 materialModulation。
           alpha: obj.alpha,
           brightness: obj.brightness,
-          parallaxDepth: obj.parallaxDepth,
+          ...parallaxFieldsOf(obj.id),
           // 动画层（T8）：逐帧选层由 player 负责，装配期只透传解析结果（undefined = 字段缺失）。
           animationLayers: obj.animationLayers,
           // 对象级效果链（we 的 puppet 效果在贴图空间跑，输出当贴图）：贴图 + 隔离尺寸透传。
@@ -1554,9 +1577,8 @@ export function loadSceneToThree(
         // 对象级效果链：带效果的对象其内容进 localScene 渲染到对象 RT，主场景放合成 quad；
         // 缺省不隔离。隔离条目的键 = obj.id，与 ObjectEffectStage 的键空间一致。
         isolate: assets.isolate?.get(obj.id),
-        // 视差深度：Task 2 修订后**所有 kind** 都带该字段（SceneObjectBase.parallaxDepth）⇒ 直接透传；
-        // 写成 `obj.kind === 'image' ? … : undefined` 会丢掉 text 图层的视差（真实库 20 处）。
-        parallaxDepth: obj.parallaxDepth,
+        // 视差：契约解析（父链锚点继承 / disablepropagation）后下发；node 原点缺省 = 自身 origin。
+        ...parallaxFieldsOf(obj.id),
       });
       backgroundIds.push(id);
     } else if (obj.kind === 'text') {
@@ -1586,8 +1608,8 @@ export function loadSceneToThree(
         // 对象级效果链：带效果的对象其内容进 localScene 渲染到对象 RT，主场景放合成 quad；
         // 缺省不隔离。隔离条目的键 = obj.id，与 ObjectEffectStage 的键空间一致。
         isolate: assets.isolate?.get(obj.id),
-        // 视差深度同 image 分支：直接透传对象级字段（text 也有 parallaxDepth）。
-        parallaxDepth: obj.parallaxDepth,
+        // 视差深度同 image 分支（契约解析后的有效深度）。
+        ...parallaxFieldsOf(obj.id),
         // text 的静态色已烘进 canvas：脚本/时间线 color 不应用（AGENT §7.44）。
         disableDynamicColor: true,
       });
@@ -1624,7 +1646,7 @@ export function loadSceneToThree(
         alpha: obj.alpha,
         brightness: obj.brightness,
         isolate,
-        parallaxDepth: obj.parallaxDepth,
+        ...parallaxFieldsOf(obj.id),
       });
       backgroundIds.push(id);
     } else if (obj.kind === 'particle' && obj.particle) {
@@ -1635,6 +1657,7 @@ export function loadSceneToThree(
       // 桌面不渲染的「稀疏事件源」粒子（见 specSparseEventSource 注释）→ 整层跳过，不建模拟器。
       if (specSparseEventSource(p.specJson)) continue;
       const t = world(obj);
+      const particleContract = parallaxContracts.get(obj.id);
       // createParticleSim(json, origin, sceneW, sceneH, overrideJson)（经工厂抽象：生产 wasm /
       // 测试 mock）。第 5 参 = 该对象 instanceoverride 的原始 JSON（无覆盖 → 空串）。
       const sim = assets.createParticleSim(p.specJson, t.origin, sceneW, sceneH, p.overrideJson ?? '');
@@ -1687,8 +1710,11 @@ export function loadSceneToThree(
         // 对象级效果链：带效果的粒子对象同样隔离（对象 RT + 合成 quad）。世界尺寸由调用方按
         // `particleWorldSize(spec, scale)` 算好（player 不知道 spec 的 distanceMax）；缺省不隔离。
         isolate: assets.isolate?.get(obj.id),
-        // 视差深度：真实库 parallaxDepth 有 106 处落在 particle 对象上（最大的一支）。
-        parallaxDepth: obj.parallaxDepth,
+        // 视差：粒子层 node 用 three 坐标（同 objectCenter）；父链锚点继承时 = 锚点对象世界中心。
+        parallaxDepth: particleContract?.depth ?? undefined,
+        parallaxNodeCenter: particleContract && particleContract.anchorId !== obj.id
+          ? [particleContract.node[0] - sceneW / 2, particleContract.node[1] - sceneH / 2]
+          : undefined,
       });
       particleLayers.push({ id, sim });
       sims.push(sim);

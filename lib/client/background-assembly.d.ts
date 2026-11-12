@@ -58,6 +58,7 @@ export interface AddBackgroundOptions {
         worldH: number;
     };
     parallaxDepth?: [number, number];
+    parallaxNodeOrigin?: [number, number, number];
     disableDynamicColor?: boolean;
 }
 export interface AddPuppetOptions {
@@ -72,6 +73,7 @@ export interface AddPuppetOptions {
     alpha?: number;
     brightness?: number;
     parallaxDepth?: [number, number];
+    parallaxNodeOrigin?: [number, number, number];
     animationLayers?: SceneImageObject['animationLayers'];
     texture?: THREE.Texture | null;
     isolate?: {

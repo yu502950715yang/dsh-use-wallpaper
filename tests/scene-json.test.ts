@@ -142,6 +142,18 @@ describe('parseSceneJson', () => {
     expect((desc.objects[0] as any).parent).toBeUndefined();
     expect((desc.objects[1] as any).parent).toBe(1);
   });
+  it('disablepropagation 解析为 disablePropagation（仅 true 保留；其它值忽略）', () => {
+    const desc = parseSceneJson(JSON.stringify({
+      objects: [
+        { id: 1, image: 'models/a.json', origin: '0 0 0', scale: '1 1 1', disablepropagation: true },
+        { id: 2, image: 'models/b.json', origin: '0 0 0', scale: '1 1 1', disablepropagation: false },
+        { id: 3, image: 'models/c.json', origin: '0 0 0', scale: '1 1 1' },
+      ],
+    }));
+    expect((desc.objects[0] as any).disablePropagation).toBe(true);
+    expect((desc.objects[1] as any).disablePropagation).toBeUndefined();
+    expect((desc.objects[2] as any).disablePropagation).toBeUndefined();
+  });
   it('classifies built-in util layers (models/util/*) as util kind', () => {
     // WE 内置合成层/全屏层/项目层：pkg 内无 models/util/*.json 文件，
     // 对象语义是效果链容器/控制节点（非纹理），必须与普通 image 区分开

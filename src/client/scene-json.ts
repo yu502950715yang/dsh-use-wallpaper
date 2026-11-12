@@ -347,6 +347,8 @@ export function parseSceneJson(raw: string): SceneDescription {
       // 对象级 parallaxDepth 与 kind 无关（全库 227 处：particle 106 / image 91 / text 20 / other 10），
       // 故落在 base 让所有分支都带出 —— Task 4 的粒子/文本注入 u_Parallax 全靠它。
       parallaxDepth: optNum2(o.parallaxDepth),
+      // WE 视差传播：父层置 true 时子层不再继承该父的视差位移（只有显式 true 才算；见 parallax-contract.ts）。
+      disablePropagation: o.disablepropagation === true ? true : undefined,
       // T4.4：origin/scale/angles 的 user 绑定保留（静态值照旧解析，供 resolve 缺失回退）。
       userRefs: pickUserRefs(o, ['origin', 'scale', 'angles']),
       // 转换字段里的对象属性脚本（angles/origin/scale/color 各一个）；无脚本的属性不产出条目。

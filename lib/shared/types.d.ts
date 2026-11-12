@@ -116,6 +116,8 @@ export interface SceneObjectBase {
     userRefs?: ObjectUserRefs;
     /** WE 对象级视差深度（scene.json `parallaxDepth`，两根轴）；缺省 = OWE 的 {0,0} ⇒ 不参与视差。 */
     parallaxDepth?: [number, number];
+    /** WE `disablepropagation: true`：作为父层时**禁止子层继承自己的视差**（见 client/parallax-contract.ts）。 */
+    disablePropagation?: boolean;
     /** 对象级属性脚本（angles/origin/scale/color 可各有一个）；visible.script 走 VisibleBinding。 */
     objectScripts?: ObjectScriptEntry[];
     /** 属性时间线动画（alpha/origin/scale/angles/color 可各一条）；见 client/scene-timeline.ts。 */

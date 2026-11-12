@@ -16,6 +16,7 @@ import { createGlowStage } from '../src/client/glow-stage.js';
 import type { PuppetInstance } from '../src/client/puppet.js';
 import type { MdlAnimation } from '../src/client/mdl-parser.js';
 import { parseSceneJson } from '../src/client/scene-json.js';
+import { resolveWorldTransforms } from '../src/client/scene-graph.js';
 import { computeEffectiveVisibility } from '../src/client/visibility.js';
 
 // 注入的 mock renderer：只测相机/场景/RAF 逻辑，不触碰 WebGL。
@@ -5473,5 +5474,115 @@ describe('setBackgroundTexture（媒体封面默认图切换）', () => {
     expect(player.setBackgroundTexture(13, b)).toBe(true);
     expect((content.material as THREE.MeshBasicMaterial).map).toBe(b);
     expect((entry.quad.material as THREE.MeshBasicMaterial).map).toBe(quadMap);
+  });
+});
+
+// 视差传播（WE 语义）：
+// ① 图层条目支持「锚点节点」：位移按锚点 origin 计算、基座位置仍用自身 origin；
+// ② loadSceneToThree 解析父链契约：子层无深度 ⇒ 继承父层锚点（与父同位移动），
+//    父层 disablepropagation ⇒ 阻断继承。根因与语义见 client/parallax-contract.ts。
+describe('视差传播（parallaxNodeOrigin / 父链锚点）', () => {
+  const ON = { enabled: true, amount: 1, delay: 0, mouseInfluence: 1 };
+
+  it('背景：parallaxNodeOrigin 用锚点节点算位移，基座位置仍用自身 origin', () => {
+    const { player } = makePlayer(1920, 1080);
+    // 父：origin 居中（node = 0）→ shift = mouse = (-960, 0)。
+    const idParent = player.addBackground({
+      origin: [960, 540, 0], size: [100, 100], scale: [1, 1, 1],
+      sceneW: 1920, sceneH: 1080, parallaxDepth: [1, 1],
+    });
+    // 子：自身 origin (760,390)（基座 (-200,-150)），但视差节点取父 origin (960,540) → node (0,0)。
+    const idChild = player.addBackground({
+      origin: [760, 390, 0], size: [90, 90], scale: [1, 1, 1],
+      sceneW: 1920, sceneH: 1080, parallaxDepth: [1, 1], parallaxNodeOrigin: [960, 540, 0],
+    });
+    player.setParallax(ON);
+    player.setParallaxPointer({ x: 1, y: 0.5 });
+    player.tickParallaxForTest(0.016);
+    const parent = player.backgroundMeshForTest(idParent);
+    const child = player.backgroundMeshForTest(idChild);
+    expect(parent.position.x).toBeCloseTo(-960, 3);
+    expect(child.position.x).toBeCloseTo(-200 - 960, 3); // 基座 -200 + 与父相同的 shift -960
+    expect(child.position.y).toBeCloseTo(-150, 6);
+  });
+
+  it('粒子：parallaxNodeCenter 用锚点节点算 u_Parallax（objectCenter 仍决定基座）', () => {
+    const { player } = makePlayer(1920, 1080);
+    const verts = () => new Float32Array([0, 0, 0, 10, 0, 0, 1, 1, 1, 1]);
+    player.addParticle(verts, {
+      frameCount: 1, blend: 'alpha', objectCenter: [300, 250, 0],
+      parallaxDepth: [1, 1], parallaxNodeCenter: [100, 50],
+    });
+    const mesh = player.scene.children[0] as THREE.Mesh;
+    player.setParallax(ON);
+    player.setParallaxPointer({ x: 1, y: 0.5 });
+    player.tickParallaxForTest(0.016);
+    // node = (100,50)；mouse = (-960, 0) → u_Parallax = (-860, 50)（不是 (-660, 250)）。
+    const u = (mesh.material as THREE.ShaderMaterial).uniforms.u_Parallax;
+    expect(u.value.x).toBeCloseTo(-860, 3);
+    expect(u.value.y).toBeCloseTo(50, 3);
+  });
+
+  const PARENT_CHILD_SCENE = (parentExtra: object = {}) => JSON.stringify({
+    camera: { center: '0 0 0', eye: '0 0 1', up: '0 1 0' },
+    general: {
+      orthogonalprojection: { width: 1920, height: 1080 },
+      cameraparallax: true, cameraparallaxamount: 1,
+      cameraparallaxmouseinfluence: 1, cameraparallaxdelay: 0,
+    },
+    objects: [
+      {
+        id: 10, name: 'frame', image: 'models/a.json',
+        origin: '760 390 0', scale: '1 1 1', size: '100 100',
+        parallaxDepth: '1.00000 1.00000', ...parentExtra,
+      },
+      // 子层：无 origin（继承父原点）、无 parallaxDepth（继承父视差）。
+      { id: 11, name: 'cover', image: 'models/b.json', parent: 10, scale: '1 1 1', size: '90 90' },
+    ],
+  });
+
+  function loadParentChild(parentExtra: object = {}) {
+    const canvas = document.createElement('canvas');
+    const mock = createMockRenderer();
+    const scene = PARENT_CHILD_SCENE(parentExtra);
+    const desc = parseSceneJson(scene);
+    const worldTransforms = resolveWorldTransforms(desc.objects);
+    const tex = () => new THREE.DataTexture(new Uint8Array(4), 2, 2);
+    return loadSceneToThree(scene, {
+      renderer: mock as unknown as THREE.WebGLRenderer,
+      backgroundTextures: new Map([[10, tex()], [11, tex()]]),
+      worldTransforms,
+    }, canvas);
+  }
+
+  it('loadSceneToThree：子层无深度 ⇒ 继承父层视差（两者 screen 位移相同，封面不再相对封面框偏移）', () => {
+    const result = loadParentChild();
+    const player = result.player;
+    player.setParallax(ON);
+    player.setParallaxPointer({ x: 1, y: 0.5 });
+    player.tickParallaxForTest(0.016);
+    const frame = player.displayObject(10)!;
+    const cover = player.displayObject(11)!;
+    // node = (760-960, 390-540) = (-200,-150)；mouse = (-960,0) ⇒ shift = (-1160,-150)。
+    expect(frame.position.x).toBeCloseTo(-200 - 1160, 3);
+    expect(frame.position.y).toBeCloseTo(-150 - 150, 3);
+    // 子层与父层同一位移 ⇒ 两者相对位置保持装配期关系（中心一致）。
+    expect(cover.position.x).toBeCloseTo(frame.position.x, 6);
+    expect(cover.position.y).toBeCloseTo(frame.position.y, 6);
+    player.dispose();
+  });
+
+  it('loadSceneToThree：父层 disablepropagation ⇒ 子层不继承（保持基座），父层照常位移', () => {
+    const result = loadParentChild({ disablepropagation: true });
+    const player = result.player;
+    player.setParallax(ON);
+    player.setParallaxPointer({ x: 1, y: 0.5 });
+    player.tickParallaxForTest(0.016);
+    const frame = player.displayObject(10)!;
+    const cover = player.displayObject(11)!;
+    expect(frame.position.x).toBeCloseTo(-200 - 1160, 3);
+    expect(cover.position.x).toBeCloseTo(-200, 3);  // 无深度 ⇒ 不参与视差
+    expect(cover.position.y).toBeCloseTo(-150, 3);
+    player.dispose();
   });
 });

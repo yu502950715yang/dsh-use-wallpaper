@@ -32,6 +32,9 @@ export type BackgroundEntry = {
   // depth 来自 scene.json 的 parallaxDepth（缺省 undefined = 不参与视差）。
   parallaxNode: THREE.Object3D;
   parallaxDepth?: [number, number];
+  // 视差节点原点（WE 场景坐标）：父链锚点继承时 = 锚点对象**世界** origin（子层与父层同位移）；
+  // 缺省 = 自身 origin（旧行为）。见 client/parallax-contract.ts。
+  parallaxNodeOrigin?: [number, number, number];
   // 本条目**当前**是否在该 node 上留着位移（true ⇒ 关视差时写回一次基准位；见 parallax-runtime）。
   parallaxApplied?: boolean;
 };

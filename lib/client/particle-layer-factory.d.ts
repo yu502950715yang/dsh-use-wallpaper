@@ -20,6 +20,7 @@ export type ParticleLayer = {
     loggedRefract: boolean;
     parallaxDepth?: [number, number];
     parallaxCenter: [number, number];
+    parallaxNode?: [number, number];
     parallaxQuad?: THREE.Object3D;
     parallaxIsolated?: boolean;
     parallaxApplied?: boolean;
@@ -63,6 +64,7 @@ export interface AddParticleOptions {
         worldH: number;
     };
     parallaxDepth?: [number, number];
+    parallaxNodeCenter?: [number, number];
 }
 export interface ParticleLayerHost {
     readonly scene: THREE.Scene;
