@@ -5431,3 +5431,47 @@ describe('ThreeScenePlayer updateBackgroundTransform（时间线世界变换）'
     expect(uni.objScale.value.x).toBeCloseTo(4.16432, 6);
   });
 });
+
+// 媒体封面默认图切换：按 scene 对象 id 换背景图层采样纹理。
+// 直渲对象换 mesh 材质；隔离对象必须换**内容 mesh**（进对象 RT）——合成 quad 仍采样对象 RT。
+describe('setBackgroundTexture（媒体封面默认图切换）', () => {
+  const tex = () => new THREE.Texture();
+
+  it('直渲背景：换 map；纹理互换不重编 program，有↔无纹理才置 needsUpdate', () => {
+    const { player } = makePlayer(1000, 600);
+    const a = tex(); const b = tex();
+    player.addBackground({
+      origin: [500, 300, 0], size: [100, 50], scale: [1, 1, 1],
+      texture: a, sceneW: 1000, sceneH: 600, objectId: 13,
+    });
+    const mat = (player.displayObject(13) as THREE.Mesh).material as THREE.MeshBasicMaterial;
+    expect(mat.map).toBe(a);
+    expect(player.setBackgroundTexture(13, b)).toBe(true);
+    expect(mat.map).toBe(b);
+    const v = mat.version;
+    player.setBackgroundTexture(13, a);
+    expect(mat.map).toBe(a);
+    expect(mat.version).toBe(v); // 两个纹理互换：采样源不同，program 不变
+    player.setBackgroundTexture(13, null);
+    expect(mat.map).toBeNull();
+    expect(mat.version).toBeGreaterThan(v); // 有→无纹理：USE_MAP 宏变化，需重编
+    expect(player.setBackgroundTexture(999, a)).toBe(false);
+  });
+
+  it('隔离背景：换内容 mesh 的 map，合成 quad 仍采样对象 RT', () => {
+    const { player } = makePlayer(1000, 600);
+    const a = tex(); const b = tex();
+    player.addBackground({
+      origin: [500, 300, 0], size: [100, 50], scale: [1, 1, 1],
+      texture: a, sceneW: 1000, sceneH: 600, objectId: 13,
+      isolate: { objectId: 13, rtWidth: 100, rtHeight: 50, worldW: 100, worldH: 50 },
+    });
+    const entry = player.isolatedObjects().find((e) => e.id === 13)!;
+    const content = entry.localScene.children[0] as THREE.Mesh;
+    const quadMap = (entry.quad.material as THREE.MeshBasicMaterial).map;
+    expect((content.material as THREE.MeshBasicMaterial).map).toBe(a);
+    expect(player.setBackgroundTexture(13, b)).toBe(true);
+    expect((content.material as THREE.MeshBasicMaterial).map).toBe(b);
+    expect((entry.quad.material as THREE.MeshBasicMaterial).map).toBe(quadMap);
+  });
+});

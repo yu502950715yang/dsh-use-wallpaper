@@ -44,6 +44,8 @@ import type { MediaOrchestration, MediaOrchestrationHost } from './media-orchest
 import { paletteFromImage } from './media-palette.js';
 import { createMediaThumbnailTextureSource } from './media-texture.js';
 import type { MediaThumbnailTextureSource } from './media-texture.js';
+import { mediaCoverSwitches } from './media-cover.js';
+import type { MediaCoverTarget } from './media-cover.js';
 import type { MediaThumbnailPayload } from './scene-script-vm.js';
 import { DynamicMeshRegistry } from './dynamic-mesh.js';
 import { createMeshMaterial, parseMeshMaterial } from './mesh-material.js';
@@ -294,8 +296,6 @@ export function createThreeSceneRenderer(opts?: {
   let currentTextures: Map<number, Texture> | null = null;
   // 本次装配的封面共享纹理源（instance.usertextures=$mediaThumbnail 的对象共用一张 Texture）。
   let currentMediaThumbnailSource: MediaThumbnailTextureSource | null = null;
-  // 封面对象解析出的材质纹理（已由共享封面替代，仅本对象不再使用）：teardown 释放。
-  let currentMediaReplacedTextures: Texture[] = [];
   // 本次装配的 text 脚本 binding（每个持 quickjs 堆 handle），teardown 必须逐个 dispose。
   let currentScriptBindings: TextScriptBinding[] = [];
   // 本次装配的 SceneScript 运行时（visible.script）：持有 quickjs ctx/handle，teardown 释放。
@@ -490,9 +490,6 @@ export function createThreeSceneRenderer(opts?: {
     // dispose 用可选调用：测试夹具可能只给假纹理，收尾不得因单个纹理抛错而中断。
     for (const tex of currentExtraTextures) tex.dispose?.();
     currentExtraTextures = [];
-    // 被封面替代的材质纹理（已不参与渲染）与共享封面源一并释放。
-    for (const tex of currentMediaReplacedTextures) tex.dispose();
-    currentMediaReplacedTextures = [];
     currentMediaThumbnailSource?.dispose();
     currentMediaThumbnailSource = null;
     // 脚本 binding 独立于 GL 资源，但同样只在本次装配内有效（切壁纸不留 handle）；SceneScript 运行时同理。
@@ -671,8 +668,8 @@ export function createThreeSceneRenderer(opts?: {
         // 封面（`$mediaThumbnail`）共享纹理源：首个封面对象出现时才创建，非媒体壁纸零开销。
         let mediaThumbnailSource: MediaThumbnailTextureSource | null = null;
         const mediaThumbnailObjects = new Set<number>();
-        const mediaReplacedTextures: Texture[] = [];
-        currentMediaReplacedTextures = mediaReplacedTextures;
+        // 装配期带默认纹理的封面对象：无系统封面时显示默认纹理（WE 占位图语义），封面到达后切共享纹理。
+        const mediaCoverTargets: MediaCoverTarget[] = [];
         // puppet 实例（对象 id → 网格）：所有权交给 player（addPuppet 后由 player.dispose 释放）。
         const puppetMeshes = new Map<number, PuppetInstance>();
         const particles = new Map<number, LoadedParticleAssets>();
@@ -700,12 +697,13 @@ export function createThreeSceneRenderer(opts?: {
             // model json 拉取。
             const { texture, puppetPath, mediaThumbnail } = await resolveImageAssets(id, obj);
             if (mediaThumbnail) {
-              // 封面层：所有绑定 $mediaThumbnail 的对象共用同一张纹理，封面到达/切歌只换 image。
+              // 封面层：默认纹理（对象自身/作者预留的占位图，WE 语义）先上屏；系统封面到达后由
+              // syncMediaCover 切到共享封面纹理。共享源只承载「当前封面」——切歌只换 image。
               mediaThumbnailSource ??= createMediaThumbnailTextureSource();
               currentMediaThumbnailSource = mediaThumbnailSource;
-              backgroundTextures.set(obj.id, mediaThumbnailSource.texture);
+              backgroundTextures.set(obj.id, texture ?? mediaThumbnailSource.texture);
               mediaThumbnailObjects.add(obj.id);
-              if (texture) mediaReplacedTextures.push(texture);
+              if (texture) mediaCoverTargets.push({ objectId: obj.id, fallback: texture });
             } else if (texture) {
               backgroundTextures.set(obj.id, texture);
             } else if (!puppetPath) {
@@ -1345,6 +1343,18 @@ export function createThreeSceneRenderer(opts?: {
           const dispatchThumbnail = (payload: MediaThumbnailPayload): void => {
             try { scriptHost?.mediaThumbnail(payload); } catch { /* 脚本回调异常不阻断纹理链路 */ }
           };
+          // 封面纹理切换：有系统封面 → 共享封面纹理；无封面 → 对象自身默认纹理（WE 占位图语义，
+          // 而不是共享源的 1×1 白）。无默认图的对象的 map 恒为共享源，随 setImage 自动更新 ⇒ 不切换。
+          const syncMediaCover = (hasThumbnail: boolean): void => {
+            if (mediaCoverTargets.length === 0) return;
+            for (const sw of mediaCoverSwitches({
+              targets: mediaCoverTargets,
+              thumbnail: mediaThumbnailSource?.texture ?? null,
+              hasThumbnail,
+            })) {
+              result.player.setBackgroundTexture?.(sw.objectId, sw.texture);
+            }
+          };
           /** teardown/换壁纸/切歌后迟到的响应一律丢弃（序号 + 当前编排身份双保险）。 */
           const stale = (seq: number): boolean => seq !== thumbnailSeq || currentMedia !== mediaSession;
           const loadThumbnail = async (rev: number): Promise<void> => {
@@ -1360,6 +1370,7 @@ export function createThreeSceneRenderer(opts?: {
               // 拉取/解码失败：中性色 + 空纹理。**不计入媒体轮询的 failures**（那套退避只归快照轮询）。
               if (stale(seq)) return;
               mediaThumbnailSource?.setImage(null);
+              syncMediaCover(false);
               dispatchThumbnail(neutral());
               return;
             }
@@ -1368,6 +1379,8 @@ export function createThreeSceneRenderer(opts?: {
             // 无封面对象（只有脚本的场景）也照常取色派发，只是 bitmap 不进任何纹理源。
             const source = mediaThumbnailSource;
             if (source) source.setImage(bitmap); // 所有权转移：替换/dispose 由纹理源关闭
+            // 新封面立即上屏（取色在之后异步做，不阻塞画面更新）。
+            syncMediaCover(true);
             try {
               const palette = await paletteFromImage(bitmap);
               if (stale(seq)) return;
@@ -1407,6 +1420,7 @@ export function createThreeSceneRenderer(opts?: {
               if (!payload.hasThumbnail) {
                 thumbnailSeq += 1; // 作废在途请求（无封面 ⇒ 不显示旧图）
                 mediaThumbnailSource?.setImage(null);
+                syncMediaCover(false);
                 dispatchThumbnail(neutral());
                 return null;
               }

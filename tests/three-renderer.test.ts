@@ -4381,3 +4381,73 @@ describe('getMediaStatus（媒体集成状态）', () => {
     r.dispose?.();
   });
 });
+
+// 媒体封面默认图（WE 占位图语义）：`$mediaThumbnail` 对象装配期先用对象自身纹理上屏，
+// 系统封面到达后切共享封面纹理、封面消失后切回默认图 —— 不再出现「无封面 = 纯白占位」。
+describe('$mediaThumbnail 默认图与封面切换', () => {
+  const MEDIA_SCENE = JSON.stringify({
+    general: { orthogonalprojection: { width: 100, height: 100 } },
+    objects: [{
+      id: 171, name: 'Album Cover', image: 'models/cover.json',
+      origin: '50 50 0', scale: '1 1 1', size: '20 20',
+      instance: { textures: ['wayside'], usertextures: [{ name: '$mediaThumbnail' }] },
+    }],
+  });
+
+  it('装配期用默认纹理；封面到达切共享封面纹理；封面消失切回默认纹理', async () => {
+    const fallback = new THREE.Texture();
+    vi.mocked(resolveImageAssets).mockResolvedValue({
+      texture: fallback as never, puppetPath: null, spriteSheet: false, mediaThumbnail: true,
+    });
+    let hasThumbnail = true;
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      const u = String(url);
+      if (u.includes('name=scene.json')) return { ok: true, text: async () => MEDIA_SCENE };
+      if (u.includes('/wallpapers/now-playing/thumbnail')) return { ok: true, blob: async () => new Blob(['x']) };
+      if (u.includes('/wallpapers/now-playing')) {
+        return {
+          ok: true,
+          json: async () => ({
+            available: true, reason: 'ok', appId: 'e2e.exe', title: 'T', artist: '', album: '',
+            contentType: 'music', playback: 'playing', hasThumbnail, thumbnailRev: hasThumbnail ? 1 : 0,
+            positionMs: 0, durationMs: 1, at: 0,
+          }),
+        };
+      }
+      if (u.includes('/wallpapers/properties')) return { ok: true, json: async () => ({ properties: [] }) };
+      return { ok: false, text: async () => '' };
+    }));
+    vi.stubGlobal('createImageBitmap', vi.fn(async () => ({ width: 2, height: 2, close: vi.fn() })));
+    // jsdom 无 canvas：取色路径返回中性色即可（getContext 未实现会向 stderr 打噪声，桩掉避噪）。
+    const getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null as never);
+    const setBackgroundTexture = vi.fn((_objectId: number, _texture: unknown) => true);
+    let capturedAssets: { backgroundTextures: Map<number, unknown> } | null = null;
+    vi.mocked(loadSceneToThree).mockImplementation(((sceneJson: string, assets: { backgroundTextures: Map<number, unknown> }) => {
+      capturedAssets = assets;
+      return {
+        player: {
+          dispose: vi.fn(), resize: vi.fn(), setGlowStage: vi.fn(), setFrameCapture: vi.fn(),
+          setParallax: vi.fn(), setParallaxPointer: vi.fn(), setObjectEffectStage: vi.fn(),
+          isolatedObjects: () => [], displayObject: () => null, updateBackgroundTransform: vi.fn(),
+          setBackgroundTexture,
+        },
+        sims: [], backgroundIds: [0], particleLayers: [], puppetLayers: [],
+      };
+    }) as never);
+    const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
+    expect(await r.render('wid-media-cover', document.createElement('canvas'), undefined)).toBe(true);
+    // 装配期：默认纹理（作者预留的占位图）直接上屏，而不是共享封面纹理的白色占位。
+    expect(capturedAssets!.backgroundTextures.get(171)).toBe(fallback);
+    // 首轮轮询带封面 ⇒ 切到共享封面纹理。
+    await vi.waitFor(() => expect(setBackgroundTexture).toHaveBeenCalledTimes(1));
+    const first = setBackgroundTexture.mock.calls[0]!;
+    expect(first[0]).toBe(171);
+    expect(first[1]).not.toBe(fallback);
+    // 下一轮快照无封面 ⇒ 切回默认纹理。
+    hasThumbnail = false;
+    await vi.waitFor(() => expect(setBackgroundTexture).toHaveBeenCalledTimes(2), { timeout: 3000 });
+    expect(setBackgroundTexture.mock.calls[1]).toEqual([171, fallback]);
+    getContext.mockRestore();
+    r.dispose?.();
+  });
+});

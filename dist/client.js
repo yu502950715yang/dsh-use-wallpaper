@@ -30571,6 +30571,35 @@ var ThreeScenePlayer = class {
     return this.displayObjects.get(objectId);
   }
   /**
+   * 运行期替换背景图层的采样纹理（媒体封面「默认图 ↔ 当前封面」切换）。
+   * 键 = scene.json 对象 id；隔离对象换的是**内容 mesh**（进对象 RT），合成 quad 仍采样对象 RT。
+   * 两个纹理互换只换采样源、不重编 program；有/无纹理切换才置 needsUpdate（USE_MAP 宏变化）。
+   * 返回是否命中已登记的背景图层。
+   */
+  setBackgroundTexture(objectId, texture) {
+    const bgId = this.objectToBackground.get(objectId);
+    const entry = bgId === void 0 ? void 0 : this.backgroundEntries.get(bgId);
+    const mat = entry?.mesh.material;
+    if (!mat) return false;
+    let changed = false;
+    for (const m of Array.isArray(mat) ? mat : [mat]) {
+      if (m instanceof ShaderMaterial) {
+        const slot = m.uniforms?.map;
+        if (slot && slot.value !== texture) {
+          slot.value = texture;
+          changed = true;
+        }
+      } else if (m instanceof MeshBasicMaterial) {
+        if (m.map === texture) continue;
+        const hadTexture = m.map !== null;
+        m.map = texture;
+        if (hadTexture !== (texture !== null)) m.needsUpdate = true;
+        changed = true;
+      }
+    }
+    return changed;
+  }
+  /**
    * 时间线动画：按 scene 对象 id 写入**世界变换**。
    * 支持非隔离背景/puppet（mesh TRS）与非隔离粒子的 origin 平移增量（粒子内容由 shader 定位，
    * 写绝对中心会双重平移）；隔离对象（对象级效果链的合成 quad）暂不支持 → false + 告警一次。
@@ -31621,8 +31650,7 @@ async function resolveImageAssets(id, obj) {
     const texName = mat?.passes?.[0]?.textures?.[0];
     if (typeof texName !== "string" || !texName) return { texture: null, puppetPath, spriteSheet, mediaThumbnail };
     const instanceTex = obj.instance?.textures?.[0];
-    const texName2 = instanceTex && instanceTex.includes("/") ? instanceTex : texName;
-    const url = sceneAssetUrl(id, resolveTexPath(matRef, texName2));
+    const url = sceneAssetUrl(id, instanceTex ? "materials/" + instanceTex + ".tex" : resolveTexPath(matRef, texName));
     const texture = await loadTexTexture(url);
     if (texture && spriteSheet) texture.userData.spritesheet = true;
     return { texture, puppetPath, spriteSheet, mediaThumbnail };
@@ -37388,6 +37416,17 @@ function createMediaThumbnailTextureSource() {
   };
 }
 
+// src/client/media-cover.ts
+function mediaCoverSwitches(input) {
+  const { targets, thumbnail, hasThumbnail } = input;
+  const out = [];
+  for (const t of targets) {
+    if (!t.fallback) continue;
+    out.push({ objectId: t.objectId, texture: hasThumbnail ? thumbnail ?? t.fallback : t.fallback });
+  }
+  return out;
+}
+
 // src/client/dynamic-mesh.ts
 function resolveVertexLayout(vertexFormat) {
   if (!Array.isArray(vertexFormat) || vertexFormat.length !== 3) return null;
@@ -37825,7 +37864,6 @@ function createThreeSceneRenderer(opts) {
   let onWindowResize = null;
   let currentTextures = null;
   let currentMediaThumbnailSource = null;
-  let currentMediaReplacedTextures = [];
   let currentScriptBindings = [];
   let currentScriptHost = null;
   let currentTimeline = null;
@@ -37987,8 +38025,6 @@ function createThreeSceneRenderer(opts) {
     currentTextures = null;
     for (const tex of currentExtraTextures) tex.dispose?.();
     currentExtraTextures = [];
-    for (const tex of currentMediaReplacedTextures) tex.dispose();
-    currentMediaReplacedTextures = [];
     currentMediaThumbnailSource?.dispose();
     currentMediaThumbnailSource = null;
     for (const b of currentScriptBindings) b.dispose();
@@ -38125,8 +38161,7 @@ function createThreeSceneRenderer(opts) {
         currentTextures = backgroundTextures;
         let mediaThumbnailSource = null;
         const mediaThumbnailObjects = /* @__PURE__ */ new Set();
-        const mediaReplacedTextures = [];
-        currentMediaReplacedTextures = mediaReplacedTextures;
+        const mediaCoverTargets = [];
         const puppetMeshes = /* @__PURE__ */ new Map();
         const particles = /* @__PURE__ */ new Map();
         const effectiveVisible = computeEffectiveVisibility(desc.objects, userProps);
@@ -38138,9 +38173,9 @@ function createThreeSceneRenderer(opts) {
             if (mediaThumbnail) {
               mediaThumbnailSource ??= createMediaThumbnailTextureSource();
               currentMediaThumbnailSource = mediaThumbnailSource;
-              backgroundTextures.set(obj.id, mediaThumbnailSource.texture);
+              backgroundTextures.set(obj.id, texture ?? mediaThumbnailSource.texture);
               mediaThumbnailObjects.add(obj.id);
-              if (texture) mediaReplacedTextures.push(texture);
+              if (texture) mediaCoverTargets.push({ objectId: obj.id, fallback: texture });
             } else if (texture) {
               backgroundTextures.set(obj.id, texture);
             } else if (!puppetPath) {
@@ -38674,6 +38709,16 @@ function createThreeSceneRenderer(opts) {
             } catch {
             }
           };
+          const syncMediaCover = (hasThumbnail) => {
+            if (mediaCoverTargets.length === 0) return;
+            for (const sw of mediaCoverSwitches({
+              targets: mediaCoverTargets,
+              thumbnail: mediaThumbnailSource?.texture ?? null,
+              hasThumbnail
+            })) {
+              result.player.setBackgroundTexture?.(sw.objectId, sw.texture);
+            }
+          };
           const stale = (seq) => seq !== thumbnailSeq || currentMedia !== mediaSession;
           const loadThumbnail = async (rev) => {
             const seq = ++thumbnailSeq;
@@ -38686,6 +38731,7 @@ function createThreeSceneRenderer(opts) {
             } catch {
               if (stale(seq)) return;
               mediaThumbnailSource?.setImage(null);
+              syncMediaCover(false);
               dispatchThumbnail(neutral());
               return;
             }
@@ -38695,6 +38741,7 @@ function createThreeSceneRenderer(opts) {
             }
             const source = mediaThumbnailSource;
             if (source) source.setImage(bitmap);
+            syncMediaCover(true);
             try {
               const palette = await paletteFromImage(bitmap);
               if (stale(seq)) return;
@@ -38734,6 +38781,7 @@ function createThreeSceneRenderer(opts) {
               if (!payload.hasThumbnail) {
                 thumbnailSeq += 1;
                 mediaThumbnailSource?.setImage(null);
+                syncMediaCover(false);
                 dispatchThumbnail(neutral());
                 return null;
               }

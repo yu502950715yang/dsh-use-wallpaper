@@ -451,6 +451,23 @@ describe('resolveImageAssets / instance 封面纹理（Task 8）', () => {
     } finally { vi.unstubAllGlobals(); }
   });
 
+  it('instance.textures 的根级名字（不含 "/"，如 wayside）按 materials/ 根解析', async () => {
+    const calls: string[] = [];
+    stubFetch(calls);
+    try {
+      const r = await resolveImageAssets('1', {
+        ...obj,
+        instance: { textures: ['wayside'], usertextures: [{ name: '$mediaThumbnail', type: 'system' }] },
+      } as SceneImageObject);
+      // WE 的实例纹理名相对 materials/ 根：`wayside` = materials/wayside.tex，不能按材质目录拼。
+      expect(calls[calls.length - 1])
+        .toBe('/wallpapers/scene/1/asset?name=' + encodeURIComponent('materials/wayside.tex'));
+      // 媒体封面的默认纹理（占位图）必须解析出来，供「无封面」回退使用。
+      expect(r.mediaThumbnail).toBe(true);
+      expect(r.texture).not.toBeNull();
+    } finally { vi.unstubAllGlobals(); }
+  });
+
   it('model 拉取失败但声明了 $mediaThumbnail ⇒ 仍标记（封面不依赖材质解析成功）', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, json: async () => ({}) })));
     try {

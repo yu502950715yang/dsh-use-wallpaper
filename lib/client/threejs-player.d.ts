@@ -144,6 +144,13 @@ export declare class ThreeScenePlayer {
     /** 按 scene.json 对象 id 取最终显示的 three 对象（脚本图层桥用）。未登记 → undefined。 */
     displayObject(objectId: number): THREE.Object3D | undefined;
     /**
+     * 运行期替换背景图层的采样纹理（媒体封面「默认图 ↔ 当前封面」切换）。
+     * 键 = scene.json 对象 id；隔离对象换的是**内容 mesh**（进对象 RT），合成 quad 仍采样对象 RT。
+     * 两个纹理互换只换采样源、不重编 program；有/无纹理切换才置 needsUpdate（USE_MAP 宏变化）。
+     * 返回是否命中已登记的背景图层。
+     */
+    setBackgroundTexture(objectId: number, texture: THREE.Texture | null): boolean;
+    /**
      * 时间线动画：按 scene 对象 id 写入**世界变换**。
      * 支持非隔离背景/puppet（mesh TRS）与非隔离粒子的 origin 平移增量（粒子内容由 shader 定位，
      * 写绝对中心会双重平移）；隔离对象（对象级效果链的合成 quad）暂不支持 → false + 告警一次。
