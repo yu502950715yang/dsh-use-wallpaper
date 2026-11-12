@@ -52,6 +52,7 @@
 - 用户可见行为：开机动画选文件流程不变；web 壁纸正常加载不变；WebGL 贴图类壁纸保留。
 - 边缘变化：直接在 GUI 同源打开 `/wallpapers/web/<id>/index.html` 会 403；构造未配置的 boot path 会 403（即攻击面）。
 - 桌面版 App：GUI origin 为 `dsh-app://`，不参与 HTTP Host 判定，无影响。
+  - **2026-11-12 勘误（实现与本节假设不符，已修）**：桌面壳仍会把 `dsh-app://app` 的插件请求代理到宿主 HTTP 服务（`forwardWebRequest`），其 Host 被原实现登记进 `guiHosts`；而桌面 iframe 的承载 origin 正是同一个宿主 HTTP origin ⇒ 桌面版所有 `/wallpapers/web` 请求恒 403（荷塘观鱼 `3818900270` 用户报告）。修法：`guiHosts` 只登记**浏览器直接请求**（带 `Sec-Fetch-Site`）；桌面壳代理请求不带该头（Electron fetch 代理显式删除 + `Sec-*` 为 fetch 禁止头），不再登记。本节「不参与 HTTP Host 判定」的意图由此落实。
 
 ## 6. 残留边界（不在本次修复）
 

@@ -72,7 +72,7 @@ web 壁纸是第三方网页，加载在 **与宿主 GUI 不同源**的 iframe �
 
 - 承载 origin 优先级（`background-layer.ts`）：① 桌面壳公布的宿主 HTTP origin（`__DSH_TRANSPORT__.streamBaseUrl`）；② 回环页换**另一个回环主机名**（`127.0.0.1` ↔ `localhost`）并探活；③ 其余（局域网 IP / 隧道）退回 **opaque origin**（`sandbox="allow-scripts"`，无 `allow-same-origin`）。
 - iframe 与宿主页跨源，因此**拿不到宿主 GUI 的 DOM、localStorage、设置与插件 API 对象**；宿主与 iframe 的交互只有 `postMessage` 的指针坐标与声音开关/音量（只发给可见帧）。
-- **承载 Host 绑定（2026-11-10）**：`/wallpapers/web/*` 若收到「已知 GUI 页面的 Host」（任一非 `/web` 插件路由被请求时记录），一律 403。否则壁纸 iframe 可以 `location.href` 导航回 GUI origin 的同一路径，拿回「GUI origin + 壁纸自己的 HTML」的组合，借 sandbox 的 `allow-same-origin` 访问 `parent.document`。承载 Host 是另一回环主机名，与 GUI Host 天然不同。
+- **承载 Host 绑定（2026-11-10，2026-11-12 修正桌面壳）**：`/wallpapers/web/*` 若收到「已知 GUI 页面的 Host」一律 403，否则壁纸 iframe 可以 `location.href` 导航回 GUI origin 的同一路径，拿回「GUI origin + 壁纸自己的 HTML」的组合，借 sandbox 的 `allow-same-origin` 访问 `parent.document`。「已知 GUI Host」只从**浏览器直接发起**的非 `/web` 请求登记（`Sec-Fetch-Site` 是浏览器直连标志）；桌面壳把 `dsh-app://app` 的插件请求经 Electron fetch 代理到宿主，这类请求不带 `Sec-Fetch-Site`、不登记——桌面 iframe 的承载 origin 正是宿主 HTTP origin，登记它会让桌面版全部 web 壁纸 403。承载 Host 是另一回环主机名（dsh web）或宿主 transport origin（桌面壳），与 GUI 页 origin 天然不同源。
 - 插件向 web 壁纸 HTML 注入的 shim（鼠标跟随、声音控制）是本插件的受控代码，只合成 mouse 事件、设置页内 `<audio>/<video>` 的 `muted/volume`；CSP 禁内联脚本的页面注入会被拦，插件保持网页原样。
 
 ### 4.4 不联网、无遥测、落盘边界
