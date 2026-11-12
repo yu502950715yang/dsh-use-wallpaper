@@ -36,6 +36,21 @@ describe('resolveBackground', () => {
     const plan = resolveBackground({ ...base, id: '9', type: 'web' });
     expect(plan).toEqual({ kind: 'web', url: '/wallpapers/web/9/index.html' });
   });
+  it('web 入口跟随 project.json.file（非 index.html 的入口否则恒 404）', () => {
+    // 实测样本 3818900270 荷塘观鱼 2.2完整版：file=wallpaper.html，写死 index.html 时 iframe 404 空白
+    expect(resolveBackground({ ...base, id: '10', type: 'web', file: 'wallpaper.html' }))
+      .toEqual({ kind: 'web', url: '/wallpapers/web/10/wallpaper.html' });
+    expect(resolveBackground({ ...base, id: '11', type: 'web', file: 'sub/page.html' }))
+      .toEqual({ kind: 'web', url: '/wallpapers/web/11/sub/page.html' });
+    expect(resolveBackground({ ...base, id: '12', type: 'web', file: 'sub\\page.html' }))
+      .toEqual({ kind: 'web', url: '/wallpapers/web/12/sub/page.html' });
+  });
+  it('web 入口非法 / 越界 / 空值回退 index.html（不得拼出宿主其它路由）', () => {
+    for (const file of ['', '   ', '..', '../x.html', '..\\x.html', '/etc/passwd', 'C:\\x.html', 'a b.html', 'a?b.html']) {
+      expect(resolveBackground({ ...base, id: '13', type: 'web', file }))
+        .toEqual({ kind: 'web', url: '/wallpapers/web/13/index.html' });
+    }
+  });
   it('gif preview sets kenBurns false, jpg sets true', () => {
     const gif = resolveBackground({ ...base, id: '5', type: 'unknown', hasPreviewGif: true, previewUrl: '/wallpapers/media/5/preview' });
     expect(gif).toEqual({ kind: 'image', url: '/wallpapers/media/5/preview', kenBurns: false });

@@ -30,6 +30,12 @@ export declare function sceneActionUrl(id: string, action: 'video-probe' | 'embe
 /** 视频壁纸文件 / 预览图（prefix /media）。 */
 export declare function mediaFileUrl(id: string): string;
 export declare function mediaPreviewUrl(id: string): string;
+/**
+ * web 壁纸入口文件：`project.json.file` 未必是 index.html（实测 `3818900270` 荷塘观鱼 = wallpaper.html，
+ * 与 §5.53 的 scene 入口同一类问题）。只放行壁纸目录内的相对路径——含 '..' 的段会被 WHATWG URL
+ * 规范化折叠到宿主其它路由；非法/缺失回退 index.html（旧行为）。
+ */
+export declare function resolveWebEntryPath(file: unknown): string;
 /** web 壁纸静态文件（prefix /web）。 */
 export declare function webWallpaperUrl(id: string, file?: string): string;
 /** 首帧抓帧缓存（prefix /frame；GET 读、POST 写）。 */

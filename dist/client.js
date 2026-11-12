@@ -3227,8 +3227,15 @@ function mediaFileUrl(id) {
 function mediaPreviewUrl(id) {
   return `${WALLPAPER_ROUTES.media}/${enc(id)}/preview`;
 }
-function webWallpaperUrl(id, file = "index.html") {
-  return `${WALLPAPER_ROUTES.web}/${enc(id)}/${file}`;
+function resolveWebEntryPath(file) {
+  const raw = typeof file === "string" ? file.trim().replace(/\\/g, "/") : "";
+  if (!raw) return "index.html";
+  const segs = raw.split("/");
+  if (segs.some((s) => !s || s === "." || s === ".." || !/^[A-Za-z0-9._-]+$/.test(s))) return "index.html";
+  return segs.join("/");
+}
+function webWallpaperUrl(id, file) {
+  return `${WALLPAPER_ROUTES.web}/${enc(id)}/${resolveWebEntryPath(file)}`;
 }
 function frameUrl(id) {
   return `${WALLPAPER_ROUTES.frame}/${enc(id)}`;
@@ -6509,7 +6516,7 @@ function resolveBackground(info) {
     return { kind: "video", url: mediaFileUrl(info.id), hasAudio: info.hasAudio };
   }
   if (info.type === "web") {
-    return { kind: "web", url: webWallpaperUrl(info.id) };
+    return { kind: "web", url: webWallpaperUrl(info.id, info.file) };
   }
   if (info.previewUrl) {
     return { kind: "image", url: info.previewUrl, kenBurns: !info.hasPreviewGif };

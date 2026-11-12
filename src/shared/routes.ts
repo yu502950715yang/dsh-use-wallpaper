@@ -59,9 +59,23 @@ export function mediaPreviewUrl(id: string): string {
   return `${WALLPAPER_ROUTES.media}/${enc(id)}/preview`;
 }
 
+/**
+ * web 壁纸入口文件：`project.json.file` 未必是 index.html（实测 `3818900270` 荷塘观鱼 = wallpaper.html，
+ * 与 §5.53 的 scene 入口同一类问题）。只放行壁纸目录内的相对路径——含 '..' 的段会被 WHATWG URL
+ * 规范化折叠到宿主其它路由；非法/缺失回退 index.html（旧行为）。
+ */
+export function resolveWebEntryPath(file: unknown): string {
+  const raw = typeof file === 'string' ? file.trim().replace(/\\/g, '/') : '';
+  if (!raw) return 'index.html';
+  const segs = raw.split('/');
+  // 只接受字母/数字/._- 段：空格与 ?#% 等会让 URL 解析错位，host 路由也不解码百分号转义
+  if (segs.some((s) => !s || s === '.' || s === '..' || !/^[A-Za-z0-9._-]+$/.test(s))) return 'index.html';
+  return segs.join('/');
+}
+
 /** web 壁纸静态文件（prefix /web）。 */
-export function webWallpaperUrl(id: string, file = 'index.html'): string {
-  return `${WALLPAPER_ROUTES.web}/${enc(id)}/${file}`;
+export function webWallpaperUrl(id: string, file?: string): string {
+  return `${WALLPAPER_ROUTES.web}/${enc(id)}/${resolveWebEntryPath(file)}`;
 }
 
 /** 首帧抓帧缓存（prefix /frame；GET 读、POST 写）。 */
