@@ -41,9 +41,19 @@ export interface CompiledEffectPass {
 
 interface SceneEffectPass { material?: string; combos?: Record<string, number>; constantshadervalues?: Record<string, unknown>; textures?: (string | null)[]; target?: string; bind?: { name: string; index: number }[] }
 
+export interface EffectChainOptions {
+  /**
+   * 内容输入是否是**整帧场景快照**（util 的 project/fullscreen/compose 层）。
+   * 影响 Simple_Audio_Bars 的 BLENDMODE 分叉：快照内容用官方 mix(A,B)（否则 min 会把竖条染成背景色）；
+   * image 层（内容=图层贴图）保留 v0.8.2 的 0→5（min）映射以取桌面 WE 的内容色。
+   */
+  contentIsSceneSnapshot?: boolean;
+}
+
 export async function resolveEffectChain(
   sceneEffect: { file: string; passes?: unknown[] },
   loadFile: (name: string) => Promise<Uint8Array | null>,
+  options?: EffectChainOptions,
 ): Promise<CompiledEffectPass[] | null> {
   try {
     const effectRaw = await loadFile(sceneEffect.file);
@@ -113,11 +123,19 @@ export async function resolveEffectChain(
       for (const raw of [rawVert, rawFrag]) {
         for (const [k, v] of extractComboDefaults(raw)) if (!(k in combos)) combos[k] = v;
       }
-      // Simple_Audio_Bars 不做 BLENDMODE 改写（2026-11-12 修正）：WE 官方 common_blending.h 的
-      // BLENDMODE=0 是 fallback `mix(A, BlendNormal(A,B), opacity)` = mix(A, B, opacity)，本仓
-      // we-headers 逐字转写。v0.8.2 曾改写成 5（min(A,B)）「对齐内容色」，但那是 A（输入内容）比
-      // Bar Color 亮时 min≈A 的巧合：util 层的 A 是整帧快照（暗背景）⇒ min(A,B)=背景色、竖条消失
-      // （3819637149 实测）。保留 0 由真实公式着色，alpha 仍由 shader 的 TRANSPARENCY 决定。
+      // Simple_Audio_Bars 的 BLENDMODE 分叉（2026-11-12 两轮实测的最终口径）：
+      //   · image 层（g_Texture0 = 图层自己的贴图）⇒ 映射为 5（min(A,B)）：桌面 WE 竖条取内容色
+      //     （2832263418 的 Rainboww 渐变 = 彩色；官方 mix 在 bar=1 时会冲成白色 Bar Color）；
+      //   · util 层（g_Texture0 = 整帧快照）⇒ 保留 0 走官方 `mix(A,B,opacity)`：min(A,B) 在暗背景上
+      //     等于背景色，竖条会「消失」（3819637149 / 2911105183 实测）。
+      // 两轮都不改 alpha（仍由 shader 的 TRANSPARENCY combo 决定）。
+      if (
+        shaderName === 'workshop/2084198056/effects/Simple_Audio_Bars'
+        && (combos.BLENDMODE ?? 0) === 0
+        && options?.contentIsSceneSnapshot !== true
+      ) {
+        combos.BLENDMODE = 5;
+      }
       // varying 声明跨 stage 一致化（combo 合并之后、预处理之前）：作者把同一 varying 写成不同类型
       // 会让 linkProgram 失败、整 pass 被跳过。只在真实不匹配时动手，且只做语义等价改写（见该函数注释）。
       const varying = reconcileVaryingDeclarations(rawVert, rawFrag);

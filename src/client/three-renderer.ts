@@ -195,7 +195,11 @@ export async function collectObjectEffectChains(
       if (typeof fx?.file !== 'string') continue;
       // effect 级可见性：lwe CImage::setupPasses 对 visible=false 的 effect 整条跳过（正常内容，不告警）
       if (fx.visible === false) continue;
-      const chain = await resolveEffectChain({ file: fx.file, passes: fx.passes }, loadFile);
+      const chain = await resolveEffectChain({ file: fx.file, passes: fx.passes }, loadFile, {
+        // util 层（project/fullscreen/compose）的效果输入是整帧场景快照；image 层输入是自身贴图。
+        // 该分叉影响 Simple_Audio_Bars 的 BLENDMODE（见 effect-chain.ts 注释）。
+        contentIsSceneSnapshot: group.obj.kind === 'util',
+      });
       if (!chain) {
         console.warn('[wallpaper-engine] 效果链解析失败，跳过:', fx.file);
         continue;

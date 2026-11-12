@@ -35097,7 +35097,7 @@ ${body}` : body;
 }
 
 // src/client/shader/effect-chain.ts
-async function resolveEffectChain(sceneEffect, loadFile) {
+async function resolveEffectChain(sceneEffect, loadFile, options) {
   try {
     const effectRaw = await loadFile(sceneEffect.file);
     if (!effectRaw) return null;
@@ -35139,6 +35139,9 @@ async function resolveEffectChain(sceneEffect, loadFile) {
       const combos = { ...derived, ...override.combos ?? {} };
       for (const raw of [rawVert, rawFrag]) {
         for (const [k, v] of extractComboDefaults(raw)) if (!(k in combos)) combos[k] = v;
+      }
+      if (shaderName === "workshop/2084198056/effects/Simple_Audio_Bars" && (combos.BLENDMODE ?? 0) === 0 && options?.contentIsSceneSnapshot !== true) {
+        combos.BLENDMODE = 5;
       }
       const varying = reconcileVaryingDeclarations(rawVert, rawFrag);
       for (const w of varying.warnings) console.warn(`[wallpaper-engine] ${w}`);
@@ -37943,7 +37946,11 @@ async function collectObjectEffectChains(desc, loadFile, isHidden) {
     for (const fx of group.effects) {
       if (typeof fx?.file !== "string") continue;
       if (fx.visible === false) continue;
-      const chain = await resolveEffectChain({ file: fx.file, passes: fx.passes }, loadFile);
+      const chain = await resolveEffectChain({ file: fx.file, passes: fx.passes }, loadFile, {
+        // util 层（project/fullscreen/compose）的效果输入是整帧场景快照；image 层输入是自身贴图。
+        // 该分叉影响 Simple_Audio_Bars 的 BLENDMODE（见 effect-chain.ts 注释）。
+        contentIsSceneSnapshot: group.obj.kind === "util"
+      });
       if (!chain) {
         console.warn("[wallpaper-engine] \u6548\u679C\u94FE\u89E3\u6790\u5931\u8D25\uFF0C\u8DF3\u8FC7:", fx.file);
         continue;

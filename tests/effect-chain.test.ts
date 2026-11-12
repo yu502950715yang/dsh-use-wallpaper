@@ -83,14 +83,15 @@ describe('resolveEffectChain', () => {
     const load = async (name: string) => fxFiles.get(name) ?? null;
     expect(await resolveEffectChain({ file: 'effects/composeonly/effect.json' }, load)).toBeNull();
   });
-  // 2026-11-12 修正：v0.8.2 曾把 Simple_Audio_Bars 的 BLENDMODE=0 改写成 5（min(A,B)）来「对齐内容色」，
-  // 但那只是当 A（效果输入内容）比 B（Bar Color）亮时 min≈A 的巧合；util 层（如 3819637149 的音频条）
-  // 的 A = 整帧快照（暗背景）⇒ min(A,B)=背景色，竖条与背景同色而「消失」。
-  // WE 引擎 assets/shaders/common_blending.h 的原实现：BLENDMODE=0 走 fallback `mix(A, BlendNormal(A,B), opacity)`
-  // = `mix(A, B, opacity)` ⇒ 这里必须保留 0，交给真实公式（bar 处混到 Bar Color，alpha 另由 TRANSPARENCY 决定）。
-  it('Simple_Audio_Bars 的 BLENDMODE=0 保持官方语义（不再改写成 5）', async () => {
+  // 2026-11-12 修正（第二轮）：Simple_Audio_Bars 的 BLENDMODE 处理**按内容输入分叉**：
+  //   · image 层（g_Texture0 = 图层自己的贴图，如 2832263418 的 Rainboww 渐变）⇒ 保留 v0.8.2 的
+  //     `0→5`（min(A,B)）映射：桌面 WE 的竖条取内容色（彩色），官方 mix 会把它当 bar 高时冲成白色；
+  //   · util 层（g_Texture0 = 整帧快照，如 3819637149/2911105183）⇒ 用官方 `mix(A,B,opacity)`：
+  //     min(A,B) 在暗背景上会把竖条染成背景色而「消失」。
+  const BARS_EFFECT_FILE = 'effects/workshop/2084198056/Simple_Audio_Bars/effect.json';
+  function stubMediaBarsFiles(): Map<string, Uint8Array> {
     const fxFiles = new Map<string, Uint8Array>(files);
-    fxFiles.set('effects/workshop/2084198056/Simple_Audio_Bars/effect.json', encoder.encode(JSON.stringify({
+    fxFiles.set(BARS_EFFECT_FILE, encoder.encode(JSON.stringify({
       passes: [{ material: 'materials/workshop/2084198056/effects/Simple_Audio_Bars.json' }],
     })));
     fxFiles.set('materials/workshop/2084198056/effects/Simple_Audio_Bars.json', encoder.encode(JSON.stringify({
@@ -102,10 +103,21 @@ describe('resolveEffectChain', () => {
       'uniform float u_BarColor;',
       'void main() { gl_FragColor = vec4(1.0); }',
     ].join('\n')));
+    return fxFiles;
+  }
+
+  it('Simple_Audio_Bars（image 层）：BLENDMODE=0 仍映射为内容色（5）', async () => {
+    const fxFiles = stubMediaBarsFiles();
     const load = async (name: string) => fxFiles.get(name) ?? null;
-    const chain = await resolveEffectChain({
-      file: 'effects/workshop/2084198056/Simple_Audio_Bars/effect.json',
-    }, load);
+    const chain = await resolveEffectChain({ file: BARS_EFFECT_FILE }, load);
+    expect(chain).not.toBeNull();
+    expect(chain![0].combos.BLENDMODE).toBe(5);
+  });
+
+  it('Simple_Audio_Bars（util 层，内容=整帧快照）：BLENDMODE 保留 0，按官方 mix(A,B) 着色', async () => {
+    const fxFiles = stubMediaBarsFiles();
+    const load = async (name: string) => fxFiles.get(name) ?? null;
+    const chain = await resolveEffectChain({ file: BARS_EFFECT_FILE }, load, { contentIsSceneSnapshot: true });
     expect(chain).not.toBeNull();
     expect(chain![0].combos.BLENDMODE).toBe(0);
   });
