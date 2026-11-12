@@ -61,7 +61,7 @@ describe('插件重挂载与收尾（HMR rebuilt）', () => {
 
     expect(layers()).toHaveLength(1);
     expect(fillSrcs()).toEqual(['/new.jpg']);
-  });
+  }, 20_000); // 全量并行下 2× i.resetModules() + 动态 import 会吃满 5s 默认超时（既有 flake，基线 8b995a3 可复现）
 
   it('mount 清掉无主的残留层（老版本没有 teardown 时的兜底）', async () => {
     for (let i = 0; i < 3; i++) {
