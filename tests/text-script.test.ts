@@ -230,6 +230,49 @@ export function update(v) { return "import { x } from 'y'"; }`,
 
   // 回归靶子：真实素材（tests/fixtures/1922570576/text-object-778.json，scene.pkg 原文逐字复制）。
   // 这条脚本在修复前 bind 返回 null ⇒ 生产装配整层跳过 ⇒ 用户看不到右下角的时间数字。
+
+  // ── WE text 脚本的 thisLayer / engine 契约（2026-11-12，真实素材 3819637149「Clock 12Hrs」）──
+  // 该脚本 `update()` 不返回值、而是写 `thisLayer.text`，并读 `engine.userProperties.name`。
+  // 旧实现只认 update 的返回值 ⇒ 每帧抛 "'thisLayer' is not defined" ⇒ 文本层空白（用户报告时钟消失）。
+  const WRITE_TEXT_SCRIPT = `'use strict';
+var lastString;
+export function update() {
+  var newString = '1:29 PM';
+  if (newString != lastString) {
+    lastString = newString;
+    thisLayer.text = newString.replace('$', engine.userProperties.name);
+  }
+}
+export function checkTime(i) { if (i < 10) { i = '0' + i } return i; }`;
+
+  it('thisLayer.text 写入可作为 update 的文本输出（不返回值也生效）', async () => {
+    const rt = await getTextScriptRuntime();
+    const b = rt!.bind(WRITE_TEXT_SCRIPT, {}, '');
+    expect(b).not.toBeNull();
+    expect(b!.update()).toBe('1:29 PM');
+    // 第二次 update 脚本不再写 thisLayer.text ⇒ 保持上一帧文本
+    expect(b!.update()).toBe('1:29 PM');
+    b!.dispose();
+  });
+
+  it('engine.userProperties 可读（脚本用 engine.userProperties.name 做替换）', async () => {
+    const rt = await getTextScriptRuntime();
+    const b = rt!.bind(`'use strict';
+export function update() {
+  thisLayer.text = 'name=' + engine.userProperties.name;
+}`, {}, '', { name: 'X' });
+    expect(b).not.toBeNull();
+    expect(b!.update()).toBe('name=X');
+    b!.dispose();
+  });
+
+  it('update 返回值优先于 thisLayer.text（回归：VHS 类脚本返回字符串）', async () => {
+    const rt = await getTextScriptRuntime();
+    const b = rt!.bind(`'use strict';
+export function update() { thisLayer.text = 'side-effect'; return 'returned'; }`, {}, '');
+    expect(b!.update()).toBe('returned');
+    b!.dispose();
+  });
   it('真实素材：魔兽之门 #778「3D Clock」脚本 bind 成功并输出 HH:MM:SS', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 9, 10, 9, 4, 5)); // 2026-10-10 09:04:05

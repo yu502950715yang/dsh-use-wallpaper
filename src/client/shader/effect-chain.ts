@@ -113,11 +113,11 @@ export async function resolveEffectChain(
       for (const raw of [rawVert, rawFrag]) {
         for (const [k, v] of extractComboDefaults(raw)) if (!(k in combos)) combos[k] = v;
       }
-      // 桌面实测修正（v0.8.2）：Simple_Audio_Bars 在 BLENDMODE=0（Normal）时，WE 实际输出内容色
-      // （Rainboww 彩虹），而官方 common_blending.h 的 fallback 输出 BarColor（白）⇒ 按内容色（min(A,B)）对齐。
-      if (shaderName === 'workshop/2084198056/effects/Simple_Audio_Bars' && (combos.BLENDMODE ?? 0) === 0) {
-        combos.BLENDMODE = 5;
-      }
+      // Simple_Audio_Bars 不做 BLENDMODE 改写（2026-11-12 修正）：WE 官方 common_blending.h 的
+      // BLENDMODE=0 是 fallback `mix(A, BlendNormal(A,B), opacity)` = mix(A, B, opacity)，本仓
+      // we-headers 逐字转写。v0.8.2 曾改写成 5（min(A,B)）「对齐内容色」，但那是 A（输入内容）比
+      // Bar Color 亮时 min≈A 的巧合：util 层的 A 是整帧快照（暗背景）⇒ min(A,B)=背景色、竖条消失
+      // （3819637149 实测）。保留 0 由真实公式着色，alpha 仍由 shader 的 TRANSPARENCY 决定。
       // varying 声明跨 stage 一致化（combo 合并之后、预处理之前）：作者把同一 varying 写成不同类型
       // 会让 linkProgram 失败、整 pass 被跳过。只在真实不匹配时动手，且只做语义等价改写（见该函数注释）。
       const varying = reconcileVaryingDeclarations(rawVert, rawFrag);

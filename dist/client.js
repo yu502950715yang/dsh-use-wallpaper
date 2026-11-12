@@ -31082,7 +31082,7 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
       }
     } else if (obj.kind === "util") {
       const isolate = assets.isolate?.get(obj.id);
-      if (!isolate) continue;
+      if (!isolate && obj.layerKind !== "solid") continue;
       const t = world(obj);
       const id = player.addBackground({
         origin: t.origin,
@@ -35140,9 +35140,6 @@ async function resolveEffectChain(sceneEffect, loadFile) {
       for (const raw of [rawVert, rawFrag]) {
         for (const [k, v] of extractComboDefaults(raw)) if (!(k in combos)) combos[k] = v;
       }
-      if (shaderName === "workshop/2084198056/effects/Simple_Audio_Bars" && (combos.BLENDMODE ?? 0) === 0) {
-        combos.BLENDMODE = 5;
-      }
       const varying = reconcileVaryingDeclarations(rawVert, rawFrag);
       for (const w of varying.warnings) console.warn(`[wallpaper-engine] ${w}`);
       const vertSrc = preprocessWeShader(varying.vert, combos);
@@ -35277,6 +35274,18 @@ function createScriptProperties() {
   });
   return proxy;
 }
+// WE text \u811A\u672C\u7684 layer \u4EE3\u7406\uFF1AthisLayer.text \u8BFB\u5199\u5F53\u524D\u6587\u672C\uFF08\u5176\u4F59\u5C5E\u6027\u53EF\u81EA\u7531\u5B58\u53D6\uFF0C\u4E0D\u53C2\u4E0E\u6E32\u67D3\uFF09\u3002
+var __weText = '';
+var thisLayer = {
+  get text() { return __weText; },
+  set text(v) { __weText = String(v); }
+};
+// WE \u811A\u672C\u7684 engine \u6A21\u5757\uFF08\u6700\u4F4E\u9650\u5EA6\uFF09\uFF1AuserProperties \u6765\u81EA project.json \u7528\u6237\u5C5E\u6027\uFF1Bframetime \u4F9B
+// \u4F9D\u8D56\u5E27\u65F6\u957F\u7684\u811A\u672C\u8BFB\u53D6\uFF08\u5F53\u524D\u53EA\u7ED9 0\uFF0C\u52A8\u753B\u7C7B\u811A\u672C\u7531\u5C5E\u6027\u65F6\u95F4\u7EBF\u627F\u62C5\uFF09\u3002
+var engine = {
+  userProperties: (typeof __weUserProps === 'object' && __weUserProps) ? __weUserProps : {},
+  frametime: 0
+};
 // WE \u811A\u672C\u91CC\u7684 import \u5BFC\u5165\u7684\u662F**\u5F15\u64CE\u6CE8\u5165\u7684 WE \u6A21\u5757**\uFF08WEMath / WEColor / WEVector \u2026\uFF09\uFF0C\u4E0D\u662F\u6587\u4EF6\u3002
 // \u8FD9\u91CC\u53EA\u63D0\u4F9B\u6700\u4F4E\u9650\u5EA6\u7684\u300C\u4E0D\u5D29\u300Dshim\uFF1A\u547D\u540D\u7A7A\u95F4\u662F object\u3001\u70B9\u51FA\u6765\u7684\u6210\u5458\u662F\u53EF\u8C03\u7528\u7684 noop\uFF08\u8FD4\u56DE
 // undefined\uFF09\u3002\u771F\u5B9E\u6210\u5458\u672A\u5B9E\u73B0 \u2014\u2014 \u7528\u4E86\u5B83\u7684\u811A\u672C\u4F1A\u628A 'undefined' \u753B\u8FDB\u6587\u672C\u5C42\uFF0C\u4F46\u4ECD**\u597D\u8FC7\u6574\u6BB5 bind
@@ -35306,13 +35315,16 @@ function rewriteWeModuleImports(script) {
   return out;
 }
 var QuickJSTextRuntimeBinding = class {
-  constructor(owner, ctx, updateFn, mediaFn, mod, props, initialValue) {
+  constructor(owner, ctx, updateFn, mediaFn, readTextFn, writeTextFn, mod, props, userProps, initialValue) {
     this.owner = owner;
     this.ctx = ctx;
     this.updateFn = updateFn;
     this.mediaFn = mediaFn;
+    this.readTextFn = readTextFn;
+    this.writeTextFn = writeTextFn;
     this.mod = mod;
     this.props = props;
+    this.userProps = userProps;
     this.last = initialValue ?? "";
   }
   last;
@@ -35323,6 +35335,7 @@ var QuickJSTextRuntimeBinding = class {
     if (this.disposed) return null;
     const ctx = this.ctx;
     this.owner.resetBudget();
+    this.writeText(this.last);
     const arg = ctx.newString(this.last);
     const out = ctx.callFunction(this.updateFn, ctx.undefined, arg);
     arg.dispose();
@@ -35337,8 +35350,31 @@ var QuickJSTextRuntimeBinding = class {
     }
     const v = ctx.dump(out.value);
     out.value.dispose();
-    this.last = typeof v === "string" ? v : String(v ?? "");
+    if (typeof v === "string") {
+      this.last = v;
+    } else {
+      this.last = this.readText(this.last);
+    }
+    this.writeText(this.last);
     return this.last;
+  }
+  /** 读脚本闭包里的 thisLayer.text（脚本未返回值时的输出；失败保持上一帧）。 */
+  readText(fallback) {
+    const out = this.ctx.callFunction(this.readTextFn, this.ctx.undefined);
+    if (out.error) {
+      out.error.dispose();
+      return fallback;
+    }
+    const v = this.ctx.dump(out.value);
+    out.value.dispose();
+    return typeof v === "string" ? v : String(v ?? "");
+  }
+  writeText(text) {
+    const h = this.ctx.newString(text);
+    const out = this.ctx.callFunction(this.writeTextFn, this.ctx.undefined, h);
+    h.dispose();
+    if (out.error) out.error.dispose();
+    else out.value.dispose();
   }
   dispatchMediaProperties(props) {
     if (this.disposed || !this.mediaFn) return;
@@ -35380,10 +35416,14 @@ var QuickJSTextRuntimeBinding = class {
     this.owner.forget(this);
     const ctx = this.ctx;
     ctx.setProp(ctx.global, "__weScriptProps", ctx.undefined);
+    ctx.setProp(ctx.global, "__weUserProps", ctx.undefined);
     this.mediaFn?.dispose();
     this.updateFn.dispose();
+    this.readTextFn.dispose();
+    this.writeTextFn.dispose();
     this.mod.dispose();
     this.props.dispose();
+    this.userProps.dispose();
   }
 };
 var QuickJSTextRuntime = class {
@@ -35408,7 +35448,7 @@ var QuickJSTextRuntime = class {
   outOfBudget() {
     return this.budget <= 0;
   }
-  bind(script, scriptProperties, initialValue) {
+  bind(script, scriptProperties, initialValue, userProperties) {
     if (typeof script !== "string" || !script) return null;
     const ctx = this.ctx;
     this.resetBudget();
@@ -35419,12 +35459,21 @@ var QuickJSTextRuntime = class {
       else if (typeof value === "string") ctx.setProp(props, key, ctx.newString(value));
     }
     ctx.setProp(ctx.global, "__weScriptProps", props);
+    const userProps = ctx.newObject();
+    for (const [key, value] of Object.entries(userProperties ?? {})) {
+      if (typeof value === "boolean") ctx.setProp(userProps, key, value ? ctx.true : ctx.false);
+      else if (typeof value === "number") ctx.setProp(userProps, key, ctx.newNumber(value));
+      else if (typeof value === "string") ctx.setProp(userProps, key, ctx.newString(value));
+    }
+    ctx.setProp(ctx.global, "__weUserProps", userProps);
     const sanitized = rewriteWeModuleImports(script.replace(/\bexport\s+/g, ""));
     const r = ctx.evalCode(
       `(function(){ ${PRELUDE} ${sanitized}
         return (typeof update === 'function') ? {
           update: update,
           mediaPropertiesChanged: (typeof mediaPropertiesChanged === 'function') ? mediaPropertiesChanged : null,
+          readText: function () { return __weText; },
+          writeText: function (v) { __weText = String(v); },
         } : null;
       })()`
     );
@@ -35433,12 +35482,14 @@ var QuickJSTextRuntime = class {
       console.warn("[text-script] \u811A\u672C\u6267\u884C\u5931\u8D25\uFF0C\u8BE5\u6587\u672C\u5C42\u5C06\u56DE\u9000/\u8DF3\u8FC7\uFF1A", info?.message ?? String(info));
       r.error.dispose();
       props.dispose();
+      userProps.dispose();
       return null;
     }
     const mod = r.value;
     if (ctx.typeof(mod) !== "object" || ctx.dump(mod) === null) {
       mod.dispose();
       props.dispose();
+      userProps.dispose();
       return null;
     }
     const updateFn = ctx.getProp(mod, "update");
@@ -35446,6 +35497,7 @@ var QuickJSTextRuntime = class {
       updateFn.dispose();
       mod.dispose();
       props.dispose();
+      userProps.dispose();
       return null;
     }
     let mediaFn = ctx.getProp(mod, "mediaPropertiesChanged");
@@ -35453,13 +35505,18 @@ var QuickJSTextRuntime = class {
       mediaFn.dispose();
       mediaFn = null;
     }
+    const readTextFn = ctx.getProp(mod, "readText");
+    const writeTextFn = ctx.getProp(mod, "writeText");
     const binding = new QuickJSTextRuntimeBinding(
       this,
       ctx,
       updateFn,
       mediaFn,
+      readTextFn,
+      writeTextFn,
       mod,
       props,
+      userProps,
       initialValue ?? ""
     );
     this.active.add(binding);
@@ -38344,7 +38401,7 @@ function createThreeSceneRenderer(opts) {
           if (effectiveVisible.get(obj.id) === false) continue;
           const props = obj.scriptProperties ?? {};
           const isClock = obj.script ? detectScriptPattern(obj.script) === "clock" : false;
-          const binding = obj.script && scriptRuntime ? scriptRuntime.bind(obj.script, props, obj.text) : null;
+          const binding = obj.script && scriptRuntime ? scriptRuntime.bind(obj.script, props, obj.text, userProps) : null;
           if (obj.script && !binding && !isClock) continue;
           const initial = binding ? binding.update() ?? "" : isClock ? formatClockText(/* @__PURE__ */ new Date(), props) : obj.text;
           const font = await loadWallpaperFont(id, obj.font) ?? obj.font;

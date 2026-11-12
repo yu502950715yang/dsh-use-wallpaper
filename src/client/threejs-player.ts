@@ -1628,10 +1628,11 @@ export function loadSceneToThree(
         });
       }
     } else if (obj.kind === 'util') {
-      // util 层（v0.8.2 F2）：只有带效果链（有 isolate 条目）的层接入隔离渲染；无条目保持不渲染，
-      // 不引入白块。层内容 = 内置材质（solid 纯色 / 其余直通占位，T3 用整帧快照填内容）。
+      // util 层（v0.8.2 F2 + 2026-11-12）：带效果链（有 isolate 条目）的层进隔离渲染；**无链 solid
+      // 纯色层直接渲染**（WE 桌面可见：3819637149 音频条基线）；无链 project/fullscreen/compose
+      // 没有内容输入（透传占位 opacity 0）⇒ 保持不渲染、不引入白块。
       const isolate = assets.isolate?.get(obj.id);
-      if (!isolate) continue;
+      if (!isolate && obj.layerKind !== 'solid') continue;
       const t = world(obj);
       const id = player.addBackground({
         origin: t.origin,

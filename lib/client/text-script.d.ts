@@ -7,8 +7,11 @@ export interface TextScriptBinding {
     dispose(): void;
 }
 export interface TextScriptRuntime {
-    /** 绑定一个 text 脚本；eval 失败/无 update → null（调用方回退）。 */
-    bind(script: string, scriptProperties: Record<string, unknown>, initialValue: string): TextScriptBinding | null;
+    /**
+     * 绑定一个 text 脚本；eval 失败/无 update → null（调用方回退）。
+     * `userProperties` = project.json 用户属性（脚本经 `engine.userProperties` 读取）。
+     */
+    bind(script: string, scriptProperties: Record<string, unknown>, initialValue: string, userProperties?: Record<string, unknown>): TextScriptBinding | null;
     /** 向所有活动 binding 广播媒体属性事件。 */
     dispatchMediaProperties(props: MediaPropertiesPayload): void;
     dispose(): void;

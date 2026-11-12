@@ -2220,9 +2220,11 @@ describe('ThreeScenePlayer loadSceneToThree', () => {
     expect(renderer.setSize).toHaveBeenCalledWith(2400, 1555, false);
   });
 
-  // v0.8.2 F2：util 对象只渲染「带效果链（isolate 条目）」的层 —— 条目由 three-renderer 按
-  // utilWorldSize 算好下发；无条目（无链）保持改动前的「不渲染」，不引入白块。
-  it('util 对象：有 isolate 条目 → addBackground(util)；无条目 → 不渲染', () => {
+  // v0.8.2 F2 + 2026-11-12：util 层渲染条件 —— 带效果链（isolate 条目）的层进隔离渲染；
+  // **没有效果链的 solid 纯色层也要直接渲染**（WE 桌面可见：3819637149 音频条下面的 3px 基线就是
+  // solid util 层，此前被「无链 util 整层不渲染」的边界漏掉）；无链的 project/fullscreen/compose
+  // 没有内容输入（透传占位 opacity 0），继续保持不渲染、不引入白块。
+  it('util 对象：有 isolate 条目 → 隔离渲染；无链 solid → 直接渲染；无链 passthrough → 不渲染', () => {
     const scene = JSON.stringify({
       general: { orthogonalprojection: { height: 1080, width: 1920 } },
       objects: [
@@ -2232,6 +2234,11 @@ describe('ThreeScenePlayer loadSceneToThree', () => {
           alpha: 1, color: '1 1 1', effects: [{ file: 'effects/w/effect.json' }],
         },
         { id: 37, image: 'models/util/composelayer.json', size: '400 850', origin: '200 200 0', scale: '1 1 1' },
+        {
+          id: 327, name: 'Solid', image: 'models/util/solidlayer.json',
+          origin: '2110 1955 0', scale: '1 1 1', size: '900 3',
+          color: '0.52941 0.72549 1.00000', alpha: 0.95,
+        },
       ],
     });
     const assets = {
@@ -2239,11 +2246,18 @@ describe('ThreeScenePlayer loadSceneToThree', () => {
       isolate: new Map([[58, { objectId: 58, rtWidth: 1920, rtHeight: 1080, worldW: 1920, worldH: 1080 }]]),
     };
     const result = loadSceneToThree(scene, assets, document.createElement('canvas'));
-    expect(result.backgroundIds).toHaveLength(1);
+    // 58 隔离 + 327 solid 直渲 = 2 个图层；37 无链 passthrough 不建图层。
+    expect(result.backgroundIds).toHaveLength(2);
     expect(result.player.isolatedObjects().map((o) => o.id)).toEqual([58]);
     expect(result.player.displayObject(58)).toBe(result.player.isolatedObjects()[0].quad);
-    // 无链 util 层不建图层（与 v0.8.1 行为一致）。
     expect(result.player.displayObject(37)).toBeUndefined();
+    const solid = result.player.displayObject(327) as THREE.Mesh;
+    expect(solid).toBeDefined();
+    const mat = solid.material as THREE.MeshBasicMaterial;
+    expect(mat.color.r).toBeCloseTo(0.52941, 2);
+    expect(mat.color.g).toBeCloseTo(0.72549, 2);
+    expect(mat.color.b).toBeCloseTo(1, 2);
+    expect(mat.opacity).toBeCloseTo(0.95, 2);
   });
 });
 
