@@ -4383,7 +4383,8 @@ describe('getMediaStatus（媒体集成状态）', () => {
 });
 
 // 媒体封面默认图（WE 占位图语义）：`$mediaThumbnail` 对象装配期先用对象自身纹理上屏，
-// 系统封面到达后切共享封面纹理、封面消失后切回默认图 —— 不再出现「无封面 = 纯白占位」。
+// 系统封面到达后切共享封面纹理 —— 不再出现「无封面 = 纯白占位」。用例只依赖**首轮**轮询（立即发起），
+// 不等待 1s 周期的第二次快照（并行跑测试时定时器抖动会让判据变脆）。
 describe('$mediaThumbnail 默认图与封面切换', () => {
   const MEDIA_SCENE = JSON.stringify({
     general: { orthogonalprojection: { width: 100, height: 100 } },
@@ -4394,12 +4395,12 @@ describe('$mediaThumbnail 默认图与封面切换', () => {
     }],
   });
 
-  it('装配期用默认纹理；封面到达切共享封面纹理；封面消失切回默认纹理', async () => {
+  /** 装配 mock + 首轮快照固定为 hasThumbnail 的媒体场景；返回探针与清理函数。 */
+  function stubMediaRender(hasThumbnail: boolean) {
     const fallback = new THREE.Texture();
     vi.mocked(resolveImageAssets).mockResolvedValue({
       texture: fallback as never, puppetPath: null, spriteSheet: false, mediaThumbnail: true,
     });
-    let hasThumbnail = true;
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       const u = String(url);
       if (u.includes('name=scene.json')) return { ok: true, text: async () => MEDIA_SCENE };
@@ -4409,8 +4410,8 @@ describe('$mediaThumbnail 默认图与封面切换', () => {
           ok: true,
           json: async () => ({
             available: true, reason: 'ok', appId: 'e2e.exe', title: 'T', artist: '', album: '',
-            contentType: 'music', playback: 'playing', hasThumbnail, thumbnailRev: hasThumbnail ? 1 : 0,
-            positionMs: 0, durationMs: 1, at: 0,
+            contentType: 'music', playback: 'playing', hasThumbnail,
+            thumbnailRev: hasThumbnail ? 1 : 0, positionMs: 0, durationMs: 1, at: 0,
           }),
         };
       }
@@ -4434,20 +4435,52 @@ describe('$mediaThumbnail 默认图与封面切换', () => {
         sims: [], backgroundIds: [0], particleLayers: [], puppetLayers: [],
       };
     }) as never);
+    return {
+      fallback,
+      setBackgroundTexture,
+      assets: () => capturedAssets,
+      restore: () => getContext.mockRestore(),
+    };
+  }
+
+  async function renderMediaCover(stub: ReturnType<typeof stubMediaRender>) {
     const r = createThreeSceneRenderer({ loadWasm: defaultLoadWasm });
-    expect(await r.render('wid-media-cover', document.createElement('canvas'), undefined)).toBe(true);
-    // 装配期：默认纹理（作者预留的占位图）直接上屏，而不是共享封面纹理的白色占位。
-    expect(capturedAssets!.backgroundTextures.get(171)).toBe(fallback);
-    // 首轮轮询带封面 ⇒ 切到共享封面纹理。
-    await vi.waitFor(() => expect(setBackgroundTexture).toHaveBeenCalledTimes(1));
-    const first = setBackgroundTexture.mock.calls[0]!;
-    expect(first[0]).toBe(171);
-    expect(first[1]).not.toBe(fallback);
-    // 下一轮快照无封面 ⇒ 切回默认纹理。
-    hasThumbnail = false;
-    await vi.waitFor(() => expect(setBackgroundTexture).toHaveBeenCalledTimes(2), { timeout: 3000 });
-    expect(setBackgroundTexture.mock.calls[1]).toEqual([171, fallback]);
-    getContext.mockRestore();
-    r.dispose?.();
+    try {
+      expect(await r.render('wid-media-cover', document.createElement('canvas'), undefined)).toBe(true);
+      // 装配期：默认纹理（作者预留的占位图）直接上屏，而不是共享封面纹理的白色占位。
+      expect(stub.assets()!.backgroundTextures.get(171)).toBe(stub.fallback);
+      return r;
+    } catch (e) {
+      r.dispose?.();
+      throw e;
+    }
+  }
+
+  it('装配期用默认纹理；首轮快照带封面 ⇒ 切共享封面纹理', async () => {
+    const stub = stubMediaRender(true);
+    const r = await renderMediaCover(stub);
+    try {
+      await vi.waitFor(() => expect(stub.setBackgroundTexture).toHaveBeenCalled(), { timeout: 5000 });
+      const [objectId, texture] = stub.setBackgroundTexture.mock.calls[0]!;
+      expect(objectId).toBe(171);
+      expect(texture).not.toBe(stub.fallback);
+    } finally {
+      stub.restore();
+      r.dispose?.();
+    }
+  });
+
+  it('首轮快照无封面 ⇒ 显式切回默认纹理（不留在共享白占位）', async () => {
+    const stub = stubMediaRender(false);
+    const r = await renderMediaCover(stub);
+    try {
+      await vi.waitFor(
+        () => expect(stub.setBackgroundTexture).toHaveBeenCalledWith(171, stub.fallback),
+        { timeout: 5000 },
+      );
+    } finally {
+      stub.restore();
+      r.dispose?.();
+    }
   });
 });
