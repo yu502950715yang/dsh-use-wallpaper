@@ -150,9 +150,9 @@ describe('S2：/wallpapers/web 承载 Host 绑定', () => {
   it('Host 是已知 GUI host → 403（壁纸导航回 GUI origin 的逃逸路径）', async () => {
     seedWeb('w1');
     register('');
-    // GUI 页面先请求一个非 /web 路由，记录它的 Host
+    // GUI 页面（浏览器直接请求）先请求一个非 /web 路由，记录它的 Host；Sec-Fetch-Site 是浏览器直连的标志
     await routes.get('/wallpapers/list')!(
-      makeReq('/wallpapers/list', { host: '127.0.0.1:58769' }), makeRes(),
+      makeReq('/wallpapers/list', { host: '127.0.0.1:58769', 'sec-fetch-site': 'same-origin' }), makeRes(),
     );
     const res = makeRes();
     await routes.get('/wallpapers/web')!(
@@ -161,11 +161,28 @@ describe('S2：/wallpapers/web 承载 Host 绑定', () => {
     expect(res.statusCode).toBe(403);
   });
 
+  it('桌面壳代理请求（无 Sec-Fetch-Site）不登记 GUI Host：桌面 iframe 与代理请求同为宿主 HTTP origin', async () => {
+    seedWeb('w1');
+    register('');
+    // 桌面壳把 dsh-app://app 的插件请求经 Electron fetch 代理到宿主：Sec-* 是 fetch 禁止头，
+    // forwardWebRequest 还会显式删 sec-fetch-site ⇒ 这类请求不带该头，不得被当成 GUI 页面的 Host。
+    // 否则桌面壳 iframe 的承载 origin（= 宿主 HTTP origin）会命中 guiHosts ⇒ 桌面版 web 壁纸恒 403。
+    await routes.get('/wallpapers/list')!(
+      makeReq('/wallpapers/list', { host: '127.0.0.1:58769' }), makeRes(),
+    );
+    const res = makeRes();
+    await routes.get('/wallpapers/web')!(
+      makeReq('/wallpapers/web/w1/index.html', { host: '127.0.0.1:58769' }), res,
+    );
+    expect(res.statusCode).toBe(200);
+    expect(String(res.body)).toContain('wallpaper');
+  });
+
   it('Host 是壁纸承载 host（另一回环名）→ 200', async () => {
     seedWeb('w1');
     register('');
     await routes.get('/wallpapers/list')!(
-      makeReq('/wallpapers/list', { host: '127.0.0.1:58769' }), makeRes(),
+      makeReq('/wallpapers/list', { host: '127.0.0.1:58769', 'sec-fetch-site': 'same-origin' }), makeRes(),
     );
     const res = makeRes();
     await routes.get('/wallpapers/web')!(
