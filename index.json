@@ -126,6 +126,17 @@
           "engines": {
             "dsh": ">=0.2.0-rc.1 <0.3.0"
           }
+        },
+        {
+          "version": "1.0.1",
+          "publishTimestamp": 0,
+          "source": {
+            "type": "npm",
+            "registry": "https://registry.npmjs.org/"
+          },
+          "engines": {
+            "dsh": ">=0.2.0-rc.1 <0.3.0"
+          }
         }
       ]
     }
