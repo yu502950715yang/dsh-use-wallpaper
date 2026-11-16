@@ -60,6 +60,8 @@ export interface BackgroundLayer {
     showNone(): void;
     setOverlayOpacity(v: number): void;
     setBlur(enabled: boolean, radius: number): void;
+    /** 对话区文字列毛玻璃：写 body[data-we-glass] 与 --wp-glass-*（关闭时移除并让文字色回主题）。 */
+    setChatGlass(enabled: boolean, strength: number): void;
     /** 设置 Ken Burns 开关状态并即时应用到当前图片（不重建元素）。 */
     setKenBurns(enabled: boolean): void;
     /** 运行期切换画面适配模式（当前图片/视频即时生效）。 */

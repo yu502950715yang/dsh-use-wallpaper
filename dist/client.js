@@ -2372,6 +2372,31 @@ body[data-ds-dark-theme][data-we-wallpaper] [data-question-key] section{
   background-color:rgba(24,26,30,.75);
   background-image:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.02) 38%,rgba(255,255,255,.03));
 }
+/* \u2500\u2500 \u5BF9\u8BDD\u533A\u6587\u5B57\u5217\u6BDB\u73BB\u7483\uFF082026-11-16\uFF0C\u53EF\u9009\uFF1B\u9ED8\u8BA4\u5173 = \u672C\u8282\u4E0D\u547D\u4E2D\uFF0C\u96F6\u56DE\u5F52\uFF09 \u2500\u2500
+   \u53EA\u7ED9 DSH \u7684 920px \u6D88\u606F\u5217\uFF08[class*="_column"]\uFF09\u52A0\u73BB\u7483\uFF1A\u58C1\u7EB8\u4E0D\u538B\u6697\uFF0C\u6807\u9898\u680F/\u4FA7\u680F/\u8F93\u5165\u6846\u4E0D\u53C2\u4E0E\u3002
+   \u5F3A\u5EA6\u7531 background-layer.setChatGlass \u5199\u7684 --wp-glass-alpha\uFF080.20\u20130.82\uFF09\u4E0E
+   --wp-glass-blur\uFF080\u201332px\uFF09\u9A71\u52A8\uFF1B\u73BB\u7483\u5F00\u542F\u65F6\u6587\u5B57\u8272\u56DE\u4E3B\u9898\uFF08\u540C\u4E00\u51FD\u6570\u6E05 --wp-chat-fg/outline\uFF09\u3002 */
+body[data-we-wallpaper][data-we-glass] [data-conversation-scroll] [class*="_column"]{
+  box-sizing:border-box;
+  padding:20px 22px;
+  border-radius:20px;
+  border:1px solid var(--wp-glass-border);
+  background:var(--wp-glass-bg);
+  box-shadow:var(--wp-glass-shadow);
+  backdrop-filter:blur(var(--wp-glass-blur,14px)) saturate(140%);
+  -webkit-backdrop-filter:blur(var(--wp-glass-blur,14px)) saturate(140%);
+}
+body[data-we-wallpaper][data-we-glass]:not([data-ds-dark-theme]) [data-conversation-scroll] [class*="_column"]{
+  --wp-glass-bg:rgba(252,253,254,var(--wp-glass-alpha,.48));
+  --wp-glass-border:rgba(15,17,22,.10);
+  --wp-glass-shadow:inset 0 1px 0 rgba(255,255,255,.85),0 14px 36px rgba(15,17,22,.14);
+}
+body[data-ds-dark-theme][data-we-wallpaper][data-we-glass] [data-conversation-scroll] [class*="_column"]{
+  --wp-glass-bg:rgba(48,49,54,var(--wp-glass-alpha,.48));
+  --wp-glass-border:rgba(255,255,255,.15);
+  --wp-glass-shadow:inset 0 1px 0 rgba(255,255,255,.10),0 14px 36px rgba(0,0,0,.42);
+}
+
 /* \u4FA7\u8FB9\u680F\uFF1A\u80CC\u666F\u7531 --dsw-specific-sidebar-fill \u63A7\u5236\uFF08\u89C1\u4E0A\u65B9\u6D45/\u6DF1\u5206\u652F\uFF09\uFF0C\u6B64\u5904\u4E0D\u518D\u8986\u76D6
    sidebarCol\u2014\u2014\u4FA7\u8FB9\u680F\u6839\uFF08hHd-Xa_root\uFF09\u586B\u6EE1\u8BE5\u5217\u4E14\u7528\u540C\u4E00 fill\uFF0C\u900F\u660E\u540E\u58C1\u7EB8\u5373\u900F\u51FA\u3002
    \u65E0 blur\uFF08\u8BBE\u7F6E\u5BF9\u8BDD\u6846 portal \u6302\u5728\u4FA7\u8FB9\u680F\u4E0B\uFF0C\u52A0 blur \u4F1A\u584C\u9677\uFF09\u3002 */
@@ -2527,6 +2552,13 @@ body[data-ds-dark-theme] .wss-hero::before{background:radial-gradient(90% 140% a
 .wss-slider input[type=range]::-moz-range-track{height:4px;border-radius:2px;background:rgba(127,127,127,.25)}
 .wss-slider input[type=range]::-moz-range-thumb{width:12px;height:12px;border-radius:50%;background:var(--wp-accent);border:2px solid #fff}
 .wss-slider input[type=range]:focus-visible{outline:2px solid var(--wp-accent);outline-offset:2px}
+.wss-slider input[type=range]:disabled{opacity:.45;cursor:default}
+/* \u5BF9\u8BDD\u533A\u6BDB\u73BB\u7483\uFF1A\u63D0\u793A\u884C + \u300C\u906E\u7F69\u8BBE\u4E3A 0\u300D\u5C0F\u6309\u94AE\uFF082026-11-16\uFF09 */
+.wss-glass-hint{margin-top:2px}
+.wss-glass-scrim-zero{margin:0 4px;padding:2px 8px;border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));border-radius:6px;
+  background:var(--dsw-alias-bg-module-platform,rgba(127,127,127,.12));color:var(--dsw-alias-label-primary,var(--wp-text));
+  font:inherit;font-size:11.5px;cursor:pointer}
+.wss-glass-scrim-zero:hover{background:rgba(127,127,127,.2)}
 /* \u4E0B\u62C9 / \u6587\u672C\u8F93\u5165\uFF1A\u7EDF\u4E00 32px \u9AD8\u4E0E\u81EA\u5B9A\u4E49\u7BAD\u5934 */
 .wss-quality,.wss-fit-mode,.wss-type-filter,.wss-sort,.wss-rotation-interval,.wss-rotation-order,.wss-userprop-select{appearance:none;-webkit-appearance:none;min-height:32px;border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background-color:var(--dsw-alias-bg-module-platform,rgba(127,127,127,.06));color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;padding:5px 30px 5px 10px;font:inherit;font-size:12px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238892a0' stroke-width='1.5'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;cursor:pointer}
 .wss-fit-mode:focus-visible,.wss-quality:focus-visible,.wss-type-filter:focus-visible,.wss-sort:focus-visible,.wss-rotation-interval:focus-visible,.wss-rotation-order:focus-visible,.wss-userprop-select:focus-visible{outline:2px solid var(--wp-accent);outline-offset:1px}
@@ -3386,6 +3418,9 @@ var DEFAULTS = {
   overlayOpacity: 0.35,
   blurEnabled: false,
   blurRadius: 12,
+  // 对话区毛玻璃（2026-11-16）：默认关；45% = 不透明度 48% + 模糊 14px，壁纸不压暗。
+  chatGlassEnabled: false,
+  chatGlassStrength: 45,
   kenBurns: true,
   // 光晕默认值 = 2026-09-21 用户在真机面板上定档（低阈值保留光晕、低强度压住过曝；
   // 旧 A 档 0.65/1.0 在亮部多的壁纸上过曝，见 AGENT.md §7.1）。
@@ -5271,6 +5306,55 @@ function WallpaperSettingsSection(props) {
               "input",
               {
                 type: "checkbox",
+                className: "wss-chat-glass",
+                checked: settings.chatGlassEnabled,
+                onChange: (e) => applyRuntime({ chatGlassEnabled: e.target.checked })
+              }
+            ),
+            "\u5BF9\u8BDD\u533A\u6BDB\u73BB\u7483"
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-slider", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-slider-head", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u6BDB\u73BB\u7483\u5F3A\u5EA6" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-effect-value", children: [
+                settings.chatGlassStrength,
+                "%"
+              ] })
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "input",
+              {
+                type: "range",
+                className: "wss-chat-glass-strength",
+                min: 0,
+                max: 100,
+                step: 1,
+                value: settings.chatGlassStrength,
+                disabled: !settings.chatGlassEnabled,
+                onChange: (e) => applyRuntime({ chatGlassStrength: Number(e.target.value) })
+              }
+            )
+          ] }),
+          settings.chatGlassEnabled && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc wss-glass-hint", children: settings.overlayOpacity > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+            "\u6BDB\u73BB\u7483\u53EA\u8D1F\u8D23\u6587\u5B57\u5217\u7684\u53EF\u8BFB\u6027\uFF1B\u4E0A\u9762\u7684\u300C\u906E\u7F69\u4E0D\u900F\u660E\u5EA6\u300D\u538B\u6697\u7684\u662F",
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("b", { children: "\u6574\u5F20\u58C1\u7EB8" }),
+            "\uFF0C\u60F3\u8BA9\u58C1\u7EB8\u6062\u590D\u539F\u4EAE\u5EA6\u53EF\u4EE5",
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "button",
+              {
+                type: "button",
+                className: "wss-glass-scrim-zero",
+                onClick: () => applyRuntime({ overlayOpacity: 0 }),
+                children: "\u8BBE\u4E3A 0"
+              }
+            ),
+            "\u3002"
+          ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_jsx_runtime.Fragment, { children: "\u6BDB\u73BB\u7483\u5DF2\u5F00\u542F\uFF0C\u906E\u7F69\u4E3A 0 \u2014\u2014 \u58C1\u7EB8\u4FDD\u6301\u539F\u4EAE\u5EA6\u3002" }) }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+              "input",
+              {
+                type: "checkbox",
                 className: "wss-kenburns",
                 checked: settings.kenBurns,
                 onChange: (e) => applyRuntime({ kenBurns: e.target.checked })
@@ -6594,6 +6678,7 @@ function createBackgroundLayer(root, opts = {}) {
   let altOrigin = null;
   const pointerPost = new PointerPostBridge();
   let paused = false;
+  let chatGlassEnabled = false;
   let currentVideo = null;
   let currentVideoHasAudio;
   let gestureUnlock = null;
@@ -6895,9 +6980,30 @@ function createBackgroundLayer(root, opts = {}) {
       applyFit(currentImage);
       applyFit(currentVideo);
     },
+    // 对话区毛玻璃（2026-11-16）：只写 body 属性 + 两个 CSS 变量，样式全在 styles.ts。
+    // 关闭时撤变量（文字色/描边由 controller.applyTextStyle 重新下发，回到壁纸亮度反色）。
+    setChatGlass(enabled, strength) {
+      chatGlassEnabled = enabled === true;
+      document.body.toggleAttribute("data-we-glass", chatGlassEnabled);
+      const style = document.documentElement.style;
+      if (!chatGlassEnabled) {
+        style.removeProperty("--wp-glass-alpha");
+        style.removeProperty("--wp-glass-blur");
+        return;
+      }
+      const v = Number.isFinite(strength) ? Math.min(100, Math.max(0, strength)) : 45;
+      style.setProperty("--wp-glass-alpha", String(0.2 + 0.62 * (v / 100)));
+      style.setProperty("--wp-glass-blur", `${Math.round(32 * (v / 100))}px`);
+      style.removeProperty("--wp-chat-fg");
+      style.removeProperty("--wp-chat-outline");
+    },
     // 文字颜色跟随壁纸亮度（2026-09-03）：把颜色写为 --wp-chat-fg，
     // styles.ts 消息列文字消费者用它；null/空则移除（回主题默认）。移除时删变量。
     setChatFg(color) {
+      if (chatGlassEnabled) {
+        document.documentElement.style.removeProperty("--wp-chat-fg");
+        return;
+      }
       if (!color) document.documentElement.style.removeProperty("--wp-chat-fg");
       else document.documentElement.style.setProperty("--wp-chat-fg", color);
     },
@@ -6905,6 +7011,10 @@ function createBackgroundLayer(root, opts = {}) {
     // 写在 --wp-chat-outline，由 styles.ts 的贴壁纸文字消费者读取。0 档/空色 = 移除变量，
     // 消费者 fallback 到 none ⇒ 默认观感与加此功能前一致（零回归）。
     setChatOutline(color, level) {
+      if (chatGlassEnabled) {
+        document.documentElement.style.removeProperty("--wp-chat-outline");
+        return;
+      }
       const shadow = color ? outlineShadow(color, level) : null;
       if (!shadow) document.documentElement.style.removeProperty("--wp-chat-outline");
       else document.documentElement.style.setProperty("--wp-chat-outline", shadow);
@@ -39346,6 +39456,7 @@ function bootstrap(ctx) {
     if (!layer) return;
     layer.setOverlayOpacity(s.overlayOpacity);
     layer.setBlur(s.blurEnabled, s.blurRadius);
+    layer.setChatGlass(s.chatGlassEnabled, s.chatGlassStrength);
     layer.setKenBurns(s.kenBurns);
     layer.setFitMode(s.fitMode);
     layer.setSoundEnabled(bootActive ? false : s.soundEnabled);

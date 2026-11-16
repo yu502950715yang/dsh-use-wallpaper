@@ -33,7 +33,7 @@ const e2eHealth = vi.hoisted(() => ({
 vi.mock('../../src/client/background-layer.js', () => ({
   createBackgroundLayer: () => ({
     root: document.createElement('div'),
-    setOverlayOpacity() {}, setBlur() {}, setPaused() {}, setSoundEnabled() {}, setVolume() {},
+    setOverlayOpacity() {}, setBlur() {}, setChatGlass() {}, setPaused() {}, setSoundEnabled() {}, setVolume() {},
     setKenBurns() {}, setFitMode() {},
     showNone() {}, showImage() {}, showVideo: (url: string) => e2eVideo.showVideo(url), showWeb() {},
     getVideoHealth: () => null,
@@ -55,7 +55,8 @@ import { bootstrap } from '../../src/client/index.js';
 
 const BASE_SETTINGS: ClientSettings = {
   selectedWallpaperId: '1', wallpaperDir: '', weAssetsDir: '',
-  overlayOpacity: 0.35, blurEnabled: false, blurRadius: 12, kenBurns: true,
+  overlayOpacity: 0.35, blurEnabled: false, blurRadius: 12,
+  chatGlassEnabled: false, chatGlassStrength: 45, kenBurns: true,
   glowEnabled: true, glowThreshold: 0.65, glowStrength: 0.35,
   paused: false, pauseOnHidden: true, qualityScale: 1, soundEnabled: true, soundVolume: 1, mediaIntegrationEnabled: true,
   textColorMode: 'auto', textColor: '#ffffff', textOutline: 0,
@@ -819,6 +820,36 @@ describe('WallpaperSettingsSection', () => {
     setValue(container.querySelector('.wss-fit-mode') as HTMLSelectElement, 'contain');
     await flush();
     expect(onRuntimeSettings).toHaveBeenCalledWith({ fitMode: 'contain' });
+  });
+
+  // 对话区毛玻璃（2026-11-16）：开关 + 强度即时下发；开启且遮罩 > 0 时给「设为 0」入口。
+  it('对话区毛玻璃：开关/强度即时下发；开启且遮罩 > 0 时可一键把遮罩设为 0', async () => {
+    const writeSettings = vi.fn(async () => {});
+    const onRuntimeSettings = vi.fn();
+    mount({ writeSettings, onRuntimeSettings });
+    await flush();
+    const setValue = (el: HTMLInputElement, value: string) => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+      setter.call(el, value);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    const checkbox = container.querySelector('.wss-chat-glass') as HTMLInputElement;
+    const slider = container.querySelector('.wss-chat-glass-strength') as HTMLInputElement;
+    expect(checkbox.checked).toBe(false);
+    expect(slider.disabled).toBe(true);
+
+    checkbox.click();
+    await flush();
+    expect(onRuntimeSettings).toHaveBeenCalledWith({ chatGlassEnabled: true });
+    expect(slider.disabled).toBe(false);
+
+    setValue(slider, '70');
+    await flush();
+    expect(onRuntimeSettings).toHaveBeenCalledWith({ chatGlassStrength: 70 });
+
+    (container.querySelector('.wss-glass-scrim-zero') as HTMLButtonElement).click();
+    await flush();
+    expect(onRuntimeSettings).toHaveBeenCalledWith({ overlayOpacity: 0 });
   });
 
   // v0.8 壁纸库：搜索 / 收藏 / 隐藏与恢复（localStorage 持久化；隐藏不打断播放）。

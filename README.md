@@ -173,7 +173,7 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 下表的**设置字段**都能写进 profile `cordis.patch.yml` 的 `config`（面板里改过的值优先）。面板按分区暴露的是：
 
 - **当前壁纸 / 壁纸目录**：`selectedWallpaperId`（缩略图点选）、`wallpaperDir` / `weAssetsDir`（手填 +「自动探测」）。
-- **显示效果**：`overlayOpacity`、`blurEnabled` / `blurRadius`、`kenBurns`、`fitMode`、`glowEnabled` / `glowThreshold` / `glowStrength`。
+- **显示效果**：`overlayOpacity`、`blurEnabled` / `blurRadius`、`chatGlassEnabled` / `chatGlassStrength`、`kenBurns`、`fitMode`、`glowEnabled` / `glowThreshold` / `glowStrength`。
 - **声音**：`soundEnabled` + `soundVolume`（壁纸音效：scene 音效对象 + 视频壁纸自带音轨，共用音量）。
 - **性能与省电**：`paused`、`pauseOnHidden`、`qualityScale`。
 - **轮播**：`rotationEnabled`、`rotationIntervalMs`、`rotationOrder`。
@@ -189,6 +189,8 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 | `weAssetsDir` | 空 | Wallpaper Engine 安装目录（读内置粒子/效果纹理） |
 | `overlayOpacity` | `0.35` | 壁纸层上方遮罩的不透明度；面板「显示效果」可调 |
 | `blurEnabled` / `blurRadius` | `false` / `12` | 背景模糊与半径；面板「显示效果」可调 |
+| `chatGlassEnabled` | `false` | 对话区毛玻璃：只给 920px 消息列加一层玻璃（壁纸不压暗）；面板「显示效果」可调 |
+| `chatGlassStrength` | `45` | 毛玻璃强度 0–100：45 = 不透明度 48% + 模糊 14px（映射 20%–82% / 0–32px）；面板可调 |
 | `kenBurns` | `true` | 图片壁纸的缓慢缩放动效；面板「显示效果」可调 |
 | `fitMode` | `cover` | 画面适配：`cover` 裁剪铺满 / `contain` 完整显示（可能留边）/ `stretch` 拉伸铺满；面板可调 |
 | `glowEnabled` | `true` | 应用级光晕（全屏后处理，仅 scene 壁纸） |
@@ -291,6 +293,7 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 - **精灵表图标由作者脚本控制帧**：调用 `pause`/`setFrame` 的壁纸（如 `3765967112` 的日/夜图标）静止在脚本帧；无脚本的仍约 1 帧/秒自动循环。生产 GUI 里背景层不吃点击（`pointer-events:none`），按产品决策不做点击转发 ⇒ **点击切帧为已知边界**（e2e/harness 内可触发）。**壁纸内点击/悬停交互均不可用**：脚本的 `getLayer(name)` 写入、`getEffect().visible` 与 `cursorEnter/Leave/Down/Up` 回调尚未实现，依赖交互的壁纸会保持初始状态。
 - **纯文本 / 透明场景会铺作者设定的底色**（`general.clearcolor`，WE 多为 0-1 色值）；`clearenabled` 开关未消费。
 - **输入框用半透明玻璃底**（不模糊），避免桌面端在输出回复时出现滚动条抖动。
+- **对话区毛玻璃可选、默认关**（设置 → 壁纸 →「显示效果」→「对话区毛玻璃」）：只给 920px 的消息列加玻璃，标题栏、侧栏、输入框和壁纸其余区域不受影响；**不压暗壁纸**——遮罩仍是独立滑杆，想让壁纸恢复原亮度把它调到 0 即可（面板里有「设为 0」按钮）。强度 45% ≈ 不透明度 48% + 模糊 14px，拉满 100% 接近磨砂板。**不支持"每条消息一个框"**：长对话会变成一块块玻璃页 + 硬缝，工具卡/代码块还会盒中盒（mock 对比后否决）。
 - **视频壁纸能不能播，取决于浏览器的解码能力**：视频壁纸直接交给浏览器的 `<video>` 解码 —— HEVC / H.265 需要系统装有对应的解码扩展。**缺解码扩展时不再停在黑背景**：解码失败或 1.5 秒内没有首帧，会自动回退到预览图，并在设置 →「Wallpaper 壁纸」面板里提示原因（没有预览图则回退空态并同样提示）。想真正播放 HEVC，请换 Chrome 等能解该编码的浏览器，或把视频转成 H.264。
 - **scene 渲染失败时按多级降级链回退**：见下方「降级链（scene 渲染失败时）」小节。
 - **抓帧缓存放在本机数据目录**：scene 首帧渲染成功后会抓一张 PNG 存到 `~/.dsh-use-wallpaper/frames/`；设环境变量 `DSH_USE_WALLPAPER_DATA_DIR` 可整体搬走。单张 ≤ 12MB、最多 200 张（按修改时间淘汰最旧），随时可删 —— 删掉只会让下次渲染成功时重新抓，不影响画面。

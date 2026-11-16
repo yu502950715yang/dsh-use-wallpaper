@@ -325,6 +325,8 @@ npx vitest run tests/xxx.test.ts --reporter=basic   # 跑单个文件
 
 46. **text 脚本契约：`thisLayer.text` 与 `engine.userProperties`（2026-11-12）**：`text-script.ts` 的 quickjs 沙箱为每个 binding 注入 `thisLayer`（`text` 属性可读写；其余属性可自由存取但不参与渲染）与最低限度的 `engine`（`userProperties` = project.json 用户属性、`frametime` = 0）；`update()` **返回值优先**，无返回值时读回 `thisLayer.text`，每帧 update 前把上一帧文本写回 `thisLayer.text`（供脚本做增量判断）。真实样本 `3819637149` 的「Clock 12Hrs」即此形态：不返回字符串而写 `thisLayer.text`，并读 `engine.userProperties.name` —— 旧实现每帧抛 `'thisLayer' is not defined` ⇒ 时钟整层空白（用户报告）。`TextScriptRuntime.bind()` 增加第 4 参 `userProperties`（renderer 传装配期 userProps）。**边界**：`engine` 只有上述两字段；`thisLayer` 仅 text 读写生效（visible/alpha 等动态写入仍走 SceneScript 的 LayerStateTable 那条路，text 属性脚本不写回）；本机库扫描只有这 1 条 text 脚本用到这两个契约（影响面小、可回归）。
 
+47. **对话区毛玻璃只作用于消息列（2026-11-16，issue #7）**：`body[data-we-wallpaper][data-we-glass] [data-conversation-scroll] [class*="_column"]` —— 只给 DSH 的 920px 居中消息列（`.V4vHZW_column`）加玻璃，标题栏/侧栏/输入框不参与，壁纸不压暗；遮罩仍是独立旋钮（面板只在开启且遮罩 > 0 时给「设为 0」按钮，不自动改）。**强度 0-100** 由 `background-layer.setChatGlass` 映射为 `--wp-glass-alpha`（0.20–0.82）与 `--wp-glass-blur`（0–32px），45 = 48% / 14px；**玻璃开启时文字回主题**（清 `--wp-chat-fg`/`--wp-chat-outline`，`setChatFg`/`setChatOutline` 变空操作，关闭后由 `applyTextStyle` 恢复）。**不做每条消息框**：长对话会变成一块块玻璃页 + 硬缝，工具卡/代码块出现盒中盒（mock 验证，用户亦反馈过"效果不好"）；只给用户气泡加玻璃的 F2 也因助理侧仍碎而被否。取舍与对比见[决策笔记](.agents/notes/implemented/feature/2026-11-16-chat-column-glass.md)。
+
 ## 8. 历史归档
 
 | 位置 | 内容 |

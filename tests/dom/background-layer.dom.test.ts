@@ -475,6 +475,73 @@ describe('createBackgroundLayer (DOM)', () => {
     });
   });
 
+  // 对话区毛玻璃（2026-11-16）：只写 body 属性 + 两个强度变量；开启时文字回主题（不再按壁纸亮度反色）。
+  describe('setChatGlass（文字列毛玻璃变量）', () => {
+    const root = () => { document.body.innerHTML = ''; const el = document.createElement('div'); document.body.appendChild(el); return el; };
+    const cleanup = () => {
+      document.body.removeAttribute('data-we-glass');
+      document.documentElement.style.removeProperty('--wp-glass-alpha');
+      document.documentElement.style.removeProperty('--wp-glass-blur');
+      document.documentElement.style.removeProperty('--wp-chat-fg');
+      document.documentElement.style.removeProperty('--wp-chat-outline');
+    };
+
+    it('开启：挂 body[data-we-glass] 并写入强度映射（45% → alpha .479 / blur 14px）', () => {
+      cleanup();
+      const layer = createBackgroundLayer(root());
+      layer.setChatGlass(true, 45);
+      expect(document.body.hasAttribute('data-we-glass')).toBe(true);
+      expect(Number(document.documentElement.style.getPropertyValue('--wp-glass-alpha'))).toBeCloseTo(0.479, 3);
+      expect(document.documentElement.style.getPropertyValue('--wp-glass-blur')).toBe('14px');
+      cleanup();
+    });
+
+    it('关闭：撤掉属性与两个变量（样式回到零命中）', () => {
+      cleanup();
+      const layer = createBackgroundLayer(root());
+      layer.setChatGlass(true, 45);
+      layer.setChatGlass(false, 45);
+      expect(document.body.hasAttribute('data-we-glass')).toBe(false);
+      expect(document.documentElement.style.getPropertyValue('--wp-glass-alpha')).toBe('');
+      expect(document.documentElement.style.getPropertyValue('--wp-glass-blur')).toBe('');
+      cleanup();
+    });
+
+    it('开启时 setChatFg / setChatOutline 不写反色变量，并清掉已有的值（玻璃上文字回主题）', () => {
+      cleanup();
+      const layer = createBackgroundLayer(root());
+      document.documentElement.style.setProperty('--wp-chat-fg', '#000000');
+      layer.setChatGlass(true, 45);
+      expect(document.documentElement.style.getPropertyValue('--wp-chat-fg')).toBe('');
+      layer.setChatFg('#ffffff');
+      layer.setChatOutline('#ffffff', 2);
+      expect(document.documentElement.style.getPropertyValue('--wp-chat-fg')).toBe('');
+      expect(document.documentElement.style.getPropertyValue('--wp-chat-outline')).toBe('');
+      cleanup();
+    });
+
+    it('关闭后 setChatFg 恢复写入（文字色重新按壁纸亮度下发）', () => {
+      cleanup();
+      const layer = createBackgroundLayer(root());
+      layer.setChatGlass(true, 45);
+      layer.setChatFg('#ffffff');
+      expect(document.documentElement.style.getPropertyValue('--wp-chat-fg')).toBe('');
+      layer.setChatGlass(false, 45);
+      layer.setChatFg('#ffffff');
+      expect(document.documentElement.style.getPropertyValue('--wp-chat-fg')).toBe('#ffffff');
+      cleanup();
+    });
+
+    it('非法强度回退默认 45（不写入 NaN）', () => {
+      cleanup();
+      const layer = createBackgroundLayer(root());
+      layer.setChatGlass(true, Number.NaN);
+      expect(Number(document.documentElement.style.getPropertyValue('--wp-glass-alpha'))).toBeCloseTo(0.479, 3);
+      expect(document.documentElement.style.getPropertyValue('--wp-glass-blur')).toBe('14px');
+      cleanup();
+    });
+  });
+
   // v0.8 显示效果：适配模式与 KenBurns 支持运行期切换（不重建媒体元素）。
   it('setFitMode 对当前图片/视频生效，stretch → object-fit:fill', () => {
     const layer = createBackgroundLayer(document.createElement('div'));

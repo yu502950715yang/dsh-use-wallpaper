@@ -22,7 +22,7 @@ vi.mock('../../src/client/boot-player.js', () => ({
 vi.mock('../../src/client/background-layer.js', () => ({
   createBackgroundLayer: () => ({
     root: document.createElement('div'),
-    setOverlayOpacity() {}, setBlur() {}, setPaused() {}, setSoundEnabled: layerSound.setSoundEnabled,
+    setOverlayOpacity() {}, setBlur() {}, setChatGlass() {}, setPaused() {}, setSoundEnabled: layerSound.setSoundEnabled,
     setVolume() {}, setKenBurns() {}, setFitMode() {},
     showNone() {}, showImage() {}, showVideo: async () => 'ok', showWeb() {},
     getVideoHealth: () => null,

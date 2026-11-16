@@ -12,6 +12,9 @@ export const WallpaperSettingsSchema = z.object({
   overlayOpacity: z.number().min(0).max(1).default(0.35),
   blurEnabled: z.boolean().default(false),
   blurRadius: z.number().min(0).max(64).default(12),
+  // 对话区文字列毛玻璃（可选，默认关）：强度 0-100 同时映射不透明度与模糊半径（映射在 client）。
+  chatGlassEnabled: z.boolean().default(false),
+  chatGlassStrength: z.number().min(0).max(100).default(45),
   kenBurns: z.boolean().default(true),
   // 应用级 Glow（整帧亮部发光）：阈值/强度默认值与 client 的 DEFAULTS 一致（2026-09-21 用户真机定档）。
   glowEnabled: z.boolean().default(true),

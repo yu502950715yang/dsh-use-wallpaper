@@ -138,6 +138,8 @@ export interface BackgroundLayer {
   showNone(): void;
   setOverlayOpacity(v: number): void;
   setBlur(enabled: boolean, radius: number): void;
+  /** 对话区文字列毛玻璃：写 body[data-we-glass] 与 --wp-glass-*（关闭时移除并让文字色回主题）。 */
+  setChatGlass(enabled: boolean, strength: number): void;
   /** 设置 Ken Burns 开关状态并即时应用到当前图片（不重建元素）。 */
   setKenBurns(enabled: boolean): void;
   /** 运行期切换画面适配模式（当前图片/视频即时生效）。 */
@@ -200,6 +202,9 @@ export function createBackgroundLayer(root: HTMLElement, opts: BackgroundLayerOp
 
   // 省电状态与当前视频元素（setPaused 对后者 pause/play）。
   let paused = false;
+  // 对话区毛玻璃开关（2026-11-16）：开启时玻璃上的文字回主题色——setChatFg/setChatOutline 变成空操作，
+  // 避免「按壁纸亮度反色」和玻璃底打架；关闭后由 controller.applyTextStyle 重新下发。
+  let chatGlassEnabled = false;
   let currentVideo: HTMLVideoElement | null = null;
   // 视频声音：当前素材是否有音轨（false = 已知无音轨）+ 浏览器手势解锁监听（null = 无）。
   let currentVideoHasAudio: boolean | undefined;
@@ -542,9 +547,28 @@ export function createBackgroundLayer(root: HTMLElement, opts: BackgroundLayerOp
       applyFit(currentImage);
       applyFit(currentVideo);
     },
+    // 对话区毛玻璃（2026-11-16）：只写 body 属性 + 两个 CSS 变量，样式全在 styles.ts。
+    // 关闭时撤变量（文字色/描边由 controller.applyTextStyle 重新下发，回到壁纸亮度反色）。
+    setChatGlass(enabled, strength) {
+      chatGlassEnabled = enabled === true;
+      document.body.toggleAttribute('data-we-glass', chatGlassEnabled);
+      const style = document.documentElement.style;
+      if (!chatGlassEnabled) {
+        style.removeProperty('--wp-glass-alpha');
+        style.removeProperty('--wp-glass-blur');
+        return;
+      }
+      const v = Number.isFinite(strength) ? Math.min(100, Math.max(0, strength)) : 45;
+      style.setProperty('--wp-glass-alpha', String(0.2 + 0.62 * (v / 100)));
+      style.setProperty('--wp-glass-blur', `${Math.round(32 * (v / 100))}px`);
+      // 玻璃上文字用主题色：清掉按壁纸亮度的反色与描边（关闭后由 applyTextStyle 恢复）。
+      style.removeProperty('--wp-chat-fg');
+      style.removeProperty('--wp-chat-outline');
+    },
     // 文字颜色跟随壁纸亮度（2026-09-03）：把颜色写为 --wp-chat-fg，
     // styles.ts 消息列文字消费者用它；null/空则移除（回主题默认）。移除时删变量。
     setChatFg(color) {
+      if (chatGlassEnabled) { document.documentElement.style.removeProperty('--wp-chat-fg'); return; }
       if (!color) document.documentElement.style.removeProperty('--wp-chat-fg');
       else document.documentElement.style.setProperty('--wp-chat-fg', color);
     },
@@ -552,6 +576,7 @@ export function createBackgroundLayer(root: HTMLElement, opts: BackgroundLayerOp
     // 写在 --wp-chat-outline，由 styles.ts 的贴壁纸文字消费者读取。0 档/空色 = 移除变量，
     // 消费者 fallback 到 none ⇒ 默认观感与加此功能前一致（零回归）。
     setChatOutline(color, level) {
+      if (chatGlassEnabled) { document.documentElement.style.removeProperty('--wp-chat-outline'); return; }
       const shadow = color ? outlineShadow(color, level) : null;
       if (!shadow) document.documentElement.style.removeProperty('--wp-chat-outline');
       else document.documentElement.style.setProperty('--wp-chat-outline', shadow);

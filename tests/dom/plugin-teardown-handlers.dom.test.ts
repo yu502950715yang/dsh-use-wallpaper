@@ -23,7 +23,7 @@ const handlers = vi.hoisted(() => ({
 vi.mock('../../src/client/background-layer.js', () => ({
   createBackgroundLayer: () => ({
     root: document.createElement('div'),
-    setOverlayOpacity() {}, setBlur() {}, setPaused() {}, setSoundEnabled() {}, setVolume() {}, setKenBurns() {}, setFitMode() {},
+    setOverlayOpacity() {}, setBlur() {}, setChatGlass() {}, setPaused() {}, setSoundEnabled() {}, setVolume() {}, setKenBurns() {}, setFitMode() {},
     showNone() {}, showImage() {}, showVideo: async () => 'ok', showWeb() {},
     getVideoHealth: () => null,
   }),

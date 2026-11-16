@@ -166,6 +166,31 @@ body[data-ds-dark-theme][data-we-wallpaper] [data-question-key] section{
   background-color:rgba(24,26,30,.75);
   background-image:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.02) 38%,rgba(255,255,255,.03));
 }
+/* ── 对话区文字列毛玻璃（2026-11-16，可选；默认关 = 本节不命中，零回归） ──
+   只给 DSH 的 920px 消息列（[class*="_column"]）加玻璃：壁纸不压暗，标题栏/侧栏/输入框不参与。
+   强度由 background-layer.setChatGlass 写的 --wp-glass-alpha（0.20–0.82）与
+   --wp-glass-blur（0–32px）驱动；玻璃开启时文字色回主题（同一函数清 --wp-chat-fg/outline）。 */
+body[data-we-wallpaper][data-we-glass] [data-conversation-scroll] [class*="_column"]{
+  box-sizing:border-box;
+  padding:20px 22px;
+  border-radius:20px;
+  border:1px solid var(--wp-glass-border);
+  background:var(--wp-glass-bg);
+  box-shadow:var(--wp-glass-shadow);
+  backdrop-filter:blur(var(--wp-glass-blur,14px)) saturate(140%);
+  -webkit-backdrop-filter:blur(var(--wp-glass-blur,14px)) saturate(140%);
+}
+body[data-we-wallpaper][data-we-glass]:not([data-ds-dark-theme]) [data-conversation-scroll] [class*="_column"]{
+  --wp-glass-bg:rgba(252,253,254,var(--wp-glass-alpha,.48));
+  --wp-glass-border:rgba(15,17,22,.10);
+  --wp-glass-shadow:inset 0 1px 0 rgba(255,255,255,.85),0 14px 36px rgba(15,17,22,.14);
+}
+body[data-ds-dark-theme][data-we-wallpaper][data-we-glass] [data-conversation-scroll] [class*="_column"]{
+  --wp-glass-bg:rgba(48,49,54,var(--wp-glass-alpha,.48));
+  --wp-glass-border:rgba(255,255,255,.15);
+  --wp-glass-shadow:inset 0 1px 0 rgba(255,255,255,.10),0 14px 36px rgba(0,0,0,.42);
+}
+
 /* 侧边栏：背景由 --dsw-specific-sidebar-fill 控制（见上方浅/深分支），此处不再覆盖
    sidebarCol——侧边栏根（hHd-Xa_root）填满该列且用同一 fill，透明后壁纸即透出。
    无 blur（设置对话框 portal 挂在侧边栏下，加 blur 会塌陷）。 */
@@ -321,6 +346,13 @@ body[data-ds-dark-theme] .wss-hero::before{background:radial-gradient(90% 140% a
 .wss-slider input[type=range]::-moz-range-track{height:4px;border-radius:2px;background:rgba(127,127,127,.25)}
 .wss-slider input[type=range]::-moz-range-thumb{width:12px;height:12px;border-radius:50%;background:var(--wp-accent);border:2px solid #fff}
 .wss-slider input[type=range]:focus-visible{outline:2px solid var(--wp-accent);outline-offset:2px}
+.wss-slider input[type=range]:disabled{opacity:.45;cursor:default}
+/* 对话区毛玻璃：提示行 + 「遮罩设为 0」小按钮（2026-11-16） */
+.wss-glass-hint{margin-top:2px}
+.wss-glass-scrim-zero{margin:0 4px;padding:2px 8px;border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));border-radius:6px;
+  background:var(--dsw-alias-bg-module-platform,rgba(127,127,127,.12));color:var(--dsw-alias-label-primary,var(--wp-text));
+  font:inherit;font-size:11.5px;cursor:pointer}
+.wss-glass-scrim-zero:hover{background:rgba(127,127,127,.2)}
 /* 下拉 / 文本输入：统一 32px 高与自定义箭头 */
 .wss-quality,.wss-fit-mode,.wss-type-filter,.wss-sort,.wss-rotation-interval,.wss-rotation-order,.wss-userprop-select{appearance:none;-webkit-appearance:none;min-height:32px;border:1px solid var(--dsw-alias-border-l2,var(--wp-panel-border));background-color:var(--dsw-alias-bg-module-platform,rgba(127,127,127,.06));color:var(--dsw-alias-label-primary,var(--wp-text));border-radius:8px;padding:5px 30px 5px 10px;font:inherit;font-size:12px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238892a0' stroke-width='1.5'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;cursor:pointer}
 .wss-fit-mode:focus-visible,.wss-quality:focus-visible,.wss-type-filter:focus-visible,.wss-sort:focus-visible,.wss-rotation-interval:focus-visible,.wss-rotation-order:focus-visible,.wss-userprop-select:focus-visible{outline:2px solid var(--wp-accent);outline-offset:1px}

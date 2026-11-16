@@ -151,6 +151,8 @@ export function bootstrap(ctx?: any): void {
     if (!layer) return;
     layer.setOverlayOpacity(s.overlayOpacity);
     layer.setBlur(s.blurEnabled, s.blurRadius);
+    // 对话区毛玻璃：只加文字列玻璃，不压暗壁纸（关闭时文字色回壁纸亮度反色）。
+    layer.setChatGlass(s.chatGlassEnabled, s.chatGlassStrength);
     layer.setKenBurns(s.kenBurns);
     layer.setFitMode(s.fitMode);
     // 声音总开关同样下发背景层：视频壁纸的音轨不归渲染器管（开机动画期间强制静音）。

@@ -27,6 +27,10 @@ export interface ClientSettings {
     overlayOpacity: number;
     blurEnabled: boolean;
     blurRadius: number;
+    /** 对话区文字列毛玻璃（可选，默认关）：只给 DSH 的 920px 消息列加一层玻璃，壁纸其余区域不压暗。 */
+    chatGlassEnabled: boolean;
+    /** 毛玻璃强度 0-100：同时驱动底色不透明度（20%→82%）与模糊（0→32px），45 = 默认。 */
+    chatGlassStrength: number;
     kenBurns: boolean;
     /** 应用级 Glow（对齐 WE 的 general.user.postprocessing）：整帧亮部发光。 */
     glowEnabled: boolean;

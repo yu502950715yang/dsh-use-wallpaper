@@ -6,7 +6,8 @@ import { readClientSettings, writeClientSettings, getUserPropertyValue, setSetti
 
 const FULL_DEFAULTS = {
   selectedWallpaperId: '', wallpaperDir: '', weAssetsDir: '',
-  overlayOpacity: 0.35, blurEnabled: false, blurRadius: 12, kenBurns: true,
+  overlayOpacity: 0.35, blurEnabled: false, blurRadius: 12,
+  chatGlassEnabled: false, chatGlassStrength: 45, kenBurns: true,
   glowEnabled: true, glowThreshold: 0.65, glowStrength: 0.35,
   paused: false, pauseOnHidden: true, qualityScale: 1, soundEnabled: true, soundVolume: 1,
   mediaIntegrationEnabled: true,
@@ -180,6 +181,11 @@ describe('DEFAULTS（客户端缺省值）', () => {
     expect(DEFAULTS.rotationOrder).toBe('sequential');
     expect(DEFAULTS.frameCacheEnabled).toBe(true);
   });
+  // 对话区毛玻璃（2026-11-16）：默认关 = 零回归；强度 45 = 不透明度 48% + 模糊 14px。
+  it('DEFAULTS 对话区毛玻璃：默认关、强度 45', () => {
+    expect(DEFAULTS.chatGlassEnabled).toBe(false);
+    expect(DEFAULTS.chatGlassStrength).toBe(45);
+  });
   // 媒体集成（Task 7）：默认开 = 与 host schema 默认一致；关闭后渲染器停轮询并隐藏媒体层。
   it('DEFAULTS 含媒体集成开关（默认开启）', () => {
     expect(DEFAULTS.mediaIntegrationEnabled).toBe(true);
@@ -264,3 +270,4 @@ describe('getUserPropertyValue（WE 用户属性 localStorage 存储）', () => 
     expect(ls.getItem).toHaveBeenCalledWith('we:userprop:clouds');
   });
 });
+

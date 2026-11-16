@@ -71,6 +71,15 @@ describe('styles 主题适配', () => {
   it('整区 scrollBody 不 blur（壁纸在气泡间清晰可见，不遮挡背景）', () => {
     expect(WALLPAPER_CSS).not.toMatch(/\[class\*="scrollBody"\]\s*\{[^}]*backdrop-filter/);
   });
+  it('对话区毛玻璃（2026-11-16）：只给 920px 文字列加玻璃，且由 data-we-glass 门控（默认关 = 零命中）', () => {
+    // 命中面：对话滚动区里的消息列（DSH 的 .V4vHZW_column），不是 scrollBody、不是每条消息。
+    expect(WALLPAPER_CSS).toMatch(/body\[data-we-wallpaper\]\[data-we-glass\]\s*\[data-conversation-scroll\]\s*\[class\*="_column"\]\{[^}]*backdrop-filter:blur\(var\(--wp-glass-blur/);
+    // 未挂 data-we-glass 时不得有规则落到消息列（默认态与现状逐字节等价）。
+    expect(WALLPAPER_CSS).not.toMatch(/body\[data-we-wallpaper\]\s*\[data-conversation-scroll\]\s*\[class\*="_column"\]/);
+    // 浅/深两套底色，强度由 --wp-glass-alpha 驱动（0.20–0.82）。
+    expect(WALLPAPER_CSS).toMatch(/--wp-glass-bg:rgba\(252,\s*253,\s*254,\s*var\(--wp-glass-alpha/);
+    expect(WALLPAPER_CSS).toMatch(/--wp-glass-bg:rgba\(48,\s*49,\s*54,\s*var\(--wp-glass-alpha/);
+  });
   it('侧边栏无 blur（对话框 portal 在下面会塌陷）；填充用 --dsw-specific-sidebar-fill 半透明（壁纸透出）', () => {
     expect(WALLPAPER_CSS).not.toMatch(/\[class\*="sidebarCol"\]\s*\{[^}]*backdrop-filter/);
     // 侧边栏根（hHd-Xa_root）与列都用 --dsw-specific-sidebar-fill，半透明让壁纸透出

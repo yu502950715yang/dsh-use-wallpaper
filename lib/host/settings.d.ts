@@ -6,6 +6,8 @@ export declare const WallpaperSettingsSchema: z<Schemastery.ObjectS<NoInfer<{
     overlayOpacity: z<number, number, "defined">;
     blurEnabled: z<boolean, boolean, "defined">;
     blurRadius: z<number, number, "defined">;
+    chatGlassEnabled: z<boolean, boolean, "defined">;
+    chatGlassStrength: z<number, number, "defined">;
     kenBurns: z<boolean, boolean, "defined">;
     glowEnabled: z<boolean, boolean, "defined">;
     glowThreshold: z<number, number, "defined">;
@@ -44,6 +46,8 @@ export declare const WallpaperSettingsSchema: z<Schemastery.ObjectS<NoInfer<{
     overlayOpacity: z<number, number, "defined">;
     blurEnabled: z<boolean, boolean, "defined">;
     blurRadius: z<number, number, "defined">;
+    chatGlassEnabled: z<boolean, boolean, "defined">;
+    chatGlassStrength: z<number, number, "defined">;
     kenBurns: z<boolean, boolean, "defined">;
     glowEnabled: z<boolean, boolean, "defined">;
     glowThreshold: z<number, number, "defined">;
@@ -83,6 +87,8 @@ export declare const Config: z<NoInfer<Schemastery.ObjectS<NoInfer<{
     overlayOpacity: z<number, number, "defined">;
     blurEnabled: z<boolean, boolean, "defined">;
     blurRadius: z<number, number, "defined">;
+    chatGlassEnabled: z<boolean, boolean, "defined">;
+    chatGlassStrength: z<number, number, "defined">;
     kenBurns: z<boolean, boolean, "defined">;
     glowEnabled: z<boolean, boolean, "defined">;
     glowThreshold: z<number, number, "defined">;
@@ -121,6 +127,8 @@ export declare const Config: z<NoInfer<Schemastery.ObjectS<NoInfer<{
     overlayOpacity: z<number, number, "defined">;
     blurEnabled: z<boolean, boolean, "defined">;
     blurRadius: z<number, number, "defined">;
+    chatGlassEnabled: z<boolean, boolean, "defined">;
+    chatGlassStrength: z<number, number, "defined">;
     kenBurns: z<boolean, boolean, "defined">;
     glowEnabled: z<boolean, boolean, "defined">;
     glowThreshold: z<number, number, "defined">;

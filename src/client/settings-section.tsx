@@ -1097,6 +1097,50 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
             <label className="wss-row">
               <input
                 type="checkbox"
+                className="wss-chat-glass"
+                checked={settings.chatGlassEnabled}
+                onChange={(e) => applyRuntime({ chatGlassEnabled: e.target.checked })}
+              />
+              对话区毛玻璃
+            </label>
+            <label className="wss-slider">
+              <span className="wss-slider-head">
+                <span>毛玻璃强度</span>
+                <span className="wss-effect-value">{settings.chatGlassStrength}%</span>
+              </span>
+              <input
+                type="range"
+                className="wss-chat-glass-strength"
+                min={0}
+                max={100}
+                step={1}
+                value={settings.chatGlassStrength}
+                disabled={!settings.chatGlassEnabled}
+                onChange={(e) => applyRuntime({ chatGlassStrength: Number(e.target.value) })}
+              />
+            </label>
+            {settings.chatGlassEnabled && (
+              <p className="wss-section-desc wss-glass-hint">
+                {settings.overlayOpacity > 0 ? (
+                  <>
+                    毛玻璃只负责文字列的可读性；上面的「遮罩不透明度」压暗的是<b>整张壁纸</b>，想让壁纸恢复原亮度可以
+                    <button
+                      type="button"
+                      className="wss-glass-scrim-zero"
+                      onClick={() => applyRuntime({ overlayOpacity: 0 })}
+                    >
+                      设为 0
+                    </button>
+                    。
+                  </>
+                ) : (
+                  <>毛玻璃已开启，遮罩为 0 —— 壁纸保持原亮度。</>
+                )}
+              </p>
+            )}
+            <label className="wss-row">
+              <input
+                type="checkbox"
                 className="wss-kenburns"
                 checked={settings.kenBurns}
                 onChange={(e) => applyRuntime({ kenBurns: e.target.checked })}
