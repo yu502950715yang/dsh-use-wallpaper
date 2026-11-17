@@ -1054,9 +1054,14 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
       {settings && (
         <section className="wss-section" id="wss-anchor-appearance">
           <h4 className="wss-section-title">显示效果</h4>
+          {/* 显示效果分四组：壁纸画面 / 对话区 / 光晕 / 媒体集成（2026-11-17 重排，卡片式分区） */}
+          <div className="wss-groups">
           {/* 壁纸画面：整张壁纸的观感（遮罩 / 模糊 / 适配 / Ken Burns） */}
-          <div className="wss-effects-group">
-            <h5 className="wss-effects-subtitle">壁纸画面</h5>
+          <section className="wss-group-card" aria-labelledby="wss-group-picture">
+            <div className="wss-group-head">
+              <h5 className="wss-group-title" id="wss-group-picture">壁纸画面</h5>
+              <span className="wss-group-hint">整张壁纸</span>
+            </div>
             <div className="wss-effects">
               <label className="wss-slider">
                 <span className="wss-slider-head">
@@ -1130,10 +1135,13 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
                 Ken Burns 缓慢缩放
               </label>
             </div>
-          </div>
+          </section>
           {/* 对话区：只糊文字列，不压暗壁纸（与上面的「整张壁纸模糊」是两件事） */}
-          <div className="wss-effects-group">
-            <h5 className="wss-effects-subtitle">对话区</h5>
+          <section className="wss-group-card wss-group-card-accent" aria-labelledby="wss-group-chat">
+            <div className="wss-group-head">
+              <h5 className="wss-group-title" id="wss-group-chat">对话区</h5>
+              <span className="wss-group-hint">只糊文字列</span>
+            </div>
             <div className="wss-effects">
               <label className="wss-row">
                 <input
@@ -1190,8 +1198,13 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
                 </p>
               )}
             </div>
-          </div>
-          <div className="wss-glow">
+          </section>
+          <section className="wss-group-card" aria-labelledby="wss-group-glow">
+            <div className="wss-group-head">
+              <h5 className="wss-group-title" id="wss-group-glow">光晕</h5>
+              <span className="wss-group-hint">仅 scene 壁纸</span>
+            </div>
+            <div className="wss-effects">
             <label className="wss-glow-row">
               <input
                 type="checkbox"
@@ -1231,10 +1244,16 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
                 onChange={(e) => applyRuntime({ glowStrength: Number(e.target.value) })}
               />
             </label>
-          </div>
+            </div>
+          </section>
           {/* 媒体集成（spec §4.5：显示效果组）：开关 + 状态/隐私说明。状态行在未选壁纸时也可读；
               失败 reason（非 Windows / 无 PowerShell / watcher 失败）换成对应提示，不显示曲目信息。 */}
-          <div className="wss-media-block">
+          <section className="wss-group-card" aria-labelledby="wss-group-media">
+            <div className="wss-group-head">
+              <h5 className="wss-group-title" id="wss-group-media">媒体集成</h5>
+              <span className="wss-group-hint">Windows · 只读</span>
+            </div>
+            <div className="wss-media-block">
             <label className="wss-glow-row">
               <input
                 type="checkbox"
@@ -1250,6 +1269,8 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
             >
               {mediaIntegrationHint(mediaEnabled, mediaStatus)}
             </p>
+            </div>
+          </section>
           </div>
         </section>
       )}
