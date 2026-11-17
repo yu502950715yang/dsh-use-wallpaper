@@ -667,7 +667,7 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
       <section className="wss-section">
         <header className="wss-section-head">
           <h4 className="wss-section-title">壁纸库</h4>
-          <span className="wss-count">{wallpapers.length} 张</span>
+          <span className="wss-section-hint">{wallpapers.length} 张</span>
         </header>
         {/* 壁纸库为空时工具栏（搜索/筛选）没有可操作对象，直接隐藏，把首屏留给素材目录卡 */}
         {wallpapers.length > 0 && (
@@ -886,7 +886,10 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
           提交后写 localStorage 并重装配当前壁纸（渲染器装配时读取属性值）。 */}
       {selectedIsScene && visibleProperties.length > 0 && (
         <section className="wss-section wss-userprops">
-          <h4 className="wss-section-title">壁纸属性</h4>
+          <header className="wss-section-head">
+            <h4 className="wss-section-title">壁纸属性</h4>
+            <span className="wss-section-hint">当前壁纸</span>
+          </header>
           <p className="wss-section-desc">切换后生效（会重新装配当前壁纸）。</p>
           <div className="wss-userprops-list">
             {visibleProperties.map((property) => {
@@ -1026,7 +1029,10 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
       {/* 系统音频（v0.9 P1）：仅 supportsaudioprocessing 的 scene 壁纸；浏览器授权后驱动音频可视化。 */}
       {selectedIsScene && audioProcessing && (
         <section className="wss-section wss-sysaudio">
-          <h4 className="wss-section-title">系统音频</h4>
+          <header className="wss-section-head">
+            <h4 className="wss-section-title">系统音频</h4>
+            <span className="wss-section-hint">仅浏览器</span>
+          </header>
           <p className="wss-section-desc">
             用系统播放的声音驱动壁纸的音频可视化。点下面按钮后，在浏览器弹窗里选择「整个屏幕」并勾选「共享音频」；
             共享期间会持续采集系统声音（不上传、不落盘），可随时停止。桌面版 App 受宿主权限限制不可用，
@@ -1049,20 +1055,16 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
         </section>
       )}
       </div>
-      <div className="wss-pair">
-      {/* 显示效果：壁纸画面观感（遮罩/模糊/KenBurns/适配模式）与应用级 Glow，改完立即生效、不必重选壁纸 */}
+      <div className="wss-group">
+      {/* 显示效果拆成四张同级卡片（2026-11-17 统一「一张卡 = 一个主题」）：壁纸画面 / 对话区 / 光晕 / 媒体集成 */}
       {settings && (
+        <>
         <section className="wss-section" id="wss-anchor-appearance">
-          <h4 className="wss-section-title">显示效果</h4>
-          {/* 显示效果分四组：壁纸画面 / 对话区 / 光晕 / 媒体集成（2026-11-17 重排，卡片式分区） */}
-          <div className="wss-groups">
-          {/* 壁纸画面：整张壁纸的观感（遮罩 / 模糊 / 适配 / Ken Burns） */}
-          <section className="wss-group-card" aria-labelledby="wss-group-picture">
-            <div className="wss-group-head">
-              <h5 className="wss-group-title" id="wss-group-picture">壁纸画面</h5>
-              <span className="wss-group-hint">整张壁纸</span>
-            </div>
-            <div className="wss-effects">
+          <header className="wss-section-head">
+            <h4 className="wss-section-title">壁纸画面</h4>
+            <span className="wss-section-hint">整张壁纸</span>
+          </header>
+          <div className="wss-effects">
               <label className="wss-slider">
                 <span className="wss-slider-head">
                   <span>遮罩不透明度</span>
@@ -1135,14 +1137,14 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
                 Ken Burns 缓慢缩放
               </label>
             </div>
-          </section>
-          {/* 对话区：只糊文字列，不压暗壁纸（与上面的「整张壁纸模糊」是两件事） */}
-          <section className="wss-group-card wss-group-card-accent" aria-labelledby="wss-group-chat">
-            <div className="wss-group-head">
-              <h5 className="wss-group-title" id="wss-group-chat">对话区</h5>
-              <span className="wss-group-hint">只糊文字列</span>
-            </div>
-            <div className="wss-effects">
+        </section>
+        {/* 对话区：只糊文字列，不压暗壁纸（与上面的「整张壁纸模糊」是两件事） */}
+        <section className="wss-section wss-section-accent">
+          <header className="wss-section-head">
+            <h4 className="wss-section-title">对话区</h4>
+            <span className="wss-section-hint">只糊文字列</span>
+          </header>
+          <div className="wss-effects">
               <label className="wss-row">
                 <input
                   type="checkbox"
@@ -1198,13 +1200,13 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
                 </p>
               )}
             </div>
-          </section>
-          <section className="wss-group-card" aria-labelledby="wss-group-glow">
-            <div className="wss-group-head">
-              <h5 className="wss-group-title" id="wss-group-glow">光晕</h5>
-              <span className="wss-group-hint">仅 scene 壁纸</span>
-            </div>
-            <div className="wss-effects">
+        </section>
+        <section className="wss-section">
+          <header className="wss-section-head">
+            <h4 className="wss-section-title">光晕</h4>
+            <span className="wss-section-hint">仅 scene 壁纸</span>
+          </header>
+          <div className="wss-effects">
             <label className="wss-glow-row">
               <input
                 type="checkbox"
@@ -1245,15 +1247,15 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
               />
             </label>
             </div>
-          </section>
-          {/* 媒体集成（spec §4.5：显示效果组）：开关 + 状态/隐私说明。状态行在未选壁纸时也可读；
-              失败 reason（非 Windows / 无 PowerShell / watcher 失败）换成对应提示，不显示曲目信息。 */}
-          <section className="wss-group-card" aria-labelledby="wss-group-media">
-            <div className="wss-group-head">
-              <h5 className="wss-group-title" id="wss-group-media">媒体集成</h5>
-              <span className="wss-group-hint">Windows · 只读</span>
-            </div>
-            <div className="wss-media-block">
+        </section>
+        {/* 媒体集成（spec §4.5：显示效果组）：开关 + 状态/隐私说明。状态行在未选壁纸时也可读；
+            失败 reason（非 Windows / 无 PowerShell / watcher 失败）换成对应提示，不显示曲目信息。 */}
+        <section className="wss-section">
+          <header className="wss-section-head">
+            <h4 className="wss-section-title">媒体集成</h4>
+            <span className="wss-section-hint">Windows · 只读</span>
+          </header>
+          <div className="wss-media-block">
             <label className="wss-glow-row">
               <input
                 type="checkbox"
@@ -1269,15 +1271,17 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
             >
               {mediaIntegrationHint(mediaEnabled, mediaStatus)}
             </p>
-            </div>
-          </section>
           </div>
         </section>
+        </>
       )}
       {/* 自动轮播（v0.8）：开启后按间隔自动切换；收藏 ≥2 张时只轮播收藏，池不足 2 张时明示原因。 */}
       {settings && (
         <section className="wss-section" id="wss-anchor-playback">
-          <h4 className="wss-section-title">轮播</h4>
+          <header className="wss-section-head">
+            <h4 className="wss-section-title">轮播</h4>
+            <span className="wss-section-hint">自动切换</span>
+          </header>
           <div className="wss-rotation">
             <label className="wss-glow-row">
               <input
@@ -1499,7 +1503,10 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
       </details>
       {/* 关于：常驻的 Star / 反馈 / 文档入口。放面板最末，不打扰日常操作。 */}
       <section className="wss-section wss-about" aria-label="关于">
-        <h4 className="wss-section-title">关于</h4>
+        <header className="wss-section-head">
+          <h4 className="wss-section-title">关于</h4>
+          <span className="wss-section-hint">MIT · 开源</span>
+        </header>
         <p className="wss-section-desc">
           MIT 开源。如果它让你的界面好看了，点个 Star 就是最大的支持；哪张壁纸渲染不正常，带 Workshop ID 提个 Issue 即可。
         </p>

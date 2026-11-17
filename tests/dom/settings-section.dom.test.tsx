@@ -1616,14 +1616,15 @@ describe('壁纸属性（四类型控件）', () => {
 describe('媒体集成状态行（B1）', () => {
   const statusEl = () => container.querySelector('.wss-media-status') as HTMLElement | null;
 
-  it('开关在「显示效果」组；未注册 handler 时显示隐私说明（不显示曲目）', async () => {
+  it('开关在独立的「媒体集成」卡；未注册 handler 时显示隐私说明（不显示曲目）', async () => {
     mount();
     await flush();
-    const appearance = container.querySelector('#wss-anchor-appearance') as HTMLElement | null;
-    expect(appearance).toBeTruthy();
-    const box = appearance!.querySelector('.wss-media-integration') as HTMLInputElement | null;
+    const box = container.querySelector('.wss-media-integration') as HTMLInputElement | null;
     expect(box).toBeTruthy();
     expect(box!.checked).toBe(true);
+    // 显示效果拆成同级卡片（2026-11-17）：媒体集成是独立卡，不再挂在「壁纸画面」里。
+    expect(box!.closest('section.wss-section')?.textContent).toContain('媒体集成');
+    expect(container.querySelector('#wss-anchor-appearance .wss-media-integration')).toBeNull();
     // 原「性能与省电」卡片不再承载媒体开关（spec §4.5 / TESTING M6 的入口路径）。
     expect(container.querySelector('.wss-sound-row .wss-media-integration')).toBeNull();
     const text = statusEl()!.textContent ?? '';

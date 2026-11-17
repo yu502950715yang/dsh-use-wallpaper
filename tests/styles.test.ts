@@ -25,7 +25,6 @@ describe('styles 主题适配', () => {
     expect(WALLPAPER_CSS).toContain('@container (max-width:620px){.wss-hero-media{flex:0 0 160px;width:160px}}');
     expect(WALLPAPER_CSS).toContain('@container (max-width:440px){.wss-hero{flex-direction:column');
     expect(WALLPAPER_CSS).not.toContain('@container (max-width:620px){.wss-hero{');
-    expect(WALLPAPER_CSS).toContain('@container (max-width:600px){.wss-pair{grid-template-columns:minmax(0,1fr)}}');
   });
   it('设置面板 UI 用 CSS 变量而非硬编码深色（wss-root）', () => {
     expect(WALLPAPER_CSS).toMatch(/\.wss-root\s*{[^}]*var\(--dsw-alias-label-primary/);
