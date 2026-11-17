@@ -38,4 +38,4 @@ Status: implemented
 
 ## Affected repositories
 
-- `dsh-use-wallpaper`：`src/client/{types,settings,background-layer,index,styles,settings-section}`、`src/host/settings.ts`、测试 4 个文件、README/CHANGELOG/AGENT.md。
+- `dsh-use-wallpaper` 分支 `master` commits `0f8bb81`
