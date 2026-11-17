@@ -17,6 +17,7 @@ export const WallpaperSettingsSchema = z.object({
   chatGlassStrength: z.number().min(0).max(100).default(45),
   kenBurns: z.boolean().default(true),
   // 应用级 Glow（整帧亮部发光）：阈值/强度默认值与 client 的 DEFAULTS 一致（2026-09-21 用户真机定档）。
+  // 2026-11-17 起 bright-pass 按 WE 口径计算（saturate(max-t)）：同值比旧版淡约 2.9 倍，属有意行为变化。
   glowEnabled: z.boolean().default(true),
   glowThreshold: z.number().min(0).max(0.99).default(0.65),
   glowStrength: z.number().min(0).max(4).default(0.35),

@@ -239,6 +239,16 @@
     - **边界（如实）**：① 数字**尺寸随之改变**（quad 从 702×301 变 884×228）—— 这是正确行为（桌面端就是这个字形宽度），不是回归；② 该字体的 `init()` 阴影层仍不执行（上一条边界③，未动）；③ 生效需**重启 `dsh web`**（host 侧改动）；④ 只回退 `assets/` 一层，未做 lwe 的 cwd 挂载（WE 的最后一级挂载点，本库无依赖它的样本）；⑤ 未做真机 GUI 目检。
 
 
+29. **亮部口径与桌面不一致 ⇒ 大面积「死白」（2026-11-17；用户报告 `3817739578`「Lake at sunset[无雨]」在 DSH 里左上更刺眼）**：
+    - **现象与量化**：这张壁纸的太阳在左上，bloom（作者参数 `bloomstrength 0.35` / `bloomthreshold 0.5`）与应用级 Glow（`0.65/0.35`）两级串联后，左上 1/4 的**纯白（luma>250）占比 21.4%**；同帧桌面 WE（`postprocessing: enabled`）只有 **10.1%**。全图 6.6% vs 2.4%。
+    - **根因（两层）**：① **叠加**：`threejs-player.ts` 的帧体是「主场景 → bloom → Glow → 画布」，两张后处理各跑一遍 bright-pass + 三级模糊 + 加法回叠（`bloom-stage.ts` 只是 `createGlowStage` 的薄封装）；② **量级**：`glow-stage.ts` 的 bright-pass 是 `(luma − t) / (1 − t)`，而 WE `assets/shaders/downsample_quarter_bloom.frag` 是 `saturate(max(r,g,b) − t)` —— 差 `1/(1−t)` 倍（阈 0.5 → 2×，0.65 → 2.86×），且 WE 用 **max 通道**判阈值、我们用 luma。实测单开任一级就已接近桌面 WE 的合计，两级相加翻倍。
+    - **改动**：新增 `glow-math.ts`（纯函数：`brightPassFactor` / `shoulderCurve` / `softShoulder`），`glow-stage.ts` 的 `BRIGHT_FRAG` / `COMPOSITE_FRAG` 逐式镜像：bright-pass 改 `clamp(max(r,g,b) − t, 0, 1)`；composite 加软膝（`< 0.9` 恒等、之上指数压向 1）并取 `max(base, …)`（**不压暗本来纯白的底图**，否则 255 会被压成 246）。**bloom 的 strength/threshold 仍按 `scene.json` 原样使用**（WE 语义下这才正确）。
+    - **验收**：`tests/glow-math.test.ts`（15 项：阈值边界、max 通道 vs luma、软膝恒等段/C1/单调/渐近/不压暗纯白）+ `tests/glow-stage.test.ts` 新增 3 项 GLSL 源码契约（不得再出现 `1.0 - uThreshold` 的除法、必须含软膝与 `max(base, …)`、`uKnee` uniform 真的装上）。渲染实测（1920×1040，同动画相位，`research/_lake-ab2.mjs`）：左上 1/4 纯白 **21.4% → 9.8%**（桌面 WE 10.1%）、全图 **6.6% → 2.4%**（桌面 2.4%）；纯白区域 bbox 从 `[201,167]` 收回到 `[342,272]`（不再糊到窗口左上角）。
+    - **行为变化（有意）**：同一组光晕滑杆值比旧口径淡 `1/(1−t)` 倍（默认 0.65 → 2.86×），`0.35` 现在是「清淡档」，想要旧观感调到 ≈`1.0`；README / AGENT.md §7.42③ / CHANGELOG 已同步。
+    - **顺带修掉的判据缺陷**：`e2e/harness/harness-object-effects-entry.mjs` 的 Glow 注入写死了 1.0 已移除的旧命名空间 `wallpaper-engine` ⇒ `glow=off` 静默失效、`e2e:verify-v081` 的「Glow=off」两臂其实都开着（该 e2e 自 1.0 起一直是红的：`present=true` 两条 FAIL + 精灵表判据在「亮着的光晕」上量出 2 个亮行组）。改为从 `settings.ts` 导入 `SETTINGS_NS` 后三项判据全 PASS（bloom A/B 差值 1.003pp ≥ 0.80）。
+    - **边界（如实）**：① **叠加本身没改**（bloom 与应用级 Glow 仍然都跑）——「有 bloom 的壁纸默认不叠光晕」是另一条未采纳的方案；② 三级等权模糊的宽度仍与 WE 的 quarter + 13-tap 链不同，中间距离的光晕略亮（径向剖面上 150–400px 仍高 0–5 luma）；③ 山体/天空比桌面 WE 略暗约 5 luma（WE 的后处理铺得更宽，本方案不追）；④ 改完需重载 DSH 窗口（插件加载 `dist/client.js`，不是 HMR）。
+
+
 ### ~~备用 wasm / JS 路径~~ ⇒ **已删除（2026-09-22）**
 
 `wasm-renderer.ts` / `scene-renderer.ts` 及其 Rust 侧 `wasm/src/render/**` 已整体移除（见下面第 14 条）。

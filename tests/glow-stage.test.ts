@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
-import { GLOW_DEFAULTS, normalizeGlowOptions, glowLevelSizes, createGlowStage } from '../src/client/glow-stage.js';
+import { GLOW_DEFAULTS, normalizeGlowOptions, glowLevelSizes, createGlowStage, BRIGHT_FRAG, COMPOSITE_FRAG } from '../src/client/glow-stage.js';
+import { SHOULDER_KNEE } from '../src/client/glow-math.js';
 
 describe('normalizeGlowOptions（参数 clamp：越界 / 非法一律收敛，不抛）', () => {
   it('缺省 = 2026-09-21 用户真机定档 (0.65 / 0.35)', () => {
@@ -433,5 +434,33 @@ describe('createGlowStage（RT 池与 pass 链）', () => {
     stage.dispose();
     expect((stage as unknown as { rtCount: number }).rtCount).toBe(0);
     expect(() => stage.apply(renderer, scene, camera)).not.toThrow();
+  });
+});
+
+// 2026-11-17 A 方案：GLSL 在 node 里无法执行 ⇒ 用源码契约钉住「公式与 glow-math.ts 同源」，
+// 防止有人把 bright-pass 改回 `(luma - t) / (1 - t)`（那会把 bloom 放大 2×、Glow 放大 2.86×）。
+describe('GLSL 源码契约（WE 口径 bright-pass + 软膝）', () => {
+  it('bright-pass 用 max 通道 + saturate，不再除以 (1 - threshold)', () => {
+    expect(BRIGHT_FRAG).toContain('max(max(c.r, c.g), c.b) - uThreshold');
+    expect(BRIGHT_FRAG).not.toContain('1.0 - uThreshold');
+    expect(BRIGHT_FRAG).not.toContain('0.299'); // 不再用 luma 判阈值
+  });
+
+  it('composite 带软膝：knee 恒等段 + exp 压肩 + max(base, …) 保住纯白', () => {
+    expect(COMPOSITE_FRAG).toContain('uKnee');
+    expect(COMPOSITE_FRAG).toContain('exp(-over)');
+    expect(COMPOSITE_FRAG).toContain('max(base, summed)');
+  });
+
+  it('uKnee uniform 真的装上了（值 = SHOULDER_KNEE，不是硬编码在 shader 里）', () => {
+    const { renderer, calls } = mockRenderer();
+    const stage = createGlowStage(1280, 720)!;
+    stage.apply(renderer, scene, camera);
+    // 最后一次 render 的 quad scene 上挂着 composite 材质（runPass 逐 pass 换 material）
+    const quadScene = calls.scenes[calls.scenes.length - 1] as THREE.Scene;
+    const mesh = quadScene.children[0] as THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>;
+    expect(mesh.material.fragmentShader).toBe(COMPOSITE_FRAG);
+    expect(mesh.material.uniforms.uKnee.value).toBe(SHOULDER_KNEE);
+    stage.dispose();
   });
 });

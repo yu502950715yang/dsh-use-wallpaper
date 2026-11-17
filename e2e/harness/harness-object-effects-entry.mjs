@@ -40,7 +40,7 @@ import * as THREE from 'three';
 import { createThreeSceneRenderer } from '../../lib/client/three-renderer.js';
 import { ThreeScenePlayer } from '../../lib/client/threejs-player.js';
 import { ObjectEffectStage } from '../../lib/client/object-effects.js';
-import { setSettingsCtx } from '../../lib/client/settings.js';
+import { setSettingsCtx, SETTINGS_NS } from '../../lib/client/settings.js';
 
 const q = new URLSearchParams(location.search);
 
@@ -83,13 +83,15 @@ const WASM_NONE = q.get('wasm') === 'none';
 // URL `glow=on|off` 在**创建 renderer 之前**注入 ⇒ 加载即生效。⚠️ 必须走 URL：`Page.navigate`
 // 会重置模块态，页内注入的值活不过一次导航（跨页开/关对照只能靠它）。
 const GLOW_PARAM = q.get('glow');
+// ⚠️ ns 必须用生产常量（1.0 起是 `dsh-wallpaper-engine`）：写死旧短名会让注入静默失效，
+// 判据退化成「开 vs 开」（2026-11-17 才发现：verify-v081 的 Glow=off 两臂其实都开着）。
 const applyGlowCtx = (on) => {
   setSettingsCtx({
     remote: {
       settings: {
         describe: async () => ({
           ok: true,
-          value: { namespaces: [{ ns: 'wallpaper-engine', value: { glowEnabled: on } }] },
+          value: { namespaces: [{ ns: SETTINGS_NS, value: { glowEnabled: on } }] },
         }),
       },
     },

@@ -3412,7 +3412,7 @@ var import_react3 = require("react");
 var import_react = require("react");
 
 // src/client/settings.ts
-var NS = "dsh-wallpaper-engine";
+var SETTINGS_NS = "dsh-wallpaper-engine";
 var DEFAULTS = {
   selectedWallpaperId: "",
   wallpaperDir: "",
@@ -3424,8 +3424,9 @@ var DEFAULTS = {
   chatGlassEnabled: false,
   chatGlassStrength: 45,
   kenBurns: true,
-  // 光晕默认值 = 2026-09-21 用户在真机面板上定档（低阈值保留光晕、低强度压住过曝；
-  // 旧 A 档 0.65/1.0 在亮部多的壁纸上过曝，见 AGENT.md §7.1）。
+  // 光晕默认值 = 2026-09-21 用户在真机面板上定档（低阈值保留光晕、低强度压住过曝）。
+  // ⚠️ 2026-11-17 起 bright-pass 改成 WE 口径（saturate(max-t)，不除 (1-t)）：同一组数比旧版
+  // 淡约 1/(1-t) 倍（0.65 阈值 → 2.86×），0.35 现在是「清淡档」，想要旧观感调到 ≈1.0。
   glowEnabled: true,
   glowThreshold: 0.65,
   glowStrength: 0.35,
@@ -3482,7 +3483,7 @@ async function readClientSettings() {
       const value = resp?.ok ? resp.value : void 0;
       if (typeof value === "object" && value !== null) {
         const namespaces = value.namespaces;
-        const nsValue = namespaces?.find((n) => n.ns === NS)?.value;
+        const nsValue = namespaces?.find((n) => n.ns === SETTINGS_NS)?.value;
         if (typeof nsValue === "object" && nsValue !== null) {
           lastGood = { ...lastGood ?? DEFAULTS, ...nsValue };
           return { ...lastGood };
@@ -3497,14 +3498,14 @@ async function writeClientSettings(patch) {
   const remote = settingsRemote();
   if (!remote) return false;
   try {
-    const resp = await remote.update(NS, patch, void 0);
+    const resp = await remote.update(SETTINGS_NS, patch, void 0);
     if (resp && resp.ok === false) {
-      console.warn(`[wallpaper-engine] \u8BBE\u7F6E\u5199\u5165\u5931\u8D25\uFF08ns=${NS}\uFF09\uFF1A`, resp.error);
+      console.warn(`[wallpaper-engine] \u8BBE\u7F6E\u5199\u5165\u5931\u8D25\uFF08ns=${SETTINGS_NS}\uFF09\uFF1A`, resp.error);
       return false;
     }
     return true;
   } catch (error) {
-    console.warn(`[wallpaper-engine] \u8BBE\u7F6E\u5199\u5165\u5931\u8D25\uFF08ns=${NS}\uFF09\uFF1A`, error);
+    console.warn(`[wallpaper-engine] \u8BBE\u7F6E\u5199\u5165\u5931\u8D25\uFF08ns=${SETTINGS_NS}\uFF09\uFF1A`, error);
     return false;
   }
 }
@@ -33595,6 +33596,9 @@ var ObjectEffectStage = class {
   }
 };
 
+// src/client/glow-math.ts
+var SHOULDER_KNEE = 0.9;
+
 // src/client/glow-stage.ts
 var GLOW_DEFAULTS = { threshold: 0.65, strength: 0.35 };
 var THRESHOLD_MAX = 0.99;
@@ -33634,8 +33638,8 @@ uniform float uThreshold;
 varying vec2 vUv;
 void main() {
   vec3 c = texture2D(tSrc, vUv).rgb;
-  float luma = dot(c, vec3(0.299, 0.587, 0.114));
-  float k = max(0.0, luma - uThreshold) / max(1e-6, 1.0 - uThreshold);
+  // WE downsample_quarter_bloom\uFF1Asaturate(max(rgb) - threshold)\uFF1B\u4E0D\u9664 (1 - t)\u3001\u4E0D\u7528 luma \u5224\u9608\u503C
+  float k = clamp(max(max(c.r, c.g), c.b) - uThreshold, 0.0, 1.0);
   gl_FragColor = vec4(c * k, 1.0);
 }
 `;
@@ -33665,11 +33669,19 @@ uniform sampler2D tL1;
 uniform sampler2D tL2;
 uniform sampler2D tL3;
 uniform float uStrength;
+uniform float uKnee;
 varying vec2 vUv;
+vec3 shoulder(vec3 x) {
+  vec3 over = max(x - uKnee, vec3(0.0)) / (1.0 - uKnee);
+  vec3 curve = uKnee + (1.0 - uKnee) * (1.0 - exp(-over));
+  return mix(x, curve, step(vec3(uKnee), x));
+}
 void main() {
   vec3 base = texture2D(tBase, vUv).rgb;
   vec3 glow = (texture2D(tL1, vUv).rgb + texture2D(tL2, vUv).rgb + texture2D(tL3, vUv).rgb) / 3.0;
-  gl_FragColor = vec4(clamp(base + glow * uStrength, 0.0, 1.0), 1.0);
+  // max(base, ...)\uFF1A\u5E95\u56FE\u5DF2\u7ECF\u5230\u767D\u65F6\u4FDD\u6301 1.0\uFF08\u53EA\u538B\u5149\u6655\u65B0\u589E\u7684\u80FD\u91CF\uFF0C\u4E0D\u628A 255 \u538B\u6210\u7070\uFF09
+  vec3 summed = shoulder(base + glow * uStrength);
+  gl_FragColor = vec4(clamp(max(base, summed), 0.0, 1.0), 1.0);
 }
 `;
 var BLUR_RADII = [4, 6, 8];
@@ -33700,7 +33712,7 @@ function createGlowStage(width, height, opts) {
   const brightMat = new ShaderMaterial({ vertexShader: VERT2, fragmentShader: BRIGHT_FRAG, uniforms: { tSrc: { value: null }, uThreshold: { value: options.threshold } }, depthTest: false, depthWrite: false });
   const blurMat = new ShaderMaterial({ vertexShader: VERT2, fragmentShader: BLUR_FRAG, uniforms: { tSrc: { value: null }, uStep: { value: new Vector2() } }, depthTest: false, depthWrite: false });
   const copyMat = new ShaderMaterial({ vertexShader: VERT2, fragmentShader: COPY_FRAG, uniforms: { tSrc: { value: null } }, depthTest: false, depthWrite: false });
-  const compositeMat = new ShaderMaterial({ vertexShader: VERT2, fragmentShader: COMPOSITE_FRAG, uniforms: { tBase: { value: null }, tL1: { value: null }, tL2: { value: null }, tL3: { value: null }, uStrength: { value: options.strength } }, depthTest: false, depthWrite: false });
+  const compositeMat = new ShaderMaterial({ vertexShader: VERT2, fragmentShader: COMPOSITE_FRAG, uniforms: { tBase: { value: null }, tL1: { value: null }, tL2: { value: null }, tL3: { value: null }, uStrength: { value: options.strength }, uKnee: { value: SHOULDER_KNEE } }, depthTest: false, depthWrite: false });
   let baseRT = null;
   let levelRTs = [];
   let levelSizes = [];

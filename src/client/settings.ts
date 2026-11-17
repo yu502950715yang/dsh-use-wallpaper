@@ -8,9 +8,10 @@ import type { UserPropertyValue } from '../shared/types.js';
 // 插件 client 须在 index.ts 的 inject 声明 'remote','remote.settings'，并在
 // bootstrap 时 setSettingsCtx(ctx)，使本模块能经 ctx.remote.settings 访问。
 //
-// ns：1.0 起只支持 DSH ≥0.1.7 的设置命名空间（= profile 条目 id `dsh-wallpaper-engine`）。
+// SETTINGS_NS：1.0 起只支持 DSH ≥0.1.7 的设置命名空间（= profile 条目 id `dsh-wallpaper-engine`）。
 // ≤0.1.6 的旧短名 `wallpaper-engine` 回退已随 1.0 移除（AGENT.md §7.34）。
-const NS = 'dsh-wallpaper-engine';
+// 导出给 e2e harness 用：harness 若写死旧短名，注入的 Glow 开关会静默失效（判据退化成「开 vs 开」）。
+export const SETTINGS_NS = 'dsh-wallpaper-engine';
 
 export const DEFAULTS: ClientSettings = {
   selectedWallpaperId: '', wallpaperDir: '', weAssetsDir: '',
@@ -18,8 +19,9 @@ export const DEFAULTS: ClientSettings = {
   // 对话区毛玻璃（2026-11-16）：默认关；45% = 不透明度 48% + 模糊 14px，壁纸不压暗。
   chatGlassEnabled: false, chatGlassStrength: 45,
   kenBurns: true,
-  // 光晕默认值 = 2026-09-21 用户在真机面板上定档（低阈值保留光晕、低强度压住过曝；
-  // 旧 A 档 0.65/1.0 在亮部多的壁纸上过曝，见 AGENT.md §7.1）。
+  // 光晕默认值 = 2026-09-21 用户在真机面板上定档（低阈值保留光晕、低强度压住过曝）。
+  // ⚠️ 2026-11-17 起 bright-pass 改成 WE 口径（saturate(max-t)，不除 (1-t)）：同一组数比旧版
+  // 淡约 1/(1-t) 倍（0.65 阈值 → 2.86×），0.35 现在是「清淡档」，想要旧观感调到 ≈1.0。
   glowEnabled: true, glowThreshold: 0.65, glowStrength: 0.35,
   paused: false, pauseOnHidden: true, qualityScale: 1,
   // 壁纸音效（sound 对象 + 频谱驱动效果）：默认开启，与桌面 WE 一致；面板可关。
@@ -76,7 +78,7 @@ export async function readClientSettings(): Promise<ClientSettings> {
       const value = resp?.ok ? resp.value : undefined;
       if (typeof value === 'object' && value !== null) {
         const namespaces = (value as { namespaces?: Array<{ ns?: unknown; value?: unknown }> }).namespaces;
-        const nsValue = namespaces?.find((n) => n.ns === NS)?.value;
+        const nsValue = namespaces?.find((n) => n.ns === SETTINGS_NS)?.value;
         if (typeof nsValue === 'object' && nsValue !== null) {
           // 未给的字段由「上次成功值（首次则 DEFAULTS）」补齐：一次读到残缺值也不该翻掉已知的开关。
           lastGood = { ...(lastGood ?? DEFAULTS), ...(nsValue as Partial<ClientSettings>) };
@@ -96,14 +98,14 @@ export async function writeClientSettings(patch: Partial<ClientSettings>): Promi
   if (!remote) return false;
   try {
     // update(ns, patch, revision)：revision 不传（undefined）→ 无条件写。
-    const resp: any = await remote.update(NS, patch, undefined);
+    const resp: any = await remote.update(SETTINGS_NS, patch, undefined);
     if (resp && resp.ok === false) {
-      console.warn(`[wallpaper-engine] 设置写入失败（ns=${NS}）：`, resp.error);
+      console.warn(`[wallpaper-engine] 设置写入失败（ns=${SETTINGS_NS}）：`, resp.error);
       return false;
     }
     return true;
   } catch (error) {
-    console.warn(`[wallpaper-engine] 设置写入失败（ns=${NS}）：`, error);
+    console.warn(`[wallpaper-engine] 设置写入失败（ns=${SETTINGS_NS}）：`, error);
     return false;
   }
 }

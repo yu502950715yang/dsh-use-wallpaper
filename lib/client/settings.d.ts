@@ -1,5 +1,6 @@
 import type { ClientSettings } from './types.js';
 import type { UserPropertyValue } from '../shared/types.js';
+export declare const SETTINGS_NS = "dsh-wallpaper-engine";
 export declare const DEFAULTS: ClientSettings;
 /** 注入 client ctx：bootstrap(ctx) 时调用；无 ctx（node 测试/SSR）时回退默认值。 */
 export declare function setSettingsCtx(ctx: any): void;
