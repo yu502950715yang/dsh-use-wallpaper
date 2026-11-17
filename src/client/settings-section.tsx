@@ -1054,111 +1054,142 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
       {settings && (
         <section className="wss-section" id="wss-anchor-appearance">
           <h4 className="wss-section-title">显示效果</h4>
-          <div className="wss-effects">
-            <label className="wss-slider">
-              <span className="wss-slider-head">
-                <span>遮罩不透明度</span>
-                <span className="wss-effect-value">{settings.overlayOpacity.toFixed(2)}</span>
-              </span>
-              <input
-                type="range"
-                className="wss-overlay-opacity"
-                min={0}
-                max={1}
-                step={0.01}
-                value={settings.overlayOpacity}
-                onChange={(e) => applyRuntime({ overlayOpacity: Number(e.target.value) })}
-              />
-            </label>
-            <label className="wss-row">
-              <input
-                type="checkbox"
-                className="wss-blur-enabled"
-                checked={settings.blurEnabled}
-                onChange={(e) => applyRuntime({ blurEnabled: e.target.checked })}
-              />
-              背景模糊
-            </label>
-            <label className="wss-slider">
-              <span className="wss-slider-head">
-                <span>模糊半径</span>
-                <span className="wss-effect-value">{settings.blurRadius} px</span>
-              </span>
-              <input
-                type="range"
-                className="wss-blur-radius"
-                min={0}
-                max={64}
-                step={1}
-                value={settings.blurRadius}
-                onChange={(e) => applyRuntime({ blurRadius: Number(e.target.value) })}
-              />
-            </label>
-            <label className="wss-row">
-              <input
-                type="checkbox"
-                className="wss-chat-glass"
-                checked={settings.chatGlassEnabled}
-                onChange={(e) => applyRuntime({ chatGlassEnabled: e.target.checked })}
-              />
-              对话区毛玻璃
-            </label>
-            <label className="wss-slider">
-              <span className="wss-slider-head">
-                <span>毛玻璃强度</span>
-                <span className="wss-effect-value">{settings.chatGlassStrength}%</span>
-              </span>
-              <input
-                type="range"
-                className="wss-chat-glass-strength"
-                min={0}
-                max={100}
-                step={1}
-                value={settings.chatGlassStrength}
-                disabled={!settings.chatGlassEnabled}
-                onChange={(e) => applyRuntime({ chatGlassStrength: Number(e.target.value) })}
-              />
-            </label>
-            {settings.chatGlassEnabled && (
-              <p className="wss-section-desc wss-glass-hint">
-                {settings.overlayOpacity > 0 ? (
-                  <>
-                    毛玻璃只负责文字列的可读性；上面的「遮罩不透明度」压暗的是<b>整张壁纸</b>，想让壁纸恢复原亮度可以
-                    <button
-                      type="button"
-                      className="wss-glass-scrim-zero"
-                      onClick={() => applyRuntime({ overlayOpacity: 0 })}
-                    >
-                      设为 0
-                    </button>
-                    。
-                  </>
-                ) : (
-                  <>毛玻璃已开启，遮罩为 0 —— 壁纸保持原亮度。</>
-                )}
-              </p>
-            )}
-            <label className="wss-row">
-              <input
-                type="checkbox"
-                className="wss-kenburns"
-                checked={settings.kenBurns}
-                onChange={(e) => applyRuntime({ kenBurns: e.target.checked })}
-              />
-              Ken Burns 缓慢缩放
-            </label>
-            <label className="wss-row">
-              <span>画面适配</span>
-              <select
-                className="wss-fit-mode"
-                value={settings.fitMode}
-                onChange={(e) => applyRuntime({ fitMode: e.target.value as FitMode })}
-              >
-                <option value="cover">裁剪铺满</option>
-                <option value="contain">完整显示（可能留边）</option>
-                <option value="stretch">拉伸铺满</option>
-              </select>
-            </label>
+          {/* 壁纸画面：整张壁纸的观感（遮罩 / 模糊 / 适配 / Ken Burns） */}
+          <div className="wss-effects-group">
+            <h5 className="wss-effects-subtitle">壁纸画面</h5>
+            <div className="wss-effects">
+              <label className="wss-slider">
+                <span className="wss-slider-head">
+                  <span>遮罩不透明度</span>
+                  <span className="wss-effect-value">{settings.overlayOpacity.toFixed(2)}</span>
+                </span>
+                <input
+                  type="range"
+                  className="wss-overlay-opacity"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={settings.overlayOpacity}
+                  onChange={(e) => applyRuntime({ overlayOpacity: Number(e.target.value) })}
+                />
+              </label>
+              <label className="wss-row">
+                <input
+                  type="checkbox"
+                  className="wss-blur-enabled"
+                  checked={settings.blurEnabled}
+                  onChange={(e) => {
+                    const on = e.target.checked;
+                    // 半径 0 时打开没有视觉效果：补默认 12（2026-11-17）
+                    if (on && settings.blurRadius < 1) applyRuntime({ blurEnabled: true, blurRadius: 12 });
+                    else applyRuntime({ blurEnabled: on });
+                  }}
+                />
+                背景模糊
+              </label>
+              <label className="wss-slider">
+                <span className="wss-slider-head">
+                  <span>模糊半径</span>
+                  <span className="wss-effect-value">{settings.blurRadius} px</span>
+                </span>
+                <input
+                  type="range"
+                  className="wss-blur-radius"
+                  min={0}
+                  max={64}
+                  step={1}
+                  value={settings.blurRadius}
+                  disabled={!settings.blurEnabled}
+                  onChange={(e) => {
+                    const radius = Number(e.target.value);
+                    // 拖到 0 = 关闭整张壁纸模糊（避免「开着但 0px」的死状态）
+                    if (radius < 1) applyRuntime({ blurRadius: 0, blurEnabled: false });
+                    else applyRuntime({ blurRadius: radius });
+                  }}
+                />
+              </label>
+              <label className="wss-row">
+                <span>画面适配</span>
+                <select
+                  className="wss-fit-mode"
+                  value={settings.fitMode}
+                  onChange={(e) => applyRuntime({ fitMode: e.target.value as FitMode })}
+                >
+                  <option value="cover">裁剪铺满</option>
+                  <option value="contain">完整显示（可能留边）</option>
+                  <option value="stretch">拉伸铺满</option>
+                </select>
+              </label>
+              <label className="wss-row">
+                <input
+                  type="checkbox"
+                  className="wss-kenburns"
+                  checked={settings.kenBurns}
+                  onChange={(e) => applyRuntime({ kenBurns: e.target.checked })}
+                />
+                Ken Burns 缓慢缩放
+              </label>
+            </div>
+          </div>
+          {/* 对话区：只糊文字列，不压暗壁纸（与上面的「整张壁纸模糊」是两件事） */}
+          <div className="wss-effects-group">
+            <h5 className="wss-effects-subtitle">对话区</h5>
+            <div className="wss-effects">
+              <label className="wss-row">
+                <input
+                  type="checkbox"
+                  className="wss-chat-glass"
+                  checked={settings.chatGlassEnabled}
+                  onChange={(e) => {
+                    const on = e.target.checked;
+                    // 强度 ≤5% 几乎不可见：打开时补默认 45（2026-11-17）
+                    if (on && settings.chatGlassStrength <= 5) applyRuntime({ chatGlassEnabled: true, chatGlassStrength: 45 });
+                    else applyRuntime({ chatGlassEnabled: on });
+                  }}
+                />
+                对话区毛玻璃
+              </label>
+              <label className="wss-slider">
+                <span className="wss-slider-head">
+                  <span>毛玻璃强度</span>
+                  <span className="wss-effect-value">{settings.chatGlassStrength}%</span>
+                </span>
+                <input
+                  type="range"
+                  className="wss-chat-glass-strength"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={settings.chatGlassStrength}
+                  disabled={!settings.chatGlassEnabled}
+                  onChange={(e) => {
+                    const v = Number(e.target.value);
+                    // 强度 ≤5% 视为关（避免「开着但看不见」的死状态）
+                    if (v <= 5) applyRuntime({ chatGlassStrength: v, chatGlassEnabled: false });
+                    else applyRuntime({ chatGlassStrength: v });
+                  }}
+                />
+              </label>
+              {settings.chatGlassEnabled && (
+                <p className="wss-section-desc wss-glass-hint">
+                  {settings.overlayOpacity > 0 ? (
+                    <>
+                      毛玻璃只负责文字列的可读性；上面的「遮罩不透明度」压暗的是<b>整张壁纸</b>，想让壁纸恢复原亮度可以
+                      <button
+                        type="button"
+                        className="wss-glass-scrim-zero"
+                        onClick={() => applyRuntime({ overlayOpacity: 0 })}
+                      >
+                        设为 0
+                      </button>
+                      。
+                    </>
+                  ) : (
+                    <>毛玻璃已开启，遮罩为 0 —— 壁纸保持原亮度。</>
+                  )}
+                </p>
+              )}
+            </div>
           </div>
           <div className="wss-glow">
             <label className="wss-glow-row">

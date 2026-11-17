@@ -188,9 +188,9 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 | `wallpaperDir` | 空 | Steam workshop 壁纸目录 |
 | `weAssetsDir` | 空 | Wallpaper Engine 安装目录（读内置粒子/效果纹理） |
 | `overlayOpacity` | `0.35` | 壁纸层上方遮罩的不透明度；面板「显示效果」可调 |
-| `blurEnabled` / `blurRadius` | `false` / `12` | 背景模糊与半径；面板「显示效果」可调 |
-| `chatGlassEnabled` | `false` | 对话区毛玻璃：只给 920px 消息列加一层玻璃（壁纸不压暗）；面板「显示效果」可调 |
-| `chatGlassStrength` | `45` | 毛玻璃强度 0–100：45 = 不透明度 48% + 模糊 14px（映射 20%–82% / 0–32px）；面板可调 |
+| `blurEnabled` / `blurRadius` | `false` / `12` | 背景模糊与半径；面板「显示效果」可调，半径拖到 0 会自动关掉开关 |
+| `chatGlassEnabled` | `false` | 对话区毛玻璃：只给 920px 消息列加一层玻璃（壁纸不压暗）；面板「显示效果 → 对话区」可调 |
+| `chatGlassStrength` | `45` | 毛玻璃强度 0–100：45 = 不透明度 48% + 模糊 14px（映射 20%–82% / 0–32px）；≤5% 视为关，面板可调 |
 | `kenBurns` | `true` | 图片壁纸的缓慢缩放动效；面板「显示效果」可调 |
 | `fitMode` | `cover` | 画面适配：`cover` 裁剪铺满 / `contain` 完整显示（可能留边）/ `stretch` 拉伸铺满；面板可调 |
 | `glowEnabled` | `true` | 应用级光晕（全屏后处理，仅 scene 壁纸） |

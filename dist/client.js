@@ -2538,6 +2538,10 @@ body[data-ds-dark-theme] .wss-hero::before{background:radial-gradient(90% 140% a
 .wss-row input[type=checkbox]:checked::before,.wss-glow-row input[type=checkbox]:checked::before{transform:translateX(16px)}
 .wss-row input[type=checkbox]:focus-visible,.wss-glow-row input[type=checkbox]:focus-visible{outline:2px solid var(--wp-accent);outline-offset:2px}
 .wss-effects,.wss-power,.wss-rotation,.wss-textcolor{display:flex;flex-direction:column;gap:10px}
+/* \u663E\u793A\u6548\u679C\u5206\u7EC4\uFF082026-11-17\uFF09\uFF1A\u300C\u58C1\u7EB8\u753B\u9762\u300D\u4E0E\u300C\u5BF9\u8BDD\u533A\u300D\u5206\u5F00\uFF0C\u907F\u514D\u4E24\u7C7B"\u6A21\u7CCA"\u6DF7\u5728\u4E00\u8D77 */
+.wss-effects-group{display:flex;flex-direction:column;gap:10px}
+.wss-effects-group + .wss-effects-group{margin-top:14px;padding-top:14px;border-top:1px dashed var(--dsw-alias-border-l2,var(--wp-panel-border))}
+.wss-effects-subtitle{margin:0;font-size:11px;font-weight:650;letter-spacing:.08em;color:var(--dsw-alias-label-tertiary,var(--wp-text))}
 .wss-glow{border-top:1px dashed var(--dsw-alias-border-l2,var(--wp-panel-border));padding-top:10px;margin-top:10px;display:flex;flex-direction:column;gap:10px}
 .wss-rotation-status{margin:0}
 .wss-rotation-status[data-state="empty"]{color:var(--dsw-alias-state-warning-primary,#f5b301)}
@@ -5249,134 +5253,159 @@ function WallpaperSettingsSection(props) {
     /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-pair", children: [
       settings && /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section", id: "wss-anchor-appearance", children: [
         /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wss-section-title", children: "\u663E\u793A\u6548\u679C" }),
-        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-effects", children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-slider", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-slider-head", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u906E\u7F69\u4E0D\u900F\u660E\u5EA6" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-effect-value", children: settings.overlayOpacity.toFixed(2) })
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-effects-group", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h5", { className: "wss-effects-subtitle", children: "\u58C1\u7EB8\u753B\u9762" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-effects", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-slider", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-slider-head", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u906E\u7F69\u4E0D\u900F\u660E\u5EA6" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-effect-value", children: settings.overlayOpacity.toFixed(2) })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "input",
+                {
+                  type: "range",
+                  className: "wss-overlay-opacity",
+                  min: 0,
+                  max: 1,
+                  step: 0.01,
+                  value: settings.overlayOpacity,
+                  onChange: (e) => applyRuntime({ overlayOpacity: Number(e.target.value) })
+                }
+              )
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-              "input",
-              {
-                type: "range",
-                className: "wss-overlay-opacity",
-                min: 0,
-                max: 1,
-                step: 0.01,
-                value: settings.overlayOpacity,
-                onChange: (e) => applyRuntime({ overlayOpacity: Number(e.target.value) })
-              }
-            )
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-              "input",
-              {
-                type: "checkbox",
-                className: "wss-blur-enabled",
-                checked: settings.blurEnabled,
-                onChange: (e) => applyRuntime({ blurEnabled: e.target.checked })
-              }
-            ),
-            "\u80CC\u666F\u6A21\u7CCA"
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-slider", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-slider-head", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u6A21\u7CCA\u534A\u5F84" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-effect-value", children: [
-                settings.blurRadius,
-                " px"
-              ] })
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "input",
+                {
+                  type: "checkbox",
+                  className: "wss-blur-enabled",
+                  checked: settings.blurEnabled,
+                  onChange: (e) => {
+                    const on = e.target.checked;
+                    if (on && settings.blurRadius < 1) applyRuntime({ blurEnabled: true, blurRadius: 12 });
+                    else applyRuntime({ blurEnabled: on });
+                  }
+                }
+              ),
+              "\u80CC\u666F\u6A21\u7CCA"
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-              "input",
-              {
-                type: "range",
-                className: "wss-blur-radius",
-                min: 0,
-                max: 64,
-                step: 1,
-                value: settings.blurRadius,
-                onChange: (e) => applyRuntime({ blurRadius: Number(e.target.value) })
-              }
-            )
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-              "input",
-              {
-                type: "checkbox",
-                className: "wss-chat-glass",
-                checked: settings.chatGlassEnabled,
-                onChange: (e) => applyRuntime({ chatGlassEnabled: e.target.checked })
-              }
-            ),
-            "\u5BF9\u8BDD\u533A\u6BDB\u73BB\u7483"
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-slider", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-slider-head", children: [
-              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u6BDB\u73BB\u7483\u5F3A\u5EA6" }),
-              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-effect-value", children: [
-                settings.chatGlassStrength,
-                "%"
-              ] })
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-slider", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-slider-head", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u6A21\u7CCA\u534A\u5F84" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-effect-value", children: [
+                  settings.blurRadius,
+                  " px"
+                ] })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "input",
+                {
+                  type: "range",
+                  className: "wss-blur-radius",
+                  min: 0,
+                  max: 64,
+                  step: 1,
+                  value: settings.blurRadius,
+                  disabled: !settings.blurEnabled,
+                  onChange: (e) => {
+                    const radius = Number(e.target.value);
+                    if (radius < 1) applyRuntime({ blurRadius: 0, blurEnabled: false });
+                    else applyRuntime({ blurRadius: radius });
+                  }
+                }
+              )
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-              "input",
-              {
-                type: "range",
-                className: "wss-chat-glass-strength",
-                min: 0,
-                max: 100,
-                step: 1,
-                value: settings.chatGlassStrength,
-                disabled: !settings.chatGlassEnabled,
-                onChange: (e) => applyRuntime({ chatGlassStrength: Number(e.target.value) })
-              }
-            )
-          ] }),
-          settings.chatGlassEnabled && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc wss-glass-hint", children: settings.overlayOpacity > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-            "\u6BDB\u73BB\u7483\u53EA\u8D1F\u8D23\u6587\u5B57\u5217\u7684\u53EF\u8BFB\u6027\uFF1B\u4E0A\u9762\u7684\u300C\u906E\u7F69\u4E0D\u900F\u660E\u5EA6\u300D\u538B\u6697\u7684\u662F",
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("b", { children: "\u6574\u5F20\u58C1\u7EB8" }),
-            "\uFF0C\u60F3\u8BA9\u58C1\u7EB8\u6062\u590D\u539F\u4EAE\u5EA6\u53EF\u4EE5",
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-              "button",
-              {
-                type: "button",
-                className: "wss-glass-scrim-zero",
-                onClick: () => applyRuntime({ overlayOpacity: 0 }),
-                children: "\u8BBE\u4E3A 0"
-              }
-            ),
-            "\u3002"
-          ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_jsx_runtime.Fragment, { children: "\u6BDB\u73BB\u7483\u5DF2\u5F00\u542F\uFF0C\u906E\u7F69\u4E3A 0 \u2014\u2014 \u58C1\u7EB8\u4FDD\u6301\u539F\u4EAE\u5EA6\u3002" }) }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-              "input",
-              {
-                type: "checkbox",
-                className: "wss-kenburns",
-                checked: settings.kenBurns,
-                onChange: (e) => applyRuntime({ kenBurns: e.target.checked })
-              }
-            ),
-            "Ken Burns \u7F13\u6162\u7F29\u653E"
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u753B\u9762\u9002\u914D" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
-              "select",
-              {
-                className: "wss-fit-mode",
-                value: settings.fitMode,
-                onChange: (e) => applyRuntime({ fitMode: e.target.value }),
-                children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "cover", children: "\u88C1\u526A\u94FA\u6EE1" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "contain", children: "\u5B8C\u6574\u663E\u793A\uFF08\u53EF\u80FD\u7559\u8FB9\uFF09" }),
-                  /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "stretch", children: "\u62C9\u4F38\u94FA\u6EE1" })
-                ]
-              }
-            )
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u753B\u9762\u9002\u914D" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+                "select",
+                {
+                  className: "wss-fit-mode",
+                  value: settings.fitMode,
+                  onChange: (e) => applyRuntime({ fitMode: e.target.value }),
+                  children: [
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "cover", children: "\u88C1\u526A\u94FA\u6EE1" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "contain", children: "\u5B8C\u6574\u663E\u793A\uFF08\u53EF\u80FD\u7559\u8FB9\uFF09" }),
+                    /* @__PURE__ */ (0, import_jsx_runtime.jsx)("option", { value: "stretch", children: "\u62C9\u4F38\u94FA\u6EE1" })
+                  ]
+                }
+              )
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "input",
+                {
+                  type: "checkbox",
+                  className: "wss-kenburns",
+                  checked: settings.kenBurns,
+                  onChange: (e) => applyRuntime({ kenBurns: e.target.checked })
+                }
+              ),
+              "Ken Burns \u7F13\u6162\u7F29\u653E"
+            ] })
+          ] })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-effects-group", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h5", { className: "wss-effects-subtitle", children: "\u5BF9\u8BDD\u533A" }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-effects", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "input",
+                {
+                  type: "checkbox",
+                  className: "wss-chat-glass",
+                  checked: settings.chatGlassEnabled,
+                  onChange: (e) => {
+                    const on = e.target.checked;
+                    if (on && settings.chatGlassStrength <= 5) applyRuntime({ chatGlassEnabled: true, chatGlassStrength: 45 });
+                    else applyRuntime({ chatGlassEnabled: on });
+                  }
+                }
+              ),
+              "\u5BF9\u8BDD\u533A\u6BDB\u73BB\u7483"
+            ] }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-slider", children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-slider-head", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { children: "\u6BDB\u73BB\u7483\u5F3A\u5EA6" }),
+                /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-effect-value", children: [
+                  settings.chatGlassStrength,
+                  "%"
+                ] })
+              ] }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "input",
+                {
+                  type: "range",
+                  className: "wss-chat-glass-strength",
+                  min: 0,
+                  max: 100,
+                  step: 1,
+                  value: settings.chatGlassStrength,
+                  disabled: !settings.chatGlassEnabled,
+                  onChange: (e) => {
+                    const v = Number(e.target.value);
+                    if (v <= 5) applyRuntime({ chatGlassStrength: v, chatGlassEnabled: false });
+                    else applyRuntime({ chatGlassStrength: v });
+                  }
+                }
+              )
+            ] }),
+            settings.chatGlassEnabled && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc wss-glass-hint", children: settings.overlayOpacity > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+              "\u6BDB\u73BB\u7483\u53EA\u8D1F\u8D23\u6587\u5B57\u5217\u7684\u53EF\u8BFB\u6027\uFF1B\u4E0A\u9762\u7684\u300C\u906E\u7F69\u4E0D\u900F\u660E\u5EA6\u300D\u538B\u6697\u7684\u662F",
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("b", { children: "\u6574\u5F20\u58C1\u7EB8" }),
+              "\uFF0C\u60F3\u8BA9\u58C1\u7EB8\u6062\u590D\u539F\u4EAE\u5EA6\u53EF\u4EE5",
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+                "button",
+                {
+                  type: "button",
+                  className: "wss-glass-scrim-zero",
+                  onClick: () => applyRuntime({ overlayOpacity: 0 }),
+                  children: "\u8BBE\u4E3A 0"
+                }
+              ),
+              "\u3002"
+            ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(import_jsx_runtime.Fragment, { children: "\u6BDB\u73BB\u7483\u5DF2\u5F00\u542F\uFF0C\u906E\u7F69\u4E3A 0 \u2014\u2014 \u58C1\u7EB8\u4FDD\u6301\u539F\u4EAE\u5EA6\u3002" }) })
           ] })
         ] }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-glow", children: [

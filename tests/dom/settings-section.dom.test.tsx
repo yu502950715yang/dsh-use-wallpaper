@@ -852,6 +852,53 @@ describe('WallpaperSettingsSection', () => {
     expect(onRuntimeSettings).toHaveBeenCalledWith({ overlayOpacity: 0 });
   });
 
+  // 显示效果分组（2026-11-17）：开关与滑杆联动，消掉「开着但 0px / 0%」的死状态。
+  it('背景模糊联动：半径 0 时开启自动补 12；半径拖到 0 自动关闭', async () => {
+    const writeSettings = vi.fn(async () => {});
+    const onRuntimeSettings = vi.fn();
+    mount({
+      writeSettings,
+      onRuntimeSettings,
+      fetchSettings: async () => ({ ...BASE_SETTINGS, blurEnabled: false, blurRadius: 0 }),
+    });
+    await flush();
+    const setValue = (el: HTMLInputElement, value: string) => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+      setter.call(el, value);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    (container.querySelector('.wss-blur-enabled') as HTMLInputElement).click();
+    await flush();
+    expect(onRuntimeSettings).toHaveBeenCalledWith({ blurEnabled: true, blurRadius: 12 });
+
+    setValue(container.querySelector('.wss-blur-radius') as HTMLInputElement, '0');
+    await flush();
+    expect(onRuntimeSettings).toHaveBeenCalledWith({ blurRadius: 0, blurEnabled: false });
+  });
+
+  it('毛玻璃联动：强度 ≤5% 自动关闭；关闭态开启自动补 45', async () => {
+    const writeSettings = vi.fn(async () => {});
+    const onRuntimeSettings = vi.fn();
+    mount({
+      writeSettings,
+      onRuntimeSettings,
+      fetchSettings: async () => ({ ...BASE_SETTINGS, chatGlassEnabled: true, chatGlassStrength: 3 }),
+    });
+    await flush();
+    const setValue = (el: HTMLInputElement, value: string) => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+      setter.call(el, value);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    setValue(container.querySelector('.wss-chat-glass-strength') as HTMLInputElement, '2');
+    await flush();
+    expect(onRuntimeSettings).toHaveBeenCalledWith({ chatGlassStrength: 2, chatGlassEnabled: false });
+
+    (container.querySelector('.wss-chat-glass') as HTMLInputElement).click();
+    await flush();
+    expect(onRuntimeSettings).toHaveBeenCalledWith({ chatGlassEnabled: true, chatGlassStrength: 45 });
+  });
+
   // v0.8 壁纸库：搜索 / 收藏 / 隐藏与恢复（localStorage 持久化；隐藏不打断播放）。
   it('壁纸库：搜索、类型筛选、收藏、隐藏/恢复', async () => {
     localStorage.clear();

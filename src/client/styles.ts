@@ -332,6 +332,10 @@ body[data-ds-dark-theme] .wss-hero::before{background:radial-gradient(90% 140% a
 .wss-row input[type=checkbox]:checked::before,.wss-glow-row input[type=checkbox]:checked::before{transform:translateX(16px)}
 .wss-row input[type=checkbox]:focus-visible,.wss-glow-row input[type=checkbox]:focus-visible{outline:2px solid var(--wp-accent);outline-offset:2px}
 .wss-effects,.wss-power,.wss-rotation,.wss-textcolor{display:flex;flex-direction:column;gap:10px}
+/* 显示效果分组（2026-11-17）：「壁纸画面」与「对话区」分开，避免两类"模糊"混在一起 */
+.wss-effects-group{display:flex;flex-direction:column;gap:10px}
+.wss-effects-group + .wss-effects-group{margin-top:14px;padding-top:14px;border-top:1px dashed var(--dsw-alias-border-l2,var(--wp-panel-border))}
+.wss-effects-subtitle{margin:0;font-size:11px;font-weight:650;letter-spacing:.08em;color:var(--dsw-alias-label-tertiary,var(--wp-text))}
 .wss-glow{border-top:1px dashed var(--dsw-alias-border-l2,var(--wp-panel-border));padding-top:10px;margin-top:10px;display:flex;flex-direction:column;gap:10px}
 .wss-rotation-status{margin:0}
 .wss-rotation-status[data-state="empty"]{color:var(--dsw-alias-state-warning-primary,#f5b301)}
