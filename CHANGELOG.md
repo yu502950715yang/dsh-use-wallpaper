@@ -6,7 +6,7 @@
 - 单次发布的用户文案（GitHub Release）按 [`.github/RELEASE_NOTES_TEMPLATE.md`](./.github/RELEASE_NOTES_TEMPLATE.md) 写；本文件面向长期回溯，按「破坏性变更 / 新增 / 变更 / 修复 / 移除」归类。
 - 兼容性、已知限制与素材边界的**现状**以 README「使用前请了解」与 [`AGENT.md`](./AGENT.md) §7 为准，本文件不重复维护。
 
-## [未发布]
+## [1.0.2] - 2026-11-17
 
 ### 变更（Changed）
 
