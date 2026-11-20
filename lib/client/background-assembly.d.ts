@@ -42,6 +42,8 @@ export interface AddBackgroundOptions {
     alpha?: number;
     brightness?: number;
     util?: UtilLayerKind;
+    effectOnly?: boolean;
+    effectBounds?: [number, number, number, number];
     color?: [number, number, number];
     colorUserBound?: boolean;
     alignment?: string;

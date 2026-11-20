@@ -192,6 +192,8 @@ export interface SceneUtilObject extends SceneObjectBase {
     brightness?: number;
     visible?: VisibleBinding;
     effects?: unknown[];
+    effectOnly?: boolean;
+    effectBounds?: [number, number, number, number];
 }
 export interface SceneTextObject extends SceneObjectBase {
     kind: 'text';

@@ -1087,6 +1087,10 @@ export class ThreeScenePlayer {
     brightness?: number;
     // v0.8.2 F2：util 层无 pkg 纹理，按 layerKind 用内置材质（solid 纯色 / 其余直通占位）。
     util?: UtilLayerKind;
+    // WE 纯效果对象（shape:"quad"）：无内容输入 ⇒ 不登记快照消费者。
+    effectOnly?: boolean;
+    // lightshafts 的最终 UV 包围盒（[minU,minV,maxU,maxV]）：合成 quad 按它采样效果输出。
+    effectBounds?: [number, number, number, number];
     // 对象颜色（0-255）：image tint 乘进内容材质（F13）；util=solid 作纯色。
     color?: [number, number, number];
     // color 来自 `{user|script,value}` 绑定（WE 运行期动态驱动；我们只有静态默认值）：
@@ -1643,6 +1647,8 @@ export function loadSceneToThree(
         objectId: obj.id,
         renderOrder,
         util: obj.layerKind,
+        effectOnly: obj.effectOnly,
+        effectBounds: obj.effectBounds,
         color: obj.color,
         alpha: obj.alpha,
         brightness: obj.brightness,

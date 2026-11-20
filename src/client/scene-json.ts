@@ -220,6 +220,56 @@ function utilLayerKind(image: string): UtilLayerKind {
   return 'fullscreen';
 }
 
+// WE 桌面实测（WPEDesktopDX11Window 帧，短边 2160 的场景）：shape quad 中心相对 origin 的固定位移，
+// 单位 = 短边比例。与 alignment 同属对象几何语义，故落在解析层。
+const SHAPE_QUAD_CENTER_SHIFT: readonly [number, number] = [0.030, -0.058];
+
+// 该对象的效果链是否含 lightshafts：只有它为真时才套 SHAPE_QUAD_CENTER_SHIFT 的实测标定
+//（其它 DIRECTDRAW shape 效果没有标定依据，保持短边正方形居中）。
+function hasLightshaftsEffect(effects: unknown): boolean {
+  if (!Array.isArray(effects)) return false;
+  return effects.some((e) => {
+    const file = (e as { file?: unknown } | null)?.file;
+    return typeof file === 'string' && /lightshafts/i.test(file);
+  });
+}
+
+// lightshafts 的 g_Point0..3 是透视四边形控制点：WE 用 [0,0,1,1] 与四点的并集当包围盒，
+// 扩展最终 quad 的几何与 UV（参考实现 ResolveLightshaftsDirectDrawFinalTexCoordBounds）；
+// 四点都在 0..1 内时返回 null（不扩展）。
+function lightshaftsBounds(effects: unknown): [number, number, number, number] | null {
+  if (!Array.isArray(effects)) return null;
+  for (const rawEffect of effects) {
+    const effect = rawEffect as {
+      file?: unknown;
+      passes?: Array<{ constantshadervalues?: Record<string, unknown> }>;
+    };
+    if (typeof effect?.file !== 'string' || !/lightshafts/i.test(effect.file)) continue;
+    const points: Array<[number, number] | undefined> = [undefined, undefined, undefined, undefined];
+    for (const pass of Array.isArray(effect.passes) ? effect.passes : []) {
+      const constants = pass?.constantshadervalues;
+      if (!constants || typeof constants !== 'object') continue;
+      for (const [key, value] of Object.entries(constants)) {
+        const match = /^(?:g_)?point([0-3])$/i.exec(key);
+        if (!match) continue;
+        const text = unwrapFieldValue(value);
+        const nums = typeof text === 'string' ? text.trim().split(/\s+/).map(Number) : [];
+        if (nums.length >= 2 && nums.every((n) => isFinite(n))) points[Number(match[1])] = [nums[0], nums[1]];
+      }
+    }
+    if (points.some((p) => !p)) continue;
+    const [p0, p1, p2, p3] = points as Array<[number, number]>;
+    const bounds: [number, number, number, number] = [
+      Math.min(0, p0[0], p1[0], p2[0], p3[0]),
+      Math.min(0, p0[1], p1[1], p2[1], p3[1]),
+      Math.max(1, p0[0], p1[0], p2[0], p3[0]),
+      Math.max(1, p0[1], p1[1], p2[1], p3[1]),
+    ];
+    if (bounds[0] < 0 || bounds[1] < 0 || bounds[2] > 1 || bounds[3] > 1) return bounds;
+  }
+  return null;
+}
+
 // 脚本字段提取（T3.3）：WE 对象脚本挂在 image 的 visible / text 的 text 对象上，
 // 形如 { script, scriptproperties, value }。scriptproperties 直接读 scene.json 对象
 // （{user} 绑定保留为 {value,user}，装配前由 resolveSceneUserBindings 换成标量），不解析脚本源码。
@@ -457,6 +507,39 @@ export function parseSceneJson(raw: string): SceneDescription {
         ...textVisibleFields(o),
         // T3.3：text.script 识别为 clock 时每帧刷新时间文本（scriptproperties 的 {user,value} 保留到装配前 resolve）
         ...scriptFields(t),
+      };
+    }
+    // WE 纯效果对象（shape:"quad"，无 image/particle/text）：全屏效果载体（lightshafts 光束等）。
+    // 无 size 时视觉尺寸 = 场景短边正方形、以 origin 为中心（参考实现 ResolveDirectDrawShapeVisualSize）；
+    // 纯效果对象（shape:"quad"，无 image/particle/text）：lightshafts 等 DIRECTDRAW 效果的全屏载体。
+    // quad 尺寸 = 场景短边，中心按 SHAPE_QUAD_CENTER_SHIFT（WE 实测）与 lightshafts 包围盒再偏移。
+    // layerKind 用 compose 保留 origin/size（fullscreen 会强制居中）。effectOnly ⇒ 不登记帧快照消费者。
+    if (typeof o.shape === 'string' && o.shape.toLowerCase() === 'quad') {
+      const quadSize = Math.min(numOr(ortho.width, 3840), numOr(ortho.height, 2160));
+      const isLightshafts = hasLightshaftsEffect(o.effects);
+      const origin = [...base.origin] as [number, number, number];
+      let size: [number, number] = [quadSize, quadSize];
+      if (isLightshafts) {
+        origin[0] += SHAPE_QUAD_CENTER_SHIFT[0] * quadSize;
+        origin[1] += SHAPE_QUAD_CENTER_SHIFT[1] * quadSize;
+      }
+      const bounds = isLightshafts ? lightshaftsBounds(o.effects) : null;
+      if (bounds) {
+        const [u0, v0, u1, v1] = bounds;
+        size = [(u1 - u0) * quadSize, (v1 - v0) * quadSize];
+        origin[0] += ((u0 + u1) / 2 - 0.5) * quadSize;
+        origin[1] += (0.5 - (v0 + v1) / 2) * quadSize;
+      }
+      return {
+        ...base,
+        kind: 'util' as const,
+        image: 'models/util/effectlayer.json',
+        layerKind: 'compose' as const,
+        origin,
+        size,
+        effectOnly: true as const,
+        ...(bounds ? { effectBounds: bounds } : {}),
+        ...fromVisibleScript,
       };
     }
     // 无 image/particle/text 的纯容器/控制器对象：不渲染，但**可能承载 SceneScript**

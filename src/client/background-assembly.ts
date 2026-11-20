@@ -63,6 +63,10 @@ export interface AddBackgroundOptions {
   brightness?: number;
   // v0.8.2 F2：util 层无 pkg 纹理，按 layerKind 用内置材质（solid 纯色 / 其余直通占位）。
   util?: UtilLayerKind;
+  // WE 纯效果对象（shape:"quad"）：无内容输入 ⇒ 不登记快照消费者。
+  effectOnly?: boolean;
+  // lightshafts 的最终 UV 包围盒（[minU,minV,maxU,maxV]）：合成 quad 按它采样效果输出。
+  effectBounds?: [number, number, number, number];
   // 对象颜色（0-255）：image tint 乘进内容材质（F13）；util=solid 作纯色。
   color?: [number, number, number];
   // color 来自 `{user|script,value}` 绑定（WE 运行期动态驱动；我们只有静态默认值）：
@@ -213,14 +217,36 @@ export function addBackground(host: BackgroundAssemblyHost, opts: AddBackgroundO
       { x: origin[0] - sceneW / 2 + align[0], y: origin[1] - sceneH / 2 + align[1], z: origin[2] },
       [a[0], a[1], a[2]], opts.colorBlendMode ?? 0, opts.renderOrder, compositeOpacity,
     );
+    // 合成 quad 只在这里取一次：下面三处（脚本 color 标记 / additive / 包围盒 UV）都改它的材质或几何。
+    const quad = host.isolatedQuad(opts.isolate.objectId) as THREE.Mesh | undefined;
+    const quadMats = Array.isArray(quad?.material) ? quad.material : quad?.material ? [quad.material] : [];
     // 隔离时 displayObject 返回合成 quad：标记也要落到它的材质上，否则脚本 color 仍会乘到合成输出。
     if (opts.disableDynamicColor) {
-      const quadMat = (host.isolatedQuad(opts.isolate.objectId) as THREE.Mesh | undefined)?.material;
-      const mats = Array.isArray(quadMat) ? quadMat : quadMat ? [quadMat] : [];
-      for (const m of mats) m.userData.dynamicColorDisabled = true;
+      for (const m of quadMats) m.userData.dynamicColorDisabled = true;
     }
-    // util 层内容输入（T3）：段边界把整帧快照写成内容。solid 的内容是纯色 ⇒ 不建条目。
-    if (opts.util && opts.util !== 'solid') {
+    // WE 的 shape DIRECTDRAW 最终合成用 additive（shader 输出是预乘的「生成贡献」，见参考实现
+    // WPSceneParser 的 direct_draw_final_blend）；normal 会把光轴再乘一次 alpha。
+    if (opts.effectOnly) {
+      for (const m of quadMats) m.blending = THREE.AdditiveBlending;
+    }
+    // lightshafts 的 g_Point0..3 超出 0..1：合成 quad 按包围盒采样效果输出（WE 的
+    // GenCardMeshWithTexCoordBounds）；不套这层，光柱整体偏低（源头落不到太阳上）。
+    // ⚠️ 事后改 attribute 依赖「resize 不重建合成 quad 几何」（见 layer-factory.attachIsolated）。
+    if (opts.effectOnly && opts.effectBounds) {
+      const uv = (quad?.geometry as THREE.BufferGeometry | undefined)?.attributes.uv;
+      if (uv) {
+        const [u0, v0, u1, v1] = opts.effectBounds;
+        const arr = uv.array as Float32Array;
+        for (let i = 0; i < arr.length; i += 2) {
+          // quad 的 v 已被 flipGeometryUvY 翻过（底边 uv=1），与 RT 的 WE 约定（v=0 顶部）同向
+          arr[i] = u0 + arr[i] * (u1 - u0);
+          arr[i + 1] = v0 + arr[i + 1] * (v1 - v0);
+        }
+        uv.needsUpdate = true;
+      }
+    }
+    // util 层内容输入（T3）：段边界把整帧快照写成内容。solid 的内容是纯色、effectOnly 无内容 ⇒ 不建条目。
+    if (opts.util && opts.util !== 'solid' && !opts.effectOnly) {
       host.registerUtilContent(opts.isolate.objectId, mesh, origin[0] - sceneW / 2, origin[1] - sceneH / 2);
     }
   } else {

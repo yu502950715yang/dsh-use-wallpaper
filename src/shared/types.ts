@@ -218,6 +218,12 @@ export interface SceneUtilObject extends SceneObjectBase {
   brightness?: number;           // 颜色乘法系数，缺省 1
   visible?: VisibleBinding;      // T4.2：可见性绑定（不可见 util 层跳过）
   effects?: unknown[];           // 对象效果链定义（effects 数组，v0.8.2 起挂 util 链）
+  // WE 纯效果对象（shape:"quad"，无 image/particle/text）：全屏效果载体（lightshafts 等）。
+  // 没有内容输入 ⇒ 不登记帧快照消费者；效果链输出直接合成回主场景。
+  effectOnly?: boolean;
+  // lightshafts 控制点包围盒（[minU,minV,maxU,maxV]，= [0,0,1,1] 与四点的并集）：合成 quad 按它
+  // 采样效果输出（WE 的 GenCardMeshWithTexCoordBounds）；缺省 = 整张 RT。
+  effectBounds?: [number, number, number, number];
 }
 // WE text 对象（T3.1/T3.3）：scene.json 携带 text 字段（{ script, scriptproperties, value }
 // 对象，如 2937346640 的 VHS Time and Date）。T3.1 静态渲染 text.value（离屏 canvas

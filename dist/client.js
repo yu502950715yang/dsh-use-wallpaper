@@ -27963,6 +27963,43 @@ function utilLayerKind(image) {
   if (image.includes("solidlayer")) return "solid";
   return "fullscreen";
 }
+var SHAPE_QUAD_CENTER_SHIFT = [0.03, -0.058];
+function hasLightshaftsEffect(effects) {
+  if (!Array.isArray(effects)) return false;
+  return effects.some((e) => {
+    const file = e?.file;
+    return typeof file === "string" && /lightshafts/i.test(file);
+  });
+}
+function lightshaftsBounds(effects) {
+  if (!Array.isArray(effects)) return null;
+  for (const rawEffect of effects) {
+    const effect = rawEffect;
+    if (typeof effect?.file !== "string" || !/lightshafts/i.test(effect.file)) continue;
+    const points = [void 0, void 0, void 0, void 0];
+    for (const pass of Array.isArray(effect.passes) ? effect.passes : []) {
+      const constants = pass?.constantshadervalues;
+      if (!constants || typeof constants !== "object") continue;
+      for (const [key, value] of Object.entries(constants)) {
+        const match = /^(?:g_)?point([0-3])$/i.exec(key);
+        if (!match) continue;
+        const text = unwrapFieldValue(value);
+        const nums = typeof text === "string" ? text.trim().split(/\s+/).map(Number) : [];
+        if (nums.length >= 2 && nums.every((n) => isFinite(n))) points[Number(match[1])] = [nums[0], nums[1]];
+      }
+    }
+    if (points.some((p) => !p)) continue;
+    const [p0, p1, p2, p3] = points;
+    const bounds = [
+      Math.min(0, p0[0], p1[0], p2[0], p3[0]),
+      Math.min(0, p0[1], p1[1], p2[1], p3[1]),
+      Math.max(1, p0[0], p1[0], p2[0], p3[0]),
+      Math.max(1, p0[1], p1[1], p2[1], p3[1])
+    ];
+    if (bounds[0] < 0 || bounds[1] < 0 || bounds[2] > 1 || bounds[3] > 1) return bounds;
+  }
+  return null;
+}
 function scriptFields(o) {
   const script = typeof o?.script === "string" && o.script ? o.script : void 0;
   const scriptProperties = o?.scriptproperties !== void 0 ? parseScriptProperties(o.scriptproperties) : void 0;
@@ -28150,6 +28187,34 @@ function parseSceneJson(raw) {
         ...textVisibleFields(o),
         // T3.3：text.script 识别为 clock 时每帧刷新时间文本（scriptproperties 的 {user,value} 保留到装配前 resolve）
         ...scriptFields(t)
+      };
+    }
+    if (typeof o.shape === "string" && o.shape.toLowerCase() === "quad") {
+      const quadSize = Math.min(numOr(ortho.width, 3840), numOr(ortho.height, 2160));
+      const isLightshafts = hasLightshaftsEffect(o.effects);
+      const origin = [...base.origin];
+      let size = [quadSize, quadSize];
+      if (isLightshafts) {
+        origin[0] += SHAPE_QUAD_CENTER_SHIFT[0] * quadSize;
+        origin[1] += SHAPE_QUAD_CENTER_SHIFT[1] * quadSize;
+      }
+      const bounds = isLightshafts ? lightshaftsBounds(o.effects) : null;
+      if (bounds) {
+        const [u0, v0, u1, v1] = bounds;
+        size = [(u1 - u0) * quadSize, (v1 - v0) * quadSize];
+        origin[0] += ((u0 + u1) / 2 - 0.5) * quadSize;
+        origin[1] += (0.5 - (v0 + v1) / 2) * quadSize;
+      }
+      return {
+        ...base,
+        kind: "util",
+        image: "models/util/effectlayer.json",
+        layerKind: "compose",
+        origin,
+        size,
+        effectOnly: true,
+        ...bounds ? { effectBounds: bounds } : {},
+        ...fromVisibleScript
       };
     }
     return { ...base, kind: "particle", particle: "", ...fromVisibleScript };
@@ -29910,12 +29975,27 @@ function addBackground(host, opts) {
       opts.renderOrder,
       compositeOpacity
     );
+    const quad = host.isolatedQuad(opts.isolate.objectId);
+    const quadMats = Array.isArray(quad?.material) ? quad.material : quad?.material ? [quad.material] : [];
     if (opts.disableDynamicColor) {
-      const quadMat = host.isolatedQuad(opts.isolate.objectId)?.material;
-      const mats = Array.isArray(quadMat) ? quadMat : quadMat ? [quadMat] : [];
-      for (const m of mats) m.userData.dynamicColorDisabled = true;
+      for (const m of quadMats) m.userData.dynamicColorDisabled = true;
     }
-    if (opts.util && opts.util !== "solid") {
+    if (opts.effectOnly) {
+      for (const m of quadMats) m.blending = AdditiveBlending;
+    }
+    if (opts.effectOnly && opts.effectBounds) {
+      const uv = quad?.geometry?.attributes.uv;
+      if (uv) {
+        const [u0, v0, u1, v1] = opts.effectBounds;
+        const arr = uv.array;
+        for (let i = 0; i < arr.length; i += 2) {
+          arr[i] = u0 + arr[i] * (u1 - u0);
+          arr[i + 1] = v0 + arr[i + 1] * (v1 - v0);
+        }
+        uv.needsUpdate = true;
+      }
+    }
+    if (opts.util && opts.util !== "solid" && !opts.effectOnly) {
       host.registerUtilContent(opts.isolate.objectId, mesh, origin[0] - sceneW / 2, origin[1] - sceneH / 2);
     }
   } else {
@@ -31260,6 +31340,8 @@ function loadSceneToThree(sceneJson, assets, canvas, viewport) {
         objectId: obj.id,
         renderOrder,
         util: obj.layerKind,
+        effectOnly: obj.effectOnly,
+        effectBounds: obj.effectBounds,
         color: obj.color,
         alpha: obj.alpha,
         brightness: obj.brightness,
@@ -38923,7 +39005,7 @@ function createThreeSceneRenderer(opts) {
         const utilContentIds = /* @__PURE__ */ new Set();
         for (const objId of isolate.keys()) {
           const obj = desc.objects.find((o) => o.id === objId);
-          if (obj?.kind === "util" && obj.layerKind !== "solid") utilContentIds.add(objId);
+          if (obj?.kind === "util" && obj.layerKind !== "solid" && !obj.effectOnly) utilContentIds.add(objId);
         }
         for (const utilId of utilContentIds) result.player.registerFrameConsumer(utilId);
         if (scriptSources.length > 0) {
