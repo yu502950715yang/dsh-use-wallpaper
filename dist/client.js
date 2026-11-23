@@ -2396,6 +2396,42 @@ body[data-ds-dark-theme][data-we-wallpaper][data-we-glass] [data-conversation-sc
   --wp-glass-border:rgba(255,255,255,.15);
   --wp-glass-shadow:inset 0 1px 0 rgba(255,255,255,.10),0 14px 36px rgba(0,0,0,.42);
 }
+/* \u2500\u2500 \u975E\u4F1A\u8BDD\u9875\u5185\u5BB9\u5217\u73BB\u7483\uFF08\u5B9E\u9A8C B\uFF0C2026-11-23\uFF09 \u2500\u2500
+   \u5168\u5C40\u9762\u677F\uFF08\u81EA\u52A8\u5316\u4EFB\u52A1 / \u63D2\u4EF6\u9875\u7B49\uFF09\u7684 mainPanel \u5E26 [data-global-panel]\uFF0C\u4F1A\u8BDD\u89C6\u56FE\u6CA1\u6709
+   \u21D2 \u53EA\u7CCA\u9762\u677F\u9875\u7684\u4E2D\u95F4\u5185\u5BB9\u5217\uFF0C\u804A\u5929\u9875\u7EF4\u6301\u539F\u6837\u3002\u58C1\u7EB8\u5728\u5185\u5BB9\u5217\u4E24\u4FA7\u4ECD\u53EF\u89C1\u3002
+   setChatGlass \u53E6\u5199 --wp-page-alpha = max(0.45, alpha) \u4E0E
+   --wp-page-glass-blur = max(8px, blur)\uFF1A\u9762\u677F\u9875\u5C0F\u5B57\u591A\uFF0C\u6CBF\u7528\u804A\u5929\u5217\u5F3A\u5EA6\u4F1A\u8BFB\u4E0D\u6E05\u3002
+   \u26A0 \u4E0D\u5728 mainPanel \u4E0A\u7528 isolation \u2014\u2014 \u5B83\u4F1A\u6210\u4E3A backdrop root\uFF0C::before \u7684
+   backdrop-filter \u5C31\u91C7\u4E0D\u5230\u58C1\u7EB8\uFF1B\u7528 z-index:0 \u5EFA\u6808\u5C42\u540C\u6837\u80FD\u628A ::before \u538B\u5230\u5185\u5BB9\u4E4B\u4E0B\u3002 */
+body[data-we-wallpaper][data-we-glass] [class*="mainPanel"][data-global-panel]{
+  position:relative;
+  z-index:0;
+}
+body[data-we-wallpaper][data-we-glass] [class*="mainPanel"][data-global-panel]::before{
+  content:"";
+  position:absolute;
+  z-index:-1;
+  top:0;bottom:0;left:50%;
+  width:min(1048px,100%);
+  transform:translateX(-50%);
+  border-radius:20px;
+  border:1px solid var(--wp-page-glass-border);
+  background:var(--wp-page-glass-bg);
+  box-shadow:var(--wp-page-glass-shadow);
+  backdrop-filter:blur(var(--wp-page-glass-blur,10px)) saturate(140%);
+  -webkit-backdrop-filter:blur(var(--wp-page-glass-blur,10px)) saturate(140%);
+  pointer-events:none;
+}
+body[data-we-wallpaper][data-we-glass]:not([data-ds-dark-theme]) [class*="mainPanel"][data-global-panel]{
+  --wp-page-glass-bg:rgba(252,253,254,var(--wp-page-alpha,.5));
+  --wp-page-glass-border:rgba(15,17,22,.10);
+  --wp-page-glass-shadow:inset 0 1px 0 rgba(255,255,255,.85),0 14px 36px rgba(15,17,22,.14);
+}
+body[data-ds-dark-theme][data-we-wallpaper][data-we-glass] [class*="mainPanel"][data-global-panel]{
+  --wp-page-glass-bg:rgba(48,49,54,var(--wp-page-alpha,.5));
+  --wp-page-glass-border:rgba(255,255,255,.15);
+  --wp-page-glass-shadow:inset 0 1px 0 rgba(255,255,255,.10),0 14px 36px rgba(0,0,0,.42);
+}
 
 /* \u4FA7\u8FB9\u680F\uFF1A\u80CC\u666F\u7531 --dsw-specific-sidebar-fill \u63A7\u5236\uFF08\u89C1\u4E0A\u65B9\u6D45/\u6DF1\u5206\u652F\uFF09\uFF0C\u6B64\u5904\u4E0D\u518D\u8986\u76D6
    sidebarCol\u2014\u2014\u4FA7\u8FB9\u680F\u6839\uFF08hHd-Xa_root\uFF09\u586B\u6EE1\u8BE5\u5217\u4E14\u7528\u540C\u4E00 fill\uFF0C\u900F\u660E\u540E\u58C1\u7EB8\u5373\u900F\u51FA\u3002
@@ -3420,7 +3456,7 @@ var DEFAULTS = {
   overlayOpacity: 0.35,
   blurEnabled: false,
   blurRadius: 12,
-  // 对话区毛玻璃（2026-11-16）：默认关；45% = 不透明度 48% + 模糊 14px，壁纸不压暗。
+  // 内容区毛玻璃（2026-11-16；2026-11-23 起含面板页内容列）：默认关；45% = 不透明度 48% + 模糊 14px，面板页下限 45% / 8px，壁纸不压暗。
   chatGlassEnabled: false,
   chatGlassStrength: 45,
   kenBurns: true,
@@ -5355,8 +5391,8 @@ function WallpaperSettingsSection(props) {
         ] }),
         /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("section", { className: "wss-section wss-section-accent", children: [
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("header", { className: "wss-section-head", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wss-section-title", children: "\u5BF9\u8BDD\u533A" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-section-hint", children: "\u53EA\u7CCA\u6587\u5B57\u5217" })
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h4", { className: "wss-section-title", children: "\u5185\u5BB9\u533A" }),
+            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "wss-section-hint", children: "\u4F1A\u8BDD\u5217 + \u9762\u677F\u9875" })
           ] }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "wss-effects", children: [
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-row", children: [
@@ -5373,7 +5409,7 @@ function WallpaperSettingsSection(props) {
                   }
                 }
               ),
-              "\u5BF9\u8BDD\u533A\u6BDB\u73BB\u7483"
+              "\u5185\u5BB9\u533A\u6BDB\u73BB\u7483"
             ] }),
             /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("label", { className: "wss-slider", children: [
               /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("span", { className: "wss-slider-head", children: [
@@ -5402,7 +5438,7 @@ function WallpaperSettingsSection(props) {
               )
             ] }),
             settings.chatGlassEnabled && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "wss-section-desc wss-glass-hint", children: settings.overlayOpacity > 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
-              "\u6BDB\u73BB\u7483\u53EA\u8D1F\u8D23\u6587\u5B57\u5217\u7684\u53EF\u8BFB\u6027\uFF1B\u4E0A\u9762\u7684\u300C\u906E\u7F69\u4E0D\u900F\u660E\u5EA6\u300D\u538B\u6697\u7684\u662F",
+              "\u6BDB\u73BB\u7483\u8D1F\u8D23\u5185\u5BB9\u5217\uFF08\u4F1A\u8BDD\u5217\u4E0E\u81EA\u52A8\u5316\u4EFB\u52A1\u7B49\u9762\u677F\u9875\uFF09\u7684\u53EF\u8BFB\u6027\uFF0C\u9762\u677F\u9875\u6700\u4F4E\u6309 45% \u8BA1\uFF1B\u4E0A\u9762\u7684\u300C\u906E\u7F69\u4E0D\u900F\u660E\u5EA6\u300D\u538B\u6697\u7684\u662F",
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)("b", { children: "\u6574\u5F20\u58C1\u7EB8" }),
               "\uFF0C\u60F3\u8BA9\u58C1\u7EB8\u6062\u590D\u539F\u4EAE\u5EA6\u53EF\u4EE5",
               /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
@@ -7037,7 +7073,8 @@ function createBackgroundLayer(root, opts = {}) {
       applyFit(currentImage);
       applyFit(currentVideo);
     },
-    // 对话区毛玻璃（2026-11-16）：只写 body 属性 + 两个 CSS 变量，样式全在 styles.ts。
+    // 内容区毛玻璃（2026-11-16）：只写 body 属性 + 强度变量，样式全在 styles.ts。
+    // 2026-11-23 实验 B：同开关也给面板页内容列写 --wp-page-*（小字多，带 45%/8px 下限）。
     // 关闭时撤变量（文字色/描边由 controller.applyTextStyle 重新下发，回到壁纸亮度反色）。
     setChatGlass(enabled, strength) {
       chatGlassEnabled = enabled === true;
@@ -7046,11 +7083,17 @@ function createBackgroundLayer(root, opts = {}) {
       if (!chatGlassEnabled) {
         style.removeProperty("--wp-glass-alpha");
         style.removeProperty("--wp-glass-blur");
+        style.removeProperty("--wp-page-alpha");
+        style.removeProperty("--wp-page-glass-blur");
         return;
       }
       const v = Number.isFinite(strength) ? Math.min(100, Math.max(0, strength)) : 45;
-      style.setProperty("--wp-glass-alpha", String(0.2 + 0.62 * (v / 100)));
-      style.setProperty("--wp-glass-blur", `${Math.round(32 * (v / 100))}px`);
+      const alpha = 0.2 + 0.62 * (v / 100);
+      const blur = Math.round(32 * (v / 100));
+      style.setProperty("--wp-glass-alpha", String(alpha));
+      style.setProperty("--wp-glass-blur", `${blur}px`);
+      style.setProperty("--wp-page-alpha", String(Math.max(0.45, alpha)));
+      style.setProperty("--wp-page-glass-blur", `${Math.max(8, blur)}px`);
       style.removeProperty("--wp-chat-fg");
       style.removeProperty("--wp-chat-outline");
     },

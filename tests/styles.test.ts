@@ -79,6 +79,15 @@ describe('styles 主题适配', () => {
     expect(WALLPAPER_CSS).toMatch(/--wp-glass-bg:rgba\(252,\s*253,\s*254,\s*var\(--wp-glass-alpha/);
     expect(WALLPAPER_CSS).toMatch(/--wp-glass-bg:rgba\(48,\s*49,\s*54,\s*var\(--wp-glass-alpha/);
   });
+  it('面板页内容列玻璃（实验 B，2026-11-23）：只命中带 data-global-panel 的 mainPanel，由 data-we-glass 门控', () => {
+    // 锚点：只有全局面板会给 mainPanel 挂 data-global-panel，会话视图没有该属性。
+    expect(WALLPAPER_CSS).toMatch(/body\[data-we-wallpaper\]\[data-we-glass\]\s*\[class\*="mainPanel"\]\[data-global-panel\]::before\{[^}]*backdrop-filter:blur\(var\(--wp-page-glass-blur/);
+    // 面板页小字多，底色/模糊各有下限（变量由 background-layer 写入）。
+    expect(WALLPAPER_CSS).toMatch(/--wp-page-glass-bg:rgba\(252,\s*253,\s*254,\s*var\(--wp-page-alpha/);
+    expect(WALLPAPER_CSS).toMatch(/--wp-page-glass-bg:rgba\(48,\s*49,\s*54,\s*var\(--wp-page-alpha/);
+    // 未挂 data-we-glass 时不得命中面板页（关闭态零回归）。
+    expect(WALLPAPER_CSS).not.toMatch(/body\[data-we-wallpaper\]\s*\[class\*="mainPanel"\]\[data-global-panel\]/);
+  });
   it('侧边栏无 blur（对话框 portal 在下面会塌陷）；填充用 --dsw-specific-sidebar-fill 半透明（壁纸透出）', () => {
     expect(WALLPAPER_CSS).not.toMatch(/\[class\*="sidebarCol"\]\s*\{[^}]*backdrop-filter/);
     // 侧边栏根（hHd-Xa_root）与列都用 --dsw-specific-sidebar-fill，半透明让壁纸透出

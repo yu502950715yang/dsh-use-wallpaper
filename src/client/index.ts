@@ -151,7 +151,7 @@ export function bootstrap(ctx?: any): void {
     if (!layer) return;
     layer.setOverlayOpacity(s.overlayOpacity);
     layer.setBlur(s.blurEnabled, s.blurRadius);
-    // 对话区毛玻璃：只加文字列玻璃，不压暗壁纸（关闭时文字色回壁纸亮度反色）。
+    // 内容区毛玻璃：会话列 + 面板页内容列，不压暗壁纸（关闭时文字色回壁纸亮度反色）。
     layer.setChatGlass(s.chatGlassEnabled, s.chatGlassStrength);
     layer.setKenBurns(s.kenBurns);
     layer.setFitMode(s.fitMode);

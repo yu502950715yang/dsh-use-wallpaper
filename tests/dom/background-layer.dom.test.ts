@@ -482,6 +482,8 @@ describe('createBackgroundLayer (DOM)', () => {
       document.body.removeAttribute('data-we-glass');
       document.documentElement.style.removeProperty('--wp-glass-alpha');
       document.documentElement.style.removeProperty('--wp-glass-blur');
+      document.documentElement.style.removeProperty('--wp-page-alpha');
+      document.documentElement.style.removeProperty('--wp-page-glass-blur');
       document.documentElement.style.removeProperty('--wp-chat-fg');
       document.documentElement.style.removeProperty('--wp-chat-outline');
     };
@@ -538,6 +540,22 @@ describe('createBackgroundLayer (DOM)', () => {
       layer.setChatGlass(true, Number.NaN);
       expect(Number(document.documentElement.style.getPropertyValue('--wp-glass-alpha'))).toBeCloseTo(0.479, 3);
       expect(document.documentElement.style.getPropertyValue('--wp-glass-blur')).toBe('14px');
+      cleanup();
+    });
+
+    it('面板页内容列（实验 B）：底色 45% / 模糊 8px 下限，关闭时一并撤掉', () => {
+      cleanup();
+      const layer = createBackgroundLayer(root());
+      layer.setChatGlass(true, 17);
+      expect(Number(document.documentElement.style.getPropertyValue('--wp-glass-alpha'))).toBeCloseTo(0.305, 3);
+      expect(Number(document.documentElement.style.getPropertyValue('--wp-page-alpha'))).toBeCloseTo(0.45, 3);
+      expect(document.documentElement.style.getPropertyValue('--wp-page-glass-blur')).toBe('8px');
+      layer.setChatGlass(true, 90);
+      expect(Number(document.documentElement.style.getPropertyValue('--wp-page-alpha'))).toBeCloseTo(0.758, 3);
+      expect(document.documentElement.style.getPropertyValue('--wp-page-glass-blur')).toBe('29px');
+      layer.setChatGlass(false, 90);
+      expect(document.documentElement.style.getPropertyValue('--wp-page-alpha')).toBe('');
+      expect(document.documentElement.style.getPropertyValue('--wp-page-glass-blur')).toBe('');
       cleanup();
     });
   });

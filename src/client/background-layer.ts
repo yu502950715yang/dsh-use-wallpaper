@@ -138,7 +138,7 @@ export interface BackgroundLayer {
   showNone(): void;
   setOverlayOpacity(v: number): void;
   setBlur(enabled: boolean, radius: number): void;
-  /** 对话区文字列毛玻璃：写 body[data-we-glass] 与 --wp-glass-*（关闭时移除并让文字色回主题）。 */
+  /** 内容区毛玻璃：写 body[data-we-glass] 与 --wp-glass-* / --wp-page-*（关闭时移除并让文字色回主题）。 */
   setChatGlass(enabled: boolean, strength: number): void;
   /** 设置 Ken Burns 开关状态并即时应用到当前图片（不重建元素）。 */
   setKenBurns(enabled: boolean): void;
@@ -547,7 +547,8 @@ export function createBackgroundLayer(root: HTMLElement, opts: BackgroundLayerOp
       applyFit(currentImage);
       applyFit(currentVideo);
     },
-    // 对话区毛玻璃（2026-11-16）：只写 body 属性 + 两个 CSS 变量，样式全在 styles.ts。
+    // 内容区毛玻璃（2026-11-16）：只写 body 属性 + 强度变量，样式全在 styles.ts。
+    // 2026-11-23 实验 B：同开关也给面板页内容列写 --wp-page-*（小字多，带 45%/8px 下限）。
     // 关闭时撤变量（文字色/描边由 controller.applyTextStyle 重新下发，回到壁纸亮度反色）。
     setChatGlass(enabled, strength) {
       chatGlassEnabled = enabled === true;
@@ -556,11 +557,18 @@ export function createBackgroundLayer(root: HTMLElement, opts: BackgroundLayerOp
       if (!chatGlassEnabled) {
         style.removeProperty('--wp-glass-alpha');
         style.removeProperty('--wp-glass-blur');
+        style.removeProperty('--wp-page-alpha');
+        style.removeProperty('--wp-page-glass-blur');
         return;
       }
       const v = Number.isFinite(strength) ? Math.min(100, Math.max(0, strength)) : 45;
-      style.setProperty('--wp-glass-alpha', String(0.2 + 0.62 * (v / 100)));
-      style.setProperty('--wp-glass-blur', `${Math.round(32 * (v / 100))}px`);
+      const alpha = 0.2 + 0.62 * (v / 100);
+      const blur = Math.round(32 * (v / 100));
+      style.setProperty('--wp-glass-alpha', String(alpha));
+      style.setProperty('--wp-glass-blur', `${blur}px`);
+      // 面板页内容列：低于 45% 的底色 / 8px 的模糊对 12–14px 小字无效。
+      style.setProperty('--wp-page-alpha', String(Math.max(0.45, alpha)));
+      style.setProperty('--wp-page-glass-blur', `${Math.max(8, blur)}px`);
       // 玻璃上文字用主题色：清掉按壁纸亮度的反色与描边（关闭后由 applyTextStyle 恢复）。
       style.removeProperty('--wp-chat-fg');
       style.removeProperty('--wp-chat-outline');

@@ -1138,11 +1138,11 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
               </label>
             </div>
         </section>
-        {/* 对话区：只糊文字列，不压暗壁纸（与上面的「整张壁纸模糊」是两件事） */}
+        {/* 内容区：会话列 + 面板页内容列，不压暗壁纸（与上面的「整张壁纸模糊」是两件事） */}
         <section className="wss-section wss-section-accent">
           <header className="wss-section-head">
-            <h4 className="wss-section-title">对话区</h4>
-            <span className="wss-section-hint">只糊文字列</span>
+            <h4 className="wss-section-title">内容区</h4>
+            <span className="wss-section-hint">会话列 + 面板页</span>
           </header>
           <div className="wss-effects">
               <label className="wss-row">
@@ -1157,7 +1157,7 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
                     else applyRuntime({ chatGlassEnabled: on });
                   }}
                 />
-                对话区毛玻璃
+                内容区毛玻璃
               </label>
               <label className="wss-slider">
                 <span className="wss-slider-head">
@@ -1184,7 +1184,7 @@ export function WallpaperSettingsSection(props: WallpaperSettingsSectionProps): 
                 <p className="wss-section-desc wss-glass-hint">
                   {settings.overlayOpacity > 0 ? (
                     <>
-                      毛玻璃只负责文字列的可读性；上面的「遮罩不透明度」压暗的是<b>整张壁纸</b>，想让壁纸恢复原亮度可以
+                      毛玻璃负责内容列（会话列与自动化任务等面板页）的可读性，面板页最低按 45% 计；上面的「遮罩不透明度」压暗的是<b>整张壁纸</b>，想让壁纸恢复原亮度可以
                       <button
                         type="button"
                         className="wss-glass-scrim-zero"
