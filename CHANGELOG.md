@@ -6,6 +6,13 @@
 - 单次发布的用户文案（GitHub Release）按 [`.github/RELEASE_NOTES_TEMPLATE.md`](./.github/RELEASE_NOTES_TEMPLATE.md) 写；本文件面向长期回溯，按「破坏性变更 / 新增 / 变更 / 修复 / 移除」归类。
 - 兼容性、已知限制与素材边界的**现状**以 README「使用前请了解」与 [`AGENT.md`](./AGENT.md) §7 为准，本文件不重复维护。
 
+## [1.0.3] - 2026-11-23
+
+### 修复（Fixed）
+
+- **光束类壁纸整层缺光**：Wallpaper Engine 里没有图片的 `shape` 纯效果对象（`3840341648`「Tokyo Sunset City Sky」的阳光光柱、`3819697503`「鸣潮·爱弥斯」的窗光）此前被当作空粒子丢弃，壁纸自带的 `lightshafts` 光束整层不显示；现在按全屏效果层实时渲染。
+- **光束位置与桌面不一致**：quad 的尺寸与中心按 WE 桌面实测标定（含 `g_Point0..3` 包围盒），光柱源头落在太阳上，不再偏左上。
+
 ## [1.0.2] - 2026-11-17
 
 ### 变更（Changed）
