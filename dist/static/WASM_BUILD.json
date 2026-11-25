@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-25T07:56:43.477Z",
+  "generatedAt": "2026-11-25T07:57:17.725Z",
   "buildCommand": "cd wasm && wasm-pack build --no-opt --target web --release --features cpu-sim",
   "toolchain": {
     "rustc": "1.96.0",
@@ -8,8 +8,8 @@
     "wasmPack": "0.15.0"
   },
   "source": {
-    "wasmSrcCommit": "d8a22bd49d51198440018906f286a2303c53ec96",
-    "wasmSrcDirty": true
+    "wasmSrcCommit": "19da5a0c7644713e013ad03fd5c8dd1f506bd763",
+    "wasmSrcDirty": false
   },
   "quickjs": {
     "version": "0.32.0",
