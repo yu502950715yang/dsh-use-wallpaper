@@ -584,6 +584,59 @@ mod tests {
         assert!(max - min > 0.5, "alpha 应随时间明显振荡（min={min}, max={max}）");
     }
 
+    /// oscillatesize 按 OWE `value *= GetScale(t)` 的语义漂移：同一倍率区间下 age 越大尺寸越小；
+    /// 区间均值为 1（如 0.9..1.1）时不漂移。
+    #[test]
+    fn oscillate_size_drifts_down_over_lifetime() {
+        use crate::particle::sim::{OscState, OscState3, ParticleOperator, SimInitial, SimParticle};
+        let make = || SimParticle {
+            pos: [0.0; 3],
+            vel: [0.0; 3],
+            rot: [0.0; 3],
+            angular_vel: [0.0; 3],
+            size: 100.0,
+            alpha: 1.0,
+            life: 100.0,
+            max_life: 100.0,
+            color: [1.0; 3],
+            frame: 0.0,
+            initial: SimInitial { color: [1.0; 3], alpha: 1.0, size: 100.0, lifetime: 100.0 },
+            fade_in: 0.0,
+            fade_out: 1.0,
+            oscillate_alpha: OscState { frequency: 0.0, scale: 1.0, phase: 0.0, base: 0.0, initialized: false },
+            oscillate_size: OscState { frequency: 0.0, scale: 1.0, phase: 0.0, base: 0.0, initialized: false },
+            oscillate_position: OscState3 { frequency: [0.0; 3], scale: [0.0; 3], phase: [0.0; 3], initialized: false },
+        };
+        let op = |scale_min: f32, scale_max: f32| ParticleOperator::OscillateSize {
+            freq_min: 2.0,
+            freq_max: 2.0,
+            scale_min,
+            scale_max,
+            phase_min: 0.0,
+            phase_max: 0.0,
+        };
+        // 0.6..1.2：均值 0.9 ⇒ 每秒 ×0.9，6 秒后应明显变小
+        let mut p = make();
+        op(0.6, 1.2).apply(&mut p, 0.0, 0.0);
+        let young = p.size;
+        p.life = 94.0; // age = 6s
+        op(0.6, 1.2).apply(&mut p, 0.0, 0.0);
+        let old = p.size;
+        assert!(old < young * 0.75, "age 6s 后应明显变小（young={young}, old={old}）");
+        assert!(old > 1.0, "不应缩到 0（old={old}）");
+        // 0.9..1.1：均值 1.0 ⇒ 只振荡不漂移
+        let mut q = make();
+        op(0.9, 1.1).apply(&mut q, 0.0, 0.0);
+        let q_young = q.size;
+        q.life = 94.0;
+        op(0.9, 1.1).apply(&mut q, 0.0, 0.0);
+        assert!(
+            (q.size - q_young).abs() < 1e-3 || (q.size >= 0.9 * 100.0 - 1e-3 && q.size <= 1.1 * 100.0),
+            "均值为 1 的区间不应漂移（{q_young} → {}）",
+            q.size
+        );
+    }
+
     #[test]
     fn init_defaults_white_color_zero_rotation_when_absent() {
         // 无 colorrandom/rotationrandom/alpharandom → color 缺省 [1,1,1]、rotation 缺省 [0,0,0]、alpha 缺省 1.0。

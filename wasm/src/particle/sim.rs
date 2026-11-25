@@ -572,6 +572,7 @@ impl ParticleOperator {
             } => {
                 // lwe createOscillateAlphaOperator：首次按 min/max 随机 frequency/scale/phase（phase 加 2π）
                 // 并置 initialized、base=当前 alpha；其后 `mult = mix(scaleMin, scaleMax, (cos(freq*age+phase)+1)/2)`。
+                // 注意：alpha **不做** 漂移包络（WE 桌面的星会持续闪烁而不是逐渐消失，见 oscillatesize 处注释）。
                 if !p.oscillate_alpha.initialized {
                     p.oscillate_alpha.frequency = *freq_min + (*freq_max - *freq_min) * rand();
                     p.oscillate_alpha.scale = *scale_min + (*scale_max - *scale_min) * rand();
@@ -606,7 +607,12 @@ impl ParticleOperator {
                 let w = p.oscillate_size.frequency;
                 let cos_val = ((w * t + p.oscillate_size.phase).cos() + 1.0) * 0.5;
                 let multiplier = scale_min + (scale_max - scale_min) * cos_val;
-                p.size = p.oscillate_size.base * multiplier;
+                // OWE `OscillateScalarOperator::Apply` 是 `value *= GetScale(t)`（乘到当前值上、随存活时间漂移，
+                // 不是每帧回基准）。逐帧相乘会随帧率变，这里取它的期望：包络 = 平均倍率^age（收敛到区间均值），
+                // 同时保留 cos 脉动。桌面实测：Big Stars 15~16 px vs 本实现改前 25~31 px。
+                let mean_scale = (scale_min + scale_max) * 0.5;
+                let drift = mean_scale.max(1e-4).powf(t);
+                p.size = (p.oscillate_size.base * multiplier * drift).max(0.0);
             }
             ParticleOperator::OscillatePosition {
                 freq_min,

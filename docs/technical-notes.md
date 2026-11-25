@@ -50,6 +50,7 @@
 - **`emitter.directions` 缺省 `(1,1,0)`**（lwe 语义；缺省零向量会让粒子全堆在同一点）；`distancemin/max` 逐轴 vec3。
 - **y 约定**：`origin.y - sceneH/2` + emitter 局部 `+y` 朝上（与桌面 WE 实测一致）。
 - **闪烁**：`oscillatealpha` 等算子接线，星点/火光按 spec 振荡。
+- **`oscillatesize` 会随存活时间漂移**（勿改成「每帧回基准」）：OWE `OscillateScalarOperator::Apply` 是 `value *= GetScale(t)`，乘到**当前值**上 ⇒ 尺寸从基准逐步收敛到区间均值（`mean=(min+max)/2`，每秒 ×mean）。`0.6..1.2` 的星点 6 秒后约 0.53×；区间均值为 1（如 `0.9..1.1`）时不漂移。`oscillatealpha` **不**做这个包络（否则星会在 1 秒内淡没，与桌面持续闪烁矛盾）。
 - **坐标与变换**（勿再翻转 / 勿漏乘）：WE 场景系 = 左下原点、y 向上；three 正交相机 = 中心原点、y 向上。映射 `three = we − viewport/2`，**y 不翻转**。对象 model matrix = `T·R·S`，`angles` 是**弧度**，旋转顺序 `R = Rz·Ry·Rx`。历史事故：曾用 `vh/2 − oy` 导致非居中对象上下镜像。
 - **`turbulentvelocityrandom` = `forward` 绕 `normal` 旋转**（不是「沿 normal 偏移」）：官方 `TurbulentVelocityRandomProgram` = curl 噪声采样 → 投影到垂直 normal 的平面 → 与 forward 求夹角 → `AngleAxisf(angle*scale + offset, normal) * forward`。方向**恒在垂直 normal 的平面内**。旧实现得到 `(0, cosθ, sinθ)`：x 恒 0、速度全进屏幕上不可见的 z 轴 → 粒子排成一条竖线。影响全库 **9 张壁纸**。
 - **对象级 `instanceoverride`**：`alpha/size/lifetime/speed` 是**乘数**，`color/colorn` 是**覆盖**（`UiColorToLinear` = v²），emitter rate **× `count`**；缺省恒等。JS 只解 `{user|script,value}` 编辑器包装，数值语义仍在 Rust（`particle::parse_particle_override`）。
