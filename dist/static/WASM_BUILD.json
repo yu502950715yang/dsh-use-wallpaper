@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-10T05:25:27.126Z",
+  "generatedAt": "2026-11-25T06:35:25.505Z",
   "buildCommand": "cd wasm && wasm-pack build --no-opt --target web --release --features cpu-sim",
   "toolchain": {
     "rustc": "1.96.0",
@@ -9,7 +9,7 @@
   },
   "source": {
     "wasmSrcCommit": "fc4b5f2ee4235f16d256b31c041f1c8a23bdea48",
-    "wasmSrcDirty": false
+    "wasmSrcDirty": true
   },
   "quickjs": {
     "version": "0.32.0",
@@ -22,8 +22,8 @@
       "size": 11499
     },
     "dist/static/we_scene_wasm_bg.wasm": {
-      "sha256": "9086da343388dda42a0e0cc973658232f72525950855ea6d985e5a5d9b58fd8b",
-      "size": 162514
+      "sha256": "36eea66fb2f8dea06067a1831258c4cedfe78f26ccc9ad2803bc995953c950b8",
+      "size": 162537
     },
     "dist/static/quickjs.wasm": {
       "sha256": "105c3bed22d457e43e3d1c3c1c6959fda62a8fe06f0fc8a985303c3a2be72232",

@@ -52,7 +52,7 @@ pub enum OperatorKind {
     /// 按寿命线性插值调制 color（colorchange）。参数同上 + startvalue/endvalue 为 vec3。
     ColorChange,
     /// controlpointattract：`diff = center - pos`，`|diff| < threshold` 时
-    /// `vel += normalize(diff) * scale * dt`（`scale` 为负 = **推离**控制点）。
+    /// `vel += normalize(diff) * scale*dt*(1 - |diff|/threshold)`（`scale` 为负 = **推离**控制点）。
     /// 控制点位置来自 spec 的 `controlpoint[controlpoint]` + instanceoverride 的 `controlpointN`。
     ControlPointAttract,
     Other,

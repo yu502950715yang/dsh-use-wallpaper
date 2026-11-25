@@ -4024,8 +4024,10 @@ describe('ThreeScenePlayer 粒子自旋轴序（A9）', () => {
     expect(src).toContain('weObjectRotate(weParticleSpinRotate(vec3(0.0, 1.0, 0.0), particleRot), objAngles)');
     // 对象角度零回归：局部坐标、拖尾偏移、角点缩放仍由 weObjectRotate 施加。
     expect(src).toContain('weObjectRotate(objScale * (emitterOrigin + local), objAngles)');
-    expect(src).toContain('weObjectRotate(abs(objScale) * offset, objAngles)');
-    expect(src).toContain('weObjectRotate(abs(objScale) * (spun * particleSize * 0.5), objAngles)');
+    // 角点/拖尾偏移带**符号** scale（WE 把 model 矩阵乘到每个 quad 顶点 ⇒ 负 scale 时精灵也镜像）。
+    expect(src).toContain('weObjectRotate(objScale * offset, objAngles)');
+    expect(src).toContain('weObjectRotate(objScale * (spun * particleSize * 0.5), objAngles)');
+    expect(src).not.toContain('abs(objScale)');
     // 轴序：WE 函数体 = 先 Ry、再 Rx、最后 Rz（列向量 ⇒ 矩阵 Rz·Rx·Ry）；对象函数仍是 x→y→z。
     expect(axisOrderOf(src, 'weParticleSpinRotate')).toEqual(['y', 'x', 'z']);
     expect(axisOrderOf(src, 'weObjectRotate')).toEqual(['x', 'y', 'z']);

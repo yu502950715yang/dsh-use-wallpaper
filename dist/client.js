@@ -29361,8 +29361,10 @@ void main() {
   // \u671D\u5411\u7528 \u2014\u2014 GTR 3743126786 \u7684\u70DF\u67F1 angles.z = -1.20063 \u672C\u5E94\u628A\u5C40\u90E8 +Y\uFF08\u6E4D\u6D41\u7684 forward\uFF09\u8F6C\u5230
   // \u4E16\u754C (0.932, 0.362)\uFF08\u300C\u4ECE\u6392\u6C14\u7BA1\u5411\u53F3\u4FA7\u98D8\u300D\uFF09\uFF0C\u6F0F\u6389\u65CB\u8F6C\u540E\u70DF\u5C31\u76F4\u7740\u5F80\u4E0A\u8D70\u3002
   vec3 worldPos = objCenter + weObjectRotate(objScale * (emitterOrigin + local), objAngles);
-  // \u7C92\u5B50 quad \u5C3A\u5BF8\u4E58\u5BF9\u8C61 scale\uFF08\u975E\u5747\u5300\uFF1Babs \u53BB\u6389\u955C\u50CF\u7B26\u53F7\uFF09\u5E76\u968F\u5BF9\u8C61\u89D2\u5EA6\u8F6C\uFF1B\u81EA\u65CB\u7528 WE \u8F74\u5E8F Rz\xB7Rx\xB7Ry\uFF0C
-  // \u5BF9\u8C61\u89D2\u5EA6\u4ECD\u7528 Rz\xB7Ry\xB7Rx\uFF08\u4E24\u5E8F z-only \u7B49\u4EF7\uFF09\u2014\u2014 \u89C1 weParticleSpinRotate\u3002
+  // \u7C92\u5B50 quad \u5C3A\u5BF8\u4E58\u5BF9\u8C61 scale\uFF08\u975E\u5747\u5300\uFF0C**\u5E26\u7B26\u53F7**\uFF09\uFF1AWE \u628A g_ModelViewProjectionMatrix\uFF08T\xB7R\xB7S\uFF09
+  // \u4E58\u5230\u6BCF\u4E2A quad \u9876\u70B9\u4E0A\uFF0C\u8D1F scale \u4F1A\u8FDE\u540C\u7CBE\u7075\u4E00\u8D77\u955C\u50CF \u2014\u2014 abs \u4F1A\u8BA9\u300C\u955C\u50CF\u5BF9\u8C61\u7684\u7CBE\u7075\u300D\u4E0E\u684C\u9762\u5DE6\u53F3\u76F8\u53CD
+  // \uFF083825702259 \u7684\u9E1F\uFF1A\u684C\u9762\u671D\u5DE6\u98DE\u3001\u671D\u5DE6\u770B\uFF0C\u53D6 abs \u65F6\u671D\u53F3\u770B\uFF09\u3002\u518D\u968F\u5BF9\u8C61\u89D2\u5EA6\u8F6C\uFF1B\u81EA\u65CB\u7528 WE \u8F74\u5E8F
+  // Rz\xB7Rx\xB7Ry\uFF0C\u5BF9\u8C61\u89D2\u5EA6\u4ECD\u7528 Rz\xB7Ry\xB7Rx\uFF08\u4E24\u5E8F z-only \u7B49\u4EF7\uFF09\u2014\u2014 \u89C1 weParticleSpinRotate\u3002
   if (trailEnabled > 0.5 && length(particleVelocity) > 1e-6) {
     // spritetrail\uFF1A\u590D\u523B WE ComputeParticleTrailTangents / ComputeParticlePosition\uFF08common_particles.h:42-59\uFF09\u2014\u2014
     //   right = normalize(cross(eyeDirection, velocity))
@@ -29383,12 +29385,12 @@ void main() {
     vec3 up = (particleVelocity / speed) * trailLen;
     vec2 quadUv = position.xy * 0.5 + 0.5;
     vec3 offset = particleSize * (right * (quadUv.x - 0.5) + up * (quadUv.y - 0.5) * texelRatio);
-    worldPos += weObjectRotate(abs(objScale) * offset, objAngles);
+    worldPos += weObjectRotate(objScale * offset, objAngles);
   } else {
     // sprite\uFF08\u65E2\u6709\u8DEF\u5F84\uFF0C\u9010\u5B57\u4E0D\u53D8\uFF09\uFF1A\u4E09\u8F74\u6B27\u62C9\u65CB\u8F6C quad \u89D2\u70B9\uFF1B|v|=0 \u7684 spritetrail \u4E5F\u9000\u5230\u8FD9\u91CC
     // \uFF08WE \u7684 normalize(0) \u4F1A\u4EA7\u51FA NaN\u3001\u7C92\u5B50\u6D88\u5931\uFF0C\u672C\u63D2\u4EF6\u9009\u62E9\u753B\u51FA size \u65B9\u5757\u800C\u4E0D\u662F\u4E22\u7C92\u5B50\uFF09\u3002
     vec3 spun = weParticleSpinRotate(vec3(position.xy, 0.0), particleRot);
-    vec3 corner = weObjectRotate(abs(objScale) * (spun * particleSize * 0.5), objAngles);
+    vec3 corner = weObjectRotate(objScale * (spun * particleSize * 0.5), objAngles);
     worldPos += corner;
   }
   // \u89C6\u5DEE\uFF1A\u6CBF\u4E16\u754C\u8F74\u5E73\u79FB\u6574\u4E2A\u5BF9\u8C61\uFF080 = \u9010\u5B57\u4E0D\u53D8\uFF09\u3002

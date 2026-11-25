@@ -41,7 +41,7 @@
 
 - **WE 场景系 = 左下原点、y 向上**；three 正交相机 = 中心原点、y 向上。映射：`three = we − viewport/2`，**y 不翻转**。历史事故：曾用 `vh/2 − oy`，导致非居中对象上下镜像。新代码不得引入 y 翻转或 `scale.y` 取负。
 - **对象 model matrix = T·R·S**；其中 `angles` 是**弧度**（OWE `SceneNode.cpp:15`），旋转顺序 **R = Rz·Ry·Rx**（OWE `ParticleRuntime.cpp:25-28`）。
-- 粒子世界坐标：`worldPos = objCenter + R(angles) · (scale ⊙ (emitterOrigin + local))`（`threejs-player.ts` 的 `PARTICLE_VERTEX_SHADER`）。
+- 粒子世界坐标：`worldPos = objCenter + R(angles) · (scale ⊙ (emitterOrigin + local))`（`threejs-player.ts` 的 `PARTICLE_VERTEX_SHADER`）。**quad 角点/拖尾偏移同样乘带符号 `scale`**（WE 把 `g_ModelViewProjectionMatrix` 乘到每个顶点上 ⇒ 负 scale 时精灵也镜像；曾用 `abs(objScale)`，导致镜像对象的鸟/流星朝向与桌面左右相反，2026-11-25 修）。
 - 背景 mesh：`position / rotation / scale` 直接对应 T / R / S（three 的 `Object3D` 变换顺序本就是 T·R·S）。
 - **视差**（`cameraparallax`）也是**对象 model 矩阵的平移**（相机不动）：`shift = depth ⊙ ((node − cam) + mouse) × amount`，`mouse = ((0.5−px)·W, (py−0.5)·H) × mouseInfluence`（`W/H` = 场景正交尺寸）。`depth`/`node` 由 `parallax-contract.ts` 按**父链锚点传播**解析：子层没有自己的非零深度 ⇒ 复用祖先锚点的 depth 与**世界** origin（与父层同位移），父层 `disablepropagation: true` 阻断继承，双方都声明非零深度 ⇒ 各算各的。`depth` 全 0 或关视差的对象**不写** `position` —— 每帧无条件写会盖掉脚本对同一对象 `origin` 的写入（§7.39）。
 

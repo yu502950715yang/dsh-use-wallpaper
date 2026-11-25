@@ -6,6 +6,13 @@
 - 单次发布的用户文案（GitHub Release）按 [`.github/RELEASE_NOTES_TEMPLATE.md`](./.github/RELEASE_NOTES_TEMPLATE.md) 写；本文件面向长期回溯，按「破坏性变更 / 新增 / 变更 / 修复 / 移除」归类。
 - 兼容性、已知限制与素材边界的**现状**以 README「使用前请了解」与 [`AGENT.md`](./AGENT.md) §7 为准，本文件不重复维护。
 
+## [Unreleased]
+
+### 修复（Fixed）
+
+- **粒子飞行方向与桌面相反（`3825702259`「Where the World Falls Asleep」的鸟群）**：`controlpointattract` 此前整段阈值半径内都按满力作用，漏了官方的线性衰减 `scale·dt·(1 − d/threshold)`；现在按官方公式，掠过吸引点只受很小的力。
+- **同一张壁纸鸟群扇开、且整体飘到天空上缘**：`instanceoverride.controlpointN` 此前被**累加**到 spec 的 offset 上，吸引点被推到发射点外 4~7k px，差动力把鸟群扇开（散布 sd 345 px）；现在按 OWE `UpdateControlpoints` 的口径**替换**（`offset = position`），两个吸引点落回横穿路径上的 `scene (41,974)/(1790,1077)`，鸟群被压回天空中段、宽度 ~550 px、单向穿屏（桌面截图实测 582×657 中心 (1099,1003)）。
+- **镜像粒子对象（负 scale）的精灵朝向与桌面左右相反**：quad 角点此前用 `abs(objScale)`（只缩放不镜像），而 WE 把对象 model 矩阵乘到每个顶点上；全库 10 张壁纸 / 22 个镜像粒子对象受影响，正 scale 对象位级不变。
 ## [1.0.3] - 2026-11-23
 
 ### 修复（Fixed）

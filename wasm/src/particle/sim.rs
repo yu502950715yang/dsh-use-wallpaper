@@ -459,12 +459,17 @@ impl ParticleOperator {
             ParticleOperator::ControlPointAttract { center, scale, threshold, .. } => {
                 // 官方 `ControlPointAttractOperator::Update`（OWE ParticleParser.cpp:1368-1386）：
                 //   difference = offset - position; if |difference| < threshold:
-                //       velocity += difference.normalized() * scale * dt
-                // `threshold` **不除以 2**（lwe 除以 2，以官方为准）；`scale` 为负 = 推离控制点。
+                //       impulse = scale * dt * (1 - distance / threshold)
+                //       velocity += difference.normalized() * impulse
+                // **线性衰减是这条算子的关键**：力在阈值边缘为 0、越靠中心越强。旧实现漏了
+                // `(1 - d/threshold)`（整段半径内都是满力），把「掠过吸引点边缘」算成了「被满力拽回」——
+                // 3825702259 的鸟群因此飞到左半屏被拽回右侧来回摆（桌面是单向穿屏：鸟群只在边缘掠过，
+                // 受到的力只有几 px/s²）。`threshold` 不除以 2（lwe 除以 2，以官方为准）；
+                // `scale` 为负 = 推离控制点。
                 let d = [center[0] - p.pos[0], center[1] - p.pos[1], center[2] - p.pos[2]];
                 let dist = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
                 if dist > 1e-3 && dist < *threshold {
-                    let k = *scale * dt / dist;
+                    let k = *scale * dt * (1.0 - dist / *threshold) / dist;
                     for i in 0..3 {
                         p.vel[i] += d[i] * k;
                     }
@@ -927,10 +932,13 @@ impl SceneParticleSim {
         }
     }
 
-    /// 用 `spec.controlpoints`（基础偏移）与 `override_spec.controlpoints`（实例覆盖）填好
-    /// `ControlPointAttract` 算子的 `center`（**局部空间**坐标）。
+    /// 用 `spec.controlpoints` / `override_spec.controlpoints` 填好 `ControlPointAttract` 算子的
+    /// `center`（**局部空间**坐标）。
     ///
-    /// 非 worldspace（官方 `ParticleRuntime.cpp:607-620` 的 else 分支）：`center = base_offset + override`。
+    /// **覆盖值是 replace 而不是相加**（OWE `ParticleRuntime.cpp::UpdateControlpoints`：
+    /// `controlpoint.offset = controlpoint.base_offset;` 之后 `controlpoint.offset = position;`）。
+    /// 相加会把吸引点推到发射点外 4~7k px（3825702259 的两个点被推到 (4321/1195)），差动力把鸟群
+    /// 扇开；replace 后它们落在横穿路径上的 (2821/1072) 处，正好是桌面那个「鸟群被压在中段天空」的路标。
     /// worldspace 的控制点需要对象的 world←spawn 变换（对象 angles/scale）—— 本模拟器暂不接收这两个
     /// 参数，`spec_operators_to_sim` 对这类控制点**不生成算子**，故这里也无需处理。
     pub fn resolve_controlpoint_attract(&mut self, cps: &[super::ControlPointSpec]) {
@@ -947,10 +955,12 @@ impl SceneParticleSim {
         let ov = self.override_spec.controlpoints;
         for op in &mut self.operators {
             if let ParticleOperator::ControlPointAttract { cp_index, center, .. } = op {
-                let mut c = cps.get(*cp_index).map(|cp| cp.offset).unwrap_or([0.0; 3]);
-                if let Some(add) = ov.get(*cp_index).copied().flatten() {
-                    c = [c[0] + add[0], c[1] + add[1], c[2] + add[2]];
-                }
+                let c = ov
+                    .get(*cp_index)
+                    .copied()
+                    .flatten()
+                    .or_else(|| cps.get(*cp_index).map(|cp| cp.offset))
+                    .unwrap_or([0.0; 3]);
                 *center = [base[0] + c[0], base[1] + c[1], base[2] + c[2]];
             }
         }
@@ -1549,8 +1559,9 @@ mod tests {
     }
 
     /// controlpointattract（官方 `ControlPointAttractOperator::Update`）：
-    /// `diff = center - pos`，`|diff| < threshold` 时 `vel += normalize(diff) * scale * dt`
-    /// —— `scale` 为负即**推离**控制点。
+    /// `diff = center - pos`，`|diff| < threshold` 时
+    /// `vel += normalize(diff) * scale*dt*(1 - |diff|/threshold)`（**线性衰减**：边缘 0、中心满力）。
+    /// `scale` 为负即**推离**控制点。
     ///
     /// 回归 3793620838：`Bird`（乌鸦群）的 CP1 就在发射点（`flags=link_mouse` + offset 0 ⇒ 局部原点）、
     /// `scale=-200`、`threshold=100`，而出生散射半径只有 0..35 ⇒ 桌面端每个新粒子都被径向推开
@@ -1568,15 +1579,55 @@ mod tests {
         sim.particles.push(dummy_particle([200.0, 0.0, 0.0]));
         for p in &mut sim.particles {
             p.vel = [0.0; 3];
+            p.life = 100.0; // 两次 update 后仍在（缺省 life=1 会在第二次 update 前死掉）
         }
         sim.update(0.5);
-        // 内：diff = -10 → normalize = (-1,0,0) → v += (-1) * (-200) * 0.5 = +100（沿 +x 向外推）
+        // 内：diff = -10 → normalize = (-1,0,0)，impulse = -200 * 0.5 * (1 - 10/100) = -90
+        //     → v += (-1) * (-90) = +90（沿 +x 向外推）
         assert!(
-            (sim.particles[0].vel[0] - 100.0).abs() < 1e-3,
-            "threshold 内应被径向推开，got {:?}",
+            (sim.particles[0].vel[0] - 90.0).abs() < 1e-3,
+            "threshold 内应被径向推开且按 (1 - d/threshold) 衰减，got {:?}",
             sim.particles[0].vel
         );
         assert_eq!(sim.particles[1].vel[0], 0.0, "threshold 外不受力");
+        // 越靠边缘力越小：x=50 处 impulse = -200*0.5*(1-0.5) = -50
+        sim.particles[0].pos = [50.0, 0.0, 0.0];
+        sim.particles[0].vel = [0.0; 3];
+        sim.update(0.5);
+        assert!(
+            (sim.particles[0].vel[0] - 50.0).abs() < 1e-3,
+            "力应随距离线性衰减，got {:?}",
+            sim.particles[0].vel
+        );
+    }
+
+    /// 覆盖值是 **replace** 而不是相加（OWE `UpdateControlpoints`）：覆盖过的控制点用 override 定位，
+    /// 未覆盖的用 spec 的 offset；两者都以发射点为基准。
+    #[test]
+    fn override_replaces_spec_offset_for_attract() {
+        let mut sim = mk_prewarm_sim(1.0, 1.0, 0.0, 4);
+        sim.operators = vec![
+            ParticleOperator::ControlPointAttract { cp_index: 1, center: [0.0; 3], scale: 200.0, threshold: 100.0 },
+            ParticleOperator::ControlPointAttract { cp_index: 2, center: [0.0; 3], scale: 200.0, threshold: 100.0 },
+        ];
+        let mut cps = [crate::particle::ControlPointSpec::default(); 8];
+        cps[2].offset = [123.0, 0.0, 0.0];
+        sim.override_spec.controlpoints[2] = Some([1000.0, 0.0, 0.0]);
+        sim.resolve_controlpoint_attract(&cps);
+        let centers: Vec<[f32; 3]> = sim
+            .operators
+            .iter()
+            .filter_map(|op| match op {
+                ParticleOperator::ControlPointAttract { center, .. } => Some(*center),
+                _ => None,
+            })
+            .collect();
+        // 对象原点 (0,0,0)、scene 3840×2160 ⇒ we_to_three = (-1920, -1080)。
+        assert!((centers[0][0] - (-1920.0)).abs() < 1e-3, "cp1 无覆盖 ⇒ 用 spec 偏移 0");
+        assert!(
+            (centers[1][0] - (-920.0)).abs() < 1e-3,
+            "cp2 被覆盖 ⇒ 用 override 1000（不是 spec 123，也不是相加）"
+        );
     }
 
     /// `resolve_controlpoint_attract` 的基准对齐：控制点 offset 是**相对粒子系统位置**的偏移，
