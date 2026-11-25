@@ -751,6 +751,9 @@ pub struct SceneParticleSim {
     pub animation_mode: AnimationMode,
     /// 序列帧倍率（官方 `sequencemultiplier`，缺省 1）：一个寿命内播放的动画轮数。
     pub sequence_multiplier: f32,
+    /// sizerandom 的换算除数：缺省 2（`值/2` = billboard 整宽）；带**衰减型** `oscillatesize`
+    /// （区间均值 <1）的对象取 4 —— 桌面 1:1 实测这两类的口径不同，详见 `size_divisor_for`。
+    pub size_divisor: f32,
 }
 
 impl SceneParticleSim {
@@ -784,7 +787,27 @@ impl SceneParticleSim {
             spritesheet_frames: DEFAULT_FRAME_COUNT,
             animation_mode: AnimationMode::Sequence,
             sequence_multiplier: 1.0,
+            size_divisor: 2.0,
         }
+    }
+
+    /// sizerandom 换算除数（见 `size_divisor` 字段）。
+    ///
+    /// 经验口径（2026-11-25，两张 1:1 桌面截图）：
+    /// - 带 `oscillatesize` 且区间均值 <1（如 `0.6..1.2`）：桌面星斑 = `值/4`
+    ///   （`3819637149` Big Stars 110..180 → 桌面 14~16 px）；
+    /// - 其余（鸟群/花瓣/雨雪）：`值/2`（`3825702259` 鸟群对得上桌面；`/4` 时用户反馈"鸟过小"）。
+    ///
+    /// 均值 = 1 的振荡（如 `0.9..1.1`）不漂移，按 `/2` 处理。
+    pub fn size_divisor_for(operators: &[ParticleOperator]) -> f32 {
+        for op in operators {
+            if let ParticleOperator::OscillateSize { scale_min, scale_max, .. } = op {
+                if (scale_min + scale_max) * 0.5 < 1.0 {
+                    return 4.0;
+                }
+            }
+        }
+        2.0
     }
 
     /// 每帧推进：累计发射 → 积分运动/寿命 → 回收死亡粒子。
@@ -1101,7 +1124,7 @@ impl SceneParticleSim {
         // instanceoverride.size：官方 override 是**追加在最后**的 initializer，在 sizerandom 的
         // 「/2」之后乘 `modifiers.Size()`（ParticleParser.cpp:369 `columns.sizes[index] *= ...`）。
         let size = (i.size_min + (i.size_max - i.size_min) * rand().powf(i.size_exponent))
-            * 0.25
+            / self.size_divisor
             * self.override_spec.size;
         // lifetimeRandom / alphaRandom：`lerp(min,max,rand)`（黑神话 life∈[5,10]、alpha 缺省 1.0）。
         // 两者再乘 instanceoverride 的 lifetime/alpha（官方 ParticleParser.cpp:365-368）。
@@ -1821,8 +1844,8 @@ mod tests {
         assert!((-200.0..=200.0).contains(&p.vel[1]), "vel[1] 应来自 init（非黑神话 -50..-15），got {}", p.vel[1]);
         assert!((-300.0..=300.0).contains(&p.vel[2]), "vel[2] 应在 init 范围内，got {}", p.vel[2]);
 
-        // size 落在 init [size_min/4, size_max/4]（WE：sizerandom 值 /4；非黑神话 15..25）。
-        assert!((2.5..=5.0).contains(&p.size), "size 应来自 init 且 = 值/4，got {}", p.size);
+        // size 落在 init [size_min/2, size_max/2]（缺省除数 2；带衰减型 oscillatesize 的对象才是 /4）。
+        assert!((5.0..=10.0).contains(&p.size), "size 应来自 init 且 = 值/2，got {}", p.size);
         // life 落在 init [lifetime_min, lifetime_max]（非黑神话 5..10）。
         assert!((2.0..=3.0).contains(&p.life), "life 应来自 init，got {}", p.life);
         // color 各分量落在 init [color_min, color_max]（非黑神话粉 [1,0.83,0.97]）。
@@ -1968,5 +1991,37 @@ mod tests {
         let y = sim.particles[0].pos[1];
         // 对象中心 y = 419.77 - 2160/2 = -660.23（scene 中心下方，we_to_three 与背景一致）。
         assert!((y - (-660.23)).abs() < 1e-3, "origin.y=0 时 pos.y 应为对象中心 we_to_three 坐标 -660.23，got {}", y);
+    }
+}
+
+#[cfg(test)]
+mod size_divisor_tests {
+    use super::*;
+
+    /// 带衰减型 oscillatesize（区间均值 <1）⇒ /4；其余（含均值 =1 的振荡）⇒ /2。
+    #[test]
+    fn size_divisor_depends_on_decaying_oscillate_size() {
+        let none = vec![ParticleOperator::Movement { gravity: [0.0; 3], drag: 0.0 }];
+        assert_eq!(SceneParticleSim::size_divisor_for(&none), 2.0, "无 oscillatesize ⇒ /2");
+
+        let decaying = vec![ParticleOperator::OscillateSize {
+            freq_min: 0.0,
+            freq_max: 2.0,
+            scale_min: 0.6,
+            scale_max: 1.2,
+            phase_min: 0.0,
+            phase_max: 0.0,
+        }];
+        assert_eq!(SceneParticleSim::size_divisor_for(&decaying), 4.0, "0.6..1.2（均值 0.9）⇒ /4");
+
+        let neutral = vec![ParticleOperator::OscillateSize {
+            freq_min: 0.0,
+            freq_max: 2.0,
+            scale_min: 0.9,
+            scale_max: 1.1,
+            phase_min: 0.0,
+            phase_max: 0.0,
+        }];
+        assert_eq!(SceneParticleSim::size_divisor_for(&neutral), 2.0, "0.9..1.1（均值 1）⇒ /2");
     }
 }
