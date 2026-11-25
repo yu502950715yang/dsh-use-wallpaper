@@ -4032,6 +4032,8 @@ describe('ThreeScenePlayer 粒子自旋轴序（A9）', () => {
     expect(src).toContain('weObjectRotate(objScale * offset, objAngles)');
     expect(src).toContain('weObjectRotate(objScale * (spun * particleSize * 0.5), objAngles)');
     expect(src).not.toContain('abs(objScale)');
+    // rope 的「绝对长度」口径：沿速度轴不再乘 size/texelRatio（否则流星拖尾被拉到 3000 px 量级）。
+    expect(src).toContain('trailAbsolute > 0.5 ? 1.0 : particleSize * texelRatio');
     // 轴序：WE 函数体 = 先 Ry、再 Rx、最后 Rz（列向量 ⇒ 矩阵 Rz·Rx·Ry）；对象函数仍是 x→y→z。
     expect(axisOrderOf(src, 'weParticleSpinRotate')).toEqual(['y', 'x', 'z']);
     expect(axisOrderOf(src, 'weObjectRotate')).toEqual(['x', 'y', 'z']);

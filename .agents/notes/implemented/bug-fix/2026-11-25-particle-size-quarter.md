@@ -14,7 +14,7 @@ Asleep」的鸟群被用户反馈「过小」——鸟群是 `/2` 时对得上�
 
 ## Decision
 
-`SceneParticleSim::size_divisor_for(&operators)` 按算子判定除数，spawn 时用：
+`SceneParticleSim::size_divisor_for(&operators)` 按算子判定除数；**spawn 时现算**（不存字段，避免与 `operators` 不同步）：
 
 - 带 **衰减型** `oscillatesize`（区间均值 < 1，如 `0.6..1.2`）⇒ `值/4`；
 - 其余（含均值 = 1 的振荡，如 `0.9..1.1`）⇒ `值/2`。

@@ -611,7 +611,9 @@ impl ParticleOperator {
                 // 不是每帧回基准）。逐帧相乘会随帧率变，这里取它的期望：包络 = 平均倍率^age（收敛到区间均值），
                 // 同时保留 cos 脉动。桌面实测：Big Stars 15~16 px vs 本实现改前 25~31 px。
                 let mean_scale = (scale_min + scale_max) * 0.5;
-                let drift = mean_scale.max(1e-4).powf(t);
+                // 夹住：spec 是第三方数据，均值 >1 会指数放大（上万 px 的 quad 打满填充率），
+                // 均值过小会让粒子在几秒内缩到看不见。
+                let drift = mean_scale.max(1e-4).powf(t).clamp(0.25, 4.0);
                 p.size = (p.oscillate_size.base * multiplier * drift).max(0.0);
             }
             ParticleOperator::OscillatePosition {
@@ -751,9 +753,6 @@ pub struct SceneParticleSim {
     pub animation_mode: AnimationMode,
     /// 序列帧倍率（官方 `sequencemultiplier`，缺省 1）：一个寿命内播放的动画轮数。
     pub sequence_multiplier: f32,
-    /// sizerandom 的换算除数：缺省 2（`值/2` = billboard 整宽）；带**衰减型** `oscillatesize`
-    /// （区间均值 <1）的对象取 4 —— 桌面 1:1 实测这两类的口径不同，详见 `size_divisor_for`。
-    pub size_divisor: f32,
 }
 
 impl SceneParticleSim {
@@ -787,11 +786,10 @@ impl SceneParticleSim {
             spritesheet_frames: DEFAULT_FRAME_COUNT,
             animation_mode: AnimationMode::Sequence,
             sequence_multiplier: 1.0,
-            size_divisor: 2.0,
         }
     }
 
-    /// sizerandom 换算除数（见 `size_divisor` 字段）。
+    /// sizerandom 换算除数（spawn 时按当前算子现算）。
     ///
     /// 经验口径（2026-11-25，两张 1:1 桌面截图）：
     /// - 带 `oscillatesize` 且区间均值 <1（如 `0.6..1.2`）：桌面星斑 = `值/4`
@@ -1115,16 +1113,16 @@ impl SceneParticleSim {
             lerp(i.velocity_min[2], i.velocity_max[2]),
         ];
 
-        // sizeRandom：WE/lwe `createSizeRandomInitializer` 为
-        //   `p.size = (min + t^exponent*(max-min)) * override / 4`（**除以 4**）。
+        // sizeRandom：`p.size = (min + t^exponent*(max-min)) / 除数 * override.size`。
         // 语义：本模拟器输出的 `size` 与渲染器（three `position.xy*particleSize*0.5`、角点 ±1）同为
-        // billboard **整宽**；实测桌面 WE 的星点直径 ≈ `sizerandom/4`（`3819637149` 的 Big Stars：
-        // spec 110..180 ⇒ 桌面 14~16 px 星斑，1920 视口 scale 0.48）。
-        // 历史：/1 时明显偏大（Crimson 绿点、黑神话花瓣），改 /2 仍偏大一倍，2026-11-25 定为 /4。
-        // instanceoverride.size：官方 override 是**追加在最后**的 initializer，在 sizerandom 的
-        // 「/2」之后乘 `modifiers.Size()`（ParticleParser.cpp:369 `columns.sizes[index] *= ...`）。
+        // billboard **整宽**。除数是**按对象**的经验口径（见 `size_divisor_for`）：带衰减型
+        // `oscillatesize` 的对象 `/4`，其余 `/2`。
+        // 历史：/1 时明显偏大（Crimson 绿点、黑神话花瓣），全局改 /2 后星点仍偏大一倍，2026-11-25 分档。
+        // instanceoverride.size：官方 override 是**追加在最后**的 initializer，最后乘
+        // `modifiers.Size()`（ParticleParser.cpp:369 `columns.sizes[index] *= ...`）。
+        let divisor = Self::size_divisor_for(&self.operators);
         let size = (i.size_min + (i.size_max - i.size_min) * rand().powf(i.size_exponent))
-            / self.size_divisor
+            / divisor
             * self.override_spec.size;
         // lifetimeRandom / alphaRandom：`lerp(min,max,rand)`（黑神话 life∈[5,10]、alpha 缺省 1.0）。
         // 两者再乘 instanceoverride 的 lifetime/alpha（官方 ParticleParser.cpp:365-368）。
@@ -1992,11 +1990,6 @@ mod tests {
         // 对象中心 y = 419.77 - 2160/2 = -660.23（scene 中心下方，we_to_three 与背景一致）。
         assert!((y - (-660.23)).abs() < 1e-3, "origin.y=0 时 pos.y 应为对象中心 we_to_three 坐标 -660.23，got {}", y);
     }
-}
-
-#[cfg(test)]
-mod size_divisor_tests {
-    use super::*;
 
     /// 带衰减型 oscillatesize（区间均值 <1）⇒ /4；其余（含均值 =1 的振荡）⇒ /2。
     #[test]
