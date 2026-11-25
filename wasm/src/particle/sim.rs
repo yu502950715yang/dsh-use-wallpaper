@@ -1093,16 +1093,15 @@ impl SceneParticleSim {
         ];
 
         // sizeRandom：WE/lwe `createSizeRandomInitializer` 为
-        //   `p.size = (min + t^exponent*(max-min)) * override / 2`（**除以 2**）。
-        // 原因：WE 粒子 shader（`common_particles.h::ComputeParticlePosition`）用
-        // `positionAndSize.w * right * (uvs.x-0.5)` 展开 quad —— 即 `p.size` 就是 billboard 的**整宽**
-        // （uvs∈[0,1]），sizerandom 存的是编辑器值的**一半**。本模拟器输出的 `size` 与渲染器
-        // （three `position.xy*particleSize*0.5`、wasm `corner*size/2`，角点 ±1）同为「整宽」语义，
-        // 故此处同样 /2；否则粒子会是 WE 的 **2 倍大**（Crimson 绿点/星点偏大、黑神话花瓣偏大）。
+        //   `p.size = (min + t^exponent*(max-min)) * override / 4`（**除以 4**）。
+        // 语义：本模拟器输出的 `size` 与渲染器（three `position.xy*particleSize*0.5`、角点 ±1）同为
+        // billboard **整宽**；实测桌面 WE 的星点直径 ≈ `sizerandom/4`（`3819637149` 的 Big Stars：
+        // spec 110..180 ⇒ 桌面 14~16 px 星斑，1920 视口 scale 0.48）。
+        // 历史：/1 时明显偏大（Crimson 绿点、黑神话花瓣），改 /2 仍偏大一倍，2026-11-25 定为 /4。
         // instanceoverride.size：官方 override 是**追加在最后**的 initializer，在 sizerandom 的
         // 「/2」之后乘 `modifiers.Size()`（ParticleParser.cpp:369 `columns.sizes[index] *= ...`）。
         let size = (i.size_min + (i.size_max - i.size_min) * rand().powf(i.size_exponent))
-            * 0.5
+            * 0.25
             * self.override_spec.size;
         // lifetimeRandom / alphaRandom：`lerp(min,max,rand)`（黑神话 life∈[5,10]、alpha 缺省 1.0）。
         // 两者再乘 instanceoverride 的 lifetime/alpha（官方 ParticleParser.cpp:365-368）。
@@ -1822,8 +1821,8 @@ mod tests {
         assert!((-200.0..=200.0).contains(&p.vel[1]), "vel[1] 应来自 init（非黑神话 -50..-15），got {}", p.vel[1]);
         assert!((-300.0..=300.0).contains(&p.vel[2]), "vel[2] 应在 init 范围内，got {}", p.vel[2]);
 
-        // size 落在 init [size_min/2, size_max/2]（WE/lwe：sizerandom 值 /2；非黑神话 15..25）。
-        assert!((5.0..=10.0).contains(&p.size), "size 应来自 init 且 = 值/2，got {}", p.size);
+        // size 落在 init [size_min/4, size_max/4]（WE：sizerandom 值 /4；非黑神话 15..25）。
+        assert!((2.5..=5.0).contains(&p.size), "size 应来自 init 且 = 值/4，got {}", p.size);
         // life 落在 init [lifetime_min, lifetime_max]（非黑神话 5..10）。
         assert!((2.0..=3.0).contains(&p.life), "life 应来自 init，got {}", p.life);
         // color 各分量落在 init [color_min, color_max]（非黑神话粉 [1,0.83,0.97]）。
