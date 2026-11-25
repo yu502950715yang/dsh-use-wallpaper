@@ -36,3 +36,5 @@ dist/static/ptex-*.tex
 
 # --- 推广与竞品调研物料（仅本地保留，不入库）---
 docs/promo/
+# 临时取证/调试目录（agent 用完即删，避免误入库）
+.scratch*
