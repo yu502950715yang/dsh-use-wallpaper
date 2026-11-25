@@ -1250,7 +1250,7 @@ export class ThreeScenePlayer {
       maxInstances?: number;
       // 拖尾渲染条件（spec.renderer[0] == "spritetrail" 时由 `specRenderer()` 给出；缺省不启用）。
       // 三参数语义见 WE `common_particles.h` ComputeParticleTrailTangents → trailParams uniform。
-      trail?: { length: number; maxLength: number; minLength: number };
+      trail?: { length: number; maxLength: number; minLength: number; absolute?: boolean };
       // 粒子透视相机（spec.flags perspective 位；`particlePerspectiveCamera()` 给出参数）。
       // 缺省不启用 → 顶点 shader 走主正交投影。fov/distance = WE 的 global_perspective 相机参数。
       perspective?: { fov: number; distance: number; aspect: number };

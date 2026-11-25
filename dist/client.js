@@ -29163,12 +29163,17 @@ function specRenderer(specJson) {
   try {
     const raw = JSON.parse(specJson).renderer;
     const first = Array.isArray(raw) ? raw[0] : void 0;
-    if (!first || typeof first.name !== "string" || first.name !== "spritetrail") return sprite;
+    const name = typeof first?.name === "string" ? first.name : "";
+    const isTrail = name === "spritetrail" || name === "rope" || name === "ropetrail";
+    if (!isTrail) return sprite;
     const num2 = (v, dflt) => {
       const n = typeof v === "string" ? parseFloat(v) : typeof v === "number" ? v : NaN;
       return Number.isFinite(n) ? n : dflt;
     };
     const r = first;
+    if (name !== "spritetrail") {
+      return { kind: "spritetrail", length: num2(r.length, 0.2), maxLength: 1e6, minLength: 0, absolute: true };
+    }
     return {
       kind: "spritetrail",
       length: num2(r.length, 0.05),
@@ -29304,6 +29309,8 @@ uniform vec3 bmOffset;
 uniform float trailEnabled;
 uniform vec3 trailParams;
 uniform float texelRatio;
+// 1 = rope \u53E3\u5F84\uFF08length \u662F\u79D2\uFF0C\u62D6\u5C3E\u957F\u5EA6 = \u901F\u5EA6 \xD7 length\uFF0C\u4E0D\u4E58 size\uFF09\uFF1B0 = WE spritetrail \u53E3\u5F84\u3002
+uniform float trailAbsolute;
 // \u7C92\u5B50\u900F\u89C6\u76F8\u673A\uFF08spec.flags \u7684 perspective \u4F4D\uFF09\uFF1A
 //   perspEnabled  1 = \u8BE5\u5C42\u7528 WE \u7684 global_perspective \u76F8\u673A\u6295\u5F71\uFF08\u8FD1\u5927\u8FDC\u5C0F\uFF09\uFF0C0 = \u4E3B\u6B63\u4EA4\u76F8\u673A
 //   persp         \u8BE5\u900F\u89C6\u76F8\u673A\u7684**\u89C6\u56FE\u6295\u5F71\u77E9\u9635**\uFF08\u76F8\u673A\u5728 (0,0,distance)\uFF0C\u770B\u5411 -z\uFF09\u2014\u2014
@@ -29384,7 +29391,11 @@ void main() {
     float trailLen = clamp(speed * trailParams.x, trailParams.z, trailParams.y);
     vec3 up = (particleVelocity / speed) * trailLen;
     vec2 quadUv = position.xy * 0.5 + 0.5;
-    vec3 offset = particleSize * (right * (quadUv.x - 0.5) + up * (quadUv.y - 0.5) * texelRatio);
+    // \u5BBD\u5EA6\u8F74\u7167 WE \u4E58 size\uFF1B\u6CBF\u901F\u5EA6\u8F74\uFF1Arope \u7528\u7EDD\u5BF9\u957F\u5EA6\uFF08\u901F\u5EA6\xD7length\uFF09\uFF0Cspritetrail \u8FD8\u8981\u4E58 size\u3002
+    vec3 across = right * (quadUv.x - 0.5) * particleSize;
+    // rope \u53E3\u5F84\uFF1A\u6CBF\u901F\u5EA6\u8F74 = \u7269\u7406\u62D6\u5C3E\u957F\u5EA6\uFF08\u901F\u5EA6\xD7length\uFF09\uFF0C\u4E0D\u518D\u505A texelRatio \u62C9\u4F38\uFF08rope \u7684\u7EB9\u7406\u6CBF v \u94FA\u6EE1\u6574\u6761\u5E26\uFF09\u3002
+    vec3 along = up * (quadUv.y - 0.5) * (trailAbsolute > 0.5 ? 1.0 : particleSize * texelRatio);
+    vec3 offset = across + along;
     worldPos += weObjectRotate(objScale * offset, objAngles);
   } else {
     // sprite\uFF08\u65E2\u6709\u8DEF\u5F84\uFF0C\u9010\u5B57\u4E0D\u53D8\uFF09\uFF1A\u4E09\u8F74\u6B27\u62C9\u65CB\u8F6C quad \u89D2\u70B9\uFF1B|v|=0 \u7684 spritetrail \u4E5F\u9000\u5230\u8FD9\u91CC
@@ -29621,6 +29632,7 @@ function addParticle(host, simVerticesGetter, opts) {
       bmOffset: { value: new Vector3(...simEmitterOffset(opts.emitterOrigin ?? [0, 0, 0])) },
       // spritetrail（缺省关闭 → 顶点 shader 走原旋转分支，既有壁纸逐像素不变）。
       trailEnabled: { value: opts.trail ? 1 : 0 },
+      trailAbsolute: { value: opts.trail?.absolute ? 1 : 0 },
       trailParams: {
         value: new Vector3(
           opts.trail?.length ?? 1,

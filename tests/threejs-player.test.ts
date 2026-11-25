@@ -1234,8 +1234,12 @@ describe('ThreeScenePlayer particle layer', () => {
     expect(specRenderer(JSON.stringify({ renderer: [{ name: 'spritetrail' }] })))
       .toEqual({ kind: 'spritetrail', length: 0.05, maxLength: 10, minLength: 0 });
     expect(specRenderer(JSON.stringify({ renderer: [{ name: 'sprite' }] })).kind).toBe('sprite');
-    // rope/ropetrail 与 wasm 侧一致地走 sprite 兜底（不白屏）。
-    expect(specRenderer(JSON.stringify({ renderer: [{ name: 'rope', subdivision: 4 }] })).kind).toBe('sprite');
+    // rope / ropetrail（流星/坠落物拖尾）：按 spritetrail 近似（WE 的 rope 是沿历史位置的带状曲线，
+    // 直线运动下与「沿速度拉长的 billboard」等价；不近似则流星只剩 1~2 px 的点）。
+    expect(specRenderer(JSON.stringify({ renderer: [{ name: 'ropetrail', length: 0.2 }] })))
+      .toEqual({ kind: 'spritetrail', length: 0.2, maxLength: 1e6, minLength: 0, absolute: true });
+    expect(specRenderer(JSON.stringify({ renderer: [{ name: 'rope', subdivision: 4 }] })))
+      .toEqual({ kind: 'spritetrail', length: 0.2, maxLength: 1e6, minLength: 0, absolute: true });
     expect(specRenderer('{}').kind).toBe('sprite');
     expect(specRenderer('').kind).toBe('sprite');
   });

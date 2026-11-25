@@ -29,12 +29,17 @@ export function specMaxcount(specJson: string): number {
 }
 
 // 粒子渲染器（spec 顶层 `renderer[0]`）—— 缺省值与 wasm `parse_particle_spec` / WE/lwe/OWE
-// 口径一致（length 0.05、maxlength 10、minlength 0）；rope/ropetrail 也按 sprite 兜底。
+// 口径一致（length 0.05、maxlength 10、minlength 0）。
+// `rope`/`ropetrail` 按 spritetrail 近似，并用 `absolute` 区分两者的 `length` 语义：
+// spritetrail 的 `length` 是「速度 × size 之后的缩放」（WE `g_RenderVar0.x`）；rope 的 `length`
+// 是拖尾**时长（秒）**，视觉长度 = 速度 × length（不再乘 size）。
 export interface ParticleRendererSpec {
   kind: 'sprite' | 'spritetrail';
   length: number;
   maxLength: number;
   minLength: number;
+  /** true = rope 口径：拖尾长度按秒计（不乘粒子 size）。 */
+  absolute?: boolean;
 }
 
 // 解析 spec JSON 的 `renderer[0]`。非法/缺失 → sprite（不启用拖尾，行为与旧版一致）。
@@ -43,12 +48,21 @@ export function specRenderer(specJson: string): ParticleRendererSpec {
   try {
     const raw = (JSON.parse(specJson) as { renderer?: unknown }).renderer;
     const first = Array.isArray(raw) ? (raw[0] as { name?: unknown } | undefined) : undefined;
-    if (!first || typeof first.name !== 'string' || first.name !== 'spritetrail') return sprite;
+    const name = typeof first?.name === 'string' ? first.name : '';
+    // `rope` / `ropetrail`（流星/雨丝的带状拖尾）本插件按 **spritetrail 近似**：WE 的 rope 是沿粒子
+    // 历史位置的带状曲线，直线运动的流星/坠落物与「沿速度方向拉长的 billboard」在视觉上等价；
+    // 不做近似时它们会被当普通 sprite 画成 1~2 px 的点（`3819637149`/`3765967112`/`3840341648`/`3743126786`
+    // 的流星全部看不见）。`length` 两者同义（拖尾时长，秒）；rope 没有 max/minlength 字段 ⇒ 不钳制。
+    const isTrail = name === 'spritetrail' || name === 'rope' || name === 'ropetrail';
+    if (!isTrail) return sprite;
     const num = (v: unknown, dflt: number): number => {
       const n = typeof v === 'string' ? parseFloat(v) : typeof v === 'number' ? v : NaN;
       return Number.isFinite(n) ? n : dflt;
     };
     const r = first as { length?: unknown; maxlength?: unknown; minlength?: unknown };
+    if (name !== 'spritetrail') {
+      return { kind: 'spritetrail', length: num(r.length, 0.2), maxLength: 1e6, minLength: 0, absolute: true };
+    }
     return {
       kind: 'spritetrail',
       length: num(r.length, 0.05),
@@ -230,6 +244,8 @@ uniform vec3 bmOffset;
 uniform float trailEnabled;
 uniform vec3 trailParams;
 uniform float texelRatio;
+// 1 = rope 口径（length 是秒，拖尾长度 = 速度 × length，不乘 size）；0 = WE spritetrail 口径。
+uniform float trailAbsolute;
 // 粒子透视相机（spec.flags 的 perspective 位）：
 //   perspEnabled  1 = 该层用 WE 的 global_perspective 相机投影（近大远小），0 = 主正交相机
 //   persp         该透视相机的**视图投影矩阵**（相机在 (0,0,distance)，看向 -z）——
@@ -310,7 +326,11 @@ void main() {
     float trailLen = clamp(speed * trailParams.x, trailParams.z, trailParams.y);
     vec3 up = (particleVelocity / speed) * trailLen;
     vec2 quadUv = position.xy * 0.5 + 0.5;
-    vec3 offset = particleSize * (right * (quadUv.x - 0.5) + up * (quadUv.y - 0.5) * texelRatio);
+    // 宽度轴照 WE 乘 size；沿速度轴：rope 用绝对长度（速度×length），spritetrail 还要乘 size。
+    vec3 across = right * (quadUv.x - 0.5) * particleSize;
+    // rope 口径：沿速度轴 = 物理拖尾长度（速度×length），不再做 texelRatio 拉伸（rope 的纹理沿 v 铺满整条带）。
+    vec3 along = up * (quadUv.y - 0.5) * (trailAbsolute > 0.5 ? 1.0 : particleSize * texelRatio);
+    vec3 offset = across + along;
     worldPos += weObjectRotate(objScale * offset, objAngles);
   } else {
     // sprite（既有路径，逐字不变）：三轴欧拉旋转 quad 角点；|v|=0 的 spritetrail 也退到这里

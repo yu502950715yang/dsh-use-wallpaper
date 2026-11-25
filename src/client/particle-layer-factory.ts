@@ -87,7 +87,8 @@ export interface AddParticleOptions {
   maxInstances?: number;
   // 拖尾渲染条件（spec.renderer[0] == "spritetrail" 时由 `specRenderer()` 给出；缺省不启用）。
   // 三参数语义见 WE `common_particles.h` ComputeParticleTrailTangents → trailParams uniform。
-  trail?: { length: number; maxLength: number; minLength: number };
+  // `absolute`（rope 近似）：length 是秒，拖尾长度 = 速度 × length（不再乘 size）。
+  trail?: { length: number; maxLength: number; minLength: number; absolute?: boolean };
   // 粒子透视相机（spec.flags perspective 位；`particlePerspectiveCamera()` 给出参数）。
   // 缺省不启用 → 顶点 shader 走主正交投影。fov/distance = WE 的 global_perspective 相机参数。
   perspective?: { fov: number; distance: number; aspect: number };
@@ -226,6 +227,7 @@ export function addParticle(
         bmOffset: { value: new THREE.Vector3(...simEmitterOffset(opts.emitterOrigin ?? [0, 0, 0])) },
         // spritetrail（缺省关闭 → 顶点 shader 走原旋转分支，既有壁纸逐像素不变）。
         trailEnabled: { value: opts.trail ? 1.0 : 0.0 },
+        trailAbsolute: { value: opts.trail?.absolute ? 1.0 : 0.0 },
         trailParams: {
           value: new THREE.Vector3(
             opts.trail?.length ?? 1,

@@ -44,6 +44,7 @@ export interface AddParticleOptions {
         length: number;
         maxLength: number;
         minLength: number;
+        absolute?: boolean;
     };
     perspective?: {
         fov: number;
