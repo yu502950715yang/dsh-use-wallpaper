@@ -60,7 +60,7 @@ dsh plugin --profile web add "@dsh-use/wallpaper-engine" && dsh plugin --profile
 | | 能力 | 说明 |
 |---|---|---|
 | 🎨 | **Scene 动态壁纸** | 在浏览器里实时算出来，不是静态图贴上去：背景图层与粒子系统各司其职，背景的缩放、透明度、亮度按原作者的设定还原 |
-| 🌊 | **粒子效果基本完整** | 雪、雨、花瓣、火星、雾、气泡等都按壁纸里的原始参数运动：重力、风向、湍流、寿命、颜色与大小渐变；**沿速度方向拉伸的拖尾**（雨丝、风痕、余烬，即 WE 的 `spritetrail`）也已实现；**起播相位（`starttime`）按原设定预推进**，对象级实例覆盖（`instanceoverride`，含编辑器的 `{user|script,value}` 包装）同样生效 —— 加色雪层不再变黑；**子粒子（子发射器）与绳索类拖尾（`ropetrail`）尚未支持**，见「使用前请了解」 |
+| 🌊 | **粒子效果基本完整** | 雪、雨、花瓣、火星、雾、气泡等都按壁纸里的原始参数运动：重力、风向、湍流、寿命、颜色与大小渐变；**沿速度方向拉伸的拖尾**（雨丝、风痕、余烬，即 WE 的 `spritetrail`）也已实现；**起播相位（`starttime`）按原设定预推进**，对象级实例覆盖（`instanceoverride`，含编辑器的 `{user|script,value}` 包装）同样生效 —— 加色雪层不再变黑；**子粒子（子发射器）尚未支持**；绳索类拖尾（`rope` / `ropetrail`）按 sprite 拖尾近似（差异见「使用前请了解」） |
 | 🖼️ | **各种纹理都能解** | 主流压缩格式（DXT1/3/5、RGBA、R8、RG88）与多帧精灵动画（火把、雾、光晕）都能正确解出原图，不糊、不露黑边；**标记为精灵表的 image 只显示当前帧**：有作者脚本的按脚本帧（可 `pause` / `setFrame`），无脚本的按约 1 帧/秒自动循环，不再把整张帧表压进一个图标 |
 | 🎞️ | **视频 / 网页 / 图片壁纸** | 视频循环播放（编码不支持时自动回退预览并提示；**视频壁纸自带音轨跟随「声音」开关播放**，无音轨素材会提示）；网页壁纸在沙箱里加载，**页内 `<audio>/<video>` 声音同样跟随「声音」开关与音量**（Web Audio 自建声源控制不到）；图片壁纸用预览图 + 缓慢缩放动效 |
 | 🪜 | **多级降级链** | scene 渲染失败时依次尝试 **内嵌 MP4 → 抓帧 PNG → 作者预览图 → 空态**；每级失败只跳过，不白屏、不黑屏卡死 |
@@ -201,9 +201,13 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 | `qualityScale` | `1` | 画质档位：渲染像素比倍率（0.5–1，越小越省显存） |
 | `soundEnabled` | `true` | 壁纸声音总开关：scene 壁纸的音效对象 + 视频壁纸自带音轨；面板「声音」卡有开关，改完立即生效 |
 | `soundVolume` | `1` | 壁纸声音音量 0–1：scene 音效对象与视频壁纸共用；面板「声音」卡滑杆，拖动即时生效 |
+| `mediaIntegrationEnabled` | `true` | 系统媒体集成（Windows SMTC）：读系统播放器的歌曲/封面让壁纸联动；面板「媒体集成」卡可关，关闭后不启动轮询、立即隐藏媒体层 |
 | `rotationEnabled` | `false` | 自动轮播开关 |
 | `rotationIntervalMs` | `300000` | 轮播间隔（1–30 分钟；面板档位为 1 / 5 / 10 / 30 分钟） |
 | `rotationOrder` | `sequential` | 轮播顺序：`sequential` 顺序 / `random` 随机 |
+| `textColorMode` | `auto` | 贴壁纸的文字颜色：`auto` 按壁纸测光自动选黑/白 / `white` / `black` / `custom`（取 `textColor`）；面板「文字可读性」卡可调 |
+| `textColor` | `#ffffff` | 自定义文字色，仅 `textColorMode: custom` 时生效 |
+| `textOutline` | `0` | 文字描边档位 0–3（0 = 无描边），越深越耐浅色 / 花杂壁纸 |
 | `frameCacheEnabled` | `true` | scene 首帧抓帧缓存（写入数据目录 `frames/`，供降级链使用）；面板无控件 |
 | `bootAnimationEnabled` | `false` | 开机动画总开关（设置 →「Wallpaper 壁纸」→「开机动画」tab，默认关闭；默认不记忆 tab） |
 | `bootAnimationSource` | `we` | 素材来源：`we` = WE 库壁纸 / `local` = 本地视频文件 |
@@ -244,7 +248,7 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 
 > 💡 **设置字段与本地状态**：上表的都是**设置字段**，可写进 profile `cordis.patch.yml` 的 `config`；面板改动除用户属性（提交后重装配当前壁纸才生效）外都**立即生效**。其中 `fitMode` / Ken Burns 只对图片 / 视频壁纸生效（scene 由渲染器自绘；Ken Burns 仅图片）。壁纸库的**收藏 / 隐藏 / 最近使用**（`we:fav` / `we:hidden` / `we:recent`）与**用户属性**（`we:userprop:<wallpaperId>:<key>`）是浏览器侧 UI 状态，**只存 localStorage**，不能写进 profile config，也不跨浏览器 / 端口同步。
 > 
-> ⚠️ 光晕默认值 `0.65` / `0.35` 是 **2026-09-21 由用户在真机面板上试出来的**（按「亮部不过曝」定档，6 张壁纸的参数网格数据见 `AGENT.md` §7.1）。**2026-11-17 起亮部取值口径改成与 Wallpaper Engine 同式**（`clamp(max(r,g,b) − 阈值, 0, 1)`，不再除以 `1 − 阈值`），同一组滑杆值比旧版淡约 2.9 倍：`0.35` 现在是「清淡档」，**想恢复旧观感把强度调到 ≈ `1.0`**（面板即时生效）。实测 `3817739578`（Lake at sunset[无雨]）左上 1/4 纯白占比 21.4% → **9.8%**，同帧桌面 WE 为 10.1%。
+> ⚠️ 光晕默认值 `0.65` / `0.35` 是 **2026-09-21 由用户在真机面板上试出来的**（按「亮部不过曝」定档；6 张壁纸的标定数据见 [`docs/fixes/threejs-path-fixes.md`](docs/fixes/threejs-path-fixes.md) 的 Glow 标定段）。**2026-11-17 起亮部取值口径改成与 Wallpaper Engine 同式**（`clamp(max(r,g,b) − 阈值, 0, 1)`，不再除以 `1 − 阈值`），同一组滑杆值比旧版淡约 2.9 倍：`0.35` 现在是「清淡档」，**想恢复旧观感把强度调到 ≈ `1.0`**（面板即时生效）。实测 `3817739578`（Lake at sunset[无雨]）左上 1/4 纯白占比 21.4% → **9.8%**，同帧桌面 WE 为 10.1%。
 
 ---
 
@@ -280,7 +284,7 @@ dsh plugin --profile web add link:E:/code/dsh-use-wallpaper
 **画面表现**
 
 - **少数壁纸可能出现黑块或整体偏暗**：带复杂遮罩或特殊混合方式的壁纸会这样，**不是你没配好**。
-- **粒子的旋转、拖尾（雨丝 / 风痕）、近大远小都已支持**，但**能不能看出来取决于壁纸本身** —— 只有规格里给了对应参数的粒子才会动。绳索类拖尾（`ropetrail`）尚未支持，会退化成普通贴图；**子粒子（子发射器，如火焰火星、雷电二次放电）尚未支持**。**起播相位（`starttime`）按原作者设定预推进，最多 15 秒**；对象级实例覆盖（`instanceoverride`）也按原设定生效。
+- **粒子的旋转、拖尾（雨丝 / 风痕）、近大远小都已支持**，但**能不能看出来取决于壁纸本身** —— 只有规格里给了对应参数的粒子才会动。绳索类拖尾（`rope` / `ropetrail`）**按 sprite 拖尾近似**：WE 的「沿历史位置的带状曲线」退化成沿速度方向拉伸的条带，流星 / 坠落物能看出拖尾，但形态与桌面不完全一致；**子粒子（子发射器，如火焰火星、雷电二次放电）尚未支持**。**起播相位（`starttime`）按原作者设定预推进，最多 15 秒**；对象级实例覆盖（`instanceoverride`）也按原设定生效。
 - **鼠标互动粒子尚未支持**：粒子控制点 `link_mouse` / `worldspace`（跟随光标 / 世界坐标吸引点）、`vortex` 旋涡算子、`mapsequencearoundcontrolpoint` 以及 `boids` / `remapvalue` 算子会退化 —— 粒子不跟手、漩涡不旋转、鸟群不聚散。
 - **骨骼模型（puppet）已能播真实动画**：`scene.json` 的 `animationlayers` 引用的 `.mdl` 动画（MDLS 骨骼 + MDLA 关键帧）会驱动骨骼，角色身上的对象级效果（披风 / 衣摆的水波、涟漪等）也能执行。**边界**：MDLE（世界绑定矩阵）不消费、MDLS 多扩展块不解析、多条可见动画层只应用第一条（`blend` / `additive` 不混合）、puppet 材质的 `colorBlendMode ≠ 0` 与自定义 shader 不复刻、puppet 的 color / alignment 未接。
 - **时间 / 日期类文字会实时走字，作者挂在文字上的模糊 / VHS / 水波效果也会执行**；隔离渲染的文本尺寸在装配时固定，**跨分钟变宽时可能轻微裁边或拉伸**。壁纸自带的脚本跑不通时，退回内置时钟或跳过该层，**不会**把作者的占位文字画到屏幕上。
@@ -381,7 +385,7 @@ scripts/      build-client.mjs（esbuild 打包 + wasm 复制）；check-known-f
 tests/        vitest 单测（node + jsdom 双环境）
 e2e/          端到端渲染验证（headless Edge + 生产 lib/ 逐像素判定，可上 CI）
 .github/      CI：tsc + lib/ 产物新鲜度 / vitest 新增失败 / Windows 渲染 e2e
-docs/         开发配置（dev-setup.md）；设计文档与实施计划（superpowers/*）；技术细节（technical-notes.md）；效果视频（videos/*）
+docs/         开发配置（dev-setup.md）；设计文档与实施计划（superpowers/*）；技术细节（technical-notes.md）；格式规格（mdl-puppet-format.md）；效果视频（videos/*）
 ```
 
 **降级链**

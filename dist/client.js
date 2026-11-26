@@ -32421,7 +32421,7 @@ function parseAnimations(buf, dv) {
         const o = p + k * KEYFRAME_BYTES;
         const key = {
           pos: [readF322(dv, o), readF322(dv, o + 4), readF322(dv, o + 8)],
-          // 欧拉角（弧度）：WE 组合顺序 Rz·Ry·Rx，渲染侧换算四元数（AGENT.md §7.40）
+          // 欧拉角（弧度）：WE 组合顺序 Rz·Ry·Rx，渲染侧换算四元数（docs/mdl-puppet-format.md）
           angle: [readF322(dv, o + 12), readF322(dv, o + 16), readF322(dv, o + 20)],
           scale: [readF322(dv, o + 24), readF322(dv, o + 28), readF322(dv, o + 32)]
         };
