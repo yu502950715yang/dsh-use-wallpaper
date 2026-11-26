@@ -385,7 +385,7 @@ scripts/      build-client.mjs（esbuild 打包 + wasm 复制）；check-known-f
 tests/        vitest 单测（node + jsdom 双环境）
 e2e/          端到端渲染验证（headless Edge + 生产 lib/ 逐像素判定，可上 CI）
 .github/      CI：tsc + lib/ 产物新鲜度 / vitest 新增失败 / Windows 渲染 e2e
-docs/         开发配置（dev-setup.md）；设计文档与实施计划（superpowers/*）；技术细节（technical-notes.md）；格式规格（mdl-puppet-format.md）；效果视频（videos/*）
+docs/         开发配置（dev-setup.md）；设计文档与实施计划（superpowers/*）；技术细节（technical-notes.md）；格式规格与实现细节（mdl-puppet-format.md、v08-gap-fixes.md）；效果视频（videos/*）
 ```
 
 **降级链**
